@@ -250,13 +250,20 @@ the entrypoint has finished and the Agent answers. A create issued in that windo
 still gets `502 workspace agent unreachable`; retry.
 
 **The split has been measured** (2026-08-15,
-[`docs/62-ecs-start-latency.md`](../../../docs/62-ecs-start-latency.md) §62.9), and
-the answer was not the image. On a warm-home Stop→Start, the ~160s average breaks
-down as **~79s waiting for the ECS service scheduler to create a task after
-`desiredCount` 0→1**, **35s image pull** (918 MiB compressed, 34 layers), **~25s
-EFS mount + container create**, **16s provision**, **21s entrypoint**. Image pull
-is only ~22% of it, so SOCI lazy loading was **rejected** — the lever is the
-scheduler reaction time. Re-measure the same way if any of this changes:
+[`docs/62-ecs-start-latency.md`](../../../docs/62-ecs-start-latency.md) §62.9–62.10),
+and the answer was not the image. A warm-home Stop→Start costs **~101s**: **4–8s**
+for ECS to create the task, **16s** provision (ENI attach), **35s** image pull
+(918 MiB compressed, 34 layers), **~25s** EFS mount + container create, **21s**
+entrypoint. Image pull is ~35% of that — under the 40% decision gate and under 40s
+absolute — so SOCI lazy loading was **rejected**.
+
+⚠️ **Benchmarking caveat, learned the hard way**: restarting a workspace *right
+after* stopping it (within a minute or two) makes ECS take **40–143s** just to
+create the task, because the previous task is still being torn down while the new
+deployment lands on top of it. That is a property of the measurement loop, not of
+production (a workspace is stopped by the reaper and started minutes-to-hours
+later). **State the stop→start gap whenever you quote a restart number.**
+Re-measure the same way if any of this changes:
 
 ```bash
 # image pull window (and the surrounding task lifecycle)
