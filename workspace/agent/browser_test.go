@@ -693,14 +693,7 @@ func TestBrowserWebSocketProtocol(t *testing.T) {
 }
 
 func TestBrowserChromiumIntegration(t *testing.T) {
-	bin, err := findChromiumBinary()
-	if err != nil {
-		t.Skip("Chromium is not installed in this test environment")
-	}
-	cdpFactory := browserCDPFactory(launchPipeCDP)
-	if strings.Contains(bin, "/.cache/ms-playwright/") {
-		cdpFactory = launchPipeCDPWithoutSandboxForTest
-	}
+	cdpFactory := browserTestCDPFactory(t)
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(`<!doctype html><title>Browser smoke</title><main>日本語</main><input id="ime" autofocus>`))
@@ -771,11 +764,8 @@ func TestBrowserChromiumIntegration(t *testing.T) {
 }
 
 func TestBrowserTwoPageCaptureIntegration(t *testing.T) {
-	bin, err := findChromiumBinary()
-	if err != nil {
-		t.Skip("Chromium is not installed in this test environment")
-	}
-	if err := runBrowserSmoke(!strings.Contains(bin, "/.cache/ms-playwright/")); err != nil {
+	sandbox := browserTestUsesSandbox(t)
+	if err := runBrowserSmoke(sandbox); err != nil {
 		t.Fatal(err)
 	}
 }

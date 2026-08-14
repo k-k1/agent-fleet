@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 )
@@ -33,14 +32,7 @@ requestAnimationFrame(frame);
 // and is never invalidated with reason=screencast backpressure. Before the fix the
 // Page crashed after 0-1 frames.
 func TestBrowserScreencastBackpressureIntegration(t *testing.T) {
-	bin, err := findChromiumBinary()
-	if err != nil {
-		t.Skip("Chromium is not installed in this test environment")
-	}
-	cdpFactory := browserCDPFactory(launchPipeCDP)
-	if strings.Contains(bin, "/.cache/ms-playwright/") {
-		cdpFactory = launchPipeCDPWithoutSandboxForTest
-	}
+	cdpFactory := browserTestCDPFactory(t)
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(browserAnimationFixture))

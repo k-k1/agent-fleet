@@ -90,6 +90,13 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 	// last send. Go の json.Marshal は map キーをソートするので、内容が同じなら
 	// バイト列も同じ — 素朴な文字列比較で diff できる。
 	emit := func(stream string, payload any) bool {
+		// この tick の payload を組む途中で切断されたなら、それは「変化」ではなく
+		// 中断。sessions は Agent への HTTP が ctx キャンセルで失敗すると DB ミラー
+		// へフォールバックする（別 shape）ので、ここで弾かないと**購読者がもう居ない
+		// のに**「セッションが変わった」フレームを 1 本書き、last[] まで汚す。
+		if ctx.Err() != nil {
+			return false
+		}
 		b, err := json.Marshal(payload)
 		if err != nil {
 			return false
