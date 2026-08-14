@@ -79,12 +79,16 @@ type oidcProvider struct {
 	prompt       string     // "" omits the prompt parameter
 	extraAuth    url.Values // provider-specific authorize params (Google: access_type)
 
-	// Authorization. A provider-specific allowlist replaces the deployment-wide
-	// one entirely (docs/61 §61.8: "未設定なら共通の許可リストを使う").
+	// Authorization. A provider-specific allowlist replaces the DEPLOYMENT-WIDE
+	// list entirely (docs/61 §61.8: "未設定なら共通の許可リストを使う") — that is a
+	// per-provider narrowing operators rely on and P3 did not change it.
+	// dbAllowed is the separate, database-derived term P3 adds on top of whichever
+	// of the two applies: see Allowed.
 	allowedTIDs   map[string]bool
 	allowEmails   map[string]bool
 	allowDomains  map[string]bool
 	deployAllowed func(email string) bool
+	dbAllowed     func(ctx context.Context, email string) bool
 
 	client *http.Client
 
@@ -354,19 +358,37 @@ func (p *oidcProvider) userinfo(ctx context.Context, ep oidcEndpoints, accessTok
 	return c, true
 }
 
-func (p *oidcProvider) Allowed(_ context.Context, pr principal) (bool, error) {
+// Allowed is the entry gate for this provider: a union taken strictly WITHIN the
+// email axis (docs/61 §61.9.6, revised in P3).
+//
+//	(this provider's own email list, or — when it declares none — the
+//	 deployment-wide list)
+//	OR (an auto-join domain matches, or the person holds a membership)
+//
+// ★ Two things this shape is careful about.
+//
+// First, the provider-specific list still REPLACES the deployment-wide list rather
+// than adding to it. Union-ing those two would silently widen a provider an
+// operator had deliberately narrowed ("Google is company-wide, Entra only for the
+// subsidiary domain") — a regression against P0's documented behaviour.
+//
+// Second, only the email axis is union-ed. Terms of a different kind stay AND-ed:
+// the GitHub adapter checks org membership separately, so holding an Agent Fleet
+// membership can never be a way past its org gate (決定 2).
+func (p *oidcProvider) Allowed(ctx context.Context, pr principal) (bool, error) {
 	email := strings.ToLower(strings.TrimSpace(pr.Email))
 	at := strings.LastIndexByte(email, '@')
 	if email == "" || at < 0 {
 		return false, nil
 	}
 	if p.hasOwnAllowlist() {
-		return p.allowEmails[email] || p.allowDomains[email[at+1:]], nil
+		if p.allowEmails[email] || p.allowDomains[email[at+1:]] {
+			return true, nil
+		}
+	} else if p.deployAllowed != nil && p.deployAllowed(email) {
+		return true, nil
 	}
-	if p.deployAllowed == nil {
-		return false, nil
-	}
-	return p.deployAllowed(email), nil
+	return p.dbAllowed != nil && p.dbAllowed(ctx, email), nil
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -392,7 +414,7 @@ func emailLike(s string) string {
 // newGoogleProvider builds the historical Google login as one instance of the
 // generic client. Its env names, scope, prompt and endpoints are unchanged, so an
 // existing deployment behaves exactly as before (受入条件 6).
-func newGoogleProvider(clientID, clientSecret string, deployAllowed func(string) bool) *oidcProvider {
+func newGoogleProvider(clientID, clientSecret string, deployAllowed func(string) bool, dbAllowed func(context.Context, string) bool) *oidcProvider {
 	p := &oidcProvider{
 		id:            googleProviderID,
 		labelJA:       loginText["ja"].signin,
@@ -405,6 +427,7 @@ func newGoogleProvider(clientID, clientSecret string, deployAllowed func(string)
 		prompt:        "select_account",
 		extraAuth:     url.Values{"access_type": {"online"}},
 		deployAllowed: deployAllowed,
+		dbAllowed:     dbAllowed,
 	}
 	p.seedEndpoints(oidcEndpoints{
 		Issuer: googleIssuer, Authorize: googleAuthorizeURL,
@@ -485,7 +508,7 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 
 	switch {
 	case c.googleClientID != "" && c.googleClientSecret != "":
-		out = append(out, newGoogleProvider(c.googleClientID, c.googleClientSecret, c.emailAllowed))
+		out = append(out, newGoogleProvider(c.googleClientID, c.googleClientSecret, c.emailAllowed, c.tenantEmailAllowed))
 		seen[googleProviderID] = true
 	case c.googleClientID != "" || c.googleClientSecret != "":
 		log.Printf("WARNING: google login disabled — set both GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET")
@@ -550,6 +573,7 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 			allowEmails:   emailSet(oidcEnv(id, "ALLOWED_EMAILS")),
 			allowDomains:  domainSet(oidcEnv(id, "ALLOWED_DOMAINS")),
 			deployAllowed: c.emailAllowed,
+			dbAllowed:     c.tenantEmailAllowed,
 		}
 		if v := oidcEnv(id, "PROMPT"); v != "" {
 			p.prompt = strings.TrimSpace(strings.ToLower(v))
@@ -565,7 +589,7 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 	// button people should normally press at the top.
 	if seen[githubProviderID] {
 		log.Printf("WARNING: %q is the GitHub adapter's reserved id and cannot be used for an OIDC provider — the GitHub login is disabled", githubProviderID)
-	} else if gh := newGitHubProvider(c.emailAllowed, c.hasDeploymentAllowlist()); gh != nil {
+	} else if gh := newGitHubProvider(c.emailAllowed, c.tenantEmailAllowed, c.hasDeploymentAllowlist()); gh != nil {
 		out = append(out, gh)
 	}
 	return out, nil

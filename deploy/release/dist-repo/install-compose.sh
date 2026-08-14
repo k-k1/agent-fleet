@@ -122,6 +122,8 @@ Next steps (Compose needs manual config — cannot be fully automated):
   #   and the login IdP: GOOGLE_OAUTH_* and/or AF_OIDC_PROVIDERS + AF_OIDC_<ID>_*
   #   (Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab), and/or GitHub via
   #   AF_GITHUB_ALLOWED_ORGS + GITHUB_OAUTH_CLIENT_ID/_SECRET
+  #   plus AF_OAUTH_ALLOWED_DOMAINS (or _EMAILS) so your first administrator can
+  #   sign in — after that, people invited in the Admin panel get in without it
   # (optional) enable the git-provider "Connect" buttons:
   #   GITHUB_OAUTH_CLIENT_ID / BITBUCKET_OAUTH_KEY / BITBUCKET_OAUTH_SECRET
   docker compose up -d

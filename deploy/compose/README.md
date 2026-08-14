@@ -190,7 +190,24 @@ in `.env` (users can always paste a token instead, without these):
   with zero friction. Create additional tenants only if you need hard separation
   (e.g. departments) — each membership gets a fully isolated workspace.
 - `AF_PROVISION=auto` (default) auto-admits any allow-listed login into the
-  default tenant. Set `AF_PROVISION=invite` to require an admin to add people.
+  default tenant. Set `AF_PROVISION=invite` to require an admin to add people —
+  you can do that from the first boot, since a `SUPER_ADMIN_EMAILS` account
+  reaches the Admin panel with no membership of its own.
+- **An invitation is itself permission to sign in.** Somebody you add in the
+  Admin panel gets past the login without also being in `AF_OAUTH_ALLOWED_*`, so
+  an invite-run deployment keeps one roster rather than two lists that drift.
+- Each tenant can carry **login rules** (Admin → tenant → Login rules): which
+  sign-in methods it accepts, which domains join it automatically, and which
+  domains may be invited. It also gets its own page at
+  `<PUBLIC_BASE_URL>/login/<slug>`, showing only the methods that tenant accepts —
+  that URL is what you hand to a new member (there is no invitation email).
+- **Offboarding is "Remove member"** (Admin → tenant → member). Disabling the
+  account at the IdP does not end a session that already exists — the signed
+  cookie is valid for up to `AF_SESSION_TTL`. Removing them from the roster (or
+  the allowlist) takes effect on their very next request. To cut every session at
+  once, rotate `AF_COOKIE_SECRET` and restart.
+- `SUPER_ADMIN_EMAILS` is read **once at startup** and is the only source of
+  truth: on restart the CP also revokes the role from accounts no longer listed.
 
 ## Backup & restore
 
@@ -297,7 +314,9 @@ encodes them, but if you customize it, keep them:
 | "permission denied" on docker.sock | `DOCKER_GID` matches `getent group docker`? |
 | Workspace starts but home is empty | DooD (B): `DATA_DIR` identical inside/outside; same path on restore |
 | Can't reach a started workspace | DooD (A): CP + Caddy both `network_mode: host` |
-| Login always denied | allowlist empty (fail-closed) — set `AF_OAUTH_ALLOWED_DOMAINS`/`_EMAILS` |
+| Login always denied | allowlist empty **and nobody invited yet** (fail-closed) — set `AF_OAUTH_ALLOWED_DOMAINS`/`_EMAILS`, or invite somebody |
+| "this tenant needs a different sign-in" | the tenant's Login rules → sign-in methods excludes the IdP they used; send them `<PUBLIC_BASE_URL>/login/<slug>` |
+| A removed person still has access | the IdP block doesn't end their session — remove the member (Admin → tenant → member) or rotate `AF_COOKIE_SECRET` |
 | TLS not issued | DNS A/AAAA → this host? ports 80/443 reachable? Let's Encrypt rate limit? |
 | Redirect URI mismatch | the IdP's registered URI == `<PUBLIC_BASE_URL>/oauth2/callback` |
 | A login button is missing | that provider was disabled at startup — `docker compose logs cp \| grep -i "login provider"` names the missing setting |

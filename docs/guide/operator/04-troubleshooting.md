@@ -22,7 +22,9 @@ included here as well. The working directory is `deploy/compose/`.
 | "permission denied" on docker.sock | Whether `DOCKER_GID` matches the host's docker group GID (DooD constraint C) |
 | Workspace starts but home is empty | Whether `DATA_DIR` is the same absolute path inside and outside the CP. The same path at restore time too (DooD constraint B) |
 | Cannot reach a started Workspace | Whether both the CP and Caddy have `network_mode: host` (DooD constraint A) |
-| Logins are always rejected | The allowlist is empty (fail-closed). Set `AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` |
+| Logins are always rejected | The allowlist is empty **and nobody is invited yet** (fail-closed). Set `AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS`, or invite somebody |
+| One person is refused with "this tenant needs a different sign-in" | That tenant's **Login rules → Sign-in methods** does not include the IdP they used. Send them `/login/<slug>` |
+| Somebody you removed can still work | Removing them at the IdP does not end the session. Take them off the roster (Admin → tenant → member → **Remove member**) or out of the allowlist |
 | TLS certificate is not issued | Whether DNS A/AAAA point to this host. Whether 80/443 are reachable. Let's Encrypt rate limits |
 | redirect URI mismatch | Whether the URI registered at the IdP matches `<PUBLIC_BASE_URL>/oauth2/callback` |
 | A sign-in button is missing | That provider was disabled at startup. `docker compose logs control-plane \| grep -i "login provider"` names the missing setting |
@@ -55,9 +57,21 @@ background on how this works is in [dev/09](../../dev/09-deploy.md).
 ## Cannot log in
 
 - **Always rejected** → if the allowlist (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` /
-  `_EMAILS_FILE`) is **entirely empty, everything is rejected** (fail-closed = a
-  fail-safe design). Set at least one. `_EMAILS_FILE` is re-read on every login, so additions
-  need no restart.
+  `_EMAILS_FILE`) is **entirely empty and nobody has been invited to a tenant, everything is
+  rejected** (fail-closed = a fail-safe design). Set at least one, or add the person as a
+  member. `_EMAILS_FILE` is re-read on every login, so additions need no restart; an invitation
+  takes effect immediately too.
+- **"This tenant needs a different sign-in"** (`provider_required`) → the tenant's **Login
+  rules → Sign-in methods** does not list the IdP that session came from. This is not a fault:
+  a session carries one provider, so moving to a tenant that requires another one means signing
+  in again. The Console offers that link; `https://<PUBLIC_DOMAIN>/login/<slug>` shows exactly
+  the methods that tenant accepts. If it is the *rule* that is wrong, fix it in the Admin panel.
+- **A person you removed is still working** → removing their account at the IdP does not end
+  the session they already hold; the signed cookie stays valid for up to `AF_SESSION_TTL`
+  (7 days by default) and cannot be revoked individually. Take them off the roster (Admin →
+  tenant → member → **Remove member**) or out of the allowlist — either takes effect on their
+  very next request. To cut every session at once, rotate `AF_COOKIE_SECRET`
+  ([03 §Offboarding](03-security.md)).
 - **redirect URI mismatch** → check that the authorized redirect URI registered at the IdP
   (Google Cloud Console, the Entra app registration, …) is an **exact match** for
   `<PUBLIC_BASE_URL>/oauth2/callback`. If you change `PUBLIC_BASE_URL`, update the IdP side to

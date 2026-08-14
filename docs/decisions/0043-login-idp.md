@@ -1,9 +1,10 @@
 # 0043. ログイン IdP はプロバイダ別実装を増やさず「汎用 OIDC 1 本 ＋ GitHub だけ専用」にし、同一人物の保証を GitHub より先に入れる
 
-- 状態: 採用・**未実装**（2026-08-14。設計は docs/61。同日、1 デプロイ内を部署でテナント分割する
-  要件を受けて**決定 13〜28（テナント毎のログイン・責務分担・移譲と退職・P3）を追加**した。うち決定 15/16 は
-  「テナント毎にログインできる ID を管理すればよい」という指摘を受けた見直しで、
-  招待 API が既にあることを実測して**テナント側の email リストを設計から落とした**）
+- 状態: 採用・**P0 / P1 / P2 / P3 実装済み**（残 P4。2026-08-14。設計は docs/61。同日、1 デプロイ内を
+  部署でテナント分割する要件を受けて**決定 13〜28（テナント毎のログイン・責務分担・移譲と退職・P3）を
+  追加**した。うち決定 15/16 は「テナント毎にログインできる ID を管理すればよい」という指摘を受けた
+  見直しで、招待 API が既にあることを実測して**テナント側の email リストを設計から落とした**。
+  P3 実装時に決定 16 を改訂 — 和は email 軸の中だけに閉じる。下記）
 - 関連: [61-login-idp.md](../61-login-idp.md) /
   [dev/07-security.md](../dev/07-security.md) §7.3（AUTH 3 モード＝現行契約） /
   [dev/06-data-model.md](../dev/06-data-model.md)（`identity` / `user_key`） /
@@ -122,6 +123,18 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     不要**になり、名簿が membership 1 箇所に寄る。積にすると招待のたびに env にも足す二重管理になる。
     和でも危険が増えないのは、入口通過が「どこかに入れる」を意味しないため（決定 13）。
     **すべて空なら現行どおり全拒否**。
+    ★ **改訂（2026-08-14・P3 実装時）— 「和」は *email 軸の中だけ*、しかも 2 項に分ける。**
+    素直に `provider.Allowed(...) || hasMembership(...)` と書くと 2 通り壊れる。
+    (a) **GitHub の org 判定を迂回できる** — P2 の GitHub は「org ∧ email 許可リスト」の
+    2 門 AND（決定 2）なので、membership を持つだけで org 外の人が入れてしまう。
+    (b) **provider 固有リストの絞り込みが黙って広がる** — P0 の「provider 固有リストは共通
+    リストを置き換える」は「Google は全社、Entra は子会社ドメインだけ」という per-provider の
+    narrowing として使える仕様で、共通リストとの和にすると後退になる。
+    よって採用した形は `( provider 固有 | デプロイ共通 ) ∪ ( auto_join | membership )` —
+    **置き換えの規則は P0 のまま据え置き、DB 由来の項だけを常に OR する**。
+    種類の違う判定（GitHub の org）は AND のままで、DB 由来の項は email 側の門にしか足さない。
+    これにより「二重管理の解消」は達成され（招待された人はどちらの形式でも入口を通る）、
+    P0 の文書記述の改訂は不要になった。詳細と回帰テストは docs/61 §61.9.6 の改訂節。
 17. **ログイン画面の分割はパス方式（`/login/<slug>`）**。サブドメイン方式はワイルドカード DNS と
     証明書が要り、Funnel は 1 ホスト名しか出せず、redirect_uri が増えて決定 8 を壊す。
     **未知の slug は 404 にせず汎用画面**を返す（テナント slug の存在有無を未認証者に漏らさない）。
@@ -134,6 +147,18 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     毎リクエスト参照は短 TTL（30 秒）キャッシュ＋管理 API 書き込みで破棄。
     なお現行 `emailAllowed` は許可ファイル指定時に**毎リクエスト `os.ReadFile`**しており
     （`oauth_google.go:130`）、DB＋キャッシュはこれより軽い。
+    ★ **実装時の判断（P3）— この 3 カラムを編集できるのは `super_admin` だけ**にした
+    （`PUT /api/admin/tenants/{slug}/login` は `withSuperAdmin`）。決定 26 で workspace / home を
+    tenant_admin に開いたのと逆向きに見えるが、3 つのうち 2 つは**テナントの外に効く**:
+    `auto_join_domains` は**デプロイの入口**をドメイン単位で開けてしまい（決定 16 の和の項）、
+    `allowed_providers` は「誰であるか」を宣言してよい IdP の選択だから。tenant_admin が持つのは
+    自テナントの名簿と、その人たちの workspace / home。docs/61 §61.10.3 の運用像（テナント新設と
+    その設定は super_admin）とも一致する。
+
+    ついでに保存時の検証を 2 つ入れた: **同じ `auto_join_domains` を 2 テナントが持てない**
+    （決定 15 の競合を作らせない。既存行のための「slug 昇順」規則は残す）／
+    **デプロイに存在しない provider id を `allowed_providers` に書けない**（黙ってボタンの
+    無いログインページになるのを防ぐ）。
 20. **P3（テナント毎のログイン）は P1 / P2 と独立**で、P0 の直後に着手してよい（依存は `prov` だけ）。
     GitHub を入れない会社でも「部署ごとにテナントを分け、Entra 限定にする」だけで価値が出る。
 21. **IdP のグループ（Entra `groups` / GitHub team）→ テナント同期は入れない。** 決定 15 で名簿を
@@ -153,13 +178,20 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     **論理削除（`status='inactive'`）で足りる**（workspace / home は残したまま締め出せる）。
     外した後の workspace / home の扱いは [0028-deletion-lock](0028-deletion-lock.md) と
     掃除の段階制に合わせ、即削除しない。
+    ★ **実装時の補足（P3）— `EnsureMembership` に「復活」を持たせてはいけない。**
+    同じ関数を `auto_join_domains` と `AF_PROVISION=auto` の自動採番が通るので、そこで
+    `status='active'` に戻すと**除名した人が次のログインで自動的に名簿へ戻る**。復活は招待
+    API だけが明示的に行う。同じ理由で **auto_join は「行が存在するなら（inactive でも）
+    参加させない」** — 決定 15 の「membership があればそれが正」には「外した」も含まれる。
+    あわせて**自分自身は外せない**ようにした（製品内に取り消し手段が無いため）。
 23. **`super_admin` は membership が無くても管理画面に入れるようにする（P3）。**
     現状コードを追う限り、`AF_PROVISION=invite` で立ち上げると最初の 1 人が入れない —
     membership ゼロだと `GET /api/tenants` が 403 `not_provisioned`（`resolver.go:69`）、
     Console は `data.error` 分岐で `superAdmin` を立てず（`tenant.ts:93-100`・既定 `false`）、
     管理メニューの表示条件 `superAdmin || tenant_admin`（`TopBar.tsx:319`）が偽になる。
     admin API 自体は `identityFor` だけで通るので API 直叩きなら可能だが、手順として成立しない。
-    直すまでの運用は「**`auto` で立ち上げ → テナント作成と招待 → `invite` へ切替**」（docs/61 §61.10.2）。
+    ~~直すまでの運用は「**`auto` で立ち上げ → テナント作成と招待 → `invite` へ切替**」~~
+    → ✅ **P3 で解消**（`tenantAPI.list`）。**`AF_PROVISION=invite` のまま立ち上げてよい**。
 
 ### 責務分担（2026-08-14 確認）
 
@@ -179,6 +211,9 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     `addMembership`（`tenants.go:285`）/ `cleanHome`（`:195`）/ `stopWorkspace`（`:149`）は
     `roleHint=""` で呼ぶため、誰かをテナントに追加しただけで super_admin が落ちる。
     起動時の一括 UPDATE なら `roleHint` を通らないので、この罠を構造的に回避できる。
+    ★ **実装時の補足（P3）— `email` が空の identity は降格しない。** `SUPER_ADMIN_EMAILS` は
+    email の列挙なので、email を持たない行（`AUTH=dev` の固定ユーザー等）を落とすと
+    **文書化された復旧手順（env を書いて再起動）で戻せなくなる**。降格した相手は CP ログに残す。
 25. **テナントの新設と `tenant_admin` の任命は `super_admin`。** 実装は既にこのとおりで変更不要
     （`POST /api/admin/tenants` は `withSuperAdmin`＝`routes.go:133`、`tenant_admin` を付けられるのは
     super_admin だけ＝`tenants.go:280`、`PUT /api/admin/membership-role` も `withSuperAdmin`）。
@@ -192,6 +227,8 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     tenant_admin ができるため揃えるのは `clean-home` だけ。即時削除にしない扱いは
     [0028-deletion-lock](0028-deletion-lock.md) と掃除の段階制に合わせる。
     決定 22 の membership 無効化 API も同じく tenant_admin（自テナント分）に開く。
+    → ✅ **P3 で実装**: `routes.go` の `withSuperAdmin(adm.cleanHome)` を外し、ハンドラ内で
+    `tenantAdminFor` を取る形にした。**権限を広げたので監査に必ず残す**（`workspace.clean_home`）。
 27. ★ **セッションの即時失効は「`AF_COOKIE_SECRET` のローテーション」しか無い。これを runbook に書く。**
     セッション cookie は stateless（HMAC over `{email, exp}`・`oauth_google.go:85-93`）で、
     サーバ側にセッションストアも個別失効も「全端末からログアウト」も無い。今それで足りていたのは、
@@ -312,22 +349,23 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - `dev/07-security.md` §7.3 の「AUTH 3 モード」表は、`oauth` 行が「Google」ではなくなるので書き換え。
 - GitHub を入れる会社には **org の OAuth App 承認**という設置手順が 1 つ増える
   （org が OAuth App access restrictions を有効にしていると、承認前は membership が見えず全員拒否になる）。
-- P3 で `authGate` の入口判定が membership を参照するようになる（決定 16）。招待運用のデプロイでは
-  `AF_OAUTH_ALLOWED_*` を空にできるようになるので、**「空＝全拒否」の警告文
-  （`main.go:283`）は「かつ membership も無い」まで含めた条件に直す**必要がある。
-- P3 で `tenant` に 3 カラム増える（`0039`）。`Tenant` 構造体（`store.go:15`）と
-  `CreateTenant`（`store.go:364`）まわり、テナント管理 API と Console の管理 UI に編集面が要る。
-- P3 で `selectMembership`（`resolver.go:128`）にテナント規則と `prov` の突合が入り、
-  戻り値のエラーコードに `provider_required` が増える。Console のテナント切替は
-  これを 403 として扱わず**再サインイン導線**に変える必要がある。
-- P3 で `clean-home` の権限が super_admin 限定から tenant_admin（自テナント分）へ広がる（決定 26）。
-  `routes.go:136` の `withSuperAdmin` を外し、ハンドラ内で `tenantAdminFor` を取る形に変える。
-  **権限を広げる変更なので、監査（`audit.go`）に誰がどのテナントの誰の home を消したかを必ず残す。**
-- P3 で `identity.role` の降格経路ができる（決定 24）。`UpsertIdentity` の
-  「never downgrade」は**維持したまま**、起動時に一括同期する処理を `main.go` に足す形にする。
-- `AF_COOKIE_SECRET` のローテーション手順（＝全員ログアウト）を **operator の runbook に新設**する
-  （決定 27）。現状 `deploy/**` にも `docs/guide/operator/**` にも記述が無い。guide は二言語とも。
-- 退職・移譲の棚卸し表（docs/61 §61.10.7）を operator guide にも出す。とくに
+- ✅ P3: `authGate` の入口判定が membership を参照する（決定 16）。招待運用のデプロイでは
+  `AF_OAUTH_ALLOWED_*` を空にできるので、「空＝全拒否」の警告は
+  **起動時に `AnyActiveMembership()` を見て**、名簿があるときは警告ではなく
+  「入口は membership と auto_join_domains が支配する」という情報行に変えた。
+- ✅ P3: `tenant` に 3 カラム（`0039` / pg `0022`）。`Tenant` 構造体と `getTenant` /
+  `ListTenants` の SELECT、`PUT /api/admin/tenants/{slug}/login`、Console の管理 UI。
+  新しい env は 1 つも増えない（規則は全部 DB）。
+- ✅ P3: `resolveFull` / `resolveMembership` に `checkTenantProvider` が入り、
+  エラーコードに `provider_required` が増えた。Console は専用モーダル
+  （`ProviderRequiredModal`）で再サインイン導線を出す。リンクに要る provider id は
+  `/api/tenants` の `allowed_providers`（membership ごと）から引く。
+- ✅ P3: `clean-home` が tenant_admin（自テナント分）へ広がり、監査に `workspace.clean_home` を追加。
+- ✅ P3: `identity.role` の降格経路（決定 24）。`UpsertIdentity` の「never downgrade」は維持し、
+  `DemoteSuperAdmins` を `main.go` の起動直後に 1 回だけ呼ぶ。
+- ✅ P3: `AF_COOKIE_SECRET` のローテーション手順（＝全員ログアウト）を operator の runbook に新設
+  （決定 27）。`docs/guide/operator/03-security{,.ja}.md`。
+- ✅ P3: 退職・移譲の棚卸し表（docs/61 §61.10.7）を operator guide にも出した。とくに
   **定時実行は `Schedule.MembershipID`＝個人所有なので止まる**（内部 git は `git_repo.tenant_id`＝
   テナント所有なので残る）という非対称は、事前に知らないと退職後に気づくことになる。
 - P3 で `AF_PROVISION` の意味が広がる（`auto_join_domains` 一致が `auto` / `invite` より先に効く）。

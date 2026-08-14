@@ -158,9 +158,13 @@ front can remove the Caddy service entirely (Caddyfile alternative 2).
 - **`invite`** — unknown identities are rejected until an administrator adds them in the
   Admin panel. Choose this when you want to control who gets in, one by one.
 
-Either way, only people who pass the allowlist (`AF_OAUTH_ALLOWED_*`) can log in at all.
-`auto` only changes whether "anyone inside the allowlist proceeds automatically all the way to
-tenant assignment."
+With `invite`, **being invited is itself permission to log in**: somebody you add in the Admin
+panel gets in without also being listed in `AF_OAUTH_ALLOWED_*`, so you keep one roster rather
+than two lists that drift apart. With `auto`, the allowlist is what decides who may enter at
+all, and everyone who passes it lands in the default tenant.
+
+You can start with `invite` from the very first boot — a `SUPER_ADMIN_EMAILS` account reaches
+the Admin panel even with no membership of its own.
 
 ### Single tenant, or separate tenants
 
@@ -169,6 +173,24 @@ tenant assignment."
 - **Tenant separation** — add it only when you need **hard isolation**, e.g. between
   departments. Each membership gets a fully isolated Workspace. You can add tenants later, so
   when in doubt it is safest to start with a single tenant and split only when the need arises.
+
+Once you do split, each tenant can carry its own login rules (Admin panel → the tenant →
+**Login rules**):
+
+| Setting | What it does | Where it applies |
+|---|---|---|
+| **Sign-in methods** | Which of the enabled IdPs may be used to enter this tenant | Enforced on every request, not just by hiding buttons |
+| **Auto-join domains** | An address in this domain joins this tenant on first sign-in | One domain can belong to only one tenant |
+| **Invite domains** | Bounds who may be **added** as a member | The invite form only — never a per-request check |
+
+Each tenant also gets its own sign-in page at `https://<PUBLIC_DOMAIN>/login/<slug>`, showing
+only the methods that tenant accepts. Hand that URL to new members; there is no invitation email
+(the CP has no SMTP, by design).
+
+> **"Invite domains" is not "who may use this tenant."** It only bounds who can be put on the
+> roster. Somebody already invited keeps working even from another domain — which is what makes
+> a contractor's address workable — and the way to end their access is to remove the member, not
+> to narrow this field.
 
 ## 5. Start it up
 
@@ -191,10 +213,11 @@ Open `https://<PUBLIC_DOMAIN>` in a browser and sign in with an account listed i
 super_admin sees the shield-icon **Admin panel** in the Console and can manage the entire
 deployment.
 
-> If login is always rejected, the allowlist is most likely empty. If all 3 channels
-> (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`) are **empty, all logins are
-> rejected** (fail-closed = designed to fail safe). Set at least one of them. Details in
-> [04](04-troubleshooting.md).
+> If login is always rejected, the allowlist is most likely empty. With all 3 channels
+> (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`) **empty, and nobody invited to a
+> tenant yet, all logins are rejected** (fail-closed = designed to fail safe). On a first
+> install nobody is invited yet, so set at least one of them to get your first administrator in.
+> Details in [04](04-troubleshooting.md).
 
 ## 7. The first tenant and members
 

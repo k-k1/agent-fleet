@@ -47,6 +47,15 @@ export const ja = {
   "err.send_failed": "送信に失敗しました",
   "err.network": "通信エラー",
   "err.unknown": "不明なエラーが発生しました",
+  // テナント毎のログイン（docs/61 §61.9）。provider_required は専用モーダルが
+  // 再サインイン導線を出すので、この文言はモーダル外で出た場合の保険。
+  "err.provider_required": "このテナントには別のサインイン方法が必要です。サインインし直してください。",
+  "err.not_provisioned": "所属するテナントがありません。管理者に追加を依頼してください。",
+  "err.domain_not_allowed": "このテナントに招待できるメールアドレスのドメインではありません。",
+  "err.email_required": "このテナントはドメインで招待を制限しています。メールアドレスで招待してください。",
+  "err.auto_join_conflict": "その自動参加ドメインは既に別のテナントが使っています。",
+  "err.unknown_provider": "そのサインイン方法はこのデプロイで有効になっていません。",
+  "err.self_removal": "自分自身を名簿から外すことはできません。他の管理者に依頼してください。",
   "err.bad_share": "共有リクエストが不正です。",
   "err.member_not_found": "指定した相手は同じテナントのメンバーではありません。検索候補から選び直してください。",
   "err.share_self": "自分自身を共有先に指定することはできません。",
@@ -1288,6 +1297,28 @@ export const ja = {
   "admin.grant_body_1": "このメンバーに ",
   "admin.grant_body_2": " のテナント管理者権限を付与します。",
   "admin.grant_note": "付与後はこのテナント内のメンバー管理・リソース閲覧・ワークスペース強制停止・セッション上限設定ができるようになります（他テナントには影響しません）。",
+
+  // --- テナント毎のログイン（docs/61 §61.9・P3）。3 つの規則は似て非なるもので、
+  // とくに「招待できるドメイン」を「使えるドメイン」と読み違えると運用が壊れる。---
+  "admin.login_rules": "ログイン規則",
+  "admin.login_rules_note": "空欄 = 制限なし",
+  "admin.allowed_providers": "使えるサインイン方法",
+  "admin.allowed_providers_unit": "provider id をカンマ区切り。空 = 有効な全方式",
+  "admin.auto_join_domains": "自動参加ドメイン",
+  "admin.auto_join_domains_unit": "初回ログイン時にこのテナントへ自動で参加",
+  "admin.invite_domains": "招待できるドメイン",
+  "admin.invite_domains_unit": "メンバー追加時のガードのみ",
+  "admin.login_rules_hint":
+    "「招待できるドメイン」はメンバー追加時にだけ効きます。既にメンバーの人は、別ドメインでもそのまま使えます（外すには下のメンバー詳細から「メンバーを外す」）。" +
+    "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。",
+  "admin.login_url": "このテナント専用のログイン URL:",
+  "admin.member_removed": "外れています（名簿から削除済み）",
+  "admin.remove_member": "メンバーを外す",
+  "admin.remove_title": "{key} を {slug} から外す",
+  "admin.remove_confirm": "外す",
+  "admin.remove_body": "このメンバーを {slug} の名簿から外します。次のリクエストからアクセスできなくなります。",
+  "admin.remove_keeps": "ワークスペース・home・保存済みの認証情報は残ります（消すには先に「home を掃除」）。",
+  "admin.remove_undo": "戻すには、同じメールアドレスでもう一度「メンバー追加」してください。",
 
   // --- キーボード操作体系（features/keys・docs/29）。コマンド/グループ名は表示と
   // コマンドパレットの日英マッチ両方に使う。{n} はペイン序数。---
@@ -3446,6 +3477,12 @@ export const ja = {
   "auth.expired_body": "ログインセッションの有効期限が切れました。作業中のセッションはワークスペース上でそのまま動き続けています（ブラウザのログイン切れでは停止しません）。",
   "auth.expired_relogin_hint": "再ログインすると、この画面に戻って作業を続けられます。",
   "auth.relogin": "再ログイン",
+
+  // === サインイン方法が違うテナント（ProviderRequiredModal・docs/61 §61.9.4） ===
+  "auth.provider_required_title": "このテナントには別のサインインが必要です",
+  "auth.provider_required_body": "{tenant} は、いまサインインしている方法とは別のサインイン方法だけを受け付ける設定になっています。",
+  "auth.provider_required_hint": "サインインし直すとこのテナントに入れます。元のテナントに戻る場合は、このままキャンセルしてテナントを切り替えてください。",
+  "auth.provider_required_signin": "サインインし直す",
 
   // === Text/コード編集（docs/44 Phase 2） ===
   "editor.aria_label": "{path} エディター",

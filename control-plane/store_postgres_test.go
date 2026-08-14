@@ -255,4 +255,75 @@ func TestPostgresStore(t *testing.T) {
 	if n := countRows(t, st, "identity_provider"); n != 2 {
 		t.Fatalf("identity_provider rows = %d, want 2", n)
 	}
+
+	// tenant login rules round trip (docs/61 P3 / migrations-pg/0022). The columns
+	// arrive by ALTER on an existing table, and the entry gate reads them on every
+	// request, so a dialect slip here would take the whole login down.
+	if err := st.SetTenantLogin(ctx, t2.ID, "entra,github", "acme.co.jp", "acme.co.jp"); err != nil {
+		t.Fatalf("set tenant login: %v", err)
+	}
+	if got, err := st.GetTenant(ctx, t2.ID); err != nil ||
+		got.AllowedProviders != "entra,github" || got.AutoJoinDomains != "acme.co.jp" || got.AllowedDomains != "acme.co.jp" {
+		t.Fatalf("tenant login round trip: %v %+v", err, got)
+	}
+	// The default tenant was created before the ALTER, so it must read back as the
+	// NOT NULL DEFAULT '' rather than a NULL that would fail the Scan.
+	if got, err := st.GetTenant(ctx, tn.ID); err != nil || got.AllowedProviders != "" {
+		t.Fatalf("pre-existing tenant row: %v %+v", err, got)
+	}
+	rules, err := st.ListTenantLoginRules(ctx)
+	if err != nil {
+		t.Fatalf("list tenant login rules: %v", err)
+	}
+	var found bool
+	for _, r := range rules {
+		if r.ID == t2.ID {
+			found = true
+			if len(r.AllowedProviders) != 2 || r.AutoJoinDomains[0] != "acme.co.jp" {
+				t.Fatalf("rules split wrong: %+v", r)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("t2 missing from %+v", rules)
+	}
+
+	// membership deactivate + the entry gate's roster lookup (LOWER on the column,
+	// not on the placeholder — Postgres cannot infer a type for LOWER($1)).
+	if ok, err := st.EmailHasActiveMembership(ctx, "DEV@example.com"); err != nil || !ok {
+		t.Fatalf("EmailHasActiveMembership = (%v,%v), want true", ok, err)
+	}
+	if any, err := st.AnyActiveMembership(ctx); err != nil || !any {
+		t.Fatalf("AnyActiveMembership = (%v,%v), want true", any, err)
+	}
+	memT2, _, err := st.GetMembership(ctx, i2.ID, t2.ID)
+	if err != nil {
+		t.Fatalf("get membership: %v", err)
+	}
+	if err := st.SetMembershipStatus(ctx, memT2.ID, "inactive"); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+	if got, _, err := st.GetMembership(ctx, i2.ID, t2.ID); err != nil || got.Status != "inactive" {
+		t.Fatalf("membership status = %+v %v", got, err)
+	}
+	// EnsureMembership must NOT revive it (that is the invite path's explicit job).
+	if _, err := st.EnsureMembership(ctx, i2.ID, t2.ID, "member"); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if got, _, _ := st.GetMembership(ctx, i2.ID, t2.ID); got.Status != "inactive" {
+		t.Fatalf("EnsureMembership revived a deactivated membership: %+v", got)
+	}
+
+	// super_admin revocation (決定 24): i2 was upgraded above, and dropping it from
+	// the env list must take it away.
+	demoted, err := st.DemoteSuperAdmins(ctx, []string{"someone-else@example.com"})
+	if err != nil {
+		t.Fatalf("demote: %v", err)
+	}
+	if len(demoted) != 1 || demoted[0] != "dev@example.com" {
+		t.Fatalf("demoted = %v, want dev@example.com", demoted)
+	}
+	if got, _, _ := st.GetIdentityByID(ctx, i2.ID); got.Role != "user" {
+		t.Fatalf("role after demotion = %q", got.Role)
+	}
 }
