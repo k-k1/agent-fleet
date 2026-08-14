@@ -203,7 +203,7 @@ email is trusted, and the email domains it may admit. As a deployment administra
 same panel from **Admin → the tenant → "Sign-in methods."**
 
 > **A new sign-in method does nothing until you approve it.** It is created as *waiting for
-> approval*, and until a deployment administrator activates it (from Admin → the tenant), no
+> approval*, and until a deployment administrator activates it, no
 > button appears on the tenant's sign-in page and no session is issued even to somebody who
 > constructs the sign-in link by hand.
 >
@@ -224,6 +224,9 @@ What to check before approving, on the deployment-wide list under **Admin → Te
 Changing the issuer, the client ID or the trust rule — or *adding* a domain — sends the method
 back for approval, because the approval was given to that issuer for that scope. Suspending is
 always available, to the tenant's own administrator as well: stopping should never wait for you.
+
+**Approve and activate** and **Suspend** sit on the rows of the register itself ("Tenant-defined
+sign-in methods," below the tenant list); the tenant's own detail screen offers the same actions.
 
 Approved methods stay on that list with who approved them and when. Treat it as a register to
 re-read now and then, not a queue that empties: the IdP stays under the other company's control,

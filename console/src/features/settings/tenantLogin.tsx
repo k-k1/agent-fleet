@@ -472,10 +472,45 @@ function IdPForm({
 // は、そこで誰かが待っているから。
 export function SignInMethodRegister() {
   const tr = useT();
+  const toast = useToast();
   const [rows, setRows] = useState<TenantIdP[] | null>(null);
-  useEffect(() => {
-    api("api/admin/idp").then((res) => setRows(res?.providers || []));
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const res = await api("api/admin/idp");
+    setRows(res?.providers || []);
   }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // ★ 承認はこの台帳から直接できる。件数だけ出して「承認はテナントの詳細画面で」と
+  // 案内していたが、待っている人が見えている場所と、待たせている人が動ける場所が
+  // 違うのは、ただの遠回りだった。叩く先はテナント側と同じ 1 本
+  // （POST /api/admin/tenants/{slug}/idp/{id}/status）で、行が持つ tenant_slug から
+  // 組み立てる。★ 権限は変わらない — CP の setStatus が super_admin を見ている
+  // （決定 30）。ここが super_admin にしか見えないのは、その事実の案内でしかない。
+  const setStatus = async (row: TenantIdP, status: string) => {
+    if (!row.tenant_slug) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON(
+        `api/admin/tenants/${encodeURIComponent(row.tenant_slug)}/idp/${encodeURIComponent(row.id)}/status`,
+        "POST",
+        { status },
+      );
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      // 承認したら状態も承認者・承認日時も変わる。1 回きりの fetch のままだと
+      // 押した本人にだけ結果が見えない画面になる。
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (rows === null || rows.length === 0) return null;
   const pending = rows.filter((r) => r.status === "pending").length;
   return (
@@ -496,6 +531,20 @@ export function SignInMethodRegister() {
           <span className="muted">{row.allowed_domains}</span>
           <span className={"idp-state idp-" + (row.status || "pending")}>{tr(idpStatusKey(row))}</span>
           {row.approved_at && <span className="muted">{fmtDateTime(row.approved_at, DATETIME_FULL)}</span>}
+          {row.tenant_slug && (
+            <span className="allow-acts">
+              {row.status !== "active" && (
+                <button type="button" className="ghost xs" disabled={busy} onClick={() => setStatus(row, "active")}>
+                  {tr("admin.idp_approve")}
+                </button>
+              )}
+              {row.status === "active" && (
+                <button type="button" className="ghost xs" disabled={busy} onClick={() => setStatus(row, "suspended")}>
+                  {tr("admin.idp_suspend")}
+                </button>
+              )}
+            </span>
+          )}
         </div>
       ))}
     </section>

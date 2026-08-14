@@ -1357,7 +1357,7 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.idp_pending_count": "{n} waiting for approval",
   "admin.idp_register_hint":
     "Every IdP registered by a tenant. Approval is a point-in-time check, but the IdP's own settings (self-sign-up, for one) can change afterwards. " +
-    "Approved methods stay listed here so their issuers and domains can be reviewed periodically. Approve or suspend from the tenant's own screen.",
+    "Approved methods stay listed here so their issuers and domains can be reviewed periodically. Approve or suspend right here.",
   "admin.member_removed": "removed",
   "admin.remove_member": "Remove member",
   "admin.remove_title": "Remove {key} from {slug}",
@@ -1375,6 +1375,13 @@ export const en: Record<keyof typeof ja, string> = {
   "tenant.group_login": "Sign-in",
   "tenant.tab_signin": "Sign-in methods",
   "tenant.tab_rules": "Login rules",
+  "tenant.summary_note": "a deployment administrator sets the tenant-wide caps",
+  "tenant.group_manage": "Operations",
+  "tenant.tab_members": "Members",
+  "tenant.tab_sessions": "Sessions",
+  "tenant.tab_usage": "Usage",
+  "tenant.tab_audit": "Audit",
+  "tenant.tab_mcp": "MCP distribution",
   "tenant.picker": "Tenant",
   "tenant.none": "You don't administer any tenant.",
   "tenant.forbidden": "You don't have permission to view this tenant's settings.",
