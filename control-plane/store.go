@@ -14,6 +14,19 @@ import (
 
 type Tenant struct {
 	ID, Slug, Name, Status, Limits, Isolation, KeyRef, CreatedAt string
+	// Per-tenant login rules (docs/61 §61.9.7, migration 0039). All CSV, all
+	// optional; see TenantLoginRules for what each one governs and why there is no
+	// allowed_emails among them.
+	AllowedProviders, AutoJoinDomains, AllowedDomains string
+}
+
+// TenantLoginRules is the login-relevant slice of a tenant, as loaded in bulk by
+// the entry gate's cache (docs/61 §61.9.6/§61.9.7). Slug is carried because the
+// deterministic tie-break for two tenants claiming the same auto-join domain is
+// "lowest slug wins" (§61.9.8).
+type TenantLoginRules struct {
+	ID, Slug, Name                                    string
+	AllowedProviders, AutoJoinDomains, AllowedDomains []string
 }
 
 // Identity is a person, unique by email within the deployment. role is the
@@ -366,6 +379,12 @@ type TenantStore interface {
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
 	SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error
 	ListTenants(ctx context.Context) ([]Tenant, error)
+	// SetTenantLogin stores the three CSV login rules (docs/61 §61.9.7). Values are
+	// normalized by the caller (lowercased, deduped); this only writes them.
+	SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains string) error
+	// ListTenantLoginRules is the entry gate's bulk read: one query behind a short
+	// TTL cache rather than a per-request lookup (§61.9.7).
+	ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error)
 }
 
 type IdentityStore interface {
@@ -386,11 +405,27 @@ type IdentityStore interface {
 	// admin MCP list tools): unlike UpsertIdentity it neither inserts a row for a
 	// mistyped key nor touches last_login_at.
 	GetIdentityByUserKey(ctx context.Context, key string) (Identity, bool, error)
+	// DemoteSuperAdmins drops every identity whose deployment role is super_admin
+	// and whose email is NOT in keep back to "user", and returns the demoted
+	// addresses. SUPER_ADMIN_EMAILS is the single source of truth and CP runs this
+	// once at STARTUP (ADR0043 決定 24): a login-time sync would never reach the
+	// person who left, because the person who left never logs in again. Identities
+	// with an empty email are left alone — they cannot be named in the env, so
+	// demoting them would be unrecoverable by the documented procedure.
+	DemoteSuperAdmins(ctx context.Context, keep []string) ([]string, error)
 }
 
 type MembershipStore interface {
 	ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error)
 	ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error)
+	// ListRemovedMembersByTenant returns the tenant's DEACTIVATED memberships.
+	// Deliberately a second method rather than a flag on the one above: every other
+	// caller of that one (share targets, the MCP admin tools, the session overview)
+	// reads it as "who is a member of this tenant" and must never be handed somebody
+	// who was taken off the roster. The admin roster still needs them, because
+	// offboarding runs remove → stop workspace → clean home and the last two steps
+	// happen when the person is already off the list (docs/61 §61.10.6).
+	ListRemovedMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error)
 	EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error)
 	GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error)
 	// GetMembershipByID resolves a membership (with its tenant slug + live role) by
@@ -404,6 +439,24 @@ type MembershipStore interface {
 	// SetMembershipRole changes a membership's tenant-scoped role (member |
 	// tenant_admin). EnsureMembership only inserts, so this is the update path.
 	SetMembershipRole(ctx context.Context, membershipID, role string) error
+	// SetMembershipStatus deactivates (or restores) a membership. Offboarding is a
+	// LOGICAL delete: the workspace, its home and its secrets survive, but every
+	// path that resolves a membership already requires status='active', so the
+	// person is locked out on the next request (docs/61 §61.10.6 / 決定 22).
+	// Hard deletion is deliberately not offered — schedules, audit rows and shares
+	// reference the membership id.
+	SetMembershipStatus(ctx context.Context, membershipID, status string) error
+	// EmailHasActiveMembership reports whether the person at this address is on any
+	// tenant's roster. This is the term decision 16 adds to the entry gate: being
+	// invited is itself permission to reach the login, so an invite-run deployment
+	// need not also maintain AF_OAUTH_ALLOWED_*.
+	// ★ Matched on identity.email, NOT on sanitizeUser(email): since P1 a person may
+	// keep a user_key that no longer derives from their current address.
+	EmailHasActiveMembership(ctx context.Context, email string) (bool, error)
+	// AnyActiveMembership reports whether the deployment has any roster at all —
+	// used by the startup warning, which must no longer claim "every login is
+	// denied" on a deployment that runs purely on invitations.
+	AnyActiveMembership(ctx context.Context) (bool, error)
 	// MembershipOwnerName resolves a membership to a human display label (email, or
 	// the user key) — e.g. for stamping on an LFS lock. "" when it can't be resolved.
 	MembershipOwnerName(ctx context.Context, membershipID string) (string, error)

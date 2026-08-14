@@ -243,6 +243,20 @@ func loginRefFrom(ctx context.Context) (loginRef, bool) {
 	return ref, ok && ref.subject != ""
 }
 
+// sessionProviderFrom reports WHICH sign-in button minted the current session.
+// The tenant gate needs it (tenant.allowed_providers, docs/61 §61.9.4) and, unlike
+// identity resolution, it is meaningful even without a subject: a pre-P0 cookie
+// carries no `sub` but its provider is still known ("google", by the transitional
+// rule). "" means there is no IdP behind this request at all — AUTH=proxy and
+// AUTH=dev — and the gate treats that as "cannot be restricted", not as a denial.
+func sessionProviderFrom(ctx context.Context) string {
+	ref, ok := ctx.Value(loginRefKey{}).(loginRef)
+	if !ok {
+		return ""
+	}
+	return ref.provider
+}
+
 // --- allowlist (emails.txt successor) -------------------------------------
 
 // emailAllowed checks the exact-email and domain allowlists (env CSVs) plus the
@@ -286,6 +300,25 @@ func (c config) hasDeploymentAllowlist() bool {
 	return len(c.allowEmails) > 0 || len(c.allowDomains) > 0 || c.allowEmailsFile != ""
 }
 
+// tenantEmailAllowed is the DATABASE-derived term of the entry gate (docs/61
+// §61.9.6 + 決定 16): an auto-join domain matches, or this person is on some
+// tenant's roster because an administrator invited them.
+//
+// ★ Adding this term is what lets an invite-run deployment stop maintaining
+// AF_OAUTH_ALLOWED_* at all — the roster becomes the single ledger of who may
+// enter (§61.9.5). Taking the INTERSECTION instead would mean adding every invited
+// person to the env as well, which is the double bookkeeping this replaces.
+//
+// ★ It is a term of the EMAIL axis only. It is OR'd with the email allowlists and
+// never with a different kind of check: the GitHub adapter's org membership stays
+// a separate AND, or holding a membership would be a way around it (決定 2).
+func (c config) tenantEmailAllowed(ctx context.Context, email string) bool {
+	if c.mgr == nil || c.mgr.tenantLogin == nil {
+		return false
+	}
+	return c.mgr.tenantLogin.entryAllowed(ctx, email)
+}
+
 // --- OAuth flow -----------------------------------------------------------
 
 type oauthState struct {
@@ -293,6 +326,15 @@ type oauthState struct {
 	Next  string `json:"x"`
 	Exp   int64  `json:"e"`
 	Prov  string `json:"p,omitempty"` // provider id; empty on pre-P0 state cookies
+	// Tnt is the tenant slug the person started from (/login/<slug>). It is carried
+	// in the signed state for exactly two reasons: an error goes back to the same
+	// department's page rather than the generic one, and the Console can preselect
+	// that tenant afterwards.
+	//
+	// ★ It is NOT an authorization input (決定 14). Anybody can type any slug; which
+	// tenants a person may actually use is decided server-side from membership and
+	// the tenant rules, so this value only ever picks a VIEW.
+	Tnt string `json:"t,omitempty"`
 }
 
 // sanitizeNext keeps post-login redirects on-site (no open redirect): a single
@@ -314,14 +356,18 @@ func (c config) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "oauth not configured", http.StatusServiceUnavailable)
 		return
 	}
+	tenant := sanitizeTenantSlug(r.URL.Query().Get("tenant"))
 	p := c.providerFor(strings.TrimSpace(r.URL.Query().Get("provider")))
 	if p == nil {
-		loginRedirect(w, r, "provider")
+		loginRedirect(w, r, "provider", tenant)
 		return
 	}
 	next := sanitizeNext(r.URL.Query().Get("next"))
 	nonce := randHex(16)
-	b, _ := json.Marshal(oauthState{Nonce: nonce, Next: next, Exp: time.Now().Add(10 * time.Minute).Unix(), Prov: p.ID()})
+	b, _ := json.Marshal(oauthState{
+		Nonce: nonce, Next: next, Exp: time.Now().Add(10 * time.Minute).Unix(),
+		Prov: p.ID(), Tnt: tenant,
+	})
 	c.setCookie(w, stateCookie, c.signCookie(b), 600)
 
 	au, err := p.AuthorizeURL(r.Context(), nonce, c.oauthRedirectURI())
@@ -329,10 +375,21 @@ func (c config) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
 		// Discovery failed (unreachable/misconfigured issuer) — there is nowhere
 		// to send the browser, so fall back to the login page with an error.
 		log.Printf("oauth: provider %s authorize: %v", p.ID(), err)
-		loginRedirect(w, r, "exchange")
+		loginRedirect(w, r, "exchange", tenant)
 		return
 	}
 	http.Redirect(w, r, au, http.StatusFound)
+}
+
+// sanitizeTenantSlug keeps a tenant hint to the character set slugs are minted
+// from (sanitizeUser), so it can be pasted into a path or query without escaping
+// surprises. Anything else becomes "" = the generic login.
+func sanitizeTenantSlug(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || len(s) > 64 || s != sanitizeUser(s) {
+		return ""
+	}
+	return s
 }
 
 func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
@@ -340,31 +397,32 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	ck, err := r.Cookie(stateCookie)
 	c.setCookie(w, stateCookie, "", -1) // burn it regardless
 	if err != nil {
-		loginRedirect(w, r, "session")
+		loginRedirect(w, r, "session", "")
 		return
 	}
 	payload, ok := c.verifyCookie(ck.Value)
 	if !ok {
-		loginRedirect(w, r, "session")
+		loginRedirect(w, r, "session", "")
 		return
 	}
 	var st oauthState
 	if json.Unmarshal(payload, &st) != nil || time.Now().Unix() > st.Exp ||
 		subtle.ConstantTimeCompare([]byte(st.Nonce), []byte(r.URL.Query().Get("state"))) != 1 {
-		loginRedirect(w, r, "session")
+		loginRedirect(w, r, "session", "")
 		return
 	}
+	tenant := sanitizeTenantSlug(st.Tnt)
 	// The state cookie is signed, but still resolve its provider id against the
 	// configured set before branching on it (決定 8) — a provider that was
 	// removed from the config must not keep serving callbacks.
 	p := c.providerFor(st.Prov)
 	if p == nil {
-		loginRedirect(w, r, "provider")
+		loginRedirect(w, r, "provider", tenant)
 		return
 	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		loginRedirect(w, r, "denied")
+		loginRedirect(w, r, "denied", tenant)
 		return
 	}
 
@@ -372,28 +430,51 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("oauth: provider %s exchange: %v", p.ID(), err)
 		if errors.Is(err, errNotAllowed) { // e.g. a tid outside ALLOWED_TIDS
-			loginRedirect(w, r, "forbidden")
+			loginRedirect(w, r, "forbidden", tenant)
 		} else {
-			loginRedirect(w, r, "exchange")
+			loginRedirect(w, r, "exchange", tenant)
 		}
 		return
 	}
 	if pr.Email == "" || !pr.Verified {
-		loginRedirect(w, r, "denied")
+		loginRedirect(w, r, "denied", tenant)
 		return
 	}
 	allowed, err := p.Allowed(r.Context(), pr)
 	if err != nil || !allowed {
-		loginRedirect(w, r, "forbidden")
+		loginRedirect(w, r, "forbidden", tenant)
 		return
 	}
 	c.issueSession(w, pr)
-	next := sanitizeNext(st.Next)
+	next := withTenantHint(sanitizeNext(st.Next), tenant)
 	if c.newAccountAfterLogin(r.Context(), pr) {
 		c.writeNewAccountPage(w, r, pr, next)
 		return
 	}
 	http.Redirect(w, r, next, http.StatusFound)
+}
+
+// withTenantHint appends ?tenant=<slug> to the post-login destination so the
+// Console preselects the department whose login URL was used (docs/61 §61.10.4).
+// It is a HINT: the Console only honours it if that tenant is among the
+// memberships the server returned, and every API call is authorized server-side
+// regardless (決定 14). An existing query string is preserved, and an existing
+// tenant parameter wins so a deep link is never rewritten.
+func withTenantHint(next, tenant string) string {
+	if tenant == "" {
+		return next
+	}
+	u, err := url.Parse(next)
+	if err != nil {
+		return next
+	}
+	q := u.Query()
+	if q.Get("tenant") != "" {
+		return next
+	}
+	q.Set("tenant", tenant)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // newAccountAfterLogin binds the (provider, subject) that just signed in to a
@@ -449,8 +530,14 @@ func (c config) handleOAuthLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-func loginRedirect(w http.ResponseWriter, r *http.Request, errCode string) {
+// loginRedirect sends the browser back to the login page, staying on the tenant's
+// own page when the attempt started there so the person does not suddenly see a
+// different set of buttons after a failure.
+func loginRedirect(w http.ResponseWriter, r *http.Request, errCode, tenant string) {
 	u := "/login"
+	if tenant != "" {
+		u += "/" + tenant
+	}
 	if errCode != "" {
 		u += "?error=" + url.QueryEscape(errCode)
 	}
@@ -483,7 +570,7 @@ func (c config) authGate(next http.Handler) http.Handler {
 		if ok, code := c.sessionAllowed(r.Context(), claims); !ok {
 			if wantsHTML(r) {
 				c.setCookie(w, sessionCookie, "", -1)
-				loginRedirect(w, r, code)
+				loginRedirect(w, r, code, "")
 			} else if code == "reauth" {
 				// 401, not 403: the SPA's unauthenticated path sends the person to
 				// /login, which is exactly the remedy here.
@@ -497,10 +584,10 @@ func (c config) authGate(next http.Handler) http.Handler {
 		// Hand the proven IdP subject to the identity resolution downstream, so a
 		// person whose email changed at the IdP keeps their user_key — and with it
 		// their workspace, home and secrets (docs/61 §61.5). Sessions minted before
-		// P0 carry no subject and simply resolve by email as they always did.
-		if claims.Sub != "" {
-			r = r.WithContext(withLoginRef(r.Context(), loginRef{claims.provider(), claims.Sub}))
-		}
+		// P0 carry no subject, and loginRefFrom keeps ignoring those — but the
+		// PROVIDER is set unconditionally, because the tenant gate (§61.9.4) has to
+		// know which button was pressed even on a cookie that predates `sub`.
+		r = r.WithContext(withLoginRef(r.Context(), loginRef{claims.provider(), claims.Sub}))
 		next.ServeHTTP(w, r)
 	})
 }
@@ -516,6 +603,12 @@ func wantsHTML(r *http.Request) bool {
 
 // --- login landing page ---------------------------------------------------
 
+// handleLogin serves both /login and the per-tenant /login/{slug} (docs/61
+// §61.9.3). The slug decides which buttons to show and nothing else.
+//
+// ★ An unknown slug renders the GENERIC page rather than a 404. A 404 would tell
+// an unauthenticated visitor which department slugs exist, and the login page is
+// the one surface reachable without a session.
 func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if _, ok := c.session(r); ok { // already signed in
 		http.Redirect(w, r, "/", http.StatusFound)
@@ -523,37 +616,84 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := preferredUILang(r)
 	t := loginText[lang]
+	title, note := t.title, t.note
+	slug := sanitizeTenantSlug(r.PathValue("slug"))
+	rules, known := c.mgr.tenantLogin.rulesForSlug(r.Context(), slug)
+	if !known {
+		// Unknown (or absent) slug: generic page, and no tenant is carried forward
+		// — a typo must not pin the person to a department that does not exist.
+		slug, rules = "", TenantLoginRules{}
+	} else {
+		name := rules.Name
+		if name == "" {
+			name = rules.Slug
+		}
+		// Only the display name — never the member count or anything else that would
+		// turn the login page into a directory (§61.9.3).
+		title = t.title + " — " + name
+		note = fmt.Sprintf(t.tenantNote, html.EscapeString(name))
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	page := strings.NewReplacer(
 		"{{LANG}}", lang,
-		"{{TITLE}}", t.title,
-		"{{NOTE}}", t.note,
+		"{{TITLE}}", html.EscapeString(title),
+		"{{NOTE}}", note,
 		"{{ERROR}}", loginErrorBlock(r.URL.Query().Get("error"), lang),
-		"{{BUTTONS}}", c.loginButtons(sanitizeNext(r.URL.Query().Get("next")), lang),
+		"{{BUTTONS}}", c.loginButtons(sanitizeNext(r.URL.Query().Get("next")), lang, slug, rules.AllowedProviders),
 	).Replace(loginPageHTML)
 	_, _ = w.Write([]byte(page))
 }
 
-// loginButtons renders one sign-in button per enabled provider (docs/61 §61.6).
-// With a single provider the markup is the same single .gbtn as before, so an
-// existing Google-only deployment looks unchanged.
-func (c config) loginButtons(next, lang string) string {
+// loginButtons renders one sign-in button per enabled provider (docs/61 §61.6),
+// narrowed to a tenant's allowed_providers when one was named.
+//
+// ★ The narrowing is cosmetic. The same rule is enforced again at tenant
+// resolution (resolver.go), because a person can always go to the generic /login
+// and press whichever button they like (決定 14).
+func (c config) loginButtons(next, lang, tenant string, allowed []string) string {
 	if len(c.providers) == 0 {
 		return `<div class="err">` + loginText[lang].errUnconfigured + `</div>`
 	}
 	var b strings.Builder
+	shown := 0
 	for _, p := range c.providers {
+		if !providerInList(allowed, p.ID()) {
+			continue
+		}
+		shown++
 		q := url.Values{"provider": {p.ID()}}
 		if next != "/" {
 			q.Set("next", next)
+		}
+		if tenant != "" {
+			q.Set("tenant", tenant)
 		}
 		b.WriteString(`<a class="gbtn" href="/oauth2/login?` + html.EscapeString(q.Encode()) + `">`)
 		b.WriteString(providerIcon(p.ID()))
 		b.WriteString(html.EscapeString(p.Label(lang)))
 		b.WriteString("</a>\n")
 	}
+	if shown == 0 {
+		// The tenant named providers this deployment does not have — an operator
+		// error, and one nobody can work around from the page.
+		return `<div class="err">` + loginText[lang].errTenantNoProvider + `</div>`
+	}
 	return b.String()
+}
+
+// providerInList reports membership in a tenant's allowed_providers; an empty list
+// means "every provider the deployment enabled".
+func providerInList(allowed []string, id string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, a := range allowed {
+		if a == id {
+			return true
+		}
+	}
+	return false
 }
 
 // providerIcon returns the inline SVG mark for a provider's button: the Google
@@ -613,6 +753,8 @@ type loginStrings struct {
 	title, signin, signinWith, note                  string
 	errForbidden, errDenied, errSession, errProvider string
 	errUnconfigured, errReauth                       string
+	// Per-tenant login page (docs/61 §61.9.3). tenantNote takes the tenant name.
+	tenantNote, errTenantNoProvider string
 	// The new-account notice (docs/61 受入条件 3). newBody takes the email.
 	newTitle, newBody, newNote, newContinue, newSwitch string
 }
@@ -629,7 +771,10 @@ var loginText = map[string]loginStrings{
 		errProvider:     "指定されたサインイン方法は利用できません。下のボタンから選び直してください。",
 		errUnconfigured: "サインイン方法が設定されていません。管理者に連絡してください。",
 		errReauth:       "セッションの確認ができなくなりました。もう一度サインインしてください。",
-		newTitle:        "Agent Fleet — 新しいアカウント",
+		tenantNote:      "%s のサインインページです。アクセスは許可されたアカウントに限定されています。",
+		errTenantNoProvider: "このテナントに設定されたサインイン方法は、現在このデプロイでは利用できません。" +
+			"管理者に連絡してください。",
+		newTitle: "Agent Fleet — 新しいアカウント",
 		newBody: "%s でサインインしました。このメールアドレスはこのデプロイで使われたことがないため、" +
 			"<b>新しいワークスペース</b>を作成しました。以前から使っているワークスペースがある場合、" +
 			"このアカウントからは入れません。",
@@ -649,7 +794,10 @@ var loginText = map[string]loginStrings{
 		errProvider:     "That sign-in method isn't available. Pick one of the buttons below.",
 		errUnconfigured: "No sign-in method is configured. Please contact your administrator.",
 		errReauth:       "We couldn't re-verify your session. Please sign in again.",
-		newTitle:        "Agent Fleet — New account",
+		tenantNote:      "Sign-in page for %s. Access is limited to allowed accounts.",
+		errTenantNoProvider: "The sign-in methods configured for this tenant aren't available on this " +
+			"deployment. Please contact your administrator.",
+		newTitle: "Agent Fleet — New account",
 		newBody: "You signed in as %s. That address hasn't been used on this deployment, " +
 			"so a <b>new workspace</b> was created. A workspace you already had is not " +
 			"reachable from this account.",

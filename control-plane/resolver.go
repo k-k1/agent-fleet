@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -54,13 +55,21 @@ func (m *manager) roleHintFor(email string) string {
 // tenantAdminFor reports whether ident may administer tenant tID: a deployment
 // super_admin (any tenant) or a tenant_admin member of that specific tenant.
 // This is the per-tenant admin gate; deployment-wide actions (create tenant,
-// tenant quotas, clean-home, host stats, role grants) stay super_admin-only.
+// tenant quotas, host stats, role grants) stay super_admin-only.
+//
+// ★ The membership must be ACTIVE. GetMembership deliberately returns
+// deactivated rows too — the offboarding sequence needs them, since stopping the
+// workspace and wiping the home happen after the person is off the roster — so
+// the status check has to be here. Without it, a tenant_admin who was removed
+// would still administer the tenant from a session cookie that stays valid for
+// up to AF_SESSION_TTL, and could put themselves straight back on the roster
+// (docs/61 §61.10.7 の穴 2).
 func (m *manager) tenantAdminFor(ctx context.Context, ident Identity, tID string) bool {
 	if ident.Role == "super_admin" {
 		return true
 	}
 	mem, ok, err := m.store.GetMembership(ctx, ident.ID, tID)
-	return err == nil && ok && mem.Role == "tenant_admin"
+	return err == nil && ok && mem.Status == "active" && mem.Role == "tenant_admin"
 }
 
 // identityFor upserts and returns the caller's identity (used by /api/tenants and
@@ -77,30 +86,104 @@ func (m *manager) identityFor(ctx context.Context, r *http.Request) (Identity, *
 	return ident, nil
 }
 
-// membershipsFor returns the caller's memberships, auto-provisioning a default
-// membership when the policy allows and the person has none.
+// membershipsFor returns the caller's memberships, provisioning one when the
+// person has none. The order is docs/61 §61.9.8, and it matters:
+//
+//  1. an existing membership always wins — that is the roster, and somebody put
+//     this person on it deliberately (§61.9.5)
+//  2. otherwise a tenant whose auto_join_domains matches the address
+//  3. otherwise AF_PROVISION=invite → not_provisioned (unchanged)
+//  4. otherwise AF_PROVISION=auto → the default tenant (unchanged)
+//
+// An invite-run deployment lives entirely in 1; a small single-tenant one lives
+// entirely in 2 and never opens the invite screen. Steps 3 and 4 are exactly what
+// they were, so a deployment that sets no auto_join_domains sees no change.
 func (m *manager) membershipsFor(ctx context.Context, ident Identity) ([]MembershipView, *apiError) {
 	ms, err := m.store.ListMemberships(ctx, ident.ID)
 	if err != nil {
 		return nil, internalErr(err)
 	}
-	if len(ms) == 0 {
-		if m.provisionMode == "invite" {
-			return nil, &apiError{http.StatusForbidden, "not_provisioned", "no tenant membership; ask an administrator"}
-		}
-		t, err := m.store.EnsureDefaultTenant(ctx)
-		if err != nil {
-			return nil, internalErr(err)
-		}
+	if len(ms) > 0 {
+		return ms, nil
+	}
+	if t, contested, ok := m.tenantLogin.autoJoinTenant(ctx, ident.Email); ok && !m.hasAnyMembershipRow(ctx, ident.ID, t.ID) {
 		if _, err := m.store.EnsureMembership(ctx, ident.ID, t.ID, "member"); err != nil {
 			return nil, internalErr(err)
+		}
+		// The person now holds a membership, which is also an entry-gate term — the
+		// cached "no" for this address has to go (docs/61 §61.9.7).
+		m.tenantLogin.invalidate()
+		if contested {
+			// ★ Never join silently when the configuration is ambiguous: more than one
+			// tenant claimed this domain and the lowest slug won by rule, which is a
+			// decision an administrator has to be able to find afterwards (§61.9.8).
+			log.Printf("WARNING: auto-join: %s matched more than one tenant; joined %q (lowest slug)", ident.Email, t.Slug)
+			_ = m.store.InsertAudit(ctx, AuditLog{
+				ID: newID(), TenantID: t.ID, ActorKind: "system", ActorID: ident.ID,
+				Action: "tenant.auto_join_conflict", Target: t.Slug,
+				Detail: "domain claimed by multiple tenants; lowest slug won", At: nowTS(),
+			})
 		}
 		ms, err = m.store.ListMemberships(ctx, ident.ID)
 		if err != nil {
 			return nil, internalErr(err)
 		}
+		return ms, nil
+	}
+	if m.provisionMode == "invite" {
+		return nil, &apiError{http.StatusForbidden, "not_provisioned", "no tenant membership; ask an administrator"}
+	}
+	t, err := m.store.EnsureDefaultTenant(ctx)
+	if err != nil {
+		return nil, internalErr(err)
+	}
+	if _, err := m.store.EnsureMembership(ctx, ident.ID, t.ID, "member"); err != nil {
+		return nil, internalErr(err)
+	}
+	m.tenantLogin.invalidate()
+	ms, err = m.store.ListMemberships(ctx, ident.ID)
+	if err != nil {
+		return nil, internalErr(err)
+	}
+	if len(ms) == 0 {
+		// The only way to land here is a membership row that exists but is
+		// inactive — somebody was taken off this roster. Say so, rather than
+		// falling through to selectMembership's "specify X-AF-Tenant" 409, which is
+		// what a removed person used to see.
+		return nil, &apiError{http.StatusForbidden, "not_provisioned", "no tenant membership; ask an administrator"}
 	}
 	return ms, nil
+}
+
+// hasAnyMembershipRow reports whether a membership row exists at all, ACTIVE OR
+// NOT. An inactive row is a decision somebody made — auto-join must respect it
+// rather than quietly putting the person back (docs/61 §61.9.8 rule 1: an existing
+// membership is authoritative, and "removed" is an answer too).
+func (m *manager) hasAnyMembershipRow(ctx context.Context, identityID, tenantID string) bool {
+	_, ok, err := m.store.GetMembership(ctx, identityID, tenantID)
+	return err == nil && ok
+}
+
+// checkTenantProvider enforces tenant.allowed_providers (docs/61 §61.9.4 + 決定
+// 14). This is the ENFORCEMENT point; filtering the login page's buttons is only
+// presentation, and without this check a person could sign in on the generic
+// /login with any enabled provider and then simply send X-AF-Tenant for a tenant
+// that was configured to accept one specific IdP.
+//
+// ★ It answers with provider_required, not a bare forbidden. A session carries
+// exactly one provider (決定 18), so moving between departments with different
+// IdPs legitimately requires signing in again — and being told "not allowed" when
+// the remedy is one click away is how support tickets are made. The Console builds
+// that link from the tenant's allowed_providers, which /api/tenants reports per
+// membership (tenants.go), so this error itself needs no extra payload.
+func (m *manager) checkTenantProvider(ctx context.Context, mv MembershipView) *apiError {
+	prov := sessionProviderFrom(ctx)
+	ok, allowed := m.tenantLogin.providerAllowed(ctx, mv.TenantID, prov)
+	if ok {
+		return nil
+	}
+	return &apiError{http.StatusForbidden, "provider_required",
+		"tenant " + mv.TenantSlug + " requires signing in with: " + strings.Join(allowed, ", ")}
 }
 
 // resolveFull maps a request's identity + selected tenant to its runtime and
@@ -117,6 +200,9 @@ func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string)
 	}
 	mv, aerr := selectMembership(ms, tenantSel)
 	if aerr != nil {
+		return nil, aerr
+	}
+	if aerr := m.checkTenantProvider(ctx, mv); aerr != nil {
 		return nil, aerr
 	}
 	return m.buildResolved(ctx, ident, mv)
@@ -136,6 +222,9 @@ func (m *manager) resolveMembership(ctx context.Context, key, email, tenantSel s
 	}
 	mv, aerr := selectMembership(ms, tenantSel)
 	if aerr != nil {
+		return Identity{}, MembershipView{}, aerr
+	}
+	if aerr := m.checkTenantProvider(ctx, mv); aerr != nil {
 		return Identity{}, MembershipView{}, aerr
 	}
 	return ident, mv, nil
@@ -265,6 +354,11 @@ func (m *manager) shareLockFor(ownerMembershipID string) *sync.Mutex {
 // resolveByMembership resolves a runtime from a PAT's stored identity+membership
 // (the MCP path, which has no gateway headers). The membership must still be an
 // active membership of the identity — so a revoked membership 403s here.
+//
+// No allowed_providers check: this path has no browser session and therefore no
+// provider to match. A PAT is authorized by the membership it was issued against,
+// and deactivating that membership (docs/61 §61.10.6) is what revokes it — which
+// ListMemberships already enforces by only returning active rows.
 func (m *manager) resolveByMembership(ctx context.Context, identityID, membershipID string) (*resolved, *apiError) {
 	ident, ok, err := m.store.GetIdentityByID(ctx, identityID)
 	if err != nil {

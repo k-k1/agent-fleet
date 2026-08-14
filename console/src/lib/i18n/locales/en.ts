@@ -46,6 +46,15 @@ export const en: Record<keyof typeof ja, string> = {
   "err.send_failed": "Failed to send.",
   "err.network": "Network error",
   "err.unknown": "An unknown error occurred.",
+  // per-tenant login (docs/61 §61.9). provider_required has a dedicated modal that
+  // offers the re-sign-in link; this string is the fallback outside it.
+  "err.provider_required": "This tenant needs a different sign-in method. Please sign in again.",
+  "err.not_provisioned": "You don't belong to any tenant yet. Ask an administrator to add you.",
+  "err.domain_not_allowed": "That email domain can't be invited to this tenant.",
+  "err.email_required": "This tenant restricts invites by domain. Invite by email address.",
+  "err.auto_join_conflict": "That auto-join domain already belongs to another tenant.",
+  "err.unknown_provider": "That sign-in method isn't enabled on this deployment.",
+  "err.self_removal": "You can't remove your own membership. Ask another administrator.",
   "err.bad_share": "That share request is invalid.",
   "err.member_not_found": "That recipient isn't a member of this tenant. Pick one from the search results.",
   "err.share_self": "You can't share with yourself.",
@@ -1283,6 +1292,29 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.grant_body_1": "This grants this member tenant-admin rights for ",
   "admin.grant_body_2": ".",
   "admin.grant_note": "After granting, they can manage members, view resources, force-stop workspaces, and set session limits within this tenant (other tenants are unaffected).",
+
+  // --- per-tenant login (docs/61 §61.9 · P3). The three rules look alike and are
+  // not: reading "invite domains" as "domains that may use this tenant" is the
+  // mistake that breaks the operation. ---
+  "admin.login_rules": "Login rules",
+  "admin.login_rules_note": "empty = no restriction",
+  "admin.allowed_providers": "Sign-in methods",
+  "admin.allowed_providers_unit": "provider ids, comma-separated. Empty = every enabled method",
+  "admin.auto_join_domains": "Auto-join domains",
+  "admin.auto_join_domains_unit": "joins this tenant on first sign-in",
+  "admin.invite_domains": "Invite domains",
+  "admin.invite_domains_unit": "a guard on adding members only",
+  "admin.login_rules_hint":
+    "Invite domains apply only when adding a member. Someone already on the roster keeps working even from another domain (use \"Remove member\" below to take them off). " +
+    "An auto-join domain can belong to only one tenant.",
+  "admin.login_url": "Sign-in URL for this tenant:",
+  "admin.member_removed": "removed",
+  "admin.remove_member": "Remove member",
+  "admin.remove_title": "Remove {key} from {slug}",
+  "admin.remove_confirm": "Remove",
+  "admin.remove_body": "This takes the member off the {slug} roster. Access stops from the next request.",
+  "admin.remove_keeps": "The workspace, its home and stored credentials are kept (use \"Clean home\" first to erase them).",
+  "admin.remove_undo": "To restore access, add the same email address as a member again.",
 
   // --- keyboard system (features/keys · docs/29). Command/group names drive both the
   // display and the command palette's bilingual match. {n} is the pane ordinal. ---
@@ -3402,6 +3434,12 @@ export const en: Record<keyof typeof ja, string> = {
   "auth.expired_body": "Your login session has expired. Sessions you are working on keep running on the workspace (a lapsed browser login does not stop them).",
   "auth.expired_relogin_hint": "Log in again and you'll return to this screen and can continue working.",
   "auth.relogin": "Log in again",
+
+  // === tenant requires another sign-in method (ProviderRequiredModal · docs/61 §61.9.4) ===
+  "auth.provider_required_title": "This tenant needs a different sign-in",
+  "auth.provider_required_body": "{tenant} only accepts a sign-in method other than the one you used.",
+  "auth.provider_required_hint": "Sign in again to enter this tenant. To go back to the tenant you were in, cancel and switch tenants instead.",
+  "auth.provider_required_signin": "Sign in again",
 
   // === Text/code editor (docs/44 Phase 2) ===
   "editor.aria_label": "{path} editor",

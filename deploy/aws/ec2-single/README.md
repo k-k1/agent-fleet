@@ -78,6 +78,12 @@ Caddy obtains a real Let's Encrypt cert for `<Fqdn>` (ports 80/443 are open).
 Register `https://<Fqdn>/oauth2/callback` in the login IdP's client (that one URI
 serves every provider you enable), then open `https://<Fqdn>` and sign in.
 
+`AF_OAUTH_ALLOWED_DOMAINS` is what gets your **first** administrator in; after
+that, somebody invited to a tenant in the Admin panel signs in without being
+listed there too. Per-tenant sign-in pages live at `https://<Fqdn>/login/<slug>`.
+`SUPER_ADMIN_EMAILS` is read once at startup and is the only source of truth —
+removing an address from it and restarting also revokes the role in the database.
+
 ## 4. Tear down (removes EVERYTHING in the stack)
 
 ```bash

@@ -16,9 +16,9 @@
 
 | テーブル | 役割 / 主なカラム |
 |----------|------------------|
-| `tenant` | 部署単位（既定 1 テナント=全社）。`slug`(unique)・`limits`(JSON: max_workspaces 等)・`isolation`・`key_ref` |
+| `tenant` | 部署単位（既定 1 テナント=全社）。`slug`(unique)・`limits`(JSON: max_workspaces 等)・`isolation`・`key_ref`・ログイン規則 3 種（0039: `allowed_providers`／`auto_join_domains`／`allowed_domains`・すべて CSV。**`allowed_emails` は無い** — 「誰が入れるか」の名簿は `membership` が持つ。[61](../61-login-idp.md) §61.9.5）|
 | `identity` | 人。`email`(unique)・`user_key`(unique・sanitize 済みキー)・`role`(`super_admin`\|`user`) |
-| `membership` | identity×tenant の結節。`role`(`tenant_admin`\|`member`)・`UNIQUE(identity_id, tenant_id)` |
+| `membership` | identity×tenant の結節。`role`(`tenant_admin`\|`member`)・`UNIQUE(identity_id, tenant_id)`・`status`。**オフボーディングは論理削除**（`status='inactive'`・workspace / home は残る）で、解決系はすべて `status='active'` を要求する。復活は招待 API だけが行う（自動採番経路が復活させると除名が無効化されるため） |
 | `user_limit` | membership 単位の上限（`max_sessions`・`disk_gb`・`mem_limit`＝Workspace RAM 上限 bytes、0018）。テナント枠内で管理者が設定 |
 
 **実行環境**（Workspace は **membership 単位**＝同一人物でもテナントごとに完全分離）

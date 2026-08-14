@@ -447,6 +447,46 @@ AF_GITHUB_LOGIN_CLIENT_SECRET=
 - ★ **すべて空なら現行どおり全拒否**（fail-closed を維持）。membership も許可リストも
   `auto_join_domains` も無ければ誰も入れない。
 
+#### ★ 改訂（2026-08-14・P3 実装時）— 「和」は *email 軸の中だけ*。しかも 2 項に分ける
+
+初版の書き方（「入口の判定はデプロイ全体の許可リスト ∪ auto_join_domains ∪ membership」）を
+P0/P2 の現行構造にそのまま乗せると、**2 通りの壊し方**がある。実装ではどちらも避けた。
+
+**壊し方 1 — 別軸まで和にすると GitHub の org 判定を迂回できる。**
+P2 の GitHub は「org メンバーシップ **∧** email 許可リスト」の 2 門 AND（§61.7）。
+`provider.Allowed(...) || hasMembership(...)` と素直に和を取ると、
+**どこかのテナントに招待されているだけで org 外の人が GitHub から入れる**（決定 2 を壊す）。
+→ **和は email 軸の中でだけ取り、種類の違う判定は AND のまま**にする。実装上は
+`githubProvider.emailAllowed`（＝門 2）にだけ DB 由来の項を足し、門 1 には触らない。
+
+**壊し方 2 — provider 固有リストを「和」にすると、意図した絞り込みが黙って広がる。**
+P0 では provider 固有の許可リストは**共通リストを置き換える**（`hasOwnAllowlist()` なら
+`deployAllowed` を見ない）。これは「Google は全社ドメイン、Entra は子会社ドメインだけ」という
+**per-provider の絞り込み**として使える仕様で、ここを共通リストとの和にすると
+Entra が全社ドメインまで受け入れてしまう。P0 の後退になる。
+
+したがって**採用した形は「置き換え」でも「和」でもなく、項を 2 つに分ける**:
+
+```
+入口の email 軸 =
+      ( provider 固有リスト  … 設定があれば
+      | デプロイ共通リスト    … 無ければこちら )    ← P0 のまま（置き換え）
+   ∪  ( auto_join_domains 一致 | membership 保有 )  ← P3 が足す DB 由来の項（常に和）
+```
+
+- 「二重管理の解消」（本節の目的）は達成される — **招待された人は、どちらの形式の許可リストを
+  使っていても入口を通る**。env に足し直す作業は消える。
+- P0 の「未設定なら共通の許可リストを使う」という記述は**そのまま有効**（改訂不要）。
+  変わったのは「その結果に DB 由来の項が常に OR される」ことだけ。
+- コード上は `deployAllowed`（デプロイ共通リスト・意味は据え置き）と
+  `dbAllowed`（auto_join ∪ membership）の**2 本のクロージャ**になる。
+  `config.tenantEmailAllowed` が後者で、`mgr.tenantLogin`（短 TTL キャッシュ）を見る。
+
+**この 3 点は回帰テストで固定した**（`tenant_login_test.go`）:
+`TestMembershipDoesNotBypassTheGitHubOrgGate` /
+`TestProviderOwnAllowlistStillReplacesTheDeploymentWideOne` /
+`TestEntryGateAdmitsAnInvitedPersonWithNoDeploymentAllowlist`。
+
 ### 61.9.7 置き場は DB（env ではない）
 
 テナントは DB 行で管理 API も既にある（`routes.go:129-137`）ので、規則も `tenant` のカラムにして
@@ -483,6 +523,34 @@ ALTER TABLE tenant ADD COLUMN allowed_domains   TEXT NOT NULL DEFAULT ''; -- CSV
 
 この節は **P0（`prov` クレーム）さえ済めば着手でき、P1 / P2 とは独立**。GitHub を入れない会社でも
 「部署ごとにテナントを分け、Entra 限定にする」だけで価値が出る。
+
+### 実装メモ（P3 で実際にこうした）
+
+- **migration は `0039_tenant_login.sql`（pg `0022`）**。`tenant` に 3 カラム（CSV・
+  `NOT NULL DEFAULT ''`）。`allowed_emails` は作っていない（§61.9.5）。前方互換
+  — 旧 CP バイナリは知っているカラムだけ SELECT するので、バイナリだけ戻しても動く。
+- **キャッシュは `tenant_login.go` の `tenantLoginCache`**。テナント規則は 30 秒 TTL の
+  スナップショット 1 本、membership の有無は**アドレス単位**で同じ TTL。
+  ロスター全体を毎回読まないので、常駐メモリはログインしている人数に比例する。
+  管理 API の書き込み（規則保存・招待・除名）で**必ず破棄**する。
+  DB を一時的に読めないときは**古いスナップショットを使う** — ここで「誰もメンバーでない」に
+  倒すと、入口を閉じるだけでなく auto_join が membership を二重に作りかねない。
+- **`prov` は `sub` が無くても context に載せる。** P0 以前の cookie は `sub` を持たないが
+  provider は分かる（暫定規則で `google`）。identity 解決は従来どおり `sub` があるときだけ
+  pair を使い（`loginRefFrom`）、テナントの門は `sessionProviderFrom` で provider だけを見る。
+- ★ **`EnsureMembership` は「復活」させない。** auto_join / `AF_PROVISION=auto` の自動採番経路が
+  同じ関数を通るので、ここで `status='active'` に戻すと**除名した人が次のログインで自動的に
+  戻ってしまう**（§61.10.6 の運用が成立しない）。復活は招待 API（`addMembership`）が
+  明示的に行う。あわせて **auto_join は「行が存在するなら（inactive でも）参加させない」** —
+  §61.9.8 の規則 1「membership があればそれが正」には「外した」という答えも含まれる。
+- **`provider_required` は `{code,message}` のまま**返す。再サインインのリンクに要る
+  provider id は、Console が `/api/tenants` の `allowed_providers`（membership ごとに追加）
+  から引く。`apiError` に details を足す案は、**positional な composite literal が
+  249 箇所ある**ため見送った（1 フィールド足すだけで全部コンパイルエラーになる）。
+- **`/login/<slug>` は `GET /login/{slug}` の 1 ルート**。未知の slug は generic ページを返し、
+  **tenant を先へ持ち回さない**（誤字が存在しない部署に固定されないように）。
+  ログイン後は `next` に `?tenant=<slug>` を足すだけ — Console はそれを
+  **サーバが返した membership の中にある場合だけ**初期選択に使う（決定 14）。
 
 ## 61.10 運用イメージ（部署分割の一連の流れ）
 
@@ -544,8 +612,10 @@ AF_PROVISION=auto            # ★ 最初は auto。招待運用へ切り替え�
 その結果、管理メニューの表示条件 `superAdmin || tenant_admin`（`TopBar.tsx:319`）が偽になり、
 **`super_admin` でも管理画面に到達できない**。API 直叩き（`POST /api/admin/tenants` は
 `identityFor` だけで通る）なら可能だが、運用手順としては成立しない。
-→ **P3 の作業項目**: membership が無くても `super_admin` には `/api/tenants` が
-`{tenants: [], super_admin: true}` を返すようにする（現状は 403 で潰れる）。
+→ ✅ **P3 で解消**: `tenantAPI.list` が `not_provisioned` を受けたとき、相手が `super_admin` なら
+`{tenants: [], super_admin: true}` を 200 で返す（`tenants.go`）。それ以外の人には従来どおり
+403 `not_provisioned` のまま。**つまり `AF_PROVISION=invite` で最初から立ち上げてよくなった**
+（上の 5 手順の「`auto` で立ち上げてから切り替える」は不要）。
 
 ### 61.10.3 部署を 1 つ増やす（情シス）
 
@@ -597,6 +667,28 @@ AF_PROVISION=auto            # ★ 最初は auto。招待運用へ切り替え�
   **論理削除（`status='inactive'`）で足りる** — workspace / home を残したまま締め出せる。
   **実行できるのは `tenant_admin`（自テナント分）と `super_admin`**（下記の責務分担に合わせる）。
 
+→ ✅ **P3 で実装**: `DELETE /api/admin/memberships {tenant_slug,user_key}`（`tenantAdminFor` ゲート）。
+Console は管理 → メンバー詳細の「メンバーを外す」。実装で足した判断が 3 つある。
+
+- **自分自身は外せない**（`self_removal`）。UI からの誤クリックに製品内の取り消し手段が無く、
+  残る復旧経路は他の管理者かホストの env になるため。
+- **戻すのは「もう一度招待する」**。`EnsureMembership` は復活させない（上の実装メモの理由）ので、
+  招待 API だけが `status='active'` に戻す。
+- **除名は監査に残す**（`membership.remove`）。`clean-home` も tenant_admin へ開いたので
+  `workspace.clean_home` を追加した（決定 26 の「権限を広げるなら監査」）。
+
+実装中に見つけた**追随が要る 2 箇所**（どちらも「active であること」の確認漏れ）:
+
+- ★ **`tenantAdminFor` が status を見ていなかった。** `GetMembership` は inactive な行も返す
+  （オフボーディングの残り 2 手が必要とするので、これは正しい）。status を見ないと、
+  **外された tenant_admin が手元の cookie（最大 `AF_SESSION_TTL`）で管理を続けられ、
+  自分を名簿に戻せる** — §61.10.7 の穴 2 そのもの。`mem.Status == "active"` を足した。
+- ★ **`ListMembersByTenant` は active のみなので、除名した相手が管理画面から消えて
+  「停止 → home 削除」に到達できなくなる。** ただしこの関数は共有先の候補・MCP の
+  admin ツール・セッション一覧でも「このテナントのメンバーは誰か」として使われており、
+  そこに外した人を混ぜてはいけない。よって**別メソッド `ListRemovedMembersByTenant` を足し、
+  管理 API の名簿だけが両方を出す**（`status: "active" | "removed"` を付けて返す）。
+
 #### workspace / home の削除は tenant_admin の責務
 
 部署の人員を把握しているのは部署側なので、**外した人の workspace / home を消すのは
@@ -647,6 +739,12 @@ tenant_admin の仕事**とする。情シス（super_admin）に毎回頼む形
 `SUPER_ADMIN_EMAILS` に無い `super_admin` を `user` に落とす。移譲手順の 1（再起動）と
 同じタイミングで効くので運用と噛み合い、`roleHint` を経由しないので
 「`addMembership` が `roleHint=""` で呼んで降格させてしまう」罠（§61.10.1）も構造的に回避できる。
+
+→ ✅ **P3 で実装**: `store.DemoteSuperAdmins(ctx, keep)` を `main.go` の起動直後に 1 回。
+`UpsertIdentity` の「never downgrade」は**維持したまま**別メソッドにしたので上の罠は起きない。
+★ 実装で 1 つ絞った — **`email` が空の identity は降格しない**。`SUPER_ADMIN_EMAILS` は
+email の列挙なので、email を持たない行（`AUTH=dev` の固定ユーザー等）を落とすと
+**文書化された手順（env を書いて再起動）では戻せなくなる**。落とした相手は CP ログに出す。
 
 #### ★ 穴 2: セッションを即時失効させる手段が無い
 
@@ -851,7 +949,7 @@ P4 を入れない会社は §61.11.1 の env 併記で足りる（再起動が�
 | **P0**（実装済み）| プロバイダ抽象 ＋ 汎用 OIDC（Entra / Okta / Keycloak / Auth0 / Cognito）。Google を同実装の 1 インスタンスへ移す。ログイン画面の複数ボタン・`sessionClaims` 拡張（`prov` / `sub`）・設定と文書 | 無し |
 | **P1**（実装済み）| `identity_provider` テーブルと解決規則（§61.5）。★ **Console の「アカウントを追加」導線は撤回**（§61.5 の改訂・ADR 決定 5）ので Console 側の作業はゼロ | `0038`（pg `0021`）|
 | **P2**（実装済み）| GitHub アダプタ（org 判定・TTL キャッシュ・猶予・再ログイン要求） | 無し |
-| **P3** | テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・入口の門に membership を含める・`auto_join_domains` / `allowed_domains`・admin 編集 UI・`provider_required` の再サインイン導線。★ **membership の削除／無効化 API**（§61.10.6）と **`super_admin` のブートストラップ**（§61.10.2）を含む | `0039` |
+| **P3**（実装済み）| テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・入口の門に membership を含める・`auto_join_domains` / `allowed_domains`・admin 編集 UI・`provider_required` の再サインイン導線。★ **membership の削除／無効化 API**（§61.10.6）・**`super_admin` のブートストラップ**（§61.10.2）・**`super_admin` の起動時降格**（§61.10.7）・**`clean-home` の tenant_admin 開放**（§61.10.6）を含む | `0039`（pg `0022`）|
 | **P4** | テナント定義の認証方式（§61.11）: `tenant_idp` テーブル・秘密の封印保存・tenant_admin の編集 UI・**super_admin の承認フロー**・provider の名前空間分離 | `0040` |
 
 - **P1 を P2 より先に置くのが本設計の要点**。GitHub は email 不一致が常態なので、リンク機構なしに

@@ -91,10 +91,13 @@ type githubProvider struct {
 	allowedOrgs []string // required; membership in ANY of them is enough
 
 	// Email gate. A provider-specific list replaces the deployment-wide one
-	// entirely; with neither configured the orgs are the only gate.
+	// entirely; with neither configured the orgs are the only gate. dbAllowed is
+	// the roster/auto-join term P3 adds (docs/61 §61.9.6) — an extra way to satisfy
+	// gate 2, never a way around gate 1.
 	allowEmails   map[string]bool
 	allowDomains  map[string]bool
 	deployAllowed func(email string) bool
+	dbAllowed     func(ctx context.Context, email string) bool
 	deployHasList bool
 
 	ttl   time.Duration
@@ -358,25 +361,36 @@ func (p *githubProvider) remember(subject, token string, ok bool) {
 
 // emailAllowed applies gate 2 (see the file header). With no list anywhere the
 // org membership is the whole allowlist, so this passes.
-func (p *githubProvider) emailAllowed(email string) bool {
+//
+// ★ P3 (docs/61 §61.9.6) adds the roster/auto-join term, OR'd into this gate — an
+// invited person clears the email gate without also being listed in the env. It is
+// deliberately confined to gate 2: gate 1 (org membership) is a different axis and
+// stays an AND, so a membership can never let somebody outside the org sign in.
+func (p *githubProvider) emailAllowed(ctx context.Context, email string) bool {
 	email = strings.ToLower(strings.TrimSpace(email))
 	at := strings.LastIndexByte(email, '@')
 	if email == "" || at < 0 {
 		return false
 	}
-	if len(p.allowEmails) > 0 || len(p.allowDomains) > 0 {
-		return p.allowEmails[email] || p.allowDomains[email[at+1:]]
+	switch {
+	case len(p.allowEmails) > 0 || len(p.allowDomains) > 0:
+		if p.allowEmails[email] || p.allowDomains[email[at+1:]] {
+			return true
+		}
+	case p.deployHasList && p.deployAllowed != nil:
+		if p.deployAllowed(email) {
+			return true
+		}
+	default:
+		return true // no email list anywhere: the orgs are the whole allowlist
 	}
-	if p.deployHasList && p.deployAllowed != nil {
-		return p.deployAllowed(email)
-	}
-	return true
+	return p.dbAllowed != nil && p.dbAllowed(ctx, email)
 }
 
 // Allowed runs both gates. The email one is first because it costs nothing and
 // needs no token — a person outside the allowed domains never causes an API call.
 func (p *githubProvider) Allowed(ctx context.Context, pr principal) (bool, error) {
-	if !p.emailAllowed(pr.Email) {
+	if !p.emailAllowed(ctx, pr.Email) {
 		return false, nil
 	}
 	if pr.Subject == "" {
@@ -437,7 +451,7 @@ func (p *githubProvider) Allowed(ctx context.Context, pr principal) (bool, error
 // GitHub *login* was wanted at all: a deployment that has only ever used the
 // device flow has GITHUB_OAUTH_CLIENT_ID set and must not be nagged at every
 // startup about a feature it never asked for.
-func newGitHubProvider(deployAllowed func(string) bool, deployHasList bool) *githubProvider {
+func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.Context, string) bool, deployHasList bool) *githubProvider {
 	clientID := firstNonEmpty(os.Getenv("AF_GITHUB_LOGIN_CLIENT_ID"), os.Getenv("GITHUB_OAUTH_CLIENT_ID"))
 	clientSecret := firstNonEmpty(os.Getenv("AF_GITHUB_LOGIN_CLIENT_SECRET"), os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"))
 	orgs := splitCSV(os.Getenv("AF_GITHUB_ALLOWED_ORGS"))
@@ -467,6 +481,7 @@ func newGitHubProvider(deployAllowed func(string) bool, deployHasList bool) *git
 		allowEmails:   emailSet(os.Getenv("AF_GITHUB_ALLOWED_EMAILS")),
 		allowDomains:  domainSet(os.Getenv("AF_GITHUB_ALLOWED_DOMAINS")),
 		deployAllowed: deployAllowed,
+		dbAllowed:     dbAllowed,
 		deployHasList: deployHasList,
 		ttl:           parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_TTL"), githubDefaultTTL),
 		grace:         parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), githubDefaultGrace),
