@@ -2,26 +2,20 @@
 
 English | [日本語](01-members.ja.md)
 
-You manage tenants and members on the **"Tenants"** tab of the admin screen. It is a
-three-level drill-down: tenant list → tenant detail → member detail.
-To go back up a level, use the "Back" button or follow the breadcrumb at the top of the screen
-(tenant › member).
-
-Since you can only see your own tenant, in most cases the first list contains just your one tenant.
-Open it and you're straight into member management.
+You manage members under **"Operations → Members"** in the tenant settings rail. It is a
+two-level drill-down: roster → member detail. To go back up a level, use the "Back" button or
+follow the breadcrumb at the top of the panel (Members › the person).
 
 ## Finding your way around
 
-**Tenant list** — tenants appear as cards. Each card shows the display name, the member count, the
-number of workspaces currently running ("N running"), and the tenant-wide limits
-("Limits — Workspace: X / Session: Y"). The "New tenant" button is shown only to super_admin
-(you won't see it).
+**The tenant's numbers** — above the roster you'll find this tenant's display name, its member
+count, the number of workspaces currently running ("N running"), and the tenant-wide limits
+("Limits — Workspace: X / Session: Y"). This is **read-only** (a super_admin sets the caps —
+see [02-limits.md](02-limits.md)).
 
-**Tenant detail** — opening a tenant shows the "Members" list. For super_admin a limits-settings
-section also appears above it, but as tenant_admin you won't see the limits section (for limits,
-see [02-limits.md](02-limits.md)). Each member row shows a dot indicating running state, the
-internal identifier (`user_key`), the email address, and the role (`member` / `tenant_admin`).
-Clicking a row takes you to the member detail.
+**Roster** — each member row shows a dot indicating running state, the internal identifier
+(`user_key`), the email address, and the role (`member` / `tenant_admin`). Clicking a row takes you
+to the member detail.
 
 **Member detail** — the screen that gathers that member's workspace resources, running sessions,
 and the various operations. Resources and sessions, force-stop, and limit settings are covered in
@@ -29,7 +23,7 @@ and the various operations. Resources and sessions, force-stop, and limit settin
 
 ## Adding a member
 
-At the very bottom of the "Members" section in the tenant detail there is an **"Add member"** form.
+At the very bottom of the roster there is an **"Add member"** form.
 
 1. Enter the email address the member signs in with in the "email" field. Alternatively you
    can enter a key directly in the "or user_key" (internal identifier) field (if you enter an email,
@@ -72,25 +66,34 @@ domain. Someone who isn't permitted can't log in even if you add them to the ten
 
 ## Removing a member
 
-The admin screen has **no button to delete a member on the spot**. When you want to cleanly revoke
-a membership (removing someone who has left the company, for example), ask your IT department /
-deployment administrator. As a practical interim measure, stopping that person's running workspace
-("Force-stop the workspace" in [02-limits.md](02-limits.md)) reins in their resource occupancy and
-activity.
+Offboarding is **entirely yours to do**. The department is the one that knows who left, so the
+sequence isn't half a ticket to IT. From the "Operations" section of the member detail, in this
+order:
+
+1. **Remove member** — takes them off the roster and stops access. **Do this first**: the signed
+   session cookie cannot be revoked individually, so this — effective from the next request — is
+   what actually cuts access. The workspace, its home and stored credentials are kept, so a mistake
+   is undone by adding the same email address again.
+2. **Force-stop the workspace** — stop what is running ([02-limits.md](02-limits.md)).
+3. **Clean home** — erase the contents of home. **This cannot be undone.**
+
+Someone you removed stays on the roster marked "removed". That is so steps 2 and 3 remain reachable
+afterwards — they have not vanished.
 
 ## What the roles mean
 
 Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the first two below.
 
 - **member (regular member)** — someone who writes code in their own workspace and runs sessions.
-  They cannot enter the admin screen.
+  They cannot enter tenant settings.
 - **tenant_admin (tenant administrator)** — can manage members within this tenant, view resources,
-  force-stop workspaces, and set session limits. **They cannot touch other tenants at all.** They
-  cannot create tenants, change tenant-wide limits, clean home, or grant admin rights. = You.
+  force-stop workspaces, set session limits, remove members and clean their home. **They cannot
+  touch other tenants at all.** They cannot create tenants, change tenant-wide limits, grant admin
+  rights, or change the login rules. = You.
 - **super_admin** — the deployment-wide administrator. Sees all tenants and can create tenants,
   set limits, and grant rights such as "make someone a tenant_admin". super_admins are determined
   by environment configuration (`SUPER_ADMIN_EMAILS`) and are marked with a star in the member
-  list of the admin screen.
+  roster.
 
 **When you want to promote someone to tenant_admin**, you can't do it yourself. Only a super_admin
 can grant roles, from the "Permissions" section of the member detail. A granted administrator's

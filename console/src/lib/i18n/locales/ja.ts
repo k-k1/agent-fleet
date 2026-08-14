@@ -1360,7 +1360,7 @@ export const ja = {
   "admin.idp_pending_count": "承認待ち {n} 件",
   "admin.idp_register_hint":
     "各テナントが登録した IdP の一覧です。承認は一度きりの点検ですが、IdP 側の設定（セルフサインアップの有効化など）は承認後にも変わり得ます。" +
-    "承認済みのものもここに残るので、定期的に issuer と受け入れドメインを見直してください。承認・停止はテナントの詳細画面から行います。",
+    "承認済みのものもここに残るので、定期的に issuer と受け入れドメインを見直してください。承認・停止はこの一覧から行えます。",
   "admin.member_removed": "外れています（名簿から削除済み）",
   "admin.remove_member": "メンバーを外す",
   "admin.remove_title": "{key} を {slug} から外す",
@@ -1377,6 +1377,13 @@ export const ja = {
   "tenant.group_login": "ログイン",
   "tenant.tab_signin": "サインイン方式",
   "tenant.tab_rules": "ログイン規則",
+  "tenant.summary_note": "テナント全体の上限を決めるのはデプロイ管理者です",
+  "tenant.group_manage": "運用",
+  "tenant.tab_members": "メンバー",
+  "tenant.tab_sessions": "セッション",
+  "tenant.tab_usage": "使用量",
+  "tenant.tab_audit": "監査",
+  "tenant.tab_mcp": "MCP 配布",
   "tenant.picker": "テナント",
   "tenant.none": "管理しているテナントがありません。",
   "tenant.forbidden": "このテナントの設定を見る権限がありません。",

@@ -13,9 +13,9 @@ member**.
 
 ### Tenant-wide limits (set by super_admin)
 
-At the top of the tenant detail there is a settings section for tenant-wide limits and idle
-auto-stop. However, this section is **shown only to super_admin — as tenant_admin you cannot edit
-it.** Just know what it contains.
+Tenant-wide limits and idle auto-stop are **set by a super_admin only** — the settings section lives
+in the Admin modal and never appears for you. What you can read is the current values, shown at the
+top of the "Members" roster ("Limits — Workspace / Session"). Just know what they contain.
 
 - **Max workspaces** — the number of workspaces that can run concurrently in this tenant
   (`0` = unlimited).
@@ -25,7 +25,7 @@ it.** Just know what it contains.
 - **Idle auto-stop** — how long before neglected sessions and workspaces are stopped automatically
   (next section).
 
-The "Limits — Workspace: X / Session: Y" shown on the card in the tenant list is the value
+The "Limits — Workspace: X / Session: Y" shown at the top of the "Members" roster is the value
 currently in effect. When you want it changed, ask your IT department / deployment administrator
 ([operator/README.md](../operator/README.md)).
 
@@ -34,7 +34,7 @@ currently in effect. When you want it changed, ask your IT department / deployme
 What you can adjust is the per-member **session limit**. Pressing **"Set limits"** in the
 "Operations" section of the member detail lets you enter "Max sessions (0 = unlimited)"; once
 saved, it applies to that person only. Members with a personal limit show "s≤ N" on their member
-row in the tenant list.
+row in the roster.
 
 Between a personal session limit and the tenant-wide limit, whichever is stricter kicks in first.
 
@@ -75,7 +75,7 @@ glance. Values refresh every few seconds.
 time. This is view-only — there is no button to stop an individual session (if you want to stop
 the whole environment, use force-stop in the next section).
 
-When you want to survey the whole tenant, open the **"Sessions"** tab at the top. It shows
+When you want to survey the whole tenant, open **"Sessions"** in the rail. It shows
 **only the sessions running right now** in the tenant, aggregated across users (stopped ones are
 checked in each member detail). You can filter by "User / label / repository", and the total
 ("N running") appears at the top right. It is well suited to a first-thing-in-the-morning check of
@@ -115,7 +115,7 @@ tenant-wide limits.
 
 When people start saying "it's heavy" or "it's slow", triaging in this order is fastest.
 
-1. **Survey the whole picture on the "Sessions" tab** — see what is running and how many, and
+1. **Survey the whole picture under "Sessions"** — see what is running and how many, and
    whether it is skewed toward a particular person or repository.
 2. **Open the likely member's detail and check the meters** — if memory or disk is in the danger
    zone (the color has changed), that person's environment is the main cause of the pressure. CPU
