@@ -30,6 +30,7 @@ func eventsTestEnv(t *testing.T, sessionsBody *atomic.Value) (eventsAPI, *resolv
 // cancelled — the shape the hosted CI runner hit by being slow.
 func eventsTestEnvDelayed(t *testing.T, sessionsBody *atomic.Value, sessionsDelay *atomic.Value) (eventsAPI, *resolved) {
 	t.Helper()
+	var sessionsHits atomic.Int64
 	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +52,11 @@ func eventsTestEnvDelayed(t *testing.T, sessionsBody *atomic.Value, sessionsDela
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/sessions":
-			if d, ok := sessionsDelay.Load().(time.Duration); ok && d > 0 {
+			// 遅延は 2 回目以降にだけ効かせる。初回 tick（スナップショット）を
+			// 必ず素通しするのが要点で、これを「N ミリ秒後に遅延を有効化する」
+			// で書くと、遅いランナーでは初回の poll 自体が遅延に巻き込まれて
+			// スナップショットごと消える（実際にそうなった）。
+			if d, ok := sessionsDelay.Load().(time.Duration); ok && d > 0 && sessionsHits.Add(1) > 1 {
 				time.Sleep(d)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -175,13 +180,10 @@ func TestEventsStreamPushesChange(t *testing.T) {
 func TestEventsStreamNoFrameWhenCancelledMidPoll(t *testing.T) {
 	var body, delay atomic.Value
 	body.Store(`{"sessions":[{"name":"s1","kind":"claude","alive":true}]}`)
+	// 遅延は stub 側で 2 回目の /sessions から効く（初回＝スナップショットは
+	// 必ず素通し）。締切より長いので、2 回目以降の poll は必ず中断される。
+	delay.Store(500 * time.Millisecond)
 	a, res := eventsTestEnvDelayed(t, &body, &delay)
-
-	// 初回 tick（スナップショット）は素通しし、その後の poll を締切より長くする。
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		delay.Store(500 * time.Millisecond)
-	}()
 	frames, _ := runStream(t, a, res, 120*time.Millisecond)
 
 	if got := len(frames["sessions"]); got != 1 {
