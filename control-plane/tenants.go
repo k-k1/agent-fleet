@@ -122,6 +122,7 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Iden
 			"allowed_providers": t.AllowedProviders,
 			"auto_join_domains": t.AutoJoinDomains,
 			"allowed_domains":   t.AllowedDomains,
+			"hidden_providers":  t.HiddenProviders,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
@@ -138,6 +139,7 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident I
 		AllowedProviders string `json:"allowed_providers"`
 		AutoJoinDomains  string `json:"auto_join_domains"`
 		AllowedDomains   string `json:"allowed_domains"`
+		HiddenProviders  string `json:"hidden_providers"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
@@ -155,6 +157,7 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident I
 	provs := splitCSVLower(body.AllowedProviders)
 	autoJoin := splitDomainCSV(body.AutoJoinDomains)
 	allowed := splitDomainCSV(body.AllowedDomains)
+	hidden := splitCSVLower(body.HiddenProviders)
 
 	// Naming a provider the deployment does not have would silently produce a login
 	// page with no buttons, so refuse it here rather than at 3am.
@@ -166,7 +169,12 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident I
 	// produce a button nobody here can use, since the tenant gate pins such a session
 	// to its own tenant anyway (決定 32-3).
 	var ownIdP map[string]bool
-	for _, p := range provs {
+	// ★ hidden_providers is validated by the same rule, and for the same reason: a
+	// typo there is silent (the button simply keeps appearing) and nothing else in
+	// the system will ever mention it. It is checked TOGETHER with allowed_providers
+	// so both halves of "which methods does this tenant know about" stay one rule
+	// (docs/61 §61.15.9).
+	for _, p := range append(append([]string(nil), provs...), hidden...) {
 		if slug, name, isTenant := parseTenantProviderID(p); isTenant {
 			if ownIdP == nil {
 				rows, err := a.mgr.store.ListTenantIdPs(r.Context(), t.ID)
@@ -216,7 +224,7 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident I
 		}
 	}
 
-	if err := a.mgr.store.SetTenantLogin(r.Context(), t.ID, joinCSV(provs), joinCSV(autoJoin), joinCSV(allowed)); err != nil {
+	if err := a.mgr.store.SetTenantLogin(r.Context(), t.ID, joinCSV(provs), joinCSV(autoJoin), joinCSV(allowed), joinCSV(hidden)); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -225,12 +233,14 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident I
 	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
 		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
 		Action: "tenant.login_rules", Target: t.Slug,
-		Detail: "providers=" + joinCSV(provs) + " auto_join=" + joinCSV(autoJoin) + " allowed=" + joinCSV(allowed),
-		At:     nowTS(),
+		Detail: "providers=" + joinCSV(provs) + " auto_join=" + joinCSV(autoJoin) +
+			" allowed=" + joinCSV(allowed) + " hidden=" + joinCSV(hidden),
+		At: nowTS(),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tenant": t.Slug, "allowed_providers": joinCSV(provs),
 		"auto_join_domains": joinCSV(autoJoin), "allowed_domains": joinCSV(allowed),
+		"hidden_providers": joinCSV(hidden),
 	})
 }
 

@@ -34,6 +34,13 @@ import (
 // tenantProviderPrefix marks a provider id as database-derived.
 const tenantProviderPrefix = "t:"
 
+// The kinds a row can be built into (docs/61 §61.15). "" is read as oidc: rows
+// written before 0041 predate the column, and P4 had only one kind.
+const (
+	tenantIdPKindOIDC   = "oidc"
+	tenantIdPKindGitHub = "github"
+)
+
 // tenantProviderID builds the deployment-wide id of a tenant's provider.
 func tenantProviderID(slug, name string) string {
 	return tenantProviderPrefix + slug + ":" + name
@@ -74,16 +81,21 @@ type tenantIdPStoreView interface {
 }
 
 // tenantProviderSnapshot is one consistent read of every ACTIVE tenant provider.
+//
+// ★ loginProvider, not *oidcProvider: since §61.15 a row can also be built into the
+// GitHub adapter, which is not an OIDC client at all (it reads the REST API).
 type tenantProviderSnapshot struct {
-	byID   map[string]*oidcProvider
-	bySlug map[string][]*oidcProvider // login-page order, per tenant
+	byID   map[string]loginProvider
+	bySlug map[string][]loginProvider // login-page order, per tenant
 }
 
 // builtProvider caches the constructed provider so an unchanged row keeps its OIDC
-// discovery cache instead of re-fetching .well-known every refresh.
+// discovery cache instead of re-fetching .well-known every refresh — and, for a
+// GitHub row, its org-membership cache, which is what stands between a refresh and
+// making everyone sign in again (oauth_github.go: an empty cache answers reauth).
 type builtProvider struct {
 	updatedAt string
-	prov      *oidcProvider
+	prov      loginProvider
 }
 
 type tenantIdPRegistry struct {
@@ -149,8 +161,8 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 	}
 
 	snap := &tenantProviderSnapshot{
-		byID:   map[string]*oidcProvider{},
-		bySlug: map[string][]*oidcProvider{},
+		byID:   map[string]loginProvider{},
+		bySlug: map[string][]loginProvider{},
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -165,7 +177,7 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 		if !ok || p.updatedAt != row.UpdatedAt {
 			secret, err := r.secret(ctx, row.SecretEnc, row.KeyRef)
 			if err == nil {
-				var prov *oidcProvider
+				var prov loginProvider
 				prov, err = buildTenantProvider(row, slug, secret)
 				if err == nil {
 					p = builtProvider{updatedAt: row.UpdatedAt, prov: prov}
@@ -219,11 +231,7 @@ func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) [
 	if snap == nil {
 		return nil
 	}
-	out := make([]loginProvider, 0, len(snap.bySlug[slug]))
-	for _, p := range snap.bySlug[slug] {
-		out = append(out, p)
-	}
-	return out
+	return append([]loginProvider(nil), snap.bySlug[slug]...)
 }
 
 // --- building one provider from its row --------------------------------------
@@ -243,9 +251,20 @@ func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) [
 //
 // allowed_tids keeps its P0 meaning and is checked inside Exchange, on a different
 // axis (the token's tenant), so it stays AND-ed.
-func buildTenantProvider(row TenantIdP, slug, secret string) (*oidcProvider, error) {
+//
+// ★ kind picks the adapter (docs/61 §61.15 + 決定 34). This function is the RUNTIME
+// half of the same rules validateTenantIdPBody applies on save, and the two must
+// stay in step: an approved row that only the API accepts would save cleanly and
+// then disappear from the login page with a log line nobody is watching.
+func buildTenantProvider(row TenantIdP, slug, secret string) (loginProvider, error) {
 	if !validTenantIdPName(row.Name) {
 		return nil, fmt.Errorf("invalid provider name %q", row.Name)
+	}
+	if row.Kind == tenantIdPKindGitHub {
+		return newTenantGitHubProvider(row, slug, secret)
+	}
+	if row.Kind != "" && row.Kind != tenantIdPKindOIDC {
+		return nil, fmt.Errorf("unknown sign-in method kind %q", row.Kind)
 	}
 	if row.ClientID == "" || secret == "" {
 		return nil, errors.New("client_id / client_secret are required")
