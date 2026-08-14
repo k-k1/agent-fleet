@@ -140,6 +140,16 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/admin/clean-home", adm.cleanHome) // wipe home (tenant_admin, docs/61 §61.10.6)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", adm.withSuperAdmin(adm.setTenantLimits))
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/login", adm.withSuperAdmin(adm.setTenantLogin)) // per-tenant login rules (docs/61 §61.9.7)
+	// Tenant-defined sign-in methods (docs/61 §61.11). The rows are the tenant's, so
+	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
+	// which is the one super_admin step (決定 30). The queue is deployment-wide.
+	idp := newTenantIdPAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/idp", idp.list)
+	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp", idp.upsert)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/idp/{id}", idp.upsert)
+	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/idp/{id}", idp.remove)
+	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp/{id}/status", idp.setStatus)
+	mux.HandleFunc("GET /api/admin/idp", idp.withSuperAdmin(idp.queue)) // approval queue (super_admin)
 	mux.HandleFunc("PUT /api/admin/user-limits", adm.setUserLimit)
 	mux.HandleFunc("PUT /api/admin/membership-role", adm.withSuperAdmin(adm.setMembershipRole))         // grant/revoke tenant_admin (super_admin only)
 	mux.HandleFunc("GET /api/admin/host", adm.withSuperAdmin(adm.hostStats))                            // host load / memory (super_admin)

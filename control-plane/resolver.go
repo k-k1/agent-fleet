@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"regexp"
@@ -37,12 +38,42 @@ func (m *manager) resolveUser(r *http.Request) string { return m.resolveIdentity
 // key/email are the caller's own, taken from resolveIdentity on the same request,
 // so the context pair always describes the same person. Do not call this with
 // another person's key while a session context is in scope — the pair wins.
+// ★ It is also the choke point for the two things a TENANT-DEFINED provider must
+// not be able to do (docs/61 §61.11 + 決定 31/32), and they are enforced here rather
+// than at each caller on purpose — identityFor, resolveFull and resolveMembership
+// all pass roleHintFor(email), and a rule that has to be repeated three times is a
+// rule that will be missed the fourth time:
+//
+//   - no deployment role. roleHintFor matches SUPER_ADMIN_EMAILS on the address
+//     alone, so without this a subsidiary's administrator could mint a token
+//     carrying the operator's address and be upgraded to super_admin — and
+//     UpsertIdentity never downgrades, so removing the provider afterwards would
+//     not take it back (決定 30 の乗っ取り経路 4).
+//   - no join by email. The (provider, subject) pair is the only key, because that
+//     issuer belongs to the subsidiary and its assertion about an address is not
+//     proof of being that person (LinkIdentity's rule 2').
 func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error) {
 	if ref, ok := loginRefFrom(ctx); ok {
-		ident, _, err := m.store.LinkIdentity(ctx, ref.provider, ref.subject, email, key, roleHint)
+		tenantDefined := isTenantProviderID(ref.provider)
+		if tenantDefined {
+			roleHint = ""
+		}
+		ident, _, err := m.store.LinkIdentity(ctx, ref.provider, ref.subject, email, key, roleHint, !tenantDefined)
 		return ident, err
 	}
 	return m.store.UpsertIdentity(ctx, email, key, roleHint)
+}
+
+// identityErr maps an identity-resolution failure to the response. Only one of them
+// is the caller's business: errIdentityClaimed means a tenant-defined provider
+// asserted an address that already belongs to somebody (LinkIdentity rule 2'), and
+// answering 500 would send an operator looking for a fault that does not exist.
+// The normal path refuses it at the callback, before a session exists.
+func identityErr(err error) *apiError {
+	if errors.Is(err, errIdentityClaimed) {
+		return &apiError{http.StatusForbidden, "email_taken", errIdentityClaimed.Error()}
+	}
+	return internalErr(err)
 }
 
 func (m *manager) roleHintFor(email string) string {
@@ -81,7 +112,7 @@ func (m *manager) identityFor(ctx context.Context, r *http.Request) (Identity, *
 	}
 	ident, err := m.upsertIdentity(ctx, id.email, id.key, m.roleHintFor(id.email))
 	if err != nil {
-		return Identity{}, internalErr(err)
+		return Identity{}, identityErr(err)
 	}
 	return ident, nil
 }
@@ -176,8 +207,17 @@ func (m *manager) hasAnyMembershipRow(ctx context.Context, identityID, tenantID 
 // the remedy is one click away is how support tickets are made. The Console builds
 // that link from the tenant's allowed_providers, which /api/tenants reports per
 // membership (tenants.go), so this error itself needs no extra payload.
+// ★ It also pins a TENANT-DEFINED session to its own tenant (docs/61 §61.11 + 決定
+// 32-3). That check cannot be left to allowed_providers: a tenant that names no
+// providers accepts every one of them, so without this a subsidiary's own IdP would
+// be a way into every such tenant in the deployment. The subsidiary's administrator
+// controls that issuer, so the only tenant its assertions may open is theirs.
 func (m *manager) checkTenantProvider(ctx context.Context, mv MembershipView) *apiError {
 	prov := sessionProviderFrom(ctx)
+	if slug, _, ok := parseTenantProviderID(prov); ok && slug != mv.TenantSlug {
+		return &apiError{http.StatusForbidden, "provider_required",
+			"tenant " + mv.TenantSlug + " cannot be used with a sign-in method defined by tenant " + slug}
+	}
 	ok, allowed := m.tenantLogin.providerAllowed(ctx, mv.TenantID, prov)
 	if ok {
 		return nil
@@ -192,7 +232,7 @@ func (m *manager) checkTenantProvider(ctx context.Context, mv MembershipView) *a
 func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string) (*resolved, *apiError) {
 	ident, err := m.upsertIdentity(ctx, email, key, m.roleHintFor(email))
 	if err != nil {
-		return nil, internalErr(err)
+		return nil, identityErr(err)
 	}
 	ms, aerr := m.membershipsFor(ctx, ident)
 	if aerr != nil {
@@ -214,7 +254,7 @@ func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string)
 func (m *manager) resolveMembership(ctx context.Context, key, email, tenantSel string) (Identity, MembershipView, *apiError) {
 	ident, err := m.upsertIdentity(ctx, email, key, m.roleHintFor(email))
 	if err != nil {
-		return Identity{}, MembershipView{}, internalErr(err)
+		return Identity{}, MembershipView{}, identityErr(err)
 	}
 	ms, aerr := m.membershipsFor(ctx, ident)
 	if aerr != nil {

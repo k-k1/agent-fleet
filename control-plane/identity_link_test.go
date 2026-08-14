@@ -54,7 +54,7 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	got, isNew, err := st.LinkIdentity(ctx, googleProviderID, "g-sub-1", email, sanitizeUser(email), "")
+	got, isNew, err := st.LinkIdentity(ctx, googleProviderID, "g-sub-1", email, sanitizeUser(email), "", true)
 	if err != nil {
 		t.Fatalf("first login: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 	}
 
 	// 同じ (provider, subject) の再ログインで identity は増えない。
-	again, isNew, err := st.LinkIdentity(ctx, googleProviderID, "g-sub-1", email, sanitizeUser(email), "")
+	again, isNew, err := st.LinkIdentity(ctx, googleProviderID, "g-sub-1", email, sanitizeUser(email), "", true)
 	if err != nil || isNew || again.ID != seed.ID {
 		t.Fatalf("re-login: id=%s isNew=%v err=%v", again.ID, isNew, err)
 	}
@@ -80,7 +80,7 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 	// IdP 側で email が変わった（姓変更・ドメイン統合）。同じ人のまま、
 	// user_key は据え置き、表示用の email だけ新しくなる。
 	const renamed = "yamada-hanako@acme.co.jp"
-	moved, isNew, err := st.LinkIdentity(ctx, googleProviderID, "g-sub-1", renamed, sanitizeUser(renamed), "")
+	moved, isNew, err := st.LinkIdentity(ctx, googleProviderID, "g-sub-1", renamed, sanitizeUser(renamed), "", true)
 	if err != nil {
 		t.Fatalf("after rename: %v", err)
 	}
@@ -105,11 +105,11 @@ func TestLinkIdentityJoinsSameEmailFromAnotherProvider(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
 
-	first, _, err := st.LinkIdentity(ctx, googleProviderID, "g-1", email, sanitizeUser(email), "")
+	first, _, err := st.LinkIdentity(ctx, googleProviderID, "g-1", email, sanitizeUser(email), "", true)
 	if err != nil {
 		t.Fatalf("google: %v", err)
 	}
-	second, isNew, err := st.LinkIdentity(ctx, "entra", "e-1", email, sanitizeUser(email), "")
+	second, isNew, err := st.LinkIdentity(ctx, "entra", "e-1", email, sanitizeUser(email), "", true)
 	if err != nil {
 		t.Fatalf("entra: %v", err)
 	}
@@ -130,13 +130,13 @@ func TestLinkIdentityJoinsSameEmailFromAnotherProvider(t *testing.T) {
 func TestLinkIdentityNewAccountWhenEmailIsUnknown(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const known = "yamada@acme.co.jp"
-	first, _, err := st.LinkIdentity(ctx, googleProviderID, "g-1", known, sanitizeUser(known), "")
+	first, _, err := st.LinkIdentity(ctx, googleProviderID, "g-1", known, sanitizeUser(known), "", true)
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
 	const other = "tanaka@acme.co.jp"
-	got, isNew, err := st.LinkIdentity(ctx, "entra", "e-2", other, sanitizeUser(other), "")
+	got, isNew, err := st.LinkIdentity(ctx, "entra", "e-2", other, sanitizeUser(other), "", true)
 	if err != nil {
 		t.Fatalf("new person: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestLinkIdentityNewAccountWhenEmailIsUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
-	claimed, isNew, err := st.LinkIdentity(ctx, googleProviderID, "g-3", invited, sanitizeUser(invited), "")
+	claimed, isNew, err := st.LinkIdentity(ctx, googleProviderID, "g-3", invited, sanitizeUser(invited), "", true)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}

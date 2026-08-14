@@ -158,7 +158,34 @@ func (a adminAPI) setTenantLogin(w http.ResponseWriter, r *http.Request, ident I
 
 	// Naming a provider the deployment does not have would silently produce a login
 	// page with no buttons, so refuse it here rather than at 3am.
+	//
+	// ★ A "t:<slug>:<name>" id is one of the tenant's OWN sign-in methods (docs/61
+	// §61.11), which is how a subsidiary says "only our Entra, please". It is checked
+	// against that tenant's rows instead of knownProviderIDs (which holds env ids
+	// only), and the slug must be this tenant's: naming another tenant's method would
+	// produce a button nobody here can use, since the tenant gate pins such a session
+	// to its own tenant anyway (決定 32-3).
+	var ownIdP map[string]bool
 	for _, p := range provs {
+		if slug, name, isTenant := parseTenantProviderID(p); isTenant {
+			if ownIdP == nil {
+				rows, err := a.mgr.store.ListTenantIdPs(r.Context(), t.ID)
+				if err != nil {
+					writeAPIErr(w, internalErr(err))
+					return
+				}
+				ownIdP = map[string]bool{}
+				for _, row := range rows {
+					ownIdP[row.Name] = true
+				}
+			}
+			if slug != t.Slug || !ownIdP[name] {
+				writeAPIErr(w, &apiError{http.StatusBadRequest, "unknown_provider",
+					"tenant " + t.Slug + " has no sign-in method named " + p})
+				return
+			}
+			continue
+		}
 		if a.mgr.knownProviderIDs != nil && !a.mgr.knownProviderIDs[p] {
 			writeAPIErr(w, &apiError{http.StatusBadRequest, "unknown_provider",
 				"no login provider named " + p + " is enabled on this deployment"})

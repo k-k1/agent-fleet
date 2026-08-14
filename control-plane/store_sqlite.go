@@ -430,7 +430,19 @@ func (s *sqlStore) DemoteSuperAdmins(ctx context.Context, keep []string) ([]stri
 // from reaching this code at all. Two DIFFERENT emails are never merged: proving
 // you can sign in to both accounts shows control of both, not that they are one
 // person, and the merge would be irreversible.
-func (s *sqlStore) LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string) (Identity, bool, error) {
+//
+// ★ emailJoin=false is a TENANT-DEFINED provider (docs/61 §61.11): the operator did
+// not configure that issuer, a subsidiary's administrator did, so an asserted
+// address is not proof of being that person. Rule 2 becomes rule 2' — CLAIM an
+// identity nobody has ever signed in as (the placeholder an invite leaves behind,
+// which is how a subsidiary's first login is supposed to work), and refuse with
+// errIdentityClaimed when the address belongs to an account that has a login
+// history. Falling through to rule 3 instead would NOT be fail-closed: user_key is
+// sanitizeUser(email), so UpsertIdentity's ON CONFLICT(user_key) would land right
+// back on the very identity rule 2 was refusing to join (and identity.email is
+// UNIQUE, so a genuinely separate row cannot exist either). Refusing is the only
+// answer that is actually a refusal.
+func (s *sqlStore) LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string, emailJoin bool) (Identity, bool, error) {
 	if provider == "" || subject == "" { // no subject to key on: legacy/pre-P0 session
 		ident, err := s.UpsertIdentity(ctx, email, fallbackKey, roleHint)
 		return ident, false, err
@@ -445,7 +457,16 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, provider, subject, email, f
 		switch {
 		case err != nil:
 			return Identity{}, false, err
-		case ok: // rule 2
+		case ok && emailJoin: // rule 2
+			identityID = ident.ID
+		case ok: // rule 2', a tenant-defined provider: claim, never join
+			claimed, err := s.identityHasProvider(ctx, ident.ID)
+			if err != nil {
+				return Identity{}, false, err
+			}
+			if claimed {
+				return Identity{}, false, errIdentityClaimed
+			}
 			identityID = ident.ID
 		default: // rule 3
 			ident, created, err := s.createIdentityForLogin(ctx, email, fallbackKey, roleHint)
@@ -479,6 +500,24 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, provider, subject, email, f
 		return Identity{}, false, fmt.Errorf("identity %s vanished mid-login", identityID)
 	}
 	return ident, isNew, nil
+}
+
+// errIdentityClaimed is returned when a tenant-defined provider asserts an address
+// that already belongs to somebody who has signed in here. The login is refused
+// rather than joined or duplicated — see LinkIdentity.
+var errIdentityClaimed = errors.New("this email address already belongs to an account on this deployment")
+
+// identityHasProvider reports whether anybody has ever completed an IdP login as
+// this identity. An identity with no such row is either an invite placeholder or a
+// pre-P1 account; that is the line rule 2' draws.
+func (s *sqlStore) identityHasProvider(ctx context.Context, identityID string) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM identity_provider WHERE identity_id=? LIMIT 1`, identityID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // identityIDForProvider returns the identity a (provider, subject) is bound to,
@@ -787,6 +826,26 @@ func (s *sqlStore) EmailHasActiveMembership(ctx context.Context, email string) (
 		`SELECT 1 FROM membership m JOIN identity i ON i.id = m.identity_id
 		 WHERE m.status='active' AND i.email <> '' AND LOWER(i.email) = ?
 		 LIMIT 1`, email).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// EmailHasActiveMembershipInTenant is EmailHasActiveMembership narrowed to one
+// tenant — the entry-gate term a tenant-defined provider is allowed to use
+// (docs/61 §61.11.3-3). Being on ANOTHER tenant's roster says nothing about this
+// subsidiary's IdP.
+func (s *sqlStore) EmailHasActiveMembershipInTenant(ctx context.Context, email, tenantID string) (bool, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" || tenantID == "" {
+		return false, nil
+	}
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM membership m JOIN identity i ON i.id = m.identity_id
+		 WHERE m.status='active' AND m.tenant_id = ? AND i.email <> '' AND LOWER(i.email) = ?
+		 LIMIT 1`, tenantID, email).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
@@ -2300,5 +2359,132 @@ func (s *sqlStore) UpdateMCPServer(ctx context.Context, m MCPServerRow) error {
 
 func (s *sqlStore) DeleteMCPServer(ctx context.Context, tenantID, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM mcp_server WHERE tenant_id=? AND id=?`, tenantID, id)
+	return err
+}
+
+// --- tenant-defined login providers (docs/61 §61.11 + ADR0043 決定 29-33) -------
+
+const tenantIdPCols = `SELECT id, tenant_id, name, label_ja, label_en, issuer, client_id,
+       secret_enc, key_ref, trust, allowed_tids, allowed_domains, status,
+       approved_by, approved_at, created_by, created_at, updated_at FROM tenant_idp`
+
+func scanTenantIdP(sc scanner) (TenantIdP, error) {
+	var t TenantIdP
+	err := sc.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Issuer, &t.ClientID,
+		&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.Status,
+		&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
+	return t, err
+}
+
+func (s *sqlStore) ListTenantIdPs(ctx context.Context, tenantID string) ([]TenantIdP, error) {
+	rows, err := s.db.QueryContext(ctx, tenantIdPCols+` WHERE tenant_id=? ORDER BY name`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TenantIdP
+	for rows.Next() {
+		t, err := scanTenantIdP(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error) {
+	return s.listTenantIdPs(ctx, "")
+}
+
+func (s *sqlStore) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error) {
+	return s.listTenantIdPs(ctx, "active")
+}
+
+// listTenantIdPs is the deployment-wide read. The tenant slug travels with each row
+// because the provider id the rest of CP sees is built from it (t:<slug>:<name>),
+// and joining here saves the caller a lookup per row.
+//
+// ★ Rows of a non-active tenant are left out: a suspended tenant's IdP must not keep
+// minting sessions, the same way ListTenantLoginRules only loads active tenants.
+func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantIdP, map[string]string, error) {
+	q := `SELECT p.id, p.tenant_id, p.name, p.label_ja, p.label_en, p.issuer, p.client_id,
+	             p.secret_enc, p.key_ref, p.trust, p.allowed_tids, p.allowed_domains, p.status,
+	             p.approved_by, p.approved_at, p.created_by, p.created_at, p.updated_at, t.slug
+	      FROM tenant_idp p JOIN tenant t ON t.id = p.tenant_id
+	      WHERE t.status='active'`
+	args := []any{}
+	if status != "" {
+		q += ` AND p.status=?`
+		args = append(args, status)
+	}
+	q += ` ORDER BY t.slug, p.name`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var out []TenantIdP
+	slugs := map[string]string{}
+	for rows.Next() {
+		var t TenantIdP
+		var slug string
+		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Issuer, &t.ClientID,
+			&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.Status,
+			&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &slug); err != nil {
+			return nil, nil, err
+		}
+		out = append(out, t)
+		slugs[t.TenantID] = slug
+	}
+	return out, slugs, rows.Err()
+}
+
+func (s *sqlStore) GetTenantIdP(ctx context.Context, tenantID, id string) (TenantIdP, bool, error) {
+	t, err := scanTenantIdP(s.db.QueryRowContext(ctx, tenantIdPCols+` WHERE tenant_id=? AND id=?`, tenantID, id))
+	if err == sql.ErrNoRows {
+		return TenantIdP{}, false, nil
+	}
+	return t, err == nil, err
+}
+
+func (s *sqlStore) CreateTenantIdP(ctx context.Context, t TenantIdP) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO tenant_idp(id, tenant_id, name, label_ja, label_en, issuer, client_id,
+		   secret_enc, key_ref, trust, allowed_tids, allowed_domains, status,
+		   approved_by, approved_at, created_by, created_at, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		t.ID, t.TenantID, t.Name, t.LabelJA, t.LabelEN, t.Issuer, t.ClientID,
+		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains, t.Status,
+		t.ApprovedBy, t.ApprovedAt, t.CreatedBy, t.CreatedAt, t.UpdatedAt)
+	return err
+}
+
+// UpdateTenantIdP replaces the editable content of a row. status / approved_* are
+// written here too, because an edit that changes the issuer, the client_id or the
+// trust rule sends the row back to pending (決定 30) — the caller computes that and
+// this is where it lands.
+func (s *sqlStore) UpdateTenantIdP(ctx context.Context, t TenantIdP) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tenant_idp SET name=?, label_ja=?, label_en=?, issuer=?, client_id=?,
+		   secret_enc=?, key_ref=?, trust=?, allowed_tids=?, allowed_domains=?,
+		   status=?, approved_by=?, approved_at=?, updated_at=?
+		 WHERE tenant_id=? AND id=?`,
+		t.Name, t.LabelJA, t.LabelEN, t.Issuer, t.ClientID,
+		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains,
+		t.Status, t.ApprovedBy, t.ApprovedAt, t.UpdatedAt,
+		t.TenantID, t.ID)
+	return err
+}
+
+func (s *sqlStore) SetTenantIdPStatus(ctx context.Context, tenantID, id, status, approvedBy, approvedAt, updatedAt string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE tenant_idp SET status=?, approved_by=?, approved_at=?, updated_at=? WHERE tenant_id=? AND id=?`,
+		status, approvedBy, approvedAt, updatedAt, tenantID, id)
+	return err
+}
+
+func (s *sqlStore) DeleteTenantIdP(ctx context.Context, tenantID, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM tenant_idp WHERE tenant_id=? AND id=?`, tenantID, id)
 	return err
 }

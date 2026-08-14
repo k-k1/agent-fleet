@@ -139,6 +139,10 @@ func main() {
 	}
 	mgr.store = store
 	mgr.tenantLogin = newTenantLoginCache(store)
+	// Tenant-defined login providers (docs/61 §61.11). Unlike the env providers built
+	// below, this set is read from the database on demand, so approving a subsidiary's
+	// IdP needs no restart (決定 29).
+	mgr.tenantIdP = newTenantIdPRegistry(store, mgr.openTenantSecret)
 	if dt, err := store.EnsureDefaultTenant(ctx); err != nil {
 		log.Fatalf("ensure default tenant: %v", err)
 	} else {
@@ -324,6 +328,15 @@ func main() {
 		// warning, and only say "every login is denied" when that is actually true.
 		if !cfg.hasDeploymentAllowlist() && !anyProviderAllowlist(cfg.providers) {
 			hasRoster, err := mgr.store.AnyActiveMembership(ctx)
+			// A tenant-defined provider carries its own (mandatory) domain list
+			// (docs/61 §61.11), so an approved one is also a way in — counting it keeps
+			// the warning from claiming "every login is denied" on a deployment that
+			// runs entirely on a subsidiary's own IdP.
+			if !hasRoster && err == nil {
+				if rows, _, lerr := mgr.store.ListActiveTenantIdPs(ctx); lerr == nil && len(rows) > 0 {
+					hasRoster = true
+				}
+			}
 			switch {
 			case err != nil:
 				log.Printf("WARNING: could not check for existing memberships: %v", err)

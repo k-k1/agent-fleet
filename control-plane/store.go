@@ -343,6 +343,7 @@ type Store interface {
 	ScheduleStore
 	MCPServerStore
 	SessionShareStore
+	TenantIdPStore
 
 	Close() error
 }
@@ -387,6 +388,51 @@ type TenantStore interface {
 	ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error)
 }
 
+// TenantIdP is one tenant-defined login provider (docs/61 §61.11, migration 0040).
+// SecretEnc is opaque ciphertext here exactly like MCPServerRow.HeadersEnc: the
+// SQL layer stores and returns it, and tenant_idp.go owns the sealing.
+//
+// ★ Status governs everything. Only "active" rows are turned into a provider, and
+// a row is born "pending" until a super_admin approves it (決定 30). ApprovedBy /
+// ApprovedAt are the copy of that approval kept next to the row — the audit ledger
+// is the record.
+type TenantIdP struct {
+	ID, TenantID, Name              string
+	LabelJA, LabelEN                string
+	Issuer, ClientID                string
+	SecretEnc, KeyRef               string
+	Trust                           string
+	AllowedTIDs, AllowedDomains     string // CSV
+	Status                          string // pending | active | suspended
+	ApprovedBy, ApprovedAt          string
+	CreatedBy, CreatedAt, UpdatedAt string
+}
+
+// TenantIdPStore is the tenant-defined login provider registry (docs/61 §61.11).
+// Every mutation carries tenant_id in the WHERE, the way MCPServerStore does, so a
+// tenant_admin of one tenant can never reach another's row even if an id leaks.
+// ListActiveTenantIdPs is the exception by design: it is the deployment-wide read
+// the login layer needs to assemble the provider set, and it is never reached from
+// a tenant-scoped handler.
+type TenantIdPStore interface {
+	ListTenantIdPs(ctx context.Context, tenantID string) ([]TenantIdP, error)
+	// ListAllTenantIdPs returns every row with its tenant slug, for the super_admin
+	// approval queue. slugs are returned separately so the store stays free of view
+	// structs; the handler joins them.
+	ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error)
+	// ListActiveTenantIdPs returns the approved rows only — the login layer's bulk
+	// read, behind the same short TTL cache the tenant rules use.
+	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error)
+	GetTenantIdP(ctx context.Context, tenantID, id string) (TenantIdP, bool, error)
+	CreateTenantIdP(ctx context.Context, row TenantIdP) error
+	UpdateTenantIdP(ctx context.Context, row TenantIdP) error
+	// SetTenantIdPStatus is the approval / suspension path, kept apart from the
+	// content update so approving cannot accidentally rewrite the issuer that was
+	// being approved.
+	SetTenantIdPStatus(ctx context.Context, tenantID, id, status, approvedBy, approvedAt, updatedAt string) error
+	DeleteTenantIdP(ctx context.Context, tenantID, id string) error
+}
+
 type IdentityStore interface {
 	// UpsertIdentity creates/updates the person. roleHint, when non-empty,
 	// upgrades the deployment role (e.g. "super_admin" from SUPER_ADMIN_EMAILS);
@@ -399,7 +445,15 @@ type IdentityStore interface {
 	// and a new one was created, which is the only signal the caller has that this
 	// person landed in a different workspace than the one they may expect.
 	// fallbackKey is used only on that path (it is sanitizeUser(email)).
-	LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string) (ident Identity, isNew bool, err error)
+	//
+	// ★ emailJoin selects rule 2 ("this address already belongs to someone — join
+	// that identity"). It is FALSE for a tenant-defined provider (docs/61 §61.11 +
+	// 決定 32): its issuer belongs to the subsidiary, not to the operator, so an
+	// admin there could otherwise mint a token carrying a colleague's address and
+	// land in that colleague's identity — home, secrets and all. The caller decides,
+	// because the naming rule that distinguishes the two kinds of provider
+	// (tenantProviderID) belongs to the login layer, not to SQL.
+	LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string, emailJoin bool) (ident Identity, isNew bool, err error)
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
 	// GetIdentityByUserKey is the READ-ONLY lookup for view paths (admin stats,
 	// admin MCP list tools): unlike UpsertIdentity it neither inserts a row for a
@@ -453,6 +507,12 @@ type MembershipStore interface {
 	// ★ Matched on identity.email, NOT on sanitizeUser(email): since P1 a person may
 	// keep a user_key that no longer derives from their current address.
 	EmailHasActiveMembership(ctx context.Context, email string) (bool, error)
+	// EmailHasActiveMembershipInTenant is the same question asked of ONE tenant. A
+	// tenant-defined provider (docs/61 §61.11) may only admit that tenant's own
+	// people, so its entry gate cannot use the deployment-wide answer above: being
+	// on some other subsidiary's roster is not permission to use this subsidiary's
+	// IdP (決定 32-3).
+	EmailHasActiveMembershipInTenant(ctx context.Context, email, tenantID string) (bool, error)
 	// AnyActiveMembership reports whether the deployment has any roster at all —
 	// used by the startup warning, which must no longer claim "every login is
 	// denied" on a deployment that runs purely on invitations.

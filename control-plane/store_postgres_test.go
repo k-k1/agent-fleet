@@ -226,20 +226,20 @@ func TestPostgresStore(t *testing.T) {
 	// Rule 2: no pair recorded yet, but the address is already someone's — join that
 	// person. Matching is case-insensitive even though the unique index is on the
 	// exact string, so a differently-cased login must not fork a second identity.
-	joined, isNew, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", "yamada@acme.co.jp", sanitizeUser(pgEmail), "")
+	joined, isNew, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", "yamada@acme.co.jp", sanitizeUser(pgEmail), "", true)
 	if err != nil || isNew || joined.ID != seed.ID || joined.UserKey != seed.UserKey {
 		t.Fatalf("link rule 2: %+v isNew=%v err=%v want id=%s key=%s", joined, isNew, err, seed.ID, seed.UserKey)
 	}
 	// Rule 1 + rename: the recorded pair outranks the address, so user_key — the home
 	// directory name — stays put and only the display email moves.
 	const pgRenamed = "yamada-hanako@acme.co.jp"
-	moved, isNew, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", pgRenamed, sanitizeUser(pgRenamed), "")
+	moved, isNew, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", pgRenamed, sanitizeUser(pgRenamed), "", true)
 	if err != nil || isNew || moved.ID != seed.ID || moved.UserKey != seed.UserKey || moved.Email != pgRenamed {
 		t.Fatalf("link rule 1: %+v isNew=%v err=%v want id=%s key=%s", moved, isNew, err, seed.ID, seed.UserKey)
 	}
 	// touchIdentity's other statement: nothing asserted, so last_login_at moves and
 	// the display email must survive rather than be blanked.
-	if _, _, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", "", sanitizeUser(pgRenamed), ""); err != nil {
+	if _, _, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", "", sanitizeUser(pgRenamed), "", true); err != nil {
 		t.Fatalf("link without an asserted email: %v", err)
 	}
 	if got, ok, err := st.GetIdentityByID(ctx, seed.ID); err != nil || !ok || got.Email != pgRenamed {
@@ -248,7 +248,7 @@ func TestPostgresStore(t *testing.T) {
 	// Rule 3: an address nobody owns is a new person — the isNew that raises the
 	// "this is a new workspace" notice on a multi-IdP deployment.
 	const pgOther = "tanaka@acme.co.jp"
-	fresh, isNew, err := st.LinkIdentity(ctx, "entra", "pg-sub-2", pgOther, sanitizeUser(pgOther), "")
+	fresh, isNew, err := st.LinkIdentity(ctx, "entra", "pg-sub-2", pgOther, sanitizeUser(pgOther), "", true)
 	if err != nil || !isNew || fresh.ID == seed.ID || fresh.UserKey != sanitizeUser(pgOther) {
 		t.Fatalf("link rule 3: %+v isNew=%v err=%v", fresh, isNew, err)
 	}
@@ -312,6 +312,48 @@ func TestPostgresStore(t *testing.T) {
 	}
 	if got, _, _ := st.GetMembership(ctx, i2.ID, t2.ID); got.Status != "inactive" {
 		t.Fatalf("EnsureMembership revived a deactivated membership: %+v", got)
+	}
+
+	// tenant_idp round trip (docs/61 P4 / migrations-pg/0023). The table is created
+	// by this migration, the deployment-wide read JOINs tenant, and the approval path
+	// is a second UPDATE — all of it had only ever run on SQLite.
+	idpRow := TenantIdP{
+		ID: newID(), TenantID: t2.ID, Name: "entra",
+		Issuer: "https://login.microsoftonline.com/guid-pg/v2.0", ClientID: "c",
+		SecretEnc: "sealed", KeyRef: t2.ID, Trust: trustIssuer,
+		AllowedDomains: "sub.example", Status: "pending", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+	}
+	if err := st.CreateTenantIdP(ctx, idpRow); err != nil {
+		t.Fatalf("create tenant_idp: %v", err)
+	}
+	if got, ok, err := st.GetTenantIdP(ctx, t2.ID, idpRow.ID); err != nil || !ok || got.Status != "pending" || got.SecretEnc != "sealed" {
+		t.Fatalf("get tenant_idp: %+v ok=%v err=%v", got, ok, err)
+	}
+	// Only APPROVED rows reach the login layer — the property the whole feature rests on.
+	if act, _, err := st.ListActiveTenantIdPs(ctx); err != nil || len(act) != 0 {
+		t.Fatalf("pending row must not be active: %+v %v", act, err)
+	}
+	if err := st.SetTenantIdPStatus(ctx, t2.ID, idpRow.ID, "active", "boss", nowTS(), nowTS()); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	act, slugs, err := st.ListActiveTenantIdPs(ctx)
+	if err != nil || len(act) != 1 || slugs[t2.ID] != t2.Slug || act[0].ApprovedBy != "boss" {
+		t.Fatalf("active tenant_idp: %+v slugs=%v err=%v", act, slugs, err)
+	}
+	// The tenant-scoped roster lookup. dev@example.com is an ACTIVE member of the
+	// default tenant and was deactivated in t2 just above, so this one call proves
+	// both halves: the tenant scoping and the active-only filter.
+	if ok, err := st.EmailHasActiveMembershipInTenant(ctx, "DEV@example.com", tn.ID); err != nil || !ok {
+		t.Fatalf("EmailHasActiveMembershipInTenant = (%v,%v), want true", ok, err)
+	}
+	if ok, err := st.EmailHasActiveMembershipInTenant(ctx, "DEV@example.com", t2.ID); err != nil || ok {
+		t.Fatalf("a deactivated membership must not count = (%v,%v), want false", ok, err)
+	}
+	if err := st.DeleteTenantIdP(ctx, t2.ID, idpRow.ID); err != nil {
+		t.Fatalf("delete tenant_idp: %v", err)
+	}
+	if _, ok, _ := st.GetTenantIdP(ctx, t2.ID, idpRow.ID); ok {
+		t.Fatal("tenant_idp row survived the delete")
 	}
 
 	// super_admin revocation (決定 24): i2 was upgraded above, and dropping it from
