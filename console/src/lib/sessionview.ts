@@ -102,6 +102,13 @@ export const stateInfo = (s: SessionState): StateInfo => {
     // the backend refuses prompt injection here, since typed text would land on the menu.
     case "blocked":
       return { cls: "question", icon: "debug-disconnect", text: t("state.blocked") };
+    // The workspace's claude login expired (agent: agents.StateAuth). Separate from
+    // "blocked" because the next move is the opposite one: a usage limit lifts on its
+    // own, an expired login never does — it needs 再認証 now. NOT "idle" for the same
+    // reason as blocked, only worse: the pane looks like it is waiting for input, but a
+    // prompt sent here is accepted and no turn ever starts (the backend now refuses it).
+    case "auth":
+      return { cls: "question", icon: "key", text: t("state.auth_expired") };
     default:
       // Idle by hook, but a run_in_background task is still running under the pane:
       // show it's not actually done (spinner + "BG実行中" alongside 入力待ち).
