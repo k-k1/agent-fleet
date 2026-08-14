@@ -1312,6 +1312,55 @@ export const ja = {
     "「招待できるドメイン」はメンバー追加時にだけ効きます。既にメンバーの人は、別ドメインでもそのまま使えます（外すには下のメンバー詳細から「メンバーを外す」）。" +
     "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。",
   "admin.login_url": "このテナント専用のログイン URL:",
+
+  // --- テナント定義の認証方式（docs/61 §61.11・P4）。子会社ごとに Entra が違う場合。
+  // 作るのはテナント管理者、有効化はデプロイ管理者（決定 30）。この非対称が本体。---
+  "admin.idp_title": "このテナントのサインイン方法",
+  "admin.idp_note": "有効化にはデプロイ管理者の承認が必要",
+  "admin.idp_hint":
+    "自社の IdP（Entra / Okta / Keycloak など）をこのテナント専用のサインイン方法として登録できます。" +
+    "登録した時点では「承認待ち」で、デプロイ管理者が承認するまでログイン画面にボタンは出ず、サインインもできません。",
+  "admin.idp_none": "まだ登録されていません。",
+  "admin.idp_add": "サインイン方法を追加",
+  "admin.idp_approve": "承認して有効化",
+  "admin.idp_suspend": "停止する",
+  "admin.idp_reapply": "承認を申請する",
+  "admin.idp_state_pending": "承認待ち",
+  "admin.idp_state_active": "有効",
+  "admin.idp_state_suspended": "停止中",
+  "admin.idp_state_broken": "承認済みだが設定に不備あり",
+  "admin.idp_name": "名前",
+  "admin.idp_name_hint": "テナント内で使う識別子（英小文字・数字・- _）。例: entra",
+  "admin.idp_issuer": "issuer（発行者 URL）",
+  "admin.idp_issuer_hint": "IdP の issuer URL。Entra は自社テナントの GUID を含む URL を指定します（common / organizations は tid の指定が必須）。",
+  "admin.idp_client_id": "client_id",
+  "admin.idp_client_secret": "client_secret",
+  "admin.idp_secret_hint": "保存時に暗号化され、画面に表示されることはありません。",
+  "admin.idp_secret_kept": "空のままにすると、保存済みの値をそのまま使います。",
+  "admin.idp_trust": "email の信頼方法",
+  "admin.idp_trust_hint": "この IdP が名乗る email をなぜ信じてよいか。Entra は email_verified を出さないため「issuer 固定」を選びます。",
+  "admin.idp_trust_issuer": "issuer が自社テナントに固定されている",
+  "admin.idp_trust_email": "IdP が email_verified を返す",
+  "admin.idp_domains": "受け入れるメールドメイン",
+  "admin.idp_domains_hint":
+    "この方式でサインインできるドメイン（必須）。空にはできません — この方式はデプロイ共通の許可リストを使わないため、空だと誰も入れなくなります。" +
+    "同じドメインを 2 つのテナントが持つことはできません。",
+  "admin.idp_tids": "許可する tenant id（Entra の tid・任意）",
+  "admin.idp_tids_hint": "カンマ区切り。issuer が common / organizations の場合は必須です。",
+  "admin.idp_label_ja": "ボタンの文言（日本語）",
+  "admin.idp_label_en": "ボタンの文言（英語）",
+  "admin.idp_repend_hint":
+    "issuer / client_id / email の信頼方法を変更したとき、または受け入れるドメイン・tid を追加したときは、" +
+    "承認がやり直しになります（承認は「この issuer をこの範囲で信じてよい」に対して与えられたものなので）。",
+  "admin.idp_delete_title": "{name} を削除する",
+  "admin.idp_delete_body":
+    "このサインイン方法を削除します。この方式で入っていた人はサインインできなくなりますが、" +
+    "ワークスペース・home・保存済みの認証情報は残ります。",
+  "admin.idp_register": "テナント定義のサインイン方法",
+  "admin.idp_pending_count": "承認待ち {n} 件",
+  "admin.idp_register_hint":
+    "各テナントが登録した IdP の一覧です。承認は一度きりの点検ですが、IdP 側の設定（セルフサインアップの有効化など）は承認後にも変わり得ます。" +
+    "承認済みのものもここに残るので、定期的に issuer と受け入れドメインを見直してください。承認・停止はテナントの詳細画面から行います。",
   "admin.member_removed": "外れています（名簿から削除済み）",
   "admin.remove_member": "メンバーを外す",
   "admin.remove_title": "{key} を {slug} から外す",
