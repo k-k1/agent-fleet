@@ -206,6 +206,30 @@ func (c config) sessionAllowed(ctx context.Context, claims sessionClaims) bool {
 	return err == nil && ok
 }
 
+// --- carrying the IdP subject downstream (docs/61 §61.5) -------------------
+
+// loginRef is the (provider, subject) the current session was minted with. It
+// travels in the REQUEST CONTEXT rather than in a header like the email does:
+// CP is the edge, so a header would have to be stripped on the way in as well as
+// set on the way out, and forgetting the strip would let a client claim any
+// subject it likes. A context value cannot be reached from outside the process.
+type loginRef struct{ provider, subject string }
+
+type loginRefKey struct{}
+
+func withLoginRef(ctx context.Context, ref loginRef) context.Context {
+	return context.WithValue(ctx, loginRefKey{}, ref)
+}
+
+// loginRefFrom reports the proven IdP subject behind this request, if any. It is
+// absent under AUTH=proxy and AUTH=dev (neither has an IdP subject to offer) and
+// on sessions minted before P0 (no `sub` claim), and every caller must keep
+// working by email alone in that case.
+func loginRefFrom(ctx context.Context) (loginRef, bool) {
+	ref, ok := ctx.Value(loginRefKey{}).(loginRef)
+	return ref, ok && ref.subject != ""
+}
+
 // --- allowlist (emails.txt successor) -------------------------------------
 
 // emailAllowed checks the exact-email and domain allowlists (env CSVs) plus the
@@ -351,7 +375,60 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.issueSession(w, pr)
-	http.Redirect(w, r, sanitizeNext(st.Next), http.StatusFound)
+	next := sanitizeNext(st.Next)
+	if c.newAccountAfterLogin(r.Context(), pr) {
+		c.writeNewAccountPage(w, r, pr, next)
+		return
+	}
+	http.Redirect(w, r, next, http.StatusFound)
+}
+
+// newAccountAfterLogin binds the (provider, subject) that just signed in to a
+// person and reports whether that created a NEW identity — i.e. whether this
+// login landed in a different workspace from one the person may already have
+// (docs/61 §61.5 の 3 行目).
+//
+// Binding here rather than leaving it to the first API request is what makes the
+// answer available at all: by the next request the row exists and the login is no
+// longer new. It runs only where more than one sign-in button exists — with a
+// single IdP a new identity just means a new colleague, and the notice would be
+// noise on every deployment that predates this feature (受入条件 6).
+func (c config) newAccountAfterLogin(ctx context.Context, p principal) bool {
+	if len(c.providers) < 2 || c.mgr == nil || c.mgr.store == nil {
+		return false
+	}
+	_, isNew, err := c.mgr.store.LinkIdentity(ctx, p.Provider, p.Subject, p.Email,
+		sanitizeUser(p.Email), c.mgr.roleHintFor(p.Email))
+	if err != nil {
+		// Not fatal to the login: the next request resolves the identity the usual
+		// way. Only the notice is lost.
+		log.Printf("oauth: link %s/%s: %v", p.Provider, p.Subject, err)
+		return false
+	}
+	return isNew
+}
+
+// writeNewAccountPage is the one page between a login that created a new account
+// and the Console — docs/61 受入条件 3: never hand someone a second workspace
+// silently. There is deliberately no "merge with my other account" action on it:
+// being able to sign in to two accounts proves control of both, not that they
+// belong to one person, and the merge could not be undone (§61.5). So the honest
+// advice is to come back with the address they normally use.
+func (c config) writeNewAccountPage(w http.ResponseWriter, r *http.Request, p principal, next string) {
+	lang := preferredUILang(r)
+	t := loginText[lang]
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	buttons := `<a class="gbtn" href="` + html.EscapeString(next) + `">` + t.newContinue + "</a>\n" +
+		`<a class="gbtn ghost" href="/oauth2/logout">` + t.newSwitch + `</a>`
+	page := strings.NewReplacer(
+		"{{LANG}}", lang,
+		"{{TITLE}}", t.newTitle,
+		"{{NOTE}}", t.newNote,
+		"{{ERROR}}", `<div class="msg">`+fmt.Sprintf(t.newBody, html.EscapeString(p.Email))+`</div>`,
+		"{{BUTTONS}}", buttons,
+	).Replace(loginPageHTML)
+	_, _ = w.Write([]byte(page))
 }
 
 func (c config) handleOAuthLogout(w http.ResponseWriter, r *http.Request) {
@@ -400,6 +477,13 @@ func (c config) authGate(next http.Handler) http.Handler {
 			return
 		}
 		r.Header.Set(c.mgr.emailHeader, claims.Email)
+		// Hand the proven IdP subject to the identity resolution downstream, so a
+		// person whose email changed at the IdP keeps their user_key — and with it
+		// their workspace, home and secrets (docs/61 §61.5). Sessions minted before
+		// P0 carry no subject and simply resolve by email as they always did.
+		if claims.Sub != "" {
+			r = r.WithContext(withLoginRef(r.Context(), loginRef{claims.provider(), claims.Sub}))
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -510,6 +594,8 @@ type loginStrings struct {
 	title, signin, signinWith, note                  string
 	errForbidden, errDenied, errSession, errProvider string
 	errUnconfigured                                  string
+	// The new-account notice (docs/61 受入条件 3). newBody takes the email.
+	newTitle, newBody, newNote, newContinue, newSwitch string
 }
 
 var loginText = map[string]loginStrings{
@@ -523,6 +609,14 @@ var loginText = map[string]loginStrings{
 		errSession:      "セッションの確立に失敗しました。もう一度サインインしてください。",
 		errProvider:     "指定されたサインイン方法は利用できません。下のボタンから選び直してください。",
 		errUnconfigured: "サインイン方法が設定されていません。管理者に連絡してください。",
+		newTitle:        "Agent Fleet — 新しいアカウント",
+		newBody: "%s でサインインしました。このメールアドレスはこのデプロイで使われたことがないため、" +
+			"<b>新しいワークスペース</b>を作成しました。以前から使っているワークスペースがある場合、" +
+			"このアカウントからは入れません。",
+		newNote: "以前のワークスペースに入るには、いつも使っているメールアドレスでサインインし直してください。" +
+			"メールアドレスの違うアカウント同士を後から 1 つにまとめることはできません。",
+		newContinue: "新しいワークスペースで続ける",
+		newSwitch:   "サインアウトして入り直す",
 	},
 	"en": {
 		title:           "Agent Fleet — Sign in",
@@ -534,6 +628,14 @@ var loginText = map[string]loginStrings{
 		errSession:      "Couldn't establish a session. Please sign in again.",
 		errProvider:     "That sign-in method isn't available. Pick one of the buttons below.",
 		errUnconfigured: "No sign-in method is configured. Please contact your administrator.",
+		newTitle:        "Agent Fleet — New account",
+		newBody: "You signed in as %s. That address hasn't been used on this deployment, " +
+			"so a <b>new workspace</b> was created. A workspace you already had is not " +
+			"reachable from this account.",
+		newNote: "To get back to it, sign in again with the address you normally use. " +
+			"Accounts under different email addresses cannot be merged afterwards.",
+		newContinue: "Continue to the new workspace",
+		newSwitch:   "Sign out and use another account",
 	},
 }
 
@@ -593,6 +695,10 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
 .note{margin-top:18px;color:var(--muted);font-size:13px}
 .err{margin:0 0 18px;padding:11px 14px;border-radius:9px;background:rgba(220,68,68,.12);
  border:1px solid rgba(220,68,68,.4);color:#ffb4b4;font-size:14px;text-align:left}
+.msg{margin:0 0 18px;padding:11px 14px;border-radius:9px;background:rgba(42,167,155,.12);
+ border:1px solid rgba(42,167,155,.45);color:#cfe9e5;font-size:14px;text-align:left}
+.gbtn.ghost{background:transparent;color:var(--ink);border:1px solid #22344f}
+.gbtn.ghost:hover{background:#16273f}
 </style></head><body>
 <main class="card">
  <img class="hero" src="/brand/agent-fleet-banner.webp" alt="Agent Fleet — Deploy. Connect. Scale."
