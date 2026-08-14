@@ -405,6 +405,25 @@ AF_PROVISION=auto            # ★ 最初は auto。招待運用へ切り替え�
 ★ **`AF_OAUTH_ALLOWED_*` は書かなくてよい**（P3 後）。招待した人は membership で入口を通るため
 （§61.9.6）。ここが「名簿を 1 箇所に寄せる」の実利。
 
+★ **`super_admin` はここ（ホスト側の env）で決めたままにする。** Console からの昇格は作らない。
+デプロイ全体を動かせる権限は、**そのデプロイを設置した人＝ホストのファイルに触れる人**だけが
+持つべきで、アプリ内の操作で増やせるようにすると設置者以外が権限を作れてしまう。
+`SUPER_ADMIN_EMAILS`（`main.go:85`）は **env で、起動時に 1 度だけ読む** —
+許可リストの `AF_OAUTH_ALLOWED_EMAILS_FILE` のような live-read ではないので、
+**変更には CP の再起動が要る**（実体は compose の `.env` / `oauth.env` / ECS の SSM パラメータ）。
+
+★ **ただし剥奪ができない（現状の穴）。** `UpsertIdentity` は
+「Upgrade (never downgrade) the deployment role」（`store_sqlite.go:314-317`）で、
+`SUPER_ADMIN_EMAILS` から消して再起動しても **`identity.role` は `super_admin` のまま残る**。
+テナント側の `setMembershipRole`（`tenants.go:434`）が触るのは `member`/`tenant_admin` だけで、
+デプロイ役割を降格する API は無い。＝**DB を直接触る以外に外す手段が無い**。
+→ **P3 の作業項目**: env を単一の正にし、ログイン時に「リストに無ければ `user` へ落とす」。
+実装注意 — **`UpsertIdentity` の `roleHint` に降格を持たせてはいけない**。
+`addMembership`（`tenants.go:285`）・`cleanHome`（`:195`）・`stopWorkspace`（`:149`）は
+`roleHint=""` で呼ぶので、管理者が誰かをテナントに追加しただけで super_admin が降格してしまう。
+**本人の email が確定しているログイン経路（`identityFor` / `resolveFull`）だけ**が
+役割を同期するよう、専用の store メソッドに分ける。
+
 ### 61.10.2 最初の 1 人（＝ブートストラップ）
 
 1. 情シスの人が `https://af.acme.co.jp/` を開く → Entra でサインイン → `auto` なので既定テナントに入る。
@@ -471,19 +490,40 @@ AF_PROVISION=auto            # ★ 最初は auto。招待運用へ切り替え�
   これが無いと部署分割の運用は回らない（異動＝旧部署から外す、退職＝全部から外す、が実行できない）。
   `Membership` には `Status` があり `GetMembershipByID` も「missing/inactive」を想定しているので、
   **論理削除（`status='inactive'`）で足りる** — workspace / home を残したまま締め出せる。
-- 併せて決める: 外した後の **workspace / home をどう扱うか**（即削除しない・
-  [45-deletion-lock](45-deletion-lock.md) と掃除の段階制に合わせる）。
+  **実行できるのは `tenant_admin`（自テナント分）と `super_admin`**（下記の責務分担に合わせる）。
 
-### 61.10.7 まとめ — 情シスが触る場所
+#### workspace / home の削除は tenant_admin の責務
 
-| やること | 触る場所 | 再起動 |
-|---------|---------|-------|
-| 設置 | env（IdP 1 つ分）＋ Entra のアプリ登録 1 つ | 初回のみ |
-| 部署を増やす | 管理 → テナント作成＋設定 | 不要 |
-| 人を入れる | 管理 → メンバー追加（部長でも可） | 不要 |
-| 異動 | 新部署に追加＋旧部署から外す（**P3 で API 追加**） | 不要 |
-| 退職 | 全部署から外す＋ IdP 側で無効化 | 不要 |
-| IdP を増やす | env に `AF_OIDC_PROVIDERS` を 1 つ足す | 要 |
+部署の人員を把握しているのは部署側なので、**外した人の workspace / home を消すのは
+tenant_admin の仕事**とする。情シス（super_admin）に毎回頼む形にしない。
+
+- ★ **現状 `clean-home` は super_admin 限定**（`routes.go:136` の `adm.withSuperAdmin(adm.cleanHome)`。
+  ハンドラ自身も `_ Identity` を受けるだけで、テナント所属を見ていない）。
+  → **P3 で `tenantAdminFor` によるハンドラ内ゲートへ付け替える。**
+  同じ形の前例が既にある: `stopWorkspace` は `adm.tenantAdminFor(w, r, body.TenantSlug)`
+  で自テナントに絞っている（`tenants.go:145`）。同じ形にすれば、tenant_admin は
+  **自部署のメンバーの home しか消せない**。
+- 順序は「membership を無効化 → workspace 停止 → home 削除」。
+  停止（`stopWorkspace`）は既に tenant_admin ができるので、揃うのは `clean-home` だけ。
+- 即時削除にしない扱い（棚 / 猶予）は [45-deletion-lock](45-deletion-lock.md) と掃除の段階制に合わせる。
+
+### 61.10.7 責務分担のまとめ
+
+| やること | 誰が | 触る場所 | 再起動 |
+|---------|------|---------|-------|
+| 設置 | 情シス（ホスト） | env（IdP 1 つ分）＋ Entra のアプリ登録 1 つ | 初回のみ |
+| **`super_admin` の指定** | **情シス（ホスト）** | **`SUPER_ADMIN_EMAILS`（env・ホスト側のファイル）** | **要** |
+| IdP を増やす | 情シス（ホスト） | env に `AF_OIDC_PROVIDERS` を 1 つ足す | 要 |
+| 部署テナントを作る | super_admin | 管理 → テナント作成＋設定（`routes.go:133`） | 不要 |
+| 部署の管理者を任命 | super_admin | 管理 → メンバー追加で `tenant_admin`（`tenants.go:280`） | 不要 |
+| 人を入れる | tenant_admin | 管理 → メンバー追加（member） | 不要 |
+| 招待 URL を伝える | tenant_admin | **口頭 / 社内チャットなど CP の外**（§61.10.4） | 不要 |
+| 異動 | tenant_admin | 新部署に追加＋旧部署の membership 無効化（**P3 で追加**） | 不要 |
+| 退職 | tenant_admin ＋ IdP 側 | membership 無効化 → workspace 停止 → home 削除（**`clean-home` の再ゲートは P3**） | 不要 |
+
+**線引き**: ホスト（＝設置者）が握るのは「デプロイ全体に効くもの」だけ — IdP の設定と
+`super_admin` の指定。テナントの中の人と物（メンバー・workspace・home）は tenant_admin が持つ。
+super_admin が毎日の運用に出てくるのは、部署テナントの新設と管理者の任命だけになる。
 
 ## 61.11 段階
 
@@ -538,6 +578,7 @@ AF_PROVISION=auto            # ★ 最初は auto。招待運用へ切り替え�
 - Console のアカウント連携 UI をどのグループに置くか（設定モーダルの IA・[settings-modal](../docs/README.md) 参照の再編と衝突しないか）。
 - `audit.go` に provider を残すか（監査上は残したいが、DTO を広げる前に既存カラムから導出できないか確認する）。
 - `SUPER_ADMIN_EMAILS`（`main.go:85`・email ベース）を provider 付きにするか。当面は email のままで足りる。
+  （**置き場はホスト側の env のまま**で決着済み — §61.10.1。剥奪できない穴の解消は P3 の作業項目。）
 - IdP 側のグループ（Entra の `groups` / GitHub の team）を tenant へ同期するか。
   **必須ではなくなった**（§61.9.5 で名簿＝membership に寄せたため、全社共通ドメインの会社でも
   部署分割は成立する）。残るのは**異動の自動追従**という利便性だけで、入れると
@@ -548,11 +589,7 @@ AF_PROVISION=auto            # ★ 最初は auto。招待運用へ切り替え�
   `provider_required` は見せないと再ログインに誘導できないが、`allowed_domains` 違反を詳細に見せると
   他部署のドメイン構成が漏れる。
 - テナント規則による拒否を `audit.go` に残すか（§61.9.8 の競合解決も含めて）。
-- membership を外した人の **workspace / home をいつ消すか**（§61.10.6）。即削除しないのは決まりだが、
-  棚に載せるのか、テナント管理者に見えるのか、猶予は何日かは [45-deletion-lock](45-deletion-lock.md) と
-  掃除の段階制に合わせて決める。
-- 招待した本人へ**通知を出すか**（現状の招待は API を叩くだけで、本人には何も届かない）。
-  メール送信を CP に持たせない方針（§61.3 の magic link 却下と同じ理由）なので、
-  URL を人が伝える運用のままにするか、Console の通知センターに載せるか。
+- membership を外した人の workspace / home を**いつ**消すか。**誰が**は決着済み（tenant_admin・§61.10.6）。
+  残るのは猶予の長さと棚の見せ方で、[45-deletion-lock](45-deletion-lock.md) と掃除の段階制に合わせて決める。
 - `prompt=select_account` 相当を各 IdP でどう揃えるか（Entra は `prompt=select_account` が使えるが、
   IdP によっては未対応で無視される）。
