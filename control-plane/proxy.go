@@ -350,9 +350,15 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 		hdr = http.Header{"Authorization": []string{"Bearer " + rt.Token()}} // CP↔Agent auth
 	}
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, EnableCompression: true}
-	up, _, err := dialer.Dial(agentURL.String(), hdr)
+	// Keep the Agent's response: it refuses with real statuses the user needs to see —
+	// notably 409 "session not running and no terminal history" for a stopped session
+	// whose replay has expired (terminal history is a /tmp ring buffer, so a container
+	// restart empties it). Discarding it reported "cannot reach workspace agent
+	// terminal" (502) for an Agent that answered immediately and correctly, which sent
+	// this investigation looking at connectivity instead of at history.
+	up, agentResp, err := dialer.Dial(agentURL.String(), hdr)
 	if err != nil {
-		http.Error(w, "cannot reach workspace agent terminal", http.StatusBadGateway)
+		writeAgentHandshakeError(w, agentResp, "cannot reach workspace agent terminal")
 		return
 	}
 	defer up.Close()
