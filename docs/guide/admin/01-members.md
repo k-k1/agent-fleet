@@ -31,7 +31,7 @@ and the various operations. Resources and sessions, force-stop, and limit settin
 
 At the very bottom of the "Members" section in the tenant detail there is an **"Add member"** form.
 
-1. Enter the email address the member uses for Google login in the "email" field. Alternatively you
+1. Enter the email address the member signs in with in the "email" field. Alternatively you
    can enter a key directly in the "or user_key" (internal identifier) field (if you enter an email,
    the key is derived from it automatically).
 2. As tenant_admin, you can only add **`member` (regular members)**. The role selector is shown

@@ -24,7 +24,9 @@ included here as well. The working directory is `deploy/compose/`.
 | Cannot reach a started Workspace | Whether both the CP and Caddy have `network_mode: host` (DooD constraint A) |
 | Logins are always rejected | The allowlist is empty (fail-closed). Set `AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` |
 | TLS certificate is not issued | Whether DNS A/AAAA point to this host. Whether 80/443 are reachable. Let's Encrypt rate limits |
-| redirect URI mismatch | Whether the URI in Google Console matches `<PUBLIC_BASE_URL>/oauth2/callback` |
+| redirect URI mismatch | Whether the URI registered at the IdP matches `<PUBLIC_BASE_URL>/oauth2/callback` |
+| A sign-in button is missing | That provider was disabled at startup. `docker compose logs control-plane \| grep -i "login provider"` names the missing setting |
+| CP exits with a message about a multi-tenant issuer | An Entra `/common/` or `/organizations/` issuer with no `AF_OIDC_<ID>_ALLOWED_TIDS`. Pin the issuer to your tenant GUID |
 
 ## Diagnosing the 3 DooD constraints ("starts but silently doesn't work")
 
@@ -54,9 +56,20 @@ background on how this works is in [dev/09](../../dev/09-deploy.md).
   `_EMAILS_FILE`) is **entirely empty, everything is rejected** (fail-closed = a
   fail-safe design). Set at least one. `_EMAILS_FILE` is re-read on every login, so additions
   need no restart.
-- **redirect URI mismatch** → check that the authorized redirect URI in Google Cloud Console
-  is an **exact match** for `<PUBLIC_BASE_URL>/oauth2/callback`. If you change
-  `PUBLIC_BASE_URL`, update the Google side to match ([01 §3](01-install.md)).
+- **redirect URI mismatch** → check that the authorized redirect URI registered at the IdP
+  (Google Cloud Console, the Entra app registration, …) is an **exact match** for
+  `<PUBLIC_BASE_URL>/oauth2/callback`. If you change `PUBLIC_BASE_URL`, update the IdP side to
+  match ([01 §3](01-install.md)). There is only ever this one URI, however many providers you
+  enable.
+- **A sign-in button you configured is not on the login page** → that provider was disabled at
+  startup because its settings were incomplete (one broken IdP must not lock everyone out).
+  `docker compose logs control-plane | grep -i "login provider"` names the missing variable —
+  most often `AF_OIDC_<ID>_TRUST`, which has no default on purpose.
+- **The CP exits complaining about a multi-tenant issuer** → an Entra ID issuer of `/common/`
+  or `/organizations/` with no `AF_OIDC_<ID>_ALLOWED_TIDS`. On those endpoints every Microsoft
+  account on earth reaches your login, and personal accounts can change their own email address,
+  so the allowlist would stop meaning anything. Pin the issuer to your tenant GUID
+  (`https://login.microsoftonline.com/<tenant-guid>/v2.0`), or list the tenants you accept.
 - **Cookie not saved / bounced back right after login** → `AUTH=oauth` uses Secure cookies, so
   **HTTPS is required**. Over plain HTTP (no TLS termination) they are not saved. Check that
   `PUBLIC_BASE_URL` is `https://`, and that TLS is actually being issued (below).
@@ -133,8 +146,11 @@ of scope for now. For the design direction toward larger scale, see
 [dev/09](../../dev/09-deploy.md) (the aws target is implemented but has no production track
 record).
 
-**Q. I want to use authentication other than Google (LDAP / SAML, etc.).**
-A. Natively, the CP supports Google OAuth (`AUTH=oauth`). If you put an existing authentication
-gateway (oauth2-proxy / ALB OIDC, etc.) in front and have the CP trust the upstream email
-header with `AUTH=proxy`, other IdPs can be used indirectly
-([01 §3](01-install.md) / [dev/07 §7.3](../../dev/07-security.md)).
+**Q. I want to use authentication other than Google (Microsoft 365 / LDAP / SAML, etc.).**
+A. Natively (`AUTH=oauth`) the CP speaks OIDC, so **Microsoft Entra ID, Okta, Keycloak, Auth0,
+Cognito and GitLab work with configuration alone** — `AF_OIDC_PROVIDERS` plus a few
+`AF_OIDC_<ID>_*` variables, and one redirect URI at the IdP ([01 §3](01-install.md)). You can
+enable several at once; the login page then shows one button per provider.
+SAML-only IdPs (HENNGE One / TrustLogin / CloudGate, etc.) and LDAP are not implemented in the
+CP: put an existing gateway (oauth2-proxy / Keycloak / ALB OIDC) in front and have the CP trust
+the upstream email header with `AUTH=proxy` ([dev/07 §7.3](../../dev/07-security.md)).

@@ -97,7 +97,16 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
 
 - **ログイン許可リストは fail-closed。** `AF_OAUTH_ALLOWED_*` の 3 系統がすべて空だと全ログインを
   拒否します。`_EMAILS_FILE` はログインごとに再読込されるので、**追加は CP 再起動なしで反映**され
-  ます（削除も同様）。設定は [01 §6](01-install.ja.md)。
+  ます（削除も同様）。判定はログイン時だけでなく**毎リクエスト**走るため、リストから外した人は
+  `AF_SESSION_TTL` の満了を待たずに**次のリクエストで**締め出されます（＝これがオフボーディング
+  経路）。設定は [01 §6](01-install.ja.md)。
+- **ログイン provider ごとに「その email をなぜ信じてよいか」を宣言させている。**
+  `AF_OIDC_<ID>_TRUST`（`email_verified` または `issuer`）は必須で、宣言の無い provider は起動時に
+  無効化されます — 許可リストがメールアドレスで書かれている以上、ここが認可の強度そのものだから
+  です。特に Entra ID の issuer は自社テナント GUID に固定してください。`/common/` や
+  `/organizations/` では Microsoft アカウントを持つ全人類がログイン画面に立て、個人アカウントは
+  自分の email を付け替えられるため、`AF_OIDC_<ID>_ALLOWED_TIDS` が無い限り CP は起動を拒否します
+  （[01 §3](01-install.ja.md) / [dev/07 §7.3](../../dev/07-security.md)）。
 - **監査ログ。** 変更・破壊操作のみが `audit_log` に記録されます（読み取りは既定オフ、**ターミナルの
   生ストリームは秘密混入リスクのため保存しません**）。閲覧は super_admin / tenant_admin が Admin の
   audit タブから。運用上の見方は admin 分冊が扱います。
