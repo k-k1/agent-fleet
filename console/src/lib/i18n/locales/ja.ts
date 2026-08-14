@@ -39,6 +39,8 @@ export const ja = {
     "エージェントが許可の判断待ちです。許可カードから許可・拒否してから送信してください（テキストは許可メニューに飲まれ、そのまま許可になります）。",
   "err.interaction_pending":
     "エージェントが対話中のプロンプトを表示しています。カードから回答してから送信してください。",
+  "err.auth_expired":
+    "このワークスペースの Claude のログインが期限切れです。設定 > エージェント から再認証してから送信してください（この状態で送るとターミナルは文字を受け取りますが、ターンは一つも始まりません）。",
   "err.not_running": "セッションが停止しています。再開してから送信してください。",
   "err.driver_unavailable": "このエージェントではマネージド実行を利用できません。",
   "err.runtime_failed": "エージェントを起動できませんでした。しばらく待ってから再試行してください。",
@@ -317,6 +319,9 @@ export const ja = {
   "conn.disconnected": "未接続",
   "conn.connect": "接続",
   "conn.connect_failed": "接続に失敗: {msg}",
+  "conn.expired": "認証切れ",
+  "conn.expires_in": "あと{days}日で期限切れ",
+  "conn.expires_soon": "まもなく期限切れ",
   "provider.click_to_copy": "クリックでコピー",
   "provider.disconnect": "切断",
   "provider.disconnect_confirm_title": "接続を切断しますか？",
@@ -1443,6 +1448,7 @@ export const ja = {
   "state.plan": "プランあり",
   "state.permission": "許可待ち",
   "state.blocked": "上限で停止 — 操作が必要",
+  "state.auth_expired": "認証切れ — 再認証が必要",
   "state.idle_bg": "入力待ち · BG実行中",
   "state.idle": "入力待ち",
 
