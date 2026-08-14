@@ -6,23 +6,15 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 )
 
-// keyboardTestCDPFactory picks the sandboxed production launcher, or the
-// no-sandbox variant when only Playwright's unprivileged cache binary is present.
+// keyboardTestCDPFactory picks whichever launcher can actually start Chromium
+// here — see browserTestCDPFactory.
 func keyboardTestCDPFactory(t *testing.T) browserCDPFactory {
 	t.Helper()
-	bin, err := findChromiumBinary()
-	if err != nil {
-		t.Skip("Chromium is not installed in this test environment")
-	}
-	if strings.Contains(bin, "/.cache/ms-playwright/") {
-		return launchPipeCDPWithoutSandboxForTest
-	}
-	return launchPipeCDP
+	return browserTestCDPFactory(t)
 }
 
 func newKeyboardTestPage(t *testing.T, factory browserCDPFactory, html string, viewport browserViewportRequest) (*browserManager, *browserPage, browserCDP) {
