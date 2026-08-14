@@ -262,10 +262,20 @@ Note the workspace image pushed here is the **lean** variant
 (`BAKE_AGENT_CLIS=0`), so a *fresh home* additionally pays a one-time
 npm/GitHub boot-install inside the entrypoint (~60s for all CLIs, measured in
 `workspace/entrypoint.sh`). That cost is network, not image pull, and it does
-not recur — `~/.local` persists on EFS. Whether to adopt SOCI (Seekable OCI)
-lazy loading for the pull itself is analysed in
-[`docs/62-ecs-start-latency.md`](../../../docs/62-ecs-start-latency.md)
-(conclusion: conditional yes, gated on the measurement above).
+not recur — `~/.local` persists on EFS. So measure **two** scenarios and judge
+on the second: a first Start on an empty home (pull + boot-install) and a
+Stop→Start on a warm home (pull only). The warm one is what scale-to-zero pays
+every time.
+
+To isolate the pull with no EFS/entrypoint noise, register a throwaway task
+definition for the same image with `entryPoint` overridden (`run-task
+--overrides` can override `command` but **not** `entryPoint`, and
+`entrypoint.sh` ends in `exec "$@"`, so overriding the command alone still runs
+the whole entrypoint). Every `run-task` is cold by construction — Fargate keeps
+no image cache between tasks. The full recipe, the delta arithmetic and the
+decision gate are in
+[`docs/62-ecs-start-latency.md`](../../../docs/62-ecs-start-latency.md) §62.7
+(conclusion on SOCI: conditional yes, gated on this measurement).
 
 ## Cost & ephemerality
 

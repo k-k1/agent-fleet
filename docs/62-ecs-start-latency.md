@@ -3,6 +3,9 @@
 > 状態: 調査（2026-08-14）＋ **P0.5 実装済**（504 の解消・§62.5.1）。SOCI 本体は **条件付き採用**＝
 > 「~100s の内訳を実測してから SOCI（Seekable OCI）遅延ロードへ進む」で、**P0 / P1 は未着手**。
 > 計測（§62.7 P0）と 504 の解消（§62.7 P0.5）は SOCI の採否と独立。
+> **索引生成のツールチェーンは開発 Workspace で実測済み**（§62.4.1）——起票時に書いた
+> 「Docker が無いのでここでは実検証できない」は**誤りだった**。`crane` + `soci --standalone` で
+> root も Docker も containerd も無しに index manifest v2 まで生成できる。
 > 意思決定: **ADR は未起票**（§62.7 P1 に進む決定をした時点で 0044 として起こす）
 > 関連: [dev/09-deploy.md §9.5](dev/09-deploy.md)（aws ターゲットの縮約） /
 > [deploy/aws/ecs/README.md](../deploy/aws/ecs/README.md)（ランブック・"Known behavior: first Start may 504"） /
@@ -108,19 +111,31 @@ AWS 公称 40〜60%（>750MB のイメージで 60% 超の事例）。pull が�
 ECR」の唯一の関門で、かつ ECS 専用。`deploy/release/build.sh` 側に入れると GHCR 配布物・compose・
 native という無関係な成果物にまで soci 依存が波及する。
 
-必要ツールは 2 本。どちらも本リポジトリの流儀（版ピン＋sha256）で導入できる:
+必要ツールは 2 本。どちらも**単一の静的 Go バイナリ**で、本リポジトリの流儀（版ピン＋sha256）で
+`~/.local/bin` へ入る。**root も Docker も containerd も要らない**（§62.4.1 で実測）:
 
 - **`soci` CLI** — `awslabs/soci-snapshotter` の release tarball（現行 **v0.15.0**・2026-07-30）。
-  `soci-snapshotter-<ver>-linux-{amd64,arm64}[-static].tar.gz` ＋ sha256 同梱。v2 の `convert` には ≥0.10.0。
-- **`skopeo`** — docker daemon ↔ OCI layout ↔ registry の橋渡し。
+  資産名は `soci-snapshotter-<ver>-linux-{amd64,arm64}[-static].tar.gz` と `.tar.gz.sha256sum`
+  （`.sha256` ではない）。中身は `soci` / `soci-snapshotter-grpc` / ライセンス。v2 の `convert` には ≥0.10.0。
+- **`crane`** — `google/go-containerregistry`（現行 **v0.21.9**）。レジストリ ↔ OCI layout の橋渡し。
+  **一次情報の例は `skopeo` を使っているが、こちらでは採らない** — skopeo は apt 依存で
+  root 無しの Workspace に入らないのに対し、crane は tarball 1 個で入り、Go 製という点も揃う。
 
-コマンド列（一次情報の standalone 例に準拠）:
+コマンド列（一次情報の standalone 例を crane に置き換えたもの）:
 
 ```bash
-skopeo copy docker-daemon:agent-fleet/workspace:$VERSION oci-archive:ws.tar
-soci convert --standalone ws.tar ws-soci.tar
-skopeo copy --all oci-archive:ws-soci.tar docker://$ECR_HOST/af-workspace:$VERSION
+crane auth login "$ECR_HOST" -u AWS -p "$(aws ecr get-login-password)"
+crane pull --format=oci "$ECR_HOST/af-workspace:$VERSION" ws-oci
+soci convert --standalone --format oci-dir ws-oci ws-soci-oci
+crane push ws-soci-oci "$ECR_HOST/af-workspace:$VERSION"
 ```
+
+- `soci convert` の既定は**ホストプラットフォームのみ変換**（他アーキのマニフェストは素通し）。
+  ws イメージは amd64 単一なので既定でよいが、意識するなら `--platform` / `--all-platforms`。
+- **`--prefetch-file` が効きうる**。索引メタデータに「先読みするファイル」を書けるフラグで、
+  §62.3 (a) の「entrypoint がメタデータ多発型なので効果が目減りする」懸念を**直接叩けるノブ**。
+  起動パスが確実に読むもの（node / npm / git / `workspace-agent`）を候補にして P1 でチューニングする。
+- `--min-layer-size` の既定は 10MiB。これ未満の層は zTOC を持たず遅延ロードされない（＝素で pull）。
 
 - **CP イメージは対象外**（小さい・ローリングするだけ）。
 - **タグ運用は「未変換を一度も push しない」の一択**。`:$VERSION-soci` という別タグは使えない —
@@ -134,8 +149,40 @@ skopeo copy --all oci-archive:ws-soci.tar docker://$ECR_HOST/af-workspace:$VERSI
 基盤のみ・4 段」という現構成の芯に Lambda + EventBridge を足す**ことになり `20-platform` の性格が変わる。
 かつ Lambda 側で ~1GB イメージが通るかの検証が別途要る。→ リリース手順側に寄せるほうがこの構成に合う。
 
-**この開発環境では実検証できない**（Docker 無し）。判断材料までを本書に残し、実行は docker のある
-リリースホスト / AWS 側に委ねる。
+### 62.4.1 索引生成は Workspace の中で完結する（2026-08-14 実測）
+
+**起票時に書いた「この開発環境では実検証できない（Docker 無し）。実行は docker のあるリリース
+ホストに委ねる」は誤りだった。** Docker は要らない。開発 Workspace で通しで動かして確認した:
+
+```
+soci  v0.15.0 (linux-amd64-static, sha256 検証) → ~/.local/bin/soci
+crane v0.21.9 (go-containerregistry, sha256 検証) → ~/.local/bin/crane
+
+crane pull --format=oci public.ecr.aws/docker/library/debian:12-slim src   # 20.7s
+soci convert --standalone --format oci-dir src dst                          # 1.4s
+  → layer sha256:039e6f9f... -> ztoc sha256:b52c942d...
+```
+
+出力 layout を検査して確認した点:
+
+- 変換後の image index に **`artifactType: "application/vnd.amazon.soci.index.v2+json"`** の
+  マニフェストが増える ＝ **Fargate が新規利用者に要求する index manifest v2 が生成できている**。
+- amd64 のイメージマニフェストに **`com.amazon.soci.index-digest` アノテーション**が付く
+  ＝ §62.2 の「digest が変わるので repush が要る」が実物で裏付けられた。
+- `soci convert --help` に `--standalone`（"without containerd runtime"）が実在する。
+
+**Docker が要らない理由**（＝ここで動く理由）: `soci convert --standalone` は OCI layout の
+tar / ディレクトリを読んで書くだけで daemon に触らず、crane も HTTP でレジストリを叩くだけ。
+逆に **Docker / podman は原理的にこの Workspace に置けない** — root も `sudo` も無く、rootless に
+必要な `newuidmap` / `newgidmap` は **workspace イメージが setuid を全部剥がしてビルド時に
+assert している**（`workspace/Dockerfile` の `find / -perm /6000 -exec chmod a-s` ＋ 事後 `test -z`）
+ため存在しない。
+
+**まだ未検証の 1 点**: `crane push`（OCI layout → ECR）が SOCI アーティファクトのマニフェストを
+保ったまま上がるか。ECR が立っていない状態で試せていない。**P1 の最初の 1 手はこれの確認。**
+
+**外部に残る依存はイメージのビルドだけ**（`docker build`）。ただし P1 が必要とするのは
+「既に ECR にあるタグを引いて変換して戻す」ことなので、**ビルドは P1 の経路に入らない**。
 
 ## 62.5 代替案の比較
 
@@ -200,14 +247,115 @@ skopeo copy --all oci-archive:ws-soci.tar docker://$ECR_HOST/af-workspace:$VERSI
 
 ## 62.7 実装計画
 
-### P0 — 計測（コード変更なし・sandbox の 1 回の Start で取れる）
+### P0 — 計測（コード変更なし）
 
-1. `00 → 30` を deploy し、workspace を 1 つ Start。
-2. `aws ecs describe-tasks` の **`pullStartedAt` / `pullStoppedAt`**（＋ `createdAt` / `startedAt`）で
-   **pull 時間を切り出す**。
-3. awslogs（`af-ws*`）の entrypoint ログで boot-install 時間を切り出す。
-4. **判定ゲート: pull が 100s の 40% 未満なら SOCI は投資対効果が薄い** → (b) か boot-install の
-   非同期化へ切り替える。
+収束時間は `describe-tasks` の 4 つのタイムスタンプで 3 区間に割れる。これは AWS 自身が推す方法で、
+開発者ガイドの "Task lifecycle logging" が「このタイムスタンプで**イメージ取得にどれだけ費やしたかを
+評価し、イメージ縮小か SOCI を使うか判断できる**」と明記している。
+
+| 区間 | 計算 | 何の時間か | 効く手 |
+|---|---|---|---|
+| provision | `pullStartedAt - createdAt` | スケジューリング・ENI attach・EFS mount 準備 | どれも効かない |
+| **pull** | **`pullStoppedAt - pullStartedAt`** | **イメージ取得** | **SOCI (a) / 縮小 (b)** |
+| boot | `startedAt` 以降 | entrypoint の同期処理＋Agent 起動 | boot-install の非同期化 |
+
+**実行手段は `aws` CLI**（イメージに焼かれている）。AWS MCP でも原理的には可能だが向かない — §62.7.1。
+
+#### L1 — pull だけを孤立させて測る（これを最初にやる）
+
+実ワークスペースを起こすと EFS・Service Connect・entrypoint が混ざる。**entrypoint を潰した使い捨て
+タスクで同じイメージを引く**のが precise で安い。Fargate はタスク間キャッシュを持たないので
+**run-task は毎回必ずコールド**＝それ自体が再現条件になる。
+
+`run-task --overrides` で上書きできるのは `command` だけで **`entryPoint` は上書きできない**。
+`entrypoint.sh` は末尾で `exec "$@"` するので command だけ差し替えても entrypoint は丸ごと走る。
+よって**専用の probe タスク定義を登録する**。
+
+```bash
+CL=af-af-ecs-platform                 # 20-platform の ClusterName（af-<stack名>）
+SUBNETS=subnet-aaa,subnet-bbb         # 00-network の PrivateSubnets
+SG=sg-ccc                             # 00-network の WsSgId
+EXEC=<20-platform の ExecRoleArn>
+IMG=<acct>.dkr.ecr.<rg>.amazonaws.com/af-workspace:<tag>
+LG=/af/af-ecs-ingress/ws
+
+cat > probe.json <<JSON
+{ "family": "af-ws-pullprobe",
+  "requiresCompatibilities": ["FARGATE"], "networkMode": "awsvpc",
+  "cpu": "1024", "memory": "2048", "executionRoleArn": "$EXEC",
+  "containerDefinitions": [{
+    "name": "probe", "image": "$IMG", "essential": true,
+    "entryPoint": ["/bin/sh","-c"],
+    "command": ["curl -s \$ECS_CONTAINER_METADATA_URI_V4/task"],
+    "logConfiguration": { "logDriver": "awslogs", "options": {
+      "awslogs-group": "$LG", "awslogs-region": "<rg>", "awslogs-stream-prefix": "probe" }}
+  }]}
+JSON
+aws ecs register-task-definition --cli-input-json file://probe.json
+
+d(){ date -d "$1" +%s; }
+for i in 1 2 3; do                    # ばらつきを見るので 3 回
+  T=$(aws ecs run-task --cluster $CL --launch-type FARGATE --task-definition af-ws-pullprobe \
+      --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+      --query 'tasks[0].taskArn' --output text)
+  aws ecs wait tasks-stopped --cluster $CL --tasks $T
+  J=$(aws ecs describe-tasks --cluster $CL --tasks $T --query 'tasks[0]' --output json)
+  c=$(jq -r .createdAt <<<"$J"); ps=$(jq -r .pullStartedAt <<<"$J")
+  pe=$(jq -r .pullStoppedAt <<<"$J"); st=$(jq -r .startedAt <<<"$J")
+  echo "run$i  provision $(( $(d $ps)-$(d $c) ))s / pull $(( $(d $pe)-$(d $ps) ))s / start $(( $(d $st)-$(d $pe) ))s"
+done
+```
+
+**この probe は P2 の A/B ハーネスをそのまま兼ねる**。`IMG` を SOCI 変換済みタグに差し替えて同じ
+ループを回すだけで前後比較になり、`command` が task metadata v4 を叩いているのでログに
+`"Snapshotter":"soci"` が出るかも同時に取れる。→ **P2 の「workspace 側にログを 1 行足す」変更は不要**。
+
+L1 は `00`/`10`/`20` と ECR のイメージがあれば動く（`30-ingress` は不要）＝**最短で pull の絶対値が出る**。
+
+#### L2 — 実ワークスペースの端から端（シナリオ 2 つ）
+
+- **(A) 新規ホームの初回 Start**（EFS access point が空）＝ pull ＋ boot-install（~60s）
+- **(B) Stop → 再 Start**（ホーム温）＝ pull のみ、boot-install は無音スキップ
+
+**判定に使うのは (B)。** scale-to-zero で毎回払っているのは (B) で、SOCI の射程もそこ。(A) の ~100s を
+ゲートにすると boot-install の分だけ pull の割合が薄まり、**SOCI を過小評価する**（§62.3 (b) の罠）。
+
+```bash
+SVC=af-ws-<userkey>                   # 既定テナントは af-ws-<key>、それ以外は af-ws-<slug>-<key>
+T=$(aws ecs list-tasks --cluster $CL --service-name $SVC --query 'taskArns[0]' --output text)
+# ↑ 同じ describe-tasks の差分計算をかける
+
+aws logs tail $LG --since 15m --format short | grep '\[entrypoint\]'   # entrypoint の内訳
+aws logs tail /af/af-ecs-ingress/cp --since 15m | grep 'Agent healthy' # §62.5.1 で足した 1 行
+```
+
+`[entrypoint] boot-install (pinned): …` → `boot-install ok` の 2 行の差が boot-install 時間。
+**停止したタスクが describe できる時間には限りがある**（1 時間程度）ので、task ARN を先に控えること。
+
+#### 判定ゲート
+
+- **(B) の pull が総収束時間の 40% 以上、かつ絶対値 40s 以上** → P1 へ。公称 40〜60% が乗るので
+  20〜35s の短縮が見込める。
+- **(B) の pull が短く (A) との差が大きい** → 効くのは SOCI ではなく **boot-install の非同期化**
+  （Agent を先に上げて CLI 導入は裏で走らせる）。workspace 側の別トラック。
+- **provision が支配的** → どの案も効かない。ECS の構造的下限なので `starting` の見せ方 (c) で受ける。
+
+### 62.7.1 計測の実行手段: `aws` CLI か AWS MCP か
+
+フリートには 4 つ目の builtin 連携として **Agent Toolkit for AWS（AWS MCP Server）**があり
+（[25-ops-monitoring.md](25-ops-monitoring.md)）、`call_aws` は AWS API 約 15,000 アクションを叩ける。
+原理的には P0 も P1 もこれで実行できる。**が、この用途では `aws` CLI を使う。**
+
+- **既定 `--read-only` では `call_aws` 自体が消える**（`awsMCPArgs`。read-only で残るのは
+  `read_documentation` / `search_documentation` / `retrieve_skill` / `list_regions` /
+  `get_regional_availability` / `get_tasks` の 6 個）。`describe-tasks` は読み取りだが、
+  **読み取りだけのために「書き込みツール」トグルを ON にする必要がある** — そして ON にした瞬間
+  `call_aws` と `run_script`（任意コード）がセッションに開く。**計測 1 回のために開ける権限として過大。**
+- `aws` CLI はイメージに焼かれ、資格情報も既に通っている。**追加の権限拡大がゼロ**で、
+  L1 のようなループ（run-task → wait → describe → 差分計算）はシェルのほうが素直。
+- **MCP が向くのは別の場面**: `search_documentation` / `read_documentation` / `retrieve_skill` は
+  **read-only の既定のまま**使えて、SOCI や Fargate の仕様確認を AWS 公式の一次情報として引ける。
+  本書 §62.2 の裏取りに使う分にはこちらが適する（Web 検索よりドリフトに強い）。
 
 ### P0.5 — 504 の解消（P0 と並行・SOCI と独立）✅ 実装済
 
@@ -216,21 +364,23 @@ skopeo copy --all oci-archive:ws-soci.tar docker://$ECR_HOST/af-workspace:$VERSI
    切り詰めて同期待ちを残す）は**採らなかった**——ECS では同期待ちが成功する経路が無いため。
    実 ECS では未検証（単体テストまで）。
 
-### P1 — SOCI 導入（`release-ecr.sh` のみ）
+### P1 — SOCI 導入（`release-ecr.sh` のみ・**この Workspace で実行できる**・§62.4.1）
 
-6. `--soci` を追加（既定 off）。`soci` v0.15.0 / `skopeo` を版ピン＋sha256 で取得（`GH_VERSION` の流儀）。
-7. workspace イメージのみ変換、CP は素通し。`--soci` 時は `docker push` を通さず skopeo 一本化
-   （＝未変換を絶対に push しない）。
-8. `deploy/aws/ecs/README.md` の §ECR push / §Upgrade に手順追記。
+6. **最初の 1 手は `crane push` の確認**。ECR を立て、変換済み OCI layout を push して
+   SOCI アーティファクトのマニフェストが保たれるかを見る（§62.4.1 の唯一の未検証点）。
+   確認は `aws ecr batch-get-image` で `artifactType == application/vnd.amazon.soci.index.v2+json`。
+7. `release-ecr.sh` に `--soci` を追加（既定 off）。`soci` v0.15.0 / `crane` v0.21.9 を版ピン＋sha256 で
+   取得（`GH_VERSION` の流儀。soci の checksum 資産は `.tar.gz.sha256sum`）。
+8. workspace イメージのみ変換、CP は素通し。`--soci` 時は `docker push` を通さず crane 一本化
+   （＝未変換を絶対に push しない）。`--prefetch-file` のチューニングはここで詰める。
+9. `deploy/aws/ecs/README.md` の §ECR push / §Upgrade に手順追記。
 
 ### P2 — 検証
 
-9. 起動ログに 1 行だけ `${ECS_CONTAINER_METADATA_URI_V4}/task` の `Snapshotter` を出す
-   （`soci` か `overlayfs` か）。変数が無い環境では no-op ガード。**これが唯一の workspace 側
-   コード変更候補**。索引の有無は `aws ecr batch-get-image` で
-   `artifactType == application/vnd.amazon.soci.index.v2+json` を見る手もある（一次情報に例あり）。
-10. P0 と同じ計測を再実行して差分を取る。
-11. 効果が出なければ索引なしで再 push して即ロールバック。
+10. P0 の L1 probe の `IMG` を変換済みタグに差し替えて回す。**workspace 側のコード変更は不要**
+    （probe の `command` が task metadata v4 を叩き、ログの `"Snapshotter"` が `soci` か `overlayfs` かで判る）。
+11. L2 の (B) も再実行して P0 と差分を取る。
+12. 効果が出なければ索引なしで再 push して即ロールバック。
 
 ## 62.8 一次情報
 
