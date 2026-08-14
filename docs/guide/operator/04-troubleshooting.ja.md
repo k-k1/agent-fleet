@@ -25,6 +25,8 @@
 | redirect URI mismatch | IdP に登録した URI が `<PUBLIC_BASE_URL>/oauth2/callback` と一致しているか |
 | サインインのボタンが出ない | その provider が起動時に無効化された。`docker compose logs control-plane \| grep -i "login provider"` に不足している設定名が出る |
 | マルチテナント issuer を理由に CP が起動しない | Entra の `/common/` `/organizations/` issuer で `AF_OIDC_<ID>_ALLOWED_TIDS` が空。issuer を自社テナント GUID に固定する |
+| GitHub ログインが全員拒否される | org が OAuth App を未承認（CP ログの `returned 403`）か、本人の primary/verified アドレスが `AF_GITHUB_ALLOWED_DOMAINS` の外 |
+| CP 再起動後に GitHub の人だけ再サインインを求められる | 仕様。org メンバーシップのキャッシュはメモリ上。拒否ではなく再確認 |
 
 ## DooD の 3 制約の診断（「起動するのに静かに動かない」）
 
@@ -65,6 +67,18 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
   許可リストが意味を失います。issuer を自社テナント GUID
   （`https://login.microsoftonline.com/<tenant-guid>/v2.0`）に固定するか、受け入れるテナントを
   列挙してください。
+- **設定は正しく見えるのに GitHub ログインが全員拒否される** → 多いのは、org 側がサードパーティ
+  OAuth App を制限していて、まだ承認されていないケースです。承認されるまでメンバーシップは
+  見えません。`docker compose logs control-plane | grep "returned 403"` にその旨が出ます。
+  もう 1 つの原因はアドレスで、GitHub が渡すのはアカウントの **primary かつ verified** な
+  メールアドレスです。これが個人用アドレスだと `AF_GITHUB_ALLOWED_DOMAINS` の外になります。
+  本人が会社アドレスを GitHub に登録して verified・primary にするか、別のボタンでサインイン
+  してもらってください。
+- **CP を再起動すると GitHub の人だけ再サインインを求められる** → 不具合ではなく仕様です。
+  org メンバーシップの判定結果と、それを更新するためのトークンはメモリ上にしか持たないため、
+  再起動すると再確認する材料が無くなります。「許可されていません」ではなく「もう一度サイン
+  インしてください」を出すのはそのためで、GitHub 側のセッションが生きていれば、この往復は
+  たいてい利用者に見えません。
 - **cookie が保存されない/ログイン直後に戻される** → `AUTH=oauth` は Secure cookie を使うため
   **HTTPS 必須**です。素の HTTP（TLS 未終端）では保存されません。`PUBLIC_BASE_URL` が `https://` か、
   TLS が実際に発行されているか（下記）を確認します。

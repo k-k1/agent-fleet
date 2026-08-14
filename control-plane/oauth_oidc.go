@@ -559,14 +559,27 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 		}
 		out = append(out, p)
 	}
+
+	// GitHub last: it is the conditional door (§61.7), and putting the OIDC
+	// providers — where the company's own directory lives — above it keeps the
+	// button people should normally press at the top.
+	if seen[githubProviderID] {
+		log.Printf("WARNING: %q is the GitHub adapter's reserved id and cannot be used for an OIDC provider — the GitHub login is disabled", githubProviderID)
+	} else if gh := newGitHubProvider(c.emailAllowed, c.hasDeploymentAllowlist()); gh != nil {
+		out = append(out, gh)
+	}
 	return out, nil
 }
+
+// providerAllowlister is implemented by providers that can carry an allowlist of
+// their own (an email list for OIDC, the org list for GitHub).
+type providerAllowlister interface{ hasOwnAllowlist() bool }
 
 // anyProviderAllowlist reports whether at least one provider carries its own
 // allowlist — with none, and no deployment-wide list, every login is denied.
 func anyProviderAllowlist(ps []loginProvider) bool {
 	for _, p := range ps {
-		if op, ok := p.(*oidcProvider); ok && op.hasOwnAllowlist() {
+		if a, ok := p.(providerAllowlister); ok && a.hasOwnAllowlist() {
 			return true
 		}
 	}
