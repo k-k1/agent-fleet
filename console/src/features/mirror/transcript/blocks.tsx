@@ -767,10 +767,16 @@ export function QuestionBlock({
   questions,
   answered,
   answer,
+  declined,
 }: {
   questions?: Question[];
   answered?: boolean;
   answer?: string;
+  // declined: the tool_result was claude's own decline boilerplate (an Escape out of
+  // the modal — e.g. docs/dev/92 §6's preview free-text bug), not a genuine answer.
+  // Rendering `answer` as if it were a pick would parse to nothing but still badge
+  // "回答済み" — the exact "answered but not recognized" confusion this fixes.
+  declined?: boolean;
 }) {
   const norm = (answer || "").trim();
   // Per-question answers, so each card shows its OWN reply instead of the whole raw
@@ -781,16 +787,19 @@ export function QuestionBlock({
   const answerAt = (qi: number) => (pairs.length ? pairs[qi] || "" : norm);
   const wide = hasPreview(qs);
   return (
-    <div className={"mt-question" + (answered ? " answered" : "")}>
+    <div className={"mt-question" + (answered ? " answered" : "") + (declined ? " declined" : "")}>
       {qs.map((qn, qi) => {
         const opts = qn.options || [];
         const a = answerAt(qi);
         // extras is the custom "Type something" entry, which multi-select can COMBINE
         // with checked options — show it even when an option also matched, or the typed
-        // text silently vanishes from the answered card.
-        const { chosen, extras } = answered
-          ? resolveAnswer(a, opts.map((o) => o.label))
-          : { chosen: [] as string[], extras: [] as string[] };
+        // text silently vanishes from the answered card. Skipped entirely when declined:
+        // `a` is claude's rejection prose, not a pick, and parsing it as one would show
+        // whatever fragment happened to match as if the user had typed it.
+        const { chosen, extras } =
+          answered && !declined
+            ? resolveAnswer(a, opts.map((o) => o.label))
+            : { chosen: [] as string[], extras: [] as string[] };
         const chosenSet = new Set(chosen);
         return (
           <div className="mq" key={qi}>
@@ -798,7 +807,11 @@ export function QuestionBlock({
               <Icon name="comment-discussion" />
               {qn.header && <span className="mq-header">{qn.header}</span>}
               {qn.multiSelect && <span className="mq-multi muted">{tr("mirror.multi_select_ok")}</span>}
-              {answered && <span className="mq-done muted">{tr("mirror.answered")}</span>}
+              {answered && (
+                <span className={"mq-done muted" + (declined ? " declined" : "")}>
+                  {declined ? tr("mirror.rejected") : tr("mirror.answered")}
+                </span>
+              )}
             </div>
             {qn.question && <div className="mq-text">{qn.question}</div>}
             <div className={"mq-options" + (wide ? " wide" : "")}>
@@ -818,7 +831,12 @@ export function QuestionBlock({
                 );
               })}
             </div>
-            {answered && extras.length > 0 && (
+            {answered && declined && qi === 0 && (
+              // One note for the whole card (not per question) — claude declines the
+              // WHOLE AskUserQuestion call, not individual questions within it.
+              <div className="mq-answer mq-declined-note muted">{tr("mirror.question_declined")}</div>
+            )}
+            {answered && !declined && extras.length > 0 && (
               // A free-text ("Type something") reply is the user's actual words — surface it as
               // an accented callout, not a muted footnote, so it doesn't get lost next to the
               // (possibly none) highlighted options.

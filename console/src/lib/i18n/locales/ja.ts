@@ -2036,6 +2036,7 @@ export const ja = {
   "mirror.answered": "回答済み",
   "mirror.freeform_label": "自由入力: ",
   "mirror.answer_label": "回答: ",
+  "mirror.question_declined": "エージェント側で却下されました（回答は記録されていません）",
   // PlanBlock
   "mirror.approval_pending": "承認待ち",
   "mirror.approved": "承認済み",

@@ -69,7 +69,13 @@ export function TranscriptTurn({
       ) : item.p.kind === "question" ? (
         // A question from the transcript is already answered (claude writes the
         // tool_use only after the answer) — show it resolved, not clickable.
-        <QuestionBlock key={item.i} questions={item.p.questions} answered answer={item.p.answer} />
+        <QuestionBlock
+          key={item.i}
+          questions={item.p.questions}
+          answered
+          answer={item.p.answer}
+          declined={item.p.declined}
+        />
       ) : item.p.kind === "plan" ? (
         // A historical plan (already decided) — show the outcome, open in a pane when
         // this view can (the shared view has no pane to open, so PlanBlock omits it).
