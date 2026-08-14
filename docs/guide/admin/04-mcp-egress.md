@@ -9,7 +9,8 @@ English | [日本語](04-mcp-egress.ja.md)
 
 ## Distributing an MCP server to everyone in the tenant (your permission)
 
-The **MCP** tab of the admin screen distributes an MCP server to every member of the tenant.
+Tenant settings → **"Operations → MCP distribution"** distributes an MCP server to every member of
+the tenant.
 A distributed server appears in each member's ⚙ Settings → MCP servers labelled **tenant**,
 ready to use from their assistants and sessions (what they see:
 [member/12 Settings](../member/12-settings.md#mcp-servers)).
@@ -58,14 +59,15 @@ they do, the server is not used for them).
 
 ## Speech (tenant-wide settings)
 
-The **Speech** tab is super_admin only. It starts and stops the VOICEVOX (Zundamon) engine and
+Speech is super_admin only (the **Speech** section of the Admin modal). It starts and stops the VOICEVOX (Zundamon) engine and
 holds the **tenant-wide pronunciation dictionary**, which applies to everyone's text-to-speech
 (a member's personal dictionary overrides the same spelling). When a product name or an
 in-house term is consistently mispronounced, ask the super_admin to add it there.
 
 ## Controlling outbound traffic (egress — super_admin only)
 
-This is the **Traffic** tab. **Opening it as a tenant_admin shows "no permission".** It belongs
+This is the **Traffic** section of the Admin modal. **It is super_admin only, so it does not appear
+in your tenant settings.** It belongs
 to IT / the deployment administrator, so ask them when you need it (see the request template at
 the end). The following is here so you know what happens on their side.
 
