@@ -120,6 +120,12 @@ func (p *githubProvider) Label(lang string) string {
 	return p.labelJA
 }
 
+// issuerURL — GitHub is not an OIDC issuer here (the adapter reads the REST API),
+// but "where does this identity come from" has the same answer for the admin list,
+// and it is one fixed host for every deployment. The org allowlist that actually
+// gates login is config, so it stays out of the response.
+func (p *githubProvider) issuerURL() string { return githubWebBase }
+
 // hasOwnAllowlist is true for every configured GitHub provider: the org list is an
 // allowlist, so a deployment whose only provider is GitHub must not be warned that
 // every login will be denied.

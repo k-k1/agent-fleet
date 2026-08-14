@@ -431,6 +431,13 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
   **管理モーダルの入口を `superAdmin` だけにした**。後者にあたって tenant_admin に意味のある
   面（メンバー・セッション・使用量・監査・MCP 配布）をテナント設定へ移している。閉じたのは
   入口だけで、CP のゲートは前から `withSuperAdmin` 固定 — 決定 19 も決定 30 も変えていない。
+  ★ 2026-08-15 にもう 1 点: **`GET /api/admin/providers`（`withSuperAdmin`）を新設**し、
+  「使えるサインイン方法」欄に何が書けるかを欄の直下に読み取り専用で出した。集合は
+  `manager.knownProviderIDs` に前からあったが**外に出すハンドラが無く**、書ける値を知るには
+  デプロイの env を読むしかなかった（間違えれば 400 `unknown_provider` で弾かれるだけで、
+  次に何を打てばよいかは画面に無い）。返すのは id・ボタン文言（ja/en）・issuer だけで
+  `client_id` / `client_secret` は載せない。テナント定義の `t:<slug>:<name>` は混ぜない
+  （決定 32-4）。詳細は docs/61 §61.11.8。
 - ✅ P4 の秘密は `DATA_DIR` の DB に入るため、**バックアップの取り扱い（`AF_MASTER_KEY` を
   データ領域の外に置く）が今より効く**。operator guide の該当箇所に一言足した（二言語とも）。
 - ★ P4 は env を 1 つも増やさない。4 配布ターゲットの env 例に足すものは無く、

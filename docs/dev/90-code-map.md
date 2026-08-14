@@ -32,6 +32,7 @@
 | `oauth_github.go` | GitHub ログインアダプタ（OIDC 非対応のため専用）: org メンバーシップ・TTL キャッシュ・猶予・再ログイン要求 |
 | `tenant_login.go` | テナント毎のログイン規則（docs/61 §61.9）: 入口の門の DB 由来の項・`allowed_providers` の突合・`auto_join_domains` の解決・30 秒 TTL キャッシュ |
 | `tenant_idp.go` / `tenant_idp_api.go` | テナント定義のサインイン方法（docs/61 §61.11）: provider id の名前空間（`t:<slug>:<name>`）・**実行時 provider レジストリ**（承認/停止が再起動なしで効く・30 秒 TTL）・`client_secret` の封印 / 開封 / admin CRUD と承認フロー（`active` にできるのは super_admin だけ） |
+| `login_provider_api.go` | デプロイが env で有効にしている provider の読み取り専用一覧（`GET /api/admin/providers`・super_admin）。`allowed_providers` に何が書けるかを画面へ出すためのもので、id・ボタン文言・issuer だけを返す（秘密は載せない） |
 | `oauth_bitbucket.go` | Bitbucket OAuth ブローカ（Connections 向けトークン取得の CP 側） |
 | `pat.go` | PAT（Bearer トークン）発行・ハッシュ・スコープ天井 |
 | `tenants.go` | tenant / identity / membership の CRUD・limits・admin API |
