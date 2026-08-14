@@ -1,11 +1,16 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"html"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,29 +18,85 @@ import (
 	"time"
 )
 
-// CP-native Google OAuth (Authorization Code Grant). Replaces the external
+// CP-native OIDC login (Authorization Code Grant). Replaces the external
 // oauth2-proxy: the Control Plane sits directly behind Tailscale Funnel, runs the
-// Google login itself, and carries the authenticated email in a signed session
-// cookie. authGate() then injects that email into the same header AUTH=proxy used
-// to read, so the entire downstream (resolveIdentity / tenants / bitbucket) is
-// unchanged. Enabled by AUTH=oauth.
+// login itself, and carries the authenticated email in a signed session cookie.
+// authGate() then injects that email into the same header AUTH=proxy used to read,
+// so the entire downstream (resolveIdentity / tenants / bitbucket) is unchanged.
+// Enabled by AUTH=oauth.
+//
+// This file owns everything that is provider-independent — the loginProvider
+// abstraction, the signed state/session cookies, the allowlist, authGate and the
+// login page. The IdP-facing protocol lives in oauth_oidc.go (docs/61 §61.6);
+// Google is one instance of that generic OIDC client, keeping its historical env
+// names (GOOGLE_OAUTH_*) so existing deployments need no config change.
 //
 // Security note: because CP is now the edge (Funnel forwards client headers
 // verbatim), authGate strips any inbound identity header before trusting our own
 // session — oauth2-proxy used to own that boundary.
 
 const (
-	googleAuthorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
-	googleTokenURL     = "https://oauth2.googleapis.com/token"
-	googleUserinfoURL  = "https://openidconnect.googleapis.com/v1/userinfo"
-
 	sessionCookie = "af_session"
 	stateCookie   = "af_oauth_state"
+
+	// googleProviderID is also the transitional default for sessions and state
+	// cookies minted before providers existed (they carry no provider id).
+	googleProviderID = "google"
 )
 
+// --- provider abstraction (docs/61 §61.6) ----------------------------------
+
+// principal is what a provider proves about the person who just signed in.
+// Verified means the provider's declared `trust` rule (§61.4) was satisfied —
+// not merely that an email claim was present.
+type principal struct {
+	Provider string
+	Subject  string // the IdP's stable subject id (unlike email, it never changes)
+	Email    string
+	Verified bool
+}
+
+// loginProvider is one sign-in button: an IdP the deployment enabled. Every
+// provider shares the single redirect_uri (/oauth2/callback) — which provider a
+// callback belongs to is carried in the signed state cookie, so the operator
+// registers exactly one URI per IdP no matter how many are configured (決定 8).
+type loginProvider interface {
+	ID() string
+	Label(lang string) string // login page button text
+	// AuthorizeURL may hit the network (OIDC discovery is lazy), hence ctx+error.
+	AuthorizeURL(ctx context.Context, state, redirectURI string) (string, error)
+	Exchange(ctx context.Context, code, redirectURI string) (principal, error)
+	// Allowed re-checks authorization. It is called at login AND on every
+	// request (authGate) — removing someone from the allowlist is the
+	// offboarding path and must not wait for the session cookie to expire.
+	Allowed(ctx context.Context, p principal) (bool, error)
+}
+
+// setProviders installs the enabled providers in display order and builds the
+// id lookup used by the callback (an unknown id must never reach a provider).
+func (c *config) setProviders(ps []loginProvider) {
+	c.providers = ps
+	c.providerByID = make(map[string]loginProvider, len(ps))
+	for _, p := range ps {
+		c.providerByID[p.ID()] = p
+	}
+}
+
+// providerFor resolves a provider id from a query string or state cookie. An
+// empty id means "the deployment's first button" — that also covers bookmarked
+// /oauth2/login links and state cookies minted before P0.
+func (c config) providerFor(id string) loginProvider {
+	if id == "" {
+		if len(c.providers) == 0 {
+			return nil
+		}
+		return c.providers[0]
+	}
+	return c.providerByID[id]
+}
+
 func (c config) oauthConfigured() bool {
-	return c.googleClientID != "" && c.googleClientSecret != "" &&
-		len(c.cookieSecret) > 0 && c.publicBaseURL != ""
+	return len(c.providers) > 0 && len(c.cookieSecret) > 0 && c.publicBaseURL != ""
 }
 
 func (c config) oauthRedirectURI() string {
@@ -82,33 +143,67 @@ func (c config) setCookie(w http.ResponseWriter, name, value string, maxAge int)
 
 // --- session --------------------------------------------------------------
 
+// sessionClaims is the signed session cookie payload. `prov` / `sub` were added
+// in P0 (docs/61 §61.6): JSON decoding tolerates their absence, so cookies minted
+// by the previous version keep working — no forced logout on upgrade.
 type sessionClaims struct {
 	Email string `json:"email"`
 	Exp   int64  `json:"exp"`
+	Prov  string `json:"prov,omitempty"` // provider id the person signed in with
+	Sub   string `json:"sub,omitempty"`  // that provider's subject id
 }
 
-func (c config) issueSession(w http.ResponseWriter, email string) {
-	b, _ := json.Marshal(sessionClaims{Email: email, Exp: time.Now().Add(c.sessionTTL).Unix()})
+// provider applies the one-version transitional rule: a cookie without `prov`
+// predates multi-IdP support, and back then the only IdP was Google.
+func (s sessionClaims) provider() string {
+	if s.Prov == "" {
+		return googleProviderID
+	}
+	return s.Prov
+}
+
+func (c config) issueSession(w http.ResponseWriter, p principal) {
+	b, _ := json.Marshal(sessionClaims{
+		Email: p.Email,
+		Exp:   time.Now().Add(c.sessionTTL).Unix(),
+		Prov:  p.Provider,
+		Sub:   p.Subject,
+	})
 	c.setCookie(w, sessionCookie, c.signCookie(b), int(c.sessionTTL.Seconds()))
 }
 
-func (c config) sessionEmail(r *http.Request) (string, bool) {
+// session returns the verified, unexpired claims from the session cookie.
+func (c config) session(r *http.Request) (sessionClaims, bool) {
 	ck, err := r.Cookie(sessionCookie)
 	if err != nil {
-		return "", false
+		return sessionClaims{}, false
 	}
 	payload, ok := c.verifyCookie(ck.Value)
 	if !ok {
-		return "", false
+		return sessionClaims{}, false
 	}
 	var claims sessionClaims
 	if json.Unmarshal(payload, &claims) != nil {
-		return "", false
+		return sessionClaims{}, false
 	}
 	if claims.Email == "" || time.Now().Unix() > claims.Exp {
-		return "", false
+		return sessionClaims{}, false
 	}
-	return claims.Email, true
+	return claims, true
+}
+
+// sessionAllowed re-runs the authorization check for an established session
+// against the provider it was issued by. A session whose provider is no longer
+// configured is denied (the operator removed that IdP = that door is closed).
+func (c config) sessionAllowed(ctx context.Context, claims sessionClaims) bool {
+	p := c.providerByID[claims.provider()]
+	if p == nil {
+		return false
+	}
+	ok, err := p.Allowed(ctx, principal{
+		Provider: claims.provider(), Subject: claims.Sub, Email: claims.Email, Verified: true,
+	})
+	return err == nil && ok
 }
 
 // --- allowlist (emails.txt successor) -------------------------------------
@@ -116,7 +211,8 @@ func (c config) sessionEmail(r *http.Request) (string, bool) {
 // emailAllowed checks the exact-email and domain allowlists (env CSVs) plus the
 // live-read allowlist file (so edits need no restart). In the file, a line is an
 // exact email, or "@example.com" for a whole domain. All sources empty => deny
-// all (fail closed).
+// all (fail closed). This is the deployment-wide list; a provider may declare its
+// own (AF_OIDC_<ID>_ALLOWED_*), in which case that one applies instead.
 func (c config) emailAllowed(email string) bool {
 	email = strings.ToLower(strings.TrimSpace(email))
 	at := strings.LastIndexByte(email, '@')
@@ -147,12 +243,19 @@ func (c config) emailAllowed(email string) bool {
 	return false
 }
 
+// hasDeploymentAllowlist reports whether any deployment-wide allowlist source is
+// configured at all (startup warning: with none, every login is denied).
+func (c config) hasDeploymentAllowlist() bool {
+	return len(c.allowEmails) > 0 || len(c.allowDomains) > 0 || c.allowEmailsFile != ""
+}
+
 // --- OAuth flow -----------------------------------------------------------
 
 type oauthState struct {
 	Nonce string `json:"n"`
 	Next  string `json:"x"`
 	Exp   int64  `json:"e"`
+	Prov  string `json:"p,omitempty"` // provider id; empty on pre-P0 state cookies
 }
 
 // sanitizeNext keeps post-login redirects on-site (no open redirect): a single
@@ -174,20 +277,24 @@ func (c config) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "oauth not configured", http.StatusServiceUnavailable)
 		return
 	}
+	p := c.providerFor(strings.TrimSpace(r.URL.Query().Get("provider")))
+	if p == nil {
+		loginRedirect(w, r, "provider")
+		return
+	}
 	next := sanitizeNext(r.URL.Query().Get("next"))
 	nonce := randHex(16)
-	b, _ := json.Marshal(oauthState{Nonce: nonce, Next: next, Exp: time.Now().Add(10 * time.Minute).Unix()})
+	b, _ := json.Marshal(oauthState{Nonce: nonce, Next: next, Exp: time.Now().Add(10 * time.Minute).Unix(), Prov: p.ID()})
 	c.setCookie(w, stateCookie, c.signCookie(b), 600)
 
-	au := googleAuthorizeURL + "?" + url.Values{
-		"client_id":     {c.googleClientID},
-		"redirect_uri":  {c.oauthRedirectURI()},
-		"response_type": {"code"},
-		"scope":         {"openid email"},
-		"state":         {nonce},
-		"access_type":   {"online"},
-		"prompt":        {"select_account"},
-	}.Encode()
+	au, err := p.AuthorizeURL(r.Context(), nonce, c.oauthRedirectURI())
+	if err != nil {
+		// Discovery failed (unreachable/misconfigured issuer) — there is nowhere
+		// to send the browser, so fall back to the login page with an error.
+		log.Printf("oauth: provider %s authorize: %v", p.ID(), err)
+		loginRedirect(w, r, "exchange")
+		return
+	}
 	http.Redirect(w, r, au, http.StatusFound)
 }
 
@@ -210,55 +317,40 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, "session")
 		return
 	}
+	// The state cookie is signed, but still resolve its provider id against the
+	// configured set before branching on it (決定 8) — a provider that was
+	// removed from the config must not keep serving callbacks.
+	p := c.providerFor(st.Prov)
+	if p == nil {
+		loginRedirect(w, r, "provider")
+		return
+	}
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		loginRedirect(w, r, "denied")
 		return
 	}
 
-	// Exchange the code for an access token.
-	resp, err := http.PostForm(googleTokenURL, url.Values{
-		"code": {code}, "client_id": {c.googleClientID}, "client_secret": {c.googleClientSecret},
-		"redirect_uri": {c.oauthRedirectURI()}, "grant_type": {"authorization_code"},
-	})
+	pr, err := p.Exchange(r.Context(), code, c.oauthRedirectURI())
 	if err != nil {
-		loginRedirect(w, r, "exchange")
+		log.Printf("oauth: provider %s exchange: %v", p.ID(), err)
+		if errors.Is(err, errNotAllowed) { // e.g. a tid outside ALLOWED_TIDS
+			loginRedirect(w, r, "forbidden")
+		} else {
+			loginRedirect(w, r, "exchange")
+		}
 		return
 	}
-	defer resp.Body.Close()
-	var tok struct {
-		AccessToken string `json:"access_token"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&tok)
-	if tok.AccessToken == "" {
-		loginRedirect(w, r, "exchange")
-		return
-	}
-
-	// Fetch the verified email (token came straight from Google over TLS = trusted;
-	// no JWT signature check needed).
-	ureq, _ := http.NewRequest("GET", googleUserinfoURL, nil)
-	ureq.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-	uresp, err := http.DefaultClient.Do(ureq)
-	if err != nil {
-		loginRedirect(w, r, "exchange")
-		return
-	}
-	defer uresp.Body.Close()
-	var info struct {
-		Email         string `json:"email"`
-		EmailVerified bool   `json:"email_verified"`
-	}
-	_ = json.NewDecoder(uresp.Body).Decode(&info)
-	if info.Email == "" || !info.EmailVerified {
+	if pr.Email == "" || !pr.Verified {
 		loginRedirect(w, r, "denied")
 		return
 	}
-	if !c.emailAllowed(info.Email) {
+	allowed, err := p.Allowed(r.Context(), pr)
+	if err != nil || !allowed {
 		loginRedirect(w, r, "forbidden")
 		return
 	}
-	c.issueSession(w, info.Email)
+	c.issueSession(w, pr)
 	http.Redirect(w, r, sanitizeNext(st.Next), http.StatusFound)
 }
 
@@ -286,7 +378,7 @@ func (c config) authGate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		email, ok := c.sessionEmail(r)
+		claims, ok := c.session(r)
 		if !ok {
 			if wantsHTML(r) {
 				http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
@@ -295,10 +387,10 @@ func (c config) authGate(next http.Handler) http.Handler {
 			}
 			return
 		}
-		// Re-check the allowlist on every request, not just at login: removing an
+		// Re-check authorization on every request, not just at login: removing an
 		// email from the allowlist is the offboarding path, and must take effect
 		// before the session cookie's TTL runs out.
-		if !c.emailAllowed(email) {
+		if !c.sessionAllowed(r.Context(), claims) {
 			if wantsHTML(r) {
 				c.setCookie(w, sessionCookie, "", -1)
 				loginRedirect(w, r, "forbidden")
@@ -307,7 +399,7 @@ func (c config) authGate(next http.Handler) http.Handler {
 			}
 			return
 		}
-		r.Header.Set(c.mgr.emailHeader, email)
+		r.Header.Set(c.mgr.emailHeader, claims.Email)
 		next.ServeHTTP(w, r)
 	})
 }
@@ -324,13 +416,9 @@ func wantsHTML(r *http.Request) bool {
 // --- login landing page ---------------------------------------------------
 
 func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.sessionEmail(r); ok { // already signed in
+	if _, ok := c.session(r); ok { // already signed in
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
-	}
-	loginHref := "/oauth2/login"
-	if next := sanitizeNext(r.URL.Query().Get("next")); next != "/" {
-		loginHref += "?next=" + url.QueryEscape(next)
 	}
 	lang := preferredUILang(r)
 	t := loginText[lang]
@@ -339,12 +427,42 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 	page := strings.NewReplacer(
 		"{{LANG}}", lang,
 		"{{TITLE}}", t.title,
-		"{{SIGNIN}}", t.signin,
 		"{{NOTE}}", t.note,
 		"{{ERROR}}", loginErrorBlock(r.URL.Query().Get("error"), lang),
-		"{{LOGIN_HREF}}", loginHref,
+		"{{BUTTONS}}", c.loginButtons(sanitizeNext(r.URL.Query().Get("next")), lang),
 	).Replace(loginPageHTML)
 	_, _ = w.Write([]byte(page))
+}
+
+// loginButtons renders one sign-in button per enabled provider (docs/61 §61.6).
+// With a single provider the markup is the same single .gbtn as before, so an
+// existing Google-only deployment looks unchanged.
+func (c config) loginButtons(next, lang string) string {
+	if len(c.providers) == 0 {
+		return `<div class="err">` + loginText[lang].errUnconfigured + `</div>`
+	}
+	var b strings.Builder
+	for _, p := range c.providers {
+		q := url.Values{"provider": {p.ID()}}
+		if next != "/" {
+			q.Set("next", next)
+		}
+		b.WriteString(`<a class="gbtn" href="/oauth2/login?` + html.EscapeString(q.Encode()) + `">`)
+		b.WriteString(providerIcon(p.ID()))
+		b.WriteString(html.EscapeString(p.Label(lang)))
+		b.WriteString("</a>\n")
+	}
+	return b.String()
+}
+
+// providerIcon returns the inline SVG mark for a provider's button: the Google
+// wordmark for Google (unchanged), a neutral key glyph for everything else — CP
+// must not ship third-party logos it has no license for.
+func providerIcon(id string) string {
+	if id == googleProviderID {
+		return googleIconSVG
+	}
+	return genericIconSVG
 }
 
 func loginErrorBlock(code, lang string) string {
@@ -357,6 +475,8 @@ func loginErrorBlock(code, lang string) string {
 		msg = t.errDenied
 	case "session", "exchange":
 		msg = t.errSession
+	case "provider":
+		msg = t.errProvider
 	default:
 		return ""
 	}
@@ -387,32 +507,66 @@ func preferredUILang(r *http.Request) string {
 // loginText holds the localized strings for the CP-rendered login page. ja is the
 // default; en is served when Accept-Language prefers English (preferredUILang).
 type loginStrings struct {
-	title, signin, note                 string
-	errForbidden, errDenied, errSession string
+	title, signin, signinWith, note                  string
+	errForbidden, errDenied, errSession, errProvider string
+	errUnconfigured                                  string
 }
 
 var loginText = map[string]loginStrings{
 	"ja": {
-		title:        "Agent Fleet — サインイン",
-		signin:       "Google でサインイン",
-		note:         "アクセスは許可されたアカウントに限定されています。",
-		errForbidden: "このアカウントはアクセスを許可されていません。管理者にメールアドレスの追加を依頼してください。",
-		errDenied:    "サインインがキャンセルされました。もう一度お試しください。",
-		errSession:   "セッションの確立に失敗しました。もう一度サインインしてください。",
+		title:           "Agent Fleet — サインイン",
+		signin:          "Google でサインイン",
+		signinWith:      "%s でサインイン",
+		note:            "アクセスは許可されたアカウントに限定されています。",
+		errForbidden:    "このアカウントはアクセスを許可されていません。管理者にメールアドレスの追加を依頼してください。",
+		errDenied:       "サインインがキャンセルされました。もう一度お試しください。",
+		errSession:      "セッションの確立に失敗しました。もう一度サインインしてください。",
+		errProvider:     "指定されたサインイン方法は利用できません。下のボタンから選び直してください。",
+		errUnconfigured: "サインイン方法が設定されていません。管理者に連絡してください。",
 	},
 	"en": {
-		title:        "Agent Fleet — Sign in",
-		signin:       "Sign in with Google",
-		note:         "Access is limited to allowed accounts.",
-		errForbidden: "This account isn't allowed access. Ask an administrator to add your email address.",
-		errDenied:    "Sign-in was canceled. Please try again.",
-		errSession:   "Couldn't establish a session. Please sign in again.",
+		title:           "Agent Fleet — Sign in",
+		signin:          "Sign in with Google",
+		signinWith:      "Sign in with %s",
+		note:            "Access is limited to allowed accounts.",
+		errForbidden:    "This account isn't allowed access. Ask an administrator to add your email address.",
+		errDenied:       "Sign-in was canceled. Please try again.",
+		errSession:      "Couldn't establish a session. Please sign in again.",
+		errProvider:     "That sign-in method isn't available. Pick one of the buttons below.",
+		errUnconfigured: "No sign-in method is configured. Please contact your administrator.",
 	},
 }
 
+// defaultProviderLabel builds a button label for a provider that declared no
+// AF_OIDC_<ID>_LABEL_*: "<Id> でサインイン" / "Sign in with <Id>".
+func defaultProviderLabel(id, lang string) string {
+	t, ok := loginText[lang]
+	if !ok {
+		t = loginText["ja"]
+	}
+	name := id
+	if name != "" {
+		name = strings.ToUpper(name[:1]) + name[1:]
+	}
+	return fmt.Sprintf(t.signinWith, name)
+}
+
+const googleIconSVG = `<svg viewBox="0 0 48 48" aria-hidden="true">
+    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+   </svg>
+   `
+
+const genericIconSVG = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="#1f2937" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+   </svg>
+   `
+
 // loginPageHTML — self-contained (inline CSS, no external assets but the brand
 // banner). The banner carries the wordmark + tagline; if it fails to load the
-// text wordmark below it shows instead. Tokens {{ERROR}} and {{LOGIN_HREF}} are
+// text wordmark below it shows instead. Tokens {{ERROR}} and {{BUTTONS}} are
 // substituted by handleLogin (no fmt verbs — the CSS contains literal % units).
 const loginPageHTML = `<!doctype html><html lang="{{LANG}}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -430,6 +584,7 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
 .wordmark{display:none;font-size:34px;font-weight:800;letter-spacing:.5px;margin:8px 0}
 .wordmark b{color:var(--teal)}
 .tag{color:var(--muted);letter-spacing:3px;font-size:12px;text-transform:uppercase;margin:0 0 22px}
+.btns{display:grid;gap:10px}
 .gbtn{display:inline-flex;align-items:center;gap:12px;justify-content:center;width:100%;
  padding:13px 18px;border-radius:10px;border:0;cursor:pointer;background:#fff;color:#1f2937;
  font-size:15px;font-weight:600;text-decoration:none}
@@ -446,15 +601,9 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
   <div id="wm" class="wordmark">Agent <b>Fleet</b></div>
   <p id="tg" class="tag" style="display:none">Deploy. Connect. Scale.</p>
   {{ERROR}}
-  <a class="gbtn" href="{{LOGIN_HREF}}">
-   <svg viewBox="0 0 48 48" aria-hidden="true">
-    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-   </svg>
-   {{SIGNIN}}
-  </a>
+  <div class="btns">
+  {{BUTTONS}}
+  </div>
   <p class="note">{{NOTE}}</p>
  </div>
 </main>

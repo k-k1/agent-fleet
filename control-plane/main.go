@@ -31,7 +31,9 @@ type config struct {
 	bbKey         string
 	bbSecret      string
 	publicBaseURL string // external base, e.g. https://host (for redirect_uri)
-	// CP-native Google OAuth (AUTH=oauth) — replaces oauth2-proxy. See oauth_google.go.
+	// CP-native OIDC login (AUTH=oauth) — replaces oauth2-proxy. See oauth.go /
+	// oauth_oidc.go. Google keeps its historical env names and is one instance of
+	// the generic OIDC client (docs/61 §61.6).
 	googleClientID     string
 	googleClientSecret string
 	cookieSecret       []byte        // HMAC key for the signed session cookie
@@ -40,7 +42,11 @@ type config struct {
 	allowEmails        map[string]bool
 	allowDomains       map[string]bool // allowed email domains (lowercased, no leading @)
 	allowEmailsFile    string          // emails.txt-style allowlist, read live per callback
-	autostart          bool            // P3-9: on-demand start of a stopped workspace on intentful access
+	// Enabled login providers, in login-page display order, plus the id lookup the
+	// callback resolves state against. Built by buildLoginProviders/setProviders.
+	providers    []loginProvider
+	providerByID map[string]loginProvider
+	autostart    bool // P3-9: on-demand start of a stopped workspace on intentful access
 	// Egress observation (docs/20 M2, log-only). egressToken authenticates the
 	// forward proxy's POST /internal/egress; egressDedup collapses would-block audit
 	// rows to one per (day, host). Both empty/nil unless egress is configured.
@@ -184,7 +190,7 @@ func main() {
 		bbSecret:      os.Getenv("BITBUCKET_OAUTH_SECRET"),
 		publicBaseURL: publicBaseURL,
 		mgr:           mgr,
-		// CP-native Google OAuth (AUTH=oauth).
+		// CP-native OIDC login (AUTH=oauth). Google's env names are unchanged.
 		googleClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		googleClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
 		cookieSecret:       decodeKey(os.Getenv("AF_COOKIE_SECRET")),
@@ -269,20 +275,38 @@ func main() {
 		log.Printf("scheduler: enabled (interval=%s settle=%s wake_timeout=%s jitter=%s)", iv, settle, ready, scheduleJitterMax)
 	}
 
+	// Login providers (docs/61 §61.6): Google (historical env names) plus every id
+	// listed in AF_OIDC_PROVIDERS. A provider with incomplete config is dropped
+	// with a warning inside; only the unsafe multi-tenant Entra case errors, and
+	// that is fatal below. Must run before buildMux — it captures cfg by value.
+	provs, provErr := buildLoginProviders(cfg)
+	cfg.setProviders(provs)
+
 	mux := buildMux(cfg)
 
 	// In oauth mode the CP is the edge (behind Funnel): gate every request on a
-	// verified Google session. dev/proxy modes keep the prior behavior (no gate;
-	// proxy trusts the upstream oauth2-proxy header).
+	// verified session. dev/proxy modes keep the prior behavior (no gate; proxy
+	// trusts the upstream oauth2-proxy header).
 	var handler http.Handler = mux
 	if cfg.mgr.authMode == "oauth" {
+		if provErr != nil {
+			log.Fatalf("AUTH=oauth: %v", provErr)
+		}
 		if !cfg.oauthConfigured() {
-			log.Fatalf("AUTH=oauth requires GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, AF_COOKIE_SECRET, PUBLIC_BASE_URL")
+			log.Fatalf("AUTH=oauth requires AF_COOKIE_SECRET, PUBLIC_BASE_URL and at least one login provider " +
+				"(GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET, and/or AF_OIDC_PROVIDERS with AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST})")
 		}
-		if len(cfg.allowEmails) == 0 && len(cfg.allowDomains) == 0 && cfg.allowEmailsFile == "" {
-			log.Printf("WARNING: AUTH=oauth with no allowlist (AF_OAUTH_ALLOWED_EMAILS / AF_OAUTH_ALLOWED_DOMAINS / AF_OAUTH_ALLOWED_EMAILS_FILE) — every login is denied")
+		if !cfg.hasDeploymentAllowlist() && !anyProviderAllowlist(cfg.providers) {
+			log.Printf("WARNING: AUTH=oauth with no allowlist (AF_OAUTH_ALLOWED_EMAILS / AF_OAUTH_ALLOWED_DOMAINS / AF_OAUTH_ALLOWED_EMAILS_FILE / AF_OIDC_<ID>_ALLOWED_EMAILS / AF_OIDC_<ID>_ALLOWED_DOMAINS) — every login is denied")
 		}
+		ids := make([]string, 0, len(cfg.providers))
+		for _, p := range cfg.providers {
+			ids = append(ids, p.ID())
+		}
+		log.Printf("login providers: %s", strings.Join(ids, ", "))
 		handler = cfg.authGate(mux)
+	} else if provErr != nil {
+		log.Printf("WARNING: login provider config rejected (AUTH=%s so it is unused): %v", cfg.mgr.authMode, provErr)
 	}
 
 	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode, rtProfile)
