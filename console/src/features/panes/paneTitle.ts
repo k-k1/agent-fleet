@@ -7,6 +7,7 @@ import { displayName } from "../../lib/sessionview.ts";
 import { kindLabel } from "../../lib/sessionkind.ts";
 import { t as tI18n } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
+import type { SharedSession } from "../sharing/store.ts";
 
 export const KIND_JA: Partial<Record<PaneKind, MsgKey>> = {
   file: "pane.kind.file",
@@ -31,9 +32,19 @@ export function jaKind(k: PaneKind): string {
 
 const basename = (p: string): string => p.split("/").filter(Boolean).pop() || p;
 
+/** Display name for a shared-session tab: the session's own name, so several
+ * shared-session tabs read apart instead of all showing the generic kind
+ * label (falls back to it while the shared-sessions list hasn't loaded yet). */
+export function sharedSessionLabel(meta: SharedSession | undefined): string {
+  if (!meta) return tI18n("share.shared_sessions");
+  return (meta.title || meta.label || meta.name || tI18n("share.shared_sessions")).replace(/^\[AF\]\s*/, "");
+}
+
 /** Title for a pane: the bound session (name · agent) for terminal/mirror
- * panes, else the content's own identity (file name, repo, doc title, …). */
-export function paneTitle(pane: Pane, session: Session | null): string {
+ * panes, else the content's own identity (file name, repo, doc title, …).
+ * `sharedMeta` resolves a sharedSession pane's own name — callers that have
+ * it (Pane.tsx tab strip, PopoutTitleBar) should pass it in. */
+export function paneTitle(pane: Pane, session: Session | null, sharedMeta?: SharedSession): string {
   const c = pane.content;
   switch (c.kind) {
     case "terminal":
@@ -59,6 +70,6 @@ export function paneTitle(pane: Pane, session: Session | null): string {
     case "browserAttach":
       return jaKind("browserAttach");
     case "sharedSession":
-      return jaKind("sharedSession");
+      return sharedSessionLabel(sharedMeta);
   }
 }
