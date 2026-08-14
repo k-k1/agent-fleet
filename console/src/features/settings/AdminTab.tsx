@@ -830,8 +830,8 @@ function TenantView({
           tenant_admin's — they write them, including the client secret — so their
           place is the tenant settings modal, and that is where a tenant_admin now
           finds them. It stays here for the operator because approval is theirs and
-          nobody else's (決定 30): the deployment-wide register points at this
-          screen for 承認・停止. */}
+          nobody else's (決定 30) and because this screen shows one tenant's rows in
+          full — the register (tenant list, below) now carries 承認・停止 itself. */}
       {isSuper && <TenantSignInMethods slug={slug} isSuper={isSuper} />}
 
       <MembersPanel slug={slug} isSuper={isSuper} onOpenMember={onOpenMember} />
