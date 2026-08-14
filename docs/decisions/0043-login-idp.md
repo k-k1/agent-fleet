@@ -265,6 +265,12 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     無効化（`suspended`）は tenant_admin も打てる — **止める方向は誰でも早く**。
     ★ **issuer / client_id / trust を変更したら `pending` へ戻す**。承認は「この issuer を信じてよい」に
     対して与えたもので、issuer が変われば承認の対象そのものが変わる。
+    ★ **実装時の補足（P4）— 戻す条件に「許可ドメイン・tid の拡大」を足した。** 承認は
+    「この issuer を**この範囲で**信じてよい」であって、範囲が広がれば対象が変わる。縮小は戻さない。
+    `client_secret` の更新も戻さない（同じ issuer・同じアプリ登録で、鍵のローテーションのたびに
+    再承認を要求すると**ローテーションしなくなる**方が高くつく）。
+    ★ **承認前の拒否は callback で効かせる。** ボタンを出さないのは表示なので、
+    `/oauth2/login?provider=t:…` を直接叩かれれば通ってしまう（決定 14 と同じ穴）。
 31. ★ **テナント定義の provider からは `super_admin` を取れない。** `roleHintFor` は
     **env 由来 provider のログインにだけ**効かせる。承認済みでも、その IdP の管理者はその会社の
     情シスであってこのデプロイの設置者ではない（決定 24 の「デプロイ全体の権限はホストに触れる人だけ」）。
@@ -275,6 +281,16 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     入口の許可リストもそのテナントのものを使い、デプロイ共通リストへフォールバックしない）し、
     **素の `/login` には出さず `/login/<slug>` 限定**にする（全子会社のボタンが未認証者に並ぶと
     組織構成が漏れる）。依存関係は実質 **P1 → P3 → P4**。
+    ★ **改訂（P4 実装時）— 「無効化する」は実装できず、「拒否する」になった。** 規則 2 を切って
+    新規作成へ落としても `user_key = sanitizeUser(email)` の `ON CONFLICT(user_key)` で同じ行に戻り、
+    `identity.email` は UNIQUE なので別行も作れない。よって**規則 2'**: 一度もサインインされて
+    いない identity（招待の placeholder）だけ claim し、ログイン実績のあるアドレスは
+    `email_taken` で拒否する。招待 → 初回ログインという本線は通り、乗っ取りは塞がる（docs/61 §61.11.8）。
+    ★ **改訂 — 入口の門は行の `allowed_domains` を必須にした。** デプロイ共通リストへ
+    フォールバックしない（本文どおり）だけでは、許可リストが空の行が「誰も入れない」か
+    「誰でも入れる」かのどちらかになる。必須にすることで、**その issuer が名乗ってよいアドレスの
+    範囲**が常に明示され、1 ドメイン 1 テナント（§61.9.8 と同じ規則）で他社のアドレスを
+    名乗れなくなる。
 33. **`client_secret` は DB にテナント鍵で封印して置く。前例は `mcp_server`。**
     `headers_enc` ＋ `key_ref` を `custodian.Wrap(tenantID, …)` で封印し（`mcp_server.go:146`・
     AES-256-GCM・AAD=keyRef）、UI へは `***` でマスク、更新は merge で未編集の値を残し、
@@ -286,6 +302,8 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     混ぜるとテナントが `google` という名前の行を作って env の Google を上書きできる。
     `common` / `organizations` ＋ TIDs 空の禁止（決定 7）は、DB 側では**保存時 400** で効かせる
     （実行中の CP は落とせないため）。
+    ★ **実装時の補足（P4）— `validProviderID` は緩めない。** `t:` 形式は別関数で検証する。
+    緩めると env 側の provider id をテナント名前空間へ入れられる、という逆向きの穴になる。
 
 ## 却下した案
 
@@ -370,14 +388,42 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
   テナント所有なので残る）という非対称は、事前に知らないと退職後に気づくことになる。
 - P3 で `AF_PROVISION` の意味が広がる（`auto_join_domains` 一致が `auto` / `invite` より先に効く）。
   一致しないときの挙動は現行と同じなので、既存デプロイの見え方は変わらない。
-- P4 で `tenant_idp`（`0040`）が増え、**provider の一覧が env 固定ではなくなる**（決定 29）。
-  P0 の `buildLoginProviders` は起動時に 1 回読むだけなので、DB 由来の provider を扱うには
-  **実行時に足し引きできる形へ変える**（短 TTL キャッシュ＋管理 API の書き込みで破棄。決定 19 の
-  テナント規則と同じ扱い）。承認・停止が再起動なしで効くことが P4 の前提なので、ここは避けられない。
-- P4 で `roleHintFor`（`resolver.go:28`）に「どの provider で入ったか」が渡るようになる（決定 31）。
-  `sessionClaims.prov` は P0 で入っているので、経路としては `authGate` から下ろすだけ。
-- P4 で Console に面が 2 つ増える: テナント詳細の「認証方式」（tenant_admin）と、
-  super_admin の**承認キュー**。承認は権限を作る操作なので、**`audit.go` に必ず残す**
-  （誰がどのテナントのどの issuer を承認したか）。
-- P4 の秘密は `DATA_DIR` の DB に入るため、**バックアップの取り扱い（`AF_MASTER_KEY` を
-  データ領域の外に置く）が今より効く**。operator guide の該当箇所に一言足す（二言語とも）。
+- ✅ P4: `tenant_idp`（`0040` / pg `0023`）が増え、**provider の一覧が env 固定ではなくなった**（決定 29）。
+  実装は「env 由来は起動時固定のまま、DB 由来だけを実行時レジストリに重ねる」形にした
+  （`tenant_idp.go` の `tenantIdPRegistry`。30 秒 TTL ＋ 管理 API の書き込みで破棄、
+  DB が読めなければ古いスナップショットを使う＝決定 19 と同じ作法）。置き場が `manager` なのは、
+  `config` が**値でコピーされて**ハンドラに渡るため、そこに置いた集合は再起動しないと変わらないから。
+- ✅ P4: 承認前の拒否は**ログイン画面ではなく callback** で効く。`providerFor` が active 行だけを
+  引くので、`/oauth2/login?provider=t:…` を直接叩いても authorize もセッション発行も通らない
+  （ボタンを隠すのは表示、という決定 14 の型）。`sessionAllowed` も同じ経路なので、
+  **停止は既存セッションを TTL 内に失効させる**。
+- ✅ P4: `roleHintFor`（`resolver.go`）の抑止は**呼び出し 3 箇所ではなく `upsertIdentity` の 1 箇所**に
+  置いた（決定 31）。`identityFor` / `resolveFull` / `resolveMembership` が同じ引数を渡す以上、
+  規則を 3 回書けば 4 回目で漏れる。callback の `linkAfterLogin` だけは store を直接呼ぶので同じ抑止を書いた。
+- ★ P4 の実装で決定 32 を**改訂**した。「email 一致の結合を無効化する」は**実装できない** —
+  規則 2 を切って新規作成へ落としても、`user_key = sanitizeUser(email)` なので
+  `ON CONFLICT(user_key)` で同じ行に戻り、`identity.email` は UNIQUE なので別行も作れない。
+  よって**規則 2'**（一度もサインインされていない identity＝招待の placeholder だけ claim し、
+  ログイン実績のあるアドレスは `email_taken` で**拒否**）にした。招待 → 初回ログインという
+  子会社受け入れの本線は通り、既存アカウントの乗っ取りは塞がる。詳細は docs/61 §61.11.8。
+- ★ P4 の実装で決定 32-3 を**具体化**した。`deployAllowed` は nil（デプロイ共通リストへ
+  フォールバックしない）にしたうえで、**行の `allowed_domains` を保存時必須（400）**にし、
+  **1 ドメイン 1 テナント**（他テナントの行が主張済みなら 409）を効かせた。動機は
+  「承認したのに誰も入れない」の回避より、**allowed_domains がその issuer の名乗ってよい範囲を
+  縛る唯一の手段**であること — 空にできると承認済みの子会社 IdP が親会社のアドレスを名乗れる。
+  あわせて、承認のやり直し条件に**許可ドメイン・tid の「拡大」**を足した（縮小は戻さない。
+  `client_secret` の更新も戻さない — ローテーションのたびに再承認だとローテーションしなくなる）。
+- ✅ P4: `tenant.allowed_providers` にテナント自身の `t:<slug>:<name>` を書けるようにした。
+  P3 の検証は env の provider id しか通さず、そのままでは**子会社が自社 IdP だけに絞れなかった**。
+- ✅ P4: Console に面が 2 つ増えた: テナント詳細の「このテナントのサインイン方法」（tenant_admin）と、
+  super_admin の一覧。承認は権限を作る操作なので **`audit.go` に残す**
+  （`tenant_idp.create` / `.update` / `.active` / `.suspended` / `.pending` / `.delete`。
+  誰がどのテナントのどの issuer を承認したか）。★ 後者は**空になるキューではなく登録簿**にした —
+  承認は一度きりの点検だが IdP 側の設定は後から変わるので、承認済みも承認者・承認日時つきで
+  残し続ける方が、定期的な見直しの置き場になる（docs/61 §61.14 の 3 つ目の答え）。
+  置き場は P3 の「ログイン規則」欄と同じく現 `AdminTab.tsx` に暫定配置（Console IA 刷新のときに
+  まとめて移す）。
+- ✅ P4 の秘密は `DATA_DIR` の DB に入るため、**バックアップの取り扱い（`AF_MASTER_KEY` を
+  データ領域の外に置く）が今より効く**。operator guide の該当箇所に一言足した（二言語とも）。
+- ★ P4 は env を 1 つも増やさない。4 配布ターゲットの env 例に足すものは無く、
+  更新が要るのは運用ガイドの記述だけ（docs/61 §61.8 の末尾）。
