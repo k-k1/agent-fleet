@@ -266,6 +266,32 @@ OIDC ではないので専用実装になる。
   キャッシュミス時は同期問い合わせ。API 障害時は**最後の肯定結果を猶予期間（既定 1 時間）だけ延命**し、
   それを超えたら拒否する（可用性と fail-closed の折衷。値は env で調整可能にする）。
 
+### 実装メモ（P2 で実際にこうした）
+
+設計から動かなかった点は無いが、書いていなかった判断が 4 つある。
+
+- ★ **キャッシュを失ったセッションは「拒否」ではなく「再ログイン」**（利用者判断）。org の再判定には
+  本人の access token が要るが、cookie に載せれば XSS で漏れるので**プロセス内メモリにしか持たない**。
+  つまり **CP 再起動でキャッシュも token も消える**。そのとき本人は org のメンバーのままなので、
+  既存の `forbidden`（「このアカウントはアクセスを許可されていません」）を出すのは事実と違う。
+  エラーコード **`reauth`** を 1 つ足し、「セッションの確認ができなくなりました。もう一度サインイン
+  してください」を出す（API には 403 ではなく **401** を返し、SPA の既存の未認証経路に乗せる）。
+  GitHub 側のセッションが生きていれば、この往復はたいてい無操作で完了する。
+  `sessionAllowed` は `bool` からエラーコードも返す形へ変えた。
+- ★ **`GITHUB_OAUTH_CLIENT_ID` は既に使われている**。git 連携の **device flow**（Workspace の Agent が
+  実行する）が前から使っていて、CP が各 Workspace コンテナへ注入し、`.env.example` にも載っている。
+  1 つの OAuth App で両方のフローを賄えるので env 名は §61.8 のまま共有し、**コールバック URL
+  `<PUBLIC_BASE_URL>/oauth2/callback` の追加だけ**を設置手順に足す。分けたい運用（org への App 承認を
+  ログイン用だけに絞りたい等）向けに `AF_GITHUB_LOGIN_CLIENT_ID` / `_SECRET` の上書きを用意した。
+  **これに伴い「GitHub ログインを有効にする合図」は client_id ではなく `AF_GITHUB_ALLOWED_ORGS`** に
+  した。device flow だけを使ってきた既存デプロイを、毎起動 warning で叩かないため。
+- **許可は 2 つの門の AND**: ①org メンバーシップ（必須。`AF_GITHUB_ALLOWED_ORGS` が空なら provider ごと
+  無効化する — メンバーシップ判定とセットでのみ採用した入口なので §61.3）②email 許可リスト
+  （provider 固有 → 無ければ共通 → **どちらも設定が無ければ email の門は無し**＝org が許可リストそのもの）。
+  email の門を先に評価するので、ドメイン外の人は API 呼び出しを一切起こさない。
+- **GitHub のロゴは出さない**。P0 で決めた「ライセンスの無いサードパーティロゴを同梱しない」に従い、
+  ボタンは汎用の鍵アイコンのまま。ラベルだけ `GitHub でサインイン` を既定にする。
+
 ## 61.8 設定面（4 配布ターゲットすべてに同じ形で配る）
 
 Google は**既存の env 名を据え置く**（受入条件 6）。追加分:
@@ -282,20 +308,30 @@ AF_OIDC_ENTRA_TRUST=issuer                           # email_verified | issuer�
 AF_OIDC_ENTRA_ALLOWED_DOMAINS=example.co.jp          # 未設定なら共通の許可リストを使う
 AF_OIDC_ENTRA_ALLOWED_TIDS=<tenant-guid>             # issuer を common にする場合は必須
 
-# GitHub（P2）
+# GitHub（P2）— CLIENT_ID は git 連携（device flow）と共有。既存アプリに
+# コールバック URL <PUBLIC_BASE_URL>/oauth2/callback を足すだけでよい
 GITHUB_OAUTH_CLIENT_ID=
 GITHUB_OAUTH_CLIENT_SECRET=
-AF_GITHUB_ALLOWED_ORGS=acme,acme-labs
+AF_GITHUB_ALLOWED_ORGS=acme,acme-labs                # 必須。これが GitHub ログインを有効にする合図
+AF_GITHUB_ALLOWED_DOMAINS=example.co.jp              # 強く推奨（§61.7）。未設定なら共通の許可リスト
+AF_GITHUB_ALLOWED_EMAILS=                            # 任意
+AF_GITHUB_LABEL_JA=GitHub でサインイン                # 任意
+AF_GITHUB_LABEL_EN=Sign in with GitHub
 AF_GITHUB_MEMBERSHIP_TTL=10m
 AF_GITHUB_MEMBERSHIP_GRACE=1h
+AF_GITHUB_LOGIN_CLIENT_ID=                           # 任意。ログイン専用の OAuth App を分ける場合
+AF_GITHUB_LOGIN_CLIENT_SECRET=
 ```
 
 起動時チェック（`main.go:278` を拡張）:
 
 - 有効な provider が **1 つも無ければ現行どおり fatal**。
 - 個々の provider は設定不足なら**無効化＋警告**（1 つの IdP の設定ミスで全員が締め出されない）。
-- provider ごとの許可リストも共通の許可リストも空なら、現行と同じ**警告つき全拒否**。
+- provider ごとの許可リストも共通の許可リストも空なら、現行と同じ**警告つき全拒否**
+  （GitHub の `AF_GITHUB_ALLOWED_ORGS` も「許可リスト有り」として数える）。
 - `AF_OIDC_*_ISSUER` が `common` / `organizations` で `ALLOWED_TIDS` が空なら **fatal**（§61.4 の事故防止）。
+- GitHub は `AF_GITHUB_ALLOWED_ORGS` が空なら**無効化＋警告**。ただし `GITHUB_OAUTH_CLIENT_ID` だけが
+  設定されている状態（＝ git 連携の device flow を使っているだけ）は**警告を出さない**。
 
 更新する配布物: `deploy/compose/.env.example` / `deploy/local/oauth.env.example` /
 `deploy/aws/ecs/cfn/30-ingress.yaml` / `deploy/aws/ec2-single/README.md` /
@@ -813,13 +849,15 @@ P4 を入れない会社は §61.11.1 の env 併記で足りる（再起動が�
 | 段階 | 内容 | スキーマ変更 |
 |------|------|------------|
 | **P0**（実装済み）| プロバイダ抽象 ＋ 汎用 OIDC（Entra / Okta / Keycloak / Auth0 / Cognito）。Google を同実装の 1 インスタンスへ移す。ログイン画面の複数ボタン・`sessionClaims` 拡張（`prov` / `sub`）・設定と文書 | 無し |
-| **P1** | `identity_provider` テーブルと解決規則（§61.5）。Console の「アカウントを追加」導線 | `0038` |
-| **P2** | GitHub アダプタ（org 判定・TTL キャッシュ・猶予） | 無し |
+| **P1**（実装済み）| `identity_provider` テーブルと解決規則（§61.5）。★ **Console の「アカウントを追加」導線は撤回**（§61.5 の改訂・ADR 決定 5）ので Console 側の作業はゼロ | `0038`（pg `0021`）|
+| **P2**（実装済み）| GitHub アダプタ（org 判定・TTL キャッシュ・猶予・再ログイン要求） | 無し |
 | **P3** | テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・入口の門に membership を含める・`auto_join_domains` / `allowed_domains`・admin 編集 UI・`provider_required` の再サインイン導線。★ **membership の削除／無効化 API**（§61.10.6）と **`super_admin` のブートストラップ**（§61.10.2）を含む | `0039` |
 | **P4** | テナント定義の認証方式（§61.11）: `tenant_idp` テーブル・秘密の封印保存・tenant_admin の編集 UI・**super_admin の承認フロー**・provider の名前空間分離 | `0040` |
 
 - **P1 を P2 より先に置くのが本設計の要点**。GitHub は email 不一致が常態なので、リンク機構なしに
-  出すと §61.5-1 の workspace 分裂を必ず起こす。
+  出すと §61.5-1 の workspace 分裂を必ず起こす。★ 改訂後はリンク機構そのものを作らないので、
+  P1 が先である意味は「**分裂したときに本人へ通知が出る**」ことと、`AF_GITHUB_ALLOWED_DOMAINS` で
+  入口から落とせることに変わった（§61.7）。
 - **P3 は P1 / P2 と独立**で、P0 の直後に着手してよい（依存は `prov` クレームだけ）。
 - **P4 は P1 が必須**（§61.11.3-2）。email 一致で identity を結合する規則が生きたままテナント定義の
   IdP を許すと、email を騙るだけで既存 identity を乗っ取れる。

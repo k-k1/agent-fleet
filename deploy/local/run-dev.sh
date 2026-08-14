@@ -260,10 +260,11 @@ echo "==> build control-plane"
 echo "==> control-plane on $CP_ADDR  (console: http://${CP_ADDR/#:/localhost:})  mode=$MODE runtime=$AF_RUNTIME auth=${AUTH:-dev}"
 # The generic OIDC login providers (docs/61) are named at runtime — AF_OIDC_PROVIDERS
 # plus AF_OIDC_<ID>_* per provider — so they can't be listed one by one like the
-# fixed vars below. Forward whatever is exported.
+# fixed vars below. Forward whatever is exported, along with the GitHub adapter's
+# AF_GITHUB_* (P2), which has the same open-ended shape.
 oidc_env=()
 while IFS='=' read -r k _; do
-  case "$k" in AF_OIDC_*) oidc_env+=("$k=${!k}") ;; esac
+  case "$k" in AF_OIDC_*|AF_GITHUB_*) oidc_env+=("$k=${!k}") ;; esac
 done < <(env)
 
 exec env \
@@ -282,6 +283,7 @@ exec env \
   ${WS_SESSION_CMD:+WS_SESSION_CMD="$WS_SESSION_CMD"} \
   ${WS_ENV:+WS_ENV="$WS_ENV"} \
   ${GITHUB_OAUTH_CLIENT_ID:+GITHUB_OAUTH_CLIENT_ID="$GITHUB_OAUTH_CLIENT_ID"} \
+  ${GITHUB_OAUTH_CLIENT_SECRET:+GITHUB_OAUTH_CLIENT_SECRET="$GITHUB_OAUTH_CLIENT_SECRET"} \
   ${BITBUCKET_OAUTH_KEY:+BITBUCKET_OAUTH_KEY="$BITBUCKET_OAUTH_KEY"} \
   ${BITBUCKET_OAUTH_SECRET:+BITBUCKET_OAUTH_SECRET="$BITBUCKET_OAUTH_SECRET"} \
   ${PUBLIC_BASE_URL:+PUBLIC_BASE_URL="$PUBLIC_BASE_URL"} \

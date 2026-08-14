@@ -95,6 +95,33 @@ Two things about that block are worth reading before you copy it:
   the allowlist meaningless. The CP refuses to start on those endpoints unless
   `AF_OIDC_ENTRA_ALLOWED_TIDS` names the tenants you accept.
 
+**GitHub** — GitHub has no OIDC for user sign-in, so it is configured separately, and what
+authorizes the login is membership in an organization you name:
+
+```sh
+AF_GITHUB_ALLOWED_ORGS=acme,acme-labs      # required; also what turns the button on
+GITHUB_OAUTH_CLIENT_SECRET=<client-secret>
+AF_GITHUB_ALLOWED_DOMAINS=example.com      # strongly recommended, see below
+```
+
+- The OAuth App is the same one behind the Console's GitHub **Connect** button
+  (`GITHUB_OAUTH_CLIENT_ID`); add the redirect URI above to it. If you would rather the login
+  had an app of its own, set `AF_GITHUB_LOGIN_CLIENT_ID` / `AF_GITHUB_LOGIN_CLIENT_SECRET`.
+  Setting `GITHUB_OAUTH_CLIENT_ID` alone still means only the git-connect device flow.
+- **If your organization restricts third-party OAuth apps, an owner must approve this app.**
+  Until they do, the membership check can see nothing and *every* GitHub login is rejected —
+  with settings that look entirely correct.
+- **Set `AF_GITHUB_ALLOWED_DOMAINS` as well.** GitHub gives the CP the account's *primary
+  verified* address, which for most people is a personal one — and a different address is a
+  different person here, so they would land in a new empty workspace instead of their own.
+  Turning them away at the door is kinder than letting them work somewhere they didn't mean
+  to be.
+- Membership is re-checked through the GitHub API, cached per person for
+  `AF_GITHUB_MEMBERSHIP_TTL` (10m) and, when GitHub is unreachable, honored for
+  `AF_GITHUB_MEMBERSHIP_GRACE` (1h) past the last positive answer. That cache lives in memory,
+  so after a CP restart these people are asked to **sign in again** — they are not rejected,
+  and the round trip usually completes without prompting them.
+
 List several ids (`AF_OIDC_PROVIDERS=entra,okta`) to offer several buttons; the login page shows
 one button per enabled provider, and with a single provider it looks exactly as it does today.
 A provider whose settings are incomplete is disabled with a warning in the CP log — one broken

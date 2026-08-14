@@ -85,6 +85,12 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 12. **オフボーディングの性質（毎リクエスト再判定）を落とさない。** GitHub の org 判定だけは
     ローカル判定できないので、`(provider, subject)` キーの TTL キャッシュ（既定 10 分）＋
     API 障害時は最後の肯定結果を猶予（既定 1 時間）だけ延命し、超えたら拒否する。
+    （P2 実装時の補足 — 利用者判断: 再判定には**本人の access token** が要る。cookie に載せると
+    XSS で漏れるのでプロセス内メモリにしか持たず、したがって **CP 再起動でキャッシュごと消える**。
+    そのとき本人は org のメンバーのままなので、「許可されていません」（`forbidden`）は事実と違う。
+    エラーコード **`reauth`** を足して**再ログインを要求**する — fail-closed を守りつつ、
+    GitHub 側のセッションが生きていれば無操作で戻れる。API には 403 ではなく **401** を返し、
+    SPA の既存の未認証経路に乗せる。判定材料を持たないことと、許可されていないことは別物。）
 
 ### テナント毎のログイン（P3・部署分割・docs/61 §61.9）
 
@@ -291,6 +297,13 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - `sessionClaims` に `prov` / `sub` が増える。JSON なので**既存 cookie は欠損フィールドとして読め**、
   移行時の強制ログアウトは不要。ただし `prov` 欠損を `"google"` とみなす暫定規則を 1 版だけ置く。
 - `oauthState` に provider id が増える（state cookie は署名済みなので追加は安全）。
+- P2 で `GITHUB_OAUTH_CLIENT_ID` の意味が広がる。**git 連携の device flow が既に使っている** env で、
+  CP が各 Workspace へ注入し `.env.example` にも載っている。1 つの OAuth App が両フローを賄えるので
+  共有し、設置手順には**コールバック URL の追加**だけを足す（分けたい場合は `AF_GITHUB_LOGIN_*`）。
+  そのため **GitHub ログインを有効にする合図は `AF_GITHUB_ALLOWED_ORGS`** とし、device flow だけの
+  既存デプロイが毎起動 warning を浴びないようにした。
+- P2 で `sessionAllowed` の戻り値が `bool` から `(bool, エラーコード)` になる（`reauth` の追加・決定 12）。
+  ログイン画面の文言に `errReauth` が 1 つ増える（ja/en 両方）。
 - `authGate` の毎リクエスト再判定が provider 分岐を持つ（`oauth_google.go:299-309`）。
 - 起動時バリデーション（`main.go:278-284`）が provider 単位になる。
 - 配布物 6 箇所に設定例が増える: `deploy/compose/.env.example` / `deploy/local/oauth.env.example` /
