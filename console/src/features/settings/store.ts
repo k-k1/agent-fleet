@@ -36,12 +36,19 @@ interface SettingsUIStore {
    * (localStorage), else "display". */
   settingsSection: string;
   adminOpen: boolean;
+  /** テナント設定 modal（テナント管理者の面）。管理モーダル＝デプロイ全体、個人設定
+   *  ＝自分、に対して「自分が管理しているテナント」の設定がここ。 */
+  tenantOpen: boolean;
+  /** 開くセクション（deep-link）。未指定なら既定の "signin"。 */
+  tenantSection: string;
   /** はじめかたガイド modal (re-openable first-run checklist — GuideModal). */
   guideOpen: boolean;
   openSettings(section?: string): void;
   closeSettings(): void;
   openAdmin(): void;
   closeAdmin(): void;
+  openTenantSettings(section?: string): void;
+  closeTenantSettings(): void;
   openGuide(): void;
   closeGuide(): void;
   /** Connections change tick (old connKey): bump after a connect/disconnect so
@@ -66,6 +73,8 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   settingsOpen: false,
   settingsSection: lastSection() || "display",
   adminOpen: false,
+  tenantOpen: false,
+  tenantSection: "signin",
   guideOpen: false,
 
   openSettings(section?: string) {
@@ -93,6 +102,17 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
     if (typeof history !== "undefined" && history.state && history.state.modal === "admin") {
       history.go(-(adminDepthRef.current + 1));
     } else set({ adminOpen: false });
+  },
+
+  // テナント設定は個人設定と同じ ui/Modal に乗るので、戻るで閉じるのは useBackClose
+  // が面倒を見る（管理モーダルのような独自 history エントリは持たない）。セクション
+  // は呼び出し側の deep-link だけで決め、localStorage には覚えない（面が 2 つしか
+  // なく、開くたびに「前回の続き」より「入口」が欲しい画面のため）。
+  openTenantSettings(section?: string) {
+    set({ tenantSection: section || "signin", tenantOpen: true });
+  },
+  closeTenantSettings() {
+    set({ tenantOpen: false });
   },
 
   // Close-on-back comes from ui/Modal (useBackClose), like the settings dialog.

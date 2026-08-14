@@ -1590,11 +1590,13 @@ function TenantView({
           trusted to say who somebody is. */}
       {isSuper && <TenantLoginRules slug={slug} tenant={tenant} onChanged={onChanged} />}
 
-      {/* Tenant-defined sign-in methods (docs/61 §61.11). Unlike the rules above,
-          this one IS the tenant_admin's — they write the row, including the client
-          secret. What they cannot do is activate it: that is the operator's one
-          step (決定 30), so the approve control appears only for a super_admin. */}
-      <TenantSignInMethods slug={slug} isSuper={isSuper} />
+      {/* Tenant-defined sign-in methods (docs/61 §61.11). The rows are the
+          tenant_admin's — they write them, including the client secret — so their
+          place is the tenant settings modal, and that is where a tenant_admin now
+          finds them. It stays here for the operator because approval is theirs and
+          nobody else's (決定 30): the deployment-wide register points at this
+          screen for 承認・停止. */}
+      {isSuper && <TenantSignInMethods slug={slug} isSuper={isSuper} />}
 
       <section className="admin-panel">
         <h4>{tr("admin.members")}</h4>

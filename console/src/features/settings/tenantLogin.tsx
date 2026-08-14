@@ -130,6 +130,52 @@ export function TenantLoginRules({
   );
 }
 
+// TenantLoginRulesView — 同じ 3 列の読み取り専用版（テナント設定モーダル用）。
+//
+// 編集フォームを出さないのは権限の実装ではなく、事実の反映: PUT は withSuperAdmin
+// 固定（決定 19）で、3 つのうち 2 つはこのテナントの外まで届く — 自動参加ドメインは
+// デプロイの入口そのものを開け、使えるサインイン方法は「誰であるか」を名乗ってよい
+// IdP の選定だから。それでもテナント管理者に見せるのは、招待が弾かれた理由や、
+// 自分のテナントに何が効いているかを人に聞かずに読めるようにするため。
+export function TenantLoginRulesView({
+  slug,
+  tenant,
+}: {
+  slug: string;
+  tenant: TenantLoginFields | null | undefined;
+}) {
+  const tr = useT();
+  const loginURL = new URL("login/" + encodeURIComponent(slug), document.baseURI).toString();
+  const row = (cap: string, value: string, note: string) => (
+    <div className="admin-fld">
+      <span className="af-cap">{cap}</span>
+      <span className={"af-val" + (value ? "" : " unset")}>{value || tr("tenant.rules_unset")}</span>
+      <span className="af-unit">{note}</span>
+    </div>
+  );
+  return (
+    <section className="admin-panel">
+      <div className="admin-fgroup">
+        <h4>
+          {tr("admin.login_rules")}
+          <span className="af-note">{tr("tenant.rules_readonly_note")}</span>
+        </h4>
+        <div className="admin-fgrid">
+          {row(tr("admin.allowed_providers"), (tenant?.allowed_providers || "").trim(), tr("tenant.rules_providers_note"))}
+          {row(tr("admin.auto_join_domains"), (tenant?.auto_join_domains || "").trim(), tr("tenant.rules_autojoin_note"))}
+          {row(tr("admin.invite_domains"), (tenant?.allowed_domains || "").trim(), tr("tenant.rules_invite_note"))}
+        </div>
+        {/* 管理モーダル側の同名ヒント（admin.login_rules_hint）はこの面に合わない —
+            「下のメンバー詳細から外す」は、この画面には無い操作を指してしまう。 */}
+        <p className="admin-hint">{tr("tenant.rules_hint")}</p>
+        <p className="admin-hint">
+          {tr("admin.login_url")} <code>{loginURL}</code>
+        </p>
+      </div>
+    </section>
+  );
+}
+
 // --- テナント定義のサインイン方法（docs/61 §61.11 / ADR0043 決定 29-33）------
 
 // idpStatusLabel は行の status を「読み手が知りたいこと」に写す。状態名ではなく、
