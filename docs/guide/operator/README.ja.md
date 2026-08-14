@@ -44,7 +44,9 @@
 - **Docker が動く Linux ホスト**（Docker Engine + `docker compose`）。1 台で完結します。
 - **公開ドメイン**と、そのホストを指す DNS の A/AAAA レコード（自動 TLS のため）。
   社内限定・公開 DNS を用意できない場合は自己署名 TLS の代替手段があります（[01](01-install.ja.md) 参照）。
-- **Google OAuth 2.0 の Web クライアント**（ログイン用）。
+- **ログイン用 IdP のクライアント**。Google OAuth 2.0 の Web クライアント、または
+  Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab の OIDC アプリ登録。
+  どの IdP を何個有効にしても、登録するリダイレクト URI は 1 本だけです。
 - チームの **Claude シートは各自が持ち込み**（BYO）。初回起動後、各メンバーが Console から
   自分のシートでログインします。個人の Pro/Max より会社の Team/Enterprise シートを推奨します。
 
@@ -99,6 +101,8 @@ DooD 方式には破ると静かに壊れる 3 つの制約（host ネットワ�
 - [ ] リストア手順を一度は実地で試し、`DATA_DIR` の basename 制約を理解している。
 - [ ] アップグレード前に必ずバックアップを取る運用にしている（**ダウングレード不可**）。
 - [ ] ログイン許可リスト（`AF_OAUTH_ALLOWED_*`）を適切に設定した（空 = 全拒否の fail-closed）。
+- [ ] Entra ID でサインインする場合、`AF_OIDC_<ID>_ISSUER` を自社のテナント GUID に固定した
+      （`/common/` だと Microsoft アカウントを持つ全人類がログイン画面に立つ）。
 - [ ] ホスト OS への SSH・sudo・docker 実行権限を持つ人を最小限に絞っている（= ホスト root 相当）。
 - [ ] egress 統制を入れる場合、log-only で観測してから enforce へ段階的に進める方針を理解している。
 - [ ] 脆弱性を見つけたときの報告手順（[SECURITY.md](../../../SECURITY.md)）を把握している。

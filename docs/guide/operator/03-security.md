@@ -115,7 +115,17 @@ into answers, logs or commits is part of the agent-side instructions as well.
 
 - **The login allowlist is fail-closed.** If all 3 of the `AF_OAUTH_ALLOWED_*` variables are
   empty, all logins are rejected. `_EMAILS_FILE` is re-read on every login, so **additions take
-  effect without a CP restart** (removals likewise). Configuration is in [01 §6](01-install.md).
+  effect without a CP restart** (removals likewise). The check runs **on every request**, not
+  just at sign-in, so removing someone locks them out on their very next request instead of
+  waiting out `AF_SESSION_TTL` — that is the offboarding path. Configuration is in
+  [01 §6](01-install.md).
+- **Each login provider declares why its email may be trusted.** `AF_OIDC_<ID>_TRUST` is
+  mandatory (`email_verified` or `issuer`) and a provider that omits it is disabled at startup,
+  because the allowlist is written in email addresses. In particular, an Entra ID issuer must be
+  pinned to your tenant GUID: on the `/common/` or `/organizations/` endpoints every Microsoft
+  account on earth reaches the login and a personal account can rewrite its own email address,
+  so the CP refuses to start there unless `AF_OIDC_<ID>_ALLOWED_TIDS` is set
+  ([01 §3](01-install.md) / [dev/07 §7.3](../../dev/07-security.md)).
 - **Audit log.** Only mutating / destructive operations are recorded in `audit_log` (reads are
   off by default, and **raw terminal streams are never stored, due to the risk of secrets
   leaking into them**). super_admins / tenant_admins view it from the Audit tab of the Admin

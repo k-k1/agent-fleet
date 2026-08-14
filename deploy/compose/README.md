@@ -7,9 +7,10 @@ home and git working copies, and drives agent sessions from the browser. A Go
 control plane orchestrates the workspaces; deployment targets include this on-prem
 Docker Compose stack, AWS ECS (CloudFormation), and a Docker-less native runtime.
 
-This runbook covers the Docker Compose target: your team logs in with Google and
-works on **one deployment per company**, on your own infrastructure, with your own
-agent seats (e.g. your Claude subscription).
+This runbook covers the Docker Compose target: your team signs in with your
+company's IdP — Google, Microsoft Entra ID, Okta, Keycloak, Auth0, Cognito,
+GitLab — and works on **one deployment per company**, on your own infrastructure,
+with your own agent seats (e.g. your Claude subscription).
 
 This directory is the whole deployment surface:
 
@@ -33,7 +34,11 @@ no registry login. Point `REGISTRY` at your own mirror to pull from elsewhere.
 - A Linux host with **Docker** (Engine + `docker compose`).
 - A **public domain** with a DNS A/AAAA record pointing at this host (for TLS).
   Internal-only? Use the `tls internal` fallback in `Caddyfile`.
-- A **Google OAuth 2.0** Web client (for login).
+- An **IdP client for login**: a Google OAuth 2.0 Web client, or an OIDC app
+  registration at Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab. Only one
+  redirect URI is ever registered, whichever (and however many) you use.
+  SAML-only IdP (HENNGE One / TrustLogin / CloudGate …)? Front the CP with
+  oauth2-proxy or Keycloak and run `AUTH=proxy` instead.
 - Your team's **Claude** login (each user logs in with their own seat from the
   Console after first launch — bring your own; company Team/Enterprise seats
   recommended over personal Pro/Max).
@@ -59,8 +64,8 @@ head -c 32 /dev/urandom | base64   # -> AF_MASTER_KEY   (store a copy in a vault
 head -c 32 /dev/urandom | base64   # -> AF_COOKIE_SECRET
 # 2) set DOCKER_GID to the host docker group:
 getent group docker | cut -d: -f3  # -> DOCKER_GID
-# 3) fill in PUBLIC_DOMAIN / PUBLIC_BASE_URL / GOOGLE_OAUTH_* /
-#    AF_OAUTH_ALLOWED_DOMAINS / SUPER_ADMIN_EMAILS / DATA_DIR in .env
+# 3) fill in PUBLIC_DOMAIN / PUBLIC_BASE_URL / your IdP (GOOGLE_OAUTH_* and/or
+#    AF_OIDC_*) / AF_OAUTH_ALLOWED_DOMAINS / SUPER_ADMIN_EMAILS / DATA_DIR in .env
 mkdir -p "$(grep -E '^DATA_DIR=' .env | cut -d= -f2)"
 
 # 4) build the per-user workspace image (compose builds only the CP; the CP
@@ -89,20 +94,53 @@ a multi-minute wait for whoever presses Start first.
 Then open `https://<PUBLIC_DOMAIN>`, sign in with a `SUPER_ADMIN_EMAILS` account,
 and launch a workspace.
 
-### Google OAuth setup
+### Login IdP setup
 
-In Google Cloud Console → *APIs & Services* → *Credentials* → create an **OAuth
-client ID** (Web application). Add an **Authorized redirect URI**:
+Whichever IdPs you enable, the redirect URI you register is always this one — it
+does not multiply with the number of providers:
 
 ```
 https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
-Copy the client ID/secret into `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`.
+**Google.** In Google Cloud Console → *APIs & Services* → *Credentials* → create
+an **OAuth client ID** (Web application), add the redirect URI above, and copy the
+client ID/secret into `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`.
+
+**Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab.** Register a
+confidential *web* app at the IdP with the same redirect URI, then in `.env`:
+
+```sh
+AF_OIDC_PROVIDERS=entra
+AF_OIDC_ENTRA_ISSUER=https://login.microsoftonline.com/<tenant-guid>/v2.0
+AF_OIDC_ENTRA_CLIENT_ID=<application-client-id>
+AF_OIDC_ENTRA_CLIENT_SECRET=<client-secret-value>
+AF_OIDC_ENTRA_TRUST=issuer                       # required; see below
+AF_OIDC_ENTRA_LABEL_JA=Microsoft でサインイン     # optional button labels
+AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
+```
+
+- **`_TRUST` has no default on purpose.** It states why this IdP's email may be
+  believed, and the login page is the front door: `email_verified` accepts only
+  the addresses the IdP marks verified (Google, most Okta / Keycloak / Auth0
+  setups); `issuer` says the issuer is pinned to one tenant, so its directory's
+  addresses are authoritative. Entra ID never emits `email_verified`, so `issuer`
+  is the correct value there. A provider with no `_TRUST` is disabled at startup.
+- ★ **Pin the Entra issuer to your tenant guid.** With the `/common/` or
+  `/organizations/` endpoint, everyone on earth with a Microsoft account reaches
+  your login, and personal accounts can change their own email — which would make
+  the email allowlist meaningless. The CP refuses to start on those endpoints
+  unless `AF_OIDC_ENTRA_ALLOWED_TIDS` names the tenants you accept.
+- Set several ids in `AF_OIDC_PROVIDERS` (`entra,okta`) to offer several buttons.
+  A provider whose settings are incomplete is disabled with a warning in the CP
+  log — one broken IdP never locks the whole company out — and the CP only
+  refuses to start when no provider at all is usable.
+- Users are the same person regardless of which button they used only when the
+  IdPs hand out the same email address; identity is keyed on the email today.
 
 ### Git provider OAuth (GitHub / Bitbucket) — optional
 
-Google OAuth above is for **console login**. To also enable the one-click
+Login above is for the **console**. To also enable the one-click
 "Connect via OAuth" buttons for cloning private repos, set the git-provider vars
 in `.env` (users can always paste a token instead, without these):
 
@@ -229,7 +267,9 @@ encodes them, but if you customize it, keep them:
 | Can't reach a started workspace | DooD (A): CP + Caddy both `network_mode: host` |
 | Login always denied | allowlist empty (fail-closed) — set `AF_OAUTH_ALLOWED_DOMAINS`/`_EMAILS` |
 | TLS not issued | DNS A/AAAA → this host? ports 80/443 reachable? Let's Encrypt rate limit? |
-| Redirect URI mismatch | Google console URI == `<PUBLIC_BASE_URL>/oauth2/callback` |
+| Redirect URI mismatch | the IdP's registered URI == `<PUBLIC_BASE_URL>/oauth2/callback` |
+| A login button is missing | that provider was disabled at startup — `docker compose logs cp \| grep -i "login provider"` names the missing setting |
+| CP exits on an Entra config | `/common/` or `/organizations/` issuer without `AF_OIDC_<ID>_ALLOWED_TIDS` — pin the issuer to your tenant guid |
 
 ## Security notes
 

@@ -258,6 +258,14 @@ echo "==> build control-plane"
 (cd "$ROOT/control-plane" && go build -o /tmp/af-cp .)
 
 echo "==> control-plane on $CP_ADDR  (console: http://${CP_ADDR/#:/localhost:})  mode=$MODE runtime=$AF_RUNTIME auth=${AUTH:-dev}"
+# The generic OIDC login providers (docs/61) are named at runtime — AF_OIDC_PROVIDERS
+# plus AF_OIDC_<ID>_* per provider — so they can't be listed one by one like the
+# fixed vars below. Forward whatever is exported.
+oidc_env=()
+while IFS='=' read -r k _; do
+  case "$k" in AF_OIDC_*) oidc_env+=("$k=${!k}") ;; esac
+done < <(env)
+
 exec env \
   CP_ADDR="$CP_ADDR" \
   AF_RUNTIME="$AF_RUNTIME" \
@@ -282,7 +290,9 @@ exec env \
   ${AF_COOKIE_SECRET:+AF_COOKIE_SECRET="$AF_COOKIE_SECRET"} \
   ${AF_SESSION_TTL:+AF_SESSION_TTL="$AF_SESSION_TTL"} \
   ${AF_OAUTH_ALLOWED_EMAILS:+AF_OAUTH_ALLOWED_EMAILS="$AF_OAUTH_ALLOWED_EMAILS"} \
+  ${AF_OAUTH_ALLOWED_DOMAINS:+AF_OAUTH_ALLOWED_DOMAINS="$AF_OAUTH_ALLOWED_DOMAINS"} \
   ${AF_OAUTH_ALLOWED_EMAILS_FILE:+AF_OAUTH_ALLOWED_EMAILS_FILE="$AF_OAUTH_ALLOWED_EMAILS_FILE"} \
+  "${oidc_env[@]}" \
   ${AF_MASTER_KEY:+AF_MASTER_KEY="$AF_MASTER_KEY"} \
   ${AF_DB:+AF_DB="$AF_DB"} \
   ${AF_PROVISION:+AF_PROVISION="$AF_PROVISION"} \

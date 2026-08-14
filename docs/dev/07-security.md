@@ -43,8 +43,8 @@
 
 | モード | 仕組み | 用途 |
 |--------|--------|------|
-| `oauth`（実運用の既定）| **CP ネイティブ Google OAuth**。`/oauth2/{login,callback,logout}` + `/login` を CP が所有。ログイン成功で署名 cookie（HMAC-SHA256・`AF_COOKIE_SECRET`・HttpOnly/Secure/Lax・TTL `AF_SESSION_TTL` 既定 168h）発行 | セルフホスト本命。HTTPS 前提（エッジは Caddy/Funnel）|
-| `proxy` | 外部ゲートウェイ（oauth2-proxy / ALB OIDC）の `X-Forwarded-Email`（`AUTH_EMAIL_HEADER` で変更可）を信頼。**ヘッダ欠落は 401**（フォールバック無し）。CP は loopback 束縛前提 | ALB OIDC（aws）/ 既存ゲート流用 |
+| `oauth`（実運用の既定）| **CP ネイティブ OIDC ログイン**（Google ＋ 任意の OIDC IdP・§7.3.1）。`/oauth2/{login,callback,logout}` + `/login` を CP が所有。ログイン成功で署名 cookie（HMAC-SHA256・`AF_COOKIE_SECRET`・HttpOnly/Secure/Lax・TTL `AF_SESSION_TTL` 既定 168h）発行 | セルフホスト本命。HTTPS 前提（エッジは Caddy/Funnel）|
+| `proxy` | 外部ゲートウェイ（oauth2-proxy / ALB OIDC）の `X-Forwarded-Email`（`AUTH_EMAIL_HEADER` で変更可）を信頼。**ヘッダ欠落は 401**（フォールバック無し）。CP は loopback 束縛前提 | ALB OIDC（aws）/ 既存ゲート流用。**SAML IdP（HENNGE One / TrustLogin / CloudGate 等）の正式な答えもこれ** — oauth2-proxy / Keycloak でブリッジする（[61](../61-login-idp.md) 決定 10）|
 | `dev` | 固定 `DEV_USER`（既定 `dev`）| ローカル開発のみ。`AUTH=oauth` は素の HTTP では Secure cookie が保存されず使えない |
 
 **authGate の要点**（`oauth` モード）:
@@ -57,6 +57,36 @@
 - 許可リスト 3 系統の併用可・**すべて空なら全拒否（fail-closed）**:
   `AF_OAUTH_ALLOWED_EMAILS`（CSV）/ `AF_OAUTH_ALLOWED_DOMAINS`（CSV）/
   `AF_OAUTH_ALLOWED_EMAILS_FILE`（1 行 = メール or `@domain`・ログイン毎に再読込＝**追加は再起動不要**）。
+  provider ごとに `AF_OIDC_<ID>_ALLOWED_{EMAILS,DOMAINS}` を置くと、その provider ではデプロイ共通
+  リストの**代わりに**それが使われる。
+- **判定はログイン時だけでなく毎リクエスト**（許可リストから消す＝オフボーディング経路。
+  セッション cookie の TTL を待たずに次のリクエストで締め出される）。
+
+### 7.3.1 ログイン IdP（`oauth` モード）
+
+Google 固定ではなく**汎用 OIDC クライアント 1 本**で、Entra ID / Okta / Keycloak / Auth0 /
+Cognito / GitLab が設定だけで載る（[61](../61-login-idp.md) P0 + [ADR0043](../decisions/0043-login-idp.md)）。
+Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）は据え置き**＝既存デプロイは無変更。
+
+- `AF_OIDC_PROVIDERS`（CSV）＋ `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,
+  LABEL_EN,SCOPES,PROMPT,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`。
+  ログイン画面には有効な provider の数だけボタンが出る（1 つなら現行と同じ見た目）。
+- **redirect_uri は `/oauth2/callback` の 1 本のまま**。どの provider かは署名済み state cookie で
+  運び、コールバックでは**設定済みの集合と突合してから**分岐する（決定 8）。
+- **`TRUST` に既定値を置かない**（§61.4）: `email_verified`（IdP が検証済みと言う場合のみ受理）/
+  `issuer`（issuer が単一テナントに固定済み。**Entra ID は `email_verified` を出さない**のでこちら）。
+  宣言の無い provider は起動時に無効化される（fail-closed）。
+- ★ **issuer が `common` / `organizations` / `consumers` で `ALLOWED_TIDS` が空なら起動を止める**
+  （決定 7）。許すと「Microsoft アカウントを持つ全人類」が入口に立ち、個人 MSA は email を
+  付け替えられるので email 許可リストが無意味になる。
+- **1 つの IdP の設定ミスで全員を締め出さない**（決定 11）: 個々の provider は設定不足なら
+  無効化＋警告で、**有効な provider がゼロのときだけ fatal**。
+- セッション cookie には `prov` / `sub` が入る（JSON なので旧 cookie は欠損フィールドとして読め、
+  移行時のログアウトは不要）。毎リクエストの再判定はその provider の許可判定を呼ぶ。
+- **id_token の署名検証は行わない**（決定 9）。認可コードフロー・client_secret 付き・トークン
+  エンドポイントから TLS 直受けのため（OIDC Core §3.1.3.7 の注記と同じ論拠）。userinfo に出ない
+  `tid` は同一レスポンス内の id_token ペイロードから読む。**フロントチャネル（implicit /
+  form_post）で id_token を受ける経路を足すなら JWKS 検証が必須**。JWT ライブラリ依存はゼロ。
 
 認可は [05 §5.4](05-api-contracts.md): 自分のリソースのみ + membership 検証、admin は role gate
 （super_admin=デプロイ全体 / tenant_admin=自テナント）。role の階層は `identity.role` と
@@ -84,7 +114,7 @@ L2（Claude/codex/opencode を誰として動かすか）はユーザー本人�
 |-------------|------|----------|
 | git 資格情報（GitHub PAT/Device、Bitbucket OAuth/token）・opencode env キー | Workspace home の **`secrets.enc`**（AES-256-GCM・0600）| 当該ユーザーのみ。統一 cred helper（`workspace-agent cred`）が都度復号して出力＝**平文ファイルを作らない** |
 | Claude `.credentials.json`（claude 自身が書く）| `CLAUDE_CONFIG_DIR`（home 外・browse 範囲外, §7.2）| 当該ユーザーのみ |
-| システム秘密（Google OAuth client secret・`AF_MASTER_KEY`・`AF_COOKIE_SECRET`）| `oauth.env` / compose `.env`（git 管理外）。aws=Secrets Manager/SSM 🚧 | CP のみ。`AF_MASTER_KEY` はデータ領域の外で保管（バックアップに含めない＝失えば crypto-shred）|
+| システム秘密（ログイン IdP の client secret＝`GOOGLE_OAUTH_CLIENT_SECRET` / `AF_OIDC_<ID>_CLIENT_SECRET`・`AF_MASTER_KEY`・`AF_COOKIE_SECRET`）| `oauth.env` / compose `.env`（git 管理外）。aws=Secrets Manager/SSM 🚧 | CP のみ。`AF_MASTER_KEY` はデータ領域の外で保管（バックアップに含めない＝失えば crypto-shred）|
 | PAT | DB に SHA-256 ハッシュのみ（[06](06-data-model.md)）| 平文は発行時 1 回だけ表示 |
 
 **封筒暗号 + custodian 抽象**（[decisions/0005](../decisions/0005-envelope-custodian.md)）:

@@ -49,7 +49,9 @@ Read this section first as the entry point for a technical evaluation.
 - **A public domain** and DNS A/AAAA records pointing at that host (for automatic TLS).
   If your deployment is internal-only and you cannot provide public DNS, there is a
   self-signed TLS alternative (see [01](01-install.md)).
-- **A Google OAuth 2.0 web client** (for login).
+- **A login IdP client**: a Google OAuth 2.0 web client, or an OIDC app registration at
+  Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab. You register exactly one
+  redirect URI, whichever (and however many) providers you enable.
 - Your team's **Claude seats are brought by each member** (BYO). After the first startup,
   each member logs in with their own seat from the Console. Company Team/Enterprise seats
   are recommended over personal Pro/Max.
@@ -113,6 +115,8 @@ contains them, but their meaning is explained from a diagnostic perspective in
 - [ ] Always take a backup before upgrading (**downgrade is not possible**).
 - [ ] Configured the login allowlist (`AF_OAUTH_ALLOWED_*`) appropriately (empty = deny all,
       fail-closed).
+- [ ] If you sign in with Entra ID, pinned `AF_OIDC_<ID>_ISSUER` to your own tenant GUID
+      (the `/common/` endpoint would put every Microsoft account in front of the login).
 - [ ] Kept the set of people with SSH, sudo, and docker execution rights on the host OS to a
       minimum (= host-root equivalent).
 - [ ] If introducing egress controls, understand the policy of observing in log-only mode

@@ -22,7 +22,9 @@
 | 起動した Workspace に到達できない | CP と Caddy が両方 `network_mode: host` か（DooD 制約 A）|
 | ログインが常に拒否される | 許可リストが空（fail-closed）。`AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` を設定 |
 | TLS 証明書が発行されない | DNS A/AAAA がこのホストを指すか。80/443 が到達可能か。Let's Encrypt のレート制限 |
-| redirect URI mismatch | Google Console の URI が `<PUBLIC_BASE_URL>/oauth2/callback` と一致しているか |
+| redirect URI mismatch | IdP に登録した URI が `<PUBLIC_BASE_URL>/oauth2/callback` と一致しているか |
+| サインインのボタンが出ない | その provider が起動時に無効化された。`docker compose logs control-plane \| grep -i "login provider"` に不足している設定名が出る |
+| マルチテナント issuer を理由に CP が起動しない | Entra の `/common/` `/organizations/` issuer で `AF_OIDC_<ID>_ALLOWED_TIDS` が空。issuer を自社テナント GUID に固定する |
 
 ## DooD の 3 制約の診断（「起動するのに静かに動かない」）
 
@@ -49,9 +51,20 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
 - **常に拒否される** → 許可リスト（`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`）が
   **すべて空だと全拒否**です（fail-closed = 安全側に倒す設計）。少なくとも 1 つ設定します。
   `_EMAILS_FILE` はログインごとに再読込されるので追加は再起動不要です。
-- **redirect URI mismatch** → Google Cloud Console の承認済みリダイレクト URI が
-  `<PUBLIC_BASE_URL>/oauth2/callback` と**完全一致**しているか。`PUBLIC_BASE_URL` を変えたら Google 側も
-  合わせます（[01 §3](01-install.ja.md)）。
+- **redirect URI mismatch** → IdP 側（Google Cloud Console、Entra のアプリ登録など）に登録した
+  承認済みリダイレクト URI が `<PUBLIC_BASE_URL>/oauth2/callback` と**完全一致**しているか。
+  `PUBLIC_BASE_URL` を変えたら IdP 側も合わせます（[01 §3](01-install.ja.md)）。有効にする provider が
+  何個でも、この URI は 1 本だけです。
+- **設定したはずのサインインボタンがログイン画面に出ない** → 設定が不完全なため起動時に無効化
+  されています（1 つの IdP の設定ミスで全員が締め出されないための挙動）。
+  `docker compose logs control-plane | grep -i "login provider"` に不足している変数名が出ます。
+  多いのは、既定値を持たない `AF_OIDC_<ID>_TRUST` の未設定です。
+- **マルチテナント issuer を理由に CP が終了する** → Entra ID の issuer が `/common/` または
+  `/organizations/` で `AF_OIDC_<ID>_ALLOWED_TIDS` が空です。これらのエンドポイントでは Microsoft
+  アカウントを持つ全人類がログイン画面に立て、個人アカウントは自分の email を付け替えられるため、
+  許可リストが意味を失います。issuer を自社テナント GUID
+  （`https://login.microsoftonline.com/<tenant-guid>/v2.0`）に固定するか、受け入れるテナントを
+  列挙してください。
 - **cookie が保存されない/ログイン直後に戻される** → `AUTH=oauth` は Secure cookie を使うため
   **HTTPS 必須**です。素の HTTP（TLS 未終端）では保存されません。`PUBLIC_BASE_URL` が `https://` か、
   TLS が実際に発行されているか（下記）を確認します。
@@ -117,7 +130,11 @@ A. 提供モデルは 1 社 = 1 デプロイ = 1 ホストです。CP はホス�
 複数ホストへの分散や HA 構成は現行の対象外です。大規模化の設計方向は [dev/09](../../dev/09-deploy.md)
 （aws ターゲットは実装済みだが実運用実績なし）を参照してください。
 
-**Q. Google 以外の認証（LDAP / SAML など）を使いたい。**
-A. CP ネイティブは Google OAuth（`AUTH=oauth`）です。既存の認証ゲートウェイ（oauth2-proxy / ALB
-OIDC など）を前段に置き、`AUTH=proxy` で上流のメールヘッダを信頼させる形なら、他の IdP も間接的に
-使えます（[01 §3](01-install.ja.md) / [dev/07 §7.3](../../dev/07-security.md)）。
+**Q. Google 以外の認証（Microsoft 365 / LDAP / SAML など）を使いたい。**
+A. CP ネイティブ（`AUTH=oauth`）は OIDC を話すので、**Microsoft Entra ID・Okta・Keycloak・Auth0・
+Cognito・GitLab は設定だけで使えます** — `AF_OIDC_PROVIDERS` と数個の `AF_OIDC_<ID>_*`、そして
+IdP 側にリダイレクト URI を 1 本（[01 §3](01-install.ja.md)）。同時に複数有効化でき、その場合は
+ログイン画面に provider の数だけボタンが並びます。
+SAML のみの IdP（HENNGE One / TrustLogin / CloudGate など）と LDAP は CP には実装していません。
+既存のゲートウェイ（oauth2-proxy / Keycloak / ALB OIDC）を前段に置き、`AUTH=proxy` で上流のメール
+ヘッダを信頼させてください（[dev/07 §7.3](../../dev/07-security.md)）。
