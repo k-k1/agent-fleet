@@ -85,12 +85,24 @@ func (c *config) setProviders(ps []loginProvider) {
 // providerFor resolves a provider id from a query string or state cookie. An
 // empty id means "the deployment's first button" — that also covers bookmarked
 // /oauth2/login links and state cookies minted before P0.
-func (c config) providerFor(id string) loginProvider {
+//
+// ★ A "t:<slug>:<name>" id is a tenant-defined provider (docs/61 §61.11) and is
+// resolved through the runtime registry, which only holds APPROVED (active) rows.
+// That is what makes "a pending provider issues no session" true at the callback,
+// not merely on the login page — hiding a button is presentation, and decision 14
+// says presentation is never the enforcement.
+func (c config) providerFor(ctx context.Context, id string) loginProvider {
 	if id == "" {
 		if len(c.providers) == 0 {
 			return nil
 		}
 		return c.providers[0]
+	}
+	if isTenantProviderID(id) {
+		if c.mgr == nil {
+			return nil
+		}
+		return c.mgr.tenantIdP.providerFor(ctx, id)
 	}
 	return c.providerByID[id]
 }
@@ -203,7 +215,11 @@ func (c config) session(r *http.Request) (sessionClaims, bool) {
 // see oauth_github.go). Telling someone they are not allowed when they are is the
 // kind of message that generates a support ticket.
 func (c config) sessionAllowed(ctx context.Context, claims sessionClaims) (bool, string) {
-	p := c.providerByID[claims.provider()]
+	// A tenant-defined provider goes through the registry, so suspending one (or
+	// letting an edit send it back to pending) ends its sessions within the cache
+	// TTL instead of waiting out AF_SESSION_TTL — the same offboarding property the
+	// allowlist re-check gives env providers.
+	p := c.providerFor(ctx, claims.provider())
 	if p == nil {
 		return false, "forbidden"
 	}
@@ -357,10 +373,16 @@ func (c config) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := sanitizeTenantSlug(r.URL.Query().Get("tenant"))
-	p := c.providerFor(strings.TrimSpace(r.URL.Query().Get("provider")))
+	p := c.providerFor(r.Context(), strings.TrimSpace(r.URL.Query().Get("provider")))
 	if p == nil {
 		loginRedirect(w, r, "provider", tenant)
 		return
+	}
+	// A tenant-defined provider belongs to exactly one department, so carry ITS slug
+	// rather than whatever the query said: an error then goes back to the page the
+	// button actually lives on, and the post-login hint preselects the right tenant.
+	if slug, _, ok := parseTenantProviderID(p.ID()); ok {
+		tenant = slug
 	}
 	next := sanitizeNext(r.URL.Query().Get("next"))
 	nonce := randHex(16)
@@ -415,7 +437,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// The state cookie is signed, but still resolve its provider id against the
 	// configured set before branching on it (決定 8) — a provider that was
 	// removed from the config must not keep serving callbacks.
-	p := c.providerFor(st.Prov)
+	p := c.providerFor(r.Context(), st.Prov)
 	if p == nil {
 		loginRedirect(w, r, "provider", tenant)
 		return
@@ -445,9 +467,18 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, "forbidden", tenant)
 		return
 	}
+	isNew, err := c.linkAfterLogin(r.Context(), pr)
+	if errors.Is(err, errIdentityClaimed) {
+		// A tenant-defined provider asserted an address that already belongs to an
+		// account somebody has signed in as (docs/61 §61.11 rule 2'). No session is
+		// issued: the remedy is to sign in the way that account already signs in.
+		log.Printf("oauth: provider %s: refusing %s — the address belongs to an existing account", pr.Provider, pr.Email)
+		loginRedirect(w, r, "email_taken", tenant)
+		return
+	}
 	c.issueSession(w, pr)
 	next := withTenantHint(sanitizeNext(st.Next), tenant)
-	if c.newAccountAfterLogin(r.Context(), pr) {
+	if isNew {
 		c.writeNewAccountPage(w, r, pr, next)
 		return
 	}
@@ -477,29 +508,51 @@ func withTenantHint(next, tenant string) string {
 	return u.String()
 }
 
-// newAccountAfterLogin binds the (provider, subject) that just signed in to a
-// person and reports whether that created a NEW identity — i.e. whether this
-// login landed in a different workspace from one the person may already have
-// (docs/61 §61.5 の 3 行目).
+// linkAfterLogin binds the (provider, subject) that just signed in to a person and
+// reports whether that created a NEW identity — i.e. whether this login landed in a
+// different workspace from one the person may already have (docs/61 §61.5 の 3 行目).
 //
 // Binding here rather than leaving it to the first API request is what makes the
 // answer available at all: by the next request the row exists and the login is no
-// longer new. It runs only where more than one sign-in button exists — with a
-// single IdP a new identity just means a new colleague, and the notice would be
-// noise on every deployment that predates this feature (受入条件 6).
-func (c config) newAccountAfterLogin(ctx context.Context, p principal) bool {
-	if len(c.providers) < 2 || c.mgr == nil || c.mgr.store == nil {
-		return false
+// longer new. For an env provider it runs only where more than one sign-in button
+// exists — with a single IdP a new identity just means a new colleague, and the
+// notice would be noise on every deployment that predates this feature (受入条件 6).
+//
+// ★ For a TENANT-DEFINED provider it always runs, whatever the button count, because
+// this is also where that login can be REFUSED: rule 2' returns errIdentityClaimed
+// for an address that belongs to an existing account, and the caller must hear about
+// it before a session cookie is written. Leaving it to the first API request would
+// mean issuing the session and then failing every request with a 403 nobody can act
+// on.
+//
+// ★ roleHint is suppressed for tenant-defined providers (決定 31): SUPER_ADMIN_EMAILS
+// is matched on the email alone, and a subsidiary's IdP must not be able to hand out
+// the deployment role by asserting the operator's address. The same suppression is
+// applied again in upsertIdentity, which is the choke point for every OTHER path.
+func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
+	if c.mgr == nil || c.mgr.store == nil {
+		return false, nil
+	}
+	tenantDefined := isTenantProviderID(p.Provider)
+	if len(c.providers) < 2 && !tenantDefined {
+		return false, nil
+	}
+	roleHint := c.mgr.roleHintFor(p.Email)
+	if tenantDefined {
+		roleHint = ""
 	}
 	_, isNew, err := c.mgr.store.LinkIdentity(ctx, p.Provider, p.Subject, p.Email,
-		sanitizeUser(p.Email), c.mgr.roleHintFor(p.Email))
-	if err != nil {
+		sanitizeUser(p.Email), roleHint, !tenantDefined)
+	switch {
+	case errors.Is(err, errIdentityClaimed):
+		return false, err
+	case err != nil:
 		// Not fatal to the login: the next request resolves the identity the usual
 		// way. Only the notice is lost.
 		log.Printf("oauth: link %s/%s: %v", p.Provider, p.Subject, err)
-		return false
+		return false, nil
 	}
-	return isNew
+	return isNew, nil
 }
 
 // writeNewAccountPage is the one page between a login that created a new account
@@ -640,7 +693,7 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"{{TITLE}}", html.EscapeString(title),
 		"{{NOTE}}", note,
 		"{{ERROR}}", loginErrorBlock(r.URL.Query().Get("error"), lang),
-		"{{BUTTONS}}", c.loginButtons(sanitizeNext(r.URL.Query().Get("next")), lang, slug, rules.AllowedProviders),
+		"{{BUTTONS}}", c.loginButtons(r.Context(), sanitizeNext(r.URL.Query().Get("next")), lang, slug, rules.AllowedProviders),
 	).Replace(loginPageHTML)
 	_, _ = w.Write([]byte(page))
 }
@@ -651,13 +704,24 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 // ★ The narrowing is cosmetic. The same rule is enforced again at tenant
 // resolution (resolver.go), because a person can always go to the generic /login
 // and press whichever button they like (決定 14).
-func (c config) loginButtons(next, lang, tenant string, allowed []string) string {
-	if len(c.providers) == 0 {
+//
+// ★ A tenant's OWN providers (docs/61 §61.11) are appended only when a slug was
+// named — /login/<slug>. On the generic page the full list would be a directory of
+// the group's subsidiaries, readable by anyone who can reach the login (決定 32-4).
+// They come last: the department's own button belongs next to the deployment-wide
+// ones, and an operator who wants only that button says so in allowed_providers.
+func (c config) loginButtons(ctx context.Context, next, lang, tenant string, allowed []string) string {
+	providers := c.providers
+	if tenant != "" && c.mgr != nil {
+		providers = append(append([]loginProvider(nil), providers...),
+			c.mgr.tenantIdP.providersForSlug(ctx, tenant)...)
+	}
+	if len(providers) == 0 {
 		return `<div class="err">` + loginText[lang].errUnconfigured + `</div>`
 	}
 	var b strings.Builder
 	shown := 0
-	for _, p := range c.providers {
+	for _, p := range providers {
 		if !providerInList(allowed, p.ID()) {
 			continue
 		}
@@ -720,6 +784,8 @@ func loginErrorBlock(code, lang string) string {
 		msg = t.errReauth
 	case "provider":
 		msg = t.errProvider
+	case "email_taken":
+		msg = t.errEmailTaken
 	default:
 		return ""
 	}
@@ -755,6 +821,9 @@ type loginStrings struct {
 	errUnconfigured, errReauth                       string
 	// Per-tenant login page (docs/61 §61.9.3). tenantNote takes the tenant name.
 	tenantNote, errTenantNoProvider string
+	// errEmailTaken: a tenant-defined provider asserted an address that already
+	// belongs to an account on this deployment (docs/61 §61.11 rule 2').
+	errEmailTaken string
 	// The new-account notice (docs/61 受入条件 3). newBody takes the email.
 	newTitle, newBody, newNote, newContinue, newSwitch string
 }
@@ -774,6 +843,8 @@ var loginText = map[string]loginStrings{
 		tenantNote:      "%s のサインインページです。アクセスは許可されたアカウントに限定されています。",
 		errTenantNoProvider: "このテナントに設定されたサインイン方法は、現在このデプロイでは利用できません。" +
 			"管理者に連絡してください。",
+		errEmailTaken: "このメールアドレスは、すでにこのデプロイの別のサインイン方法で使われています。" +
+			"いつも使っているサインイン方法でログインしてください。",
 		newTitle: "Agent Fleet — 新しいアカウント",
 		newBody: "%s でサインインしました。このメールアドレスはこのデプロイで使われたことがないため、" +
 			"<b>新しいワークスペース</b>を作成しました。以前から使っているワークスペースがある場合、" +
@@ -797,6 +868,8 @@ var loginText = map[string]loginStrings{
 		tenantNote:      "Sign-in page for %s. Access is limited to allowed accounts.",
 		errTenantNoProvider: "The sign-in methods configured for this tenant aren't available on this " +
 			"deployment. Please contact your administrator.",
+		errEmailTaken: "This email address is already used by another sign-in method on this deployment. " +
+			"Please sign in the way you normally do.",
 		newTitle: "Agent Fleet — New account",
 		newBody: "You signed in as %s. That address hasn't been used on this deployment, " +
 			"so a <b>new workspace</b> was created. A workspace you already had is not " +

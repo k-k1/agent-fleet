@@ -132,6 +132,33 @@ Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）
   `forbidden` ではなく **`reauth`（再ログイン要求・API には 401）** を返す。fail-closed は
   保ったまま、事実と違う「許可されていません」を出さないための区別。
 
+**テナント定義のサインイン方法**（[61](../61-login-idp.md) §61.11 P4）。子会社ごとに Entra が違う
+場合に、IdP の定義そのものをテナントが持てる（`tenant_idp`）。env の provider と決定的に違うのは
+**誰が有効化するか**で、そこが安全性の全体を支えている:
+
+- **書くのは tenant_admin、`active` にできるのは super_admin だけ**（決定 30）。IdP の登録は
+  「誰であるかを宣言する」権限で、`user_key` もデプロイ役割も **email をキーにデプロイ全体で 1 つ**
+  なので、自分の支配下の IdP を単独で有効化できると情シスの email を名乗るトークンを自分で発行できる。
+  `trust: issuer` は防波堤にならない（issuer が攻撃者自身）。悪意が無くても、セルフサインアップ有効な
+  Auth0 テナントを善意で登録した瞬間にデプロイ全体が開く。
+- 承認前は**ログイン画面にボタンも出ず、callback もセッションも通らない**（レジストリが active 行しか
+  返さない）。`issuer` / `client_id` / `trust` の変更、許可ドメイン・tid の**拡大**で `pending` へ戻る。
+  停止（`suspended`）は tenant_admin も打てる。承認と停止は監査に残る（`tenant_idp.*`）。
+- **provider id は `t:<tenant-slug>:<name>`** と名前空間を分ける（決定 33）。混ぜるとテナントが
+  `google` という行を作って env の Google を上書きできる。
+- **デプロイ役割は取れない**（決定 31）: `roleHintFor` はテナント定義 provider のログインでは効かない。
+  `UpsertIdentity` が never downgrade である以上、ここを抜かれると不正 provider を消しても role が残る。
+- **email 一致で既存 identity へ結合しない**（決定 32）。一度もサインインされていない identity
+  （招待の placeholder）だけを claim し、ログイン実績のあるアドレスは**拒否**する。
+- **入口の門は行の `allowed_domains`（必須）だけ**で、デプロイ共通の許可リストにも他テナントの
+  名簿にもフォールバックしない。ドメインは**1 ドメイン 1 テナント**で、これがその issuer の
+  名乗ってよいアドレスの範囲を縛る。`allowed_tids` は issuer が `common` / `organizations` のとき必須。
+- **セッションは自テナントにしか入れない**（`t:<slug>:` の prefix をテナント解決時に突合）。
+- `client_secret` は**テナント鍵で封印して DB**（`custodian.Wrap`・AES-256-GCM・AAD=keyRef。
+  `mcp_server.headers_enc` と同形）。UI へは返さず、更新時に空なら既存値を維持し、
+  **復号不能は空にせず明示エラー**。★ 秘密が `DATA_DIR` に入るので、**`AF_MASTER_KEY` を
+  データ領域の外に置く**既存ルールの重みが増す（§7.6・バックアップ運用）。
+
 認可は [05 §5.4](05-api-contracts.md): 自分のリソースのみ + membership 検証、admin は role gate
 （super_admin=デプロイ全体 / tenant_admin=自テナント）。role の階層は `identity.role` と
 `membership.role` の 2 段（[06 §6.2](06-data-model.md)）。
