@@ -65,7 +65,8 @@ tar xzf agent-fleet-0.1.0.tar.gz && cd agent-fleet-0.1.0
 ./load-images.sh ~/agent-fleet-images-0.1.0.tar.gz    # or: gunzip|docker load
 cp .env.example .env
 #   set DATA_DIR=/srv/agent-fleet/data, DOCKER_GID=$(getent group docker|cut -d: -f3),
-#   PUBLIC_DOMAIN / PUBLIC_BASE_URL=https://<Fqdn>, GOOGLE_OAUTH_*, AF_COOKIE_SECRET,
+#   PUBLIC_DOMAIN / PUBLIC_BASE_URL=https://<Fqdn>, the login IdP (GOOGLE_OAUTH_*
+#   and/or AF_OIDC_PROVIDERS + AF_OIDC_<ID>_*), AF_COOKIE_SECRET,
 #   AF_MASTER_KEY (generate!), AF_OAUTH_ALLOWED_DOMAINS, SUPER_ADMIN_EMAILS
 sudo mkdir -p /srv/agent-fleet/data && sudo chown 1000:1000 /srv/agent-fleet/data
 docker compose up -d
@@ -73,8 +74,8 @@ docker compose logs -f caddy control-plane
 ```
 
 Caddy obtains a real Let's Encrypt cert for `<Fqdn>` (ports 80/443 are open).
-Register `https://<Fqdn>/oauth2/callback` in the Google OAuth client, then open
-`https://<Fqdn>` and sign in.
+Register `https://<Fqdn>/oauth2/callback` in the login IdP's client (that one URI
+serves every provider you enable), then open `https://<Fqdn>` and sign in.
 
 ## 4. Tear down (removes EVERYTHING in the stack)
 
@@ -101,8 +102,8 @@ deleted with the stack.
 > (Or grant the deploying user `ssm:PutParameter`/`ssm:DeleteParameter` on
 > `/ec2/keypair/*` to avoid it entirely.)
 
-Also delete the throwaway **Google OAuth client** in Google Cloud Console — its
-secret was used during testing.
+Also delete the throwaway **login IdP client** (the Google Cloud Console OAuth
+client, or the Entra/Okta/… app registration) — its secret was used during testing.
 
 ## Notes
 

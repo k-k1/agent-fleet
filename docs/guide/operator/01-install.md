@@ -17,7 +17,8 @@ Before starting the build-out, confirm you have the 4 items listed under "Prereq
 - A Linux host running Docker Engine + `docker compose`.
 - A public domain and DNS A/AAAA records pointing at this host (for TLS). For internal-only
   deployments, see the decision in §4.
-- A Google OAuth 2.0 web client (created in §3).
+- A login IdP client (created in §3): a Google OAuth 2.0 web client, or an OIDC app
+  registration at Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab.
 - Claude seats are brought by each member later, so they are not needed at build time.
 
 ## 1. Prepare the configuration file
@@ -29,7 +30,7 @@ The meaning of each variable, generation steps, and annotations are described in
 [dev/09 §9.4](../../dev/09-deploy.md).
 
 The main values you must fill in at build time are the public URL (`PUBLIC_DOMAIN` /
-`PUBLIC_BASE_URL`), the Google OAuth client ID/secret, the login allowlist
+`PUBLIC_BASE_URL`), your login IdP's client ID/secret, the login allowlist
 (`AF_OAUTH_ALLOWED_DOMAINS`, etc.), the initial administrators (`SUPER_ADMIN_EMAILS`), the data
 storage location (`DATA_DIR`), and the 2 secrets (next section).
 
@@ -52,24 +53,60 @@ In addition, set the `DOCKER_GID` used by the CP to match the host's docker grou
 find the value is in the runbook). Getting this wrong results in permission denied on the docker
 socket after startup ([04](04-troubleshooting.md)).
 
-## 3. Configure Google OAuth
+## 3. Configure the login IdP
 
-Create an OAuth client ID (web application) in the Google Cloud Console, and register the
-following as an **authorized redirect URI**.
+Register the following as an **authorized redirect URI** at your IdP. You register this **one
+URI** no matter how many providers you enable.
 
 ```
 https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
 This path must match `<PUBLIC_BASE_URL>/oauth2/callback`. If they diverge, you get
-"redirect URI mismatch" at login (a common failure — [04](04-troubleshooting.md)). Put the issued
-client ID/secret into `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` in `.env`. Detailed
-steps are in the runbook's "Google OAuth setup" section.
+"redirect URI mismatch" at login (a common failure — [04](04-troubleshooting.md)).
 
-Note: for Console login authentication (L1), the CP itself performs Google OAuth
+**Google** — create an OAuth client ID (web application) in the Google Cloud Console and put the
+issued client ID/secret into `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` in `.env`.
+
+**Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab** — register a confidential
+web app at the IdP, then list it in `.env`:
+
+```sh
+AF_OIDC_PROVIDERS=entra
+AF_OIDC_ENTRA_ISSUER=https://login.microsoftonline.com/<tenant-guid>/v2.0
+AF_OIDC_ENTRA_CLIENT_ID=<application-client-id>
+AF_OIDC_ENTRA_CLIENT_SECRET=<client-secret-value>
+AF_OIDC_ENTRA_TRUST=issuer
+AF_OIDC_ENTRA_LABEL_JA=Microsoft でサインイン
+AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
+```
+
+Two things about that block are worth reading before you copy it:
+
+- **`_TRUST` has no default, on purpose.** It records *why* this IdP's email address may be
+  believed, because the allowlist is written in email addresses. `email_verified` accepts only
+  addresses the IdP itself marks as verified (Google, and most Okta / Keycloak / Auth0 setups);
+  `issuer` says the issuer is pinned to a single tenant, so that directory's addresses are
+  authoritative. **Entra ID never emits `email_verified`**, so `issuer` is the value there.
+  A provider with no `_TRUST` is disabled at startup rather than guessed at.
+- **Pin the Entra issuer to your own tenant GUID.** If you use the `/common/` or
+  `/organizations/` endpoint, everyone on earth with a Microsoft account reaches your login
+  screen — and a personal Microsoft account can change its own email address, which would make
+  the allowlist meaningless. The CP refuses to start on those endpoints unless
+  `AF_OIDC_ENTRA_ALLOWED_TIDS` names the tenants you accept.
+
+List several ids (`AF_OIDC_PROVIDERS=entra,okta`) to offer several buttons; the login page shows
+one button per enabled provider, and with a single provider it looks exactly as it does today.
+A provider whose settings are incomplete is disabled with a warning in the CP log — one broken
+IdP never locks the whole company out — and the CP only refuses to start when no provider at all
+is usable. Detailed steps are in the runbook's "Login IdP setup" section.
+
+Note: for Console login authentication (L1), the CP performs the OAuth/OIDC flow itself
 (`AUTH=oauth`, the default). Companies that put an existing authentication gateway
 (oauth2-proxy / ALB OIDC, etc.) in front can choose `AUTH=proxy` (delegating email
-identification to upstream headers). How this works is in [dev/07 §7.3](../../dev/07-security.md).
+identification to upstream headers) — **this is also the answer for a SAML-only IdP**
+(HENNGE One / TrustLogin / CloudGate and the like): bridge it with oauth2-proxy or Keycloak.
+How this works is in [dev/07 §7.3](../../dev/07-security.md).
 The GitHub/Bitbucket integration OAuth is optional — everything works with token pasting even
 without it, so you can skip it during initial setup.
 

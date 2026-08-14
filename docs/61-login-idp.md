@@ -1,6 +1,6 @@
 # 61. ログイン IdP — Google 固定から「汎用 OIDC ＋ GitHub」へ
 
-> 状態: **設計・未実装**（2026-08-14）
+> 状態: **P0 実装済み**（2026-08-14）／P1・P2・P3 は未着手
 > 意思決定: [decisions/0043](decisions/0043-login-idp.md)
 > 関連: [dev/07-security.md](dev/07-security.md) §7.3（AUTH 3 モード＝現行契約） /
 > [dev/06-data-model.md](dev/06-data-model.md)（`identity` / `membership`） /
@@ -171,6 +171,27 @@ type principal struct {
   署名検証なしで読む**。これが許されるのは「同一 TLS レスポンス由来」だからで、
   **フロントチャネル（implicit / form_post）で id_token を受ける経路を将来足すなら JWKS 検証が必須**になる。
   この前提を `oauth_oidc.go` の先頭コメントに固定する。
+
+### 実装メモ（P0 で実際にこうした）
+
+設計から動かなかった点は無いが、書いていなかった判断が 5 つある。
+
+- **Google は discovery を引かない。** エンドポイント 3 本を静的に seed した（従来の定数のまま）。
+  受入条件 6 を「設定を変えずに動く」だけでなく「**通信要件も増やさない**」まで満たすため
+  （egress 制限のあるデプロイで `.well-known` が引けずログイン不能、を作らない）。
+  他の provider は discovery を**遅延実行＋24h キャッシュ**にした。起動時に引くと
+  IdP の可用性が CP の起動条件になってしまう。
+- **discovery の issuer 一致は検証するが、`{tenantid}` テンプレートだけ例外**にした。
+  Entra のマルチテナント文書は issuer に literal `{tenantid}` を返すため。その構成は
+  そもそも `ALLOWED_TIDS` 必須（決定 7）で、実質の担保はそちら。
+- **userinfo の失敗ではログインを落とさない**。同じトークンレスポンスに入っている id_token が
+  同等に信頼できる出所だから（決定 9 と同じ論拠）。email は
+  userinfo → id_token の `email` → `preferred_username` → `upn` の順で採る（Entra の userinfo は
+  email を返さないことがある）。`email_verified` を文字列 `"true"` で返す IdP も受ける。
+- **`tid` 不一致は "denied" ではなく "forbidden"** を出す（内部的には `errNotAllowed` 番兵）。
+  利用者に見える意味が「キャンセルされた」ではなく「許可されていない」だから。
+- **issuer は https 必須、ただしループバックのみ http を許す**（ローカルの Keycloak / Dex 用）。
+  http のときは起動ログに警告を出す。
 
 ### ログイン画面
 
@@ -595,7 +616,7 @@ super_admin が毎日の運用に出てくるのは、部署テナントの新�
 
 | 段階 | 内容 | スキーマ変更 |
 |------|------|------------|
-| **P0** | プロバイダ抽象 ＋ 汎用 OIDC（Entra / Okta / Keycloak / Auth0 / Cognito）。Google を同実装の 1 インスタンスへ移す。ログイン画面の複数ボタン・`sessionClaims` 拡張（`prov` / `sub`）・設定と文書 | 無し |
+| **P0**（実装済み）| プロバイダ抽象 ＋ 汎用 OIDC（Entra / Okta / Keycloak / Auth0 / Cognito）。Google を同実装の 1 インスタンスへ移す。ログイン画面の複数ボタン・`sessionClaims` 拡張（`prov` / `sub`）・設定と文書 | 無し |
 | **P1** | `identity_provider` テーブルと解決規則（§61.5）。Console の「アカウントを追加」導線 | `0031` |
 | **P2** | GitHub アダプタ（org 判定・TTL キャッシュ・猶予） | 無し |
 | **P3** | テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・入口の門に membership を含める・`auto_join_domains` / `allowed_domains`・admin 編集 UI・`provider_required` の再サインイン導線。★ **membership の削除／無効化 API**（§61.10.6）と **`super_admin` のブートストラップ**（§61.10.2）を含む | `0032` |

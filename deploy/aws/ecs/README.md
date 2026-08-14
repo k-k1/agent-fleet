@@ -58,7 +58,8 @@ platform changes:
 
 ### 30-ingress stand-up (milestone: CP boots + Google login)
 
-Auth is **CP-native Google OAuth** (`AUTH=oauth`); the ALB only terminates TLS.
+Auth is the **CP-native login** (`AUTH=oauth`) — Google and/or any OIDC IdP
+(Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab); the ALB only terminates TLS.
 The CP stores its state in RDS Postgres and workspaces mount EFS — both wired
 from `10-data`'s exports, so that stack must already be up. Prerequisites:
 
@@ -76,12 +77,15 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
      --name /af-cp/cookie-secret       --value "$(openssl rand -hex 32)"
    aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
      --name /af-cp/master-key          --value "$(openssl rand -hex 32)"
+   # one of these two, or both — only the IdPs you enable are wired in
    aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
      --name /af-cp/google-client-secret --value "<GOOGLE_OAUTH_CLIENT_SECRET>"   # your terminal, not shared
+   aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
+     --name /af-cp/oidc-client-secret   --value "<AF_OIDC_<ID>_CLIENT_SECRET>"
    ```
-3. **Google OAuth client**: add `https://<your-fqdn>/oauth2/callback` to the
-   client's Authorized redirect URIs. Pass the fqdn/zone + client id +
-   allowed/super-admin emails as parameters at deploy:
+3. **The IdP client**: add `https://<your-fqdn>/oauth2/callback` to its Authorized
+   redirect URIs — that single URI serves every provider you enable. Pass the
+   fqdn/zone + client id + allowed/super-admin emails as parameters at deploy:
    ```bash
    aws cloudformation deploy --stack-name af-ecs-ingress \
      --template-file cfn/30-ingress.yaml \
@@ -90,6 +94,21 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
        AllowedEmails=you@example.com SuperAdminEmails=you@example.com \
      --profile af-sandbox --region $RG
    ```
+   For a Microsoft Entra ID (or Okta / Keycloak / …) deployment, swap
+   `GoogleClientId` for the `Oidc*` parameters (docs/61) — leaving `GoogleClientId`
+   empty is fine, Google is then simply not offered:
+   ```bash
+     --parameter-overrides OidcProviderId=ENTRA \
+       OidcIssuer=https://login.microsoftonline.com/<tenant-guid>/v2.0 \
+       OidcClientId=<application-client-id> OidcTrust=issuer \
+       OidcLabelJa="Microsoft でサインイン" OidcLabelEn="Sign in with Microsoft" \
+       Fqdn=af.example.com HostedZoneId=<your-zone-id> \
+       AllowedDomains=example.co.jp SuperAdminEmails=you@example.co.jp
+   ```
+   ★ Pin `OidcIssuer` to your tenant guid. With the `/common/` or `/organizations/`
+   endpoint every Microsoft account in the world reaches the login, and personal
+   accounts can rewrite their own email — the CP refuses to start on those unless
+   `OidcAllowedTids` is set.
    ACM DNS validation and the Route53 alias are automated (the hosted zone must be
    in this account); cert issuance adds a few minutes to the first deploy.
    Versioned (release) images add `ImageTag=<v>` to the overrides — the default

@@ -13,7 +13,8 @@
 
 - Docker Engine + `docker compose` が動く Linux ホスト。
 - 公開ドメインと、このホストを指す DNS の A/AAAA レコード（TLS 用）。社内限定なら §4 の判断を参照。
-- Google OAuth 2.0 Web クライアント（§3 で作成）。
+- ログイン用 IdP のクライアント（§3 で作成）。Google OAuth 2.0 Web クライアント、または
+  Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab の OIDC アプリ登録。
 - Claude シートは各メンバーが後から持ち込むので、構築時点では不要です。
 
 ## 1. 設定ファイルを用意する
@@ -23,7 +24,7 @@
 [.env.example](../../../deploy/compose/.env.example) 自体に詳しく書いてあります。索引が欲しいときは
 [dev/09 §9.4](../../dev/09-deploy.md) を参照してください。
 
-構築時に必ず埋める主なものは、公開 URL（`PUBLIC_DOMAIN` / `PUBLIC_BASE_URL`）、Google OAuth の
+構築時に必ず埋める主なものは、公開 URL（`PUBLIC_DOMAIN` / `PUBLIC_BASE_URL`）、ログイン IdP の
 クライアント ID/シークレット、ログイン許可リスト（`AF_OAUTH_ALLOWED_DOMAINS` など）、初期管理者
 （`SUPER_ADMIN_EMAILS`）、データ保管先（`DATA_DIR`）、そして 2 つの秘密（次節）です。
 
@@ -44,24 +45,61 @@ base64 化）は runbook の "Quick start" に載っています。
 あわせて、CP が使う `DOCKER_GID` をホストの docker グループ GID に合わせます（値の求め方は
 runbook）。これを間違えると起動後に docker ソケットで permission denied になります（[04](04-troubleshooting.ja.md)）。
 
-## 3. Google OAuth を設定する
+## 3. ログイン IdP を設定する
 
-Google Cloud Console で OAuth クライアント ID（Web アプリケーション）を作成し、**承認済みリダイレクト
-URI** に次を登録します。
+IdP 側の**承認済みリダイレクト URI** に次を登録します。有効にする provider が何個でも、
+登録するのは**この 1 本だけ**です。
 
 ```
 https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
 このパスは `<PUBLIC_BASE_URL>/oauth2/callback` と一致していなければなりません。ここがズレると
-ログイン時に "redirect URI mismatch" になります（よくある失敗・[04](04-troubleshooting.ja.md)）。発行された
-クライアント ID/シークレットを `.env` の `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` に
-入れます。手順の詳細は runbook の "Google OAuth setup" 節。
+ログイン時に "redirect URI mismatch" になります（よくある失敗・[04](04-troubleshooting.ja.md)）。
 
-補足: Console のログイン認証（L1）は CP 自身が Google OAuth を実行します（`AUTH=oauth`・既定）。
+**Google** — Google Cloud Console で OAuth クライアント ID（Web アプリケーション）を作成し、
+発行されたクライアント ID/シークレットを `.env` の `GOOGLE_OAUTH_CLIENT_ID` /
+`GOOGLE_OAUTH_CLIENT_SECRET` に入れます。
+
+**Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab** — IdP 側で機密クライアントの
+Web アプリを登録し、`.env` に次を書きます。
+
+```sh
+AF_OIDC_PROVIDERS=entra
+AF_OIDC_ENTRA_ISSUER=https://login.microsoftonline.com/<tenant-guid>/v2.0
+AF_OIDC_ENTRA_CLIENT_ID=<application-client-id>
+AF_OIDC_ENTRA_CLIENT_SECRET=<client-secret-value>
+AF_OIDC_ENTRA_TRUST=issuer
+AF_OIDC_ENTRA_LABEL_JA=Microsoft でサインイン
+AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
+```
+
+このうち 2 つは、コピーする前に読んでおく価値があります。
+
+- **`_TRUST` に既定値はありません（意図的です）。** 許可リストがメールアドレスで書かれている以上、
+  「その IdP のメールアドレスをなぜ信じてよいか」を宣言してもらう必要があるためです。
+  `email_verified` は IdP 自身が検証済みと言うアドレスだけを受理します（Google、多くの Okta /
+  Keycloak / Auth0）。`issuer` は issuer が単一テナントに固定済みなので、そのディレクトリの
+  アドレスを正とする、という意味です。**Entra ID は `email_verified` をそもそも出さない**ので、
+  Entra では `issuer` が正解です。`_TRUST` が無い provider は推測されず、起動時に無効化されます。
+- **Entra の issuer は自社のテナント GUID に固定してください。** `/common/` や
+  `/organizations/` のエンドポイントを使うと、**Microsoft アカウントを持つ全人類**がログイン画面に
+  立てます。しかも個人 Microsoft アカウントは自分の email を付け替えられるため、許可リストが
+  意味を失います。これらのエンドポイントでは、受け入れるテナントを
+  `AF_OIDC_ENTRA_ALLOWED_TIDS` に列挙しない限り CP は起動を拒否します。
+
+`AF_OIDC_PROVIDERS=entra,okta` のように複数列挙すればボタンも複数出ます。ログイン画面には有効な
+provider の数だけボタンが出て、1 つだけなら現行とまったく同じ見た目です。設定が不完全な provider
+は CP のログに警告を出して無効化されるだけで（1 つの IdP の設定ミスで全社が締め出されないため）、
+CP が起動を止めるのは**有効な provider が 1 つも無いとき**だけです。手順の詳細は runbook の
+"Login IdP setup" 節。
+
+補足: Console のログイン認証（L1）は CP 自身が OAuth/OIDC を実行します（`AUTH=oauth`・既定）。
 既存の認証ゲートウェイ（oauth2-proxy / ALB OIDC など）を前段に置く社は `AUTH=proxy` を選べます
-（メール識別を上流ヘッダに委ねる）。仕組みは [dev/07 §7.3](../../dev/07-security.md)。GitHub/Bitbucket
-の連携 OAuth は任意で、無くてもトークン貼り付けで動くため初期構築では省略できます。
+（メール識別を上流ヘッダに委ねる）。**SAML のみの IdP（HENNGE One / TrustLogin / CloudGate など）の
+正式な答えもこれ**で、oauth2-proxy や Keycloak でブリッジします。仕組みは
+[dev/07 §7.3](../../dev/07-security.md)。GitHub/Bitbucket の連携 OAuth は任意で、無くても
+トークン貼り付けで動くため初期構築では省略できます。
 
 ## 4. 判断ポイント
 
