@@ -42,7 +42,7 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
    **identity が 2 つ・home が 2 つ・secrets が別**になる。ユーザーからは「リポジトリが消えた」に見える。
    順番は **P0 汎用 OIDC → P1 リンク → P2 GitHub**。P0 だけで「Microsoft でログインしたい」は満たせる。
 4. **`user_key` は不変とし、`(provider, subject)` を横に足す。** 新テーブル `identity_provider`
-   （`0031`）を作り、`identity` 本体は触らない。`user_key` を `sub` ベースへ作り替える案は、
+   （`0038`）を作り、`identity` 本体は触らない。`user_key` を `sub` ベースへ作り替える案は、
    home ディレクトリ名なので**既存デプロイ全員のデータ移行**が要る上、`af-ws-<user>` が人に読めなくなる。
    既存デプロイの移行は初回ログイン時に `(google, sub)` 行を書くだけで済む（移行ゼロ）。
 5. **別 email の結合はログイン画面から行わない。** サインイン済みの状態で Console の
@@ -111,7 +111,7 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     `provider_required` を返し、**403 で終わらせず再ログインへ誘導**する（「このテナントには
     Microsoft でのサインインが必要です」）。複数 provider の同時保持は cookie を
     「認可状態の集合」にし、失効とオフボーディングの意味を曖昧にする。
-19. **テナント規則は env ではなく DB（`tenant` のカラム・`0032`）に置く。** テナントは実行時に増えるので
+19. **テナント規則は env ではなく DB（`tenant` のカラム・`0039`）に置く。** テナントは実行時に増えるので
     `AF_TENANT_<SLUG>_…` は必ずずれる。管理 API は既にある（`routes.go:129-137`）。
     毎リクエスト参照は短 TTL（30 秒）キャッシュ＋管理 API 書き込みで破棄。
     なお現行 `emailAllowed` は許可ファイル指定時に**毎リクエスト `os.ReadFile`**しており
@@ -236,7 +236,7 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - P3 で `authGate` の入口判定が membership を参照するようになる（決定 16）。招待運用のデプロイでは
   `AF_OAUTH_ALLOWED_*` を空にできるようになるので、**「空＝全拒否」の警告文
   （`main.go:283`）は「かつ membership も無い」まで含めた条件に直す**必要がある。
-- P3 で `tenant` に 3 カラム増える（`0032`）。`Tenant` 構造体（`store.go:15`）と
+- P3 で `tenant` に 3 カラム増える（`0039`）。`Tenant` 構造体（`store.go:15`）と
   `CreateTenant`（`store.go:364`）まわり、テナント管理 API と Console の管理 UI に編集面が要る。
 - P3 で `selectMembership`（`resolver.go:128`）にテナント規則と `prov` の突合が入り、
   戻り値のエラーコードに `provider_required` が増える。Console のテナント切替は
