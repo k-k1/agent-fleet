@@ -10,7 +10,14 @@
 //     two auto-margined children make flex split the free space EVENLY, stranding
 //     待機中/作業計画 mid-row.
 //
-// Both are pure cascade/geometry faults, so this needs a layout engine but no bundle,
+// The tabbed pane below carries BOTH `pane tabbed` and a .pane-tabs child, because
+// that is what Pane.tsx renders: the tabbed rules key on the .tabbed class, not on
+// :has(.pane-tabs) — a descendant :has() forces Chrome to re-test the subject on every
+// mutation inside the pane, and the terminal's DOM renderer mutates its rows every
+// frame (that cost 19 of 20 profiled seconds in Recalculate style). Drop `tabbed` here
+// and every check below fails, reporting fault 1 — the class IS the contract now.
+//
+// All of these are pure cascade/geometry faults, so this needs a layout engine but no bundle,
 // no CP and no agent: the page links the REAL stylesheets and measures in headless
 // Chromium over raw CDP (Node's global WebSocket — no Playwright/Puppeteer, same
 // technique as ../shots/capture.mjs).
@@ -160,7 +167,7 @@ ${sheets.map((p) => `<link rel="stylesheet" href="${pathToFileURL(p).href}">`).j
 ${kinds
   .map(
     ([kind, [rootClass, head]]) => `<div class="host" data-kind="${kind}">
-  <div class="pane active" style="--pane-ctl-n: 2">
+  <div class="pane tabbed active" style="--pane-ctl-n: 2">
     <div class="pane-tabs" role="tablist">
       <div class="pane-tab selected"><button type="button" role="tab"><span class="pane-tab-title">タブ1</span></button><button class="pane-tab-close">×</button></div>
       <div class="pane-tab"><button type="button" role="tab"><span class="pane-tab-title">タブ2</span></button><button class="pane-tab-close">×</button></div>

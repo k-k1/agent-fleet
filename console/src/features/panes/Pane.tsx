@@ -74,7 +74,7 @@ function EmptyPane({ cell, style, active, tabbed, canSplitRight, canSplitDown, c
   const tr = useT();
   return (
     <div
-      className={cx("pane", active && "active", ordinal ? ordClass(ordinal) : "")}
+      className={cx("pane", active && "active", tabbed && "tabbed", ordinal ? ordClass(ordinal) : "")}
       style={style}
       data-cell-id={cell.id}
       onMouseDownCapture={() => onActivate(cell.id)}
@@ -357,7 +357,7 @@ function PopulatedPane({
   return (
     <div
       ref={paneRef}
-      className={cx("pane", active && "active", zone && "droptarget", hovered && "pane-hover", ordCls)}
+      className={cx("pane", active && "active", tabbed && "tabbed", zone && "droptarget", hovered && "pane-hover", ordCls)}
       style={{ ...style, "--pane-ctl-n": ctlCount } as CSSProperties}
       data-pane-id={pane.id}
       data-cell-id={cell.id}
