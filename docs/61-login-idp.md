@@ -246,9 +246,11 @@ AF_GITHUB_MEMBERSHIP_GRACE=1h
 | テナント帰属は `AF_PROVISION` の 2 択のみ。`auto`＝既定テナントへ自動参加 / `invite`＝membership 無しは拒否 | `main.go:84`, `resolver.go:69` |
 | 実行時のテナント選択は `X-AF-Tenant`。非メンバーは 403 `forbidden_tenant`、複数所属で未指定は 409 | `httpapi.go:34`, `resolver.go:128-142` |
 | テナントの管理 API は既にある（list / create / limits） | `routes.go:129-137` |
+| ★ **テナント毎の「ログインできる ID の名簿」は既に存在する。** `POST /api/admin/memberships` は email（または user_key）で **未ログインの人の identity を先に作って** membership を張る＝招待そのもの | `tenants.go:254-293`, `routes.go:134` |
+| その招待 UI も既にある（設定 → 管理 → メンバー追加。email / user_key / role を送る） | `console/src/features/settings/AdminTab.tsx:1593` |
 
 つまり今は「**入口の門（デプロイ全体で 1 枚）**」と「**どのテナントに属するか（membership）**」が
-完全に分離していて、両者をつなぐ規則が無い。
+完全に分離していて、**両者をつなぐ規則だけが無い**。名簿の器は既に揃っている。
 
 ### 61.9.2 3 つの層を混ぜない（本節の要）
 
@@ -294,33 +296,51 @@ AF_GITHUB_MEMBERSHIP_GRACE=1h
   `/oauth2/login?provider=entra&tenant=b&next=…` へ誘導する。**「このテナントには Microsoft
   でのサインインが必要です」と画面に出す**（黙って 403 にしない）。
 
-### 61.9.5 email / ドメインの縛りは 2 種類ある（混同禁止）
+### 61.9.5 ★ 名簿は membership。テナント側に email リストを持たせない
 
-「テナント毎にログイン可能な email / ドメインを指定」は、実は**別々の 2 つの規則**を指している。
-1 フィールドで兼ねると必ずどちらかの要求を壊す。
+「テナント毎にログイン可能な ID を管理する」——これが本設計の中心で、**新しい台帳は要らない**。
+`membership` がその名簿そのもので、招待 API（`tenants.go:254`）が未ログインの人の identity を
+先に作れるようになっている。テナントに `allowed_emails` カラムを足すと、
+**同じ「誰が入れるか」を 2 箇所で管理する二重台帳**になり、必ずずれる。
 
-| | (A) `auto_join_domains` — 自動参加の規則 | (B) `allowed_domains` / `allowed_emails` — 制約 |
+したがってテナント側に持たせる規則は次の 2 つだけにする。
+
+| | `auto_join_domains` — 自動参加 | `allowed_domains` — 招待のガード |
 |---|---|---|
-| 意味 | 「`@sales.acme.co.jp` が来たら sales テナントへ入れる」 | 「sales テナントを使えるのは `@sales.acme.co.jp` だけ」 |
-| 効く相手 | **初回ログインの新規** | **既存メンバーにも毎回** |
-| 空のとき | 現行どおり（`auto`＝既定テナント / `invite`＝拒否） | 制約なし（membership だけで判断）＝**既定** |
+| 意味 | 「`@sales.acme.co.jp` が来たら sales へ自動で membership を作る」 | 「sales に招待してよいのは `@sales.acme.co.jp` だけ」 |
+| 効くとき | **初回ログイン時** | **membership 追加時（招待 API）** |
+| 目的 | 招待運用を省きたい小規模／単一テナント向けの省力化 | tenant_admin が自部署ドメイン外を勝手に足すのを防ぐ |
+| 空のとき | 現行どおり（`auto`＝既定テナント / `invite`＝拒否） | ガードなし＝**既定** |
 
-- (A) だけだと「一度入れば誰でも残る」（異動しても残る）。
-- (B) だけだと部署テナントに誰も自動で入れず、招待運用のままになる。
-- **(B) を単独で設定すると、招待した業務委託（別ドメイン）が締め出される。**
-  そのため (B) を設定するテナントでは、例外は `allowed_emails` に個別に足す運用にする。
-  (B) の既定は空（制約なし）とし、**入れたい会社だけが入れる**形にする。
+★ **`allowed_domains` を「毎リクエストの制約」にしない。** 制約にすると、正規に招待した
+業務委託（別ドメイン）が締め出され、それを救うために例外リスト（`allowed_emails`）が要り、
+結局二重台帳に戻る。**継続的な可否は membership が持つ**（外したい人は membership を消す＝
+現行の運用のまま）。`allowed_domains` は「誰を名簿に載せてよいか」の上限だけを縛る。
 
-### 61.9.6 入口の門は「和」にする
+★ **全社共通ドメインの会社ではこれが本命**になる。`@acme.co.jp` しか無ければ
+`auto_join_domains` では部署を分けられないが、名簿（membership）は最初からドメインに依存しない。
+このため **IdP のグループ（Entra の `groups` / GitHub の team）連携は必須ではなくなった**（§61.12）。
 
-入口の判定は **デプロイ全体の許可リスト ∪ 各テナントの (A)(B)**。
+★ **招待は email に紐づくので、GitHub 単独ログインとは噛み合わない。** `addMembership` は
+`sanitizeUser(email)` で identity を先に作る（`tenants.go:271-286`）。GitHub の登録 email が
+会社 email と違えば招待に一致せず、別 identity が生まれる。よって **GitHub を使う人の順序は
+「まず会社 IdP でログイン → Console で GitHub をリンク（§61.5）」**になる。ここでも P1 が P2 の前提。
+（副作用として、typo した email への招待は孤児 identity 行を残す。管理 UI から消せるようにする。）
 
-- 「積」（デプロイ全体にも載っていること）にすると、部署テナントを 1 つ足すたびに
-  デプロイ全体のリストにも同じドメインを足す**二重管理**になる。
+### 61.9.6 入口の門は「和」にし、そこに membership を含める
+
+入口の判定は **デプロイ全体の許可リスト ∪ 各テナントの `auto_join_domains` ∪ 「membership を持つこと」**。
+
+★ 最後の項が、いま欠けている接続そのもの。現状は招待されていても
+`AF_OAUTH_ALLOWED_*`（env）に載っていなければ `authGate` が入口で弾く。ここを繋ぐと
+**招待運用のデプロイでは env の許可リストが不要**になり、名簿が membership 1 箇所に寄る。
+
+- 「積」（デプロイ全体にも載っていること）にすると、招待するたびに env にも足す**二重管理**になる。
 - 和にしても危険が増えないのは、**入口を通ったことは「どこかに入れる」を意味しないから**
   （§61.9.2 のテナントの門が別にある）。どのテナントにも入れない人は、現行の
   `not_provisioned`（`resolver.go:69`）と同じ画面で止まる。
-- ★ **すべて空なら現行どおり全拒否**（fail-closed を維持）。
+- ★ **すべて空なら現行どおり全拒否**（fail-closed を維持）。membership も許可リストも
+  `auto_join_domains` も無ければ誰も入れない。
 
 ### 61.9.7 置き場は DB（env ではない）
 
@@ -329,10 +349,10 @@ admin から編集する。env に `AF_TENANT_<SLUG>_…` を生やす案は、�
 
 ```sql
 -- migrations/0032_tenant_login.sql（0031 は §61.5 の identity_provider）
-ALTER TABLE tenant ADD COLUMN allowed_providers  TEXT NOT NULL DEFAULT ''; -- CSV。空=デプロイの全 provider
-ALTER TABLE tenant ADD COLUMN auto_join_domains  TEXT NOT NULL DEFAULT ''; -- CSV。(A)
-ALTER TABLE tenant ADD COLUMN allowed_domains    TEXT NOT NULL DEFAULT ''; -- CSV。(B)
-ALTER TABLE tenant ADD COLUMN allowed_emails     TEXT NOT NULL DEFAULT ''; -- CSV。(B) の例外
+ALTER TABLE tenant ADD COLUMN allowed_providers TEXT NOT NULL DEFAULT ''; -- CSV。空=デプロイの全 provider
+ALTER TABLE tenant ADD COLUMN auto_join_domains TEXT NOT NULL DEFAULT ''; -- CSV。自動参加（§61.9.5）
+ALTER TABLE tenant ADD COLUMN allowed_domains   TEXT NOT NULL DEFAULT ''; -- CSV。招待時のガードのみ
+-- allowed_emails は作らない。「誰が入れるか」の名簿は membership が持つ（§61.9.5）
 ```
 
 実装注: 現行の `emailAllowed` は `AF_OAUTH_ALLOWED_EMAILS_FILE` 指定時に**毎リクエスト
@@ -340,11 +360,15 @@ ALTER TABLE tenant ADD COLUMN allowed_emails     TEXT NOT NULL DEFAULT ''; -- CS
 **DB 参照＋短 TTL（30 秒）のメモリキャッシュはこれより軽い**。管理 API の書き込みでキャッシュを
 破棄すれば「消したら即効く」性質も落ちない。
 
-### 61.9.8 自動参加の優先順位
+### 61.9.8 帰属の優先順位
 
-1. `auto_join_domains` に一致するテナントがある → **そのテナントへ membership 作成**。
-2. 一致なし ＋ `AF_PROVISION=invite` → `not_provisioned`（現行どおり）。
-3. 一致なし ＋ `auto` → 既定テナント（現行どおり）。
+1. **既に membership がある → それが正**（招待済み＝名簿に載っている人。§61.9.5）。
+2. 無く、`auto_join_domains` に一致するテナントがある → そのテナントへ membership 作成。
+3. どちらも無し ＋ `AF_PROVISION=invite` → `not_provisioned`（現行どおり）。
+4. どちらも無し ＋ `auto` → 既定テナント（現行どおり）。
+
+招待運用（部署分割）は 1 だけで回り、2 は使わなくてよい。逆に単一テナントの会社は
+2 だけで回り、招待画面を触らずに済む。
 
 同じドメインを 2 つのテナントが `auto_join_domains` に持つのは設定ミスなので、
 **管理 API の保存時に弾く**。それでも競合した場合は決定性のため slug 昇順の先頭を採る
@@ -362,7 +386,7 @@ ALTER TABLE tenant ADD COLUMN allowed_emails     TEXT NOT NULL DEFAULT ''; -- CS
 | **P0** | プロバイダ抽象 ＋ 汎用 OIDC（Entra / Okta / Keycloak / Auth0 / Cognito）。Google を同実装の 1 インスタンスへ移す。ログイン画面の複数ボタン・`sessionClaims` 拡張（`prov` / `sub`）・設定と文書 | 無し |
 | **P1** | `identity_provider` テーブルと解決規則（§61.5）。Console の「アカウントを追加」導線 | `0031` |
 | **P2** | GitHub アダプタ（org 判定・TTL キャッシュ・猶予） | 無し |
-| **P3** | テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・(A)(B) 規則・admin 編集 UI・`provider_required` の再サインイン導線 | `0032` |
+| **P3** | テナント毎のログイン（§61.9）: `/login/<slug>`・`allowed_providers` の強制・入口の門に membership を含める・`auto_join_domains` / `allowed_domains`・admin 編集 UI・`provider_required` の再サインイン導線 | `0032` |
 
 - **P1 を P2 より先に置くのが本設計の要点**。GitHub は email 不一致が常態なので、リンク機構なしに
   出すと §61.5-1 の workspace 分裂を必ず起こす。
@@ -391,8 +415,13 @@ ALTER TABLE tenant ADD COLUMN allowed_emails     TEXT NOT NULL DEFAULT ''; -- CS
   テナントの門はサーバ側の membership ＋ 規則だけで判定する（§61.9.2）。
 - **テナント規則を `authGate` に置く。** 「どのテナントで判定するか」が決まらないので、
   穴か過剰拒否のどちらかになる。入口とテナントで層を分ける（§61.9.2）。
-- **(A) 自動参加と (B) 制約を 1 つのドメインリストで兼ねる。** 設定は 1 個で済むが、
-  「異動しても残る」か「招待した業務委託が締め出される」のどちらかを必ず起こす（§61.9.5）。
+- ★ **テナントに `allowed_emails` カラムを持たせる。** 「テナント毎にログインできる ID を管理する」の
+  最も素直な実装だが、**membership が既に同じ名簿**（招待 API は未ログインの人の identity も作れる・
+  `tenants.go:254`）なので、同じ事実を 2 箇所で管理する二重台帳になる（§61.9.5）。
+- **`allowed_domains` を毎リクエストの制約にする。** 正規に招待した業務委託（別ドメイン）が
+  締め出され、例外リストが要り、結局二重台帳に戻る。招待時のガードに留める（§61.9.5）。
+- **`auto_join_domains` を唯一の帰属手段にする。** 全社共通ドメイン（`@acme.co.jp` だけ）の会社では
+  部署を分けられない。名簿はドメインに依存しない membership が持つ（§61.9.5）。
 - **テナント規則を env（`AF_TENANT_<SLUG>_…`）に置く。** テナントは実行時に増えるので必ずずれる。
   管理 API のある DB 側に置く（§61.9.7）。
 - **セッションに複数 provider を同時に持たせる。** テナント間移動の再ログインは消えるが、
@@ -403,10 +432,12 @@ ALTER TABLE tenant ADD COLUMN allowed_emails     TEXT NOT NULL DEFAULT ''; -- CS
 - Console のアカウント連携 UI をどのグループに置くか（設定モーダルの IA・[settings-modal](../docs/README.md) 参照の再編と衝突しないか）。
 - `audit.go` に provider を残すか（監査上は残したいが、DTO を広げる前に既存カラムから導出できないか確認する）。
 - `SUPER_ADMIN_EMAILS`（`main.go:85`・email ベース）を provider 付きにするか。当面は email のままで足りる。
-- IdP 側のグループ（Entra の `groups` / GitHub の team）を tenant / role へ自動マッピングするか。
-  §61.9 の `auto_join_domains` の次の段。ドメインは部署を表さないことも多い（全社共通ドメインの会社では
-  §61.9.5-(A) が機能しない）ので、部署分割を本気でやるならここまで要る。現状は membership を
-  CP 側で持つ設計（[dev/06](dev/06-data-model.md)）。
+- IdP 側のグループ（Entra の `groups` / GitHub の team）を tenant へ同期するか。
+  **必須ではなくなった**（§61.9.5 で名簿＝membership に寄せたため、全社共通ドメインの会社でも
+  部署分割は成立する）。残るのは**異動の自動追従**という利便性だけで、入れると
+  「membership が正」という単一の正が崩れて同期の衝突を扱うことになる。当面は入れない。
+  入れるとしても、membership を上書きするのではなく**管理画面に差分を出して人が承認する**形にする。
+  なお Entra の `groups` クレームには overage（数が多いと Graph 参照に化ける）があり、実装は見た目より重い。
 - テナントの門で弾いた理由（規則違反 / provider 不一致 / 非メンバー）を、本人にどこまで見せるか。
   `provider_required` は見せないと再ログインに誘導できないが、`allowed_domains` 違反を詳細に見せると
   他部署のドメイン構成が漏れる。
