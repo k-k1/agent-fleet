@@ -1,10 +1,7 @@
 package claude
 
 import (
-	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -85,18 +82,11 @@ func adjustWindow(pct float64, windowMin int, resetEpoch int64, now time.Time) *
 
 // oauthToken reads the subscription OAuth access token from the credentials file claude
 // maintains under its config dir. "" when absent. Used only as the "signed in" signal
-// for the chip — we no longer call any usage endpoint with it.
+// for the chip — we no longer call any usage endpoint with it. The file itself is read
+// (and stat-cached) by authexpiry.go, which owns the one parse of it.
 func oauthToken() string {
-	b, err := os.ReadFile(filepath.Join(ConfigDir(), ".credentials.json"))
-	if err != nil {
-		return ""
-	}
-	var c struct {
-		ClaudeAiOauth struct {
-			AccessToken string `json:"accessToken"`
-		} `json:"claudeAiOauth"`
-	}
-	if json.Unmarshal(b, &c) != nil {
+	c, ok := readCreds()
+	if !ok {
 		return ""
 	}
 	return c.ClaudeAiOauth.AccessToken
