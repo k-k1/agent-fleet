@@ -195,15 +195,28 @@ func (c config) session(r *http.Request) (sessionClaims, bool) {
 // sessionAllowed re-runs the authorization check for an established session
 // against the provider it was issued by. A session whose provider is no longer
 // configured is denied (the operator removed that IdP = that door is closed).
-func (c config) sessionAllowed(ctx context.Context, claims sessionClaims) bool {
+//
+// It returns the login-page error code to show when it denies, because the two
+// denials mean different things to the person reading the page: "forbidden" says
+// they are not allowed in, while "reauth" says only that CP can no longer verify
+// them and they should sign in again (the GitHub adapter after a restart —
+// see oauth_github.go). Telling someone they are not allowed when they are is the
+// kind of message that generates a support ticket.
+func (c config) sessionAllowed(ctx context.Context, claims sessionClaims) (bool, string) {
 	p := c.providerByID[claims.provider()]
 	if p == nil {
-		return false
+		return false, "forbidden"
 	}
 	ok, err := p.Allowed(ctx, principal{
 		Provider: claims.provider(), Subject: claims.Sub, Email: claims.Email, Verified: true,
 	})
-	return err == nil && ok
+	switch {
+	case errors.Is(err, errNeedsReauth):
+		return false, "reauth"
+	case err != nil || !ok:
+		return false, "forbidden"
+	}
+	return true, ""
 }
 
 // --- carrying the IdP subject downstream (docs/61 §61.5) -------------------
@@ -467,10 +480,14 @@ func (c config) authGate(next http.Handler) http.Handler {
 		// Re-check authorization on every request, not just at login: removing an
 		// email from the allowlist is the offboarding path, and must take effect
 		// before the session cookie's TTL runs out.
-		if !c.sessionAllowed(r.Context(), claims) {
+		if ok, code := c.sessionAllowed(r.Context(), claims); !ok {
 			if wantsHTML(r) {
 				c.setCookie(w, sessionCookie, "", -1)
-				loginRedirect(w, r, "forbidden")
+				loginRedirect(w, r, code)
+			} else if code == "reauth" {
+				// 401, not 403: the SPA's unauthenticated path sends the person to
+				// /login, which is exactly the remedy here.
+				writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "login required"})
 			} else {
 				writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "email not allowed"})
 			}
@@ -559,6 +576,8 @@ func loginErrorBlock(code, lang string) string {
 		msg = t.errDenied
 	case "session", "exchange":
 		msg = t.errSession
+	case "reauth":
+		msg = t.errReauth
 	case "provider":
 		msg = t.errProvider
 	default:
@@ -593,7 +612,7 @@ func preferredUILang(r *http.Request) string {
 type loginStrings struct {
 	title, signin, signinWith, note                  string
 	errForbidden, errDenied, errSession, errProvider string
-	errUnconfigured                                  string
+	errUnconfigured, errReauth                       string
 	// The new-account notice (docs/61 受入条件 3). newBody takes the email.
 	newTitle, newBody, newNote, newContinue, newSwitch string
 }
@@ -609,6 +628,7 @@ var loginText = map[string]loginStrings{
 		errSession:      "セッションの確立に失敗しました。もう一度サインインしてください。",
 		errProvider:     "指定されたサインイン方法は利用できません。下のボタンから選び直してください。",
 		errUnconfigured: "サインイン方法が設定されていません。管理者に連絡してください。",
+		errReauth:       "セッションの確認ができなくなりました。もう一度サインインしてください。",
 		newTitle:        "Agent Fleet — 新しいアカウント",
 		newBody: "%s でサインインしました。このメールアドレスはこのデプロイで使われたことがないため、" +
 			"<b>新しいワークスペース</b>を作成しました。以前から使っているワークスペースがある場合、" +
@@ -628,6 +648,7 @@ var loginText = map[string]loginStrings{
 		errSession:      "Couldn't establish a session. Please sign in again.",
 		errProvider:     "That sign-in method isn't available. Pick one of the buttons below.",
 		errUnconfigured: "No sign-in method is configured. Please contact your administrator.",
+		errReauth:       "We couldn't re-verify your session. Please sign in again.",
 		newTitle:        "Agent Fleet — New account",
 		newBody: "You signed in as %s. That address hasn't been used on this deployment, " +
 			"so a <b>new workspace</b> was created. A workspace you already had is not " +

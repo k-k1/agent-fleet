@@ -27,7 +27,9 @@
 | ファイル | 責務 |
 |----------|------|
 | `main.go` / `routes.go` / `httpapi.go` | 起動と配線 / 機能別ルート登録 / HTTP 共通処理 |
-| `oauth_google.go` | L1 認証（AUTH=oauth/proxy/dev）・authGate・署名 cookie・`isAuthExempt` |
+| `oauth.go` | L1 認証（AUTH=oauth/proxy/dev）・`loginProvider` 抽象・authGate・署名 cookie・ログイン画面 |
+| `oauth_oidc.go` | 汎用 OIDC クライアント（Google / Entra / Okta / Keycloak / …）・discovery・env からの provider 組み立て |
+| `oauth_github.go` | GitHub ログインアダプタ（OIDC 非対応のため専用）: org メンバーシップ・TTL キャッシュ・猶予・再ログイン要求 |
 | `oauth_bitbucket.go` | Bitbucket OAuth ブローカ（Connections 向けトークン取得の CP 側） |
 | `pat.go` | PAT（Bearer トークン）発行・ハッシュ・スコープ天井 |
 | `tenants.go` | tenant / identity / membership の CRUD・limits・admin API |

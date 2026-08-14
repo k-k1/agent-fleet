@@ -88,6 +88,32 @@ AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
   意味を失います。これらのエンドポイントでは、受け入れるテナントを
   `AF_OIDC_ENTRA_ALLOWED_TIDS` に列挙しない限り CP は起動を拒否します。
 
+**GitHub** — GitHub にはユーザーログイン用の OIDC が無いので設定が別になります。ログインを許可
+するのは、指定した **org のメンバーであること**です。
+
+```sh
+AF_GITHUB_ALLOWED_ORGS=acme,acme-labs      # 必須。これがボタンを有効にする合図でもある
+GITHUB_OAUTH_CLIENT_SECRET=<client-secret>
+AF_GITHUB_ALLOWED_DOMAINS=example.com      # 強く推奨（下記）
+```
+
+- OAuth App は Console の GitHub **接続**ボタンが使っているもの（`GITHUB_OAUTH_CLIENT_ID`）と
+  同じで構いません。上のリダイレクト URI を追加するだけです。ログイン用に別アプリを立てたい
+  場合は `AF_GITHUB_LOGIN_CLIENT_ID` / `AF_GITHUB_LOGIN_CLIENT_SECRET` を設定します。
+  `GITHUB_OAUTH_CLIENT_ID` だけを設定した状態は、これまでどおり git 連携の device flow のみを
+  意味します。
+- **org 側でサードパーティ OAuth App を制限している場合、org のオーナーによる承認が必要です。**
+  承認前はメンバーシップが見えず、**設定が完全に正しく見えるのに全員が拒否されます**。
+- **`AF_GITHUB_ALLOWED_DOMAINS` も設定してください。** GitHub が CP に渡すのはアカウントの
+  **primary かつ verified** なアドレスで、多くの人ではそれが個人用アドレスです。ここでは
+  アドレスが違えば別人なので、本人のワークスペースではなく**新しい空のワークスペース**に
+  着地してしまいます。入口で断る方が、意図しない場所で作業を始めてもらうより親切です。
+- メンバーシップは GitHub API で再判定し、1 人ごとに `AF_GITHUB_MEMBERSHIP_TTL`（10 分）
+  キャッシュします。GitHub に到達できないときは、最後の肯定結果を
+  `AF_GITHUB_MEMBERSHIP_GRACE`（1 時間）だけ延命します。このキャッシュはメモリ上にあるため、
+  **CP を再起動すると再サインインを求められます**（拒否ではありません。GitHub 側のセッションが
+  生きていれば、たいてい無操作で戻ります）。
+
 `AF_OIDC_PROVIDERS=entra,okta` のように複数列挙すればボタンも複数出ます。ログイン画面には有効な
 provider の数だけボタンが出て、1 つだけなら現行とまったく同じ見た目です。設定が不完全な provider
 は CP のログに警告を出して無効化されるだけで（1 つの IdP の設定ミスで全社が締め出されないため）、

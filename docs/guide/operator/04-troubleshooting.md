@@ -27,6 +27,8 @@ included here as well. The working directory is `deploy/compose/`.
 | redirect URI mismatch | Whether the URI registered at the IdP matches `<PUBLIC_BASE_URL>/oauth2/callback` |
 | A sign-in button is missing | That provider was disabled at startup. `docker compose logs control-plane \| grep -i "login provider"` names the missing setting |
 | CP exits with a message about a multi-tenant issuer | An Entra `/common/` or `/organizations/` issuer with no `AF_OIDC_<ID>_ALLOWED_TIDS`. Pin the issuer to your tenant GUID |
+| Every GitHub sign-in is rejected | The org has not approved the OAuth app (`grep "returned 403"` in the CP log), or the person's primary verified address is outside `AF_GITHUB_ALLOWED_DOMAINS` |
+| GitHub users must sign in again after a CP restart | Expected. The org-membership cache is in memory; they are re-verified, not rejected |
 
 ## Diagnosing the 3 DooD constraints ("starts but silently doesn't work")
 
@@ -70,6 +72,17 @@ background on how this works is in [dev/09](../../dev/09-deploy.md).
   account on earth reaches your login, and personal accounts can change their own email address,
   so the allowlist would stop meaning anything. Pin the issuer to your tenant GUID
   (`https://login.microsoftonline.com/<tenant-guid>/v2.0`), or list the tenants you accept.
+- **Every GitHub sign-in is rejected, but the settings look right** → most often the
+  organization restricts third-party OAuth apps and nobody has approved yours yet; until an
+  owner does, the membership check sees nothing.
+  `docker compose logs control-plane | grep "returned 403"` says so explicitly. The other cause
+  is the address: GitHub hands over the account's *primary verified* email, which may be a
+  personal one and therefore outside `AF_GITHUB_ALLOWED_DOMAINS`. The person can make their
+  company address primary and verify it on GitHub, or sign in with a different button.
+- **GitHub users are asked to sign in again after a CP restart** → expected, not a fault. The
+  org-membership answer and the token used to refresh it are held in memory only, so a restart
+  leaves nothing to re-verify them with. They are asked to sign in again rather than told they
+  are not allowed, and with a live GitHub session the round trip is usually invisible.
 - **Cookie not saved / bounced back right after login** → `AUTH=oauth` uses Secure cookies, so
   **HTTPS is required**. Over plain HTTP (no TLS termination) they are not saved. Check that
   `PUBLIC_BASE_URL` is `https://`, and that TLS is actually being issued (below).

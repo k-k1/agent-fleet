@@ -88,6 +88,26 @@ Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）
   `tid` は同一レスポンス内の id_token ペイロードから読む。**フロントチャネル（implicit /
   form_post）で id_token を受ける経路を足すなら JWKS 検証が必須**。JWT ライブラリ依存はゼロ。
 
+**GitHub だけは専用アダプタ**（[61](../61-login-idp.md) §61.7 P2）。OIDC ではないので上の 1 本には
+載らない。許可は**独立した 2 つの門の AND**:
+
+- ①**org メンバーシップ**（必須）: `GET /user/memberships/orgs/{org}` が `active`。
+  `AF_GITHUB_ALLOWED_ORGS` が空なら provider ごと無効化する（決定 2 — メンバーシップ判定と
+  セットでのみ採用した入口）。**この env が GitHub ログインを有効にする合図**でもある
+  （`GITHUB_OAUTH_CLIENT_ID` は git 連携の device flow が先に使っている env なので、それ単体では
+  ログインを有効にしない）。
+- ②**email 許可リスト**: `AF_GITHUB_ALLOWED_{EMAILS,DOMAINS}` → 無ければデプロイ共通 →
+  どちらも未設定なら email の門は無し（org が許可リストそのもの）。email はアカウントの
+  **`primary && verified`** のみを `GET /user/emails` から採る（`GET /user` の `email` は検証
+  フラグを持たず、非公開設定で `null`）。`subject` は**数値 id**（`login` は改名できる）。
+- 毎リクエスト再判定は API 呼び出しになるため、`(provider, subject)` キーの TTL キャッシュ
+  （既定 10 分・`AF_GITHUB_MEMBERSHIP_TTL`）で間引き、GitHub 到達不能時は**最後の肯定結果を
+  猶予（既定 1 時間・`AF_GITHUB_MEMBERSHIP_GRACE`）だけ延命**して超えたら拒否する（決定 12）。
+- ★ **access token はプロセス内メモリにしか置かない**（cookie に載せれば XSS で漏れる）。
+  したがって **CP 再起動で判定材料が消える**。その人は org のメンバーのままなので
+  `forbidden` ではなく **`reauth`（再ログイン要求・API には 401）** を返す。fail-closed は
+  保ったまま、事実と違う「許可されていません」を出さないための区別。
+
 認可は [05 §5.4](05-api-contracts.md): 自分のリソースのみ + membership 検証、admin は role gate
 （super_admin=デプロイ全体 / tenant_admin=自テナント）。role の階層は `identity.role` と
 `membership.role` の 2 段（[06 §6.2](06-data-model.md)）。
@@ -114,7 +134,8 @@ L2（Claude/codex/opencode を誰として動かすか）はユーザー本人�
 |-------------|------|----------|
 | git 資格情報（GitHub PAT/Device、Bitbucket OAuth/token）・opencode env キー | Workspace home の **`secrets.enc`**（AES-256-GCM・0600）| 当該ユーザーのみ。統一 cred helper（`workspace-agent cred`）が都度復号して出力＝**平文ファイルを作らない** |
 | Claude `.credentials.json`（claude 自身が書く）| `CLAUDE_CONFIG_DIR`（home 外・browse 範囲外, §7.2）| 当該ユーザーのみ |
-| システム秘密（ログイン IdP の client secret＝`GOOGLE_OAUTH_CLIENT_SECRET` / `AF_OIDC_<ID>_CLIENT_SECRET`・`AF_MASTER_KEY`・`AF_COOKIE_SECRET`）| `oauth.env` / compose `.env`（git 管理外）。aws=Secrets Manager/SSM 🚧 | CP のみ。`AF_MASTER_KEY` はデータ領域の外で保管（バックアップに含めない＝失えば crypto-shred）|
+| システム秘密（ログイン IdP の client secret＝`GOOGLE_OAUTH_CLIENT_SECRET` / `AF_OIDC_<ID>_CLIENT_SECRET` / `GITHUB_OAUTH_CLIENT_SECRET`・`AF_MASTER_KEY`・`AF_COOKIE_SECRET`）| `oauth.env` / compose `.env`（git 管理外）。aws=Secrets Manager/SSM 🚧 | CP のみ。`AF_MASTER_KEY` はデータ領域の外で保管（バックアップに含めない＝失えば crypto-shred）|
+| GitHub ログイン中の人の access token（org 再判定用・§7.3.1）| **CP プロセス内メモリのみ**（永続化しない）| CP のみ。再起動で消え、その人は再ログインを求められる |
 | PAT | DB に SHA-256 ハッシュのみ（[06](06-data-model.md)）| 平文は発行時 1 回だけ表示 |
 
 **封筒暗号 + custodian 抽象**（[decisions/0005](../decisions/0005-envelope-custodian.md)）:
