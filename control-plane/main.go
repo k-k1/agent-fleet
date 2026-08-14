@@ -294,10 +294,11 @@ func main() {
 		}
 		if !cfg.oauthConfigured() {
 			log.Fatalf("AUTH=oauth requires AF_COOKIE_SECRET, PUBLIC_BASE_URL and at least one login provider " +
-				"(GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET, and/or AF_OIDC_PROVIDERS with AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST})")
+				"(GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET, AF_OIDC_PROVIDERS with AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST}, " +
+				"and/or GITHUB_OAUTH_CLIENT_ID + GITHUB_OAUTH_CLIENT_SECRET + AF_GITHUB_ALLOWED_ORGS)")
 		}
 		if !cfg.hasDeploymentAllowlist() && !anyProviderAllowlist(cfg.providers) {
-			log.Printf("WARNING: AUTH=oauth with no allowlist (AF_OAUTH_ALLOWED_EMAILS / AF_OAUTH_ALLOWED_DOMAINS / AF_OAUTH_ALLOWED_EMAILS_FILE / AF_OIDC_<ID>_ALLOWED_EMAILS / AF_OIDC_<ID>_ALLOWED_DOMAINS) — every login is denied")
+			log.Printf("WARNING: AUTH=oauth with no allowlist (AF_OAUTH_ALLOWED_EMAILS / AF_OAUTH_ALLOWED_DOMAINS / AF_OAUTH_ALLOWED_EMAILS_FILE / AF_OIDC_<ID>_ALLOWED_EMAILS / AF_OIDC_<ID>_ALLOWED_DOMAINS / AF_GITHUB_ALLOWED_ORGS) — every login is denied")
 		}
 		ids := make([]string, 0, len(cfg.providers))
 		for _, p := range cfg.providers {

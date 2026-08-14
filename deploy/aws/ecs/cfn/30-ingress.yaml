@@ -52,7 +52,8 @@ Parameters:
     Default: /af-cp
     Description: SSM SecureString path prefix holding the CP secrets (created out of
       band before deploy — see README). Params - cookie-secret, master-key, plus
-      google-client-secret and/or oidc-client-secret depending on the IdP in use.
+      google-client-secret / oidc-client-secret / github-client-secret depending on
+      the IdPs in use.
   GoogleClientId:
     Type: String
     Default: ""
@@ -65,7 +66,7 @@ Parameters:
     Description: >-
       Enable an OIDC IdP (Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab)
       under this id — UPPERCASE, e.g. ENTRA (it names the AF_OIDC_<ID>_* env). Empty
-      = Google only. Its client secret must exist at ${SsmPrefix}/oidc-client-secret.
+      = Google only. Its client secret must exist at <SsmPrefix>/oidc-client-secret.
       docs/61.
   OidcIssuer:
     Type: String
@@ -100,6 +101,29 @@ Parameters:
     Type: String
     Default: ""
     Description: Login button label, English (default is generated from the id).
+  GithubAllowedOrgs:
+    Type: String
+    Default: ""
+    Description: >-
+      AF_GITHUB_ALLOWED_ORGS — comma-separated GitHub orgs whose ACTIVE members may
+      sign in. Setting this is what enables the GitHub button; its OAuth App secret
+      must exist at <SsmPrefix>/github-client-secret, and the app needs the
+      redirect URI https://<Fqdn>/oauth2/callback. ★ If the org restricts
+      third-party OAuth apps, an org owner must approve the app or everyone is
+      rejected. docs/61 §61.7.
+  GithubClientId:
+    Type: String
+    Default: ""
+    Description: GITHUB_OAUTH_CLIENT_ID (not secret; the secret comes from SSM). The
+      same OAuth App also drives the Console's GitHub "Connect" device flow.
+  GithubAllowedDomains:
+    Type: String
+    Default: ""
+    Description: >-
+      AF_GITHUB_ALLOWED_DOMAINS — strongly recommended. GitHub hands us the
+      account's PRIMARY VERIFIED address, which is a personal one for most people,
+      and a personal address is a different person here: they get a new empty
+      workspace rather than their own. Empty = the deployment-wide allowlist.
   AllowedEmails:
     Type: String
     Default: ""
@@ -129,6 +153,9 @@ Conditions:
   # only when that IdP is actually configured.
   HasGoogle: !Not [ !Equals [ !Ref GoogleClientId, "" ] ]
   HasOidc: !Not [ !Equals [ !Ref OidcProviderId, "" ] ]
+  # The org list, not the client id: GITHUB_OAUTH_CLIENT_ID is also the Console's
+  # git-connect device flow, which many deployments set without wanting a login.
+  HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
 
 Resources:
   Cert:
@@ -253,6 +280,11 @@ Resources:
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_ALLOWED_TIDS", Value: !Ref OidcAllowedTids }, !Ref "AWS::NoValue" ]
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_JA", Value: !Ref OidcLabelJa }, !Ref "AWS::NoValue" ]
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_EN", Value: !Ref OidcLabelEn }, !Ref "AWS::NoValue" ]
+            # GitHub sign-in (docs/61 §61.7). GITHUB_OAUTH_CLIENT_ID is passed
+            # unconditionally: it is also the Console's git-connect device flow.
+            - { Name: GITHUB_OAUTH_CLIENT_ID, Value: !Ref GithubClientId }
+            - { Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs }
+            - { Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains }
             # AF_RUNTIME=ecs = the P3-7 stage-2 adapter. The AF_ECS_* below give it the
             # substrate placement it needs to provision per-workspace ECS services.
             - { Name: AF_RUNTIME, Value: ecs }
@@ -288,6 +320,11 @@ Resources:
               - HasOidc
               - Name: !Sub "AF_OIDC_${OidcProviderId}_CLIENT_SECRET"
                 ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/oidc-client-secret"
+              - !Ref "AWS::NoValue"
+            - !If
+              - HasGithub
+              - Name: GITHUB_OAUTH_CLIENT_SECRET
+                ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/github-client-secret"
               - !Ref "AWS::NoValue"
             - Name: AF_COOKIE_SECRET
               ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/cookie-secret"

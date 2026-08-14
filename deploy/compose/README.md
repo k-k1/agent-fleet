@@ -135,8 +135,40 @@ AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
   A provider whose settings are incomplete is disabled with a warning in the CP
   log — one broken IdP never locks the whole company out — and the CP only
   refuses to start when no provider at all is usable.
-- Users are the same person regardless of which button they used only when the
-  IdPs hand out the same email address; identity is keyed on the email today.
+- Pressing a different button lands the same person in the same workspace as long
+  as the IdPs hand out the same email address. From then on that IdP account is
+  remembered, so a later rename at the IdP no longer moves anyone's home
+  directory. Two **different** addresses stay two people, and cannot be merged
+  afterwards — someone who signs in with an address nobody has used here before is
+  shown a page saying a new workspace was created.
+
+**GitHub.** Not OIDC, so it is configured separately — and what authorizes the
+sign-in is membership in an org you list:
+
+```sh
+AF_GITHUB_ALLOWED_ORGS=acme,acme-labs    # required; also what enables the button
+GITHUB_OAUTH_CLIENT_SECRET=<client-secret>
+AF_GITHUB_ALLOWED_DOMAINS=example.com    # strongly recommended; see below
+```
+
+- The OAuth App is the same one the Console's GitHub "Connect" button uses
+  (`GITHUB_OAUTH_CLIENT_ID`) — just add the redirect URI
+  `<PUBLIC_BASE_URL>/oauth2/callback` to it. Set `AF_GITHUB_LOGIN_CLIENT_ID` /
+  `AF_GITHUB_LOGIN_CLIENT_SECRET` instead if you would rather the login use an app
+  of its own (approving an app for an org approves it for both flows).
+- ★ **If your org restricts third-party OAuth apps, an org owner must approve the
+  app.** Until they do, the membership check sees nothing and *everybody* is
+  rejected — with settings that look correct.
+- ★ **Set `AF_GITHUB_ALLOWED_DOMAINS` too.** GitHub gives us the account's primary
+  **verified** address, which for most people is a personal one — and a personal
+  address is a different person here, so they land in a new empty workspace
+  instead of their own. Refusing at the door is kinder than letting someone work
+  in a workspace they never meant to create.
+- Membership is re-checked through the API, cached for `AF_GITHUB_MEMBERSHIP_TTL`
+  (10m) and, if GitHub is unreachable, honored for `AF_GITHUB_MEMBERSHIP_GRACE`
+  (1h) past the last positive answer. The cache is in memory, so after a CP
+  restart these sessions are asked to **sign in again** — they are not rejected,
+  and GitHub usually completes that round trip without prompting.
 
 ### Git provider OAuth (GitHub / Bitbucket) — optional
 
@@ -270,6 +302,8 @@ encodes them, but if you customize it, keep them:
 | Redirect URI mismatch | the IdP's registered URI == `<PUBLIC_BASE_URL>/oauth2/callback` |
 | A login button is missing | that provider was disabled at startup — `docker compose logs cp \| grep -i "login provider"` names the missing setting |
 | CP exits on an Entra config | `/common/` or `/organizations/` issuer without `AF_OIDC_<ID>_ALLOWED_TIDS` — pin the issuer to your tenant guid |
+| Every GitHub login is rejected | the org restricts third-party OAuth apps and nobody approved this one (`docker compose logs cp \| grep "returned 403"`), or the person's primary verified address is outside `AF_GITHUB_ALLOWED_DOMAINS` |
+| GitHub users are asked to sign in again after a restart | expected: the org-membership cache is in memory. They are re-verified, not rejected |
 
 ## Security notes
 

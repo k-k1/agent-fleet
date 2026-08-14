@@ -120,7 +120,8 @@ Next steps (Compose needs manual config — cannot be fully automated):
   # fill in .env: AF_MASTER_KEY / AF_COOKIE_SECRET / DOCKER_GID /
   #   PUBLIC_DOMAIN / PUBLIC_BASE_URL / SUPER_ADMIN_EMAILS / DATA_DIR
   #   and the login IdP: GOOGLE_OAUTH_* and/or AF_OIDC_PROVIDERS + AF_OIDC_<ID>_*
-  #   (Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab)
+  #   (Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab), and/or GitHub via
+  #   AF_GITHUB_ALLOWED_ORGS + GITHUB_OAUTH_CLIENT_ID/_SECRET
   # (optional) enable the git-provider "Connect" buttons:
   #   GITHUB_OAUTH_CLIENT_ID / BITBUCKET_OAUTH_KEY / BITBUCKET_OAUTH_SECRET
   docker compose up -d
