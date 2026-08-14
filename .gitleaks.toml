@@ -21,6 +21,10 @@ regexes = [
   # internal/bridge/*_test.go（Discord/Slack へ流す本文の伏字化）
   '''xoxb-123456789012-[A-Za-z]+''',
   '''ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789''',
+  # workspace/agent/internal/mcpproj/{inspect,ops}_test.go（プロジェクト MCP の
+  # 秘密検出）。「秘密らしい値」を入力に取るテストなので、高エントロピーの固定値が
+  # 要る。実在しないと分かる af-test-fixture- 接頭辞を自分で付けた値だけを外す。
+  '''af-test-fixture-[0-9a-z]+''',
 ]
 
 [[allowlists]]
