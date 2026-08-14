@@ -1377,6 +1377,7 @@ export const ja = {
   "tenant.group_login": "ログイン",
   "tenant.tab_signin": "サインイン方式",
   "tenant.tab_rules": "ログイン規則",
+  "tenant.summary_note": "テナント全体の上限を決めるのはデプロイ管理者です",
   "tenant.group_manage": "運用",
   "tenant.tab_members": "メンバー",
   "tenant.tab_sessions": "セッション",

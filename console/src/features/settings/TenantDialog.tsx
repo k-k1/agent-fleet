@@ -55,6 +55,33 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
 ];
 const ALL_SECTIONS = GROUPS.flatMap((g) => g.items.map(([k]) => k));
 
+// TenantSummary — テナントそのものの数字（人数・起動中のワークスペース・テナント
+// 全体の上限）。管理モーダルではテナントカードに出ていて、テナント管理者もそこで
+// 読めた。入口を閉じるとこれだけが行き場を失うので、名簿の頭に読み取り専用で残す。
+// 決めるのはデプロイ管理者（PUT .../limits は withSuperAdmin 固定）。
+function TenantSummary({ tenant }: { tenant: Tenant }) {
+  const tr = useT();
+  return (
+    <section className="admin-panel tenant-summary">
+      <h4>
+        {tenant.name || tenant.slug}
+        <span className="af-note">{tr("tenant.summary_note")}</span>
+      </h4>
+      <div className="tc-stats">
+        <span>
+          <Icon name="person" /> {tr("admin.person_count", { n: tenant.users ?? 0 })}
+        </span>
+        <span className={(tenant.running || 0) > 0 ? "tc-run on" : "tc-run"}>
+          <Icon name="vm-running" /> {tr("admin.running_ws", { n: tenant.running ?? 0 })}
+        </span>
+      </div>
+      <p className="admin-hint">
+        {tr("admin.tenant_limits", { ws: tenant.max_workspaces || "∞", ss: tenant.max_sessions || "∞" })}
+      </p>
+    </section>
+  );
+}
+
 export function TenantDialog() {
   const tr = useT();
   const closeTenantSettings = useSettingsUI((s) => s.closeTenantSettings);
@@ -157,7 +184,12 @@ export function TenantDialog() {
           </>
         );
       }
-      return <MembersPanel slug={tenant.slug} isSuper={isSuper} onOpenMember={setMember} />;
+      return (
+        <>
+          <TenantSummary tenant={tenant} />
+          <MembersPanel slug={tenant.slug} isSuper={isSuper} onOpenMember={setMember} />
+        </>
+      );
     }
     // ★ 運用の 3 面には、この画面が見ているテナント 1 つだけを渡す。isSuper={false}
     // は「あなたはデプロイ管理者ではない」ではなく「この画面はテナントを跨がない」

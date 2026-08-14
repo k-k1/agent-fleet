@@ -1375,6 +1375,7 @@ export const en: Record<keyof typeof ja, string> = {
   "tenant.group_login": "Sign-in",
   "tenant.tab_signin": "Sign-in methods",
   "tenant.tab_rules": "Login rules",
+  "tenant.summary_note": "a deployment administrator sets the tenant-wide caps",
   "tenant.group_manage": "Operations",
   "tenant.tab_members": "Members",
   "tenant.tab_sessions": "Sessions",
