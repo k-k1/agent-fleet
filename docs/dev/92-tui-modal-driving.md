@@ -1,6 +1,6 @@
 # 92 — TUI モーダル駆動の実測検証プレイブック（AUQ ほか）
 
-正: コード（本書は検証手法と実測記録）/ 主な更新トリガ: claude CLI のバージョン更新・AUQ 駆動経路（`PendingQuestions` / `handleSessionInput`）の変更 / 最終確認: 2026-07（claude v2.1.204）
+正: コード（本書は検証手法と実測記録）/ 主な更新トリガ: claude CLI のバージョン更新・AUQ 駆動経路（`PendingQuestions` / `handleSessionInput`）の変更 / 最終確認: 2026-08（claude v2.1.232、§6 追加）
 
 Console のチャットは、エージェント TUI のモーダル（claude の AskUserQuestion=AUQ、プラン承認、
 許可プロンプト）を **tmux send-keys で代理操作**して回答する。この結合は claude CLI 側の
@@ -115,3 +115,66 @@ tmux kill-session -t auqtest
 §3 の雛形で最低限これだけ回す: ①単一選択 `Down, Enter`、②ラベル全文打鍵→無反応の確認、
 ③複数選択 トグル→`Right`→`Enter`、④Type 行の自由入力。①〜④のどれかが変わっていたら
 `PendingQuestions.submit` のシーケンス生成と本書 §2 を同時に更新する。
+
+## 6. preview 付き選択肢は「Type something」行が消える（2026-08-14、claude v2.1.232 で実測・修正済み）
+
+**症状**: preview 付きの AskUserQuestion で自由入力を送信すると、claude が
+`User declined to answer questions` / 「The user wants to clarify these questions」
+「(No answer provided)」を返す。質問数に関係なく **選択肢のどれかに `preview` が
+1つでも付いていれば** 発生する（実フリートで3回、この調査中に4回、計7回すべて同一
+症状で再現）。ユーザーは「回答したのに認識されない」と見える。
+
+**根因**: claude の AskUserQuestion モーダルは、選択肢に `preview` が付くと
+**「Type something.」行（自由入力欄）が消える**（代わりに選択肢ごとの
+「n to add notes」機能に置き換わる）。
+
+```
+previewなし: 1.案A / 2.案B / 3.案C / 4.Type something. / 5.Chat about this （5行・番号あり）
+previewあり: 1.案A / 2.案B / 3.案C                        + 番号なしの Chat about this （Type something が無い）
+```
+
+旧 `questionKeys.ts`（`buildClaudeSeq`）の自由入力シーケンスは「Type something 行は
+選択肢の直後（`Down×選択肢数`）」という **previewなしレイアウトの前提のまま**だった。
+preview があると同じ `Down×選択肢数` が「Chat about this」（番号なしの最終行）に着地し、
+①打鍵したテキストはメニュー行なので黙って握り潰される → ②続く Enter が
+「Chat about this」を確定 → ③ claude が上記の decline 定型文を返す、という順で壊れる。
+実機で1ステップずつ確認して特定した（tmux capture-pane を都度取得）。
+
+**回避策（この判定は「質問ごと」— フォーム全体ではない）**: claude は preview の有無を
+**質問（タブ）ごと**に切り替える。3問中2問だけ preview が付いていても、3問目の
+タブに着けば通常レイアウトへ戻る。
+
+**修正後のキー列**（`hasPreview(opts)` で分岐）:
+- 単一選択・自由入力・**previewあり**: `n`（現在ハイライト中の選択肢に notes を開く。
+  各質問タブは常に選択肢0番から始まるので Down は不要）→ 自由入力テキスト → `Enter`
+  （notes だけで提出され、選択肢は選ばれない。tool_result は
+  `"質問"=(no option selected) notes: <テキスト>` という形になる — これが claude 側の
+  自由入力の等価物）。
+- 単一選択・自由入力・**previewなし**: 従来どおり `Down×選択肢数, テキスト, Enter`。
+- 選択肢そのものを選ぶ経路（`Down×i, Enter`）は preview の有無に関係なく無傷
+  （previewの有無で変わるのは Type something 行の有無だけ）。
+
+**副次的に見つかった別バグ（同じ調査で修正）**: `buildClaudeSeq` は単一質問（レビュー
+ページが存在しない — claude は 1 問だけの Enter で直接提出する）でも末尾に無条件で
+`Enter` を1つ余分に送っていた。previewなしの通常自由入力でも同型（提出後の空の
+コンポーザに着地するだけで実害は出ていなかったが、正しくない）。単一選択かつ非
+multiSelect の1問フォームだけ、この末尾 Enter を送らないよう修正（多問フォーム・
+単一 multiSelect フォームは Right 経由でレビュー/提出ページに乗るので従来どおり必要）。
+
+**表示側の別バグ（同時修正）**: 上記の decline は claude 側の正常な拒否応答なので、
+Console はこれを「回答済み」ではなく明確に区別する必要がある。修正前は
+`CollectInteractionAnswers`/`CollectTurns` が `is_error` を見ておらず、
+拒否の定型文をそのまま「回答」として Console に渡し、`QuestionBlock` も
+`answered=true` の場合は常に「回答済み」バッジを出し、定型文をパースできず
+ラベルにマッチしない生テキストをそのままカードに出していた（ユーザー報告の
+スクリーンショットそのもの）。claude.`InteractionAnswer{Text, Declined}` を追加し、
+`Declined` は「(No answer provided)」を含む is_error な tool_result のときだけ立てる
+（`isDeclinedAnswer`）。Console 側は `Part.declined` を見て「却下」バッジ＋固定の
+短い注記を出し、定型文のパースは一切行わない。
+
+**検証**: 実機（claude 2.1.232、tmux 直叩き）で①バグの再現、②修正後のキー列
+（`n`, テキスト, `Enter`）が実際に自由入力として通ることの両方を確認済み
+（本ドキュメントの diff と同じセッションで実施）。ユニットテストは
+`questionKeys.test.ts`（"preview options drop the free-text row" ブロック）、
+`transcript_test.go`（`TestCollectInteractionAnswers_Declined`）、
+`QuestionBlock.dom.test.tsx`。

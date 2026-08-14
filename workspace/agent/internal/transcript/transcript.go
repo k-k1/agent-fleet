@@ -23,12 +23,17 @@ type Part struct {
 	Model     string     `json:"model,omitempty"`     // kind=delegation: explicitly selected child model
 	Questions []Question `json:"questions,omitempty"` // kind=question: AskUserQuestion
 	Answer    string     `json:"answer,omitempty"`    // kind=question: the chosen answer text
-	Plan      string     `json:"plan,omitempty"`      // kind=plan: ExitPlanMode plan Markdown
-	File      string     `json:"file,omitempty"`      // kind=tool: edit/write target (openable as a diff)
-	Edits     []Edit     `json:"edits,omitempty"`     // kind=tool: before/after per edit (Edit/Write/MultiEdit)
-	Files     []string   `json:"files,omitempty"`     // kind=userfile: SendUserFile paths, browse-root-relative (openable in a pane)
-	Caption   string     `json:"caption,omitempty"`   // kind=userfile: optional caption the agent attached
-	QID       string     `json:"qid,omitempty"`       // kind=question/plan/delegation: tool_use id, so the Console can patch a late-arriving answer (see CollectInteractionAnswers) onto an already-delivered turn
+	// Declined marks kind=question only: claude's tool_result was a decline (Escape out
+	// of the modal, e.g. docs/dev/92 §6's preview free-text bug) rather than a genuine
+	// answer — Answer then holds claude's own rejection boilerplate, not a pick, and the
+	// Console must not render it as an answered card (see QuestionBlock).
+	Declined bool     `json:"declined,omitempty"`
+	Plan     string   `json:"plan,omitempty"`    // kind=plan: ExitPlanMode plan Markdown
+	File     string   `json:"file,omitempty"`    // kind=tool: edit/write target (openable as a diff)
+	Edits    []Edit   `json:"edits,omitempty"`   // kind=tool: before/after per edit (Edit/Write/MultiEdit)
+	Files    []string `json:"files,omitempty"`   // kind=userfile: SendUserFile paths, browse-root-relative (openable in a pane)
+	Caption  string   `json:"caption,omitempty"` // kind=userfile: optional caption the agent attached
+	QID      string   `json:"qid,omitempty"`     // kind=question/plan/delegation: tool_use id, so the Console can patch a late-arriving answer (see CollectInteractionAnswers) onto an already-delivered turn
 
 	// ViewImageCallID/ViewImageData carry a codex view_image tool_result's inline
 	// "data:image/...;base64,..." payload(s) from the pure rollout parser up to

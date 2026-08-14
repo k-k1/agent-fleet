@@ -1998,6 +1998,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.answered": "Answered",
   "mirror.freeform_label": "Free text: ",
   "mirror.answer_label": "Answer: ",
+  "mirror.question_declined": "Declined by the agent — no answer was recorded",
   "mirror.approval_pending": "Awaiting approval",
   "mirror.approved": "Approved",
   "mirror.rejected": "Rejected",

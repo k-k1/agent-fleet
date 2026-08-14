@@ -11,17 +11,26 @@
 // and the Enter then confirms the highlighted first option (docs/dev/92-tui-modal-driving.md).
 
 import type { InteractionAnswer } from "../../core/api/client.ts";
+import { previewBody } from "./optionPreview.ts";
 
 // One step of a sequence: a named key (k) or literal text to type (t).
 export type KeyStep = { k?: string; t?: string };
 
 export interface QKOption {
   label: string;
+  preview?: string;
 }
 export interface QKQuestion {
   multiSelect?: boolean;
   options?: QKOption[];
 }
+
+// Does THIS question's option set carry a preview? claude only ever attaches preview to
+// single-select options (the tool's own contract), and whether the row layout below
+// changes is decided per question, not once for the whole form — a later question with
+// plain options reverts to the normal layout even if an earlier one had previews
+// (実測 v2.1.232, docs/dev/92 §6).
+const hasPreview = (opts: QKOption[]): boolean => opts.some((o) => previewBody(o.preview) !== "");
 
 // The card's per-question state: the labels checked (single-select holds at most one)
 // and the free-text answer. Indices are resolved from labels here so a stale label —
@@ -91,6 +100,19 @@ export function buildClaudeSeq(qs: QKQuestion[], sel: string[][], freeText: stri
       } else {
         seq.push({ k: "Right" }); // advance to the next question / review (Submit) page
       }
+    } else if (ft && hasPreview(opts)) {
+      // A previewed single-select question drops the "Type something" row entirely —
+      // replaced by a per-OPTION "press n to add notes" field — so the old
+      // downs(opts.length) lands on the unnumbered "Chat about this" row instead. Typed
+      // text is then silently swallowed there (option/menu rows ignore typed text) and
+      // the trailing Enter activates "Chat about this", which claude treats as declining
+      // the question — the exact "User declined to answer questions" / "(No answer
+      // provided)" rejection this was reported as (実測 v2.1.232, docs/dev/92 §6).
+      // The fix: the cursor always starts a question's tab on option 0, so 'n' opens
+      // notes there with no navigation needed; typing + Enter submits with no option
+      // picked ("(no option selected) notes: …" — claude's own free-text equivalent
+      // for this layout).
+      seq.push({ k: "n" }, { t: ft }, { k: "Enter" });
     } else if (ft) {
       // single-select free text: move to the "Type something" row, type, then Enter
       // confirms + auto-advances (single-select Enter does NOT toggle-off — verified).
@@ -101,7 +123,14 @@ export function buildClaudeSeq(qs: QKQuestion[], sel: string[][], freeText: stri
       seq.push({ k: "Enter" }); // select + auto-advance to the next tab
     }
   });
-  seq.push({ k: "Enter" }); // Review page: "Submit answers"
+  // A single-select single question has no review page — its own Enter above already
+  // submitted (verified: option pick, plain free text, and the preview/notes free text
+  // all submit directly). Multi-select reaches "Submit answers" via Right even for one
+  // question (its Enter only toggles, never submits), and any multi-question form always
+  // ends on the review page, so both of those still need this trailing Enter.
+  if (qs.length > 1 || qs[0]?.multiSelect) {
+    seq.push({ k: "Enter" }); // Review page: "Submit answers"
+  }
   return seq;
 }
 
