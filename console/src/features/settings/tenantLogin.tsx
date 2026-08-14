@@ -14,7 +14,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
-import { useT } from "../../lib/i18n/index.ts";
+import { useT, useLocale } from "../../lib/i18n/index.ts";
 // メンバー側の MCP フォームと同じ部品立て（1 つのデザインに保つ）。
 import { Field } from "./mcpForm.tsx";
 
@@ -46,6 +46,66 @@ export interface TenantIdP {
   approved_by?: string;
   approved_at?: string;
   usable?: boolean;
+}
+
+// このデプロイが env で有効にしているサインイン方法（GET /api/admin/providers）。
+// 秘密は載らない — id・表示名・issuer だけ。
+interface DeployProvider {
+  id: string;
+  label_ja?: string;
+  label_en?: string;
+  issuer?: string;
+}
+
+// DeploymentSignInMethods — 「使えるサインイン方法」欄に何が書けるかの一覧。
+//
+// ★ この欄は自由入力で、書けるものはデプロイの env（AF_OIDC_PROVIDERS ほか）にしか
+// 無い。今までは画面から知る手段が無く、間違えると保存が 400 unknown_provider で
+// 弾かれるだけだった — 弾かれた人が次に何を打てばいいかは、やはり画面のどこにも
+// 書いていない。だから欄のすぐ下に置く。
+//
+// ★ 出すのは表示名（ログイン画面のボタンと同じ文言）を主にし、id は打ち込む値なので
+// <code> で添える。provider id はドメイン概念ではなく技術識別子で、それを主役にすると
+// 「entra とは何か」を別の場所で聞くことになる。
+//
+// ★ テナント自身の方法（t:<slug>:<name>）はここには出ない。あれは実行時に増減し、
+// 全部並べるとグループ会社の名簿になる（決定 32-4）。自テナントの分は下の
+// 「このテナントのサインイン方法」に出ているので、ヒントでそちらを指す。
+function DeploymentSignInMethods() {
+  const tr = useT();
+  const locale = useLocale();
+  const [rows, setRows] = useState<DeployProvider[] | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api("api/admin/providers").then((res) => {
+      if (live) setRows(res?.providers || []);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // 読み込み中は何も出さない（編集フォームの下で行が生えるより静かなほうがよい）。
+  if (rows === null) return null;
+  const label = (p: DeployProvider) => (locale === "en" ? p.label_en : p.label_ja) || p.label_ja || p.label_en || p.id;
+  return (
+    <div className="idp-known">
+      <span className="af-cap">{tr("admin.providers_title")}</span>
+      {rows.length === 0 ? (
+        <p className="admin-hint">{tr("admin.providers_none")}</p>
+      ) : (
+        rows.map((p) => (
+          <div key={p.id} className="adm-mcp-row">
+            <span className="as-name">{label(p)}</span>
+            <code>{p.id}</code>
+            <span className="as-repo muted">{p.issuer}</span>
+          </div>
+        ))
+      )}
+      <p className="admin-hint">{tr("admin.providers_hint")}</p>
+    </div>
+  );
 }
 
 // TenantLoginRules — docs/61 §61.9.7 の CSV 3 列のエディタ。
@@ -117,6 +177,9 @@ export function TenantLoginRules({
             <span className="af-unit">{tr("admin.invite_domains_unit")}</span>
           </label>
         </div>
+        {/* 「使えるサインイン方法」の答えは欄の隣にしか置けない — 別の面に置くと、
+            打ち間違えて 400 で弾かれた人がそこへ辿り着けない。 */}
+        <DeploymentSignInMethods />
         <p className="admin-hint">{tr("admin.login_rules_hint")}</p>
         <p className="admin-hint">
           {tr("admin.login_url")} <code>{loginURL}</code>

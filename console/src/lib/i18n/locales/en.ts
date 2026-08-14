@@ -1309,6 +1309,15 @@ export const en: Record<keyof typeof ja, string> = {
     "An auto-join domain can belong to only one tenant.",
   "admin.login_url": "Sign-in URL for this tenant:",
 
+  // --- what may be written in "Sign-in methods" (docs/61 §61.11.8). The field is
+  // free text and the answer lived only in the deployment's environment. The
+  // display name leads; the id you type is shown next to it. ---
+  "admin.providers_title": "Sign-in methods this deployment has",
+  "admin.providers_none": "This deployment has no sign-in method configured (the login page shows no buttons).",
+  "admin.providers_hint":
+    "Write the ids from this list, comma-separated, in \"Sign-in methods\" above. Empty means every one of them. " +
+    "This tenant's own sign-in methods (listed below) go in the same field as t:tenant:method once they are approved.",
+
   // --- tenant-defined sign-in methods (docs/61 §61.11 · P4), for a group whose
   // subsidiaries each have their own Entra tenant. The tenant admin writes the
   // definition, the deployment admin activates it (決定 30) — that asymmetry is the
