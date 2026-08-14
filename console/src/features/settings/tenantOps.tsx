@@ -115,9 +115,13 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
                 .sort((a, b) => compareText(tName(a[0]), tName(b[0])))
                 .map(([tslug, list]) => (
                   <div key={tslug || "_"} className="asx-group">
-                    <div className="asx-group-head">
-                      {tName(tslug)} <span className="muted">({list.length})</span>
-                    </div>
+                    {/* テナントが 1 つに絞られている（テナント設定モーダル、または
+                        絞り込み中）ときの見出しは、全行に同じ名前を掲げるだけなので出さない。 */}
+                    {by.size > 1 && (
+                      <div className="asx-group-head">
+                        {tName(tslug)} <span className="muted">({list.length})</span>
+                      </div>
+                    )}
                     {list.map((s: any) => {
                       const st = stateInfo(s);
                       return (
