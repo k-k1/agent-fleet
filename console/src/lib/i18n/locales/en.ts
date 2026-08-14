@@ -1325,7 +1325,7 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.idp_title": "Sign-in methods for this tenant",
   "admin.idp_note": "activation needs a deployment administrator",
   "admin.idp_hint":
-    "Register your own IdP (Entra ID / Okta / Keycloak …) as a sign-in method for this tenant. " +
+    "Register your own IdP (Entra ID / Okta / Keycloak …), or a GitHub organization, as a sign-in method for this tenant. " +
     "A new method starts as \"waiting for approval\": until a deployment administrator approves it, no button appears on the sign-in page and no one can sign in with it.",
   "admin.idp_none": "None registered yet.",
   "admin.idp_add": "Add a sign-in method",
@@ -1338,6 +1338,19 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.idp_state_broken": "Approved, but the settings are incomplete",
   "admin.idp_name": "Name",
   "admin.idp_name_hint": "Identifier within this tenant (a-z, 0-9, - _). For example: entra",
+  "admin.idp_kind": "Kind of sign-in",
+  "admin.idp_kind_hint":
+    "Your own IdP (OIDC), or a GitHub organization. GitHub is one issuer shared by every tenant, so \"which organization are they a member of\" is what makes a sign-in yours.",
+  "admin.idp_kind_oidc": "Our own IdP (Entra ID / Okta / Keycloak …)",
+  "admin.idp_kind_github": "A GitHub organization",
+  "admin.idp_orgs": "Allowed GitHub organizations",
+  "admin.idp_orgs_hint":
+    "Comma-separated (required). Active membership in one of them is what authorizes a sign-in. " +
+    "If an organization restricts third-party OAuth apps, everyone is denied until an organization owner approves this OAuth app.",
+  "admin.idp_github_app_hint":
+    "Create an OAuth App for this tenant in GitHub, add {url} as its callback URL, then enter its client ID and secret here.",
+  "admin.idp_github_domains_note":
+    "GitHub hands over exactly one address it has verified. Someone whose primary GitHub address is outside your company domain should be stopped here — letting them through lands them in a NEW workspace rather than their existing one.",
   "admin.idp_issuer": "Issuer URL",
   "admin.idp_issuer_hint": "The IdP's issuer URL. For Entra ID, use the URL containing your own tenant GUID (common / organizations require tenant ids below).",
   "admin.idp_client_id": "Client ID",
@@ -1357,8 +1370,13 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.idp_label_ja": "Button label (Japanese)",
   "admin.idp_label_en": "Button label (English)",
   "admin.idp_repend_hint":
-    "Changing the issuer, the client ID or the trust rule — or adding a domain or tenant id — sends the method back for approval, " +
-    "because the approval was given to that issuer for that scope.",
+    "Changing the issuer, the client ID, the trust rule or the kind — or adding a domain, tenant id or GitHub organization — sends the method back for approval, " +
+    "because the approval was given to that identity source for that scope.",
+  "admin.hidden_providers": "Methods to keep off the sign-in page",
+  "admin.hidden_providers_unit":
+    "Comma-separated. Still accepted — only the button is removed from this tenant's sign-in page. Ignored if it would hide every button.",
+  "admin.allowed_providers_shared_note":
+    "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Keep the method those people use accepted, and list it under \"methods to keep off the sign-in page\" so it does not appear here. Accepting a method does not widen who can enter — the roster decides that.",
   "admin.idp_delete_title": "Delete {name}",
   "admin.idp_delete_body":
     "This removes the sign-in method. People who used it can no longer sign in, but their workspaces, homes and stored credentials are kept.",

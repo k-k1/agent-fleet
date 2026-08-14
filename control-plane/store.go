@@ -16,8 +16,9 @@ type Tenant struct {
 	ID, Slug, Name, Status, Limits, Isolation, KeyRef, CreatedAt string
 	// Per-tenant login rules (docs/61 §61.9.7, migration 0039). All CSV, all
 	// optional; see TenantLoginRules for what each one governs and why there is no
-	// allowed_emails among them.
-	AllowedProviders, AutoJoinDomains, AllowedDomains string
+	// allowed_emails among them. HiddenProviders (0042) is the one that is DISPLAY
+	// only — accepted methods to leave off this tenant's login page (§61.15.9).
+	AllowedProviders, AutoJoinDomains, AllowedDomains, HiddenProviders string
 }
 
 // TenantLoginRules is the login-relevant slice of a tenant, as loaded in bulk by
@@ -27,6 +28,9 @@ type Tenant struct {
 type TenantLoginRules struct {
 	ID, Slug, Name                                    string
 	AllowedProviders, AutoJoinDomains, AllowedDomains []string
+	// HiddenProviders is not a gate. It only removes buttons from /login/<slug>;
+	// the same method still admits its people (docs/61 §61.15.9 + 決定 14).
+	HiddenProviders []string
 }
 
 // Identity is a person, unique by email within the deployment. role is the
@@ -382,7 +386,9 @@ type TenantStore interface {
 	ListTenants(ctx context.Context) ([]Tenant, error)
 	// SetTenantLogin stores the three CSV login rules (docs/61 §61.9.7). Values are
 	// normalized by the caller (lowercased, deduped); this only writes them.
-	SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains string) error
+	// hiddenProviders is DISPLAY only (0042, docs/61 §61.15.9) — accepted methods to
+	// leave off this tenant's login page, never a gate.
+	SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains, hiddenProviders string) error
 	// ListTenantLoginRules is the entry gate's bulk read: one query behind a short
 	// TTL cache rather than a per-request lookup (§61.9.7).
 	ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error)
@@ -397,12 +403,18 @@ type TenantStore interface {
 // ApprovedAt are the copy of that approval kept next to the row — the audit ledger
 // is the record.
 type TenantIdP struct {
-	ID, TenantID, Name              string
-	LabelJA, LabelEN                string
+	ID, TenantID, Name string
+	LabelJA, LabelEN   string
+	// Kind selects the adapter the row is built into and therefore which of the
+	// fields below mean anything: "oidc" (the P4 default) uses Issuer/Trust/
+	// AllowedTIDs, "github" uses AllowedOrgs and pins Issuer to https://github.com
+	// (docs/61 §61.15 + 決定 35).
+	Kind                            string
 	Issuer, ClientID                string
 	SecretEnc, KeyRef               string
 	Trust                           string
 	AllowedTIDs, AllowedDomains     string // CSV
+	AllowedOrgs                     string // CSV, kind=github only
 	Status                          string // pending | active | suspended
 	ApprovedBy, ApprovedAt          string
 	CreatedBy, CreatedAt, UpdatedAt string
@@ -433,6 +445,27 @@ type TenantIdPStore interface {
 	DeleteTenantIdP(ctx context.Context, tenantID, id string) error
 }
 
+// IdentityLink is one proven login, on its way to LinkIdentity. It is a struct
+// rather than eight positional parameters because every field but one is a string
+// and this is the identity path: a swapped pair here hands somebody another
+// person's workspace, and `Realm: x, Subject: y` says which is which at the call
+// site.
+type IdentityLink struct {
+	Provider string // the button that was pressed (env id, or t:<slug>:<name>)
+	Subject  string // the IdP's stable id for this account
+	// Realm is WHERE Subject was proven: the issuer URL for OIDC, and
+	// https://github.com for the GitHub adapter. Two providers sharing a realm are
+	// two buttons onto the same IdP, so the same subject there is the same person —
+	// that is rule 1.5, and it is the one join a tenant-defined provider is allowed
+	// to make, because the realm is asserted by the adapter and verified against
+	// that IdP, never taken from the tenant's row (docs/61 §61.15).
+	Realm       string
+	Email       string
+	FallbackKey string // sanitizeUser(email), used only when a new identity is created
+	RoleHint    string
+	EmailJoin   bool
+}
+
 type IdentityStore interface {
 	// UpsertIdentity creates/updates the person. roleHint, when non-empty,
 	// upgrades the deployment role (e.g. "super_admin" from SUPER_ADMIN_EMAILS);
@@ -446,14 +479,18 @@ type IdentityStore interface {
 	// person landed in a different workspace than the one they may expect.
 	// fallbackKey is used only on that path (it is sanitizeUser(email)).
 	//
-	// ★ emailJoin selects rule 2 ("this address already belongs to someone — join
+	// ★ EmailJoin selects rule 2 ("this address already belongs to someone — join
 	// that identity"). It is FALSE for a tenant-defined provider (docs/61 §61.11 +
 	// 決定 32): its issuer belongs to the subsidiary, not to the operator, so an
 	// admin there could otherwise mint a token carrying a colleague's address and
 	// land in that colleague's identity — home, secrets and all. The caller decides,
 	// because the naming rule that distinguishes the two kinds of provider
 	// (tenantProviderID) belongs to the login layer, not to SQL.
-	LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string, emailJoin bool) (ident Identity, isNew bool, err error)
+	LinkIdentity(ctx context.Context, link IdentityLink) (ident Identity, isNew bool, err error)
+	// FillProviderRealm stamps the realm on the rows a provider wrote before the
+	// column existed (or through a path that had no provider object). Startup-only
+	// and idempotent — see the implementation for why it cannot be a migration.
+	FillProviderRealm(ctx context.Context, provider, realm string) error
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
 	// GetIdentityByUserKey is the READ-ONLY lookup for view paths (admin stats,
 	// admin MCP list tools): unlike UpsertIdentity it neither inserts a row for a

@@ -112,9 +112,11 @@ test("テナント管理者: サインイン方式は編集できるが承認は
 
   // ログイン規則: 値は読めるが、入力欄も保存ボタンも無い。
   await modal.locator(".settings-rail-item", { hasText: "ログイン規則" }).click();
-  await expect(modal.locator(".af-val")).toHaveCount(3);
+  // 4 行目は「ボタンを出さない方式」（docs/61 §61.15.9）— 受け入れる方式とは別の欄。
+  await expect(modal.locator(".af-val")).toHaveCount(4);
   await expect(modal.locator(".af-val").nth(0)).toHaveText("entra");
   await expect(modal.locator(".af-val").nth(2)).toContainText("未設定");
+  await expect(modal.locator(".af-val").nth(3)).toContainText("未設定");
   await expect(modal.locator(".settings-content input")).toHaveCount(0);
   await expect(modal.locator(".settings-content .admin-actions")).toHaveCount(0);
 });
