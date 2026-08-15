@@ -568,6 +568,14 @@
   color: var(--muted, #888);
   font-weight: 500;
 }
+/* アカウント（サインイン方法の紐づけ・docs/61 §61.16）。表のすぐ下に「追加」の見出しが
+   来るので段落として離し、方式の数だけ並ぶボタンは折り返す。 */
+.account-methods {
+  margin-bottom: 22px;
+}
+.account-add {
+  flex-wrap: wrap;
+}
 .pat-revoked {
   opacity: 0.5;
 }
