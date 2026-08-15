@@ -1,5 +1,5 @@
 // タッチの横スワイプ認識 — 左ペインの出し入れ（従来）と、スマホでの稼働中セッション
-// ローテート（← スワイプ）。
+// ローテート（← が次・→ が前）。
 //
 // App.tsx の useEffect に直書きされていた認識ロジックをここへ出した。理由は検証性で、
 // スマホのジェスチャは実機でしか触れない一方、判定そのもの（どの向き・どの距離・どの
@@ -9,7 +9,10 @@
 //
 // 規則:
 // - スマホ（≤760px）: 左ペインはオフキャンバス drawer。閉→左 1/3 から右で開く／開→左で閉じる。
-//   drawer が閉じている間の ← は「稼働中セッションを 1 件送る」に使う。
+//   drawer が閉じている間の横スワイプは「稼働中セッションを 1 件送る／戻す」に使う。
+// - **左端始まりの → は drawer 優先**（そこは「レールを引き出す」場所）。判定順で
+//   先に 50px の drawer 分岐に落ち、ローテートの 70px には届かないまま確定する。
+//   → で前へ戻すのは左端以外から始めたときだけ。
 // - タブレット（>760px かつタッチ）: 同じエッジスワイプがデスクトップのレールを
 //   overlay として出し入れする。マウス機は TouchEvent を出さないので不活性。
 // - 縦優先（|dx| <= |dy| は無視）＝スクロールを奪わない。長押し窓（500ms）を超えたら
@@ -31,7 +34,8 @@ export interface SwipeSurfaces {
   setDrawer(open: boolean): void;
   openRailOverlay(): void;
   closeRail(): void;
-  rotateNext(): void;
+  /** 稼働中セッションを delta 件ぶん送る（← が +1＝次、→ が -1＝前）。 */
+  rotateSession(delta: number): void;
 }
 
 /** レール開閉に要る横移動量。 */
@@ -105,7 +109,12 @@ export function installSwipeGestures(win: Window, s: SwipeSurfaces): () => void 
     } else if (rotate && dx < -ROTATE_DIST) {
       // 左端始まりの ← は mode==="open"（右スワイプ待ち）と両立するが、向きで
       // ここに落ちるので取り合いにはならない。
-      s.rotateNext();
+      s.rotateSession(1);
+      cancelGesture();
+    } else if (rotate && dx > ROTATE_DIST) {
+      // ここに来るのは左端始まりでないとき（左端なら上の drawer 分岐が 50px で
+      // 先に確定している）。
+      s.rotateSession(-1);
       cancelGesture();
     }
   };

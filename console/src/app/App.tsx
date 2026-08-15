@@ -98,11 +98,11 @@ function wireWorkspaceRefresh(): () => void {
   });
 }
 
-// スマホの ← スワイプ: 稼働中セッションを 1 つ送る。画面が丸ごと入れ替わる操作なので、
-// どこへ着地したか（何件中の何番目か）を短いトーストで返す — 空振り（対象が自分だけ／
-// 無し）も黙って落とさず、理由を出す。
-function rotateToNextSession(): void {
-  const target = rotateRunningSession(1);
+// スマホの横スワイプ: 稼働中セッションを 1 つ送る（← が次・→ が前）。画面が丸ごと
+// 入れ替わる操作なので、どこへ着地したか（何件中の何番目か）を短いトーストで返す —
+// 空振り（対象が自分だけ／無し）も黙って落とさず、理由を出す。
+function rotateToSession(delta: number): void {
+  const target = rotateRunningSession(delta);
   if (!target) {
     toast(t("swipe.rotate_none"), { kind: "info", duration: 2000 });
     return;
@@ -247,7 +247,7 @@ export function App() {
       setDrawer: setNavOpen,
       openRailOverlay: () => useLeftRail.getState().openOverlay(),
       closeRail: () => useLeftRail.getState().close(),
-      rotateNext: rotateToNextSession,
+      rotateSession: rotateToSession,
     });
   }, []);
 

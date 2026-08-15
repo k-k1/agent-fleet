@@ -36,7 +36,7 @@ function setup(over: Partial<Harness["state"]> = {}): Harness {
     setDrawer: (open) => calls.push(open ? "drawer:open" : "drawer:close"),
     openRailOverlay: () => calls.push("rail:open"),
     closeRail: () => calls.push("rail:close"),
-    rotateNext: () => calls.push("rotate"),
+    rotateSession: (delta) => calls.push(delta > 0 ? "rotate:next" : "rotate:prev"),
   };
   const uninstall = installSwipeGestures(window, surfaces);
   return { surfaces, calls, state, target, uninstall };
@@ -73,10 +73,10 @@ describe("左ペインの出し入れ（従来の挙動）", () => {
     expect(h.calls).toEqual(["drawer:close"]);
   });
 
-  it("画面中央から → は何も起こさない（エッジ始まりだけ）", () => {
+  it("スマホ: 左端始まりの → は drawer が優先（前のセッションへは戻さない）", () => {
     h = setup();
-    swipe([300, 300], 80);
-    expect(h.calls).toEqual([]);
+    swipe([10, 300], 120);
+    expect(h.calls).toEqual(["drawer:open"]);
   });
 
   it("タブレット（スマホ幅でないタッチ端末）はレールを overlay で出し入れする", () => {
@@ -103,28 +103,43 @@ describe("左ペインの出し入れ（従来の挙動）", () => {
   });
 });
 
-describe("スマホの ← スワイプ＝稼働中セッションのローテート", () => {
-  it("drawer が閉じているときの ← で 1 件送る", () => {
+describe("スマホの横スワイプ＝稼働中セッションのローテート", () => {
+  it("drawer が閉じているときの ← で次のセッションへ送る", () => {
     h = setup();
     swipe([300, 300], -120);
-    expect(h.calls).toEqual(["rotate"]);
+    expect(h.calls).toEqual(["rotate:next"]);
+  });
+
+  it("左端以外からの → は前のセッションへ戻す", () => {
+    h = setup();
+    swipe([300, 300], 120);
+    expect(h.calls).toEqual(["rotate:prev"]);
   });
 
   it("左端始まりの ← でも（→ 待ちと両立して）ローテートに落ちる", () => {
     h = setup();
     swipe([10, 300], -120);
-    expect(h.calls).toEqual(["rotate"]);
+    expect(h.calls).toEqual(["rotate:next"]);
+  });
+
+  it("drawer が開いていれば → も何もしない（閉じる ← だけを受ける）", () => {
+    h = setup({ drawer: true });
+    swipe([300, 300], 120);
+    expect(h.calls).toEqual([]);
   });
 
   it("70px に届かない横ぶれでは発火しない（レール開閉の 50px より遠い）", () => {
     h = setup();
     swipe([300, 300], -60);
     expect(h.calls).toEqual([]);
+    swipe([300, 300], 60);
+    expect(h.calls).toEqual([]);
   });
 
   it("縦優先: 斜めでも縦の方が大きければスクロールに譲る", () => {
     h = setup();
     swipe([300, 300], -120, -200);
+    swipe([300, 300], 120, 200);
     expect(h.calls).toEqual([]);
   });
 
@@ -134,7 +149,16 @@ describe("スマホの ← スワイプ＝稼働中セッションのローテ�
     touchEvent("touchmove", 180, 300, h.target);
     touchEvent("touchmove", 40, 300, h.target);
     touchEvent("touchend", 40, 300, h.target);
-    expect(h.calls).toEqual(["rotate"]);
+    expect(h.calls).toEqual(["rotate:next"]);
+  });
+
+  it("戻したあと同じ指で反対へ振っても、確定は 1 回きり", () => {
+    h = setup();
+    touchEvent("touchstart", 300, 300, h.target);
+    touchEvent("touchmove", 440, 300, h.target);
+    touchEvent("touchmove", 100, 300, h.target);
+    touchEvent("touchend", 100, 300, h.target);
+    expect(h.calls).toEqual(["rotate:prev"]);
   });
 
   it("長押しの窓を越えたら候補を取り消す（テキスト選択のドラッグを化けさせない）", () => {
@@ -161,9 +185,10 @@ describe("スマホの ← スワイプ＝稼働中セッションのローテ�
     expect(h.calls).toEqual([]);
   });
 
-  it("タブレットでは ← でローテートしない（スマホだけの操作）", () => {
+  it("タブレットでは ← / → でローテートしない（スマホだけの操作）", () => {
     h = setup({ phone: false, coarse: true });
     swipe([500, 300], -120);
+    swipe([500, 300], 120);
     expect(h.calls).toEqual([]);
   });
 
