@@ -294,9 +294,43 @@ decision gate are in
 
 ## Cost & ephemerality
 
-Standing costs while the substrate is up: **NAT (~$32/mo)**, ALB (~$20/mo), RDS
-t4g.micro (~$15–30/mo), EFS (usage). For iteration, **deploy → E2E → `delete-stack`**
-and keep stacks short-lived.
+**Standing cost with every workspace stopped and nobody logged in** — list prices
+pulled from the AWS Pricing API for **ap-northeast-1**, 730 h/month, 2026-08-15
+(scale by your region's rates; us-east-1 is roughly 30% lower):
+
+| Always-on | Rate | $/month |
+|---|---|---|
+| NAT Gateway ×1 | $0.062/h | **45.3** |
+| **CP/Console Fargate task ×1** (0.5 vCPU + 1 GB, `DesiredCount: 1`) | $0.05056/vCPU-h + $0.00553/GB-h | **22.5** |
+| RDS db.t4g.micro Single-AZ | $0.025/h | **18.3** |
+| ALB ×1 | $0.0243/h (+ $0.008/LCU-h, ~0 when idle) | **17.7** |
+| RDS storage 20 GiB | $0.138/GB-mo | 2.8 |
+| Secrets Manager (RDS-managed password) | $0.40/secret | 0.4 |
+| Cloud Map private namespace (Route 53 private zone) | — | 0.5 |
+| ECR (CP + WS ≈ 1.05 GB) | $0.10/GB-mo | 0.1 |
+| EFS (every user's home persists) | $0.36/GB-mo | usage |
+| **Total** | | **≈ $107/mo + EFS** |
+
+Stopped workspaces cost **nothing** (that is scale-to-zero working); the S3 gateway
+endpoint, ACM, the NAT's EIP and standard SSM parameters are free. A *running*
+workspace adds Fargate at **$0.0616/h** (1 vCPU + 2 GB) — ~$11/mo at 8 h × 22 days,
+$45/mo if left on around the clock.
+
+So **the floor is four always-on pieces that do not care how many users you have**.
+The lever is NAT: a **NAT instance** (t4g.nano + EBS + its public IPv4 ≈ $8/mo)
+cuts ~$37/mo, at the price of running it yourself. Dropping the CP task to
+256/512 saves another ~$11 (unverified that it fits). ALB and RDS are effectively
+the floor — Aurora Serverless v2 costs more at its 0.5-ACU minimum.
+
+**One or two users: [`../ec2-single`](../ec2-single/) is cheaper**, and that is what
+it exists for. A t3.medium + 30 GB gp3 + EIP is ~$47/mo **with the workspaces
+included** (t3.large, the default, ~$87/mo), versus ~$72/mo for a trimmed ECS
+deployment that still bills workspace hours on top. ECS wins on cost only around
+**8–10 concurrent users**, where the single VM has to be sized for everyone's peak
+24/7 while Fargate bills only the hours each workspace actually runs — plus the
+isolation ECS gives you regardless of price.
+
+For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived.
 
 - NAT is needed because workspaces egress to **git / Anthropic** (public internet),
   and every private-subnet task also reaches ECR / CloudWatch Logs / SSM through it
@@ -304,14 +338,16 @@ and keep stacks short-lived.
   path**, not just the user's internet access.
   - The **S3 gateway endpoint is in `00-network.yaml`** because it is free (no
     hourly charge, no ENI) and ECR layer blobs live in S3 — it takes the bulk of
-    every cold image pull off the NAT's $0.045/GB data processing. **Interface**
+    every cold image pull off the NAT's data processing charge ($0.062/GB in
+    ap-northeast-1 — the same rate as its hourly charge). **Interface**
     endpoints (ecr.api, ecr.dkr, logs, ssm) are left out on purpose: $0.01/AZ/hour
     × 2 AZ each adds up past the NAT Gateway they would relieve.
   - What still crosses the NAT: git / Anthropic / npm / package registries (the real
     developer traffic), plus the small ECR auth+manifest, Logs and SSM calls.
-  - Replacing the NAT Gateway with a **NAT instance** (t4g.nano/small, ~$7–12/mo vs
-    $33) is the remaining lever for a dev loop, at the price of running it yourself
-    (source/dest check off, iptables MASQUERADE, ASG for replacement + route rewrite).
+  - Replacing the NAT Gateway with a **NAT instance** (t4g.nano $3.9 + 8 GB gp3
+    $0.8 + its public IPv4 $3.7 ≈ **$8/mo**, vs **$45** for the managed gateway) is
+    the biggest single lever, at the price of running it yourself (source/dest check
+    off, iptables MASQUERADE, ASG for replacement + route rewrite).
 - Persistence: `10-data.yaml` takes a **`Persistence` parameter** — `delete`
   (default, sandbox-ephemeral: EFS/RDS dropped with the stack, no backups) or
   `retain` (production: EFS `Retain`, RDS `Snapshot` + 7-day backups + deletion
