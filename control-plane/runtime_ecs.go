@@ -448,6 +448,11 @@ func (e *ecsRuntime) putSecrets(ctx context.Context) ([]ecstypes.Secret, error) 
 func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP string, secrets []ecstypes.Secret) (string, error) {
 	env := []ecstypes.KeyValuePair{
 		{Name: aws.String("CLAUDE_CONFIG_DIR"), Value: aws.String("/var/lib/af/claude")},
+		// The task-local working disk. Injected ONLY here: the docker adapter bind-mounts
+		// a host directory for home, so on-prem has nothing to gain from moving caches
+		// off it. The entrypoint uses this to relocate the small-file caches (ADR 0044
+		// 決定 3); everything it points at is wiped when the task stops.
+		{Name: aws.String("AF_WS_SCRATCH"), Value: aws.String(wsScratchPath)},
 		// Graceful-shutdown budget for the Agent's SIGTERM handler — the container
 		// stopTimeout minus a safety margin (see StopTimeout below).
 		{Name: aws.String("AGENT_STOP_GRACE_SEC"), Value: aws.String(strconv.Itoa(agentStopGraceSec()))},

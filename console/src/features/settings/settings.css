@@ -2775,6 +2775,33 @@
   display: flex;
   gap: 8px;
 }
+/* Named sizes fill the three numeric fields above in one click. They are a shortcut,
+   not a separate mode, so they sit next to the fields rather than replacing them. */
+.limit-edit .le-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.limit-edit .le-presets .chip {
+  min-width: 44px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+.limit-edit .le-presets .chip:hover {
+  border-color: var(--accent);
+}
+.limit-edit .le-presets .chip.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+}
 .role-now {
   display: inline-flex;
   align-items: center;

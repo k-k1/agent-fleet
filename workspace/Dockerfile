@@ -409,6 +409,12 @@ ARG NOTO_CJK_VERSION=Sans2.004
 # 作成するが、native rootfs モード（bwrap --ro-bind で / が read-only — docs/35
 # §35.7.2）では bwrap が bind 先を mkdir できず起動が即死する。3 箇所とも空のまま焼く。
 RUN mkdir -p /var/lib/af/claude /usr/local/share/agent-fleet/docs /usr/lib/jvm
+# /scratch = タスクローカルの作業ディスク（ADR 0044 決定 3）。ECS では ephemeral
+# storage 上の素のディレクトリ（>200 GiB のときだけ EBS のマウント先）で、entrypoint が
+# ここへ小ファイルの山（go-build / uv / go module）を逃がす。dev が書けないと意味が
+# 無いので所有者を渡しておく。docker / native では CP が AF_WS_SCRATCH を注入しない
+# ので空のまま使われない。
+RUN mkdir -p /scratch && chown 1000:1000 /scratch
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
@@ -518,7 +524,9 @@ COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 # gh 透過認証ラッパー（実体は /usr/local/libexec/gh）。§8.3 参照。
 COPY gh-auth-wrapper.sh /usr/local/bin/gh
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh
+# ビルド生成物をタスクローカルの作業ディスクへ逃がすヘルパー（ADR 0044 決定 3）。
+COPY af-scratch.sh /usr/local/bin/af-scratch
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/af-scratch
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
 # rtk.ts (token-saving command rewrite, the opencode analog of claude's rtk hook —
