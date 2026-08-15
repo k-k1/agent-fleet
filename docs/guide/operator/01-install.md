@@ -95,6 +95,22 @@ Two things about that block are worth reading before you copy it:
   the allowlist meaningless. The CP refuses to start on those endpoints unless
   `AF_OIDC_ENTRA_ALLOWED_TIDS` names the tenants you accept.
 
+**One IdP behind two app registrations (optional)** — when head office and a subsidiary use the
+same Entra tenant through different app registrations, **Entra's `sub` differs per app
+registration**, so one person is two accounts depending on which button they pressed. Naming a
+**stable claim** such as `oid` (the person's id within that directory) makes them one:
+
+```sh
+AF_OIDC_ENTRA_LINK_CLAIM=oid
+```
+
+> **⚠ Name only a value the IdP ASSIGNS — one nobody can choose.** Naming an asserted value such
+> as `email` / `upn` / `preferred_username` lets any other sign-in method sharing that issuer (a
+> subsidiary's own registration, say) **land on an existing account** merely by asserting that
+> value. The field a tenant administrator sees in the Console only offers `oid`; this environment
+> variable is not restricted because it is the operator's own declaration. Leave it unset and
+> matching stays on `sub` alone, as before.
+
 **GitHub** — GitHub has no OIDC for user sign-in, so it is configured separately, and what
 authorizes the login is membership in an organization you name:
 
@@ -196,6 +212,12 @@ sign-in page**, which stays accepted but gets no button here (hiding all of them
 the page is never a dead end). Hand that URL to new members; there is no invitation email (the CP
 has no SMTP, by design).
 
+> **A hidden button still appears on the plain `/login`.** That page (the one without a slug)
+> belongs to no tenant, so the deployment-wide methods stay on it — hiding them there would lock
+> out everybody who is not in a tenant yet (a new deployment admin, somebody not invited so far).
+> So **"methods to keep off the sign-in page" only takes effect when people use `/login/<slug>`**.
+> Once you set it, hand that URL to the tenant's people and have them bookmark it.
+
 > **"Invite domains" is not "who may use this tenant."** It only bounds who can be put on the
 > roster. Somebody already invited keeps working even from another domain — which is what makes
 > a contractor's address workable — and the way to end their access is to remove the member, not
@@ -208,7 +230,10 @@ Entra ID (or Okta / Keycloak) tenant is a different one, with its own issuer, cl
 secret. Rather than adding it to `.env` and restarting the CP for every subsidiary, that tenant's
 own administrator registers it from the Console: **Tenant settings → "Sign-in methods"** (the
 account menu's *Tenant settings*). They fill in the issuer, client ID, client secret, how the
-email is trusted, and the email domains it may admit — or, instead of their own IdP, **a GitHub
+email is trusted, and the email domains it may admit (when they use the same IdP as head office
+through a different app registration, **"How the same account is recognised"** offers `oid` — the
+same thing as `AF_OIDC_<ID>_LINK_CLAIM` above, restricted on the tenant side to claims that are
+safe to name) — or, instead of their own IdP, **a GitHub
 organization** (see "When a subsidiary uses GitHub" below). As a deployment administrator you reach the
 same panel from **Admin → the tenant → "Sign-in methods."**
 
@@ -231,8 +256,8 @@ What to check before approving, on the deployment-wide list under **Admin → Te
   addresses that issuer is allowed to assert, and a domain can belong to only one tenant. Do not
   approve a method that claims the parent company's domain.
 
-Changing the issuer, the client ID or the trust rule — or *adding* a domain — sends the method
-back for approval, because the approval was given to that issuer for that scope. Suspending is
+Changing the issuer, the client ID, the trust rule or how the same account is recognised — or
+*adding* a domain — sends the method back for approval, because the approval was given to that issuer for that scope. Suspending is
 always available, to the tenant's own administrator as well: stopping should never wait for you.
 
 #### When a subsidiary uses GitHub
