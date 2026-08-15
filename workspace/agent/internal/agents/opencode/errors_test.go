@@ -97,6 +97,28 @@ func TestTurnWith200ErrorBodyLandsFailedAndReportsReason(t *testing.T) {
 	}
 }
 
+func TestRetryableProviderFailureIsRetriedOnce(t *testing.T) {
+	m, srv := newMockServe(t)
+	m.turnBodies = []string{
+		`{"info":{"error":{"name":"APIError","data":{"statusCode":500,"isRetryable":true,"message":"Internal server error"}}},"parts":[]}`,
+		`{"info":{"role":"assistant"},"parts":[]}`,
+	}
+	h := newTestHandle(t, srv)
+	origWait := waitBeforeProviderRetry
+	waitBeforeProviderRetry = func(time.Duration) {}
+	t.Cleanup(func() { waitBeforeProviderRetry = origWait })
+
+	if err := h.Send(agents.TurnInput{Prompt: "retry me", ClientMessageID: "msg_retry"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitState(t, h, agents.TurnCompleted)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.turns) != 2 {
+		t.Fatalf("provider calls = %d, want 2", len(m.turns))
+	}
+}
+
 // read 層の回帰: 失敗したターンは parts が空なので、「表示できる part が無い」判定で
 // 丸ごと捨てられ、ミラーにも get_session_output にも何も出なかった。エラーを 1 part
 // として持ち上げ、Text（= /output・コピー・チャットブリッジ）にも載ること。
