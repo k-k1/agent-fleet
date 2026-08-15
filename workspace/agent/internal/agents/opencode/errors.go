@@ -48,7 +48,6 @@ type messageError struct {
 	Data struct {
 		Message         string            `json:"message"`
 		StatusCode      int               `json:"statusCode"`
-		IsRetryable     bool              `json:"isRetryable"`
 		ProviderID      string            `json:"providerID"`
 		ResponseBody    string            `json:"responseBody"`
 		ResponseHeaders map[string]string `json:"responseHeaders"`
@@ -97,13 +96,6 @@ func (e messageError) summary() string {
 // ok reports whether this is a failure worth surfacing (a deliberate abort is not).
 func (e messageError) ok() bool {
 	return strings.TrimSpace(e.Name) != "" && strings.TrimSpace(e.Name) != abortedErrorName
-}
-
-// retryable reports whether OpenCode's provider adapter explicitly says that the
-// failed request can be sent again.  Do not infer this from the HTTP status alone:
-// a provider can use a 5xx response for an error after it has begun work.
-func (e messageError) retryable() bool {
-	return e.ok() && e.Data.IsRetryable
 }
 
 // part renders the failure as the ordered part the Console renders as an error block.
