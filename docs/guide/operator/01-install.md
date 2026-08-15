@@ -177,12 +177,13 @@ has no SMTP, by design).
 > a contractor's address workable — and the way to end their access is to remove the member, not
 > to narrow this field.
 
-### A subsidiary with its own IdP
+### A tenant with its own IdP
 
-When a tenant is a separate company — a group subsidiary, or a business still being merged — its
-Entra ID (or Okta / Keycloak) tenant is a different one, with its own issuer, client ID and
-secret; or it may have no IdP of its own and want **a GitHub organization** instead. Rather than
-adding each one to `.env` and restarting the CP, that tenant's own administrator registers it
+Some tenants have an identity source of their own: a different Entra ID (or Okta / Keycloak)
+tenant, with its own issuer, client ID and secret, or **a GitHub organization** instead. A group
+subsidiary is the obvious case, but so is a business still being merged, an outsourcing partner,
+or a division that simply runs its own directory. Rather than adding each one to `.env` and
+restarting the CP, that tenant's own administrator registers it
 from the Console — **Tenant settings → "Sign-in methods"** (the account menu's *Tenant settings*),
 which you reach from **Admin → the tenant → "Sign-in methods."** Nothing here needs a restart.
 
@@ -197,7 +198,7 @@ variant — is [05 §7](05-login-idp.md).** What belongs here is the decision:
 > **This one step is not bureaucracy.** Registering an IdP is the power to declare *who somebody
 > is*, and on this deployment a person is identified by their email address — deployment-wide,
 > including who is a deployment administrator. An admin who could activate their own issuer could
-> issue themselves a token carrying *your* address. Approving is a once-per-subsidiary action, so
+> issue themselves a token carrying *your* address. Approving is a once-per-tenant action, so
 > the day-to-day picture ("the department runs itself") is unchanged.
 
 So the deployment-wide register under **Admin → Tenants** ("Tenant-defined sign-in methods,"

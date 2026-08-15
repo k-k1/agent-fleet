@@ -55,9 +55,9 @@ The rail on the left holds two groups.
   administrator has to approve it. With GitHub you list the **allowed organizations** instead of
   an issuer and use an OAuth App created in your own organization — the approval is read as
   "these organizations, these domains", so **adding an organization sends it back for approval**.
-  ★ **"How the same account is recognised"** only matters when head office and your company use
-  **the same IdP through different app registrations**. Entra's default `sub` differs per app
-  registration, so one person is two accounts across head office's button and this method;
+  ★ **"How the same account is recognised"** only matters when your company and the deployment's
+  own sign-in use **the same IdP through different app registrations**. Entra's default `sub`
+  differs per app registration, so one person is two accounts across that button and this method;
   picking `oid` makes them one. Only values the IdP assigns can be picked — never one somebody
   can **assert**, such as an email address (asserting it would be enough to reach another
   person's account). **Changing it sends the row back for approval.**
