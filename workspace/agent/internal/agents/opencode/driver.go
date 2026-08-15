@@ -54,13 +54,6 @@ import (
 // runs for minutes/hours. Interrupt (abort) or daemon death unblocks it.
 var turnClient = &http.Client{}
 
-const providerRetryDelay = 5 * time.Second
-
-// waitBeforeProviderRetry is a seam for the retry contract test.  The production
-// delay gives an overloaded provider a chance to recover before spending the one
-// bounded retry.
-var waitBeforeProviderRetry = time.Sleep
-
 // ledger は ClientMessageID の永続台帳（§9.5 のプロセス跨ぎ永続化 — §12.2-3 の
 // 将来課題を P3 で解消。in-memory 台帳は Agent 再起動を跨ぐ再送に効かなかった）。
 var ledger = agents.NewMsgLedger("opencode-msgledger")
@@ -494,58 +487,48 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 		return
 	}
 	h.setState(agents.TurnRunning)
-	for attempt := 0; attempt < 2; attempt++ {
-		req, err := http.NewRequest("POST", dirQ(addr+"/session/"+url.PathEscape(ses)+"/message", h.dir), bytes.NewReader(buf))
-		if err != nil {
-			h.setState(agents.TurnFailed)
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		res, err := turnClient.Do(req)
-		if err != nil {
-			// transport 断 = daemon 喪失か中断: 正直に unknown へ落とし §6 に委ねる。
-			h.mu.Lock()
-			interrupted := h.state == agents.TurnInterrupting
-			h.mu.Unlock()
-			if interrupted {
-				h.setState(agents.TurnCancelled)
-			} else {
-				h.setState(agents.TurnUnknown)
-			}
-			return
-		}
-		// 200 でも失敗していることがある: opencode はプロバイダ側の失敗を HTTP ステータス
-		// ではなく assistant message の error フィールドで返す（errors.go の実測）。
-		turnErr, failed := decodeTurnError(res.Body)
-		res.Body.Close()
+	req, err := http.NewRequest("POST", dirQ(addr+"/session/"+url.PathEscape(ses)+"/message", h.dir), bytes.NewReader(buf))
+	if err != nil {
+		h.setState(agents.TurnFailed)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := turnClient.Do(req)
+	if err != nil {
+		// transport 断 = daemon 喪失か中断: 正直に unknown へ落とし §6 に委ねる。
 		h.mu.Lock()
 		interrupted := h.state == agents.TurnInterrupting
-		h.inter = nil // turn が終わった＝質問はもう待っていない
 		h.mu.Unlock()
 		if interrupted {
 			h.setState(agents.TurnCancelled)
-			return
-		}
-		// OpenCode が明示した一時エラーだけを一度再送する。isRetryable を見ずに
-		// HTTP 500 全般を再送すると、既にツールを動かしたターンを重複実行し得る。
-		if attempt == 0 && failed && turnErr.retryable() {
-			log.Printf("opencode managed: retrying retryable provider failure name=%s status=%d", h.name, turnErr.Data.StatusCode)
-			waitBeforeProviderRetry(providerRetryDelay)
-			continue
-		}
-		switch {
-		case res.StatusCode >= 400:
-			failure = fmt.Sprintf("[error] HTTP %d", res.StatusCode)
-			log.Printf("opencode managed: turn failed name=%s status=%d", h.name, res.StatusCode)
-			h.setState(agents.TurnFailed)
-		case failed:
-			failure = turnErr.summary()
-			log.Printf("opencode managed: turn failed name=%s model=%s %s", h.name, st.Model, turnErr.summary())
-			h.setState(agents.TurnFailed)
-		default:
-			h.setState(agents.TurnCompleted)
+		} else {
+			h.setState(agents.TurnUnknown)
 		}
 		return
+	}
+	defer res.Body.Close()
+	// 200 でも失敗していることがある: opencode はプロバイダ側の失敗を HTTP ステータス
+	// ではなく assistant message の error フィールドで返す（errors.go の実測）。status
+	// だけ見ていた頃は残高切れ・認証エラーが「正常完了」として idle に戻り、転写にも
+	// 何も残らなかった。
+	turnErr, failed := decodeTurnError(res.Body)
+	h.mu.Lock()
+	interrupted := h.state == agents.TurnInterrupting
+	h.inter = nil // turn が終わった＝質問はもう待っていない
+	h.mu.Unlock()
+	switch {
+	case interrupted:
+		h.setState(agents.TurnCancelled)
+	case res.StatusCode >= 400:
+		failure = fmt.Sprintf("[error] HTTP %d", res.StatusCode)
+		log.Printf("opencode managed: turn failed name=%s status=%d", h.name, res.StatusCode)
+		h.setState(agents.TurnFailed)
+	case failed:
+		failure = turnErr.summary()
+		log.Printf("opencode managed: turn failed name=%s model=%s %s", h.name, st.Model, turnErr.summary())
+		h.setState(agents.TurnFailed)
+	default:
+		h.setState(agents.TurnCompleted)
 	}
 }
 
