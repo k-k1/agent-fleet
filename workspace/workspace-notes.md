@@ -38,7 +38,9 @@ instead. What is relocated there for you (Go build cache, `uv`, Go modules) is o
 regenerable, and `~/.npm` deliberately stays on the persistent home so a rebuild needs no
 network.
 
-**Build artifacts are relocated for you too, at the moment a working copy is created.**
+**On such a deployment, build artifacts are relocated for you too, at the moment a
+working copy is created** (nothing below applies when `$AF_WS_SCRATCH` is unset — there
+is no working disk, and every path stays exactly where you put it).
 When the Console clones a repo or adds a worktree, `node_modules` (next to a
 `package.json`), `target` (`Cargo.toml` / `pom.xml`), `.venv` (`pyproject.toml`) and
 `build` (`build.gradle`) become symlinks into `/scratch` **before** anything installs into
