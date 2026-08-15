@@ -281,7 +281,9 @@ EFS のペナルティは **1 ファイルあたり約 14.5 ms 固定**、帯域
 | ECS | CPU を `fargateSize` の下限として反映。ディスクは 21〜200 GiB を `EphemeralStorage`、200 GiB 超を ECS 管理 EBS（`configuredAtLaunch` ボリューム＋サービスの `volumeConfigurations`・要 `AF_ECS_INFRA_ROLE`） |
 | docker | `--cpus`（単位は Fargate units のまま保持し、渡すときに /1024） |
 | 置き場 | ECS のときだけ `AF_WS_SCRATCH=/scratch` を注入。entrypoint が `go-build`/`uv`/`go/pkg/mod` を symlink で退避 |
-| 生成物 | `af-scratch` ヘルパー（`af-scratch node_modules`）。プロジェクト毎にしか場所が決まらないので利用者/エージェントが張る |
+| 生成物 | `af-scratch` ヘルパー（`af-scratch node_modules`）。手で張る経路 |
+| 生成物（自動・P3） | Agent が clone / worktree 作成の直後に `af-scratch --auto <dir>` を叩き、`node_modules`/`target`/`.venv`/`build` を**空のうちに** symlink 化（§63.6.3） |
+| 既定（P3） | `WsDiskGiB` / `AF_ECS_WS_DISK_GB` の既定を **0 → 50 GiB**。0 のままでは退避が一度も発火しなかった（§63.6.1） |
 | Console | 上限の設定に CPU と作業ディスクを追加。S/M/L/XL/2XL は 3 軸を埋める近道 |
 | MCP | `set_user_quota` に `cpu_units` を追加し、3 軸すべての post-clamp 値を返す |
 | IaC | `WsTaskCpu` / `WsTaskMemory` / `WsDiskGiB`（既定は現行の挙動を変えない） |
@@ -297,12 +299,59 @@ EFS のペナルティは **1 ファイルあたり約 14.5 ms 固定**、帯域
 
 「機能を入れる」と「容量を用意する」が 1 つのノブになるので、容量不足で詰まる組み合わせが作れない。
 
+**ただし既定を 0 のまま出したのは誤りだった（P3 で訂正）。** ノブが 1 つであることと、その
+ノブを既定で切っておくことは別の話で、実際には **どのデプロイでも一度も発火しない**まま
+「入っている」ことになっていた。既定を **50 GiB** に上げ、退避が既定で有効な状態にする。
+
+- 50 GiB の根拠: entrypoint の発火閾値（`AF_WS_SCRATCH_MIN_GB` = 30 GiB）より上で、実測
+  キャッシュ 10.5 GiB ＋ イメージ層 ＋ `/tmp` ＋ 生成物が同居しても余裕がある水準。
+- 費用: 無料枠 20 GiB を超えた分だけ **$0.097/GiB-月・しかもタスク稼働中のみ**。
+  30 GiB 上乗せで 24/7 なら月 $2.9、アイドル停止が効いていれば月 $1 未満。
+- 逃げ道は `WsDiskGiB=0`（＝従来どおり全部 EFS）。
+- **既存スタックは自動では上がらない**（CloudFormation はパラメータ値を保持する）。
+  更新時に `WsDiskGiB=50` を明示する必要がある——ここは運用手順として `deploy/aws/ecs/README.md` に書いた。
+
 ### 63.6.2 まだ検証していないこと
 
 - **ECS 管理 EBS の経路（200 GiB 超）は実機未検証。** インフラ IAM ロールが要り、参照スタックは
   それを作らない。ロール未設定なら無料既定へフォールバックする。マウント先の所有者が dev で
   ない可能性があり、その場合 entrypoint は退避をスキップして EFS のまま動く（ログに残す）。
 - **`~/.local` の置き場**（§63.5.3）。
+- **P3（既定 50 GiB ＋ 生成物の自動退避）も実 ECS では未検証。** ローカルのユニットテスト
+  （`workspace/agent/scratch_test.go`・実物の `af-scratch.sh` を PATH に置いて叩く）と
+  CP のファクトリテストまで。実機で確認すべきは「50 GiB で退避が実際に発火するか」と
+  「clone 直後の symlink 越しに `npm ci` が通るか」の 2 点。
+
+### 63.6.3 生成物の自動退避（P3）
+
+`af-scratch node_modules` を手で張る形には、**効き幅が取れない**という致命的な穴があった。
+退避できるのは「既にある node_modules」であり、その時点で **1 回目の `npm ci` は EFS 上で
+走り終えている**（105 秒を払い済み）。そのうえ数万ファイルを EFS から読み直して移すので、
+退避そのものも遅い。**速いのは「まだ無いうちに symlink を張っておく」形だけ**である。
+
+そこで Agent が `gitClone` と worktree 作成の直後に `af-scratch --auto <dir>` を叩く
+（`workspace/agent/scratch.go`）。マーカーから生成物の位置を決める:
+
+| マーカー | 逃がす先 |
+|---|---|
+| `package.json` | `node_modules` |
+| `Cargo.toml` / `pom.xml` | `target` |
+| `pyproject.toml` | `.venv` |
+| `build.gradle` / `build.gradle.kts` | `build` |
+
+モノレポのため既定 3 階層まで走査し、`.git` と生成物ディレクトリ自身には降りない。安全側の規則は 4 つ:
+
+1. 既に symlink → 触らない（利用者が親クローンへ張った共有かもしれない）
+2. 実体があり **git が無視していない** → 触らない（**追跡物は絶対に動かさない**）
+3. 実体があり git が無視している → 移して symlink に置き換える
+4. 実体が無い → 空の逃がし先を作って symlink を張る（**この経路が本命**）
+
+**既存の作業コピーには適用しない**（clone / worktree 作成時のみ）。停止をまたいで残った
+巨大な木を再開時に移すと、セッションの起動がそのぶん止まるため。手で `af-scratch` を張る導線は残す。
+
+代償として `[ -d node_modules ] || npm install` の形をしたスクリプトは「もう入っている」と
+誤認する（空ディレクトリでも `-d` は真）。`AF_WS_SCRATCH_AUTO=0` で切れる。この事実は
+`workspace/workspace-notes.md` に利用者/エージェント向けに書いた。
 
 ## 63.7 計測ハーネス
 

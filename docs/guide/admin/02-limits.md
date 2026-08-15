@@ -47,7 +47,7 @@ independent.
 |---|---|---|
 | Memory | MB | deployment default |
 | CPU | Fargate CPU units (1024 = 1 vCPU) | deployment default |
-| Working disk | GB | the default 20 GiB (free tier) |
+| Working disk | GB | the deployment default (50 GiB on the reference AWS stack) |
 
 The **S / M / L / XL / 2XL** buttons are a shortcut that fills all three at once. You can also enter
 them individually.
@@ -61,6 +61,12 @@ Changes take effect **from the next workspace start**; a running workspace is no
 
 > **The working disk does not persist.** Its contents are wiped when the workspace stops — only the
 > home directory (`~`) survives. It is a place for build output and caches, not for storing things.
+
+Build output goes there **by itself**: caches (Go build cache, `uv`, Go modules) are moved at
+workspace start, and `node_modules` / `target` / `.venv` / `build` are pointed at it as each repo or
+worktree is created. That is what makes installs and builds several times faster on AWS, where the
+home directory is network storage. It only happens when the working disk is **30 GB or more** — below
+that there is no room, and everything stays in the home directory as before.
 
 ## Idle auto-stop
 

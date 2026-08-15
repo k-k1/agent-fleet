@@ -456,6 +456,7 @@ func gitClone(dir, remoteURL, branch, newBranch string) error {
 		}
 	}
 	gitSubmodulesEnsure(dir) // clone-then-start lands a session here too
+	scratchAutoRelocate(dir) // artifact dirs onto the working disk while the tree is still empty
 	return nil
 }
 
@@ -1039,6 +1040,10 @@ func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	}
 	applyGitIdentity(dir)    // commit identity for the worktree (config is shared, but explicit)
 	gitSubmodulesEnsure(dir) // per-worktree submodule checkout; parent untouched (verified)
+	// A new worktree starts without node_modules/target/.venv, which is exactly when
+	// relocating them is free. Only on creation: an existing worktree may already hold
+	// a populated tree on EFS, and moving that on a relaunch would stall the session.
+	scratchAutoRelocate(dir)
 	return dir, nil
 }
 

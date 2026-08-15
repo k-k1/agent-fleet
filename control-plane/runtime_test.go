@@ -92,9 +92,20 @@ func TestFactoryCPUAndDiskOverride(t *testing.T) {
 	if e.cpu != "4096" || e.memory != "8192" {
 		t.Errorf("ecs cpu-only: cpu=%q memory=%q, want 4096/8192", e.cpu, e.memory)
 	}
-	// Disk: below the free default stays absent, 21-200 becomes ephemeral storage.
-	if e := ecsF.New(Workspace{ContainerName: "c"}, "", nil).(*ecsRuntime); e.diskGiB != 0 || e.ebsGiB != 0 {
-		t.Errorf("ecs disk default: ephemeral=%d ebs=%d, want 0/0", e.diskGiB, e.ebsGiB)
+	// Disk: the deployment default must land ABOVE the entrypoint's arming threshold
+	// (AF_WS_SCRATCH_MIN_GB, 30 GiB), or the cache relocation of ADR 0044 決定 3 never
+	// runs — which is exactly what shipping 0 here did.
+	if e := ecsF.New(Workspace{ContainerName: "c"}, "", nil).(*ecsRuntime); int(e.diskGiB) != ecsDefaultWorkDiskGiB || e.ebsGiB != 0 {
+		t.Errorf("ecs disk default: ephemeral=%d ebs=%d, want %d/0", e.diskGiB, e.ebsGiB, ecsDefaultWorkDiskGiB)
+	}
+	if ecsDefaultWorkDiskGiB <= 30 {
+		t.Errorf("ecsDefaultWorkDiskGiB=%d must exceed the 30 GiB scratch threshold", ecsDefaultWorkDiskGiB)
+	}
+	// An explicit 0 is still "free tier": a deployment can opt out of paying for disk.
+	t.Setenv("AF_ECS_WS_DISK_GB", "0")
+	ecsFree, _ := newRuntimeFactory("ecs", m)
+	if e := ecsFree.New(Workspace{ContainerName: "c"}, "", nil).(*ecsRuntime); e.diskGiB != 0 || e.ebsGiB != 0 {
+		t.Errorf("ecs disk opt-out: ephemeral=%d ebs=%d, want 0/0", e.diskGiB, e.ebsGiB)
 	}
 	if e := ecsF.New(Workspace{ContainerName: "c", DiskGB: 60}, "", nil).(*ecsRuntime); e.diskGiB != 60 || e.ebsGiB != 0 {
 		t.Errorf("ecs disk 60: ephemeral=%d ebs=%d, want 60/0", e.diskGiB, e.ebsGiB)
