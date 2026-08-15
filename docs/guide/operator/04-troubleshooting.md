@@ -10,7 +10,7 @@ included here as well. The working directory is `deploy/compose/`.
 
 ## The first 2 places to look
 
-- **CP logs**: `docker compose logs -f control-plane` (the reason for startup failures and
+- **CP logs**: `docker compose logs -f cp` (the reason for startup failures and
   authentication rejections is almost always here).
 - **CP health**: whether `curl -s http://127.0.0.1:8099/healthz` returns `ok`.
 
@@ -18,7 +18,7 @@ included here as well. The working directory is `deploy/compose/`.
 
 | Symptom | What to check |
 |------|-------------|
-| CP does not start | `docker compose logs control-plane`. Whether `curl -s http://127.0.0.1:8099/healthz` returns `ok` |
+| CP does not start | `docker compose logs cp`. Whether `curl -s http://127.0.0.1:8099/healthz` returns `ok` |
 | "permission denied" on docker.sock | Whether `DOCKER_GID` matches the host's docker group GID (DooD constraint C) |
 | Workspace starts but home is empty | Whether `DATA_DIR` is the same absolute path inside and outside the CP. The same path at restore time too (DooD constraint B) |
 | Cannot reach a started Workspace | Whether both the CP and Caddy have `network_mode: host` (DooD constraint A) |
@@ -27,7 +27,7 @@ included here as well. The working directory is `deploy/compose/`.
 | Somebody you removed can still work | Removing them at the IdP does not end the session. Take them off the roster (Admin → tenant → member → **Remove member**) or out of the allowlist |
 | TLS certificate is not issued | Whether DNS A/AAAA point to this host. Whether 80/443 are reachable. Let's Encrypt rate limits |
 | redirect URI mismatch | Whether the URI registered at the IdP matches `<PUBLIC_BASE_URL>/oauth2/callback` |
-| A sign-in button is missing | That provider was disabled at startup. `docker compose logs control-plane \| grep -i "login provider"` names the missing setting |
+| A sign-in button is missing | That provider was disabled at startup. `docker compose logs cp \| grep -i "login provider"` names the missing setting |
 | CP exits with a message about a multi-tenant issuer | An Entra `/common/` or `/organizations/` issuer with no `AF_OIDC_<ID>_ALLOWED_TIDS`. Pin the issuer to your tenant GUID |
 | Every GitHub sign-in is rejected | The org has not approved the OAuth app (`grep "returned 403"` in the CP log), or the person's primary verified address is outside `AF_GITHUB_ALLOWED_DOMAINS` |
 | GitHub users must sign in again after a CP restart | Expected. The org-membership cache is in memory; they are re-verified, not rejected |
@@ -58,6 +58,10 @@ background on how this works is in [dev/09](../../dev/09-deploy.md).
 
 ## Cannot log in
 
+> Setting an IdP up in the first place — what to create at Google / Entra ID / GitHub / another
+> OIDC IdP, which value goes where, and how to confirm it — is
+> [05-login-idp.md](05-login-idp.md). Come here when it is configured and still refuses.
+
 - **Always rejected** → if the allowlist (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` /
   `_EMAILS_FILE`) is **entirely empty and nobody has been invited to a tenant, everything is
   rejected** (fail-closed = a fail-safe design). Set at least one, or add the person as a
@@ -77,11 +81,11 @@ background on how this works is in [dev/09](../../dev/09-deploy.md).
 - **redirect URI mismatch** → check that the authorized redirect URI registered at the IdP
   (Google Cloud Console, the Entra app registration, …) is an **exact match** for
   `<PUBLIC_BASE_URL>/oauth2/callback`. If you change `PUBLIC_BASE_URL`, update the IdP side to
-  match ([01 §3](01-install.md)). There is only ever this one URI, however many providers you
+  match ([05 §1](05-login-idp.md)). There is only ever this one URI, however many providers you
   enable.
 - **A sign-in button you configured is not on the login page** → that provider was disabled at
   startup because its settings were incomplete (one broken IdP must not lock everyone out).
-  `docker compose logs control-plane | grep -i "login provider"` names the missing variable —
+  `docker compose logs cp | grep -i "login provider"` names the missing variable —
   most often `AF_OIDC_<ID>_TRUST`, which has no default on purpose.
 - **The CP exits complaining about a multi-tenant issuer** → an Entra ID issuer of `/common/`
   or `/organizations/` with no `AF_OIDC_<ID>_ALLOWED_TIDS`. On those endpoints every Microsoft
@@ -91,7 +95,7 @@ background on how this works is in [dev/09](../../dev/09-deploy.md).
 - **Every GitHub sign-in is rejected, but the settings look right** → most often the
   organization restricts third-party OAuth apps and nobody has approved yours yet; until an
   owner does, the membership check sees nothing.
-  `docker compose logs control-plane | grep "returned 403"` says so explicitly. The other cause
+  `docker compose logs cp | grep "returned 403"` says so explicitly. The other cause
   is the address: GitHub hands over the account's *primary verified* email, which may be a
   personal one and therefore outside `AF_GITHUB_ALLOWED_DOMAINS`. The person can make their
   company address primary and verify it on GitHub, or sign in with a different button.
@@ -178,7 +182,7 @@ record).
 **Q. I want to use authentication other than Google (Microsoft 365 / LDAP / SAML, etc.).**
 A. Natively (`AUTH=oauth`) the CP speaks OIDC, so **Microsoft Entra ID, Okta, Keycloak, Auth0,
 Cognito and GitLab work with configuration alone** — `AF_OIDC_PROVIDERS` plus a few
-`AF_OIDC_<ID>_*` variables, and one redirect URI at the IdP ([01 §3](01-install.md)). You can
+`AF_OIDC_<ID>_*` variables, and one redirect URI at the IdP ([05](05-login-idp.md)). You can
 enable several at once; the login page then shows one button per provider.
 SAML-only IdPs (HENNGE One / TrustLogin / CloudGate, etc.) and LDAP are not implemented in the
 CP: put an existing gateway (oauth2-proxy / Keycloak / ALB OIDC) in front and have the CP trust
