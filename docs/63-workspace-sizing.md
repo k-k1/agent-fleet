@@ -5,7 +5,7 @@
 > **決定は [ADR 0044](decisions/0044-workspace-sizing.md) に固定済み**（2026-08-15）: サイズは数値 3 軸で
 > 持ち名前付きサイズは UI 層／ディスクは 200 GiB を境に ephemeral と EBS／`~` の置き場は
 > **平均ファイルサイズ**で分ける／home を EBS に載せる案は Fargate では原理的に不可。
-> 残る未決は `~/.local`（CLI 実体）の置き場のみ（§63.5.3）。
+> **P1〜P2 実装済み**（§63.7）。残る未決は `~/.local`（CLI 実体）の置き場のみ（§63.5.3）。
 > 関連: [62-ecs-start-latency.md](62-ecs-start-latency.md)（同じ ECS の起動レイテンシ側の調査） /
 > [history/p3-7-aws-adapter.md](history/p3-7-aws-adapter.md) §20b.7.4（EFS を選んだ凍結仕様） /
 > [guide/admin/02-limits.md](guide/admin/02-limits.md)（管理者向けの上限の説明）
@@ -265,7 +265,40 @@ EFS のペナルティは **1 ファイルあたり約 14.5 ms 固定**、帯域
 参考価格: m7i.large（2 vCPU/8 GiB）$0.1302/時 vs 同等 Fargate $0.1454/時（実測・ap-northeast-1）。
 **別セッションで検討する。**
 
-## 63.6 計測ハーネス
+## 63.6 実装（P1〜P2・2026-08-15）
+
+| 層 | 入ったもの |
+|---|---|
+| 保存 | `user_limit.cpu_limit`（migration 0044 / pg 0027）。`UserQuota` に 3 軸＋セッション数を集約 |
+| 解決 | `resolveWorkspaceSize`（3 軸を一度に解いてテナント上限でクランプ）。`resolveWorkspaceMemBytes` はその薄い包み |
+| テナント上限 | `max_workspace_cpu` / `max_workspace_disk_gb` |
+| ECS | CPU を `fargateSize` の下限として反映。ディスクは 21〜200 GiB を `EphemeralStorage`、200 GiB 超を ECS 管理 EBS（`configuredAtLaunch` ボリューム＋サービスの `volumeConfigurations`・要 `AF_ECS_INFRA_ROLE`） |
+| docker | `--cpus`（単位は Fargate units のまま保持し、渡すときに /1024） |
+| 置き場 | ECS のときだけ `AF_WS_SCRATCH=/scratch` を注入。entrypoint が `go-build`/`uv`/`go/pkg/mod` を symlink で退避 |
+| 生成物 | `af-scratch` ヘルパー（`af-scratch node_modules`）。プロジェクト毎にしか場所が決まらないので利用者/エージェントが張る |
+| Console | 上限の設定に CPU と作業ディスクを追加。S/M/L/XL/2XL は 3 軸を埋める近道 |
+| MCP | `set_user_quota` に `cpu_units` を追加し、3 軸すべての post-clamp 値を返す |
+| IaC | `WsTaskCpu` / `WsTaskMemory` / `WsDiskGiB`（既定は現行の挙動を変えない） |
+
+### 63.6.1 退避のスイッチはディスクの設定そのもの
+
+キャッシュの退避を常時有効にすると、Fargate 既定の 20 GiB（イメージ層と `/tmp` が同居）に
+実測 10.5 GiB のキャッシュを載せることになり余裕が無い。そこで entrypoint は **作業ディスクの
+実サイズを `df` で見て、30 GiB 未満なら何もしない**。結果として:
+
+- 既定のままのデプロイ → 従来どおり全部 EFS（挙動の変化ゼロ）
+- ディスクを広げたデプロイ → その瞬間に退避が有効になる
+
+「機能を入れる」と「容量を用意する」が 1 つのノブになるので、容量不足で詰まる組み合わせが作れない。
+
+### 63.6.2 まだ検証していないこと
+
+- **ECS 管理 EBS の経路（200 GiB 超）は実機未検証。** インフラ IAM ロールが要り、参照スタックは
+  それを作らない。ロール未設定なら無料既定へフォールバックする。マウント先の所有者が dev で
+  ない可能性があり、その場合 entrypoint は退避をスキップして EFS のまま動く（ログに残す）。
+- **`~/.local` の置き場**（§63.5.3）。
+
+## 63.7 計測ハーネス
 
 `~/af-efs/`（このセッションの Workspace）に残してある。`setup.sh`（EFS 2 本 ＋ SG ＋ cluster ＋
 exec role）／ `bench.sh`・`bench2.sh`・`bench3.sh`（計測本体）／ `teardown.sh`（撤去）。

@@ -224,6 +224,38 @@ service supports it:
 | ssm | CP secrets (out-of-band) | PutParameter/DeleteParameter under `/af-cp/*` |
 | sts | account resolution in release-ecr.sh | GetCallerIdentity |
 
+## Workspace size (CPU / memory / working disk)
+
+Three `30-ingress` parameters set what every workspace gets by default; per-user
+overrides live in the Console (Settings → members → "Set limits") and are clamped by the
+tenant cap. Design and measurements: `docs/63`, decisions in `docs/decisions/0044`.
+
+| Parameter | Env | Default | Notes |
+|---|---|---|---|
+| `WsTaskCpu` | `AF_ECS_TASK_CPU` | `1024` | Fargate units; 1024 = 1 vCPU |
+| `WsTaskMemory` | `AF_ECS_TASK_MEMORY` | `2048` | MiB |
+| `WsDiskGiB` | `AF_ECS_WS_DISK_GB` | `0` | 0 = Fargate's free 20 GiB; 21–200 sets ephemeral storage |
+
+**Only specific (cpu, memory) pairs exist**, and the steps are not uniform — 8 vCPU moves
+in 4096 MiB steps and 16 vCPU in 8192, while 0.25 vCPU accepts only 512/1024/2048. The
+full matrix was measured against the ECS API and is in `docs/63` §63.2. The CP snaps any
+request onto a valid pair, so an odd value never reaches a task definition; the visible
+effect is that **raising CPU can also raise memory** (4 vCPU cannot run below 8 GiB).
+
+The working disk is **not persistent** — it is wiped when the workspace stops, like every
+other task-local disk on Fargate. Only the EFS home survives. `WsDiskGiB` is also the
+switch for moving the small-file caches (Go build cache, `uv`, Go modules) off EFS onto
+that disk: the workspace entrypoint relocates them only when the disk is **30 GiB or
+more**, because the measured caches do not fit alongside the image in 20 GiB. On EFS those
+caches are 8–30× slower to write (`docs/63` §63.4), so a deployment doing real builds
+wants this; one that does not can leave the default and behave exactly as before.
+
+Above 200 GiB the CP switches the working disk to an **ECS-managed EBS volume**, which
+needs an ECS infrastructure role passed as `AF_ECS_INFRA_ROLE` (policy
+`AmazonECSInfrastructureRolePolicyForVolumes`). The reference stacks do not create that
+role — without it a >200 GiB request silently falls back to the free default. 🚧 This path
+is untested on real infrastructure; ephemeral storage covers everything up to 200 GiB.
+
 ## Known behavior: a cold Start answers `starting`, not `running`
 
 A cold workspace Start pays a full image pull on every launch (Fargate keeps no
