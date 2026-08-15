@@ -6,7 +6,8 @@
 // in a SEPARATE modal — see AdminDialog — so admin actions stay distinct from personal
 // settings.
 //
-// Section keys are unchanged (display/keys/env/agents/assistant/tts/git/ssm/ops/tokens/memory)
+// Section keys are unchanged (display/keys/env/agents/assistant/tts/git/ssm/ops/tokens/memory
+// — account was added later, docs/61 §61.16)
 // so every openSettings(section) deep-link still lands on the right item.
 //
 // Mobile (≤760px): the two panes become a drill-down — the rail is shown first, then
@@ -20,6 +21,7 @@ import { mobileMatches } from "../../lib/device.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { DisplayTab } from "./DisplayTab.tsx";
+import { AccountTab } from "./AccountTab.tsx";
 import { KeysTab } from "./KeysTab.tsx";
 import { EnvTab } from "./EnvTab.tsx";
 import { AgentsTab } from "./AgentsTab.tsx";
@@ -47,6 +49,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
     label: "set.group_personal",
     items: [
       ["display", "set.tab_display"],
+      ["account", "set.tab_account"],
       ["keys", "set.tab_keys"],
       ["tts", "set.tab_tts"],
       ["notifications", "set.tab_notifications"],
@@ -189,6 +192,7 @@ export function SettingsDialog() {
             {section === "danger" && <DangerTab />}
             {section === "display" && <DisplayTab />}
             {section === "keys" && <KeysTab />}
+            {section === "account" && <AccountTab />}
           </div>
         </div>
       </div>
