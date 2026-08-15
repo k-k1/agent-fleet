@@ -486,6 +486,19 @@ ADR0030 §3 が Agent 直送を避けた第一の理由「誰が何を送った�
 | `chat_report_abort_test.go` | 抑止中は 0 通、打ち切りを書いた瞬間に同じ転写のまま 1 通配られること（片道切符でないこと）。既存の中断報告テストは機能 OFF の経路として残す |
 | `internal/agents/claude/abort_test.go` | `stream idle timeout` の 2 形、`error` フィールドの分類（未知文言＋server_error / invalid_request / rate_limit / 未知の値、文言が `error` より強いこと） |
 
+### 4-6-8. OpenCode / Codex managed への適用（2026-08-15）
+
+同じ状態機械を managed の OpenCode / Codex にも適用する。元の prompt や
+`turn/start` を再送してはいけない。OpenCode は provider error の `isRetryable`、Codex は
+`serverOverloaded` / 接続・stream 系の分類と HTTP 5xx を `TurnAborted` に落とし、Agent が
+永続化した中断シグナルを 30 秒後の `続けて（自動再開）` に変換する。
+
+- 認証、残高・利用上限、context overflow は `TurnFailed` のままで自動再開しない。
+- 通知センターには中断を即時表示し、会話への完了報告だけを再開中は抑止する。
+- managed の再開可否は tmux でなく driver の live state が idle かで判定する。
+- 成功時はシグナルとエピソードを閉じ、打ち切り時だけ抑止を外して利用者へ渡す。
+- 設定値は後方互換のため既存の `claudeAbortAutoResume` を共用する。
+
 ## 4-7. 追補（2026-08-07）— 認証切れの見え方（ミラーの失敗ブロック）
 
 中断そのものではなく、**中断が画面でどう見えるか**の穴。実測（2026-08-06 22:12 UTC・

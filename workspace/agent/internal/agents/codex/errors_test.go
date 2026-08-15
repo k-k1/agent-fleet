@@ -45,6 +45,20 @@ func TestDecodeCodexErrorAdditionalDetails(t *testing.T) {
 	if e.message != "rate limited (retry in 5m)" {
 		t.Fatalf("message = %q", e.message)
 	}
+	if !e.retryable() {
+		t.Fatal("serverOverloaded must be retryable")
+	}
+}
+
+func TestCodexErrorRetryableClassification(t *testing.T) {
+	if !(codexError{status: 500}).retryable() {
+		t.Fatal("HTTP 500 must be retryable")
+	}
+	for _, e := range []codexError{{label: "usageLimitExceeded"}, {status: 401}, {label: "contextWindowExceeded"}} {
+		if e.retryable() {
+			t.Fatalf("permanent error classified retryable: %+v", e)
+		}
+	}
 }
 
 func TestDecodeCodexErrorNoMessageNotOK(t *testing.T) {
