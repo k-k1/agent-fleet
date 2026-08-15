@@ -57,7 +57,10 @@ import { CommandPalette } from "../features/keys/CommandPalette.tsx";
 import { CheatSheet } from "../features/keys/CheatSheet.tsx";
 import { useUpdateCheck } from "../lib/useUpdateCheck.tsx";
 import { consumeSessionDeepLink } from "../lib/sessionDeepLink.ts";
-import { usePopoutMode } from "../lib/popoutMode.ts";
+import { popoutMode, usePopoutMode } from "../lib/popoutMode.ts";
+import { installSwipeGestures } from "./swipeGestures.ts";
+import { rotateRunningSession } from "../features/sessions/open.ts";
+import { displayName } from "../lib/sessionview.ts";
 import { takePendingPopout, takeStalePopoutLink } from "../features/panes/popout.ts";
 import type { PopoutDescriptor } from "../layout/popout.ts";
 import { confirmDirtyNavigation } from "../features/editor/dirtyRegistry.ts";
@@ -93,6 +96,25 @@ function wireWorkspaceRefresh(): () => void {
       useChatStore.getState().bumpList();
     }
   });
+}
+
+// スマホの ← スワイプ: 稼働中セッションを 1 つ送る。画面が丸ごと入れ替わる操作なので、
+// どこへ着地したか（何件中の何番目か）を短いトーストで返す — 空振り（対象が自分だけ／
+// 無し）も黙って落とさず、理由を出す。
+function rotateToNextSession(): void {
+  const target = rotateRunningSession(1);
+  if (!target) {
+    toast(t("swipe.rotate_none"), { kind: "info", duration: 2000 });
+    return;
+  }
+  toast(
+    t("swipe.rotated", {
+      n: target.index + 1,
+      total: target.total,
+      name: displayName(target.session),
+    }),
+    { kind: "info", duration: 1600 },
+  );
 }
 
 export function App() {
@@ -205,85 +227,28 @@ export function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  // Edge swipe reveals the left rail. Phone (≤760px): drives the off-canvas
-  // drawer (navOpen). Tablet (>760px, touch): drives the desktop rail (leftOpen),
-  // floated as an overlay for that reveal (see leftRail.openOverlay). Swipe right from
-  // the left third opens; swipe left closes. Mouse desktops never fire TouchEvent,
-  // so they're inert. Passive listeners; vertical drags are left for scrolling.
+  // 横スワイプ（左ペインの出し入れ／スマホでの稼働中セッションのローテート）。認識規則と
+  // その理由は app/swipeGestures.ts に置き、ここは画面状態の読み取りと副作用の配線だけ。
   useEffect(() => {
     const mq = window.matchMedia(MOBILE_QUERY);
-    const DIST = 50;
-    // A drawer gesture is a quick swipe.  Cancelling the candidate after the
-    // browser's long-press window keeps text selection (notably in the mirror)
-    // from turning a later selection-handle drag into an edge swipe.
-    const LONG_PRESS_MS = 500;
-    let sx = 0,
-      sy = 0,
-      mode: "open" | "close" | null = null,
-      // Which surface this gesture drives, latched at touchstart: the phone
-      // drawer (navOpen) vs. the tablet desktop rail (leftOpen overlay).
-      drawer = false,
-      longPressTimer: number | null = null;
-    const cancelGesture = () => {
-      mode = null;
-      if (longPressTimer !== null) {
-        window.clearTimeout(longPressTimer);
-        longPressTimer = null;
-      }
-    };
-    // ローカル変数は touch — i18n の t（このモジュールで import 済み）を隠さない名前に。
-    const onStart = (e: TouchEvent) => {
-      const touch = e.touches[0];
-      cancelGesture();
-      const phone = mq.matches;
-      // Above the phone breakpoint, only enable the gesture on touch devices
-      // (tablets) — a mouse desktop shouldn't get an edge-swipe rail.
-      const tablet = !phone && coarsePointer();
-      drawer = phone;
+    return installSwipeGestures(window, {
+      phone: () => mq.matches,
+      coarse: coarsePointer,
       // While a modal is up, don't let an edge swipe open the rail behind it.
-      const { settingsOpen, adminOpen } = useSettingsUI.getState();
-      if (touch && (phone || tablet) && !settingsOpen && !adminOpen) {
-        const isOpen = phone ? navOpenRef.current : useLeftRail.getState().open;
-        if (isOpen) mode = "close";
-        else if (touch.clientX < Math.min(window.innerWidth * 0.33, 160)) mode = "open";
-      }
-      if (touch) {
-        sx = touch.clientX;
-        sy = touch.clientY;
-        if (mode) {
-          longPressTimer = window.setTimeout(cancelGesture, LONG_PRESS_MS);
-        }
-      }
-    };
-    const onMove = (e: TouchEvent) => {
-      if (!mode) return;
-      const touch = e.touches[0];
-      if (!touch) return;
-      const dx = touch.clientX - sx;
-      const dy = touch.clientY - sy;
-      if (Math.abs(dx) <= Math.abs(dy)) return;
-      if (mode === "open" && dx > DIST) {
-        if (drawer) setNavOpen(true);
-        else useLeftRail.getState().openOverlay();
-        cancelGesture();
-      } else if (mode === "close" && dx < -DIST) {
-        if (drawer) setNavOpen(false);
-        else useLeftRail.getState().close();
-        cancelGesture();
-      }
-    };
-    const onEnd = cancelGesture;
-    window.addEventListener("touchstart", onStart, { passive: true });
-    window.addEventListener("touchmove", onMove, { passive: true });
-    window.addEventListener("touchend", onEnd, { passive: true });
-    window.addEventListener("touchcancel", onEnd, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", onStart);
-      window.removeEventListener("touchmove", onMove);
-      window.removeEventListener("touchend", onEnd);
-      window.removeEventListener("touchcancel", onEnd);
-      cancelGesture();
-    };
+      modal: () => {
+        const { settingsOpen, adminOpen } = useSettingsUI.getState();
+        return settingsOpen || adminOpen;
+      },
+      drawerOpen: () => navOpenRef.current,
+      railOpen: () => useLeftRail.getState().open,
+      // 切り離しタブ（popout）はペイン 1 枚だけの最小 UI — セッションの持ち替えは
+      // その趣旨から外れるので入れない。
+      rotatable: () => popoutMode() !== "popout",
+      setDrawer: setNavOpen,
+      openRailOverlay: () => useLeftRail.getState().openOverlay(),
+      closeRail: () => useLeftRail.getState().close(),
+      rotateNext: rotateToNextSession,
+    });
   }, []);
 
   // One-time wiring: history (back/forward → layout), terminal reconciliation,
