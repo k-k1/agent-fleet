@@ -283,7 +283,7 @@ back. **One slot serves one user at a time** (`ADR 0045` 決定 8).
 
 | | Fargate (`ecs`) | EC2 pool (`ecs-ec2`) |
 |---|---|---|
-| Warm Start | ~105s | **22–27s** (hot slot), ~50s (stopped slot) |
+| Warm Start | ~105s | **13–95s** (measured through the adapter, §64.16.3) |
 | Home | EFS — small files are 8–30× slower | **EBS gp3** — 2,000 small files in 0.04s vs 30.7s |
 | Size | 74 discrete (cpu, memory) pairs, ≤16 vCPU / 120 GiB | instance types; the task reserves nothing and gets the box |
 | Resources per workspace | 2 (service + EFS access points) | 6 (also instance, volume, container-instance registration, task def) |
@@ -310,9 +310,18 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 
 **Operational facts worth knowing before you turn it on**
 
-- **The pool never shrinks on its own (P0).** Released slots stay hot so the next user
-  gets 22–27s; nothing stops or terminates them yet. `Ec2MaxSlots` is what bounds the
-  bill — treat it as "how many people work at the same time".
+- **A workspace keeps its slot while it is stopped, and the slot goes to sleep with it.**
+  Stopping a workspace does not detach its home ("lazy release"): the attachment IS the
+  affinity, so the same person comes back to the same slot without re-attaching or
+  re-mounting. After `Ec2IdleStopSec` (default 15m) the sweeper **stops** that slot —
+  never terminates it, so the image cache survives on its root volume. A stopped slot
+  costs only that volume (~$9.6/month at 100 GiB) instead of ~$95 for a running one.
+- **Slots are reclaimed only at the cap.** Below `Ec2MaxSlots` a new user gets a new
+  slot; at the cap the longest-dormant occupant is evicted (a workspace with a running
+  task is never touched). So `Ec2MaxSlots` bounds the number of *provisioned* slots, and
+  `Ec2IdleStopSec` bounds how many of them are *running*.
+- **No hot spare is kept.** The first person of the morning wakes a stopped slot (~90s,
+  estimated) or, if the pool has none, pays the full ~135s to build one.
 - **AZ is destiny.** An EBS volume cannot leave its AZ, so a user is pinned to the AZ
   their home was created in. If no slot can be run there, that user cannot start.
 - **A slot's root volume is shared with whoever had it before.** `/tmp` is a tmpfs

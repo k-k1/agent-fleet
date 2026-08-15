@@ -342,10 +342,25 @@ func (f *fakeEC2) StartInstances(_ context.Context, in *ec2.StartInstancesInput,
 	return &ec2.StartInstancesOutput{}, nil
 }
 
+func (f *fakeEC2) StopInstances(_ context.Context, in *ec2.StopInstancesInput, _ ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, id := range in.InstanceIds {
+		f.log("StopInstances %s", id)
+		if i := f.instances[id]; i != nil {
+			i.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameStopped}
+		}
+	}
+	return &ec2.StopInstancesOutput{}, nil
+}
+
 type fakeSSMCmd struct {
 	mu       sync.Mutex
 	commands []string
 	fail     map[string]bool // substring of the command -> fail it
+	// sink shares the EC2 fake's call log so a test can assert the ORDER of an SSM
+	// command against an EC2 call — "umount before detach" spans both.
+	sink *fakeEC2
 }
 
 func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
@@ -353,6 +368,9 @@ func (f *fakeSSMCmd) SendCommand(_ context.Context, in *ssm.SendCommandInput, _ 
 	defer f.mu.Unlock()
 	cmd := in.Parameters["commands"][0]
 	f.commands = append(f.commands, cmd)
+	if f.sink != nil {
+		f.sink.log("SSM %s", cmd)
+	}
 	// The command id carries the command text so GetCommandInvocation can decide
 	// whether this particular step is the one the test wants to fail.
 	return &ssm.SendCommandOutput{Command: &ssmtypes.Command{CommandId: aws.String(cmd)}}, nil
@@ -441,6 +459,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		ssmc: &fakeSSMCmd{fail: map[string]bool{}},
 		ci:   &fakeContainerInstances{registered: map[string]bool{}},
 	}
+	h.ssmc.sink = h.ec2
 	base := newTestECS(h.ecs, h.efs, h.ssm)
 	base.cfg.subnets = []string{"sub-1a", "sub-1c"}
 	h.rt = &ecsEC2Runtime{
@@ -458,6 +477,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 			tmpfsOpts:      []string{"nosuid", "nodev"},
 			claimTTL:       15 * time.Minute,
 			releaseGrace:   10 * time.Minute,
+			idleStopAfter:  15 * time.Minute,
 			waitBudget:     time.Minute,
 		},
 		instanceType: "m7i.large",
@@ -468,6 +488,15 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		sleep:        func(context.Context, time.Duration) error { return nil },
 	}
 	return h
+}
+
+// factory builds the sweeper's view of this harness. The runtimes it creates inherit the
+// harness clients, so a sweep acts on the same fake world the test set up.
+func (h *ec2Harness) factory() *ecsEC2Factory {
+	return &ecsEC2Factory{
+		base: &ecsFactory{cfg: h.rt.base.cfg, ecs: h.ecs, efs: h.efs, ssm: h.ssm},
+		ec2:  h.ec2, ssmc: h.ssmc, ci: h.ci, pool: h.rt.pool,
+	}
 }
 
 func (h *ec2Harness) runDeferred(ctx context.Context) {
@@ -795,8 +824,10 @@ func TestECSEC2CreatesHomeTaggedInOneCall(t *testing.T) {
 	}
 }
 
-// The one ordering that can destroy user data.
-func TestECSEC2StopUnmountsBeforeDetach(t *testing.T) {
+// Lazy release: Stop must NOT take the home off its slot. That attachment is both the
+// affinity ("the same user comes back to the same slot") and the reason the return is
+// the 13s path instead of re-attaching and re-mounting.
+func TestECSEC2StopKeepsTheHomeAttached(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
@@ -808,19 +839,224 @@ func TestECSEC2StopUnmountsBeforeDetach(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 	if len(h.ecs.updateCalls) != 1 || aws.ToInt32(h.ecs.updateCalls[0].DesiredCount) != 0 {
-		t.Fatalf("Stop must scale to zero synchronously, got %+v", h.ecs.updateCalls)
+		t.Fatalf("Stop must scale to zero, got %+v", h.ecs.updateCalls)
 	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-hot" {
+		t.Errorf("home was detached on Stop (inst=%q); lazy release means it stays", inst)
+	}
+	if len(h.ssmc.commands) != 0 {
+		t.Errorf("nothing should be unmounted on Stop, got %v", h.ssmc.commands)
+	}
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince) == "" {
+		t.Error("Stop must record when the home went dormant (the sweeper reads it)")
+	}
+	// ...and the workspace reads as stopped, not starting: nothing is converging.
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
-	h.runDeferred(ctx)
+	if got := h.rt.State(ctx); got != "stopped" {
+		t.Errorf("State after Stop = %q, want stopped", got)
+	}
+}
 
+// A dormant slot is stopped, not terminated — the image cache lives on its root volume.
+// Waking it must not re-attach anything, and must not look like a fresh launch.
+func TestECSEC2StartWakesADormantSlot(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-sleep", "ap-northeast-1a", "m7i.large", false, false) // stopped
+	h.ec2.attach("vol-1", "i-sleep", time.Now().Add(-time.Hour))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	started := false
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "StartInstances i-sleep") {
+			started = true
+		}
+		if strings.HasPrefix(c, "AttachVolume") || strings.HasPrefix(c, "RunInstances") {
+			t.Errorf("waking a dormant slot must not %s — the home is already on it", c)
+		}
+	}
+	if !started {
+		t.Error("the dormant slot was never started")
+	}
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Errorf("State while the slot boots = %q, want starting", got)
+	}
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince) != "" {
+		t.Error("the idle mark must be cleared when the owner comes back")
+	}
+}
+
+// The sweeper is what keeps lazy release from becoming hoarding: after the idle window
+// it STOPS the slot (cheap, keeps the cache) instead of releasing it (which would throw
+// away the affinity and make the owner re-attach).
+func TestECSEC2SweeperStopsDormantSlotInsteadOfReleasing(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	f := h.factory()
+	f.sweepVolume(ctx, h.ec2.volumes["vol-1"])
+
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-hot" {
+		t.Error("the sweeper released a merely dormant home; it should only put the slot to sleep")
+	}
+	stopped := false
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "StopInstances i-hot") {
+			stopped = true
+		}
+	}
+	if !stopped {
+		t.Error("the dormant slot was never stopped — the deployment keeps paying for it")
+	}
+}
+
+func TestECSEC2SweeperLeavesFreshlyDormantSlotsAlone(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-time.Minute).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "StopInstances") {
+			t.Error("a slot dormant for a minute must stay hot — the owner is probably coming back")
+		}
+	}
+}
+
+// At the cap the only way to serve a new user is to take a slot back. It must be the
+// LONGEST-dormant one, and never one that is in use.
+func TestECSEC2EvictsLongestDormantAtTheCap(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.maxSlots = 2
+	h.ec2.addSlot("i-a", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.addSlot("i-b", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-a"] = true
+	h.ci.registered["i-b"] = true
+	// bob has been dormant for 2h, carol for 10m; dave wants a slot.
+	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
+	h.ec2.attach("vol-bob", "i-a", time.Now().Add(-3*time.Hour))
+	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.ec2.addHomeVolume("vol-carol", "M-CAROL", "af-ws-carol", "ap-northeast-1a")
+	h.ec2.attach("vol-carol", "i-b", time.Now().Add(-3*time.Hour))
+	h.ec2.setTag("vol-carol", ec2TagIdleSince, time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-carol"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	h.rt.base.name = "af-ws-dave"
+	h.rt.base.membershipID = "M-DAVE"
+	h.ec2.addHomeVolume("vol-dave", "M-DAVE", "af-ws-dave", "ap-northeast-1a")
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-dave"]); inst != "i-a" {
+		t.Fatalf("dave landed on %q, want i-a (bob was dormant longest)", inst)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-carol"]); inst != "i-b" {
+		t.Error("carol was evicted even though bob had been dormant far longer")
+	}
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "RunInstances") {
+			t.Error("grew the pool past its cap instead of reclaiming a dormant slot")
+		}
+	}
+}
+
+func TestECSEC2NeverEvictsALiveWorkspace(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.maxSlots = 1
+	h.ec2.addSlot("i-a", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-a"] = true
+	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
+	h.ec2.attach("vol-bob", "i-a", time.Now().Add(-3*time.Hour))
+	// Marked dormant, but bob's service came back up in the meantime.
+	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+
+	h.rt.base.name = "af-ws-dave"
+	h.rt.base.membershipID = "M-DAVE"
+	h.ec2.addHomeVolume("vol-dave", "M-DAVE", "af-ws-dave", "ap-northeast-1a")
+
+	err := h.rt.Start(ctx)
+	if err == nil {
+		t.Fatal("Start must fail rather than evict a running workspace")
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-bob"]); inst != "i-a" {
+		t.Fatal("bob lost his slot while his task was running")
+	}
+	if len(h.ssmc.commands) != 0 {
+		t.Errorf("nothing should have been unmounted, got %v", h.ssmc.commands)
+	}
+}
+
+// The ordering that can destroy user data. Reached now by eviction, Destroy and drift
+// repair rather than by Stop.
+func TestECSEC2ReleaseUnmountsBeforeDetach(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.rt.releaseSlot(ctx); err != nil {
+		t.Fatalf("releaseSlot: %v", err)
+	}
 	if len(h.ssmc.commands) != 1 || !strings.HasPrefix(h.ssmc.commands[0], "af-umount") {
 		t.Fatalf("expected an umount, got %v", h.ssmc.commands)
 	}
-	if got := h.ec2.calls; len(got) == 0 || !strings.HasPrefix(got[len(got)-1], "DetachVolume") {
-		t.Fatalf("detach must be the last step, calls = %v", got)
+	umount, detach := -1, -1
+	for i, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "SSM af-umount") {
+			umount = i
+		}
+		if strings.HasPrefix(c, "DetachVolume") {
+			detach = i
+		}
+	}
+	if umount < 0 || detach < 0 || umount > detach {
+		t.Fatalf("umount must come before detach, calls = %v", h.ec2.calls)
 	}
 	if attachedInstance(h.ec2.volumes["vol-1"]) != "" {
 		t.Error("volume still attached after release")
+	}
+}
+
+// A stopped slot cannot be reached over SSM, and has nothing mounted: the instance stop
+// unmounted it on the way down. Waiting for an umount that can never run would make
+// dormant slots impossible to reclaim.
+func TestECSEC2ReleaseOfADormantSlotSkipsUnmount(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-sleep", "ap-northeast-1a", "m7i.large", false, false)
+	h.ec2.attach("vol-1", "i-sleep", time.Now())
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.rt.releaseSlot(ctx); err != nil {
+		t.Fatalf("releaseSlot on a stopped slot: %v", err)
+	}
+	if len(h.ssmc.commands) != 0 {
+		t.Errorf("no SSM command can run on a stopped slot, got %v", h.ssmc.commands)
+	}
+	if attachedInstance(h.ec2.volumes["vol-1"]) != "" {
+		t.Error("the dormant slot was not reclaimed")
 	}
 }
 
