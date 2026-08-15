@@ -67,6 +67,43 @@ func TestFactoryMemoryOverride(t *testing.T) {
 	}
 }
 
+// The CPU and disk axes must reach the adapters the same way memory does: docker as
+// --cpus (fractional cores, since it stores Fargate units), ECS as the task size plus
+// ephemeral storage — and past Fargate's 200 GiB ephemeral ceiling as a managed EBS
+// volume instead (ADR 0044 決定 2).
+func TestFactoryCPUAndDiskOverride(t *testing.T) {
+	m := &manager{image: "img", agentHost: "127.0.0.1", memory: "1g", dataRoot: "/srv/data"}
+
+	dockerF, _ := newRuntimeFactory("local", m)
+	if d := dockerF.New(Workspace{ContainerName: "c", CPUUnits: 2048}, "", nil).(*dockerRuntime); d.cpus != "2" {
+		t.Errorf("docker cpus=%q, want 2", d.cpus)
+	}
+	if d := dockerF.New(Workspace{ContainerName: "c", CPUUnits: 512}, "", nil).(*dockerRuntime); d.cpus != "0.5" {
+		t.Errorf("docker cpus=%q, want 0.5", d.cpus)
+	}
+	// Unset must stay unset: an empty --cpus is "every core", the pre-P1 behaviour.
+	if d := dockerF.New(Workspace{ContainerName: "c"}, "", nil).(*dockerRuntime); d.cpus != "" {
+		t.Errorf("docker default cpus=%q, want empty", d.cpus)
+	}
+
+	ecsF, _ := newRuntimeFactory("ecs", m) // cfg defaults: cpu 1024 / memory 2048
+	// CPU alone still yields a VALID pair: 4 vCPU cannot run with the 2048 default.
+	e := ecsF.New(Workspace{ContainerName: "c", CPUUnits: 4096}, "", nil).(*ecsRuntime)
+	if e.cpu != "4096" || e.memory != "8192" {
+		t.Errorf("ecs cpu-only: cpu=%q memory=%q, want 4096/8192", e.cpu, e.memory)
+	}
+	// Disk: below the free default stays absent, 21-200 becomes ephemeral storage.
+	if e := ecsF.New(Workspace{ContainerName: "c"}, "", nil).(*ecsRuntime); e.diskGiB != 0 || e.ebsGiB != 0 {
+		t.Errorf("ecs disk default: ephemeral=%d ebs=%d, want 0/0", e.diskGiB, e.ebsGiB)
+	}
+	if e := ecsF.New(Workspace{ContainerName: "c", DiskGB: 60}, "", nil).(*ecsRuntime); e.diskGiB != 60 || e.ebsGiB != 0 {
+		t.Errorf("ecs disk 60: ephemeral=%d ebs=%d, want 60/0", e.diskGiB, e.ebsGiB)
+	}
+	if e := ecsF.New(Workspace{ContainerName: "c", DiskGB: 500}, "", nil).(*ecsRuntime); e.diskGiB != 0 || e.ebsGiB != 500 {
+		t.Errorf("ecs disk 500: ephemeral=%d ebs=%d, want 0/500", e.diskGiB, e.ebsGiB)
+	}
+}
+
 // The stop grace drives docker stop -t AND the ECS stopTimeout from one env knob;
 // the Agent budget must stay under it (safety margin) so the in-container graceful
 // shutdown finishes before the runtime's SIGKILL. Clamps: >=1, <=120 (Fargate

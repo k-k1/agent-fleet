@@ -24,6 +24,12 @@ type tenantLimits struct {
 	// container start (resolveWorkspaceMemBytes). 0 = no tenant cap (a per-user value is
 	// still bounded by the deployment hard ceiling AF_MAX_WORKSPACE_MEM and the floor).
 	MaxWorkspaceMem int64 `json:"max_workspace_mem,omitempty"`
+	// MaxWorkspaceCPU caps a single workspace's CPU in Fargate CPU units (1024 =
+	// 1 vCPU) and MaxWorkspaceDiskGB its working disk in GiB. Same two-stage shape as
+	// MaxWorkspaceMem: super_admin sets the tenant ceiling, a tenant_admin's per-user
+	// value is clamped to it at container start. 0 = no tenant cap (ADR 0044).
+	MaxWorkspaceCPU    int `json:"max_workspace_cpu,omitempty"`
+	MaxWorkspaceDiskGB int `json:"max_workspace_disk_gb,omitempty"`
 	// P3-9 idle-stop (docs/19): per-tenant, super_admin-editable.
 	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
 	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop
