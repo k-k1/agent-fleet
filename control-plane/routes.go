@@ -115,6 +115,13 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /oauth2/login", cfg.handleOAuthLogin)
 	mux.HandleFunc("GET /oauth2/callback", cfg.handleOAuthCallback)
 	mux.HandleFunc("GET /oauth2/logout", cfg.handleOAuthLogout)
+	// Linking a second sign-in method to the account you are ALREADY signed in as
+	// (docs/61 §61.16 + 決定 37). It sits under the auth-exempt /oauth2/ prefix like
+	// the rest of the flow, and therefore checks the session itself.
+	mux.HandleFunc("GET /oauth2/link", cfg.handleOAuthLink)
+	// The account panel behind it — a normal session-gated API (docs/61 §61.16).
+	acct := newAccountAPI(cfg)
+	mux.HandleFunc("GET /api/me/login-methods", acct.withIdentity(acct.loginMethods))
 	// Identity — who the AuthGateway resolved this request to (and the raw
 	// gateway headers, for verifying the oauth2-proxy -> Caddy -> CP chain).
 	mux.HandleFunc("GET /api/whoami", newWorkspaceAPI(cfg.mgr, cfg.autostart).whoami)

@@ -368,6 +368,15 @@ type oauthState struct {
 	// tenants a person may actually use is decided server-side from membership and
 	// the tenant rules, so this value only ever picks a VIEW.
 	Tnt string `json:"t,omitempty"`
+	// Link marks a LINK flow (docs/61 §61.16): the identity the proven method is to
+	// be attached to, plus the session that proved it. Unlike Tnt these ARE
+	// authorization inputs, which is why they travel in the signed state and are
+	// re-checked against the live session at the callback — a signed value only says
+	// CP wrote it, not that the same person is still holding the browser.
+	Link   string `json:"l,omitempty"`
+	LEmail string `json:"le,omitempty"`
+	LProv  string `json:"lp,omitempty"`
+	LSub   string `json:"ls,omitempty"`
 }
 
 // sanitizeNext keeps post-login redirects on-site (no open redirect): a single
@@ -456,7 +465,18 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// removed from the config must not keep serving callbacks.
 	p := c.providerFor(r.Context(), st.Prov)
 	if p == nil {
+		if st.Link != "" {
+			c.writeLinkResult(w, r, linkErrProv, "", sanitizeNext(st.Next))
+			return
+		}
 		loginRedirect(w, r, "provider", tenant)
+		return
+	}
+	// ★ A link flow branches here, before anything that would mint a session: the
+	// person is already signed in and stays signed in as whoever they were
+	// (docs/61 §61.16).
+	if st.Link != "" {
+		c.finishLink(w, r, st, p)
 		return
 	}
 	code := r.URL.Query().Get("code")
@@ -873,6 +893,10 @@ type loginStrings struct {
 	errEmailTaken string
 	// The new-account notice (docs/61 受入条件 3). newBody takes the email.
 	newTitle, newBody, newNote, newContinue, newSwitch string
+	// The result page of a link flow (docs/61 §61.16 + 決定 37).
+	linkTitle, linkNote, linkBack          string
+	linkOK, linkTaken, linkEmail, linkGate string
+	linkSession, linkProvider, linkFailed  string
 }
 
 var loginText = map[string]loginStrings{
@@ -891,7 +915,8 @@ var loginText = map[string]loginStrings{
 		errTenantNoProvider: "このテナントに設定されたサインイン方法は、現在このデプロイでは利用できません。" +
 			"管理者に連絡してください。",
 		errEmailTaken: "このメールアドレスは、すでにこのデプロイの別のサインイン方法で使われています。" +
-			"いつも使っているサインイン方法でログインしてください。",
+			"いつも使っているサインイン方法でログインしたうえで、" +
+			"<b>設定 → アカウント → サインイン方法</b> からこの方式を追加してください。",
 		newTitle: "Agent Fleet — 新しいアカウント",
 		newBody: "%s でサインインしました。このメールアドレスはこのデプロイで使われたことがないため、" +
 			"<b>新しいワークスペース</b>を作成しました。以前から使っているワークスペースがある場合、" +
@@ -900,6 +925,20 @@ var loginText = map[string]loginStrings{
 			"メールアドレスの違うアカウント同士を後から 1 つにまとめることはできません。",
 		newContinue: "新しいワークスペースで続ける",
 		newSwitch:   "サインアウトして入り直す",
+		linkTitle:   "Agent Fleet — サインイン方法の追加",
+		linkNote:    "この画面はサインイン方法を追加したときだけ表示されます。",
+		linkBack:    "Agent Fleet に戻る",
+		linkOK:      "このサインイン方法を、いまのアカウントに追加しました。次回からどちらの方法でも同じワークスペースに入れます。",
+		linkTaken: "このサインイン方法は、すでにこのデプロイの別のアカウントで使われています。" +
+			"アカウント同士を 1 つにまとめることはできません。",
+		linkEmail: "このサインイン方法が名乗ったメールアドレスは、いまのアカウントのものと違います。" +
+			"追加できるのは、同じメールアドレスを名乗る方法だけです。",
+		linkGate: "このサインイン方法では、いまのアカウントは許可されていません。" +
+			"組織（org）への参加やドメインの許可について、管理者に確認してください。",
+		linkSession: "サインインの状態が確認できませんでした。サインインし直してから、もう一度お試しください。",
+		linkProvider: "指定されたサインイン方法は利用できません。" +
+			"設定の「サインイン方法」から選び直してください。",
+		linkFailed: "サインイン方法の追加に失敗しました。もう一度お試しください。",
 	},
 	"en": {
 		title:           "Agent Fleet — Sign in",
@@ -916,7 +955,8 @@ var loginText = map[string]loginStrings{
 		errTenantNoProvider: "The sign-in methods configured for this tenant aren't available on this " +
 			"deployment. Please contact your administrator.",
 		errEmailTaken: "This email address is already used by another sign-in method on this deployment. " +
-			"Please sign in the way you normally do.",
+			"Sign in the way you normally do, then add this method under " +
+			"<b>Settings → Account → Sign-in methods</b>.",
 		newTitle: "Agent Fleet — New account",
 		newBody: "You signed in as %s. That address hasn't been used on this deployment, " +
 			"so a <b>new workspace</b> was created. A workspace you already had is not " +
@@ -925,6 +965,20 @@ var loginText = map[string]loginStrings{
 			"Accounts under different email addresses cannot be merged afterwards.",
 		newContinue: "Continue to the new workspace",
 		newSwitch:   "Sign out and use another account",
+		linkTitle:   "Agent Fleet — Add a sign-in method",
+		linkNote:    "This page only appears when you add a sign-in method.",
+		linkBack:    "Back to Agent Fleet",
+		linkOK: "This sign-in method was added to your account. From now on either method " +
+			"takes you to the same workspace.",
+		linkTaken: "That sign-in method already belongs to another account on this deployment. " +
+			"Accounts cannot be merged.",
+		linkEmail: "The address that sign-in method asserted is not the one on your account. " +
+			"Only a method that asserts the same address can be added.",
+		linkGate: "That sign-in method doesn't allow this account. Ask your administrator about " +
+			"the organization membership or the allowed domains.",
+		linkSession:  "We couldn't confirm you were signed in. Please sign in again and retry.",
+		linkProvider: "That sign-in method isn't available. Pick one under Settings → Sign-in methods.",
+		linkFailed:   "Couldn't add the sign-in method. Please try again.",
 	},
 }
 
