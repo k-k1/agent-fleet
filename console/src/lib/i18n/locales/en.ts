@@ -3271,6 +3271,12 @@ export const en: Record<keyof typeof ja, string> = {
   "account.none": "No sign-in method is linked yet.",
   "account.add_title": "Add a sign-in method",
   "account.add_note": "Only a method that asserts the same email address as this account can be added, and you must also satisfy that method's own rules (organization membership, allowed domains). A method already used by another account cannot be added.",
+  "account.detach": "Remove",
+  "account.detach_title": "Remove {name}?",
+  "account.detach_body":
+    "You will no longer be able to sign in with this method. Your workspace, home and secrets are untouched, and you can add it again later.",
+  "account.detach_current": "You are signed in with this method right now. Sign in with another one first, then remove it.",
+  "account.detach_last": "This is the only sign-in method left. Removing it would leave you unable to sign in at all.",
   // === 使用量ビュー（docs/46 P4・features/usage/UsageView.tsx） ===
   "usage.intro":
     "Where the tokens went, feature by feature. Interactive sessions and the auxiliary LLM calls the fleet makes on its own (title suggestions, compaction, reply suggestions…) are measured on the same yardstick.",

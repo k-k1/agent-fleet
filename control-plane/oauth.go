@@ -290,6 +290,15 @@ func sessionProviderFrom(ctx context.Context) string {
 	return ref.provider
 }
 
+// sessionLoginRef is loginRefFrom WITHOUT the "there is a subject" requirement.
+// Unlinking needs it (docs/61 §61.16.4): the method the caller is signed in with
+// must not be removable, and on a pre-P0 cookie — provider known, subject not — the
+// safe reading is "every row of that provider is the one in use", not "none is".
+func sessionLoginRef(ctx context.Context) (loginRef, bool) {
+	ref, ok := ctx.Value(loginRefKey{}).(loginRef)
+	return ref, ok && ref.provider != ""
+}
+
 // --- allowlist (emails.txt successor) -------------------------------------
 
 // emailAllowed checks the exact-email and domain allowlists (env CSVs) plus the

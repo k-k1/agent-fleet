@@ -72,6 +72,12 @@ land in the same workspace, the same home and the same settings.
 - A method already used by **somebody else's account** cannot be added.
 - If the sign-in page told you "this email address is already used by another sign-in method", the fix is to
   **sign in the way you normally do** and add the other method here.
+- **Remove** — a method you no longer use can be taken off the list. Your workspace, home and secrets are
+  untouched, and you can add the same method again later. Two of them cannot be removed, and hovering the
+  disabled button says which case you are in:
+  - **the method you are signed in with right now** — sign in with another one first, then remove it.
+  - **the only method left** — removing it would leave you unable to sign in at all, with no way to undo it
+    yourself (this deployment has no password and sends no email).
 
 ### Keys
 

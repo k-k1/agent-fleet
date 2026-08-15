@@ -683,6 +683,53 @@ func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link I
 	return err
 }
 
+// errLastLoginMethod / errNoSuchLoginMethod are DetachProvider's two refusals.
+//
+// ★ The first one is a lockout guard, not a formality: with the last method gone
+// there is no way back into the account — no password, no SMTP to mail a link from
+// (決定 28) — and the person doing it is the account's own owner, mid-cleanup, who
+// is exactly the one who cannot ask anybody to undo it.
+var (
+	errLastLoginMethod   = errors.New("this is the only sign-in method left on the account, and removing it would lock you out")
+	errNoSuchLoginMethod = errors.New("that sign-in method is not linked to this account")
+)
+
+// DetachProvider — see the Store interface (docs/61 §61.16.4).
+func (s *sqlStore) DetachProvider(ctx context.Context, identityID, provider, subject string) error {
+	if identityID == "" || provider == "" || subject == "" {
+		return fmt.Errorf("detach provider: identity, provider and subject are required")
+	}
+	// The row must be this person's own. Checked separately from the delete so
+	// "not yours / not there" is distinguishable from "it is the last one".
+	owner, err := s.identityIDForProvider(ctx, provider, subject)
+	if err != nil {
+		return err
+	}
+	if owner != identityID {
+		return errNoSuchLoginMethod
+	}
+	// ★ The count lives INSIDE the delete. Reading it first and deleting after would
+	// let two tabs each see "2 left" and remove one, ending at zero.
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM identity_provider
+		 WHERE identity_id=? AND provider=? AND subject=?
+		   AND (SELECT COUNT(*) FROM identity_provider WHERE identity_id=?) > 1`,
+		identityID, provider, subject, identityID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		// The ownership check above already passed, so the only remaining reason the
+		// statement matched nothing is the count guard.
+		return errLastLoginMethod
+	}
+	return nil
+}
+
 // identityByEmail finds the person an address already belongs to. Non-empty
 // emails are UNIQUE (idx_identity_email), so at most one row matches; the empty
 // email never does (those rows are invite-by-user_key placeholders, claimed through
