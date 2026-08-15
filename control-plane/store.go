@@ -529,6 +529,19 @@ type IdentityStore interface {
 	//     errLinkTaken. Joining two accounts that both have a login history is a
 	//     merge, and a merge cannot be undone (§61.5).
 	AttachProvider(ctx context.Context, identityID string, link IdentityLink) error
+	// DetachProvider removes one sign-in method from a person's account (docs/61
+	// §61.16.4, the deferred half of 決定 37). identityID is always in the WHERE, so
+	// no caller can reach somebody else's row even with a (provider, subject) it
+	// guessed.
+	//
+	// ★ It REFUSES to remove the last one (errLastLoginMethod). An account with no
+	// method left cannot be signed into at all, and there is no recovery path from
+	// the Console — this deployment has no password and no SMTP (決定 28). The count
+	// is taken in SQL, in the same statement, because the caller's check and the
+	// delete are otherwise two moments with a browser tab in between.
+	// errNoSuchLoginMethod means the pair is not this person's (or not there at all);
+	// the two are separate so the API can answer 409 and 404 rather than one 400.
+	DetachProvider(ctx context.Context, identityID, provider, subject string) error
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
 	// GetIdentityByUserKey is the READ-ONLY lookup for view paths (admin stats,
 	// admin MCP list tools): unlike UpsertIdentity it neither inserts a row for a
