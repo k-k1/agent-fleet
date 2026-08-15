@@ -1,7 +1,10 @@
 # 64. ECS の Workspace を EC2 起動タイプ ＋ インスタンス stop/start で持つ
 
-> 状態: 調査完了・**採用は条件付きで見送り**（2026-08-15）。決定は
+> 状態: 調査完了・**採用（実装中）**（2026-08-15）。決定は
 > [ADR 0045](decisions/0045-ec2-persistent-workspace.md)。
+> ⚠️ **§64.2〜§64.14 は「見送り」を結論としていた調査の記録である。** 同じ日のうちに利用者の判断で
+> **採用に転じた**（ADR 0045 決定 10。§64.10 の判定ゲートは**充足していない**）。
+> **採る形はプール型（§64.12）**で、**実装の設計は §64.15**。
 > **成立性は AWS sandbox で端から端まで実測した**（deploy → 計測 → teardown を 1 セッションで閉じ、
 > 残存リソース 0 を確認済み・§64.14）。**第 2 ラウンドで「プール ＋ EBS 差し替え」と
 > 「初回ユーザー用 golden snapshot」も実測した**（§64.12 / §64.13）。
@@ -338,6 +341,9 @@ ADR 0012 の「アダプタは CP に状態を持たない」は**維持でき�
 
 ## 64.10 判定ゲート（いつ着手するか）
 
+> ⚠️ **このゲートは充足しないまま越えた**（ADR 0045 決定 10）。下の 5 つはどれも実測では言えていない。
+> 2026-08-15 に利用者の判断で着手したので、以下は「何を測れば正当化できたか」の記録である。
+
 ADR 0044 決定 3（`~` の置き場の分割）を実装したうえで、**次のいずれかが実測で言えたとき**に着手する。
 言えないうちは着手しない——理由は §64.2 のとおり、EC2 化の効き幅の大半を決定 3 が先に取るため。
 
@@ -526,3 +532,171 @@ Cloud Map 名前空間 / ロググループ / SG / IAM ロール / インスタ�
 - **`tar cf /dev/null` は中身を読まない。** GNU tar が出力先 `/dev/null` を検出して入力ファイルの
   読み出しを省く最適化があり、819 MB のツリーが 0.349s で「読めた」ことになっていた。
   I/O を測るなら `tar cf - dir | wc -c` のように**実際に流すこと**。
+
+## 64.15 実装設計（P0・プール型・2026-08-15 に採用）
+
+[ADR 0045](decisions/0045-ec2-persistent-workspace.md) 決定 10 で採用に転じた。ここは**実装前に紙で
+確定させた設計**である（§64.9 は「1 ユーザー = 1 インスタンス固定」の設計案で、採らない）。
+
+- **形**: §64.12 のプール型（汎用スロット ＋ ユーザー毎 EBS の差し替え・ホット ＋ 排他 ＋ tmpfs ＋ 短い cleanup）
+- **置き場**: `control-plane/runtime_ecs_ec2.go` を**新設**し、`AF_RUNTIME=ecs-ec2` で並走。
+  **`runtime_ecs.go`（Fargate）は 1 行も変えない**（決定 10-1。退路が profile 1 行）
+- **P0 の範囲**: ライフサイクル（確保 → attach → mount → 配置 → umount → detach → 返却）と
+  `Start` / `Stop` / `State` / 削除。golden snapshot（決定 9）と退避・復帰（決定 4）は P1
+
+### 64.15.1 資源と引き方（DB スキーマは増やさない）
+
+[ADR 0012](decisions/0012-go-refactor.md)「アダプタは CP に状態を持たない」は**維持できる**。
+占有は導出でき、確保の原子性は AWS の API に委ねられるためである。
+
+| 資源 | 引き方 | タグ |
+|---|---|---|
+| ユーザーの home ボリューム | `DescribeVolumes` | `af-membership=<id>` ＋ `af-role=home` |
+| スロット | `DescribeInstances`（state: running/stopped） | `af-pool=<cluster>` ＋ `af-role=slot` ＋ `af-slot-size=<type>` |
+| **スロットの占有** | **導出**（保持しない）: home ボリュームの `Attachments[].InstanceId` | — |
+| **確保中**（attach 前の一瞬） | home ボリュームの `af-claim=<instance-id>` ＋ `af-claim-at=<RFC3339>` | 期限切れは回収が剥がす |
+| コンテナインスタンス登録 | `ListContainerInstances` → `DescribeContainerInstances` を `ec2InstanceId` で突合 | — |
+| サービス / タスク定義 | 現行どおり `ContainerName` | — |
+| 資格情報（`homeKeep` の 7 つ） | 現行の EFS アクセスポイント（決定 3-6 のハイブリッド） | `af-membership` ＋ `af-role` |
+| golden snapshot（P1） | `DescribeSnapshots` | `af-role=golden` ＋ `af-image-tag=<tag>` |
+
+### 64.15.2 スロット確保の原子性は「固定デバイス名の `AttachVolume`」に委ねる
+
+2 つの Workspace が同時に同じ空きスロットを掴む競合を、CP のロックではなく **AWS の API に解かせる。**
+
+- **ユーザーの home はどのスロットでも常に同じデバイス名**（`/dev/sdf`）に attach する。
+  既に何かが `/dev/sdf` に付いているインスタンスへの `AttachVolume` は AWS 側で失敗するので、
+  **確保 ＝ `AttachVolume` が成功すること**になる。失敗したら次の候補スロットへ回る。
+- これは決定 8 の「1 スロット 1 ユーザー排他」と実装が一致する——**「空きスロット」とは
+  「`/dev/sdf` が空いているスロット」**である。別の場所に空き table を持つ必要がない。
+- CP 既存の `AcquireWorkspaceOperationFence` は**同じ Workspace の二重 Start**しか防がない。
+  **異なる Workspace 同士の競合はここで解ける。**
+
+⚠️ **P0 の一次確認事項**: 同一インスタンスの同一デバイス名への 2 本目の `AttachVolume` が
+確実に弾かれること（第 2 ラウンドでは 1 ユーザーずつしか付けていないので未確認）。
+弾かれないなら確保は別の原子操作（`CreateTags` ではなく、スロット側のダミーボリュームや
+`af-claim` の条件付き更新）に置き換える必要がある。
+
+### 64.15.3 Start —— 同期部は ALB の 60s に収める
+
+順序は **AZ の鶏卵**から決まる: **ボリュームが AZ を決め、AZ がスロット候補を決める**（決定 3-4）。
+
+1. `State()` が `running` / `starting` なら return（現行 Fargate と同じ契約）
+2. home ボリュームを引く。**無ければ先にスロットを確保し、そのスロットの AZ に `CreateVolume`**
+   （P0 は空ボリューム ＋ 既存 `entrypoint.sh` の boot-install 48s。P1 で golden から 17〜20s）
+3. **スロット確保**（候補順）
+   1. 同 AZ の**ホットスロット**（running・`/dev/sdf` 空き）→ `AttachVolume`（実測 **3s**）
+   2. 同 AZ の**停止スロット** → **停止したまま `AttachVolume`**（実測 3s・§64.12.1）→ `StartInstances`
+   3. どちらも無ければ `af-claim` を打って `RunInstances`
+4. **mount**: SSM SendCommand `af-mount <volume-id> /af-home/<membership>`（実測 4s）
+5. `RegisterTaskDefinition` — 配置制約 `memberOf: ec2InstanceId == i-xxx`、**`cpu` は省略**（決定 8）、
+   `/tmp` は `linuxParameters.tmpfs`、home は `host` ボリューム、資格情報は EFS アクセスポイント
+6. `UpdateService desired 1` → return
+
+**(3-1) だけが同期経路**（attach 3s ＋ mount 4s ＋ API ＝ 10 秒台）で、ALB の 60s idle timeout に対して
+安全である。**(3-2)（+19s の起動待ち）と (3-3)（+8s の running 待ち）はバックグラウンドへ逃がす**——
+`runtime.go` の `Start` は「COMMITTED で返す」契約であり、収束は `State()` が `starting` で写す。
+これは docs/62 §62.5 で Fargate が 504 を返した轍と同じ話である。
+
+配置制約は**サービスではなくタスク定義側**に置く（`RegisterTaskDefinition.PlacementConstraints`）。
+毎 Start で登録し直しているので、**スロットが変わるたびに制約も書き換わる**のが自然で、
+サービス側の `PlacementConstraints`（`UpdateService` でも更新できる）を触らずに済む。
+
+### 64.15.4 `State()` の写像（決定 3-5）
+
+サービスの desired/running だけでは足りない。**ボリューム・インスタンス・サービスの 3 つ組**で写す。
+
+| home ボリューム | スロット | サービス / タスク | `State()` |
+|---|---|---|---|
+| 無い | — | 無い | `none` |
+| `available`・claim 無し | — | desired 0 / 無し | `stopped` |
+| `available`・**claim が期限内** | pending | — | **`starting`** |
+| `in-use` | pending / running | desired 1・RUNNING 無し | **`starting`** |
+| `in-use` | running | desired 1・RUNNING 1 | `running` |
+| `in-use` | running | **desired 0** | `stopped`（後片付け待ち。再 Start は刺さったまま再利用でき、むしろ速い） |
+
+**`af-claim` に期限が要る**——さもないと「スロット起動に失敗したユーザーが永久に `starting`」になり、
+Console からは復帰できなくなる（`Start` は `starting` を見て早期 return するため）。
+
+### 64.15.5 Stop —— 同期は `desired 0` まで、あとは非同期
+
+1. `UpdateService desired 0`（**同期・ここで返す**。現行 Fargate の `Stop` と同じ）
+2. 非同期: タスク消滅を待つ（実測 7〜13s）→ SSM `af-umount` → `DetachVolume` → **スロット返却**
+3. **`umount` は `DetachVolume` の前に必ず**（決定 8 の代償 3。強制 detach はファイルシステムを壊す）。
+   タスクが SIGKILL で残って umount が失敗する場合はリトライ → 最後に `fuser -k`
+4. 返却時に**前ユーザーの痕跡を消す**（停止済みコンテナの削除）。`/tmp` は tmpfs なので残らない
+5. P0 は**返却したスロットをホットのまま残す**（次のユーザーが 22〜27s で乗れる）。
+   アイドルスロットの `StopInstances` / terminate による縮退は P1
+
+### 64.15.6 漂流の回収（CP が落ちても直る）
+
+非同期の後片付けは CP の再起動で失われる。**CP に状態を持たないので、回収はタグからの再導出で行う。**
+
+| 症状 | 回収 |
+|---|---|
+| desired 0 なのに home ボリュームが `in-use` のまま N 分 | umount → detach → 返却 |
+| `af-claim` が期限切れ | タグを剥がす（`stopped` に戻す） |
+| スロットに刺さっているが対応する Workspace が消えている | detach → ボリュームは削除ロック（ADR 0028）に従う |
+| `agentConnected=false` が長く続くコンテナインスタンス | `DeregisterContainerInstance`（決定 3-2） |
+| どの Workspace にも紐づかない `af-role=slot` インスタンス | 返却済みとして扱う（terminate は P1） |
+
+### 64.15.7 削除とサイズ変更
+
+- **削除**: タスク停止 → umount → detach → `DeleteVolume`（P1: 先に snapshot）→ EFS AP 削除。
+  **スロットは消さない**（スロットはユーザーのものではない）。ADR 0028 の削除ロックの対象が増える。
+- **サイズ変更は §64.5 (1) の 3 手を踏まない。** プール型ではユーザーとインスタンスが紐づいていないので、
+  **「別サイズのスロットへ載せ替える」＝ Stop → 別プールのスロットへ attach → Start** で済み、
+  `ModifyInstanceAttribute` を呼ぶ場面自体が無い。**プール型の思わぬ利点である**
+  （代わりに**プールを AZ × サイズで持つ**必要がある）。
+  3 手の手順は**スロットのタイプを運用で変えるとき**のために残すが、その場合も
+  「古いスロットを terminate して新しく起こす」で足りる——スロットはユーザーデータを持たない。
+- **ディスク拡張**: `ModifyVolume`（オンライン）＋ インスタンス側で `growpart` / `resize2fs`。
+
+### 64.15.8 substrate 側に要るもの
+
+- **スロットの user-data**: `ECS_CLUSTER` ／ `ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION` を詰める（既定 3h・決定 8）
+  ／ `af-mount` `af-umount` の設置（`~/af-ec2b/userdata.sh` が原型）／ SSM エージェント
+- **CP のタスクロール（追加）**:
+  `ec2:DescribeInstances` `DescribeVolumes` `CreateVolume` `DeleteVolume` `AttachVolume` `DetachVolume`
+  `CreateTags` `DeleteTags` `RunInstances` `StartInstances` `StopInstances` `TerminateInstances` ／
+  `ecs:ListContainerInstances` `DescribeContainerInstances` `DeregisterContainerInstance` ／
+  `ssm:SendCommand` `GetCommandInvocation` ／ `iam:PassRole`（スロットのインスタンスプロファイル）
+- **スロットのインスタンスプロファイル**: ECS 参加 ＋ SSM ＋ ECR pull ＋ CloudWatch Logs
+- **プライベートサブネット ＋ NAT**（決定 3-3。パブリック IP に依存しない）
+
+### 64.15.9 実装したもの（P0）と、設計から動いた 4 点
+
+**入ったもの**: `control-plane/runtime_ecs_ec2.go`（アダプタ本体 ＋ 漂流回収）／
+`runtime.go` の `ecs-ec2` profile ／ `runtime_ecs_ec2_test.go`（13 本・フェイクの EC2 が
+「同じデバイス名への 2 本目の attach を拒否する」ところまで模す）／
+`deploy/aws/ecs/cfn/40-ec2-pool.yaml`（スロットの起動テンプレート・IAM・SG）／
+20-platform の CP ロールに EC2/SSM/コンテナインスタンス権限 ／ 30-ingress の `WsRuntime`
+と `Ec2*` パラメータ ／ `workspace/entrypoint.sh` の `AF_WS_KEEP`（資格情報の EFS 退避）。
+
+**設計から動いた 4 点**（いずれも実装して初めて分かったこと）:
+
+1. **`/tmp` の tmpfs から `noexec` を既定で外した。** 決定 8 は `noexec,nosuid,nodev` と
+   書いたが、ここは**開発コンテナ**で、インストーラやテストランナーが `/tmp` から exec
+   するのは日常である。決定が実際に欲しかった 2 つ（共有 root に書かれない・上限が付く）は
+   `noexec` 無しで得られる。`AF_ECS_EC2_TMP_OPTS` で戻せる。
+2. **サイズ変更で §64.5 (1) の 3 手を踏む場面が無くなった。** プール型はユーザーと
+   インスタンスが紐づかないので、サイズ変更は「別サイズのスロットへ載せ替える」だけになる
+   （§64.15.7）。**罠 1 はプール型を採った時点で消える**——ただしスロットのタイプを運用で
+   変える場合に備え、手順は §64.5 に残す。
+3. **削除（`Destroy`）は実装したが、呼び出し元が無い。** CP には Workspace 削除の継ぎ目が
+   そもそも無く、Fargate でもサービスとアクセスポイントはメンバーシップより長生きしている。
+   ここで放置される物が**課金され続ける EBS ボリューム**である以上、手順は書いておくべきなので
+   `runtimeDestroyer` として置き、配線は削除ロック（ADR 0028）側の宿題とした。
+4. **P0 ではプールが縮まない。** 返却したスロットはホットのまま残す（次のユーザーが 22〜27s で
+   乗れる）。したがって**費用を抑えるのは `AF_ECS_EC2_MAX_SLOTS` だけ**であり、これは
+   「同時に働く人数」として設定する必要がある。アイドルスロットの stop/terminate は P1。
+
+**まだ実測で確かめていないこと（実装の前提として置いた仮定）**:
+
+- **同一インスタンスの同一デバイス名への 2 本目の `AttachVolume` が確実に弾かれること。**
+  §64.15.2 のスロット確保はこの 1 点に全体重を預けている。弾かれないなら確保は別の
+  原子操作に置き換えが要る。**sandbox で最初に確かめるのはこれ**。
+- EC2 起動タイプ ＋ awsvpc ＋ Service Connect ＋ **タスク定義側**の `ec2InstanceId` 配置制約の
+  組み合わせ（第 1・2 ラウンドはサービス側の属性制約と bridge で測っている）。
+- `host` ボリュームで EBS を bind した状態での entrypoint 一式（`AF_WS_KEEP` の symlink 化を含む）。
+- CFN の `40-ec2-pool` をスタックとして立てたことは無い（user-data の中身は第 2 ラウンドで実証済み）。
