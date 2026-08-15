@@ -234,7 +234,7 @@ tenant cap. Design and measurements: `docs/63`, decisions in `docs/decisions/004
 |---|---|---|---|
 | `WsTaskCpu` | `AF_ECS_TASK_CPU` | `1024` | Fargate units; 1024 = 1 vCPU |
 | `WsTaskMemory` | `AF_ECS_TASK_MEMORY` | `2048` | MiB |
-| `WsDiskGiB` | `AF_ECS_WS_DISK_GB` | `0` | 0 = Fargate's free 20 GiB; 21–200 sets ephemeral storage |
+| `WsDiskGiB` | `AF_ECS_WS_DISK_GB` | `50` | 21–200 sets ephemeral storage; 0 = Fargate's free 20 GiB (turns cache relocation off) |
 
 **Only specific (cpu, memory) pairs exist**, and the steps are not uniform — 8 vCPU moves
 in 4096 MiB steps and 16 vCPU in 8192, while 0.25 vCPU accepts only 512/1024/2048. The
@@ -244,11 +244,21 @@ effect is that **raising CPU can also raise memory** (4 vCPU cannot run below 8 
 
 The working disk is **not persistent** — it is wiped when the workspace stops, like every
 other task-local disk on Fargate. Only the EFS home survives. `WsDiskGiB` is also the
-switch for moving the small-file caches (Go build cache, `uv`, Go modules) off EFS onto
-that disk: the workspace entrypoint relocates them only when the disk is **30 GiB or
-more**, because the measured caches do not fit alongside the image in 20 GiB. On EFS those
-caches are 8–30× slower to write (`docs/63` §63.4), so a deployment doing real builds
-wants this; one that does not can leave the default and behave exactly as before.
+switch for moving small-file trees off EFS onto that disk: the workspace entrypoint
+relocates the caches (Go build cache, `uv`, Go modules) and the Agent relocates build
+artifacts (`node_modules`, `target`, `.venv`, `build`) as each working copy is created.
+Both arm only when the disk is **30 GiB or more**, because the measured caches do not fit
+alongside the image in 20 GiB. On EFS these trees are 8–30× slower to write (`docs/63`
+§63.4).
+
+**The default is 50 GiB, so relocation is on.** It used to be 0, which meant the feature
+could never arm and every deployment kept building on EFS. Above the free 20 GiB you pay
+about **$0.097/GiB-month, and only while the task runs** — roughly $2.9/month for a
+workspace that never stops, well under a dollar for one that idles out. A deployment that
+does not want it sets `WsDiskGiB=0` and behaves exactly as before. **Existing stacks keep
+the value they were deployed with**: CloudFormation stores the parameter, so a stack
+created with `0` stays at `0` until you update it — pass `WsDiskGiB=50` explicitly (or
+accept the new default in the console) when you update.
 
 Above 200 GiB the CP switches the working disk to an **ECS-managed EBS volume**, which
 needs an ECS infrastructure role passed as `AF_ECS_INFRA_ROLE` (policy

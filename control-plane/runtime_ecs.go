@@ -33,6 +33,12 @@ const ecsAgentPort int32 = 7700
 const (
 	wsScratchPath    = "/scratch"
 	ecsScratchVolume = "scratch"
+	// ecsDefaultWorkDiskGiB is the deployment default for the working disk. It must
+	// stay above the entrypoint's arming threshold (AF_WS_SCRATCH_MIN_GB, 30 GiB) or
+	// the relocation never happens, and it has to hold the measured caches (~10.5 GiB)
+	// plus the image layers and /tmp, which share the same disk. Only the GiB above
+	// Fargate's free 20 are billed (~$0.097/GiB-month, and only while the task runs).
+	ecsDefaultWorkDiskGiB = 50
 )
 
 // --- narrow AWS client ports (only the calls the adapter makes), so the runtime
@@ -200,10 +206,15 @@ func newECSFactory(m *manager) (RuntimeFactory, error) {
 		cpu:            envOr("AF_ECS_TASK_CPU", "1024"),
 		memory:         envOr("AF_ECS_TASK_MEMORY", "2048"),
 		// Deployment default working disk in GiB. 0 keeps Fargate's free 20 GiB; a
-		// value of 21–200 becomes the task's ephemeral storage. Raise it when the
-		// deployment moves regenerable caches onto the task-local disk (ADR 0044 決定 3),
-		// since those do not fit in 20 GiB.
-		diskGiB:  envInt("AF_ECS_WS_DISK_GB", 0),
+		// value of 21–200 becomes the task's ephemeral storage.
+		//
+		// The default is ecsDefaultWorkDiskGiB, NOT 0: the relocation of regenerable
+		// caches (ADR 0044 決定 3) only arms itself when the working disk is big enough
+		// to hold them (entrypoint checks AF_WS_SCRATCH_MIN_GB, 30 GiB), and 20 GiB is
+		// not — the free tier also carries the image layers and /tmp. Shipping 0 meant
+		// the feature was inert in every deployment. Set AF_ECS_WS_DISK_GB=0 to go back
+		// to the free tier (and with it, home entirely on EFS).
+		diskGiB:  envInt("AF_ECS_WS_DISK_GB", ecsDefaultWorkDiskGiB),
 		posixUID: int64(envInt("AF_ECS_POSIX_UID", 1000)),
 		posixGID: int64(envInt("AF_ECS_POSIX_GID", 1000)),
 		// How long the BACKGROUND readiness watch keeps polling /healthz after Start
