@@ -46,6 +46,9 @@ export interface TenantIdP {
   allowed_tids?: string;
   allowed_domains?: string;
   allowed_orgs?: string;
+  // 規則 1.5 を当てるための安定クレーム名（docs/61 §61.15.10）。値ではなく「名前」だけ
+  // が設定で、値は必ずトークンから読む。書けるのは CP が許した名前だけ。
+  link_claim?: string;
   provider_id?: string;
   tenant_slug?: string;
   status?: string;
@@ -345,6 +348,7 @@ export function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: 
         allowed_tids: (form.allowed_tids || "").trim(),
         allowed_domains: (form.allowed_domains || "").trim(),
         allowed_orgs: (form.allowed_orgs || "").trim(),
+        link_claim: (form.link_claim || "").trim(),
       };
       const res = form.id
         ? await apiJSON(`${base}/${encodeURIComponent(form.id)}`, "PUT", body)
@@ -587,6 +591,19 @@ function IdPForm({
         {!isGitHub && (
           <Field label={tr("admin.idp_tids")} wide hint={tr("admin.idp_tids_hint")}>
             <input value={form.allowed_tids || ""} onChange={(e) => set({ allowed_tids: e.target.value })} />
+          </Field>
+        )}
+        {/* ★ 自由入力ではなく選択にしてある。ここに書けるのは「IdP が割り当てる、
+            本人にも選べないクレーム」だけで、主張されるクレーム（email・upn …）を
+            書けると、同じ発行元を共有する方式の間で email 結合ができてしまう
+            （docs/61 §61.15.10）。選択肢は CP のホワイトリストの写しで、判断は
+            サーバが持つ（保存時に弾かれる）。 */}
+        {!isGitHub && (
+          <Field label={tr("admin.idp_link_claim")} wide hint={tr("admin.idp_link_claim_hint")}>
+            <select value={form.link_claim || ""} onChange={(e) => set({ link_claim: e.target.value })}>
+              <option value="">{tr("admin.idp_link_claim_none")}</option>
+              <option value="oid">oid</option>
+            </select>
           </Field>
         )}
         <Field label={tr("admin.idp_label_ja")}>

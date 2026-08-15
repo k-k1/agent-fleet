@@ -409,12 +409,18 @@ type TenantIdP struct {
 	// fields below mean anything: "oidc" (the P4 default) uses Issuer/Trust/
 	// AllowedTIDs, "github" uses AllowedOrgs and pins Issuer to https://github.com
 	// (docs/61 §61.15 + 決定 35).
-	Kind                            string
-	Issuer, ClientID                string
-	SecretEnc, KeyRef               string
-	Trust                           string
-	AllowedTIDs, AllowedDomains     string // CSV
-	AllowedOrgs                     string // CSV, kind=github only
+	Kind                        string
+	Issuer, ClientID            string
+	SecretEnc, KeyRef           string
+	Trust                       string
+	AllowedTIDs, AllowedDomains string // CSV
+	AllowedOrgs                 string // CSV, kind=github only
+	// LinkClaim names the stable claim rule 1.5 should match on, for an issuer whose
+	// `sub` is pairwise (docs/61 §61.15.10). ★ A tenant may only name a claim from a
+	// closed list (tenantLinkClaims): naming `email` or `upn` would build an
+	// email join inside a shared realm, which is precisely what 決定 32 refuses. The
+	// VALUE is never taken from this row — only the name is configuration.
+	LinkClaim                       string
 	Status                          string // pending | active | suspended
 	ApprovedBy, ApprovedAt          string
 	CreatedBy, CreatedAt, UpdatedAt string
@@ -466,11 +472,24 @@ type IdentityLink struct {
 	// that is rule 1.5, and it is the one join a tenant-defined provider is allowed
 	// to make, because the realm is asserted by the adapter and verified against
 	// that IdP, never taken from the tenant's row (docs/61 §61.15).
-	Realm       string
-	Email       string
-	FallbackKey string // sanitizeUser(email), used only when a new identity is created
-	RoleHint    string
-	EmailJoin   bool
+	Realm string
+	// RealmClaim / RealmSubject are rule 1.5's SECOND key (docs/61 §61.15.10 + 決定
+	// 38). Some IdPs make `sub` pairwise — Entra's is a function of (app registration,
+	// user) — so the same person through two app registrations on one issuer is two
+	// subjects and rule 1.5 never fires. A provider may therefore also name a stable
+	// claim (`oid`): RealmClaim is WHICH claim was read, RealmSubject is what it
+	// carried. Both must match for the rule to join, so two providers reading
+	// different claims never join on a coincidental value collision.
+	//
+	// ★ Subject keeps meaning `sub`. Replacing it would change the key of every row
+	// already written, and a tenant-defined provider — which has no rule 2 to fall
+	// back on — would refuse its own existing people as email_taken.
+	RealmClaim   string
+	RealmSubject string
+	Email        string
+	FallbackKey  string // sanitizeUser(email), used only when a new identity is created
+	RoleHint     string
+	EmailJoin    bool
 }
 
 // LinkedProvider is one sign-in method bound to a person, as shown on their own

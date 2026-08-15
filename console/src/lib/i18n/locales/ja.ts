@@ -1370,6 +1370,10 @@ export const ja = {
     "同じドメインを 2 つのテナントが持つことはできません。",
   "admin.idp_tids": "許可する tenant id（Entra の tid・任意）",
   "admin.idp_tids_hint": "カンマ区切り。issuer が common / organizations の場合は必須です。",
+  "admin.idp_link_claim": "同一アカウントの見分け方",
+  "admin.idp_link_claim_none": "既定（sub で見分ける）",
+  "admin.idp_link_claim_hint":
+    "同じ発行元に別のアプリ登録がある場合に使います。Entra の sub はアプリ登録ごとに違う値になるため、本社のボタンとこの方式で同じ人が別アカウント扱いになります。oid を選ぶと同じ人として扱われます。選べるのは IdP が割り当てる値だけで、メールアドレスのように名乗れる値は選べません。変更すると承認のやり直しになります。",
   "admin.idp_label_ja": "ボタンの文言（日本語）",
   "admin.idp_label_en": "ボタンの文言（英語）",
   "admin.idp_repend_hint":

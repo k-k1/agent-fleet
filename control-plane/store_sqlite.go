@@ -466,6 +466,14 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, link IdentityLink) (Identit
 		if identityID, err = s.identityIDForRealm(ctx, link.Realm, subject); err != nil {
 			return Identity{}, false, err
 		}
+		// ★ …and its second key, for an issuer whose `sub` is pairwise (docs/61
+		// §61.15.10 + 決定 38). Tried AFTER the subject match, so an IdP where both
+		// work behaves exactly as it did before this column existed.
+		if identityID == "" {
+			if identityID, err = s.identityIDForRealmClaim(ctx, link.Realm, link.RealmClaim, link.RealmSubject); err != nil {
+				return Identity{}, false, err
+			}
+		}
 	}
 	isNew := false
 	if identityID == "" {
@@ -500,13 +508,17 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, link IdentityLink) (Identit
 	// empty one, and rule 1.5 can only see what has been recorded.
 	now := nowTS()
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO identity_provider(provider, subject, identity_id, email, realm, created_at, last_login_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO identity_provider(provider, subject, identity_id, email, realm,
+		                               realm_claim, realm_subject, created_at, last_login_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(provider, subject) DO UPDATE SET
 		   email = excluded.email,
 		   realm = CASE WHEN excluded.realm = '' THEN identity_provider.realm ELSE excluded.realm END,
+		   realm_claim = CASE WHEN excluded.realm_subject = '' THEN identity_provider.realm_claim ELSE excluded.realm_claim END,
+		   realm_subject = CASE WHEN excluded.realm_subject = '' THEN identity_provider.realm_subject ELSE excluded.realm_subject END,
 		   last_login_at = excluded.last_login_at`,
-		provider, subject, identityID, email, link.Realm, now, now); err != nil {
+		provider, subject, identityID, email, link.Realm,
+		link.RealmClaim, link.RealmSubject, now, now); err != nil {
 		return Identity{}, false, err
 	}
 	if err := s.touchIdentity(ctx, identityID, email, link.RoleHint); err != nil {
@@ -572,6 +584,33 @@ func (s *sqlStore) identityIDForRealm(ctx context.Context, realm, subject string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT identity_id FROM identity_provider WHERE realm=? AND subject=? ORDER BY provider LIMIT 1`,
 		realm, subject).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// identityIDForRealmClaim is rule 1.5's second key: the same IdP account recognised
+// by a STABLE CLAIM rather than by `sub` (docs/61 §61.15.10 + 決定 38). Entra's `sub`
+// is pairwise — a function of (app registration, user) — so one person coming through
+// the head office's app and through a subsidiary's carries two subjects on one
+// issuer, and identityIDForRealm cannot see that they are the same account. `oid` is
+// the same value in both tokens, and this is where that is read.
+//
+// ★ The CLAIM NAME is part of the key, not just the value. Two providers reading
+// DIFFERENT claims must never join because their values happened to collide — the
+// name records which question was asked. And an empty claim or value matches
+// nothing, so every row written before the column, and every provider that names no
+// claim, simply does not take part.
+func (s *sqlStore) identityIDForRealmClaim(ctx context.Context, realm, claim, subject string) (string, error) {
+	if realm == "" || claim == "" || subject == "" {
+		return "", nil
+	}
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT identity_id FROM identity_provider
+		 WHERE realm=? AND realm_claim=? AND realm_subject=? ORDER BY provider LIMIT 1`,
+		realm, claim, subject).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -659,6 +698,16 @@ func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link I
 		if byRealm != "" && byRealm != identityID {
 			return errLinkTaken
 		}
+		// ★ …and through rule 1.5's second key (docs/61 §61.15.10). Without this the
+		// pairwise-`sub` case slips past: two subjects, one Entra account, so the pair
+		// looks free while signing in with it would land on somebody else.
+		byClaim, err := s.identityIDForRealmClaim(ctx, link.Realm, link.RealmClaim, link.RealmSubject)
+		if err != nil {
+			return err
+		}
+		if byClaim != "" && byClaim != identityID {
+			return errLinkTaken
+		}
 	}
 	// 3. the address the IdP asserted belongs to a different person. Even with the
 	//    caller's same-address rule in front, this stays: identity.email is UNIQUE
@@ -674,12 +723,16 @@ func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link I
 	// login with this method, and the account panel orders by it. ON CONFLICT keeps
 	// the same shape as LinkIdentity — identity_id is never in the update list.
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO identity_provider(provider, subject, identity_id, email, realm, created_at, last_login_at)
-		 VALUES(?, ?, ?, ?, ?, ?, '')
+		`INSERT INTO identity_provider(provider, subject, identity_id, email, realm,
+		                               realm_claim, realm_subject, created_at, last_login_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, '')
 		 ON CONFLICT(provider, subject) DO UPDATE SET
 		   email = excluded.email,
-		   realm = CASE WHEN excluded.realm = '' THEN identity_provider.realm ELSE excluded.realm END`,
-		link.Provider, link.Subject, identityID, link.Email, link.Realm, now)
+		   realm = CASE WHEN excluded.realm = '' THEN identity_provider.realm ELSE excluded.realm END,
+		   realm_claim = CASE WHEN excluded.realm_subject = '' THEN identity_provider.realm_claim ELSE excluded.realm_claim END,
+		   realm_subject = CASE WHEN excluded.realm_subject = '' THEN identity_provider.realm_subject ELSE excluded.realm_subject END`,
+		link.Provider, link.Subject, identityID, link.Email, link.Realm,
+		link.RealmClaim, link.RealmSubject, now)
 	return err
 }
 
@@ -2563,13 +2616,14 @@ func (s *sqlStore) DeleteMCPServer(ctx context.Context, tenantID, id string) err
 // --- tenant-defined login providers (docs/61 §61.11 + ADR0043 決定 29-33) -------
 
 const tenantIdPCols = `SELECT id, tenant_id, name, label_ja, label_en, kind, issuer, client_id,
-       secret_enc, key_ref, trust, allowed_tids, allowed_domains, allowed_orgs, status,
+       secret_enc, key_ref, trust, allowed_tids, allowed_domains, allowed_orgs, link_claim, status,
        approved_by, approved_at, created_by, created_at, updated_at FROM tenant_idp`
 
 func scanTenantIdP(sc scanner) (TenantIdP, error) {
 	var t TenantIdP
 	err := sc.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Kind, &t.Issuer, &t.ClientID,
-		&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.AllowedOrgs, &t.Status,
+		&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.AllowedOrgs,
+		&t.LinkClaim, &t.Status,
 		&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
@@ -2608,7 +2662,8 @@ func (s *sqlStore) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[s
 // minting sessions, the same way ListTenantLoginRules only loads active tenants.
 func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantIdP, map[string]TenantRef, error) {
 	q := `SELECT p.id, p.tenant_id, p.name, p.label_ja, p.label_en, p.kind, p.issuer, p.client_id,
-	             p.secret_enc, p.key_ref, p.trust, p.allowed_tids, p.allowed_domains, p.allowed_orgs, p.status,
+	             p.secret_enc, p.key_ref, p.trust, p.allowed_tids, p.allowed_domains, p.allowed_orgs,
+	             p.link_claim, p.status,
 	             p.approved_by, p.approved_at, p.created_by, p.created_at, p.updated_at, t.slug, t.name
 	      FROM tenant_idp p JOIN tenant t ON t.id = p.tenant_id
 	      WHERE t.status='active'`
@@ -2629,7 +2684,8 @@ func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantI
 		var t TenantIdP
 		var ref TenantRef
 		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Kind, &t.Issuer, &t.ClientID,
-			&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.AllowedOrgs, &t.Status,
+			&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.AllowedOrgs,
+			&t.LinkClaim, &t.Status,
 			&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &ref.Slug, &ref.Name); err != nil {
 			return nil, nil, err
 		}
@@ -2650,11 +2706,11 @@ func (s *sqlStore) GetTenantIdP(ctx context.Context, tenantID, id string) (Tenan
 func (s *sqlStore) CreateTenantIdP(ctx context.Context, t TenantIdP) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant_idp(id, tenant_id, name, label_ja, label_en, kind, issuer, client_id,
-		   secret_enc, key_ref, trust, allowed_tids, allowed_domains, allowed_orgs, status,
+		   secret_enc, key_ref, trust, allowed_tids, allowed_domains, allowed_orgs, link_claim, status,
 		   approved_by, approved_at, created_by, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.ID, t.TenantID, t.Name, t.LabelJA, t.LabelEN, t.Kind, t.Issuer, t.ClientID,
-		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains, t.AllowedOrgs, t.Status,
+		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains, t.AllowedOrgs, t.LinkClaim, t.Status,
 		t.ApprovedBy, t.ApprovedAt, t.CreatedBy, t.CreatedAt, t.UpdatedAt)
 	return err
 }
@@ -2667,11 +2723,11 @@ func (s *sqlStore) UpdateTenantIdP(ctx context.Context, t TenantIdP) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tenant_idp SET name=?, label_ja=?, label_en=?, kind=?, issuer=?, client_id=?,
 		   secret_enc=?, key_ref=?, trust=?, allowed_tids=?, allowed_domains=?, allowed_orgs=?,
-		   status=?, approved_by=?, approved_at=?, updated_at=?
+		   link_claim=?, status=?, approved_by=?, approved_at=?, updated_at=?
 		 WHERE tenant_id=? AND id=?`,
 		t.Name, t.LabelJA, t.LabelEN, t.Kind, t.Issuer, t.ClientID,
 		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains, t.AllowedOrgs,
-		t.Status, t.ApprovedBy, t.ApprovedAt, t.UpdatedAt,
+		t.LinkClaim, t.Status, t.ApprovedBy, t.ApprovedAt, t.UpdatedAt,
 		t.TenantID, t.ID)
 	return err
 }

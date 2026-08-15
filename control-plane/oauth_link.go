@@ -208,7 +208,8 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 		return
 	}
 	err = c.mgr.store.AttachProvider(r.Context(), ident.ID, IdentityLink{
-		Provider: pr.Provider, Subject: pr.Subject, Realm: pr.Realm, Email: pr.Email,
+		Provider: pr.Provider, Subject: pr.Subject, Realm: pr.Realm,
+		RealmClaim: pr.RealmClaim, RealmSubject: pr.RealmSubject, Email: pr.Email,
 	})
 	switch {
 	case errors.Is(err, errLinkTaken):
