@@ -112,7 +112,7 @@ Workspace からの外向き通信（egress）を統制する仕組みがあり�
   です。特に Entra ID の issuer は自社テナント GUID に固定してください。`/common/` や
   `/organizations/` では Microsoft アカウントを持つ全人類がログイン画面に立て、個人アカウントは
   自分の email を付け替えられるため、`AF_OIDC_<ID>_ALLOWED_TIDS` が無い限り CP は起動を拒否します
-  （[01 §3](01-install.ja.md) / [dev/07 §7.3](../../dev/07-security.md)）。
+  （[05 §4](05-login-idp.ja.md) / [dev/07 §7.3](../../dev/07-security.md)）。
 - **監査ログ。** 変更・破壊操作のみが `audit_log` に記録されます（読み取りは既定オフ、**ターミナルの
   生ストリームは秘密混入リスクのため保存しません**）。閲覧は super_admin / tenant_admin が Admin の
   audit タブから。運用上の見方は admin 分冊が扱います。
@@ -165,7 +165,7 @@ cookie 自体は最大 `AF_SESSION_TTL`（既定 7 日）有効なままです�
 ```sh
 openssl rand -base64 32          # 新しい値を生成
 # .env / oauth.env / SSM パラメータの AF_COOKIE_SECRET を差し替えて CP を再起動
-docker compose up -d control-plane
+docker compose up -d cp
 ```
 
 旧鍵で署名された cookie はすべて検証に通らなくなるので、**全員がログアウトされ、再ログインに

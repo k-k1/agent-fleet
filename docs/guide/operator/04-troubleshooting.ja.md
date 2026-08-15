@@ -9,14 +9,14 @@
 
 ## まず見る 2 か所
 
-- **CP のログ**: `docker compose logs -f control-plane`（起動失敗・認証拒否の理由はほぼここ）。
+- **CP のログ**: `docker compose logs -f cp`（起動失敗・認証拒否の理由はほぼここ）。
 - **CP のヘルス**: `curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか。
 
 ## 症状別・確認表
 
 | 症状 | 確認すること |
 |------|-------------|
-| CP が起動しない | `docker compose logs control-plane`。`curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか |
+| CP が起動しない | `docker compose logs cp`。`curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか |
 | docker.sock で "permission denied" | `DOCKER_GID` がホストの docker グループ GID と一致しているか（DooD 制約 C）|
 | Workspace は起動するのに home が空 | `DATA_DIR` が CP の内外で同一絶対パスか。リストア時も同じパスか（DooD 制約 B）|
 | 起動した Workspace に到達できない | CP と Caddy が両方 `network_mode: host` か（DooD 制約 A）|
@@ -25,7 +25,7 @@
 | 外したはずの人がまだ使える | IdP 側で止めてもセッションは切れない。名簿から外す（管理 → テナント → メンバー → **メンバーを外す**）か許可リストから消す |
 | TLS 証明書が発行されない | DNS A/AAAA がこのホストを指すか。80/443 が到達可能か。Let's Encrypt のレート制限 |
 | redirect URI mismatch | IdP に登録した URI が `<PUBLIC_BASE_URL>/oauth2/callback` と一致しているか |
-| サインインのボタンが出ない | その provider が起動時に無効化された。`docker compose logs control-plane \| grep -i "login provider"` に不足している設定名が出る |
+| サインインのボタンが出ない | その provider が起動時に無効化された。`docker compose logs cp \| grep -i "login provider"` に不足している設定名が出る |
 | マルチテナント issuer を理由に CP が起動しない | Entra の `/common/` `/organizations/` issuer で `AF_OIDC_<ID>_ALLOWED_TIDS` が空。issuer を自社テナント GUID に固定する |
 | GitHub ログインが全員拒否される | org が OAuth App を未承認（CP ログの `returned 403`）か、本人の primary/verified アドレスが `AF_GITHUB_ALLOWED_DOMAINS` の外 |
 | CP 再起動後に GitHub の人だけ再サインインを求められる | 仕様。org メンバーシップのキャッシュはメモリ上。拒否ではなく再確認 |
@@ -54,6 +54,10 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
 
 ## ログインできない
 
+> そもそも IdP をどう設定するか — Google / Entra ID / GitHub / その他 OIDC で何を作り、どの値を
+> どこに入れ、どう確認するか — は [05-login-idp.md](05-login-idp.ja.md) にあります。ここは
+> 「設定してあるのに拒否される」ときに読む場所です。
+
 - **常に拒否される** → 許可リスト（`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`）が
   **すべて空で、かつ誰もテナントに招待されていないと全拒否**です（fail-closed = 安全側に倒す設計）。
   少なくとも 1 つ設定するか、その人をメンバーとして追加します。`_EMAILS_FILE` はログインごとに
@@ -71,11 +75,11 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
   `AF_COOKIE_SECRET` のローテーション（[03 のオフボーディング節](03-security.ja.md)）。
 - **redirect URI mismatch** → IdP 側（Google Cloud Console、Entra のアプリ登録など）に登録した
   承認済みリダイレクト URI が `<PUBLIC_BASE_URL>/oauth2/callback` と**完全一致**しているか。
-  `PUBLIC_BASE_URL` を変えたら IdP 側も合わせます（[01 §3](01-install.ja.md)）。有効にする provider が
+  `PUBLIC_BASE_URL` を変えたら IdP 側も合わせます（[05 §1](05-login-idp.ja.md)）。有効にする provider が
   何個でも、この URI は 1 本だけです。
 - **設定したはずのサインインボタンがログイン画面に出ない** → 設定が不完全なため起動時に無効化
   されています（1 つの IdP の設定ミスで全員が締め出されないための挙動）。
-  `docker compose logs control-plane | grep -i "login provider"` に不足している変数名が出ます。
+  `docker compose logs cp | grep -i "login provider"` に不足している変数名が出ます。
   多いのは、既定値を持たない `AF_OIDC_<ID>_TRUST` の未設定です。
 - **マルチテナント issuer を理由に CP が終了する** → Entra ID の issuer が `/common/` または
   `/organizations/` で `AF_OIDC_<ID>_ALLOWED_TIDS` が空です。これらのエンドポイントでは Microsoft
@@ -85,7 +89,7 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
   列挙してください。
 - **設定は正しく見えるのに GitHub ログインが全員拒否される** → 多いのは、org 側がサードパーティ
   OAuth App を制限していて、まだ承認されていないケースです。承認されるまでメンバーシップは
-  見えません。`docker compose logs control-plane | grep "returned 403"` にその旨が出ます。
+  見えません。`docker compose logs cp | grep "returned 403"` にその旨が出ます。
   もう 1 つの原因はアドレスで、GitHub が渡すのはアカウントの **primary かつ verified** な
   メールアドレスです。これが個人用アドレスだと `AF_GITHUB_ALLOWED_DOMAINS` の外になります。
   本人が会社アドレスを GitHub に登録して verified・primary にするか、別のボタンでサインイン
@@ -163,7 +167,7 @@ A. 提供モデルは 1 社 = 1 デプロイ = 1 ホストです。CP はホス�
 **Q. Google 以外の認証（Microsoft 365 / LDAP / SAML など）を使いたい。**
 A. CP ネイティブ（`AUTH=oauth`）は OIDC を話すので、**Microsoft Entra ID・Okta・Keycloak・Auth0・
 Cognito・GitLab は設定だけで使えます** — `AF_OIDC_PROVIDERS` と数個の `AF_OIDC_<ID>_*`、そして
-IdP 側にリダイレクト URI を 1 本（[01 §3](01-install.ja.md)）。同時に複数有効化でき、その場合は
+IdP 側にリダイレクト URI を 1 本（[05](05-login-idp.ja.md)）。同時に複数有効化でき、その場合は
 ログイン画面に provider の数だけボタンが並びます。
 SAML のみの IdP（HENNGE One / TrustLogin / CloudGate など）と LDAP は CP には実装していません。
 既存のゲートウェイ（oauth2-proxy / Keycloak / ALB OIDC）を前段に置き、`AUTH=proxy` で上流のメール
