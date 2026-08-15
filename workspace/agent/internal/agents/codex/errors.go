@@ -122,3 +122,15 @@ func (e codexError) part() transcript.Part {
 	}
 	return transcript.Part{Kind: "error", Info: label, Text: e.message}
 }
+
+func (e codexError) retryable() bool {
+	if e.status >= 500 && e.status <= 599 {
+		return true
+	}
+	switch e.label {
+	case "serverOverloaded", "httpConnectionFailed", "responseStreamFailed":
+		return true
+	default:
+		return false
+	}
+}

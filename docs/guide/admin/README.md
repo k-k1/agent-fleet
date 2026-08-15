@@ -50,13 +50,34 @@ The rail on the left holds two groups.
 
 **Sign-in**
 
-- **Sign-in methods** — register your own company's IdP (Entra ID / Okta / Keycloak …) as a way
-  into this tenant. Registering is not enough: a deployment administrator has to approve it.
+- **Sign-in methods** — register your own company's IdP (Entra ID / Okta / Keycloak …), or a
+  **GitHub organization**, as a way into this tenant. Registering is not enough: a deployment
+  administrator has to approve it. With GitHub you list the **allowed organizations** instead of
+  an issuer and use an OAuth App created in your own organization — the approval is read as
+  "these organizations, these domains", so **adding an organization sends it back for approval**.
+  ★ **"How the same account is recognised"** only matters when head office and your company use
+  **the same IdP through different app registrations**. Entra's default `sub` differs per app
+  registration, so one person is two accounts across head office's button and this method;
+  picking `oid` makes them one. Only values the IdP assigns can be picked — never one somebody
+  can **assert**, such as an email address (asserting it would be enough to reach another
+  person's account). **Changing it sends the row back for approval.**
   → [operator/01 Install](../operator/01-install.md)
 - **Login rules** — **read-only** view of what is in effect for this tenant: the usable sign-in
-  methods, the auto-join domains and the invitable domains. Changing them is a deployment
+  methods (★ narrowing these to your own methods locks out people who also belong to another
+  tenant and sign in there — the same address at a different IdP is a different login; keep their
+  method accepted and list it under *methods to keep off the sign-in page* instead), the
+  auto-join domains and the invitable domains. Changing them is a deployment
   administrator's job; this panel exists so you can read *why* an invitation was refused without
-  asking anyone.
+  asking anyone. ★ If that person **holds both accounts**, they can instead link the second method
+  to their own account under **Settings → Personal → Account → Add a sign-in method** (only a
+  method asserting the same address, and its own entry rules still apply). Nothing for you to do.
+  A method they no longer use can be **removed** from the same panel — except the only one left
+  and the one they are signed in with, which would lock them out.
+  ★ **"Methods to keep off the sign-in page" has no effect on the plain `/login`.** The page
+  without a slug belongs to no tenant, so the deployment-wide methods stay on it (hiding them
+  there would lock out everybody not in a tenant). For the setting to do anything, hand this
+  tenant's people **its own sign-in URL (`/login/<slug>`)** — it is shown under Login rules on
+  this panel.
 
 **Operations**
 

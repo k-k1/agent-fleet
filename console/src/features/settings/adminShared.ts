@@ -26,6 +26,8 @@ export interface Tenant {
   allowed_providers?: string;
   auto_join_domains?: string;
   allowed_domains?: string;
+  // 受け入れるが、そのテナントのログイン画面には出さない方式（docs/61 §61.15.9）。
+  hidden_providers?: string;
 }
 
 export interface Member {

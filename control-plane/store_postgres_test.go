@@ -226,20 +226,20 @@ func TestPostgresStore(t *testing.T) {
 	// Rule 2: no pair recorded yet, but the address is already someone's — join that
 	// person. Matching is case-insensitive even though the unique index is on the
 	// exact string, so a differently-cased login must not fork a second identity.
-	joined, isNew, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", "yamada@acme.co.jp", sanitizeUser(pgEmail), "", true)
+	joined, isNew, err := st.LinkIdentity(ctx, IdentityLink{Provider: googleProviderID, Subject: "pg-sub-1", Email: "yamada@acme.co.jp", FallbackKey: sanitizeUser(pgEmail), RoleHint: "", EmailJoin: true})
 	if err != nil || isNew || joined.ID != seed.ID || joined.UserKey != seed.UserKey {
 		t.Fatalf("link rule 2: %+v isNew=%v err=%v want id=%s key=%s", joined, isNew, err, seed.ID, seed.UserKey)
 	}
 	// Rule 1 + rename: the recorded pair outranks the address, so user_key — the home
 	// directory name — stays put and only the display email moves.
 	const pgRenamed = "yamada-hanako@acme.co.jp"
-	moved, isNew, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", pgRenamed, sanitizeUser(pgRenamed), "", true)
+	moved, isNew, err := st.LinkIdentity(ctx, linkOf(googleProviderID, "pg-sub-1", pgRenamed, true))
 	if err != nil || isNew || moved.ID != seed.ID || moved.UserKey != seed.UserKey || moved.Email != pgRenamed {
 		t.Fatalf("link rule 1: %+v isNew=%v err=%v want id=%s key=%s", moved, isNew, err, seed.ID, seed.UserKey)
 	}
 	// touchIdentity's other statement: nothing asserted, so last_login_at moves and
 	// the display email must survive rather than be blanked.
-	if _, _, err := st.LinkIdentity(ctx, googleProviderID, "pg-sub-1", "", sanitizeUser(pgRenamed), "", true); err != nil {
+	if _, _, err := st.LinkIdentity(ctx, IdentityLink{Provider: googleProviderID, Subject: "pg-sub-1", Email: "", FallbackKey: sanitizeUser(pgRenamed), RoleHint: "", EmailJoin: true}); err != nil {
 		t.Fatalf("link without an asserted email: %v", err)
 	}
 	if got, ok, err := st.GetIdentityByID(ctx, seed.ID); err != nil || !ok || got.Email != pgRenamed {
@@ -248,7 +248,7 @@ func TestPostgresStore(t *testing.T) {
 	// Rule 3: an address nobody owns is a new person — the isNew that raises the
 	// "this is a new workspace" notice on a multi-IdP deployment.
 	const pgOther = "tanaka@acme.co.jp"
-	fresh, isNew, err := st.LinkIdentity(ctx, "entra", "pg-sub-2", pgOther, sanitizeUser(pgOther), "", true)
+	fresh, isNew, err := st.LinkIdentity(ctx, linkOf("entra", "pg-sub-2", pgOther, true))
 	if err != nil || !isNew || fresh.ID == seed.ID || fresh.UserKey != sanitizeUser(pgOther) {
 		t.Fatalf("link rule 3: %+v isNew=%v err=%v", fresh, isNew, err)
 	}
@@ -259,7 +259,7 @@ func TestPostgresStore(t *testing.T) {
 	// tenant login rules round trip (docs/61 P3 / migrations-pg/0022). The columns
 	// arrive by ALTER on an existing table, and the entry gate reads them on every
 	// request, so a dialect slip here would take the whole login down.
-	if err := st.SetTenantLogin(ctx, t2.ID, "entra,github", "acme.co.jp", "acme.co.jp"); err != nil {
+	if err := st.SetTenantLogin(ctx, t2.ID, "entra,github", "acme.co.jp", "acme.co.jp", ""); err != nil {
 		t.Fatalf("set tenant login: %v", err)
 	}
 	if got, err := st.GetTenant(ctx, t2.ID); err != nil ||
@@ -336,9 +336,12 @@ func TestPostgresStore(t *testing.T) {
 	if err := st.SetTenantIdPStatus(ctx, t2.ID, idpRow.ID, "active", "boss", nowTS(), nowTS()); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	act, slugs, err := st.ListActiveTenantIdPs(ctx)
-	if err != nil || len(act) != 1 || slugs[t2.ID] != t2.Slug || act[0].ApprovedBy != "boss" {
-		t.Fatalf("active tenant_idp: %+v slugs=%v err=%v", act, slugs, err)
+	// ★ The display name travels with the slug: it is what the generated button label
+	// says to tell this tenant's method apart from the deployment's (docs/61 §61.15.10).
+	act, tenants, err := st.ListActiveTenantIdPs(ctx)
+	if err != nil || len(act) != 1 || tenants[t2.ID].Slug != t2.Slug ||
+		tenants[t2.ID].Name != t2.Name || act[0].ApprovedBy != "boss" {
+		t.Fatalf("active tenant_idp: %+v tenants=%v err=%v", act, tenants, err)
 	}
 	// The tenant-scoped roster lookup. dev@example.com is an ACTIVE member of the
 	// default tenant and was deactivated in t2 just above, so this one call proves

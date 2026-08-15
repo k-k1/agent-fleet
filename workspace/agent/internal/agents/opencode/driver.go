@@ -526,7 +526,11 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	case failed:
 		failure = turnErr.summary()
 		log.Printf("opencode managed: turn failed name=%s model=%s %s", h.name, st.Model, turnErr.summary())
-		h.setState(agents.TurnFailed)
+		if turnErr.retryable() {
+			h.setState(agents.TurnAborted)
+		} else {
+			h.setState(agents.TurnFailed)
+		}
 	default:
 		h.setState(agents.TurnCompleted)
 	}

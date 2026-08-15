@@ -98,7 +98,7 @@ func TestTenantProviderGateDoesNotFallBackToTheDeployment(t *testing.T) {
 	}
 
 	row := seedTenantIdP(t, st, tn.ID, "entra", "sub.co.jp", "active")
-	p, err := buildTenantProvider(row, "sub", "s3cret")
+	p, err := buildTenantProvider(row, TenantRef{Slug: "sub"}, "s3cret")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestBuildTenantProviderRefusesDangerousRows(t *testing.T) {
 		Name: "entra", Issuer: "https://login.microsoftonline.com/guid/v2.0",
 		ClientID: "c", Trust: trustIssuer, AllowedDomains: "sub.co.jp",
 	}
-	if _, err := buildTenantProvider(base, "sub", "s"); err != nil {
+	if _, err := buildTenantProvider(base, TenantRef{Slug: "sub"}, "s"); err != nil {
 		t.Fatalf("the valid row must build: %v", err)
 	}
 	bad := map[string]func(*TenantIdP){
@@ -137,14 +137,14 @@ func TestBuildTenantProviderRefusesDangerousRows(t *testing.T) {
 	for label, mutate := range bad {
 		row := base
 		mutate(&row)
-		if _, err := buildTenantProvider(row, "sub", "s"); err == nil {
+		if _, err := buildTenantProvider(row, TenantRef{Slug: "sub"}, "s"); err == nil {
 			t.Fatalf("%s: must be refused", label)
 		}
 	}
 	// A multi-tenant issuer is allowed once the tenant ids are pinned (決定 7).
 	row := base
 	row.Issuer, row.AllowedTIDs = "https://login.microsoftonline.com/common/v2.0", "guid-a"
-	if _, err := buildTenantProvider(row, "sub", "s"); err != nil {
+	if _, err := buildTenantProvider(row, TenantRef{Slug: "sub"}, "s"); err != nil {
 		t.Fatalf("pinned tids must make the multi-tenant issuer acceptable: %v", err)
 	}
 }
@@ -372,12 +372,12 @@ func TestTenantProviderRefusesAnAddressThatBelongsToSomebody(t *testing.T) {
 
 	// Somebody who signs in with the deployment's own IdP.
 	const victim = "cto@acme.co.jp"
-	seed, _, err := st.LinkIdentity(ctx, "entra", "real-1", victim, sanitizeUser(victim), "", true)
+	seed, _, err := st.LinkIdentity(ctx, linkOf("entra", "real-1", victim, true))
 	if err != nil {
 		t.Fatalf("victim login: %v", err)
 	}
 	// The subsidiary's issuer asserts that address.
-	_, _, err = st.LinkIdentity(ctx, "t:sub:entra", "attacker-1", victim, sanitizeUser(victim), "", false)
+	_, _, err = st.LinkIdentity(ctx, linkOf("t:sub:entra", "attacker-1", victim, false))
 	if !errors.Is(err, errIdentityClaimed) {
 		t.Fatalf("err = %v, want errIdentityClaimed", err)
 	}
@@ -396,7 +396,7 @@ func TestTenantProviderRefusesAnAddressThatBelongsToSomebody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("invite: %v", err)
 	}
-	claimed, isNew, err := st.LinkIdentity(ctx, "t:sub:entra", "hanako-1", invited, sanitizeUser(invited), "", false)
+	claimed, isNew, err := st.LinkIdentity(ctx, linkOf("t:sub:entra", "hanako-1", invited, false))
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestTenantProviderRefusesAnAddressThatBelongsToSomebody(t *testing.T) {
 		t.Fatal("claiming an invite is not a new account")
 	}
 	// A second login through the same pair is rule 1 and stays stable.
-	again, _, err := st.LinkIdentity(ctx, "t:sub:entra", "hanako-1", invited, sanitizeUser(invited), "", false)
+	again, _, err := st.LinkIdentity(ctx, linkOf("t:sub:entra", "hanako-1", invited, false))
 	if err != nil || again.ID != placeholder.ID {
 		t.Fatalf("re-login: %+v %v", again, err)
 	}

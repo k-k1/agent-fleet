@@ -99,6 +99,19 @@ func TestAbortResumeWaitsThenSends(t *testing.T) {
 	}
 }
 
+func TestAbortInfoForManagedUsesPersistedSignal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "oc-managed", Dir: "/tmp/oc-managed", Kind: session.KindOpencode, Driver: session.DriverManaged}
+	at := time.Now().Truncate(time.Second)
+	if err := managedAbortSignals.Write(m.Name, managedAbortSignal{At: at.Format(time.RFC3339), Msg: "HTTP 500"}); err != nil {
+		t.Fatal(err)
+	}
+	a, ok := abortInfoFor(m)
+	if !ok || !a.Retryable || a.Msg != "HTTP 500" || !a.At.Equal(at) {
+		t.Fatalf("managed abort = %+v ok=%v", a, ok)
+	}
+}
+
 // TestAbortResumeCapsThenHandsOver: 上限まで再送しても中断が続いたら手を引き、
 // 報告側のカウンタを合わせる（＝配られる報告が「上限に達した」文面になる）。
 // ここが「打ち切ったときだけアシスタントへ」の接点。

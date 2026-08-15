@@ -78,6 +78,11 @@ type oidcProvider struct {
 	scope        string
 	prompt       string     // "" omits the prompt parameter
 	extraAuth    url.Values // provider-specific authorize params (Google: access_type)
+	// linkClaim names a STABLE claim to carry alongside `sub`, for rule 1.5's second
+	// key (docs/61 §61.15.10 + 決定 38). Entra's `sub` is pairwise — different per app
+	// registration — so two buttons onto one Entra tenant are two subjects; `oid` is
+	// the same value in both. "" (the default) takes no part in the rule.
+	linkClaim string
 
 	// Authorization. A provider-specific allowlist replaces the DEPLOYMENT-WIDE
 	// list entirely (docs/61 §61.8: "未設定なら共通の許可リストを使う") — that is a
@@ -234,6 +239,22 @@ type oidcClaims struct {
 	PreferredUsername string   `json:"preferred_username"`
 	UPN               string   `json:"upn"` // Entra's user principal name
 	TID               string   `json:"tid"` // Entra tenant id (never in userinfo)
+	// raw is the same payload as a plain object. AF_OIDC_<ID>_LINK_CLAIM and
+	// tenant_idp.link_claim name a claim at RUNTIME, so it cannot be a struct field
+	// — see claimString.
+	raw map[string]any
+}
+
+// claimString reads a named claim, and only when it is a string. A number or an
+// object is not a stable identifier we can compare as text, and quietly formatting
+// one would make the key depend on Go's float formatting — a silent way for two
+// logins of the same person to disagree.
+func claimString(raw map[string]any, name string) string {
+	if raw == nil || name == "" {
+		return ""
+	}
+	s, _ := raw[name].(string)
+	return strings.TrimSpace(s)
 }
 
 // decodeIDTokenClaims reads an id_token payload WITHOUT verifying its signature.
@@ -252,6 +273,9 @@ func decodeIDTokenClaims(idToken string) (oidcClaims, error) {
 	if err := json.Unmarshal(payload, &c); err != nil {
 		return c, fmt.Errorf("id_token payload: %w", err)
 	}
+	// A second pass for the claims nobody named at compile time (linkClaim). It is
+	// best-effort: the struct above is what the login itself runs on.
+	_ = json.Unmarshal(payload, &c.raw)
 	return c, nil
 }
 
@@ -312,6 +336,18 @@ func (p *oidcProvider) Exchange(ctx context.Context, code, redirectURI string) (
 	pr := principal{Provider: p.id}
 	pr.Subject = firstNonEmpty(uic.Sub, idc.Sub)
 	pr.Email = firstNonEmpty(uic.Email, idc.Email, emailLike(idc.PreferredUsername), emailLike(idc.UPN))
+	// ★ Rule 1.5's second key, read straight out of the token this exchange returned
+	// (docs/61 §61.15.10). The provider names the CLAIM; the VALUE is never taken from
+	// anywhere else — a tenant that could supply it could name another person. A claim
+	// the IdP did not send leaves BOTH fields empty, so the row takes no part in the
+	// rule rather than matching every other row that is also missing it.
+	if p.linkClaim != "" {
+		if v := firstNonEmpty(claimString(uic.raw, p.linkClaim), claimString(idc.raw, p.linkClaim)); v != "" {
+			pr.RealmClaim, pr.RealmSubject = p.linkClaim, v
+		} else {
+			log.Printf("oauth: provider %s: no %q claim in the token (rule 1.5 will fall back to sub)", p.id, p.linkClaim)
+		}
+	}
 	switch p.trust {
 	case trustIssuer:
 		// The issuer is pinned (single-tenant issuer URL, or tid checked above),
@@ -355,10 +391,16 @@ func (p *oidcProvider) userinfo(ctx context.Context, ep oidcEndpoints, accessTok
 		log.Printf("oauth: provider %s userinfo: HTTP %d", p.id, resp.StatusCode)
 		return c, false
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&c); err != nil {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
 		log.Printf("oauth: provider %s userinfo: %v", p.id, err)
 		return c, false
 	}
+	if err := json.Unmarshal(body, &c); err != nil {
+		log.Printf("oauth: provider %s userinfo: %v", p.id, err)
+		return c, false
+	}
+	_ = json.Unmarshal(body, &c.raw) // the runtime-named claims — see decodeIDTokenClaims
 	return c, true
 }
 
@@ -579,6 +621,13 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 			deployAllowed: c.emailAllowed,
 			dbAllowed:     c.tenantEmailAllowed,
 		}
+		// ★ AF_OIDC_<ID>_LINK_CLAIM accepts ANY claim name, unlike the tenant column,
+		// which is whitelisted (docs/61 §61.15.10). The difference is who is speaking:
+		// this is the operator's own deployment file, and an operator who wanted to
+		// join accounts by email could simply set the allowlist to do it. The hazard is
+		// still real — naming `email` here makes rule 1.5 an email join for every
+		// provider sharing that realm — so the guide says so in as many words.
+		p.linkClaim = strings.ToLower(oidcEnv(id, "LINK_CLAIM"))
 		if v := oidcEnv(id, "PROMPT"); v != "" {
 			p.prompt = strings.TrimSpace(strings.ToLower(v))
 			if p.prompt == "none" || p.prompt == "-" {

@@ -1326,7 +1326,7 @@ export const ja = {
   "admin.idp_title": "このテナントのサインイン方法",
   "admin.idp_note": "有効化にはデプロイ管理者の承認が必要",
   "admin.idp_hint":
-    "自社の IdP（Entra / Okta / Keycloak など）をこのテナント専用のサインイン方法として登録できます。" +
+    "自社の IdP（Entra / Okta / Keycloak など）や GitHub の組織を、このテナント専用のサインイン方法として登録できます。" +
     "登録した時点では「承認待ち」で、デプロイ管理者が承認するまでログイン画面にボタンは出ず、サインインもできません。",
   "admin.idp_none": "まだ登録されていません。",
   "admin.idp_add": "サインイン方法を追加",
@@ -1339,6 +1339,21 @@ export const ja = {
   "admin.idp_state_broken": "承認済みだが設定に不備あり",
   "admin.idp_name": "名前",
   "admin.idp_name_hint": "テナント内で使う識別子（英小文字・数字・- _）。例: entra",
+  "admin.idp_kind": "サインインの種類",
+  "admin.idp_kind_hint":
+    "自社の IdP（OIDC）か、GitHub の組織か。GitHub は世界で 1 つの発行元を全テナントで共有するため、" +
+    "「どの組織のメンバーか」が自社の人である根拠になります。",
+  "admin.idp_kind_oidc": "自社の IdP（Entra / Okta / Keycloak など）",
+  "admin.idp_kind_github": "GitHub の組織",
+  "admin.idp_orgs": "許可する GitHub 組織",
+  "admin.idp_orgs_hint":
+    "カンマ区切り（必須）。このいずれかに「アクティブなメンバー」として所属していることが、サインインの条件になります。" +
+    "組織側でサードパーティ OAuth App を制限している場合は、組織の管理者がこの OAuth App を承認するまで全員が拒否されます。",
+  "admin.idp_github_app_hint":
+    "GitHub の設定でこのテナント用の OAuth App を作り、コールバック URL に {url} を登録してから、client_id と client_secret をここに入れてください。",
+  "admin.idp_github_domains_note":
+    "GitHub が渡すのは本人が検証済みのアドレス 1 件だけです。会社ドメイン以外のアドレスが主アドレスになっている人は、" +
+    "ここで落としてください（通すと、その人は既存のワークスペースではなく新しいワークスペースに入ります）。",
   "admin.idp_issuer": "issuer（発行者 URL）",
   "admin.idp_issuer_hint": "IdP の issuer URL。Entra は自社テナントの GUID を含む URL を指定します（common / organizations は tid の指定が必須）。",
   "admin.idp_client_id": "client_id",
@@ -1355,11 +1370,28 @@ export const ja = {
     "同じドメインを 2 つのテナントが持つことはできません。",
   "admin.idp_tids": "許可する tenant id（Entra の tid・任意）",
   "admin.idp_tids_hint": "カンマ区切り。issuer が common / organizations の場合は必須です。",
+  "admin.idp_link_claim": "同一アカウントの見分け方",
+  "admin.idp_link_claim_none": "既定（sub で見分ける）",
+  "admin.idp_link_claim_hint":
+    "同じ発行元に別のアプリ登録がある場合に使います。Entra の sub はアプリ登録ごとに違う値になるため、本社のボタンとこの方式で同じ人が別アカウント扱いになります。oid を選ぶと同じ人として扱われます。選べるのは IdP が割り当てる値だけで、メールアドレスのように名乗れる値は選べません。変更すると承認のやり直しになります。",
   "admin.idp_label_ja": "ボタンの文言（日本語）",
   "admin.idp_label_en": "ボタンの文言（英語）",
   "admin.idp_repend_hint":
-    "issuer / client_id / email の信頼方法を変更したとき、または受け入れるドメイン・tid を追加したときは、" +
-    "承認がやり直しになります（承認は「この issuer をこの範囲で信じてよい」に対して与えられたものなので）。",
+    "issuer / client_id / email の信頼方法・種類・同一アカウントの見分け方を変更したとき、または受け入れるドメイン・tid・GitHub 組織を追加したときは、" +
+    "承認がやり直しになります（承認は「この発行元・この組織を、この範囲で信じてよい」に対して与えられたものなので）。",
+  "admin.hidden_providers": "ボタンを出さない方式",
+  "admin.hidden_providers_unit":
+    "カンマ区切り。受け入れたまま、このテナントのログイン画面にボタンだけ出しません。" +
+    "全部隠した場合は無視します（ボタンの無いログイン画面を作らないため）。",
+  "admin.hidden_providers_url_note":
+    "★ ボタンを隠しても、上の URL を付けない素のログイン画面にはデプロイ共通の方式が出続けます" +
+    "（そこはどのテナントの画面でもないため、隠すとどのテナントにも属さない人が入れなくなります）。" +
+    "隠す指定を活かすには、このテナントの人に上のサインイン URL を配ってください。",
+  "admin.allowed_providers_shared_note":
+    "★ ここを自テナントの方式だけに絞ると、他テナントの方式で入っている兼務の人は、このテナントに切り替えられなくなります" +
+    "（同じアドレスでも、別の IdP のアカウントは別のログインとして扱われるため）。" +
+    "その人が使う方式は受け入れたまま、「ボタンを出さない方式」に書けば、このテナントのログイン画面には出ません。" +
+    "受け入れても入れる人が増えるわけではありません — 誰がこのテナントに入れるかを決めるのは名簿です。",
   "admin.idp_delete_title": "{name} を削除する",
   "admin.idp_delete_body":
     "このサインイン方法を削除します。この方式で入っていた人はサインインできなくなりますが、" +
@@ -3285,6 +3317,24 @@ export const ja = {
   "set.group_workspace": "ワークスペース",
   "set.back": "設定一覧",
 
+  // === アカウント（サインイン方法の紐づけ・docs/61 §61.16 + 決定 37） ===
+  "set.tab_account": "アカウント",
+  "account.intro": "このアカウントに紐づいたサインイン方法です。どの方法で入っても、同じワークスペース・同じホーム・同じ秘密情報になります。",
+  "account.disabled": "このデプロイはサインイン方法の追加に対応していません（IdP を使うログインが有効なときだけ使えます）。",
+  "account.load_failed": "サインイン方法を取得できませんでした。",
+  "account.th_method": "サインイン方法",
+  "account.th_email": "名乗ったメールアドレス",
+  "account.th_last_login": "最終サインイン",
+  "account.current": "いま使用中",
+  "account.none": "紐づいたサインイン方法はまだありません。",
+  "account.add_title": "サインイン方法を追加",
+  "account.add_note": "追加できるのは、いまのアカウントと同じメールアドレスを名乗る方法だけです。その方法の許可条件（組織への参加・許可ドメイン）も満たしている必要があります。すでに別のアカウントで使われている方法は追加できません。",
+  "account.detach": "解除",
+  "account.detach_title": "{name} を解除しますか？",
+  "account.detach_body":
+    "この方法ではサインインできなくなります。ワークスペース・ホーム・秘密情報はそのままで、あとから同じ方法をもう一度追加できます。",
+  "account.detach_current": "いまこの方法でサインインしています。先に別の方法でサインインしてから解除してください。",
+  "account.detach_last": "残り 1 つのサインイン方法です。解除するとどの方法でも入れなくなります。",
   // === 使用量ビュー（docs/46 P4・features/usage/UsageView.tsx） ===
   // usage.val.<軸>.<値> は台帳の列挙値の表示名。カタログに無い値（新しいモデル名など）は
   // 生の値がそのまま出る（tMaybe フォールバック）＝新語彙で画面が壊れない。

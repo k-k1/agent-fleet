@@ -122,10 +122,13 @@ describe("TenantDialog", () => {
     expect(content.querySelector("input")).toBeNull();
     expect(content.querySelector(".admin-actions")).toBeNull();
     const vals = Array.from(content.querySelectorAll(".af-val")).map((e) => e.textContent || "");
-    expect(vals).toHaveLength(3);
+    // 4 行目は「ボタンを出さない方式」（docs/61 §61.15.9）。受け入れる方式とは別の欄で、
+    // 表示だけを変えるもの。
+    expect(vals).toHaveLength(4);
     expect(vals[0]).toBe("entra");
     expect(vals[1]).toBe("@sales.acme.co.jp");
     expect(vals[2]).toContain("未設定");
+    expect(vals[3]).toContain("未設定");
     // このテナント専用のログイン URL は規則の面にも出る（人が配る導線・決定 28）。
     expect(content.textContent).toContain("login/acme");
   });
