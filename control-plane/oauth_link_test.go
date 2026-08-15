@@ -415,3 +415,154 @@ func TestLoginMethodsListsLinkedAndLinkable(t *testing.T) {
 		}
 	}
 }
+
+// --- 解除（docs/61 §61.16.4）--------------------------------------------------
+
+// detachReq は DELETE /api/me/login-methods を 1 回叩く。provider / subject は
+// パスではなくクエリ（テナントの provider id は ":" を含む）。
+func detachReq(t *testing.T, api accountAPI, me Identity, cur loginRef, provider, subject string) *httptest.ResponseRecorder {
+	t.Helper()
+	q := url.Values{"provider": {provider}, "subject": {subject}}
+	r := httptest.NewRequest(http.MethodDelete, "/api/me/login-methods?"+q.Encode(), nil)
+	r = r.WithContext(withLoginRef(r.Context(), cur))
+	w := httptest.NewRecorder()
+	api.detachLoginMethod(w, r, me)
+	return w
+}
+
+// ★ 3 つのガードはどれか 1 つでも抜けると別々の壊れ方をする:
+//   - 残り 1 つを外す → 二度と入れないアカウントができる（復旧経路が無い）
+//   - いま使っている方式を外す → そのセッションで自分の足元を消す
+//   - 他人の行 → identity_id を条件から落とすと、対を当てるだけで他人の方式を消せる
+func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
+	idp := newStubIdP(t, &stubIdP{})
+	cfg, st := linkTestConfig(t, idp)
+	me, _ := seedSignedIn(t, cfg, st, "yamada@acme.co.jp")
+	api := newAccountAPI(cfg)
+	cur := loginRef{googleProviderID, "g-1"}
+
+	// 1. まだ 1 つしか無い。★ 現セッションの方式のガードと重なるので、ここでは別の
+	//    方式で入っていることにして「残数」のガード単体を見る — 2 つは独立に効く。
+	if w := detachReq(t, api, me, loginRef{"entra", "e-1"}, googleProviderID, "g-1"); w.Code != http.StatusConflict ||
+		!strings.Contains(w.Body.String(), "last_login_method") {
+		t.Fatalf("最後の 1 つは外せてはいけない: %d %s", w.Code, w.Body.String())
+	}
+	// ★ SQL 層でも数えている（API のチェックと DELETE の間にタブが 1 枚挟まる）。
+	if err := st.DetachProvider(t.Context(), me.ID, googleProviderID, "g-1"); !errors.Is(err, errLastLoginMethod) {
+		t.Fatalf("store 層の残数ガードが効いていない: %v", err)
+	}
+
+	if err := st.AttachProvider(t.Context(), me.ID, IdentityLink{
+		Provider: "entra", Subject: "e-1", Realm: idp.URL, Email: "yamada@acme.co.jp",
+	}); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	// 2. 2 つになっても、いま入っている方式は外せない。
+	if w := detachReq(t, api, me, cur, googleProviderID, "g-1"); w.Code != http.StatusConflict ||
+		!strings.Contains(w.Body.String(), "current_login_method") {
+		t.Fatalf("現セッションの方式は外せてはいけない: %d %s", w.Code, w.Body.String())
+	}
+	// 3. 他人の行。対を知っていても届かない。
+	other, _, err := st.LinkIdentity(t.Context(), IdentityLink{
+		Provider: "entra", Subject: "e-9", Realm: idp.URL, Email: "suzuki@acme.co.jp",
+		FallbackKey: "suzuki-acme-co-jp", EmailJoin: true,
+	})
+	if err != nil {
+		t.Fatalf("other: %v", err)
+	}
+	if w := detachReq(t, api, me, cur, "entra", "e-9"); w.Code != http.StatusNotFound {
+		t.Fatalf("他人の行に届いてはいけない: %d %s", w.Code, w.Body.String())
+	}
+	if lp, _ := st.ListLinkedProviders(t.Context(), other.ID); len(lp) != 1 {
+		t.Fatalf("他人の方式が消えている: %+v", lp)
+	}
+
+	// そして正しい 1 件は外せる。identity 行は動かない（解除もログインではない）。
+	before, _, _ := st.GetIdentityByID(t.Context(), me.ID)
+	if w := detachReq(t, api, me, cur, "entra", "e-1"); w.Code != http.StatusOK {
+		t.Fatalf("外せるはずの 1 件が外せない: %d %s", w.Code, w.Body.String())
+	}
+	lp, _ := st.ListLinkedProviders(t.Context(), me.ID)
+	if len(lp) != 1 || lp[0].Provider != googleProviderID {
+		t.Fatalf("linked = %+v, want google だけ", lp)
+	}
+	after, _, _ := st.GetIdentityByID(t.Context(), me.ID)
+	if after.UserKey != before.UserKey || after.Email != before.Email || after.Role != before.Role {
+		t.Fatalf("解除で identity 行が動いた: %+v -> %+v", before, after)
+	}
+	// 台帳に残る（いつからその扉が開いていた／閉じたかを後から読めること）。
+	rows, err := st.ListAuditByTenant(t.Context(), "", 50)
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	seen := ""
+	for _, row := range rows {
+		if row.Action == "identity_provider.detach" && row.Target == "entra" {
+			seen = row.Detail
+		}
+	}
+	if !strings.Contains(seen, "e-1") {
+		t.Fatalf("解除が監査に残っていない: %+v", rows)
+	}
+}
+
+// ★ 一覧は「外せるかどうか」もサーバが答える。UI はその写しで、判断はしない
+// （決定 14）— そして解除 API は同じ規則を自分でもう一度見る。
+func TestLoginMethodsSaysWhichRowsCanBeRemoved(t *testing.T) {
+	idp := newStubIdP(t, &stubIdP{})
+	cfg, st := linkTestConfig(t, idp)
+	me, _ := seedSignedIn(t, cfg, st, "yamada@acme.co.jp")
+	api := newAccountAPI(cfg)
+
+	read := func() []struct {
+		Provider  string `json:"provider"`
+		Subject   string `json:"subject"`
+		Current   bool   `json:"current"`
+		Removable bool   `json:"removable"`
+	} {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/api/me/login-methods", nil)
+		r = r.WithContext(withLoginRef(r.Context(), loginRef{googleProviderID, "g-1"}))
+		w := httptest.NewRecorder()
+		api.loginMethods(w, r, me)
+		var got struct {
+			Linked []struct {
+				Provider  string `json:"provider"`
+				Subject   string `json:"subject"`
+				Current   bool   `json:"current"`
+				Removable bool   `json:"removable"`
+			} `json:"linked"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("body: %v", err)
+		}
+		return got.Linked
+	}
+
+	// 1 つだけのときは、それが現セッションの方式でもあるので二重に外せない。
+	one := read()
+	if len(one) != 1 || one[0].Removable {
+		t.Fatalf("最後の 1 つが removable になっている: %+v", one)
+	}
+	if one[0].Subject != "g-1" {
+		t.Fatalf("行を名指しする subject が返っていない: %+v", one)
+	}
+
+	if err := st.AttachProvider(t.Context(), me.ID, IdentityLink{
+		Provider: "entra", Subject: "e-1", Realm: idp.URL, Email: "yamada@acme.co.jp",
+	}); err != nil {
+		t.Fatalf("attach: %v", err)
+	}
+	for _, l := range read() {
+		switch l.Provider {
+		case googleProviderID:
+			if !l.Current || l.Removable {
+				t.Fatalf("現セッションの方式は removable ではない: %+v", l)
+			}
+		case "entra":
+			if l.Current || !l.Removable {
+				t.Fatalf("もう一方は外せるはず: %+v", l)
+			}
+		}
+	}
+}

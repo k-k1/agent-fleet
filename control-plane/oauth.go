@@ -58,9 +58,15 @@ type principal struct {
 	// and a tenant's own GitHub resolve to one person (docs/61 §61.15, rule 1.5).
 	// It is filled in by the callback from the provider itself — never from a
 	// tenant-supplied field — so a tenant cannot name somebody else's realm.
-	Realm    string
-	Email    string
-	Verified bool
+	Realm string
+	// RealmClaim / RealmSubject are the optional SECOND key rule 1.5 may match on:
+	// which stable claim the adapter was told to read, and what it carried (docs/61
+	// §61.15.10). Both are filled by the adapter out of the token it just exchanged,
+	// never from configuration — a tenant names the claim, never the value.
+	RealmClaim   string
+	RealmSubject string
+	Email        string
+	Verified     bool
 }
 
 // providerRealm answers "where would this provider prove someone", reusing the
@@ -288,6 +294,15 @@ func sessionProviderFrom(ctx context.Context) string {
 		return ""
 	}
 	return ref.provider
+}
+
+// sessionLoginRef is loginRefFrom WITHOUT the "there is a subject" requirement.
+// Unlinking needs it (docs/61 §61.16.4): the method the caller is signed in with
+// must not be removable, and on a pre-P0 cookie — provider known, subject not — the
+// safe reading is "every row of that provider is the one in use", not "none is".
+func sessionLoginRef(ctx context.Context) (loginRef, bool) {
+	ref, ok := ctx.Value(loginRefKey{}).(loginRef)
+	return ref, ok && ref.provider != ""
 }
 
 // --- allowlist (emails.txt successor) -------------------------------------
@@ -579,7 +594,8 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 		roleHint = ""
 	}
 	_, isNew, err := c.mgr.store.LinkIdentity(ctx, IdentityLink{
-		Provider: p.Provider, Subject: p.Subject, Realm: p.Realm, Email: p.Email,
+		Provider: p.Provider, Subject: p.Subject, Realm: p.Realm,
+		RealmClaim: p.RealmClaim, RealmSubject: p.RealmSubject, Email: p.Email,
 		FallbackKey: sanitizeUser(p.Email), RoleHint: roleHint, EmailJoin: !tenantDefined,
 	})
 	switch {

@@ -26,7 +26,7 @@ func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 		Name: "github", Kind: tenantIdPKindGitHub, ClientID: "c",
 		AllowedOrgs: "Acme-Sub, other", AllowedDomains: "@sub.co.jp",
 	}
-	p, err := buildTenantProvider(base, "sub", "s")
+	p, err := buildTenantProvider(base, TenantRef{Slug: "sub"}, "s")
 	if err != nil {
 		t.Fatalf("the valid row must build: %v", err)
 	}
@@ -69,12 +69,12 @@ func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 	for label, mutate := range bad {
 		row := base
 		mutate(&row)
-		if _, err := buildTenantProvider(row, "sub", "s"); err == nil {
+		if _, err := buildTenantProvider(row, TenantRef{Slug: "sub"}, "s"); err == nil {
 			t.Fatalf("%s: must be refused", label)
 		}
 	}
 	// 秘密が空（復号できなかった等）でも組めてはいけない。
-	if _, err := buildTenantProvider(base, "sub", ""); err == nil {
+	if _, err := buildTenantProvider(base, TenantRef{Slug: "sub"}, ""); err == nil {
 		t.Fatal("an empty client_secret must be refused")
 	}
 }
@@ -316,5 +316,95 @@ func TestHiddenProvidersHideTheButtonButNotTheDoor(t *testing.T) {
 	mgr.tenantLogin.invalidate()
 	if page := body("/login/sub"); !strings.Contains(page, "provider=google") {
 		t.Fatalf("全部隠したときはボタンを出す（行き止まりを作らない）:\n%s", page)
+	}
+}
+
+// --- ボタン文言の書き分け（docs/61 §61.15.10）---------------------------------
+
+// env の GitHub とテナントの GitHub は同じ画面（/login/<slug>）に並ぶ。id は衝突
+// しないが、id はボタンに出ない — 既定ラベルが同じ「GitHub でサインイン」のままだと、
+// 見分けのつかない 2 つのボタンが別々の OAuth アプリへ人を送ることになる。
+//
+// ★ 固定するのは 3 点:
+//   - テナント行の既定ラベルにテナント名が入り、env のボタンと文字列が違う
+//   - 行が label_ja / label_en を書いていればそちらが勝つ（優先順位は変えない）
+//   - 二言語とも効く（日本語だけ直すと英語の面で元の衝突が残る）
+func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
+	ctx := context.Background()
+	st := p3Store(t)
+	mgr := p4Manager(t, st)
+	tn, _ := st.CreateTenant(ctx, "sub", "子会社")
+	row := TenantIdP{
+		ID: newID(), TenantID: tn.ID, Name: "github", Kind: tenantIdPKindGitHub,
+		Issuer: githubWebBase, ClientID: "c", SecretEnc: "s", Trust: trustAPI,
+		AllowedOrgs: "acme-sub", AllowedDomains: "@sub.co.jp",
+		Status: "active", CreatedAt: nowTS(), UpdatedAt: nowTS(),
+	}
+	if err := st.CreateTenantIdP(ctx, row); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	cfg := config{
+		publicBaseURL: "https://af.example.com",
+		cookieSecret:  []byte("0123456789abcdef0123456789abcdef"),
+		mgr:           mgr,
+	}
+	// デプロイ自身の GitHub ボタン（env 由来）。既定の文言を持っている。
+	cfg.setProviders([]loginProvider{&githubProvider{
+		id: githubProviderID, labelJA: "GitHub でサインイン", labelEN: "Sign in with GitHub",
+	}})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin)
+	body := func(accept string) string {
+		r := httptest.NewRequest(http.MethodGet, "/login/sub", nil)
+		r.Header.Set("Accept-Language", accept)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w.Body.String()
+	}
+
+	for _, tc := range []struct{ lang, accept, env, tenant string }{
+		{"ja", "ja,en;q=0.8", "GitHub でサインイン", "GitHub でサインイン（子会社）"},
+		{"en", "en-US,en;q=0.9", "Sign in with GitHub", "Sign in with GitHub (子会社)"},
+	} {
+		page := body(tc.accept)
+		if !strings.Contains(page, tc.tenant) {
+			t.Fatalf("%s: テナント行のボタンに会社名が入っていない（%q が無い）:\n%s", tc.lang, tc.tenant, page)
+		}
+		// env のボタンは元の文言のまま。テナント行の文言はそれを含むので、
+		// 「同じ文字列のボタンが 2 つ」でないことは出現回数で見る。
+		if n := strings.Count(page, tc.env); n != 2 {
+			t.Fatalf("%s: %q の出現が %d（env の 1 つ＋テナント行の接頭辞 1 つ = 2 のはず）:\n%s",
+				tc.lang, tc.env, n, page)
+		}
+		if !strings.Contains(page, "provider="+githubProviderID) || !strings.Contains(page, "t%3Asub%3Agithub") {
+			t.Fatalf("%s: 両方のボタンが出ていない:\n%s", tc.lang, page)
+		}
+	}
+
+	// ★ 行が自分でラベルを書いていればそちらが勝つ。既定を補うのが目的で、
+	// 管理者が選んだ文言を上書きするのは別のこと。
+	row.LabelJA, row.LabelEN = "子会社の GitHub", "Subsidiary GitHub"
+	p, err := buildTenantProvider(row, TenantRef{Slug: "sub", Name: "子会社"}, "s")
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if p.Label("ja") != "子会社の GitHub" || p.Label("en") != "Subsidiary GitHub" {
+		t.Fatalf("行が書いたラベルが勝っていない: %q / %q", p.Label("ja"), p.Label("en"))
+	}
+}
+
+// 表示名の無いテナント（name が空）では slug で代用する。会社名が読めなくても、
+// 「どちらのボタンか」が分かることのほうが大事。
+func TestTenantLabelFallsBackToTheSlug(t *testing.T) {
+	if got := tenantLabelSuffix("GitHub でサインイン", TenantRef{Slug: "sub"}, "ja"); got != "GitHub でサインイン（sub）" {
+		t.Fatalf("ja = %q", got)
+	}
+	if got := tenantLabelSuffix("Sign in with GitHub", TenantRef{Slug: "sub"}, "en"); got != "Sign in with GitHub (sub)" {
+		t.Fatalf("en = %q", got)
+	}
+	// slug も名前も無いのは実際には起きないが、そのときは接尾辞を足さない。
+	if got := tenantLabelSuffix("x", TenantRef{}, "ja"); got != "x" {
+		t.Fatalf("empty tenant = %q", got)
 	}
 }
