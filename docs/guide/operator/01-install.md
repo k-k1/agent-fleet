@@ -280,6 +280,14 @@ everybody — so *active membership of that organization* is what makes a sign-i
 >
 > The **same GitHub account** is fine either way: the deployment-wide GitHub button and the
 > tenant's own GitHub button resolve to one person.
+>
+> There is also **(c): let Yamada link it**, an alternative to (a). If Yamada **already has an
+> account in the subsidiary's GitHub org**, they sign in with the usual Google and press
+> **Settings → Personal → Account → Add a sign-in method**. Either button then leads to the same
+> account. Two conditions hold: only a method asserting **the same email address** can be added
+> (accounts under different addresses are never merged), and they must **be a member of that
+> organization** — linking is not a way around the entry rules. Somebody with no account on the
+> other side cannot use this, so for them it is (a) or (b).
 
 **Approve and activate** and **Suspend** sit on the rows of the register itself ("Tenant-defined
 sign-in methods," below the tenant list); the tenant's own detail screen offers the same actions.
