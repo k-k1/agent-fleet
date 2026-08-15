@@ -18,6 +18,8 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
+	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
@@ -225,8 +227,11 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		// actually wanted from tmpfs — nothing lands on the shared root volume, and the
 		// size is capped — hold without it. Deployments that want it back can set
 		// AF_ECS_EC2_TMP_OPTS=noexec,nosuid,nodev.
-		tmpfsOpts:    splitCSV(envOr("AF_ECS_EC2_TMP_OPTS", "nosuid,nodev")),
-		claimTTL:     time.Duration(envInt("AF_ECS_EC2_CLAIM_TTL_SEC", 900)) * time.Second,
+		tmpfsOpts: splitCSV(envOr("AF_ECS_EC2_TMP_OPTS", "nosuid,nodev")),
+		// A launch that has not produced a running service within this window is dead,
+		// and the workspace must become startable again — the claim is what would
+		// otherwise keep answering `starting` forever.
+		claimTTL:     time.Duration(envInt("AF_ECS_EC2_CLAIM_TTL_SEC", 300)) * time.Second,
 		releaseGrace: time.Duration(envInt("AF_ECS_EC2_RELEASE_GRACE_SEC", 600)) * time.Second,
 		sweepEvery:   time.Duration(envInt("AF_ECS_EC2_SWEEP_SEC", 300)) * time.Second,
 		ghostAfter:   time.Duration(envInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
@@ -363,12 +368,18 @@ func (e *ecsEC2Runtime) Endpoint() string { return e.base.Endpoint() }
 // caller to Start it a second time.
 //
 //	no volume                                  → none
-//	volume available, no live claim            → stopped
-//	volume available, live claim               → starting (a slot is booting for it)
-//	volume attached, no task RUNNING           → starting
+//	live claim (attached or not)               → starting — a Start is converging
 //	volume attached, task RUNNING              → running
-//	volume attached, service desired 0         → stopped (teardown still draining; the
-//	                                             next Start reuses the attachment)
+//	volume attached, service desired 1         → starting
+//	volume attached, service desired 0 or gone → stopped
+//	volume available, no claim                 → stopped
+//
+// The claim tag — not the attachment — is what says "starting". An earlier revision
+// reported "volume attached but no service yet" as `starting`, and that was a trap:
+// Start returns early on `starting`, so a workspace whose launch died between the
+// attach and the CreateService could never be started again by anyone. Measured on real
+// AWS. Now the same tag that covers the pre-attach window covers the whole launch, and
+// it EXPIRES, so a dead launch always falls back to `stopped`.
 func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
@@ -378,10 +389,10 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	if vol == nil {
 		return "none"
 	}
+	if e.claimLive(vol) {
+		return "starting"
+	}
 	if attachedInstance(vol) == "" {
-		if e.claimLive(vol) {
-			return "starting"
-		}
 		return "stopped"
 	}
 	s, ok, err := e.base.describeService(ctx)
@@ -390,7 +401,10 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 		return "starting" // attached but unknown: never report a live slot as gone
 	}
 	if !ok {
-		return "starting" // volume already on a slot, service not created yet
+		// Attached with no service and no claim: an abandoned attachment. Say stopped so
+		// Start can pick it up again (it reuses the attachment) and the sweeper can
+		// release it.
+		return "stopped"
 	}
 	switch {
 	case s.DesiredCount >= 1 && s.RunningCount >= 1:
@@ -485,16 +499,74 @@ func (e *ecsEC2Runtime) prepare(ctx context.Context) (ec2Prep, error) {
 	// home is on EBS now, but the credentials/identity set stays on EFS: a single-AZ
 	// volume is one bad day away from taking the user's logins with it, and the whole
 	// keep-list is under 100 MiB (ADR 0045 決定 3-6). The entrypoint links ~ into it.
-	if p.keepAP, err = e.base.ensureAccessPoint(ctx, "keep", "/home-keep/"+e.base.membershipID); err != nil {
+	if p.keepAP, err = e.ensureAccessPoint(ctx, "keep-ec2", "/home-keep/"+e.base.membershipID); err != nil {
 		return p, fmt.Errorf("efs keep access point: %w", err)
 	}
-	if p.claudeAP, err = e.base.ensureAccessPoint(ctx, "claude", "/claude-config/"+e.base.membershipID); err != nil {
+	if p.claudeAP, err = e.ensureAccessPoint(ctx, "claude-ec2", "/claude-config/"+e.base.membershipID); err != nil {
 		return p, fmt.Errorf("efs claude access point: %w", err)
 	}
 	if p.secrets, err = e.base.putSecrets(ctx); err != nil {
 		return p, fmt.Errorf("ssm secrets: %w", err)
 	}
 	return p, nil
+}
+
+// ensureAccessPoint is the EC2 variant of the Fargate adapter's access-point helper,
+// and it exists for one measured reason: **the access point must NOT carry a PosixUser
+// on this launch type.**
+//
+// On EC2, ECS hands EFS volumes to the Docker daemon, and Docker initializes a fresh
+// volume by copying the image directory's ownership onto it. The workspace image ships
+// /var/lib/af/claude owned by root, so Docker calls lchown(0,0) on the EFS mount — which
+// an access point with PosixUser 1000 performs AS uid 1000, and only root may chown. The
+// task then never starts:
+//
+//	CannotCreateContainerError: failed to copy file info for /var/lib/ecs/volumes/…-claude-…:
+//	failed to chown …: operation not permitted
+//
+// Fargate never sees this because it mounts EFS itself instead of going through Docker.
+// Dropping PosixUser lets the mount act as root (so the chown succeeds) while the access
+// point's rootDirectory still confines the task to that membership's subtree — the
+// isolation we actually wanted from it. CreationInfo still creates that directory owned
+// by the container user.
+//
+// The role tags are distinct from the Fargate ones (claude-ec2 / keep-ec2) so the two
+// adapters never hand each other an access point whose posix config breaks them, while
+// the rootDirectory paths are IDENTICAL — a deployment that switches profiles keeps its
+// Claude state and logins.
+func (e *ecsEC2Runtime) ensureAccessPoint(ctx context.Context, role, path string) (string, error) {
+	out, err := e.base.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
+		FileSystemId: aws.String(e.base.cfg.efsFileSystem),
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, ap := range out.AccessPoints {
+		if tagValue(ap.Tags, "af-membership") == e.base.membershipID && tagValue(ap.Tags, "af-role") == role {
+			return aws.ToString(ap.AccessPointId), nil
+		}
+	}
+	created, err := e.base.efs.CreateAccessPoint(ctx, &efs.CreateAccessPointInput{
+		FileSystemId: aws.String(e.base.cfg.efsFileSystem),
+		RootDirectory: &efstypes.RootDirectory{
+			Path: aws.String(path),
+			CreationInfo: &efstypes.CreationInfo{
+				OwnerUid:    aws.Int64(e.base.cfg.posixUID),
+				OwnerGid:    aws.Int64(e.base.cfg.posixGID),
+				Permissions: aws.String("0755"),
+			},
+		},
+		// No PosixUser — see above. This is the difference from the Fargate adapter.
+		Tags: []efstypes.Tag{
+			{Key: aws.String("af-membership"), Value: aws.String(e.base.membershipID)},
+			{Key: aws.String("af-role"), Value: aws.String(role)},
+			{Key: aws.String("Name"), Value: aws.String(e.base.name + "-" + role)},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return aws.ToString(created.AccessPointId), nil
 }
 
 // ec2Placement is the answer to "which slot is this user's home on".
@@ -520,14 +592,15 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	}
 	if vol != nil {
 		if inst := attachedInstance(vol); inst != "" {
-			// Still (or already) attached — a restart that beat the teardown, or a
-			// Start after a Stop whose release has not run yet. Reuse it: this is the
-			// cheapest path there is, and re-attaching would mean detaching first.
-			return ec2Placement{
-				volumeID:   aws.ToString(vol.VolumeId),
-				instanceID: inst,
-				az:         aws.ToString(vol.AvailabilityZone),
-			}, nil
+			// Still (or already) attached — a restart that beat the teardown, a Start
+			// after a Stop whose release has not run yet, or a previous launch that died
+			// before it made a service. Reuse it: this is the cheapest path there is, and
+			// re-attaching would mean detaching first.
+			volID := aws.ToString(vol.VolumeId)
+			if err := e.claim(ctx, volID, inst); err != nil {
+				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+			}
+			return ec2Placement{volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone)}, nil
 		}
 	}
 	azFilter := ""
@@ -562,9 +635,14 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 		if err := e.waitVolumeAttachable(ctx, volID); err != nil {
 			return ec2Placement{}, err
 		}
-		if err := e.attachHome(ctx, volID, s.id); err != nil {
+		if err := e.attachHomeWithRetry(ctx, volID, s.id); err != nil {
 			log.Printf("ecs-ec2 start: slot %s did not take %s (%v); trying the next one", s.id, volID, err)
 			continue
+		}
+		// Claim it for the whole launch, not just until the attach: State() reads this
+		// tag to say `starting`, and Start early-returns on `starting`.
+		if err := e.claim(ctx, volID, s.id); err != nil {
+			log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
 		}
 		if !s.running {
 			if _, err := e.ec2.StartInstances(ctx, &ec2.StartInstancesInput{InstanceIds: []string{s.id}}); err != nil {
@@ -600,7 +678,6 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 			log.Printf("ecs-ec2 start: attaching %s to the new slot %s failed: %v", p.volumeID, p.instanceID, err)
 			return
 		}
-		e.unclaim(ctx, p.volumeID)
 	}
 	if err := e.launch(ctx, p, prep); err != nil {
 		log.Printf("ecs-ec2 start: %s did not converge on slot %s: %v", e.base.name, p.instanceID, err)
@@ -624,6 +701,8 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	if err := e.upsertService(ctx, taskDefArn, p); err != nil {
 		return fmt.Errorf("service: %w", err)
 	}
+	// The service now carries the state; drop the claim so State() reads the real thing.
+	e.unclaim(ctx, p.volumeID)
 	e.base.watchReady(ctx)
 	return nil
 }
@@ -709,6 +788,32 @@ func (e *ecsEC2Runtime) waitVolumeAttachable(ctx context.Context, volumeID strin
 	}
 }
 
+// attachHomeWithRetry keeps trying while the only problem is that the slot's attachment
+// point has not been given back yet.
+//
+// Measured on real AWS: DetachVolume answers, the volume reads `available`, and an
+// attach to the same slot is STILL refused ~7s later with "Attachment point /dev/sdf is
+// already in use". Without this retry the next Start reads that as "no free slot" and
+// grows the pool — paying for an instance and ~90s to avoid a wait of a few seconds,
+// which is precisely the cost the pool exists to avoid. A genuine race with another
+// workspace (the device really is taken now) simply exhausts the window and moves on to
+// the next candidate.
+func (e *ecsEC2Runtime) attachHomeWithRetry(ctx context.Context, volumeID, instanceID string) error {
+	var err error
+	for i := 0; i < 10; i++ {
+		if err = e.attachHome(ctx, volumeID, instanceID); err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "already in use") {
+			return err
+		}
+		if serr := e.sleep(ctx, 2*time.Second); serr != nil {
+			return serr
+		}
+	}
+	return err
+}
+
 func (e *ecsEC2Runtime) attachHome(ctx context.Context, volumeID, instanceID string) error {
 	_, err := e.ec2.AttachVolume(ctx, &ec2.AttachVolumeInput{
 		Device:     aws.String(ec2HomeDevice),
@@ -763,10 +868,19 @@ type ec2SlotCandidate struct {
 	registered bool
 }
 
-// freeSlots lists the pool's slots that have nothing on ec2HomeDevice, hot ones first
-// (22–27s to swap) and stopped ones after (~50s). Slots that some other workspace has
-// claimed but not yet attached are excluded — the claim is exactly what covers that
-// blind spot in the "attachment == occupancy" derivation.
+// freeSlots lists the pool's slots that nobody's home is on, hot ones first (22–27s to
+// swap) and stopped ones after (~50s).
+//
+// Occupancy is read from the VOLUMES, not from the instances' BlockDeviceMappings. Both
+// are eventually consistent, but measured on real AWS the instance view lags: seconds
+// after a detach had completed (volume `available`), the instance still listed /dev/sdf,
+// so the freed slot looked busy and the next Start grew the pool instead of swapping
+// onto it — the exact behaviour this design exists to avoid. The volume side is also the
+// same source State() and releaseSlot() already trust, so there is one story about who
+// is on which slot instead of two.
+//
+// Claims cover the rest: a slot some other workspace is launching onto has no attachment
+// yet, and only its claim says so.
 func (e *ecsEC2Runtime) freeSlots(ctx context.Context, az string) ([]ec2SlotCandidate, error) {
 	filters := []ec2types.Filter{
 		tagFilter(ec2TagPool, e.pool.pool),
@@ -781,7 +895,7 @@ func (e *ecsEC2Runtime) freeSlots(ctx context.Context, az string) ([]ec2SlotCand
 	if err != nil {
 		return nil, err
 	}
-	claimed, err := e.claimedInstances(ctx)
+	busy, err := e.occupiedInstances(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -793,7 +907,7 @@ func (e *ecsEC2Runtime) freeSlots(ctx context.Context, az string) ([]ec2SlotCand
 	for _, r := range out.Reservations {
 		for _, inst := range r.Instances {
 			id := aws.ToString(inst.InstanceId)
-			if claimed[id] || deviceInUse(inst, ec2HomeDevice) {
+			if busy[id] {
 				continue
 			}
 			cands = append(cands, ec2SlotCandidate{
@@ -816,8 +930,9 @@ func (e *ecsEC2Runtime) freeSlots(ctx context.Context, az string) ([]ec2SlotCand
 	return cands, nil
 }
 
-// claimedInstances is the set of slots some workspace is launching onto right now.
-func (e *ecsEC2Runtime) claimedInstances(ctx context.Context) (map[string]bool, error) {
+// occupiedInstances is the set of slots that are taken: someone's home is attached to
+// them, or someone is launching onto them (claim). One DescribeVolumes answers both.
+func (e *ecsEC2Runtime) occupiedInstances(ctx context.Context) (map[string]bool, error) {
 	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(ec2TagPool, e.pool.pool),
@@ -827,13 +942,16 @@ func (e *ecsEC2Runtime) claimedInstances(ctx context.Context) (map[string]bool, 
 	if err != nil {
 		return nil, err
 	}
-	claimed := map[string]bool{}
+	busy := map[string]bool{}
 	for i := range out.Volumes {
+		if inst := attachedInstance(&out.Volumes[i]); inst != "" {
+			busy[inst] = true
+		}
 		if inst := ec2TagValue(out.Volumes[i].Tags, ec2TagClaim); inst != "" && e.claimLive(&out.Volumes[i]) {
-			claimed[inst] = true
+			busy[inst] = true
 		}
 	}
-	return claimed, nil
+	return busy, nil
 }
 
 // registeredSlots is the set of EC2 instance ids the cluster currently accepts tasks
@@ -1276,8 +1394,66 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	}); err != nil {
 		return fmt.Errorf("detach %s: %w", volumeID, err)
 	}
+	// Do not call the slot free until it really is: the attachment point outlives the
+	// DetachVolume response (see attachHomeWithRetry), and a Start that lands in that
+	// window would grow the pool instead of swapping onto this slot.
+	if err := e.waitDeviceFree(ctx, instanceID); err != nil {
+		log.Printf("ecs-ec2: %s detached from %s but the device is still held: %v", volumeID, instanceID, err)
+	}
 	log.Printf("ecs-ec2: released slot %s from %s", instanceID, e.base.name)
 	return nil
+}
+
+// waitDeviceFree polls until the slot no longer lists the home device. The instance view
+// is the conservative one here — it keeps reporting the device while the volume side
+// already says `available` — which makes it the right thing to wait on.
+func (e *ecsEC2Runtime) waitDeviceFree(ctx context.Context, instanceID string) error {
+	started := e.now()
+	for i := 0; i < 30; i++ {
+		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+		if err != nil {
+			return err
+		}
+		held := false
+		for _, r := range out.Reservations {
+			for _, inst := range r.Instances {
+				for _, m := range inst.BlockDeviceMappings {
+					if aws.ToString(m.DeviceName) == ec2HomeDevice {
+						held = true
+					}
+				}
+			}
+		}
+		if !held {
+			if d := e.now().Sub(started); d > time.Second {
+				log.Printf("ecs-ec2: slot %s gave back %s after %.0fs", instanceID, ec2HomeDevice, d.Seconds())
+			}
+			return nil
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("slot %s still holds %s", instanceID, ec2HomeDevice)
+}
+
+// waitDetached blocks until the volume has really left the slot. DetachVolume ANSWERS
+// while the volume is still `detaching`, so anything that acts on the volume next — a
+// DeleteVolume, an attach elsewhere — has to wait for this or it fails with VolumeInUse
+// (measured).
+func (e *ecsEC2Runtime) waitDetached(ctx context.Context, volumeID string) error {
+	for {
+		out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
+		if err != nil {
+			return err
+		}
+		if len(out.Volumes) == 0 || attachedInstance(&out.Volumes[0]) == "" {
+			return nil
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
 }
 
 // waitTasksGone waits until the service actually has no task left. Detaching while the
@@ -1325,8 +1501,25 @@ func (e *ecsEC2Runtime) Destroy(ctx context.Context) error {
 	if err != nil || vol == nil {
 		return err
 	}
-	_, err = e.ec2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: vol.VolumeId})
-	return err
+	volumeID := aws.ToString(vol.VolumeId)
+	if err := e.waitDetached(ctx, volumeID); err != nil {
+		return err
+	}
+	// DescribeVolumes can already report the volume detached while DeleteVolume still
+	// answers VolumeInUse (measured — the two views converge separately). Retry rather
+	// than leave a provisioned volume behind, which is the one leftover here that bills
+	// forever.
+	for i := 0; ; i++ {
+		if _, err = e.ec2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(volumeID)}); err == nil {
+			return nil
+		}
+		if i >= 15 || !strings.Contains(err.Error(), "VolumeInUse") {
+			return err
+		}
+		if serr := e.sleep(ctx, 4*time.Second); serr != nil {
+			return serr
+		}
+	}
 }
 
 // --- drift sweeper (docs/64 §64.15.6) ---
@@ -1510,18 +1703,6 @@ func attachedInstance(vol *ec2types.Volume) string {
 		return aws.ToString(a.InstanceId)
 	}
 	return ""
-}
-
-// deviceInUse reports whether the slot already has something on the home device — i.e.
-// whether it is taken. Nitro renames the device under /dev, but the block device
-// MAPPING keeps the name we asked for, which is what makes this readable.
-func deviceInUse(inst ec2types.Instance, device string) bool {
-	for _, m := range inst.BlockDeviceMappings {
-		if aws.ToString(m.DeviceName) == device {
-			return true
-		}
-	}
-	return false
 }
 
 func filterSlotsByAZ(slots []ec2SlotCandidate, az string) []ec2SlotCandidate {

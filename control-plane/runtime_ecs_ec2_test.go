@@ -29,9 +29,12 @@ type fakeEC2 struct {
 	// attachErr forces AttachVolume to fail for a given instance id, standing in for
 	// "another workspace took this slot a moment ago".
 	attachErr map[string]bool
-	calls     []string
-	nextVol   int
-	nextInst  int
+	// attachFailures, when > 0, makes attachErr transient: it counts down on each
+	// refusal, which is how a slot behaves while it is still giving back its device.
+	attachFailures int
+	calls          []string
+	nextVol        int
+	nextInst       int
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -241,7 +244,13 @@ func (f *fakeEC2) AttachVolume(_ context.Context, in *ec2.AttachVolumeInput, _ .
 	inst := aws.ToString(in.InstanceId)
 	f.log("AttachVolume %s -> %s (%s)", aws.ToString(in.VolumeId), inst, aws.ToString(in.Device))
 	if f.attachErr[inst] {
-		return nil, fmt.Errorf("VolumeInUse: %s is already in use", aws.ToString(in.Device))
+		if f.attachFailures > 0 {
+			f.attachFailures--
+			if f.attachFailures == 0 {
+				f.attachErr[inst] = false
+			}
+		}
+		return nil, fmt.Errorf("InvalidParameterValue: Attachment point %s is already in use", aws.ToString(in.Device))
 	}
 	// The real API refuses a second volume on a device that is already taken; that
 	// refusal IS the slot lock, so the fake enforces it too.
@@ -394,6 +403,19 @@ func (f *fakeContainerInstances) DeregisterContainerInstance(_ context.Context, 
 	return &ecs.DeregisterContainerInstanceOutput{}, nil
 }
 
+// deviceInUse mirrors what EC2 itself enforces: one volume per device name. The adapter
+// no longer READS this (instance block-device mappings lag behind a detach on real AWS —
+// see freeSlots), but the fake still needs it to refuse a second attach the way the API
+// does.
+func deviceInUse(inst ec2types.Instance, device string) bool {
+	for _, m := range inst.BlockDeviceMappings {
+		if aws.ToString(m.DeviceName) == device {
+			return true
+		}
+	}
+	return false
+}
+
 // --- harness ---
 
 type ec2Harness struct {
@@ -499,13 +521,37 @@ func TestECSEC2StateMapping(t *testing.T) {
 		}
 	})
 
-	t.Run("attached without a service is starting", func(t *testing.T) {
+	t.Run("attached mid-launch is starting", func(t *testing.T) {
 		h := newEC2Harness(t)
 		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 		h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
 		h.ec2.attach("vol-1", "i-hot", time.Now())
+		h.ec2.setTag("vol-1", ec2TagClaim, "i-hot")
+		h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
 		if got := h.rt.State(ctx); got != "starting" {
 			t.Fatalf("State = %q, want starting", got)
+		}
+	})
+
+	t.Run("attached with no service and no claim is stopped", func(t *testing.T) {
+		// An abandoned attachment: a launch died between the attach and the
+		// CreateService. Calling this `starting` (an earlier revision did, and real AWS
+		// caught it) makes the workspace UNSTARTABLE FOREVER — Start returns early on
+		// `starting`, so nobody can drive it forward and nobody can retry.
+		h := newEC2Harness(t)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+		h.ec2.attach("vol-1", "i-hot", time.Now())
+		h.ci.registered["i-hot"] = true
+		if got := h.rt.State(ctx); got != "stopped" {
+			t.Fatalf("State = %q, want stopped", got)
+		}
+		// ...and a Start must actually recover it, reusing the attachment.
+		if err := h.rt.Start(ctx); err != nil {
+			t.Fatalf("Start on an abandoned attachment: %v", err)
+		}
+		if len(h.ecs.createCalls) != 1 {
+			t.Fatalf("Start did not create the missing service (createCalls=%d)", len(h.ecs.createCalls))
 		}
 	})
 
@@ -735,10 +781,17 @@ func TestECSEC2CreatesHomeTaggedInOneCall(t *testing.T) {
 	if aws.ToInt32(vol.Size) != 50 {
 		t.Errorf("volume size = %d, want the deployment default", aws.ToInt32(vol.Size))
 	}
+	created := ""
 	for _, call := range h.ec2.calls {
-		if strings.HasPrefix(call, "CreateTags") {
-			t.Errorf("home tags must ride along with CreateVolume, saw %q", call)
+		if strings.HasPrefix(call, "CreateVolume") {
+			created = call
 		}
+	}
+	// The identity tags must be part of the creation call itself. A volume that exists
+	// for even a moment without them is invisible to every lookup in this adapter — the
+	// next Start would make a second one and bill the first forever.
+	if !strings.Contains(created, "tags=5") {
+		t.Errorf("CreateVolume did not carry the identity tags: %q", created)
 	}
 }
 
@@ -898,5 +951,33 @@ func TestECSEC2ReleaseAbortsWhenStartRacesIt(t *testing.T) {
 	}
 	if attachedInstance(h.ec2.volumes["vol-1"]) != "i-hot" {
 		t.Error("home was released despite the restart")
+	}
+}
+
+// A slot handed back seconds ago still refuses an attach for a few seconds (measured on
+// real AWS: 7s after DetachVolume answered and the volume already read `available`).
+// Treating that as "no free slot" makes the next Start buy an instance to avoid a
+// five-second wait — the pool would defeat its own purpose on every quick swap.
+func TestECSEC2AttachRetriesWhileTheDeviceIsStillHeld(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.base.name = "af-ws-retry-alice"
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-retry-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	// The first two attaches fail the way EC2 does mid-release, then the device frees.
+	h.ec2.attachErr["i-hot"] = true
+	h.ec2.attachFailures = 2
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-hot" {
+		t.Fatalf("landed on %q; the adapter must wait out the release instead of growing the pool", inst)
+	}
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "RunInstances") {
+			t.Error("grew the pool despite a slot that was about to free up")
+		}
 	}
 }
