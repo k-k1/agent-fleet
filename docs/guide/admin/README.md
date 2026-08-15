@@ -62,7 +62,9 @@ The rail on the left holds two groups.
   method accepted and list it under *methods to keep off the sign-in page* instead), the
   auto-join domains and the invitable domains. Changing them is a deployment
   administrator's job; this panel exists so you can read *why* an invitation was refused without
-  asking anyone.
+  asking anyone. ★ If that person **holds both accounts**, they can instead link the second method
+  to their own account under **Settings → Personal → Account → Add a sign-in method** (only a
+  method asserting the same address, and its own entry rules still apply). Nothing for you to do.
 
 **Operations**
 
