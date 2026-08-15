@@ -115,6 +115,14 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   使えない）。戻る / 進むでレイアウト・設定/管理モーダル・スマホ drawer が復元される。スマホは左ペインを
   オフキャンバス drawer 化し、`{drawer:true}` の履歴エントリで「戻る＝drawer を閉じる/再び開く」を実現
   （端末の beforeunload ガードを誤爆させない）。エッジスワイプで開閉。
+- **スマホの横スワイプ＝稼働中セッションのローテート**: drawer が閉じている間の ← は次、→ は前の
+  稼働中（alive）セッションをアクティブペインに開く（`features/sessions/rotate.ts` が選択規則、
+  `open.ts` の `rotateRunningSession` が副作用）。順序は `GET /api/sessions` のまま（CreatedAt 降順）、
+  絞り込みは作業グループに従う＝左ペインで見えている集合と一致する。開き方は行クリックと同じ規則
+  （chat 可なら mirror）。**左端始まりの → は drawer が優先**（判定順で先に 50px の drawer 分岐が
+  確定し、ローテートの 70px には届かない）。drawer が開いていれば従来どおり「閉じる」が優先。起点が
+  横操作を持つ面（ブラウザペイン `.browser-stage` / 入力欄・contenteditable / 横スクロール域 /
+  `[data-no-swipe]`）なら見送る（`app/swipeGuard.ts`）。閾値はレール開閉の 50px に対し 70px。
 - **設定モーダル**: 3 グループの左レール × 17 タブ（旧 6 タブの単段バーはスケールせず再編。
   モバイルはレール→内容の 2 段ドリルダウン）。**個人設定**＝表示 / キー操作 / 読み上げ / 通知 /
   アシスタント、**接続**＝エージェント（各 kind の接続・RTK 等）/ Gitホスティング / 運用・監視 /
