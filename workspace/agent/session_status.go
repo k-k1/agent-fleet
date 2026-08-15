@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -196,6 +197,24 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		if session.UUID(m.Dir, m.Name) != sid {
 			continue
 		}
+		holdReport := false
+		if m.DriverKind() == session.DriverManaged && (m.Kind == session.KindCodex || m.Kind == session.KindOpencode) {
+			switch state {
+			case agents.StateAborted:
+				sig, ok := managedAbortSignals.Read(m.Name)
+				if !ok {
+					sig.At = time.Now().Format(time.RFC3339)
+				}
+				sig.Msg = turnText
+				_ = managedAbortSignals.Write(m.Name, sig)
+				a, _ := abortInfoFor(m)
+				holdReport = abortResumeHolds(m.Name, a, time.Now())
+			case "idle", agents.StateFailed:
+				managedAbortSignals.Remove(m.Name)
+				abortResumeStates.Remove(m.Name)
+				resetAutoResume(m.Name)
+			}
+		}
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
 		// 全文ブリッジ (docs/37 将来の方向): carry the turn's final prose on the
 		// answer-ready event so a full-text-mode provider can post it. Only
@@ -230,7 +249,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		// docs/51 Phase 1: この kick は終端イベントでは「配送」ではなく**起床ヒント**。
 		// 消費してよいかの判定はリコンサイラが状態をレベルで見て決める（この関数は
 		// 「何が起きたか」を伝えるだけで、「もう報告してよいか」は決めない）。
-		if (kind == reportKindAnswerReady || kind == "question" || kind == "plan-approval") && sessionReportPending(m.Name) {
+		if !holdReport && (kind == reportKindAnswerReady || kind == "question" || kind == "plan-approval") && sessionReportPending(m.Name) {
 			kickSessionReport(m.Name, kind, reason)
 		}
 		return

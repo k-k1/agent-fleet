@@ -262,6 +262,24 @@ func TestAbortedStateOnlyFiresFromWorkingOrEmpty(t *testing.T) {
 	}
 }
 
+func TestManagedAbortedTurnPersistsResumeSignalAndKeepsNotice(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "oc-abort", Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	recordSessionNotification(sid, "working", agents.StateAborted, "[error] APIError (HTTP 500): Internal server error")
+
+	sig, ok := managedAbortSignals.Read(m.Name)
+	if !ok || !strings.Contains(sig.Msg, "HTTP 500") || sig.At == "" {
+		t.Fatalf("managed signal = %+v ok=%v", sig, ok)
+	}
+	events := notice.List()
+	if len(events) != 1 || events[0].Kind != reportKindAnswerReady {
+		t.Fatalf("managed abort notice = %+v", events)
+	}
+}
+
 // TestTurnEndLabelRefinesStopHookIdle: Stop フックの idle を「どう終わったか」に精緻化する
 // 判定そのもの。転写に中断が無ければ素通し（＝ターンの本文がブリッジに乗る）、中断が
 // あればラベルと理由に差し替わる。理由を excerpt に載せるのは managed の MarkTurnEndErr と
