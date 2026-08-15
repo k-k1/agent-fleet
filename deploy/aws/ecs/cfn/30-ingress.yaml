@@ -58,6 +58,48 @@ Parameters:
       relocation is ON — at 0 it can never arm, which is what shipped before and meant
       every deployment ran builds on EFS at ~9x the cost. Roughly $2.9/month per
       workspace at 24/7, and only while the task runs. Set 0 to opt out.
+  WsRuntime:
+    Type: String
+    Default: ecs
+    AllowedValues: [ ecs, ecs-ec2 ]
+    Description: >-
+      Which Runtime adapter the Control Plane uses. `ecs` = Fargate (the shipped
+      default: two resources per workspace, ~105s to start, home on EFS). `ecs-ec2` =
+      a pool of EC2 slots with a persistent per-user EBS home (docs/64 §64.12,
+      ADR 0045 決定 10): a warm Start measures 22-27s and small-file I/O stops being
+      8-30x slower, at the price of six resource kinds per workspace on a substrate
+      with no production mileage. Requires the 40-ec2-pool stack and
+      Ec2SlotLaunchTemplate below. Falling back is this one value.
+  Ec2SlotLaunchTemplate:
+    Type: String
+    Default: ""
+    Description: >-
+      SlotLaunchTemplateId output of the 40-ec2-pool stack (lt-…). Required when
+      WsRuntime=ecs-ec2 — the CP refuses to boot on that profile without it, rather
+      than silently running no workspaces.
+  Ec2SlotTypes:
+    Type: String
+    Default: "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768"
+    Description: >-
+      The slot sizes the pool may run, as instanceType:memoryMiB, ascending. A
+      workspace lands on the smallest slot that holds its memory cap and gets the WHOLE
+      box (the task reserves neither cpu nor memory — on EC2 those are reservations
+      against the instance). EC2 on-demand pricing is perfectly linear in vCPU, so
+      bigger slots are not more expensive per user (ADR 0045 決定 8).
+  Ec2MaxSlots:
+    Type: String
+    Default: "8"
+    Description: >-
+      Hard cap on instances in the pool. A slot is one concurrently RUNNING workspace,
+      so size this like "how many people work at once", not "how many accounts exist".
+      Start fails with a clear error at the cap instead of growing the bill.
+  Ec2HomeGiB:
+    Type: String
+    Default: "50"
+    Description: >-
+      Default size of a user's persistent home volume (gp3). Unlike EFS this is billed
+      as PROVISIONED ($0.096/GB-month vs EFS $0.36 for what you use), so the break-even
+      fill rate is 26.7% — do not hand out volumes far larger than people fill.
   Fqdn:
     Type: String
     Description: >-
@@ -329,9 +371,12 @@ Resources:
             - { Name: GITHUB_OAUTH_CLIENT_ID, Value: !Ref GithubClientId }
             - { Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs }
             - { Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains }
-            # AF_RUNTIME=ecs = the P3-7 stage-2 adapter. The AF_ECS_* below give it the
-            # substrate placement it needs to provision per-workspace ECS services.
-            - { Name: AF_RUNTIME, Value: ecs }
+            # AF_RUNTIME=ecs = the P3-7 stage-2 adapter (Fargate). AF_RUNTIME=ecs-ec2
+            # keeps the same substrate but puts workspaces on a pool of EC2 slots with a
+            # persistent per-user EBS home (docs/64, ADR 0045 決定 10) — deploy the
+            # 40-ec2-pool stack and set WsRuntime=ecs-ec2 + Ec2SlotLaunchTemplate.
+            # Rolling back is this one parameter. The AF_ECS_* below are shared by both.
+            - { Name: AF_RUNTIME, Value: !Ref WsRuntime }
             - { Name: AF_ECS_REGION, Value: !Ref "AWS::Region" }
             - { Name: AF_ECS_CLUSTER, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
             - { Name: AF_ECS_SUBNETS, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } }
@@ -344,6 +389,11 @@ Resources:
             - { Name: AF_ECS_TASK_CPU, Value: !Ref WsTaskCpu }
             - { Name: AF_ECS_TASK_MEMORY, Value: !Ref WsTaskMemory }
             - { Name: AF_ECS_WS_DISK_GB, Value: !Ref WsDiskGiB }
+            # --- EC2 slot pool (only read when WsRuntime=ecs-ec2) ---
+            - { Name: AF_ECS_EC2_LAUNCH_TEMPLATE, Value: !Ref Ec2SlotLaunchTemplate }
+            - { Name: AF_ECS_EC2_SLOT_TYPES, Value: !Ref Ec2SlotTypes }
+            - { Name: AF_ECS_EC2_MAX_SLOTS, Value: !Ref Ec2MaxSlots }
+            - { Name: AF_ECS_EC2_HOME_GB, Value: !Ref Ec2HomeGiB }
             # Start returns as soon as the service is at desiredCount 1; the Agent
             # readiness poll runs in the background for the log line only, on the
             # AF_ECS_START_TIMEOUT_SEC budget (default 300s). Nothing waits on it,

@@ -34,6 +34,7 @@ platform changes:
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
+| `cfn/40-ec2-pool.yaml` | 🚧 **authored, not stood up** (the mechanics were measured in a sandbox harness, not through these templates) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand |
 
 > `00`/`10`/`20` are proven end-to-end (deploy→verify→`delete-stack`, no orphans).
 > `30-ingress` is authored and template-validated; standing it up needs a domain +
@@ -265,6 +266,66 @@ needs an ECS infrastructure role passed as `AF_ECS_INFRA_ROLE` (policy
 `AmazonECSInfrastructureRolePolicyForVolumes`). The reference stacks do not create that
 role — without it a >200 GiB request silently falls back to the free default. 🚧 This path
 is untested on real infrastructure; ephemeral storage covers everything up to 200 GiB.
+
+## Optional: EC2 slot pool (`WsRuntime=ecs-ec2`)
+
+🚧 **Not stood up through these templates yet.** The lifecycle was measured end to end in
+a sandbox harness (`docs/64` §64.12–§64.14) and the adapter is unit-tested, but nobody has
+deployed `40-ec2-pool` and run a real workspace on it. Fargate (`WsRuntime=ecs`) stays the
+default and is untouched by this profile.
+
+**What changes.** A workspace stops being "a Fargate task with an EFS home" and becomes
+"a task on a general-purpose EC2 *slot*, with the user's own EBS volume attached to it".
+Slots are not owned by anyone: on Start the CP picks a free one, attaches that user's
+volume at `/dev/sdf`, mounts it over SSM and pins the task there with an
+`ec2InstanceId ==` placement constraint; on Stop it unmounts, detaches and hands the slot
+back. **One slot serves one user at a time** (`ADR 0045` 決定 8).
+
+| | Fargate (`ecs`) | EC2 pool (`ecs-ec2`) |
+|---|---|---|
+| Warm Start | ~105s | **22–27s** (hot slot), ~50s (stopped slot) |
+| Home | EFS — small files are 8–30× slower | **EBS gp3** — 2,000 small files in 0.04s vs 30.7s |
+| Size | 74 discrete (cpu, memory) pairs, ≤16 vCPU / 120 GiB | instance types; the task reserves nothing and gets the box |
+| Resources per workspace | 2 (service + EFS access points) | 6 (also instance, volume, container-instance registration, task def) |
+| Idle cost | EFS (what you use) | EBS (what you **provision**) + any hot slots |
+
+**Stand-up**
+
+```bash
+aws cloudformation deploy --stack-name af-ecs-ec2-pool \
+  --template-file cfn/40-ec2-pool.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides NetworkStackName=af-ecs-network PlatformStackName=af-ecs-platform
+# then point the CP at it (this is the whole switch, and the whole rollback):
+aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ingress.yaml \
+  --parameter-overrides WsRuntime=ecs-ec2 Ec2SlotLaunchTemplate=lt-0123456789abcdef0 ...
+```
+
+| Parameter | Env | Default | Notes |
+|---|---|---|---|
+| `WsRuntime` | `AF_RUNTIME` | `ecs` | `ecs-ec2` switches the adapter. Rolling back is this value |
+| `Ec2SlotLaunchTemplate` | `AF_ECS_EC2_LAUNCH_TEMPLATE` | — | `SlotLaunchTemplateId` output of `40-ec2-pool`. The CP refuses to boot without it on this profile |
+| `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192,…` | `instanceType:memoryMiB`, ascending |
+| `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap. Start fails at the cap rather than growing the bill |
+| `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
+
+**Operational facts worth knowing before you turn it on**
+
+- **The pool never shrinks on its own (P0).** Released slots stay hot so the next user
+  gets 22–27s; nothing stops or terminates them yet. `Ec2MaxSlots` is what bounds the
+  bill — treat it as "how many people work at the same time".
+- **AZ is destiny.** An EBS volume cannot leave its AZ, so a user is pinned to the AZ
+  their home was created in. If no slot can be run there, that user cannot start.
+- **A slot's root volume is shared with whoever had it before.** `/tmp` is a tmpfs
+  (nothing lands on disk, capped size) and the ECS task-cleanup window is shortened to
+  5m, but the image cache and container write layers are genuinely shared.
+- **Patching slots = updating this stack** (the AMI parameter resolves at update time)
+  and letting the old slots go. That is the operational cost the EC2 launch type adds.
+- **Credentials still live on EFS.** The auth/identity set (`homeKeep`: `.config`,
+  `.ssh`, `.git-credentials`, `.gitconfig`, `.claude`, `.claude.json`, `.codex` — under
+  100 MiB) is kept on an EFS access point and symlinked into home by the entrypoint, so
+  losing one single-AZ volume does not take the user's logins with it.
+- **The working disk (`WsDiskGiB`) does not apply.** `AF_WS_SCRATCH` is not injected on
+  this profile: home is already local EBS, so there is nothing to relocate off EFS.
 
 ## Known behavior: a cold Start answers `starting`, not `running`
 
