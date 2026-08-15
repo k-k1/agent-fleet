@@ -2996,12 +2996,20 @@ export function MirrorView({
                     onMouseDown={(ev) => ev.preventDefault()}
                     onClick={() => pickSkill(skillInsertText(s))}
                   >
-                    <span className="mirror-skill-name">{s.invoke ? s.invoke.trim() : s.name}</span>
-                    {s.argumentHint ? <span className="mirror-skill-hint">{s.argumentHint}</span> : null}
+                    {/* 1 行目＝起動文字列＋引数ヒント＋出所バッジ、2 行目＝説明。説明を
+                        独立行にすることで、名前と引数に幅を食われず全幅で読める。 */}
+                    <span className="mirror-skill-head">
+                      <span className="mirror-skill-name">{s.invoke ? s.invoke.trim() : s.name}</span>
+                      {s.argumentHint ? <span className="mirror-skill-hint">{s.argumentHint}</span> : null}
+                      {/* バッジは 1 つの入れ物に — 直接並べて margin-left:auto を各々に付けると、
+                          2 つ出たとき余白が両者に均等配分されて右端に寄らない。 */}
+                      <span className="mirror-skill-badges">
+                        {s.origin ? <SkillOriginBadge origin={s.origin} /> : null}
+                        {s.source === "user" ? <span className="mirror-skill-src">{tr("mirror.skills_src_user")}</span> : null}
+                        {s.source === "cli" ? <span className="mirror-skill-src">{tr("mirror.skills_src_cli")}</span> : null}
+                      </span>
+                    </span>
                     {s.description ? <span className="mirror-skill-desc">{s.description}</span> : null}
-                    {s.origin ? <SkillOriginBadge origin={s.origin} /> : null}
-                    {s.source === "user" ? <span className="mirror-skill-src">{tr("mirror.skills_src_user")}</span> : null}
-                    {s.source === "cli" ? <span className="mirror-skill-src">{tr("mirror.skills_src_cli")}</span> : null}
                   </button>
                 ))
               )}
