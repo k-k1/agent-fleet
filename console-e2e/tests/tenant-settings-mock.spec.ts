@@ -42,6 +42,22 @@ const IDP = {
   usable: false,
   tenant_slug: "acme",
 };
+// テナント定義の GitHub 行（docs/61 §61.15）。issuer はサーバが入れた定数で、
+// 行の身元を分けているのは org（＋ドメイン台帳）。
+const GITHUB_IDP = {
+  id: "idp2",
+  name: "github",
+  kind: "github",
+  issuer: "https://github.com",
+  client_id: "gh-cid",
+  trust: "api",
+  allowed_orgs: "acme-sub",
+  allowed_domains: "@sub.acme.co.jp",
+  status: "active",
+  usable: true,
+  has_secret: true,
+  tenant_slug: "acme",
+};
 const MEMBERS = [
   { user_key: "tanaka", email: "tanaka@acme.co.jp", role: "tenant_admin", state: "running", max_sessions: 5 },
   { user_key: "suzuki", email: "suzuki@acme.co.jp", role: "member", state: "stopped" },
@@ -205,6 +221,56 @@ test("デプロイ管理者: 登録簿の行から承認して有効化できる
   // 押したあとは読み直す — 承認済みの行は「停止する」に変わる（台帳は空にならない）。
   await expect(register.locator("button", { hasText: "停止する" })).toHaveCount(1);
   await expect(register.locator("button", { hasText: "承認して有効化" })).toHaveCount(0);
+});
+
+// ★ kind で「何を訊くか」が変わる（docs/61 §61.15）。GitHub 行に issuer / tid /
+// 信頼方法を出すと、埋めようのない欄を見せて保存時 400 になり、逆に組織を出さないと
+// 必須欄が無い。一覧の「身元の出どころ」も、github.com は全テナント同じで何も区別
+// できないので org を出す。そして種類を戻したときに issuer を持ち越さないこと —
+// 持ち越すと「issuer が https://github.com の OIDC 行」という、保存はできるのに
+// 動かない行が作れてしまう。
+test("テナント管理者: GitHub 行は組織を訊き、issuer / tid / 信頼方法を出さない", async ({ page }) => {
+  await page.route("**/api/**", async (route) => {
+    const p = new URL(route.request().url()).pathname;
+    if (p === "/api/whoami") return route.fulfill({ json: { auth_mode: "dev", user: "alice", email: "alice@acme.co.jp" } });
+    if (p === "/api/tenants")
+      return route.fulfill({ json: { tenants: [{ slug: "acme", name: "Acme", role: "tenant_admin" }], super_admin: false } });
+    if (p === "/api/workspace") return route.fulfill({ json: { state: "running" } });
+    if (p === "/api/sessions") return route.fulfill({ json: { sessions: [] } });
+    if (p === "/api/admin/tenants") return route.fulfill({ json: { tenants: [TENANT], super_admin: false } });
+    if (p === "/api/admin/tenants/acme/idp") return route.fulfill({ json: { providers: [IDP, GITHUB_IDP] } });
+    return route.abort();
+  });
+  await page.goto(origin);
+
+  await page.locator(".acct-btn").click();
+  await page.locator(".acct-menu .acct-item", { hasText: "テナント設定" }).click();
+
+  const modal = page.locator(".tenant-modal");
+  const rows = modal.locator(".adm-mcp-row");
+  await expect(rows).toHaveCount(2);
+  // 身元の出どころ: OIDC は issuer、GitHub は組織。
+  await expect(rows.nth(0).locator(".as-repo")).toHaveText(IDP.issuer);
+  await expect(rows.nth(1).locator(".as-name")).toHaveText("github");
+  await expect(rows.nth(1).locator(".as-repo")).toHaveText("GitHub: acme-sub");
+
+  // github 行を編集すると、欄が入れ替わる。
+  await rows.nth(1).locator("button", { hasText: "編集" }).click();
+  const form = modal.locator(".adm-mcp-form");
+  const labels = form.locator(".ssm-fld > label");
+  await expect(labels.filter({ hasText: "許可する GitHub 組織" })).toHaveCount(1);
+  await expect(form.locator(".ssm-fld input").nth(1)).toHaveValue("acme-sub");
+  await expect(labels.filter({ hasText: "issuer" })).toHaveCount(0);
+  await expect(labels.filter({ hasText: "email の信頼方法" })).toHaveCount(0);
+  await expect(labels.filter({ hasText: "許可する Entra テナント" })).toHaveCount(0);
+  // ドメインは GitHub でも必須のまま（1 ドメイン 1 テナントの台帳・§61.15.3）。
+  await expect(labels.filter({ hasText: "受け入れるメールドメイン" })).toHaveCount(1);
+
+  // 種類を自社 IdP に戻すと issuer 欄が現れ、github.com は持ち越されない。
+  await form.locator("select").first().selectOption("oidc");
+  await expect(labels.filter({ hasText: "許可する GitHub 組織" })).toHaveCount(0);
+  const issuer = form.locator(".ssm-fld", { hasText: "issuer（発行者 URL）" }).locator("input");
+  await expect(issuer).toHaveValue("");
 });
 
 // 「使えるサインイン方法」は自由入力で、何が書けるかは env にしか無かった（打ち間違えると
