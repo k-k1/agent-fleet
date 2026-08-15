@@ -2555,6 +2555,13 @@ button.mt-bash-toggle:hover {
   .mirror-skill-btn {
     width: 24px;
   }
+  /* スマホは選択肢が縦1列に折り返るので省略の必要が薄い。タップ前に全文を読めるよう
+     2行クランプを外す（PC/タブレットは省略のまま = .mq-opt-desc 本体）。 */
+  .mq-opt-desc {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+  }
 }
 /* The `.view-head` band moved to ui/ui.css (ui/ViewHead.tsx). Its min-height of
    36px — 23px seg-control content + 12px padding + 1px border — is what keeps
