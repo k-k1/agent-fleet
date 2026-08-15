@@ -21,6 +21,7 @@
 | [02-operations.md](02-operations.ja.md) | 日常運用（バックアップ・リストア・アップグレード・閉域・停止）|
 | [03-security.md](03-security.ja.md) | セキュリティ運用（脅威モデル・残存リスク・egress 統制・報告窓口）|
 | [04-troubleshooting.md](04-troubleshooting.ja.md) | 障害対応と FAQ（DooD 3制約の診断・切り分けフロー）|
+| [05-login-idp.md](05-login-idp.ja.md) | サインイン方式の通しガイド（Google / Entra ID / GitHub / その他 OIDC で何を作り、どの値をどこに入れ、どう確認するか）|
 
 ---
 
@@ -46,7 +47,8 @@
   社内限定・公開 DNS を用意できない場合は自己署名 TLS の代替手段があります（[01](01-install.ja.md) 参照）。
 - **ログイン用 IdP のクライアント**。Google OAuth 2.0 の Web クライアント、または
   Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab の OIDC アプリ登録。
-  どの IdP を何個有効にしても、登録するリダイレクト URI は 1 本だけです。
+  どの IdP を何個有効にしても、登録するリダイレクト URI は 1 本だけです。IdP 側で何を作るかは
+  [05-login-idp.md](05-login-idp.ja.md)。
 - チームの **Claude シートは各自が持ち込み**（BYO）。初回起動後、各メンバーが Console から
   自分のシートでログインします。個人の Pro/Max より会社の Team/Enterprise シートを推奨します。
 
