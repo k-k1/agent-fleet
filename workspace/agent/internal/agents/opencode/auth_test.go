@@ -80,6 +80,11 @@ func TestEnvDropsOpencodeKeyOnlyForFreeUsage(t *testing.T) {
 // opencode's zero-auth free tier even when the user configured nothing.
 func TestConnectedDefaultsOffWithoutCredentials(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	// Connected also probes the shared serve daemon for a Console OAuth account.
+	// HOME isolates the key store but not that loopback process, so a developer's real
+	// login would make this supposedly fresh workspace connected. Use the same empty
+	// daemon fixture as the OAuth contract tests.
+	_ = newFakeDaemon(t)
 	orig := UsagePref
 	defer func() { UsagePref = orig }()
 
