@@ -132,6 +132,8 @@ type mockServe struct {
 	// opencode reports a provider-side failure INSIDE a 200 response (errors.go), so a
 	// failing turn is simulated by the body, not by the status code.
 	turnBody string
+	// turnBodies lets a test model a retryable failure followed by a healthy retry.
+	turnBodies []string
 }
 
 func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
@@ -177,6 +179,9 @@ func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 		m.mu.Lock()
 		m.busy = false
 		resp := m.turnBody
+		if n := len(m.turns); n <= len(m.turnBodies) {
+			resp = m.turnBodies[n-1]
+		}
 		m.mu.Unlock()
 		if resp == "" {
 			resp = `{"info":{"role":"assistant"},"parts":[]}`
