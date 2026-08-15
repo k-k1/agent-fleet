@@ -52,8 +52,31 @@ const (
 type principal struct {
 	Provider string
 	Subject  string // the IdP's stable subject id (unlike email, it never changes)
-	Email    string
-	Verified bool
+	// Realm is the authority that verified Subject: the issuer URL for OIDC, the
+	// fixed https://github.com for the GitHub adapter. Two providers with one realm
+	// are two buttons onto the same IdP, which is what lets the deployment's GitHub
+	// and a tenant's own GitHub resolve to one person (docs/61 §61.15, rule 1.5).
+	// It is filled in by the callback from the provider itself — never from a
+	// tenant-supplied field — so a tenant cannot name somebody else's realm.
+	Realm string
+	// RealmClaim / RealmSubject are the optional SECOND key rule 1.5 may match on:
+	// which stable claim the adapter was told to read, and what it carried (docs/61
+	// §61.15.10). Both are filled by the adapter out of the token it just exchanged,
+	// never from configuration — a tenant names the claim, never the value.
+	RealmClaim   string
+	RealmSubject string
+	Email        string
+	Verified     bool
+}
+
+// providerRealm answers "where would this provider prove someone", reusing the
+// optional interface the admin provider list already relies on (login_provider_api.go).
+// A provider that does not implement it simply takes no part in rule 1.5.
+func providerRealm(p loginProvider) string {
+	if pi, ok := p.(providerIssuer); ok {
+		return pi.issuerURL()
+	}
+	return ""
 }
 
 // loginProvider is one sign-in button: an IdP the deployment enabled. Every
@@ -273,6 +296,15 @@ func sessionProviderFrom(ctx context.Context) string {
 	return ref.provider
 }
 
+// sessionLoginRef is loginRefFrom WITHOUT the "there is a subject" requirement.
+// Unlinking needs it (docs/61 §61.16.4): the method the caller is signed in with
+// must not be removable, and on a pre-P0 cookie — provider known, subject not — the
+// safe reading is "every row of that provider is the one in use", not "none is".
+func sessionLoginRef(ctx context.Context) (loginRef, bool) {
+	ref, ok := ctx.Value(loginRefKey{}).(loginRef)
+	return ref, ok && ref.provider != ""
+}
+
 // --- allowlist (emails.txt successor) -------------------------------------
 
 // emailAllowed checks the exact-email and domain allowlists (env CSVs) plus the
@@ -351,6 +383,15 @@ type oauthState struct {
 	// tenants a person may actually use is decided server-side from membership and
 	// the tenant rules, so this value only ever picks a VIEW.
 	Tnt string `json:"t,omitempty"`
+	// Link marks a LINK flow (docs/61 §61.16): the identity the proven method is to
+	// be attached to, plus the session that proved it. Unlike Tnt these ARE
+	// authorization inputs, which is why they travel in the signed state and are
+	// re-checked against the live session at the callback — a signed value only says
+	// CP wrote it, not that the same person is still holding the browser.
+	Link   string `json:"l,omitempty"`
+	LEmail string `json:"le,omitempty"`
+	LProv  string `json:"lp,omitempty"`
+	LSub   string `json:"ls,omitempty"`
 }
 
 // sanitizeNext keeps post-login redirects on-site (no open redirect): a single
@@ -439,7 +480,18 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// removed from the config must not keep serving callbacks.
 	p := c.providerFor(r.Context(), st.Prov)
 	if p == nil {
+		if st.Link != "" {
+			c.writeLinkResult(w, r, linkErrProv, "", sanitizeNext(st.Next))
+			return
+		}
 		loginRedirect(w, r, "provider", tenant)
+		return
+	}
+	// ★ A link flow branches here, before anything that would mint a session: the
+	// person is already signed in and stays signed in as whoever they were
+	// (docs/61 §61.16).
+	if st.Link != "" {
+		c.finishLink(w, r, st, p)
 		return
 	}
 	code := r.URL.Query().Get("code")
@@ -462,6 +514,9 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, "denied", tenant)
 		return
 	}
+	// ★ Stamped here, from the provider CP resolved by id — not from anything the
+	// exchange returned and not from the row a tenant typed (docs/61 §61.15).
+	pr.Realm = providerRealm(p)
 	allowed, err := p.Allowed(r.Context(), pr)
 	if err != nil || !allowed {
 		loginRedirect(w, r, "forbidden", tenant)
@@ -534,15 +589,15 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 		return false, nil
 	}
 	tenantDefined := isTenantProviderID(p.Provider)
-	if len(c.providers) < 2 && !tenantDefined {
-		return false, nil
-	}
 	roleHint := c.mgr.roleHintFor(p.Email)
 	if tenantDefined {
 		roleHint = ""
 	}
-	_, isNew, err := c.mgr.store.LinkIdentity(ctx, p.Provider, p.Subject, p.Email,
-		sanitizeUser(p.Email), roleHint, !tenantDefined)
+	_, isNew, err := c.mgr.store.LinkIdentity(ctx, IdentityLink{
+		Provider: p.Provider, Subject: p.Subject, Realm: p.Realm,
+		RealmClaim: p.RealmClaim, RealmSubject: p.RealmSubject, Email: p.Email,
+		FallbackKey: sanitizeUser(p.Email), RoleHint: roleHint, EmailJoin: !tenantDefined,
+	})
 	switch {
 	case errors.Is(err, errIdentityClaimed):
 		return false, err
@@ -550,6 +605,16 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 		// Not fatal to the login: the next request resolves the identity the usual
 		// way. Only the notice is lost.
 		log.Printf("oauth: link %s/%s: %v", p.Provider, p.Subject, err)
+		return false, nil
+	}
+	// ★ The single-provider deployment used to skip this function entirely, and the
+	// resolver wrote the row on the first API request instead. It now runs anyway,
+	// because that path has no provider object and therefore no realm — and a row
+	// with no realm cannot take part in rule 1.5 when the tenant later adds its own
+	// GitHub (docs/61 §61.15). What stays suppressed is the NOTICE: with one button
+	// there is no second account to have landed in by mistake, so announcing a new
+	// account would be noise nobody can act on.
+	if len(c.providers) < 2 && !tenantDefined {
 		return false, nil
 	}
 	return isNew, nil
@@ -693,7 +758,8 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"{{TITLE}}", html.EscapeString(title),
 		"{{NOTE}}", note,
 		"{{ERROR}}", loginErrorBlock(r.URL.Query().Get("error"), lang),
-		"{{BUTTONS}}", c.loginButtons(r.Context(), sanitizeNext(r.URL.Query().Get("next")), lang, slug, rules.AllowedProviders),
+		"{{BUTTONS}}", c.loginButtons(r.Context(), sanitizeNext(r.URL.Query().Get("next")), lang, slug,
+			rules.AllowedProviders, rules.HiddenProviders),
 	).Replace(loginPageHTML)
 	_, _ = w.Write([]byte(page))
 }
@@ -710,7 +776,7 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 // the group's subsidiaries, readable by anyone who can reach the login (決定 32-4).
 // They come last: the department's own button belongs next to the deployment-wide
 // ones, and an operator who wants only that button says so in allowed_providers.
-func (c config) loginButtons(ctx context.Context, next, lang, tenant string, allowed []string) string {
+func (c config) loginButtons(ctx context.Context, next, lang, tenant string, allowed, hidden []string) string {
 	providers := c.providers
 	if tenant != "" && c.mgr != nil {
 		providers = append(append([]loginProvider(nil), providers...),
@@ -719,9 +785,26 @@ func (c config) loginButtons(ctx context.Context, next, lang, tenant string, all
 	if len(providers) == 0 {
 		return `<div class="err">` + loginText[lang].errUnconfigured + `</div>`
 	}
+	// ★ hidden_providers removes a button WITHOUT removing the method (docs/61
+	// §61.15.9): a subsidiary that runs on its own GitHub still has to accept the
+	// parent company's method for the colleague on loan, and that person signs in on
+	// the generic /login. Applied only when something would remain — a page with no
+	// buttons is a dead end, and the tenant's own mistake must not become one.
+	visible := providers
+	if len(hidden) > 0 {
+		kept := make([]loginProvider, 0, len(providers))
+		for _, p := range providers {
+			if providerInList(allowed, p.ID()) && !providerInList(hidden, p.ID()) {
+				kept = append(kept, p)
+			}
+		}
+		if len(kept) > 0 {
+			visible = kept
+		}
+	}
 	var b strings.Builder
 	shown := 0
-	for _, p := range providers {
+	for _, p := range visible {
 		if !providerInList(allowed, p.ID()) {
 			continue
 		}
@@ -826,6 +909,10 @@ type loginStrings struct {
 	errEmailTaken string
 	// The new-account notice (docs/61 受入条件 3). newBody takes the email.
 	newTitle, newBody, newNote, newContinue, newSwitch string
+	// The result page of a link flow (docs/61 §61.16 + 決定 37).
+	linkTitle, linkNote, linkBack          string
+	linkOK, linkTaken, linkEmail, linkGate string
+	linkSession, linkProvider, linkFailed  string
 }
 
 var loginText = map[string]loginStrings{
@@ -844,7 +931,8 @@ var loginText = map[string]loginStrings{
 		errTenantNoProvider: "このテナントに設定されたサインイン方法は、現在このデプロイでは利用できません。" +
 			"管理者に連絡してください。",
 		errEmailTaken: "このメールアドレスは、すでにこのデプロイの別のサインイン方法で使われています。" +
-			"いつも使っているサインイン方法でログインしてください。",
+			"いつも使っているサインイン方法でログインしたうえで、" +
+			"<b>設定 → アカウント → サインイン方法</b> からこの方式を追加してください。",
 		newTitle: "Agent Fleet — 新しいアカウント",
 		newBody: "%s でサインインしました。このメールアドレスはこのデプロイで使われたことがないため、" +
 			"<b>新しいワークスペース</b>を作成しました。以前から使っているワークスペースがある場合、" +
@@ -853,6 +941,20 @@ var loginText = map[string]loginStrings{
 			"メールアドレスの違うアカウント同士を後から 1 つにまとめることはできません。",
 		newContinue: "新しいワークスペースで続ける",
 		newSwitch:   "サインアウトして入り直す",
+		linkTitle:   "Agent Fleet — サインイン方法の追加",
+		linkNote:    "この画面はサインイン方法を追加したときだけ表示されます。",
+		linkBack:    "Agent Fleet に戻る",
+		linkOK:      "このサインイン方法を、いまのアカウントに追加しました。次回からどちらの方法でも同じワークスペースに入れます。",
+		linkTaken: "このサインイン方法は、すでにこのデプロイの別のアカウントで使われています。" +
+			"アカウント同士を 1 つにまとめることはできません。",
+		linkEmail: "このサインイン方法が名乗ったメールアドレスは、いまのアカウントのものと違います。" +
+			"追加できるのは、同じメールアドレスを名乗る方法だけです。",
+		linkGate: "このサインイン方法では、いまのアカウントは許可されていません。" +
+			"組織（org）への参加やドメインの許可について、管理者に確認してください。",
+		linkSession: "サインインの状態が確認できませんでした。サインインし直してから、もう一度お試しください。",
+		linkProvider: "指定されたサインイン方法は利用できません。" +
+			"設定の「サインイン方法」から選び直してください。",
+		linkFailed: "サインイン方法の追加に失敗しました。もう一度お試しください。",
 	},
 	"en": {
 		title:           "Agent Fleet — Sign in",
@@ -869,7 +971,8 @@ var loginText = map[string]loginStrings{
 		errTenantNoProvider: "The sign-in methods configured for this tenant aren't available on this " +
 			"deployment. Please contact your administrator.",
 		errEmailTaken: "This email address is already used by another sign-in method on this deployment. " +
-			"Please sign in the way you normally do.",
+			"Sign in the way you normally do, then add this method under " +
+			"<b>Settings → Account → Sign-in methods</b>.",
 		newTitle: "Agent Fleet — New account",
 		newBody: "You signed in as %s. That address hasn't been used on this deployment, " +
 			"so a <b>new workspace</b> was created. A workspace you already had is not " +
@@ -878,6 +981,20 @@ var loginText = map[string]loginStrings{
 			"Accounts under different email addresses cannot be merged afterwards.",
 		newContinue: "Continue to the new workspace",
 		newSwitch:   "Sign out and use another account",
+		linkTitle:   "Agent Fleet — Add a sign-in method",
+		linkNote:    "This page only appears when you add a sign-in method.",
+		linkBack:    "Back to Agent Fleet",
+		linkOK: "This sign-in method was added to your account. From now on either method " +
+			"takes you to the same workspace.",
+		linkTaken: "That sign-in method already belongs to another account on this deployment. " +
+			"Accounts cannot be merged.",
+		linkEmail: "The address that sign-in method asserted is not the one on your account. " +
+			"Only a method that asserts the same address can be added.",
+		linkGate: "That sign-in method doesn't allow this account. Ask your administrator about " +
+			"the organization membership or the allowed domains.",
+		linkSession:  "We couldn't confirm you were signed in. Please sign in again and retry.",
+		linkProvider: "That sign-in method isn't available. Pick one under Settings → Sign-in methods.",
+		linkFailed:   "Couldn't add the sign-in method. Please try again.",
 	},
 }
 

@@ -291,19 +291,19 @@ func (s *sqlStore) getTenant(ctx context.Context, id string) (Tenant, error) {
 	var keyRef sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at,
-		        allowed_providers, auto_join_domains, allowed_domains
+		        allowed_providers, auto_join_domains, allowed_domains, hidden_providers
 		 FROM tenant WHERE id=?`, id).
 		Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &keyRef, &t.CreatedAt,
-			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains)
+			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains, &t.HiddenProviders)
 	t.KeyRef = keyRef.String
 	return t, err
 }
 
 // SetTenantLogin writes the per-tenant login rules (docs/61 §61.9.7).
-func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains string) error {
+func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains, hiddenProviders string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE tenant SET allowed_providers=?, auto_join_domains=?, allowed_domains=? WHERE id=?`,
-		allowedProviders, autoJoinDomains, allowedDomains, tenantID)
+		`UPDATE tenant SET allowed_providers=?, auto_join_domains=?, allowed_domains=?, hidden_providers=? WHERE id=?`,
+		allowedProviders, autoJoinDomains, allowedDomains, hiddenProviders, tenantID)
 	return err
 }
 
@@ -311,7 +311,7 @@ func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProvider
 // slices — the shape the entry-gate cache and the auto-join resolution want.
 func (s *sqlStore) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, slug, name, allowed_providers, auto_join_domains, allowed_domains
+		`SELECT id, slug, name, allowed_providers, auto_join_domains, allowed_domains, hidden_providers
 		 FROM tenant WHERE status='active' ORDER BY slug`)
 	if err != nil {
 		return nil, err
@@ -320,13 +320,14 @@ func (s *sqlStore) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules
 	var out []TenantLoginRules
 	for rows.Next() {
 		var r TenantLoginRules
-		var provs, autoJoin, allowed string
-		if err := rows.Scan(&r.ID, &r.Slug, &r.Name, &provs, &autoJoin, &allowed); err != nil {
+		var provs, autoJoin, allowed, hidden string
+		if err := rows.Scan(&r.ID, &r.Slug, &r.Name, &provs, &autoJoin, &allowed, &hidden); err != nil {
 			return nil, err
 		}
 		r.AllowedProviders = splitCSVLower(provs)
 		r.AutoJoinDomains = splitDomainCSV(autoJoin)
 		r.AllowedDomains = splitDomainCSV(allowed)
+		r.HiddenProviders = splitCSVLower(hidden)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -417,10 +418,19 @@ func (s *sqlStore) DemoteSuperAdmins(ctx context.Context, keep []string) ([]stri
 //
 //  1. (provider, subject) already recorded => that identity, whatever its email is
 //     now. user_key does not move, so home and secrets stay put across a rename.
+//     1.5. not recorded, but the SAME REALM has this subject on another provider =>
+//     that identity (docs/61 §61.15 + 決定 35). Two buttons can be two doors onto
+//     one IdP — the deployment's GitHub and a tenant's own GitHub, or an env Entra
+//     and a tenant row pointing at the same issuer — and the same account behind
+//     both is the same person. The realm is the adapter's own answer to "where did
+//     I verify this" (issuerURL), never a value the tenant typed, which is why this
+//     join is open to tenant-defined providers while rule 2 is not.
+//
 //  2. not recorded, but the email matches an identity => join it. This is what
 //     makes "sign in with the company address and you land in the same workspace
 //     whichever button you pressed" true, and it is how an existing Google-only
 //     deployment migrates: the first login after the upgrade takes this path.
+//
 //  3. neither => a NEW identity (isNew), created through UpsertIdentity so the
 //     user_key collision guard still applies.
 //
@@ -442,14 +452,28 @@ func (s *sqlStore) DemoteSuperAdmins(ctx context.Context, keep []string) ([]stri
 // back on the very identity rule 2 was refusing to join (and identity.email is
 // UNIQUE, so a genuinely separate row cannot exist either). Refusing is the only
 // answer that is actually a refusal.
-func (s *sqlStore) LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string, emailJoin bool) (Identity, bool, error) {
+func (s *sqlStore) LinkIdentity(ctx context.Context, link IdentityLink) (Identity, bool, error) {
+	provider, subject, email := link.Provider, link.Subject, link.Email
 	if provider == "" || subject == "" { // no subject to key on: legacy/pre-P0 session
-		ident, err := s.UpsertIdentity(ctx, email, fallbackKey, roleHint)
+		ident, err := s.UpsertIdentity(ctx, email, link.FallbackKey, link.RoleHint)
 		return ident, false, err
 	}
 	identityID, err := s.identityIDForProvider(ctx, provider, subject)
 	if err != nil {
 		return Identity{}, false, err
+	}
+	if identityID == "" && link.Realm != "" { // rule 1.5
+		if identityID, err = s.identityIDForRealm(ctx, link.Realm, subject); err != nil {
+			return Identity{}, false, err
+		}
+		// ★ …and its second key, for an issuer whose `sub` is pairwise (docs/61
+		// §61.15.10 + 決定 38). Tried AFTER the subject match, so an IdP where both
+		// work behaves exactly as it did before this column existed.
+		if identityID == "" {
+			if identityID, err = s.identityIDForRealmClaim(ctx, link.Realm, link.RealmClaim, link.RealmSubject); err != nil {
+				return Identity{}, false, err
+			}
+		}
 	}
 	isNew := false
 	if identityID == "" {
@@ -457,7 +481,7 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, provider, subject, email, f
 		switch {
 		case err != nil:
 			return Identity{}, false, err
-		case ok && emailJoin: // rule 2
+		case ok && link.EmailJoin: // rule 2
 			identityID = ident.ID
 		case ok: // rule 2', a tenant-defined provider: claim, never join
 			claimed, err := s.identityHasProvider(ctx, ident.ID)
@@ -469,7 +493,7 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, provider, subject, email, f
 			}
 			identityID = ident.ID
 		default: // rule 3
-			ident, created, err := s.createIdentityForLogin(ctx, email, fallbackKey, roleHint)
+			ident, created, err := s.createIdentityForLogin(ctx, email, link.FallbackKey, link.RoleHint)
 			if err != nil {
 				return Identity{}, false, err
 			}
@@ -479,17 +503,25 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, provider, subject, email, f
 	// Record the pair. ON CONFLICT only refreshes the display columns: an existing
 	// mapping is never re-pointed at another identity, so a subject cannot be moved
 	// onto someone else's workspace by a later login.
+	// ★ realm is refreshed on every login, not only on insert: rows written before
+	// 0041 (and by the resolver path, which has no provider object to ask) carry an
+	// empty one, and rule 1.5 can only see what has been recorded.
 	now := nowTS()
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO identity_provider(provider, subject, identity_id, email, created_at, last_login_at)
-		 VALUES(?, ?, ?, ?, ?, ?)
+		`INSERT INTO identity_provider(provider, subject, identity_id, email, realm,
+		                               realm_claim, realm_subject, created_at, last_login_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(provider, subject) DO UPDATE SET
 		   email = excluded.email,
+		   realm = CASE WHEN excluded.realm = '' THEN identity_provider.realm ELSE excluded.realm END,
+		   realm_claim = CASE WHEN excluded.realm_subject = '' THEN identity_provider.realm_claim ELSE excluded.realm_claim END,
+		   realm_subject = CASE WHEN excluded.realm_subject = '' THEN identity_provider.realm_subject ELSE excluded.realm_subject END,
 		   last_login_at = excluded.last_login_at`,
-		provider, subject, identityID, email, now, now); err != nil {
+		provider, subject, identityID, email, link.Realm,
+		link.RealmClaim, link.RealmSubject, now, now); err != nil {
 		return Identity{}, false, err
 	}
-	if err := s.touchIdentity(ctx, identityID, email, roleHint); err != nil {
+	if err := s.touchIdentity(ctx, identityID, email, link.RoleHint); err != nil {
 		return Identity{}, false, err
 	}
 	ident, ok, err := s.GetIdentityByID(ctx, identityID)
@@ -530,6 +562,225 @@ func (s *sqlStore) identityIDForProvider(ctx context.Context, provider, subject 
 		return "", nil
 	}
 	return id, err
+}
+
+// identityIDForRealm implements rule 1.5: the same IdP account reached through a
+// DIFFERENT button (docs/61 §61.15). The realm identifies the authority that
+// verified the subject — https://github.com for the GitHub adapter, the issuer URL
+// for OIDC — so (realm, subject) is the same person no matter which provider row
+// carried them here.
+//
+// ★ Deliberately not keyed on the email as well: an email change must not break the
+// link, and the address is precisely the thing a tenant-defined provider is not
+// trusted to assert (rule 2”). An empty realm never matches — pre-0041 rows have
+// one, and matching them would join everyone whose subject happens to collide
+// across two unrelated IdPs. ORDER BY provider only makes the answer deterministic
+// when several rows exist, which by construction all point at one identity.
+func (s *sqlStore) identityIDForRealm(ctx context.Context, realm, subject string) (string, error) {
+	if realm == "" || subject == "" {
+		return "", nil
+	}
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT identity_id FROM identity_provider WHERE realm=? AND subject=? ORDER BY provider LIMIT 1`,
+		realm, subject).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// identityIDForRealmClaim is rule 1.5's second key: the same IdP account recognised
+// by a STABLE CLAIM rather than by `sub` (docs/61 §61.15.10 + 決定 38). Entra's `sub`
+// is pairwise — a function of (app registration, user) — so one person coming through
+// the head office's app and through a subsidiary's carries two subjects on one
+// issuer, and identityIDForRealm cannot see that they are the same account. `oid` is
+// the same value in both tokens, and this is where that is read.
+//
+// ★ The CLAIM NAME is part of the key, not just the value. Two providers reading
+// DIFFERENT claims must never join because their values happened to collide — the
+// name records which question was asked. And an empty claim or value matches
+// nothing, so every row written before the column, and every provider that names no
+// claim, simply does not take part.
+func (s *sqlStore) identityIDForRealmClaim(ctx context.Context, realm, claim, subject string) (string, error) {
+	if realm == "" || claim == "" || subject == "" {
+		return "", nil
+	}
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT identity_id FROM identity_provider
+		 WHERE realm=? AND realm_claim=? AND realm_subject=? ORDER BY provider LIMIT 1`,
+		realm, claim, subject).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// FillProviderRealm records the realm of the rows an env-defined provider already
+// wrote, and is called once per provider at STARTUP (docs/61 §61.15).
+//
+// ★ It has to happen in Go rather than in the migration: which realm a provider id
+// belongs to is only known from the provider set CP just built, and a migration that
+// guessed "provider='github' means the GitHub adapter" would be wrong on a
+// deployment that named an OIDC provider `github` (oauth_oidc.go warns about that
+// but still builds it). Only empty realms are written, so a person whose row was
+// filled by a login keeps that value, and re-running is a no-op.
+func (s *sqlStore) FillProviderRealm(ctx context.Context, provider, realm string) error {
+	if provider == "" || realm == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE identity_provider SET realm=? WHERE provider=? AND realm=''`, realm, provider)
+	return err
+}
+
+// errLinkTaken is returned by AttachProvider when the IdP account being linked
+// already belongs to somebody on this deployment — the pair itself is recorded, or
+// rule 1.5 finds the same account under another button. Linking it would either
+// re-point an existing mapping or merge two accounts, and both are irreversible.
+var errLinkTaken = errors.New("that sign-in method already belongs to an account on this deployment")
+
+// ListLinkedProviders — see the Store interface (docs/61 §61.16).
+func (s *sqlStore) ListLinkedProviders(ctx context.Context, identityID string) ([]LinkedProvider, error) {
+	if identityID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT provider, subject, COALESCE(realm,''), COALESCE(email,''),
+		        COALESCE(created_at,''), COALESCE(last_login_at,'')
+		 FROM identity_provider WHERE identity_id=? ORDER BY last_login_at DESC, provider`, identityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LinkedProvider
+	for rows.Next() {
+		var lp LinkedProvider
+		if err := rows.Scan(&lp.Provider, &lp.Subject, &lp.Realm, &lp.Email,
+			&lp.CreatedAt, &lp.LastLoginAt); err != nil {
+			return nil, err
+		}
+		out = append(out, lp)
+	}
+	return out, rows.Err()
+}
+
+// AttachProvider — see the Store interface (docs/61 §61.16 + 決定 37).
+//
+// ★ The three refusals below are STRUCTURAL: they hold whoever calls this and
+// whatever the login layer checked first. The caller adds the policy half (the
+// address must be the person's own — 決定 37), which this layer cannot state
+// because it does not know which of several rules the deployment settled on; what
+// it does know is that a row must never move to another identity and that two
+// accounts must never become one.
+func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link IdentityLink) error {
+	if identityID == "" || link.Provider == "" || link.Subject == "" {
+		return fmt.Errorf("attach provider: identity, provider and subject are required")
+	}
+	// 1. the pair is already recorded — the same identity is a no-op (pressing the
+	//    button twice), another identity is a refusal (never re-point).
+	owner, err := s.identityIDForProvider(ctx, link.Provider, link.Subject)
+	if err != nil {
+		return err
+	}
+	if owner != "" && owner != identityID {
+		return errLinkTaken
+	}
+	// 2. rule 1.5: the same IdP account reached through a different button already
+	//    belongs to somebody else. Signing in with it would land there, so linking it
+	//    here would create two identities claiming one account.
+	if owner == "" && link.Realm != "" {
+		byRealm, err := s.identityIDForRealm(ctx, link.Realm, link.Subject)
+		if err != nil {
+			return err
+		}
+		if byRealm != "" && byRealm != identityID {
+			return errLinkTaken
+		}
+		// ★ …and through rule 1.5's second key (docs/61 §61.15.10). Without this the
+		// pairwise-`sub` case slips past: two subjects, one Entra account, so the pair
+		// looks free while signing in with it would land on somebody else.
+		byClaim, err := s.identityIDForRealmClaim(ctx, link.Realm, link.RealmClaim, link.RealmSubject)
+		if err != nil {
+			return err
+		}
+		if byClaim != "" && byClaim != identityID {
+			return errLinkTaken
+		}
+	}
+	// 3. the address the IdP asserted belongs to a different person. Even with the
+	//    caller's same-address rule in front, this stays: identity.email is UNIQUE
+	//    and case-sensitive there, so a case-differing row is reachable, and it is
+	//    somebody else's account.
+	if ident, ok, err := s.identityByEmail(ctx, link.Email); err != nil {
+		return err
+	} else if ok && ident.ID != identityID {
+		return errLinkTaken
+	}
+	now := nowTS()
+	// The insert deliberately does NOT set last_login_at to "now": linking is not a
+	// login with this method, and the account panel orders by it. ON CONFLICT keeps
+	// the same shape as LinkIdentity — identity_id is never in the update list.
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO identity_provider(provider, subject, identity_id, email, realm,
+		                               realm_claim, realm_subject, created_at, last_login_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, '')
+		 ON CONFLICT(provider, subject) DO UPDATE SET
+		   email = excluded.email,
+		   realm = CASE WHEN excluded.realm = '' THEN identity_provider.realm ELSE excluded.realm END,
+		   realm_claim = CASE WHEN excluded.realm_subject = '' THEN identity_provider.realm_claim ELSE excluded.realm_claim END,
+		   realm_subject = CASE WHEN excluded.realm_subject = '' THEN identity_provider.realm_subject ELSE excluded.realm_subject END`,
+		link.Provider, link.Subject, identityID, link.Email, link.Realm,
+		link.RealmClaim, link.RealmSubject, now)
+	return err
+}
+
+// errLastLoginMethod / errNoSuchLoginMethod are DetachProvider's two refusals.
+//
+// ★ The first one is a lockout guard, not a formality: with the last method gone
+// there is no way back into the account — no password, no SMTP to mail a link from
+// (決定 28) — and the person doing it is the account's own owner, mid-cleanup, who
+// is exactly the one who cannot ask anybody to undo it.
+var (
+	errLastLoginMethod   = errors.New("this is the only sign-in method left on the account, and removing it would lock you out")
+	errNoSuchLoginMethod = errors.New("that sign-in method is not linked to this account")
+)
+
+// DetachProvider — see the Store interface (docs/61 §61.16.4).
+func (s *sqlStore) DetachProvider(ctx context.Context, identityID, provider, subject string) error {
+	if identityID == "" || provider == "" || subject == "" {
+		return fmt.Errorf("detach provider: identity, provider and subject are required")
+	}
+	// The row must be this person's own. Checked separately from the delete so
+	// "not yours / not there" is distinguishable from "it is the last one".
+	owner, err := s.identityIDForProvider(ctx, provider, subject)
+	if err != nil {
+		return err
+	}
+	if owner != identityID {
+		return errNoSuchLoginMethod
+	}
+	// ★ The count lives INSIDE the delete. Reading it first and deleting after would
+	// let two tabs each see "2 left" and remove one, ending at zero.
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM identity_provider
+		 WHERE identity_id=? AND provider=? AND subject=?
+		   AND (SELECT COUNT(*) FROM identity_provider WHERE identity_id=?) > 1`,
+		identityID, provider, subject, identityID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		// The ownership check above already passed, so the only remaining reason the
+		// statement matched nothing is the count guard.
+		return errLastLoginMethod
+	}
+	return nil
 }
 
 // identityByEmail finds the person an address already belongs to. Non-empty
@@ -663,7 +914,7 @@ func (s *sqlStore) GetIdentityByID(ctx context.Context, id string) (Identity, bo
 func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at,
-		        allowed_providers, auto_join_domains, allowed_domains
+		        allowed_providers, auto_join_domains, allowed_domains, hidden_providers
 		 FROM tenant ORDER BY slug`)
 	if err != nil {
 		return nil, err
@@ -673,7 +924,7 @@ func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	for rows.Next() {
 		var t Tenant
 		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &t.KeyRef, &t.CreatedAt,
-			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains); err != nil {
+			&t.AllowedProviders, &t.AutoJoinDomains, &t.AllowedDomains, &t.HiddenProviders); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -2364,14 +2615,15 @@ func (s *sqlStore) DeleteMCPServer(ctx context.Context, tenantID, id string) err
 
 // --- tenant-defined login providers (docs/61 §61.11 + ADR0043 決定 29-33) -------
 
-const tenantIdPCols = `SELECT id, tenant_id, name, label_ja, label_en, issuer, client_id,
-       secret_enc, key_ref, trust, allowed_tids, allowed_domains, status,
+const tenantIdPCols = `SELECT id, tenant_id, name, label_ja, label_en, kind, issuer, client_id,
+       secret_enc, key_ref, trust, allowed_tids, allowed_domains, allowed_orgs, link_claim, status,
        approved_by, approved_at, created_by, created_at, updated_at FROM tenant_idp`
 
 func scanTenantIdP(sc scanner) (TenantIdP, error) {
 	var t TenantIdP
-	err := sc.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Issuer, &t.ClientID,
-		&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.Status,
+	err := sc.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Kind, &t.Issuer, &t.ClientID,
+		&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.AllowedOrgs,
+		&t.LinkClaim, &t.Status,
 		&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
@@ -2393,24 +2645,26 @@ func (s *sqlStore) ListTenantIdPs(ctx context.Context, tenantID string) ([]Tenan
 	return out, rows.Err()
 }
 
-func (s *sqlStore) ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error) {
+func (s *sqlStore) ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error) {
 	return s.listTenantIdPs(ctx, "")
 }
 
-func (s *sqlStore) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error) {
+func (s *sqlStore) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error) {
 	return s.listTenantIdPs(ctx, "active")
 }
 
 // listTenantIdPs is the deployment-wide read. The tenant slug travels with each row
 // because the provider id the rest of CP sees is built from it (t:<slug>:<name>),
-// and joining here saves the caller a lookup per row.
+// and joining here saves the caller a lookup per row. The display name comes along
+// for the default button label (docs/61 §61.15.10).
 //
 // ★ Rows of a non-active tenant are left out: a suspended tenant's IdP must not keep
 // minting sessions, the same way ListTenantLoginRules only loads active tenants.
-func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantIdP, map[string]string, error) {
-	q := `SELECT p.id, p.tenant_id, p.name, p.label_ja, p.label_en, p.issuer, p.client_id,
-	             p.secret_enc, p.key_ref, p.trust, p.allowed_tids, p.allowed_domains, p.status,
-	             p.approved_by, p.approved_at, p.created_by, p.created_at, p.updated_at, t.slug
+func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantIdP, map[string]TenantRef, error) {
+	q := `SELECT p.id, p.tenant_id, p.name, p.label_ja, p.label_en, p.kind, p.issuer, p.client_id,
+	             p.secret_enc, p.key_ref, p.trust, p.allowed_tids, p.allowed_domains, p.allowed_orgs,
+	             p.link_claim, p.status,
+	             p.approved_by, p.approved_at, p.created_by, p.created_at, p.updated_at, t.slug, t.name
 	      FROM tenant_idp p JOIN tenant t ON t.id = p.tenant_id
 	      WHERE t.status='active'`
 	args := []any{}
@@ -2425,19 +2679,20 @@ func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantI
 	}
 	defer rows.Close()
 	var out []TenantIdP
-	slugs := map[string]string{}
+	tenants := map[string]TenantRef{}
 	for rows.Next() {
 		var t TenantIdP
-		var slug string
-		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Issuer, &t.ClientID,
-			&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.Status,
-			&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &slug); err != nil {
+		var ref TenantRef
+		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Kind, &t.Issuer, &t.ClientID,
+			&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.AllowedOrgs,
+			&t.LinkClaim, &t.Status,
+			&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &ref.Slug, &ref.Name); err != nil {
 			return nil, nil, err
 		}
 		out = append(out, t)
-		slugs[t.TenantID] = slug
+		tenants[t.TenantID] = ref
 	}
-	return out, slugs, rows.Err()
+	return out, tenants, rows.Err()
 }
 
 func (s *sqlStore) GetTenantIdP(ctx context.Context, tenantID, id string) (TenantIdP, bool, error) {
@@ -2450,12 +2705,12 @@ func (s *sqlStore) GetTenantIdP(ctx context.Context, tenantID, id string) (Tenan
 
 func (s *sqlStore) CreateTenantIdP(ctx context.Context, t TenantIdP) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO tenant_idp(id, tenant_id, name, label_ja, label_en, issuer, client_id,
-		   secret_enc, key_ref, trust, allowed_tids, allowed_domains, status,
+		`INSERT INTO tenant_idp(id, tenant_id, name, label_ja, label_en, kind, issuer, client_id,
+		   secret_enc, key_ref, trust, allowed_tids, allowed_domains, allowed_orgs, link_claim, status,
 		   approved_by, approved_at, created_by, created_at, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		t.ID, t.TenantID, t.Name, t.LabelJA, t.LabelEN, t.Issuer, t.ClientID,
-		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains, t.Status,
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		t.ID, t.TenantID, t.Name, t.LabelJA, t.LabelEN, t.Kind, t.Issuer, t.ClientID,
+		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains, t.AllowedOrgs, t.LinkClaim, t.Status,
 		t.ApprovedBy, t.ApprovedAt, t.CreatedBy, t.CreatedAt, t.UpdatedAt)
 	return err
 }
@@ -2466,13 +2721,13 @@ func (s *sqlStore) CreateTenantIdP(ctx context.Context, t TenantIdP) error {
 // this is where it lands.
 func (s *sqlStore) UpdateTenantIdP(ctx context.Context, t TenantIdP) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE tenant_idp SET name=?, label_ja=?, label_en=?, issuer=?, client_id=?,
-		   secret_enc=?, key_ref=?, trust=?, allowed_tids=?, allowed_domains=?,
-		   status=?, approved_by=?, approved_at=?, updated_at=?
+		`UPDATE tenant_idp SET name=?, label_ja=?, label_en=?, kind=?, issuer=?, client_id=?,
+		   secret_enc=?, key_ref=?, trust=?, allowed_tids=?, allowed_domains=?, allowed_orgs=?,
+		   link_claim=?, status=?, approved_by=?, approved_at=?, updated_at=?
 		 WHERE tenant_id=? AND id=?`,
-		t.Name, t.LabelJA, t.LabelEN, t.Issuer, t.ClientID,
-		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains,
-		t.Status, t.ApprovedBy, t.ApprovedAt, t.UpdatedAt,
+		t.Name, t.LabelJA, t.LabelEN, t.Kind, t.Issuer, t.ClientID,
+		t.SecretEnc, t.KeyRef, t.Trust, t.AllowedTIDs, t.AllowedDomains, t.AllowedOrgs,
+		t.LinkClaim, t.Status, t.ApprovedBy, t.ApprovedAt, t.UpdatedAt,
 		t.TenantID, t.ID)
 	return err
 }
