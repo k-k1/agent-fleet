@@ -31,16 +31,23 @@ func newTenantIdPAPI(m *manager) tenantIdPAPI { return tenantIdPAPI{memberAuth{m
 // an update that leaves it at the mask (or empty) keeps the stored value — the same
 // contract mcp_server.go uses for header values.
 type tenantIdPBody struct {
-	ID             string `json:"id,omitempty"`
-	Name           string `json:"name"`
-	LabelJA        string `json:"label_ja,omitempty"`
-	LabelEN        string `json:"label_en,omitempty"`
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name"`
+	LabelJA string `json:"label_ja,omitempty"`
+	LabelEN string `json:"label_en,omitempty"`
+	// Kind is "oidc" (default) or "github". It decides which of the fields below the
+	// form even shows, and which ones this API requires (docs/61 §61.15).
+	Kind           string `json:"kind,omitempty"`
 	Issuer         string `json:"issuer"`
 	ClientID       string `json:"client_id"`
 	ClientSecret   string `json:"client_secret,omitempty"`
 	Trust          string `json:"trust"`
 	AllowedTIDs    string `json:"allowed_tids,omitempty"`
 	AllowedDomains string `json:"allowed_domains"`
+	AllowedOrgs    string `json:"allowed_orgs,omitempty"`
+	// LinkClaim names the stable claim rule 1.5 matches on when the issuer's `sub` is
+	// pairwise (docs/61 §61.15.10). Only the names in tenantLinkClaims are accepted.
+	LinkClaim string `json:"link_claim,omitempty"`
 	// Read-only fields.
 	ProviderID string `json:"provider_id,omitempty"`
 	TenantSlug string `json:"tenant_slug,omitempty"`
@@ -58,10 +65,15 @@ type tenantIdPBody struct {
 }
 
 func (a tenantIdPAPI) rowToBody(row TenantIdP, slug string, usable bool) tenantIdPBody {
+	kind := row.Kind
+	if kind == "" {
+		kind = tenantIdPKindOIDC // rows written before 0041
+	}
 	return tenantIdPBody{
 		ID: row.ID, Name: row.Name, LabelJA: row.LabelJA, LabelEN: row.LabelEN,
-		Issuer: row.Issuer, ClientID: row.ClientID, Trust: row.Trust,
+		Kind: kind, Issuer: row.Issuer, ClientID: row.ClientID, Trust: row.Trust,
 		AllowedTIDs: row.AllowedTIDs, AllowedDomains: row.AllowedDomains,
+		AllowedOrgs: row.AllowedOrgs, LinkClaim: row.LinkClaim,
 		ProviderID: tenantProviderID(slug, row.Name), TenantSlug: slug,
 		Status: row.Status, HasSecret: row.SecretEnc != "",
 		ApprovedBy: row.ApprovedBy, ApprovedAt: row.ApprovedAt,
@@ -92,14 +104,14 @@ func (a tenantIdPAPI) list(w http.ResponseWriter, r *http.Request) {
 // queue (GET /api/admin/idp) — the super_admin approval queue across every tenant
 // (docs/61 §61.11.6). Pending rows come first: that is the list somebody is waiting on.
 func (a tenantIdPAPI) queue(w http.ResponseWriter, r *http.Request, _ Identity) {
-	rows, slugs, err := a.mgr.store.ListAllTenantIdPs(r.Context())
+	rows, tenants, err := a.mgr.store.ListAllTenantIdPs(r.Context())
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	out := make([]tenantIdPBody, 0, len(rows))
 	for _, row := range rows {
-		slug := slugs[row.TenantID]
+		slug := tenants[row.TenantID].Slug
 		id := tenantProviderID(slug, row.Name)
 		out = append(out, a.rowToBody(row, slug, a.mgr.tenantIdP.providerFor(r.Context(), id) != nil))
 	}
@@ -135,8 +147,26 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 	b.Issuer = strings.TrimSpace(b.Issuer)
 	b.ClientID = strings.TrimSpace(b.ClientID)
 	b.Trust = strings.ToLower(strings.TrimSpace(b.Trust))
+	b.Kind = strings.ToLower(strings.TrimSpace(b.Kind))
+	b.LinkClaim = strings.ToLower(strings.TrimSpace(b.LinkClaim))
+	if b.Kind == "" {
+		b.Kind = tenantIdPKindOIDC
+	}
 	tids := splitCSVLower(b.AllowedTIDs)
 	domains := splitDomainCSV(b.AllowedDomains)
+	orgs := splitCSVLower(b.AllowedOrgs)
+	// ★ github rows do not carry an issuer or a trust rule from the form: there is
+	// exactly one GitHub and its email rule is fixed (trust=api, the verified flag on
+	// /user/emails — docs/61 §61.4). Writing them here rather than leaving them blank
+	// keeps every row readable in the register and in the audit line, where "which
+	// identity source" is the question being asked (§61.15).
+	// ★ link_claim goes the same way for a github row: the GitHub adapter's subject is
+	// the account's numeric id, which is already the same for every OAuth App, so rule
+	// 1.5 needs no second key there and a stored value would only be a lie in the
+	// register.
+	if b.Kind == tenantIdPKindGitHub {
+		b.Issuer, b.Trust, tids, b.LinkClaim = githubWebBase, trustAPI, nil, ""
+	}
 
 	id := r.PathValue("id")
 	rows, err := a.mgr.store.ListTenantIdPs(r.Context(), t.ID)
@@ -160,7 +190,7 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "tenant_idp_not_found", "unknown sign-in method"})
 		return
 	}
-	if aerr := validateTenantIdPBody(b, domains, tids); aerr != nil {
+	if aerr := validateTenantIdPBody(b, domains, tids, orgs); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -198,10 +228,11 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 	now := nowTS()
 	row := TenantIdP{
 		ID: id, TenantID: t.ID, Name: b.Name, LabelJA: strings.TrimSpace(b.LabelJA),
-		LabelEN: strings.TrimSpace(b.LabelEN), Issuer: b.Issuer, ClientID: b.ClientID,
+		LabelEN: strings.TrimSpace(b.LabelEN), Kind: b.Kind, Issuer: b.Issuer, ClientID: b.ClientID,
 		SecretEnc: enc, KeyRef: keyRef, Trust: b.Trust,
-		AllowedTIDs: joinCSV(tids), AllowedDomains: joinCSV(domains),
-		Status: "pending", CreatedBy: ident.ID, CreatedAt: now, UpdatedAt: now,
+		AllowedTIDs: joinCSV(tids), AllowedDomains: joinCSV(domains), AllowedOrgs: joinCSV(orgs),
+		LinkClaim: b.LinkClaim,
+		Status:    "pending", CreatedBy: ident.ID, CreatedAt: now, UpdatedAt: now,
 	}
 	action := "tenant_idp.create"
 	if stored != nil {
@@ -228,7 +259,8 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mgr.tenantIdP.invalidate()
 	a.audit(r, ident, t.ID, action, tenantProviderID(t.Slug, row.Name),
-		"issuer="+row.Issuer+" trust="+row.Trust+" domains="+row.AllowedDomains+" status="+row.Status)
+		"kind="+row.Kind+" issuer="+row.Issuer+" trust="+row.Trust+" orgs="+row.AllowedOrgs+
+			" domains="+row.AllowedDomains+" link_claim="+row.LinkClaim+" status="+row.Status)
 	writeJSON(w, http.StatusOK, a.rowToBody(row, t.Slug, false))
 }
 
@@ -239,6 +271,12 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 // A new client_secret does not re-pend: it is the same issuer and the same app
 // registration, and forcing re-approval on a routine credential rotation would teach
 // people to avoid rotating.
+// ★ For a github row the approval rests on a different pair — (allowed_orgs,
+// allowed_domains) instead of (issuer, allowed_domains) — because github.com is one
+// issuer shared by every tenant (docs/61 §61.15 + 決定 34). So ADDING an org repends:
+// the approver said "the members of these organizations", and another organization
+// is another set of people they never saw. Removing one does not, for the same
+// reason narrowing the domains does not.
 func repend(old, next TenantIdP) bool {
 	if old.Status != "active" {
 		return false
@@ -246,7 +284,19 @@ func repend(old, next TenantIdP) bool {
 	if old.Issuer != next.Issuer || old.ClientID != next.ClientID || old.Trust != next.Trust {
 		return true
 	}
-	return widened(old.AllowedDomains, next.AllowedDomains) || widened(old.AllowedTIDs, next.AllowedTIDs)
+	if old.Kind != next.Kind {
+		return true
+	}
+	// ★ link_claim too (docs/61 §61.15.10). It does not change WHO may sign in, so it
+	// is easy to read as cosmetic — but it changes WHERE a login LANDS: rule 1.5 joins
+	// on it, so an existing account can be reached through a button that could not
+	// reach it before. That is the approver's business, exactly like the issuer.
+	if old.LinkClaim != next.LinkClaim {
+		return true
+	}
+	return widened(old.AllowedDomains, next.AllowedDomains) ||
+		widened(old.AllowedTIDs, next.AllowedTIDs) ||
+		widened(old.AllowedOrgs, next.AllowedOrgs)
 }
 
 // widened reports whether next contains an entry old did not.
@@ -311,7 +361,7 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 				"the stored client secret cannot be decrypted — the tenant has to enter it again"})
 			return
 		}
-		if _, err := buildTenantProvider(row, t.Slug, secret); err != nil {
+		if _, err := buildTenantProvider(row, TenantRef{Slug: t.Slug, Name: t.Name}, secret); err != nil {
 			writeAPIErr(w, &apiError{http.StatusBadRequest, "tenant_idp_invalid", err.Error()})
 			return
 		}
@@ -376,7 +426,7 @@ func (a tenantIdPAPI) audit(r *http.Request, ident Identity, tenantID, action, t
 // tenant, exactly as auto_join_domains works (§61.9.8) — and refusing on save is the
 // only moment a human is present to read why.
 func (a tenantIdPAPI) checkDomainsUnclaimed(r *http.Request, tenantID, rowID string, domains []string) *apiError {
-	rows, slugs, err := a.mgr.store.ListAllTenantIdPs(r.Context())
+	rows, tenants, err := a.mgr.store.ListAllTenantIdPs(r.Context())
 	if err != nil {
 		return internalErr(err)
 	}
@@ -394,7 +444,7 @@ func (a tenantIdPAPI) checkDomainsUnclaimed(r *http.Request, tenantID, rowID str
 		for _, d := range domains {
 			if claimed[d] {
 				return &apiError{http.StatusConflict, "tenant_idp_domain_conflict",
-					"domain " + d + " is already claimed by the sign-in method of tenant " + slugs[other.TenantID]}
+					"domain " + d + " is already claimed by the sign-in method of tenant " + tenants[other.TenantID].Slug}
 			}
 		}
 	}
@@ -404,10 +454,37 @@ func (a tenantIdPAPI) checkDomainsUnclaimed(r *http.Request, tenantID, rowID str
 // validateTenantIdPBody is the save-time half of the rules the env path enforces at
 // startup. It has to be a 400 rather than a fatal: a running CP cannot be brought
 // down because somebody typed a bad issuer into a form (§61.11.5).
-func validateTenantIdPBody(b tenantIdPBody, domains, tids []string) *apiError {
+func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiError {
 	if !validTenantIdPName(b.Name) {
 		return &apiError{http.StatusBadRequest, "tenant_idp_name_invalid",
 			"name must be 1-32 chars of a-z 0-9 - _ and start with a letter or digit"}
+	}
+	switch b.Kind {
+	case tenantIdPKindOIDC:
+	case tenantIdPKindGitHub:
+		// ★ The org list carries the whole weight an issuer carries for OIDC. github.com
+		// is one issuer for every tenant on earth, so "which organization vouches for
+		// this person" is what makes the login mean anything (docs/61 §61.15 + 決定 34),
+		// and it is the same rule the env path enforces by disabling GitHub outright
+		// when AF_GITHUB_ALLOWED_ORGS is empty (§61.3).
+		if len(orgs) == 0 {
+			return &apiError{http.StatusBadRequest, "tenant_idp_orgs_required",
+				"list the GitHub organizations whose members may sign in (membership in one of them is what authorizes a GitHub sign-in)"}
+		}
+		if b.ClientID == "" {
+			return &apiError{http.StatusBadRequest, "bad_request", "client_id is required"}
+		}
+		// allowed_domains stays required for github too — see the note below. It is not
+		// what stops a forged address here (GitHub verifies the mailbox itself), it is
+		// this row's claim in the deployment-wide one-domain-one-tenant ledger.
+		if len(domains) == 0 {
+			return &apiError{http.StatusBadRequest, "tenant_idp_domains_required",
+				"list the email domains this sign-in method may admit (an empty list would admit every address the organization's members carry)"}
+		}
+		return nil
+	default:
+		return &apiError{http.StatusBadRequest, "tenant_idp_kind_invalid",
+			"kind must be " + tenantIdPKindOIDC + " or " + tenantIdPKindGitHub}
 	}
 	if !validIssuerURL(b.Issuer) {
 		return &apiError{http.StatusBadRequest, "tenant_idp_issuer_invalid",
@@ -422,6 +499,16 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids []string) *apiError {
 	}
 	if b.ClientID == "" {
 		return &apiError{http.StatusBadRequest, "bad_request", "client_id is required"}
+	}
+	// ★ The whitelist, and the save-time half of the pair buildTenantProvider enforces
+	// at runtime (docs/61 §61.15.10). `oid` is a per-directory object id nobody can
+	// choose; `email` / `upn` / `preferred_username` are ASSERTED, and a tenant that
+	// could name one would have an email join inside a shared realm — the takeover
+	// rule 2' refuses, arriving through another door.
+	if b.LinkClaim != "" && !tenantLinkClaims[b.LinkClaim] {
+		return &apiError{http.StatusBadRequest, "tenant_idp_link_claim_invalid",
+			"link_claim must be one of " + strings.Join(tenantLinkClaimList(), ", ") +
+				" — a claim the IdP assigns and nobody can choose. An asserted claim (email, upn, …) would let this sign-in method reach accounts created by a different authority"}
 	}
 	switch b.Trust {
 	case trustEmailVerified, trustIssuer:

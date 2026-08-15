@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -91,7 +92,7 @@ func TestEntryGateAdmitsAnAutoJoinDomain(t *testing.T) {
 	p := &oidcProvider{id: "entra", deployAllowed: cfg.emailAllowed, dbAllowed: cfg.tenantEmailAllowed}
 
 	tn, _ := st.CreateTenant(ctx, "acme", "Acme")
-	if err := st.SetTenantLogin(ctx, tn.ID, "", "acme.co.jp", ""); err != nil {
+	if err := st.SetTenantLogin(ctx, tn.ID, "", "acme.co.jp", "", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
 	mgr.tenantLogin.invalidate()
@@ -186,7 +187,7 @@ func TestAllowedProvidersIsEnforcedAtTenantResolution(t *testing.T) {
 	mgr := p3Manager(t, st)
 
 	tn, _ := st.CreateTenant(ctx, "sales", "営業部")
-	if err := st.SetTenantLogin(ctx, tn.ID, "entra", "", ""); err != nil {
+	if err := st.SetTenantLogin(ctx, tn.ID, "entra", "", "", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
 	mv := MembershipView{MembershipID: "m1", TenantID: tn.ID, TenantSlug: "sales"}
@@ -224,7 +225,7 @@ func TestAutoJoinCreatesAMembershipButNeverOutranksAnExistingOne(t *testing.T) {
 	mgr := p3Manager(t, st) // AF_PROVISION=invite
 
 	sales, _ := st.CreateTenant(ctx, "sales", "営業部")
-	if err := st.SetTenantLogin(ctx, sales.ID, "", "acme.co.jp", ""); err != nil {
+	if err := st.SetTenantLogin(ctx, sales.ID, "", "acme.co.jp", "", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
 
@@ -274,7 +275,7 @@ func TestAutoJoinConflictResolvesToTheLowestSlug(t *testing.T) {
 	b, _ := st.CreateTenant(ctx, "bravo", "B")
 	a, _ := st.CreateTenant(ctx, "alpha", "A")
 	for _, id := range []string{b.ID, a.ID} {
-		if err := st.SetTenantLogin(ctx, id, "", "acme.co.jp", ""); err != nil {
+		if err := st.SetTenantLogin(ctx, id, "", "acme.co.jp", "", ""); err != nil {
 			t.Fatalf("set login rules: %v", err)
 		}
 	}
@@ -389,7 +390,7 @@ func TestAllowedDomainsGuardsInvitesOnly(t *testing.T) {
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
 	tn, _ := st.CreateTenant(ctx, "sales", "営業部")
-	if err := st.SetTenantLogin(ctx, tn.ID, "", "", "acme.co.jp"); err != nil {
+	if err := st.SetTenantLogin(ctx, tn.ID, "", "", "acme.co.jp", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
 	if _, err := st.UpsertIdentity(ctx, "boss@acme.co.jp", "boss-acme-co-jp", "super_admin"); err != nil {
@@ -496,7 +497,7 @@ func TestPerTenantLoginPage(t *testing.T) {
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
 	tn, _ := st.CreateTenant(ctx, "sales", "営業部")
-	if err := st.SetTenantLogin(ctx, tn.ID, "entra", "", ""); err != nil {
+	if err := st.SetTenantLogin(ctx, tn.ID, "entra", "", "", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
 
@@ -576,7 +577,7 @@ func TestSetTenantLoginRejectsDuplicateAutoJoinDomains(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 	a, _ := st.CreateTenant(ctx, "alpha", "A")
-	if err := st.SetTenantLogin(ctx, a.ID, "", "acme.co.jp", ""); err != nil {
+	if err := st.SetTenantLogin(ctx, a.ID, "", "acme.co.jp", "", ""); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if _, err := st.CreateTenant(ctx, "bravo", "B"); err != nil {
@@ -609,5 +610,90 @@ func TestSetTenantLoginRejectsDuplicateAutoJoinDomains(t *testing.T) {
 	}
 	if got.AllowedProviders != "entra" || got.AutoJoinDomains != "b.example" || got.AllowedDomains != "b.example" {
 		t.Fatalf("stored rules = %+v, want normalized and deduped", got)
+	}
+}
+
+// GET /api/admin/providers answers the question the free-text allowed_providers
+// field asks and never answered: which ids may be written there. The test pins the
+// two properties the endpoint exists for — it names every enabled provider with a
+// label, and it leaks no credential — plus the gate, which is the same one that
+// guards the rule this list feeds (決定 19).
+func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
+	ctx := context.Background()
+	st := p3Store(t)
+	mgr := p3Manager(t, st)
+	if _, err := st.UpsertIdentity(ctx, "boss@acme.co.jp", "boss-acme-co-jp", "super_admin"); err != nil {
+		t.Fatalf("super admin: %v", err)
+	}
+	tn, _ := st.CreateTenant(ctx, "sub", "子会社")
+	lead, _ := st.UpsertIdentity(ctx, "lead@sub.co.jp", "lead-sub-co-jp", "")
+	if _, err := st.EnsureMembership(ctx, lead.ID, tn.ID, "tenant_admin"); err != nil {
+		t.Fatalf("membership: %v", err)
+	}
+
+	api := newLoginProviderAPI(mgr, []loginProvider{
+		&oidcProvider{
+			id: "entra", labelJA: "Microsoft でサインイン", labelEN: "Sign in with Microsoft",
+			issuer:   "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0",
+			clientID: "cid-entra", clientSecret: "sekrit-entra",
+		},
+		// No labels declared: the endpoint must still hand the Console something
+		// printable, or every caller re-invents defaultProviderLabel.
+		&oidcProvider{id: "okta", issuer: "https://acme.okta.com", clientID: "cid-okta", clientSecret: "sekrit-okta"},
+		&githubProvider{
+			id: githubProviderID, labelJA: "GitHub でサインイン", labelEN: "Sign in with GitHub",
+			clientID: "cid-gh", clientSecret: "sekrit-gh",
+		},
+	})
+
+	get := func(email string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/api/admin/providers", nil)
+		r.Header.Set("X-Forwarded-Email", email)
+		w := httptest.NewRecorder()
+		api.withSuperAdmin(api.list)(w, r)
+		return w
+	}
+
+	// ★ A tenant_admin cannot edit allowed_providers (決定 19), so this list is
+	// none of their business — and the UI hiding it is not what makes that true.
+	if w := get("lead@sub.co.jp"); w.Code != http.StatusForbidden {
+		t.Fatalf("tenant_admin: %d %s", w.Code, w.Body.String())
+	}
+
+	w := get("boss@acme.co.jp")
+	if w.Code != http.StatusOK {
+		t.Fatalf("super_admin: %d %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Providers []struct {
+			ID      string `json:"id"`
+			LabelJA string `json:"label_ja"`
+			LabelEN string `json:"label_en"`
+			Issuer  string `json:"issuer"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v (%s)", err, w.Body.String())
+	}
+	if len(got.Providers) != 3 {
+		t.Fatalf("providers = %+v, want all three, in the deployment's order", got.Providers)
+	}
+	if p := got.Providers[0]; p.ID != "entra" || p.LabelJA != "Microsoft でサインイン" || p.LabelEN != "Sign in with Microsoft" ||
+		p.Issuer != "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0" {
+		t.Fatalf("entra = %+v, want id, both labels and the issuer", p)
+	}
+	if p := got.Providers[1]; p.LabelJA != "Okta でサインイン" || p.LabelEN != "Sign in with Okta" {
+		t.Fatalf("okta = %+v, want the generated labels rather than empty strings", p)
+	}
+	if p := got.Providers[2]; p.ID != githubProviderID || p.Issuer != githubWebBase {
+		t.Fatalf("github = %+v, want the fixed identity source", p)
+	}
+	// ★ The response is read by whoever can open the admin modal; a client_id is
+	// not a secret but it is not on screen either, and client_secret must never
+	// come back out of the process.
+	for _, leak := range []string{"sekrit-entra", "sekrit-okta", "sekrit-gh", "cid-entra", "cid-okta", "cid-gh"} {
+		if strings.Contains(w.Body.String(), leak) {
+			t.Fatalf("response leaks %q:\n%s", leak, w.Body.String())
+		}
 	}
 }

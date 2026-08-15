@@ -16,8 +16,9 @@ type Tenant struct {
 	ID, Slug, Name, Status, Limits, Isolation, KeyRef, CreatedAt string
 	// Per-tenant login rules (docs/61 §61.9.7, migration 0039). All CSV, all
 	// optional; see TenantLoginRules for what each one governs and why there is no
-	// allowed_emails among them.
-	AllowedProviders, AutoJoinDomains, AllowedDomains string
+	// allowed_emails among them. HiddenProviders (0042) is the one that is DISPLAY
+	// only — accepted methods to leave off this tenant's login page (§61.15.9).
+	AllowedProviders, AutoJoinDomains, AllowedDomains, HiddenProviders string
 }
 
 // TenantLoginRules is the login-relevant slice of a tenant, as loaded in bulk by
@@ -27,6 +28,9 @@ type Tenant struct {
 type TenantLoginRules struct {
 	ID, Slug, Name                                    string
 	AllowedProviders, AutoJoinDomains, AllowedDomains []string
+	// HiddenProviders is not a gate. It only removes buttons from /login/<slug>;
+	// the same method still admits its people (docs/61 §61.15.9 + 決定 14).
+	HiddenProviders []string
 }
 
 // Identity is a person, unique by email within the deployment. role is the
@@ -382,7 +386,9 @@ type TenantStore interface {
 	ListTenants(ctx context.Context) ([]Tenant, error)
 	// SetTenantLogin stores the three CSV login rules (docs/61 §61.9.7). Values are
 	// normalized by the caller (lowercased, deduped); this only writes them.
-	SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains string) error
+	// hiddenProviders is DISPLAY only (0042, docs/61 §61.15.9) — accepted methods to
+	// leave off this tenant's login page, never a gate.
+	SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains, hiddenProviders string) error
 	// ListTenantLoginRules is the entry gate's bulk read: one query behind a short
 	// TTL cache rather than a per-request lookup (§61.9.7).
 	ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error)
@@ -397,12 +403,24 @@ type TenantStore interface {
 // ApprovedAt are the copy of that approval kept next to the row — the audit ledger
 // is the record.
 type TenantIdP struct {
-	ID, TenantID, Name              string
-	LabelJA, LabelEN                string
-	Issuer, ClientID                string
-	SecretEnc, KeyRef               string
-	Trust                           string
-	AllowedTIDs, AllowedDomains     string // CSV
+	ID, TenantID, Name string
+	LabelJA, LabelEN   string
+	// Kind selects the adapter the row is built into and therefore which of the
+	// fields below mean anything: "oidc" (the P4 default) uses Issuer/Trust/
+	// AllowedTIDs, "github" uses AllowedOrgs and pins Issuer to https://github.com
+	// (docs/61 §61.15 + 決定 35).
+	Kind                        string
+	Issuer, ClientID            string
+	SecretEnc, KeyRef           string
+	Trust                       string
+	AllowedTIDs, AllowedDomains string // CSV
+	AllowedOrgs                 string // CSV, kind=github only
+	// LinkClaim names the stable claim rule 1.5 should match on, for an issuer whose
+	// `sub` is pairwise (docs/61 §61.15.10). ★ A tenant may only name a claim from a
+	// closed list (tenantLinkClaims): naming `email` or `upn` would build an
+	// email join inside a shared realm, which is precisely what 決定 32 refuses. The
+	// VALUE is never taken from this row — only the name is configuration.
+	LinkClaim                       string
 	Status                          string // pending | active | suspended
 	ApprovedBy, ApprovedAt          string
 	CreatedBy, CreatedAt, UpdatedAt string
@@ -414,15 +432,22 @@ type TenantIdP struct {
 // ListActiveTenantIdPs is the exception by design: it is the deployment-wide read
 // the login layer needs to assemble the provider set, and it is never reached from
 // a tenant-scoped handler.
+// TenantRef is the owning tenant of a tenant_idp row, as the deployment-wide reads
+// carry it: the slug because the provider id the rest of CP sees is built from it
+// (t:<slug>:<name>), and the DISPLAY NAME because the default button label has to
+// say WHICH company's method it is — otherwise a tenant's GitHub row and the
+// deployment's GitHub button render the same text on one page (docs/61 §61.15.10).
+type TenantRef struct{ Slug, Name string }
+
 type TenantIdPStore interface {
 	ListTenantIdPs(ctx context.Context, tenantID string) ([]TenantIdP, error)
-	// ListAllTenantIdPs returns every row with its tenant slug, for the super_admin
-	// approval queue. slugs are returned separately so the store stays free of view
-	// structs; the handler joins them.
-	ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error)
+	// ListAllTenantIdPs returns every row with its tenant, for the super_admin
+	// approval queue. The tenants are returned separately (keyed by tenant id) so
+	// the store stays free of view structs; the handler joins them.
+	ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error)
 	// ListActiveTenantIdPs returns the approved rows only — the login layer's bulk
 	// read, behind the same short TTL cache the tenant rules use.
-	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error)
+	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error)
 	GetTenantIdP(ctx context.Context, tenantID, id string) (TenantIdP, bool, error)
 	CreateTenantIdP(ctx context.Context, row TenantIdP) error
 	UpdateTenantIdP(ctx context.Context, row TenantIdP) error
@@ -431,6 +456,52 @@ type TenantIdPStore interface {
 	// being approved.
 	SetTenantIdPStatus(ctx context.Context, tenantID, id, status, approvedBy, approvedAt, updatedAt string) error
 	DeleteTenantIdP(ctx context.Context, tenantID, id string) error
+}
+
+// IdentityLink is one proven login, on its way to LinkIdentity. It is a struct
+// rather than eight positional parameters because every field but one is a string
+// and this is the identity path: a swapped pair here hands somebody another
+// person's workspace, and `Realm: x, Subject: y` says which is which at the call
+// site.
+type IdentityLink struct {
+	Provider string // the button that was pressed (env id, or t:<slug>:<name>)
+	Subject  string // the IdP's stable id for this account
+	// Realm is WHERE Subject was proven: the issuer URL for OIDC, and
+	// https://github.com for the GitHub adapter. Two providers sharing a realm are
+	// two buttons onto the same IdP, so the same subject there is the same person —
+	// that is rule 1.5, and it is the one join a tenant-defined provider is allowed
+	// to make, because the realm is asserted by the adapter and verified against
+	// that IdP, never taken from the tenant's row (docs/61 §61.15).
+	Realm string
+	// RealmClaim / RealmSubject are rule 1.5's SECOND key (docs/61 §61.15.10 + 決定
+	// 38). Some IdPs make `sub` pairwise — Entra's is a function of (app registration,
+	// user) — so the same person through two app registrations on one issuer is two
+	// subjects and rule 1.5 never fires. A provider may therefore also name a stable
+	// claim (`oid`): RealmClaim is WHICH claim was read, RealmSubject is what it
+	// carried. Both must match for the rule to join, so two providers reading
+	// different claims never join on a coincidental value collision.
+	//
+	// ★ Subject keeps meaning `sub`. Replacing it would change the key of every row
+	// already written, and a tenant-defined provider — which has no rule 2 to fall
+	// back on — would refuse its own existing people as email_taken.
+	RealmClaim   string
+	RealmSubject string
+	Email        string
+	FallbackKey  string // sanitizeUser(email), used only when a new identity is created
+	RoleHint     string
+	EmailJoin    bool
+}
+
+// LinkedProvider is one sign-in method bound to a person, as shown on their own
+// account panel (docs/61 §61.16). Subject is included because it is the only
+// stable handle on the row; the Console shows the label and the address instead.
+type LinkedProvider struct {
+	Provider    string
+	Subject     string
+	Realm       string
+	Email       string
+	CreatedAt   string
+	LastLoginAt string
 }
 
 type IdentityStore interface {
@@ -446,14 +517,50 @@ type IdentityStore interface {
 	// person landed in a different workspace than the one they may expect.
 	// fallbackKey is used only on that path (it is sanitizeUser(email)).
 	//
-	// ★ emailJoin selects rule 2 ("this address already belongs to someone — join
+	// ★ EmailJoin selects rule 2 ("this address already belongs to someone — join
 	// that identity"). It is FALSE for a tenant-defined provider (docs/61 §61.11 +
 	// 決定 32): its issuer belongs to the subsidiary, not to the operator, so an
 	// admin there could otherwise mint a token carrying a colleague's address and
 	// land in that colleague's identity — home, secrets and all. The caller decides,
 	// because the naming rule that distinguishes the two kinds of provider
 	// (tenantProviderID) belongs to the login layer, not to SQL.
-	LinkIdentity(ctx context.Context, provider, subject, email, fallbackKey, roleHint string, emailJoin bool) (ident Identity, isNew bool, err error)
+	LinkIdentity(ctx context.Context, link IdentityLink) (ident Identity, isNew bool, err error)
+	// FillProviderRealm stamps the realm on the rows a provider wrote before the
+	// column existed (or through a path that had no provider object). Startup-only
+	// and idempotent — see the implementation for why it cannot be a migration.
+	FillProviderRealm(ctx context.Context, provider, realm string) error
+	// ListLinkedProviders returns the sign-in methods bound to one person, newest
+	// login first. It is the read half of the "link a second sign-in method" flow
+	// (docs/61 §61.16) and carries nothing secret — the pairs it lists are exactly
+	// what the person proved by signing in.
+	ListLinkedProviders(ctx context.Context, identityID string) ([]LinkedProvider, error)
+	// AttachProvider binds an ALREADY-PROVEN (provider, subject) to an EXISTING
+	// identity, at that person's own request (docs/61 §61.16 + 決定 37). It differs
+	// from LinkIdentity in three ways that are the whole point:
+	//
+	//   - it never creates an identity and never resolves one — the caller passes the
+	//     identity that is already signed in;
+	//   - it never touches the identity row: not the email, and above all not the
+	//     role (決定 31 — a linked method must not be able to hand out a deployment
+	//     role, the same reason roleHint is suppressed for tenant-defined providers);
+	//   - it REFUSES rather than re-points when the pair (or the same IdP account
+	//     reached through another button — rule 1.5) already belongs to somebody:
+	//     errLinkTaken. Joining two accounts that both have a login history is a
+	//     merge, and a merge cannot be undone (§61.5).
+	AttachProvider(ctx context.Context, identityID string, link IdentityLink) error
+	// DetachProvider removes one sign-in method from a person's account (docs/61
+	// §61.16.4, the deferred half of 決定 37). identityID is always in the WHERE, so
+	// no caller can reach somebody else's row even with a (provider, subject) it
+	// guessed.
+	//
+	// ★ It REFUSES to remove the last one (errLastLoginMethod). An account with no
+	// method left cannot be signed into at all, and there is no recovery path from
+	// the Console — this deployment has no password and no SMTP (決定 28). The count
+	// is taken in SQL, in the same statement, because the caller's check and the
+	// delete are otherwise two moments with a browser tab in between.
+	// errNoSuchLoginMethod means the pair is not this person's (or not there at all);
+	// the two are separate so the API can answer 409 and 404 rather than one 400.
+	DetachProvider(ctx context.Context, identityID, provider, subject string) error
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
 	// GetIdentityByUserKey is the READ-ONLY lookup for view paths (admin stats,
 	// admin MCP list tools): unlike UpsertIdentity it neither inserts a row for a

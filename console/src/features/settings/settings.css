@@ -227,6 +227,24 @@
 .tenant-modal .settings-content .admin-panel + .admin-panel {
   margin-top: 12px;
 }
+/* メンバーの 2 段（一覧 → 詳細）。管理モーダルと同じ .admin-nav / .admin-crumbs を
+   使うが、あちらは .admin-surface で、settings-modal の button リセット（枠付きピル）
+   を通らない。ここでは「戻る」がピルになってしまうので、その分だけ戻す。
+   .settings-crumb（スマホのレール↔本文）はモーダル自体の段で、こちらは本文の中の段。
+   両方出ても意味は重ならない。 */
+.tenant-modal .tenant-drill {
+  margin: 0 0 12px;
+}
+.tenant-modal .admin-back {
+  border: none;
+  background: transparent;
+  color: var(--dialog-muted);
+  padding: 4px 6px;
+}
+.tenant-modal .admin-back:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
 /* 複数テナントを管理している人向けの切り替え。レールの見出し直下に置くので、
    レール項目と同じ幅・同じ余白に合わせる。 */
 .tenant-modal .tenant-picker {
@@ -549,6 +567,14 @@
 .pat-table th {
   color: var(--muted, #888);
   font-weight: 500;
+}
+/* アカウント（サインイン方法の紐づけ・docs/61 §61.16）。表のすぐ下に「追加」の見出しが
+   来るので段落として離し、方式の数だけ並ぶボタンは折り返す。 */
+.account-methods {
+  margin-bottom: 22px;
+}
+.account-add {
+  flex-wrap: wrap;
 }
 .pat-revoked {
   opacity: 0.5;
@@ -3396,6 +3422,33 @@
 .idp-state.idp-pending {
   color: var(--warn, #d9a441);
   border-color: color-mix(in srgb, var(--warn, #d9a441) 45%, var(--border2));
+}
+/* What may be written in "使えるサインイン方法" (docs/61 §61.11.8 ·
+   tenantLogin.tsx DeploymentSignInMethods). It sits directly under the rules form
+   because that is the only place the person who mistyped an id will look. Rows
+   are the .adm-mcp-row family; only the id — the value actually typed — is mono,
+   the display name leads. */
+.idp-known {
+  margin-top: 14px;
+}
+.idp-known > .af-cap {
+  display: block;
+  font-size: 11.5px;
+  color: var(--fg);
+  margin-bottom: 2px;
+}
+/* ★ 枠は var(--border2) では引けない — ライトでは #e6e8ec が地の #f4f5f7 とほぼ同色で、
+   チップが消えて id が宙に浮いた文字列に見える（実測）。前景を薄く混ぜると、どちらの
+   テーマでも同じ濃さで浮く。 */
+.idp-known code {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: 4px;
+  padding: 0 5px;
 }
 /* key/value secret editor (env vars / headers) */
 .mcp-kv {

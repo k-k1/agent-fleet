@@ -1,0 +1,42 @@
+-- Tenant-defined GitHub sign-in (docs/61 §61.15 + ADR0043 決定 34 / 35).
+--
+-- P4 (0040) assumed every tenant-defined method is an OIDC client, because its
+-- trust rests on the issuer: the issuer belongs to that subsidiary alone, so the
+-- addresses it asserts inside allowed_domains may be believed (決定 7 / 30).
+-- GitHub breaks that assumption in a way no column default can paper over --
+-- github.com is ONE issuer shared by every tenant, so the basis moves to
+-- "membership of an org, carrying an email GitHub itself verified".
+--
+-- kind is therefore not a cosmetic tag but the switch that selects which adapter a
+-- row is built into, and which fields are required:
+--
+--   oidc    issuer + trust (+ allowed_tids when the issuer is multi-tenant)
+--   github  allowed_orgs, and issuer is the constant https://github.com
+--
+-- allowed_domains stays REQUIRED for both. For GitHub it is not what stops a
+-- forged address (GitHub verifies the mailbox and a tenant admin cannot fake
+-- that) -- it is the row's entry in the deployment-wide one-domain-one-tenant
+-- ledger, which is what stops tenant A from claiming tenant B's domain, and it
+-- keeps a member whose GitHub address is a personal one from silently landing in
+-- a SECOND workspace (docs/61 §61.7).
+--
+-- identity_provider.realm records WHERE an identity was proven, next to the
+-- subject that was proven there. Without it, the same person pressing the
+-- deployment's GitHub button and their tenant's GitHub button is two unrelated
+-- (provider, subject) pairs, and the second one is refused as email_taken -- the
+-- address already belongs to an account (rule 2''). realm is the issuer URL for
+-- OIDC and https://github.com for the GitHub adapter, so a match means the SAME
+-- IdP account, proven by an authority the tenant does not control. That is rule
+-- 1.5, and it is deliberately NOT an email match: an email match would let a
+-- subsidiary's administrator assert a colleague's address and take the account
+-- that was created through some other authority (決定 32).
+--
+-- No data step: rows written before this migration have realm '' and simply do
+-- not participate in rule 1.5. CP fills them in at startup from the provider set
+-- it just built, which is the only place the id -> issuer mapping is known for
+-- certain (fillProviderRealms).
+-- NOTE the migrator splits on the semicolon, so comments must not contain one.
+ALTER TABLE tenant_idp ADD COLUMN kind TEXT NOT NULL DEFAULT 'oidc';
+ALTER TABLE tenant_idp ADD COLUMN allowed_orgs TEXT NOT NULL DEFAULT '';
+ALTER TABLE identity_provider ADD COLUMN realm TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_identity_provider_realm ON identity_provider(realm, subject)

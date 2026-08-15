@@ -115,6 +115,16 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /oauth2/login", cfg.handleOAuthLogin)
 	mux.HandleFunc("GET /oauth2/callback", cfg.handleOAuthCallback)
 	mux.HandleFunc("GET /oauth2/logout", cfg.handleOAuthLogout)
+	// Linking a second sign-in method to the account you are ALREADY signed in as
+	// (docs/61 §61.16 + 決定 37). It sits under the auth-exempt /oauth2/ prefix like
+	// the rest of the flow, and therefore checks the session itself.
+	mux.HandleFunc("GET /oauth2/link", cfg.handleOAuthLink)
+	// The account panel behind it — a normal session-gated API (docs/61 §61.16).
+	acct := newAccountAPI(cfg)
+	mux.HandleFunc("GET /api/me/login-methods", acct.withIdentity(acct.loginMethods))
+	// Unlinking one (docs/61 §61.16.4). provider/subject are query parameters, not
+	// path segments — a tenant provider id carries colons; see detachLoginMethod.
+	mux.HandleFunc("DELETE /api/me/login-methods", acct.withIdentity(acct.detachLoginMethod))
 	// Identity — who the AuthGateway resolved this request to (and the raw
 	// gateway headers, for verifying the oauth2-proxy -> Caddy -> CP chain).
 	mux.HandleFunc("GET /api/whoami", newWorkspaceAPI(cfg.mgr, cfg.autostart).whoami)
@@ -150,6 +160,11 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/idp/{id}", idp.remove)
 	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp/{id}/status", idp.setStatus)
 	mux.HandleFunc("GET /api/admin/idp", idp.withSuperAdmin(idp.queue)) // approval queue (super_admin)
+	// The deployment's own (env-defined) providers, read-only: what may be written
+	// in a tenant's allowed_providers (login_provider_api.go). cfg.providers is set
+	// before buildMux, so capturing it here is the whole set.
+	lp := newLoginProviderAPI(cfg.mgr, cfg.providers)
+	mux.HandleFunc("GET /api/admin/providers", lp.withSuperAdmin(lp.list))
 	mux.HandleFunc("PUT /api/admin/user-limits", adm.setUserLimit)
 	mux.HandleFunc("PUT /api/admin/membership-role", adm.withSuperAdmin(adm.setMembershipRole))         // grant/revoke tenant_admin (super_admin only)
 	mux.HandleFunc("GET /api/admin/host", adm.withSuperAdmin(adm.hostStats))                            // host load / memory (super_admin)
