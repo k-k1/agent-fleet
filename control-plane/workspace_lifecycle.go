@@ -227,7 +227,7 @@ func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (Runt
 		return nil, err
 	}
 	ws := res.ws
-	ws.MemBytes = m.resolveWorkspaceMemBytes(ctx, ws)
+	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
 	env := append(m.workspaceExtraEnv(ctx, ws), unattendedStartEnv)
 	return m.runtimeFor(ws, dekHex, env...), nil
 }
@@ -288,29 +288,59 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 // unusable state; an unset value (0) is untouched and falls back to the default.
 const memFloorBytes = 256 * mib
 
-// resolveWorkspaceMemBytes returns the RAM cap (bytes) for ws's NEXT container start,
-// or 0 to mean "use the runtime's deployment default" (WS_MEMORY / AF_ECS_TASK_MEMORY).
-// A tenant_admin's per-user mem_limit is honored but clamped to the per-tenant cap
-// (tenantLimits.MaxWorkspaceMem) and the deployment hard ceiling (memMaxBytes), then
-// floored — so the shared host stays protected regardless of what was entered. Unset
-// per-user (0) returns 0 so the operator's default applies unchanged. Best-effort: a
-// store error falls back to the default (0) rather than guessing a value.
-func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws Workspace) int64 {
+// resolveWorkspaceSize returns the three RESOLVED size axes for ws's NEXT container
+// start — RAM (bytes), CPU (Fargate units, 1024 = 1 vCPU) and working disk (GiB).
+// 0 on an axis means "use the runtime's deployment default", so an operator who never
+// set a per-user value keeps exactly the behaviour they configured.
+//
+// A tenant_admin's per-user values are honored but clamped to the per-tenant caps
+// (tenantLimits.MaxWorkspace*) and, for memory, to the deployment hard ceiling
+// (memMaxBytes) and floor — so the shared host stays protected regardless of what was
+// entered. Best-effort: a store error falls back to the defaults rather than guessing.
+//
+// The axes are resolved together because they are read from the same two rows; the
+// runtime factory then maps them per backend (docker --memory/--cpus, ECS task size +
+// ephemeral storage). Fargate's valid (cpu, memory) pairs are enforced later by
+// fargateSize, not here — this function is runtime-neutral (ADR 0044 決定 1).
+func (m *manager) resolveWorkspaceSize(ctx context.Context, ws Workspace) (memBytes int64, cpuUnits, diskGB int) {
 	ul, ok, err := m.store.GetUserLimit(ctx, ws.MembershipID)
-	if err != nil || !ok || ul.MemLimit <= 0 {
-		return 0 // unset → deployment default
+	if err != nil || !ok {
+		return 0, 0, 0
 	}
-	v := ul.MemLimit
+	var lim tenantLimits
 	if t, err := m.store.GetTenant(ctx, ws.TenantID); err == nil {
-		if cap := parseLimits(t.Limits).MaxWorkspaceMem; cap > 0 && v > cap {
-			v = cap
+		lim = parseLimits(t.Limits)
+	}
+	if ul.MemLimit > 0 {
+		memBytes = ul.MemLimit
+		if lim.MaxWorkspaceMem > 0 && memBytes > lim.MaxWorkspaceMem {
+			memBytes = lim.MaxWorkspaceMem
+		}
+		if m.memMaxBytes > 0 && memBytes > m.memMaxBytes {
+			memBytes = m.memMaxBytes
+		}
+		if memBytes < memFloorBytes {
+			memBytes = memFloorBytes
 		}
 	}
-	if m.memMaxBytes > 0 && v > m.memMaxBytes {
-		v = m.memMaxBytes
+	if ul.CPULimit > 0 {
+		cpuUnits = ul.CPULimit
+		if lim.MaxWorkspaceCPU > 0 && cpuUnits > lim.MaxWorkspaceCPU {
+			cpuUnits = lim.MaxWorkspaceCPU
+		}
 	}
-	if v < memFloorBytes {
-		v = memFloorBytes
+	if ul.DiskGB > 0 {
+		diskGB = ul.DiskGB
+		if lim.MaxWorkspaceDiskGB > 0 && diskGB > lim.MaxWorkspaceDiskGB {
+			diskGB = lim.MaxWorkspaceDiskGB
+		}
 	}
-	return v
+	return memBytes, cpuUnits, diskGB
+}
+
+// resolveWorkspaceMemBytes is the memory axis alone, kept because the admin API and
+// MCP echo the post-clamp memory value back to the caller.
+func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws Workspace) int64 {
+	b, _, _ := m.resolveWorkspaceSize(ctx, ws)
+	return b
 }

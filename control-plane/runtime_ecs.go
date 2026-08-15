@@ -25,6 +25,16 @@ import (
 // Connect by DNS name instead of a host-published port.
 const ecsAgentPort int32 = 7700
 
+// wsScratchPath is where a workspace finds its TASK-LOCAL working disk — the fast,
+// non-persistent place for regenerable build output and caches (ADR 0044 決定 3).
+// It is a plain directory on the task's ephemeral storage in the normal case, and the
+// mount point of an ECS-managed EBS volume when the requested disk exceeds Fargate's
+// 200 GiB ephemeral ceiling; the workspace sees the same path either way.
+const (
+	wsScratchPath    = "/scratch"
+	ecsScratchVolume = "scratch"
+)
+
 // --- narrow AWS client ports (only the calls the adapter makes), so the runtime
 // is unit-testable against fakes. The real *ecs.Client / *efs.Client / *ssm.Client
 // satisfy these. ---
@@ -62,10 +72,15 @@ type ecsRuntime struct {
 	token        string // CP↔Agent bearer (Workspace.AgentToken)
 	secretKey    string // per-workspace at-rest DEK (hex); "" in dev
 	extraEnv     []string
-	// cpu / memory are the Fargate task size for THIS workspace: the cfg defaults,
-	// or a size snapped up to hold the per-workspace RAM cap (fargateSize) when one is
-	// set. registerTaskDef stamps them into the task definition revision.
+	// cpu / memory are the Fargate task size for THIS workspace: the cfg defaults, or
+	// a size snapped up to hold the per-workspace RAM/CPU caps (fargateSize) when one
+	// is set. registerTaskDef stamps them into the task definition revision.
 	cpu, memory string
+	// diskGiB is the task's ephemeral storage size, or 0 for "leave the field out"
+	// (Fargate's free 20 GiB default). Above the ephemeral ceiling the request is an
+	// ECS-managed EBS volume instead — see ebsGiB (ADR 0044 決定 2).
+	diskGiB int32
+	ebsGiB  int32
 	// waitReady polls the Agent /healthz through Endpoint(); a field so tests can
 	// stub it out (real path hits HTTP, unavailable in unit tests). Start runs it in
 	// the background (watchReady), never on the caller's thread.
@@ -86,10 +101,12 @@ type ecsConfig struct {
 	namespaceArn   string   // Service Connect (Cloud Map) namespace ARN
 	execRole       string   // task execution role (pull image, logs, read SSM secrets)
 	taskRole       string   // task role (least-privilege; Agent needs no AWS APIs)
+	infraRole      string   // ECS infrastructure role — only needed for managed EBS (disk > 200 GiB)
 	logGroup       string   // CloudWatch Logs group for workspace tasks
 	workspaceImage string   // ECR image URI:tag for the Workspace Agent
 	sessionCmd     string   // AGENT_SESSION_CMD passthrough
 	cpu, memory    string   // Fargate task size (e.g. "1024" / "2048")
+	diskGiB        int      // AF_ECS_WS_DISK_GB: deployment default working disk (0 = Fargate's free 20 GiB)
 	posixUID       int64    // EFS access-point owner uid/gid (container dev user)
 	posixGID       int64
 	startTimeout   time.Duration // budget for the background readiness watch (see watchReady)
@@ -105,12 +122,27 @@ type ecsFactory struct {
 }
 
 func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
-	// Default to the deployment task size; when a per-workspace RAM cap is set, snap
-	// onto the smallest VALID Fargate (cpu, memory) pair that holds it — Fargate only
-	// accepts specific combinations, so a memory bump may raise CPU too.
+	// Default to the deployment task size; when a per-workspace RAM or CPU cap is set,
+	// snap onto the smallest VALID Fargate (cpu, memory) pair that holds both — Fargate
+	// only accepts specific combinations, so a memory bump may raise CPU and a CPU bump
+	// may raise memory.
 	cpu, memory := f.cfg.cpu, f.cfg.memory
-	if ws.MemBytes > 0 {
-		cpu, memory = fargateSize(ws.MemBytes, f.cfg.cpu)
+	if ws.MemBytes > 0 || ws.CPUUnits > 0 {
+		memBytes := ws.MemBytes
+		if memBytes == 0 { // CPU set alone: keep the deployment memory as the request
+			if m, err := strconv.ParseInt(f.cfg.memory, 10, 64); err == nil {
+				memBytes = m * mib
+			}
+		}
+		cpu, memory = fargateSize(memBytes, ws.CPUUnits, f.cfg.cpu)
+	}
+	// Working disk: ephemeral storage up to Fargate's 200 GiB ceiling, an ECS-managed
+	// EBS volume above it. Unset (0) leaves the task definition field out, which is the
+	// free 20 GiB default.
+	diskGiB, needsEBS := fargateDiskGiB(pickDiskGiB(ws.DiskGB, f.cfg.diskGiB))
+	var ebsGiB int32
+	if needsEBS {
+		ebsGiB = int32(pickDiskGiB(ws.DiskGB, f.cfg.diskGiB))
 	}
 	return &ecsRuntime{
 		cfg:          f.cfg,
@@ -124,8 +156,20 @@ func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runt
 		extraEnv:     extraEnv,
 		cpu:          cpu,
 		memory:       memory,
+		diskGiB:      diskGiB,
+		ebsGiB:       ebsGiB,
 		waitReady:    httpHealthz,
 	}
+}
+
+// pickDiskGiB resolves the working-disk request: the per-workspace value when set,
+// otherwise the deployment default (AF_ECS_WS_DISK_GB), otherwise 0 = Fargate's free
+// 20 GiB.
+func pickDiskGiB(perWorkspace, deploymentDefault int) int {
+	if perWorkspace > 0 {
+		return perWorkspace
+	}
+	return deploymentDefault
 }
 
 var _ RuntimeFactory = (*ecsFactory)(nil)
@@ -149,13 +193,19 @@ func newECSFactory(m *manager) (RuntimeFactory, error) {
 		namespaceArn:   os.Getenv("AF_ECS_NAMESPACE_ARN"),
 		execRole:       os.Getenv("AF_ECS_EXEC_ROLE"),
 		taskRole:       os.Getenv("AF_ECS_TASK_ROLE"),
+		infraRole:      os.Getenv("AF_ECS_INFRA_ROLE"),
 		logGroup:       os.Getenv("AF_ECS_LOG_GROUP"),
 		workspaceImage: envOr("AF_ECS_WORKSPACE_IMAGE", m.image),
 		sessionCmd:     m.sessionCmd,
 		cpu:            envOr("AF_ECS_TASK_CPU", "1024"),
 		memory:         envOr("AF_ECS_TASK_MEMORY", "2048"),
-		posixUID:       int64(envInt("AF_ECS_POSIX_UID", 1000)),
-		posixGID:       int64(envInt("AF_ECS_POSIX_GID", 1000)),
+		// Deployment default working disk in GiB. 0 keeps Fargate's free 20 GiB; a
+		// value of 21–200 becomes the task's ephemeral storage. Raise it when the
+		// deployment moves regenerable caches onto the task-local disk (ADR 0044 決定 3),
+		// since those do not fit in 20 GiB.
+		diskGiB:  envInt("AF_ECS_WS_DISK_GB", 0),
+		posixUID: int64(envInt("AF_ECS_POSIX_UID", 1000)),
+		posixGID: int64(envInt("AF_ECS_POSIX_GID", 1000)),
 		// How long the BACKGROUND readiness watch keeps polling /healthz after Start
 		// returns (observability only — nothing waits on it, see watchReady). Sized
 		// over the whole convergence, not under the ALB idle timeout: a Fargate cold
@@ -444,6 +494,24 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 			},
 		}
 	}
+	volumes := []ecstypes.Volume{
+		efsVolume("home", e.cfg.efsFileSystem, homeAP),
+		efsVolume("claude", e.cfg.efsFileSystem, claudeAP),
+	}
+	if e.ebsGiB > 0 {
+		// Above Fargate's 200 GiB ephemeral ceiling the working disk becomes an
+		// ECS-managed EBS volume. The task definition only DECLARES it; the size and
+		// type come from the service's volumeConfigurations at launch, which is what
+		// configuredAtLaunch means. It is created per task and deleted when the task
+		// stops, exactly like ephemeral storage — see ADR 0044 決定 4 for why this is
+		// not a persistence mechanism.
+		volumes = append(volumes, ecstypes.Volume{
+			Name: aws.String(ecsScratchVolume), ConfiguredAtLaunch: aws.Bool(true),
+		})
+		container.MountPoints = append(container.MountPoints, ecstypes.MountPoint{
+			SourceVolume: aws.String(ecsScratchVolume), ContainerPath: aws.String(wsScratchPath),
+		})
+	}
 	in := &ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String(e.name),
 		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
@@ -453,16 +521,46 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 		ExecutionRoleArn:        strOrNil(e.cfg.execRole),
 		TaskRoleArn:             strOrNil(e.cfg.taskRole),
 		ContainerDefinitions:    []ecstypes.ContainerDefinition{container},
-		Volumes: []ecstypes.Volume{
-			efsVolume("home", e.cfg.efsFileSystem, homeAP),
-			efsVolume("claude", e.cfg.efsFileSystem, claudeAP),
-		},
+		Volumes:                 volumes,
+	}
+	if e.diskGiB > 0 {
+		// Task-local working disk. Absent = Fargate's default 20 GiB, which is also the
+		// only free amount, so an unset size must stay absent rather than be written
+		// as 20 (docs/63 §63.2: the API rejects anything below 21).
+		in.EphemeralStorage = &ecstypes.EphemeralStorage{SizeInGiB: e.diskGiB}
 	}
 	out, err := e.ecs.RegisterTaskDefinition(ctx, in)
 	if err != nil {
 		return "", err
 	}
 	return aws.ToString(out.TaskDefinition.TaskDefinitionArn), nil
+}
+
+// volumeConfigurations supplies the launch-time settings for the configured-at-launch
+// scratch volume, and is nil in the normal (ephemeral-storage) case. ECS creates one
+// EBS volume per task from these and deletes it when the task stops; the infrastructure
+// role is what lets it call the EC2 volume APIs on the deployment's behalf.
+func (e *ecsRuntime) volumeConfigurations() []ecstypes.ServiceVolumeConfiguration {
+	if e.ebsGiB <= 0 || e.cfg.infraRole == "" {
+		return nil
+	}
+	return []ecstypes.ServiceVolumeConfiguration{{
+		Name: aws.String(ecsScratchVolume),
+		ManagedEBSVolume: &ecstypes.ServiceManagedEBSVolumeConfiguration{
+			RoleArn:        aws.String(e.cfg.infraRole),
+			SizeInGiB:      aws.Int32(e.ebsGiB),
+			VolumeType:     aws.String("gp3"),
+			Encrypted:      aws.Bool(true),
+			FilesystemType: ecstypes.TaskFilesystemTypeExt4,
+			TagSpecifications: []ecstypes.EBSTagSpecification{{
+				ResourceType: ecstypes.EBSResourceTypeVolume,
+				Tags: []ecstypes.Tag{
+					{Key: aws.String("af-membership"), Value: aws.String(e.membershipID)},
+					{Key: aws.String("af-role"), Value: aws.String("scratch")},
+				},
+			}},
+		},
+	}}
 }
 
 func efsVolume(name, fsID, apID string) ecstypes.Volume {
@@ -495,20 +593,22 @@ func (e *ecsRuntime) upsertService(ctx context.Context, taskDefArn string) error
 	}
 	if ok && aws.ToString(s.Status) == "ACTIVE" {
 		_, err = e.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
-			Cluster:            aws.String(e.cfg.cluster),
-			Service:            aws.String(e.name),
-			DesiredCount:       aws.Int32(1),
-			TaskDefinition:     aws.String(taskDefArn),
-			ForceNewDeployment: true,
+			Cluster:              aws.String(e.cfg.cluster),
+			Service:              aws.String(e.name),
+			DesiredCount:         aws.Int32(1),
+			TaskDefinition:       aws.String(taskDefArn),
+			ForceNewDeployment:   true,
+			VolumeConfigurations: e.volumeConfigurations(),
 		})
 		return err
 	}
 	_, err = e.ecs.CreateService(ctx, &ecs.CreateServiceInput{
-		Cluster:        aws.String(e.cfg.cluster),
-		ServiceName:    aws.String(e.name),
-		TaskDefinition: aws.String(taskDefArn),
-		DesiredCount:   aws.Int32(1),
-		LaunchType:     ecstypes.LaunchTypeFargate,
+		Cluster:              aws.String(e.cfg.cluster),
+		ServiceName:          aws.String(e.name),
+		TaskDefinition:       aws.String(taskDefArn),
+		DesiredCount:         aws.Int32(1),
+		LaunchType:           ecstypes.LaunchTypeFargate,
+		VolumeConfigurations: e.volumeConfigurations(),
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 				Subnets:        e.cfg.subnets,
