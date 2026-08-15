@@ -58,9 +58,15 @@ type principal struct {
 	// and a tenant's own GitHub resolve to one person (docs/61 §61.15, rule 1.5).
 	// It is filled in by the callback from the provider itself — never from a
 	// tenant-supplied field — so a tenant cannot name somebody else's realm.
-	Realm    string
-	Email    string
-	Verified bool
+	Realm string
+	// RealmClaim / RealmSubject are the optional SECOND key rule 1.5 may match on:
+	// which stable claim the adapter was told to read, and what it carried (docs/61
+	// §61.15.10). Both are filled by the adapter out of the token it just exchanged,
+	// never from configuration — a tenant names the claim, never the value.
+	RealmClaim   string
+	RealmSubject string
+	Email        string
+	Verified     bool
 }
 
 // providerRealm answers "where would this provider prove someone", reusing the
@@ -588,7 +594,8 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 		roleHint = ""
 	}
 	_, isNew, err := c.mgr.store.LinkIdentity(ctx, IdentityLink{
-		Provider: p.Provider, Subject: p.Subject, Realm: p.Realm, Email: p.Email,
+		Provider: p.Provider, Subject: p.Subject, Realm: p.Realm,
+		RealmClaim: p.RealmClaim, RealmSubject: p.RealmSubject, Email: p.Email,
 		FallbackKey: sanitizeUser(p.Email), RoleHint: roleHint, EmailJoin: !tenantDefined,
 	})
 	switch {

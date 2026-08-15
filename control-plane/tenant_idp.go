@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -285,6 +286,14 @@ func buildTenantProvider(row TenantIdP, tn TenantRef, secret string) (loginProvi
 	if len(domains) == 0 {
 		return nil, errors.New("allowed_domains is empty, which would admit every address this issuer asserts")
 	}
+	// ★ The runtime half of the link_claim whitelist. Validated here as well as in
+	// validateTenantIdPBody because those are two different moments: a row saved
+	// before the list changed, or written by an older binary, must not be built into
+	// a provider that joins accounts on a claim this deployment never allowed.
+	if row.LinkClaim != "" && !tenantLinkClaims[row.LinkClaim] {
+		return nil, fmt.Errorf("link_claim %q is not one this deployment allows a tenant to name (%s)",
+			row.LinkClaim, strings.Join(tenantLinkClaimList(), ", "))
+	}
 	id := tenantProviderID(tn.Slug, row.Name)
 	labelJA, labelEN := row.LabelJA, row.LabelEN
 	if labelJA == "" {
@@ -305,7 +314,33 @@ func buildTenantProvider(row TenantIdP, tn TenantRef, secret string) (loginProvi
 		prompt:       "select_account",
 		allowedTIDs:  tids,
 		allowDomains: domains,
+		linkClaim:    row.LinkClaim,
 	}, nil
+}
+
+// tenantLinkClaims is the CLOSED set of claims a tenant row may name for rule 1.5's
+// second key (docs/61 §61.15.10 + 決定 38).
+//
+// ★ It is a whitelist and not a validity check, and the reason is the whole point of
+// 決定 32. `oid` is a per-directory object id: two app registrations in one Entra
+// tenant report the same one for the same person, and nobody can choose what it says.
+// `email` / `upn` / `preferred_username` are the opposite — they are asserted, and a
+// tenant that could name one of them would have built an email join INSIDE a shared
+// realm, reaching accounts created by another authority. That is exactly the takeover
+// rule 2' exists to refuse, arriving through a different door.
+//
+// Adding to this list is a decision about which claims an IdP does not let its
+// tenants choose, not a convenience.
+var tenantLinkClaims = map[string]bool{"oid": true}
+
+// tenantLinkClaimList is the same set, sorted, for error messages and the API.
+func tenantLinkClaimList() []string {
+	out := make([]string, 0, len(tenantLinkClaims))
+	for c := range tenantLinkClaims {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // tenantLabelSuffix names the company inside a tenant row's DEFAULT button label

@@ -1367,6 +1367,10 @@ export const en: Record<keyof typeof ja, string> = {
     "One domain can belong to only one tenant.",
   "admin.idp_tids": "Allowed tenant ids (Entra tid, optional)",
   "admin.idp_tids_hint": "Comma-separated. Required when the issuer is common / organizations.",
+  "admin.idp_link_claim": "How the same account is recognised",
+  "admin.idp_link_claim_none": "Default (recognise by sub)",
+  "admin.idp_link_claim_hint":
+    "Use this when the same issuer has more than one app registration. Entra's sub differs per app registration, so one person pressing head office's button and this one looks like two accounts. Picking oid makes them one. Only values the IdP assigns can be picked — never one somebody can assert, such as an email address. Changing it sends the row back for approval.",
   "admin.idp_label_ja": "Button label (Japanese)",
   "admin.idp_label_en": "Button label (English)",
   "admin.idp_repend_hint":
