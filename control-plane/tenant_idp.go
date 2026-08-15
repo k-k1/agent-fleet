@@ -77,7 +77,7 @@ func validTenantIdPName(name string) bool { return validProviderID(name) }
 
 // tenantIdPStoreView is the narrow store view the registry needs.
 type tenantIdPStoreView interface {
-	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error)
+	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error)
 }
 
 // tenantProviderSnapshot is one consistent read of every ACTIVE tenant provider.
@@ -151,7 +151,7 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 	}
 	r.mu.Unlock()
 
-	rows, slugs, err := r.store.ListActiveTenantIdPs(ctx)
+	rows, tenants, err := r.store.ListActiveTenantIdPs(ctx)
 	if err != nil {
 		log.Printf("tenant idp: %v (using the previous snapshot)", err)
 		r.mu.Lock()
@@ -168,17 +168,17 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 	defer r.mu.Unlock()
 	keep := make(map[string]builtProvider, len(rows))
 	for _, row := range rows {
-		slug := slugs[row.TenantID]
-		if slug == "" {
+		tn := tenants[row.TenantID]
+		if tn.Slug == "" {
 			continue // tenant vanished between the join and here
 		}
-		id := tenantProviderID(slug, row.Name)
+		id := tenantProviderID(tn.Slug, row.Name)
 		p, ok := r.built[id]
 		if !ok || p.updatedAt != row.UpdatedAt {
 			secret, err := r.secret(ctx, row.SecretEnc, row.KeyRef)
 			if err == nil {
 				var prov loginProvider
-				prov, err = buildTenantProvider(row, slug, secret)
+				prov, err = buildTenantProvider(row, tn, secret)
 				if err == nil {
 					p = builtProvider{updatedAt: row.UpdatedAt, prov: prov}
 				}
@@ -197,7 +197,7 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 		}
 		keep[id] = p
 		snap.byID[id] = p.prov
-		snap.bySlug[slug] = append(snap.bySlug[slug], p.prov)
+		snap.bySlug[tn.Slug] = append(snap.bySlug[tn.Slug], p.prov)
 	}
 	r.built = keep
 	r.snap, r.exp = snap, time.Now().Add(r.ttl)
@@ -256,12 +256,12 @@ func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) [
 // half of the same rules validateTenantIdPBody applies on save, and the two must
 // stay in step: an approved row that only the API accepts would save cleanly and
 // then disappear from the login page with a log line nobody is watching.
-func buildTenantProvider(row TenantIdP, slug, secret string) (loginProvider, error) {
+func buildTenantProvider(row TenantIdP, tn TenantRef, secret string) (loginProvider, error) {
 	if !validTenantIdPName(row.Name) {
 		return nil, fmt.Errorf("invalid provider name %q", row.Name)
 	}
 	if row.Kind == tenantIdPKindGitHub {
-		return newTenantGitHubProvider(row, slug, secret)
+		return newTenantGitHubProvider(row, tn, secret)
 	}
 	if row.Kind != "" && row.Kind != tenantIdPKindOIDC {
 		return nil, fmt.Errorf("unknown sign-in method kind %q", row.Kind)
@@ -285,13 +285,13 @@ func buildTenantProvider(row TenantIdP, slug, secret string) (loginProvider, err
 	if len(domains) == 0 {
 		return nil, errors.New("allowed_domains is empty, which would admit every address this issuer asserts")
 	}
-	id := tenantProviderID(slug, row.Name)
+	id := tenantProviderID(tn.Slug, row.Name)
 	labelJA, labelEN := row.LabelJA, row.LabelEN
 	if labelJA == "" {
-		labelJA = defaultProviderLabel(row.Name, "ja")
+		labelJA = tenantLabelSuffix(defaultProviderLabel(row.Name, "ja"), tn, "ja")
 	}
 	if labelEN == "" {
-		labelEN = defaultProviderLabel(row.Name, "en")
+		labelEN = tenantLabelSuffix(defaultProviderLabel(row.Name, "en"), tn, "en")
 	}
 	return &oidcProvider{
 		id:           id,
@@ -306,6 +306,36 @@ func buildTenantProvider(row TenantIdP, slug, secret string) (loginProvider, err
 		allowedTIDs:  tids,
 		allowDomains: domains,
 	}, nil
+}
+
+// tenantLabelSuffix names the company inside a tenant row's DEFAULT button label
+// (docs/61 §61.15.10).
+//
+// The problem it solves is only visible on /login/<slug>, where the deployment's own
+// buttons and the tenant's own rows are rendered side by side: a tenant row named
+// "github" generated "GitHub でサインイン", which is exactly the env GitHub button's
+// text. Two identical buttons that send you to two different OAuth apps is a place
+// people get stuck, and the stuck person cannot tell them apart by looking.
+//
+// ★ It only ever touches the GENERATED label. A row that filled in label_ja /
+// label_en wrote what its administrator wants on the button, and appending to that
+// would override a deliberate choice — so the caller applies this to the fallback
+// only, and the existing precedence (row label > generated) is unchanged.
+//
+// The display name is preferred over the slug because it is what a human calls that
+// company; the slug is the fallback for a tenant that never set one.
+func tenantLabelSuffix(base string, tn TenantRef, lang string) string {
+	who := strings.TrimSpace(tn.Name)
+	if who == "" {
+		who = strings.TrimSpace(tn.Slug)
+	}
+	if who == "" || base == "" {
+		return base
+	}
+	if lang == "en" {
+		return base + " (" + who + ")"
+	}
+	return base + "（" + who + "）"
 }
 
 // --- secret sealing (docs/61 §61.11.4 + 決定 33) ------------------------------

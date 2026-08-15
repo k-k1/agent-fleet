@@ -101,14 +101,14 @@ func (a tenantIdPAPI) list(w http.ResponseWriter, r *http.Request) {
 // queue (GET /api/admin/idp) — the super_admin approval queue across every tenant
 // (docs/61 §61.11.6). Pending rows come first: that is the list somebody is waiting on.
 func (a tenantIdPAPI) queue(w http.ResponseWriter, r *http.Request, _ Identity) {
-	rows, slugs, err := a.mgr.store.ListAllTenantIdPs(r.Context())
+	rows, tenants, err := a.mgr.store.ListAllTenantIdPs(r.Context())
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	out := make([]tenantIdPBody, 0, len(rows))
 	for _, row := range rows {
-		slug := slugs[row.TenantID]
+		slug := tenants[row.TenantID].Slug
 		id := tenantProviderID(slug, row.Name)
 		out = append(out, a.rowToBody(row, slug, a.mgr.tenantIdP.providerFor(r.Context(), id) != nil))
 	}
@@ -345,7 +345,7 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 				"the stored client secret cannot be decrypted — the tenant has to enter it again"})
 			return
 		}
-		if _, err := buildTenantProvider(row, t.Slug, secret); err != nil {
+		if _, err := buildTenantProvider(row, TenantRef{Slug: t.Slug, Name: t.Name}, secret); err != nil {
 			writeAPIErr(w, &apiError{http.StatusBadRequest, "tenant_idp_invalid", err.Error()})
 			return
 		}
@@ -410,7 +410,7 @@ func (a tenantIdPAPI) audit(r *http.Request, ident Identity, tenantID, action, t
 // tenant, exactly as auto_join_domains works (§61.9.8) — and refusing on save is the
 // only moment a human is present to read why.
 func (a tenantIdPAPI) checkDomainsUnclaimed(r *http.Request, tenantID, rowID string, domains []string) *apiError {
-	rows, slugs, err := a.mgr.store.ListAllTenantIdPs(r.Context())
+	rows, tenants, err := a.mgr.store.ListAllTenantIdPs(r.Context())
 	if err != nil {
 		return internalErr(err)
 	}
@@ -428,7 +428,7 @@ func (a tenantIdPAPI) checkDomainsUnclaimed(r *http.Request, tenantID, rowID str
 		for _, d := range domains {
 			if claimed[d] {
 				return &apiError{http.StatusConflict, "tenant_idp_domain_conflict",
-					"domain " + d + " is already claimed by the sign-in method of tenant " + slugs[other.TenantID]}
+					"domain " + d + " is already claimed by the sign-in method of tenant " + tenants[other.TenantID].Slug}
 			}
 		}
 	}

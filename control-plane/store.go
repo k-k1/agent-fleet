@@ -426,15 +426,22 @@ type TenantIdP struct {
 // ListActiveTenantIdPs is the exception by design: it is the deployment-wide read
 // the login layer needs to assemble the provider set, and it is never reached from
 // a tenant-scoped handler.
+// TenantRef is the owning tenant of a tenant_idp row, as the deployment-wide reads
+// carry it: the slug because the provider id the rest of CP sees is built from it
+// (t:<slug>:<name>), and the DISPLAY NAME because the default button label has to
+// say WHICH company's method it is — otherwise a tenant's GitHub row and the
+// deployment's GitHub button render the same text on one page (docs/61 §61.15.10).
+type TenantRef struct{ Slug, Name string }
+
 type TenantIdPStore interface {
 	ListTenantIdPs(ctx context.Context, tenantID string) ([]TenantIdP, error)
-	// ListAllTenantIdPs returns every row with its tenant slug, for the super_admin
-	// approval queue. slugs are returned separately so the store stays free of view
-	// structs; the handler joins them.
-	ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error)
+	// ListAllTenantIdPs returns every row with its tenant, for the super_admin
+	// approval queue. The tenants are returned separately (keyed by tenant id) so
+	// the store stays free of view structs; the handler joins them.
+	ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error)
 	// ListActiveTenantIdPs returns the approved rows only — the login layer's bulk
 	// read, behind the same short TTL cache the tenant rules use.
-	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error)
+	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error)
 	GetTenantIdP(ctx context.Context, tenantID, id string) (TenantIdP, bool, error)
 	CreateTenantIdP(ctx context.Context, row TenantIdP) error
 	UpdateTenantIdP(ctx context.Context, row TenantIdP) error
