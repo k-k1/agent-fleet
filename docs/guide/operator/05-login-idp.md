@@ -188,11 +188,12 @@ The CP reads `<issuer>/.well-known/openid-configuration` lazily, on the first si
 this button, and caches it for 24 hours. So a wrong issuer does not show up at startup: it shows
 up as an error the first time somebody presses the button.
 
-### 4.3 Head office and a subsidiary on one directory
+### 4.3 One directory behind two app registrations
 
-When two app registrations point at the same Entra directory, **Entra's `sub` differs per app
-registration**, so one person pressing head office's button and the subsidiary's button looks
-like two people — two accounts, two workspaces. Naming a stable claim makes them one:
+When two app registrations point at the same Entra directory — this deployment's own button and
+a tenant that registered its own method (§7), say — **Entra's `sub` differs per app
+registration**, so one person pressing one button and then the other looks like two people: two
+accounts, two workspaces. Naming a stable claim makes them one:
 
 ```sh
 AF_OIDC_ENTRA_LINK_CLAIM=oid
@@ -340,10 +341,12 @@ Issuer shapes, so you know what you are looking for in the IdP's own admin UI:
 
 ## 7. A sign-in method a tenant defines itself
 
-When a tenant is a separate company — a group subsidiary, or a business still being merged — its
-IdP is a different one, with its own issuer, client ID and secret. Rather than editing `.env`
-and restarting the CP for every subsidiary, that tenant's own administrator registers it from
-the Console, and **you approve it**. Nothing here needs a restart.
+Some tenants have an identity source of their own: a different Entra ID (or Okta / Keycloak)
+tenant, with its own issuer, client ID and secret, or a GitHub organization instead. A group
+subsidiary is the obvious case, but so is a business still being merged, an outsourcing partner,
+or a division that simply runs its own directory. Rather than editing `.env` and restarting the
+CP for each one, that tenant's own administrator registers it from the Console, and **you approve
+it**. Nothing here needs a restart.
 
 Where it is: **Tenant settings → Sign-in → Sign-in methods** for the tenant's own administrator
 (the account menu's *Tenant settings*). As a deployment administrator you reach the same panel
@@ -369,7 +372,7 @@ get wrong: it is not their console, it is yours.
 | **How the email is trusted** | *The issuer is pinned to our own tenant* (Entra) or *The IdP asserts email_verified* |
 | **Email domains to admit** | **required.** A tenant-defined method does not fall back to the deployment-wide allowlist, so an empty list would admit nobody. It also bounds which addresses this issuer may assert |
 | **Allowed tenant ids** | Entra `tid`s; required when the issuer is a multi-tenant endpoint |
-| **How the same account is recognised** | `oid`, when the same issuer serves head office through a different app registration (§4.3). This is the only value a tenant may name |
+| **How the same account is recognised** | `oid`, when the same issuer already serves this deployment through a different app registration (§4.3). This is the only value a tenant may name |
 | **Button label** | optional; the generated default already names the company, so the row does not produce a button reading the same as yours |
 
 > **Why a tenant may only name `oid` here, while `AF_OIDC_<ID>_LINK_CLAIM` accepts any claim.**
@@ -398,8 +401,8 @@ Read two things on the row before you approve it:
 - **The email domains are theirs.** The approval is *for that scope*: this list bounds which
   addresses the issuer may assert, and **one domain belongs to one tenant** — saving a row that
   claims a domain another tenant already holds is refused with
-  `domain … is already claimed by the sign-in method of tenant …`. Never approve a method
-  claiming the parent company's domain.
+  `domain … is already claimed by the sign-in method of tenant …`. Never approve a method that
+  claims a domain belonging to the rest of the deployment.
 
 Approval is refused, with the reason, if the row could not actually be built into a working
 method (a bad issuer, an empty domain list, a client secret that can no longer be decrypted) —
@@ -424,7 +427,7 @@ organizations**. `github.com` is one issuer for the whole world, so active membe
 organization is what makes a sign-in theirs.
 
 - **The tenant brings its own OAuth App**, created in its own organization with your callback
-  URL (§1) — sharing yours would make every subsidiary's owner approve the app your git device
+  URL (§1) — sharing yours would make every such tenant's owner approve the app your git device
   flow also uses. **Your `.env` needs no GitHub settings at all**: the env-level GitHub login can
   stay off while a tenant's own GitHub method works.
 - **The org-approval trap of §5.3 applies here too**, and it is the tenant's org owner who has
