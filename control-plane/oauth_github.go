@@ -499,3 +499,70 @@ func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 	}
 	return p
 }
+
+// --- construction from a tenant's row (docs/61 §61.15 + 決定 34) ---------------
+
+// newTenantGitHubProvider builds the same adapter from a tenant_idp row instead of
+// the environment. Everything protocol-level is identical — the same two gates, the
+// same cache, the same github.com — and the difference is entirely in where the
+// authorization comes from:
+//
+//	clientID/secret   the TENANT's own OAuth App. Not the deployment's: sharing it
+//	                  would make every subsidiary's org owner approve the operator's
+//	                  app (the same one the git device flow uses), and an operator's
+//	                  key rotation would silently break every subsidiary.
+//	allowedOrgs       required. Membership in one of them replaces "the issuer is
+//	                  yours" as the reason to believe this login belongs to that
+//	                  subsidiary — github.com is one issuer for the whole world, so
+//	                  the org IS the tenant boundary here (docs/61 §61.15).
+//	allowDomains      required, from the row. No fallback to the deployment-wide
+//	                  list or the roster term, exactly as buildTenantProvider does
+//	                  for OIDC (決定 32-3).
+//
+// ★ webBase / apiBase are deliberately NOT settable from the row: they are the
+// constants github.com / api.github.com. A row that could redirect them would let a
+// tenant point the adapter at a server it controls and mint any subject it liked —
+// and the subject is what rule 1.5 joins on.
+func newTenantGitHubProvider(row TenantIdP, tn TenantRef, secret string) (*githubProvider, error) {
+	if row.ClientID == "" || secret == "" {
+		return nil, errors.New("client_id / client_secret are required")
+	}
+	orgs := splitCSV(row.AllowedOrgs)
+	for i, o := range orgs {
+		orgs[i] = strings.ToLower(o)
+	}
+	if len(orgs) == 0 {
+		return nil, errors.New("allowed_orgs is empty, and membership in one of those organizations is what authorizes a GitHub sign-in")
+	}
+	domains := domainSet(row.AllowedDomains)
+	if len(domains) == 0 {
+		return nil, errors.New("allowed_domains is empty, which would admit every address this organization's members carry")
+	}
+	// ★ The generated label names the tenant (docs/61 §61.15.10). Without it this row
+	// and the deployment's own GitHub button carry the SAME text on /login/<slug> —
+	// the ids differ, but nobody reads ids off a button. The base string stays the
+	// env one so "GitHub" keeps its casing and AF_GITHUB_LABEL_* is still honoured;
+	// a row that declared its own label wins, as before.
+	labelJA, labelEN := row.LabelJA, row.LabelEN
+	if labelJA == "" {
+		labelJA = tenantLabelSuffix(envOr("AF_GITHUB_LABEL_JA", "GitHub でサインイン"), tn, "ja")
+	}
+	if labelEN == "" {
+		labelEN = tenantLabelSuffix(envOr("AF_GITHUB_LABEL_EN", "Sign in with GitHub"), tn, "en")
+	}
+	return &githubProvider{
+		id:           tenantProviderID(tn.Slug, row.Name),
+		labelJA:      labelJA,
+		labelEN:      labelEN,
+		clientID:     row.ClientID,
+		clientSecret: secret,
+		allowedOrgs:  orgs,
+		allowDomains: domains,
+		// The TTL and grace stay deployment-level: they are about how long CP may
+		// trust a cached answer from GitHub, which is an operational property of this
+		// installation and not something a tenant should be able to stretch.
+		ttl:   parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_TTL"), githubDefaultTTL),
+		grace: parseDurationOr(os.Getenv("AF_GITHUB_MEMBERSHIP_GRACE"), githubDefaultGrace),
+		cache: map[string]*githubMembership{},
+	}, nil
+}

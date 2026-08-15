@@ -1176,6 +1176,9 @@ func dispatchNotification(msg rpcMsg) {
 				if ce, ok := decodeCodexError(p.Turn.Error); ok {
 					failure = ce.summary()
 					h.setLastError(ce)
+					if ce.retryable() {
+						st = agents.TurnAborted
+					}
 				}
 			case "interrupted":
 				st = agents.TurnCancelled

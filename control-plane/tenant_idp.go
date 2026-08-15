@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,13 @@ import (
 
 // tenantProviderPrefix marks a provider id as database-derived.
 const tenantProviderPrefix = "t:"
+
+// The kinds a row can be built into (docs/61 §61.15). "" is read as oidc: rows
+// written before 0041 predate the column, and P4 had only one kind.
+const (
+	tenantIdPKindOIDC   = "oidc"
+	tenantIdPKindGitHub = "github"
+)
 
 // tenantProviderID builds the deployment-wide id of a tenant's provider.
 func tenantProviderID(slug, name string) string {
@@ -70,20 +78,25 @@ func validTenantIdPName(name string) bool { return validProviderID(name) }
 
 // tenantIdPStoreView is the narrow store view the registry needs.
 type tenantIdPStoreView interface {
-	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error)
+	ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error)
 }
 
 // tenantProviderSnapshot is one consistent read of every ACTIVE tenant provider.
+//
+// ★ loginProvider, not *oidcProvider: since §61.15 a row can also be built into the
+// GitHub adapter, which is not an OIDC client at all (it reads the REST API).
 type tenantProviderSnapshot struct {
-	byID   map[string]*oidcProvider
-	bySlug map[string][]*oidcProvider // login-page order, per tenant
+	byID   map[string]loginProvider
+	bySlug map[string][]loginProvider // login-page order, per tenant
 }
 
 // builtProvider caches the constructed provider so an unchanged row keeps its OIDC
-// discovery cache instead of re-fetching .well-known every refresh.
+// discovery cache instead of re-fetching .well-known every refresh — and, for a
+// GitHub row, its org-membership cache, which is what stands between a refresh and
+// making everyone sign in again (oauth_github.go: an empty cache answers reauth).
 type builtProvider struct {
 	updatedAt string
-	prov      *oidcProvider
+	prov      loginProvider
 }
 
 type tenantIdPRegistry struct {
@@ -139,7 +152,7 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 	}
 	r.mu.Unlock()
 
-	rows, slugs, err := r.store.ListActiveTenantIdPs(ctx)
+	rows, tenants, err := r.store.ListActiveTenantIdPs(ctx)
 	if err != nil {
 		log.Printf("tenant idp: %v (using the previous snapshot)", err)
 		r.mu.Lock()
@@ -149,24 +162,24 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 	}
 
 	snap := &tenantProviderSnapshot{
-		byID:   map[string]*oidcProvider{},
-		bySlug: map[string][]*oidcProvider{},
+		byID:   map[string]loginProvider{},
+		bySlug: map[string][]loginProvider{},
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	keep := make(map[string]builtProvider, len(rows))
 	for _, row := range rows {
-		slug := slugs[row.TenantID]
-		if slug == "" {
+		tn := tenants[row.TenantID]
+		if tn.Slug == "" {
 			continue // tenant vanished between the join and here
 		}
-		id := tenantProviderID(slug, row.Name)
+		id := tenantProviderID(tn.Slug, row.Name)
 		p, ok := r.built[id]
 		if !ok || p.updatedAt != row.UpdatedAt {
 			secret, err := r.secret(ctx, row.SecretEnc, row.KeyRef)
 			if err == nil {
-				var prov *oidcProvider
-				prov, err = buildTenantProvider(row, slug, secret)
+				var prov loginProvider
+				prov, err = buildTenantProvider(row, tn, secret)
 				if err == nil {
 					p = builtProvider{updatedAt: row.UpdatedAt, prov: prov}
 				}
@@ -185,7 +198,7 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 		}
 		keep[id] = p
 		snap.byID[id] = p.prov
-		snap.bySlug[slug] = append(snap.bySlug[slug], p.prov)
+		snap.bySlug[tn.Slug] = append(snap.bySlug[tn.Slug], p.prov)
 	}
 	r.built = keep
 	r.snap, r.exp = snap, time.Now().Add(r.ttl)
@@ -219,11 +232,7 @@ func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) [
 	if snap == nil {
 		return nil
 	}
-	out := make([]loginProvider, 0, len(snap.bySlug[slug]))
-	for _, p := range snap.bySlug[slug] {
-		out = append(out, p)
-	}
-	return out
+	return append([]loginProvider(nil), snap.bySlug[slug]...)
 }
 
 // --- building one provider from its row --------------------------------------
@@ -243,9 +252,20 @@ func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) [
 //
 // allowed_tids keeps its P0 meaning and is checked inside Exchange, on a different
 // axis (the token's tenant), so it stays AND-ed.
-func buildTenantProvider(row TenantIdP, slug, secret string) (*oidcProvider, error) {
+//
+// ★ kind picks the adapter (docs/61 §61.15 + 決定 34). This function is the RUNTIME
+// half of the same rules validateTenantIdPBody applies on save, and the two must
+// stay in step: an approved row that only the API accepts would save cleanly and
+// then disappear from the login page with a log line nobody is watching.
+func buildTenantProvider(row TenantIdP, tn TenantRef, secret string) (loginProvider, error) {
 	if !validTenantIdPName(row.Name) {
 		return nil, fmt.Errorf("invalid provider name %q", row.Name)
+	}
+	if row.Kind == tenantIdPKindGitHub {
+		return newTenantGitHubProvider(row, tn, secret)
+	}
+	if row.Kind != "" && row.Kind != tenantIdPKindOIDC {
+		return nil, fmt.Errorf("unknown sign-in method kind %q", row.Kind)
 	}
 	if row.ClientID == "" || secret == "" {
 		return nil, errors.New("client_id / client_secret are required")
@@ -266,13 +286,21 @@ func buildTenantProvider(row TenantIdP, slug, secret string) (*oidcProvider, err
 	if len(domains) == 0 {
 		return nil, errors.New("allowed_domains is empty, which would admit every address this issuer asserts")
 	}
-	id := tenantProviderID(slug, row.Name)
+	// ★ The runtime half of the link_claim whitelist. Validated here as well as in
+	// validateTenantIdPBody because those are two different moments: a row saved
+	// before the list changed, or written by an older binary, must not be built into
+	// a provider that joins accounts on a claim this deployment never allowed.
+	if row.LinkClaim != "" && !tenantLinkClaims[row.LinkClaim] {
+		return nil, fmt.Errorf("link_claim %q is not one this deployment allows a tenant to name (%s)",
+			row.LinkClaim, strings.Join(tenantLinkClaimList(), ", "))
+	}
+	id := tenantProviderID(tn.Slug, row.Name)
 	labelJA, labelEN := row.LabelJA, row.LabelEN
 	if labelJA == "" {
-		labelJA = defaultProviderLabel(row.Name, "ja")
+		labelJA = tenantLabelSuffix(defaultProviderLabel(row.Name, "ja"), tn, "ja")
 	}
 	if labelEN == "" {
-		labelEN = defaultProviderLabel(row.Name, "en")
+		labelEN = tenantLabelSuffix(defaultProviderLabel(row.Name, "en"), tn, "en")
 	}
 	return &oidcProvider{
 		id:           id,
@@ -286,7 +314,63 @@ func buildTenantProvider(row TenantIdP, slug, secret string) (*oidcProvider, err
 		prompt:       "select_account",
 		allowedTIDs:  tids,
 		allowDomains: domains,
+		linkClaim:    row.LinkClaim,
 	}, nil
+}
+
+// tenantLinkClaims is the CLOSED set of claims a tenant row may name for rule 1.5's
+// second key (docs/61 §61.15.10 + 決定 38).
+//
+// ★ It is a whitelist and not a validity check, and the reason is the whole point of
+// 決定 32. `oid` is a per-directory object id: two app registrations in one Entra
+// tenant report the same one for the same person, and nobody can choose what it says.
+// `email` / `upn` / `preferred_username` are the opposite — they are asserted, and a
+// tenant that could name one of them would have built an email join INSIDE a shared
+// realm, reaching accounts created by another authority. That is exactly the takeover
+// rule 2' exists to refuse, arriving through a different door.
+//
+// Adding to this list is a decision about which claims an IdP does not let its
+// tenants choose, not a convenience.
+var tenantLinkClaims = map[string]bool{"oid": true}
+
+// tenantLinkClaimList is the same set, sorted, for error messages and the API.
+func tenantLinkClaimList() []string {
+	out := make([]string, 0, len(tenantLinkClaims))
+	for c := range tenantLinkClaims {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// tenantLabelSuffix names the company inside a tenant row's DEFAULT button label
+// (docs/61 §61.15.10).
+//
+// The problem it solves is only visible on /login/<slug>, where the deployment's own
+// buttons and the tenant's own rows are rendered side by side: a tenant row named
+// "github" generated "GitHub でサインイン", which is exactly the env GitHub button's
+// text. Two identical buttons that send you to two different OAuth apps is a place
+// people get stuck, and the stuck person cannot tell them apart by looking.
+//
+// ★ It only ever touches the GENERATED label. A row that filled in label_ja /
+// label_en wrote what its administrator wants on the button, and appending to that
+// would override a deliberate choice — so the caller applies this to the fallback
+// only, and the existing precedence (row label > generated) is unchanged.
+//
+// The display name is preferred over the slug because it is what a human calls that
+// company; the slug is the fallback for a tenant that never set one.
+func tenantLabelSuffix(base string, tn TenantRef, lang string) string {
+	who := strings.TrimSpace(tn.Name)
+	if who == "" {
+		who = strings.TrimSpace(tn.Slug)
+	}
+	if who == "" || base == "" {
+		return base
+	}
+	if lang == "en" {
+		return base + " (" + who + ")"
+	}
+	return base + "（" + who + "）"
 }
 
 // --- secret sealing (docs/61 §61.11.4 + 決定 33) ------------------------------

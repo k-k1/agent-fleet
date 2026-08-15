@@ -92,7 +92,7 @@ func TestEntryGateAdmitsAnAutoJoinDomain(t *testing.T) {
 	p := &oidcProvider{id: "entra", deployAllowed: cfg.emailAllowed, dbAllowed: cfg.tenantEmailAllowed}
 
 	tn, _ := st.CreateTenant(ctx, "acme", "Acme")
-	if err := st.SetTenantLogin(ctx, tn.ID, "", "acme.co.jp", ""); err != nil {
+	if err := st.SetTenantLogin(ctx, tn.ID, "", "acme.co.jp", "", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
 	mgr.tenantLogin.invalidate()
@@ -187,7 +187,7 @@ func TestAllowedProvidersIsEnforcedAtTenantResolution(t *testing.T) {
 	mgr := p3Manager(t, st)
 
 	tn, _ := st.CreateTenant(ctx, "sales", "営業部")
-	if err := st.SetTenantLogin(ctx, tn.ID, "entra", "", ""); err != nil {
+	if err := st.SetTenantLogin(ctx, tn.ID, "entra", "", "", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
 	mv := MembershipView{MembershipID: "m1", TenantID: tn.ID, TenantSlug: "sales"}
@@ -225,7 +225,7 @@ func TestAutoJoinCreatesAMembershipButNeverOutranksAnExistingOne(t *testing.T) {
 	mgr := p3Manager(t, st) // AF_PROVISION=invite
 
 	sales, _ := st.CreateTenant(ctx, "sales", "営業部")
-	if err := st.SetTenantLogin(ctx, sales.ID, "", "acme.co.jp", ""); err != nil {
+	if err := st.SetTenantLogin(ctx, sales.ID, "", "acme.co.jp", "", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
 
@@ -275,7 +275,7 @@ func TestAutoJoinConflictResolvesToTheLowestSlug(t *testing.T) {
 	b, _ := st.CreateTenant(ctx, "bravo", "B")
 	a, _ := st.CreateTenant(ctx, "alpha", "A")
 	for _, id := range []string{b.ID, a.ID} {
-		if err := st.SetTenantLogin(ctx, id, "", "acme.co.jp", ""); err != nil {
+		if err := st.SetTenantLogin(ctx, id, "", "acme.co.jp", "", ""); err != nil {
 			t.Fatalf("set login rules: %v", err)
 		}
 	}
@@ -390,7 +390,7 @@ func TestAllowedDomainsGuardsInvitesOnly(t *testing.T) {
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
 	tn, _ := st.CreateTenant(ctx, "sales", "営業部")
-	if err := st.SetTenantLogin(ctx, tn.ID, "", "", "acme.co.jp"); err != nil {
+	if err := st.SetTenantLogin(ctx, tn.ID, "", "", "acme.co.jp", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
 	if _, err := st.UpsertIdentity(ctx, "boss@acme.co.jp", "boss-acme-co-jp", "super_admin"); err != nil {
@@ -497,7 +497,7 @@ func TestPerTenantLoginPage(t *testing.T) {
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
 	tn, _ := st.CreateTenant(ctx, "sales", "営業部")
-	if err := st.SetTenantLogin(ctx, tn.ID, "entra", "", ""); err != nil {
+	if err := st.SetTenantLogin(ctx, tn.ID, "entra", "", "", ""); err != nil {
 		t.Fatalf("set login rules: %v", err)
 	}
 
@@ -577,7 +577,7 @@ func TestSetTenantLoginRejectsDuplicateAutoJoinDomains(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 	a, _ := st.CreateTenant(ctx, "alpha", "A")
-	if err := st.SetTenantLogin(ctx, a.ID, "", "acme.co.jp", ""); err != nil {
+	if err := st.SetTenantLogin(ctx, a.ID, "", "acme.co.jp", "", ""); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if _, err := st.CreateTenant(ctx, "bravo", "B"); err != nil {

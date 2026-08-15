@@ -95,6 +95,22 @@ Two things about that block are worth reading before you copy it:
   the allowlist meaningless. The CP refuses to start on those endpoints unless
   `AF_OIDC_ENTRA_ALLOWED_TIDS` names the tenants you accept.
 
+**One IdP behind two app registrations (optional)** — when head office and a subsidiary use the
+same Entra tenant through different app registrations, **Entra's `sub` differs per app
+registration**, so one person is two accounts depending on which button they pressed. Naming a
+**stable claim** such as `oid` (the person's id within that directory) makes them one:
+
+```sh
+AF_OIDC_ENTRA_LINK_CLAIM=oid
+```
+
+> **⚠ Name only a value the IdP ASSIGNS — one nobody can choose.** Naming an asserted value such
+> as `email` / `upn` / `preferred_username` lets any other sign-in method sharing that issuer (a
+> subsidiary's own registration, say) **land on an existing account** merely by asserting that
+> value. The field a tenant administrator sees in the Console only offers `oid`; this environment
+> variable is not restricted because it is the operator's own declaration. Leave it unset and
+> matching stays on `sub` alone, as before.
+
 **GitHub** — GitHub has no OIDC for user sign-in, so it is configured separately, and what
 authorizes the login is membership in an organization you name:
 
@@ -182,6 +198,7 @@ Once you do split, each tenant can carry its own login rules (Admin panel → th
 | **Sign-in methods** | Which of the enabled IdPs may be used to enter this tenant | Enforced on every request, not just by hiding buttons |
 | **Auto-join domains** | An address in this domain joins this tenant on first sign-in | One domain can belong to only one tenant |
 | **Invite domains** | Bounds who may be **added** as a member | The invite form only — never a per-request check |
+| **Methods to keep off the sign-in page** | Removes the button only, leaving the method accepted | Display only — somebody signing in with a hidden method is still admitted |
 
 **Sign-in methods** takes the provider ids from your `.env` (`AF_OIDC_PROVIDERS`, plus Google),
 and the field lists them right underneath: every id this deployment has, with the label that
@@ -190,8 +207,16 @@ refused when you save, so there is nothing to look up in the environment first. 
 approved method goes in the same field as `t:<tenant>:<method>`.
 
 Each tenant also gets its own sign-in page at `https://<PUBLIC_DOMAIN>/login/<slug>`, showing
-only the methods that tenant accepts. Hand that URL to new members; there is no invitation email
-(the CP has no SMTP, by design).
+only the methods that tenant accepts — minus anything listed under **methods to keep off the
+sign-in page**, which stays accepted but gets no button here (hiding all of them is ignored, so
+the page is never a dead end). Hand that URL to new members; there is no invitation email (the CP
+has no SMTP, by design).
+
+> **A hidden button still appears on the plain `/login`.** That page (the one without a slug)
+> belongs to no tenant, so the deployment-wide methods stay on it — hiding them there would lock
+> out everybody who is not in a tenant yet (a new deployment admin, somebody not invited so far).
+> So **"methods to keep off the sign-in page" only takes effect when people use `/login/<slug>`**.
+> Once you set it, hand that URL to the tenant's people and have them bookmark it.
 
 > **"Invite domains" is not "who may use this tenant."** It only bounds who can be put on the
 > roster. Somebody already invited keeps working even from another domain — which is what makes
@@ -205,7 +230,11 @@ Entra ID (or Okta / Keycloak) tenant is a different one, with its own issuer, cl
 secret. Rather than adding it to `.env` and restarting the CP for every subsidiary, that tenant's
 own administrator registers it from the Console: **Tenant settings → "Sign-in methods"** (the
 account menu's *Tenant settings*). They fill in the issuer, client ID, client secret, how the
-email is trusted, and the email domains it may admit. As a deployment administrator you reach the
+email is trusted, and the email domains it may admit (when they use the same IdP as head office
+through a different app registration, **"How the same account is recognised"** offers `oid` — the
+same thing as `AF_OIDC_<ID>_LINK_CLAIM` above, restricted on the tenant side to claims that are
+safe to name) — or, instead of their own IdP, **a GitHub
+organization** (see "When a subsidiary uses GitHub" below). As a deployment administrator you reach the
 same panel from **Admin → the tenant → "Sign-in methods."**
 
 > **A new sign-in method does nothing until you approve it.** It is created as *waiting for
@@ -227,9 +256,63 @@ What to check before approving, on the deployment-wide list under **Admin → Te
   addresses that issuer is allowed to assert, and a domain can belong to only one tenant. Do not
   approve a method that claims the parent company's domain.
 
-Changing the issuer, the client ID or the trust rule — or *adding* a domain — sends the method
-back for approval, because the approval was given to that issuer for that scope. Suspending is
+Changing the issuer, the client ID, the trust rule or how the same account is recognised — or
+*adding* a domain — sends the method back for approval, because the approval was given to that issuer for that scope. Suspending is
 always available, to the tenant's own administrator as well: stopping should never wait for you.
+
+#### When a subsidiary uses GitHub
+
+Choosing **a GitHub organization** as the kind replaces the issuer field with **the GitHub
+organizations to allow**. GitHub has no per-tenant issuer — `github.com` is the same one for
+everybody — so *active membership of that organization* is what makes a sign-in theirs.
+
+- **The tenant brings its own OAuth App.** The subsidiary creates one in its own organization,
+  adds `<PUBLIC_BASE_URL>/oauth2/callback` as the callback URL, and enters the client ID and
+  secret. **Your `.env` needs no GitHub settings at all** — the env-level GitHub login
+  (`AF_GITHUB_ALLOWED_ORGS`) can stay off while the tenant's own method works.
+- **If the organization restricts third-party OAuth apps, an organization owner must approve that
+  app**, or membership stays invisible and everyone is denied while the settings look perfect —
+  the same trap as the env-level login.
+- **The email domains are required here too.** GitHub hands over exactly one verified primary
+  address, and somebody whose primary address is outside the company domain lands in a NEW
+  workspace rather than their existing one. One domain still belongs to one tenant: never approve
+  a method claiming another company's domain.
+- What you read before approving is **the pair (organizations, domains)** — the issuer tells you
+  nothing here, being the same for every tenant. **Adding an organization sends the method back
+  for approval**, because the approval was given for the members of *those* organizations.
+  Removing one does not.
+- Two tenants may register the same organization. Who lands where is decided by the email domain,
+  and that is still one-tenant-only.
+
+> **Watch the narrowing of "Sign-in methods allowed" in a tenant whose people also belong to
+> another tenant.** Say Yamada belongs to both head office and a subsidiary and normally signs in
+> with head office's Google. If the subsidiary narrows its allowed methods to its own GitHub,
+> switching to that tenant asks Yamada to sign in again with it — and pressing that button is
+> refused with *"This email address is already used by another sign-in method."* The same address
+> at a different IdP is a different login, and if Yamada has no GitHub account at all there is
+> nothing to press.
+>
+> Two ways out. **(a) Invite Yamada into the subsidiary's GitHub organization** (keeping
+> "GitHub only" literally true), or **(b) keep head office's method on the allowed list.** (b)
+> does not widen who can enter: the roster decides that, and this field only says which identity
+> sources are accepted (do check **auto-join domains** though — that one does create roster
+> entries).
+>
+> If (b) bothers you because an unused Google button then sits on the subsidiary's sign-in page,
+> put `google` in **"Methods to keep off the sign-in page."** It stays accepted and the button
+> disappears from that page — Yamada keeps signing in on the generic `/login` and switches
+> tenants. Hiding every method is ignored, so the page is never left without buttons.
+>
+> The **same GitHub account** is fine either way: the deployment-wide GitHub button and the
+> tenant's own GitHub button resolve to one person.
+>
+> There is also **(c): let Yamada link it**, an alternative to (a). If Yamada **already has an
+> account in the subsidiary's GitHub org**, they sign in with the usual Google and press
+> **Settings → Personal → Account → Add a sign-in method**. Either button then leads to the same
+> account. Two conditions hold: only a method asserting **the same email address** can be added
+> (accounts under different addresses are never merged), and they must **be a member of that
+> organization** — linking is not a way around the entry rules. Somebody with no account on the
+> other side cannot use this, so for them it is (a) or (b).
 
 **Approve and activate** and **Suspend** sit on the rows of the register itself ("Tenant-defined
 sign-in methods," below the tenant list); the tenant's own detail screen offers the same actions.

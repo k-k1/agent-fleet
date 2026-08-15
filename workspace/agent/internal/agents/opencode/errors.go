@@ -48,6 +48,7 @@ type messageError struct {
 	Data struct {
 		Message         string            `json:"message"`
 		StatusCode      int               `json:"statusCode"`
+		IsRetryable     bool              `json:"isRetryable"`
 		ProviderID      string            `json:"providerID"`
 		ResponseBody    string            `json:"responseBody"`
 		ResponseHeaders map[string]string `json:"responseHeaders"`
@@ -97,6 +98,8 @@ func (e messageError) summary() string {
 func (e messageError) ok() bool {
 	return strings.TrimSpace(e.Name) != "" && strings.TrimSpace(e.Name) != abortedErrorName
 }
+
+func (e messageError) retryable() bool { return e.ok() && e.Data.IsRetryable }
 
 // part renders the failure as the ordered part the Console renders as an error block.
 func (e messageError) part() transcript.Part {

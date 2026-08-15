@@ -12,7 +12,7 @@ English | [日本語](12-settings.ja.md)
 
 | Group | What is in it |
 |---|---|
-| **Personal** | Display / Keys / Speech / Notifications / Assistant / Agent instructions |
+| **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / Agent instructions |
 | **Connections** | Agents / Git hosting / Ops & monitoring / Chat integration / MCP servers / MCP tokens |
 | **Workspace** | Usage / Agent memory / Toolchain / AWS SSM / Internal repositories / Danger zone |
 
@@ -56,6 +56,28 @@ Everything about appearance.
   Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
   disturb either ([03](03-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
   can) in the top bar.
+
+### Account
+
+The **sign-in methods** linked to your account (Google / Microsoft / GitHub …). Whichever one you use, you
+land in the same workspace, the same home and the same settings.
+
+- **Add a sign-in method** — when your company offers more than one (say Microsoft at head office and GitHub
+  at the subsidiary you are seconded to), you can add a second one to your account. The button takes you
+  through that method's sign-in and back; the list then shows it.
+- Only a method that asserts **the same email address as this account** can be added. Accounts under
+  different addresses cannot be merged into one (it could not be undone).
+- That method's own entry rules still apply — organization membership for GitHub, the allowed email domains.
+  Linking is not a way around them.
+- A method already used by **somebody else's account** cannot be added.
+- If the sign-in page told you "this email address is already used by another sign-in method", the fix is to
+  **sign in the way you normally do** and add the other method here.
+- **Remove** — a method you no longer use can be taken off the list. Your workspace, home and secrets are
+  untouched, and you can add the same method again later. Two of them cannot be removed, and hovering the
+  disabled button says which case you are in:
+  - **the method you are signed in with right now** — sign in with another one first, then remove it.
+  - **the only method left** — removing it would leave you unable to sign in at all, with no way to undo it
+    yourself (this deployment has no password and sends no email).
 
 ### Keys
 
@@ -255,6 +277,7 @@ deeper reset that also removes home except logins and connections). Both lose un
 | What you want | Tab |
 |---|---|
 | Text is too small / change the colours | Display |
+| Sign in with another method too | Account |
 | Send with Enter | Keys (send key) |
 | Switch panes by tab | Display (main area layout) |
 | Rebind a shortcut / pass keys to the terminal | Keys |

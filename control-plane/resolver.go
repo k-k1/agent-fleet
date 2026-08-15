@@ -58,7 +58,14 @@ func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint strin
 		if tenantDefined {
 			roleHint = ""
 		}
-		ident, _, err := m.store.LinkIdentity(ctx, ref.provider, ref.subject, email, key, roleHint, !tenantDefined)
+		// ★ No realm on this path: the request carries a provider ID from the session
+		// cookie, not the provider object, and rule 1.5 must never guess one. The
+		// callback stamped it at login, and LinkIdentity keeps a recorded realm when
+		// it is handed an empty one (docs/61 §61.15).
+		ident, _, err := m.store.LinkIdentity(ctx, IdentityLink{
+			Provider: ref.provider, Subject: ref.subject, Email: email,
+			FallbackKey: key, RoleHint: roleHint, EmailJoin: !tenantDefined,
+		})
 		return ident, err
 	}
 	return m.store.UpsertIdentity(ctx, email, key, roleHint)
