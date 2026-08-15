@@ -46,14 +46,18 @@ Parameters:
       5.30 GiB peak including page cache, so 2048 is tight for real use.
   WsDiskGiB:
     Type: String
-    Default: "0"
+    Default: "50"
     Description: >-
       Default per-workspace WORKING disk in GiB. 0 keeps Fargate's free 20 GiB; 21-200
       sets the task's ephemeral storage (billed only above 20 GiB). This disk is wiped
       when the workspace stops — only the EFS home persists. It is also the switch for
-      moving the small-file caches (go build cache, uv, go modules) off EFS onto the
-      task-local disk: the entrypoint does that only when this is 30 or more, because
-      the measured caches do not fit alongside the image in 20 GiB (ADR 0044 決定 3).
+      moving the small-file caches (go build cache, uv, go modules) and build artifacts
+      (node_modules, target, .venv) off EFS onto the task-local disk: the entrypoint
+      does that only when this is 30 or more, because the measured caches do not fit
+      alongside the image in 20 GiB (ADR 0044 決定 3). The default is 50 so that
+      relocation is ON — at 0 it can never arm, which is what shipped before and meant
+      every deployment ran builds on EFS at ~9x the cost. Roughly $2.9/month per
+      workspace at 24/7, and only while the task runs. Set 0 to opt out.
   Fqdn:
     Type: String
     Description: >-

@@ -97,6 +97,25 @@ EFS のペナルティは 1 ファイル約 14.5 ms、帯域差は 1 MiB 約 1 m
 これは別案件として検討する。docs/62 の `(d) EC2 起動タイプ＝却下` は理由が
 「scale-to-zero が消える」だったので、インスタンス stop を前提にすれば**再検討の余地がある**。
 
+## 決定 5 — 退避は既定で有効にする（既定 50 GiB）／生成物は作業コピーを作った時点で逃がす
+
+決定 3 は実装したが、**出荷状態では一度も発火していなかった**。原因は 2 つで、どちらも
+「入れた」と「効く」の差である。
+
+1. **作業ディスクの既定が 0（＝ Fargate 無料枠 20 GiB）だった。** 退避は作業ディスクが
+   30 GiB 以上のときだけ有効になる設計（docs/63 §63.6.1）なので、既定のままではどのデプロイでも
+   条件を満たさない。→ **既定を 50 GiB に上げる**（`WsDiskGiB` / `AF_ECS_WS_DISK_GB`）。
+   無料枠超過分は **$0.097/GiB-月・タスク稼働中のみ**課金で、30 GiB 上乗せは 24/7 でも月 $2.9。
+   `WsDiskGiB=0` で従来どおりに戻せる。**既存スタックは自動では上がらない**（CFN はパラメータ値を保持する）。
+2. **生成物の退避が手動だった。** `af-scratch node_modules` は「既にある木」しか動かせず、
+   そのときには **1 回目の `npm ci` が EFS 上で走り終えている**（＝ 105 秒を払い済み・移動自体も遅い）。
+   効き幅を取れるのは**空のうちに symlink を張る**形だけなので、**Agent が clone / worktree 作成の
+   直後に `af-scratch --auto` を叩く**（docs/63 §63.6.3）。
+
+**追跡物は絶対に動かさない**——実体があるものは `git check-ignore` が無視と答えたときだけ移す。
+既存の作業コピーには適用しない（再開時に巨大な木を移すとセッション起動が止まるため）。
+代償は `[ -d node_modules ] || npm install` 型のスクリプトが誤認すること（`AF_WS_SCRATCH_AUTO=0` で無効化）。
+
 ## 影響
 
 - `control-plane/mem.go` — 帯ごとの刻みを持つ形へ。既存バグの修正を含む
@@ -109,4 +128,7 @@ EFS のペナルティは 1 ファイル約 14.5 ms、帯域差は 1 MiB 約 1 m
 - `control-plane/tenants.go`・`mcp.go` — 設定経路
 - `console/src/features/settings/tenantMembers.tsx` — 名前付きサイズの選択 UI
 - `workspace/entrypoint.sh` — 置き場の分割（ECS のときだけ有効化）
+- `workspace/af-scratch.sh` — `--auto`（マーカーから生成物を引き当て、空のうちに symlink）
+- `workspace/agent/scratch.go` — clone / worktree 作成後の best-effort 呼び出し
+- `deploy/aws/ecs/cfn/30-ingress.yaml` — `WsDiskGiB` の既定を 0 → 50
 - `workspace/workspace-notes.md` — 永続モデルの記述を ECS について書き換える（利用者への約束）

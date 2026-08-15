@@ -36,7 +36,22 @@ network storage where writing many small files is ~9x slower (a `node_modules`-s
 is the pathological case), so the caches that are cheap to rebuild live on fast local disk
 instead. What is relocated there for you (Go build cache, `uv`, Go modules) is only ever
 regenerable, and `~/.npm` deliberately stays on the persistent home so a rebuild needs no
-network. You can move a build artifact there yourself:
+network.
+
+**Build artifacts are relocated for you too, at the moment a working copy is created.**
+When the Console clones a repo or adds a worktree, `node_modules` (next to a
+`package.json`), `target` (`Cargo.toml` / `pom.xml`), `.venv` (`pyproject.toml`) and
+`build` (`build.gradle`) become symlinks into `/scratch` **before** anything installs into
+them — that is where the speedup comes from, since it is the first `npm ci` that would
+otherwise pay the network-storage cost. So an empty `node_modules` symlink in a fresh
+checkout is expected, not a broken install. Two consequences worth knowing:
+
+- A script shaped like `[ -d node_modules ] || npm install` will now think the install
+  already happened. Prefer running the install unconditionally.
+- Nothing already checked in is ever moved: a directory that git does **not** ignore is
+  left exactly where it is.
+
+You can also move one yourself, at any time:
 
 ```
 af-scratch node_modules      # move ./node_modules to the fast disk and symlink it
