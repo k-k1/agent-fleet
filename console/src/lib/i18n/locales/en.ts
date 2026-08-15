@@ -2509,6 +2509,10 @@ export const en: Record<keyof typeof ja, string> = {
   "clean.reason_badge.branch_merged": "Merged branch",
   "clean.reason_hint.branch_merged": "Already in the parent; recoverable after deletion",
 
+  // === Phone left-swipe = rotate through running sessions (app/App.tsx) ===
+  "swipe.rotated": "{n}/{total} {name}",
+  "swipe.rotate_none": "No other running session",
+
   // === P2 session row (features/sessions/SessionRow.tsx) ===
   "srow.id_copied": "Copied the ID: {name}",
   "srow.cant_resume": "Can't resume — the working folder no longer exists",
