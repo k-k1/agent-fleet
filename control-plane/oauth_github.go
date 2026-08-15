@@ -523,7 +523,7 @@ func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 // constants github.com / api.github.com. A row that could redirect them would let a
 // tenant point the adapter at a server it controls and mint any subject it liked —
 // and the subject is what rule 1.5 joins on.
-func newTenantGitHubProvider(row TenantIdP, slug, secret string) (*githubProvider, error) {
+func newTenantGitHubProvider(row TenantIdP, tn TenantRef, secret string) (*githubProvider, error) {
 	if row.ClientID == "" || secret == "" {
 		return nil, errors.New("client_id / client_secret are required")
 	}
@@ -538,15 +538,20 @@ func newTenantGitHubProvider(row TenantIdP, slug, secret string) (*githubProvide
 	if len(domains) == 0 {
 		return nil, errors.New("allowed_domains is empty, which would admit every address this organization's members carry")
 	}
+	// ★ The generated label names the tenant (docs/61 §61.15.10). Without it this row
+	// and the deployment's own GitHub button carry the SAME text on /login/<slug> —
+	// the ids differ, but nobody reads ids off a button. The base string stays the
+	// env one so "GitHub" keeps its casing and AF_GITHUB_LABEL_* is still honoured;
+	// a row that declared its own label wins, as before.
 	labelJA, labelEN := row.LabelJA, row.LabelEN
 	if labelJA == "" {
-		labelJA = envOr("AF_GITHUB_LABEL_JA", "GitHub でサインイン")
+		labelJA = tenantLabelSuffix(envOr("AF_GITHUB_LABEL_JA", "GitHub でサインイン"), tn, "ja")
 	}
 	if labelEN == "" {
-		labelEN = envOr("AF_GITHUB_LABEL_EN", "Sign in with GitHub")
+		labelEN = tenantLabelSuffix(envOr("AF_GITHUB_LABEL_EN", "Sign in with GitHub"), tn, "en")
 	}
 	return &githubProvider{
-		id:           tenantProviderID(slug, row.Name),
+		id:           tenantProviderID(tn.Slug, row.Name),
 		labelJA:      labelJA,
 		labelEN:      labelEN,
 		clientID:     row.ClientID,

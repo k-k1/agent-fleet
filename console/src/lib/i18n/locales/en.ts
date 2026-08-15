@@ -1367,14 +1367,20 @@ export const en: Record<keyof typeof ja, string> = {
     "One domain can belong to only one tenant.",
   "admin.idp_tids": "Allowed tenant ids (Entra tid, optional)",
   "admin.idp_tids_hint": "Comma-separated. Required when the issuer is common / organizations.",
+  "admin.idp_link_claim": "How the same account is recognised",
+  "admin.idp_link_claim_none": "Default (recognise by sub)",
+  "admin.idp_link_claim_hint":
+    "Use this when the same issuer has more than one app registration. Entra's sub differs per app registration, so one person pressing head office's button and this one looks like two accounts. Picking oid makes them one. Only values the IdP assigns can be picked — never one somebody can assert, such as an email address. Changing it sends the row back for approval.",
   "admin.idp_label_ja": "Button label (Japanese)",
   "admin.idp_label_en": "Button label (English)",
   "admin.idp_repend_hint":
-    "Changing the issuer, the client ID, the trust rule or the kind — or adding a domain, tenant id or GitHub organization — sends the method back for approval, " +
+    "Changing the issuer, the client ID, the trust rule, the kind or how the same account is recognised — or adding a domain, tenant id or GitHub organization — sends the method back for approval, " +
     "because the approval was given to that identity source for that scope.",
   "admin.hidden_providers": "Methods to keep off the sign-in page",
   "admin.hidden_providers_unit":
     "Comma-separated. Still accepted — only the button is removed from this tenant's sign-in page. Ignored if it would hide every button.",
+  "admin.hidden_providers_url_note":
+    "★ Hiding a button does not remove it from the plain sign-in page (the one without the URL above): that page belongs to no tenant, and hiding methods there would lock out everybody who is not in one. For the setting to have any effect, hand this tenant's people the sign-in URL above.",
   "admin.allowed_providers_shared_note":
     "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Keep the method those people use accepted, and list it under \"methods to keep off the sign-in page\" so it does not appear here. Accepting a method does not widen who can enter — the roster decides that.",
   "admin.idp_delete_title": "Delete {name}",
@@ -3271,6 +3277,12 @@ export const en: Record<keyof typeof ja, string> = {
   "account.none": "No sign-in method is linked yet.",
   "account.add_title": "Add a sign-in method",
   "account.add_note": "Only a method that asserts the same email address as this account can be added, and you must also satisfy that method's own rules (organization membership, allowed domains). A method already used by another account cannot be added.",
+  "account.detach": "Remove",
+  "account.detach_title": "Remove {name}?",
+  "account.detach_body":
+    "You will no longer be able to sign in with this method. Your workspace, home and secrets are untouched, and you can add it again later.",
+  "account.detach_current": "You are signed in with this method right now. Sign in with another one first, then remove it.",
+  "account.detach_last": "This is the only sign-in method left. Removing it would leave you unable to sign in at all.",
   // === 使用量ビュー（docs/46 P4・features/usage/UsageView.tsx） ===
   "usage.intro":
     "Where the tokens went, feature by feature. Interactive sessions and the auxiliary LLM calls the fleet makes on its own (title suggestions, compaction, reply suggestions…) are measured on the same yardstick.",

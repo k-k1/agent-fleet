@@ -208,7 +208,8 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 		return
 	}
 	err = c.mgr.store.AttachProvider(r.Context(), ident.ID, IdentityLink{
-		Provider: pr.Provider, Subject: pr.Subject, Realm: pr.Realm, Email: pr.Email,
+		Provider: pr.Provider, Subject: pr.Subject, Realm: pr.Realm,
+		RealmClaim: pr.RealmClaim, RealmSubject: pr.RealmSubject, Email: pr.Email,
 	})
 	switch {
 	case errors.Is(err, errLinkTaken):
@@ -220,6 +221,14 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 		return
 	}
 	log.Printf("oauth: linked %s to identity %s", pr.Provider, ident.ID)
+	// ★ Both directions are in the ledger (§61.16.4). A link is a NEW door into a
+	// workspace, and an audit that only records removals cannot answer "since when
+	// could that account also be reached with the subsidiary's GitHub".
+	_ = c.mgr.store.InsertAudit(r.Context(), AuditLog{
+		ID: newID(), ActorKind: "user", ActorID: ident.ID,
+		Action: "identity_provider.attach", Target: pr.Provider,
+		Detail: "subject=" + pr.Subject, HTTPStatus: http.StatusOK, At: nowTS(),
+	})
 	c.writeLinkResult(w, r, linkOK, p.Label(preferredUILang(r)), next)
 }
 
@@ -289,16 +298,25 @@ func (a accountAPI) loginMethods(w http.ResponseWriter, r *http.Request, ident I
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	current := sessionProviderFrom(r.Context())
+	cur, hasCur := sessionLoginRef(r.Context())
 	have := make(map[string]bool, len(linked))
 	out := make([]map[string]any, 0, len(linked))
 	for _, lp := range linked {
 		have[lp.Provider] = true
 		row := map[string]any{
-			"provider":      lp.Provider,
+			"provider": lp.Provider,
+			// ★ subject is what identifies the ROW. One provider can hold two of them
+			// (the same button pressed as two IdP accounts is refused today, but rows
+			// written before that guard, or by two adapters sharing an id, are not
+			// impossible), and without it "remove this one" has nothing to name.
+			"subject":       lp.Subject,
 			"email":         lp.Email,
 			"last_login_at": lp.LastLoginAt,
-			"current":       lp.Provider == current,
+			"current":       hasCur && currentMethod(cur, lp.Provider, lp.Subject),
+			// ★ Whether it CAN be removed is answered here, by the server, for the same
+			// reason the list is a view and not the gate (決定 14): the Console only
+			// mirrors it, and detach re-checks both rules itself.
+			"removable": len(linked) > 1 && !(hasCur && currentMethod(cur, lp.Provider, lp.Subject)),
 		}
 		// A provider that is gone (removed from env, or a suspended tenant row) has no
 		// label to show. The row stays visible — it is still how that person can sign
@@ -321,6 +339,79 @@ func (a accountAPI) loginMethods(w http.ResponseWriter, r *http.Request, ident I
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": a.enabled, "linked": out, "linkable": cand,
+	})
+}
+
+// currentMethod reports whether a linked row is the one this session is signed in
+// with. A session that carries no subject (a cookie minted before P0) matches every
+// row of its provider — see sessionLoginRef for why that direction is the safe one.
+func currentMethod(cur loginRef, provider, subject string) bool {
+	return cur.provider == provider && (cur.subject == "" || cur.subject == subject)
+}
+
+// detachLoginMethod (DELETE /api/me/login-methods?provider=…&subject=…) removes one
+// sign-in method from the caller's OWN account (docs/61 §61.16.4).
+//
+// ★ provider and subject arrive as QUERY parameters, not path segments: a
+// tenant-defined provider id is "t:<slug>:<name>" and the colons make it a poor path
+// component — encoded, it is at the mercy of every proxy in front of CP, and
+// unencoded it silently splits into segments that never match the route.
+//
+// Three guards, and each closes a different hole:
+//
+//	the last one           removing it locks the account out for good (store layer,
+//	                       counted inside the DELETE so two tabs cannot race to zero)
+//	the one in use         you would still be signed in on a method you just deleted,
+//	                       and the next request would resolve to nothing
+//	somebody else's row    identityID is in the WHERE, always
+func (a accountAPI) detachLoginMethod(w http.ResponseWriter, r *http.Request, ident Identity) {
+	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
+	subject := strings.TrimSpace(r.URL.Query().Get("subject"))
+	if provider == "" || subject == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request",
+			"provider and subject are required"})
+		return
+	}
+	// ★ The method that minted THIS session. Checked here rather than in the store
+	// because the store has no session — and it is checked at all because "sign in
+	// with the other method first, then remove this one" is a step people skip.
+	if cur, ok := sessionLoginRef(r.Context()); ok && currentMethod(cur, provider, subject) {
+		writeAPIErr(w, &apiError{http.StatusConflict, "current_login_method",
+			"you are signed in with this method right now — sign in with another one first, then remove it"})
+		return
+	}
+	err := a.mgr.store.DetachProvider(r.Context(), ident.ID, provider, subject)
+	switch {
+	case errors.Is(err, errNoSuchLoginMethod):
+		writeAPIErr(w, &apiError{http.StatusNotFound, "login_method_not_found", err.Error()})
+		return
+	case errors.Is(err, errLastLoginMethod):
+		writeAPIErr(w, &apiError{http.StatusConflict, "last_login_method", err.Error()})
+		return
+	case err != nil:
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	a.auditMethod(r, ident, "identity_provider.detach", provider, subject)
+	writeJSON(w, http.StatusOK, map[string]any{"detached": provider})
+}
+
+// auditMethod records a change to WHICH doors open an account. Both directions are
+// written (docs/61 §61.16.4): a linked method is a new way into a workspace, and the
+// question an audit answers afterwards is "when did that become possible", which a
+// detach-only ledger cannot.
+//
+// TenantID is empty on purpose — this is a deployment-level fact about one person,
+// not an action inside a tenant, and filing it under whichever tenant happened to be
+// selected would hide it from everybody else's view of the same account.
+func (a accountAPI) auditMethod(r *http.Request, ident Identity, action, provider, subject string) {
+	if a.mgr == nil || a.mgr.store == nil {
+		return
+	}
+	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
+		ID: newID(), ActorKind: "user", ActorID: ident.ID,
+		Action: action, Target: provider, Detail: "subject=" + subject,
+		HTTPStatus: http.StatusOK, At: nowTS(),
 	})
 }
 

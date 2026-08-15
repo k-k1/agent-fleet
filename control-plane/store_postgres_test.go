@@ -336,9 +336,12 @@ func TestPostgresStore(t *testing.T) {
 	if err := st.SetTenantIdPStatus(ctx, t2.ID, idpRow.ID, "active", "boss", nowTS(), nowTS()); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	act, slugs, err := st.ListActiveTenantIdPs(ctx)
-	if err != nil || len(act) != 1 || slugs[t2.ID] != t2.Slug || act[0].ApprovedBy != "boss" {
-		t.Fatalf("active tenant_idp: %+v slugs=%v err=%v", act, slugs, err)
+	// ★ The display name travels with the slug: it is what the generated button label
+	// says to tell this tenant's method apart from the deployment's (docs/61 §61.15.10).
+	act, tenants, err := st.ListActiveTenantIdPs(ctx)
+	if err != nil || len(act) != 1 || tenants[t2.ID].Slug != t2.Slug ||
+		tenants[t2.ID].Name != t2.Name || act[0].ApprovedBy != "boss" {
+		t.Fatalf("active tenant_idp: %+v tenants=%v err=%v", act, tenants, err)
 	}
 	// The tenant-scoped roster lookup. dev@example.com is an ACTIVE member of the
 	// default tenant and was deactivated in t2 just above, so this one call proves

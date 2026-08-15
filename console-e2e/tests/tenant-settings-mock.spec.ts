@@ -263,12 +263,20 @@ test("テナント管理者: GitHub 行は組織を訊き、issuer / tid / 信�
   await expect(labels.filter({ hasText: "issuer" })).toHaveCount(0);
   await expect(labels.filter({ hasText: "email の信頼方法" })).toHaveCount(0);
   await expect(labels.filter({ hasText: "許可する Entra テナント" })).toHaveCount(0);
+  // ★ 「同一アカウントの見分け方」も GitHub には無い（docs/61 §61.15.11）。GitHub の
+  // subject はどの OAuth App でも同じ数値 id なので、2 本目の鍵が要らない。
+  await expect(labels.filter({ hasText: "同一アカウントの見分け方" })).toHaveCount(0);
   // ドメインは GitHub でも必須のまま（1 ドメイン 1 テナントの台帳・§61.15.3）。
   await expect(labels.filter({ hasText: "受け入れるメールドメイン" })).toHaveCount(1);
 
   // 種類を自社 IdP に戻すと issuer 欄が現れ、github.com は持ち越されない。
   await form.locator("select").first().selectOption("oidc");
   await expect(labels.filter({ hasText: "許可する GitHub 組織" })).toHaveCount(0);
+  // OIDC 側には出る。★ 自由入力ではなく選択で、選べるのは CP が許した名前だけ
+  // （email などを書けると、同じ発行元を共有する方式が既存アカウントに届く）。
+  const linkClaim = form.locator(".ssm-fld", { hasText: "同一アカウントの見分け方" }).locator("select");
+  await expect(linkClaim).toHaveCount(1);
+  await expect(linkClaim.locator("option")).toHaveText(["既定（sub で見分ける）", "oid"]);
   const issuer = form.locator(".ssm-fld", { hasText: "issuer（発行者 URL）" }).locator("input");
   await expect(issuer).toHaveValue("");
 });
@@ -313,4 +321,38 @@ test("デプロイ管理者: ログイン規則の欄に、書ける provider id
   await expect(known.locator(".adm-mcp-row").nth(1).locator(".as-name")).toHaveText("Microsoft でサインイン");
   await expect(known.locator(".adm-mcp-row").nth(1).locator("code")).toHaveText("entra");
   await expect(known.locator(".adm-mcp-row").nth(1).locator(".as-repo")).toHaveText(IDP.issuer);
+});
+
+// 「ボタンを出さない方式」は、そのテナントのログイン画面にしか効かない — 素の /login は
+// テナントを知らないので、デプロイ共通の方式はそこに出続ける（docs/61 §61.15.13）。
+// つまり隠す指定が効くのは `/login/<slug>` を配ったときだけで、それが読めるのは
+// 隠す欄と同じ画面しかない。★ 欄を埋めた「その場で」出ることを固定する。
+test("デプロイ管理者: 方式を隠すと、サインイン URL を配る必要がその場で読める", async ({ page }) => {
+  await page.route("**/api/**", async (route) => {
+    const p = new URL(route.request().url()).pathname;
+    if (p === "/api/whoami") return route.fulfill({ json: { auth_mode: "dev", user: "root", email: "root@example.com" } });
+    if (p === "/api/tenants") return route.fulfill({ json: { tenants: [{ slug: "acme", name: "Acme", role: "tenant_admin" }], super_admin: true } });
+    if (p === "/api/workspace") return route.fulfill({ json: { state: "running" } });
+    if (p === "/api/sessions") return route.fulfill({ json: { sessions: [] } });
+    if (p === "/api/admin/tenants") return route.fulfill({ json: { tenants: [TENANT], super_admin: true } });
+    if (p === "/api/admin/tenants/acme/idp") return route.fulfill({ json: { providers: [IDP] } });
+    if (p === "/api/admin/tenants/acme/members") return route.fulfill({ json: { members: MEMBERS } });
+    if (p === "/api/admin/idp") return route.fulfill({ json: { providers: [IDP] } });
+    if (p === "/api/admin/providers") return route.fulfill({ json: { providers: [] } });
+    return route.abort();
+  });
+  await page.goto(origin);
+
+  await page.locator(".acct-btn").click();
+  await page.locator(".acct-menu .acct-item", { hasText: "管理" }).click();
+  await page.locator(".tc-name", { hasText: "Acme" }).first().click();
+
+  const rules = page.locator(".admin-panel", { hasText: "ログイン規則" });
+  const note = rules.locator(".admin-hint", { hasText: "素のログイン画面" });
+  // 何も隠していないうちは出さない（読む理由が無いヒントは、他のヒントを薄める）。
+  await expect(note).toHaveCount(0);
+  await rules.locator(".admin-fld", { hasText: "ボタンを出さない方式" }).locator("input").fill("google");
+  await expect(note).toHaveCount(1);
+  // 配るべき URL はすぐ上にある（別の面に置くと、読んだ人が探しに行くことになる）。
+  await expect(rules.locator("code", { hasText: "/login/acme" })).toHaveCount(1);
 });

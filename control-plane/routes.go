@@ -122,6 +122,9 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 	// The account panel behind it — a normal session-gated API (docs/61 §61.16).
 	acct := newAccountAPI(cfg)
 	mux.HandleFunc("GET /api/me/login-methods", acct.withIdentity(acct.loginMethods))
+	// Unlinking one (docs/61 §61.16.4). provider/subject are query parameters, not
+	// path segments — a tenant provider id carries colons; see detachLoginMethod.
+	mux.HandleFunc("DELETE /api/me/login-methods", acct.withIdentity(acct.detachLoginMethod))
 	// Identity — who the AuthGateway resolved this request to (and the raw
 	// gateway headers, for verifying the oauth2-proxy -> Caddy -> CP chain).
 	mux.HandleFunc("GET /api/whoami", newWorkspaceAPI(cfg.mgr, cfg.autostart).whoami)
