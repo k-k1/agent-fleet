@@ -217,8 +217,20 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 </button>
               </div>
               <div className="acct-theme">
+                <div className="ui-seg choice-seg acct-theme-seg">
+                  {LOCALES.map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      className={"seg-btn" + (s.locale === l.id ? " active" : "")}
+                      onClick={() => setSetting("locale", l.id)}
+                    >
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
                 {/* 配置（分割ペイン / タブ付きグリッド）は色ではないが、面の見え方を
-                    ここで完結させたいので外観ポップの先頭に置く。設定→表示と同じ
+                    ここで完結させたいので外観ポップの先頭付近に置く。設定→表示と同じ
                     paneLayout を書くだけで、実際の切り替え（未保存の編集がある場合の
                     確認を含む）は App の loadMode 側が受け持つ。 */}
                 <div className="appr-seg-row">
@@ -235,18 +247,6 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                       </button>
                     ))}
                   </div>
-                </div>
-                <div className="ui-seg choice-seg acct-theme-seg">
-                  {LOCALES.map((l) => (
-                    <button
-                      key={l.id}
-                      type="button"
-                      className={"seg-btn" + (s.locale === l.id ? " active" : "")}
-                      onClick={() => setSetting("locale", l.id)}
-                    >
-                      {l.label}
-                    </button>
-                  ))}
                 </div>
                 <div className="ui-seg choice-seg acct-theme-seg">
                   {THEMES.map((t) => (
