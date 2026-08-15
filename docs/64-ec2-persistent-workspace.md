@@ -721,3 +721,86 @@ Console からは復帰できなくなる（`Start` は `starting` を見て早�
   組み合わせ（第 1・2 ラウンドはサービス側の属性制約と bridge で測っている）。
 - `host` ボリュームで EBS を bind した状態での entrypoint 一式（`AF_WS_KEEP` の symlink 化を含む）。
 - CFN の `40-ec2-pool` をスタックとして立てたことは無い（user-data の中身は第 2 ラウンドで実証済み）。
+
+## 64.16 実装したアダプタを実 AWS で通す（第 3 ラウンド c・2026-08-15）
+
+§64.15 の実装（`runtime_ecs_ec2.go`）を**本物の ECS / EC2 / EBS / EFS / SSM に対して**動かした。
+ハーネスは `~/af-ec2c/`（`setup.sh` → `go test -run TestECSEC2Live` → `teardown.sh`）で、
+**基盤は repo の `deploy/aws/ecs/cfn/40-ec2-pool.yaml` をそのまま立てている**
+（テンプレート自体を検証したいので、手書きの launch template は使わない）。
+イメージも本番と同じ `workspace:0.8.0`。NAT / ALB / RDS は作らない。
+
+### 64.16.1 通ったこと
+
+| 確かめたこと | 結果 |
+|---|---|
+| `40-ec2-pool` スタックが立つ（LT・IAM・SG・user-data） | ✅ CREATE_COMPLETE |
+| user-data が置く `af-mount` / `af-umount` | ✅ 実機で動作（`--mkfs` の blkid ガードも含む） |
+| **タスク定義側の `ec2InstanceId ==` 配置制約** | ✅ 狙ったスロットに載る（タスクのコンテナインスタンスと attach 先が一致） |
+| **awsvpc ＋ Service Connect（EC2 起動タイプ）** | ✅ `ServiceConnect: ATTACHED`。`Endpoint()` の契約は変えなくてよい |
+| **EBS home がコンテナの `/home/dev`** | ✅ entrypoint が書いた `.local` / `.npm` がホストの `/af-home/<id>/dev` に見える |
+| **home がスワップをまたいで残る** | ✅ マーカーが u1 → u2 → u1 の往復後も無傷 |
+| 1 スロットを 2 ユーザーが順番に使う（プールは増えない） | ✅ |
+| EFS アクセスポイント（資格情報ハイブリッド）が EC2 でもマウントできる | ✅ **ただし条件付き** — §64.16.2 (1) |
+| `Destroy`（返却 → ボリューム削除） | ✅ ただしリトライが要る — §64.16.2 (4) |
+
+### 64.16.2 実装が間違っていた 4 点（実 AWS でしか出なかった）
+
+1. **EFS アクセスポイントに `PosixUser` を付けると、EC2 起動タイプではタスクが起動しない。**
+
+   ```
+   CannotCreateContainerError: failed to copy file info for /var/lib/ecs/volumes/…-claude-…:
+   failed to chown …: operation not permitted
+   ```
+
+   EC2 では ECS が **EFS を Docker に渡す**ので、Docker が「イメージ側のディレクトリの所有情報を
+   空ボリュームへ複製する」段で `lchown` する。ワークスペースイメージの `/var/lib/af/claude` は
+   **root 所有**なので `lchown(0,0)` になり、`PosixUser 1000` のアクセスポイントはそれを
+   **uid 1000 として**実行する ＝ 権限が無い。**Fargate は EFS を自前でマウントする**ので、
+   この経路が存在せず、既存アダプタでは一度も出ていなかった。
+   → EC2 側は**専用のアクセスポイント（`claude-ec2` / `keep-ec2`・`PosixUser` 無し）**を作る。
+   `rootDirectory` は Fargate と同じパスにしてあるので、プロファイルを切り替えても中身は続く。
+
+2. **「ボリュームは刺さっているがサービスが無い」を `starting` と写すと、Start が永久に no-op になる。**
+   `Start` は `starting` で早期 return するので、**起動が attach と CreateService の間で死んだ
+   Workspace は誰にも起こせなくなる**。§64.15.4 の表はこの形で書かれていた。
+   → **収束中を名乗るのは claim タグだけ**にし（launch 完了で落とす・TTL 5 分）、
+   claim の無い attach 済みは `stopped`（＝ Start が拾い直せる）に変えた。
+
+3. **`DetachVolume` が返り、ボリュームが `available` になっても、スロットのデバイスは 8〜9 秒解放されない。**
+   その間の `AttachVolume` は `Attachment point /dev/sdf is already in use` で弾かれる
+   （＝ §64.15.2 の排他は効いている）。素直に「空きスロット無し」と読むと
+   **数秒待てば済むところでインスタンスを 1 台買う**——プールの意味が消える。
+   → 返却は**デバイスが返るまで待って**から完了とし、attach 側にも短いリトライを入れた。
+   なお「インスタンスの `BlockDeviceMappings`」と「ボリュームの attachment」は**別々に収束する**
+   （ボリューム側が先に空く）ので、占有の判定はボリューム側 ＋ リトライに寄せた。
+
+4. **`DeleteVolume` は、`DescribeVolumes` が detach 済みと答えた後でも `VolumeInUse` を返す窓がある。**
+   → リトライする。ここで諦めると**課金され続けるボリュームが残る**。
+
+（おまけ）**ECS は削除直後の同名サービス作成を拒否する**（`Create service is not idempotent`）。
+CP は今のところサービスを削除しないので実害は無いが、削除を配線するときはこの窓を踏む。
+
+### 64.16.3 計測 —— 「22〜27s」は Service Connect 込みでは出ない
+
+| 形 | 実測 |
+|---|---|
+| 全部温（既存 home ＋ ホットスロット ＋ 既存サービス） | **13.2s** |
+| 既存 home をホットスロットへ載せ替え（サービス更新込み） | **51.8s / 94.3s**（run による幅） |
+| 新規 home（`CreateVolume` ＋ `mkfs` ＋ 初回 boot）をホットスロットへ | **81.7s** |
+| Stop → スロット返却（タスク消滅 ＋ umount ＋ detach ＋ デバイス解放） | **7.3〜13.3s**（うちデバイス解放 8〜9s） |
+| 停止スロットからの起動（インスタンス boot 込み） | 135.4s（1 回のみ観測） |
+
+⚠️ **§64.12.1 の「22〜27s」は bridge ＋ Service Connect 無しで測った数字である。**
+製品は CP → Agent の到達に Service Connect を使う（`Endpoint()` の契約）ので、
+§64.4.3 の実測どおり **awsvpc ＋ SC がおよそ 20 秒を足す**。実装を通した実測は
+**13〜95 秒の帯**で、Fargate の温再 Start（~105s）より速いが**「1/4」ではない**。
+
+**この帯を 30 秒未満に寄せたいなら、削りしろは Service Connect を外すこと**（§64.4.3 の
+bridge ＋ 固定ホストポートで 22s）だが、それは `Endpoint()` の契約変更（CP がインスタンスの
+private IP ＋ ポートを自前で解決する）を意味する。P0 では採らない。
+
+### 64.16.4 後始末
+
+`teardown.sh` で全消去し、**インスタンス / ボリューム / スナップショット / EFS / クラスタ /
+名前空間 / ECR / スタック / IAM ロール / ENI / SG / ロググループが 0 件**であることを確認した。
