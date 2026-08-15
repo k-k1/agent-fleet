@@ -16,7 +16,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
-import { fmtG, fmtPct, fmtGbHint } from "./adminShared.ts";
+import { fmtG, fmtPct, fmtGbHint, WS_SIZE_PRESETS } from "./adminShared.ts";
 import type { Member } from "./adminShared.ts";
 
 // MembersPanel — 名簿と「メンバー追加」。TenantView の中に直接書かれていたものを、
@@ -143,8 +143,13 @@ export function MemberView({
   const [busy, setBusy] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
   const [limit, setLimit] = useState<number | string>(member.max_sessions ?? 0);
-  // Per-workspace RAM cap, stored in bytes, edited in MB (0 = unset → deployment default).
+  // The three workspace size axes. Memory is stored in bytes and edited in MB, CPU in
+  // Fargate units (1024 = 1 vCPU) and disk in GiB — 0 means "unset → deployment default"
+  // on every axis. They are independent on purpose (ADR 0044 決定 1): the presets below
+  // just fill all three at once with a combination Fargate accepts.
   const [memMb, setMemMb] = useState<number | string>(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
+  const [cpuUnits, setCpuUnits] = useState<number | string>(member.cpu_limit ?? 0);
+  const [diskGb, setDiskGb] = useState<number | string>(member.disk_gb ?? 0);
   const [role, setMemberRole] = useState(member.role); // tenant-scoped role, live-updated on grant/revoke
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   // Only setState on an actual change so an unchanged 4s poll doesn't re-render
@@ -219,6 +224,10 @@ export function MemberView({
       tenant_slug: slug,
       max_sessions: +limit || 0,
       mem_limit: Math.round(+memMb || 0) * 1048576,
+      cpu_limit: Math.round(+cpuUnits || 0),
+      // Sent explicitly rather than omitted: the endpoint writes the whole quota row,
+      // so leaving it out would silently reset a disk quota set elsewhere (MCP/API).
+      disk_gb: Math.round(+diskGb || 0),
     });
     setLimitOpen(false);
     poll(); // mem_max reflects the new cap after the next start; refresh sessions/stats
@@ -371,7 +380,13 @@ export function MemberView({
           <button className="danger-btn" disabled={!running} onClick={() => setConfirmStop(true)}>
             <Icon name="debug-stop" /> {tr("admin.force_stop_ws")}
           </button>
-          <button onClick={() => { setLimit(member.max_sessions ?? 0); setMemMb(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0); setLimitOpen(true); }}>
+          <button onClick={() => {
+            setLimit(member.max_sessions ?? 0);
+            setMemMb(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
+            setCpuUnits(member.cpu_limit ?? 0);
+            setDiskGb(member.disk_gb ?? 0);
+            setLimitOpen(true);
+          }}>
             <Icon name="settings" /> {tr("admin.set_limits")}
           </button>
           {/* clean-home is a tenant_admin action now (docs/61 §61.10.6 / 決定 26):
@@ -403,6 +418,43 @@ export function MemberView({
                 </span>
                 <span className="af-unit">{+memMb > 0 ? tr("admin.eq_hint", { hint: fmtGbHint(+memMb) }) : tr("admin.zero_deploy_default")}</span>
               </label>
+              <label className="admin-fld">
+                <span className="af-cap">{tr("admin.ws_cpu")}</span>
+                <input type="number" min="0" step="256" value={cpuUnits} onChange={(e) => setCpuUnits(e.target.value)} />
+                <span className="af-unit">
+                  {+cpuUnits > 0 ? tr("admin.ws_cpu_vcpu", { n: String(+cpuUnits / 1024) }) : tr("admin.zero_deploy_default_cpu")}
+                </span>
+              </label>
+              <label className="admin-fld">
+                <span className="af-cap">{tr("admin.ws_disk")}</span>
+                <span className="af-inputwrap">
+                  <input type="number" min="0" step="10" value={diskGb} onChange={(e) => setDiskGb(e.target.value)} />
+                  <span className="af-suffix">GB</span>
+                </span>
+                <span className="af-unit">{+diskGb > 0 ? tr("admin.ws_disk_warn") : tr("admin.ws_disk_hint")}</span>
+              </label>
+            </div>
+            {/* The presets fill all three axes at once with a combination Fargate
+                accepts; the fields above stay editable for anything in between. */}
+            <div className="le-presets">
+              <span className="af-cap">{tr("admin.ws_size_preset")}</span>
+              {WS_SIZE_PRESETS.map((p) => {
+                const on = +memMb === p.mem && +cpuUnits === p.cpu && +diskGb === p.disk;
+                return (
+                  <button
+                    key={p.id}
+                    className={on ? "chip on" : "chip"}
+                    onClick={() => { setMemMb(p.mem); setCpuUnits(p.cpu); setDiskGb(p.disk); }}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+              <span className="af-unit">
+                {WS_SIZE_PRESETS.some((p) => +memMb === p.mem && +cpuUnits === p.cpu && +diskGb === p.disk)
+                  ? ""
+                  : tr("admin.ws_size_custom")}
+              </span>
             </div>
             <p className="admin-hint">
               {tr("admin.mem_clamp_1")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.mem_clamp_2")}

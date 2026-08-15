@@ -38,11 +38,26 @@ export interface Member {
   state?: string;
   max_sessions?: number | null;
   mem_limit?: number | null; // per-workspace RAM cap in bytes (0/undefined = unset)
+  cpu_limit?: number | null; // per-workspace CPU cap in Fargate units, 1024 = 1 vCPU (0/undefined = unset)
+  disk_gb?: number | null; // per-workspace working disk in GiB (0/undefined = unset → 20 GiB free default)
   /** "active" | "removed". A removed member is off the roster and can no longer
    *  sign in, but stays on THIS list so the rest of the offboarding sequence
    *  (stop workspace → clean home) is still reachable (docs/61 §61.10.6). */
   status?: string;
 }
+
+/** The workspace sizes offered as named choices. The three axes are stored as
+ *  independent numbers (ADR 0044 決定 1); these presets exist only so an admin picks
+ *  from combinations Fargate actually accepts instead of discovering the matrix by
+ *  trial and error. cpu is in Fargate units (1024 = 1 vCPU), mem in MiB, disk in GiB.
+ *  Every pair here is a measured-valid Fargate size (docs/63 §63.2). */
+export const WS_SIZE_PRESETS = [
+  { id: "s", label: "S", cpu: 1024, mem: 2048, disk: 0 },
+  { id: "m", label: "M", cpu: 1024, mem: 4096, disk: 0 },
+  { id: "l", label: "L", cpu: 2048, mem: 8192, disk: 40 },
+  { id: "xl", label: "XL", cpu: 4096, mem: 16384, disk: 80 },
+  { id: "2xl", label: "2XL", cpu: 8192, mem: 32768, disk: 160 },
+] as const;
 
 // GiB with adaptive precision (shared fmtGiB) plus AdminTab's "G" suffix.
 export const fmtG = (b: number) => fmtGiB(b) + "G";
