@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -333,6 +334,23 @@ func (f *ecsEC2Factory) subnetAZs(ctx context.Context) (map[string]string, error
 	return m, nil
 }
 
+// startGen counts Starts per workspace WITHIN THIS PROCESS. It exists for one race:
+// the recreate / clean-home handlers call Stop and then Start immediately, while the
+// teardown Stop scheduled — unmount and detach — is still on its way. Releasing a slot
+// out from under a workspace that has just been started would drop the task's home
+// mount, and the entrypoint would then write into the slot's root disk instead.
+//
+// The counter is process-local scratch, not state: nothing is authoritative here, and
+// losing it on restart only means the sweeper (which re-checks the service anyway) is
+// the one that notices. The service's desiredCount is still the primary check — this
+// closes the window where Start has begun but has not reached UpdateService yet.
+var startGen sync.Map // workspace name -> *atomic.Int64
+
+func (e *ecsEC2Runtime) generation() *atomic.Int64 {
+	v, _ := startGen.LoadOrStore(e.base.name, &atomic.Int64{})
+	return v.(*atomic.Int64)
+}
+
 // --- Runtime port ---
 
 func (e *ecsEC2Runtime) Token() string    { return e.base.Token() }
@@ -398,6 +416,10 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 		// service deployment from zero, exactly as on Fargate.
 		return nil
 	}
+	// Mark that a Start has begun, so a teardown still draining from the Stop that the
+	// recreate / clean-home handlers issued a moment ago aborts instead of pulling this
+	// workspace's home out from under it.
+	e.generation().Add(1)
 	prep, err := e.prepare(ctx)
 	if err != nil {
 		return err
@@ -434,8 +456,12 @@ func (e *ecsEC2Runtime) Stop(ctx context.Context) error {
 			return err
 		}
 	}
+	// Anchor the guard HERE, not in the goroutine: the whole point is to detect a Start
+	// that happens after this Stop was issued, and the goroutine may not get its turn
+	// until after that Start has already run.
+	gen := e.generation().Load()
 	e.bg(ctx, func(c context.Context) {
-		if err := e.releaseSlot(c); err != nil {
+		if err := e.releaseSlotSince(c, gen); err != nil {
 			// Not fatal: the sweeper re-derives this from tags and finishes the job.
 			log.Printf("ecs-ec2 stop: releasing the slot of %s failed (sweeper will retry): %v", e.base.name, err)
 		}
@@ -1210,6 +1236,12 @@ func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p 
 // slot back to the pool. Idempotent — every step is a no-op when it has already
 // happened, because the sweeper WILL run it again.
 func (e *ecsEC2Runtime) releaseSlot(ctx context.Context) error {
+	return e.releaseSlotSince(ctx, e.generation().Load())
+}
+
+// releaseSlotSince is releaseSlot anchored to a Start count taken by the CALLER — see
+// startGen for why the anchor cannot be taken here.
+func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
 		return err
@@ -1224,12 +1256,20 @@ func (e *ecsEC2Runtime) releaseSlot(ctx context.Context) error {
 	if err := e.waitTasksGone(ctx); err != nil {
 		return err
 	}
+	if e.generation().Load() != gen {
+		return fmt.Errorf("%s was started again while releasing its slot; leaving it attached", e.base.name)
+	}
 	// umount first, ALWAYS. A detach of a mounted filesystem is how a home gets
 	// corrupted (ADR 0045 決定 8 の代償 3). A failure here must stop the detach.
 	if err := e.umountHome(ctx, instanceID); err != nil {
 		return fmt.Errorf("umount %s on %s: %w", e.homeMountPoint(), instanceID, err)
 	}
 	volumeID := aws.ToString(vol.VolumeId)
+	if e.generation().Load() != gen {
+		// Re-mount rather than detach: the workspace is coming up and needs its home.
+		log.Printf("ecs-ec2: %s restarted mid-release; re-mounting instead of detaching", e.base.name)
+		return e.mountHome(ctx, ec2Placement{volumeID: volumeID, instanceID: instanceID})
+	}
 	if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
 		VolumeId:   aws.String(volumeID),
 		InstanceId: aws.String(instanceID),
