@@ -32,13 +32,13 @@ func TestResolveWorkspaceMemBytes(t *testing.T) {
 	}
 
 	// Below the floor is raised to the floor.
-	_ = st.PutUserLimit(ctx, mem.ID, 0, 0, 64*mib)
+	_ = st.PutUserLimit(ctx, mem.ID, UserQuota{MemLimit: 64 * mib})
 	if got := m.resolveWorkspaceMemBytes(ctx, ws); got != memFloorBytes {
 		t.Errorf("floor: got %d, want %d", got, memFloorBytes)
 	}
 
 	// A normal value passes through untouched.
-	_ = st.PutUserLimit(ctx, mem.ID, 0, 0, 4*gib)
+	_ = st.PutUserLimit(ctx, mem.ID, UserQuota{MemLimit: 4 * gib})
 	if got := m.resolveWorkspaceMemBytes(ctx, ws); got != 4*gib {
 		t.Errorf("passthrough: got %d, want %d", got, 4*gib)
 	}
@@ -54,5 +54,47 @@ func TestResolveWorkspaceMemBytes(t *testing.T) {
 	m.memMaxBytes = 1 * gib
 	if got := m.resolveWorkspaceMemBytes(ctx, ws); got != 1*gib {
 		t.Errorf("host ceiling: got %d, want %d", got, 1*gib)
+	}
+}
+
+// The CPU and disk axes go through the same two-stage clamp as memory (per-user value
+// bounded by the tenant cap) and are INDEPENDENT of it — setting one must not disturb
+// the others, which is the point of storing three numbers instead of a named size
+// (ADR 0044 決定 1).
+func TestResolveWorkspaceSizeCPUAndDisk(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tn, _ := st.EnsureDefaultTenant(ctx)
+	ident, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
+	mem, _ := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
+	ws := Workspace{MembershipID: mem.ID, TenantID: tn.ID}
+	m := &manager{store: st}
+
+	if b, c, d := m.resolveWorkspaceSize(ctx, ws); b != 0 || c != 0 || d != 0 {
+		t.Errorf("unset: got %d/%d/%d, want 0/0/0", b, c, d)
+	}
+
+	// All three set at once and none of them interfering with the others.
+	_ = st.PutUserLimit(ctx, mem.ID, UserQuota{MemLimit: 8 * gib, CPULimit: 4096, DiskGB: 60})
+	if b, c, d := m.resolveWorkspaceSize(ctx, ws); b != 8*gib || c != 4096 || d != 60 {
+		t.Errorf("passthrough: got %d/%d/%d, want %d/4096/60", b, c, d, 8*gib)
+	}
+
+	// Each tenant cap clamps only its own axis.
+	lj, _ := json.Marshal(tenantLimits{MaxWorkspaceCPU: 2048, MaxWorkspaceDiskGB: 30})
+	_ = st.SetTenantLimits(ctx, tn.ID, string(lj))
+	b, c, d := m.resolveWorkspaceSize(ctx, ws)
+	if c != 2048 || d != 30 {
+		t.Errorf("tenant caps: cpu=%d disk=%d, want 2048/30", c, d)
+	}
+	if b != 8*gib {
+		t.Errorf("memory must be untouched by the cpu/disk caps: got %d, want %d", b, 8*gib)
 	}
 }

@@ -139,10 +139,10 @@ func TestPostgresStore(t *testing.T) {
 	}
 
 	// user limit upsert
-	if err := st.PutUserLimit(ctx, m1.ID, 3, 0, 0); err != nil {
+	if err := st.PutUserLimit(ctx, m1.ID, UserQuota{MaxSessions: 3}); err != nil {
 		t.Fatalf("put ulimit: %v", err)
 	}
-	if err := st.PutUserLimit(ctx, m1.ID, 4, 0, 2*gib); err != nil {
+	if err := st.PutUserLimit(ctx, m1.ID, UserQuota{MaxSessions: 4, MemLimit: 2 * gib}); err != nil {
 		t.Fatalf("upsert ulimit: %v", err)
 	}
 	if ul, ok, err := st.GetUserLimit(ctx, m1.ID); err != nil || !ok || ul.MaxSessions != 4 || ul.MemLimit != 2*gib {

@@ -31,6 +31,9 @@ type dockerRuntime struct {
 	extraEnv   []string // KEY=VAL passed to the workspace container (e.g. CLAUDE_INSTALL=0)
 	// inspect overrides `docker inspect` (tests only); nil = the real docker CLI.
 	inspect func(ctx context.Context, typ, ref, format string) string
+	// cpus is the per-workspace CPU cap as docker --cpus (fractional cores); "" = no
+	// flag = every core. Native has no cgroup, so it ignores this axis entirely.
+	cpus string
 }
 
 // dockerFactory is the `local` (compose) RuntimeFactory. It carries the template
@@ -57,6 +60,14 @@ func (f *dockerFactory) New(ws Workspace, secretKey string, extraEnv []string) R
 	if ws.MemBytes > 0 {
 		memory = strconv.FormatInt(ws.MemBytes, 10)
 	}
+	// Per-workspace CPU cap. The value is carried in Fargate CPU units (1024 = 1 vCPU)
+	// because that is the axis the ECS adapter needs to be exact about; docker --cpus
+	// takes fractional cores, so it is just units/1024. Unset (0) means no --cpus flag
+	// at all, which is docker's "use every core" default — the pre-P1 behaviour.
+	cpus := ""
+	if ws.CPUUnits > 0 {
+		cpus = strconv.FormatFloat(float64(ws.CPUUnits)/1024, 'f', -1, 64)
+	}
 	return &dockerRuntime{
 		image:      f.image,
 		name:       ws.ContainerName,
@@ -67,6 +78,7 @@ func (f *dockerFactory) New(ws Workspace, secretKey string, extraEnv []string) R
 		token:      ws.AgentToken,
 		secretKey:  secretKey,
 		memory:     memory,
+		cpus:       cpus,
 		sessionCmd: f.sessionCmd,
 		extraEnv:   env,
 	}
@@ -222,6 +234,9 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		"-e", "CLAUDE_CONFIG_DIR=/var/lib/af/claude",
 		// Graceful-shutdown budget for the Agent's SIGTERM handler; see Stop.
 		"-e", fmt.Sprintf("AGENT_STOP_GRACE_SEC=%d", agentStopGraceSec()),
+	}
+	if d.cpus != "" {
+		args = append(args, "--cpus", d.cpus)
 	}
 	// Shared Temurin JDKs: mounted read-only from one host dir into every
 	// workspace (kept out of the image to stay slim). The entrypoint/agent pick

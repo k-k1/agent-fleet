@@ -28,6 +28,32 @@ Parameters:
       then re-deploy with only this parameter overridden: the CP service rolls to
       the new image; workspaces pick it up on their next Start (running ones are
       untouched — the adapter builds task definitions statelessly).
+  WsTaskCpu:
+    Type: String
+    Default: "1024"
+    Description: >-
+      Default Fargate CPU units for a workspace task (1024 = 1 vCPU). Valid values are
+      256/512/1024/2048/4096/8192/16384 — Fargate accepts only specific (cpu, memory)
+      pairs (docs/63 §63.2). Per-user overrides are set in the Console and are snapped
+      onto a valid pair, so this is only the floor everyone starts from.
+  WsTaskMemory:
+    Type: String
+    Default: "2048"
+    Description: >-
+      Default workspace task memory in MiB. Must be valid for WsTaskCpu: 1 vCPU allows
+      2048-8192 in 1024 steps, 2 vCPU 4096-16384, 4 vCPU 8192-30720; 8 vCPU steps by
+      4096 and 16 vCPU by 8192. A development workspace measured 1.12 GiB anonymous and
+      5.30 GiB peak including page cache, so 2048 is tight for real use.
+  WsDiskGiB:
+    Type: String
+    Default: "0"
+    Description: >-
+      Default per-workspace WORKING disk in GiB. 0 keeps Fargate's free 20 GiB; 21-200
+      sets the task's ephemeral storage (billed only above 20 GiB). This disk is wiped
+      when the workspace stops — only the EFS home persists. It is also the switch for
+      moving the small-file caches (go build cache, uv, go modules) off EFS onto the
+      task-local disk: the entrypoint does that only when this is 30 or more, because
+      the measured caches do not fit alongside the image in 20 GiB (ADR 0044 決定 3).
   Fqdn:
     Type: String
     Description: >-
@@ -182,6 +208,14 @@ Resources:
       Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PublicSubnets" } ]
       SecurityGroups:
         - Fn::ImportValue: !Sub "${NetworkStackName}-AlbSgId"
+      # Spelled out at the AWS default (60s) rather than left implicit: it is the
+      # hard ceiling on every CP request, and a handler that outran it is what
+      # turned a cold workspace Start into a 504 (docs/62 §62.5). The CP now
+      # answers Start immediately and reports convergence through GET
+      # /api/workspace, so raise this only for a NEW long-poll — never to let a
+      # handler block longer.
+      LoadBalancerAttributes:
+        - { Key: idle_timeout.timeout_seconds, Value: "60" }
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -303,9 +337,13 @@ Resources:
             - { Name: AF_ECS_EXEC_ROLE, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" } }
             - { Name: AF_ECS_TASK_ROLE, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-WsTaskRoleArn" } }
             - { Name: AF_ECS_LOG_GROUP, Value: !Ref WsLogGroup }
-            # Start's Agent-readiness wait is best-effort (a cold pull that outlasts
-            # it does NOT fail Start — the workspace converges async), so the default
-            # 90s budget is fine; override AF_ECS_START_TIMEOUT_SEC only if needed.
+            - { Name: AF_ECS_TASK_CPU, Value: !Ref WsTaskCpu }
+            - { Name: AF_ECS_TASK_MEMORY, Value: !Ref WsTaskMemory }
+            - { Name: AF_ECS_WS_DISK_GB, Value: !Ref WsDiskGiB }
+            # Start returns as soon as the service is at desiredCount 1; the Agent
+            # readiness poll runs in the background for the log line only, on the
+            # AF_ECS_START_TIMEOUT_SEC budget (default 300s). Nothing waits on it,
+            # so it is deliberately longer than the ALB idle timeout above.
             - Name: AF_ECS_WORKSPACE_IMAGE
               Value: !Sub
                 - "${Uri}:${Tag}"

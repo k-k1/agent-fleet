@@ -30,7 +30,7 @@ platform changes:
 
 | File | Status | Contents |
 |------|--------|----------|
-| `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, base SGs (`alb`/`cp`/`ws`) |
+| `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, S3 gateway endpoint, base SGs (`alb`/`cp`/`ws`) |
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
@@ -210,7 +210,7 @@ service supports it:
 | Service | Why | Actions (summary) |
 |---|---|---|
 | cloudformation | stack CRUD | Create/Update/Delete/Describe stacks + change sets |
-| ec2 | 00-network (VPC/subnets/NAT/SG) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, routes, security groups |
+| ec2 | 00-network (VPC/subnets/NAT/SG/endpoint) | Create/Delete/Describe VPC, subnets, IGW, NAT, EIP, routes, security groups, VPC endpoints |
 | ecr | 20-platform repos + image push | CreateRepository/DeleteRepository/Describe*, GetAuthorizationToken, BatchCheckLayerAvailability, InitiateLayerUpload, UploadLayerPart, CompleteLayerUpload, PutImage |
 | ecs | 20-platform cluster + 30-ingress service | Create/Delete/Describe cluster & service, RegisterTaskDefinition, plus `iam:CreateServiceLinkedRole` once per account |
 | servicediscovery | Service Connect namespace | Create/Delete/Get namespace |
@@ -224,25 +224,162 @@ service supports it:
 | ssm | CP secrets (out-of-band) | PutParameter/DeleteParameter under `/af-cp/*` |
 | sts | account resolution in release-ecr.sh | GetCallerIdentity |
 
-## Known behavior: first Start may 504 at the ALB
+## Workspace size (CPU / memory / working disk)
 
-A cold workspace Start (image pull + agent wait) can outlast the ALB's 60s idle
-timeout, so the *HTTP request* dies with 504 — but the CP keeps provisioning
-server-side and the workspace converges to `running` shortly after (~100s
-measured). The Console polls `GET /api/workspace` so users just see "starting";
-when driving the API directly, poll the same endpoint instead of trusting the
-Start response code.
+Three `30-ingress` parameters set what every workspace gets by default; per-user
+overrides live in the Console (Settings → members → "Set limits") and are clamped by the
+tenant cap. Design and measurements: `docs/63`, decisions in `docs/decisions/0044`.
+
+| Parameter | Env | Default | Notes |
+|---|---|---|---|
+| `WsTaskCpu` | `AF_ECS_TASK_CPU` | `1024` | Fargate units; 1024 = 1 vCPU |
+| `WsTaskMemory` | `AF_ECS_TASK_MEMORY` | `2048` | MiB |
+| `WsDiskGiB` | `AF_ECS_WS_DISK_GB` | `0` | 0 = Fargate's free 20 GiB; 21–200 sets ephemeral storage |
+
+**Only specific (cpu, memory) pairs exist**, and the steps are not uniform — 8 vCPU moves
+in 4096 MiB steps and 16 vCPU in 8192, while 0.25 vCPU accepts only 512/1024/2048. The
+full matrix was measured against the ECS API and is in `docs/63` §63.2. The CP snaps any
+request onto a valid pair, so an odd value never reaches a task definition; the visible
+effect is that **raising CPU can also raise memory** (4 vCPU cannot run below 8 GiB).
+
+The working disk is **not persistent** — it is wiped when the workspace stops, like every
+other task-local disk on Fargate. Only the EFS home survives. `WsDiskGiB` is also the
+switch for moving the small-file caches (Go build cache, `uv`, Go modules) off EFS onto
+that disk: the workspace entrypoint relocates them only when the disk is **30 GiB or
+more**, because the measured caches do not fit alongside the image in 20 GiB. On EFS those
+caches are 8–30× slower to write (`docs/63` §63.4), so a deployment doing real builds
+wants this; one that does not can leave the default and behave exactly as before.
+
+Above 200 GiB the CP switches the working disk to an **ECS-managed EBS volume**, which
+needs an ECS infrastructure role passed as `AF_ECS_INFRA_ROLE` (policy
+`AmazonECSInfrastructureRolePolicyForVolumes`). The reference stacks do not create that
+role — without it a >200 GiB request silently falls back to the free default. 🚧 This path
+is untested on real infrastructure; ephemeral storage covers everything up to 200 GiB.
+
+## Known behavior: a cold Start answers `starting`, not `running`
+
+A cold workspace Start pays a full image pull on every launch (Fargate keeps no
+image cache between tasks). Measured end-to-end in the sandbox (2026-08-15,
+`docs/62` §62.9): **126s on a fresh home, 128–218s on a warm one** — the earlier
+"~100s" was optimistic. `POST
+/api/workspace/start` does **not** wait for that: it returns as soon as the ECS
+service sits at `desiredCount 1`, with the live state — normally `starting`.
+Poll `GET /api/workspace` for the transition to `running`; the Console already
+does (4s, and it walks the cold start to `running` without a reload).
+
+Older builds blocked the request on the Agent readiness wait
+(`AF_ECS_START_TIMEOUT_SEC`, then 90s) and so outlived the ALB's **60s** idle
+timeout — the *HTTP request* died with a **504** while the workspace converged
+fine behind it. Fixed in `control-plane/runtime_ecs.go` (`watchReady`): the
+readiness poll now runs in the background for a log line only
+(`ecs start: service <name> Agent healthy <n>s after Start`), on a budget
+deliberately longer (default **300s**) than any request may take. `30-ingress.yaml`
+now spells the ALB's `idle_timeout` out at its default 60s so the ceiling is
+visible. 🚧 Verified by unit tests only — not re-run against a live ECS stack.
+
+Note `running` here means the ECS **task** is RUNNING, which is a moment before
+the entrypoint has finished and the Agent answers. A create issued in that window
+still gets `502 workspace agent unreachable`; retry.
+
+**The split has been measured** (2026-08-15,
+[`docs/62-ecs-start-latency.md`](../../../docs/62-ecs-start-latency.md) §62.9–62.10),
+and the answer was not the image. A warm-home Stop→Start costs **~101s**: **4–8s**
+for ECS to create the task, **16s** provision (ENI attach), **35s** image pull
+(918 MiB compressed, 34 layers), **~25s** EFS mount + container create, **21s**
+entrypoint. Image pull is ~35% of that — under the 40% decision gate and under 40s
+absolute — so SOCI lazy loading was **rejected**.
+
+⚠️ **Benchmarking caveat, learned the hard way**: restarting a workspace *right
+after* stopping it (within a minute or two) makes ECS take **40–143s** just to
+create the task, because the previous task is still being torn down while the new
+deployment lands on top of it. That is a property of the measurement loop, not of
+production (a workspace is stopped by the reaper and started minutes-to-hours
+later). **State the stop→start gap whenever you quote a restart number.**
+Re-measure the same way if any of this changes:
+
+```bash
+# image pull window (and the surrounding task lifecycle)
+aws ecs describe-tasks --cluster <cluster> --tasks <task-arn> \
+  --query 'tasks[0].{created:createdAt,pullStart:pullStartedAt,pullStop:pullStoppedAt,started:startedAt}'
+# entrypoint cost (boot-install of the pinned CLIs on a fresh home is NOT a pull)
+aws logs tail <ws-log-group> --since 10m
+```
+
+Note the workspace image pushed here is the **lean** variant
+(`BAKE_AGENT_CLIS=0`), so a *fresh home* additionally pays a one-time
+npm/GitHub boot-install inside the entrypoint (~60s for all CLIs, measured in
+`workspace/entrypoint.sh`). That cost is network, not image pull, and it does
+not recur — `~/.local` persists on EFS. So measure **two** scenarios and judge
+on the second: a first Start on an empty home (pull + boot-install) and a
+Stop→Start on a warm home (pull only). The warm one is what scale-to-zero pays
+every time.
+
+To isolate the pull with no EFS/entrypoint noise, register a throwaway task
+definition for the same image with `entryPoint` overridden (`run-task
+--overrides` can override `command` but **not** `entryPoint`, and
+`entrypoint.sh` ends in `exec "$@"`, so overriding the command alone still runs
+the whole entrypoint). Every `run-task` is cold by construction — Fargate keeps
+no image cache between tasks. The full recipe, the delta arithmetic and the
+decision gate are in
+[`docs/62-ecs-start-latency.md`](../../../docs/62-ecs-start-latency.md) §62.7
+(conclusion on SOCI: conditional yes, gated on this measurement).
 
 ## Cost & ephemerality
 
-Standing costs while the substrate is up: **NAT (~$32/mo)**, ALB (~$20/mo), RDS
-t4g.micro (~$15–30/mo), EFS (usage). For iteration, **deploy → E2E → `delete-stack`**
-and keep stacks short-lived.
+**Standing cost with every workspace stopped and nobody logged in** — list prices
+pulled from the AWS Pricing API for **ap-northeast-1**, 730 h/month, 2026-08-15
+(scale by your region's rates; us-east-1 is roughly 30% lower):
 
-- NAT is needed because workspaces egress to **git / Anthropic** (public internet).
-  VPC endpoints (ECR api+dkr, S3 gw, Logs, SSM) cut AWS-service traffic off NAT but
-  not the public git/Anthropic egress — for a dev loop, a **NAT instance** (t4g.nano)
-  or just accepting the NAT Gateway for the hours a stack lives is simpler.
+| Always-on | Rate | $/month |
+|---|---|---|
+| NAT Gateway ×1 | $0.062/h | **45.3** |
+| **CP/Console Fargate task ×1** (0.5 vCPU + 1 GB, `DesiredCount: 1`) | $0.05056/vCPU-h + $0.00553/GB-h | **22.5** |
+| RDS db.t4g.micro Single-AZ | $0.025/h | **18.3** |
+| ALB ×1 | $0.0243/h (+ $0.008/LCU-h, ~0 when idle) | **17.7** |
+| RDS storage 20 GiB | $0.138/GB-mo | 2.8 |
+| Secrets Manager (RDS-managed password) | $0.40/secret | 0.4 |
+| Cloud Map private namespace (Route 53 private zone) | — | 0.5 |
+| ECR (CP + WS ≈ 1.05 GB) | $0.10/GB-mo | 0.1 |
+| EFS (every user's home persists) | $0.36/GB-mo | usage |
+| **Total** | | **≈ $107/mo + EFS** |
+
+Stopped workspaces cost **nothing** (that is scale-to-zero working); the S3 gateway
+endpoint, ACM, the NAT's EIP and standard SSM parameters are free. A *running*
+workspace adds Fargate at **$0.0616/h** (1 vCPU + 2 GB) — ~$11/mo at 8 h × 22 days,
+$45/mo if left on around the clock.
+
+So **the floor is four always-on pieces that do not care how many users you have**.
+The lever is NAT: a **NAT instance** (t4g.nano + EBS + its public IPv4 ≈ $8/mo)
+cuts ~$37/mo, at the price of running it yourself. Dropping the CP task to
+256/512 saves another ~$11 (unverified that it fits). ALB and RDS are effectively
+the floor — Aurora Serverless v2 costs more at its 0.5-ACU minimum.
+
+**One or two users: [`../ec2-single`](../ec2-single/) is cheaper**, and that is what
+it exists for. A t3.medium + 30 GB gp3 + EIP is ~$47/mo **with the workspaces
+included** (t3.large, the default, ~$87/mo), versus ~$72/mo for a trimmed ECS
+deployment that still bills workspace hours on top. ECS wins on cost only around
+**8–10 concurrent users**, where the single VM has to be sized for everyone's peak
+24/7 while Fargate bills only the hours each workspace actually runs — plus the
+isolation ECS gives you regardless of price.
+
+For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived.
+
+- NAT is needed because workspaces egress to **git / Anthropic** (public internet),
+  and every private-subnet task also reaches ECR / CloudWatch Logs / SSM through it
+  (there is no public IP on those tasks) — so the NAT is on the **workspace start
+  path**, not just the user's internet access.
+  - The **S3 gateway endpoint is in `00-network.yaml`** because it is free (no
+    hourly charge, no ENI) and ECR layer blobs live in S3 — it takes the bulk of
+    every cold image pull off the NAT's data processing charge ($0.062/GB in
+    ap-northeast-1 — the same rate as its hourly charge). **Interface**
+    endpoints (ecr.api, ecr.dkr, logs, ssm) are left out on purpose: $0.01/AZ/hour
+    × 2 AZ each adds up past the NAT Gateway they would relieve.
+  - What still crosses the NAT: git / Anthropic / npm / package registries (the real
+    developer traffic), plus the small ECR auth+manifest, Logs and SSM calls.
+  - Replacing the NAT Gateway with a **NAT instance** (t4g.nano $3.9 + 8 GB gp3
+    $0.8 + its public IPv4 $3.7 ≈ **$8/mo**, vs **$45** for the managed gateway) is
+    the biggest single lever, at the price of running it yourself (source/dest check
+    off, iptables MASQUERADE, ASG for replacement + route rewrite).
 - Persistence: `10-data.yaml` takes a **`Persistence` parameter** — `delete`
   (default, sandbox-ephemeral: EFS/RDS dropped with the stack, no backups) or
   `retain` (production: EFS `Retain`, RDS `Snapshot` + 7-day backups + deletion
@@ -260,7 +397,18 @@ aws cloudformation delete-stack --stack-name af-ecs-network   # last (others dep
 Per-workspace resources the CP created at runtime (ECS Services, task defs, EFS
 access points, SSM params) are **not** in these stacks — deregister/delete them via
 the CP's own workspace-delete path, or sweep by the `af-ws*` name/tag prefix, before
-deleting `af-ecs-network`.
+deleting `af-ecs-network`. Order that works (measured 2026-08-15):
+
+1. ECS **Service** `af-ws*` — `update-service --desired-count 0`, then `delete-service --force`.
+2. **Task definitions** `af-ws*` — `deregister-task-definition` for every ACTIVE revision
+   (the adapter registers a new one per Start, so expect several).
+3. **EFS access points** — `describe-access-points --file-system-id <efs>` then delete each.
+   ⚠️ **Miss these and `delete-stack af-ecs-data` stalls.** The filesystem id is the
+   `EfsId` output of `af-ecs-data` (*not* `FileSystemId` — a sweep script keyed on the
+   wrong name silently deletes nothing).
+4. **SSM** `/af-ws/*` (per-workspace DEK/token) and `/af-cp/*` (the out-of-band CP
+   secrets you created before `30-ingress`).
+5. Then the four `delete-stack` calls above, in order.
 
 ## Notes
 

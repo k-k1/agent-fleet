@@ -908,14 +908,18 @@ func adminTools() []mcpTool {
 		},
 		{
 			name: "set_user_quota", minScope: scopeWrite, admin: true,
-			desc: "Set a member's per-user quota within the tenant (admin): max_sessions, disk_gb, and mem_mib (workspace RAM cap in MiB). 0 = unset. mem_mib is clamped to the tenant cap + host ceiling and applied at the next container start.",
+			desc: "Set a member's per-user quota within the tenant (admin): max_sessions plus the three workspace size axes — mem_mib (RAM in MiB), cpu_units (Fargate CPU units, 1024 = 1 vCPU) and disk_gb (working disk in GiB). 0 = unset on every axis. Each is clamped to the tenant cap and applied at the next container start; the reply echoes the post-clamp values.",
 			schema: userKeyArg(map[string]any{
 				"max_sessions": map[string]any{"type": "integer", "description": "max concurrent sessions (0 = unset)"},
-				"disk_gb":      map[string]any{"type": "integer", "description": "disk quota in GiB (0 = unset)"},
+				"disk_gb":      map[string]any{"type": "integer", "description": "workspace working disk in GiB (0 = unset → deployment default). On ECS 21-200 becomes task ephemeral storage; above 200 an ECS-managed EBS volume. NOT persistent storage - it is wiped when the workspace stops."},
 				"mem_mib":      map[string]any{"type": "integer", "description": "workspace RAM cap in MiB (0 = unset → deployment default); applied at next container start"},
+				"cpu_units":    map[string]any{"type": "integer", "description": "workspace CPU cap in Fargate CPU units (0 = unset; 1024 = 1 vCPU). Valid Fargate values are 256/512/1024/2048/4096/8192/16384 and the pair is snapped onto a valid (cpu, memory) combination, so asking for more CPU can also raise memory."},
 			}, "user_key"),
 			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
-				return a.mcpSetUserQuota(ctx, ac, argStr(args, "user_key"), argInt(args, "max_sessions"), argInt(args, "disk_gb"), int64(argInt(args, "mem_mib"))*mib)
+				return a.mcpSetUserQuota(ctx, ac, argStr(args, "user_key"), UserQuota{
+					MaxSessions: argInt(args, "max_sessions"), DiskGB: argInt(args, "disk_gb"),
+					MemLimit: int64(argInt(args, "mem_mib")) * mib, CPULimit: argInt(args, "cpu_units"),
+				})
 			},
 		},
 		// --- egress review (docs/20 M4: agent 壁打ち) ---------------------------
@@ -1230,24 +1234,24 @@ func (a mcpAPI) mcpStopSession(ctx context.Context, ac *adminCtx, userKey, name 
 	return text, nil
 }
 
-func (a mcpAPI) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, maxSessions, diskGB int, memBytes int64) (string, error) {
+func (a mcpAPI) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, q UserQuota) (string, error) {
 	mem, _, _, err := a.mcpResolveMember(ctx, ac.tenant.ID, userKey)
 	if err != nil {
 		return "", err
 	}
-	if err := a.mgr.store.PutUserLimit(ctx, mem.ID, maxSessions, diskGB, memBytes); err != nil {
+	if err := a.mgr.store.PutUserLimit(ctx, mem.ID, q); err != nil {
 		return "", err
 	}
-	// Memory feeds the built runtime, so drop the cached one → applied at next start.
+	// The size axes feed the built runtime, so drop the cached one → applied at next start.
 	a.mgr.evictMembershipCache(mem.ID)
-	effMem := memBytes
-	if effMem > 0 {
-		effMem = a.mgr.resolveWorkspaceMemBytes(ctx, Workspace{MembershipID: mem.ID, TenantID: ac.tenant.ID})
-	}
-	a.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d mem=%s", maxSessions, diskGB, formatMemHuman(effMem)))
+	effMem, effCPU, effDisk := a.mgr.resolveWorkspaceSize(ctx, Workspace{MembershipID: mem.ID, TenantID: ac.tenant.ID})
+	a.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d mem=%s cpu=%d",
+		q.MaxSessions, effDisk, formatMemHuman(effMem), effCPU))
 	return jsonText(map[string]any{
-		"user_key": userKey, "tenant": ac.tenant.Slug, "max_sessions": maxSessions, "disk_gb": diskGB,
-		"mem_mib": memBytes / mib, "mem_effective_mib": effMem / mib,
+		"user_key": userKey, "tenant": ac.tenant.Slug, "max_sessions": q.MaxSessions,
+		"disk_gb": q.DiskGB, "disk_effective_gb": effDisk,
+		"mem_mib": q.MemLimit / mib, "mem_effective_mib": effMem / mib,
+		"cpu_units": q.CPULimit, "cpu_effective_units": effCPU,
 	})
 }
 

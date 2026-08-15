@@ -112,10 +112,12 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Iden
 			"slug": t.Slug, "name": t.Name, "status": t.Status, "isolation": t.Isolation,
 			"users": len(members), "running": running,
 			"max_workspaces": lim.MaxWorkspaces, "max_sessions": lim.MaxSessions,
-			"max_git_repos":        lim.MaxGitRepos,
-			"max_lfs_bytes":        lim.MaxLFSBytes,
-			"max_workspace_mem":    lim.MaxWorkspaceMem,
-			"session_idle_timeout": lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
+			"max_git_repos":         lim.MaxGitRepos,
+			"max_lfs_bytes":         lim.MaxLFSBytes,
+			"max_workspace_mem":     lim.MaxWorkspaceMem,
+			"max_workspace_cpu":     lim.MaxWorkspaceCPU,
+			"max_workspace_disk_gb": lim.MaxWorkspaceDiskGB,
+			"session_idle_timeout":  lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
 			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
 			"terminal_history_retention_days": lim.TerminalHistoryRetentionDays,
 			// Per-tenant login rules (docs/61 §61.9.7), for the admin editor.
@@ -276,6 +278,8 @@ func (a adminAPI) listMembers(w http.ResponseWriter, r *http.Request) {
 			if ul, ok, _ := a.mgr.store.GetUserLimit(r.Context(), m.MembershipID); ok {
 				row["max_sessions"] = ul.MaxSessions
 				row["mem_limit"] = ul.MemLimit
+				row["cpu_limit"] = ul.CPULimit
+				row["disk_gb"] = ul.DiskGB
 			}
 			out = append(out, row)
 		}
@@ -588,6 +592,9 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		// Per-workspace RAM cap in BYTES (roadmap P3-4); 0 = no tenant cap. Bounds a
 		// tenant_admin's per-user mem_limit at container start.
 		MaxWorkspaceMem int64 `json:"max_workspace_mem"`
+		// Per-workspace CPU (Fargate units) and working disk (GiB) ceilings; 0 = no cap.
+		MaxWorkspaceCPU    int `json:"max_workspace_cpu"`
+		MaxWorkspaceDiskGB int `json:"max_workspace_disk_gb"`
 		// P3-9 idle-stop: duration strings ("30m"); "" => deployment default,
 		// "0" => disabled for this tenant.
 		SessionIdleTimeout string `json:"session_idle_timeout"`
@@ -628,6 +635,8 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		MaxGitRepos:                  body.MaxGitRepos,
 		MaxLFSBytes:                  body.MaxLFSBytes,
 		MaxWorkspaceMem:              body.MaxWorkspaceMem,
+		MaxWorkspaceCPU:              body.MaxWorkspaceCPU,
+		MaxWorkspaceDiskGB:           body.MaxWorkspaceDiskGB,
 		SessionIdleTimeout:           body.SessionIdleTimeout,
 		WSIdleTimeout:                body.WSIdleTimeout,
 		AllowAgentSelfUpdate:         body.AllowAgentSelfUpdate,
@@ -642,8 +651,10 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 	a.mgr.evictTenantCache(t.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tenant": t.Slug, "max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions,
-		"max_workspace_mem":    body.MaxWorkspaceMem,
-		"session_idle_timeout": body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
+		"max_workspace_mem":     body.MaxWorkspaceMem,
+		"max_workspace_cpu":     body.MaxWorkspaceCPU,
+		"max_workspace_disk_gb": body.MaxWorkspaceDiskGB,
+		"session_idle_timeout":  body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,
 		"terminal_history_retention_days": body.TerminalHistoryRetentionDays,
 	})
@@ -661,6 +672,9 @@ func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
 		// default). Clamped to the tenant cap + host ceiling at container start; the
 		// response echoes the effective (post-clamp) value so the admin sees it.
 		MemLimit int64 `json:"mem_limit"`
+		// CPULimit is the per-workspace CPU cap in Fargate CPU units (1024 = 1 vCPU),
+		// independent of MemLimit. 0 = unset (ADR 0044 決定 1).
+		CPULimit int `json:"cpu_limit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
@@ -692,21 +706,21 @@ func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "user is not a member of " + t.Slug})
 		return
 	}
-	if err := a.mgr.store.PutUserLimit(r.Context(), mem.ID, body.MaxSessions, body.DiskGB, body.MemLimit); err != nil {
+	q := UserQuota{MaxSessions: body.MaxSessions, DiskGB: body.DiskGB, MemLimit: body.MemLimit, CPULimit: body.CPULimit}
+	if err := a.mgr.store.PutUserLimit(r.Context(), mem.ID, q); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	// Memory feeds the built runtime (docker --memory / ECS task size), so drop the
-	// cached runtime — the new cap reaches the next container start. Also compute the
-	// effective post-clamp value so the caller sees what will actually be applied.
+	// The size axes feed the built runtime (docker --memory/--cpus, ECS task size +
+	// ephemeral storage), so drop the cached runtime — the new values reach the next
+	// container start. Also compute the effective post-clamp values so the caller sees
+	// what will actually be applied rather than what they typed.
 	a.mgr.evictMembershipCache(mem.ID)
-	effMem := body.MemLimit
-	if effMem > 0 {
-		effMem = a.mgr.resolveWorkspaceMemBytes(r.Context(), Workspace{MembershipID: mem.ID, TenantID: t.ID})
-	}
+	effMem, effCPU, effDisk := a.mgr.resolveWorkspaceSize(r.Context(), Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB,
 		"mem_limit": body.MemLimit, "mem_effective": effMem,
+		"cpu_limit": body.CPULimit, "cpu_effective": effCPU, "disk_effective": effDisk,
 	})
 }
 

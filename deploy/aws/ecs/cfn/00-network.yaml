@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   agent-fleet ECS adapter (P3-7) — network substrate: VPC, 2-AZ public/private
-  subnets, IGW, one NAT gateway, and the base security groups (alb -> cp -> ws).
+  subnets, IGW, one NAT gateway, the (free) S3 gateway endpoint, and the base
+  security groups (alb -> cp -> ws).
   Static substrate only; per-workspace resources are created by the Control Plane
   at runtime. Later stacks (10-data, 20-platform) import these via exports.
 
@@ -129,6 +130,21 @@ Resources:
   PrivateAssoc1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref PrivateSubnet1, RouteTableId: !Ref PrivateRt }
+
+  # S3 gateway endpoint — the one VPC endpoint that is free (no hourly charge, no
+  # ENI). ECR stores layer blobs in S3, so every cold Fargate image pull (a fresh
+  # pull on EVERY task start — Fargate keeps no image cache) would otherwise cross
+  # the NAT gateway and pay its $0.045/GB data processing. Routing the S3 prefix
+  # list off the private route table takes the bulk of those bytes off the NAT.
+  # Interface endpoints (ecr.api / ecr.dkr / logs / ssm) are deliberately NOT here:
+  # at $0.01/AZ/hour x 2 AZ each they cost more than the NAT gateway they'd relieve.
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds: [ !Ref PrivateRt ]
 
   # --- Security groups: linear alb -> cp -> ws (no cycle) ---
   AlbSg:
