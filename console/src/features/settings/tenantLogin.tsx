@@ -209,6 +209,11 @@ export function TenantLoginRules({
         <p className="admin-hint">
           {tr("admin.login_url")} <code>{loginURL}</code>
         </p>
+        {/* ★ 隠す指定をした人にだけ出す。素の /login はテナントを知らないので、
+            デプロイ共通の方式はそこに出続ける（出さないと誰も入れない・docs/61
+            §61.15.13）。つまり「隠した」が効くのはこの URL を配ったときだけで、
+            それが読めるのは隠す欄と同じ画面しかない。 */}
+        {hidden.trim() && <p className="admin-hint">{tr("admin.hidden_providers_url_note")}</p>}
       </div>
       <div className="admin-actions">
         <button onClick={save} className="primary">{tr("common.save")}</button>
@@ -261,6 +266,9 @@ export function TenantLoginRulesView({
         <p className="admin-hint">
           {tr("admin.login_url")} <code>{loginURL}</code>
         </p>
+        {/* 読み取り専用の面にも同じ一文を出す。設定した人と、それを読む人が別なのが
+            この面の前提なので、「なぜこの URL を配る必要があるのか」はここにも要る。 */}
+        {(tenant?.hidden_providers || "").trim() && <p className="admin-hint">{tr("admin.hidden_providers_url_note")}</p>}
       </div>
     </section>
   );
