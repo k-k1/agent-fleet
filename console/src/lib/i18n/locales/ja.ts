@@ -2521,6 +2521,11 @@ export const ja = {
   "clean.reason_badge.branch_merged": "マージ済みブランチ",
   "clean.reason_hint.branch_merged": "親に取り込み済み。削除しても復元可",
 
+  // === スマホの ← スワイプ＝稼働中セッションのローテート（app/App.tsx）===
+  // 画面が丸ごと入れ替わるので、着地点（何件中の何番目か）を短く返す。
+  "swipe.rotated": "{n}/{total} {name}",
+  "swipe.rotate_none": "ほかに稼働中のセッションはありません",
+
   // === P2 セッション行（features/sessions/SessionRow.tsx）===
   "srow.id_copied": "IDをコピーしました: {name}",
   "srow.cant_resume": "作業フォルダが存在しないため再開できません",
