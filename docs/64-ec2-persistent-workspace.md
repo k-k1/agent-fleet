@@ -515,6 +515,11 @@ Cloud Map 名前空間）／ `userdata.sh`（追加 EBS のマウントと ECS �
 `mktd.py`・`bench-in-task.sh`（タスク定義生成と I/O 計測）／ `svc.sh`・`warmtask.sh`・`cycle.sh`（起動計測）／
 `snap.sh`・`snap2.sh`（退避と復元）／ `resize.sh`（タイプ変更）／ `pricing.sh`（Pricing API）／ `teardown.sh`。
 
+第 3 ラウンド（§64.15.2 のデバイス名排他）はハーネスを作らず、`/tmp/af-devprobe.sh` に
+書いた 1 本のスクリプトで deploy → 検証 → teardown を閉じた（t3.micro 1 台 ＋ 1 GiB 3 本・
+残存 0 を確認）。**確保の原子性のように「これが崩れると設計ごと崩れる」1 点は、実装より先に
+最小構成で潰す**——ECS もクラスタも要らなかった。
+
 第 2 ラウンド（§64.12 / §64.13）は `~/af-ec2b/`: `setup.sh` ／ `userdata.sh`（`af-mount` / `af-umount` を置く
 汎用スロット）／ `phase1.sh`（停止中 attach）／ `phase2.sh`（ホットスワップ・2 ユーザー同居）／
 `phase3.sh`・`phase3b.sh`（golden snapshot とハイドレート）／ `teardown.sh`。
@@ -572,10 +577,19 @@ Cloud Map 名前空間 / ロググループ / SG / IAM ロール / インスタ�
 - CP 既存の `AcquireWorkspaceOperationFence` は**同じ Workspace の二重 Start**しか防がない。
   **異なる Workspace 同士の競合はここで解ける。**
 
-⚠️ **P0 の一次確認事項**: 同一インスタンスの同一デバイス名への 2 本目の `AttachVolume` が
-確実に弾かれること（第 2 ラウンドでは 1 ユーザーずつしか付けていないので未確認）。
-弾かれないなら確保は別の原子操作（`CreateTags` ではなく、スロット側のダミーボリュームや
-`af-claim` の条件付き更新）に置き換える必要がある。
+✅ **実測で確認した（2026-08-15・第 3 ラウンド。t3.micro 1 台 ＋ 1 GiB ボリューム 3 本の最小構成・
+teardown 済み残存 0）。** 確保の原子性はここに全体重を預けているので、実装より先に潰した。
+
+| 試したこと | 結果 |
+|---|---|
+| 1 本目を `/dev/sdf` へ | 通る |
+| **2 本目を同じ `/dev/sdf` へ** | **`InvalidParameterValue: Attachment point /dev/sdf is already in use`** |
+| 2 本目を `/dev/sdg` へ | 通る（＝ 失敗はデバイス固有であって、インスタンスが埋まっているのではない） |
+| **インスタンス停止中に同じ `/dev/sdf` へ 2 本目** | **同じエラーで弾かれる**（停止スロット経由でも排他が効く） |
+| 停止中インスタンスへの `AttachVolume`（別デバイス） | 通る・**2.1s**（§64.12.1 の 3s と整合） |
+| `DescribeInstances` の `BlockDeviceMappings` | **要求したデバイス名がそのまま出る**（`/dev/xvda` ＝ root と `/dev/sdf` `/dev/sdg`）＝ 占有の導出はこれで足りる |
+
+→ **「空きスロット＝ `/dev/sdf` が空いているスロット」は AWS が保証する。** CP 側に空き table は要らない。
 
 ### 64.15.3 Start —— 同期部は ALB の 60s に収める
 
@@ -698,11 +712,11 @@ Console からは復帰できなくなる（`Start` は `starting` を見て早�
    乗れる）。したがって**費用を抑えるのは `AF_ECS_EC2_MAX_SLOTS` だけ**であり、これは
    「同時に働く人数」として設定する必要がある。アイドルスロットの stop/terminate は P1。
 
+**確かめたこと**: スロット確保の土台（同一デバイス名の排他・停止中でも効くこと・
+`BlockDeviceMappings` で占有を導出できること）は §64.15.2 の表のとおり**実測で潰した**。
+
 **まだ実測で確かめていないこと（実装の前提として置いた仮定）**:
 
-- **同一インスタンスの同一デバイス名への 2 本目の `AttachVolume` が確実に弾かれること。**
-  §64.15.2 のスロット確保はこの 1 点に全体重を預けている。弾かれないなら確保は別の
-  原子操作に置き換えが要る。**sandbox で最初に確かめるのはこれ**。
 - EC2 起動タイプ ＋ awsvpc ＋ Service Connect ＋ **タスク定義側**の `ec2InstanceId` 配置制約の
   組み合わせ（第 1・2 ラウンドはサービス側の属性制約と bridge で測っている）。
 - `host` ボリュームで EBS を bind した状態での entrypoint 一式（`AF_WS_KEEP` の symlink 化を含む）。
