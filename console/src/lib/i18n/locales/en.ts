@@ -3259,6 +3259,18 @@ export const en: Record<keyof typeof ja, string> = {
   "set.group_workspace": "Workspace",
   "set.back": "All settings",
 
+  // === アカウント（サインイン方法の紐づけ・docs/61 §61.16 + 決定 37） ===
+  "set.tab_account": "Account",
+  "account.intro": "The sign-in methods linked to this account. Whichever one you use, you land in the same workspace, the same home and the same secrets.",
+  "account.disabled": "This deployment doesn't support adding sign-in methods (only available when IdP sign-in is enabled).",
+  "account.load_failed": "Couldn't load your sign-in methods.",
+  "account.th_method": "Sign-in method",
+  "account.th_email": "Address it asserted",
+  "account.th_last_login": "Last sign-in",
+  "account.current": "in use now",
+  "account.none": "No sign-in method is linked yet.",
+  "account.add_title": "Add a sign-in method",
+  "account.add_note": "Only a method that asserts the same email address as this account can be added, and you must also satisfy that method's own rules (organization membership, allowed domains). A method already used by another account cannot be added.",
   // === 使用量ビュー（docs/46 P4・features/usage/UsageView.tsx） ===
   "usage.intro":
     "Where the tokens went, feature by feature. Interactive sessions and the auxiliary LLM calls the fleet makes on its own (title suggestions, compaction, reply suggestions…) are measured on the same yardstick.",
