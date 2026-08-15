@@ -596,6 +596,93 @@ func (s *sqlStore) FillProviderRealm(ctx context.Context, provider, realm string
 	return err
 }
 
+// errLinkTaken is returned by AttachProvider when the IdP account being linked
+// already belongs to somebody on this deployment — the pair itself is recorded, or
+// rule 1.5 finds the same account under another button. Linking it would either
+// re-point an existing mapping or merge two accounts, and both are irreversible.
+var errLinkTaken = errors.New("that sign-in method already belongs to an account on this deployment")
+
+// ListLinkedProviders — see the Store interface (docs/61 §61.16).
+func (s *sqlStore) ListLinkedProviders(ctx context.Context, identityID string) ([]LinkedProvider, error) {
+	if identityID == "" {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT provider, subject, COALESCE(realm,''), COALESCE(email,''),
+		        COALESCE(created_at,''), COALESCE(last_login_at,'')
+		 FROM identity_provider WHERE identity_id=? ORDER BY last_login_at DESC, provider`, identityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LinkedProvider
+	for rows.Next() {
+		var lp LinkedProvider
+		if err := rows.Scan(&lp.Provider, &lp.Subject, &lp.Realm, &lp.Email,
+			&lp.CreatedAt, &lp.LastLoginAt); err != nil {
+			return nil, err
+		}
+		out = append(out, lp)
+	}
+	return out, rows.Err()
+}
+
+// AttachProvider — see the Store interface (docs/61 §61.16 + 決定 37).
+//
+// ★ The three refusals below are STRUCTURAL: they hold whoever calls this and
+// whatever the login layer checked first. The caller adds the policy half (the
+// address must be the person's own — 決定 37), which this layer cannot state
+// because it does not know which of several rules the deployment settled on; what
+// it does know is that a row must never move to another identity and that two
+// accounts must never become one.
+func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link IdentityLink) error {
+	if identityID == "" || link.Provider == "" || link.Subject == "" {
+		return fmt.Errorf("attach provider: identity, provider and subject are required")
+	}
+	// 1. the pair is already recorded — the same identity is a no-op (pressing the
+	//    button twice), another identity is a refusal (never re-point).
+	owner, err := s.identityIDForProvider(ctx, link.Provider, link.Subject)
+	if err != nil {
+		return err
+	}
+	if owner != "" && owner != identityID {
+		return errLinkTaken
+	}
+	// 2. rule 1.5: the same IdP account reached through a different button already
+	//    belongs to somebody else. Signing in with it would land there, so linking it
+	//    here would create two identities claiming one account.
+	if owner == "" && link.Realm != "" {
+		byRealm, err := s.identityIDForRealm(ctx, link.Realm, link.Subject)
+		if err != nil {
+			return err
+		}
+		if byRealm != "" && byRealm != identityID {
+			return errLinkTaken
+		}
+	}
+	// 3. the address the IdP asserted belongs to a different person. Even with the
+	//    caller's same-address rule in front, this stays: identity.email is UNIQUE
+	//    and case-sensitive there, so a case-differing row is reachable, and it is
+	//    somebody else's account.
+	if ident, ok, err := s.identityByEmail(ctx, link.Email); err != nil {
+		return err
+	} else if ok && ident.ID != identityID {
+		return errLinkTaken
+	}
+	now := nowTS()
+	// The insert deliberately does NOT set last_login_at to "now": linking is not a
+	// login with this method, and the account panel orders by it. ON CONFLICT keeps
+	// the same shape as LinkIdentity — identity_id is never in the update list.
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO identity_provider(provider, subject, identity_id, email, realm, created_at, last_login_at)
+		 VALUES(?, ?, ?, ?, ?, ?, '')
+		 ON CONFLICT(provider, subject) DO UPDATE SET
+		   email = excluded.email,
+		   realm = CASE WHEN excluded.realm = '' THEN identity_provider.realm ELSE excluded.realm END`,
+		link.Provider, link.Subject, identityID, link.Email, link.Realm, now)
+	return err
+}
+
 // identityByEmail finds the person an address already belongs to. Non-empty
 // emails are UNIQUE (idx_identity_email), so at most one row matches; the empty
 // email never does (those rows are invite-by-user_key placeholders, claimed through

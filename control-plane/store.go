@@ -466,6 +466,18 @@ type IdentityLink struct {
 	EmailJoin   bool
 }
 
+// LinkedProvider is one sign-in method bound to a person, as shown on their own
+// account panel (docs/61 §61.16). Subject is included because it is the only
+// stable handle on the row; the Console shows the label and the address instead.
+type LinkedProvider struct {
+	Provider    string
+	Subject     string
+	Realm       string
+	Email       string
+	CreatedAt   string
+	LastLoginAt string
+}
+
 type IdentityStore interface {
 	// UpsertIdentity creates/updates the person. roleHint, when non-empty,
 	// upgrades the deployment role (e.g. "super_admin" from SUPER_ADMIN_EMAILS);
@@ -491,6 +503,25 @@ type IdentityStore interface {
 	// column existed (or through a path that had no provider object). Startup-only
 	// and idempotent — see the implementation for why it cannot be a migration.
 	FillProviderRealm(ctx context.Context, provider, realm string) error
+	// ListLinkedProviders returns the sign-in methods bound to one person, newest
+	// login first. It is the read half of the "link a second sign-in method" flow
+	// (docs/61 §61.16) and carries nothing secret — the pairs it lists are exactly
+	// what the person proved by signing in.
+	ListLinkedProviders(ctx context.Context, identityID string) ([]LinkedProvider, error)
+	// AttachProvider binds an ALREADY-PROVEN (provider, subject) to an EXISTING
+	// identity, at that person's own request (docs/61 §61.16 + 決定 37). It differs
+	// from LinkIdentity in three ways that are the whole point:
+	//
+	//   - it never creates an identity and never resolves one — the caller passes the
+	//     identity that is already signed in;
+	//   - it never touches the identity row: not the email, and above all not the
+	//     role (決定 31 — a linked method must not be able to hand out a deployment
+	//     role, the same reason roleHint is suppressed for tenant-defined providers);
+	//   - it REFUSES rather than re-points when the pair (or the same IdP account
+	//     reached through another button — rule 1.5) already belongs to somebody:
+	//     errLinkTaken. Joining two accounts that both have a login history is a
+	//     merge, and a merge cannot be undone (§61.5).
+	AttachProvider(ctx context.Context, identityID string, link IdentityLink) error
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
 	// GetIdentityByUserKey is the READ-ONLY lookup for view paths (admin stats,
 	// admin MCP list tools): unlike UpsertIdentity it neither inserts a row for a
