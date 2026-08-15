@@ -51,6 +51,53 @@ if [ "$CCD" != "$HOME/.claude" ] && [ -d "$HOME/.claude" ] && [ -z "$(ls -A "$CC
   fi
 fi
 
+# --- 作業ディスクへの退避（ADR 0044 決定 3・docs/63 §63.5） -------------------
+# AF_WS_SCRATCH が指すのはタスクローカルの速いディスクで、**コンテナ停止で消える**。
+# CP は ECS ランタイムのときだけこれを注入する（docker/native はホストのローカル
+# ディスクを bind mount しているので、逃がす動機が無い）。
+#
+# 逃がすのは「ファイル数が多く、再生成が安い」ものだけ。EFS のペナルティは 1 ファイル
+# 約 14.5ms 固定で帯域差は 1MiB 約 1ms しか無いため、平均ファイルサイズが小さいものだけが
+# 致命的に遅い（実測 docs/63 §63.4）。~/.npm は 20GiB あってもファイル数は 6,756 なので
+# **EFS に残す**——残すことで、朝いちばんの npm ci がネットワーク無しで走る。
+#
+# 既にホーム側に実体がある場合は、EFS 上の削除が遅い（数万ファイルで数分）ので
+# 退避してから背景で消す。中身はいずれも製品が「消してよい」と宣言しているもの
+# （home 掃除の対象）なので、失われても再生成できる。
+if [ -n "${AF_WS_SCRATCH:-}" ]; then
+  # 退避先の実サイズを見てから決める。Fargate 既定の 20 GiB にはイメージ層と /tmp も
+  # 同居しており、実測の go-build 9GiB + uv 1GiB を足すと余裕が無い。作業ディスクを
+  # 明示的に広げたデプロイでだけ有効にする——つまり **ディスクの設定そのものが
+  # このスイッチ**で、既定のままのデプロイは従来どおり全部 EFS で動く。
+  scratch_kb=$(df -Pk "$AF_WS_SCRATCH" 2>/dev/null | awk 'NR==2{print $2}')
+  scratch_min_kb=$(( ${AF_WS_SCRATCH_MIN_GB:-30} * 1024 * 1024 ))
+  if [ -z "$scratch_kb" ] || [ "$scratch_kb" -lt "$scratch_min_kb" ]; then
+    echo "[entrypoint] scratch: 作業ディスクが小さいため退避しません（$(( ${scratch_kb:-0} / 1048576 )) GiB < ${AF_WS_SCRATCH_MIN_GB:-30} GiB）"
+  elif mkdir -p "$AF_WS_SCRATCH/home" 2>/dev/null && [ -w "$AF_WS_SCRATCH/home" ]; then
+    # 既定は go のビルドキャッシュ・モジュールキャッシュと uv。いずれも実測で
+    # ファイル数が飛び抜けて多い（uv は 1GiB に 10 万ファイル）。
+    for rel in ${AF_WS_SCRATCH_DIRS:-.cache/go-build .cache/uv go/pkg/mod}; do
+      src="$HOME/$rel"; dst="$AF_WS_SCRATCH/home/$rel"
+      mkdir -p "$dst" 2>/dev/null || continue
+      if [ -L "$src" ]; then
+        [ "$(readlink "$src")" = "$dst" ] && continue
+        rm -f "$src"
+      elif [ -e "$src" ]; then
+        old="$src.af-old-$$"
+        mv "$src" "$old" 2>/dev/null || continue
+        echo "[entrypoint] scratch: $rel の旧実体を背景で削除します"
+        ( rm -rf "$old" >/dev/null 2>&1 & )
+      fi
+      mkdir -p "$(dirname "$src")" 2>/dev/null
+      ln -s "$dst" "$src" && echo "[entrypoint] scratch: ~/$rel -> $dst"
+    done
+  else
+    # EBS をマウントした場合など、所有者が dev でないと書けない。ここで止める理由は
+    # 無いので、EFS のまま（＝従来どおり）動かして事実だけ残す。
+    echo "[entrypoint] scratch: $AF_WS_SCRATCH に書けないため退避をスキップします"
+  fi
+fi
+
 # --- boot-install（lean 配布 variant、docs/35 §35.4.1 / §35.7.1-6） -----------
 # BAKE_AGENT_CLIS=0 で焼いたイメージ/rootfs はエージェント CLI
 # （claude/opencode/codex/copilot/cursor/agy/rtk）を含まない。ここで versions.json の

@@ -45,15 +45,33 @@ type Membership struct {
 	ID, IdentityID, TenantID, Role, Status, CreatedAt string
 }
 
-// UserLimit is a per-membership quota override (docs/16 P3-4). 0 = unset.
-type UserLimit struct {
-	MembershipID        string
-	MaxSessions, DiskGB int
+// UserQuota is the settable part of a per-membership quota override — the three
+// workspace size axes plus the session count. All are 0 = unset, meaning "use the
+// deployment default". The axes are held as independent numbers rather than as a
+// named size (S/M/L…): the named sizes live in the Console and MCP as a way to
+// PRESENT valid combinations, while storage stays runtime-neutral so docker keeps
+// its byte-exact --memory and --cpus (ADR 0044 決定 1).
+type UserQuota struct {
+	MaxSessions int
+	// DiskGB is the per-workspace working disk in GiB. On ECS it becomes the task's
+	// ephemeral storage (21–200 GiB) or, above that, an ECS-managed EBS volume
+	// (ADR 0044 決定 2). On docker it stays the display-only quota it has always been.
+	DiskGB int
 	// MemLimit is the per-workspace RAM cap in BYTES (0 = unset → deployment default
 	// WS_MEMORY / AF_ECS_TASK_MEMORY). A tenant_admin sets it within the tenant cap
 	// (tenantLimits.MaxWorkspaceMem); resolveWorkspaceMemBytes clamps and applies it at
 	// container start (docker --memory / ECS task size). See docs/26 / roadmap P3-4.
-	MemLimit  int64
+	MemLimit int64
+	// CPULimit is the per-workspace CPU cap in Fargate CPU units (1024 = 1 vCPU),
+	// bounded by tenantLimits.MaxWorkspaceCPU. Independent of MemLimit so "8 GB with
+	// 4 vCPU" is expressible; fargateSize snaps the pair onto a valid Fargate size.
+	CPULimit int
+}
+
+// UserLimit is a per-membership quota override (docs/16 P3-4) as stored.
+type UserLimit struct {
+	MembershipID string
+	UserQuota
 	CreatedAt string
 }
 
@@ -265,6 +283,13 @@ type Workspace struct {
 	// and the factory (docker --memory / ECS task size) honors it when >0. Read/stop
 	// call sites leave it 0, which never needs a memory value.
 	MemBytes int64
+	// CPUUnits and DiskGB are the other two RESOLVED size axes for the next container
+	// start (0 = deployment default), filled alongside MemBytes by buildResolved.
+	// CPUUnits is in Fargate CPU units (1024 = 1 vCPU); DiskGB is the working disk in
+	// GiB. Like MemBytes they are not persisted columns — the persisted values live in
+	// user_limit and are resolved through the tenant cap on the way here (ADR 0044).
+	CPUUnits int
+	DiskGB   int
 }
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
@@ -650,7 +675,7 @@ type WorkspaceStore interface {
 // QuotaStore is the per-membership quota override (docs/16 P3-4).
 type QuotaStore interface {
 	GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error)
-	PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int, memLimit int64) error
+	PutUserLimit(ctx context.Context, membershipID string, q UserQuota) error
 }
 
 // DEKStore holds the envelope-encrypted per-workspace DEK (docs/15 P3-3).

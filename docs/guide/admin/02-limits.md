@@ -38,6 +38,30 @@ row in the roster.
 
 Between a personal session limit and the tenant-wide limit, whichever is stricter kicks in first.
 
+### Workspace size (memory, CPU, working disk)
+
+The same "Set limits" panel also decides how big that member's workspace is. The three axes are
+independent.
+
+| Axis | Unit | When 0 |
+|---|---|---|
+| Memory | MB | deployment default |
+| CPU | Fargate CPU units (1024 = 1 vCPU) | deployment default |
+| Working disk | GB | the default 20 GiB (free tier) |
+
+The **S / M / L / XL / 2XL** buttons are a shortcut that fills all three at once. You can also enter
+them individually.
+
+On AWS **only specific memory/CPU combinations exist** (4 vCPU cannot run with less than 8 GB, for
+example). An entry that is not a valid combination is rounded up to the nearest valid size when you
+save, which is why **raising CPU can also raise memory**. The response after saving shows the values
+that will actually be applied.
+
+Changes take effect **from the next workspace start**; a running workspace is not resized.
+
+> **The working disk does not persist.** Its contents are wiped when the workspace stops — only the
+> home directory (`~`) survives. It is a place for build output and caches, not for storing things.
+
 ## Idle auto-stop
 
 This is the mechanism that automatically folds up neglected environments (the settings are on the

@@ -28,6 +28,24 @@ from the latest image. The rule is simple:
   root; see "What is not available".)
 - So the only data loss risk from a recreate is `~/repos`: **commit / push before recreating.**
 
+**One environment-dependent exception: `/scratch`.** If `$AF_WS_SCRATCH` is set in your
+shell, this Workspace has a **task-local working disk** at that path, and it is the one
+place that does NOT follow the rules above: **everything under it is gone as soon as the
+Workspace stops** — not just on recreate. It exists because on that deployment `~` is
+network storage where writing many small files is ~9x slower (a `node_modules`-sized tree
+is the pathological case), so the caches that are cheap to rebuild live on fast local disk
+instead. What is relocated there for you (Go build cache, `uv`, Go modules) is only ever
+regenerable, and `~/.npm` deliberately stays on the persistent home so a rebuild needs no
+network. You can move a build artifact there yourself:
+
+```
+af-scratch node_modules      # move ./node_modules to the fast disk and symlink it
+af-scratch --status          # what is currently relocated
+```
+
+Use it for build output only (`node_modules`, `target`, `dist`, `.venv`) — **never for
+tracked files or uncommitted work**, which would be destroyed by an ordinary stop.
+
 **Claude's memory / config persists too, and nothing deletes it.** Claude state
 (`CLAUDE_CONFIG_DIR=/var/lib/af/claude`, including its saved memory under
 `.../projects/*/memory/`) lives on a *separate* dedicated mount, not in home. No
