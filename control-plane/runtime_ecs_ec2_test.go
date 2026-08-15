@@ -864,3 +864,39 @@ func TestECSEC2ParseSlotSizesIgnoresJunk(t *testing.T) {
 		t.Fatalf("parseSlotSizes = %+v, want the two valid entries in ascending order", got)
 	}
 }
+
+// recreate / clean-home call Stop and then Start straight away, so a teardown can still
+// be draining when the workspace comes back up. Releasing the slot then would leave the
+// task running with no home mounted — and the entrypoint would write into the slot's
+// shared root disk instead of the user's volume.
+func TestECSEC2ReleaseAbortsWhenStartRacesIt(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.base.name = "af-ws-race-alice" // own generation counter, isolated from other tests
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-race-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	h.ci.registered["i-hot"] = true
+	h.ecs.services["af-ws-race-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	// The task is gone, but the workspace is being started again before the deferred
+	// release gets its turn.
+	h.ecs.services["af-ws-race-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.ecs.services["af-ws-race-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.runDeferred(ctx)
+
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "DetachVolume") {
+			t.Fatal("detached a home that a concurrent Start had just claimed")
+		}
+	}
+	if attachedInstance(h.ec2.volumes["vol-1"]) != "i-hot" {
+		t.Error("home was released despite the restart")
+	}
+}
