@@ -2544,24 +2544,25 @@ func (s *sqlStore) ListTenantIdPs(ctx context.Context, tenantID string) ([]Tenan
 	return out, rows.Err()
 }
 
-func (s *sqlStore) ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error) {
+func (s *sqlStore) ListAllTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error) {
 	return s.listTenantIdPs(ctx, "")
 }
 
-func (s *sqlStore) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]string, error) {
+func (s *sqlStore) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[string]TenantRef, error) {
 	return s.listTenantIdPs(ctx, "active")
 }
 
 // listTenantIdPs is the deployment-wide read. The tenant slug travels with each row
 // because the provider id the rest of CP sees is built from it (t:<slug>:<name>),
-// and joining here saves the caller a lookup per row.
+// and joining here saves the caller a lookup per row. The display name comes along
+// for the default button label (docs/61 §61.15.10).
 //
 // ★ Rows of a non-active tenant are left out: a suspended tenant's IdP must not keep
 // minting sessions, the same way ListTenantLoginRules only loads active tenants.
-func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantIdP, map[string]string, error) {
+func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantIdP, map[string]TenantRef, error) {
 	q := `SELECT p.id, p.tenant_id, p.name, p.label_ja, p.label_en, p.kind, p.issuer, p.client_id,
 	             p.secret_enc, p.key_ref, p.trust, p.allowed_tids, p.allowed_domains, p.allowed_orgs, p.status,
-	             p.approved_by, p.approved_at, p.created_by, p.created_at, p.updated_at, t.slug
+	             p.approved_by, p.approved_at, p.created_by, p.created_at, p.updated_at, t.slug, t.name
 	      FROM tenant_idp p JOIN tenant t ON t.id = p.tenant_id
 	      WHERE t.status='active'`
 	args := []any{}
@@ -2576,19 +2577,19 @@ func (s *sqlStore) listTenantIdPs(ctx context.Context, status string) ([]TenantI
 	}
 	defer rows.Close()
 	var out []TenantIdP
-	slugs := map[string]string{}
+	tenants := map[string]TenantRef{}
 	for rows.Next() {
 		var t TenantIdP
-		var slug string
+		var ref TenantRef
 		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.LabelJA, &t.LabelEN, &t.Kind, &t.Issuer, &t.ClientID,
 			&t.SecretEnc, &t.KeyRef, &t.Trust, &t.AllowedTIDs, &t.AllowedDomains, &t.AllowedOrgs, &t.Status,
-			&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &slug); err != nil {
+			&t.ApprovedBy, &t.ApprovedAt, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt, &ref.Slug, &ref.Name); err != nil {
 			return nil, nil, err
 		}
 		out = append(out, t)
-		slugs[t.TenantID] = slug
+		tenants[t.TenantID] = ref
 	}
-	return out, slugs, rows.Err()
+	return out, tenants, rows.Err()
 }
 
 func (s *sqlStore) GetTenantIdP(ctx context.Context, tenantID, id string) (TenantIdP, bool, error) {
