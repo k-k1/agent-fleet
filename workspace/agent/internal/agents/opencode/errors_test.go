@@ -39,6 +39,14 @@ func TestDecodeTurnErrorReadsProviderFailureFrom200Body(t *testing.T) {
 	}
 }
 
+func TestDecodeTurnErrorKeepsRetryableFlag(t *testing.T) {
+	body := `{"info":{"error":{"name":"APIError","data":{"statusCode":500,"isRetryable":true,"message":"Internal server error"}}},"parts":[]}`
+	e, ok := decodeTurnError(strings.NewReader(body))
+	if !ok || !e.retryable() {
+		t.Fatalf("retryable provider error = %+v ok=%v", e, ok)
+	}
+}
+
 // 転写ストアは info オブジェクトそのものを行に持つ（ラップが無い）— 同じ decoder が
 // 両方の形を受けること。
 func TestDecodeMessageErrorAcceptsStoreRowShape(t *testing.T) {
@@ -94,6 +102,22 @@ func TestTurnWith200ErrorBodyLandsFailedAndReportsReason(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("a failed turn must notify the failure, not a plain completion")
+	}
+}
+
+func TestRetryableTurnLandsAbortedWithoutRepostingPrompt(t *testing.T) {
+	m, srv := newMockServe(t)
+	m.turnBody = `{"info":{"error":{"name":"APIError","data":{"statusCode":500,"isRetryable":true,"message":"Internal server error"}}},"parts":[]}`
+	h := newTestHandle(t, srv)
+
+	if err := h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "msg_abort"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitState(t, h, agents.TurnAborted)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.turns) != 1 {
+		t.Fatalf("provider calls = %d, want 1; the original prompt must not be reposted", len(m.turns))
 	}
 }
 
