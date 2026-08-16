@@ -14,7 +14,8 @@
     "shots": "node scripts/shots/capture.mjs",
     "panes:heads": "node scripts/pane-heads/check.mjs",
     "mirror:scroll": "node scripts/mirror-scroll/check.mjs",
-    "mirror:handoff": "node scripts/mirror-handoff/check.mjs"
+    "mirror:handoff": "node scripts/mirror-handoff/check.mjs",
+    "drawio:check": "node scripts/drawio/check.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

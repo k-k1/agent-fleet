@@ -24,6 +24,16 @@ preprocessing in control-plane/enkana.go):
   Source: https://github.com/cmusphinx/cmudict
 
 --------------------------------------------------------------------------------
+This product bundles the draw.io (diagrams.net) viewer, used by the Console to render
+`.drawio` diagrams in a File pane (docs/65). The file is vendored verbatim at
+console/vendor/drawio/viewer-static.min.js and shipped inside the Console bundle:
+
+  draw.io / diagrams.net — Copyright (C) JGraph Ltd. Licensed under the Apache
+  License, Version 2.0 (the same license as this product; see LICENSE).
+  Version, checksum and update procedure: console/vendor/drawio/README.md
+  Source: https://github.com/jgraph/drawio
+
+--------------------------------------------------------------------------------
 Third-party software bundled in the distributed container images / rootfs
 (docs/35 §35.4.1). License texts ship with each component inside the image
 (/usr/share/doc/<pkg>/copyright for Debian packages, or the component's own
