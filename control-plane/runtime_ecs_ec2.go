@@ -289,6 +289,9 @@ type ecsEC2Factory struct {
 
 var _ RuntimeFactory = (*ecsEC2Factory)(nil)
 
+// WorkspaceImage passes the base factory's answer through (same deployment, same image).
+func (f *ecsEC2Factory) WorkspaceImage() string { return f.base.WorkspaceImage() }
+
 // newECSEC2Factory builds the EC2-pool Runtime factory. It reuses the Fargate
 // factory's AWS config plumbing (region, cluster, subnets, EFS, Service Connect, log
 // group, image) and adds the EC2/SSM clients plus the pool settings; then it starts
@@ -516,7 +519,13 @@ func (e *ecsEC2Runtime) Endpoint() string { return e.base.Endpoint() }
 func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
-		log.Printf("ecs-ec2 state: describe home volume for %s: %v", e.base.name, err)
+		// A cancelled context is the caller leaving (a Console poll aborted because the
+		// tab closed or the next poll superseded it), not a fault. Logging it printed an
+		// error line per abandoned poll on a real deployment — noise that makes the log
+		// harder to read exactly when somebody is reading it for a real failure.
+		if ctx.Err() == nil {
+			log.Printf("ecs-ec2 state: describe home volume for %s: %v", e.base.name, err)
+		}
 		return "none"
 	}
 	if vol == nil {

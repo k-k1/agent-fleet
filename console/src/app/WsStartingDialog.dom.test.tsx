@@ -24,6 +24,15 @@ describe("phaseKey", () => {
     expect(phaseKey("install-jdk 21")).toBe("wsstart.toolchain");
   });
 
+  // The complaint that produced this: the fallback claimed "the first start installs
+  // agent CLIs" and appeared on a RESTART, where nothing is installed.
+  it("does not let the fallback line name a cause it cannot know", () => {
+    for (const s of [ja["wsstart.generic"], en["wsstart.generic"]]) {
+      expect(s).not.toMatch(/CLI/i);
+      expect(s).not.toMatch(/初回|first start/i);
+    }
+  });
+
   it("falls back to the generic line for anything it does not know", () => {
     expect(phaseKey("task: starting")).toBe("wsstart.generic");
     expect(phaseKey("something new the CP grew later")).toBe("wsstart.generic");

@@ -15,9 +15,14 @@ import { useT } from "../lib/i18n/index.ts";
 import { useWorkspaceStore, wsPreparing } from "../core/store/workspace.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
 
-// Map a raw entrypoint boot phase ("boot-install (pinned): …", "boot-install rtk …",
-// "install-go 1.26.4", …) to a friendly localized line. The raw phase is still shown
-// beneath as a technical detail, so an unmapped phase is fine.
+// Map a raw phase ("boot-install (pinned): …", "install-go 1.26.4", "slot: creating",
+// …) to a friendly localized line. The raw phase is still shown beneath as a technical
+// detail, so an unmapped phase is fine.
+//
+// The fallback names no cause. It used to say the first start installs agent CLIs,
+// which is a guess: it is wrong on every restart (nothing is installed), and on the EC2
+// pool it was wrong about which wait the user was in. Where the cause IS known a phase
+// says so; where it is not, "starting" is the whole truth.
 export function phaseKey(phase: string): MsgKey {
   const p = phase.toLowerCase();
   if (p.startsWith("boot-install rtk") || p.startsWith("boot-install agy")) return "wsstart.fetching_tool";

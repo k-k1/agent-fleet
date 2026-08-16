@@ -1705,7 +1705,7 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.state.unknown": "Unknown",
   // Starting dialog (WsStartingDialog — docs/35 §35.9-9)
   "wsstart.title": "Starting workspace",
-  "wsstart.generic": "Starting… (the first start may take a few minutes to install agent CLIs)",
+  "wsstart.generic": "Starting…",
   "wsstart.installing_clis": "Installing agent CLIs… (first start only, can take a few minutes)",
   "wsstart.fetching_tool": "Fetching additional tools…",
   "wsstart.toolchain": "Installing toolchain…",

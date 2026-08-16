@@ -376,7 +376,16 @@ func main() {
 		log.Printf("WARNING: login provider config rejected (AUTH=%s so it is unused): %v", cfg.mgr.authMode, provErr)
 	}
 
-	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode, rtProfile)
+	// Ask the runtime what it will really run rather than printing the docker default:
+	// on ECS the image comes from AF_ECS_WORKSPACE_IMAGE, and a banner naming the wrong
+	// one is worse than no banner when somebody is trying to tell which build is live.
+	wsImage := cfg.mgr.image
+	if f, ok := cfg.mgr.rtFactory.(interface{ WorkspaceImage() string }); ok {
+		if img := f.WorkspaceImage(); img != "" {
+			wsImage = img
+		}
+	}
+	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, wsImage, cfg.mgr.authMode, rtProfile)
 	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(gzipMiddleware(etagJSON(handler))), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
