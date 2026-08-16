@@ -56,7 +56,6 @@ say ssm-params
 for p in $(aws ssm describe-parameters --query "Parameters[?starts_with(Name,'/af-ws/$N')].Name" --output text); do
   aws ssm delete-parameter --name "$p" >/dev/null 2>&1 && echo "param $p"
 done
-
 # ORDER, not a list. -plat / -net exist only to publish the two exports -pool imports,
 # and CloudFormation CANCELS the delete of an exporting stack while an importer is still
 # there ("Cannot delete export ... as it is in use by af-ec2c-pool" — measured; the three
@@ -73,7 +72,7 @@ for s in $N-plat $N-net; do
 done
 
 say iam
-for r in $N-exec $N-ws-task; do
+for r in $N-exec $N-ws-task $N-cp; do
   for p in $(aws iam list-attached-role-policies --role-name $r --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
     aws iam detach-role-policy --role-name $r --policy-arn "$p" >/dev/null 2>&1
   done

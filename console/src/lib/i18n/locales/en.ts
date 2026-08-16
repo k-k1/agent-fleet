@@ -1123,9 +1123,10 @@ export const en: Record<keyof typeof ja, string> = {
   "pool.asleep": "Asleep",
   "pool.asleep_sub": "stopped; root volume only",
   "pool.free": "Free",
-  "pool.free_sub": "nobody's home attached",
+  "pool.free_sub": "of the above, with no home on them",
   "pool.at_cap": "The pool is at its cap. The next person to start takes a slot from the longest-dormant occupant instead of getting a new one.",
-  "pool.timers": "A slot sleeps after {sleep} without a task. A home hibernates to a snapshot after {hibernate}.",
+  "pool.timers": "A slot sleeps after {sleep} without a task. Unless a tenant sets its own, a home hibernates to a snapshot after {hibernate} (the deployment default).",
+  "pool.timers_no_hibernate": "A slot sleeps after {sleep} without a task. Homes are never hibernated unless a tenant asks for it (Tenants → the tenant → Hibernate unused homes).",
   "pool.off": "never",
   "pool.no_slots": "No slots. The first Start will create one.",
   "pool.col_instance": "Instance",
@@ -1133,7 +1134,13 @@ export const en: Record<keyof typeof ja, string> = {
   "pool.col_state": "State",
   "pool.col_occupant": "Occupied by",
   "pool.col_dormant": "Dormant",
+  "pool.col_backup": "Spare copy",
+  "pool.backup_none": "none",
+  "pool.backup_count": "{n} copies kept",
   "pool.state_asleep": "asleep",
+  "pool.state_quarantined": "quarantined",
+  "pool.quarantined_hint":
+    "{n} slot(s) could not mount a home and were taken out of the pool, so nobody else lands on them. They are stopped but still hold their root volume: terminate them once you have taken what you need from the box.",
   "pool.not_registered": "(not accepting tasks yet)",
   "pool.free_slot": "free",
   "pool.homes_title": "Homes",
@@ -1281,6 +1288,25 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.idle_hint_1": "Idle claude sessions are folded to stopped (resumable) after Session halt after, and workspaces with no connection or activity are docker-stopped after Workspace stop after. Format: ",
   "admin.idle_hint_2": ". Empty follows the deploy default (disabled by default); ",
   "admin.idle_hint_3": " explicitly disables it.",
+  // Home hibernation (AF_RUNTIME=ecs-ec2 only; ADR 0045 決定 13-2). This is the one
+  // setting that moves a user's home off the disk it was on, so the copy has to say both
+  // that it is reversible and that the return is slower.
+  "admin.hibernate_title": "Hibernate unused homes",
+  "admin.hibernate_after": "Hibernate after",
+  "admin.hibernate_ph": "e.g. 720h = 30 days (empty = deploy default)",
+  "admin.hibernate_hint":
+    "A home nobody has opened for this long is captured as a snapshot and its disk released. The next start brings it back, so nothing is lost — but that start takes longer, and the disk is slower for a few hours afterwards.",
+  "admin.hibernate_warn":
+    "Only hibernation is automatic; nothing is ever destroyed this way. The unit goes up to hours, so write days as a multiple of 24h. Enter 0 to never hibernate this tenant's homes.",
+  // Home backups (ADR 0045 決定 17). Losing a whole AZ is a story only this runtime has,
+  // so lead with why it exists. Say "how far back" rather than "RPO".
+  "admin.backup_title": "Keep a spare copy of each home",
+  "admin.backup_every": "Copy every",
+  "admin.backup_ph": "e.g. 24h (empty = deploy default)",
+  "admin.backup_hint":
+    "A home lives inside one Availability Zone, and losing that zone loses the home with it. A spare copy is kept outside the zone, so the home can be rebuilt from it. What you are choosing here is how far back the worst case may throw someone.",
+  "admin.backup_warn":
+    "The copy is taken while the home is in use, so it is the same picture a power cut would leave. It is never restored automatically — that is an operator decision. Enter 0 to take no copies for this tenant.",
   "admin.term_log_title": "Terminal-log retention",
   "admin.retention": "Retention",
   "admin.retention_off": "Disabled (standard short-lived history only)",

@@ -233,11 +233,21 @@ func main() {
 	// (tier 1) and stops cold workspaces (tier 2). Deployment defaults are
 	// DISABLED (0) — safe by default, like the P3-4 quotas; an operator opts in
 	// per-tenant via limits (no restart needed) or deployment-wide via env.
-	// AF_IDLE_SWEEP_INTERVAL=0 disables the reaper entirely.
-	if iv := parseDurationOr(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
+	// AF_IDLE_SWEEP_INTERVAL=0 disables the reaper entirely — see intervalOff, which is
+	// what makes that true (measured: it was not).
+	if iv := intervalOff(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
 		sessDef := parseDurationOr(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), 0)
 		wsDef := parseDurationOr(os.Getenv("AF_WS_IDLE_TIMEOUT"), 0)
-		go newReaper(mgr, iv, sessDef, wsDef).run(context.Background())
+		// Tier 3 (ecs-ec2 only): the deployment default for home hibernation. Kept in the
+		// AF_ECS_EC2_* namespace and in seconds because that is where it started life, as
+		// a setting of the pool sweeper; the trigger moved up here so a tenant can override
+		// it (ADR 0045 決定 13-2). Still 0 = off by default.
+		hibDef := time.Duration(envInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second
+		// Tier 4 (ecs-ec2 only): the deployment default for how often a home is copied
+		// somewhere its AZ is not. Also 0 = off — a backup is cheap but not free, and a
+		// deployment that has not thought about retention should not be paying for it.
+		backupDef := time.Duration(envInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
+		go newReaper(mgr, iv, sessDef, wsDef, hibDef, backupDef).run(context.Background())
 	}
 
 	// Showback usage sampler (P3-9): credits running-seconds per workspace so the
@@ -423,6 +433,21 @@ func decodeKey(s string) []byte {
 
 func parseDurationOr(s string, def time.Duration) time.Duration {
 	if d, err := time.ParseDuration(strings.TrimSpace(s)); err == nil && d > 0 {
+		return d
+	}
+	return def
+}
+
+// intervalOff is parseDurationOr for the settings where an explicit "0" means OFF rather
+// than "use the default". parseDurationOr cannot say that: it falls back on anything that
+// is not a POSITIVE duration, so AF_IDLE_SWEEP_INTERVAL=0 — documented right where it is
+// read as "disables the reaper entirely" — quietly gave the 1-minute default instead
+// (measured: the reaper logged interval=1m0s with the variable set to 0).
+//
+// Garbage still falls back. A misspelled value should not silently switch a sweep off;
+// only a duration the operator actually wrote as non-positive does.
+func intervalOff(s string, def time.Duration) time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(s)); err == nil {
 		return d
 	}
 	return def
