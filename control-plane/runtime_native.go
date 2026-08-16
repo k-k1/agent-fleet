@@ -684,6 +684,26 @@ func (n *nativeRuntime) Stop(ctx context.Context) error {
 	return nil
 }
 
+// Destroy stops the agent process and removes the workspace's data directory (home,
+// pid file, boot phase, the lifecycle lock). Nothing else on the host belongs to this
+// workspace, so there is never a leftover to report.
+//
+// Stop must complete first: the lock file the operation fence uses lives under dataDir,
+// and killing the process after unlinking its home is how you get a half-written home
+// back on the next start.
+func (n *nativeRuntime) Destroy(ctx context.Context) ([]string, error) {
+	if err := n.Stop(ctx); err != nil {
+		return nil, err
+	}
+	if n.dataDir == "" {
+		return nil, nil
+	}
+	if err := os.RemoveAll(n.dataDir); err != nil {
+		return nil, fmt.Errorf("remove data dir %s: %w", n.dataDir, err)
+	}
+	return nil, nil
+}
+
 // readPidFile returns the recorded pid, or 0 when absent/garbled.
 func readPidFile(path string) int {
 	b, err := os.ReadFile(path)

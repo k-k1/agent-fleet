@@ -14,6 +14,7 @@ import type { Member, Tenant } from "./adminShared.ts";
 import { MembersPanel, MemberView } from "./tenantMembers.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
 import { McpAdminView } from "./mcpAdmin.tsx";
+import { PoolView } from "./ec2Pool.tsx";
 import { TenantLoginRules, TenantSignInMethods, SignInMethodRegister } from "./tenantLogin.tsx";
 
 // Drill-down location: stage plus (optionally) the tenant slug / member being viewed.
@@ -30,6 +31,8 @@ interface View {
 // the member's session list, served by the per-member admin endpoints.
 
 const ADMIN_MODES = ["manage", "sessions", "usage", "audit", "egress", "mcp", "tts"]; // swipe order for the mode tabs
+// "pool" is appended at runtime (see hasPool): the EC2 slot pool exists on one runtime
+// profile, and an empty Slots tab on a Fargate deployment reads as "my slots vanished".
 
 export function AdminTab() {
   const tr = useT();
@@ -38,6 +41,9 @@ export function AdminTab() {
   const [forbidden, setForbidden] = useState(false);
   const [isSuper, setIsSuper] = useState(false); // super_admin: unlocks deployment-wide controls
   const [mode, setMode] = useState("manage"); // manage (tenant drilldown) | usage (showback)
+  // Whether this deployment HAS a slot pool. One cheap probe at mount; the endpoint
+  // answers {"runtime":"other"} everywhere else.
+  const [hasPool, setHasPool] = useState(false);
   // view: {stage:'tenants'} | {stage:'tenant', slug} | {stage:'member', slug, member}
   const [view, setView] = useState<View>({ stage: "tenants" });
 
@@ -113,6 +119,13 @@ export function AdminTab() {
   useEffect(() => {
     loadTenants();
   }, [loadTenants]);
+  useEffect(() => {
+    // super_admin only, so a tenant_admin simply never sees the tab (the endpoint 403s
+    // and this stays false).
+    api("api/admin/ec2-pool")
+      .then((d) => setHasPool(d?.runtime === "ecs-ec2"))
+      .catch(() => setHasPool(false));
+  }, []);
 
   if (forbidden) return <p className="muted pad">{tr("admin.forbidden")}</p>;
   if (tenants === null) return <p className="muted pad">{tr("common.loading")}</p>;
@@ -146,6 +159,11 @@ export function AdminTab() {
         <button type="button" className={"seg-btn" + (mode === "tts" ? " active" : "")} onClick={() => setMode("tts")}>
           <Icon name="unmute" /> {tr("admin.mode_tts")}
         </button>
+        {hasPool && (
+          <button type="button" className={"seg-btn" + (mode === "pool" ? " active" : "")} onClick={() => setMode("pool")}>
+            <Icon name="server" /> {tr("admin.mode_pool")}
+          </button>
+        )}
       </div>
 
       {mode === "sessions" && <AllSessionsView tenants={tenants} isSuper={isSuper} />}
@@ -154,6 +172,7 @@ export function AdminTab() {
       {mode === "egress" && <EgressView />}
       {mode === "mcp" && <McpAdminView tenants={tenants} />}
       {mode === "tts" && <TtsAdminView />}
+      {mode === "pool" && hasPool && <PoolView />}
 
       {mode === "manage" && (
       <>

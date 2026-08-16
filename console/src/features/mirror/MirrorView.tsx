@@ -85,6 +85,7 @@ import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
 // workSplit はターン描画とともに transcript/ へ移った（TranscriptTurn が持つ）。
 import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts } from "./mirrorParts.ts";
 import { echoLanded, echoNeedsResync, type PendingEcho } from "./pendingEcho.ts";
+import { applyMark, captureMark, saveMark, scrollTopForTurn, loadMark, type ScrollMark } from "./scrollMark.ts";
 import { PLAN_APPROVE_KEYS } from "./planDecision.ts";
 import { deliverPlanComments, planKey } from "./planComments.ts";
 import { type InteractionAnswerWire, patchAnswers } from "./interactionAnswers.ts";
@@ -152,6 +153,9 @@ const NEAR_BOTTOM_PX = 80;
 // their position instead of snapping past it. Only needs to outlive the reflow the click
 // causes — everything else that grows the transcript is content, and is followed.
 const INTERACT_HOLD_MS = 600;
+
+// 「返信を頭から」の頭出しで、返信ブロックの上端に残す余白（px）。0 だと切り出しに見える。
+const REPLY_TOP_PAD = 8;
 
 // Optimistic send echoes ("反映待ち"), stashed per session at module level. MirrorView
 // unmounts on a チャット→ターミナル switch, so keeping them only in component state made a
@@ -263,6 +267,9 @@ export function MirrorView({
   // Show a "jump to latest ↓" affordance whenever the user has scrolled up off the bottom
   // (auto-follow is paused) so new/streaming content below is discoverable with one click.
   const [showJump, setShowJump] = useState(false);
+  // 「返信を頭から」— 最新の回答ブロックの先頭が画面より上に流れていて、かつ末尾追従が切れて
+  // いるときだけ出す（末尾では出さない: 押すべきボタンの上に被るため。syncReplyTop の注記）。
+  const [showReplyTop, setShowReplyTop] = useState(false);
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
   // Prompts claude reports queued into the RUNNING turn (queue-operation events) — sent
   // mid-run from this composer or typed in the raw terminal, not yet injected. Matching
@@ -377,6 +384,19 @@ export function MirrorView({
   const selfTopRef = useRef(0);
   // Until this ms, a geometry change is attributed to the reader's own click, not to content.
   const interactUntilRef = useRef(0);
+  // 位置復元（scrollMark）: このセッションに戻ってきたときに復元すべき位置。復元中（= restoring
+  // が true）は、末尾ピンではなくこのアンカーを保つ。
+  //
+  // 時間で切らないのは末尾ピンと同じ理由 — 高さは何段にも分かれて遅れて確定し、その最後の一段が
+  // いつ来るかは端末しだい。実測（4x スロットリング / 400 ターン）では、遅延レイアウトが 1 回の
+  // 大きなコミットで片付き、ResizeObserver が鳴ったのは着地の 3.6 秒後だった。3 秒で切る設計だと
+  // その 1 回を取りこぼし、目的地の 24〜729px 手前で固まる。抜けるのは「読者が触った」ときと
+  // 「末尾追従に戻った」とき（送信・最新へ）だけにする。
+  const restoreMarkRef = useRef<ScrollMark | null>(null);
+  const restoringRef = useRef(false);
+  // 「返信を頭から」の対象＝最新の回答ブロックの idx。レンダごとに書き、[] で作られる
+  // ResizeObserver / onScroll のクロージャからも今の値が読めるようにする（ttsCaptureRef と同型）。
+  const lastReplyIdxRef = useRef<number | undefined>(undefined);
   // The idx of the assistant block whose TOP we last brought to the viewport top. A fresh
   // reply is anchored there once (so the user reads it from its first line) and then left
   // alone as it streams; this remembers which reply we've already anchored.
@@ -729,7 +749,23 @@ export function MirrorView({
     // in the current mirror). Clear its physical offset in the same pre-paint phase;
     // the first transcript layout effect below then pins the new content to its end.
     if (bodyRef.current) { bodyRef.current.scrollTop = 0; selfTopRef.current = 0; }
+    // 「読者自身が広げた」窓は前のセッションの話なので、持ち越さない。スマホの横スワイプで
+    // セッションを持ち替えると、その指の pointerdown が transcript の上に降りて
+    // noteInteraction を 600ms 武装する（.mirror-scroll の capture ハンドラ）。ミラーの高さは
+    // ほぼ全部が遅れて入るので、窓が開いたままだと下の ResizeObserver の再ピンが握りつぶされ、
+    // 着地位置が中途半端なところで止まりうる。
+    //
+    // ただし正直に言うと、これは塞いだ穴であって再現した不具合ではない: mirror-scroll の
+    // swipe シナリオでは、この 1 行の有無にかかわらず末尾に着地した（fetch とレンダが毎回
+    // 600ms より長くかかり、窓が閉じたあとの成長で再ピンが効いてしまう）。窓が実際に効く
+    // 速さの端末では効く、という理屈のぶんだけの手当て。
+    interactUntilRef.current = 0;
+    // このセッションを最後に見ていた位置（あれば）。実際に戻すのは transcript が載ってから＝
+    // 下の初回 settle で、そこまでは末尾ピンのまま待つ。
+    restoreMarkRef.current = loadMark(session);
+    restoringRef.current = false;
     setShowJump(false); // …so no jump-to-latest affordance until they scroll up
+    setShowReplyTop(false); // 新しいセッションの回答が載るまで頭出しの対象が無い
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
     answerAnchoredRef.current = undefined; // …nor its final answer
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
@@ -742,6 +778,14 @@ export function MirrorView({
     ttsWorkDoneRef.current.clear();
     ttsPendingInitRef.current = false; // 確認読み上げの基準も取り直す
     ttsPendingSigRef.current = "";
+    // 離脱時（別セッションへの持ち替え・ターミナルへの切替・ペインを閉じる）に、いま見ていた
+    // 位置を控える。cleanup が読む session / DOM は「出ていく側」のもの: React はこの
+    // クリーンアップを、新しい props でのレンダを DOM に反映したあと・次の layout effect
+    // より前に走らせるが、transcript の中身は state（turns）なので、まだ古いセッションの
+    // ターンが載ったままで scrollTop も動いていない。
+    return () => {
+      saveMark(session, captureMark(bodyRef.current, atBottomRef.current));
+    };
   }, [session]);
 
   // Poll the transcript since our cursor while this view is mounted (Pane only mounts
@@ -949,6 +993,7 @@ export function MirrorView({
   // (tracked by its idx), so it reads from the start instead of the tail. That upward scroll
   // honestly flips atBottomRef→false via onBodyScroll, so afterwards the user is left alone.
   useLayoutEffect(() => {
+    scheduleReplyTopSync(); // 内容が変わるたび「返信を頭から」の要否を採り直す（末尾追従の有無に依らない）
     if (!atBottomRef.current) return;
     const el = bodyRef.current;
     if (!el) return;
@@ -983,6 +1028,20 @@ export function MirrorView({
         didInitRef.current = true;
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = replyIdx; // a reply already present at open isn't re-anchored
+        // …ただし、このセッションを「途中まで読んだ状態」で離れていたなら、そこへ戻す
+        // （scrollMark）。末尾で離れていた（atBottom）ときは意図が「最新を見る」なので
+        // 従来どおり末尾。アンカーのターンが tail ウィンドウに載っていなければ復元は
+        // 諦めて末尾＝どのみち読み直せる位置に落とす。
+        const mark = restoreMarkRef.current;
+        if (mark && !mark.atBottom && applyMark(el, mark)) {
+          selfTopRef.current = el.scrollTop;
+          atBottomRef.current = false; // 末尾ではない ⇒ 追従は切れ、最新へ の導線が出る
+          restoringRef.current = true; // 以後、遅れて入る高さのたびにこのアンカーへ置き直す
+          setShowJump(true);
+          scheduleReplyTopSync();
+          return;
+        }
+        restoreMarkRef.current = null;
       }
       toBottom();
       return;
@@ -1073,6 +1132,18 @@ export function MirrorView({
     const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
+      scheduleReplyTopSync();
+      // 位置復元中は、末尾ではなくアンカーを保つ。理由は末尾ピンと同じ（高さが遅れて入る）で、
+      // 向き先だけが違う。atBottomRef が立っていたら誰かが末尾追従へ戻した合図（送信・最新へ）
+      // なので、そちらを優先して復元を畳む。
+      if (restoringRef.current) {
+        const mark = restoreMarkRef.current;
+        if (mark && !atBottomRef.current && applyMark(el, mark)) {
+          selfTopRef.current = el.scrollTop;
+          return;
+        }
+        endRestore();
+      }
       if (!atBottomRef.current) return; // scrolled up, or parked at a completion anchor
       if (Date.now() < interactUntilRef.current) return; // the reader's own click grew it
       if (el.scrollHeight - el.scrollTop - el.clientHeight < 1) return;
@@ -1092,6 +1163,7 @@ export function MirrorView({
   // that WE change (foldWork on completion) is content, not interaction, and is followed.
   const noteInteraction = () => {
     interactUntilRef.current = Date.now() + INTERACT_HOLD_MS;
+    endRestoreOnInput(); // 読者が触った ⇒ 位置の復元より、その手を優先する
   };
 
   // Follow state, from user INTENT rather than from raw geometry.
@@ -1107,6 +1179,7 @@ export function MirrorView({
   const onBodyScroll = () => {
     const el = bodyRef.current;
     if (!el) return;
+    scheduleReplyTopSync();
     const movedUp = el.scrollTop < selfTopRef.current - 1;
     if (atBottomRef.current && !movedUp) {
       // Following, and the viewport did not move up — the gap (if any) is content that grew
@@ -1123,14 +1196,90 @@ export function MirrorView({
     setShowJump((s) => (s === !stuck ? s : !stuck));
   };
 
+  // 位置復元をやめる（ユーザーが触った／末尾追従へ戻った）。以後は従来どおり atBottomRef だけが
+  // 追従を決める。
+  const endRestore = () => {
+    restoringRef.current = false;
+    restoreMarkRef.current = null;
+  };
+
+  // 復元を打ち切るのは「ユーザーが入力した」ときだけ — scrollTop が自分の書いた値からズレた
+  // ことを根拠にしてはいけない。ブラウザ自身のスクロールアンカリング（上の内容が伸びた分だけ
+  // scrollTop を勝手に足して見た目を保つ機構）が遅延レイアウトのたびに動かすので、それを
+  // 「触られた」と読むと復元を途中でやめてしまう（実測: 目的地の 354px 手前で固まり、以後
+  // 二度と直らなかった）。入力（ホイール・タッチ・キー・ポインタ）だけを退出条件にすれば、
+  // アンカリングのズレは次の再適用で必ず上書きされる。
+  //
+  // 取りこぼすのはネイティブのスクロールバーをドラッグした場合（Chromium は要素へ
+  // pointerdown を出さない）。復元が畳まれるまで引っぱり合いになるが、掴み直せば済む。
+  const endRestoreOnInput = () => {
+    if (restoringRef.current) endRestore();
+  };
+
   // Jump-to-latest button: snap to the bottom and re-arm auto-follow.
   const jumpToBottom = () => {
     const el = bodyRef.current;
     if (!el) return;
+    endRestore(); // 明示的に末尾を選んだ ⇒ 復元アンカーは捨てる
     el.scrollTop = el.scrollHeight;
     selfTopRef.current = el.scrollTop;
     atBottomRef.current = true;
     setShowJump(false);
+    syncReplyTop();
+  };
+
+  // 「返信を頭から」— 最新の回答ブロックの上端を画面の一番上へ。長い回答の途中から 1 タップで
+  // 頭出しするための導線（末尾に貼り付いている間は出さない — syncReplyTop の注記）。
+  //
+  // 対象はユーザー発言ではなく回答ブロックの先頭（＝畳まれた 作業過程 の行から）。完了時の
+  // 自動アンカー（answerAnchoredRef、回答本文の 1 行目）より 1 段上を見せる位置で、「この
+  // 返信は何をやったのか」から読み直せる。
+  const jumpToReplyTop = () => {
+    const el = bodyRef.current;
+    const idx = lastReplyIdxRef.current;
+    if (!el || idx === undefined) return;
+    const top = scrollTopForTurn(el, idx, REPLY_TOP_PAD);
+    if (top === null) return;
+    endRestore();
+    el.scrollTop = top;
+    selfTopRef.current = el.scrollTop;
+    // 末尾から離れた ⇒ 追従は切る（ここで切らないと、次の poll でまた末尾へ引き戻される）。
+    atBottomRef.current = false;
+    setShowJump(true);
+    syncReplyTop();
+  };
+
+  // ピルの出し入れ（＝下の setState）は、必ず次のフレームへ逃がす。末尾ピンと同じフレームで
+  // DOM を足し引きすると着地を壊す — 実測: ResizeObserver や follow の layout effect から
+  // 直接呼んだ版は、末尾着地が 4 回に 1 回ほど 240px（＝画像 1 枚ぶんの遅延レイアウト）手前で
+  // 止まり、そのまま直らなかった。mirror-scroll ハーネスの long シナリオが赤くなる。
+  // 1 フレーム遅れて出ることに実害はないので、素直に逃がす。
+  const replyTopSyncRef = useRef(false);
+  const scheduleReplyTopSync = () => {
+    if (replyTopSyncRef.current) return;
+    replyTopSyncRef.current = true;
+    requestAnimationFrame(() => {
+      replyTopSyncRef.current = false;
+      syncReplyTop();
+    });
+  };
+
+  // 「返信を頭から」を出すべきか — 最新の回答ブロックの先頭が、ビューポート上端より上に
+  // 流れているときだけ。すでに頭が見えているなら押しても何も起きないので出さない。
+  const syncReplyTop = () => {
+    const el = bodyRef.current;
+    const idx = lastReplyIdxRef.current;
+    const turn = el && idx !== undefined ? el.querySelector<HTMLElement>(`[data-turn-idx="${idx}"]`) : null;
+    const on = !!(
+      el &&
+      turn &&
+      // 末尾に貼り付いている間は出さない。末尾には押すべきものが並ぶ面（引き継ぎカードの
+      // 起動ボタン、質問 / プラン / 許可の回答ボタン、コピー…）で、その上に浮くピルが被って
+      // 押せなくなる。読んでいる途中＝追従が切れているときだけの導線にする。
+      !atBottomRef.current &&
+      turn.getBoundingClientRect().top < el.getBoundingClientRect().top - REPLY_TOP_PAD
+    );
+    setShowReplyTop((s) => (s === on ? s : on));
   };
 
   // Page older history in (P2): fetch the window before the oldest line we hold and
@@ -2189,6 +2338,9 @@ export function MirrorView({
   const lastUserGi = latestWorkPromptIndex(groups);
   const replyGroup = lastUserGi >= 0 ? groups[lastUserGi + 1] : undefined;
   const lastReplyText = replyGroup && replyGroup.role === "assistant" ? textOfParts(replyGroup.parts) : "";
+  // 「返信を頭から」の対象。レンダ中に ref へ落とすのは、[] で 1 度だけ作られる
+  // ResizeObserver / onScroll のクロージャからも今の値を読ませるため（ttsCaptureRef と同型）。
+  lastReplyIdxRef.current = replyGroup && replyGroup.role !== "user" ? replyGroup.idx : undefined;
   // Tab 補完サイクル中は、絞り込みキーを「ユーザーが打った文字」に凍結する（入力欄は補完で
   // 候補そのものに変わっているので、そのまま渡すとチップ列が1件に痩せてサイクルが崩れる）。
   const suggestDraft = suggestFilterDraft(cycle, draft);
@@ -2539,7 +2691,16 @@ export function MirrorView({
         </div>
       )}
 
-      <div className="mirror-body" ref={bodyRef} onScroll={onBodyScroll} onMouseUp={captureTtsSel}>
+      <div
+        className="mirror-body"
+        ref={bodyRef}
+        onScroll={onBodyScroll}
+        onMouseUp={captureTtsSel}
+        // 位置復元の打ち切り条件（endRestoreOnInput の注記）。ホイールとタッチはここで拾う —
+        // .mirror-scroll の pointerdown/keydown（noteInteraction）はホイールでは出ない。
+        onWheelCapture={endRestoreOnInput}
+        onTouchStartCapture={endRestoreOnInput}
+      >
         {/* Wrapper whose height == the transcript's total height, so a ResizeObserver can
             re-pin a bottom-stuck view to the true bottom as late content lays out — that's
             what makes opening a session land at the bottom, and keeps streaming glued to the
@@ -2756,19 +2917,48 @@ export function MirrorView({
           </div>
         )}
         </div>
-        {showJump && (
-          // Sticky so it floats just above the composer at the viewport bottom while the
-          // user reads up-thread; one click re-arms follow and snaps to the newest content.
+        {(showJump || showReplyTop) && (
+          // 入力欄のすぐ上に浮くピル。sticky で本文の最後に置く（bottom 指定の sticky は
+          // 「本来の位置より下へ行きそうなときだけ上へ留める」ので、先頭に置くと二度と
+          // 降りてこない — 実測で本文の 42,000px 上に取り残された）。
+          //
+          // ラッパは height:0、ボタンはその中で absolute。in-flow のまま置くと、はみ出した
+          // ボタンぶん（実測 12px）がスクロール可能領域を伸ばし、末尾に貼り付いているのに
+          // 12px の余白が残る。「最新へ」は末尾から離れたときしか出ないので誰も踏まなかったが、
+          // 「返信を頭から」は末尾でも出るので表に出た。bottom:0 の absolute なら、ボタンの箱は
+          // ラッパの上へ伸びる＝末尾より下へはみ出さない。
+          //
+          // 「返信を頭から」は逆向きの導線で、条件も別（最新の回答の先頭が画面より上にある）。
+          // 同じ帯に並べる — 両方出る場面（回答の途中を読んでいて、かつ末尾から離れている）
+          // では、上へ・下への 2 択がそのまま並んで見える。
           <div className="mirror-jump-wrap">
-            <button
-              type="button"
-              className="mirror-jump"
-              onClick={jumpToBottom}
-              title={tr("mirror.jump_latest")}
-              aria-label={tr("mirror.jump_latest")}
-            >
-              <Icon name="arrow-down" /> {tr("mirror.jump_latest")}
-            </button>
+            <div className="mirror-jump-row">
+              {showReplyTop && (
+                <button
+                  type="button"
+                  // 見た目は 最新へ と同じピル。クラスを足すのは検証のため — mirror-scroll の
+                  // ハーネスは「最新へ が出ていないこと」で末尾着地を判定しており、素の
+                  // .mirror-jump が 2 種類あると区別が付かない。
+                  className="mirror-jump mirror-jump-top"
+                  onClick={jumpToReplyTop}
+                  title={tr("mirror.jump_reply_top")}
+                  aria-label={tr("mirror.jump_reply_top")}
+                >
+                  <Icon name="arrow-up" /> {tr("mirror.jump_reply_top")}
+                </button>
+              )}
+              {showJump && (
+                <button
+                  type="button"
+                  className="mirror-jump"
+                  onClick={jumpToBottom}
+                  title={tr("mirror.jump_latest")}
+                  aria-label={tr("mirror.jump_latest")}
+                >
+                  <Icon name="arrow-down" /> {tr("mirror.jump_latest")}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
