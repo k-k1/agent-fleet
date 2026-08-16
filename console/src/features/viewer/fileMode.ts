@@ -21,6 +21,10 @@ export type MarkdownMode = "edit" | "preview" | "split";
  *  MarkdownView, which stays available for Marp decks too (§1.1). */
 export type PreviewRenderer = "normal" | "slides";
 
+/** 図（.drawio）の面。`figure` が同梱ビューアの描画、`source` が XML そのもの
+ *  （編集できるなら CodeMirror、できないなら読み取り専用の CodeView）。 */
+export type DiagramMode = "figure" | "source";
+
 /** The pane's own layer, derived for Markdown and driven directly otherwise. */
 export type PaneMode = "view" | "edit";
 
@@ -32,11 +36,14 @@ export interface FileModeCaps {
   marp: boolean;
   /** A validated, PUT-able editor snapshot exists, so the buffer can be edited. */
   editable: boolean;
+  /** drawio の図として開ける（docs/65）。Markdown と同時に立つことはない。 */
+  diagram: boolean;
 }
 
 export type FileModeState =
   | { kind: "plain"; mode: PaneMode }
-  | { kind: "markdown"; md: MarkdownMode; renderer: PreviewRenderer };
+  | { kind: "markdown"; md: MarkdownMode; renderer: PreviewRenderer }
+  | { kind: "diagram"; diagram: DiagramMode };
 
 /** Which surfaces the pane renders. `editor` and `source` are mutually
  *  exclusive: the same slot is CodeMirror when editable, CodeView when not. */
@@ -49,6 +56,8 @@ export interface FileSurfaces {
   preview: PreviewRenderer | null;
   /** Source and preview are shown side by side. */
   split: boolean;
+  /** drawio の図（同梱ビューア）を表示している。 */
+  diagram: boolean;
 }
 
 /** The mode a freshly opened file starts in.
@@ -66,6 +75,12 @@ export function initialFileMode(
   caps: FileModeCaps,
   options: { hasTargetLine?: boolean; requested?: PaneMode } = {},
 ): FileModeState {
+  // 図はまず図として開く。ただし行を指してきた引用と「編集で開く」は、その行 /
+  // その編集面が無ければ意味を成さないので XML ソース側に着地させる（§65.4）。
+  if (caps.diagram) {
+    const wantsSource = options.hasTargetLine || options.requested === "edit";
+    return { kind: "diagram", diagram: wantsSource ? "source" : "figure" };
+  }
   if (options.requested === "edit" && caps.editable) {
     return caps.markdown
       ? { kind: "markdown", md: "edit", renderer: "normal" }
@@ -96,13 +111,18 @@ export function effectiveRenderer(state: FileModeState, caps: FileModeCaps): Pre
 /** The pane-level mode. For Markdown it is derived from the top-level mode
  *  rather than driven by its own control (§1.1). */
 export function paneModeOf(state: FileModeState, caps: FileModeCaps): PaneMode {
+  if (state.kind === "diagram") return state.diagram === "source" && caps.editable ? "edit" : "view";
   if (state.kind === "plain") return state.mode === "edit" && caps.editable ? "edit" : "view";
   if (!caps.editable) return "view";
   return state.md === "edit" || state.md === "split" ? "edit" : "view";
 }
 
 export function surfacesFor(state: FileModeState, caps: FileModeCaps): FileSurfaces {
-  const none: FileSurfaces = { editor: false, source: false, preview: null, split: false };
+  const none: FileSurfaces = { editor: false, source: false, preview: null, split: false, diagram: false };
+  if (state.kind === "diagram") {
+    if (state.diagram === "figure") return { ...none, diagram: true };
+    return { ...none, ...(caps.editable ? { editor: true } : { source: true }) };
+  }
   if (state.kind === "plain") {
     return state.mode === "edit" && caps.editable
       ? { ...none, editor: true }
@@ -125,7 +145,7 @@ export function surfacesFor(state: FileModeState, caps: FileModeCaps): FileSurfa
  *  reacts to "the user moved to another surface" — focus, above all — must not
  *  be triggered by it (docs/44 §5). */
 export function surfaceKey(surfaces: FileSurfaces): string {
-  return [surfaces.editor, surfaces.source, !!surfaces.preview, surfaces.split].join("|");
+  return [surfaces.editor, surfaces.source, !!surfaces.preview, surfaces.split, surfaces.diagram].join("|");
 }
 
 /** One button of the Markdown mode group (docs/44 §5: a button group with
@@ -136,6 +156,25 @@ export interface MarkdownModeControl {
   /** True when `edit` is the read-only CodeView rather than the editor, which
    *  is what the label has to say. */
   readOnlySource: boolean;
+}
+
+/** 図の面のボタン群（図 / ソース）。Markdown の 3 モード群と同時には出ない。 */
+export function diagramModeControls(
+  state: FileModeState,
+  caps: FileModeCaps,
+): { mode: DiagramMode; pressed: boolean; readOnlySource: boolean }[] {
+  if (state.kind !== "diagram") return [];
+  return (["figure", "source"] as DiagramMode[]).map((mode) => ({
+    mode,
+    pressed: state.diagram === mode,
+    readOnlySource: mode === "source" && !caps.editable,
+  }));
+}
+
+/** 図の面を選ぶ。 */
+export function withDiagramMode(state: FileModeState, diagram: DiagramMode, caps: FileModeCaps): FileModeState {
+  if (!caps.diagram) return state;
+  return { kind: "diagram", diagram };
 }
 
 export function markdownModeControls(
@@ -168,6 +207,12 @@ export function rendererControls(
  *  read-only deck this is the same set of three states the pane offers today
  *  (source, preview, slides). */
 export function fileModeCycle(caps: FileModeCaps): FileModeState[] {
+  if (caps.diagram) {
+    return [
+      { kind: "diagram", diagram: "figure" },
+      { kind: "diagram", diagram: "source" },
+    ];
+  }
   if (!caps.markdown) return [];
   const out: FileModeState[] = [];
   for (const md of availableMarkdownModes(caps)) {
@@ -185,6 +230,9 @@ export function fileModeCycle(caps: FileModeCaps): FileModeState[] {
 export function cycleFileMode(state: FileModeState, caps: FileModeCaps): FileModeState {
   const cycle = fileModeCycle(caps);
   if (cycle.length === 0) return state;
+  if (caps.diagram) {
+    return state.kind === "diagram" && state.diagram === "figure" ? cycle[1] : cycle[0];
+  }
   const renderer = effectiveRenderer(state, caps);
   const at = cycle.findIndex(
     (entry) =>
@@ -237,6 +285,8 @@ export function withPaneMode(
  *  unsavable, can retract a mode or renderer while it is selected. Nothing here
  *  touches the buffer — it only keeps the selection inside what is offered. */
 export function reconcileFileMode(state: FileModeState, caps: FileModeCaps): FileModeState {
+  if (caps.diagram) return state.kind === "diagram" ? state : initialFileMode(caps);
+  if (state.kind === "diagram") return initialFileMode(caps);
   if (state.kind === "plain") {
     if (!caps.markdown) return state.mode === "edit" && !caps.editable ? { kind: "plain", mode: "view" } : state;
     return initialFileMode(caps);

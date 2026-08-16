@@ -29,7 +29,7 @@ import { useKeysStore } from "./store.ts";
 import { useUiOpen } from "../../core/store/uiOpen.ts";
 import { toggleTtsPlayback } from "../../core/store/tts.ts";
 import { paneViewActions } from "../viewer/paneViewActions.ts";
-import { langFor, imageFormat } from "../../lib/filemeta.ts";
+import { langFor, imageFormat, isDrawioFile } from "../../lib/filemeta.ts";
 import { focusPaneContent, focusRegion } from "./focus.ts";
 import { api, apiJSON } from "../../core/api/client.ts";
 import { toast } from "../../ui/toast.ts";
@@ -88,9 +88,13 @@ function toggleMarkdownMode(): void {
   if (p) paneViewActions(p.id)?.toggleMdMode?.();
 }
 // A markdown file is showing in the active pane (gates the preview/source toggle).
+// drawio の図も同じコマンドで図 ↔ ソースを行き来する（docs/65 §65.4）。ここは
+// 拡張子だけで判定する —— 中身を見ないと分からない `.xml` はコマンドの対象外で
+// よく、ペイン内のボタンで切り替えられる。
 function activeIsMarkdown(): boolean {
   const c = activePane(getLayout())?.content;
-  return !!c && c.kind === "file" && langFor(c.filePath) === "markdown";
+  if (!c || c.kind !== "file") return false;
+  return langFor(c.filePath) === "markdown" || isDrawioFile(c.filePath);
 }
 // The active pane can switch between the normal file view and the read-aloud view
 // (docs/24) — a text file, or one already in the reader.

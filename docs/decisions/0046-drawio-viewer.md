@@ -1,7 +1,9 @@
 # 0046. `.drawio` は drawio 公式ビューアを同梱し、サンドボックス iframe に閉じ込めて表示する
 
-- 状態: **設計確定・未実装**（2026-08-16。設計と実測は [docs/65](../65-drawio-viewer.md)）。
-  成立性は開発 Workspace の headless Chromium で**外部通信を全遮断した状態**まで実測した。
+- 状態: **P0 実装済み**（2026-08-16。設計と実測は [docs/65](../65-drawio-viewer.md)）。
+  成立性は開発 Workspace の headless Chromium で**外部通信を全遮断した状態**まで実測し、
+  実装後は検証ハーネス（`npm --prefix console run drawio:check`）が実ブラウザで
+  「描画される・外部への要求 0 件」を毎回判定する。P1（ステンシル）以降は未着手。
 - 関連: [0027-markdown-code-editor.md](0027-markdown-code-editor.md)（File ペインの面と保存機構。
   本 ADR はその面を 1 つ増やす） / [docs/35](../35-packaging.md)（同梱物と配布サイズ） /
   [0031-mcp-registry.md](0031-mcp-registry.md)（信用できない入力を名前で照合してから使う型）
@@ -28,8 +30,8 @@ Console の File ペインは `.drawio` を**生の XML** としてしか出せ�
 
 ## 決定 2 — アプリの window へは読み込まず、サンドボックス iframe に閉じ込める
 
-`sandbox="allow-scripts"`（`allow-same-origin` も `allow-popups` も与えない）の iframe で
-自前の `viewer.html` を開き、**XML は親が `api/fs/download` で取って postMessage で流し込む**。
+`sandbox="allow-scripts"`（`allow-same-origin` も `allow-popups` も与えない）の iframe に
+自前の受け皿を置き、**XML は親が `api/fs/download` で取って postMessage で流し込む**。
 
 理由はすべて実測に基づく。
 
@@ -44,6 +46,17 @@ Console の File ペインは `.drawio` を**生の XML** としてしか出せ�
    すり抜けても Console の DOM・Cookie・API に届かない。
 4. **P0 はこれで追加設定が要らない。** `<script src>` は CORS の対象外なので、オリジンなしの
    iframe からでも自オリジンのビューアを読める。
+
+**フレームの中身は静的ファイルではなく `srcdoc`（文字列を組み立てる 1 モジュール）にした。**
+CSP・外部 URL の潰し・メッセージ契約が 1 か所に集まり、「lightbox を出していないか」
+「外部 URL を潰しているか」をユニットテストで文字列として検査できる。ハッシュ付き資産に
+なるのは 4 MB の本体だけで、srcdoc はそれを `<script src>` で読む。
+
+**外部 URL の既定値は空文字では潰せない**（実装時に判明）。ビューアは
+`window.X = window.X || "https://…"` の形で入れるので `""` は falsy ＝ 外部の既定値が残る。
+実際 `DRAW_MATH_URL` が `viewer.diagrams.net` を取りに行き、CSP だけが止めていた。
+ネットワークに出ない dead value を入れ、**ハーネスの「外部への要求 0 件」で担保する**
+（版が上がって新しい名前が増えたら、そこで赤くなる）。
 
 ## 決定 3 — 新しい `PaneKind` は作らず、File ペインの面を 1 つ増やす
 
