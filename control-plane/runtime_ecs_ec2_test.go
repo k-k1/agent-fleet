@@ -51,6 +51,8 @@ type fakeEC2 struct {
 	// describeVolumesErr makes the volume lookup fail, for the paths that must keep
 	// working (degraded) when it does rather than failing a Start.
 	describeVolumesErr error
+	// images is the AMI world: image id -> its tags. Only the pool screen reads it.
+	images map[string][]ec2types.Tag
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -61,6 +63,7 @@ func newFakeEC2() *fakeEC2 {
 		attachErr: map[string]bool{},
 		snapshots: map[string]*ec2types.Snapshot{},
 		runErr:    map[string]error{},
+		images:    map[string][]ec2types.Tag{},
 	}
 }
 
@@ -403,6 +406,20 @@ func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...fu
 		f.log("DeleteTags %s", r)
 	}
 	return &ec2.DeleteTagsOutput{}, nil
+}
+
+func (f *fakeEC2) DescribeImages(_ context.Context, in *ec2.DescribeImagesInput, _ ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := &ec2.DescribeImagesOutput{}
+	for _, id := range in.ImageIds {
+		tags, ok := f.images[id]
+		if !ok {
+			continue
+		}
+		out.Images = append(out.Images, ec2types.Image{ImageId: aws.String(id), Tags: tags})
+	}
+	return out, nil
 }
 
 func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error) {
@@ -2429,6 +2446,84 @@ func TestECSEC2BackupSkipsWhatItShould(t *testing.T) {
 		}
 		if len(h.ec2.snapshots) != 0 {
 			t.Error("took a backup although the tenant asked for none")
+		}
+	})
+}
+
+// --- slot AMI staleness (ADR 0045 決定 18) ---
+
+// The pool screen has to answer "are new slots still paying the image pull". It is read
+// from the INSTANCES, not from the launch template: a template edit nobody has launched
+// from yet would report an improvement that does not exist.
+func TestECSEC2PoolStatusReportsTheSlotAMI(t *testing.T) {
+	ctx := context.Background()
+
+	newPool := func(t *testing.T) (*ec2Harness, *ecsEC2Factory) {
+		h := newEC2Harness(t)
+		h.ec2.addSlot("i-a", "ap-northeast-1a", "m7i.large", true, false)
+		h.ec2.instances["i-a"].ImageId = aws.String("ami-baked")
+		return h, h.factory()
+	}
+
+	t.Run("baked from the image this deployment runs", func(t *testing.T) {
+		h, f := newPool(t)
+		h.ec2.images["ami-baked"] = []ec2types.Tag{
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleSlotAMI)},
+			{Key: aws.String(ec2TagImage), Value: aws.String(f.base.cfg.workspaceImage)},
+		}
+		st, err := f.PoolStatus(ctx)
+		if err != nil {
+			t.Fatalf("PoolStatus: %v", err)
+		}
+		if st.SlotAmiStale || st.SlotAmiID != "ami-baked" || st.SlotAmiImage != f.base.cfg.workspaceImage {
+			t.Errorf("slot AMI = %+v; a matching bake must not read as stale",
+				[]any{st.SlotAmiID, st.SlotAmiImage, st.SlotAmiStale})
+		}
+	})
+
+	t.Run("baked from an older image", func(t *testing.T) {
+		h, f := newPool(t)
+		h.ec2.images["ami-baked"] = []ec2types.Tag{
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleSlotAMI)},
+			{Key: aws.String(ec2TagImage), Value: aws.String("ecr/af-workspace:0.7.0")},
+		}
+		st, _ := f.PoolStatus(ctx)
+		if !st.SlotAmiStale || st.SlotAmiImage != "ecr/af-workspace:0.7.0" {
+			t.Errorf("a re-bake that never happened went unreported: %+v",
+				[]any{st.SlotAmiID, st.SlotAmiImage, st.SlotAmiStale})
+		}
+	})
+
+	t.Run("never baked at all", func(t *testing.T) {
+		h, f := newPool(t)
+		h.ec2.images["ami-baked"] = nil // the plain ECS-optimized AMI: no af-image tag
+		st, _ := f.PoolStatus(ctx)
+		if !st.SlotAmiStale || st.SlotAmiImage != "" {
+			t.Errorf("an unbaked AMI must read as 'new slots pay the pull': %+v",
+				[]any{st.SlotAmiID, st.SlotAmiImage, st.SlotAmiStale})
+		}
+	})
+
+	t.Run("a mixed pool reports the one that still costs a pull", func(t *testing.T) {
+		h, f := newPool(t)
+		h.ec2.addSlot("i-b", "ap-northeast-1a", "m7i.large", true, false)
+		h.ec2.instances["i-b"].ImageId = aws.String("ami-old")
+		h.ec2.images["ami-baked"] = []ec2types.Tag{{Key: aws.String(ec2TagImage), Value: aws.String(f.base.cfg.workspaceImage)}}
+		h.ec2.images["ami-old"] = []ec2types.Tag{{Key: aws.String(ec2TagImage), Value: aws.String("ecr/af-workspace:0.7.0")}}
+		st, _ := f.PoolStatus(ctx)
+		if !st.SlotAmiStale || st.SlotAmiID != "ami-old" {
+			t.Errorf("a half-re-baked pool reported as fine: %+v", []any{st.SlotAmiID, st.SlotAmiStale})
+		}
+	})
+
+	t.Run("an empty pool says nothing", func(t *testing.T) {
+		h := newEC2Harness(t)
+		st, err := h.factory().PoolStatus(ctx)
+		if err != nil {
+			t.Fatalf("PoolStatus: %v", err)
+		}
+		if st.SlotAmiID != "" || st.SlotAmiStale {
+			t.Errorf("reported an AMI verdict with no slots to read it from: %+v", []any{st.SlotAmiID, st.SlotAmiStale})
 		}
 	})
 }

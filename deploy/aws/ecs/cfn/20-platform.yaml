@@ -165,6 +165,21 @@ Resources:
                   - ec2:RunInstances
                   - ec2:StartInstances
                   - ec2:StopInstances
+                  # ⚠️ Snapshots were MISSING here until 2026-08-16, and nothing caught it:
+                  # the live E2E runs with a deployer credential, not with this role. Every
+                  # snapshot path would have failed with AccessDenied on a real deployment —
+                  # and not only the optional ones. createHomeVolume asks for the user's
+                  # hibernation snapshot FIRST, so a brand-new user's Start would have failed
+                  # outright, not merely started slowly. (docs/64 §64.22.)
+                  #   DescribeSnapshots — restore (決定 4), golden lookup (決定 9), backups (決定 17)
+                  #   CreateSnapshot    — hibernation and backups
+                  #   DeleteSnapshot    — retention, superseded captures, Destroy
+                  - ec2:DescribeSnapshots
+                  - ec2:CreateSnapshot
+                  - ec2:DeleteSnapshot
+                  # The slot AMI's af-image tag, to tell the operator when it no longer
+                  # matches the workspace image being run (決定 18).
+                  - ec2:DescribeImages
                 Resource: "*"          # Describe* cannot be resource-scoped; tags are the fence
               - Sid: EcsContainerInstances
                 Effect: Allow

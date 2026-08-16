@@ -148,6 +148,12 @@ const (
 	// sweep, and to the golden lookup. Nothing gets to mistake a backup for the copy it
 	// was waiting for.
 	ec2RoleBackup = "backup"
+	// ec2RoleSlotAMI marks an AMI baked by bake-slot-ami.sh: an ECS-optimized image with
+	// the workspace image already pulled, so a NEW slot does not pay the pull (31.8s →
+	// 0.09s, 決定 1). Stamped with af-image for the same reason the golden snapshot is —
+	// a stale one is not broken, only slow, which is exactly the kind of failure nobody
+	// notices (決定 18).
+	ec2RoleSlotAMI = "slot-ami"
 	// ec2TagBackupAt is when a backup was STARTED, by the CP's clock. EBS reports its own
 	// StartTime, but the schedule is decided against this: a snapshot's StartTime is what
 	// AWS did, and the question here is when this deployment last asked.
@@ -179,6 +185,10 @@ type ec2API interface {
 	StopInstances(context.Context, *ec2.StopInstancesInput, ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error)
 	// Snapshots serve two features that share one mechanism: hibernating a long-unused
 	// home (ADR 0045 決定 4) and seeding a new one from the golden image (決定 9).
+	// DescribeImages reads the slot AMI's af-image tag. Read-only and only for the pool
+	// screen: the adapter never chooses an AMI (the launch template does), it only tells
+	// the operator when the one in use no longer matches what this deployment runs.
+	DescribeImages(context.Context, *ec2.DescribeImagesInput, ...func(*ec2.Options)) (*ec2.DescribeImagesOutput, error)
 	DescribeSnapshots(context.Context, *ec2.DescribeSnapshotsInput, ...func(*ec2.Options)) (*ec2.DescribeSnapshotsOutput, error)
 	CreateSnapshot(context.Context, *ec2.CreateSnapshotInput, ...func(*ec2.Options)) (*ec2.CreateSnapshotOutput, error)
 	DeleteSnapshot(context.Context, *ec2.DeleteSnapshotInput, ...func(*ec2.Options)) (*ec2.DeleteSnapshotOutput, error)
@@ -2924,6 +2934,13 @@ type ec2PoolStatus struct {
 	GoldenImage  string        `json:"golden_image"`
 	GoldenStale  bool          `json:"golden_stale"`
 	RunningImage string        `json:"running_image"`
+	// The AMI the slots in this pool were actually launched from, and the workspace image
+	// baked into it. Read from the INSTANCES rather than from the launch template: what
+	// matters is what is running, and a template edit that no slot has been created from
+	// yet would report an improvement nobody has.
+	SlotAmiID    string `json:"slot_ami_id"`
+	SlotAmiImage string `json:"slot_ami_image"`
+	SlotAmiStale bool   `json:"slot_ami_stale"`
 }
 
 // PoolStatus reports the live pool. Read-only and tolerant: a section that cannot be read
@@ -3008,6 +3025,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		}
 	}
 	sort.SliceStable(st.Slots, func(i, j int) bool { return st.Slots[i].InstanceID < st.Slots[j].InstanceID })
+	f.readSlotAMI(ctx, insts, &st)
 	sort.SliceStable(st.Homes, func(i, j int) bool { return st.Homes[i].Workspace < st.Homes[j].Workspace })
 
 	// Hibernation snapshots, matched back onto the homes they belong to, plus the golden.
@@ -3068,6 +3086,60 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	}
 	st.GoldenStale = st.GoldenID != "" && st.GoldenImage != st.RunningImage
 	return st, nil
+}
+
+// readSlotAMI answers "are new slots still paying the image pull". The AMI is chosen by
+// the launch template, not by this adapter, so all this does is compare the af-image tag
+// of the AMI the running slots came from against the image this deployment runs.
+//
+// Best effort throughout: an unreadable AMI leaves the fields empty rather than failing
+// the screen, because the most likely moment somebody opens it is when something else is
+// already wrong.
+func (f *ecsEC2Factory) readSlotAMI(ctx context.Context, insts *ec2.DescribeInstancesOutput, st *ec2PoolStatus) {
+	ids := map[string]bool{}
+	for _, r := range insts.Reservations {
+		for _, inst := range r.Instances {
+			if id := aws.ToString(inst.ImageId); id != "" {
+				ids[id] = true
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return // an empty pool has nothing to report; the next slot decides
+	}
+	list := make([]string, 0, len(ids))
+	for id := range ids {
+		list = append(list, id)
+	}
+	sort.Strings(list)
+	out, err := f.ec2.DescribeImages(ctx, &ec2.DescribeImagesInput{ImageIds: list})
+	if err != nil {
+		log.Printf("ecs-ec2 pool status: slot AMI unreadable: %v", err)
+		return
+	}
+	// With a mixed pool (a re-bake landed between two slot creations) report the AMI that
+	// still costs a pull. Saying "fine" because SOME slots are fine would hide the one
+	// thing the operator has to act on, and the action is the same either way.
+	var okID, okImage, staleID, staleImage string
+	for _, img := range out.Images {
+		id, baked := aws.ToString(img.ImageId), ec2TagValue(img.Tags, ec2TagImage)
+		if baked == f.base.cfg.workspaceImage {
+			if okID == "" {
+				okID, okImage = id, baked
+			}
+			continue
+		}
+		if staleID == "" {
+			staleID, staleImage = id, baked
+		}
+	}
+	if staleID != "" {
+		// staleImage is "" for a plain ECS-optimized AMI — nothing was ever baked into it.
+		// The Console tells those two apart; both mean "new slots pay the pull".
+		st.SlotAmiID, st.SlotAmiImage, st.SlotAmiStale = staleID, staleImage, true
+		return
+	}
+	st.SlotAmiID, st.SlotAmiImage = okID, okImage
 }
 
 func hasHome(homes []ec2HomeView, workspace string) bool {

@@ -379,6 +379,30 @@ only copy that is not in the zone — snapshots are regional.
 - The Slots tab shows, per home, how old its newest spare copy is — and says so loudly when
   there is none.
 
+**Slot AMI: skip the image pull on every new slot (opt-in).** A slot's root volume IS the
+image cache (pull 31.8s → 0.09s measured), and a slot the CP has just created always has a
+cold one — the first person in an AZ, growth up to the cap, and any spread into a new AZ.
+Bake the workspace image into the AMI the launch template uses and that disappears:
+
+```bash
+deploy/aws/ecs/bake-slot-ami.sh \
+  --image <account>.dkr.ecr.<region>.amazonaws.com/af-workspace:<tag> \
+  --launch-template <SlotLaunchTemplateId> --subnet <a private subnet> --pool <cluster>
+# then point the pool at the AMI it prints
+aws cloudformation deploy --stack-name <net>-pool --template-file deploy/aws/ecs/cfn/40-ec2-pool.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides SlotAmiId=<ami-id> ...
+```
+
+- An AMI is **regional**, so one bake covers every AZ — no per-AZ warm instances, nothing
+  extra in the pool's bookkeeping, and no adapter change (ADR 0045 決定 18).
+- Only NEW slots use it. Slots already running keep the AMI they were launched from, and
+  nothing needs them replaced.
+- **Re-bake when the workspace image changes.** The CP compares the AMI's `af-image` tag
+  against what it runs and says so in Settings → Admin → Slots; forgetting costs a pull per
+  new slot, silently. Same failure shape as a stale golden snapshot.
+- Stopped instances do **not** reserve capacity, so this does not help an AZ that has run
+  out — see docs/64 §64.21 for that.
+
 **Golden snapshot: skip boot-install for new users.** A brand-new home pays boot-install
 (4 CLIs 41s + rtk 1s + agy 6s = 48s) and a cold npm cache. Bake one home that has already
 paid it and every later user starts from that copy (ADR 0045 決定 9):
