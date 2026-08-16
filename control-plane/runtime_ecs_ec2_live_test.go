@@ -64,11 +64,14 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	pre, _ := u1.homeVolume(ctx)
 	preSlots := live.poolSize(f)
 	t.Logf("starting conditions: home volume exists=%v, pool slots=%d", pre != nil, preSlots)
+	wasRunning := u1.State(ctx) == "running"
 	t0 := time.Now()
 	if err := u1.Start(ctx); err != nil {
 		t.Fatalf("u1 Start: %v", err)
 	}
-	if s := u1.State(ctx); s != "starting" {
+	// Only meaningful when this Start actually launches something: a re-run against a
+	// workspace that is already up answers `running` immediately, which is correct.
+	if s := u1.State(ctx); !wasRunning && s != "starting" {
 		t.Errorf("u1 State right after Start = %q, want starting (a cold start must not look stopped)", s)
 	}
 	live.waitState(u1, "running", 12*time.Minute)
@@ -153,6 +156,17 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		t.Fatalf("u1 Stop before eviction: %v", err)
 	}
 	live.waitTasksGone(u1, 3*time.Minute)
+	// The pool may already hold slots from an earlier run, so "did it grow?" has to be
+	// measured, not assumed to be 1. Hard-coding it made a warm re-run report a product
+	// bug that was really leftover state.
+	nBefore := live.poolSize(f)
+	// Eviction only happens when there is NOWHERE else to go. Lowering the cap is not
+	// enough: if a slot from an earlier run is sitting free, u2 takes it — correctly —
+	// and nothing is evicted. Measure which world we are in instead of assuming.
+	freeBefore, err := u2.freeSlots(ctx, "")
+	if err != nil {
+		t.Fatalf("list free slots: %v", err)
+	}
 	// Each runtime carries its OWN copy of the pool config (taken when it was built), so
 	// lowering the cap on the factory alone changes nothing for u2 — it grew the pool
 	// instead of reclaiming, and the test read that as a product bug.
@@ -165,14 +179,23 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	}
 	live.waitState(u2, "running", 10*time.Minute)
 	t.Logf("MEASURED eviction + swap (u2 takes u1's slot at the cap) = %.1fs", time.Since(t4).Seconds())
-	if inst := live.slotOf(u2); inst != slot1 {
-		t.Errorf("u2 landed on %s, expected the reclaimed slot %s", inst, slot1)
+	if len(freeBefore) == 0 {
+		if inst := live.slotOf(u2); inst != slot1 {
+			t.Errorf("u2 landed on %s, expected the reclaimed slot %s", inst, slot1)
+		}
+		if inst := live.slotOf(u1); inst != "" {
+			t.Errorf("u1 is still attached to %s after being evicted", inst)
+		}
+	} else {
+		// Not a pass for eviction — say so rather than letting a green run imply it.
+		t.Logf("EVICTION NOT EXERCISED: %d free slot(s) were left over from an earlier run, "+
+			"so u2 took one instead of reclaiming u1's. Start from an empty pool to cover it.", len(freeBefore))
+		if inst := live.slotOf(u1); inst != slot1 {
+			t.Errorf("u1 lost its slot (%q) although u2 had a free one to take", inst)
+		}
 	}
-	if inst := live.slotOf(u1); inst != "" {
-		t.Errorf("u1 is still attached to %s after being evicted", inst)
-	}
-	if n := live.poolSize(f); n != 1 {
-		t.Errorf("pool grew to %d instead of reclaiming at the cap", n)
+	if n := live.poolSize(f); n > nBefore {
+		t.Errorf("pool grew to %d (from %d) instead of reclaiming at the cap", n, nBefore)
 	}
 
 	// --- 6. hibernation: u1's home (detached since the eviction) becomes a snapshot, the
@@ -194,10 +217,16 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	if err != nil || len(snaps) != 1 {
 		t.Fatalf("hibernation snapshots = %v (err %v), want exactly one", snaps, err)
 	}
-	golden := aws.ToString(snaps[0].SnapshotId) // reused below as the golden source
 	if s := u1.State(ctx); s != "none" {
 		t.Logf("State of a hibernated workspace = %q (no volume; Start restores it)", s)
 	}
+	// A restore has to land somewhere, and step 5 left the cap at 1 with u2 holding the
+	// only slot. Stopping u2 makes it the longest-dormant occupant, so the restore comes
+	// back through the eviction path rather than by growing the pool.
+	if err := u2.Stop(ctx); err != nil {
+		t.Fatalf("u2 Stop before the restore: %v", err)
+	}
+	live.waitTasksGone(u2, 3*time.Minute)
 	t6 := time.Now()
 	if err := u1.Start(ctx); err != nil {
 		t.Fatalf("u1 Start after hibernation: %v", err)
@@ -212,21 +241,40 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		t.Error("the restored home was built empty rather than from the snapshot")
 	}
 
-	// --- 7. golden snapshot: tag a snapshot the way bake-golden.sh does and check that a
-	// BRAND-NEW user's home is created from it. Only the volume is created here (no boot)
-	// — what needs proving on real AWS is the tag lookup and the image match, not another
-	// task launch. (ADR 0045 決定 9.) ---
-	if _, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
-		Resources: []string{golden},
-		Tags: []ec2types.Tag{
-			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleGolden)},
-			{Key: aws.String(ec2TagPool), Value: aws.String(f.pool.pool)},
-			{Key: aws.String(ec2TagImage), Value: aws.String(f.base.cfg.workspaceImage)},
-			{Key: aws.String(ec2TagMembership), Value: aws.String("")},
-		},
-	}); err != nil {
-		t.Fatalf("tag %s as golden: %v", golden, err)
+	// --- 7. golden snapshot: bake one the way bake-golden.sh does — stop the seed
+	// workspace, release its slot, snapshot the DETACHED volume — and check that a
+	// BRAND-NEW user's home is created from it. Only the volume is created here (no boot):
+	// what needs proving on real AWS is the tag lookup and the image match, not another
+	// task launch. (ADR 0045 決定 9.)
+	//
+	// The hibernation snapshot from step 6 cannot be reused as the golden: a successful
+	// restore deletes it, on purpose — otherwise the user pays for both the volume and a
+	// stale copy of it. (Measured: this test used to reuse it and got InvalidSnapshot.NotFound.)
+	if err := u1.Stop(ctx); err != nil {
+		t.Fatalf("u1 Stop before baking the golden: %v", err)
 	}
+	live.waitTasksGone(u1, 3*time.Minute)
+	if err := u1.releaseSlot(ctx); err != nil {
+		t.Fatalf("release u1's slot before baking: %v", err)
+	}
+	seed := aws.ToString(live.volumeOf(u1).VolumeId)
+	out2, err := f.ec2.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId:    aws.String(seed),
+		Description: aws.String("agent-fleet golden (live test)"),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeSnapshot,
+			Tags: []ec2types.Tag{
+				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleGolden)},
+				{Key: aws.String(ec2TagPool), Value: aws.String(f.pool.pool)},
+				{Key: aws.String(ec2TagImage), Value: aws.String(f.base.cfg.workspaceImage)},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("bake the golden from %s: %v", seed, err)
+	}
+	golden := aws.ToString(out2.SnapshotId)
+	live.waitSnapshot(golden, 20*time.Minute)
 	u3 := f.New(Workspace{ContainerName: "af-ec2c-u3" + sfx, MembershipID: "m-u3", AgentToken: "tok-u3"}, "", nil).(*ecsEC2Runtime)
 	newHome, err := u3.createHomeVolume(ctx, live.azOf(u1))
 	if err != nil {
@@ -249,11 +297,8 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		}
 	}()
 
-	// --- 8. leave nothing running; the volumes are deleted by Destroy. ---
-	if err := u1.Stop(ctx); err != nil {
-		t.Errorf("u1 final stop: %v", err)
-	}
-	live.waitTasksGone(u1, 3*time.Minute)
+	// --- 8. leave nothing running; the volumes are deleted by Destroy. u1 was already
+	// stopped and released in step 7. ---
 	if err := u2.Stop(ctx); err != nil {
 		t.Errorf("final stop: %v", err)
 	}
@@ -266,15 +311,16 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		// Destroy now folds the Fargate-side resources too (ADR 0045 決定 13-3): the
 		// service, both EFS access points and both SSM parameters. Those are exactly the
 		// things that survived every earlier run and had to be swept up by teardown.sh.
-		if _, ok, err := rt.base.describeService(ctx); err == nil && ok {
-			t.Errorf("Destroy left the ECS service %s behind", rt.Name())
-		}
-		if n := live.accessPointsOf(rt); n != 0 {
-			t.Errorf("Destroy left %d EFS access points behind for %s", n, rt.Name())
-		}
-		if n := live.paramsOf(rt); n != 0 {
-			t.Errorf("Destroy left %d SSM parameters behind for %s", n, rt.Name())
-		}
+		// ECS and EFS both delete asynchronously — DescribeServices keeps returning the
+		// service (DRAINING, then INACTIVE) and DescribeAccessPoints keeps listing the
+		// access points (deleting) for a while after the call returns. Poll, or the
+		// assertion measures the API's bookkeeping rather than the teardown (measured:
+		// it reported a leak while everything was already on its way out).
+		rt := rt
+		live.eventually(3*time.Minute, "the workspace's cloud resources are gone", func() bool {
+			_, ok, err := rt.base.describeService(ctx)
+			return err == nil && !ok && live.accessPointsOf(rt) == 0 && live.paramsOf(rt) == 0
+		})
 		// The EFS directories are the one thing Destroy cannot remove (docs/64
 		// §64.18.4). Report them so the harness' teardown check stays honest about
 		// what is left on the filesystem.
@@ -466,6 +512,27 @@ func (l *liveEC2) azOf(rt *ecsEC2Runtime) string {
 	return aws.ToString(v.AvailabilityZone)
 }
 
+// waitSnapshot blocks until a snapshot completes. A near-empty 8 GiB home took ~60s
+// measured; a real 45 GiB one is 30–40 minutes, which is exactly why the product advances
+// hibernation one sweep at a time instead of waiting like this.
+func (l *liveEC2) waitSnapshot(id string, budget time.Duration) {
+	l.t.Helper()
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		out, err := l.ec2.DescribeSnapshots(l.ctx, &ec2.DescribeSnapshotsInput{SnapshotIds: []string{id}})
+		if err == nil && len(out.Snapshots) == 1 {
+			switch out.Snapshots[0].State {
+			case ec2types.SnapshotStateCompleted:
+				return
+			case ec2types.SnapshotStateError:
+				l.t.Fatalf("snapshot %s failed", id)
+			}
+		}
+		time.Sleep(10 * time.Second)
+	}
+	l.t.Fatalf("snapshot %s did not complete within %s", id, budget)
+}
+
 func (l *liveEC2) snapshotOfVolume(volumeID string) string {
 	out, err := l.ec2.DescribeVolumes(l.ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
 	if err != nil || len(out.Volumes) == 0 {
@@ -487,6 +554,12 @@ func (l *liveEC2) accessPointsOf(rt *ecsEC2Runtime) int {
 	}
 	n := 0
 	for _, ap := range out.AccessPoints {
+		// EFS deletes asynchronously: an access point sits in `deleting` for a while and
+		// is still listed. Counting those made a complete teardown look like a leak
+		// (measured — this assertion failed while the resources were in fact going away).
+		if st := string(ap.LifeCycleState); st == "deleting" || st == "deleted" {
+			continue
+		}
 		if tagValue(ap.Tags, "af-membership") == rt.base.membershipID {
 			n++
 		}
