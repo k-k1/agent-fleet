@@ -2,19 +2,62 @@
 # 第3ラウンド(b): EC2 プール型アダプタ（ecs-ec2）を実 AWS で通すための最小基盤。
 # 方針: **repo の 40-ec2-pool.yaml をそのまま立てる**（テンプレート自体を検証したいので、
 # 手書きの launch template は作らない）。同スタックは 00-network / 20-platform の
-# export を参照するので、その 2 つだけダミースタックで供給する。
-# NAT / ALB / RDS は作らない（デフォルト VPC のパブリックサブネット 1 本）。
+# export を参照するので、その 2 つだけダミースタックで供給する。ALB / RDS は作らない。
+#
+# ネットワークは 2 通り:
+#
+#   既定            デフォルト VPC のパブリックサブネット 1 本。安くて速いが、
+#                   **本番と形が違う**——スロットは自動割当パブリック IPv4 で外に出るので、
+#                   §64.5 (3) の「タスク ENI 残留 → パブリック IPv4 消失 → 戻ってこない」を
+#                   踏む（実際に踏んだ・§64.17.5）。
+#   AF_HARNESS_NAT=1  専用 VPC ＋ プライベートサブネット ＋ NAT ゲートウェイ。**本番相当**。
+#                   スロットもタスクもパブリック IP を持たず、egress は NAT 経由になる。
+#                   NAT は時間課金（約 $0.062/h ＋ 転送量）なので、必ず teardown まで閉じる。
 set -euo pipefail
 export AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1
 N=af-ec2c
+NAT=${AF_HARNESS_NAT:-0}
 REPO_DIR=/home/dev/repos/agent-fleet@wip-sdcg4ag
 cd ~/af-ec2c
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
-CIDR=$(aws ec2 describe-vpcs --vpc-ids "$VPC" --query 'Vpcs[0].CidrBlock' --output text)
-SUBNET=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$VPC Name=availability-zone,Values=ap-northeast-1a \
-  --query 'Subnets[0].SubnetId' --output text)
-echo "ACCOUNT=$ACCOUNT VPC=$VPC CIDR=$CIDR SUBNET=$SUBNET"
+
+if [ "$NAT" = 1 ]; then
+  # --- 本番相当: 専用 VPC / パブリック（NAT 用）＋ プライベート（スロットとタスク）---
+  CIDR=10.90.0.0/16
+  VPC=$(aws ec2 create-vpc --cidr-block $CIDR --query Vpc.VpcId --output text)
+  aws ec2 create-tags --resources "$VPC" --tags Key=Name,Value=$N
+  aws ec2 modify-vpc-attribute --vpc-id "$VPC" --enable-dns-hostnames
+  IGW=$(aws ec2 create-internet-gateway --query InternetGateway.InternetGatewayId --output text)
+  aws ec2 attach-internet-gateway --internet-gateway-id "$IGW" --vpc-id "$VPC"
+  PUB=$(aws ec2 create-subnet --vpc-id "$VPC" --cidr-block 10.90.0.0/24 \
+    --availability-zone ap-northeast-1a --query Subnet.SubnetId --output text)
+  SUBNET=$(aws ec2 create-subnet --vpc-id "$VPC" --cidr-block 10.90.1.0/24 \
+    --availability-zone ap-northeast-1a --query Subnet.SubnetId --output text)
+  aws ec2 create-tags --resources "$PUB" --tags Key=Name,Value=$N-public
+  aws ec2 create-tags --resources "$SUBNET" --tags Key=Name,Value=$N-private
+  # NAT 自身はパブリック側に置くので、そのサブネットだけ公開経路を持つ。
+  aws ec2 modify-subnet-attribute --subnet-id "$PUB" --map-public-ip-on-launch
+  PUBRT=$(aws ec2 create-route-table --vpc-id "$VPC" --query RouteTable.RouteTableId --output text)
+  aws ec2 create-route --route-table-id "$PUBRT" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW" >/dev/null
+  aws ec2 associate-route-table --route-table-id "$PUBRT" --subnet-id "$PUB" >/dev/null
+  EIP=$(aws ec2 allocate-address --domain vpc --query AllocationId --output text)
+  NATGW=$(aws ec2 create-nat-gateway --subnet-id "$PUB" --allocation-id "$EIP" \
+    --query NatGateway.NatGatewayId --output text)
+  aws ec2 create-tags --resources "$NATGW" --tags Key=Name,Value=$N
+  echo "waiting for the NAT gateway (2–3 min)"
+  aws ec2 wait nat-gateway-available --nat-gateway-ids "$NATGW"
+  PRIVRT=$(aws ec2 create-route-table --vpc-id "$VPC" --query RouteTable.RouteTableId --output text)
+  aws ec2 create-route --route-table-id "$PRIVRT" --destination-cidr-block 0.0.0.0/0 --nat-gateway-id "$NATGW" >/dev/null
+  aws ec2 associate-route-table --route-table-id "$PRIVRT" --subnet-id "$SUBNET" >/dev/null
+  aws ec2 create-tags --resources "$PUBRT" "$PRIVRT" "$IGW" --tags Key=Name,Value=$N
+  echo "VPC=$VPC PUB=$PUB PRIVATE=$SUBNET NAT=$NATGW EIP=$EIP"
+else
+  VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
+  CIDR=$(aws ec2 describe-vpcs --vpc-ids "$VPC" --query 'Vpcs[0].CidrBlock' --output text)
+  SUBNET=$(aws ec2 describe-subnets --filters Name=vpc-id,Values="$VPC" Name=availability-zone,Values=ap-northeast-1a \
+    --query 'Subnets[0].SubnetId' --output text)
+fi
+echo "ACCOUNT=$ACCOUNT VPC=$VPC CIDR=$CIDR SUBNET=$SUBNET NAT=$NAT"
 
 # --- SG: タスク ENI 用（自己参照で全許可）＋ EFS は VPC 内から 2049 ---
 SG=$(aws ec2 create-security-group --group-name $N-ws --description "af-ec2c ws task eni" --vpc-id "$VPC" --query GroupId --output text)
@@ -41,7 +84,7 @@ echo "ECR=$ECR:dev"
 
 # --- ECS クラスタ ＋ Service Connect 名前空間 ---
 NSOP=$(aws servicediscovery create-private-dns-namespace --name $N.internal --vpc "$VPC" --query OperationId --output text)
-for i in $(seq 60); do
+for _ in $(seq 60); do
   st=$(aws servicediscovery get-operation --operation-id "$NSOP" --query 'Operation.Status' --output text)
   [ "$st" = SUCCESS ] && break; sleep 5
 done
@@ -117,6 +160,7 @@ export AF_ECS_EC2_TMP_MB=512
 export AF_HARNESS_VPC=$VPC
 export AF_HARNESS_EFSSG=$EFSSG
 export AF_HARNESS_ACCOUNT=$ACCOUNT
+export AF_HARNESS_NAT=$NAT
 ENV
 echo "=== SETUP DONE ==="
 cat state.env
