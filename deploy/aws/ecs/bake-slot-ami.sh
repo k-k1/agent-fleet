@@ -24,6 +24,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: bake-slot-ami.sh --image <image:tag> --launch-template <lt-id> --subnet <subnet-id>
                         [--pool <cluster>] [--region <region>] [--name <ami-name>]
+                        [--ssm-param <name>]
 
   --image            焼き込む Workspace イメージ。CP の AF_ECS_WORKSPACE_IMAGE と
                      **完全一致**していること（CP はこの文字列で突合する）
@@ -32,11 +33,15 @@ usage: bake-slot-ami.sh --image <image:tag> --launch-template <lt-id> --subnet <
   --subnet           焼く場所。ECR と SSM に到達できるサブネットならどこでもよい
                      （AMI はリージョン資源なので、どの AZ で焼いても全 AZ で使える）
   --pool             af-pool タグの値（既定: AF_ECS_EC2_POOL、無ければ AF_ECS_CLUSTER）
+  --ssm-param        焼いた AMI ID を書く SSM パラメータ名（既定: /af-slot-ami/<pool>）。
+                     40-ec2-pool の SlotAmiId は **AMI ID ではなく SSM パラメータ名**を
+                     取るので（Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>）、
+                     ここに書いた名前をそのまま渡すことになる
 EOF
   exit 2
 }
 
-IMAGE="" LT="" SUBNET="" POOL="${AF_ECS_EC2_POOL:-${AF_ECS_CLUSTER:-}}" REGION="${AWS_REGION:-}" NAME=""
+IMAGE="" LT="" SUBNET="" POOL="${AF_ECS_EC2_POOL:-${AF_ECS_CLUSTER:-}}" REGION="${AWS_REGION:-}" NAME="" PARAM=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --image)           IMAGE="$2"; shift 2 ;;
@@ -45,12 +50,14 @@ while [ $# -gt 0 ]; do
     --pool)            POOL="$2"; shift 2 ;;
     --region)          REGION="$2"; shift 2 ;;
     --name)            NAME="$2"; shift 2 ;;
+    --ssm-param)       PARAM="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
 [ -n "$IMAGE" ] && [ -n "$LT" ] && [ -n "$SUBNET" ] && [ -n "$POOL" ] || usage
 [ -n "$REGION" ] && export AWS_REGION="$REGION"
 [ -n "$NAME" ] || NAME="af-slot-$(date +%Y%m%d-%H%M%S)"
+[ -n "$PARAM" ] || PARAM="/af-slot-ami/$POOL"
 
 say() { echo "=== $* ==="; }
 cleanup() {
@@ -125,17 +132,28 @@ AMI=$(aws ec2 create-image --instance-id "$INST" --name "$NAME" \
 echo "image $AMI"
 aws ec2 wait image-available --image-ids "$AMI"
 
+# 40-ec2-pool.yaml の SlotAmiId は **SSM パラメータ名**を取る（Type:
+# AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>。既定値も ECS-optimized AMI の
+# パラメータ名である）。AMI ID を直接渡すと CFN は「そんな SSM パラメータは無い」で
+# 落ちる —— 実際にこのスクリプトは最初そう案内していて、実走させて初めて分かった。
+# なので焼いた ID はパラメータに書き、運用者にはその名前を渡してもらう。
+# 焼き直しはこのパラメータを上書きするだけになり、次のスタック更新で効く（決定 7 と同じ形）。
+say "publishing $AMI to the SSM parameter $PARAM (SlotAmiId takes a parameter NAME, not an AMI id)"
+aws ssm put-parameter --name "$PARAM" --type String --value "$AMI" --overwrite \
+  --description "agent-fleet slot AMI for pool $POOL ($IMAGE)" >/dev/null
+
 cat <<EOF
 
 === done ===
 AMI: $AMI  (af-image=$IMAGE)
+SSM: $PARAM -> $AMI
 
 Point the pool at it and the pull disappears from every new slot:
 
   aws cloudformation deploy --stack-name <net>-pool \\
     --template-file deploy/aws/ecs/cfn/40-ec2-pool.yaml \\
     --capabilities CAPABILITY_NAMED_IAM \\
-    --parameter-overrides SlotAmiId=$AMI NetworkStackName=<net> PlatformStackName=<plat>
+    --parameter-overrides SlotAmiId=$PARAM NetworkStackName=<net> PlatformStackName=<plat>
 
 Slots already running keep the AMI they were launched from — this takes effect on the
 NEXT slot the CP creates. Existing slots are not replaced; nothing needs them to be.

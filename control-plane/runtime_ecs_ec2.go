@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -297,7 +296,7 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 	if !ok {
 		return nil, fmt.Errorf("ecs-ec2: unexpected base factory %T", baseFactory)
 	}
-	ac, err := awscfg.LoadDefaultConfig(context.Background(), awscfg.WithRegion(base.cfg.region))
+	ac, err := awsConfigFor(context.Background(), base.cfg.region)
 	if err != nil {
 		return nil, fmt.Errorf("aws config: %w", err)
 	}

@@ -56,6 +56,17 @@ say ssm-params
 for p in $(aws ssm describe-parameters --query "Parameters[?starts_with(Name,'/af-ws/$N')].Name" --output text); do
   aws ssm delete-parameter --name "$p" >/dev/null 2>&1 && echo "param $p"
 done
+# 焼いた AMI とその snapshot。**AMI を登録解除する前に snapshot は消せない**（InvalidSnapshot.InUse）
+# ので順序が要る。残っていても壊れないが月額を生み、残存確認の snapshots に出続ける。
+say slot-amis
+for img in $(aws ec2 describe-images --owners self --filters Name=tag:af-pool,Values=$N --query 'Images[].ImageId' --output text); do
+  SNAPS=$(aws ec2 describe-images --image-ids "$img" \
+    --query 'Images[].BlockDeviceMappings[].Ebs.SnapshotId' --output text)
+  aws ec2 deregister-image --image-id "$img" >/dev/null 2>&1 && echo "deregistered $img"
+  for s in $SNAPS; do
+    aws ec2 delete-snapshot --snapshot-id "$s" >/dev/null 2>&1 && echo "snapshot $s"
+  done
+done
 
 # ORDER, not a list. -plat / -net exist only to publish the two exports -pool imports,
 # and CloudFormation CANCELS the delete of an exporting stack while an importer is still
@@ -72,8 +83,13 @@ for s in $N-plat $N-net; do
   aws cloudformation wait stack-delete-complete --stack-name $s 2>/dev/null && echo "stack $s deleted"
 done
 
+# bake-slot-ami.sh が書く、プールの起動テンプレートが読むパラメータ（決定 18）。
+# **スタックを消したあとで**消す: SlotAmiId は SSM パラメータ名を取る型なので、
+# 先に消すと CFN 操作が「そんなパラメータは無い」で止まりうる。
+aws ssm delete-parameter --name "/af-slot-ami/$N" >/dev/null 2>&1 && echo "param /af-slot-ami/$N"
+
 say iam
-for r in $N-exec $N-ws-task; do
+for r in $N-exec $N-ws-task $N-cp; do
   for p in $(aws iam list-attached-role-policies --role-name $r --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
     aws iam detach-role-policy --role-name $r --policy-arn "$p" >/dev/null 2>&1
   done
@@ -160,4 +176,6 @@ echo -n "vpc:       "; aws ec2 describe-vpcs --query "Vpcs[?!(IsDefault)].VpcId"
 echo -n "nat:       "; aws ec2 describe-nat-gateways --query "NatGateways[?State!='deleted'].NatGatewayId" --output json
 echo -n "eip:       "; aws ec2 describe-addresses --query 'Addresses[].AllocationId' --output json
 echo -n "logs:      "; aws logs describe-log-groups --query 'logGroups[].logGroupName' --output json
+echo -n "amis:      "; aws ec2 describe-images --owners self --query 'Images[].ImageId' --output json
+echo -n "ssm-ami:   "; aws ssm describe-parameters --query "Parameters[?starts_with(Name,'/af-slot-ami/')].Name" --output json
 echo TEARDOWN_DONE

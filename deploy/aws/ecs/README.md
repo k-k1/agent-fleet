@@ -388,9 +388,10 @@ Bake the workspace image into the AMI the launch template uses and that disappea
 deploy/aws/ecs/bake-slot-ami.sh \
   --image <account>.dkr.ecr.<region>.amazonaws.com/af-workspace:<tag> \
   --launch-template <SlotLaunchTemplateId> --subnet <a private subnet> --pool <cluster>
-# then point the pool at the AMI it prints
+# then point the pool at the SSM PARAMETER it printed (SlotAmiId takes a parameter name,
+# not an AMI id — its default is the ECS-optimized AMI's parameter)
 aws cloudformation deploy --stack-name <net>-pool --template-file deploy/aws/ecs/cfn/40-ec2-pool.yaml \
-  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides SlotAmiId=<ami-id> ...
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides SlotAmiId=/af-slot-ami/<cluster> ...
 ```
 
 - An AMI is **regional**, so one bake covers every AZ — no per-AZ warm instances, nothing
