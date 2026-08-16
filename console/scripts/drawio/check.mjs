@@ -8,6 +8,13 @@
 //  2. 圧縮された `<diagram>`（deflate+base64）も開ける。
 //  3. 複数ページを数えて親へ返す（ヘッダの「n / m」表示の材料）。
 //  4. ライト/ダークの双方で描ける。
+//  5. **アセットに認証ゲートがあっても描ける。** サンドボックス iframe はオリジンを
+//     持たないため、そこからの要求は cross-site 扱いで SameSite=Lax のセッション
+//     cookie が付かない。フレームが自分で `<script src>` を取りに行く設計だと CP の
+//     authGate に 401 で弾かれ、実機だけが壊れる（2026-08-16 の不具合）。ここでは
+//     **cookie 無しの要求を 401 で返す配信**を用意し、それでも描けることを判定する
+//     —— ローカルの素の静的配信では絶対に出ない種類の欠陥なので、これが無いと
+//     同じ穴に何度でも落ちる。
 //
 // バンドルも CP も Agent も要らない: フレームは drawioFrame.ts が組み立てる HTML そのもので、
 // 素の CDP（Node の global WebSocket）で headless Chromium に読ませる。
@@ -95,23 +102,40 @@ async function loadFrameBuilder() {
 }
 
 // ---------------------------------------------------------------- static server
+// CP を模した配信。**`/assets/*` はセッション cookie が無ければ 401**（authGate と
+// 同じ形）。ページ側は Lax cookie を配るので、親の fetch には付き、オリジンを持たない
+// フレームからの要求には付かない —— 実機で起きたことがそのまま再現する。
 function serve(dir, port) {
   return new Promise((resolve) => {
     import("node:http").then(({ createServer }) => {
       const srv = createServer((req, res) => {
-        const file = path.join(dir, decodeURIComponent(req.url.split("?")[0]));
+        const url = req.url.split("?")[0];
+        const gated = url.startsWith("/assets/");
+        if (gated && !(req.headers.cookie || "").includes("af_session=")) {
+          unauthorized.push(url);
+          res.writeHead(401, { "Content-Type": "application/json" }).end('{"error":"unauthenticated"}');
+          return;
+        }
+        const file = path.join(dir, decodeURIComponent(gated ? url.slice("/assets/".length) : url));
         fs.readFile(file, (err, buf) => {
           if (err) {
             res.writeHead(404).end("no");
             return;
           }
-          res.writeHead(200, { "Content-Type": (file.endsWith(".js") ? "text/javascript" : "text/html") + "; charset=utf-8" }).end(buf);
+          res.writeHead(200, {
+            "Content-Type": (file.endsWith(".js") ? "text/javascript" : "text/html") + "; charset=utf-8",
+            // CP と同じ SameSite=Lax。これが無いと欠陥を再現できない。
+            "Set-Cookie": "af_session=harness; Path=/; HttpOnly; SameSite=Lax",
+          }).end(buf);
         });
       });
       srv.listen(port, "127.0.0.1", () => resolve(srv));
     });
   });
 }
+
+/** cookie 無しで拒否した要求（＝フレームが自分で取りに行った証拠）。 */
+const unauthorized = [];
 
 // ---------------------------------------------------------------- CDP
 async function browser() {
@@ -176,17 +200,25 @@ await b.call("Emulation.setDeviceMetricsOverride", { width: 900, height: 600, de
 await b.call("Network.enable");
 
 for (const c of CASES) {
-  const srcdoc = drawioFrameSrcdoc({ viewerUrl: `${base}/viewer.js`, dark: c.dark });
+  const srcdoc = drawioFrameSrcdoc({ dark: c.dark });
+  // 親の手順は DrawioView.tsx と同じにする（ここが実機とずれると、守っている対象が
+  // 製品コードでなくなる）: ready を待つ → 自分が取ったビューア本文を boot で渡す →
+  // booted を待って render。**フレームは 1 本も要求を出さない。**
   const page = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:${c.dark ? "#1e1e1e" : "#fff"}">
 <iframe id="f" sandbox="allow-scripts" width="860" height="520" style="border:0;display:block" srcdoc="${srcdoc.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"></iframe>
 <script>
 window.__ev=[];
+var f=document.getElementById("f");
+function post(m){ m.af="af-drawio"; f.contentWindow.postMessage(m,"*"); }
 window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-drawio")return; window.__ev.push(d);
-  if(d.t==="ready") document.getElementById("f").contentWindow.postMessage({af:"af-drawio",t:"render",xml:${JSON.stringify(c.xml)},dark:${c.dark}},"*"); });
+  if(d.t==="ready") fetch("/assets/viewer.js",{credentials:"same-origin"}).then(function(r){return r.text()}).then(function(src){ post({t:"boot",src:src}); });
+  if(d.t==="booted") post({t:"render",xml:${JSON.stringify(c.xml)},dark:${c.dark}});
+});
 </script></body></html>`;
   fs.writeFileSync(path.join(work, `${c.name}.html`), page);
 
   b.events.length = 0;
+  unauthorized.length = 0;
   await b.call("Page.navigate", { url: `${base}/${c.name}.html` });
   // 実時間で待つ（先頭のコメント参照）。4MB のビューアの読み込み + 描画で十分な余裕。
   await sleep(3500);
@@ -212,6 +244,10 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     .map((e) => e.params.request.url)
     .filter((u) => !u.startsWith(base) && !u.startsWith("data:") && !u.startsWith("about:") && !u.startsWith("blob:"));
   if (external.length) fail.push(`${c.name}: 外部への要求 ${JSON.stringify([...new Set(external)])}`);
+  // cookie の付かない要求 ＝ オリジンを持たないフレームが自分で取りに行った要求。
+  if (unauthorized.length) {
+    fail.push(`${c.name}: フレームが資格情報無しで取りに行った ${JSON.stringify([...new Set(unauthorized)])}`);
+  }
 
   if (SHOT) {
     const shot = await b.call("Page.captureScreenshot", {});
