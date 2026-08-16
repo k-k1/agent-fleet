@@ -33,7 +33,17 @@ export type DrawioFrameRequest =
 export type DrawioFrameEvent =
   | { af: typeof DRAWIO_MSG; t: "ready" }
   | { af: typeof DRAWIO_MSG; t: "booted" }
-  | { af: typeof DRAWIO_MSG; t: "rendered"; pages: number; page: number; scale: number }
+  | {
+      af: typeof DRAWIO_MSG;
+      t: "rendered";
+      pages: number;
+      page: number;
+      scale: number;
+      /** ビューアが実際に暗色描画になっているか（要求どおりかを親／ハーネスが検算する）。
+       *  **画素を数える判定は当てにならない** —— 暗色にならないまま暗い背景に載った絵は
+       *  図形の明るい塗りのせいで「明るい画素」がむしろ増える（実測 40778 対 2387）。 */
+      darkMode: boolean;
+    }
   /** `boot` はビューアを評価できなかった、`parse` は図として読めなかった。
    *  **この 2 つを混ぜてはいけない** —— 読み込み失敗を「図が壊れている」と表示すると、
    *  原因がファイル側にあるように見えて調査が丸ごと逸れる（実際に起きた）。 */
@@ -106,6 +116,10 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   var viewer = null;
   var booted = false;
   var dark = ${dark ? "true" : "false"};
+  // 収まりの基準倍率と、利用者が自分で動かしたかどうか。**動かした後にペインの寸法が
+  // 変わっても勝手に収め直さない** —— 拡大して見ている最中に元へ戻されるのが一番困る。
+  var fitScale = 1;
+  var adjusted = false;
 
   function post(m) {
     m.af = MSG;
@@ -140,9 +154,12 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     return el;
   }
 
+  // ツールバーはコンテナの外（上）に置かれ、コンテナには marginTop が付く。
+  // その分を引かないと下端がフレームからはみ出す。
   function sizeToViewport(el) {
+    var chrome = parseInt(el.style.marginTop || "0", 10) || 0;
     el.style.width = document.documentElement.clientWidth + "px";
-    el.style.height = document.documentElement.clientHeight + "px";
+    el.style.height = Math.max(0, document.documentElement.clientHeight - chrome) + "px";
   }
 
   // 収め直しはビューア自身の fitGraph に任せる。allowZoomIn が既定 false なので
@@ -153,6 +170,8 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     if (!v || typeof v.fitGraph !== "function") return;
     sizeToViewport(v.graph.container);
     v.fitGraph();
+    fitScale = v.graph.view.scale;
+    adjusted = false;
   }
 
   function render(xml, isDark) {
@@ -176,7 +195,11 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
         nav: true,
         resize: 0,
         center: true,
-        "dark-mode": dark,
+        // **真偽値では効かない**: isDarkMode() は "dark" / "auto" という文字列と
+        // 比較するので、true を渡すと黙って「ライト」になる。既定の文字色は黒のまま
+        // 暗い背景に載り、既定色のラベルが黒地に黒で消える（実測: 文字 0 / 背景 30 の
+        // 輝度＝コントラスト比 1.3:1）。docs/65 §65.11-10。
+        "dark-mode": dark ? "dark" : "light",
         highlight: "#3572b0",
       })
     );
@@ -206,12 +229,188 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     }
   }
 
+  // ── 操作（ズーム / パン）─────────────────────────────────────────────
+  // GraphViewer は**何も配線していない**（init は pinchEnabled=false・setPanning(false)、
+  // ホイールの購読も無し）。ツールバーのボタンしか無いので、ここで足す:
+  //   Ctrl/⌘＋ホイール … 指した点を軸に拡大縮小（トラックパッドのピンチも同じ経路で来る）
+  //   素のホイール      … 上下左右へパン
+  //   2 本指ピンチ      … 中点を軸に拡大縮小
+  //   1 本指ドラッグ    … パン
+  //   ダブルクリック/タップ … 収まり ↔ 等倍（等倍で収まっているときは 2 倍）
+  var MIN_SCALE = 0.05;
+  var MAX_SCALE = 16;
+
+  function graph() {
+    return viewer && viewer.graph;
+  }
+
+  // ツールバー上の操作は素通しする（ボタンを潰さないため）。
+  function onToolbar(target) {
+    return !!(viewer && viewer.toolbar && target && viewer.toolbar.contains(target));
+  }
+
+  // コンテナ左上を原点とする座標。ズームの軸に使う。
+  function localPoint(clientX, clientY) {
+    var g = graph();
+    if (!g) return { x: 0, y: 0 };
+    var box = g.container.getBoundingClientRect();
+    return { x: clientX - box.left, y: clientY - box.top };
+  }
+
+  // 画面上の 1 点を固定したまま倍率を変える。mxGraph は screen = (graph + translate) * scale
+  // なので、その点が動かない translate は translate + p * (1/s' - 1/s) で出る。
+  function zoomAt(nextScale, px, py) {
+    var g = graph();
+    if (!g) return;
+    var s = g.view.scale;
+    var s2 = Math.max(MIN_SCALE, Math.min(MAX_SCALE, nextScale));
+    if (!isFinite(s2) || s2 === s) return;
+    var t = g.view.translate;
+    adjusted = true;
+    g.view.scaleAndTranslate(s2, t.x + px * (1 / s2 - 1 / s), t.y + py * (1 / s2 - 1 / s));
+    postState(viewer);
+  }
+
+  function panBy(dx, dy) {
+    var g = graph();
+    if (!g || (!dx && !dy)) return;
+    var s = g.view.scale;
+    var t = g.view.translate;
+    adjusted = true;
+    g.view.scaleAndTranslate(s, t.x + dx / s, t.y + dy / s);
+  }
+
+  // 最初に見せた状態へ戻す。**fitGraph は使えない** —— あれはコンテナ幅が前回と同じなら
+  // 何もしない実装（N == t で早期 return）なので、寸法が変わらないダブルタップでは
+  // 無反応になる（実測: 4.37 倍のまま動かなかった）。ビューアが控えている
+  // initialViewState をそのまま戻す方が速く、ズームボタンの基準とも食い違わない。
+  function resetView(v) {
+    var g = v && v.graph;
+    if (!g) return;
+    var st = g.initialViewState;
+    if (st && st.translate) {
+      g.view.scaleAndTranslate(st.scale, st.translate.x, st.translate.y);
+      fitScale = st.scale;
+    } else {
+      fit(v);
+    }
+    adjusted = false;
+    postState(v);
+  }
+
+  // ダブルクリック / ダブルタップ。収まっているなら等倍へ寄る、それ以外は収め直す。
+  // 収まりが既に等倍のときだけ 2 倍にする（「押しても何も起きない」を作らない）。
+  function toggleZoom(px, py) {
+    var g = graph();
+    if (!g) return;
+    var atFit = Math.abs(g.view.scale - fitScale) < 0.01;
+    if (!atFit) {
+      resetView(viewer);
+      return;
+    }
+    zoomAt(fitScale >= 0.99 ? 2 : 1, px, py);
+  }
+
+  function installGestures() {
+    var el = document.documentElement;
+
+    // ホイールは passive で登録されると preventDefault が効かない。明示的に外す。
+    el.addEventListener(
+      "wheel",
+      function (e) {
+        if (!graph() || onToolbar(e.target)) return;
+        // deltaMode: 0=px, 1=行, 2=ページ。行/ページのブラウザでも同じ効き目にする。
+        var unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+        e.preventDefault();
+        var p = localPoint(e.clientX, e.clientY);
+        // ctrlKey はトラックパッドのピンチでも立つ（ブラウザ共通の約束）。
+        if (e.ctrlKey || e.metaKey) {
+          zoomAt(graph().view.scale * Math.exp((-e.deltaY * unit) / 400), p.x, p.y);
+        } else {
+          panBy(-e.deltaX * unit, -e.deltaY * unit);
+        }
+      },
+      { passive: false }
+    );
+
+    var points = {};   // pointerId -> {x,y}
+    var pinch = null;  // {dist, scale}
+    var lastTap = 0;
+    var lastTapPos = null;
+
+    el.addEventListener("pointerdown", function (e) {
+      if (!graph() || onToolbar(e.target)) return;
+      points[e.pointerId] = { x: e.clientX, y: e.clientY };
+      if (el.setPointerCapture) {
+        try {
+          el.setPointerCapture(e.pointerId);
+        } catch (err) {
+          /* 別の要素が既に捕捉している等 —— パンできればよいので黙って続ける */
+        }
+      }
+      var ids = Object.keys(points);
+      if (ids.length === 2) {
+        var a = points[ids[0]];
+        var b = points[ids[1]];
+        pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), scale: graph().view.scale };
+      }
+    });
+
+    el.addEventListener("pointermove", function (e) {
+      var prev = points[e.pointerId];
+      if (!prev || !graph()) return;
+      var cur = { x: e.clientX, y: e.clientY };
+      points[e.pointerId] = cur;
+      var ids = Object.keys(points);
+      if (ids.length >= 2 && pinch) {
+        var a = points[ids[0]];
+        var b = points[ids[1]];
+        var dist = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch.dist > 0) {
+          var mid = localPoint((a.x + b.x) / 2, (a.y + b.y) / 2);
+          zoomAt((pinch.scale * dist) / pinch.dist, mid.x, mid.y);
+        }
+        return;
+      }
+      panBy(cur.x - prev.x, cur.y - prev.y);
+    });
+
+    function endPointer(e) {
+      if (!points[e.pointerId]) return;
+      delete points[e.pointerId];
+      if (Object.keys(points).length < 2) pinch = null;
+      if (!graph()) return;
+      // ダブルタップ判定。dblclick はタッチでは環境差が大きいので自分で見る。
+      var now = e.timeStamp || 0;
+      var pos = { x: e.clientX, y: e.clientY };
+      if (lastTapPos && now - lastTap < 350 && Math.hypot(pos.x - lastTapPos.x, pos.y - lastTapPos.y) < 30) {
+        var p = localPoint(pos.x, pos.y);
+        lastTap = 0;
+        lastTapPos = null;
+        toggleZoom(p.x, p.y);
+        return;
+      }
+      lastTap = now;
+      lastTapPos = pos;
+    }
+    el.addEventListener("pointerup", endPointer);
+    el.addEventListener("pointercancel", endPointer);
+
+    el.addEventListener("dblclick", function (e) {
+      if (!graph() || onToolbar(e.target)) return;
+      e.preventDefault();
+      var p = localPoint(e.clientX, e.clientY);
+      toggleZoom(p.x, p.y);
+    });
+  }
+
   function postState(v) {
     post({
       t: "rendered",
       pages: v.diagrams ? v.diagrams.length : 1,
       page: (v.currentPage || 0) + 1,
       scale: Math.round(v.graph.view.scale * 100) / 100,
+      darkMode: !!(v.isDarkMode && v.isDarkMode()),
     });
   }
 
@@ -227,6 +426,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
       return;
     }
     booted = true;
+    installGestures();
     // ステンシルの遅延取得は P0 では行わない。connect-src 'none' で塞がってはいるが、
     // 試行そのものを止めておく方が失敗の見え方が素直になる（docs/65 §65.5）。
     if (window.mxStencilRegistry) mxStencilRegistry.dynamicLoading = false;
@@ -264,7 +464,13 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   // ペインの寸法が変わったら描き直さずに収め直す。
   if (window.ResizeObserver) {
     new ResizeObserver(function () {
-      if (viewer) fit(viewer);
+      if (!viewer) return;
+      if (adjusted) {
+        // 倍率と位置はそのまま。コンテナの大きさだけ追従させる。
+        sizeToViewport(viewer.graph.container);
+        return;
+      }
+      fit(viewer);
     }).observe(document.body);
   }
 })();`;
@@ -275,7 +481,10 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
 <html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${attrEscape(csp)}">
 <style>
-html,body{margin:0;padding:0;height:100%;overflow:hidden;background:${dark ? "#1e1e1e" : "#ffffff"};}
+/* touch-action:none が無いと、スマホのピンチはページ拡大に取られて図に届かない。
+   overscroll-behavior は、端まで動かしたときに親ペインが引っ張られるのを止める。 */
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:${dark ? "#1e1e1e" : "#ffffff"};
+  touch-action:none;overscroll-behavior:contain;-webkit-user-select:none;user-select:none;}
 #c{position:absolute;inset:0;}
 </style></head>
 <body><div id="c"></div>
