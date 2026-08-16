@@ -1141,6 +1141,12 @@ export const ja = {
   "pool.col_occupant": "使用中",
   "pool.col_dormant": "休眠",
   "pool.col_backup": "予備",
+  "pool.ami_title": "スロットのイメージ",
+  "pool.ami_ok": "（{image} を焼き込み済み。新しいスロットは pull を払いません）",
+  "pool.ami_stale":
+    "スロットの AMI（{ami}）には {baked} が焼かれていますが、いま動かしているのは {running} です。新しいスロットを立てるたびにイメージの取得を払い直しています。deploy/aws/ecs/bake-slot-ami.sh で焼き直し、40-ec2-pool の SlotAmiId を差し替えてください。",
+  "pool.ami_none":
+    "スロットの AMI（{ami}）にはワークスペースイメージが焼かれていません。新しいスロットを立てるたびに {image} の取得を払います（その AZ の最初の 1 人、上限まで伸びるとき、新しい AZ に広げるとき）。deploy/aws/ecs/bake-slot-ami.sh で焼けます。",
   "pool.backup_none": "無し",
   "pool.backup_count": "予備 {n} 本",
   "pool.state_asleep": "休止中",
