@@ -68,12 +68,19 @@ chromium --headless --disable-gpu --no-sandbox --virtual-time-budget=8000 \
 
 ```
 FileView (.drawio)  … src/features/viewer/DrawioView.tsx
-  ├ fetch api/fs/download?path=…        ← 資格情報つき・親だけが行う
+  ├ fetch api/fs/download?path=…                  ← 図の XML   ┐ 取得は
+  ├ fetch assets/viewer-static.min-<hash>.js      ← ビューア本文 ┘ 親だけが行う（資格情報つき）
   └ <iframe sandbox="allow-scripts" srcDoc={drawioFrameSrcdoc(…)}>
-        └ viewer-static.min.js（dist/assets/ のハッシュ付き資産）＋ GraphViewer
-             ↑ postMessage({t:"render", xml, dark})     ← 資格情報なし・connect-src 'none'
-             ↓ postMessage({t:"ready"} / {t:"rendered", pages, page, scale} / {t:"error"})
+             ↓ {t:"ready"}                        ← 文書ができた（まだ何も無い）
+             ↑ {t:"boot", src}                    ← ビューア本文をインライン評価
+             ↓ {t:"booted"}
+             ↑ {t:"render", xml, dark}
+             ↓ {t:"rendered", pages, page, scale} / {t:"error", code}
 ```
+
+**フレームは 1 本も要求を出さない。** 図の XML もビューア本文も親が取って渡す
+（CSP は `default-src 'none'` / `connect-src 'none'` で、script-src に外部オリジンすら
+載せない）。ビューアを `<script src>` で読ませる形は**実機だけで壊れる** — §65.11-7。
 
 この形を採る理由は 3 つとも実測に基づく。
 
@@ -157,7 +164,7 @@ iframe ──GET /drawio/stencils/aws4.xml──▶ CP
 | `STENCIL_PATH` 既定の外部取得 | `viewer.html` で自オリジンへ固定。CP 経由以外へは出ない |
 | ラベル内の HTML / `javascript:` リンク | ビューア同梱の DOMPurify ＋ オリジンなし iframe（`allow-same-origin` なし）で二重 |
 | 任意 URL 取得（SSRF） | ステンシル名を同梱台帳で照合（65.5.3） |
-| iframe からの通信 | `Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline' <ビューアのオリジン>; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'`（P1 でステンシル用に `connect-src` を開ける）。**`'self'` は使えない** —— srcdoc のオリジンは opaque で自分自身を指せないため、ビューアの実体があるオリジンを明示する |
+| iframe からの通信 | `Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'`。**外部オリジンを script-src に載せない** —— 載せるとフレームが自分で取りに行く経路が復活し、§65.11-7 の欠陥に戻る。ステンシル（P1）も同じ理由で**親が取って渡す**（フレームの CSP は開けない） |
 | 外部 URL の既定値 | `PROXY_URL` / `STYLE_PATH` / `SHAPES_PATH` / `STENCIL_PATH` / `DRAW_MATH_URL` / `GRAPH_IMAGE_PATH` / `CSS_PATH` / `DRAWIO_BASE_URL` / `DRAWIO_SERVER_URL` / `DRAWIO_LIGHTBOX_URL` / `DRAWIO_LOG_URL` を **dead value で** 潰す（空文字では潰せない — §65.11-1） |
 
 ## 65.7 配布
@@ -241,3 +248,21 @@ iframe ──GET /drawio/stencils/aws4.xml──▶ CP
 6. 図の面は **一度出したら畳んでも外さない**（`hidden` にするだけ）。作り直すと 4 MB の
    ビューアを読み直し、ズーム位置と開いていたページも失う。逆に**一度も図を見ていない
    うちは作らない** —— 行を指した引用でソース面に着地した人に、図の取得をさせない。
+7. **サンドボックス iframe からの `<script src>` は認証を通れない**（実機で最初に壊れた点。
+   ローカルの素の静的配信では絶対に出ない）。オリジンを持たないフレームからの要求は
+   **cross-site 扱いになり、`SameSite=Lax` のセッション cookie が付かない**
+   （`setCookie` は Lax・`registerStatic` は auth 除外を宣言していない）。CP の `authGate` が
+   `/assets/*` を 401 で弾き、`GraphViewer` が未定義のまま `render` に入っていた。
+   → **フレームは何ひとつ自分で取りに行かない**形に変えた。ビューア本文は親が `fetch`
+   して `postMessage` で渡し、フレームはインライン script として評価する。
+   CP 側の認証やキャッシュの規則を触らずに済み、P1 のステンシルも同じ経路に乗る。
+   検証ハーネスは **cookie の無い要求を 401 にする配信**を持つようになった
+   （この形にしないと、この欠陥はローカルでは一生再現しない）。
+8. **iframe を作った直後に `postMessage` してはいけない。** まだ srcdoc の文書が無く、
+   メッセージは初期の `about:blank` に配達されて**消える**（実測: 遅延 0 / 10 / 50 ms は
+   届かず、200 ms で届いた）。フレーム内に置いた保持キューも、その文書がまだ無い以上
+   役に立たない。→ フレームが `ready` を出してから送る。
+9. **「読み込めなかった」と「図として読めない」を混ぜない。** 7 の不具合はビューアの
+   読み込み失敗だったのに、`try/catch` が一律 `parse` を返していたため画面には
+   「drawio の図として解釈できません」と出て、**原因がファイル側にあるように見えた**。
+   `code: "boot"` を分けて別の文言にした。

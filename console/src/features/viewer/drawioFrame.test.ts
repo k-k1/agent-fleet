@@ -2,10 +2,9 @@
 // 隔離が、文字列として本当に入っているか」だけ。描画そのものは実ブラウザでしか
 // 確かめられないので scripts/drawio/check.mjs が見る。
 import { describe, expect, it } from "vitest";
-import { drawioFrameSrcdoc, isDrawioFrameEvent, scriptOriginOf, DRAWIO_MSG } from "./drawioFrame.ts";
+import { drawioFrameSrcdoc, isDrawioFrameEvent, DRAWIO_MSG } from "./drawioFrame.ts";
 
-const html = (dark = false) =>
-  drawioFrameSrcdoc({ viewerUrl: "https://console.example/assets/viewer-abc123.js", dark });
+const html = (dark = false) => drawioFrameSrcdoc({ dark });
 
 describe("drawioFrameSrcdoc", () => {
   it("外部の既定 URL を空文字ではなく dead value で潰す", () => {
@@ -31,12 +30,16 @@ describe("drawioFrameSrcdoc", () => {
     expect(s).toContain('var DEAD = "about:blank";');
   });
 
-  it("ビューアの実体だけを script-src に許し、通信は塞ぐ", () => {
+  it("フレームは何ひとつ自分で取りに行かない", () => {
     const s = html();
     expect(s).toContain("default-src 'none'");
-    expect(s).toContain("script-src 'unsafe-inline' https://console.example");
     expect(s).toContain("connect-src 'none'");
-    expect(s).toContain('<script src="https://console.example/assets/viewer-abc123.js"></script>');
+    // **`<script src>` を復活させてはならない**: オリジンを持たないフレームからの要求は
+    // cross-site 扱いで SameSite=Lax のセッション cookie が付かず、CP の authGate に
+    // 401 で弾かれる（2026-08-16 の不具合）。ビューアの本文は親が postMessage で渡す。
+    expect(s).not.toMatch(/<script[^>]+src=/);
+    // 外部オリジンを script-src に載せる必要も無い（載せれば取りに行く経路が復活する）。
+    expect(s).toContain("script-src 'unsafe-inline';");
   });
 
   it("lightbox をツールバーにも設定にも出さない", () => {
@@ -59,19 +62,14 @@ describe("drawioFrameSrcdoc", () => {
   });
 });
 
-describe("scriptOriginOf", () => {
-  it("URL のオリジンを返し、壊れた URL では空を返す", () => {
-    expect(scriptOriginOf("https://a.example/x/y.js")).toBe("https://a.example");
-    expect(scriptOriginOf("not a url")).toBe("");
-  });
-});
-
 describe("isDrawioFrameEvent", () => {
   it("自分のフレームの形だけを通す", () => {
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "ready" })).toBe(true);
+    expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "booted" })).toBe(true);
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "rendered", pages: 1, page: 1, scale: 1 })).toBe(true);
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "error", code: "parse" })).toBe(true);
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "render", xml: "" })).toBe(false);
+    expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "boot", src: "" })).toBe(false);
     expect(isDrawioFrameEvent({ t: "ready" })).toBe(false);
     expect(isDrawioFrameEvent("ready")).toBe(false);
     expect(isDrawioFrameEvent(null)).toBe(false);
