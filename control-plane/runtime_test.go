@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // The Runtime port must be constructed only through the profile-selected factory
 // (docs/09, P3-7 段1). These tests lock the seam: the local profile builds a
@@ -178,4 +184,77 @@ func TestDockerFactoryNew(t *testing.T) {
 	if want := "/srv/data/acme/alice"; rt.dataDir != want {
 		t.Errorf("dataDir = %q, want %q (re-rooted)", rt.dataDir, want)
 	}
+}
+
+// Every adapter destroys (ADR 0045 決定 13-3), and the two local ones own exactly one
+// thing beyond the container: the data directory that holds the home bind-mount. The
+// ordering is the part worth asserting — unlinking a home out from under a live
+// container is how you get a half-written home back on the next start.
+func TestLocalAdaptersDestroyRemoveTheDataDir(t *testing.T) {
+	t.Run("docker", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "marker"), []byte("home"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stopped := false
+		d := &dockerRuntime{
+			name: "af-ws-acme-alice", dataDir: dir,
+			stopFn: func(context.Context) error {
+				if _, err := os.Stat(filepath.Join(dir, "marker")); err != nil {
+					t.Errorf("data dir was removed before the container stopped: %v", err)
+				}
+				stopped = true
+				return nil
+			},
+		}
+		leftovers, err := d.Destroy(context.Background())
+		if err != nil {
+			t.Fatalf("Destroy: %v", err)
+		}
+		if !stopped {
+			t.Error("Destroy did not stop the container first")
+		}
+		if len(leftovers) != 0 {
+			t.Errorf("the local adapters leave nothing behind, got %v", leftovers)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("data dir survived Destroy: %v", err)
+		}
+	})
+
+	t.Run("docker refuses to remove the home when the container will not stop", func(t *testing.T) {
+		dir := t.TempDir()
+		d := &dockerRuntime{
+			name: "af-ws-acme-alice", dataDir: dir,
+			stopFn: func(context.Context) error { return errors.New("docker stop: no such daemon") },
+		}
+		if _, err := d.Destroy(context.Background()); err == nil {
+			t.Fatal("Destroy must fail when Stop fails")
+		}
+		if _, err := os.Stat(dir); err != nil {
+			t.Errorf("data dir removed despite a failed Stop: %v", err)
+		}
+	})
+
+	t.Run("native", func(t *testing.T) {
+		dir := t.TempDir()
+		// No pid file: Stop finds nothing to kill, which is the state a Destroy runs in.
+		n := &nativeRuntime{name: "af-ws-acme-alice", dataDir: dir, rootfs: "x"}
+		if _, err := n.Destroy(context.Background()); err != nil {
+			t.Fatalf("Destroy: %v", err)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("data dir survived Destroy: %v", err)
+		}
+	})
+
+	t.Run("an absent data dir is success, not an error", func(t *testing.T) {
+		d := &dockerRuntime{
+			name: "af-ws-acme-alice", dataDir: filepath.Join(t.TempDir(), "gone"),
+			stopFn: func(context.Context) error { return nil },
+		}
+		if _, err := d.Destroy(context.Background()); err != nil {
+			t.Errorf("re-running a partial Destroy must succeed: %v", err)
+		}
+	})
 }

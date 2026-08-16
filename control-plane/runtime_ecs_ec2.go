@@ -1,0 +1,2646 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
+	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+)
+
+// ecsEC2Runtime is the `ecs-ec2` Runtime adapter: ECS on the EC2 launch type, with a
+// POOL of general-purpose slots and one PERSISTENT EBS volume per user that gets
+// swapped between them (docs/64 §64.12 / §64.15, ADR 0045 決定 8 / 決定 10).
+//
+// Why it exists next to the Fargate adapter rather than inside it: Fargate has no
+// "fast and persistent" home (ADR 0044 決定 4) and cannot go below ~105s on a warm
+// Start, while a hot slot + volume swap measures 22–27s. The price is that one
+// workspace stops being "a service + two EFS access points" and becomes six kinds of
+// resource, on an ECS substrate with zero production mileage (ADR 0045 決定 2-3). So
+// this ships as a SEPARATE profile: AF_RUNTIME=ecs-ec2 opts a deployment in, and
+// runtime_ecs.go (Fargate) is not touched — rolling back is one line of profile, not
+// a revert.
+//
+// The three invariants everything below leans on:
+//
+//   - A slot is EXCLUSIVE to one user (ADR 0045 決定 8). EC2 on-demand pricing is
+//     perfectly linear in vCPU, so bin-packing users onto one box saves nothing but
+//     costs a shared kernel and a shared root filesystem.
+//   - The adapter holds NO CP-side state (ADR 0012). Volumes and slots are found by
+//     tag, "which slot is this user on" is DERIVED from the volume's attachment, and
+//     the placement is an `ec2InstanceId ==` constraint. No schema change.
+//   - Slot allocation is decided by AWS, not by us — see ec2HomeDevice.
+type ecsEC2Runtime struct {
+	// base is the Fargate adapter instance for this same workspace, used as a library
+	// for the parts that are identical on both launch types: the EFS access points,
+	// the SSM SecureString secrets, the Service Connect endpoint and the background
+	// readiness watch.
+	//
+	// COMPOSITION, NOT EMBEDDING, on purpose: embedding would promote base's Start /
+	// Stop / State and silently satisfy the Runtime interface with the FARGATE
+	// implementations if one of the overrides below were ever dropped. With a named
+	// field the compiler makes that impossible (see the var _ Runtime assertion).
+	base *ecsRuntime
+
+	ec2  ec2API
+	ssmc ssmCommandAPI
+	ci   ecsContainerInstanceAPI
+	pool ec2PoolConfig
+
+	// instanceType is the slot size this workspace needs (from its memory cap), and
+	// homeGiB the size of its persistent home volume.
+	instanceType string
+	homeGiB      int32
+
+	// azOfSubnet resolves the deployment's subnets to their AZ (cached in the factory):
+	// an EBS volume never leaves its AZ, so the volume pins the AZ and the AZ picks
+	// both the slot candidates and the subnet the task's ENI is created in.
+	azOfSubnet func(context.Context) (map[string]string, error)
+
+	// bg runs the slow half of a lifecycle operation off the caller's thread. It is a
+	// field, not a bare `go`, so tests can run that half inline (or drop it) instead of
+	// racing a goroutine they cannot join.
+	bg func(context.Context, func(context.Context))
+
+	// now is time.Now, overridable in tests (claim expiry / release grace).
+	now func() time.Time
+	// sleep is the poll delay, overridable in tests so waits do not really sleep.
+	sleep func(context.Context, time.Duration) error
+}
+
+var _ Runtime = (*ecsEC2Runtime)(nil)
+
+const (
+	// ec2HomeDevice is the ONE device name every user's home volume is attached at,
+	// on every slot. This single constant IS the slot allocator (docs/64 §64.15.2):
+	// AWS refuses a second AttachVolume on a device name that is already taken, so
+	// "this slot is free" and "AttachVolume succeeded" are the same statement. Two
+	// workspaces racing for the last hot slot are separated by EC2 itself — there is
+	// no CP-side free-list to get out of sync with reality, and the exclusivity of
+	// ADR 0045 決定 8 is enforced by the API rather than by convention.
+	ec2HomeDevice = "/dev/sdf"
+
+	// ec2HomeMountBase is where a slot mounts a user's volume. The task bind-mounts the
+	// `dev` subdirectory (owned by uid 1000) as /home/dev, so the filesystem root stays
+	// out of the container — same layout the sandbox harness measured (docs/64 §64.14).
+	ec2HomeMountBase = "/af-home"
+
+	// Where the credentials-only EFS access point lands inside the task. home now lives
+	// on a single-AZ EBS volume, so the auth/identity set is kept on EFS as well and the
+	// entrypoint symlinks it back into ~ (ADR 0045 決定 3-6 のハイブリッド).
+	ec2KeepPath = "/var/lib/af/keep"
+
+	ec2TagPool       = "af-pool"
+	ec2TagRole       = "af-role"
+	ec2TagMembership = "af-membership"
+	ec2TagWorkspace  = "af-workspace"
+	ec2TagSlotSize   = "af-slot-size"
+	// ec2TagClaim marks a home volume as "a slot is being launched for this user".
+	// It exists for exactly one window: RunInstances returns a PENDING instance, and
+	// AttachVolume only accepts running|stopped, so for those few seconds the volume
+	// is the only place that can say "this workspace is starting". Without it State()
+	// would answer `stopped`, the Console would offer Start again, and the second
+	// Start would create a second slot.
+	ec2TagClaim   = "af-claim"
+	ec2TagClaimAt = "af-claim-at"
+	// ec2TagIdleSince marks a home that is still ATTACHED to its slot but whose
+	// workspace is stopped. It is what makes "the same user gets the same slot" work
+	// without the CP remembering anything: the attachment IS the affinity, and this tag
+	// is how long it has been dormant (for the idle-stop and for picking a victim).
+	ec2TagIdleSince = "af-idle-since"
+	// ec2TagHibernating marks a home that has entered hibernation (§64.18.2) and the
+	// moment it did. It exists because hibernation spans several sweeps and cannot lean
+	// on af-idle-since: releaseSlot — hibernation's own first step — clears that tag.
+	//
+	// The timestamp is load-bearing, not decoration. It is what tells "the snapshot that
+	// captures this dormancy" apart from "a snapshot of the same volume taken during an
+	// EARLIER one", and mistaking the second for the first deletes a volume holding work
+	// that was never captured. Only a snapshot started after this mark counts.
+	ec2TagHibernating = "af-hibernating"
+
+	ec2RoleHome = "home"
+	ec2RoleSlot = "slot"
+	// ec2RoleGolden is the ONE shared snapshot new homes are built from: a home that has
+	// already paid boot-install (48s) and warmed its caches (ADR 0045 決定 9). One per
+	// pool, no membership tag — deleting it by mistake would cost every future user
+	// their first two minutes, which is why nothing that walks per-membership resources
+	// can ever match it.
+	ec2RoleGolden = "golden"
+	// ec2TagImage stamps the golden snapshot with the workspace image it was baked from.
+	// A golden that predates an image or CLI-pin bump would start new users on the OLD
+	// tools, silently and only for them — so the CP compares and refuses a stale one
+	// instead of trusting that somebody remembered to re-bake (決定 9).
+	ec2TagImage = "af-image"
+)
+
+// --- narrow AWS client ports (only the calls this adapter makes), so it is unit
+// testable against fakes. The real *ec2.Client / *ssm.Client / *ecs.Client satisfy
+// these. The ECS calls are a SECOND interface rather than an extension of ecsAPI so
+// that runtime_ecs.go and its fakes stay untouched. ---
+
+type ec2API interface {
+	DescribeInstances(context.Context, *ec2.DescribeInstancesInput, ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
+	DescribeVolumes(context.Context, *ec2.DescribeVolumesInput, ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error)
+	DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error)
+	CreateVolume(context.Context, *ec2.CreateVolumeInput, ...func(*ec2.Options)) (*ec2.CreateVolumeOutput, error)
+	DeleteVolume(context.Context, *ec2.DeleteVolumeInput, ...func(*ec2.Options)) (*ec2.DeleteVolumeOutput, error)
+	AttachVolume(context.Context, *ec2.AttachVolumeInput, ...func(*ec2.Options)) (*ec2.AttachVolumeOutput, error)
+	DetachVolume(context.Context, *ec2.DetachVolumeInput, ...func(*ec2.Options)) (*ec2.DetachVolumeOutput, error)
+	CreateTags(context.Context, *ec2.CreateTagsInput, ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error)
+	DeleteTags(context.Context, *ec2.DeleteTagsInput, ...func(*ec2.Options)) (*ec2.DeleteTagsOutput, error)
+	RunInstances(context.Context, *ec2.RunInstancesInput, ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error)
+	StartInstances(context.Context, *ec2.StartInstancesInput, ...func(*ec2.Options)) (*ec2.StartInstancesOutput, error)
+	StopInstances(context.Context, *ec2.StopInstancesInput, ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error)
+	// Snapshots serve two features that share one mechanism: hibernating a long-unused
+	// home (ADR 0045 決定 4) and seeding a new one from the golden image (決定 9).
+	DescribeSnapshots(context.Context, *ec2.DescribeSnapshotsInput, ...func(*ec2.Options)) (*ec2.DescribeSnapshotsOutput, error)
+	CreateSnapshot(context.Context, *ec2.CreateSnapshotInput, ...func(*ec2.Options)) (*ec2.CreateSnapshotOutput, error)
+	DeleteSnapshot(context.Context, *ec2.DeleteSnapshotInput, ...func(*ec2.Options)) (*ec2.DeleteSnapshotOutput, error)
+}
+
+type ssmCommandAPI interface {
+	SendCommand(context.Context, *ssm.SendCommandInput, ...func(*ssm.Options)) (*ssm.SendCommandOutput, error)
+	GetCommandInvocation(context.Context, *ssm.GetCommandInvocationInput, ...func(*ssm.Options)) (*ssm.GetCommandInvocationOutput, error)
+}
+
+type ecsContainerInstanceAPI interface {
+	ListContainerInstances(context.Context, *ecs.ListContainerInstancesInput, ...func(*ecs.Options)) (*ecs.ListContainerInstancesOutput, error)
+	DescribeContainerInstances(context.Context, *ecs.DescribeContainerInstancesInput, ...func(*ecs.Options)) (*ecs.DescribeContainerInstancesOutput, error)
+	DeregisterContainerInstance(context.Context, *ecs.DeregisterContainerInstanceInput, ...func(*ecs.Options)) (*ecs.DeregisterContainerInstanceOutput, error)
+}
+
+// ec2PoolConfig is the deployment-wide shape of the slot pool, read once at boot from
+// AF_ECS_EC2_*. The substrate (deploy/aws/ecs/cfn/40-ec2-pool.yaml) owns the launch
+// template: AMI, user-data (cluster join, the shortened task-cleanup window, the
+// af-mount/af-umount helpers), instance profile and security group all live there, so
+// the CP only ever says "run one of these, in this AZ, at this size".
+type ec2PoolConfig struct {
+	launchTemplate string    // AF_ECS_EC2_LAUNCH_TEMPLATE (id or name)
+	pool           string    // AF_ECS_EC2_POOL tag value (defaults to the cluster name)
+	slotSizes      []ec2Slot // AF_ECS_EC2_SLOT_TYPES, ascending by memory
+	maxSlots       int       // AF_ECS_EC2_MAX_SLOTS: cap on instances this pool may run
+	homeGiB        int32     // AF_ECS_EC2_HOME_GB: default per-user home volume size
+	tmpfsMiB       int32     // AF_ECS_EC2_TMP_MB: size cap of the /tmp tmpfs
+	tmpfsOpts      []string  // AF_ECS_EC2_TMP_OPTS
+	claimTTL       time.Duration
+	releaseGrace   time.Duration
+	// slotSleepAfter is how long a slot may sit with no running task before the sweeper
+	// STOPS the instance (never terminates it — the image cache lives on its root
+	// volume, and a stopped instance costs only that volume).
+	//
+	// This is a SECOND, lower-level timer, and it is not the idle-stop the product
+	// already had. The reaper (AF_WS_IDLE_TIMEOUT / per-tenant ws_idle_timeout) watches
+	// the PERSON and stops their WORKSPACE; every runtime has that. This one starts
+	// counting only once the workspace is already stopped, and it acts on the BOX the
+	// workspace was using. The two run in series: person goes away → (reaper) workspace
+	// stops → (this) slot sleeps.
+	slotSleepAfter time.Duration
+	// hibernateAfter is the THIRD timer in the same series, and the only one that
+	// touches the user's data: once a home has been dormant this long, the sweeper
+	// snapshots it and deletes the volume (ADR 0045 決定 4 + 決定 13-2). The next Start
+	// restores it — 122s and a slower first day, against $4.80 → $1.00 a month for a
+	// 20 GiB home nobody has opened.
+	//
+	// 0 = OFF, and that is the default ON PURPOSE. This is the only automatic path in
+	// the product that removes a user's home from where it was, so a deployment has to
+	// ask for it. It stays reversible for exactly that reason: the sweeper hibernates,
+	// it never destroys (which is what makes it safe to run unattended at all).
+	//
+	// ⚠️ Deployment-wide, not per tenant. ADR 0045 決定 13-2 said "per-tenant setting",
+	// which this layer cannot honour: the sweeper starts from EC2 tags and has no view
+	// of tenants or the CP database (ADR 0012 — the adapter holds no state). Making it
+	// per-tenant means moving the trigger up into the reaper, which knows the tenant;
+	// that is a bigger change than the feature.
+	hibernateAfter time.Duration
+	sweepEvery     time.Duration
+	ghostAfter     time.Duration
+	// waitBudget bounds every background convergence (slot boot → ECS registration →
+	// mount → task). Past it the attempt gives up and leaves the state for the sweeper.
+	waitBudget time.Duration
+}
+
+// ec2Slot is one purchasable slot size.
+type ec2Slot struct {
+	instanceType string
+	memMiB       int64
+}
+
+// ecsEC2Factory is the `ecs-ec2` RuntimeFactory.
+type ecsEC2Factory struct {
+	base *ecsFactory
+	ec2  ec2API
+	ssmc ssmCommandAPI
+	ci   ecsContainerInstanceAPI
+	pool ec2PoolConfig
+
+	subnetMu sync.Mutex
+	subnetAZ map[string]string // subnet-id -> AZ, resolved once
+}
+
+var _ RuntimeFactory = (*ecsEC2Factory)(nil)
+
+// newECSEC2Factory builds the EC2-pool Runtime factory. It reuses the Fargate
+// factory's AWS config plumbing (region, cluster, subnets, EFS, Service Connect, log
+// group, image) and adds the EC2/SSM clients plus the pool settings; then it starts
+// the drift sweeper (docs/64 §64.15.6), which is what makes the "no CP-side state"
+// choice survivable — every unfinished teardown is re-derived from tags.
+func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
+	baseFactory, err := newECSFactory(m)
+	if err != nil {
+		return nil, err
+	}
+	base, ok := baseFactory.(*ecsFactory)
+	if !ok {
+		return nil, fmt.Errorf("ecs-ec2: unexpected base factory %T", baseFactory)
+	}
+	ac, err := awscfg.LoadDefaultConfig(context.Background(), awscfg.WithRegion(base.cfg.region))
+	if err != nil {
+		return nil, fmt.Errorf("aws config: %w", err)
+	}
+	pool := ec2PoolConfig{
+		launchTemplate: os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"),
+		pool:           envOr("AF_ECS_EC2_POOL", base.cfg.cluster),
+		slotSizes:      parseSlotSizes(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),
+		maxSlots:       envInt("AF_ECS_EC2_MAX_SLOTS", 8),
+		homeGiB:        int32(envInt("AF_ECS_EC2_HOME_GB", 50)),
+		tmpfsMiB:       int32(envInt("AF_ECS_EC2_TMP_MB", 2048)),
+		// noexec is deliberately NOT in the default set. ADR 0045 決定 8 names
+		// noexec,nosuid,nodev, but this is a developer container: installers, test
+		// runners and build tools routinely exec out of /tmp, and a noexec /tmp turns
+		// that into a confusing "Permission denied". The two properties the decision
+		// actually wanted from tmpfs — nothing lands on the shared root volume, and the
+		// size is capped — hold without it. Deployments that want it back can set
+		// AF_ECS_EC2_TMP_OPTS=noexec,nosuid,nodev.
+		tmpfsOpts: splitCSV(envOr("AF_ECS_EC2_TMP_OPTS", "nosuid,nodev")),
+		// A launch that has not produced a running service within this window is dead,
+		// and the workspace must become startable again — the claim is what would
+		// otherwise keep answering `starting` forever.
+		claimTTL:       time.Duration(envInt("AF_ECS_EC2_CLAIM_TTL_SEC", 300)) * time.Second,
+		releaseGrace:   time.Duration(envInt("AF_ECS_EC2_RELEASE_GRACE_SEC", 600)) * time.Second,
+		slotSleepAfter: time.Duration(envInt("AF_ECS_EC2_SLOT_SLEEP_SEC", 900)) * time.Second,
+		// Default 0 = no hibernation. See the field comment: this is the one automatic
+		// path that moves a user's home, so it is opt-in.
+		hibernateAfter: time.Duration(envInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second,
+		sweepEvery:     time.Duration(envInt("AF_ECS_EC2_SWEEP_SEC", 300)) * time.Second,
+		ghostAfter:     time.Duration(envInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
+		waitBudget:     time.Duration(envInt("AF_ECS_EC2_WAIT_SEC", 600)) * time.Second,
+	}
+	if pool.launchTemplate == "" {
+		return nil, fmt.Errorf("AF_ECS_EC2_LAUNCH_TEMPLATE is required for AF_RUNTIME=ecs-ec2")
+	}
+	if len(pool.slotSizes) == 0 {
+		return nil, fmt.Errorf("AF_ECS_EC2_SLOT_TYPES has no usable entry (want type:memMiB,...)")
+	}
+	f := &ecsEC2Factory{
+		base: base,
+		ec2:  ec2.NewFromConfig(ac),
+		ssmc: ssm.NewFromConfig(ac),
+		ci:   ecs.NewFromConfig(ac),
+		pool: pool,
+	}
+	log.Printf("runtime=ecs-ec2 pool=%s launch-template=%s slots=%s max=%d home=%dGiB",
+		pool.pool, pool.launchTemplate, envOr("AF_ECS_EC2_SLOT_TYPES", "(default)"), pool.maxSlots, pool.homeGiB)
+	go f.sweepLoop(context.Background())
+	return f, nil
+}
+
+func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
+	base, ok := f.base.New(ws, secretKey, extraEnv).(*ecsRuntime)
+	if !ok { // unreachable: ecsFactory.New always returns *ecsRuntime
+		panic("ecs-ec2: base factory did not return *ecsRuntime")
+	}
+	return &ecsEC2Runtime{
+		base:         base,
+		ec2:          f.ec2,
+		ssmc:         f.ssmc,
+		ci:           f.ci,
+		pool:         f.pool,
+		instanceType: f.pool.slotTypeFor(ws.MemBytes),
+		homeGiB:      f.homeGiB(ws),
+		azOfSubnet:   f.subnetAZs,
+		bg:           backgroundWithin(f.pool.waitBudget),
+		now:          time.Now,
+		sleep:        sleepCtx,
+	}
+}
+
+// homeGiB is the persistent home size for a workspace: its own disk request, else the
+// deployment default. Unlike Fargate's ephemeral storage there is no free tier and no
+// 200 GiB ceiling here — the volume is billed as provisioned and grows online with
+// ModifyVolume (docs/64 §64.4.5).
+func (f *ecsEC2Factory) homeGiB(ws Workspace) int32 {
+	if ws.DiskGB > 0 {
+		return int32(ws.DiskGB)
+	}
+	return f.pool.homeGiB
+}
+
+// slotTypeFor picks the smallest configured slot that holds the workspace's memory
+// cap. Sizing on EC2 is a choice of instance type, not Fargate's 74 discrete (cpu,
+// memory) pairs (docs/64 §64.4.5): the task reserves neither cpu nor memory, so the
+// user gets the whole box (ADR 0045 決定 8).
+func (p ec2PoolConfig) slotTypeFor(memBytes int64) string {
+	want := memBytes / mib
+	for _, s := range p.slotSizes {
+		if want <= s.memMiB {
+			return s.instanceType
+		}
+	}
+	return p.slotSizes[len(p.slotSizes)-1].instanceType
+}
+
+// parseSlotSizes reads "m7i.large:8192,m7i.xlarge:16384" into an ascending list.
+func parseSlotSizes(spec string) []ec2Slot {
+	var out []ec2Slot
+	for _, part := range splitCSV(spec) {
+		name, memStr, ok := strings.Cut(part, ":")
+		if !ok {
+			continue
+		}
+		mem, err := strconv.ParseInt(strings.TrimSpace(memStr), 10, 64)
+		if err != nil || mem <= 0 || strings.TrimSpace(name) == "" {
+			continue
+		}
+		out = append(out, ec2Slot{instanceType: strings.TrimSpace(name), memMiB: mem})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].memMiB < out[j].memMiB })
+	return out
+}
+
+// subnetAZs maps the deployment's task subnets to their AZ, once. EBS volumes are
+// AZ-bound, so nearly every placement decision starts here.
+func (f *ecsEC2Factory) subnetAZs(ctx context.Context) (map[string]string, error) {
+	f.subnetMu.Lock()
+	defer f.subnetMu.Unlock()
+	if f.subnetAZ != nil {
+		return f.subnetAZ, nil
+	}
+	out, err := f.ec2.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: f.base.cfg.subnets})
+	if err != nil {
+		return nil, err
+	}
+	m := map[string]string{}
+	for _, s := range out.Subnets {
+		m[aws.ToString(s.SubnetId)] = aws.ToString(s.AvailabilityZone)
+	}
+	f.subnetAZ = m
+	return m, nil
+}
+
+// startGen counts Starts per workspace WITHIN THIS PROCESS. It exists for one race:
+// the recreate / clean-home handlers call Stop and then Start immediately, while the
+// teardown Stop scheduled — unmount and detach — is still on its way. Releasing a slot
+// out from under a workspace that has just been started would drop the task's home
+// mount, and the entrypoint would then write into the slot's root disk instead.
+//
+// The counter is process-local scratch, not state: nothing is authoritative here, and
+// losing it on restart only means the sweeper (which re-checks the service anyway) is
+// the one that notices. The service's desiredCount is still the primary check — this
+// closes the window where Start has begun but has not reached UpdateService yet.
+var startGen sync.Map // workspace name -> *atomic.Int64
+
+func (e *ecsEC2Runtime) generation() *atomic.Int64 {
+	v, _ := startGen.LoadOrStore(e.base.name, &atomic.Int64{})
+	return v.(*atomic.Int64)
+}
+
+// --- Runtime port ---
+
+func (e *ecsEC2Runtime) Token() string    { return e.base.Token() }
+func (e *ecsEC2Runtime) Name() string     { return e.base.Name() }
+func (e *ecsEC2Runtime) Endpoint() string { return e.base.Endpoint() }
+
+// State maps the THREE-part truth — home volume, slot, service — onto the port's four
+// words (ADR 0045 決定 3-5). The service's desired/running alone cannot tell a booting
+// slot from a stopped workspace, and calling a starting workspace `stopped` invites the
+// caller to Start it a second time.
+//
+//	no volume                                  → none
+//	live claim (attached or not)               → starting — a Start is converging
+//	volume attached, task RUNNING              → running
+//	volume attached, service desired 1         → starting
+//	volume attached, service desired 0 or gone → stopped
+//	volume available, no claim                 → stopped
+//
+// The claim tag — not the attachment — is what says "starting". An earlier revision
+// reported "volume attached but no service yet" as `starting`, and that was a trap:
+// Start returns early on `starting`, so a workspace whose launch died between the
+// attach and the CreateService could never be started again by anyone. Measured on real
+// AWS. Now the same tag that covers the pre-attach window covers the whole launch, and
+// it EXPIRES, so a dead launch always falls back to `stopped`.
+func (e *ecsEC2Runtime) State(ctx context.Context) string {
+	vol, err := e.homeVolume(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 state: describe home volume for %s: %v", e.base.name, err)
+		return "none"
+	}
+	if vol == nil {
+		return "none"
+	}
+	if e.claimLive(vol) {
+		return "starting"
+	}
+	if attachedInstance(vol) == "" {
+		return "stopped"
+	}
+	s, ok, err := e.base.describeService(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 state: describe service %s: %v", e.base.name, err)
+		return "starting" // attached but unknown: never report a live slot as gone
+	}
+	if !ok {
+		// Attached with no service and no claim: an abandoned attachment. Say stopped so
+		// Start can pick it up again (it reuses the attachment) and the sweeper can
+		// release it.
+		return "stopped"
+	}
+	switch {
+	case s.DesiredCount >= 1 && s.RunningCount >= 1:
+		return "running"
+	case s.DesiredCount >= 1:
+		return "starting"
+	default:
+		return "stopped"
+	}
+}
+
+// Start brings the workspace up on a slot. Everything that can be slow is pushed off
+// the caller's thread: Start runs inside an HTTP request behind a 60s-idle ALB
+// (docs/62 §62.5), so only the hot path — attach 3s + mount 4s + a few API calls —
+// may run synchronously. Booting a slot (19s) or creating one (8s to running, then
+// ~20s to register) hands off to a background goroutine and State() says `starting`.
+func (e *ecsEC2Runtime) Start(ctx context.Context) error {
+	switch e.State(ctx) {
+	case "running":
+		return nil
+	case "starting":
+		// Already converging. Re-entering would attach a second slot / restart the
+		// service deployment from zero, exactly as on Fargate.
+		return nil
+	}
+	// Mark that a Start has begun, so a teardown still draining from the Stop that the
+	// recreate / clean-home handlers issued a moment ago aborts instead of pulling this
+	// workspace's home out from under it.
+	e.generation().Add(1)
+	prep, err := e.prepare(ctx)
+	if err != nil {
+		return err
+	}
+	place, err := e.placeHome(ctx)
+	if err != nil {
+		return err
+	}
+	if place.deferred {
+		// The slot is not attachable yet (pending instance) or not registered with ECS
+		// yet (just started). Finish in the background; the claim tag / the attachment
+		// is what keeps State() at `starting` until it lands.
+		e.bg(ctx, func(c context.Context) { e.finishStart(c, place, prep) })
+		return nil
+	}
+	return e.launch(ctx, place, prep)
+}
+
+// Stop scales the service to zero and LEAVES THE HOME ATTACHED — "lazy release".
+//
+// The first implementation unmounted and detached right away, which handed the slot
+// back in ~13s but made the common case pay for it: the same person coming back after
+// lunch had to find a slot, attach, mkfs-check and mount again. Keeping the attachment
+// makes that return the cheapest path there is (measured 13.2s: no attach, no mount,
+// just the service going back to desiredCount 1), and it gives the affinity for free —
+// **the attachment IS "this user's slot"**, so nothing has to be remembered anywhere.
+//
+// Two things keep it from turning into hoarding, both in the sweeper:
+//
+//   - the slot is STOPPED after AF_ECS_EC2_SLOT_SLEEP_SEC (default 15m). A stopped slot
+//     costs only its root volume (~$9.6/month vs ~$95 running) and keeps the image
+//     cache, so the return is ~90s instead of 135s.
+//   - when someone else needs a slot and the pool is at its cap, the longest-idle
+//     occupant is evicted (placeHome → evict).
+//
+// Nothing is unmounted here, so nothing can be corrupted here. The teardown order
+// (umount before detach) still lives in releaseSlot, which is now reached only by
+// eviction, Destroy and drift repair.
+func (e *ecsEC2Runtime) Stop(ctx context.Context) error {
+	if _, ok, err := e.base.describeService(ctx); err != nil {
+		return err
+	} else if ok {
+		if _, err := e.base.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
+			Cluster:      aws.String(e.base.cfg.cluster),
+			Service:      aws.String(e.base.name),
+			DesiredCount: aws.Int32(0),
+		}); err != nil {
+			return err
+		}
+	}
+	// Record when the dormancy started. If this write is lost (CP restart mid-Stop) the
+	// sweeper stamps it the first time it sees an idle attachment, so the worst case is
+	// that the slot sleeps one sweep later.
+	vol, err := e.homeVolume(ctx)
+	if err != nil || vol == nil || attachedInstance(vol) == "" {
+		return nil
+	}
+	e.markIdle(ctx, aws.ToString(vol.VolumeId))
+	return nil
+}
+
+// markIdle / clearIdle move the home in and out of the dormant set.
+func (e *ecsEC2Runtime) markIdle(ctx context.Context, volumeID string) {
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{volumeID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagIdleSince), Value: aws.String(e.now().UTC().Format(time.RFC3339))}},
+	}); err != nil {
+		log.Printf("ecs-ec2: marking %s idle failed (the sweeper will stamp it): %v", volumeID, err)
+	}
+}
+
+func (e *ecsEC2Runtime) clearIdle(ctx context.Context, volumeID string) {
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{volumeID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagIdleSince)}},
+	}); err != nil {
+		log.Printf("ecs-ec2: clearing the idle mark on %s failed: %v", volumeID, err)
+	}
+}
+
+// clearDormancy is what a START calls: the owner is back, so both the dormancy clock and
+// any in-flight hibernation are off. It is deliberately NOT the same thing as clearIdle —
+// hibernation's own first step is releaseSlot, which clears the idle mark, and if that
+// also dropped the hibernation mark the operation would forget itself one line after
+// starting.
+//
+// A snapshot already running is left to finish rather than cancelled: the next
+// hibernation drops it as superseded (it started before that one's mark), and
+// DeleteSnapshot racing a completing capture buys nothing.
+func (e *ecsEC2Runtime) clearDormancy(ctx context.Context, volumeID string) {
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{volumeID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagIdleSince)}, {Key: aws.String(ec2TagHibernating)}},
+	}); err != nil {
+		log.Printf("ecs-ec2: clearing the dormancy marks on %s failed: %v", volumeID, err)
+	}
+}
+
+// idleSince reports how long a home has been dormant, and whether it is dormant at all.
+func idleSince(vol *ec2types.Volume, now time.Time) (time.Duration, bool) {
+	v := ec2TagValue(vol.Tags, ec2TagIdleSince)
+	if v == "" {
+		return 0, false
+	}
+	at, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return 0, false
+	}
+	return now.Sub(at), true
+}
+
+// --- Start internals ---
+
+// ec2Prep is the launch-type-independent half of a Start, done before any slot is
+// chosen because it is cheap and its failures are the caller's to see.
+type ec2Prep struct {
+	claudeAP string
+	keepAP   string
+	secrets  []ecstypes.Secret
+}
+
+func (e *ecsEC2Runtime) prepare(ctx context.Context) (ec2Prep, error) {
+	var p ec2Prep
+	var err error
+	// home is on EBS now, but the credentials/identity set stays on EFS: a single-AZ
+	// volume is one bad day away from taking the user's logins with it, and the whole
+	// keep-list is under 100 MiB (ADR 0045 決定 3-6). The entrypoint links ~ into it.
+	if p.keepAP, err = e.ensureAccessPoint(ctx, "keep-ec2", "/home-keep/"+e.base.membershipID); err != nil {
+		return p, fmt.Errorf("efs keep access point: %w", err)
+	}
+	if p.claudeAP, err = e.ensureAccessPoint(ctx, "claude-ec2", "/claude-config/"+e.base.membershipID); err != nil {
+		return p, fmt.Errorf("efs claude access point: %w", err)
+	}
+	if p.secrets, err = e.base.putSecrets(ctx); err != nil {
+		return p, fmt.Errorf("ssm secrets: %w", err)
+	}
+	return p, nil
+}
+
+// ensureAccessPoint is the EC2 variant of the Fargate adapter's access-point helper,
+// and it exists for one measured reason: **the access point must NOT carry a PosixUser
+// on this launch type.**
+//
+// On EC2, ECS hands EFS volumes to the Docker daemon, and Docker initializes a fresh
+// volume by copying the image directory's ownership onto it. The workspace image ships
+// /var/lib/af/claude owned by root, so Docker calls lchown(0,0) on the EFS mount — which
+// an access point with PosixUser 1000 performs AS uid 1000, and only root may chown. The
+// task then never starts:
+//
+//	CannotCreateContainerError: failed to copy file info for /var/lib/ecs/volumes/…-claude-…:
+//	failed to chown …: operation not permitted
+//
+// Fargate never sees this because it mounts EFS itself instead of going through Docker.
+// Dropping PosixUser lets the mount act as root (so the chown succeeds) while the access
+// point's rootDirectory still confines the task to that membership's subtree — the
+// isolation we actually wanted from it. CreationInfo still creates that directory owned
+// by the container user.
+//
+// The role tags are distinct from the Fargate ones (claude-ec2 / keep-ec2) so the two
+// adapters never hand each other an access point whose posix config breaks them, while
+// the rootDirectory paths are IDENTICAL — a deployment that switches profiles keeps its
+// Claude state and logins.
+func (e *ecsEC2Runtime) ensureAccessPoint(ctx context.Context, role, path string) (string, error) {
+	out, err := e.base.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
+		FileSystemId: aws.String(e.base.cfg.efsFileSystem),
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, ap := range out.AccessPoints {
+		if tagValue(ap.Tags, "af-membership") == e.base.membershipID && tagValue(ap.Tags, "af-role") == role {
+			return aws.ToString(ap.AccessPointId), nil
+		}
+	}
+	created, err := e.base.efs.CreateAccessPoint(ctx, &efs.CreateAccessPointInput{
+		FileSystemId: aws.String(e.base.cfg.efsFileSystem),
+		RootDirectory: &efstypes.RootDirectory{
+			Path: aws.String(path),
+			CreationInfo: &efstypes.CreationInfo{
+				OwnerUid:    aws.Int64(e.base.cfg.posixUID),
+				OwnerGid:    aws.Int64(e.base.cfg.posixGID),
+				Permissions: aws.String("0755"),
+			},
+		},
+		// No PosixUser — see above. This is the difference from the Fargate adapter.
+		Tags: []efstypes.Tag{
+			{Key: aws.String("af-membership"), Value: aws.String(e.base.membershipID)},
+			{Key: aws.String("af-role"), Value: aws.String(role)},
+			{Key: aws.String("Name"), Value: aws.String(e.base.name + "-" + role)},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return aws.ToString(created.AccessPointId), nil
+}
+
+// ec2Placement is the answer to "which slot is this user's home on".
+type ec2Placement struct {
+	volumeID   string
+	instanceID string
+	az         string
+	// deferred means the volume is not attached yet (or the slot is not registered
+	// with ECS yet) and the rest must run in the background.
+	deferred bool
+	// claimed means a claim tag was written and has to be cleared once the volume is
+	// really attached.
+	claimed bool
+	// wake means the slot has to be started before anything can be placed on it. The
+	// StartInstances itself is deferred: a slot the sweeper has just put to sleep is in
+	// `stopping`, and EC2 refuses to start it from there ("IncorrectInstanceState") —
+	// measured. Waiting for `stopped` is a background job, not something a Start inside
+	// an HTTP request can sit on.
+	wake bool
+}
+
+// placeHome resolves the volume and the slot, attaching the two together when it can.
+// The order follows the AZ (docs/64 §64.15.3): the volume pins the AZ, the AZ picks
+// the candidate slots, and only a user with no volume yet is free to follow the pool.
+func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
+	vol, err := e.homeVolume(ctx)
+	if err != nil {
+		return ec2Placement{}, fmt.Errorf("describe home volume: %w", err)
+	}
+	if vol != nil {
+		if inst := attachedInstance(vol); inst != "" {
+			// The home is still on a slot — the normal case now that Stop leaves it
+			// there (lazy release). This is both the affinity ("the same user gets the
+			// same slot") and the cheapest path: no attach, no mount to redo.
+			volID := aws.ToString(vol.VolumeId)
+			if err := e.claim(ctx, volID, inst); err != nil {
+				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+			}
+			e.clearDormancy(ctx, volID)
+			running, err := e.instanceRunning(ctx, inst)
+			if err != nil {
+				return ec2Placement{}, err
+			}
+			// A dormant slot keeps both the image cache and the attachment, so waking it
+			// is the ~90s path rather than the 135s of building a new one.
+			return ec2Placement{
+				volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
+				deferred: !running, wake: !running,
+			}, nil
+		}
+	}
+	azFilter := ""
+	if vol != nil {
+		azFilter = aws.ToString(vol.AvailabilityZone)
+	}
+	slots, err := e.freeSlots(ctx, azFilter)
+	if err != nil {
+		return ec2Placement{}, fmt.Errorf("list free slots: %w", err)
+	}
+	if vol == nil {
+		az := azFilter
+		if len(slots) > 0 {
+			az = slots[0].az
+		}
+		if az == "" {
+			if az, err = e.anyAZ(ctx); err != nil {
+				return ec2Placement{}, err
+			}
+		}
+		if vol, err = e.createHomeVolume(ctx, az); err != nil {
+			return ec2Placement{}, fmt.Errorf("create home volume: %w", err)
+		}
+		azFilter = az
+		slots = filterSlotsByAZ(slots, az)
+	}
+	volID := aws.ToString(vol.VolumeId)
+	// Try the candidates in order (hot first, then stopped). A failed AttachVolume is
+	// the normal outcome of losing a race for the last free slot, not an error to
+	// surface — move to the next one.
+	for _, s := range slots {
+		if err := e.waitVolumeAttachable(ctx, volID); err != nil {
+			return ec2Placement{}, err
+		}
+		if err := e.attachHomeWithRetry(ctx, volID, s.id); err != nil {
+			log.Printf("ecs-ec2 start: slot %s did not take %s (%v); trying the next one", s.id, volID, err)
+			continue
+		}
+		// Claim it for the whole launch, not just until the attach: State() reads this
+		// tag to say `starting`, and Start early-returns on `starting`.
+		if err := e.claim(ctx, volID, s.id); err != nil {
+			log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+		}
+		// A hot, already-registered slot is the only case that can finish inline.
+		return ec2Placement{
+			volumeID: volID, instanceID: s.id, az: azFilter,
+			deferred: !(s.running && s.registered), wake: !s.running,
+		}, nil
+	}
+	// No free slot. Growing the pool is preferred while there is room — it disturbs
+	// nobody, and an extra slot at rest costs only its root volume now that idle slots
+	// are stopped. The cap is therefore the real knob, and at the cap the only way to
+	// serve this user is to take a slot back from the longest-dormant one.
+	if full, err := e.poolFull(ctx); err != nil {
+		return ec2Placement{}, err
+	} else if full {
+		victim, err := e.evictLongestIdle(ctx, azFilter)
+		if err != nil {
+			return ec2Placement{}, err
+		}
+		if err := e.waitVolumeAttachable(ctx, volID); err != nil {
+			return ec2Placement{}, err
+		}
+		if err := e.attachHomeWithRetry(ctx, volID, victim); err != nil {
+			return ec2Placement{}, fmt.Errorf("attach %s to the reclaimed slot %s: %w", volID, victim, err)
+		}
+		if err := e.claim(ctx, volID, victim); err != nil {
+			log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+		}
+		e.clearDormancy(ctx, volID)
+		running, err := e.instanceRunning(ctx, victim)
+		if err != nil {
+			return ec2Placement{}, err
+		}
+		return ec2Placement{volumeID: volID, instanceID: victim, az: azFilter, deferred: true, wake: !running}, nil
+	}
+	// RunInstances answers immediately with a PENDING instance that cannot accept a
+	// volume yet, so the claim tag carries the "starting" state until the background
+	// half attaches for real.
+	inst, err := e.runSlot(ctx, azFilter)
+	if err != nil {
+		return ec2Placement{}, err
+	}
+	if err := e.claim(ctx, volID, inst); err != nil {
+		return ec2Placement{}, fmt.Errorf("claim %s for %s: %w", volID, inst, err)
+	}
+	return ec2Placement{volumeID: volID, instanceID: inst, az: azFilter, deferred: true, claimed: true}, nil
+}
+
+// finishStart is the background half: wait for the slot, attach if the claim path left
+// that undone, then launch. Everything it does is idempotent and re-derivable, so a CP
+// restart in the middle costs a retry, not a wedged workspace.
+func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec2Prep) {
+	if p.wake {
+		if err := e.wakeSlot(ctx, p.instanceID); err != nil {
+			log.Printf("ecs-ec2 start: waking slot %s for %s failed: %v", p.instanceID, e.base.name, err)
+			return
+		}
+	}
+	if p.claimed {
+		if err := e.waitInstanceRunning(ctx, p.instanceID); err != nil {
+			log.Printf("ecs-ec2 start: slot %s for %s never came up: %v", p.instanceID, e.base.name, err)
+			return
+		}
+		if err := e.attachHome(ctx, p.volumeID, p.instanceID); err != nil {
+			log.Printf("ecs-ec2 start: attaching %s to the new slot %s failed: %v", p.volumeID, p.instanceID, err)
+			return
+		}
+	}
+	if err := e.launch(ctx, p, prep); err != nil {
+		log.Printf("ecs-ec2 start: %s did not converge on slot %s: %v", e.base.name, p.instanceID, err)
+	}
+}
+
+// launch takes an attached volume to a running task: wait for the slot to be a usable
+// ECS container instance, mount the home, register a task definition pinned to that
+// instance, and put the service at desiredCount 1.
+func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep) error {
+	if err := e.waitSlotRegistered(ctx, p.instanceID); err != nil {
+		return fmt.Errorf("slot %s not registered with the cluster: %w", p.instanceID, err)
+	}
+	if err := e.mountHome(ctx, p); err != nil {
+		return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
+	}
+	taskDefArn, err := e.registerTaskDef(ctx, p, prep)
+	if err != nil {
+		return fmt.Errorf("register task def: %w", err)
+	}
+	if err := e.upsertService(ctx, taskDefArn, p); err != nil {
+		return fmt.Errorf("service: %w", err)
+	}
+	// The service now carries the state; drop the claim so State() reads the real thing,
+	// and make sure this home is not counted as dormant while its task runs.
+	e.unclaim(ctx, p.volumeID)
+	e.clearDormancy(ctx, p.volumeID)
+	e.base.watchReady(ctx)
+	return nil
+}
+
+// --- volumes ---
+
+// homeVolume returns this workspace's persistent home volume, or nil. Tag lookup only:
+// this is what keeps the adapter stateless (ADR 0012).
+func (e *ecsEC2Runtime) homeVolume(ctx context.Context) (*ec2types.Volume, error) {
+	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagMembership, e.base.membershipID),
+			tagFilter(ec2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	for i := range out.Volumes {
+		if out.Volumes[i].State == ec2types.VolumeStateDeleting || out.Volumes[i].State == ec2types.VolumeStateDeleted {
+			continue
+		}
+		return &out.Volumes[i], nil
+	}
+	return nil, nil
+}
+
+// createHomeVolume creates the user's home in the given AZ. Tags go in the SAME call
+// (TagSpecifications), never as a follow-up CreateTags: an untagged volume is an
+// invisible volume — State() would say `none`, the next Start would make another one,
+// and the first would be billed forever with nothing pointing at it.
+//
+// "Create" is really three cases, tried in this order:
+//
+//  1. this user's home was HIBERNATED (§64.18.3) → rebuild it from that snapshot, so the
+//     workspace cannot tell it ever went away;
+//  2. a GOLDEN snapshot matches the running image (決定 9) → a new user skips
+//     boot-install (48s) and a cold npm cache;
+//  3. neither → an empty volume, which is correct, just slow.
+//
+// The order is the point: the user's own home always wins. Handing somebody the golden
+// image when their real home merely failed to be found would be silent data loss.
+func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2types.Volume, error) {
+	snapshotID, err := e.restoreSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	restored := snapshotID != ""
+	if restored {
+		log.Printf("ecs-ec2: restoring %s from %s", e.base.name, snapshotID)
+	} else if golden := e.goldenSnapshot(ctx); golden != "" {
+		snapshotID = golden
+		log.Printf("ecs-ec2: seeding a new home for %s from the golden snapshot %s", e.base.name, golden)
+	}
+	var snapshot *string
+	if snapshotID != "" {
+		snapshot = aws.String(snapshotID)
+	}
+	out, err := e.ec2.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String(az),
+		SnapshotId:       snapshot,
+		Size:             aws.Int32(e.homeGiB),
+		VolumeType:       ec2types.VolumeTypeGp3,
+		Encrypted:        aws.Bool(true),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeVolume,
+			Tags: []ec2types.Tag{
+				{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
+				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
+				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
+				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
+				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-home")},
+			},
+		}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("ecs-ec2: created %s (%d GiB, %s) for %s", aws.ToString(out.VolumeId), e.homeGiB, az, e.base.name)
+	if restored {
+		// ONLY after restoring the user's OWN home. The golden snapshot is shared by every
+		// future user and must never be swept up here — deleteHomeSnapshots filters on
+		// af-membership + af-role=home and so cannot match it, but the intent is worth
+		// stating twice for a call that deletes things.
+		//
+		// The home is the volume again, so the snapshot is now a stale copy that bills.
+		// In the background and only once the volume is usable — and if it fails, the
+		// next hibernation drops it as superseded rather than trusting it.
+		volID := aws.ToString(out.VolumeId)
+		e.bg(ctx, func(ctx context.Context) {
+			if err := e.waitVolumeAttachable(ctx, volID); err != nil {
+				log.Printf("ecs-ec2: %s restored but not usable yet; keeping %s: %v", volID, snapshotID, err)
+				return
+			}
+			if err := e.deleteHomeSnapshots(ctx); err != nil {
+				log.Printf("ecs-ec2: could not drop the restored-from snapshot of %s: %v", e.base.name, err)
+			}
+		})
+	}
+	return &ec2types.Volume{
+		VolumeId:         out.VolumeId,
+		AvailabilityZone: out.AvailabilityZone,
+		State:            out.State,
+	}, nil
+}
+
+// waitVolumeAttachable polls until the volume leaves `creating`. Measured at ~3s for a
+// fresh volume (docs/64 §64.7), which is why this can sit in the synchronous path.
+func (e *ecsEC2Runtime) waitVolumeAttachable(ctx context.Context, volumeID string) error {
+	for i := 0; ; i++ {
+		out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
+		if err != nil {
+			return err
+		}
+		if len(out.Volumes) == 0 {
+			return fmt.Errorf("volume %s disappeared", volumeID)
+		}
+		switch out.Volumes[0].State {
+		case ec2types.VolumeStateAvailable, ec2types.VolumeStateInUse:
+			return nil
+		case ec2types.VolumeStateError, ec2types.VolumeStateDeleting, ec2types.VolumeStateDeleted:
+			return fmt.Errorf("volume %s is %s", volumeID, out.Volumes[0].State)
+		}
+		if i >= 30 {
+			return fmt.Errorf("volume %s still %s", volumeID, out.Volumes[0].State)
+		}
+		if err := e.sleep(ctx, time.Second); err != nil {
+			return err
+		}
+	}
+}
+
+// attachHomeWithRetry keeps trying while the only problem is that the slot's attachment
+// point has not been given back yet.
+//
+// Measured on real AWS: DetachVolume answers, the volume reads `available`, and an
+// attach to the same slot is STILL refused ~7s later with "Attachment point /dev/sdf is
+// already in use". Without this retry the next Start reads that as "no free slot" and
+// grows the pool — paying for an instance and ~90s to avoid a wait of a few seconds,
+// which is precisely the cost the pool exists to avoid. A genuine race with another
+// workspace (the device really is taken now) simply exhausts the window and moves on to
+// the next candidate.
+func (e *ecsEC2Runtime) attachHomeWithRetry(ctx context.Context, volumeID, instanceID string) error {
+	var err error
+	for i := 0; i < 10; i++ {
+		if err = e.attachHome(ctx, volumeID, instanceID); err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "already in use") {
+			return err
+		}
+		if serr := e.sleep(ctx, 2*time.Second); serr != nil {
+			return serr
+		}
+	}
+	return err
+}
+
+func (e *ecsEC2Runtime) attachHome(ctx context.Context, volumeID, instanceID string) error {
+	_, err := e.ec2.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		Device:     aws.String(ec2HomeDevice),
+		InstanceId: aws.String(instanceID),
+		VolumeId:   aws.String(volumeID),
+	})
+	return err
+}
+
+// claim / unclaim mark the one window where a workspace is starting but has nothing
+// attached yet (see ec2TagClaim).
+func (e *ecsEC2Runtime) claim(ctx context.Context, volumeID, instanceID string) error {
+	_, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{volumeID},
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagClaim), Value: aws.String(instanceID)},
+			{Key: aws.String(ec2TagClaimAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
+		},
+	})
+	return err
+}
+
+func (e *ecsEC2Runtime) unclaim(ctx context.Context, volumeID string) {
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{volumeID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagClaim)}, {Key: aws.String(ec2TagClaimAt)}},
+	}); err != nil {
+		log.Printf("ecs-ec2: clearing the claim on %s failed (sweeper will): %v", volumeID, err)
+	}
+}
+
+// claimLive reports whether the volume carries a claim that has not expired. The TTL
+// matters: a claim that outlives its failed launch pins the workspace at `starting`
+// forever, and Start returns early on `starting`, so the user could never recover.
+func (e *ecsEC2Runtime) claimLive(vol *ec2types.Volume) bool {
+	if ec2TagValue(vol.Tags, ec2TagClaim) == "" {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, ec2TagValue(vol.Tags, ec2TagClaimAt))
+	if err != nil {
+		return false
+	}
+	return e.now().Sub(at) < e.pool.claimTTL
+}
+
+// --- slots ---
+
+type ec2SlotCandidate struct {
+	id         string
+	az         string
+	running    bool
+	registered bool
+}
+
+// freeSlots lists the pool's slots that nobody's home is on, hot ones first (22–27s to
+// swap) and stopped ones after (~50s).
+//
+// Occupancy is read from the VOLUMES, not from the instances' BlockDeviceMappings. Both
+// are eventually consistent, but measured on real AWS the instance view lags: seconds
+// after a detach had completed (volume `available`), the instance still listed /dev/sdf,
+// so the freed slot looked busy and the next Start grew the pool instead of swapping
+// onto it — the exact behaviour this design exists to avoid. The volume side is also the
+// same source State() and releaseSlot() already trust, so there is one story about who
+// is on which slot instead of two.
+//
+// Claims cover the rest: a slot some other workspace is launching onto has no attachment
+// yet, and only its claim says so.
+func (e *ecsEC2Runtime) freeSlots(ctx context.Context, az string) ([]ec2SlotCandidate, error) {
+	filters := []ec2types.Filter{
+		tagFilter(ec2TagPool, e.pool.pool),
+		tagFilter(ec2TagRole, ec2RoleSlot),
+		{Name: aws.String("instance-state-name"), Values: []string{"running", "stopped"}},
+		{Name: aws.String("instance-type"), Values: []string{e.instanceType}},
+	}
+	if az != "" {
+		filters = append(filters, ec2types.Filter{Name: aws.String("availability-zone"), Values: []string{az}})
+	}
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{Filters: filters})
+	if err != nil {
+		return nil, err
+	}
+	busy, err := e.occupiedInstances(ctx)
+	if err != nil {
+		return nil, err
+	}
+	registered, err := e.registeredSlots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var cands []ec2SlotCandidate
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			id := aws.ToString(inst.InstanceId)
+			if busy[id] {
+				continue
+			}
+			cands = append(cands, ec2SlotCandidate{
+				id:         id,
+				az:         aws.ToString(inst.Placement.AvailabilityZone),
+				running:    inst.State != nil && inst.State.Name == ec2types.InstanceStateNameRunning,
+				registered: registered[id],
+			})
+		}
+	}
+	sort.SliceStable(cands, func(i, j int) bool {
+		if cands[i].running != cands[j].running {
+			return cands[i].running
+		}
+		if cands[i].registered != cands[j].registered {
+			return cands[i].registered
+		}
+		return cands[i].id < cands[j].id
+	})
+	return cands, nil
+}
+
+// occupiedInstances is the set of slots that are taken: someone's home is attached to
+// them, or someone is launching onto them (claim). One DescribeVolumes answers both.
+func (e *ecsEC2Runtime) occupiedInstances(ctx context.Context) (map[string]bool, error) {
+	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, e.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	busy := map[string]bool{}
+	for i := range out.Volumes {
+		if inst := attachedInstance(&out.Volumes[i]); inst != "" {
+			busy[inst] = true
+		}
+		if inst := ec2TagValue(out.Volumes[i].Tags, ec2TagClaim); inst != "" && e.claimLive(&out.Volumes[i]) {
+			busy[inst] = true
+		}
+	}
+	return busy, nil
+}
+
+// registeredSlots is the set of EC2 instance ids the cluster currently accepts tasks
+// on (ACTIVE + agentConnected). An unregistered slot can hold a volume but cannot run
+// the task yet, so it sorts behind the hot ones rather than being skipped.
+func (e *ecsEC2Runtime) registeredSlots(ctx context.Context) (map[string]bool, error) {
+	arns, err := e.listContainerInstanceARNs(ctx)
+	if err != nil || len(arns) == 0 {
+		return map[string]bool{}, err
+	}
+	ready := map[string]bool{}
+	for _, chunk := range chunkStrings(arns, 100) {
+		out, err := e.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
+			Cluster:            aws.String(e.base.cfg.cluster),
+			ContainerInstances: chunk,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, ci := range out.ContainerInstances {
+			if aws.ToString(ci.Status) == "ACTIVE" && ci.AgentConnected {
+				ready[aws.ToString(ci.Ec2InstanceId)] = true
+			}
+		}
+	}
+	return ready, nil
+}
+
+func (e *ecsEC2Runtime) listContainerInstanceARNs(ctx context.Context) ([]string, error) {
+	var arns []string
+	var next *string
+	for {
+		out, err := e.ci.ListContainerInstances(ctx, &ecs.ListContainerInstancesInput{
+			Cluster:   aws.String(e.base.cfg.cluster),
+			NextToken: next,
+		})
+		if err != nil {
+			return nil, err
+		}
+		arns = append(arns, out.ContainerInstanceArns...)
+		if next = out.NextToken; next == nil {
+			return arns, nil
+		}
+	}
+}
+
+// runSlot grows the pool by one instance in the given AZ. The launch template owns
+// everything about what a slot IS (AMI, user-data, instance profile, security group);
+// the CP only chooses size and placement.
+func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) {
+	total, err := e.poolSize(ctx)
+	if err != nil {
+		return "", err
+	}
+	if total >= e.pool.maxSlots {
+		return "", fmt.Errorf("slot pool is full (%d/%d); raise AF_ECS_EC2_MAX_SLOTS", total, e.pool.maxSlots)
+	}
+	subnet, err := e.subnetIn(ctx, az)
+	if err != nil {
+		return "", err
+	}
+	lt := &ec2types.LaunchTemplateSpecification{Version: aws.String("$Latest")}
+	if strings.HasPrefix(e.pool.launchTemplate, "lt-") {
+		lt.LaunchTemplateId = aws.String(e.pool.launchTemplate)
+	} else {
+		lt.LaunchTemplateName = aws.String(e.pool.launchTemplate)
+	}
+	out, err := e.ec2.RunInstances(ctx, &ec2.RunInstancesInput{
+		LaunchTemplate: lt,
+		InstanceType:   ec2types.InstanceType(e.instanceType),
+		SubnetId:       aws.String(subnet),
+		MinCount:       aws.Int32(1),
+		MaxCount:       aws.Int32(1),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeInstance,
+			Tags: []ec2types.Tag{
+				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
+				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleSlot)},
+				{Key: aws.String(ec2TagSlotSize), Value: aws.String(e.instanceType)},
+				{Key: aws.String("Name"), Value: aws.String("af-slot-" + e.instanceType)},
+			},
+		}},
+	})
+	if err != nil {
+		return "", fmt.Errorf("run slot: %w", err)
+	}
+	if len(out.Instances) == 0 {
+		return "", fmt.Errorf("run slot: no instance returned")
+	}
+	id := aws.ToString(out.Instances[0].InstanceId)
+	log.Printf("ecs-ec2: grew the pool with slot %s (%s, %s) for %s", id, e.instanceType, az, e.base.name)
+	return id, nil
+}
+
+// instanceRunning reports whether a slot is up. A dormant slot is stopped, not gone, so
+// "which of the two" decides between the 13s path and the ~90s one.
+func (e *ecsEC2Runtime) instanceRunning(ctx context.Context, instanceID string) (bool, error) {
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil {
+		return false, err
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			if inst.State == nil {
+				continue
+			}
+			switch inst.State.Name {
+			case ec2types.InstanceStateNameRunning:
+				return true, nil
+			case ec2types.InstanceStateNameTerminated, ec2types.InstanceStateNameShuttingDown:
+				return false, fmt.Errorf("slot %s is %s", instanceID, inst.State.Name)
+			}
+			return false, nil
+		}
+	}
+	return false, fmt.Errorf("slot %s no longer exists", instanceID)
+}
+
+func (e *ecsEC2Runtime) poolFull(ctx context.Context) (bool, error) {
+	n, err := e.poolSize(ctx)
+	if err != nil {
+		return false, err
+	}
+	return n >= e.pool.maxSlots, nil
+}
+
+// evictLongestIdle takes a slot back from the workspace that has been dormant longest
+// and returns the freed instance id.
+//
+// Only dormant homes are candidates (the af-idle-since tag, written by Stop), and
+// releaseSlot refuses any victim whose service is not actually at desiredCount 0 — so a
+// workspace that woke up between the pick and the release keeps its slot and we simply
+// report that there was nothing to take.
+func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string, error) {
+	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, e.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	var best *ec2types.Volume
+	var bestIdle time.Duration
+	now := e.now()
+	for i := range out.Volumes {
+		v := &out.Volumes[i]
+		if attachedInstance(v) == "" || (az != "" && aws.ToString(v.AvailabilityZone) != az) {
+			continue
+		}
+		if aws.ToString(v.VolumeId) == "" || ec2TagValue(v.Tags, ec2TagMembership) == e.base.membershipID {
+			continue
+		}
+		idle, ok := idleSince(v, now)
+		if !ok || (best != nil && idle <= bestIdle) {
+			continue
+		}
+		best, bestIdle = v, idle
+	}
+	if best == nil {
+		return "", fmt.Errorf("slot pool is full (%d) and every slot is in use; raise AF_ECS_EC2_MAX_SLOTS", e.pool.maxSlots)
+	}
+	victimSlot := attachedInstance(best)
+	victim := e.siblingFor(best)
+	if victim == nil {
+		return "", fmt.Errorf("slot %s holds an unidentifiable home %s", victimSlot, aws.ToString(best.VolumeId))
+	}
+	log.Printf("ecs-ec2: reclaiming slot %s from %s (dormant %.0fm) for %s",
+		victimSlot, victim.base.name, bestIdle.Minutes(), e.base.name)
+	if err := victim.releaseSlot(ctx); err != nil {
+		return "", fmt.Errorf("reclaim slot %s: %w", victimSlot, err)
+	}
+	return victimSlot, nil
+}
+
+// siblingFor builds the runtime of ANOTHER workspace from its home volume's tags — the
+// same trick the sweeper uses. Only the identity and the clients matter here; the
+// runtime is used exclusively to release that workspace's slot.
+func (e *ecsEC2Runtime) siblingFor(vol *ec2types.Volume) *ecsEC2Runtime {
+	membership := ec2TagValue(vol.Tags, ec2TagMembership)
+	name := ec2TagValue(vol.Tags, ec2TagWorkspace)
+	if membership == "" || name == "" {
+		return nil
+	}
+	base := *e.base
+	base.name = name
+	base.membershipID = membership
+	sib := *e
+	sib.base = &base
+	return &sib
+}
+
+// poolSize counts every slot that is not terminated, across sizes and AZs — the cap is
+// about the deployment's blast radius and bill, not about one size.
+func (e *ecsEC2Runtime) poolSize(ctx context.Context) (int, error) {
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, e.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleSlot),
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
+		},
+	})
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, r := range out.Reservations {
+		n += len(r.Instances)
+	}
+	return n, nil
+}
+
+func (e *ecsEC2Runtime) subnetIn(ctx context.Context, az string) (string, error) {
+	azs, err := e.azOfSubnet(ctx)
+	if err != nil {
+		return "", err
+	}
+	subnets := append([]string(nil), e.base.cfg.subnets...)
+	sort.Strings(subnets)
+	for _, s := range subnets {
+		if az == "" || azs[s] == az {
+			return s, nil
+		}
+	}
+	return "", fmt.Errorf("no configured subnet in %s (AF_ECS_SUBNETS)", az)
+}
+
+func (e *ecsEC2Runtime) anyAZ(ctx context.Context) (string, error) {
+	azs, err := e.azOfSubnet(ctx)
+	if err != nil {
+		return "", err
+	}
+	subnets := append([]string(nil), e.base.cfg.subnets...)
+	sort.Strings(subnets)
+	for _, s := range subnets {
+		if azs[s] != "" {
+			return azs[s], nil
+		}
+	}
+	return "", fmt.Errorf("no usable subnet/AZ configured (AF_ECS_SUBNETS)")
+}
+
+// wakeSlot starts a dormant slot, waiting first for it to be startable.
+//
+// The wait is the whole point: the sweeper stops a slot the moment its workspace goes
+// dormant, so a user who comes back seconds later finds it in `stopping`, and EC2
+// answers StartInstances with "IncorrectInstanceState" (measured — it failed the live
+// test). Retrying from `stopping` is not an error case, it is the normal race between a
+// person and a 15-minute timer.
+func (e *ecsEC2Runtime) wakeSlot(ctx context.Context, instanceID string) error {
+	for i := 0; ; i++ {
+		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+		if err != nil {
+			return err
+		}
+		state := ec2types.InstanceStateName("")
+		for _, r := range out.Reservations {
+			for _, inst := range r.Instances {
+				if inst.State != nil {
+					state = inst.State.Name
+				}
+			}
+		}
+		switch state {
+		case ec2types.InstanceStateNameRunning, ec2types.InstanceStateNamePending:
+			return nil
+		case ec2types.InstanceStateNameStopped:
+			log.Printf("ecs-ec2: waking slot %s for %s (home still attached)", instanceID, e.base.name)
+			_, err := e.ec2.StartInstances(ctx, &ec2.StartInstancesInput{InstanceIds: []string{instanceID}})
+			return err
+		case ec2types.InstanceStateNameTerminated, ec2types.InstanceStateNameShuttingDown:
+			return fmt.Errorf("slot %s is %s", instanceID, state)
+		}
+		if i >= 60 {
+			return fmt.Errorf("slot %s stuck in %s", instanceID, state)
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
+}
+
+func (e *ecsEC2Runtime) waitInstanceRunning(ctx context.Context, instanceID string) error {
+	for {
+		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+		if err == nil {
+			for _, r := range out.Reservations {
+				for _, inst := range r.Instances {
+					if inst.State != nil && inst.State.Name == ec2types.InstanceStateNameRunning {
+						return nil
+					}
+				}
+			}
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
+}
+
+// waitSlotRegistered waits until the slot is an ACTIVE, agent-connected container
+// instance. Measured at ~20s after an instance start (docs/64 §64.12.1); a hot slot
+// returns on the first poll.
+func (e *ecsEC2Runtime) waitSlotRegistered(ctx context.Context, instanceID string) error {
+	// Bounded as well as context-scoped. The caller's budget is the real limit in
+	// production, but an unbounded "poll until" hangs anything that drives this with a
+	// context that never expires.
+	for i := 0; i < 400; i++ {
+		ready, err := e.registeredSlots(ctx)
+		if err == nil && ready[instanceID] {
+			return nil
+		}
+		if err := e.sleep(ctx, 3*time.Second); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("slot %s never registered with the cluster", instanceID)
+}
+
+// --- mount / umount (SSM) ---
+
+func (e *ecsEC2Runtime) homeMountPoint() string {
+	return ec2HomeMountBase + "/" + e.base.membershipID
+}
+
+// mountHome runs `af-mount <volume-id> <mountpoint> --mkfs` on the slot. The helper is
+// placed by the launch template's user-data, resolves the NVMe device from the volume
+// id (the device name we asked for is not what the kernel shows on Nitro), and only
+// formats when blkid finds no filesystem — which is why --mkfs can be passed
+// unconditionally and a retried mount never eats a home.
+func (e *ecsEC2Runtime) mountHome(ctx context.Context, p ec2Placement) error {
+	mp := e.homeMountPoint()
+	return e.runOnSlot(ctx, p.instanceID, fmt.Sprintf("af-mount %s %s --mkfs", p.volumeID, mp))
+}
+
+func (e *ecsEC2Runtime) umountHome(ctx context.Context, instanceID string) error {
+	return e.runOnSlot(ctx, instanceID, fmt.Sprintf("af-umount %s", e.homeMountPoint()))
+}
+
+// runOnSlot sends one shell command through SSM and waits for it. SendCommand is
+// retried for a while because a freshly booted slot registers with SSM a little after
+// it registers with ECS, and an InvalidInstanceId there is a timing artifact rather
+// than a failure.
+func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command string) error {
+	var cmdID string
+	for attempt := 1; ; attempt++ {
+		out, err := e.ssmc.SendCommand(ctx, &ssm.SendCommandInput{
+			DocumentName: aws.String("AWS-RunShellScript"),
+			InstanceIds:  []string{instanceID},
+			Parameters:   map[string][]string{"commands": {command}},
+			Comment:      aws.String("agent-fleet slot volume"),
+		})
+		if err == nil && out.Command != nil {
+			cmdID = aws.ToString(out.Command.CommandId)
+			break
+		}
+		// SAY SOMETHING. A slot whose SSM agent never came back swallows every mount and
+		// unmount silently, and the workspace just sits at `starting` with no clue why —
+		// which is exactly how a live run burned ten minutes before anyone could tell
+		// that SSM, not ECS, was the thing that was stuck.
+		if attempt%5 == 1 {
+			log.Printf("ecs-ec2: slot %s is not answering SSM yet (attempt %d, %q): %v",
+				instanceID, attempt, command, err)
+		}
+		if err := e.sleep(ctx, 3*time.Second); err != nil {
+			return fmt.Errorf("ssm send %q to %s: %w", command, instanceID, err)
+		}
+	}
+	for {
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+		inv, err := e.ssmc.GetCommandInvocation(ctx, &ssm.GetCommandInvocationInput{
+			CommandId:  aws.String(cmdID),
+			InstanceId: aws.String(instanceID),
+		})
+		if err != nil {
+			continue // InvocationDoesNotExist right after SendCommand is normal
+		}
+		switch inv.Status {
+		case "Success":
+			return nil
+		case "Failed", "Cancelled", "TimedOut":
+			return fmt.Errorf("%q on %s: %s: %s", command, instanceID, inv.Status,
+				strings.TrimSpace(aws.ToString(inv.StandardErrorContent)))
+		}
+	}
+}
+
+// --- task definition / service ---
+
+// registerTaskDef registers a fresh EC2-launch-type revision pinned to one slot.
+//
+// Differences from the Fargate revision that matter:
+//   - placementConstraints `ec2InstanceId == i-…` — the whole point. It lives on the
+//     task definition (re-registered every Start anyway) rather than on the service,
+//     so moving a user to another slot never touches the service's own shape.
+//   - no task cpu / memory. On EC2 those are RESERVATIONS against the instance
+//     (docs/64 §64.4.5); with one user per slot the right answer is to reserve nothing
+//     and let them have the box. A small memoryReservation keeps the API happy.
+//   - /tmp is a tmpfs. The root volume is shared with whoever had the slot before, so
+//     a disk-backed /tmp would both leak (readable from the host) and let one user fill
+//     the volume out from under the next (ADR 0045 決定 8 の代償 2). tmpfs is the one
+//     tool Fargate did not have.
+//   - home is a host bind of the freshly mounted EBS, not an EFS volume.
+func (e *ecsEC2Runtime) registerTaskDef(ctx context.Context, p ec2Placement, prep ec2Prep) (string, error) {
+	env := []ecstypes.KeyValuePair{
+		{Name: aws.String("CLAUDE_CONFIG_DIR"), Value: aws.String("/var/lib/af/claude")},
+		// Where the entrypoint keeps the auth/identity set (ADR 0045 決定 3-6).
+		{Name: aws.String("AF_WS_KEEP"), Value: aws.String(ec2KeepPath)},
+		{Name: aws.String("AGENT_STOP_GRACE_SEC"), Value: aws.String(strconv.Itoa(agentStopGraceSec()))},
+		// NOTE: AF_WS_SCRATCH is deliberately absent (ADR 0045 決定 10-3). It exists to
+		// keep small-file build output off EFS; here home IS local NVMe-backed EBS, so
+		// the relocation would buy nothing and would move the user's caches onto a disk
+		// that is wiped when the slot changes hands.
+	}
+	if e.base.cfg.sessionCmd != "" {
+		env = append(env, ecstypes.KeyValuePair{Name: aws.String("AGENT_SESSION_CMD"), Value: aws.String(e.base.cfg.sessionCmd)})
+	}
+	for _, kv := range e.base.extraEnv {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			env = append(env, ecstypes.KeyValuePair{Name: aws.String(k), Value: aws.String(v)})
+		}
+	}
+	container := ecstypes.ContainerDefinition{
+		Name:      aws.String("agent"),
+		Image:     aws.String(e.base.cfg.workspaceImage),
+		Essential: aws.Bool(true),
+		// A soft reservation only: ECS requires a memory figure somewhere, and a hard
+		// limit here would cap the user below the slot they are paying for.
+		MemoryReservation: aws.Int32(512),
+		PortMappings: []ecstypes.PortMapping{
+			{ContainerPort: aws.Int32(ecsAgentPort), Name: aws.String("agent")},
+		},
+		Environment: env,
+		Secrets:     prep.secrets,
+		MountPoints: []ecstypes.MountPoint{
+			{SourceVolume: aws.String("home"), ContainerPath: aws.String("/home/dev")},
+			{SourceVolume: aws.String("claude"), ContainerPath: aws.String("/var/lib/af/claude")},
+			{SourceVolume: aws.String("keep"), ContainerPath: aws.String(ec2KeepPath)},
+		},
+		StopTimeout: aws.Int32(int32(stopGraceSec())),
+		LinuxParameters: &ecstypes.LinuxParameters{
+			InitProcessEnabled: aws.Bool(true),
+			Tmpfs: []ecstypes.Tmpfs{{
+				ContainerPath: aws.String("/tmp"),
+				Size:          e.pool.tmpfsMiB,
+				MountOptions:  e.pool.tmpfsOpts,
+			}},
+		},
+	}
+	if e.base.cfg.logGroup != "" {
+		container.LogConfiguration = &ecstypes.LogConfiguration{
+			LogDriver: ecstypes.LogDriverAwslogs,
+			Options: map[string]string{
+				"awslogs-group":         e.base.cfg.logGroup,
+				"awslogs-region":        e.base.cfg.region,
+				"awslogs-stream-prefix": "agent",
+			},
+		}
+	}
+	in := &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String(e.base.name),
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityEc2},
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		ExecutionRoleArn:        strOrNil(e.base.cfg.execRole),
+		TaskRoleArn:             strOrNil(e.base.cfg.taskRole),
+		ContainerDefinitions:    []ecstypes.ContainerDefinition{container},
+		PlacementConstraints: []ecstypes.TaskDefinitionPlacementConstraint{{
+			Type:       ecstypes.TaskDefinitionPlacementConstraintTypeMemberOf,
+			Expression: aws.String(fmt.Sprintf("ec2InstanceId == %s", p.instanceID)),
+		}},
+		Volumes: []ecstypes.Volume{
+			{
+				Name: aws.String("home"),
+				Host: &ecstypes.HostVolumeProperties{SourcePath: aws.String(e.homeMountPoint() + "/dev")},
+			},
+			efsVolume("claude", e.base.cfg.efsFileSystem, prep.claudeAP),
+			efsVolume("keep", e.base.cfg.efsFileSystem, prep.keepAP),
+		},
+	}
+	out, err := e.base.ecs.RegisterTaskDefinition(ctx, in)
+	if err != nil {
+		return "", err
+	}
+	return aws.ToString(out.TaskDefinition.TaskDefinitionArn), nil
+}
+
+// upsertService creates or updates the workspace's service at desiredCount 1 on the EC2
+// launch type. The awsvpc ENI must land in the slot's own AZ, so the network config
+// carries only that AZ's subnet — and Service Connect stays exactly as on Fargate,
+// which is why Endpoint() did not have to change (docs/64 §64.4.4).
+func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p ec2Placement) error {
+	subnet, err := e.subnetIn(ctx, p.az)
+	if err != nil {
+		return err
+	}
+	netCfg := &ecstypes.NetworkConfiguration{
+		AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+			Subnets:        []string{subnet},
+			SecurityGroups: []string{e.base.cfg.securityGroup},
+			// Never AssignPublicIp on a slot: a task ENI that outlives a stop turns the
+			// instance into a multi-ENI box that silently loses its auto-assigned public
+			// IPv4, and the agent then cannot reach the control plane at all
+			// (ADR 0045 決定 3-3, measured: 11 minutes offline).
+			AssignPublicIp: ecstypes.AssignPublicIpDisabled,
+		},
+	}
+	s, ok, err := e.base.describeService(ctx)
+	if err != nil {
+		return err
+	}
+	if ok && aws.ToString(s.Status) == "ACTIVE" {
+		_, err = e.base.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
+			Cluster:              aws.String(e.base.cfg.cluster),
+			Service:              aws.String(e.base.name),
+			DesiredCount:         aws.Int32(1),
+			TaskDefinition:       aws.String(taskDefArn),
+			NetworkConfiguration: netCfg,
+			ForceNewDeployment:   true,
+		})
+		return err
+	}
+	_, err = e.base.ecs.CreateService(ctx, &ecs.CreateServiceInput{
+		Cluster:              aws.String(e.base.cfg.cluster),
+		ServiceName:          aws.String(e.base.name),
+		TaskDefinition:       aws.String(taskDefArn),
+		DesiredCount:         aws.Int32(1),
+		LaunchType:           ecstypes.LaunchTypeEc2,
+		NetworkConfiguration: netCfg,
+		ServiceConnectConfiguration: &ecstypes.ServiceConnectConfiguration{
+			Enabled:   true,
+			Namespace: strOrNil(e.base.cfg.namespaceArn),
+			Services: []ecstypes.ServiceConnectService{{
+				PortName:      aws.String("agent"),
+				DiscoveryName: aws.String(e.base.name),
+				ClientAliases: []ecstypes.ServiceConnectClientAlias{
+					{DnsName: aws.String(e.base.name), Port: aws.Int32(ecsAgentPort)},
+				},
+			}},
+		},
+	})
+	return err
+}
+
+// --- release / destroy ---
+
+// releaseSlot is the teardown half of a Stop, and the same routine the sweeper runs on
+// anything it finds drifting: wait for the task to be gone, unmount, detach, hand the
+// slot back to the pool. Idempotent — every step is a no-op when it has already
+// happened, because the sweeper WILL run it again.
+func (e *ecsEC2Runtime) releaseSlot(ctx context.Context) error {
+	return e.releaseSlotSince(ctx, e.generation().Load())
+}
+
+// releaseSlotSince is releaseSlot anchored to a Start count taken by the CALLER — see
+// startGen for why the anchor cannot be taken here.
+func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
+	vol, err := e.homeVolume(ctx)
+	if err != nil {
+		return err
+	}
+	if vol == nil {
+		return nil
+	}
+	instanceID := attachedInstance(vol)
+	if instanceID == "" {
+		return nil
+	}
+	if err := e.waitTasksGone(ctx); err != nil {
+		return err
+	}
+	if e.generation().Load() != gen {
+		return fmt.Errorf("%s was started again while releasing its slot; leaving it attached", e.base.name)
+	}
+	// umount first, ALWAYS — while the slot is running. A detach of a mounted filesystem
+	// is how a home gets corrupted (ADR 0045 決定 8 の代償 3), so a failure here must stop
+	// the detach.
+	//
+	// A STOPPED slot is the exception, and it has to be: SSM cannot reach it, and there
+	// is nothing to unmount — the instance stop is an ordinary shutdown, which unmounts
+	// filesystems on the way down. Waiting for an umount that can never run would leave
+	// dormant slots unreclaimable.
+	running, err := e.instanceRunning(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+	if running {
+		if err := e.umountHome(ctx, instanceID); err != nil {
+			return fmt.Errorf("umount %s on %s: %w", e.homeMountPoint(), instanceID, err)
+		}
+	}
+	volumeID := aws.ToString(vol.VolumeId)
+	if e.generation().Load() != gen {
+		// Re-mount rather than detach: the workspace is coming up and needs its home.
+		log.Printf("ecs-ec2: %s restarted mid-release; re-mounting instead of detaching", e.base.name)
+		return e.mountHome(ctx, ec2Placement{volumeID: volumeID, instanceID: instanceID})
+	}
+	if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
+		VolumeId:   aws.String(volumeID),
+		InstanceId: aws.String(instanceID),
+	}); err != nil {
+		return fmt.Errorf("detach %s: %w", volumeID, err)
+	}
+	// Do not call the slot free until it really is: the attachment point outlives the
+	// DetachVolume response (see attachHomeWithRetry), and a Start that lands in that
+	// window would grow the pool instead of swapping onto this slot.
+	if err := e.waitDeviceFree(ctx, instanceID); err != nil {
+		log.Printf("ecs-ec2: %s detached from %s but the device is still held: %v", volumeID, instanceID, err)
+	}
+	e.clearIdle(ctx, volumeID)
+	log.Printf("ecs-ec2: released slot %s from %s", instanceID, e.base.name)
+	return nil
+}
+
+// waitDeviceFree polls until the slot no longer lists the home device. The instance view
+// is the conservative one here — it keeps reporting the device while the volume side
+// already says `available` — which makes it the right thing to wait on.
+func (e *ecsEC2Runtime) waitDeviceFree(ctx context.Context, instanceID string) error {
+	started := e.now()
+	for i := 0; i < 30; i++ {
+		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+		if err != nil {
+			return err
+		}
+		held := false
+		for _, r := range out.Reservations {
+			for _, inst := range r.Instances {
+				for _, m := range inst.BlockDeviceMappings {
+					if aws.ToString(m.DeviceName) == ec2HomeDevice {
+						held = true
+					}
+				}
+			}
+		}
+		if !held {
+			if d := e.now().Sub(started); d > time.Second {
+				log.Printf("ecs-ec2: slot %s gave back %s after %.0fs", instanceID, ec2HomeDevice, d.Seconds())
+			}
+			return nil
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("slot %s still holds %s", instanceID, ec2HomeDevice)
+}
+
+// waitDetached blocks until the volume has really left the slot. DetachVolume ANSWERS
+// while the volume is still `detaching`, so anything that acts on the volume next — a
+// DeleteVolume, an attach elsewhere — has to wait for this or it fails with VolumeInUse
+// (measured).
+func (e *ecsEC2Runtime) waitDetached(ctx context.Context, volumeID string) error {
+	for {
+		out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
+		if err != nil {
+			return err
+		}
+		if len(out.Volumes) == 0 || attachedInstance(&out.Volumes[0]) == "" {
+			return nil
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
+}
+
+// waitTasksGone waits until the service actually has no task left. Detaching while the
+// container still holds the mount is the failure mode this exists to prevent.
+func (e *ecsEC2Runtime) waitTasksGone(ctx context.Context) error {
+	for {
+		s, ok, err := e.base.describeService(ctx)
+		if err != nil {
+			return err
+		}
+		if !ok || (s.RunningCount == 0 && s.PendingCount == 0) {
+			return nil
+		}
+		if s.DesiredCount > 0 {
+			return fmt.Errorf("service %s is at desired %d; not releasing its slot", e.base.name, s.DesiredCount)
+		}
+		if err := e.sleep(ctx, 3*time.Second); err != nil {
+			return err
+		}
+	}
+}
+
+// Destroy releases the slot, deletes the user's home volume, and then hands the shared
+// (Fargate-side) resources to the base adapter. The slot itself is NOT terminated: it
+// never belonged to this user.
+//
+// ⚠️ P0 left the second half out — it deleted the EBS volume but kept the ECS service,
+// the two EFS access points and the two SSM parameters alive forever (ADR 0045 決定 13,
+// docs/64 §64.18.1). The order matters: the slot has to come back to the pool and the
+// volume has to be detached before the service goes away, because releaseSlot reads the
+// service to prove nothing is running on it.
+//
+// Ordering rationale for the volume vs its snapshot: destroy is irreversible on purpose,
+// so any hibernation snapshot (§64.18.2) goes too — otherwise a "deleted" user keeps
+// billing at snapshot rates and their home is restorable by the next person who gets
+// their membership id.
+func (e *ecsEC2Runtime) Destroy(ctx context.Context) ([]string, error) {
+	if err := e.Stop(ctx); err != nil {
+		return nil, err
+	}
+	if err := e.releaseSlot(ctx); err != nil {
+		return nil, err
+	}
+	if err := e.deleteHomeVolume(ctx); err != nil {
+		return nil, err
+	}
+	if err := e.deleteHomeSnapshots(ctx); err != nil {
+		return nil, err
+	}
+	return e.base.Destroy(ctx)
+}
+
+// deleteHomeVolume detaches (if needed) and deletes this workspace's home volume.
+// Absent volume = already done.
+func (e *ecsEC2Runtime) deleteHomeVolume(ctx context.Context) error {
+	vol, err := e.homeVolume(ctx)
+	if err != nil || vol == nil {
+		return err
+	}
+	volumeID := aws.ToString(vol.VolumeId)
+	if err := e.waitDetached(ctx, volumeID); err != nil {
+		return err
+	}
+	// DescribeVolumes can already report the volume detached while DeleteVolume still
+	// answers VolumeInUse (measured — the two views converge separately). Retry rather
+	// than leave a provisioned volume behind, which is the one leftover here that bills
+	// forever.
+	for i := 0; ; i++ {
+		if _, err = e.ec2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(volumeID)}); err == nil {
+			return nil
+		}
+		if i >= 15 || !strings.Contains(err.Error(), "VolumeInUse") {
+			return err
+		}
+		if serr := e.sleep(ctx, 4*time.Second); serr != nil {
+			return serr
+		}
+	}
+}
+
+// homeSnapshots returns this workspace's hibernation snapshots (§64.18.2), newest first
+// is not guaranteed — callers that need one pick by state. Owner self-scoped so a
+// public snapshot with a colliding tag can never be picked up.
+func (e *ecsEC2Runtime) homeSnapshots(ctx context.Context) ([]ec2types.Snapshot, error) {
+	out, err := e.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		OwnerIds: []string{"self"},
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagMembership, e.base.membershipID),
+			tagFilter(ec2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out.Snapshots, nil
+}
+
+// hibernate is one STEP of putting a long-unused home to sleep (ADR 0045 決定 4, docs/64
+// §64.18.2), not the whole thing. A snapshot of a 45 GiB home takes 30–40 minutes, and
+// the sweeper cannot sit on that, so the operation is resumable: each sweep advances it
+// by one step and the state lives in AWS, not in the CP (ADR 0012).
+//
+//	no snapshot          → release the slot, then start one
+//	snapshot pending     → nothing to do; the next sweep looks again
+//	snapshot completed   → delete the volume (the home is now the snapshot)
+//
+// The slot is released BEFORE the snapshot on purpose: releaseSlot unmounts and detaches,
+// so what gets captured is a quiesced filesystem rather than a crash-consistent image of
+// a live mount. It also returns the slot to the pool at the earliest moment, which is
+// half of why hibernation is worth doing.
+func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
+	vol, err := e.homeVolume(ctx)
+	if err != nil || vol == nil {
+		return err
+	}
+	volumeID := aws.ToString(vol.VolumeId)
+	mark, err := e.hibernationMark(ctx, vol)
+	if err != nil {
+		return err
+	}
+	snaps, err := e.homeSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range snaps {
+		// Only a snapshot of THIS volume, started after THIS hibernation's mark, is the
+		// capture we are waiting for. Everything else is a leftover — from a restore
+		// whose cleanup did not finish, or from a dormancy the owner interrupted by
+		// coming back — and taking one of those for the capture deletes a volume holding
+		// work that was never captured.
+		if aws.ToString(s.VolumeId) != volumeID || s.StartTime == nil || s.StartTime.Before(mark) {
+			log.Printf("ecs-ec2 hibernate: dropping the superseded snapshot %s of %s",
+				aws.ToString(s.SnapshotId), e.base.name)
+			if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId}); err != nil && !isAWSNotFound(err) {
+				return err
+			}
+			continue
+		}
+		switch s.State {
+		case ec2types.SnapshotStateCompleted:
+			log.Printf("ecs-ec2 hibernate: %s captured in %s; deleting the volume",
+				e.base.name, aws.ToString(s.SnapshotId))
+			return e.deleteHomeVolume(ctx)
+		case ec2types.SnapshotStateError:
+			// A failed snapshot would otherwise pin the home in this state forever:
+			// never "completed", so the volume never goes, and never absent, so no new
+			// snapshot is ever started.
+			log.Printf("ecs-ec2 hibernate: snapshot %s of %s failed; discarding it and retrying",
+				aws.ToString(s.SnapshotId), e.base.name)
+			if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId}); err != nil && !isAWSNotFound(err) {
+				return err
+			}
+			return nil
+		default:
+			return nil // pending: let it finish
+		}
+	}
+	if err := e.releaseSlot(ctx); err != nil {
+		return fmt.Errorf("release the slot before snapshotting: %w", err)
+	}
+	out, err := e.ec2.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId:    aws.String(volumeID),
+		Description: aws.String("agent-fleet hibernated home for " + e.base.name),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeSnapshot,
+			Tags: []ec2types.Tag{
+				{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
+				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
+				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
+				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
+				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-home")},
+			},
+		}},
+	})
+	if err != nil {
+		return fmt.Errorf("snapshot %s: %w", volumeID, err)
+	}
+	log.Printf("ecs-ec2 hibernate: %s → %s (the volume goes once it completes)",
+		e.base.name, aws.ToString(out.SnapshotId))
+	return nil
+}
+
+// hibernationMark returns the moment this hibernation began, stamping it if this is the
+// first step. Written BEFORE the slot is released so a CP that dies in between resumes
+// instead of starting over — and so the mark always predates the snapshot it validates.
+func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volume) (time.Time, error) {
+	if v := ec2TagValue(vol.Tags, ec2TagHibernating); v != "" {
+		at, err := time.Parse(time.RFC3339, v)
+		if err == nil {
+			return at, nil
+		}
+		// An unparseable mark is worse than none: every snapshot would compare against a
+		// zero time and be accepted. Re-stamp.
+		log.Printf("ecs-ec2 hibernate: %s has an unreadable %s tag (%q); re-stamping",
+			e.base.name, ec2TagHibernating, v)
+	}
+	// RFC3339Nano, not RFC3339: second granularity would round the mark DOWN, placing it
+	// up to a second before it was actually written — long enough to accept a snapshot
+	// from the dormancy this one replaces.
+	at := e.now().UTC()
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{aws.ToString(vol.VolumeId)},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagHibernating), Value: aws.String(at.Format(time.RFC3339Nano))}},
+	}); err != nil {
+		return time.Time{}, fmt.Errorf("mark %s as hibernating: %w", aws.ToString(vol.VolumeId), err)
+	}
+	return at, nil
+}
+
+// restoreSnapshot returns the completed hibernation snapshot to build this home from, or
+// "" when there is none. A pending one is deliberately NOT used: CreateVolume from an
+// incomplete snapshot is rejected, and answering "" here means the user gets a fresh home
+// while their real one is still being captured — data loss dressed up as a fast start.
+// Returning an error instead makes the Start fail, which is the honest outcome.
+func (e *ecsEC2Runtime) restoreSnapshot(ctx context.Context) (string, error) {
+	snaps, err := e.homeSnapshots(ctx)
+	if err != nil {
+		return "", err
+	}
+	// NEWEST completed, not first: a restore whose snapshot cleanup failed leaves an
+	// older one behind, and picking that would silently hand the user a home from two
+	// hibernations ago.
+	var newest *ec2types.Snapshot
+	for i := range snaps {
+		if snaps[i].State != ec2types.SnapshotStateCompleted {
+			continue
+		}
+		if newest == nil || snapshotStartedAfter(snaps[i], *newest) {
+			newest = &snaps[i]
+		}
+	}
+	if newest != nil {
+		return aws.ToString(newest.SnapshotId), nil
+	}
+	for _, s := range snaps {
+		if s.State == ec2types.SnapshotStatePending {
+			return "", fmt.Errorf("home of %s is being hibernated (%s); try again once it completes",
+				e.base.name, aws.ToString(s.SnapshotId))
+		}
+	}
+	return "", nil
+}
+
+// goldenSnapshot returns the pool's pre-baked home for the image this deployment runs, or
+// "" to build an empty one. Best-effort by design: a new user with no golden gets a slow
+// first start, which is a worse experience but not a wrong one, so nothing here is ever
+// promoted to an error that blocks a Start.
+//
+// ★ The image stamp is checked, not assumed. Re-baking is a manual step tied to a release
+// (決定 9), and the failure mode of forgetting it is invisible: only NEW users get it,
+// they get old CLIs, and everything looks fine. A stale golden is therefore refused —
+// loudly — rather than used.
+func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
+	out, err := e.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		OwnerIds: []string{"self"},
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, e.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleGolden),
+		},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2: looking up the golden snapshot failed; building an empty home: %v", err)
+		return ""
+	}
+	want := e.base.cfg.workspaceImage
+	var stale []string
+	var newest *ec2types.Snapshot
+	for i := range out.Snapshots {
+		s := out.Snapshots[i]
+		if s.State != ec2types.SnapshotStateCompleted {
+			continue
+		}
+		if got := ec2TagValue(s.Tags, ec2TagImage); got != want {
+			stale = append(stale, fmt.Sprintf("%s(%s)", aws.ToString(s.SnapshotId), got))
+			continue
+		}
+		if newest == nil || snapshotStartedAfter(s, *newest) {
+			newest = &out.Snapshots[i]
+		}
+	}
+	if newest != nil {
+		return aws.ToString(newest.SnapshotId)
+	}
+	if len(stale) > 0 {
+		log.Printf("ecs-ec2: the golden snapshot %s was baked from another image; this deployment runs %s. "+
+			"New homes are being built EMPTY (slow first start) until it is re-baked — ADR 0045 決定 9.",
+			strings.Join(stale, ", "), want)
+	}
+	return ""
+}
+
+func snapshotStartedAfter(a, b ec2types.Snapshot) bool {
+	if a.StartTime == nil {
+		return false
+	}
+	return b.StartTime == nil || a.StartTime.After(*b.StartTime)
+}
+
+// deleteHomeSnapshots removes every hibernation snapshot of this home. Called by Destroy
+// and, after a restore, by createHomeVolume — both are moments when the snapshot is
+// definitively superseded. Hibernation itself must never call it: it would delete the
+// snapshot it just took.
+func (e *ecsEC2Runtime) deleteHomeSnapshots(ctx context.Context) error {
+	snaps, err := e.homeSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range snaps {
+		if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{
+			SnapshotId: s.SnapshotId,
+		}); err != nil && !isAWSNotFound(err) {
+			return fmt.Errorf("delete snapshot %s: %w", aws.ToString(s.SnapshotId), err)
+		}
+	}
+	return nil
+}
+
+// --- drift sweeper (docs/64 §64.15.6) ---
+
+// sweepLoop re-derives the world from tags every sweepEvery and finishes whatever a
+// crashed CP left half-done. Without it, "hold no state" would mean "lose the teardown
+// when the process dies": a volume stuck on a slot no one is using, a claim that pins a
+// workspace at `starting`, a ghost container instance the scheduler keeps trying to
+// place onto.
+func (f *ecsEC2Factory) sweepLoop(ctx context.Context) {
+	t := time.NewTicker(f.pool.sweepEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := f.sweep(ctx); err != nil {
+				log.Printf("ecs-ec2 sweep: %v", err)
+			}
+		}
+	}
+}
+
+func (f *ecsEC2Factory) sweep(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, f.pool.waitBudget)
+	defer cancel()
+	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, f.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("describe home volumes: %w", err)
+	}
+	for i := range vols.Volumes {
+		f.sweepVolume(ctx, &vols.Volumes[i])
+	}
+	return f.sweepGhostInstances(ctx)
+}
+
+func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
+	rt := f.runtimeForVolume(vol)
+	if rt == nil {
+		return
+	}
+	volumeID := aws.ToString(vol.VolumeId)
+	if ec2TagValue(vol.Tags, ec2TagClaim) != "" && !rt.claimLive(vol) {
+		log.Printf("ecs-ec2 sweep: clearing an expired claim on %s", volumeID)
+		rt.unclaim(ctx, volumeID)
+	}
+	att := attachment(vol)
+	if att == nil {
+		// A hibernation already under way: the slot went back to the pool at its first
+		// step (which is also what cleared af-idle-since, so the dormancy test below
+		// cannot be what resumes it). Keep advancing it — nothing else will, and stopping
+		// here leaves BOTH a snapshot and a volume billing. Deliberately not gated on
+		// hibernateAfter: turning the feature off must not strand a home half-way.
+		if ec2TagValue(vol.Tags, ec2TagHibernating) != "" {
+			if err := rt.hibernate(ctx); err != nil {
+				log.Printf("ecs-ec2 sweep: hibernating %s failed: %v", rt.base.name, err)
+			}
+		}
+		return
+	}
+	instanceID := aws.ToString(att.InstanceId)
+	s, ok, err := rt.base.describeService(ctx)
+	if err != nil {
+		return
+	}
+	if ok && (s.DesiredCount > 0 || s.RunningCount > 0 || s.PendingCount > 0) {
+		return // live workspace: leave it alone
+	}
+	if !ok {
+		// Attached but the workspace has no service at all — drift (a launch that never
+		// got that far, or a workspace that was removed). This is the only case where
+		// the sweeper still takes the home off its slot; a merely STOPPED workspace
+		// keeps its slot on purpose (lazy release).
+		//
+		// The grace is on the ATTACH time and belongs to THIS branch only: a Start
+		// attaches before it creates the service, so without it a sweep landing in that
+		// window would tear down a launch in progress. The idle-stop below must NOT be
+		// gated this way — a long-lived attachment is exactly what it is looking for.
+		if att.AttachTime != nil && time.Since(*att.AttachTime) < f.pool.releaseGrace {
+			return
+		}
+		log.Printf("ecs-ec2 sweep: %s is attached to %s but has no service; releasing", volumeID, instanceID)
+		if err := rt.releaseSlot(ctx); err != nil {
+			log.Printf("ecs-ec2 sweep: releasing %s failed: %v", volumeID, err)
+		}
+		return
+	}
+	// Dormant workspace. Stamp it if the Stop lost the mark, then put the slot to sleep
+	// once it has been dormant long enough: a stopped slot keeps the image cache and the
+	// attachment (so the owner comes back in ~90s instead of 135s) and costs only its
+	// root volume instead of a running instance.
+	idle, marked := idleSince(vol, time.Now())
+	if !marked {
+		rt.markIdle(ctx, volumeID)
+		return
+	}
+	// Hibernation is the third and last step of the same series (reaper stops the
+	// workspace → the slot sleeps → the home becomes a snapshot). Checked before the
+	// slot-sleep branch because it subsumes it: hibernating releases the slot outright,
+	// so there is nothing left to put to sleep.
+	if f.pool.hibernateAfter > 0 && idle >= f.pool.hibernateAfter {
+		log.Printf("ecs-ec2 sweep: %s has been dormant %.0fh; hibernating the home",
+			rt.base.name, idle.Hours())
+		if err := rt.hibernate(ctx); err != nil {
+			log.Printf("ecs-ec2 sweep: hibernating %s failed: %v", rt.base.name, err)
+		}
+		return
+	}
+	if idle < f.pool.slotSleepAfter {
+		return
+	}
+	running, err := rt.instanceRunning(ctx, instanceID)
+	if err != nil || !running {
+		return
+	}
+	// Never stop a slot that still carries a task ENI. ECS detaches those a little after
+	// the task is gone, and an instance stopped in that window comes back MULTI-ENI —
+	// which is how it silently loses its auto-assigned public IPv4 and, on a deployment
+	// without NAT, its egress: the agent then never reconnects (ADR 0045 決定 3-3, and
+	// reproduced through this very code path in the live test). Skipping just means the
+	// next sweep stops it.
+	if held, err := f.taskENIsAttached(ctx, instanceID); err != nil || held {
+		if held {
+			log.Printf("ecs-ec2 sweep: slot %s still has a task ENI; leaving it running for now", instanceID)
+		}
+		return
+	}
+	log.Printf("ecs-ec2 sweep: %s has been dormant %.0fm; stopping slot %s (home stays attached)",
+		rt.base.name, idle.Minutes(), instanceID)
+	if _, err := f.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{instanceID}}); err != nil {
+		log.Printf("ecs-ec2 sweep: stopping %s failed: %v", instanceID, err)
+	}
+}
+
+// runtimeForVolume rebuilds just enough of an ecsEC2Runtime to act on a volume found by
+// tag — the sweeper starts from AWS, not from the database, so it can clean up after a
+// workspace the CP has not looked at since it restarted.
+func (f *ecsEC2Factory) runtimeForVolume(vol *ec2types.Volume) *ecsEC2Runtime {
+	membership := ec2TagValue(vol.Tags, ec2TagMembership)
+	name := ec2TagValue(vol.Tags, ec2TagWorkspace)
+	if membership == "" || name == "" {
+		return nil
+	}
+	rt, ok := f.New(Workspace{ContainerName: name, MembershipID: membership}, "", nil).(*ecsEC2Runtime)
+	if !ok {
+		return nil
+	}
+	return rt
+}
+
+// sweepGhostInstances deregisters container instances whose EC2 instance is gone or
+// long disconnected. ECS does NOT do this for stopped instances or disconnected agents
+// even when they are terminated (ADR 0045 決定 3-2), and the ghosts satisfy placement
+// constraints — the scheduler keeps aiming tasks at a box that is not there.
+func (f *ecsEC2Factory) sweepGhostInstances(ctx context.Context) error {
+	rt := &ecsEC2Runtime{
+		base: &ecsRuntime{cfg: f.base.cfg, ecs: f.base.ecs}, ci: f.ci, ec2: f.ec2, pool: f.pool,
+		bg: backgroundWithin(f.pool.waitBudget), now: time.Now, sleep: sleepCtx,
+	}
+	arns, err := rt.listContainerInstanceARNs(ctx)
+	if err != nil || len(arns) == 0 {
+		return err
+	}
+	for _, chunk := range chunkStrings(arns, 100) {
+		out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
+			Cluster:            aws.String(f.base.cfg.cluster),
+			ContainerInstances: chunk,
+		})
+		if err != nil {
+			return err
+		}
+		for _, ci := range out.ContainerInstances {
+			if ci.AgentConnected || aws.ToString(ci.Status) != "ACTIVE" {
+				continue
+			}
+			if ci.RegisteredAt != nil && time.Since(*ci.RegisteredAt) < f.pool.ghostAfter {
+				continue
+			}
+			id := aws.ToString(ci.Ec2InstanceId)
+			alive, err := f.instanceAlive(ctx, id)
+			if err != nil || alive {
+				continue
+			}
+			log.Printf("ecs-ec2 sweep: deregistering ghost container instance %s (ec2 %s is gone)",
+				aws.ToString(ci.ContainerInstanceArn), id)
+			if _, err := f.ci.DeregisterContainerInstance(ctx, &ecs.DeregisterContainerInstanceInput{
+				Cluster:           aws.String(f.base.cfg.cluster),
+				ContainerInstance: ci.ContainerInstanceArn,
+				Force:             aws.Bool(true),
+			}); err != nil {
+				log.Printf("ecs-ec2 sweep: deregistering %s failed: %v", id, err)
+			}
+		}
+	}
+	return nil
+}
+
+// taskENIsAttached reports whether ECS still has a task network interface on the slot.
+// Task ENIs are described with the attachment ARN of the task that owns them, which is
+// what distinguishes them from the instance's own primary interface.
+func (f *ecsEC2Factory) taskENIsAttached(ctx context.Context, instanceID string) (bool, error) {
+	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil {
+		return false, err
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			for _, ni := range inst.NetworkInterfaces {
+				if strings.Contains(aws.ToString(ni.Description), ":ecs:") {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+func (f *ecsEC2Factory) instanceAlive(ctx context.Context, instanceID string) (bool, error) {
+	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil {
+		return true, err // unknown: never deregister on a failed lookup
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			if inst.State != nil && inst.State.Name != ec2types.InstanceStateNameTerminated {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// --- small helpers ---
+
+func tagFilter(key, value string) ec2types.Filter {
+	return ec2types.Filter{Name: aws.String("tag:" + key), Values: []string{value}}
+}
+
+func ec2TagValue(tags []ec2types.Tag, key string) string {
+	for _, t := range tags {
+		if aws.ToString(t.Key) == key {
+			return aws.ToString(t.Value)
+		}
+	}
+	return ""
+}
+
+func attachment(vol *ec2types.Volume) *ec2types.VolumeAttachment {
+	for i := range vol.Attachments {
+		switch vol.Attachments[i].State {
+		case ec2types.VolumeAttachmentStateAttached, ec2types.VolumeAttachmentStateAttaching:
+			return &vol.Attachments[i]
+		}
+	}
+	return nil
+}
+
+func attachedInstance(vol *ec2types.Volume) string {
+	if a := attachment(vol); a != nil {
+		return aws.ToString(a.InstanceId)
+	}
+	return ""
+}
+
+func filterSlotsByAZ(slots []ec2SlotCandidate, az string) []ec2SlotCandidate {
+	var out []ec2SlotCandidate
+	for _, s := range slots {
+		if s.az == az {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func chunkStrings(in []string, n int) [][]string {
+	var out [][]string
+	for len(in) > n {
+		out = append(out, in[:n])
+		in = in[n:]
+	}
+	if len(in) > 0 {
+		out = append(out, in)
+	}
+	return out
+}
+
+// sleepCtx sleeps unless the context ends first — the poll primitive every wait above
+// is built on, so a canceled Start stops polling AWS immediately.
+// backgroundWithin is the production bg: detach from the request (whose cancelation
+// would otherwise kill the convergence the moment the HTTP response is written) but
+// keep a budget, so a wedged AWS call cannot leak a goroutine forever.
+func backgroundWithin(budget time.Duration) func(context.Context, func(context.Context)) {
+	return func(ctx context.Context, fn func(context.Context)) {
+		go func() {
+			c, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
+			defer cancel()
+			fn(c)
+		}()
+	}
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// --- pool status for the admin UI (docs/64 §64.18.6) ---
+
+// ec2SlotView / ec2HomeView / ec2PoolStatus are what an operator needs to answer the three
+// questions this runtime introduces and no other one has: how many boxes am I paying for,
+// which of them are asleep, and whose home is where. Everything is derived from AWS at
+// call time — there is no pool state in the CP to show (ADR 0012).
+type ec2SlotView struct {
+	InstanceID   string `json:"instance_id"`
+	InstanceType string `json:"instance_type"`
+	AZ           string `json:"az"`
+	State        string `json:"state"`      // running | stopped | pending | …
+	Registered   bool   `json:"registered"` // ECS accepts tasks on it
+	Workspace    string `json:"workspace"`  // occupant, "" = free
+	IdleMinutes  int    `json:"idle_minutes"`
+}
+
+type ec2HomeView struct {
+	VolumeID      string `json:"volume_id"`
+	Workspace     string `json:"workspace"`
+	SizeGiB       int32  `json:"size_gib"`
+	AZ            string `json:"az"`
+	AttachedTo    string `json:"attached_to"` // "" = detached (hibernating, or drifted)
+	IdleMinutes   int    `json:"idle_minutes"`
+	Hibernating   bool   `json:"hibernating"`
+	SnapshotID    string `json:"snapshot_id"`
+	SnapshotState string `json:"snapshot_state"`
+}
+
+type ec2PoolStatus struct {
+	Runtime      string        `json:"runtime"`
+	Pool         string        `json:"pool"`
+	MaxSlots     int           `json:"max_slots"`
+	SleepAfterS  int           `json:"slot_sleep_sec"`
+	HibernateS   int           `json:"hibernate_after_sec"`
+	Slots        []ec2SlotView `json:"slots"`
+	Homes        []ec2HomeView `json:"homes"`
+	GoldenID     string        `json:"golden_id"`
+	GoldenImage  string        `json:"golden_image"`
+	GoldenStale  bool          `json:"golden_stale"`
+	RunningImage string        `json:"running_image"`
+}
+
+// PoolStatus reports the live pool. Read-only and tolerant: a section that cannot be read
+// comes back empty rather than failing the whole call, because the most likely time an
+// operator opens this screen is when something is already wrong.
+func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
+	// One throwaway runtime as the library for the tag queries — the same trick the
+	// sweeper uses. It is bound to no workspace, so only pool-wide calls are valid on it.
+	probe := &ecsEC2Runtime{
+		base: &ecsRuntime{cfg: f.base.cfg, ecs: f.base.ecs}, ec2: f.ec2, ci: f.ci, pool: f.pool,
+		bg: backgroundWithin(f.pool.waitBudget), now: time.Now, sleep: sleepCtx,
+	}
+	st := ec2PoolStatus{
+		Runtime: "ecs-ec2", Pool: f.pool.pool, MaxSlots: f.pool.maxSlots,
+		SleepAfterS: int(f.pool.slotSleepAfter.Seconds()),
+		HibernateS:  int(f.pool.hibernateAfter.Seconds()),
+		Slots:       []ec2SlotView{}, Homes: []ec2HomeView{},
+		RunningImage: f.base.cfg.workspaceImage,
+	}
+	now := time.Now()
+
+	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, f.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return st, err
+	}
+	occupant := map[string]*ec2HomeView{} // instance id → the home on it
+	for i := range vols.Volumes {
+		v := &vols.Volumes[i]
+		idle, _ := idleSince(v, now)
+		h := ec2HomeView{
+			VolumeID:    aws.ToString(v.VolumeId),
+			Workspace:   ec2TagValue(v.Tags, ec2TagWorkspace),
+			SizeGiB:     aws.ToInt32(v.Size),
+			AZ:          aws.ToString(v.AvailabilityZone),
+			AttachedTo:  attachedInstance(v),
+			IdleMinutes: int(idle.Minutes()),
+			Hibernating: ec2TagValue(v.Tags, ec2TagHibernating) != "",
+		}
+		st.Homes = append(st.Homes, h)
+		if h.AttachedTo != "" {
+			occupant[h.AttachedTo] = &st.Homes[len(st.Homes)-1]
+		}
+	}
+
+	insts, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, f.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleSlot),
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
+		},
+	})
+	if err != nil {
+		return st, err
+	}
+	registered, err := probe.registeredSlots(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 pool status: container instances unreadable: %v", err)
+		registered = map[string]bool{}
+	}
+	for _, r := range insts.Reservations {
+		for _, inst := range r.Instances {
+			id := aws.ToString(inst.InstanceId)
+			s := ec2SlotView{
+				InstanceID: id, InstanceType: string(inst.InstanceType),
+				AZ: aws.ToString(inst.Placement.AvailabilityZone), Registered: registered[id],
+			}
+			if inst.State != nil {
+				s.State = string(inst.State.Name)
+			}
+			if h := occupant[id]; h != nil {
+				s.Workspace, s.IdleMinutes = h.Workspace, h.IdleMinutes
+			}
+			st.Slots = append(st.Slots, s)
+		}
+	}
+	sort.SliceStable(st.Slots, func(i, j int) bool { return st.Slots[i].InstanceID < st.Slots[j].InstanceID })
+	sort.SliceStable(st.Homes, func(i, j int) bool { return st.Homes[i].Workspace < st.Homes[j].Workspace })
+
+	// Hibernation snapshots, matched back onto the homes they belong to, plus the golden.
+	snaps, err := f.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		OwnerIds: []string{"self"},
+		Filters:  []ec2types.Filter{tagFilter(ec2TagPool, f.pool.pool)},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2 pool status: snapshots unreadable: %v", err)
+		return st, nil
+	}
+	for _, s := range snaps.Snapshots {
+		switch ec2TagValue(s.Tags, ec2TagRole) {
+		case ec2RoleGolden:
+			// A matching golden wins over a stale one, so the screen shows what the Start
+			// path would actually use — and shows the stale one only when that is all
+			// there is, which is exactly when the operator needs to be told to re-bake.
+			img := ec2TagValue(s.Tags, ec2TagImage)
+			if st.GoldenID == "" || img == st.RunningImage {
+				st.GoldenID, st.GoldenImage = aws.ToString(s.SnapshotId), img
+			}
+		case ec2RoleHome:
+			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
+			for i := range st.Homes {
+				if st.Homes[i].Workspace == ws {
+					st.Homes[i].SnapshotID = aws.ToString(s.SnapshotId)
+					st.Homes[i].SnapshotState = string(s.State)
+				}
+			}
+			// A home whose volume is already gone is not in Homes at all — it IS the
+			// snapshot now, and an operator looking for "where did that user go" needs
+			// to see it.
+			if !hasHome(st.Homes, ws) {
+				st.Homes = append(st.Homes, ec2HomeView{
+					Workspace: ws, Hibernating: true,
+					SnapshotID: aws.ToString(s.SnapshotId), SnapshotState: string(s.State),
+				})
+			}
+		}
+	}
+	st.GoldenStale = st.GoldenID != "" && st.GoldenImage != st.RunningImage
+	return st, nil
+}
+
+func hasHome(homes []ec2HomeView, workspace string) bool {
+	for _, h := range homes {
+		if h.Workspace == workspace && h.VolumeID != "" {
+			return true
+		}
+	}
+	return false
+}
