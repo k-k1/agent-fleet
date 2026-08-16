@@ -54,6 +54,28 @@ describe("drawioFrameSrcdoc", () => {
     expect(html(true)).toContain("background:#1e1e1e");
   });
 
+  it("dark-mode は真偽値ではなく文字列で渡す", () => {
+    // isDarkMode() は "dark" / "auto" と比較するので、true は黙って「ライト」になる。
+    // 暗い背景に黒い既定文字が載って読めなくなる（docs/65 §65.11-10）。
+    // 値はフレームの中で描画時に決まるので、ここで見えるのは式そのもの。
+    // **実際に暗色描画になったか**は scripts/drawio/check.mjs が isDarkMode() で検算する。
+    expect(html()).toContain('"dark-mode": dark ? "dark" : "light"');
+    expect(html()).not.toMatch(/"dark-mode": dark,/);
+  });
+
+  it("ジェスチャを自分で配線する（GraphViewer は何もしない）", () => {
+    const s = html();
+    // ホイールは passive 既定では preventDefault が効かないので明示する。
+    expect(s).toContain('"wheel"');
+    expect(s).toContain("{ passive: false }");
+    expect(s).toContain('"pointerdown"');
+    expect(s).toContain('"dblclick"');
+    // スマホのピンチを図に届かせるには touch-action を切るしかない。
+    expect(s).toContain("touch-action:none");
+    // 収め直しは fitGraph ではなく initialViewState（幅が同じだと fitGraph は無反応）。
+    expect(s).toContain("initialViewState");
+  });
+
   it("window.onerror ではなく addEventListener で失敗を拾う", () => {
     // ビューア本体が window.onerror を上書きするため（実測）。
     const s = html();
