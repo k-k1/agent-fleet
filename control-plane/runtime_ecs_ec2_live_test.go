@@ -697,19 +697,25 @@ func TestECSEC2LiveScale(t *testing.T) {
 	// --- 2. the second AZ. An EBS volume never leaves its AZ, so a user whose home is
 	// there must get a slot there — including growing one, since every existing slot is in
 	// the other AZ and offering one would fail the attach. ---
-	subnetB := os.Getenv("AF_HARNESS_SUBNET_B")
+	// Which subnet is "the other AZ" is not a fixed one: a new home follows anyAZ(), which
+	// sorts the configured subnet IDs and takes the first — so the default AZ depends on
+	// the IDs AWS happened to hand out, not on the order in AF_ECS_SUBNETS (measured: with
+	// 1a listed first, every new home still landed in 1c). Pick the one the adapter did
+	// NOT choose, by looking at where the homes actually are.
+	azB, subnetB := "", ""
+	for _, s := range f.base.cfg.subnets {
+		if az := live.azOfSubnet(s); az != "" && az != azs[users[0].Name()] {
+			azB, subnetB = az, s
+			break
+		}
+	}
 	var u4 *ecsEC2Runtime
-	if subnetB == "" {
-		t.Log("AZ COVERAGE SKIPPED: AF_HARNESS_SUBNET_B is unset, so only one AZ is configured. " +
-			"Re-run against a harness built with two private subnets to cover it.")
+	if azB == "" {
+		t.Logf("AZ COVERAGE SKIPPED: every configured subnet (%v) is in %s, so the AZ-bound "+
+			"placement path is not exercised. Re-run against a harness with two AZs.",
+			f.base.cfg.subnets, azs[users[0].Name()])
 	} else {
-		azB := live.azOfSubnet(subnetB)
-		if azB == "" {
-			t.Fatalf("cannot resolve the AZ of %s", subnetB)
-		}
-		if azB == azs[users[0].Name()] {
-			t.Fatalf("AF_HARNESS_SUBNET_B (%s) is in %s, the same AZ as the other homes", subnetB, azB)
-		}
+		t.Logf("second AZ: %s (%s); the homes above are in %s", azB, subnetB, azs[users[0].Name()])
 		u4 = newUser("s4")
 		if _, err := u4.createHomeVolume(ctx, azB); err != nil {
 			t.Fatalf("create a home in %s: %v", azB, err)
