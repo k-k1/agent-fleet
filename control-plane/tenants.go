@@ -889,3 +889,26 @@ func (a adminAPI) setMembershipRole(w http.ResponseWriter, r *http.Request, _ Id
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user_key": body.UserKey, "tenant": t.Slug, "role": role})
 }
+
+// poolStatus (GET /api/admin/ec2-pool) reports the EC2 slot pool: how many boxes are
+// provisioned, which are asleep, whose home is on which one, what is hibernating, and
+// whether the golden snapshot still matches the running image (docs/64 §64.18.6).
+//
+// super_admin only. This is deployment infrastructure — slots are shared across tenants,
+// so there is no view of it that belongs to one tenant_admin.
+//
+// On every other runtime profile it answers {"runtime": ...} with no pool, and the
+// Console hides the screen. Reporting an empty pool instead would read as "your slots all
+// vanished" on a Fargate deployment.
+func (a adminAPI) poolStatus(w http.ResponseWriter, r *http.Request, _ Identity) {
+	st, ok, err := a.mgr.poolStatus(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"runtime": "other"})
+		return
+	}
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}

@@ -1761,3 +1761,85 @@ func TestECSEC2DestroyLeavesTheGoldenAlone(t *testing.T) {
 		t.Error("destroying one workspace took the pool's golden snapshot with it")
 	}
 }
+
+// --- pool status for the admin UI (docs/64 §64.18.6) ---
+
+// The screen exists to answer three questions no other runtime raises: how many boxes am
+// I paying for, which are asleep, and whose home is where. A hibernated home has NO
+// volume, so it is only visible if the snapshot is folded back in — otherwise the user
+// simply disappears from the list, which reads as "their home is gone".
+func TestECSEC2PoolStatus(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	f := h.factory()
+	f.pool.hibernateAfter = 30 * 24 * time.Hour
+
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.addSlot("i-zzz", "ap-northeast-1a", "m7i.large", false, false)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-90*time.Minute).UTC().Format(time.RFC3339))
+	// Carol's home is already a snapshot: the volume is gone.
+	h.ec2.snapshots["snap-carol"] = &ec2types.Snapshot{
+		SnapshotId: aws.String("snap-carol"), State: ec2types.SnapshotStateCompleted,
+		StartTime: aws.Time(time.Now()),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagPool), Value: aws.String("clu")},
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
+			{Key: aws.String(ec2TagWorkspace), Value: aws.String("af-ws-acme-carol")},
+		},
+	}
+	h.ec2.addGolden("snap-golden", "clu", "ecr/af-workspace:0.7.0", ec2types.SnapshotStateCompleted, time.Now())
+
+	st, err := f.PoolStatus(ctx)
+	if err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if st.Runtime != "ecs-ec2" || len(st.Slots) != 2 {
+		t.Fatalf("runtime=%q slots=%d, want ecs-ec2 / 2", st.Runtime, len(st.Slots))
+	}
+	byID := map[string]ec2SlotView{}
+	for _, s := range st.Slots {
+		byID[s.InstanceID] = s
+	}
+	if got := byID["i-hot"]; got.State != "running" || got.Workspace != "af-ws-acme-alice" {
+		t.Errorf("i-hot = %+v, want running and occupied", got)
+	}
+	if got := byID["i-zzz"]; got.State != "stopped" || got.Workspace != "" {
+		t.Errorf("i-zzz = %+v, want a stopped, free slot", got)
+	}
+	if got := byID["i-hot"].IdleMinutes; got < 85 || got > 95 {
+		t.Errorf("dormant minutes = %d, want ~90", got)
+	}
+	var alice, carol *ec2HomeView
+	for i := range st.Homes {
+		switch st.Homes[i].Workspace {
+		case "af-ws-acme-alice":
+			alice = &st.Homes[i]
+		case "af-ws-acme-carol":
+			carol = &st.Homes[i]
+		}
+	}
+	if alice == nil || alice.AttachedTo != "i-hot" {
+		t.Errorf("alice = %+v, want her home on i-hot", alice)
+	}
+	if carol == nil {
+		t.Fatal("a hibernated home vanished from the list — it reads as 'their home is gone'")
+	}
+	if !carol.Hibernating || carol.SnapshotID != "snap-carol" || carol.VolumeID != "" {
+		t.Errorf("carol = %+v, want a hibernated home with no volume", carol)
+	}
+	if !st.GoldenStale || st.GoldenImage != "ecr/af-workspace:0.7.0" {
+		t.Errorf("golden = %q/%q stale=%v, want it reported as stale against %q",
+			st.GoldenID, st.GoldenImage, st.GoldenStale, st.RunningImage)
+	}
+}
+
+// Nothing else in the product has a pool, and an empty table on a Fargate deployment
+// reads as "my slots all vanished".
+func TestPoolStatusIsAbsentOnOtherRuntimes(t *testing.T) {
+	m := &manager{rtFactory: &dockerFactory{}}
+	if _, ok, err := m.poolStatus(context.Background()); ok || err != nil {
+		t.Errorf("poolStatus on the docker runtime = (ok=%v, err=%v), want (false, nil)", ok, err)
+	}
+}

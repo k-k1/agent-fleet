@@ -388,7 +388,7 @@ func isAWSNotFound(err error) bool {
 	}
 	s := err.Error()
 	for _, needle := range []string{
-		"NotFound",      // AccessPointNotFound, ParameterNotFound, InvalidVolume.NotFound, …
+		"NotFound", // AccessPointNotFound, ParameterNotFound, InvalidVolume.NotFound, …
 		"ServiceNotActive",
 		"ServiceNotFoundException",
 		"does not exist",

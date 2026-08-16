@@ -2470,3 +2470,177 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 		return nil
 	}
 }
+
+// --- pool status for the admin UI (docs/64 §64.18.6) ---
+
+// ec2SlotView / ec2HomeView / ec2PoolStatus are what an operator needs to answer the three
+// questions this runtime introduces and no other one has: how many boxes am I paying for,
+// which of them are asleep, and whose home is where. Everything is derived from AWS at
+// call time — there is no pool state in the CP to show (ADR 0012).
+type ec2SlotView struct {
+	InstanceID   string `json:"instance_id"`
+	InstanceType string `json:"instance_type"`
+	AZ           string `json:"az"`
+	State        string `json:"state"`      // running | stopped | pending | …
+	Registered   bool   `json:"registered"` // ECS accepts tasks on it
+	Workspace    string `json:"workspace"`  // occupant, "" = free
+	IdleMinutes  int    `json:"idle_minutes"`
+}
+
+type ec2HomeView struct {
+	VolumeID      string `json:"volume_id"`
+	Workspace     string `json:"workspace"`
+	SizeGiB       int32  `json:"size_gib"`
+	AZ            string `json:"az"`
+	AttachedTo    string `json:"attached_to"` // "" = detached (hibernating, or drifted)
+	IdleMinutes   int    `json:"idle_minutes"`
+	Hibernating   bool   `json:"hibernating"`
+	SnapshotID    string `json:"snapshot_id"`
+	SnapshotState string `json:"snapshot_state"`
+}
+
+type ec2PoolStatus struct {
+	Runtime      string        `json:"runtime"`
+	Pool         string        `json:"pool"`
+	MaxSlots     int           `json:"max_slots"`
+	SleepAfterS  int           `json:"slot_sleep_sec"`
+	HibernateS   int           `json:"hibernate_after_sec"`
+	Slots        []ec2SlotView `json:"slots"`
+	Homes        []ec2HomeView `json:"homes"`
+	GoldenID     string        `json:"golden_id"`
+	GoldenImage  string        `json:"golden_image"`
+	GoldenStale  bool          `json:"golden_stale"`
+	RunningImage string        `json:"running_image"`
+}
+
+// PoolStatus reports the live pool. Read-only and tolerant: a section that cannot be read
+// comes back empty rather than failing the whole call, because the most likely time an
+// operator opens this screen is when something is already wrong.
+func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
+	// One throwaway runtime as the library for the tag queries — the same trick the
+	// sweeper uses. It is bound to no workspace, so only pool-wide calls are valid on it.
+	probe := &ecsEC2Runtime{
+		base: &ecsRuntime{cfg: f.base.cfg, ecs: f.base.ecs}, ec2: f.ec2, ci: f.ci, pool: f.pool,
+		bg: backgroundWithin(f.pool.waitBudget), now: time.Now, sleep: sleepCtx,
+	}
+	st := ec2PoolStatus{
+		Runtime: "ecs-ec2", Pool: f.pool.pool, MaxSlots: f.pool.maxSlots,
+		SleepAfterS: int(f.pool.slotSleepAfter.Seconds()),
+		HibernateS:  int(f.pool.hibernateAfter.Seconds()),
+		Slots:       []ec2SlotView{}, Homes: []ec2HomeView{},
+		RunningImage: f.base.cfg.workspaceImage,
+	}
+	now := time.Now()
+
+	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, f.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return st, err
+	}
+	occupant := map[string]*ec2HomeView{} // instance id → the home on it
+	for i := range vols.Volumes {
+		v := &vols.Volumes[i]
+		idle, _ := idleSince(v, now)
+		h := ec2HomeView{
+			VolumeID:    aws.ToString(v.VolumeId),
+			Workspace:   ec2TagValue(v.Tags, ec2TagWorkspace),
+			SizeGiB:     aws.ToInt32(v.Size),
+			AZ:          aws.ToString(v.AvailabilityZone),
+			AttachedTo:  attachedInstance(v),
+			IdleMinutes: int(idle.Minutes()),
+			Hibernating: ec2TagValue(v.Tags, ec2TagHibernating) != "",
+		}
+		st.Homes = append(st.Homes, h)
+		if h.AttachedTo != "" {
+			occupant[h.AttachedTo] = &st.Homes[len(st.Homes)-1]
+		}
+	}
+
+	insts, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, f.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleSlot),
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
+		},
+	})
+	if err != nil {
+		return st, err
+	}
+	registered, err := probe.registeredSlots(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 pool status: container instances unreadable: %v", err)
+		registered = map[string]bool{}
+	}
+	for _, r := range insts.Reservations {
+		for _, inst := range r.Instances {
+			id := aws.ToString(inst.InstanceId)
+			s := ec2SlotView{
+				InstanceID: id, InstanceType: string(inst.InstanceType),
+				AZ: aws.ToString(inst.Placement.AvailabilityZone), Registered: registered[id],
+			}
+			if inst.State != nil {
+				s.State = string(inst.State.Name)
+			}
+			if h := occupant[id]; h != nil {
+				s.Workspace, s.IdleMinutes = h.Workspace, h.IdleMinutes
+			}
+			st.Slots = append(st.Slots, s)
+		}
+	}
+	sort.SliceStable(st.Slots, func(i, j int) bool { return st.Slots[i].InstanceID < st.Slots[j].InstanceID })
+	sort.SliceStable(st.Homes, func(i, j int) bool { return st.Homes[i].Workspace < st.Homes[j].Workspace })
+
+	// Hibernation snapshots, matched back onto the homes they belong to, plus the golden.
+	snaps, err := f.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		OwnerIds: []string{"self"},
+		Filters:  []ec2types.Filter{tagFilter(ec2TagPool, f.pool.pool)},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2 pool status: snapshots unreadable: %v", err)
+		return st, nil
+	}
+	for _, s := range snaps.Snapshots {
+		switch ec2TagValue(s.Tags, ec2TagRole) {
+		case ec2RoleGolden:
+			// A matching golden wins over a stale one, so the screen shows what the Start
+			// path would actually use — and shows the stale one only when that is all
+			// there is, which is exactly when the operator needs to be told to re-bake.
+			img := ec2TagValue(s.Tags, ec2TagImage)
+			if st.GoldenID == "" || img == st.RunningImage {
+				st.GoldenID, st.GoldenImage = aws.ToString(s.SnapshotId), img
+			}
+		case ec2RoleHome:
+			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
+			for i := range st.Homes {
+				if st.Homes[i].Workspace == ws {
+					st.Homes[i].SnapshotID = aws.ToString(s.SnapshotId)
+					st.Homes[i].SnapshotState = string(s.State)
+				}
+			}
+			// A home whose volume is already gone is not in Homes at all — it IS the
+			// snapshot now, and an operator looking for "where did that user go" needs
+			// to see it.
+			if !hasHome(st.Homes, ws) {
+				st.Homes = append(st.Homes, ec2HomeView{
+					Workspace: ws, Hibernating: true,
+					SnapshotID: aws.ToString(s.SnapshotId), SnapshotState: string(s.State),
+				})
+			}
+		}
+	}
+	st.GoldenStale = st.GoldenID != "" && st.GoldenImage != st.RunningImage
+	return st, nil
+}
+
+func hasHome(homes []ec2HomeView, workspace string) bool {
+	for _, h := range homes {
+		if h.Workspace == workspace && h.VolumeID != "" {
+			return true
+		}
+	}
+	return false
+}
