@@ -805,7 +805,57 @@ func TestECSEC2LiveScale(t *testing.T) {
 		t.Errorf("the home did not survive the soak: %q", got)
 	}
 
-	// --- 4. clean up: nothing may outlive this test. ---
+	// --- 4. the reaper's entry point, on real AWS. The lifecycle test drives hibernate()
+	// — the resumable stepper. What is only reachable from the reaper is BeginHibernate:
+	// its guards decide whether a capture starts at all, and both of them are about state
+	// that only AWS knows (ADR 0045 決定 14). s3 is stopped and its slot asleep, which is
+	// exactly the shape a tenant's retention sweep would find. ---
+	s3 := users[2]
+	if err := s3.BeginHibernate(ctx); err != nil {
+		t.Fatalf("BeginHibernate %s: %v", s3.Name(), err)
+	}
+	vol3, err := s3.homeVolume(ctx)
+	if err != nil || vol3 == nil {
+		t.Fatalf("%s home after BeginHibernate: %v", s3.Name(), err)
+	}
+	if ec2TagValue(vol3.Tags, ec2TagHibernating) == "" {
+		t.Error("BeginHibernate did not stamp the hibernation mark")
+	}
+	if inst := attachedInstance(vol3); inst != "" {
+		t.Errorf("the slot was not released before the capture (still on %s)", inst)
+	}
+	snapsBefore, _ := s3.homeSnapshots(ctx)
+	if len(snapsBefore) != 1 {
+		t.Fatalf("snapshots after BeginHibernate = %d, want 1", len(snapsBefore))
+	}
+	// Called again while the capture is pending — the reaper's next pass, or the other
+	// replica's. A second CreateSnapshot here is an orphan nobody deletes.
+	if err := s3.BeginHibernate(ctx); err != nil {
+		t.Fatalf("BeginHibernate (second pass): %v", err)
+	}
+	if snaps, _ := s3.homeSnapshots(ctx); len(snaps) != 1 {
+		t.Errorf("a second pass started another capture: %d snapshots", len(snaps))
+	}
+	// Let the sweep loop finish it, the way it would in production.
+	finishCtx, stopFinish := context.WithCancel(ctx)
+	go f.sweepLoop(finishCtx)
+	live.eventually(20*time.Minute, s3.Name()+"'s home captured and the volume deleted", func() bool {
+		v, err := s3.homeVolume(ctx)
+		return err == nil && v == nil
+	})
+	stopFinish()
+	t.Logf("%s is now a snapshot; the Console should show it as hibernated rather than dropping it from the list", s3.Name())
+	t7 := time.Now()
+	if err := s3.Start(ctx); err != nil {
+		t.Fatalf("restoring %s after the reaper-side hibernation: %v", s3.Name(), err)
+	}
+	live.waitState(s3, "running", 15*time.Minute)
+	t.Logf("MEASURED restore after a reaper-side hibernation = %.1fs", time.Since(t7).Seconds())
+	if got := live.run(live.slotOf(s3), "cat /af-home/m-s3/dev/af-marker.txt"); !strings.Contains(got, "marker-m-s3") {
+		t.Errorf("the home did not survive the reaper-side hibernation: %q", got)
+	}
+
+	// --- 5. clean up: nothing may outlive this test. ---
 	all := append([]*ecsEC2Runtime{}, users...)
 	if u4 != nil {
 		all = append(all, u4)

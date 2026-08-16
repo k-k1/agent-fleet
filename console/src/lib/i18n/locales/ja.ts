@@ -1129,7 +1129,7 @@ export const ja = {
   "pool.asleep": "休止中",
   "pool.asleep_sub": "停止済み・root ボリュームのみ",
   "pool.free": "空き",
-  "pool.free_sub": "誰の home も付いていない",
+  "pool.free_sub": "上のうち home が付いていないもの",
   "pool.at_cap": "上限に達しています。次に起動する人には新しいスロットではなく、最も長く休眠しているユーザーのスロットが割り当てられます（立ち退き）。",
   "pool.timers": "タスクが無くなって {sleep} でスロットを停止します。home はテナント側で指定が無ければ {hibernate} で snapshot へ退避します（デプロイ既定）。",
   "pool.timers_no_hibernate": "タスクが無くなって {sleep} でスロットを停止します。home の退避はテナント側で指定しない限り行いません（テナント → 使われない home の退避）。",

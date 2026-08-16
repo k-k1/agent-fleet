@@ -269,14 +269,21 @@ is untested on real infrastructure; ephemeral storage covers everything up to 20
 
 ## Optional: EC2 slot pool (`WsRuntime=ecs-ec2`)
 
-🚧 **Stood up and run in a sandbox, including a production-shaped VPC — but never at
-scale or for real users.** `40-ec2-pool` has been deployed as a stack and real workspaces
-have run on it end to end, first in a public subnet (docs/64 §64.16, §64.17) and then in a
-**private subnet behind a NAT gateway** (§64.19), which is the shape a real deployment
-has. The task-ENI trap below does not reproduce there — there is no public IPv4 to lose.
-What is still untested is everything about scale: more than two slots, more than two
-users, and any run longer than about fifteen minutes. Fargate (`WsRuntime=ecs`) stays the
-default and is untouched by this profile.
+🚧 **Stood up and run in a sandbox, including a production-shaped VPC — but never with
+real users.** `40-ec2-pool` has been deployed as a stack and real workspaces have run on it
+end to end, first in a public subnet (docs/64 §64.16, §64.17), then in a **private subnet
+behind a NAT gateway** (§64.19), and then with **four slots across two AZs, three users
+starting at once, and the sweep loop left running for eighteen minutes** (§64.20). The
+task-ENI trap below does not reproduce behind a NAT — there is no public IPv4 to lose.
+Fargate (`WsRuntime=ecs`) stays the default and is untouched by this profile.
+
+⚠️ **Multiple AZs: two things to know.** An EBS home cannot leave its AZ, so the CP starts
+a slot in the AZ that user's home is already in — which works, but (1) **every AZ you list
+in `AF_ECS_SUBNETS` needs its own EFS mount target**, or a task landing there cannot mount
+the credentials filesystem, and (2) **a brand-new home always goes to one AZ** — the
+lowest-sorted subnet ID, *not* the first one you listed — and a capacity shortfall there
+stops new users from starting at all while existing ones keep working (ADR 0045「未解決 —
+AZ の選び方」).
 
 **What you get, and what you do NOT.** Measured through the adapter on real AWS, a warm
 Start is 43–110s against Fargate's ~105s — **the start latency is not the reason to switch**
