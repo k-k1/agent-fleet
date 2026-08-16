@@ -146,6 +146,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/admin/tenants", adm.withSuperAdmin(adm.createTenant))
 	mux.HandleFunc("POST /api/admin/memberships", adm.addMembership)
 	mux.HandleFunc("DELETE /api/admin/memberships", adm.removeMembership) // offboarding (docs/61 §61.10.6)
+	mux.HandleFunc("DELETE /api/admin/workspaces", adm.destroyWorkspace) // irreversible; inactive members only (ADR 0045 決定 13)
 	mux.HandleFunc("POST /api/admin/stop-workspace", adm.stopWorkspace)
 	mux.HandleFunc("POST /api/admin/clean-home", adm.cleanHome) // wipe home (tenant_admin, docs/61 §61.10.6)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", adm.withSuperAdmin(adm.setTenantLimits))

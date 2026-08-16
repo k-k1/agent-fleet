@@ -657,6 +657,9 @@ type MembershipStore interface {
 type WorkspaceStore interface {
 	GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error)
 	CreateWorkspace(ctx context.Context, ws Workspace) error
+	// DeleteWorkspace removes the row and its dependents. Irreversible, and only ever
+	// reached through the explicit destroy operation (ADR 0045 決定 13-2).
+	DeleteWorkspace(ctx context.Context, workspaceID string) error
 	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
 	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error)
 	WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error)
