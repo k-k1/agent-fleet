@@ -1140,6 +1140,9 @@ export const ja = {
   "pool.col_state": "状態",
   "pool.col_occupant": "使用中",
   "pool.col_dormant": "休眠",
+  "pool.col_backup": "予備",
+  "pool.backup_none": "無し",
+  "pool.backup_count": "予備 {n} 本",
   "pool.state_asleep": "休止中",
   "pool.not_registered": "（まだタスクを受け付けない）",
   "pool.free_slot": "空き",
@@ -1296,6 +1299,15 @@ export const ja = {
     "この期間だれも開かなかった home は snapshot にして、ディスクを解放します。次に起動したときに戻すので失われるものはありませんが、その回の起動は少し長くなり、戻した直後の数時間はディスクが遅くなります。",
   "admin.hibernate_warn":
     "自動で行うのは退避までで、破棄はしません。書式は時間まで（日は 24h の倍数で書きます）。0 と書くとこのテナントでは退避しません。",
+  // home の予備（ADR 0045 決定 17）。AZ ごと失う話はこのランタイムにしか無いので、
+  // 「なぜ要るのか」を先に書く。RPO の語は使わず「どれだけ巻き戻ってよいか」で言う。
+  "admin.backup_title": "home の予備を取る",
+  "admin.backup_every": "取る間隔",
+  "admin.backup_ph": "例 24h（空=デプロイ既定）",
+  "admin.backup_hint":
+    "home は 1 つのアベイラビリティゾーンの中にあり、そのゾーンごと失われると home も失われます。予備はゾーンの外に置かれるので、そこから作り直せます。ここで決めるのは「最悪どれだけ巻き戻ってよいか」です。",
+  "admin.backup_warn":
+    "使用中のまま取るので、電源が落ちた直後と同じ状態の写しになります（起動時に自動では戻しません。戻すのは管理者の操作です）。0 と書くとこのテナントでは取りません。",
   "admin.term_log_title": "ターミナルログの保存",
   "admin.retention": "保持期間",
   "admin.retention_off": "無効（標準の短命履歴のみ）",

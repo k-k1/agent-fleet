@@ -30,6 +30,13 @@ import (
 //	  it). Runs on stopped workspaces, so it is the mirror image of tiers 1–2,
 //	  and only a runtime that implements hibernatingRuntime does anything.
 //
+//	Tier 4 — home backup: every home_backup_every, a copy of the home is taken
+//	  somewhere its Availability Zone is not. Unlike the other three this one is
+//	  not about idleness at all — it runs whatever the workspace is doing, because
+//	  the thing it protects against (losing the AZ) does not wait for people to go
+//	  home. Only ecs-ec2 implements it; on every other runtime the home is not
+//	  pinned to one AZ in the first place.
+//
 // Timeouts are per-tenant (tenantLimits, super_admin-editable) with a
 // deployment default from env; "0" disables idle-stop for that tenant.
 
@@ -246,6 +253,7 @@ type reaper struct {
 	sessionDef time.Duration
 	wsDef      time.Duration
 	hibDef     time.Duration
+	backupDef  time.Duration
 	bootTime   time.Time
 
 	// idleSince tracks, per live claude session, when it was first observed
@@ -254,21 +262,22 @@ type reaper struct {
 	idleSince map[string]time.Time // workspaceID|session -> first idle
 }
 
-func newReaper(mgr *manager, interval, sessionDef, wsDef, hibDef time.Duration) *reaper {
+func newReaper(mgr *manager, interval, sessionDef, wsDef, hibDef, backupDef time.Duration) *reaper {
 	return &reaper{
 		mgr:        mgr,
 		interval:   interval,
 		sessionDef: sessionDef,
 		wsDef:      wsDef,
 		hibDef:     hibDef,
+		backupDef:  backupDef,
 		bootTime:   time.Now(),
 		idleSince:  map[string]time.Time{},
 	}
 }
 
 func (rp *reaper) run(ctx context.Context) {
-	log.Printf("idle-stop reaper: interval=%s session_default=%s ws_default=%s hibernate_default=%s",
-		rp.interval, rp.sessionDef, rp.wsDef, rp.hibDef)
+	log.Printf("idle-stop reaper: interval=%s session_default=%s ws_default=%s hibernate_default=%s backup_default=%s",
+		rp.interval, rp.sessionDef, rp.wsDef, rp.hibDef, rp.backupDef)
 	t := time.NewTicker(rp.interval)
 	defer t.Stop()
 	for {
@@ -294,8 +303,9 @@ func (rp *reaper) sweep(ctx context.Context) {
 		sessTO, sessOn := idleTimeout(lim.SessionIdleTimeout, rp.sessionDef)
 		wsTO, wsOn := idleTimeout(lim.WSIdleTimeout, rp.wsDef)
 		hibTO, hibOn := idleTimeout(lim.HomeHibernateAfter, rp.hibDef)
-		if !sessOn && !wsOn && !hibOn {
-			continue // idle-stop fully disabled for this tenant
+		backupTO, backupOn := idleTimeout(lim.HomeBackupEvery, rp.backupDef)
+		if !sessOn && !wsOn && !hibOn && !backupOn {
+			continue // nothing enabled for this tenant
 		}
 		wss, err := rp.mgr.store.ListWorkspaces(ctx, t.ID)
 		if err != nil {
@@ -303,7 +313,7 @@ func (rp *reaper) sweep(ctx context.Context) {
 			continue
 		}
 		for _, ws := range wss {
-			rp.sweepWorkspace(ctx, ws, sessTO, sessOn, wsTO, wsOn, hibTO, hibOn, live)
+			rp.sweepWorkspace(ctx, ws, sessTO, sessOn, wsTO, wsOn, hibTO, hibOn, backupTO, backupOn, live)
 		}
 	}
 	// Drop trackers for sessions that no longer exist so a resumed session
@@ -315,8 +325,14 @@ func (rp *reaper) sweep(ctx context.Context) {
 	}
 }
 
-func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.Duration, sessOn bool, wsTO time.Duration, wsOn bool, hibTO time.Duration, hibOn bool, live map[string]bool) {
+func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.Duration, sessOn bool, wsTO time.Duration, wsOn bool, hibTO time.Duration, hibOn bool, backupTO time.Duration, backupOn bool, live map[string]bool) {
 	rt := rp.mgr.runtimeFor(ws, "") // secretKey unused for read/halt calls
+	// Tier 4 first, and outside every state test below: a backup is not about whether
+	// anybody is using this workspace. It takes no locks and changes nothing — a snapshot
+	// of a volume is invisible to the volume — so there is no fence to wait behind either.
+	if backupOn {
+		rp.backupHome(ctx, rt, ws, backupTO)
+	}
 	// Only a "running" workspace is swept by tiers 1–2. "starting" (ECS cold pull) is
 	// deliberately left alone — idle-stopping a workspace that is still converging would
 	// cancel a legitimate launch; its idle clock starts once it actually runs.
@@ -573,6 +589,30 @@ func (rp *reaper) hibernateHome(ctx context.Context, rt Runtime, ws Workspace, h
 	}
 	if err := h.BeginHibernate(lease.Context()); err != nil {
 		log.Printf("idle-stop: hibernating the home of %s: %v", ws.ContainerName, err)
+	}
+}
+
+// backingUpRuntime is tier 4's capability: a runtime whose home lives in one place that
+// can be lost on its own. Only ecs-ec2 has that shape — an EBS volume is pinned to a
+// single Availability Zone and cannot be evacuated — so only it implements this. On
+// docker and native the home is on the host it is already on, and on Fargate it is EFS,
+// which is regional to begin with.
+type backingUpRuntime interface {
+	BackupHome(ctx context.Context, every time.Duration) error
+}
+
+// backupHome is tier 4. It is the one tier that takes no locks: a snapshot does not touch
+// the volume, so there is nothing for a Start, a Stop or a hibernation to collide with,
+// and whether one is due is decided from AWS rather than from anything the reaper
+// remembers. Two CP replicas can therefore both fire in the same window; the cost is one
+// extra incremental copy, which the retention then drops.
+func (rp *reaper) backupHome(ctx context.Context, rt Runtime, ws Workspace, every time.Duration) {
+	b, ok := rt.(backingUpRuntime)
+	if !ok {
+		return // this runtime's home is not pinned to one AZ
+	}
+	if err := b.BackupHome(ctx, every); err != nil {
+		log.Printf("idle-stop: backing up the home of %s: %v", ws.ContainerName, err)
 	}
 }
 

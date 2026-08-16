@@ -1134,6 +1134,9 @@ export const en: Record<keyof typeof ja, string> = {
   "pool.col_state": "State",
   "pool.col_occupant": "Occupied by",
   "pool.col_dormant": "Dormant",
+  "pool.col_backup": "Spare copy",
+  "pool.backup_none": "none",
+  "pool.backup_count": "{n} copies kept",
   "pool.state_asleep": "asleep",
   "pool.not_registered": "(not accepting tasks yet)",
   "pool.free_slot": "free",
@@ -1292,6 +1295,15 @@ export const en: Record<keyof typeof ja, string> = {
     "A home nobody has opened for this long is captured as a snapshot and its disk released. The next start brings it back, so nothing is lost — but that start takes longer, and the disk is slower for a few hours afterwards.",
   "admin.hibernate_warn":
     "Only hibernation is automatic; nothing is ever destroyed this way. The unit goes up to hours, so write days as a multiple of 24h. Enter 0 to never hibernate this tenant's homes.",
+  // Home backups (ADR 0045 決定 17). Losing a whole AZ is a story only this runtime has,
+  // so lead with why it exists. Say "how far back" rather than "RPO".
+  "admin.backup_title": "Keep a spare copy of each home",
+  "admin.backup_every": "Copy every",
+  "admin.backup_ph": "e.g. 24h (empty = deploy default)",
+  "admin.backup_hint":
+    "A home lives inside one Availability Zone, and losing that zone loses the home with it. A spare copy is kept outside the zone, so the home can be rebuilt from it. What you are choosing here is how far back the worst case may throw someone.",
+  "admin.backup_warn":
+    "The copy is taken while the home is in use, so it is the same picture a power cut would leave. It is never restored automatically — that is an operator decision. Enter 0 to take no copies for this tenant.",
   "admin.term_log_title": "Terminal-log retention",
   "admin.retention": "Retention",
   "admin.retention_off": "Disabled (standard short-lived history only)",

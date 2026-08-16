@@ -120,6 +120,7 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Iden
 			"max_workspace_disk_gb": lim.MaxWorkspaceDiskGB,
 			"session_idle_timeout":  lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
 			"home_hibernate_after":            lim.HomeHibernateAfter,
+			"home_backup_every":               lim.HomeBackupEvery,
 			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
 			"terminal_history_retention_days": lim.TerminalHistoryRetentionDays,
 			// Per-tenant login rules (docs/61 §61.9.7), for the admin editor.
@@ -719,6 +720,8 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		WSIdleTimeout      string `json:"ws_idle_timeout"`
 		// Tier-3 home hibernation (ecs-ec2 only): "" => deployment default, "0" => never.
 		HomeHibernateAfter string `json:"home_hibernate_after"`
+		// Tier-4 home backup (ecs-ec2 only): the tenant's RPO. Same resolution.
+		HomeBackupEvery string `json:"home_backup_every"`
 		// Operator gate for member CLI self-update (claude/opencode/codex).
 		AllowAgentSelfUpdate         bool `json:"allow_agent_self_update"`
 		TerminalHistoryRetentionDays int  `json:"terminal_history_retention_days"`
@@ -732,7 +735,7 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		return
 	}
 	// Reject unparseable durations up front (empty stays empty = use default).
-	for _, v := range []string{body.SessionIdleTimeout, body.WSIdleTimeout, body.HomeHibernateAfter} {
+	for _, v := range []string{body.SessionIdleTimeout, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery} {
 		if v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
 				writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_duration", "invalid idle timeout: " + v})
@@ -760,6 +763,7 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		SessionIdleTimeout:           body.SessionIdleTimeout,
 		WSIdleTimeout:                body.WSIdleTimeout,
 		HomeHibernateAfter:           body.HomeHibernateAfter,
+		HomeBackupEvery:              body.HomeBackupEvery,
 		AllowAgentSelfUpdate:         body.AllowAgentSelfUpdate,
 		TerminalHistoryRetentionDays: body.TerminalHistoryRetentionDays,
 	})
@@ -777,6 +781,7 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		"max_workspace_disk_gb": body.MaxWorkspaceDiskGB,
 		"session_idle_timeout":  body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
 		"home_hibernate_after":            body.HomeHibernateAfter,
+		"home_backup_every":               body.HomeBackupEvery,
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,
 		"terminal_history_retention_days": body.TerminalHistoryRetentionDays,
 	})

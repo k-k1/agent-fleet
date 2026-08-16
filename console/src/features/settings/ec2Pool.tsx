@@ -44,6 +44,8 @@ type Home = {
   attached_to: string;
   idle_minutes: number;
   hibernating: boolean;
+  backups?: number;
+  backup_age_minutes?: number;
   snapshot_id: string;
   snapshot_state: string;
 };
@@ -136,6 +138,7 @@ export function PoolView() {
                 <th>{tr("pool.col_state")}</th>
                 <th>{tr("pool.col_occupant")}</th>
                 <th>{tr("pool.col_dormant")}</th>
+                <th>{tr("pool.col_backup")}</th>
               </tr>
             </thead>
             <tbody>
@@ -192,6 +195,19 @@ export function PoolView() {
                     )}
                   </td>
                   <td>{h.volume_id && h.idle_minutes > 0 ? fmtIdle(h.idle_minutes, tr) : "–"}</td>
+                  {/* 予備が「無い」と「さっき取った」は正反対の答えなので、同じ空欄に
+                      まとめない。退避済みの home は snapshot そのものなので対象外。 */}
+                  <td>
+                    {!h.volume_id ? (
+                      "–"
+                    ) : (h.backup_age_minutes ?? -1) >= 0 ? (
+                      <span title={tr("pool.backup_count", { n: h.backups ?? 0 })}>
+                        {fmtIdle(h.backup_age_minutes ?? 0, tr)}
+                      </span>
+                    ) : (
+                      <span className="warn-text">{tr("pool.backup_none")}</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

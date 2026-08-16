@@ -243,7 +243,11 @@ func main() {
 		// a setting of the pool sweeper; the trigger moved up here so a tenant can override
 		// it (ADR 0045 決定 13-2). Still 0 = off by default.
 		hibDef := time.Duration(envInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second
-		go newReaper(mgr, iv, sessDef, wsDef, hibDef).run(context.Background())
+		// Tier 4 (ecs-ec2 only): the deployment default for how often a home is copied
+		// somewhere its AZ is not. Also 0 = off — a backup is cheap but not free, and a
+		// deployment that has not thought about retention should not be paying for it.
+		backupDef := time.Duration(envInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
+		go newReaper(mgr, iv, sessDef, wsDef, hibDef, backupDef).run(context.Background())
 	}
 
 	// Showback usage sampler (P3-9): credits running-seconds per workspace so the
