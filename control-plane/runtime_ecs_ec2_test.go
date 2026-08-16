@@ -45,6 +45,9 @@ type fakeEC2 struct {
 	// compares it against the af-hibernating mark, so a test that wants a "stale"
 	// snapshot backdates it here.
 	snapshotStart *time.Time
+	// runErr forces RunInstances to fail for a given SUBNET, standing in for an AZ that
+	// has no capacity for the slot type right now.
+	runErr map[string]error
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -54,6 +57,7 @@ func newFakeEC2() *fakeEC2 {
 		subnetAZ:  map[string]string{"sub-1a": "ap-northeast-1a", "sub-1c": "ap-northeast-1c"},
 		attachErr: map[string]bool{},
 		snapshots: map[string]*ec2types.Snapshot{},
+		runErr:    map[string]error{},
 	}
 }
 
@@ -398,6 +402,10 @@ func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...fu
 func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.runErr[aws.ToString(in.SubnetId)]; err != nil {
+		f.log("RunInstances REFUSED subnet=%s (%v)", aws.ToString(in.SubnetId), err)
+		return nil, err
+	}
 	f.nextInst++
 	id := fmt.Sprintf("i-new%d", f.nextInst)
 	f.instances[id] = &ec2types.Instance{
@@ -1891,5 +1899,192 @@ func TestPoolStatusIsAbsentOnOtherRuntimes(t *testing.T) {
 	m := &manager{rtFactory: &dockerFactory{}}
 	if _, ok, err := m.poolStatus(context.Background()); ok || err != nil {
 		t.Errorf("poolStatus on the docker runtime = (ok=%v, err=%v), want (false, nil)", ok, err)
+	}
+}
+
+// --- AZ placement (docs/64 §64.20.4, ADR 0045「未解決 — AZ の選び方」を閉じる) ---
+
+// countCalls counts the calls whose text starts with prefix — used where the POINT is how
+// many times something happened, not that it happened.
+func (f *fakeEC2) countCalls(prefix string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+var errNoCapacity = fmt.Errorf("api error InsufficientInstanceCapacity: We currently do not have sufficient m7i.large capacity in the Availability Zone you requested")
+
+// One AZ running out of the slot type used to stop every NEW user in the deployment:
+// anyAZ() is deterministic, so the one AZ the adapter ever picked was the one that had no
+// room, and nothing tried anywhere else. Everybody already placed kept working, so it did
+// not look like an outage.
+func TestECSEC2NewHomeMovesToAnAZWithRoom(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.runErr["sub-1a"] = errNoCapacity // 1a is the AZ a new home would take
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	vol, err := h.rt.homeVolume(ctx)
+	if err != nil || vol == nil {
+		t.Fatalf("home volume: %v", err)
+	}
+	if got := aws.ToString(vol.AvailabilityZone); got != "ap-northeast-1c" {
+		t.Errorf("the home was created in %q; 1a had no capacity, so it belongs in 1c", got)
+	}
+	// The whole reason the volume is created last: one attempt, one volume. Creating it
+	// up front and deleting it to try elsewhere is what this replaced.
+	if n := h.ec2.countCalls("CreateVolume"); n != 1 {
+		t.Errorf("CreateVolume called %d times, want 1", n)
+	}
+	if n := h.ec2.countCalls("DeleteVolume"); n != 0 {
+		t.Errorf("a home volume was deleted to retry (%d DeleteVolume calls) — on a restored "+
+			"home that is the home, gone", n)
+	}
+}
+
+// The other half of the same rule: an EBS home cannot move, so a slot in another AZ is
+// useless to it. Wandering off would produce a slot nothing can ever attach to.
+func TestECSEC2ExistingHomeNeverFollowsCapacityToAnotherAZ(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.runErr["sub-1a"] = errNoCapacity
+
+	err := h.rt.Start(ctx)
+	if err == nil {
+		t.Fatal("Start succeeded although the home's own AZ had no capacity")
+	}
+	if !strings.Contains(err.Error(), "InsufficientInstanceCapacity") {
+		t.Errorf("the capacity error was swallowed: %v", err)
+	}
+	for _, c := range h.ec2.calls {
+		if strings.Contains(c, "subnet=sub-1c") {
+			t.Errorf("a slot was launched in another AZ for a home pinned to 1a: %q", c)
+		}
+	}
+}
+
+// Only "no room here" is worth asking elsewhere. A bad launch template or an exhausted
+// quota fails the same way in every AZ, and retrying buries the real message.
+func TestECSEC2NonCapacityFailuresAreNotRetriedInEveryAZ(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	boom := fmt.Errorf("api error InvalidLaunchTemplateId.NotFound: the launch template does not exist")
+	h.ec2.runErr["sub-1a"] = boom
+	h.ec2.runErr["sub-1c"] = boom
+
+	err := h.rt.Start(ctx)
+	if err == nil || !strings.Contains(err.Error(), "InvalidLaunchTemplateId") {
+		t.Fatalf("Start error = %v, want the launch template failure surfaced as-is", err)
+	}
+	if n := h.ec2.countCalls("RunInstances REFUSED"); n != 1 {
+		t.Errorf("RunInstances was attempted %d times; a broken launch template is not an AZ problem", n)
+	}
+}
+
+// No room ANYWHERE is a failure, and it must be a failure with nothing left behind: the
+// home is not created, so there is no empty volume billing for a user who never started.
+func TestECSEC2NoRoomAnywhereLeavesNoHomeBehind(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.runErr["sub-1a"] = errNoCapacity
+	h.ec2.runErr["sub-1c"] = errNoCapacity
+
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("Start succeeded with no capacity in any AZ")
+	}
+	if n := h.ec2.countCalls("CreateVolume"); n != 0 {
+		t.Errorf("a home was created for a start that could not happen (%d CreateVolume calls)", n)
+	}
+	vol, err := h.rt.homeVolume(ctx)
+	if err != nil || vol != nil {
+		t.Errorf("home volume = %v (err %v), want none", vol, err)
+	}
+}
+
+// At the cap a new home has no AZ yet, so the victim should be the longest-dormant one in
+// the WHOLE pool. It used to be the longest-dormant one in an AZ chosen before anybody
+// looked — which could evict somebody who had been away ten minutes while leaving a
+// week-old occupant of the other AZ alone.
+func TestECSEC2EvictionForANewHomeLooksAtEveryAZ(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.maxSlots = 2
+	h.ec2.addSlot("i-1a", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.addSlot("i-1c", "ap-northeast-1c", "m7i.large", true, false)
+	h.ci.registered["i-1a"], h.ci.registered["i-1c"] = true, true
+	// Both slots are taken. The 1c occupant has been gone far longer.
+	h.ec2.addHomeVolume("vol-a", "M-A", "af-ws-acme-a", "ap-northeast-1a")
+	h.ec2.attach("vol-a", "i-1a", time.Now())
+	h.ec2.setTag("vol-a", ec2TagIdleSince, time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.addHomeVolume("vol-c", "M-C", "af-ws-acme-c", "ap-northeast-1c")
+	h.ec2.attach("vol-c", "i-1c", time.Now())
+	h.ec2.setTag("vol-c", ec2TagIdleSince, time.Now().Add(-7*24*time.Hour).UTC().Format(time.RFC3339))
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	vol, err := h.rt.homeVolume(ctx)
+	if err != nil || vol == nil {
+		t.Fatalf("home volume: %v", err)
+	}
+	if got := aws.ToString(vol.AvailabilityZone); got != "ap-northeast-1c" {
+		t.Errorf("the new home landed in %q; the week-old occupant is in 1c", got)
+	}
+	if attachedInstance(h.ec2.volumes["vol-a"]) == "" {
+		t.Error("evicted the occupant who had been away ten minutes instead of the one away a week")
+	}
+}
+
+// Moving a user to another AZ. An EBS home cannot be moved and the adapter has no
+// "move" operation — but it does not need one: hibernation turns the home into a
+// snapshot, and a snapshot has no AZ. The next Start rebuilds it wherever a slot is,
+// which is the whole runbook (docs/64 §64.20.7).
+//
+// This is a real path with real consequences, so it is pinned: the home has to come back
+// FROM THE SNAPSHOT (not as a fresh empty volume) and in the NEW AZ.
+func TestECSEC2HibernateThenStartMovesTheHomeToAnotherAZ(t *testing.T) {
+	ctx := context.Background()
+	h := hibernateHarness(t, 60*24*time.Hour) // home on vol-1, slot i-sleep, both in 1a
+
+	// Step 1–3 of the runbook: the workspace is already stopped; put the home away.
+	live := func() { // the sweeper finishes what BeginHibernate starts
+		if err := h.factory().sweep(ctx); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+	}
+	if err := h.rt.BeginHibernate(ctx); err != nil {
+		t.Fatalf("BeginHibernate: %v", err)
+	}
+	live()
+	if v, _ := h.rt.homeVolume(ctx); v != nil {
+		t.Fatalf("the home is still a volume in %s", aws.ToString(v.AvailabilityZone))
+	}
+
+	// The old AZ has nothing free any more; the only slot is in the other one.
+	h.ec2.instances["i-sleep"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameTerminated}
+	h.ec2.addSlot("i-elsewhere", "ap-northeast-1c", "m7i.large", true, false)
+	h.ci.registered["i-elsewhere"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start after hibernation: %v", err)
+	}
+	vol, err := h.rt.homeVolume(ctx)
+	if err != nil || vol == nil {
+		t.Fatalf("home volume after the move: %v", err)
+	}
+	if got := aws.ToString(vol.AvailabilityZone); got != "ap-northeast-1c" {
+		t.Errorf("the home came back in %q, want the AZ the free slot is in", got)
+	}
+	if aws.ToString(vol.SnapshotId) == "" {
+		t.Error("the home came back EMPTY — a move that loses the contents is not a move")
 	}
 }

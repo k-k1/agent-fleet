@@ -277,13 +277,20 @@ starting at once, and the sweep loop left running for eighteen minutes** (§64.2
 task-ENI trap below does not reproduce behind a NAT — there is no public IPv4 to lose.
 Fargate (`WsRuntime=ecs`) stays the default and is untouched by this profile.
 
-⚠️ **Multiple AZs: two things to know.** An EBS home cannot leave its AZ, so the CP starts
-a slot in the AZ that user's home is already in — which works, but (1) **every AZ you list
-in `AF_ECS_SUBNETS` needs its own EFS mount target**, or a task landing there cannot mount
-the credentials filesystem, and (2) **a brand-new home always goes to one AZ** — the
-lowest-sorted subnet ID, *not* the first one you listed — and a capacity shortfall there
-stops new users from starting at all while existing ones keep working (ADR 0045「未解決 —
-AZ の選び方」).
+⚠️ **Multiple AZs: three things to know.** An EBS home cannot leave its AZ, so the CP
+starts a slot in the AZ that user's home is already in.
+
+1. **Every AZ you list in `AF_ECS_SUBNETS` needs its own EFS mount target**, or a task
+   landing there cannot mount the credentials filesystem and never comes up.
+2. **New homes are not spread.** They all go to one AZ — the lowest-sorted subnet ID,
+   *not* the first one you listed. That is deliberate (it keeps free slots and homes in the
+   same place), but it means the AZ you get is not the one you wrote first. If that AZ runs
+   out of the slot type, a new home now falls back to the next AZ; an **existing** home
+   still fails, because it cannot move (ADR 0045 決定 15).
+3. **To move someone to another AZ there is no "move".** Hibernate their home and start it
+   again with free capacity only where you want them — the snapshot has no AZ. docs/64
+   §64.20.7 has the runbook, including the AWS CLI form for moving one person to a
+   named AZ.
 
 **What you get, and what you do NOT.** Measured through the adapter on real AWS, a warm
 Start is 43–110s against Fargate's ~105s — **the start latency is not the reason to switch**

@@ -753,27 +753,35 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	if err != nil {
 		return ec2Placement{}, fmt.Errorf("list free slots: %w", err)
 	}
-	if vol == nil {
-		az := azFilter
-		if len(slots) > 0 {
-			az = slots[0].az
+	// A brand-new home has no AZ yet, and an EBS volume can NEVER change the one it was
+	// created in — so the AZ is decided by where a slot can actually be had, and the volume
+	// is created last, once that is settled.
+	//
+	// It used to be created first, from anyAZ(). That is the same answer whenever a slot is
+	// free, but it made the two growth paths below unable to look anywhere else: a capacity
+	// shortfall in that one AZ could only be answered by deleting the volume and starting
+	// over, which is harmless for an empty home and DATA LOSS for a restored one —
+	// createHomeVolume drops the snapshot it restored from as soon as the volume is usable.
+	// Not creating it until the destination is known removes the choice entirely.
+	create := func(az string) error {
+		v, err := e.createHomeVolume(ctx, az)
+		if err != nil {
+			return fmt.Errorf("create home volume: %w", err)
 		}
-		if az == "" {
-			if az, err = e.anyAZ(ctx); err != nil {
-				return ec2Placement{}, err
-			}
-		}
-		if vol, err = e.createHomeVolume(ctx, az); err != nil {
-			return ec2Placement{}, fmt.Errorf("create home volume: %w", err)
-		}
-		azFilter = az
-		slots = filterSlotsByAZ(slots, az)
+		vol, azFilter = v, az
+		return nil
 	}
-	volID := aws.ToString(vol.VolumeId)
+	if vol == nil && len(slots) > 0 {
+		if err := create(slots[0].az); err != nil {
+			return ec2Placement{}, err
+		}
+		slots = filterSlotsByAZ(slots, azFilter)
+	}
 	// Try the candidates in order (hot first, then stopped). A failed AttachVolume is
 	// the normal outcome of losing a race for the last free slot, not an error to
 	// surface — move to the next one.
 	for _, s := range slots {
+		volID := aws.ToString(vol.VolumeId)
 		if err := e.waitVolumeAttachable(ctx, volID); err != nil {
 			return ec2Placement{}, err
 		}
@@ -799,10 +807,19 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	if full, err := e.poolFull(ctx); err != nil {
 		return ec2Placement{}, err
 	} else if full {
-		victim, err := e.evictLongestIdle(ctx, azFilter)
+		// azFilter is "" for a home that does not exist yet, so the victim is the
+		// longest-dormant one in the WHOLE pool rather than the longest-dormant one in an
+		// AZ that was picked before anybody looked.
+		victim, victimAZ, err := e.evictLongestIdle(ctx, azFilter)
 		if err != nil {
 			return ec2Placement{}, err
 		}
+		if vol == nil {
+			if err := create(victimAZ); err != nil {
+				return ec2Placement{}, err
+			}
+		}
+		volID := aws.ToString(vol.VolumeId)
 		if err := e.waitVolumeAttachable(ctx, volID); err != nil {
 			return ec2Placement{}, err
 		}
@@ -822,10 +839,16 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	// RunInstances answers immediately with a PENDING instance that cannot accept a
 	// volume yet, so the claim tag carries the "starting" state until the background
 	// half attaches for real.
-	inst, err := e.runSlot(ctx, azFilter)
+	inst, az, err := e.growPool(ctx, azFilter)
 	if err != nil {
 		return ec2Placement{}, err
 	}
+	if vol == nil {
+		if err := create(az); err != nil {
+			return ec2Placement{}, err
+		}
+	}
+	volID := aws.ToString(vol.VolumeId)
 	if err := e.claim(ctx, volID, inst); err != nil {
 		return ec2Placement{}, fmt.Errorf("claim %s for %s: %w", volID, inst, err)
 	}
@@ -1223,6 +1246,69 @@ func (e *ecsEC2Runtime) listContainerInstanceARNs(ctx context.Context) ([]string
 // runSlot grows the pool by one instance in the given AZ. The launch template owns
 // everything about what a slot IS (AMI, user-data, instance profile, security group);
 // the CP only chooses size and placement.
+// growPool adds a slot and reports which AZ it landed in.
+//
+// The az argument is a CONSTRAINT, not a preference. An existing home cannot move, so a
+// slot anywhere else is useless to it and a capacity failure there is a real failure. A
+// home that does not exist yet passes "" and may go wherever there is room — which is the
+// only reason to try more than one AZ.
+//
+// Without this, one AZ running out of the slot type stops every NEW user in the deployment
+// (everybody already placed keeps working, so it does not look like an outage) — and the
+// AZ that ran out is the one AZ the adapter ever picks, because anyAZ is deterministic.
+// docs/64 §64.20.4.
+func (e *ecsEC2Runtime) growPool(ctx context.Context, az string) (string, string, error) {
+	if az != "" {
+		id, err := e.runSlot(ctx, az)
+		return id, az, err
+	}
+	azs, err := e.poolAZs(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	if len(azs) == 0 {
+		return "", "", fmt.Errorf("no usable subnet/AZ configured (AF_ECS_SUBNETS)")
+	}
+	var lastErr error
+	for _, candidate := range azs {
+		id, err := e.runSlot(ctx, candidate)
+		if err == nil {
+			return id, candidate, nil
+		}
+		// Only a "there is no room here" answer is worth asking somewhere else. A bad
+		// launch template or a hit quota fails identically in every AZ, and retrying it
+		// three times just buries the real message under the last one.
+		if !isEC2CapacityError(err) {
+			return "", "", err
+		}
+		log.Printf("ecs-ec2: %s cannot take a %s right now (%v); trying the next AZ", candidate, e.instanceType, err)
+		lastErr = err
+	}
+	return "", "", fmt.Errorf("no configured AZ (%s) could take a new %s slot: %w",
+		strings.Join(azs, ", "), e.instanceType, lastErr)
+}
+
+// isEC2CapacityError reports whether RunInstances failed for a reason that another AZ
+// might not have. Matched on the message like isAWSNotFound, because that is how this
+// package reads AWS error codes.
+func isEC2CapacityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, needle := range []string{
+		"InsufficientInstanceCapacity",
+		"InsufficientHostCapacity",
+		"InsufficientCapacity",
+		"Unsupported", // the instance type is not offered in that AZ at all
+	} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) {
 	total, err := e.poolSize(ctx)
 	if err != nil {
@@ -1300,14 +1386,18 @@ func (e *ecsEC2Runtime) poolFull(ctx context.Context) (bool, error) {
 	return n >= e.pool.maxSlots, nil
 }
 
-// evictLongestIdle takes a slot back from the workspace that has been dormant longest
-// and returns the freed instance id.
+// evictLongestIdle takes a slot back from the workspace that has been dormant longest and
+// returns the freed instance id AND its AZ — the caller may not have an AZ yet (a home
+// that has not been created), and the reclaimed slot is what decides it.
+//
+// az is a filter, not a preference: pass the AZ an existing home is pinned to, or "" to
+// consider the whole pool.
 //
 // Only dormant homes are candidates (the af-idle-since tag, written by Stop), and
 // releaseSlot refuses any victim whose service is not actually at desiredCount 0 — so a
 // workspace that woke up between the pick and the release keeps its slot and we simply
 // report that there was nothing to take.
-func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string, error) {
+func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string, string, error) {
 	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(ec2TagPool, e.pool.pool),
@@ -1315,7 +1405,7 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 		},
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var best *ec2types.Volume
 	var bestIdle time.Duration
@@ -1335,19 +1425,20 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 		best, bestIdle = v, idle
 	}
 	if best == nil {
-		return "", fmt.Errorf("slot pool is full (%d) and every slot is in use; raise AF_ECS_EC2_MAX_SLOTS", e.pool.maxSlots)
+		return "", "", fmt.Errorf("slot pool is full (%d) and every slot is in use; raise AF_ECS_EC2_MAX_SLOTS", e.pool.maxSlots)
 	}
 	victimSlot := attachedInstance(best)
+	victimAZ := aws.ToString(best.AvailabilityZone)
 	victim := e.siblingFor(best)
 	if victim == nil {
-		return "", fmt.Errorf("slot %s holds an unidentifiable home %s", victimSlot, aws.ToString(best.VolumeId))
+		return "", "", fmt.Errorf("slot %s holds an unidentifiable home %s", victimSlot, aws.ToString(best.VolumeId))
 	}
-	log.Printf("ecs-ec2: reclaiming slot %s from %s (dormant %.0fm) for %s",
-		victimSlot, victim.base.name, bestIdle.Minutes(), e.base.name)
+	log.Printf("ecs-ec2: reclaiming slot %s in %s from %s (dormant %.0fm) for %s",
+		victimSlot, victimAZ, victim.base.name, bestIdle.Minutes(), e.base.name)
 	if err := victim.releaseSlot(ctx); err != nil {
-		return "", fmt.Errorf("reclaim slot %s: %w", victimSlot, err)
+		return "", "", fmt.Errorf("reclaim slot %s: %w", victimSlot, err)
 	}
-	return victimSlot, nil
+	return victimSlot, victimAZ, nil
 }
 
 // siblingFor builds the runtime of ANOTHER workspace from its home volume's tags — the
@@ -1402,19 +1493,43 @@ func (e *ecsEC2Runtime) subnetIn(ctx context.Context, az string) (string, error)
 	return "", fmt.Errorf("no configured subnet in %s (AF_ECS_SUBNETS)", az)
 }
 
-func (e *ecsEC2Runtime) anyAZ(ctx context.Context) (string, error) {
-	azs, err := e.azOfSubnet(ctx)
+// poolAZs is every AZ the pool may use, in the order a new home tries them: the configured
+// subnets sorted by SUBNET ID, deduplicated.
+//
+// ⚠️ Sorted by id, which is NOT the order they were written in AF_ECS_SUBNETS — an
+// operator listing 1a first still gets 1c when its subnet id happens to be smaller
+// (measured, docs/64 §64.20.4). The order is arbitrary but it must be STABLE: every new
+// home going to the same AZ is what keeps a pool from scattering one workspace's slots
+// away from where the free ones are.
+func (e *ecsEC2Runtime) poolAZs(ctx context.Context) ([]string, error) {
+	bySubnet, err := e.azOfSubnet(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	subnets := append([]string(nil), e.base.cfg.subnets...)
 	sort.Strings(subnets)
+	seen := map[string]bool{}
+	var azs []string
 	for _, s := range subnets {
-		if azs[s] != "" {
-			return azs[s], nil
+		az := bySubnet[s]
+		if az == "" || seen[az] {
+			continue
 		}
+		seen[az] = true
+		azs = append(azs, az)
 	}
-	return "", fmt.Errorf("no usable subnet/AZ configured (AF_ECS_SUBNETS)")
+	return azs, nil
+}
+
+func (e *ecsEC2Runtime) anyAZ(ctx context.Context) (string, error) {
+	azs, err := e.poolAZs(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(azs) == 0 {
+		return "", fmt.Errorf("no usable subnet/AZ configured (AF_ECS_SUBNETS)")
+	}
+	return azs[0], nil
 }
 
 // wakeSlot starts a dormant slot, waiting first for it to be startable.
