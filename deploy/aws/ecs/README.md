@@ -269,14 +269,35 @@ is untested on real infrastructure; ephemeral storage covers everything up to 20
 
 ## Optional: EC2 slot pool (`WsRuntime=ecs-ec2`)
 
-🚧 **Stood up and run in a sandbox, including a production-shaped VPC — but never at
-scale or for real users.** `40-ec2-pool` has been deployed as a stack and real workspaces
-have run on it end to end, first in a public subnet (docs/64 §64.16, §64.17) and then in a
-**private subnet behind a NAT gateway** (§64.19), which is the shape a real deployment
-has. The task-ENI trap below does not reproduce there — there is no public IPv4 to lose.
-What is still untested is everything about scale: more than two slots, more than two
-users, and any run longer than about fifteen minutes. Fargate (`WsRuntime=ecs`) stays the
-default and is untouched by this profile.
+🚧 **Stood up and run in a sandbox, including a production-shaped VPC — but never with
+real users.** `40-ec2-pool` has been deployed as a stack and real workspaces have run on it
+end to end, first in a public subnet (docs/64 §64.16, §64.17), then in a **private subnet
+behind a NAT gateway** (§64.19), and then with **four slots across two AZs, three users
+starting at once, and the sweep loop left running for eighteen minutes** (§64.20). The
+task-ENI trap below does not reproduce behind a NAT — there is no public IPv4 to lose.
+Fargate (`WsRuntime=ecs`) stays the default and is untouched by this profile.
+
+⚠️ **Multiple AZs: three things to know.** An EBS home cannot leave its AZ, so the CP
+starts a slot in the AZ that user's home is already in.
+
+1. **Every AZ you list in `AF_ECS_SUBNETS` needs its own EFS mount target**, or a task
+   landing there cannot mount the credentials filesystem and never comes up.
+2. **New homes are spread across the AZs you list**, fewest-homes-first, so losing one AZ
+   does not take out everybody (ADR 0045 決定 16). It costs slots: a home in one AZ can only
+   use a slot in that AZ, so free slots elsewhere are no use to it and the pool grows
+   instead of reusing. Reusing a free slot still wins over balancing. If an AZ runs out of
+   the slot type, a **new** home falls back to another; an **existing** one fails, because
+   it cannot move (決定 15).
+3. **To move someone to another AZ there is no "move".** Hibernate their home and start it
+   again with free capacity only where you want them — the snapshot has no AZ. docs/64
+   §64.20.7 has the runbook, including the AWS CLI form for moving one person to a
+   named AZ.
+
+**Losing an AZ is a different question from moving.** A home cannot be evacuated, so the
+answer has to be in place before the bad day: turn on **home backups** (below). docs/64
+§64.21 walks through what the adapter actually does during an AZ outage, what the operator
+should do first (drop the failed subnet from `AF_ECS_SUBNETS` and restart the CP), and how
+to rebuild a home from a backup afterwards.
 
 **What you get, and what you do NOT.** Measured through the adapter on real AWS, a warm
 Start is 43–110s against Fargate's ~105s — **the start latency is not the reason to switch**
@@ -318,25 +339,62 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192,…` | `instanceType:memoryMiB`, ascending |
 | `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap. Start fails at the cap rather than growing the bill |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
-| — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | Snapshot a home that has been dormant this long and delete the volume. See below |
+| — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant can override it. See below |
 
 **Hibernating long-unused homes (opt-in).** An EBS home bills for what it is *provisioned*
-at, whether or not anyone opens it. With `AF_ECS_EC2_HIBERNATE_AFTER_SEC` set, the sweeper
-takes a snapshot of a home that has been dormant that long and deletes the volume;
-the owner's next Start rebuilds it from the snapshot. For a 20 GiB-used / 50 GiB-provisioned
-home that is **$4.80 → $1.00 a month**, against ~122s on the return and a slightly slower
-first day (ADR 0045 決定 4).
+at, whether or not anyone opens it. With this enabled, a home that nobody has opened for
+that long is captured as a snapshot and its volume deleted; the owner's next Start rebuilds
+it from the snapshot. For a 20 GiB-used / 50 GiB-provisioned home that is
+**$4.80 → $1.00 a month**, against ~122s on the return and a slightly slower first day
+(ADR 0045 決定 4).
 
 - **It hibernates; it never destroys.** This is the only automatic path in the product that
   moves someone's home, so it stays reversible — and off by default.
 - It is a **third** timer after the two above: the person goes idle → the workspace stops →
   the slot sleeps → (days later) the home becomes a snapshot. Set it in days, not minutes.
-- **Deployment-wide, not per tenant.** The sweeper works from EC2 tags and has no view of
-  tenants (ADR 0012).
+- **Per tenant, with this env as the deployment default** (ADR 0045 決定 14).
+  Settings → Admin → a tenant → *Hibernate unused homes* takes a duration string
+  (`720h`); empty follows this env and `0` means never for that tenant. The trigger lives
+  in the idle-stop reaper, so **`AF_IDLE_SWEEP_INTERVAL=0` disables hibernation too**.
 - A snapshot of a 45 GiB home takes 30–40 minutes; the sweeper advances one step per pass
   and the state lives entirely in AWS tags, so a CP restart mid-way resumes rather than
   strands. If the owner comes back first, the hibernation is abandoned and the volume is
   simply reattached.
+
+**Spare copies of each home (opt-in).** An EBS home lives in exactly ONE Availability
+Zone and cannot be evacuated, so losing that zone loses the home with it. Backups are the
+only copy that is not in the zone — snapshots are regional.
+
+| Env | Default | Notes |
+|---|---|---|
+| `AF_ECS_EC2_BACKUP_EVERY_SEC` | `0` (off) | **Default** interval; a tenant overrides it in Settings → Admin → the tenant → *Keep a spare copy of each home* |
+| `AF_ECS_EC2_BACKUP_KEEP` | `3` | How many completed copies to keep per home. Snapshots are incremental, so copy 2 costs only what changed |
+
+- Taken **while the home is in use** — a backup is crash-consistent, the same picture a
+  power cut leaves. Quiescing would mean taking a working person's home away on a timer.
+- **Never restored automatically.** A backup is older than the home by definition; handing
+  somebody a silently older home is worse than telling an operator to decide. The restore
+  runbook is docs/64 §64.21.4.
+- The trigger is the idle-stop reaper, so `AF_IDLE_SWEEP_INTERVAL=0` turns backups off too.
+- The Slots tab shows, per home, how old its newest spare copy is — and says so loudly when
+  there is none.
+
+**Baking the workspace image into the slot AMI: tried, measured, removed.** A slot's root
+volume IS the image cache, so baking the image in does remove the pull (31.8s → **0.185s**,
+measured) — and makes the slot **slower overall**, because a private AMI's root is lazily
+loaded from a fresh snapshot: the box took ~56s longer to join the cluster and a new user's
+first start measured **179–192s against 144s** on the stock ECS-optimized AMI. The script
+and the CP-side reporting were removed rather than left as a not-recommended option; the
+measurement and the reasoning are in docs/64 §64.24 / ADR 0045 決定 19. **`SlotAmiId` stays
+at its default** (the ECS-optimized AMI's SSM parameter — re-deploying this stack is how
+slots get patched, 決定 7).
+
+**A slot that cannot mount a home is quarantined** (`af-role=quarantined`, ADR 0045 決定 20):
+it leaves the pool so nobody else lands on it, its home is detached and freed for another
+slot, and the box is stopped. It stays on the Slots tab with the reason, because it still
+holds its root volume — **terminate it yourself** once you have taken what you need from
+it (this adapter never terminates instances). The failure that made this necessary was a
+wedged kernel holding a deleted volume's NVMe namespace, which no amount of retrying fixes.
 
 **Golden snapshot: skip boot-install for new users.** A brand-new home pays boot-install
 (4 CLIs 41s + rtk 1s + agy 6s = 48s) and a cold npm cache. Bake one home that has already
