@@ -23,6 +23,9 @@ export interface Tenant {
   // How long a home may sit unopened before it is put away as a snapshot (ecs-ec2 only;
   // "" = deploy default, "0" = never). ADR 0045 決定 13-2.
   home_hibernate_after?: string;
+  // How often to keep a copy of a home outside its AZ — the tenant's RPO (ecs-ec2 only;
+  // "" = deploy default, "0" = no backups). ADR 0045 決定 17.
+  home_backup_every?: string;
   allow_agent_self_update?: boolean;
   terminal_history_retention_days?: number;
   // Per-tenant login rules, stored as CSV (docs/61 §61.9.7).

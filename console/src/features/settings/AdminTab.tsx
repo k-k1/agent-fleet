@@ -720,6 +720,7 @@ function TenantView({
   const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
   const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
   const [homeHib, setHomeHib] = useState(tenant?.home_hibernate_after || "");
+  const [homeBackup, setHomeBackup] = useState(tenant?.home_backup_every || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
   const [termRetention, setTermRetention] = useState(tenant?.terminal_history_retention_days || 0);
   const [saved, setSaved] = useState(false);
@@ -734,6 +735,7 @@ function TenantView({
     setSessIdle(tenant?.session_idle_timeout || "");
     setWsIdle(tenant?.ws_idle_timeout || "");
     setHomeHib(tenant?.home_hibernate_after || "");
+    setHomeBackup(tenant?.home_backup_every || "");
     setAllowUpd(!!tenant?.allow_agent_self_update);
     setTermRetention(tenant?.terminal_history_retention_days || 0);
   }, [slug, tenant]);
@@ -748,6 +750,7 @@ function TenantView({
       session_idle_timeout: sessIdle.trim(),
       ws_idle_timeout: wsIdle.trim(),
       home_hibernate_after: homeHib.trim(),
+      home_backup_every: homeBackup.trim(),
       allow_agent_self_update: allowUpd,
       terminal_history_retention_days: termRetention,
     });
@@ -830,6 +833,22 @@ function TenantView({
               </div>
               <p className="admin-hint">{tr("admin.hibernate_hint")}</p>
               <p className="admin-hint">{tr("admin.hibernate_warn")}</p>
+            </div>
+          )}
+
+          {/* home が 1 つの AZ に固定されるのはこのランタイムだけなので、AZ ごと失う話も
+              ここにしか無い。他では home はそもそも 1 AZ に縛られていない。 */}
+          {hasPool && (
+            <div className="admin-fgroup">
+              <h4>{tr("admin.backup_title")}<span className="af-note">{tr("admin.empty_deploy_default")}</span></h4>
+              <div className="admin-fgrid">
+                <label className="admin-fld">
+                  <span className="af-cap">{tr("admin.backup_every")}</span>
+                  <input type="text" placeholder={tr("admin.backup_ph")} value={homeBackup} onChange={(e) => setHomeBackup(e.target.value)} />
+                </label>
+              </div>
+              <p className="admin-hint">{tr("admin.backup_hint")}</p>
+              <p className="admin-hint">{tr("admin.backup_warn")}</p>
             </div>
           )}
 
