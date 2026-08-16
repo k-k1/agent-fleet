@@ -135,6 +135,17 @@ const (
 
 	ec2RoleHome = "home"
 	ec2RoleSlot = "slot"
+	// ec2RoleGolden is the ONE shared snapshot new homes are built from: a home that has
+	// already paid boot-install (48s) and warmed its caches (ADR 0045 決定 9). One per
+	// pool, no membership tag — deleting it by mistake would cost every future user
+	// their first two minutes, which is why nothing that walks per-membership resources
+	// can ever match it.
+	ec2RoleGolden = "golden"
+	// ec2TagImage stamps the golden snapshot with the workspace image it was baked from.
+	// A golden that predates an image or CLI-pin bump would start new users on the OLD
+	// tools, silently and only for them — so the CP compares and refuses a stale one
+	// instead of trusting that somebody remembered to re-bake (決定 9).
+	ec2TagImage = "af-image"
 )
 
 // --- narrow AWS client ports (only the calls this adapter makes), so it is unit
@@ -897,19 +908,31 @@ func (e *ecsEC2Runtime) homeVolume(ctx context.Context) (*ec2types.Volume, error
 // invisible volume — State() would say `none`, the next Start would make another one,
 // and the first would be billed forever with nothing pointing at it.
 //
-// "Create" covers restoring, too: if this user's home was hibernated (§64.18.3) the
-// volume is built FROM that snapshot, so from the workspace's point of view the home was
-// simply there. The first day is ~2.3× slower on the blocks it touches (ADR 0045 決定 4);
-// nothing else changes.
+// "Create" is really three cases, tried in this order:
+//
+//  1. this user's home was HIBERNATED (§64.18.3) → rebuild it from that snapshot, so the
+//     workspace cannot tell it ever went away;
+//  2. a GOLDEN snapshot matches the running image (決定 9) → a new user skips
+//     boot-install (48s) and a cold npm cache;
+//  3. neither → an empty volume, which is correct, just slow.
+//
+// The order is the point: the user's own home always wins. Handing somebody the golden
+// image when their real home merely failed to be found would be silent data loss.
 func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2types.Volume, error) {
 	snapshotID, err := e.restoreSnapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
+	restored := snapshotID != ""
+	if restored {
+		log.Printf("ecs-ec2: restoring %s from %s", e.base.name, snapshotID)
+	} else if golden := e.goldenSnapshot(ctx); golden != "" {
+		snapshotID = golden
+		log.Printf("ecs-ec2: seeding a new home for %s from the golden snapshot %s", e.base.name, golden)
+	}
 	var snapshot *string
 	if snapshotID != "" {
 		snapshot = aws.String(snapshotID)
-		log.Printf("ecs-ec2: restoring %s from %s", e.base.name, snapshotID)
 	}
 	out, err := e.ec2.CreateVolume(ctx, &ec2.CreateVolumeInput{
 		AvailabilityZone: aws.String(az),
@@ -932,7 +955,12 @@ func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2ty
 		return nil, err
 	}
 	log.Printf("ecs-ec2: created %s (%d GiB, %s) for %s", aws.ToString(out.VolumeId), e.homeGiB, az, e.base.name)
-	if snapshot != nil {
+	if restored {
+		// ONLY after restoring the user's OWN home. The golden snapshot is shared by every
+		// future user and must never be swept up here — deleteHomeSnapshots filters on
+		// af-membership + af-role=home and so cannot match it, but the intent is worth
+		// stating twice for a call that deletes things.
+		//
 		// The home is the volume again, so the snapshot is now a stale copy that bills.
 		// In the background and only once the volume is usable — and if it fails, the
 		// next hibernation drops it as superseded rather than trusting it.
@@ -2051,6 +2079,54 @@ func (e *ecsEC2Runtime) restoreSnapshot(ctx context.Context) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// goldenSnapshot returns the pool's pre-baked home for the image this deployment runs, or
+// "" to build an empty one. Best-effort by design: a new user with no golden gets a slow
+// first start, which is a worse experience but not a wrong one, so nothing here is ever
+// promoted to an error that blocks a Start.
+//
+// ★ The image stamp is checked, not assumed. Re-baking is a manual step tied to a release
+// (決定 9), and the failure mode of forgetting it is invisible: only NEW users get it,
+// they get old CLIs, and everything looks fine. A stale golden is therefore refused —
+// loudly — rather than used.
+func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
+	out, err := e.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		OwnerIds: []string{"self"},
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, e.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleGolden),
+		},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2: looking up the golden snapshot failed; building an empty home: %v", err)
+		return ""
+	}
+	want := e.base.cfg.workspaceImage
+	var stale []string
+	var newest *ec2types.Snapshot
+	for i := range out.Snapshots {
+		s := out.Snapshots[i]
+		if s.State != ec2types.SnapshotStateCompleted {
+			continue
+		}
+		if got := ec2TagValue(s.Tags, ec2TagImage); got != want {
+			stale = append(stale, fmt.Sprintf("%s(%s)", aws.ToString(s.SnapshotId), got))
+			continue
+		}
+		if newest == nil || snapshotStartedAfter(s, *newest) {
+			newest = &out.Snapshots[i]
+		}
+	}
+	if newest != nil {
+		return aws.ToString(newest.SnapshotId)
+	}
+	if len(stale) > 0 {
+		log.Printf("ecs-ec2: the golden snapshot %s was baked from another image; this deployment runs %s. "+
+			"New homes are being built EMPTY (slow first start) until it is re-baked — ADR 0045 決定 9.",
+			strings.Join(stale, ", "), want)
+	}
+	return ""
 }
 
 func snapshotStartedAfter(a, b ec2types.Snapshot) bool {
