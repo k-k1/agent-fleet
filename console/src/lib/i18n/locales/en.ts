@@ -1986,6 +1986,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.dismiss_suggestion": "Don't show this suggestion again",
   "mirror.load_earlier": "Load earlier conversation",
   "mirror.jump_latest": "Jump to latest",
+  "mirror.jump_reply_top": "Start of reply",
   "mirror.ws_stopped_history": "The workspace is stopped. Start it from the top bar to view the history.",
   "mirror.no_history": "There is no history to show for this conversation.",
   "mirror.no_conversation":
