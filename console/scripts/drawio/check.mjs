@@ -8,7 +8,16 @@
 //  2. 圧縮された `<diagram>`（deflate+base64）も開ける。
 //  3. 複数ページを数えて親へ返す（ヘッダの「n / m」表示の材料）。
 //  4. ライト/ダークの双方で描ける。
-//  5. **アセットに認証ゲートがあっても描ける。** サンドボックス iframe はオリジンを
+//  5. **要求した暗色描画に本当になっているか。** `"dark-mode"` は真偽値では効かず
+//     （isDarkMode() は "dark" / "auto" という文字列と比較する）、true を渡すと黙って
+//     ライト描画のまま暗い背景に載り、既定色のラベルが**黒地に黒**になる。判定は
+//     ビューアの isDarkMode() を返させて突き合わせる —— **画素を数える判定は当てに
+//     ならない**（暗色にならない絵の方が図形の明るい塗りで「明るい画素」が多くなる。
+//     実測 40778 対 2387 で、素朴なしきい値は真逆の答えを出した）。
+//  6. **ジェスチャが効く。** Ctrl＋ホイール / 2 本指ピンチ / ダブルタップ。GraphViewer は
+//     これらを一切配線していない（init は pinchEnabled=false・setPanning(false)）ので、
+//     こちらの実装が生きているかは実ブラウザで押してみるしかない。
+//  7. **アセットに認証ゲートがあっても描ける。** サンドボックス iframe はオリジンを
 //     持たないため、そこからの要求は cross-site 扱いで SameSite=Lax のセッション
 //     cookie が付かない。フレームが自分で `<script src>` を取りに行く設計だと CP の
 //     authGate に 401 で弾かれ、実機だけが壊れる（2026-08-16 の不具合）。ここでは
@@ -78,7 +87,8 @@ const BIG = `<mxfile><diagram name="大" id="b1"><mxGraphModel page="1"><root>
 </root></mxGraphModel></diagram></mxfile>`;
 
 const CASES = [
-  { name: "plain-light", xml: PLAIN, dark: false, pages: 2, scale: 1 },
+  { name: "plain-light", xml: PLAIN, dark: false, pages: 2, scale: 1, gestures: true },
+  // 暗いテーマは「既定色の文字が読めるか」まで見る（真偽値を渡すと黒地に黒になる）。
   { name: "plain-dark", xml: PLAIN, dark: true, pages: 2, scale: 1 },
   { name: "compressed", xml: compressed(PLAIN), dark: false, pages: 1, scale: 1 },
   { name: "big", xml: BIG, dark: false, pages: 1, maxScale: 0.5 },
@@ -247,6 +257,71 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
   // cookie の付かない要求 ＝ オリジンを持たないフレームが自分で取りに行った要求。
   if (unauthorized.length) {
     fail.push(`${c.name}: フレームが資格情報無しで取りに行った ${JSON.stringify([...new Set(unauthorized)])}`);
+  }
+
+  // ── ジェスチャ（docs/65 §65.12）────────────────────────────────────────
+  // フレームは倍率が変わるたびに rendered を返すので、押した結果は親から観測できる。
+  if (c.gestures && rendered) {
+    const scaleNow = async () => {
+      const r = await b.call("Runtime.evaluate", {
+        expression: "JSON.stringify(window.__ev.filter(function(e){return e.t==='rendered'}).pop()||null)",
+        returnByValue: true,
+      });
+      return JSON.parse(r.result?.value || "null")?.scale ?? null;
+    };
+    const base0 = await scaleNow();
+
+    // Ctrl＋ホイール（modifiers: 2 = Ctrl）。トラックパッドのピンチも同じ経路。
+    await b.call("Input.dispatchMouseEvent", {
+      type: "mouseWheel", x: 430, y: 260, deltaX: 0, deltaY: -240, modifiers: 2,
+    });
+    await sleep(400);
+    const afterWheel = await scaleNow();
+    if (!(afterWheel > base0)) fail.push(`${c.name}: Ctrl+ホイールで拡大しない (${base0} → ${afterWheel})`);
+
+    // 素のホイールは倍率を変えない（パンのみ）。
+    await b.call("Input.dispatchMouseEvent", { type: "mouseWheel", x: 430, y: 260, deltaX: 0, deltaY: -240 });
+    await sleep(300);
+    const afterPan = await scaleNow();
+    if (afterPan !== afterWheel) fail.push(`${c.name}: 素のホイールで倍率が動いた (${afterWheel} → ${afterPan})`);
+
+    // 2 本指ピンチ（広げる = 拡大）。タッチを有効にしてから送る。
+    await b.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+    await b.call("Input.dispatchTouchEvent", {
+      type: "touchStart", touchPoints: [ { x: 380, y: 260, id: 1 }, { x: 480, y: 260, id: 2 } ],
+    });
+    for (const spread of [40, 80, 120]) {
+      await b.call("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [ { x: 430 - spread, y: 260, id: 1 }, { x: 430 + spread, y: 260, id: 2 } ],
+      });
+      await sleep(60);
+    }
+    await b.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await sleep(400);
+    const afterPinch = await scaleNow();
+    if (!(afterPinch > afterPan)) fail.push(`${c.name}: ピンチで拡大しない (${afterPan} → ${afterPinch})`);
+
+    // ダブルタップ = 収まりへ戻る（拡大している状態なので fit に落ちる）。
+    for (let i = 0; i < 2; i++) {
+      await b.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 430, y: 260, id: 3 }] });
+      await b.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await sleep(60);
+    }
+    await sleep(500);
+    const afterTap = await scaleNow();
+    if (!(afterTap < afterPinch)) fail.push(`${c.name}: ダブルタップで収め直さない (${afterPinch} → ${afterTap})`);
+    await b.call("Emulation.setTouchEmulationEnabled", { enabled: false });
+    console.log(`   gestures: fit=${base0} → ctrl+wheel=${afterWheel} → pinch=${afterPinch} → dbltap=${afterTap}`);
+  }
+
+  // ── コントラスト（docs/65 §65.12）────────────────────────────────────
+  // 暗いテーマで「既定色の文字」が背景に溶けていないか。画素を数えて判定する。
+  if (rendered && rendered.darkMode !== c.dark) {
+    fail.push(
+      `${c.name}: 要求 dark=${c.dark} に対しビューアは darkMode=${rendered.darkMode}` +
+        `（"dark-mode" に真偽値を渡すと黙ってライト描画になる）`,
+    );
   }
 
   if (SHOT) {
