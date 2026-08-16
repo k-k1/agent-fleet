@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveMarkdownFileTarget } from "./filemeta.ts";
+import { isDrawioFile, langFor, looksLikeDrawioXml, resolveMarkdownFileTarget } from "./filemeta.ts";
 
 describe("resolveMarkdownFileTarget", () => {
   it("resolves an agent absolute source citation under home", () => {
@@ -53,5 +53,46 @@ describe("resolveMarkdownFileTarget", () => {
       line: 20,
     });
     expect(resolveMarkdownFileTarget("https://example.com:443/a.ts:8")).toBeNull();
+  });
+});
+
+// ── drawio の判定（docs/65 §65.4）─────────────────────────────────────────
+describe("isDrawioFile", () => {
+  it("拡張子で決まるのは .drawio / .dio だけ", () => {
+    expect(isDrawioFile("repos/a/design.drawio")).toBe(true);
+    expect(isDrawioFile("repos/a/design.DIO")).toBe(true);
+    expect(isDrawioFile("repos/a/design.drawio.svg")).toBe(false); // 画像として既に開ける
+    expect(isDrawioFile("repos/a/notes.md")).toBe(false);
+  });
+
+  it(".xml は中身の頭を見る（見せなければ図とは言わない）", () => {
+    const head = '<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="app.diagrams.net">';
+    expect(isDrawioFile("repos/a/diagram.xml", head)).toBe(true);
+    expect(isDrawioFile("repos/a/diagram.xml")).toBe(false);
+    expect(isDrawioFile("repos/a/pom.xml", "<project><modelVersion/></project>")).toBe(false);
+  });
+
+  it("2 MiB 超で本文が取れなくても .drawio は図として開ける", () => {
+    // Agent は maxEditorFileBytes を超えると content を差し替える。図そのものは
+    // download 経由で取り直すので、拡張子の判断だけで面を出してよい。
+    expect(isDrawioFile("repos/a/big.drawio", "(file too large to preview)")).toBe(true);
+  });
+});
+
+describe("looksLikeDrawioXml", () => {
+  it("XML 宣言・BOM・コメントを読み飛ばす", () => {
+    expect(looksLikeDrawioXml("<mxfile>")).toBe(true);
+    expect(looksLikeDrawioXml("<mxGraphModel dx=\"1\">")).toBe(true);
+    expect(looksLikeDrawioXml('\uFEFF<?xml version="1.0"?><!-- made by drawio --><mxfile a="1">')).toBe(true);
+    expect(looksLikeDrawioXml("<mxfileish>")).toBe(false);
+    expect(looksLikeDrawioXml("<svg xmlns=\"http://www.w3.org/2000/svg\">")).toBe(false);
+    expect(looksLikeDrawioXml("")).toBe(false);
+  });
+});
+
+describe("langFor", () => {
+  it("図のソース面は XML として色を付ける", () => {
+    expect(langFor("a/b.drawio")).toBe("xml");
+    expect(langFor("a/b.dio")).toBe("xml");
   });
 });

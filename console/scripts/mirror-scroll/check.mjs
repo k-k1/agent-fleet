@@ -176,10 +176,12 @@ async function runLanding(cdp) {
   const still = await cdp.ev(PROBE);
 
   const stayedPut = Math.abs(still.top - up.top) < 5;
-  const ok = !!landed && landed.gap <= 2 && !landed.jump && keptPlace && up.gap > 2 && up.jump && stayedPut;
+  // 末尾に貼り付いている間は「返信を頭から」を出さない — そこは引き継ぎカードの起動ボタンや
+  // 質問カードの回答ボタンが並ぶ面で、浮くピルが被ると押せなくなる（実機で報告あり）。
+  const ok = !!landed && landed.gap <= 2 && !landed.jump && !landed.replyTop && keptPlace && up.gap > 2 && up.jump && stayedPut;
   return {
     ok,
-    note: `landed gap=${landed?.gap}px (turns=${landed?.turns})  expand-kept-place=${keptPlace}  wheel-up: gap=${up.gap}px jump=${up.jump} stayedPut=${stayedPut}`,
+    note: `landed gap=${landed?.gap}px (turns=${landed?.turns}) replyTop=${landed?.replyTop}  expand-kept-place=${keptPlace}  wheel-up: gap=${up.gap}px jump=${up.jump} stayedPut=${stayedPut}`,
   };
 }
 
@@ -246,11 +248,21 @@ async function runSwipe(cdp) {
   await sleep(2500);
   const settled = await cdp.ev(PROBE);
 
+  // …そして、少しだけ上へ送ると「返信を頭から」が出る（＝末尾でだけ引っ込む導線であって、
+  // 消えたわけではないことの確認）。回答 1 本ぶんより小さく送るのがポイント — 大きく送ると
+  // 最新の回答そのものより上へ出てしまい、頭出しの対象が画面の下になる。
+  const { x: wx, y: wy } = JSON.parse(await cdp.ev(WHEEL_UP));
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: wx, y: wy, deltaX: 0, deltaY: -300, pointerType: "mouse" });
+  await sleep(1200);
+  const up = await cdp.ev(PROBE);
+
   const rotated = !!landed && landed.first !== before.first;
-  const ok = rotated && landed.gap <= 2 && !landed.jump && Math.abs(settled.top - landed.top) <= 5 && settled.gap <= 2;
+  const ok =
+    rotated && landed.gap <= 2 && !landed.jump && !landed.replyTop &&
+    Math.abs(settled.top - landed.top) <= 5 && settled.gap <= 2 && up.replyTop;
   return {
     ok,
-    note: `rotated=${rotated} (first ${before?.first}→${landed?.first})  landed gap=${landed?.gap}px  settled gap=${settled?.gap}px jump=${landed?.jump}`,
+    note: `rotated=${rotated} (first ${before?.first}→${landed?.first})  landed gap=${landed?.gap}px replyTop=${landed?.replyTop}  settled gap=${settled?.gap}px  after small wheel-up: replyTop=${up?.replyTop}`,
   };
 }
 

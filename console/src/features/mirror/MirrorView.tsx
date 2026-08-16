@@ -267,8 +267,8 @@ export function MirrorView({
   // Show a "jump to latest ↓" affordance whenever the user has scrolled up off the bottom
   // (auto-follow is paused) so new/streaming content below is discoverable with one click.
   const [showJump, setShowJump] = useState(false);
-  // 「返信を頭から」— 最新の回答ブロックの先頭が画面より上に流れているときだけ出す。長い回答の
-  // 途中や末尾（セッションを持ち替えた直後がまさにこれ）から、1 タップで頭出しできる導線。
+  // 「返信を頭から」— 最新の回答ブロックの先頭が画面より上に流れていて、かつ末尾追従が切れて
+  // いるときだけ出す（末尾では出さない: 押すべきボタンの上に被るため。syncReplyTop の注記）。
   const [showReplyTop, setShowReplyTop] = useState(false);
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
   // Prompts claude reports queued into the RUNNING turn (queue-operation events) — sent
@@ -1228,8 +1228,8 @@ export function MirrorView({
     syncReplyTop();
   };
 
-  // 「返信を頭から」— 最新の回答ブロックの上端を画面の一番上へ。長い回答の途中／末尾から、
-  // また持ち替え直後の末尾着地から、1 タップで頭出しするための導線。
+  // 「返信を頭から」— 最新の回答ブロックの上端を画面の一番上へ。長い回答の途中から 1 タップで
+  // 頭出しするための導線（末尾に貼り付いている間は出さない — syncReplyTop の注記）。
   //
   // 対象はユーザー発言ではなく回答ブロックの先頭（＝畳まれた 作業過程 の行から）。完了時の
   // 自動アンカー（answerAnchoredRef、回答本文の 1 行目）より 1 段上を見せる位置で、「この
@@ -1273,6 +1273,10 @@ export function MirrorView({
     const on = !!(
       el &&
       turn &&
+      // 末尾に貼り付いている間は出さない。末尾には押すべきものが並ぶ面（引き継ぎカードの
+      // 起動ボタン、質問 / プラン / 許可の回答ボタン、コピー…）で、その上に浮くピルが被って
+      // 押せなくなる。読んでいる途中＝追従が切れているときだけの導線にする。
+      !atBottomRef.current &&
       turn.getBoundingClientRect().top < el.getBoundingClientRect().top - REPLY_TOP_PAD
     );
     setShowReplyTop((s) => (s === on ? s : on));

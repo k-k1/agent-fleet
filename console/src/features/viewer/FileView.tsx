@@ -9,7 +9,7 @@ import type { CSSProperties, FocusEvent, KeyboardEvent, ReactNode } from "react"
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
-import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat } from "../../lib/filemeta.ts";
+import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat, isDrawioFile } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -23,6 +23,7 @@ import { MarkdownView } from "./MarkdownView.tsx";
 import { MarpView } from "./MarpView.tsx";
 import { CodeView } from "./CodeView.tsx";
 import { ImageView } from "./ImageView.tsx";
+import { DrawioView, type DrawioState } from "./DrawioView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import type { LineMarks } from "./CodeView.tsx";
 import { CodeEditor, type CodeEditorHandle } from "../editor/CodeEditor.tsx";
@@ -38,6 +39,7 @@ import { revisionOf, type BufferValidationError } from "../editor/buffer.ts";
 import type { FileEditorModel } from "../editor/model.ts";
 import {
   cycleFileMode,
+  diagramModeControls,
   initialFileMode,
   markdownModeControls,
   paneModeOf,
@@ -45,9 +47,11 @@ import {
   rendererControls,
   surfaceKey,
   surfacesFor,
+  withDiagramMode,
   withMarkdownMode,
   withPaneMode,
   withRenderer,
+  type DiagramMode,
   type FileModeCaps,
   type FileModeState,
   type MarkdownMode,
@@ -147,6 +151,12 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const [err, setErr] = useState("");
   const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
+  // 図の面が返す状態（ページ数・倍率）。ヘッダの表示にだけ使う。
+  const [diagramState, setDiagramState] = useState<DrawioState | null>(null);
+  // 図の面は **一度出したら畳んでも外さない**（hidden にするだけ）。作り直すと 4MB の
+  // ビューアを読み直し、ズーム位置と開いていたページも失う。逆に一度も見ていない
+  // うちは作らない —— ソースだけ見て閉じる人に図の取得をさせない。
+  const [diagramMounted, setDiagramMounted] = useState(false);
   const [marks, setMarks] = useState<LineMarks | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // `origin` keeps the two capture paths (the read-only grid's DOM walk and the
@@ -384,9 +394,16 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
 
   // What the loaded file allows. The mode state machine (docs/44 §1.1) derives
   // the pane's view/edit layer and the surfaces to render from these.
+  // 図として開けるか。.drawio / .dio は拡張子で決まり、.xml は中身の頭で決まる
+  // （docs/65 §65.4）。2 MiB 超で content が打ち切られていても、拡張子で決まる分は
+  // そのまま効く —— 図そのものは download 経由で取り直すので開ける。
+  const isDiagram = useMemo(
+    () => isDrawioFile(filePath, isText ? (data?.content ?? "").slice(0, 4096) : null),
+    [filePath, isText, data],
+  );
   const caps = useMemo<FileModeCaps>(
-    () => ({ markdown: isMarkdown, marp: isMarp, editable: canEdit }),
-    [canEdit, isMarkdown, isMarp],
+    () => ({ markdown: isMarkdown, marp: isMarp, editable: canEdit, diagram: isDiagram }),
+    [canEdit, isMarkdown, isMarp, isDiagram],
   );
   const capsRef = useRef(caps);
   capsRef.current = caps;
@@ -455,6 +472,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
       }
     }
   };
+
+  useEffect(() => {
+    if (surfaces.diagram) setDiagramMounted(true);
+  }, [surfaces.diagram]);
 
   useEffect(() => {
     setEditorNotice("");
@@ -535,11 +556,11 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // deck reaches both of its previews without a fourth top-level mode (§1.1).
   // Registered only for Markdown, so the command no-ops on other files.
   useEffect(() => {
-    if (!paneId || !isMarkdown) return;
+    if (!paneId || (!isMarkdown && !isDiagram)) return;
     return registerPaneViewActions(paneId, {
       toggleMdMode: () => updateMode((prev) => cycleFileMode(prev, capsRef.current)),
     });
-  }, [paneId, isMarkdown]);
+  }, [paneId, isMarkdown, isDiagram]);
 
   // Highlight once per file load; fall back to escaped plain text. Huge files
   // skip highlighting entirely (plain mode below). Markdown source is deliberately
@@ -639,6 +660,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
         : "edit";
     changeMode(next);
     (next === "view" ? viewTabRef : editTabRef).current?.focus();
+  };
+
+  const changeDiagramMode = (next: DiagramMode) => {
+    updateMode((prev) => withDiagramMode(prev, next, capsRef.current));
   };
 
   const changeMarkdownMode = (next: MarkdownMode) => {
@@ -874,6 +899,41 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             </button>
           </>
         )}
+        {fileMode.kind === "diagram" && (
+          <>
+            <span
+              ref={modeGroupRef}
+              className="ui-seg sm md-toggle"
+              role="group"
+              aria-label={tr("view.diagram_display_mode")}
+            >
+              {diagramModeControls(fileMode, caps).map((control) => (
+                <button
+                  key={control.mode}
+                  type="button"
+                  aria-pressed={control.pressed}
+                  className={"seg-btn" + (control.pressed ? " active" : "")}
+                  onClick={() => changeDiagramMode(control.mode)}
+                >
+                  {control.mode === "figure"
+                    ? tr("view.diagram")
+                    : // 編集面が無いときは読み取り専用の「ソース」と名乗る
+                      control.readOnlySource
+                      ? tr("view.source")
+                      : tr("editor.mode.edit")}
+                </button>
+              ))}
+            </span>
+            {surfaces.diagram && diagramState && (
+              <span className="fi-meta muted">
+                {diagramState.pages > 1
+                  ? tr("view.diagram_page", { page: diagramState.page, pages: diagramState.pages })
+                  : ""}
+                {diagramState.scale !== 1 ? ` ${Math.round(diagramState.scale * 100)}%` : ""}
+              </span>
+            )}
+          </>
+        )}
         {fileMode.kind === "markdown" && (
           <>
             <span
@@ -1022,6 +1082,17 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
                 <pre>{editor.mergeMine}</pre>
               </aside>
             )}
+          </div>
+        )}
+
+        {diagramMounted && (
+          <div className="file-diagram-shell" hidden={!surfaces.diagram}>
+            <DrawioView
+              filePath={filePath}
+              dark={settings.theme !== "light"}
+              onState={setDiagramState}
+              onShowSource={() => changeDiagramMode("source")}
+            />
           </div>
         )}
 

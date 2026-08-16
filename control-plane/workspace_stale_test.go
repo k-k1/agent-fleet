@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -43,7 +44,7 @@ func TestWorkspacePayloadStale(t *testing.T) {
 	}
 }
 
-// docker は「起動時に控えたタグの Image ID」と「いまのタグの Image ID」を比べる。
+// docker は「起動時に控えたイメージの内容」と「いまのタグのイメージの内容」を比べる。
 //
 // ★ 走っているコンテナの {{.Image}} は見てはいけない。containerd イメージストアでは
 //
@@ -51,6 +52,12 @@ func TestWorkspacePayloadStale(t *testing.T) {
 //	（マニフェスト/インデックスの digest）が別物で、同じイメージから起動していても
 //	一致しない。旧実装はこれを直接比較していたため、dev フリート（Driver=overlayfs）で
 //	何も更新していなくても「要再起動」が恒久点灯した。ここでその二辺比較へ戻るのを防ぐ。
+//
+// ★ 控える値に digest を選んでもいけない（2026-08-16 の再発）。全層キャッシュヒットの
+//
+//	docker build が provenance だけ付け直すと、内容が 1 バイトも変わらないのにタグの
+//	{{.Id}} が config digest → インデックス digest へ変わり、また恒久点灯する。
+//	内容（層チェーン＋config）で比べていればここは黙る、を固定する。
 func TestDockerStaleImageStamp(t *testing.T) {
 	orig := freshness
 	defer func() { freshness = orig }()
@@ -58,19 +65,23 @@ func TestDockerStaleImageStamp(t *testing.T) {
 	freshness = &ttlCache{m: map[string]ttlEntry{}, now: func() time.Time { return now }}
 
 	const (
-		built    = "sha256:ff2da9ec" // タグが指すイメージ（image inspect {{.Id}}）
-		rebuilt  = "sha256:aaaa1111" // 焼き直し後にタグが指すイメージ
+		built    = "sha256:b05a9622 |dev|/home/dev|[/usr/local/bin/entrypoint.sh]|[workspace-agent]|[]|map[]"
+		rebuilt  = "sha256:aaaa1111 |dev|/home/dev|[/usr/local/bin/entrypoint.sh]|[workspace-agent]|[]|map[]"
+		envOnly  = "sha256:b05a9622 |dev|/home/dev|[/usr/local/bin/entrypoint.sh]|[workspace-agent]|[TZ=Asia/Tokyo]|map[]"
 		ctrLocal = "sha256:02a946de" // 同じイメージから起動したコンテナの {{.Image}}
 	)
 	dir := t.TempDir()
-	tagID := built
+	fp := built
 	d := &dockerRuntime{image: "agent-fleet/workspace:dev", name: "af-ws-x", dataDir: dir}
-	d.inspect = func(_ context.Context, typ, _, _ string) string {
+	d.inspect = func(_ context.Context, typ, _, format string) string {
 		if typ == "container" {
 			t.Errorf("コンテナの {{.Image}} を参照した — 表現差で恒久誤点灯する二辺比較に戻っている")
 			return ctrLocal
 		}
-		return tagID
+		if strings.Contains(format, "{{.Id}}") {
+			t.Errorf("イメージの {{.Id}} を控えている — 内容が同じでも動く表現で、再び恒久誤点灯する")
+		}
+		return fp
 	}
 	ctx := context.Background()
 
@@ -85,11 +96,18 @@ func TestDockerStaleImageStamp(t *testing.T) {
 		t.Fatal("same image: stale, want false")
 	}
 
-	// タグが焼き直された（ローカル docker build / 新リリースの pull）→ 出す。
-	tagID = rebuilt
+	// 内容が同じままタグだけ貼り直された（全層キャッシュヒットの再ビルド）→ 出さない。
+	// これが 2026-08-16 に恒久点灯した経路そのもの。
 	now = now.Add(2 * time.Minute) // TTL 越え（4s ポーリングを毎回 inspect しないための帽子）
+	if d.Stale(ctx) {
+		t.Fatal("cache-hit rebuild (same content, new tag digest): stale, want false")
+	}
+
+	// 層が焼き直された（ローカル docker build / 新リリースの pull）→ 出す。
+	fp = rebuilt
+	now = now.Add(2 * time.Minute)
 	if !d.Stale(ctx) {
-		t.Fatal("moved tag: not stale, want stale")
+		t.Fatal("rebuilt layers: not stale, want stale")
 	}
 
 	// その状態で再起動 → 新しいイメージを控え直すので、TTL 内でも即座に消えること。
@@ -98,11 +116,46 @@ func TestDockerStaleImageStamp(t *testing.T) {
 		t.Fatal("restarted onto the new image: stale, want false")
 	}
 
+	// 層は同じで ENV だけ変えた Dockerfile（層を生まない変更）も取りこぼさない。
+	fp = envOnly
+	now = now.Add(2 * time.Minute)
+	if !d.Stale(ctx) {
+		t.Fatal("config-only change (ENV): not stale, want stale")
+	}
+
 	// タグが引けない（レジストリのみのタグ・docker 不在）＝判らない → false。
-	tagID = ""
+	fp = ""
 	now = now.Add(2 * time.Minute)
 	if d.Stale(ctx) {
 		t.Fatal("unreadable image: stale, want false")
+	}
+}
+
+// 旧 {{.Id}} スタンプが残っているだけの状態（この修正より前に起動したコンテナ）は
+// 「判らない」＝ stale ではない。ID と内容指紋を比べれば必ず不一致になるので、読んで
+// しまうと修正した当のバグ（恒久点灯）をそのまま引き継ぐ。次の Start で解消する。
+func TestDockerStaleLegacyIDStampIgnored(t *testing.T) {
+	orig := freshness
+	defer func() { freshness = orig }()
+	freshness = &ttlCache{m: map[string]ttlEntry{}}
+
+	dir := t.TempDir()
+	d := &dockerRuntime{image: "agent-fleet/workspace:dev", name: "af-ws-x", dataDir: dir}
+	d.inspect = func(context.Context, string, string, string) string { return "sha256:b05a9622 |dev|" }
+	if err := os.WriteFile(d.legacyImageIDStampPath(), []byte("sha256:97f63692"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d.Stale(context.Background()) {
+		t.Fatal("legacy id stamp: stale, want false")
+	}
+
+	// 次の Start で内容指紋へ移行し、置き去りの旧スタンプは消しておく。
+	d.recordImageStamp(context.Background())
+	if _, err := os.Stat(d.legacyImageIDStampPath()); !os.IsNotExist(err) {
+		t.Fatalf("legacy stamp left behind: err=%v", err)
+	}
+	if d.Stale(context.Background()) {
+		t.Fatal("after migration: stale, want false")
 	}
 }
 
