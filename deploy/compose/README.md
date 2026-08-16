@@ -96,6 +96,11 @@ and launch a workspace.
 
 ### Login IdP setup
 
+The condensed version is below. For the walk-through that includes **what to create
+on the IdP's side** (Google Cloud Console, the Entra app registration, a GitHub
+OAuth App), how to verify it, and the per-IdP failure modes, see
+[docs/guide/operator/05-login-idp.md](../../docs/guide/operator/05-login-idp.md).
+
 Whichever IdPs you enable, the redirect URI you register is always this one — it
 does not multiply with the number of providers:
 
