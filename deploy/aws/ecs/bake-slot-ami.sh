@@ -2,6 +2,12 @@
 # bake-slot-ami.sh — スロットの AMI に Workspace イメージを焼き込む。
 # ADR 0045 決定 18 / docs/64 §64.22。対象は AF_RUNTIME=ecs-ec2 のデプロイのみ。
 #
+# ⚠️ **既定では使わないこと（ADR 0045 決定 19・docs/64 §64.24）。** 実測では、焼くと pull は
+# 確かに消える（31.8s → 0.185s）が、**自前 AMI の初回起動がそれ以上に高くつく**——root が
+# 新しい snapshot からの遅延読み込みになるため、ECS に登録されるまで +56s、新規ユーザーの
+# Start は 144.0s → 179〜192s になった。素の ECS-optimized AMI のままが速い。
+# それでも「タスク起動時にレジストリへ行かせたくない」など**別の理由**がある人のために残す。
+#
 # 何のためか: スロットの root ボリュームはイメージキャッシュそのもので、キャッシュが
 # 温まっていれば pull は 31.8s → 0.09s になる（決定 1 の実測）。ところが**新しく立てた
 # スロットの root は常に冷たい**ので、その AZ の最初の 1 人・上限まで伸びるとき・
@@ -73,7 +79,7 @@ trap cleanup EXIT
 say "launching a bake instance from $LT in $SUBNET"
 INST=$(aws ec2 run-instances \
   --launch-template "LaunchTemplateId=$LT,Version=\$Latest" \
-  --subnet-id "$SUBNET" --min-count 1 --max-count 1 \
+  --subnet-id "$SUBNET" --count 1 \
   --tag-specifications "ResourceType=instance,Tags=[{Key=af-pool,Value=$POOL},{Key=af-role,Value=bake},{Key=Name,Value=$NAME}]" \
   --query 'Instances[0].InstanceId' --output text)
 echo "instance $INST"
@@ -116,7 +122,9 @@ run "\"set -e\",\"aws ecr get-login-password --region $AWS_REGION | docker login
 # ⚠️ 決定 3-1 の罠。/var/lib/ecs/data を残したまま焼くと、この AMI から立てた
 # インスタンスは「自分は登録済み」と思い込み、クラスタに入り直せない。
 say "clearing the ECS agent's identity (決定 3-1: leaving /var/lib/ecs/data behind wedges every instance from this AMI)"
-run "\"set -e\",\"systemctl stop ecs || true\",\"rm -rf /var/lib/ecs/data/*\",\"rm -f /var/log/ecs/*\",\"ls -la /var/lib/ecs/data || true\""
+# ⚠️ /var/log/ecs には exec/ というディレクトリがある。`rm -f` はそこで «Is a directory» を
+# 返し、set -e のこのブロックごと落ちる —— 2.6GB を pull したあとで、である（実走で判明）。
+run "\"set -e\",\"systemctl stop ecs || true\",\"rm -rf /var/lib/ecs/data/*\",\"rm -rf /var/log/ecs/* || true\",\"ls -la /var/lib/ecs/data || true\""
 
 say "stopping the instance so the image is taken from a quiesced filesystem"
 aws ec2 stop-instances --instance-ids "$INST" >/dev/null

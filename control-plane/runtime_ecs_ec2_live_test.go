@@ -1094,6 +1094,18 @@ func TestECSEC2LiveSlotAMI(t *testing.T) {
 		t.Logf("PoolStatus: slot AMI %s is current for %s", st.SlotAmiID, st.SlotAmiImage)
 	}
 
+	// 決定 17's periodic backup is the last snapshot path no live test had ever taken, and
+	// it is precisely the shape of call the missing IAM statement would have refused. Any
+	// positive interval means "nothing recent enough exists — take one now".
+	if err := u.BackupHome(ctx, time.Nanosecond); err != nil {
+		t.Fatalf("BackupHome (this is the call the CP task role had no permission for until §64.22.3): %v", err)
+	}
+	backups, err := u.backupSnapshots(ctx)
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("after a backup the home has %d backup snapshot(s) (err %v), want exactly 1", len(backups), err)
+	}
+	t.Logf("backup snapshot %s (%s) tagged af-role=backup", aws.ToString(backups[0].SnapshotId), backups[0].State)
+
 	if err := u.Stop(ctx); err != nil {
 		t.Errorf("Stop: %v", err)
 	}
@@ -1102,6 +1114,11 @@ func TestECSEC2LiveSlotAMI(t *testing.T) {
 		t.Errorf("Destroy: %v", err)
 	} else if len(leftovers) > 0 {
 		t.Logf("Destroy left behind (expected, EFS dirs need a mount): %v", leftovers)
+	}
+	// A backup has its own role tag, so every other cleanup is blind to it: if Destroy
+	// misses it, it bills forever.
+	if left, err := u.backupSnapshots(ctx); err != nil || len(left) != 0 {
+		t.Errorf("Destroy left %d backup snapshot(s) behind (err %v)", len(left), err)
 	}
 }
 
@@ -1130,4 +1147,92 @@ func (l *liveEC2) imageTag(amiID, key string) string {
 		return ""
 	}
 	return ec2TagValue(out.Images[0].Tags, key)
+}
+
+// TestECSEC2LiveKeep is the check ADR 0045 決定 3-6 has been waiting for an image bake to
+// get: the entrypoint's AF_WS_KEEP step, running for real on a slot.
+//
+// The credentials-only EFS mount exists because a home on the EC2 pool is ONE EBS volume
+// in ONE AZ — lose it and the user loses their logins too. Nothing about that is visible
+// from the CP side, which only injects AF_WS_KEEP and mounts the access point; whether ~
+// really ends up pointing at it is the entrypoint's half, and no published workspace
+// image had the code (measured: ghcr.io/k-k1/agent-fleet/workspace:0.8.0 does not
+// contain the block at all).
+//
+// So point the test at an image that does. AF_HARNESS_KEEP_IMAGE overrides the
+// deployment's workspace image for this test only; the harness builds one by layering
+// workspace/entrypoint.sh onto the released image with `crane append` (no docker needed).
+func TestECSEC2LiveKeep(t *testing.T) {
+	if os.Getenv("AF_ECS_EC2_LIVE") != "1" || os.Getenv("AF_ECS_EC2_LIVE_KEEP") != "1" {
+		t.Skip("set AF_ECS_EC2_LIVE=1 AF_ECS_EC2_LIVE_KEEP=1 (and source the harness state.env) to check AF_WS_KEEP on a slot")
+	}
+	ctx := context.Background()
+	useCPTaskRole(t)
+	factory, err := newECSEC2Factory(&manager{})
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	f := factory.(*ecsEC2Factory)
+	if img := os.Getenv("AF_HARNESS_KEEP_IMAGE"); img != "" {
+		t.Logf("running this workspace on %s instead of %s (the released image has no AF_WS_KEEP block)",
+			img, f.base.cfg.workspaceImage)
+		f.base.cfg.workspaceImage = img
+	}
+	// Deliberately the AMBIENT credentials: the test's own eyes and cleanup are the
+	// deployer's, only the product runs as the CP task role (see useCPTaskRole).
+	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(f.base.cfg.region))
+	if err != nil {
+		t.Fatalf("aws config: %v", err)
+	}
+	live := &liveEC2{t: t, ctx: ctx, ec2: ec2.NewFromConfig(ac), ecs: ecs.NewFromConfig(ac), ssm: ssm.NewFromConfig(ac), cluster: f.base.cfg.cluster}
+
+	sfx := os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
+	u := f.New(Workspace{ContainerName: "af-ec2c-keep" + sfx, MembershipID: "m-keep", AgentToken: "tok-keep"}, "", nil).(*ecsEC2Runtime)
+	if err := u.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	live.waitState(u, "running", 15*time.Minute)
+	slot := live.slotOf(u)
+
+	// From the HOST the links look broken, and that is correct: they point at the task's
+	// mount path, which exists inside the container only. Say so, or the next reader
+	// "fixes" it.
+	host := live.run(slot, "ls -la /af-home/m-keep/dev | head -20")
+	t.Logf("host view of the home (links into %s dangle here on purpose):\n%s", "/var/lib/af/keep", host)
+
+	// The real check is inside the container: ~/.config and friends are symlinks into the
+	// EFS-backed keep mount, and writing through one lands on the other side.
+	// The task definition calls this container `agent`, and that name — not the image or
+	// the task family — is what ECS puts in the label.
+	cid := strings.TrimSpace(live.run(slot, "docker ps --filter label=com.amazonaws.ecs.container-name=agent --format '{{.ID}}' | head -1"))
+	if cid == "" {
+		t.Fatal("no workspace container on the slot to look inside")
+	}
+	in := func(sh string) string {
+		return live.run(slot, fmt.Sprintf("docker exec %s sh -lc %q", cid, sh))
+	}
+	links := in("ls -ld ~/.config ~/.ssh ~/.claude ~/.codex 2>&1")
+	t.Logf("container view of the kept set:\n%s", links)
+	for _, rel := range []string{".config", ".ssh", ".claude", ".codex"} {
+		if !strings.Contains(links, "/home/dev/"+rel+" -> /var/lib/af/keep/"+rel) {
+			t.Errorf("~/%s is not a link into the keep mount:\n%s", rel, links)
+		}
+	}
+	// Written through the link, read back on the mount: this is what makes the set
+	// survive losing the home volume.
+	const marker = "af-keep-marker"
+	in("printf " + marker + " > ~/.config/af-keep-probe")
+	if got := in("cat /var/lib/af/keep/.config/af-keep-probe; mountpoint -q /var/lib/af/keep && echo MOUNTED"); !strings.Contains(got, marker) || !strings.Contains(got, "MOUNTED") {
+		t.Errorf("a write through ~/.config did not land on the mounted keep volume: %q", got)
+	} else {
+		t.Logf("a write through ~/.config landed on the keep mount: %s", strings.TrimSpace(got))
+	}
+
+	if err := u.Stop(ctx); err != nil {
+		t.Errorf("Stop: %v", err)
+	}
+	live.waitTasksGone(u, 3*time.Minute)
+	if _, err := u.Destroy(ctx); err != nil {
+		t.Errorf("Destroy: %v", err)
+	}
 }

@@ -1142,14 +1142,18 @@ export const ja = {
   "pool.col_dormant": "休眠",
   "pool.col_backup": "予備",
   "pool.ami_title": "スロットのイメージ",
-  "pool.ami_ok": "（{image} を焼き込み済み。新しいスロットは pull を払いません）",
+  "pool.ami_ok":
+    "（{image} を焼き込み済みなので pull は払いません。ただし通しで測ると、自前 AMI の初回起動は節約した pull より高くつきました——素のイメージ 144 秒に対して 179〜192 秒。docs/64 §64.24）",
   "pool.ami_stale":
-    "スロットの AMI（{ami}）には {baked} が焼かれていますが、いま動かしているのは {running} です。新しいスロットを立てるたびにイメージの取得を払い直しています。deploy/aws/ecs/bake-slot-ami.sh で焼き直し、40-ec2-pool の SlotAmiId を差し替えてください。",
+    "スロットの AMI（{ami}）には {baked} が焼かれていますが、いま動かしているのは {running} です。新しいスロットは、イメージの取得と、自前 AMI の遅い初回起動の両方を払っています。deploy/aws/ecs/bake-slot-ami.sh で焼き直すか、40-ec2-pool の SlotAmiId を素の ECS-optimized のパラメータに戻してください（実測ではそちらが速い——docs/64 §64.24）。",
   "pool.ami_none":
-    "スロットの AMI（{ami}）にはワークスペースイメージが焼かれていません。新しいスロットを立てるたびに {image} の取得を払います（その AZ の最初の 1 人、上限まで伸びるとき、新しい AZ に広げるとき）。deploy/aws/ecs/bake-slot-ami.sh で焼けます。",
+    "スロットの AMI（{ami}）は素の ECS-optimized イメージです。新しいスロットは必要になった時点で {image} を取得します。これが推奨の状態です——焼き込むと pull は消えますが、初回起動でそれ以上に遅くなることが実測で分かっています（docs/64 §64.24）。",
   "pool.backup_none": "無し",
   "pool.backup_count": "予備 {n} 本",
   "pool.state_asleep": "休止中",
+  "pool.state_quarantined": "隔離",
+  "pool.quarantined_hint":
+    "home をマウントできなかったスロットが {n} 台あり、プールから外しました（他の人がここに入ることはありません）。停止済みですが root ボリュームは残っているので、必要なものを取り終えたら終了させてください。",
   "pool.not_registered": "（まだタスクを受け付けない）",
   "pool.free_slot": "空き",
   "pool.homes_title": "home",

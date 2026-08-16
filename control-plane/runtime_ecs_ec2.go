@@ -134,6 +134,23 @@ const (
 
 	ec2RoleHome = "home"
 	ec2RoleSlot = "slot"
+	// ec2RoleQuarantined is a slot that could not mount a home and must never be offered
+	// again. It is the SAME tag every pool query already filters on, so re-stamping it
+	// removes the box from the free list, from the cap, and from placement in one write —
+	// no second concept, no CP-side state (ADR 0012).
+	//
+	// Measured, 2026-08-16 (docs/64 §64.24): a workspace container whose home was
+	// detached under it left processes in uninterruptible sleep, XFS flushing to a device
+	// that was gone, and the kernel holding the dead volume's NVMe namespace. The next
+	// user's volume then never appeared under /dev at all, so `af-mount` failed with
+	// "device not found" — and because the slot still looked free, EVERY later Start
+	// picked the same box and failed the same way. One wedged kernel became an outage for
+	// everyone, silently.
+	ec2RoleQuarantined = "quarantined"
+	// Why the slot was quarantined, and when — the operator has to decide whether to
+	// terminate it, and "some slot went away" is not a report.
+	ec2TagQuarantineReason = "af-quarantine-reason"
+	ec2TagQuarantineAt     = "af-quarantine-at"
 	// ec2RoleGolden is the ONE shared snapshot new homes are built from: a home that has
 	// already paid boot-install (48s) and warmed its caches (ADR 0045 決定 9). One per
 	// pool, no membership tag — deleting it by mistake would cost every future user
@@ -915,6 +932,10 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 		return fmt.Errorf("slot %s not registered with the cluster: %w", p.instanceID, err)
 	}
 	if err := e.mountHome(ctx, p); err != nil {
+		// A slot that cannot mount is not a slow slot, it is a broken one, and leaving it
+		// in the pool means the next Start picks it too (measured: it did, for every user
+		// that followed). Take it out of the world before returning.
+		e.quarantineSlot(ctx, p, err)
 		return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
 	}
 	taskDefArn, err := e.registerTaskDef(ctx, p, prep)
@@ -930,6 +951,56 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	e.clearDormancy(ctx, p.volumeID)
 	e.base.watchReady(ctx)
 	return nil
+}
+
+// quarantineSlot takes a slot that failed to mount a home out of the pool, and frees the
+// home so its owner can be placed somewhere that works.
+//
+// Order matters and every step is best-effort: this runs when something is ALREADY wrong,
+// and the one outcome that must not happen is the box staying in the free list.
+//
+//  1. re-tag af-role → quarantined. Every slot query filters on that tag, so this single
+//     write removes it from freeSlots, from poolSize (a replacement may be created) and
+//     from placement.
+//  2. detach the home. The volume is the user's; it has to be able to attach elsewhere,
+//     and on the failure this was written for it was never actually opened here.
+//  3. drop the claim, so the owner's next Start is immediate rather than waiting out the
+//     claim TTL on a slot that will never work.
+//  4. stop the instance. It cannot run tasks, and a wedged kernel is not something the CP
+//     can repair — but it bills by the hour until an operator looks. Stopping keeps the
+//     root volume (and the evidence) while ending the compute charge; terminating is the
+//     operator's call, and this adapter has no TerminateInstances by design.
+func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, cause error) {
+	reason := cause.Error()
+	if len(reason) > 200 {
+		reason = reason[:200]
+	}
+	log.Printf("ecs-ec2: QUARANTINING slot %s — it could not mount %s for %s: %v",
+		p.instanceID, p.volumeID, e.base.name, cause)
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{p.instanceID},
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleQuarantined)},
+			{Key: aws.String(ec2TagQuarantineReason), Value: aws.String(reason)},
+			{Key: aws.String(ec2TagQuarantineAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
+		},
+	}); err != nil {
+		// This is the step that stops the bleeding; say so loudly when it fails, because
+		// nothing else here prevents the next user from landing on the same box.
+		log.Printf("ecs-ec2: could not quarantine slot %s (it will be offered again): %v", p.instanceID, err)
+	}
+	if p.volumeID != "" {
+		if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
+			VolumeId:   aws.String(p.volumeID),
+			InstanceId: aws.String(p.instanceID),
+		}); err != nil {
+			log.Printf("ecs-ec2: detaching %s from the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
+		}
+		e.unclaim(ctx, p.volumeID)
+	}
+	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{p.instanceID}}); err != nil {
+		log.Printf("ecs-ec2: stopping the quarantined slot %s: %v", p.instanceID, err)
+	}
 }
 
 // --- volumes ---
@@ -2902,6 +2973,11 @@ type ec2SlotView struct {
 	Registered   bool   `json:"registered"` // ECS accepts tasks on it
 	Workspace    string `json:"workspace"`  // occupant, "" = free
 	IdleMinutes  int    `json:"idle_minutes"`
+	// Quarantined: this box failed to mount a home and has been taken out of the pool
+	// (決定 20). It is shown rather than hidden because it keeps billing until somebody
+	// terminates it, and because "the pool shrank by one" is not an explanation.
+	Quarantined      bool   `json:"quarantined"`
+	QuarantineReason string `json:"quarantine_reason"`
 }
 
 type ec2HomeView struct {
@@ -2973,6 +3049,13 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	occupant := map[string]*ec2HomeView{} // instance id → the home on it
 	for i := range vols.Volumes {
 		v := &vols.Volumes[i]
+		// A volume EC2 is still deleting is not a home any more, and listing it as one
+		// tells the operator a destroyed workspace is still around (measured: a Destroy
+		// left two volumes in `deleting` for ~40 minutes, and both showed on this screen
+		// as detached homes). homeVolume() has always skipped these; the screen must too.
+		if v.State == ec2types.VolumeStateDeleting || v.State == ec2types.VolumeStateDeleted {
+			continue
+		}
 		idle, _ := idleSince(v, now)
 		h := ec2HomeView{
 			VolumeID:    aws.ToString(v.VolumeId),
@@ -2992,10 +3075,14 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		}
 	}
 
+	// Quarantined boxes are listed too, on purpose. They are out of the pool for
+	// placement, but they still exist and still bill, and a slot that disappears from the
+	// screen the moment it breaks is how an operator ends up paying for a box nobody can
+	// see (決定 20).
 	insts, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(ec2TagPool, f.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleSlot),
+			{Name: aws.String("tag:" + ec2TagRole), Values: []string{ec2RoleSlot, ec2RoleQuarantined}},
 			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
 		},
 	})
@@ -3019,6 +3106,10 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			}
 			if h := occupant[id]; h != nil {
 				s.Workspace, s.IdleMinutes = h.Workspace, h.IdleMinutes
+			}
+			if ec2TagValue(inst.Tags, ec2TagRole) == ec2RoleQuarantined {
+				s.Quarantined = true
+				s.QuarantineReason = ec2TagValue(inst.Tags, ec2TagQuarantineReason)
 			}
 			st.Slots = append(st.Slots, s)
 		}

@@ -379,10 +379,14 @@ only copy that is not in the zone — snapshots are regional.
 - The Slots tab shows, per home, how old its newest spare copy is — and says so loudly when
   there is none.
 
-**Slot AMI: skip the image pull on every new slot (opt-in).** A slot's root volume IS the
-image cache (pull 31.8s → 0.09s measured), and a slot the CP has just created always has a
-cold one — the first person in an AZ, growth up to the cap, and any spread into a new AZ.
-Bake the workspace image into the AMI the launch template uses and that disappears:
+**Slot AMI: NOT recommended — measured slower end to end.** A slot's root volume IS the
+image cache, and a slot the CP has just created always has a cold one, so baking the
+workspace image into the AMI does remove the pull (31.8s → **0.185s**, measured). It also
+makes the slot **slower overall**: a private AMI's root is lazily loaded from a fresh
+snapshot, so the box takes ~56s longer to join the cluster and a new user's first start
+measured **179–192s against 144s** on the stock ECS-optimized AMI (docs/64 §64.24, ADR 0045
+決定 19). **Leave `SlotAmiId` at its default.** The script stays for deployments that want
+independence from the registry at task start for their own reasons:
 
 ```bash
 deploy/aws/ecs/bake-slot-ami.sh \
@@ -399,10 +403,17 @@ aws cloudformation deploy --stack-name <net>-pool --template-file deploy/aws/ecs
 - Only NEW slots use it. Slots already running keep the AMI they were launched from, and
   nothing needs them replaced.
 - **Re-bake when the workspace image changes.** The CP compares the AMI's `af-image` tag
-  against what it runs and says so in Settings → Admin → Slots; forgetting costs a pull per
-  new slot, silently. Same failure shape as a stale golden snapshot.
+  against what it runs and says so in Settings → Admin → Slots — where a pool on the stock
+  AMI is reported as the recommended state, not as something to fix.
 - Stopped instances do **not** reserve capacity, so this does not help an AZ that has run
   out — see docs/64 §64.21 for that.
+
+**A slot that cannot mount a home is quarantined** (`af-role=quarantined`, ADR 0045 決定 20):
+it leaves the pool so nobody else lands on it, its home is detached and freed for another
+slot, and the box is stopped. It stays on the Slots tab with the reason, because it still
+holds its root volume — **terminate it yourself** once you have taken what you need from
+it (this adapter never terminates instances). The failure that made this necessary was a
+wedged kernel holding a deleted volume's NVMe namespace, which no amount of retrying fixes.
 
 **Golden snapshot: skip boot-install for new users.** A brand-new home pays boot-install
 (4 CLIs 41s + rtk 1s + agy 6s = 48s) and a cold npm cache. Bake one home that has already

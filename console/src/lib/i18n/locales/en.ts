@@ -1136,14 +1136,18 @@ export const en: Record<keyof typeof ja, string> = {
   "pool.col_dormant": "Dormant",
   "pool.col_backup": "Spare copy",
   "pool.ami_title": "Slot image",
-  "pool.ami_ok": "({image} is already baked in, so a new slot pays no pull)",
+  "pool.ami_ok":
+    "({image} is baked in, so a new slot pays no pull — but measured end to end, a private AMI's first boot cost more than the pull it saves: 179–192s against 144s on the stock image. See docs/64 §64.24.)",
   "pool.ami_stale":
-    "The slot AMI ({ami}) has {baked} baked in, but this deployment runs {running}. Every new slot is paying for the image pull again. Re-bake with deploy/aws/ecs/bake-slot-ami.sh and point 40-ec2-pool's SlotAmiId at the result.",
+    "The slot AMI ({ami}) has {baked} baked in, but this deployment runs {running}. Every new slot pays for the image pull again AND for the slower first boot of a private AMI. Either re-bake with deploy/aws/ecs/bake-slot-ami.sh, or point 40-ec2-pool's SlotAmiId back at the stock ECS-optimized parameter (measured faster — docs/64 §64.24).",
   "pool.ami_none":
-    "The slot AMI ({ami}) has no workspace image baked in, so every new slot pays to pull {image} — the first person in an AZ, growth up to the cap, and any spread into a new AZ. deploy/aws/ecs/bake-slot-ami.sh bakes one.",
+    "The slot AMI ({ami}) is the stock ECS-optimized image, so a new slot pulls {image} the first time it needs it. That is the recommended state: baking the image in removes the pull but was measured to cost more in first boot (docs/64 §64.24).",
   "pool.backup_none": "none",
   "pool.backup_count": "{n} copies kept",
   "pool.state_asleep": "asleep",
+  "pool.state_quarantined": "quarantined",
+  "pool.quarantined_hint":
+    "{n} slot(s) could not mount a home and were taken out of the pool, so nobody else lands on them. They are stopped but still hold their root volume: terminate them once you have taken what you need from the box.",
   "pool.not_registered": "(not accepting tasks yet)",
   "pool.free_slot": "free",
   "pool.homes_title": "Homes",

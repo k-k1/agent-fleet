@@ -38,6 +38,9 @@ type Slot = {
   registered: boolean;
   workspace: string;
   idle_minutes: number;
+  // 隔離されたスロット（決定 20）。プールからは外れているが、まだ課金されている。
+  quarantined?: boolean;
+  quarantine_reason?: string;
 };
 type Home = {
   volume_id: string;
@@ -102,17 +105,21 @@ export function PoolView() {
 
   const slots = st.slots || [];
   const homes = st.homes || [];
-  const running = slots.filter((s) => s.state === "running").length;
-  const asleep = slots.filter((s) => s.state === "stopped").length;
-  const free = slots.filter((s) => !s.workspace).length;
-  const atCap = st.max_slots != null && slots.length >= st.max_slots;
+  // 隔離された箱はプールの数に入れない——上限にも空きにも数えると、運用者は
+  // 「空きが 1 あるのに誰も入れない」を見ることになる。表には残す（まだ課金されている）。
+  const pool = slots.filter((s) => !s.quarantined);
+  const quarantined = slots.filter((s) => s.quarantined);
+  const running = pool.filter((s) => s.state === "running").length;
+  const asleep = pool.filter((s) => s.state === "stopped").length;
+  const free = pool.filter((s) => !s.workspace).length;
+  const atCap = st.max_slots != null && pool.length >= st.max_slots;
 
   return (
     <div className="admin-stage pool-view">
       <section className="admin-panel">
         <h4>{tr("pool.slots_title")}</h4>
         <div className="res-tiles">
-          <PoolTile label={tr("pool.provisioned")} value={`${slots.length}`} sub={tr("pool.of_max", { n: String(st.max_slots ?? 0) })} warn={atCap} />
+          <PoolTile label={tr("pool.provisioned")} value={`${pool.length}`} sub={tr("pool.of_max", { n: String(st.max_slots ?? 0) })} warn={atCap} />
           <PoolTile label={tr("pool.running")} value={`${running}`} sub={tr("pool.running_sub")} />
           <PoolTile label={tr("pool.asleep")} value={`${asleep}`} sub={tr("pool.asleep_sub")} />
           <PoolTile label={tr("pool.free")} value={`${free}`} sub={tr("pool.free_sub")} />
@@ -120,6 +127,11 @@ export function PoolView() {
         {/* 上限に達している＝次の人はスロットを取り上げて作る。運用者が最初に知りたいのは
             「増えないこと」ではなく「立ち退きが起きること」なので、そう書く。 */}
         {atCap && <p className="admin-hint warn-text">{tr("pool.at_cap")}</p>}
+        {/* 隔離は「勝手に減った」ではなく「この箱はもう使えないので外した。まだ課金される」
+            と読めないと意味がない。台数と、終了は運用者の手であることを書く。 */}
+        {quarantined.length > 0 && (
+          <p className="admin-hint warn-text">{tr("pool.quarantined_hint", { n: String(quarantined.length) })}</p>
+        )}
         {/* 「退避しない」を「…の後に退避します」の穴に入れると "after never" になって
             読めなくなる。0 は別の文にする（既定はオフなので、これが普通に出る方）。 */}
         <p className="admin-hint">
@@ -150,9 +162,15 @@ export function PoolView() {
                   <td className="mono">{s.instance_id}</td>
                   <td className="mono">{s.instance_type}<span className="muted"> {s.az}</span></td>
                   <td>
-                    <span className={"state-dot " + (s.state === "running" ? "on" : "off")} />
-                    {s.state === "stopped" ? tr("pool.state_asleep") : s.state}
-                    {s.state === "running" && !s.registered && (
+                    <span className={"state-dot " + (s.quarantined ? "off" : s.state === "running" ? "on" : "off")} />
+                    {s.quarantined ? (
+                      <span className="warn-text" title={s.quarantine_reason || ""}>{tr("pool.state_quarantined")}</span>
+                    ) : s.state === "stopped" ? (
+                      tr("pool.state_asleep")
+                    ) : (
+                      s.state
+                    )}
+                    {!s.quarantined && s.state === "running" && !s.registered && (
                       <span className="muted"> {tr("pool.not_registered")}</span>
                     )}
                   </td>
