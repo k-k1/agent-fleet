@@ -1,0 +1,119 @@
+<mxfile host="agent-fleet" type="device">
+  <diagram id="af-architecture-overview" name="全体構成（docker / native）">
+    <mxGraphModel dx="1100" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="1654" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="cpbox" value="Control Plane（Go 常駐・ホスト側 CP_ADDR 既定 :8080 / compose 127.0.0.1:8099）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9E9E9E;dashed=1;verticalAlign=top;align=left;fontSize=12;fontStyle=1;spacingLeft=8;spacingTop=4;" vertex="1" parent="1">
+          <mxGeometry x="60" y="290" width="1000" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="wsbox" value="Workspace（メンバーシップ単位で完全分離）&lt;br&gt;docker: コンテナ af-ws-*　｜　native: ホストプロセス + 仮想 HOME" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9E9E9E;dashed=1;verticalAlign=top;align=left;fontSize=12;fontStyle=1;spacingLeft=8;spacingTop=4;" vertex="1" parent="1">
+          <mxGeometry x="60" y="600" width="1000" height="510" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cn" value="Console SPA（ブラウザ）&lt;br&gt;React + Vite + zustand&lt;br&gt;xterm.js / BrowserPane" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="80" y="40" width="300" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ext" value="外部の Claude Code / Claude Desktop&lt;br&gt;（利用者 PC）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="740" y="40" width="300" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="edge1" value="エッジ（運用者選択）&lt;br&gt;Caddy 自動TLS / Tailscale Funnel / ALB" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="80" y="170" width="300" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="gate" value="authGate（L1 Console 認証）&lt;br&gt;identity / membership 解決・認可" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="340" width="230" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="relay" value="REST / WS / SSE 中継&lt;br&gt;Console dist 静的配信" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="350" y="340" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="cpmcp" value="/mcp（Streamable HTTP）&lt;br&gt;Bearer PAT・member 4 + admin 6 ツール" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="680" y="340" width="350" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="store" value="MetadataStore&lt;br&gt;SQLite 既定 / Postgres" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="440" width="230" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="rta" value="Runtime アダプタ&lt;br&gt;docker ｜ native ｜ ecs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="350" y="440" width="240" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="agent" value="Workspace Agent（Go・AGENT_ADDR 既定 :7700 loopback）&lt;br&gt;session lifecycle / driver 選択・復旧 / git / fs / 暗号ストア secrets.enc&lt;br&gt;transcript / usage / チャット（headless CLI）/ preview 中継 /proxy/{port}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="650" width="940" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="managed" value="managed runtime（Workspace ごとに共有）&lt;br&gt;Codex app-server / opencode serve" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="790" width="300" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="tmux" value="tmux / PTY&lt;br&gt;claude・shell・SSM・&lt;br&gt;CLI を選んだ Codex / opencode ほか" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="420" y="790" width="300" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="chrome" value="Chromium / CDP&lt;br&gt;（BrowserManager・screencast）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="750" y="790" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="clis" value="CLI エージェント本体&lt;br&gt;claude / codex / opencode / copilot / cursor / kiro / agy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="910" width="630" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="mcpx" value="MCP サーバー群&lt;br&gt;（詳細は mcp-wiring.drawio）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="1020" width="300" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="repos" value="working copy（~/repos）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="420" y="1020" width="300" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_cn_edge" value="HTTPS / WSS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="cn" target="edge1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_edge_gate" value="127.0.0.1 loopback へ素通し" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.61;entryY=0;" edge="1" parent="1" source="edge1" target="gate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_gate_relay" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="gate" target="relay">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_relay_store" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.1;exitY=1;entryX=1;entryY=0.5;" edge="1" parent="1" source="relay" target="store">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_relay_rta" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.4;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="relay" target="rta">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ext_cpmcp" value="Bearer PAT&lt;br&gt;（authGate 除外パス）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.6;entryY=0;" edge="1" parent="1" source="ext" target="cpmcp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_relay_agent" value="Bearer AGENT_TOKEN で 127.0.0.1:ポート へ&lt;br&gt;REST / SSE / terminal WS / browser WS / preview" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.95;exitY=1;entryX=0.58;entryY=0;" edge="1" parent="1" source="relay" target="agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cpmcp_agent" value="CP が中継（同じ経路）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.81;entryY=0;" edge="1" parent="1" source="cpmcp" target="agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_rta_agent" value="起動・停止&lt;br&gt;docker: docker run + bind mount&lt;br&gt;native: プロセス fork + HOME 差し替え" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;dashed=1;exitX=0.2;exitY=1;entryX=0.33;entryY=0;" edge="1" parent="1" source="rta" target="agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_agent_managed" value="driver=managed（構造化 API）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.16;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="agent" target="managed">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_agent_tmux" value="driver=tui（tmux 画面）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.51;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="agent" target="tmux">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_agent_chrome" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.85;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="agent" target="chrome">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_managed_clis" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.238;entryY=0;" edge="1" parent="1" source="managed" target="clis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_tmux_clis" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.762;entryY=0;" edge="1" parent="1" source="tmux" target="clis">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_clis_mcpx" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.238;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="clis" target="mcpx">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_clis_repos" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.762;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="clis" target="repos">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note" value="ブラウザは常に CP とだけ話す。CP は tmux にも git にも直接触れず、必ず Agent 経由。&lt;br&gt;docker と native の差は Runtime アダプタの中だけで、CP → Agent より下流は同一。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=11;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1130" width="1000" height="40" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

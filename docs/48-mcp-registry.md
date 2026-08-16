@@ -9,6 +9,9 @@
 - 関連: [history/19](history/19-assistant-chat.md)（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
   [20](20-container-audit-egress.md)（egress allowlist）/ [46](46-usage-accounting.md)（残 P5 = MCP の使用量計上）/
   [27](27-agent-managed-driver.md) §codex thread MCP / [32](32-agy-agent-kind.md) §MCP / [43](43-kiro-agent-kind.md) §2.6
+- 図: [`img/mcp-wiring.drawio`](img/mcp-wiring.drawio) — 「提供する側」（CP `/mcp` / agent `mcp-stdio` の 2 面）と
+  「利用する側」（本設計＝レジストリ → materialize / アシスタント配線）の全体配線。
+  プロセス構成そのものは [`img/architecture-overview.drawio`](img/architecture-overview.drawio)。
 
 ---
 

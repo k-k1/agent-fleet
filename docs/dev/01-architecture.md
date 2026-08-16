@@ -30,6 +30,10 @@
 
 ## 1.3 3 プロセス構成（local/Docker が既定）
 
+図（同じ内容を draw.io で描いたもの。docker / native の差し替え点つき）:
+[`img/architecture-overview.drawio`](../img/architecture-overview.drawio) /
+MCP まわりの配線だけを取り出したもの: [`img/mcp-wiring.drawio`](../img/mcp-wiring.drawio)
+
 ```
 Browser (Console SPA: React+Vite+zustand, xterm.js + BrowserPane canvas)
    │ HTTPS / WSS

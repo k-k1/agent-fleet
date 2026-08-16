@@ -1,0 +1,127 @@
+<mxfile host="agent-fleet" type="device">
+  <diagram id="af-mcp-wiring" name="MCP 配線（提供する側 / 利用する側）">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="provbox" value="af が【提供する側】の MCP（CP と Agent は別実装・別スコープ）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9E9E9E;dashed=1;verticalAlign=top;align=left;fontSize=12;fontStyle=1;spacingLeft=8;spacingTop=4;" vertex="1" parent="1">
+          <mxGeometry x="800" y="140" width="600" height="440" as="geometry" />
+        </mxCell>
+        <mxCell id="usebox" value="af が【利用する側】＝ 外部 MCP をクライアントとして掴む" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#9E9E9E;dashed=1;verticalAlign=top;align=left;fontSize=12;fontStyle=1;spacingLeft=8;spacingTop=4;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="710" height="740" as="geometry" />
+        </mxCell>
+
+        <mxCell id="bi" value="builtin（コード定義・編集不可）&lt;br&gt;af / pagerduty / grafana /&lt;br&gt;cloudwatch / aws&lt;br&gt;&lt;br&gt;workspace-agent mcp-run が&lt;br&gt;鍵を spawn 時に env 注入&lt;br&gt;＝設定ファイルに書かない" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="60" width="210" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="usr" value="user 登録&lt;br&gt;&lt;br&gt;stdio ＋ リモート&lt;br&gt;（Streamable HTTP のみ）&lt;br&gt;暗号ストア secrets.enc" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="290" y="60" width="210" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="ten" value="tenant 配布&lt;br&gt;&lt;br&gt;リモートのみ（stdio は禁止）&lt;br&gt;＝全員のコンテナで任意コマンド&lt;br&gt;実行と等価になるため" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="520" y="60" width="210" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="reg" value="mcpreg：実効レジストリ&lt;br&gt;builtin（接続済のみ） ∪ tenant（enabled） ∪ user" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="180" y="220" width="430" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mat" value="materialize（起動 5 箇所 + CRUD 契機・mutex で直列化）&lt;br&gt;各 CLI のネイティブ設定へ書き込み&lt;br&gt;~/.claude.json ・ ~/.codex/config.toml ・ ほか kind 別&lt;br&gt;所有台帳つきの非破壊書き込み／shell・SSM は Skipped" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="350" width="340" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="chat" value="アシスタントチャット&lt;br&gt;（headless CLI）&lt;br&gt;&lt;br&gt;起動時 --mcp-config で付与" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="430" y="350" width="300" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="session" value="対話セッション（全 kind）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="520" width="340" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="extmcp" value="外部 MCP サーバー（社内 Wiki・チケット・社内 API …）&lt;br&gt;af は定義を配るだけで、通信は各 CLI が直接行う" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="180" y="650" width="430" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="extclient" value="外部の Claude Code / Claude Desktop（利用者 PC）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="980" y="40" width="390" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="cpmcp" value="CP /mcp（Streamable HTTP）&lt;br&gt;Bearer PAT・member 4 + admin 6 ツール&lt;br&gt;role は呼び出し時に live 再解決" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="830" y="190" width="540" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="assistmcp" value="workspace-agent mcp-stdio ── アシスタント面&lt;br&gt;既定 read-only／--write のとき送信・相談などフリート操作も広告&lt;br&gt;（見えるツール集合そのものがゲート）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="830" y="310" width="540" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="sessmcp" value="workspace-agent mcp-stdio --self-report --chromium-attach&lt;br&gt;── セッション面 ＝ builtin『af』&lt;br&gt;af_report ＋ Chromium Attach View 7 種だけ&lt;br&gt;その他のフリート tool は広告も call も拒否" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="830" y="440" width="540" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="agentrest" value="Workspace Agent REST&lt;br&gt;127.0.0.1 + AGENT_TOKEN（子プロセスへ転送）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="830" y="650" width="540" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_bi_reg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.75;exitY=1;entryX=0.1;entryY=0;" edge="1" parent="1" source="bi" target="reg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_usr_reg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="usr" target="reg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ten_reg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.9;entryY=0;" edge="1" parent="1" source="ten" target="reg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_reg_mat" value="targets.session" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.25;exitY=1;entryX=0.66;entryY=0;" edge="1" parent="1" source="reg" target="mat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_reg_chat" value="targets.assistant" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.75;exitY=1;entryX=0.24;entryY=0;" edge="1" parent="1" source="reg" target="chat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_mat_session" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="mat" target="session">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_session_extmcp" value="stdio は子プロセスを spawn／リモートは HTTP を直接" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.2;entryY=0;" edge="1" parent="1" source="session" target="extmcp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_chat_extmcp" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.2;exitY=1;entryX=0.8;entryY=0;" edge="1" parent="1" source="chat" target="extmcp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_sessmcp_bi" value="builtin『af』としてレジストリの中にいる&lt;br&gt;（自前サーバーだけ別配線にしない）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;dashed=1;exitX=0;exitY=0;entryX=0.5;entryY=1;" edge="1" parent="1" source="sessmcp" target="bi">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="780" y="440" />
+              <mxPoint x="780" y="320" />
+              <mxPoint x="165" y="320" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_session_sessmcp" value="af_report・Chromium Attach" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="session" target="sessmcp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_chat_assistmcp" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="chat" target="assistmcp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_extclient_cpmcp" value="Bearer PAT" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.64;entryY=0;" edge="1" parent="1" source="extclient" target="cpmcp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cpmcp_agentrest" value="CP が中継" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="cpmcp" target="agentrest">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="790" y="235" />
+              <mxPoint x="790" y="690" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_assistmcp_agentrest" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="assistmcp" target="agentrest">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1420" y="360" />
+              <mxPoint x="1420" y="690" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_sessmcp_agentrest" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="sessmcp" target="agentrest">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note2" value="「提供する側」と「利用する側」を分けて読むこと。レジストリ（利用する側）は 1 本のリストで、af 自身の builtin『af』もその中に並ぶ。" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=11;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="780" width="1360" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
