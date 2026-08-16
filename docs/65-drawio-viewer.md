@@ -1,7 +1,9 @@
 # 65. `.drawio` をペインで表示する
 
-- 状態: **設計確定・未実装**（2026-08-16）。実測は開発 Workspace の headless Chromium で行い、
-  再現コマンドを各節に残した。設計判断は [decisions/0046](decisions/0046-drawio-viewer.md)。
+- 状態: **P0 実装済み**（2026-08-16。P1 以降は未着手）。実測は開発 Workspace の headless
+  Chromium で行い、再現コマンドを各節に残した。実装で分かったことは §65.11。
+  検証ハーネスは `npm --prefix console run drawio:check`。
+  設計判断は [decisions/0046](decisions/0046-drawio-viewer.md)。
 - 関連: [44-markdown-code-editor.md](44-markdown-code-editor.md)（File ペインの面と編集・保存機構。
   本機能は**その面を 1 つ増やす**形で載る） / [28-i18n.md](28-i18n.md) /
   [35-packaging.md](35-packaging.md)（同梱物と配布サイズ） /
@@ -65,12 +67,12 @@ chromium --headless --disable-gpu --no-sandbox --virtual-time-budget=8000 \
 **サンドボックス iframe に閉じ込め、XML は親から postMessage で流し込む。**
 
 ```
-FileView (.drawio)
+FileView (.drawio)  … src/features/viewer/DrawioView.tsx
   ├ fetch api/fs/download?path=…        ← 資格情報つき・親だけが行う
-  └ <iframe sandbox="allow-scripts" src="assets/drawio-<ver>/viewer.html">
-        └ viewer-static.min.js + GraphViewer     ← 資格情報なし・connect-src 'none'
-             ↑ postMessage({xml, dark, page})
-             ↓ postMessage({ready, pages, error})
+  └ <iframe sandbox="allow-scripts" srcDoc={drawioFrameSrcdoc(…)}>
+        └ viewer-static.min.js（dist/assets/ のハッシュ付き資産）＋ GraphViewer
+             ↑ postMessage({t:"render", xml, dark})     ← 資格情報なし・connect-src 'none'
+             ↓ postMessage({t:"ready"} / {t:"rendered", pages, page, scale} / {t:"error"})
 ```
 
 この形を採る理由は 3 つとも実測に基づく。
@@ -83,8 +85,12 @@ FileView (.drawio)
   HTML がビューアの DOMPurify をすり抜けても、Console の DOM・Cookie・API に届かない。
   `<script src>` は CORS の対象外なので、**P0（ステンシル無し）ではこの構成に追加設定は要らない。**
 
-`viewer.html` は自前の 30 行程度の受け皿で、`window.STENCIL_PATH` /
-`window.DRAWIO_LIGHTBOX_URL` を自オリジンへ固定してから `viewer-static.min.js` を読む。
+フレームの中身は静的ファイルではなく **`srcdoc`**（`src/features/viewer/drawioFrame.ts` が
+組み立てる文字列）にした。CSP・外部 URL の潰し・メッセージ契約が 1 か所に集まり、
+«lightbox を出していないか» «外部 URL を潰しているか» を**文字列としてユニットテストで
+検査できる**（`drawioFrame.test.ts`）。ハッシュ付き資産になるのは 4 MB の本体だけで、
+srcdoc はそれを `<script src>` で読む —— `<script src>` は CORS の対象外なので、
+オリジンを持たないフレームからでも読める。
 
 ## 65.4 ペインへの載せ方
 
@@ -151,7 +157,8 @@ iframe ──GET /drawio/stencils/aws4.xml──▶ CP
 | `STENCIL_PATH` 既定の外部取得 | `viewer.html` で自オリジンへ固定。CP 経由以外へは出ない |
 | ラベル内の HTML / `javascript:` リンク | ビューア同梱の DOMPurify ＋ オリジンなし iframe（`allow-same-origin` なし）で二重 |
 | 任意 URL 取得（SSRF） | ステンシル名を同梱台帳で照合（65.5.3） |
-| iframe からの通信 | `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'self'`（P0 は `connect-src 'none'`） |
+| iframe からの通信 | `Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline' <ビューアのオリジン>; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'`（P1 でステンシル用に `connect-src` を開ける）。**`'self'` は使えない** —— srcdoc のオリジンは opaque で自分自身を指せないため、ビューアの実体があるオリジンを明示する |
+| 外部 URL の既定値 | `PROXY_URL` / `STYLE_PATH` / `SHAPES_PATH` / `STENCIL_PATH` / `DRAW_MATH_URL` / `GRAPH_IMAGE_PATH` / `CSS_PATH` / `DRAWIO_BASE_URL` / `DRAWIO_SERVER_URL` / `DRAWIO_LIGHTBOX_URL` / `DRAWIO_LOG_URL` を **dead value で** 潰す（空文字では潰せない — §65.11-1） |
 
 ## 65.7 配布
 
@@ -161,13 +168,17 @@ iframe ──GET /drawio/stencils/aws4.xml──▶ CP
 - **Vite のハッシュ資産として出す。** `console/public/` に素置きすると 65.2.1-4 で `no-store` に
   なるため、`?url` インポートで `dist/assets/` へ吐かせ、`immutable` キャッシュに載せる。
   バージョン更新はハッシュ変更で自然に反映される。
-- `viewer.html` も同じ扱い（`assets/` 配下に置き、iframe の `src` はビルド時に確定した相対 URL）。
+- 資産 URL は **`document.baseURI` で絶対化してから** フレームへ渡す。srcdoc の中の相対 URL は
+  親の base に対して解決されるため、パスを剥がすプロキシの下や `/open/...` のような深い URL では
+  解決先がずれる。
+- 版とチェックサム、更新手順は `console/vendor/drawio/README.md`。gitleaks の許可（upstream の
+  Dropbox アプリ ID）は `.gitleaks.toml` に値だけを登録している。
 
 ## 65.8 段階
 
 | Phase | 内容 | 受け入れ基準 |
 |-------|------|--------------|
-| **P0** | ビューア同梱・iframe・図 ↔ XML ソース切替・テーマ追従・ページ送り・`.drawio`/`.dio`/`mxfile` 判定・i18n・dom テスト | 素の `.drawio` が図として開く／ラベルが日本語で出る／圧縮 `<diagram>` が開く／2 MiB 超が開く（`fs/download` 経由）／外向き通信が 0 件（CDP で確認） |
+| **P0** ✅ | ビューア同梱・iframe・図 ↔ XML ソース切替・テーマ追従・ページ送り・`.drawio`/`.dio`/`mxfile` 判定・i18n・dom テスト | 素の `.drawio` が図として開く／ラベルが日本語で出る／圧縮 `<diagram>` が開く／2 MiB 超が開く（`fs/download` 経由）／外向き通信が 0 件（CDP で確認）—— **すべて `drawio:check` が実ブラウザで判定**（実機の Console での目視は未） |
 | **P1** | ステンシルの CP プロキシ＋キャッシュ＋台帳（65.5.3）、事前投入スクリプト | `aws4` を含む図でアイコンが出る／台帳に無い名前が 404／2 回目はキャッシュから |
 | **P2** | `.drawio.svg` / `.drawio.png` の埋め込み XML から図モードを出す（今は画像として開く） | 同じファイルが画像／図の両モードで開ける |
 | **P3** | **編集**。drawio webapp を自ホストし embed（`?embed=1&proto=json`）、保存は docs/44 の revision/競合機構へ載せる | 別起票（配布サイズが桁で変わるため） |
@@ -194,3 +205,39 @@ iframe ──GET /drawio/stencils/aws4.xml──▶ CP
 - P1 のキャッシュ置き場（CP の既存データディレクトリのどこに置くか。テナント横断で 1 つでよい）。
 - upstream の pin 先（GitHub raw のタグ URL か、リリース `draw.war` の展開か）。
 - P3 の webapp 自ホストは配布サイズが別次元（`draw.war` 53 MB）なので、着手時に別 ADR を起こす。
+
+---
+
+## 65.11 実装で分かったこと（2026-08-16・P0）
+
+設計時の実測（§65.2）に加え、**書いてみて初めて出た**ものを残す。どれも「静かに壊れる」型で、
+次に触る人が同じ時間を溶かさないためのもの。
+
+1. **外部 URL の既定値は空文字では潰せない。** ビューアは
+   `window.X = window.X || "https://viewer.diagrams.net/…"` の形で既定値を入れるので、
+   先回りして `""` を代入しても falsy ＝ 外部の既定値が生き残る。実際、`DRAW_MATH_URL` を
+   `""` にしたまま `viewer.diagrams.net/math4/es5/startup.js` を取りに行き、CSP が止めていた
+   （CSP が無ければ黙って外部に出ていた）。**ネットワークに出ない dead value**（`about:blank`）を
+   入れる。`drawio:check` の「外部への要求 0 件」はこの取りこぼしを捕まえるためにある。
+2. **`window.onerror` は使えない。** ビューア本体が自分のロガーで `window.onerror` を
+   上書きするため、こちらが代入したハンドラは静かに外れる。上書きできない
+   `addEventListener("error", …)` で受ける。**失敗を親へ返せないと、ペインは理由も出さず
+   空になる。**
+3. **コンテナの寸法はビューアが奪う。** `GraphViewer` は既定で
+   `graph.resizeContainer = true` にし、コンテナを図の大きさへ縮める。860×520 のフレームで
+   コンテナが **181×341** まで縮み、図が左上に貼り付いた。`addSizeHandler` の分岐が
+   **インライン `style.height` の有無**を見ているので、CSS クラスで大きさを与えても効かない。
+   → ホスト要素にピクセルで幅・高さを与え、`resize: 0` にし、収め直しはビューア自身の
+   `fitGraph()` に任せる（`allowZoomIn` が既定 false なので上限が等倍 ＝ 大きい図は縮小、
+   小さい図は原寸で中央）。
+4. **`--virtual-time-budget` はサンドボックス iframe を動かさない。** 別プロセスになる
+   フレームは仮想時間の対象外で、`ready` の後で時間が止まり「描画されない」ように見える。
+   **ハーネスの罠であって製品の不具合ではない** —— 実時間（CDP で待つ）に切り替えたら
+   同じコードがそのまま通った。iframe を含む UI の検証はスクリーンショット CLI ではなく
+   CDP ＋ 実時間で行うこと。
+5. **gitleaks は同梱ビューアに反応する。** upstream の配布物に Dropbox の**アプリ ID**
+   （公開識別子）が入っており `dropbox-api-token` ルールに当たる。`.gitleaks.toml` の原則
+   どおりパスごと除外はせず、その値だけを許可した。
+6. 図の面は **一度出したら畳んでも外さない**（`hidden` にするだけ）。作り直すと 4 MB の
+   ビューアを読み直し、ズーム位置と開いていたページも失う。逆に**一度も図を見ていない
+   うちは作らない** —— 行を指した引用でソース面に着地した人に、図の取得をさせない。

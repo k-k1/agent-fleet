@@ -3,6 +3,7 @@ import {
   availableMarkdownModes,
   availableRenderers,
   cycleFileMode,
+  diagramModeControls,
   effectiveRenderer,
   fileModeCycle,
   initialFileMode,
@@ -12,6 +13,7 @@ import {
   rendererControls,
   surfaceKey,
   surfacesFor,
+  withDiagramMode,
   withMarkdownMode,
   withPaneMode,
   withRenderer,
@@ -23,6 +25,7 @@ const caps = (over: Partial<FileModeCaps> = {}): FileModeCaps => ({
   markdown: true,
   marp: false,
   editable: true,
+  diagram: false,
   ...over,
 });
 
@@ -125,12 +128,14 @@ describe("surfacesFor", () => {
       source: false,
       preview: null,
       split: false,
+      diagram: false,
     });
     expect(surfacesFor({ kind: "plain", mode: "view" }, caps({ markdown: false }))).toEqual({
       editor: false,
       source: true,
       preview: null,
       split: false,
+      diagram: false,
     });
   });
 
@@ -148,6 +153,7 @@ describe("surfacesFor", () => {
       source: false,
       preview: "normal",
       split: true,
+      diagram: false,
     });
     // A non-editable document is never offered split. A state that still carries
     // it must render what reconcileFileMode clamps it to — a plain preview — and
@@ -157,6 +163,7 @@ describe("surfacesFor", () => {
       source: false,
       preview: "normal",
       split: false,
+      diagram: false,
     });
     expect(surfacesFor(md({ md: "split" }), caps({ editable: false }))).toEqual(
       surfacesFor(reconcileFileMode(md({ md: "split" }), caps({ editable: false })), caps({ editable: false })),
@@ -355,5 +362,84 @@ describe("reconcileFileMode", () => {
       kind: "plain",
       mode: "view",
     });
+  });
+});
+
+// ── 図（.drawio）の面 — docs/65 §65.4 ─────────────────────────────────────
+describe("diagram mode", () => {
+  const dcaps = (over: Partial<FileModeCaps> = {}) => caps({ markdown: false, diagram: true, ...over });
+
+  it("図として開き、行を指した引用と「編集で開く」はソースに着地する", () => {
+    expect(initialFileMode(dcaps())).toEqual({ kind: "diagram", diagram: "figure" });
+    expect(initialFileMode(dcaps(), { hasTargetLine: true })).toEqual({ kind: "diagram", diagram: "source" });
+    expect(initialFileMode(dcaps(), { requested: "edit" })).toEqual({ kind: "diagram", diagram: "source" });
+  });
+
+  it("図の面はペインの view 層、ソース面は編集できるときだけ edit 層", () => {
+    expect(paneModeOf({ kind: "diagram", diagram: "figure" }, dcaps())).toBe("view");
+    expect(paneModeOf({ kind: "diagram", diagram: "source" }, dcaps())).toBe("edit");
+    expect(paneModeOf({ kind: "diagram", diagram: "source" }, dcaps({ editable: false }))).toBe("view");
+  });
+
+  it("ソース面は編集できないときだけ読み取り専用の CodeView になる", () => {
+    expect(surfacesFor({ kind: "diagram", diagram: "figure" }, dcaps())).toEqual({
+      editor: false,
+      source: false,
+      preview: null,
+      split: false,
+      diagram: true,
+    });
+    expect(surfacesFor({ kind: "diagram", diagram: "source" }, dcaps())).toMatchObject({ editor: true, diagram: false });
+    expect(surfacesFor({ kind: "diagram", diagram: "source" }, dcaps({ editable: false }))).toMatchObject({
+      source: true,
+      editor: false,
+    });
+  });
+
+  it("図とソースを 2 状態で往復する（キーボードコマンド）", () => {
+    const cycle = fileModeCycle(dcaps());
+    expect(cycle).toEqual([
+      { kind: "diagram", diagram: "figure" },
+      { kind: "diagram", diagram: "source" },
+    ]);
+    expect(cycleFileMode({ kind: "diagram", diagram: "figure" }, dcaps())).toEqual({ kind: "diagram", diagram: "source" });
+    expect(cycleFileMode({ kind: "diagram", diagram: "source" }, dcaps())).toEqual({ kind: "diagram", diagram: "figure" });
+    // 別種の状態から入ってきても図に着地する（clamp と同じ向き）。
+    expect(cycleFileMode({ kind: "plain", mode: "view" }, dcaps())).toEqual({ kind: "diagram", diagram: "figure" });
+  });
+
+  it("能力が変わったら状態を寄せ直す（Markdown の面と混ざらない）", () => {
+    expect(reconcileFileMode({ kind: "markdown", md: "preview", renderer: "normal" }, dcaps())).toEqual({
+      kind: "diagram",
+      diagram: "figure",
+    });
+    expect(reconcileFileMode({ kind: "diagram", diagram: "figure" }, caps({ markdown: false, diagram: false }))).toEqual({
+      kind: "plain",
+      mode: "view",
+    });
+  });
+
+  it("図のときは Markdown の 3 モード群を出さない", () => {
+    expect(markdownModeControls({ kind: "diagram", diagram: "figure" }, dcaps())).toEqual([]);
+    expect(diagramModeControls({ kind: "diagram", diagram: "figure" }, dcaps())).toEqual([
+      { mode: "figure", pressed: true, readOnlySource: false },
+      { mode: "source", pressed: false, readOnlySource: false },
+    ]);
+    expect(diagramModeControls({ kind: "markdown", md: "preview", renderer: "normal" }, dcaps())).toEqual([]);
+  });
+
+  it("withDiagramMode は図でないファイルでは何もしない", () => {
+    expect(withDiagramMode({ kind: "diagram", diagram: "figure" }, "source", dcaps())).toEqual({
+      kind: "diagram",
+      diagram: "source",
+    });
+    const plain: FileModeState = { kind: "plain", mode: "view" };
+    expect(withDiagramMode(plain, "figure", caps({ markdown: false, diagram: false }))).toBe(plain);
+  });
+
+  it("surfaceKey は図の面を別の面として数える（焦点の移動判定）", () => {
+    const figure = surfaceKey(surfacesFor({ kind: "diagram", diagram: "figure" }, dcaps()));
+    const source = surfaceKey(surfacesFor({ kind: "diagram", diagram: "source" }, dcaps()));
+    expect(figure).not.toBe(source);
   });
 });
