@@ -1388,21 +1388,32 @@
     transform: translateY(-3px);
   }
 }
-/* Jump-to-latest affordance. Sticky at the bottom of the scroll body (a zero-height
-   wrapper so it never adds scrollable space), centered, floating just above the composer.
-   Shown only while the user has scrolled up off the bottom (auto-follow paused). */
+/* 浮くピル（「最新へ」「返信を頭から」）。スクロール本文の最後に sticky で置き、入力欄のすぐ上に
+   浮かせる。ラッパは height:0 で、中身は absolute — in-flow のままだと、はみ出したボタンぶん
+   （実測 12px）がスクロール可能領域を伸ばし、末尾に貼り付いているのに 12px の余白が残る
+   （MirrorView の注記）。 */
 .mirror-jump-wrap {
   position: sticky;
   bottom: 10px;
   height: 0;
-  display: flex;
-  justify-content: center;
   pointer-events: none; /* let clicks fall through the zero-height strip… */
   z-index: 4;
 }
+/* ボタンの帯。bottom:0 の absolute なので、箱はラッパの「上」へ伸びる＝末尾より下へはみ出さない。 */
+.mirror-jump-row {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  /* 「返信を頭から」と「最新へ」は同時に出ることがある（回答の途中で、かつ末尾から離れて
+     いる）。折り返さない — 2 つ並んでもスマホ幅（≈360px）に収まる寸法。 */
+  flex-wrap: nowrap;
+  gap: 8px;
+}
 .mirror-jump {
   pointer-events: auto; /* …except on the button itself */
-  transform: translateY(-8px);
   display: inline-flex;
   align-items: center;
   gap: 6px;
