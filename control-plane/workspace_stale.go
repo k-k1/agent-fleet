@@ -24,9 +24,15 @@
 //	二辺比較をすると、containerd イメージストアでは同一イメージ由来でも digest の
 //	表現が違って恒久点灯する（実測と詳細は runtime_docker.go）。
 //
+// ★ そして「実体」に digest を選んではならない。digest は内容ではなく表現で、内容が
+//
+//	変わらなくても動く。全層キャッシュヒットの docker build が provenance だけ付け
+//	直すとタグの {{.Id}} は別物になる（2026-08-16 実測・runtime_docker.go）。控えるのは
+//	層チェーン＋config のような内容そのものにする。
+//
 // 実装は Runtime の任意インタフェース staleRuntime。判らないときは必ず false に倒す。
 //
-//	docker: 起動時に控えたタグの Image ID ≠ いまのタグの Image ID（runtime_docker.go）
+//	docker: 起動時に控えたイメージの内容 ≠ いまのタグのイメージの内容（runtime_docker.go）
 //	native: 起動時に控えた spawn 実体 ≠ 現在の spawn 実体（runtime_native.go）
 //	ecs   : 未実装（＝常に false）。誤警告を出さない側に倒してある。実装するなら
 //	        「走っているタスクの task definition と、いま Start が使う task definition」
