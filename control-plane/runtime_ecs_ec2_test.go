@@ -41,6 +41,10 @@ type fakeEC2 struct {
 	// snapshotState overrides the state CreateSnapshot reports, so a test can hold a
 	// snapshot at `pending` and drive the wait.
 	snapshotState ec2types.SnapshotState
+	// snapshotStart overrides the StartTime stamped on a new snapshot; hibernation
+	// compares it against the af-hibernating mark, so a test that wants a "stale"
+	// snapshot backdates it here.
+	snapshotStart *time.Time
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -230,6 +234,7 @@ func (f *fakeEC2) CreateVolume(_ context.Context, in *ec2.CreateVolumeInput, _ .
 	f.volumes[id] = &ec2types.Volume{
 		VolumeId: aws.String(id), AvailabilityZone: in.AvailabilityZone,
 		State: ec2types.VolumeStateAvailable, Size: in.Size, Tags: tags,
+		SnapshotId: in.SnapshotId,
 	}
 	f.log("CreateVolume %s az=%s tags=%d", id, aws.ToString(in.AvailabilityZone), len(tags))
 	return &ec2.CreateVolumeOutput{
@@ -279,8 +284,13 @@ func (f *fakeEC2) CreateSnapshot(_ context.Context, in *ec2.CreateSnapshotInput,
 	if f.snapshotState != "" {
 		state = f.snapshotState
 	}
+	started := time.Now()
+	if f.snapshotStart != nil {
+		started = *f.snapshotStart
+	}
 	s := &ec2types.Snapshot{
 		SnapshotId: aws.String(id), VolumeId: in.VolumeId, State: state, Tags: tags,
+		StartTime: aws.Time(started),
 	}
 	f.snapshots[id] = s
 	return &ec2.CreateSnapshotOutput{SnapshotId: aws.String(id), State: state, Tags: tags}, nil
@@ -336,7 +346,21 @@ func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...fu
 	defer f.mu.Unlock()
 	for _, r := range in.Resources {
 		for _, t := range in.Tags {
-			if v := f.volumes[r]; v != nil {
+			v := f.volumes[r]
+			if v == nil {
+				continue
+			}
+			// OVERWRITE, like the real API. Appending left two tags with the same key and
+			// ec2TagValue reads the first, so re-stamping a mark silently kept the old
+			// value — a fake that made a broken implementation look correct.
+			replaced := false
+			for i := range v.Tags {
+				if aws.ToString(v.Tags[i].Key) == aws.ToString(t.Key) {
+					v.Tags[i].Value = t.Value
+					replaced = true
+				}
+			}
+			if !replaced {
 				v.Tags = append(v.Tags, t)
 			}
 		}
@@ -1400,5 +1424,248 @@ func TestECSEC2DestroyIsIdempotent(t *testing.T) {
 	}
 	if _, err := h.rt.Destroy(ctx); err != nil {
 		t.Fatalf("second Destroy: %v", err)
+	}
+}
+
+// --- hibernation (ADR 0045 決定 4 + 決定 13, docs/64 §64.18.2) ---
+
+func hibernateHarness(t *testing.T, dormantFor time.Duration) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.rt.pool.hibernateAfter = 30 * 24 * time.Hour
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-sleep", "ap-northeast-1a", "m7i.large", false, false)
+	h.ec2.attach("vol-1", "i-sleep", time.Now().Add(-dormantFor))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-dormantFor).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	return h
+}
+
+// A snapshot of a 45 GiB home takes 30–40 minutes, so hibernation cannot be one call.
+// Each sweep advances it by one step and the state lives in AWS, not in the CP.
+func TestECSEC2HibernationAdvancesOneStepPerSweep(t *testing.T) {
+	ctx := context.Background()
+	h := hibernateHarness(t, 60*24*time.Hour)
+	h.ec2.snapshotState = ec2types.SnapshotStatePending
+
+	// Step 1: the slot goes back to the pool and the capture starts. The volume must
+	// still be here — it is the only copy until the snapshot completes.
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate step 1: %v", err)
+	}
+	if attachedInstance(h.ec2.volumes["vol-1"]) != "" {
+		t.Error("the slot was not released before the snapshot; the capture would be of a live mount")
+	}
+	if len(h.ec2.snapshots) != 1 {
+		t.Fatalf("snapshots = %d, want 1", len(h.ec2.snapshots))
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; !ok {
+		t.Fatal("the volume was deleted while its snapshot was still pending — that is the home, gone")
+	}
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHibernating) == "" {
+		t.Error("no hibernation mark: the next sweep cannot tell this snapshot from an older one")
+	}
+
+	// Step 2: still pending, so still nothing to do — and no second snapshot.
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate step 2: %v", err)
+	}
+	if len(h.ec2.snapshots) != 1 {
+		t.Errorf("a second capture was started while the first was running: %d", len(h.ec2.snapshots))
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; !ok {
+		t.Fatal("volume deleted on a pending snapshot")
+	}
+
+	// Step 3: completed → the home is now the snapshot, so the volume can go.
+	for _, s := range h.ec2.snapshots {
+		s.State = ec2types.SnapshotStateCompleted
+	}
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate step 3: %v", err)
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; ok {
+		t.Error("the volume is still billing after its home was captured")
+	}
+	if len(h.ec2.snapshots) != 1 {
+		t.Errorf("the capture must survive: %d snapshots", len(h.ec2.snapshots))
+	}
+}
+
+// The data-loss case. A snapshot from an EARLIER dormancy is a snapshot of the same
+// volume in the same state field — and acting on it deletes a volume holding everything
+// the owner did after coming back.
+func TestECSEC2HibernationIgnoresASnapshotOlderThanTheMark(t *testing.T) {
+	ctx := context.Background()
+	h := hibernateHarness(t, 60*24*time.Hour)
+	stale := time.Now().Add(-90 * 24 * time.Hour)
+	h.ec2.snapshots["snap-stale"] = &ec2types.Snapshot{
+		SnapshotId: aws.String("snap-stale"), VolumeId: aws.String("vol-1"),
+		State: ec2types.SnapshotStateCompleted, StartTime: aws.Time(stale),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagMembership), Value: aws.String("M-1")},
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
+		},
+	}
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate: %v", err)
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; !ok {
+		t.Fatal("the volume was deleted on the strength of a snapshot taken before this dormancy")
+	}
+	if _, ok := h.ec2.snapshots["snap-stale"]; ok {
+		t.Error("the superseded snapshot must be dropped, not left to confuse the next sweep")
+	}
+	if len(h.ec2.snapshots) != 1 {
+		t.Errorf("a fresh capture should have been started: %v", h.ec2.snapshots)
+	}
+}
+
+// A failed capture must not pin the home forever: never completed, so the volume never
+// goes; never absent, so nothing new is ever started.
+func TestECSEC2HibernationRetriesAFailedSnapshot(t *testing.T) {
+	ctx := context.Background()
+	h := hibernateHarness(t, 60*24*time.Hour)
+	h.ec2.snapshotState = ec2types.SnapshotStateError
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate: %v", err)
+	}
+	if err := h.rt.hibernate(ctx); err != nil { // sees the error state, discards it
+		t.Fatalf("hibernate retry: %v", err)
+	}
+	if len(h.ec2.snapshots) != 0 {
+		t.Errorf("the failed capture must be discarded, got %v", h.ec2.snapshots)
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; !ok {
+		t.Error("the volume must survive a failed capture")
+	}
+}
+
+// The owner coming back beats the sweeper: clearIdle drops the hibernation mark, and the
+// snapshot that was already running is then treated as superseded rather than acted on.
+func TestECSEC2ReturningOwnerCancelsHibernation(t *testing.T) {
+	ctx := context.Background()
+	h := hibernateHarness(t, 60*24*time.Hour)
+	h.ec2.snapshotState = ec2types.SnapshotStatePending
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate: %v", err)
+	}
+	h.rt.clearDormancy(ctx, "vol-1") // what every Start path does
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHibernating) != "" {
+		t.Fatal("the hibernation mark survived the owner's return")
+	}
+	// That capture completes anyway. It must NOT be mistaken for a new hibernation's.
+	for _, s := range h.ec2.snapshots {
+		s.State = ec2types.SnapshotStateCompleted
+	}
+	if err := h.rt.hibernate(ctx); err != nil {
+		t.Fatalf("hibernate after the return: %v", err)
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; !ok {
+		t.Error("the volume was deleted using a capture from the interrupted dormancy")
+	}
+}
+
+// The sweeper is the only thing that starts a hibernation, and only when the deployment
+// asked for one (0 = off is the default: this is the one automatic path that moves a
+// user's home).
+func TestECSEC2SweepHibernatesOnlyWhenConfigured(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("off by default", func(t *testing.T) {
+		h := hibernateHarness(t, 60*24*time.Hour)
+		h.rt.pool.hibernateAfter = 0
+		f := h.factory()
+		f.pool.hibernateAfter = 0
+		if err := f.sweep(ctx); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		if len(h.ec2.snapshots) != 0 {
+			t.Error("a home was hibernated although the deployment never asked for it")
+		}
+	})
+
+	t.Run("not before the threshold", func(t *testing.T) {
+		h := hibernateHarness(t, 2*time.Hour) // dormant, but only for hours
+		f := h.factory()
+		f.pool.hibernateAfter = 30 * 24 * time.Hour
+		if err := f.sweep(ctx); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		if len(h.ec2.snapshots) != 0 {
+			t.Error("hibernated a home that has been idle for two hours")
+		}
+	})
+
+	t.Run("and resumes one already under way even after it is switched off", func(t *testing.T) {
+		h := hibernateHarness(t, 60*24*time.Hour)
+		f := h.factory()
+		f.pool.hibernateAfter = 30 * 24 * time.Hour
+		h.ec2.snapshotState = ec2types.SnapshotStatePending
+		if err := f.sweep(ctx); err != nil {
+			t.Fatalf("sweep 1: %v", err)
+		}
+		if len(h.ec2.snapshots) != 1 {
+			t.Fatalf("the sweep did not start a capture: %v", h.ec2.calls)
+		}
+		for _, s := range h.ec2.snapshots {
+			s.State = ec2types.SnapshotStateCompleted
+		}
+		// Turned off between sweeps. Leaving the home half-way would bill for BOTH the
+		// snapshot and the volume, forever.
+		f.pool.hibernateAfter = 0
+		if err := f.sweep(ctx); err != nil {
+			t.Fatalf("sweep 2: %v", err)
+		}
+		if _, ok := h.ec2.volumes["vol-1"]; ok {
+			t.Error("a hibernation in flight was stranded, leaving both a snapshot and a volume")
+		}
+	})
+}
+
+// The other half: a hibernated home has to come back, and the workspace must not be able
+// to tell the difference.
+func TestECSEC2StartRestoresAHibernatedHome(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.snapshots["snap-old"] = &ec2types.Snapshot{
+		SnapshotId: aws.String("snap-old"), VolumeId: aws.String("vol-gone"),
+		State: ec2types.SnapshotStateCompleted, StartTime: aws.Time(time.Now().Add(-24 * time.Hour)),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagMembership), Value: aws.String("M-1")},
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
+		},
+	}
+	vol, err := h.rt.createHomeVolume(ctx, "ap-northeast-1a")
+	if err != nil {
+		t.Fatalf("createHomeVolume: %v", err)
+	}
+	created := h.ec2.volumes[aws.ToString(vol.VolumeId)]
+	if created == nil || aws.ToString(created.SnapshotId) != "snap-old" {
+		t.Fatalf("the home was created empty instead of restored: %#v", created)
+	}
+	// And the snapshot goes once the volume is usable — otherwise the user pays for both.
+	h.runDeferred(ctx)
+	if _, ok := h.ec2.snapshots["snap-old"]; ok {
+		t.Error("the restored-from snapshot is still billing")
+	}
+}
+
+// A Start while the capture is still running must fail loudly. Answering "no snapshot"
+// would hand the user an empty home while their real one is mid-flight — data loss
+// dressed up as a fast start.
+func TestECSEC2StartRefusesWhileTheHomeIsBeingCaptured(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.snapshots["snap-run"] = &ec2types.Snapshot{
+		SnapshotId: aws.String("snap-run"), VolumeId: aws.String("vol-gone"),
+		State: ec2types.SnapshotStatePending, StartTime: aws.Time(time.Now()),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagMembership), Value: aws.String("M-1")},
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
+		},
+	}
+	if _, err := h.rt.createHomeVolume(ctx, "ap-northeast-1a"); err == nil {
+		t.Fatal("createHomeVolume made an empty home while the real one was being captured")
 	}
 }
