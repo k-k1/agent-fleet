@@ -1721,6 +1721,12 @@ export const ja = {
   "wsstart.installing_clis": "エージェント CLI を導入中…（初回のみ・数分かかることがあります）",
   "wsstart.fetching_tool": "追加ツールを取得中…",
   "wsstart.toolchain": "ツールチェーンを導入中…",
+  "wsstart.slot_creating": "実行するマシンを用意しています…（新しく起動するので数分かかります）",
+  "wsstart.slot_waking": "マシンを起こしています…",
+  "wsstart.slot_booting": "マシンの起動を待っています…",
+  "wsstart.home_creating": "home のディスクを作成しています…（初回のみ）",
+  "wsstart.home_restoring": "退避してあった home を復元しています…",
+  "wsstart.home_attaching": "home のディスクを接続しています…",
   "wsstart.hint": "進捗は agent.log にも記録されます。このダイアログは閉じても起動は続きます。",
   // 使用状況チップ／ドロップダウン（UsageChip / UsageRow / USAGE_SOURCES）
   "wsbar.usage.title": "{name} 使用状況（5時間 / 週次）",
