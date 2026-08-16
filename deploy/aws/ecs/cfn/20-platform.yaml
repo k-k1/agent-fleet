@@ -177,9 +177,6 @@ Resources:
                   - ec2:DescribeSnapshots
                   - ec2:CreateSnapshot
                   - ec2:DeleteSnapshot
-                  # The slot AMI's af-image tag, to tell the operator when it no longer
-                  # matches the workspace image being run (決定 18).
-                  - ec2:DescribeImages
                 Resource: "*"          # Describe* cannot be resource-scoped; tags are the fence
               - Sid: EcsContainerInstances
                 Effect: Allow

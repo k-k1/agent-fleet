@@ -369,6 +369,19 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		t.Logf("host view of the golden-seeded home:\n%s", got)
 	}
 
+	// --- 7b. the periodic backup (決定 17). It is the last snapshot path no live test
+	// ever took, and precisely the shape of call the CP task role had no permission for
+	// until §64.22.3 — so it belongs on the run that uses the production permissions.
+	// Any positive interval means "nothing recent enough exists, take one now". ---
+	if err := u3.BackupHome(ctx, time.Nanosecond); err != nil {
+		t.Fatalf("BackupHome: %v", err)
+	}
+	backups, err := u3.backupSnapshots(ctx)
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("after a backup the home has %d backup snapshot(s) (err %v), want exactly 1", len(backups), err)
+	}
+	t.Logf("backup snapshot %s (%s) tagged af-role=backup", aws.ToString(backups[0].SnapshotId), backups[0].State)
+
 	// --- 8. leave nothing running; the volumes are deleted by Destroy. u1 was already
 	// stopped and released in step 7. ---
 	for _, rt := range []*ecsEC2Runtime{u2, u3} {
@@ -401,6 +414,11 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		if len(leftovers) > 0 {
 			t.Logf("Destroy %s left behind (expected, EFS dirs need a mount): %v", rt.Name(), leftovers)
 		}
+	}
+	// A backup carries its own role tag, so every other cleanup is blind to it: if Destroy
+	// misses it, it bills forever.
+	if left, err := u3.backupSnapshots(ctx); err != nil || len(left) != 0 {
+		t.Errorf("Destroy left %d backup snapshot(s) behind (err %v)", len(left), err)
 	}
 	t.Logf("SUMMARY start#1=%.1fs warmReturn=%.1fs wake=%.1fs", coldStart.Seconds(), warmReturn.Seconds(), wake.Seconds())
 }
@@ -977,176 +995,6 @@ func (l *liveEC2) instance(instanceID string) *ec2types.Instance {
 		return nil
 	}
 	return &out.Reservations[0].Instances[0]
-}
-
-// TestECSEC2LiveSlotAMI proves deploy/aws/ecs/bake-slot-ami.sh the same way §64.20.2
-// proved bake-golden.sh: not by making the same API calls from Go, but by pointing the
-// pool at an AMI the script actually baked and starting a real user on it.
-//
-// What only the real thing can answer:
-//
-//   - Does an instance from that AMI rejoin the ECS cluster? An AMI baked without
-//     clearing /var/lib/ecs/data produces instances that believe they are already
-//     registered and never come back (ADR 0045 決定 3-1). Nothing about that shows up
-//     until a task has to be placed on one.
-//   - Is the workspace image really in the AMI's cache, i.e. does the new slot skip the
-//     pull the bake exists to remove?
-//   - Does the CP's own operator surface (PoolStatus → readSlotAMI) call this pool
-//     "baked" once it is, reading the AMI off the instance rather than off the template?
-//
-// Run it against an EMPTY pool, after baking and redeploying 40-ec2-pool.yaml with
-// SlotAmiId: a leftover slot from an earlier run was launched from the old AMI, and
-// reusing it would measure nothing.
-//
-//	bash deploy/aws/ecs/bake-slot-ami.sh --image "$AF_ECS_WORKSPACE_IMAGE" \
-//	  --launch-template "$AF_ECS_EC2_LAUNCH_TEMPLATE" --subnet "${AF_ECS_SUBNETS%%,*}"
-//	aws cloudformation deploy --stack-name af-ec2c-pool ... SlotAmiId=<ami>
-//	AF_ECS_EC2_LIVE_AMI=1 go test -run TestECSEC2LiveSlotAMI -v -timeout 40m .
-func TestECSEC2LiveSlotAMI(t *testing.T) {
-	if os.Getenv("AF_ECS_EC2_LIVE") != "1" || os.Getenv("AF_ECS_EC2_LIVE_AMI") != "1" {
-		t.Skip("set AF_ECS_EC2_LIVE=1 AF_ECS_EC2_LIVE_AMI=1 (and source the harness state.env) to measure a baked slot AMI")
-	}
-	ctx := context.Background()
-	useCPTaskRole(t)
-	factory, err := newECSEC2Factory(&manager{})
-	if err != nil {
-		t.Fatalf("factory: %v", err)
-	}
-	f := factory.(*ecsEC2Factory)
-	// Deliberately the AMBIENT credentials: the test's own eyes and cleanup are the
-	// deployer's, only the product runs as the CP task role (see useCPTaskRole).
-	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(f.base.cfg.region))
-	if err != nil {
-		t.Fatalf("aws config: %v", err)
-	}
-	live := &liveEC2{t: t, ctx: ctx, ec2: ec2.NewFromConfig(ac), ecs: ecs.NewFromConfig(ac), ssm: ssm.NewFromConfig(ac), cluster: f.base.cfg.cluster}
-
-	if n := live.poolSize(f); n != 0 {
-		t.Fatalf("the pool already holds %d slot(s), launched from whatever AMI was current then. "+
-			"Empty the pool first, or this measures a reused slot rather than a baked one", n)
-	}
-	// Read the AMI off the launch template the CP will actually use — the deploy is the
-	// step that is easy to forget, and a bake that was never wired up looks exactly like
-	// a bake that did not help.
-	ltAMI := live.launchTemplateAMI(os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"))
-	if ltAMI == "" {
-		t.Fatalf("launch template %s pins no AMI; redeploy 40-ec2-pool.yaml with SlotAmiId=<the baked AMI>",
-			os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"))
-	}
-	baked := live.imageTag(ltAMI, ec2TagImage)
-	t.Logf("the pool launches slots from %s (af-image=%q); this deployment runs %s", ltAMI, baked, f.base.cfg.workspaceImage)
-	if baked != f.base.cfg.workspaceImage {
-		t.Fatalf("%s was not baked for this image (af-image=%q). Run bake-slot-ami.sh --image %s "+
-			"and redeploy the pool stack with SlotAmiId", ltAMI, baked, f.base.cfg.workspaceImage)
-	}
-
-	sfx := os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
-	u := f.New(Workspace{ContainerName: "af-ec2c-ami" + sfx, MembershipID: "m-ami", AgentToken: "tok-ami"}, "", nil).(*ecsEC2Runtime)
-	if vol, _ := u.homeVolume(ctx); vol != nil {
-		t.Fatalf("%s already has a home volume; the comparison is against a brand-new user with an empty home", u.Name())
-	}
-	t0 := time.Now()
-	if err := u.Start(ctx); err != nil {
-		t.Fatalf("Start on a baked slot AMI: %v", err)
-	}
-	live.waitState(u, "running", 15*time.Minute)
-	// The baseline is §64.20.2's start #1 in this same harness: a brand-new user, empty
-	// home, cold root, stock ECS-optimized AMI = 148.5s. Only the pull is meant to move.
-	t.Logf("MEASURED first start of a NEW user on a pre-baked slot AMI = %.1fs (same harness, stock AMI: 148.5s)",
-		time.Since(t0).Seconds())
-
-	slot := live.slotOf(u)
-	if slot == "" {
-		t.Fatal("running with no slot")
-	}
-	// Reaching `running` with the task pinned here IS the 決定 3-1 check: an instance from
-	// an AMI that kept /var/lib/ecs/data never registers, so nothing could be placed on it.
-	live.assertTaskPinnedTo(u, slot)
-	live.assertHomeMounted(u, slot)
-	if inst := live.instance(slot); inst == nil || aws.ToString(inst.ImageId) != ltAMI {
-		t.Errorf("the slot was launched from %q, want the baked %s", aws.ToString(inst.ImageId), ltAMI)
-	}
-
-	// Did the pull actually disappear? Docker records when it last tagged the image
-	// locally: baked into the AMI means "before this instance existed".
-	launch := aws.ToTime(live.instance(slot).LaunchTime)
-	raw := strings.TrimSpace(live.run(slot, "docker image inspect --format '{{.Metadata.LastTagTime}}' "+f.base.cfg.workspaceImage))
-	if cached, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(strings.Split(raw, "\n")[0])); perr != nil {
-		t.Logf("NOT VERIFIED (could not read the image's local cache time: %q / %v): the start time above is the only evidence about the pull", raw, perr)
-	} else if cached.After(launch) {
-		t.Errorf("the workspace image was pulled at %s, AFTER the slot booted at %s — the AMI's cache did not carry it",
-			cached.UTC().Format(time.RFC3339), launch.UTC().Format(time.RFC3339))
-	} else {
-		t.Logf("no pull: the image was already cached at %s and the slot booted at %s",
-			cached.UTC().Format(time.RFC3339), launch.UTC().Format(time.RFC3339))
-	}
-
-	// The operator surface has to agree, and it reads the AMI off the INSTANCE — a
-	// template that was fixed but never launched anything must not report "baked".
-	st, err := f.PoolStatus(ctx)
-	if err != nil {
-		t.Fatalf("PoolStatus: %v", err)
-	}
-	if st.SlotAmiStale || st.SlotAmiID != ltAMI || st.SlotAmiImage != f.base.cfg.workspaceImage {
-		t.Errorf("PoolStatus reports slot AMI %s (af-image=%q, stale=%v), want %s / %s / false",
-			st.SlotAmiID, st.SlotAmiImage, st.SlotAmiStale, ltAMI, f.base.cfg.workspaceImage)
-	} else {
-		t.Logf("PoolStatus: slot AMI %s is current for %s", st.SlotAmiID, st.SlotAmiImage)
-	}
-
-	// 決定 17's periodic backup is the last snapshot path no live test had ever taken, and
-	// it is precisely the shape of call the missing IAM statement would have refused. Any
-	// positive interval means "nothing recent enough exists — take one now".
-	if err := u.BackupHome(ctx, time.Nanosecond); err != nil {
-		t.Fatalf("BackupHome (this is the call the CP task role had no permission for until §64.22.3): %v", err)
-	}
-	backups, err := u.backupSnapshots(ctx)
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("after a backup the home has %d backup snapshot(s) (err %v), want exactly 1", len(backups), err)
-	}
-	t.Logf("backup snapshot %s (%s) tagged af-role=backup", aws.ToString(backups[0].SnapshotId), backups[0].State)
-
-	if err := u.Stop(ctx); err != nil {
-		t.Errorf("Stop: %v", err)
-	}
-	live.waitTasksGone(u, 3*time.Minute)
-	if leftovers, err := u.Destroy(ctx); err != nil {
-		t.Errorf("Destroy: %v", err)
-	} else if len(leftovers) > 0 {
-		t.Logf("Destroy left behind (expected, EFS dirs need a mount): %v", leftovers)
-	}
-	// A backup has its own role tag, so every other cleanup is blind to it: if Destroy
-	// misses it, it bills forever.
-	if left, err := u.backupSnapshots(ctx); err != nil || len(left) != 0 {
-		t.Errorf("Destroy left %d backup snapshot(s) behind (err %v)", len(left), err)
-	}
-}
-
-// launchTemplateAMI is the ImageId the pool's $Latest launch template version carries —
-// i.e. what the CP's next RunInstances will really boot, as opposed to what a stack
-// parameter was set to at some point.
-func (l *liveEC2) launchTemplateAMI(ltID string) string {
-	out, err := l.ec2.DescribeLaunchTemplateVersions(l.ctx, &ec2.DescribeLaunchTemplateVersionsInput{
-		LaunchTemplateId: aws.String(ltID), Versions: []string{"$Latest"},
-	})
-	if err != nil || len(out.LaunchTemplateVersions) == 0 {
-		l.t.Logf("describe launch template %s: %v", ltID, err)
-		return ""
-	}
-	d := out.LaunchTemplateVersions[0].LaunchTemplateData
-	if d == nil {
-		return ""
-	}
-	return aws.ToString(d.ImageId)
-}
-
-func (l *liveEC2) imageTag(amiID, key string) string {
-	out, err := l.ec2.DescribeImages(l.ctx, &ec2.DescribeImagesInput{ImageIds: []string{amiID}})
-	if err != nil || len(out.Images) == 0 {
-		l.t.Logf("describe image %s: %v", amiID, err)
-		return ""
-	}
-	return ec2TagValue(out.Images[0].Tags, key)
 }
 
 // TestECSEC2LiveKeep is the check ADR 0045 決定 3-6 has been waiting for an image bake to

@@ -1141,13 +1141,6 @@ export const ja = {
   "pool.col_occupant": "使用中",
   "pool.col_dormant": "休眠",
   "pool.col_backup": "予備",
-  "pool.ami_title": "スロットのイメージ",
-  "pool.ami_ok":
-    "（{image} を焼き込み済みなので pull は払いません。ただし通しで測ると、自前 AMI の初回起動は節約した pull より高くつきました——素のイメージ 144 秒に対して 179〜192 秒。docs/64 §64.24）",
-  "pool.ami_stale":
-    "スロットの AMI（{ami}）には {baked} が焼かれていますが、いま動かしているのは {running} です。新しいスロットは、イメージの取得と、自前 AMI の遅い初回起動の両方を払っています。deploy/aws/ecs/bake-slot-ami.sh で焼き直すか、40-ec2-pool の SlotAmiId を素の ECS-optimized のパラメータに戻してください（実測ではそちらが速い——docs/64 §64.24）。",
-  "pool.ami_none":
-    "スロットの AMI（{ami}）は素の ECS-optimized イメージです。新しいスロットは必要になった時点で {image} を取得します。これが推奨の状態です——焼き込むと pull は消えますが、初回起動でそれ以上に遅くなることが実測で分かっています（docs/64 §64.24）。",
   "pool.backup_none": "無し",
   "pool.backup_count": "予備 {n} 本",
   "pool.state_asleep": "休止中",

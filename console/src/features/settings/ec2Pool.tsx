@@ -25,9 +25,6 @@ export type PoolStatus = {
   golden_id?: string;
   golden_image?: string;
   golden_stale?: boolean;
-  slot_ami_id?: string;
-  slot_ami_image?: string;
-  slot_ami_stale?: boolean;
   running_image?: string;
 };
 type Slot = {
@@ -254,25 +251,6 @@ export function PoolView() {
         )}
       </section>
 
-      {/* スロットの AMI（決定 18）。golden と同じ「忘れても壊れず遅くなるだけ」の失敗なので、
-          同じ書き方をする——一致/不一致ではなく、いま誰が何を払っているか。 */}
-      {st.slot_ami_id && (
-        <section className="admin-panel">
-          <h4>{tr("pool.ami_title")}</h4>
-          {!st.slot_ami_stale ? (
-            <p>
-              <span className="mono">{st.slot_ami_id}</span>{" "}
-              <span className="muted">{tr("pool.ami_ok", { image: st.slot_ami_image || "" })}</span>
-            </p>
-          ) : st.slot_ami_image ? (
-            <p className="warn-text">
-              {tr("pool.ami_stale", { ami: st.slot_ami_id, baked: st.slot_ami_image, running: st.running_image || "?" })}
-            </p>
-          ) : (
-            <p className="warn-text">{tr("pool.ami_none", { ami: st.slot_ami_id, image: st.running_image || "" })}</p>
-          )}
-        </section>
-      )}
     </div>
   );
 }
