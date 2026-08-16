@@ -603,13 +603,13 @@ func (l *liveEC2) paramsOf(rt *ecsEC2Runtime) int {
 // user at a time, done with several at once and left running past the timers. Three things
 // had never been exercised before it (docs/64 §64.20):
 //
-//	 - concurrent Starts. Slot allocation is a race by design — it is decided by AWS
-//	   accepting exactly one AttachVolume on a fixed device name — and one user at a time
-//	   never puts two Starts on the same free slot.
-//	 - a second AZ. An EBS home is pinned to its AZ, so "this user's home is in 1c" has to
-//	   produce a slot in 1c; with a single subnet configured that path is dead code.
-//	 - the sweep loop actually looping, over several users, for longer than its own timers.
-//	   Every earlier run called sweep() by hand a handful of times.
+//   - concurrent Starts. Slot allocation is a race by design — it is decided by AWS
+//     accepting exactly one AttachVolume on a fixed device name — and one user at a time
+//     never puts two Starts on the same free slot.
+//   - a second AZ. An EBS home is pinned to its AZ, so "this user's home is in 1c" has to
+//     produce a slot in 1c; with a single subnet configured that path is dead code.
+//   - the sweep loop actually looping, over several users, for longer than its own timers.
+//     Every earlier run called sweep() by hand a handful of times.
 //
 // Opt-in on top of the lifecycle test's own gate, because it holds four instances at once
 // and runs for well over half an hour:
