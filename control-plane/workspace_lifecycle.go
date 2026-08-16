@@ -398,3 +398,20 @@ func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID
 	m.evictMembershipCache(membershipID)
 	return leftovers, nil
 }
+
+// runtimePoolStatuser is implemented by the one adapter that has a POOL to report on.
+// Everything else in the product is per-workspace, so there is nothing to show — and the
+// admin UI hides the screen rather than showing an empty one.
+type runtimePoolStatuser interface {
+	PoolStatus(context.Context) (ec2PoolStatus, error)
+}
+
+// poolStatus reports the EC2 slot pool, or ok=false on every other runtime profile.
+func (m *manager) poolStatus(ctx context.Context) (ec2PoolStatus, bool, error) {
+	p, ok := m.rtFactory.(runtimePoolStatuser)
+	if !ok {
+		return ec2PoolStatus{}, false, nil
+	}
+	st, err := p.PoolStatus(ctx)
+	return st, true, err
+}
