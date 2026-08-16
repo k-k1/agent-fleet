@@ -2012,6 +2012,7 @@ export const ja = {
   // 履歴ロード
   "mirror.load_earlier": "以前の会話を読み込む",
   "mirror.jump_latest": "最新へ",
+  "mirror.jump_reply_top": "返信を頭から",
   "mirror.ws_stopped_history": "ワークスペースが停止しています。上部の Start で起動すると履歴を表示できます。",
   "mirror.no_history": "この会話に表示できる履歴はありません。",
   "mirror.no_conversation":
