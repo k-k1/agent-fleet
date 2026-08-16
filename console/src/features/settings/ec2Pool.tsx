@@ -115,11 +115,15 @@ export function PoolView() {
         {/* 上限に達している＝次の人はスロットを取り上げて作る。運用者が最初に知りたいのは
             「増えないこと」ではなく「立ち退きが起きること」なので、そう書く。 */}
         {atCap && <p className="admin-hint warn-text">{tr("pool.at_cap")}</p>}
+        {/* 「退避しない」を「…の後に退避します」の穴に入れると "after never" になって
+            読めなくなる。0 は別の文にする（既定はオフなので、これが普通に出る方）。 */}
         <p className="admin-hint">
-          {tr("pool.timers", {
-            sleep: fmtDuration(st.slot_sleep_sec ?? 0, tr),
-            hibernate: fmtDuration(st.hibernate_after_sec ?? 0, tr),
-          })}
+          {(st.hibernate_after_sec ?? 0) > 0
+            ? tr("pool.timers", {
+                sleep: fmtDuration(st.slot_sleep_sec ?? 0, tr),
+                hibernate: fmtDuration(st.hibernate_after_sec ?? 0, tr),
+              })
+            : tr("pool.timers_no_hibernate", { sleep: fmtDuration(st.slot_sleep_sec ?? 0, tr) })}
         </p>
         {slots.length === 0 ? (
           <p className="muted">{tr("pool.no_slots")}</p>

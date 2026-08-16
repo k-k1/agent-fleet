@@ -1126,6 +1126,7 @@ export const en: Record<keyof typeof ja, string> = {
   "pool.free_sub": "nobody's home attached",
   "pool.at_cap": "The pool is at its cap. The next person to start takes a slot from the longest-dormant occupant instead of getting a new one.",
   "pool.timers": "A slot sleeps after {sleep} without a task. Unless a tenant sets its own, a home hibernates to a snapshot after {hibernate} (the deployment default).",
+  "pool.timers_no_hibernate": "A slot sleeps after {sleep} without a task. Homes are never hibernated unless a tenant asks for it (Tenants → the tenant → Hibernate unused homes).",
   "pool.off": "never",
   "pool.no_slots": "No slots. The first Start will create one.",
   "pool.col_instance": "Instance",
