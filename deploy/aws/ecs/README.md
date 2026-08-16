@@ -320,13 +320,18 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 - **A workspace keeps its slot while it is stopped, and the slot goes to sleep with it.**
   Stopping a workspace does not detach its home ("lazy release"): the attachment IS the
   affinity, so the same person comes back to the same slot without re-attaching or
-  re-mounting. After `Ec2IdleStopSec` (default 15m) the sweeper **stops** that slot —
+  re-mounting. After `Ec2SlotSleepSec` (default 15m) the sweeper **stops** that slot —
   never terminates it, so the image cache survives on its root volume. A stopped slot
   costs only that volume (~$9.6/month at 100 GiB) instead of ~$95 for a running one.
+- **Two different idle timers, in series.** `AF_WS_IDLE_TIMEOUT` / the per-tenant
+  `ws_idle_timeout` is the product's existing idle-stop: it watches the person and stops
+  their *workspace* (every runtime has it). `Ec2SlotSleepSec` only starts counting after
+  that, and it stops the *slot*. Someone who walks away is therefore idle-stopped on the
+  tenant's timeout and their box sleeps 15 minutes later.
 - **Slots are reclaimed only at the cap.** Below `Ec2MaxSlots` a new user gets a new
   slot; at the cap the longest-dormant occupant is evicted (a workspace with a running
   task is never touched). So `Ec2MaxSlots` bounds the number of *provisioned* slots, and
-  `Ec2IdleStopSec` bounds how many of them are *running*.
+  `Ec2SlotSleepSec` bounds how many of them are *running*.
 - **No hot spare is kept.** The first person of the morning wakes a stopped slot (~90s,
   estimated) or, if the pool has none, pays the full ~135s to build one.
 - **AZ is destiny.** An EBS volume cannot leave its AZ, so a user is pinned to the AZ
