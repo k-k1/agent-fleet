@@ -147,6 +147,51 @@ Resources:
                   - ssm:DeleteParameter
                   - ssm:AddTagsToResource
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
+              # --- EC2 slot pool (AF_RUNTIME=ecs-ec2 only; harmless on Fargate) ---
+              # The CP owns the whole swap: find slots and volumes by tag, attach the
+              # user's home, mount it over SSM, and hand the slot back. docs/64 §64.15.8.
+              - Sid: Ec2SlotPool
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeSubnets
+                  - ec2:CreateVolume
+                  - ec2:DeleteVolume
+                  - ec2:AttachVolume
+                  - ec2:DetachVolume
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                  - ec2:RunInstances
+                  - ec2:StartInstances
+                  - ec2:StopInstances
+                Resource: "*"          # Describe* cannot be resource-scoped; tags are the fence
+              - Sid: EcsContainerInstances
+                Effect: Allow
+                Action:
+                  - ecs:ListContainerInstances
+                  - ecs:DescribeContainerInstances
+                  # Stopped instances and disconnected agents are NOT deregistered
+                  # automatically, even on terminate (ADR 0045 決定 3-2). The sweeper
+                  # has to do it or ghosts accumulate and satisfy placement constraints.
+                  - ecs:DeregisterContainerInstance
+                Resource: "*"
+              - Sid: SsmSlotCommands
+                Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                Resource: "*"          # scoped by the AWS-RunShellScript document + slot tags
+              - Sid: PassSlotRole
+                Effect: Allow
+                Action: iam:PassRole
+                # The launch template carries the slot instance profile, so RunInstances
+                # needs to pass that role. Named by convention (the 40-ec2-pool stack
+                # creates af-<stack>-slot) to avoid a circular stack import.
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/af-*-slot"
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ec2.amazonaws.com
               - Sid: ServiceConnectDiscovery
                 Effect: Allow
                 Action:

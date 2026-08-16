@@ -1388,37 +1388,50 @@
     transform: translateY(-3px);
   }
 }
-/* Jump-to-latest affordance. Sticky at the bottom of the scroll body (a zero-height
-   wrapper so it never adds scrollable space), centered, floating just above the composer.
-   Shown only while the user has scrolled up off the bottom (auto-follow paused). */
+/* 浮くピル（「最新へ」「返信を頭から」）。スクロール本文の最後に sticky で置き、入力欄のすぐ上に
+   浮かせる。ラッパは height:0 で、中身は absolute — in-flow のままだと、はみ出したボタンぶん
+   （実測 12px）がスクロール可能領域を伸ばし、末尾に貼り付いているのに 12px の余白が残る
+   （MirrorView の注記）。 */
 .mirror-jump-wrap {
   position: sticky;
   bottom: 10px;
   height: 0;
-  display: flex;
-  justify-content: center;
   pointer-events: none; /* let clicks fall through the zero-height strip… */
   z-index: 4;
 }
+/* ボタンの帯。bottom:0 の absolute なので、箱はラッパの「上」へ伸びる＝末尾より下へはみ出さない。 */
+.mirror-jump-row {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  /* 「返信を頭から」と「最新へ」は同時に出ることがある（回答の途中で、かつ末尾から離れて
+     いる）。折り返さない — 2 つ並んでもスマホ幅（≈360px）に収まる寸法。 */
+  flex-wrap: nowrap;
+  gap: 8px;
+}
 .mirror-jump {
   pointer-events: auto; /* …except on the button itself */
-  transform: translateY(-8px);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   /* Follows the TOP-BAR colour theme so it reads correctly light AND dark: the bar surface
      (--bar: light grey / near-black) with the theme foreground, edged and iconed in the
      top-bar accent. These tokens are re-scoped by the mirror's own data-theme, so the pill
-     tracks whatever theme the chat surface is showing. Bold + shadow keep it prominent. */
-  padding: 9px 18px;
-  font-size: 13.5px;
+     tracks whatever theme the chat surface is showing. Bold + shadow keep it prominent.
+     寸法は本文より小さく — 会話の上に浮かぶ補助の導線なので、読んでいる面より目立たせない
+     （2 つ並んでもスマホ幅に余裕で収まる、というのも効く）。 */
+  padding: 6px 13px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
   color: var(--fg);
   background: var(--bar);
   border: 1px solid color-mix(in srgb, var(--topbar-accent) 45%, var(--border));
   border-radius: 999px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.32);
   cursor: pointer;
 }
 .mirror-jump:hover {
@@ -1426,7 +1439,7 @@
   border-color: var(--topbar-accent);
 }
 .mirror-jump .codicon {
-  font-size: 15px;
+  font-size: 13px;
   color: var(--topbar-accent);
 }
 
@@ -2291,7 +2304,7 @@ button.mt-bash-toggle:hover {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.32);
 }
 /* 1 項目 = 2 行（1 行目: 起動文字列＋引数ヒント＋出所バッジ / 2 行目: 説明）。
    行数は倍でも高さは 25px → 31px に留めてある（headless 実測）— 上下 padding を
@@ -2554,6 +2567,13 @@ button.mt-bash-toggle:hover {
   .mirror-attach-btn,
   .mirror-skill-btn {
     width: 24px;
+  }
+  /* スマホは選択肢が縦1列に折り返るので省略の必要が薄い。タップ前に全文を読めるよう
+     2行クランプを外す（PC/タブレットは省略のまま = .mq-opt-desc 本体）。 */
+  .mq-opt-desc {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
   }
 }
 /* The `.view-head` band moved to ui/ui.css (ui/ViewHead.tsx). Its min-height of

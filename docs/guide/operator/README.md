@@ -23,6 +23,7 @@ how things work internally, see the developer docs [dev/09 Deploy](../../dev/09-
 | [02-operations.md](02-operations.md) | Day-to-day operations (backup, restore, upgrades, air-gapped networks, shutdown) |
 | [03-security.md](03-security.md) | Security operations (threat model, residual risks, egress controls, reporting channel) |
 | [04-troubleshooting.md](04-troubleshooting.md) | Incident response and FAQ (diagnosing the 3 DooD constraints, triage flow) |
+| [05-login-idp.md](05-login-idp.md) | Sign-in methods, end to end: what to create at Google / Entra ID / GitHub / another OIDC IdP, which value goes into which setting, and how to check it |
 
 ---
 
@@ -51,7 +52,8 @@ Read this section first as the entry point for a technical evaluation.
   self-signed TLS alternative (see [01](01-install.md)).
 - **A login IdP client**: a Google OAuth 2.0 web client, or an OIDC app registration at
   Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab. You register exactly one
-  redirect URI, whichever (and however many) providers you enable.
+  redirect URI, whichever (and however many) providers you enable. What to create at the IdP is
+  [05-login-idp.md](05-login-idp.md).
 - Your team's **Claude seats are brought by each member** (BYO). After the first startup,
   each member logs in with their own seat from the Console. Company Team/Enterprise seats
   are recommended over personal Pro/Max.

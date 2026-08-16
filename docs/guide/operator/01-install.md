@@ -55,6 +55,12 @@ socket after startup ([04](04-troubleshooting.md)).
 
 ## 3. Configure the login IdP
 
+> **The full procedure is [05-login-idp.md](05-login-idp.md)** — what to create at Google /
+> Microsoft Entra ID / GitHub / another OIDC IdP, which value goes into which `.env` key, how to
+> confirm it worked, and what usually goes wrong. That page is the source of truth for sign-in
+> configuration; this section is only the shape of the decision. Work through it now and come
+> back here for §4.
+
 Register the following as an **authorized redirect URI** at your IdP. You register this **one
 URI** no matter how many providers you enable.
 
@@ -62,87 +68,35 @@ URI** no matter how many providers you enable.
 https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
-This path must match `<PUBLIC_BASE_URL>/oauth2/callback`. If they diverge, you get
+This path must match `<PUBLIC_BASE_URL>/oauth2/callback` exactly. If they diverge, you get
 "redirect URI mismatch" at login (a common failure — [04](04-troubleshooting.md)).
 
-**Google** — create an OAuth client ID (web application) in the Google Cloud Console and put the
-issued client ID/secret into `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` in `.env`.
+Which keys you fill in depends on the IdP:
 
-**Microsoft Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab** — register a confidential
-web app at the IdP, then list it in `.env`:
+| IdP | The keys in `.env` |
+|---|---|
+| **Google** | `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` (not listed in `AF_OIDC_PROVIDERS`) |
+| **Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab** | `AF_OIDC_PROVIDERS=<id>` plus `AF_OIDC_<ID>_ISSUER` / `_CLIENT_ID` / `_CLIENT_SECRET` / `_TRUST` |
+| **GitHub** | `AF_GITHUB_ALLOWED_ORGS` (required — it is also what turns the button on) plus `GITHUB_OAUTH_CLIENT_ID` / `_SECRET`, and `AF_GITHUB_ALLOWED_DOMAINS` |
 
-```sh
-AF_OIDC_PROVIDERS=entra
-AF_OIDC_ENTRA_ISSUER=https://login.microsoftonline.com/<tenant-guid>/v2.0
-AF_OIDC_ENTRA_CLIENT_ID=<application-client-id>
-AF_OIDC_ENTRA_CLIENT_SECRET=<client-secret-value>
-AF_OIDC_ENTRA_TRUST=issuer
-AF_OIDC_ENTRA_LABEL_JA=Microsoft でサインイン
-AF_OIDC_ENTRA_LABEL_EN=Sign in with Microsoft
-```
+Three points decide whether this goes smoothly, and all three are covered in detail in
+[05](05-login-idp.md):
 
-Two things about that block are worth reading before you copy it:
-
-- **`_TRUST` has no default, on purpose.** It records *why* this IdP's email address may be
-  believed, because the allowlist is written in email addresses. `email_verified` accepts only
-  addresses the IdP itself marks as verified (Google, and most Okta / Keycloak / Auth0 setups);
-  `issuer` says the issuer is pinned to a single tenant, so that directory's addresses are
-  authoritative. **Entra ID never emits `email_verified`**, so `issuer` is the value there.
-  A provider with no `_TRUST` is disabled at startup rather than guessed at.
-- **Pin the Entra issuer to your own tenant GUID.** If you use the `/common/` or
-  `/organizations/` endpoint, everyone on earth with a Microsoft account reaches your login
-  screen — and a personal Microsoft account can change its own email address, which would make
-  the allowlist meaningless. The CP refuses to start on those endpoints unless
-  `AF_OIDC_ENTRA_ALLOWED_TIDS` names the tenants you accept.
-
-**One IdP behind two app registrations (optional)** — when head office and a subsidiary use the
-same Entra tenant through different app registrations, **Entra's `sub` differs per app
-registration**, so one person is two accounts depending on which button they pressed. Naming a
-**stable claim** such as `oid` (the person's id within that directory) makes them one:
-
-```sh
-AF_OIDC_ENTRA_LINK_CLAIM=oid
-```
-
-> **⚠ Name only a value the IdP ASSIGNS — one nobody can choose.** Naming an asserted value such
-> as `email` / `upn` / `preferred_username` lets any other sign-in method sharing that issuer (a
-> subsidiary's own registration, say) **land on an existing account** merely by asserting that
-> value. The field a tenant administrator sees in the Console only offers `oid`; this environment
-> variable is not restricted because it is the operator's own declaration. Leave it unset and
-> matching stays on `sub` alone, as before.
-
-**GitHub** — GitHub has no OIDC for user sign-in, so it is configured separately, and what
-authorizes the login is membership in an organization you name:
-
-```sh
-AF_GITHUB_ALLOWED_ORGS=acme,acme-labs      # required; also what turns the button on
-GITHUB_OAUTH_CLIENT_SECRET=<client-secret>
-AF_GITHUB_ALLOWED_DOMAINS=example.com      # strongly recommended, see below
-```
-
-- The OAuth App is the same one behind the Console's GitHub **Connect** button
-  (`GITHUB_OAUTH_CLIENT_ID`); add the redirect URI above to it. If you would rather the login
-  had an app of its own, set `AF_GITHUB_LOGIN_CLIENT_ID` / `AF_GITHUB_LOGIN_CLIENT_SECRET`.
-  Setting `GITHUB_OAUTH_CLIENT_ID` alone still means only the git-connect device flow.
-- **If your organization restricts third-party OAuth apps, an owner must approve this app.**
-  Until they do, the membership check can see nothing and *every* GitHub login is rejected —
-  with settings that look entirely correct.
-- **Set `AF_GITHUB_ALLOWED_DOMAINS` as well.** GitHub gives the CP the account's *primary
-  verified* address, which for most people is a personal one — and a different address is a
-  different person here, so they would land in a new empty workspace instead of their own.
-  Turning them away at the door is kinder than letting them work somewhere they didn't mean
-  to be.
-- Membership is re-checked through the GitHub API, cached per person for
-  `AF_GITHUB_MEMBERSHIP_TTL` (10m) and, when GitHub is unreachable, honored for
-  `AF_GITHUB_MEMBERSHIP_GRACE` (1h) past the last positive answer. That cache lives in memory,
-  so after a CP restart these people are asked to **sign in again** — they are not rejected,
-  and the round trip usually completes without prompting them.
+- **`AF_OIDC_<ID>_TRUST` has no default, on purpose** — it records *why* this IdP's email address
+  may be believed, and a provider without it is disabled at startup rather than guessed at.
+  Entra ID never emits `email_verified`, so `issuer` is the value there.
+- **Pin an Entra issuer to your own tenant GUID.** On a `/common/` or `/organizations/` endpoint
+  the CP **refuses to start** unless `AF_OIDC_<ID>_ALLOWED_TIDS` names the tenants you accept —
+  otherwise every Microsoft account on earth reaches your login and the allowlist stops meaning
+  anything.
+- **A GitHub login also needs the organization to approve the OAuth app** when the org restricts
+  third-party apps; until it does, everybody is rejected with settings that look correct.
 
 List several ids (`AF_OIDC_PROVIDERS=entra,okta`) to offer several buttons; the login page shows
 one button per enabled provider, and with a single provider it looks exactly as it does today.
 A provider whose settings are incomplete is disabled with a warning in the CP log — one broken
 IdP never locks the whole company out — and the CP only refuses to start when no provider at all
-is usable. Detailed steps are in the runbook's "Login IdP setup" section.
+is usable.
 
 Note: for Console login authentication (L1), the CP performs the OAuth/OIDC flow itself
 (`AUTH=oauth`, the default). Companies that put an existing authentication gateway
@@ -223,19 +177,18 @@ has no SMTP, by design).
 > a contractor's address workable — and the way to end their access is to remove the member, not
 > to narrow this field.
 
-### A subsidiary with its own IdP
+### A tenant with its own IdP
 
-When a tenant is a separate company — a group subsidiary, or a business still being merged — its
-Entra ID (or Okta / Keycloak) tenant is a different one, with its own issuer, client ID and
-secret. Rather than adding it to `.env` and restarting the CP for every subsidiary, that tenant's
-own administrator registers it from the Console: **Tenant settings → "Sign-in methods"** (the
-account menu's *Tenant settings*). They fill in the issuer, client ID, client secret, how the
-email is trusted, and the email domains it may admit (when they use the same IdP as head office
-through a different app registration, **"How the same account is recognised"** offers `oid` — the
-same thing as `AF_OIDC_<ID>_LINK_CLAIM` above, restricted on the tenant side to claims that are
-safe to name) — or, instead of their own IdP, **a GitHub
-organization** (see "When a subsidiary uses GitHub" below). As a deployment administrator you reach the
-same panel from **Admin → the tenant → "Sign-in methods."**
+Some tenants have an identity source of their own: a different Entra ID (or Okta / Keycloak)
+tenant, with its own issuer, client ID and secret, or **a GitHub organization** instead. A group
+subsidiary is the obvious case, but so is a business still being merged, an outsourcing partner,
+or a division that simply runs its own directory. Rather than adding each one to `.env` and
+restarting the CP, that tenant's own administrator registers it
+from the Console — **Tenant settings → "Sign-in methods"** (the account menu's *Tenant settings*),
+which you reach from **Admin → the tenant → "Sign-in methods."** Nothing here needs a restart.
+
+**The step-by-step — what the tenant fills in, what to check before approving, and the GitHub
+variant — is [05 §7](05-login-idp.md).** What belongs here is the decision:
 
 > **A new sign-in method does nothing until you approve it.** It is created as *waiting for
 > approval*, and until a deployment administrator activates it, no
@@ -245,44 +198,15 @@ same panel from **Admin → the tenant → "Sign-in methods."**
 > **This one step is not bureaucracy.** Registering an IdP is the power to declare *who somebody
 > is*, and on this deployment a person is identified by their email address — deployment-wide,
 > including who is a deployment administrator. An admin who could activate their own issuer could
-> issue themselves a token carrying *your* address. Approving is a once-per-subsidiary action, so
+> issue themselves a token carrying *your* address. Approving is a once-per-tenant action, so
 > the day-to-day picture ("the department runs itself") is unchanged.
 
-What to check before approving, on the deployment-wide list under **Admin → Tenants**:
-
-- **The issuer** really is that company's own tenant — not a `common` / `organizations` endpoint
-  (those accept every Microsoft account in the world, and are refused unless tenant ids are pinned).
-- **The email domains** are theirs. This list is what the approval is *for*: it bounds which
-  addresses that issuer is allowed to assert, and a domain can belong to only one tenant. Do not
-  approve a method that claims the parent company's domain.
-
-Changing the issuer, the client ID, the trust rule or how the same account is recognised — or
-*adding* a domain — sends the method back for approval, because the approval was given to that issuer for that scope. Suspending is
-always available, to the tenant's own administrator as well: stopping should never wait for you.
-
-#### When a subsidiary uses GitHub
-
-Choosing **a GitHub organization** as the kind replaces the issuer field with **the GitHub
-organizations to allow**. GitHub has no per-tenant issuer — `github.com` is the same one for
-everybody — so *active membership of that organization* is what makes a sign-in theirs.
-
-- **The tenant brings its own OAuth App.** The subsidiary creates one in its own organization,
-  adds `<PUBLIC_BASE_URL>/oauth2/callback` as the callback URL, and enters the client ID and
-  secret. **Your `.env` needs no GitHub settings at all** — the env-level GitHub login
-  (`AF_GITHUB_ALLOWED_ORGS`) can stay off while the tenant's own method works.
-- **If the organization restricts third-party OAuth apps, an organization owner must approve that
-  app**, or membership stays invisible and everyone is denied while the settings look perfect —
-  the same trap as the env-level login.
-- **The email domains are required here too.** GitHub hands over exactly one verified primary
-  address, and somebody whose primary address is outside the company domain lands in a NEW
-  workspace rather than their existing one. One domain still belongs to one tenant: never approve
-  a method claiming another company's domain.
-- What you read before approving is **the pair (organizations, domains)** — the issuer tells you
-  nothing here, being the same for every tenant. **Adding an organization sends the method back
-  for approval**, because the approval was given for the members of *those* organizations.
-  Removing one does not.
-- Two tenants may register the same organization. Who lands where is decided by the email domain,
-  and that is still one-tenant-only.
+So the deployment-wide register under **Admin → Tenants** ("Tenant-defined sign-in methods,"
+below the tenant list) is a list you own: it carries the approve and suspend buttons, and
+approved methods stay on it with who approved them and when. Treat it as a register to re-read
+now and then, not a queue that empties — the IdP stays under the other company's control, and
+settings such as self-sign-up can be turned on after you approved it. Suspending is always
+available to the tenant's own administrator too: stopping should never wait for you.
 
 > **Watch the narrowing of "Sign-in methods allowed" in a tenant whose people also belong to
 > another tenant.** Say Yamada belongs to both head office and a subsidiary and normally signs in
@@ -313,13 +237,6 @@ everybody — so *active membership of that organization* is what makes a sign-i
 > (accounts under different addresses are never merged), and they must **be a member of that
 > organization** — linking is not a way around the entry rules. Somebody with no account on the
 > other side cannot use this, so for them it is (a) or (b).
-
-**Approve and activate** and **Suspend** sit on the rows of the register itself ("Tenant-defined
-sign-in methods," below the tenant list); the tenant's own detail screen offers the same actions.
-
-Approved methods stay on that list with who approved them and when. Treat it as a register to
-re-read now and then, not a queue that empties: the IdP stays under the other company's control,
-and settings such as self-sign-up can be turned on after you approved it.
 
 ## 5. Start it up
 

@@ -344,3 +344,74 @@ func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws Workspace) in
 	b, _, _ := m.resolveWorkspaceSize(ctx, ws)
 	return b
 }
+
+// destroyWorkspaceByMembership is the irreversible half of ADR 0045 決定 13: it tears
+// down the runtime's resources (home, and on the cloud adapters the ECS service, EFS
+// access points, SSM secrets, EBS volume and any hibernation snapshot) and then removes
+// the DB row. It returns the resources the adapter could NOT remove, for the audit log.
+//
+// Only reachable from an explicit administrator action. In particular it does NOT run on
+// offboarding: removeMembership is a logical delete that keeps the home on purpose
+// (docs/61 §61.10.6), and the automatic sweep hibernates rather than destroys.
+//
+// ⚠️ This cannot honour the deletion locks of ADR 0028. They live inside the home
+// (~/.config/agent-fleet/), which is unreadable while the workspace is stopped — a
+// structural consequence of where the locks are kept, not an omission. Callers must
+// surface "this overrides deletion locks" in the UI.
+//
+// Order: runtime first, DB row last. The reverse would turn any runtime failure into an
+// orphaned cloud resource with nothing in the database pointing at it — exactly the leak
+// this operation exists to close. Every adapter's Destroy is idempotent, so the retry
+// after a partial failure is safe.
+func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID string) ([]string, error) {
+	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
+	if err != nil || !ok {
+		return nil, err
+	}
+	lock := m.startLockFor(ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, m.store, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.Close()
+	rt := m.runtimeFor(ws, "")
+	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseFence()
+	if err := lease.checkpoint(ctx); err != nil {
+		return nil, err
+	}
+	leftovers, err := destroyRuntime(lease.Context(), rt)
+	if err != nil {
+		return nil, err
+	}
+	if err := lease.checkpoint(ctx); err != nil {
+		return leftovers, err
+	}
+	if err := m.store.DeleteWorkspace(ctx, ws.ID); err != nil {
+		return leftovers, err
+	}
+	m.evictMembershipCache(membershipID)
+	return leftovers, nil
+}
+
+// runtimePoolStatuser is implemented by the one adapter that has a POOL to report on.
+// Everything else in the product is per-workspace, so there is nothing to show — and the
+// admin UI hides the screen rather than showing an empty one.
+type runtimePoolStatuser interface {
+	PoolStatus(context.Context) (ec2PoolStatus, error)
+}
+
+// poolStatus reports the EC2 slot pool, or ok=false on every other runtime profile.
+func (m *manager) poolStatus(ctx context.Context) (ec2PoolStatus, bool, error) {
+	p, ok := m.rtFactory.(runtimePoolStatuser)
+	if !ok {
+		return ec2PoolStatus{}, false, nil
+	}
+	st, err := p.PoolStatus(ctx)
+	return st, true, err
+}
