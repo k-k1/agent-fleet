@@ -146,6 +146,11 @@ type ec2API interface {
 	RunInstances(context.Context, *ec2.RunInstancesInput, ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error)
 	StartInstances(context.Context, *ec2.StartInstancesInput, ...func(*ec2.Options)) (*ec2.StartInstancesOutput, error)
 	StopInstances(context.Context, *ec2.StopInstancesInput, ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error)
+	// Snapshots serve two features that share one mechanism: hibernating a long-unused
+	// home (ADR 0045 決定 4) and seeding a new one from the golden image (決定 9).
+	DescribeSnapshots(context.Context, *ec2.DescribeSnapshotsInput, ...func(*ec2.Options)) (*ec2.DescribeSnapshotsOutput, error)
+	CreateSnapshot(context.Context, *ec2.CreateSnapshotInput, ...func(*ec2.Options)) (*ec2.CreateSnapshotOutput, error)
+	DeleteSnapshot(context.Context, *ec2.DeleteSnapshotInput, ...func(*ec2.Options)) (*ec2.DeleteSnapshotOutput, error)
 }
 
 type ssmCommandAPI interface {
@@ -1750,27 +1755,39 @@ func (e *ecsEC2Runtime) waitTasksGone(ctx context.Context) error {
 	}
 }
 
-// runtimeDestroyer is implemented by adapters that own cloud resources whose lifetime
-// is the workspace's, not the container's. The CP has no workspace-deletion seam today
-// (not even for Fargate: its services and access points also outlive the membership),
-// so nothing calls this yet — it is here because on this adapter the leftover is a
-// PROVISIONED EBS volume that bills forever, and the teardown order is only obvious
-// while the reasoning is fresh. Wiring it belongs with the deletion lock (ADR 0028).
-type runtimeDestroyer interface {
-	Destroy(context.Context) error
-}
-
-var _ runtimeDestroyer = (*ecsEC2Runtime)(nil)
-
-// Destroy releases the slot and then deletes the user's home volume. The slot itself is
-// NOT terminated: it never belonged to this user.
-func (e *ecsEC2Runtime) Destroy(ctx context.Context) error {
+// Destroy releases the slot, deletes the user's home volume, and then hands the shared
+// (Fargate-side) resources to the base adapter. The slot itself is NOT terminated: it
+// never belonged to this user.
+//
+// ⚠️ P0 left the second half out — it deleted the EBS volume but kept the ECS service,
+// the two EFS access points and the two SSM parameters alive forever (ADR 0045 決定 13,
+// docs/64 §64.18.1). The order matters: the slot has to come back to the pool and the
+// volume has to be detached before the service goes away, because releaseSlot reads the
+// service to prove nothing is running on it.
+//
+// Ordering rationale for the volume vs its snapshot: destroy is irreversible on purpose,
+// so any hibernation snapshot (§64.18.2) goes too — otherwise a "deleted" user keeps
+// billing at snapshot rates and their home is restorable by the next person who gets
+// their membership id.
+func (e *ecsEC2Runtime) Destroy(ctx context.Context) ([]string, error) {
 	if err := e.Stop(ctx); err != nil {
-		return err
+		return nil, err
 	}
 	if err := e.releaseSlot(ctx); err != nil {
-		return err
+		return nil, err
 	}
+	if err := e.deleteHomeVolume(ctx); err != nil {
+		return nil, err
+	}
+	if err := e.deleteHomeSnapshots(ctx); err != nil {
+		return nil, err
+	}
+	return e.base.Destroy(ctx)
+}
+
+// deleteHomeVolume detaches (if needed) and deletes this workspace's home volume.
+// Absent volume = already done.
+func (e *ecsEC2Runtime) deleteHomeVolume(ctx context.Context) error {
 	vol, err := e.homeVolume(ctx)
 	if err != nil || vol == nil {
 		return err
@@ -1794,6 +1811,40 @@ func (e *ecsEC2Runtime) Destroy(ctx context.Context) error {
 			return serr
 		}
 	}
+}
+
+// homeSnapshots returns this workspace's hibernation snapshots (§64.18.2), newest first
+// is not guaranteed — callers that need one pick by state. Owner self-scoped so a
+// public snapshot with a colliding tag can never be picked up.
+func (e *ecsEC2Runtime) homeSnapshots(ctx context.Context) ([]ec2types.Snapshot, error) {
+	out, err := e.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		OwnerIds: []string{"self"},
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagMembership, e.base.membershipID),
+			tagFilter(ec2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out.Snapshots, nil
+}
+
+// deleteHomeSnapshots removes every hibernation snapshot of this home. Only Destroy
+// calls it: hibernation itself must never delete the snapshot it just took.
+func (e *ecsEC2Runtime) deleteHomeSnapshots(ctx context.Context) error {
+	snaps, err := e.homeSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range snaps {
+		if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{
+			SnapshotId: s.SnapshotId,
+		}); err != nil && !isAWSNotFound(err) {
+			return fmt.Errorf("delete snapshot %s: %w", aws.ToString(s.SnapshotId), err)
+		}
+	}
+	return nil
 }
 
 // --- drift sweeper (docs/64 §64.15.6) ---

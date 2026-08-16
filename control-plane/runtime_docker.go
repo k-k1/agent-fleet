@@ -31,6 +31,10 @@ type dockerRuntime struct {
 	extraEnv   []string // KEY=VAL passed to the workspace container (e.g. CLAUDE_INSTALL=0)
 	// inspect overrides `docker inspect` (tests only); nil = the real docker CLI.
 	inspect func(ctx context.Context, typ, ref, format string) string
+	// stopFn overrides Stop (tests only; the CP's own test environment has no docker
+	// CLI, and Destroy's contract — never unlink the home while the container can still
+	// be writing to it — is exactly what needs asserting). nil = the real Stop.
+	stopFn func(ctx context.Context) error
 	// cpus is the per-workspace CPU cap as docker --cpus (fractional cores); "" = no
 	// flag = every core. Native has no cgroup, so it ignores this axis entirely.
 	cpus string
@@ -402,6 +406,31 @@ func (d *dockerRuntime) Stop(ctx context.Context) error {
 		_ = exec.CommandContext(ctx, "docker", "network", "rm", d.network).Run()
 	}
 	return nil
+}
+
+// Destroy removes the container (Stop already does that, plus the per-user network) and
+// then the host data directory that holds the home bind-mount. Unlike the cloud adapters
+// there is nothing left over afterwards: the workspace's whole existence on this host is
+// the container and <dataDir>.
+//
+// The dataDir is removed AFTER Stop so nothing is writing through the bind-mount while we
+// unlink it. An already-absent directory is success, not an error — Destroy is retried by
+// the caller when a partial teardown left the DB row behind.
+func (d *dockerRuntime) Destroy(ctx context.Context) ([]string, error) {
+	stop := d.Stop
+	if d.stopFn != nil {
+		stop = d.stopFn
+	}
+	if err := stop(ctx); err != nil {
+		return nil, err
+	}
+	if d.dataDir == "" {
+		return nil, nil
+	}
+	if err := os.RemoveAll(d.dataDir); err != nil {
+		return nil, fmt.Errorf("remove data dir %s: %w", d.dataDir, err)
+	}
+	return nil, nil
 }
 
 // homeKeep are the top-level ~ entries preserved by an admin "home 掃除": connection

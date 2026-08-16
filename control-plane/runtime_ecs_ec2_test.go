@@ -13,6 +13,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
@@ -35,6 +36,11 @@ type fakeEC2 struct {
 	calls          []string
 	nextVol        int
 	nextInst       int
+	nextSnap       int
+	snapshots      map[string]*ec2types.Snapshot
+	// snapshotState overrides the state CreateSnapshot reports, so a test can hold a
+	// snapshot at `pending` and drive the wait.
+	snapshotState ec2types.SnapshotState
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -43,6 +49,7 @@ func newFakeEC2() *fakeEC2 {
 		instances: map[string]*ec2types.Instance{},
 		subnetAZ:  map[string]string{"sub-1a": "ap-northeast-1a", "sub-1c": "ap-northeast-1c"},
 		attachErr: map[string]bool{},
+		snapshots: map[string]*ec2types.Snapshot{},
 	}
 }
 
@@ -236,6 +243,55 @@ func (f *fakeEC2) DeleteVolume(_ context.Context, in *ec2.DeleteVolumeInput, _ .
 	f.log("DeleteVolume %s", aws.ToString(in.VolumeId))
 	delete(f.volumes, aws.ToString(in.VolumeId))
 	return &ec2.DeleteVolumeOutput{}, nil
+}
+
+func (f *fakeEC2) DescribeSnapshots(_ context.Context, in *ec2.DescribeSnapshotsInput, _ ...func(*ec2.Options)) (*ec2.DescribeSnapshotsOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := &ec2.DescribeSnapshotsOutput{}
+	for _, s := range f.snapshots {
+		if !filterMatch(in.Filters, func(name string) []string {
+			if strings.HasPrefix(name, "tag:") {
+				return []string{ec2TagValue(s.Tags, strings.TrimPrefix(name, "tag:"))}
+			}
+			return nil
+		}) {
+			continue
+		}
+		out.Snapshots = append(out.Snapshots, *s)
+	}
+	return out, nil
+}
+
+func (f *fakeEC2) CreateSnapshot(_ context.Context, in *ec2.CreateSnapshotInput, _ ...func(*ec2.Options)) (*ec2.CreateSnapshotOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextSnap++
+	id := fmt.Sprintf("snap-%d", f.nextSnap)
+	f.log("CreateSnapshot %s -> %s", aws.ToString(in.VolumeId), id)
+	var tags []ec2types.Tag
+	for _, ts := range in.TagSpecifications {
+		tags = append(tags, ts.Tags...)
+	}
+	// completed straight away: the fake models the API's bookkeeping, not the hours a
+	// real snapshot takes. Tests that care about the wait drive snapshotState instead.
+	state := ec2types.SnapshotStateCompleted
+	if f.snapshotState != "" {
+		state = f.snapshotState
+	}
+	s := &ec2types.Snapshot{
+		SnapshotId: aws.String(id), VolumeId: in.VolumeId, State: state, Tags: tags,
+	}
+	f.snapshots[id] = s
+	return &ec2.CreateSnapshotOutput{SnapshotId: aws.String(id), State: state, Tags: tags}, nil
+}
+
+func (f *fakeEC2) DeleteSnapshot(_ context.Context, in *ec2.DeleteSnapshotInput, _ ...func(*ec2.Options)) (*ec2.DeleteSnapshotOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.log("DeleteSnapshot %s", aws.ToString(in.SnapshotId))
+	delete(f.snapshots, aws.ToString(in.SnapshotId))
+	return &ec2.DeleteSnapshotOutput{}, nil
 }
 
 func (f *fakeEC2) AttachVolume(_ context.Context, in *ec2.AttachVolumeInput, _ ...func(*ec2.Options)) (*ec2.AttachVolumeOutput, error) {
@@ -1261,5 +1317,88 @@ func TestECSEC2SweeperWaitsForTaskENIsBeforeStopping(t *testing.T) {
 	}
 	if !stopped {
 		t.Error("the slot was never stopped after its task ENI went away")
+	}
+}
+
+// P0's Destroy deleted the EBS home and stopped there, leaving the ECS service, both EFS
+// access points and both SSM secrets alive for a membership that no longer exists
+// (ADR 0045 決定 13, docs/64 §64.18.1). Everything the adapter created has to go — and the
+// hibernation snapshot with it, or a "deleted" home stays restorable and keeps billing.
+func TestECSEC2DestroyFoldsEveryResourceItCreated(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	h.ec2.snapshots["snap-old"] = &ec2types.Snapshot{
+		SnapshotId: aws.String("snap-old"), VolumeId: aws.String("vol-1"),
+		State: ec2types.SnapshotStateCompleted,
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagMembership), Value: aws.String("M-1")},
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
+		},
+	}
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.efs.aps = []efstypes.AccessPointDescription{
+		{AccessPointId: aws.String("fsap-home"), RootDirectory: &efstypes.RootDirectory{Path: aws.String("/home/M-1")},
+			Tags: []efstypes.Tag{{Key: aws.String("af-membership"), Value: aws.String("M-1")}, {Key: aws.String("af-role"), Value: aws.String("home")}}},
+		{AccessPointId: aws.String("fsap-keep"), RootDirectory: &efstypes.RootDirectory{Path: aws.String("/claude-config/M-1")},
+			Tags: []efstypes.Tag{{Key: aws.String("af-membership"), Value: aws.String("M-1")}, {Key: aws.String("af-role"), Value: aws.String("claude")}}},
+		// Somebody else's access point on the same filesystem must survive.
+		{AccessPointId: aws.String("fsap-other"), RootDirectory: &efstypes.RootDirectory{Path: aws.String("/home/M-2")},
+			Tags: []efstypes.Tag{{Key: aws.String("af-membership"), Value: aws.String("M-2")}, {Key: aws.String("af-role"), Value: aws.String("home")}}},
+	}
+
+	leftovers, err := h.rt.Destroy(ctx)
+	if err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if _, ok := h.ec2.volumes["vol-1"]; ok {
+		t.Error("home volume survived Destroy")
+	}
+	if _, ok := h.ec2.snapshots["snap-old"]; ok {
+		t.Error("hibernation snapshot survived Destroy — the home is still restorable and still billed")
+	}
+	if _, ok := h.ecs.services["af-ws-acme-alice"]; ok {
+		t.Error("ECS service survived Destroy")
+	}
+	if len(h.ecs.deleteCalls) != 1 || !aws.ToBool(h.ecs.deleteCalls[0].Force) {
+		t.Errorf("DeleteService must be forced (a draining task refuses otherwise), got %#v", h.ecs.deleteCalls)
+	}
+	if len(h.efs.aps) != 1 || aws.ToString(h.efs.aps[0].AccessPointId) != "fsap-other" {
+		t.Errorf("wrong access points deleted, left = %v", h.efs.aps)
+	}
+	if len(h.ssm.deletes) != 2 {
+		t.Errorf("both SSM secrets must be deleted, got %v", h.ssm.deletes)
+	}
+	// The EFS directories are the one thing that cannot be removed from the API. They
+	// come back as leftovers so the caller can record them rather than believe the data
+	// is gone (docs/64 §64.18.4).
+	if len(leftovers) != 2 {
+		t.Errorf("expected the two EFS directories reported as leftovers, got %v", leftovers)
+	}
+	for _, want := range []string{"/home/M-1", "/claude-config/M-1"} {
+		found := false
+		for _, l := range leftovers {
+			if strings.HasSuffix(l, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("leftover %s not reported, got %v", want, leftovers)
+		}
+	}
+}
+
+// Destroy runs after a crash mid-teardown as often as it runs on a whole workspace, so
+// every step has to treat "already gone" as success.
+func TestECSEC2DestroyIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	if _, err := h.rt.Destroy(ctx); err != nil {
+		t.Fatalf("Destroy of a workspace that never started: %v", err)
+	}
+	if _, err := h.rt.Destroy(ctx); err != nil {
+		t.Fatalf("second Destroy: %v", err)
 	}
 }

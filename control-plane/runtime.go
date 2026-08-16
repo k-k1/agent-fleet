@@ -37,6 +37,35 @@ type Runtime interface {
 	Name() string                     // container / display name
 }
 
+// runtimeDestroyer tears down everything a Workspace owns that OUTLIVES its container:
+// the home data, and on the cloud adapters the per-membership resources the CP created
+// along the way (ECS service, EFS access points, SSM parameters, EBS volume, snapshot).
+//
+// It is a separate port from Runtime on purpose — `Destroy` is irreversible and must not
+// be reachable from a Runtime value by accident. Every adapter implements it (ADR 0045
+// 決定 13-3): a delete button that works on one deployment profile and silently does
+// nothing on another is worse than no button.
+//
+// The []string return is NOT an error channel — it lists resources this adapter KNOWS it
+// could not remove, so the caller can put them in the audit log instead of letting the
+// operator believe the data is gone. Today that is only the Fargate adapter's EFS
+// directories: an access point can be deleted from the API, but the directory it pointed
+// at cannot (docs/64 §64.18.4), and EFS keeps billing for it.
+type runtimeDestroyer interface {
+	Destroy(context.Context) ([]string, error)
+}
+
+// destroyRuntime runs the adapter's teardown. The "does not support" error is unreachable
+// with the four adapters in tree and exists so a future adapter fails loudly rather than
+// leaking resources quietly.
+func destroyRuntime(ctx context.Context, rt Runtime) ([]string, error) {
+	d, ok := rt.(runtimeDestroyer)
+	if !ok {
+		return nil, fmt.Errorf("runtime %T does not support destroy", rt)
+	}
+	return d.Destroy(ctx)
+}
+
 // runtimeOperationFencer is implemented by adapters whose lifecycle resource is
 // local to the CP host and needs an OS-level fence in addition to the DB lease.
 // nativeRuntime uses flock so a paused/expired CP cannot overlap a new holder.
@@ -72,6 +101,15 @@ func (m *manager) acquireWorkspaceOperationFence(ctx context.Context, workspaceI
 // dockerRuntime is the first Runtime adapter; the ECS adapter (P3-7) must satisfy
 // the same contract. This assertion fails the build if either drifts.
 var _ Runtime = (*dockerRuntime)(nil)
+
+// Every adapter destroys (ADR 0045 決定 13-3). Asserted here rather than next to each
+// adapter so a new one cannot be added without meeting this list.
+var (
+	_ runtimeDestroyer = (*dockerRuntime)(nil)
+	_ runtimeDestroyer = (*nativeRuntime)(nil)
+	_ runtimeDestroyer = (*ecsRuntime)(nil)
+	_ runtimeDestroyer = (*ecsEC2Runtime)(nil)
+)
 
 // RuntimeFactory is the single construction seam for the Runtime port. Every call
 // site (handlers, manager, reaper, admin, mcp) builds its Runtime through the

@@ -180,8 +180,15 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	}
 	live.waitTasksGone(u2, 3*time.Minute)
 	for _, rt := range []*ecsEC2Runtime{u1, u2} {
-		if err := rt.Destroy(ctx); err != nil {
+		leftovers, err := rt.Destroy(ctx)
+		if err != nil {
 			t.Errorf("Destroy %s: %v", rt.Name(), err)
+		}
+		// The EFS directories are the one thing Destroy cannot remove (docs/64
+		// §64.18.4). Report them so the harness' teardown check stays honest about
+		// what is left on the filesystem.
+		if len(leftovers) > 0 {
+			t.Logf("Destroy %s left behind (expected, EFS dirs need a mount): %v", rt.Name(), leftovers)
 		}
 	}
 	t.Logf("SUMMARY start#1=%.1fs warmReturn=%.1fs wake=%.1fs", coldStart.Seconds(), warmReturn.Seconds(), wake.Seconds())
