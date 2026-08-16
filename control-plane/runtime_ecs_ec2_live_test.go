@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
@@ -27,7 +28,7 @@ import (
 //
 // Opt-in, because it creates billable resources and needs a substrate:
 //
-//	source ~/af-ec2c/state.env && go test -run TestECSEC2Live -v -timeout 40m ./...
+//	source ~/af-ec2c/state.env && go test -run TestECSEC2Live -v -timeout 75m ./...
 //
 // The substrate is ~/af-ec2c/setup.sh (which stands up the REAL deploy/aws/ecs/cfn/
 // 40-ec2-pool.yaml), and ~/af-ec2c/teardown.sh removes everything. Run all three in one
@@ -174,7 +175,85 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		t.Errorf("pool grew to %d instead of reclaiming at the cap", n)
 	}
 
-	// --- 6. leave nothing running; the volumes are deleted by Destroy. ---
+	// --- 6. hibernation: u1's home (detached since the eviction) becomes a snapshot, the
+	// volume goes, and the next Start rebuilds it. This is the only path in the product
+	// that deletes a live home on its own, so the marker file is the whole assertion.
+	// (ADR 0045 決定 4 / docs/64 §64.18.2.) ---
+	vol1 := aws.ToString(live.volumeOf(u1).VolumeId)
+	t5 := time.Now()
+	live.eventually(20*time.Minute, "home hibernated (snapshot completed, volume deleted)", func() bool {
+		if err := u1.hibernate(ctx); err != nil {
+			t.Logf("hibernate step: %v", err)
+			return false
+		}
+		v, err := u1.homeVolume(ctx)
+		return err == nil && v == nil
+	})
+	t.Logf("MEASURED hibernate (%s → snapshot, volume deleted) = %.1fs", vol1, time.Since(t5).Seconds())
+	snaps, err := u1.homeSnapshots(ctx)
+	if err != nil || len(snaps) != 1 {
+		t.Fatalf("hibernation snapshots = %v (err %v), want exactly one", snaps, err)
+	}
+	golden := aws.ToString(snaps[0].SnapshotId) // reused below as the golden source
+	if s := u1.State(ctx); s != "none" {
+		t.Logf("State of a hibernated workspace = %q (no volume; Start restores it)", s)
+	}
+	t6 := time.Now()
+	if err := u1.Start(ctx); err != nil {
+		t.Fatalf("u1 Start after hibernation: %v", err)
+	}
+	live.waitState(u1, "running", 12*time.Minute)
+	t.Logf("MEASURED restore from snapshot → running = %.1fs", time.Since(t6).Seconds())
+	slotR := live.slotOf(u1)
+	if got := live.run(slotR, "cat /af-home/m-u1/dev/af-marker.txt"); !strings.Contains(got, "af-ec2c-marker-u1") {
+		t.Errorf("the home did not survive hibernation: %q", got)
+	}
+	if v := live.volumeOf(u1); aws.ToString(v.SnapshotId) == "" {
+		t.Error("the restored home was built empty rather than from the snapshot")
+	}
+
+	// --- 7. golden snapshot: tag a snapshot the way bake-golden.sh does and check that a
+	// BRAND-NEW user's home is created from it. Only the volume is created here (no boot)
+	// — what needs proving on real AWS is the tag lookup and the image match, not another
+	// task launch. (ADR 0045 決定 9.) ---
+	if _, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{golden},
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleGolden)},
+			{Key: aws.String(ec2TagPool), Value: aws.String(f.pool.pool)},
+			{Key: aws.String(ec2TagImage), Value: aws.String(f.base.cfg.workspaceImage)},
+			{Key: aws.String(ec2TagMembership), Value: aws.String("")},
+		},
+	}); err != nil {
+		t.Fatalf("tag %s as golden: %v", golden, err)
+	}
+	u3 := f.New(Workspace{ContainerName: "af-ec2c-u3" + sfx, MembershipID: "m-u3", AgentToken: "tok-u3"}, "", nil).(*ecsEC2Runtime)
+	newHome, err := u3.createHomeVolume(ctx, live.azOf(u1))
+	if err != nil {
+		t.Fatalf("createHomeVolume for a new user: %v", err)
+	}
+	newID := aws.ToString(newHome.VolumeId)
+	if src := live.snapshotOfVolume(newID); src != golden {
+		t.Errorf("a new user's home was built from %q, want the golden snapshot %s", src, golden)
+	} else {
+		t.Logf("a new user's home came from the golden snapshot %s", golden)
+	}
+	if _, err := f.ec2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(newID)}); err != nil {
+		t.Errorf("cleaning up the new user's volume %s: %v", newID, err)
+	}
+	// The golden belongs to the pool, not to u1 — Destroy below must leave it alone, and
+	// the harness teardown removes it.
+	defer func() {
+		if _, err := f.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: aws.String(golden)}); err != nil {
+			t.Logf("cleaning up the golden snapshot %s: %v", golden, err)
+		}
+	}()
+
+	// --- 8. leave nothing running; the volumes are deleted by Destroy. ---
+	if err := u1.Stop(ctx); err != nil {
+		t.Errorf("u1 final stop: %v", err)
+	}
+	live.waitTasksGone(u1, 3*time.Minute)
 	if err := u2.Stop(ctx); err != nil {
 		t.Errorf("final stop: %v", err)
 	}
@@ -183,6 +262,18 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		leftovers, err := rt.Destroy(ctx)
 		if err != nil {
 			t.Errorf("Destroy %s: %v", rt.Name(), err)
+		}
+		// Destroy now folds the Fargate-side resources too (ADR 0045 決定 13-3): the
+		// service, both EFS access points and both SSM parameters. Those are exactly the
+		// things that survived every earlier run and had to be swept up by teardown.sh.
+		if _, ok, err := rt.base.describeService(ctx); err == nil && ok {
+			t.Errorf("Destroy left the ECS service %s behind", rt.Name())
+		}
+		if n := live.accessPointsOf(rt); n != 0 {
+			t.Errorf("Destroy left %d EFS access points behind for %s", n, rt.Name())
+		}
+		if n := live.paramsOf(rt); n != 0 {
+			t.Errorf("Destroy left %d SSM parameters behind for %s", n, rt.Name())
 		}
 		// The EFS directories are the one thing Destroy cannot remove (docs/64
 		// §64.18.4). Report them so the harness' teardown check stays honest about
@@ -363,4 +454,53 @@ func (l *liveEC2) run(instanceID, command string) string {
 	}
 	l.t.Fatalf("ssm command %q on %s never finished", command, instanceID)
 	return ""
+}
+
+// azOf is the AZ a workspace's home lives in — an EBS volume never leaves it, so a new
+// volume created for a comparison has to be made there too.
+func (l *liveEC2) azOf(rt *ecsEC2Runtime) string {
+	v := l.volumeOf(rt)
+	if v == nil {
+		return ""
+	}
+	return aws.ToString(v.AvailabilityZone)
+}
+
+func (l *liveEC2) snapshotOfVolume(volumeID string) string {
+	out, err := l.ec2.DescribeVolumes(l.ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
+	if err != nil || len(out.Volumes) == 0 {
+		l.t.Logf("describe %s: %v", volumeID, err)
+		return ""
+	}
+	return aws.ToString(out.Volumes[0].SnapshotId)
+}
+
+// accessPointsOf / paramsOf count the per-membership resources on the Fargate side, so
+// the Destroy assertions can say "nothing is left" about the things no unit test can see.
+func (l *liveEC2) accessPointsOf(rt *ecsEC2Runtime) int {
+	out, err := rt.base.efs.DescribeAccessPoints(l.ctx, &efs.DescribeAccessPointsInput{
+		FileSystemId: aws.String(rt.base.cfg.efsFileSystem),
+	})
+	if err != nil {
+		l.t.Logf("describe access points: %v", err)
+		return 0
+	}
+	n := 0
+	for _, ap := range out.AccessPoints {
+		if tagValue(ap.Tags, "af-membership") == rt.base.membershipID {
+			n++
+		}
+	}
+	return n
+}
+
+func (l *liveEC2) paramsOf(rt *ecsEC2Runtime) int {
+	n := 0
+	for _, suffix := range []string{"agent-token", "secret-key"} {
+		name := "/af-ws/" + rt.base.name + "/" + suffix
+		if _, err := l.ssm.GetParameter(l.ctx, &ssm.GetParameterInput{Name: aws.String(name)}); err == nil {
+			n++
+		}
+	}
+	return n
 }
