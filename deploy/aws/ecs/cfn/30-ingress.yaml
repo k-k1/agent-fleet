@@ -65,11 +65,12 @@ Parameters:
     Description: >-
       Which Runtime adapter the Control Plane uses. `ecs` = Fargate (the shipped
       default: two resources per workspace, ~105s to start, home on EFS). `ecs-ec2` =
-      a pool of EC2 slots with a persistent per-user EBS home (docs/64 §64.12/§64.16,
-      ADR 0045 決定 10): a warm Start measured 13-95s (vs Fargate's ~105s every time) and
-      small-file I/O stops being 8-30x slower, at the price of six resource kinds per
-      workspace on a substrate with no production mileage. Requires the 40-ec2-pool
-      stack and Ec2SlotLaunchTemplate below. Falling back is this one value.
+      a pool of EC2 slots with a persistent per-user EBS home (docs/64 §64.12/§64.17,
+      ADR 0045 決定 10/12). Switch for I/O and persistence (small-file writes 8-30x faster
+      than EFS, a home that survives) and for sizes above Fargate's ceilings — NOT for
+      start latency: measured 43-110s against Fargate's ~105s. The price is six resource
+      kinds per workspace on a substrate with no production mileage. Requires the
+      40-ec2-pool stack and Ec2SlotLaunchTemplate below. Falling back is this one value.
   Ec2SlotLaunchTemplate:
     Type: String
     Default: ""

@@ -864,6 +864,7 @@ func TestECSEC2StartWakesADormantSlot(t *testing.T) {
 	h := newEC2Harness(t)
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
 	h.ec2.addSlot("i-sleep", "ap-northeast-1a", "m7i.large", false, false) // stopped
+	h.ci.registered["i-sleep"] = true                                      // it re-registers with the cluster as it boots
 	h.ec2.attach("vol-1", "i-sleep", time.Now().Add(-time.Hour))
 	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339))
 	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
@@ -871,6 +872,15 @@ func TestECSEC2StartWakesADormantSlot(t *testing.T) {
 	if err := h.rt.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	// Waking is deferred on purpose: a slot the sweeper just put to sleep is `stopping`,
+	// and EC2 refuses to start it from there — so Start must not sit on that wait.
+	if got := h.rt.State(ctx); got != "starting" {
+		t.Errorf("State while the slot boots = %q, want starting", got)
+	}
+	if len(h.deferred) != 1 {
+		t.Fatalf("waking a dormant slot must be handed off, deferred=%d", len(h.deferred))
+	}
+	h.runDeferred(ctx)
 	started := false
 	for _, c := range h.ec2.calls {
 		if strings.HasPrefix(c, "StartInstances i-sleep") {
@@ -882,9 +892,6 @@ func TestECSEC2StartWakesADormantSlot(t *testing.T) {
 	}
 	if !started {
 		t.Error("the dormant slot was never started")
-	}
-	if got := h.rt.State(ctx); got != "starting" {
-		t.Errorf("State while the slot boots = %q, want starting", got)
 	}
 	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince) != "" {
 		t.Error("the idle mark must be cleared when the owner comes back")
@@ -1215,5 +1222,44 @@ func TestECSEC2AttachRetriesWhileTheDeviceIsStillHeld(t *testing.T) {
 		if strings.HasPrefix(c, "RunInstances") {
 			t.Error("grew the pool despite a slot that was about to free up")
 		}
+	}
+}
+
+// Stopping a slot while ECS still has a task ENI on it is how an instance comes back
+// multi-ENI, loses its auto-assigned public IPv4 and — without NAT — its egress; the
+// agent then never reconnects. Reproduced through this code path against real AWS, so
+// the guard is not theoretical.
+func TestECSEC2SweeperWaitsForTaskENIsBeforeStopping(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	inst := h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	inst.NetworkInterfaces = []ec2types.InstanceNetworkInterface{
+		{Description: aws.String("")},
+		{Description: aws.String("arn:aws:ecs:ap-northeast-1:1234:attachment/abc")},
+	}
+	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	f := h.factory()
+	f.sweepVolume(ctx, h.ec2.volumes["vol-1"])
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "StopInstances") {
+			t.Fatal("stopped a slot that still had a task ENI attached")
+		}
+	}
+
+	// Once ECS has cleaned the ENI up, the same sweep puts the slot to sleep.
+	inst.NetworkInterfaces = []ec2types.InstanceNetworkInterface{{Description: aws.String("")}}
+	f.sweepVolume(ctx, h.ec2.volumes["vol-1"])
+	stopped := false
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "StopInstances i-hot") {
+			stopped = true
+		}
+	}
+	if !stopped {
+		t.Error("the slot was never stopped after its task ENI went away")
 	}
 }

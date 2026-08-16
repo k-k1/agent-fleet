@@ -274,6 +274,13 @@ a sandbox harness (`docs/64` §64.12–§64.14) and the adapter is unit-tested, 
 deployed `40-ec2-pool` and run a real workspace on it. Fargate (`WsRuntime=ecs`) stays the
 default and is untouched by this profile.
 
+**What you get, and what you do NOT.** Measured through the adapter on real AWS, a warm
+Start is 43–110s against Fargate's ~105s — **the start latency is not the reason to switch**
+(the earlier 22–27s figure was measured without Service Connect, which this product needs).
+What the pool actually buys is **I/O and persistence** (small-file writes 8–30× faster than
+EFS, and a home that really survives) and **sizes above Fargate's 16 vCPU / 120 GiB /
+200 GiB ephemeral ceiling**.
+
 **What changes.** A workspace stops being "a Fargate task with an EFS home" and becomes
 "a task on a general-purpose EC2 *slot*, with the user's own EBS volume attached to it".
 Slots are not owned by anyone: on Start the CP picks a free one, attaches that user's
@@ -283,7 +290,7 @@ back. **One slot serves one user at a time** (`ADR 0045` 決定 8).
 
 | | Fargate (`ecs`) | EC2 pool (`ecs-ec2`) |
 |---|---|---|
-| Warm Start | ~105s | **13–95s** (measured through the adapter, §64.16.3) |
+| Warm Start | ~105s | **43–110s** — *not* an improvement worth switching for (docs/64 §64.17.5) |
 | Home | EFS — small files are 8–30× slower | **EBS gp3** — 2,000 small files in 0.04s vs 30.7s |
 | Size | 74 discrete (cpu, memory) pairs, ≤16 vCPU / 120 GiB | instance types; the task reserves nothing and gets the box |
 | Resources per workspace | 2 (service + EFS access points) | 6 (also instance, volume, container-instance registration, task def) |

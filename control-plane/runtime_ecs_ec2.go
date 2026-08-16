@@ -635,6 +635,12 @@ type ec2Placement struct {
 	// claimed means a claim tag was written and has to be cleared once the volume is
 	// really attached.
 	claimed bool
+	// wake means the slot has to be started before anything can be placed on it. The
+	// StartInstances itself is deferred: a slot the sweeper has just put to sleep is in
+	// `stopping`, and EC2 refuses to start it from there ("IncorrectInstanceState") —
+	// measured. Waiting for `stopped` is a background job, not something a Start inside
+	// an HTTP request can sit on.
+	wake bool
 }
 
 // placeHome resolves the volume and the slot, attaching the two together when it can.
@@ -659,16 +665,12 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 			if err != nil {
 				return ec2Placement{}, err
 			}
-			if !running {
-				// The slot was stopped while dormant. Wake it: the image cache and the
-				// attachment are both still there, so this is the ~90s path rather than
-				// the 135s of building a new slot.
-				if _, err := e.ec2.StartInstances(ctx, &ec2.StartInstancesInput{InstanceIds: []string{inst}}); err != nil {
-					return ec2Placement{}, fmt.Errorf("wake slot %s: %w", inst, err)
-				}
-				log.Printf("ecs-ec2: waking slot %s for %s (home still attached)", inst, e.base.name)
-			}
-			return ec2Placement{volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone), deferred: !running}, nil
+			// A dormant slot keeps both the image cache and the attachment, so waking it
+			// is the ~90s path rather than the 135s of building a new one.
+			return ec2Placement{
+				volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
+				deferred: !running, wake: !running,
+			}, nil
 		}
 	}
 	azFilter := ""
@@ -712,13 +714,11 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 		if err := e.claim(ctx, volID, s.id); err != nil {
 			log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
 		}
-		if !s.running {
-			if _, err := e.ec2.StartInstances(ctx, &ec2.StartInstancesInput{InstanceIds: []string{s.id}}); err != nil {
-				return ec2Placement{}, fmt.Errorf("start slot %s: %w", s.id, err)
-			}
-		}
 		// A hot, already-registered slot is the only case that can finish inline.
-		return ec2Placement{volumeID: volID, instanceID: s.id, az: azFilter, deferred: !(s.running && s.registered)}, nil
+		return ec2Placement{
+			volumeID: volID, instanceID: s.id, az: azFilter,
+			deferred: !(s.running && s.registered), wake: !s.running,
+		}, nil
 	}
 	// No free slot. Growing the pool is preferred while there is room — it disturbs
 	// nobody, and an extra slot at rest costs only its root volume now that idle slots
@@ -745,12 +745,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 		if err != nil {
 			return ec2Placement{}, err
 		}
-		if !running {
-			if _, err := e.ec2.StartInstances(ctx, &ec2.StartInstancesInput{InstanceIds: []string{victim}}); err != nil {
-				return ec2Placement{}, fmt.Errorf("start reclaimed slot %s: %w", victim, err)
-			}
-		}
-		return ec2Placement{volumeID: volID, instanceID: victim, az: azFilter, deferred: true}, nil
+		return ec2Placement{volumeID: volID, instanceID: victim, az: azFilter, deferred: true, wake: !running}, nil
 	}
 	// RunInstances answers immediately with a PENDING instance that cannot accept a
 	// volume yet, so the claim tag carries the "starting" state until the background
@@ -769,6 +764,12 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 // that undone, then launch. Everything it does is idempotent and re-derivable, so a CP
 // restart in the middle costs a retry, not a wedged workspace.
 func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec2Prep) {
+	if p.wake {
+		if err := e.wakeSlot(ctx, p.instanceID); err != nil {
+			log.Printf("ecs-ec2 start: waking slot %s for %s failed: %v", p.instanceID, e.base.name, err)
+			return
+		}
+	}
 	if p.claimed {
 		if err := e.waitInstanceRunning(ctx, p.instanceID); err != nil {
 			log.Printf("ecs-ec2 start: slot %s for %s never came up: %v", p.instanceID, e.base.name, err)
@@ -1297,6 +1298,46 @@ func (e *ecsEC2Runtime) anyAZ(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("no usable subnet/AZ configured (AF_ECS_SUBNETS)")
 }
 
+// wakeSlot starts a dormant slot, waiting first for it to be startable.
+//
+// The wait is the whole point: the sweeper stops a slot the moment its workspace goes
+// dormant, so a user who comes back seconds later finds it in `stopping`, and EC2
+// answers StartInstances with "IncorrectInstanceState" (measured — it failed the live
+// test). Retrying from `stopping` is not an error case, it is the normal race between a
+// person and a 15-minute timer.
+func (e *ecsEC2Runtime) wakeSlot(ctx context.Context, instanceID string) error {
+	for i := 0; ; i++ {
+		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+		if err != nil {
+			return err
+		}
+		state := ec2types.InstanceStateName("")
+		for _, r := range out.Reservations {
+			for _, inst := range r.Instances {
+				if inst.State != nil {
+					state = inst.State.Name
+				}
+			}
+		}
+		switch state {
+		case ec2types.InstanceStateNameRunning, ec2types.InstanceStateNamePending:
+			return nil
+		case ec2types.InstanceStateNameStopped:
+			log.Printf("ecs-ec2: waking slot %s for %s (home still attached)", instanceID, e.base.name)
+			_, err := e.ec2.StartInstances(ctx, &ec2.StartInstancesInput{InstanceIds: []string{instanceID}})
+			return err
+		case ec2types.InstanceStateNameTerminated, ec2types.InstanceStateNameShuttingDown:
+			return fmt.Errorf("slot %s is %s", instanceID, state)
+		}
+		if i >= 60 {
+			return fmt.Errorf("slot %s stuck in %s", instanceID, state)
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
+}
+
 func (e *ecsEC2Runtime) waitInstanceRunning(ctx context.Context, instanceID string) error {
 	for {
 		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
@@ -1319,7 +1360,10 @@ func (e *ecsEC2Runtime) waitInstanceRunning(ctx context.Context, instanceID stri
 // instance. Measured at ~20s after an instance start (docs/64 §64.12.1); a hot slot
 // returns on the first poll.
 func (e *ecsEC2Runtime) waitSlotRegistered(ctx context.Context, instanceID string) error {
-	for {
+	// Bounded as well as context-scoped. The caller's budget is the real limit in
+	// production, but an unbounded "poll until" hangs anything that drives this with a
+	// context that never expires.
+	for i := 0; i < 400; i++ {
 		ready, err := e.registeredSlots(ctx)
 		if err == nil && ready[instanceID] {
 			return nil
@@ -1328,6 +1372,7 @@ func (e *ecsEC2Runtime) waitSlotRegistered(ctx context.Context, instanceID strin
 			return err
 		}
 	}
+	return fmt.Errorf("slot %s never registered with the cluster", instanceID)
 }
 
 // --- mount / umount (SSM) ---
@@ -1356,7 +1401,7 @@ func (e *ecsEC2Runtime) umountHome(ctx context.Context, instanceID string) error
 // than a failure.
 func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command string) error {
 	var cmdID string
-	for {
+	for attempt := 1; ; attempt++ {
 		out, err := e.ssmc.SendCommand(ctx, &ssm.SendCommandInput{
 			DocumentName: aws.String("AWS-RunShellScript"),
 			InstanceIds:  []string{instanceID},
@@ -1366,6 +1411,14 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 		if err == nil && out.Command != nil {
 			cmdID = aws.ToString(out.Command.CommandId)
 			break
+		}
+		// SAY SOMETHING. A slot whose SSM agent never came back swallows every mount and
+		// unmount silently, and the workspace just sits at `starting` with no clue why —
+		// which is exactly how a live run burned ten minutes before anyone could tell
+		// that SSM, not ECS, was the thing that was stuck.
+		if attempt%5 == 1 {
+			log.Printf("ecs-ec2: slot %s is not answering SSM yet (attempt %d, %q): %v",
+				instanceID, attempt, command, err)
 		}
 		if err := e.sleep(ctx, 3*time.Second); err != nil {
 			return fmt.Errorf("ssm send %q to %s: %w", command, instanceID, err)
@@ -1791,11 +1844,6 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		return
 	}
 	instanceID := aws.ToString(att.InstanceId)
-	// Grace on the ATTACH time, not on the stop: a Start attaches before it creates the
-	// service, and a sweep landing in that window must not act on it.
-	if att.AttachTime != nil && time.Since(*att.AttachTime) < f.pool.releaseGrace {
-		return
-	}
 	s, ok, err := rt.base.describeService(ctx)
 	if err != nil {
 		return
@@ -1808,6 +1856,14 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		// got that far, or a workspace that was removed). This is the only case where
 		// the sweeper still takes the home off its slot; a merely STOPPED workspace
 		// keeps its slot on purpose (lazy release).
+		//
+		// The grace is on the ATTACH time and belongs to THIS branch only: a Start
+		// attaches before it creates the service, so without it a sweep landing in that
+		// window would tear down a launch in progress. The idle-stop below must NOT be
+		// gated this way — a long-lived attachment is exactly what it is looking for.
+		if att.AttachTime != nil && time.Since(*att.AttachTime) < f.pool.releaseGrace {
+			return
+		}
 		log.Printf("ecs-ec2 sweep: %s is attached to %s but has no service; releasing", volumeID, instanceID)
 		if err := rt.releaseSlot(ctx); err != nil {
 			log.Printf("ecs-ec2 sweep: releasing %s failed: %v", volumeID, err)
@@ -1828,6 +1884,18 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 	}
 	running, err := rt.instanceRunning(ctx, instanceID)
 	if err != nil || !running {
+		return
+	}
+	// Never stop a slot that still carries a task ENI. ECS detaches those a little after
+	// the task is gone, and an instance stopped in that window comes back MULTI-ENI —
+	// which is how it silently loses its auto-assigned public IPv4 and, on a deployment
+	// without NAT, its egress: the agent then never reconnects (ADR 0045 決定 3-3, and
+	// reproduced through this very code path in the live test). Skipping just means the
+	// next sweep stops it.
+	if held, err := f.taskENIsAttached(ctx, instanceID); err != nil || held {
+		if held {
+			log.Printf("ecs-ec2 sweep: slot %s still has a task ENI; leaving it running for now", instanceID)
+		}
 		return
 	}
 	log.Printf("ecs-ec2 sweep: %s has been dormant %.0fm; stopping slot %s (home stays attached)",
@@ -1898,6 +1966,26 @@ func (f *ecsEC2Factory) sweepGhostInstances(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// taskENIsAttached reports whether ECS still has a task network interface on the slot.
+// Task ENIs are described with the attachment ARN of the task that owns them, which is
+// what distinguishes them from the instance's own primary interface.
+func (f *ecsEC2Factory) taskENIsAttached(ctx context.Context, instanceID string) (bool, error) {
+	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil {
+		return false, err
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			for _, ni := range inst.NetworkInterfaces {
+				if strings.Contains(aws.ToString(ni.Description), ":ecs:") {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
 }
 
 func (f *ecsEC2Factory) instanceAlive(ctx context.Context, instanceID string) (bool, error) {
