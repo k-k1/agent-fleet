@@ -183,13 +183,27 @@ func pickDiskGiB(perWorkspace, deploymentDefault int) int {
 
 var _ RuntimeFactory = (*ecsFactory)(nil)
 
+// awsConfigFor is where every AWS client this deployment builds gets its credentials.
+// In production it is the default chain — which on ECS means the CP task role, i.e. the
+// only identity that matters — and it exists as a variable for exactly one reason: so
+// the live E2E can run the PRODUCT under a copy of that task role while its own
+// verification calls keep the ambient (deployer) credentials.
+//
+// That distinction is not academic. Until 2026-08-16 the CP task role had no snapshot
+// permissions at all, and the live E2E went green through every round of it, because it
+// was running as the deployer. "Passed against real AWS" is not "passed with the
+// permissions of production". (docs/64 §64.22.3 / §64.23.)
+var awsConfigFor = func(ctx context.Context, region string) (aws.Config, error) {
+	return awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region))
+}
+
 // newECSFactory builds the AWS Runtime factory: it loads AWS config (region) and
 // constructs the ECS/EFS/SSM clients once, then reads the placement from AF_ECS_*.
 // Credentials are resolved lazily by the SDK (task role on ECS), so this does no
 // network I/O at boot.
 func newECSFactory(m *manager) (RuntimeFactory, error) {
 	region := os.Getenv("AF_ECS_REGION")
-	ac, err := awscfg.LoadDefaultConfig(context.Background(), awscfg.WithRegion(region))
+	ac, err := awsConfigFor(context.Background(), region)
 	if err != nil {
 		return nil, fmt.Errorf("aws config: %w", err)
 	}

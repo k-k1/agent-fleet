@@ -21,6 +21,56 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
+// useCPTaskRole makes the PRODUCT talk to AWS as a copy of the production CP task role
+// (20-platform.yaml's CpTaskRole), while this test's own verification and cleanup calls
+// keep the ambient deployer credentials.
+//
+// Why this exists: until 2026-08-16 that role had no ec2 snapshot permissions at all —
+// hibernation, backups, the golden lookup and therefore every brand-new user's Start
+// would have failed with AccessDenied on a real deployment — and five rounds of live
+// E2E stayed green, because they ran as the deployer. A live test that grants itself
+// more than production has proves the API calls, not the deployment. (docs/64 §64.23.)
+//
+// The harness (setup.sh) creates the role from the very statements in 20-platform.yaml
+// and writes an AWS profile that assumes it; the SDK re-assumes on expiry by itself,
+// which static STS credentials would not survive an 80-minute run doing.
+func useCPTaskRole(t *testing.T) {
+	t.Helper()
+	prof, cfgFile := os.Getenv("AF_HARNESS_CP_PROFILE"), os.Getenv("AF_HARNESS_CP_CONFIG")
+	if prof == "" || cfgFile == "" {
+		t.Logf("NOT VERIFIED: the product is running with the ambient (deployer) credentials, " +
+			"so a missing permission in 20-platform.yaml CANNOT fail this run. Re-run the " +
+			"harness setup.sh to get AF_HARNESS_CP_PROFILE / AF_HARNESS_CP_CONFIG.")
+		return
+	}
+	prev := awsConfigFor
+	awsConfigFor = func(ctx context.Context, region string) (aws.Config, error) {
+		return awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region),
+			awscfg.WithSharedConfigFiles([]string{cfgFile}),
+			awscfg.WithSharedConfigProfile(prof))
+	}
+	t.Cleanup(func() { awsConfigFor = prev })
+	// Prove the assume happens BEFORE the first product call. An unusable profile must
+	// not degrade quietly into "ran as the deployer again" — that is the failure this
+	// whole path exists to make impossible.
+	ac, err := awsConfigFor(context.Background(), os.Getenv("AF_ECS_REGION"))
+	if err != nil {
+		t.Fatalf("loading the CP-role profile %s from %s: %v", prof, cfgFile, err)
+	}
+	cr, err := ac.Credentials.Retrieve(context.Background())
+	if err != nil {
+		t.Fatalf("assuming the CP task role through profile %s: %v", prof, err)
+	}
+	if cr.SessionToken == "" {
+		t.Fatalf("profile %s handed out long-lived credentials (%s) — that is the deployer, not an assumed role", prof, cr.AccessKeyID)
+	}
+	who := exec.Command("aws", "sts", "get-caller-identity", "--query", "Arn", "--output", "text")
+	who.Env = append(os.Environ(), "AWS_CONFIG_FILE="+cfgFile, "AWS_PROFILE="+prof)
+	arn, _ := who.Output()
+	t.Logf("the product runs as %s (profile %s) — the CP task role's permissions, not the deployer's",
+		strings.TrimSpace(string(arn)), prof)
+}
+
 // TestECSEC2LiveLifecycle drives the real ecs-ec2 adapter against real AWS: one cold
 // start (new volume + new slot), a hot swap to a second workspace on the same slot, and
 // a return to the first with its home intact. The unit tests prove the decisions; this
@@ -42,12 +92,15 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		t.Skip("set AF_ECS_EC2_LIVE=1 (and source the harness state.env) to run the live EC2 pool test")
 	}
 	ctx := context.Background()
+	useCPTaskRole(t)
 	factory, err := newECSEC2Factory(&manager{})
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
 	f := factory.(*ecsEC2Factory)
 
+	// Deliberately the AMBIENT credentials: the test's own eyes and cleanup are the
+	// deployer's, only the product runs as the CP task role (see useCPTaskRole).
 	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(f.base.cfg.region))
 	if err != nil {
 		t.Fatalf("aws config: %v", err)
@@ -620,11 +673,14 @@ func TestECSEC2LiveScale(t *testing.T) {
 		t.Skip("set AF_ECS_EC2_LIVE=1 AF_ECS_EC2_LIVE_SCALE=1 (and source the harness state.env) for the multi-user soak")
 	}
 	ctx := context.Background()
+	useCPTaskRole(t)
 	factory, err := newECSEC2Factory(&manager{})
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
 	f := factory.(*ecsEC2Factory)
+	// Deliberately the AMBIENT credentials: the test's own eyes and cleanup are the
+	// deployer's, only the product runs as the CP task role (see useCPTaskRole).
 	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(f.base.cfg.region))
 	if err != nil {
 		t.Fatalf("aws config: %v", err)
@@ -688,11 +744,12 @@ func TestECSEC2LiveScale(t *testing.T) {
 	if n := live.poolSize(f); n != 3 {
 		t.Errorf("pool holds %d slots for 3 users, want exactly 3", n)
 	}
-	// Say what the AZ numbers mean instead of letting three-in-one-AZ read as a failure or
-	// three-across-AZs read as a feature: a NEW home follows anyAZ(), which is the
-	// lowest-sorted configured subnet, deterministically. There is no spreading.
-	t.Logf("AZs of the three new homes: %v (all the same is EXPECTED — a new home takes the "+
-		"first configured subnet's AZ; the adapter does not spread)", azs)
+	// Say what the AZ numbers mean rather than letting either outcome read as a verdict.
+	// Since 決定 16 a NEW home goes to the AZ holding the fewest homes, so over time they
+	// spread — but three homes created AT THE SAME TIME each read the counts before any of
+	// them wrote, so landing together is just as correct here as spreading.
+	t.Logf("AZs of the three new homes: %v (both outcomes are fine: concurrent creations read "+
+		"the same home counts, so 決定 16's spreading has nothing to go on yet)", azs)
 
 	// --- 2. the second AZ. An EBS volume never leaves its AZ, so a user whose home is
 	// there must get a slot there — including growing one, since every existing slot is in
@@ -920,4 +977,157 @@ func (l *liveEC2) instance(instanceID string) *ec2types.Instance {
 		return nil
 	}
 	return &out.Reservations[0].Instances[0]
+}
+
+// TestECSEC2LiveSlotAMI proves deploy/aws/ecs/bake-slot-ami.sh the same way §64.20.2
+// proved bake-golden.sh: not by making the same API calls from Go, but by pointing the
+// pool at an AMI the script actually baked and starting a real user on it.
+//
+// What only the real thing can answer:
+//
+//   - Does an instance from that AMI rejoin the ECS cluster? An AMI baked without
+//     clearing /var/lib/ecs/data produces instances that believe they are already
+//     registered and never come back (ADR 0045 決定 3-1). Nothing about that shows up
+//     until a task has to be placed on one.
+//   - Is the workspace image really in the AMI's cache, i.e. does the new slot skip the
+//     pull the bake exists to remove?
+//   - Does the CP's own operator surface (PoolStatus → readSlotAMI) call this pool
+//     "baked" once it is, reading the AMI off the instance rather than off the template?
+//
+// Run it against an EMPTY pool, after baking and redeploying 40-ec2-pool.yaml with
+// SlotAmiId: a leftover slot from an earlier run was launched from the old AMI, and
+// reusing it would measure nothing.
+//
+//	bash deploy/aws/ecs/bake-slot-ami.sh --image "$AF_ECS_WORKSPACE_IMAGE" \
+//	  --launch-template "$AF_ECS_EC2_LAUNCH_TEMPLATE" --subnet "${AF_ECS_SUBNETS%%,*}"
+//	aws cloudformation deploy --stack-name af-ec2c-pool ... SlotAmiId=<ami>
+//	AF_ECS_EC2_LIVE_AMI=1 go test -run TestECSEC2LiveSlotAMI -v -timeout 40m .
+func TestECSEC2LiveSlotAMI(t *testing.T) {
+	if os.Getenv("AF_ECS_EC2_LIVE") != "1" || os.Getenv("AF_ECS_EC2_LIVE_AMI") != "1" {
+		t.Skip("set AF_ECS_EC2_LIVE=1 AF_ECS_EC2_LIVE_AMI=1 (and source the harness state.env) to measure a baked slot AMI")
+	}
+	ctx := context.Background()
+	useCPTaskRole(t)
+	factory, err := newECSEC2Factory(&manager{})
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	f := factory.(*ecsEC2Factory)
+	// Deliberately the AMBIENT credentials: the test's own eyes and cleanup are the
+	// deployer's, only the product runs as the CP task role (see useCPTaskRole).
+	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(f.base.cfg.region))
+	if err != nil {
+		t.Fatalf("aws config: %v", err)
+	}
+	live := &liveEC2{t: t, ctx: ctx, ec2: ec2.NewFromConfig(ac), ecs: ecs.NewFromConfig(ac), ssm: ssm.NewFromConfig(ac), cluster: f.base.cfg.cluster}
+
+	if n := live.poolSize(f); n != 0 {
+		t.Fatalf("the pool already holds %d slot(s), launched from whatever AMI was current then. "+
+			"Empty the pool first, or this measures a reused slot rather than a baked one", n)
+	}
+	// Read the AMI off the launch template the CP will actually use — the deploy is the
+	// step that is easy to forget, and a bake that was never wired up looks exactly like
+	// a bake that did not help.
+	ltAMI := live.launchTemplateAMI(os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"))
+	if ltAMI == "" {
+		t.Fatalf("launch template %s pins no AMI; redeploy 40-ec2-pool.yaml with SlotAmiId=<the baked AMI>",
+			os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"))
+	}
+	baked := live.imageTag(ltAMI, ec2TagImage)
+	t.Logf("the pool launches slots from %s (af-image=%q); this deployment runs %s", ltAMI, baked, f.base.cfg.workspaceImage)
+	if baked != f.base.cfg.workspaceImage {
+		t.Fatalf("%s was not baked for this image (af-image=%q). Run bake-slot-ami.sh --image %s "+
+			"and redeploy the pool stack with SlotAmiId", ltAMI, baked, f.base.cfg.workspaceImage)
+	}
+
+	sfx := os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
+	u := f.New(Workspace{ContainerName: "af-ec2c-ami" + sfx, MembershipID: "m-ami", AgentToken: "tok-ami"}, "", nil).(*ecsEC2Runtime)
+	if vol, _ := u.homeVolume(ctx); vol != nil {
+		t.Fatalf("%s already has a home volume; the comparison is against a brand-new user with an empty home", u.Name())
+	}
+	t0 := time.Now()
+	if err := u.Start(ctx); err != nil {
+		t.Fatalf("Start on a baked slot AMI: %v", err)
+	}
+	live.waitState(u, "running", 15*time.Minute)
+	// The baseline is §64.20.2's start #1 in this same harness: a brand-new user, empty
+	// home, cold root, stock ECS-optimized AMI = 148.5s. Only the pull is meant to move.
+	t.Logf("MEASURED first start of a NEW user on a pre-baked slot AMI = %.1fs (same harness, stock AMI: 148.5s)",
+		time.Since(t0).Seconds())
+
+	slot := live.slotOf(u)
+	if slot == "" {
+		t.Fatal("running with no slot")
+	}
+	// Reaching `running` with the task pinned here IS the 決定 3-1 check: an instance from
+	// an AMI that kept /var/lib/ecs/data never registers, so nothing could be placed on it.
+	live.assertTaskPinnedTo(u, slot)
+	live.assertHomeMounted(u, slot)
+	if inst := live.instance(slot); inst == nil || aws.ToString(inst.ImageId) != ltAMI {
+		t.Errorf("the slot was launched from %q, want the baked %s", aws.ToString(inst.ImageId), ltAMI)
+	}
+
+	// Did the pull actually disappear? Docker records when it last tagged the image
+	// locally: baked into the AMI means "before this instance existed".
+	launch := aws.ToTime(live.instance(slot).LaunchTime)
+	raw := strings.TrimSpace(live.run(slot, "docker image inspect --format '{{.Metadata.LastTagTime}}' "+f.base.cfg.workspaceImage))
+	if cached, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(strings.Split(raw, "\n")[0])); perr != nil {
+		t.Logf("NOT VERIFIED (could not read the image's local cache time: %q / %v): the start time above is the only evidence about the pull", raw, perr)
+	} else if cached.After(launch) {
+		t.Errorf("the workspace image was pulled at %s, AFTER the slot booted at %s — the AMI's cache did not carry it",
+			cached.UTC().Format(time.RFC3339), launch.UTC().Format(time.RFC3339))
+	} else {
+		t.Logf("no pull: the image was already cached at %s and the slot booted at %s",
+			cached.UTC().Format(time.RFC3339), launch.UTC().Format(time.RFC3339))
+	}
+
+	// The operator surface has to agree, and it reads the AMI off the INSTANCE — a
+	// template that was fixed but never launched anything must not report "baked".
+	st, err := f.PoolStatus(ctx)
+	if err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if st.SlotAmiStale || st.SlotAmiID != ltAMI || st.SlotAmiImage != f.base.cfg.workspaceImage {
+		t.Errorf("PoolStatus reports slot AMI %s (af-image=%q, stale=%v), want %s / %s / false",
+			st.SlotAmiID, st.SlotAmiImage, st.SlotAmiStale, ltAMI, f.base.cfg.workspaceImage)
+	} else {
+		t.Logf("PoolStatus: slot AMI %s is current for %s", st.SlotAmiID, st.SlotAmiImage)
+	}
+
+	if err := u.Stop(ctx); err != nil {
+		t.Errorf("Stop: %v", err)
+	}
+	live.waitTasksGone(u, 3*time.Minute)
+	if leftovers, err := u.Destroy(ctx); err != nil {
+		t.Errorf("Destroy: %v", err)
+	} else if len(leftovers) > 0 {
+		t.Logf("Destroy left behind (expected, EFS dirs need a mount): %v", leftovers)
+	}
+}
+
+// launchTemplateAMI is the ImageId the pool's $Latest launch template version carries —
+// i.e. what the CP's next RunInstances will really boot, as opposed to what a stack
+// parameter was set to at some point.
+func (l *liveEC2) launchTemplateAMI(ltID string) string {
+	out, err := l.ec2.DescribeLaunchTemplateVersions(l.ctx, &ec2.DescribeLaunchTemplateVersionsInput{
+		LaunchTemplateId: aws.String(ltID), Versions: []string{"$Latest"},
+	})
+	if err != nil || len(out.LaunchTemplateVersions) == 0 {
+		l.t.Logf("describe launch template %s: %v", ltID, err)
+		return ""
+	}
+	d := out.LaunchTemplateVersions[0].LaunchTemplateData
+	if d == nil {
+		return ""
+	}
+	return aws.ToString(d.ImageId)
+}
+
+func (l *liveEC2) imageTag(amiID, key string) string {
+	out, err := l.ec2.DescribeImages(l.ctx, &ec2.DescribeImagesInput{ImageIds: []string{amiID}})
+	if err != nil || len(out.Images) == 0 {
+		l.t.Logf("describe image %s: %v", amiID, err)
+		return ""
+	}
+	return ec2TagValue(out.Images[0].Tags, key)
 }

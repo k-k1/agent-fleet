@@ -114,6 +114,83 @@ aws iam put-role-policy --role-name $N-exec --policy-name ssm-read --policy-docu
 aws iam create-role --role-name $N-ws-task --assume-role-policy-document "$TRUST" >/dev/null
 echo "roles ok"
 
+# --- CP タスクロールの複製。E2E を**本番の権限で**回すためのもの（docs/64 §64.23） ---
+# ⚠️ **手で書き写さない。** 20-platform.yaml の CpTaskRole のポリシーをそのまま取り出す。
+# 書き写した瞬間、ここは「テンプレートが与えている権限」ではなく「与えていると思っている
+# 権限」になり、E2E は本物の穴を緑で通す——それが決定 18-1 で起きたことである
+# （snapshot 権限が 1 つも無いまま 5 ラウンド緑だった）。
+# 解決できない組み込み関数に当たったら**黙って落とさず落ちる**: statement が 1 本欠けた
+# ロールは、欠けたぶんだけ本番より緩い（あるいは厳しい）別物になる。
+DEPLOYER=$(aws sts get-caller-identity --query Arn --output text)
+python3 - "$REPO_DIR/deploy/aws/ecs/cfn/20-platform.yaml" "$ACCOUNT" "$AWS_REGION" \
+  "arn:aws:iam::$ACCOUNT:role/$N-exec" "arn:aws:iam::$ACCOUNT:role/$N-ws-task" > cp-policy.json <<'PY'
+import json, sys, yaml
+
+tpl, account, region, exec_arn, ws_arn = sys.argv[1:6]
+
+class CFN(yaml.SafeLoader):
+    pass
+
+def short(loader, suffix, node):
+    if isinstance(node, yaml.ScalarNode):
+        v = loader.construct_scalar(node)
+    elif isinstance(node, yaml.SequenceNode):
+        v = loader.construct_sequence(node)
+    else:
+        v = loader.construct_mapping(node)
+    return {suffix if suffix == "Ref" else "Fn::" + suffix: v}
+
+CFN.add_multi_constructor("!", short)
+doc = yaml.load(open(tpl), Loader=CFN)
+pols = doc["Resources"]["CpTaskRole"]["Properties"]["Policies"]
+if len(pols) != 1:
+    sys.exit("CpTaskRole now carries %d policies; teach this extractor which ones to copy" % len(pols))
+
+getatt = {"ExecRole.Arn": exec_arn, "WsTaskRole.Arn": ws_arn}
+
+def resolve(x, path):
+    if isinstance(x, dict):
+        if list(x) == ["Fn::Sub"] and isinstance(x["Fn::Sub"], str):
+            s = x["Fn::Sub"].replace("${AWS::AccountId}", account).replace("${AWS::Region}", region)
+            if "${" in s:
+                sys.exit("unresolved !Sub at %s: %r — teach the harness this substitution" % (path, s))
+            return s
+        if list(x) == ["Fn::GetAtt"]:
+            k = x["Fn::GetAtt"]
+            k = ".".join(k) if isinstance(k, list) else k
+            if k not in getatt:
+                sys.exit("!GetAtt %s at %s has no harness equivalent — map it or the copy is not the real role" % (k, path))
+            return getatt[k]
+        for key in x:
+            if key == "Ref" or key.startswith("Fn::"):
+                sys.exit("unsupported intrinsic %s at %s" % (key, path))
+        return {k: resolve(v, path + "." + k) for k, v in x.items()}
+    if isinstance(x, list):
+        return [resolve(v, "%s[%d]" % (path, i)) for i, v in enumerate(x)]
+    return x
+
+print(json.dumps(resolve(pols[0]["PolicyDocument"], "PolicyDocument"), indent=1))
+PY
+echo "CP policy statements: $(python3 -c 'import json,sys;d=json.load(open("cp-policy.json"));print(" ".join(s.get("Sid","?") for s in d["Statement"]))')"
+aws iam create-role --role-name $N-cp --max-session-duration 43200 --assume-role-policy-document \
+  "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"$DEPLOYER\"},\"Action\":\"sts:AssumeRole\"}]}" >/dev/null
+aws iam put-role-policy --role-name $N-cp --policy-name cp-runtime --policy-document file://cp-policy.json
+# 資格情報はプロファイル経由で渡す。静的な STS 資格情報だと 1 時間で切れて、
+# 80 分の E2E が途中から資格情報エラーで落ちる（SDK は role_arn を自分で取り直す）。
+CPROLE=arn:aws:iam::$ACCOUNT:role/$N-cp
+cat > aws-config <<CFG
+[profile $N-cp]
+role_arn = $CPROLE
+source_profile = af-sandbox
+region = $AWS_REGION
+CFG
+echo "waiting for the CP role to become assumable (IAM is eventually consistent)"
+for _ in $(seq 30); do
+  AWS_CONFIG_FILE=$PWD/aws-config AWS_PROFILE=$N-cp aws sts get-caller-identity >/dev/null 2>&1 && break
+  sleep 5
+done
+AWS_CONFIG_FILE=$PWD/aws-config AWS_PROFILE=$N-cp aws sts get-caller-identity --query Arn --output text
+
 aws logs create-log-group --log-group-name /$N >/dev/null 2>&1 || true
 
 # --- 40-ec2-pool.yaml が参照する export をダミースタックで供給する ---
@@ -174,6 +251,11 @@ export AF_HARNESS_SUBNET_B=$SUBNET2
 export AF_HARNESS_EFSSG=$EFSSG
 export AF_HARNESS_ACCOUNT=$ACCOUNT
 export AF_HARNESS_NAT=$NAT
+# 実機 E2E は**製品側だけ**をこのロールで走らせる（テスト自身の確認と後始末は
+# デプロイヤのまま）。これが無いと go test は「デプロイヤで走った」と明示ログを出す。
+export AF_HARNESS_CP_ROLE=$CPROLE
+export AF_HARNESS_CP_PROFILE=$N-cp
+export AF_HARNESS_CP_CONFIG=$HOME/af-ec2c/aws-config
 ENV
 echo "=== SETUP DONE ==="
 cat state.env
