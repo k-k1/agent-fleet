@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -383,6 +384,91 @@ func (a adminAPI) cleanHome(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
 }
 
+// destroyWorkspace (DELETE /api/admin/workspaces {tenant_slug,user_key}) is the
+// irreversible one: it deletes the home and every per-membership resource the runtime
+// created, then the DB row. ADR 0045 決定 13-2.
+//
+// ★ It is a SEPARATE operation from removing the membership on purpose. Offboarding is a
+// logical delete that keeps the home so a returning member is just a re-invite
+// (docs/61 §61.10.6); destroying is the second, deliberate step you take later — when the
+// EBS volume behind a long-gone member is still being billed for. Doing both at once is
+// possible (removeMembership's purge flag) but never the default.
+//
+// ★ Only an INACTIVE membership can be destroyed. In the admin UI this operation sits one
+// misclick away from a member who is at their desk, and there is no undo.
+//
+// ★ It overrides the deletion locks of ADR 0028 and cannot do otherwise: the locks live
+// inside the home, which is unreadable while the workspace is stopped
+// (docs/64 §64.18.1). The Console has to say so.
+//
+// tenant_admin (their own tenant) or super_admin — the same gate as clean-home, which is
+// already "destroy this person's work" in every sense except the billing.
+func (a adminAPI) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserKey    string `json:"user_key"`
+		TenantSlug string `json:"tenant_slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	caller, t, ok := a.tenantAdminFor(w, r, body.TenantSlug)
+	if !ok {
+		return
+	}
+	ident, found, err := a.mgr.store.GetIdentityByUserKey(r.Context(), body.UserKey)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	mem, ok, err := a.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	if mem.Status == "active" {
+		writeAPIErr(w, &apiError{http.StatusConflict, "membership_active",
+			"remove the membership first; an active member's workspace cannot be destroyed"})
+		return
+	}
+	leftovers, err := a.mgr.destroyWorkspaceByMembership(r.Context(), mem.ID)
+	if err != nil {
+		if errors.Is(err, errSessionShareOwnerBusy) {
+			writeAPIErr(w, workspaceLifecycleLeaseError(err))
+			return
+		}
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeAuditDestroy(r, a.mgr.store, t.ID, caller.ID, ident.UserKey, leftovers)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"destroyed": ident.UserKey, "tenant": t.Slug, "leftovers": leftovers,
+	})
+}
+
+// writeAuditDestroy records who destroyed whose workspace, and — the part that matters —
+// what could NOT be deleted. On Fargate the EFS directories survive their access points
+// and keep billing (docs/64 §64.18.4); if that only ever appeared in an HTTP response
+// nobody would ever find it again.
+func writeAuditDestroy(r *http.Request, store Store, tenantID, actorID, userKey string, leftovers []string) {
+	detail := "workspace destroyed (home and runtime resources deleted)"
+	if len(leftovers) > 0 {
+		detail += "; NOT deleted: " + strings.Join(leftovers, ", ")
+	}
+	_ = store.InsertAudit(r.Context(), AuditLog{
+		ID: newID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
+		Action: "workspace.destroy", Target: userKey, Detail: detail, At: nowTS(),
+	})
+}
+
 // createTenant (POST /api/admin/tenants {slug,name}).
 func (a adminAPI) createTenant(w http.ResponseWriter, r *http.Request, _ Identity) {
 	var body struct {
@@ -531,6 +617,13 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
 		TenantSlug string `json:"tenant_slug"`
+		// Purge additionally destroys the workspace — home, and every per-membership
+		// resource the runtime created (ADR 0045 決定 13-2). Default false: the logical
+		// delete above is what offboarding means, and this is a second, irreversible
+		// thing that happens to be convenient to do in the same click. It runs AFTER
+		// the membership is deactivated, so a failure here still leaves the person
+		// locked out.
+		Purge bool `json:"purge"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
@@ -574,12 +667,36 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 	// disk, but nothing should keep serving it from memory for this membership.
 	a.mgr.evictMembershipCache(mem.ID)
 	a.mgr.tenantLogin.invalidate()
+	detail := "status=inactive (workspace and home kept)"
+	var leftovers []string
+	if body.Purge {
+		leftovers, err = a.mgr.destroyWorkspaceByMembership(r.Context(), mem.ID)
+		if err != nil {
+			// The membership IS deactivated at this point — say so rather than
+			// returning a bare 500 that reads as "nothing happened".
+			_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
+				ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+				Action: "membership.remove", Target: ident.UserKey,
+				Detail: "status=inactive; purge FAILED: " + err.Error(), At: nowTS(),
+			})
+			writeAPIErr(w, &apiError{http.StatusInternalServerError, "purge_failed",
+				"the membership was deactivated but the workspace could not be destroyed: " + err.Error()})
+			return
+		}
+		detail = "status=inactive; workspace destroyed (purge)"
+		if len(leftovers) > 0 {
+			detail += "; NOT deleted: " + strings.Join(leftovers, ", ")
+		}
+	}
 	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
 		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
 		Action: "membership.remove", Target: ident.UserKey,
-		Detail: "status=inactive (workspace and home kept)", At: nowTS(),
+		Detail: detail, At: nowTS(),
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"removed": ident.UserKey, "tenant": t.Slug})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"removed": ident.UserKey, "tenant": t.Slug,
+		"purged": body.Purge, "leftovers": leftovers,
+	})
 }
 
 // setTenantLimits (PUT /api/admin/tenants/{slug}/limits) — docs/16 P3-4.
