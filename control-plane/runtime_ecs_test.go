@@ -22,6 +22,7 @@ type fakeECS struct {
 	createCalls []*ecs.CreateServiceInput
 	updateCalls []*ecs.UpdateServiceInput
 	regCalls    []*ecs.RegisterTaskDefinitionInput
+	deleteCalls []*ecs.DeleteServiceInput
 }
 
 func (f *fakeECS) DescribeServices(_ context.Context, in *ecs.DescribeServicesInput, _ ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
@@ -57,14 +58,23 @@ func (f *fakeECS) RegisterTaskDefinition(_ context.Context, in *ecs.RegisterTask
 	}, nil
 }
 
+func (f *fakeECS) DeleteService(_ context.Context, in *ecs.DeleteServiceInput, _ ...func(*ecs.Options)) (*ecs.DeleteServiceOutput, error) {
+	f.deleteCalls = append(f.deleteCalls, in)
+	delete(f.services, aws.ToString(in.Service))
+	return &ecs.DeleteServiceOutput{}, nil
+}
+
 type fakeEFS struct {
 	aps         []efstypes.AccessPointDescription
 	createCalls []*efs.CreateAccessPointInput
+	deleteCalls []*efs.DeleteAccessPointInput
 	n           int
 }
 
 func (f *fakeEFS) DescribeAccessPoints(_ context.Context, _ *efs.DescribeAccessPointsInput, _ ...func(*efs.Options)) (*efs.DescribeAccessPointsOutput, error) {
-	return &efs.DescribeAccessPointsOutput{AccessPoints: f.aps}, nil
+	// A COPY, like the real API: a caller that deletes while iterating its own listing
+	// (Destroy does exactly that) must not have the slice change under it.
+	return &efs.DescribeAccessPointsOutput{AccessPoints: append([]efstypes.AccessPointDescription(nil), f.aps...)}, nil
 }
 func (f *fakeEFS) CreateAccessPoint(_ context.Context, in *efs.CreateAccessPointInput, _ ...func(*efs.Options)) (*efs.CreateAccessPointOutput, error) {
 	f.createCalls = append(f.createCalls, in)
@@ -75,11 +85,31 @@ func (f *fakeEFS) CreateAccessPoint(_ context.Context, in *efs.CreateAccessPoint
 	return &efs.CreateAccessPointOutput{AccessPointId: id}, nil
 }
 
-type fakeSSM struct{ puts []*ssm.PutParameterInput }
+func (f *fakeEFS) DeleteAccessPoint(_ context.Context, in *efs.DeleteAccessPointInput, _ ...func(*efs.Options)) (*efs.DeleteAccessPointOutput, error) {
+	f.deleteCalls = append(f.deleteCalls, in)
+	var kept []efstypes.AccessPointDescription
+	for _, ap := range f.aps {
+		if aws.ToString(ap.AccessPointId) != aws.ToString(in.AccessPointId) {
+			kept = append(kept, ap)
+		}
+	}
+	f.aps = kept
+	return &efs.DeleteAccessPointOutput{}, nil
+}
+
+type fakeSSM struct {
+	puts    []*ssm.PutParameterInput
+	deletes []*ssm.DeleteParameterInput
+}
 
 func (f *fakeSSM) PutParameter(_ context.Context, in *ssm.PutParameterInput, _ ...func(*ssm.Options)) (*ssm.PutParameterOutput, error) {
 	f.puts = append(f.puts, in)
 	return &ssm.PutParameterOutput{}, nil
+}
+
+func (f *fakeSSM) DeleteParameter(_ context.Context, in *ssm.DeleteParameterInput, _ ...func(*ssm.Options)) (*ssm.DeleteParameterOutput, error) {
+	f.deletes = append(f.deletes, in)
+	return &ssm.DeleteParameterOutput{}, nil
 }
 
 func newTestECS(fe *fakeECS, ff *fakeEFS, fs *fakeSSM) *ecsRuntime {
@@ -389,5 +419,54 @@ func tags(membership, role string) []efstypes.Tag {
 	return []efstypes.Tag{
 		{Key: aws.String("af-membership"), Value: aws.String(membership)},
 		{Key: aws.String("af-role"), Value: aws.String(role)},
+	}
+}
+
+// The Fargate adapter has the same leak the EC2 one had: an ECS service, two EFS access
+// points and two SSM SecureStrings that outlive the membership (docs/64 §64.18.1). What
+// it CANNOT do is delete the home itself — the EFS directories survive their access
+// points — so those come back as reported leftovers rather than as a silent success.
+func TestECSDestroyRemovesServiceAccessPointsAndSecrets(t *testing.T) {
+	ctx := context.Background()
+	fe, ff, fs := &fakeECS{}, &fakeEFS{}, &fakeSSM{}
+	rt := newTestECS(fe, ff, fs)
+	fe.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	ff.aps = []efstypes.AccessPointDescription{
+		{AccessPointId: aws.String("fsap-home"), RootDirectory: &efstypes.RootDirectory{Path: aws.String("/home/M-1")},
+			Tags: []efstypes.Tag{{Key: aws.String("af-membership"), Value: aws.String("M-1")}}},
+		{AccessPointId: aws.String("fsap-claude"), RootDirectory: &efstypes.RootDirectory{Path: aws.String("/claude-config/M-1")},
+			Tags: []efstypes.Tag{{Key: aws.String("af-membership"), Value: aws.String("M-1")}}},
+		{AccessPointId: aws.String("fsap-other"), RootDirectory: &efstypes.RootDirectory{Path: aws.String("/home/M-9")},
+			Tags: []efstypes.Tag{{Key: aws.String("af-membership"), Value: aws.String("M-9")}}},
+	}
+
+	leftovers, err := rt.Destroy(ctx)
+	if err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if _, ok := fe.services["af-ws-acme-alice"]; ok {
+		t.Error("service survived Destroy")
+	}
+	// Scaled to zero before the delete: a forced delete of a service with a running task
+	// kills the container without the Agent's graceful shutdown.
+	if len(fe.updateCalls) != 1 || aws.ToInt32(fe.updateCalls[0].DesiredCount) != 0 {
+		t.Errorf("Destroy must scale to zero first, updates = %#v", fe.updateCalls)
+	}
+	if len(ff.aps) != 1 || aws.ToString(ff.aps[0].AccessPointId) != "fsap-other" {
+		t.Errorf("another membership's access point was touched, left = %d", len(ff.aps))
+	}
+	if len(fs.deletes) != 2 {
+		t.Errorf("both SSM secrets must go, got %d", len(fs.deletes))
+	}
+	for _, want := range []string{"efs:fs-1/home/M-1", "efs:fs-1/claude-config/M-1"} {
+		found := false
+		for _, l := range leftovers {
+			if l == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("leftover %q not reported (the operator would think the home is gone), got %v", want, leftovers)
+		}
 	}
 }
