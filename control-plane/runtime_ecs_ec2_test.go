@@ -1566,47 +1566,36 @@ func TestECSEC2ReturningOwnerCancelsHibernation(t *testing.T) {
 	}
 }
 
-// The sweeper is the only thing that starts a hibernation, and only when the deployment
-// asked for one (0 = off is the default: this is the one automatic path that moves a
-// user's home).
-func TestECSEC2SweepHibernatesOnlyWhenConfigured(t *testing.T) {
+// The sweeper never STARTS a hibernation any more: "how long may this tenant's homes sit
+// before they are put away" is a database answer, and this loop has no database (ADR 0012).
+// It still carries an in-flight one to the end, which is what makes the operation survive a
+// CP restart — and what stops a switched-off deployment from billing for a snapshot AND a
+// volume forever.
+func TestECSEC2SweepNeverStartsAHibernation(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("off by default", func(t *testing.T) {
+	t.Run("not even a home dormant for two months", func(t *testing.T) {
 		h := hibernateHarness(t, 60*24*time.Hour)
-		h.rt.pool.hibernateAfter = 0
 		f := h.factory()
-		f.pool.hibernateAfter = 0
+		f.pool.hibernateAfter = 30 * 24 * time.Hour // the deployment default, no longer a trigger
 		if err := f.sweep(ctx); err != nil {
 			t.Fatalf("sweep: %v", err)
 		}
 		if len(h.ec2.snapshots) != 0 {
-			t.Error("a home was hibernated although the deployment never asked for it")
+			t.Errorf("the sweeper started a hibernation on its own: %v", h.ec2.calls)
 		}
 	})
 
-	t.Run("not before the threshold", func(t *testing.T) {
-		h := hibernateHarness(t, 2*time.Hour) // dormant, but only for hours
-		f := h.factory()
-		f.pool.hibernateAfter = 30 * 24 * time.Hour
-		if err := f.sweep(ctx); err != nil {
-			t.Fatalf("sweep: %v", err)
-		}
-		if len(h.ec2.snapshots) != 0 {
-			t.Error("hibernated a home that has been idle for two hours")
-		}
-	})
-
-	t.Run("and resumes one already under way even after it is switched off", func(t *testing.T) {
+	t.Run("but resumes one already under way even after it is switched off", func(t *testing.T) {
 		h := hibernateHarness(t, 60*24*time.Hour)
 		f := h.factory()
-		f.pool.hibernateAfter = 30 * 24 * time.Hour
 		h.ec2.snapshotState = ec2types.SnapshotStatePending
-		if err := f.sweep(ctx); err != nil {
-			t.Fatalf("sweep 1: %v", err)
+		// The reaper's step: mark, release the slot, start the capture.
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate: %v", err)
 		}
 		if len(h.ec2.snapshots) != 1 {
-			t.Fatalf("the sweep did not start a capture: %v", h.ec2.calls)
+			t.Fatalf("the capture never started: %v", h.ec2.calls)
 		}
 		for _, s := range h.ec2.snapshots {
 			s.State = ec2types.SnapshotStateCompleted
@@ -1615,10 +1604,71 @@ func TestECSEC2SweepHibernatesOnlyWhenConfigured(t *testing.T) {
 		// snapshot and the volume, forever.
 		f.pool.hibernateAfter = 0
 		if err := f.sweep(ctx); err != nil {
-			t.Fatalf("sweep 2: %v", err)
+			t.Fatalf("sweep: %v", err)
 		}
 		if _, ok := h.ec2.volumes["vol-1"]; ok {
 			t.Error("a hibernation in flight was stranded, leaving both a snapshot and a volume")
+		}
+	})
+}
+
+// BeginHibernate is the seam between the reaper (which knows the tenant's window) and the
+// sweeper (which finishes the job). Both of its guards exist because the alternative costs
+// money or work.
+func TestECSEC2BeginHibernateGuards(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("starts the capture", func(t *testing.T) {
+		h := hibernateHarness(t, 60*24*time.Hour)
+		h.ec2.snapshotState = ec2types.SnapshotStatePending
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate: %v", err)
+		}
+		if len(h.ec2.snapshots) != 1 {
+			t.Fatalf("snapshots = %d, want 1", len(h.ec2.snapshots))
+		}
+		if attachedInstance(h.ec2.volumes["vol-1"]) != "" {
+			t.Error("the slot was not released before the capture")
+		}
+	})
+
+	t.Run("does not start a second capture once it is marked", func(t *testing.T) {
+		h := hibernateHarness(t, 60*24*time.Hour)
+		h.ec2.snapshotState = ec2types.SnapshotStatePending
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate 1: %v", err)
+		}
+		// The sweeper is advancing this one now. A reaper pass landing in the same window
+		// must not fire CreateSnapshot again — the second copy is orphaned and bills.
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate 2: %v", err)
+		}
+		if len(h.ec2.snapshots) != 1 {
+			t.Errorf("snapshots = %d, want 1 — the reaper raced the sweeper into a duplicate", len(h.ec2.snapshots))
+		}
+	})
+
+	t.Run("leaves a workspace that is running alone", func(t *testing.T) {
+		h := hibernateHarness(t, 60*24*time.Hour)
+		h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate: %v", err)
+		}
+		if len(h.ec2.snapshots) != 0 {
+			t.Error("hibernated a workspace whose owner had come back")
+		}
+		if attachedInstance(h.ec2.volumes["vol-1"]) == "" {
+			t.Error("released the slot out from under a running task")
+		}
+	})
+
+	t.Run("does nothing when the home is already a snapshot", func(t *testing.T) {
+		h := newEC2Harness(t)
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate with no home: %v", err)
+		}
+		if len(h.ec2.snapshots) != 0 {
+			t.Error("captured something although there is no home volume")
 		}
 	})
 }

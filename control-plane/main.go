@@ -237,7 +237,12 @@ func main() {
 	if iv := parseDurationOr(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
 		sessDef := parseDurationOr(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), 0)
 		wsDef := parseDurationOr(os.Getenv("AF_WS_IDLE_TIMEOUT"), 0)
-		go newReaper(mgr, iv, sessDef, wsDef).run(context.Background())
+		// Tier 3 (ecs-ec2 only): the deployment default for home hibernation. Kept in the
+		// AF_ECS_EC2_* namespace and in seconds because that is where it started life, as
+		// a setting of the pool sweeper; the trigger moved up here so a tenant can override
+		// it (ADR 0045 決定 13-2). Still 0 = off by default.
+		hibDef := time.Duration(envInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second
+		go newReaper(mgr, iv, sessDef, wsDef, hibDef).run(context.Background())
 	}
 
 	// Showback usage sampler (P3-9): credits running-seconds per workspace so the
