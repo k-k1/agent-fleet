@@ -88,64 +88,103 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	}
 	live.run(slot1, "echo af-ec2c-marker-u1 > /af-home/m-u1/dev/af-marker.txt; chown 1000:1000 /af-home/m-u1/dev/af-marker.txt")
 
-	// --- 2. Stop releases the slot: task gone, umounted, detached. ---
+	// --- 2. Stop drains the task but keeps the home where it is (lazy release). ---
 	t1 := time.Now()
 	if err := u1.Stop(ctx); err != nil {
 		t.Fatalf("u1 Stop: %v", err)
 	}
-	live.waitVolumeDetached(u1, 5*time.Minute)
-	t.Logf("MEASURED stop → slot released (task drain + umount + detach) = %.1fs", time.Since(t1).Seconds())
+	live.waitTasksGone(u1, 5*time.Minute)
+	t.Logf("MEASURED stop → task drained = %.1fs", time.Since(t1).Seconds())
 	if s := u1.State(ctx); s != "stopped" {
-		t.Errorf("u1 State after release = %q, want stopped", s)
-	}
-	if out := live.run(slot1, "mountpoint /af-home/m-u1 || true; lsblk -o NAME,SERIAL | tail -5"); strings.Contains(out, "is a mountpoint") {
-		t.Errorf("slot still has u1's home mounted after release:\n%s", out)
+		t.Errorf("u1 State after stop = %q, want stopped", s)
 	}
 
-	// --- 3. hot swap: a different user takes the slot that was just handed back. ---
+	// --- 3. lazy release: Stop must leave the home on the slot (that attachment IS the
+	// affinity), and the return must be the cheap path. ---
+	if inst := live.slotOf(u1); inst != slot1 {
+		t.Fatalf("Stop detached the home (now on %q); lazy release means it stays on %s", inst, slot1)
+	}
+	if ec2TagValue(live.volumeOf(u1).Tags, ec2TagIdleSince) == "" {
+		t.Error("Stop did not record when the home went dormant")
+	}
 	t2 := time.Now()
-	if err := u2.Start(ctx); err != nil {
-		t.Fatalf("u2 Start: %v", err)
-	}
-	live.waitState(u2, "running", 8*time.Minute)
-	swap := time.Since(t2)
-	t.Logf("MEASURED hot swap (Start u2 → task RUNNING on a warm slot) = %.1fs", swap.Seconds())
-	slot2 := live.slotOf(u2)
-	if slot2 != slot1 {
-		t.Errorf("u2 landed on %s, expected the freed hot slot %s (a new instance means the swap did not happen)", slot2, slot1)
-	}
-	if n := live.poolSize(f); n != 1 {
-		t.Errorf("pool grew to %d instances; the whole point is reusing the slot", n)
-	}
-
-	// --- 4. u1 comes back: its home must still be its home. ---
-	if err := u2.Stop(ctx); err != nil {
-		t.Fatalf("u2 Stop: %v", err)
-	}
-	live.waitVolumeDetached(u2, 5*time.Minute)
-	t3 := time.Now()
 	if err := u1.Start(ctx); err != nil {
-		t.Fatalf("u1 restart: %v", err)
+		t.Fatalf("u1 warm return: %v", err)
 	}
 	live.waitState(u1, "running", 8*time.Minute)
-	t.Logf("MEASURED return of u1 (swap back) = %.1fs", time.Since(t3).Seconds())
-	if got := live.run(live.slotOf(u1), "cat /af-home/m-u1/dev/af-marker.txt"); !strings.Contains(got, "af-ec2c-marker-u1") {
-		t.Errorf("u1's home did not survive the swap: %q", got)
-	} else {
-		t.Log("u1 home survived the swap (marker intact)")
+	warmReturn := time.Since(t2)
+	t.Logf("MEASURED warm return (home never left the slot) = %.1fs", warmReturn.Seconds())
+	if inst := live.slotOf(u1); inst != slot1 {
+		t.Errorf("came back on %s instead of its own slot %s", inst, slot1)
 	}
 
-	// --- 5. leave nothing running; the volumes are deleted by Destroy. ---
+	// --- 4. dormant: the sweeper stops the slot; the home stays attached and the owner
+	// wakes it. This is the path that replaces "release and re-attach". ---
 	if err := u1.Stop(ctx); err != nil {
+		t.Fatalf("u1 Stop before sleeping: %v", err)
+	}
+	live.waitTasksGone(u1, 3*time.Minute)
+	f.pool.idleStopAfter = time.Second // do not wait 15 minutes in a test
+	u1.pool.idleStopAfter = time.Second
+	live.eventually(2*time.Minute, "slot stopped", func() bool {
+		if err := f.sweep(ctx); err != nil {
+			t.Logf("sweep: %v", err)
+		}
+		running, err := u1.instanceRunning(ctx, slot1)
+		return err == nil && !running
+	})
+	if inst := live.slotOf(u1); inst != slot1 {
+		t.Errorf("the sweeper detached a dormant home (now %q); it should only stop the slot", inst)
+	}
+	t3 := time.Now()
+	if err := u1.Start(ctx); err != nil {
+		t.Fatalf("u1 wake: %v", err)
+	}
+	live.waitState(u1, "running", 10*time.Minute)
+	wake := time.Since(t3)
+	t.Logf("MEASURED wake of a dormant slot (StartInstances → task) = %.1fs", wake.Seconds())
+	if got := live.run(slot1, "cat /af-home/m-u1/dev/af-marker.txt"); !strings.Contains(got, "af-ec2c-marker-u1") {
+		t.Errorf("home did not survive the slot sleeping: %q", got)
+	}
+
+	// --- 5. eviction: at the cap, the longest-dormant occupant gives its slot up. ---
+	if err := u1.Stop(ctx); err != nil {
+		t.Fatalf("u1 Stop before eviction: %v", err)
+	}
+	live.waitTasksGone(u1, 3*time.Minute)
+	// Each runtime carries its OWN copy of the pool config (taken when it was built), so
+	// lowering the cap on the factory alone changes nothing for u2 — it grew the pool
+	// instead of reclaiming, and the test read that as a product bug.
+	f.pool.maxSlots = 1
+	u1.pool.maxSlots = 1
+	u2.pool.maxSlots = 1
+	t4 := time.Now()
+	if err := u2.Start(ctx); err != nil {
+		t.Fatalf("u2 Start (should evict u1): %v", err)
+	}
+	live.waitState(u2, "running", 10*time.Minute)
+	t.Logf("MEASURED eviction + swap (u2 takes u1's slot at the cap) = %.1fs", time.Since(t4).Seconds())
+	if inst := live.slotOf(u2); inst != slot1 {
+		t.Errorf("u2 landed on %s, expected the reclaimed slot %s", inst, slot1)
+	}
+	if inst := live.slotOf(u1); inst != "" {
+		t.Errorf("u1 is still attached to %s after being evicted", inst)
+	}
+	if n := live.poolSize(f); n != 1 {
+		t.Errorf("pool grew to %d instead of reclaiming at the cap", n)
+	}
+
+	// --- 6. leave nothing running; the volumes are deleted by Destroy. ---
+	if err := u2.Stop(ctx); err != nil {
 		t.Errorf("final stop: %v", err)
 	}
-	live.waitVolumeDetached(u1, 5*time.Minute)
+	live.waitTasksGone(u2, 3*time.Minute)
 	for _, rt := range []*ecsEC2Runtime{u1, u2} {
 		if err := rt.Destroy(ctx); err != nil {
 			t.Errorf("Destroy %s: %v", rt.Name(), err)
 		}
 	}
-	t.Logf("SUMMARY cold=%.1fs hotswap=%.1fs", coldStart.Seconds(), swap.Seconds())
+	t.Logf("SUMMARY start#1=%.1fs warmReturn=%.1fs wake=%.1fs", coldStart.Seconds(), warmReturn.Seconds(), wake.Seconds())
 }
 
 type liveEC2 struct {
@@ -172,6 +211,38 @@ func (l *liveEC2) waitState(rt *ecsEC2Runtime, want string, budget time.Duration
 		time.Sleep(3 * time.Second)
 	}
 	l.t.Fatalf("%s never reached %q (stuck at %q)", rt.Name(), want, last)
+}
+
+// eventually polls until cond() holds, failing the test if it never does.
+func (l *liveEC2) eventually(budget time.Duration, what string, cond func() bool) {
+	l.t.Helper()
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Second)
+	}
+	l.t.Fatalf("timed out waiting for %s", what)
+}
+
+// waitTasksGone waits until the service has drained. With lazy release there is no
+// detach to watch for any more, so this is what "stopped" looks like from outside.
+func (l *liveEC2) waitTasksGone(rt *ecsEC2Runtime, budget time.Duration) {
+	l.t.Helper()
+	l.eventually(budget, rt.Name()+" tasks gone", func() bool {
+		s, ok, err := rt.base.describeService(l.ctx)
+		return err == nil && (!ok || (s.RunningCount == 0 && s.PendingCount == 0))
+	})
+}
+
+func (l *liveEC2) volumeOf(rt *ecsEC2Runtime) *ec2types.Volume {
+	l.t.Helper()
+	vol, err := rt.homeVolume(l.ctx)
+	if err != nil || vol == nil {
+		l.t.Fatalf("home volume of %s: %v", rt.Name(), err)
+	}
+	return vol
 }
 
 func (l *liveEC2) slotOf(rt *ecsEC2Runtime) string {
@@ -228,19 +299,6 @@ func (l *liveEC2) assertHomeMounted(rt *ecsEC2Runtime, instanceID string) {
 	if aws.ToString(att.InstanceId) != instanceID {
 		l.t.Fatalf("home attached to %s, task slot is %s", aws.ToString(att.InstanceId), instanceID)
 	}
-}
-
-func (l *liveEC2) waitVolumeDetached(rt *ecsEC2Runtime, budget time.Duration) {
-	l.t.Helper()
-	deadline := time.Now().Add(budget)
-	for time.Now().Before(deadline) {
-		vol, err := rt.homeVolume(l.ctx)
-		if err == nil && vol != nil && attachedInstance(vol) == "" {
-			return
-		}
-		time.Sleep(3 * time.Second)
-	}
-	l.t.Fatalf("%s home was never detached", rt.Name())
 }
 
 func (l *liveEC2) poolSize(f *ecsEC2Factory) int {
