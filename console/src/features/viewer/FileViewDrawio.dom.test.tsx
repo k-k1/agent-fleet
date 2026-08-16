@@ -11,6 +11,7 @@ import { revisionOf } from "../editor/buffer.ts";
 import { clearDirtyRegistryForTests } from "../editor/dirtyRegistry.ts";
 
 const DIAGRAM = '<mxfile host="app.diagrams.net"><diagram id="a" name="ページ1"></diagram></mxfile>';
+const VIEWER_SRC = "/* drawio viewer source */";
 
 let served = { content: DIAGRAM, editable: true, truncated: false };
 
@@ -81,7 +82,8 @@ beforeEach(() => {
   fetched = [];
   vi.stubGlobal("fetch", (url: string) => {
     fetched.push(String(url));
-    return Promise.resolve({ ok: true, text: async () => DIAGRAM } as Response);
+    const viewer = String(url).includes("viewer-static");
+    return Promise.resolve({ ok: true, text: async () => (viewer ? VIEWER_SRC : DIAGRAM) } as Response);
   });
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -155,5 +157,62 @@ describe(".drawio の面", () => {
     expect(frame()).toBeNull();
     expect(groupButtons("Diagram display mode")).toBeNull();
     expect(host.querySelector('[role="tablist"]')).not.toBeNull();
+  });
+});
+
+// ── フレームとの手順（docs/65 §65.11-7・§65.11-8）───────────────────────────
+// jsdom は srcdoc の中のスクリプトを走らせないので、フレームの発言はこちらで作る。
+// ここで守るのは「親が何を、いつ送るか」——実機だけで壊れた 2 件の再発防止。
+describe("フレームとの手順", () => {
+  const fromFrame = (data: Record<string, unknown>) => {
+    const win = frame()!.contentWindow!;
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: { af: "af-drawio", ...data }, source: win }));
+    });
+  };
+  const posts = () =>
+    (frame()!.contentWindow!.postMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls.map(
+      (c) => c[0] as Record<string, unknown>,
+    );
+  const spyOnFrame = () => {
+    vi.spyOn(frame()!.contentWindow!, "postMessage").mockImplementation(() => {});
+  };
+
+  it("ready を待ってからビューア本体を渡し、booted を待って描画を頼む", async () => {
+    await render();
+    spyOnFrame();
+    // 作った直後には何も送らない: srcdoc の文書ができる前に送るとメッセージは
+    // 初期の about:blank に配達されて消える（実測）。
+    expect(posts()).toEqual([]);
+
+    fromFrame({ t: "ready" });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // ビューアは **親が** 取る（フレームからでは Lax cookie が付かず 401 になる）。
+    expect(fetched.some((u) => u.includes("viewer-static"))).toBe(true);
+    expect(posts().map((m) => m.t)).toEqual(["boot"]);
+    expect(posts()[0].src).toBe(VIEWER_SRC);
+
+    fromFrame({ t: "booted" });
+    expect(posts().map((m) => m.t)).toEqual(["boot", "render"]);
+    expect(posts()[1].xml).toBe(DIAGRAM);
+  });
+
+  it("ビューアを読み込めなかったときに「図が壊れている」と言わない", async () => {
+    await render();
+    spyOnFrame();
+    fromFrame({ t: "error", code: "boot" });
+    const note = host.querySelector(".drawio-note")!.textContent ?? "";
+    expect(note).toContain("Could not load the diagram viewer");
+    expect(note).not.toContain("not readable as drawio");
+  });
+
+  it("図として読めないときはそのまま伝える", async () => {
+    await render();
+    spyOnFrame();
+    fromFrame({ t: "error", code: "parse" });
+    expect(host.querySelector(".drawio-note")!.textContent).toContain("not readable as drawio");
   });
 });

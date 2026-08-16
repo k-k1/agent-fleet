@@ -36,3 +36,8 @@ dead value で** 潰しているが、新しい名前が増えていれば取り
 配布物の中でどう扱われるかは Vite が決める（`?url` インポート ＝ ハッシュ付きで
 `dist/assets/` へ。CP が immutable キャッシュを付けるのはこのディレクトリだけ）。
 `console/public/` へ移すと `no-store` になり、ペインを開くたびに 4 MB を取り直す。
+
+**このファイルを iframe に `<script src>` で読ませてはならない。** サンドボックス
+iframe はオリジンを持たないため要求が cross-site 扱いになり、`SameSite=Lax` の
+セッション cookie が付かず CP の `authGate` に 401 で弾かれる（docs/65 §65.11-7）。
+親が `fetch` して本文を postMessage で渡す —— それが `DrawioView.tsx` の作法。

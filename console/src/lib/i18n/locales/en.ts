@@ -3587,6 +3587,7 @@ export const en: Record<keyof typeof ja, string> = {
   "view.diagram_page": " · page {page} / {pages}",
   "view.drawio.unreadable": "This file could not be shown as a diagram (not readable as drawio).",
   "view.drawio.empty": "The diagram is empty.",
+  "view.drawio.viewer_unavailable": "Could not load the diagram viewer. Reload the page and try again.",
   "view.markdown_display_mode": "Markdown display mode",
   "view.image_display_mode": "Image display mode",
   "view.open_reader_tip": "Open in reader view (sequential read-aloud + vertical reading)",
