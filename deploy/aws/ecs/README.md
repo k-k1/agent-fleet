@@ -269,10 +269,11 @@ is untested on real infrastructure; ephemeral storage covers everything up to 20
 
 ## Optional: EC2 slot pool (`WsRuntime=ecs-ec2`)
 
-🚧 **Not stood up through these templates yet.** The lifecycle was measured end to end in
-a sandbox harness (`docs/64` §64.12–§64.14) and the adapter is unit-tested, but nobody has
-deployed `40-ec2-pool` and run a real workspace on it. Fargate (`WsRuntime=ecs`) stays the
-default and is untouched by this profile.
+🚧 **Stood up and run in a sandbox, never in a production-shaped VPC.** `40-ec2-pool` has
+been deployed as a stack and real workspaces have run on it end to end (docs/64 §64.16,
+§64.17) — but only in a **public subnet with no NAT**, which is where the known task-ENI
+trap below actually bit. A private-subnet + NAT deployment has not been tried. Fargate
+(`WsRuntime=ecs`) stays the default and is untouched by this profile.
 
 **What you get, and what you do NOT.** Measured through the adapter on real AWS, a warm
 Start is 43–110s against Fargate's ~105s — **the start latency is not the reason to switch**
@@ -314,6 +315,53 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192,…` | `instanceType:memoryMiB`, ascending |
 | `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap. Start fails at the cap rather than growing the bill |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
+| — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | Snapshot a home that has been dormant this long and delete the volume. See below |
+
+**Hibernating long-unused homes (opt-in).** An EBS home bills for what it is *provisioned*
+at, whether or not anyone opens it. With `AF_ECS_EC2_HIBERNATE_AFTER_SEC` set, the sweeper
+takes a snapshot of a home that has been dormant that long and deletes the volume;
+the owner's next Start rebuilds it from the snapshot. For a 20 GiB-used / 50 GiB-provisioned
+home that is **$4.80 → $1.00 a month**, against ~122s on the return and a slightly slower
+first day (ADR 0045 決定 4).
+
+- **It hibernates; it never destroys.** This is the only automatic path in the product that
+  moves someone's home, so it stays reversible — and off by default.
+- It is a **third** timer after the two above: the person goes idle → the workspace stops →
+  the slot sleeps → (days later) the home becomes a snapshot. Set it in days, not minutes.
+- **Deployment-wide, not per tenant.** The sweeper works from EC2 tags and has no view of
+  tenants (ADR 0012).
+- A snapshot of a 45 GiB home takes 30–40 minutes; the sweeper advances one step per pass
+  and the state lives entirely in AWS tags, so a CP restart mid-way resumes rather than
+  strands. If the owner comes back first, the hibernation is abandoned and the volume is
+  simply reattached.
+
+**Golden snapshot: skip boot-install for new users.** A brand-new home pays boot-install
+(4 CLIs 41s + rtk 1s + agy 6s = 48s) and a cold npm cache. Bake one home that has already
+paid it and every later user starts from that copy (ADR 0045 決定 9):
+
+```bash
+# 1. create a seed member, start their workspace from the Console, let it finish booting
+# 2. stop it and wait for the sweeper to release the slot
+./bake-golden.sh --workspace af-ws-<tenant>-<seed> --image <the exact AF_ECS_WORKSPACE_IMAGE>
+# 3. destroy the seed workspace:  DELETE /api/admin/workspaces {tenant_slug,user_key}
+```
+
+- **Re-bake on every release that moves the image or a CLI pin.** The CP compares the
+  `af-image` tag against the image it runs and **refuses a stale golden**, falling back to
+  an empty home — new users just get the slow first start, and the CP logs why. Forgetting
+  to re-bake cannot silently hand anyone old CLIs.
+- One golden per pool, shared. It carries no `af-membership` tag, so destroying a
+  workspace never touches it.
+
+**Destroying a workspace (irreversible).** `DELETE /api/admin/workspaces
+{tenant_slug,user_key}` deletes the home and every per-membership resource — on this
+profile the EBS volume, any hibernation snapshot, the slot claim, the ECS service, both
+EFS access points and both SSM parameters. It only accepts a membership that has already
+been removed, and it **overrides the deletion locks of ADR 0028** (those live inside the
+home, which is unreadable while the workspace is stopped). Removing a membership on its
+own still keeps everything, as before; `{"purge": true}` on that call does both at once.
+⚠️ On Fargate the same call cannot delete the EFS *directories* behind the access points —
+they survive, and keep billing. The response and the audit entry list what was left.
 
 **Operational facts worth knowing before you turn it on**
 

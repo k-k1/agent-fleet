@@ -1669,3 +1669,95 @@ func TestECSEC2StartRefusesWhileTheHomeIsBeingCaptured(t *testing.T) {
 		t.Fatal("createHomeVolume made an empty home while the real one was being captured")
 	}
 }
+
+// --- golden snapshot (ADR 0045 決定 9) ---
+
+func (f *fakeEC2) addGolden(id, pool, image string, state ec2types.SnapshotState, started time.Time) {
+	f.snapshots[id] = &ec2types.Snapshot{
+		SnapshotId: aws.String(id), State: state, StartTime: aws.Time(started),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagPool), Value: aws.String(pool)},
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleGolden)},
+			{Key: aws.String(ec2TagImage), Value: aws.String(image)},
+		},
+	}
+}
+
+func TestECSEC2GoldenSnapshotSeedsANewHome(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addGolden("snap-golden", "clu", h.rt.base.cfg.workspaceImage, ec2types.SnapshotStateCompleted, time.Now())
+
+	vol, err := h.rt.createHomeVolume(ctx, "ap-northeast-1a")
+	if err != nil {
+		t.Fatalf("createHomeVolume: %v", err)
+	}
+	if got := aws.ToString(h.ec2.volumes[aws.ToString(vol.VolumeId)].SnapshotId); got != "snap-golden" {
+		t.Errorf("new home built from %q, want the golden snapshot", got)
+	}
+	// The golden is shared by everyone. The post-restore cleanup must not touch it.
+	h.runDeferred(ctx)
+	if _, ok := h.ec2.snapshots["snap-golden"]; !ok {
+		t.Fatal("the golden snapshot was deleted — every future user just lost their fast first start")
+	}
+}
+
+// Re-baking is a manual step tied to a release, and forgetting it is invisible: only NEW
+// users are affected, and only by getting old CLIs. So a mismatch is refused, not used.
+func TestECSEC2StaleGoldenSnapshotIsRefused(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addGolden("snap-old", "clu", "ecr/af-workspace:0.7.0", ec2types.SnapshotStateCompleted, time.Now())
+
+	vol, err := h.rt.createHomeVolume(ctx, "ap-northeast-1a")
+	if err != nil {
+		t.Fatalf("createHomeVolume: %v", err)
+	}
+	if got := h.ec2.volumes[aws.ToString(vol.VolumeId)].SnapshotId; got != nil {
+		t.Errorf("a golden baked from another image was used: %q", aws.ToString(got))
+	}
+}
+
+// The user's own home always wins. Handing somebody the golden image because their real
+// home was merely not found yet would be silent data loss.
+func TestECSEC2HibernatedHomeBeatsTheGolden(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addGolden("snap-golden", "clu", h.rt.base.cfg.workspaceImage, ec2types.SnapshotStateCompleted, time.Now())
+	h.ec2.snapshots["snap-mine"] = &ec2types.Snapshot{
+		SnapshotId: aws.String("snap-mine"), VolumeId: aws.String("vol-gone"),
+		State: ec2types.SnapshotStateCompleted, StartTime: aws.Time(time.Now().Add(-time.Hour)),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagMembership), Value: aws.String("M-1")},
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
+		},
+	}
+	vol, err := h.rt.createHomeVolume(ctx, "ap-northeast-1a")
+	if err != nil {
+		t.Fatalf("createHomeVolume: %v", err)
+	}
+	if got := aws.ToString(h.ec2.volumes[aws.ToString(vol.VolumeId)].SnapshotId); got != "snap-mine" {
+		t.Errorf("built from %q, want the user's own hibernated home", got)
+	}
+	h.runDeferred(ctx)
+	if _, ok := h.ec2.snapshots["snap-golden"]; !ok {
+		t.Error("the restore cleanup deleted the shared golden snapshot")
+	}
+	if _, ok := h.ec2.snapshots["snap-mine"]; ok {
+		t.Error("the user's superseded snapshot is still billing")
+	}
+}
+
+// Destroy walks per-membership resources; the golden belongs to the pool, not to anyone.
+func TestECSEC2DestroyLeavesTheGoldenAlone(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addGolden("snap-golden", "clu", h.rt.base.cfg.workspaceImage, ec2types.SnapshotStateCompleted, time.Now())
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	if _, err := h.rt.Destroy(ctx); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if _, ok := h.ec2.snapshots["snap-golden"]; !ok {
+		t.Error("destroying one workspace took the pool's golden snapshot with it")
+	}
+}
