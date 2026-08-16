@@ -123,6 +123,15 @@ const (
 	// without the CP remembering anything: the attachment IS the affinity, and this tag
 	// is how long it has been dormant (for the idle-stop and for picking a victim).
 	ec2TagIdleSince = "af-idle-since"
+	// ec2TagHibernating marks a home that has entered hibernation (§64.18.2) and the
+	// moment it did. It exists because hibernation spans several sweeps and cannot lean
+	// on af-idle-since: releaseSlot — hibernation's own first step — clears that tag.
+	//
+	// The timestamp is load-bearing, not decoration. It is what tells "the snapshot that
+	// captures this dormancy" apart from "a snapshot of the same volume taken during an
+	// EARLIER one", and mistaking the second for the first deletes a volume holding work
+	// that was never captured. Only a snapshot started after this mark counts.
+	ec2TagHibernating = "af-hibernating"
 
 	ec2RoleHome = "home"
 	ec2RoleSlot = "slot"
@@ -190,6 +199,23 @@ type ec2PoolConfig struct {
 	// workspace was using. The two run in series: person goes away → (reaper) workspace
 	// stops → (this) slot sleeps.
 	slotSleepAfter time.Duration
+	// hibernateAfter is the THIRD timer in the same series, and the only one that
+	// touches the user's data: once a home has been dormant this long, the sweeper
+	// snapshots it and deletes the volume (ADR 0045 決定 4 + 決定 13-2). The next Start
+	// restores it — 122s and a slower first day, against $4.80 → $1.00 a month for a
+	// 20 GiB home nobody has opened.
+	//
+	// 0 = OFF, and that is the default ON PURPOSE. This is the only automatic path in
+	// the product that removes a user's home from where it was, so a deployment has to
+	// ask for it. It stays reversible for exactly that reason: the sweeper hibernates,
+	// it never destroys (which is what makes it safe to run unattended at all).
+	//
+	// ⚠️ Deployment-wide, not per tenant. ADR 0045 決定 13-2 said "per-tenant setting",
+	// which this layer cannot honour: the sweeper starts from EC2 tags and has no view
+	// of tenants or the CP database (ADR 0012 — the adapter holds no state). Making it
+	// per-tenant means moving the trigger up into the reaper, which knows the tenant;
+	// that is a bigger change than the feature.
+	hibernateAfter time.Duration
 	sweepEvery     time.Duration
 	ghostAfter     time.Duration
 	// waitBudget bounds every background convergence (slot boot → ECS registration →
@@ -256,6 +282,9 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		claimTTL:       time.Duration(envInt("AF_ECS_EC2_CLAIM_TTL_SEC", 300)) * time.Second,
 		releaseGrace:   time.Duration(envInt("AF_ECS_EC2_RELEASE_GRACE_SEC", 600)) * time.Second,
 		slotSleepAfter: time.Duration(envInt("AF_ECS_EC2_SLOT_SLEEP_SEC", 900)) * time.Second,
+		// Default 0 = no hibernation. See the field comment: this is the one automatic
+		// path that moves a user's home, so it is opt-in.
+		hibernateAfter: time.Duration(envInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second,
 		sweepEvery:     time.Duration(envInt("AF_ECS_EC2_SWEEP_SEC", 300)) * time.Second,
 		ghostAfter:     time.Duration(envInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
 		waitBudget:     time.Duration(envInt("AF_ECS_EC2_WAIT_SEC", 600)) * time.Second,
@@ -537,6 +566,24 @@ func (e *ecsEC2Runtime) clearIdle(ctx context.Context, volumeID string) {
 	}
 }
 
+// clearDormancy is what a START calls: the owner is back, so both the dormancy clock and
+// any in-flight hibernation are off. It is deliberately NOT the same thing as clearIdle —
+// hibernation's own first step is releaseSlot, which clears the idle mark, and if that
+// also dropped the hibernation mark the operation would forget itself one line after
+// starting.
+//
+// A snapshot already running is left to finish rather than cancelled: the next
+// hibernation drops it as superseded (it started before that one's mark), and
+// DeleteSnapshot racing a completing capture buys nothing.
+func (e *ecsEC2Runtime) clearDormancy(ctx context.Context, volumeID string) {
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{volumeID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagIdleSince)}, {Key: aws.String(ec2TagHibernating)}},
+	}); err != nil {
+		log.Printf("ecs-ec2: clearing the dormancy marks on %s failed: %v", volumeID, err)
+	}
+}
+
 // idleSince reports how long a home has been dormant, and whether it is dormant at all.
 func idleSince(vol *ec2types.Volume, now time.Time) (time.Duration, bool) {
 	v := ec2TagValue(vol.Tags, ec2TagIdleSince)
@@ -672,7 +719,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 			if err := e.claim(ctx, volID, inst); err != nil {
 				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
 			}
-			e.clearIdle(ctx, volID)
+			e.clearDormancy(ctx, volID)
 			running, err := e.instanceRunning(ctx, inst)
 			if err != nil {
 				return ec2Placement{}, err
@@ -752,7 +799,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 		if err := e.claim(ctx, volID, victim); err != nil {
 			log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
 		}
-		e.clearIdle(ctx, volID)
+		e.clearDormancy(ctx, volID)
 		running, err := e.instanceRunning(ctx, victim)
 		if err != nil {
 			return ec2Placement{}, err
@@ -817,7 +864,7 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	// The service now carries the state; drop the claim so State() reads the real thing,
 	// and make sure this home is not counted as dormant while its task runs.
 	e.unclaim(ctx, p.volumeID)
-	e.clearIdle(ctx, p.volumeID)
+	e.clearDormancy(ctx, p.volumeID)
 	e.base.watchReady(ctx)
 	return nil
 }
@@ -849,9 +896,24 @@ func (e *ecsEC2Runtime) homeVolume(ctx context.Context) (*ec2types.Volume, error
 // (TagSpecifications), never as a follow-up CreateTags: an untagged volume is an
 // invisible volume — State() would say `none`, the next Start would make another one,
 // and the first would be billed forever with nothing pointing at it.
+//
+// "Create" covers restoring, too: if this user's home was hibernated (§64.18.3) the
+// volume is built FROM that snapshot, so from the workspace's point of view the home was
+// simply there. The first day is ~2.3× slower on the blocks it touches (ADR 0045 決定 4);
+// nothing else changes.
 func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2types.Volume, error) {
+	snapshotID, err := e.restoreSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var snapshot *string
+	if snapshotID != "" {
+		snapshot = aws.String(snapshotID)
+		log.Printf("ecs-ec2: restoring %s from %s", e.base.name, snapshotID)
+	}
 	out, err := e.ec2.CreateVolume(ctx, &ec2.CreateVolumeInput{
 		AvailabilityZone: aws.String(az),
+		SnapshotId:       snapshot,
 		Size:             aws.Int32(e.homeGiB),
 		VolumeType:       ec2types.VolumeTypeGp3,
 		Encrypted:        aws.Bool(true),
@@ -870,6 +932,21 @@ func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2ty
 		return nil, err
 	}
 	log.Printf("ecs-ec2: created %s (%d GiB, %s) for %s", aws.ToString(out.VolumeId), e.homeGiB, az, e.base.name)
+	if snapshot != nil {
+		// The home is the volume again, so the snapshot is now a stale copy that bills.
+		// In the background and only once the volume is usable — and if it fails, the
+		// next hibernation drops it as superseded rather than trusting it.
+		volID := aws.ToString(out.VolumeId)
+		e.bg(ctx, func(ctx context.Context) {
+			if err := e.waitVolumeAttachable(ctx, volID); err != nil {
+				log.Printf("ecs-ec2: %s restored but not usable yet; keeping %s: %v", volID, snapshotID, err)
+				return
+			}
+			if err := e.deleteHomeSnapshots(ctx); err != nil {
+				log.Printf("ecs-ec2: could not drop the restored-from snapshot of %s: %v", e.base.name, err)
+			}
+		})
+	}
 	return &ec2types.Volume{
 		VolumeId:         out.VolumeId,
 		AvailabilityZone: out.AvailabilityZone,
@@ -1830,8 +1907,163 @@ func (e *ecsEC2Runtime) homeSnapshots(ctx context.Context) ([]ec2types.Snapshot,
 	return out.Snapshots, nil
 }
 
-// deleteHomeSnapshots removes every hibernation snapshot of this home. Only Destroy
-// calls it: hibernation itself must never delete the snapshot it just took.
+// hibernate is one STEP of putting a long-unused home to sleep (ADR 0045 決定 4, docs/64
+// §64.18.2), not the whole thing. A snapshot of a 45 GiB home takes 30–40 minutes, and
+// the sweeper cannot sit on that, so the operation is resumable: each sweep advances it
+// by one step and the state lives in AWS, not in the CP (ADR 0012).
+//
+//	no snapshot          → release the slot, then start one
+//	snapshot pending     → nothing to do; the next sweep looks again
+//	snapshot completed   → delete the volume (the home is now the snapshot)
+//
+// The slot is released BEFORE the snapshot on purpose: releaseSlot unmounts and detaches,
+// so what gets captured is a quiesced filesystem rather than a crash-consistent image of
+// a live mount. It also returns the slot to the pool at the earliest moment, which is
+// half of why hibernation is worth doing.
+func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
+	vol, err := e.homeVolume(ctx)
+	if err != nil || vol == nil {
+		return err
+	}
+	volumeID := aws.ToString(vol.VolumeId)
+	mark, err := e.hibernationMark(ctx, vol)
+	if err != nil {
+		return err
+	}
+	snaps, err := e.homeSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range snaps {
+		// Only a snapshot of THIS volume, started after THIS hibernation's mark, is the
+		// capture we are waiting for. Everything else is a leftover — from a restore
+		// whose cleanup did not finish, or from a dormancy the owner interrupted by
+		// coming back — and taking one of those for the capture deletes a volume holding
+		// work that was never captured.
+		if aws.ToString(s.VolumeId) != volumeID || s.StartTime == nil || s.StartTime.Before(mark) {
+			log.Printf("ecs-ec2 hibernate: dropping the superseded snapshot %s of %s",
+				aws.ToString(s.SnapshotId), e.base.name)
+			if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId}); err != nil && !isAWSNotFound(err) {
+				return err
+			}
+			continue
+		}
+		switch s.State {
+		case ec2types.SnapshotStateCompleted:
+			log.Printf("ecs-ec2 hibernate: %s captured in %s; deleting the volume",
+				e.base.name, aws.ToString(s.SnapshotId))
+			return e.deleteHomeVolume(ctx)
+		case ec2types.SnapshotStateError:
+			// A failed snapshot would otherwise pin the home in this state forever:
+			// never "completed", so the volume never goes, and never absent, so no new
+			// snapshot is ever started.
+			log.Printf("ecs-ec2 hibernate: snapshot %s of %s failed; discarding it and retrying",
+				aws.ToString(s.SnapshotId), e.base.name)
+			if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId}); err != nil && !isAWSNotFound(err) {
+				return err
+			}
+			return nil
+		default:
+			return nil // pending: let it finish
+		}
+	}
+	if err := e.releaseSlot(ctx); err != nil {
+		return fmt.Errorf("release the slot before snapshotting: %w", err)
+	}
+	out, err := e.ec2.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId:    aws.String(volumeID),
+		Description: aws.String("agent-fleet hibernated home for " + e.base.name),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeSnapshot,
+			Tags: []ec2types.Tag{
+				{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
+				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
+				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
+				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
+				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-home")},
+			},
+		}},
+	})
+	if err != nil {
+		return fmt.Errorf("snapshot %s: %w", volumeID, err)
+	}
+	log.Printf("ecs-ec2 hibernate: %s → %s (the volume goes once it completes)",
+		e.base.name, aws.ToString(out.SnapshotId))
+	return nil
+}
+
+// hibernationMark returns the moment this hibernation began, stamping it if this is the
+// first step. Written BEFORE the slot is released so a CP that dies in between resumes
+// instead of starting over — and so the mark always predates the snapshot it validates.
+func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volume) (time.Time, error) {
+	if v := ec2TagValue(vol.Tags, ec2TagHibernating); v != "" {
+		at, err := time.Parse(time.RFC3339, v)
+		if err == nil {
+			return at, nil
+		}
+		// An unparseable mark is worse than none: every snapshot would compare against a
+		// zero time and be accepted. Re-stamp.
+		log.Printf("ecs-ec2 hibernate: %s has an unreadable %s tag (%q); re-stamping",
+			e.base.name, ec2TagHibernating, v)
+	}
+	// RFC3339Nano, not RFC3339: second granularity would round the mark DOWN, placing it
+	// up to a second before it was actually written — long enough to accept a snapshot
+	// from the dormancy this one replaces.
+	at := e.now().UTC()
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{aws.ToString(vol.VolumeId)},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagHibernating), Value: aws.String(at.Format(time.RFC3339Nano))}},
+	}); err != nil {
+		return time.Time{}, fmt.Errorf("mark %s as hibernating: %w", aws.ToString(vol.VolumeId), err)
+	}
+	return at, nil
+}
+
+// restoreSnapshot returns the completed hibernation snapshot to build this home from, or
+// "" when there is none. A pending one is deliberately NOT used: CreateVolume from an
+// incomplete snapshot is rejected, and answering "" here means the user gets a fresh home
+// while their real one is still being captured — data loss dressed up as a fast start.
+// Returning an error instead makes the Start fail, which is the honest outcome.
+func (e *ecsEC2Runtime) restoreSnapshot(ctx context.Context) (string, error) {
+	snaps, err := e.homeSnapshots(ctx)
+	if err != nil {
+		return "", err
+	}
+	// NEWEST completed, not first: a restore whose snapshot cleanup failed leaves an
+	// older one behind, and picking that would silently hand the user a home from two
+	// hibernations ago.
+	var newest *ec2types.Snapshot
+	for i := range snaps {
+		if snaps[i].State != ec2types.SnapshotStateCompleted {
+			continue
+		}
+		if newest == nil || snapshotStartedAfter(snaps[i], *newest) {
+			newest = &snaps[i]
+		}
+	}
+	if newest != nil {
+		return aws.ToString(newest.SnapshotId), nil
+	}
+	for _, s := range snaps {
+		if s.State == ec2types.SnapshotStatePending {
+			return "", fmt.Errorf("home of %s is being hibernated (%s); try again once it completes",
+				e.base.name, aws.ToString(s.SnapshotId))
+		}
+	}
+	return "", nil
+}
+
+func snapshotStartedAfter(a, b ec2types.Snapshot) bool {
+	if a.StartTime == nil {
+		return false
+	}
+	return b.StartTime == nil || a.StartTime.After(*b.StartTime)
+}
+
+// deleteHomeSnapshots removes every hibernation snapshot of this home. Called by Destroy
+// and, after a restore, by createHomeVolume — both are moments when the snapshot is
+// definitively superseded. Hibernation itself must never call it: it would delete the
+// snapshot it just took.
 func (e *ecsEC2Runtime) deleteHomeSnapshots(ctx context.Context) error {
 	snaps, err := e.homeSnapshots(ctx)
 	if err != nil {
@@ -1899,6 +2131,16 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 	}
 	att := attachment(vol)
 	if att == nil {
+		// A hibernation already under way: the slot went back to the pool at its first
+		// step (which is also what cleared af-idle-since, so the dormancy test below
+		// cannot be what resumes it). Keep advancing it — nothing else will, and stopping
+		// here leaves BOTH a snapshot and a volume billing. Deliberately not gated on
+		// hibernateAfter: turning the feature off must not strand a home half-way.
+		if ec2TagValue(vol.Tags, ec2TagHibernating) != "" {
+			if err := rt.hibernate(ctx); err != nil {
+				log.Printf("ecs-ec2 sweep: hibernating %s failed: %v", rt.base.name, err)
+			}
+		}
 		return
 	}
 	instanceID := aws.ToString(att.InstanceId)
@@ -1935,6 +2177,18 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 	idle, marked := idleSince(vol, time.Now())
 	if !marked {
 		rt.markIdle(ctx, volumeID)
+		return
+	}
+	// Hibernation is the third and last step of the same series (reaper stops the
+	// workspace → the slot sleeps → the home becomes a snapshot). Checked before the
+	// slot-sleep branch because it subsumes it: hibernating releases the slot outright,
+	// so there is nothing left to put to sleep.
+	if f.pool.hibernateAfter > 0 && idle >= f.pool.hibernateAfter {
+		log.Printf("ecs-ec2 sweep: %s has been dormant %.0fh; hibernating the home",
+			rt.base.name, idle.Hours())
+		if err := rt.hibernate(ctx); err != nil {
+			log.Printf("ecs-ec2 sweep: hibernating %s failed: %v", rt.base.name, err)
+		}
 		return
 	}
 	if idle < f.pool.slotSleepAfter {
