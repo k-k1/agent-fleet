@@ -20,6 +20,9 @@ export interface Tenant {
   max_workspace_mem?: number; // per-workspace RAM cap in bytes (0 = no tenant cap)
   session_idle_timeout?: string;
   ws_idle_timeout?: string;
+  // How long a home may sit unopened before it is put away as a snapshot (ecs-ec2 only;
+  // "" = deploy default, "0" = never). ADR 0045 決定 13-2.
+  home_hibernate_after?: string;
   allow_agent_self_update?: boolean;
   terminal_history_retention_days?: number;
   // Per-tenant login rules, stored as CSV (docs/61 §61.9.7).

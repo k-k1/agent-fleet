@@ -24,6 +24,12 @@ import (
 //	  terminal/preview connection, no working/question session, no recent
 //	  request) past ws_idle_timeout is docker-stopped, reclaiming the rest.
 //
+//	Tier 3 — home hibernation: an ALREADY-STOPPED workspace whose home nobody
+//	  has opened since home_hibernate_after is asked to put that home to sleep
+//	  (ecs-ec2: snapshot the EBS volume and delete it; the next Start restores
+//	  it). Runs on stopped workspaces, so it is the mirror image of tiers 1–2,
+//	  and only a runtime that implements hibernatingRuntime does anything.
+//
 // Timeouts are per-tenant (tenantLimits, super_admin-editable) with a
 // deployment default from env; "0" disables idle-stop for that tenant.
 
@@ -239,6 +245,7 @@ type reaper struct {
 	interval   time.Duration
 	sessionDef time.Duration
 	wsDef      time.Duration
+	hibDef     time.Duration
 	bootTime   time.Time
 
 	// idleSince tracks, per live claude session, when it was first observed
@@ -247,19 +254,21 @@ type reaper struct {
 	idleSince map[string]time.Time // workspaceID|session -> first idle
 }
 
-func newReaper(mgr *manager, interval, sessionDef, wsDef time.Duration) *reaper {
+func newReaper(mgr *manager, interval, sessionDef, wsDef, hibDef time.Duration) *reaper {
 	return &reaper{
 		mgr:        mgr,
 		interval:   interval,
 		sessionDef: sessionDef,
 		wsDef:      wsDef,
+		hibDef:     hibDef,
 		bootTime:   time.Now(),
 		idleSince:  map[string]time.Time{},
 	}
 }
 
 func (rp *reaper) run(ctx context.Context) {
-	log.Printf("idle-stop reaper: interval=%s session_default=%s ws_default=%s", rp.interval, rp.sessionDef, rp.wsDef)
+	log.Printf("idle-stop reaper: interval=%s session_default=%s ws_default=%s hibernate_default=%s",
+		rp.interval, rp.sessionDef, rp.wsDef, rp.hibDef)
 	t := time.NewTicker(rp.interval)
 	defer t.Stop()
 	for {
@@ -284,7 +293,8 @@ func (rp *reaper) sweep(ctx context.Context) {
 		lim := parseLimits(t.Limits)
 		sessTO, sessOn := idleTimeout(lim.SessionIdleTimeout, rp.sessionDef)
 		wsTO, wsOn := idleTimeout(lim.WSIdleTimeout, rp.wsDef)
-		if !sessOn && !wsOn {
+		hibTO, hibOn := idleTimeout(lim.HomeHibernateAfter, rp.hibDef)
+		if !sessOn && !wsOn && !hibOn {
 			continue // idle-stop fully disabled for this tenant
 		}
 		wss, err := rp.mgr.store.ListWorkspaces(ctx, t.ID)
@@ -293,7 +303,7 @@ func (rp *reaper) sweep(ctx context.Context) {
 			continue
 		}
 		for _, ws := range wss {
-			rp.sweepWorkspace(ctx, ws, sessTO, sessOn, wsTO, wsOn, live)
+			rp.sweepWorkspace(ctx, ws, sessTO, sessOn, wsTO, wsOn, hibTO, hibOn, live)
 		}
 	}
 	// Drop trackers for sessions that no longer exist so a resumed session
@@ -305,12 +315,20 @@ func (rp *reaper) sweep(ctx context.Context) {
 	}
 }
 
-func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.Duration, sessOn bool, wsTO time.Duration, wsOn bool, live map[string]bool) {
+func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.Duration, sessOn bool, wsTO time.Duration, wsOn bool, hibTO time.Duration, hibOn bool, live map[string]bool) {
 	rt := rp.mgr.runtimeFor(ws, "") // secretKey unused for read/halt calls
-	// Only a "running" workspace is swept. "starting" (ECS cold pull) is deliberately
-	// left alone — idle-stopping a workspace that is still converging would cancel a
-	// legitimate launch; its idle clock starts once it actually runs.
-	if rt.State(ctx) != "running" {
+	// Only a "running" workspace is swept by tiers 1–2. "starting" (ECS cold pull) is
+	// deliberately left alone — idle-stopping a workspace that is still converging would
+	// cancel a legitimate launch; its idle clock starts once it actually runs.
+	state := rt.State(ctx)
+	if state != "running" {
+		// Tier 3 is the mirror image: it only ever looks at a workspace that is ALREADY
+		// stopped, which is why it lives on this side of the return. "starting" and "none"
+		// are excluded on purpose — the first is a launch in flight, the second has no home
+		// to put away (it may already be a snapshot).
+		if hibOn && state == "stopped" {
+			rp.hibernateHome(ctx, rt, ws, hibTO)
+		}
 		return
 	}
 	now := time.Now()
@@ -496,4 +514,81 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, w
 		log.Printf("idle-stop: mark stopped %s: %v", ws.ContainerName, err)
 	}
 	log.Printf("idle-stop: stopped cold workspace %s (tenant %s)", ws.ContainerName, ws.TenantID)
+}
+
+// hibernatingRuntime is the optional capability behind tier 3: a runtime that can park a
+// stopped workspace's home somewhere cheaper and bring it back on the next Start. Only
+// ecs-ec2 implements it (snapshot the EBS home, delete the volume — ADR 0045 決定 4);
+// every other runtime keeps the home where it is, so tier 3 is simply absent for them
+// rather than half-working.
+//
+// The trigger lives HERE, in the reaper, and not in the ecs-ec2 sweeper, because the
+// answer to "how long before this tenant's homes go to sleep" is in the database and the
+// sweeper deliberately has no view of it — it derives its whole world from EC2 tags
+// (ADR 0012). BeginHibernate is one STEP: it starts the capture. Advancing and finishing
+// it stays with the pool sweeper, which is what makes the operation resumable across a CP
+// restart (docs/64 §64.18.2.1).
+type hibernatingRuntime interface {
+	BeginHibernate(ctx context.Context) error
+}
+
+// hibernateHome is tier 3. It runs under the same three fences as tier 2, because
+// hibernation releases the slot and starts a snapshot — a Start that wins the race while
+// this is deciding must not find its home being taken apart underneath it.
+func (rp *reaper) hibernateHome(ctx context.Context, rt Runtime, ws Workspace, hibTO time.Duration) {
+	h, ok := rt.(hibernatingRuntime)
+	if !ok {
+		return // this runtime has nowhere cheaper to put a home
+	}
+	if !rp.homeIdleFor(ws.ID, ws.LastActiveAt, hibTO) {
+		return
+	}
+	lock := rp.mgr.startLockFor(ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, rp.mgr.store, ws.MembershipID)
+	if err != nil {
+		return // someone else owns the lifecycle; the next sweep tries again
+	}
+	defer lease.Close()
+	releaseFence, err := rp.mgr.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
+	if err != nil {
+		return
+	}
+	defer releaseFence()
+	if err := lease.checkpoint(ctx); err != nil {
+		return
+	}
+	// Re-decide while holding the fences: everything below was read before we waited on
+	// them, and the owner coming back in that window is exactly the case this protects.
+	if rt.State(lease.Context()) != "stopped" {
+		return
+	}
+	freshWS, ok2, err := rp.mgr.store.GetWorkspaceByMembership(lease.Context(), ws.MembershipID)
+	if err != nil || !ok2 {
+		return
+	}
+	if !rp.homeIdleFor(ws.ID, freshWS.LastActiveAt, hibTO) {
+		return
+	}
+	if err := h.BeginHibernate(lease.Context()); err != nil {
+		log.Printf("idle-stop: hibernating the home of %s: %v", ws.ContainerName, err)
+	}
+}
+
+// homeIdleFor answers "has nobody opened this workspace for hibTO". Unlike idleBase it
+// does NOT consider rp.bootTime: a hibernation window is days or weeks, so a CP that
+// restarts more often than that would push the deadline out forever and the setting would
+// look enabled while never firing once. Only the persisted last_active_at can carry a
+// clock that long — and an unreadable one therefore means "leave it alone", never
+// "hibernate it now".
+func (rp *reaper) homeIdleFor(wsID, dbLastActive string, hibTO time.Duration) bool {
+	last, err := time.Parse(time.RFC3339, dbLastActive)
+	if err != nil {
+		return false
+	}
+	if _, lastSeen, seen := rp.mgr.conns.snapshot(wsID); seen && lastSeen.After(last) {
+		last = lastSeen
+	}
+	return time.Since(last) >= hibTO
 }

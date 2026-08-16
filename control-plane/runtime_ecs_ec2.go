@@ -211,21 +211,23 @@ type ec2PoolConfig struct {
 	// stops → (this) slot sleeps.
 	slotSleepAfter time.Duration
 	// hibernateAfter is the THIRD timer in the same series, and the only one that
-	// touches the user's data: once a home has been dormant this long, the sweeper
-	// snapshots it and deletes the volume (ADR 0045 決定 4 + 決定 13-2). The next Start
-	// restores it — 122s and a slower first day, against $4.80 → $1.00 a month for a
-	// 20 GiB home nobody has opened.
+	// touches the user's data: once a home has been dormant this long it is snapshotted
+	// and its volume deleted (ADR 0045 決定 4 + 決定 13-2). The next Start restores it —
+	// 122s and a slower first day, against $4.80 → $1.00 a month for a 20 GiB home
+	// nobody has opened.
 	//
 	// 0 = OFF, and that is the default ON PURPOSE. This is the only automatic path in
 	// the product that removes a user's home from where it was, so a deployment has to
-	// ask for it. It stays reversible for exactly that reason: the sweeper hibernates,
-	// it never destroys (which is what makes it safe to run unattended at all).
+	// ask for it. It stays reversible for exactly that reason: hibernation never
+	// destroys (which is what makes it safe to run unattended at all).
 	//
-	// ⚠️ Deployment-wide, not per tenant. ADR 0045 決定 13-2 said "per-tenant setting",
-	// which this layer cannot honour: the sweeper starts from EC2 tags and has no view
-	// of tenants or the CP database (ADR 0012 — the adapter holds no state). Making it
-	// per-tenant means moving the trigger up into the reaper, which knows the tenant;
-	// that is a bigger change than the feature.
+	// ⚠️ This copy is the DEPLOYMENT DEFAULT, and this layer no longer decides WHEN.
+	// The trigger lives in the reaper, which is the only place that can see a tenant's
+	// home_hibernate_after (the sweeper starts from EC2 tags and has no view of the CP
+	// database — ADR 0012). What is left here is the resume path: the sweeper advances
+	// a hibernation ALREADY under way, ungated, so switching the feature off never
+	// strands a home half-way. The value is kept so the pool screen can say what the
+	// deployment default is.
 	hibernateAfter time.Duration
 	sweepEvery     time.Duration
 	ghostAfter     time.Duration
@@ -1948,6 +1950,40 @@ func (e *ecsEC2Runtime) homeSnapshots(ctx context.Context) ([]ec2types.Snapshot,
 // so what gets captured is a quiesced filesystem rather than a crash-consistent image of
 // a live mount. It also returns the slot to the pool at the earliest moment, which is
 // half of why hibernation is worth doing.
+// BeginHibernate is the reaper's entry point into the series above (tier 3 — see
+// hibernatingRuntime in reaper.go). It only ever STARTS one: the timing decision belongs
+// to the reaper, which can see the tenant's home_hibernate_after, and every step after
+// the first belongs to the pool sweeper, which can resume it after a CP restart.
+//
+// Two guards, both of which are the difference between "cheap" and "lost work":
+//
+//   - already marked ⇒ do nothing. Otherwise the reaper and the sweeper would both be
+//     advancing the same hibernation, and two CreateSnapshot calls in the same window
+//     leave a second, orphaned capture billing forever.
+//   - a live service ⇒ do nothing. The reaper decided from the database that nobody has
+//     opened this workspace in weeks; AWS is the authority on whether it is running right
+//     now, and it is the one that would lose the mount.
+var _ hibernatingRuntime = (*ecsEC2Runtime)(nil)
+
+func (e *ecsEC2Runtime) BeginHibernate(ctx context.Context) error {
+	vol, err := e.homeVolume(ctx)
+	if err != nil || vol == nil {
+		return err // no home here: already a snapshot, or never created
+	}
+	if at := ec2TagValue(vol.Tags, ec2TagHibernating); at != "" {
+		return nil // under way; the pool sweeper carries it the rest of the way
+	}
+	s, ok, err := e.base.describeService(ctx)
+	if err != nil {
+		return err
+	}
+	if ok && (s.DesiredCount > 0 || s.RunningCount > 0 || s.PendingCount > 0) {
+		return nil
+	}
+	log.Printf("ecs-ec2 hibernate: %s has not been opened for the tenant's retention window; putting the home away", e.base.name)
+	return e.hibernate(ctx)
+}
+
 func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 	vol, err := e.homeVolume(ctx)
 	if err != nil || vol == nil {
@@ -2256,17 +2292,11 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		return
 	}
 	// Hibernation is the third and last step of the same series (reaper stops the
-	// workspace → the slot sleeps → the home becomes a snapshot). Checked before the
-	// slot-sleep branch because it subsumes it: hibernating releases the slot outright,
-	// so there is nothing left to put to sleep.
-	if f.pool.hibernateAfter > 0 && idle >= f.pool.hibernateAfter {
-		log.Printf("ecs-ec2 sweep: %s has been dormant %.0fh; hibernating the home",
-			rt.base.name, idle.Hours())
-		if err := rt.hibernate(ctx); err != nil {
-			log.Printf("ecs-ec2 sweep: hibernating %s failed: %v", rt.base.name, err)
-		}
-		return
-	}
+	// workspace → the slot sleeps → the home becomes a snapshot), but it is NOT started
+	// here: how long a tenant's homes may sit before they are put away is a database
+	// answer and this loop has no database (ADR 0012). The reaper stamps af-hibernating
+	// and starts the capture; from then on the branch above (att == nil) advances it.
+	// A hibernation whose first step has run therefore never reaches this point.
 	if idle < f.pool.slotSleepAfter {
 		return
 	}

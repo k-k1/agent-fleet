@@ -318,21 +318,23 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192,…` | `instanceType:memoryMiB`, ascending |
 | `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap. Start fails at the cap rather than growing the bill |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
-| — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | Snapshot a home that has been dormant this long and delete the volume. See below |
+| — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant can override it. See below |
 
 **Hibernating long-unused homes (opt-in).** An EBS home bills for what it is *provisioned*
-at, whether or not anyone opens it. With `AF_ECS_EC2_HIBERNATE_AFTER_SEC` set, the sweeper
-takes a snapshot of a home that has been dormant that long and deletes the volume;
-the owner's next Start rebuilds it from the snapshot. For a 20 GiB-used / 50 GiB-provisioned
-home that is **$4.80 → $1.00 a month**, against ~122s on the return and a slightly slower
-first day (ADR 0045 決定 4).
+at, whether or not anyone opens it. With this enabled, a home that nobody has opened for
+that long is captured as a snapshot and its volume deleted; the owner's next Start rebuilds
+it from the snapshot. For a 20 GiB-used / 50 GiB-provisioned home that is
+**$4.80 → $1.00 a month**, against ~122s on the return and a slightly slower first day
+(ADR 0045 決定 4).
 
 - **It hibernates; it never destroys.** This is the only automatic path in the product that
   moves someone's home, so it stays reversible — and off by default.
 - It is a **third** timer after the two above: the person goes idle → the workspace stops →
   the slot sleeps → (days later) the home becomes a snapshot. Set it in days, not minutes.
-- **Deployment-wide, not per tenant.** The sweeper works from EC2 tags and has no view of
-  tenants (ADR 0012).
+- **Per tenant, with this env as the deployment default** (ADR 0045 決定 14).
+  Settings → Admin → a tenant → *Hibernate unused homes* takes a duration string
+  (`720h`); empty follows this env and `0` means never for that tenant. The trigger lives
+  in the idle-stop reaper, so **`AF_IDLE_SWEEP_INTERVAL=0` disables hibernation too**.
 - A snapshot of a 45 GiB home takes 30–40 minutes; the sweeper advances one step per pass
   and the state lives entirely in AWS tags, so a CP restart mid-way resumes rather than
   strands. If the owner comes back first, the hibernation is abandoned and the volume is

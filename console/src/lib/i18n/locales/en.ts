@@ -1125,7 +1125,7 @@ export const en: Record<keyof typeof ja, string> = {
   "pool.free": "Free",
   "pool.free_sub": "nobody's home attached",
   "pool.at_cap": "The pool is at its cap. The next person to start takes a slot from the longest-dormant occupant instead of getting a new one.",
-  "pool.timers": "A slot sleeps after {sleep} without a task. A home hibernates to a snapshot after {hibernate}.",
+  "pool.timers": "A slot sleeps after {sleep} without a task. Unless a tenant sets its own, a home hibernates to a snapshot after {hibernate} (the deployment default).",
   "pool.off": "never",
   "pool.no_slots": "No slots. The first Start will create one.",
   "pool.col_instance": "Instance",
@@ -1281,6 +1281,16 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.idle_hint_1": "Idle claude sessions are folded to stopped (resumable) after Session halt after, and workspaces with no connection or activity are docker-stopped after Workspace stop after. Format: ",
   "admin.idle_hint_2": ". Empty follows the deploy default (disabled by default); ",
   "admin.idle_hint_3": " explicitly disables it.",
+  // Home hibernation (AF_RUNTIME=ecs-ec2 only; ADR 0045 決定 13-2). This is the one
+  // setting that moves a user's home off the disk it was on, so the copy has to say both
+  // that it is reversible and that the return is slower.
+  "admin.hibernate_title": "Hibernate unused homes",
+  "admin.hibernate_after": "Hibernate after",
+  "admin.hibernate_ph": "e.g. 720h = 30 days (empty = deploy default)",
+  "admin.hibernate_hint":
+    "A home nobody has opened for this long is captured as a snapshot and its disk released. The next start brings it back, so nothing is lost — but that start takes longer, and the disk is slower for a few hours afterwards.",
+  "admin.hibernate_warn":
+    "Only hibernation is automatic; nothing is ever destroyed this way. The unit goes up to hours, so write days as a multiple of 24h. Enter 0 to never hibernate this tenant's homes.",
   "admin.term_log_title": "Terminal-log retention",
   "admin.retention": "Retention",
   "admin.retention_off": "Disabled (standard short-lived history only)",

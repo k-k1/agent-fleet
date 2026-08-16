@@ -1131,7 +1131,7 @@ export const ja = {
   "pool.free": "空き",
   "pool.free_sub": "誰の home も付いていない",
   "pool.at_cap": "上限に達しています。次に起動する人には新しいスロットではなく、最も長く休眠しているユーザーのスロットが割り当てられます（立ち退き）。",
-  "pool.timers": "タスクが無くなって {sleep} でスロットを停止します。home は {hibernate} で snapshot へ退避します。",
+  "pool.timers": "タスクが無くなって {sleep} でスロットを停止します。home はテナント側で指定が無ければ {hibernate} で snapshot へ退避します（デプロイ既定）。",
   "pool.off": "しない",
   "pool.no_slots": "スロットはありません。最初の起動で 1 台作られます。",
   "pool.col_instance": "インスタンス",
@@ -1286,6 +1286,15 @@ export const ja = {
   "admin.idle_hint_1": "放置された Claude セッションは「セッション停止まで」で停止中（再開可）になり、接続も稼働もないワークスペースは「ワークスペース停止まで」で停止します。書式は ",
   "admin.idle_hint_2": "。空欄はデプロイ既定（既定は無効）に従い、",
   "admin.idle_hint_3": " で明示的に無効化します。",
+  // home の退避（AF_RUNTIME=ecs-ec2 のみ・ADR 0045 決定 13-2）。ここだけが「利用者の home を
+  // 自動で今の置き場から動かす」設定なので、可逆であることと初日が遅くなることを必ず書く。
+  "admin.hibernate_title": "使われない home の退避",
+  "admin.hibernate_after": "退避するまで",
+  "admin.hibernate_ph": "例 720h＝30日（空=デプロイ既定）",
+  "admin.hibernate_hint":
+    "この期間だれも開かなかった home は snapshot にして、ディスクを解放します。次に起動したときに戻すので失われるものはありませんが、その回の起動は少し長くなり、戻した直後の数時間はディスクが遅くなります。",
+  "admin.hibernate_warn":
+    "自動で行うのは退避までで、破棄はしません。書式は時間まで（日は 24h の倍数で書きます）。0 と書くとこのテナントでは退避しません。",
   "admin.term_log_title": "ターミナルログの保存",
   "admin.retention": "保持期間",
   "admin.retention_off": "無効（標準の短命履歴のみ）",

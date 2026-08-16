@@ -33,6 +33,13 @@ type tenantLimits struct {
 	// P3-9 idle-stop (docs/19): per-tenant, super_admin-editable.
 	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
 	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop
+	// HomeHibernateAfter is the third step of the same series and the only one that
+	// touches the user's data: a home nobody has opened for this long is snapshotted and
+	// its volume deleted, and the next Start restores it (ADR 0045 決定 13-2, docs/64
+	// §64.18.2). Only the ecs-ec2 runtime can do this; on every other runtime the value
+	// is inert. Same resolution as the two timeouts above — "" => deployment default
+	// (AF_ECS_EC2_HIBERNATE_AFTER_SEC), "0" => never hibernate this tenant's homes.
+	HomeHibernateAfter string `json:"home_hibernate_after,omitempty"`
 	// AllowAgentSelfUpdate: the operator gate for member-driven CLI self-update
 	// (claude/opencode/codex). When true the CP injects AF_AGENT_SELF_UPDATE_ALLOWED=1
 	// so a member who opted in (toolchains.agentUpdate) gets the baked /usr/local CLIs
