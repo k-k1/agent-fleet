@@ -33,8 +33,14 @@ if [ "$NAT" = 1 ]; then
     --availability-zone ap-northeast-1a --query Subnet.SubnetId --output text)
   SUBNET=$(aws ec2 create-subnet --vpc-id "$VPC" --cidr-block 10.90.1.0/24 \
     --availability-zone ap-northeast-1a --query Subnet.SubnetId --output text)
+  # 2 本目の AZ。EBS は AZ に固定されるので、「別 AZ に home を持つ人にその AZ のスロットが
+  # 立つか」は 1 本の subnet では一度も試されない（§64.20）。NAT は 1a 側のまま共有する
+  # （AZ 跨ぎの転送料はかかるが、検証したいのは経路ではなく配置）。
+  SUBNET2=$(aws ec2 create-subnet --vpc-id "$VPC" --cidr-block 10.90.2.0/24 \
+    --availability-zone ap-northeast-1c --query Subnet.SubnetId --output text)
   aws ec2 create-tags --resources "$PUB" --tags Key=Name,Value=$N-public
   aws ec2 create-tags --resources "$SUBNET" --tags Key=Name,Value=$N-private
+  aws ec2 create-tags --resources "$SUBNET2" --tags Key=Name,Value=$N-private-c
   # NAT 自身はパブリック側に置くので、そのサブネットだけ公開経路を持つ。
   aws ec2 modify-subnet-attribute --subnet-id "$PUB" --map-public-ip-on-launch
   PUBRT=$(aws ec2 create-route-table --vpc-id "$VPC" --query RouteTable.RouteTableId --output text)
@@ -49,15 +55,18 @@ if [ "$NAT" = 1 ]; then
   PRIVRT=$(aws ec2 create-route-table --vpc-id "$VPC" --query RouteTable.RouteTableId --output text)
   aws ec2 create-route --route-table-id "$PRIVRT" --destination-cidr-block 0.0.0.0/0 --nat-gateway-id "$NATGW" >/dev/null
   aws ec2 associate-route-table --route-table-id "$PRIVRT" --subnet-id "$SUBNET" >/dev/null
+  aws ec2 associate-route-table --route-table-id "$PRIVRT" --subnet-id "$SUBNET2" >/dev/null
   aws ec2 create-tags --resources "$PUBRT" "$PRIVRT" "$IGW" --tags Key=Name,Value=$N
-  echo "VPC=$VPC PUB=$PUB PRIVATE=$SUBNET NAT=$NATGW EIP=$EIP"
+  echo "VPC=$VPC PUB=$PUB PRIVATE=$SUBNET,$SUBNET2 NAT=$NATGW EIP=$EIP"
 else
   VPC=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
   CIDR=$(aws ec2 describe-vpcs --vpc-ids "$VPC" --query 'Vpcs[0].CidrBlock' --output text)
   SUBNET=$(aws ec2 describe-subnets --filters Name=vpc-id,Values="$VPC" Name=availability-zone,Values=ap-northeast-1a \
     --query 'Subnets[0].SubnetId' --output text)
+  SUBNET2=$(aws ec2 describe-subnets --filters Name=vpc-id,Values="$VPC" Name=availability-zone,Values=ap-northeast-1c \
+    --query 'Subnets[0].SubnetId' --output text)
 fi
-echo "ACCOUNT=$ACCOUNT VPC=$VPC CIDR=$CIDR SUBNET=$SUBNET NAT=$NAT"
+echo "ACCOUNT=$ACCOUNT VPC=$VPC CIDR=$CIDR SUBNET=$SUBNET SUBNET2=$SUBNET2 NAT=$NAT"
 
 # --- SG: タスク ENI 用（自己参照で全許可）＋ EFS は VPC 内から 2049 ---
 SG=$(aws ec2 create-security-group --group-name $N-ws --description "af-ec2c ws task eni" --vpc-id "$VPC" --query GroupId --output text)
@@ -72,7 +81,10 @@ echo "SG=$SG EFSSG=$EFSSG"
 EFS=$(aws efs create-file-system --performance-mode generalPurpose --throughput-mode bursting \
   --tags Key=Name,Value=$N --query FileSystemId --output text)
 while [ "$(aws efs describe-file-systems --file-system-id "$EFS" --query 'FileSystems[0].LifeCycleState' --output text)" != available ]; do sleep 3; done
+# マウントターゲットは AZ ごとに要る。2 本目の AZ にスロットを立てたとき、ここが無いと
+# タスクは資格情報の EFS をマウントできずに落ちる（本番の複数 AZ 構成でも同じ）。
 aws efs create-mount-target --file-system-id "$EFS" --subnet-id "$SUBNET" --security-groups "$EFSSG" >/dev/null
+aws efs create-mount-target --file-system-id "$EFS" --subnet-id "$SUBNET2" --security-groups "$EFSSG" >/dev/null
 echo "EFS=$EFS"
 
 # --- ECR ＋ 本番と同じイメージを複製（docker 不要・crane） ---
@@ -140,7 +152,7 @@ export AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1
 export AF_ECS_EC2_LIVE=1
 export AF_ECS_REGION=ap-northeast-1
 export AF_ECS_CLUSTER=$N
-export AF_ECS_SUBNETS=$SUBNET
+export AF_ECS_SUBNETS=$SUBNET,$SUBNET2
 export AF_ECS_SECURITY_GROUP=$SG
 export AF_ECS_EFS_ID=$EFS
 export AF_ECS_NAMESPACE_ARN=$NSARN
@@ -151,13 +163,14 @@ export AF_ECS_WORKSPACE_IMAGE=$ECR:dev
 export AF_ECS_EC2_LAUNCH_TEMPLATE=$LT
 export AF_ECS_EC2_POOL=$N
 export AF_ECS_EC2_SLOT_TYPES=m7i.large:8192
-export AF_ECS_EC2_MAX_SLOTS=2
+export AF_ECS_EC2_MAX_SLOTS=4
 export AF_ECS_EC2_SLOT_SLEEP_SEC=60
 export AF_ECS_EC2_RELEASE_GRACE_SEC=60
 export AF_ECS_EC2_HOME_GB=8
 export AF_ECS_EC2_SWEEP_SEC=3600
 export AF_ECS_EC2_TMP_MB=512
 export AF_HARNESS_VPC=$VPC
+export AF_HARNESS_SUBNET_B=$SUBNET2
 export AF_HARNESS_EFSSG=$EFSSG
 export AF_HARNESS_ACCOUNT=$ACCOUNT
 export AF_HARNESS_NAT=$NAT
