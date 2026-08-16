@@ -1717,7 +1717,7 @@ export const ja = {
   "wsbar.state.unknown": "不明",
   // 起動中ダイアログ（WsStartingDialog・docs/35 §35.9-9）
   "wsstart.title": "ワークスペースを起動中",
-  "wsstart.generic": "起動しています…（初回はエージェント CLI の導入で数分かかることがあります）",
+  "wsstart.generic": "起動しています…",
   "wsstart.installing_clis": "エージェント CLI を導入中…（初回のみ・数分かかることがあります）",
   "wsstart.fetching_tool": "追加ツールを取得中…",
   "wsstart.toolchain": "ツールチェーンを導入中…",

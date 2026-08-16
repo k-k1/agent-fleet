@@ -183,6 +183,13 @@ func pickDiskGiB(perWorkspace, deploymentDefault int) int {
 
 var _ RuntimeFactory = (*ecsFactory)(nil)
 
+// WorkspaceImage is the image THIS deployment will actually run for a workspace, so the
+// startup banner can say it. Without this it printed the docker runtime's WS_IMAGE
+// default (agent-fleet/workspace:m3) on an ECS deployment that runs an ECR image —
+// measured on a real deployment, where "which image is this running?" is exactly the
+// question the banner is read for.
+func (f *ecsFactory) WorkspaceImage() string { return f.cfg.workspaceImage }
+
 // awsConfigFor is where every AWS client this deployment builds gets its credentials.
 // In production it is the default chain — which on ECS means the CP task role, i.e. the
 // only identity that matters — and it exists as a variable for exactly one reason: so
