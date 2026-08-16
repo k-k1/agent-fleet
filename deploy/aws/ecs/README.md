@@ -34,7 +34,7 @@ platform changes:
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
-| `cfn/40-ec2-pool.yaml` | 🚧 **authored, not stood up** (the mechanics were measured in a sandbox harness, not through these templates) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand |
+| `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand |
 
 > `00`/`10`/`20` are proven end-to-end (deploy→verify→`delete-stack`, no orphans).
 > `30-ingress` is authored and template-validated; standing it up needs a domain +
@@ -269,11 +269,14 @@ is untested on real infrastructure; ephemeral storage covers everything up to 20
 
 ## Optional: EC2 slot pool (`WsRuntime=ecs-ec2`)
 
-🚧 **Stood up and run in a sandbox, never in a production-shaped VPC.** `40-ec2-pool` has
-been deployed as a stack and real workspaces have run on it end to end (docs/64 §64.16,
-§64.17) — but only in a **public subnet with no NAT**, which is where the known task-ENI
-trap below actually bit. A private-subnet + NAT deployment has not been tried. Fargate
-(`WsRuntime=ecs`) stays the default and is untouched by this profile.
+🚧 **Stood up and run in a sandbox, including a production-shaped VPC — but never at
+scale or for real users.** `40-ec2-pool` has been deployed as a stack and real workspaces
+have run on it end to end, first in a public subnet (docs/64 §64.16, §64.17) and then in a
+**private subnet behind a NAT gateway** (§64.19), which is the shape a real deployment
+has. The task-ENI trap below does not reproduce there — there is no public IPv4 to lose.
+What is still untested is everything about scale: more than two slots, more than two
+users, and any run longer than about fifteen minutes. Fargate (`WsRuntime=ecs`) stays the
+default and is untouched by this profile.
 
 **What you get, and what you do NOT.** Measured through the adapter on real AWS, a warm
 Start is 43–110s against Fargate's ~105s — **the start latency is not the reason to switch**
@@ -291,7 +294,7 @@ back. **One slot serves one user at a time** (`ADR 0045` 決定 8).
 
 | | Fargate (`ecs`) | EC2 pool (`ecs-ec2`) |
 |---|---|---|
-| Warm Start | ~105s | **43–110s** — *not* an improvement worth switching for (docs/64 §64.17.5) |
+| Warm Start | ~105s | **84–110s** — *not* an improvement worth switching for (docs/64 §64.17.5, §64.19.2) |
 | Home | EFS — small files are 8–30× slower | **EBS gp3** — 2,000 small files in 0.04s vs 30.7s |
 | Size | 74 discrete (cpu, memory) pairs, ≤16 vCPU / 120 GiB | instance types; the task reserves nothing and gets the box |
 | Resources per workspace | 2 (service + EFS access points) | 6 (also instance, volume, container-instance registration, task def) |

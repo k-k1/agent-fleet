@@ -57,11 +57,18 @@ for p in $(aws ssm describe-parameters --query "Parameters[?starts_with(Name,'/a
   aws ssm delete-parameter --name "$p" >/dev/null 2>&1 && echo "param $p"
 done
 
+# ORDER, not a list. -plat / -net exist only to publish the two exports -pool imports,
+# and CloudFormation CANCELS the delete of an exporting stack while an importer is still
+# there ("Cannot delete export ... as it is in use by af-ec2c-pool" — measured; the three
+# deletes were issued together and the last two silently did nothing, leaving both stacks
+# behind while the wait loop spun on a delete that had already been cancelled).
 say cfn-stacks
-for s in $N-pool $N-plat $N-net; do
+aws cloudformation delete-stack --stack-name $N-pool >/dev/null 2>&1
+aws cloudformation wait stack-delete-complete --stack-name $N-pool 2>/dev/null && echo "stack $N-pool deleted"
+for s in $N-plat $N-net; do
   aws cloudformation delete-stack --stack-name $s >/dev/null 2>&1
 done
-for s in $N-pool $N-plat $N-net; do
+for s in $N-plat $N-net; do
   aws cloudformation wait stack-delete-complete --stack-name $s 2>/dev/null && echo "stack $s deleted"
 done
 
