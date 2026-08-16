@@ -29,7 +29,7 @@ whenever you want to know how things work.
 | See who changed what (audit log) | Audit | [03-audit-usage.md](03-audit-usage.md) |
 | View usage (running time) and export it as CSV | Usage | [03-audit-usage.md](03-audit-usage.md) |
 | Distribute a shared MCP server to the whole team | MCP distribution | [04-mcp-egress.md](04-mcp-egress.md) |
-| Let people sign in with your own company's IdP | Sign-in methods | [operator/01 Install](../operator/01-install.md) |
+| Let people sign in with your own company's IdP | Sign-in methods | [operator/05 Sign-in methods](../operator/05-login-idp.md) |
 
 ## How to enter tenant settings
 
@@ -55,13 +55,13 @@ The rail on the left holds two groups.
   administrator has to approve it. With GitHub you list the **allowed organizations** instead of
   an issuer and use an OAuth App created in your own organization — the approval is read as
   "these organizations, these domains", so **adding an organization sends it back for approval**.
-  ★ **"How the same account is recognised"** only matters when head office and your company use
-  **the same IdP through different app registrations**. Entra's default `sub` differs per app
-  registration, so one person is two accounts across head office's button and this method;
+  ★ **"How the same account is recognised"** only matters when your company and the deployment's
+  own sign-in use **the same IdP through different app registrations**. Entra's default `sub`
+  differs per app registration, so one person is two accounts across that button and this method;
   picking `oid` makes them one. Only values the IdP assigns can be picked — never one somebody
   can **assert**, such as an email address (asserting it would be enough to reach another
   person's account). **Changing it sends the row back for approval.**
-  → [operator/01 Install](../operator/01-install.md)
+  → [operator/05 Sign-in methods](../operator/05-login-idp.md)
 - **Login rules** — **read-only** view of what is in effect for this tenant: the usable sign-in
   methods (★ narrowing these to your own methods locks out people who also belong to another
   tenant and sign in there — the same address at a different IdP is a different login; keep their
