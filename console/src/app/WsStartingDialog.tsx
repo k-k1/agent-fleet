@@ -18,11 +18,20 @@ import type { MsgKey } from "../lib/i18n/index.ts";
 // Map a raw entrypoint boot phase ("boot-install (pinned): …", "boot-install rtk …",
 // "install-go 1.26.4", …) to a friendly localized line. The raw phase is still shown
 // beneath as a technical detail, so an unmapped phase is fine.
-function phaseKey(phase: string): MsgKey {
+export function phaseKey(phase: string): MsgKey {
   const p = phase.toLowerCase();
   if (p.startsWith("boot-install rtk") || p.startsWith("boot-install agy")) return "wsstart.fetching_tool";
   if (p.startsWith("install-go") || p.startsWith("install-jdk")) return "wsstart.toolchain";
   if (p.startsWith("boot-install") || p.startsWith("lean variant")) return "wsstart.installing_clis";
+  // EC2 pool runtime (ADR 0045): the first minutes are infrastructure, not CLIs — a
+  // new slot, a new/restored home disk, an SSM mount. Saying "installing agent CLIs"
+  // there names the wrong wait, which is what an operator judges "stuck" against.
+  if (p.startsWith("slot: creating")) return "wsstart.slot_creating";
+  if (p.startsWith("slot: waking")) return "wsstart.slot_waking";
+  if (p.startsWith("slot: booting") || p.startsWith("slot: joining")) return "wsstart.slot_booting";
+  if (p.startsWith("home: restoring")) return "wsstart.home_restoring";
+  if (p.startsWith("home: creating")) return "wsstart.home_creating";
+  if (p.startsWith("home: attaching") || p.startsWith("home: mounting")) return "wsstart.home_attaching";
   return "wsstart.generic";
 }
 
