@@ -174,12 +174,19 @@ type ec2PoolConfig struct {
 	tmpfsOpts      []string  // AF_ECS_EC2_TMP_OPTS
 	claimTTL       time.Duration
 	releaseGrace   time.Duration
-	// idleStopAfter is how long a slot may sit with no running task before the sweeper
+	// slotSleepAfter is how long a slot may sit with no running task before the sweeper
 	// STOPS the instance (never terminates it — the image cache lives on its root
 	// volume, and a stopped instance costs only that volume).
-	idleStopAfter time.Duration
-	sweepEvery    time.Duration
-	ghostAfter    time.Duration
+	//
+	// This is a SECOND, lower-level timer, and it is not the idle-stop the product
+	// already had. The reaper (AF_WS_IDLE_TIMEOUT / per-tenant ws_idle_timeout) watches
+	// the PERSON and stops their WORKSPACE; every runtime has that. This one starts
+	// counting only once the workspace is already stopped, and it acts on the BOX the
+	// workspace was using. The two run in series: person goes away → (reaper) workspace
+	// stops → (this) slot sleeps.
+	slotSleepAfter time.Duration
+	sweepEvery     time.Duration
+	ghostAfter     time.Duration
 	// waitBudget bounds every background convergence (slot boot → ECS registration →
 	// mount → task). Past it the attempt gives up and leaves the state for the sweeper.
 	waitBudget time.Duration
@@ -241,12 +248,12 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		// A launch that has not produced a running service within this window is dead,
 		// and the workspace must become startable again — the claim is what would
 		// otherwise keep answering `starting` forever.
-		claimTTL:      time.Duration(envInt("AF_ECS_EC2_CLAIM_TTL_SEC", 300)) * time.Second,
-		releaseGrace:  time.Duration(envInt("AF_ECS_EC2_RELEASE_GRACE_SEC", 600)) * time.Second,
-		idleStopAfter: time.Duration(envInt("AF_ECS_EC2_IDLE_STOP_SEC", 900)) * time.Second,
-		sweepEvery:    time.Duration(envInt("AF_ECS_EC2_SWEEP_SEC", 300)) * time.Second,
-		ghostAfter:    time.Duration(envInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
-		waitBudget:    time.Duration(envInt("AF_ECS_EC2_WAIT_SEC", 600)) * time.Second,
+		claimTTL:       time.Duration(envInt("AF_ECS_EC2_CLAIM_TTL_SEC", 300)) * time.Second,
+		releaseGrace:   time.Duration(envInt("AF_ECS_EC2_RELEASE_GRACE_SEC", 600)) * time.Second,
+		slotSleepAfter: time.Duration(envInt("AF_ECS_EC2_SLOT_SLEEP_SEC", 900)) * time.Second,
+		sweepEvery:     time.Duration(envInt("AF_ECS_EC2_SWEEP_SEC", 300)) * time.Second,
+		ghostAfter:     time.Duration(envInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
+		waitBudget:     time.Duration(envInt("AF_ECS_EC2_WAIT_SEC", 600)) * time.Second,
 	}
 	if pool.launchTemplate == "" {
 		return nil, fmt.Errorf("AF_ECS_EC2_LAUNCH_TEMPLATE is required for AF_RUNTIME=ecs-ec2")
@@ -474,7 +481,7 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 //
 // Two things keep it from turning into hoarding, both in the sweeper:
 //
-//   - the slot is STOPPED after AF_ECS_EC2_IDLE_STOP_SEC (default 15m). A stopped slot
+//   - the slot is STOPPED after AF_ECS_EC2_SLOT_SLEEP_SEC (default 15m). A stopped slot
 //     costs only its root volume (~$9.6/month vs ~$95 running) and keeps the image
 //     cache, so the return is ~90s instead of 135s.
 //   - when someone else needs a slot and the pool is at its cap, the longest-idle
@@ -1879,7 +1886,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		rt.markIdle(ctx, volumeID)
 		return
 	}
-	if idle < f.pool.idleStopAfter {
+	if idle < f.pool.slotSleepAfter {
 		return
 	}
 	running, err := rt.instanceRunning(ctx, instanceID)

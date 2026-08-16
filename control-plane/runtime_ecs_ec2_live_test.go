@@ -124,8 +124,8 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		t.Fatalf("u1 Stop before sleeping: %v", err)
 	}
 	live.waitTasksGone(u1, 3*time.Minute)
-	f.pool.idleStopAfter = time.Second // do not wait 15 minutes in a test
-	u1.pool.idleStopAfter = time.Second
+	f.pool.slotSleepAfter = time.Second // do not wait 15 minutes in a test
+	u1.pool.slotSleepAfter = time.Second
 	live.eventually(2*time.Minute, "slot stopped", func() bool {
 		if err := f.sweep(ctx); err != nil {
 			t.Logf("sweep: %v", err)

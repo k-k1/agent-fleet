@@ -477,7 +477,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 			tmpfsOpts:      []string{"nosuid", "nodev"},
 			claimTTL:       15 * time.Minute,
 			releaseGrace:   10 * time.Minute,
-			idleStopAfter:  15 * time.Minute,
+			slotSleepAfter: 15 * time.Minute,
 			waitBudget:     time.Minute,
 		},
 		instanceType: "m7i.large",

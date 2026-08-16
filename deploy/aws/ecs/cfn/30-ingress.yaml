@@ -94,17 +94,20 @@ Parameters:
       Hard cap on instances in the pool. A slot is one concurrently RUNNING workspace,
       so size this like "how many people work at once", not "how many accounts exist".
       Start fails with a clear error at the cap instead of growing the bill.
-  Ec2IdleStopSec:
+  Ec2SlotSleepSec:
     Type: String
     Default: "900"
     Description: >-
-      How long a slot may sit with no running task before it is STOPPED (not terminated
-      — the image cache lives on its root volume). A stopped slot costs only that volume
-      (~$9.6/month at 100 GiB) instead of a running instance (~$95), and its owner comes
-      back in ~90s instead of the ~135s of building a new slot. A workspace's home stays
-      ATTACHED to its slot while dormant, which is what gives "the same user gets the
-      same slot" — so this is also how long that affinity is held hot. Set 0 to keep
-      slots running forever (fastest returns, highest bill).
+      How long a slot may sit with no running task before the instance is STOPPED (not
+      terminated — the image cache lives on its root volume). NOT the same thing as the
+      idle-stop the product already has: AF_WS_IDLE_TIMEOUT / the per-tenant
+      ws_idle_timeout watches the PERSON and stops their WORKSPACE on every runtime,
+      while this one starts counting after that has happened and puts the BOX to sleep.
+      They run in series (person leaves -> workspace stops -> slot sleeps). A sleeping
+      slot costs only its root volume (~$9.6/month at 100 GiB) instead of ~$95 running,
+      and its owner wakes it in ~110s. The home stays ATTACHED while the slot sleeps,
+      which is what keeps "the same user gets the same slot". Set 0 to keep slots
+      running forever (fastest returns, highest bill).
   Ec2HomeGiB:
     Type: String
     Default: "50"
@@ -405,7 +408,7 @@ Resources:
             - { Name: AF_ECS_EC2_LAUNCH_TEMPLATE, Value: !Ref Ec2SlotLaunchTemplate }
             - { Name: AF_ECS_EC2_SLOT_TYPES, Value: !Ref Ec2SlotTypes }
             - { Name: AF_ECS_EC2_MAX_SLOTS, Value: !Ref Ec2MaxSlots }
-            - { Name: AF_ECS_EC2_IDLE_STOP_SEC, Value: !Ref Ec2IdleStopSec }
+            - { Name: AF_ECS_EC2_SLOT_SLEEP_SEC, Value: !Ref Ec2SlotSleepSec }
             - { Name: AF_ECS_EC2_HOME_GB, Value: !Ref Ec2HomeGiB }
             # Start returns as soon as the service is at desiredCount 1; the Agent
             # readiness poll runs in the background for the log line only, on the
