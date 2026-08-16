@@ -31,6 +31,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -81,6 +82,13 @@ type abortResumeState struct {
 
 var abortResumeStates = fstore.JSON[abortResumeState](paths.AgentConfigDir, "session-abort-resume", ".json")
 
+type managedAbortSignal struct {
+	At  string `json:"at"`
+	Msg string `json:"msg"`
+}
+
+var managedAbortSignals = fstore.JSON[managedAbortSignal](paths.AgentConfigDir, "session-managed-abort", ".json")
+
 // 副作用は差し替え可能にしておく（テストは tmux を持たない）。
 var (
 	abortResumeInject      = injectSessionPrompt
@@ -99,18 +107,16 @@ func startAbortResumeWatch() {
 	}()
 }
 
-// abortResumeTick is one sweep over every claude session.
+// abortResumeTick is one sweep over every session kind whose driver can distinguish a
+// retryable cut-off from a permanent failure.
 //
 // 母集団のゲートは ListMetas だけ（rateLimitTick と同じ）: 会話に紐付いているか・指示
 // 台帳に行があるかは無関係で、Console から直接起動した単独セッションもまったく同じに
 // 扱う。それがこの機能の主目的だから。
 func abortResumeTick(now time.Time) {
 	for _, m := range session.ListMetas() {
-		if normalizeKind(m.Kind) != session.KindClaude {
-			continue // 判別材料（isApiErrorMessage）が claude 固有（docs/47 §5）
-		}
 		st, has := abortResumeStates.Read(m.Name)
-		a, ok := claudeAbortInfo(session.UUID(m.Dir, m.Name))
+		a, ok := abortInfoFor(m)
 		if !ok || !a.Retryable {
 			// 末尾が中断ではない＝再開できた・利用者が自分で進めた・正常に終わった。
 			// blocked な中断（上限・残高・プロンプト超過）もここで閉じる — そちらは
@@ -128,6 +134,21 @@ func abortResumeTick(now time.Time) {
 		}
 		abortResumeAttempt(m, st, a, now)
 	}
+}
+
+func abortInfoFor(m session.Meta) (claude.Abort, bool) {
+	if normalizeKind(m.Kind) == session.KindClaude {
+		return claudeAbortInfo(session.UUID(m.Dir, m.Name))
+	}
+	if m.DriverKind() != session.DriverManaged || (m.Kind != session.KindCodex && m.Kind != session.KindOpencode) {
+		return claude.Abort{}, false
+	}
+	s, ok := managedAbortSignals.Read(m.Name)
+	if !ok {
+		return claude.Abort{}, false
+	}
+	at, _ := time.Parse(time.RFC3339, s.At)
+	return claude.Abort{Msg: s.Msg, Retryable: true, At: at}, true
 }
 
 // abortResumeAttempt advances one open episode: 開始 → バックオフ待ち → 注入 → 打ち切り。
@@ -148,6 +169,7 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 		st.GaveUp = abortGaveUpStale
 		log.Printf("abort-resume: %s の自動再開を打ち切る（%s）", m.Name, st.GaveUp)
 		_ = abortResumeStates.Write(m.Name, st)
+		escalateManagedAbort(m, st)
 		return
 	}
 	if st.Attempts >= maxAutoResumeAttempts {
@@ -158,6 +180,7 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 		setAutoResumeAttempts(m.Name, st.Attempts)
 		log.Printf("abort-resume: %s の自動再開を打ち切る（%d 回連続で中断）", m.Name, st.Attempts)
 		_ = abortResumeStates.Write(m.Name, st)
+		escalateManagedAbort(m, st)
 		return
 	}
 	if !abortResumeDue(st, now) {
@@ -173,6 +196,9 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 			log.Printf("abort-resume: %s へ再開プロンプトを届けられない — 打ち切る", m.Name)
 		}
 		_ = abortResumeStates.Write(m.Name, st)
+		if st.GaveUp != "" {
+			escalateManagedAbort(m, st)
+		}
 		return
 	}
 	prompt := abortResumePrompt()
@@ -188,6 +214,9 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 			st.GaveUp = abortGaveUpUndeliverable
 		}
 		_ = abortResumeStates.Write(m.Name, st)
+		if st.GaveUp != "" {
+			escalateManagedAbort(m, st)
+		}
 		log.Printf("abort-resume: %s へ再開プロンプトを送れなかった: %v", m.Name, err)
 		return
 	}
@@ -206,8 +235,18 @@ func abortResumeReady(name string) bool {
 	if promptBlocker(name) != "" {
 		return false
 	}
+	if m, ok := session.ReadMeta(name); ok && m.DriverKind() == session.DriverManaged {
+		return sessionAlive(m) && driveState(m, true, false) == "idle"
+	}
 	pr := abortResumeReadingPane(name)
 	return pr.OK && pr.Idle && !pr.Busy && !pr.RateLimitMenu
+}
+
+func escalateManagedAbort(m session.Meta, st abortResumeState) {
+	if m.DriverKind() != session.DriverManaged {
+		return
+	}
+	recordSessionNotification(session.UUID(m.Dir, m.Name), "working", agents.StateAborted, st.Msg)
 }
 
 // abortResumeDue applies the backoff: 1回目は中断から abortResumeFirstDelay、2回目以降は

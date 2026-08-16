@@ -217,8 +217,23 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 </button>
               </div>
               <div className="acct-theme">
+                <div className="appr-seg-row">
+                  <span className="appr-seg-lbl">{tr("settings.language")}</span>
+                  <div className="ui-seg choice-seg acct-theme-seg">
+                    {LOCALES.map((l) => (
+                      <button
+                        key={l.id}
+                        type="button"
+                        className={"seg-btn" + (s.locale === l.id ? " active" : "")}
+                        onClick={() => setSetting("locale", l.id)}
+                      >
+                        {l.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {/* 配置（分割ペイン / タブ付きグリッド）は色ではないが、面の見え方を
-                    ここで完結させたいので外観ポップの先頭に置く。設定→表示と同じ
+                    ここで完結させたいので外観ポップの先頭付近に置く。設定→表示と同じ
                     paneLayout を書くだけで、実際の切り替え（未保存の編集がある場合の
                     確認を含む）は App の loadMode 側が受け持つ。 */}
                 <div className="appr-seg-row">
@@ -236,29 +251,20 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     ))}
                   </div>
                 </div>
-                <div className="ui-seg choice-seg acct-theme-seg">
-                  {LOCALES.map((l) => (
-                    <button
-                      key={l.id}
-                      type="button"
-                      className={"seg-btn" + (s.locale === l.id ? " active" : "")}
-                      onClick={() => setSetting("locale", l.id)}
-                    >
-                      {l.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="ui-seg choice-seg acct-theme-seg">
-                  {THEMES.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      className={"seg-btn" + (s.theme === t.id ? " active" : "")}
-                      onClick={() => setSetting("theme", t.id)}
-                    >
-                      {tr(t.labelKey)}
-                    </button>
-                  ))}
+                <div className="appr-seg-row">
+                  <span className="appr-seg-lbl">{tr("display.theme")}</span>
+                  <div className="ui-seg choice-seg acct-theme-seg">
+                    {THEMES.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={"seg-btn" + (s.theme === t.id ? " active" : "")}
+                        onClick={() => setSetting("theme", t.id)}
+                      >
+                        {tr(t.labelKey)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 {SURFACE_TARGETS.map((t) => (
                   <SwatchRow key={t.key} label={tr(t.shortKey)} theme={s.theme} value={s[t.key]} onPick={(v) => setSetting(t.key, v)} />

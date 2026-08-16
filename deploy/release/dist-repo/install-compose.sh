@@ -127,7 +127,7 @@ Next steps (Compose needs manual config — cannot be fully automated):
   # (optional) enable the git-provider "Connect" buttons:
   #   GITHUB_OAUTH_CLIENT_ID / BITBUCKET_OAUTH_KEY / BITBUCKET_OAUTH_SECRET
   docker compose up -d
-  docker compose logs -f control-plane
+  docker compose logs -f cp
 
 The extracted README.md is the full runbook (TLS/domain, backup/restore, upgrades,
 AWS ECS under aws/). See it for details.

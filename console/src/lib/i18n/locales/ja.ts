@@ -2012,6 +2012,7 @@ export const ja = {
   // 履歴ロード
   "mirror.load_earlier": "以前の会話を読み込む",
   "mirror.jump_latest": "最新へ",
+  "mirror.jump_reply_top": "返信を頭から",
   "mirror.ws_stopped_history": "ワークスペースが停止しています。上部の Start で起動すると履歴を表示できます。",
   "mirror.no_history": "この会話に表示できる履歴はありません。",
   "mirror.no_conversation":
@@ -2560,6 +2561,11 @@ export const ja = {
   "clean.reason_hint.wt_unmerged": "クリーンだが固有コミットあり。削除でブランチは残るが要確認",
   "clean.reason_badge.branch_merged": "マージ済みブランチ",
   "clean.reason_hint.branch_merged": "親に取り込み済み。削除しても復元可",
+
+  // === スマホの ← スワイプ＝稼働中セッションのローテート（app/App.tsx）===
+  // 画面が丸ごと入れ替わるので、着地点（何件中の何番目か）を短く返す。
+  "swipe.rotated": "{n}/{total} {name}",
+  "swipe.rotate_none": "ほかに稼働中のセッションはありません",
 
   // === P2 セッション行（features/sessions/SessionRow.tsx）===
   "srow.id_copied": "IDをコピーしました: {name}",

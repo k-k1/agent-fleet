@@ -80,6 +80,7 @@ On phones, the left pane is hidden to make the most of the screen.
 - **Show the left pane** — pull it out with **≡ (menu)** at the top left of the screen. It closes automatically when you pick an item. The back gesture opens it again.
 - **Control key row** — below the terminal sits a row of keys that are hard to press on a soft keyboard: **`Esc` `Tab` `←` `↑` `↓` `→` `^C` `⏎`**. You can send these without bringing up the keyboard.
 - **Scrolling back through past output** — **swipe vertically with one finger** on the terminal to go back through past output (drag down for older lines, up for newer). In apps that use the whole terminal, like vim, this becomes that app's own scrolling.
+- **Stepping through the running sessions** — **swipe left** for the next running session and **swipe right** for the previous one, wrapping around at either end. Each switch briefly shows where you landed, as in "2/3 session name". While a working set is selected, the rotation stays inside that set. **A right swipe that starts at the very left edge** still pulls out the left pane, as before — start away from the edge when you mean to go back a session. A left swipe with the left pane open still closes it. Over a text field, the browser pane, or anything that scrolls sideways (a code block, say), that surface keeps the gesture and no switch happens.
 
 (Phones are for "checking progress and quick replies". For involved editing, a PC is recommended.)
 

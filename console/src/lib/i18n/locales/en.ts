@@ -1986,6 +1986,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.dismiss_suggestion": "Don't show this suggestion again",
   "mirror.load_earlier": "Load earlier conversation",
   "mirror.jump_latest": "Jump to latest",
+  "mirror.jump_reply_top": "Start of reply",
   "mirror.ws_stopped_history": "The workspace is stopped. Start it from the top bar to view the history.",
   "mirror.no_history": "There is no history to show for this conversation.",
   "mirror.no_conversation":
@@ -2516,6 +2517,10 @@ export const en: Record<keyof typeof ja, string> = {
   "clean.reason_hint.wt_unmerged": "Clean but has its own commits; the branch survives deletion — check first",
   "clean.reason_badge.branch_merged": "Merged branch",
   "clean.reason_hint.branch_merged": "Already in the parent; recoverable after deletion",
+
+  // === Phone left-swipe = rotate through running sessions (app/App.tsx) ===
+  "swipe.rotated": "{n}/{total} {name}",
+  "swipe.rotate_none": "No other running session",
 
   // === P2 session row (features/sessions/SessionRow.tsx) ===
   "srow.id_copied": "Copied the ID: {name}",
