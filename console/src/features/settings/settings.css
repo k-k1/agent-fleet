@@ -3718,3 +3718,55 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* EC2 slot pool (ecs-ec2 only; features/settings/ec2Pool.tsx) */
+.pool-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.pool-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding: 4px 8px 6px;
+  white-space: nowrap;
+}
+.pool-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border2);
+  vertical-align: middle;
+}
+.pool-table tr:last-child td {
+  border-bottom: none;
+}
+/* Hibernation is a state of the DATA, not a fault: muted, never the danger colour.
+   The one thing that IS a warning here is a stale golden snapshot, because nothing
+   else will ever tell the operator about it. */
+.pool-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+.pool-view .warn-text {
+  color: var(--warn);
+}
+/* purge opt-in inside the offboarding dialog: a checkbox, never a preselected one —
+   removing a membership and destroying a home are two different decisions. */
+.purge-opt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.warn-text {
+  color: var(--warn);
+}

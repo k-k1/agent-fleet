@@ -9,6 +9,39 @@
 set -e
 export PATH="$HOME/.local/bin:$PATH"
 
+# --- 資格情報だけ別の永続領域に残す（ADR 0045 決定 3-6・ecs-ec2 ランタイムのみ） --
+# AF_WS_KEEP は「home とは別に、確実に生き残る場所」を指す。EC2 プール型では home が
+# **単一 AZ の EBS 1 本**になるので、それを失うとログイン情報まで一緒に失う。認証・接続・
+# identity（`homeKeep` の 7 つ・合計 100 MiB 未満）だけを EFS 側へ逃がし、home からは
+# symlink で見せる。CP が AF_WS_KEEP を注入しないランタイム（docker / native / Fargate）
+# では丸ごと no-op で、home の実体はそのまま。
+#
+# claude/gh などが触る前に済ませる必要があるので、entrypoint の最初に置く。
+if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; then
+  for rel in ${AF_WS_KEEP_DIRS:-.config .ssh .claude .codex} ${AF_WS_KEEP_FILES:-.git-credentials .gitconfig .claude.json}; do
+    src="$HOME/$rel"; dst="$AF_WS_KEEP/$rel"
+    if [ -L "$src" ] && [ "$(readlink "$src")" = "$dst" ]; then
+      continue
+    fi
+    if [ -e "$src" ] || [ -L "$src" ]; then
+      # home 側に実体がある。初回の移行のほか、**書き込みが symlink を実体で置き換えた**
+      # 後（tmp へ書いて rename する実装がこれをやる）にもここへ来るので、新しい方を残す。
+      if [ ! -e "$dst" ] || [ "$src" -nt "$dst" ]; then
+        rm -rf "$dst" 2>/dev/null || true
+        mv "$src" "$dst" 2>/dev/null || { echo "[entrypoint] keep: $rel を退避できませんでした"; continue; }
+      else
+        rm -rf "$src" 2>/dev/null || continue
+      fi
+    fi
+    case " ${AF_WS_KEEP_DIRS:-.config .ssh .claude .codex} " in
+      *" $rel "*) mkdir -p "$dst" 2>/dev/null || true ;;
+    esac
+    # ファイル側は実体が無くても dangling symlink を張っておく: 後から普通に書けば
+    # EFS 側にできる（O_CREAT は symlink を辿る）。
+    ln -sfn "$dst" "$src" && echo "[entrypoint] keep: ~/$rel -> $dst"
+  done
+fi
+
 # claude records installMethod="native" and self-checks its launcher at
 # ~/.local/bin/claude on every start, warning "claude command … missing or broken"
 # when it is gone/dangling. After the node→dev rename that launcher dangled (it

@@ -140,6 +140,10 @@ export function MemberView({
   const [confirmClean, setConfirmClean] = useState(false);
   const [confirmGrant, setConfirmGrant] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmDestroy, setConfirmDestroy] = useState(false);
+  // 退職処理のついでに破棄するかどうか。既定 false のまま出す——現行の契約
+  // （home を残し、戻ってきたら再招待するだけ）を、チェックしない限り変えない。
+  const [purge, setPurge] = useState(false);
   const [busy, setBusy] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
   const [limit, setLimit] = useState<number | string>(member.max_sessions ?? 0);
@@ -242,13 +246,35 @@ export function MemberView({
   const removeMember = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/admin/memberships", "DELETE", { tenant_slug: slug, user_key: key });
+      const res = await apiJSON("api/admin/memberships", "DELETE", { tenant_slug: slug, user_key: key, purge });
       if (res?.error) {
         toast(errText(res.error));
         return;
       }
       setConfirmRemove(false);
       onRemoved();
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Workspace の破棄（ADR 0045 決定 13）。退職処理とは別の 2 段目で、対象は
+  // 「すでに外したメンバー」だけ——在席中の人の home を管理画面の 1 クリック隣で
+  // 消せないようにするため（サーバ側も 409 で拒む）。
+  //
+  // leftovers は「消せなかったもの」。Fargate では EFS のディレクトリが残り、課金も
+  // 残る。成功したことにして黙らせると、運用者は「消えた」と思い込む。
+  const destroyWorkspace = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/admin/workspaces", "DELETE", { tenant_slug: slug, user_key: key });
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      setConfirmDestroy(false);
+      if (res?.leftovers?.length) toast(tr("admin.destroy_leftovers", { list: res.leftovers.join(", ") }));
+      onChanged();
+      poll();
     } finally {
       setBusy(false);
     }
@@ -395,9 +421,13 @@ export function MemberView({
           <button className="danger-btn" onClick={() => setConfirmClean(true)}>
             <Icon name="trash" /> {tr("admin.clean_home")}
           </button>
-          {member.status !== "removed" && (
+          {member.status !== "removed" ? (
             <button className="danger-btn" disabled={busy} onClick={() => setConfirmRemove(true)}>
               <Icon name="close" /> {tr("admin.remove_member")}
+            </button>
+          ) : (
+            <button className="danger-btn" disabled={busy} onClick={() => setConfirmDestroy(true)}>
+              <Icon name="trash" /> {tr("admin.destroy_ws")}
             </button>
           )}
         </div>
@@ -502,6 +532,24 @@ export function MemberView({
           <p>{tr("admin.remove_body", { slug })}</p>
           <p className="muted">{tr("admin.remove_keeps")}</p>
           <p className="muted">{tr("admin.remove_undo")}</p>
+          <label className="purge-opt">
+            <input type="checkbox" checked={purge} onChange={(e) => setPurge(e.target.checked)} />
+            <span>{tr("admin.remove_purge")}</span>
+          </label>
+          {purge && <p className="warn-text">{tr("admin.remove_purge_warn")}</p>}
+        </ConfirmDialog>
+      )}
+      {confirmDestroy && (
+        <ConfirmDialog
+          title={tr("admin.destroy_title", { key })}
+          confirmLabel={tr("admin.destroy_confirm")}
+          busy={busy}
+          onCancel={() => setConfirmDestroy(false)}
+          onConfirm={destroyWorkspace}
+        >
+          <p>{tr("admin.destroy_body")}</p>
+          <p className="warn-text">{tr("admin.destroy_locks")}</p>
+          <p className="muted">{tr("admin.destroy_efs")}</p>
         </ConfirmDialog>
       )}
       {confirmGrant && (

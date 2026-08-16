@@ -1264,6 +1264,39 @@ func (s *sqlStore) ClearWorkspaceIdleStop(ctx context.Context, workspaceID strin
 	return tx.Commit()
 }
 
+// DeleteWorkspace removes the workspace row and everything keyed to it. It is the DB
+// half of the irreversible destroy (ADR 0045 決定 13); the runtime half (home, cloud
+// resources) has already run by the time this is called.
+//
+// The dependents are deleted EXPLICITLY rather than left to ON DELETE CASCADE: only two
+// of the five tables declare one, and a delete that half-works because of a schema
+// detail is the kind of thing that shows up as a foreign-key error in production and
+// nowhere in tests. session_share_proposal does cascade off shared_session_catalog on
+// both dialects, so it is the one dependent left implicit.
+func (s *sqlStore) DeleteWorkspace(ctx context.Context, workspaceID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`DELETE FROM workspace_stop_intent WHERE workspace_id=?`,
+		`DELETE FROM workspace_activity WHERE workspace_id=?`,
+		`DELETE FROM shared_session_catalog WHERE workspace_id=?`,
+		`DELETE FROM session WHERE workspace_id=?`,
+		`DELETE FROM wrapped_dek WHERE workspace_id=?`,
+		`DELETE FROM workspace WHERE id=?`,
+	} {
+		if _, err = tx.ExecContext(ctx, stmt, workspaceID); err != nil {
+			return fmt.Errorf("%s: %w", stmt, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // AcquireWorkspaceOperationFence holds a Postgres session advisory lock across
 // external Runtime I/O. Unlike a time-based lease it remains held while a CP is
 // paused and is released automatically if the process/connection dies. SQLite is

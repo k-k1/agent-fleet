@@ -28,6 +28,14 @@ from the latest image. The rule is simple:
   root; see "What is not available".)
 - So the only data loss risk from a recreate is `~/repos`: **commit / push before recreating.**
 
+**Another environment-dependent detail: some dotfiles may be symlinks.** On deployments
+that keep home on a per-user disk, the auth/connection set (`~/.config`, `~/.ssh`,
+`~/.git-credentials`, `~/.gitconfig`, `~/.claude`, `~/.claude.json`, `~/.codex`) is stored
+on separate always-available storage and linked into `~`, so that losing the home disk
+never costs you your logins. Read and write them exactly as normal — but **don't "repair"
+those symlinks into real copies**: a copy sits on the disk the arrangement exists to
+protect you from. `ls -la ~` showing links there is correct, not damage.
+
 **One environment-dependent exception: `/scratch`.** If `$AF_WS_SCRATCH` is set in your
 shell, this Workspace has a **task-local working disk** at that path, and it is the one
 place that does NOT follow the rules above: **everything under it is gone as soon as the

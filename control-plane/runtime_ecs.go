@@ -50,15 +50,18 @@ type ecsAPI interface {
 	CreateService(context.Context, *ecs.CreateServiceInput, ...func(*ecs.Options)) (*ecs.CreateServiceOutput, error)
 	UpdateService(context.Context, *ecs.UpdateServiceInput, ...func(*ecs.Options)) (*ecs.UpdateServiceOutput, error)
 	RegisterTaskDefinition(context.Context, *ecs.RegisterTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.RegisterTaskDefinitionOutput, error)
+	DeleteService(context.Context, *ecs.DeleteServiceInput, ...func(*ecs.Options)) (*ecs.DeleteServiceOutput, error)
 }
 
 type efsAPI interface {
 	DescribeAccessPoints(context.Context, *efs.DescribeAccessPointsInput, ...func(*efs.Options)) (*efs.DescribeAccessPointsOutput, error)
 	CreateAccessPoint(context.Context, *efs.CreateAccessPointInput, ...func(*efs.Options)) (*efs.CreateAccessPointOutput, error)
+	DeleteAccessPoint(context.Context, *efs.DeleteAccessPointInput, ...func(*efs.Options)) (*efs.DeleteAccessPointOutput, error)
 }
 
 type ssmAPI interface {
 	PutParameter(context.Context, *ssm.PutParameterInput, ...func(*ssm.Options)) (*ssm.PutParameterOutput, error)
+	DeleteParameter(context.Context, *ssm.DeleteParameterInput, ...func(*ssm.Options)) (*ssm.DeleteParameterOutput, error)
 }
 
 // ecsRuntime is the `aws` Runtime adapter (P3-7 段2). It maps one per-membership
@@ -300,6 +303,101 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 		DesiredCount: aws.Int32(0),
 	})
 	return err
+}
+
+// Destroy tears down everything this adapter created for the membership: the ECS
+// service, the two EFS access points and the two SSM SecureString parameters.
+// ecsEC2Runtime.Destroy calls it for the same resources (it shares this adapter as a
+// library) after it has released the slot and deleted the EBS home.
+//
+// ⚠️ It CANNOT delete the home itself. The EFS directories the access points pointed at
+// (/home/<membership>, /claude-config/<membership>) survive the access points, and EFS
+// keeps billing for them — deleting them needs a mount, i.e. a throwaway task
+// (docs/64 §64.18.4, ADR 0045 決定 13-3). They come back as leftovers rather than as an
+// error so the caller can record them; an error here would only make the operator retry
+// a teardown that already did everything it can.
+//
+// Every step is idempotent (already-gone is success): a partial Destroy must be safe to
+// re-run, which is the normal case after a CP restart mid-teardown.
+func (e *ecsRuntime) Destroy(ctx context.Context) ([]string, error) {
+	if err := e.Stop(ctx); err != nil {
+		return nil, err
+	}
+	// Force: the service is at desired 0 but its last task may still be draining, and
+	// DeleteService refuses a service with running tasks without it.
+	if _, ok, err := e.describeService(ctx); err != nil {
+		return nil, err
+	} else if ok {
+		if _, err := e.ecs.DeleteService(ctx, &ecs.DeleteServiceInput{
+			Cluster: aws.String(e.cfg.cluster),
+			Service: aws.String(e.name),
+			Force:   aws.Bool(true),
+		}); err != nil && !isAWSNotFound(err) {
+			return nil, fmt.Errorf("delete service %s: %w", e.name, err)
+		}
+	}
+	leftovers, err := e.destroySharedResources(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return leftovers, nil
+}
+
+// destroySharedResources removes the per-membership EFS access points and SSM secrets —
+// the part of the teardown that is identical on both launch types. Split out so the EC2
+// adapter can run it in its own order (slot and volume first, then this).
+func (e *ecsRuntime) destroySharedResources(ctx context.Context) ([]string, error) {
+	out, err := e.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
+		FileSystemId: aws.String(e.cfg.efsFileSystem),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var leftovers []string
+	for _, ap := range out.AccessPoints {
+		if tagValue(ap.Tags, "af-membership") != e.membershipID {
+			continue
+		}
+		if rd := ap.RootDirectory; rd != nil && aws.ToString(rd.Path) != "" {
+			leftovers = append(leftovers, "efs:"+e.cfg.efsFileSystem+aws.ToString(rd.Path))
+		}
+		if _, err := e.efs.DeleteAccessPoint(ctx, &efs.DeleteAccessPointInput{
+			AccessPointId: ap.AccessPointId,
+		}); err != nil && !isAWSNotFound(err) {
+			return nil, fmt.Errorf("delete access point %s: %w", aws.ToString(ap.AccessPointId), err)
+		}
+	}
+	for _, suffix := range []string{"agent-token", "secret-key"} {
+		name := fmt.Sprintf("/af-ws/%s/%s", e.name, suffix)
+		if _, err := e.ssm.DeleteParameter(ctx, &ssm.DeleteParameterInput{
+			Name: aws.String(name),
+		}); err != nil && !isAWSNotFound(err) {
+			return nil, fmt.Errorf("delete parameter %s: %w", name, err)
+		}
+	}
+	return leftovers, nil
+}
+
+// isAWSNotFound reports whether err is one of the "it is already gone" shapes the
+// teardown treats as success. Matching on the message rather than errors.As over a dozen
+// per-service NotFound types: the four services here spell it four different ways, and a
+// teardown that fails because something was already deleted is the bug we are avoiding.
+func isAWSNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, needle := range []string{
+		"NotFound", // AccessPointNotFound, ParameterNotFound, InvalidVolume.NotFound, …
+		"ServiceNotActive",
+		"ServiceNotFoundException",
+		"does not exist",
+	} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // Start brings the workspace up: ensure the two EFS access points, push the token
