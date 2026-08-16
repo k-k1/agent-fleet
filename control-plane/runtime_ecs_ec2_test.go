@@ -358,23 +358,30 @@ func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...fu
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, r := range in.Resources {
+		// Volumes AND instances: quarantining a slot re-stamps af-role on the INSTANCE
+		// (決定 20), and a fake that only knew about volumes reported "tag written" while
+		// the box stayed in the pool — the implementation looked correct and was not.
+		var tags *[]ec2types.Tag
+		if v := f.volumes[r]; v != nil {
+			tags = &v.Tags
+		} else if i := f.instances[r]; i != nil {
+			tags = &i.Tags
+		} else {
+			continue
+		}
 		for _, t := range in.Tags {
-			v := f.volumes[r]
-			if v == nil {
-				continue
-			}
 			// OVERWRITE, like the real API. Appending left two tags with the same key and
 			// ec2TagValue reads the first, so re-stamping a mark silently kept the old
 			// value — a fake that made a broken implementation look correct.
 			replaced := false
-			for i := range v.Tags {
-				if aws.ToString(v.Tags[i].Key) == aws.ToString(t.Key) {
-					v.Tags[i].Value = t.Value
+			for i := range *tags {
+				if aws.ToString((*tags)[i].Key) == aws.ToString(t.Key) {
+					(*tags)[i].Value = t.Value
 					replaced = true
 				}
 			}
 			if !replaced {
-				v.Tags = append(v.Tags, t)
+				*tags = append(*tags, t)
 			}
 		}
 		f.log("CreateTags %s", r)
@@ -2526,4 +2533,130 @@ func TestECSEC2PoolStatusReportsTheSlotAMI(t *testing.T) {
 			t.Errorf("reported an AMI verdict with no slots to read it from: %+v", []any{st.SlotAmiID, st.SlotAmiStale})
 		}
 	})
+}
+
+// A slot that cannot mount a home must leave the pool, not stay in it failing every user
+// in turn. This is the live-run failure of 2026-08-16 (docs/64 §64.24): a wedged kernel
+// held the previous home's NVMe namespace, the next volume never appeared under /dev, and
+// because the box still looked free, every subsequent Start picked it and failed there.
+func TestECSEC2QuarantinesASlotThatCannotMount(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-bad"] = true
+	h.ssmc.fail["af-mount"] = true
+
+	err := h.rt.Start(ctx)
+	if err == nil {
+		t.Fatal("Start returned nil although the home could not be mounted")
+	}
+	bad := h.ec2.instances["i-bad"]
+	if got := ec2TagValue(bad.Tags, ec2TagRole); got != ec2RoleQuarantined {
+		t.Errorf("slot af-role = %q, want %q — a slot left tagged `slot` is offered again", got, ec2RoleQuarantined)
+	}
+	if ec2TagValue(bad.Tags, ec2TagQuarantineReason) == "" || ec2TagValue(bad.Tags, ec2TagQuarantineAt) == "" {
+		t.Errorf("quarantine left no reason/time on %s: %v", "i-bad", bad.Tags)
+	}
+	if bad.State == nil || bad.State.Name != ec2types.InstanceStateNameStopped {
+		t.Errorf("a quarantined slot must be stopped (it cannot run tasks and bills by the hour), state = %v", bad.State)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "" {
+		t.Errorf("the home is still attached to %s; it has to be free to go somewhere that works", inst)
+	}
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagClaim) != "" {
+		t.Error("the claim survived the failure, so the owner would wait out the claim TTL before retrying")
+	}
+}
+
+// …and the very next Start must go somewhere else. Quarantine that only relabels the box
+// would be cosmetic; what matters is that placement stops choosing it.
+func TestECSEC2StartAfterQuarantineGrowsAFreshSlot(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-bad"] = true
+	h.ssmc.fail["af-mount"] = true
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("the first Start must fail; the mount does")
+	}
+
+	// The box is repaired for nobody: the mount still fails on it. The second Start has
+	// to create a slot instead of reusing the quarantined one.
+	delete(h.ssmc.fail, "af-mount")
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if h.ec2.instances["i-new1"] == nil {
+		t.Fatalf("the second Start did not create a slot; instances = %v", h.ec2.calls)
+	}
+	h.ec2.instances["i-new1"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+	h.ci.registered["i-new1"] = true
+	h.runDeferred(ctx)
+	got := attachedInstance(h.ec2.volumes["vol-1"])
+	if got == "i-bad" {
+		t.Fatal("the second Start landed on the quarantined slot again")
+	}
+	if got == "" {
+		t.Fatal("the second Start attached the home nowhere")
+	}
+	if n := len(h.ec2.instances); n != 2 {
+		t.Errorf("pool holds %d instances, want 2 (the quarantined one plus a fresh slot)", n)
+	}
+}
+
+// A quarantined box still bills. It is out of the pool for placement but must stay on the
+// operator's screen, with the reason — otherwise the only symptom is a bill.
+func TestECSEC2PoolStatusShowsQuarantinedSlots(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-bad"] = true
+	h.ssmc.fail["af-mount"] = true
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("the mount fails, so Start must")
+	}
+
+	st, err := h.factory().PoolStatus(ctx)
+	if err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	var seen *ec2SlotView
+	for i := range st.Slots {
+		if st.Slots[i].InstanceID == "i-bad" {
+			seen = &st.Slots[i]
+		}
+	}
+	if seen == nil {
+		t.Fatalf("the quarantined slot vanished from the pool screen while still billing: %+v", st.Slots)
+	}
+	if !seen.Quarantined || seen.QuarantineReason == "" {
+		t.Errorf("slot view = %+v, want quarantined with a reason", *seen)
+	}
+}
+
+// A destroyed home lingers in `deleting` for a while — measured at ~40 minutes on a
+// volume whose slot had wedged. Until then the pool screen listed it as a home, so a
+// workspace that had been destroyed still looked present to the operator.
+func TestECSEC2PoolStatusHidesVolumesBeingDeleted(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-live", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	gone := h.ec2.addHomeVolume("vol-gone", "M-2", "af-ws-acme-bob", "ap-northeast-1a")
+	gone.State = ec2types.VolumeStateDeleting
+
+	st, err := h.factory().PoolStatus(ctx)
+	if err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	for _, home := range st.Homes {
+		if home.VolumeID == "vol-gone" {
+			t.Fatalf("a volume EC2 is deleting is still listed as a home: %+v", home)
+		}
+	}
+	if len(st.Homes) != 1 || st.Homes[0].VolumeID != "vol-live" {
+		t.Errorf("homes = %+v, want just vol-live", st.Homes)
+	}
 }
