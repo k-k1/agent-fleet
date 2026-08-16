@@ -4,7 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,11 +245,11 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		t.Error("the restored home was built empty rather than from the snapshot")
 	}
 
-	// --- 7. golden snapshot: bake one the way bake-golden.sh does — stop the seed
-	// workspace, release its slot, snapshot the DETACHED volume — and check that a
-	// BRAND-NEW user's home is created from it. Only the volume is created here (no boot):
-	// what needs proving on real AWS is the tag lookup and the image match, not another
-	// task launch. (ADR 0045 決定 9.)
+	// --- 7. golden snapshot: bake one by RUNNING deploy/aws/ecs/bake-golden.sh, then boot
+	// a brand-new user on the home it seeds. Earlier rounds only made the same AWS calls
+	// from Go, which left the operator-facing script itself unproven and stopped at "the
+	// volume came from the right snapshot" — never at "a task starts on it". (ADR 0045
+	// 決定 9 / docs/64 §64.19.4.)
 	//
 	// The hibernation snapshot from step 6 cannot be reused as the golden: a successful
 	// restore deletes it, on purpose — otherwise the user pays for both the volume and a
@@ -257,38 +261,26 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	if err := u1.releaseSlot(ctx); err != nil {
 		t.Fatalf("release u1's slot before baking: %v", err)
 	}
-	seed := aws.ToString(live.volumeOf(u1).VolumeId)
-	out2, err := f.ec2.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
-		VolumeId:    aws.String(seed),
-		Description: aws.String("agent-fleet golden (live test)"),
-		TagSpecifications: []ec2types.TagSpecification{{
-			ResourceType: ec2types.ResourceTypeSnapshot,
-			Tags: []ec2types.Tag{
-				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleGolden)},
-				{Key: aws.String(ec2TagPool), Value: aws.String(f.pool.pool)},
-				{Key: aws.String(ec2TagImage), Value: aws.String(f.base.cfg.workspaceImage)},
-			},
-		}},
-	})
+	script, err := filepath.Abs("../deploy/aws/ecs/bake-golden.sh")
 	if err != nil {
-		t.Fatalf("bake the golden from %s: %v", seed, err)
+		t.Fatalf("locate bake-golden.sh: %v", err)
 	}
-	golden := aws.ToString(out2.SnapshotId)
-	live.waitSnapshot(golden, 20*time.Minute)
-	u3 := f.New(Workspace{ContainerName: "af-ec2c-u3" + sfx, MembershipID: "m-u3", AgentToken: "tok-u3"}, "", nil).(*ecsEC2Runtime)
-	newHome, err := u3.createHomeVolume(ctx, live.azOf(u1))
+	bake := exec.CommandContext(ctx, "bash", script,
+		"--workspace", u1.Name(), "--image", f.base.cfg.workspaceImage, "--pool", f.pool.pool)
+	bake.Env = os.Environ()
+	bakeOut, err := bake.CombinedOutput()
+	t.Logf("bake-golden.sh:\n%s", bakeOut)
 	if err != nil {
-		t.Fatalf("createHomeVolume for a new user: %v", err)
+		t.Fatalf("bake-golden.sh: %v", err)
 	}
-	newID := aws.ToString(newHome.VolumeId)
-	if src := live.snapshotOfVolume(newID); src != golden {
-		t.Errorf("a new user's home was built from %q, want the golden snapshot %s", src, golden)
-	} else {
-		t.Logf("a new user's home came from the golden snapshot %s", golden)
+	// Read the result back the way the CP does rather than parsing the script's output:
+	// what matters is that the tags it wrote are the ones goldenSnapshot() looks for.
+	golden := u1.goldenSnapshot(ctx)
+	if golden == "" {
+		t.Fatalf("bake-golden.sh finished but the CP does not see a usable golden for %s / %s",
+			f.pool.pool, f.base.cfg.workspaceImage)
 	}
-	if _, err := f.ec2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(newID)}); err != nil {
-		t.Errorf("cleaning up the new user's volume %s: %v", newID, err)
-	}
+	t.Logf("the CP picked up the baked golden %s", golden)
 	// The golden belongs to the pool, not to u1 — Destroy below must leave it alone, and
 	// the harness teardown removes it.
 	defer func() {
@@ -297,13 +289,42 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		}
 	}()
 
+	// A brand-new user, started for real. u2 still holds the only slot at the cap set in
+	// step 5, so raise it by one rather than evicting — this measures a new user's first
+	// start, and an eviction in the middle of it would measure something else.
+	f.pool.maxSlots = 2
+	u1.pool.maxSlots, u2.pool.maxSlots = 2, 2
+	u3 := f.New(Workspace{ContainerName: "af-ec2c-u3" + sfx, MembershipID: "m-u3", AgentToken: "tok-u3"}, "", nil).(*ecsEC2Runtime)
+	u3.pool.maxSlots = 2
+	t7 := time.Now()
+	if err := u3.Start(ctx); err != nil {
+		t.Fatalf("u3 (a brand-new user seeded from the golden) Start: %v", err)
+	}
+	live.waitState(u3, "running", 12*time.Minute)
+	t.Logf("MEASURED first start of a NEW user seeded from the golden = %.1fs (compare start #1 = %.1fs, which built an empty home)",
+		time.Since(t7).Seconds(), coldStart.Seconds())
+	if src := live.snapshotOfVolume(aws.ToString(live.volumeOf(u3).VolumeId)); src != golden {
+		t.Errorf("the new user's home was built from %q, want the golden snapshot %s", src, golden)
+	}
+	// The seed really arrived: u1's marker was written into the volume this golden was
+	// taken from, so it has to be in a brand-new user's home — and readable from the task's
+	// slot, not just present on a volume nobody mounted.
+	slot3 := live.slotOf(u3)
+	if got := live.run(slot3, "cat /af-home/m-u3/dev/af-marker.txt; ls /af-home/m-u3/dev/.local/bin 2>&1 | head -20"); !strings.Contains(got, "af-ec2c-marker-u1") {
+		t.Errorf("a home seeded from the golden did not carry the seed's contents: %q", got)
+	} else {
+		t.Logf("host view of the golden-seeded home:\n%s", got)
+	}
+
 	// --- 8. leave nothing running; the volumes are deleted by Destroy. u1 was already
 	// stopped and released in step 7. ---
-	if err := u2.Stop(ctx); err != nil {
-		t.Errorf("final stop: %v", err)
+	for _, rt := range []*ecsEC2Runtime{u2, u3} {
+		if err := rt.Stop(ctx); err != nil {
+			t.Errorf("final stop %s: %v", rt.Name(), err)
+		}
+		live.waitTasksGone(rt, 3*time.Minute)
 	}
-	live.waitTasksGone(u2, 3*time.Minute)
-	for _, rt := range []*ecsEC2Runtime{u1, u2} {
+	for _, rt := range []*ecsEC2Runtime{u1, u2, u3} {
 		leftovers, err := rt.Destroy(ctx)
 		if err != nil {
 			t.Errorf("Destroy %s: %v", rt.Name(), err)
@@ -576,4 +597,271 @@ func (l *liveEC2) paramsOf(rt *ecsEC2Runtime) int {
 		}
 	}
 	return n
+}
+
+// TestECSEC2LiveScale is the second live test: everything the lifecycle test does with one
+// user at a time, done with several at once and left running past the timers. Three things
+// had never been exercised before it (docs/64 §64.20):
+//
+//	 - concurrent Starts. Slot allocation is a race by design — it is decided by AWS
+//	   accepting exactly one AttachVolume on a fixed device name — and one user at a time
+//	   never puts two Starts on the same free slot.
+//	 - a second AZ. An EBS home is pinned to its AZ, so "this user's home is in 1c" has to
+//	   produce a slot in 1c; with a single subnet configured that path is dead code.
+//	 - the sweep loop actually looping, over several users, for longer than its own timers.
+//	   Every earlier run called sweep() by hand a handful of times.
+//
+// Opt-in on top of the lifecycle test's own gate, because it holds four instances at once
+// and runs for well over half an hour:
+//
+//	AF_ECS_EC2_LIVE=1 AF_ECS_EC2_LIVE_SCALE=1 go test -run TestECSEC2LiveScale -v -timeout 90m .
+func TestECSEC2LiveScale(t *testing.T) {
+	if os.Getenv("AF_ECS_EC2_LIVE") != "1" || os.Getenv("AF_ECS_EC2_LIVE_SCALE") != "1" {
+		t.Skip("set AF_ECS_EC2_LIVE=1 AF_ECS_EC2_LIVE_SCALE=1 (and source the harness state.env) for the multi-user soak")
+	}
+	ctx := context.Background()
+	factory, err := newECSEC2Factory(&manager{})
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	f := factory.(*ecsEC2Factory)
+	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(f.base.cfg.region))
+	if err != nil {
+		t.Fatalf("aws config: %v", err)
+	}
+	live := &liveEC2{t: t, ctx: ctx, ec2: ec2.NewFromConfig(ac), ecs: ecs.NewFromConfig(ac), ssm: ssm.NewFromConfig(ac), cluster: f.base.cfg.cluster}
+
+	if n := live.poolSize(f); n != 0 {
+		t.Fatalf("the pool already holds %d slot(s). Start from an empty pool, or this measures "+
+			"how an earlier run's leftovers get reused rather than how %d users are placed", n, 3)
+	}
+	if f.pool.maxSlots < 4 {
+		t.Fatalf("AF_ECS_EC2_MAX_SLOTS=%d; this test needs 4 (three users plus one in the second AZ)", f.pool.maxSlots)
+	}
+	sfx := os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
+	newUser := func(n string) *ecsEC2Runtime {
+		return f.New(Workspace{ContainerName: "af-ec2c-" + n + sfx, MembershipID: "m-" + n, AgentToken: "tok-" + n}, "", nil).(*ecsEC2Runtime)
+	}
+
+	// --- 1. three users start AT THE SAME TIME. The interesting outcome is not that they
+	// come up but that they come up on three DIFFERENT slots: the allocation has no lock,
+	// it relies on AttachVolume being the arbiter (docs/64 §64.15.2). ---
+	users := []*ecsEC2Runtime{newUser("s1"), newUser("s2"), newUser("s3")}
+	var wg sync.WaitGroup
+	errs := make([]error, len(users))
+	t0 := time.Now()
+	for i, u := range users {
+		wg.Add(1)
+		go func(i int, u *ecsEC2Runtime) {
+			defer wg.Done()
+			errs[i] = u.Start(ctx)
+		}(i, u)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("%s Start: %v", users[i].Name(), err)
+		}
+	}
+	for _, u := range users {
+		live.waitState(u, "running", 15*time.Minute)
+	}
+	t.Logf("MEASURED three concurrent cold starts, all running = %.1fs", time.Since(t0).Seconds())
+
+	slots := map[string]string{}
+	azs := map[string]string{}
+	for _, u := range users {
+		s := live.slotOf(u)
+		if s == "" {
+			t.Fatalf("%s is running with no slot", u.Name())
+		}
+		if other, dup := slots[s]; dup {
+			t.Fatalf("%s and %s are both on slot %s — two homes on one box is the thing "+
+				"the fixed device name is supposed to make impossible", other, u.Name(), s)
+		}
+		slots[s] = u.Name()
+		live.assertTaskPinnedTo(u, s)
+		live.assertHomeMounted(u, s)
+		azs[u.Name()] = live.azOf(u)
+		live.run(s, fmt.Sprintf("echo marker-%s > /af-home/%s/dev/af-marker.txt", u.base.membershipID, u.base.membershipID))
+	}
+	if n := live.poolSize(f); n != 3 {
+		t.Errorf("pool holds %d slots for 3 users, want exactly 3", n)
+	}
+	// Say what the AZ numbers mean instead of letting three-in-one-AZ read as a failure or
+	// three-across-AZs read as a feature: a NEW home follows anyAZ(), which is the
+	// lowest-sorted configured subnet, deterministically. There is no spreading.
+	t.Logf("AZs of the three new homes: %v (all the same is EXPECTED — a new home takes the "+
+		"first configured subnet's AZ; the adapter does not spread)", azs)
+
+	// --- 2. the second AZ. An EBS volume never leaves its AZ, so a user whose home is
+	// there must get a slot there — including growing one, since every existing slot is in
+	// the other AZ and offering one would fail the attach. ---
+	subnetB := os.Getenv("AF_HARNESS_SUBNET_B")
+	var u4 *ecsEC2Runtime
+	if subnetB == "" {
+		t.Log("AZ COVERAGE SKIPPED: AF_HARNESS_SUBNET_B is unset, so only one AZ is configured. " +
+			"Re-run against a harness built with two private subnets to cover it.")
+	} else {
+		azB := live.azOfSubnet(subnetB)
+		if azB == "" {
+			t.Fatalf("cannot resolve the AZ of %s", subnetB)
+		}
+		if azB == azs[users[0].Name()] {
+			t.Fatalf("AF_HARNESS_SUBNET_B (%s) is in %s, the same AZ as the other homes", subnetB, azB)
+		}
+		u4 = newUser("s4")
+		if _, err := u4.createHomeVolume(ctx, azB); err != nil {
+			t.Fatalf("create a home in %s: %v", azB, err)
+		}
+		t4 := time.Now()
+		if err := u4.Start(ctx); err != nil {
+			t.Fatalf("s4 (home in %s) Start: %v", azB, err)
+		}
+		live.waitState(u4, "running", 15*time.Minute)
+		t.Logf("MEASURED first start of a user whose home is in the second AZ = %.1fs", time.Since(t4).Seconds())
+		slot4 := live.slotOf(u4)
+		if _, reused := slots[slot4]; reused {
+			t.Fatalf("s4 landed on %s, a slot in the other AZ — its home could not have attached there", slot4)
+		}
+		if got := live.instanceAZ(slot4); got != azB {
+			t.Errorf("s4's slot is in %s, its home is in %s", got, azB)
+		}
+		live.assertTaskPinnedTo(u4, slot4)
+		live.assertHomeMounted(u4, slot4)
+		live.run(slot4, "echo marker-m-s4 > /af-home/m-s4/dev/af-marker.txt")
+		slots[slot4] = u4.Name()
+	}
+
+	// --- 3. the soak. Two users go away, one stays. The sweep LOOP (not a hand-called
+	// sweep) then runs for longer than its own timers, over every home in the pool. What is
+	// being watched for is the quiet kind of breakage: a live workspace disturbed, a slot
+	// leaked, a home detached — or a hibernation starting on its own, which is exactly what
+	// the sweeper stopped being allowed to do (ADR 0045 決定 14). ---
+	for _, u := range users[1:] {
+		if err := u.Stop(ctx); err != nil {
+			t.Fatalf("%s Stop before the soak: %v", u.Name(), err)
+		}
+		live.waitTasksGone(u, 5*time.Minute)
+	}
+	f.pool.slotSleepAfter = 2 * time.Minute
+	f.pool.sweepEvery = 45 * time.Second
+	f.pool.hibernateAfter = time.Minute // a trap: the LOOP must still never start one
+	// A second loop on purpose: newECSEC2Factory already started one, but it took its
+	// interval from AF_ECS_EC2_SWEEP_SEC when the ticker was created (an hour in the
+	// harness), so it would fire once at most in this window. Both read the same f.pool.
+	soakCtx, stopSoak := context.WithCancel(ctx)
+	go f.sweepLoop(soakCtx)
+	soak := 18 * time.Minute
+	t.Logf("soaking for %s with the sweep loop running every %s (slot sleep %s)", soak, f.pool.sweepEvery, f.pool.slotSleepAfter)
+	deadline := time.Now().Add(soak)
+	asleep := map[string]bool{}
+	for time.Now().Before(deadline) {
+		time.Sleep(90 * time.Second)
+		if s := users[0].State(ctx); s != "running" {
+			stopSoak()
+			t.Fatalf("the sweeper disturbed the one workspace that was still in use: state=%q", s)
+		}
+		if n := live.poolSize(f); n != len(slots) {
+			stopSoak()
+			t.Fatalf("pool size drifted to %d, want %d", n, len(slots))
+		}
+		for _, u := range users[1:] {
+			vol, err := u.homeVolume(ctx)
+			if err != nil || vol == nil {
+				stopSoak()
+				t.Fatalf("%s lost its home volume during the soak (err %v) — the sweep loop "+
+					"started a hibernation, which is no longer its job", u.Name(), err)
+			}
+			if inst := attachedInstance(vol); inst == "" {
+				stopSoak()
+				t.Fatalf("%s's home was detached from its slot; lazy release means it stays", u.Name())
+			} else if live.instanceState(inst) == "stopped" {
+				asleep[inst] = true
+			}
+		}
+		t.Logf("soak +%.0fm: pool=%d asleep=%d", soak.Minutes()-time.Until(deadline).Minutes(), live.poolSize(f), len(asleep))
+	}
+	stopSoak()
+	if len(asleep) < len(users)-1 {
+		t.Errorf("only %d of the %d dormant slots were ever put to sleep during %s", len(asleep), len(users)-1, soak)
+	}
+
+	// The point of sleeping rather than releasing: the owner comes back to the same box,
+	// with the same home on it.
+	t6 := time.Now()
+	if err := users[1].Start(ctx); err != nil {
+		t.Fatalf("waking %s after the soak: %v", users[1].Name(), err)
+	}
+	live.waitState(users[1], "running", 12*time.Minute)
+	t.Logf("MEASURED wake after an 18-minute soak = %.1fs", time.Since(t6).Seconds())
+	if got := live.run(live.slotOf(users[1]), "cat /af-home/m-s2/dev/af-marker.txt"); !strings.Contains(got, "marker-m-s2") {
+		t.Errorf("the home did not survive the soak: %q", got)
+	}
+
+	// --- 4. clean up: nothing may outlive this test. ---
+	all := append([]*ecsEC2Runtime{}, users...)
+	if u4 != nil {
+		all = append(all, u4)
+	}
+	for _, u := range all {
+		if err := u.Stop(ctx); err != nil {
+			t.Errorf("final stop %s: %v", u.Name(), err)
+		}
+		live.waitTasksGone(u, 5*time.Minute)
+	}
+	for _, u := range all {
+		leftovers, err := u.Destroy(ctx)
+		if err != nil {
+			t.Errorf("Destroy %s: %v", u.Name(), err)
+		}
+		u := u
+		live.eventually(5*time.Minute, u.Name()+"'s cloud resources are gone", func() bool {
+			_, ok, err := u.base.describeService(ctx)
+			return err == nil && !ok && live.accessPointsOf(u) == 0 && live.paramsOf(u) == 0
+		})
+		if len(leftovers) > 0 {
+			t.Logf("Destroy %s left behind (expected, EFS dirs need a mount): %v", u.Name(), leftovers)
+		}
+	}
+	names := make([]string, 0, len(slots))
+	for s := range slots {
+		names = append(names, s)
+	}
+	sort.Strings(names)
+	t.Logf("SUMMARY slots used: %v (the harness teardown terminates them)", names)
+}
+
+func (l *liveEC2) azOfSubnet(subnetID string) string {
+	out, err := l.ec2.DescribeSubnets(l.ctx, &ec2.DescribeSubnetsInput{SubnetIds: []string{subnetID}})
+	if err != nil || len(out.Subnets) == 0 {
+		l.t.Logf("describe subnet %s: %v", subnetID, err)
+		return ""
+	}
+	return aws.ToString(out.Subnets[0].AvailabilityZone)
+}
+
+func (l *liveEC2) instanceAZ(instanceID string) string {
+	i := l.instance(instanceID)
+	if i == nil || i.Placement == nil {
+		return ""
+	}
+	return aws.ToString(i.Placement.AvailabilityZone)
+}
+
+func (l *liveEC2) instanceState(instanceID string) string {
+	i := l.instance(instanceID)
+	if i == nil || i.State == nil {
+		return ""
+	}
+	return string(i.State.Name)
+}
+
+func (l *liveEC2) instance(instanceID string) *ec2types.Instance {
+	out, err := l.ec2.DescribeInstances(l.ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil || len(out.Reservations) == 0 || len(out.Reservations[0].Instances) == 0 {
+		l.t.Logf("describe instance %s: %v", instanceID, err)
+		return nil
+	}
+	return &out.Reservations[0].Instances[0]
 }
