@@ -214,7 +214,7 @@ NOT RENDERED」。本件もそれに従う。
     "rel":   "console/src/features/mirror/MirrorView.tsx",
     "verb":  "edit",                       // edit | add | delete（転写から見た最後の操作）
     "added": 42, "removed": 3,             // Edits を持つ kind のみ。無ければ省略
-    "turns": 3,                            // 触ったターン数
+    "count": 3,                            // このファイルを触った編集ツール呼び出しの数
     "lastIdx": 812,                        // 最後に触ったターンの transcript idx
     "lastTs": "2026-08-17T12:04:11+09:00",
     "sidechain": true                      // サブエージェントだけが触った場合
@@ -224,6 +224,22 @@ NOT RENDERED」。本件もそれに従う。
 
 - `(repo, rel)` が突合キー、`path` は FileView 用（§68.4.2）。
 - 並び順はサーバが `lastTs` 降順で確定させる（クライアントで並べ替える時だけ触る）。
+
+### 68.8.4 `transcript.Part.Verb`（追加した任意フィールド）
+
+`verb` を**推定に頼らない**ために、パーサが知っている場合だけ申告できる欄を `Part` に足した。
+
+⚠️ **「Edits が無い＝削除」と読んではいけない。** codex の delete だけが意図的に
+before/after を持たないが、それは codex が `*** Delete File:` を読んでいるから言えることで、
+**そもそも差分本体を運ばない kind**（cursor / copilot・§68.2.1）に同じ規則を当てると、
+そのエージェントが触ったファイルが**全部「削除」になる**。よって:
+
+- パーサが知っている（codex）→ `Verb` を明示。`update` は `edit` に正規化。
+- 知らない（claude / opencode）→ `Edits` から導出（全ハンクが純挿入なら `add`、他は `edit`）。
+- 何も無い → **`edit`**（安全側）。`delete` には決してしない。
+
+同じ理由で、codex の rename（`*** Move to:`）は `Info` に `"<src> → <dst>"` を残したまま
+`File` を**行き先のパス**にした。従来の `File` は矢印入りの文字列で、開ける座標ではなかった。
 
 ### 68.8.2 突合（Console 側）
 
@@ -253,6 +269,34 @@ NOT RENDERED」。本件もそれに従う。
 
 ---
 
+## 68.9.1 実装した形（P0・2026-08-17）
+
+| 層 | 置き場 |
+|---|---|
+| 語彙 | `internal/transcript/files.go` — `FileEdit` / `FileTouch` / `EditVerb` / `EditStat` / `FileEditsInTurn`、`Part.Verb` |
+| claude | `internal/agents/claude/transcript.go` `CollectFileEdits(lines, from)` |
+| codex | `internal/agents/codex/transcript.go` — `Verb` 明示＋rename の `File` を行き先へ |
+| 集計 | `session_files.go` `sessionFileTouches(...)` ＋ 両ハンドラで `resp["files"]` |
+| Console | `features/mirror/sessionFiles.ts`（突合・並び・開き方）/ `FileChangeStrip.tsx`（帯）/ `MirrorView.tsx`（`caps.openDiff` と公開ストア）/ `CommandPalette.tsx`（4 つ目のモード） |
+
+**走査コストの扱い（§68.10-9 の答え）。** 全転写を毎ポーリング数え直すのは無理だった——
+`+N −M` は行差分（LCS）であり、編集 1 件あたり最大 2 万文字ぶんの表になる。転写は
+**追記のみ**なので、折り畳んだ位置から先だけを畳む形にした（`sessionFileTouches` の
+`from`）。無効化は 3 条件——転写のパスが変わった／**先頭レコードの指紋が変わった**（同じ
+長さのまま書き換えられた場合）／畳んだ数より短くなった。
+
+⚠️ **store 由来の kind は最後の 1 ターンを畳んではいけない。** opencode は既存メッセージへ
+part を足し続けるので（`genericMutableTail` と同じ理由）、そのターンを確定として畳むと
+**ポーリングの度に同じ編集を数える**。可変な尾だけは毎回コピーに畳み直している。
+
+**`+N −M` は 2 箇所で数えることになった。** Agent が数え、Console の差分ビューも数える。
+食い違えば「帯の数字と、その行を開いた差分の中身が合わない」という、画面上はもっともらしい
+壊れ方になるので、`EditStat` は `viewer/DiffView.tsx` の `lineDiff` と**同じ規則**（LCS ＋
+同じサイズガード）にし、**同一の表**を両側のテストに置いた
+（`internal/transcript/files_test.go` ↔ `features/viewer/lineDiffStat.dom.test.tsx`）。
+
+---
+
 ## 68.10 実機で確かめること
 
 1. **長いセッション**（転写 1000 行超）で、上へスクロールしても件数が変わらないこと（§68.4 の回帰）。
@@ -265,6 +309,24 @@ NOT RENDERED」。本件もそれに従う。
 8. 共有セッションビューに帯が出ないこと。
 9. ポーリング 1 周の増分コスト——`CollectTasks` ほかで既に全行を舐めているので、
    **新しい走査を足すのではなく同じパスに相乗りさせる**か、`(path, size, mtime)` でメモ化する。
+   → §68.9.1 で追記前提の逐次畳み込みにした。実セッションでの体感は未計測。
+
+### 68.10.1 いま確かめた範囲（2026-08-17）
+
+自前の headless Chromium で**実バンドル**を撮って確認した（`scripts/shots` のスタブ経由・
+CP も Workspace Agent も無し）。見たのは **1・2・5・7・8 ではなく描画と導線**である:
+
+- 帯が ja / en・dark / light で出て、行が「名前＋薄いディレクトリ＋増減＋状態バッジ」に
+  なること。**バッジの列が揃うこと**——増減を持たない行（削除・差分本体を持たない kind）で
+  `margin-left:auto` を載せた要素ごと消えて、バッジがファイル名に貼り付いていた。
+  空でも `.mfl-stat` を描いて直した。
+- コマンドパレットの 4 つ目のモードが**出る／選べる／5 行を新しい順で並べる**こと
+  （Ctrl+P → Tab×3 を CDP で叩いて確認）。
+
+**まだ実機で見ていない**: 長い転写での件数不変（1）、停止済みセッション（2）、
+worktree 違いの開き先（3）、subdir 起動（4）、未追跡行の遷移（5）、codex / opencode の
+実転写（6）、未対応 kind と共有ビューでの非表示（7・8）。ここは単体テストで
+押さえてあるだけで、実セッションでは未検証。
 
 ---
 

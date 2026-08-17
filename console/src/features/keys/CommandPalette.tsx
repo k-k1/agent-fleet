@@ -8,6 +8,11 @@
 //   - file    : recursive filename search under ~/repos (server-side via /fs/search = ripgrep
 //               --files, .gitignore-honouring) → open the file. Unlike command/changed (a
 //               static list client-fuzzed), this queries the backend per keystroke.
+//   - session : the files the ACTIVE session's agent edited (docs/68), joined with the
+//               working tree the same way the mirror's 変更ファイル strip joins them.
+//               A different axis from `changed`, which is per working copy and cannot
+//               tell two sessions in the same worktree apart. Appended last on purpose:
+//               inserting it earlier would renumber every existing mode's Tab position.
 //
 // Search matches across ALL locales (cmdSearch) so typing English or Japanese finds a
 // command regardless of the current UI language; display uses the current locale.
@@ -41,12 +46,22 @@ import { useReposStore } from "../repos/store.ts";
 import { revealRepoInRail } from "../repos/reveal.ts";
 import { openFileDiff } from "../scm/open.ts";
 import { agentOf } from "../../agents/registry.ts";
+import { activePane } from "../../layout/ops.ts";
+import {
+  joinChanges,
+  openRow,
+  sortRows,
+  useSessionFilesStore,
+  type FsChange,
+  type SessionFile,
+} from "../mirror/sessionFiles.ts";
 
-type Mode = "command" | "changed" | "file";
-const MODES: Mode[] = ["command", "changed", "file"];
+type Mode = "command" | "changed" | "file" | "session";
+const MODES: Mode[] = ["command", "changed", "file", "session"];
 const MODE_LABEL: Record<Mode, MsgKey> = {
   command: "keys.palette.mode_command",
   changed: "keys.palette.mode_changed",
+  session: "keys.palette.mode_session",
   file: "keys.palette.mode_file",
 };
 // File search is rooted at ~/repos: the working-copy scope, so results are code files (the
@@ -133,6 +148,33 @@ async function loadChangedItems(): Promise<Item[]> {
   return lists.flat();
 }
 
+// Load the ACTIVE session's edited files (docs/68). The list itself normally rides the
+// mirror's transcript poll, so it is read from the store first; a session whose mirror was
+// never open is fetched once here, with the smallest window the API accepts — the `files`
+// aggregate is whole-transcript regardless of how many turns come back with it.
+async function loadSessionItems(session: string): Promise<Item[]> {
+  let files = useSessionFilesStore.getState().bySession[session];
+  const [fetched, changesRes] = await Promise.all([
+    files
+      ? Promise.resolve(null)
+      : api(`api/sessions/${encodeURIComponent(session)}/messages?since=0&tail=1&limit=50`).catch(() => null),
+    api("api/fs/changes").catch(() => null),
+  ]);
+  if (!files) {
+    files = Array.isArray(fetched?.files) ? (fetched.files as SessionFile[]) : [];
+    useSessionFilesStore.getState().set(session, files);
+  }
+  const changes: FsChange[] = Array.isArray(changesRes?.changes) ? changesRes.changes : [];
+  return sortRows(joinChanges(files, changes), "recent").map((row) => ({
+    id: "sf:" + row.path,
+    title: row.rel || row.path,
+    sub: row.repo || "",
+    search: row.path + " " + (row.repo || ""),
+    keys: [],
+    run: (split: boolean) => openRow(row, split),
+  }));
+}
+
 // One /fs/search hit (a home-relative path like "repos/<repo>/<...>") → a palette row. Split
 // off the repo segment for the badge, show the in-repo path as the title, open it as a file.
 function fileItem(homeRel: string): Item {
@@ -159,13 +201,26 @@ export function CommandPalette() {
   const open = useKeysStore((s) => s.paletteOpen);
   const sessions = useSessionsStore((s) => s.sessions);
   const repos = useReposStore((s) => s.repos);
+  // Subscribed (not a getState peek): which session is active decides whether the session
+  // mode exists at all, and the palette must not open with a stale answer.
+  const layout = useLayoutStore((s) => s.layout);
   const commands = useEffectiveCommands();
   const locale = useLocale(); // re-render + recompute items when the UI language changes
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const [mode, setMode] = useState<Mode>("command");
   const [changed, setChanged] = useState<Item[] | null>(null); // null = loading
+  const [sessionFiles, setSessionFiles] = useState<Item[] | null>(null); // null = loading
   const [fileHits, setFileHits] = useState<Item[] | null>(null); // null = searching (file mode)
+  // The session mode needs a session to be about. With none in the active pane the mode is
+  // not offered at all rather than offered empty — an empty mode reads as "this session
+  // changed nothing", which is a different claim from "there is no session here".
+  const activeSessionName = activePane(layout)?.session ?? null;
+  const activeKind = sessions.find((x) => x.name === activeSessionName)?.kind;
+  const modes = MODES.filter(
+    (m) => m !== "session" || (!!activeSessionName && !!activeKind && agentOf(activeKind).caps.transcript),
+  );
+
   const inputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const selRef = useRef<HTMLDivElement | null>(null);
@@ -206,6 +261,20 @@ export function CommandPalette() {
       cancelled = true;
     };
   }, [open, mode]);
+
+  // Same shape as the changed-files fetch: re-entering the mode always reloads, so a stale
+  // list from a previous session can never flash before the fresh one lands.
+  useEffect(() => {
+    if (!open || mode !== "session" || !activeSessionName) return;
+    let cancelled = false;
+    setSessionFiles(null);
+    void loadSessionItems(activeSessionName).then((items) => {
+      if (!cancelled) setSessionFiles(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, mode, activeSessionName]);
 
   // File mode searches the backend per keystroke (debounced). An empty query yields nothing
   // (there's no whole-tree listing to fuzz locally — the point of /fs/search is to not).
@@ -281,8 +350,18 @@ export function CommandPalette() {
   // command/changed are static lists filtered client-side; file is already server-filtered by q.
   // File "loading" only counts with a live query — an empty query shows the type-to-search hint,
   // never a spurious spinner from the initial null state.
-  const loading = (mode === "changed" && changed === null) || (mode === "file" && fileHits === null && !!q.trim());
-  const items = mode === "command" ? commandItems : mode === "changed" ? (changed ?? []) : (fileHits ?? []);
+  const loading =
+    (mode === "changed" && changed === null) ||
+    (mode === "session" && sessionFiles === null) ||
+    (mode === "file" && fileHits === null && !!q.trim());
+  const items =
+    mode === "command"
+      ? commandItems
+      : mode === "changed"
+        ? (changed ?? [])
+        : mode === "session"
+          ? (sessionFiles ?? [])
+          : (fileHits ?? []);
   const filtered = useMemo(
     () => (mode === "file" ? items : items.filter((it) => fuzzy(q, it.search + " " + it.sub))),
     [items, q, mode],
@@ -301,8 +380,8 @@ export function CommandPalette() {
     inputRef.current?.focus();
   };
   const cycleMode = (dir: number) => {
-    const i = MODES.indexOf(mode);
-    switchMode(MODES[(i + dir + MODES.length) % MODES.length]);
+    const i = modes.indexOf(mode);
+    switchMode(modes[(i + dir + modes.length) % modes.length]);
   };
 
   if (!open) return null;
@@ -332,9 +411,11 @@ export function CommandPalette() {
           placeholder={t(
             mode === "changed"
               ? "keys.palette.placeholder_changed"
-              : mode === "file"
-                ? "keys.palette.placeholder_file"
-                : "keys.palette.placeholder",
+              : mode === "session"
+                ? "keys.palette.placeholder_session"
+                : mode === "file"
+                  ? "keys.palette.placeholder_file"
+                  : "keys.palette.placeholder",
           )}
           aria-label={t("keys.palette.aria")}
           autoComplete="off"
@@ -368,7 +449,7 @@ export function CommandPalette() {
           }}
         />
         <div className="cp-modes" role="tablist">
-          {MODES.map((m) => (
+          {modes.map((m) => (
             <button
               key={m}
               type="button"
@@ -391,7 +472,13 @@ export function CommandPalette() {
           ) : loading ? (
             <div className="cp-empty">{t(mode === "file" ? "keys.palette.file_searching" : "keys.palette.changed_loading")}</div>
           ) : filtered.length === 0 ? (
-            <div className="cp-empty">{mode === "changed" ? t("keys.palette.changed_empty") : t("keys.palette.empty")}</div>
+            <div className="cp-empty">
+              {mode === "changed"
+                ? t("keys.palette.changed_empty")
+                : mode === "session"
+                  ? t("keys.palette.session_empty")
+                  : t("keys.palette.empty")}
+            </div>
           ) : (
             filtered.map((it, i) => (
               <div
