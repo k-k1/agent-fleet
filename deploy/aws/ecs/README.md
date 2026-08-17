@@ -115,6 +115,36 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
    Versioned (release) images add `ImageTag=<v>` to the overrides — the default
    `dev` matches the sandbox push above.
 
+### WAF (optional, off by default)
+
+`30-ingress` can put an AWS WAF web ACL in front of the ALB. Two knobs, and only two on
+purpose:
+
+```bash
+--parameter-overrides WafRateLimitPer5Min=3000 WafIpReputation=on ...
+```
+
+- `WafRateLimitPer5Min` — requests per 5 minutes from one IP before WAF blocks it. `0`
+  (default) creates no web ACL at all. It counts every request including Console polling,
+  so keep it far above what a whole office behind one NAT produces. Verified end to end:
+  with the limit at 100, a 150-request burst got `403` within ~45s; raising it released
+  the IP on the next evaluation.
+- `WafIpReputation` — AWS's managed IP reputation list. It matches on the SOURCE, not on
+  the body. Measured on a real deployment: it blocked the scanners probing `/.env` and
+  friends within minutes of being switched on.
+
+⚠️ **The signature rule sets (Core rule set, SQLi, XSS, LFI) are deliberately not
+offered.** This product carries source code and shell commands in ordinary request bodies
+— chat messages, file writes, terminal input — so `'; DROP TABLE`, `../../etc/passwd` and
+`<script>` are legitimate traffic here. Those rules would 403 real work at random, and it
+would look like a product bug long before anyone suspects the WAF. (WAF also inspects only
+the first 8 KB of a body by default, so a signature set buys less than it appears to.)
+
+For a private deployment the cheaper and stronger control is upstream: set
+`00-network`'s `AlbIngressCidr` to your own range and the traffic never reaches the ALB.
+Cost, if you do turn WAF on: about $5/month for the web ACL plus $1/month per rule, plus
+$0.60 per million requests.
+
 ## Prove-out sequence
 
 Runs from a host (or an Agent Fleet workspace — dogfooding) with **dedicated
