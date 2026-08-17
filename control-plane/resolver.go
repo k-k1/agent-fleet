@@ -233,6 +233,35 @@ func (m *manager) checkTenantProvider(ctx context.Context, mv MembershipView) *a
 		"tenant " + mv.TenantSlug + " requires signing in with: " + strings.Join(allowed, ", ")}
 }
 
+// checkTenantIP enforces tenant.allowed_cidrs (docs/66 + ADR 0047 決定 3). It sits
+// next to checkTenantProvider because it answers the same shape of question — "may
+// this request use THIS tenant" — at the same choke point, which is the first place
+// where the tenant is known at all (the login page and the OAuth round trip happen
+// before anyone knows which tenant is being entered).
+//
+// ★ super_admin is exempt (決定 4). This is a tenant's own control, and the operator
+// must always be able to undo a tenant that locked itself out; without the exemption
+// the only remedy would be editing the database.
+//
+// ★ It is NOT called from resolveByMembership. That is the PAT path — MCP and the
+// internal git provider — and its source address is the caller's OWN Workspace
+// container, not a place a person is sitting. Enforcing here would mean a tenant that
+// allowlists its office silently blocks every agent inside its own workspaces
+// (ADR 0047 決定 3). Revoking that access is the membership's job, as it always was.
+func (m *manager) checkTenantIP(ctx context.Context, ident Identity, mv MembershipView) *apiError {
+	if ident.Role == "super_admin" {
+		return nil
+	}
+	if m.tenantLogin.networkAllowed(ctx, mv.TenantID, clientIPFrom(ctx)) {
+		return nil
+	}
+	// The message names the tenant but not the allowed ranges: whoever is refused is
+	// by definition somewhere the tenant did not authorize, and the list is the
+	// administrator's to know rather than the refused caller's to enumerate.
+	return &apiError{http.StatusForbidden, "ip_not_allowed",
+		"tenant " + mv.TenantSlug + " restricts which networks may be used; this one is not allowed"}
+}
+
 // resolveFull maps a request's identity + selected tenant to its runtime and
 // records, creating the workspace on first use. tenantSel is the X-AF-Tenant
 // value (slug or tenant id); empty means "default selection".
@@ -250,6 +279,9 @@ func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string)
 		return nil, aerr
 	}
 	if aerr := m.checkTenantProvider(ctx, mv); aerr != nil {
+		return nil, aerr
+	}
+	if aerr := m.checkTenantIP(ctx, ident, mv); aerr != nil {
 		return nil, aerr
 	}
 	return m.buildResolved(ctx, ident, mv)
@@ -272,6 +304,9 @@ func (m *manager) resolveMembership(ctx context.Context, key, email, tenantSel s
 		return Identity{}, MembershipView{}, aerr
 	}
 	if aerr := m.checkTenantProvider(ctx, mv); aerr != nil {
+		return Identity{}, MembershipView{}, aerr
+	}
+	if aerr := m.checkTenantIP(ctx, ident, mv); aerr != nil {
 		return Identity{}, MembershipView{}, aerr
 	}
 	return ident, mv, nil

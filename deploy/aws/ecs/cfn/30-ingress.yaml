@@ -447,6 +447,13 @@ Resources:
             - { Name: AF_DB_PORT, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbPort" } }
             - { Name: AF_DB_NAME, Value: agentfleet }
             - { Name: AF_DB_USER, Value: afadmin }
+            # ⚠️ Exactly one proxy sits in front of the CP here: this ALB. The CP needs
+            # to be TOLD, because it cannot tell — without this, r.RemoteAddr is the load
+            # balancer and every request looks like it comes from the same private
+            # address. That is what a tenant's source-network restriction is matched
+            # against (docs/66, ADR 0047 決定 2), so a wrong value here is either "the
+            # rule never matches anyone" or "the rule matches everyone".
+            - { Name: AF_TRUSTED_PROXY_HOPS, Value: "1" }
             - { Name: AUTH, Value: !Ref AuthMode }
             - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
             - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
