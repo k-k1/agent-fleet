@@ -64,15 +64,20 @@ platform changes:
      ```
      ⚠️ **Do this on day one.** Activation is not retroactive: every day it is left off is a
      day of spend that can never be attributed to anyone.
-     **Once per AWS account, by you — never per tenant and never per member.** Activation
-     is keyed on the tag KEY alone (the API has no value dimension), so one `af-membership`
-     entry covers every member who will ever exist here, and one `af-tenant` entry covers
-     every tenant. Somebody joining next month needs nothing. Under AWS Organizations only
-     the management (payer) account can activate.
+     **Each key once per AWS account, by you — never again per tenant or per member.**
+     Activation is keyed on the tag KEY alone (the API has no value dimension), so the one
+     `af-membership` entry covers every member who will ever exist here and the one
+     `af-tenant` entry covers every tenant: somebody joining next month needs nothing. What
+     that does NOT mean is that a key can be skipped — every key in the list above has to be
+     activated once. Under AWS Organizations only the management (payer) account can do it.
      ⚠️ **A tag key AWS has never seen on a real resource cannot be activated**
      (`ValidationException: Tag keys not found`). So the order is: deploy → start one
      workspace (the CP stamps the tags) → wait for AWS to discover the keys (up to 24h) →
-     activate. Re-run the command until it stops erroring.
+     activate. Re-run the command until it stops erroring. `list-cost-allocation-tags`
+     shows what AWS has found: a key already listed as `Inactive` flips to `Active`
+     instantly, and a key missing from the list is one nothing has stamped yet. The wait is
+     per KEY and only the first time it appears — not per tenant, per member, or per
+     deployment of a key that is already listed.
      ⚠️ **Do not activate `af-workspace`.** Its value is derived from the member's email
      address, and activating it copies that into the billing data (CUR / Cost Explorer /
      invoice CSVs). `af-membership` is an opaque random id and is the join key the Control
