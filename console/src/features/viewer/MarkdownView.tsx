@@ -2,16 +2,9 @@ import { useEffect, useRef } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
-import {
-  dirName,
-  baseName,
-  isExternalUrl,
-  resolveMarkdownFileTarget,
-  slug,
-  type MarkdownFileTarget,
-} from "../../lib/filemeta.ts";
-import { pathRefCandidate } from "../../lib/pathref.ts";
-import { listDirListing, type DirListing } from "./dirListing.ts";
+import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget, slug } from "../../lib/filemeta.ts";
+import { pathRefCandidate, type PathRef } from "../../lib/pathref.ts";
+import { resolvePathRefs, type ResolvedPathRef } from "./pathResolve.ts";
 import { repairFullwidthTables, splitYamlFrontMatter, type TableRepair } from "../../lib/markdown.ts";
 import { api, downloadURL } from "../../core/api/client.ts";
 import { useSettings } from "../../lib/settings.ts";
@@ -179,12 +172,13 @@ export function MarkdownView({
     // Link the file paths written as inline code (`docs/65-drawio-viewer.md`) to the file
     // they name — but only on a surface that can actually open one. onOpenFile absent means
     // the shared view (docs/59): a recipient has no such file, so nothing is linked there
-    // rather than shown a link that opens nothing.
+    // rather than shown a link that opens nothing. The paths resolve against the reply's
+    // own working directory (the mirror passes the turn's cwd), or — in a document viewer,
+    // which has no cwd — against the folder the document itself sits in.
     if (onOpenFileRef.current) {
       void linkifyPathRefs(
         el,
-        basePath,
-        baseDir,
+        baseDir || dirName(basePath),
         () => alive,
         (p, line, column, openInNew) => onOpenFileRef.current?.(p, line, column, openInNew),
         // No onOpenDir on this surface (the mirror passes only onOpenFile) → fall back to
@@ -556,61 +550,66 @@ function makeSessionLink(name: string, openSession: (name: string, openInNew: bo
 // prose, a `--flag` shaped like a name, a file from another machine's log all stay plain
 // text instead of becoming links that answer a click with "見つかりません".
 //
-// Cost is bounded on three sides: pathRefCandidate rejects anything not path-shaped
-// before a request exists, one fs/tree listing answers every path in a directory
-// (memoized across turns by dirListing), and a single document asks about at most
-// MAX_DIRS_PER_DOC directories — a reply that cites paths in twenty directories links
-// the first few and leaves the rest as text rather than firing twenty requests.
+// WHICH file a written path names is not decided here. The Console can only guess (it has
+// a cwd string and a regex for "repos/<name>"), while the agent knows the working copy's
+// real root, what lives outside home, and what is denylisted — so it resolves cwd-first,
+// repository-root-second, and answers every path in the message in one request
+// (pathResolve.ts → workspace/agent/fs_resolve.go). That fallback matters: an agent
+// launched in a subfolder routinely writes paths from the repository root.
+//
+// Cost is bounded on three sides: pathRefCandidate rejects anything not path-shaped before
+// a request exists, the answers and the in-flight requests are memoized per (cwd, ref)
+// across turns, and a single document asks about at most MAX_REFS_PER_DOC paths — a reply
+// citing a hundred of them links the first few and leaves the rest as text.
 //
 // Fenced blocks (<pre>) are left alone, as everywhere else in this file: a code sample is
 // literal source, and its lines are usually commands rather than citations.
-const MAX_DIRS_PER_DOC = 8;
+const MAX_REFS_PER_DOC = 32;
 
 async function linkifyPathRefs(
   el: HTMLElement,
-  basePath: string,
-  baseDir: string,
+  cwd: string,
   alive: () => boolean,
   onOpenFile: (path: string, line?: number, column?: number, openInNew?: boolean) => void,
   onOpenDir: (path: string) => void,
   onError: (message: string) => void,
 ) {
-  const candidates: { code: HTMLElement; target: MarkdownFileTarget }[] = [];
+  const candidates: { code: HTMLElement; ref: PathRef }[] = [];
   el.querySelectorAll<HTMLElement>("code").forEach((code) => {
+    if (candidates.length >= MAX_REFS_PER_DOC) return;
     if (code.dataset.pathLink) return; // already processed (the effect can link twice)
     if (code.closest("pre,a")) return; // fenced source, or already inside a link
     if (code.childElementCount) return; // not a bare token
     const ref = pathRefCandidate(code.textContent);
-    if (!ref) return;
-    const target = resolveMarkdownFileTarget(ref, basePath, baseDir);
-    if (target?.path) candidates.push({ code, target });
+    if (ref) candidates.push({ code, ref });
   });
   if (!candidates.length) return;
 
-  const dirs = [...new Set(candidates.map((c) => dirName(c.target.path)))].slice(0, MAX_DIRS_PER_DOC);
-  const listings = new Map<string, DirListing | null>();
-  await Promise.all(dirs.map(async (dir) => void listings.set(dir, await listDirListing(dir))));
+  const resolved = await resolvePathRefs(
+    cwd,
+    candidates.map((c) => c.ref.ref),
+  );
   if (!alive()) return; // the effect re-ran or the view unmounted while we were asking
 
-  for (const { code, target } of candidates) {
-    const type = listings.get(dirName(target.path))?.get(baseName(target.path));
-    if (!type) continue; // unknown directory (over the cap / unlistable) or no such entry
+  for (const { code, ref } of candidates) {
+    const hit = resolved.get(ref.ref);
+    if (!hit) continue; // no such file — leave the text exactly as the agent wrote it
     if (!code.isConnected || code.dataset.pathLink) continue;
     code.dataset.pathLink = "1";
-    const a = makePathLink(target, type, onOpenFile, onOpenDir, onError);
+    const a = makePathLink(cwd, ref, hit, onOpenFile, onOpenDir, onError);
     while (code.firstChild) a.appendChild(code.firstChild);
     code.appendChild(a);
   }
 }
 
-// makePathLink builds the non-navigating anchor a linked path gets. Existence was checked
-// to decide whether to link at all; the click re-checks through openRepoTarget anyway, so
-// a file deleted since the reply was rendered toasts instead of opening an empty pane.
-// Modifier keys follow the file-link convention (wireLinks): Ctrl/Cmd or middle click
-// forces a new pane.
+// makePathLink builds the non-navigating anchor a linked path gets. The click re-resolves
+// (bypassing the memo) rather than trusting what was true when the message rendered, so a
+// file deleted or moved in between says so instead of opening an empty pane. Modifier keys
+// follow the file-link convention (wireLinks): Ctrl/Cmd or middle click forces a new pane.
 function makePathLink(
-  target: MarkdownFileTarget,
-  type: "file" | "dir",
+  cwd: string,
+  ref: PathRef,
+  hit: ResolvedPathRef,
   onOpenFile: (path: string, line?: number, column?: number, openInNew?: boolean) => void,
   onOpenDir: (path: string) => void,
   onError: (message: string) => void,
@@ -620,12 +619,20 @@ function makePathLink(
   a.setAttribute("role", "link");
   a.tabIndex = 0;
   a.title =
-    type === "dir"
-      ? t("view.reveal_in_files", { path: target.path })
-      : target.line
-        ? t("view.open_in_pane_at_line", { path: target.path, line: target.line })
-        : t("view.open_in_pane", { path: target.path });
-  const open = (openInNew: boolean) => openRepoTarget(target, onOpenFile, onOpenDir, onError, openInNew);
+    hit.type === "dir"
+      ? t("view.reveal_in_files", { path: hit.path })
+      : ref.line
+        ? t("view.open_in_pane_at_line", { path: hit.path, line: ref.line })
+        : t("view.open_in_pane", { path: hit.path });
+  const open = async (openInNew: boolean) => {
+    const fresh = (await resolvePathRefs(cwd, [ref.ref], { fresh: true })).get(ref.ref);
+    if (!fresh) {
+      onError(t("view.file_not_found", { path: hit.path }));
+      return;
+    }
+    if (fresh.type === "dir") onOpenDir(fresh.path);
+    else onOpenFile(fresh.path, ref.line, ref.column, openInNew);
+  };
   a.addEventListener("click", (e) => {
     e.preventDefault();
     void open(e.ctrlKey || e.metaKey);

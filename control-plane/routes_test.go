@@ -224,6 +224,18 @@ func TestBrowserAttachmentListProxyRouteRegistered(t *testing.T) {
 	}
 }
 
+// ミラー本文のパス参照解決: 同じく明示許可リスト方式なので、Agent 側 POST /fs/resolve に
+// 対応する登録漏れを回帰検知する。落ちていると、リンクが 1 つも付かないという「静かな」
+// 壊れ方をする（Console 側は解決できなかった＝実在しない、と読むため）。
+func TestFSResolveProxyRouteRegistered(t *testing.T) {
+	_, mux := smokeEnv(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/fs/resolve", nil)
+	_, pattern := mux.Handler(req)
+	if pattern != "POST /api/fs/resolve" {
+		t.Fatalf("route pattern=%q", pattern)
+	}
+}
+
 // エディタ AI 変更提案（docs/44 Phase 4）: CP は明示許可リスト方式なので、Agent 側
 // ルートに対応する /api/fs/suggest-edit の登録漏れを回帰検知する。
 func TestFSSuggestEditProxyRouteRegistered(t *testing.T) {
