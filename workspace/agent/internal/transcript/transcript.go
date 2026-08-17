@@ -27,13 +27,19 @@ type Part struct {
 	// of the modal, e.g. docs/dev/92 §6's preview free-text bug) rather than a genuine
 	// answer — Answer then holds claude's own rejection boilerplate, not a pick, and the
 	// Console must not render it as an answered card (see QuestionBlock).
-	Declined bool     `json:"declined,omitempty"`
-	Plan     string   `json:"plan,omitempty"`    // kind=plan: ExitPlanMode plan Markdown
-	File     string   `json:"file,omitempty"`    // kind=tool: edit/write target (openable as a diff)
-	Edits    []Edit   `json:"edits,omitempty"`   // kind=tool: before/after per edit (Edit/Write/MultiEdit)
-	Files    []string `json:"files,omitempty"`   // kind=userfile: SendUserFile paths, browse-root-relative (openable in a pane)
-	Caption  string   `json:"caption,omitempty"` // kind=userfile: optional caption the agent attached
-	QID      string   `json:"qid,omitempty"`     // kind=question/plan/delegation: tool_use id, so the Console can patch a late-arriving answer (see CollectInteractionAnswers) onto an already-delivered turn
+	Declined bool   `json:"declined,omitempty"`
+	Plan     string `json:"plan,omitempty"`  // kind=plan: ExitPlanMode plan Markdown
+	File     string `json:"file,omitempty"`  // kind=tool: edit/write target (openable as a diff)
+	Edits    []Edit `json:"edits,omitempty"` // kind=tool: before/after per edit (Edit/Write/MultiEdit)
+	// Verb qualifies File for the changed-files list (docs/68): "add" | "edit" | "delete".
+	// Only a parser that KNOWS says so — codex reads it out of the patch header, and its
+	// delete branch carries no Edits at all. Everyone else omits it and EditVerb derives
+	// add/edit from the before/after, because "no Edits" must not be read as a deletion
+	// (a kind that simply carries no diff bodies would have every file labelled 削除).
+	Verb    string   `json:"verb,omitempty"`
+	Files   []string `json:"files,omitempty"`   // kind=userfile: SendUserFile paths, browse-root-relative (openable in a pane)
+	Caption string   `json:"caption,omitempty"` // kind=userfile: optional caption the agent attached
+	QID     string   `json:"qid,omitempty"`     // kind=question/plan/delegation: tool_use id, so the Console can patch a late-arriving answer (see CollectInteractionAnswers) onto an already-delivered turn
 
 	// ViewImageCallID/ViewImageData carry a codex view_image tool_result's inline
 	// "data:image/...;base64,..." payload(s) from the pure rollout parser up to
