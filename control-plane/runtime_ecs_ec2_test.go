@@ -247,8 +247,12 @@ func (f *fakeEC2) CreateVolume(_ context.Context, in *ec2.CreateVolumeInput, _ .
 		SnapshotId: in.SnapshotId,
 	}
 	f.log("CreateVolume %s az=%s tags=%d", id, aws.ToString(in.AvailabilityZone), len(tags))
+	// Tags come back on the response, like the real API. Dropping them made the fake
+	// say "this volume has no tags" for a call that had just tagged it — which is the
+	// wrong direction of the usual fake bug, but still a fake that does not model AWS.
 	return &ec2.CreateVolumeOutput{
-		VolumeId: aws.String(id), AvailabilityZone: in.AvailabilityZone, State: ec2types.VolumeStateAvailable,
+		VolumeId: aws.String(id), AvailabilityZone: in.AvailabilityZone,
+		State: ec2types.VolumeStateAvailable, Tags: tags,
 	}, nil
 }
 
@@ -390,12 +394,20 @@ func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...fu
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, r := range in.Resources {
-		v := f.volumes[r]
-		if v == nil {
+		// Instances as well as volumes, for the same reason CreateTags above handles
+		// both: the slot's owner tags (af-membership / af-tenant, ADR 0048 決定 3) are
+		// removed from the INSTANCE on release, and a volumes-only fake would report
+		// "cleared" while the box kept billing its last user forever.
+		var tags *[]ec2types.Tag
+		if v := f.volumes[r]; v != nil {
+			tags = &v.Tags
+		} else if i := f.instances[r]; i != nil {
+			tags = &i.Tags
+		} else {
 			continue
 		}
 		var kept []ec2types.Tag
-		for _, t := range v.Tags {
+		for _, t := range *tags {
 			drop := false
 			for _, d := range in.Tags {
 				if aws.ToString(d.Key) == aws.ToString(t.Key) {
@@ -406,7 +418,7 @@ func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...fu
 				kept = append(kept, t)
 			}
 		}
-		v.Tags = kept
+		*tags = kept
 		f.log("DeleteTags %s", r)
 	}
 	return &ec2.DeleteTagsOutput{}, nil

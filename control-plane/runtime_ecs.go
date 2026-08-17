@@ -78,9 +78,13 @@ type ecsRuntime struct {
 	ssm          ssmAPI
 	name         string // ECS service name / SC dnsName (Workspace.ContainerName)
 	membershipID string // EFS access-point tag key (af-membership)
-	token        string // CP↔Agent bearer (Workspace.AgentToken)
-	secretKey    string // per-workspace at-rest DEK (hex); "" in dev
-	extraEnv     []string
+	// tenantSlug is stamped as af-tenant on every billable resource this adapter
+	// creates. Read by nothing but the bill (docs/67, ADR 0048 決定 3); empty is a
+	// valid value and simply means the resource carries no tenant tag.
+	tenantSlug string
+	token      string // CP↔Agent bearer (Workspace.AgentToken)
+	secretKey  string // per-workspace at-rest DEK (hex); "" in dev
+	extraEnv   []string
 	// cpu / memory are the Fargate task size for THIS workspace: the cfg defaults, or
 	// a size snapped up to hold the per-workspace RAM/CPU caps (fargateSize) when one
 	// is set. registerTaskDef stamps them into the task definition revision.
@@ -160,6 +164,7 @@ func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runt
 		ssm:          f.ssm,
 		name:         ws.ContainerName,
 		membershipID: ws.MembershipID,
+		tenantSlug:   ws.TenantSlug,
 		token:        ws.AgentToken,
 		secretKey:    secretKey,
 		extraEnv:     extraEnv,
@@ -529,11 +534,11 @@ func (e *ecsRuntime) ensureAccessPoint(ctx context.Context, role, path string) (
 			},
 		},
 		PosixUser: &efstypes.PosixUser{Uid: aws.Int64(e.cfg.posixUID), Gid: aws.Int64(e.cfg.posixGID)},
-		Tags: []efstypes.Tag{
+		Tags: appendEFSTenantTag(e.tenantSlug, []efstypes.Tag{
 			{Key: aws.String("af-membership"), Value: aws.String(e.membershipID)},
 			{Key: aws.String("af-role"), Value: aws.String(role)},
 			{Key: aws.String("Name"), Value: aws.String(e.name + "-" + role)},
-		},
+		}),
 	})
 	if err != nil {
 		return "", err
@@ -689,13 +694,33 @@ func (e *ecsRuntime) volumeConfigurations() []ecstypes.ServiceVolumeConfiguratio
 			FilesystemType: ecstypes.TaskFilesystemTypeExt4,
 			TagSpecifications: []ecstypes.EBSTagSpecification{{
 				ResourceType: ecstypes.EBSResourceTypeVolume,
-				Tags: []ecstypes.Tag{
+				Tags: appendECSTenantTag(e.tenantSlug, []ecstypes.Tag{
 					{Key: aws.String("af-membership"), Value: aws.String(e.membershipID)},
 					{Key: aws.String("af-role"), Value: aws.String("scratch")},
-				},
+				}),
 			}},
 		},
 	}}
+}
+
+// appendEFSTenantTag / appendECSTenantTag add `af-tenant` when the workspace knows its
+// tenant slug. Split by SDK tag type rather than generics because each AWS service
+// ships its own Tag struct; an empty slug appends nothing so a Workspace built without
+// a store read (tests, the in-memory backfill path) simply carries no tenant tag
+// instead of an empty one — an empty cost allocation tag value is a real value in the
+// bill and would show up as its own group (docs/67 §67.10).
+func appendEFSTenantTag(slug string, tags []efstypes.Tag) []efstypes.Tag {
+	if slug == "" {
+		return tags
+	}
+	return append(tags, efstypes.Tag{Key: aws.String(ec2TagTenant), Value: aws.String(slug)})
+}
+
+func appendECSTenantTag(slug string, tags []ecstypes.Tag) []ecstypes.Tag {
+	if slug == "" {
+		return tags
+	}
+	return append(tags, ecstypes.Tag{Key: aws.String(ec2TagTenant), Value: aws.String(slug)})
 }
 
 func efsVolume(name, fsID, apID string) ecstypes.Volume {
@@ -744,6 +769,25 @@ func (e *ecsRuntime) upsertService(ctx context.Context, taskDefArn string) error
 		DesiredCount:         aws.Int32(1),
 		LaunchType:           ecstypes.LaunchTypeFargate,
 		VolumeConfigurations: e.volumeConfigurations(),
+		// Billing only (docs/67 §67.8). On Fargate the TASK is the billed thing, and a
+		// task inherits tags only when the service is told to propagate them — without
+		// this, af-membership exists nowhere on the Fargate path and the compute cannot
+		// be attributed to anyone. EnableECSManagedTags is what makes propagation legal.
+		//
+		// ⚠️ Applies to services created from here on. An ALREADY-EXISTING service is not
+		// retagged (CreateService is skipped above), so a deployment that predates this
+		// keeps untagged tasks until the service is recreated — deliberately not "fixed"
+		// with a TagResource call on every start, which would be a write per Start for a
+		// number only the invoice reads.
+		//
+		// ⚠️ NOT verified against real Fargate: the live deployment runs ecs-ec2
+		// (ADR 0048 決定 9).
+		EnableECSManagedTags: true,
+		PropagateTags:        ecstypes.PropagateTagsService,
+		Tags: appendECSTenantTag(e.tenantSlug, []ecstypes.Tag{
+			{Key: aws.String("af-membership"), Value: aws.String(e.membershipID)},
+			{Key: aws.String("af-role"), Value: aws.String("workspace")},
+		}),
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 				Subnets:        e.cfg.subnets,

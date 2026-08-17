@@ -87,9 +87,16 @@ interface ProjectFilesProps {
   searchable?: boolean;
   /** Add non-interactive working-copy headings to recursive repos results. */
   groupByRepo?: boolean;
+  /**
+   * This is the secondary "home" tree mounted below the primary one. Both are rooted
+   * so that a path under repos/ matches BOTH, and answering a reveal twice means two
+   * scrolls, two selections and a fight over focus. The secondary one stands down for
+   * paths the repos tree owns.
+   */
+  secondary?: boolean;
 }
 
-export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: ProjectFilesProps) {
+export function ProjectFiles({ root, markRepos, searchable, groupByRepo, secondary }: ProjectFilesProps) {
   const repos = useReposStore((s) => s.repos);
   const layout = useLayoutStore((s) => s.layout);
   const openTarget = useLayoutStore((s) => s.openTarget);
@@ -528,6 +535,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   useEffect(() => {
     const p = reveal.path;
     if (!p || (root && p !== root && !p.startsWith(root + "/"))) return;
+    if (secondary && (p === "repos" || p.startsWith("repos/"))) return; // the repos tree owns it
     let alive = true;
     void (async () => {
       const rel = !root ? p : p === root ? "" : p.slice(root.length + 1);
@@ -554,12 +562,17 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
       // Selecting isn't enough — bring the revealed row into view. The row only
       // mounts after the ancestor-expand re-render commits, so retry across a few
       // frames until its <li> exists, then scroll it into the middle of the tree.
+      // When the reveal was asked for (reveal.focus), hand keyboard focus to the tree
+      // at the same moment: the reader is now looking at that row, so ↑↓ should walk
+      // from it instead of doing nothing until they click.
       let tries = 0;
       const scrollToRow = () => {
         if (!alive) return;
         const el = treeRef.current?.querySelector<HTMLElement>(`li[data-path="${CSS.escape(p)}"]`);
-        if (el) el.scrollIntoView({ block: "center" });
-        else if (tries++ < 10) requestAnimationFrame(scrollToRow);
+        if (el) {
+          el.scrollIntoView({ block: "center" });
+          if (reveal.focus) treeRef.current?.focus({ preventScroll: true });
+        } else if (tries++ < 10) requestAnimationFrame(scrollToRow);
       };
       requestAnimationFrame(scrollToRow);
     })();

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"io/fs"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -328,5 +330,99 @@ func TestAggregateUsage(t *testing.T) {
 	}
 	if got[1].UserKey != "b" || got[1].RunningHrs != 0.25 {
 		t.Fatalf("member b total wrong: %+v", got[1])
+	}
+}
+
+// Workspace reads carry the owning tenant's SLUG (docs/67, ADR 0048 決定 3). It is not a
+// column on the row — the AWS adapters need it to stamp `af-tenant`, and reading it
+// there would mean a store call from inside a tag write, on every Start.
+func TestSQLiteWorkspaceCarriesTenantSlug(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tn, err := st.CreateTenant(ctx, "acme", "Acme")
+	if err != nil {
+		t.Fatalf("tenant: %v", err)
+	}
+	ident, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
+	mem, err := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
+	if err != nil {
+		t.Fatalf("membership: %v", err)
+	}
+	ws := Workspace{
+		ID: newID(), TenantID: tn.ID, MembershipID: mem.ID,
+		ContainerName: "af-ws-acme-a", Network: "n", DataDir: "/d",
+		AgentPort: "7700", AgentToken: "tok", State: "stopped", CreatedAt: nowTS(),
+	}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	got, ok, err := st.GetWorkspaceByMembership(ctx, mem.ID)
+	if err != nil || !ok {
+		t.Fatalf("get: %v ok=%v", err, ok)
+	}
+	if got.TenantSlug != "acme" {
+		t.Errorf("GetWorkspaceByMembership TenantSlug = %q, want acme", got.TenantSlug)
+	}
+	list, err := st.ListWorkspaces(ctx, tn.ID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list: %v %+v", err, list)
+	}
+	if list[0].TenantSlug != "acme" {
+		t.Errorf("ListWorkspaces TenantSlug = %q, want acme", list[0].TenantSlug)
+	}
+}
+
+// The migration runner splits statements on a naive `;` (see sqlStore.migrate), so a
+// semicolon inside a `--` comment can cut a statement in half. The failure is a SQL
+// syntax error pointing at a random English word from the prose, which reads like
+// anything except "your comment has a semicolon in it" — measured while adding
+// 0046_cloud_cost.sql.
+//
+// Only the two shapes that actually break are flagged, which is why three existing
+// migrations with a trailing `;` in prose are legal:
+//
+//	-- ...prose; more prose        BREAKS: " more prose" becomes a bare statement
+//	  a INT,  -- note;             BREAKS: the fragment before it is half a CREATE TABLE
+//	-- ...prose;                   fine: the next fragment starts with `--` again
+func TestMigrationsHaveNoStatementSplittingSemicolonInComments(t *testing.T) {
+	for _, dir := range []struct {
+		fs   fs.FS
+		name string
+	}{{migrationFS, "migrations"}, {pgMigrationFS, "migrations-pg"}} {
+		entries, err := fs.ReadDir(dir.fs, dir.name)
+		if err != nil {
+			t.Fatalf("read %s: %v", dir.name, err)
+		}
+		for _, e := range entries {
+			body, err := fs.ReadFile(dir.fs, dir.name+"/"+e.Name())
+			if err != nil {
+				t.Fatalf("read %s: %v", e.Name(), err)
+			}
+			for n, line := range strings.Split(string(body), "\n") {
+				i := strings.Index(line, "--")
+				if i < 0 {
+					continue
+				}
+				j := strings.Index(line[i:], ";")
+				if j < 0 {
+					continue
+				}
+				trailing := strings.TrimSpace(line[i+j+1:])
+				code := strings.TrimSpace(line[:i])
+				if trailing == "" && code == "" {
+					continue
+				}
+				t.Errorf("%s/%s:%d has a `;` inside a comment that will cut the statement:\n  %s",
+					dir.name, e.Name(), n+1, strings.TrimSpace(line))
+			}
+		}
 	}
 }

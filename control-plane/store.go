@@ -281,8 +281,15 @@ type UsageNotificationState struct {
 type Workspace struct {
 	ID, TenantID, MembershipID      string
 	ContainerName, Network, DataDir string
-	AgentPort, AgentToken, State    string
-	CreatedAt, LastActiveAt         string
+	// TenantSlug is the owning tenant's slug, joined in by every read rather than
+	// stored on the row (the tenant table owns it). It exists because the AWS
+	// adapters stamp `af-tenant` on billable resources and the cost-allocation tag
+	// has to be READABLE in Cost Explorer — an opaque tenant id there would say
+	// nothing the membership id does not already imply (docs/67 §67.4, ADR 0048
+	// 決定 3)。Empty on a Workspace built in memory by a test.
+	TenantSlug                   string
+	AgentPort, AgentToken, State string
+	CreatedAt, LastActiveAt      string
 	// MemBytes is the RESOLVED per-workspace RAM cap in bytes for the NEXT container
 	// start (0 = use the runtime's deployment default). It is NOT a persisted column:
 	// buildResolved fills it via resolveWorkspaceMemBytes before the runtime is built,
@@ -372,6 +379,7 @@ type Store interface {
 	EgressStore
 	SettingsStore
 	UsageStore
+	CloudCostStore
 	SSMStore
 	MemoStore
 	NotificationStore
@@ -804,6 +812,50 @@ type SettingsStore interface {
 type UsageStore interface {
 	AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error
 	ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error)
+}
+
+// CloudCostRow is one (day, membership, service) slice of the AWS invoice, as landed
+// by the Cost Explorer poller (docs/67, ADR 0048). MembershipID=="" is the SHARED
+// bucket — infrastructure that belongs to nobody. Amounts are integer micro-units of
+// Currency; they are never converted to another currency and never divided among
+// people (決定 4 / 決定 6).
+type CloudCostRow struct {
+	Day, MembershipID, TenantID, Service string
+	Unblended, Amortized                 int64
+	Currency                             string
+	Estimated                            bool
+}
+
+// CloudCostTotal is one member's attributed spend over a window, enriched with the
+// labels needed to name them. The labels are resolved at READ time by join, exactly
+// like UsageRow: a membership that has been deleted leaves rows whose money is still
+// real, and they surface with empty UserKey/Email rather than vanishing.
+type CloudCostTotal struct {
+	TenantSlug, MembershipID, UserKey, Email string
+	Unblended, Amortized                     int64
+	Currency                                 string
+}
+
+// CloudCostStore holds the invoice slices the Cost Explorer poller writes.
+//
+// PutCloudCost REPLACES a day wholesale rather than accumulating: Cost Explorer
+// restates recent days (they arrive `Estimated` and move for ~24h), so the poller
+// re-fetches a trailing window every run and the newest answer has to win. An
+// accumulating write would double every re-fetch — the opposite of AddUsage next door,
+// and the reason these two look similar but must not share code.
+type CloudCostStore interface {
+	// PutCloudCost replaces every row for the given days with rows. days lists exactly
+	// the days the caller re-fetched, so a day that came back empty is emptied here too.
+	PutCloudCost(ctx context.Context, days []string, rows []CloudCostRow) error
+	// ListCloudCost returns rows in [fromDay,toDay]. tenantID=="" spans every tenant;
+	// membershipID!="" narrows to one person (the member's own view).
+	ListCloudCost(ctx context.Context, tenantID, membershipID, fromDay, toDay string) ([]CloudCostRow, error)
+	// CloudCostTotals aggregates the same window per member, with labels joined in.
+	CloudCostTotals(ctx context.Context, tenantID, fromDay, toDay string) ([]CloudCostTotal, error)
+	// CloudCostDays reports which days have any row at all, so the API can tell
+	// "nothing was spent" apart from "the poller has never covered this range" —
+	// the difference matters because cost allocation cannot be backfilled.
+	CloudCostDays(ctx context.Context) (first, last string, err error)
 }
 
 // SSMStore is the SSM login config (docs/history/p3-ssm-session.md), personal

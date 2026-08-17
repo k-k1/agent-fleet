@@ -41,6 +41,10 @@ import { MemoryTab } from "./MemoryTab.tsx";
 // 使用量タブは features/usage の View をそのまま差す薄いラッパ（モーダル非依存に
 // 保つ＝将来ペインへ昇格させるときに同じ View を差し替えなしで使える。docs/46 §5）。
 import { UsageView } from "../usage/UsageView.tsx";
+// クラウド費用は AWS の請求がある時だけの面（docs/67 §67.8）。トークンの「使用量」の
+// 隣に置くが、同じパネルには入れない——時間と $ を並べると、片方が実測でもう片方が
+// 請求である差が消える（ADR 0048 決定 5）。
+import { MyCloudCostView, useCostProfile } from "../cost/CloudCostView.tsx";
 
 // Rail groups. Each item = [section key, i18n label key]. Order here IS the rail order.
 const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
@@ -74,6 +78,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
     label: "set.group_workspace",
     items: [
       ["usage", "set.tab_usage"],
+      ["cost", "set.tab_cost"],
       ["memory", "set.tab_memory"],
       ["env", "set.tab_env"],
       ["ssm", "set.tab_ssm"],
@@ -86,6 +91,7 @@ const ALL_SECTIONS = GROUPS.flatMap((g) => g.items.map(([k]) => k));
 
 export function SettingsDialog() {
   const tr = useT();
+  const costProfile = useCostProfile();
   const closeSettings = useSettingsUI((s) => s.closeSettings);
   const settingsSection = useSettingsUI((s) => s.settingsSection);
   // Initial section comes from the store (a requested deep-link, else the restored
@@ -151,7 +157,7 @@ export function SettingsDialog() {
             {GROUPS.map((g) => (
               <div key={g.key} className="settings-rail-group">
                 <div className="settings-rail-head">{tr(g.label as Parameters<typeof tr>[0])}</div>
-                {g.items.map(([key, label]) => (
+                {g.items.filter(([key]) => key !== "cost" || costProfile?.available).map(([key, label]) => (
                   <button
                     key={key}
                     type="button"
@@ -181,6 +187,7 @@ export function SettingsDialog() {
             {section === "notifications" && <NotificationsTab />}
             {section === "git" && <GitTab />}
             {section === "usage" && <UsageView />}
+            {section === "cost" && costProfile?.available && <MyCloudCostView />}
             {section === "memory" && <MemoryTab />}
             {section === "env" && <EnvTab />}
             {section === "ssm" && <SsmTab />}
