@@ -41,6 +41,7 @@ func (m *manager) createWorkspace(ctx context.Context, mv MembershipView, userKe
 	ws := Workspace{
 		ID:            newID(),
 		TenantID:      mv.TenantID,
+		TenantSlug:    mv.TenantSlug, // not persisted; every later read joins it back
 		MembershipID:  mv.MembershipID,
 		ContainerName: name,
 		Network:       network,

@@ -110,6 +110,49 @@ EBS ボリューム vol-07d5994a655a25929 (50 GiB, in-use)
 （`freeSlots` / `occupiedInstances`）ので、**タグを 1 つ足してもロジックは何も変わらない**。
 `ec2:CreateTags` / `ec2:DeleteTags` は `CpTaskRole` に既にある——**IAM の追加は要らない**。
 
+### 67.4.1 ユーザー軸は既にある（`af-membership` はメール由来ではない）
+
+⚠️ 実機の値 `d6e8070a484b950b4c71474bbbbdd95a` はハッシュに見えるが、実体は
+`newID() = randHex(16)`（`control-plane/store.go`）——**メールとは無関係の乱数 32 桁**である。
+`Tenant.ID` も同じ生成。したがって:
+
+- **ユーザーへの紐づけは既に成立していて、既に非 PII。** 67.5 で `af-workspace` を外しても
+  失うものは無い——`af-membership` → メンバーは CP が DB で解決できる（`usage.go` の
+  `ListUsage` が既にやっている join と同じ）。
+- ⚠️ **メールのハッシュを新設するのは、この乱数 ID より悪い。** メールのハッシュは
+  仮名化された個人データのままで、しかも**総当たりで戻せる**（組織のメールアドレス空間は
+  小さく列挙可能）。乱数 ID が既に与えているもの以上は何も買えない。
+- **`af-user`（人単位・テナント横断）も足さない。** AWS 側では人を不透明のままにするので
+  読みやすさの利得が無く、membership → identity の join で CP が出せる。
+
+### 67.4.2 本当に無いのは**テナント軸**——`af-tenant` を新設する
+
+どの AWS リソースにもテナントのタグが無い。CP は membership → tenant を DB で引けるので
+Console の画面は作れるが、**AWS 側だけでテナント別に切れない**（Cost Explorer・請求
+コンソール・CSV エクスポート）。
+
+→ **`af-tenant` = テナントの slug**（ADR 0048 決定 3）。**ID ではなく slug** にするのは、
+テナント軸を足す唯一の利得が「CP 無しで AWS 側だけで読めること」だからで、不透明 ID では
+`af-membership` から導ける以上のものがほぼ無い。slug は**組織名であって個人データではなく**、
+変更 API も無い（`CreateTenant` で決まり `UpdateTenant` が存在しない＝実質不変）。
+
+打つ先は `af-membership` を打っている所すべて（home ボリューム / スナップショット /
+EFS アクセスポイント / ECS 管理 EBS）＋ 新しくスロットインスタンス。
+⚠️ **slug が不明なときは空文字を打たず、タグごと省く**——空のコスト配分タグ値は請求上
+「テナント =（空白）」という実在のグループになり、「タグが無い」と読めない。
+
+### 67.4.3 ⚠️ AWS が見たことのないタグキーは、先に有効化できない（実測）
+
+```
+$ aws ce update-cost-allocation-tags-status --cost-allocation-tags-status '[{"TagKey":"af-tenant","Status":"Active"}]'
+ValidationException: Failed to update Cost Allocation Tag: Tag keys not found: af-tenant
+```
+
+順序は **「リソースに打つ → AWS が発見（〜24h）→ 有効化」** で固定されている。そして
+**バックフィル無しの時計は打った時ではなく有効化した時から動く**。つまり
+**タグ付けのコードを実機に届けるのが遅れた日数が、そのまま永久に取れない日数になる。**
+これが「設計を書き終える前に P1 を実装した」理由である。
+
 ## 67.5 コスト配分タグの有効化——**設計より先に済ませた**
 
 ⚠️ **コスト配分タグは有効化した時点より先にしか効かない。バックフィルは無い。**
@@ -125,8 +168,11 @@ af-membership Active 2026-08-17T05:26:16Z  af-slot-size Active 2026-08-17T05:26:
 
 **`af-workspace` は意図的に有効化していない。** 値が `af-ws-k1-kami-gmail-com` と
 **メールアドレス由来**で、有効化すると請求データ（CUR / CE / 請求書 CSV）に個人情報が入る。
-分析上は不透明 ID の `af-membership` で足り、メンバーへの解決は CP が自分の DB でできる。
-（必要になれば後から足せる。ただし**足した時点より前は取れない**。）
+分析上は不透明 ID の `af-membership`（乱数・67.4.1）で足り、メンバーへの解決は CP が
+自分の DB でできる。（必要になれば後から足せる。ただし**足した時点より前は取れない**。）
+
+**`af-tenant` は有効化「できない」——まだリソースに付いていないから**（67.4.3）。
+P1 を実機に届けて AWS が発見してから有効化する。
 
 ⚠️ **したがって、この機能の「実費」は 2026-08-17 より前を一切表示できない。**
 画面はそれを空欄ではなく**「この日より前は取得できません」と書く**（67.9）。
@@ -279,11 +325,12 @@ sandbox では既に有効（`ce list-cost-allocation-tags` が通った）。**
 | | 内容 | 実機で確かめられるか |
 |---|---|---|
 | **P0** | コスト配分タグの有効化 | ✅ **実行済み**（67.5） |
-| **P1** | `ecs-ec2`: 確保時にインスタンスへ `af-membership`、解放／隔離時に除去＋掃除経路 | ✅ sandbox で確認可 |
+| **P1** | `ecs-ec2`: 確保時にインスタンスへ `af-membership` ＋ `af-tenant`、解放／隔離時に除去、掃除経路で**双方向に**修復（古いタグは消し、抜けたタグはボリュームから写す）。`Workspace.TenantSlug` を join で運ぶ | ✅ **実装済み・sandbox で確認する** |
+| **P1.5** | 実機に届いた後、AWS が `af-tenant` を発見したら有効化 | ✅ P1 の翌日 |
 | **P2** | `CpTaskRole` に `ce:GetCostAndUsage`／スタック更新／**タスクロールで assume して疎通** | ✅ |
 | **P3** | `cloudcost.go`（CE ポーラ＋`cloud_cost_daily`）／`CostProfile()`／API 3 本 | ✅（P0 の翌日以降、実データで） |
 | **P4** | Console: 「クラウド費用」（管理・テナント設定・個人）／「使用量」→「稼働時間」改称／en+ja | ✅ headless で目視 |
-| **P5** | Fargate のタグ伝播 | ❌ **実機未検証で出す** |
+| **P5** | Fargate のタグ伝播（`Tags` ＋ `EnableECSManagedTags` ＋ `PropagateTags: SERVICE`） | ❌ **実装済み・実機未検証で出す** |
 
 ⚠️ **P3 の受け入れ確認は P0 の 24 時間後より前にはできない**（CE の反映待ち）。
 「実装したが 0 が並ぶ」のは正常なので、**それを異常と読まないよう画面に理由を出す**。
@@ -298,3 +345,5 @@ sandbox では既に有効（`ce list-cost-allocation-tags` が通った）。**
   8/14〜8/16 は全額が未タグ（$0.61 / $1.16 / $4.94）。
 - `CpTaskRole` には `ec2:CreateTags` / `ec2:DeleteTags` / `ecs:TagResource` が**既にある**。
   足りないのは `ce:GetCostAndUsage` **だけ**。
+- **未発見のタグキーは有効化できない**（`ValidationException: Tag keys not found`）。
+  タグ付け → 発見 → 有効化の順で、時計は最後から動く（67.4.3）。

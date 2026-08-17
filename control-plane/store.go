@@ -281,8 +281,15 @@ type UsageNotificationState struct {
 type Workspace struct {
 	ID, TenantID, MembershipID      string
 	ContainerName, Network, DataDir string
-	AgentPort, AgentToken, State    string
-	CreatedAt, LastActiveAt         string
+	// TenantSlug is the owning tenant's slug, joined in by every read rather than
+	// stored on the row (the tenant table owns it). It exists because the AWS
+	// adapters stamp `af-tenant` on billable resources and the cost-allocation tag
+	// has to be READABLE in Cost Explorer — an opaque tenant id there would say
+	// nothing the membership id does not already imply (docs/67 §67.4, ADR 0048
+	// 決定 3)。Empty on a Workspace built in memory by a test.
+	TenantSlug                   string
+	AgentPort, AgentToken, State string
+	CreatedAt, LastActiveAt      string
 	// MemBytes is the RESOLVED per-workspace RAM cap in bytes for the NEXT container
 	// start (0 = use the runtime's deployment default). It is NOT a persisted column:
 	// buildResolved fills it via resolveWorkspaceMemBytes before the runtime is built,
