@@ -52,6 +52,51 @@ export interface Member {
   status?: string;
 }
 
+/** What the three size axes MEAN on this deployment's runtime
+ *  (GET /api/admin/workspace-sizing, ADR 0045 決定 21).
+ *
+ *  The stored shape is the same everywhere — three independent numbers — but what a
+ *  stored number BECOMES is not. On the EC2 slot pool the CPU axis never reaches the
+ *  backend, memory picks a box instead of capping one, and the disk number sizes the
+ *  PERSISTENT home. The UI reads this instead of describing every deployment as if it
+ *  were Fargate, which is what it used to do (docs/64 §64.27). */
+export interface WsSizing {
+  runtime: string;
+  cpu_effective: boolean;
+  /** "limit" = a cap (docker/Fargate) · "slot" = a requirement that picks a box. */
+  mem_meaning: "limit" | "slot";
+  /** "work" = wiped on stop · "home" = the persistent home · "quota" = display only. */
+  disk_meaning: "work" | "home" | "quota";
+  disk_default_gb?: number;
+  disk_create_only?: boolean;
+  slots?: WsSlot[];
+}
+
+export interface WsSlot {
+  instance_type: string;
+  mem_mib: number;
+  /** 0/absent when the operator did not declare it — then no vCPU count is shown. */
+  vcpu?: number;
+}
+
+/** The runtime's own answer, used while the profile is still loading. It matches the
+ *  docker/Fargate description the UI has always shown, so nothing flickers into view. */
+export const WS_SIZING_FALLBACK: WsSizing = {
+  runtime: "",
+  cpu_effective: true,
+  mem_meaning: "limit",
+  disk_meaning: "work",
+};
+
+/** The slot a memory request (in MiB) lands on: the smallest rung that holds it, and
+ *  the top rung when nothing does — the same rule as the CP's slotTypeFor, including
+ *  0 landing on the SMALLEST slot (on Fargate/docker 0 means the deployment default
+ *  instead, which is why the caller must not reuse this for those runtimes). */
+export function slotFor(slots: WsSlot[] | undefined, memMib: number): WsSlot | null {
+  if (!slots || slots.length === 0) return null;
+  return slots.find((s) => memMib <= s.mem_mib) ?? slots[slots.length - 1];
+}
+
 /** The workspace sizes offered as named choices. The three axes are stored as
  *  independent numbers (ADR 0044 決定 1); these presets exist only so an admin picks
  *  from combinations Fargate actually accepts instead of discovering the matrix by
