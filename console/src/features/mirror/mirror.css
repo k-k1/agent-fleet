@@ -811,6 +811,163 @@
   font-variant-numeric: tabular-nums;
   color: var(--fg);
 }
+/* 変更ファイル (docs/68): the files this session edited, as a collapsed disclosure in the
+   same band as the ToDo list. It reuses .mirror-disclosure and the .chg-badge / .dv-add /
+   .dv-del vocabularies (global) so a row reads identically to the rail's 変更 list and to
+   a diff pane's counters. */
+.mirror-files {
+  margin: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar);
+}
+.mirror-files-head {
+  display: flex;
+  align-items: center;
+  padding: 0;
+}
+.mirror-files.open .mirror-files-head {
+  border-bottom: 1px solid var(--border);
+}
+.mirror-files-toggle {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.mirror-files-head .mfl-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+.mirror-files-head .mfl-count {
+  font-variant-numeric: tabular-nums;
+}
+/* The collapsed summary's file name: it gives up its width first, so the +/- counters
+   stay readable on a narrow split pane. */
+.mirror-files-head .mfl-lead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mfl-stat {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.mfl-row .mfl-stat {
+  margin-left: auto;
+}
+.mfl-sort,
+.mfl-scm {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.mfl-sort:hover,
+.mfl-scm:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.mirror-files-list-wrap {
+  min-width: 0;
+}
+.mirror-files-list {
+  margin: 0;
+  padding: 4px 6px;
+  list-style: none;
+  /* Same containment rule as the ToDo list: a long list must not push the conversation
+     off screen, and the cap is proportional to THIS pane, not the viewport. */
+  max-height: min(calc(8lh + 48px), var(--mirror-todo-max-height, 20dvh));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.mfl-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+}
+.mfl-row:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.mfl-row:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+.mfl-row:disabled:hover {
+  background: transparent;
+}
+.mfl-ic {
+  flex: none;
+  display: inline-flex;
+}
+.mfl-name {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The directory yields before the name does: which file it is matters more than where. */
+.mfl-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-size: 11px;
+}
+.mfl-sub .codicon {
+  font-size: 11px;
+}
+/* Edited but with nothing left in the working tree (committed, or reverted) and files
+   outside ~/repos: kept in the list — they ARE part of what the session did — but muted
+   so the eye lands on the rows that still have a diff to open. */
+.chg-badge.st-muted {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 15%, transparent);
+}
+.mfl-clean .mfl-name,
+.mfl-outside .mfl-name {
+  color: var(--muted);
+}
+.mfl-deleted .mfl-name {
+  text-decoration: line-through;
+}
+
 /* ToDo list (reconstructed from Task tool calls): a collapsed disclosure with a
    done/total count. Completed items dim + strike; the in-progress one is emphasized. */
 .mirror-tasks {
