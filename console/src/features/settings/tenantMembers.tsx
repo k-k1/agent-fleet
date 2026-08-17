@@ -16,8 +16,8 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
-import { fmtG, fmtPct, fmtGbHint, WS_SIZE_PRESETS } from "./adminShared.ts";
-import type { Member } from "./adminShared.ts";
+import { fmtG, fmtPct, fmtGbHint, slotFor, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
+import type { Member, WsSizing, WsSlot } from "./adminShared.ts";
 
 // MembersPanel — 名簿と「メンバー追加」。TenantView の中に直接書かれていたものを、
 // テナント設定モーダルからも同じ実装を差せるように 1 つの部品にした（描画も
@@ -154,6 +154,10 @@ export function MemberView({
   const [memMb, setMemMb] = useState<number | string>(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
   const [cpuUnits, setCpuUnits] = useState<number | string>(member.cpu_limit ?? 0);
   const [diskGb, setDiskGb] = useState<number | string>(member.disk_gb ?? 0);
+  // What those three numbers actually DO on this deployment's runtime (ADR 0045 決定 21).
+  // Fetched rather than assumed: the same editor is shown for docker, native, Fargate and
+  // the EC2 slot pool, and it used to describe all four as Fargate.
+  const [sizing, setSizing] = useState<WsSizing>(WS_SIZING_FALLBACK);
   const [role, setMemberRole] = useState(member.role); // tenant-scoped role, live-updated on grant/revoke
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   // Only setState on an actual change so an unchanged 4s poll doesn't re-render
@@ -184,6 +188,22 @@ export function MemberView({
     }
   }, [base]);
 
+  // Deployment-wide and immutable while the Console runs, so it is read once per open
+  // member rather than on the 4s poll.
+  useEffect(() => {
+    let live = true;
+    api("api/admin/workspace-sizing")
+      .then((d: WsSizing) => {
+        if (live && d && !(d as any).error && d.runtime) setSizing(d);
+      })
+      .catch(() => {
+        /* keep the docker/Fargate description; the editor still works */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
   useEffect(() => {
     statsSer.current = "";
     sessSer.current = "";
@@ -199,6 +219,32 @@ export function MemberView({
   const running = stats?.running;
   const memRatio = stats?.mem_max ? stats.mem_used / stats.mem_max : null;
   const diskRatio = stats?.disk_quota ? stats.disk_used / stats.disk_quota : null;
+
+  // --- how to describe the three size axes on THIS runtime (ADR 0045 決定 21) ------
+  // A ladder exists only on the EC2 slot pool; everywhere else the memory number is a
+  // cap and keeps the wording it has always had.
+  const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
+  const slotSpec = (s: WsSlot) => (s.vcpu ? `${s.vcpu} vCPU / ${fmtGbHint(s.mem_mib)}` : fmtGbHint(s.mem_mib));
+  const landed = onSlots ? slotFor(sizing.slots, +memMb || 0) : null;
+  const memHint = !landed
+    ? +memMb > 0
+      ? tr("admin.eq_hint", { hint: fmtGbHint(+memMb) })
+      : tr("admin.zero_deploy_default")
+    : +memMb > 0
+      ? tr("admin.ws_slot_lands", { type: landed.instance_type, spec: slotSpec(landed) })
+      : // ⚠️ 0 is NOT "deployment default" here: slotTypeFor(0) lands on the smallest rung.
+        tr("admin.ws_slot_zero", { type: landed.instance_type });
+  const diskDefault = sizing.disk_default_gb ?? 0;
+  const diskHint =
+    sizing.disk_meaning === "home"
+      ? tr("admin.ws_disk_home_hint", { n: String(diskDefault) })
+      : sizing.disk_meaning === "quota"
+        ? tr("admin.ws_disk_quota_hint")
+        : +diskGb > 0
+          ? tr("admin.ws_disk_warn")
+          : diskDefault && diskDefault !== 20
+            ? tr("admin.ws_disk_work_hint", { n: String(diskDefault) })
+            : tr("admin.ws_disk_hint");
 
   const stop = async () => {
     setBusy(true);
@@ -441,51 +487,73 @@ export function MemberView({
                 <span className="af-unit">{tr("admin.zero_unlimited")}</span>
               </label>
               <label className="admin-fld">
-                <span className="af-cap">{tr("admin.ws_memory")}</span>
+                <span className="af-cap">{onSlots ? tr("admin.ws_mem_req") : tr("admin.ws_memory")}</span>
                 <span className="af-inputwrap">
                   <input type="number" min="0" step="256" value={memMb} onChange={(e) => setMemMb(e.target.value)} />
                   <span className="af-suffix">MB</span>
                 </span>
-                <span className="af-unit">{+memMb > 0 ? tr("admin.eq_hint", { hint: fmtGbHint(+memMb) }) : tr("admin.zero_deploy_default")}</span>
+                <span className="af-unit">{memHint}</span>
               </label>
+              {/* A CPU number that never reaches the backend is worse than no field, so
+                  on such a runtime it is not rendered at all — but saveLimit keeps
+                  sending the stored value, so hiding it here cannot zero a value set
+                  for a runtime where it does work. */}
+              {sizing.cpu_effective && (
+                <label className="admin-fld">
+                  <span className="af-cap">{tr("admin.ws_cpu")}</span>
+                  <input type="number" min="0" step="256" value={cpuUnits} onChange={(e) => setCpuUnits(e.target.value)} />
+                  <span className="af-unit">
+                    {+cpuUnits > 0 ? tr("admin.ws_cpu_vcpu", { n: String(+cpuUnits / 1024) }) : tr("admin.zero_deploy_default_cpu")}
+                  </span>
+                </label>
+              )}
               <label className="admin-fld">
-                <span className="af-cap">{tr("admin.ws_cpu")}</span>
-                <input type="number" min="0" step="256" value={cpuUnits} onChange={(e) => setCpuUnits(e.target.value)} />
-                <span className="af-unit">
-                  {+cpuUnits > 0 ? tr("admin.ws_cpu_vcpu", { n: String(+cpuUnits / 1024) }) : tr("admin.zero_deploy_default_cpu")}
-                </span>
-              </label>
-              <label className="admin-fld">
-                <span className="af-cap">{tr("admin.ws_disk")}</span>
+                <span className="af-cap">{sizing.disk_meaning === "home" ? tr("admin.ws_disk_home") : tr("admin.ws_disk")}</span>
                 <span className="af-inputwrap">
                   <input type="number" min="0" step="10" value={diskGb} onChange={(e) => setDiskGb(e.target.value)} />
                   <span className="af-suffix">GB</span>
                 </span>
-                <span className="af-unit">{+diskGb > 0 ? tr("admin.ws_disk_warn") : tr("admin.ws_disk_hint")}</span>
+                <span className="af-unit">{diskHint}</span>
               </label>
             </div>
-            {/* The presets fill all three axes at once with a combination Fargate
-                accepts; the fields above stay editable for anything in between. */}
+            {/* Presets are a way to PRESENT valid combinations, not a stored size
+                (ADR 0044 決定 1). On a slot pool the valid set is the ladder itself, so
+                the chips become the rungs and touch only the memory axis — offering an
+                in-between value there would just round up silently. */}
             <div className="le-presets">
               <span className="af-cap">{tr("admin.ws_size_preset")}</span>
-              {WS_SIZE_PRESETS.map((p) => {
-                const on = +memMb === p.mem && +cpuUnits === p.cpu && +diskGb === p.disk;
-                return (
-                  <button
-                    key={p.id}
-                    className={on ? "chip on" : "chip"}
-                    onClick={() => { setMemMb(p.mem); setCpuUnits(p.cpu); setDiskGb(p.disk); }}
-                  >
-                    {p.label}
-                  </button>
-                );
-              })}
+              {onSlots
+                ? sizing.slots!.map((s) => (
+                    <button
+                      key={s.instance_type}
+                      className={+memMb === s.mem_mib ? "chip on" : "chip"}
+                      onClick={() => setMemMb(s.mem_mib)}
+                    >
+                      {fmtGbHint(s.mem_mib)}
+                    </button>
+                  ))
+                : WS_SIZE_PRESETS.map((p) => {
+                    const on = +memMb === p.mem && +cpuUnits === p.cpu && +diskGb === p.disk;
+                    return (
+                      <button
+                        key={p.id}
+                        className={on ? "chip on" : "chip"}
+                        onClick={() => { setMemMb(p.mem); setCpuUnits(p.cpu); setDiskGb(p.disk); }}
+                      >
+                        {p.label}
+                      </button>
+                    );
+                  })}
               <span className="af-unit">
-                {WS_SIZE_PRESETS.some((p) => +memMb === p.mem && +cpuUnits === p.cpu && +diskGb === p.disk)
+                {(onSlots
+                  ? sizing.slots!.some((s) => +memMb === s.mem_mib)
+                  : WS_SIZE_PRESETS.some((p) => +memMb === p.mem && +cpuUnits === p.cpu && +diskGb === p.disk))
                   ? ""
                   : tr("admin.ws_size_custom")}
               </span>
             </div>
+            {!sizing.cpu_effective && <p className="admin-hint">{tr("admin.ws_cpu_na")}</p>}
+            {onSlots && <p className="admin-hint">{tr("admin.ws_slot_note")}</p>}
             <p className="admin-hint">
               {tr("admin.mem_clamp_1")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.mem_clamp_2")}
             </p>

@@ -2197,6 +2197,16 @@
   font-family: var(--mono);
   color: var(--muted);
 }
+/* 接続元制限の CIDR 一覧は 1 行に長い文字列が入るので、格子の 1 列では読めない
+   （docs/66）。ssm-fld.wide と同じ扱いで 1 行を丸ごと使う。 */
+.admin-fld.wide {
+  grid-column: 1 / -1;
+}
+/* 設定ミス（プロキシ未申告・送信元不明）はヒントではなく警告である —— 気づかない
+   ままだと「絞ったつもりで全員を通す」ので、色で他のヒントと分ける。 */
+.admin-hint.warn {
+  color: var(--warn);
+}
 .admin-surface .tc-slug,
 .admin-surface .admin-panel h4 .af-note,
 .admin-surface .af-suffix,

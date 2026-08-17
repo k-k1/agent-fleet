@@ -12,6 +12,8 @@ export const ja = {
 
   // --- API エラー（core/api/client.ts の ERR_TEXT ＋ インライン fallback）---
   // Go 側の安定コード（control-plane/errcodes.go, workspace/agent/errcodes.go）と対。
+  "err.ip_not_allowed":
+    "このテナントは管理者が許可したネットワークからしか使えません。現在の接続元は許可されていません。",
   "err.ssm_search_forbidden":
     "AWS上のインスタンスを検索する権限がありません。AWS管理者に ssm:DescribeInstanceInformation の付与を依頼してください。",
   "err.quota_sessions":
@@ -1359,6 +1361,15 @@ export const ja = {
   "admin.ws_disk_hint": "0 = 既定 20 GiB（無料枠）",
   "admin.ws_disk_warn": "作業ディスクは停止すると消えます。永続するのはホームだけです。",
   "admin.ws_cpu_vcpu": "= {n} vCPU",
+  "admin.ws_mem_req": "ワークスペースのメモリ（必要量）",
+  "admin.ws_slot_lands": "→ {type}（{spec}・専有）",
+  "admin.ws_slot_zero": "0 = 最小スロット（{type}）",
+  "admin.ws_slot_note": "スロットは 1 人で専有し、タスクに予約を掛けないので箱を丸ごと使えます。この値は箱を選ぶだけです。",
+  "admin.ws_cpu_na": "このランタイムでは CPU を選べません（箱を丸ごと使うため）。",
+  "admin.ws_disk_home": "ワークスペースの home（永続）",
+  "admin.ws_disk_home_hint": "0 = デプロイ既定 {n} GiB。home の作成時にだけ反映され、あとから縮められません。",
+  "admin.ws_disk_quota_hint": "0 = 制限なし。表示用の目安で、強制はされません。",
+  "admin.ws_disk_work_hint": "0 = デプロイ既定 {n} GiB",
   "admin.limits_edit_title": "上限の設定",
   "admin.max_sessions_label": "最大セッション数",
   "admin.ws_memory": "ワークスペースのメモリ",
@@ -1499,6 +1510,20 @@ export const ja = {
   "tenant.group_login": "ログイン",
   "tenant.tab_signin": "サインイン方式",
   "tenant.tab_rules": "ログイン規則",
+  "tenant.tab_network": "接続元の制限",
+  "tenant.net_title": "接続元ネットワーク",
+  "tenant.net_on": "制限あり",
+  "tenant.net_off": "制限なし",
+  "tenant.net_allowed": "許可するネットワーク",
+  "tenant.net_allowed_unit": "CIDR か単独アドレスをカンマ区切りで（IPv4/IPv6）。空 = 制限なし。",
+  "tenant.net_your_ip": "このデプロイから見えているあなたのアドレス",
+  "tenant.net_your_ip_unit": "規則はこの値と照合されます（ブラウザが自分で思っているアドレスではありません）。",
+  "tenant.net_ip_unknown": "判定できません",
+  "tenant.net_ip_unknown_hint": "この要求の送信元をコントロールプレーンが特定できないため、規則を適用できません。AF_TRUSTED_PROXY_HOPS の設定を運用者に確認してください。",
+  "tenant.net_proxy_not_configured": "コントロールプレーンの手前にプロキシがありますが、デプロイがそれを申告していません（AF_TRUSTED_PROXY_HOPS）。このままだと全員がそのプロキシから来ているように見えるため、保存を止めています——絞ったつもりで全員を通す設定になってしまいます。運用者に連絡してください。",
+  "tenant.net_scope_hint": "制限されるのはテナントの「利用」で、サイトへの到達ではありません。ログイン画面はどこからでも開けますしサインインも通りますが、一覧に無いネットワークからはこのテナントの中身を開けません。",
+  "tenant.net_exempt_hint": "対象外: MCP と内蔵 Git です（本人のワークスペースの中から呼ばれるので、人がどこにいるかを表しません）。これらを止めるにはメンバーシップを無効化してください。デプロイ管理者はこの規則の対象外で、設定を間違えても必ず戻せます。",
+  "tenant.net_layers_hint": "これはアクセス制限であってネットワーク防御ではありません（要求はコントロールプレーンまで届き、セッションを検証したあとで拒否されます）。届く前に止めるには、運用者がロードバランサ側で絞ります。",
   "tenant.summary_note": "テナント全体の上限を決めるのはデプロイ管理者です",
   "tenant.group_manage": "運用",
   "tenant.tab_members": "メンバー",
