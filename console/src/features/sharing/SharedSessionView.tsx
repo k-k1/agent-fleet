@@ -300,16 +300,22 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
           )}
           {showJump && (
             // ミラーと同じ sticky ピル(mirror.css)。高さ0の帯なのでスクロール量を増やさない。
+            // .mirror-jump-row は飾りではなく位置そのもの: これが無いとボタンは高さ0の帯の中に
+            // in-flow で置かれ、左端に寄り、箱は帯より下へはみ出す(実測 左1px / 下端を 13px
+            // はみ出し / スクロール量 +24px)。row(absolute bottom:0 + center)を挟むと
+            // ミラーと同じ「中央・下端から 11px・スクロール量そのまま」になる。
             <div className="mirror-jump-wrap">
-              <button
-                type="button"
-                className="mirror-jump"
-                onClick={jumpToBottom}
-                title={tr("mirror.jump_latest")}
-                aria-label={tr("mirror.jump_latest")}
-              >
-                <Icon name="arrow-down" /> {tr("mirror.jump_latest")}
-              </button>
+              <div className="mirror-jump-row">
+                <button
+                  type="button"
+                  className="mirror-jump"
+                  onClick={jumpToBottom}
+                  title={tr("mirror.jump_latest")}
+                  aria-label={tr("mirror.jump_latest")}
+                >
+                  <Icon name="arrow-down" /> {tr("mirror.jump_latest")}
+                </button>
+              </div>
             </div>
           )}
         </div>
