@@ -51,7 +51,14 @@ platform changes:
   aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || true
   ```
 - **Cloud cost (optional, but it cannot be backfilled — see docs/67).** Two account-level
-  switches the templates cannot set, both in the Billing console of the **payer** account:
+  switches the templates cannot set, both in the Billing console of the **payer** account.
+  ⚠️ **None of this arrives with the stacks.** The templates carry only the IAM permission
+  (`ce:GetCostAndUsage` on `CpTaskRole`); the tags themselves are written by the *running*
+  Control Plane, and there is no CloudFormation resource type for activating a cost
+  allocation tag at all (`AWS::CE::CostAllocationTag` does not exist). So on a brand-new
+  deployment: deploy → **start one workspace so the CP stamps the tags** → wait up to 24h
+  for AWS to discover the keys → activate. The spend in that gap is lost for good, so start
+  a workspace on day one even if nobody is using it yet.
   1. **IAM user and role access to Billing Information** must be ON, or `CpTaskRole`'s
      `ce:GetCostAndUsage` fails for every call even though the policy is attached.
   2. **Activate the cost allocation tags** `af-membership`, `af-tenant`, `af-role`,
