@@ -110,7 +110,11 @@ func (b *transcriptBuf) thoughtChunk(text string) {
 	b.appendTextLocked("thinking", text)
 }
 
-func (b *transcriptBuf) toolCall(id, title, info string) {
+// toolCall records one ACP tool_call. `file`/`verb`/`edits` are the changed-files
+// coordinate (docs/68) when this call edited something — in the ACP path they come from
+// the PROTOCOL's own classification (tool_call.kind / locations), not from the tool's
+// display name, so they survive a CLI that renames its tools.
+func (b *transcriptBuf) toolCall(id, title, info, file, verb string, edits []transcript.Edit) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.ensureAsstLocked()
@@ -118,7 +122,8 @@ func (b *transcriptBuf) toolCall(id, title, info string) {
 	if label == "" {
 		label = info
 	}
-	b.curAsst.Parts = append(b.curAsst.Parts, transcript.Part{Kind: "tool", Tool: label, Info: clipBuf(info)})
+	b.curAsst.Parts = append(b.curAsst.Parts,
+		transcript.Part{Kind: "tool", Tool: label, Info: clipBuf(info), File: file, Verb: verb, Edits: edits})
 	if id != "" {
 		if b.toolIdx == nil {
 			b.toolIdx = map[string]int{}

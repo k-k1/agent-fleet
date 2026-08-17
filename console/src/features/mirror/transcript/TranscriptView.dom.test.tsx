@@ -44,7 +44,9 @@ const EDIT_TURN: Turn[] = [
     idx: 2,
     ts: "2026-08-13T10:01:00Z",
     parts: [
-      { kind: "tool", tool: "Edit", info: "app.ts", edits: [{ old: "const a = 1", new: "const a = 2" }] },
+      // file は Agent が編集系ツールに必ず載せる座標（docs/68）。ここに無いと
+      // 「このターンが直したファイル」のチップが出ない。
+      { kind: "tool", tool: "Edit", info: "app.ts", file: "src/app.ts", edits: [{ old: "const a = 1", new: "const a = 2" }] },
       { kind: "text", text: "直しました" },
     ],
   },
@@ -67,6 +69,17 @@ describe("TranscriptCaps: 能力が無ければ操作要素を出さない", () 
     const el = render(EDIT_TURN, OWNER);
     expect(el.querySelector(".mt-tool-diff")).not.toBeNull();
     expect(el.querySelector(".mt-fork")).not.toBeNull();
+  });
+
+  it("所有者にはターン末尾に「このターンが直したファイル」のチップが出る（docs/68 P1）", () => {
+    const el = render(EDIT_TURN, OWNER);
+    const chips = el.querySelectorAll(".mtf-chip");
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent).toContain("app.ts");
+  });
+
+  it("受信者にはチップを出さない（共有 DTO はパスを落とすので開く座標が無い）", () => {
+    expect(render(EDIT_TURN, RECIPIENT).querySelector(".mirror-turn-files")).toBeNull();
   });
 
   it("受信者には分岐導線が出ない（叩ける相手のセッションが無い）", () => {

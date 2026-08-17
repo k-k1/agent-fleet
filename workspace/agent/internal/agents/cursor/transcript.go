@@ -88,20 +88,40 @@ type line struct {
 	} `json:"message"`
 }
 
-// contentBlock is one Anthropic-style content block. input is tool_use args
-// (arbitrary shape — we pull a few common label fields).
+// contentBlock is one Anthropic-style content block. input is tool_use args of an
+// arbitrary shape, kept raw: the label wants a couple of common fields (toolLabel) and
+// the changed-files list wants the edit payload (toolEdits), and the two disagree about
+// which fields matter.
 type contentBlock struct {
-	Type  string `json:"type"` // "text" | "thinking" | "tool_use"
-	Text  string `json:"text"`
-	Think string `json:"thinking"`
-	Name  string `json:"name"` // tool_use: tool name
-	Input struct {
+	Type  string          `json:"type"` // "text" | "thinking" | "tool_use"
+	Text  string          `json:"text"`
+	Think string          `json:"thinking"`
+	Name  string          `json:"name"` // tool_use: tool name
+	Input json.RawMessage `json:"input"`
+}
+
+// toolLabel picks the short human-facing label for a tool trace, in the order that has
+// the most information first (unchanged behaviour — it just reads the raw input now).
+func toolLabel(input json.RawMessage) string {
+	if len(input) == 0 {
+		return ""
+	}
+	var in struct {
 		Command     string `json:"command"`
 		Description string `json:"description"`
 		Path        string `json:"path"`
 		FilePath    string `json:"file_path"`
 		TargetFile  string `json:"target_file"`
-	} `json:"input"`
+	}
+	if json.Unmarshal(input, &in) != nil {
+		return ""
+	}
+	for _, s := range []string{in.Description, in.Command, in.Path, in.FilePath, in.TargetFile} {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // outClip bounds any carried text (parity with the other parsers — a preview).
@@ -203,17 +223,119 @@ func parseTranscript(path string) []transcript.Turn {
 						cur.Parts = append(cur.Parts, transcript.Part{Kind: "thinking", Text: clip(b.Think)})
 					}
 				case "tool_use":
-					info := b.Input.Description
-					for _, alt := range []string{b.Input.Command, b.Input.Path, b.Input.FilePath, b.Input.TargetFile} {
-						if info == "" {
-							info = alt
-						}
+					part := transcript.Part{Kind: "tool", Tool: b.Name, Info: clip(toolLabel(b.Input))}
+					if f, verb, es := toolEdits(b.Name, b.Input); f != "" {
+						part.File, part.Verb, part.Edits = f, verb, es
 					}
-					cur.Parts = append(cur.Parts, transcript.Part{Kind: "tool", Tool: b.Name, Info: clip(info)})
+					cur.Parts = append(cur.Parts, part)
 				}
 			}
 		}
 	}
 	flush()
 	return turns
+}
+
+// ── 編集の抽出（docs/68）────────────────────────────────────────────────────────
+//
+// 経路が 2 つあり、手掛かりが違う:
+//   jsonl（TUI / -p）  … tool 名しか無い → toolEdits が名前の allowlist で判定する
+//   ACP（managed）     … プロトコル自身が `kind` で分類している → 名前を見ない
+// 共通なのは入力の形だけなので、before/after の取り出し（editsFromInput）を分けてある。
+
+// editInput is the union of the field spellings an edit-family call has been seen to use.
+// 実測（transcript jsonl, 2026-08）: `Write` は {"path","contents"}。他は同じ語彙群だが
+// 実呼び出しを観測できていないので、claude 綴り（old_string/new_string）と copilot 綴り
+// （old_str/new_str）の両方を受ける。
+type editInput struct {
+	Path       string `json:"path"`
+	FilePath   string `json:"file_path"`
+	TargetFile string `json:"target_file"`
+	Contents   string `json:"contents"`
+	Content    string `json:"content"`
+	OldString  string `json:"old_string"`
+	NewString  string `json:"new_string"`
+	OldStr     string `json:"old_str"`
+	NewStr     string `json:"new_str"`
+	Edits      []struct {
+		OldString string `json:"old_string"`
+		NewString string `json:"new_string"`
+		OldStr    string `json:"old_str"`
+		NewStr    string `json:"new_str"`
+	} `json:"edits"`
+}
+
+func (in editInput) file() string {
+	for _, p := range []string{in.Path, in.FilePath, in.TargetFile} {
+		if p != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+func pick(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// editsFromInput reads the before/after payload from a tool call's raw input WITHOUT
+// consulting the tool name — for the ACP path, where the protocol has already said this
+// call is an edit and the name is only a display title.
+func editsFromInput(raw json.RawMessage) (string, []transcript.Edit) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	var in editInput
+	if json.Unmarshal(raw, &in) != nil {
+		return "", nil
+	}
+	file := in.file()
+	switch {
+	case len(in.Edits) > 0:
+		var out []transcript.Edit
+		for _, e := range in.Edits {
+			out = append(out, transcript.Edit{
+				Old: transcript.CapEdit(pick(e.OldString, e.OldStr)),
+				New: transcript.CapEdit(pick(e.NewString, e.NewStr)),
+			})
+		}
+		return file, out
+	case pick(in.OldString, in.OldStr) != "" || pick(in.NewString, in.NewStr) != "":
+		return file, []transcript.Edit{{
+			Old: transcript.CapEdit(pick(in.OldString, in.OldStr)),
+			New: transcript.CapEdit(pick(in.NewString, in.NewStr)),
+		}}
+	case pick(in.Contents, in.Content) != "":
+		return file, []transcript.Edit{{Old: "", New: transcript.CapEdit(pick(in.Contents, in.Content))}}
+	}
+	return file, nil
+}
+
+// toolEdits is the jsonl path's entry point: there is no protocol-level classification
+// there, only the tool's name.
+//
+// ⚠️ 名前は allowlist で、知らないものは無視する。逆（read 以外を編集とみなす）にすると、
+// 名前が変わった版で **Read しただけのファイルが「変更ファイル」に並ぶ** —— 一覧が黙って
+// 嘘をつく側に倒れる。取りこぼしたときに起きるのは「行が出ない」だけで済む。
+func toolEdits(name string, input json.RawMessage) (file, verb string, edits []transcript.Edit) {
+	switch name {
+	case "Write", "Create", "Edit", "MultiEdit":
+		f, es := editsFromInput(input)
+		if f == "" || len(es) == 0 {
+			return "", "", nil
+		}
+		return f, "", es
+	case "Delete":
+		// 消えたファイルには before/after が無い。ここだけ verb を明示する
+		// （「Edits が無い＝削除」という推定は差分本体を運ばない kind を壊すので使えない）。
+		f, _ := editsFromInput(input)
+		if f == "" {
+			return "", "", nil
+		}
+		return f, "delete", nil
+	}
+	return "", "", nil
 }

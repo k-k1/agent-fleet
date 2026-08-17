@@ -5,6 +5,7 @@ package cursor
 // 行形式は v2026.07.20 の実測（docs/40 実測記録）。
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,5 +238,54 @@ claude-opus-4-8-thinking-high - Opus 4.8 1M Thinking
 		if !strings.HasPrefix(m.ID, "composer") {
 			t.Errorf("non-composer leaked into Free catalog: %q", m.ID)
 		}
+	}
+}
+
+// docs/68: 転写から「編集したファイル」を拾えること。Write の形は実測
+// （~/.cursor/projects/*/agent-transcripts/*.jsonl に {"path","contents"} で残っていた）。
+func TestToolEditsPicksEditFamilyOnly(t *testing.T) {
+	cases := []struct {
+		name     string
+		tool     string
+		input    string
+		wantFile string
+		wantVerb string
+		wantNew  string
+	}{
+		{"Write（実測の形）", "Write", `{"path":"/tmp/x/probe.txt","contents":"hello"}`, "/tmp/x/probe.txt", "", "hello"},
+		{"Edit（claude 綴り）", "Edit", `{"path":"/a.ts","old_string":"a","new_string":"b"}`, "/a.ts", "", "b"},
+		{"Edit（copilot 綴り）", "Edit", `{"file_path":"/a.ts","old_str":"a","new_str":"b"}`, "/a.ts", "", "b"},
+		{"Delete は verb を明示する", "Delete", `{"path":"/a.ts"}`, "/a.ts", "delete", ""},
+		// ⚠️ ここが肝。読み取り系を編集として拾うと、見ただけのファイルが
+		// 「変更ファイル」に並ぶ＝一覧が黙って嘘をつく。
+		{"Read は拾わない", "Read", `{"path":"/a.ts"}`, "", "", ""},
+		{"Grep は拾わない", "Grep", `{"path":"/a.ts","pattern":"x"}`, "", "", ""},
+		{"Shell は拾わない", "Shell", `{"command":"rm /a.ts"}`, "", "", ""},
+		{"知らない名前は拾わない", "Frobnicate", `{"path":"/a.ts","contents":"x"}`, "", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			file, verb, edits := toolEdits(c.tool, json.RawMessage(c.input))
+			if file != c.wantFile || verb != c.wantVerb {
+				t.Fatalf("toolEdits = %q/%q, want %q/%q", file, verb, c.wantFile, c.wantVerb)
+			}
+			if c.wantNew == "" {
+				return
+			}
+			if len(edits) != 1 || edits[0].New != c.wantNew {
+				t.Fatalf("edits = %+v, want New=%q", edits, c.wantNew)
+			}
+		})
+	}
+}
+
+// ACP 経路は名前ではなくプロトコルの kind で分類するので、抽出は形だけを見る。
+func TestEditsFromInputIgnoresToolName(t *testing.T) {
+	file, edits := editsFromInput(json.RawMessage(`{"path":"/a.ts","old_str":"a","new_str":"b"}`))
+	if file != "/a.ts" || len(edits) != 1 || edits[0].Old != "a" {
+		t.Fatalf("editsFromInput = %q %+v", file, edits)
+	}
+	if _, es := editsFromInput(json.RawMessage(`{"path":"/a.ts"}`)); len(es) != 0 {
+		t.Fatalf("payload の無い入力から差分を作ってはいけない: %+v", es)
 	}
 }
