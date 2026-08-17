@@ -3571,6 +3571,7 @@ export const en: Record<keyof typeof ja, string> = {
   "view.open_in_pane_at_line": "Open {path}:{line} in a separate pane",
   "view.open_in_pane": "Open {path} in a separate pane",
   "view.open_in_pane_aria": "Open {label} in a separate pane",
+  "view.reveal_in_files": "Show {path} in the file browser",
   "view.cannot_resolve_link": "Cannot resolve link: {href}",
   "view.cannot_load": "Cannot load",
   "view.lines_meta": " · {n} lines",

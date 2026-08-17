@@ -2,7 +2,16 @@ import { useEffect, useRef } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
-import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget, slug } from "../../lib/filemeta.ts";
+import {
+  dirName,
+  baseName,
+  isExternalUrl,
+  resolveMarkdownFileTarget,
+  slug,
+  type MarkdownFileTarget,
+} from "../../lib/filemeta.ts";
+import { pathRefCandidate } from "../../lib/pathref.ts";
+import { listDirListing, type DirListing } from "./dirListing.ts";
 import { repairFullwidthTables, splitYamlFrontMatter, type TableRepair } from "../../lib/markdown.ts";
 import { api, downloadURL } from "../../core/api/client.ts";
 import { useSettings } from "../../lib/settings.ts";
@@ -15,6 +24,7 @@ import { openChat, openChatSplit } from "../chat/open.ts";
 import { openCommit } from "../scm/open.ts";
 import { browserAttachmentIdFromLink } from "../../layout/browserAttachmentAction.ts";
 import { openBrowserAttachment } from "../browser/attachmentAction.ts";
+import { useFilesStore } from "../files/store.ts";
 
 // MarkdownView renders Markdown to sanitized HTML, highlights fenced code blocks,
 // turns ```mermaid blocks into rendered diagrams (lazy-loaded), and wires links:
@@ -164,6 +174,26 @@ export function MarkdownView({
       void ensureConvs().then(() => {
         if (alive) runLinkify();
       });
+    }
+
+    // Link the file paths written as inline code (`docs/65-drawio-viewer.md`) to the file
+    // they name — but only on a surface that can actually open one. onOpenFile absent means
+    // the shared view (docs/59): a recipient has no such file, so nothing is linked there
+    // rather than shown a link that opens nothing.
+    if (onOpenFileRef.current) {
+      void linkifyPathRefs(
+        el,
+        basePath,
+        baseDir,
+        () => alive,
+        (p, line, column, openInNew) => onOpenFileRef.current?.(p, line, column, openInNew),
+        // No onOpenDir on this surface (the mirror passes only onOpenFile) → fall back to
+        // revealing the directory in the ファイル rail, which is what the Doc viewer's own
+        // onOpenDir does. Safe as a default precisely because this whole pass is gated on
+        // onOpenFile above: it can never fire on somebody else's shared session.
+        (p) => (onOpenDirRef.current ? onOpenDirRef.current(p) : useFilesStore.getState().revealInFiles(p)),
+        (message) => toast(message),
+      );
     }
 
     // VS Code-style sticky headings: when this markdown is inside a scroll container
@@ -511,6 +541,104 @@ function makeSessionLink(name: string, openSession: (name: string, openInNew: bo
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       openSession(name, e.ctrlKey || e.metaKey);
+    }
+  });
+  return a;
+}
+
+// linkifyPathRefs turns the file paths an agent writes as INLINE CODE — `docs/65.md`,
+// `console/src/lib/filemeta.ts:73`, `_act-parts/` — into links that open that file in a
+// pane (a directory reveals in the ファイル rail). Until now those were dead text: the
+// coordinate you most want to follow was the one thing you had to retype.
+//
+// Existence-gated, like a session slug and unlike a commit hash: a path is linked only
+// when it is really there. That is what keeps it quiet — a generic `package.json` in
+// prose, a `--flag` shaped like a name, a file from another machine's log all stay plain
+// text instead of becoming links that answer a click with "見つかりません".
+//
+// Cost is bounded on three sides: pathRefCandidate rejects anything not path-shaped
+// before a request exists, one fs/tree listing answers every path in a directory
+// (memoized across turns by dirListing), and a single document asks about at most
+// MAX_DIRS_PER_DOC directories — a reply that cites paths in twenty directories links
+// the first few and leaves the rest as text rather than firing twenty requests.
+//
+// Fenced blocks (<pre>) are left alone, as everywhere else in this file: a code sample is
+// literal source, and its lines are usually commands rather than citations.
+const MAX_DIRS_PER_DOC = 8;
+
+async function linkifyPathRefs(
+  el: HTMLElement,
+  basePath: string,
+  baseDir: string,
+  alive: () => boolean,
+  onOpenFile: (path: string, line?: number, column?: number, openInNew?: boolean) => void,
+  onOpenDir: (path: string) => void,
+  onError: (message: string) => void,
+) {
+  const candidates: { code: HTMLElement; target: MarkdownFileTarget }[] = [];
+  el.querySelectorAll<HTMLElement>("code").forEach((code) => {
+    if (code.dataset.pathLink) return; // already processed (the effect can link twice)
+    if (code.closest("pre,a")) return; // fenced source, or already inside a link
+    if (code.childElementCount) return; // not a bare token
+    const ref = pathRefCandidate(code.textContent);
+    if (!ref) return;
+    const target = resolveMarkdownFileTarget(ref, basePath, baseDir);
+    if (target?.path) candidates.push({ code, target });
+  });
+  if (!candidates.length) return;
+
+  const dirs = [...new Set(candidates.map((c) => dirName(c.target.path)))].slice(0, MAX_DIRS_PER_DOC);
+  const listings = new Map<string, DirListing | null>();
+  await Promise.all(dirs.map(async (dir) => void listings.set(dir, await listDirListing(dir))));
+  if (!alive()) return; // the effect re-ran or the view unmounted while we were asking
+
+  for (const { code, target } of candidates) {
+    const type = listings.get(dirName(target.path))?.get(baseName(target.path));
+    if (!type) continue; // unknown directory (over the cap / unlistable) or no such entry
+    if (!code.isConnected || code.dataset.pathLink) continue;
+    code.dataset.pathLink = "1";
+    const a = makePathLink(target, type, onOpenFile, onOpenDir, onError);
+    while (code.firstChild) a.appendChild(code.firstChild);
+    code.appendChild(a);
+  }
+}
+
+// makePathLink builds the non-navigating anchor a linked path gets. Existence was checked
+// to decide whether to link at all; the click re-checks through openRepoTarget anyway, so
+// a file deleted since the reply was rendered toasts instead of opening an empty pane.
+// Modifier keys follow the file-link convention (wireLinks): Ctrl/Cmd or middle click
+// forces a new pane.
+function makePathLink(
+  target: MarkdownFileTarget,
+  type: "file" | "dir",
+  onOpenFile: (path: string, line?: number, column?: number, openInNew?: boolean) => void,
+  onOpenDir: (path: string) => void,
+  onError: (message: string) => void,
+): HTMLAnchorElement {
+  const a = document.createElement("a");
+  a.className = "md-ref-link md-path-link";
+  a.setAttribute("role", "link");
+  a.tabIndex = 0;
+  a.title =
+    type === "dir"
+      ? t("view.reveal_in_files", { path: target.path })
+      : target.line
+        ? t("view.open_in_pane_at_line", { path: target.path, line: target.line })
+        : t("view.open_in_pane", { path: target.path });
+  const open = (openInNew: boolean) => openRepoTarget(target, onOpenFile, onOpenDir, onError, openInNew);
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    void open(e.ctrlKey || e.metaKey);
+  });
+  a.addEventListener("auxclick", (e) => {
+    if (e.button !== 1) return; // middle click → new pane
+    e.preventDefault();
+    void open(true);
+  });
+  a.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      void open(e.ctrlKey || e.metaKey);
     }
   });
   return a;
