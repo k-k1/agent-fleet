@@ -1,0 +1,96 @@
+/* クラウド費用（docs/67 + ADR 0048）。
+   稼働時間の面（.usage-rows / .usage-toolbar、settings.css）を意図的に使い回して
+   いる。行の形が同じなら「同じ種類の表」として読めるので、違うのは単位だけだと
+   伝わる。ここに足すのは金額固有の要素だけ。 */
+
+.cloud-cost .cc-lede {
+  margin: 0 0 12px;
+}
+
+/* 見出しの金額。⚠️ ラベルは必ず金額の下に置く——「あなたのコスト」ではなく
+   「直接ひも付く費用」であることは、数字と同じ視線の中に無いと読まれない。 */
+.cloud-cost .cc-headline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.cloud-cost .cc-total {
+  font-size: 1.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.cloud-cost .cc-total-lab {
+  font-size: 0.82rem;
+}
+
+/* 但し書き。数字のすぐ下、脚注ではない。 */
+.cloud-cost .cc-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 14px;
+}
+.cloud-cost .cc-notes p {
+  margin: 0;
+  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 日次の棒。SVG を持ち込むほどの図ではないので素の flex で足りる。 */
+.cloud-cost .cc-days {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 96px;
+  margin: 4px 0 18px;
+  padding-bottom: 16px;
+  position: relative;
+}
+.cloud-cost .cc-day {
+  flex: 1 1 0;
+  min-width: 6px;
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+}
+.cloud-cost .cc-day-fill {
+  width: 100%;
+  min-height: 2px;
+  background: var(--accent, #4c8bf5);
+  border-radius: 2px 2px 0 0;
+}
+/* 未確定の日はまだ動く。塗りつぶしを弱めて「確定した日と同じ重みで読むな」と示す。 */
+.cloud-cost .cc-day.est .cc-day-fill {
+  opacity: 0.55;
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 3px,
+    rgba(255, 255, 255, 0.35) 3px,
+    rgba(255, 255, 255, 0.35) 6px
+  );
+}
+.cloud-cost .cc-day-lab {
+  position: absolute;
+  bottom: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+/* 日数が増えると日付ラベルは重なる。数字は tooltip にあるので、狭いときは消す。 */
+@media (max-width: 720px) {
+  .cloud-cost .cc-day-lab {
+    display: none;
+  }
+}
+
+.cloud-cost .cc-sub {
+  margin: 18px 0 8px;
+  font-size: 0.9rem;
+}

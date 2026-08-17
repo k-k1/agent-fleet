@@ -1106,7 +1106,7 @@ export const ja = {
   "admin.forbidden": "権限がありません（super_admin のみ）。",
   "admin.mode_manage": "テナント管理",
   "admin.mode_sessions": "セッション",
-  "admin.mode_usage": "使用量",
+  "admin.mode_usage": "稼働時間",
   "admin.mode_audit": "監査",
   "admin.mode_egress": "通信",
   "admin.mode_mcp": "MCP 配布",
@@ -1250,7 +1250,54 @@ export const ja = {
   "admin.tts_dict_note":
     "全ユーザーの読み上げに適用される共通辞書です（1 行に 1 件「表記=読み」、# 始まりはコメント）。各ユーザーが設定（読み上げタブ）の読み仮名辞書に同じ表記を持つ場合は、そのユーザーの指定が優先されます。保存後、他のユーザーには Console の次回ロードから反映されます。",
   "admin.usage_load_error": "読み込みに失敗しました。",
-  "admin.usage_title": "使用量（ワークスペース稼働時間）",
+  // --- クラウド費用（docs/67 + ADR 0048）---
+  // ⚠️ わざと「使用量」と呼ばない。その名前は既に 3 か所で使っている
+  //（エージェントのトークン、ワークスペース稼働時間が 2 か所）。ここは金額で、
+  // しかも AWS の請求があるデプロイにしか存在しない。
+  "admin.mode_cost": "クラウド費用",
+  "tenant.tab_cost": "クラウド費用",
+  "set.tab_cost": "クラウド費用",
+  "cost.admin_title": "メンバー別のクラウド費用",
+  "cost.admin_intro":
+    "AWS の請求を、コスト配分タグでメンバーごとに割り当てたものです。人にひも付いた分だけがここに出ます。共有インフラは別に出していて、頭割りはしません。",
+  "cost.my_title": "あなたのワークスペースのクラウド費用",
+  // ⚠️ この文言こそが本体である。実測では請求のうち人に紐づけられるのは 2 割ほどで、
+  // それを「あなたのコスト」と呼ぶと、実際に払っている額の 1/5 を指すことになる。
+  "cost.my_intro":
+    "あなたのワークスペースに直接ひも付いている分です（スロットの稼働時間・永続ホームのボリューム・そのスナップショット）。共有インフラ（NAT・DNS・ロードバランサ・データベース・空きスロット）は含みませんので、ワークスペースを動かす費用の全部ではありません。",
+  "cost.my_total_label": "あなたのワークスペースに直接ひも付く費用（共有分は含みません）",
+  "cost.attributed_label": "メンバーにひも付く費用",
+  "cost.shared_title": "共有インフラ",
+  "cost.shared_intro":
+    "誰か 1 人のものではない費用です。あえてメンバーに割り振っていません——割り振った時点で、それは請求ではなく見積になります。誰も使っていない空きスロットもここに入ります（プールを大きく持っている分の実費です）。",
+  "cost.shared_label": "共有（割り当てなし）",
+  "cost.shared_centres": "内訳の区分:",
+  "cost.account_scope": "この AWS アカウント全体を集計しています。同じアカウントで他のものを動かしていれば、それも共有の額に入ります。",
+  "cost.breakdown": "何に使ったか",
+  "cost.no_records": "この期間の費用はありません。",
+  "cost.load_error": "クラウド費用を取得できませんでした。",
+  "cost.lag": "Cost Explorer は約 {h} 時間遅れです。",
+  "cost.estimated_note": "直近の日はまだ確定しておらず、あとから変わります。",
+  // ⚠️ 有効化は遡らないので、これは読み込み中ではなく恒久的な欠測である。
+  "cost.no_backfill":
+    "{day} より前は取得できません。コスト配分タグは有効化した時点より後にしか効かず、遡って埋めることはできません。",
+  "cost.unverified_runtime":
+    "このランタイムでのタグ付けは実環境でまだ確認できていないため、数字が欠けている可能性があります。",
+  "cost.poll_error": "Cost Explorer を読めていないため、この数字は古いか空です:",
+  "cost.centre_slot_hours": "スロット稼働時間",
+  "cost.centre_home_volume": "ホームボリューム",
+  "cost.centre_snapshots": "スナップショット",
+  "cost.centre_task_compute": "タスクの計算資源",
+  "cost.centre_scratch": "作業ディスク",
+  "cost.centre_nat": "NAT ゲートウェイ",
+  "cost.centre_dns": "DNS",
+  "cost.centre_lb": "ロードバランサ",
+  "cost.centre_db": "データベース",
+  "cost.centre_efs": "共有ファイルシステム",
+  "cost.centre_idle_pool": "空きスロット",
+  "cost.centre_cp": "コントロールプレーン",
+  "cost.centre_tax": "税",
+  "admin.usage_title": "稼働時間（ワークスペースの占有）",
   "admin.usage_intro":
     "インフラ占有＝ワークスペースが起動していた時間の集計です（Claude 利用料は各自のサブスクで、ここには含みません）。約 5 分ごとのサンプリングのため誤差があります。",
   "admin.from": "開始",
@@ -1528,7 +1575,7 @@ export const ja = {
   "tenant.group_manage": "運用",
   "tenant.tab_members": "メンバー",
   "tenant.tab_sessions": "セッション",
-  "tenant.tab_usage": "使用量",
+  "tenant.tab_usage": "稼働時間",
   "tenant.tab_audit": "監査",
   "tenant.tab_mcp": "MCP 配布",
   "tenant.picker": "テナント",
