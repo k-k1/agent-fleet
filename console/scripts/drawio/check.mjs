@@ -22,7 +22,13 @@
 //     ラベルはライト時の白いピル＋黒文字のまま残る**（実測）。DrawioView はフレームごと
 //     作り直し、見ていた場所（ページ・倍率・位置）を渡して復元する。ここではその
 //     手順どおりに動かし、暗色になっていることと倍率が保たれることを見る。
-//  8. **アセットに認証ゲートがあっても描ける。** サンドボックス iframe はオリジンを
+//  8. **背景が要求したテーマどおりに塗られている。** 背景色は srcdoc のスタイルシートと
+//     描画時の inline の 2 か所から来る。html だけを inline で上書きしても body の指定が
+//     上に塗るため、**組み立て時のテーマがそのまま残る**（実測: 組み立て dark ＋ 要求
+//     light で背景 #1e1e1e のまま／逆向きは白のまま。利用者が見た症状 2 つはどちらもこれ）。
+//     ここでは**組み立てと要求をわざと食い違わせて**画素で判定する —— 背景色は単色なので
+//     画素で見てよい（コントラストと違い、指標が素直に対応する）。
+//  9. **アセットに認証ゲートがあっても描ける。** サンドボックス iframe はオリジンを
 //     持たないため、そこからの要求は cross-site 扱いで SameSite=Lax のセッション
 //     cookie が付かない。フレームが自分で `<script src>` を取りに行く設計だと CP の
 //     authGate に 401 で弾かれ、実機だけが壊れる（2026-08-16 の不具合）。ここでは
@@ -102,6 +108,9 @@ const CASES = [
   { name: "not-a-diagram", xml: "<foo><bar/></foo>", dark: false, expectError: true },
   // ライトで開き、ズームしてから、テーマ切り替え（＝フレーム作り直し）を通す。
   { name: "theme-switch", xml: PLAIN, dark: false, pages: 2, themeSwitch: true },
+  // 組み立てと要求を食い違わせる。背景は **要求した側** に従わなければならない。
+  { name: "bg-follows-request-dark", xml: PLAIN, dark: true, builtDark: false, pages: 2, bg: "#1e1e1e" },
+  { name: "bg-follows-request-light", xml: PLAIN, dark: false, builtDark: true, pages: 2, bg: "#ffffff" },
 ];
 
 // ---------------------------------------------------------------- frame html
@@ -217,7 +226,8 @@ await b.call("Emulation.setDeviceMetricsOverride", { width: 900, height: 600, de
 await b.call("Network.enable");
 
 for (const c of CASES) {
-  const srcdoc = drawioFrameSrcdoc({ dark: c.dark });
+  // builtDark を指定したケースだけ、組み立て時のテーマを要求とわざとずらす。
+  const srcdoc = drawioFrameSrcdoc({ dark: c.builtDark === undefined ? c.dark : c.builtDark });
   // 親の手順は DrawioView.tsx と同じにする（ここが実機とずれると、守っている対象が
   // 製品コードでなくなる）: ready を待つ → 自分が取ったビューア本文を boot で渡す →
   // booted を待って render。**フレームは 1 本も要求を出さない。**
@@ -264,6 +274,32 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
   // cookie の付かない要求 ＝ オリジンを持たないフレームが自分で取りに行った要求。
   if (unauthorized.length) {
     fail.push(`${c.name}: フレームが資格情報無しで取りに行った ${JSON.stringify([...new Set(unauthorized)])}`);
+  }
+
+  // ── 背景（docs/65 §65.11-13）──────────────────────────────────────────
+  if (c.bg && rendered) {
+    // 図形の載っていない隅を見る（フレームは 860x520・図は中央に収まる）。
+    const shot = await b.call("Page.captureScreenshot", { clip: { x: 840, y: 500, width: 8, height: 8, scale: 1 } });
+    const px = await b.call("Runtime.evaluate", {
+      expression: `(async () => {
+        const img = new Image();
+        img.src = "data:image/png;base64," + ${JSON.stringify(shot.data)};
+        await img.decode();
+        const cv = document.createElement("canvas");
+        cv.width = img.width; cv.height = img.height;
+        cv.getContext("2d").drawImage(img, 0, 0);
+        const d = cv.getContext("2d").getImageData(2, 2, 1, 1).data;
+        return "#" + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, "0")).join("");
+      })()`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    const got = px.result?.value;
+    if (got !== c.bg) {
+      fail.push(`${c.name}: 背景が ${got}（要求 ${c.bg}）—— 組み立て時のテーマが残っている`);
+    } else {
+      console.log(`   background: ${got}`);
+    }
   }
 
   // ── テーマ切り替え（docs/65 §65.11-12）──────────────────────────────────
