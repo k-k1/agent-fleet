@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -467,4 +468,218 @@ func TestIdleBase(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- Tier 3: home hibernation (ADR 0045 決定 13-2) ---
+
+// hibernateStub is a runtime that CAN put its home away. Everything tier 3 decides is
+// decided against this: it never actually goes to AWS.
+type hibernateStub struct {
+	state  string
+	begins atomic.Int32
+	err    error
+}
+
+func (r *hibernateStub) Start(context.Context) error  { return nil }
+func (r *hibernateStub) Stop(context.Context) error   { return nil }
+func (r *hibernateStub) State(context.Context) string { return r.state }
+func (r *hibernateStub) Endpoint() string             { return "" }
+func (r *hibernateStub) Token() string                { return "" }
+func (r *hibernateStub) Name() string                 { return "hib-stub" }
+func (r *hibernateStub) BeginHibernate(context.Context) error {
+	r.begins.Add(1)
+	return r.err
+}
+
+// plainStub is every other runtime: no cheaper place to put a home, so tier 3 must be
+// absent rather than half-working.
+type plainStub struct{ state string }
+
+func (r *plainStub) Start(context.Context) error  { return nil }
+func (r *plainStub) Stop(context.Context) error   { return nil }
+func (r *plainStub) State(context.Context) string { return r.state }
+func (r *plainStub) Endpoint() string             { return "" }
+func (r *plainStub) Token() string                { return "" }
+func (r *plainStub) Name() string                 { return "plain-stub" }
+
+func setLastActive(t *testing.T, st *sqlStore, wsID string, at time.Time) string {
+	t.Helper()
+	ts := at.UTC().Format(time.RFC3339)
+	if _, err := st.db.Exec(`UPDATE workspace SET last_active_at=? WHERE id=?`, ts, wsID); err != nil {
+		t.Fatal(err)
+	}
+	return ts
+}
+
+func TestReaperHibernatesOnlyAColdHome(t *testing.T) {
+	ctx := context.Background()
+	month := 30 * 24 * time.Hour
+
+	t.Run("a home nobody has opened for two months", func(t *testing.T) {
+		st, ws, mgr := reaperLifecycleFixture(t)
+		ws.LastActiveAt = setLastActive(t, st, ws.ID, time.Now().Add(-60*24*time.Hour))
+		rt := &hibernateStub{state: "stopped"}
+		(&reaper{mgr: mgr, bootTime: time.Now()}).hibernateHome(ctx, rt, ws, month)
+		if rt.begins.Load() != 1 {
+			t.Fatalf("BeginHibernate calls = %d, want 1", rt.begins.Load())
+		}
+	})
+
+	t.Run("a CP restart does not push the deadline out", func(t *testing.T) {
+		// The regression this guards: tier 2's idleBase starts its clock at the reaper's
+		// boot time, which is right for minutes and fatal for weeks — a CP that restarts
+		// more often than the window would leave the setting enabled and never firing.
+		st, ws, mgr := reaperLifecycleFixture(t)
+		ws.LastActiveAt = setLastActive(t, st, ws.ID, time.Now().Add(-60*24*time.Hour))
+		rt := &hibernateStub{state: "stopped"}
+		rp := &reaper{mgr: mgr, bootTime: time.Now()} // just booted
+		rp.hibernateHome(ctx, rt, ws, month)
+		if rt.begins.Load() != 1 {
+			t.Fatalf("a fresh CP boot suppressed hibernation entirely (calls = %d)", rt.begins.Load())
+		}
+	})
+
+	t.Run("not before the window", func(t *testing.T) {
+		st, ws, mgr := reaperLifecycleFixture(t)
+		ws.LastActiveAt = setLastActive(t, st, ws.ID, time.Now().Add(-2*time.Hour))
+		rt := &hibernateStub{state: "stopped"}
+		(&reaper{mgr: mgr, bootTime: time.Now()}).hibernateHome(ctx, rt, ws, month)
+		if rt.begins.Load() != 0 {
+			t.Fatal("put away a home that was used two hours ago")
+		}
+	})
+
+	t.Run("an unreadable last_active_at means leave it alone", func(t *testing.T) {
+		_, ws, mgr := reaperLifecycleFixture(t) // last_active_at never written
+		rt := &hibernateStub{state: "stopped"}
+		(&reaper{mgr: mgr, bootTime: time.Now()}).hibernateHome(ctx, rt, ws, month)
+		if rt.begins.Load() != 0 {
+			t.Fatal("an empty timestamp was read as 'idle forever' — that is a home, deleted")
+		}
+	})
+
+	t.Run("the owner came back while we waited for the fences", func(t *testing.T) {
+		st, ws, mgr := reaperLifecycleFixture(t)
+		ws.LastActiveAt = setLastActive(t, st, ws.ID, time.Now().Add(-60*24*time.Hour))
+		rt := &hibernateStub{state: "running"} // re-read under the lease
+		(&reaper{mgr: mgr, bootTime: time.Now()}).hibernateHome(ctx, rt, ws, month)
+		if rt.begins.Load() != 0 {
+			t.Fatal("released the slot of a workspace that had come back up")
+		}
+	})
+
+	t.Run("a runtime with nowhere to put a home", func(t *testing.T) {
+		st, ws, mgr := reaperLifecycleFixture(t)
+		ws.LastActiveAt = setLastActive(t, st, ws.ID, time.Now().Add(-60*24*time.Hour))
+		// Nothing to assert but "does not panic and does not stop the sweep": on docker,
+		// native and Fargate the home stays exactly where it is.
+		(&reaper{mgr: mgr, bootTime: time.Now()}).hibernateHome(ctx, &plainStub{state: "stopped"}, ws, month)
+	})
+}
+
+// The tenant's setting is what decides, and "0" has to mean never — this is the only
+// automatic path in the product that takes a user's home off the disk it was on.
+func TestHomeHibernateAfterResolution(t *testing.T) {
+	cases := []struct {
+		name    string
+		tenant  string
+		def     time.Duration
+		want    time.Duration
+		enabled bool
+	}{
+		{"deployment default when unset", "", 30 * 24 * time.Hour, 30 * 24 * time.Hour, true},
+		{"off by default", "", 0, 0, false},
+		{"tenant opts in on a deployment that did not", "720h", 0, 720 * time.Hour, true},
+		{"tenant opts out of a deployment that did", "0", 30 * 24 * time.Hour, 0, false},
+		{"garbage falls back rather than silently disabling", "soon", 24 * time.Hour, 24 * time.Hour, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lim := parseLimits(`{"home_hibernate_after":` + jsonQuote(tc.tenant) + `}`)
+			got, on := idleTimeout(lim.HomeHibernateAfter, tc.def)
+			if got != tc.want || on != tc.enabled {
+				t.Fatalf("= (%s, %v), want (%s, %v)", got, on, tc.want, tc.enabled)
+			}
+		})
+	}
+}
+
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+type stubFactory struct{ rt Runtime }
+
+func (f stubFactory) New(Workspace, string, []string) Runtime { return f.rt }
+
+// The wiring, not the decision: a STOPPED workspace never reaches tiers 1–2 (they return
+// on anything that is not running), so tier 3 has to be reached from the other side of
+// that return. This is the branch that would silently do nothing if it were misplaced.
+func TestReaperSweepReachesTier3OnAStoppedWorkspace(t *testing.T) {
+	ctx := context.Background()
+	st, ws, mgr := reaperLifecycleFixture(t)
+	ws.LastActiveAt = setLastActive(t, st, ws.ID, time.Now().Add(-60*24*time.Hour))
+	rt := &hibernateStub{state: "stopped"}
+	mgr.rtFactory = stubFactory{rt: rt}
+	rp := &reaper{mgr: mgr, bootTime: time.Now()}
+
+	// Tiers 1 and 2 on, tier 3 off: nothing may happen to a stopped workspace's home.
+	rp.sweepWorkspace(ctx, ws, time.Minute, true, time.Minute, true, 0, false, 0, false, map[string]bool{})
+	if rt.begins.Load() != 0 {
+		t.Fatal("hibernated a home although the tenant never asked for it")
+	}
+	rp.sweepWorkspace(ctx, ws, time.Minute, true, time.Minute, true, 30*24*time.Hour, true, 0, false, map[string]bool{})
+	if rt.begins.Load() != 1 {
+		t.Fatalf("tier 3 was never reached from sweepWorkspace (calls = %d)", rt.begins.Load())
+	}
+
+	// "starting" is a launch converging, and "none" has no home left to put away.
+	for _, state := range []string{"starting", "none", "running"} {
+		rt.state = state
+		before := rt.begins.Load()
+		rp.sweepWorkspace(ctx, ws, time.Minute, true, time.Minute, true, 30*24*time.Hour, true, 0, false, map[string]bool{})
+		if rt.begins.Load() != before {
+			t.Errorf("state %q was hibernated", state)
+		}
+	}
+}
+
+// The deployment defaults. They were 0 (off) until 2026-08-17, which read as "safe by
+// default" and was not: a real deployment sat 9.4h with a workspace nobody had touched,
+// holding an m7i.large slot (docs/64 §64.26). Now they are on, so this test guards the
+// two things that make that safe: a tenant can still turn them off, and an operator can
+// still turn them off deployment-wide with an explicit "0".
+func TestIdleTimeoutDefaultsAndOverrides(t *testing.T) {
+	const (
+		sessDefault = time.Hour
+		wsDefault   = 2 * time.Hour
+	)
+	t.Run("a tenant that says nothing gets the deployment default", func(t *testing.T) {
+		d, on := idleTimeout("", wsDefault)
+		if !on || d != wsDefault {
+			t.Errorf("idleTimeout(\"\", 2h) = %s/%v, want 2h/true", d, on)
+		}
+	})
+	t.Run("a tenant can raise, lower, or switch it off", func(t *testing.T) {
+		if d, on := idleTimeout("30m", wsDefault); !on || d != 30*time.Minute {
+			t.Errorf("tenant 30m = %s/%v", d, on)
+		}
+		if d, on := idleTimeout("0", wsDefault); on || d != 0 {
+			t.Errorf("tenant \"0\" = %s/%v, want off — a tenant that opts out must stay out", d, on)
+		}
+	})
+	t.Run("an operator turns it off deployment-wide with an explicit 0", func(t *testing.T) {
+		// intervalOff, not parseDurationOr: the latter reads any non-positive value as
+		// "use the default", which would turn the off switch back on.
+		if got := intervalOff("0", sessDefault); got != 0 {
+			t.Errorf("AF_SESSION_IDLE_TIMEOUT=0 resolved to %s, want off", got)
+		}
+		if got := intervalOff("", sessDefault); got != sessDefault {
+			t.Errorf("unset resolved to %s, want the 1h default", got)
+		}
+		if got := intervalOff("nonsense", wsDefault); got != wsDefault {
+			t.Errorf("a typo resolved to %s, want the default (a typo must not silently disable it)", got)
+		}
+	})
 }

@@ -1129,9 +1129,10 @@ export const ja = {
   "pool.asleep": "休止中",
   "pool.asleep_sub": "停止済み・root ボリュームのみ",
   "pool.free": "空き",
-  "pool.free_sub": "誰の home も付いていない",
+  "pool.free_sub": "上のうち home が付いていないもの",
   "pool.at_cap": "上限に達しています。次に起動する人には新しいスロットではなく、最も長く休眠しているユーザーのスロットが割り当てられます（立ち退き）。",
-  "pool.timers": "タスクが無くなって {sleep} でスロットを停止します。home は {hibernate} で snapshot へ退避します。",
+  "pool.timers": "タスクが無くなって {sleep} でスロットを停止します。home はテナント側で指定が無ければ {hibernate} で snapshot へ退避します（デプロイ既定）。",
+  "pool.timers_no_hibernate": "タスクが無くなって {sleep} でスロットを停止します。home の退避はテナント側で指定しない限り行いません（テナント → 使われない home の退避）。",
   "pool.off": "しない",
   "pool.no_slots": "スロットはありません。最初の起動で 1 台作られます。",
   "pool.col_instance": "インスタンス",
@@ -1139,7 +1140,13 @@ export const ja = {
   "pool.col_state": "状態",
   "pool.col_occupant": "使用中",
   "pool.col_dormant": "休眠",
+  "pool.col_backup": "予備",
+  "pool.backup_none": "無し",
+  "pool.backup_count": "予備 {n} 本",
   "pool.state_asleep": "休止中",
+  "pool.state_quarantined": "隔離",
+  "pool.quarantined_hint":
+    "home をマウントできなかったスロットが {n} 台あり、プールから外しました（他の人がここに入ることはありません）。停止済みですが root ボリュームは残っているので、必要なものを取り終えたら終了させてください。",
   "pool.not_registered": "（まだタスクを受け付けない）",
   "pool.free_slot": "空き",
   "pool.homes_title": "home",
@@ -1281,11 +1288,29 @@ export const ja = {
   "admin.empty_deploy_default": "空 = デプロイ既定に従う",
   "admin.session_halt": "セッション停止まで",
   "admin.ws_stop": "ワークスペース停止まで",
-  "admin.idle_ph_30m": "例 30m（空=無効）",
-  "admin.idle_ph_60m": "例 60m（空=無効）",
+  "admin.idle_ph_30m": "例 30m（空=デプロイ既定 1h）",
+  "admin.idle_ph_60m": "例 60m（空=デプロイ既定 2h）",
   "admin.idle_hint_1": "放置された Claude セッションは「セッション停止まで」で停止中（再開可）になり、接続も稼働もないワークスペースは「ワークスペース停止まで」で停止します。書式は ",
-  "admin.idle_hint_2": "。空欄はデプロイ既定（既定は無効）に従い、",
+  "admin.idle_hint_2": "。空欄はデプロイ既定（セッション 1h／ワークスペース 2h）に従い、",
   "admin.idle_hint_3": " で明示的に無効化します。",
+  // home の退避（AF_RUNTIME=ecs-ec2 のみ・ADR 0045 決定 13-2）。ここだけが「利用者の home を
+  // 自動で今の置き場から動かす」設定なので、可逆であることと初日が遅くなることを必ず書く。
+  "admin.hibernate_title": "使われない home の退避",
+  "admin.hibernate_after": "退避するまで",
+  "admin.hibernate_ph": "例 720h＝30日（空=デプロイ既定）",
+  "admin.hibernate_hint":
+    "この期間だれも開かなかった home は snapshot にして、ディスクを解放します。次に起動したときに戻すので失われるものはありませんが、その回の起動は少し長くなり、戻した直後の数時間はディスクが遅くなります。",
+  "admin.hibernate_warn":
+    "自動で行うのは退避までで、破棄はしません。書式は時間まで（日は 24h の倍数で書きます）。0 と書くとこのテナントでは退避しません。",
+  // home の予備（ADR 0045 決定 17）。AZ ごと失う話はこのランタイムにしか無いので、
+  // 「なぜ要るのか」を先に書く。RPO の語は使わず「どれだけ巻き戻ってよいか」で言う。
+  "admin.backup_title": "home の予備を取る",
+  "admin.backup_every": "取る間隔",
+  "admin.backup_ph": "例 24h（空=デプロイ既定）",
+  "admin.backup_hint":
+    "home は 1 つのアベイラビリティゾーンの中にあり、そのゾーンごと失われると home も失われます。予備はゾーンの外に置かれるので、そこから作り直せます。ここで決めるのは「最悪どれだけ巻き戻ってよいか」です。",
+  "admin.backup_warn":
+    "使用中のまま取るので、電源が落ちた直後と同じ状態の写しになります（起動時に自動では戻しません。戻すのは管理者の操作です）。0 と書くとこのテナントでは取りません。",
   "admin.term_log_title": "ターミナルログの保存",
   "admin.retention": "保持期間",
   "admin.retention_off": "無効（標準の短命履歴のみ）",
@@ -1692,10 +1717,16 @@ export const ja = {
   "wsbar.state.unknown": "不明",
   // 起動中ダイアログ（WsStartingDialog・docs/35 §35.9-9）
   "wsstart.title": "ワークスペースを起動中",
-  "wsstart.generic": "起動しています…（初回はエージェント CLI の導入で数分かかることがあります）",
+  "wsstart.generic": "起動しています…",
   "wsstart.installing_clis": "エージェント CLI を導入中…（初回のみ・数分かかることがあります）",
   "wsstart.fetching_tool": "追加ツールを取得中…",
   "wsstart.toolchain": "ツールチェーンを導入中…",
+  "wsstart.slot_creating": "実行するマシンを用意しています…（新しく起動するので数分かかります）",
+  "wsstart.slot_waking": "マシンを起こしています…",
+  "wsstart.slot_booting": "マシンの起動を待っています…",
+  "wsstart.home_creating": "home のディスクを作成しています…（初回のみ）",
+  "wsstart.home_restoring": "退避してあった home を復元しています…",
+  "wsstart.home_attaching": "home のディスクを接続しています…",
   "wsstart.hint": "進捗は agent.log にも記録されます。このダイアログは閉じても起動は続きます。",
   // 使用状況チップ／ドロップダウン（UsageChip / UsageRow / USAGE_SOURCES）
   "wsbar.usage.title": "{name} 使用状況（5時間 / 週次）",
