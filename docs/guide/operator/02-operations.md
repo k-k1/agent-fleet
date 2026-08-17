@@ -144,10 +144,12 @@ session; codex and opencode are seeded with the same text at each start).
 
 ## Idle stop and force-stop
 
-- **Automatic idle stop (scale-to-zero)**: setting `AF_SESSION_IDLE_TIMEOUT` /
-  `AF_WS_IDLE_TIMEOUT` automatically stops Workspaces that have been unused for a given period
-  (per-tenant overrides are in the Admin UI). Disabled by default. A stopped Workspace starts
-  automatically the next time the user opens a terminal (`AF_AUTOSTART`). This is effective for
+- **Automatic idle stop (scale-to-zero)**: an idle claude session is halted after **1 hour**
+  and a Workspace with nothing running is stopped after **2 hours**. That is the default;
+  `AF_SESSION_IDLE_TIMEOUT` / `AF_WS_IDLE_TIMEOUT` change it (per-tenant overrides are in the
+  Admin UI — a tenant setting `0` opts that tenant out, and `0` in the env turns it off for the
+  whole deployment). A stopped Workspace starts automatically the next time the user opens a
+  terminal (`AF_AUTOSTART`). This is effective for
   saving resources. For the meaning of the env vars, see
   [.env.example](../../../deploy/compose/.env.example); for how it works, see
   [dev/09 §9.4](../../dev/09-deploy.md).

@@ -230,14 +230,27 @@ func main() {
 	}
 
 	// P3-9 idle-stop (docs/19): a background reaper halts idle claude sessions
-	// (tier 1) and stops cold workspaces (tier 2). Deployment defaults are
-	// DISABLED (0) — safe by default, like the P3-4 quotas; an operator opts in
-	// per-tenant via limits (no restart needed) or deployment-wide via env.
+	// (tier 1) and stops cold workspaces (tier 2).
+	//
+	// The deployment defaults are ON — 1h for a session, 2h for the workspace. They used
+	// to be 0 (off), which read as "safe by default" and was not: a workspace nobody had
+	// touched since the night before was still running the next morning, and on the EC2
+	// pool that also pins an m7i.large, because a slot only sleeps once its task is gone
+	// (measured on a real deployment, 9.4h — docs/64 §64.26). Nothing is lost when they
+	// fire: a halted claude session is resumable, and a stopped workspace restarts on the
+	// next visit.
+	//
+	// A tenant admin overrides either one in the tenant's limits, INCLUDING "0" to turn
+	// it off for that tenant (idleTimeout), and a deployment sets its own default in env.
 	// AF_IDLE_SWEEP_INTERVAL=0 disables the reaper entirely — see intervalOff, which is
 	// what makes that true (measured: it was not).
 	if iv := intervalOff(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
-		sessDef := parseDurationOr(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), 0)
-		wsDef := parseDurationOr(os.Getenv("AF_WS_IDLE_TIMEOUT"), 0)
+		// intervalOff, not parseDurationOr: now that the default is non-zero, "0" has to
+		// mean OFF for the whole deployment. parseDurationOr treats any non-positive value
+		// as "use the default", which would have silently turned an operator's explicit
+		// off switch into 1h/2h — the same trap AF_IDLE_SWEEP_INTERVAL was in.
+		sessDef := intervalOff(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), time.Hour)
+		wsDef := intervalOff(os.Getenv("AF_WS_IDLE_TIMEOUT"), 2*time.Hour)
 		// Tier 3 (ecs-ec2 only): the deployment default for home hibernation. Kept in the
 		// AF_ECS_EC2_* namespace and in seconds because that is where it started life, as
 		// a setting of the pool sweeper; the trigger moved up here so a tenant can override
