@@ -167,3 +167,58 @@ describe("CloudCostAdminView", () => {
     expect(text()).toContain("実環境でまだ確認できていない");
   });
 });
+
+describe("コスト配分タグの状態", () => {
+  // ⚠️ 未有効の軸があるのは「読み込み中」ではない。その間の費用は永久に失われる
+  // ので、待っている間ずっと、目立つ形で出し続けなければならない。
+  it("未登録の軸があるなら、失われつつあることを警告として出す", async () => {
+    api.mockResolvedValue({
+      total_micro: 0,
+      days: [],
+      services: [],
+      meta: meta({ tags: { active: ["af-membership"], pending: ["af-tenant"] } }),
+    });
+    await mount(<MyCloudCostView />);
+    const warn = host?.querySelector(".cc-notes .form-err");
+    expect(warn?.textContent).toContain("af-tenant");
+    expect(warn?.textContent).toContain("あとから取り戻せません");
+  });
+
+  it("自動有効化できなかったときは理由を出す", async () => {
+    api.mockResolvedValue({
+      total_micro: 0,
+      days: [],
+      services: [],
+      meta: meta({ tags: { pending: ["af-tenant"], error: "AccessDeniedException: ce:UpdateCostAllocationTagsStatus" } }),
+    });
+    await mount(<MyCloudCostView />);
+    expect(text()).toContain("自動で有効化できませんでした");
+    expect(text()).toContain("AccessDeniedException");
+  });
+
+  // 人が請求コンソールで切ったものは CP が勝手に戻さない。画面もそれを警告では
+  // なく事実として出す（警告にすると「直せ」と読まれる）。
+  it("人が無効にした軸は、警告ではなく注記として出す", async () => {
+    api.mockResolvedValue({
+      total_micro: 1_000_000,
+      days: [],
+      services: [],
+      meta: meta({ tags: { active: ["af-membership"], declined: ["af-slot-size"] } }),
+    });
+    await mount(<MyCloudCostView />);
+    expect(text()).toContain("そのままにしています");
+    expect(host?.querySelector(".cc-notes .form-err")).toBeNull();
+  });
+
+  it("全部 active なら何も足さない", async () => {
+    api.mockResolvedValue({
+      total_micro: 1_000_000,
+      days: [],
+      services: [],
+      meta: meta({ tags: { active: ["af-membership", "af-tenant"] } }),
+    });
+    await mount(<MyCloudCostView />);
+    expect(text()).not.toContain("取り戻せません");
+    expect(text()).not.toContain("そのままにしています");
+  });
+});

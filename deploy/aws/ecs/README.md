@@ -61,8 +61,12 @@ platform changes:
   a workspace on day one even if nobody is using it yet.
   1. **IAM user and role access to Billing Information** must be ON, or `CpTaskRole`'s
      `ce:GetCostAndUsage` fails for every call even though the policy is attached.
-  2. **Activate the cost allocation tags** `af-membership`, `af-tenant`, `af-role`,
-     `af-pool`, `af-slot-size`:
+  2. **Activate the cost allocation tags** — **normally the Control Plane does this for
+     you.** It retries every poller tick until AWS has discovered each key, skips
+     `af-workspace` (email-derived), and leaves alone any tag a human switched off. Do it
+     by hand only if you removed the `CostAllocationTagActivation` statement from
+     `CpTaskRole`, or if the Console reports it could not (`af-membership`, `af-tenant`,
+     `af-role`, `af-pool`, `af-slot-size`):
      ```bash
      aws ce update-cost-allocation-tags-status --region us-east-1 \
        --cost-allocation-tags-status '[{"TagKey":"af-membership","Status":"Active"},
@@ -80,7 +84,9 @@ platform changes:
      ⚠️ **A tag key AWS has never seen on a real resource cannot be activated**
      (`ValidationException: Tag keys not found`). So the order is: deploy → start one
      workspace (the CP stamps the tags) → wait for AWS to discover the keys (up to 24h) →
-     activate. Re-run the command until it stops erroring. `list-cost-allocation-tags`
+     activate. The CP walks that sequence on its own; **your part is starting one workspace
+     on day one**, even if nobody is using it yet, because the discovery gap is spend that
+     is lost for good. `list-cost-allocation-tags`
      shows what AWS has found: a key already listed as `Inactive` flips to `Active`
      instantly, and a key missing from the list is one nothing has stamped yet. The wait is
      per KEY and only the first time it appears — not per tenant, per member, or per

@@ -55,6 +55,11 @@ const (
 // without AWS (and so nobody adds a second $0.01 call by accident).
 type costExplorerAPI interface {
 	GetCostAndUsage(context.Context, *costexplorer.GetCostAndUsageInput, ...func(*costexplorer.Options)) (*costexplorer.GetCostAndUsageOutput, error)
+	// The two below keep the cost allocation tags switched on (cost_tags.go). They are
+	// on the same port because they share the client, the cadence and the failure mode:
+	// no permission here looks exactly like "this deployment spent nothing".
+	ListCostAllocationTags(context.Context, *costexplorer.ListCostAllocationTagsInput, ...func(*costexplorer.Options)) (*costexplorer.ListCostAllocationTagsOutput, error)
+	UpdateCostAllocationTagsStatus(context.Context, *costexplorer.UpdateCostAllocationTagsStatusInput, ...func(*costexplorer.Options)) (*costexplorer.UpdateCostAllocationTagsStatusOutput, error)
 }
 
 // cloudCostPoller pulls a trailing window out of Cost Explorer on a slow tick and lands
@@ -74,6 +79,10 @@ type cloudCostPoller struct {
 	// roles, and the Console must say that instead of drawing an empty chart.
 	lastErr atomic.Value // string
 	lastRun atomic.Value // string
+	// tagState is the last cost-allocation-tag activation result (costTagState).
+	// Read by the API so the Console can say "this axis is not switched on yet"
+	// instead of drawing a zero.
+	tagState atomic.Value // costTagState
 }
 
 // lastError is the poller's most recent failure, or "". Read by the API so an
@@ -137,6 +146,10 @@ func (p *cloudCostPoller) run(ctx context.Context) {
 }
 
 func (p *cloudCostPoller) pollOnce(ctx context.Context) {
+	// Before reading the bill, make sure the axes are switched on. Not a one-shot at
+	// boot: AWS cannot activate a key it has not discovered yet, so this retries on the
+	// same tick until each one lands (cost_tags.go).
+	p.ensureCostTagsActive(ctx)
 	rows, days, err := p.fetch(ctx)
 	p.lastRun.Store(p.now().UTC().Format(time.RFC3339))
 	if err != nil {
@@ -304,6 +317,10 @@ type cloudCostMeta struct {
 	Error string `json:"error,omitempty"`
 	// Profile lets one response answer "should this screen exist" too.
 	Profile costProfile `json:"profile"`
+	// Tags is which cost allocation axes are actually switched on. A key still
+	// `pending` means AWS has not discovered it yet and spend on that axis is missing
+	// — and will stay missing, because activation is not retroactive.
+	Tags costTagState `json:"tags"`
 }
 
 const cloudCostLagHours = 24
@@ -315,6 +332,7 @@ func (a adminAPI) cloudCostMeta(ctx context.Context, rows []CloudCostRow) cloudC
 	}
 	if a.mgr.costPoller != nil {
 		m.Error = a.mgr.costPoller.lastError()
+		m.Tags = a.mgr.costPoller.costTags()
 	}
 	for _, r := range rows {
 		if r.Currency != "" {
