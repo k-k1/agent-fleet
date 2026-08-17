@@ -28,7 +28,17 @@ export type CostProfile = {
   verified: boolean;
 };
 
+// CP が返すコスト配分タグの有効化状態。⚠️ `pending` のキーがあるということは、
+// その軸の費用が「今まさに永久に失われつつある」ということで、読み込み中ではない。
+type CostTagState = {
+  active?: string[];
+  pending?: string[];
+  declined?: string[];
+  error?: string;
+};
+
 type CostMeta = {
+  tags?: CostTagState;
   currency?: string;
   first_day?: string;
   last_day?: string;
@@ -123,6 +133,23 @@ function CostNotes({ meta, from }: { meta: CostMeta; from: string }) {
       {meta.profile && !meta.profile.verified && (
         <p className="muted">
           <Icon name="warning" /> {tr("cost.unverified_runtime")}
+        </p>
+      )}
+      {/* ⚠️ ここは「まだ読み込み中」ではない。有効化が済むまでの分は永久に取れない
+          ので、待っている間ずっと出し続ける必要がある。 */}
+      {(meta.tags?.pending?.length || 0) > 0 && (
+        <p className="form-err">
+          <Icon name="warning" /> {tr("cost.tags_pending", { keys: (meta.tags?.pending || []).join(", ") })}
+        </p>
+      )}
+      {meta.tags?.error && (
+        <p className="form-err">
+          <Icon name="warning" /> {tr("cost.tags_error")} <span className="mono">{meta.tags.error}</span>
+        </p>
+      )}
+      {(meta.tags?.declined?.length || 0) > 0 && (
+        <p className="muted">
+          <Icon name="info" /> {tr("cost.tags_declined", { keys: (meta.tags?.declined || []).join(", ") })}
         </p>
       )}
     </div>

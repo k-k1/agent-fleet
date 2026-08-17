@@ -83,6 +83,65 @@ type fakeCE struct {
 	pages []costexplorer.GetCostAndUsageOutput
 	calls []costexplorer.GetCostAndUsageInput
 	err   error
+
+	// cost allocation tag activation (cost_tags.go)
+	tags        []cetypes.CostAllocationTag
+	listErr     error
+	updErr      error
+	updRefuse   map[string]string // tag key -> error message the API returns per entry
+	activated   [][]string        // one entry per UpdateCostAllocationTagsStatus call
+	listCalls   int
+	updateCalls int
+}
+
+func (f *fakeCE) ListCostAllocationTags(_ context.Context, _ *costexplorer.ListCostAllocationTagsInput, _ ...func(*costexplorer.Options)) (*costexplorer.ListCostAllocationTagsOutput, error) {
+	f.listCalls++
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return &costexplorer.ListCostAllocationTagsOutput{CostAllocationTags: f.tags}, nil
+}
+
+func (f *fakeCE) UpdateCostAllocationTagsStatus(_ context.Context, in *costexplorer.UpdateCostAllocationTagsStatusInput, _ ...func(*costexplorer.Options)) (*costexplorer.UpdateCostAllocationTagsStatusOutput, error) {
+	f.updateCalls++
+	if f.updErr != nil {
+		return nil, f.updErr
+	}
+	var asked []string
+	var errs []cetypes.UpdateCostAllocationTagsStatusError
+	for _, e := range in.CostAllocationTagsStatus {
+		k := aws.ToString(e.TagKey)
+		asked = append(asked, k)
+		if msg, bad := f.updRefuse[k]; bad {
+			errs = append(errs, cetypes.UpdateCostAllocationTagsStatusError{
+				TagKey: aws.String(k), Code: aws.String("ValidationException"), Message: aws.String(msg),
+			})
+			continue
+		}
+		// Reflect the change, like the real API: the next List sees it Active.
+		f.setTag(k, cetypes.CostAllocationTagStatusActive, "2026-08-17T05:26:16Z")
+	}
+	f.activated = append(f.activated, asked)
+	return &costexplorer.UpdateCostAllocationTagsStatusOutput{Errors: errs}, nil
+}
+
+// setTag adds or updates one entry in the fake's view of the account.
+// lastUpdated "" = AWS has seen the key but nobody has ever changed its status.
+func (f *fakeCE) setTag(key string, status cetypes.CostAllocationTagStatus, lastUpdated string) {
+	for i := range f.tags {
+		if aws.ToString(f.tags[i].TagKey) == key {
+			f.tags[i].Status = status
+			if lastUpdated != "" {
+				f.tags[i].LastUpdatedDate = aws.String(lastUpdated)
+			}
+			return
+		}
+	}
+	t := cetypes.CostAllocationTag{TagKey: aws.String(key), Status: status, Type: cetypes.CostAllocationTagTypeUserDefined}
+	if lastUpdated != "" {
+		t.LastUpdatedDate = aws.String(lastUpdated)
+	}
+	f.tags = append(f.tags, t)
 }
 
 func (f *fakeCE) GetCostAndUsage(_ context.Context, in *costexplorer.GetCostAndUsageInput, _ ...func(*costexplorer.Options)) (*costexplorer.GetCostAndUsageOutput, error) {
