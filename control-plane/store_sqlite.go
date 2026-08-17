@@ -1371,7 +1371,7 @@ func discardSQLConn(conn *sql.Conn) {
 }
 
 func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {
-	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, workspaceCols+` WHERE membership_id=?`, membershipID))
+	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, workspaceCols+` WHERE w.membership_id=?`, membershipID))
 	if err == sql.ErrNoRows {
 		return Workspace{}, false, nil
 	}
@@ -1413,7 +1413,7 @@ func (s *sqlStore) MaxAgentPort(ctx context.Context) (int, error) {
 }
 
 func (s *sqlStore) ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error) {
-	rows, err := s.db.QueryContext(ctx, workspaceCols+` WHERE tenant_id=? ORDER BY created_at`, tenantID)
+	rows, err := s.db.QueryContext(ctx, workspaceCols+` WHERE w.tenant_id=? ORDER BY w.created_at`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -2035,15 +2035,22 @@ func nullable(s string) any {
 	return s
 }
 
-const workspaceCols = `SELECT id, tenant_id, membership_id, container_name, network, data_dir,
-	agent_port, agent_token, state, created_at, COALESCE(last_active_at,'') FROM workspace`
+// workspaceCols joins the tenant only for its slug (Workspace.TenantSlug). A LEFT
+// JOIN on purpose: a workspace whose tenant row is missing is already broken, but it
+// must still be readable — the alternative is that the sweeper and the reaper stop
+// seeing it, which turns a bad row into leaked AWS resources.
+const workspaceCols = `SELECT w.id, w.tenant_id, COALESCE(t.slug,''), w.membership_id,
+	w.container_name, w.network, w.data_dir, w.agent_port, w.agent_token, w.state,
+	w.created_at, COALESCE(w.last_active_at,'')
+	FROM workspace w LEFT JOIN tenant t ON t.id = w.tenant_id`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanWorkspace(row scanner) (Workspace, error) {
 	var ws Workspace
-	err := row.Scan(&ws.ID, &ws.TenantID, &ws.MembershipID, &ws.ContainerName, &ws.Network,
-		&ws.DataDir, &ws.AgentPort, &ws.AgentToken, &ws.State, &ws.CreatedAt, &ws.LastActiveAt)
+	err := row.Scan(&ws.ID, &ws.TenantID, &ws.TenantSlug, &ws.MembershipID, &ws.ContainerName,
+		&ws.Network, &ws.DataDir, &ws.AgentPort, &ws.AgentToken, &ws.State, &ws.CreatedAt,
+		&ws.LastActiveAt)
 	return ws, err
 }
 
@@ -2794,4 +2801,136 @@ func (s *sqlStore) SetTenantIdPStatus(ctx context.Context, tenantID, id, status,
 func (s *sqlStore) DeleteTenantIdP(ctx context.Context, tenantID, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM tenant_idp WHERE tenant_id=? AND id=?`, tenantID, id)
 	return err
+}
+
+// --- cloud cost (docs/67, ADR 0048) --------------------------------------------
+
+// PutCloudCost replaces the given days wholesale. Cost Explorer restates recent days
+// (they arrive `Estimated` and keep moving for about a day), so the poller re-fetches a
+// trailing window every run and the latest answer must WIN, not accumulate. Deleting the
+// days first is also what makes a day that came back empty actually become empty —
+// otherwise a resource that lost its tag would leave its last attributed row frozen in
+// place forever, and the invoice would never stop blaming that person.
+func (s *sqlStore) PutCloudCost(ctx context.Context, days []string, rows []CloudCostRow) error {
+	if len(days) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, d := range days {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM cloud_cost_daily WHERE day=?`, d); err != nil {
+			return err
+		}
+	}
+	now := nowTS()
+	for _, r := range rows {
+		est := 0
+		if r.Estimated {
+			est = 1
+		}
+		if _, err = tx.ExecContext(ctx,
+			`INSERT INTO cloud_cost_daily(day, membership_id, tenant_id, service,
+			   unblended, amortized, currency, estimated, updated_at)
+			 VALUES(?,?,?,?,?,?,?,?,?)
+			 ON CONFLICT(day, membership_id, service) DO UPDATE SET
+			   tenant_id=excluded.tenant_id, unblended=excluded.unblended,
+			   amortized=excluded.amortized, currency=excluded.currency,
+			   estimated=excluded.estimated, updated_at=excluded.updated_at`,
+			r.Day, r.MembershipID, r.TenantID, r.Service,
+			r.Unblended, r.Amortized, r.Currency, est, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ListCloudCost returns the raw per-(day, member, service) rows in the window.
+// membershipID != "" is the member's own view; tenantID != "" scopes to one tenant.
+//
+// ⚠️ The shared bucket (membership_id=”) has no tenant, so a tenant-scoped query must
+// NOT return it — a tenant_admin seeing the deployment's ALB/RDS bill would be reading
+// outside their tenant (ADR 0048 決定 4). It falls out of the WHERE naturally, and that
+// is deliberate rather than accidental.
+func (s *sqlStore) ListCloudCost(ctx context.Context, tenantID, membershipID, fromDay, toDay string) ([]CloudCostRow, error) {
+	q := `SELECT day, membership_id, tenant_id, service, unblended, amortized, currency, estimated
+	      FROM cloud_cost_daily WHERE day BETWEEN ? AND ?`
+	args := []any{fromDay, toDay}
+	if tenantID != "" {
+		q += ` AND tenant_id=?`
+		args = append(args, tenantID)
+	}
+	if membershipID != "" {
+		q += ` AND membership_id=?`
+		args = append(args, membershipID)
+	}
+	q += ` ORDER BY day, membership_id, service`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CloudCostRow
+	for rows.Next() {
+		var r CloudCostRow
+		var est int
+		if err := rows.Scan(&r.Day, &r.MembershipID, &r.TenantID, &r.Service,
+			&r.Unblended, &r.Amortized, &r.Currency, &est); err != nil {
+			return nil, err
+		}
+		r.Estimated = est != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// CloudCostTotals sums the window per member, joining the labels in at read time (a
+// deleted membership keeps its spend and surfaces with empty key/email, like ListUsage).
+// The shared bucket is included as a row with an empty MembershipID; the API decides
+// who is allowed to see it.
+func (s *sqlStore) CloudCostTotals(ctx context.Context, tenantID, fromDay, toDay string) ([]CloudCostTotal, error) {
+	q := `SELECT COALESCE(t.slug,''), c.membership_id, COALESCE(i.user_key,''), COALESCE(i.email,''),
+	             SUM(c.unblended), SUM(c.amortized), COALESCE(MAX(c.currency),'')
+	      FROM cloud_cost_daily c
+	      LEFT JOIN tenant t ON t.id = c.tenant_id
+	      LEFT JOIN membership m ON m.id = c.membership_id
+	      LEFT JOIN identity i ON i.id = m.identity_id
+	      WHERE c.day BETWEEN ? AND ?`
+	args := []any{fromDay, toDay}
+	if tenantID != "" {
+		q += ` AND c.tenant_id=?`
+		args = append(args, tenantID)
+	}
+	q += ` GROUP BY t.slug, c.membership_id, i.user_key, i.email ORDER BY SUM(c.unblended) DESC`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CloudCostTotal
+	for rows.Next() {
+		var c CloudCostTotal
+		if err := rows.Scan(&c.TenantSlug, &c.MembershipID, &c.UserKey, &c.Email,
+			&c.Unblended, &c.Amortized, &c.Currency); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// CloudCostDays is the coverage window that actually exists. It is what lets the API say
+// "cost allocation was not switched on before this date" instead of drawing an honest-
+// looking zero — and that distinction is permanent, because activation is not
+// retroactive (docs/67 §67.5).
+func (s *sqlStore) CloudCostDays(ctx context.Context) (string, string, error) {
+	var first, last sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT MIN(day), MAX(day) FROM cloud_cost_daily`).Scan(&first, &last)
+	if err != nil {
+		return "", "", err
+	}
+	return first.String, last.String, nil
 }

@@ -220,6 +220,51 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: ecs-tasks.amazonaws.com
+              # --- Cloud cost (docs/67, ADR 0048 決定 8) ---
+              # ADR 0045 決定 21 refused to add IAM just to DISPLAY something (the vCPU
+              # count became an env declaration instead). This reverses that, on purpose:
+              # there the same number was obtainable another way, and here the alternative
+              # to real money is a DIFFERENT number (an estimate from operator-declared
+              # unit prices, which goes stale silently). There is no substitute for the
+              # invoice.
+              #
+              # Read-only, one action. Cost Explorer has no resource-level scoping, so
+              # Resource must be "*" — but what comes back is aggregated amounts, not
+              # access to any resource or secret.
+              #
+              # ⚠️ Account prerequisite, not expressible here: an IAM role can only call
+              # the Billing APIs when the account has "IAM user and role access to Billing
+              # Information" enabled. Without it this policy is present and every call
+              # still fails — see deploy/aws/ecs/README.md.
+              - Sid: CostExplorerRead
+                Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                  - ce:ListCostAllocationTags
+                Resource: "*"
+              # ⚠️ ACCOUNT-LEVEL BILLING CONFIGURATION — the one place the Control Plane
+              # writes something outside the resources it created itself. Read the reason
+              # before removing it (docs/67 §67.5, ADR 0048 決定 11).
+              #
+              # A cost allocation tag only applies from the moment it is switched on, and
+              # AWS will not activate a key it has not yet discovered on a real resource —
+              # so the step cannot be done at deploy time, only a day later, by hand, by
+              # someone who remembers. Every day it is missed is spend that can never be
+              # attributed to anyone. That is the trade this grant buys.
+              #
+              # What bounds it, in code (cost_tags.go), not in policy:
+              #   - a fixed allow-list of five keys. `af-workspace` is NEVER activated —
+              #     its value is built from a member's email address.
+              #   - a key a human set to Inactive is left alone (AWS stamps
+              #     LastUpdatedDate on any deliberate change).
+              #
+              # ⚠️ Removing this statement does NOT break the cost views. The CP reports
+              # "cannot activate" and the operator runs the CLI command instead.
+              - Sid: CostAllocationTagActivation
+                Effect: Allow
+                Action:
+                  - ce:UpdateCostAllocationTagsStatus
+                Resource: "*"
 
 Outputs:
   EcrControlPlaneUri:

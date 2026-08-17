@@ -50,6 +50,51 @@ platform changes:
   ```bash
   aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || true
   ```
+- **Cloud cost (optional, but it cannot be backfilled — see docs/67).** Two account-level
+  switches the templates cannot set, both in the Billing console of the **payer** account.
+  ⚠️ **None of this arrives with the stacks.** The templates carry only the IAM permission
+  (`ce:GetCostAndUsage` on `CpTaskRole`); the tags themselves are written by the *running*
+  Control Plane, and there is no CloudFormation resource type for activating a cost
+  allocation tag at all (`AWS::CE::CostAllocationTag` does not exist). So on a brand-new
+  deployment: deploy → **start one workspace so the CP stamps the tags** → wait up to 24h
+  for AWS to discover the keys → activate. The spend in that gap is lost for good, so start
+  a workspace on day one even if nobody is using it yet.
+  1. **IAM user and role access to Billing Information** must be ON, or `CpTaskRole`'s
+     `ce:GetCostAndUsage` fails for every call even though the policy is attached.
+  2. **Activate the cost allocation tags** — **normally the Control Plane does this for
+     you.** It retries every poller tick until AWS has discovered each key, skips
+     `af-workspace` (email-derived), and leaves alone any tag a human switched off. Do it
+     by hand only if you removed the `CostAllocationTagActivation` statement from
+     `CpTaskRole`, or if the Console reports it could not (`af-membership`, `af-tenant`,
+     `af-role`, `af-pool`, `af-slot-size`):
+     ```bash
+     aws ce update-cost-allocation-tags-status --region us-east-1 \
+       --cost-allocation-tags-status '[{"TagKey":"af-membership","Status":"Active"},
+         {"TagKey":"af-tenant","Status":"Active"},{"TagKey":"af-role","Status":"Active"},
+         {"TagKey":"af-pool","Status":"Active"},{"TagKey":"af-slot-size","Status":"Active"}]'
+     ```
+     ⚠️ **Do this on day one.** Activation is not retroactive: every day it is left off is a
+     day of spend that can never be attributed to anyone.
+     **Each key once per AWS account, by you — never again per tenant or per member.**
+     Activation is keyed on the tag KEY alone (the API has no value dimension), so the one
+     `af-membership` entry covers every member who will ever exist here and the one
+     `af-tenant` entry covers every tenant: somebody joining next month needs nothing. What
+     that does NOT mean is that a key can be skipped — every key in the list above has to be
+     activated once. Under AWS Organizations only the management (payer) account can do it.
+     ⚠️ **A tag key AWS has never seen on a real resource cannot be activated**
+     (`ValidationException: Tag keys not found`). So the order is: deploy → start one
+     workspace (the CP stamps the tags) → wait for AWS to discover the keys (up to 24h) →
+     activate. The CP walks that sequence on its own; **your part is starting one workspace
+     on day one**, even if nobody is using it yet, because the discovery gap is spend that
+     is lost for good. `list-cost-allocation-tags`
+     shows what AWS has found: a key already listed as `Inactive` flips to `Active`
+     instantly, and a key missing from the list is one nothing has stamped yet. The wait is
+     per KEY and only the first time it appears — not per tenant, per member, or per
+     deployment of a key that is already listed.
+     ⚠️ **Do not activate `af-workspace`.** Its value is derived from the member's email
+     address, and activating it copies that into the billing data (CUR / Cost Explorer /
+     invoice CSVs). `af-membership` is an opaque random id and is the join key the Control
+     Plane uses.
 - **`20-platform` needs `--capabilities CAPABILITY_NAMED_IAM`** (it creates named IAM roles):
   ```bash
   aws cloudformation deploy --stack-name af-ecs-platform \

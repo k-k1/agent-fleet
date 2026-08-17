@@ -13,6 +13,7 @@ import type { Member, Tenant } from "./adminShared.ts";
 // 「デプロイ管理者から見た」置き場として差すだけ。
 import { MembersPanel, MemberView } from "./tenantMembers.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
+import { CloudCostAdminView, useCostProfile } from "../cost/CloudCostView.tsx";
 import { McpAdminView } from "./mcpAdmin.tsx";
 import { PoolView } from "./ec2Pool.tsx";
 import { TenantLoginRules, TenantSignInMethods, SignInMethodRegister } from "./tenantLogin.tsx";
@@ -34,6 +35,9 @@ interface View {
 const ADMIN_MODES = ["manage", "sessions", "usage", "audit", "egress", "mcp", "tts"]; // swipe order for the mode tabs
 // "pool" is appended at runtime (see hasPool): the EC2 slot pool exists on one runtime
 // profile, and an empty Slots tab on a Fargate deployment reads as "my slots vanished".
+// "cost" is appended the same way, for the same reason: docker / native deployments have
+// no AWS invoice at all, and a cost tab full of zeros there would read as "free"
+// (docs/67 §67.8, ADR 0048 決定 9).
 
 export function AdminTab() {
   const tr = useT();
@@ -45,6 +49,8 @@ export function AdminTab() {
   // Whether this deployment HAS a slot pool. One cheap probe at mount; the endpoint
   // answers {"runtime":"other"} everywhere else.
   const [hasPool, setHasPool] = useState(false);
+  // Whether this deployment HAS an AWS bill. Runtime-declared, not configured.
+  const costProfile = useCostProfile();
   // view: {stage:'tenants'} | {stage:'tenant', slug} | {stage:'member', slug, member}
   const [view, setView] = useState<View>({ stage: "tenants" });
 
@@ -165,6 +171,11 @@ export function AdminTab() {
             <Icon name="server" /> {tr("admin.mode_pool")}
           </button>
         )}
+        {costProfile?.available && (
+          <button type="button" className={"seg-btn" + (mode === "cost" ? " active" : "")} onClick={() => setMode("cost")}>
+            <Icon name="graph" /> {tr("admin.mode_cost")}
+          </button>
+        )}
       </div>
 
       {mode === "sessions" && <AllSessionsView tenants={tenants} isSuper={isSuper} />}
@@ -174,6 +185,7 @@ export function AdminTab() {
       {mode === "mcp" && <McpAdminView tenants={tenants} />}
       {mode === "tts" && <TtsAdminView />}
       {mode === "pool" && hasPool && <PoolView />}
+      {mode === "cost" && costProfile?.available && <CloudCostAdminView tenants={tenants} isSuper={isSuper} />}
 
       {mode === "manage" && (
       <>

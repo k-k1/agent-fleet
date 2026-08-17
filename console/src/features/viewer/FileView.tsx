@@ -1113,7 +1113,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             <MarpView source={previewSource} />
           ) : surfaces.preview === "normal" ? (
             <div className="md-scroll">
-              <MarkdownView source={previewSource} basePath={filePath} onOpenFile={showFile} onOpenDir={revealInFiles} />
+              <MarkdownView source={previewSource} basePath={filePath} onOpenFile={showFile} onOpenDir={(path) => revealInFiles(path, { focus: true })} />
             </div>
           ) : (
             <CodeView
