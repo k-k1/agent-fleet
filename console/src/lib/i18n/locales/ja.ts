@@ -3676,6 +3676,7 @@ export const ja = {
   "view.open_in_pane_at_line": "{path}:{line} を別ペインで開く",
   "view.open_in_pane": "{path} を別ペインで開く",
   "view.open_in_pane_aria": "{label}を別ペインで開く",
+  "view.reveal_in_files": "{path} をファイル一覧で表示",
   "view.cannot_resolve_link": "リンク先を解決できません: {href}",
   "view.cannot_load": "読み込めません",
   "view.lines_meta": " · {n} 行",
