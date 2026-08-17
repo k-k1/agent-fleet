@@ -72,6 +72,12 @@ function centreLabel(tr: (k: MsgKey) => string, id: string): string {
   return s === key ? id : s;
 }
 
+// labelStride — 日次の棒に目盛りを何本おきに出すか。10 本前後に収める。
+// 30 日ぶんを毎日ラベルすると隣と重なり、連結して読めない文字列になる。
+function labelStride(n: number): number {
+  return Math.max(1, Math.ceil(n / 10));
+}
+
 // 期間の入力とデータ取得。稼働時間の面と同じ形（適用ボタンで明示的に取り直す）。
 function useCostRange() {
   const [from, setFrom] = useState("");
@@ -199,21 +205,23 @@ export function MyCloudCostView() {
         ) : (
           <>
             <div className="cc-days">
-              {days.map((d) => (
-                <div key={d.day} className={"cc-day" + (d.estimated ? " est" : "")} title={fmtMoney(d.unblended_micro, currency)}>
+              {days.map((d, i) => (
+                <div key={d.day} className={"cc-day" + (d.estimated ? " est" : "")} title={`${d.day} ${fmtMoney(d.unblended_micro, currency)}`}>
                   <span
                     className="cc-day-fill"
                     style={{ height: (maxDay ? Math.round((d.unblended_micro / maxDay) * 100) : 0) + "%" }}
                   />
-                  <span className="cc-day-lab muted">{d.day.slice(5)}</span>
+                  {/* 30 日を毎日ラベルすると重なって「08-1708-1808-19」と読めなくなる
+                      （実測）。目盛りは間引き、正確な日付は各棒の title に持たせる。 */}
+                  {i % labelStride(days.length) === 0 && <span className="cc-day-lab muted">{d.day.slice(5)}</span>}
                 </div>
               ))}
             </div>
             <h5 className="cc-sub">{tr("cost.breakdown")}</h5>
             <div className="usage-rows">
               {services.map((s) => (
-                <div key={s.service} className="usage-row">
-                  <span className="ur-key">{s.service}</span>
+                <div key={s.service} className="usage-row cc-svc">
+                  <span className="ur-key" title={s.service}>{s.service}</span>
                   <span className="ur-hrs mono">{fmtMoney(s.unblended_micro, currency)}</span>
                 </div>
               ))}
@@ -353,8 +361,8 @@ export function CloudCostAdminView({
           </div>
           <div className="usage-rows">
             {sharedServices.map((s) => (
-              <div key={s.service} className="usage-row">
-                <span className="ur-key">{s.service}</span>
+              <div key={s.service} className="usage-row cc-svc">
+                <span className="ur-key" title={s.service}>{s.service}</span>
                 <span className="ur-hrs mono">{fmtMoney(s.unblended_micro, currency)}</span>
               </div>
             ))}

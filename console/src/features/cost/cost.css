@@ -94,3 +94,24 @@
   margin: 18px 0 8px;
   font-size: 0.9rem;
 }
+
+/* サービス別の内訳。稼働時間の行は棒（.ur-bar）が真ん中を埋めるが、こちらは
+   名前と金額の 2 列しかないので、金額を右端へ寄せないと宙に浮いて見える。 */
+.cloud-cost .usage-row.cc-svc {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cloud-cost .usage-row.cc-svc .ur-key {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cloud-cost .usage-row.cc-svc .ur-hrs {
+  flex: 0 0 auto;
+  margin-left: auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
