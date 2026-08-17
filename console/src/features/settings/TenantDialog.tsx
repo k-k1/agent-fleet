@@ -24,6 +24,7 @@ import { TenantLoginRules, TenantLoginRulesView, TenantSignInMethods } from "./t
 import { TenantNetworkView } from "./tenantNetwork.tsx";
 import { MembersPanel, MemberView } from "./tenantMembers.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
+import { CloudCostAdminView, useCostProfile } from "../cost/CloudCostView.tsx";
 import { McpAdminView } from "./mcpAdmin.tsx";
 import type { Member, Tenant } from "./adminShared.ts";
 
@@ -52,6 +53,10 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       ["members", "tenant.tab_members"],
       ["sessions", "tenant.tab_sessions"],
       ["usage", "tenant.tab_usage"],
+      // クラウド費用は AWS の請求があるデプロイにしかない。レールから外すのでは
+      // なく、そもそも項目を作らない（docs/67 §67.8）。GROUPS は静的なので、
+      // 描画側で落とす（COST_SECTION）。
+      ["cost", "tenant.tab_cost"],
       ["audit", "tenant.tab_audit"],
       ["mcp", "tenant.tab_mcp"],
     ],
@@ -88,6 +93,9 @@ function TenantSummary({ tenant }: { tenant: Tenant }) {
 
 export function TenantDialog() {
   const tr = useT();
+  // クラウド費用の面があるかはランタイムが申告する。docker / native には AWS の
+  // 請求が無いので、項目ごと出さない（ADR 0048 決定 9）。
+  const costProfile = useCostProfile();
   const closeTenantSettings = useSettingsUI((s) => s.closeTenantSettings);
   const tenantSection = useSettingsUI((s) => s.tenantSection);
   const [section, setSection] = useState(
@@ -212,6 +220,7 @@ export function TenantDialog() {
     // slug を key にしているのは、テナントを切り替えたらポーリングごと張り直すため。
     if (section === "sessions") return <AllSessionsView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
     if (section === "usage") return <UsageView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
+    if (section === "cost") return <CloudCostAdminView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
     if (section === "audit") return <AuditView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
     if (section === "mcp") return <McpAdminView key={tenant.slug} tenants={[tenant]} />;
     return <TenantSignInMethods slug={tenant.slug} isSuper={isSuper} />;
@@ -247,7 +256,7 @@ export function TenantDialog() {
             {GROUPS.map((g) => (
               <div key={g.key} className="settings-rail-group">
                 <div className="settings-rail-head">{tr(g.label as Parameters<typeof tr>[0])}</div>
-                {g.items.map(([key, label]) => (
+                {g.items.filter(([key]) => key !== "cost" || costProfile?.available).map(([key, label]) => (
                   <button
                     key={key}
                     type="button"

@@ -274,6 +274,12 @@ func main() {
 		go newUsageSampler(mgr, iv).run(context.Background())
 	}
 
+	// Cloud cost (docs/67 + ADR 0048): the AWS invoice, attributed per member by cost
+	// allocation tag. A different claim from the sampler above — that one counts
+	// seconds on every runtime, this one reads real money and only where there is a
+	// bill. No-op unless the runtime declares one (docker/native have no invoice).
+	startCloudCostPoller(context.Background(), mgr)
+
 	// docs/20 M5 (claude self-op audit, A-第2段): a sweeper that pulls each running
 	// claude session's transcript and records Write/Edit/Bash into the audit ledger
 	// (actor_kind=claude). OFF by default (AF_CLAUDE_AUDIT_INTERVAL=0) — it polls every

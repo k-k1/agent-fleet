@@ -220,6 +220,32 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: ecs-tasks.amazonaws.com
+              # --- Cloud cost (docs/67, ADR 0048 決定 8) ---
+              # ADR 0045 決定 21 refused to add IAM just to DISPLAY something (the vCPU
+              # count became an env declaration instead). This reverses that, on purpose:
+              # there the same number was obtainable another way, and here the alternative
+              # to real money is a DIFFERENT number (an estimate from operator-declared
+              # unit prices, which goes stale silently). There is no substitute for the
+              # invoice.
+              #
+              # Read-only, one action. Cost Explorer has no resource-level scoping, so
+              # Resource must be "*" — but what comes back is aggregated amounts, not
+              # access to any resource or secret.
+              #
+              # ⚠️ Two things this does NOT grant, deliberately: writing cost allocation
+              # tag status (ce:UpdateCostAllocationTagsStatus — a billing-console decision
+              # that belongs to a human, and it cannot be undone for past days), and CUR /
+              # budget APIs.
+              #
+              # ⚠️ Account prerequisite, not expressible here: an IAM role can only call
+              # the Billing APIs when the account has "IAM user and role access to Billing
+              # Information" enabled. Without it this policy is present and every call
+              # still fails — see deploy/aws/ecs/README.md.
+              - Sid: CostExplorerRead
+                Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                Resource: "*"
 
 Outputs:
   EcrControlPlaneUri:
