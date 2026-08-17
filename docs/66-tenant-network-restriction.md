@@ -188,6 +188,16 @@ git も `git clone http://<cp>/git/...` をコンテナの中から叩く。オ�
 
 ## 66.8 実機で確かめること
 
+**入れたところまで（2026-08-17・<dev-deployment>）**: `30-ingress` の CP タスクに
+`AF_TRUSTED_PROXY_HOPS=1` が入り、起動ログに
+`edge: trusted-proxy-hops=1 (client IP = X-Forwarded-For counted from the right)` が出た。
+`GET/PUT /api/admin/tenants/{slug}/network` は 404 ではなく **401**（ルートは生きている）。
+
+⚠️ **肝心の 1 行はまだ見ていない。** 「CP が実際にどのアドレスを見ているか」は
+`your_ip` を返す画面にしか出ず、**その画面はログインの先**にある（Google は headless を
+弾く）。CP の設計としてアクセスログに送信元 IP を出さないと決めた（§66.6-6）ので、
+ログから読む逃げ道も**意図的に無い**。人がブラウザで開いて確かめる。
+
 - ALB の後ろで `AF_TRUSTED_PROXY_HOPS=1` にしたとき、CP が**自宅回線のグローバル IP**を
   見ていること（`10.20.x.x` ではないこと）。**これが全ての前提**で、机上では確かめられない。
 - 偽の `X-Forwarded-For` を付けた要求で判定が変わらないこと。
