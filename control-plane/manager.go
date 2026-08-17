@@ -34,6 +34,12 @@ type manager struct {
 	// ECS on AWS; P3-7). Every runtime is constructed through it — see runtimeFor.
 	rtFactory RuntimeFactory
 
+	// costPoller is the Cost Explorer poller when this deployment has an AWS bill and
+	// the credentials to read it (docs/67, ADR 0048), else nil. Held only so the API can
+	// surface the poller's last failure — an AccessDenied there is indistinguishable
+	// from "nothing was spent" if it is not shown.
+	costPoller *cloudCostPoller
+
 	// nativeRuntime is true when AF_RUNTIME is native/wsl (containerless, single-user;
 	// docs/34). Native is a personal dev host with no shared-host contention, so the
 	// concurrent-session quota is not enforced there — see sessionQuotaExceeded.

@@ -942,3 +942,69 @@ export function cleanupArchives(locale) {
     },
   ];
 }
+
+// --- クラウド費用（docs/67 + ADR 0048）------------------------------------------
+// ⚠️ 共有が請求の大半を占めるという実測の形をそのまま持たせている。ここを小さくすると
+// ハーネスの画面が「ほとんど個人に紐づく」ように見えて、この機能の一番大事な事実
+// （個人に出る額は全体の一部でしかない）が確認できなくなる。
+export const costProfile = () => ({
+  runtime: "ecs-ec2",
+  available: true,
+  verified: true,
+  attributable: ["slot_hours", "home_volume", "snapshots"],
+  shared: ["nat", "dns", "lb", "db", "efs", "idle_pool", "cp", "tax"],
+});
+
+const costMeta = () => ({
+  currency: "USD",
+  first_day: "2026-08-17",
+  last_day: "2026-09-15",
+  estimated: true,
+  lag_hours: 24,
+  profile: costProfile(),
+});
+
+// 30 日ぶんの日次。末尾 1 日だけ未確定（縞の塗り分けが見えるように）。
+const costDays = () => {
+  const out = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(Date.UTC(2026, 8, 15) - i * 86400000).toISOString().slice(0, 10);
+    const weekend = [0, 6].includes(new Date(d + "T00:00:00Z").getUTCDay());
+    out.push({ day: d, unblended_micro: weekend ? 120_000 + i * 900 : 640_000 + i * 4_200, estimated: i === 0 });
+  }
+  return out;
+};
+
+export const myCloudCost = () => ({
+  from: "2026-08-17",
+  to: "2026-09-15",
+  total_micro: costDays().reduce((s, d) => s + d.unblended_micro, 0),
+  days: costDays(),
+  services: [
+    { service: "Amazon Elastic Compute Cloud - Compute", unblended_micro: 12_480_000 },
+    { service: "EC2 - Other", unblended_micro: 2_910_000 },
+    { service: "Amazon Elastic Block Store", unblended_micro: 640_000 },
+  ],
+  meta: costMeta(),
+});
+
+export const adminCloudCost = () => ({
+  from: "2026-08-17",
+  to: "2026-09-15",
+  members: [
+    { tenant: "demo", membership_id: "m1", user_key: "aoi-tanaka", email: "aoi@example.com", unblended_micro: 16_030_000 },
+    { tenant: "demo", membership_id: "m2", user_key: "ren-sato", email: "ren@example.com", unblended_micro: 9_240_000 },
+    { tenant: "demo", membership_id: "m3", user_key: "mio-kubo", email: "mio@example.com", unblended_micro: 3_870_000 },
+  ],
+  attributed_micro: 29_140_000,
+  shared_micro: 96_500_000,
+  shared_services: [
+    { service: "Amazon Virtual Private Cloud", unblended_micro: 41_200_000 },
+    { service: "Amazon Route 53", unblended_micro: 22_500_000 },
+    { service: "Amazon Elastic File System", unblended_micro: 12_800_000 },
+    { service: "Amazon Elastic Load Balancing", unblended_micro: 8_900_000 },
+    { service: "Amazon Relational Database Service", unblended_micro: 7_100_000 },
+    { service: "Tax", unblended_micro: 4_000_000 },
+  ],
+  meta: costMeta(),
+});

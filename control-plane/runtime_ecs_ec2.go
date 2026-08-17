@@ -109,6 +109,17 @@ const (
 	ec2TagMembership = "af-membership"
 	ec2TagWorkspace  = "af-workspace"
 	ec2TagSlotSize   = "af-slot-size"
+	// ec2TagTenant is the owning tenant's SLUG, and it exists only for the bill
+	// (docs/67, ADR 0048 決定 3). Nothing in the pool logic reads it: the CP can already
+	// derive the tenant from af-membership through its own DB, so an opaque tenant id
+	// here would buy nothing. A slug can be read straight out of Cost Explorer, which
+	// is the whole point — grouping the invoice by tenant without the Console.
+	//
+	// ⚠️ The value is a slug rather than the tenant id ON PURPOSE, and it is safe to put
+	// in billing data for the same reason af-workspace is NOT activated as a cost
+	// allocation tag: a slug names an organisation, af-workspace names a person
+	// (it is built from their email).
+	ec2TagTenant = "af-tenant"
 	// ec2TagClaim marks a home volume as "a slot is being launched for this user".
 	// It exists for exactly one window: RunInstances returns a PENDING instance, and
 	// AttachVolume only accepts running|stopped, so for those few seconds the volume
@@ -785,11 +796,11 @@ func (e *ecsEC2Runtime) ensureAccessPoint(ctx context.Context, role, path string
 			},
 		},
 		// No PosixUser — see above. This is the difference from the Fargate adapter.
-		Tags: []efstypes.Tag{
+		Tags: appendEFSTenantTag(e.base.tenantSlug, []efstypes.Tag{
 			{Key: aws.String("af-membership"), Value: aws.String(e.base.membershipID)},
 			{Key: aws.String("af-role"), Value: aws.String(role)},
 			{Key: aws.String("Name"), Value: aws.String(e.base.name + "-" + role)},
-		},
+		}),
 	})
 	if err != nil {
 		return "", err
@@ -1004,6 +1015,10 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 		e.quarantineSlot(ctx, p, err)
 		return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
 	}
+	// The home is on this box now, so the box is this person's for as long as it stays
+	// there — stamp it for the bill. Deliberately AFTER the mount and best-effort: the
+	// tag is read by Cost Explorer and by nothing else (ADR 0048 決定 3).
+	e.tagSlotOwner(ctx, p.instanceID)
 	e.setPhase("task: starting")
 	taskDefArn, err := e.registerTaskDef(ctx, p, prep)
 	if err != nil {
@@ -1056,6 +1071,10 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 		// nothing else here prevents the next user from landing on the same box.
 		log.Printf("ecs-ec2: could not quarantine slot %s (it will be offered again): %v", p.instanceID, err)
 	}
+	// A quarantined box is nobody's. It reaches here before launch stamps the owner, so
+	// normally there is nothing to remove — but a previous tenancy whose release failed
+	// would otherwise keep billing a person for a box they can no longer use.
+	e.untagSlotOwner(ctx, p.instanceID)
 	if p.volumeID != "" {
 		if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
 			VolumeId:   aws.String(p.volumeID),
@@ -1139,13 +1158,13 @@ func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2ty
 		Encrypted:        aws.Bool(true),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeVolume,
-			Tags: []ec2types.Tag{
+			Tags: e.ownedTags([]ec2types.Tag{
 				{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
 				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
 				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
 				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
 				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-home")},
-			},
+			}),
 		}},
 	})
 	if err != nil {
@@ -1259,6 +1278,65 @@ func (e *ecsEC2Runtime) unclaim(ctx context.Context, volumeID string) {
 		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagClaim)}, {Key: aws.String(ec2TagClaimAt)}},
 	}); err != nil {
 		log.Printf("ecs-ec2: clearing the claim on %s failed (sweeper will): %v", volumeID, err)
+	}
+}
+
+// ownedTags appends `af-tenant` when this workspace knows its tenant slug. Nothing in
+// the pool reads it — it exists so the invoice can be grouped by tenant (ADR 0048 決定 3).
+// An unknown slug appends nothing rather than an empty value: an empty cost allocation
+// tag is a real group in the bill, and "tenant = (blank)" reads like a bug.
+func (e *ecsEC2Runtime) ownedTags(tags []ec2types.Tag) []ec2types.Tag {
+	if e.base.tenantSlug == "" {
+		return tags
+	}
+	return append(tags, ec2types.Tag{Key: aws.String(ec2TagTenant), Value: aws.String(e.base.tenantSlug)})
+}
+
+// tagSlotOwner / untagSlotOwner put this workspace's owner tags on the INSTANCE, and
+// take them off again when the slot goes back to the pool.
+//
+// Why the instance and not just the home volume (docs/67 §67.4): measured on the live
+// deployment, 91% of the cost that can be attributed to a person at all is the slot's
+// instance-hours, and the instance carried af-role/af-pool/af-slot-size but NO
+// af-membership. That is correct as pool logic — a slot belongs to nobody until a home
+// is attached to it — but it means the cost allocation tag had nothing to attach to.
+//
+// ⚠️ Neither call may fail a Start or a Stop. These tags are read by the bill and by
+// nothing else; the sweeper repairs whatever a crash leaves behind (sweepSlotOwnerTags).
+// A pool that stops working because a billing tag could not be written would be a far
+// worse bug than a mis-attributed hour.
+//
+// ⚠️ Untag on release is what keeps a WARM POOL slot out of somebody's bill. Without it
+// the last user of a box keeps paying for it while it sits idle waiting for the next
+// person — and "idle pool" is exactly the shared cost the operator needs to see as
+// shared (ADR 0048 決定 4).
+func (e *ecsEC2Runtime) tagSlotOwner(ctx context.Context, instanceID string) {
+	if instanceID == "" {
+		return
+	}
+	tags := e.ownedTags([]ec2types.Tag{
+		{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
+	})
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{instanceID},
+		Tags:      tags,
+	}); err != nil {
+		log.Printf("ecs-ec2: stamping the owner of slot %s failed (billing only): %v", instanceID, err)
+	}
+}
+
+func (e *ecsEC2Runtime) untagSlotOwner(ctx context.Context, instanceID string) {
+	if instanceID == "" {
+		return
+	}
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{instanceID},
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagMembership)},
+			{Key: aws.String(ec2TagTenant)},
+		},
+	}); err != nil {
+		log.Printf("ecs-ec2: clearing the owner of slot %s failed (sweeper will): %v", instanceID, err)
 	}
 }
 
@@ -2123,6 +2201,8 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 		log.Printf("ecs-ec2: %s detached from %s but the device is still held: %v", volumeID, instanceID, err)
 	}
 	e.clearIdle(ctx, volumeID)
+	// The box is back in the pool, so it stops being this person's cost from here on.
+	e.untagSlotOwner(ctx, instanceID)
 	log.Printf("ecs-ec2: released slot %s from %s", instanceID, e.base.name)
 	return nil
 }
@@ -2397,13 +2477,13 @@ func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 		Description: aws.String("agent-fleet hibernated home for " + e.base.name),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeSnapshot,
-			Tags: []ec2types.Tag{
+			Tags: e.ownedTags([]ec2types.Tag{
 				{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
 				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleHome)},
 				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
 				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
 				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-home")},
-			},
+			}),
 		}},
 	})
 	if err != nil {
@@ -2655,14 +2735,14 @@ func (e *ecsEC2Runtime) BackupHome(ctx context.Context, every time.Duration) err
 		Description: aws.String("agent-fleet backup of " + e.base.name),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeSnapshot,
-			Tags: []ec2types.Tag{
+			Tags: e.ownedTags([]ec2types.Tag{
 				{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
 				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleBackup)},
 				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
 				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
 				{Key: aws.String(ec2TagBackupAt), Value: aws.String(at.Format(time.RFC3339Nano))},
 				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-backup")},
-			},
+			}),
 		}},
 	})
 	if err != nil {
@@ -2760,7 +2840,88 @@ func (f *ecsEC2Factory) sweep(ctx context.Context) error {
 	for i := range vols.Volumes {
 		f.sweepVolume(ctx, &vols.Volumes[i])
 	}
+	// Repair the billing tags BEFORE the volume sweep's own releases are re-read: the
+	// truth is "who is attached right now", and that is exactly what `vols` holds.
+	f.sweepSlotOwnerTags(ctx, vols.Volumes)
 	return f.sweepGhostInstances(ctx)
+}
+
+// sweepSlotOwnerTags takes af-membership/af-tenant off any slot that is not actually
+// holding that person's home. It is the repair half of tagSlotOwner: a CP that dies
+// between "detach" and "delete the tag" would otherwise keep charging the last user for
+// a box that is back in the free pool, and nothing else would ever notice — the pool
+// logic does not read these tags, so a stale one is invisible except on the invoice.
+//
+// The attached volumes ARE the answer to who owns what (the same source freeSlots and
+// releaseSlot already trust), so this compares against them rather than asking ECS.
+// It repairs BOTH directions, because they are different failures:
+//   - a slot tagged for somebody whose home is not on it → clear (a crash between the
+//     detach and the untag; the box is back in the pool and its hours are shared cost);
+//   - a slot holding a home but not tagged for it → stamp (a crash between the attach
+//     and the stamp, or a box that predates this code) — copied FROM THE VOLUME, which
+//     is the only place that knows the owner without a DB read.
+func (f *ecsEC2Factory) sweepSlotOwnerTags(ctx context.Context, homes []ec2types.Volume) {
+	type ownerTags struct{ membership, tenant string }
+	owner := map[string]ownerTags{} // instance id -> who is actually on it
+	for i := range homes {
+		if inst := attachedInstance(&homes[i]); inst != "" {
+			owner[inst] = ownerTags{
+				membership: ec2TagValue(homes[i].Tags, ec2TagMembership),
+				tenant:     ec2TagValue(homes[i].Tags, ec2TagTenant),
+			}
+		}
+	}
+	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, f.pool.pool),
+			// A terminated box still answers DescribeInstances for a while and cannot be
+			// tagged; excluding it keeps the log free of failures nobody can act on.
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
+		},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: reading slot owner tags: %v", err)
+		return
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			id := aws.ToString(inst.InstanceId)
+			stamped := ec2TagValue(inst.Tags, ec2TagMembership)
+			want := owner[id]
+			switch {
+			case stamped == want.membership:
+				continue // already right (including "nobody on it, no tag")
+			case want.membership == "":
+				log.Printf("ecs-ec2 sweep: slot %s is billed to %q but holds no home; clearing", id, stamped)
+				if _, err := f.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+					Resources: []string{id},
+					Tags:      []ec2types.Tag{{Key: aws.String(ec2TagMembership)}, {Key: aws.String(ec2TagTenant)}},
+				}); err != nil {
+					log.Printf("ecs-ec2 sweep: clearing the owner of slot %s failed: %v", id, err)
+				}
+			default:
+				log.Printf("ecs-ec2 sweep: slot %s holds %q but is billed to %q; restamping", id, want.membership, stamped)
+				tags := []ec2types.Tag{{Key: aws.String(ec2TagMembership), Value: aws.String(want.membership)}}
+				if want.tenant != "" {
+					tags = append(tags, ec2types.Tag{Key: aws.String(ec2TagTenant), Value: aws.String(want.tenant)})
+				}
+				if _, err := f.ec2.CreateTags(ctx, &ec2.CreateTagsInput{Resources: []string{id}, Tags: tags}); err != nil {
+					log.Printf("ecs-ec2 sweep: restamping the owner of slot %s failed: %v", id, err)
+				}
+				// The new owner's tenant is unknown but the previous one's may still be
+				// on the box; leaving it would bill this person's hours to a tenant they
+				// are not in, which is worse than no tenant at all.
+				if want.tenant == "" && ec2TagValue(inst.Tags, ec2TagTenant) != "" {
+					if _, err := f.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+						Resources: []string{id},
+						Tags:      []ec2types.Tag{{Key: aws.String(ec2TagTenant)}},
+					}); err != nil {
+						log.Printf("ecs-ec2 sweep: clearing a stale tenant tag on %s failed: %v", id, err)
+					}
+				}
+			}
+		}
+	}
 }
 
 func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {

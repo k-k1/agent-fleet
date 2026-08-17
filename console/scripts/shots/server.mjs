@@ -74,6 +74,11 @@ const exact = {
   "/api/env/ui-prefs": () => ({}),
   "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
   "/api/usage": () => ({ agents: fx.usage(LOCALE) }),
+  // クラウド費用（docs/67）。⚠️ profile.available が true でないとタブごと出ないので、
+  // このスタブが無いとハーネスでは新しい面が存在しないのと同じになる。
+  "/api/cost/profile": () => fx.costProfile(),
+  "/api/cost/me": () => fx.myCloudCost(),
+  "/api/admin/cloud-cost": () => fx.adminCloudCost(),
   "/api/agents/rtk/gain": () => fx.rtkGain(),
   "/api/stats": () => fx.stats(),
   "/api/ssm/hosts": () => ({ hosts: [] }),

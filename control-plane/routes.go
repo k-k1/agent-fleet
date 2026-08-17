@@ -174,9 +174,15 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/admin/user-limits", adm.setUserLimit)
 	mux.HandleFunc("PUT /api/admin/membership-role", adm.withSuperAdmin(adm.setMembershipRole)) // grant/revoke tenant_admin (super_admin only)
 	mux.HandleFunc("GET /api/admin/host", adm.withSuperAdmin(adm.hostStats))
-	mux.HandleFunc("GET /api/admin/ec2-pool", adm.withSuperAdmin(adm.poolStatus))                       // EC2 slot pool (ecs-ec2 only)                            // host load / memory (super_admin)
-	mux.HandleFunc("GET /api/admin/workspace-sizing", adm.withIdentity(adm.workspaceSizingProfile))     // what mem/CPU/disk MEAN on this runtime (ADR 0045 決定 21)
-	mux.HandleFunc("GET /api/admin/usage", adm.usage)                                                   // showback: occupancy per tenant/member (json|csv)
+	mux.HandleFunc("GET /api/admin/ec2-pool", adm.withSuperAdmin(adm.poolStatus))                   // EC2 slot pool (ecs-ec2 only)                            // host load / memory (super_admin)
+	mux.HandleFunc("GET /api/admin/workspace-sizing", adm.withIdentity(adm.workspaceSizingProfile)) // what mem/CPU/disk MEAN on this runtime (ADR 0045 決定 21)
+	mux.HandleFunc("GET /api/admin/usage", adm.usage)                                               // showback: occupancy per tenant/member (json|csv)
+	// Cloud cost — the AWS invoice (docs/67 + ADR 0048). Deliberately NOT folded into
+	// /api/admin/usage: that one is occupancy in seconds and exists everywhere, this one
+	// is money and exists only on AWS. Same reason the Console gives them different names.
+	mux.HandleFunc("GET /api/cost/profile", adm.withIdentity(adm.costProfileHandler))                   // is there a bill here at all
+	mux.HandleFunc("GET /api/cost/me", adm.withMembership(adm.myCloudCost))                             // the caller's OWN attributed spend
+	mux.HandleFunc("GET /api/admin/cloud-cost", adm.cloudCost)                                          // per-member totals (+ shared, super_admin only)
 	mux.HandleFunc("GET /api/admin/sessions", adm.allSessions)                                          // deployment-wide session overview (super_admin / tenant_admin)
 	mux.HandleFunc("GET /api/admin/audit", adm.audit)                                                   // audit log ledger (super_admin / tenant_admin, docs/20 M1)
 	mux.HandleFunc("GET /api/admin/egress", eg.withSuperAdmin(eg.stats))                                // egress observation stats (super_admin, docs/20 M2)
