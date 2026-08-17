@@ -26,9 +26,13 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 // Revealing a directory lands in the ファイル rail; the store call is enough to observe.
-const revealed: string[] = [];
+const revealed: { path: string; focus?: boolean }[] = [];
 vi.mock("../files/store.ts", () => ({
-  useFilesStore: { getState: () => ({ revealInFiles: (p: string) => revealed.push(p) }) },
+  useFilesStore: {
+    getState: () => ({
+      revealInFiles: (path: string, opts?: { focus?: boolean }) => revealed.push({ path, focus: opts?.focus }),
+    }),
+  },
 }));
 
 const { MarkdownView } = await import("./MarkdownView.tsx");
@@ -120,8 +124,19 @@ describe("MarkdownView path auto-linking", () => {
     const a = pathLinks()[0];
     expect(a?.textContent).toBe("_act-parts/");
     await click(a);
-    expect(revealed).toEqual(["repos/x/_act-parts"]);
+    // focus: the reader clicked to go there, so the rail takes the keyboard as well —
+    // the row is expanded, selected AND ready for ↑↓ (ProjectFiles.dom.test.tsx).
+    expect(revealed).toEqual([{ path: "repos/x/_act-parts", focus: true }]);
     expect(opened).toEqual([]);
+  });
+
+  it("leaves a directory outside home as text — the rail is rooted at home", async () => {
+    // The resolver legitimately places these (the staged docs mount, the scratch base),
+    // and a FILE there opens fine; a directory has nowhere to be revealed.
+    resolved["docs/guide"] = { path: "/usr/local/share/agent-fleet/docs/guide", type: "dir" };
+    resolved["docs/guide/a.md"] = { path: "/usr/local/share/agent-fleet/docs/guide/a.md", type: "file" };
+    await render("`docs/guide` の中の `docs/guide/a.md`");
+    expect(pathLinks().map((a) => a.textContent)).toEqual(["docs/guide/a.md"]);
   });
 
   it("re-resolves on click, so a file that vanished says so instead of opening a pane", async () => {
