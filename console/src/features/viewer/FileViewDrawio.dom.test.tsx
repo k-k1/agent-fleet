@@ -152,12 +152,21 @@ describe(".drawio の面", () => {
     expect(frame()).not.toBeNull();
   });
 
+  it("図には朗読を出さない（読み上げる本文が無い）", async () => {
+    await render();
+    const labels = [...host.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels.some((l) => l?.includes("Read aloud"))).toBe(false);
+  });
+
   it("ただの .xml は今までどおりソースのまま", async () => {
     served = { content: "<project><modelVersion>4.0.0</modelVersion></project>", editable: true, truncated: false };
     await render({ filePath: "repos/x/pom.xml" });
     expect(frame()).toBeNull();
     expect(groupButtons("Diagram display mode")).toBeNull();
     expect(host.querySelector('[role="tablist"]')).not.toBeNull();
+    // 図でないテキストからは朗読を取り上げない（外す条件が広すぎないことの確認）。
+    const labels = [...host.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels.some((l) => l?.includes("Read aloud"))).toBe(true);
   });
 });
 

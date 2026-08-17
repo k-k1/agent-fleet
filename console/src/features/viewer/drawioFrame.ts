@@ -170,6 +170,17 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     return el;
   }
 
+  // 背景は **html と body の両方に inline で** 置く。スタイルシートは
+  // html,body{background:…} の形で両方に色を付けているので、html だけを inline で
+  // 上書きしても **body の指定が上に塗ってしまい、一度も効かない**（実測: 組み立て時が
+  // dark・描画要求が light のとき、図形はライトなのに背景は #1e1e1e のままだった。
+  // 逆向きでは白のまま。利用者が見た 2 つの症状はどちらもこれ）。docs/65 §65.11-13。
+  function setBackground(isDark) {
+    var color = isDark ? "#1e1e1e" : "#ffffff";
+    document.documentElement.style.background = color;
+    if (document.body) document.body.style.background = color;
+  }
+
   // ツールバーはコンテナの外（上）に置かれ、コンテナには marginTop が付く。
   // その分を引かないと下端がフレームからはみ出す。
   function sizeToViewport(el) {
@@ -192,9 +203,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
 
   function render(xml, isDark, restore) {
     dark = !!isDark;
-    // srcdoc は一度しか組み立てない（作り直すと 4MB を読み直す）。テーマ切り替えは
-    // 描画要求として届くので、背景もここで追従させる。
-    document.documentElement.style.background = dark ? "#1e1e1e" : "#ffffff";
+    setBackground(dark);
     var el = host();
     if (!xml || !xml.trim()) {
       post({ t: "error", code: "empty" });
