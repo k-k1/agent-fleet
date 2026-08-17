@@ -830,6 +830,19 @@
 :root[data-theme="light"] .markdown a.md-conv-link {
   color: #5b21b6;
 }
+/* An existing file path written as inline code (`docs/65-drawio-viewer.md`) → that file's
+   pane. The anchor lives INSIDE the <code>, so it inherits the code chip's font and
+   background and only takes the link color; green keeps it apart from the amber commit
+   hash, the blue session slug and the violet conversation slug. */
+.markdown code a.md-path-link {
+  color: #86c78f;
+}
+.markdown code a.md-path-link:hover {
+  color: #a9dcb0;
+}
+:root[data-theme="light"] .markdown code a.md-path-link {
+  color: #1f6b39;
+}
 .markdown code {
   font-family: var(--viewer-font, var(--mono));
   font-size: 0.88em;
