@@ -155,8 +155,15 @@ hours** (measured: 172 probes for `/actuator/heapdump`, `/.env` and friends in t
 - **The access log carries the status code**, e.g. `GET /actuator/heapdump 401 0s`, so
   the log alone answers "did we refuse it, or serve it?". Filter on `401` to count probes.
 - **Per-IP analysis and blocking belong outside the CP**: ALB access logs for the former,
-  AWS WAF (managed rules) for the latter. The CP deliberately has no path-level blocklist
-  of its own — that would add a second place where access is decided.
+  AWS WAF for the latter. The CP deliberately has no path-level blocklist of its own —
+  that would add a second place where access is decided. On AWS, `30-ingress` ships an
+  **off-by-default WAF** with exactly two knobs: `WafRateLimitPer5Min` and
+  `WafIpReputation`. ⚠️ **Signature rule sets (Core rule set, SQLi, XSS) are deliberately
+  not offered** — this product carries source code and shell commands in ordinary request
+  bodies, so `'; DROP TABLE` and `../../etc/passwd` are legitimate traffic and those rules
+  would 403 real work at random, looking like a product bug.
+- **If only your own people need it, narrow the door instead**: `00-network`'s
+  `AlbIngressCidr` keeps probes from ever reaching the ALB, and it costs nothing.
 
 ## Idle stop and force-stop
 
