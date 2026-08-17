@@ -199,6 +199,18 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if tasks := claude.CollectTasks(lines); len(tasks) > 0 {
 		resp["tasks"] = tasks
 	}
+	// Files this session edited (docs/68). Whole-transcript like the ToDo list above —
+	// the turns sent alongside are a window, so anything derived from them would
+	// undercount. jsonl lines are immutable once written, so all of them are foldable.
+	var head []byte
+	if len(lines) > 0 {
+		head = lines[0]
+	}
+	if files := sessionFileTouches(name, jpath, fileAggHead(head), len(lines), len(lines),
+		func(from, to int) []transcript.FileEdit { return claude.CollectFileEdits(lines[:to], from) },
+	); len(files) > 0 {
+		resp["files"] = files
+	}
 	// Prompts queued into the running turn (typed mid-run, not yet injected) so the
 	// mirror can badge them キュー済み like the terminal does. The queue only exists
 	// while a turn runs, so gate on working — this also hides stale leftovers from a
@@ -327,6 +339,24 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// same progress checklist claude gets. Whole-transcript (not windowed), like claude's.
 	if len(td.Tasks) > 0 {
 		resp["tasks"] = td.Tasks
+	}
+	// Files this session edited (docs/68), from the same whole parse. The LAST turn is
+	// held back from the fold: these agents keep appending parts to an already-counted
+	// message (genericMutableTail above), so folding it into the cache would double-count
+	// its edits — it is re-folded into a copy on every poll instead.
+	if total > 0 {
+		head := all[0].TS + "|" + all[0].AnchorID + "|" + strconv.Itoa(all[0].Idx)
+		if files := sessionFileTouches(meta.Name, path, head, total, total-1,
+			func(from, to int) []transcript.FileEdit {
+				var out []transcript.FileEdit
+				for i := from; i < to; i++ {
+					out = append(out, transcript.FileEditsInTurn(all[i])...)
+				}
+				return out
+			},
+		); len(files) > 0 {
+			resp["files"] = files
+		}
 	}
 	// A currently-awaiting agent question (codex request_user_input / opencode question
 	// tool), surfaced interactively like claude's AskUserQuestion — only while the session

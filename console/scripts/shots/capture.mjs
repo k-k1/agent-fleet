@@ -61,6 +61,9 @@ const SCENES = [
   {
     name: "mirror",
     sections: FOCUS_TREE,
+    // 変更ファイル帯を開いた状態で撮る（docs/68）。既定は畳まれているので、開いて
+    // おかないと「セッションが直したファイル」の面が絵に出ない。
+    storage: { "af.mirror-files-open.sk4rq2f": "1" },
     width: 1280,
     height: 900,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
@@ -246,9 +249,16 @@ try {
     const sections = Object.entries(scene.sections || {})
       .map(([id, v]) => `localStorage.setItem("af-section-${id}", "${v}");`)
       .join("\n        ");
+    // Per-scene UI state that is remembered in localStorage rather than in the layout —
+    // e.g. a disclosure the user has opened before (the mirror's 変更ファイル strip).
+    // Without it a shot can only ever show such a panel in its default state.
+    const storage = Object.entries(scene.storage || {})
+      .map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(String(v))});`)
+      .join("\n        ");
     const seed = `
       try {
         ${sections}
+        ${storage}
         localStorage.setItem("af-display-settings", ${JSON.stringify(JSON.stringify({ locale: LOCALE, theme: THEME }))});
         localStorage.setItem("af-tenant", "demo");
         ${scene.settings ? `localStorage.setItem("af-settings-section", ${JSON.stringify(scene.settings)});` : ""}

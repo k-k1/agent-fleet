@@ -107,12 +107,14 @@ import type { ForkAtTarget } from "./ForkAtModal.tsx";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT } from "./HandoffProposal.tsx";
 import { PendingQuestions } from "./PendingQuestions.tsx";
+import { FileChangeStrip } from "./FileChangeStrip.tsx";
+import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
 // The transcript rendering layer, shared with the shared-session view (docs/59). What the
 // reader may DO here is expressed as TranscriptCaps — the mirror is the owner, so it fills
 // in every capability; a recipient fills in almost none. See transcript/capabilities.ts.
 import { TranscriptView } from "./transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "./transcript/capabilities.ts";
-import type { Group, Question, TaskItem, Turn, TurnTtsWiring } from "./transcript/types.ts";
+import type { Group, Part, Question, TaskItem, Turn, TurnTtsWiring } from "./transcript/types.ts";
 import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, spendOf } from "./transcript/model.ts";
 import { PlanBlock, TaskChecklist, planTitle } from "./transcript/blocks.tsx";
 
@@ -271,6 +273,10 @@ export function MirrorView({
   // いるときだけ出す（末尾では出さない: 押すべきボタンの上に被るため。syncReplyTop の注記）。
   const [showReplyTop, setShowReplyTop] = useState(false);
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
+  // Files this session's agent edited (docs/68). Aggregated server-side over the WHOLE
+  // transcript and delivered on this same poll — deriving it from `turns` would count
+  // only the window the mirror happens to hold and grow as the reader scrolls up.
+  const [files, setFiles] = useState<SessionFile[]>([]);
   // Prompts claude reports queued into the RUNNING turn (queue-operation events) — sent
   // mid-run from this composer or typed in the raw terminal, not yet injected. Matching
   // echoes get a キュー済み badge; the rest render as synthetic queued bubbles.
@@ -727,6 +733,7 @@ export function MirrorView({
     finalizingRef.current = false;
     wasWorkingRef.current = false;
     setTasks([]);
+    setFiles([]);
     setQueuedPrompts([]);
     setAlive(!!sessionMeta?.alive);
     setPending(null);
@@ -901,6 +908,7 @@ export function MirrorView({
           bgBusyRef.current = !!d.backgroundBusy;
           setBgBusy(!!d.backgroundBusy);
           setTasks(Array.isArray(d.tasks) ? d.tasks : []);
+          setFiles(Array.isArray(d.files) ? d.files : []);
           setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
           setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
@@ -2068,6 +2076,28 @@ export function MirrorView({
       true,
     );
 
+  // Open an edit trace's captured before/after in a diff pane. The mirror HAS panes, so
+  // it must pass this capability: without it ToolTrace silently takes the degraded path
+  // meant for the pane-less shared view (transcript/capabilities.ts) and an edit becomes
+  // an inline expansion with nothing to open — which is how it behaved until docs/68.
+  const openDiff = (p: Part) => {
+    const title = p.file ? p.file.split("/").pop() || p.file : p.tool || tr("view.diff");
+    const target = { content: { kind: "diff" as const, docTitle: title, diffTool: p.tool || "", diffEdits: p.edits || [] } };
+    const open = findDiffPane();
+    if (open) {
+      setPaneTarget(open, target);
+      setActivePane(open);
+      return;
+    }
+    openTargetInNew(target, true);
+  };
+
+  // Publish the edited-file list for readers outside this pane (the command palette's
+  // このセッションの変更 mode), so they don't have to poll the transcript themselves.
+  useEffect(() => {
+    if (session) useSessionFilesStore.getState().set(session, files);
+  }, [session, files]);
+
   // Auto-suggested title (session_title.go): 採用 promotes it to the session's real
   // title (bumpSessions so the left-pane label updates without waiting for its own
   // poll); 却下 discards it. Either way the server never offers one again.
@@ -2533,6 +2563,7 @@ export function MirrorView({
     fileURL: downloadURL,
     openFile,
     openImage: setLightbox,
+    openDiff,
     openPlan,
     session,
     sendPlanComments: (plan: string) => void sendPlanComments(plan),
@@ -2619,6 +2650,7 @@ export function MirrorView({
 
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
       {tasks.length > 0 && <TaskChecklist key={session} tasks={tasks} session={session} />}
+      <FileChangeStrip key={session} session={session} files={files} />
       {isPlan && (
         <div className="mirror-planmode">
           <Icon name="debug-pause" /> {tr("mirror.plan_mode_note")}
@@ -3403,6 +3435,19 @@ function findPlanPane(session: string): string | null {
   for (const col of layout?.cols || []) {
     for (const cell of col.cells) for (const pane of cell.views) {
       if (pane.content.kind === "doc" && pane.content.docSession === session) return pane.id;
+    }
+  }
+  return null;
+}
+
+// findDiffPane returns the id of an already-open captured-edit diff pane. Clicking one
+// edit trace after another retargets that single pane instead of spawning one each — the
+// same reuse the SCM list does for working diffs (features/scm/open.ts).
+function findDiffPane(): string | null {
+  const layout = useLayoutStore.getState().layout;
+  for (const col of layout?.cols || []) {
+    for (const cell of col.cells) for (const pane of cell.views) {
+      if (pane.content.kind === "diff") return pane.id;
     }
   }
   return null;
