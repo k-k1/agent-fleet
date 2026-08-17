@@ -123,6 +123,9 @@ const exact = {
 
 const re = [
   [/^\/api\/sessions\/([^/]+)\/messages$/, (m) => fx.messages(LOCALE, decodeURIComponent(m[1]))],
+  // 変更ファイル帯の「コミット済み」判定（docs/68 P2）: セッション開始以降のコミットに
+  // 現れた repo 相対パス。
+  [/^\/api\/sessions\/([^/]+)\/committed$/, () => fx.committedFiles()],
   [/^\/api\/repos\/([^/]+)\/graph$/, (m) => fx.graph(LOCALE, decodeURIComponent(m[1]))],
   [/^\/api\/repos\/([^/]+)\/status$/, (m) => fx.scmStatus(LOCALE, decodeURIComponent(m[1]))],
   [/^\/api\/repos\/([^/]+)\/changes$/, (m) => fx.changes(LOCALE, decodeURIComponent(m[1]))],

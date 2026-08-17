@@ -63,6 +63,21 @@ describe("joinChanges", () => {
     expect(rows[0].state).toBe("clean");
   });
 
+  it("差分は無いがコミットに現れた行は「コミット済み」になる", () => {
+    expect(joinChanges([file()], [], ["src/a.ts"])[0].state).toBe("committed");
+  });
+
+  it("⚠️ コミットに無いものを「取り消された」と断じない——差分なしのまま", () => {
+    // 差分が無くコミットにも無い理由は他にもある（開始より前のコミットに入っていた・
+    // 別の作業コピーで起きた）。肯定できるのは「コミットに現れた」ことだけ。
+    expect(joinChanges([file()], [], ["other/z.ts"])[0].state).toBe("clean");
+  });
+
+  it("作業ツリーに差分がある行はコミット集合より git を優先する", () => {
+    // 「コミット済み、ただしその後また直した」は、いま開けるのは作業差分の方。
+    expect(joinChanges([file()], [change()], ["src/a.ts"])[0].state).toBe("unstaged");
+  });
+
   it("作業コピーの外は列挙するが git 側は持たない", () => {
     const rows = joinChanges([file({ path: ".claude/settings.json", repo: undefined, rel: undefined })], []);
     expect(rows[0].state).toBe("outside");
@@ -119,6 +134,12 @@ describe("openRow", () => {
     expect(openFileMode).toHaveBeenCalledWith("repos/r/src/a.ts", "view");
   });
 
+  it("コミット済みの行はファイルとして開ける（作業差分は無い）", () => {
+    openRow(joinChanges([file()], [], ["src/a.ts"])[0]);
+    expect(openFileDiff).not.toHaveBeenCalled();
+    expect(openFileMode).toHaveBeenCalledWith("repos/r/src/a.ts", "view");
+  });
+
   it("差分なしの行もファイルとしては開ける", () => {
     openRow(joinChanges([file()], [])[0]);
     expect(openFileMode).toHaveBeenCalledWith("repos/r/src/a.ts", "view");
@@ -145,5 +166,10 @@ describe("stateBadge", () => {
     expect(stateBadge("clean").cls).toBe("st-muted");
     expect(stateBadge("outside").cls).toBe("st-muted");
     expect(stateBadge("unstaged").cls).toBe("st-mod");
+  });
+
+  it("コミット済みは差分なしと別の見た目にする（同じ灰色だと P2 の意味が消える）", () => {
+    expect(stateBadge("committed").cls).not.toBe(stateBadge("clean").cls);
+    expect(stateBadge("committed").label).not.toBe(stateBadge("clean").label);
   });
 });

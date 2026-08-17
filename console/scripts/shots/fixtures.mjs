@@ -398,6 +398,13 @@ export function sessionFiles() {
   ];
 }
 
+// 変更ファイル帯の「コミット済み」(docs/68 P2): PriceLine.tsx は直したあとコミットまで
+// 済んでいる —— 作業ツリーには何も残っていないが「取り消された」わけではない、という
+// 区別がこの一覧の要点。
+export function committedFiles() {
+  return { committed: ["src/cart/PriceLine.tsx", "src/cart/useCartCount.ts"] };
+}
+
 export function changes(locale, repo) {
   // index/worktree carry the two-column git status codes the view renders.
   return {
