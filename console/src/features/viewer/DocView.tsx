@@ -200,7 +200,8 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
             if (openInNew) openTargetInNew(target, true);
             else openTarget(target);
           }}
-          onOpenDir={revealInFiles}
+          // クリックした先へ「行く」ので、ファイル一覧はキーボードごと受け取る。
+          onOpenDir={(path) => revealInFiles(path, { focus: true })}
         />
       </div>
 
