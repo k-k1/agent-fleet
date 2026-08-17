@@ -1,9 +1,11 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -189,5 +191,74 @@ func TestRepoRelOf(t *testing.T) {
 		if repo != c.repo || rel != c.rel {
 			t.Fatalf("repoRelOf(%q) = %q,%q want %q,%q", c.abs, repo, rel, c.repo, c.rel)
 		}
+	}
+}
+
+func TestCommittedSinceDegradesToEmpty(t *testing.T) {
+	// バッジは「肯定できるときだけ」出す。git 作業コピーでない・時刻が読めない・
+	// そもそも dir が無い、のいずれでも空を返して「差分なし」のままにする。
+	cases := []struct{ name, dir, since string }{
+		{"dir が空", "", "2026-08-17T10:00:00Z"},
+		{"時刻が空", t.TempDir(), ""},
+		{"時刻が壊れている", t.TempDir(), "きのう"},
+		{"git 作業コピーではない", t.TempDir(), "2026-08-17T10:00:00Z"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := committedSince(c.dir, c.since); len(got) != 0 {
+				t.Fatalf("committedSince = %v, want empty", got)
+			}
+		})
+	}
+}
+
+func TestCommittedSinceListsPathsFromCommitsInTheWindow(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := gitx.Run(dir, "init", "-q"); err != nil {
+		t.Skipf("git を実行できない環境: %v", err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := gitx.Run(dir, args...); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+	git("config", "user.email", "t@example.com")
+	git("config", "user.name", "T")
+	write := func(rel, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// --since は COMMITTER date を見るので、そこを動かす（--date は author 側だけ）。
+	commitAt := func(when, msg string) {
+		t.Helper()
+		t.Setenv("GIT_COMMITTER_DATE", when)
+		t.Setenv("GIT_AUTHOR_DATE", when)
+		git("add", "-A")
+		git("commit", "-q", "-m", msg)
+	}
+
+	write("old.txt", "1")
+	commitAt("2020-01-01T00:00:00Z", "before") // セッションが始まる前
+	write("src/a.ts", "x")
+	write("docs/b.md", "y")
+	commitAt("2026-01-01T00:00:00Z", "after") // セッション開始以降
+
+	got := committedSince(dir, "2021-01-01T00:00:00Z")
+	set := map[string]bool{}
+	for _, p := range got {
+		set[p] = true
+	}
+	if !set["src/a.ts"] || !set["docs/b.md"] {
+		t.Fatalf("窓の中のコミットのパスが落ちている: %v", got)
+	}
+	// ⚠️ 窓の外は入れない。入れると「コミット済み」が常に真になり、バッジが情報を失う。
+	if set["old.txt"] {
+		t.Fatalf("セッション開始より前のコミットまで拾っている: %v", got)
 	}
 }

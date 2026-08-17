@@ -43,10 +43,15 @@ async function render(session: string, files: SessionFile[]) {
   return host;
 }
 
+// 帯は 2 本引く: 作業ツリー（/fs/changes）と、セッション開始以降のコミット
+// （/sessions/{name}/committed）。URL で振り分ける。
+const route = (changes: unknown[], committed: string[] = []) => (url: string) =>
+  Promise.resolve(url.includes("/committed") ? { committed } : { changes });
+
 beforeEach(() => {
   localStorage.clear();
   apiMock.mockReset();
-  apiMock.mockResolvedValue({ changes: [{ path: "repos/r/src/a.ts", repo: "r", index: " ", worktree: "M" }] });
+  apiMock.mockImplementation(route([{ path: "repos/r/src/a.ts", repo: "r", index: " ", worktree: "M" }]));
 });
 
 afterEach(() => {
@@ -87,7 +92,7 @@ describe("FileChangeStrip", () => {
   });
 
   it("⚠️ 作業ツリーに差分が無い行も残す（灰色で）", async () => {
-    apiMock.mockResolvedValue({ changes: [] });
+    apiMock.mockImplementation(route([]));
     const el = await render("s1", [file()]);
     await act(async () => {
       (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
@@ -117,8 +122,31 @@ describe("FileChangeStrip", () => {
     expect(other.querySelector(".mirror-files")!.classList.contains("open")).toBe(false);
   });
 
+  it("差分は無いがコミットに現れた行は「コミット済み」で出す（docs/68 P2）", async () => {
+    apiMock.mockImplementation(route([], ["src/a.ts"]));
+    const el = await render("s1", [file()]);
+    await act(async () => {
+      (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
+    });
+    const row = el.querySelector(".mfl-item")!;
+    expect(row.classList.contains("mfl-committed")).toBe(true);
+    expect(row.classList.contains("mfl-clean")).toBe(false);
+  });
+
+  it("コミットの問い合わせが失敗しても帯は出る（refine するだけの情報だから）", async () => {
+    apiMock.mockImplementation((url: string) =>
+      url.includes("/committed") ? Promise.reject(new Error("boom")) : Promise.resolve({ changes: [] }),
+    );
+    const el = await render("s1", [file()]);
+    expect(el.querySelector(".mirror-files")).not.toBeNull();
+    await act(async () => {
+      (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
+    });
+    expect(el.querySelector(".mfl-item")!.classList.contains("mfl-clean")).toBe(true);
+  });
+
   it("消えたファイルの行は開けない", async () => {
-    apiMock.mockResolvedValue({ changes: [] });
+    apiMock.mockImplementation(route([]));
     const el = await render("s1", [file({ verb: "delete" })]);
     await act(async () => {
       (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();

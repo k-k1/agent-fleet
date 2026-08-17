@@ -1009,14 +1009,22 @@
 .mfl-sub .codicon {
   font-size: 11px;
 }
-/* Edited but with nothing left in the working tree (committed, or reverted) and files
-   outside ~/repos: kept in the list — they ARE part of what the session did — but muted
-   so the eye lands on the rows that still have a diff to open. */
+/* コミット済み (docs/68 P2): 作業ツリーに差分は無いが、セッション開始以降のコミットに
+   現れた行。「片付いた」ことが読み取れればよいので、まだ手を入れられる行（未ステージ/
+   未追跡）より控えめだが、根拠のない「差分なし」よりは前に出す。 */
+.chg-badge.st-done {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+/* Edited but with nothing left in the working tree AND no commit we can point at, plus
+   files outside ~/repos: kept in the list — they ARE part of what the session did — but
+   muted so the eye lands on the rows that still have a diff to open. */
 .chg-badge.st-muted {
   color: var(--muted);
   background: color-mix(in srgb, var(--muted) 15%, transparent);
 }
 .mfl-clean .mfl-name,
+.mfl-committed .mfl-name,
 .mfl-outside .mfl-name {
   color: var(--muted);
 }
