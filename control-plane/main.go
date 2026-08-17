@@ -5,10 +5,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -230,14 +233,27 @@ func main() {
 	}
 
 	// P3-9 idle-stop (docs/19): a background reaper halts idle claude sessions
-	// (tier 1) and stops cold workspaces (tier 2). Deployment defaults are
-	// DISABLED (0) — safe by default, like the P3-4 quotas; an operator opts in
-	// per-tenant via limits (no restart needed) or deployment-wide via env.
+	// (tier 1) and stops cold workspaces (tier 2).
+	//
+	// The deployment defaults are ON — 1h for a session, 2h for the workspace. They used
+	// to be 0 (off), which read as "safe by default" and was not: a workspace nobody had
+	// touched since the night before was still running the next morning, and on the EC2
+	// pool that also pins an m7i.large, because a slot only sleeps once its task is gone
+	// (measured on a real deployment, 9.4h — docs/64 §64.26). Nothing is lost when they
+	// fire: a halted claude session is resumable, and a stopped workspace restarts on the
+	// next visit.
+	//
+	// A tenant admin overrides either one in the tenant's limits, INCLUDING "0" to turn
+	// it off for that tenant (idleTimeout), and a deployment sets its own default in env.
 	// AF_IDLE_SWEEP_INTERVAL=0 disables the reaper entirely — see intervalOff, which is
 	// what makes that true (measured: it was not).
 	if iv := intervalOff(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
-		sessDef := parseDurationOr(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), 0)
-		wsDef := parseDurationOr(os.Getenv("AF_WS_IDLE_TIMEOUT"), 0)
+		// intervalOff, not parseDurationOr: now that the default is non-zero, "0" has to
+		// mean OFF for the whole deployment. parseDurationOr treats any non-positive value
+		// as "use the default", which would have silently turned an operator's explicit
+		// off switch into 1h/2h — the same trap AF_IDLE_SWEEP_INTERVAL was in.
+		sessDef := intervalOff(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), time.Hour)
+		wsDef := intervalOff(os.Getenv("AF_WS_IDLE_TIMEOUT"), 2*time.Hour)
 		// Tier 3 (ecs-ec2 only): the deployment default for home hibernation. Kept in the
 		// AF_ECS_EC2_* namespace and in seconds because that is where it started life, as
 		// a setting of the pool sweeper; the trigger moved up here so a tenant can override
@@ -376,7 +392,16 @@ func main() {
 		log.Printf("WARNING: login provider config rejected (AUTH=%s so it is unused): %v", cfg.mgr.authMode, provErr)
 	}
 
-	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode, rtProfile)
+	// Ask the runtime what it will really run rather than printing the docker default:
+	// on ECS the image comes from AF_ECS_WORKSPACE_IMAGE, and a banner naming the wrong
+	// one is worse than no banner when somebody is trying to tell which build is live.
+	wsImage := cfg.mgr.image
+	if f, ok := cfg.mgr.rtFactory.(interface{ WorkspaceImage() string }); ok {
+		if img := f.WorkspaceImage(); img != "" {
+			wsImage = img
+		}
+	}
+	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, wsImage, cfg.mgr.authMode, rtProfile)
 	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(gzipMiddleware(etagJSON(handler))), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
@@ -491,12 +516,66 @@ func splitCSV(s string) []string {
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
+		sw := &statusWriter{ResponseWriter: w}
+		next.ServeHTTP(sw, r)
 		uri := r.URL.RequestURI()
 		// OAuth 系パスのクエリには認可コード等の機微値が乗るためマスクする
 		if r.URL.RawQuery != "" && strings.Contains(r.URL.Path, "oauth") {
 			uri = r.URL.Path + "?<redacted>"
 		}
-		log.Printf("%s %s %s", r.Method, uri, time.Since(start).Round(time.Millisecond))
+		log.Printf("%s %s %d %s", r.Method, uri, sw.code(), time.Since(start).Round(time.Millisecond))
 	})
+}
+
+// statusWriter captures the response status for the access log.
+//
+// Why it exists: a public deployment is found by vulnerability scanners within hours
+// (measured on <dev-deployment> — 172 probes for /actuator/heapdump, /.env and friends in
+// the first 9 hours), and the log could not answer the only question that matters about
+// them: was that a 401 or a 200? Every line looked identical.
+//
+// It forwards the two optional interfaces the CP actually depends on. A wrapper that
+// hides them does not show up as a bad log line — it shows up as an SSE stream that
+// never streams (Flusher) or a terminal that never connects (Hijacker).
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) code() int {
+	if w.status == 0 {
+		return http.StatusOK // handler wrote nothing explicit; net/http sends 200
+	}
+	return w.status
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("connection does not support hijacking")
+	}
+	// The response never gets a status through WriteHeader after this point; the
+	// upgrade IS the outcome, so record it as one instead of logging a bare 200.
+	w.status = http.StatusSwitchingProtocols
+	return hj.Hijack()
 }

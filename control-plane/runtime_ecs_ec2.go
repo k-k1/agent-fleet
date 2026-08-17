@@ -289,6 +289,9 @@ type ecsEC2Factory struct {
 
 var _ RuntimeFactory = (*ecsEC2Factory)(nil)
 
+// WorkspaceImage passes the base factory's answer through (same deployment, same image).
+func (f *ecsEC2Factory) WorkspaceImage() string { return f.base.WorkspaceImage() }
+
 // newECSEC2Factory builds the EC2-pool Runtime factory. It reuses the Fargate
 // factory's AWS config plumbing (region, cluster, subnets, EFS, Service Connect, log
 // group, image) and adds the EC2/SSM clients plus the pool settings; then it starts
@@ -450,6 +453,40 @@ func (f *ecsEC2Factory) subnetAZs(ctx context.Context) (map[string]string, error
 // closes the window where Start has begun but has not reached UpdateService yet.
 var startGen sync.Map // workspace name -> *atomic.Int64
 
+// startPhase is what the CP is DOING for a workspace right now: "slot: creating",
+// "home: restoring", … It exists because on this runtime the first minutes of a start
+// are infrastructure work — a new EC2 slot, a 50 GiB volume, an SSM mount — and the
+// only thing the Console could say about them was the native runtime's line about
+// installing agent CLIs, which is not what is happening (and not what is slow).
+//
+// Same shape as startGen for the same reason: the Runtime object is rebuilt per
+// request, so the phase cannot live on it. Process-local scratch, keyed by workspace
+// name; a CP restart or the other replica answering just means no phase, which the
+// Console renders as the generic line.
+var startPhase sync.Map // workspace name -> string
+
+// setPhase publishes (or with "" clears) the current provisioning step. Clearing is
+// not optional: the Console keeps its "starting" dialog open for as long as a phase is
+// reported, so a phase left behind by a failed start would never go away.
+func (e *ecsEC2Runtime) setPhase(p string) {
+	if p == "" {
+		startPhase.Delete(e.base.name)
+		return
+	}
+	startPhase.Store(e.base.name, p)
+}
+
+// BootPhase satisfies the optional interface GET /api/workspace probes for (the one
+// the native rootfs uses for boot-install). Empty = nothing in flight.
+func (e *ecsEC2Runtime) BootPhase() string {
+	if v, ok := startPhase.Load(e.base.name); ok {
+		if s, _ := v.(string); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 func (e *ecsEC2Runtime) generation() *atomic.Int64 {
 	v, _ := startGen.LoadOrStore(e.base.name, &atomic.Int64{})
 	return v.(*atomic.Int64)
@@ -482,7 +519,13 @@ func (e *ecsEC2Runtime) Endpoint() string { return e.base.Endpoint() }
 func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
-		log.Printf("ecs-ec2 state: describe home volume for %s: %v", e.base.name, err)
+		// A cancelled context is the caller leaving (a Console poll aborted because the
+		// tab closed or the next poll superseded it), not a fault. Logging it printed an
+		// error line per abandoned poll on a real deployment — noise that makes the log
+		// harder to read exactly when somebody is reading it for a real failure.
+		if ctx.Err() == nil {
+			log.Printf("ecs-ec2 state: describe home volume for %s: %v", e.base.name, err)
+		}
 		return "none"
 	}
 	if vol == nil {
@@ -533,12 +576,15 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 	// recreate / clean-home handlers issued a moment ago aborts instead of pulling this
 	// workspace's home out from under it.
 	e.generation().Add(1)
+	e.setPhase("preparing")
 	prep, err := e.prepare(ctx)
 	if err != nil {
+		e.setPhase("")
 		return err
 	}
 	place, err := e.placeHome(ctx)
 	if err != nil {
+		e.setPhase("")
 		return err
 	}
 	if place.deferred {
@@ -548,6 +594,7 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 		e.bg(ctx, func(c context.Context) { e.finishStart(c, place, prep) })
 		return nil
 	}
+	defer e.setPhase("")
 	return e.launch(ctx, place, prep)
 }
 
@@ -873,6 +920,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	// RunInstances answers immediately with a PENDING instance that cannot accept a
 	// volume yet, so the claim tag carries the "starting" state until the background
 	// half attaches for real.
+	e.setPhase("slot: creating")
 	inst, az, err := e.growPool(ctx, azFilter)
 	if err != nil {
 		return ec2Placement{}, err
@@ -893,17 +941,23 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 // that undone, then launch. Everything it does is idempotent and re-derivable, so a CP
 // restart in the middle costs a retry, not a wedged workspace.
 func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec2Prep) {
+	// Whatever happens — converged, failed, or gave up — the workspace is no longer
+	// mid-provisioning, and the Console's dialog keys off exactly this.
+	defer e.setPhase("")
 	if p.wake {
+		e.setPhase("slot: waking")
 		if err := e.wakeSlot(ctx, p.instanceID); err != nil {
 			log.Printf("ecs-ec2 start: waking slot %s for %s failed: %v", p.instanceID, e.base.name, err)
 			return
 		}
 	}
 	if p.claimed {
+		e.setPhase("slot: booting")
 		if err := e.waitInstanceRunning(ctx, p.instanceID); err != nil {
 			log.Printf("ecs-ec2 start: slot %s for %s never came up: %v", p.instanceID, e.base.name, err)
 			return
 		}
+		e.setPhase("home: attaching")
 		if err := e.attachHome(ctx, p.volumeID, p.instanceID); err != nil {
 			log.Printf("ecs-ec2 start: attaching %s to the new slot %s failed: %v", p.volumeID, p.instanceID, err)
 			return
@@ -918,9 +972,11 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 // ECS container instance, mount the home, register a task definition pinned to that
 // instance, and put the service at desiredCount 1.
 func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep) error {
+	e.setPhase("slot: joining the cluster")
 	if err := e.waitSlotRegistered(ctx, p.instanceID); err != nil {
 		return fmt.Errorf("slot %s not registered with the cluster: %w", p.instanceID, err)
 	}
+	e.setPhase("home: mounting")
 	if err := e.mountHome(ctx, p); err != nil {
 		// A slot that cannot mount is not a slow slot, it is a broken one, and leaving it
 		// in the pool means the next Start picks it too (measured: it did, for every user
@@ -928,6 +984,7 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 		e.quarantineSlot(ctx, p, err)
 		return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
 	}
+	e.setPhase("task: starting")
 	taskDefArn, err := e.registerTaskDef(ctx, p, prep)
 	if err != nil {
 		return fmt.Errorf("register task def: %w", err)
@@ -1038,10 +1095,17 @@ func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2ty
 	}
 	restored := snapshotID != ""
 	if restored {
+		// Two different waits with two different explanations: restoring somebody's
+		// hibernated home is not the same as making a new one, and the Console should
+		// not call both "starting".
+		e.setPhase("home: restoring")
 		log.Printf("ecs-ec2: restoring %s from %s", e.base.name, snapshotID)
 	} else if golden := e.goldenSnapshot(ctx); golden != "" {
 		snapshotID = golden
+		e.setPhase("home: creating")
 		log.Printf("ecs-ec2: seeding a new home for %s from the golden snapshot %s", e.base.name, golden)
+	} else {
+		e.setPhase("home: creating")
 	}
 	var snapshot *string
 	if snapshotID != "" {

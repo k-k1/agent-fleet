@@ -2561,3 +2561,51 @@ func TestECSEC2PoolStatusHidesVolumesBeingDeleted(t *testing.T) {
 		t.Errorf("homes = %+v, want just vol-live", st.Homes)
 	}
 }
+
+// What the "starting" dialog reads. The infrastructure half of a start on this runtime
+// (a new slot, a new or restored home, an SSM mount) used to be invisible to the
+// Console, which could only offer the native runtime's line about installing agent
+// CLIs — the wrong wait, and the one an operator judges "stuck" against.
+func TestECSEC2PublishesItsProvisioningPhase(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+
+	// No slot exists: Start grows one and hands the rest to the background half, so the
+	// phase has to survive Start returning — the Console polls after that, not during.
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := h.rt.BootPhase(); got == "" {
+		t.Fatal("no phase while the start is still converging; the dialog has nothing to say")
+	} else if !strings.HasPrefix(got, "slot:") && !strings.HasPrefix(got, "home:") {
+		t.Errorf("phase = %q, want the slot/home work that is actually happening", got)
+	}
+
+	h.ec2.instances["i-new1"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+	h.ci.registered["i-new1"] = true
+	h.runDeferred(ctx)
+	// Cleared on the way out — the dialog stays open for as long as a phase is reported,
+	// so a leftover one is a dialog that never closes.
+	if got := h.rt.BootPhase(); got != "" {
+		t.Errorf("phase %q survived a converged start", got)
+	}
+}
+
+// …and a start that fails must clear it too, or the workspace looks like it is still
+// coming up forever.
+func TestECSEC2ClearsThePhaseWhenTheStartFails(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	h.ssmc.fail["af-mount"] = true
+
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("Start returned nil although the mount failed")
+	}
+	if got := h.rt.BootPhase(); got != "" {
+		t.Errorf("phase %q survived a failed start", got)
+	}
+}

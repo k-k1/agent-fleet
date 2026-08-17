@@ -644,3 +644,42 @@ func TestReaperSweepReachesTier3OnAStoppedWorkspace(t *testing.T) {
 		}
 	}
 }
+
+// The deployment defaults. They were 0 (off) until 2026-08-17, which read as "safe by
+// default" and was not: a real deployment sat 9.4h with a workspace nobody had touched,
+// holding an m7i.large slot (docs/64 §64.26). Now they are on, so this test guards the
+// two things that make that safe: a tenant can still turn them off, and an operator can
+// still turn them off deployment-wide with an explicit "0".
+func TestIdleTimeoutDefaultsAndOverrides(t *testing.T) {
+	const (
+		sessDefault = time.Hour
+		wsDefault   = 2 * time.Hour
+	)
+	t.Run("a tenant that says nothing gets the deployment default", func(t *testing.T) {
+		d, on := idleTimeout("", wsDefault)
+		if !on || d != wsDefault {
+			t.Errorf("idleTimeout(\"\", 2h) = %s/%v, want 2h/true", d, on)
+		}
+	})
+	t.Run("a tenant can raise, lower, or switch it off", func(t *testing.T) {
+		if d, on := idleTimeout("30m", wsDefault); !on || d != 30*time.Minute {
+			t.Errorf("tenant 30m = %s/%v", d, on)
+		}
+		if d, on := idleTimeout("0", wsDefault); on || d != 0 {
+			t.Errorf("tenant \"0\" = %s/%v, want off — a tenant that opts out must stay out", d, on)
+		}
+	})
+	t.Run("an operator turns it off deployment-wide with an explicit 0", func(t *testing.T) {
+		// intervalOff, not parseDurationOr: the latter reads any non-positive value as
+		// "use the default", which would turn the off switch back on.
+		if got := intervalOff("0", sessDefault); got != 0 {
+			t.Errorf("AF_SESSION_IDLE_TIMEOUT=0 resolved to %s, want off", got)
+		}
+		if got := intervalOff("", sessDefault); got != sessDefault {
+			t.Errorf("unset resolved to %s, want the 1h default", got)
+		}
+		if got := intervalOff("nonsense", wsDefault); got != wsDefault {
+			t.Errorf("a typo resolved to %s, want the default (a typo must not silently disable it)", got)
+		}
+	})
+}
