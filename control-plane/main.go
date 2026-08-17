@@ -5,10 +5,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -513,12 +516,66 @@ func splitCSV(s string) []string {
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
+		sw := &statusWriter{ResponseWriter: w}
+		next.ServeHTTP(sw, r)
 		uri := r.URL.RequestURI()
 		// OAuth 系パスのクエリには認可コード等の機微値が乗るためマスクする
 		if r.URL.RawQuery != "" && strings.Contains(r.URL.Path, "oauth") {
 			uri = r.URL.Path + "?<redacted>"
 		}
-		log.Printf("%s %s %s", r.Method, uri, time.Since(start).Round(time.Millisecond))
+		log.Printf("%s %s %d %s", r.Method, uri, sw.code(), time.Since(start).Round(time.Millisecond))
 	})
+}
+
+// statusWriter captures the response status for the access log.
+//
+// Why it exists: a public deployment is found by vulnerability scanners within hours
+// (measured on af.lazmix.jp — 172 probes for /actuator/heapdump, /.env and friends in
+// the first 9 hours), and the log could not answer the only question that matters about
+// them: was that a 401 or a 200? Every line looked identical.
+//
+// It forwards the two optional interfaces the CP actually depends on. A wrapper that
+// hides them does not show up as a bad log line — it shows up as an SSE stream that
+// never streams (Flusher) or a terminal that never connects (Hijacker).
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) code() int {
+	if w.status == 0 {
+		return http.StatusOK // handler wrote nothing explicit; net/http sends 200
+	}
+	return w.status
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("connection does not support hijacking")
+	}
+	// The response never gets a status through WriteHeader after this point; the
+	// upgrade IS the outcome, so record it as one instead of logging a bare 200.
+	w.status = http.StatusSwitchingProtocols
+	return hj.Hijack()
 }

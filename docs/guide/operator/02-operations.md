@@ -142,6 +142,22 @@ session; codex and opencode are seeded with the same text at each start).
   to it, check that it is genuinely needed by everyone, every time. This layer cannot be
   delivered to cursor.
 
+## Once it is on the public internet
+
+Put the Control Plane on a public hostname and **vulnerability scanners find it within
+hours** (measured: 172 probes for `/actuator/heapdump`, `/.env` and friends in the first
+9 hours). Nothing to panic about, but three things are worth knowing.
+
+- **Very little is reachable without a session**: `/healthz`, `/login`, `/oauth2/*`,
+  `/brand/*` and a legacy redirect. Everything else answers 401. `/internal/*` (egress
+  ingestion), `/mcp` and `/git/*` sit outside the session gate but carry **their own
+  authentication** (404 when the feature is off).
+- **The access log carries the status code**, e.g. `GET /actuator/heapdump 401 0s`, so
+  the log alone answers "did we refuse it, or serve it?". Filter on `401` to count probes.
+- **Per-IP analysis and blocking belong outside the CP**: ALB access logs for the former,
+  AWS WAF (managed rules) for the latter. The CP deliberately has no path-level blocklist
+  of its own — that would add a second place where access is decided.
+
 ## Idle stop and force-stop
 
 - **Automatic idle stop (scale-to-zero)**: an idle claude session is halted after **1 hour**
