@@ -33,6 +33,7 @@ const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useReposStore } = await import("../repos/store.ts");
+const { useFilesStore } = await import("../files/store.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -59,8 +60,18 @@ const rows = () =>
     li.querySelector(".fs-branch")?.textContent ?? "",
   ]);
 
+// The reveal walk fetches each ancestor and lands its row a frame or two later.
+async function flushFrames(): Promise<void> {
+  for (let i = 0; i < 8; i++) {
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+  }
+}
+
 beforeEach(() => {
   useWorkspaceStore.setState({ state: "running" });
+  useFilesStore.setState({ reveal: { path: null, n: 0, focus: false } });
   useReposStore.setState({
     repos: [
       { name: "agent-fleet", branch: "develop" },
@@ -69,6 +80,12 @@ beforeEach(() => {
     ],
   });
   served = {
+    // Two entries, so the folder is not folded into a passthrough row (a/b).
+    "repos/agent-fleet": [
+      { name: "docs", type: "dir" },
+      { name: "README.md", type: "file" },
+    ],
+    "repos/agent-fleet/docs": [{ name: "a.md", type: "file" }],
     repos: [
       { name: "agent-fleet", type: "dir" },
       { name: "agent-fleet@wip-a", type: "dir" },
@@ -105,5 +122,38 @@ describe("working-copy rows in the repos tree", () => {
     );
     expect(icons[0]).toContain("codicon-root-folder");
     expect(icons[1]).toContain("codicon-git-branch");
+  });
+});
+
+// Clicking a folder — in a reply, in a document, in the リポジトリ row menu — asks the
+// rail to GO there. Expanding and selecting is only half of that: without focus the
+// reader is looking at a row that ↑↓ do not move.
+describe("reveal", () => {
+  it("expands the ancestors, opens the folder, selects it and takes the keyboard", async () => {
+    await render();
+    await act(async () => {
+      useFilesStore.getState().revealInFiles("repos/agent-fleet/docs", { focus: true });
+    });
+    await flushFrames();
+    const row = host.querySelector<HTMLLIElement>('li[data-path="repos/agent-fleet/docs"]');
+    expect(row).not.toBeNull();
+    expect(row!.className).toContain("selected");
+    // The folder itself is open too, so its contents are what you land on.
+    expect(host.querySelector('li[data-path="repos/agent-fleet/docs/a.md"]')).not.toBeNull();
+    expect(document.activeElement).toBe(host.querySelector("ul.fstree"));
+  });
+
+  it("leaves focus alone when the reveal was a side effect (a clone landing)", async () => {
+    await render();
+    const outside = document.createElement("input");
+    document.body.appendChild(outside);
+    outside.focus();
+    await act(async () => {
+      useFilesStore.getState().revealInFiles("repos/agent-fleet/docs");
+    });
+    await flushFrames();
+    expect(host.querySelector('li[data-path="repos/agent-fleet/docs"]')?.className).toContain("selected");
+    expect(document.activeElement).toBe(outside); // still typing wherever they were
+    outside.remove();
   });
 });

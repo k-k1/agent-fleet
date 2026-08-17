@@ -183,9 +183,13 @@ export function MarkdownView({
         (p, line, column, openInNew) => onOpenFileRef.current?.(p, line, column, openInNew),
         // No onOpenDir on this surface (the mirror passes only onOpenFile) → fall back to
         // revealing the directory in the ファイル rail, which is what the Doc viewer's own
-        // onOpenDir does. Safe as a default precisely because this whole pass is gated on
+        // onOpenDir does. focus: the reader clicked to GO there, so the rail takes the
+        // keyboard too. Safe as a default precisely because this whole pass is gated on
         // onOpenFile above: it can never fire on somebody else's shared session.
-        (p) => (onOpenDirRef.current ? onOpenDirRef.current(p) : useFilesStore.getState().revealInFiles(p)),
+        (p) =>
+          onOpenDirRef.current
+            ? onOpenDirRef.current(p)
+            : useFilesStore.getState().revealInFiles(p, { focus: true }),
         (message) => toast(message),
       );
     }
@@ -594,6 +598,11 @@ async function linkifyPathRefs(
   for (const { code, ref } of candidates) {
     const hit = resolved.get(ref.ref);
     if (!hit) continue; // no such file — leave the text exactly as the agent wrote it
+    // A directory opens by revealing it in the ファイル rail, and that tree is rooted at
+    // home — so a directory OUTSIDE it (the scratch base, the staged docs mount, both of
+    // which the resolver can legitimately place) has nowhere to be revealed. Leave it as
+    // text rather than offer a link that scrolls to nothing. Files there open fine.
+    if (hit.type === "dir" && hit.path.startsWith("/")) continue;
     if (!code.isConnected || code.dataset.pathLink) continue;
     code.dataset.pathLink = "1";
     const a = makePathLink(cwd, ref, hit, onOpenFile, onOpenDir, onError);
@@ -630,8 +639,11 @@ function makePathLink(
       onError(t("view.file_not_found", { path: hit.path }));
       return;
     }
-    if (fresh.type === "dir") onOpenDir(fresh.path);
-    else onOpenFile(fresh.path, ref.line, ref.column, openInNew);
+    if (fresh.type !== "dir") onOpenFile(fresh.path, ref.line, ref.column, openInNew);
+    // Moved out from under home since it was linked (or re-resolved to a directory that
+    // never was under it): the rail cannot show it, so say so instead of doing nothing.
+    else if (fresh.path.startsWith("/")) onError(t("view.cannot_open_from_here", { path: fresh.path }));
+    else onOpenDir(fresh.path);
   };
   a.addEventListener("click", (e) => {
     e.preventDefault();

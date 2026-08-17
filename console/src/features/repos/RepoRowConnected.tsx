@@ -65,7 +65,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         else openTarget(target);
       }}
       // Right-click → フォルダを開く: expand + select the repo in the Files tree.
-      onOpenFolder={() => useFilesStore.getState().revealInFiles("repos/" + r.name)}
+      onOpenFolder={() => useFilesStore.getState().revealInFiles("repos/" + r.name, { focus: true })}
       onOpenChanges={() => openTarget({ content: { kind: "changes", scmRepo: r.name } })}
       onFF={async () => {
         const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/ff`, "POST", {});
