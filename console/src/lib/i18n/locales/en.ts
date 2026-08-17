@@ -1283,10 +1283,10 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.empty_deploy_default": "empty = follow the deploy default",
   "admin.session_halt": "Session halt after",
   "admin.ws_stop": "Workspace stop after",
-  "admin.idle_ph_30m": "e.g. 30m (empty = disabled)",
-  "admin.idle_ph_60m": "e.g. 60m (empty = disabled)",
+  "admin.idle_ph_30m": "e.g. 30m (empty = the deploy default, 1h)",
+  "admin.idle_ph_60m": "e.g. 60m (empty = the deploy default, 2h)",
   "admin.idle_hint_1": "Idle claude sessions are folded to stopped (resumable) after Session halt after, and workspaces with no connection or activity are docker-stopped after Workspace stop after. Format: ",
-  "admin.idle_hint_2": ". Empty follows the deploy default (disabled by default); ",
+  "admin.idle_hint_2": ". Empty follows the deploy default (1h for a session, 2h for the workspace); ",
   "admin.idle_hint_3": " explicitly disables it.",
   // Home hibernation (AF_RUNTIME=ecs-ec2 only; ADR 0045 決定 13-2). This is the one
   // setting that moves a user's home off the disk it was on, so the copy has to say both

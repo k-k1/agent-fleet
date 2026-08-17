@@ -127,9 +127,11 @@ image を手で持ち込みます（ネット接続のあるマシンで `releas
 
 ## アイドル停止と force-stop
 
-- **アイドル自動停止（scale-to-zero）**: `AF_SESSION_IDLE_TIMEOUT` / `AF_WS_IDLE_TIMEOUT` を設定すると、
-  一定時間使われていない Workspace を自動で止めます（テナント単位の上書きは Admin UI）。既定は
-  無効。停止した Workspace は、ユーザーが次にターミナルを開くと自動起動します（`AF_AUTOSTART`）。
+- **アイドル自動停止（scale-to-zero）**: 使われていない claude セッションを **1 時間**で停止し、
+  何も動いていない Workspace を **2 時間**で停止します。**これが既定**で、
+  `AF_SESSION_IDLE_TIMEOUT` / `AF_WS_IDLE_TIMEOUT` で変えられます（テナント単位の上書きは Admin UI。
+  テナントが `0` を入れればそのテナントだけ無効、env に `0` を入れればデプロイ全体で無効）。
+  停止した Workspace は、ユーザーが次にターミナルを開くと自動起動します（`AF_AUTOSTART`）。
   資源の節約に有効です。env の意味は [.env.example](../../../deploy/compose/.env.example)、仕組みは
   [dev/09 §9.4](../../dev/09-deploy.md)。
 - **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose

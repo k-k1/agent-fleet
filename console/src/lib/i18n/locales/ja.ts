@@ -1288,10 +1288,10 @@ export const ja = {
   "admin.empty_deploy_default": "空 = デプロイ既定に従う",
   "admin.session_halt": "セッション停止まで",
   "admin.ws_stop": "ワークスペース停止まで",
-  "admin.idle_ph_30m": "例 30m（空=無効）",
-  "admin.idle_ph_60m": "例 60m（空=無効）",
+  "admin.idle_ph_30m": "例 30m（空=デプロイ既定 1h）",
+  "admin.idle_ph_60m": "例 60m（空=デプロイ既定 2h）",
   "admin.idle_hint_1": "放置された Claude セッションは「セッション停止まで」で停止中（再開可）になり、接続も稼働もないワークスペースは「ワークスペース停止まで」で停止します。書式は ",
-  "admin.idle_hint_2": "。空欄はデプロイ既定（既定は無効）に従い、",
+  "admin.idle_hint_2": "。空欄はデプロイ既定（セッション 1h／ワークスペース 2h）に従い、",
   "admin.idle_hint_3": " で明示的に無効化します。",
   // home の退避（AF_RUNTIME=ecs-ec2 のみ・ADR 0045 決定 13-2）。ここだけが「利用者の home を
   // 自動で今の置き場から動かす」設定なので、可逆であることと初日が遅くなることを必ず書く。
