@@ -5,7 +5,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { agentOf } from "../../agents/registry.ts";
-import { effectiveTheme, expandThinking, surfaceAccent, surfaceBg, useSettings } from "../../lib/settings.ts";
+import { chatFontStack, effectiveTheme, expandThinking, surfaceAccent, surfaceBg, useSettings } from "../../lib/settings.ts";
 import { TranscriptView } from "../mirror/transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "../mirror/transcript/capabilities.ts";
 import type { Turn } from "../mirror/transcript/types.ts";
@@ -251,6 +251,12 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       className="shared-view"
       data-theme={settings.sharedTheme !== "inherit" ? settings.sharedTheme : undefined}
       style={{
+        // 文字サイズ・フォントは色と違って面ごとに分けない — 読みやすさの好みは読み手のもので、
+        // 自分のミラーだけ大きくても意味がない。表示設定「セッションミラー」の値をそのまま渡す
+        // (MirrorView と同じ契約)。渡さないと本文 .mirror-turn .markdown が CSS 側の
+        // フォールバック 13.5px / system-ui で固まり、設定を変えてもここだけ動かなかった。
+        "--chat-font": chatFontStack(settings.chatFont),
+        "--chat-size": settings.chatSize + "px",
         ...(sharedBg ? { "--chat-bg": sharedBg } : {}),
         ...(sharedAccent ? { "--chat-accent": sharedAccent } : {}),
       } as CSSProperties}
