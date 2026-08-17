@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -135,12 +134,40 @@ const (
 
 	ec2RoleHome = "home"
 	ec2RoleSlot = "slot"
+	// ec2RoleQuarantined is a slot that could not mount a home and must never be offered
+	// again. It is the SAME tag every pool query already filters on, so re-stamping it
+	// removes the box from the free list, from the cap, and from placement in one write —
+	// no second concept, no CP-side state (ADR 0012).
+	//
+	// Measured, 2026-08-16 (docs/64 §64.24): a workspace container whose home was
+	// detached under it left processes in uninterruptible sleep, XFS flushing to a device
+	// that was gone, and the kernel holding the dead volume's NVMe namespace. The next
+	// user's volume then never appeared under /dev at all, so `af-mount` failed with
+	// "device not found" — and because the slot still looked free, EVERY later Start
+	// picked the same box and failed the same way. One wedged kernel became an outage for
+	// everyone, silently.
+	ec2RoleQuarantined = "quarantined"
+	// Why the slot was quarantined, and when — the operator has to decide whether to
+	// terminate it, and "some slot went away" is not a report.
+	ec2TagQuarantineReason = "af-quarantine-reason"
+	ec2TagQuarantineAt     = "af-quarantine-at"
 	// ec2RoleGolden is the ONE shared snapshot new homes are built from: a home that has
 	// already paid boot-install (48s) and warmed its caches (ADR 0045 決定 9). One per
 	// pool, no membership tag — deleting it by mistake would cost every future user
 	// their first two minutes, which is why nothing that walks per-membership resources
 	// can ever match it.
 	ec2RoleGolden = "golden"
+	// ec2RoleBackup is a periodic copy of a home, kept so that losing the AZ is not the
+	// same as losing the work (ADR 0045 決定 17). It is a THIRD kind of snapshot and it is
+	// tagged as its own role on purpose: every existing lookup filters on af-role, so
+	// backups are invisible to the restore path, to hibernation's superseded-capture
+	// sweep, and to the golden lookup. Nothing gets to mistake a backup for the copy it
+	// was waiting for.
+	ec2RoleBackup = "backup"
+	// ec2TagBackupAt is when a backup was STARTED, by the CP's clock. EBS reports its own
+	// StartTime, but the schedule is decided against this: a snapshot's StartTime is what
+	// AWS did, and the question here is when this deployment last asked.
+	ec2TagBackupAt = "af-backup-at"
 	// ec2TagImage stamps the golden snapshot with the workspace image it was baked from.
 	// A golden that predates an image or CLI-pin bump would start new users on the OLD
 	// tools, silently and only for them — so the CP compares and refuses a stale one
@@ -211,24 +238,32 @@ type ec2PoolConfig struct {
 	// stops → (this) slot sleeps.
 	slotSleepAfter time.Duration
 	// hibernateAfter is the THIRD timer in the same series, and the only one that
-	// touches the user's data: once a home has been dormant this long, the sweeper
-	// snapshots it and deletes the volume (ADR 0045 決定 4 + 決定 13-2). The next Start
-	// restores it — 122s and a slower first day, against $4.80 → $1.00 a month for a
-	// 20 GiB home nobody has opened.
+	// touches the user's data: once a home has been dormant this long it is snapshotted
+	// and its volume deleted (ADR 0045 決定 4 + 決定 13-2). The next Start restores it —
+	// 122s and a slower first day, against $4.80 → $1.00 a month for a 20 GiB home
+	// nobody has opened.
 	//
 	// 0 = OFF, and that is the default ON PURPOSE. This is the only automatic path in
 	// the product that removes a user's home from where it was, so a deployment has to
-	// ask for it. It stays reversible for exactly that reason: the sweeper hibernates,
-	// it never destroys (which is what makes it safe to run unattended at all).
+	// ask for it. It stays reversible for exactly that reason: hibernation never
+	// destroys (which is what makes it safe to run unattended at all).
 	//
-	// ⚠️ Deployment-wide, not per tenant. ADR 0045 決定 13-2 said "per-tenant setting",
-	// which this layer cannot honour: the sweeper starts from EC2 tags and has no view
-	// of tenants or the CP database (ADR 0012 — the adapter holds no state). Making it
-	// per-tenant means moving the trigger up into the reaper, which knows the tenant;
-	// that is a bigger change than the feature.
+	// ⚠️ This copy is the DEPLOYMENT DEFAULT, and this layer no longer decides WHEN.
+	// The trigger lives in the reaper, which is the only place that can see a tenant's
+	// home_hibernate_after (the sweeper starts from EC2 tags and has no view of the CP
+	// database — ADR 0012). What is left here is the resume path: the sweeper advances
+	// a hibernation ALREADY under way, ungated, so switching the feature off never
+	// strands a home half-way. The value is kept so the pool screen can say what the
+	// deployment default is.
 	hibernateAfter time.Duration
-	sweepEvery     time.Duration
-	ghostAfter     time.Duration
+	// backupKeep is how many completed backup copies of a home to keep
+	// (AF_ECS_EC2_BACKUP_KEEP). How OFTEN to take one is a tenant answer and lives in the
+	// reaper; how many to pay for is the operator's, and lives here. Snapshots are
+	// incremental — the second copy of a home costs only the blocks that changed — so the
+	// default is small rather than one.
+	backupKeep int
+	sweepEvery time.Duration
+	ghostAfter time.Duration
 	// waitBudget bounds every background convergence (slot boot → ECS registration →
 	// mount → task). Past it the attempt gives up and leaves the state for the sweeper.
 	waitBudget time.Duration
@@ -254,6 +289,9 @@ type ecsEC2Factory struct {
 
 var _ RuntimeFactory = (*ecsEC2Factory)(nil)
 
+// WorkspaceImage passes the base factory's answer through (same deployment, same image).
+func (f *ecsEC2Factory) WorkspaceImage() string { return f.base.WorkspaceImage() }
+
 // newECSEC2Factory builds the EC2-pool Runtime factory. It reuses the Fargate
 // factory's AWS config plumbing (region, cluster, subnets, EFS, Service Connect, log
 // group, image) and adds the EC2/SSM clients plus the pool settings; then it starts
@@ -268,7 +306,7 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 	if !ok {
 		return nil, fmt.Errorf("ecs-ec2: unexpected base factory %T", baseFactory)
 	}
-	ac, err := awscfg.LoadDefaultConfig(context.Background(), awscfg.WithRegion(base.cfg.region))
+	ac, err := awsConfigFor(context.Background(), base.cfg.region)
 	if err != nil {
 		return nil, fmt.Errorf("aws config: %w", err)
 	}
@@ -296,6 +334,7 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		// Default 0 = no hibernation. See the field comment: this is the one automatic
 		// path that moves a user's home, so it is opt-in.
 		hibernateAfter: time.Duration(envInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second,
+		backupKeep:     envInt("AF_ECS_EC2_BACKUP_KEEP", 3),
 		sweepEvery:     time.Duration(envInt("AF_ECS_EC2_SWEEP_SEC", 300)) * time.Second,
 		ghostAfter:     time.Duration(envInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
 		waitBudget:     time.Duration(envInt("AF_ECS_EC2_WAIT_SEC", 600)) * time.Second,
@@ -414,6 +453,40 @@ func (f *ecsEC2Factory) subnetAZs(ctx context.Context) (map[string]string, error
 // closes the window where Start has begun but has not reached UpdateService yet.
 var startGen sync.Map // workspace name -> *atomic.Int64
 
+// startPhase is what the CP is DOING for a workspace right now: "slot: creating",
+// "home: restoring", … It exists because on this runtime the first minutes of a start
+// are infrastructure work — a new EC2 slot, a 50 GiB volume, an SSM mount — and the
+// only thing the Console could say about them was the native runtime's line about
+// installing agent CLIs, which is not what is happening (and not what is slow).
+//
+// Same shape as startGen for the same reason: the Runtime object is rebuilt per
+// request, so the phase cannot live on it. Process-local scratch, keyed by workspace
+// name; a CP restart or the other replica answering just means no phase, which the
+// Console renders as the generic line.
+var startPhase sync.Map // workspace name -> string
+
+// setPhase publishes (or with "" clears) the current provisioning step. Clearing is
+// not optional: the Console keeps its "starting" dialog open for as long as a phase is
+// reported, so a phase left behind by a failed start would never go away.
+func (e *ecsEC2Runtime) setPhase(p string) {
+	if p == "" {
+		startPhase.Delete(e.base.name)
+		return
+	}
+	startPhase.Store(e.base.name, p)
+}
+
+// BootPhase satisfies the optional interface GET /api/workspace probes for (the one
+// the native rootfs uses for boot-install). Empty = nothing in flight.
+func (e *ecsEC2Runtime) BootPhase() string {
+	if v, ok := startPhase.Load(e.base.name); ok {
+		if s, _ := v.(string); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 func (e *ecsEC2Runtime) generation() *atomic.Int64 {
 	v, _ := startGen.LoadOrStore(e.base.name, &atomic.Int64{})
 	return v.(*atomic.Int64)
@@ -446,7 +519,13 @@ func (e *ecsEC2Runtime) Endpoint() string { return e.base.Endpoint() }
 func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
-		log.Printf("ecs-ec2 state: describe home volume for %s: %v", e.base.name, err)
+		// A cancelled context is the caller leaving (a Console poll aborted because the
+		// tab closed or the next poll superseded it), not a fault. Logging it printed an
+		// error line per abandoned poll on a real deployment — noise that makes the log
+		// harder to read exactly when somebody is reading it for a real failure.
+		if ctx.Err() == nil {
+			log.Printf("ecs-ec2 state: describe home volume for %s: %v", e.base.name, err)
+		}
 		return "none"
 	}
 	if vol == nil {
@@ -497,12 +576,15 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 	// recreate / clean-home handlers issued a moment ago aborts instead of pulling this
 	// workspace's home out from under it.
 	e.generation().Add(1)
+	e.setPhase("preparing")
 	prep, err := e.prepare(ctx)
 	if err != nil {
+		e.setPhase("")
 		return err
 	}
 	place, err := e.placeHome(ctx)
 	if err != nil {
+		e.setPhase("")
 		return err
 	}
 	if place.deferred {
@@ -512,6 +594,7 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 		e.bg(ctx, func(c context.Context) { e.finishStart(c, place, prep) })
 		return nil
 	}
+	defer e.setPhase("")
 	return e.launch(ctx, place, prep)
 }
 
@@ -751,27 +834,35 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	if err != nil {
 		return ec2Placement{}, fmt.Errorf("list free slots: %w", err)
 	}
-	if vol == nil {
-		az := azFilter
-		if len(slots) > 0 {
-			az = slots[0].az
+	// A brand-new home has no AZ yet, and an EBS volume can NEVER change the one it was
+	// created in — so the AZ is decided by where a slot can actually be had, and the volume
+	// is created last, once that is settled.
+	//
+	// It used to be created first, from anyAZ(). That is the same answer whenever a slot is
+	// free, but it made the two growth paths below unable to look anywhere else: a capacity
+	// shortfall in that one AZ could only be answered by deleting the volume and starting
+	// over, which is harmless for an empty home and DATA LOSS for a restored one —
+	// createHomeVolume drops the snapshot it restored from as soon as the volume is usable.
+	// Not creating it until the destination is known removes the choice entirely.
+	create := func(az string) error {
+		v, err := e.createHomeVolume(ctx, az)
+		if err != nil {
+			return fmt.Errorf("create home volume: %w", err)
 		}
-		if az == "" {
-			if az, err = e.anyAZ(ctx); err != nil {
-				return ec2Placement{}, err
-			}
-		}
-		if vol, err = e.createHomeVolume(ctx, az); err != nil {
-			return ec2Placement{}, fmt.Errorf("create home volume: %w", err)
-		}
-		azFilter = az
-		slots = filterSlotsByAZ(slots, az)
+		vol, azFilter = v, az
+		return nil
 	}
-	volID := aws.ToString(vol.VolumeId)
+	if vol == nil && len(slots) > 0 {
+		if err := create(slots[0].az); err != nil {
+			return ec2Placement{}, err
+		}
+		slots = filterSlotsByAZ(slots, azFilter)
+	}
 	// Try the candidates in order (hot first, then stopped). A failed AttachVolume is
 	// the normal outcome of losing a race for the last free slot, not an error to
 	// surface — move to the next one.
 	for _, s := range slots {
+		volID := aws.ToString(vol.VolumeId)
 		if err := e.waitVolumeAttachable(ctx, volID); err != nil {
 			return ec2Placement{}, err
 		}
@@ -797,10 +888,19 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	if full, err := e.poolFull(ctx); err != nil {
 		return ec2Placement{}, err
 	} else if full {
-		victim, err := e.evictLongestIdle(ctx, azFilter)
+		// azFilter is "" for a home that does not exist yet, so the victim is the
+		// longest-dormant one in the WHOLE pool rather than the longest-dormant one in an
+		// AZ that was picked before anybody looked.
+		victim, victimAZ, err := e.evictLongestIdle(ctx, azFilter)
 		if err != nil {
 			return ec2Placement{}, err
 		}
+		if vol == nil {
+			if err := create(victimAZ); err != nil {
+				return ec2Placement{}, err
+			}
+		}
+		volID := aws.ToString(vol.VolumeId)
 		if err := e.waitVolumeAttachable(ctx, volID); err != nil {
 			return ec2Placement{}, err
 		}
@@ -820,10 +920,17 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	// RunInstances answers immediately with a PENDING instance that cannot accept a
 	// volume yet, so the claim tag carries the "starting" state until the background
 	// half attaches for real.
-	inst, err := e.runSlot(ctx, azFilter)
+	e.setPhase("slot: creating")
+	inst, az, err := e.growPool(ctx, azFilter)
 	if err != nil {
 		return ec2Placement{}, err
 	}
+	if vol == nil {
+		if err := create(az); err != nil {
+			return ec2Placement{}, err
+		}
+	}
+	volID := aws.ToString(vol.VolumeId)
 	if err := e.claim(ctx, volID, inst); err != nil {
 		return ec2Placement{}, fmt.Errorf("claim %s for %s: %w", volID, inst, err)
 	}
@@ -834,17 +941,23 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 // that undone, then launch. Everything it does is idempotent and re-derivable, so a CP
 // restart in the middle costs a retry, not a wedged workspace.
 func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec2Prep) {
+	// Whatever happens — converged, failed, or gave up — the workspace is no longer
+	// mid-provisioning, and the Console's dialog keys off exactly this.
+	defer e.setPhase("")
 	if p.wake {
+		e.setPhase("slot: waking")
 		if err := e.wakeSlot(ctx, p.instanceID); err != nil {
 			log.Printf("ecs-ec2 start: waking slot %s for %s failed: %v", p.instanceID, e.base.name, err)
 			return
 		}
 	}
 	if p.claimed {
+		e.setPhase("slot: booting")
 		if err := e.waitInstanceRunning(ctx, p.instanceID); err != nil {
 			log.Printf("ecs-ec2 start: slot %s for %s never came up: %v", p.instanceID, e.base.name, err)
 			return
 		}
+		e.setPhase("home: attaching")
 		if err := e.attachHome(ctx, p.volumeID, p.instanceID); err != nil {
 			log.Printf("ecs-ec2 start: attaching %s to the new slot %s failed: %v", p.volumeID, p.instanceID, err)
 			return
@@ -859,12 +972,19 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 // ECS container instance, mount the home, register a task definition pinned to that
 // instance, and put the service at desiredCount 1.
 func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep) error {
+	e.setPhase("slot: joining the cluster")
 	if err := e.waitSlotRegistered(ctx, p.instanceID); err != nil {
 		return fmt.Errorf("slot %s not registered with the cluster: %w", p.instanceID, err)
 	}
+	e.setPhase("home: mounting")
 	if err := e.mountHome(ctx, p); err != nil {
+		// A slot that cannot mount is not a slow slot, it is a broken one, and leaving it
+		// in the pool means the next Start picks it too (measured: it did, for every user
+		// that followed). Take it out of the world before returning.
+		e.quarantineSlot(ctx, p, err)
 		return fmt.Errorf("mount home on %s: %w", p.instanceID, err)
 	}
+	e.setPhase("task: starting")
 	taskDefArn, err := e.registerTaskDef(ctx, p, prep)
 	if err != nil {
 		return fmt.Errorf("register task def: %w", err)
@@ -878,6 +998,56 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	e.clearDormancy(ctx, p.volumeID)
 	e.base.watchReady(ctx)
 	return nil
+}
+
+// quarantineSlot takes a slot that failed to mount a home out of the pool, and frees the
+// home so its owner can be placed somewhere that works.
+//
+// Order matters and every step is best-effort: this runs when something is ALREADY wrong,
+// and the one outcome that must not happen is the box staying in the free list.
+//
+//  1. re-tag af-role → quarantined. Every slot query filters on that tag, so this single
+//     write removes it from freeSlots, from poolSize (a replacement may be created) and
+//     from placement.
+//  2. detach the home. The volume is the user's; it has to be able to attach elsewhere,
+//     and on the failure this was written for it was never actually opened here.
+//  3. drop the claim, so the owner's next Start is immediate rather than waiting out the
+//     claim TTL on a slot that will never work.
+//  4. stop the instance. It cannot run tasks, and a wedged kernel is not something the CP
+//     can repair — but it bills by the hour until an operator looks. Stopping keeps the
+//     root volume (and the evidence) while ending the compute charge; terminating is the
+//     operator's call, and this adapter has no TerminateInstances by design.
+func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, cause error) {
+	reason := cause.Error()
+	if len(reason) > 200 {
+		reason = reason[:200]
+	}
+	log.Printf("ecs-ec2: QUARANTINING slot %s — it could not mount %s for %s: %v",
+		p.instanceID, p.volumeID, e.base.name, cause)
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{p.instanceID},
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleQuarantined)},
+			{Key: aws.String(ec2TagQuarantineReason), Value: aws.String(reason)},
+			{Key: aws.String(ec2TagQuarantineAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
+		},
+	}); err != nil {
+		// This is the step that stops the bleeding; say so loudly when it fails, because
+		// nothing else here prevents the next user from landing on the same box.
+		log.Printf("ecs-ec2: could not quarantine slot %s (it will be offered again): %v", p.instanceID, err)
+	}
+	if p.volumeID != "" {
+		if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
+			VolumeId:   aws.String(p.volumeID),
+			InstanceId: aws.String(p.instanceID),
+		}); err != nil {
+			log.Printf("ecs-ec2: detaching %s from the quarantined slot %s: %v", p.volumeID, p.instanceID, err)
+		}
+		e.unclaim(ctx, p.volumeID)
+	}
+	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{p.instanceID}}); err != nil {
+		log.Printf("ecs-ec2: stopping the quarantined slot %s: %v", p.instanceID, err)
+	}
 }
 
 // --- volumes ---
@@ -925,10 +1095,17 @@ func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2ty
 	}
 	restored := snapshotID != ""
 	if restored {
+		// Two different waits with two different explanations: restoring somebody's
+		// hibernated home is not the same as making a new one, and the Console should
+		// not call both "starting".
+		e.setPhase("home: restoring")
 		log.Printf("ecs-ec2: restoring %s from %s", e.base.name, snapshotID)
 	} else if golden := e.goldenSnapshot(ctx); golden != "" {
 		snapshotID = golden
+		e.setPhase("home: creating")
 		log.Printf("ecs-ec2: seeding a new home for %s from the golden snapshot %s", e.base.name, golden)
+	} else {
+		e.setPhase("home: creating")
 	}
 	var snapshot *string
 	if snapshotID != "" {
@@ -1221,6 +1398,69 @@ func (e *ecsEC2Runtime) listContainerInstanceARNs(ctx context.Context) ([]string
 // runSlot grows the pool by one instance in the given AZ. The launch template owns
 // everything about what a slot IS (AMI, user-data, instance profile, security group);
 // the CP only chooses size and placement.
+// growPool adds a slot and reports which AZ it landed in.
+//
+// The az argument is a CONSTRAINT, not a preference. An existing home cannot move, so a
+// slot anywhere else is useless to it and a capacity failure there is a real failure. A
+// home that does not exist yet passes "" and may go wherever there is room — which is the
+// only reason to try more than one AZ.
+//
+// Without this, one AZ running out of the slot type stops every NEW user in the deployment
+// (everybody already placed keeps working, so it does not look like an outage) — and the
+// AZ that ran out is the one AZ the adapter ever picks, because anyAZ is deterministic.
+// docs/64 §64.20.4.
+func (e *ecsEC2Runtime) growPool(ctx context.Context, az string) (string, string, error) {
+	if az != "" {
+		id, err := e.runSlot(ctx, az)
+		return id, az, err
+	}
+	azs, err := e.spreadAZs(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	if len(azs) == 0 {
+		return "", "", fmt.Errorf("no usable subnet/AZ configured (AF_ECS_SUBNETS)")
+	}
+	var lastErr error
+	for _, candidate := range azs {
+		id, err := e.runSlot(ctx, candidate)
+		if err == nil {
+			return id, candidate, nil
+		}
+		// Only a "there is no room here" answer is worth asking somewhere else. A bad
+		// launch template or a hit quota fails identically in every AZ, and retrying it
+		// three times just buries the real message under the last one.
+		if !isEC2CapacityError(err) {
+			return "", "", err
+		}
+		log.Printf("ecs-ec2: %s cannot take a %s right now (%v); trying the next AZ", candidate, e.instanceType, err)
+		lastErr = err
+	}
+	return "", "", fmt.Errorf("no configured AZ (%s) could take a new %s slot: %w",
+		strings.Join(azs, ", "), e.instanceType, lastErr)
+}
+
+// isEC2CapacityError reports whether RunInstances failed for a reason that another AZ
+// might not have. Matched on the message like isAWSNotFound, because that is how this
+// package reads AWS error codes.
+func isEC2CapacityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, needle := range []string{
+		"InsufficientInstanceCapacity",
+		"InsufficientHostCapacity",
+		"InsufficientCapacity",
+		"Unsupported", // the instance type is not offered in that AZ at all
+	} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) {
 	total, err := e.poolSize(ctx)
 	if err != nil {
@@ -1298,14 +1538,18 @@ func (e *ecsEC2Runtime) poolFull(ctx context.Context) (bool, error) {
 	return n >= e.pool.maxSlots, nil
 }
 
-// evictLongestIdle takes a slot back from the workspace that has been dormant longest
-// and returns the freed instance id.
+// evictLongestIdle takes a slot back from the workspace that has been dormant longest and
+// returns the freed instance id AND its AZ — the caller may not have an AZ yet (a home
+// that has not been created), and the reclaimed slot is what decides it.
+//
+// az is a filter, not a preference: pass the AZ an existing home is pinned to, or "" to
+// consider the whole pool.
 //
 // Only dormant homes are candidates (the af-idle-since tag, written by Stop), and
 // releaseSlot refuses any victim whose service is not actually at desiredCount 0 — so a
 // workspace that woke up between the pick and the release keeps its slot and we simply
 // report that there was nothing to take.
-func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string, error) {
+func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string, string, error) {
 	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(ec2TagPool, e.pool.pool),
@@ -1313,7 +1557,7 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 		},
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var best *ec2types.Volume
 	var bestIdle time.Duration
@@ -1333,19 +1577,20 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 		best, bestIdle = v, idle
 	}
 	if best == nil {
-		return "", fmt.Errorf("slot pool is full (%d) and every slot is in use; raise AF_ECS_EC2_MAX_SLOTS", e.pool.maxSlots)
+		return "", "", fmt.Errorf("slot pool is full (%d) and every slot is in use; raise AF_ECS_EC2_MAX_SLOTS", e.pool.maxSlots)
 	}
 	victimSlot := attachedInstance(best)
+	victimAZ := aws.ToString(best.AvailabilityZone)
 	victim := e.siblingFor(best)
 	if victim == nil {
-		return "", fmt.Errorf("slot %s holds an unidentifiable home %s", victimSlot, aws.ToString(best.VolumeId))
+		return "", "", fmt.Errorf("slot %s holds an unidentifiable home %s", victimSlot, aws.ToString(best.VolumeId))
 	}
-	log.Printf("ecs-ec2: reclaiming slot %s from %s (dormant %.0fm) for %s",
-		victimSlot, victim.base.name, bestIdle.Minutes(), e.base.name)
+	log.Printf("ecs-ec2: reclaiming slot %s in %s from %s (dormant %.0fm) for %s",
+		victimSlot, victimAZ, victim.base.name, bestIdle.Minutes(), e.base.name)
 	if err := victim.releaseSlot(ctx); err != nil {
-		return "", fmt.Errorf("reclaim slot %s: %w", victimSlot, err)
+		return "", "", fmt.Errorf("reclaim slot %s: %w", victimSlot, err)
 	}
-	return victimSlot, nil
+	return victimSlot, victimAZ, nil
 }
 
 // siblingFor builds the runtime of ANOTHER workspace from its home volume's tags — the
@@ -1400,19 +1645,93 @@ func (e *ecsEC2Runtime) subnetIn(ctx context.Context, az string) (string, error)
 	return "", fmt.Errorf("no configured subnet in %s (AF_ECS_SUBNETS)", az)
 }
 
-func (e *ecsEC2Runtime) anyAZ(ctx context.Context) (string, error) {
-	azs, err := e.azOfSubnet(ctx)
+// poolAZs is every AZ the pool may use, in the order a new home tries them: the configured
+// subnets sorted by SUBNET ID, deduplicated.
+//
+// ⚠️ Sorted by id, which is NOT the order they were written in AF_ECS_SUBNETS — an
+// operator listing 1a first still gets 1c when its subnet id happens to be smaller
+// (measured, docs/64 §64.20.4). The order is arbitrary but it must be STABLE: every new
+// home going to the same AZ is what keeps a pool from scattering one workspace's slots
+// away from where the free ones are.
+func (e *ecsEC2Runtime) poolAZs(ctx context.Context) ([]string, error) {
+	bySubnet, err := e.azOfSubnet(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	subnets := append([]string(nil), e.base.cfg.subnets...)
 	sort.Strings(subnets)
+	seen := map[string]bool{}
+	var azs []string
 	for _, s := range subnets {
-		if azs[s] != "" {
-			return azs[s], nil
+		az := bySubnet[s]
+		if az == "" || seen[az] {
+			continue
 		}
+		seen[az] = true
+		azs = append(azs, az)
 	}
-	return "", fmt.Errorf("no usable subnet/AZ configured (AF_ECS_SUBNETS)")
+	return azs, nil
+}
+
+// spreadAZs is poolAZs ordered by how many homes are already in each — fewest first, ties
+// broken by the stable poolAZs order. Only growPool uses it, and only for a home that has
+// no AZ yet.
+//
+// Why spread at all, when the pool otherwise works hardest to keep homes and free slots in
+// the same place: because "the same place" turned out to mean ONE AZ for everybody. New
+// homes followed a deterministic first choice, so the blast radius of a single AZ going
+// down was not half the deployment, it was all of it (docs/64 §64.21). An EBS home cannot
+// be evacuated — the only lever is not putting everyone in the same AZ to begin with.
+//
+// ⚠️ It is not free. A home in 1a can only ever use a slot in 1a, so free slots in the
+// other AZ are useless to it and the pool grows instead of reusing — more instances for
+// the same number of people. That is the price of the blast radius, and it is why the
+// FREE-SLOT-FIRST preference in placeHome is untouched: spreading only decides where a
+// NEW slot goes, never whether an existing one gets reused.
+func (e *ecsEC2Runtime) spreadAZs(ctx context.Context) ([]string, error) {
+	azs, err := e.poolAZs(ctx)
+	if err != nil || len(azs) < 2 {
+		return azs, err
+	}
+	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, e.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		// Balancing is an optimisation; the fixed order still works. Never fail a Start
+		// over it.
+		log.Printf("ecs-ec2: could not count homes per AZ (%v); falling back to the fixed AZ order", err)
+		return azs, nil
+	}
+	homes := map[string]int{}
+	for i := range out.Volumes {
+		homes[aws.ToString(out.Volumes[i].AvailabilityZone)]++
+	}
+	ordered := append([]string(nil), azs...)
+	rank := map[string]int{}
+	for i, az := range azs {
+		rank[az] = i
+	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if homes[ordered[i]] != homes[ordered[j]] {
+			return homes[ordered[i]] < homes[ordered[j]]
+		}
+		return rank[ordered[i]] < rank[ordered[j]]
+	})
+	return ordered, nil
+}
+
+func (e *ecsEC2Runtime) anyAZ(ctx context.Context) (string, error) {
+	azs, err := e.poolAZs(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(azs) == 0 {
+		return "", fmt.Errorf("no usable subnet/AZ configured (AF_ECS_SUBNETS)")
+	}
+	return azs[0], nil
 }
 
 // wakeSlot starts a dormant slot, waiting first for it to be startable.
@@ -1887,6 +2206,12 @@ func (e *ecsEC2Runtime) Destroy(ctx context.Context) ([]string, error) {
 	if err := e.deleteHomeSnapshots(ctx); err != nil {
 		return nil, err
 	}
+	// Backups are a different role and so are invisible to every other cleanup here.
+	// Without this they would outlive the person and bill forever — the exact thing
+	// Destroy exists to stop (docs/64 §64.18.1).
+	if err := e.deleteBackups(ctx); err != nil {
+		return nil, err
+	}
 	return e.base.Destroy(ctx)
 }
 
@@ -1948,13 +2273,47 @@ func (e *ecsEC2Runtime) homeSnapshots(ctx context.Context) ([]ec2types.Snapshot,
 // so what gets captured is a quiesced filesystem rather than a crash-consistent image of
 // a live mount. It also returns the slot to the pool at the earliest moment, which is
 // half of why hibernation is worth doing.
+// BeginHibernate is the reaper's entry point into the series above (tier 3 — see
+// hibernatingRuntime in reaper.go). It only ever STARTS one: the timing decision belongs
+// to the reaper, which can see the tenant's home_hibernate_after, and every step after
+// the first belongs to the pool sweeper, which can resume it after a CP restart.
+//
+// Two guards, both of which are the difference between "cheap" and "lost work":
+//
+//   - already marked ⇒ do nothing. Otherwise the reaper and the sweeper would both be
+//     advancing the same hibernation, and two CreateSnapshot calls in the same window
+//     leave a second, orphaned capture billing forever.
+//   - a live service ⇒ do nothing. The reaper decided from the database that nobody has
+//     opened this workspace in weeks; AWS is the authority on whether it is running right
+//     now, and it is the one that would lose the mount.
+var _ hibernatingRuntime = (*ecsEC2Runtime)(nil)
+
+func (e *ecsEC2Runtime) BeginHibernate(ctx context.Context) error {
+	vol, err := e.homeVolume(ctx)
+	if err != nil || vol == nil {
+		return err // no home here: already a snapshot, or never created
+	}
+	if at := ec2TagValue(vol.Tags, ec2TagHibernating); at != "" {
+		return nil // under way; the pool sweeper carries it the rest of the way
+	}
+	s, ok, err := e.base.describeService(ctx)
+	if err != nil {
+		return err
+	}
+	if ok && (s.DesiredCount > 0 || s.RunningCount > 0 || s.PendingCount > 0) {
+		return nil
+	}
+	log.Printf("ecs-ec2 hibernate: %s has not been opened for the tenant's retention window; putting the home away", e.base.name)
+	return e.hibernate(ctx)
+}
+
 func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 	vol, err := e.homeVolume(ctx)
 	if err != nil || vol == nil {
 		return err
 	}
 	volumeID := aws.ToString(vol.VolumeId)
-	mark, err := e.hibernationMark(ctx, vol)
+	mark, fresh, err := e.hibernationMark(ctx, vol)
 	if err != nil {
 		return err
 	}
@@ -1996,6 +2355,21 @@ func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 		}
 	}
 	if err := e.releaseSlot(ctx); err != nil {
+		// Take the mark back off if THIS call put it there. releaseSlot unmounts over SSM,
+		// so it fails for as long as the slot is unreachable — an AZ having a bad day is
+		// the case that matters — and a mark with nothing behind it is not free:
+		//
+		//   - the volume looks "hibernating" in the pool view while it is still attached
+		//     and perfectly fine;
+		//   - every sweep logs the same failure with no way to tell it apart from progress;
+		//   - and the mark outlives the outage, so the FIRST snapshot taken afterwards is
+		//     judged against a timestamp from before it.
+		//
+		// A mark that was already there is left alone: it belongs to a hibernation that is
+		// genuinely under way, and the snapshot it validates may already exist.
+		if fresh {
+			e.unmarkHibernating(ctx, volumeID)
+		}
 		return fmt.Errorf("release the slot before snapshotting: %w", err)
 	}
 	out, err := e.ec2.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
@@ -2021,13 +2395,17 @@ func (e *ecsEC2Runtime) hibernate(ctx context.Context) error {
 }
 
 // hibernationMark returns the moment this hibernation began, stamping it if this is the
-// first step. Written BEFORE the slot is released so a CP that dies in between resumes
-// instead of starting over — and so the mark always predates the snapshot it validates.
-func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volume) (time.Time, error) {
+// first step, and whether THIS call is what stamped it. Written BEFORE the slot is
+// released so a CP that dies in between resumes instead of starting over — and so the
+// mark always predates the snapshot it validates.
+//
+// The "fresh" answer is what lets the caller take it back when the very next step fails:
+// see hibernate.
+func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volume) (time.Time, bool, error) {
 	if v := ec2TagValue(vol.Tags, ec2TagHibernating); v != "" {
 		at, err := time.Parse(time.RFC3339, v)
 		if err == nil {
-			return at, nil
+			return at, false, nil
 		}
 		// An unparseable mark is worse than none: every snapshot would compare against a
 		// zero time and be accepted. Re-stamp.
@@ -2042,9 +2420,21 @@ func (e *ecsEC2Runtime) hibernationMark(ctx context.Context, vol *ec2types.Volum
 		Resources: []string{aws.ToString(vol.VolumeId)},
 		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagHibernating), Value: aws.String(at.Format(time.RFC3339Nano))}},
 	}); err != nil {
-		return time.Time{}, fmt.Errorf("mark %s as hibernating: %w", aws.ToString(vol.VolumeId), err)
+		return time.Time{}, false, fmt.Errorf("mark %s as hibernating: %w", aws.ToString(vol.VolumeId), err)
 	}
-	return at, nil
+	return at, true, nil
+}
+
+// unmarkHibernating removes a hibernation mark this CP just wrote and could not act on.
+// Best effort: leaving it is untidy, not dangerous, and the caller is already returning
+// the real error.
+func (e *ecsEC2Runtime) unmarkHibernating(ctx context.Context, volumeID string) {
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{volumeID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagHibernating)}},
+	}); err != nil {
+		log.Printf("ecs-ec2 hibernate: could not take the mark back off %s: %v", volumeID, err)
+	}
 }
 
 // restoreSnapshot returns the completed hibernation snapshot to build this home from, or
@@ -2155,6 +2545,164 @@ func (e *ecsEC2Runtime) deleteHomeSnapshots(ctx context.Context) error {
 	return nil
 }
 
+// --- periodic backups (ADR 0045 決定 17) ---
+
+// backupSnapshots lists this membership's backup copies, newest first. Role-filtered, so
+// a hibernation capture or the pool's golden can never be counted, pruned, or mistaken
+// for one.
+func (e *ecsEC2Runtime) backupSnapshots(ctx context.Context) ([]ec2types.Snapshot, error) {
+	out, err := e.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		OwnerIds: []string{"self"},
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagMembership, e.base.membershipID),
+			tagFilter(ec2TagRole, ec2RoleBackup),
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	snaps := out.Snapshots
+	sort.SliceStable(snaps, func(i, j int) bool {
+		return backupStamp(snaps[j]).Before(backupStamp(snaps[i]))
+	})
+	return snaps, nil
+}
+
+// backupStamp is when the CP asked for a backup — af-backup-at, falling back to what EBS
+// reports. The tag is preferred because the schedule is a statement about this deployment
+// ("when did we last ask"), not about how long AWS took to answer.
+func backupStamp(s ec2types.Snapshot) time.Time {
+	if v := ec2TagValue(s.Tags, ec2TagBackupAt); v != "" {
+		if at, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			return at
+		}
+	}
+	if s.StartTime != nil {
+		return *s.StartTime
+	}
+	return time.Time{}
+}
+
+// BackupHome keeps a copy of this home OUTSIDE its Availability Zone, because an EBS
+// volume lives in exactly one and cannot be evacuated: losing that AZ is otherwise the
+// same as losing the work. Snapshots are regional, so they are the only place a home can
+// be that its own AZ is not (docs/64 §64.21, ADR 0045 決定 17).
+//
+// Three things this deliberately does NOT do:
+//
+//   - It does not unmount anything. The volume is captured where it is, mounted and in
+//     use, so a backup is CRASH-CONSISTENT — the same guarantee as snapshotting a running
+//     instance, and the same one a power cut gives. Quiescing would mean taking a working
+//     person's home away on a timer, which is a worse product than a backup that may need
+//     a filesystem check. (This is the opposite call from bake-golden.sh — §64.18.5 — for
+//     the opposite reason: a golden is everyone's STARTING state and gets to be clean.)
+//   - It does not restore. A backup is older than the home by construction, and handing
+//     somebody a silently older home is the failure mode this file keeps designing around.
+//     Restoring is an operator decision, with the runbook in §64.21.
+//   - It keeps no state in the CP. Whether a backup is due is read from the newest one's
+//     tag (ADR 0012), so a restart, a second replica and a redeploy all agree.
+func (e *ecsEC2Runtime) BackupHome(ctx context.Context, every time.Duration) error {
+	if every <= 0 {
+		return nil
+	}
+	vol, err := e.homeVolume(ctx)
+	if err != nil || vol == nil {
+		// No volume: either this workspace has never started, or the home is already a
+		// hibernation snapshot — which is itself a regional copy, so there is nothing a
+		// backup would add.
+		return err
+	}
+	if ec2TagValue(vol.Tags, ec2TagHibernating) != "" {
+		// A hibernation is capturing this volume and will DELETE it. A second capture of
+		// the same blocks would pay twice for one moment in time.
+		return nil
+	}
+	snaps, err := e.backupSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range snaps {
+		if s.State == ec2types.SnapshotStatePending {
+			return nil // one at a time; a 45 GiB home takes 30–40 minutes
+		}
+	}
+	if len(snaps) > 0 && e.now().Sub(backupStamp(snaps[0])) < every {
+		return e.pruneBackups(ctx, snaps)
+	}
+	at := e.now().UTC()
+	out, err := e.ec2.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
+		VolumeId:    vol.VolumeId,
+		Description: aws.String("agent-fleet backup of " + e.base.name),
+		TagSpecifications: []ec2types.TagSpecification{{
+			ResourceType: ec2types.ResourceTypeSnapshot,
+			Tags: []ec2types.Tag{
+				{Key: aws.String(ec2TagMembership), Value: aws.String(e.base.membershipID)},
+				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleBackup)},
+				{Key: aws.String(ec2TagWorkspace), Value: aws.String(e.base.name)},
+				{Key: aws.String(ec2TagPool), Value: aws.String(e.pool.pool)},
+				{Key: aws.String(ec2TagBackupAt), Value: aws.String(at.Format(time.RFC3339Nano))},
+				{Key: aws.String("Name"), Value: aws.String(e.base.name + "-backup")},
+			},
+		}},
+	})
+	if err != nil {
+		return fmt.Errorf("back up %s: %w", aws.ToString(vol.VolumeId), err)
+	}
+	log.Printf("ecs-ec2 backup: %s → %s", e.base.name, aws.ToString(out.SnapshotId))
+	// Re-read rather than pruning the list we had a moment ago: the copy just created is
+	// part of the retention count, and pruning the stale list would keep backupKeep+1
+	// forever — one more than the operator agreed to pay for, every time.
+	fresh, err := e.backupSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	return e.pruneBackups(ctx, fresh)
+}
+
+// pruneBackups keeps the newest backupKeep COMPLETED copies and deletes the rest.
+//
+// Completed only, on purpose: a capture in flight has already been paid for and deleting
+// it buys nothing. It also means the count never drops below the retention while a new
+// backup is still running — the oldest goes when its replacement is actually usable.
+func (e *ecsEC2Runtime) pruneBackups(ctx context.Context, snaps []ec2types.Snapshot) error {
+	keep := e.pool.backupKeep
+	if keep < 1 {
+		keep = 1
+	}
+	seen := 0
+	for _, s := range snaps {
+		if s.State != ec2types.SnapshotStateCompleted {
+			continue
+		}
+		seen++
+		if seen <= keep {
+			continue
+		}
+		log.Printf("ecs-ec2 backup: dropping %s of %s (keeping %d)",
+			aws.ToString(s.SnapshotId), e.base.name, keep)
+		if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId}); err != nil && !isAWSNotFound(err) {
+			return fmt.Errorf("prune backup %s: %w", aws.ToString(s.SnapshotId), err)
+		}
+	}
+	return nil
+}
+
+// deleteBackups removes every backup of this membership. Only Destroy calls it: a backup
+// outliving its home is the entire point, so nothing short of "this person is being
+// removed for good" may take one.
+func (e *ecsEC2Runtime) deleteBackups(ctx context.Context) error {
+	snaps, err := e.backupSnapshots(ctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range snaps {
+		if _, err := e.ec2.DeleteSnapshot(ctx, &ec2.DeleteSnapshotInput{SnapshotId: s.SnapshotId}); err != nil && !isAWSNotFound(err) {
+			return fmt.Errorf("delete backup %s: %w", aws.ToString(s.SnapshotId), err)
+		}
+	}
+	return nil
+}
+
 // --- drift sweeper (docs/64 §64.15.6) ---
 
 // sweepLoop re-derives the world from tags every sweepEvery and finishes whatever a
@@ -2256,17 +2804,11 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		return
 	}
 	// Hibernation is the third and last step of the same series (reaper stops the
-	// workspace → the slot sleeps → the home becomes a snapshot). Checked before the
-	// slot-sleep branch because it subsumes it: hibernating releases the slot outright,
-	// so there is nothing left to put to sleep.
-	if f.pool.hibernateAfter > 0 && idle >= f.pool.hibernateAfter {
-		log.Printf("ecs-ec2 sweep: %s has been dormant %.0fh; hibernating the home",
-			rt.base.name, idle.Hours())
-		if err := rt.hibernate(ctx); err != nil {
-			log.Printf("ecs-ec2 sweep: hibernating %s failed: %v", rt.base.name, err)
-		}
-		return
-	}
+	// workspace → the slot sleeps → the home becomes a snapshot), but it is NOT started
+	// here: how long a tenant's homes may sit before they are put away is a database
+	// answer and this loop has no database (ADR 0012). The reaper stamps af-hibernating
+	// and starts the capture; from then on the branch above (att == nil) advances it.
+	// A hibernation whose first step has run therefore never reaches this point.
 	if idle < f.pool.slotSleepAfter {
 		return
 	}
@@ -2485,6 +3027,11 @@ type ec2SlotView struct {
 	Registered   bool   `json:"registered"` // ECS accepts tasks on it
 	Workspace    string `json:"workspace"`  // occupant, "" = free
 	IdleMinutes  int    `json:"idle_minutes"`
+	// Quarantined: this box failed to mount a home and has been taken out of the pool
+	// (決定 20). It is shown rather than hidden because it keeps billing until somebody
+	// terminates it, and because "the pool shrank by one" is not an explanation.
+	Quarantined      bool   `json:"quarantined"`
+	QuarantineReason string `json:"quarantine_reason"`
 }
 
 type ec2HomeView struct {
@@ -2497,6 +3044,11 @@ type ec2HomeView struct {
 	Hibernating   bool   `json:"hibernating"`
 	SnapshotID    string `json:"snapshot_id"`
 	SnapshotState string `json:"snapshot_state"`
+	// Backups (決定 17). Reported per home rather than as a pool total, because the
+	// question an operator actually has is "would THIS person lose work if their AZ went
+	// away", and an average cannot answer it. BackupAgeMinutes is -1 when there is none.
+	Backups          int `json:"backups"`
+	BackupAgeMinutes int `json:"backup_age_minutes"`
 }
 
 type ec2PoolStatus struct {
@@ -2544,6 +3096,13 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	occupant := map[string]*ec2HomeView{} // instance id → the home on it
 	for i := range vols.Volumes {
 		v := &vols.Volumes[i]
+		// A volume EC2 is still deleting is not a home any more, and listing it as one
+		// tells the operator a destroyed workspace is still around (measured: a Destroy
+		// left two volumes in `deleting` for ~40 minutes, and both showed on this screen
+		// as detached homes). homeVolume() has always skipped these; the screen must too.
+		if v.State == ec2types.VolumeStateDeleting || v.State == ec2types.VolumeStateDeleted {
+			continue
+		}
 		idle, _ := idleSince(v, now)
 		h := ec2HomeView{
 			VolumeID:    aws.ToString(v.VolumeId),
@@ -2553,6 +3112,9 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			AttachedTo:  attachedInstance(v),
 			IdleMinutes: int(idle.Minutes()),
 			Hibernating: ec2TagValue(v.Tags, ec2TagHibernating) != "",
+			// -1 rather than 0: "no copy at all" and "copied a moment ago" are opposite
+			// answers and must not render as the same number.
+			BackupAgeMinutes: -1,
 		}
 		st.Homes = append(st.Homes, h)
 		if h.AttachedTo != "" {
@@ -2560,10 +3122,14 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		}
 	}
 
+	// Quarantined boxes are listed too, on purpose. They are out of the pool for
+	// placement, but they still exist and still bill, and a slot that disappears from the
+	// screen the moment it breaks is how an operator ends up paying for a box nobody can
+	// see (決定 20).
 	insts, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(ec2TagPool, f.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleSlot),
+			{Name: aws.String("tag:" + ec2TagRole), Values: []string{ec2RoleSlot, ec2RoleQuarantined}},
 			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
 		},
 	})
@@ -2587,6 +3153,10 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			}
 			if h := occupant[id]; h != nil {
 				s.Workspace, s.IdleMinutes = h.Workspace, h.IdleMinutes
+			}
+			if ec2TagValue(inst.Tags, ec2TagRole) == ec2RoleQuarantined {
+				s.Quarantined = true
+				s.QuarantineReason = ec2TagValue(inst.Tags, ec2TagQuarantineReason)
 			}
 			st.Slots = append(st.Slots, s)
 		}
@@ -2613,6 +3183,24 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			if st.GoldenID == "" || img == st.RunningImage {
 				st.GoldenID, st.GoldenImage = aws.ToString(s.SnapshotId), img
 			}
+		case ec2RoleBackup:
+			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
+			for i := range st.Homes {
+				if st.Homes[i].Workspace != ws {
+					continue
+				}
+				// Count every copy, but age only from COMPLETED ones: a capture still
+				// running is not something anybody could restore from yet, and showing
+				// its age would say "you are covered" a good half hour early.
+				st.Homes[i].Backups++
+				if s.State != ec2types.SnapshotStateCompleted {
+					continue
+				}
+				age := int(now.Sub(backupStamp(s)).Minutes())
+				if st.Homes[i].BackupAgeMinutes < 0 || age < st.Homes[i].BackupAgeMinutes {
+					st.Homes[i].BackupAgeMinutes = age
+				}
+			}
 		case ec2RoleHome:
 			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
 			for i := range st.Homes {
@@ -2626,7 +3214,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			// to see it.
 			if !hasHome(st.Homes, ws) {
 				st.Homes = append(st.Homes, ec2HomeView{
-					Workspace: ws, Hibernating: true,
+					Workspace: ws, Hibernating: true, BackupAgeMinutes: -1,
 					SnapshotID: aws.ToString(s.SnapshotId), SnapshotState: string(s.State),
 				})
 			}

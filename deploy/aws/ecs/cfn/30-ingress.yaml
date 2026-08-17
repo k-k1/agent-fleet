@@ -115,6 +115,34 @@ Parameters:
       Default size of a user's persistent home volume (gp3). Unlike EFS this is billed
       as PROVISIONED ($0.096/GB-month vs EFS $0.36 for what you use), so the break-even
       fill rate is 26.7% — do not hand out volumes far larger than people fill.
+  # --- WAF (optional, OFF by default) ---------------------------------------
+  # ⚠️ ONLY rate limiting and IP reputation. The signature rule sets (Core rule
+  # set, SQLi, XSS, LFI) are deliberately NOT offered here: this product carries
+  # SOURCE CODE AND SHELL COMMANDS in ordinary request bodies — chat messages,
+  # file writes, terminal input — so strings like `'; DROP TABLE`, `../../etc/passwd`
+  # and `<script>` are legitimate traffic. Those rules would 403 real work at
+  # random, and it would look like a product bug rather than a WAF decision (the
+  # expensive part is the hours spent before anyone suspects the WAF). WAF also
+  # inspects only the first 8 KB of a body by default, so a signature set here
+  # buys less than it appears to.
+  #
+  # The cheaper, stronger control for a private deployment is upstream of this:
+  # 00-network's AlbIngressCidr, which stops the traffic at the security group.
+  WafRateLimitPer5Min:
+    Type: Number
+    Default: 0
+    Description: >-
+      Requests per 5 minutes from one IP before WAF blocks it (0 = no WAF at all).
+      Counts every request including Console polling, so keep it well above what a
+      whole office behind one NAT produces — 3000 is a sane starting point.
+  WafIpReputation:
+    Type: String
+    Default: "off"
+    AllowedValues: [ "off", "on" ]
+    Description: >-
+      Add AWS's managed IP reputation list (known scanners/botnets). Matches on the
+      SOURCE, not on the body, so it cannot mangle legitimate agent traffic.
+      Requires WafRateLimitPer5Min > 0 (that is what creates the web ACL).
   Fqdn:
     Type: String
     Description: >-
@@ -249,6 +277,9 @@ Conditions:
   # The org list, not the client id: GITHUB_OAUTH_CLIENT_ID is also the Console's
   # git-connect device flow, which many deployments set without wanting a login.
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
+  # The rate limit is what creates the web ACL; reputation is an extra rule on it.
+  HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
+  HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
 
 Resources:
   Cert:
@@ -277,6 +308,54 @@ Resources:
       # handler block longer.
       LoadBalancerAttributes:
         - { Key: idle_timeout.timeout_seconds, Value: "60" }
+
+  # --- WAF (only when WafRateLimitPer5Min > 0) --------------------------------
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Condition: HasWaf
+    Properties:
+      Name: !Sub "af-${AWS::StackName}"
+      Scope: REGIONAL
+      DefaultAction: { Allow: {} }
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "af-${AWS::StackName}"
+      Rules:
+        # Rate limit first: it is the one rule that protects the login endpoint and
+        # the API from a flood, and it decides on the SOURCE rather than the body.
+        - Name: rate-limit
+          Priority: 0
+          Action: { Block: {} }
+          Statement:
+            RateBasedStatement:
+              Limit: !Ref WafRateLimitPer5Min
+              AggregateKeyType: IP
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "af-${AWS::StackName}-rate"
+        - !If
+          - HasWafReputation
+          - Name: ip-reputation
+            Priority: 1
+            OverrideAction: { None: {} }
+            Statement:
+              ManagedRuleGroupStatement:
+                VendorName: AWS
+                Name: AWSManagedRulesAmazonIpReputationList
+            VisibilityConfig:
+              SampledRequestsEnabled: true
+              CloudWatchMetricsEnabled: true
+              MetricName: !Sub "af-${AWS::StackName}-reputation"
+          - !Ref AWS::NoValue
+
+  WebAclAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Condition: HasWaf
+    Properties:
+      ResourceArn: !Ref Alb
+      WebACLArn: !GetAtt WebAcl.Arn
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup

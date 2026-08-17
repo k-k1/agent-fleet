@@ -45,6 +45,12 @@ type fakeEC2 struct {
 	// compares it against the af-hibernating mark, so a test that wants a "stale"
 	// snapshot backdates it here.
 	snapshotStart *time.Time
+	// runErr forces RunInstances to fail for a given SUBNET, standing in for an AZ that
+	// has no capacity for the slot type right now.
+	runErr map[string]error
+	// describeVolumesErr makes the volume lookup fail, for the paths that must keep
+	// working (degraded) when it does rather than failing a Start.
+	describeVolumesErr error
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -54,6 +60,7 @@ func newFakeEC2() *fakeEC2 {
 		subnetAZ:  map[string]string{"sub-1a": "ap-northeast-1a", "sub-1c": "ap-northeast-1c"},
 		attachErr: map[string]bool{},
 		snapshots: map[string]*ec2types.Snapshot{},
+		runErr:    map[string]error{},
 	}
 }
 
@@ -146,6 +153,9 @@ func filterMatch(filters []ec2types.Filter, get func(name string) []string) bool
 func (f *fakeEC2) DescribeVolumes(_ context.Context, in *ec2.DescribeVolumesInput, _ ...func(*ec2.Options)) (*ec2.DescribeVolumesOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.describeVolumesErr != nil {
+		return nil, f.describeVolumesErr
+	}
 	out := &ec2.DescribeVolumesOutput{}
 	for id, v := range f.volumes {
 		if len(in.VolumeIds) > 0 {
@@ -345,23 +355,30 @@ func (f *fakeEC2) CreateTags(_ context.Context, in *ec2.CreateTagsInput, _ ...fu
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, r := range in.Resources {
+		// Volumes AND instances: quarantining a slot re-stamps af-role on the INSTANCE
+		// (決定 20), and a fake that only knew about volumes reported "tag written" while
+		// the box stayed in the pool — the implementation looked correct and was not.
+		var tags *[]ec2types.Tag
+		if v := f.volumes[r]; v != nil {
+			tags = &v.Tags
+		} else if i := f.instances[r]; i != nil {
+			tags = &i.Tags
+		} else {
+			continue
+		}
 		for _, t := range in.Tags {
-			v := f.volumes[r]
-			if v == nil {
-				continue
-			}
 			// OVERWRITE, like the real API. Appending left two tags with the same key and
 			// ec2TagValue reads the first, so re-stamping a mark silently kept the old
 			// value — a fake that made a broken implementation look correct.
 			replaced := false
-			for i := range v.Tags {
-				if aws.ToString(v.Tags[i].Key) == aws.ToString(t.Key) {
-					v.Tags[i].Value = t.Value
+			for i := range *tags {
+				if aws.ToString((*tags)[i].Key) == aws.ToString(t.Key) {
+					(*tags)[i].Value = t.Value
 					replaced = true
 				}
 			}
 			if !replaced {
-				v.Tags = append(v.Tags, t)
+				*tags = append(*tags, t)
 			}
 		}
 		f.log("CreateTags %s", r)
@@ -398,6 +415,10 @@ func (f *fakeEC2) DeleteTags(_ context.Context, in *ec2.DeleteTagsInput, _ ...fu
 func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.runErr[aws.ToString(in.SubnetId)]; err != nil {
+		f.log("RunInstances REFUSED subnet=%s (%v)", aws.ToString(in.SubnetId), err)
+		return nil, err
+	}
 	f.nextInst++
 	id := fmt.Sprintf("i-new%d", f.nextInst)
 	f.instances[id] = &ec2types.Instance{
@@ -1566,47 +1587,36 @@ func TestECSEC2ReturningOwnerCancelsHibernation(t *testing.T) {
 	}
 }
 
-// The sweeper is the only thing that starts a hibernation, and only when the deployment
-// asked for one (0 = off is the default: this is the one automatic path that moves a
-// user's home).
-func TestECSEC2SweepHibernatesOnlyWhenConfigured(t *testing.T) {
+// The sweeper never STARTS a hibernation any more: "how long may this tenant's homes sit
+// before they are put away" is a database answer, and this loop has no database (ADR 0012).
+// It still carries an in-flight one to the end, which is what makes the operation survive a
+// CP restart — and what stops a switched-off deployment from billing for a snapshot AND a
+// volume forever.
+func TestECSEC2SweepNeverStartsAHibernation(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("off by default", func(t *testing.T) {
+	t.Run("not even a home dormant for two months", func(t *testing.T) {
 		h := hibernateHarness(t, 60*24*time.Hour)
-		h.rt.pool.hibernateAfter = 0
 		f := h.factory()
-		f.pool.hibernateAfter = 0
+		f.pool.hibernateAfter = 30 * 24 * time.Hour // the deployment default, no longer a trigger
 		if err := f.sweep(ctx); err != nil {
 			t.Fatalf("sweep: %v", err)
 		}
 		if len(h.ec2.snapshots) != 0 {
-			t.Error("a home was hibernated although the deployment never asked for it")
+			t.Errorf("the sweeper started a hibernation on its own: %v", h.ec2.calls)
 		}
 	})
 
-	t.Run("not before the threshold", func(t *testing.T) {
-		h := hibernateHarness(t, 2*time.Hour) // dormant, but only for hours
-		f := h.factory()
-		f.pool.hibernateAfter = 30 * 24 * time.Hour
-		if err := f.sweep(ctx); err != nil {
-			t.Fatalf("sweep: %v", err)
-		}
-		if len(h.ec2.snapshots) != 0 {
-			t.Error("hibernated a home that has been idle for two hours")
-		}
-	})
-
-	t.Run("and resumes one already under way even after it is switched off", func(t *testing.T) {
+	t.Run("but resumes one already under way even after it is switched off", func(t *testing.T) {
 		h := hibernateHarness(t, 60*24*time.Hour)
 		f := h.factory()
-		f.pool.hibernateAfter = 30 * 24 * time.Hour
 		h.ec2.snapshotState = ec2types.SnapshotStatePending
-		if err := f.sweep(ctx); err != nil {
-			t.Fatalf("sweep 1: %v", err)
+		// The reaper's step: mark, release the slot, start the capture.
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate: %v", err)
 		}
 		if len(h.ec2.snapshots) != 1 {
-			t.Fatalf("the sweep did not start a capture: %v", h.ec2.calls)
+			t.Fatalf("the capture never started: %v", h.ec2.calls)
 		}
 		for _, s := range h.ec2.snapshots {
 			s.State = ec2types.SnapshotStateCompleted
@@ -1615,10 +1625,71 @@ func TestECSEC2SweepHibernatesOnlyWhenConfigured(t *testing.T) {
 		// snapshot and the volume, forever.
 		f.pool.hibernateAfter = 0
 		if err := f.sweep(ctx); err != nil {
-			t.Fatalf("sweep 2: %v", err)
+			t.Fatalf("sweep: %v", err)
 		}
 		if _, ok := h.ec2.volumes["vol-1"]; ok {
 			t.Error("a hibernation in flight was stranded, leaving both a snapshot and a volume")
+		}
+	})
+}
+
+// BeginHibernate is the seam between the reaper (which knows the tenant's window) and the
+// sweeper (which finishes the job). Both of its guards exist because the alternative costs
+// money or work.
+func TestECSEC2BeginHibernateGuards(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("starts the capture", func(t *testing.T) {
+		h := hibernateHarness(t, 60*24*time.Hour)
+		h.ec2.snapshotState = ec2types.SnapshotStatePending
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate: %v", err)
+		}
+		if len(h.ec2.snapshots) != 1 {
+			t.Fatalf("snapshots = %d, want 1", len(h.ec2.snapshots))
+		}
+		if attachedInstance(h.ec2.volumes["vol-1"]) != "" {
+			t.Error("the slot was not released before the capture")
+		}
+	})
+
+	t.Run("does not start a second capture once it is marked", func(t *testing.T) {
+		h := hibernateHarness(t, 60*24*time.Hour)
+		h.ec2.snapshotState = ec2types.SnapshotStatePending
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate 1: %v", err)
+		}
+		// The sweeper is advancing this one now. A reaper pass landing in the same window
+		// must not fire CreateSnapshot again — the second copy is orphaned and bills.
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate 2: %v", err)
+		}
+		if len(h.ec2.snapshots) != 1 {
+			t.Errorf("snapshots = %d, want 1 — the reaper raced the sweeper into a duplicate", len(h.ec2.snapshots))
+		}
+	})
+
+	t.Run("leaves a workspace that is running alone", func(t *testing.T) {
+		h := hibernateHarness(t, 60*24*time.Hour)
+		h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate: %v", err)
+		}
+		if len(h.ec2.snapshots) != 0 {
+			t.Error("hibernated a workspace whose owner had come back")
+		}
+		if attachedInstance(h.ec2.volumes["vol-1"]) == "" {
+			t.Error("released the slot out from under a running task")
+		}
+	})
+
+	t.Run("does nothing when the home is already a snapshot", func(t *testing.T) {
+		h := newEC2Harness(t)
+		if err := h.rt.BeginHibernate(ctx); err != nil {
+			t.Fatalf("BeginHibernate with no home: %v", err)
+		}
+		if len(h.ec2.snapshots) != 0 {
+			t.Error("captured something although there is no home volume")
 		}
 	})
 }
@@ -1841,5 +1912,700 @@ func TestPoolStatusIsAbsentOnOtherRuntimes(t *testing.T) {
 	m := &manager{rtFactory: &dockerFactory{}}
 	if _, ok, err := m.poolStatus(context.Background()); ok || err != nil {
 		t.Errorf("poolStatus on the docker runtime = (ok=%v, err=%v), want (false, nil)", ok, err)
+	}
+}
+
+// --- AZ placement (docs/64 §64.20.4, ADR 0045「未解決 — AZ の選び方」を閉じる) ---
+
+// countCalls counts the calls whose text starts with prefix — used where the POINT is how
+// many times something happened, not that it happened.
+func (f *fakeEC2) countCalls(prefix string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+var errNoCapacity = fmt.Errorf("api error InsufficientInstanceCapacity: We currently do not have sufficient m7i.large capacity in the Availability Zone you requested")
+
+// One AZ running out of the slot type used to stop every NEW user in the deployment:
+// anyAZ() is deterministic, so the one AZ the adapter ever picked was the one that had no
+// room, and nothing tried anywhere else. Everybody already placed kept working, so it did
+// not look like an outage.
+func TestECSEC2NewHomeMovesToAnAZWithRoom(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.runErr["sub-1a"] = errNoCapacity // 1a is the AZ a new home would take
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	vol, err := h.rt.homeVolume(ctx)
+	if err != nil || vol == nil {
+		t.Fatalf("home volume: %v", err)
+	}
+	if got := aws.ToString(vol.AvailabilityZone); got != "ap-northeast-1c" {
+		t.Errorf("the home was created in %q; 1a had no capacity, so it belongs in 1c", got)
+	}
+	// The whole reason the volume is created last: one attempt, one volume. Creating it
+	// up front and deleting it to try elsewhere is what this replaced.
+	if n := h.ec2.countCalls("CreateVolume"); n != 1 {
+		t.Errorf("CreateVolume called %d times, want 1", n)
+	}
+	if n := h.ec2.countCalls("DeleteVolume"); n != 0 {
+		t.Errorf("a home volume was deleted to retry (%d DeleteVolume calls) — on a restored "+
+			"home that is the home, gone", n)
+	}
+}
+
+// The other half of the same rule: an EBS home cannot move, so a slot in another AZ is
+// useless to it. Wandering off would produce a slot nothing can ever attach to.
+func TestECSEC2ExistingHomeNeverFollowsCapacityToAnotherAZ(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.runErr["sub-1a"] = errNoCapacity
+
+	err := h.rt.Start(ctx)
+	if err == nil {
+		t.Fatal("Start succeeded although the home's own AZ had no capacity")
+	}
+	if !strings.Contains(err.Error(), "InsufficientInstanceCapacity") {
+		t.Errorf("the capacity error was swallowed: %v", err)
+	}
+	for _, c := range h.ec2.calls {
+		if strings.Contains(c, "subnet=sub-1c") {
+			t.Errorf("a slot was launched in another AZ for a home pinned to 1a: %q", c)
+		}
+	}
+}
+
+// Only "no room here" is worth asking elsewhere. A bad launch template or an exhausted
+// quota fails the same way in every AZ, and retrying buries the real message.
+func TestECSEC2NonCapacityFailuresAreNotRetriedInEveryAZ(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	boom := fmt.Errorf("api error InvalidLaunchTemplateId.NotFound: the launch template does not exist")
+	h.ec2.runErr["sub-1a"] = boom
+	h.ec2.runErr["sub-1c"] = boom
+
+	err := h.rt.Start(ctx)
+	if err == nil || !strings.Contains(err.Error(), "InvalidLaunchTemplateId") {
+		t.Fatalf("Start error = %v, want the launch template failure surfaced as-is", err)
+	}
+	if n := h.ec2.countCalls("RunInstances REFUSED"); n != 1 {
+		t.Errorf("RunInstances was attempted %d times; a broken launch template is not an AZ problem", n)
+	}
+}
+
+// No room ANYWHERE is a failure, and it must be a failure with nothing left behind: the
+// home is not created, so there is no empty volume billing for a user who never started.
+func TestECSEC2NoRoomAnywhereLeavesNoHomeBehind(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.runErr["sub-1a"] = errNoCapacity
+	h.ec2.runErr["sub-1c"] = errNoCapacity
+
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("Start succeeded with no capacity in any AZ")
+	}
+	if n := h.ec2.countCalls("CreateVolume"); n != 0 {
+		t.Errorf("a home was created for a start that could not happen (%d CreateVolume calls)", n)
+	}
+	vol, err := h.rt.homeVolume(ctx)
+	if err != nil || vol != nil {
+		t.Errorf("home volume = %v (err %v), want none", vol, err)
+	}
+}
+
+// At the cap a new home has no AZ yet, so the victim should be the longest-dormant one in
+// the WHOLE pool. It used to be the longest-dormant one in an AZ chosen before anybody
+// looked — which could evict somebody who had been away ten minutes while leaving a
+// week-old occupant of the other AZ alone.
+func TestECSEC2EvictionForANewHomeLooksAtEveryAZ(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.maxSlots = 2
+	h.ec2.addSlot("i-1a", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.addSlot("i-1c", "ap-northeast-1c", "m7i.large", true, false)
+	h.ci.registered["i-1a"], h.ci.registered["i-1c"] = true, true
+	// Both slots are taken. The 1c occupant has been gone far longer.
+	h.ec2.addHomeVolume("vol-a", "M-A", "af-ws-acme-a", "ap-northeast-1a")
+	h.ec2.attach("vol-a", "i-1a", time.Now())
+	h.ec2.setTag("vol-a", ec2TagIdleSince, time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
+	h.ec2.addHomeVolume("vol-c", "M-C", "af-ws-acme-c", "ap-northeast-1c")
+	h.ec2.attach("vol-c", "i-1c", time.Now())
+	h.ec2.setTag("vol-c", ec2TagIdleSince, time.Now().Add(-7*24*time.Hour).UTC().Format(time.RFC3339))
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	vol, err := h.rt.homeVolume(ctx)
+	if err != nil || vol == nil {
+		t.Fatalf("home volume: %v", err)
+	}
+	if got := aws.ToString(vol.AvailabilityZone); got != "ap-northeast-1c" {
+		t.Errorf("the new home landed in %q; the week-old occupant is in 1c", got)
+	}
+	if attachedInstance(h.ec2.volumes["vol-a"]) == "" {
+		t.Error("evicted the occupant who had been away ten minutes instead of the one away a week")
+	}
+}
+
+// Moving a user to another AZ. An EBS home cannot be moved and the adapter has no
+// "move" operation — but it does not need one: hibernation turns the home into a
+// snapshot, and a snapshot has no AZ. The next Start rebuilds it wherever a slot is,
+// which is the whole runbook (docs/64 §64.20.7).
+//
+// This is a real path with real consequences, so it is pinned: the home has to come back
+// FROM THE SNAPSHOT (not as a fresh empty volume) and in the NEW AZ.
+func TestECSEC2HibernateThenStartMovesTheHomeToAnotherAZ(t *testing.T) {
+	ctx := context.Background()
+	h := hibernateHarness(t, 60*24*time.Hour) // home on vol-1, slot i-sleep, both in 1a
+
+	// Step 1–3 of the runbook: the workspace is already stopped; put the home away.
+	live := func() { // the sweeper finishes what BeginHibernate starts
+		if err := h.factory().sweep(ctx); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+	}
+	if err := h.rt.BeginHibernate(ctx); err != nil {
+		t.Fatalf("BeginHibernate: %v", err)
+	}
+	live()
+	if v, _ := h.rt.homeVolume(ctx); v != nil {
+		t.Fatalf("the home is still a volume in %s", aws.ToString(v.AvailabilityZone))
+	}
+
+	// The old AZ has nothing free any more; the only slot is in the other one.
+	h.ec2.instances["i-sleep"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameTerminated}
+	h.ec2.addSlot("i-elsewhere", "ap-northeast-1c", "m7i.large", true, false)
+	h.ci.registered["i-elsewhere"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start after hibernation: %v", err)
+	}
+	vol, err := h.rt.homeVolume(ctx)
+	if err != nil || vol == nil {
+		t.Fatalf("home volume after the move: %v", err)
+	}
+	if got := aws.ToString(vol.AvailabilityZone); got != "ap-northeast-1c" {
+		t.Errorf("the home came back in %q, want the AZ the free slot is in", got)
+	}
+	if aws.ToString(vol.SnapshotId) == "" {
+		t.Error("the home came back EMPTY — a move that loses the contents is not a move")
+	}
+}
+
+// An AZ having a bad day is exactly when the reaper's hibernation step fails: releaseSlot
+// unmounts over SSM, and the slot is unreachable. What must NOT happen is that the mark
+// stays behind — a home that reads as "hibernating" while it is attached and fine, an
+// error that repeats every sweep with no way to tell it from progress, and a stale
+// timestamp that the first snapshot taken after the outage would be judged against.
+func TestECSEC2HibernateTakesItsMarkBackWhenTheSlotIsUnreachable(t *testing.T) {
+	ctx := context.Background()
+	h := hibernateHarness(t, 60*24*time.Hour)
+	// The shape an AZ outage has: EC2 still says the instance is running, so releaseSlot
+	// insists on unmounting first (a detach of a mounted filesystem is how a home gets
+	// corrupted) — and nothing answers over SSM. A STOPPED slot would not reproduce this:
+	// there is nothing to unmount and the release goes straight through.
+	h.ec2.instances["i-sleep"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+	h.ssmc.fail["umount"] = true
+
+	err := h.rt.BeginHibernate(ctx)
+	if err == nil {
+		t.Fatal("BeginHibernate reported success although the home could not be released")
+	}
+	vol := h.ec2.volumes["vol-1"]
+	if mark := ec2TagValue(vol.Tags, ec2TagHibernating); mark != "" {
+		t.Errorf("the hibernation mark %q was left on a home that is still attached", mark)
+	}
+	if attachedInstance(vol) == "" {
+		t.Error("the home was detached even though the unmount failed — that is how a home gets corrupted")
+	}
+	if len(h.ec2.snapshots) != 0 {
+		t.Errorf("a capture was started without releasing the slot: %v", h.ec2.snapshots)
+	}
+
+	// And when the AZ comes back, the next pass starts cleanly rather than resuming a
+	// hibernation that never began.
+	delete(h.ssmc.fail, "umount")
+	if err := h.rt.BeginHibernate(ctx); err != nil {
+		t.Fatalf("BeginHibernate after the slot came back: %v", err)
+	}
+	if len(h.ec2.snapshots) != 1 {
+		t.Fatalf("snapshots = %d, want 1", len(h.ec2.snapshots))
+	}
+	for _, s := range h.ec2.snapshots {
+		mark, _ := time.Parse(time.RFC3339, ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHibernating))
+		if s.StartTime != nil && s.StartTime.Before(mark) {
+			t.Error("the capture predates its own mark — it would be dropped as superseded forever")
+		}
+	}
+}
+
+// A mark that was already there belongs to a hibernation that is genuinely under way, and
+// the snapshot it validates may already exist. A later failure must not remove it.
+func TestECSEC2HibernateKeepsAMarkItDidNotWrite(t *testing.T) {
+	ctx := context.Background()
+	h := hibernateHarness(t, 60*24*time.Hour)
+	earlier := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	h.ec2.setTag("vol-1", ec2TagHibernating, earlier)
+	h.ec2.instances["i-sleep"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+	h.ssmc.fail["umount"] = true
+
+	if err := h.rt.hibernate(ctx); err == nil {
+		t.Fatal("hibernate reported success although the slot could not be released")
+	}
+	if got := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagHibernating); got != earlier {
+		t.Errorf("mark = %q, want the existing %q — a hibernation in flight lost its timestamp", got, earlier)
+	}
+}
+
+// New homes used to follow one deterministic first choice, so everybody ended up in the
+// same AZ and losing it took out the whole deployment rather than half of it. An EBS home
+// cannot be evacuated, so the only lever is not putting everyone in one place (docs/64
+// §64.21).
+func TestECSEC2NewSlotsSpreadAcrossAZs(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	// Two homes already in 1a and none in 1c, and no free slot to reuse.
+	h.ec2.addHomeVolume("vol-x", "M-X", "af-ws-acme-x", "ap-northeast-1a")
+	h.ec2.addHomeVolume("vol-y", "M-Y", "af-ws-acme-y", "ap-northeast-1a")
+	h.ec2.addSlot("i-x", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.addSlot("i-y", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-x", "i-x", time.Now())
+	h.ec2.attach("vol-y", "i-y", time.Now())
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	vol, err := h.rt.homeVolume(ctx)
+	if err != nil || vol == nil {
+		t.Fatalf("home volume: %v", err)
+	}
+	if got := aws.ToString(vol.AvailabilityZone); got != "ap-northeast-1c" {
+		t.Errorf("the new home went to %q; 1a already holds two and 1c none", got)
+	}
+}
+
+// Spreading decides where a NEW slot goes. It must never talk anybody out of reusing a
+// free one: that preference is what keeps the pool small, and a home can only ever attach
+// to a slot in its own AZ anyway.
+func TestECSEC2SpreadingNeverBeatsAFreeSlot(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-x", "M-X", "af-ws-acme-x", "ap-northeast-1a")
+	h.ec2.addSlot("i-busy", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-x", "i-busy", time.Now())
+	// 1a holds the only home AND the only free slot. Balance says 1c, reuse says 1a.
+	h.ec2.addSlot("i-free", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-free"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	vol, _ := h.rt.homeVolume(ctx)
+	if got := aws.ToString(vol.AvailabilityZone); got != "ap-northeast-1a" {
+		t.Errorf("the home was created in %q instead of on the free slot in 1a", got)
+	}
+	if n := h.ec2.countCalls("RunInstances"); n != 0 {
+		t.Errorf("grew the pool (%d RunInstances) with a free slot sitting there", n)
+	}
+}
+
+// Balancing is an optimisation. If the count cannot be read, placement still has to
+// happen — on the fixed order, not on an error.
+func TestECSEC2SpreadingFallsBackToTheFixedOrder(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.describeVolumesErr = fmt.Errorf("api error RequestLimitExceeded")
+	azs, err := h.rt.spreadAZs(ctx)
+	if err != nil {
+		t.Fatalf("spreadAZs surfaced a counting failure as a placement failure: %v", err)
+	}
+	if len(azs) != 2 || azs[0] != "ap-northeast-1a" {
+		t.Errorf("AZ order = %v, want the fixed poolAZs order", azs)
+	}
+}
+
+// --- periodic backups (ADR 0045 決定 17) ---
+
+func backupHarness(t *testing.T) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.rt.pool.backupKeep = 2
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+	return h
+}
+
+// A home is in one AZ and cannot be evacuated, so the copy has to be taken BEFORE the bad
+// day — while the workspace is running, mounted and in use. That is the whole feature.
+func TestECSEC2BacksUpAHomeThatIsInUse(t *testing.T) {
+	ctx := context.Background()
+	h := backupHarness(t)
+
+	if err := h.rt.BackupHome(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("BackupHome: %v", err)
+	}
+	if len(h.ec2.snapshots) != 1 {
+		t.Fatalf("snapshots = %d, want 1", len(h.ec2.snapshots))
+	}
+	for _, s := range h.ec2.snapshots {
+		if got := ec2TagValue(s.Tags, ec2TagRole); got != ec2RoleBackup {
+			t.Errorf("backup tagged af-role=%q; a backup that looks like a home would be "+
+				"restored from, or deleted as a superseded capture", got)
+		}
+		if ec2TagValue(s.Tags, ec2TagBackupAt) == "" {
+			t.Error("no af-backup-at: the next sweep cannot tell whether one is due")
+		}
+	}
+	// Not detached, not unmounted, nobody disturbed.
+	if attachedInstance(h.ec2.volumes["vol-1"]) != "i-hot" {
+		t.Error("the home left its slot to be backed up")
+	}
+	for _, c := range h.ssmc.commands {
+		if strings.Contains(c, "umount") {
+			t.Error("the home was unmounted for a backup — that is taking a working person's desk away on a timer")
+		}
+	}
+}
+
+// The schedule is read from AWS, not from anything the CP remembers, so a restart or a
+// second replica cannot double the bill.
+func TestECSEC2BackupWaitsForTheInterval(t *testing.T) {
+	ctx := context.Background()
+	h := backupHarness(t)
+	if err := h.rt.BackupHome(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("first backup: %v", err)
+	}
+	for _, s := range h.ec2.snapshots {
+		s.State = ec2types.SnapshotStateCompleted
+	}
+	if err := h.rt.BackupHome(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if n := len(h.ec2.snapshots); n != 1 {
+		t.Errorf("snapshots = %d; a second copy was taken minutes after the first", n)
+	}
+	// A day later it is due again.
+	base := time.Now()
+	h.rt.now = func() time.Time { return base.Add(25 * time.Hour) }
+	if err := h.rt.BackupHome(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("third pass: %v", err)
+	}
+	if n := len(h.ec2.snapshots); n != 2 {
+		t.Errorf("snapshots = %d, want 2 once the interval had passed", n)
+	}
+}
+
+// One capture at a time: a 45 GiB home takes 30–40 minutes, and stacking them pays for
+// the same home several times over.
+func TestECSEC2BackupDoesNotStackOnAPendingOne(t *testing.T) {
+	ctx := context.Background()
+	h := backupHarness(t)
+	h.ec2.snapshotState = ec2types.SnapshotStatePending
+	if err := h.rt.BackupHome(ctx, time.Hour); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	base := time.Now()
+	h.rt.now = func() time.Time { return base.Add(48 * time.Hour) } // long overdue
+	if err := h.rt.BackupHome(ctx, time.Hour); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if n := len(h.ec2.snapshots); n != 1 {
+		t.Errorf("snapshots = %d; a second capture started while the first was still running", n)
+	}
+}
+
+// Retention: keep N completed copies. Pruning a PENDING one throws away work already paid
+// for, and dropping below N while a replacement is still running leaves a window with
+// fewer copies than the operator asked for.
+func TestECSEC2BackupRetention(t *testing.T) {
+	ctx := context.Background()
+	h := backupHarness(t)
+	base := time.Now()
+	for i := 0; i < 3; i++ {
+		h.rt.now = func() time.Time { return base.Add(time.Duration(i) * 25 * time.Hour) }
+		if err := h.rt.BackupHome(ctx, 24*time.Hour); err != nil {
+			t.Fatalf("backup %d: %v", i, err)
+		}
+		for _, s := range h.ec2.snapshots {
+			s.State = ec2types.SnapshotStateCompleted
+		}
+	}
+	if n := len(h.ec2.snapshots); n != 2 {
+		t.Errorf("kept %d copies, want backupKeep=2", n)
+	}
+
+	// A pending fourth must not push a completed one out before it is usable.
+	h.ec2.snapshotState = ec2types.SnapshotStatePending
+	h.rt.now = func() time.Time { return base.Add(100 * time.Hour) }
+	if err := h.rt.BackupHome(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("fourth: %v", err)
+	}
+	completed := 0
+	for _, s := range h.ec2.snapshots {
+		if s.State == ec2types.SnapshotStateCompleted {
+			completed++
+		}
+	}
+	if completed != 2 {
+		t.Errorf("completed copies = %d while a replacement was still running, want 2", completed)
+	}
+}
+
+// The three kinds of snapshot must never be mistaken for one another. A backup that a
+// restore picked up would hand somebody an older home in silence; one that hibernation
+// counted would delete a volume that had not been captured.
+func TestECSEC2BackupsAreInvisibleToRestoreAndHibernation(t *testing.T) {
+	ctx := context.Background()
+	h := backupHarness(t)
+	if err := h.rt.BackupHome(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("BackupHome: %v", err)
+	}
+	for _, s := range h.ec2.snapshots {
+		s.State = ec2types.SnapshotStateCompleted
+	}
+	if got, err := h.rt.restoreSnapshot(ctx); err != nil || got != "" {
+		t.Errorf("restoreSnapshot picked up a backup (%q, err %v) — that is a silently older home", got, err)
+	}
+	snaps, err := h.rt.homeSnapshots(ctx)
+	if err != nil || len(snaps) != 0 {
+		t.Errorf("homeSnapshots saw %d backups; hibernation would treat one as its own capture", len(snaps))
+	}
+	if got := h.rt.goldenSnapshot(ctx); got != "" {
+		t.Errorf("goldenSnapshot picked up a backup: %q", got)
+	}
+}
+
+// A backup outlives the home on purpose — but not the person. Destroy has to take them,
+// or an offboarded member keeps billing forever with nothing pointing at it.
+func TestECSEC2DestroyTakesTheBackupsToo(t *testing.T) {
+	ctx := context.Background()
+	h := backupHarness(t)
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	if err := h.rt.BackupHome(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("BackupHome: %v", err)
+	}
+	if _, err := h.rt.Destroy(ctx); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if n := len(h.ec2.snapshots); n != 0 {
+		t.Errorf("%d snapshot(s) survived the workspace being destroyed", n)
+	}
+}
+
+// Two cases where taking a copy is wrong rather than merely unnecessary.
+func TestECSEC2BackupSkipsWhatItShould(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a home that is being hibernated", func(t *testing.T) {
+		h := backupHarness(t)
+		h.ec2.setTag("vol-1", ec2TagHibernating, time.Now().UTC().Format(time.RFC3339Nano))
+		if err := h.rt.BackupHome(ctx, time.Hour); err != nil {
+			t.Fatalf("BackupHome: %v", err)
+		}
+		if len(h.ec2.snapshots) != 0 {
+			t.Error("backed up a volume that is being captured and deleted — paying twice for one moment")
+		}
+	})
+
+	t.Run("a home that is already a snapshot", func(t *testing.T) {
+		h := newEC2Harness(t) // no volume at all
+		if err := h.rt.BackupHome(ctx, time.Hour); err != nil {
+			t.Fatalf("BackupHome: %v", err)
+		}
+		if len(h.ec2.snapshots) != 0 {
+			t.Error("took a backup with no home volume to back up")
+		}
+	})
+
+	t.Run("backups turned off", func(t *testing.T) {
+		h := backupHarness(t)
+		if err := h.rt.BackupHome(ctx, 0); err != nil {
+			t.Fatalf("BackupHome: %v", err)
+		}
+		if len(h.ec2.snapshots) != 0 {
+			t.Error("took a backup although the tenant asked for none")
+		}
+	})
+}
+
+func TestECSEC2QuarantinesASlotThatCannotMount(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-bad"] = true
+	h.ssmc.fail["af-mount"] = true
+
+	err := h.rt.Start(ctx)
+	if err == nil {
+		t.Fatal("Start returned nil although the home could not be mounted")
+	}
+	bad := h.ec2.instances["i-bad"]
+	if got := ec2TagValue(bad.Tags, ec2TagRole); got != ec2RoleQuarantined {
+		t.Errorf("slot af-role = %q, want %q — a slot left tagged `slot` is offered again", got, ec2RoleQuarantined)
+	}
+	if ec2TagValue(bad.Tags, ec2TagQuarantineReason) == "" || ec2TagValue(bad.Tags, ec2TagQuarantineAt) == "" {
+		t.Errorf("quarantine left no reason/time on %s: %v", "i-bad", bad.Tags)
+	}
+	if bad.State == nil || bad.State.Name != ec2types.InstanceStateNameStopped {
+		t.Errorf("a quarantined slot must be stopped (it cannot run tasks and bills by the hour), state = %v", bad.State)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "" {
+		t.Errorf("the home is still attached to %s; it has to be free to go somewhere that works", inst)
+	}
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagClaim) != "" {
+		t.Error("the claim survived the failure, so the owner would wait out the claim TTL before retrying")
+	}
+}
+
+// …and the very next Start must go somewhere else. Quarantine that only relabels the box
+// would be cosmetic; what matters is that placement stops choosing it.
+func TestECSEC2StartAfterQuarantineGrowsAFreshSlot(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-bad"] = true
+	h.ssmc.fail["af-mount"] = true
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("the first Start must fail; the mount does")
+	}
+
+	// The box is repaired for nobody: the mount still fails on it. The second Start has
+	// to create a slot instead of reusing the quarantined one.
+	delete(h.ssmc.fail, "af-mount")
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if h.ec2.instances["i-new1"] == nil {
+		t.Fatalf("the second Start did not create a slot; instances = %v", h.ec2.calls)
+	}
+	h.ec2.instances["i-new1"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+	h.ci.registered["i-new1"] = true
+	h.runDeferred(ctx)
+	got := attachedInstance(h.ec2.volumes["vol-1"])
+	if got == "i-bad" {
+		t.Fatal("the second Start landed on the quarantined slot again")
+	}
+	if got == "" {
+		t.Fatal("the second Start attached the home nowhere")
+	}
+	if n := len(h.ec2.instances); n != 2 {
+		t.Errorf("pool holds %d instances, want 2 (the quarantined one plus a fresh slot)", n)
+	}
+}
+
+// A quarantined box still bills. It is out of the pool for placement but must stay on the
+// operator's screen, with the reason — otherwise the only symptom is a bill.
+func TestECSEC2PoolStatusShowsQuarantinedSlots(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-bad"] = true
+	h.ssmc.fail["af-mount"] = true
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("the mount fails, so Start must")
+	}
+
+	st, err := h.factory().PoolStatus(ctx)
+	if err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	var seen *ec2SlotView
+	for i := range st.Slots {
+		if st.Slots[i].InstanceID == "i-bad" {
+			seen = &st.Slots[i]
+		}
+	}
+	if seen == nil {
+		t.Fatalf("the quarantined slot vanished from the pool screen while still billing: %+v", st.Slots)
+	}
+	if !seen.Quarantined || seen.QuarantineReason == "" {
+		t.Errorf("slot view = %+v, want quarantined with a reason", *seen)
+	}
+}
+
+// A destroyed home lingers in `deleting` for a while — measured at ~40 minutes on a
+// volume whose slot had wedged. Until then the pool screen listed it as a home, so a
+// workspace that had been destroyed still looked present to the operator.
+func TestECSEC2PoolStatusHidesVolumesBeingDeleted(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-live", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	gone := h.ec2.addHomeVolume("vol-gone", "M-2", "af-ws-acme-bob", "ap-northeast-1a")
+	gone.State = ec2types.VolumeStateDeleting
+
+	st, err := h.factory().PoolStatus(ctx)
+	if err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	for _, home := range st.Homes {
+		if home.VolumeID == "vol-gone" {
+			t.Fatalf("a volume EC2 is deleting is still listed as a home: %+v", home)
+		}
+	}
+	if len(st.Homes) != 1 || st.Homes[0].VolumeID != "vol-live" {
+		t.Errorf("homes = %+v, want just vol-live", st.Homes)
+	}
+}
+
+// What the "starting" dialog reads. The infrastructure half of a start on this runtime
+// (a new slot, a new or restored home, an SSM mount) used to be invisible to the
+// Console, which could only offer the native runtime's line about installing agent
+// CLIs — the wrong wait, and the one an operator judges "stuck" against.
+func TestECSEC2PublishesItsProvisioningPhase(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+
+	// No slot exists: Start grows one and hands the rest to the background half, so the
+	// phase has to survive Start returning — the Console polls after that, not during.
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := h.rt.BootPhase(); got == "" {
+		t.Fatal("no phase while the start is still converging; the dialog has nothing to say")
+	} else if !strings.HasPrefix(got, "slot:") && !strings.HasPrefix(got, "home:") {
+		t.Errorf("phase = %q, want the slot/home work that is actually happening", got)
+	}
+
+	h.ec2.instances["i-new1"].State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameRunning}
+	h.ci.registered["i-new1"] = true
+	h.runDeferred(ctx)
+	// Cleared on the way out — the dialog stays open for as long as a phase is reported,
+	// so a leftover one is a dialog that never closes.
+	if got := h.rt.BootPhase(); got != "" {
+		t.Errorf("phase %q survived a converged start", got)
+	}
+}
+
+// …and a start that fails must clear it too, or the workspace looks like it is still
+// coming up forever.
+func TestECSEC2ClearsThePhaseWhenTheStartFails(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	h.ssmc.fail["af-mount"] = true
+
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("Start returned nil although the mount failed")
+	}
+	if got := h.rt.BootPhase(); got != "" {
+		t.Errorf("phase %q survived a failed start", got)
 	}
 }
