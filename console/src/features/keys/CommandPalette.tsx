@@ -154,18 +154,20 @@ async function loadChangedItems(): Promise<Item[]> {
 // aggregate is whole-transcript regardless of how many turns come back with it.
 async function loadSessionItems(session: string): Promise<Item[]> {
   let files = useSessionFilesStore.getState().bySession[session];
-  const [fetched, changesRes] = await Promise.all([
+  const [fetched, changesRes, committedRes] = await Promise.all([
     files
       ? Promise.resolve(null)
       : api(`api/sessions/${encodeURIComponent(session)}/messages?since=0&tail=1&limit=50`).catch(() => null),
     api("api/fs/changes").catch(() => null),
+    api(`api/sessions/${encodeURIComponent(session)}/committed`).catch(() => null),
   ]);
   if (!files) {
     files = Array.isArray(fetched?.files) ? (fetched.files as SessionFile[]) : [];
     useSessionFilesStore.getState().set(session, files);
   }
   const changes: FsChange[] = Array.isArray(changesRes?.changes) ? changesRes.changes : [];
-  return sortRows(joinChanges(files, changes), "recent").map((row) => ({
+  const committed: string[] = Array.isArray(committedRes?.committed) ? committedRes.committed : [];
+  return sortRows(joinChanges(files, changes, committed), "recent").map((row) => ({
     id: "sf:" + row.path,
     title: row.rel || row.path,
     sub: row.repo || "",

@@ -1,6 +1,6 @@
 # 68. セッションが直したファイルへ、ミラーから一手で届くようにする
 
-- 状態: **P0＋P1 実装済み**（2026-08-17）。決定は [decisions/0049](decisions/0049-session-changed-files.md)。
+- 状態: **P0〜P2 実装済み**（2026-08-17）。決定は [decisions/0049](decisions/0049-session-changed-files.md)。
 - 関連: [docs/44](44-markdown-code-editor.md)（File ペインの表示/編集モード） /
   [docs/55](55-fork-at-message.md)（転写の anchor） /
   [docs/59](59-session-sharing.md) §3（共有 DTO は座標を落とす） /
@@ -110,7 +110,8 @@ kiro / agy / shell / ssm は載らない——**その場合は帯ごと出さ�
 | 状態 | 意味 | 出し方 |
 |---|---|---|
 | 未ステージ / ステージ済 / 未追跡 | ②に一致がある | porcelain XY から。`FilesChanges.tsx` の `changeBadge()` と同じ語彙を使う |
-| 作業ツリーに差分なし | ①にあるが②に無い | **コミット済みか、取り消されたか**の区別は P0 ではしない（§68.9） |
+| コミット済み | ①にあり②に無く、セッション開始以降のコミットに現れた | P2。`git log --since=<createdAt> --name-only` |
+| 作業ツリーに差分なし | ①にあるが②にもコミットにも無い | ⚠️ **「取り消された」とは言わない**（§68.9.2） |
 | 作業コピー外 | 転写のパスが `~/repos/<作業コピー>` の下でない | 行は出すが差分は開けない |
 
 ⚠️ **「差分なし」の行を消してはいけない。** 消すと「さっき直したのに一覧に居ない」に
@@ -283,7 +284,7 @@ before/after を持たないが、それは codex が `*** Delete File:` を読�
 |---|---|
 | **P0** | Agent: `CollectFiles()` を claude / 汎用の両経路に足し `resp["files"]`。Console: 帯（`FileChangeStrip`）＋ `fs/changes` 突合＋ `caps.openDiff` 配線＋パレットの `session` モード。i18n は en/ja 両方 |
 | **P1** | ✅ 済 — cursor / copilot の対応（§68.2.1・差分本体まで取れた）／ターン末尾のファイルチップ行（`turnFiles.ts`）。`sidechain` 印は P0 で入っていた |
-| **P2** | 「差分なし」を **コミット済み / 取り消された** に割る（セッション開始以降の `log` と突合）／左レールのセッション行メニューからの導線 |
+| **P2** | ✅ 済 — 「差分なし」から**コミット済みだけを切り出す**（§68.9.2）／左レールのセッション行メニューからの導線 |
 
 「帯だけ作って様子を見る」で止められる形にしてある。P1・P2 は P0 の形を変えない。
 
@@ -299,7 +300,8 @@ before/after を持たないが、それは codex が `*** Delete File:` を読�
 | 集計 | `session_files.go` `sessionFileTouches(...)` ＋ 両ハンドラで `resp["files"]` |
 | cursor | `internal/agents/cursor/transcript.go`（jsonl・名前の allowlist）/ `driver.go`＋`mirror.go`（ACP・`tool_call.kind` と `locations`） |
 | copilot | `internal/agents/copilot/transcript.go`（`edit` / `create` / `write`） |
-| Console | `features/mirror/sessionFiles.ts`（突合・並び・開き方）/ `FileChangeStrip.tsx`（帯）/ `transcript/turnFiles.ts`＋`TranscriptTurn.tsx`（ターン末尾のチップ）/ `MirrorView.tsx`（`caps.openDiff` と公開ストア）/ `CommandPalette.tsx`（4 つ目のモード） |
+| コミット済み | `session_files.go` `handleSessionCommittedFiles` / `committedSince` ＋ `GET /sessions/{name}/committed` |
+| Console | `features/mirror/sessionFiles.ts`（突合・並び・開き方）/ `FileChangeStrip.tsx`（帯）/ `transcript/turnFiles.ts`＋`TranscriptTurn.tsx`（ターン末尾のチップ）/ `MirrorView.tsx`（`caps.openDiff` と公開ストア）/ `CommandPalette.tsx`（4 つ目のモード）/ `sessions/SessionRow.tsx`（レールの行メニュー） |
 
 **走査コストの扱い（§68.10-9 の答え）。** 全転写を毎ポーリング数え直すのは無理だった——
 `+N −M` は行差分（LCS）であり、編集 1 件あたり最大 2 万文字ぶんの表になる。転写は
@@ -316,6 +318,31 @@ part を足し続けるので（`genericMutableTail` と同じ理由）、その
 壊れ方になるので、`EditStat` は `viewer/DiffView.tsx` の `lineDiff` と**同じ規則**（LCS ＋
 同じサイズガード）にし、**同一の表**を両側のテストに置いた
 （`internal/transcript/files_test.go` ↔ `features/viewer/lineDiffStat.dom.test.tsx`）。
+
+---
+
+## 68.9.2 ⚠️ P2 で「取り消された」を出すのをやめた
+
+設計時は「差分なし」を **コミット済み / 取り消された**の 2 つに割ると書いていた。実装して
+みると、割れるのは片側だけだと分かった。
+
+- **コミット済みは肯定できる。** `git log --since=<セッション作成時刻> --name-only` に
+  そのパスが現れれば、それは事実である。
+- **「取り消された」は肯定できない。** 差分が無くコミットにも出てこない理由は他にもある——
+  セッション開始**より前**のコミットに入っていた／別の作業コピーで起きた／その後
+  改名された／`--max-count` の窓から溢れた。これらを一括で「取り消し」と表示すると、
+  **UI が根拠のない断定をする**ことになる。
+
+よって出すのは **「コミット済み」だけ**で、残りは P0 と同じ「差分なし」のままにした。
+一覧全体の方針（肯定できることだけを言う）と同じ線である。
+
+⚠️ **時刻が根拠なので、同じ作業コピーで並行していた別セッションのコミットも入る。**
+実害が小さいのは、突き合わせる相手が**このセッションが編集したファイル**に限られている
+から——「自分が触ったファイルが、その後コミットされた」は誰がコミットしたかに関わらず
+正しい。
+
+エンドポイントは `GET /sessions/{name}/committed`。git 作業コピーでない・時刻が読めない・
+コマンドが失敗した、のいずれでも**空を返す**（バッジが出ないだけで、帯は出る）。
 
 ---
 
@@ -347,6 +374,10 @@ CP も Workspace Agent も無し）。見たのは **1・2・5・7・8 ではな
 - ターン末尾のファイルチップが、畳まれた「2 件のツール」行とフッターの間に出ること（P1）。
 - cursor / copilot の編集の形は**ディスクに残っていた実転写**から取った（§68.2.1）——
   ただし読んだのは既存の記録で、**この変更を通した実セッションでは未確認**。
+- 「コミット済み」バッジが出ること（P2）と、レールの行メニュー「変更ファイル」が
+  ミラーを開いて帯を展開すること（CDP でメニューを開いて押して確認）。
+  `committedSince` 自体は使い捨ての git リポジトリを作る単体テストで押さえてある
+  （窓の外のコミットを拾わないこと込み）。
 
 **まだ実機で見ていない**: 長い転写での件数不変（1）、停止済みセッション（2）、
 worktree 違いの開き先（3）、subdir 起動（4）、未追跡行の遷移（5）、codex / opencode の

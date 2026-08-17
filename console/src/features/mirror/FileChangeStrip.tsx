@@ -32,6 +32,7 @@ export function FileChangeStrip({ session, files }: { session: string; files: Se
   const tr = useT();
   const filesTick = useFilesStore((s) => s.tick);
   const [changes, setChanges] = useState<FsChange[]>([]);
+  const [committed, setCommitted] = useState<string[]>([]);
   const [sort, setSort] = useState<FileSort>(() => (readLS("af.mirror-files-sort." + session) === "path" ? "path" : "recent"));
   const openKey = "af.mirror-files-open." + session;
   const sortKey = "af.mirror-files-sort." + session;
@@ -46,16 +47,23 @@ export function FileChangeStrip({ session, files }: { session: string; files: Se
   useRetryLoad(
     async (signal) => {
       try {
-        const d = await api("api/fs/changes");
+        // Two questions, one load: what does the working tree say, and which of these
+        // paths already went into a commit (docs/68 P2). The second only refines rows the
+        // first has nothing to say about, so a failure there is not a failure of the strip.
+        const [d, c] = await Promise.all([
+          api("api/fs/changes"),
+          api(`api/sessions/${encodeURIComponent(session)}/committed`).catch(() => null),
+        ]);
         if (signal.aborted) return true;
         if (isTransientErr(d)) return false;
         setChanges(d.changes || []);
+        setCommitted(Array.isArray(c?.committed) ? c.committed : []);
         return true;
       } catch {
         return false;
       }
     },
-    [newest, filesTick],
+    [newest, filesTick, session],
   );
 
   // ⚠️ No empty state. A kind that records no edit coordinates at all (kiro / agy /
@@ -63,7 +71,7 @@ export function FileChangeStrip({ session, files }: { session: string; files: Se
   // indistinguishable from "this session really changed nothing".
   if (!files.length) return null;
 
-  const rows = sortRows(joinChanges(files, changes), sort);
+  const rows = sortRows(joinChanges(files, changes, committed), sort);
   const added = rows.reduce((n, r) => n + (r.added || 0), 0);
   const removed = rows.reduce((n, r) => n + (r.removed || 0), 0);
   const lead = sortRows(rows, "recent")[0];
