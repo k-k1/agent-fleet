@@ -16,6 +16,7 @@ import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
 import { McpAdminView } from "./mcpAdmin.tsx";
 import { PoolView } from "./ec2Pool.tsx";
 import { TenantLoginRules, TenantSignInMethods, SignInMethodRegister } from "./tenantLogin.tsx";
+import { TenantNetworkView } from "./tenantNetwork.tsx";
 
 // Drill-down location: stage plus (optionally) the tenant slug / member being viewed.
 interface View {
@@ -895,6 +896,13 @@ function TenantView({
           nobody else's (決定 30) and because this screen shows one tenant's rows in
           full — the register (tenant list, below) now carries 承認・停止 itself. */}
       {isSuper && <TenantSignInMethods slug={slug} isSuper={isSuper} />}
+
+      {/* テナントの接続元制限（docs/66・ADR 0047）。持ち主は tenant_admin だが、
+          ★ 入口をテナント設定モーダルだけにすると、**tenant_admin の在籍が無い
+          super_admin からは一生見えない** —— アカウントメニューの「テナント設定」は
+          tenant_admin の在籍だけで出るため。実際にそれで「設定にも管理にも無い」に
+          なった。ログイン規則・サインイン方法と同じで面は両方に置く（権限はサーバ）。 */}
+      <TenantNetworkView key={slug} slug={slug} />
 
       <MembersPanel slug={slug} isSuper={isSuper} onOpenMember={onOpenMember} />
     </div>
