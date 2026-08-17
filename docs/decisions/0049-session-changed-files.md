@@ -80,11 +80,22 @@ SCM ペイン・コマンドパレットの `changed`）が、どれも作業コ
 `MirrorView` の `caps` に `openDiff` が無いためミラーもそこを走っている。
 ミラーはペインを持っている側なので渡す。帯とツール行のどちらから開いても同じ挙動になる。
 
-## 決定 8 — cursor / copilot は `Part.File` を埋めて対応 kind に入れる（P1）
+## 決定 8 — cursor / copilot は `Part.File` を埋めて対応 kind に入れる（P1 で実施）
 
 両者とも入力に `path` / `file_path` / `target_file` を持ちながら、**表示用の `Info` 文字列に
-畳んで捨てている**。取り直すだけで一覧に載る（`Edits` は無いので `+N −M` は出さない）。
-kiro / agy は持っていないので対象外。
+畳んで捨てていた**。kiro / agy は持っていないので対象外。
+
+**実測（2026-08-17・ディスクに残っていた実転写）で見積もりが 2 つ変わった:**
+
+- **before/after も来ていた** ので `+N −M` まで出る（「差分は出さない」を撤回）。
+  cursor `Write` = `{"path","contents"}` / copilot `edit` = `{"path","old_str","new_str"}`。
+- ⚠️ **判定は名前の allowlist にする。「read 以外は編集」にしない。** 名前が変わった版で
+  後者だと **`Read` / `view` しただけのファイルが「変更ファイル」に並ぶ**——一覧が黙って
+  嘘をつく側に倒れる。allowlist の取りこぼしは「行が出ない」で済む。
+- ⚠️ **cursor の managed（ACP）経路では名前を見ない。** ACP は `tool_call.kind`
+  （`read`/`edit`/`delete`/`move`/…）と `locations` で**プロトコル自身が分類している**。
+  `title` は "Write /tmp/x" という表示文字列で、そこから名前を復元するのは、まさに
+  この機能が避けたい文字列契約になる。before/after は入力の**形だけ**から取る。
 
 ## 決定 9 — fork の履歴もサブエージェントの編集も**数える**
 

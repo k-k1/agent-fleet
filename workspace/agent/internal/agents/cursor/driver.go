@@ -774,6 +774,14 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 			Status     string          `json:"status"`
 			RawInput   json.RawMessage `json:"rawInput"`
 			RawOutput  json.RawMessage `json:"rawOutput"`
+			// ACP classifies a tool call itself: read | edit | delete | move | search |
+			// execute | think | fetch | other, with the files it touches in `locations`.
+			// That is what the changed-files list (docs/68) keys off here — the protocol's
+			// own vocabulary, rather than the CLI's tool NAMES which are free to change.
+			Kind      string `json:"kind"`
+			Locations []struct {
+				Path string `json:"path"`
+			} `json:"locations"`
 			// current_mode_update
 			CurrentModeID string `json:"currentModeId"`
 			// available_commands_update — CLI 広告のスキル/コマンド一覧
@@ -807,7 +815,31 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	case "agent_thought_chunk":
 		h.buf.thoughtChunk(u.Content.Text)
 	case "tool_call":
-		h.buf.toolCall(u.ToolCallID, u.Title, toolInfo(u.RawInput))
+		file, verb, edits := "", "", []transcript.Edit(nil)
+		switch u.Kind {
+		case "edit", "move":
+			verb = "edit"
+		case "delete":
+			verb = "delete"
+		}
+		if verb != "" {
+			// `move` reports its DESTINATION last (source first), and for an edit there is
+			// normally exactly one location; either way the last one is where the content
+			// lives now, which is what a reader wants to open.
+			if n := len(u.Locations); n > 0 {
+				file = u.Locations[n-1].Path
+			}
+			// rawInput still carries the before/after, so the +/- counters work here too.
+			// Read by SHAPE, not by name: `title` is a display string ("Write /tmp/x"),
+			// and turning it back into a tool name would be exactly the string contract
+			// the protocol's `kind` lets us avoid.
+			f, es := editsFromInput(u.RawInput)
+			if file == "" {
+				file = f
+			}
+			edits = es
+		}
+		h.buf.toolCall(u.ToolCallID, u.Title, toolInfo(u.RawInput), file, verb, edits)
 	case "tool_call_update":
 		if out := toolOutput(u.RawOutput); out != "" {
 			h.buf.toolOutput(u.ToolCallID, out)
