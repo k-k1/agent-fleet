@@ -1288,10 +1288,10 @@ export const ja = {
   "admin.empty_deploy_default": "空 = デプロイ既定に従う",
   "admin.session_halt": "セッション停止まで",
   "admin.ws_stop": "ワークスペース停止まで",
-  "admin.idle_ph_30m": "例 30m（空=無効）",
-  "admin.idle_ph_60m": "例 60m（空=無効）",
+  "admin.idle_ph_30m": "例 30m（空=デプロイ既定 1h）",
+  "admin.idle_ph_60m": "例 60m（空=デプロイ既定 2h）",
   "admin.idle_hint_1": "放置された Claude セッションは「セッション停止まで」で停止中（再開可）になり、接続も稼働もないワークスペースは「ワークスペース停止まで」で停止します。書式は ",
-  "admin.idle_hint_2": "。空欄はデプロイ既定（既定は無効）に従い、",
+  "admin.idle_hint_2": "。空欄はデプロイ既定（セッション 1h／ワークスペース 2h）に従い、",
   "admin.idle_hint_3": " で明示的に無効化します。",
   // home の退避（AF_RUNTIME=ecs-ec2 のみ・ADR 0045 決定 13-2）。ここだけが「利用者の home を
   // 自動で今の置き場から動かす」設定なので、可逆であることと初日が遅くなることを必ず書く。
@@ -1717,10 +1717,16 @@ export const ja = {
   "wsbar.state.unknown": "不明",
   // 起動中ダイアログ（WsStartingDialog・docs/35 §35.9-9）
   "wsstart.title": "ワークスペースを起動中",
-  "wsstart.generic": "起動しています…（初回はエージェント CLI の導入で数分かかることがあります）",
+  "wsstart.generic": "起動しています…",
   "wsstart.installing_clis": "エージェント CLI を導入中…（初回のみ・数分かかることがあります）",
   "wsstart.fetching_tool": "追加ツールを取得中…",
   "wsstart.toolchain": "ツールチェーンを導入中…",
+  "wsstart.slot_creating": "実行するマシンを用意しています…（新しく起動するので数分かかります）",
+  "wsstart.slot_waking": "マシンを起こしています…",
+  "wsstart.slot_booting": "マシンの起動を待っています…",
+  "wsstart.home_creating": "home のディスクを作成しています…（初回のみ）",
+  "wsstart.home_restoring": "退避してあった home を復元しています…",
+  "wsstart.home_attaching": "home のディスクを接続しています…",
   "wsstart.hint": "進捗は agent.log にも記録されます。このダイアログは閉じても起動は続きます。",
   // 使用状況チップ／ドロップダウン（UsageChip / UsageRow / USAGE_SOURCES）
   "wsbar.usage.title": "{name} 使用状況（5時間 / 週次）",
