@@ -1100,7 +1100,7 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.forbidden": "You don't have permission (super_admin only).",
   "admin.mode_manage": "Tenants",
   "admin.mode_sessions": "Sessions",
-  "admin.mode_usage": "Usage",
+  "admin.mode_usage": "Running time",
   "admin.mode_audit": "Audit",
   "admin.mode_egress": "Egress",
   "admin.mode_mcp": "MCP",
@@ -1245,7 +1245,55 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.tts_dict_note":
     "A shared dictionary applied to every user's read-aloud (one “spelling=reading” per line; lines starting with # are comments). If a user's own reading dictionary (Read-aloud tab) has the same spelling, that user's entry wins. After saving, other users pick it up on the next Console load.",
   "admin.usage_load_error": "Failed to load.",
-  "admin.usage_title": "Usage (workspace running time)",
+  // --- Cloud cost (docs/67 + ADR 0048) ---
+  // ⚠️ Deliberately NOT called "Usage". Three surfaces already carry that name (agent
+  // tokens, and workspace running time in two places). This one is money, and it only
+  // exists where there is an AWS bill.
+  "admin.mode_cost": "Cloud cost",
+  "tenant.tab_cost": "Cloud cost",
+  "set.tab_cost": "Cloud cost",
+  "cost.admin_title": "Cloud cost by member",
+  "cost.admin_intro":
+    "The AWS invoice, attributed per member by cost allocation tag. Only what is tagged to a person appears here — shared infrastructure is listed separately and is never divided up.",
+  "cost.my_title": "Cloud cost for your workspace",
+  // ⚠️ This wording is the feature. Measured on a real deployment, roughly a fifth of
+  // the bill can be attributed to anyone at all; calling that "your cost" would name a
+  // number five times smaller than what is actually being paid.
+  "cost.my_intro":
+    "What your workspace is directly tagged for: its slot hours, its persistent home volume and its snapshots. Shared infrastructure (NAT, DNS, load balancer, database, idle pool) is NOT included, so this is not the full cost of running your workspace.",
+  "cost.my_total_label": "Directly attributable to your workspace (shared not included)",
+  "cost.attributed_label": "Attributable to members",
+  "cost.shared_title": "Shared infrastructure",
+  "cost.shared_intro":
+    "Costs that belong to no one person and are deliberately not split among members — splitting them would turn the invoice into an estimate. Warm slots nobody is holding land here too, which is what an oversized pool costs.",
+  "cost.shared_label": "Shared (not attributed)",
+  "cost.shared_centres": "Cost centres:",
+  "cost.account_scope": "Aggregated over this whole AWS account, so anything else running in it is included in the shared figure.",
+  "cost.breakdown": "What it was spent on",
+  "cost.no_records": "No cost recorded for this range.",
+  "cost.load_error": "Could not load cloud cost.",
+  "cost.lag": "Cost Explorer runs about {h} hours behind.",
+  "cost.estimated_note": "The most recent days are not final yet and will still change.",
+  // ⚠️ Activation is not retroactive, so this is permanent, not a loading state.
+  "cost.no_backfill":
+    "Nothing is available before {day}: cost allocation tags only apply from the moment they are switched on, and cannot be backfilled.",
+  "cost.unverified_runtime":
+    "Tagging for this runtime has not yet been confirmed against a live deployment, so figures may be incomplete.",
+  "cost.poll_error": "Cost Explorer could not be read, so these figures are stale or empty:",
+  "cost.centre_slot_hours": "Slot hours",
+  "cost.centre_home_volume": "Home volume",
+  "cost.centre_snapshots": "Snapshots",
+  "cost.centre_task_compute": "Task compute",
+  "cost.centre_scratch": "Working disk",
+  "cost.centre_nat": "NAT gateway",
+  "cost.centre_dns": "DNS",
+  "cost.centre_lb": "Load balancer",
+  "cost.centre_db": "Database",
+  "cost.centre_efs": "Shared file system",
+  "cost.centre_idle_pool": "Idle slot pool",
+  "cost.centre_cp": "Control plane",
+  "cost.centre_tax": "Tax",
+  "admin.usage_title": "Running time (workspace occupancy)",
   "admin.usage_intro":
     "Infrastructure occupancy = the total time workspaces were running (Claude usage fees are on each person's own subscription and not included here). Sampled about every 5 minutes, so there's some error.",
   "admin.from": "From",
@@ -1520,7 +1568,7 @@ export const en: Record<keyof typeof ja, string> = {
   "tenant.group_manage": "Operations",
   "tenant.tab_members": "Members",
   "tenant.tab_sessions": "Sessions",
-  "tenant.tab_usage": "Usage",
+  "tenant.tab_usage": "Running time",
   "tenant.tab_audit": "Audit",
   "tenant.tab_mcp": "MCP distribution",
   "tenant.picker": "Tenant",
