@@ -10,12 +10,17 @@ package main
 // 作らない（決定 3）。
 
 import (
+	"net/http"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -208,4 +213,73 @@ func fileAggHead(b []byte) string {
 		b = b[:256]
 	}
 	return string(b)
+}
+
+// ── コミット済みの判定（docs/68 P2）────────────────────────────────────────────
+//
+// 帯の行は「エージェントが編集した」ものだが、作業ツリーに差分が残っていない行が出る。
+// P0 ではそれを「差分なし」の一語で出していた——コミットされたのか、取り消されたのかを
+// 区別できなかったからである。
+//
+// ⚠️ ここで足すのは **「コミット済み」だけ**。「取り消された」は言わない。
+// 差分が無くコミットにも出てこない理由は他にもある（このセッションの開始より前の
+// コミットに入っていた・別の作業コピーで起きた・ファイルが移動した）。**肯定できるのは
+// 「コミットに現れた」という事実だけ**で、残りを「取り消し」と断ずるのは、根拠のない
+// 断定を UI に書くことになる。残りは「差分なし」のままにする。
+
+// maxCommitScan bounds the log walk. A session that produced more commits than this is
+// well past the point where a per-file badge is the interesting information.
+const maxCommitScan = 200
+
+// handleSessionCommittedFiles reports the repo-relative paths that appeared in a commit
+// in this session's working copy SINCE the session was created.
+//
+// ⚠️ 時刻が根拠なので、同じ作業コピーで並行していた別セッションのコミットも入る。
+// それでも実害が小さいのは、突き合わせる相手が**このセッションが編集したファイル**に
+// 限られているからで、「自分が触ったファイルが、その後コミットされた」という表示は
+// 誰がコミットしたかに関わらず正しい。
+func handleSessionCommittedFiles(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	meta, ok := session.ReadMeta(name)
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"repo":      meta.Repo,
+		"committed": committedSince(meta.Dir, meta.CreatedAt),
+	})
+}
+
+// committedSince lists the paths touched by commits in dir since `since` (RFC3339).
+// Any failure — not a git working copy, no such directory, an unparsable timestamp —
+// returns an empty list: the badge simply stays 差分なし, which is the honest degradation.
+func committedSince(dir, since string) []string {
+	if dir == "" || since == "" {
+		return []string{}
+	}
+	if _, err := time.Parse(time.RFC3339, since); err != nil {
+		return []string{}
+	}
+	out, err := gitx.Run(dir, "-c", "core.quotePath=false", "log",
+		"--since="+since, "--max-count="+strconv.Itoa(maxCommitScan),
+		"--name-only", "--pretty=format:", "--no-renames")
+	if err != nil {
+		return []string{}
+	}
+	seen := map[string]bool{}
+	paths := []string{}
+	for _, ln := range strings.Split(out, "\n") {
+		p := strings.TrimSpace(ln)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	return paths
 }
