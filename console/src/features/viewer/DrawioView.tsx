@@ -12,11 +12,18 @@
 //      （2026-08-16 の不具合。§65.11-7）。資格情報を持つ親が取り、本文を渡す。
 //   3. フレームが `ready` と言ってから送る。iframe を作った直後に送ると、まだ srcdoc の
 //      文書が無く、メッセージは初期の about:blank に配達されて消える（実測）。
+//
+// **テーマが変わったらフレームごと作り直す**（docs/65 §65.11-12）。同じフレームに
+// 描き直しを頼んでも drawio のテーマは切り替わらない —— 実測では背景と塗りだけが
+// 暗くなり、**コンテナ見出しが消え、エッジのラベルはライト時の白いピル＋黒文字のまま**
+// 残った。色の決定は読み込み・初回描画の時点で固まる作りで、1 文書内でのテーマ往復は
+// 想定されていない。作り直しの代償は 4MB の再評価（キャッシュから ~76ms）だけで、
+// **見ていた場所（ページ・倍率・位置）は引き継ぐ**ので体感は連続する。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import viewerAssetUrl from "../../../vendor/drawio/viewer-static.min.js?url";
 import { downloadURL } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import { DRAWIO_MSG, drawioFrameSrcdoc, isDrawioFrameEvent } from "./drawioFrame.ts";
+import { DRAWIO_MSG, drawioFrameSrcdoc, isDrawioFrameEvent, type DrawioViewState } from "./drawioFrame.ts";
 
 export interface DrawioState {
   pages: number;
@@ -56,14 +63,17 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [xml, setXml] = useState<string | null>(null);
   const [booted, setBooted] = useState(false);
+  // 直近の現在地。フレームを作り直すときにそのまま渡す。
+  const viewStateRef = useRef<DrawioViewState | null>(null);
   const [err, setErr] = useState("");
   const [frameErr, setFrameErr] = useState("");
   const onStateRef = useRef(onState);
   onStateRef.current = onState;
 
-  // srcdoc は **一度だけ** 組み立てる。作り直すと iframe が再読み込みになり、ビューアを
-  // もう一度評価することになるので、テーマ切り替えや別ファイルは postMessage 側で扱う。
-  const srcdoc = useMemo(() => drawioFrameSrcdoc({ dark }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // srcdoc はテーマごとに組み立てる。**テーマが変わったら作り直す**のが目的なので、
+  // iframe には key を与えて React に新しい要素を作らせる（同じ要素の srcDoc を
+  // 差し替える形だと、前の文書のリスナが残った window を掴み続けることがある）。
+  const srcdoc = useMemo(() => drawioFrameSrcdoc({ dark }), [dark]);
 
   const post = useCallback((message: Record<string, unknown>) => {
     const win = frameRef.current?.contentWindow;
@@ -71,11 +81,18 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
     win.postMessage({ af: DRAWIO_MSG, ...message }, "*");
   }, []);
 
+  // 新しいフレームは何も知らない状態から始まる。boot からやり直す。
+  useEffect(() => {
+    setBooted(false);
+  }, [dark]);
+
   useEffect(() => {
     let alive = true;
     setXml(null);
     setErr("");
     setFrameErr("");
+    // 別のファイルになったら現在地は捨てる（別の文書の座標は意味を持たない）。
+    viewStateRef.current = null;
     onStateRef.current?.(null);
     fetch(downloadURL(filePath))
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
@@ -117,6 +134,13 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
         return;
       }
       setFrameErr("");
+      viewStateRef.current = {
+        pageId: msg.pageId,
+        scale: msg.scale,
+        tx: msg.tx,
+        ty: msg.ty,
+        adjusted: msg.adjusted,
+      };
       onStateRef.current?.({ pages: msg.pages, page: msg.page, scale: msg.scale });
     };
     window.addEventListener("message", onMessage);
@@ -125,9 +149,10 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
 
   // 描画要求。ビューアが評価済みで XML が揃ってから送る。順番が逆でもフレーム側が
   // 1 通だけ保持するが、待てるならここで待つ方が経路が 1 本で済む。
+  // 作り直し後は、直前に見ていた場所を一緒に渡して復元させる。
   useEffect(() => {
     if (!booted || xml == null) return;
-    post({ t: "render", xml, dark });
+    post({ t: "render", xml, dark, restore: viewStateRef.current });
   }, [booted, xml, dark, post]);
 
   if (err) return <pre className="filebody muted">({err})</pre>;
@@ -135,6 +160,8 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
   return (
     <div className="drawioview">
       <iframe
+        // テーマごとに別の要素にする（作り直しの契機はここ）。
+        key={dark ? "dark" : "light"}
         ref={frameRef}
         className="drawio-frame"
         title={tr("view.diagram")}
