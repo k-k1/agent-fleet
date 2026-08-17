@@ -359,3 +359,15 @@ EFS のペナルティは **1 ファイルあたり約 14.5 ms 固定**、帯域
 exec role）／ `bench.sh`・`bench2.sh`・`bench3.sh`（計測本体）／ `teardown.sh`（撤去）。
 再現するときは **1 セッションで deploy → 計測 → teardown を閉じる**こと。今回の実行後、
 EFS / cluster / SG / log group / IAM role / task definition がすべて 0 件であることを確認済み。
+
+## 63.8 4 つ目のランタイムでは 3 軸の意味が変わる（`ecs-ec2`・2026-08-17）
+
+本書が決めた 3 軸（メモリ・CPU・ディスク）は **Fargate と docker を前提にした意味**である。
+[64](64-ec2-persistent-workspace.md) の `ecs-ec2` はスロットを 1 人で専有する形なので、
+**同じ 3 軸が別のものを指す**——CPU は使われず、メモリは「上限」ではなく「乗る箱を選ぶ必要量」、
+ディスクは作業ディスクではなく**永続 home の EBS サイズ**になる。
+
+保存の形（ADR 0044 決定 1：ランタイム中立な独立した 3 つの数値）は**変えない**。
+変えるのは「その値が何になるか」を**ランタイムが申告し、画面がその通りに言う**ことだけである。
+調査は [64](64-ec2-persistent-workspace.md) §64.27、決定は
+[ADR 0045](decisions/0045-ec2-persistent-workspace.md) 決定 21。

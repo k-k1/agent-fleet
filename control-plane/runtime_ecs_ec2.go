@@ -270,9 +270,16 @@ type ec2PoolConfig struct {
 }
 
 // ec2Slot is one purchasable slot size.
+//
+// vcpu is DECLARED by the operator, not looked up: it exists only so the Console can
+// say "you land on m7i.xlarge (4 vCPU / 16 GiB)". Asking EC2 (DescribeInstanceTypes)
+// would be authoritative, but it means adding an IAM action to the CP task role and
+// redeploying the platform stack for a label — and the operator writing the ladder
+// already knows the number (ADR 0045 決定 21). 0 = not declared → not shown.
 type ec2Slot struct {
 	instanceType string
 	memMiB       int64
+	vcpu         int
 }
 
 // ecsEC2Factory is the `ecs-ec2` RuntimeFactory.
@@ -390,9 +397,14 @@ func (f *ecsEC2Factory) homeGiB(ws Workspace) int32 {
 }
 
 // slotTypeFor picks the smallest configured slot that holds the workspace's memory
-// cap. Sizing on EC2 is a choice of instance type, not Fargate's 74 discrete (cpu,
+// request. Sizing on EC2 is a choice of instance type, not Fargate's 74 discrete (cpu,
 // memory) pairs (docs/64 §64.4.5): the task reserves neither cpu nor memory, so the
 // user gets the whole box (ADR 0045 決定 8).
+//
+// ⚠️ The argument is a REQUIREMENT, not a cap — "fit me into a box this big" — and the
+// person then gets whatever that box has. It is also why 0 (unset) lands on the
+// SMALLEST slot here, while 0 on Fargate means the deployment's task size and on
+// docker means WS_MEMORY. The Console says which of the three it is (ADR 0045 決定 21).
 func (p ec2PoolConfig) slotTypeFor(memBytes int64) string {
 	want := memBytes / mib
 	for _, s := range p.slotSizes {
@@ -403,19 +415,27 @@ func (p ec2PoolConfig) slotTypeFor(memBytes int64) string {
 	return p.slotSizes[len(p.slotSizes)-1].instanceType
 }
 
-// parseSlotSizes reads "m7i.large:8192,m7i.xlarge:16384" into an ascending list.
+// parseSlotSizes reads "m7i.large:8192,m7i.xlarge:16384:4" into an ascending list.
+// The third field (vCPU) is OPTIONAL and display-only, so every ladder written before
+// it existed keeps parsing unchanged; a malformed one drops just the vCPU, never the
+// slot — a rung silently vanishing from the ladder would change placement.
 func parseSlotSizes(spec string) []ec2Slot {
 	var out []ec2Slot
 	for _, part := range splitCSV(spec) {
-		name, memStr, ok := strings.Cut(part, ":")
+		name, rest, ok := strings.Cut(part, ":")
 		if !ok {
 			continue
 		}
+		memStr, cpuStr, _ := strings.Cut(rest, ":")
 		mem, err := strconv.ParseInt(strings.TrimSpace(memStr), 10, 64)
 		if err != nil || mem <= 0 || strings.TrimSpace(name) == "" {
 			continue
 		}
-		out = append(out, ec2Slot{instanceType: strings.TrimSpace(name), memMiB: mem})
+		slot := ec2Slot{instanceType: strings.TrimSpace(name), memMiB: mem}
+		if cpu, err := strconv.Atoi(strings.TrimSpace(cpuStr)); err == nil && cpu > 0 {
+			slot.vcpu = cpu
+		}
+		out = append(out, slot)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].memMiB < out[j].memMiB })
 	return out
