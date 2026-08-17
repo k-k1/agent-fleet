@@ -20,6 +20,7 @@ import { textOfParts, workSplit } from "../mirrorParts.ts";
 import { footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
 import { foldParts, peerSenderOf, spendOf } from "./model.ts";
+import { chipPart, turnFiles } from "./turnFiles.ts";
 import type { Group, Part } from "./types.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import {
@@ -59,6 +60,7 @@ export function TranscriptTurn({
   const maxSpend = caps.maxSpend || 0;
   const bodyEl = useRef<HTMLDivElement>(null); // カラオケ朗読（turnTts）の本文 DOM
   const split = !isUser && foldWork ? workSplit(turn.parts) : null;
+  const edited = isUser ? [] : turnFiles(turn.parts);
   const copyText = split ? textOfParts(turn.parts.slice(split.at)) : turn.text;
   const renderAssistantParts = (parts: Part[]) =>
     foldParts(parts).map((item) =>
@@ -278,6 +280,28 @@ export function TranscriptTurn({
           renderAssistantParts(turn.parts)
         )}
       </div>
+      {/* Files this reply edited, as chips — the answer to 「さっき直したのはどれ」
+          without expanding a folded ToolRun and reading tool traces. Only where a diff
+          can actually be opened: the shared view has no pane, and its DTO drops the path
+          anyway (transcript/capabilities.ts — absent capability, no affordance). */}
+      {!isUser && caps.openDiff && edited.length > 0 && (
+        <div className="mirror-turn-files">
+          <Icon name="edit" className="mtf-mark" />
+          {edited.map((f) => (
+            <button
+              type="button"
+              key={f.file}
+              className={"mtf-chip" + (f.verb === "delete" ? " mtf-deleted" : "")}
+              title={f.file}
+              disabled={f.edits.length === 0}
+              onClick={() => caps.openDiff!(chipPart(f))}
+            >
+              <FileIcon name={f.name} />
+              <span className="mtf-name">{f.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="mirror-turn-foot">
         {/* The block's END: when this reply landed, not when the agent started working on
             it (turnTime.ts). The start stays reachable as a tooltip on a spanning turn. */}

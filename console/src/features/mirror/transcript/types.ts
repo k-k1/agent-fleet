@@ -48,6 +48,10 @@ export interface Part {
   model?: string; // kind=delegation: explicitly selected child model
   file?: string;
   edits?: any[];
+  // verb qualifies `file` for the changed-files list (docs/68): "add" | "edit" | "delete".
+  // Only a parser that KNOWS sends it (codex reads it out of the patch header); absent
+  // means "derive it from the edits", never "deleted".
+  verb?: string;
   questions?: Question[];
   answer?: string;
   // declined marks kind=question only: the answer text is claude's own decline
