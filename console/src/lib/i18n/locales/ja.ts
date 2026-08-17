@@ -1284,6 +1284,11 @@ export const ja = {
   "cost.unverified_runtime":
     "このランタイムでのタグ付けは実環境でまだ確認できていないため、数字が欠けている可能性があります。",
   "cost.poll_error": "Cost Explorer を読めていないため、この数字は古いか空です:",
+  "cost.tags_pending":
+    "{keys} はまだ集計されていません。AWS 側の登録が終わっていないためで、この間の費用はいま失われつつあり、あとから取り戻せません。通常は 1 日以内に解消します。",
+  "cost.tags_error":
+    "コスト配分タグを自動で有効化できませんでした。費用が誰にも割り当てられておらず、この欠測は取り戻せません:",
+  "cost.tags_declined": "請求コンソールで無効にされているため、そのままにしています: {keys}",
   "cost.centre_slot_hours": "スロット稼働時間",
   "cost.centre_home_volume": "ホームボリューム",
   "cost.centre_snapshots": "スナップショット",

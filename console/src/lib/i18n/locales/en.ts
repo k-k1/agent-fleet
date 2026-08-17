@@ -1280,6 +1280,11 @@ export const en: Record<keyof typeof ja, string> = {
   "cost.unverified_runtime":
     "Tagging for this runtime has not yet been confirmed against a live deployment, so figures may be incomplete.",
   "cost.poll_error": "Cost Explorer could not be read, so these figures are stale or empty:",
+  "cost.tags_pending":
+    "Not yet counting {keys}: AWS has not finished registering the tag, so spend on that axis is being lost right now and cannot be recovered later. This usually clears within a day.",
+  "cost.tags_error":
+    "The cost allocation tags could not be switched on automatically, so spend is not being attributed and that gap is permanent:",
+  "cost.tags_declined": "Switched off in the billing console, so it is left alone: {keys}",
   "cost.centre_slot_hours": "Slot hours",
   "cost.centre_home_volume": "Home volume",
   "cost.centre_snapshots": "Snapshots",
