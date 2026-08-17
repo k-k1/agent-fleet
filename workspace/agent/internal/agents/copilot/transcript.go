@@ -148,27 +148,20 @@ func parseEvents(path string) []transcript.Turn {
 			}
 		case "tool.execution_start":
 			var d struct {
-				ToolCallID string `json:"toolCallId"`
-				ToolName   string `json:"toolName"`
-				Model      string `json:"model"`
-				Arguments  struct {
-					Command     string `json:"command"`
-					Description string `json:"description"`
-					Path        string `json:"path"`
-				} `json:"arguments"`
+				ToolCallID string          `json:"toolCallId"`
+				ToolName   string          `json:"toolName"`
+				Model      string          `json:"model"`
+				Arguments  json.RawMessage `json:"arguments"`
 			}
 			if json.Unmarshal(ev.Data, &d) != nil {
 				continue
 			}
 			ensureCur(idx, ev.TS, d.Model)
-			info := d.Arguments.Description
-			if info == "" {
-				info = d.Arguments.Command
+			part := transcript.Part{Kind: "tool", Tool: d.ToolName, Info: clip(toolLabel(d.Arguments))}
+			if f, verb, es := toolEdits(d.ToolName, d.Arguments); f != "" {
+				part.File, part.Verb, part.Edits = f, verb, es
 			}
-			if info == "" {
-				info = d.Arguments.Path
-			}
-			cur.Parts = append(cur.Parts, transcript.Part{Kind: "tool", Tool: d.ToolName, Info: clip(info)})
+			cur.Parts = append(cur.Parts, part)
 			if d.ToolCallID != "" {
 				toolIdx[d.ToolCallID] = len(cur.Parts) - 1
 			}
@@ -204,4 +197,73 @@ func parseEvents(path string) []transcript.Turn {
 	}
 	flush()
 	return turns
+}
+
+// toolLabel picks the short human-facing label for a tool trace (unchanged order —
+// description, then the command, then the path; it just reads the raw arguments now).
+func toolLabel(args json.RawMessage) string {
+	if len(args) == 0 {
+		return ""
+	}
+	var a struct {
+		Command     string `json:"command"`
+		Description string `json:"description"`
+		Path        string `json:"path"`
+	}
+	if json.Unmarshal(args, &a) != nil {
+		return ""
+	}
+	for _, s := range []string{a.Description, a.Command, a.Path} {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// toolEdits extracts the edit-family payload of a copilot tool call, so a session's
+// changed-files list (docs/68) has a coordinate to list and a before/after to count.
+//
+// 実測（~/.copilot/session-state/*/events.jsonl, 2026-08）: 観測できた tool は
+// `view` / `bash` / `edit` / `grep` の 4 つで、編集は **`edit`** ——
+// {"path","old_str","new_str"}。`create` / `write` は同じ引数語彙を持つ兄弟として
+// 受けておく（存在しなければ一致しないだけ）。ファイルの削除は `bash` の rm で行われる
+// ので、ここでは表現できない（git 側の D が拾う）。
+//
+// ⚠️ 名前は allowlist。逆にすると名前が変わった版で **`view` しただけのファイルが
+// 「変更ファイル」に並ぶ**。取りこぼしは「行が出ない」で済む。
+func toolEdits(name string, args json.RawMessage) (file, verb string, edits []transcript.Edit) {
+	switch name {
+	case "edit", "create", "write", "str_replace":
+	default:
+		return "", "", nil
+	}
+	if len(args) == 0 {
+		return "", "", nil
+	}
+	var a struct {
+		Path     string `json:"path"`
+		FilePath string `json:"file_path"`
+		OldStr   string `json:"old_str"`
+		NewStr   string `json:"new_str"`
+		Content  string `json:"content"`
+		Contents string `json:"contents"`
+	}
+	if json.Unmarshal(args, &a) != nil {
+		return "", "", nil
+	}
+	file = a.Path
+	if file == "" {
+		file = a.FilePath
+	}
+	if file == "" {
+		return "", "", nil
+	}
+	if body := a.Content + a.Contents; a.OldStr == "" && a.NewStr == "" && body != "" {
+		return file, "", []transcript.Edit{{Old: "", New: transcript.CapEdit(body)}}
+	}
+	if a.OldStr == "" && a.NewStr == "" {
+		return "", "", nil // an edit-family name with no payload we understand
+	}
+	return file, "", []transcript.Edit{{Old: transcript.CapEdit(a.OldStr), New: transcript.CapEdit(a.NewStr)}}
 }

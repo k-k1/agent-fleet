@@ -1,6 +1,6 @@
 # 68. セッションが直したファイルへ、ミラーから一手で届くようにする
 
-- 状態: **設計確定**（2026-08-17）。決定は [decisions/0049](decisions/0049-session-changed-files.md)。
+- 状態: **P0＋P1 実装済み**（2026-08-17）。決定は [decisions/0049](decisions/0049-session-changed-files.md)。
 - 関連: [docs/44](44-markdown-code-editor.md)（File ペインの表示/編集モード） /
   [docs/55](55-fork-at-message.md)（転写の anchor） /
   [docs/59](59-session-sharing.md) §3（共有 DTO は座標を落とす） /
@@ -58,13 +58,33 @@ Console 側の `Part` にも `file?: string` は宣言されている。
 | claude | ○ | ○ | `toolEdits()` が Edit/Write/MultiEdit を展開 |
 | codex | ○ | ○ | `*** Update File:` などの patch ヘッダから |
 | opencode | ○ | ○ | 同上（edit 系ツール） |
-| cursor | ✕ | ✕ | **入力に `path`/`file_path`/`target_file` が来ているのに、表示用 `Info` 文字列に畳んで捨てている**（`cursor/transcript.go`） |
-| copilot | ✕ | ✕ | 同上（`arguments.path` を `Info` へ・`copilot/transcript.go`） |
+| cursor | ○ | ○ | P1 で対応。jsonl は tool 名の allowlist（`Write`/`Edit`/`MultiEdit`/`Delete`）、**ACP（managed）は `tool_call.kind`** |
+| copilot | ○ | ○ | P1 で対応。`edit` / `create` / `write`（events.jsonl は全経路で書かれる） |
 | kiro / agy | ✕ | ✕ | ツール名と短いラベルしか持たない |
 | shell / ssm | — | — | 転写が無い |
 
-cursor / copilot は **`Part.File` に入れ直すだけ**で一覧に載る（差分の +N −N は出ない）。
 kiro / agy / shell / ssm は載らない——**その場合は帯ごと出さない**（§68.7）。
+
+#### cursor / copilot をどう載せたか（P1・実測 2026-08-17）
+
+設計時は「`Info` に畳む前のパスを取り直すだけ・差分は出ない」と見積もっていたが、
+**ディスクに残っていた実転写を読んだら before/after も来ていた**ので、+N −M まで出る。
+
+| | 観測できた tool 名 | 編集の形 |
+|---|---|---|
+| cursor（jsonl） | `Shell` `Glob` `Grep` `Read` `Write` `WebSearch` `WebFetch` `GetMcpTools` `CallMcpTool` | `Write` = `{"path","contents"}` |
+| copilot（events.jsonl） | `view` `bash` `edit` `grep` | `edit` = `{"path","old_str","new_str"}` |
+
+⚠️ **判定は allowlist にする（「read 以外は編集」にしない）。** 名前が変わった版で
+後者だと **Read / view しただけのファイルが「変更ファイル」に並ぶ**——一覧が黙って嘘を
+つく側に倒れる。allowlist なら取りこぼしても「行が出ない」で済む。実測できた名前
+（`Write` / `edit`）に、同じ語彙群の兄弟（`Edit`/`MultiEdit`/`Delete`、`create`/`write`）を
+足してある。存在しなければ一致しないだけ。
+
+⚠️ **cursor の managed（ACP）経路では tool 名を見ない。** ACP は `tool_call.kind`
+（`read`/`edit`/`delete`/`move`/…）と `locations` で**プロトコル自身が分類している**ので、
+そちらを使う（`title` は "Write /tmp/x" のような表示文字列で、そこから名前を復元するのは
+まさに避けたい文字列契約）。before/after は入力の**形だけ**を見て取る。
 
 ---
 
@@ -262,14 +282,14 @@ before/after を持たないが、それは codex が `*** Delete File:` を読�
 | | 内容 |
 |---|---|
 | **P0** | Agent: `CollectFiles()` を claude / 汎用の両経路に足し `resp["files"]`。Console: 帯（`FileChangeStrip`）＋ `fs/changes` 突合＋ `caps.openDiff` 配線＋パレットの `session` モード。i18n は en/ja 両方 |
-| **P1** | cursor / copilot の `Part.File` を埋める（`Info` へ畳む前に取る）／ターン末尾のファイルチップ行／`sidechain` 印 |
+| **P1** | ✅ 済 — cursor / copilot の対応（§68.2.1・差分本体まで取れた）／ターン末尾のファイルチップ行（`turnFiles.ts`）。`sidechain` 印は P0 で入っていた |
 | **P2** | 「差分なし」を **コミット済み / 取り消された** に割る（セッション開始以降の `log` と突合）／左レールのセッション行メニューからの導線 |
 
 「帯だけ作って様子を見る」で止められる形にしてある。P1・P2 は P0 の形を変えない。
 
 ---
 
-## 68.9.1 実装した形（P0・2026-08-17）
+## 68.9.1 実装した形（P0・P1 / 2026-08-17）
 
 | 層 | 置き場 |
 |---|---|
@@ -277,7 +297,9 @@ before/after を持たないが、それは codex が `*** Delete File:` を読�
 | claude | `internal/agents/claude/transcript.go` `CollectFileEdits(lines, from)` |
 | codex | `internal/agents/codex/transcript.go` — `Verb` 明示＋rename の `File` を行き先へ |
 | 集計 | `session_files.go` `sessionFileTouches(...)` ＋ 両ハンドラで `resp["files"]` |
-| Console | `features/mirror/sessionFiles.ts`（突合・並び・開き方）/ `FileChangeStrip.tsx`（帯）/ `MirrorView.tsx`（`caps.openDiff` と公開ストア）/ `CommandPalette.tsx`（4 つ目のモード） |
+| cursor | `internal/agents/cursor/transcript.go`（jsonl・名前の allowlist）/ `driver.go`＋`mirror.go`（ACP・`tool_call.kind` と `locations`） |
+| copilot | `internal/agents/copilot/transcript.go`（`edit` / `create` / `write`） |
+| Console | `features/mirror/sessionFiles.ts`（突合・並び・開き方）/ `FileChangeStrip.tsx`（帯）/ `transcript/turnFiles.ts`＋`TranscriptTurn.tsx`（ターン末尾のチップ）/ `MirrorView.tsx`（`caps.openDiff` と公開ストア）/ `CommandPalette.tsx`（4 つ目のモード） |
 
 **走査コストの扱い（§68.10-9 の答え）。** 全転写を毎ポーリング数え直すのは無理だった——
 `+N −M` は行差分（LCS）であり、編集 1 件あたり最大 2 万文字ぶんの表になる。転写は
@@ -311,7 +333,7 @@ part を足し続けるので（`genericMutableTail` と同じ理由）、その
    **新しい走査を足すのではなく同じパスに相乗りさせる**か、`(path, size, mtime)` でメモ化する。
    → §68.9.1 で追記前提の逐次畳み込みにした。実セッションでの体感は未計測。
 
-### 68.10.1 いま確かめた範囲（2026-08-17）
+### 68.10.1 いま確かめた範囲（2026-08-17・P0＋P1）
 
 自前の headless Chromium で**実バンドル**を撮って確認した（`scripts/shots` のスタブ経由・
 CP も Workspace Agent も無し）。見たのは **1・2・5・7・8 ではなく描画と導線**である:
@@ -322,6 +344,9 @@ CP も Workspace Agent も無し）。見たのは **1・2・5・7・8 ではな
   空でも `.mfl-stat` を描いて直した。
 - コマンドパレットの 4 つ目のモードが**出る／選べる／5 行を新しい順で並べる**こと
   （Ctrl+P → Tab×3 を CDP で叩いて確認）。
+- ターン末尾のファイルチップが、畳まれた「2 件のツール」行とフッターの間に出ること（P1）。
+- cursor / copilot の編集の形は**ディスクに残っていた実転写**から取った（§68.2.1）——
+  ただし読んだのは既存の記録で、**この変更を通した実セッションでは未確認**。
 
 **まだ実機で見ていない**: 長い転写での件数不変（1）、停止済みセッション（2）、
 worktree 違いの開き先（3）、subdir 起動（4）、未追跡行の遷移（5）、codex / opencode の
