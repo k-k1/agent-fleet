@@ -212,6 +212,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /fs/search", handleFSSearch)
 	mux.HandleFunc("GET /fs/file", handleFSFile)
 	mux.HandleFunc("PUT /fs/file", handleFSFilePut)
+	// ミラー本文のパス参照解決（fs_resolve.go）。読むのは stat だけの read-only。
+	mux.HandleFunc("POST /fs/resolve", handleFSResolve)
 	// エディタの AI 変更提案（docs/44 Phase 4）。fs は触らない read-only 生成チャネル。
 	mux.HandleFunc("POST /fs/suggest-edit", handleFSSuggestEdit)
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
