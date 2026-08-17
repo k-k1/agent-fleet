@@ -58,10 +58,19 @@ export const FilesSection = memo(function FilesSection() {
   const searchRoot = q.trim() && scope === "home" ? "" : "repos";
 
   useEffect(() => {
-    if (reveal.path) {
-      set(true);
-      setView("tree"); // a reveal targets the tree — switch back so it's visible
-    }
+    const p = reveal.path;
+    if (!p) return;
+    set(true);
+    setView("tree"); // a reveal targets the tree — switch back so it's visible
+    // A leftover 絞り込み hides most of the tree (and, while it is a recursive search,
+    // replaces it with a flat hit list and unmounts the home tree) — so the row we are
+    // about to expand to could land somewhere nobody can see. Clearing it is what
+    // "見せて" means.
+    setQ("");
+    // Only the repos tree is mounted unconditionally; everything else in home lives in
+    // the collapsed home disclosure below it. Revealing e.g. ~/.local/share/x without
+    // opening that would look like the click did nothing at all.
+    if (p !== "repos" && !p.startsWith("repos/")) setHome(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal.n]);
 
@@ -183,7 +192,7 @@ export const FilesSection = memo(function FilesSection() {
                 <Icon name={homeOpen ? "chevron-down" : "chevron-right"} />
                 <Icon name="vm" /> home
               </button>
-              {homeOpen && <ProjectFiles root="" />}
+              {homeOpen && <ProjectFiles root="" secondary />}
             </>
           )}
         </div>
