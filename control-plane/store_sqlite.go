@@ -307,11 +307,28 @@ func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProvider
 	return err
 }
 
+// SetTenantAllowedCIDRs writes the tenant's source-network restriction (docs/66).
+// Separate from SetTenantLogin on purpose: that one is super_admin-only because its
+// three fields reach outside the tenant, while this one is the tenant_admin's
+// (ADR 0047 決定 6). Empty = no restriction.
+func (s *sqlStore) SetTenantAllowedCIDRs(ctx context.Context, tenantID, cidrs string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET allowed_cidrs=? WHERE id=?`, cidrs, tenantID)
+	return err
+}
+
+// GetTenantAllowedCIDRs reads it back for the editing screen (the request path reads
+// it through the cache instead).
+func (s *sqlStore) GetTenantAllowedCIDRs(ctx context.Context, tenantID string) (string, error) {
+	var cidrs string
+	err := s.db.QueryRowContext(ctx, `SELECT allowed_cidrs FROM tenant WHERE id=?`, tenantID).Scan(&cidrs)
+	return cidrs, err
+}
+
 // ListTenantLoginRules loads every tenant's rules in one query, already split into
 // slices — the shape the entry-gate cache and the auto-join resolution want.
 func (s *sqlStore) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, slug, name, allowed_providers, auto_join_domains, allowed_domains, hidden_providers
+		`SELECT id, slug, name, allowed_providers, auto_join_domains, allowed_domains, hidden_providers, allowed_cidrs
 		 FROM tenant WHERE status='active' ORDER BY slug`)
 	if err != nil {
 		return nil, err
@@ -320,14 +337,15 @@ func (s *sqlStore) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules
 	var out []TenantLoginRules
 	for rows.Next() {
 		var r TenantLoginRules
-		var provs, autoJoin, allowed, hidden string
-		if err := rows.Scan(&r.ID, &r.Slug, &r.Name, &provs, &autoJoin, &allowed, &hidden); err != nil {
+		var provs, autoJoin, allowed, hidden, cidrs string
+		if err := rows.Scan(&r.ID, &r.Slug, &r.Name, &provs, &autoJoin, &allowed, &hidden, &cidrs); err != nil {
 			return nil, err
 		}
 		r.AllowedProviders = splitCSVLower(provs)
 		r.AutoJoinDomains = splitDomainCSV(autoJoin)
 		r.AllowedDomains = splitDomainCSV(allowed)
 		r.HiddenProviders = splitCSVLower(hidden)
+		r.AllowedCIDRs = splitCSV(cidrs)
 		out = append(out, r)
 	}
 	return out, rows.Err()

@@ -124,3 +124,67 @@ describe("メンバーの上限編集", () => {
     expect(body).toMatchObject({ mem_limit: 16384 * 1048576, cpu_limit: 4096, disk_gb: 80 });
   });
 });
+
+// EC2 スロットプール（ADR 0045 決定 21）。ここで押さえるのは「効かない入力欄を出さない」
+// ことと、「隠した副作用で保存済みの値を 0 に落とさない」ことの 2 点である —— 前者だけ
+// 直すと、CPU 欄を隠した瞬間に他ランタイム用に設定された cpu_limit が消える。
+const SIZING_EC2 = {
+  runtime: "ecs-ec2",
+  cpu_effective: false,
+  mem_meaning: "slot",
+  disk_meaning: "home",
+  disk_default_gb: 50,
+  disk_create_only: true,
+  slots: [
+    { instance_type: "m7i.large", mem_mib: 8192, vcpu: 2 },
+    { instance_type: "m7i.xlarge", mem_mib: 16384, vcpu: 4 },
+    { instance_type: "m7i.2xlarge", mem_mib: 32768, vcpu: 8 },
+  ],
+};
+
+describe("メンバーの上限編集（ecs-ec2）", () => {
+  beforeEach(() => {
+    api.mockImplementation((p: string) =>
+      p === "api/admin/workspace-sizing"
+        ? Promise.resolve(SIZING_EC2)
+        : Promise.resolve({ running: false, sessions: [] }),
+    );
+  });
+
+  it("CPU 欄を出さない。ただし保存では保存済みの cpu_limit をそのまま送り返す", async () => {
+    await mount();
+    await openEditor();
+    // 最大セッション / メモリ(MB) / ディスク(GB)。CPU 欄が消えている。
+    expect(numbers()).toEqual(["2", "4096", "40"]);
+
+    const save = buttonWith("保存");
+    await act(async () => save!.click());
+    const [, , body] = apiJSON.mock.calls.find((c) => c[0] === "api/admin/user-limits")!;
+    expect(body).toMatchObject({ mem_limit: 4096 * 1048576, cpu_limit: 1024, disk_gb: 40 });
+  });
+
+  it("プリセットは梯子そのもので、メモリ軸だけを動かす", async () => {
+    await mount();
+    await openEditor();
+    const chips = Array.from(document.querySelectorAll<HTMLButtonElement>(".le-presets .chip")).map(
+      (b) => (b.textContent || "").trim(),
+    );
+    expect(chips).toEqual(["8 GiB", "16 GiB", "32 GiB"]);
+
+    await act(async () => buttonWith("16 GiB")!.click());
+    expect(numbers()).toEqual(["2", "16384", "40"]);
+  });
+
+  it("メモリ欄は「上限」ではなく、実際に乗る箱を言う", async () => {
+    await mount();
+    await openEditor();
+    const units = Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) =>
+      (e.textContent || "").trim(),
+    );
+    // 4096 MB は m7i.large に乗る（そして 8 GiB 丸ごと使える）。
+    expect(units).toContain("→ m7i.large（2 vCPU / 8 GiB・専有）");
+    // ディスクは作業ディスクではなく永続 home である、と言う。
+    expect(units.some((u) => u.includes("home の作成時にだけ反映され"))).toBe(true);
+    expect(units.some((u) => u.includes("作業ディスクは停止すると消えます"))).toBe(false);
+  });
+});

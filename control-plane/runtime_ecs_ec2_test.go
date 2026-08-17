@@ -2609,3 +2609,45 @@ func TestECSEC2ClearsThePhaseWhenTheStartFails(t *testing.T) {
 		t.Errorf("phase %q survived a failed start", got)
 	}
 }
+
+// The vCPU field is display-only and OPTIONAL, so a ladder written before it existed
+// must parse exactly as it did — and a malformed vCPU must cost only the label, never
+// the rung. A rung silently dropping out of the ladder would change PLACEMENT.
+func TestECSEC2ParseSlotSizesOptionalVCPU(t *testing.T) {
+	got := parseSlotSizes("m7i.large:8192:2, m7i.xlarge:16384, m7i.2xlarge:32768:oops")
+	if len(got) != 3 {
+		t.Fatalf("parseSlotSizes = %+v, want all three rungs", got)
+	}
+	if got[0].instanceType != "m7i.large" || got[0].vcpu != 2 {
+		t.Errorf("declared vCPU lost: %+v", got[0])
+	}
+	if got[1].vcpu != 0 || got[2].vcpu != 0 {
+		t.Errorf("absent or malformed vCPU must be 0, got %+v / %+v", got[1], got[2])
+	}
+	if got[2].memMiB != 32768 {
+		t.Errorf("a bad vCPU dropped the rung: %+v", got[2])
+	}
+}
+
+// The Console asks the runtime what the three axes mean rather than assuming Fargate
+// (ADR 0045 決定 21). On this one, CPU is not used at all, memory picks a box and the
+// disk number is the PERSISTENT home — the opposite of what the UI used to say.
+func TestECSEC2SizingProfile(t *testing.T) {
+	f := &ecsEC2Factory{pool: ec2PoolConfig{
+		slotSizes: parseSlotSizes("m7i.large:8192:2,m7i.xlarge:16384:4"),
+		homeGiB:   50,
+	}}
+	p := f.SizingProfile()
+	if p.Runtime != "ecs-ec2" || p.CPUEffective {
+		t.Fatalf("want ecs-ec2 with no effective CPU axis, got %+v", p)
+	}
+	if p.MemMeaning != memMeaningSlot || p.DiskMeaning != diskMeaningHome {
+		t.Errorf("axis meanings wrong: %+v", p)
+	}
+	if !p.DiskCreateOnly || p.DiskDefaultGB != 50 {
+		t.Errorf("home size is honoured only at creation and defaults to the pool value: %+v", p)
+	}
+	if len(p.Slots) != 2 || p.Slots[0].InstanceType != "m7i.large" || p.Slots[0].VCPU != 2 {
+		t.Errorf("ladder not reported: %+v", p.Slots)
+	}
+}
