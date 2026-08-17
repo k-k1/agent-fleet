@@ -330,3 +330,50 @@ func TestAggregateUsage(t *testing.T) {
 		t.Fatalf("member b total wrong: %+v", got[1])
 	}
 }
+
+// Workspace reads carry the owning tenant's SLUG (docs/67, ADR 0048 決定 3). It is not a
+// column on the row — the AWS adapters need it to stamp `af-tenant`, and reading it
+// there would mean a store call from inside a tag write, on every Start.
+func TestSQLiteWorkspaceCarriesTenantSlug(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tn, err := st.CreateTenant(ctx, "acme", "Acme")
+	if err != nil {
+		t.Fatalf("tenant: %v", err)
+	}
+	ident, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
+	mem, err := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
+	if err != nil {
+		t.Fatalf("membership: %v", err)
+	}
+	ws := Workspace{
+		ID: newID(), TenantID: tn.ID, MembershipID: mem.ID,
+		ContainerName: "af-ws-acme-a", Network: "n", DataDir: "/d",
+		AgentPort: "7700", AgentToken: "tok", State: "stopped", CreatedAt: nowTS(),
+	}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	got, ok, err := st.GetWorkspaceByMembership(ctx, mem.ID)
+	if err != nil || !ok {
+		t.Fatalf("get: %v ok=%v", err, ok)
+	}
+	if got.TenantSlug != "acme" {
+		t.Errorf("GetWorkspaceByMembership TenantSlug = %q, want acme", got.TenantSlug)
+	}
+	list, err := st.ListWorkspaces(ctx, tn.ID)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list: %v %+v", err, list)
+	}
+	if list[0].TenantSlug != "acme" {
+		t.Errorf("ListWorkspaces TenantSlug = %q, want acme", list[0].TenantSlug)
+	}
+}

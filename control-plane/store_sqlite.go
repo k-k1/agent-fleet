@@ -1371,7 +1371,7 @@ func discardSQLConn(conn *sql.Conn) {
 }
 
 func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {
-	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, workspaceCols+` WHERE membership_id=?`, membershipID))
+	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, workspaceCols+` WHERE w.membership_id=?`, membershipID))
 	if err == sql.ErrNoRows {
 		return Workspace{}, false, nil
 	}
@@ -1413,7 +1413,7 @@ func (s *sqlStore) MaxAgentPort(ctx context.Context) (int, error) {
 }
 
 func (s *sqlStore) ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error) {
-	rows, err := s.db.QueryContext(ctx, workspaceCols+` WHERE tenant_id=? ORDER BY created_at`, tenantID)
+	rows, err := s.db.QueryContext(ctx, workspaceCols+` WHERE w.tenant_id=? ORDER BY w.created_at`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -2035,15 +2035,22 @@ func nullable(s string) any {
 	return s
 }
 
-const workspaceCols = `SELECT id, tenant_id, membership_id, container_name, network, data_dir,
-	agent_port, agent_token, state, created_at, COALESCE(last_active_at,'') FROM workspace`
+// workspaceCols joins the tenant only for its slug (Workspace.TenantSlug). A LEFT
+// JOIN on purpose: a workspace whose tenant row is missing is already broken, but it
+// must still be readable — the alternative is that the sweeper and the reaper stop
+// seeing it, which turns a bad row into leaked AWS resources.
+const workspaceCols = `SELECT w.id, w.tenant_id, COALESCE(t.slug,''), w.membership_id,
+	w.container_name, w.network, w.data_dir, w.agent_port, w.agent_token, w.state,
+	w.created_at, COALESCE(w.last_active_at,'')
+	FROM workspace w LEFT JOIN tenant t ON t.id = w.tenant_id`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanWorkspace(row scanner) (Workspace, error) {
 	var ws Workspace
-	err := row.Scan(&ws.ID, &ws.TenantID, &ws.MembershipID, &ws.ContainerName, &ws.Network,
-		&ws.DataDir, &ws.AgentPort, &ws.AgentToken, &ws.State, &ws.CreatedAt, &ws.LastActiveAt)
+	err := row.Scan(&ws.ID, &ws.TenantID, &ws.TenantSlug, &ws.MembershipID, &ws.ContainerName,
+		&ws.Network, &ws.DataDir, &ws.AgentPort, &ws.AgentToken, &ws.State, &ws.CreatedAt,
+		&ws.LastActiveAt)
 	return ws, err
 }
 
