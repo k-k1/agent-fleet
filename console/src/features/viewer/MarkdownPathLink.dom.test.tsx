@@ -1,6 +1,6 @@
 // Render tests for MarkdownView's inline-code path auto-linking (linkifyPathRefs): a path
-// an agent wrote as `docs/a.md` becomes a link to that file — but only when the file is
-// really there, and only on a surface that can open one.
+// an agent wrote as `docs/a.md` becomes a link to that file — but only when the agent's
+// resolver placed it, and only on a surface that can open one.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -10,16 +10,17 @@ vi.mock("../../ui/ToastProvider.tsx", () => ({
   useToast: () => (m: unknown) => toasts.push(m),
 }));
 
-// Every fs/tree listing the view asks for, and the answers this case wants to give.
-let tree: Record<string, { name: string; type: string }[] | null> = {};
-const asked: string[] = [];
+// The Workspace agent's resolver (POST fs/resolve): every request it is asked, and the
+// answers this case wants to give. Keyed by ref, exactly like the real endpoint.
+let resolved: Record<string, { path: string; type: string }> = {};
+const asked: { cwd: string; refs: string[] }[] = [];
 vi.mock("../../core/api/client.ts", () => ({
-  api: vi.fn(async (path: string) => {
-    const dir = decodeURIComponent(new URL(path, "http://x/").searchParams.get("path") ?? "");
-    asked.push(dir);
-    const entries = tree[dir];
-    if (!entries) return { error: { code: "http_404", message: "not_dir" } };
-    return { entries };
+  api: vi.fn(async () => ({})),
+  apiJSON: vi.fn(async (_path: string, _method: string, body: { cwd: string; refs: string[] }) => {
+    asked.push(body);
+    const out: Record<string, { path: string; type: string }> = {};
+    for (const ref of body.refs) if (resolved[ref]) out[ref] = resolved[ref];
+    return { resolved: out };
   }),
   downloadURL: (p: string) => "/dl/" + p,
 }));
@@ -31,7 +32,7 @@ vi.mock("../files/store.ts", () => ({
 }));
 
 const { MarkdownView } = await import("./MarkdownView.tsx");
-const { clearDirListingCache } = await import("./dirListing.ts");
+const { clearPathRefCache } = await import("./pathResolve.ts");
 
 let host: HTMLDivElement;
 let root: Root;
@@ -42,7 +43,7 @@ const render = async (source: string, props: Record<string, unknown> = {}) => {
     root.render(
       <MarkdownView
         source={source}
-        baseDir="repos/x"
+        baseDir="repos/x/sub"
         onOpenFile={(path: string, line?: number, _c?: number, openInNew?: boolean) =>
           opened.push({ path, line, openInNew })
         }
@@ -50,21 +51,28 @@ const render = async (source: string, props: Record<string, unknown> = {}) => {
       />,
     );
   });
-  // The existence check is async: let the listing promises settle and the links land.
+  // Resolution is async: let the request settle and the links land.
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
   });
 };
 const pathLinks = () => [...host.querySelectorAll<HTMLAnchorElement>("a.md-path-link")];
+const click = async (a: HTMLAnchorElement, init: MouseEventInit = {}) => {
+  await act(async () => {
+    a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+};
 
 beforeEach(() => {
   toasts.length = 0;
   opened.length = 0;
   revealed.length = 0;
   asked.length = 0;
-  tree = {};
-  clearDirListingCache();
+  resolved = {};
+  clearPathRefCache();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -76,77 +84,75 @@ afterEach(async () => {
 });
 
 describe("MarkdownView path auto-linking", () => {
-  it("links an existing file cited as inline code, and leaves a missing one as text", async () => {
-    tree["repos/x/docs"] = [{ name: "a.md", type: "file" }];
+  it("links a path the agent resolved and leaves an unresolved one as text", async () => {
+    resolved["docs/a.md"] = { path: "repos/x/docs/a.md", type: "file" };
     await render("出力: `docs/a.md`（`docs/nope.md` は無い）");
     const links = pathLinks();
     expect(links.map((a) => a.textContent)).toEqual(["docs/a.md"]);
     // The anchor lives inside the <code> so the chip styling is kept.
     expect(links[0].closest("code")).not.toBeNull();
+    // The path shown is the one the agent resolved — note it is NOT under the cwd the
+    // Console sent: the repository-root fallback is the agent's, and the Console just
+    // uses what came back.
     expect(links[0].title).toContain("repos/x/docs/a.md");
   });
 
-  it("opens the file on click, and a new pane for Ctrl-click", async () => {
-    tree["repos/x/docs"] = [{ name: "a.md", type: "file" }];
+  it("sends the turn's cwd and asks about every candidate at once", async () => {
+    resolved["docs/a.md"] = { path: "repos/x/docs/a.md", type: "file" };
+    await render("`docs/a.md` と `b.md` と `docs/nope.md`");
+    expect(asked).toEqual([{ cwd: "repos/x/sub", refs: ["docs/a.md", "b.md", "docs/nope.md"] }]);
+  });
+
+  it("opens the file on click, at its line, and in a new pane for Ctrl-click", async () => {
+    resolved["docs/a.md"] = { path: "repos/x/docs/a.md", type: "file" };
     await render("`docs/a.md:12` を見て");
     const a = pathLinks()[0];
-    expect(a).toBeTruthy();
-    await act(async () => {
-      a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
+    expect(a?.textContent).toBe("docs/a.md:12");
+    await click(a);
     expect(opened).toEqual([{ path: "repos/x/docs/a.md", line: 12, openInNew: false }]);
-    await act(async () => {
-      a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
-    });
+    await click(a, { ctrlKey: true });
     expect(opened[1]).toEqual({ path: "repos/x/docs/a.md", line: 12, openInNew: true });
   });
 
   it("reveals a directory (written with a trailing slash) in the file rail", async () => {
-    tree["repos/x"] = [{ name: "_act-parts", type: "dir" }];
+    resolved["_act-parts"] = { path: "repos/x/_act-parts", type: "dir" };
     await render("下読みは `_act-parts/` に置いた");
     const a = pathLinks()[0];
     expect(a?.textContent).toBe("_act-parts/");
-    await act(async () => {
-      a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
+    await click(a);
     expect(revealed).toEqual(["repos/x/_act-parts"]);
     expect(opened).toEqual([]);
   });
 
-  it("says so instead of opening an empty pane when the file vanished after rendering", async () => {
-    tree["repos/x/docs"] = [{ name: "a.md", type: "file" }];
+  it("re-resolves on click, so a file that vanished says so instead of opening a pane", async () => {
+    resolved["docs/a.md"] = { path: "repos/x/docs/a.md", type: "file" };
     await render("`docs/a.md`");
     const a = pathLinks()[0];
-    tree["repos/x/docs"] = []; // deleted between the reply and the click
-    clearDirListingCache();
-    await act(async () => {
-      a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
+    resolved = {}; // deleted between the reply and the click
+    await click(a);
     expect(opened).toEqual([]);
     expect(toasts).toHaveLength(1);
   });
 
-  it("does not link on a surface that cannot open a file (the shared view)", async () => {
-    tree["repos/x/docs"] = [{ name: "a.md", type: "file" }];
+  it("does not link — or even ask — on a surface that cannot open a file (the shared view)", async () => {
+    resolved["docs/a.md"] = { path: "repos/x/docs/a.md", type: "file" };
     await render("`docs/a.md`", { onOpenFile: undefined });
     expect(pathLinks()).toHaveLength(0);
-    expect(asked).toEqual([]); // and asks the filesystem nothing
+    expect(asked).toEqual([]);
   });
 
-  it("never touches a fenced code block, and asks for no listing when nothing is path-shaped", async () => {
-    tree["repos/x/docs"] = [{ name: "a.md", type: "file" }];
+  it("never touches a fenced code block, and asks nothing when no token is path-shaped", async () => {
+    resolved["docs/a.md"] = { path: "repos/x/docs/a.md", type: "file" };
     await render("```\ndocs/a.md\n```\n\n`npm run build` と `develop`");
     expect(pathLinks()).toHaveLength(0);
     expect(asked).toEqual([]);
   });
 
-  it("asks for one listing per directory however many paths cite it", async () => {
-    tree["repos/x/docs"] = [
-      { name: "a.md", type: "file" },
-      { name: "b.md", type: "file" },
-    ];
-    await render("`docs/a.md` と `docs/b.md`");
-    expect(pathLinks()).toHaveLength(2);
-    expect(asked).toEqual(["repos/x/docs"]);
+  it("asks once for a path already resolved for the same cwd (turns share the memo)", async () => {
+    resolved["docs/a.md"] = { path: "repos/x/docs/a.md", type: "file" };
+    await render("`docs/a.md`");
+    await render("`docs/a.md` — 別ターンの本文");
+    expect(asked).toHaveLength(1);
+    expect(pathLinks()).toHaveLength(1);
   });
 });

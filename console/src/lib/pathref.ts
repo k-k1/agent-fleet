@@ -15,9 +15,11 @@
 //     is not a question worth a request per mention.
 //   - never a URL — those are wired as external links long before this runs.
 //
-// What it deliberately does NOT decide is whether the path exists. That is the caller's
-// job, and it is what makes a loose accept harmless: a candidate that resolves to nothing
-// stays plain text, on the same contract as an unknown session slug (存在しない→リンクにしない).
+// What it deliberately does NOT decide is whether the path exists, or WHICH file it names.
+// Both are the Workspace agent's job (POST fs/resolve): the agent knows the working copy's
+// real root, the read-only roots outside home, and the denylist, and it answers cwd-first /
+// repository-root-second in one round trip. A candidate it can't place stays plain text, on
+// the same contract as an unknown session slug (存在しない→リンクにしない).
 
 import { isExternalUrl } from "./filemeta.ts";
 
@@ -33,29 +35,40 @@ const CODEY = /[\s"'`$;&|*?<>(){}[\]\\^=,!]/;
 // version strings ("1.2.3", "v0.14.2") out, which are the most common dotted non-paths.
 const EXT_RE = /\.[A-Za-z][A-Za-z0-9_+-]{0,11}$/;
 
-// A "…:12" / "…:12:3" line-column suffix, which resolveMarkdownFileTarget parses later.
-// Stripped here only so the shape test judges the filename, not the digits.
-const LINE_SUFFIX = /:\d+(?::\d+)?$/;
+// A "…:12" / "…:12:3" line-column suffix — the coordinate an agent cites a source line
+// with. Split off here: the agent resolves the path, the pane needs the line.
+const LINE_SUFFIX = /:(\d+)(?::(\d+))?$/;
+
+export interface PathRef {
+  /** The path to resolve: no line suffix, no trailing slash. */
+  ref: string;
+  line?: number;
+  column?: number;
+}
 
 /**
  * pathRefCandidate returns the path reference a piece of inline code carries, or null when
  * the token is not worth resolving. A trailing "/" (a directory, as agents write them) is
- * dropped: fs paths carry none, and the listing tells file from directory anyway.
+ * dropped — fs paths carry none, and the resolver reports file vs directory anyway.
  */
-export function pathRefCandidate(raw: string | null | undefined): string | null {
+export function pathRefCandidate(raw: string | null | undefined): PathRef | null {
   const text = (raw ?? "").trim();
   if (!text || text.length > MAX_REF_LEN) return null;
   if (CODEY.test(text)) return null;
   if (isExternalUrl(text)) return null;
 
-  const ref = text.replace(/\/+$/, "");
+  const trimmed = text.replace(/\/+$/, "");
   // Nothing left to resolve: "/", "./", "..", "~" name a place, not a file.
-  if (!ref || ref === "~" || /^[./]+$/.test(ref)) return null;
+  if (!trimmed || trimmed === "~" || /^[./]+$/.test(trimmed)) return null;
 
-  const body = ref.replace(LINE_SUFFIX, "");
-  if (!body || body === "~") return null;
+  const suffix = trimmed.match(LINE_SUFFIX);
+  const ref = suffix ? trimmed.slice(0, -suffix[0].length) : trimmed;
+  if (!ref || ref === "~" || /^[./]+$/.test(ref)) return null;
   // Path-shaped: it has a separator, ended in one (`_act-parts/` — how a directory is
   // written), or carries an extension.
-  if (!body.includes("/") && ref === text && !EXT_RE.test(body)) return null;
-  return ref;
+  if (!ref.includes("/") && trimmed === text && !EXT_RE.test(ref)) return null;
+
+  const line = suffix ? Number(suffix[1]) : 0;
+  const column = suffix?.[2] ? Number(suffix[2]) : 0;
+  return { ref, ...(line > 0 ? { line } : {}), ...(column > 0 ? { column } : {}) };
 }
