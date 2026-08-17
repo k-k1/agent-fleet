@@ -335,6 +335,40 @@ sandbox では既に有効（`ce list-cost-allocation-tags` が通った）。**
 ⚠️ **P3 の受け入れ確認は P0 の 24 時間後より前にはできない**（CE の反映待ち）。
 「実装したが 0 が並ぶ」のは正常なので、**それを異常と読まないよう画面に理由を出す**。
 
+## 67.13.1 実機に入れた（2026-08-17・<dev-deployment>）
+
+P1 を CP に入れ、`crane append` で **af-cp のレイヤ 1 枚だけ**を現行 `:dev` に重ねた。
+**Console の層には触っていない**——今回 Console を 1 行も変えていないので、
+差し替えなければ「Console だけ古い CP」は構造的に起こり得ない。
+
+- push 前に**レイヤ tar と展開後のイメージを照合**: `usr/local/bin/af-cp` の sha256 が
+  ビルドした物と一致（`bbe6d923…`）、`app/console/index.html` が参照する
+  ローカル資産（`assets/index-B95pBURp.js` / `index-BucQrwJi.css` / `brand/*` /
+  `manifest.webmanifest`）が全て在ることを確認。
+- push 後、**走っているタスクの `imageDigest` が push した digest と一致**
+  （`sha256:b2666429…`。旧 `sha256:558b87fc…` から入れ替わった）。`/healthz` は 200。
+- ⚠️ **`af-tenant` は先に実リソースへ手で打った**（`vol-07d5994a…` に `af-tenant=default`）。
+  発見の時計を CP のデプロイより先に動かすため。値はコードが書くのと同じもの。
+
+**そして修復パスが実機で発火した。** home が停止中スロットに attach されたままだったので、
+スイーパーの「タグが抜けている箱をボリュームから写す」側が動いた:
+
+```
+2026/08/17 06:18:18 ecs-ec2 sweep: slot i-0ac9ffa24cbf8f2b3 holds
+  "d6e8070a484b950b4c71474bbbbdd95a" but is billed to ""; restamping
+```
+
+```
+i-0ac9ffa24cbf8f2b3 のタグ（修復後）
+  af-role=slot  af-slot-size=m7i.large  af-pool=af-af-ecs-platform  af-managed-by=agent-fleet
+  af-membership=d6e8070a484b950b4c71474bbbbdd95a   ← 新
+  af-tenant=default                                 ← 新
+```
+
+⚠️ **残: `af-tenant` の有効化。** デプロイ直後もまだ
+`ValidationException: Tag keys not found: af-tenant` で、AWS 側の発見待ち（〜24h）。
+**これを済ませるまで、テナント軸の実費は 1 日も溜まっていない。**
+
 ## 67.14 実機で確かめたこと（2026-08-17）
 
 - `af-sandbox` は**単独アカウント**（`organizations describe-organization` が
