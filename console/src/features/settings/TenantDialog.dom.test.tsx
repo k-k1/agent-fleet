@@ -145,6 +145,16 @@ describe("TenantDialog", () => {
     expect(rail.textContent).toContain("接続元の制限");
   });
 
+  // super_admin がこのモーダルから入ってきたら、規則は読み取り専用にしない——
+  // 「変更できるのはデプロイ管理者だけです」と書かれた画面を当のデプロイ管理者が
+  // 眺めることになる。出し分けはサーバの super_admin フラグに従う。
+  it("super_admin には規則を編集できる形で出す", async () => {
+    respond(true);
+    await mount("rules");
+    const content = document.querySelector(".settings-content")!;
+    expect(content.querySelector("input")).not.toBeNull();
+  });
+
   it("メンバーは一覧 → 詳細の 2 段で、戻ると一覧に戻る", async () => {
     respond(false);
     await mount("members");
