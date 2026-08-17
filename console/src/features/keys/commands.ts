@@ -102,7 +102,8 @@ function activeCanRead(): boolean {
   const c = activePane(getLayout())?.content;
   if (!c) return false;
   if (c.kind === "read") return true;
-  return c.kind === "file" && !imageFormat(c.filePath);
+  // 図（.drawio）は読み上げる本文を持たない。画像と同じく対象外にする。
+  return c.kind === "file" && !imageFormat(c.filePath) && !isDrawioFile(c.filePath);
 }
 // Toggle the active pane in place between the file view and the read-aloud view,
 // keeping the same file (docs/24). Replaces the active pane's content (openTarget).

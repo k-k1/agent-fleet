@@ -271,6 +271,18 @@ func TestPostgresStore(t *testing.T) {
 	if got, err := st.GetTenant(ctx, tn.ID); err != nil || got.AllowedProviders != "" {
 		t.Fatalf("pre-existing tenant row: %v %+v", err, got)
 	}
+	// The tenant's source-network restriction rides the same row and the same bulk
+	// read (docs/66 / migrations-pg/0028). It is consulted on EVERY request, so a
+	// dialect slip here would 403 an entire tenant rather than just fail a screen.
+	if err := st.SetTenantAllowedCIDRs(ctx, t2.ID, "203.0.113.0/24,198.51.100.7/32"); err != nil {
+		t.Fatalf("set allowed_cidrs: %v", err)
+	}
+	if got, err := st.GetTenantAllowedCIDRs(ctx, t2.ID); err != nil || got != "203.0.113.0/24,198.51.100.7/32" {
+		t.Fatalf("allowed_cidrs round trip: %v %q", err, got)
+	}
+	if got, err := st.GetTenantAllowedCIDRs(ctx, tn.ID); err != nil || got != "" {
+		t.Fatalf("a tenant created before the ALTER must read back as empty: %v %q", err, got)
+	}
 	rules, err := st.ListTenantLoginRules(ctx)
 	if err != nil {
 		t.Fatalf("list tenant login rules: %v", err)
@@ -281,6 +293,9 @@ func TestPostgresStore(t *testing.T) {
 			found = true
 			if len(r.AllowedProviders) != 2 || r.AutoJoinDomains[0] != "acme.co.jp" {
 				t.Fatalf("rules split wrong: %+v", r)
+			}
+			if len(r.AllowedCIDRs) != 2 || r.AllowedCIDRs[0] != "203.0.113.0/24" {
+				t.Fatalf("allowed_cidrs not carried by the bulk read: %+v", r)
 			}
 		}
 	}

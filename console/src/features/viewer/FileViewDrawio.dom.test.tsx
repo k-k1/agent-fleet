@@ -37,6 +37,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { FileView } = await import("./FileView.tsx");
+const { DrawioView } = await import("./DrawioView.tsx");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -151,12 +152,21 @@ describe(".drawio の面", () => {
     expect(frame()).not.toBeNull();
   });
 
+  it("図には朗読を出さない（読み上げる本文が無い）", async () => {
+    await render();
+    const labels = [...host.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels.some((l) => l?.includes("Read aloud"))).toBe(false);
+  });
+
   it("ただの .xml は今までどおりソースのまま", async () => {
     served = { content: "<project><modelVersion>4.0.0</modelVersion></project>", editable: true, truncated: false };
     await render({ filePath: "repos/x/pom.xml" });
     expect(frame()).toBeNull();
     expect(groupButtons("Diagram display mode")).toBeNull();
     expect(host.querySelector('[role="tablist"]')).not.toBeNull();
+    // 図でないテキストからは朗読を取り上げない（外す条件が広すぎないことの確認）。
+    const labels = [...host.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels.some((l) => l?.includes("Read aloud"))).toBe(true);
   });
 });
 
@@ -214,5 +224,88 @@ describe("フレームとの手順", () => {
     spyOnFrame();
     fromFrame({ t: "error", code: "parse" });
     expect(host.querySelector(".drawio-note")!.textContent).toContain("not readable as drawio");
+  });
+});
+
+// ── テーマ切り替え（docs/65 §65.11-12）─────────────────────────────────────
+// drawio は 1 つの文書内でのテーマ往復を想定していない（実測: 同じフレームに描き直しを
+// 頼むと見出しが消え、ラベルはライト時の白いピル＋黒文字のまま残る）。**フレームごと
+// 作り直し、見ていた場所を引き継ぐ**のが契約で、ここではその配線を見る。
+describe("テーマ切り替え", () => {
+  const mount = async (dark: boolean) => {
+    await act(async () => {
+      root!.render(<DrawioView filePath="repos/x/design.drawio" dark={dark} />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+  };
+  const frameEl = () => host.querySelector("iframe.drawio-frame") as HTMLIFrameElement;
+  const postsOf = (el: HTMLIFrameElement) =>
+    (el.contentWindow!.postMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls.map(
+      (c) => c[0] as Record<string, unknown>,
+    );
+  const drive = async (el: HTMLIFrameElement) => {
+    vi.spyOn(el.contentWindow!, "postMessage").mockImplementation(() => {});
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: { af: "af-drawio", t: "ready" }, source: el.contentWindow }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: { af: "af-drawio", t: "booted" }, source: el.contentWindow }));
+    });
+  };
+
+  it("テーマが変わったらフレームを作り直し、ページと倍率を引き継ぐ", async () => {
+    await mount(false);
+    const first = frameEl();
+    await drive(first);
+    expect(postsOf(first).map((m) => m.t)).toEqual(["boot", "render"]);
+    // 最初の描画には引き継ぐものが無い。
+    expect(postsOf(first)[1].restore).toBeNull();
+
+    // 利用者が拡大して 2 ページ目を見ている状態をフレームから伝える。
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { af: "af-drawio", t: "rendered", pages: 2, page: 2, scale: 2.5, darkMode: false, pageId: "p2", tx: 12, ty: 34, adjusted: true },
+          source: first.contentWindow,
+        }),
+      );
+    });
+
+    // ダークへ切り替える。
+    await mount(true);
+    const second = frameEl();
+    // **同じ要素を使い回さない**（作り直しが目的）。
+    expect(second).not.toBe(first);
+    await drive(second);
+    const render = postsOf(second).find((m) => m.t === "render")!;
+    expect(render.dark).toBe(true);
+    // 見ていた場所がそのまま渡る。ページは番号ではなく id で指す。
+    expect(render.restore).toEqual({ pageId: "p2", scale: 2.5, tx: 12, ty: 34, adjusted: true });
+  });
+
+  it("自分で動かしていなければ復元させない（収まりのままにする）", async () => {
+    await mount(false);
+    const first = frameEl();
+    await drive(first);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          data: { af: "af-drawio", t: "rendered", pages: 1, page: 1, scale: 1, darkMode: false, pageId: "p1", tx: 5, ty: 6, adjusted: false },
+          source: first.contentWindow,
+        }),
+      );
+    });
+    await mount(true);
+    const second = frameEl();
+    await drive(second);
+    const render = postsOf(second).find((m) => m.t === "render")!;
+    // 渡しはするが adjusted=false なので、フレーム側は収め直しを選ぶ。
+    expect((render.restore as { adjusted: boolean }).adjusted).toBe(false);
   });
 });

@@ -20,7 +20,8 @@ import { mobileMatches } from "../../lib/device.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Modal } from "../../ui/Modal.tsx";
-import { TenantLoginRulesView, TenantSignInMethods } from "./tenantLogin.tsx";
+import { TenantLoginRules, TenantLoginRulesView, TenantSignInMethods } from "./tenantLogin.tsx";
+import { TenantNetworkView } from "./tenantNetwork.tsx";
 import { MembersPanel, MemberView } from "./tenantMembers.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
 import { McpAdminView } from "./mcpAdmin.tsx";
@@ -39,6 +40,9 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
     items: [
       ["signin", "tenant.tab_signin"],
       ["rules", "tenant.tab_rules"],
+      // 接続元の制限（docs/66）。ここだけ tenant_admin が「書ける」面で、
+      // 上の 2 つ（読み取り専用 / super_admin 承認）とは持ち主が違う。
+      ["network", "tenant.tab_network"],
     ],
   },
   {
@@ -153,7 +157,18 @@ export function TenantDialog() {
     if (forbidden) return <p className="muted pad">{tr("tenant.forbidden")}</p>;
     if (tenants === null) return <p className="muted pad">{tr("common.loading")}</p>;
     if (!tenant) return <p className="muted pad">{tr("tenant.none")}</p>;
-    if (section === "rules") return <TenantLoginRulesView slug={tenant.slug} tenant={tenant} />;
+    // ★ 規則は「テナント管理者には読み取り専用」（PUT が withSuperAdmin 固定）だが、
+    //   super_admin がこのモーダルから入ってきたときまで読み取り専用にすると、
+    //   「変更できるのはデプロイ管理者だけです」と書いてある画面を当のデプロイ管理者が
+    //   眺めることになる。出し分けはサーバの super_admin フラグに従う。
+    if (section === "rules") {
+      return isSuper ? (
+        <TenantLoginRules slug={tenant.slug} tenant={tenant} onChanged={load} />
+      ) : (
+        <TenantLoginRulesView slug={tenant.slug} tenant={tenant} />
+      );
+    }
+    if (section === "network") return <TenantNetworkView key={tenant.slug} slug={tenant.slug} />;
     if (section === "members") {
       if (member) {
         return (
