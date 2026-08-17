@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"io/fs"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -375,5 +377,52 @@ func TestSQLiteWorkspaceCarriesTenantSlug(t *testing.T) {
 	}
 	if list[0].TenantSlug != "acme" {
 		t.Errorf("ListWorkspaces TenantSlug = %q, want acme", list[0].TenantSlug)
+	}
+}
+
+// The migration runner splits statements on a naive `;` (see sqlStore.migrate), so a
+// semicolon inside a `--` comment can cut a statement in half. The failure is a SQL
+// syntax error pointing at a random English word from the prose, which reads like
+// anything except "your comment has a semicolon in it" — measured while adding
+// 0046_cloud_cost.sql.
+//
+// Only the two shapes that actually break are flagged, which is why three existing
+// migrations with a trailing `;` in prose are legal:
+//
+//	-- ...prose; more prose        BREAKS: " more prose" becomes a bare statement
+//	  a INT,  -- note;             BREAKS: the fragment before it is half a CREATE TABLE
+//	-- ...prose;                   fine: the next fragment starts with `--` again
+func TestMigrationsHaveNoStatementSplittingSemicolonInComments(t *testing.T) {
+	for _, dir := range []struct {
+		fs   fs.FS
+		name string
+	}{{migrationFS, "migrations"}, {pgMigrationFS, "migrations-pg"}} {
+		entries, err := fs.ReadDir(dir.fs, dir.name)
+		if err != nil {
+			t.Fatalf("read %s: %v", dir.name, err)
+		}
+		for _, e := range entries {
+			body, err := fs.ReadFile(dir.fs, dir.name+"/"+e.Name())
+			if err != nil {
+				t.Fatalf("read %s: %v", e.Name(), err)
+			}
+			for n, line := range strings.Split(string(body), "\n") {
+				i := strings.Index(line, "--")
+				if i < 0 {
+					continue
+				}
+				j := strings.Index(line[i:], ";")
+				if j < 0 {
+					continue
+				}
+				trailing := strings.TrimSpace(line[i+j+1:])
+				code := strings.TrimSpace(line[:i])
+				if trailing == "" && code == "" {
+					continue
+				}
+				t.Errorf("%s/%s:%d has a `;` inside a comment that will cut the statement:\n  %s",
+					dir.name, e.Name(), n+1, strings.TrimSpace(line))
+			}
+		}
 	}
 }
