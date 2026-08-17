@@ -232,11 +232,6 @@ Resources:
               # Resource must be "*" — but what comes back is aggregated amounts, not
               # access to any resource or secret.
               #
-              # ⚠️ Two things this does NOT grant, deliberately: writing cost allocation
-              # tag status (ce:UpdateCostAllocationTagsStatus — a billing-console decision
-              # that belongs to a human, and it cannot be undone for past days), and CUR /
-              # budget APIs.
-              #
               # ⚠️ Account prerequisite, not expressible here: an IAM role can only call
               # the Billing APIs when the account has "IAM user and role access to Billing
               # Information" enabled. Without it this policy is present and every call
@@ -245,6 +240,30 @@ Resources:
                 Effect: Allow
                 Action:
                   - ce:GetCostAndUsage
+                  - ce:ListCostAllocationTags
+                Resource: "*"
+              # ⚠️ ACCOUNT-LEVEL BILLING CONFIGURATION — the one place the Control Plane
+              # writes something outside the resources it created itself. Read the reason
+              # before removing it (docs/67 §67.5, ADR 0048 決定 11).
+              #
+              # A cost allocation tag only applies from the moment it is switched on, and
+              # AWS will not activate a key it has not yet discovered on a real resource —
+              # so the step cannot be done at deploy time, only a day later, by hand, by
+              # someone who remembers. Every day it is missed is spend that can never be
+              # attributed to anyone. That is the trade this grant buys.
+              #
+              # What bounds it, in code (cost_tags.go), not in policy:
+              #   - a fixed allow-list of five keys. `af-workspace` is NEVER activated —
+              #     its value is built from a member's email address.
+              #   - a key a human set to Inactive is left alone (AWS stamps
+              #     LastUpdatedDate on any deliberate change).
+              #
+              # ⚠️ Removing this statement does NOT break the cost views. The CP reports
+              # "cannot activate" and the operator runs the CLI command instead.
+              - Sid: CostAllocationTagActivation
+                Effect: Allow
+                Action:
+                  - ce:UpdateCostAllocationTagsStatus
                 Resource: "*"
 
 Outputs:
