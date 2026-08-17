@@ -50,6 +50,28 @@ platform changes:
   ```bash
   aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || true
   ```
+- **Cloud cost (optional, but it cannot be backfilled — see docs/67).** Two account-level
+  switches the templates cannot set, both in the Billing console of the **payer** account:
+  1. **IAM user and role access to Billing Information** must be ON, or `CpTaskRole`'s
+     `ce:GetCostAndUsage` fails for every call even though the policy is attached.
+  2. **Activate the cost allocation tags** `af-membership`, `af-tenant`, `af-role`,
+     `af-pool`, `af-slot-size`:
+     ```bash
+     aws ce update-cost-allocation-tags-status --region us-east-1 \
+       --cost-allocation-tags-status '[{"TagKey":"af-membership","Status":"Active"},
+         {"TagKey":"af-tenant","Status":"Active"},{"TagKey":"af-role","Status":"Active"},
+         {"TagKey":"af-pool","Status":"Active"},{"TagKey":"af-slot-size","Status":"Active"}]'
+     ```
+     ⚠️ **Do this on day one.** Activation is not retroactive: every day it is left off is a
+     day of spend that can never be attributed to anyone.
+     ⚠️ **A tag key AWS has never seen on a real resource cannot be activated**
+     (`ValidationException: Tag keys not found`). So the order is: deploy → start one
+     workspace (the CP stamps the tags) → wait for AWS to discover the keys (up to 24h) →
+     activate. Re-run the command until it stops erroring.
+     ⚠️ **Do not activate `af-workspace`.** Its value is derived from the member's email
+     address, and activating it copies that into the billing data (CUR / Cost Explorer /
+     invoice CSVs). `af-membership` is an opaque random id and is the join key the Control
+     Plane uses.
 - **`20-platform` needs `--capabilities CAPABILITY_NAMED_IAM`** (it creates named IAM roles):
   ```bash
   aws cloudformation deploy --stack-name af-ecs-platform \
