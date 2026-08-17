@@ -26,9 +26,20 @@
 export const DRAWIO_MSG = "af-drawio" as const;
 
 /** 親 → フレーム。`boot` は 1 回だけ（4MB のソースを載せる）、`render` は何度でも。 */
+/** 見ている場所。テーマ切り替えでフレームを作り直すとき、そのまま返して復元する。 */
+export interface DrawioViewState {
+  /** 表示中のページ（diagram の id）。番号ではなく id —— 番号はページの増減でずれる。 */
+  pageId: string | null;
+  scale: number;
+  tx: number;
+  ty: number;
+  /** 利用者が自分でズーム / パンしたか。していないなら復元せず収め直す。 */
+  adjusted: boolean;
+}
+
 export type DrawioFrameRequest =
   | { af: typeof DRAWIO_MSG; t: "boot"; src: string }
-  | { af: typeof DRAWIO_MSG; t: "render"; xml: string; dark: boolean };
+  | { af: typeof DRAWIO_MSG; t: "render"; xml: string; dark: boolean; restore?: DrawioViewState | null };
 
 export type DrawioFrameEvent =
   | { af: typeof DRAWIO_MSG; t: "ready" }
@@ -43,6 +54,11 @@ export type DrawioFrameEvent =
        *  **画素を数える判定は当てにならない** —— 暗色にならないまま暗い背景に載った絵は
        *  図形の明るい塗りのせいで「明るい画素」がむしろ増える（実測 40778 対 2387）。 */
       darkMode: boolean;
+      /** 作り直したフレームへ引き継ぐための現在地。 */
+      pageId: string | null;
+      tx: number;
+      ty: number;
+      adjusted: boolean;
     }
   /** `boot` はビューアを評価できなかった、`parse` は図として読めなかった。
    *  **この 2 つを混ぜてはいけない** —— 読み込み失敗を「図が壊れている」と表示すると、
@@ -174,7 +190,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     adjusted = false;
   }
 
-  function render(xml, isDark) {
+  function render(xml, isDark, restore) {
     dark = !!isDark;
     // srcdoc は一度しか組み立てない（作り直すと 4MB を読み直す）。テーマ切り替えは
     // 描画要求として届くので、背景もここで追従させる。
@@ -201,6 +217,9 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
         // 輝度＝コントラスト比 1.3:1）。docs/65 §65.11-10。
         "dark-mode": dark ? "dark" : "light",
         highlight: "#3572b0",
+        // 復元するページ。**番号ではなく id** で指す（graphConfig.pageId）——
+        // 番号はページの増減でずれるうえ、ここで欲しいのは「さっき見ていたページ」。
+        pageId: restore && restore.pageId ? restore.pageId : undefined,
       })
     );
     if (!booted || typeof GraphViewer === "undefined") {
@@ -214,7 +233,14 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
         viewer = v;
         // 収まってから状態を返す（scale はヘッダの倍率表示とハーネスの判定に使う）。
         requestAnimationFrame(function () {
+          // 先に収める: fitScale と initialViewState（ダブルタップの戻り先）を確定させる。
           fit(v);
+          // そのうえで、利用者が自分で動かしていた場所へ戻す。動かしていなければ
+          // 収まりのままにする —— 何もしていない人にとっては、それが正しい状態。
+          if (restore && restore.adjusted) {
+            v.graph.view.scaleAndTranslate(restore.scale, restore.tx, restore.ty);
+            adjusted = true;
+          }
           postState(v);
         });
         // ページ送り・レイヤー操作の結果も同じ形で返す（ヘッダの「n / m」のため）。
@@ -405,12 +431,17 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   }
 
   function postState(v) {
+    var page = v.diagrams && v.diagrams[v.currentPage || 0];
     post({
       t: "rendered",
       pages: v.diagrams ? v.diagrams.length : 1,
       page: (v.currentPage || 0) + 1,
       scale: Math.round(v.graph.view.scale * 100) / 100,
       darkMode: !!(v.isDarkMode && v.isDarkMode()),
+      pageId: page && page.getAttribute ? page.getAttribute("id") : null,
+      tx: v.graph.view.translate.x,
+      ty: v.graph.view.translate.y,
+      adjusted: adjusted,
     });
   }
 
@@ -434,7 +465,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     if (pending) {
       var m = pending;
       pending = null;
-      render(m.xml, m.dark);
+      render(m.xml, m.dark, m.restore);
     }
   }
 
@@ -453,7 +484,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
       pending = m;
       return;
     }
-    render(m.xml, m.dark);
+    render(m.xml, m.dark, m.restore);
   });
 
   // 「この文書はもう受け取れる」を親へ知らせる。**親はこれを待ってから送る**——
