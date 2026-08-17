@@ -64,6 +64,11 @@ platform changes:
      ```
      ⚠️ **Do this on day one.** Activation is not retroactive: every day it is left off is a
      day of spend that can never be attributed to anyone.
+     **Once per AWS account, by you — never per tenant and never per member.** Activation
+     is keyed on the tag KEY alone (the API has no value dimension), so one `af-membership`
+     entry covers every member who will ever exist here, and one `af-tenant` entry covers
+     every tenant. Somebody joining next month needs nothing. Under AWS Organizations only
+     the management (payer) account can activate.
      ⚠️ **A tag key AWS has never seen on a real resource cannot be activated**
      (`ValidationException: Tag keys not found`). So the order is: deploy → start one
      workspace (the CP stamps the tags) → wait for AWS to discover the keys (up to 24h) →
