@@ -133,6 +133,28 @@ describe("TenantDialog", () => {
     expect(content.textContent).toContain("login/acme");
   });
 
+  // ⚠️ 実際に「設定にも管理にも見当たらない」と言われた。接続元の制限（docs/66）は
+  // テナント設定モーダルにしか置いておらず、そのモーダルの入口は **tenant_admin の
+  // 在籍だけ**で出るので、在籍の無い super_admin からは一生見えなかった。面はレールに
+  // 並んでいること、そして管理モーダル側にも置いてあること（AdminTab 側）を固定する。
+  it("接続元の制限がレールに並び、開ける", async () => {
+    respond(false);
+    await mount("network");
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/network");
+    const rail = document.querySelector(".settings-rail, .settings-modal")!;
+    expect(rail.textContent).toContain("接続元の制限");
+  });
+
+  // super_admin がこのモーダルから入ってきたら、規則は読み取り専用にしない——
+  // 「変更できるのはデプロイ管理者だけです」と書かれた画面を当のデプロイ管理者が
+  // 眺めることになる。出し分けはサーバの super_admin フラグに従う。
+  it("super_admin には規則を編集できる形で出す", async () => {
+    respond(true);
+    await mount("rules");
+    const content = document.querySelector(".settings-content")!;
+    expect(content.querySelector("input")).not.toBeNull();
+  });
+
   it("メンバーは一覧 → 詳細の 2 段で、戻ると一覧に戻る", async () => {
     respond(false);
     await mount("members");

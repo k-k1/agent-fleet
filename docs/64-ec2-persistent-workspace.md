@@ -1743,3 +1743,21 @@ GET /api/admin/workspace-sizing        (tenant_admin 可)
   `GET /api/admin/workspace-sizing` が実デプロイで `ecs-ec2` を申告すること、
   齟齬 5 の修正後にメンバー詳細が実際に「実行中」を出し、強制停止が押せること。
   ——最後の 1 つは**実機でしか確かめられない**（docker が無い環境が前提の不具合なので）。
+
+### 64.27.6 実機に入れた（2026-08-17・<dev-deployment>）
+
+CP イメージを crane で合成し直し（`ghcr.io/…/control-plane:0.8.0` に今ビルドした `af-cp` と
+`console/dist` を 1 層）、`30-ingress` を更新して `Ec2SlotTypes` に vCPU を入れた。
+
+- 起動ログ: `control-plane dev-511ac9d6 … runtime=ecs-ec2` /
+  `runtime=ecs-ec2 pool=… slots=m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8`。
+  **`type:memMiB:vcpu` を書いても CP は起動する**（後方互換の確認）。
+- `GET /api/admin/workspace-sizing` は 404 ではなく **401**（ルートは生きている）。
+- **走っているタスクのイメージ digest が push した digest と一致**
+  （`sha256:bf5e0cf0…`）。⚠️ 前回ここで「Console だけ古い」を踏んでいるので、
+  **push 前にレイヤ tar の中身を照合し**（`index.html` が参照する資産が全部入っているか）、
+  **push 後に digest を突き合わせる**——「合成したつもり」を残さない。
+
+⚠️ **ここから先はログイン後の画面**なので headless では見られない（Google が弾く）。
+残っているのは、メンバー詳細で **CPU 欄が消えていること・メモリ欄が箱を言うこと・
+「実行中」が出て強制停止が押せること**の目視で、人が自分のブラウザで見る分担にした。
