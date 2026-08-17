@@ -273,6 +273,39 @@ func (c *tenantLoginCache) providerAllowed(ctx context.Context, tenantID, prov s
 	return false, r.AllowedProviders
 }
 
+// networkAllowed enforces tenant.allowed_cidrs (docs/66, ADR 0047 決定 3). An empty
+// list means "any network", which is how a tenant that never set one is unaffected —
+// and how the feature is switched off, since there is no operator flag.
+//
+// ⚠️ An unknown caller address is a DENIAL, not a pass. The address is unknown only
+// when the deployment says there are N proxies in front and the forwarding chain does
+// not have N entries — i.e. the CP cannot tell who is calling. A restriction nobody
+// can evaluate must not be one that everybody passes.
+func (c *tenantLoginCache) networkAllowed(ctx context.Context, tenantID string, ip clientIPInfo) bool {
+	if c == nil {
+		return true
+	}
+	snap := c.snapshot(ctx)
+	if snap == nil {
+		return true
+	}
+	r, found := snap.byID[tenantID]
+	if !found || len(r.AllowedCIDRs) == 0 {
+		return true
+	}
+	prefixes, _, err := parseCIDRList(strings.Join(r.AllowedCIDRs, ","))
+	if err != nil || len(prefixes) == 0 {
+		// Stored text that no longer parses would otherwise lock the tenant out
+		// forever with no way back through the UI. Treat it as no rule and let the
+		// screen show what is stored so a human can fix it.
+		return true
+	}
+	if !ip.OK {
+		return false
+	}
+	return ipInAny(ip.IP, prefixes)
+}
+
 // rulesForSlug returns a tenant's rules by slug (login page rendering).
 func (c *tenantLoginCache) rulesForSlug(ctx context.Context, slug string) (TenantLoginRules, bool) {
 	if c == nil || slug == "" {

@@ -402,7 +402,11 @@ func main() {
 		}
 	}
 	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, wsImage, cfg.mgr.authMode, rtProfile)
-	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(gzipMiddleware(etagJSON(handler))), ReadHeaderTimeout: 10 * time.Second}
+	log.Print("edge: " + clientIPBanner())
+	// withClientIP is OUTERMOST on purpose: it is the only place the forwarding
+	// headers are read, so nothing downstream can be tempted to trust a client's own
+	// claim about where it is calling from (docs/66 §66.6).
+	srv := &http.Server{Addr: cfg.addr, Handler: withClientIP(logRequests(gzipMiddleware(etagJSON(handler)))), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}

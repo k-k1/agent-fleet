@@ -11,6 +11,8 @@ export const en: Record<keyof typeof ja, string> = {
   "region_theme.inherit": "Match app",
 
   // --- API errors (mirror of ERR_TEXT + inline fallbacks) ---
+  "err.ip_not_allowed":
+    "This tenant can only be used from the networks its administrator allows, and this one is not among them.",
   "err.ssm_search_forbidden":
     "You don't have permission to search AWS instances. Ask your AWS administrator to grant ssm:DescribeInstanceInformation.",
   "err.quota_sessions":
@@ -1500,6 +1502,20 @@ export const en: Record<keyof typeof ja, string> = {
   "tenant.group_login": "Sign-in",
   "tenant.tab_signin": "Sign-in methods",
   "tenant.tab_rules": "Login rules",
+  "tenant.tab_network": "Allowed networks",
+  "tenant.net_title": "Source networks",
+  "tenant.net_on": "restricted",
+  "tenant.net_off": "no restriction",
+  "tenant.net_allowed": "Allowed networks",
+  "tenant.net_allowed_unit": "Comma-separated CIDR ranges or single addresses (IPv4/IPv6). Empty = no restriction.",
+  "tenant.net_your_ip": "Your address, as this deployment sees it",
+  "tenant.net_your_ip_unit": "This is what a rule is matched against — not what your browser thinks its address is.",
+  "tenant.net_ip_unknown": "cannot be determined",
+  "tenant.net_ip_unknown_hint": "The control plane cannot work out where this request came from, so a rule could not be enforced. Ask the operator to check AF_TRUSTED_PROXY_HOPS.",
+  "tenant.net_proxy_not_configured": "A proxy sits in front of the control plane but the deployment has not declared it (AF_TRUSTED_PROXY_HOPS), so every request looks like it comes from that proxy. Saving a rule is blocked until an operator fixes it — otherwise the rule would let everyone in while appearing to restrict.",
+  "tenant.net_scope_hint": "This restricts USE of the tenant, not reaching the site: the sign-in page still loads and signing in still works from anywhere, but nothing in this tenant can be opened from a network that is not listed.",
+  "tenant.net_exempt_hint": "Not covered: MCP and the internal Git provider, which are called from inside a member's own workspace and say nothing about where the person is. Revoke those by deactivating the membership. Deployment administrators are exempt from this rule so a mistake here can always be undone.",
+  "tenant.net_layers_hint": "This is an access rule, not a network defence — the request still reaches the control plane and is refused after the session is verified. To stop traffic before it arrives, an operator restricts it at the load balancer instead.",
   "tenant.summary_note": "a deployment administrator sets the tenant-wide caps",
   "tenant.group_manage": "Operations",
   "tenant.tab_members": "Members",
