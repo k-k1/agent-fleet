@@ -17,7 +17,18 @@
 //  6. **ジェスチャが効く。** Ctrl＋ホイール / 2 本指ピンチ / ダブルタップ。GraphViewer は
 //     これらを一切配線していない（init は pinchEnabled=false・setPanning(false)）ので、
 //     こちらの実装が生きているかは実ブラウザで押してみるしかない。
-//  7. **アセットに認証ゲートがあっても描ける。** サンドボックス iframe はオリジンを
+//  7. **テーマを切り替えても図が壊れない。** drawio は 1 つの文書内でのテーマ往復を
+//     想定しておらず、同じフレームに描き直しを頼むと**コンテナ見出しが消え、エッジの
+//     ラベルはライト時の白いピル＋黒文字のまま残る**（実測）。DrawioView はフレームごと
+//     作り直し、見ていた場所（ページ・倍率・位置）を渡して復元する。ここではその
+//     手順どおりに動かし、暗色になっていることと倍率が保たれることを見る。
+//  8. **背景が要求したテーマどおりに塗られている。** 背景色は srcdoc のスタイルシートと
+//     描画時の inline の 2 か所から来る。html だけを inline で上書きしても body の指定が
+//     上に塗るため、**組み立て時のテーマがそのまま残る**（実測: 組み立て dark ＋ 要求
+//     light で背景 #1e1e1e のまま／逆向きは白のまま。利用者が見た症状 2 つはどちらもこれ）。
+//     ここでは**組み立てと要求をわざと食い違わせて**画素で判定する —— 背景色は単色なので
+//     画素で見てよい（コントラストと違い、指標が素直に対応する）。
+//  9. **アセットに認証ゲートがあっても描ける。** サンドボックス iframe はオリジンを
 //     持たないため、そこからの要求は cross-site 扱いで SameSite=Lax のセッション
 //     cookie が付かない。フレームが自分で `<script src>` を取りに行く設計だと CP の
 //     authGate に 401 で弾かれ、実機だけが壊れる（2026-08-16 の不具合）。ここでは
@@ -95,6 +106,11 @@ const CASES = [
   // 図として読めない XML。ビューアの英語メッセージを黙って出すのではなく、
   // 親が扱えるイベントとして返ってこなければならない。
   { name: "not-a-diagram", xml: "<foo><bar/></foo>", dark: false, expectError: true },
+  // ライトで開き、ズームしてから、テーマ切り替え（＝フレーム作り直し）を通す。
+  { name: "theme-switch", xml: PLAIN, dark: false, pages: 2, themeSwitch: true },
+  // 組み立てと要求を食い違わせる。背景は **要求した側** に従わなければならない。
+  { name: "bg-follows-request-dark", xml: PLAIN, dark: true, builtDark: false, pages: 2, bg: "#1e1e1e" },
+  { name: "bg-follows-request-light", xml: PLAIN, dark: false, builtDark: true, pages: 2, bg: "#ffffff" },
 ];
 
 // ---------------------------------------------------------------- frame html
@@ -210,7 +226,8 @@ await b.call("Emulation.setDeviceMetricsOverride", { width: 900, height: 600, de
 await b.call("Network.enable");
 
 for (const c of CASES) {
-  const srcdoc = drawioFrameSrcdoc({ dark: c.dark });
+  // builtDark を指定したケースだけ、組み立て時のテーマを要求とわざとずらす。
+  const srcdoc = drawioFrameSrcdoc({ dark: c.builtDark === undefined ? c.dark : c.builtDark });
   // 親の手順は DrawioView.tsx と同じにする（ここが実機とずれると、守っている対象が
   // 製品コードでなくなる）: ready を待つ → 自分が取ったビューア本文を boot で渡す →
   // booted を待って render。**フレームは 1 本も要求を出さない。**
@@ -218,11 +235,11 @@ for (const c of CASES) {
 <iframe id="f" sandbox="allow-scripts" width="860" height="520" style="border:0;display:block" srcdoc="${srcdoc.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"></iframe>
 <script>
 window.__ev=[];
-var f=document.getElementById("f");
-function post(m){ m.af="af-drawio"; f.contentWindow.postMessage(m,"*"); }
+function post(m){ m.af="af-drawio"; document.getElementById("f").contentWindow.postMessage(m,"*"); }
+window.__dark=${c.dark}; window.__restore=null;
 window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-drawio")return; window.__ev.push(d);
   if(d.t==="ready") fetch("/assets/viewer.js",{credentials:"same-origin"}).then(function(r){return r.text()}).then(function(src){ post({t:"boot",src:src}); });
-  if(d.t==="booted") post({t:"render",xml:${JSON.stringify(c.xml)},dark:${c.dark}});
+  if(d.t==="booted") post({t:"render",xml:${JSON.stringify(c.xml)},dark:window.__dark,restore:window.__restore?JSON.parse(window.__restore):null});
 });
 </script></body></html>`;
   fs.writeFileSync(path.join(work, `${c.name}.html`), page);
@@ -257,6 +274,80 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
   // cookie の付かない要求 ＝ オリジンを持たないフレームが自分で取りに行った要求。
   if (unauthorized.length) {
     fail.push(`${c.name}: フレームが資格情報無しで取りに行った ${JSON.stringify([...new Set(unauthorized)])}`);
+  }
+
+  // ── 背景（docs/65 §65.11-13）──────────────────────────────────────────
+  if (c.bg && rendered) {
+    // 図形の載っていない隅を見る（フレームは 860x520・図は中央に収まる）。
+    const shot = await b.call("Page.captureScreenshot", { clip: { x: 840, y: 500, width: 8, height: 8, scale: 1 } });
+    const px = await b.call("Runtime.evaluate", {
+      expression: `(async () => {
+        const img = new Image();
+        img.src = "data:image/png;base64," + ${JSON.stringify(shot.data)};
+        await img.decode();
+        const cv = document.createElement("canvas");
+        cv.width = img.width; cv.height = img.height;
+        cv.getContext("2d").drawImage(img, 0, 0);
+        const d = cv.getContext("2d").getImageData(2, 2, 1, 1).data;
+        return "#" + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, "0")).join("");
+      })()`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    const got = px.result?.value;
+    if (got !== c.bg) {
+      fail.push(`${c.name}: 背景が ${got}（要求 ${c.bg}）—— 組み立て時のテーマが残っている`);
+    } else {
+      console.log(`   background: ${got}`);
+    }
+  }
+
+  // ── テーマ切り替え（docs/65 §65.11-12）──────────────────────────────────
+  // DrawioView と同じ手順: 拡大しておく → フレームを作り直す（新しい srcdoc）→
+  // ready から boot し直し → 直前の現在地を restore で渡す。
+  if (c.themeSwitch && rendered) {
+    // まず利用者の操作を模して拡大する（引き継ぎの対象を作る）。
+    await b.call("Input.dispatchMouseEvent", { type: "mouseWheel", x: 430, y: 260, deltaX: 0, deltaY: -240, modifiers: 2 });
+    await sleep(400);
+    const before = await b.call("Runtime.evaluate", {
+      expression: "JSON.stringify(window.__ev.filter(function(e){return e.t==='rendered'}).pop())",
+      returnByValue: true,
+    });
+    const kept = JSON.parse(before.result?.value || "null");
+
+    const darkDoc = drawioFrameSrcdoc({ dark: true }).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+    await b.call("Runtime.evaluate", {
+      expression: `(() => {
+        const old = document.getElementById("f");
+        const next = document.createElement("iframe");
+        next.id = "f"; next.width = "860"; next.height = "520";
+        next.style.cssText = "border:0;display:block";
+        next.setAttribute("sandbox", "allow-scripts");
+        window.__dark = true;
+        window.__restore = ${JSON.stringify(JSON.stringify(kept))};
+        next.srcdoc = ${JSON.stringify(darkDoc.replace(/&amp;/g, "&").replace(/&quot;/g, '"'))};
+        old.replaceWith(next);
+        window.__ev.length = 0;
+        return true;
+      })()`,
+      returnByValue: true,
+    });
+    await sleep(4000);
+
+    const after = await b.call("Runtime.evaluate", {
+      expression: "JSON.stringify(window.__ev.filter(function(e){return e.t==='rendered'}).pop())",
+      returnByValue: true,
+    });
+    const now = JSON.parse(after.result?.value || "null");
+    if (!now) fail.push(`${c.name}: 作り直したフレームが描画しなかった`);
+    else {
+      if (!now.darkMode) fail.push(`${c.name}: 作り直し後に暗色になっていない`);
+      if (Math.abs(now.scale - kept.scale) > 0.01) {
+        fail.push(`${c.name}: 倍率が引き継がれていない (${kept.scale} → ${now.scale})`);
+      }
+      if (now.pageId !== kept.pageId) fail.push(`${c.name}: ページが引き継がれていない (${kept.pageId} → ${now.pageId})`);
+      console.log(`   theme-switch: scale ${kept.scale} → ${now.scale} / page ${now.pageId} / darkMode=${now.darkMode}`);
+    }
   }
 
   // ── ジェスチャ（docs/65 §65.12）────────────────────────────────────────

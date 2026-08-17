@@ -989,7 +989,9 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             </button>
           </span>
         )}
-        {isText && !huge && (
+        {/* 図には朗読を出さない。読み上げる本文が無く（あるのは mxfile の XML）、
+            押しても意味のある結果にならない —— 能力が無いなら操作要素を出さない。 */}
+        {isText && !huge && !isDiagram && (
           <span className="ui-seg sm md-toggle">
             <button type="button" className="seg-btn" onClick={openReader} title={tr("view.open_reader_tip")}>
               <Icon name="book" /> {tr("view.read_aloud")}

@@ -31,6 +31,12 @@ type TenantLoginRules struct {
 	// HiddenProviders is not a gate. It only removes buttons from /login/<slug>;
 	// the same method still admits its people (docs/61 §61.15.9 + 決定 14).
 	HiddenProviders []string
+	// AllowedCIDRs restricts which source networks may USE this tenant (docs/66,
+	// ADR 0047). Empty = no restriction, and that is how the feature is switched off.
+	// Unlike the fields above it belongs to the tenant_admin: it reaches nothing
+	// outside this tenant. It is stored here rather than in limits JSON because it is
+	// consulted on every request and these rules already have a cache in front of them.
+	AllowedCIDRs []string
 }
 
 // Identity is a person, unique by email within the deployment. role is the
@@ -417,6 +423,11 @@ type TenantStore interface {
 	// ListTenantLoginRules is the entry gate's bulk read: one query behind a short
 	// TTL cache rather than a per-request lookup (§61.9.7).
 	ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error)
+	// The tenant's source-network restriction (docs/66, ADR 0047). Kept apart from
+	// SetTenantLogin because the owner differs: those three fields are the operator's,
+	// this one is the tenant_admin's. "" = no restriction.
+	GetTenantAllowedCIDRs(ctx context.Context, tenantID string) (string, error)
+	SetTenantAllowedCIDRs(ctx context.Context, tenantID, cidrs string) error
 }
 
 // TenantIdP is one tenant-defined login provider (docs/61 §61.11, migration 0040).

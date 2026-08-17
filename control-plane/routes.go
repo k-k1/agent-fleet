@@ -151,6 +151,11 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/admin/clean-home", adm.cleanHome) // wipe home (tenant_admin, docs/61 §61.10.6)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", adm.withSuperAdmin(adm.setTenantLimits))
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/login", adm.withSuperAdmin(adm.setTenantLogin)) // per-tenant login rules (docs/61 §61.9.7)
+	// The tenant's own source-network restriction (docs/66, ADR 0047). tenant_admin,
+	// unlike the login rules above: it reaches nothing outside this tenant. The gate
+	// on both is checked mid-handler by tenantAdminFor.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/network", adm.tenantNetwork)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/network", adm.setTenantNetwork)
 	// Tenant-defined sign-in methods (docs/61 §61.11). The rows are the tenant's, so
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
 	// which is the one super_admin step (決定 30). The queue is deployment-wide.
@@ -170,6 +175,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/admin/membership-role", adm.withSuperAdmin(adm.setMembershipRole)) // grant/revoke tenant_admin (super_admin only)
 	mux.HandleFunc("GET /api/admin/host", adm.withSuperAdmin(adm.hostStats))
 	mux.HandleFunc("GET /api/admin/ec2-pool", adm.withSuperAdmin(adm.poolStatus))                       // EC2 slot pool (ecs-ec2 only)                            // host load / memory (super_admin)
+	mux.HandleFunc("GET /api/admin/workspace-sizing", adm.withIdentity(adm.workspaceSizingProfile))     // what mem/CPU/disk MEAN on this runtime (ADR 0045 決定 21)
 	mux.HandleFunc("GET /api/admin/usage", adm.usage)                                                   // showback: occupancy per tenant/member (json|csv)
 	mux.HandleFunc("GET /api/admin/sessions", adm.allSessions)                                          // deployment-wide session overview (super_admin / tenant_admin)
 	mux.HandleFunc("GET /api/admin/audit", adm.audit)                                                   // audit log ledger (super_admin / tenant_admin, docs/20 M1)

@@ -319,10 +319,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 <button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
                   <Icon name="gear" /> {tr("topbar.settings")}
                 </button>
-                {/* テナント設定は「自分が管理しているテナント」の面なので、入口は
-                    tenant_admin の在籍だけで決まる（デプロイ管理者は管理モーダルの
-                    テナント詳細から同じ面に入る）。 */}
-                {tenants?.some((t) => t.role === "tenant_admin") && (
+                {/* テナント設定は「自分が管理しているテナント」の面。入口は在籍で決まる
+                    ——のだが、⚠️ **super_admin も出す**。サーバは前から super_admin を
+                    どのテナントの管理者としても通す（`tenantAdminFor`）ので、隠していたのは
+                    表示だけであり、その表示が「デプロイ管理者は管理モーダルから入る」という
+                    暗黙のルールを人に要求していた。実際それで、テナント設定にしか無い面
+                    （接続元の制限・docs/66）が在籍の無い super_admin から見えなくなった。
+                    テナントが複数あればモーダル側にピッカーが出る（TenantDialog）。 */}
+                {(superAdmin || tenants?.some((t) => t.role === "tenant_admin")) && (
                   <button className="acct-item" role="menuitem" onClick={() => run(() => openTenantSettings())}>
                     <Icon name="organization" /> {tr("topbar.tenant_settings")}
                   </button>
