@@ -6,6 +6,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { chatFontStack, effectiveTheme, expandThinking, surfaceAccent, surfaceBg, useSettings } from "../../lib/settings.ts";
+import { HandoffBody, HandoffCard, type Proposal } from "../mirror/HandoffProposal.tsx";
 import { TranscriptView } from "../mirror/transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "../mirror/transcript/capabilities.ts";
 import type { Turn } from "../mirror/transcript/types.ts";
@@ -40,6 +41,9 @@ const POLL_WORKING = 1200;
 const POLL_IDLE = 3000;
 // The owner's Workspace is stopped: nothing can change until they start it, so back off.
 const POLL_STOPPED = 5000;
+// 引き継ぎ提案の取得間隔。転写より粗くてよい(提案は所有者の操作でしか変わらない)。
+// 転写ポーリングと同じ 120回/分のバケツを共有するので、ここを詰めると転写の方が絞られる。
+const POLL_HANDOFF = 5000;
 const NEAR_BOTTOM_PX = 80;
 
 interface SharedTurn extends Turn {
@@ -75,6 +79,11 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // 上へ読み返している間(自動追従が外れている間)だけ「最新へ」を出す。ミラーと同じ
   // 見た目・同じ文言で、共有側にだけ無いと「下に何か来ているのか」が分からない。
   const [showJump, setShowJump] = useState(false);
+  // 共有元が提案した引き継ぎ(propose_session_handoff)。転写に残るのはツール行と定型文
+  // だけで、本文は所有者側の別ストアにある — 出さないと「引き継いだ」ことしか分からず、
+  // 何を引き継いだのかが共有先には見えない。
+  const [handoffs, setHandoffs] = useState<Proposal[]>([]);
+  const seen = useRef(""); // 直近に受け取った提案の中身(同じなら state を触らない)
   const cursor = useRef(cached?.cursor ?? 0);
   const firstLine = useRef(cached?.firstLine ?? 0);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -144,6 +153,33 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     };
   }, [sharedSessionId, refreshList, tr, path]);
 
+  // 引き継ぎ提案は転写とは別ストアなので、別ポーリングで取る(ミラーの useHandoffProposals と
+  // 同じ形)。転写に相乗りさせると CP が所有者 Agent へ毎回2往復することになり、共有履歴の
+  // 読み出しコストが倍になる。所有者 Workspace が停止中は転写と同じく取りに行かない。
+  useEffect(() => {
+    let live = true;
+    seen.current = "";
+    setHandoffs([]); // 別セッションの提案が一瞬残らないように(ペインはセッションを差し替える)
+    const load = async () => {
+      const current = useSharedSessionsStore.getState().sessions.find((x) => x.id === sharedSessionId);
+      if (current && current.workspaceState !== "running") return;
+      const d = await api(`${path}/handoff-proposals`).catch(() => null);
+      if (!live || !d || d.error) return; // 一時的な失敗では今出ているカードを消さない
+      const next = JSON.stringify(Array.isArray(d.proposals) ? d.proposals : []);
+      // 中身が変わっていないなら state を触らない。毎回新しい配列を入れると、5秒ごとに
+      // 転写ごと再描画し、末尾追従のレイアウト効果(下の useLayoutEffect)も空振りで回る。
+      if (next === seen.current) return;
+      seen.current = next;
+      setHandoffs(JSON.parse(next) as Proposal[]);
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), POLL_HANDOFF);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [sharedSessionId, path]);
+
   // Keep the module cache in step so the next mount paints from it.
   useEffect(() => {
     if (loaded) {
@@ -188,7 +224,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       return;
     }
     if (atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [turns]);
+    // handoffs も追従の対象。カードは転写とは別のポーリングで後から届くので、turns だけを
+    // 見ていると末尾にいたまま高さだけが増え、その分だけ着地が上にずれる(実測 +263px)。
+  }, [turns, handoffs]);
 
   const onScroll = () => {
     const el = bodyRef.current;
@@ -299,10 +337,28 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
                 <Icon name="loading" spin /> {tr("chat.ph_loading")}
               </div>
             )
-          ) : groups.length === 0 ? (
+          ) : groups.length === 0 && handoffs.length === 0 ? (
+            // handoffs.length === 0: 転写が空なら提案カードだけが出すものになる(空表示は
+            // TranscriptView ごと飛ばしてしまうので、ミラーと同じ条件にする)。
             <div className="mirror-empty muted">{tr("mirror.no_history")}</div>
           ) : (
-            <TranscriptView groups={groups} caps={caps} working={working} autoCollapseWork={atBottom.current} />
+            <TranscriptView
+              groups={groups}
+              caps={caps}
+              working={working}
+              autoCollapseWork={atBottom.current}
+              // 読むだけの面なので、編集・破棄・起動は出さない(押せない要素を出さない)。
+              // 置き場所はミラーと同じ「提案された時点」— 末尾に固定すると、以後の会話が
+              // ずっとカードの裏に隠れる(handoffPlacement の注記)。
+              inlineCards={handoffs.map((h) => ({
+                at: h.created_at,
+                node: (
+                  <HandoffCard key={"handoff-" + h.id} launched={!!h.launched_at} intro={tr("share.handoff_intro")}>
+                    <HandoffBody title={h.title} prompt={h.prompt} />
+                  </HandoffCard>
+                ),
+              }))}
+            />
           )}
           {showJump && (
             // ミラーと同じ sticky ピル(mirror.css)。高さ0の帯なのでスクロール量を増やさない。

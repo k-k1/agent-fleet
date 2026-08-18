@@ -3982,6 +3982,8 @@ export const en: Record<keyof typeof ja, string> = {
   "share.proposal_placeholder": "Propose a message to the owner…",
   "share.propose": "Propose to owner",
   "share.owner_approval_note": "Nothing is sent to the agent until the owner reviews and approves it.",
+  "share.handoff_intro":
+    "This session proposed the first prompt for a successor session. Only the owner can edit it or launch from it.",
   "share.proposal_failed": "Could not send the proposal.",
   "share.proposal_sent": "Proposal sent to the owner.",
   "share.pending": "{count} pending approval(s)",
