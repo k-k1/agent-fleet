@@ -138,6 +138,9 @@ type usageSeriesResp struct {
 	// Truncated は要求期間の一部が raw の保持期間より古く、hour バケットでは復元できな
 	// かったことを示す。黙って短い系列を返すと「その期間は消費が無かった」に見える。
 	Truncated bool `json:"truncated,omitempty"`
+	// Folding は「セッション本体の折り込みがこの読み出しの時点で走っている」＝この応答は
+	// 直近ターンをまだ含まないかもしれない、の申告。Console はこれが落ちるまで取り直す。
+	Folding bool `json:"folding,omitempty"`
 }
 
 // usageSample は集計の入力単位（rollup の1エントリ、または raw をバケット内で畳んだもの）。
@@ -201,14 +204,17 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// fold-on-read（docs/46 §3-b）: 系列を要求されたこの機会にセッション本体を折り込む。
-	// 非同期＋60秒スロットルなので、この応答自体は待たない（＝直近ターンは次回に乗る）。
-	maybeFoldSessionUsage()
+	// 非同期なのでこの応答自体は待たない（＝直近ターンは次回の読み出しに乗る）。**待たない
+	// ことを黙っていると「再取得を何度か押すまで最新にならない」画面になる**ので、走行中は
+	// folding を立てて返し、Console が終わってから取り直す。
+	// fold=force は 60 秒スロットルを飛ばす（利用者が明示的に再取得を押した経路だけ）。
+	folding := startFoldSessionUsage(q.Get("fold") == "force")
 
 	samples, truncated := collectUsageSamples(from, to, bucket)
 	resp := usageSeriesResp{
 		From: from.UTC().Format(time.RFC3339), To: to.UTC().Format(time.RFC3339),
 		Bucket: bucket, By: by, Split: split,
-		Coverage: map[string]usageCoverage{}, Truncated: truncated,
+		Coverage: map[string]usageCoverage{}, Truncated: truncated, Folding: folding,
 	}
 	byBucket := map[string]map[string]usageAgg{}
 	var order []string
