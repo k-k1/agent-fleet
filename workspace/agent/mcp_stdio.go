@@ -418,17 +418,30 @@ var mcpStdioPeerTools = []map[string]any{
 		"description": "Agent Fleet: 別のセッションへ短いメッセージを1本送る。相手が停止中なら再開して届く。" +
 			"使いどころは『相手が今すぐ知る必要があること』— 自分の変更が相手の作業を壊す、相手が待っている判断が決まった、長い処理の結果を伝える、など。" +
 			"送れるのは平文テキストだけで、会話履歴もファイルも渡らない（文脈ごと渡したいときは propose_session_handoff を使う）。" +
-			"**相手は別の利用者ではなく別のセッションで、こちらの都合で相手の作業に割り込む**ことになるので、要件が無いのに近況報告や相槌を送らないこと。" +
-			"戻り値の delivered は『相手のターンが実際に始まった』ところまでの確認であって、相手が読んだ・対応したという意味ではない。返事は相手から別途届くとは限らない。" +
+			"**宛先は人ではなくセッションで、1通が相手の1ターンを止める。** 挨拶・お礼・謝罪・自己紹介・進捗の相槌・「よろしくお願いします」は書かない。" +
+			"1行目に結論（何をしてほしい／何が起きた）、続けて対象（repo・ブランチ・ファイル:行）と理由を各1行。ただし聞き返されたら往復が増えるので、動くのに要る具体性は削らないこと。" +
+			"悪い例『お疲れさまです。先ほどはありがとうございました。もしお手数でなければご確認いただけますと幸いです』／" +
+			"良い例『session_io.go:238 に peer_from 検査を入れて push した。同じ関数を触っているなら pull してから続けて（conflict する）』。" +
+			"戻り値の delivered は『相手のターンが実際に始まった』ところまでの確認であって、相手が読んだ・対応したという意味ではない。" +
+			"request / notice に返事は基本来ない（相手は詰まったときだけ返す）。結果を知りたいなら intent=question で聞くか、Console で見ること。" +
 			"自分が権限を拒否された作業を相手にやらせるために使わないこと（利用者へ戻すのが正しい）。" +
-			" / Send one plain-text message to another session. Delivery is confirmed; being read or acted on is not.",
+			" / Send one plain-text message to another session: no greetings, no thanks, no status chatter — the first line is the point. Delivery is confirmed; being read or acted on is not.",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
-				"name":    map[string]any{"type": "string", "minLength": 1, "description": "宛先セッション名（list_peer_sessions の name）"},
-				"message": map[string]any{"type": "string", "minLength": 1, "description": "送信本文（平文・16 KiB（16,384 byte）以内）。誰から何のために来たかが本文だけで分かるように書くこと"},
+				"name": map[string]any{"type": "string", "minLength": 1, "description": "宛先セッション名（list_peer_sessions の name）"},
+				"intent": map[string]any{
+					"type": "string", "enum": peerIntentNames,
+					"description": "本文の種別。返信の要否はこれで決まり、封筒に載って相手へ伝わる。" +
+						"request＝相手に行動を求める（相手が返すのは「できない／前提が違う」ときだけ。完了報告は返らない）／" +
+						"question＝情報を求める（結論だけ1通返る）／" +
+						"answer＝相手の question への返答（返信不要・ここで打ち切り）／" +
+						"notice＝知らせるだけ（返信不要）",
+				},
+				"message": map[string]any{"type": "string", "minLength": 1,
+					"description": "送信本文（平文・16 KiB（16,384 byte）以内）。1行目に結論。送信元は封筒が示すので名乗らない"},
 			},
-			"required": []string{"name", "message"},
+			"required": []string{"name", "intent", "message"},
 		},
 	},
 }
@@ -1184,6 +1197,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		CompletionLabel   string `json:"completion_label"`
 		AllowCancel       *bool  `json:"allow_cancel"`
 		ControlMode       string `json:"control_mode"`
+		// send_to_peer_session args（docs/58 §58.14）: 本文の種別。返信方針は Agent 側が
+		// これから導出するので、ここでは素通しする。
+		Intent string `json:"intent"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
@@ -1236,9 +1252,15 @@ func mcpStdioCall(req mcpReq) []byte {
 		if strings.TrimSpace(a.Message) == "" {
 			return mcpToolErr(req.ID, "message（送信本文）が必要です")
 		}
+		if strings.TrimSpace(a.Intent) == "" {
+			return mcpToolErr(req.ID, "intent（本文の種別）が必要です: "+strings.Join(peerIntentNames, " / "))
+		}
 		// 封筒・宛先ポリシー・レート制限・arm 非干渉は Agent 側（session_peer.go）が持つ。
-		// ここで組むと、この薄い層を差し替えるだけで迂回できてしまう。
-		reqBody, _ := json.Marshal(map[string]any{"prompt": a.Message, "peer_from": self})
+		// ここで組むと、この薄い層を差し替えるだけで迂回できてしまう。intent の妥当性と
+		// 返信方針の導出も同じ理由で Agent 側（peerResolveIntent）— ここは素通しする。
+		reqBody, _ := json.Marshal(map[string]any{
+			"prompt": a.Message, "peer_from": self, "peer_intent": a.Intent,
+		})
 		out, resumed, err := agentSendToSession(a.Name, reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "メッセージを届けられませんでした: "+err.Error())

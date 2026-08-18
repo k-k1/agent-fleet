@@ -179,3 +179,25 @@ describe("共有ビューでもミラーと同じ形で畳まれる", () => {
     expect(el.querySelector("details.mirror-compact")).not.toBeNull();
   });
 });
+
+describe("peer 着信の見え方（docs/58 §58.14）", () => {
+  const peerTurn = (text: string): Turn[] => [{ role: "user", text, idx: 1, source: "peer" }];
+
+  it("送信元と種別の2つのチップが出る", () => {
+    const el = render(
+      peerTurn("[agent-fleet:peer from=build-api intent=request reply=only-if-blocked] 直して"),
+      RECIPIENT,
+    );
+    expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
+    const kind = el.querySelector(".mt-peer-kind");
+    // 文言はロケール依存なので、訳が引けている（キーが素通しされていない）ことを見る。
+    expect(kind?.textContent?.trim()).toBeTruthy();
+    expect(kind?.textContent).not.toContain("mirror.peer_intent");
+  });
+
+  it("種別の無い旧い封筒でも送信元バッジは出る（チップだけ消える）", () => {
+    const el = render(peerTurn("[agent-fleet:peer from=build-api] 直して"), RECIPIENT);
+    expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
+    expect(el.querySelector(".mt-peer-kind")).toBeNull();
+  });
+});
