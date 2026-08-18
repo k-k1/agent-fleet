@@ -988,6 +988,49 @@ export const myCloudCost = () => ({
   meta: costMeta(),
 });
 
+// --- 管理のメンバー詳細（docs/67 §67.15）---------------------------------------
+// ⚠️ このドリルダウンはこれまでスタブが 1 本も無く、管理の面は目視で確かめられな
+// かった。DOM テストが全部通っていても目視でしか出ないバグが実際に 2 件あったので、
+// 詳細（リソース → 費用 → セッション）まで描けるところまで足す。
+export const adminTenants = () => ({
+  tenants: [{ slug: "demo", name: "Demo Team", users: 3, running: 1, max_sessions: 8 }],
+  super_admin: false,
+});
+
+export const adminMembers = () => ({
+  members: [
+    { user_key: "aoi-tanaka", email: "aoi@example.com", role: "tenant_admin", state: "running", max_sessions: 8, disk_gb: 50 },
+    { user_key: "ren-sato", email: "ren@example.com", role: "member", state: "stopped", max_sessions: 4 },
+    { user_key: "mio-kubo", email: "mio@example.com", role: "member", state: "stopped" },
+  ],
+});
+
+export const adminMemberStats = () => ({
+  running: true,
+  mem_used: 5_100_000_000,
+  mem_max: 8_589_934_592,
+  cpu_pct: 34,
+  disk_used: 21_500_000_000,
+  disk_quota: 53_687_091_200,
+});
+
+export const adminMemberSessions = (locale) => ({ sessions: sessions(locale).slice(0, 3) });
+
+// 1 人分の費用。⚠️ 形は myCloudCost と同一（CP 側も同じ集計を返す）。金額を一覧の
+// 1 位（aoi-tanaka）に合わせてあるので、一覧と詳細で数字が食い違わないか目で見られる。
+export const memberCloudCost = () => ({
+  from: "2026-08-17",
+  to: "2026-09-15",
+  total_micro: 16_030_000,
+  days: costDays().map((d) => ({ ...d, unblended_micro: Math.round(d.unblended_micro * 0.55) })),
+  services: [
+    { service: "Amazon Elastic Compute Cloud - Compute", unblended_micro: 12_480_000 },
+    { service: "EC2 - Other", unblended_micro: 2_910_000 },
+    { service: "Amazon Elastic Block Store", unblended_micro: 640_000 },
+  ],
+  meta: costMeta(),
+});
+
 export const adminCloudCost = () => ({
   from: "2026-08-17",
   to: "2026-09-15",
