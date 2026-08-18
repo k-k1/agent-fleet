@@ -112,15 +112,15 @@ func TestCatalogFallsBackWhenItWouldEmptyThePicker(t *testing.T) {
 }
 
 // 旧値からの移行: 「Zen を隠す」は Go だけ見たいという意思、「Go 優先」「すべて表示」は
-// 両方見たいという意思。未設定/不明は従来の見え方（Zen）に倒す。
+// 両方見たいという意思。未設定/不明は明示的に選ぶまで無効（Off）に倒す。
 func TestCatalogPrefMigratesLegacyValues(t *testing.T) {
 	for v, want := range map[string]string{
 		"hide-zen": UsageGo,
 		"go-first": UsageZen,
 		"all":      UsageZen,
-		"":         UsageZen,
-		"nonsense": UsageZen,
-		"FREE":     UsageZen,
+		"":         UsageOff,
+		"nonsense": UsageOff,
+		"FREE":     UsageOff,
 		UsageFree:  UsageFree,
 		UsageGo:    UsageGo,
 		UsageZen:   UsageZen,

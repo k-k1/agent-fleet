@@ -72,6 +72,15 @@ func TestEnvDropsOpencodeKeyOnlyForFreeUsage(t *testing.T) {
 	}
 }
 
+// TestUsagePrefDefaultsToOff pins the package-level default of UsagePref itself
+// (before internal/agents/opencode.UsagePref is wired to ui_prefs.go's reader) — a
+// fresh workspace, or a test that never overrides UsagePref, must see UsageOff.
+func TestUsagePrefDefaultsToOff(t *testing.T) {
+	if got := UsagePref(); got != UsageOff {
+		t.Fatalf("UsagePref() default = %q, want %q", got, UsageOff)
+	}
+}
+
 // TestConnectedDefaultsOffWithoutCredentials pins the security-sensitive default:
 // a fresh workspace (no stored provider key, no account OAuth, no explicit free-tier
 // opt-in) must NOT be considered "connected" — headlessAgentAvailable

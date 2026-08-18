@@ -579,7 +579,7 @@ const DEFAULTS: Settings = {
   claudeCustomModels: [],
   autoTitleSuggest: true,
   peerMessaging: false, // opt-in（docs/58 / ADR 0041）— 既定で増やしてよい面ではない
-  opencodeCatalog: "zen",
+  opencodeCatalog: "off",
   expandThinking: {},
   assistantTitleSuggest: true,
   outputLanguage: "auto",
@@ -1023,7 +1023,8 @@ function serverPrefs(s: Settings): Partial<Settings> {
 export function migrateOpencodeCatalog(v: unknown): "off" | "free" | "go" | "zen" {
   if (v === "off" || v === "free" || v === "go" || v === "zen") return v;
   if (v === "hide-zen") return "go"; // Zen を隠す = Go だけ使う意思
-  return "zen"; // go-first / all / 未設定 / 不明 = 従来の見え方
+  if (v === "go-first" || v === "all") return "zen"; // どちらも両方見たい意思
+  return "off"; // 未設定/不明 = 明示的に選ぶまで無効
 }
 
 export async function hydrateUIPrefs(): Promise<void> {
