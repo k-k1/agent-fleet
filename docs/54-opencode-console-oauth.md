@@ -144,8 +144,9 @@ active 数）:
 opencode.ai は 3 つの課金経路を持ち、実測でそれぞれ独立していた（§54.4）。どれを使うかは
 運用の判断なので、設定 > エージェント > opencode の**「使う枠」**で選ばせる。
 旧「モデル一覧」設定（`go-first` / `hide-zen` / `all`）の置き換えで、ui-prefs のキーは
-`opencodeCatalog` のまま値だけ変わる（`hide-zen`→`go`、それ以外→`zen`。Agent 側
-`CatalogPref` と Console 側 `migrateOpencodeCatalog` が同じ規則を持つ）。
+`opencodeCatalog` のまま値だけ変わる（`hide-zen`→`go`、`go-first`/`all`→`zen`、
+未設定/不明→`off`。Agent 側 `CatalogPref` と Console 側 `migrateOpencodeCatalog` が
+同じ規則を持つ）。
 
 | 枠 | 一覧に出すもの | 必要な認証 | 起動ゲート |
 | --- | --- | --- | --- |
@@ -166,13 +167,13 @@ opencode.ai は 3 つの課金経路を持ち、実測でそれぞれ独立し�
 - 起動ゲート（`registry.ts` の `available`）は `supported !== false` かつ
   「キーあり / アカウントあり / 無料枠」（`usage==="off"` が先頭で全部を否定）。
   バイナリ不在（旧イメージ）は従来どおり隠す。
-- **オフは「未接続の既定（Zen）」の上位互換**。既定の Zen も鍵/アカウントが無ければ
-  実質起動できず結果は同じだが、それは「たまたま何も設定していない」だけの状態で、後から
-  鍵を1本保存すれば普通に起動してしまう。オフは `UsagePref()==UsageOff` を
-  `env()`/`connected()`/`Catalog()` の**先頭で** override する明示的なロックで、鍵や
-  OAuth が後から増えても動かない（`internal/agents/opencode/auth.go` の `connected()`、
-  `catalog.go` の `keepForUsage`）。セキュリティポリシー上 opencode.ai への無断の外部送信を
-  禁じたいテナント向け。
+- **既定値はオフ**（`CatalogPref("")`/`UsagePref` の未配線デフォルトとも `UsageOff`）。
+  新規ワークスペースは opencode.ai を一切使わない状態から始まり、利用者が「使う枠」で
+  明示的に選ぶまで鍵やアカウントがあっても起動しない。以前は未設定を Zen 扱いしていた
+  （鍵を1本保存しただけで無断に課金経路が動く可能性があった）ため、この既定を変更した。
+  オフは `UsagePref()==UsageOff` を `env()`/`connected()`/`Catalog()` の**先頭で** override
+  する明示的なロックで、鍵や OAuth が後から増えても動かない
+  （`internal/agents/opencode/auth.go` の `connected()`、`catalog.go` の `keepForUsage`）。
 - **アシスタント・チャットの取りこぼしを修正済み（2026-08-13）**: 対話セッションの起動ゲート
   （`registry.ts` の `available`、Go 側 `Status().connected`）は元から上表の式を守っていたが、
   アシスタント・チャット側のバックエンド選定（`chat_providers.go` の

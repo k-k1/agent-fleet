@@ -12,7 +12,11 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -50,6 +54,89 @@ func docsRolePrefixes(role string) []string {
 	}
 }
 
+// roleDocsRoots resolves a role to the absolute source subtrees it may read, paired
+// with their path relative to the docs root. Both provisioning paths (the bind-mount
+// staging below and the tar stream in docs_bridge.go) go through this one function, so
+// "what may this role see" has exactly one implementation.
+func roleDocsRoots(src, role string) []struct{ Dir, Rel string } {
+	var out []struct{ Dir, Rel string }
+	prefixes := docsRolePrefixes(role)
+	if prefixes == nil { // super_admin: the whole tree
+		return append(out, struct{ Dir, Rel string }{src, ""})
+	}
+	for _, p := range prefixes {
+		s := filepath.Join(src, p)
+		if !isDirPath(s) {
+			continue // source subtree absent → skip (best-effort)
+		}
+		out = append(out, struct{ Dir, Rel string }{s, p})
+	}
+	return out
+}
+
+// writeRoleDocsTarGz streams the role-permitted subset as a gzipped tar whose paths are
+// relative to the docs root ("guide/member/README.md", …). It is the PULL half of the
+// same provisioning decision stageWorkspaceDocs implements for docker/native: on ECS
+// there is no host path to bind-mount into a Fargate/EC2 task, so the container asks
+// for the identical subset over the internal bridge instead (docs_bridge.go).
+//
+// Regular files only. A symlink in the source tree could point outside it, and the
+// extractor in the workspace refuses non-regular entries anyway — dropping them here
+// means the archive never even describes something the other side must defend against.
+func writeRoleDocsTarGz(w io.Writer, role string) (files int, err error) {
+	src := docsSrcDir()
+	if !isDirPath(src) {
+		return 0, nil // no baked docs → a valid, empty archive
+	}
+	gz := gzip.NewWriter(w)
+	tw := tar.NewWriter(gz)
+	for _, root := range roleDocsRoots(src, role) {
+		walkErr := filepath.WalkDir(root.Dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.Type().IsRegular() {
+				return nil
+			}
+			rel, err := filepath.Rel(src, path)
+			if err != nil {
+				return err
+			}
+			fi, err := d.Info()
+			if err != nil {
+				return err
+			}
+			if err := tw.WriteHeader(&tar.Header{
+				Typeflag: tar.TypeReg,
+				Name:     filepath.ToSlash(rel),
+				Mode:     0o644,
+				Size:     fi.Size(),
+				ModTime:  fi.ModTime(),
+			}); err != nil {
+				return err
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			_, cErr := io.Copy(tw, f)
+			f.Close()
+			if cErr != nil {
+				return cErr
+			}
+			files++
+			return nil
+		})
+		if walkErr != nil {
+			return files, walkErr
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return files, err
+	}
+	return files, gz.Close()
+}
+
 // stageWorkspaceDocs (re)builds <dataDir>/docs with only the docs the given role may
 // read, copied from the CP-baked source. Rebuilt on every start so a role change
 // takes effect on the next start and the copy tracks the image version. Best-effort:
@@ -64,20 +151,12 @@ func stageWorkspaceDocs(dataDir, role string) error {
 	if err := os.RemoveAll(dest); err != nil {
 		return fmt.Errorf("clear docs stage: %w", err)
 	}
-	prefixes := docsRolePrefixes(role)
-	if prefixes == nil { // whole tree
-		return os.CopyFS(dest, os.DirFS(src))
-	}
-	for _, p := range prefixes {
-		s := filepath.Join(src, p)
-		if !isDirPath(s) {
-			continue // source subtree absent → skip (best-effort)
-		}
-		d := filepath.Join(dest, p)
+	for _, root := range roleDocsRoots(src, role) {
+		d := filepath.Join(dest, root.Rel)
 		if err := os.MkdirAll(filepath.Dir(d), 0o755); err != nil {
 			return err
 		}
-		if err := os.CopyFS(d, os.DirFS(s)); err != nil {
+		if err := os.CopyFS(d, os.DirFS(root.Dir)); err != nil {
 			return err
 		}
 	}

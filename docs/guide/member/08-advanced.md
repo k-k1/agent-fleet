@@ -158,7 +158,10 @@ shells started afterwards** (running ones and existing processes pick them up af
 workspace again).
 
 - **Time zone (TZ)** — the default is Japan time. Applying a change requires stopping and starting the workspace.
-- **Node.js / Java (JAVA_HOME)** — pick the versions to use.
+- **Node.js / Java (JAVA_HOME)** — pick the versions to use. The Java list also offers versions that are
+  **not in this workspace yet**; picking one shows an **Install** button that fetches it right there (about
+  200MB, into your home volume, so it survives restarts). Sessions started after it finishes get it as
+  `JAVA_HOME` — no stop and start needed.
 - **Agent CLI updates** — "Update the agent CLIs and rtk to the latest on start" (covers claude / opencode / codex / cursor / GitHub Copilot / Antigravity (agy) / rtk). Default is OFF (pinned to the versions baked into the image). Kiro is not part of this toggle — its version is fixed by the image rebuild / on-demand install and its own auto-update is kept off.
 
 ### Recreating the workspace (danger zone)

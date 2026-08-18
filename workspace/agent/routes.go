@@ -270,6 +270,11 @@ func buildMux() *http.ServeMux {
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
 	mux.HandleFunc("PUT /env/toolchains", handleToolchainsPut)
+	// On-demand Temurin install (jdk_install_http.go): the picker offers majors that
+	// are not on disk yet, and this is the button that actually fetches one — the only
+	// source of a JDK at all on ECS, where /usr/lib/jvm is empty.
+	mux.HandleFunc("POST /env/jdk-install", handleJDKInstall)
+	mux.HandleFunc("GET /env/jdk-install", handleJDKInstall)
 	// バンドルツールの版レポート（実効 / 焼き込み / ~/.local override / ビルド時ピン）。
 	mux.HandleFunc("GET /env/tool-versions", handleToolVersions)
 

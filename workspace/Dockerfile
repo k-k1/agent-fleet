@@ -409,6 +409,10 @@ ARG NOTO_CJK_VERSION=Sans2.004
 # 作成するが、native rootfs モード（bwrap --ro-bind で / が read-only — docs/35
 # §35.7.2）では bwrap が bind 先を mkdir できず起動が即死する。3 箇所とも空のまま焼く。
 RUN mkdir -p /var/lib/af/claude /usr/local/share/agent-fleet/docs /usr/lib/jvm
+# docs だけは dev 所有にする: ECS には bind-mount する経路が無く、Agent が CP から
+# ロール別 docs を取得してここへ展開する（docs/dev/04 §4.9・agent docs_sync.go）。
+# docker / native ではこの上に read-only マウントが被さるので所有者は関係しない。
+RUN chown 1000:1000 /usr/local/share/agent-fleet/docs
 # /scratch = タスクローカルの作業ディスク（ADR 0044 決定 3）。ECS では ephemeral
 # storage 上の素のディレクトリ（>200 GiB のときだけ EBS のマウント先）で、entrypoint が
 # ここへ小ファイルの山（go-build / uv / go module）を逃がす。dev が書けないと意味が
