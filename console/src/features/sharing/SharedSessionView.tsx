@@ -6,6 +6,8 @@ import { Button } from "../../ui/Button.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { chatFontStack, effectiveTheme, expandThinking, surfaceAccent, surfaceBg, useSettings } from "../../lib/settings.ts";
+import { HandoffBody, HandoffCard, type Proposal } from "../mirror/HandoffProposal.tsx";
+import { applyMark, captureMark, loadMark, saveMark, type ScrollMark } from "../mirror/scrollMark.ts";
 import { TranscriptView } from "../mirror/transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "../mirror/transcript/capabilities.ts";
 import type { Turn } from "../mirror/transcript/types.ts";
@@ -40,7 +42,14 @@ const POLL_WORKING = 1200;
 const POLL_IDLE = 3000;
 // The owner's Workspace is stopped: nothing can change until they start it, so back off.
 const POLL_STOPPED = 5000;
+// 引き継ぎ提案の取得間隔。転写より粗くてよい(提案は所有者の操作でしか変わらない)。
+// 転写ポーリングと同じ 120回/分のバケツを共有するので、ここを詰めると転写の方が絞られる。
+const POLL_HANDOFF = 5000;
 const NEAR_BOTTOM_PX = 80;
+// 読者自身の操作(開閉)が起こす高さの変化を追わない窓。ミラーと同じ値。
+const INTERACT_HOLD_MS = 600;
+// スクロールが止まったとみなして表示位置を控えるまで。
+const MARK_SETTLE_MS = 150;
 
 interface SharedTurn extends Turn {
   status?: string;
@@ -75,15 +84,41 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // 上へ読み返している間(自動追従が外れている間)だけ「最新へ」を出す。ミラーと同じ
   // 見た目・同じ文言で、共有側にだけ無いと「下に何か来ているのか」が分からない。
   const [showJump, setShowJump] = useState(false);
+  // 共有元が提案した引き継ぎ(propose_session_handoff)。転写に残るのはツール行と定型文
+  // だけで、本文は所有者側の別ストアにある — 出さないと「引き継いだ」ことしか分からず、
+  // 何を引き継いだのかが共有先には見えない。
+  const [handoffs, setHandoffs] = useState<Proposal[]>([]);
+  const seen = useRef(""); // 直近に受け取った提案の中身(同じなら state を触らない)
   const cursor = useRef(cached?.cursor ?? 0);
   const firstLine = useRef(cached?.firstLine ?? 0);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // 中身の高さと等しい内側のラッパ。ResizeObserver はこちらも見る(スクロール容器自体は
+  // ペインの寸法なので、転写が伸びても鳴らない)。ミラーの .mirror-scroll と同じ役目。
+  const scrollBoxRef = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  // 自分が最後に書いた scrollTop。onScroll はこれと比べて「自分のピンの下で中身が伸びた」と
+  // 「読者が上へ動かした」を見分ける(ミラーの selfTopRef と同じ — 生の距離で判定すると、
+  // 自分で留めた直後に伸びた分を「読者が上へ行った」と誤読して追従が切れる)。
+  const selfTop = useRef(0);
+  // この時刻までの高さの変化は「読者が自分で広げた(作業過程の開閉など)」ものとして追わない。
+  const interactUntil = useRef(0);
+  // 位置復元(scrollMark): 戻ってきたときに復元する位置と、復元中かどうか。
+  const restoreMark = useRef<ScrollMark | null>(null);
+  const restoring = useRef(false);
+  // このセッションの初回着地(末尾 or 復元)を済ませたか。
+  const didInit = useRef(false);
+  // スクロールが止まるたびに控える「いま見ている位置」。離脱時に DOM から採り直せない
+  // (下の cleanup の注記)ので、生きているうちに控えておく。
+  const pendingMark = useRef<ScrollMark | null>(null);
+  const markTimer = useRef(0);
   const loadingOlderRef = useRef(false);
   // Set while prepending older history, to keep the reader's position put (below).
   const anchor = useRef<number | null>(null);
 
   const path = `api/shared-sessions/${encodeURIComponent(sharedSessionId)}`;
+  // 位置の記憶はミラーと同じモジュール内 Map を使う。所有者側はセッション名、こちらは
+  // catalog id なので、鍵が混ざらないよう接頭辞を付ける。
+  const markKey = `shared:${sharedSessionId}`;
 
   useEffect(() => {
     const entry = transcriptCache.get(sharedSessionId);
@@ -144,6 +179,57 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     };
   }, [sharedSessionId, refreshList, tr, path]);
 
+  // 引き継ぎ提案は転写とは別ストアなので、別ポーリングで取る(ミラーの useHandoffProposals と
+  // 同じ形)。転写に相乗りさせると CP が所有者 Agent へ毎回2往復することになり、共有履歴の
+  // 読み出しコストが倍になる。所有者 Workspace が停止中は転写と同じく取りに行かない。
+  useEffect(() => {
+    let live = true;
+    seen.current = "";
+    setHandoffs([]); // 別セッションの提案が一瞬残らないように(ペインはセッションを差し替える)
+    const load = async () => {
+      const current = useSharedSessionsStore.getState().sessions.find((x) => x.id === sharedSessionId);
+      if (current && current.workspaceState !== "running") return;
+      const d = await api(`${path}/handoff-proposals`).catch(() => null);
+      if (!live || !d || d.error) return; // 一時的な失敗では今出ているカードを消さない
+      const next = JSON.stringify(Array.isArray(d.proposals) ? d.proposals : []);
+      // 中身が変わっていないなら state を触らない。毎回新しい配列を入れると、5秒ごとに
+      // 転写ごと再描画し、末尾追従のレイアウト効果(下の useLayoutEffect)も空振りで回る。
+      if (next === seen.current) return;
+      seen.current = next;
+      setHandoffs(JSON.parse(next) as Proposal[]);
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), POLL_HANDOFF);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [sharedSessionId, path]);
+
+  // 表示位置の記憶(scrollMark・ミラーと同じ仕組みをそのまま使う)。
+  //
+  // 初めて開いたときは末尾へ、いちど読んだ会話へ戻ったときは最後に見ていた位置へ。位置は px
+  // ではなくターン([data-turn-idx])を基準に持つ — 高さは遅れて確定するうえ、再訪では tail を
+  // 取り直すので、同じ px が同じ内容を指す保証が無い。タブが生きている間だけ覚える(リロードで
+  // 消える = 次は末尾)のもミラーと同じ。
+  useEffect(() => {
+    restoreMark.current = loadMark(markKey);
+    restoring.current = false;
+    didInit.current = false;
+    interactUntil.current = 0;
+    selfTop.current = 0;
+    pendingMark.current = null;
+    return () => {
+      window.clearTimeout(markTimer.current);
+      // 同じペインで別の共有セッションへ持ち替えただけなら、まだ出ていく側の DOM が載って
+      // いるので測り直せる。**ペインを閉じた/自分のセッションへ切り替えた場合はこの面ごと
+      // unmount され、この後片付けが走る時点で ref は外れている**(測っても rect は全部 0)。
+      // ミラーは持ち替えで unmount しないので気づけない差 — そちら側だけを真似ると、
+      // 「読みかけで離れて戻る」という一番よくある道で位置が消える。
+      saveMark(markKey, captureMark(bodyRef.current, atBottom.current) ?? pendingMark.current);
+    };
+  }, [markKey]);
+
   // Keep the module cache in step so the next mount paints from it.
   useEffect(() => {
     if (loaded) {
@@ -178,32 +264,125 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     setLoadingOlder(false);
   };
 
-  // Restore the reading position after a prepend, and otherwise follow the tail.
+  const toBottom = (el: HTMLDivElement) => {
+    el.scrollTop = el.scrollHeight;
+    selfTop.current = el.scrollTop;
+  };
+
+  // スクロールが落ち着いたら位置を控える(離脱時に測り直せないため)。ターンを上から順に
+  // 当たるので、毎イベントではなく止まってから1回だけ。
+  const rememberMark = () => {
+    window.clearTimeout(markTimer.current);
+    markTimer.current = window.setTimeout(() => {
+      pendingMark.current = captureMark(bodyRef.current, atBottom.current);
+    }, MARK_SETTLE_MS);
+  };
+
+  // Restore the reading position after a prepend, land on open, and otherwise follow the tail.
   useLayoutEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
     if (anchor.current !== null) {
       el.scrollTop = el.scrollHeight - anchor.current;
+      selfTop.current = el.scrollTop;
       anchor.current = null;
       return;
     }
-    if (atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [turns]);
+    // このセッションでの初回着地。末尾で離れていた(または初めて開いた)なら末尾、途中まで
+    // 読んで離れていたならその位置へ。アンカーのターンが tail ウィンドウに載っていなければ
+    // 復元は諦めて末尾へ落とす(どのみち読み直せる位置)。
+    if (!didInit.current) {
+      if (!turns.length && !loaded) return; // まだ何も無い — 次の更新で着地する
+      didInit.current = true;
+      const mark = restoreMark.current;
+      if (mark && !mark.atBottom && applyMark(el, mark)) {
+        selfTop.current = el.scrollTop;
+        atBottom.current = false; // 末尾ではない ⇒ 追従は切れ、「最新へ」が出る
+        restoring.current = true; // 以後、遅れて入る高さのたびにこのアンカーへ置き直す
+        setShowJump(true);
+        rememberMark(); // 触らずにまた離れても、この位置を覚えたままにする
+        return;
+      }
+      restoreMark.current = null;
+      toBottom(el);
+      rememberMark();
+      return;
+    }
+    // handoffs も追従の対象。カードは転写とは別のポーリングで後から届くので、turns だけを
+    // 見ていると末尾にいたまま高さだけが増え、その分だけ着地が上にずれる(実測 +263px)。
+    if (atBottom.current) toBottom(el);
+  }, [turns, handoffs, loaded]);
 
+  // 転写の高さはほぼ全部が遅れて確定する(markdown の流し込み → ハイライト → 画像 decode →
+  // web フォント)。発生源を数え上げるのではなく「追従中は末尾を、復元中はアンカーを保つ」で
+  // 受ける — ミラーと同じ規則。これが無いと、開いた直後に末尾から数百〜数千 px 手前で
+  // 止まったままになる(実測 gap 2096px)。
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (restoring.current) {
+        const mark = restoreMark.current;
+        if (mark && !atBottom.current && applyMark(el, mark)) {
+          selfTop.current = el.scrollTop;
+          return;
+        }
+        endRestore(); // 末尾追従へ戻った(「最新へ」)か、アンカーが消えた
+      }
+      if (!atBottom.current) return;
+      if (Date.now() < interactUntil.current) return; // 読者自身が広げた分は追わない
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 1) return;
+      toBottom(el);
+    });
+    ro.observe(el);
+    if (scrollBoxRef.current) ro.observe(scrollBoxRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  // 追従するかは「読者の意図」で決める。生の距離で判定すると、自分で末尾へ留めた直後に伸びた
+  // 分を「読者が上へ行った」と読んでしまい、以後の再ピンが全部止まる(ミラーで実測済み)。
   const onScroll = () => {
     const el = bodyRef.current;
     if (!el) return;
+    rememberMark();
+    const movedUp = el.scrollTop < selfTop.current - 1;
+    if (atBottom.current && !movedUp) {
+      selfTop.current = el.scrollTop;
+      setShowJump((s) => (s === false ? s : false));
+      return;
+    }
     const stuck = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
     atBottom.current = stuck;
+    if (stuck) selfTop.current = el.scrollTop;
     setShowJump((s) => (s === !stuck ? s : !stuck));
+  };
+
+  const endRestore = () => {
+    restoring.current = false;
+    restoreMark.current = null;
+  };
+
+  // 復元を打ち切るのは読者が入力したときだけ。「scrollTop が自分の書いた値とズレた」を根拠に
+  // してはいけない — ブラウザのスクロールアンカリングが遅延レイアウトのたびに動かすので、
+  // それを「触られた」と読むと目的地の手前で固着する(ミラーで実測)。
+  const endRestoreOnInput = () => {
+    if (restoring.current) endRestore();
+  };
+
+  // 読者自身が起こす reflow(作業過程・思考・ツール実行の開閉)の窓を張る。ポインタとキーの
+  // 両方を capture で拾ってから reflow が来る。
+  const noteInteraction = () => {
+    interactUntil.current = Date.now() + INTERACT_HOLD_MS;
+    endRestoreOnInput();
   };
 
   // 「最新へ」: 末尾へ飛んで自動追従を再開する。
   const jumpToBottom = () => {
     const el = bodyRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    endRestore();
     atBottom.current = true;
+    toBottom(el);
     setShowJump(false);
   };
 
@@ -275,8 +454,25 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
         </div>
         {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
-      <div className="shared-view-body" ref={bodyRef} onScroll={onScroll} tabIndex={-1}>
-        <div className="mirror-scroll">
+      <div
+        className="shared-view-body"
+        ref={bodyRef}
+        onScroll={onScroll}
+        // 位置復元の打ち切り条件。ホイールとタッチはここで拾う — 下の pointerdown/keydown は
+        // ホイールでは出ない。
+        onWheelCapture={endRestoreOnInput}
+        onTouchStartCapture={endRestoreOnInput}
+        tabIndex={-1}
+      >
+        {/* 高さが転写と等しい内側のラッパ。ResizeObserver がこれを見て、遅れて入る高さのたびに
+            末尾(または復元中のアンカー)へ置き直す。開閉の操作はここで捕まえて「読者が広げた
+            reflow」として観測側へ伝える。 */}
+        <div
+          className="mirror-scroll"
+          ref={scrollBoxRef}
+          onPointerDownCapture={noteInteraction}
+          onKeyDownCapture={noteInteraction}
+        >
           {error && <div className="shared-view-notice">{error}</div>}
           {loaded && hasMore && (
             <div className="mirror-loadmore">
@@ -299,10 +495,28 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
                 <Icon name="loading" spin /> {tr("chat.ph_loading")}
               </div>
             )
-          ) : groups.length === 0 ? (
+          ) : groups.length === 0 && handoffs.length === 0 ? (
+            // handoffs.length === 0: 転写が空なら提案カードだけが出すものになる(空表示は
+            // TranscriptView ごと飛ばしてしまうので、ミラーと同じ条件にする)。
             <div className="mirror-empty muted">{tr("mirror.no_history")}</div>
           ) : (
-            <TranscriptView groups={groups} caps={caps} working={working} autoCollapseWork={atBottom.current} />
+            <TranscriptView
+              groups={groups}
+              caps={caps}
+              working={working}
+              autoCollapseWork={atBottom.current}
+              // 読むだけの面なので、編集・破棄・起動は出さない(押せない要素を出さない)。
+              // 置き場所はミラーと同じ「提案された時点」— 末尾に固定すると、以後の会話が
+              // ずっとカードの裏に隠れる(handoffPlacement の注記)。
+              inlineCards={handoffs.map((h) => ({
+                at: h.created_at,
+                node: (
+                  <HandoffCard key={"handoff-" + h.id} launched={!!h.launched_at} intro={tr("share.handoff_intro")}>
+                    <HandoffBody title={h.title} prompt={h.prompt} />
+                  </HandoffCard>
+                ),
+              }))}
+            />
           )}
           {showJump && (
             // ミラーと同じ sticky ピル(mirror.css)。高さ0の帯なのでスクロール量を増やさない。

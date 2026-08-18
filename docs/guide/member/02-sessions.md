@@ -348,6 +348,14 @@ proposal (it says up front that nothing is sent until the owner approves). While
 workspace is stopped, the history cannot be read. The list refreshes on its own, but
 **"Refresh"** pulls it right now.
 
+If the session proposed a **handoff to a new session**, that card appears in the shared
+conversation too, at the point it was proposed, with the title and the full prompt. Only the
+owner can edit it, discard it, or launch from it, so those buttons are not shown to you.
+
+The view behaves like a session mirror: **opening a shared conversation for the first time
+lands on the latest message**, and if you leave part-way through, **reopening it returns you
+to where you were** (reloading the browser starts from the latest again).
+
 **Approving** (as the owner): the Shared sessions section shows **"N awaiting approval"**;
 review the content and choose **"Approve and send"** or **"Reject"**.
 

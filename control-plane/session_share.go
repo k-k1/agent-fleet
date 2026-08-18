@@ -619,24 +619,65 @@ func (a sessionShareAPI) messages(w http.ResponseWriter, r *http.Request, _ Iden
 	if r.URL.RawQuery != "" {
 		path += "?" + r.URL.RawQuery
 	}
-	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, res.rt.Endpoint()+path, nil)
+	payload, status, e := a.ownerGET(r.Context(), res, path)
+	if e != nil {
+		writeAPIErr(w, e)
+		return
+	}
+	payload = sharedTranscriptDTO(payload)
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, status, payload)
+}
+
+// handoffProposals — 共有先にも「引き継ぎ」の中身を見せる。
+//
+// セッションが propose_session_handoff を呼んでも、転写に残るのはツール行と定型の
+// 完了文だけで、肝心の本文(次セッションの表示名と引き継ぎプロンプト)は所有者
+// Workspace 側の別ストア(session-handoffs)にある。ミラーはそれを会話へ差し込む
+// カードとして描いているので、同じ描画層を通す共有ビュー(docs/59 §3)にも同じ素が要る。
+// 転写と同じく本文だけを allowlist で通し、置き場所などの座標は返さない。
+func (a sessionShareAPI) handoffProposals(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	c, res, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), false)
+	if e != nil {
+		writeAPIErr(w, e)
+		return
+	}
+	// 転写と同じバケツで数える。共有先1人あたりの所有者 Workspace への往復を、
+	// 面ごとに増やさないため。
+	if !a.allowRead(mv.MembershipID + ":" + c.ID) {
+		writeAPIErr(w, &apiError{http.StatusTooManyRequests, "shared_read_rate_limited", "too many shared transcript reads"})
+		return
+	}
+	if res.rt.State(r.Context()) != "running" {
+		writeAPIErr(w, &apiError{409, "owner_workspace_stopped", "owner workspace is stopped"})
+		return
+	}
+	payload, status, e := a.ownerGET(r.Context(), res, "/sessions/"+url.PathEscape(c.Name)+"/handoff-proposal")
+	if e != nil {
+		writeAPIErr(w, e)
+		return
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	writeJSON(w, status, sharedHandoffDTO(payload))
+}
+
+// ownerGET proxies a read to the owner's Agent and decodes it. The caller is
+// responsible for authorization, the rate limit, and the response DTO.
+func (a sessionShareAPI) ownerGET(ctx context.Context, res *resolved, path string) (map[string]any, int, *apiError) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, res.rt.Endpoint()+path, nil)
 	if res.rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+res.rt.Token())
 	}
 	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
-		writeAPIErr(w, &apiError{502, "owner_workspace_unreachable", "owner workspace is unreachable"})
-		return
+		return nil, 0, &apiError{502, "owner_workspace_unreachable", "owner workspace is unreachable"}
 	}
 	defer resp.Body.Close()
 	var payload map[string]any
 	if json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&payload) != nil {
-		writeAPIErr(w, &apiError{502, "bad_owner_response", "invalid owner response"})
-		return
+		return nil, 0, &apiError{502, "bad_owner_response", "invalid owner response"}
 	}
-	payload = sharedTranscriptDTO(payload)
-	w.Header().Set("Cache-Control", "private, no-store")
-	writeJSON(w, resp.StatusCode, payload)
+	return payload, resp.StatusCode, nil
 }
 
 // sharedTranscriptDTO is intentionally an allowlist, not a list of known path
@@ -679,6 +720,24 @@ func sharedTranscriptDTO(payload map[string]any) map[string]any {
 	}
 	out["messages"] = shared
 	return out
+}
+
+// sharedHandoffDTO — 引き継ぎ提案の allowlist。表示に要るのは本文(title/prompt)と、
+// 会話のどこへ差し込むかの created_at、それに「起動済み」バッジの launched_at だけ。
+// id は React の鍵として持たせる(ランダムな不透明値で、座標を含まない)。
+func sharedHandoffDTO(payload map[string]any) map[string]any {
+	items, _ := payload["proposals"].([]any)
+	out := make([]any, 0, len(items))
+	for _, raw := range items {
+		p, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		q := map[string]any{}
+		copyAllowed(q, p, "id", "title", "prompt", "created_at", "launched_at")
+		out = append(out, q)
+	}
+	return map[string]any{"proposals": out}
 }
 
 func copyAllowed(dst, src map[string]any, keys ...string) {
