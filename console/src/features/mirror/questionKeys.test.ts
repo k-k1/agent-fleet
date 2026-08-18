@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import {
   buildClaudeSeq,
@@ -193,7 +195,10 @@ describe("buildClaudeSeq — preview options drop the free-text row (docs/dev/92
     // No Down at all: a question's tab always starts with the cursor on option 0, and
     // notes attach without needing to select that option first (実測: submits as
     // "(no option selected) notes: …").
-    expect(show(buildClaudeSeq([preview], [[]], ["コスト優先で"]))).toBe("n type:コスト優先で Enter");
+    // 'n' goes out as literal text, NOT as a named key — the Agent rejects any {k} it
+    // doesn't know with 400 and then drops the entire sequence (see the whitelist test
+    // at the bottom of this file).
+    expect(show(buildClaudeSeq([preview], [[]], ["コスト優先で"]))).toBe("type:n type:コスト優先で Enter");
   });
 
   it("still uses Down×i, Enter for a plain OPTION pick on a previewed question", () => {
@@ -207,7 +212,7 @@ describe("buildClaudeSeq — preview options drop the free-text row (docs/dev/92
     // 3 questions, only 2 carrying preview) — each question's own options decide which
     // free-text row (if any) applies for that page.
     const seq = buildClaudeSeq([preview, opts("X", "Y")], [[], ["Y"]], ["自由記述", ""]);
-    expect(show(seq)).toBe("n type:自由記述 Enter Down Enter Enter");
+    expect(show(seq)).toBe("type:n type:自由記述 Enter Down Enter Enter");
   });
 
   it("free text on a LATER plain question still uses the old Type-something row, even after an earlier previewed one", () => {
@@ -229,7 +234,7 @@ describe("buildClaudeSeq — preview options drop the free-text row (docs/dev/92
   it("folds a previewed question's free text the same way as the plain row", () => {
     // The notes field is still a single-line input under the hood (ctrl+g opens Vim for
     // more, but the driven path doesn't use that) — multi-line answers fold like normal.
-    expect(show(buildClaudeSeq([preview], [[]], ["一行目\n二行目"]))).toBe("n type:一行目 二行目 Enter");
+    expect(show(buildClaudeSeq([preview], [[]], ["一行目\n二行目"]))).toBe("type:n type:一行目 二行目 Enter");
   });
 });
 
@@ -296,5 +301,52 @@ describe("buildRespondAnswers — managed sessions (no modal)", () => {
       { options: [0] },
       { options: [1] },
     ]);
+  });
+});
+
+describe("every named key these builders emit is one the Agent accepts", () => {
+  // 層またぎの固定。ここのビルダーが吐く {k} は Agent の /sessions/{name}/input が
+  // **名前付きキーのホワイトリスト**（session_io.go の allowedKey）で検査し、知らない
+  // 名前が1つでも混じると要求ごと 400 bad_key で弾かれる — つまり打鍵は1つも届かない。
+  // Console 側は失敗を握り潰していたので、症状は「自由入力してボタンを押しても無反応」
+  // になった（2026-08-14 の preview 修正が {k:"n"} を吐き、実 TUI（tmux 直叩き）では
+  // 通るのに Console からは一度も届かなかった実例）。モーダルの契約はテストされていても
+  // **配送層の契約**は誰も見ていなかったので、ここで結ぶ。
+  const allowed = (() => {
+    const go = readFileSync(fileURLToPath(new URL("../../../../workspace/agent/session_io.go", import.meta.url)), "utf8");
+    const fn = go.slice(go.indexOf("func allowedKey("));
+    const cases = fn.slice(0, fn.indexOf("}")).match(/"([^"]+)"/g) || [];
+    return new Set(cases.map((s) => s.slice(1, -1)));
+  })();
+
+  it("parsed the Go whitelist (a rename there must fail loudly here, not silently pass)", () => {
+    expect(allowed.has("Down")).toBe(true);
+    expect(allowed.has("Enter")).toBe(true);
+    expect(allowed.has("n")).toBe(false); // 'n' must ride as {t}, not {k}
+  });
+
+  it("holds for every form the card can build", () => {
+    const preview = withPreview("案A", "案B", "案C");
+    const multi: QKQuestion = { ...q3, multiSelect: true };
+    const forms: Array<[QKQuestion[], string[][], string[]]> = [
+      [[q3], [["緑"]], [""]],
+      [[q3], [[]], ["自由記述"]],
+      [[preview], [[]], ["自由記述"]], // ← the reported bug's shape
+      [[preview], [["案B"]], [""]],
+      [[preview, q3], [[], ["赤"]], ["自由記述", ""]],
+      [[preview, q3], [["案A"], []], ["", "自由記述"]],
+      [[multi], [["赤", "緑"]], [""]],
+      [[multi], [["赤"]], ["自由記述"]],
+      [[q3, opts("X", "Y")], [["青"], ["Y"]], ["", ""]],
+    ];
+    for (const [qs, sel, ft] of forms) {
+      const out = buildClaudeSubmit(qs, sel, ft);
+      for (const k of out.keys || []) expect([show([{ k }]), allowed.has(k)]).toEqual([k, true]);
+      for (const s of out.seq || [])
+        if (s.k !== undefined) expect([show([s]), allowed.has(s.k)]).toEqual([s.k, true]);
+      // 同じ検査を menu（codex/opencode/agy）経路にも。
+      for (const s of buildMenuSeq(qs, sel, ft, true))
+        if (s.k !== undefined) expect([show([s]), allowed.has(s.k)]).toEqual([s.k, true]);
+    }
   });
 });
