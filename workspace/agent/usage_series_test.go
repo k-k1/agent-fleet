@@ -402,6 +402,33 @@ func TestUsageSeriesDoesNotLeakRefs(t *testing.T) {
 	}
 }
 
+// セッション本体の折り込みは非同期なので、走っている間の応答は直近ターンを含まない。
+// **その事実を folding で申告する。** 黙って古い数字を返すと、Console は最新のつもりで
+// 描き、利用者は当たるまで「再取得」を連打することになる（実際の苦情がこれ）。
+func TestUsageSeriesReportsFolding(t *testing.T) {
+	useIsolatedUsageDir(t)
+	resetUsageFold(t)
+	day := daysAgo(0)
+
+	// 1本目の読み出しが折り込みを起動する＝この応答は「まだ追いついていない」。
+	if got := getSeries(t, "from="+day+"&to="+day); !got.Folding {
+		t.Fatal("折り込みを起動した応答が folding を立てていない")
+	}
+	waitUsageFoldIdle(t)
+
+	// 折り込みが終わった後の読み出しはスロットルに当たる＝走っていない。ここで folding を
+	// 立て続けると Console の自動取り直しが止まらない。
+	if got := getSeries(t, "from="+day+"&to="+day); got.Folding {
+		t.Fatal("折り込みが終わっているのに folding が立っている")
+	}
+
+	// 明示的な再取得（fold=force）はスロットルを飛ばして必ず走らせる。
+	if got := getSeries(t, "from="+day+"&to="+day+"&fold=force"); !got.Folding {
+		t.Fatal("fold=force がスロットルに当たって起動しなかった")
+	}
+	waitUsageFoldIdle(t)
+}
+
 // --- レビュー P2/P3 の回帰 -----------------------------------------------------
 
 // modelRow は claude の「1呼び出しがモデル別行に割れた」1行。

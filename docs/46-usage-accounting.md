@@ -266,6 +266,11 @@ usage を解析しているのは **プロバイダ実装の内側**（`claudeCh
 - 折り込み契機: **fold-on-read**（Console が系列を要求した時、最短60秒間隔でスロットル）
   + **fold-on-delete**（セッション削除時に取りこぼしを確定）+ 既存の完了報告 POST 契機。
   常駐タイマーを増やさない（メモリ制約ホスト。docs/26 の教訓）。
+- **fold-on-read は非同期なので、応答は「折り込み中か」を必ず申告する**（`folding`）。
+  非同期にした以上、要求した読み出し自体は折り込み前の値を返す＝**画面は常に1回ぶん古い**。
+  黙って返すと利用者は最新になるまで再取得を押し続けることになる（実際にそう報告された）。
+  Console は `folding` が落ちるまで自動で取り直し、明示的な再取得だけ `fold=force` で
+  60 秒スロットルを飛ばす（自動の取り直しに付けると、終わるたび次を起動して走り続ける）。
 - **初回バックフィル**: 転写は過去分がそのまま残っているので、導入時に一度全走査すれば
   **セッション消費の履歴は遡って復元できる**（補助呼び出しは記録が無いので遡れない＝導入日以降）。
 - 二重計上の否定: チャットの claude は `~/.claude/projects` に転写を書くが、折り込み対象は
@@ -292,10 +297,11 @@ usage を解析しているのは **プロバイダ実装の内側**（`claudeCh
 ```
 GET /usage/series?from=&to=&bucket=day|hour&by=feature|kind|model|trigger|origin
                  &split=<第2軸>&filter=kind:claude,feature:title.*&include=session,aux
+                 &fold=force                          // 明示的な再取得だけ（§3-b）
  → { buckets:[{t, series:{<key>:{spend,in,out,cread,ccreate,calls,cost_usd}}}],
      totals:{...}, matrix:{<by>:{<split>:{…}}},        // split 指定時のみ（機能×モデル等）
      coverage:{<kind>:{tokens:"exact|partial|none", model:"reported|requested|none"}},
-     unmeasured_calls:N }
+     unmeasured_calls:N, folding:true }                // 折り込み走行中＝直近ターン未反映
 ```
 
 `by` と `split` の2軸で「機能 × モデル」「エージェント × モデル」を1リクエストで取る。
@@ -492,6 +498,10 @@ in=3 out=13 cread=4412 ccreate=0 spend=16 cost_usd=0.0005092 ms=2964 ok=true mea
 - **契機**: `GET /sessions/usage` を間借りした fold-on-read（60 秒スロットル）と削除時確定。
   全転写の読み直しは実測 ~20s（158 セッション）なので**非同期に回して応答を待たせない**。
   常駐タイマーは増やしていない。
+  - **その代償を利用者に押し付けない。** 非同期＝要求した読み出しは折り込み前の値を返す
+    ので、応答に `folding` を載せて Console に取り直させる（§3-b）。載せていなかった間、
+    使用量タブは「再取得を何度か押すまで最新にならない」画面だった。**非同期にした関数の
+    戻り値は「起動した」ではなく「まだ追いついていない」を返すべき**、が教訓。
 - **バックフィルは自動**（watermark 0 から走る）。実データで **848 行**が一度に入り、
   2回目は 0 行（冪等）。
 - **出自**: Console=`user` / MCP `create_session`=`operator`＋会話 slug / handoff=`handoff` /
