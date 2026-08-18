@@ -368,12 +368,51 @@ type cloudCostService struct {
 // response deliberately does not expose a deployment total that could be subtracted to
 // infer anyone else's.
 func (a adminAPI) myCloudCost(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	a.oneMemberCloudCost(w, r, mv.MembershipID)
+}
+
+// memberCloudCost (GET /api/admin/tenants/{slug}/members/{key}/cost?from=&to=) — one
+// member's attributed spend, for the admin looking at that member's detail page.
+//
+// It answers a question the per-member list cannot: the list carries a total per member
+// and nothing else, so "is this person's slot running every day including weekends" and
+// "is it the home volume or the slot hours" are not derivable from it. Those two
+// readings are the reason this belongs next to the stop / disk-quota buttons.
+//
+// ⚠️ Same body as /api/cost/me on purpose — one aggregation, one shape, so the Console
+// can render both with the same component and the two can never drift apart.
+//
+// ⚠️ The store lookup is scoped by MEMBERSHIP ONLY, deliberately: tenantAdminFor plus
+// resolveMember have already proved this member belongs to this tenant, and passing the
+// tenant as well would hide spend whose row lost its tenant_id — which happens to anyone
+// whose workspace was destroyed (tenantByMembership resolves what exists TODAY). That
+// would put a confident $0.00 on the screen of a member who did spend.
+func (a adminAPI) memberCloudCost(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := a.tenantAdminFor(w, r, r.PathValue("slug")); !ok {
+		return
+	}
+	mem, _, _, aerr := a.resolveMember(r, r.PathValue("slug"), r.PathValue("key"))
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	a.oneMemberCloudCost(w, r, mem.ID)
+}
+
+// oneMemberCloudCost is the shared body of the two endpoints above: the days, the
+// services and the total for exactly one membership.
+//
+// ⚠️ Rows for the SHARED bucket carry an empty membership_id, so filtering by a real
+// membership excludes them by construction. That is what keeps a tenant_admin from
+// seeing the deployment's own infrastructure bill here (ADR 0048 決定 4) — it is not a
+// field this handler has to remember to omit.
+func (a adminAPI) oneMemberCloudCost(w http.ResponseWriter, r *http.Request, membershipID string) {
 	from, to, aerr := usageRange(r)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	rows, err := a.mgr.store.ListCloudCost(r.Context(), "", mv.MembershipID, from, to)
+	rows, err := a.mgr.store.ListCloudCost(r.Context(), "", membershipID, from, to)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
