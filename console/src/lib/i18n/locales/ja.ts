@@ -3567,6 +3567,9 @@ export const ja = {
   "usage.metric_cread": "キャッシュ読取",
   "usage.metric_cost": "API換算相当額",
   "usage.reload": "再取得",
+  "usage.folding": "取り込み中",
+  "usage.folding_hint":
+    "セッション本体の消費を転写から台帳へ取り込んでいます。終わり次第この画面が自動で更新されるので、再取得を押し直す必要はありません。",
   "usage.filters": "絞り込み:",
   "usage.filter_remove": "この絞り込みを外す",
   "usage.filter_clear": "すべて解除",

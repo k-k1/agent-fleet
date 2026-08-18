@@ -3520,6 +3520,9 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.metric_cread": "Cache read",
   "usage.metric_cost": "API-equivalent cost",
   "usage.reload": "Reload",
+  "usage.folding": "Catching up",
+  "usage.folding_hint":
+    "Session consumption is being folded from the transcripts into the ledger. This view refreshes itself once that finishes — no need to press reload again.",
   "usage.filters": "Filters:",
   "usage.filter_remove": "Remove this filter",
   "usage.filter_clear": "Clear all",

@@ -78,6 +78,16 @@
 .usage-controls .uc-reload {
   margin-left: auto;
 }
+/* 折り込み待ちの申告。再取得ボタンの隣（右）に置く — 自動で追いつくことを、押す指の
+   すぐ横で言う。auto マージンは uc-reload の1つだけに保つこと（2つ置くと余白が均等
+   配分されてボタンが中途半端な位置に浮く）。 */
+.uc-folding {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
 
 .usage-chips {
   display: flex;

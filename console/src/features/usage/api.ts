@@ -53,6 +53,12 @@ export interface UsageSeries {
   unmeasured_calls: number;
   /** 要求期間の一部が raw の保持期間より古く hour 粒度で復元できなかった。 */
   truncated?: boolean;
+  /**
+   * セッション本体の台帳への折り込みが、この読み出しの時点で走っていた。
+   * **＝この応答は直近のターンをまだ含まないかもしれない。** 折り込みは非同期なので、
+   * これが立っている間は落ち着くまで取り直す（UsageView）。
+   */
+  folding?: boolean;
 }
 
 export interface UsageQuery {
@@ -64,6 +70,11 @@ export interface UsageQuery {
   /** 同一軸 OR・異軸 AND。末尾 * のみ前方一致（例: kind:claude,feature:title.*）。 */
   filter?: string;
   include?: string;
+  /**
+   * "force" でセッション折り込みの 60 秒スロットルを飛ばす。**明示的な再取得だけ**に付ける
+   * （自動の取り直しに付けると、折り込みが終わるたびに次を起動して永久に走り続ける）。
+   */
+  fold?: "force";
 }
 
 export function usageSeriesPath(q: UsageQuery): string {
