@@ -217,6 +217,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// itself and applies the peer rate limit. See session_peer.go for why those
 		// invariants live server-side.
 		PeerFrom string `json:"peer_from"`
+		// PeerIntent is the message's kind (request / question / answer / notice) and is
+		// REQUIRED alongside peer_from. The server derives the reply policy from it and
+		// puts both in the envelope (docs/58 §58.14) — the sender picks what it is, never
+		// what the receiver owes back.
+		PeerIntent string `json:"peer_intent"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -238,6 +243,13 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// peer 送信（docs/58 / ADR 0041）。ここで全ての不変条件を満たしてから通常の投入経路へ
 	// 合流させる。managed/tui の分岐より前に置くのは自己申告1行と同じ理由で、片方の経路
 	// だけ素通しになるのを防ぐため。
+	if body.PeerFrom == "" && strings.TrimSpace(body.PeerIntent) != "" {
+		// peer 以外の投入に種別だけ載せても封筒は付かない。黙って無視すると呼び出し元は
+		// 「返信規律を伝えた」つもりのまま素の投入をしてしまうので、ここで落とす。
+		httpx.WriteErr(w, http.StatusBadRequest, "peer_intent_without_from",
+			"peer_intent は peer_from と一緒にのみ指定できます")
+		return
+	}
 	if body.PeerFrom != "" {
 		// arm 非干渉は構造で担保する: 両方が載った要求は通さない。呼び出し元の実装ミスで
 		// peer メッセージが指示台帳に載ると、リコンサイラが「利用者の新指示」と誤認する
@@ -260,12 +272,17 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			writePeerErr(w, err)
 			return
 		}
+		reply, err := peerResolveIntent(body.PeerIntent)
+		if err != nil {
+			writePeerErr(w, err)
+			return
+		}
 		if err := peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now()); err != nil {
 			writePeerErr(w, err)
 			return
 		}
 		// 封筒はサーバが付ける（呼び出し元に組ませない＝付け忘れも名乗り詐称も起きない）。
-		body.Prompt = peerEnvelope(body.PeerFrom, body.Prompt)
+		body.Prompt = peerEnvelope(body.PeerFrom, strings.TrimSpace(body.PeerIntent), reply, body.Prompt)
 		// 無人経路なので配達検証は必須。打鍵 200 で「送れた」と返すと、送信側モデルは
 		// 伝わった前提で先へ進んでしまう。
 		body.Confirm = true

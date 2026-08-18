@@ -7,6 +7,7 @@ import {
   latestContext,
   mergeTurns,
   parseCommand,
+  peerIntentOf,
   peerSenderOf,
 } from "./model.ts";
 import type { Turn } from "./types.ts";
@@ -151,6 +152,26 @@ describe("peerSenderOf", () => {
   it("peer 封筒から送信元セッション名を読む", () => {
     expect(peerSenderOf("[agent-fleet:peer from=build-api] お願い")).toBe("build-api");
     expect(peerSenderOf("ふつうの発話")).toBeNull();
+  });
+
+  it("封筒に語が増えても名前を読み落とさない", () => {
+    // 名前の直後を "]" に固定していたため、intent/reply が乗った時点でバッジが
+    // 無言で「別のセッション」に劣化した（docs/58 §58.14）。以後の追加にも耐える形。
+    expect(
+      peerSenderOf("[agent-fleet:peer from=build-api intent=request reply=only-if-blocked] 直して"),
+    ).toBe("build-api");
+  });
+});
+
+describe("peerIntentOf", () => {
+  it("種別を読む / 未知と非 peer は null", () => {
+    expect(peerIntentOf("[agent-fleet:peer from=a intent=notice reply=none] 出た")).toBe("notice");
+    expect(peerIntentOf("[agent-fleet:peer from=a intent=request reply=only-if-blocked] 直して")).toBe(
+      "request",
+    );
+    expect(peerIntentOf("[agent-fleet:peer from=a] 旧い封筒")).toBeNull();
+    expect(peerIntentOf("[agent-fleet:peer from=a intent=fyi] 未知")).toBeNull();
+    expect(peerIntentOf("ふつうの発話")).toBeNull();
   });
 });
 
