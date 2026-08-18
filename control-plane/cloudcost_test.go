@@ -428,3 +428,106 @@ func TestMyCloudCostIsScopedToTheCaller(t *testing.T) {
 		t.Errorf("meta.first_day = %v — it is what tells a real zero from a gap", meta["first_day"])
 	}
 }
+
+// --- one member, seen from the admin's member detail page (docs/67 §67.15) ------
+
+// memberCostReq builds a request against the per-member cost route with the path
+// values the mux would have filled in.
+func memberCostReq(slug, key, email string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet,
+		"/api/admin/tenants/"+slug+"/members/"+key+"/cost?from=2026-08-01&to=2026-08-31", nil)
+	r.SetPathValue("slug", slug)
+	r.SetPathValue("key", key)
+	if email != "" {
+		r.Header.Set("X-Forwarded-Email", email)
+	}
+	return r
+}
+
+// The member detail page exists to answer "what is this person's spend made of", which
+// the per-member LIST cannot: it carries a total and nothing else. So the daily shape
+// and the service breakdown are the point of this endpoint.
+func TestMemberCloudCostGivesTheAdminTheShapeTheListCannot(t *testing.T) {
+	_, mgr, _, _ := cloudCostFixture(t)
+	w := httptest.NewRecorder()
+	newAdminAPI(mgr).memberCloudCost(w, memberCostReq("sales", "w-acme-co-jp", "boss@acme.co.jp"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["total_micro"].(float64) != 2_000_000 {
+		t.Errorf("total = %v, want this member's 2000000", got["total_micro"])
+	}
+	days, _ := got["days"].([]any)
+	if len(days) != 1 || days[0].(map[string]any)["day"] != "2026-08-17" {
+		t.Fatalf("days = %v — without them this panel just repeats the list's number", days)
+	}
+	services, _ := got["services"].([]any)
+	if len(services) != 1 || services[0].(map[string]any)["service"] != "Amazon EC2" {
+		t.Fatalf("services = %v", services)
+	}
+	// ⚠️ The same response as /api/cost/me, so the Console renders both with one
+	// component. Anything extra here would be a second shape to keep in step.
+	for _, k := range []string{"shared_micro", "shared_services", "members", "attributed_micro"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("%q must not appear on a member's detail — the shared bill is not a tenant's to see", k)
+		}
+	}
+	meta := got["meta"].(map[string]any)
+	if meta["first_day"] != "2026-08-17" {
+		t.Errorf("meta.first_day = %v — the coverage window has to travel with the number", meta["first_day"])
+	}
+}
+
+// ⚠️ Scoped by MEMBERSHIP, not by tenant. tenantByMembership resolves what exists
+// TODAY, so once a workspace is destroyed its rows are rewritten with an empty
+// tenant_id — and a tenant-scoped read would then show a confident $0.00 for somebody
+// who plainly did spend. The membership already proved it belongs to this tenant.
+func TestMemberCloudCostStillFindsSpendWhoseTenantWasLost(t *testing.T) {
+	st, mgr, _, mem := cloudCostFixture(t)
+	if err := st.PutCloudCost(context.Background(), []string{"2026-08-18"}, []CloudCostRow{
+		{Day: "2026-08-18", MembershipID: mem.ID, TenantID: "", Service: "Amazon Elastic Block Store",
+			Unblended: 500_000, Currency: "USD"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	w := httptest.NewRecorder()
+	newAdminAPI(mgr).memberCloudCost(w, memberCostReq("sales", "w-acme-co-jp", "boss@acme.co.jp"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if got["total_micro"].(float64) != 2_500_000 {
+		t.Errorf("total = %v, want 2500000 — spend whose tenant_id was lost must not vanish into a confident zero",
+			got["total_micro"])
+	}
+}
+
+// The gate is the same as the other two member-detail endpoints: tenant_admin of this
+// tenant, or a super_admin. An ordinary member of the tenant is not one.
+func TestMemberCloudCostNeedsTenantAdmin(t *testing.T) {
+	_, mgr, _, _ := cloudCostFixture(t)
+	w := httptest.NewRecorder()
+	newAdminAPI(mgr).memberCloudCost(w, memberCostReq("sales", "w-acme-co-jp", "w@acme.co.jp"))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403: an ordinary member must not read a colleague's spend: %s", w.Code, w.Body.String())
+	}
+}
+
+// And a person who is not a member of this tenant at all is a 404, not an empty chart:
+// an empty chart reads as "they cost nothing".
+func TestMemberCloudCostRefusesANonMember(t *testing.T) {
+	st, mgr, _, _ := cloudCostFixture(t)
+	if _, err := st.UpsertIdentity(context.Background(), "outsider@x.com", "outsider-x-com", ""); err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	w := httptest.NewRecorder()
+	newAdminAPI(mgr).memberCloudCost(w, memberCostReq("sales", "outsider-x-com", "boss@acme.co.jp"))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want 404: %s", w.Code, w.Body.String())
+	}
+}

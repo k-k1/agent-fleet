@@ -1263,6 +1263,13 @@ export const en: Record<keyof typeof ja, string> = {
     "What your workspace is directly tagged for: its slot hours, its persistent home volume and its snapshots. Shared infrastructure (NAT, DNS, load balancer, database, idle pool) is NOT included, so this is not the full cost of running your workspace.",
   "cost.my_total_label": "Directly attributable to your workspace (shared not included)",
   "cost.attributed_label": "Attributable to members",
+  // メンバー詳細（管理）向け。⚠️ 二人称の cost.my_* とは別キーにしてある。
+  // 三人称に翻訳し直すのではなく、同じ規律（共有は含まない・実額の一部）を保った
+  // まま主語だけを変えるため。
+  "cost.member_title": "Cloud cost",
+  "cost.member_intro":
+    "What this member's workspace is directly tagged for: slot hours, its persistent home volume and its snapshots. Shared infrastructure (NAT, DNS, load balancer, database, idle pool) is NOT included.",
+  "cost.member_total_label": "Directly attributable to this member (shared not included)",
   "cost.shared_title": "Shared infrastructure",
   "cost.shared_intro":
     "Costs that belong to no one person and are deliberately not split among members — splitting them would turn the invoice into an estimate. Warm slots nobody is holding land here too, which is what an oversized pool costs.",
