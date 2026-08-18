@@ -6,6 +6,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { OnOff, Row } from "./controls.tsx";
 import { useHostUpdate } from "./hostUpdate.ts";
+import { usePolling } from "./usePolling.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { pinDrift } from "../../lib/pinDrift.ts";
 
@@ -89,7 +90,7 @@ export function EnvTab() {
     <div className="display-settings">
       <HostUpdateSection />
       {d ? (
-        <Toolchains d={d} update={update} running={running} />
+        <Toolchains d={d} update={update} running={running} reload={load} />
       ) : err ? (
         <p className="muted pad">{err}</p>
       ) : (
@@ -275,10 +276,19 @@ function ToolVersions({ running }: { running: boolean }) {
   );
 }
 
-function Toolchains({ d, update, running }: { d: any; update: (patch: Record<string, string>) => void; running: boolean }) {
+function Toolchains({
+  d,
+  update,
+  running,
+  reload,
+}: {
+  d: any;
+  update: (patch: Record<string, string>) => void;
+  running: boolean;
+  reload: () => void;
+}) {
   const tr = useT();
   const nodeOpts: string[] = d.node_options || ["system"];
-  const javaOpts: string[] = d.java_available || [];
   const goOpts: string[] = d.go_options || ["system"];
   const tz = d.timezone || "Asia/Tokyo";
   const tzOpts: string[] = d.tz_options && d.tz_options.length ? d.tz_options : [tz];
@@ -319,20 +329,110 @@ function Toolchains({ d, update, running }: { d: any; update: (patch: Record<str
           ))}
         </select>
       </Row>
+      <JavaRow d={d} update={update} running={running} reload={reload} />
+    </>
+  );
+}
+
+// Java is the one toolchain whose picker offers versions that are not on disk yet:
+// java_available is "installed ∪ installable" (agent jdk.go), because on ECS
+// /usr/lib/jvm is empty and EVERY JDK has to be downloaded into the home volume. Until
+// now, selecting an absent major only wrote the choice — the download happened at the
+// next container start, so nothing changed in the running workspace and the member had
+// to Stop → Start (or run `workspace-agent install-jdk` in a terminal) to get a JDK.
+// This row makes that one button: it downloads into the home volume now, and since the
+// agent resolves JAVA_HOME by globbing the JDK dirs at each launch, the next session
+// picks it up with no restart.
+function JavaRow({
+  d,
+  update,
+  running,
+  reload,
+}: {
+  d: any;
+  update: (patch: Record<string, string>) => void;
+  running: boolean;
+  reload: () => void;
+}) {
+  const tr = useT();
+  const toast = useToast();
+  const poll = usePolling();
+  const [installing, setInstalling] = useState("");
+  const javaOpts: string[] = d.java_available || [];
+  const installed: string[] = d.java_installed || [];
+  const selected: string = d.java || "";
+  const needsInstall = !!selected && !installed.includes(selected);
+
+  const install = async () => {
+    if (!selected) return;
+    setInstalling(selected);
+    const finish = (msg?: string) => {
+      setInstalling("");
+      if (msg) toast(tr("env.java_install_failed", { msg }));
+      reload(); // refresh java_installed either way
+    };
+    const res = await apiJSON("api/env/jdk-install", "POST", { major: selected });
+    if (!res || res.error) {
+      finish(res?.error?.message || "");
+      return;
+    }
+    if (res.state === "done" || res.state === "error") {
+      finish(res.state === "error" ? res.error || "" : undefined);
+      return;
+    }
+    // A JDK is ~200MB, so the install runs in the background and we poll it.
+    poll({
+      deadlineMs: 20 * 60 * 1000,
+      firstDelayMs: 4000,
+      onExpire: () => finish(tr("env.java_install_timeout")),
+      step: async () => {
+        let p;
+        try {
+          p = await api("api/env/jdk-install");
+        } catch {
+          p = null;
+        }
+        if (p && p.state === "done") {
+          finish();
+          return { stop: true };
+        }
+        if (p && p.state === "error") {
+          finish(p.error || "");
+          return { stop: true };
+        }
+        return { stop: false, nextMs: 4000 };
+      },
+    });
+  };
+
+  return (
+    <>
       <Row label="Java (JAVA_HOME)">
         {javaOpts.length === 0 ? (
           <span className="muted">{tr("env.no_jdk")}</span>
         ) : (
-          <select value={d.java || ""} disabled={!running} onChange={(e) => update({ java: e.target.value })}>
-            <option value="">{tr("env.unselected")}</option>
-            {javaOpts.map((v) => (
-              <option key={v} value={v}>
-                Temurin {v}
-              </option>
-            ))}
-          </select>
+          <span className="env-java-pick">
+            <select
+              value={selected}
+              disabled={!running || !!installing}
+              onChange={(e) => update({ java: e.target.value })}
+            >
+              <option value="">{tr("env.unselected")}</option>
+              {javaOpts.map((v) => (
+                <option key={v} value={v}>
+                  {installed.includes(v) ? `Temurin ${v}` : tr("env.java_opt_absent", { v })}
+                </option>
+              ))}
+            </select>
+            {needsInstall && (
+              <button disabled={!running || !!installing} onClick={install}>
+                {installing ? tr("env.java_installing") : tr("env.java_install")}
+              </button>
+            )}
+          </span>
         )}
       </Row>
+      {needsInstall && <p className="muted ds-sub">{tr("env.java_install_note", { v: selected })}</p>}
     </>
   );
 }

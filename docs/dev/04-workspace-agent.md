@@ -268,8 +268,23 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   member のコンテナは内部 docs をディスク上に一切持たない（＝ provisioning 時点でロール分離）。
   露出範囲: `member`→`guide/member` と `dev/`、`tenant_admin`→`guide/` と `dev/`、
   `super_admin`→全 docs。decision / history などの非公開資料は super_admin に限る。毎起動で
-  再ステージ（ロール変更が次回起動で反映・イメージ版に追従）。ECS アダプタは未配線
-  （`<dataDir>` が EFS AP でホスト経路が異なるため。未配線でも起動は壊れず docs 無しになるだけ）。
+  再ステージ（ロール変更が次回起動で反映・イメージ版に追従）。
+  - **ECS は「マウント」ではなく「取得」**（旧: 未配線）。Fargate / EC2 のタスクには CP が
+    書けるホスト経路が無く、`<dataDir>` は EFS AP なので bind-mount の継ぎ目が存在しない。
+    その結果 ECS の Workspace は docs ディレクトリが**空のまま**で、Console の「利用ガイド」が
+    何も開かず、コンテナ内エージェントも環境仕様を引く先を失っていた。そこで CP に
+    `GET /internal/docs`（`control-plane/docs_bridge.go`・per-membership の `AF_DOCS_TOKEN`）を
+    置き、**同じ `roleDocsRoots` で切った同じ部分集合**を tar.gz で配る。Agent は起動時に
+    `docs_sync.go` が取得して `/usr/local/share/agent-fleet/docs` へ展開する。
+    - **マウントが常に勝つ**: docs ディレクトリが空でないときは取得しない（docker / native は
+      read-only マウント。native rootfs では `/` が read-only なので書けもしない）。
+    - ロール分離は変わらず **CP 側**（トークン→メンバーシップ→**その場で引く**ロール）。要求側は
+      範囲を選べないので、member が decision / history を引くことはできない。
+    - アーカイブは信用しない: 通常ファイルのみ・絶対パス/`..` を拒否・件数と総バイト数に上限。
+      展開はステージングへ行い、gzip の末尾まで読めた場合だけ本番へ rename する（切れた
+      ダウンロードが「途中まで入った docs」として公開されない）。
+    - このため workspace イメージは docs マウント点だけ `chown 1000:1000` してある
+      （docker / native ではその上にマウントが被るので無関係）。
 - claude の自己更新は `~/.local` 側のみ・焼き込み版は固定。壊れた symlink（旧 home パス）は
   entrypoint が検出して repair。
 - 反映ルール: image / entrypoint に触れたら **image 再ビルド + 利用者の Stop→Start**（[10](10-development.md)）。

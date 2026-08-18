@@ -147,6 +147,10 @@ func main() {
 	// Backgrounded and fail-open: boot must not wait on the CP, and an unreachable CP
 	// keeps the cached set rather than stripping everyone's servers.
 	startMCPTenantSync()
+	// Pull the role-scoped docs when the runtime mounted none (ECS — docs/dev/04 §4.9).
+	// Backgrounded: it is a few hundred KB over the network and nothing at boot waits on
+	// it, but the Console's 利用ガイド and every agent's environment answers need it.
+	go syncWorkspaceDocs("agent boot")
 	startTerminalHistoryJanitor()
 	// managed driver（hook を持たない）の turn 完了を、hook 経路と同じ通知/報告
 	// （応答あり notice ＋ docs/30 のオペレーター報告）へ流す。driver は
