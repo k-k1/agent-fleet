@@ -10,6 +10,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // The Console's launch prompt goes through the HTTP input handler rather than
@@ -259,6 +260,47 @@ func postInput(t *testing.T, name, body string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	handleSessionInput(rec, req)
 	return rec
+}
+
+// A scheduled fire with 完了報告 OFF carries no report_to, and the badge origin used to be
+// recorded INSIDE the report_to branch — so every default-settings schedule (the Console
+// checkbox is off by default) and the usage-limit auto-resume (report:false by
+// construction) landed in the mirror as if the user had typed it. The origin must be
+// remembered from `source` alone; the instruction ledger must still stay empty, since
+// there is no conversation to report back to.
+func TestScheduledInputWithoutReportToStillBadges(t *testing.T) {
+	bin := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+  has-session) exit 0 ;;
+  list-panes) printf '1 %%3\n' ;;
+  load-buffer) /bin/cat > /dev/null ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+
+	const name = "sched_no_report"
+	const prompt = "利用上限がリセットされました。続けてください。"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+
+	if rec := postInput(t, name, `{"prompt":"`+prompt+`","source":"schedule"}`); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	turns := []transcript.Turn{{Role: "user", Text: prompt}}
+	tagInjectedTurns(name, turns)
+	if turns[0].Source != turnSourceSchedule {
+		t.Errorf("Source = %q, want %q (mirror badge)", turns[0].Source, turnSourceSchedule)
+	}
+	if rows := readInstrRows(name); len(rows) != 0 {
+		t.Errorf("instruction ledger = %d rows, want 0 (report_to が空＝報告先が無い)", len(rows))
+	}
 }
 
 // Regression for the sx37vu7 引継ぎ bug (assistant chat's send_to_session): a managed
