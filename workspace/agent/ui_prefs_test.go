@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -133,5 +137,107 @@ func TestAssistantModelPrefs(t *testing.T) {
 	}
 	if _, ok := assistantUtilityModelPref("codex"); ok {
 		t.Fatal("missing backend must remain distinguishable from explicit default")
+	}
+}
+
+// 累積データ（学習済みの返信候補・ピン・利用実績・キー割当…）は、事故で痩せた PUT が
+// 来ると復元不能に消える。実際に消えた（返信サジェストが全端末で初期状態に戻った）ので、
+// 「痩せる書き込みの直前の版を .prev に残す」ことを仕様として固定する。拒否はしない —
+// 設定 > キー の「全消去」は利用者の正当な操作で、拒否すると効かなくなる。
+func TestShrunkPrefKeys(t *testing.T) {
+	before := map[string]any{
+		"quickReplies":       map[string]any{"ok": map[string]any{"text": "OK"}},
+		"quickRepliesPinned": []any{"OK"},
+		"ttsUserDict":        "af=エーエフ",
+		"ssmHostUsage":       map[string]any{},
+		"assistantAutoTurn":  false,
+	}
+	tests := []struct {
+		name  string
+		after map[string]any
+		want  []string
+	}{
+		{"defaults over real data flags every populated key",
+			map[string]any{"quickReplies": map[string]any{}, "quickRepliesPinned": []any{}, "ttsUserDict": ""},
+			[]string{"quickReplies", "quickRepliesPinned", "ttsUserDict"}},
+		{"a missing key counts as lost too (an older Console omits it)",
+			map[string]any{},
+			[]string{"quickReplies", "quickRepliesPinned", "ttsUserDict"}},
+		{"carrying the same content through is not a loss",
+			before,
+			nil},
+		{"growing is not a loss",
+			map[string]any{
+				"quickReplies":       map[string]any{"ok": map[string]any{"text": "OK"}, "go": map[string]any{"text": "続けて"}},
+				"quickRepliesPinned": []any{"OK", "続けて"},
+				"ttsUserDict":        "af=エーエフ",
+			},
+			[]string{}},
+		{"an already-empty key cannot shrink", map[string]any{"ssmHostUsage": map[string]any{}}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shrunkPrefKeys(before, tt.after)
+			if len(tt.want) == 0 && len(got) == 0 {
+				return
+			}
+			// 順序は accumulatedPrefKeys の並び（安定）。
+			if len(got) < len(tt.want) {
+				t.Fatalf("shrunk = %v, want %v", got, tt.want)
+			}
+			for _, k := range tt.want {
+				found := false
+				for _, g := range got {
+					if g == k {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("shrunk = %v, missing %q", got, k)
+				}
+			}
+		})
+	}
+	// 真偽値は「消えた」ではなく選ばれた値なので、false になっても退避の理由にはしない。
+	if got := shrunkPrefKeys(before, map[string]any{"assistantAutoTurn": true}); len(got) != 3 {
+		t.Fatalf("boolean flips must not be counted as accumulated loss: %v", got)
+	}
+}
+
+func TestPutUIPrefsBacksUpAShrinkingWrite(t *testing.T) {
+	writeUIPrefs(t, `{"quickReplies":{"ok":{"text":"OK","count":9,"at":1}},"iconSet":"seti"}`)
+
+	// 学習を失った既定値一式の PUT（事故の形）。書き込み自体は通る。
+	rec := httptest.NewRecorder()
+	handlePutUIPrefs(rec, httptest.NewRequest("PUT", "/env/ui-prefs", strings.NewReader(`{"quickReplies":{},"iconSet":"vscode"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT = %d", rec.Code)
+	}
+	if got := readUIPrefs()["iconSet"]; got != "vscode" {
+		t.Fatalf("write must not be refused: iconSet = %v", got)
+	}
+	// 直前の版が残っていること＝復旧の手がかりがある。
+	b, err := os.ReadFile(uiPrefsBackupPath())
+	if err != nil {
+		t.Fatalf("no backup kept: %v", err)
+	}
+	var prev map[string]any
+	if err := json.Unmarshal(b, &prev); err != nil {
+		t.Fatal(err)
+	}
+	learned, _ := prev["quickReplies"].(map[string]any)
+	if len(learned) != 1 {
+		t.Fatalf("backup lost the learned replies: %v", prev)
+	}
+
+	// 痩せない書き込みは退避を上書きしない（事故の直前の版を最新の平穏な版で流さない）。
+	rec = httptest.NewRecorder()
+	handlePutUIPrefs(rec, httptest.NewRequest("PUT", "/env/ui-prefs", strings.NewReader(`{"quickReplies":{},"iconSet":"material"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second PUT = %d", rec.Code)
+	}
+	b2, err := os.ReadFile(uiPrefsBackupPath())
+	if err != nil || string(b2) != string(b) {
+		t.Fatalf("backup must survive later benign writes: %v", err)
 	}
 }
