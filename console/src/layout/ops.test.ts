@@ -56,12 +56,44 @@ describe("open/close/reset", () => {
     expect(ops.allViews(after)).toHaveLength(2);
   });
 
-  it("closing the selected view chooses its right neighbor, then left", () => {
+  it("closing the selected view falls back to its right neighbor, then left, without usage stamps", () => {
     const before = layout([cell("g1", [view("p1"), view("p2"), view("p3")], "p2")]);
     const right = ops.closeView(before, "p2");
     expect(ops.activeCell(right)?.selectedViewId).toBe("p3");
     const left = ops.closeView(right, "p3");
     expect(ops.activeCell(left)?.selectedViewId).toBe("p1");
+  });
+
+  it("closing the selected view returns to the tab shown before it, not the neighbor", () => {
+    let l = ops.freshTabbedLayout();
+    for (const name of ["alpha", "beta", "gamma"]) l = ops.openInTab(l, target(name));
+    l = ops.selectView(l, "p1"); // 例: ミラーのタブを表示している状態
+    l = ops.openInTab(l, target("delta")); // そこからリンクを開く（末尾に追加され選択される）
+    expect(ops.activeCell(l)?.selectedViewId).toBe("p4");
+
+    const back = ops.closeView(l, "p4");
+    expect(ops.activeCell(back)?.selectedViewId).toBe("p1");
+    // 戻った先が「今表示中」になるので、次に閉じたときの基準もそこから進む。
+    const reopened = ops.openInTab(back, target("epsilon"));
+    const again = ops.closeView(reopened, ops.activeView(reopened)!.id);
+    expect(ops.activeCell(again)?.selectedViewId).toBe("p1");
+  });
+
+  it("a tab retargeted while hidden does not steal the return spot", () => {
+    let l = ops.freshTabbedLayout();
+    for (const name of ["alpha", "beta"]) l = ops.openInTab(l, target(name));
+    l = ops.selectView(l, "p1");
+    // 裏のタブの差し替え（ミラーが開いているプラン面を書き換える経路）は「表示した」ではない。
+    l = ops.setPaneTarget(l, "p2", { content: { kind: "doc", docTitle: "plan", docContent: "x" } });
+    l = ops.openInTab(l, target("gamma"));
+    expect(ops.activeCell(ops.closeView(l, "p3"))?.selectedViewId).toBe("p1");
+  });
+
+  it("closing a background tab leaves the shown tab alone", () => {
+    let l = ops.freshTabbedLayout();
+    for (const name of ["alpha", "beta"]) l = ops.openInTab(l, target(name));
+    const after = ops.closeView(l, "p1");
+    expect(ops.activeCell(after)?.selectedViewId).toBe("p2");
   });
 
   it("closing the final view leaves a true empty cell", () => {
@@ -119,6 +151,22 @@ describe("tab drag operations", () => {
     expect(after.cols[0].cells).toHaveLength(2);
     expect(ops.allViews(after).map((v) => v.id)).toEqual(["p1"]);
     expect(after.cols[0].cells[0].views).toEqual([]);
+  });
+
+  it("leaves the source cell on its most recent tab when the shown one is torn out or moved", () => {
+    let l = ops.freshTabbedLayout();
+    for (const name of ["alpha", "beta", "gamma"]) l = ops.openInTab(l, target(name));
+    l = ops.selectView(l, "p1");
+    l = ops.selectView(l, "p3");
+    l = ops.dropSplitTab(l, "p3", "g0", "right"); // 表示中の p3 を切り離す
+    expect(ops.cellById(l, "g0")?.selectedViewId).toBe("p1");
+
+    l = ops.selectView(l, "p2"); // g0 を活性に戻してからもう 1 枚開く
+    l = ops.openInTab(l, target("delta")); // p4（末尾・選択される）
+    l = ops.selectView(l, "p1");
+    l = ops.selectView(l, "p2"); // 直前は p1、表示は p2
+    const moved = ops.moveTab(l, "p2", ops.allCells(l)[1].id);
+    expect(ops.cellById(moved, "g0")?.selectedViewId).toBe("p1");
   });
 
   it("enforces three columns and two rows", () => {
