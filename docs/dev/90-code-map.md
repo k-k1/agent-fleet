@@ -60,7 +60,7 @@
 | `mcp_era.go` / `mcp_server.go` / `mcp_server_bridge.go` | MCP 新版（2026-07-28 ステートレス）の受理層（docs/49）/ テナント配布 MCP レジストリの admin CRUD と Workspace 向け内部ブリッジ（docs/48） |
 | `mem.go` / `limits.go` | Workspace RAM 上限の bytes 正規化・runtime 別整形 / テナント limits JSON パースとアイドルタイムアウト解決 |
 | `tts.go` / `tts_{polly,ecs}.go` / `enkana*.go` | 読み上げの共通面 / provider / 日本語読み正規化 |
-| `workspace_docs.go` | ロール別 docs を Workspace へ read-only ステージ |
+| `workspace_docs.go` / `docs_bridge.go` | ロール別 docs を Workspace へ read-only ステージ（docker/native）/ 同じ部分集合を `GET /internal/docs` で配る取得ブリッジ（ECS・docs/dev/04 §4.9） |
 | `mcp.go` | CP 側 MCP サーバ（`/mcp`） |
 | `ws_settings.go` | workspace 毎の設定（agent 自動更新など） |
 | `admin_sessions.go` / `admin_stats.go` | admin 横断セッション一覧 / メンバー統計 |
@@ -103,6 +103,8 @@
 | `mcp_stdio.go` / `mcp_run.go` | コンテナ内 stdio MCP サーバ / MCP プロセス実行 |
 | `mcp_servers.go` / `mcp_materialize.go` / `mcp_tenant.go` | MCP レジストリの REST 面 / CLI 設定への materialize 契機 / テナント配布の取得契機（docs/48。実装本体は `internal/mcpreg`） |
 | `preview.go` / `terminal.go` | `/proxy/{port}` コンテナ内中継 / `/ws/pty`（WebSocket PTY） |
+| `docs_sync.go` | マウントが無いとき（ECS）に CP からロール別 docs を取得して展開 |
+| `jdk_install_http.go` | 設定→ツールチェーンの JDK ワンボタン導入（`/env/jdk-install`・実体は `jdk.go` の `installJDK`） |
 | `env_toolchains.go` / `env_tool_versions.go` / `ui_prefs.go` / `repo_prompts.go` | Java/Node/TZ ツールチェーン解決 / バンドルツール版レポート（実効・焼き込み・~/.local・ピン）/ UI プリファレンス / リポの command・skill テンプレ列挙 |
 | `shutdown.go` / `record_exit.go` | graceful shutdown / tui pane の終了理由記録 |
 

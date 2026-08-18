@@ -246,6 +246,10 @@ func (n *nativeRuntime) State(ctx context.Context) string {
 // own environment carries deployment secrets (AF_MASTER_KEY, oauth secrets, DB
 // URLs) that must never leak into a workspace process that runs arbitrary user
 // sessions.
+// mountsStagedDocs: native ro-binds (or points AGENT_DOCS_DIR at) <dataDir>/docs, so it
+// needs the same per-start staging as docker (runtime.go runtimeDocsMounter).
+func (n *nativeRuntime) mountsStagedDocs() {}
+
 func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
 	if n.State(ctx) == "running" {
 		return nil

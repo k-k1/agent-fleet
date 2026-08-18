@@ -115,41 +115,48 @@ func adoptiumArch() (string, error) {
 
 var majorOnlyRe = regexp.MustCompile(`^\d+$`)
 
-// runInstallJDK downloads the latest GA Temurin JDK for the given major into the
-// per-user home dir as temurin-<major>-jdk-<goarch>, replacing any existing dir for
-// that major. Keyed by major only, so re-running just updates that major to the
-// latest patch — multiple patches of the same major never accumulate.
+// runInstallJDK is the `workspace-agent install-jdk <major>` subcommand — a thin CLI
+// face over installJDK (which the Console's one-button install shares, jdk_install_http.go).
 func runInstallJDK(args []string) {
 	if len(args) < 1 || !majorOnlyRe.MatchString(args[0]) {
 		fmt.Fprintln(os.Stderr, "usage: workspace-agent install-jdk <major>   (e.g. 21)")
 		os.Exit(2)
 	}
-	major := args[0]
-	aarch, err := adoptiumArch()
-	if err != nil {
+	if _, err := installJDK(args[0]); err != nil {
 		fmt.Fprintln(os.Stderr, "[install-jdk]", err)
 		os.Exit(1)
 	}
+}
 
+// installJDK downloads the latest GA Temurin JDK for the given major into the
+// per-user home dir as temurin-<major>-jdk-<goarch>, replacing any existing dir for
+// that major, and returns where it landed. Keyed by major only, so re-running just
+// updates that major to the latest patch — multiple patches of the same major never
+// accumulate. Progress goes to stderr, which is the agent log for the HTTP caller.
+func installJDK(major string) (string, error) {
+	if !majorOnlyRe.MatchString(major) {
+		return "", fmt.Errorf("invalid major %q", major)
+	}
+	aarch, err := adoptiumArch()
+	if err != nil {
+		return "", err
+	}
 	root := jvmHomeRoot()
 	if err := os.MkdirAll(root, 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, "[install-jdk]", err)
-		os.Exit(1)
+		return "", err
 	}
 	// Download to a temp tarball, extract into a staging dir, then atomically swap
 	// it into place — a failed/half download never corrupts an existing JDK.
 	tgz, err := os.CreateTemp(root, ".jdk-*.tgz")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "[install-jdk]", err)
-		os.Exit(1)
+		return "", err
 	}
 	tgzPath := tgz.Name()
 	tgz.Close()
 	defer os.Remove(tgzPath)
 	staging, err := os.MkdirTemp(root, ".install-"+major+"-")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "[install-jdk]", err)
-		os.Exit(1)
+		return "", err
 	}
 	defer os.RemoveAll(staging)
 
@@ -159,29 +166,25 @@ func runInstallJDK(args []string) {
 	// http への降格リダイレクトは拒否）. tar --strip-components=1
 	// drops the jdk-<ver>/ top-level dir so bin/, lib/ land directly under staging.
 	if err := runCmd("curl", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "-o", tgzPath, url); err != nil {
-		fmt.Fprintf(os.Stderr, "[install-jdk] download failed: %v\n", err)
-		os.Exit(1)
+		return "", fmt.Errorf("download failed: %w", err)
 	}
 	if err := runCmd("tar", "-xzf", tgzPath, "--strip-components=1", "-C", staging); err != nil {
-		fmt.Fprintf(os.Stderr, "[install-jdk] extract failed: %v\n", err)
-		os.Exit(1)
+		return "", fmt.Errorf("extract failed: %w", err)
 	}
 	if _, err := os.Stat(filepath.Join(staging, "bin", "java")); err != nil {
-		fmt.Fprintln(os.Stderr, "[install-jdk] extracted tree has no bin/java")
-		os.Exit(1)
+		return "", fmt.Errorf("extracted tree has no bin/java")
 	}
 
 	dest := filepath.Join(root, "temurin-"+major+"-jdk-"+runtime.GOARCH)
 	if err := os.RemoveAll(dest); err != nil {
-		fmt.Fprintln(os.Stderr, "[install-jdk]", err)
-		os.Exit(1)
+		return "", err
 	}
 	if err := os.Rename(staging, dest); err != nil {
-		fmt.Fprintln(os.Stderr, "[install-jdk]", err)
-		os.Exit(1)
+		return "", err
 	}
 	out, _ := exec.Command(filepath.Join(dest, "bin", "java"), "-version").CombinedOutput()
 	fmt.Fprintf(os.Stderr, "[install-jdk] installed at %s\n%s", dest, string(out))
+	return dest, nil
 }
 
 func runCmd(name string, args ...string) error {

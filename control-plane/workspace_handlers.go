@@ -402,8 +402,15 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	// answer environment questions from the authoritative docs. Gated here because
 	// the CP knows the role — a member's container never holds private decision/history docs.
 	// Best-effort: a failure just means no docs mount, never a failed start.
-	if err := stageWorkspaceDocs(a.mgr.rootedDataDir(res.ws), res.mv.Role); err != nil {
-		log.Printf("stage workspace docs (ws=%s role=%s): %v", res.ws.ID, res.mv.Role, err)
+	//
+	// Only for the adapters that then MOUNT that directory. On ECS nothing would ever
+	// read it (the task has no path into the CP's filesystem), so staging there would
+	// just copy megabytes onto the CP's disk for nobody; that container pulls the same
+	// subset over /internal/docs instead (docs_bridge.go).
+	if _, mounts := rt.(runtimeDocsMounter); mounts {
+		if err := stageWorkspaceDocs(a.mgr.rootedDataDir(res.ws), res.mv.Role); err != nil {
+			log.Printf("stage workspace docs (ws=%s role=%s): %v", res.ws.ID, res.mv.Role, err)
+		}
 	}
 	if err := lease.checkpoint(ctx); err != nil {
 		return workspaceLifecycleLeaseError(err)
