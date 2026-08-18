@@ -47,6 +47,42 @@ describe("parseQuestionAnswers", () => {
     expect(parseQuestionAnswers(raw, ["様式は？", "色は？"])).toEqual(["左レール（推奨）", "青"]);
   });
 
+  it("reads a notes-only answer (previewed question's free text) and keeps the LATER answers on their own questions", () => {
+    // Verbatim from a real claude 2.1.234 transcript (probe run 2026-08-18): q1 answered
+    // by free text on a previewed question, so it comes back UNQUOTED as
+    // `=(no option selected) notes: …`. The old anchor demanded a quote there, failed for
+    // the whole card, and the legacy pair regex — which can't see the unquoted pair —
+    // shifted the remaining answers up: q1 showed "UI", q2 showed "先に基盤", q3 nothing.
+    const raw =
+      'The user answered: "定義の表現形式は？"=(no option selected) notes: コスト優先で決めたい, ' +
+      '"検証の入口は？"="UI" selected preview:\n[検証] ボタン, "移行の順序は？"="先に基盤". ' +
+      "Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.";
+    expect(parseQuestionAnswers(raw, ["定義の表現形式は？", "検証の入口は？", "移行の順序は？"])).toEqual([
+      "コスト優先で決めたい",
+      "UI",
+      "先に基盤",
+    ]);
+  });
+
+  it("cuts claude's trailing sentence off a notes-only LAST answer (no closing quote to stop at)", () => {
+    // Also verbatim (single-question probe): with no quote around the value, the trailer
+    // is the only end marker there is.
+    const raw =
+      'The user answered: "どの方式にしますか？"=(no option selected) notes: コストが理由でこれにしたい. ' +
+      "Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.";
+    expect(parseQuestionAnswers(raw, ["どの方式にしますか？"])).toEqual(["コストが理由でこれにしたい"]);
+  });
+
+  it("a notes answer resolves as free text, never as a pick", () => {
+    // The card must show the user's words in the 自由入力 slot with no radio checked —
+    // "(no option selected)" itself is claude's bookkeeping, not something to display.
+    const answer = parseQuestionAnswers(
+      'The user answered: "方式は？"=(no option selected) notes: 安いほうで. You can now continue.',
+      ["方式は？"],
+    )[0];
+    expect(resolveAnswer(answer, ["JSON", "UI"])).toEqual({ chosen: [], extras: ["安いほうで"] });
+  });
+
   it("falls back to pair matching when the prompt is not in the result", () => {
     const raw = 'Your questions have been answered: "old wording"="青". You can now continue.';
     expect(parseQuestionAnswers(raw, ["new wording"])).toEqual(["青"]);

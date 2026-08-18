@@ -112,7 +112,17 @@ export function buildClaudeSeq(qs: QKQuestion[], sel: string[][], freeText: stri
       // notes there with no navigation needed; typing + Enter submits with no option
       // picked ("(no option selected) notes: …" — claude's own free-text equivalent
       // for this layout).
-      seq.push({ k: "n" }, { t: ft }, { k: "Enter" });
+      //
+      // 'n' rides as a {t} step, not a {k} one: the Agent's /input validates every {k}
+      // against a NAMED-key whitelist (allowedKey in session_io.go — Up/Down/…/Enter),
+      // and a step it doesn't know rejects the WHOLE request with 400 bad_key, so not a
+      // single keystroke reaches the pane and the card just sits there (the reported
+      // "自由入力してボタンを押しても無反応"). For a printable character the two are the
+      // same byte on the pane anyway — `send-keys n` and `send-keys -l n` both deliver
+      // 0x6e — and keeping it client-side means this works against an older Agent too.
+      // The step stays separate from the text so the 90ms pacing lets the notes field
+      // open before it is typed into.
+      seq.push({ t: "n" }, { t: ft }, { k: "Enter" });
     } else if (ft) {
       // single-select free text: move to the "Type something" row, type, then Enter
       // confirms + auto-advances (single-select Enter does NOT toggle-off — verified).
