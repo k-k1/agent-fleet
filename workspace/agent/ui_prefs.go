@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,6 +26,64 @@ const maxUIPrefsBytes = 64 << 10 // 64 KiB cap on the prefs blob
 
 func uiPrefsPath() string {
 	return filepath.Join(homeDir(), ".config", "agent-fleet", "ui-prefs.json")
+}
+
+// 直前の版の退避先。PUT は本文をそのまま置き換えるので、事故で痩せた blob が来ると
+// それ以前の内容はどこにも残らない（実際に返信サジェストの学習が全端末で消えた）。
+func uiPrefsBackupPath() string {
+	return uiPrefsPath() + ".prev"
+}
+
+// 累積データのキー — 溜まっていく設定で、失っても作り直せない。Console 側の
+// ACCUMULATED（console/src/lib/settings.ts）と同じ顔ぶれにしてある。
+var accumulatedPrefKeys = []string{
+	"quickReplies",
+	"quickRepliesPinned",
+	"quickRepliesHidden",
+	"ssmHostUsage",
+	"ssmHostColors",
+	"keybindings",
+	"hiddenModels",
+	"expandThinking",
+	"claudeCustomModels",
+	"workingSets",
+	"ttsVoicePool",
+	"ttsUserDict",
+}
+
+// emptyPref は「中身が無い」— 欠落・null・空文字・空配列・空オブジェクト。
+// 数値/真偽値は対象外（0 や false は消えた印ではなく選ばれた値）。
+func emptyPref(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case string:
+		return t == ""
+	case []any:
+		return len(t) == 0
+	case map[string]any:
+		return len(t) == 0
+	default:
+		return false
+	}
+}
+
+// shrunkPrefKeys は「前は中身があったのに、この PUT で空（または欠落）になる」累積キーを返す。
+// 利用者が明示的に消すこともある（設定 > キー の「学習済みの候補を全消去」）ので拒否はしない —
+// 拒否すると正当な操作が効かなくなる。代わりに直前の版を .prev へ退避し、何が痩せたかを
+// ログに残す（この形跡が無かったせいで、原因の特定に転写と mtime の突き合わせが要った）。
+func shrunkPrefKeys(before, after map[string]any) []string {
+	var out []string
+	for _, k := range accumulatedPrefKeys {
+		old, had := before[k]
+		if !had || emptyPref(old) {
+			continue
+		}
+		if now, ok := after[k]; !ok || emptyPref(now) {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // readUIPrefs loads the raw prefs blob from disk — the same file handleGetUIPrefs
@@ -362,6 +421,17 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	if err := os.MkdirAll(filepath.Dir(uiPrefsPath()), 0o700); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 		return
+	}
+	// 累積データが痩せる書き込みだけ、直前の版を退避してから置き換える。毎回退避しないのは
+	// 「復元したい版」が最後の 1 回で流れてしまうから — 事故の直前を残すことに意味がある。
+	if lost := shrunkPrefKeys(readUIPrefs(), obj); len(lost) > 0 {
+		if old, err := os.ReadFile(uiPrefsPath()); err == nil && len(old) > 0 {
+			if err := os.WriteFile(uiPrefsBackupPath(), old, 0o600); err != nil {
+				log.Printf("ui-prefs: backup before shrinking write failed: %v", err)
+			}
+		}
+		log.Printf("ui-prefs: incoming prefs drop accumulated keys %v (previous copy kept at %s)",
+			lost, uiPrefsBackupPath())
 	}
 	before := opencodeCatalogPref()
 	peerBefore := peerMessagingPref()
