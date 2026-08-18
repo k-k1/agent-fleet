@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -160,6 +162,24 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		// `turns` above can't be reused here: it's an incremental slice after the first poll).
 		maybeSuggestTitle(name, claude.CollectTurns(lines, 0, len(lines)), time.Since(mt))
 	}
+	// Whole-transcript answers for AskUserQuestion/ExitPlanMode/Agent, keyed by tool_use
+	// id. claude writes an interaction tool_use at ASK time; its answer can land in a later
+	// poll whose window no longer re-emits that turn, so the windowed `turns` above may
+	// carry it unanswered. The Console patches the answer onto the already-held turn by qid.
+	answers := claude.CollectInteractionAnswers(lines)
+	// Pending question/plan/permission — built aside (not straight into resp) because the
+	// de-duplication below needs to know what was surfaced, and may withdraw it.
+	pending := map[string]any{}
+	surfacePendingPayloads(pending, sid, state)
+	// The pending question/plan above is ALSO in the transcript already (ask-time tool_use),
+	// so the same card would render twice. Drop the duplicate and hold the cursor short of
+	// its line, so it comes back — decided — once it resolves.
+	turns, hold := hidePendingInteraction(turns, pending, answers)
+	// forkPreview の cursor は行番号ではなく、次の poll で fork 自身の jsonl へ乗り換える
+	// ための番兵。行番号に落とすと乗り換えそのものが壊れるので、そこだけは触らない。
+	if !forkPreview && hold >= 0 && hold < cursor {
+		cursor = hold
+	}
 	resp := map[string]any{
 		"name": name, "messages": turns, "cursor": cursor,
 		"status": state, "alive": alive, "reset": reset,
@@ -179,14 +199,12 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		resp["firstLine"] = firstLine
 		resp["hasMore"] = firstLine > 0
 	}
-	// Whole-transcript answers for AskUserQuestion/ExitPlanMode/Agent, keyed by tool_use
-	// id. claude writes an interaction tool_use at ASK time; its answer can land in a later
-	// poll whose window no longer re-emits that turn, so the windowed `turns` above may
-	// carry it unanswered. The Console patches the answer onto the already-held turn by qid.
-	if ans := claude.CollectInteractionAnswers(lines); len(ans) > 0 {
-		resp["answers"] = ans
+	if len(answers) > 0 {
+		resp["answers"] = answers
 	}
-	surfacePendingPayloads(resp, sid, state)
+	for k, v := range pending { // pendingQuestions / pendingText / pendingPlan / pendingPermission
+		resp[k] = v
+	}
 	// Current mode label (Plan / Bypass / Default / …), only while alive — read from the
 	// status line so it reflects a terminal-side Shift+Tab too. The jsonl mode is a stale
 	// per-prompt snapshot with a different vocabulary, so it's not used as a fallback.
@@ -504,8 +522,11 @@ func toBrowseRel(p, cwd, root string) string {
 }
 
 // surfacePendingPayloads adds any currently-pending AskUserQuestion / ExitPlanMode /
-// permission to resp. These aren't in the transcript yet (claude writes the tool_use
-// only after it's resolved), so they come from the status hook's captured payloads.
+// permission to resp, from the status hook's captured payloads. The transcript alone
+// can't drive these: it carries the tool_use (written at ASK time — see CollectTurns)
+// but nothing that says the modal is still up, and a permission prompt never reaches
+// the jsonl at all. The tool_use it DOES carry is the duplicate hidePendingInteraction
+// removes.
 func surfacePendingPayloads(resp map[string]any, sid, state string) {
 	// A captured question/plan payload takes precedence over the "permission" state.
 	// AskUserQuestion / ExitPlanMode fire their OWN permission_prompt Notification
@@ -546,4 +567,104 @@ func surfacePendingPayloads(resp map[string]any, sid, state string) {
 	if hasP {
 		resp["pendingPlan"] = pp
 	}
+}
+
+// hidePendingInteraction removes the transcript part that DUPLICATES a still-pending
+// AskUserQuestion / ExitPlanMode payload, and reports the line index the cursor must be
+// held at (-1 = nothing hidden).
+//
+// WHY: claude writes an interaction's tool_use at ASK time, so while the modal is up the
+// very same question/plan exists twice in one response — as a part of the newest turn,
+// and as the pending payload surfacePendingPayloads surfaces for the actionable card the
+// Console renders at the bottom. The mirror drew both (実測 2026-08-19), and the inline
+// copy additionally badged 決定済み, because "it reached the transcript" used to mean
+// "it was already answered". One decision must be shown once, in one place: the pending
+// card, which is the only one that can be acted on.
+//
+// WHY hold the cursor instead of just dropping the part: the client only ever asks for
+// lines AFTER its cursor, so a line dropped from the response it advances past is gone
+// from that client's history for good (until a full reload). Holding the cursor short of
+// that line leaves it unconsumed — the poll after the decision delivers it again, this
+// time with its tool_result, and the Console renders it as the decided card. Turns are
+// merged by idx (mergeTurns), so re-delivery replaces rather than duplicates.
+//
+// Matching is by CONTENT: the hook payload carries no tool_use id (it is captured in
+// PreToolUse, before one is written). The LAST match wins — a rejected plan is often
+// refined and re-presented with identical Markdown, and only the newest presentation can
+// be the pending one. A match that is already ANSWERED means the payload is stale (a hook
+// missed its clear), and then it's the ghost card that goes, never the history.
+func hidePendingInteraction(turns []transcript.Turn, pending map[string]any, answers map[string]claude.InteractionAnswer) ([]transcript.Turn, int) {
+	hold := -1
+	if plan, _ := pending["pendingPlan"].(string); strings.TrimSpace(plan) != "" {
+		turns, hold, _ = hideDuplicatePart(turns, hold, answers,
+			func(p transcript.Part) bool {
+				return p.Kind == "plan" && strings.TrimSpace(p.Plan) == strings.TrimSpace(plan)
+			},
+			func() { delete(pending, "pendingPlan") })
+	}
+	if raw, _ := pending["pendingQuestions"].(json.RawMessage); len(raw) > 0 {
+		// The payload is the tool_input.questions array — the exact JSON parseQuestions
+		// reads into the part, so the parsed forms compare equal when they are the same ask.
+		var want []transcript.Question
+		if json.Unmarshal(raw, &want) == nil && len(want) > 0 {
+			var hidden bool
+			turns, hold, hidden = hideDuplicatePart(turns, hold, answers,
+				func(p transcript.Part) bool {
+					return p.Kind == "question" && reflect.DeepEqual(p.Questions, want)
+				},
+				func() { delete(pending, "pendingQuestions"); delete(pending, "pendingText") })
+			if hidden {
+				// pendingText is the prose the assistant streamed just before the question.
+				// It exists because that prose was believed to reach the transcript only
+				// after the answer — but the question's tool_use is here, and claude writes
+				// the prose message BEFORE it (実測: 別行の assistant メッセージが先に出る),
+				// so the transcript already shows it. Sending it again would print the same
+				// paragraphs twice, inline and inside the card.
+				delete(pending, "pendingText")
+			}
+		}
+	}
+	return turns, hold
+}
+
+// hideDuplicatePart is one pass of hidePendingInteraction: find the last part `match`
+// accepts, and either strip it (still unanswered — the pending card owns it) or, when it
+// already has an answer, withdraw the stale pending payload via dropPending. Returns the
+// turns, the lowest line index the cursor must not pass yet, and whether a part was
+// actually stripped.
+func hideDuplicatePart(turns []transcript.Turn, hold int, answers map[string]claude.InteractionAnswer, match func(transcript.Part) bool, dropPending func()) ([]transcript.Turn, int, bool) {
+	ti, pi := -1, -1
+	for i := range turns {
+		for j, p := range turns[i].Parts {
+			if match(p) {
+				ti, pi = i, j
+			}
+		}
+	}
+	if ti < 0 {
+		return turns, hold, false // outside this window (a backward page) — nothing to hide here
+	}
+	if qid := turns[ti].Parts[pi].QID; qid != "" {
+		if _, answered := answers[qid]; answered {
+			dropPending()
+			return turns, hold, false
+		}
+	}
+	parts := make([]transcript.Part, 0, len(turns[ti].Parts)-1)
+	parts = append(parts, turns[ti].Parts[:pi]...)
+	parts = append(parts, turns[ti].Parts[pi+1:]...)
+	idx := turns[ti].Idx
+	if len(parts) == 0 {
+		// The tool_use was the whole message (the common shape): drop the turn, or the
+		// Console renders an empty bubble where the card used to be.
+		turns = append(turns[:ti:ti], turns[ti+1:]...)
+	} else {
+		t := turns[ti]
+		t.Parts = parts
+		turns = append(turns[:ti:ti], append([]transcript.Turn{t}, turns[ti+1:]...)...)
+	}
+	if hold < 0 || idx < hold {
+		hold = idx
+	}
+	return turns, hold, true
 }

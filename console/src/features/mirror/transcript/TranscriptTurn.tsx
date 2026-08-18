@@ -69,23 +69,28 @@ export function TranscriptTurn({
       item.kind === "toolrun" ? (
         <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={caps.openDiff} />
       ) : item.p.kind === "question" ? (
-        // A question from the transcript is already answered (claude writes the
-        // tool_use only after the answer) — show it resolved, not clickable.
+        // A question from the transcript is history, never clickable. 回答済み is claimed
+        // only when the answer is actually here: claude writes the tool_use at ASK time,
+        // so a part CAN arrive still open (the Agent hides the one whose card is pending,
+        // but a shared/exported transcript has no such card to defer to). Badging that
+        // 回答済み with nothing to show was the old, hardcoded lie.
         <QuestionBlock
           key={item.i}
           questions={item.p.questions}
-          answered
+          answered={!!item.p.answer}
           answer={item.p.answer}
           declined={item.p.declined}
         />
       ) : item.p.kind === "plan" ? (
-        // A historical plan (already decided) — show the outcome, open in a pane when
-        // this view can (the shared view has no pane to open, so PlanBlock omits it).
+        // A historical plan — show the outcome, open in a pane when this view can (the
+        // shared view has no pane to open, so PlanBlock omits it). Same rule as the
+        // question above: 決定済み only once the tool_result (or the optimistic 却下 mark)
+        // says so, not merely because the plan reached the transcript.
         <PlanBlock
           key={item.i}
           plan={item.p.plan}
           session={caps.session}
-          answered
+          answered={!!item.p.answer}
           outcome={item.p.answer}
           forceRejected={caps.isRejectedPlan ? caps.isRejectedPlan(item.p.plan || "") : false}
           onOpen={caps.openPlan ? () => caps.openPlan!(item.p.plan || "") : undefined}
