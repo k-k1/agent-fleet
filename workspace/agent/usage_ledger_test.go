@@ -525,6 +525,58 @@ func TestFoldOnReadDoesNotBlockOnRunningPass(t *testing.T) {
 	}
 }
 
+// waitUsageFoldIdle は走行中の一括折り込みを回収する。グローバル（走行中フラグ・
+// スロットル時刻）を共有するので、跨いで漏らすと次のテストが理由もなく skip される。
+func waitUsageFoldIdle(t *testing.T) {
+	t.Helper()
+	for i := 0; usageFoldRunning.Load() && i < 500; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if usageFoldRunning.Load() {
+		t.Fatal("一括折り込みが終わらない")
+	}
+}
+
+// resetUsageFold は fold-on-read のスロットルを未使用の状態へ戻す（前後とも）。
+func resetUsageFold(t *testing.T) {
+	t.Helper()
+	clear := func() {
+		usageFoldGate.Lock()
+		usageFoldedAt = time.Time{}
+		usageFoldGate.Unlock()
+	}
+	waitUsageFoldIdle(t)
+	clear()
+	t.Cleanup(func() {
+		waitUsageFoldIdle(t)
+		clear()
+	})
+}
+
+// 「再取得」はスロットルを飛ばせなければならない。飛ばせないと、押した時点で既に終わって
+// いるターンが最大1分ぶん入ってこず、利用者は最新になるまでボタンを押し続けることになる
+// （＝この画面で実際に起きていた「何度か押すまで最新にならない」）。
+func TestStartFoldSessionUsageForceSkipsThrottle(t *testing.T) {
+	useIsolatedUsageDir(t)
+	resetUsageFold(t)
+
+	if !startFoldSessionUsage(false) {
+		t.Fatal("最初の fold-on-read が起動しなかった")
+	}
+	waitUsageFoldIdle(t)
+
+	// 直後の通常読み出しはスロットルで見送る。走ってもいないので folding は立てない
+	// （立てると Console が永久に取り直す）。
+	if startFoldSessionUsage(false) {
+		t.Fatal("スロットル中の読み出しが「折り込み中」を申告した")
+	}
+	// force はそのスロットルだけを飛ばす（多重起動ガードは残る）。
+	if !startFoldSessionUsage(true) {
+		t.Fatal("force がスロットルに当たって起動しなかった")
+	}
+	waitUsageFoldIdle(t)
+}
+
 // finalizeSessionUsage は消えるセッションの watermark を忘れる。残すと state.json が
 // 「もう存在しないセッション」の分だけ単調に増える。
 func TestFinalizeSessionUsageForgetsWatermark(t *testing.T) {
