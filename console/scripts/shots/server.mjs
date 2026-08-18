@@ -142,14 +142,11 @@ const exact = {
 
 const re = [
   [/^\/api\/sessions\/([^/]+)\/messages$/, (m) => fx.messages(LOCALE, decodeURIComponent(m[1]))],
-  // メンバー詳細の 4 本。cost だけは stats/sessions の 4 秒ポーリングに乗らず、
-  // 開いたときと「適用」のときだけ引かれる（費用は 6 時間更新の DB 読みなので）。
-  [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => fx.adminMembers()],
-  [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/stats$/, () => fx.adminMemberStats()],
-  [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/sessions$/, () => fx.adminMemberSessions(LOCALE)],
-  [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/cost$/, () => fx.memberCloudCost()],
-  // メンバー詳細の 3 本。cost は stats/sessions と違って 4 秒ポーリングではなく、
-  // 開いたときと「適用」のときだけ引かれる。
+  // 変更ファイル帯の「コミット済み」判定（docs/68 P2）: セッション開始以降のコミットに
+  // 現れた repo 相対パス。
+  [/^\/api\/sessions\/([^/]+)\/committed$/, () => fx.committedFiles()],
+  // メンバー詳細の 4 本（docs/67 §67.15）。cost だけは stats/sessions の 4 秒ポーリングに
+  // 乗らず、開いたときと「適用」のときだけ引かれる（費用は 6 時間更新の DB 読みなので）。
   [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => fx.adminMembers()],
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/stats$/, () => fx.adminMemberStats()],
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/sessions$/, () => fx.adminMemberSessions(LOCALE)],

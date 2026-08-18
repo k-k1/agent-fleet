@@ -413,3 +413,60 @@ func TestReadJSONLLinesPartialTail(t *testing.T) {
 		}
 	})
 }
+
+func TestCollectFileEdits(t *testing.T) {
+	line := func(ts, cwd string, sidechain bool, blocks string) string {
+		s := `{"type":"assistant","timestamp":"` + ts + `","cwd":"` + cwd + `"`
+		if sidechain {
+			s += `,"isSidechain":true`
+		}
+		return s + `,"message":{"content":[` + blocks + `]}}`
+	}
+	tool := func(name, input string) string {
+		return `{"type":"tool_use","name":"` + name + `","input":` + input + `}`
+	}
+	toLines := func(ss ...string) [][]byte {
+		out := make([][]byte, 0, len(ss))
+		for _, s := range ss {
+			out = append(out, []byte(s))
+		}
+		return out
+	}
+
+	lines := toLines(
+		`{"type":"user","message":{"content":"直して"}}`,
+		line("2026-08-17T10:00:00Z", "/h/repos/r", false,
+			tool("Edit", `{"file_path":"/h/repos/r/a.ts","old_string":"x","new_string":"y"}`)+","+
+				tool("Bash", `{"command":"ls"}`)), // no file coordinate → not an edit
+		line("2026-08-17T10:01:00Z", "/h/repos/r", true,
+			tool("Write", `{"file_path":"b.ts","content":"1\n2\n"}`)),
+		line("2026-08-17T10:02:00Z", "/h/repos/r", false,
+			tool("Read", `{"file_path":"/h/repos/r/a.ts"}`)), // reads carry file_path but aren't edits
+	)
+
+	got := CollectFileEdits(lines, 0)
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2 (%+v)", len(got), got)
+	}
+	if got[0].Path != "/h/repos/r/a.ts" || got[0].Verb != "edit" || got[0].Idx != 1 || got[0].Sidechain {
+		t.Fatalf("first = %+v", got[0])
+	}
+	if got[0].Added != 1 || got[0].Removed != 1 {
+		t.Fatalf("first stat = +%d -%d, want +1 -1", got[0].Added, got[0].Removed)
+	}
+	// A Write is all-insert, so it reads as an addition; the relative path travels with
+	// the turn's cwd and is anchored by the caller, not here.
+	if got[1].Path != "b.ts" || got[1].Cwd != "/h/repos/r" || got[1].Verb != "add" || got[1].Added != 2 {
+		t.Fatalf("second = %+v", got[1])
+	}
+	if !got[1].Sidechain {
+		t.Fatal("second edit happened in a subagent sidechain")
+	}
+
+	// `from` skips already-folded lines: the jsonl is append-only, so a prefix's answer
+	// never changes and the caller only pays for the tail.
+	tail := CollectFileEdits(lines, 2)
+	if len(tail) != 1 || tail[0].Path != "b.ts" {
+		t.Fatalf("tail = %+v", tail)
+	}
+}

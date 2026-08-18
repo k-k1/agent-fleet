@@ -57,6 +57,40 @@ func peerReject(code, format string, a ...any) *peerRejection {
 	return &peerRejection{Code: code, Msg: fmt.Sprintf(format, a...)}
 }
 
+// peerIntent は本文の種別と、それが受信側に課す返信方針の対応表（docs/58 §58.14）。
+//
+// **返信方針を送信側に選ばせない**のが要点。別フィールドにすると `notice`（知らせるだけ）
+// なのに「返信を要求する」といった矛盾した封筒を作れてしまう。種別1つを必須にして、
+// 返信方針はここで導出する。
+//
+// 値を4つに絞ったのは、選択肢が増えるほどモデルが迷い、封筒の意味が薄まるため。
+// answer / notice が `none`（＝ここで打ち切り）を持つことが、相槌の連鎖を構造的に
+// 終わらせる部分で、既存の重複 drop では止められない「毎回文面が違う丁寧語ループ」への
+// 唯一の弁になっている。
+var peerIntents = map[string]string{
+	"request":  "only-if-blocked", // 行動を求める。返すのは「できない/前提が違う」ときだけ
+	"question": "required",        // 情報を求める。結論だけ1通返す
+	"answer":   "none",            // 相手の question への返答。ここで終わり
+	"notice":   "none",            // 知らせるだけ。返信しない
+}
+
+// peerIntentNames は決定的なエラー文とツール説明のための並び順（map の反復は不定順）。
+var peerIntentNames = []string{"request", "question", "answer", "notice"}
+
+// peerResolveIntent は種別を検証し、封筒に載せる返信方針を返す。
+//
+// 空を既定値へ倒さないのは、既定が必ず誤るため: `notice`（返信不要）に倒すと依頼が
+// 黙殺され、`request` に倒すと単なる共有に返信が返ってきて、どちらも「冗長さを減らす」
+// という目的そのものを壊す。付け忘れは呼び出し元のバグなのでエラーで返す。
+func peerResolveIntent(intent string) (string, error) {
+	reply, ok := peerIntents[strings.TrimSpace(intent)]
+	if !ok {
+		return "", peerReject("bad_peer_intent",
+			"intent（本文の種別）は %s のいずれかにしてください", strings.Join(peerIntentNames, " / "))
+	}
+	return reply, nil
+}
+
 // peerEnvelope は投入する本文の先頭に置く1行を組み立てる。
 //
 // プロンプト前置なのは、各 kind の TUI / driver への打鍵が唯一の共通投入層で、claude
@@ -65,8 +99,14 @@ func peerReject(code, format string, a ...any) *peerRejection {
 //
 // 封筒はサーバが必ず付ける。呼び出し元に組ませると、付け忘れ・詐称（他セッション名を
 // 名乗る）がそのまま通ってしまう。
-func peerEnvelope(from, message string) string {
-	return "[agent-fleet:peer from=" + from + "] " + strings.TrimSpace(message)
+//
+// `intent` / `reply` を**封筒に**載せるのは、返信規律が効くのが着信の瞬間だからで、
+// workspace-notes.md 側だけに書くと長い文脈の後方で薄まる（docs/58 §58.14）。値は
+// 英語のまま — 既存の `from=` と同じ機械トークンの層で、ミラーの読み戻しもここを見る。
+// `reply=` は自己記述的な語にしてあり、常設ルールを読み落としていても意味が通る。
+func peerEnvelope(from, intent, reply, message string) string {
+	return "[agent-fleet:peer from=" + from + " intent=" + intent + " reply=" + reply + "] " +
+		strings.TrimSpace(message)
 }
 
 // peerTargetAllowed は「この kind へ peer メッセージを送ってよいか」。
