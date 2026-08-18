@@ -14,6 +14,7 @@
 > `runtime_ecs.go` / `routes.go` / `store*.go` ＋ `migrations*/` /
 > `deploy/aws/ecs/cfn/20-platform.yaml` /
 > `console/src/features/cost/`（新設）・`features/settings/{AdminTab,TenantDialog,SettingsDialog}.tsx`
+> ／ `features/settings/tenantMembers.tsx`（67.15：メンバー詳細）・`console/scripts/shots/`
 
 ## 67.1 問題
 
@@ -551,3 +552,102 @@ assume するのではなく、**CP 自身にやらせた**——CP は `CpTaskR
   足りないのは `ce:GetCostAndUsage` **だけ**。
 - **未発見のタグキーは有効化できない**（`ValidationException: Tag keys not found`）。
   タグ付け → 発見 → 有効化の順で、時計は最後から動く（67.4.3）。
+
+## 67.15 「このユーザーはいくら」を見る場所——メンバー詳細に足す（2026-08-18）
+
+P4 で作った 3 面（管理／テナント設定／個人設定）は揃っているのに、**「この人はいくら
+使っているのか」を見に行く場所としては一覧しか無かった**。管理モーダルの
+**テナント管理 → メンバー詳細**（`console/src/features/settings/tenantMembers.tsx`）は
+mem/CPU/disk とセッション一覧を出していて、そこに強制停止と上限設定のボタンが
+並んでいるのに、費用だけが無い。
+
+### 67.15.1 なぜ「合計の再掲」で終わらないか
+
+詳細に費用を置く価値は、一覧の数字を繰り返すことではなく、**同じ画面にある操作と
+1 対 1 で対応する読みが手に入ること**にある:
+
+| 詳細で読めること | 同じ画面にある操作 |
+|---|---|
+| 日次が週末も含めて平らに乗り続けている＝スロットを握りっぱなし | **ワークスペースを強制停止** |
+| 内訳が EBS（home ボリューム）に寄っている | **上限を設定**（ディスク GB） |
+| 内訳が EC2 Compute（スロット時間）に寄っている | 同（メモリ＝スロット段） |
+
+`attributable` は 3 種（`slot_hours` / `home_volume` / `snapshots`）しかないので、内訳は
+**3 行前後**にしかならない。「サービス別は重い」という直感はこの機能には当たらず、
+逆に内訳を落とすと詳細は一覧の再掲になる。**採ったのは「合計＋日次推移＋内訳」＋期間入力。**
+
+⚠️ **リソースのタイル（`res-tiles`）に 4 枚目として足さない。** あれは 4 秒ポーリングの
+「今」で、費用は約 24 時間遅れの「期間」である。同じカードに時間と $ を並べないのは
+ADR 0048 決定 2。**独立した `admin-panel` を、リソースの直後・セッションの前に置く。**
+
+### 67.15.2 API——**広げる前に、導出できるかを確かめた**
+
+`GET /api/admin/cloud-cost` の `members[]` は
+`{tenant, membership_id, user_key, email, unblended_micro, amortized_micro}` **だけ**である。つまり:
+
+- **合計だけなら既存応答から絞れる**（`user_key` で引ける）。
+- **日次推移とサービス別内訳は、既存のどの応答にも入っていない。** そして 67.15.1 の
+  とおり、詳細に置く価値はその 2 つの方にある。
+
+`/stats` に相乗りさせる案は採らない。あれは **4 秒ポーリング**で、費用は 6 時間更新の
+DB 読みである（900 倍の頻度で同じ値を読み直すことになる）。加えて `/stats` は
+ワークスペースが無いとき `{"running":false}` で早期 return するが、**費用は停止中・破棄後の
+メンバーにも存在する**。
+
+→ **`GET /api/admin/tenants/{slug}/members/{key}/cost?from=&to=` を新設**（ゲートは
+`/stats` `/sessions` と同じ `tenantAdminFor` ＋ `resolveMember`）。応答は
+**`/api/cost/me` と完全に同一の形**で、CP 側は集計を `oneMemberCloudCost` に切り出して
+両方から呼ぶ。**新しい DTO は 1 つも増えていない**——既存の形の呼び手が 1 つ増えただけ。
+store も追加不要（`ListCloudCost` は既に membership で絞れる）。
+
+⚠️ **`tenantID` には空文字を渡す。** `tenantByMembership` は「今の workspace 行」から
+テナントを解決するので（`cloudcost.go`）、**ワークスペースを破棄したメンバーの直近ぶんは
+`tenant_id` が空で書き直される**。テナントで絞ると、その人の詳細に**自信たっぷりの
+$0.00** が出る。所属は `resolveMember` が既に証明しているので、membership だけで引く。
+テストで固定した（`TestMemberCloudCostStillFindsSpendWhoseTenantWasLost`）。
+
+### 67.15.3 二重に持たない
+
+- **`CloudCostAdminView` は使い回せない**——「メンバー行の一覧＋共有カード」で、
+  テナント選択欄も持っている。1 人分とは形が違う。
+- **`MyCloudCostView` の中身を抽出した**: `useCostOne`（取得）/ `CostRangeBar`（期間）/
+  `CostOneBody`（合計・但し書き・日次・内訳）。本人向けとメンバー詳細は**ラッパだけ**が
+  違い、変わるのは合計ラベルのキー 1 つ。一覧のツールバーも `CostRangeBar` に寄せた
+  （テナント選択は `children` で差し込む）。
+- ⚠️ **CSS のスコープ**: `cost.css` は全部 `.cloud-cost` 配下で、そのクラスは
+  `admin-stage` に付いていた。詳細側は `section.admin-panel.cloud-cost.member-cost` と
+  部品の root 自身に持たせないと、棒グラフも金額の右寄せも効かない。
+
+### 67.15.4 ラベルと RBAC
+
+- 二人称の `cost.my_*` は流用できないので `cost.member_*` を新設。⚠️ **「このメンバーの
+  コスト」とは絶対に書かない**——実測で人に紐づくのは 22.3% なので、そう書くと会社が
+  払っている額の 1/5 を指すことになる。合計ラベルは
+  **「このメンバーに直接ひも付く費用（共有分は含みません）」**で固定し、DOM テストで縛った。
+- **`CostNotes` を必ず一緒に運ぶ。** これが無いと、タグ有効化より前の期間の 0 が
+  「この人は無料」と読まれ、その 0 は永久に自己訂正しない。
+- **共有は構造的に入らない**——共有行は `membership_id` が空なので、実在の membership で
+  絞れば定義上 1 行も来ない。「返さないよう気をつける」実装にしていない。
+- **能力の確認は部品が自分でやる**（`useCostProfile`）。prop で渡す形にすると、渡し忘れた
+  瞬間に**請求の無いデプロイ（docker / native）に金額 0 の面が出る**。
+
+### 67.15.5 目視——管理のドリルダウンは**そもそも描けなかった**
+
+⚠️ `console/scripts/shots` のフィクスチャサーバには**管理のドリルダウンのスタブが
+1 本も無かった**（あったのは `/api/tenants` と `/api/admin/cloud-cost` だけ）。
+`/api/admin/tenants`・`.../members`・`/stats`・`/sessions`・`/cost` と
+`/api/admin/workspace-sizing` を足し、`--admin`（`SHOTS_ADMIN=1`）でだけ入口が出るように
+した——⚠️ 既定で出すとアカウントメニューに項目が 1 つ増え、**README のスクショが黙って
+変わる**。
+
+自前 Chromium ＋素の CDP で実際に描かせて、直したのは 2 件（どちらも DOM テストでは出ない）:
+
+- **期間の入力欄に大きい金額が貼り付いていた。** 個人向けは「期間」と「数字」が別カード
+  なので枠線が間を作るが、詳細は 1 枚なので空けないと読めない（`.member-cost .usage-toolbar`）。
+- **導入文が 3 行で、他のカードと並べると浮いていた。** 専用面と同じ長さは詳細には重い。
+  規律（共有は含まない）を保ったまま 1 文に詰めた。
+
+実測（1440px）: パネル 774×497、日次 30 本・目盛り 10 本で**重なり 0**、内訳の金額は
+3 行とも右端が揃う。1024px でも重ならず、700px では目盛りが設計どおり消えて溢れは無い。
+⚠️ **テーマは `prefers-color-scheme` では切り替わらない**（`<html data-theme>` が正）。
+メディアだけ切り替えて「明色でも見えた」と言うと、実際には暗色を 2 回撮っただけになる。

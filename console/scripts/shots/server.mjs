@@ -23,6 +23,9 @@ const arg = (name, dflt) => {
 };
 const PORT = Number(arg("port", 8765));
 const LOCALE = arg("locale", "ja");
+// 管理／テナント設定の面を出すかどうか。⚠️ 既定は off — 入口が 1 つ増えると
+// README のスクショ（アカウントメニュー）が黙って変わる。目視のときだけ立てる。
+const ADMIN = argv.includes("--admin") || process.env.SHOTS_ADMIN === "1";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -44,7 +47,10 @@ const MIME = {
 const exact = {
   "/api/version": () => ({ version: "0.3.0", commit: "demo" }),
   "/api/whoami": () => ({ ...fx.USER, scheduler_enabled: true, role: "member" }),
-  "/api/tenants": () => ({ tenants: [{ slug: "demo", name: "Demo Team", role: "member" }], super_admin: false }),
+  "/api/tenants": () => ({
+    tenants: [{ slug: "demo", name: "Demo Team", role: ADMIN ? "tenant_admin" : "member" }],
+    super_admin: false,
+  }),
   "/api/workspace": () => ({ state: "running", bootPhase: "" }),
   "/api/sessions": () => ({ sessions: fx.sessions(LOCALE) }),
   "/api/sessions/cleanup": () => ({ candidates: fx.cleanupCandidates(LOCALE) }),
@@ -79,6 +85,19 @@ const exact = {
   "/api/cost/profile": () => fx.costProfile(),
   "/api/cost/me": () => fx.myCloudCost(),
   "/api/admin/cloud-cost": () => fx.adminCloudCost(),
+  // テナント設定 → メンバー → 詳細（--admin のときだけ入口が出る）。
+  "/api/admin/tenants": () => fx.adminTenants(),
+  "/api/admin/workspace-sizing": () => ({
+    runtime: "ecs-ec2",
+    cpu_effective: false,
+    mem_meaning: "slot",
+    disk_meaning: "home",
+    disk_default_gb: 50,
+    slots: [
+      { instance_type: "m7i.large", mem_mib: 8192, vcpu: 2 },
+      { instance_type: "m7i.xlarge", mem_mib: 16384, vcpu: 4 },
+    ],
+  }),
   "/api/agents/rtk/gain": () => fx.rtkGain(),
   "/api/stats": () => fx.stats(),
   "/api/ssm/hosts": () => ({ hosts: [] }),
@@ -123,6 +142,18 @@ const exact = {
 
 const re = [
   [/^\/api\/sessions\/([^/]+)\/messages$/, (m) => fx.messages(LOCALE, decodeURIComponent(m[1]))],
+  // メンバー詳細の 4 本。cost だけは stats/sessions の 4 秒ポーリングに乗らず、
+  // 開いたときと「適用」のときだけ引かれる（費用は 6 時間更新の DB 読みなので）。
+  [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => fx.adminMembers()],
+  [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/stats$/, () => fx.adminMemberStats()],
+  [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/sessions$/, () => fx.adminMemberSessions(LOCALE)],
+  [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/cost$/, () => fx.memberCloudCost()],
+  // メンバー詳細の 3 本。cost は stats/sessions と違って 4 秒ポーリングではなく、
+  // 開いたときと「適用」のときだけ引かれる。
+  [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => fx.adminMembers()],
+  [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/stats$/, () => fx.adminMemberStats()],
+  [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/sessions$/, () => fx.adminMemberSessions(LOCALE)],
+  [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/cost$/, () => fx.memberCloudCost()],
   [/^\/api\/repos\/([^/]+)\/graph$/, (m) => fx.graph(LOCALE, decodeURIComponent(m[1]))],
   [/^\/api\/repos\/([^/]+)\/status$/, (m) => fx.scmStatus(LOCALE, decodeURIComponent(m[1]))],
   [/^\/api\/repos\/([^/]+)\/changes$/, (m) => fx.changes(LOCALE, decodeURIComponent(m[1]))],

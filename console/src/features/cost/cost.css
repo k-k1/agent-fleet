@@ -115,3 +115,10 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+/* メンバー詳細に差す 1 枚（docs/67 §67.15）。個人向けは「期間の欄」と「数字」が
+   別のカードに分かれていて枠線が間を作るが、こちらは 1 枚なので、空けないと
+   大きい金額が日付入力に貼り付いて読めなくなる（実測）。 */
+.member-cost .usage-toolbar {
+  margin-bottom: 16px;
+}

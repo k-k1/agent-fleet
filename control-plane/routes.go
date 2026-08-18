@@ -143,6 +143,10 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members", adm.listMembers)
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/stats", adm.memberStats)       // per-member mem/CPU/disk
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/sessions", adm.memberSessions) // per-member session list (read-only)
+	// One member's attributed cloud cost (docs/67 §67.15). Same body as /api/cost/me,
+	// keyed by membership instead of by the caller — the per-member LIST carries a total
+	// and nothing else, so the daily shape and the breakdown are not derivable from it.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/cost", adm.memberCloudCost)
 	mux.HandleFunc("POST /api/admin/tenants", adm.withSuperAdmin(adm.createTenant))
 	mux.HandleFunc("POST /api/admin/memberships", adm.addMembership)
 	mux.HandleFunc("DELETE /api/admin/memberships", adm.removeMembership) // offboarding (docs/61 §61.10.6)

@@ -17,7 +17,7 @@ vi.mock("../../core/api/client.ts", () => ({
   errText: (e: { message?: string }) => e?.message || "",
 }));
 
-import { MyCloudCostView, CloudCostAdminView } from "./CloudCostView.tsx";
+import { MyCloudCostView, CloudCostAdminView, MemberCostPanel } from "./CloudCostView.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -220,5 +220,87 @@ describe("コスト配分タグの状態", () => {
     await mount(<MyCloudCostView />);
     expect(text()).not.toContain("取り戻せません");
     expect(text()).not.toContain("そのままにしています");
+  });
+});
+
+// メンバー詳細のクラウド費用（docs/67 §67.15）。個人向けと同じ 3 点に加えて、
+// ④ 請求の無いデプロイでは面ごと存在しないこと（0 が並ぶ画面は「無料」と読まれる）。
+describe("MemberCostPanel", () => {
+  // この部品は profile → 費用の 2 本を続けて叩くので、URL で振り分ける。
+  const route = (cost: Record<string, unknown>, available = true) => {
+    api.mockImplementation((url: string) => {
+      if (url.startsWith("api/cost/profile")) {
+        return Promise.resolve({ runtime: "ecs-ec2", available, verified: true });
+      }
+      return Promise.resolve(cost);
+    });
+  };
+
+  const oneMember = {
+    total_micro: 2_500_000,
+    days: [
+      { day: "2026-08-17", unblended_micro: 2_000_000, estimated: false },
+      { day: "2026-08-18", unblended_micro: 500_000, estimated: true },
+    ],
+    services: [
+      { service: "Amazon EC2", unblended_micro: 2_000_000 },
+      { service: "Amazon Elastic Block Store", unblended_micro: 500_000 },
+    ],
+    meta: meta(),
+  };
+
+  it("「このメンバーのコスト」とは書かず、直接ひも付く分だと明示する", async () => {
+    route(oneMember);
+    await mount(<MemberCostPanel slug="sales" userKey="w-acme-co-jp" />);
+    expect(text()).toContain("直接ひも付く費用");
+    expect(text()).toContain("共有分は含みません");
+    // ⚠️ ここが縮むと、会社が払っている額の 1/5 を「このメンバーのコスト」と呼ぶことになる。
+    expect(text()).not.toContain("このメンバーのコスト");
+  });
+
+  it("一覧には無い日次と内訳を出す（合計の再掲で終わらせない）", async () => {
+    route(oneMember);
+    await mount(<MemberCostPanel slug="sales" userKey="w-acme-co-jp" />);
+    expect(text()).toMatch(/\$2\.50/);
+    expect(host?.querySelectorAll(".cc-day").length).toBe(2);
+    // 未確定の日は確定した日と同じ重みで読ませない。
+    expect(host?.querySelectorAll(".cc-day.est").length).toBe(1);
+    expect(host?.querySelectorAll(".usage-row.cc-svc").length).toBe(2);
+    expect(text()).toContain("Amazon Elastic Block Store");
+  });
+
+  it("そのメンバーだけを、メンバー単位のエンドポイントから引く", async () => {
+    route(oneMember);
+    await mount(<MemberCostPanel slug="sales" userKey="w@acme.co.jp" />);
+    const urls = api.mock.calls.map((c) => String(c[0]));
+    // ⚠️ user_key はメールのこともあるので、必ずエスケープして組み立てる。
+    expect(urls).toContain("api/admin/tenants/sales/members/w%40acme.co.jp/cost");
+    // 一覧（テナント全員ぶん）は叩かない——1 人を出すために全員を取り寄せない。
+    expect(urls.some((u) => u.startsWith("api/admin/cloud-cost"))).toBe(false);
+  });
+
+  it("共有インフラも他人の額もデプロイ合計も出さない", async () => {
+    route(oneMember);
+    await mount(<MemberCostPanel slug="sales" userKey="w-acme-co-jp" />);
+    // 導入文は「共有インフラは含みません」と言う（それが本体）。禁じたいのは
+    // 共有の **額** が出ることなので、カードの見出しと合計ラベルで見る。
+    const heads = [...(host?.querySelectorAll("h4") || [])].map((h) => h.textContent || "");
+    expect(heads.some((h) => h.includes("共有インフラ"))).toBe(false);
+    expect(text()).not.toContain("共有（割り当てなし）");
+    expect(text()).not.toContain("メンバーにひも付く費用");
+  });
+
+  it("但し書きは合計のすぐ隣に運ぶ（0 を「無料」と読ませない）", async () => {
+    route({ total_micro: 0, days: [], services: [], meta: meta() });
+    await mount(<MemberCostPanel slug="sales" userKey="w-acme-co-jp" />);
+    expect(host?.querySelector(".cc-headline + .cc-notes")).toBeTruthy();
+    expect(host?.querySelector(".cc-notes")?.textContent).toContain("24 時間遅れ");
+  });
+
+  it("請求の無いデプロイでは、何も描かず管理 API も叩かない", async () => {
+    route(oneMember, false);
+    await mount(<MemberCostPanel slug="sales" userKey="w-acme-co-jp" />);
+    expect(text()).toBe("");
+    expect(api.mock.calls.map((c) => String(c[0])).every((u) => u.startsWith("api/cost/profile"))).toBe(true);
   });
 });
