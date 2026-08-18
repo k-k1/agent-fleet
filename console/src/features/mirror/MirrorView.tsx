@@ -1550,21 +1550,36 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alive, termState, session, readOnly, mode, seedForce, managed]);
 
-  // sendKeys drives the AskUserQuestion modal via named keys (Down/Space/Enter), the
-  // only way to answer multi-select / multi-question forms (free text can't).
-  const sendKeys = async (keys: string[]) => {
-    if (!keys || !keys.length || sending) return;
-    if (wsDown()) return; // WS stopped: no agent to receive keys (and the optimistic 'working' below would stick)
+  // driveInput posts one modal-driving body ({keys} or {seq}) and — this is the point —
+  // does NOT swallow a rejection. api() resolves non-2xx as a value ({error:{code}}), so
+  // the old `try/await/catch {}` here never even ran its catch: a 400 (bad_key, view-nav
+  // guard, rate-limit modal) left the card sitting there with no keystroke delivered and
+  // no message, i.e. "ボタンを押しても無反応". Answering is the one place where silence is
+  // indistinguishable from success, so failures speak — same treatment as sendRespond's
+  // managed path. The optimistic 'working' is rolled back too, or the chip claims a turn
+  // that never started until the next poll.
+  const driveInput = async (body: { keys?: string[]; seq?: Array<{ k?: string; t?: string }> }) => {
+    if (sending) return;
+    if (wsDown()) return; // WS stopped: no agent to receive the keys
+    const prev = statusRef.current;
     setSending(true);
     statusRef.current = "working";
     setStatus("working");
-    try {
-      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys });
-    } catch {
-      /* next poll reconciles */
+    const res = await apiJSON(`api/sessions/${q(session)}/input`, "POST", body).catch(() => null);
+    if (!res || res.error) {
+      statusRef.current = prev;
+      setStatus(prev);
+      toast(res?.error ? errText(res.error) : tr("mirror.answer_send_failed"));
     }
     setSending(false);
     setTimeout(() => tickRef.current?.(), 400);
+  };
+
+  // sendKeys drives the AskUserQuestion modal via named keys (Down/Space/Enter), the
+  // only way to answer multi-select / multi-question forms (free text can't).
+  const sendKeys = async (keys: string[]) => {
+    if (!keys || !keys.length) return;
+    await driveInput({ keys });
   };
 
   // sendSeq drives the modal with an ORDERED mix of named keys and literal text — the
@@ -1572,18 +1587,8 @@ export function MirrorView({
   // it, type, Enter). Built by PendingQuestions.submit for multi-question / multi-select
   // forms where free text and option navigation are interleaved.
   const sendSeq = async (seq: Array<{ k?: string; t?: string }>) => {
-    if (!seq || !seq.length || sending) return;
-    if (wsDown()) return; // WS stopped: the AUQ free-text sequence can't reach the agent
-    setSending(true);
-    statusRef.current = "working";
-    setStatus("working");
-    try {
-      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq });
-    } catch {
-      /* next poll reconciles */
-    }
-    setSending(false);
-    setTimeout(() => tickRef.current?.(), 400);
+    if (!seq || !seq.length) return;
+    await driveInput({ seq });
   };
 
   // sendInterrupt stops the running turn — turn/interrupt 相当。tui では Escape に
