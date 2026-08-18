@@ -23,7 +23,7 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | fs | `GET /api/fs/{tree,file,download,changes,linemarks}`・`PUT /api/fs/file`・`POST /api/fs/{upload,mkdir,newfile,rename,delete,suggest-edit}` | 中継 | [04](04-workspace-agent.md) / [docs/44](../44-markdown-code-editor.md) |
 | connections | `GET /api/connections`・git `PUT/DELETE /api/connections/git/{host}`（+ GitHub Device / Bitbucket OAuth / claude / codex / opencode）| 中継（Bitbucket OAuth 開始と callback のみ CP）| [08](08-integrations.md) |
 | chat / assistants | `/api/chat/conversations*`（stream は SSE、削除ロック `POST …/{id}/lock`）・`POST /api/chat/ask`・`/api/assistants*` | 中継 | [04](04-workspace-agent.md) |
-| env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex,copilot}/usage`（各 WsBar 使用量チップ。claude/codex=サブスク枠、copilot=アカウント
+| env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`POST/GET /api/env/jdk-install`（JDK ワンボタン導入・[09 §JDK](09-deploy.md)）・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex,copilot}/usage`（各 WsBar 使用量チップ。claude/codex=サブスク枠、copilot=アカウント
 クレジット残量。応答にプランと利用アカウントを含む。agy は `GET /api/connections/agy/usage`）・`GET/PUT /api/agents/rtk`・`GET /api/agents/rtk/gain`（rtk 節約履歴＝使用量タブ「rtk 効果」カード、`rtk gain --all --format json` 素通し）| ws-settings=CP、他は中継 | [04](04-workspace-agent.md) |
 | memo | `GET/POST/PATCH/DELETE /api/memos*`・`POST /api/memos/flush` | CP（flush 時のみ Agent へ）| [03](03-control-plane.md) |
 | notifications | `GET /api/notifications`・`POST /api/notifications/{seen,usage-observations}` | CP（DB）| [03](03-control-plane.md) |
@@ -40,7 +40,7 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | preview | `GET /preview/{port}/{rest...}`（`/preview/{port}` は 301 で末尾 `/` 付与）| CP → Agent `/proxy/{port}` | §5.3 |
 | browser | `POST/GET/DELETE /api/browser/pages*`・`GET /ws/browser?id=&tenant=` | CP → Agent `/browser/pages*`・`/ws/browser` | §5.3 / [設計31](../31-container-browser-pane.md) |
 | WebSocket | `GET /ws/terminal?session=&tenant=` | CP → Agent `/ws/pty` | §5.3 |
-| auth / その他 | `GET /login`・`/oauth2/{login,callback,logout}`・`GET /api/oauth/bitbucket/callback`・`GET /healthz`・`/internal/egress{,/policy}`（`AF_EGRESS_TOKEN`）・`/` = Console 静的配信（no-store）| CP | [07](07-security.md) |
+| auth / その他 | `GET /login`・`/oauth2/{login,callback,logout}`・`GET /api/oauth/bitbucket/callback`・`GET /healthz`・`/internal/egress{,/policy}`（`AF_EGRESS_TOKEN`）・`GET /internal/docs`（`AF_DOCS_TOKEN`・ロール別 docs の tar.gz／[04 §4.9](04-workspace-agent.md)）・`/` = Console 静的配信（no-store）| CP | [07](07-security.md) |
 
 - 旧 `/agent-fleet` プレフィクスは**廃止**（ルート配信）。`/agent-fleet*` は互換リダイレクトのみ。
 - 非同期操作（起動・clone）は**同期 + ポーリング**で運用（`/jobs` 構想は未採用）。

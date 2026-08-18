@@ -279,7 +279,12 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 			// this tenant's distributed MCP definitions. Its own credential, because the
 			// response can carry tenant secrets (a user_secret=0 server's headers) — a leak
 			// must not also grant memo/schedule access, and vice versa.
-			"AF_MCP_TOKEN="+mintMCPToken(mcpSignKey(m.tokenSignMaster()), ws.MembershipID))
+			"AF_MCP_TOKEN="+mintMCPToken(mcpSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// Docs bridge (docs/dev/04 §4.9): the agent pulls its role-scoped docs subset
+			// when nothing was bind-mounted — i.e. on ECS, where no host path exists to
+			// mount. Its own credential for the same reason as the others; a leak reads
+			// this member's docs subset and nothing else.
+			"AF_DOCS_TOKEN="+mintDocsToken(docsSignKey(m.tokenSignMaster()), ws.MembershipID))
 	}
 	return env
 }

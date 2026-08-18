@@ -67,7 +67,7 @@ https 前置きが Secure cookie の前提。
 | Postgres | `AF_DATABASE_URL` または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}` | Store=postgres 選択時のみ | [06](06-data-model.md) |
 | ECS アダプタ 🚧 | `AF_ECS_{CLUSTER,REGION,SUBNETS,SECURITY_GROUP,NAMESPACE_ARN,EFS_ID,EXEC_ROLE,TASK_ROLE,LOG_GROUP,TASK_CPU,TASK_MEMORY,POSIX_UID,POSIX_GID,START_TIMEOUT_SEC}` | CFN が作った静的基盤の座標を CP に渡す | [ecs runbook](../../deploy/aws/ecs/README.md) |
 | native アダプタ 🚧 | `AF_NATIVE_AGENT_BIN`（PATH の `workspace-agent`） | コンテナレス実行時の workspace-agent バイナリの所在 | [34](../34-native-runtime.md) |
-| コンテナ内（CP が注入・運用者は直接設定しない） | `AGENT_ADDR`（:7700）・`AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_TMUX_SOCKET`/`AGENT_DOCS_DIR`（native のみ） | CP↔Agent 認証・DEK・停止猶予ほか | [04](04-workspace-agent.md) / [07 §7.5](07-security.md) |
+| コンテナ内（CP が注入・運用者は直接設定しない） | `AGENT_ADDR`（:7700）・`AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_TMUX_SOCKET`/`AGENT_DOCS_DIR`（native のみ）・`AF_DOCS_TOKEN`（docs 取得ブリッジ・[04 §4.9](04-workspace-agent.md)） | CP↔Agent 認証・DEK・停止猶予ほか | [04](04-workspace-agent.md) / [07 §7.5](07-security.md) |
 
 網羅性の確認方法: 変数名そのものが grep アンカー。CP の読み値（`envOr` / `os.Getenv`）と
 `run-dev.sh` の透過リスト・`.env.example` を突き合わせる。
@@ -80,6 +80,11 @@ bind-mount する。**ECS はこのマウントが無い**（`home`・`claude` �
 install-jdk <major>` が Adoptium から Temurin を入れる。Console のツール選択（toolchains）で
 Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JAVA_HOME` を通す。`availableJava`
 相当（`GET /env/toolchains` の `java_available`）は「on-disk（両ディレクトリ）∪ install 可能 major」を返す。
+**未導入の major を選んだときは、その場で入れるボタンが出る**（`POST /env/jdk-install` →
+`GET` でポーリング・agent `jdk_install_http.go`）。選択だけでは次回のコンテナ起動まで何も
+起きなかったのを、Stop → Start もターミナルも要らない一手に畳んだもの。導入後は
+`resolvedToolchains` が起動のたびに JDK ディレクトリを glob するので、**次に起動する
+セッションから** `JAVA_HOME` に入る（再起動不要）。
 
 ## 9.5 aws ターゲットの設計（縮約）🚧
 
