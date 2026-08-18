@@ -27,8 +27,8 @@ const opencodeKeyEnv = "OPENCODE_API_KEY"
 
 // UsagePref reports the selected billing route（ui-prefs opencodeCatalog）。Agent 本体が
 // ui-prefs を読むので、その読み手を注入してもらう（internal パッケージから main の
-// 設定ファイルを触らないため）。未設定なら UsageZen＝従来の見え方。
-var UsagePref = func() string { return UsageZen }
+// 設定ファイルを触らないため）。未設定なら UsageOff＝明示的に選ぶまで無効。
+var UsagePref = func() string { return UsageOff }
 
 // env loads the stored provider keys as "NAME=value" entries for the
 // session launcher to pass via `docker`/tmux `-e`. Order is stable (sorted).
@@ -78,7 +78,7 @@ func Available() bool {
 // connected is the shared "is opencode actually usable" formula: stored provider
 // key(s), a completed account OAuth login, or the user's explicit opt-in to the
 // zero-auth free tier (UsageFree, set in 設定 > エージェント > opencode「使う枠」—
-// default is UsageZen, so a fresh workspace is NOT connected until the user
+// default is UsageOff, so a fresh workspace is NOT connected until the user
 // configures something). Takes the already-loaded secrets/oauth state so callers
 // that already have them (Status) don't reload.
 //
