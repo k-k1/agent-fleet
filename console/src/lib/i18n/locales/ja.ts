@@ -566,6 +566,13 @@ export const ja = {
   "env.node_default": "既定 (image の node)",
   "env.no_jdk": "このワークスペースに JDK がありません",
   "env.unselected": "未選択",
+  "env.java_opt_absent": "Temurin {v}（未インストール）",
+  "env.java_install": "インストール",
+  "env.java_installing": "インストール中…",
+  "env.java_install_note":
+    "Temurin {v} はまだこのワークスペースにありません。「インストール」で今すぐ取得します（約 200MB／home ボリュームへ入るので再起動しても残ります）。完了後に起動したセッションから JAVA_HOME に入り、Stop → Start は不要です。",
+  "env.java_install_failed": "JDK のインストールに失敗しました: {msg}",
+  "env.java_install_timeout": "時間内にダウンロードが終わりませんでした",
   "env.go_default": "既定 (image の go)",
   "env.agent_update_title": "エージェント CLI の更新",
   "env.agent_update_label": "起動時にエージェント CLI と rtk を最新へ更新する",

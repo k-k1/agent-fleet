@@ -184,8 +184,11 @@ The shared host is memory-constrained; build tools are the main cause of OOM tro
       persist across restarts. **If no JDK is present (or you need another major),
       install one:** `workspace-agent install-jdk 21` (any major; downloads the latest
       GA Temurin for this arch as `temurin-21-jdk-<arch>`). This works on every runtime,
-      including ECS. Selecting a Java version in the Console does the same automatically
-      on the next container start.
+      including ECS. The user can do the same from the Console without a terminal:
+      **Settings > toolchains**, pick the Java version, and an **Install** button appears
+      for a version that isn't on disk yet (the download runs in the background; sessions
+      started after it finishes get the new `JAVA_HOME`, with no restart). A version
+      selected but never installed is also fetched at the next container start.
   - `java` is not on `PATH` and `JAVA_HOME` is unset by default; wrappers resolve their
     own version. To call `java`/`javac` directly, point `JAVA_HOME` at one of the dirs
     above, e.g. `JAVA_HOME=$(ls -d /usr/lib/jvm/temurin-21-jdk* ~/.local/share/agent-fleet/jvm/temurin-21-jdk* 2>/dev/null | head -1)`.
@@ -423,14 +426,17 @@ in its `[agent-fleet]` note. Don't infer it from a directory name.
 - The clock is the workspace's local timezone (`date`), not UTC.
 
 ## Answering questions about this Workspace / environment
-The agent-fleet docs you are allowed to see are mounted **read-only** at
-`/usr/local/share/agent-fleet/docs` — the set is scoped to your access level, so just
-answer from whatever is there. When asked how this environment behaves (persistence,
+The agent-fleet docs you are allowed to see are at `/usr/local/share/agent-fleet/docs`
+— the set is scoped to your access level, so just answer from whatever is there. (On
+most deployments the Control Plane bind-mounts them read-only; where it cannot mount
+anything, the Agent downloads the same role-scoped subset at start, so on a fresh
+container the directory may fill in a moment after boot rather than being there
+instantly.) When asked how this environment behaves (persistence,
 "recreate" vs "clean home" vs Stop→Start, build/memory limits, gh transparent auth,
 connections, previews, MCP, toolchains, …), grep that tree and cite the file rather
 than answering from memory (specs drift), e.g.:
 - `grep -rni "<topic>" /usr/local/share/agent-fleet/docs`
-If that directory is absent, answer from the highlights in this file and say the full
+If that directory is absent **or empty**, answer from the highlights in this file and say the full
 docs aren't available in this container.
 
 ## Also
