@@ -646,6 +646,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		if req.ReportTo != "" {
 			addInstruction(name, req.ReportTo, injectionSource(req.Source))
 			recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/30 ② / docs/38)
+		} else if s := scheduleInjectionSource(req.Source); s != "" {
+			// 完了報告 OFF の定時実行が作ったセッション: 台帳は立てない（報告先が無い）が、
+			// 最初のプロンプトの由来は覚える — でないと initial_prompt のターンだけ
+			// バッジが落ちる（docs/38）。
+			recordInjection(name, req.InitialPrompt, s)
 		}
 		writeCreated(meta)
 		return
@@ -668,6 +673,8 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.ReportTo != "" {
 		addInstruction(name, req.ReportTo, injectionSource(req.Source))
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source))
+	} else if s := scheduleInjectionSource(req.Source); s != "" {
+		recordInjection(name, req.InitialPrompt, s) // 報告 OFF の定時実行（managed 側と同じ）
 	}
 
 	writeCreated(meta)
