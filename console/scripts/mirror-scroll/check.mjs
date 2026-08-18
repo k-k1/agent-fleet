@@ -41,12 +41,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //                  なお、この窓を持ち越したままのビルドでもここでは末尾に着地した（fetch と
 //                  レンダが 600ms より長く、窓が閉じたあとの成長で再ピンが効くため）— つまり
 //                  これは「不定にならないこと」を固定する検査であって、赤くなる再現ではない。
+//   shared       — 共有セッション(受信側・docs/59)の同じ2点: 初めて開いたら末尾、途中まで
+//                  読んで離れて戻ったらその位置。描画層はミラーと共通でも、着地と復元は
+//                  SharedSessionView 自身の持ち物なので別に見る。
 const SCENARIOS = [
   { name: "long", turns: 200, images: 3, imgdelay: 3000, mermaid: 0 },
   { name: "mermaid", turns: 12, images: 0, imgdelay: 0, mermaid: 3 },
   { name: "switch", turns: 200, images: 3, imgdelay: 3000, mermaid: 0, from: "sc9lm3d" },
   { name: "restore", turns: 200, images: 3, imgdelay: 3000, mermaid: 0, mode: "restore" },
   { name: "swipe", turns: 200, images: 3, imgdelay: 3000, mermaid: 0, mode: "swipe", from: "sk4rq2f" },
+  { name: "shared", turns: 200, images: 3, imgdelay: 3000, mermaid: 0, mode: "shared", shared: true },
 ];
 
 class CDP {
@@ -83,8 +87,9 @@ async function fetchJSON(url, init) {
 }
 
 // scrollTop/scrollHeight/clientHeight of the transcript, plus whether 最新へ is showing.
-const PROBE = `(() => {
-  const el = document.querySelector(".mirror-body");
+// `scroller` は面のスクロール容器を返す式(ミラーと共有ビューで別要素)。
+const probeIn = (scroller) => `(() => {
+  const el = ${scroller};
   if (!el) return null;
   return {
     top: Math.round(el.scrollTop),
@@ -108,9 +113,20 @@ const PROBE = `(() => {
     })(),
   };
 })()`;
-const WHEEL_UP = `(() => {
-  const r = document.querySelector(".mirror-body").getBoundingClientRect();
+const PROBE = probeIn(`document.querySelector(".mirror-body")`);
+const PROBE_SHARED = probeIn(`document.querySelector(".shared-view-body")`);
+const wheelIn = (scroller) => `(() => {
+  const r = ${scroller}.getBoundingClientRect();
   return JSON.stringify({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });
+})()`;
+const WHEEL_UP = wheelIn(`document.querySelector(".mirror-body")`);
+const WHEEL_UP_SHARED = wheelIn(`document.querySelector(".shared-view-body")`);
+// 左ペインの共有セッション行(受信側)。1件しか生やさないので先頭で足りる。
+const OPEN_SHARED = `(() => {
+  const b = document.querySelector(".shared-rail-row");
+  if (!b) return "no-row";
+  b.click();
+  return "ok";
 })()`;
 // The reader, parked at the bottom, expands the last 作業過程 disclosure. The content grows
 // under them and they must STAY — snapping to the bottom would hide what they just opened
@@ -222,6 +238,44 @@ async function runRestore(cdp) {
   };
 }
 
+// shared: 共有セッション(受信側)。初めて開いたら末尾に着地し、途中まで読んで別のセッションへ
+// 移り、戻ってくると同じ位置に戻る。所有者側と同じ2点だが、着地と復元は SharedSessionView 自身の
+// 持ち物(転写の高さは遅れて確定するので、ResizeObserver での再ピンが無いと末尾に届かない —
+// 実測 gap 2096px)。
+async function runShared(cdp) {
+  if ((await cdp.ev(OPEN_SHARED)) !== "ok") throw new Error("could not find the shared session row");
+  await sleep(9000);
+  const landed = await cdp.ev(PROBE_SHARED);
+
+  const { x, y } = JSON.parse(await cdp.ev(WHEEL_UP_SHARED));
+  for (let i = 0; i < 4; i++) {
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY: -400, pointerType: "mouse" });
+    await sleep(80);
+  }
+  await sleep(1500);
+  const before = await cdp.ev(PROBE_SHARED); // 「途中まで読んだ」位置
+
+  // いちど自分のセッション(ミラー)へ移ってから戻る = 共有ビューは unmount/remount される。
+  if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not switch to an own session");
+  await sleep(8000);
+  if ((await cdp.ev(OPEN_SHARED)) !== "ok") throw new Error("could not re-open the shared session");
+  await sleep(9000);
+  const back = await cdp.ev(PROBE_SHARED);
+  await sleep(2500);
+  const settled = await cdp.ev(PROBE_SHARED); // 遅延レイアウトが片付いても居座っているか
+
+  const restored =
+    !!before.anchor && !!back.anchor &&
+    back.anchor.idx === before.anchor.idx &&
+    Math.abs(back.anchor.off - before.anchor.off) <= 4;
+  const stayed = Math.abs(settled.top - back.top) <= 5;
+  const ok = !!landed && landed.gap <= 2 && !landed.jump && before.top > 0 && restored && stayed && back.jump;
+  return {
+    ok,
+    note: `landed gap=${landed?.gap}px (turns=${landed?.turns})  left on turn ${before.anchor?.idx}@${before.anchor?.off}px → came back to ${back.anchor?.idx}@${back.anchor?.off}px (stayed=${stayed}, jump=${back.jump})`,
+  };
+}
+
 // swipe: スマホの横スワイプでセッションを持ち替える。指が transcript の上に降りているのが
 // 肝で、その pointerdown が持ち越されると再ピンが止まり、着地位置が不定になっていた。
 async function runSwipe(cdp) {
@@ -269,7 +323,7 @@ async function runSwipe(cdp) {
 async function runScenario(sc, chrome) {
   const stub = spawn(process.execPath, [path.join(HERE, "stub.mjs"), "--port", String(PORT),
     "--turns", String(sc.turns), "--images", String(sc.images), "--imgdelay", String(sc.imgdelay),
-    "--mermaid", String(sc.mermaid)], { stdio: ["ignore", "ignore", "inherit"] });
+    "--mermaid", String(sc.mermaid), "--shared", sc.shared ? "1" : "0"], { stdio: ["ignore", "ignore", "inherit"] });
   try {
     await fetchJSON(`${BASE}api/whoami`);
     const results = [];
@@ -300,7 +354,11 @@ async function runScenario(sc, chrome) {
       await cdp.send("Page.navigate", { url: BASE });
       await sleep(5000); // boot + first poll round
 
-      const r = sc.mode === "restore" ? await runRestore(cdp) : sc.mode === "swipe" ? await runSwipe(cdp) : await runLanding(cdp);
+      const r =
+        sc.mode === "restore" ? await runRestore(cdp)
+        : sc.mode === "swipe" ? await runSwipe(cdp)
+        : sc.mode === "shared" ? await runShared(cdp)
+        : await runLanding(cdp);
       results.push(r);
       console.log(`  [${sc.name} ${run + 1}/${RUNS}] ${r.ok ? "OK " : "NG "} ${r.note}`);
       cdp.ws.close();
