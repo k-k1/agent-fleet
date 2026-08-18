@@ -18,6 +18,7 @@ import { TranscriptView } from "./TranscriptView.tsx";
 import { groupTurns } from "./model.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import type { Turn } from "./types.ts";
+import { t as tr } from "../../../lib/i18n/index.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -199,5 +200,42 @@ describe("peer 着信の見え方（docs/58 §58.14）", () => {
     const el = render(peerTurn("[agent-fleet:peer from=build-api] 直して"), RECIPIENT);
     expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
     expect(el.querySelector(".mt-peer-kind")).toBeNull();
+  });
+});
+
+// claude は AskUserQuestion / ExitPlanMode の tool_use を「訊いた時点」で転写に書く。
+// 「転写に出ている＝決着済み」は成り立たないので、決着のバッジは tool_result が来て
+// 初めて出す（これを決め打ちで出していたため、承認待ちのプランが「決定済み」を名乗った）。
+describe("決着していない質問/プランは決定済みを名乗らない", () => {
+  it("回答の無い質問カードに「回答済み」を出さない", () => {
+    const turns: Turn[] = [
+      {
+        role: "assistant",
+        idx: 1,
+        parts: [
+          {
+            kind: "question",
+            questions: [{ header: "方式", question: "どれにしますか？", options: [{ label: "案A" }, { label: "案B" }] }],
+          },
+        ],
+      },
+    ];
+    const el = render(turns, RECIPIENT);
+    expect(el.querySelector(".mt-question")).not.toBeNull(); // 問い自体は見える
+    expect(el.querySelector(".mq-done")).toBeNull();
+  });
+
+  it("tool_result の無いプランカードに「決定済み」を出さない", () => {
+    const turns: Turn[] = [{ role: "assistant", idx: 1, parts: [{ kind: "plan", plan: "# 移行計画\n\n棚卸しする" }] }];
+    const el = render(turns, RECIPIENT);
+    expect(el.querySelector(".mt-plan")).not.toBeNull();
+    expect(el.querySelector(".mt-plan-badge")).toBeNull();
+    expect(el.querySelector(".mt-plan.decided")).toBeNull();
+  });
+
+  it("却下の楽観マークが付いていれば tool_result より先に「却下」を出す", () => {
+    const turns: Turn[] = [{ role: "assistant", idx: 1, parts: [{ kind: "plan", plan: "# 移行計画" }] }];
+    const el = render(turns, { ...OWNER, isRejectedPlan: () => true });
+    expect(el.querySelector(".mt-plan-badge")?.textContent).toBe(tr("mirror.rejected"));
   });
 });

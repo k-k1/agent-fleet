@@ -762,8 +762,10 @@ export function OptionBody({ o }: { o: QuestionOption }) {
 // then stack in ONE column instead of the usual ~220px auto-fit grid.
 export const hasPreview = (qs: Question[]) => qs.some((q) => (q.options || []).some((o) => previewBody(o.preview) !== ""));
 
-// QuestionBlock renders an already-answered AskUserQuestion from the transcript:
-// header + prompt + options, inert, with the chosen option highlighted.
+// QuestionBlock renders an AskUserQuestion from the transcript: header + prompt +
+// options, inert, with the chosen option highlighted once `answered` says the answer is
+// here. It is NOT answered merely by being in the transcript — claude writes the tool_use
+// at ASK time, so an open (or abandoned) question can be in there too.
 export function QuestionBlock({
   questions,
   answered,
@@ -909,6 +911,11 @@ export function PlanBlock({
   const kind = planOutcome(outcome, !!forceRejected);
   const approved = kind === "approved";
   const rejected = kind === "rejected";
+  // 決着のバッジを出す条件。answered = tool_result が来た（＝転写に出ているだけでは
+  // 決着ではない。claude は ASK 時点で tool_use を書く）。楽観 却下 マークはそれより
+  // 先に付くので、承認待ちでない限りこれも決着として数える — でないと押した瞬間に
+  // バッジが消え、tool_result が来るまで宙に浮く。
+  const decided = !!answered || (!pending && !!forceRejected);
   // レビュー面（doc ペイン）で溜めたコメント。承認待ちに限らず引く — 却下したあとでも
   // 追加の指摘を送れるようにするため（plan モードのまま入力待ちに戻るので、そのときは
   // 普通の発話として届く）。
@@ -920,12 +927,12 @@ export function PlanBlock({
   const [expanded, setExpanded] = useState(false);
   const inline = !onOpen && !!plan;
   return (
-    <div className={"mt-plan" + (answered ? " decided" : "")}>
+    <div className={"mt-plan" + (decided ? " decided" : "")}>
       <div className="mt-plan-head">
         <Icon name="checklist" />
         <span className="mt-plan-title">{planTitle(plan)}</span>
         {pending && <span className="mt-plan-badge">{tr("mirror.approval_pending")}</span>}
-        {answered && (
+        {decided && (
           <span className={"mt-plan-badge" + (approved ? " ok" : rejected ? " no" : "")}>
             {approved ? tr("mirror.approved") : rejected ? tr("mirror.rejected") : tr("mirror.decided")}
           </span>
