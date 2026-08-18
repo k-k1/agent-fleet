@@ -110,13 +110,15 @@ func keepForUsage(id, pref string) bool {
 
 // CatalogPref normalizes a stored preference value, including the values this setting
 // used to hold（"hide-zen" は Go だけを見たいという意思なので UsageGo、"go-first"/"all"
-// は両方見たいので UsageZen）。未設定/不明は UsageZen ＝ 従来の見え方。
+// は両方見たいので UsageZen）。未設定/不明は UsageOff ＝ 明示的に選ぶまで無効。
 func CatalogPref(v string) string {
 	switch v {
 	case UsageOff, UsageFree, UsageGo, UsageZen:
 		return v
 	case "hide-zen":
 		return UsageGo
+	case "go-first", "all":
+		return UsageZen
 	}
-	return UsageZen
+	return UsageOff
 }
