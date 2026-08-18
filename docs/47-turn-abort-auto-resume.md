@@ -266,6 +266,12 @@ wake_policy=wake / overlap_policy=skip / missing_target_policy=fail / report=fal
   再開予定時刻は、その前段の 失敗報告（turn-failed）に足す（`rateLimitResumeNote`）—
   そうしないとオペレーターは「対処を相談」で止まり、利用者にはあとから勝手に再開したように
   見える。
+  - この `report=false` が、2026-08-18 まで**再開ターンのミラーバッジを消していた**:
+    Agent 側の由来記録が `report_to != ""` の枝に入っていたため、報告先の無い発火は
+    由来ごと捨てられ、「利用上限がリセットされました…」が無印の user ターンとして
+    並んでいた（利用者が自分で打ったようにしか見えない）。修正＝由来の記録を報告の
+    有無から切り離す（docs/38「完了報告 OFF の発火にバッジが付いていなかった」）。
+    バッジは once スケジュールの発火として「定時実行」になる。
 - **Agent が MCP 以外から `/internal/schedules` を叩く初めての経路**（`cpScheduleDo` を
   そのまま使う）。owner_conv は空 = 会話に紐付かないので、Console 起動のセッションでも効く
   （§3-4 の自動再開が会話持ちに限られるのとはここが違う）。
