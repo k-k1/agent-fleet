@@ -178,3 +178,65 @@ Console はこれを「回答済み」ではなく明確に区別する必要が
 `questionKeys.test.ts`（"preview options drop the free-text row" ブロック）、
 `transcript_test.go`（`TestCollectInteractionAnswers_Declined`）、
 `QuestionBlock.dom.test.tsx`。
+
+## 7. その `n` は Agent に届かない — キー列の検証は「配送層」も含めて初めて終わる（2026-08-18、claude 2.1.234 で実測・修正済み）
+
+**症状**: preview 付き AUQ で自由入力してから「回答を送信」を押しても **何も起きない**。
+トーストも出ず、質問カードもそのまま。§6 の修正が入った後に出た報告。
+
+**根因（配送層）**: §6 の検証は **tmux 直叩き**で行ったため、Console の実際の経路
+（`POST /sessions/{name}/input {seq}`）を一度も通っていなかった。Agent 側はこの
+`{k}` を **名前付きキーのホワイトリスト**で検査する:
+
+```go
+// workspace/agent/session_io.go
+func allowedKey(k string) bool {
+	switch k {
+	case "Up", "Down", "Left", "Right", "Enter", "Space", "Escape", "Tab", "BTab", "BSpace", "Home", "End":
+```
+
+`n` はここに無い。しかも検証は「半端にモーダルを駆動しないよう」**送信前に全ステップ**
+に対して行われるので、1ステップが未知だと **400 `bad_key` で要求ごと落ち、打鍵は1つも
+届かない**。つまりモーダルの契約（§6）は正しいのに、配送層で丸ごと消えていた。
+
+**なぜ無言だったか**: `api()` は非 2xx を throw せず `{error:{code}}` を**戻り値**で返す。
+`MirrorView` の `sendKeys`/`sendSeq` は `try { await … } catch {}` の形だったため catch すら
+通らず、返ってきたエラーを誰も見ていなかった。回答経路は「沈黙＝成功」と見分けが付かない
+面なので、ここだけは必ず失敗を喋らせること（managed の `sendRespond` は元からトースト表示）。
+
+**修正**: `n` を `{t}`（`send-keys -l`）で送る。印字可能文字はペイン上で同じ 1 バイトなので
+挙動は同じで、Agent を触らないぶん**版ズレに強い**（Console だけ更新されて Workspace の
+Agent が古いピンでも動く）。あわせて `sendKeys`/`sendSeq` を `driveInput` に統合し、
+失敗をトースト＋楽観的な「進行中」の巻き戻しにした。層またぎの回帰テストを
+`questionKeys.test.ts` に追加（Go の `allowedKey` をソースから読み、ビルダーが吐く全
+`{k}` が含まれることを固定 — `memoryTab.test.ts` の CP 許可リスト検査と同じ型）。
+
+**多問フォームの実測（§6 では未検証だった）**: 3問（うち2問 preview）で1ステップずつ確認。
+
+| 手順 | 画面 |
+| --- | --- |
+| `n` | ハイライト中の選択肢の `Notes:` が入力欄になる（フッタに `ctrl+g to edit in Vim` が増える） |
+| テキスト | `Notes: <テキスト>` |
+| `Enter` | **その質問が ☒ になり、次の質問タブへ自動で進む**（カーソルは選択肢0番） |
+| 最後の質問の `Enter` | レビューページ（カーソルは "Submit answers"） |
+
+→ `buildClaudeSeq` の前提（notes の Enter で次タブへ進む・多問は末尾 Enter でレビュー確定）
+は多問でも成立。preview の有無が**質問ごと**に切り替わることも同時に再確認した
+（preview 無しの3問目だけ `3. Type something.` / `4. Chat about this` の番号付きレイアウトに戻る）。
+90ms 間隔（Agent の `{seq}` と同じペース）でも通ることを確認済み。
+
+**表示側の別バグ（同時修正）**: notes 自由入力の tool_result は **値が引用符で囲まれない**唯一の形:
+
+```
+The user answered: "定義の表現形式は？"=(no option selected) notes: コスト優先で決めたい, "検証の入口は？"="UI" selected preview:
+[検証] ボタン, "移行の順序は？"="先に基盤". Read the answers carefully — …
+```
+
+`questionAnswers.ts` の錨は `"<質問>"="` と**引用符まで**要求していたので、この形が1問でも
+混ざるとカード全体が錨経路を諦め、旧ペア正規表現へ落ちる。旧経路は引用符の無いペアを
+**丸ごと読み飛ばす**ため、以降の回答が1問ずつ**ズレて**表示される（実測: 3問中1問を自由入力
+→ 1問目のカードに2問目の答え、2問目に3問目の答え、3問目は空）。錨の引用符を任意にし、
+引用符が無い場合は `(no option selected) notes: ` を剥がして「自由入力」として解決する
+（末尾の質問は閉じ引用符が無いので、claude の定型文 "Read the answers carefully" /
+"You can now continue" で切る。未知の文言なら丸ごと残す＝嘘はつかない）。
+テストは `questionAnswers.test.ts`（実データそのままの3例）。
