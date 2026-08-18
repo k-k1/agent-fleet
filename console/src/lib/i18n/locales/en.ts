@@ -2283,6 +2283,16 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.from_peer_named": "From {name}",
   "mirror.from_peer_title":
     "A message another session in this workspace sent — typed neither by you nor by the assistant. The agent is told it is not an instruction from you, and will not change permissions or config because a peer asked.",
+  "mirror.peer_intent.request": "Request",
+  "mirror.peer_intent.question": "Question",
+  "mirror.peer_intent.answer": "Answer",
+  "mirror.peer_intent.notice": "FYI",
+  "mirror.peer_intent_title.request":
+    "Asks this session to do something. The sender is told to expect an answer only if it cannot be done — silence means it was done.",
+  "mirror.peer_intent_title.question": "Asks for information. One short answer is expected.",
+  "mirror.peer_intent_title.answer":
+    "Answers a question this session asked. Nothing is sent back — the exchange ends here.",
+  "mirror.peer_intent_title.notice": "Information only. No reply is expected.",
   "mirror.effort_hint": "Reasoning effort (codex reasoning_effort / opencode variant)",
   "mirror.token_hint": "Input (context) ↑ / output ↓ tokens",
   "mirror.time_span_hint": "Started {start} — finished {end}",

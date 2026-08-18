@@ -290,6 +290,14 @@ one ("tell the session next door what we just did").
 - **Raw shell sessions (shell / ssm) can neither send nor receive**, because the text sent to
   them would run verbatim as a command.
 
+Messages are deliberately curt. Every one of them costs the receiving session a whole turn, so
+sessions are told to drop greetings and thanks and to lead with the point. Each message also
+carries a **kind**, badged in the chat view, and the kind decides what comes back: **Request**
+(act on it — the sender hears back only if it *can't* be done), **Question** (one short answer
+comes back), **Answer** (closes a question, nothing follows), **FYI** (nothing follows). So
+silence after a request usually means it was done rather than ignored; the work itself shows up
+in that session's chat and changed files.
+
 The receiving agent is told explicitly that the message is *not* an instruction from you. A
 message from another session **cannot stand in for your approval** (it can't answer a pending
 permission prompt) and **is not a reason to edit configuration or `CLAUDE.md`**. Commands

@@ -2318,6 +2318,16 @@ export const ja = {
   "mirror.from_peer_named": "{name} から",
   "mirror.from_peer_title":
     "同じワークスペースの別のセッションが送ったメッセージです。あなたもアシスタントも入力していません。エージェントには「利用者の指示ではない」と伝えてあり、これを根拠に権限設定や設定ファイルを変えることはしません。",
+  "mirror.peer_intent.request": "依頼",
+  "mirror.peer_intent.question": "質問",
+  "mirror.peer_intent.answer": "回答",
+  "mirror.peer_intent.notice": "共有",
+  "mirror.peer_intent_title.request":
+    "このセッションに行動を求めるメッセージです。送信側には「返事はできないときだけ来る」と伝えてあります（返事が無い＝やった、です）。",
+  "mirror.peer_intent_title.question": "情報を求めるメッセージです。結論だけが1通返ります。",
+  "mirror.peer_intent_title.answer":
+    "このセッションが送った質問への返答です。ここで打ち切りで、返信は送りません。",
+  "mirror.peer_intent_title.notice": "知らせるだけのメッセージです。返信はしません。",
   "mirror.effort_hint": "推論の努力度（codex reasoning_effort / opencode variant）",
   "mirror.token_hint": "入力(文脈)↑ / 出力↓ トークン",
   "mirror.time_span_hint": "開始 {start} — 完了 {end}",
