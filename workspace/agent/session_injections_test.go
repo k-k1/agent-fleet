@@ -99,6 +99,23 @@ func TestScheduleInjectionTaggingCommandForm(t *testing.T) {
 	}
 }
 
+// scheduleInjectionSource is the report_to-independent half of the whitelist: ONLY a
+// schedule origin passes, so it can gate "remember this even without report_to" without
+// turning plain Console input into an operator badge.
+func TestScheduleInjectionSource(t *testing.T) {
+	for in, want := range map[string]string{
+		"schedule":        turnSourceSchedule,
+		"schedule-manual": turnSourceScheduleManual,
+		"":                "",
+		"operator":        "",
+		"evil-badge":      "",
+	} {
+		if got := scheduleInjectionSource(in); got != want {
+			t.Errorf("scheduleInjectionSource(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // injectionSource whitelists what callers may record: schedule origins pass through,
 // anything unknown (or empty) degrades to operator — no arbitrary badge strings.
 func TestInjectionSourceWhitelist(t *testing.T) {

@@ -57,6 +57,25 @@ func injectionSource(s string) string {
 	}
 }
 
+// scheduleInjectionSource returns the schedule origin a caller declared, or "" when the
+// source is not a schedule at all.
+//
+// なぜ injectionSource() と別に要るか: あれは未知/空を operator へ倒すので、由来の記録を
+// report_to から切り離す判定には使えない（素の Console 入力まで operator バッジになる）。
+// そして切り離しは必要だった — 由来の記録が report_to != "" の中にあった間、**完了報告
+// OFF のスケジュール投入はバッジが丸ごと落ちていた**。report_to は report=true のときしか
+// 付かず（CP scheduleReportTo）、Console の完了報告チェックは既定 OFF、利用上限の自動再開に
+// 至っては常に report=false。source は最初から届いていたのに、報告の有無という無関係な条件で
+// 捨てていたことになる。
+func scheduleInjectionSource(s string) string {
+	switch s {
+	case turnSourceSchedule, turnSourceScheduleManual:
+		return s
+	default:
+		return ""
+	}
+}
+
 // maxOperatorInjections caps the per-session record. Membership is all the tagging needs,
 // so we keep the newest N distinct texts (a long-lived session steered many times stays
 // bounded).

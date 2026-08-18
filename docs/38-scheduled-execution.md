@@ -592,6 +592,31 @@ resume→readiness ゲート→`/input` 200 まで全部通っている。つま
 - Console: user turn に緑系ピル「定時実行」（clock）/「手動発火」（play）を表示
   （operator=橙 broadcast・チャット=青と並ぶ第3の注入元色）。
 
+#### 完了報告 OFF の発火にバッジが付いていなかった（2026-08-18 修正）
+
+`source` は最初から届いていたのに、Agent 側の記録（`recordInjection`）が
+`report_to != ""` の枝の中にあった。`report_to` は `report=true` のときだけ付く
+（CP `scheduleReportTo`）ので、**完了報告 OFF のスケジュール投入は由来が丸ごと
+捨てられ、利用者が自分で打った入力と見分けが付かなかった**。Console の完了報告
+チェックは既定 OFF なので、素直に作ったスケジュールはほぼ全部これに当たる。利用
+上限リセット後の自動再開（docs/47 §4-4）は `report:false` 固定なので必ず該当し、
+「利用上限がリセットされました…」が無印の user ターンとして並ぶ。
+
+修正は由来の記録を報告の有無から切り離すこと。`scheduleInjectionSource()`
+（schedule / schedule-manual のみ通し、それ以外は ""）を門にして、`report_to` が
+空でもスケジュール由来なら記録する。`injectionSource()` をそのまま使えないのは、
+あれが未知/空を "operator" へ倒す設計で、素の Console 入力まで operator バッジに
+なってしまうため。適用箇所は4つ — /input（TUI・managed）と create_session
+（TUI・managed の initial_prompt）。
+
+- **指示台帳は従来どおり**: `addInstruction` は `report_to` があるときだけ。報告先の
+  無い発火に台帳行を立てない（docs/51 の早期 settle と同型の事故を作らない）。
+- **チャットブリッジへの転記も止まる**: 従来これらは `default` 枝に落ちていたため
+  `bridge.MirrorUserInput` が走り、定時実行のプロンプトが Discord スレッドへ「利用者が
+  Console で打った入力」として流れていた（docs/37 Fix ② の意図外）。
+- 自動再開のターンは「定時実行」バッジになる（実体が once スケジュールの発火なので）。
+  専用の「自動再開」バッジ（docs/47 §4-6 の `auto-resume`）は中断再開のみが使う。
+
 ### アシスタント発火（session_mode=assistant・2026-07-25 追補）
 
 スケジュールから**セッションではなくアシスタント会話**へ発火する第3のモード。
