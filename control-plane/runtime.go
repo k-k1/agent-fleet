@@ -127,6 +127,12 @@ type RuntimeFactory interface {
 
 var _ RuntimeFactory = (*dockerFactory)(nil)
 
+// runtimeDocsMounter marks the adapters that hand the container its role-scoped docs by
+// bind-mounting <dataDir>/docs (docker, native). The start path stages that directory
+// only for them; an adapter without a host seam — ECS — leaves it alone, and its
+// container pulls the same subset over the CP's /internal/docs (docs_bridge.go).
+type runtimeDocsMounter interface{ mountsStagedDocs() }
+
 // newRuntimeFactory selects the Runtime adapter by deployment profile (AF_RUNTIME):
 // "" / "local" / "docker" → Docker Engine (compose, the on-prem default); "ecs" /
 // "aws" → AWS ECS on Fargate (P3-7); "ecs-ec2" → the same ECS substrate on the EC2

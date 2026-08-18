@@ -565,6 +565,13 @@ export const en: Record<keyof typeof ja, string> = {
   "env.node_default": "Default (image's node)",
   "env.no_jdk": "This workspace has no JDK.",
   "env.unselected": "Not selected",
+  "env.java_opt_absent": "Temurin {v} (not installed)",
+  "env.java_install": "Install",
+  "env.java_installing": "Installing…",
+  "env.java_install_note":
+    "Temurin {v} is not in this workspace yet. Install downloads it (~200MB) into your home volume, where it persists across restarts; sessions started afterwards get it as JAVA_HOME, with no Stop → Start.",
+  "env.java_install_failed": "JDK install failed: {msg}",
+  "env.java_install_timeout": "the download did not finish in time",
   "env.go_default": "Default (image's go)",
   "env.agent_update_title": "Agent CLI updates",
   "env.agent_update_label": "Update the agent CLIs and rtk to the latest on start",

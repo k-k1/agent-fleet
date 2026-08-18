@@ -231,6 +231,10 @@ func dockerInspectOne(ctx context.Context, typ, ref, format string) string {
 }
 
 // Start launches the Workspace container and waits for the Agent to be healthy.
+// mountsStagedDocs marks this adapter as one that bind-mounts <dataDir>/docs, so the
+// start path stages it (runtime.go runtimeDocsMounter).
+func (d *dockerRuntime) mountsStagedDocs() {}
+
 func (d *dockerRuntime) Start(ctx context.Context) error {
 	if d.State(ctx) == "running" {
 		return nil
