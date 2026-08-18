@@ -608,6 +608,69 @@ func CollectInteractionAnswers(lines [][]byte) map[string]InteractionAnswer {
 	return out
 }
 
+// CollectFileEdits extracts every edit-family tool call from lines[from:] — the raw
+// material for the session's changed-files list (docs/68). `from` lets the caller fold
+// only the lines it hasn't seen: the jsonl is append-only, so the answer for a prefix
+// never changes, and re-running the line differ over a whole transcript on every poll
+// would not be affordable.
+//
+// Whole-transcript by design (like CollectTasks): the turns the Console holds are a tail
+// window, so anything derived from them would undercount and then grow as the reader
+// scrolls up.
+func CollectFileEdits(lines [][]byte, from int) []transcript.FileEdit {
+	if from < 0 {
+		from = 0
+	}
+	var out []transcript.FileEdit
+	for i := from; i < len(lines); i++ {
+		ln := lines[i]
+		// Cheap prefilter: every edit-family input carries one of these keys, so the
+		// full scan stays a byte search on the overwhelming majority of lines.
+		if !bytesContains(ln, `"file_path"`) && !bytesContains(ln, `"notebook_path"`) {
+			continue
+		}
+		var ev struct {
+			Type        string `json:"type"`
+			Timestamp   string `json:"timestamp"`
+			IsSidechain bool   `json:"isSidechain"`
+			Cwd         string `json:"cwd"`
+			Message     struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(ln, &ev) != nil || ev.Type != "assistant" {
+			continue
+		}
+		if len(ev.Message.Content) == 0 || ev.Message.Content[0] != '[' {
+			continue
+		}
+		var blocks []struct {
+			Type  string          `json:"type"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+		}
+		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_use" {
+				continue
+			}
+			file, edits := toolEdits(b.Name, b.Input)
+			if file == "" {
+				continue
+			}
+			added, removed := transcript.EditStat(edits)
+			out = append(out, transcript.FileEdit{
+				Path: file, Cwd: ev.Cwd, Verb: transcript.EditVerb("", edits),
+				Added: added, Removed: removed,
+				Idx: i, TS: ev.Timestamp, Sidechain: ev.IsSidechain,
+			})
+		}
+	}
+	return out
+}
+
 // CollectTasks reconstructs the current ToDo list from the transcript. TaskCreate adds
 // a task (single, or a batch via tasks[]) with a sequential id matching claude's
 // "Task #N" numbering; TaskUpdate merges status/subject/activeForm onto an existing id.

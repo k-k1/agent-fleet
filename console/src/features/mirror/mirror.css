@@ -496,6 +496,15 @@
 .mirror-turn.user.from-peer {
   border-left: 2px solid color-mix(in srgb, var(--peer, #b48ee0) 55%, var(--border));
 }
+/* Message kind (docs/58 §58.14): 依頼 / 質問 / 回答 / 共有, read back from the envelope.
+   Same hue as the sender badge but outlined instead of filled — it qualifies that badge
+   rather than competing with it. Worth showing at all because it is what explains why a
+   message did or did not get an answer. */
+.mt-peer-kind {
+  margin-left: 4px;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--peer, #b48ee0) 45%, transparent);
+}
 /* Reasoning effort/variant chip (codex reasoning_effort / opencode variant), shown
    right after the model. A faint pill so it reads as secondary metadata. */
 .mt-effort {
@@ -811,6 +820,227 @@
   font-variant-numeric: tabular-nums;
   color: var(--fg);
 }
+/* ターン末尾のファイルチップ (docs/68 P1): この返信が直したファイル。畳まれた
+   ToolRun を開かずに「さっき直したのはどれ」に答える。フッターの直前に置き、
+   時刻・トークンと同じ余白に載せる。 */
+.mirror-turn-files {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0 0;
+  margin: 0 0 -2px;
+}
+.mirror-turn-files .mtf-mark {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: 2px;
+}
+.mtf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  padding: 1px 6px 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.mtf-chip:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+/* 差分の中身が無いチップ（削除・差分本体を運ばない kind）は座標としてだけ残す。
+   押せないボタンは出さない規約に合わせ、ホバーも反応も付けない。 */
+.mtf-chip:disabled {
+  cursor: default;
+}
+.mtf-chip:disabled:hover {
+  color: var(--muted);
+  border-color: var(--border);
+  background: transparent;
+}
+.mtf-deleted .mtf-name {
+  text-decoration: line-through;
+}
+.mtf-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 変更ファイル (docs/68): the files this session edited, as a collapsed disclosure in the
+   same band as the ToDo list. It reuses .mirror-disclosure and the .chg-badge / .dv-add /
+   .dv-del vocabularies (global) so a row reads identically to the rail's 変更 list and to
+   a diff pane's counters. */
+.mirror-files {
+  margin: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar);
+}
+.mirror-files-head {
+  display: flex;
+  align-items: center;
+  padding: 0;
+}
+.mirror-files.open .mirror-files-head {
+  border-bottom: 1px solid var(--border);
+}
+.mirror-files-toggle {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.mirror-files-head .mfl-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+.mirror-files-head .mfl-count {
+  font-variant-numeric: tabular-nums;
+}
+/* The collapsed summary's file name: it gives up its width first, so the +/- counters
+   stay readable on a narrow split pane. */
+.mirror-files-head .mfl-lead {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mfl-stat {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.mfl-row .mfl-stat {
+  margin-left: auto;
+}
+.mfl-sort,
+.mfl-scm {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.mfl-sort:hover,
+.mfl-scm:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.mirror-files-list-wrap {
+  min-width: 0;
+}
+.mirror-files-list {
+  margin: 0;
+  padding: 4px 6px;
+  list-style: none;
+  /* Same containment rule as the ToDo list: a long list must not push the conversation
+     off screen, and the cap is proportional to THIS pane, not the viewport. */
+  max-height: min(calc(8lh + 48px), var(--mirror-todo-max-height, 20dvh));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.mfl-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+}
+.mfl-row:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.mfl-row:disabled {
+  cursor: default;
+  color: var(--muted);
+}
+.mfl-row:disabled:hover {
+  background: transparent;
+}
+.mfl-ic {
+  flex: none;
+  display: inline-flex;
+}
+.mfl-name {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The directory yields before the name does: which file it is matters more than where. */
+.mfl-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-size: 11px;
+}
+.mfl-sub .codicon {
+  font-size: 11px;
+}
+/* コミット済み (docs/68 P2): 作業ツリーに差分は無いが、セッション開始以降のコミットに
+   現れた行。「片付いた」ことが読み取れればよいので、まだ手を入れられる行（未ステージ/
+   未追跡）より控えめだが、根拠のない「差分なし」よりは前に出す。 */
+.chg-badge.st-done {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+/* Edited but with nothing left in the working tree AND no commit we can point at, plus
+   files outside ~/repos: kept in the list — they ARE part of what the session did — but
+   muted so the eye lands on the rows that still have a diff to open. */
+.chg-badge.st-muted {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 15%, transparent);
+}
+.mfl-clean .mfl-name,
+.mfl-committed .mfl-name,
+.mfl-outside .mfl-name {
+  color: var(--muted);
+}
+.mfl-deleted .mfl-name {
+  text-decoration: line-through;
+}
+
 /* ToDo list (reconstructed from Task tool calls): a collapsed disclosure with a
    done/total count. Completed items dim + strike; the in-progress one is emphasized. */
 .mirror-tasks {

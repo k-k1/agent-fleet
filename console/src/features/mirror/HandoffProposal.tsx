@@ -8,7 +8,7 @@
 // bottom owns the mirror's landing position forever, and every message sent afterwards
 // looks lost behind it (2026-08-04 実障害). That is why the fetch lives in a hook the
 // mirror owns — it needs created_at to place each card.
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
@@ -61,6 +61,37 @@ export function useHandoffProposals(session: string): [Proposal[], (ps: Proposal
 export async function markHandoffLaunched(session: string, id: string): Promise<void> {
   await apiJSON(`api/sessions/${encodeURIComponent(session)}/handoff-proposal`, "POST", { id, launched: true }).catch(
     () => undefined, // best-effort badge: never let it break the launch it follows
+  );
+}
+
+/** The card's chrome, without any of the owner's controls: the same box, heading and
+ *  起動済み badge for whoever is reading. The shared view (a recipient who can neither
+ *  edit nor launch) renders it with only the read-only body — see docs/59 §3
+ *  「能力が無い操作要素は描画しない」. */
+export function HandoffCard({ intro, launched, children }: { intro: string; launched?: boolean; children: ReactNode }) {
+  const tr = useT();
+  return (
+    <section className="mirror-handoff" aria-label={tr("mirror.handoff_title")}>
+      <header className="mirror-handoff-head">
+        <span>
+          <Icon name="git-branch" /> {tr("mirror.handoff_title")}
+        </span>
+        {launched ? <span className="mirror-handoff-done">{tr("mirror.handoff_launched")}</span> : null}
+      </header>
+      <p className="muted">{intro}</p>
+      {children}
+    </section>
+  );
+}
+
+/** Title + prompt as read (the owner sees exactly this while not editing). */
+export function HandoffBody({ title, prompt }: { title?: string; prompt: string }) {
+  const tr = useT();
+  return (
+    <>
+      <strong className="mirror-handoff-session-title">{title || tr("mirror.handoff_title_auto")}</strong>
+      <pre className="mirror-handoff-prompt">{prompt}</pre>
+    </>
   );
 }
 
@@ -137,14 +168,10 @@ export function HandoffProposal({
     useLaunchTarget.getState().open(repo);
   };
   return (
-    <section className="mirror-handoff" aria-label={tr("mirror.handoff_title")}>
-      <header className="mirror-handoff-head">
-        <span>
-          <Icon name="git-branch" /> {tr("mirror.handoff_title")}
-        </span>
-        {proposal.launched_at ? <span className="mirror-handoff-done">{tr("mirror.handoff_launched")}</span> : null}
-      </header>
-      <p className="muted">{proposal.launched_at ? tr("mirror.handoff_intro_launched") : tr("mirror.handoff_intro")}</p>
+    <HandoffCard
+      launched={!!proposal.launched_at}
+      intro={proposal.launched_at ? tr("mirror.handoff_intro_launched") : tr("mirror.handoff_intro")}
+    >
       {editing ? (
         <>
           <input
@@ -157,10 +184,7 @@ export function HandoffProposal({
           <textarea className="mirror-handoff-edit" value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} />
         </>
       ) : (
-        <>
-          <strong className="mirror-handoff-session-title">{proposal.title || tr("mirror.handoff_title_auto")}</strong>
-          <pre className="mirror-handoff-prompt">{proposal.prompt}</pre>
-        </>
+        <HandoffBody title={proposal.title} prompt={proposal.prompt} />
       )}
       <div className="mirror-handoff-actions">
         {editing ? (
@@ -193,6 +217,6 @@ export function HandoffProposal({
           <Icon name="run" /> {proposal.launched_at ? tr("mirror.handoff_launch_again") : tr("mirror.handoff_launch")}
         </button>
       </div>
-    </section>
+    </HandoffCard>
   );
 }

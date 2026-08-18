@@ -6,6 +6,9 @@
 //   Your questions have been answered: "<q1>"="<a1>". You can now continue …   (older)
 // and, when the picked option carried a `preview`, that artifact rides along too:
 //   … "<q1>"="<a1>" selected preview:\n<mockup>, "<q2>"="<a2>". …
+// A question answered with free text on a PREVIEWED layout has no option at all, and is
+// the one shape whose value is not quoted:
+//   … "<q1>"=(no option selected) notes: <text>, "<q2>"="<a2>". …
 //
 // So a `"` the user typed inside a free-text answer is indistinguishable from the quote
 // that closes it, and the obvious /"[^"]*"\s*=\s*"([^"]*)"/ stops at the first typed
@@ -36,6 +39,25 @@ const cutPreview = (s: string): string | null => {
 // Strip the quote that closes an answer plus the `, ` before the next pair.
 const cutSep = (s: string) => s.replace(/"[\s,、，]*$/, "").trim();
 
+// A question answered with NOTES and no option — what a previewed question's free text
+// becomes, since that layout has no "Type something" row (docs/dev/92 §6) — is reported
+// UNQUOTED:
+//   "<q>"=(no option selected) notes: <text>
+// The anchor below used to demand a quote right after the `=`, so a single answer of this
+// shape made the anchored split fail for the WHOLE card and fell back to the legacy pair
+// regex — which skips the unquoted pair entirely and therefore shifts every later answer
+// up by one question (実測 2026-08-18: 3問中1問を自由入力すると、2問目の答えが1問目の
+// カードに、3問目の答えが2問目のカードに出て、3問目は空になる).
+const NOTES_ONLY = /^\(no option selected\)\s*notes:\s*/;
+const cutNotes = (s: string) => s.replace(NOTES_ONLY, "").trim();
+// …and without a closing quote, the last answer's end is claude's trailing sentence
+// instead. Both wordings seen so far are matched; an unknown one degrades to keeping the
+// whole tail, which reads noisy but never invents an answer.
+const cutTrailer = (s: string) =>
+  s.replace(/[.。]?\s*(?:Read the answers carefully|You can now continue)[\s\S]*$/, "").trim();
+// The separator before the next pair, for an unquoted answer (no closing quote to anchor on).
+const cutSepBare = (s: string) => s.replace(/[\s,、，]+$/, "").trim();
+
 // The last answer is followed by the closing quote and claude's trailing sentence
 // ("Read the answers carefully …" / "You can now continue …"). Neither trailer has ever
 // contained a quote, so the LAST quote in the chunk is the closing one — and quotes the
@@ -48,20 +70,24 @@ const cutTail = (s: string) => {
 // Anchored split — null when any question text is missing from the result (a reworded
 // prompt, a truncated result, or a format we don't know), so the caller can fall back.
 function byAnchors(text: string, prompts: string[]): string[] | null {
-  const at: { start: number; anchor: number }[] = [];
+  const at: { start: number; anchor: number; quoted: boolean }[] = [];
   let from = 0;
   for (const p of prompts) {
     const q = p.trim();
     if (!q) return null;
-    const m = new RegExp('"' + escRe(q) + '"\\s*=\\s*"').exec(text.slice(from));
+    // The opening quote is optional: a notes-only answer has none (see NOTES_ONLY).
+    const m = new RegExp('"' + escRe(q) + '"\\s*=\\s*("?)').exec(text.slice(from));
     if (!m) return null;
     const anchor = from + m.index;
     from = anchor + m[0].length;
-    at.push({ start: from, anchor });
+    at.push({ start: from, anchor, quoted: m[1] === '"' });
   }
   return at.map((cur, i) => {
     const last = i + 1 >= at.length;
     const chunk = last ? text.slice(cur.start) : text.slice(cur.start, at[i + 1].anchor);
+    // Unquoted: the notes-only form. Hand back just what the user typed, so it resolves
+    // to free text on the card exactly like a "Type something" answer would.
+    if (!cur.quoted) return cutNotes(last ? cutTrailer(chunk) : cutSepBare(chunk));
     // The preview cut, when it applies, already ends the answer at its closing quote —
     // running cutSep/cutTail after it would only chew into the label.
     return cutPreview(chunk) ?? (last ? cutTail(chunk) : cutSep(chunk));

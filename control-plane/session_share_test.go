@@ -825,3 +825,107 @@ func TestLifecycleLeaseHeartbeatAndFencingCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// 引き継ぎ提案の中身(タイトルと本文)は共有先にも見える。転写に残るのはツール行と定型の
+// 完了文だけなので、これを出さないと「引き継いだこと」しか分からない。ただし通すのは
+// 本文と表示に要る時刻だけで、未知フィールドや置き場所は転写と同じく落とす。
+func TestSharedHandoffProposalsShowContentAndDropUnknownFields(t *testing.T) {
+	out := sharedHandoffDTO(map[string]any{"path": "/home/dev/.config/agent-fleet/session-handoffs/s.json",
+		"proposals": []any{map[string]any{
+			"id": "hp_1", "title": "続きの実装", "prompt": "残作業は…", "created_at": float64(1700000000000),
+			"launched_at": float64(1700000009000), "cwd": "/home/dev/repos/private", "futureCoordinate": "/future",
+		}}})
+	encoded, _ := json.Marshal(out)
+	for _, secret := range []string{"session-handoffs", "cwd", "/home/dev/repos/private", "futureCoordinate"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("private/unknown field %q survived: %s", secret, encoded)
+		}
+	}
+	for _, want := range []string{"続きの実装", "残作業は…", `"created_at":1700000000000`, `"launched_at":1700000009000`} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("visible content %q removed: %s", want, encoded)
+		}
+	}
+}
+
+func TestSharedHandoffProposalsAuthorize(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	ownerIdentity, _ := st.UpsertIdentity(ctx, "owner@example.com", "owner", "")
+	recipientIdentity, _ := st.UpsertIdentity(ctx, "recipient@example.com", "recipient", "")
+	strangerIdentity, _ := st.UpsertIdentity(ctx, "stranger@example.com", "stranger", "")
+	owner, _ := st.EnsureMembership(ctx, ownerIdentity.ID, tenant.ID, "member")
+	recipient, _ := st.EnsureMembership(ctx, recipientIdentity.ID, tenant.ID, "member")
+	_, _ = st.EnsureMembership(ctx, strangerIdentity.ID, tenant.ID, "member")
+	recipientViews, _ := st.ListMemberships(ctx, recipientIdentity.ID)
+	strangerViews, _ := st.ListMemberships(ctx, strangerIdentity.ID)
+	workspace := Workspace{ID: "ws-owner", TenantID: tenant.ID, MembershipID: owner.ID,
+		ContainerName: "owner", Network: "test", DataDir: "/data/owner", AgentPort: "1", AgentToken: "tok",
+		State: "running", CreatedAt: nowTS()}
+	if err := st.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatal(err)
+	}
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/sessions/catalog":
+			_ = json.NewEncoder(w).Encode(map[string]any{"sessions": []any{map[string]any{
+				"name": "session-1", "kind": "claude", "dir": "/home/dev/repos/private", "repo": "private", "workingCopyId": "wc-1",
+			}}})
+		case "/repos":
+			_ = json.NewEncoder(w).Encode(map[string]any{"repos": []any{map[string]any{"workingCopyId": "wc-1"}}})
+		case "/sessions/session-1/handoff-proposal":
+			_ = json.NewEncoder(w).Encode(map[string]any{"proposals": []any{map[string]any{
+				"id": "hp_1", "title": "続きの実装", "prompt": "残作業は…", "created_at": float64(1700000000000),
+			}}})
+		default:
+			t.Errorf("path=%q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer agent.Close()
+
+	mgr := &manager{store: st, rts: map[string]cachedRT{owner.ID: {
+		rt: stubRuntime{endpoint: agent.URL, token: "tok"}, ws: workspace,
+	}}}
+	api := newSessionShareAPI(mgr)
+	catalog := SharedSessionCatalog{ID: "catalog-1", WorkspaceID: workspace.ID, OwnerMembershipID: owner.ID,
+		Name: "session-1", Kind: "claude", WorkingCopyID: "wc-1", LastSeen: nowTS()}
+	if err := st.ReplaceSharedSessionCatalog(ctx, workspace.ID, owner.ID, []SharedSessionCatalog{catalog}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutSessionShare(ctx, SessionShare{ID: "share-1", TenantID: tenant.ID, OwnerMembershipID: owner.ID,
+		RecipientMembershipID: recipient.ID, ScopeType: "session", ScopeKey: "session-1", Permission: "ro",
+		CreatedAt: nowTS(), UpdatedAt: nowTS()}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/shared-sessions/catalog-1/handoff-proposals", nil)
+	req.SetPathValue("id", catalog.ID)
+	rec := httptest.NewRecorder()
+	api.handoffProposals(rec, req, recipientIdentity, recipientViews[0])
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("Cache-Control=%q", got)
+	}
+	if !strings.Contains(rec.Body.String(), "残作業は…") {
+		t.Fatalf("handoff prompt missing: %s", rec.Body.String())
+	}
+
+	deniedReq := httptest.NewRequest(http.MethodGet, "/api/shared-sessions/catalog-1/handoff-proposals", nil)
+	deniedReq.SetPathValue("id", catalog.ID)
+	denied := httptest.NewRecorder()
+	api.handoffProposals(denied, deniedReq, strangerIdentity, strangerViews[0])
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("unauthorized status=%d body=%s", denied.Code, denied.Body.String())
+	}
+}

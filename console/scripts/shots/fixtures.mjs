@@ -362,6 +362,7 @@ export function messages(locale, session) {
     hasMore: false,
     mode: "Default",
     tasks: tasks(locale),
+    files: sessionFiles(),
     pendingQuestions: pendingQuestions(locale),
     pendingText: pendingText(locale),
     jsonlLines: 23,
@@ -372,6 +373,36 @@ export function messages(locale, session) {
 export function scmStatus(locale, repo) {
   const r = repos(locale).find((x) => x.name === repo);
   return { branch: r?.branch || "main", ahead: r?.ahead || 0, behind: r?.behind || 0 };
+}
+
+// 変更ファイル帯（docs/68）: the files the session's agent edited, as the Agent aggregates
+// them. Deliberately overlaps `changes()` above only in part — the point of the strip is
+// that the transcript's list and the working tree's list are DIFFERENT sets:
+//   validate.ts / messages.ts  … edited and still dirty (staged / unstaged)
+//   checkout-validation.md     … edited and still untracked
+//   PriceLine.tsx              … edited, then committed → no working-tree diff left
+//   legacy/round.ts            … deleted by the agent
+export function sessionFiles() {
+  const at = (m) => ago(m);
+  return [
+    { path: "repos/webshop@checkout-validation/src/checkout/messages.ts", repo: "webshop@checkout-validation",
+      rel: "src/checkout/messages.ts", verb: "edit", added: 18, removed: 4, count: 3, lastIdx: 21, lastTs: at(2) },
+    { path: "repos/webshop@checkout-validation/src/checkout/validate.ts", repo: "webshop@checkout-validation",
+      rel: "src/checkout/validate.ts", verb: "edit", added: 42, removed: 9, count: 5, lastIdx: 17, lastTs: at(6) },
+    { path: "repos/webshop@checkout-validation/docs/checkout-validation.md", repo: "webshop@checkout-validation",
+      rel: "docs/checkout-validation.md", verb: "add", added: 61, removed: 0, count: 1, lastIdx: 14, lastTs: at(11) },
+    { path: "repos/webshop@checkout-validation/src/cart/PriceLine.tsx", repo: "webshop@checkout-validation",
+      rel: "src/cart/PriceLine.tsx", verb: "edit", added: 7, removed: 7, count: 2, lastIdx: 9, lastTs: at(24) },
+    { path: "repos/webshop@checkout-validation/src/legacy/round.ts", repo: "webshop@checkout-validation",
+      rel: "src/legacy/round.ts", verb: "delete", count: 1, lastIdx: 8, lastTs: at(26), sidechain: true },
+  ];
+}
+
+// 変更ファイル帯の「コミット済み」(docs/68 P2): PriceLine.tsx は直したあとコミットまで
+// 済んでいる —— 作業ツリーには何も残っていないが「取り消された」わけではない、という
+// 区別がこの一覧の要点。
+export function committedFiles() {
+  return { committed: ["src/cart/PriceLine.tsx", "src/cart/useCartCount.ts"] };
 }
 
 export function changes(locale, repo) {

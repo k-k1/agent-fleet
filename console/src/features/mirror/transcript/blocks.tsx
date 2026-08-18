@@ -45,17 +45,18 @@ function taskIcon(status: string): string {
   return "circle-large-outline";
 }
 
-// Small localStorage accessors for the ToDo panel's per-session UI state (open/dismissed).
+// Small localStorage accessors for the per-session UI state of the strips that sit under
+// the mirror's head (the ToDo panel's open/dismissed, the changed-files panel's open).
 // Errors (private mode, quota) are swallowed — the state just won't persist. Mirrors the
 // swallow-and-continue pattern in lib/draft.ts.
-function readLS(key: string): string | null {
+export function readLS(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
     return null;
   }
 }
-function writeLS(key: string, value: string): void {
+export function writeLS(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
   } catch {
