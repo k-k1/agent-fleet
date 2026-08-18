@@ -82,6 +82,11 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 - `layout/ops.ts` は `Layout in → Layout out` の純関数（no-op は入力を参照のまま返し、呼び手が
   `next === cur` で commit をスキップできる）。layout ストアの `commit()` が**唯一の変更経路**で、
   state-only `pushState`（URL 不変）と per-tenant の localStorage 永続（旧形式は読み込み時 migration）を行う。
+- **タブの表示順は MRU**（タブ付きグリッド）: `View.lastUsedAt` は LRU 追い出し（`MAX_TABS`）だけでなく
+  **「表示中のタブが抜けたあと何を出すか」**の順序でもある。閉じる / 別マスへ移す / 切り離すのいずれでも、
+  残りのうち**最後に表示していたタブ**を選ぶ（ミラーからファイルを開いて閉じたら元のミラーへ戻る）。
+  隣のタブ（右→左）は、`lastUsedAt` を持たない古い永続レイアウトのフォールバックとしてだけ残る。
+  同一ミリ秒の 2 度の touch が同点にならないよう、スタンプはページセッション内で厳密単調に採る。
 - **TermService**（`terminal/service.ts`）が xterm への唯一の入口。layout ストア購読 1 本で
   「レイアウトから消えた pane の端末を dispose」する reconcile を回す。`term.ts` の中身は実戦で獲得した
   ドメイン知識の塊で不可侵: ハートビート（text フレーム＝帯域外制御、binary＝PTY 出力）によるゾンビ

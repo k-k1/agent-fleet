@@ -64,6 +64,8 @@ or in ⚙ Settings → Display → **main area layout**.
 
 - **Split panes** (default) — arranged side by side, with draggable dividers for size.
 - **Tabbed grid** — each cell switches by tab, so a lot of open items fit without adding cells.
+  Closing the tab you are on brings back **the tab you were on before it**, not the one next to it
+  in the strip: open a file from a chat, close it again, and you are back on that chat.
 
 The setting is stored **on this device only**, and the two layouts remember their arrangements
 separately, so moving between them disturbs neither. On desktop you can arrange up to 4 columns
