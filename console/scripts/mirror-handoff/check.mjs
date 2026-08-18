@@ -90,15 +90,28 @@ const OPEN_SESSION = `(() => {
   return "ok";
 })()`;
 
+// 共有セッション(受信側)の同じカード。共有ビューは所有者の転写とは別ストアにある提案を
+// 出せていなかった — 会話に残るのはツール行と定型の完了文だけなので、「引き継いだらしい」
+// ことしか読めなかった。ここでは中身が出ること、かつ押せない操作要素が出ないことを見る。
+const OPEN_SHARED = `(() => {
+  const b = document.querySelector(".shared-rail-row");
+  if (!b) return "no-row";
+  b.click();
+  return "ok";
+})()`;
+
 // What the reader actually gets: is the card present, is anything rendered BELOW it, and
-// is the newest turn inside the viewport once the mirror has landed?
-const PROBE = `(() => {
-  const body = document.querySelector(".mirror-body") || document.querySelector(".mirror-scroll");
+// is the newest turn inside the viewport once the view has landed? `scroller` is a JS
+// expression that finds the surface's scroll container (the mirror's and the shared
+// view's are different elements).
+const probeIn = (scroller) => `(() => {
+  const body = ${scroller};
   if (!body) return { err: "no scroller" };
   const card = body.querySelector(".mirror-handoff");
   const turns = [...body.querySelectorAll(".mirror-turn")];
   const last = turns[turns.length - 1];
-  if (!card || !last) return { err: !card ? "no handoff card" : "no turns", turns: turns.length };
+  const gap = Math.round(body.scrollHeight - body.clientHeight - body.scrollTop);
+  if (!card || !last) return { err: !card ? "no handoff card" : "no turns", turns: turns.length, gap };
   // Document order decides "below" — compared node-to-node, since turns and the card are
   // not necessarily siblings of the scroller itself.
   const follows = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
@@ -113,17 +126,25 @@ const PROBE = `(() => {
     // Visible = the newest turn overlaps the scroller's visible rect at all.
     newestVisible: lastBox.bottom > view.top + 4 && lastBox.top < view.bottom - 4,
     launchedBadge: !!card.querySelector(".mirror-handoff-done"),
-    gap: Math.round(body.scrollHeight - body.clientHeight - body.scrollTop),
+    // 本文が実際に読めているか(タイトルだけ出て中身が空、を通さない)。
+    prompt: (card.querySelector(".mirror-handoff-prompt")?.textContent || "").trim().slice(0, 12),
+    // 能力が無い面に操作要素を出していないか(共有側は編集・破棄・起動ができない)。
+    controls: card.querySelectorAll("button, textarea, input").length,
+    gap,
   };
 })()`;
+
+const PROBE = probeIn(`document.querySelector(".mirror-body") || document.querySelector(".mirror-scroll")`);
+const PROBE_SHARED = probeIn(`document.querySelector(".shared-view-body")`);
 
 const pane = { id: "p0", session: null, content: { kind: "terminal", chat: true }, wrap: null };
 const layout = { cols: [{ id: "c0", rowRatio: 0.5, panes: [pane] }], colRatios: [1], activeId: "p0" };
 
-async function run(mode, chrome) {
+async function run(mode, { shared = false } = {}) {
   const stub = spawn(
     process.execPath,
-    [STUB, "--port", String(PORT), "--turns", String(TURNS), "--images", "0", "--mermaid", "0", "--handoff", mode],
+    [STUB, "--port", String(PORT), "--turns", String(TURNS), "--images", "0", "--mermaid", "0", "--handoff", mode,
+     "--shared", shared ? "1" : "0"],
     { stdio: ["ignore", "ignore", "inherit"] },
   );
   try {
@@ -143,10 +164,10 @@ async function run(mode, chrome) {
     });
     await cdp.send("Page.navigate", { url: BASE });
     await sleep(5000);
-    const opened = await cdp.ev(OPEN_SESSION);
+    const opened = await cdp.ev(shared ? OPEN_SHARED : OPEN_SESSION);
     if (opened !== "ok") throw new Error("could not find the session row in the left pane");
-    await sleep(6000); // transcript render + the card's own 3s poll
-    const p = await cdp.ev(PROBE);
+    await sleep(6000); // transcript render + the card's own poll
+    const p = await cdp.ev(shared ? PROBE_SHARED : PROBE);
     cdp.ws.close();
     await fetch(`http://127.0.0.1:${CDP_PORT}/json/close/${target.id}`).catch(() => {});
     return p;
@@ -181,23 +202,30 @@ try {
 
   // 1) Proposed a few turns back: turns must render BELOW the card, and the newest one
   //    must be what you land on. This is the exact shape of the reported failure.
-  const mid = await run("mid", chrome);
+  const mid = await run("mid");
   const midOK = !mid.err && mid.turnsBelowCard && !mid.cardIsLast && mid.newestVisible;
   console.log(`[mirror-handoff] mid      ${midOK ? "OK " : "NG "} ${JSON.stringify(mid)}`);
   if (!midOK) failed++;
 
   // 2) Just proposed (nothing newer): the card SHOULD be last — placement is driven by
   //    time, not hard-coded to either end.
-  const fresh = await run("new", chrome);
+  const fresh = await run("new");
   const freshOK = !fresh.err && fresh.cardIsLast && !fresh.turnsBelowCard;
   console.log(`[mirror-handoff] new      ${freshOK ? "OK " : "NG "} ${JSON.stringify(fresh)}`);
   if (!freshOK) failed++;
 
   // 3) Already launched from: the proposal is KEPT and badged (discarding is the user's call).
-  const done = await run("launched", chrome);
+  const done = await run("launched");
   const doneOK = !done.err && done.launchedBadge;
   console.log(`[mirror-handoff] launched ${doneOK ? "OK " : "NG "} ${JSON.stringify(done)}`);
   if (!doneOK) failed++;
+
+  // 4) 共有先(受信側)も同じ中身が読める。転写だけでは「引き継いだこと」しか分からない
+  //    ので、カードが出て本文が読めること — そして押せない操作要素が無いこと。
+  const shared = await run("mid", { shared: true });
+  const sharedOK = !shared.err && shared.prompt.length > 0 && shared.controls === 0 && shared.turnsBelowCard;
+  console.log(`[mirror-handoff] shared   ${sharedOK ? "OK " : "NG "} ${JSON.stringify(shared)}`);
+  if (!sharedOK) failed++;
 } finally {
   cleanup();
 }

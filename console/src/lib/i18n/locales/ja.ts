@@ -4028,6 +4028,7 @@ export const ja = {
   "share.proposal_placeholder": "所有者へ送信内容を提案…",
   "share.propose": "所有者へ提案",
   "share.owner_approval_note": "所有者が内容を確認して承認するまで、Agentには送信されません。",
+  "share.handoff_intro": "このセッションが次のセッションへ渡す初回プロンプトとして提案した内容です。編集と起動ができるのは共有元だけです。",
   "share.proposal_failed": "提案を送信できませんでした",
   "share.proposal_sent": "所有者へ提案しました",
   "share.pending": "承認待ち {count}件",
