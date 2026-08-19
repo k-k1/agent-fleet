@@ -22,6 +22,7 @@
 // instead (e.g. ToolTrace expands the diff inline when `openDiff` is missing).
 
 import type { Group, Part, TurnTtsWiring } from "./types.ts";
+import type { TranscriptMarksWiring } from "./useMarks.ts";
 
 export interface TranscriptCaps {
   /** Display name of the agent answering (registry name, e.g. "Claude"). */
@@ -75,6 +76,12 @@ export interface TranscriptCaps {
   onReauth?: () => void;
   /** Karaoke read-aloud wiring (docs/24). Absent → no per-turn TTS buttons. */
   tts?: TurnTtsWiring;
+  /**
+   * 会話へ引いたマーカー（docs/69 / ADR 0050）。無ければ印は描かれず、選択ピルも出ない。
+   * 「読めるが引けない」（RO の共有先）は wiring 側の `canEdit` が持つ — 印の表示自体は
+   * 読み手にも要るので、ここを能力の有無だけで割ることはできない。
+   */
+  marks?: TranscriptMarksWiring;
 
   // ── Display preferences ───────────────────────────────────────────────────────
   /** Show the agent's chain-of-thought expanded (per-kind 動作設定, default off). */

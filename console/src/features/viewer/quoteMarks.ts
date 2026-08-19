@@ -73,9 +73,9 @@ export function selectionAnchor(root: HTMLElement): (QuoteAnchor & { rect: DOMRe
   return { quote, nth: occurrenceOf(text, quote, at), rect: range.getBoundingClientRect() };
 }
 
-/** applyQuoteMarks が付けたハイライトを剥がす（テキストノードは元通りに繋ぎ直す）。 */
-export function clearQuoteMarks(root: HTMLElement): void {
-  const marks = [...root.querySelectorAll<HTMLElement>("mark.quote-mark")];
+/** 被せたハイライトを剥がす（テキストノードは元通りに繋ぎ直す）。 */
+export function clearMarks(root: HTMLElement, selector: string): void {
+  const marks = [...root.querySelectorAll<HTMLElement>(selector)];
   for (const m of marks) {
     const parent = m.parentNode;
     if (!parent) continue;
@@ -85,22 +85,36 @@ export function clearQuoteMarks(root: HTMLElement): void {
   if (marks.length) root.normalize(); // 分割された text ノードを戻す（次の数えがズレないように）
 }
 
+/** applyQuoteMarks が付けたハイライトを剥がす。 */
+export function clearQuoteMarks(root: HTMLElement): void {
+  clearMarks(root, "mark.quote-mark");
+}
+
+/** 被せる 1 件: どこを（quote/nth）、どんな見た目で（className/dataset）。 */
+export interface PaintedMark extends QuoteAnchor {
+  className: string;
+  dataset?: Record<string, string>;
+}
+
 /**
- * アンカーの箇所を <mark class="quote-mark" data-n="N"> で囲む。返り値は「何番目の
- * アンカーが実際に見つかったか」— 改訂で消えた指摘をカード側で灰色にできる。
+ * アンカーの箇所を <mark> で囲む。返り値は「何番目のアンカーが実際に見つかったか」—
+ * 改訂で消えた指摘をカード側で灰色にできる。
  *
  * 1つの引用が複数要素にまたがることがある（段落をまたぐ選択、太字の途中など）ので、
  * Range.surroundContents は使わず、重なるテキストノードごとに切って包む。DOM を触りながら
  * 走査すると位置が狂うので、先に対象を集めてから書き換える（MarkdownView の renderEmoji と
  * 同じ作法）。
+ *
+ * selector は「前回この関数が付けたもの」を剥がすためのもので、面ごとに別の class を使う
+ * （プランコメントの引用と転写のマーカーが互いを消し合わないように）。
  */
-export function applyQuoteMarks(root: HTMLElement, anchors: QuoteAnchor[]): boolean[] {
-  clearQuoteMarks(root);
+export function applyPaintedMarks(root: HTMLElement, marks: PaintedMark[], selector: string): boolean[] {
+  clearMarks(root, selector);
   const { spans, text } = textSpans(root);
-  const found = anchors.map(() => false);
+  const found = marks.map(() => false);
   // 後ろから処理すると、同じテキストノードを2回切っても先に確定した位置がズレない。
-  const targets = anchors
-    .map((a, i) => ({ i, at: indexOfNth(text, a.quote, a.nth), len: a.quote.length }))
+  const targets = marks
+    .map((m, i) => ({ i, at: indexOfNth(text, m.quote, m.nth), len: m.quote.length }))
     .filter((x) => x.at >= 0)
     .sort((a, b) => b.at - a.at);
 
@@ -114,8 +128,8 @@ export function applyQuoteMarks(root: HTMLElement, anchors: QuoteAnchor[]): bool
       const from = Math.max(0, target.at - s.start);
       const to = Math.min((node.nodeValue || "").length, end - s.start);
       const mark = document.createElement("mark");
-      mark.className = "quote-mark";
-      mark.dataset.n = String(target.i + 1);
+      mark.className = marks[target.i].className;
+      for (const [k, v] of Object.entries(marks[target.i].dataset || {})) mark.dataset[k] = v;
       const range = document.createRange();
       range.setStart(node, from);
       range.setEnd(node, to);
@@ -128,4 +142,13 @@ export function applyQuoteMarks(root: HTMLElement, anchors: QuoteAnchor[]): bool
     }
   }
   return found;
+}
+
+/** プランコメントの引用ハイライト（番号バッジ付き）。 */
+export function applyQuoteMarks(root: HTMLElement, anchors: QuoteAnchor[]): boolean[] {
+  return applyPaintedMarks(
+    root,
+    anchors.map((a, i) => ({ ...a, className: "quote-mark", dataset: { n: String(i + 1) } })),
+    "mark.quote-mark",
+  );
 }

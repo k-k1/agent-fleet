@@ -10,6 +10,7 @@
 
 import type { ReactNode } from "react";
 import { CompactBlock, ContextLine } from "./blocks.tsx";
+import { MarkLayer } from "./MarkLayer.tsx";
 import { TranscriptTurn } from "./TranscriptTurn.tsx";
 import { ctxSizeAfter, ctxSizeBefore } from "./model.ts";
 import type { Group } from "./types.ts";
@@ -97,5 +98,8 @@ export function TranscriptView({
   // Nothing in the transcript is newer than these cards (the normal case right after a
   // session proposes a handoff): they go last — until the next turn arrives.
   for (const c of cards) if (c.insertAt >= groups.length) els.push(c.node);
+  // 会話ぜんぶで 1 つの浮遊レイヤー（選択ピルとマーカーのカード）。印そのものは各ターンが
+  // 自分の本文へ被せる — ここに置くのは document 単位の操作だけ。
+  if (caps.marks) els.push(<MarkLayer key="marklayer" marks={caps.marks} />);
   return <>{els}</>;
 }

@@ -293,6 +293,11 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/sessions/{name}/handoff-proposal", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/handoff-proposal", rest)
 	mux.HandleFunc("DELETE /api/sessions/{name}/handoff-proposal", rest)
+	// 転写のマーカー（docs/69 / ADR 0050）— 所有者の Console 経路。共有先の経路は
+	// registerSessionShareRoutes 側（ACL を評価して author を CP が刻む）。
+	mux.HandleFunc("GET /api/sessions/{name}/marks", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/marks", rest)
+	mux.HandleFunc("DELETE /api/sessions/{name}/marks", rest)
 	// Auto session-title suggestion accept/dismiss (session_title.go, Agent-side).
 	mux.HandleFunc("POST /api/sessions/{name}/title/accept", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", rest)

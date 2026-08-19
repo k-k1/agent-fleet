@@ -2300,6 +2300,13 @@ export const ja = {
   "mirror.queued": "キュー済み",
   "mirror.pending_title": "送信済み。claude が処理を始めると反映されます",
   "mirror.pending": "反映待ち",
+  "mirror.mark.pill": "マーカーを引く",
+  "mirror.mark.paint": "{color}のマーカーを引く",
+  "mirror.mark.remove": "マーカーを消す",
+  "mirror.mark.color.yellow": "黄",
+  "mirror.mark.color.green": "緑",
+  "mirror.mark.color.blue": "青",
+  "mirror.mark.color.pink": "桃",
   "mirror.fork_at": "ここから分岐",
   "mirror.fork_at_title": "この発言の直前から新しいセッションを始める",
   "mirror.fork_at_intro":

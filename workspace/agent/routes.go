@@ -86,6 +86,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
 	mux.HandleFunc("POST /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
 	mux.HandleFunc("DELETE /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
+	// 転写のマーカー（docs/69 / ADR 0050）。所有者の Console と、CP 経由の共有先が読み書きする。
+	mux.HandleFunc("GET /sessions/{name}/marks", handleSessionMarks)
+	mux.HandleFunc("POST /sessions/{name}/marks", handleSessionMarks)
+	mux.HandleFunc("DELETE /sessions/{name}/marks", handleSessionMarks)
 	// Auto session-title suggestion (session_title.go): accept promotes it to Title,
 	// dismiss discards it — either way it's never offered again for this session.
 	mux.HandleFunc("POST /sessions/{name}/title/accept", handleAcceptSuggestedTitle)
