@@ -1,6 +1,6 @@
 # 69. 会話のこの一文に線を引く——転写のマーカーを共有セッションまで届ける
 
-- 状態: **設計のみ（未実装）**。決定は [decisions/0050](decisions/0050-transcript-marks.md)。
+- 状態: **P0〜P2 実装済み**（2026-08-19、develop 未マージ）。決定は [decisions/0050](decisions/0050-transcript-marks.md)。
 - 関連: [docs/59](59-session-sharing.md)（共有の権限・DTO・所有者 Workspace 停止時の振る舞い） /
   [docs/55](55-fork-at-message.md)（転写の `anchorId`） /
   [docs/68](68-session-changed-files.md)（ミラーのヘッド直下の帯という置き場） /
@@ -64,10 +64,14 @@ part 番号が両側でずれる。ここを詰めずに実装すると「共有
 ### 69.3.3 決め——アンカーは「元ターン由来の root キー ＋ 引用 ＋ 出現番号」
 
 ```
-root = <anchorId>#<元ターン内の part 番号>      … anchorId があるとき
-root = h:<sha1(元ターンの text)>#<part 番号>    … 無いとき（フォールバック）
-mark = { root, quote, nth, color }
+turn = <anchorId>            … anchorId があるとき
+turn = h:<hash(元ターンの text)>  … 無いとき（フォールバック。FNV-1a — 要るのは
+                                  「両側が同じ文字列から同じ値を出す」ことだけ）
+mark = { id, turn, part, kind, quote, nth, color, author, created_at }
 ```
+
+`part` は元ターン内での part 番号（ターン本文そのものは `-1`）。DOM とクライアントの
+引き当てに使う 1 本のキーが `markRootKey(turn, part)` = `"<turn>#<part>"`（本文は `#b`）。
 
 - `nth` は**転写全体でもブロック全体でもなく、その root ひとつの描画後テキストの中**で数える。
   root に対応するのはワイヤの part 1 つで、その本文は共有 DTO を**素通り**する（後述 69.4）ので、
@@ -105,10 +109,17 @@ mark = { root, quote, nth, color }
   ターン本文 `text`、`kind=text` / `plan` / `answer` / `output` / `prompt` の part。
 - 引けない: ファイルチップ（`mirror-turn-files`）、`ToolTrace` のパス、`ContextLine`（branch・cwd）、
   差分行、添付ファイル名、変更ファイル帯。**選択ピル自体を出さない**（能力が無い＝出さない）。
-- CP 側にも二重の網を張る: 中継時、その `root` の `anchorId` が**共有窓の転写に存在しない**
-  マーカーは落とす。
+- **同じ表を 3 か所が持つ。** 塗る場所を絞るのは Console（`MARKABLE_KINDS` — `data-mark-root`
+  を出す要素と、選択ピルを出す条件）だが、`kind` は**保存時に Agent が**（`markProseKinds`）、
+  **中継時に CP が**（`sharedMarksDTO` と POST の入口）もう一度検査する。片側が緩んだだけでは
+  漏れないようにするため。3 つの表は同じ内容でなければならない。
 
 これで「共有先へ渡る `quote` は、共有先が既に読める本文の一部」が構造的に保証される。
+
+> 当初は「CP が中継時に、その `anchorId` が共有窓の転写に無いマーカーを落とす」網も考えたが、
+> それには marks を中継するたびに転写も取り直すことになり、**共有先 1 人あたりの所有者
+> Workspace への往復を面ごとに増やさない**という §69.5.2 の方針と正面から衝突する。
+> 実装したのは上の `kind` 検査で、往復を増やさずに同じ「座標を運ばせない」を担保する。
 
 ---
 
@@ -139,9 +150,10 @@ DELETE /sessions/{name}/marks?id=mk_…  → 削除
 
 共有先の書き込みは `POST` / `DELETE /api/shared-sessions/{id}/marks`（RW のみ、69.6）。
 
-**新しいポーリングは増やさない**。`SharedSessionView` は既に handoff-proposals を転写の
-ロードループの中で取っている（`SharedSessionView.tsx:192`）ので、そこへ相乗りさせる。
-2 本目のポーリングは転写とマーカーが別の時刻を見る同期ズレを生む。
+**新しいポーリングは増やさない**。ミラーは転写のポーリングに、共有ビューは既にある
+handoff-proposals のポーリングに相乗りさせ、実際の往復は `useMarksController` 側で
+15 秒に間引く（印は「もう一方の誰か」が引いたものが遅れて見えるだけの補助情報で、転写と
+同じ毎秒で取り直す価値が無い）。
 
 ### 69.5.3 所有者 Workspace が停止中
 
@@ -179,8 +191,11 @@ Agent へ送る」。この承認が要る理由は、提案が**エージェン
 | 軸 | 表現 |
 |---|---|
 | 色（利用者が選ぶ） | `<mark>` の背景。4 色（黄・緑・青・桃）。ライト／ダーク両方の値を `styles/tokens.css` に置く |
-| 作成者 | `<mark>` の**下線**（作成者ごとに割り当てた色の `border-bottom`）＋ ホバー／長押しの `title`（作成者・時刻） |
-| 一覧 | ミラーのヘッド直下、変更ファイル帯（`FileChangeStrip`）と同じ置き方の折りたたみ帯。「色・引用・作成者・時刻」を並べ、クリックでその位置へスクロール |
+| 作成者 | `<mark>` の**下線**（作成者ごとに割り当てた色。`border-bottom` ではなく `box-shadow: inset` で引く——枠線だと行送りが変わって本文が揺れる）＋ 印をクリックすると出るカード（作成者・時刻・引用・消す） |
+| 一覧 | ミラーのヘッド直下、変更ファイル帯（`FileChangeStrip`）と同じ置き方の折りたたみ帯（`MarkStrip`）。「色・引用・作成者」を並べ、クリックでその位置へスクロール |
+
+所有者（スロット 0）には下線を引かない。1 人で使っているセッションで全部の印に線が入ると
+うるさいだけで、誰が引いたかが問題になるのは共有して 2 人目が現れた時だから。
 
 「誰が」の主経路は一覧帯である。`<mark>` の下線は会話を読みながらの識別用で、名前そのものは
 出さない（本文の可読性を壊すため）。
@@ -196,26 +211,40 @@ Agent へ送る」。この承認が要る理由は、提案が**エージェン
 
 ## 69.8 描画層への配線
 
-`TranscriptCaps` に**表示**と**編集**を別の能力として足す（`readOnly` フラグにしない——
+`TranscriptCaps.marks` が無ければ印は描かれず、選択ピルも出ない（`readOnly` フラグにしない——
 「出すが押せない」を招く。`capabilities.ts` の規約）。
 
+ただし「読めるが引けない」（RO の共有先）は**能力の有無では割れない**——印の表示は読み手にも
+要るからである。そこは wiring の中身が持つ:
+
 ```ts
-/** この root に付いているマーカー。無ければ何も描かない（＝転写に印は出ない）。 */
-marksOf?: (root: string) => TranscriptMark[];
-/** 選択からマーカーを作る。無ければ選択ピルを出さない（RO 共有先・エクスポート）。 */
-addMark?: (m: NewMark) => void;
-/** 消せるものだけ消す。自分のマーカーか、所有者か。 */
-removeMark?: (id: string) => void;
-/** 一覧帯と下線の色割り当てに使う、自分は誰か。 */
-viewerId?: string;
+interface TranscriptMarksWiring {
+  byRoot: Map<string, TranscriptMark[]>; // root キー → その root の印
+  all: TranscriptMark[];                 // 一覧帯（新しい順）
+  canEdit: boolean;                      // false → 選択ピルを出さない
+  add(m: NewMark): void;
+  remove(id: string): void;
+  canRemove(m: TranscriptMark): boolean; // 所有者は誰の印でも／共有先は自分のだけ
+  authorLabel(author?: string): string;  // "" = 所有者、自分は「あなた」
+  authorSlot(author?: string): number;   // 下線の色（0 = 所有者、以降は login id の昇順）
+  find(id: string): TranscriptMark | undefined;
+}
 ```
 
-適用は DocView と同じ順序（`DocView.tsx:120-126`）——`MarkdownView` が `innerHTML` を描いた
-**あと**に被せる（子の effect が先に走る）。依存は `[source, marks]`。本文もマーカーも変わらない
-再描画では `MarkdownView` が何もしないので、被せた `<mark>` はそのまま残る。
+作るのは `useMarksController`（`transcript/useMarks.ts`）で、ミラーと共有ビューは
+エンドポイントと「自分は誰か」だけを変えて同じものを呼ぶ。アンカーの決め方は
+`transcript/marks.ts`（React も I/O も無い純粋なモジュール——`model.ts` から呼ぶため）。
 
-選択の採取もプランコメントと同じ作法: `mouseup` に加えて `selectionchange` をデバウンス購読する
-（タッチ選択は `mouseup` を出さない）。
+被せる順序は DocView と同じ——`MarkdownView` が `innerHTML` を描いた**あと**（子の effect が
+先に走る）。⚠️ ただし転写はポーリングのたびに再描画されるので、**毎回塗り直してはいけない**
+（400 ターン × 毎秒の DOM 書き換えになる）。逆に「印が変わったときだけ」にすると、
+`MarkdownView` が本文を作り直した回（テーマ変更など）に印が消えたまま戻らない。そこで
+`paintTurnMarks` は「印の内容・本文の長さ・いま実際に載っている印の数」の 3 つで判断する。
+
+選択の採取はプランコメントと同じ作法: `selectionchange` をデバウンス購読する（タッチの長押し
+選択は `mouseup` を出さないので、そちらだけでは拾えない）。ピルとカードはターンごとではなく
+転写ぜんぶで 1 つの浮遊レイヤー（`MarkLayer`）——ターンの数だけ購読を張ると 400 ターンぶんの
+listener になる。
 
 ---
 
@@ -230,34 +259,38 @@ viewerId?: string;
 
 - ⚠️ **セッション削除／スロット再利用（`DELETE /sessions/{name}?reclaim=1`）でマーカーファイルも
   消す。** セッション名はスロット名で再利用されるので、消し忘れると**新しいセッションに前の
-  セッションのマーカーが出る**。引き継ぎ提案（`session-handoffs/`）が同じ構造なので、**既存側が
-  消しているかを先に確認する**（消していなければ同じ穴なので、併せて塞ぐ）。
+  セッションのマーカーが出る**。引き継ぎ提案（`session-handoffs/`）が同じ構造で、実装時に
+  確認したところ**消していなかった**ので併せて塞いだ（`removeSessionSideFiles`）。どちらも
+  cleanup アーカイブには入れない——消される会話についての注釈で、復元しても要らない。
 - 保存に失敗しても会話は壊さない。マーカーは補助機能なので、黙って付かない方に倒す。
 
 ---
 
 ## 69.10 段階
 
-| | 内容 |
-|---|---|
-| **P0** | 所有者がミラーで引く／消す。Agent のストア＋REST、CP の `rest` 登録、`Group.origins`、`data-mark-root`、`<mark>` の描画、4 色、2 言語 |
-| **P1** | 共有先へ配送（`GET /api/shared-sessions/{id}/marks` ＋ DTO）。共有ビューは**読むだけ** |
-| **P2** | RW 共有先が引く（`POST`/`DELETE`）、作成者の下線と `title`、一覧帯、`ShareCreateModal` の注記 |
-| **P3**（任意） | 一覧からの「マーカー箇所だけ抜き出してコピー」、キーボード導線（[docs/29](29-keyboard-system.md)） |
-
-P1 まで出せば表題の要求（引く・共有に映る）は満たす。「誰が引いたか」は共有先も引ける P2 で
-初めて意味を持つが、P0/P1 でも作成者は**記録**しておく（後から遡って埋められないため）。
+| | 内容 | |
+|---|---|---|
+| **P0** | 所有者がミラーで引く／消す。Agent のストア＋REST、CP の `rest` 登録、`Group.origins`、`data-mark-root`、`<mark>` の描画、4 色、2 言語 | ✅ |
+| **P1** | 共有先へ配送（`GET /api/shared-sessions/{id}/marks` ＋ DTO）。共有ビューは読める | ✅ |
+| **P2** | RW 共有先が引く（`POST`/`DELETE`・CP が author を刻む）、作成者の下線とカード、一覧帯、`ShareCreateModal` の注記 | ✅ |
+| **P3**（任意） | 一覧からの「マーカー箇所だけ抜き出してコピー」、キーボード導線（[docs/29](29-keyboard-system.md)） | — |
 
 ---
 
-## 69.11 実装前に実機で確かめること
+## 69.11 実機で確かめること（未実施）
+
+実装は入っているが、下記は自動テストでは押さえられない。develop へ入れる前に実機で見る。
 
 1. **スマホの長押し選択と横スワイプのセッション切替が競合しないか**
    （`mobile-swipe-session-rotate` の系。転写全域に選択操作を足すのは初めて）。
-2. **ストリーミング中のターンに引けるか。** 確定前の本文は伸びる。P0 では
-   **確定したターンだけ**に限る（`working` 中の最終ブロックは選択ピルを出さない）のが安全。
+2. **ストリーミング中のターンの挙動。** いまは `pending`/`queued` にだけ印を置かせない
+   （`turnKey` が空を返す）。伸びている最中の assistant ターンには置けてしまうので、
+   本文が伸びたときに出現番号がずれないかを実機で見る。ずれるなら「確定したターンだけ」へ
+   絞る（`working` 中の最終ブロックの `data-mark-root` を落とす）。
 3. **`anchorId` の実カバレッジ。** kind ごとに空になる行がどれだけあるか。多ければ
    69.3.3 のハッシュ・フォールバックが主経路になるので、衝突（同一本文の繰り返し）の挙動を
    先に決める。
 4. **ライト／ダークのコントラスト**を CDP で実測する（`light-mode-contrast-audit` の型）。
    4 色 × 下線 × 選択中の重なりは、目視で「読める」と言える範囲を簡単に外れる。
+5. **共有先の実機確認。** CP のテストは stub Agent 相手なので、実際の 2 アカウントで
+   「所有者が引く → 共有先に出る」「RW が引く → 所有者に出る」「他人の印は消せない」を通す。

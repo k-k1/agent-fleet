@@ -118,6 +118,7 @@ import type { Group, Part, Question, TaskItem, Turn, TurnTtsWiring } from "./tra
 import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, spendOf } from "./transcript/model.ts";
 import { PlanBlock, TaskChecklist, planTitle } from "./transcript/blocks.tsx";
 import { useMarksController } from "./transcript/useMarks.ts";
+import { MarkStrip } from "./transcript/MarkStrip.tsx";
 
 const q = encodeURIComponent;
 
@@ -2674,6 +2675,7 @@ export function MirrorView({
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
       {tasks.length > 0 && <TaskChecklist key={session} tasks={tasks} session={session} />}
       <FileChangeStrip key={session} session={session} files={files} />
+      <MarkStrip key={"marks-" + session} marks={marks} storageKey={session} />
       {isPlan && (
         <div className="mirror-planmode">
           <Icon name="debug-pause" /> {tr("mirror.plan_mode_note")}
