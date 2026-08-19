@@ -126,6 +126,27 @@ const StateBlocked = "blocked"
 // 普通の状態を返せばよく、消えたことを知る別経路が要らない（StateBlocked と同型）。
 const StateAuth = "auth"
 
+// StateLimited is the third live-only wire state (StateBlocked / StateAuth と同型):
+// 利用上限に当たってターンが切れ、**リセット時刻まで待つしかない**セッション。
+// メニューは出ていない（claude はアカウントの窓のメニューを自動解除済み・モデル別の
+// 上限はそもそもメニューを出さない／codex managed は turn が usageLimitExceeded で
+// 失敗しただけ）ので、ペインは普通の待機プロンプトに戻っている。
+//
+// StateBlocked と分けるのは、そのままでは「入力待ち」に見えるからではなく、**利用者に
+// 促す次の一手が違う**から: blocked は「ペインで選べ（人が消すまで動かない）」、こちらは
+// 「待て（時刻が来れば自分で動く。docs/47 §4-4 の予約があれば自動で再開する）」。
+// 逆に idle に寄せると、ターンが上限で落ちたことも再開予定も画面から消え、一覧では
+// 正常に終わったセッションと見分けが付かない（利用者報告 2026-08-19）。
+//
+// blocked と違い**送信は塞がない**。ペインは文字を受け付けるし、モデル別上限の復旧は
+// `/model` 切替や `/usage-credits`＝そのセッションへの入力そのものなので、ここで拒否
+// すると唯一の回復手段を塞ぐことになる（promptBlocker は status ストアを見るので、
+// この状態を書かない限り自然にそうなる）。
+//
+// status ストアには書かない — 上限が解けて次のターンが走れば転写の末尾が変わり、
+// 次の poll が普通の状態を返せばよい（StateBlocked / StateAuth と同型）。
+const StateLimited = "limited"
+
 // MarkTurnEndErr is MarkTurnEnd carrying the reason a turn failed. failure is the
 // one-line summary the driver built (empty for a clean turn); it rides the notifier's
 // excerpt so the operator report can say the turn errored and the chat bridge can post

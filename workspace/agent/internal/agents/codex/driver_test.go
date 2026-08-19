@@ -742,9 +742,9 @@ func TestManagedEnrichAppendsErrorTurn(t *testing.T) {
 	}
 }
 
-// TestManagedUsageLimitBlockedBadge verifies that WireLive reports StateBlocked
+// TestManagedUsageLimitBlockedBadge verifies that WireLive reports StateLimited
 // when the last managed turn failed with usageLimitExceeded, so the Console shows
-// the same "上限で停止" badge as Claude's usage-limit menu.
+// 制限解除待ち instead of an indistinguishable 入力待ち.
 func TestManagedUsageLimitBlockedBadge(t *testing.T) {
 	m, cl := newMockCodexServer(t)
 	h := newCodexTestHandle(t, cl, "codex-limit-badge")
@@ -772,11 +772,11 @@ func TestManagedUsageLimitBlockedBadge(t *testing.T) {
 	impl := agentImpl{}
 	meta := session.Meta{Name: h.name, Dir: h.dir, Kind: session.KindCodex, Driver: session.DriverManaged}
 	li := impl.WireLive(meta, true)
-	if li.State != agents.StateBlocked {
-		t.Fatalf("WireLive state = %q, want %q", li.State, agents.StateBlocked)
+	if li.State != agents.StateLimited {
+		t.Fatalf("WireLive state = %q, want %q", li.State, agents.StateLimited)
 	}
 
-	// A non-usage-limit error must NOT become blocked.
+	// A non-usage-limit error must NOT become 制限解除待ち.
 	h2 := newCodexTestHandle(t, cl, "codex-auth-badge")
 	registerCodexTestHandle(t, h2)
 	h2.setLastError(codexError{message: "auth failed", label: "authError"})

@@ -478,6 +478,12 @@
   border-color: color-mix(in srgb, var(--warn) 40%, transparent);
   font-weight: 600;
 }
+/* 制限解除待ち（利用上限のリセット待ち）: 行では読めていてほしいので question の色は
+   借りるが、こちらは「答えろ」ではなく「待て」なので太字は戻す — 未回答の質問と同じ
+   強さで並ぶと、対応が要る行がその中に埋もれる。 */
+.session-state.question.limited {
+  font-weight: 400;
+}
 @keyframes af-pulse {
   0%,
   100% {
