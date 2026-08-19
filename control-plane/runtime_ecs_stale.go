@@ -124,9 +124,22 @@ func (e *ecsEC2Runtime) Stale(ctx context.Context) bool { return e.base.Stale(ct
 // adapter plays: a cached PRE-push fingerprint (or the previous revision's stamp) would
 // otherwise make a freshly started workspace look stale for up to a minute, which is
 // exactly the moment the user is looking at the badge they just acted on.
+//
+// ⚠️ The probe is fresh (not read through the TTL cache), because a stamp taken from a
+// value up to a minute old would be a lie about what this task launched from. But when
+// it fails we fall back to the LAST KNOWN fingerprint rather than to "unknown", and that
+// is not cosmetic: on the EC2 launch type this map is part of what taskDefFingerprint
+// hashes, so letting a transient ECR blip drop the label would change the fingerprint,
+// miss the task-definition reuse (reuseOrRegisterTaskDef) and force a deployment — the
+// 1-2 minute Service Connect window that commit 966106f4 exists to avoid. With no
+// previous value at all it stays empty, i.e. "unknown", which is the safe side.
 func (e *ecsRuntime) stampImage(ctx context.Context) map[string]string {
+	key := ecrFingerprintKey(e.cfg.workspaceImage)
 	fp := e.imageFingerprint(ctx)
-	freshness.set(ecrFingerprintKey(e.cfg.workspaceImage), fp)
+	if fp == "" {
+		fp = freshness.peek(key)
+	}
+	freshness.set(key, fp)
 	freshness.set(ecsStampKey(e.name), fp)
 	if fp == "" {
 		return nil
