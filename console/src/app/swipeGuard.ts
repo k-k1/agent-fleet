@@ -7,8 +7,10 @@
 // 操作をすでに持っている面の上なら見送る:
 //   - ブラウザペイン（.browser-stage）— タッチは中の Chromium に転送している
 //   - 入力欄 / contenteditable — キャレットや選択のドラッグ
-//   - 横スクロールできる要素（pre, テーブル, タブ列, エディタ…）
+//   - 横に振る面（pre, テーブル, タブ列, サジェストのチップ行…）＝ pansHorizontally
 //   - 明示オプトアウト [data-no-swipe]
+// 逆に、読むために縦へ送るスクロール容器は [data-swipe-y] を付けて「横のはみ出しは
+// 事故」と宣言でき、その要素は横スクローラとして数えない（pansHorizontally の注記）。
 // 判定は起点だけで行う（touchstart 時に 1 回）。純粋な DOM 関数なので dom vitest で
 // 単体テストできる。
 
@@ -23,8 +25,26 @@ function editable(el: Element): boolean {
   return ce !== null && ce !== "false";
 }
 
-/** その要素自身が横スクロール可能か（内容がはみ出し、かつ overflow-x が動く設定）。 */
-function scrollsHorizontally(el: Element): boolean {
+/** その要素自身が「横に振る面」か（内容がはみ出し、かつ overflow-x が動く設定）。
+ *
+ * overflow-x の計算値だけで見ると縦スクローラまで巻き込む。CSS は overflow-x/y の片方が
+ * visible でもう片方が非 visible なら visible を auto に計算するので、`overflow-y: auto`
+ * しか書いていない要素でも overflow-x は "auto" として読める（実ブラウザで実測）。つまり
+ * 実質 scrollWidth > clientWidth だけの判定になる。
+ *
+ * それで起きていたのが「特定のセッションだけスワイプでの切り替えが効かない」: 折り返し
+ * 位置を持たない長い文字列（sha256:… / クエリ付き URL / 長い識別子）が転写に 1 つ混ざる
+ * だけで、転写のスクロール容器（.mirror-body）が横へはみ出す（幅 390px の実測で
+ * sw=633/cw=390）。この容器は転写のあらゆる点の祖先なので、ふつうの段落の上を払っても
+ * 弾かれ、しかも scrollWidth は転写全体の値だから、その 1 行が画面外へ流れても、
+ * セッションを開き直しても直らなかった。
+ *
+ * そこで縦に送る面は [data-swipe-y] で「横のはみ出しは事故」と宣言できるようにし、その
+ * 要素は横スクローラとして数えない。判定そのものは変えない — 横にも縦にも本当に振る面
+ * （コードビュー・diff・クランプした ASCII モックアップ）を「縦にスクロールしないものだけ
+ * が横スクローラ」のような推測で素通りさせないため。 */
+function pansHorizontally(el: Element): boolean {
+  if (el.hasAttribute("data-swipe-y")) return false;
   if (el.scrollWidth <= el.clientWidth + 1) return false;
   const ox = el.ownerDocument.defaultView?.getComputedStyle(el).overflowX;
   return ox === "auto" || ox === "scroll" || ox === "overlay";
@@ -38,7 +58,7 @@ export function swipeBlocked(target: EventTarget | null): boolean {
     if (editable(el)) return true;
     if (el.hasAttribute("data-no-swipe")) return true;
     if (el.classList.contains("browser-stage")) return true;
-    if (scrollsHorizontally(el)) return true;
+    if (pansHorizontally(el)) return true;
   }
   return false;
 }
