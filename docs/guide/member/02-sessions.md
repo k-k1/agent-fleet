@@ -129,6 +129,7 @@ Active sessions refresh automatically every 4 seconds.
 | Question | It has asked you something and is waiting for a reply |
 | Plan ready | A proposed plan is waiting for your review |
 | Awaiting permission | It is asking for permission to act |
+| Waiting for limit reset | Stopped at a usage limit (when a time is shown, it resumes automatically around then) |
 | Ready | Idle, waiting for your next instruction |
 | Ready · running in background | Awaiting input, but something is still running behind the scenes |
 | Running | shell and the like (kinds with no working / awaiting-input distinction) |

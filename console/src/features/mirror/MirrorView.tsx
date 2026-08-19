@@ -2606,8 +2606,16 @@ export function MirrorView({
   const isPlan = mode.toLowerCase() === "plan";
 
   // Status chip: prefer the live polled status, fall back to the session meta.
+  // rateLimitResumeAt rides along from the meta: the polled status is a bare string, so
+  // without it the 制限解除待ち chip here could not say when the session moves again.
   const chip = status
-    ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status, backgroundBusy: bgBusy } as any)
+    ? stateInfo({
+        kind: "claude",
+        alive: status !== "stopped",
+        state: status,
+        backgroundBusy: bgBusy,
+        rateLimitResumeAt: sessionMeta?.rateLimitResumeAt,
+      } as any)
     : sessionMeta
       ? stateInfo(sessionMeta)
       : null;
