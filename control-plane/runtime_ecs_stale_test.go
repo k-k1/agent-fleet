@@ -273,3 +273,76 @@ func TestParseECRRef(t *testing.T) {
 		}
 	}
 }
+
+// ★ マージで静かに壊れる組み合わせ: 966106f4 のタスク定義再利用キャッシュ
+// （同じスロットへの再 wake で再登録＋強制デプロイを避ける）と、この指紋スタンプ。
+//
+// スタンプは taskDefFingerprint が畳む入力の一部で、それは偶然ではなく**必須**である。
+// 可変タグ（:dev）ではイメージ文字列が動かないので、「タグの中身が変わった」ことを
+// 入力に伝えているのはスタンプだけ。指紋から外すと、イメージ push 後の再 wake が古い
+// リビジョンを再利用し（タスク自体は新しいイメージを pull する）、そのリビジョンは
+// 古いスタンプを持ったままになる＝**何度再起動しても消えないバッジ**になる。
+//
+// 逆に、ECR が一時的に引けなかっただけで指紋が動いてもいけない（不要な強制デプロイ＝
+// 966106f4 が消した Service Connect の 1〜2 分の窓が戻る）。両方をここで固定する。
+func TestECSEC2TaskDefReuseSeesTheImageStamp(t *testing.T) {
+	origFresh := freshness
+	defer func() { freshness = origFresh }()
+	freshness = &ttlCache{m: map[string]ttlEntry{}}
+
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	reg := &fakeECR{manifest: index("sha256:aaaa0001", "sha256:bbbb0001", false), digest: "sha256:index0001"}
+	h.rt.base.cfg.workspaceImage = ecrTestImage
+	h.rt.base.ecr = reg
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+
+	rewake := func(what string) {
+		t.Helper()
+		if err := h.rt.Stop(ctx); err != nil {
+			t.Fatalf("%s: Stop: %v", what, err)
+		}
+		// 実サービスが desiredCount 0 に落ち着いた状態を模す（既存テストと同じ模倣）。
+		h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+		if err := h.rt.Start(ctx); err != nil {
+			t.Fatalf("%s: Start: %v", what, err)
+		}
+	}
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls after first Start = %d, want 1", len(h.ecs.regCalls))
+	}
+	stamp := h.ecs.regCalls[0].ContainerDefinitions[0].DockerLabels[afImageStampLabel]
+	if stamp == "" {
+		t.Fatal("the EC2 revision carries no image stamp — the drift badge can never light on ecs-ec2")
+	}
+
+	// 何も変わっていない再 wake: 再登録も強制デプロイもしない。
+	rewake("unchanged re-wake")
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls after an unchanged re-wake = %d, want 1 — the stamp is churning the fingerprint", len(h.ecs.regCalls))
+	}
+
+	// ECR が一時的に引けない再 wake: スタンプを落とさず、やはり再登録しない。
+	reg.err = fmt.Errorf("RequestError: send request failed")
+	rewake("ECR blip re-wake")
+	reg.err = nil
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls after a transient ECR failure = %d, want 1 — a blip must not force a deployment", len(h.ecs.regCalls))
+	}
+
+	// タグが動いた（可変タグへの再 push）: ここは必ず新しいリビジョンになる。
+	reg.manifest, reg.digest = index("sha256:aaaa0002", "sha256:bbbb0001", false), "sha256:index0002"
+	rewake("image moved")
+	if len(h.ecs.regCalls) != 2 {
+		t.Fatalf("regCalls after the tag moved = %d, want 2 — the stamp is NOT reaching the fingerprint, so the badge would never clear", len(h.ecs.regCalls))
+	}
+	if got := h.ecs.regCalls[1].ContainerDefinitions[0].DockerLabels[afImageStampLabel]; got == stamp {
+		t.Errorf("the new revision carries the old stamp %q", got)
+	}
+}

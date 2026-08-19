@@ -2039,7 +2039,7 @@ func taskDefFingerprint(in *ecs.RegisterTaskDefinitionInput) string {
 // bump, changed settings, moved slot) — upsertService only needs to know whether
 // to force a new deployment, and a fresh revision always needs one.
 func (e *ecsEC2Runtime) reuseOrRegisterTaskDef(ctx context.Context, p ec2Placement, prep ec2Prep) (arn string, reused bool, err error) {
-	in := e.buildTaskDef(p, prep)
+	in := e.buildTaskDef(ctx, p, prep)
 	fp := taskDefFingerprint(in)
 	if fp != "" {
 		if v, ok := lastTaskDef.Load(e.base.name); ok {
@@ -2075,7 +2075,16 @@ func (e *ecsEC2Runtime) reuseOrRegisterTaskDef(ctx context.Context, p ec2Placeme
 //     the volume out from under the next (ADR 0045 決定 8 の代償 2). tmpfs is the one
 //     tool Fargate did not have.
 //   - home is a host bind of the freshly mounted EBS, not an EFS volume.
-func (e *ecsEC2Runtime) buildTaskDef(p ec2Placement, prep ec2Prep) *ecs.RegisterTaskDefinitionInput {
+//
+// It takes a ctx because the backend-drift stamp is probed from ECR here
+// (runtime_ecs_stale.go). That stamp is part of what taskDefFingerprint hashes, and
+// that is LOAD-BEARING rather than incidental: with a mutable tag (`:dev`) the image
+// STRING does not change when the image does, so the stamp is the only field that
+// tells reuseOrRegisterTaskDef the inputs moved. Excluding it would make a re-wake
+// after an image push reuse the old revision — the task would still pull the new
+// image, but it would carry the OLD stamp, and the workspace's 要再起動 badge would
+// then never clear no matter how often the user restarted.
+func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep ec2Prep) *ecs.RegisterTaskDefinitionInput {
 	env := []ecstypes.KeyValuePair{
 		{Name: aws.String("CLAUDE_CONFIG_DIR"), Value: aws.String("/var/lib/af/claude")},
 		// Where the entrypoint keeps the auth/identity set (ADR 0045 決定 3-6).
