@@ -368,7 +368,11 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 		if s.Alive && (s.State == "working" || s.State == "question") {
 			busy = true
 		}
-		if !sessOn || !s.Alive || s.Kind != "claude" || s.State != "idle" {
+		// "limited"（利用上限のリセット待ち・docs/47 §4-9）は tier1 では idle と同じに扱う。
+		// ターンは終わっていて、待ち合わせは CP の定時実行が持っている（wake_policy=wake で
+		// 起こしてから届く）ので、ここで畳んでも失われる作業は無い — むしろ数時間の待ちで
+		// コンテナを起こし続けるのが上限まわりの元の実害そのものだった。
+		if !sessOn || !s.Alive || s.Kind != "claude" || (s.State != "idle" && s.State != "limited") {
 			continue
 		}
 		key := ws.ID + "|" + s.Name
