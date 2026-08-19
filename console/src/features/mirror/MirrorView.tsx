@@ -2730,6 +2730,9 @@ export function MirrorView({
 
       <div
         className="mirror-body"
+        // 転写は「縦へ送って読む面」。折り返せない長い文字列が 1 つ混ざって横へはみ出しても、
+        // それを理由にスマホの横スワイプ（セッションの持ち替え）を殺さない（app/swipeGuard.ts）。
+        data-swipe-y=""
         ref={bodyRef}
         onScroll={onBodyScroll}
         onMouseUp={captureTtsSel}
