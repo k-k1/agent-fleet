@@ -530,6 +530,11 @@ type sessionWire struct {
 	// still running" flag so the Console can badge it. Not persisted to the DB mirror
 	// (a stopped workspace has no live background work).
 	BackgroundBusy bool `json:"backgroundBusy"`
+	// RateLimitResumeAt passes through the Agent's「予約済み自動再開の時刻」(state ==
+	// "limited" のときだけ入る RFC3339)。これが落ちると Console のチップは
+	// 「制限解除待ち」とだけ言い、いつ動くのかを言えなくなる。DB ミラーには列が無い
+	// （停止中のワークスペースに進行中のエピソードは無い）。
+	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
 	// Context: claude のコンテキスト残量（ContextBar の元データ）。shape は Agent と
 	// Console（chat view）が所有し CP は解釈しないので RawMessage で素通しする。
 	// この struct に無かった頃は中継で drop され、CP 経由では ContextBar が出なかった。

@@ -17,6 +17,7 @@ shown as text as well, not just an icon.
 | Question | Waiting for an answer to a question |
 | Plan ready | Waiting for the plan to be approved or rejected |
 | Awaiting permission | Waiting for permission for a command run, an edit, etc. |
+| Waiting for limit reset · 19:50 | A usage limit stopped the turn. The time is when the automatic resume is booked (omitted when none is) |
 | Ready | Ready to take the next instruction |
 | Ready · running in background | Accepts input, but background processing is still running |
 | Running | A shell / ssm with no detailed progress state is running |

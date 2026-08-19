@@ -39,7 +39,20 @@ export interface SessionState {
   exitReason?: string;
   exitCode?: number;
   exitSignal?: number;
+  rateLimitResumeAt?: string;
 }
+
+// resumeClock renders a reserved resume instant for the 制限解除待ち chip: "19:50",
+// or "08/20 07:15" when it is not today (a weekly window can land days out, and a bare
+// time would then read as "in a few minutes"). "" for absent/unparsable input — the
+// chip then says only that the session is waiting, which is still true.
+export const resumeClock = (iso: string | undefined, now: Date = new Date()): string => {
+  const d = new Date(iso ?? "");
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  return d.toDateString() === now.toDateString() ? hm : `${p(d.getMonth() + 1)}/${p(d.getDate())} ${hm}`;
+};
 
 // exitLabel describes why a stopped session's agent process died, when the pane
 // recorder caught an abnormal end. Returns null for a clean quit or a deliberate stop
@@ -102,6 +115,22 @@ export const stateInfo = (s: SessionState): StateInfo => {
     // the backend refuses prompt injection here, since typed text would land on the menu.
     case "blocked":
       return { cls: "question", icon: "debug-disconnect", text: t("state.blocked") };
+    // The turn was cut off by a usage limit and the session is simply waiting for the
+    // window to reset (claude: the menu is already auto-dismissed, or the limit never
+    // showed one; codex managed: usageLimitExceeded). Deliberately NOT "idle" — it looked
+    // exactly like a finished turn, so nothing on screen said why the session stopped or
+    // when it moves again (docs/47 §4-9). Separate from "blocked" because nobody has to
+    // act: rateLimitResumeAt is when the reserved auto-resume fires. It keeps the question
+    // colours (so the row is readable at a glance as "not running") but adds "limited",
+    // which drops the bold weight — it must not shout as loudly as an unanswered question.
+    case "limited": {
+      const at = resumeClock(s.rateLimitResumeAt);
+      return {
+        cls: "question limited",
+        icon: "watch",
+        text: at ? t("state.rate_limited_at", { at }) : t("state.rate_limited"),
+      };
+    }
     // The workspace's claude login expired (agent: agents.StateAuth). Separate from
     // "blocked" because the next move is the opposite one: a usage limit lifts on its
     // own, an expired login never does — it needs 再認証 now. NOT "idle" for the same

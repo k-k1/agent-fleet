@@ -194,10 +194,12 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 				li.State = "question"
 			}
 			// 利用上限で turn が失敗した managed セッションは「入力待ち」に見えるが、
-			// 再送しても同じ結果なので blocked バッジを表示する（Claude の上限メニューと
-			// 同じ扱い）。turnError は次の turn 開始時にクリアされるので永遠に貼り付かない。
+			// 再送しても同じ結果なので 制限解除待ち を表示する。blocked（＝人がペインで
+			// 選ぶまで動かない claude の上限メニュー）ではなく StateLimited なのは、
+			// codex には消すべきメニューが無く、待てば窓が開くから — 促す次の一手が違う。
+			// turnError は次の turn 開始時にクリアされるので永遠に貼り付かない。
 			if li.State == "idle" && IsRateLimited(m.Name) {
-				li.State = agents.StateBlocked
+				li.State = agents.StateLimited
 			}
 		} else if li.State == "working" && HasPendingQuestion(m) {
 			// The hooks report only working/idle — a request_user_input dialog keeps

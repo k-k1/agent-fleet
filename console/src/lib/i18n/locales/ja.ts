@@ -1771,6 +1771,10 @@ export const ja = {
   "state.plan": "プランあり",
   "state.permission": "許可待ち",
   "state.blocked": "上限で停止 — 操作が必要",
+  // 利用上限のリセット待ち（docs/47 §4-9）。blocked と違い人の操作は要らないので、
+  // 「操作が必要」とは言わずに、いつ動くか（予約済みの自動再開時刻）だけを添える。
+  "state.rate_limited": "制限解除待ち",
+  "state.rate_limited_at": "制限解除待ち · {at}",
   "state.auth_expired": "認証切れ — 再認証が必要",
   "state.idle_bg": "入力待ち · BG実行中",
   "state.idle": "入力待ち",

@@ -274,6 +274,30 @@ func scheduleRateLimitResume(m session.Meta, st rateLimitState, now time.Time) r
 	return st
 }
 
+// rateLimitWaiting reports whether this claude session is sitting at its usage limit
+// **right now**, and when the reserved resume is due（"" = 予約なし）。表示側（wireSession /
+// driveState）が idle を agents.StateLimited に読み替えるための述語。
+//
+// 材料を 2 つ重ねるのは、片方だけではどちらも嘘をつくから:
+//   - エピソードファイルだけ: 予約時刻や自動再開 OFF の TTL の間ずっと真になる。利用者が
+//     モデルを切り替えて普通に働き始めても「制限解除待ち」を名乗り続ける。
+//   - 転写だけ（claudeUsageLimitAbort）: 真偽は正しいが、この一覧ポーリング経路で claude
+//     セッション全部の転写末尾を毎回読むことになる。エピソードは滅多に開かないので、
+//     まず小さな状態ファイルで刈ってから転写を見る。
+//
+// 転写側は放っておいても自然に false へ戻る（末尾が新しい user/assistant レコードに
+// 変わる）ので、「上限が解けたことを知る別経路」は要らない — StateBlocked と同じ設計。
+func rateLimitWaiting(m session.Meta, now time.Time) (string, bool) {
+	st, ok := rateLimitStates.Read(m.Name)
+	if !ok || episodeStale(st, now) {
+		return "", false
+	}
+	if _, atLimit := claudeUsageLimitAbort(session.UUID(m.Dir, m.Name)); !atLimit {
+		return "", false
+	}
+	return st.ResumeAt, true
+}
+
 // triedRecently rate-limits the Enter presses inside one episode.
 func triedRecently(st rateLimitState, now time.Time) bool {
 	t, err := time.Parse(time.RFC3339, st.LastTry)

@@ -108,6 +108,11 @@ type Session struct {
 	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
 	// running under the pane. Lets the Console mark 入力待ち as "still working in bg".
 	BackgroundBusy bool `json:"backgroundBusy"`
+	// RateLimitResumeAt: State == agents.StateLimited のとき**だけ**入る、予約済み自動再開の
+	// 時刻（RFC3339）。空 = 上限では止まっているが再開は仕込まれていない（自動再開 OFF、
+	// リセット時刻を決める材料が無い、モデル別上限 — docs/47 §4-5）。チップに「いつ動くか」を
+	// 出すためだけの表示用で、待ち合わせ自体は CP の定時実行が持つ。
+	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
 	// Context: current context-window fill (newest assistant turn's prompt tokens),
 	// claude only, nil when none recorded yet. Drives the Console's ContextBar in
 	// both the terminal and chat heads without a separate transcript poll.
