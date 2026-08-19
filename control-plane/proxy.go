@@ -221,6 +221,26 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	_, _ = io.Copy(w, resp.Body)
 }
 
+// restLoginFlow wraps rest for the agent-CLI login endpoints (Claude/agy/cursor/
+// kiro/opencode/codex/github start-poll-complete) whose state — an OAuth flow_id,
+// a device code, a PTY login session — lives only in the Workspace Agent
+// process's memory, not in the workspace's shared home volume. If the workspace
+// is still converging (rt.State() != "running": e.g. right after a wake, which
+// re-registers a task definition and force-deploys on every Start — see
+// serviceRolledOut in runtime_ecs.go), the request can be served by a task a
+// rolling deployment retires moments later, silently losing that state — the
+// user sees "unknown or expired flow_id" or a bare timeout with no clear cause
+// (confirmed 2026-08-19 on <dev-deployment>). Refuse up front instead so the client
+// can show "still starting, try again" rather than a confusing failure mid-flow.
+func (a agentProxyAPI) restLoginFlow(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if s := res.rt.State(r.Context()); s != "running" {
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_starting",
+			"workspace is still starting up — wait a moment and try connecting again"})
+		return
+	}
+	a.rest(w, r, res)
+}
+
 // stream is rest for a streaming (SSE) endpoint: it forwards to
 // the Agent and copies the response back FLUSHING after each chunk, so token deltas
 // reach the browser as they arrive instead of buffering in net/http's ~4KB writer.
