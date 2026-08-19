@@ -166,6 +166,12 @@ func markHandoffProposalLaunched(name, id string) (*sessionHandoffProposal, erro
 	return nil, os.ErrNotExist
 }
 
+// removeHandoffProposals はセッションが消えた（＝スロット名が再利用され得る）ときの後片付け。
+// 残すと、次にそのスロットへ入った別のセッションの会話に前のセッションの提案カードが出る。
+func removeHandoffProposals(name string) {
+	_ = os.Remove(handoffProposalPath(name))
+}
+
 // discardHandoffProposal removes the single proposal identified by id, leaving any
 // other outstanding proposals for the session untouched.
 func discardHandoffProposal(name, id string) error {

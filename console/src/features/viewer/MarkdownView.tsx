@@ -53,6 +53,14 @@ interface MarkdownViewProps {
   // onOpenSession: omitted → openChat / openChatSplit defaults; the assistant chat
   // passes this to force a new pane so its own conversation isn't swapped out.
   onOpenConversation?: (id: string, openInNew?: boolean) => void;
+  // markRoot tags this rendered block as an anchoring root for transcript marks
+  // (docs/69): the highlight layer counts occurrences inside ONE such element, never
+  // across the page. Absent → this block cannot carry a mark.
+  markRoot?: string;
+  // markKind is the transcript part kind behind markRoot ("" = the turn's own text). The
+  // highlight layer sends it back when a mark is created; the Agent re-checks it, because
+  // only kinds whose text crosses the shared DTO verbatim may carry one (docs/69 §69.4).
+  markKind?: string;
 }
 
 export function MarkdownView({
@@ -66,6 +74,8 @@ export function MarkdownView({
   onOpenDir,
   onOpenSession,
   onOpenConversation,
+  markRoot,
+  markKind,
 }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
@@ -246,7 +256,14 @@ export function MarkdownView({
     };
   }, [source, basePath, baseDir, repo, breaks, streaming, theme, codeWrapDefault, toast]);
 
-  return <div className="markdown" ref={ref} />;
+  return (
+    <div
+      className="markdown"
+      ref={ref}
+      data-mark-root={markRoot || undefined}
+      data-mark-kind={markRoot ? markKind || "" : undefined}
+    />
+  );
 }
 
 // Front matter belongs above the document as a compact property list. It is

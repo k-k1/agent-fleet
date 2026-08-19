@@ -2265,6 +2265,13 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.queued": "Queued",
   "mirror.pending_title": "Sent. It's reflected once claude starts processing.",
   "mirror.pending": "Pending",
+  "mirror.mark.pill": "Highlight",
+  "mirror.mark.paint": "Highlight in {color}",
+  "mirror.mark.remove": "Remove highlight",
+  "mirror.mark.color.yellow": "yellow",
+  "mirror.mark.color.green": "green",
+  "mirror.mark.color.blue": "blue",
+  "mirror.mark.color.pink": "pink",
   "mirror.fork_at": "Branch here",
   "mirror.fork_at_title": "Start a new session from just before this message",
   "mirror.fork_at_intro":

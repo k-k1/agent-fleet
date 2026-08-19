@@ -8,7 +8,7 @@
 // types.ts, and the two only coexisted before because a value and a type can share a
 // name inside one file. Split across modules that overlap would be a trap.
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import FileIcon from "../../../ui/FileIcon.tsx";
 import { fmtTok } from "../../../lib/fmttok.ts";
@@ -20,6 +20,7 @@ import { textOfParts, workSplit } from "../mirrorParts.ts";
 import { footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
 import { foldParts, peerIntentOf, peerSenderOf, spendOf } from "./model.ts";
+import { paintTurnMarks } from "./markPaint.ts";
 import { chipPart, turnFiles } from "./turnFiles.ts";
 import type { Group, Part } from "./types.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
@@ -58,7 +59,15 @@ export function TranscriptTurn({
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   const spend = spendOf(turn);
   const maxSpend = caps.maxSpend || 0;
-  const bodyEl = useRef<HTMLDivElement>(null); // カラオケ朗読（turnTts）の本文 DOM
+  const bodyEl = useRef<HTMLDivElement>(null); // カラオケ朗読（turnTts）とマーカーの本文 DOM
+  // 印を被せるのは MarkdownView が innerHTML を描いたあと（子の effect が先に走るので、
+  // この effect の時点では本文が出来ている — DocView のプランコメントと同じ作法）。
+  const painted = useRef("");
+  const marks = caps.marks;
+  useEffect(() => {
+    if (!bodyEl.current || !marks) return;
+    painted.current = paintTurnMarks(bodyEl.current, marks.byRoot, marks.authorSlot, painted.current);
+  });
   const split = !isUser && foldWork ? workSplit(turn.parts) : null;
   const edited = isUser ? [] : turnFiles(turn.parts);
   const copyText = split ? textOfParts(turn.parts.slice(split.at)) : turn.text;
@@ -134,7 +143,17 @@ export function TranscriptTurn({
           onReauth={caps.onReauth}
         />
       ) : (
-        <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} repo={caps.repo} onOpenFile={caps.openFile} />
+        <MarkdownView
+          key={item.i}
+          source={item.p.text}
+          baseDir={turn.cwd}
+          repo={caps.repo}
+          onOpenFile={caps.openFile}
+          // マーカーを数える範囲はこの part ひとつ（docs/69 §69.3）。ブロック相対ではなく
+          // 元ターン由来の root なので、共有先の tail 窓がずれても同じ場所を指す。
+          markRoot={caps.marks ? turn.origins[item.i] : undefined}
+          markKind={item.p.kind}
+        />
       ),
     );
   const fromOperator = isUser && turn.source === "operator";
@@ -258,7 +277,17 @@ export function TranscriptTurn({
             return (
               <>
                 {text && (
-                  <MarkdownView source={text} breaks baseDir={turn.cwd} repo={caps.repo} onOpenFile={caps.openFile} />
+                  <MarkdownView
+                    source={text}
+                    breaks
+                    baseDir={turn.cwd}
+                    repo={caps.repo}
+                    onOpenFile={caps.openFile}
+                    // ユーザーの吹き出しが描くのは parts ではなくブロックの text なので、
+                    // 2 行以上畳んだブロックでは root が空になる（groupTurns 参照）。
+                    markRoot={caps.marks ? turn.bodyRoot : undefined}
+                    markKind=""
+                  />
                 )}
                 {images.length > 0 && caps.loadPastedImage && (
                   <div className="mt-imgs">
