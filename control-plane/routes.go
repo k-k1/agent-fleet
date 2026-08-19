@@ -613,6 +613,11 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	proxy := newAgentProxyAPI(cfg.mgr)
 	rest := proxy.withResolved(proxy.rest)
+	// restLogin gates the start/poll/complete legs of an agent-CLI login flow on
+	// the workspace being fully rolled out (see restLoginFlow) — their state lives
+	// only in the Agent process's memory, so a wake-triggered task swap mid-flow
+	// silently drops it otherwise.
+	restLogin := proxy.withResolved(proxy.restLoginFlow)
 	// MCP レジストリ（docs/48 P0）— 実体は Agent 側（workspace/agent/mcp_servers.go）。
 	mux.HandleFunc("GET /api/mcp-servers", rest)
 	mux.HandleFunc("POST /api/mcp-servers", rest)
@@ -630,34 +635,34 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/connections/git/{host}", rest)
 	mux.HandleFunc("PUT /api/connections/git/{host}/identity", rest)
 	mux.HandleFunc("DELETE /api/connections/git/{host}", rest)
-	mux.HandleFunc("POST /api/connections/git/github/oauth/start", rest)
-	mux.HandleFunc("POST /api/connections/git/github/oauth/poll", rest)
+	mux.HandleFunc("POST /api/connections/git/github/oauth/start", restLogin)
+	mux.HandleFunc("POST /api/connections/git/github/oauth/poll", restLogin)
 	// Bitbucket OAuth — CP-native (owns the public callback), not proxied.
 	mux.HandleFunc("GET /api/connections/git/bitbucket/oauth/start", cfg.handleBitbucketOAuthStart)
 	mux.HandleFunc("GET /api/oauth/bitbucket/callback", cfg.handleBitbucketOAuthCallback)
-	mux.HandleFunc("POST /api/connections/claude/start", rest)
-	mux.HandleFunc("POST /api/connections/claude/complete", rest)
+	mux.HandleFunc("POST /api/connections/claude/start", restLogin)
+	mux.HandleFunc("POST /api/connections/claude/complete", restLogin)
 	mux.HandleFunc("DELETE /api/connections/claude", rest)
 	// agy (Antigravity CLI, docs/32) — claude-style flow: start returns the
 	// authorize URL (+ flow_id; body carries method: oauth|gcp-project — M1
 	// implements oauth only), complete submits the pasted code. usage feeds the
 	// AgyCard's Starter-Quota gauge (TUI /usage scrape, agent-side).
-	mux.HandleFunc("POST /api/connections/agy/start", rest)
-	mux.HandleFunc("POST /api/connections/agy/complete", rest)
+	mux.HandleFunc("POST /api/connections/agy/start", restLogin)
+	mux.HandleFunc("POST /api/connections/agy/complete", restLogin)
 	mux.HandleFunc("DELETE /api/connections/agy", rest)
 	mux.HandleFunc("GET /api/connections/agy/usage", rest)
 	// cursor (Cursor CLI, docs/40) — dedicated login flow: start returns the
 	// authorize URL (+ flow_id), poll checks browser approval (no pasted code —
 	// cursor self-polls). Proxied to the Agent (cursor owns ~/.config/cursor/auth.json).
-	mux.HandleFunc("POST /api/connections/cursor/start", rest)
-	mux.HandleFunc("POST /api/connections/cursor/poll", rest)
+	mux.HandleFunc("POST /api/connections/cursor/start", restLogin)
+	mux.HandleFunc("POST /api/connections/cursor/poll", restLogin)
 	mux.HandleFunc("DELETE /api/connections/cursor", rest)
 	// kiro (Kiro CLI, docs/43) — dedicated device-flow login: start returns the
 	// verification URL (+ user_code + flow_id), poll checks AWS-side approval (kiro
 	// self-polls, no pasted code). Proxied to the Agent (kiro owns its credential
 	// store under ~/.local/share/kiro-cli).
-	mux.HandleFunc("POST /api/connections/kiro/start", rest)
-	mux.HandleFunc("POST /api/connections/kiro/poll", rest)
+	mux.HandleFunc("POST /api/connections/kiro/start", restLogin)
+	mux.HandleFunc("POST /api/connections/kiro/poll", restLogin)
 	mux.HandleFunc("DELETE /api/connections/kiro", rest)
 	// kiro on-demand install (docs/43 Track B/C) — the ~855MB bundle is not baked on
 	// the lean image, so the connection card triggers a background install (POST) and
@@ -666,8 +671,8 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/connections/kiro/install", rest)
 	mux.HandleFunc("PUT /api/connections/opencode", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/{env}", rest)
-	mux.HandleFunc("POST /api/connections/opencode/oauth/start", rest)
-	mux.HandleFunc("POST /api/connections/opencode/oauth/poll", rest)
+	mux.HandleFunc("POST /api/connections/opencode/oauth/start", restLogin)
+	mux.HandleFunc("POST /api/connections/opencode/oauth/poll", restLogin)
 	mux.HandleFunc("POST /api/connections/opencode/oauth/cancel", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/oauth", rest)
 	mux.HandleFunc("PUT /api/connections/opencode/workspace", rest)
@@ -676,8 +681,8 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// Codex auth — proxied to the Agent (codex owns auth.json; no public callback,
 	// device-auth polls OpenAI from inside the container).
 	mux.HandleFunc("POST /api/connections/codex/api-key", rest)
-	mux.HandleFunc("POST /api/connections/codex/device/start", rest)
-	mux.HandleFunc("POST /api/connections/codex/device/poll", rest)
+	mux.HandleFunc("POST /api/connections/codex/device/start", restLogin)
+	mux.HandleFunc("POST /api/connections/codex/device/poll", restLogin)
 	mux.HandleFunc("DELETE /api/connections/codex", rest)
 	// Ops connections (docs/25 Phase 1): the credentials are stored in the
 	// Workspace's encrypted secrets and injected into the ops MCP servers at

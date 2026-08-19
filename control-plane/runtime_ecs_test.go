@@ -388,6 +388,32 @@ func TestECSState(t *testing.T) {
 		// Console shows 起動中 and the reaper/autostart keep their hands off.
 		{"starting", &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 0}, "starting"},
 		{"running", &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}, "running"},
+		// A Start re-registers the task definition and force-deploys every time
+		// (registerTaskDef/upsertService), so a task can go RUNNING while an old
+		// task from the outgoing deployment is still draining behind it. Service
+		// Connect load-balances across both until that settles, so this must NOT
+		// read as "running" — a caller that stashes per-request state in the Agent
+		// process (an OAuth flow_id) can land on either task and lose it (2026-08-19,
+		// <dev-deployment> incident).
+		{"running task but old deployment still draining", &ecstypes.Service{
+			Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1,
+			Deployments: []ecstypes.Deployment{
+				{Id: aws.String("new"), RolloutState: ecstypes.DeploymentRolloutStateInProgress},
+				{Id: aws.String("old"), RolloutState: ecstypes.DeploymentRolloutStateCompleted},
+			},
+		}, "starting"},
+		{"running, single deployment not yet steady", &ecstypes.Service{
+			Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1,
+			Deployments: []ecstypes.Deployment{
+				{Id: aws.String("new"), RolloutState: ecstypes.DeploymentRolloutStateInProgress},
+			},
+		}, "starting"},
+		{"running, rollout completed", &ecstypes.Service{
+			Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1,
+			Deployments: []ecstypes.Deployment{
+				{Id: aws.String("only"), RolloutState: ecstypes.DeploymentRolloutStateCompleted},
+			},
+		}, "running"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

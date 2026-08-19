@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -169,6 +170,14 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 
 	resp, err := agentRelayClient.Do(req)
 	if err != nil {
+		// TEMP DIAGNOSTIC (2026-08-19): a long-blocking agent-CLI login complete
+		// (Claude ~40s, agy ~60s) has been observed failing here with the caller
+		// having already gotten a full response server-side (Agent's own access
+		// log shows the same request completing normally) — logging the
+		// underlying error distinguishes r.Context() cancellation (browser/ALB
+		// gave up) from a genuine transport failure (connection reset, i/o
+		// timeout) instead of collapsing both into one opaque message.
+		log.Printf("agent proxy: %s %s: %v (ctx err=%v)", r.Method, r.URL.Path, err, r.Context().Err())
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
 	}
@@ -219,6 +228,26 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		_, _ = io.Copy(w, bytes.NewReader(bufferedResponse))
 	}
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// restLoginFlow wraps rest for the agent-CLI login endpoints (Claude/agy/cursor/
+// kiro/opencode/codex/github start-poll-complete) whose state — an OAuth flow_id,
+// a device code, a PTY login session — lives only in the Workspace Agent
+// process's memory, not in the workspace's shared home volume. If the workspace
+// is still converging (rt.State() != "running": e.g. right after a wake, which
+// re-registers a task definition and force-deploys on every Start — see
+// serviceRolledOut in runtime_ecs.go), the request can be served by a task a
+// rolling deployment retires moments later, silently losing that state — the
+// user sees "unknown or expired flow_id" or a bare timeout with no clear cause
+// (confirmed 2026-08-19 on <dev-deployment>). Refuse up front instead so the client
+// can show "still starting, try again" rather than a confusing failure mid-flow.
+func (a agentProxyAPI) restLoginFlow(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if s := res.rt.State(r.Context()); s != "running" {
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_starting",
+			"workspace is still starting up — wait a moment and try connecting again"})
+		return
+	}
+	a.rest(w, r, res)
 }
 
 // stream is rest for a streaming (SSE) endpoint: it forwards to

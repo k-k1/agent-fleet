@@ -564,6 +564,15 @@ type ec2Harness struct {
 
 func newEC2Harness(t *testing.T) *ec2Harness {
 	t.Helper()
+	// lastTaskDef and startGen/startPhase are process-local scratch keyed by
+	// workspace name (runtime_ecs_ec2.go) — every test in this package reuses the
+	// same "af-ws-acme-alice" name, so without a reset an earlier test's cache
+	// entry leaks into a later one and its Start silently skips
+	// RegisterTaskDefinition. Production never resets it (a real CP process only
+	// serves one instance ID per real slot lifetime); tests must, since they don't.
+	lastTaskDef.Delete("af-ws-acme-alice")
+	startGen.Delete("af-ws-acme-alice")
+	startPhase.Delete("af-ws-acme-alice")
 	h := &ec2Harness{
 		ec2:  newFakeEC2(),
 		ecs:  &fakeECS{},
@@ -755,6 +764,90 @@ func TestECSEC2StartOnHotSlotIsSynchronous(t *testing.T) {
 	}
 	if create.NetworkConfiguration.AwsvpcConfiguration.AssignPublicIp != ecstypes.AssignPublicIpDisabled {
 		t.Error("a slot task must never ask for a public IP (ADR 0045 決定 3-3)")
+	}
+}
+
+// A re-wake of the SAME slot with nothing changed must not register a second task
+// definition or force a new deployment — that pair is what retires the running
+// task and starts a fresh one, and the ~1-2 minutes Service Connect spends routing
+// to both is what silently dropped an in-flight Claude Code OAuth flow_id
+// (confirmed 2026-08-19 on <dev-deployment>). A no-op Stop→Start on one slot is the
+// common case (every idle-timeout return), so it must take the cheap path.
+func TestECSEC2ReWakingTheSameSlotReusesTheTaskDefinition(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls after first Start = %d, want 1", len(h.ecs.regCalls))
+	}
+
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	// The fake does not model ECS retiring the task on its own; mirror what a real
+	// desiredCount-0 service looks like once its task has actually stopped (same
+	// simulation TestECSEC2StopKeepsTheHomeAttached uses).
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls after re-waking the same slot = %d, want 1 (still just the first)", len(h.ecs.regCalls))
+	}
+	if len(h.ecs.updateCalls) != 2 {
+		t.Fatalf("updateCalls = %d, want 2 (Stop, then the second Start)", len(h.ecs.updateCalls))
+	}
+	second := h.ecs.updateCalls[1]
+	if aws.ToInt32(second.DesiredCount) != 1 {
+		t.Errorf("second Start's UpdateService DesiredCount = %d, want 1", aws.ToInt32(second.DesiredCount))
+	}
+	if second.ForceNewDeployment {
+		t.Error("re-waking the same slot with nothing changed must not force a new deployment")
+	}
+	if want := "arn:task/" + aws.ToString(h.ecs.regCalls[0].Family) + ":1"; aws.ToString(second.TaskDefinition) != want {
+		t.Errorf("second Start's TaskDefinition = %q, want the reused first-registration ARN %q", aws.ToString(second.TaskDefinition), want)
+	}
+}
+
+// Anything that actually changes the task definition (here: the slot changes, so
+// the placement constraint must point at the new instance) must still register a
+// fresh revision and force the deployment — reuse must never paper over a real
+// change.
+func TestECSEC2MovingSlotsForcesAFreshTaskDefinition(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	// Simulate the home moving to a different slot (eviction/new-AZ repair): the
+	// same volume now attaches to a second, distinct instance.
+	h.ec2.addSlot("i-hot-2", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot-2"] = true
+	h.ec2.attach("vol-1", "i-hot-2", time.Now())
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 2 {
+		t.Fatalf("regCalls after moving slots = %d, want 2 (a new instance needs a new placement constraint)", len(h.ecs.regCalls))
+	}
+	if len(h.ecs.updateCalls) != 2 || !h.ecs.updateCalls[1].ForceNewDeployment {
+		t.Errorf("moving slots must force a new deployment, updateCalls = %+v", h.ecs.updateCalls)
 	}
 }
 
