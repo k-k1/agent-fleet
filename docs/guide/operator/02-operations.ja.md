@@ -82,6 +82,11 @@ air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose
   したがって**アップグレードの前に必ず `backup.sh` を取る**こと。何かあれば「古い image に戻す」の
   ではなく「バックアップからリストアする」のが正しい後退経路です。
 - 破壊的変更の有無はリリースノートで確認してください。
+- **AWS（`ecs` / `ecs-ec2`）の場合は compose ではなく `deploy/aws/ecs/update.sh`** です
+  （`VERSION=<v> ./update.sh --profile <p> --region <r>`）。ECR へ push → ingress スタックを
+  `ImageTag` だけ上書きして deploy → CP サービスの入れ替わりを待つ、までを 1 コマンドで行います。
+  **走っているワークスペースは自動では新しくなりません**（次の「起動」から新しい image）。
+  該当する利用者の Console には「要再起動」バッジが出るので、停止のタイミングは本人に委ねます。
 
 ## 閉域網（air-gap）へのインストール
 

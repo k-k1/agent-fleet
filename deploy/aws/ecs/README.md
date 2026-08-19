@@ -276,6 +276,60 @@ different image under an already-released version tag (the repos stay `MUTABLE`
 so the `:dev` sandbox flow can overwrite itself — release tags are write-once by
 discipline, not enforcement).
 
+### One command: `update.sh`
+
+`./update.sh` is the runbook above as a script — the ECS counterpart of compose's
+`docker compose pull && docker compose up -d`. Use it unless you have a reason to
+drive the steps by hand.
+
+```bash
+VERSION=<v> ./update.sh --profile <p> --region <r>          # deploy an already-pushed tag
+VERSION=<v> ./update.sh --profile <p> --region <r> --push   # push to ECR first
+VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
+```
+
+It does the three things the hand-typed sequence gets wrong:
+
+- **Refuses a tag that is not in ECR.** CloudFormation only stores a string, so a
+  forgotten (or wrong-region) push *succeeds* and the CP task then dies with
+  `CannotPullContainerError`. The script checks both repositories first.
+- **Notices the empty change set.** Re-pushing the *same* tag (the `:dev` sandbox
+  flow) leaves the template byte-identical, so `cloudformation deploy` reports
+  "No changes to deploy" and the CP keeps running the old image forever. The
+  script falls back to `ecs update-service --force-new-deployment` in that case
+  (`--force` does it unconditionally), then waits for the service to stabilise.
+- **Lists the workspaces that are still on the old image**, because nothing moves
+  them automatically. It never stops one: stopping kills that user's sessions, and
+  when to take that is their call.
+- **Points out a golden snapshot left behind** (`ecs-ec2` only). A golden baked from
+  the previous image is not used at all — the CP builds new users' homes empty
+  instead (ADR 0045 決定 9), which is not a failure, just a slow first start that
+  nothing but the CP log mentions. Re-bake with `bake-golden.sh`.
+
+### What the users see
+
+Two different signals, and they mean different things:
+
+| Signal | Trigger | What it costs |
+|---|---|---|
+| Console toast "New version available" | the new CP is serving a new `version.json` | a reload; **sessions keep running** |
+| WS bar "Restart needed" badge | this workspace is running an older image than a Start would use now | a Stop→Start; **sessions stop** |
+
+The badge is CP-side detection (`control-plane/workspace_stale.go` →
+`runtime_ecs_stale.go`): at every Start the adapter stamps the fingerprint of the
+image content the tag resolved to into the task definition it registers, and the
+`/api/workspace` poll compares that stamp with what the tag resolves to *now*
+(`ecr:BatchGetImage`, cached 60s). Never a version comparison, and attestation-only
+re-pushes are silent — the fingerprint is the set of per-platform manifest digests,
+not the index digest.
+
+⚠️ **Existing deployments must re-deploy `20-platform` once** for the badge to work:
+the probe needs `ecr:BatchGetImage` / `ecr:DescribeImages` on the workspace
+repository, which was added to `CpTaskRole` for it. Without that permission the
+probe fails, the CP reports "unknown", and the badge simply never appears — a
+silent loss, not an error. A deployment whose `AF_ECS_WORKSPACE_IMAGE` is not an
+ECR reference (mirroring GHCR directly, say) gets no badge either, by design.
+
 ## Minimal IAM (deploying principal)
 
 What the human/CI principal running `release-ecr.sh` + `cloudformation deploy`

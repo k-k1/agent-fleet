@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
@@ -51,6 +52,9 @@ type ecsAPI interface {
 	UpdateService(context.Context, *ecs.UpdateServiceInput, ...func(*ecs.Options)) (*ecs.UpdateServiceOutput, error)
 	RegisterTaskDefinition(context.Context, *ecs.RegisterTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.RegisterTaskDefinitionOutput, error)
 	DeleteService(context.Context, *ecs.DeleteServiceInput, ...func(*ecs.Options)) (*ecs.DeleteServiceOutput, error)
+	// DescribeTaskDefinition reads back the revision a service currently runs, which is
+	// where the backend-drift check finds the image stamp Start left (runtime_ecs_stale.go).
+	DescribeTaskDefinition(context.Context, *ecs.DescribeTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
 }
 
 type efsAPI interface {
@@ -72,10 +76,14 @@ type ssmAPI interface {
 // NO CP-side state: every resource is addressed by a deterministic name/tag and
 // created-or-got on Start, so there is no schema change vs the docker adapter.
 type ecsRuntime struct {
-	cfg          ecsConfig
-	ecs          ecsAPI
-	efs          efsAPI
-	ssm          ssmAPI
+	cfg ecsConfig
+	ecs ecsAPI
+	efs efsAPI
+	ssm ssmAPI
+	// ecr resolves the workspace image tag to its content identity, for the
+	// backend-drift ("要再起動") badge only (runtime_ecs_stale.go). nil = the feature
+	// is simply off, never an error.
+	ecr          ecrAPI
 	name         string // ECS service name / SC dnsName (Workspace.ContainerName)
 	membershipID string // EFS access-point tag key (af-membership)
 	// tenantSlug is stamped as af-tenant on every billable resource this adapter
@@ -132,6 +140,7 @@ type ecsFactory struct {
 	ecs ecsAPI
 	efs efsAPI
 	ssm ssmAPI
+	ecr ecrAPI
 }
 
 func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
@@ -162,6 +171,7 @@ func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runt
 		ecs:          f.ecs,
 		efs:          f.efs,
 		ssm:          f.ssm,
+		ecr:          f.ecr,
 		name:         ws.ContainerName,
 		membershipID: ws.MembershipID,
 		tenantSlug:   ws.TenantSlug,
@@ -260,6 +270,7 @@ func newECSFactory(m *manager) (RuntimeFactory, error) {
 		ecs: ecs.NewFromConfig(ac),
 		efs: efs.NewFromConfig(ac),
 		ssm: ssm.NewFromConfig(ac),
+		ecr: ecr.NewFromConfig(ac),
 	}, nil
 }
 
@@ -604,6 +615,10 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 		Name:      aws.String("agent"),
 		Image:     aws.String(e.cfg.workspaceImage),
 		Essential: aws.Bool(true),
+		// What this Start actually launched, recorded so a later poll can tell that the
+		// tag has moved since (runtime_ecs_stale.go). The task definition is the only
+		// per-start place the stateless adapter has.
+		DockerLabels: e.stampImage(ctx),
 		PortMappings: []ecstypes.PortMapping{
 			{ContainerPort: aws.Int32(ecsAgentPort), Name: aws.String("agent")},
 		},
