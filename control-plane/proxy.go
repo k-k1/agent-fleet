@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -169,6 +170,14 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 
 	resp, err := agentRelayClient.Do(req)
 	if err != nil {
+		// TEMP DIAGNOSTIC (2026-08-19): a long-blocking agent-CLI login complete
+		// (Claude ~40s, agy ~60s) has been observed failing here with the caller
+		// having already gotten a full response server-side (Agent's own access
+		// log shows the same request completing normally) — logging the
+		// underlying error distinguishes r.Context() cancellation (browser/ALB
+		// gave up) from a genuine transport failure (connection reset, i/o
+		// timeout) instead of collapsing both into one opaque message.
+		log.Printf("agent proxy: %s %s: %v (ctx err=%v)", r.Method, r.URL.Path, err, r.Context().Err())
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
 	}
