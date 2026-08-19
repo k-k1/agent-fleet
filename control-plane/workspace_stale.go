@@ -107,3 +107,14 @@ func (c *ttlCache) set(key, v string) {
 	c.m[key] = ttlEntry{v: v, at: c.clock()}
 	c.mu.Unlock()
 }
+
+// peek returns the last value stored under key REGARDLESS of the TTL, or "" if
+// nothing was ever stored. It is the "last known good" reader: a caller that has
+// just probed and got nothing can prefer an old-but-real answer over "unknown",
+// where "unknown" would be more expensive than being slightly behind. Never use it
+// for the comparison itself — that is what get's TTL exists for.
+func (c *ttlCache) peek(key string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.m[key].v
+}
