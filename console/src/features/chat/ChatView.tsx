@@ -1319,7 +1319,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           }
         />
       )}
-      <div className="chat-scroll" ref={scrollRef}>
+      {/* 縦へ送って読む面 — 横へはみ出しても横スワイプを殺さない（app/swipeGuard.ts）。 */}
+      <div className="chat-scroll" data-swipe-y="" ref={scrollRef}>
         {loadError && (
           <div className="chat-error" role="alert">
             {loadError}
