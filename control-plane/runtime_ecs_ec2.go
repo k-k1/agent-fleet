@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -1027,11 +1030,11 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	// tag is read by Cost Explorer and by nothing else (ADR 0048 決定 3).
 	e.tagSlotOwner(ctx, p.instanceID)
 	e.setPhase("task: starting")
-	taskDefArn, err := e.registerTaskDef(ctx, p, prep)
+	taskDefArn, reused, err := e.reuseOrRegisterTaskDef(ctx, p, prep)
 	if err != nil {
 		return fmt.Errorf("register task def: %w", err)
 	}
-	if err := e.upsertService(ctx, taskDefArn, p); err != nil {
+	if err := e.upsertService(ctx, taskDefArn, p, !reused); err != nil {
 		return fmt.Errorf("service: %w", err)
 	}
 	// The service now carries the state; drop the claim so State() reads the real thing,
@@ -1988,12 +1991,82 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 
 // --- task definition / service ---
 
-// registerTaskDef registers a fresh EC2-launch-type revision pinned to one slot.
+// lastTaskDef caches the (instance, fingerprint, ARN) of the task definition each
+// workspace last registered, so a Start that re-attaches to the SAME slot with
+// otherwise-unchanged inputs can reuse it instead of registering a new revision and
+// force-deploying. registerTaskDef + upsertService's ForceNewDeployment together
+// retire the running task and start a fresh one — Service Connect load-balances
+// across both for the ~1-2 minutes it takes to settle, which silently drops
+// anything a caller stashed in the Agent process's memory (an OAuth flow_id;
+// confirmed 2026-08-19 on af.lazmix.jp). Most re-wakes change nothing (same image,
+// same env, same secrets ARNs), so most re-wakes can skip that window entirely.
+//
+// Same shape as startGen/startPhase for the same reason: the Runtime object is
+// rebuilt per request, so this cannot live on it. Process-local scratch, keyed by
+// workspace name — a CP restart or another replica answering just means a cache
+// miss, which falls back to today's always-register-and-deploy behavior. Never
+// incorrect (the fingerprint covers every per-Start-dynamic input, including the
+// ws-settings/tenant-limits env that workspaceExtraEnv recomputes on every Start —
+// see registerConnectionRoutes… no, see manager.workspaceExtraEnv), only sometimes
+// a missed optimization.
+var lastTaskDef sync.Map // workspace name -> ecTaskDefCacheEntry
+
+type ecTaskDefCacheEntry struct {
+	instanceID  string
+	fingerprint string
+	arn         string
+}
+
+// taskDefFingerprint hashes OUR OWN RegisterTaskDefinitionInput before it is sent —
+// not ECS's read-back representation, which AWS is free to reorder or pad with
+// defaults. Two calls that build byte-identical input (same code path, same
+// arguments) always hash the same; anything that actually differs (env, secrets,
+// image, instance) always hashes differently. That is all reuseOrRegisterTaskDef
+// needs — it never has to understand what changed, only that something did.
+func taskDefFingerprint(in *ecs.RegisterTaskDefinitionInput) string {
+	b, err := json.Marshal(in)
+	if err != nil {
+		return "" // never matches a cached fingerprint; falls back to registering
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// reuseOrRegisterTaskDef returns the task definition to launch p on, reusing the
+// last one registered for this workspace when the instance and the fingerprint
+// both still match (see lastTaskDef), and registering a fresh revision otherwise.
+// reused=false also covers the ordinary case of a genuinely new revision (image
+// bump, changed settings, moved slot) — upsertService only needs to know whether
+// to force a new deployment, and a fresh revision always needs one.
+func (e *ecsEC2Runtime) reuseOrRegisterTaskDef(ctx context.Context, p ec2Placement, prep ec2Prep) (arn string, reused bool, err error) {
+	in := e.buildTaskDef(p, prep)
+	fp := taskDefFingerprint(in)
+	if fp != "" {
+		if v, ok := lastTaskDef.Load(e.base.name); ok {
+			if entry, ok := v.(ecTaskDefCacheEntry); ok &&
+				entry.instanceID == p.instanceID && entry.fingerprint == fp {
+				return entry.arn, true, nil
+			}
+		}
+	}
+	out, err := e.base.ecs.RegisterTaskDefinition(ctx, in)
+	if err != nil {
+		return "", false, err
+	}
+	arn = aws.ToString(out.TaskDefinition.TaskDefinitionArn)
+	if fp != "" {
+		lastTaskDef.Store(e.base.name, ecTaskDefCacheEntry{instanceID: p.instanceID, fingerprint: fp, arn: arn})
+	}
+	return arn, false, nil
+}
+
+// buildTaskDef assembles (without submitting) a fresh EC2-launch-type revision
+// pinned to one slot.
 //
 // Differences from the Fargate revision that matter:
 //   - placementConstraints `ec2InstanceId == i-…` — the whole point. It lives on the
-//     task definition (re-registered every Start anyway) rather than on the service,
-//     so moving a user to another slot never touches the service's own shape.
+//     task definition rather than on the service, so moving a user to another slot
+//     never touches the service's own shape.
 //   - no task cpu / memory. On EC2 those are RESERVATIONS against the instance
 //     (docs/64 §64.4.5); with one user per slot the right answer is to reserve nothing
 //     and let them have the box. A small memoryReservation keeps the API happy.
@@ -2002,7 +2075,7 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 //     the volume out from under the next (ADR 0045 決定 8 の代償 2). tmpfs is the one
 //     tool Fargate did not have.
 //   - home is a host bind of the freshly mounted EBS, not an EFS volume.
-func (e *ecsEC2Runtime) registerTaskDef(ctx context.Context, p ec2Placement, prep ec2Prep) (string, error) {
+func (e *ecsEC2Runtime) buildTaskDef(p ec2Placement, prep ec2Prep) *ecs.RegisterTaskDefinitionInput {
 	env := []ecstypes.KeyValuePair{
 		{Name: aws.String("CLAUDE_CONFIG_DIR"), Value: aws.String("/var/lib/af/claude")},
 		// Where the entrypoint keeps the auth/identity set (ADR 0045 決定 3-6).
@@ -2078,18 +2151,18 @@ func (e *ecsEC2Runtime) registerTaskDef(ctx context.Context, p ec2Placement, pre
 			efsVolume("keep", e.base.cfg.efsFileSystem, prep.keepAP),
 		},
 	}
-	out, err := e.base.ecs.RegisterTaskDefinition(ctx, in)
-	if err != nil {
-		return "", err
-	}
-	return aws.ToString(out.TaskDefinition.TaskDefinitionArn), nil
+	return in
 }
 
 // upsertService creates or updates the workspace's service at desiredCount 1 on the EC2
 // launch type. The awsvpc ENI must land in the slot's own AZ, so the network config
 // carries only that AZ's subnet — and Service Connect stays exactly as on Fargate,
 // which is why Endpoint() did not have to change (docs/64 §64.4.4).
-func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p ec2Placement) error {
+// forceNewDeployment should be false only when taskDefArn is a task definition
+// reuseOrRegisterTaskDef found unchanged from what this service is already running —
+// specifying it without forcing lets ECS notice nothing actually changed and skip
+// the rolling replacement, instead of retiring a perfectly good running task.
+func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p ec2Placement, forceNewDeployment bool) error {
 	subnet, err := e.subnetIn(ctx, p.az)
 	if err != nil {
 		return err
@@ -2116,7 +2189,7 @@ func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p 
 			DesiredCount:         aws.Int32(1),
 			TaskDefinition:       aws.String(taskDefArn),
 			NetworkConfiguration: netCfg,
-			ForceNewDeployment:   true,
+			ForceNewDeployment:   forceNewDeployment,
 		})
 		return err
 	}
