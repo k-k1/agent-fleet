@@ -64,6 +64,19 @@
   --sel-fg-mix: 0%;
   --sel-bg: color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg));
   --sel-fg: color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg));
+  /* 転写のマーカー（docs/69 / ADR 0050）。塗りは「利用者が選ぶ意味」の軸で、作成者は
+     別の軸（--mark-author-N の下線）で示す。暗色では彩度を落として本文の可読性を優先し、
+     文字色は据え置き（背景だけを変える）。 */
+  --mark-yellow: #6a5a12;
+  --mark-green: #1f5133;
+  --mark-blue: #1d4468;
+  --mark-pink: #62244a;
+  --mark-author-0: #8b95a1; /* 所有者 */
+  --mark-author-1: #4fb3ff;
+  --mark-author-2: #57c98a;
+  --mark-author-3: #e0a13c;
+  --mark-author-4: #c98ae0;
+  --mark-author-5: #e3736b;
   /* highlight.js syntax palette (GitHub Dark) — themed via vars so the file viewer
      follows light/dark instead of the dark-only github-dark.css import. */
   --hl-fg: #c9d1d9;
@@ -131,6 +144,17 @@
   --border: #d2d6dc;
   --border2: #e6e8ec;
   --fg: #1c2024;
+  /* 転写のマーカー — 明色では淡い塗りにする（暗色の値をそのまま使うと本文が読めない）。 */
+  --mark-yellow: #fff1a8;
+  --mark-green: #c8f0d6;
+  --mark-blue: #cfe4ff;
+  --mark-pink: #ffd6ea;
+  --mark-author-0: #6b7280;
+  --mark-author-1: #1f6fb2;
+  --mark-author-2: #1f7a4d;
+  --mark-author-3: #9a6512;
+  --mark-author-4: #7b4a9c;
+  --mark-author-5: #b23b33;
   /* Secondary/tertiary text. Darkened from #6b7280 / #828a94: on the modal panel
      (#f4f5f7) those read ~4.4:1 / ~3.3:1 — below WCAG AA for the 12px labels used
      in modals (clone dialog etc.) and the mirror AUQ panels. gray-600 / (old

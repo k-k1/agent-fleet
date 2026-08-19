@@ -89,6 +89,10 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
     <Modal title={tr("share.create_title")} onClose={onClose} as="form" onSubmit={submit} lockClose={saving} className="share-create-modal">
       <div className="ui-modal-body">
         <p className="ui-field-hint">{tr("share.exposure_warning")}</p>
+        {/* ⚠️ マーカー（docs/69 / ADR 0050 決定 6）。作成者名を出すのは「誰が引いたか分かる」
+            という要件のためだが、共有先どうしが互いの login id を知るのは新しい露出なので、
+            伏せずにここで言う。 */}
+        <p className="ui-field-hint">{tr("share.marks_warning")}</p>
         {locked ? (
           <div className="ui-field">
             <span className="ui-field-label">{tr("share.target")}</span>

@@ -117,6 +117,8 @@ import type { TranscriptCaps } from "./transcript/capabilities.ts";
 import type { Group, Part, Question, TaskItem, Turn, TurnTtsWiring } from "./transcript/types.ts";
 import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, spendOf } from "./transcript/model.ts";
 import { PlanBlock, TaskChecklist, planTitle } from "./transcript/blocks.tsx";
+import { useMarksController } from "./transcript/useMarks.ts";
+import { MarkStrip } from "./transcript/MarkStrip.tsx";
 
 const q = encodeURIComponent;
 
@@ -633,6 +635,19 @@ export function MirrorView({
     announce(text, label, { ...(sessionVoiceOpts(session) ?? {}), paneId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, pending, pendingPlan, pendingPerm]);
+  // 会話へ引いたマーカー（docs/69 / ADR 0050）。ここは所有者なので、誰の印でも消せる側。
+  // ⚠️ ポーリングは増やさない — 転写のロードに合わせて reload() を呼ぶ（下の effect）。
+  const marks = useMarksController({
+    path: session ? `api/sessions/${q(session)}/marks` : "",
+    canEdit: true,
+    isOwner: true,
+    viewerId: "",
+    ownerLabel: tr("chat.you"),
+    youLabel: tr("chat.you"),
+  });
+  // 転写のポーリング effect は購読を張り直したくないので、最新の reload を ref で渡す。
+  const marksReloadRef = useRef(marks.reload);
+  marksReloadRef.current = marks.reload;
   const ttsWiring: TurnTtsWiring = {
     reading: ttsReading,
     start: ttsStart,
@@ -819,6 +834,9 @@ export function MirrorView({
           : `api/sessions/${q(session)}/messages?since=${cursorRef.current}`;
         const d = await api(url);
         if (!alive) return;
+        // 印の取り直しは転写のポーリングに相乗りさせる（新しい周期を作らない）。実際の
+        // 往復は useMarksController 側で間引かれる。
+        marksReloadRef.current();
         if (d && !d.error) {
           if (typeof d.cursor === "number") cursorRef.current = d.cursor;
           // reset: the server's jsonl shrank or was replaced (compaction, or a
@@ -2579,6 +2597,7 @@ export function MirrorView({
     expandThinking: expandThinking(settings, sessionMeta?.kind),
     isRejectedPlan: (p: string) => rejectedPlansRef.current.has(p.trim()),
     maxSpend,
+    marks,
   };
 
   // Whether the session is in Plan mode. Case-insensitive so it holds against either the
@@ -2656,6 +2675,7 @@ export function MirrorView({
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
       {tasks.length > 0 && <TaskChecklist key={session} tasks={tasks} session={session} />}
       <FileChangeStrip key={session} session={session} files={files} />
+      <MarkStrip key={"marks-" + session} marks={marks} storageKey={session} />
       {isPlan && (
         <div className="mirror-planmode">
           <Icon name="debug-pause" /> {tr("mirror.plan_mode_note")}
