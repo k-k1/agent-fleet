@@ -2300,6 +2300,15 @@ export const ja = {
   "mirror.queued": "キュー済み",
   "mirror.pending_title": "送信済み。claude が処理を始めると反映されます",
   "mirror.pending": "反映待ち",
+  "mirror.mark.pill": "マーカーを引く",
+  "mirror.mark.strip_title": "マーカー",
+  "mirror.mark.strip_authors": "{n}人",
+  "mirror.mark.paint": "{color}のマーカーを引く",
+  "mirror.mark.remove": "マーカーを消す",
+  "mirror.mark.color.yellow": "黄",
+  "mirror.mark.color.green": "緑",
+  "mirror.mark.color.blue": "青",
+  "mirror.mark.color.pink": "桃",
   "mirror.fork_at": "ここから分岐",
   "mirror.fork_at_title": "この発言の直前から新しいセッションを始める",
   "mirror.fork_at_intro":
@@ -4081,5 +4090,6 @@ export const ja = {
   "share.unshare": "解除",
   "share.save_failed": "共有設定を保存できませんでした",
   "share.exposure_warning": "会話全文（プロンプト、Agentの回答、ツール出力）を共有します。会話内の秘密情報は自動検出できません。共有先は表示内容を保存でき、共有解除後も相手側のコピーは回収できません。RWの入力は所有者承認後にだけAgentへ送信されます。",
+  "share.marks_warning": "会話に引いたマーカーも共有されます。RWの共有先は自分でもマーカーを引けます（これは承認を経ずに反映されます — Agentには届かないため）。作成者のログインIDは、あなたにも他の共有先にも表示されます。",
 
 };

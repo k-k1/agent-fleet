@@ -293,6 +293,11 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/sessions/{name}/handoff-proposal", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/handoff-proposal", rest)
 	mux.HandleFunc("DELETE /api/sessions/{name}/handoff-proposal", rest)
+	// 転写のマーカー（docs/69 / ADR 0050）— 所有者の Console 経路。共有先の経路は
+	// registerSessionShareRoutes 側（ACL を評価して author を CP が刻む）。
+	mux.HandleFunc("GET /api/sessions/{name}/marks", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/marks", rest)
+	mux.HandleFunc("DELETE /api/sessions/{name}/marks", rest)
 	// Auto session-title suggestion accept/dismiss (session_title.go, Agent-side).
 	mux.HandleFunc("POST /api/sessions/{name}/title/accept", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", rest)
@@ -314,6 +319,11 @@ func registerSessionShareRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/shared-sessions", a.withMembership(a.listReceived))
 	mux.HandleFunc("GET /api/shared-sessions/{id}/messages", a.withMembership(a.messages))
 	mux.HandleFunc("GET /api/shared-sessions/{id}/handoff-proposals", a.withMembership(a.handoffProposals))
+	// 転写のマーカー（docs/69 / ADR 0050）。読みは RO でも、書きは RW だけ — ただし
+	// 「提案 → 所有者の承認」には載せない（エージェントを動かさない注釈のため）。
+	mux.HandleFunc("GET /api/shared-sessions/{id}/marks", a.withMembership(a.marks))
+	mux.HandleFunc("POST /api/shared-sessions/{id}/marks", a.withMembership(a.marks))
+	mux.HandleFunc("DELETE /api/shared-sessions/{id}/marks", a.withMembership(a.marks))
 	mux.HandleFunc("POST /api/shared-sessions/{id}/proposals", a.withMembership(a.propose))
 	mux.HandleFunc("GET /api/session-share-proposals", a.withMembership(a.listProposals))
 	mux.HandleFunc("POST /api/session-share-proposals/{id}/approve", a.withMembership(a.approve))

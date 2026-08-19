@@ -2265,6 +2265,15 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.queued": "Queued",
   "mirror.pending_title": "Sent. It's reflected once claude starts processing.",
   "mirror.pending": "Pending",
+  "mirror.mark.pill": "Highlight",
+  "mirror.mark.strip_title": "Highlights",
+  "mirror.mark.strip_authors": "{n} people",
+  "mirror.mark.paint": "Highlight in {color}",
+  "mirror.mark.remove": "Remove highlight",
+  "mirror.mark.color.yellow": "yellow",
+  "mirror.mark.color.green": "green",
+  "mirror.mark.color.blue": "blue",
+  "mirror.mark.color.pink": "pink",
   "mirror.fork_at": "Branch here",
   "mirror.fork_at_title": "Start a new session from just before this message",
   "mirror.fork_at_intro":
@@ -4036,5 +4045,6 @@ export const en: Record<keyof typeof ja, string> = {
   "share.unshare": "Unshare",
   "share.save_failed": "Could not save the share.",
   "share.exposure_warning": "This shares the full conversation, including prompts, agent replies, and tool output. Secrets in a conversation cannot be detected reliably. Recipients can save what they view, and those copies cannot be recalled after unsharing. RW input reaches the agent only after owner approval.",
+  "share.marks_warning": "Highlights drawn on the conversation are shared too. An RW recipient can draw their own, and those appear without approval (they never reach the agent). The login id of whoever drew a highlight is shown to you and to every other recipient.",
 
 };
