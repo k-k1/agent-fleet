@@ -2306,6 +2306,23 @@ button.mt-bash-toggle:hover {
 .mirror-turn .markdown h4 {
   margin: 0.7em 0 0.35em;
 }
+/* 本文は必ず折り返す。エージェントの転写には折り返し位置を持たない長い文字列
+   （sha256:… / クエリ付き URL / 長い識別子）がふつうに現れ、それが 1 つあるだけで
+   スマホでは転写のスクロール容器（.mirror-body）ごと横へはみ出していた（幅 390px の
+   実測で sw=633/cw=390 等）。読むのに横スクロールが要るのがまず不便で、さらに
+   横スワイプのガード（app/swipeGuard.ts）にも波及していた。
+   対象はテキストブロックだけ — table と pre は自前の overflow を持ち、ここで
+   折り返すと列幅やコードの見え方が変わってしまうので触らない（overflow-wrap は
+   継承するので、段落中の inline code にはこれで効く）。 */
+.mirror-turn .markdown p,
+.mirror-turn .markdown li,
+.mirror-turn .markdown blockquote,
+.mirror-turn .markdown h1,
+.mirror-turn .markdown h2,
+.mirror-turn .markdown h3,
+.mirror-turn .markdown h4 {
+  overflow-wrap: anywhere;
+}
 .mirror-turn .markdown > :first-child {
   margin-top: 0;
 }

@@ -456,6 +456,8 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       </header>
       <div
         className="shared-view-body"
+        // 縦へ送って読む面 — 横へはみ出しても横スワイプを殺さない（app/swipeGuard.ts）。
+        data-swipe-y=""
         ref={bodyRef}
         onScroll={onScroll}
         // 位置復元の打ち切り条件。ホイールとタッチはここで拾う — 下の pointerdown/keydown は
