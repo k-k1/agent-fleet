@@ -95,6 +95,12 @@ The commands are in the runbook's "Upgrade" section.
   version. Therefore **always take a `backup.sh` before upgrading**. If something goes wrong,
   the correct rollback path is not "go back to the old image" but "restore from the backup."
 - Check the release notes for breaking changes.
+- **On AWS (`ecs` / `ecs-ec2`) the command is `deploy/aws/ecs/update.sh`, not compose**
+  (`VERSION=<v> ./update.sh --profile <p> --region <r>`): it pushes to ECR, re-deploys the
+  ingress stack with only `ImageTag` overridden, and waits for the CP service to roll.
+  **Running workspaces are not upgraded automatically** — each picks the new image up on its
+  next Start. The users concerned see a "Restart needed" badge in the Console, so when to take the
+  restart is their call, not yours.
 
 ## Installing into an air-gapped network
 

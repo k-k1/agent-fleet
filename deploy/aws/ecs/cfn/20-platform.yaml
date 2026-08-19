@@ -130,6 +130,24 @@ Resources:
                   - ecs:ListTasks
                   - ecs:TagResource
                 Resource: "*"          # ECS actions are not tightly resource-scopable; dev-acceptable
+              # --- Backend drift ("要再起動" badge; control-plane/runtime_ecs_stale.go) ---
+              # Read-only, one repository: resolve the workspace image TAG to the content
+              # it points at now, so the CP can tell that a running workspace was launched
+              # from an older image and the Console can offer a stop→start.
+              #
+              # ⚠️ This role, not the deployer's. The whole class of bug ADR 0045 決定 21 /
+              # docs/64 §64.22 documents is "it passed against real AWS" while the live
+              # test ran as the deployer — the CP task role is the only identity that
+              # matters here. Without this statement the probe fails with AccessDenied,
+              # which the CP treats as "unknown" and the badge simply never appears: a
+              # silent loss of the feature, not an error anyone would see.
+              - Sid: EcrImageRead
+                Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:DescribeImages
+                Resource:
+                  - !GetAtt EcrWorkspace.Arn
               - Sid: EfsAccessPoints
                 Effect: Allow
                 Action:

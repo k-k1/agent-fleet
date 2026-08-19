@@ -123,10 +123,11 @@ echo "roles ok"
 # ロールは、欠けたぶんだけ本番より緩い（あるいは厳しい）別物になる。
 DEPLOYER=$(aws sts get-caller-identity --query Arn --output text)
 python3 - "$REPO_DIR/deploy/aws/ecs/cfn/20-platform.yaml" "$ACCOUNT" "$AWS_REGION" \
-  "arn:aws:iam::$ACCOUNT:role/$N-exec" "arn:aws:iam::$ACCOUNT:role/$N-ws-task" > cp-policy.json <<'PY'
+  "arn:aws:iam::$ACCOUNT:role/$N-exec" "arn:aws:iam::$ACCOUNT:role/$N-ws-task" \
+  "arn:aws:ecr:$AWS_REGION:$ACCOUNT:repository/$N-ws" > cp-policy.json <<'PY'
 import json, sys, yaml
 
-tpl, account, region, exec_arn, ws_arn = sys.argv[1:6]
+tpl, account, region, exec_arn, ws_arn, ws_ecr_arn = sys.argv[1:7]
 
 class CFN(yaml.SafeLoader):
     pass
@@ -146,7 +147,10 @@ pols = doc["Resources"]["CpTaskRole"]["Properties"]["Policies"]
 if len(pols) != 1:
     sys.exit("CpTaskRole now carries %d policies; teach this extractor which ones to copy" % len(pols))
 
-getatt = {"ExecRole.Arn": exec_arn, "WsTaskRole.Arn": ws_arn}
+# The harness stands up its own equivalents of the template's named resources; the
+# workspace ECR repo is $N-ws (created above) and is what AF_ECS_WORKSPACE_IMAGE points
+# at, so the drift probe (runtime_ecs_stale.go) must be scoped to it here too.
+getatt = {"ExecRole.Arn": exec_arn, "WsTaskRole.Arn": ws_arn, "EcrWorkspace.Arn": ws_ecr_arn}
 
 def resolve(x, path):
     if isinstance(x, dict):

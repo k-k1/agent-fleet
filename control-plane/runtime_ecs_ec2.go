@@ -2018,6 +2018,9 @@ func (e *ecsEC2Runtime) registerTaskDef(ctx context.Context, p ec2Placement, pre
 		Name:      aws.String("agent"),
 		Image:     aws.String(e.base.cfg.workspaceImage),
 		Essential: aws.Bool(true),
+		// Backend-drift stamp — same contract as the Fargate revision
+		// (runtime_ecs_stale.go).
+		DockerLabels: e.base.stampImage(ctx),
 		// A soft reservation only: ECS requires a memory figure somewhere, and a hard
 		// limit here would cap the user below the slot they are paying for.
 		MemoryReservation: aws.Int32(512),

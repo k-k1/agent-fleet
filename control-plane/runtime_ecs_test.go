@@ -23,6 +23,10 @@ type fakeECS struct {
 	updateCalls []*ecs.UpdateServiceInput
 	regCalls    []*ecs.RegisterTaskDefinitionInput
 	deleteCalls []*ecs.DeleteServiceInput
+	// taskDefs mirrors the registry: RegisterTaskDefinition stores the revision under
+	// its ARN so DescribeTaskDefinition can read the image stamp back out of it, the
+	// way the drift check does (runtime_ecs_stale.go).
+	taskDefs map[string]*ecstypes.TaskDefinition
 }
 
 func (f *fakeECS) DescribeServices(_ context.Context, in *ecs.DescribeServicesInput, _ ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
@@ -41,6 +45,7 @@ func (f *fakeECS) CreateService(_ context.Context, in *ecs.CreateServiceInput, _
 	}
 	f.services[aws.ToString(in.ServiceName)] = ecstypes.Service{
 		Status: aws.String("ACTIVE"), DesiredCount: aws.ToInt32(in.DesiredCount), RunningCount: 1,
+		TaskDefinition: in.TaskDefinition,
 	}
 	return &ecs.CreateServiceOutput{}, nil
 }
@@ -48,14 +53,34 @@ func (f *fakeECS) UpdateService(_ context.Context, in *ecs.UpdateServiceInput, _
 	f.updateCalls = append(f.updateCalls, in)
 	s := f.services[aws.ToString(in.Service)]
 	s.DesiredCount = aws.ToInt32(in.DesiredCount)
+	if in.TaskDefinition != nil {
+		s.TaskDefinition = in.TaskDefinition
+	}
 	f.services[aws.ToString(in.Service)] = s
 	return &ecs.UpdateServiceOutput{}, nil
 }
 func (f *fakeECS) RegisterTaskDefinition(_ context.Context, in *ecs.RegisterTaskDefinitionInput, _ ...func(*ecs.Options)) (*ecs.RegisterTaskDefinitionOutput, error) {
 	f.regCalls = append(f.regCalls, in)
-	return &ecs.RegisterTaskDefinitionOutput{
-		TaskDefinition: &ecstypes.TaskDefinition{TaskDefinitionArn: aws.String("arn:task/" + aws.ToString(in.Family) + ":1")},
-	}, nil
+	// One revision per registration, like the real API: the drift check reads the
+	// revision the service points at, so a re-register must not overwrite the old one.
+	arn := fmt.Sprintf("arn:task/%s:%d", aws.ToString(in.Family), len(f.regCalls))
+	td := &ecstypes.TaskDefinition{
+		TaskDefinitionArn:    aws.String(arn),
+		ContainerDefinitions: in.ContainerDefinitions,
+	}
+	if f.taskDefs == nil {
+		f.taskDefs = map[string]*ecstypes.TaskDefinition{}
+	}
+	f.taskDefs[arn] = td
+	return &ecs.RegisterTaskDefinitionOutput{TaskDefinition: td}, nil
+}
+
+func (f *fakeECS) DescribeTaskDefinition(_ context.Context, in *ecs.DescribeTaskDefinitionInput, _ ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error) {
+	td, ok := f.taskDefs[aws.ToString(in.TaskDefinition)]
+	if !ok {
+		return nil, fmt.Errorf("ClientException: task definition %q does not exist", aws.ToString(in.TaskDefinition))
+	}
+	return &ecs.DescribeTaskDefinitionOutput{TaskDefinition: td}, nil
 }
 
 func (f *fakeECS) DeleteService(_ context.Context, in *ecs.DeleteServiceInput, _ ...func(*ecs.Options)) (*ecs.DeleteServiceOutput, error) {
