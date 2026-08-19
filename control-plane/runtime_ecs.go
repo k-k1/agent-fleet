@@ -278,19 +278,45 @@ func (e *ecsRuntime) Endpoint() string {
 // RUNNING yet is "starting" — the workspace image cold-pulls for minutes on
 // Fargate, and reporting that window as "stopped" (the pre-revision §20b.7.8
 // mapping) made a legitimately starting workspace look dead in the Console.
+//
+// "running" additionally requires serviceRolledOut: every Start re-registers a
+// task definition and forces a new deployment (§ registerTaskDef), so a task can
+// go RUNNING while an old task of the outgoing deployment is still draining.
+// Service Connect load-balances across both until the old one fully stops, so a
+// caller that treats "running" as "one Agent process, reachable" would otherwise
+// land on whichever task happens to answer — fatal for anything that stashes
+// per-request state in the Agent's memory (OAuth flow_id, PTY login flows: docs
+// investigation 2026-08-19, af.lazmix.jp — a task swap 8s into a Claude Code OAuth
+// flow silently dropped it).
 func (e *ecsRuntime) State(ctx context.Context) string {
 	s, ok, err := e.describeService(ctx)
 	if err != nil || !ok {
 		return "none"
 	}
 	switch {
-	case s.DesiredCount >= 1 && s.RunningCount >= 1:
+	case s.DesiredCount >= 1 && s.RunningCount >= 1 && serviceRolledOut(s):
 		return "running"
 	case s.DesiredCount >= 1:
 		return "starting"
 	default:
 		return "stopped"
 	}
+}
+
+// serviceRolledOut reports whether s has converged to a single task version: no
+// outgoing deployment still has tasks draining behind the new one. ECS keeps a
+// retired deployment in Service.Deployments until its last task stops, which can
+// be a minute or more after the new deployment's task went RUNNING.
+func serviceRolledOut(s ecstypes.Service) bool {
+	if len(s.Deployments) > 1 {
+		return false
+	}
+	for _, d := range s.Deployments {
+		if d.RolloutState != ecstypes.DeploymentRolloutStateCompleted {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *ecsRuntime) describeService(ctx context.Context) (ecstypes.Service, bool, error) {
