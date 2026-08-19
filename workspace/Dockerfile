@@ -407,12 +407,24 @@ ARG CHROMIUM_DL_VERSION=1228
 ARG NOTO_CJK_VERSION=Sans2.004
 # bind マウントポイントを rootfs に焼く: docker は -v 先のディレクトリを実行時に自動
 # 作成するが、native rootfs モード（bwrap --ro-bind で / が read-only — docs/35
-# §35.7.2）では bwrap が bind 先を mkdir できず起動が即死する。3 箇所とも空のまま焼く。
-RUN mkdir -p /var/lib/af/claude /usr/local/share/agent-fleet/docs /usr/lib/jvm
-# docs だけは dev 所有にする: ECS には bind-mount する経路が無く、Agent が CP から
-# ロール別 docs を取得してここへ展開する（docs/dev/04 §4.9・agent docs_sync.go）。
-# docker / native ではこの上に read-only マウントが被さるので所有者は関係しない。
-RUN chown 1000:1000 /usr/local/share/agent-fleet/docs
+# §35.7.2）では bwrap が bind 先を mkdir できず起動が即死する。4 箇所とも空のまま焼く。
+RUN mkdir -p /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/docs /usr/lib/jvm
+# claude / keep / docs は dev 所有にする: claude auth login が CLAUDE_CONFIG_DIR に
+# .credentials.json / settings.json を書く（claude/auth.go）。docker / native は
+# この上に host bind か EFS 直マウントが被さるので所有者は関係ないが、ECS の EFS
+# アクセスポイントは PosixUser を付けられず（ensureAccessPoint のコメント参照）
+# Docker が「イメージ側パスの所有権をフレッシュボリュームへコピーする」動作に頼る
+# ため、イメージ側が root 所有のままだと dev（uid 1000）が一切書き込めなくなる
+# （実機 <dev-deployment> で EACCES: permission denied を確認、2026-08-19）。この
+# ロジックが効くのは「そのアクセスポイントの root が初めて中身を持つ瞬間」だけなので、
+# 既存の（既に root 所有で初期化済みの）EFS ディレクトリはイメージを直しても直らない
+# ——実機では `docker exec -u root … chown -R 1000:1000 /var/lib/af/claude` で別途
+# 復旧した。keep（/var/lib/af/keep）はこれまでイメージに焼かれておらず、常に「初めて
+# 中身を持つ」側だったため元から dev 所有——このRUNは今後 keep 用アクセスポイントが
+# 新規作成される場合（決定 3-6）に同じ穴を未然に防ぐためのもの。
+# docs は ECS に bind-mount する経路が無く、Agent が CP からロール別 docs を
+# 取得してここへ展開する（docs/dev/04 §4.9・agent docs_sync.go）。
+RUN chown 1000:1000 /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/docs
 # /scratch = タスクローカルの作業ディスク（ADR 0044 決定 3）。ECS では ephemeral
 # storage 上の素のディレクトリ（>200 GiB のときだけ EBS のマウント先）で、entrypoint が
 # ここへ小ファイルの山（go-build / uv / go module）を逃がす。dev が書けないと意味が
