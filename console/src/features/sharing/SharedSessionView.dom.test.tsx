@@ -20,6 +20,8 @@ vi.mock("../../core/api/client.ts", () => ({
   api: (path: string) => api(path),
   apiJSON: vi.fn(async () => ({})),
   errText: (e: unknown) => String((e as { message?: string })?.message ?? e),
+  // マーカー（docs/69）が読み手の login id を tenant ストア経由で引くので、その初期化に要る。
+  getTenant: () => "",
 }));
 
 import { SharedSessionView } from "./SharedSessionView.tsx";

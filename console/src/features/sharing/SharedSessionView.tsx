@@ -13,6 +13,9 @@ import type { TranscriptCaps } from "../mirror/transcript/capabilities.ts";
 import type { Turn } from "../mirror/transcript/types.ts";
 import { coalesceUserActions, groupTurns, mergeTurns } from "../mirror/transcript/model.ts";
 import { ownerLabel, useSharedSessionsStore } from "./store.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
+import { useMarksController } from "../mirror/transcript/useMarks.ts";
+import { MarkStrip } from "../mirror/transcript/MarkStrip.tsx";
 import "./sharing.css";
 
 // SharedSessionView — the RECIPIENT's read of a session somebody else owns (docs/59).
@@ -71,6 +74,8 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   const tr = useT();
   const settings = useSettings();
   const meta = useSharedSessionsStore((s) => s.sessions.find((x) => x.id === sharedSessionId));
+  // 自分の login id。マーカーの「あなた」判定と、自分の印だけ消せる判定に使う。
+  const myEmail = useTenantStore((s) => s.whoami?.email || "");
   const refreshList = useSharedSessionsStore((s) => s.refresh);
   const cached = transcriptCache.get(sharedSessionId);
   const [turns, setTurns] = useState<SharedTurn[]>(cached?.turns ?? []);
@@ -119,6 +124,22 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // 位置の記憶はミラーと同じモジュール内 Map を使う。所有者側はセッション名、こちらは
   // catalog id なので、鍵が混ざらないよう接頭辞を付ける。
   const markKey = `shared:${sharedSessionId}`;
+  // 会話へ引いたマーカー（docs/69 / ADR 0050）。読むのは RO でもでき、引けるのは RW だけ。
+  // 消せるのは自分の印だけ（判定は Agent 側、CP が login id を刻む）。所有者 Workspace が
+  // 停止中は転写と同じく取りに行かない。
+  const marks = useMarksController({
+    path: `${path}/marks`,
+    canEdit: meta?.permission === "rw",
+    isOwner: false,
+    viewerId: myEmail,
+    ownerLabel: meta ? ownerLabel(meta) : "",
+    youLabel: tr("chat.you"),
+    paused: !!meta && meta.workspaceState !== "running",
+  });
+  // 引き継ぎ提案のポーリング effect から呼ぶ（新しい周期を作らない）。実際の往復は
+  // useMarksController 側で間引かれる。
+  const marksReloadRef = useRef(marks.reload);
+  marksReloadRef.current = marks.reload;
 
   useEffect(() => {
     const entry = transcriptCache.get(sharedSessionId);
@@ -189,6 +210,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     const load = async () => {
       const current = useSharedSessionsStore.getState().sessions.find((x) => x.id === sharedSessionId);
       if (current && current.workspaceState !== "running") return;
+      marksReloadRef.current();
       const d = await api(`${path}/handoff-proposals`).catch(() => null);
       if (!live || !d || d.error) return; // 一時的な失敗では今出ているカードを消さない
       const next = JSON.stringify(Array.isArray(d.proposals) ? d.proposals : []);
@@ -404,6 +426,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
 
   const groups = groupTurns(coalesceUserActions(turns));
 
+
   // A recipient can read, and nothing else. Every capability the mirror fills in is
   // deliberately absent here — there is no local file to open, no diff pane, no pasted
   // image to fetch from someone else's Workspace, no fork, and no agent of theirs to
@@ -416,6 +439,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     // sanitizeUser を通した正規化キーで、誰のことか読み手に伝わらない。
     userName: meta && ownerLabel(meta),
     expandThinking: expandThinking(settings, meta?.kind),
+    // 唯一の例外。読むだけの面でも印は「会話の一部」として要り、RW なら自分でも引ける
+    // （マーカーはエージェントを動かさないので、提案→承認には載せない — ADR 0050 決定 4）。
+    marks,
   };
 
   // 表示設定の「共有セッション」テーマ／背景(docs/59)。ミラー(.mirrorview)と同じ仕組み:
@@ -454,6 +480,8 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
         </div>
         {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
+      {/* マーカーの一覧（docs/69 §69.7）。ミラーと同じ位置＝ヘッド直下の帯に置く。 */}
+      <MarkStrip marks={marks} storageKey={`shared:${sharedSessionId}`} />
       <div
         className="shared-view-body"
         // 縦へ送って読む面 — 横へはみ出しても横スワイプを殺さない（app/swipeGuard.ts）。

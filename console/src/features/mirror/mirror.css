@@ -2938,3 +2938,44 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
   border-radius: 5px; background: var(--panel2); color: var(--muted); white-space: pre-wrap;
 }
 .tmark-card-del { align-self: flex-start; }
+
+/* マーカーの一覧帯（docs/69 §69.7）。畳み方と寸法は変更ファイル帯（.mirror-files）に
+   揃える — 同じ帯に並ぶパネルが別々の作法だと、無関係な機能が2つあるように読める。 */
+.mirror-marks {
+  margin: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar);
+}
+.mirror-marks-head { display: flex; align-items: center; padding: 0; }
+.mirror-marks.open .mirror-marks-head { border-bottom: 1px solid var(--border); }
+.mirror-marks-toggle {
+  min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border: 0; border-radius: 5px; background: transparent;
+  color: var(--muted); cursor: pointer; font-size: 12px; text-align: left;
+}
+.mirror-marks-head .mfl-title { color: var(--fg); font-weight: 600; }
+.mirror-marks-head .mfl-count { font-variant-numeric: tabular-nums; }
+.mirror-marks-head .mfl-lead { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mirror-marks-list { margin: 0; padding: 4px; list-style: none; max-height: 220px; overflow: auto; }
+.tmark-row { display: flex; align-items: center; gap: 2px; }
+.tmark-row-btn {
+  min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; border: 0; border-radius: 4px; background: transparent;
+  color: var(--fg); cursor: pointer; font-size: 12px; text-align: left;
+}
+.tmark-row-btn:hover:not(:disabled) { background: var(--hover, var(--panel2)); }
+/* 押せない行 = その印のターンがまだ tail 窓の外（スクロール先が画面に無い）。 */
+.tmark-row-btn:disabled { opacity: 0.5; cursor: default; }
+.tmark-chip { flex: none; width: 10px; height: 10px; border-radius: 3px; }
+.tmark-chip.tmark-yellow { background: var(--mark-yellow); }
+.tmark-chip.tmark-green { background: var(--mark-green); }
+.tmark-chip.tmark-blue { background: var(--mark-blue); }
+.tmark-chip.tmark-pink { background: var(--mark-pink); }
+.tmark-row-quote { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tmark-row-who { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
+.tmark-row-del {
+  flex: none; padding: 3px 5px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.tmark-row-del:hover { color: var(--fg); background: var(--hover, var(--panel2)); }

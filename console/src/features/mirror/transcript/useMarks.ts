@@ -11,6 +11,8 @@ import { markRootKey, type NewMark, type TranscriptMark } from "./marks.ts";
 export interface TranscriptMarksWiring {
   /** root キー → その root に付いている印。参照が変わることで再適用が走る。 */
   byRoot: Map<string, TranscriptMark[]>;
+  /** 一覧帯が使う全件（作成日時の新しい順）。 */
+  all: TranscriptMark[];
   /** 印を足せるか。false なら選択ピルを出さない（RO の共有先）。 */
   canEdit: boolean;
   add: (m: NewMark) => void;
@@ -84,6 +86,7 @@ export interface MarksControllerOptions {
 export function useMarksController(opts: MarksControllerOptions): TranscriptMarksWiring & { reload: () => void } {
   const { path, canEdit, isOwner, viewerId, ownerLabel, youLabel, paused } = opts;
   const [byRoot, setByRoot] = useState<Map<string, TranscriptMark[]>>(() => new Map());
+  const [all, setAll] = useState<TranscriptMark[]>([]);
   const [slots, setSlots] = useState<Map<string, number>>(() => new Map());
   // 現在の一覧は ref で持つ。楽観更新→応答という往復の途中で別の追加/削除が挟まるので、
   // クロージャに焼き付いた配列から組み立てると、あとから来た応答が先の変更を巻き戻す。
@@ -95,6 +98,7 @@ export function useMarksController(opts: MarksControllerOptions): TranscriptMark
     listRef.current = list;
     setByRoot(byRootOf(list));
     setSlots(authorSlotsOf(list));
+    setAll([...list].sort((a, b) => (b.created_at || 0) - (a.created_at || 0)));
   }, []);
 
   // セッションを切り替えたら、前のセッションの印を一瞬でも出さない。
@@ -171,7 +175,7 @@ export function useMarksController(opts: MarksControllerOptions): TranscriptMark
   const authorSlot = useCallback((author: string | undefined) => slots.get(author || "") ?? 0, [slots]);
   const find = useCallback((id: string) => listRef.current.find((m) => m.id === id), []);
 
-  return { byRoot, canEdit, add, remove, canRemove, authorLabel, authorSlot, find, reload };
+  return { byRoot, all, canEdit, add, remove, canRemove, authorLabel, authorSlot, find, reload };
 }
 
 function newMarkHex(): string {
