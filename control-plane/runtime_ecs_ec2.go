@@ -580,7 +580,14 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 		return "stopped"
 	}
 	switch {
-	case s.DesiredCount >= 1 && s.RunningCount >= 1:
+	// serviceRolledOut (runtime_ecs.go): launch() re-registers a task definition
+	// and forces a new deployment on every Start (2074/2106), including the
+	// "reattach to the same slot" case — so a RUNNING task can still share the
+	// service with an old task that Service Connect hasn't stopped routing to
+	// yet. Reporting "running" before that settles let a client's OAuth
+	// start/complete land on two different Agent processes and lose the
+	// in-memory flow_id (confirmed 2026-08-19 on af.lazmix.jp).
+	case s.DesiredCount >= 1 && s.RunningCount >= 1 && serviceRolledOut(s):
 		return "running"
 	case s.DesiredCount >= 1:
 		return "starting"
