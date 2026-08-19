@@ -32,11 +32,10 @@
 //
 // 実装は Runtime の任意インタフェース staleRuntime。判らないときは必ず false に倒す。
 //
-//	docker: 起動時に控えたイメージの内容 ≠ いまのタグのイメージの内容（runtime_docker.go）
-//	native: 起動時に控えた spawn 実体 ≠ 現在の spawn 実体（runtime_native.go）
-//	ecs   : 未実装（＝常に false）。誤警告を出さない側に倒してある。実装するなら
-//	        「走っているタスクの task definition と、いま Start が使う task definition」
-//	        の比較で、版比較に流れないこと。
+//	docker : 起動時に控えたイメージの内容 ≠ いまのタグのイメージの内容（runtime_docker.go）
+//	native : 起動時に控えた spawn 実体 ≠ 現在の spawn 実体（runtime_native.go）
+//	ecs    : Start が登録したタスク定義に焼いた指紋 ≠ いまタグを ECR に引いた指紋
+//	ecs-ec2: 同上（同じ実装に委譲）。どちらも runtime_ecs_stale.go
 package main
 
 import (
