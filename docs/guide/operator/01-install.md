@@ -201,8 +201,8 @@ variant — is [05 §7](05-login-idp.md).** What belongs here is the decision:
 > issue themselves a token carrying *your* address. Approving is a once-per-tenant action, so
 > the day-to-day picture ("the department runs itself") is unchanged.
 
-So the deployment-wide register under **Admin → Tenants** ("Tenant-defined sign-in methods,"
-below the tenant list) is a list you own: it carries the approve and suspend buttons, and
+So the deployment-wide register at **Admin → Tenants › Sign-in method register**
+("Tenant-defined sign-in methods") is a list you own: it carries the approve and suspend buttons, and
 approved methods stay on it with who approved them and when. Treat it as a register to re-read
 now and then, not a queue that empties — the IdP stays under the other company's control, and
 settings such as self-sign-up can be turned on after you approved it. Suspending is always

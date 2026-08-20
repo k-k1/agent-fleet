@@ -46,7 +46,13 @@ tenants, tenant-wide limits, and so on. Everything that is yours to do lives in 
 
 ## Layout of tenant settings
 
-The rail on the left holds two groups.
+The rail on the left holds three groups.
+
+**Tenant**
+
+- **Limits & idle** — **read-only**: this tenant's member count, its running workspaces and the
+  limits currently in effect (workspaces / sessions). A deployment administrator decides them, so
+  ask when you want one changed. → [02-limits.md](02-limits.md)
 
 **Sign-in**
 
@@ -126,8 +132,8 @@ when it matters.
    Ask a super_admin to grant them.
 2. **Look over the member list** — open "Members" and check who currently belongs.
    In auto-join mode, everyone who has logged in should already be listed. → [01-members.md](01-members.md)
-3. **Know the limits currently in effect** — look at "Limits — Workspace / Session" at the top of
-   that same "Members" section. If they feel too strict or too loose, tenant-wide limits are
+3. **Know the limits currently in effect** — look at "Limits — Workspace / Session" under
+   **Tenant › Limits & idle**. If they feel too strict or too loose, tenant-wide limits are
    adjusted by a super_admin, and per-person session limits by you yourself.
    → [02-limits.md](02-limits.md)
 4. **Learn how to read audit and usage** — looking at the logs and running time once during normal
