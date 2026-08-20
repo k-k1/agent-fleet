@@ -551,6 +551,101 @@ func TestPerTenantLoginPage(t *testing.T) {
 	}
 }
 
+// P7-1 (docs/61 §61.17.6 + 決定 42): the tenant-less /login is the DEFAULT tenant's
+// page — for hidden_providers, and for nothing else.
+//
+// The three properties below are one decision each, and the second one is why the
+// decision was narrowed after review:
+//
+//  1. hiding works there now. §61.15.13 concluded "the implementation cannot change
+//     this", which held only because that page belonged to no tenant.
+//  2. ★ narrowing allowed_providers does NOT reach it — because the hidden filter has
+//     a valve (all hidden → ignored) and the allowed filter has none. The bare /login
+//     is the only door for somebody who belongs to no tenant, and the rule that would
+//     undo it needs a session. A button-less page here is unrecoverable short of
+//     editing the database.
+//  3. the unknown-slug page stays identical to it, or comparing the two would tell an
+//     unauthenticated visitor whether a slug exists.
+func TestBareLoginAppliesDefaultTenantHiddenOnly(t *testing.T) {
+	ctx := context.Background()
+	st := p3Store(t)
+	mgr := p3Manager(t, st)
+	dt, err := st.EnsureDefaultTenant(ctx)
+	if err != nil {
+		t.Fatalf("default tenant: %v", err)
+	}
+
+	cfg := config{
+		publicBaseURL: "https://af.example.com",
+		cookieSecret:  []byte("0123456789abcdef0123456789abcdef"),
+		mgr:           mgr,
+	}
+	cfg.setProviders([]loginProvider{
+		&oidcProvider{id: "entra", labelJA: "Microsoft でサインイン"},
+		&githubProvider{id: githubProviderID, labelJA: "GitHub でサインイン"},
+	})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /login", cfg.handleLogin)
+	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin)
+	body := func(path string) string {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: %d", path, w.Code)
+		}
+		return w.Body.String()
+	}
+	// setTenantLogin writes the rules AND drops the entry-gate cache, the way the
+	// admin handler does — a cached copy would keep serving the old buttons.
+	setRules := func(allowed, hidden string) {
+		if err := st.SetTenantLogin(ctx, dt.ID, allowed, "", "", hidden); err != nil {
+			t.Fatalf("set default rules: %v", err)
+		}
+		mgr.tenantLogin.invalidate()
+	}
+
+	// 1. hidden_providers now reaches the bare /login.
+	setRules("", githubProviderID)
+	if got := body("/login"); strings.Contains(got, "provider=github") || !strings.Contains(got, "provider=entra") {
+		t.Fatalf("/login must drop the hidden button and keep the rest:\n%s", got)
+	}
+	// 3. …and the unknown-slug page is the same page.
+	if body("/login/no-such-department") != body("/login") {
+		t.Fatalf("the unknown-slug page must be byte-identical to the tenant-less one")
+	}
+
+	// 2. ★ allowed_providers must NOT reach it. "entra only" would leave the GitHub
+	// button off a tenant page — here both stay, because this page is the one nobody
+	// may be locked out of.
+	setRules("entra", "")
+	got := body("/login")
+	if !strings.Contains(got, "provider=entra") || !strings.Contains(got, "provider=github") {
+		t.Fatalf("allowed_providers must not narrow the tenant-less page:\n%s", got)
+	}
+	// The pathological case the narrowing exists to prevent: a default tenant that
+	// accepts only a method this deployment does not have. On a tenant page that is
+	// the "no usable method" dead end; here it must still render every button.
+	setRules("okta", "")
+	got = body("/login")
+	if !strings.Contains(got, "provider=entra") || !strings.Contains(got, "provider=github") {
+		t.Fatalf("a default tenant naming an absent provider must not empty the bare /login:\n%s", got)
+	}
+
+	// The tenant-less page carries no tenant into the authorize link, so nothing
+	// here reaches the state cookie or the Console's post-login tenant preselect.
+	if strings.Contains(got, "tenant=") {
+		t.Fatalf("the tenant-less page must carry no tenant:\n%s", got)
+	}
+
+	// Hiding every method is ignored (the valve), rather than rendering a page with
+	// no buttons at all.
+	setRules("", "entra,"+githubProviderID)
+	got = body("/login")
+	if !strings.Contains(got, "provider=entra") || !strings.Contains(got, "provider=github") {
+		t.Fatalf("hiding everything must be ignored, not obeyed:\n%s", got)
+	}
+}
+
 // The tenant hint survives the round trip as a QUERY on the post-login
 // destination — a hint for the Console's picker, never an authorization input.
 func TestWithTenantHint(t *testing.T) {

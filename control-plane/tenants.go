@@ -482,7 +482,7 @@ func (a adminAPI) createTenant(w http.ResponseWriter, r *http.Request, _ Identit
 		return
 	}
 	slug := sanitizeUser(body.Slug)
-	if slug == "" || slug == "default" {
+	if slug == "" || slug == defaultTenantSlug {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid slug"})
 		return
 	}

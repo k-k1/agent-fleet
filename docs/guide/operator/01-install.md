@@ -145,32 +145,34 @@ the Admin panel even with no membership of its own.
   when in doubt it is safest to start with a single tenant and split only when the need arises.
 
 Once you do split, each tenant can carry its own login rules (Admin panel → the tenant →
-**Login rules**):
+**Sign-in methods** and **Login rules**):
 
-| Setting | What it does | Where it applies |
-|---|---|---|
-| **Sign-in methods** | Which of the enabled IdPs may be used to enter this tenant | Enforced on every request, not just by hiding buttons |
-| **Auto-join domains** | An address in this domain joins this tenant on first sign-in | One domain can belong to only one tenant |
-| **Invite domains** | Bounds who may be **added** as a member | The invite form only — never a per-request check |
-| **Methods to keep off the sign-in page** | Removes the button only, leaving the method accepted | Display only — somebody signing in with a hidden method is still admitted |
+| Setting | Where | What it does | Where it applies |
+|---|---|---|---|
+| **Accept** | Sign-in methods | This method may be used to enter this tenant | Enforced on every request, not just by hiding buttons |
+| **Show button** | Sign-in methods | Removes the button only, leaving the method accepted | Display only — somebody signing in with a cleared method is still admitted |
+| **Auto-join domains** | Login rules | An address in this domain joins this tenant on first sign-in | One domain can belong to only one tenant |
+| **Invite domains** | Login rules | Bounds who may be **added** as a member | The invite form only — never a per-request check |
 
-**Sign-in methods** takes the provider ids from your `.env` (`AF_OIDC_PROVIDERS`, plus Google),
-and the field lists them right underneath: every id this deployment has, with the label that
-appears on its sign-in button and the issuer it points at. An id the deployment does not have is
-refused when you save, so there is nothing to look up in the environment first. A tenant's own
-approved method goes in the same field as `t:<tenant>:<method>`.
+The **Sign-in methods** panel lists the deployment's own methods (marked *deployment-wide*,
+enabled in your `.env`) and the tenant's own registered methods in one list. There is no field to
+type ids into any more — you flip the two toggles on each row. Only a deployment administrator
+can flip them; a tenant administrator sees the same state read-only.
 
 Each tenant also gets its own sign-in page at `https://<PUBLIC_DOMAIN>/login/<slug>`, showing
-only the methods that tenant accepts — minus anything listed under **methods to keep off the
-sign-in page**, which stays accepted but gets no button here (hiding all of them is ignored, so
-the page is never a dead end). Hand that URL to new members; there is no invitation email (the CP
-has no SMTP, by design).
+only the methods that tenant accepts, minus any whose **Show button** is cleared. Hand that URL
+to new members; there is no invitation email (the CP has no SMTP, by design).
 
-> **A hidden button still appears on the plain `/login`.** That page (the one without a slug)
-> belongs to no tenant, so the deployment-wide methods stay on it — hiding them there would lock
-> out everybody who is not in a tenant yet (a new deployment admin, somebody not invited so far).
-> So **"methods to keep off the sign-in page" only takes effect when people use `/login/<slug>`**.
-> Once you set it, hand that URL to the tenant's people and have them bookmark it.
+> **Clearing "Show button" now works on the plain `/login` too.** The page without a slug is
+> rendered as the **default tenant's** page, so a method whose button you cleared on the default
+> tenant is gone from there as well.
+>
+> ★ **"Accept" is deliberately NOT applied there.** That page is the only door for somebody who
+> belongs to no tenant yet — a new deployment admin, anybody not invited so far. If narrowing
+> what the default tenant accepts reached it, one edit would leave a page with no buttons at all,
+> and undoing that edit needs a session, which needs that page: nobody could get in again short
+> of editing the database. Narrowing is still enforced where it always was — when the tenant is
+> resolved, on every request.
 
 > **"Invite domains" is not "who may use this tenant."** It only bounds who can be put on the
 > roster. Somebody already invited keeps working even from another domain — which is what makes
@@ -208,24 +210,24 @@ now and then, not a queue that empties — the IdP stays under the other company
 settings such as self-sign-up can be turned on after you approved it. Suspending is always
 available to the tenant's own administrator too: stopping should never wait for you.
 
-> **Watch the narrowing of "Sign-in methods allowed" in a tenant whose people also belong to
+> **Watch what you clear under "Accept" in a tenant whose people also belong to
 > another tenant.** Say Yamada belongs to both head office and a subsidiary and normally signs in
-> with head office's Google. If the subsidiary narrows its allowed methods to its own GitHub,
+> with head office's Google. If the subsidiary accepts only its own GitHub,
 > switching to that tenant asks Yamada to sign in again with it — and pressing that button is
 > refused with *"This email address is already used by another sign-in method."* The same address
 > at a different IdP is a different login, and if Yamada has no GitHub account at all there is
 > nothing to press.
 >
 > Two ways out. **(a) Invite Yamada into the subsidiary's GitHub organization** (keeping
-> "GitHub only" literally true), or **(b) keep head office's method on the allowed list.** (b)
-> does not widen who can enter: the roster decides that, and this field only says which identity
+> "GitHub only" literally true), or **(b) leave head office's method on Accept.** (b)
+> does not widen who can enter: the roster decides that, and this toggle only says which identity
 > sources are accepted (do check **auto-join domains** though — that one does create roster
 > entries).
 >
 > If (b) bothers you because an unused Google button then sits on the subsidiary's sign-in page,
-> put `google` in **"Methods to keep off the sign-in page."** It stays accepted and the button
+> clear **Show button** on the Google row alone. It stays accepted and the button
 > disappears from that page — Yamada keeps signing in on the generic `/login` and switches
-> tenants. Hiding every method is ignored, so the page is never left without buttons.
+> tenants. You cannot clear it on every row, so the page is never left without buttons.
 >
 > The **same GitHub account** is fine either way: the deployment-wide GitHub button and the
 > tenant's own GitHub button resolve to one person.
