@@ -700,6 +700,83 @@ ADR0030 §3 が Agent 直送を避けた第一の理由「誰が何を送った�
 | `internal/agents/codex/driver_test.go` | managed の `usageLimitExceeded` が `limited` になること（上限以外のエラーは idle のまま） |
 | `console/src/lib/sessionview.test.ts` | 制限解除待ちが 入力待ち とも 上限で停止 とも別のチップになること、予約時刻の有無での落とし方、`resumeClock` の当日/別日/壊れた値 |
 
+## 4-10. 追補（2026-08-20）— 上限には**待っても解けない形**がある（支出・残高）
+
+利用者報告（スクリーンショット）: ミラーに出た中断ブロックが
+
+```
+エラーで終了  rate_limit (HTTP 429)
+You've hit your org's monthly spend limit · run /usage-credits to raise it,
+or visit claude.ai/admin-settings/usage
+```
+
+で、§4-9 の 制限解除待ち にも該当せず、行は 入力待ち のままだった。
+
+**穴は 2 つあった。** どちらもマーカーの取りこぼしで、既定の blocked に落ちて
+**分類だけが偶然正しかった**（コメントが繰り返し警告している型）。フリートの実転写から
+実測した文言は次のとおり（`isApiErrorMessage:true` / `apiErrorStatus:429` /
+`error:"rate_limit"`）:
+
+| 文言（実測） | 種別 | 直前の扱い |
+|---|---|---|
+| `You've hit your session limit · resets 7:50pm (Asia/Tokyo)` | 窓（5時間） | エピソードを開く（§4-4） |
+| `You've reached your Fable 5 limit. Run /usage-credits …` | 窓（モデル別） | エピソードを開く（§4-5・予約はしない） |
+| `You've hit your weekly limit · resets 9am (Asia/Tokyo)` | 窓（週次） | **どのマーカーにも当たらず素通り** |
+| `You've hit your org's monthly spend limit · run /usage-credits to raise it …` | **支出** | **同上。窓と混ぜてもいけない** |
+
+### 4-10-1. 種別 — `claude.LimitKind`（window / spend）
+
+`UsageLimitAbort` が真偽ではなく**種別**を返すようにした。同じ 429・同じ
+`error:"rate_limit"` で届くのでコードでは分けられず、文言だけが材料になる。
+
+- `spendMarkers` = `spend limit` / `credit balance`。**`/usage-credits` は材料にしない** —
+  モデル別の窓の上限も同じコマンドを案内するので、両方に当たって窓まで「増枠が必要」に化ける。
+- 支出側を**先に**見る。両方に読める文言が来たとき、待てば解ける側に倒すのが一番高い誤り
+  （利用者は来ないリセットを待ち、自動再開は同じ 429 を踏み続ける）。逆向きの誤りは、
+  待てば直るものを人が見に来るだけで済む。
+- `limitMarkers` に `weekly limit`、`blockedMarkers` に `weekly limit` / `spend limit` を追加。
+
+### 4-10-2. 支出の上限は「待てば解ける」機械にかけない
+
+- **予約しない**（`scheduleRateLimitResume` を通さない）。時刻の問題ではないので、いつ起こしても
+  同じ 429 を踏む。
+- **`rate-limit-reached` 通知も出さない。** 文言（「利用上限に達しました」）が待てば解ける前提で、
+  この形では嘘になる。利用者には**ターンが失敗した通知と報告**が、原文（`…monthly spend limit ·
+  run /usage-credits…`）ごと既に届いている。af が足せるのは一覧で見て分かる状態までで、
+  そこを二重に鳴らす価値は無い。
+- **エピソードは時刻で畳まない。** 窓のエピソードは予約時刻＋猶予（無ければ 12時間 TTL）で
+  畳むが、支出の上限は増枠されるまで続く — TTL で消すと**事実より先にチップが消える**。
+  畳むのは「生きているセッションの転写の末尾がもう上限ではない」ときだけ
+  （`rateLimitFollowUp` の唯一の終了条件）。停止中は残す（再開しても同じ上限のままかもしれない）。
+
+### 4-10-3. 状態 `agents.StateSpendLimit`（"spend_limit"）
+
+live 限定・status ストアに書かない 4 つ目の状態（blocked / auth / limited と同型）。
+チップは **「残高上限 — 増枠が必要」**、色は blocked / auth と同じ注意色（人が今やる側）。
+`limited` の落ち着いた見え方（太字なし・時刻つき）とは意図的に分ける。表示の種別は
+エピソードファイルの記録ではなく**転写から毎回引き直す** — 増枠されて今度は窓の上限に
+当たった、のような遷移でも表示が追随する。CP の reaper は `limited` と同様に tier1 の
+idle 掃除の対象に含める（`reapableIdle`）。
+
+### 4-10-4. 週次の窓はバナー単独で予約しない
+
+`resets 9am` は壁時計しか書かないので「今日か明日の 9時」としか読めないが、週次の
+リセットは数日先にあり得る。明日の 9時に起こすと同じ 429 を踏み、そのたびに新しい
+エピソードが予約を引き直す＝**本当のリセットまで毎日 1 ターンずつ焼く**。よって週次の
+バナーは、捕捉（statusline の `resets_at`）と**壁時計が一致した**ときだけ答える（日付は
+捕捉が決める）。既存の一致判定は「同じ瞬間か」なので数日先には当たらない — 週次だけは
+時:分で突き合わせ、捕捉の新しい方（＝週次窓）から見る。
+
+### 4-10-5. テスト
+
+| 対象 | 内容 |
+|---|---|
+| `internal/agents/claude/abort_test.go` | 実測 5 文言の種別（5時間・モデル別・週次＝window／組織の月次支出・残高不足＝spend）と、上限でないもの（一時的レート制限・プロンプト超過・認証・接続断・通常完了） |
+| `internal/agents/claude/ratelimit_test.go` | 週次はバナー単独では決めないこと、捕捉と壁時計が一致すれば数日先でも答えること |
+| `rate_limit_resume_test.go` | 支出では予約も解除も通知もしないこと、エピソードが TTL で畳まれないこと、停止中は残し生存中の解消でだけ畳むこと |
+| `session_rate_limit_wire_test.go` | `spend_limit` が一覧と本文の両方で出ること、再開時刻を出さないこと、種別が転写から引き直されること |
+| `console/src/lib/sessionview.test.ts` | 残高上限が 制限解除待ち とも 入力待ち とも別のチップになること |
+
 ## 5. 積み残し
 
 - 対象は claude TUI のみ（`isApiErrorMessage` は claude 固有）。他 TUI 種別は別シグナルが要る。
@@ -723,6 +800,9 @@ ADR0030 §3 が Agent 直送を避けた第一の理由「誰が何を送った�
   なく明示的な確認付きで。
 - ~~予約した再開時刻を Console のセッション行に出していない~~ → §4-9 で解消（`limited`
   チップに「制限解除待ち · HH:MM」として出る。予約が無い場合は時刻なし）。
+- 支出・残高の上限（§4-10）には**専用の通知が無い**（ターン失敗の通知と報告が原文ごと出るので
+  二重に鳴らしていない）。増枠されたことを af から知る手段も無い — 次のターンが通れば転写が
+  変わり、チップは自然に消える。
 - モデル別上限（§4-5）は**自動再開しない** — リセット時刻を決める材料が無い（バナーが無く、
   statusline 捕捉は別の窓）。復旧はモデル切替か `/usage-credits` で、どちらも課金・選択の
   判断を含むので自動化しない。通知（`rate-limit-reached`）と失敗理由つきの完了報告までが範囲。

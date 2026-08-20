@@ -204,8 +204,8 @@ func driveState(m session.Meta, alive, heal bool) string {
 	// 同じ読み替えをここでも行う — チップが一覧と本文で食い違うと、どちらが本当か利用者には
 	// 分からない（docs/47 §4-9）。送信は塞がない（agents.StateLimited のコメント）。
 	if isClaude && alive && state == "idle" {
-		if _, waiting := rateLimitWaiting(m, time.Now()); waiting {
-			return agents.StateLimited
+		if limited, _, waiting := rateLimitWaiting(m, time.Now()); waiting {
+			return limited
 		}
 	}
 	return state
