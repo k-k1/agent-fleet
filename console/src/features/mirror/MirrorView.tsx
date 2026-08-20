@@ -78,7 +78,7 @@ import { t as tr, useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
 import { agentOf } from "../../agents/registry.ts";
-import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
+import { takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
@@ -228,6 +228,12 @@ export function MirrorView({
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
   const [turns, setTurns] = useState<Turn[]>([]); // {role:'user'|'assistant', text, ts, idx}
+  // Which session the accumulated view state (turns / alive / mode / echoes …) belongs to.
+  // A pane keeps this component mounted while its `session` prop changes (PaneHost keys a
+  // cell, not a session), and the per-session reset is a layout effect — so on that one
+  // commit every piece of state below is still the PREVIOUS session's. Anything that reads
+  // state to decide something about the NEW session must wait for `stateSession === session`.
+  const [stateSession, setStateSession] = useState(session);
   // Optimistic local echoes of just-sent prompts. While claude is working it queues a new
   // prompt WITHOUT logging it to the jsonl until the current turn finishes, so the mirror
   // (transcript-only) would show nothing — the message looks lost. We render these until
@@ -728,6 +734,7 @@ export function MirrorView({
   // state in place for one paint, so the incoming session can inherit an arbitrary
   // middle position instead of taking its normal initial-bottom path.
   useLayoutEffect(() => {
+    setStateSession(session); // …and from the next render on, the state below is this session's
     cursorRef.current = 0;
     firstLineRef.current = 0;
     loadingOlderRef.current = false;
@@ -1487,86 +1494,38 @@ export function MirrorView({
     return res.ok;
   };
 
-  // seedSubmit reliably fires the launch seed's first prompt. A freshly-launched CLI
-  // coalesces the pasted text and SWALLOWS an Enter that arrives inside that paste
-  // window — the prompt then sits in the composer unsent (the reported bug; the server's
-  // 20ms claude gap is far too short right after boot). So type the text on its own
-  // (seq, no bundled Enter), then submit with a couple of delayed Enters once the paste
-  // window has closed. Enter on an empty composer is a no-op, so the later nudge is
-  // harmless if the first one already submitted.
-  const seedSubmit = async (text: string) => {
-    const t = (text || "").trim();
-    if (!t) return;
-    statusRef.current = "working";
-    setStatus("working");
-    const echoId = ++echoSeqCounter; // optimistic echo, reconciled when the real turn lands
-    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), at: Date.now() }]);
-    try {
-      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq: [{ t }] });
-    } catch {
-      applyEchoes((p) => p.filter((e) => e.id !== echoId));
-      return;
-    }
-    const enter = () => apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys: ["Enter"] }).catch(() => {});
-    setTimeout(enter, 450);
-    setTimeout(enter, 1100);
-    setTimeout(() => tickRef.current?.(), 1400);
-  };
-
-  // Launch seed: a session started from a repo row's 起動 modal carries a first prompt
-  // (keyed by slug in launchSeed). Send it exactly once, and only after the session is
-  // actually alive and not mid-resume/compacting. takeLaunchSeed is one-shot, so we only
-  // take it when about to send (the guards below return before taking it). seededRef
-  // prevents a re-send across the polls that flip `alive`.
+  // Launch seed: a session started from 作業を始める carries a first prompt. The mirror no
+  // longer SENDS it — the Agent does, from the create call's initial_prompt (or /input
+  // {when_ready} when attachments made the text final only after create; useStartWork.ts).
+  // That matters because this view is mounted only while its tab is the selected one:
+  // typing it from here meant a session launched into a background tab sat idle until the
+  // user came back to it, and then looked as if opening the tab is what sent the message.
   //
-  // Readiness gate: `alive` only means the tmux session exists — that's true seconds
-  // before the CLI can accept input, and text/Enter typed into the boot screen gets
-  // buffered into one paste burst whose Enter is coalesced away (or eaten with the boot
-  // screen entirely): the launch prompt was intermittently lost. `mode` (paneMode) is
-  // non-empty exactly when the agent has drawn its composer/status line — for claude,
-  // codex and opencode alike — so wait for it. seedForce is the escape hatch if the
-  // status line never becomes detectable (odd pane state): fall back to sending anyway.
+  // What is left here is display: show the sent text as an optimistic echo so the chat
+  // isn't empty for the seconds between 起動 and the first turn reaching the transcript.
+  // It is dropped by the normal reconciliation once that turn lands.
+  //
+  // sinceIdx is -1 on purpose. An echo's anchor exists to keep it from matching a turn
+  // that predates the send, but this one can only ever match the first turn of a brand-new
+  // session — while an anchor taken from newestIdx() would strand it forever whenever the
+  // turn is ALREADY in the transcript (delivery won the race, or the pane was opened
+  // later). stateSession likewise: on the commit where the `session` prop changes this
+  // component still holds the PREVIOUS session's state (the reset below is a layout effect,
+  // so it lands one render later), and appending an echo there would both anchor it against
+  // a foreign transcript and copy the old session's pending echoes into the new one's stash.
   const seededRef = useRef(false);
-  const [seedForce, setSeedForce] = useState(false);
-  const seedForceTimer = useRef<number | null>(null);
   useEffect(() => {
     seededRef.current = false; // new session → allow its own seed
-    setSeedForce(false);
-    if (seedForceTimer.current != null) {
-      clearTimeout(seedForceTimer.current);
-      seedForceTimer.current = null;
-    }
   }, [session]);
-  useEffect(
-    () => () => {
-      if (seedForceTimer.current != null) clearTimeout(seedForceTimer.current);
-    },
-    [],
-  );
   useEffect(() => {
-    if (seededRef.current || readOnly || !alive || termState || sending) return;
-    if (!hasLaunchSeed(session)) return;
-    // managed（docs/27 §10.2-9）: boot 画面が存在しないので readiness スクレイプも
-    // 二重 Enter も不要 — /turn の start をそのまま投げる（駄目でも駄目と返る）。
-    if (managed) {
-      const seed = takeLaunchSeed(session);
-      if (!seed) return;
-      seededRef.current = true;
-      void sendPrompt(seed);
-      return;
-    }
-    if (!mode && !seedForce) {
-      if (seedForceTimer.current == null) {
-        seedForceTimer.current = window.setTimeout(() => setSeedForce(true), 15000);
-      }
-      return; // TUI not confirmed ready — the next poll's mode (or the timer) retries
-    }
+    if (seededRef.current || stateSession !== session) return;
     const seed = takeLaunchSeed(session);
     if (!seed) return;
     seededRef.current = true;
-    seedSubmit(seed);
+    const echoId = ++echoSeqCounter;
+    applyEchoes((p) => [...p, { id: echoId, text: seed.trim(), sinceIdx: -1, at: Date.now() }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alive, termState, session, readOnly, mode, seedForce, managed]);
+  }, [session, stateSession]);
 
   // driveInput posts one modal-driving body ({keys} or {seq}) and — this is the point —
   // does NOT swallow a rejection. api() resolves non-2xx as a value ({error:{code}}), so

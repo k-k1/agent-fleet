@@ -3305,6 +3305,7 @@ export const en: Record<keyof typeof ja, string> = {
   "rp.launch_failed": "Launch failed: {err}",
   "rp.image_upload_failed": "Image upload failed: {err}",
   "rp.image_upload_failed_network": "Image upload failed (network error)",
+  "rp.first_prompt_failed": "The session started, but its first instruction could not be delivered: {err}",
   "rp.filter_branches": "Filter (branch name / commit)",
   "rp.loading": "Loading…",
   "rp.no_branches": "No matching branches",
