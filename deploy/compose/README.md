@@ -194,10 +194,15 @@ in `.env` (users can always paste a token instead, without these):
 - Single-tenant is the default: everyone lands in the built-in `default` tenant
   with zero friction. Create additional tenants only if you need hard separation
   (e.g. departments) — each membership gets a fully isolated workspace.
-- `AF_PROVISION=auto` (default) auto-admits any allow-listed login into the
-  default tenant. Set `AF_PROVISION=invite` to require an admin to add people —
-  you can do that from the first boot, since a `SUPER_ADMIN_EMAILS` account
-  reaches the Admin panel with no membership of its own.
+- **`AF_PROVISION=invite` is what `.env.example` ships with**: nobody gets a
+  workspace until an admin adds them. It works from the first boot, since a
+  `SUPER_ADMIN_EMAILS` account reaches the Admin panel with no membership of its
+  own; everybody else lands on a page telling them which address to quote to you.
+  Set `AF_PROVISION=auto` instead to auto-admit any allow-listed login into the
+  default tenant — reasonable for a small single-team install, but then
+  `AF_OAUTH_ALLOWED_*` is the only thing between a stranger and a workspace.
+  (The *built-in* default is still `auto`, so an existing `.env` that says nothing
+  keeps behaving exactly as before — only new installs start closed.)
 - **An invitation is itself permission to sign in.** Somebody you add in the
   Admin panel gets past the login without also being in `AF_OAUTH_ALLOWED_*`, so
   an invite-run deployment keeps one roster rather than two lists that drift.

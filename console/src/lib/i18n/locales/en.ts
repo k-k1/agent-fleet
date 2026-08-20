@@ -52,6 +52,17 @@ export const en: Record<keyof typeof ja, string> = {
   // offers the re-sign-in link; this string is the fallback outside it.
   "err.provider_required": "This tenant needs a different sign-in method. Please sign in again.",
   "err.not_provisioned": "You don't belong to any tenant yet. Ask an administrator to add you.",
+  // The pre-invitation landing (docs/61 §61.10.2 · P7-2). ★ Written as the normal
+  // first step on an invite-run deployment, not as a failure — and it must show the
+  // address to quote to the administrator.
+  "notprov.title": "You haven't been invited yet",
+  "notprov.lead":
+    "You are signed in. Once an administrator puts you on the team's roster, your workspace becomes available.",
+  "notprov.signed_in_as": "Signed in as:",
+  "notprov.hint":
+    "Give your administrator the address above, exactly as shown. Once they have added you, press Reload.",
+  "notprov.retry": "Reload",
+  "notprov.switch_account": "Sign in with another account",
   "err.domain_not_allowed": "That email domain can't be invited to this tenant.",
   "err.email_required": "This tenant restricts invites by domain. Invite by email address.",
   "err.auto_join_conflict": "That auto-join domain already belongs to another tenant.",

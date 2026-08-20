@@ -123,18 +123,31 @@ front can remove the Caddy service entirely (Caddyfile alternative 2).
 
 ### `AF_PROVISION`: auto or invite
 
-- **`auto` (default)** — logins that pass the allowlist are automatically accepted as members
+- **`invite` (what new installs start with)** — unknown identities are rejected until an
+  administrator adds them in the Admin panel. You control who gets in, one by one.
+- **`auto`** — logins that pass the allowlist are automatically accepted as members
   of the default tenant. Suited to small teams and domain-based allow policies.
-- **`invite`** — unknown identities are rejected until an administrator adds them in the
-  Admin panel. Choose this when you want to control who gets in, one by one.
 
 With `invite`, **being invited is itself permission to log in**: somebody you add in the Admin
 panel gets in without also being listed in `AF_OAUTH_ALLOWED_*`, so you keep one roster rather
 than two lists that drift apart. With `auto`, the allowlist is what decides who may enter at
-all, and everyone who passes it lands in the default tenant.
+all, and everyone who passes it lands in the default tenant — which means that with `auto`,
+**`AF_OAUTH_ALLOWED_*` is the only thing between a stranger and a workspace**.
 
 You can start with `invite` from the very first boot — a `SUPER_ADMIN_EMAILS` account reaches
-the Admin panel even with no membership of its own.
+the Admin panel even with no membership of its own. Anyone not invited yet lands on a
+**"you haven't been invited yet"** page showing the address they signed in with, so they can
+quote it to you (you add people by address).
+
+> ★ **Only the templates changed.** The CP's built-in default is still `auto`, so an existing
+> `.env` that never set `AF_PROVISION` behaves exactly as before. What starts closed is a **new
+> install** made from the current `.env.example` (or from the ECS `AfProvision` parameter).
+> Deriving it at runtime — "invite while there are no members yet" — was rejected: the condition
+> stops holding the moment the first person joins, so the next restart would silently reopen the
+> deployment (docs/61 §61.17.7).
+>
+> ★ **Switching an existing deployment to `invite` does not affect anyone already working.**
+> An existing membership is read first (`membershipsFor`); only NEW auto-admissions stop.
 
 ### Single tenant, or separate tenants
 
