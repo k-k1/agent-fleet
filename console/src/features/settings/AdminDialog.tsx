@@ -1,37 +1,34 @@
-// AdminDialog — ported from the old settings/AdminDialog.tsx (docs/22 P7c).
-// The super_admin-only management surface (tenants / members / quotas / live
-// resources). It is a near-full-screen overlay rather than a small centered
-// modal: the staged drill-down (tenants → tenant → member) plus the per-member
-// resource + session views need room. Kept separate from the per-user
-// SettingsDialog so administration is clearly distinct from personal settings.
+// AdminDialog — super_admin の管理面（テナント / メンバー / 上限 / 稼働状況）。
+//
+// 器は個人設定・テナント設定と同じ ui/Modal（`settings-modal`）。以前は独自の
+// 全画面サーフェス（.admin-surface）で、閉じる・Esc・端末の戻る・フォームの配色まで
+// 自前だった。中身のナビをレール化したことで大きさ以外に違う理由が無くなったので、
+// 器ごと共通の Modal に寄せた（幅・高さだけ .admin-modal で 1100×900 のまま——
+// テナントのカードとメンバーの表は個人設定より横が要る）。
+//
+// 個人設定と分けてあるのは変わらない: 管理の操作が個人の設定に紛れないため。
 import { useSettingsUI } from "./store.ts";
 import { AdminTab } from "./AdminTab.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { useEscLayer } from "../../lib/escLayer.ts";
+import { Modal } from "../../ui/Modal.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 export function AdminDialog() {
   const tr = useT();
   const closeAdmin = useSettingsUI((s) => s.closeAdmin);
-  // Escape closes fully (all drill levels), same as the × / backdrop — matches the
-  // ui/Modal behavior the settings dialog gets for free. Layered: with a confirm
-  // (停止 / 掃除 / 権限付与) open on top, Esc cancels that first.
-  useEscLayer(closeAdmin);
   return (
-    <div className="ui-modal-backdrop" onClick={closeAdmin}>
-      <div className="admin-surface" onClick={(e) => e.stopPropagation()}>
-        <header className="admin-surface-head">
-          <h3 className="modal-title">
-            <Icon name="shield" /> {tr("admin.title")}
-          </h3>
-          <button type="button" className="icon" title={tr("common.close")} onClick={closeAdmin}>
-            <Icon name="close" />
-          </button>
-        </header>
-        <div className="admin-surface-body">
-          <AdminTab />
-        </div>
+    <Modal
+      title={
+        <>
+          <Icon name="shield" /> {tr("admin.title")}
+        </>
+      }
+      onClose={closeAdmin}
+      className="settings-modal admin-modal"
+    >
+      <div className="ui-modal-body">
+        <AdminTab />
       </div>
-    </div>
+    </Modal>
   );
 }

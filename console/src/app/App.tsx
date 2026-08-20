@@ -45,7 +45,7 @@ import { FilesSection } from "../features/project/FilesSection.tsx";
 import { Section } from "../ui/Section.tsx";
 import { WsBar } from "./WsBar.tsx";
 import { TopBar } from "./TopBar.tsx";
-import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
+import { useSettingsUI } from "../features/settings/store.ts";
 import { SettingsDialog } from "../features/settings/SettingsDialog.tsx";
 import { AdminDialog } from "../features/settings/AdminDialog.tsx";
 import { TenantDialog } from "../features/settings/TenantDialog.tsx";
@@ -271,7 +271,6 @@ export function App() {
     document.addEventListener("visibilitychange", onPrefsVisible);
     window.addEventListener("focus", refreshPrefs);
     const unHistory = wireLayoutHistory();
-    const unModalHistory = wireSettingsHistory();
     const unKeys = wireKeys();
     const unReconcile = wireTerminalReconcile();
     const unBrowserReconcile = wireBrowserReconcile();
@@ -303,7 +302,6 @@ export function App() {
       document.removeEventListener("visibilitychange", onPrefsVisible);
       window.removeEventListener("focus", refreshPrefs);
       unHistory();
-      unModalHistory();
       unKeys();
       unReconcile();
       unBrowserReconcile();

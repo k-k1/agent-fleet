@@ -8,10 +8,10 @@ follow the breadcrumb at the top of the panel (Members › the person).
 
 ## Finding your way around
 
-**The tenant's numbers** — above the roster you'll find this tenant's display name, its member
-count, the number of workspaces currently running ("N running"), and the tenant-wide limits
-("Limits — Workspace: X / Session: Y"). This is **read-only** (a super_admin sets the caps —
-see [02-limits.md](02-limits.md)).
+**The tenant's numbers** — **Tenant › Limits & idle** in the rail shows this tenant's display
+name, its member count, the number of workspaces currently running ("N running"), and the
+tenant-wide limits ("Limits — Workspace: X / Session: Y"). This is **read-only** (a super_admin
+sets the caps — see [02-limits.md](02-limits.md)).
 
 **Roster** — each member row shows a dot indicating running state, the internal identifier
 (`user_key`), the email address, and the role (`member` / `tenant_admin`). Clicking a row takes you
