@@ -1,15 +1,14 @@
 // Settings/Admin dialog UI store (zustand) — replaces the old God-context slice
 // (settingsOpen/settingsSection/adminOpen + connKey).
 //
-// The settings modal gets close-on-back for free from the shared ui/Modal
-// (useBackClose), like every other dialog, so it needs NO bespoke history entry
-// here — pushing one on top of Modal's own guard double-stacked the history and
-// made ✕/Esc reopen instead of close. The Admin modal does NOT use ui/Modal (it's
-// a full-screen surface with its own drill-down history: tenants→tenant→member),
-// so it keeps the bespoke entry: openAdmin pushes {modal:"admin"}, closeAdmin pops
-// all drill levels at once, and wireSettingsHistory syncs adminOpen on popstate.
+// どのモーダルも close-on-back は共有の ui/Modal（useBackClose）が面倒を見るので、
+// ここに独自の history エントリは無い（Modal 自身のガードの上にもう 1 つ積むと
+// 二重になり、✕/Esc が閉じずに開き直す）。管理モーダルは全画面サーフェス＋独自の
+// ドリルダウン history（tenants→tenant→member）だったため長らく例外だったが、
+// レール化で ui/Modal に載ったので、その独自エントリ（openAdmin の pushState /
+// adminDepthRef / wireSettingsHistory）は撤去した。ドリルの段は AdminTab が
+// useBackClose の層として積む。
 import { create } from "zustand";
-import { useLayoutStore } from "../../layout/store.ts";
 
 // The settings modal remembers the last-opened section in localStorage, so reopening
 // lands where you left off. First-ever open (nothing stored) defaults to 表示
@@ -57,18 +56,6 @@ interface SettingsUIStore {
   bumpConn(): void;
 }
 
-// adminDepth = drill-down depth (0=tenants, 1=tenant, 2=member). AdminTab pushes a
-// history entry per level, so a browser "back" pops one level and only closes at the
-// top; the X/backdrop pops all levels at once. A plain mutable ref (not store state —
-// nothing renders from it).
-export const adminDepthRef = { current: 0 };
-
-const pushModalEntry = (modal: string) => {
-  try {
-    history.pushState({ __af: true, layout: useLayoutStore.getState().layout, modal }, "");
-  } catch {}
-};
-
 export const useSettingsUI = create<SettingsUIStore>((set) => ({
   settingsOpen: false,
   settingsSection: lastSection() || "display",
@@ -91,17 +78,13 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
     set({ settingsOpen: false });
   },
 
+  // 管理モーダルも個人設定と同じ ui/Modal に乗るので、戻るで閉じるのは useBackClose
+  // が面倒を見る（ドリルの段は AdminTab がその上に積む）。
   openAdmin() {
-    adminDepthRef.current = 0;
     set({ adminOpen: true });
-    pushModalEntry("admin");
   },
   closeAdmin() {
-    // Full close (X / backdrop): pop ALL admin entries (base + each drill level) so
-    // one action closes the modal from any depth and a later back can't re-open it.
-    if (typeof history !== "undefined" && history.state && history.state.modal === "admin") {
-      history.go(-(adminDepthRef.current + 1));
-    } else set({ adminOpen: false });
+    set({ adminOpen: false });
   },
 
   // テナント設定は個人設定と同じ ui/Modal に乗るので、戻るで閉じるのは useBackClose
@@ -122,16 +105,3 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   connTick: 0,
   bumpConn: () => set((s) => ({ connTick: s.connTick + 1 })),
 }));
-
-/** Browser back/forward closes (or re-opens) the ADMIN modal — the layout part of
- * the entry is handled by wireLayoutHistory; this syncs only the admin flag. (The
- * settings modal manages its own history through ui/Modal's useBackClose, so it is
- * deliberately NOT synced here.) Wired once from App boot; returns the cleanup
- * (StrictMode-safe). */
-export function wireSettingsHistory(): () => void {
-  const onPop = (e: PopStateEvent) => {
-    useSettingsUI.setState({ adminOpen: !!(e.state && e.state.modal === "admin") });
-  };
-  window.addEventListener("popstate", onPop);
-  return () => window.removeEventListener("popstate", onPop);
-}

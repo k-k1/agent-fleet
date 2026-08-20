@@ -1,9 +1,7 @@
 // TenantDialog — テナント設定（テナント管理者の面）。
 //
 // モーダルは 3 つある。個人設定＝自分、管理＝デプロイ全体（デプロイ管理者）、
-// そしてここ＝自分が管理しているテナント。管理モーダルの中で isSuper 分岐に
-// 埋もれていたテナント管理者向けの面を、読み手ごとに面を分ける形へ移す第一歩で、
-// まずログイン面（docs/61）を扱う。
+// そしてここ＝自分が管理しているテナント。
 //
 // ★ 面を分けても権限はサーバが持つ。サインイン方法の「承認して有効化」は CP の
 // setStatus が super_admin を見ており（ADR0043 決定 30）、ログイン規則の PUT は
@@ -12,94 +10,30 @@
 // レイアウトは個人設定と同じ二枚看板（左レール＋本文）で、CSS も settings-* を
 // そのまま使う（クラスの再定義はしない — 同名クラスの二重定義は import 順で合成
 // されるため）。tenant-modal は色味の微調整だけを足す。
+//
+// レールの並びと本文は tenantScope に置いて管理モーダルと共有する。同じテナントを
+// 別の入口から見るだけなので、IA が入口ごとに分かれないようにするため。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useSettingsUI } from "./store.ts";
 import { mobileMatches } from "../../lib/device.ts";
 import { useBackClose } from "../../lib/backClose.ts";
-import { Icon } from "../../ui/Icon.tsx";
 import { Modal } from "../../ui/Modal.tsx";
-import { TenantLoginRules, TenantLoginRulesView, TenantSignInMethods } from "./tenantLogin.tsx";
-import { TenantNetworkView } from "./tenantNetwork.tsx";
-import { MembersPanel, MemberView } from "./tenantMembers.tsx";
-import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
-import { CloudCostAdminView, useCostProfile } from "../cost/CloudCostView.tsx";
-import { McpAdminView } from "./mcpAdmin.tsx";
+import { useCostProfile } from "../cost/CloudCostView.tsx";
+import { TENANT_SCOPE_SECTIONS, TenantScopeBody, tenantScopeGroups } from "./tenantScope.tsx";
 import type { Member, Tenant } from "./adminShared.ts";
-
-// レールの並び。項目 = [セクションキー, i18n キー]。ここの順がそのまま表示順。
-//
-// 「運用」に並ぶ 4 つは、CP が tenant_admin に自テナント分を返す面（GET
-// /api/admin/{sessions,usage,audit} と /api/admin/mcp-servers）。管理モーダルにしか
-// 置き場が無かったので、デプロイ管理者と同じ画面を通らないと自分の部署のことすら
-// 見られなかった。
-const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
-  {
-    key: "login",
-    label: "tenant.group_login",
-    items: [
-      ["signin", "tenant.tab_signin"],
-      ["rules", "tenant.tab_rules"],
-      // 接続元の制限（docs/66）。ここだけ tenant_admin が「書ける」面で、
-      // 上の 2 つ（読み取り専用 / super_admin 承認）とは持ち主が違う。
-      ["network", "tenant.tab_network"],
-    ],
-  },
-  {
-    key: "manage",
-    label: "tenant.group_manage",
-    items: [
-      ["members", "tenant.tab_members"],
-      ["sessions", "tenant.tab_sessions"],
-      ["usage", "tenant.tab_usage"],
-      // クラウド費用は AWS の請求があるデプロイにしかない。レールから外すのでは
-      // なく、そもそも項目を作らない（docs/67 §67.8）。GROUPS は静的なので、
-      // 描画側で落とす（COST_SECTION）。
-      ["cost", "tenant.tab_cost"],
-      ["audit", "tenant.tab_audit"],
-      ["mcp", "tenant.tab_mcp"],
-    ],
-  },
-];
-const ALL_SECTIONS = GROUPS.flatMap((g) => g.items.map(([k]) => k));
-
-// TenantSummary — テナントそのものの数字（人数・起動中のワークスペース・テナント
-// 全体の上限）。管理モーダルではテナントカードに出ていて、テナント管理者もそこで
-// 読めた。入口を閉じるとこれだけが行き場を失うので、名簿の頭に読み取り専用で残す。
-// 決めるのはデプロイ管理者（PUT .../limits は withSuperAdmin 固定）。
-function TenantSummary({ tenant }: { tenant: Tenant }) {
-  const tr = useT();
-  return (
-    <section className="admin-panel tenant-summary">
-      <h4>
-        {tenant.name || tenant.slug}
-        <span className="af-note">{tr("tenant.summary_note")}</span>
-      </h4>
-      <div className="tc-stats">
-        <span>
-          <Icon name="person" /> {tr("admin.person_count", { n: tenant.users ?? 0 })}
-        </span>
-        <span className={(tenant.running || 0) > 0 ? "tc-run on" : "tc-run"}>
-          <Icon name="vm-running" /> {tr("admin.running_ws", { n: tenant.running ?? 0 })}
-        </span>
-      </div>
-      <p className="admin-hint">
-        {tr("admin.tenant_limits", { ws: tenant.max_workspaces || "∞", ss: tenant.max_sessions || "∞" })}
-      </p>
-    </section>
-  );
-}
 
 export function TenantDialog() {
   const tr = useT();
   // クラウド費用の面があるかはランタイムが申告する。docker / native には AWS の
   // 請求が無いので、項目ごと出さない（ADR 0048 決定 9）。
   const costProfile = useCostProfile();
+  const groups = tenantScopeGroups({ cost: !!costProfile?.available });
   const closeTenantSettings = useSettingsUI((s) => s.closeTenantSettings);
   const tenantSection = useSettingsUI((s) => s.tenantSection);
   const [section, setSection] = useState(
-    ALL_SECTIONS.includes(tenantSection) ? tenantSection : "signin",
+    TENANT_SCOPE_SECTIONS.includes(tenantSection) ? tenantSection : "signin",
   );
   // モバイルは個人設定と同じドリルダウン（レール → 本文、戻るでレールへ）。
   const [entered, setEntered] = useState(false);
@@ -113,7 +47,7 @@ export function TenantDialog() {
       mounted.current = true;
       return;
     }
-    if (ALL_SECTIONS.includes(tenantSection)) {
+    if (TENANT_SCOPE_SECTIONS.includes(tenantSection)) {
       setSection(tenantSection);
       setMember(null);
       setEntered(true);
@@ -157,7 +91,7 @@ export function TenantDialog() {
 
   const tenant = tenants?.find((t) => t.slug === slug) || null;
   const currentLabel = tr(
-    (GROUPS.flatMap((g) => g.items).find(([k]) => k === section)?.[1] ??
+    (groups.flatMap((g) => g.items).find(([k]) => k === section)?.[1] ??
       "tenant.title") as Parameters<typeof tr>[0],
   );
 
@@ -165,65 +99,18 @@ export function TenantDialog() {
     if (forbidden) return <p className="muted pad">{tr("tenant.forbidden")}</p>;
     if (tenants === null) return <p className="muted pad">{tr("common.loading")}</p>;
     if (!tenant) return <p className="muted pad">{tr("tenant.none")}</p>;
-    // ★ 規則は「テナント管理者には読み取り専用」（PUT が withSuperAdmin 固定）だが、
-    //   super_admin がこのモーダルから入ってきたときまで読み取り専用にすると、
-    //   「変更できるのはデプロイ管理者だけです」と書いてある画面を当のデプロイ管理者が
-    //   眺めることになる。出し分けはサーバの super_admin フラグに従う。
-    if (section === "rules") {
-      return isSuper ? (
-        <TenantLoginRules slug={tenant.slug} tenant={tenant} onChanged={load} />
-      ) : (
-        <TenantLoginRulesView slug={tenant.slug} tenant={tenant} />
-      );
-    }
-    if (section === "network") return <TenantNetworkView key={tenant.slug} slug={tenant.slug} />;
-    if (section === "members") {
-      if (member) {
-        return (
-          <>
-            <div className="admin-nav tenant-drill">
-              <button type="button" className="admin-back" onClick={() => setMember(null)}>
-                <Icon name="arrow-left" /> {tr("common.back")}
-              </button>
-              <nav className="admin-crumbs">
-                <button type="button" className="crumb" onClick={() => setMember(null)}>
-                  {tr("tenant.tab_members")}
-                </button>
-                <Icon name="chevron-right" className="crumb-sep" />
-                <span className="crumb here">{member.user_key}</span>
-              </nav>
-            </div>
-            <MemberView
-              slug={tenant.slug}
-              member={member}
-              isSuper={isSuper}
-              onChanged={load}
-              // 外した人の詳細を開いたままにしない — 一覧へ戻して読み直す。
-              onRemoved={() => {
-                setMember(null);
-                load();
-              }}
-            />
-          </>
-        );
-      }
-      return (
-        <>
-          <TenantSummary tenant={tenant} />
-          <MembersPanel slug={tenant.slug} isSuper={isSuper} onOpenMember={setMember} />
-        </>
-      );
-    }
-    // ★ 運用の 3 面には、この画面が見ているテナント 1 つだけを渡す。isSuper={false}
-    // は「あなたはデプロイ管理者ではない」ではなく「この画面はテナントを跨がない」
-    // の意味で、テナント選択欄を出さないための指定（誰の分が返るかはサーバが決める）。
-    // slug を key にしているのは、テナントを切り替えたらポーリングごと張り直すため。
-    if (section === "sessions") return <AllSessionsView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
-    if (section === "usage") return <UsageView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
-    if (section === "cost") return <CloudCostAdminView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
-    if (section === "audit") return <AuditView key={tenant.slug} tenants={[tenant]} isSuper={false} />;
-    if (section === "mcp") return <McpAdminView key={tenant.slug} tenants={[tenant]} />;
-    return <TenantSignInMethods slug={tenant.slug} isSuper={isSuper} />;
+    return (
+      <TenantScopeBody
+        slug={tenant.slug}
+        tenant={tenant}
+        section={section}
+        isSuper={isSuper}
+        member={member}
+        onOpenMember={setMember}
+        onCloseMember={() => setMember(null)}
+        onChanged={load}
+      />
+    );
   };
 
   return (
@@ -253,10 +140,10 @@ export function TenantDialog() {
                 </select>
               </div>
             )}
-            {GROUPS.map((g) => (
+            {groups.map((g) => (
               <div key={g.key} className="settings-rail-group">
                 <div className="settings-rail-head">{tr(g.label as Parameters<typeof tr>[0])}</div>
-                {g.items.filter(([key]) => key !== "cost" || costProfile?.available).map(([key, label]) => (
+                {g.items.map(([key, label]) => (
                   <button
                     key={key}
                     type="button"

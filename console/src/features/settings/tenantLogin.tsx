@@ -683,7 +683,17 @@ export function SignInMethodRegister() {
     }
   };
 
-  if (rows === null || rows.length === 0) return null;
+  if (rows === null) return <p className="muted pad">{tr("common.loading")}</p>;
+  // ★ 以前はテナント一覧の下に積んでいたので「0 件なら出さない」で良かったが、
+  // 今はレールの 1 項目＝それだけが本文なので、空でも空だと分かる必要がある。
+  if (rows.length === 0) {
+    return (
+      <section className="admin-panel">
+        <h4>{tr("admin.idp_register")}</h4>
+        <p className="muted">{tr("admin.idp_register_none")}</p>
+      </section>
+    );
+  }
   const pending = rows.filter((r) => r.status === "pending").length;
   return (
     <section className="admin-panel">

@@ -1111,7 +1111,6 @@ export const ja = {
   // --- 管理（features/settings/AdminTab.tsx。super_admin / tenant_admin）---
   "admin.title": "管理",
   "admin.forbidden": "権限がありません（super_admin のみ）。",
-  "admin.mode_manage": "テナント管理",
   "admin.mode_sessions": "セッション",
   "admin.mode_usage": "稼働時間",
   "admin.mode_audit": "監査",
@@ -1119,6 +1118,14 @@ export const ja = {
   "admin.mode_mcp": "MCP 配布",
   "admin.mode_tts": "読み上げ",
   "admin.mode_pool": "スロット",
+  // 左レールのグループ見出し（ルート）。テナント＝一覧と登録簿、デプロイ全体＝
+  // デプロイに 1 つしかない面、横断で見る＝全テナントを跨いで数える面。
+  "admin.group_tenants": "テナント",
+  "admin.group_deployment": "デプロイ全体",
+  "admin.group_across": "横断で見る",
+  "admin.all_tenants_back": "すべてのテナント",
+  // レールの項目名は短く（本文の見出しは admin.idp_register のまま）。
+  "admin.tab_register": "サインイン方法の登録簿",
   "admin.destroy_ws": "Workspace を破棄",
   "admin.destroy_title": "{key} の Workspace を破棄しますか？",
   "admin.destroy_confirm": "破棄する",
@@ -1557,6 +1564,7 @@ export const ja = {
     "ワークスペース・home・保存済みの認証情報は残ります。",
   "admin.idp_register": "テナント定義のサインイン方法",
   "admin.idp_pending_count": "承認待ち {n} 件",
+  "admin.idp_register_none": "テナントが定義したサインイン方法はまだありません。",
   "admin.idp_register_hint":
     "各テナントが登録した IdP の一覧です。承認は一度きりの点検ですが、IdP 側の設定（セルフサインアップの有効化など）は承認後にも変わり得ます。" +
     "承認済みのものもここに残るので、定期的に issuer と受け入れドメインを見直してください。承認・停止はこの一覧から行えます。",
@@ -1573,6 +1581,8 @@ export const ja = {
   // パネル本体の文言は admin.* のまま（キー改名は移設と別に行う）。---
   "tenant.title": "テナント設定",
   "tenant.back": "テナント設定一覧",
+  "tenant.group_tenant": "テナント",
+  "tenant.tab_limits": "上限・自動停止",
   "tenant.group_login": "ログイン",
   "tenant.tab_signin": "サインイン方式",
   "tenant.tab_rules": "ログイン規則",
