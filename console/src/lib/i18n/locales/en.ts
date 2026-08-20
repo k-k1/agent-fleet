@@ -1570,6 +1570,17 @@ export const en: Record<keyof typeof ja, string> = {
     "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Leave the method those people use on \"Accept\" and just clear \"Show button\", so it stays usable without appearing here. Accepting a method does not widen who can enter — the roster decides that.",
   "admin.login_rules_methods_moved":
     "★ Which sign-in methods this tenant accepts, and which of them get a button on the sign-in page, are set per row under \"Sign-in methods\".",
+  // ★ The suspend ordering guard (docs/61 §61.17.4). A confirmation, not a refusal —
+  // suspending is also how a compromised IdP is stopped, and stopping is always
+  // allowed to be faster than starting. The count comes from the CP's own message.
+  "admin.idp_suspend_title": "Suspend {name}",
+  "admin.idp_suspend_body":
+    "Have those people link another sign-in method first (Settings → Personal → Account). " +
+    "After you suspend it they cannot add one themselves — linking needs a session, and this is the method they sign in with.",
+  "err.tenant_idp_link_claim_required":
+    "This deployment already has a sign-in method for the same issuer. That issuer gives each app registration a different subject for the same person, so without \"how the same account is recognised\", everybody already using this deployment would be refused at login as a duplicate address.",
+  "admin.idp_suspend_members":
+    "{n} active member(s) have never used any other sign-in method. Suspending this one locks them out.",
   "admin.idp_delete_title": "Delete {name}",
   "admin.idp_delete_body":
     "This removes the sign-in method. People who used it can no longer sign in, but their workspaces, homes and stored credentials are kept.",

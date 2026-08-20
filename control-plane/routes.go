@@ -163,7 +163,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// Tenant-defined sign-in methods (docs/61 §61.11). The rows are the tenant's, so
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
 	// which is the one super_admin step (決定 30). The queue is deployment-wide.
-	idp := newTenantIdPAPI(cfg.mgr)
+	idp := newTenantIdPAPI(cfg.mgr, cfg.providers)
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/idp", idp.list)
 	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp", idp.upsert)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/idp/{id}", idp.upsert)

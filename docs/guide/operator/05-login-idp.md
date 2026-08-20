@@ -373,7 +373,7 @@ get wrong: it is not their console, it is yours.
 | **How the email is trusted** | *The issuer is pinned to our own tenant* (Entra) or *The IdP asserts email_verified* |
 | **Email domains to admit** | **required.** A tenant-defined method does not fall back to the deployment-wide allowlist, so an empty list would admit nobody. It also bounds which addresses this issuer may assert |
 | **Allowed tenant ids** | Entra `tid`s; required when the issuer is a multi-tenant endpoint |
-| **How the same account is recognised** | `oid`, when the same issuer already serves this deployment through a different app registration (§4.3). This is the only value a tenant may name |
+| **How the same account is recognised** | `oid`, when the same issuer already serves this deployment through a different app registration (§4.3). This is the only value a tenant may name. ★ In exactly that situation it is **required to save**: without it every existing user of this deployment would be refused at login with "this email address is already used by another sign-in method", so the CP refuses the save instead |
 | **Button label** | optional; the generated default already names the company, so the row does not produce a button reading the same as yours |
 
 > **Why a tenant may only name `oid` here, while `AF_OIDC_<ID>_LINK_CLAIM` accepts any claim.**

@@ -203,7 +203,7 @@ func TestTenantAdminCannotApproveItsOwnIdP(t *testing.T) {
 	if _, err := st.UpsertIdentity(ctx, "boss@acme.co.jp", "boss-acme-co-jp", "super_admin"); err != nil {
 		t.Fatalf("super admin: %v", err)
 	}
-	api := newTenantIdPAPI(mgr)
+	api := newTenantIdPAPI(mgr, nil)
 
 	call := func(method, path, email, body string, vals map[string]string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -298,7 +298,7 @@ func TestTenantIdPSaveTimeValidation(t *testing.T) {
 		t.Fatalf("super admin: %v", err)
 	}
 	_ = tn
-	api := newTenantIdPAPI(mgr)
+	api := newTenantIdPAPI(mgr, nil)
 	post := func(body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, "/api/admin/tenants/sub/idp", strings.NewReader(body))
 		r.SetPathValue("slug", "sub")

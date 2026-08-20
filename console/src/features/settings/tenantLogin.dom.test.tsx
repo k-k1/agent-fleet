@@ -287,3 +287,61 @@ describe("サインイン方法の統合リスト", () => {
     expect(flags()[0].textContent).toContain("受け入れる");
   });
 });
+
+// 停止の順序ガード（docs/61 §61.17.4 · P7-3）。
+//
+// 古い方式を止める前に、その方式しか使ったことのない人が居ないか CP に聞く。止めたあとで
+// 本人が別の方式を足すことはできない（紐づけにはサインインが要り、そのサインインに使うのが
+// 今止めようとしている方式）ので、あとから取り返せない種類の操作。
+// ★ 拒否ではなく確認。停止は「漏れた IdP を止める」手段でもあり、常に始めるより速くてよい。
+describe("サインイン方法の停止", () => {
+  const ROW_ACTIVE = { ...ROW, id: "idp1", status: "active", usable: true, provider_id: "t:acme:entra" };
+  const routes = () =>
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path === "api/admin/providers" ? { providers: [] } : { providers: [ROW_ACTIVE] }),
+    );
+  const clickSuspend = async () => {
+    const b = findButton("停止する");
+    await act(async () => {
+      b!.click();
+    });
+  };
+
+  it("その方式しか持たない人が居ると、人数を出して聞き返す", async () => {
+    routes();
+    apiJSON.mockResolvedValue({ error: { code: "tenant_idp_last_method_for_members" }, members: 3 });
+    await mount(<TenantSignInMethods slug="acme" isSuper tenant={null} onChanged={() => {}} />);
+    await clickSuspend();
+    // 1 回目は confirm 無しで飛ぶ。
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/idp/idp1/status", "POST", { status: "suspended" });
+    // ★ 人数はサーバ由来。CP の英文ではなく、こちらの文言に差して出す。
+    expect(document.body.textContent).toContain("3 人");
+  });
+
+  it("確認すると confirm=1 で通す（止めるのは常に始めるより速くてよい）", async () => {
+    routes();
+    apiJSON.mockResolvedValue({ error: { code: "tenant_idp_last_method_for_members" }, members: 1 });
+    await mount(<TenantSignInMethods slug="acme" isSuper tenant={null} onChanged={() => {}} />);
+    await clickSuspend();
+    apiJSON.mockResolvedValue({});
+    // ★ ダイアログの中のボタンを取る。行にも同じ文言のボタンがあるので、素の
+    // querySelectorAll("button") では行の方を掴んでしまう（confirm 無しで再送される）。
+    const ok = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".confirm-actions button"),
+    ).find((b) => (b.textContent || "").includes("停止する"));
+    await act(async () => {
+      ok!.click();
+    });
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/idp/idp1/status?confirm=1", "POST", {
+      status: "suspended",
+    });
+  });
+
+  it("誰も困らないなら聞き返さない", async () => {
+    routes();
+    apiJSON.mockResolvedValue({});
+    await mount(<TenantSignInMethods slug="acme" isSuper tenant={null} onChanged={() => {}} />);
+    await clickSuspend();
+    expect(document.body.textContent).not.toContain("停止すると");
+  });
+});

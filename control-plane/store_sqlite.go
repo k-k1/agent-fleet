@@ -2803,6 +2803,45 @@ func (s *sqlStore) DeleteTenantIdP(ctx context.Context, tenantID, id string) err
 	return err
 }
 
+// TenantIdPIssuerInUse — see the interface. Rows of every tenant, and every status:
+// a PENDING second registration is exactly the one worth catching, since the whole
+// point is to say something before it is approved and people start signing in.
+func (s *sqlStore) TenantIdPIssuerInUse(ctx context.Context, issuer, excludeID string) (bool, error) {
+	if issuer == "" {
+		return false, nil
+	}
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM tenant_idp WHERE issuer=? AND id<>? LIMIT 1`, issuer, excludeID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// CountMembersOnlyOnProvider — see the interface.
+//
+// ★ "Only" is over identity_provider, not over this tenant: the row records a PROVEN
+// login, so a person with a second one can get back in through it even if that other
+// method belongs to another tenant. Somebody with no identity_provider row at all is
+// not counted either — they have never signed in (an invite placeholder), so this
+// provider is not what they would lose.
+func (s *sqlStore) CountMembersOnlyOnProvider(ctx context.Context, tenantID, providerID string) (int, error) {
+	if tenantID == "" || providerID == "" {
+		return 0, nil
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM membership m
+		 WHERE m.tenant_id=? AND m.status='active'
+		   AND EXISTS (SELECT 1 FROM identity_provider ip
+		               WHERE ip.identity_id=m.identity_id AND ip.provider=?)
+		   AND NOT EXISTS (SELECT 1 FROM identity_provider ip2
+		                   WHERE ip2.identity_id=m.identity_id AND ip2.provider<>?)`,
+		tenantID, providerID, providerID).Scan(&n)
+	return n, err
+}
+
 // --- cloud cost (docs/67, ADR 0048) --------------------------------------------
 
 // PutCloudCost replaces the given days wholesale. Cost Explorer restates recent days
