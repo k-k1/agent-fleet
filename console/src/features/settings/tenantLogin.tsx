@@ -465,14 +465,30 @@ export function TenantSignInMethods({
     }
   };
 
-  const setStatus = async (row: TenantIdP, status: string) => {
+  // ★ 停止だけは 1 度だけ聞き返されることがある（docs/61 §61.17.4 の順序）。CP は
+  // 「その方式しか使ったことのない現役メンバーが N 人います」を 409 で返す — 停止すると
+  // その人たちは締め出され、しかも**自力で別の方式を足せない**（紐づけにはサインインが
+  // 要り、そのサインインに使うのが今止めようとしている方式だから）。
+  // ★ 拒否ではなく確認にしてあるのは、停止が「漏れた IdP を止める」手段でもあるため。
+  // 止めるのは常に、始めるより速くあってよい。
+  const [confirmSuspend, setConfirmSuspend] = useState<{ row: TenantIdP; members: number } | null>(null);
+
+  const setStatus = async (row: TenantIdP, status: string, confirm?: boolean) => {
     setBusy(true);
     try {
-      const res = await apiJSON(`${base}/${encodeURIComponent(row.id)}/status`, "POST", { status });
+      const q = confirm ? "?confirm=1" : "";
+      const res = await apiJSON(`${base}/${encodeURIComponent(row.id)}/status${q}`, "POST", { status });
+      if (res?.error?.code === "tenant_idp_last_method_for_members") {
+        // ★ 人数はサーバしか知らない。CP の英文をそのまま出すのではなく、数だけ受け取って
+        // こちら側の文言に差す（表示言語は Console のもので、CP のものではない）。
+        setConfirmSuspend({ row, members: Number(res.members) || 0 });
+        return;
+      }
       if (res?.error) {
         toast(errText(res.error));
         return;
       }
+      setConfirmSuspend(null);
       load();
     } finally {
       setBusy(false);
@@ -717,6 +733,19 @@ export function TenantSignInMethods({
           onConfirm={() => remove(confirmDel)}
         >
           <p>{tr("admin.idp_delete_body")}</p>
+        </ConfirmDialog>
+      )}
+      {confirmSuspend && (
+        <ConfirmDialog
+          title={tr("admin.idp_suspend_title", { name: confirmSuspend.row.name })}
+          confirmLabel={tr("admin.idp_suspend")}
+          danger
+          busy={busy}
+          onCancel={() => setConfirmSuspend(null)}
+          onConfirm={() => setStatus(confirmSuspend.row, "suspended", true)}
+        >
+          <p>{tr("admin.idp_suspend_members", { n: String(confirmSuspend.members) })}</p>
+          <p>{tr("admin.idp_suspend_body")}</p>
         </ConfirmDialog>
       )}
     </section>
