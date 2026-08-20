@@ -1551,8 +1551,10 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.idp_repend_hint":
     "Changing the issuer, the client ID, the trust rule, the kind or how the same account is recognised — or adding a domain, tenant id or GitHub organization — sends the method back for approval, " +
     "because the approval was given to that identity source for that scope.",
-  "admin.hidden_providers_url_note":
-    "★ Hiding a button does not remove it from the plain sign-in page (the one without the URL above): that page belongs to no tenant, and hiding methods there would lock out everybody who is not in one. For the setting to have any effect, hand this tenant's people the sign-in URL above.",
+  // ★ P7-1 (docs/61 §61.17.6) removed the "has no effect on the plain /login"
+  // workaround. What is left is the one misreading worth heading off: hidden ≠ gone.
+  "admin.hidden_still_accepted_note":
+    "★ A method without a button is still accepted. People signing in with it — someone who also belongs to another tenant, typically — keep getting in; it simply stops appearing on this tenant's sign-in page.",
   "admin.allowed_providers_shared_note":
     "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Leave the method those people use on \"Accept\" and just clear \"Show button\", so it stays usable without appearing here. Accepting a method does not widen who can enter — the roster decides that.",
   "admin.login_rules_methods_moved":

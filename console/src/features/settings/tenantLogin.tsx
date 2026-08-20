@@ -702,11 +702,11 @@ export function TenantSignInMethods({
           {tr("admin.login_url")} <code>{loginURL}</code>
         </p>
       )}
-      {/* ★ 「出さない」にした人にだけ出す。素の /login はテナントを知らないので、
-          デプロイ共通の方式はそこに出続ける（docs/61 §61.15.13）。つまり「出さない」が
-          効くのは上の URL を配ったときだけで、それが読めるのはこの画面しかない。
-          — P7-1（§61.17.6）でこの注記は不要になる。 */}
-      {anyHidden && <p className="admin-hint">{tr("admin.hidden_providers_url_note")}</p>}
+      {/* ★ 「出さない」にした人にだけ出す。以前はここに「素の /login には効かないので
+          上の URL を配れ」という運用回避を置いていたが、P7-1（docs/61 §61.17.6）で素の
+          /login が既定テナントのページになり、効くようになった。残っているのは
+          **受け入れは続く**という一点だけ — 「隠した＝もう使えない」と読む人が居るため。 */}
+      {anyHidden && <p className="admin-hint">{tr("admin.hidden_still_accepted_note")}</p>}
       {confirmDel && (
         <ConfirmDialog
           title={tr("admin.idp_delete_title", { name: confirmDel.name })}
