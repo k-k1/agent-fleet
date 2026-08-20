@@ -8,7 +8,6 @@
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { reconnectSession } from "../../terminal/service.ts";
-import { api, apiJSON } from "../../core/api/client.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { activeWorkingSet } from "../../lib/workingSetsStore.ts";
@@ -59,29 +58,8 @@ export function rotateRunningSession(delta: number): RotateTarget | null {
   return target;
 }
 
-// sendPromptWhenAlive delivers a launch prompt to a freshly created NON-chat
-// session (codex/opencode terminals) once it's actually up. Chat-capable kinds
-// (claude) use setLaunchSeed + the mirror's auto-send instead (the old flow).
-export function sendPromptWhenAlive(name: string, prompt: string): void {
-  if (!name || !prompt) return;
-  let tries = 0;
-  const poll = async () => {
-    tries++;
-    if (tries > 30) return; // ~30s — give up silently (the user can paste it)
-    let alive = false;
-    try {
-      const d = await api("api/sessions");
-      alive = !!(d.sessions || []).find((s: { name: string; alive?: boolean }) => s.name === name)?.alive;
-    } catch {}
-    if (!alive) {
-      setTimeout(poll, 1000);
-      return;
-    }
-    // Alive = tmux is up; wait a beat for the agent CLI to finish drawing its
-    // composer before pasting, so the text isn't swallowed by the boot screen.
-    setTimeout(() => {
-      void apiJSON(`api/sessions/${encodeURIComponent(name)}/input`, "POST", { prompt });
-    }, 2500);
-  };
-  setTimeout(poll, 1200);
-}
+// 起動時の最初の指示をここから配達していた sendPromptWhenAlive は撤去した。ブラウザ側で
+// alive を待って打つやり方は「Console が開いている間しか走らない」うえ、alive（tmux が
+// 在る）から一定時間で打つだけなので起動画面に食われることがある。今は作成要求の
+// initial_prompt（添付ありのみ /input {when_ready}）で Agent が配達する — 待ち・二度目の
+// Enter・配達確認つきで、Console を閉じていても走る（useStartWork.ts）。

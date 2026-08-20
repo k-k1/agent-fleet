@@ -16,7 +16,7 @@ import { setLaunchSeed } from "../../lib/launchSeed.ts";
 import { useReposStore } from "./store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
-import { openSessionChat, openSessionTerminal, sendPromptWhenAlive } from "../sessions/open.ts";
+import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 
 export interface StartTarget {
@@ -33,6 +33,10 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
 
   return async ({ dir, repo }, { kind, driver, model, effort, startMode, prompt, title, images, worktree, subdir, base, newBranch, useExisting }) => {
     const hasModel = agentOf(kind).caps.model;
+    // 添付があるときは、保存パスを本文へ織り込むために「セッションができてから」でないと
+    // 最初の指示の本文が確定しない（アップロード先がそのセッション）。それ以外は作成要求に
+    // 載せて Agent に配達させる。
+    const withImages = !!(images?.length && agentOf(kind).caps.imagePaste);
     const body: Record<string, unknown> = { dir, kind };
     if (driver) body.driver = driver;
     if (hasModel && model) body.model = model;
@@ -43,6 +47,12 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     // copy the launch lands in — including a worktree it creates in this same call —
     // and rejects a path that isn't there, so no client-side existence check.
     if (subdir) body.subdir = subdir;
+    // 最初の指示は Agent に配達させる（deliverInitialPrompt / managed は driver.Send）。
+    // CLI が composer を描くまで待ってから打ち、貼り付け窓が閉じたあとに Enter を押し直し、
+    // 配達を検証する — そして何より、**Console を見ていなくても走る**。以前はチャットの
+    // ミラーがマウントされている間しか送られず、起動直後に別タブへ移ると「そのタブを
+    // 開き直した瞬間に送信される」ように見えていた（裏のタブのペインは描画されない）。
+    if (prompt && !withImages) body.initial_prompt = prompt;
     if (worktree) {
       body.worktree = true;
       body.branch = base;
@@ -86,9 +96,9 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     // Now that the session exists, upload any pasted images to it and fold their
     // saved paths into the first prompt (claude opens them with its Read tool).
     let seed = prompt;
-    if (images?.length && agentOf(kind).caps.imagePaste) {
+    if (withImages) {
       const paths: string[] = [];
-      for (const f of images) {
+      for (const f of images ?? []) {
         try {
           const up = await pasteImage(res.name, f);
           if (up.status < 300 && up.path) paths.push(up.path);
@@ -98,12 +108,19 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
         }
       }
       seed = buildImagePrompt(prompt, paths, kind);
+      // 作成要求には載せられなかったぶんを、同じ配達（起動待ち＋二度目 Enter＋配達確認）へ
+      // 渡す。拒否は握りつぶさない — 黙って消えると「送ったのに始まらない」になる。
+      const del = await apiJSON(`api/sessions/${encodeURIComponent(res.name)}/input`, "POST", {
+        prompt: seed,
+        when_ready: true,
+      }).catch(() => ({ error: { message: t("err.network") } }));
+      if (del?.error) toast(t("rp.first_prompt_failed", { err: errText(del.error) }));
     }
     if (seed) {
-      // Chat-capable: stash as a launch seed — MirrorView auto-sends it once the
-      // session is alive. Other kinds: paste once the PTY is up.
+      // 送信そのものは Agent 側で走っている。ミラーには「送った文面」を楽観エコーとして
+      // 見せるだけ（launchSeed は表示用の受け渡し）— 起動から最初のターンが転写に載るまでの
+      // 数秒、チャットが空のままにならないように。
       if (chat) setLaunchSeed(res.name, seed);
-      else sendPromptWhenAlive(res.name, seed);
       if (prompt && repo) pushPromptHistory(repo, prompt);
     }
     if (worktree) {

@@ -7,15 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// The Console's launch prompt goes through the HTTP input handler rather than
-// deliverInitialPrompt. Keep that path on the same bracketed-paste primitive so a
-// regression cannot fix Fleet Operator launches while leaving 「作業を始める」 broken.
+// Every sender that types a prompt into a codex pane — send_to_session, the scheduler's
+// reuse send, /turn — goes through this handler. Keep it on the same bracketed-paste
+// primitive deliverInitialPrompt uses, so a regression cannot fix launches while leaving
+// the mid-session sends broken (codex eats an Enter bundled into a fast literal stream).
 func TestHandleSessionInputUsesBracketedPasteForCodex(t *testing.T) {
 	bin := t.TempDir()
 	logPath := filepath.Join(bin, "tmux.log")
@@ -358,5 +360,69 @@ func TestHandleSessionInputManagedOpencodeNeedsRuntime(t *testing.T) {
 	rec := postInput(t, name, `{"prompt":"x"}`)
 	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "runtime_failed") {
 		t.Fatalf("status = %d, body = %s, want 502 runtime_failed (not 409 not_running)", rec.Code, rec.Body.String())
+	}
+}
+
+// 作業を始める（起動モーダル）の最初の指示は when_ready で渡される: ここから同期的に
+// 打つのではなく、CLI が composer を描くのを待ってから打つ配達ループ
+// （deliverInitialPrompt）へ委ねる。Console のミラーが載っていなくても走るのが要点で、
+// tmux がまだ無い瞬間に呼ばれても not_running で落としてはいけない。
+func TestHandleSessionInputWhenReadyDefersDelivery(t *testing.T) {
+	bin := t.TempDir()
+	logPath := filepath.Join(bin, "tmux.log")
+	stdinPath := filepath.Join(bin, "tmux.stdin")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  has-session) exit 0 ;;
+  list-panes) printf '1 %%9\n' ;;
+  capture-pane) printf 'ready\nmedium · ~/repos\n' ;;
+  load-buffer) /bin/cat > "$TMUX_TEST_STDIN" ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("TMUX_TEST_LOG", logPath)
+	t.Setenv("TMUX_TEST_STDIN", stdinPath)
+	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+
+	// 知らないセッション名は待たせず落とす（配達ループは黙って 30 秒待つだけなので）。
+	if rec := postInput(t, "no_such_session", `{"prompt":"x","when_ready":true}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown session: status = %d, body = %s, want 404", rec.Code, rec.Body.String())
+	}
+
+	// 配達の意味論を持つ他の指定とは併用できない（それぞれ自分の配達規約を持つ）。
+	const name = "launch_when_ready"
+	// codex を使うのは配達確認（claude 専用の転写スナップショット）を回さないため。
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex})
+	if rec := postInput(t, name, `{"prompt":"x","when_ready":true,"report_to":"conv1"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("report_to: status = %d, body = %s, want 400", rec.Code, rec.Body.String())
+	}
+	if rec := postInput(t, name, `{"keys":["Enter"],"when_ready":true}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("keys: status = %d, body = %s, want 400", rec.Code, rec.Body.String())
+	}
+
+	rec := postInput(t, name, `{"prompt":"最初の指示","when_ready":true}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s, want 202", rec.Code, rec.Body.String())
+	}
+	// 202 は「受け付けた」であって「打った」ではない — 実際の打鍵は配達ループの中で起きる。
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		b, _ := os.ReadFile(logPath)
+		if strings.Contains(string(b), "send-keys -t %9 Enter") {
+			if got, _ := os.ReadFile(stdinPath); string(got) != "最初の指示" {
+				t.Fatalf("pasted text = %q, want the prompt", got)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("prompt was never delivered; tmux commands = %s", b)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
