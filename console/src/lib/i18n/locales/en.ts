@@ -1479,6 +1479,10 @@ export const en: Record<keyof typeof ja, string> = {
   // display name leads; the id you type is shown next to it. ---
   "admin.providers_title": "Sign-in methods this deployment has",
   "admin.providers_none": "This deployment has no sign-in method configured (the login page shows no buttons).",
+  // ★ "none" and "could not read" must never share a string. The 403 used to collapse
+  // into an empty array, which told an unauthorized reader the deployment was
+  // unconfigured (docs/61 §61.17.9 ②).
+  "admin.providers_unreadable": "Could not load the list of sign-in methods — you may not have permission, or it is temporarily unavailable.",
   "admin.providers_hint":
     "Write the ids from this list, comma-separated, in \"Sign-in methods\" above. Empty means every one of them. " +
     "This tenant's own sign-in methods (listed below) go in the same field as t:tenant:method once they are approved.",

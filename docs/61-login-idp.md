@@ -1862,7 +1862,7 @@ DELETE /api/me/login-methods?provider=…&subject=…
 
 | 段階 | 内容 | スキーマ |
 |---|---|---|
-| **P7-0a** | ★ 先に `GET /api/admin/providers` を **tenant_admin にも読ませる**（ただし `issuer` は super_admin 限定・§61.17.9）＋ Console の 403 潰しを直す。P7-0 の前提で、単独でも「Google が画面に出ない」が半分解ける | 無し |
+| **P7-0a**（実装済み）| ★ 先に `GET /api/admin/providers` を **tenant_admin にも読ませる**（ただし `issuer` は super_admin 限定・§61.17.9）＋ Console の 403 潰しを直す。P7-0 の前提で、単独でも「Google が画面に出ない」が半分解ける | 無し |
 | **P7-0** | テナントの「サインイン方式」を統合リストにする（自前の行＋既定テナントの行・2 トグル・従属関係・「全部 ON なら空で保存」）。管理モーダルの登録簿にも既定テナントの行を出す | 無し |
 | **P7-1** | 素の `/login` に**既定テナントの `hidden_providers` だけ**を適用（決定 42・§61.17.6）。§61.15.13 の運用回避を 3 面 6 ファイルから撤去 | 無し |
 | **P7-2** | 新規インストールの既定を `AF_PROVISION=invite` に（**インストーラが生成する env の既定**として・§61.17.9）。§61.10.2 を「super_admin だけが入れる状態から始める」に一本化 | 無し |
@@ -1906,7 +1906,14 @@ DELETE /api/me/login-methods?provider=…&subject=…
 
 ### 61.17.9 周辺（レビューで足した観点）
 
-**① `GET /api/admin/providers` の閲覧を広げるときは `issuer` を落とす。**
+**① `GET /api/admin/providers` の閲覧を広げるときは `issuer` を落とす。**（★ P7-0a で実装済み。
+ゲートは新設の `anyTenantAdminFor`（`httpapi.go`）＝ super_admin または**どこか 1 つでも
+active な tenant_admin** を持つ人。素のメンバーは 403 のまま。`issuer` は `ident.Role` を見て
+**キーごと落とす**（空文字にすると空セルが設定漏れに見える）。`routes.go` の登録を
+`withAnyTenantAdmin` に差し替え、`tenant_login_test.go` は「メンバーは 403 / tenant_admin は
+200 だが issuer 無し / super_admin は issuer 有り」を固定した。★ この gate は**書き込みには
+使えない** — slug を受け取らないのでどのテナントの管理者かを検査しておらず、全テナントで
+同じ値を返す読み取りにしか使えない。）
 P7-0 では他テナントの管理者が「デプロイの方式」を読む必要があり、今は `withSuperAdmin` 固定
 （`routes.go:177`）で、`tenant_login_test.go:657-660` が「tenant_admin には 403」を明文で
 固定している。ADR は「機密性の根拠は元々薄い（id とボタン文言は未認証の `/login` に出ている）」
@@ -1916,13 +1923,16 @@ P7-0 では他テナントの管理者が「デプロイの方式」を読む必
 返すのは `id` と 2 言語のラベルだけ**にし、`issuer` は super_admin の応答にのみ載せる。
 テストもその形（403 → 200 だが列が減る）へ書き換える。
 
-**② Console の 403 潰しを先に直す。** `DeploymentSignInMethods` は `res?.providers || []` で
-403 を空配列に潰し（`console/src/features/settings/tenantLogin.tsx:92`）、
-「このデプロイにはサインイン方法が設定されていません」と**嘘を表示する**（`:105-106`）。
-`api()` は 403 を `{error:{code,message}}` として返す（`core/api/client.ts:210` / `:217`）ので、
-分岐は書ける。今日この嘘が見えないのは、この部品が super_admin の編集フォームの中
-（`tenantLogin.tsx:203`）にしか置かれていないからで、**読める相手を広げた瞬間に表に出る**。
-「読めなかった」「本当に 0 件」「読み込み中」を 3 通に分けること。
+**② Console の 403 潰しを先に直す。**（★ P7-0a で実装済み。）`DeploymentSignInMethods` は
+`res?.providers || []` で 403 を空配列に潰し、「このデプロイにはサインイン方法が設定されて
+いません」と**嘘を表示していた**。`api()` は 403 を `{error:{code,message}}` として返す
+（`core/api/client.ts:210` / `:217`）ので分岐は書ける。この嘘が今まで見えなかったのは、
+この部品が super_admin の編集フォームの中にしか置かれていなかったからで、
+**読める相手を広げた瞬間に表に出る**性質だった。
+→ 状態を `null`（読み込み中）／`"error"`（読めなかった）／配列（読めた・空配列は本当に 0 件）
+の 3 通にし、判定は **`Array.isArray(res?.providers)`**（`res.error` の有無ではなく、
+欲しい形が来たかどうかで見る）＋ `.catch`（通信断は reject で来る）。
+i18n は `admin.providers_unreadable` を ja/en に新設。
 
 **③ 監査ログは足りている — 意味づけだけ変わる。** 2 トグルは既存の
 `PUT /api/admin/tenants/{slug}/login` を叩くので、`tenant.login_rules` の監査が

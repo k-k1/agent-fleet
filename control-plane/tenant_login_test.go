@@ -616,8 +616,14 @@ func TestSetTenantLoginRejectsDuplicateAutoJoinDomains(t *testing.T) {
 // GET /api/admin/providers answers the question the free-text allowed_providers
 // field asks and never answered: which ids may be written there. The test pins the
 // two properties the endpoint exists for — it names every enabled provider with a
-// label, and it leaks no credential — plus the gate, which is the same one that
-// guards the rule this list feeds (決定 19).
+// label, and it leaks no credential — plus the gate.
+//
+// ★ P7 (docs/61 §61.17.9 ①) widened the gate: the deployment's methods ARE the
+// default tenant's methods, so every tenant's sign-in method panel lists them and
+// its administrator has to be able to read them. What did NOT widen is the ISSUER,
+// which names the operator's own directory and is absent from /login — so the
+// column is dropped for a tenant_admin. Editing the rule this list feeds is still
+// super_admin-only (決定 19), and that gate lives on the PUT, not here.
 func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -628,6 +634,12 @@ func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
 	tn, _ := st.CreateTenant(ctx, "sub", "子会社")
 	lead, _ := st.UpsertIdentity(ctx, "lead@sub.co.jp", "lead-sub-co-jp", "")
 	if _, err := st.EnsureMembership(ctx, lead.ID, tn.ID, "tenant_admin"); err != nil {
+		t.Fatalf("membership: %v", err)
+	}
+	// A plain member of the same tenant: the widened gate must not become "anyone
+	// who is signed in".
+	staff, _ := st.UpsertIdentity(ctx, "staff@sub.co.jp", "staff-sub-co-jp", "")
+	if _, err := st.EnsureMembership(ctx, staff.ID, tn.ID, "member"); err != nil {
 		t.Fatalf("membership: %v", err)
 	}
 
@@ -650,31 +662,61 @@ func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/api/admin/providers", nil)
 		r.Header.Set("X-Forwarded-Email", email)
 		w := httptest.NewRecorder()
-		api.withSuperAdmin(api.list)(w, r)
+		api.withAnyTenantAdmin(api.list)(w, r)
 		return w
 	}
+	type provRow struct {
+		ID      string `json:"id"`
+		LabelJA string `json:"label_ja"`
+		LabelEN string `json:"label_en"`
+		Issuer  string `json:"issuer"`
+	}
+	decode := func(w *httptest.ResponseRecorder) []provRow {
+		t.Helper()
+		var got struct {
+			Providers []provRow `json:"providers"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v (%s)", err, w.Body.String())
+		}
+		return got.Providers
+	}
 
-	// ★ A tenant_admin cannot edit allowed_providers (決定 19), so this list is
-	// none of their business — and the UI hiding it is not what makes that true.
-	if w := get("lead@sub.co.jp"); w.Code != http.StatusForbidden {
-		t.Fatalf("tenant_admin: %d %s", w.Code, w.Body.String())
+	// ★ A plain member has no use for this list, so the widened gate still refuses
+	// them. "Not secret" is not a reason to open a gate.
+	if w := get("staff@sub.co.jp"); w.Code != http.StatusForbidden {
+		t.Fatalf("member: %d %s", w.Code, w.Body.String())
+	}
+
+	// ★ A tenant_admin READS it (their own panel lists these methods since P7) —
+	// but without the issuer, which names the operator's directory.
+	wLead := get("lead@sub.co.jp")
+	if wLead.Code != http.StatusOK {
+		t.Fatalf("tenant_admin: %d %s", wLead.Code, wLead.Body.String())
+	}
+	lp := decode(wLead)
+	if len(lp) != 3 {
+		t.Fatalf("tenant_admin providers = %+v, want all three", lp)
+	}
+	for _, p := range lp {
+		if p.Issuer != "" {
+			t.Fatalf("tenant_admin sees issuer %q on %s; it names the operator's directory", p.Issuer, p.ID)
+		}
+		if p.LabelJA == "" || p.LabelEN == "" {
+			t.Fatalf("tenant_admin row = %+v, want id and both labels", p)
+		}
+	}
+	// Omitted, not blanked: an empty issuer would render as an empty cell and read
+	// like a misconfiguration, so the key must be absent from the JSON entirely.
+	if strings.Contains(wLead.Body.String(), "issuer") {
+		t.Fatalf("tenant_admin response carries an issuer key:\n%s", wLead.Body.String())
 	}
 
 	w := get("boss@acme.co.jp")
 	if w.Code != http.StatusOK {
 		t.Fatalf("super_admin: %d %s", w.Code, w.Body.String())
 	}
-	var got struct {
-		Providers []struct {
-			ID      string `json:"id"`
-			LabelJA string `json:"label_ja"`
-			LabelEN string `json:"label_en"`
-			Issuer  string `json:"issuer"`
-		} `json:"providers"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v (%s)", err, w.Body.String())
-	}
+	got := struct{ Providers []provRow }{Providers: decode(w)}
 	if len(got.Providers) != 3 {
 		t.Fatalf("providers = %+v, want all three, in the deployment's order", got.Providers)
 	}
