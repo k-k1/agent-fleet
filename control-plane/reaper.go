@@ -368,11 +368,12 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 		if s.Alive && (s.State == "working" || s.State == "question") {
 			busy = true
 		}
-		// "limited"（利用上限のリセット待ち・docs/47 §4-9）は tier1 では idle と同じに扱う。
-		// ターンは終わっていて、待ち合わせは CP の定時実行が持っている（wake_policy=wake で
-		// 起こしてから届く）ので、ここで畳んでも失われる作業は無い — むしろ数時間の待ちで
-		// コンテナを起こし続けるのが上限まわりの元の実害そのものだった。
-		if !sessOn || !s.Alive || s.Kind != "claude" || (s.State != "idle" && s.State != "limited") {
+		// "limited"（利用上限のリセット待ち・docs/47 §4-9）と "spend_limit"（支出・残高の
+		// 上限・§4-10）は tier1 では idle と同じに扱う。ターンは終わっていて、前者の待ち
+		// 合わせは CP の定時実行が持っている（wake_policy=wake で起こしてから届く）ので、
+		// ここで畳んでも失われる作業は無い — むしろ数時間から数日の待ちでコンテナを起こし
+		// 続けるのが上限まわりの元の実害そのものだった。後者は増枠されるまで動きようがない。
+		if !sessOn || !s.Alive || s.Kind != "claude" || !reapableIdle(s.State) {
 			continue
 		}
 		key := ws.ID + "|" + s.Name
@@ -635,4 +636,13 @@ func (rp *reaper) homeIdleFor(wsID, dbLastActive string, hibTO time.Duration) bo
 		last = lastSeen
 	}
 	return time.Since(last) >= hibTO
+}
+
+// reapableIdle reports whether a session's live state means "the turn is over and
+// nothing is going to move on its own" — the tier1 idle sweep's population. idle plus
+// the two usage-limit waits (docs/47 §4-9 / §4-10), which are idle in every way that
+// matters here: the pane is at its prompt, the container is only being held open by a
+// clock (or by a billing decision) that does not need this workspace running.
+func reapableIdle(state string) bool {
+	return state == "idle" || state == "limited" || state == "spend_limit"
 }
