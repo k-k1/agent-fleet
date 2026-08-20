@@ -714,11 +714,19 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
   Okta のホスト名は `/login` には出ないので、「元々薄い」の理由が当たらない列がある。
   → **tenant_admin に返すのは id と 2 言語ラベルだけ**にし、`issuer` は super_admin の
   応答にのみ載せる。テストも「403 → 200 だが列が減る」形に書き換える。
+  ✅ **P7-0a で実装した。** ゲートは新設の `anyTenantAdminFor`（super_admin ∪ どこか 1 つでも
+  active な tenant_admin。素のメンバーは 403）。★ この gate は slug を取らないので
+  **どのテナントの管理者かを検査していない** — 全テナントで同じ値を返す READ 以外に
+  使ってはならず、書き込みは従来どおり `tenantAdminFor` / `withSuperAdmin`。
+  `issuer` は**キーごと落とす**（空文字は空セルとして描かれ、設定漏れに見える）。
 - ★ P7 の Console 側は、403 を `{error}` で返す `api()` の性質と噛み合わない箇所がある。
   いまの `DeploymentSignInMethods` は `res?.providers || []` で**空配列に潰す**ので、権限の無い
   相手に「このデプロイにはサインイン方法が設定されていません」と**嘘を表示する**。
   読める相手を広げる前に、この分岐を**「読めなかった／本当に 0 件／読み込み中」の 3 通**に
   分けること（i18n キーも 1 つでは足りない）。
+  ✅ **P7-0a で実装した。** 判定は `Array.isArray(res?.providers)` — `res.error` の有無ではなく
+  **欲しい形が来たかどうか**で見る（将来 error の形が変わっても、0 件と混ざらない）。
+  通信断は reject で来るので `.catch` も同じ状態へ倒す。`admin.providers_unreadable` を新設。
 - ★ P7 の監査は**足すものが無い**。2 トグルは既存の `PUT /api/admin/tenants/{slug}/login` を
   叩くので `tenant.login_rules` がそのまま残る。ただし Detail は 4 列の CSV なので、
   **画面の語彙が変わっても監査の語彙は変わらない**（「参照を外した」も「絞った」も同じ形）。

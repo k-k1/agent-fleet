@@ -170,11 +170,14 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/idp/{id}", idp.remove)
 	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp/{id}/status", idp.setStatus)
 	mux.HandleFunc("GET /api/admin/idp", idp.withSuperAdmin(idp.queue)) // approval queue (super_admin)
-	// The deployment's own (env-defined) providers, read-only: what may be written
-	// in a tenant's allowed_providers (login_provider_api.go). cfg.providers is set
-	// before buildMux, so capturing it here is the whole set.
+	// The deployment's own (env-defined) providers, read-only — since P7 these ARE
+	// the default tenant's methods, and every tenant's sign-in method panel lists
+	// them (docs/61 §61.17). Hence withAnyTenantAdmin rather than withSuperAdmin:
+	// the reader is a tenant administrator, and the issuer column is dropped for
+	// them inside the handler. cfg.providers is set before buildMux, so capturing
+	// it here is the whole set.
 	lp := newLoginProviderAPI(cfg.mgr, cfg.providers)
-	mux.HandleFunc("GET /api/admin/providers", lp.withSuperAdmin(lp.list))
+	mux.HandleFunc("GET /api/admin/providers", lp.withAnyTenantAdmin(lp.list))
 	mux.HandleFunc("PUT /api/admin/user-limits", adm.setUserLimit)
 	mux.HandleFunc("PUT /api/admin/membership-role", adm.withSuperAdmin(adm.setMembershipRole)) // grant/revoke tenant_admin (super_admin only)
 	mux.HandleFunc("GET /api/admin/host", adm.withSuperAdmin(adm.hostStats))

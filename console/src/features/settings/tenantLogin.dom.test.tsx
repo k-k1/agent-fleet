@@ -112,11 +112,15 @@ describe("SignInMethodRegister", () => {
 
 // 「使えるサインイン方法」欄に何が書けるか（docs/61 §61.11.8）。
 //
-// 押さえるのは 2 つだけ:
+// 押さえるのは 3 つ:
 //   ① 編集できる面（管理モーダル）では、欄と同じパネルの中に id と表示名が並ぶ —
 //      別の面に置くと、打ち間違えて 400 unknown_provider で弾かれた人が辿り着けない
-//   ② 読み取り専用の面（テナント設定・tenant_admin）では取りにいかない。これは
-//      デプロイ全体の情報で、GET 自体が super_admin 専用（CP が 403 を返す）
+//   ② 読み取り専用の面（テナント設定）では取りにいかない。ここに一覧を出すのは
+//      P7-0 の統合リストの仕事で、この部品の仕事ではない
+//   ③ ★ **「0 件」と「読めなかった」を混ぜない**（docs/61 §61.17.9 ②）。以前は
+//      `res?.providers || []` でエラーを空配列に潰し、読めなかった相手に
+//      「設定されていません」と嘘を表示していた。P7-0a で読める相手が広がるので、
+//      ここを分けておかないと嘘が表に出る
 describe("使えるサインイン方法の一覧", () => {
   const PROVIDERS = [
     { id: "google", label_ja: "Google でサインイン", label_en: "Sign in with Google", issuer: "https://accounts.google.com" },
@@ -141,6 +145,34 @@ describe("使えるサインイン方法の一覧", () => {
     await mount(<TenantLoginRules slug="acme" tenant={null} onChanged={() => {}} />);
     expect(host!.querySelectorAll(".idp-known .adm-mcp-row")).toHaveLength(0);
     expect(host!.querySelector(".idp-known .admin-hint")?.textContent).toContain("ボタンが出ません");
+  });
+
+  // ★ 403 は api() が {error:{code,message}} で返す（throw しない）。providers が
+  // 配列でないことだけが「読めなかった」の判定材料になる。
+  it("読めなかったときは「0 件」と言わない", async () => {
+    api.mockResolvedValue({ error: { code: "forbidden", message: "tenant admin required" } });
+    await mount(<TenantLoginRules slug="acme" tenant={null} onChanged={() => {}} />);
+    const text = host!.querySelector(".idp-known")?.textContent ?? "";
+    expect(text).not.toContain("ボタンが出ません");
+    expect(text).toContain("読み込めませんでした");
+  });
+
+  it("通信断（reject）でも「0 件」と言わない", async () => {
+    api.mockRejectedValue(new Error("network"));
+    await mount(<TenantLoginRules slug="acme" tenant={null} onChanged={() => {}} />);
+    const text = host!.querySelector(".idp-known")?.textContent ?? "";
+    expect(text).not.toContain("ボタンが出ません");
+    expect(text).toContain("読み込めませんでした");
+  });
+
+  // issuer は super_admin にしか返らない（§61.17.9 ①）。無いときは列ごと出さない。
+  it("issuer が返らない相手には、空セルを作らない", async () => {
+    api.mockResolvedValue({ providers: [{ id: "entra", label_ja: "Microsoft でサインイン", label_en: "Sign in with Microsoft" }] });
+    await mount(<TenantLoginRules slug="acme" tenant={null} onChanged={() => {}} />);
+    const rows = Array.from(host!.querySelectorAll(".idp-known .adm-mcp-row"));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].querySelector(".as-name")?.textContent).toBe("Microsoft でサインイン");
+    expect(rows[0].querySelector(".as-repo")).toBeNull();
   });
 
   it("読み取り専用の面（テナント設定）は取りにいかない", async () => {

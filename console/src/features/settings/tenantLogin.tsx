@@ -84,13 +84,24 @@ interface DeployProvider {
 function DeploymentSignInMethods() {
   const tr = useT();
   const locale = useLocale();
-  const [rows, setRows] = useState<DeployProvider[] | null>(null);
+  // ★ 3 状態を分ける。以前は `res?.providers || []` で**エラーも 0 件に潰していた**ので、
+  // 読めなかった相手に「設定されていません」と嘘を表示していた（docs/61 §61.17.9 ②）。
+  // P7 で読める相手が super_admin から各テナントの管理者へ広がるまでは、この部品が
+  // super_admin の編集フォームの中にしか無かったため表に出ていなかっただけ。
+  // null=読み込み中 / "error"=読めなかった / 配列=読めた（空配列は本当に 0 件）。
+  const [rows, setRows] = useState<DeployProvider[] | "error" | null>(null);
 
   useEffect(() => {
     let live = true;
-    api("api/admin/providers").then((res) => {
-      if (live) setRows(res?.providers || []);
-    });
+    api("api/admin/providers")
+      .then((res) => {
+        if (!live) return;
+        setRows(Array.isArray(res?.providers) ? res.providers : "error");
+      })
+      // 通信断は reject で来る（api() が合成するのは非 JSON 応答のときだけ）。
+      .catch(() => {
+        if (live) setRows("error");
+      });
     return () => {
       live = false;
     };
@@ -102,18 +113,22 @@ function DeploymentSignInMethods() {
   return (
     <div className="idp-known">
       <span className="af-cap">{tr("admin.providers_title")}</span>
-      {rows.length === 0 ? (
+      {rows === "error" ? (
+        <p className="admin-hint">{tr("admin.providers_unreadable")}</p>
+      ) : rows.length === 0 ? (
         <p className="admin-hint">{tr("admin.providers_none")}</p>
       ) : (
         rows.map((p) => (
           <div key={p.id} className="adm-mcp-row">
             <span className="as-name">{label(p)}</span>
             <code>{p.id}</code>
-            <span className="as-repo muted">{p.issuer}</span>
+            {/* issuer は super_admin にしか返らない（§61.17.9 ①）。無いときは列ごと出さない
+                — 空セルは設定漏れに見える。 */}
+            {p.issuer && <span className="as-repo muted">{p.issuer}</span>}
           </div>
         ))
       )}
-      <p className="admin-hint">{tr("admin.providers_hint")}</p>
+      {rows !== "error" && <p className="admin-hint">{tr("admin.providers_hint")}</p>}
     </div>
   );
 }

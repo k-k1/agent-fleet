@@ -13,11 +13,11 @@ import (
 // deployment's environment — which the person editing the rule usually cannot.
 //
 // ★ Nothing here is a credential. The response carries the id, the button labels
-// and the issuer; client_id and client_secret are deliberately absent — an admin
-// API that "just shows the config" is how secrets end up in a screenshot. The
-// issuer is the one config value the reader actually needs: it says WHICH Entra
-// (or Okta, or Keycloak) the id stands for, which is the same question the
-// sign-in method register answers for tenant-defined rows.
+// and (for a super_admin) the issuer; client_id and client_secret are deliberately
+// absent — an admin API that "just shows the config" is how secrets end up in a
+// screenshot. The issuer is the one config value the reader actually needs: it says
+// WHICH Entra (or Okta, or Keycloak) the id stands for, which is the same question
+// the sign-in method register answers for tenant-defined rows.
 //
 // ★ Tenant-defined providers ("t:<slug>:<name>", docs/61 §61.11) are NOT listed.
 // They come and go at runtime, they belong to their tenant, and the generic list
@@ -41,12 +41,24 @@ func newLoginProviderAPI(m *manager, provs []loginProvider) loginProviderAPI {
 // which every test fake would then have to grow a method for.
 type providerIssuer interface{ issuerURL() string }
 
-// list (GET /api/admin/providers) — super_admin only, like every other
-// deployment-wide admin read. Not because the ids are secret (they appear on the
-// login page as buttons), but because the caller is asking about the DEPLOYMENT,
-// and 決定 19 already puts the rule that consumes this list behind the same gate:
-// a tenant_admin who cannot edit allowed_providers has nothing to do with it.
-func (a loginProviderAPI) list(w http.ResponseWriter, r *http.Request, _ Identity) {
+// list (GET /api/admin/providers) — readable by a super_admin or by ANY tenant's
+// administrator (anyTenantAdminFor); EDITING the rule this list feeds stays
+// super_admin-only (決定 19 は変えていない).
+//
+// It was super_admin-only until P7 (docs/61 §61.17.9 ①), which made the deployment's
+// methods the DEFAULT TENANT's methods: every tenant's sign-in method panel now lists
+// them, so its administrator has to be able to read them. The ids and button labels
+// were never secret — they are on the unauthenticated /login, and
+// GET /api/me/login-methods hands the same ids to ordinary members.
+//
+// ★ The ISSUER is the exception, and it is why this is not simply a gate change.
+// "https://login.microsoftonline.com/<tenant GUID>/v2.0" or "https://acme.okta.com"
+// names the operator's own directory and does NOT appear on /login. A tenant
+// administrator needs to know THAT a method exists, not which directory backs it —
+// so the column is omitted unless the caller is a super_admin. Omitted, not blanked:
+// a "" issuer would render as an empty cell and read like a misconfiguration.
+func (a loginProviderAPI) list(w http.ResponseWriter, r *http.Request, ident Identity) {
+	withIssuer := ident.Role == "super_admin"
 	out := make([]map[string]any, 0, len(a.provs))
 	for _, p := range a.provs {
 		row := map[string]any{
@@ -59,7 +71,7 @@ func (a loginProviderAPI) list(w http.ResponseWriter, r *http.Request, _ Identit
 			"label_ja": p.Label("ja"),
 			"label_en": p.Label("en"),
 		}
-		if iss, ok := p.(providerIssuer); ok {
+		if iss, ok := p.(providerIssuer); ok && withIssuer {
 			row["issuer"] = iss.issuerURL()
 		}
 		out = append(out, row)
