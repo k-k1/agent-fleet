@@ -58,6 +58,26 @@ describe("stateInfo", () => {
   });
 });
 
+// 支出・残高の上限（docs/47 §4-10）。同じ 429 で届くので、ここを取り違えると利用者は
+// 来ないリセットを待ち続ける。
+describe("stateInfo（残高・支出の上限）", () => {
+  const claude = { kind: "claude", alive: true };
+
+  it("制限解除待ち とも 入力待ち とも別のチップになる", () => {
+    const spend = stateInfo({ ...claude, state: "spend_limit" });
+    expect(spend.text).toBe(t("state.spend_limit"));
+    expect(spend.text).not.toBe(t("state.rate_limited"));
+    expect(spend.text).not.toBe(t("state.idle"));
+    // 人が今やる側（増枠）なので、limited の落ち着いた見え方ではなく質問系の注意色。
+    expect(spend.cls).toBe("question");
+  });
+
+  it("再開時刻は出さない（予約は存在しない）", () => {
+    const at = new Date(Date.now() + 3600_000).toISOString();
+    expect(stateInfo({ ...claude, state: "spend_limit", rateLimitResumeAt: at }).text).toBe(t("state.spend_limit"));
+  });
+});
+
 // 日時はすべてローカル時刻のコンストラクタで組む（固定オフセットの文字列にすると、
 // 表示は実行環境の TZ で行われるので JST 以外の runner で落ちる）。
 describe("resumeClock", () => {

@@ -1773,6 +1773,8 @@ export const ja = {
   "state.blocked": "上限で停止 — 操作が必要",
   // 利用上限のリセット待ち（docs/47 §4-9）。blocked と違い人の操作は要らないので、
   // 「操作が必要」とは言わずに、いつ動くか（予約済みの自動再開時刻）だけを添える。
+  // 支出・残高の上限（docs/47 §4-10）。待っても解けないので「制限解除待ち」とは別物にする。
+  "state.spend_limit": "残高上限 — 増枠が必要",
   "state.rate_limited": "制限解除待ち",
   "state.rate_limited_at": "制限解除待ち · {at}",
   "state.auth_expired": "認証切れ — 再認証が必要",
