@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react";
-import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget, slug } from "../../lib/filemeta.ts";
 import { pathRefCandidate, type PathRef } from "../../lib/pathref.ts";
 import { resolvePathRefs, type ResolvedPathRef } from "./pathResolve.ts";
-import { repairFullwidthTables, splitYamlFrontMatter, type TableRepair } from "../../lib/markdown.ts";
+// marked: the app's own instance, not the package singleton (see lib/markdown.ts).
+import { marked, repairFullwidthTables, splitYamlFrontMatter, type TableRepair } from "../../lib/markdown.ts";
 import { api, downloadURL } from "../../core/api/client.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";

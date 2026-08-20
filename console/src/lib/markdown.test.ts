@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { repairFullwidthTables, splitYamlFrontMatter } from "./markdown.ts";
+import { isLinkDestination, marked, repairFullwidthTables, splitYamlFrontMatter } from "./markdown.ts";
 
 describe("splitYamlFrontMatter", () => {
   it("extracts a leading YAML front matter block", () => {
@@ -122,5 +122,48 @@ describe("repairFullwidthTables", () => {
 
   it("returns null for a document with no fullwidth pipe at all", () => {
     expect(repairFullwidthTables("| a | b |\n|---|---|\n| 1 | 2 |")).toBeNull();
+  });
+});
+
+// A link reference definition renders as nothing, and Japanese prose has no ASCII space,
+// so `- [保留]: 幕間の再配置／MED語彙拡張。` matched the shape whole and vanished. The
+// tokenizer keeps definitions working and only declines the ones no author wrote.
+describe("link reference definitions", () => {
+  const html = (source: string) => marked.parse(source, { gfm: true }) as string;
+
+  it("renders a label followed by Japanese prose as written", () => {
+    expect(html("- [保留]: 幕間の再配置（一律不可・幕間ごと個別）／MED語彙拡張。")).toContain(
+      "[保留]: 幕間の再配置（一律不可・幕間ごと個別）／MED語彙拡張。",
+    );
+    // Not registered either: without this, every later [保留] became a link to the sentence.
+    expect(html("- [保留]: 幕間の再配置。\n- あとで[保留]を見る")).not.toContain("<a ");
+  });
+
+  it("still consumes a definition with a real destination", () => {
+    expect(html("[foo]: https://example.com/x\n\nsee [foo]")).toBe(
+      '<p>see <a href="https://example.com/x">foo</a></p>\n',
+    );
+    expect(html("[d]: /docs/68.md\n\nsee [d]")).toContain('href="/docs/68.md"');
+    // The destination and the title may sit on the following lines — marked's own rule
+    // decides where the definition ends, so the title line is consumed with it.
+    expect(html('[t]: /a.md\n  "Title"\n\nsee [t]')).toContain('title="Title"');
+  });
+
+  it("judges a destination by whether it could be one", () => {
+    expect(isLinkDestination("https://ja.wikipedia.org/wiki/日本語")).toBe(true);
+    expect(isLinkDestination("/docs/日本語.md")).toBe(true);
+    expect(isLinkDestination("./図.drawio")).toBe(true);
+    expect(isLinkDestination("#見出し")).toBe(true);
+    expect(isLinkDestination("<any thing>")).toBe(true);
+    expect(isLinkDestination("mailto:a@example.com")).toBe(true);
+    expect(isLinkDestination("docs/68-session-changed-files.md")).toBe(true);
+    expect(isLinkDestination("中イキ未達を意図化する案（既定設計と逆）。")).toBe(false);
+    expect(isLinkDestination("幕間の再配置／MED語彙拡張。")).toBe(false);
+  });
+
+  it("leaves a same-shaped line inside a code block untouched", () => {
+    const source = "```\n[保留]: 幕間の再配置。\n```";
+    expect(html(source)).toContain("[保留]: 幕間の再配置。");
+    expect(html(source)).toContain("<code>");
   });
 });
