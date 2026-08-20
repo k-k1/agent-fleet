@@ -14,8 +14,9 @@ member**.
 ### Tenant-wide limits (set by super_admin)
 
 Tenant-wide limits and idle auto-stop are **set by a super_admin only** — the settings section lives
-in the Admin modal and never appears for you. What you can read is the current values, shown at the
-top of the "Members" roster ("Limits — Workspace / Session"). Just know what they contain.
+in the Admin modal and never appears for you. What you can read is the current values, under
+**Tenant › Limits & idle** in the tenant settings modal (member count, running workspaces and
+"Limits — Workspace / Session"). Just know what they contain.
 
 - **Max workspaces** — the number of workspaces that can run concurrently in this tenant
   (`0` = unlimited).
@@ -25,7 +26,7 @@ top of the "Members" roster ("Limits — Workspace / Session"). Just know what t
 - **Idle auto-stop** — how long before neglected sessions and workspaces are stopped automatically
   (next section).
 
-The "Limits — Workspace: X / Session: Y" shown at the top of the "Members" roster is the value
+The "Limits — Workspace: X / Session: Y" shown under **Tenant › Limits & idle** is the value
 currently in effect. When you want it changed, ask your IT department / deployment administrator
 ([operator/README.md](../operator/README.md)).
 
