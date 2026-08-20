@@ -107,3 +107,55 @@ describe("tenant store boot hint", () => {
     expect(await boot("", ["dev", "sales"], "sales")).toBe("sales");
   });
 });
+
+// 招待前（not_provisioned）の着地（docs/61 §61.10.2・P7-2）。
+//
+// AF_PROVISION=invite が新規インストールの既定になったので、これは異常系ではなく
+// 「招待される前の人が最初に見る状態」。フラグが立たないと通常の Console が開き、
+// 以後すべてのリクエストが 403 で弾かれてトーストが 1 つずつ出るだけになる。
+describe("tenant store not_provisioned", () => {
+  const errRes = (code: string, status = 403) =>
+    new Response(JSON.stringify({ error: { code, message: code } }), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  const boot = async (tenantsRes: () => Response) => {
+    values.clear();
+    fetchMock.mockReset();
+    fetchMock.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(String(args[0]).includes("whoami") ? jsonRes({ user: "u1", email: "u1@example.com" }) : tenantsRes()),
+    );
+    advance(60_000);
+    useTenantStore.setState({ notProvisioned: false });
+    await useTenantStore.getState().init();
+  };
+
+  it("flags the landing state so App can render it", async () => {
+    await boot(() => errRes("not_provisioned"));
+    expect(useTenantStore.getState().notProvisioned).toBe(true);
+  });
+
+  // ★ 他の 403 と混ぜない。テナント未選択や権限不足でここに落ちると、Console が
+  // 開けるべき人に「まだ招待されていません」と言うことになる。
+  it("does not flag any other terminal error", async () => {
+    await boot(() => errRes("forbidden_tenant"));
+    expect(useTenantStore.getState().notProvisioned).toBe(false);
+  });
+
+  // 一覧が返れば落ちる（管理者がタブを開いたまま追加した → リトライで通った）。
+  it("clears once the roster answers", async () => {
+    useTenantStore.setState({ notProvisioned: true });
+    await boot(() => jsonRes({ tenants: [{ slug: "dev" }], super_admin: false }));
+    expect(useTenantStore.getState().notProvisioned).toBe(false);
+  });
+
+  // ★ super_admin はそもそもここに来ない: CP は所属ゼロでも 200 を返す（決定 23）。
+  // その契約が壊れると、最初のテナントを作る人が着地面に閉じ込められる。
+  it("never lands a super_admin with no membership", async () => {
+    await boot(() => jsonRes({ tenants: [], super_admin: true }));
+    const s = useTenantStore.getState();
+    expect(s.notProvisioned).toBe(false);
+    expect(s.superAdmin).toBe(true);
+  });
+});

@@ -579,7 +579,7 @@ AF_OIDC_ENTRA_ISSUER=https://login.microsoftonline.com/<tenant-guid>/v2.0   # co
 AF_OIDC_ENTRA_CLIENT_ID=... / AF_OIDC_ENTRA_CLIENT_SECRET=...
 AF_OIDC_ENTRA_TRUST=issuer
 SUPER_ADMIN_EMAILS=joho@acme.co.jp
-AF_PROVISION=auto            # ★ 最初は auto。招待運用へ切り替えるのは 61.10.2 の後
+AF_PROVISION=invite          # ★ P7-2 で新規インストールの既定に。切り替えの段取りは不要（§61.10.2）
 ```
 
 ★ **`AF_OAUTH_ALLOWED_*` は書かなくてよい**（P3 後）。招待した人は membership で入口を通るため
@@ -606,23 +606,38 @@ AF_PROVISION=auto            # ★ 最初は auto。招待運用へ切り替え�
 
 ### 61.10.2 最初の 1 人（＝ブートストラップ）
 
-1. 情シスの人が `https://af.acme.co.jp/` を開く → Entra でサインイン → `auto` なので既定テナントに入る。
-2. `SUPER_ADMIN_EMAILS` に載っているので `super_admin`（`resolver.go:29`）。アカウントメニューに管理が出る。
-3. 管理 → テナント作成で `sales` / `dev` / `it` を作る。
-4. 自分を `it` に `tenant_admin` として招待し、各部署の責任者も `tenant_admin` で招待する
-   （**`tenant_admin` を付けられるのは `super_admin` だけ** — `tenants.go:280`）。
-5. `AF_PROVISION=invite` に変えて CP を再起動。以降、招待されていない人は入れない。
+★ **P7-2 でここは一本化した。「`auto` で立ち上げてから `invite` へ切り替える」という段取りは
+もう無い** — 新規インストールは最初から `invite` で始まる（`.env.example` と ECS の
+`AfProvision` パラメータの既定。CP に焼き込まれた既定は `auto` のままなので、既存デプロイは
+変わらない）。
 
-★ **いきなり `invite` で立ち上げてはいけない。** コードを追う限り、membership を 1 つも持たない人は
-`GET /api/tenants` が 403 `not_provisioned` を返し（`resolver.go:69`）、Console は
-`data.error` 分岐で `superAdmin` を立てないまま終わる（`tenant.ts:93-100`、既定 `false`）。
-その結果、管理メニューの表示条件 `superAdmin || tenant_admin`（`TopBar.tsx:319`）が偽になり、
-**`super_admin` でも管理画面に到達できない**。API 直叩き（`POST /api/admin/tenants` は
-`identityFor` だけで通る）なら可能だが、運用手順としては成立しない。
-→ ✅ **P3 で解消**: `tenantAPI.list` が `not_provisioned` を受けたとき、相手が `super_admin` なら
-`{tenants: [], super_admin: true}` を 200 で返す（`tenants.go`）。それ以外の人には従来どおり
-403 `not_provisioned` のまま。**つまり `AF_PROVISION=invite` で最初から立ち上げてよくなった**
-（上の 5 手順の「`auto` で立ち上げてから切り替える」は不要）。
+1. 情シスの人が `https://af.acme.co.jp/` を開く → Entra でサインイン。
+   membership はまだ 1 つも無いが、`SUPER_ADMIN_EMAILS` に載っているので `super_admin` になり、
+   `GET /api/tenants` は `{tenants: [], super_admin: true}` を 200 で返す（`tenants.go:35`）。
+   アカウントメニューに管理が出る。
+2. 管理 → テナント作成で `sales` / `dev` / `it` を作る。
+3. 自分を `it` に `tenant_admin` として招待し、各部署の責任者も `tenant_admin` で招待する
+   （**`tenant_admin` を付けられるのは `super_admin` だけ** — `tenants.go:280`）。
+4. 以降、招待されていない人は入れない。**切り替えの再起動は不要**（最初からその状態）。
+
+★ **かつては「いきなり `invite` で立ち上げてはいけない」だった。** membership を 1 つも持たない人は
+`GET /api/tenants` が 403 `not_provisioned` を返し、Console は `data.error` 分岐で `superAdmin` を
+立てないまま終わる（既定 `false`）。その結果、管理メニューの表示条件
+`superAdmin || tenant_admin` が偽になり、**`super_admin` でも管理画面に到達できなかった**。
+→ ✅ **P3 で解消**（`tenantAPI.list` が `not_provisioned` を受けたとき、相手が `super_admin` なら
+200 を返す）。P7-2 はその上で**既定を倒しただけ**で、新しい仕組みは足していない。
+
+★ **招待前の人の着地（P7-2 で追加）。** `super_admin` 以外は従来どおり 403 `not_provisioned`
+だが、Console はそれを**エラーではなく状態として扱う**ようになった（`tenant.ts` の
+`notProvisioned` → `App` が `NotProvisioned` を描く）。以前はこの状態でも通常の Console が開き、
+以後すべてのリクエストが 403 で弾かれてトーストが 1 つずつ出るだけで、「自分は何をすればいいのか」
+がどこにも書かれていなかった。招待制が既定になる以上、これは例外ではなく**新しい同僚が最初に見る
+画面**なので、面として作る必要があった。
+
+★ **その画面が答えるのは 3 つだけ**: ①失敗ではない（サインインは通っている）②次にすることは
+管理者に依頼すること ③**そのとき伝えるべき自分のアドレス**。③が最も実務的で、これが読めないと
+「どのアドレスで入ったのか分からない」という往復が必ず 1 回増える — 管理者は名簿にアドレスで
+人を足すし、サインイン方法が複数ある人ほど自分がどれで入ったかを分かっていない。
 
 ### 61.10.3 部署を 1 つ増やす（情シス）
 
@@ -1906,7 +1921,7 @@ DELETE /api/me/login-methods?provider=…&subject=…
 | **P7-0a**（実装済み）| ★ 先に `GET /api/admin/providers` を **tenant_admin にも読ませる**（ただし `issuer` は super_admin 限定・§61.17.9）＋ Console の 403 潰しを直す。P7-0 の前提で、単独でも「Google が画面に出ない」が半分解ける | 無し |
 | **P7-0**（実装済み）| テナントの「サインイン方式」を統合リストにする（自前の行＋既定テナントの行・2 トグル・従属関係・「全部 ON なら空で保存」）。ログイン規則の面からは方式の 2 列が消え、ドメインの 2 列だけになる | 無し |
 | **P7-1**（実装済み）| 素の `/login` に**既定テナントの `hidden_providers` だけ**を適用（決定 42・§61.17.6）。§61.15.13 の運用回避を 3 面 6 ファイルから撤去 | 無し |
-| **P7-2** | 新規インストールの既定を `AF_PROVISION=invite` に（**インストーラが生成する env の既定**として・§61.17.9）。§61.10.2 を「super_admin だけが入れる状態から始める」に一本化 | 無し |
+| **P7-2**（実装済み）| 新規インストールの既定を `AF_PROVISION=invite` に（**テンプレートの既定**として＝`.env.example` と ECS の `AfProvision`。CP の既定は `auto` のまま）。§61.10.2 を「super_admin だけが入れる状態から始める」に一本化し、**招待前の着地面**（`NotProvisioned`）を新設 | 無し |
 | **P7-3**（任意）| (b) の `link_claim` 必須化と discovery による `pairwise` 判定、古い行を止める順序のガード | 無し |
 
 ★ **意味の反転はしない。** 既存テナントの「空＝全部」はそのまま。厳密になるのは、
@@ -1933,11 +1948,13 @@ DELETE /api/me/login-methods?provider=…&subject=…
 
 ### 61.17.8 残る未決
 
-- 「デプロイ直後にログインできるのは super_admin だけ」を**字義どおり**にするか。今は
-  allowlist に合致すればサインイン自体は通り、`not_provisioned` の画面に着く（`resolver.go:172`）。
-  authGate で membership を要求すれば字義どおりになるが、それは §61.9.2 の
-  「テナントの門を `authGate` に置くな」に正面から抵触する。**着地画面を「まだ招待されていません」
-  に整える方**を採るつもりだが、確定していない。
+- ~~「デプロイ直後にログインできるのは super_admin だけ」を**字義どおり**にするか。~~
+  → ✅ **P7-2 で決着（着地画面の方を採った）。** サインイン自体は今までどおり通り、
+  membership が無ければ `not_provisioned`（`resolver.go:172`）。`authGate` で membership を
+  要求すれば字義どおりになるが、それは §61.9.2 の「テナントの門を `authGate` に置くな」に
+  正面から抵触するので採らない。代わりに**着地を「まだ招待されていません」の面にした**
+  （§61.10.2）。★ 字義どおりでないことに実害は無い — サインインが通っても、membership が
+  無ければ入れる面は 1 つも無い。**変わったのは「拒否の見え方」だけで、門は 1 つも動かしていない。**
 - 既定テナントの方式に **step-up（昇格）** を要求するか。「デプロイ所有の方式だけが super_admin を
   運べる」（§61.17.3）が画面に出ると、その 1 本に管理者権限が集中していることも同時に見える。
   短命な昇格 cookie で `withSuperAdmin` を締める案は別途。★ ただし **PAT の
