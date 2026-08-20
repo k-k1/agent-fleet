@@ -4,6 +4,8 @@ status: **Track 0 第1段（認証不要の範囲）完了（2026-08-20）**。�
 本 Workspace に導入して実測したが、**`acli rovodev` 配下は `auth` 以外すべて認証ゲートで閉じている**ため、
 判定を分ける軸（TUI 文字列契約・転写正本の実体・serve モードの実挙動・モデル/使用量）は**未実測**。
 継続には Atlassian アカウント＋Rovo Dev スコープ API トークンが要る（§6）。**採否は未決**。
+**設計は文献ベースで先に詰めた（§8・2026-08-20 ユーザー判断）**——実測待ちの前提は ⏳ で明示してあり、
+そこが覆ると設計も変わる。ADR は採用が決まってから `decisions/0051` で起票する。
 関連: docs/43（kiro・直近の雛形）/ docs/40（cursor）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）。
 
 ## 0. 対象と背景
@@ -119,7 +121,7 @@ status: **Track 0 第1段（認証不要の範囲）完了（2026-08-20）**。�
 - `/hooks` があるので、claude 型の hook マーカー方式が使える可能性がある（kiro は出荷バイナリに Stop が
   無く潰れた・docs/43 §5.1）。**実バイナリの hook トリガ enum を確認するまで前提にしない**。
 
-## 4. AF に落としたときの当たり（提案・すべて未確定）
+## 4. AF に落としたときの当たり（要約。設計本体は §8）
 
 | 項目 | 提案 | 備考 |
 |---|---|---|
@@ -165,6 +167,161 @@ status: **Track 0 第1段（認証不要の範囲）完了（2026-08-20）**。�
    単純に選択肢を増やすのか。前者なら Terminal 先行で `/jira` を活かす、後者なら serve（managed）先行。
 4. **配備方針**。版ピンできない CLI を焼き込むことを許容するか（自前 sha256 で固定＋更新は手動で追う）、
    それとも kiro 型のオンデマンド導入（利用者の home に入れる）にするか。
+
+## 8. 設計（文献ベース・2026-08-20／実測待ちは ⏳ で明示）
+
+ユーザー判断（2026-08-20）= **トークンは今は用意せず、文献ベースで設計だけ先に詰める**。
+以下は「第2段の実測が通ればこの形で作れる」という設計であって、⏳ の付いた前提は**まだ裏が取れていない**。
+ADR は採用が決まってから `decisions/0051` で起票する（現時点で ADR は作らない＝状態「検討中」の ADR は前例が無い）。
+
+### 8.1 kind 契約（確定案）
+
+| 項目 | 案 | 根拠・注意 |
+|---|---|---|
+| slug | `rovo` | `rovodev` は長い。`session.KindRovo` / `.kind-rovo` |
+| icon（codicon） | `organization` か `symbol-event` を候補に実描画で決める | 既存 9 種（sparkle/rocket/inspect/magnet/copilot/compass/hubot/terminal/cloud）と非衝突であること |
+| label / assistantName / short / launchSuffix | `Rovo Dev` / `Rovo` / `rd` / `-rd` | displayName は label と同じ（`Rovo Dev` が正式名） |
+| 実行方式 | v1 = Terminal。Managed（serve）は A2 で追加 | §8.6 |
+| 認証 | メール＋API トークンの 2 入力 | §8.4 |
+| 表示順 | kiro の後（＝追加順の末尾、shell/ssm の前） | 既存の並びを動かさない |
+
+### 8.2 色 — ⚠️ **Atlassian ブルーは使えない**
+
+現行 9 色（tokens.css dark）: claude `#e0a45e`（橙）/ codex `#4ec97a`（緑）/ cursor `#d96ba1`（薔薇）/
+**agy `#4285f4`（青）** / kiro `#a371f7`（紫）/ copilot `#7d8590`（チャコール）/ opencode `#aab4be`（淡灰）/
+shell `#46c9d0`（シアン）/ **ssm `#6d8bf5`（藍）**。
+
+- ブランド色である Atlassian ブルー（#2684FF 帯）は **agy と ssm の 2 種に挟まれて潰れる**。
+  [[kind-color-css-checklist]]（copilot 紫衝突）の再発なので、**ブランド色は最初から捨てる**。
+- 空いている色相は実質 **2 本だけ**: (a) **赤〜朱**（例 dark `#e5534b` / light `#b4362c`）、
+  (b) **ライム〜黄緑**（例 dark `#b5cc3f` / light `#5f7217`）。
+  - ⚠️ (a) は `--del: #e06c75`（dark・削除行）と `--warn` に**意味で**近い＝「赤いセッション＝異常」に読まれる危険。
+  - ⚠️ (b) は claude の橙（32°）・codex の緑（143°）の**間**に入るので、チップの小面積で識別できるかは実描画次第。
+- **決めは実描画（両テーマ・headless chromium スウォッチ）で**。kiro の Track C と同じ手順で、
+  9 色＋新色を並べて比較してから確定する。色クラス twin は tokens/app/terminal/sessions/settings/ui.css の総ざらい。
+
+### 8.3 配備 — 版ピンが無い CLI をどう焼くか
+
+現状の型（agy/cursor/kiro）は「版付き URL ＋ 公開 sha256 を Dockerfile の ARG に固定」だが、
+**Rovo Dev はどちらも無い**（§2.1 実測）。取り得るのは次で、**推奨は (a)**。
+
+- **(a) 焼き込み＋自前 sha256〔推奨〕**: Dockerfile で `linux/latest` を取得し、`acli --version` で
+  実際に焼けた版を読んで **versions.json へ「事後申告」として書く**（`rovo: "1.3.23-stable"`）。
+  sha256 も**その取得物のもの**を記録する（改竄検知としては機能する／再現ビルドにはならない）。
+  16.6MB なので kiro 型オンデマンド導入（`workspace-agent install-kiro`）は**不要**＝ lean でも焼いてよい。
+  ⚠️ **同じ Dockerfile が再ビルドの度に別の版を焼く**（ピンではなく latest 追従）ことを ADR で明示的に受け入れる。
+- (b) 取得物をリリース資産としてこちらでミラーし、そこに版と sha256 を打つ — 再現性は得られるが
+  **再配布の可否がライセンス判断**になり、更新の面倒も増える。v1 では採らない。
+- ⚠️ **どちらを選んでも Rovo Dev 本体（実行時 DL）の版は固定できない**。よって
+  **`env_tool_versions.go` の rovo は 2 行**にする: `acli`（イメージが持つ版）と
+  **Rovo Dev 本体**（`/healthcheck` の `version`、または `--version` 相当の実効版）。
+  3 版表示（実効／イメージ／`~/.local`）の枠に**外部が決める版**という第 4 の軸が入るのはこの kind だけ。
+- ⏳ 未測: 本体の落ち先ディレクトリ・サイズ・更新頻度・オフライン時の挙動（`tryFallback` が
+  何にフォールバックするか）。**初回起動が無言で数十秒〜止まる**なら、kiro の起動ガードと同じく
+  ペインに進捗を出す前置きが要る。
+
+### 8.4 認証 — 接続カードは 2 入力、start→poll は不要
+
+- Console の AgentsTab に `RovoCard`: **メール**＋**API トークン**（`type=password`）＋トークン発行導線
+  （`https://go.atlassian.com/rovo-dev-api-token` へのリンク）。保存は
+  `POST /connections/rovo`（Agent と CP の**両方**に登録 — [[cp-rest-proxy-allowlist]]）、切断は `DELETE`。
+- Agent 側は受け取ったトークンを **stdin 経由**で `acli rovodev auth login --email <mail> --token` に渡す
+  （環境変数にもコマンドラインにも載せない＝`ps` 露出なし）。状態は `acli rovodev auth status` の exit code。
+- ⚠️ トークンは `~/.acli/rovodev_config.yaml` に平文で残るので、`fs.go` の denylist に
+  **`~/.acli` と `~/.rovodev` の 2 つ**を足す（ファイルブラウザ・grep から隠す）。
+- device flow が無いので、cursor/kiro の `start`/`poll` 2 エンドポイントは作らない（1 回の POST で完結）。
+
+### 8.5 Track A（Terminal）— 状態検出は三段構えで設計する
+
+- 起動: `acli rovodev run [--restore <uuid>]`（+ 必要なら `--config-file`）。`--worktree` は AF が
+  worktree を作るので**使わない**（二重管理になる）。`--web` も使わない（AF のミラーが担当）。
+- **状態検出（⏳ 全部未測なので、実装は差し替え可能な形にする）**:
+  1. 一次 = **TUI の明示文字列契約**（`internal/agents/rovo/state.go`）。kiro と同じく
+     スピナーグリフ regex は使わない（[[spinner-re-slash-command-miss]] / false-idle の教訓）。
+  2. 保険 = **`/hooks`**。⚠️ **公式ドキュメントに載っていても出荷バイナリに無いことがある**
+     （kiro の Stop hook は docs にあってバイナリに無かった・docs/43 §5.1）ので、
+     **実バイナリの hook トリガ enum を見るまで前提にしない**。
+  3. 縮退 = `~/.rovodev/sessions/<uuid>/` の mtime と `driveState` の楽観 working。
+- **`ensureSettings`（冪等・プロセス内 1 回）**で `~/.rovodev/config.yml` に固定する候補:
+  `toolPermissions.default: allow`（⚠️ 素の home だと許可待ちでペインが固着する。kiro の
+  `chat.disableTrustAllConfirmation` と同じ位置づけ）／`sessions.auto_restore: false`（AF が
+  `--restore` を明示するので、勝手な復帰は枠とセッションの対応を壊す）／`console.outputFormat`（⏳
+  転写をファイルから読むなら影響しないはずだが要確認）。
+  ⚠️ **config.yml はユーザーの設定でもある**ので、丸ごと書き換えず該当キーだけ触る（§8.8 と同じ問題）。
+
+### 8.6 Track A2（Managed）— `serve` は「動的ポート＋自分の子だと確認」が要
+
+- `acli rovodev serve <port>` を **per-session child** で起動（cursor/kiro の driver 骨格を流用）。
+- ⚠️ **ポート番号は固定できない**（1 コンテナに複数セッション／他人のサーバを掴む）。設計:
+  1. AF が空きポートを選ぶ（bind→close で番号を取る／衝突したら再試行）。⏳ **`serve 0` が使えるかは未測**
+     — 使えるなら chromium の `DevToolsActivePort` と同じく「実際に listen した番号を読み戻す」方が安全。
+  2. 起動後 `GET /healthcheck` で生存確認し、**自分が作った session_id と `current_session` を照合**してから使う。
+     ⚠️ **これをやらないと、同居する別セッションの serve を掴む**（[[chromium-attach-link-and-port]] と同型の罠）。
+  3. ⏳ **bind アドレスが 127.0.0.1 か 0.0.0.0 かは未測**。0.0.0.0 ならコンテナ外へ出る可能性があるので、
+     その場合は採用条件（ループバック限定にできるか）を先に確かめる。
+- 転写・ターン state machine は `GET /v3/stream_chat`（SSE）を張りっぱなしにして構築。
+  停止は `POST /v3/cancel` → stdin/プロセスグループの順で正規終了（kiro の `.lock` 解放と同じ作法）。
+- **許可待ち**: `?pause_on_call_tools_start=true` で止め、`POST /v3/resume_tool_calls` に
+  `{tool_call_id, deny_message}` を返す＝既存の Interaction（質問カード）へそのまま載る。
+- **resume**: `POST /v3/sessions/{id}/restore` ＋ `POST /v3/replay` で履歴を再生してミラーを再構築
+  （cursor/kiro の `session/load` リプレイと同じ経路）。
+- Capabilities は cursor/kiro に倣い ProcessModel=per-session-child / Steer / Questions。
+  Dynamic*（稼働中のモデル変更等）は ⏳ 未測なので v1 は全 false。
+
+### 8.7 転写（read 正本）
+
+- 候補は `~/.rovodev/sessions/<uuid>/session_context.json`。⏳ スキーマ未測。
+- ⚠️ **append-only JSONL ではなく「単一 JSON を丸ごと読み直す」形の可能性が高い**（kiro の v2 JSONL とは違い、
+  opencode 型）。その場合、tail 窓・差分更新・畳み込みの前提が変わる。
+- ⚠️ **`/prune` はツール結果を捨てる＝過去の part が消える**。AF の転写は追記単調を前提にしている箇所がある
+  （[[session-changed-files]] の逐次畳み込み・[[transcript-marks]] の root）。
+  設計としては「レコード数の減少を検出したらキャッシュを捨てて作り直す」＋「マーカーは root が消えたら描かない」。
+- `metadata.json` の fork 情報は [[fork-at-message]] と噛み合う可能性がある（⏳ 第2段で確認）。
+
+### 8.8 MCP — mcpreg 初の「2 ファイル・YAML マージ」
+
+- 定義は `~/.rovodev/mcp.json` の `mcpServers`（stdio=`command`/http=`url`/sse）＝既存の
+  `materialize_json.go` の系列でほぼ書ける。
+- ⚠️ **それだけでは有効にならない**。`~/.rovodev/config.yml` の `mcp.allowedMcpServers` にも名前を載せる必要がある。
+  つまり **materialize が 2 ファイルに跨る初の kind**で、しかも 2 つ目は **YAML の部分更新**
+  （ユーザーの他キー・コメントを保つ）＝ mcpreg は今まで JSON しか触っていないので新規実装が要る。
+- ⚠️ テナント配布サーバは remote 限定（ADR0031 決定 2）なので、**ヘッダが実際に飛ぶか**を
+  kiro でやったのと同じくヘッダ記録用リスナーで**エンドツーエンドで確認する**（⏳ 第2段）。
+
+### 8.9 モデル・使用量
+
+- モデルは `agent.modelId`（既定 `auto`）が config.yml のキーなので、**起動前に書けば固定できる**見込み。
+  ⏳ 一覧の機械可読な取得口が `/models`（TUI）しか無い可能性があり、その場合 `caps.model` は
+  「固定リスト or 非表示」に倒す（cursor の Free で named 指定不可だった件と同型の判断）。
+- 使用量は ⏳ **SSE にトークン／クレジットが乗るかどうか**次第。乗るなら kiro Track D と同じ
+  `ContextReporter` seam に載せられる。乗らないなら `/usage` の PTY スクレイプになるが、
+  [[usage-chip-statusline]] の教訓どおり**常駐チップにはしない**。
+- ⚠️ クレジットは**サイト／組織単位の残量**なので、AF の「セッション使用量」とは意味が違う。
+  出すなら「このセッションが使ったクレジット」と「残量」を混ぜない。
+
+### 8.10 Track 分割と着工順（狙いが未定でも決められる部分）
+
+狙い（Atlassian 連携が主目的か、選択肢を増やすか）は未定だが、**どちらでも先に要るもの**は同じなので着工順は決まる。
+
+1. **Track 0 第2段（実測）** — トークン取得後。§6 のチェックリストを埋める。**ここを飛ばして実装に入らない**。
+2. **Track A（Terminal）** — read 層＋状態検出＋`ensureSettings`。serve の結果に依存しない。
+3. **Track B（配備）** — 焼き込み＋versions.json の 2 軸（§8.3）。
+4. **Track C（CP＋Console）** — 色・接続カード・i18n・kind enum の総ざらい（両 routes.go／mcp_stdio／CP mcp.go／
+   bridge format／enkana 辞書／registry.ts／types/session.ts）。
+5. **Track A2（Managed / serve）** — 第2段で serve が合格したときだけ。
+- 狙いが「Atlassian 連携」なら Track A の後に `/jira` を活かす面（プロンプト導線）を足す。
+  狙いが「選択肢を増やす」なら A2 を前倒しして managed 既定に寄せる。**この分岐は Track C までは効かない**。
+
+### 8.11 第2段で最初に潰すこと（この設計が壊れる順）
+
+1. `serve` の bind アドレスとポート指定（0 が使えるか）— ⚠️ ダメなら **managed は成立しない**。
+2. TUI の状態文字列 — ⚠️ 取れないと Terminal が「動いているのか分からない」kind になる。
+3. `session_context.json` のスキーマと `/prune` の破壊性 — ⚠️ 転写・マーカー・変更ファイルの前提。
+4. hook トリガの実 enum（docs を信じない）。
+5. Rovo Dev 本体の DL 挙動（初回起動の所要・オフライン・落ち先）。
+6. `allowedMcpServers` を書かないと MCP が無効という前提の確認。
+7. `run "<指示>"` の出力形式（headlessChat の可否／既定はスコープ外）。
+8. 1 ターンあたりの実消費クレジット（Free 350/月で第2段が何回回るか）。
 
 ## 参考
 
