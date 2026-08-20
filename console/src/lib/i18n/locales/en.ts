@@ -1463,8 +1463,6 @@ export const en: Record<keyof typeof ja, string> = {
   // mistake that breaks the operation. ---
   "admin.login_rules": "Login rules",
   "admin.login_rules_note": "empty = no restriction",
-  "admin.allowed_providers": "Sign-in methods",
-  "admin.allowed_providers_unit": "provider ids, comma-separated. Empty = every enabled method",
   "admin.auto_join_domains": "Auto-join domains",
   "admin.auto_join_domains_unit": "joins this tenant on first sign-in",
   "admin.invite_domains": "Invite domains",
@@ -1474,30 +1472,38 @@ export const en: Record<keyof typeof ja, string> = {
     "An auto-join domain can belong to only one tenant.",
   "admin.login_url": "Sign-in URL for this tenant:",
 
-  // --- what may be written in "Sign-in methods" (docs/61 §61.11.8). The field is
-  // free text and the answer lived only in the deployment's environment. The
-  // display name leads; the id you type is shown next to it. ---
-  "admin.providers_title": "Sign-in methods this deployment has",
+  // --- the deployment's methods = the default tenant's methods (docs/61 §61.17).
+  // Since P7-0 they appear as "deployment-wide" rows in every tenant's sign-in
+  // method list. The display name leads; the id is shown next to it in <code>. ---
   "admin.providers_none": "This deployment has no sign-in method configured (the login page shows no buttons).",
   // ★ "none" and "could not read" must never share a string. The 403 used to collapse
   // into an empty array, which told an unauthorized reader the deployment was
   // unconfigured (docs/61 §61.17.9 ②).
   "admin.providers_unreadable": "Could not load the list of sign-in methods — you may not have permission, or it is temporarily unavailable.",
-  "admin.providers_hint":
-    "Write the ids from this list, comma-separated, in \"Sign-in methods\" above. Empty means every one of them. " +
-    "This tenant's own sign-in methods (listed below) go in the same field as t:tenant:method once they are approved.",
 
   // --- tenant-defined sign-in methods (docs/61 §61.11 · P4), for a group whose
   // subsidiaries each have their own Entra tenant. The tenant admin writes the
   // definition, the deployment admin activates it (決定 30) — that asymmetry is the
   // feature. ---
-  "admin.idp_title": "Sign-in methods for this tenant",
-  "admin.idp_note": "activation needs a deployment administrator",
+  "admin.idp_title": "Sign-in methods this tenant can use",
+  "admin.idp_note": "activating a method of your own needs a deployment administrator",
   "admin.idp_hint":
-    "Register your own IdP (Entra ID / Okta / Keycloak …), or a GitHub organization, as a sign-in method for this tenant. " +
+    "Every way into this tenant: the deployment-wide methods, plus any method registered for this tenant alone. " +
+    "Register your own IdP (Entra ID / Okta / Keycloak …), or a GitHub organization, under \"Add a sign-in method\". " +
     "A new method starts as \"waiting for approval\": until a deployment administrator approves it, no button appears on the sign-in page and no one can sign in with it.",
-  "admin.idp_none": "None registered yet.",
+  "admin.idp_none": "This tenant has no method of its own yet (the deployment-wide ones above still work).",
   "admin.idp_add": "Add a sign-in method",
+  // --- the two per-row toggles (docs/61 §61.17.5). The DB still stores two CSV
+  // columns; only the screen changed. ★ "Show" is subordinate to "Accept" — a
+  // method that is not accepted never appears, however this is set. ---
+  "admin.idp_accept": "Accept",
+  "admin.idp_show": "Show button",
+  "admin.idp_deployment_wide": "Deployment-wide",
+  "admin.idp_accept_last":
+    "The last one cannot be cleared. Clearing them all means \"no restriction — accept every method\", so you would open it up while meaning to narrow it.",
+  "admin.idp_show_last":
+    "The last one cannot be cleared. Hiding every button would leave a sign-in page with no buttons, so the setting is ignored instead.",
+  "admin.idp_show_needs_accept": "Not accepted, so it never appears on the sign-in page.",
   "admin.idp_approve": "Approve and activate",
   "admin.idp_suspend": "Suspend",
   "admin.idp_reapply": "Request approval",
@@ -1545,13 +1551,12 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.idp_repend_hint":
     "Changing the issuer, the client ID, the trust rule, the kind or how the same account is recognised — or adding a domain, tenant id or GitHub organization — sends the method back for approval, " +
     "because the approval was given to that identity source for that scope.",
-  "admin.hidden_providers": "Methods to keep off the sign-in page",
-  "admin.hidden_providers_unit":
-    "Comma-separated. Still accepted — only the button is removed from this tenant's sign-in page. Ignored if it would hide every button.",
   "admin.hidden_providers_url_note":
     "★ Hiding a button does not remove it from the plain sign-in page (the one without the URL above): that page belongs to no tenant, and hiding methods there would lock out everybody who is not in one. For the setting to have any effect, hand this tenant's people the sign-in URL above.",
   "admin.allowed_providers_shared_note":
-    "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Keep the method those people use accepted, and list it under \"methods to keep off the sign-in page\" so it does not appear here. Accepting a method does not widen who can enter — the roster decides that.",
+    "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Leave the method those people use on \"Accept\" and just clear \"Show button\", so it stays usable without appearing here. Accepting a method does not widen who can enter — the roster decides that.",
+  "admin.login_rules_methods_moved":
+    "★ Which sign-in methods this tenant accepts, and which of them get a button on the sign-in page, are set per row under \"Sign-in methods\".",
   "admin.idp_delete_title": "Delete {name}",
   "admin.idp_delete_body":
     "This removes the sign-in method. People who used it can no longer sign in, but their workspaces, homes and stored credentials are kept.",
@@ -1609,7 +1614,6 @@ export const en: Record<keyof typeof ja, string> = {
     "An auto-join domain can belong to only one tenant. " +
     "To change any of these rules, ask a deployment administrator.",
   "tenant.rules_unset": "not set (no restriction)",
-  "tenant.rules_providers_note": "Sign-in methods usable in this tenant. When not set, every active method may be used.",
   "tenant.rules_autojoin_note": "People with an email address in this domain join this tenant on their first sign-in.",
   "tenant.rules_invite_note": "A guard that applies only when adding a member. It does not affect people who are already members.",
 
