@@ -108,12 +108,10 @@
 }
 /* Dialog surfaces share a stronger secondary-text token. Compact dialog copy is
    mostly 10–13px, where the app-wide navigation-oriented muted colors are too
-   faint. Custom surfaces inherit the same contract without pretending to be a
-   standard .ui-modal. */
+   faint. （管理モーダルも ui/Modal に載ったので、専用サーフェスの列挙は不要。） */
 .ui-modal,
 .ui-confirm,
-.confirm,
-.admin-surface {
+.confirm {
   --dialog-muted: color-mix(in srgb, var(--muted) 68%, var(--fg));
 }
 .dialog-secondary {
