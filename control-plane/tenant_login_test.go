@@ -551,6 +551,101 @@ func TestPerTenantLoginPage(t *testing.T) {
 	}
 }
 
+// P7-1 (docs/61 §61.17.6 + 決定 42): the tenant-less /login is the DEFAULT tenant's
+// page — for hidden_providers, and for nothing else.
+//
+// The three properties below are one decision each, and the second one is why the
+// decision was narrowed after review:
+//
+//  1. hiding works there now. §61.15.13 concluded "the implementation cannot change
+//     this", which held only because that page belonged to no tenant.
+//  2. ★ narrowing allowed_providers does NOT reach it — because the hidden filter has
+//     a valve (all hidden → ignored) and the allowed filter has none. The bare /login
+//     is the only door for somebody who belongs to no tenant, and the rule that would
+//     undo it needs a session. A button-less page here is unrecoverable short of
+//     editing the database.
+//  3. the unknown-slug page stays identical to it, or comparing the two would tell an
+//     unauthenticated visitor whether a slug exists.
+func TestBareLoginAppliesDefaultTenantHiddenOnly(t *testing.T) {
+	ctx := context.Background()
+	st := p3Store(t)
+	mgr := p3Manager(t, st)
+	dt, err := st.EnsureDefaultTenant(ctx)
+	if err != nil {
+		t.Fatalf("default tenant: %v", err)
+	}
+
+	cfg := config{
+		publicBaseURL: "https://af.example.com",
+		cookieSecret:  []byte("0123456789abcdef0123456789abcdef"),
+		mgr:           mgr,
+	}
+	cfg.setProviders([]loginProvider{
+		&oidcProvider{id: "entra", labelJA: "Microsoft でサインイン"},
+		&githubProvider{id: githubProviderID, labelJA: "GitHub でサインイン"},
+	})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /login", cfg.handleLogin)
+	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin)
+	body := func(path string) string {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: %d", path, w.Code)
+		}
+		return w.Body.String()
+	}
+	// setTenantLogin writes the rules AND drops the entry-gate cache, the way the
+	// admin handler does — a cached copy would keep serving the old buttons.
+	setRules := func(allowed, hidden string) {
+		if err := st.SetTenantLogin(ctx, dt.ID, allowed, "", "", hidden); err != nil {
+			t.Fatalf("set default rules: %v", err)
+		}
+		mgr.tenantLogin.invalidate()
+	}
+
+	// 1. hidden_providers now reaches the bare /login.
+	setRules("", githubProviderID)
+	if got := body("/login"); strings.Contains(got, "provider=github") || !strings.Contains(got, "provider=entra") {
+		t.Fatalf("/login must drop the hidden button and keep the rest:\n%s", got)
+	}
+	// 3. …and the unknown-slug page is the same page.
+	if body("/login/no-such-department") != body("/login") {
+		t.Fatalf("the unknown-slug page must be byte-identical to the tenant-less one")
+	}
+
+	// 2. ★ allowed_providers must NOT reach it. "entra only" would leave the GitHub
+	// button off a tenant page — here both stay, because this page is the one nobody
+	// may be locked out of.
+	setRules("entra", "")
+	got := body("/login")
+	if !strings.Contains(got, "provider=entra") || !strings.Contains(got, "provider=github") {
+		t.Fatalf("allowed_providers must not narrow the tenant-less page:\n%s", got)
+	}
+	// The pathological case the narrowing exists to prevent: a default tenant that
+	// accepts only a method this deployment does not have. On a tenant page that is
+	// the "no usable method" dead end; here it must still render every button.
+	setRules("okta", "")
+	got = body("/login")
+	if !strings.Contains(got, "provider=entra") || !strings.Contains(got, "provider=github") {
+		t.Fatalf("a default tenant naming an absent provider must not empty the bare /login:\n%s", got)
+	}
+
+	// The tenant-less page carries no tenant into the authorize link, so nothing
+	// here reaches the state cookie or the Console's post-login tenant preselect.
+	if strings.Contains(got, "tenant=") {
+		t.Fatalf("the tenant-less page must carry no tenant:\n%s", got)
+	}
+
+	// Hiding every method is ignored (the valve), rather than rendering a page with
+	// no buttons at all.
+	setRules("", "entra,"+githubProviderID)
+	got = body("/login")
+	if !strings.Contains(got, "provider=entra") || !strings.Contains(got, "provider=github") {
+		t.Fatalf("hiding everything must be ignored, not obeyed:\n%s", got)
+	}
+}
+
 // The tenant hint survives the round trip as a QUERY on the post-login
 // destination — a hint for the Console's picker, never an authorization input.
 func TestWithTenantHint(t *testing.T) {
@@ -616,8 +711,14 @@ func TestSetTenantLoginRejectsDuplicateAutoJoinDomains(t *testing.T) {
 // GET /api/admin/providers answers the question the free-text allowed_providers
 // field asks and never answered: which ids may be written there. The test pins the
 // two properties the endpoint exists for — it names every enabled provider with a
-// label, and it leaks no credential — plus the gate, which is the same one that
-// guards the rule this list feeds (決定 19).
+// label, and it leaks no credential — plus the gate.
+//
+// ★ P7 (docs/61 §61.17.9 ①) widened the gate: the deployment's methods ARE the
+// default tenant's methods, so every tenant's sign-in method panel lists them and
+// its administrator has to be able to read them. What did NOT widen is the ISSUER,
+// which names the operator's own directory and is absent from /login — so the
+// column is dropped for a tenant_admin. Editing the rule this list feeds is still
+// super_admin-only (決定 19), and that gate lives on the PUT, not here.
 func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -628,6 +729,12 @@ func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
 	tn, _ := st.CreateTenant(ctx, "sub", "子会社")
 	lead, _ := st.UpsertIdentity(ctx, "lead@sub.co.jp", "lead-sub-co-jp", "")
 	if _, err := st.EnsureMembership(ctx, lead.ID, tn.ID, "tenant_admin"); err != nil {
+		t.Fatalf("membership: %v", err)
+	}
+	// A plain member of the same tenant: the widened gate must not become "anyone
+	// who is signed in".
+	staff, _ := st.UpsertIdentity(ctx, "staff@sub.co.jp", "staff-sub-co-jp", "")
+	if _, err := st.EnsureMembership(ctx, staff.ID, tn.ID, "member"); err != nil {
 		t.Fatalf("membership: %v", err)
 	}
 
@@ -650,31 +757,61 @@ func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "/api/admin/providers", nil)
 		r.Header.Set("X-Forwarded-Email", email)
 		w := httptest.NewRecorder()
-		api.withSuperAdmin(api.list)(w, r)
+		api.withAnyTenantAdmin(api.list)(w, r)
 		return w
 	}
+	type provRow struct {
+		ID      string `json:"id"`
+		LabelJA string `json:"label_ja"`
+		LabelEN string `json:"label_en"`
+		Issuer  string `json:"issuer"`
+	}
+	decode := func(w *httptest.ResponseRecorder) []provRow {
+		t.Helper()
+		var got struct {
+			Providers []provRow `json:"providers"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v (%s)", err, w.Body.String())
+		}
+		return got.Providers
+	}
 
-	// ★ A tenant_admin cannot edit allowed_providers (決定 19), so this list is
-	// none of their business — and the UI hiding it is not what makes that true.
-	if w := get("lead@sub.co.jp"); w.Code != http.StatusForbidden {
-		t.Fatalf("tenant_admin: %d %s", w.Code, w.Body.String())
+	// ★ A plain member has no use for this list, so the widened gate still refuses
+	// them. "Not secret" is not a reason to open a gate.
+	if w := get("staff@sub.co.jp"); w.Code != http.StatusForbidden {
+		t.Fatalf("member: %d %s", w.Code, w.Body.String())
+	}
+
+	// ★ A tenant_admin READS it (their own panel lists these methods since P7) —
+	// but without the issuer, which names the operator's directory.
+	wLead := get("lead@sub.co.jp")
+	if wLead.Code != http.StatusOK {
+		t.Fatalf("tenant_admin: %d %s", wLead.Code, wLead.Body.String())
+	}
+	lp := decode(wLead)
+	if len(lp) != 3 {
+		t.Fatalf("tenant_admin providers = %+v, want all three", lp)
+	}
+	for _, p := range lp {
+		if p.Issuer != "" {
+			t.Fatalf("tenant_admin sees issuer %q on %s; it names the operator's directory", p.Issuer, p.ID)
+		}
+		if p.LabelJA == "" || p.LabelEN == "" {
+			t.Fatalf("tenant_admin row = %+v, want id and both labels", p)
+		}
+	}
+	// Omitted, not blanked: an empty issuer would render as an empty cell and read
+	// like a misconfiguration, so the key must be absent from the JSON entirely.
+	if strings.Contains(wLead.Body.String(), "issuer") {
+		t.Fatalf("tenant_admin response carries an issuer key:\n%s", wLead.Body.String())
 	}
 
 	w := get("boss@acme.co.jp")
 	if w.Code != http.StatusOK {
 		t.Fatalf("super_admin: %d %s", w.Code, w.Body.String())
 	}
-	var got struct {
-		Providers []struct {
-			ID      string `json:"id"`
-			LabelJA string `json:"label_ja"`
-			LabelEN string `json:"label_en"`
-			Issuer  string `json:"issuer"`
-		} `json:"providers"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v (%s)", err, w.Body.String())
-	}
+	got := struct{ Providers []provRow }{Providers: decode(w)}
 	if len(got.Providers) != 3 {
 		t.Fatalf("providers = %+v, want all three, in the deployment's order", got.Providers)
 	}

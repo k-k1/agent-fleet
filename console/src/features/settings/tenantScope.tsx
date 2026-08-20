@@ -372,5 +372,8 @@ export function TenantScopeBody({
   if (section === "cost") return <CloudCostAdminView key={slug} tenants={one} isSuper={false} />;
   if (section === "audit") return <AuditView key={slug} tenants={one} isSuper={false} />;
   if (section === "mcp") return <McpAdminView key={slug} tenants={one} />;
-  return <TenantSignInMethods slug={slug} isSuper={isSuper} />;
+  // ★ tenant を渡すのは、この面が「受け入れる／ボタンに出す」の 2 トグルを持つように
+  // なったため（docs/61 §61.17.5）。倒せるのは super_admin だけで、規則の PUT は
+  // withSuperAdmin 固定のまま（決定 19）。onChanged で 4 列を読み直す。
+  return <TenantSignInMethods slug={slug} isSuper={isSuper} tenant={tenant} onChanged={onChanged} />;
 }

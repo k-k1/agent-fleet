@@ -3360,7 +3360,13 @@
   letter-spacing: 0.04em;
   padding: 1px 6px;
   border-radius: 999px;
-  border: 1px solid var(--border2);
+  /* ★ var(--border2) では引けない。ライトでは #e6e8ec が .admin-panel の地
+     (var(--panel2) = #f4f5f7) とほぼ同色で、枠が消えてチップが宙に浮いた文字列に
+     なる（実測・.adm-mcp-row code の注記と同じ罠）。前景を薄く混ぜると、どちらの
+     テーマでも同じ濃さで浮く。
+     P7-0 まではこの素の見た目が出るのは suspended の行だけで目立たなかったが、
+     「デプロイ共通」バッジが同じ素の状態を全行に出すので、ここで直す。 */
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
   color: var(--muted);
   flex: none;
 }
@@ -3372,24 +3378,20 @@
   color: var(--warn, #d9a441);
   border-color: color-mix(in srgb, var(--warn, #d9a441) 45%, var(--border2));
 }
-/* What may be written in "使えるサインイン方法" (docs/61 §61.11.8 ·
-   tenantLogin.tsx DeploymentSignInMethods). It sits directly under the rules form
-   because that is the only place the person who mistyped an id will look. Rows
-   are the .adm-mcp-row family; only the id — the value actually typed — is mono,
-   the display name leads. */
-.idp-known {
-  margin-top: 14px;
-}
-.idp-known > .af-cap {
-  display: block;
-  font-size: 11.5px;
-  color: var(--fg);
-  margin-bottom: 2px;
-}
-/* ★ 枠は var(--border2) では引けない — ライトでは #e6e8ec が地の #f4f5f7 とほぼ同色で、
+/* The provider id on a sign-in method row (docs/61 §61.11.8 → §61.17.5). The display
+   name leads and only the id is mono, because the id is a technical identifier and
+   making it the subject sends the reader elsewhere to ask what "entra" is.
+
+   ★ The selector was `.idp-known code` while these rows lived in their own block
+   under the rules form. P7-0 moved them into the sign-in method list (.admin-panel),
+   and the rule silently stopped matching — the id then picked up the GLOBAL <code>
+   style (a bright highlight in dark) and stopped reading as the same chip. Scope it
+   to the row, which is where it actually lives now.
+
+   ★ 枠は var(--border2) では引けない — ライトでは #e6e8ec が地の #f4f5f7 とほぼ同色で、
    チップが消えて id が宙に浮いた文字列に見える（実測）。前景を薄く混ぜると、どちらの
    テーマでも同じ濃さで浮く。 */
-.idp-known code {
+.adm-mcp-row code {
   flex: none;
   font-family: var(--mono);
   font-size: 11px;
@@ -3398,6 +3400,53 @@
   border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
   border-radius: 4px;
   padding: 0 5px;
+}
+/* The two per-row toggles on the sign-in method list (docs/61 §61.17.5 ·
+   tenantLogin.tsx TenantSignInMethods): "accept" and "show button". They lead the
+   row because they are the only part of it this tenant decides — the rest (who the
+   issuer is, whether it is approved) is stated, not chosen.
+
+   ★ flex:none + nowrap. The labels are the same two strings on every row, so content
+   width already lines the names up; what this stops is the row's flexible middle
+   (.as-repo holds an issuer URL) squeezing the toggles into two illegible slivers
+   when the modal is narrow. Wrapping the row is the better failure. */
+.idp-flags {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+.idp-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--muted);
+  /* 枠は .idp-state と同じ理由で前景の混色（var(--border2) はライトで地に沈む）。 */
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+label.idp-flag {
+  cursor: pointer;
+}
+/* ★ 「効いている」を色で言うのは on だけ。両方を色付きにすると、行の意味（受け入れて
+   いるが出さない）が読めなくなる。 */
+.idp-flag.on {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 30%, var(--border2));
+}
+.idp-flag input {
+  width: 11px;
+  height: 11px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+/* 倒せない行は理由が title に入る（最後の 1 つ・受け入れていない）。薄くするだけで
+   隠さないのは、そこに状態が在ることは読めないといけないため。 */
+.idp-flag:has(input:disabled) {
+  opacity: 0.6;
+  cursor: default;
 }
 /* key/value secret editor (env vars / headers) */
 .mcp-kv {

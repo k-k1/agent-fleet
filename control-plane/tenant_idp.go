@@ -35,6 +35,15 @@ import (
 // tenantProviderPrefix marks a provider id as database-derived.
 const tenantProviderPrefix = "t:"
 
+// defaultTenantSlug is the tenant EnsureDefaultTenant guarantees exists at every
+// start (main.go), with id == slug. Since P7 it is also where the DEPLOYMENT's own
+// sign-in methods live (docs/61 §61.17): the env providers are read as the default
+// tenant's methods, so "the deployment's rules" and "this tenant's rules" stop being
+// two different layers. ★ Only the DISPLAY and the RULES moved — provider ids keep
+// their env shape (`google`, not `t:default:google`), because ten places branch on
+// that shape (§61.17.3).
+const defaultTenantSlug = "default"
+
 // The kinds a row can be built into (docs/61 §61.15). "" is read as oidc: rows
 // written before 0041 predate the column, and P4 had only one kind.
 const (
