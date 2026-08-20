@@ -59,6 +59,8 @@ var blockedMarkers = []string{
 	"reached your",       // "You've reached your <model> limit. Run /usage-credits …"
 	"usage limit",        // 別表現の上限（overrides で「上限ではない」旨を先に除外済み）
 	"session limit",      // "You've hit your session limit · resets 7:50pm (Asia/Tokyo)"
+	"weekly limit",       // "You've hit your weekly limit · resets 9am (Asia/Tokyo)"（実測コーパス）
+	"spend limit",        // "You've hit your org's monthly spend limit · run /usage-credits …"
 	"prompt is too long", // 会話が長すぎる — /compact なしの再送は無意味
 	"credit balance",
 	"invalid api key",
@@ -86,6 +88,37 @@ var limitMarkers = []string{
 	// アカウントの窓。/rate-limit-options メニューを伴う形（実測 2026-07-31 s5jjqv4）—
 	// "You've hit your session limit · resets 7:50pm (Asia/Tokyo)"
 	"session limit",
+	// 週次の窓（実測コーパス 2026-08-20）— "You've hit your weekly limit · resets 9am
+	// (Asia/Tokyo)"。上の 3 語のどれにも当たらないので、**週次だけがエピソードを開けず**
+	// 通知も再開予約もチップも出ていなかった（既定の blocked に落ちて分類だけ正しかった）。
+	"weekly limit",
+}
+
+// LimitKind splits「上限で終わったターン」into the two kinds whose next move is opposite.
+// docs/47 §4-10。どちらも 429 / `error:"rate_limit"` で届くので、コードでは分けられない。
+type LimitKind string
+
+const (
+	// LimitWindow は時間の窓（5時間 / 週次 / モデル別）。待てば解ける＝自動再開の対象。
+	LimitWindow LimitKind = "window"
+	// LimitSpend は支出・残高の上限。**待っても解けない** — 増枠かクレジットの追加という
+	// 課金側の判断が要るので、自動再開は仕込まないし「制限解除待ち」とも名乗らない。
+	LimitSpend LimitKind = "spend"
+)
+
+// spendMarkers are the usage-limit texts that mean 金額側の上限。実測（2026-08-20・
+// 利用者報告のスクリーンショット）:
+//
+//	You've hit your org's monthly spend limit · run /usage-credits to raise it,
+//	or visit claude.ai/admin-settings/usage
+//
+// **"/usage-credits" を材料にしてはいけない**: モデル別の窓の上限（"You've reached your
+// Fable 5 limit. Run /usage-credits to continue or switch models…"）も同じコマンドを案内
+// するので、両方に当たって窓の上限まで「増枠が必要」に化ける。金額そのものを名指す語
+// （spend limit / credit balance）だけを持つ。
+var spendMarkers = []string{
+	"spend limit",
+	"credit balance", // "Your credit balance is too low …"（blockedMarkers の実測由来）
 }
 
 // retryableMarkers are error texts that clear by themselves: the turn was cut off by a
@@ -255,18 +288,37 @@ func abortFrom(line []byte, r abortRecord) (Abort, bool) {
 // retryable な中断（接続断・一時的なレート制限）は上限ではないので落とす。retryableOverrides
 // が classifyAbort で先に効くため、"(not your usage limit)" と自称するレコードがここの
 // "usage limit" に当たることはない。
-func UsageLimitAbort(sid string) (Abort, bool) {
+//
+// kind は**待てば解けるか**を分ける（docs/47 §4-10）。同じ 429 / `error:"rate_limit"` で
+// 届くのに、窓（時間）と支出（金額）はその後の一手が正反対になる — 前者は待つ、後者は
+// 待っても永久に解けず、増枠かクレジットの追加が要る。
+func UsageLimitAbort(sid string) (Abort, LimitKind, bool) {
 	a, ok := AbortInfo(sid)
 	if !ok || a.Retryable {
-		return Abort{}, false
+		return Abort{}, "", false
 	}
-	low := strings.ToLower(a.Msg)
-	for _, m := range limitMarkers {
+	return limitKindOf(a.Msg, a)
+}
+
+// limitKindOf is the pure form (コーパステスト用): 文言から上限の種別を決める。
+//
+// **支出側を先に見る。** 両方に読める文言（"…spend limit… run /usage-credits…"）が来たら、
+// 待てば解ける方に倒すのが一番高い誤りになる: 利用者は来ないリセットを待ち、自動再開は
+// 同じ 429 を踏み続ける。逆向きの誤り（窓の上限を「増枠が要る」と言う）は、待てば直る
+// ものを人が見に来るだけで済む。
+func limitKindOf(msg string, a Abort) (Abort, LimitKind, bool) {
+	low := strings.ToLower(msg)
+	for _, m := range spendMarkers {
 		if strings.Contains(low, m) {
-			return a, true
+			return a, LimitSpend, true
 		}
 	}
-	return Abort{}, false
+	for _, m := range limitMarkers {
+		if strings.Contains(low, m) {
+			return a, LimitWindow, true
+		}
+	}
+	return Abort{}, "", false
 }
 
 // HealIdle is what the pane-based self-heal does once it has decided the session is

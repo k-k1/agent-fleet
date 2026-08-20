@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -91,7 +92,7 @@ func TestRateLimitRecoverBooksThenDismisses(t *testing.T) {
 	f.resetAt = now.Add(3 * time.Hour)
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, true)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
 	st := stateOf(t, m.Name)
 	if f.scheduled != 1 || st.ScheduleID != "sch_test" {
 		t.Fatalf("予約 = %d 回 / id=%q, want 1 回 / sch_test", f.scheduled, st.ScheduleID)
@@ -103,7 +104,7 @@ func TestRateLimitRecoverBooksThenDismisses(t *testing.T) {
 		t.Fatalf("解除 = %d 回 / dismissed=%v, want 1 回 / true", f.dismissed, st.Dismissed)
 	}
 	// メニューがまだ見えている（解除の反映前）状態でもう一度回っても撃ち直さない。
-	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), true)
+	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), true, claude.LimitWindow)
 	if f.scheduled != 1 || f.dismissed != 1 {
 		t.Errorf("2 回目の tick で 予約=%d 解除=%d — エピソード内で撃ち直している", f.scheduled, f.dismissed)
 	}
@@ -131,7 +132,7 @@ func TestRateLimitRecoverDoesNotDependOnSessionOrigin(t *testing.T) {
 			m.Origin = tc.origin
 			m.OriginConv = tc.originConv
 
-			rateLimitRecover(m, stateOf(t, m.Name), now, true)
+			rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
 			if f.scheduled != 1 || f.dismissed != 1 {
 				t.Fatalf("origin=%q originConv=%q: 予約=%d 解除=%d, want 1 / 1",
 					m.Origin, m.OriginConv, f.scheduled, f.dismissed)
@@ -151,13 +152,13 @@ func TestRateLimitNotificationsAreOnceAndDeliveryBased(t *testing.T) {
 	m.Title = "API 整理"
 	session.WriteMeta(m)
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, true)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
 	got := notice.List()
 	if len(got) != 1 || got[0].Kind != rateLimitNoticeReached || got[0].DisplayName != m.Title {
 		t.Fatalf("初回通知 = %+v, want reached 1件", got)
 	}
 	// 同じメニューを watcher がもう一度見ても到達通知は増えない。
-	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), true)
+	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), true, claude.LimitWindow)
 	if got = notice.List(); len(got) != 1 {
 		t.Fatalf("再走査後の通知 = %+v, want 1件のまま", got)
 	}
@@ -193,7 +194,7 @@ func TestRateLimitRecoverWithoutMenu(t *testing.T) {
 	m.Title = "読者レポート生成"
 	session.WriteMeta(m)
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, false)
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitWindow)
 	if f.dismissed != 0 {
 		t.Errorf("解除 = %d 回, want 0 回（メニューが無いのに Enter を送っている）", f.dismissed)
 	}
@@ -205,7 +206,7 @@ func TestRateLimitRecoverWithoutMenu(t *testing.T) {
 		t.Errorf("状態 = %+v, want At あり / Menu=false", st)
 	}
 	// 同じ上限を watcher が何度見ても、通知もキーも増えない。
-	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), false)
+	rateLimitRecover(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), false, claude.LimitWindow)
 	if len(notice.List()) != 1 || f.dismissed != 0 {
 		t.Errorf("再走査で 通知=%d 解除=%d — エピソード内で撃ち直している", len(notice.List()), f.dismissed)
 	}
@@ -233,7 +234,7 @@ func TestRateLimitWithoutMenuNeedsBannerTime(t *testing.T) {
 			f.resetAt, f.resetSource = now.Add(time.Hour), tc.source
 			m := rlMeta()
 
-			rateLimitRecover(m, stateOf(t, m.Name), now, tc.onMenu)
+			rateLimitRecover(m, stateOf(t, m.Name), now, tc.onMenu, claude.LimitWindow)
 			if f.scheduled != tc.wantSch {
 				t.Errorf("予約 = %d 回, want %d 回（source=%s onMenu=%v）",
 					f.scheduled, tc.wantSch, tc.source, tc.onMenu)
@@ -256,7 +257,7 @@ func TestRateLimitDismissRetriesAreBounded(t *testing.T) {
 	m := rlMeta()
 
 	for i := 0; i < maxRateLimitDismissTries+3; i++ {
-		rateLimitRecover(m, stateOf(t, m.Name), now.Add(time.Duration(i)*rateLimitWatchInterval), true)
+		rateLimitRecover(m, stateOf(t, m.Name), now.Add(time.Duration(i)*rateLimitWatchInterval), true, claude.LimitWindow)
 	}
 	if f.dismissed != maxRateLimitDismissTries {
 		t.Fatalf("解除試行 = %d 回, want %d 回で打ち止め", f.dismissed, maxRateLimitDismissTries)
@@ -279,7 +280,7 @@ func TestRateLimitDismissRunsWithSettingOff(t *testing.T) {
 	f.resetAt = now.Add(time.Hour)
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, true)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
 	if f.dismissed != 1 {
 		t.Errorf("解除 = %d 回, want 1 回（設定 OFF でも解除はする）", f.dismissed)
 	}
@@ -299,7 +300,7 @@ func TestRateLimitPastResetResumesSoon(t *testing.T) {
 	f.resetAt = now.Add(-16 * time.Hour)
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, true)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
 	if f.scheduled != 1 {
 		t.Fatalf("予約 = %d 回, want 1 回", f.scheduled)
 	}
@@ -315,7 +316,7 @@ func TestRateLimitNoResetTimeNoSchedule(t *testing.T) {
 	f.resetOK = false
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), time.Now(), true)
+	rateLimitRecover(m, stateOf(t, m.Name), time.Now(), true, claude.LimitWindow)
 	if f.scheduled != 0 {
 		t.Errorf("予約 = %d 回, want 0 回", f.scheduled)
 	}
@@ -333,19 +334,19 @@ func TestRateLimitFollowUpRetriesRegistration(t *testing.T) {
 	f.resetAt = now.Add(2 * time.Hour)
 	m := rlMeta()
 
-	rateLimitRecover(m, stateOf(t, m.Name), now, true)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
 	if f.scheduled != 1 || stateOf(t, m.Name).ScheduleID != "" {
 		t.Fatalf("前提が崩れている: 予約=%d id=%q", f.scheduled, stateOf(t, m.Name).ScheduleID)
 	}
 	f.scheduleErr = nil
-	rateLimitFollowUp(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval))
+	rateLimitFollowUp(m, stateOf(t, m.Name), now.Add(rateLimitWatchInterval), true)
 	if f.scheduled != 2 || stateOf(t, m.Name).ScheduleID != "sch_test" {
 		t.Fatalf("リトライされていない: 予約=%d id=%q", f.scheduled, stateOf(t, m.Name).ScheduleID)
 	}
 	// 失敗し続けても無限には試さない。
 	f.scheduleErr = errTest{}
 	rateLimitStates.Write(m.Name, rateLimitState{At: now.Format(time.RFC3339), ScheduleTries: maxRateLimitScheduleTries})
-	rateLimitFollowUp(m, stateOf(t, m.Name), now.Add(2*rateLimitWatchInterval))
+	rateLimitFollowUp(m, stateOf(t, m.Name), now.Add(2*rateLimitWatchInterval), true)
 	if f.scheduled != 2 {
 		t.Errorf("試行上限を超えて登録を試みている（予約 = %d 回）", f.scheduled)
 	}
@@ -359,10 +360,10 @@ func TestRateLimitEpisodeRetired(t *testing.T) {
 	now := time.Now()
 	f.resetAt = now.Add(time.Hour)
 	m := rlMeta()
-	rateLimitRecover(m, stateOf(t, m.Name), now, true)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
 
 	after := now.Add(time.Hour + rateLimitCleanupGrace + time.Minute)
-	rateLimitFollowUp(m, stateOf(t, m.Name), after)
+	rateLimitFollowUp(m, stateOf(t, m.Name), after, true)
 	if len(f.deleted) != 1 || f.deleted[0] != "sch_test" {
 		t.Errorf("使い終わったスケジュールの削除 = %v, want [sch_test]", f.deleted)
 	}
@@ -371,9 +372,61 @@ func TestRateLimitEpisodeRetired(t *testing.T) {
 	}
 	// 次の上限は新しいエピソードとして扱われる。
 	f.resetAt = after.Add(2 * time.Hour)
-	rateLimitRecover(m, stateOf(t, m.Name), after, true)
+	rateLimitRecover(m, stateOf(t, m.Name), after, true, claude.LimitWindow)
 	if f.scheduled != 2 {
 		t.Errorf("予約 = %d 回, want 2 回（新しいエピソード）", f.scheduled)
+	}
+}
+
+// TestRateLimitSpendLimitNeverSchedules: 支出・残高の上限（docs/47 §4-10）は「待てば解ける」
+// 側の機械にかけない。予約すれば来ないリセットに向けて起こし、通知すれば利用者は待つ —
+// どちらも増枠かクレジット追加という課金側の一手を遅らせるだけになる。
+func TestRateLimitSpendLimitNeverSchedules(t *testing.T) {
+	f := newRateLimitFixture(t)
+	now := time.Now()
+	f.resetAt = now.Add(time.Hour) // 決まっても使わない（時刻の問題ではない）
+	m := rlMeta()
+
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitSpend)
+	if f.scheduled != 0 {
+		t.Errorf("予約 = %d 回, want 0 回（来ないリセットへ向けて起こしている）", f.scheduled)
+	}
+	if f.dismissed != 0 {
+		t.Errorf("解除 = %d 回, want 0 回（メニューは出ていない）", f.dismissed)
+	}
+	if got := notice.List(); len(got) != 0 {
+		t.Errorf("通知 = %+v, want 0 件（「利用上限に達しました」は待てば解ける前提の文言）", got)
+	}
+	st := stateOf(t, m.Name)
+	if !st.Spend || st.At == "" || st.ResumeAt != "" {
+		t.Errorf("状態 = %+v, want Spend=true / At あり / ResumeAt 空", st)
+	}
+}
+
+// TestRateLimitSpendEpisodeEndsWithTheTranscript: 支出のエピソードは時刻では畳まない。
+// 12時間 TTL で消すと、増枠されるまで続いている事実の方が先に画面から消える（チップが
+// 「入力待ち」へ戻る）。畳んでよいのは、生きているセッションの転写がもう上限ではなくなった
+// ときだけ。
+func TestRateLimitSpendEpisodeEndsWithTheTranscript(t *testing.T) {
+	newRateLimitFixture(t)
+	now := time.Now()
+	m := rlMeta()
+	rateLimitRecover(m, stateOf(t, m.Name), now, false, claude.LimitSpend)
+
+	// TTL をはるかに過ぎても畳まない。
+	late := now.Add(rateLimitEpisodeTTL + 6*time.Hour)
+	if episodeStale(stateOf(t, m.Name), late) {
+		t.Error("支出のエピソードが時刻で畳まれている — 増枠前にチップが消える")
+	}
+	// セッションが止まっているだけなら残す（再開しても同じ上限のままかもしれない）。
+	rateLimitFollowUp(m, stateOf(t, m.Name), late, false)
+	if _, ok := rateLimitStates.Read(m.Name); !ok {
+		t.Error("停止中のセッションでエピソードを消している")
+	}
+	// 生きているセッションでここへ来た＝転写の末尾がもう上限ではない＝増枠された。
+	rateLimitFollowUp(m, stateOf(t, m.Name), late, true)
+	if _, ok := rateLimitStates.Read(m.Name); ok {
+		t.Error("解消後もエピソードが残っている — 次の上限の検知を抑止する")
 	}
 }
 
@@ -385,7 +438,7 @@ func TestRateLimitResumeNoteOnFailedReport(t *testing.T) {
 	now := time.Now()
 	f.resetAt = now.Add(90 * time.Minute)
 	m := rlMeta()
-	rateLimitRecover(m, stateOf(t, m.Name), now, true)
+	rateLimitRecover(m, stateOf(t, m.Name), now, true, claude.LimitWindow)
 
 	body := reportBodyForTest("表示名", m.Name, reportKindAnswerReady, reportReasonTurnFailed)
 	if !strings.Contains(body, "利用上限による停止です") ||

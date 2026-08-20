@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -41,8 +40,8 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	// WireLive ではなくここで見るのはエピソードの持ち主が package main だからで、
 	// driveState（チャット／ミラーのチップ）にも同じ読み替えが要る。
 	if alive && s.State == "idle" && normalizeKind(m.Kind) == session.KindClaude {
-		if at, waiting := rateLimitWaiting(m, time.Now()); waiting {
-			s.State = agents.StateLimited
+		if state, at, waiting := rateLimitWaiting(m, time.Now()); waiting {
+			s.State = state
 			s.RateLimitResumeAt = at
 		}
 	}
