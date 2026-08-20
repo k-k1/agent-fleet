@@ -350,9 +350,9 @@ it**. Nothing here needs a restart.
 
 Where it is: **Tenant settings → Sign-in → Sign-in methods** for the tenant's own administrator
 (the account menu's *Tenant settings*). As a deployment administrator you reach the same panel
-from **Admin → the tenant → Sign-in methods**, and the deployment-wide register — *Tenant-defined
-sign-in methods*, under the tenant list — carries the approve and suspend buttons for every
-tenant at once.
+from **Admin → the tenant → Sign-in methods**, and the deployment-wide **Sign-in method
+register** in the rail (*Tenant-defined sign-in methods*) carries the approve and suspend
+buttons for every tenant at once.
 
 > Whether to split into tenants at all, and how a tenant's login rules interact with people who
 > belong to two tenants, is a decision — it stays in [01-install §4](01-install.md).

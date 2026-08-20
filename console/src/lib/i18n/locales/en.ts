@@ -1105,7 +1105,6 @@ export const en: Record<keyof typeof ja, string> = {
   // --- admin (AdminTab; super_admin / tenant_admin) ---
   "admin.title": "Admin",
   "admin.forbidden": "You don't have permission (super_admin only).",
-  "admin.mode_manage": "Tenants",
   "admin.mode_sessions": "Sessions",
   "admin.mode_usage": "Running time",
   "admin.mode_audit": "Audit",
@@ -1113,6 +1112,11 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.mode_mcp": "MCP",
   "admin.mode_tts": "Read aloud",
   "admin.mode_pool": "Slots",
+  "admin.group_tenants": "Tenants",
+  "admin.group_deployment": "Deployment",
+  "admin.group_across": "Across tenants",
+  "admin.all_tenants_back": "All tenants",
+  "admin.tab_register": "Sign-in method register",
   "admin.destroy_ws": "Destroy workspace",
   "admin.destroy_title": "Destroy {key}'s workspace?",
   "admin.destroy_confirm": "Destroy",
@@ -1549,6 +1553,7 @@ export const en: Record<keyof typeof ja, string> = {
     "This removes the sign-in method. People who used it can no longer sign in, but their workspaces, homes and stored credentials are kept.",
   "admin.idp_register": "Tenant-defined sign-in methods",
   "admin.idp_pending_count": "{n} waiting for approval",
+  "admin.idp_register_none": "No tenant has defined a sign-in method yet.",
   "admin.idp_register_hint":
     "Every IdP registered by a tenant. Approval is a point-in-time check, but the IdP's own settings (self-sign-up, for one) can change afterwards. " +
     "Approved methods stay listed here so their issuers and domains can be reviewed periodically. Approve or suspend right here.",
@@ -1566,6 +1571,8 @@ export const en: Record<keyof typeof ja, string> = {
   // change from moving). ---
   "tenant.title": "Tenant settings",
   "tenant.back": "All tenant settings",
+  "tenant.group_tenant": "Tenant",
+  "tenant.tab_limits": "Limits & idle",
   "tenant.group_login": "Sign-in",
   "tenant.tab_signin": "Sign-in methods",
   "tenant.tab_rules": "Login rules",

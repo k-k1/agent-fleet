@@ -1084,7 +1084,7 @@ golden は `af-membership` を持たないので、**Workspace 破棄の per-mem
 
 ### 64.18.6 運用者に見せる面（Console の「スロット」タブ）
 
-`GET /api/admin/ec2-pool`（super_admin のみ）と Console の管理モーダルに 1 タブ。
+`GET /api/admin/ec2-pool`（super_admin のみ）と Console の管理モーダルに 1 項目（左レール「デプロイ全体 › スロット」）。
 このランタイムだけが持ち込む 3 つの問いに答える:
 
 1. **いま何台ぶん払っているか** —— 確保中 / 起動中（時間課金）/ 休止中（root EBS のみ）/ 空き。
