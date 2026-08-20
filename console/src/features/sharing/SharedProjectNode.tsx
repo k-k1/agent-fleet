@@ -21,12 +21,13 @@ import "./sharing.css";
 function SharedSessionRow({ s }: { s: SharedSession }) {
   const tr = useT();
   const st = stateInfo({ kind: s.kind, alive: s.state === "running", state: s.activity });
+  const sessionName = (s.title || s.label || s.name).replace(/^\[AF\]\s*/, "");
   return (
     <li>
       <button
         className="shared-rail-row"
         type="button"
-        title={`${ownerLabel(s)} · ${s.repo || s.name}`}
+        title={`${sessionName}\n${ownerLabel(s)} · ${s.repo || s.name}`}
         onClick={(e) => openSharedSession(s.id, e.ctrlKey || e.metaKey)}
       >
         {/* 所有者側の SessionRow と同じ kind 色付きアイコン — どのエージェントの会話かが
@@ -35,7 +36,7 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
           <Icon name={kindIcon(s.kind)} />
         </span>
         {/* claude の --name 由来の label は "[AF] " 接頭辞付きのことがある。 */}
-        <span className="name">{(s.title || s.label || s.name).replace(/^\[AF\]\s*/, "")}</span>
+        <span className="name">{sessionName}</span>
         <small>{tr(s.permission === "rw" ? "share.permission_rw" : "share.permission_ro")}</small>
         {/* アーカイブ済み/削除済みは CP 側で一覧から外れる(docs/59 §1)ので、ここに
             並ぶのは所有者の手元に今ある会話だけ。
