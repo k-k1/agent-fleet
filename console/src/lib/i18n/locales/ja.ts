@@ -3363,6 +3363,7 @@ export const ja = {
   "rp.launch_failed": "起動に失敗: {err}",
   "rp.image_upload_failed": "画像のアップロードに失敗しました: {err}",
   "rp.image_upload_failed_network": "画像のアップロードに失敗しました（通信エラー）",
+  "rp.first_prompt_failed": "セッションは起動しましたが、最初の指示を渡せませんでした: {err}",
   "rp.filter_branches": "フィルタ（ブランチ名 / コミット）",
   "rp.loading": "読み込み中…",
   "rp.no_branches": "該当するブランチがありません",
