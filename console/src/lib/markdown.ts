@@ -1,4 +1,5 @@
 import { load } from "js-yaml";
+import { Marked } from "marked";
 
 export interface YamlFrontMatter {
   attributes: Record<string, unknown>;
@@ -183,3 +184,45 @@ export function splitYamlFrontMatter(source: string): YamlFrontMatter | null {
   if (!attributes || Array.isArray(attributes) || typeof attributes !== "object") return null;
   return { attributes: attributes as Record<string, unknown>, body };
 }
+
+// A destination a link reference definition could plausibly point at. Either printable
+// ASCII with no space — a URL, a path, a bare filename, everything definitions have
+// always been written with — or an opening that says "target" out loud, which is what
+// keeps `https://ja.wikipedia.org/wiki/日本語` and `/docs/日本語.md` working.
+const ASCII_DESTINATION = /^[\x21-\x7e]+$/;
+const EXPLICIT_DESTINATION = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/|\.{1,2}\/|[#?])/;
+
+export function isLinkDestination(destination: string): boolean {
+  // <…> is CommonMark's unambiguous form: the author already said this is a target.
+  return destination.startsWith("<") || ASCII_DESTINATION.test(destination) || EXPLICIT_DESTINATION.test(destination);
+}
+
+// The Marked instance the app renders with. A separate instance rather than the package
+// singleton, because `marked.use()` would apply process-wide, and this tokenizer belongs
+// to the viewer, not to anyone else who imports "marked" later.
+//
+// Why the tokenizer: `[label]: destination` is a link reference definition, and it renders
+// as NOTHING — it only registers `label` for later `[label]` references. Japanese prose
+// contains no ASCII space, so an ordinary note line
+//   - [保留]: 幕間の再配置（一律不可・幕間ごと個別）／MED語彙拡張。
+// matches that shape whole: the sentence is read as the destination, the list item comes
+// out empty, and every later `[保留]` in the document silently becomes a link to it.
+// Definitions are still honored — but only when the destination could actually be one.
+export const marked = new Marked({
+  tokenizer: {
+    def(src) {
+      // Marked's own rule decides whether this is a definition and where it ends;
+      // re-implementing it here would drift (the destination and the title may sit on
+      // the following lines) and would have to re-derive on its own that a fenced or
+      // indented code block never reaches this point.
+      const rule = this.rules.block.def as RegExp | undefined;
+      const cap = rule?.exec(src);
+      // No definition here, or the rule moved in a marked upgrade: `false` hands the
+      // line back to the built-in tokenizer, i.e. the behavior we had before.
+      if (!cap) return false;
+      // `undefined` disables the rule for this line alone, so the block falls through to
+      // paragraph / text and the author's line renders as it was written.
+      return isLinkDestination(cap[2]) ? false : undefined;
+    },
+  },
+});

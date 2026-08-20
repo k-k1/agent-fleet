@@ -241,6 +241,37 @@ describe("fullwidth-pipe table repair", () => {
   });
 });
 
+// `[label]: destination` is a link reference definition and renders as nothing. Japanese
+// prose has no ASCII space, so a whole note line matched that shape and the list item came
+// out empty — while every later `[保留]` in the document turned into a link to the sentence.
+describe("link reference definition vs Japanese prose", () => {
+  it("renders a bracketed label followed by Japanese prose as written", async () => {
+    useChatStore.getState().setConvs([]);
+    await render("- [棄却＝記録]: 中イキ未達を意図化する案（既定設計と逆）。\n- [保留]: 幕間の再配置／MED語彙拡張。");
+
+    const items = [...host.querySelectorAll("li")].map((li) => li.textContent);
+    expect(items).toEqual(["[棄却＝記録]: 中イキ未達を意図化する案（既定設計と逆）。", "[保留]: 幕間の再配置／MED語彙拡張。"]);
+    expect(host.querySelectorAll("a")).toHaveLength(0);
+  });
+
+  it("still consumes a real definition and resolves references to it", async () => {
+    useChatStore.getState().setConvs([]);
+    await render("[foo]: https://example.com/x\n\nsee [foo] and [docs]\n\n[docs]: /docs/68-session-changed-files.md");
+
+    expect(host.textContent).not.toContain("https://example.com/x");
+    const hrefs = [...host.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(hrefs).toEqual(["https://example.com/x", "/docs/68-session-changed-files.md"]);
+  });
+
+  it("keeps a definition whose destination is a non-ASCII URL or path", async () => {
+    useChatStore.getState().setConvs([]);
+    await render("[w]: https://ja.wikipedia.org/wiki/日本語\n\nsee [w]");
+
+    expect(host.querySelector("a")?.getAttribute("href")).toContain("wiki/");
+    expect(host.querySelector("a")?.textContent).toBe("w");
+  });
+});
+
 describe("quote controls", () => {
   it("adds a copy control to a rendered quote", async () => {
     useChatStore.getState().setConvs([]);
