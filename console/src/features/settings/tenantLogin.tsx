@@ -67,30 +67,19 @@ interface DeployProvider {
   issuer?: string;
 }
 
-// DeploymentSignInMethods — 「使えるサインイン方法」欄に何が書けるかの一覧。
+// useDeploymentProviders — このデプロイの方式（＝既定テナントの方式・docs/61 §61.17）。
 //
-// ★ この欄は自由入力で、書けるものはデプロイの env（AF_OIDC_PROVIDERS ほか）にしか
-// 無い。今までは画面から知る手段が無く、間違えると保存が 400 unknown_provider で
-// 弾かれるだけだった — 弾かれた人が次に何を打てばいいかは、やはり画面のどこにも
-// 書いていない。だから欄のすぐ下に置く。
+// ★ 3 状態を分ける。以前は `res?.providers || []` で**エラーも 0 件に潰していた**ので、
+// 読めなかった相手に「設定されていません」と嘘を表示していた（§61.17.9 ②）。
+// null=読み込み中 / "error"=読めなかった / 配列=読めた（空配列は本当に 0 件）。
 //
-// ★ 出すのは表示名（ログイン画面のボタンと同じ文言）を主にし、id は打ち込む値なので
-// <code> で添える。provider id はドメイン概念ではなく技術識別子で、それを主役にすると
-// 「entra とは何か」を別の場所で聞くことになる。
+// ★ 判定は `Array.isArray(res?.providers)` — `res.error` の有無ではなく**欲しい形が
+// 来たかどうか**で見る。error の形が将来変わっても、0 件と混ざらない。
 //
-// ★ テナント自身の方法（t:<slug>:<name>）はここには出ない。あれは実行時に増減し、
-// 全部並べるとグループ会社の名簿になる（決定 32-4）。自テナントの分は下の
-// 「このテナントのサインイン方法」に出ているので、ヒントでそちらを指す。
-function DeploymentSignInMethods() {
-  const tr = useT();
-  const locale = useLocale();
-  // ★ 3 状態を分ける。以前は `res?.providers || []` で**エラーも 0 件に潰していた**ので、
-  // 読めなかった相手に「設定されていません」と嘘を表示していた（docs/61 §61.17.9 ②）。
-  // P7 で読める相手が super_admin から各テナントの管理者へ広がるまでは、この部品が
-  // super_admin の編集フォームの中にしか無かったため表に出ていなかっただけ。
-  // null=読み込み中 / "error"=読めなかった / 配列=読めた（空配列は本当に 0 件）。
+// ★ テナント自身の方法（`t:<slug>:<name>`）はここには出ない。あれは実行時に増減し、
+// 全部並べるとグループ会社の名簿になる（決定 32-4）。自テナントの分は別に取る。
+function useDeploymentProviders(): DeployProvider[] | "error" | null {
   const [rows, setRows] = useState<DeployProvider[] | "error" | null>(null);
-
   useEffect(() => {
     let live = true;
     api("api/admin/providers")
@@ -106,31 +95,114 @@ function DeploymentSignInMethods() {
       live = false;
     };
   }, []);
+  return rows;
+}
 
-  // 読み込み中は何も出さない（編集フォームの下で行が生えるより静かなほうがよい）。
-  if (rows === null) return null;
-  const label = (p: DeployProvider) => (locale === "en" ? p.label_en : p.label_ja) || p.label_ja || p.label_en || p.id;
-  return (
-    <div className="idp-known">
-      <span className="af-cap">{tr("admin.providers_title")}</span>
-      {rows === "error" ? (
-        <p className="admin-hint">{tr("admin.providers_unreadable")}</p>
-      ) : rows.length === 0 ? (
-        <p className="admin-hint">{tr("admin.providers_none")}</p>
-      ) : (
-        rows.map((p) => (
-          <div key={p.id} className="adm-mcp-row">
-            <span className="as-name">{label(p)}</span>
-            <code>{p.id}</code>
-            {/* issuer は super_admin にしか返らない（§61.17.9 ①）。無いときは列ごと出さない
-                — 空セルは設定漏れに見える。 */}
-            {p.issuer && <span className="as-repo muted">{p.issuer}</span>}
-          </div>
-        ))
-      )}
-      {rows !== "error" && <p className="admin-hint">{tr("admin.providers_hint")}</p>}
-    </div>
-  );
+// --- 「受け入れる」／「ボタンに出す」の代数（docs/61 §61.17.5）------------------
+//
+// DB 表現は CSV 2 本のまま（`allowed_providers` / `hidden_providers`）。画面がそれを
+// 行ごとの 2 トグルとして見せるだけで、スキーマは変わらない。ここに置いた関数だけが
+// CSV を読み書きし、画面は真偽値しか触らない。
+//
+// ★ 罠は 3 つとも「空＝全部」という既存の意味と、既存の安全弁から出る:
+//   1. `allowed_providers` は空＝全部受け入れ（§61.9.4）。全部 OFF にすると保存結果は
+//      「全部 ON」＝**絞ったつもりで全開**になる。
+//   2. `hidden_providers` にも「全部隠したら無視する」弁がある（`oauth.go` の
+//      loginButtons）。全行の「出す」を OFF にする操作は**保存できて、そして効かない**
+//      ＝画面が嘘をつく。
+//   3. 「空」は *デプロイに追従する* という意味を持つ。最初の操作で明示リストに固めると、
+//      以後 env に足した方式をこのテナントだけが黙って拒否する。だから固めない —
+//      正規化は「**全部 ON なら空で保存**」。
+
+/** CSV を id の配列に。CP 側が小文字化して保存する（splitCSVLower）ので合わせる。 */
+export const splitIds = (csv?: string): string[] =>
+  (csv || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
+/**
+ * 「空＝全部」を展開した受け入れ集合。knownIds の順序を保ち、knownIds に無い id は
+ * 落とす（消された方式が CSV に残っていても、画面の状態には影響させない）。
+ */
+export function acceptedIds(knownIds: string[], allowedCSV?: string): string[] {
+  const a = splitIds(allowedCSV);
+  if (a.length === 0) return [...knownIds];
+  const set = new Set(a);
+  return knownIds.filter((id) => set.has(id));
+}
+
+/** 1 行の 2 トグルの状態。shown は accepted の従属（受け入れていないものは出ない）。 */
+export function ruleStateFor(
+  knownIds: string[],
+  allowedCSV: string | undefined,
+  hiddenCSV: string | undefined,
+  id: string,
+): { accepted: boolean; shown: boolean } {
+  const acc = new Set(acceptedIds(knownIds, allowedCSV));
+  const hid = new Set(splitIds(hiddenCSV));
+  return { accepted: acc.has(id), shown: acc.has(id) && !hid.has(id) };
+}
+
+/**
+ * OFF にできない行を返す。usableIds は「いま実際に人が入れる方式」＝デプロイの方式と、
+ * **active かつ usable な自前の行**だけ。
+ *
+ * ★ これ 1 本で 2 つの規則を兼ねる: 「最後の 1 つは OFF にできない」と、
+ * §61.17.5 の**順序**（先に絞ってからテナント管理者を招くとその人が入れない＝自前の行が
+ * まだ動いていないうちは、デプロイの方式を外せない）。承認前の行は usable でないので、
+ * 自動的に後者になる。
+ */
+export function ruleLocks(
+  knownIds: string[],
+  usableIds: string[],
+  allowedCSV: string | undefined,
+  hiddenCSV: string | undefined,
+  id: string,
+): { acceptOffLocked: boolean; showOffLocked: boolean } {
+  const usable = new Set(usableIds);
+  const hid = new Set(splitIds(hiddenCSV));
+  const accUsable = acceptedIds(knownIds, allowedCSV).filter((x) => usable.has(x));
+  const shownUsable = accUsable.filter((x) => !hid.has(x));
+  return {
+    acceptOffLocked: accUsable.length <= 1 && accUsable.includes(id),
+    showOffLocked: shownUsable.length <= 1 && shownUsable.includes(id),
+  };
+}
+
+/** トグル 1 回を CSV 2 本に畳む。返すのは保存する値そのもの。 */
+export function toggleRule(
+  knownIds: string[],
+  allowedCSV: string | undefined,
+  hiddenCSV: string | undefined,
+  id: string,
+  field: "accepted" | "shown",
+  value: boolean,
+): { allowed_providers: string; hidden_providers: string } {
+  const known = new Set(knownIds);
+  const acc = new Set(acceptedIds(knownIds, allowedCSV));
+  const hid = new Set(splitIds(hiddenCSV).filter((x) => known.has(x)));
+  if (field === "accepted") {
+    if (value) {
+      acc.add(id);
+    } else {
+      acc.delete(id);
+      // 受け入れないなら「出さない」指定は意味を持たない（描画側は hidden の判定の
+      // 中でも allowed を要求する）。残すと、後で受け入れ直したときに「出ない」が
+      // 説明なく復活する。
+      hid.delete(id);
+    }
+  } else if (value) {
+    hid.delete(id);
+  } else {
+    hid.add(id);
+  }
+  const accList = knownIds.filter((x) => acc.has(x));
+  return {
+    // ★ 全部 ON なら空で保存（罠 3）。ここが「固めない」の実体。
+    allowed_providers: accList.length === knownIds.length ? "" : accList.join(","),
+    hidden_providers: knownIds.filter((x) => hid.has(x)).join(","),
+  };
 }
 
 // TenantLoginRules — docs/61 §61.9.7 の CSV 3 列のエディタ。
@@ -151,25 +223,24 @@ export function TenantLoginRules({
 }) {
   const tr = useT();
   const toast = useToast();
-  const [providers, setProviders] = useState(tenant?.allowed_providers || "");
   const [autoJoin, setAutoJoin] = useState(tenant?.auto_join_domains || "");
   const [domains, setDomains] = useState(tenant?.allowed_domains || "");
-  const [hidden, setHidden] = useState(tenant?.hidden_providers || "");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    setProviders(tenant?.allowed_providers || "");
     setAutoJoin(tenant?.auto_join_domains || "");
     setDomains(tenant?.allowed_domains || "");
-    setHidden(tenant?.hidden_providers || "");
   }, [slug, tenant]);
 
   const save = async () => {
     const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/login`, "PUT", {
-      allowed_providers: providers.trim(),
+      // ★ この PUT は 4 列を丸ごと置き換える。方式の 2 列はもう別の面（サインイン方法の
+      // 2 トグル）が持っているので、ここでは**読んだ値をそのまま返す** — 送らないと
+      // 空で上書きされ、絞っていたテナントが黙って全開になる。
+      allowed_providers: (tenant?.allowed_providers || "").trim(),
+      hidden_providers: (tenant?.hidden_providers || "").trim(),
       auto_join_domains: autoJoin.trim(),
       allowed_domains: domains.trim(),
-      hidden_providers: hidden.trim(),
     });
     if (res?.error) {
       toast(errText(res.error));
@@ -190,11 +261,6 @@ export function TenantLoginRules({
         <h4>{tr("admin.login_rules")}<span className="af-note">{tr("admin.login_rules_note")}</span></h4>
         <div className="admin-fgrid">
           <label className="admin-fld">
-            <span className="af-cap">{tr("admin.allowed_providers")}</span>
-            <input type="text" placeholder="entra, google" value={providers} onChange={(e) => setProviders(e.target.value)} />
-            <span className="af-unit">{tr("admin.allowed_providers_unit")}</span>
-          </label>
-          <label className="admin-fld">
             <span className="af-cap">{tr("admin.auto_join_domains")}</span>
             <input type="text" placeholder="@sales.acme.co.jp" value={autoJoin} onChange={(e) => setAutoJoin(e.target.value)} />
             <span className="af-unit">{tr("admin.auto_join_domains_unit")}</span>
@@ -204,31 +270,16 @@ export function TenantLoginRules({
             <input type="text" placeholder="@acme.co.jp" value={domains} onChange={(e) => setDomains(e.target.value)} />
             <span className="af-unit">{tr("admin.invite_domains_unit")}</span>
           </label>
-          {/* ★ 受け入れる方式と、ボタンに出す方式は別のこと。兼務の人のために本社の
-              方式を受け入れたままにしつつ、そのテナントの画面には出さない、が書ける
-              （docs/61 §61.15.9）。門は resolver 側のままで、ここは表示だけ。 */}
-          <label className="admin-fld">
-            <span className="af-cap">{tr("admin.hidden_providers")}</span>
-            <input type="text" placeholder="google" value={hidden} onChange={(e) => setHidden(e.target.value)} />
-            <span className="af-unit">{tr("admin.hidden_providers_unit")}</span>
-          </label>
         </div>
-        {/* 「使えるサインイン方法」の答えは欄の隣にしか置けない — 別の面に置くと、
-            打ち間違えて 400 で弾かれた人がそこへ辿り着けない。 */}
-        <DeploymentSignInMethods />
-        {/* ★ 絞り込みの副作用は、絞る人の画面にしか書く場所が無い。兼務の人は
-            他テナントの方式で入っていることがあり、その方式を外すと切り替えが
-            provider_required で止まる（docs/61 §61.15 の運用上の注意）。 */}
-        <p className="admin-hint">{tr("admin.allowed_providers_shared_note")}</p>
+        {/* ★ 方式の 2 列（受け入れる／ボタンに出す）は P7-0 でこの欄から出た
+            （docs/61 §61.17.5）。自由入力に id を打つ代わりに、「サインイン方法」の面で
+            行ごとのトグルを倒す — 打てる id の一覧を別に用意する必要も、
+            400 unknown_provider も無くなる。 */}
+        <p className="admin-hint">{tr("admin.login_rules_methods_moved")}</p>
         <p className="admin-hint">{tr("admin.login_rules_hint")}</p>
         <p className="admin-hint">
           {tr("admin.login_url")} <code>{loginURL}</code>
         </p>
-        {/* ★ 隠す指定をした人にだけ出す。素の /login はテナントを知らないので、
-            デプロイ共通の方式はそこに出続ける（出さないと誰も入れない・docs/61
-            §61.15.13）。つまり「隠した」が効くのはこの URL を配ったときだけで、
-            それが読めるのは隠す欄と同じ画面しかない。 */}
-        {hidden.trim() && <p className="admin-hint">{tr("admin.hidden_providers_url_note")}</p>}
       </div>
       <div className="admin-actions">
         <button onClick={save} className="primary">{tr("common.save")}</button>
@@ -269,21 +320,19 @@ export function TenantLoginRulesView({
           <span className="af-note">{tr("tenant.rules_readonly_note")}</span>
         </h4>
         <div className="admin-fgrid">
-          {row(tr("admin.allowed_providers"), (tenant?.allowed_providers || "").trim(), tr("tenant.rules_providers_note"))}
           {row(tr("admin.auto_join_domains"), (tenant?.auto_join_domains || "").trim(), tr("tenant.rules_autojoin_note"))}
           {row(tr("admin.invite_domains"), (tenant?.allowed_domains || "").trim(), tr("tenant.rules_invite_note"))}
-          {row(tr("admin.hidden_providers"), (tenant?.hidden_providers || "").trim(), tr("admin.hidden_providers_unit"))}
         </div>
+        {/* ★ 方式の 2 列はこの面から出た（§61.17.5）。CSV を読み取り専用で見せても
+            「うちは何で入れるのか」には答えないので、行として並ぶ「サインイン方法」の
+            面を指す。あちらは tenant_admin にも読める（§61.17.9 ①）。 */}
+        <p className="admin-hint">{tr("admin.login_rules_methods_moved")}</p>
         {/* 管理モーダル側の同名ヒント（admin.login_rules_hint）はこの面に合わない —
             「下のメンバー詳細から外す」は、この画面には無い操作を指してしまう。 */}
-        <p className="admin-hint">{tr("admin.allowed_providers_shared_note")}</p>
         <p className="admin-hint">{tr("tenant.rules_hint")}</p>
         <p className="admin-hint">
           {tr("admin.login_url")} <code>{loginURL}</code>
         </p>
-        {/* 読み取り専用の面にも同じ一文を出す。設定した人と、それを読む人が別なのが
-            この面の前提なので、「なぜこの URL を配る必要があるのか」はここにも要る。 */}
-        {(tenant?.hidden_providers || "").trim() && <p className="admin-hint">{tr("admin.hidden_providers_url_note")}</p>}
       </div>
     </section>
   );
@@ -326,7 +375,18 @@ const emptyIdP = (): TenantIdP => ({
   allowed_orgs: "",
 });
 
-// TenantSignInMethods — そのテナント自身の IdP 定義。
+// TenantSignInMethods — このテナントで使えるサインイン方法**ぜんぶ**（docs/61 §61.17.5）。
+//
+// P7-0 でここが 1 本のリストになった。自前の行（作成・編集可・承認が要る）と、
+// デプロイの方式＝既定テナントの方式（バッジ「デプロイ共通」・編集不可）が同じ並びに出て、
+// 各行に 2 つのトグルが付く: **受け入れる** と **ボタンに出す**。
+// ★ これで「その画面が門の全体を映す」ようになる — 以前はデプロイの方式がどこにも
+// 出ず、Google で毎日入っている会社でもこの面が空だった（§61.17 の出発点）。
+//
+// ★ ［方式を追加］は「新しく作る」だけを指す。既定テナントの方式を*参照する*操作は
+// 作らない — それは「受け入れる」トグルと**同じ 1 ビット**で、同じことに 2 つの名前を
+// 与えると「参照行を編集できると思った」を生む（§61.17.5）。だから未参照の行も
+// 最初から並べ、トグルが OFF なだけにする。
 //
 // ★ この画面が必ず伝えないといけないのは 2 つ。どちらを外しても子会社のオンボードが
 // 止まる:
@@ -336,14 +396,32 @@ const emptyIdP = (): TenantIdP => ({
 //     なるだけ・docs/61 §61.14 の 2 つ目）。
 //  2. 受け入れドメインは任意項目ではない。承認は「その範囲でこの issuer を信じてよい」
 //     に対して与えるものなので、範囲こそが承認の対象。
-export function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: boolean }) {
+//
+// ★ トグルを**倒せる**のは super_admin だけ（PUT .../login は withSuperAdmin 固定＝
+// 決定 19 は変えていない）。テナント管理者には同じ状態を静的なチップで見せる —
+// 押せないトグルを出すのは「できる」と言って断ることで、能力が無い面には操作要素を
+// 置かない。
+export function TenantSignInMethods({
+  slug,
+  isSuper,
+  tenant,
+  onChanged,
+}: {
+  slug: string;
+  isSuper: boolean;
+  /** ログイン規則の 4 列。方式の 2 列をこの面が読み書きする。 */
+  tenant?: TenantLoginFields | null;
+  onChanged?: () => void;
+}) {
   const tr = useT();
+  const locale = useLocale();
   const toast = useToast();
   const [rows, setRows] = useState<TenantIdP[] | null>(null);
   const [form, setForm] = useState<TenantIdP | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState<TenantIdP | null>(null);
   const base = `api/admin/tenants/${encodeURIComponent(slug)}/idp`;
+  const deployment = useDeploymentProviders();
 
   const load = useCallback(async () => {
     const res = await api(base);
@@ -419,6 +497,106 @@ export function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: 
   const loginURL = new URL("login/" + encodeURIComponent(slug), document.baseURI).toString();
   const anyActive = (rows || []).some((r) => r.status === "active" && r.usable);
 
+  // --- 統合リスト（docs/61 §61.17.5）-----------------------------------------
+  //
+  // 並びはデプロイの方式 → 自前の行。id の集合はこの順序で固定して、CSV への
+  // 書き出しにもそのまま使う（保存のたびに順番が入れ替わると監査ログが読めない）。
+  const deployRows = Array.isArray(deployment) ? deployment : [];
+  const ownRows = rows || [];
+  const knownIds = [...deployRows.map((p) => p.id), ...ownRows.map((r) => r.provider_id || "").filter(Boolean)];
+  // usable は「いま実際に人が入れる方式」。デプロイの方式は常に、自前の行は承認済みで
+  // 壊れていないものだけ。ここが §61.17.5 の**順序**の規則になる。
+  const usableIds = [
+    ...deployRows.map((p) => p.id),
+    ...ownRows.filter((r) => r.status === "active" && r.usable).map((r) => r.provider_id || ""),
+  ].filter(Boolean);
+
+  // ★ トグルを触らせてよいのは、両方の一覧が揃っていて（＝knownIds が本物で）、
+  // かつ規則そのものを読めているときだけ。デプロイの方式が読めていないのに保存すると、
+  // 「全部 ON なら空」の正規化が**知らない id を落とした結果**で走り、絞ったつもりの
+  // ないテナントを絞ってしまう。
+  const rulesReady = isSuper && deployment !== null && deployment !== "error" && rows !== null && !!tenant;
+
+  const toggle = async (id: string, field: "accepted" | "shown", value: boolean) => {
+    if (!rulesReady || !tenant) return;
+    const next = toggleRule(knownIds, tenant.allowed_providers, tenant.hidden_providers, id, field, value);
+    setBusy(true);
+    try {
+      const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/login`, "PUT", {
+        ...next,
+        // ★ この PUT は 4 列を丸ごと置き換える。ドメインの 2 列はこの面が持っていないので、
+        // 読んだ値をそのまま返す — 送らないと空で上書きされ、招待の上限が消える。
+        auto_join_domains: (tenant.auto_join_domains || "").trim(),
+        allowed_domains: (tenant.allowed_domains || "").trim(),
+      });
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      onChanged?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 1 行分の 2 トグル。super_admin には操作できるチェックボックス、それ以外には
+  // 同じ状態の静的なチップ（押せないトグルは「できる」と言って断ることになる）。
+  const toggles = (id: string) => {
+    // provider_id は CP が必ず組んで返す（tenant_idp_api.go）。それでも空の行が来たら
+    // トグルは出さない — 押せるのに何も起きない要素は、壊れているより分かりにくい。
+    if (!id) return null;
+    const { accepted, shown } = ruleStateFor(knownIds, tenant?.allowed_providers, tenant?.hidden_providers, id);
+    const locks = ruleLocks(knownIds, usableIds, tenant?.allowed_providers, tenant?.hidden_providers, id);
+    if (!isSuper) {
+      return (
+        <span className="idp-flags">
+          <span className={"idp-flag" + (accepted ? " on" : "")}>{tr("admin.idp_accept")}</span>
+          <span className={"idp-flag" + (shown ? " on" : "")}>{tr("admin.idp_show")}</span>
+        </span>
+      );
+    }
+    // ★ OFF にできない場合が 2 つある。どちらも「絞ったつもりで全開／設定ごと無視」に
+    // なるので、保存させてから謝るのではなく最初から倒せなくする（§61.17.5）。
+    const acceptLocked = accepted && locks.acceptOffLocked;
+    const showLocked = shown && locks.showOffLocked;
+    return (
+      <span className="idp-flags">
+        <label className={"idp-flag" + (accepted ? " on" : "")} title={acceptLocked ? tr("admin.idp_accept_last") : undefined}>
+          <input
+            type="checkbox"
+            checked={accepted}
+            disabled={busy || !rulesReady || acceptLocked}
+            onChange={(e) => toggle(id, "accepted", e.target.checked)}
+          />
+          <span>{tr("admin.idp_accept")}</span>
+        </label>
+        {/* ★ 「出す」は「受け入れる」の従属。描画側は hidden の判定の中でも allowed を
+            要求するので、受け入れていない行の「出す」は ON にしても何も起きない。 */}
+        <label
+          className={"idp-flag" + (shown ? " on" : "")}
+          title={!accepted ? tr("admin.idp_show_needs_accept") : showLocked ? tr("admin.idp_show_last") : undefined}
+        >
+          <input
+            type="checkbox"
+            checked={shown}
+            disabled={busy || !rulesReady || !accepted || showLocked}
+            onChange={(e) => toggle(id, "shown", e.target.checked)}
+          />
+          <span>{tr("admin.idp_show")}</span>
+        </label>
+      </span>
+    );
+  };
+
+  const deployLabel = (p: DeployProvider) =>
+    (locale === "en" ? p.label_en : p.label_ja) || p.label_ja || p.label_en || p.id;
+
+  // 「受け入れているが出さない」行が 1 つでもあるか（＝素の /login の注記を出すか）。
+  const anyHidden = knownIds.some((id) => {
+    const s = ruleStateFor(knownIds, tenant?.allowed_providers, tenant?.hidden_providers, id);
+    return s.accepted && !s.shown;
+  });
+
   return (
     <section className="admin-panel">
       <h4>
@@ -426,6 +604,34 @@ export function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: 
         <span className="af-note">{tr("admin.idp_note")}</span>
       </h4>
       <p className="admin-hint">{tr("admin.idp_hint")}</p>
+      {/* デプロイの方式＝既定テナントの方式（§61.17）。編集はできない（issuer を
+          握っているのはオペレーターで、テナント管理者ではない）が、受け入れるか／
+          ボタンに出すかはこのテナントの選択なので、同じ行にトグルが付く。 */}
+      {deployment === null ? (
+        <p className="muted">{tr("common.loading")}</p>
+      ) : deployment === "error" ? (
+        <p className="admin-hint">{tr("admin.providers_unreadable")}</p>
+      ) : deployment.length === 0 ? (
+        // 本当に 0 件（AUTH=dev / proxy、または env に 1 つも書かれていない）。
+        // 「読めなかった」とは別の文言でなければならない（§61.17.9 ②）。
+        <p className="admin-hint">{tr("admin.providers_none")}</p>
+      ) : (
+        deployment.map((p) => (
+          <div key={p.id} className="adm-mcp-row">
+            {toggles(p.id)}
+            <span className="as-name">{deployLabel(p)}</span>
+            <code>{p.id}</code>
+            {/* issuer は super_admin にしか返らない（§61.17.9 ①）。無いときは列ごと
+                出さない — 空セルは設定漏れに見える。 */}
+            {p.issuer && (
+              <span className="as-repo muted" title={p.issuer}>
+                {p.issuer}
+              </span>
+            )}
+            <span className="idp-state">{tr("admin.idp_deployment_wide")}</span>
+          </div>
+        ))
+      )}
       {rows === null ? (
         <p className="muted">{tr("common.loading")}</p>
       ) : rows.length === 0 ? (
@@ -436,6 +642,7 @@ export function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: 
             <IdPForm key={row.id} form={form} setForm={setForm} busy={busy} onSave={save} onCancel={() => setForm(null)} />
           ) : (
             <div key={row.id} className={"adm-mcp-row" + (row.status === "active" && row.usable ? "" : " off")}>
+              {toggles(row.provider_id || "")}
               <span className="as-name mono" title={row.provider_id}>
                 {row.name}
               </span>
@@ -484,6 +691,10 @@ export function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: 
           </button>
         )
       )}
+      {/* ★ 絞り込みの副作用は、絞る人の画面にしか書く場所が無い。兼務の人は他テナントの
+          方式で入っていることがあり、その方式の「受け入れる」を外すと切り替えが
+          provider_required で止まる（docs/61 §61.15 の運用上の注意）。 */}
+      {isSuper && <p className="admin-hint">{tr("admin.allowed_providers_shared_note")}</p>}
       {/* サインイン URL は、その上で何かが動くようになって初めて出す。それ以前は
           ボタンの無いページで、早く配られた URL は配らないより悪い。 */}
       {anyActive && (
@@ -491,6 +702,11 @@ export function TenantSignInMethods({ slug, isSuper }: { slug: string; isSuper: 
           {tr("admin.login_url")} <code>{loginURL}</code>
         </p>
       )}
+      {/* ★ 「出さない」にした人にだけ出す。素の /login はテナントを知らないので、
+          デプロイ共通の方式はそこに出続ける（docs/61 §61.15.13）。つまり「出さない」が
+          効くのは上の URL を配ったときだけで、それが読めるのはこの画面しかない。
+          — P7-1（§61.17.6）でこの注記は不要になる。 */}
+      {anyHidden && <p className="admin-hint">{tr("admin.hidden_providers_url_note")}</p>}
       {confirmDel && (
         <ConfirmDialog
           title={tr("admin.idp_delete_title", { name: confirmDel.name })}
