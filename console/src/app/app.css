@@ -317,3 +317,76 @@
 .lm-dot.question { background: var(--warn); }
 .lm-dot.bg { background: var(--warn); }
 .lm-dot.off { background: var(--muted2); }
+
+/* Pre-invitation landing (docs/61 §61.10.2 · P7-2 · features/auth/NotProvisioned).
+   A whole-window state rather than a modal: there is no Console behind it to dim,
+   and a dismissible dialog would leave the person in a shell where every request
+   403s. Since AF_PROVISION=invite became the default for new installs, this is the
+   first screen a new colleague sees — so it is chrome-less and reads as a step, not
+   as an error page. */
+.app-shell.notprov {
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+.notprov-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  width: 100%;
+}
+.notprov-card {
+  max-width: 30rem;
+  text-align: center;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 28px 24px;
+}
+.notprov-icon {
+  font-size: 30px;
+  color: var(--muted);
+}
+.notprov-card h1 {
+  margin: 10px 0 6px;
+  font-size: 17px;
+}
+.notprov-lead {
+  margin: 0 0 14px;
+  color: var(--fg);
+  line-height: 1.7;
+}
+/* ★ The address has to be selectable and shown in full — the reader copies it to
+   their administrator, who adds people BY ADDRESS. Truncating it (or rendering it
+   as anything but text) buys one guaranteed extra round trip. */
+.notprov-who {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.notprov-who code {
+  display: inline-block;
+  margin-left: 4px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.notprov-hint {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.notprov-acts {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}

@@ -18,6 +18,13 @@ interface TenantStore {
   /** Show the picker in the top bar (only when the user has ≥2 memberships). */
   showPicker: boolean;
   superAdmin: boolean;
+  /** The CP answered `not_provisioned`: this person signed in fine but is on
+   *  nobody's roster yet (docs/61 §61.10.2). It is a normal state on an
+   *  invite-run deployment — the default for new installs since P7-2 — not an
+   *  error, so App renders a landing screen for it instead of a Console whose
+   *  every request 403s. ★ A super_admin never reaches it: the CP answers 200
+   *  with an empty tenant list so the Admin panel stays reachable (決定 23). */
+  notProvisioned: boolean;
   /** Bumped whenever the layout-scoping identity (setUser) changes — including a
    *  DELAYED whoami resolution after a transient boot failure. App keys its
    *  per-tenant sync effect on this so load() re-runs under the user-scoped key
@@ -58,6 +65,7 @@ export const useTenantStore = create<TenantStore>((set) => ({
   tenant: getTenant(),
   showPicker: false,
   superAdmin: false,
+  notProvisioned: false,
   identityRev: 0,
 
   async init() {
@@ -102,11 +110,19 @@ export const useTenantStore = create<TenantStore>((set) => ({
         return false; // network drop — retry
       }
       if (data?.error) {
+        // ★ not_provisioned is not a failure — the person is signed in and simply
+        // not on a roster yet. Flag it so App can land them on a page that says so
+        // (docs/61 §61.10.2); without this they get the full Console with an empty
+        // tenant and every subsequent request 403ing one toast at a time.
+        set({ notProvisioned: data.error.code === "not_provisioned" });
         // Keep the current (persisted) selection either way: a 5xx is the CP/gateway
         // still booting (retry); anything else is a CP without the endpoint
         // (dev/single-tenant) — terminal.
         return !isTransientErr(data);
       }
+      // A later attempt succeeding clears it (an admin added them while the tab
+      // was open, and the retry loop or a reconnect re-read /api/tenants).
+      set({ notProvisioned: false });
       const list: Tenant[] = data.tenants || [];
       set({ superAdmin: !!data.super_admin, tenants: list });
       if (list.length <= 1) {

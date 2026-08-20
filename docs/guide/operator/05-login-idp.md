@@ -78,7 +78,8 @@ setting lives in a different place depending on which kind it is**.
 | One person across two app registrations | `AF_OIDC_<ID>_LINK_CLAIM` (any claim) | **How the same account is recognised** (`oid` only) |
 | When it starts working | at the next CP start | when a deployment administrator **approves** it — no restart |
 | Where its button appears | `/login` and every `/login/<slug>` | only on `/login/<slug>` |
-| Its provider id (for **Sign-in methods** in a tenant's login rules) | the id you listed (`google`, `github`, `entra`, …) | `t:<tenant-slug>:<name>` |
+| Its provider id (the row's id in a tenant's **Sign-in methods**) | the id you listed (`google`, `github`, `entra`, …) | `t:<tenant-slug>:<name>` |
+| How it appears on a tenant's panel | badged **deployment-wide**, not editable there (Accept / Show button still are) | a row that tenant created, editable |
 
 Three things are **not** configurable anywhere and are worth knowing before you go looking for
 them: Google's endpoints and its trust rule, GitHub's `github.com` / `api.github.com` hosts, and
@@ -372,7 +373,7 @@ get wrong: it is not their console, it is yours.
 | **How the email is trusted** | *The issuer is pinned to our own tenant* (Entra) or *The IdP asserts email_verified* |
 | **Email domains to admit** | **required.** A tenant-defined method does not fall back to the deployment-wide allowlist, so an empty list would admit nobody. It also bounds which addresses this issuer may assert |
 | **Allowed tenant ids** | Entra `tid`s; required when the issuer is a multi-tenant endpoint |
-| **How the same account is recognised** | `oid`, when the same issuer already serves this deployment through a different app registration (§4.3). This is the only value a tenant may name |
+| **How the same account is recognised** | `oid`, when the same issuer already serves this deployment through a different app registration (§4.3). This is the only value a tenant may name. ★ In exactly that situation it is **required to save**: without it every existing user of this deployment would be refused at login with "this email address is already used by another sign-in method", so the CP refuses the save instead |
 | **Button label** | optional; the generated default already names the company, so the row does not produce a button reading the same as yours |
 
 > **Why a tenant may only name `oid` here, while `AF_OIDC_<ID>_LINK_CLAIM` accepts any claim.**
@@ -469,11 +470,16 @@ Work down this list; each step tells you something the next one assumes.
 
 4. **Open `https://<PUBLIC_DOMAIN>/login`.** Count the buttons: one per id from step 1, Google
    first, GitHub last. A page saying no sign-in method is configured means step 1 found nothing.
+   ★ **A method whose "Show button" is cleared on the default tenant is missing here too** —
+   this page is rendered as the default tenant's. If the count is short, look at that tenant's
+   Sign-in methods panel first.
+   ★ What the default tenant **Accepts**, on the other hand, does not narrow this page: it is
+   the only door for somebody who belongs to no tenant, so there is no path to zero buttons.
 
 5. **Open `https://<PUBLIC_DOMAIN>/login/<slug>`** for a tenant. It shows the deployment-wide
-   buttons narrowed by that tenant's **Sign-in methods** rule, minus anything listed under
-   **Methods to keep off the sign-in page**, plus that tenant's own **approved** methods at the
-   end. If an approved method has no button, the CP log says why:
+   buttons that tenant **Accepts**, minus any whose **Show button** is cleared, plus that
+   tenant's own **approved** methods at the end. If an approved method has no button, the CP log
+   says why:
 
    ```sh
    docker compose logs cp | grep -i "tenant login provider"
