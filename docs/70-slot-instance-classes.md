@@ -1,6 +1,7 @@
 # 70. スロットのインスタンス種別（アーキ / 世代）をテナント・ユーザー毎に選ぶ
 
-> 状態: **設計中**（2026-08-22）。実装は未着手。ADR は P1 着手時に `0051` として起票する。
+> 状態: **P2 / P3 実装済み**（2026-08-22）。P0（性能実測）と P1（arm64 イメージ）は未着手で、
+> **それが終わるまで arm64 クラスは既定に載せない**（§70.14-2）。ADR は P1 着手時に `0051` として起票する。
 > 本書の価格・AMI・ECS API の記述は **ap-northeast-1 の実 AWS（sandbox 722507597273）で
 > 2026-08-22 に取得した一次情報**。残存リソースは 0（プローブしたタスク定義 2 本は
 > deregister → delete 済み）。
@@ -142,7 +143,7 @@ AF_ECS_EC2_SLOT_TYPES=
 - **アーキは宣言させる。導出しない。** `m7g` の末尾 `g` から arm を推定する案は
   `m7gd` / `g4dn` / `x2gd` で崩れる文字列契約で、この repo が何度も踏んだ型
   （`report-arm-pitfalls` の「TUI 文字列契約は毎版壊れる」と同じ）。
-- **起動時に検証する。** arm64 のクラスがあるのに `AF_ECS_EC2_LAUNCH_TEMPLATE_ARM64`（§70.8）が
+- **起動時に検証する。** arm64 のクラスがあるのに `AF_ECS_EC2_AMI_ARM64`（§70.8）が
   空なら **CP は起動を拒否する**。既存の `AF_ECS_EC2_LAUNCH_TEMPLATE is required` と同じ作法。
   黙って画面に出て Start で落ちるクラスを作らない。
 
@@ -294,17 +295,24 @@ x86 で JDK を入れた人が arm に移ると、**`JAVA_HOME` は x86 の JDK 
 /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id  → ami-02dfc6d3adc9fe799 (arm64)
 ```
 
-**launch template を 2 本にする。** `40-ec2-pool.yaml` に `SlotAmiIdArm64` パラメータ
-（同じ `AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>` 型）と 2 本目の
-`SlotLaunchTemplateArm64` を足し、`SlotLaunchTemplateIdArm64` を Export。
-`30-ingress.yaml` が `AF_ECS_EC2_LAUNCH_TEMPLATE_ARM64` として CP へ渡す。
-IAM ロール・SG・user-data・root ボリュームは**完全に共有**（user-data は bash / awk / lsblk /
-`mkfs.xfs` だけで、AL2023 arm64 に全て存在する）。
+**launch template は 1 本のまま、AMI だけを差し替える。**（実装時に §70.8 の当初案
+「LT を 2 本」から改めた。）`40-ec2-pool.yaml` に `SlotAmiIdArm64` パラメータを足して
+Export し、`30-ingress.yaml` が `AF_ECS_EC2_AMI_ARM64` として CP へ渡す。CP は arm64 の
+スロットを起動するときだけ `RunInstances` に `ImageId` を渡して LT の値を上書きする
+（リクエストのパラメータは launch template より優先される）。x86_64 の起動は
+`ImageId` が nil のままで、**今までと 1 バイトも変わらない**。
 
-- 却下: **CP が `RunInstances` で `ImageId` を上書きする案**。AMI ID を CP が知る必要が生まれ、
-  SSM 読み取りの IAM を CP タスクロールに足すことになる。決定 21 が「表示のためだけに IAM を
-  増やさない」と決めた線と同じ理由で、**起動のためだけにも増やさない**。
-  AMI のパッチ = スタック再デプロイ、という既存の運用（決定 7）も壊れる。
+- **なぜ LT 2 本をやめたか**: スロットのうちアーキで変わるのは AMI **1 フィールドだけ**で、
+  インスタンスプロファイル・SG・root ボリューム・user-data（クラスタ join と
+  af-mount/af-umount の設置。bash / awk / lsblk / `mkfs.xfs` だけなので AL2023 arm64 に
+  全部ある）は完全に共通。CloudFormation は YAML のアンカーを解釈しないので、2 本目の LT は
+  **~90 行の丸ごとコピー**になり、以後は「両方直す」を人が覚えている前提になる。
+- **それでも IAM は増やさない**。当初 `ImageId` 上書きを却下した理由は「CP が SSM から AMI を
+  引くことになる」だったが、**引くのは CloudFormation**（スタック更新時に公開パラメータを
+  解決）で、CP はその文字列を env で受け取るだけ。`ssm:GetParameter` は増えないし、
+  AMI のパッチ = スタック再デプロイ（決定 7）も**そのまま**である。
+- `SlotAmiIdArm64` の型は `AWS::SSM::Parameter::Value<...>` ではなく素の `String`。
+  前者は**空にできない**ので、既定が空である必要のあるこのパラメータには使えない。
 
 **`RuntimePlatform`**: EC2 起動タイプのタスク定義で省略した場合に何が起きるかを実測した。
 
@@ -415,8 +423,8 @@ $ は Cost Explorer 由来の実費だけにする。
 |---|---|---|
 | **P0** | §70.3.1 の性能実測（4 ファミリ × このリポジトリのビルド一式）。arm64 イメージを**手元で 1 本焼いて** L1 image smoke を通す | クラスとして出す価値のあるファミリが決まる。arm64 の CLI 9 種のうち何が動かないかが分かる |
 | **P1** | multi-arch イメージのリリース経路（§70.9）＋ `40-ec2-pool.yaml` の arm LT（§70.8）＋ 契約テストを arm64 で回す | `AF_ECS_EC2_SLOT_TYPES` を手で arm に書き換えれば**フリート全体が arm で動く**（＝案 0 が成立する） |
-| **P2** | §70.5 の home 修復（刻印 + 自己修復 + JDK glob の修正）。**arm を誰かに配る前に必ず**入れる | x86 の home を arm スロットに載せても壊れない |
-| **P3** | スロットクラス本体（parse / 解決 / クランプ / `RuntimePlatform` / golden のアーキ次元） | CP が複数クラスを持てる |
+| **P2** ✅ | §70.5 の home 修復（刻印 + 自己修復 + JDK glob の修正）。**arm を誰かに配る前に必ず**入れる | x86 の home を arm スロットに載せても壊れない |
+| **P3** ✅ | スロットクラス本体（parse / 解決 / クランプ / `RuntimePlatform` / golden のアーキ次元 / CFN パラメータ） | CP が複数クラスを持てる |
 | **P4** | Console / API / MCP / ガイド（§70.10） | テナント管理者が画面で選べる |
 | **P5** | 実 AWS で端から端まで（[ec2-live-harness](64-ec2-persistent-workspace.md) の手順・**プールを空にしてから**）。x86 → arm の切替を実機で 1 回通す | 実運用に出せる |
 
@@ -431,8 +439,14 @@ $ は Cost Explorer 由来の実費だけにする。
    **m6i は出さない**（−4.8% で得るものが無い）。
 2. **既定クラスを将来動かすか。** 既存デプロイの既定を arm に変えると全員が §70.5 を踏む。
    「新規テナントの既定だけ arm」は分岐が増える。当面**既定は `standard` のまま**を推す。
-   ただし [ADR 0044](decisions/0044-workspace-sizing.md) 決定 3（**既定オフで出した機能は
-   存在しないのと同じ**）の裏返しで、**クラスの選択肢自体は 30-ingress の既定に載せて出荷する**。
+   ⚠️ 起票時はここに「[ADR 0044](decisions/0044-workspace-sizing.md) 決定 3（**既定オフで
+   出した機能は存在しないのと同じ**）の裏返しで、クラスの選択肢自体は 30-ingress の既定に
+   載せて出荷する」と書いたが、**実装時に取り下げた**。arm64 クラスは (1) arm64 マニフェスト
+   を持つ workspace イメージ（P1・未）と (2) `Ec2SlotAmiArm64` の両方が要り、前者が無いまま
+   既定に載せると「スロットは起動するがタスクが pull できない」クラスを配ることになる。
+   さらに (2) が空のまま arm64 クラスを宣言すると CP は**起動を拒否する**ので、既定に載せた
+   時点で新規デプロイが全部落ちる。**P1 が終わるまで既定は x86_64 単独**、有効化は
+   `Ec2SlotTypes` の 1 行差し替え（30-ingress のパラメータ説明にそのまま書いてある）。
 3. **§70.5.2 の A / B / C。** 本書は B を推すが、修復対象の表（§70.5）に漏れが無いことは
    実機で 1 回確かめないと言い切れない。
 4. **クラス毎のスロット上限を持つか。** §70.7 では持たない方に倒したが、

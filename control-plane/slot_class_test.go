@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
 
 // --- parsing ---------------------------------------------------------------------
@@ -96,25 +98,22 @@ func TestSlotTypeForPerClass(t *testing.T) {
 	}
 }
 
-// An arm64 class needs an arm64 launch template: the x86_64 ECS-optimized AMI cannot
-// boot on Graviton, and the two are pinned per template (docs/70 §70.8).
-func TestTemplateForArch(t *testing.T) {
-	p := ec2PoolConfig{launchTemplate: "lt-x86", launchTemplateArm64: "lt-arm"}
-	if got := p.templateFor(ec2ArchArm); got != "lt-arm" {
-		t.Errorf("arm64 must use its own template, got %q", got)
+// An arm64 slot needs the arm64 AMI: the launch template pins the x86_64
+// ECS-optimized one and Graviton cannot boot it (docs/70 §70.8).
+func TestAMIForArch(t *testing.T) {
+	p := ec2PoolConfig{launchTemplate: "lt-x86", amiArm64: "ami-arm"}
+	if got := p.amiFor(ec2ArchArm); got != "ami-arm" {
+		t.Errorf("arm64 must override the template's AMI, got %q", got)
 	}
-	if got := p.templateFor(ec2ArchX86); got != "lt-x86" {
-		t.Errorf("x86_64 template, got %q", got)
+	// ⚠️ x86_64 must return "" and not the template's own AMI: strOrNil turns that into
+	// a nil ImageId, which is what keeps an x86_64 launch byte-for-byte the call it has
+	// always been.
+	if got := p.amiFor(ec2ArchX86); got != "" {
+		t.Errorf("x86_64 must not override anything, got %q", got)
 	}
 	// A deployment that never declared classes has no arch on its runtimes at all.
-	if got := p.templateFor(""); got != "lt-x86" {
-		t.Errorf("an unset arch is the original single template, got %q", got)
-	}
-	// And with no arm template configured, nothing silently falls back to launching an
-	// arm instance type from the x86 template — validate() refuses to boot first.
-	noArm := ec2PoolConfig{launchTemplate: "lt-x86"}
-	if got := noArm.templateFor(ec2ArchArm); got != "lt-x86" {
-		t.Errorf("without an arm template the x86 one is all there is, got %q", got)
+	if got := p.amiFor(""); got != "" {
+		t.Errorf("an unset arch must not override anything, got %q", got)
 	}
 }
 
@@ -125,19 +124,19 @@ func TestPoolValidate(t *testing.T) {
 	arm := "standard|S|x86_64|m7i.large:8192\narm|A|arm64|m7g.large:8192"
 
 	p := ec2PoolConfig{launchTemplate: "lt-x86", classes: parseSlotClasses(arm)}
-	if err := p.validate(); err == nil || !strings.Contains(err.Error(), "LAUNCH_TEMPLATE_ARM64") {
-		t.Fatalf("want a refusal naming the missing template, got %v", err)
+	if err := p.validate(); err == nil || !strings.Contains(err.Error(), "AF_ECS_EC2_AMI_ARM64") {
+		t.Fatalf("want a refusal naming the missing AMI, got %v", err)
 	}
 
-	p = ec2PoolConfig{launchTemplate: "lt-x86", launchTemplateArm64: "lt-arm", classes: parseSlotClasses(arm)}
+	p = ec2PoolConfig{launchTemplate: "lt-x86", amiArm64: "ami-arm", classes: parseSlotClasses(arm)}
 	if err := p.validate(); err != nil {
-		t.Fatalf("with both templates it must boot: %v", err)
+		t.Fatalf("with the arm64 AMI it must boot: %v", err)
 	}
 	if p.defaultClass != "standard" {
 		t.Errorf("an unset default is the first declared class, got %q", p.defaultClass)
 	}
 
-	p = ec2PoolConfig{launchTemplate: "lt-x86", launchTemplateArm64: "lt-arm",
+	p = ec2PoolConfig{launchTemplate: "lt-x86", amiArm64: "ami-arm",
 		classes: parseSlotClasses(arm), defaultClass: "nope"}
 	if err := p.validate(); err == nil {
 		t.Errorf("a default that names no declared class must refuse")
@@ -331,5 +330,50 @@ func TestUserLimitRoundTripsSlotClass(t *testing.T) {
 	}
 	if ul, _, _ := m.store.GetUserLimit(ctx, mem.ID); ul.SlotClass != "" {
 		t.Fatalf("clearing left %q", ul.SlotClass)
+	}
+}
+
+// The whole arm64 launch, end to end through the fake EC2: the request carries the
+// arm64 AMI as an override, and the task definition declares ARM64 so ECS refuses to
+// place it anywhere else.
+func TestArmClassLaunchesWithTheArmAMI(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.classes = parseSlotClasses(
+		"standard|S|x86_64|m7i.large:8192\narm|A|arm64|m7g.large:8192")
+	h.rt.pool.defaultClass = "standard"
+	h.rt.pool.amiArm64 = "ami-arm64"
+	h.rt.instanceType, h.rt.arch = "m7g.large", ec2ArchArm
+
+	if _, err := h.rt.runSlot(ctx, "ap-northeast-1a"); err != nil {
+		t.Fatalf("runSlot: %v", err)
+	}
+	if len(h.ec2.ranAMI) != 1 || h.ec2.ranAMI[0] != "ami-arm64" {
+		t.Fatalf("arm64 slot launched with ImageId %v, want [ami-arm64]", h.ec2.ranAMI)
+	}
+
+	// ...and the x86_64 path overrides nothing, so it is the call it has always been.
+	h.ec2.ranAMI = nil
+	h.rt.instanceType, h.rt.arch = "m7i.large", ec2ArchX86
+	if _, err := h.rt.runSlot(ctx, "ap-northeast-1a"); err != nil {
+		t.Fatalf("runSlot: %v", err)
+	}
+	if len(h.ec2.ranAMI) != 1 || h.ec2.ranAMI[0] != "" {
+		t.Fatalf("x86_64 slot sent ImageId %v, want no override", h.ec2.ranAMI)
+	}
+}
+
+func TestTaskDefDeclaresArchitecture(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.arch = ec2ArchArm
+	in := h.rt.buildTaskDef(ctx, ec2Placement{instanceID: "i-1", az: "ap-northeast-1a"}, ec2Prep{})
+	if in.RuntimePlatform == nil || in.RuntimePlatform.CpuArchitecture != ecstypes.CPUArchitectureArm64 {
+		t.Fatalf("arm64 slot must declare ARM64, got %+v", in.RuntimePlatform)
+	}
+	h.rt.arch = ec2ArchX86
+	in = h.rt.buildTaskDef(ctx, ec2Placement{instanceID: "i-1", az: "ap-northeast-1a"}, ec2Prep{})
+	if in.RuntimePlatform == nil || in.RuntimePlatform.CpuArchitecture != ecstypes.CPUArchitectureX8664 {
+		t.Fatalf("x86_64 slot must declare X86_64, got %+v", in.RuntimePlatform)
 	}
 }
