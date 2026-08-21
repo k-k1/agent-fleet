@@ -3,6 +3,15 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.9.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.0) — 2026-08-21
+
+ログインが Google 固定でなくなりました。任意の OpenID Connect プロバイダと GitHub を
+有効にでき、1 つのデプロイを部署（テナント）へ分けて、部署ごとにログイン画面・名簿・
+接続を許す場所を持たせられます。AWS には、各自の home が停止をまたいで残るランタイムが
+増え、その隣にメンバーごとのクラウド費用（実費）が並びます。Console では `.drawio` が
+図として開き、セッションが直したファイルの一覧が出て、会話の一節にマーカーを引いて
+共有先へ届けられるようになりました。
+
 ## [0.8.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.8.0) — 2026-08-13
 
 セッションの会話を同じテナントの他のメンバーへ読み取り専用で見せられるようになり、
