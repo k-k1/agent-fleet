@@ -1761,3 +1761,106 @@ CP イメージを crane で合成し直し（`ghcr.io/…/control-plane:0.8.0` 
 ⚠️ **ここから先はログイン後の画面**なので headless では見られない（Google が弾く）。
 残っているのは、メンバー詳細で **CPU 欄が消えていること・メモリ欄が箱を言うこと・
 「実行中」が出て強制停止が押せること**の目視で、人が自分のブラウザで見る分担にした。
+
+## 64.28 golden を実デプロイで焼く（af.acrt.link・2026-08-21）
+
+§64.20.2 で `bake-golden.sh` は実走済み——**ただし live test は、スクリプトを呼ぶ直前に
+Go から `u1.releaseSlot(ctx)` を直接叩いていた**（`runtime_ecs_ec2_live_test.go`）。操作者に
+その手段は無い。実デプロイ（af.acrt.link / 0.9.1）で **README どおりの手順だけ**を踏んだら、
+2 つとも止まった。段階 B（CP による自動焼き）の仕様は、ここで分かったことで決まる。
+
+### 64.28.1 種は「サインインできる人」でなければならない
+
+`POST /api/workspace/start` は `withResolved` → `resolveFull(id.key, …)` で **常に呼び出し元
+自身**に解決される。admin API に**「このメンバーの Workspace を起動する」は無い**
+（stop / clean-home / destroy はある。Console も同じ 3 つだけ）。だから
+「捨てる前提のアドレスで種メンバーを作る」と、**誰も起動できないメンバーシップ**ができる。
+さらにこのデプロイは `AF_OAUTH_ALLOWED_EMAILS` が 1 アドレスなので、2 つ目の Google
+アカウントを足す案も最初から通らなかった。
+
+**通った形**: 使い捨てテナントを作り、**自分が持っているアカウント**をそこに足す。同じ
+identity の**別メンバーシップ**なので home はまっさらで、テナント選択は `X-AF-Tenant` だけ
+——ログインは 1 つで足りる。（プロバイダを 1 つも指定しないテナントは全プロバイダを受ける。）
+
+> 段階 B では消える制約である。CP の中には `resolveByMembership(identityID, membershipID)`
+> ＋ `ensureWorkspaceStartedUnattended` という**セッション不要の起動経路**が既にあり、
+> 定時実行（`scheduler_wake.go`）がそれで止まっている Workspace を起こしている。
+
+### 64.28.2 「スロットが返るまで待つ」は永遠に来ない（★ 本命）
+
+`Stop()` はボリュームを**付けたままにする**（attachment ＝ その人のスロット、§64.17）。
+スイーパーが 15 分後にやるのも**インスタンスの停止だけ**で、ログはそう言っている:
+
+```
+09:44:55 ecs-ec2 sweep: af-ws-golden-seed-… has been dormant 19m;
+         stopping slot i-033f04adaf5d53f9e (home stays attached)
+09:45:23 instance=stopped attach=attached      ← 眠っても付いたまま
+```
+
+実際に外すのは eviction / Destroy / ドリフト修復 / 退避だけ。だから手順どおり停止して
+19 分待った後でも、`bake-golden.sh` は **「停止してスイーパーを待て」と言って拒否する**
+——今やったことをもう一度やれ、という行き止まりである。
+
+**直した形**: 拒否するのは **running なスロットに付いている場合だけ**にした。停止済みなら
+撮ってよい——インスタンスの停止は通常のシャットダウンでファイルシステムを umount するから
+で、これは製品自身が `releaseSlotSince` で立っている根拠（停止済みスロットは SSM が届かない
+ので umount を省く）と同じものである。README の手順も「**インスタンスが stopped になるのを
+待つ。ボリュームが外れるのを待つのではない**」に直した。
+
+### 64.28.3 golden から作った home が起動できなかった（★ 起動不能・修正済み）
+
+焼いた golden で新規ユーザーを起こしたら、**タスクが無限に再起動した**。原因はどのログにも
+出ない。出ていたのは 1 行だけ:
+
+```
+mkdir: cannot create directory ‘/home/dev/.config’: File exists
+```
+
+`entrypoint.sh` の identity 退避ループは「もう正しい symlink だ」と判断すると
+early-continue し、**向き先を作る `mkdir -p "$dst"` を飛ばしていた**。golden から作った home は
+種が張った symlink を丸ごと持ってくる一方、**keep 側（EFS）は新規ユーザーごとに空**なので、
+`~/.config` は宙に浮いたままになる。そこへ `mkdir -p "$HOME/.config/opencode"` が来て
+`File exists` で落ち、`set -e` で entrypoint ごと死ぬ。
+
+- **空 home では絶対に出ない。** 空 home には実体の `~/.config` があり、それが keep へ
+  `mv` されるので向き先が必ずできる。**golden 経由だけの不具合**であり、golden を使わない
+  限り誰も踏まない——つまり `bake-golden.sh` を実際に使うまで見えなかった。
+- 実機で確かめた: 焼き込まれた symlink 4 本を home から取り除くと、**同じイメージがそのまま
+  起動した**。keep ループが全経路を通り、keep 側を作り、貼り直したからである。
+- 直しは early-continue の枝でも keep 側のディレクトリを作ること。回帰は
+  `deploy/local/keep-relocate-test.sh`（CI の `workspace-agent` job）。修正前のコードに
+  当てると**本番と同じエラー文で落ちる**。
+
+⚠️ **段階 B への要求**: 自動焼きは、**起動を確かめていない golden を公開してはならない**。
+この不具合は「焼けた」までは全部成功に見え、壊れるのは**次に来た新規ユーザー**であり、
+しかも症状は再起動ループだけである。焼いたら種以外で一度起こして、駄目なら
+`af-role=golden` を付けない（＝ CP は空 home に落ちるだけで、誰も壊れない）。
+
+### 64.28.4 実測
+
+| 経路 | entrypoint 開始 → Agent 待受 | 備考 |
+|---|---|---|
+| 空 home（boot-install あり） | **36s** | 4 CLI ＋ rtk ＋ agy ＋ cursor を**ネットワークから**取得 |
+| golden | **12s** | `already present (skip)` ×4 ＝ **ネットワーク不要** |
+
+端から端（`POST /api/workspace/start` → 待受）は空 home で **163s**。うち **127s は
+EC2 の起動とイメージ pull** で、golden はそこには効かない（プールを新しく生やす経路だったため）。
+golden 側の端から端は、起動不能を手で直して測り直した合成値で **≒139s**。
+
+> §64.20.2 の 148.5s → 91.9s と差が小さいのは、**boot-install がその日は速かった**から
+> （25s。§64.13 の実測は 48s）で、golden の効き幅はネットワークの状態で動く。**動かないのは
+> 「ネットワークに一切依存しない」の方**で、そちらが本来の売りである。
+
+その他:
+
+- **snapshot は 3 分弱で完了した**（50 GiB のボリューム / 実使用 1 GiB 強）。待ち時間は
+  ボリュームのサイズではなく**使用ブロック量**で決まる。スクリプトが言っていた
+  「45 GiB で 30〜40 分」は退避 snapshot の数字で、種には当てはまらない。
+- **種に repo を clone してはいけない。** `~/repos` は home の上なので、clone すると
+  **それが新規ユーザー全員に配られる**。§64.13 の golden が `node_modules` 込みだったのは
+  検証ハーネスの都合であって、実デプロイで真似する話ではない。焼く範囲は boot-install まで。
+- golden は**種の MCP サーバ名**（`af_a6d00334`）も運んでくるが、初回起動の
+  `mcp materialize … removed [af_a6d00334]` で掃除される。実害なし。
+- identity が golden に載らない設計は実物で確認できた: `AF_WS_KEEP` は
+  `/var/lib/af/keep` という**全コンテナ共通の固定パス**なので、焼かれた symlink は
+  誰にとっても正しく、種の資格情報は EBS 側に最初から存在しない。

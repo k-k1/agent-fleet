@@ -550,11 +550,24 @@ paid it and every later user starts from that copy (ADR 0045 決定 9):
 
 ```bash
 # 1. create a seed member, start their workspace from the Console, let it finish booting
-# 2. stop it and wait for the sweeper to release the slot
+# 2. stop it and wait for the sweeper to STOP THE SLOT (see below — the home stays attached)
 ./bake-golden.sh --workspace af-ws-<tenant>-<seed> --image <the exact AF_ECS_WORKSPACE_IMAGE>
 # 3. destroy the seed workspace:  DELETE /api/admin/workspaces {tenant_slug,user_key}
 ```
 
+- **A seed member has to be somebody who can sign in.** There is no admin "start
+  this member's workspace" — `/api/workspace/start` always resolves to the caller's
+  own identity — so an invite-only address nobody holds gives you a membership whose
+  workspace can never be created. Adding an account you DO hold to a throwaway tenant
+  is the cheap way to get the fresh membership a seed needs.
+- **Step 2 waits for the slot to stop, not for the volume to detach.** A Stop keeps the
+  home attached on purpose (the attachment *is* that user's slot), and the sweeper only
+  stops the instance — it logs `stopping slot <id> (home stays attached)`. Nothing in the
+  normal lifecycle ever detaches it, so waiting for `available` never ends. Baking off a
+  **stopped** slot is correct: that shutdown unmounted the filesystem, which is the same
+  reasoning `releaseSlot` uses when it skips the umount on a stopped slot.
+- **Do not clone repositories into the seed.** `~/repos` lives on the home volume, so
+  anything cloned there is handed to every new user. Bake boot-install and nothing else.
 - **Re-bake on every release that moves the image or a CLI pin.** The CP compares the
   `af-image` tag against the image it runs and **refuses a stale golden**, falling back to
   an empty home — new users just get the slow first start, and the CP logs why. Forgetting
