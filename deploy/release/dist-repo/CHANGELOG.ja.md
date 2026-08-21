@@ -3,6 +3,11 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.9.3](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.3) — 2026-08-21
+
+管理者向けの修正が 1 件です。自分自身を名簿から外せるようになりました（外せないのは
+「最後の 1 つ」だけです）。
+
 ## [0.9.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.2) — 2026-08-21
 
 0.9.0 で入った EC2 版の永続ワークスペースを実際のデプロイとして運用する中で見つかった
