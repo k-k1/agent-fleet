@@ -3,6 +3,16 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.9.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.0) — 2026-08-21
+
+Signing in is no longer tied to Google: any OpenID Connect provider or GitHub can be
+enabled, and one deployment can be divided into departments that own their own sign-in
+page, roster and permitted networks. On AWS there is a new runtime that keeps each
+person's home on a disk that survives a stop, with the cloud bill shown per member
+beside it. In the Console, `.drawio` files open as diagrams, every session lists the
+files it changed, and passages of a conversation can be highlighted for the people you
+shared it with.
+
 ## [0.8.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.8.0) — 2026-08-13
 
 A session's conversation can now be shown to another member of your tenant, a new
