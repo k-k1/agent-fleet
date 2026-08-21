@@ -25,6 +25,9 @@ export type PoolStatus = {
   golden_id?: string;
   golden_image?: string;
   golden_stale?: boolean;
+  baking?: boolean;
+  bake_rejected?: string;
+  bake_reason?: string;
   running_image?: string;
 };
 type Slot = {
@@ -235,7 +238,16 @@ export function PoolView() {
 
       <section className="admin-panel">
         <h4>{tr("pool.golden_title")}</h4>
-        {!st.golden_id ? (
+        {st.bake_rejected ? (
+          // 拒否は「イベント」ではなく「状態」である。焼けた golden が起動できなかった
+          // ときの症状は再起動ループだけで、CP ログの 1 行は流れてしまう（§64.28.3）。
+          // 直るまでこの面に出し続ける。
+          <p className="warn-text">
+            {tr("pool.golden_rejected", { snapshot: st.bake_rejected, reason: st.bake_reason || "?" })}
+          </p>
+        ) : st.baking ? (
+          <p className="muted">{tr("pool.golden_baking", { image: st.running_image || "" })}</p>
+        ) : !st.golden_id ? (
           <p className="muted">{tr("pool.golden_none", { image: st.running_image || "" })}</p>
         ) : st.golden_stale ? (
           // 忘れると見えないまま新規ユーザーだけが古い CLI で始まる種類の失敗なので、

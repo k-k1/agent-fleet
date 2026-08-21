@@ -323,7 +323,9 @@ It does the three things the hand-typed sequence gets wrong:
 - **Points out a golden snapshot left behind** (`ecs-ec2` only). A golden baked from
   the previous image is not used at all — the CP builds new users' homes empty
   instead (ADR 0045 決定 9), which is not a failure, just a slow first start that
-  nothing but the CP log mentions. Re-bake with `bake-golden.sh`.
+  nothing but the CP log mentions. With auto-bake on (the default) the CP replaces it
+  within a few minutes of the deploy, as long as two slots are free; the pool panel
+  says so while it is happening. Otherwise re-bake with `bake-golden.sh`.
 
 ### What the users see
 
@@ -488,6 +490,8 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap. Start fails at the cap rather than growing the bill |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
 | — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant can override it. See below |
+| — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 決定 9-1). Set `0` and it becomes your job on every release |
+| — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
 
 **Hibernating long-unused homes (opt-in).** An EBS home bills for what it is *provisioned*
 at, whether or not anyone opens it. With this enabled, a home that nobody has opened for
@@ -546,7 +550,15 @@ wedged kernel holding a deleted volume's NVMe namespace, which no amount of retr
 
 **Golden snapshot: skip boot-install for new users.** A brand-new home pays boot-install
 (4 CLIs 41s + rtk 1s + agy 6s = 48s) and a cold npm cache. Bake one home that has already
-paid it and every later user starts from that copy (ADR 0045 決定 9):
+paid it and every later user starts from that copy (ADR 0045 決定 9).
+
+**The CP does this by itself** (決定 9-1, `AF_ECS_EC2_GOLDEN_AUTOBAKE=0` to switch off).
+When the image it runs has no golden, it boots a reserved seed through the ordinary Start
+path, captures its home as a *candidate*, boots a second reserved member from that
+candidate, and only publishes it once that one comes up. It will not start while the pool
+has fewer than two free slots, and it gives up on an image after two failed candidates —
+the pool panel says which of those is happening. Everything below is the manual path, for
+a deployment that has turned it off (or for baking one on the spot):
 
 ```bash
 # 1. create a seed member, start their workspace from the Console, let it finish booting
