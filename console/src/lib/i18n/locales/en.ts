@@ -67,7 +67,7 @@ export const en: Record<keyof typeof ja, string> = {
   "err.email_required": "This tenant restricts invites by domain. Invite by email address.",
   "err.auto_join_conflict": "That auto-join domain already belongs to another tenant.",
   "err.unknown_provider": "That sign-in method isn't enabled on this deployment.",
-  "err.self_removal": "You can't remove your own membership. Ask another administrator.",
+  "err.self_removal": "You can't remove your last membership — it is the way back in. Ask another administrator.",
   "err.bad_share": "That share request is invalid.",
   "err.member_not_found": "That recipient isn't a member of this tenant. Pick one from the search results.",
   "err.share_self": "You can't share with yourself.",

@@ -572,6 +572,13 @@ a deployment that has turned it off (or for baking one on the spot):
   own identity — so an invite-only address nobody holds gives you a membership whose
   workspace can never be created. Adding an account you DO hold to a throwaway tenant
   is the cheap way to get the fresh membership a seed needs.
+- **Step 3 is a membership of your own, and that is allowed.** The roster refuses only
+  your *last* membership (docs/61 §61.10.6), so you take yourself off the throwaway
+  tenant from the Console — *Remove member* with *destroy the workspace and home*
+  ticked, or remove then destroy. Until that rule was narrowed, every self-removal was
+  refused and a deployment with a single administrator could not free the seed's slot at
+  all — which then blocks the automatic bake, because it will not start with fewer than
+  two free slots.
 - **Step 2 waits for the slot to stop, not for the volume to detach.** A Stop keeps the
   home attached on purpose (the attachment *is* that user's slot), and the sweeper only
   stops the instance — it logs `stopping slot <id> (home stays attached)`. Nothing in the
