@@ -3,6 +3,14 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.9.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.1) — 2026-08-21
+
+A maintenance release for AWS deployments, from standing one up end to end. Read-aloud
+never worked on ECS at all, a workspace created after the Control Plane started could
+not be reached from it, and the two screens a brand-new deployment shows first — the
+first-run guide and the reason a workspace will not start — were blank. Bitbucket can
+now be connected on ECS as well.
+
 ## [0.9.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.0) — 2026-08-21
 
 Signing in is no longer tied to Google: any OpenID Connect provider or GitHub can be
