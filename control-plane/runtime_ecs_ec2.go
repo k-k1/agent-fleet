@@ -83,6 +83,16 @@ type ecsEC2Runtime struct {
 	now func() time.Time
 	// sleep is the poll delay, overridable in tests so waits do not really sleep.
 	sleep func(context.Context, time.Duration) error
+
+	// seedRole is the snapshot ROLE a brand-new home for this workspace is built from.
+	// Empty — which is every workspace a person owns — means ec2RoleGolden.
+	//
+	// The golden baker sets it to ec2RoleGoldenCandidate on its probe, and that is the
+	// entire mechanism by which a freshly baked golden is proven to boot BEFORE anyone
+	// else can be given it (docs/64 §64.28.3). Set once by the baker on a runtime for
+	// its own reserved membership, before that workspace is ever started; no session,
+	// PAT or admin path resolves that membership, so nothing else reads it.
+	seedRole string
 }
 
 var _ Runtime = (*ecsEC2Runtime)(nil)
@@ -171,6 +181,40 @@ const (
 	// their first two minutes, which is why nothing that walks per-membership resources
 	// can ever match it.
 	ec2RoleGolden = "golden"
+	// ec2RoleGoldenCandidate is a golden that has been BAKED but not yet proven to
+	// boot (docs/64 §64.28.3). Nothing seeds an ordinary home from it — the whole
+	// point is that it is invisible to goldenSnapshot()'s default lookup, so a
+	// candidate that turns out to be unbootable can never reach a real user. The
+	// baker's probe asks for this role explicitly, and only a probe that comes up
+	// healthy gets it renamed to ec2RoleGolden.
+	//
+	// ★ The failure this exists for: a golden whose home cannot boot looks like a
+	// complete success right up to "snapshot completed". What breaks is the NEXT new
+	// user, and the only symptom is a task that restarts forever. Measured on a live
+	// deployment — the first golden ever baked from the product's own path was
+	// unbootable, and nothing before the user's Console said so.
+	ec2RoleGoldenCandidate = "golden-candidate"
+	// ec2RoleGoldenRejected is a candidate whose probe did not come up. Kept rather
+	// than deleted: it is the evidence for why this image has no golden, and it is
+	// also the memo that stops the baker retrying the same broken image every tick.
+	ec2RoleGoldenRejected = "golden-rejected"
+	// ec2TagBakeStarted is when the baker began waiting on a step, by the CP's clock.
+	// It is the deadline anchor for "the probe never became healthy" — without it a
+	// crash-looping probe would hold a slot forever, since nothing else about it ever
+	// changes. Same discipline as ec2TagHibernating: the state lives in AWS, so a CP
+	// that restarts mid-bake resumes instead of starting over (ADR 0012).
+	ec2TagBakeStarted = "af-bake-started"
+	// ec2TagBakeReason records why a candidate was rejected, for the operator.
+	ec2TagBakeReason = "af-bake-reason"
+	// ec2TagBakeReady marks a SEED's home volume as having finished boot-install — the
+	// difference between "this home is worth capturing" and "this home merely exists".
+	//
+	// ★ Without it the baker cannot tell a seed it booted from a seed whose volume was
+	// created by a Start that then failed. Capturing the second one produces a golden
+	// that is EMPTY — and an empty home boots perfectly, so the probe would pass it and
+	// every new user would silently get no benefit at all. The one failure mode a
+	// boot check cannot catch is the one where booting is not the problem.
+	ec2TagBakeReady = "af-bake-ready"
 	// ec2RoleBackup is a periodic copy of a home, kept so that losing the AZ is not the
 	// same as losing the work (ADR 0045 決定 17). It is a THIRD kind of snapshot and it is
 	// tagged as its own role on purpose: every existing lookup filters on af-role, so
@@ -2673,11 +2717,18 @@ func (e *ecsEC2Runtime) restoreSnapshot(ctx context.Context) (string, error) {
 // they get old CLIs, and everything looks fine. A stale golden is therefore refused —
 // loudly — rather than used.
 func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
+	// Everybody reads ec2RoleGolden. Only the baker's probe reads a candidate, and it
+	// says so on itself — an unproven golden is not something a lookup should be able
+	// to reach by accident (§64.28.3).
+	role := e.seedRole
+	if role == "" {
+		role = ec2RoleGolden
+	}
 	out, err := e.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
 		Filters: []ec2types.Filter{
 			tagFilter(ec2TagPool, e.pool.pool),
-			tagFilter(ec2TagRole, ec2RoleGolden),
+			tagFilter(ec2TagRole, role),
 		},
 	})
 	if err != nil {
@@ -2703,7 +2754,10 @@ func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
 	if newest != nil {
 		return aws.ToString(newest.SnapshotId)
 	}
-	if len(stale) > 0 {
+	// A stale CANDIDATE is the baker's own bookkeeping, not an operator problem — it
+	// only means the image moved while a bake was in flight, and the next tick starts a
+	// fresh one. Only a stale published golden is worth the standing warning.
+	if len(stale) > 0 && role == ec2RoleGolden {
 		log.Printf("ecs-ec2: the golden snapshot %s was baked from another image; this deployment runs %s. "+
 			"New homes are being built EMPTY (slow first start) until it is re-baked — ADR 0045 決定 9.",
 			strings.Join(stale, ", "), want)
@@ -3336,6 +3390,14 @@ type ec2PoolStatus struct {
 	GoldenImage  string        `json:"golden_image"`
 	GoldenStale  bool          `json:"golden_stale"`
 	RunningImage string        `json:"running_image"`
+	// Baking / BakeRejected report what the automatic baker is doing, because the two
+	// states an operator cannot otherwise account for are "there is no golden yet and
+	// something is working on it" and "there is no golden because the last candidate
+	// could not boot". Both otherwise exist only as a CP log line that has scrolled
+	// away, and the second one is a standing condition, not an event.
+	Baking       bool   `json:"baking"`
+	BakeRejected string `json:"bake_rejected"` // snapshot id of the last refused candidate
+	BakeReason   string `json:"bake_reason"`
 }
 
 // PoolStatus reports the live pool. Read-only and tolerant: a section that cannot be read
@@ -3455,6 +3517,17 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			img := ec2TagValue(s.Tags, ec2TagImage)
 			if st.GoldenID == "" || img == st.RunningImage {
 				st.GoldenID, st.GoldenImage = aws.ToString(s.SnapshotId), img
+			}
+		case ec2RoleGoldenCandidate:
+			// Only a candidate for the image being RUN says a bake is under way. One
+			// stamped with anything else is a leftover the baker will sweep.
+			if ec2TagValue(s.Tags, ec2TagImage) == st.RunningImage {
+				st.Baking = true
+			}
+		case ec2RoleGoldenRejected:
+			if ec2TagValue(s.Tags, ec2TagImage) == st.RunningImage {
+				st.BakeRejected = aws.ToString(s.SnapshotId)
+				st.BakeReason = ec2TagValue(s.Tags, ec2TagBakeReason)
 			}
 		case ec2RoleBackup:
 			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
