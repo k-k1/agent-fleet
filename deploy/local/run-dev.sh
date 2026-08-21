@@ -204,6 +204,11 @@ fi
   exit 1
 }
 
+# go builds below (native workspace-agent, control-plane) can hit the fleet's
+# per-agent 2G cgroup cap on a new/changed dependency; see go-build.sh.
+# shellcheck disable=SC1091
+. "$ROOT/deploy/local/go-build.sh"
+
 # ---- prepare the Workspace runtime (per mode) --------------------------------
 # rtk is always baked into the image (Dockerfile BAKE_RTK=1 default, ARG-pinned).
 # The old host vendoring (update-rtk.sh -> vendor/rtk) is gone.
@@ -234,8 +239,7 @@ if [ "$MODE" != native ]; then
 else
   # native: no image — build the workspace-agent for this host instead, and check
   # the host provides what the Dockerfile normally would (warn-only; docs/34).
-  echo "==> build workspace-agent (native runtime)"
-  (cd "$ROOT/workspace/agent" && go build -o /tmp/af-agent .)
+  build_go_binary "$ROOT/workspace/agent" /tmp/af-agent "workspace-agent (native runtime)"
   AF_NATIVE_AGENT_BIN=/tmp/af-agent
   for c in tmux git claude; do
     command -v "$c" >/dev/null 2>&1 || echo "WARN: '$c' not found on host PATH (native workspaces need it)"
@@ -254,8 +258,7 @@ fi
 . "$ROOT/deploy/local/console-build.sh"
 build_console
 
-echo "==> build control-plane"
-(cd "$ROOT/control-plane" && go build -o /tmp/af-cp .)
+build_go_binary "$ROOT/control-plane" /tmp/af-cp "control-plane"
 
 echo "==> control-plane on $CP_ADDR  (console: http://${CP_ADDR/#:/localhost:})  mode=$MODE runtime=$AF_RUNTIME auth=${AUTH:-dev}"
 # The generic OIDC login providers (docs/61) are named at runtime — AF_OIDC_PROVIDERS
