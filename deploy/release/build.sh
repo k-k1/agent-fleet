@@ -18,6 +18,9 @@
 #
 # env: ROOTFS_URL_BASE … base of the R distribution URL baked into rootfs.json
 #      (default https://github.com/k-k1/agent-fleet-dist/releases/download — §35.4.2).
+#      WS_PLATFORMS … CPU architectures for the WORKSPACE image, e.g.
+#      "linux/amd64,linux/arm64" (docs/70 §70.9). Empty = the host's, as before.
+#      Needs --push. The native package (C/R) stays amd64 (docs/35 §35.3.1).
 #
 # Output: deploy/release/dist/ (each artifact + SHA256SUMS).
 # Run real release builds on hosted CI (release-gate.yml) or a host with enough
@@ -71,7 +74,11 @@ if [ "$DO_COMPOSE" = 1 ]; then
   extra=()
   [ "$DO_PUSH" = 1 ] && extra+=(--push)
   [ "$DO_IMAGES_TAR" = 1 ] && extra+=(--save)
+  # WS_PLATFORMS passes straight through (docs/70 §70.9): the workspace image is the
+  # only artifact that has to exist for more than one CPU architecture, and it is
+  # release.sh that knows how to build one.
   DIST_DIR="$DIST" VERSION="$VERSION" REGISTRY="${REGISTRY:-$DEFAULT_REGISTRY}" \
+    WS_PLATFORMS="${WS_PLATFORMS:-}" \
     bash "$ROOT/deploy/compose/release.sh" "${extra[@]+"${extra[@]}"}"
 fi
 

@@ -357,9 +357,26 @@ GitHub ホストの **`ubuntu-24.04-arm` ランナーが無料で使える**の�
 - **ドリフト印は壊れない。** `ecrManifestMediaTypes`（`runtime_ecs_stale.go:87`）は
   **既に index / manifest list を要求している**ので、印は index digest になり、
   アーキに依らず 1 つに定まる。`stampImage` / `Stale` は無改修。
-- **CI の形**: ジョブを 2 本（`ubuntu-latest` = amd64 / `ubuntu-24.04-arm` = arm64）に分け、
-  各々 `--push` でダイジェスト push → 3 本目で `docker buildx imagetools create` で
-  マニフェストリストを合成。**QEMU を使わない**（ネイティブ 2 本 + 合成）。
+- **CI の形（実装は入れたが、走らせていない）**: `deploy/compose/release.sh` に
+  `WS_PLATFORMS` を足した（空＝従来どおり。`linux/amd64,linux/arm64` で `docker buildx
+  build --platform … --push`）。`publish-dist.yml` には `workspace_arm64` という
+  workflow_dispatch の入力を足し、ON のときだけ QEMU + buildx を用意して
+  `WS_PLATFORMS` を渡す。**既定 OFF なので通常のリリースは 1 アーキのまま。**
+  - ⚠️ **QEMU での所要時間は未計測**で、このジョブの `timeout-minutes` は 90。
+    イメージはコンパイルよりダウンロードと apt が支配的なので税は dpkg と tar に乗る
+    はずだが、**それは仮説である**。入らなかったら**タイムアウトを伸ばすのは誤り**で、
+    正解はジョブを 2 本（`ubuntu-latest` + **`ubuntu-24.04-arm`**）に割ってダイジェストで
+    push し、`docker buildx imagetools create` で合成すること。**この repo は public に
+    なったので arm64 のホストランナーは無料で使える。**
+  - 押した後に**レジストリへ問い合わせて 2 アーキの index であることを確かめる**手順も
+    ジョブに入れた。マニフェストリストは `docker images` に映らないので、
+    「arm64 の側もちゃんと出たか」はローカルの docker を見ても答えられない——
+    後から 1 アーキの push でタグを上書きしていた場合、症状は Graviton のスロットが
+    pull に失敗することだけになる。
+- ⚠️ **`--save`（air-gap の images tar）と `WS_PLATFORMS` は排他**にした。
+  マニフェストリストはそもそもローカルの docker に載らないので `docker save` できない。
+  air-gap の tar は「1 台への手渡し」であって配布経路ではない（ADR 0037）ので、
+  ホストのアーキ 1 本のままでよい。
 - **`crane` 経路はそのまま通る。** `harness/setup.sh` の `crane copy` はインデックスを
   丸ごと複製するので、sandbox / acrt の実デプロイ手順（[ecs-real-deployment](64-ec2-persistent-workspace.md)）は
   変更不要。
@@ -422,7 +439,7 @@ $ は Cost Explorer 由来の実費だけにする。
 | | 内容 | 出口 |
 |---|---|---|
 | **P0** | §70.3.1 の性能実測（4 ファミリ × このリポジトリのビルド一式）。arm64 イメージを**手元で 1 本焼いて** L1 image smoke を通す | クラスとして出す価値のあるファミリが決まる。arm64 の CLI 9 種のうち何が動かないかが分かる |
-| **P1** | multi-arch イメージのリリース経路（§70.9）＋ `40-ec2-pool.yaml` の arm LT（§70.8）＋ 契約テストを arm64 で回す | `AF_ECS_EC2_SLOT_TYPES` を手で arm に書き換えれば**フリート全体が arm で動く**（＝案 0 が成立する） |
+| **P1** ◐ | multi-arch イメージのリリース経路（§70.9・**仕組みは入れたが一度も走らせていない**）＋ `40-ec2-pool.yaml` の arm64 AMI（§70.8・済）＋ 契約テストを arm64 で回す（**未**） | `AF_ECS_EC2_SLOT_TYPES` を手で arm に書き換えれば**フリート全体が arm で動く**（＝案 0 が成立する） |
 | **P2** ✅ | §70.5 の home 修復（刻印 + 自己修復 + JDK glob の修正）。**arm を誰かに配る前に必ず**入れる | x86 の home を arm スロットに載せても壊れない |
 | **P3** ✅ | スロットクラス本体（parse / 解決 / クランプ / `RuntimePlatform` / golden のアーキ次元 / CFN パラメータ） | CP が複数クラスを持てる |
 | **P4** | Console / API / MCP / ガイド（§70.10） | テナント管理者が画面で選べる |

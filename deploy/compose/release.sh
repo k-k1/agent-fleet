@@ -23,6 +23,10 @@
 #                                                      #   registry; not a released artifact)
 #   VERSION=1.0.0 deploy/compose/release.sh --no-build # bundle only (images exist)
 #   BAKE_AGENT_CLIS=1 VERSION=... deploy/compose/release.sh   # fully baked (internal use)
+#   WS_PLATFORMS=linux/amd64,linux/arm64 VERSION=... ... --push  # multi-arch workspace
+#                                                      #   image (docs/70 §70.9). Implies
+#                                                      #   --push: buildx cannot load a
+#                                                      #   manifest list locally.
 #
 # Normally invoked via deploy/release/build.sh, the single entry point (docs/35 §35.6.2).
 set -euo pipefail
@@ -38,6 +42,11 @@ WS_IMAGE="$REGISTRY/workspace:$VERSION"
 # Distribution default is lean (no baked CLIs). BAKE_AGENT_CLIS=1 restores the
 # fully-baked build.
 BAKE_AGENT_CLIS="${BAKE_AGENT_CLIS:-0}"
+# Which CPU architectures the WORKSPACE image is built for (docs/70 §70.9). Empty =
+# the host's, which is what every release so far has published. Set to
+# "linux/amd64,linux/arm64" to publish one tag holding both — ECS and docker then pull
+# whichever matches the box, and the CP needs no second image reference.
+WS_PLATFORMS="${WS_PLATFORMS:-}"
 
 DO_BUILD=1; DO_SAVE=0; DO_PUSH=0
 for a in "$@"; do
@@ -74,11 +83,33 @@ if [ "$DO_BUILD" = 1 ]; then
     --build-arg "VERSION=$VERSION" \
     --build-arg "DOCS_SRC=$DOCS_STAGE_REL" \
     "$ROOT"
-  echo "==> build $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS)"
-  docker build -t "$WS_IMAGE" \
-    --build-arg "VERSION=$VERSION" \
-    --build-arg "BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS" \
-    "$ROOT/workspace"
+  # The workspace image is the only one that has to exist for more than one CPU
+  # architecture: on the ecs-ec2 runtime a slot can be Graviton (docs/70), and the CP
+  # itself runs on Fargate x86_64 wherever it is deployed. WS_PLATFORMS is empty by
+  # default, so a plain build is byte-for-byte what it has always been.
+  #
+  # ⚠️ A multi-platform build produces a manifest LIST, and buildx cannot `--load` one
+  # into the local docker — it can only push it. So this path implies --push, and the
+  # docker push below is skipped for the workspace image (it is already in the
+  # registry, under the same tag, as an index).
+  if [ -n "$WS_PLATFORMS" ]; then
+    if [ "$DO_PUSH" != 1 ]; then
+      echo "ERROR: WS_PLATFORMS needs --push (a manifest list cannot be loaded into the local docker)" >&2
+      exit 1
+    fi
+    echo "==> buildx $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS, platforms=$WS_PLATFORMS) -> pushed"
+    docker buildx build --platform "$WS_PLATFORMS" --push -t "$WS_IMAGE" \
+      --build-arg "VERSION=$VERSION" \
+      --build-arg "BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS" \
+      --provenance=false \
+      "$ROOT/workspace"
+  else
+    echo "==> build $WS_IMAGE (BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS)"
+    docker build -t "$WS_IMAGE" \
+      --build-arg "VERSION=$VERSION" \
+      --build-arg "BAKE_AGENT_CLIS=$BAKE_AGENT_CLIS" \
+      "$ROOT/workspace"
+  fi
   rm -rf "$DOCS_STAGE"
 fi
 
@@ -103,10 +134,21 @@ if [ "$DO_PUSH" = 1 ]; then
     *) echo "ERROR: --push needs REGISTRY to be a real registry path (got '$REGISTRY')" >&2; exit 1 ;;
   esac
   docker push "$CP_IMAGE"
-  docker push "$WS_IMAGE"
+  if [ -n "$WS_PLATFORMS" ]; then
+    echo "    ($WS_IMAGE was pushed by buildx as a manifest list)"
+  else
+    docker push "$WS_IMAGE"
+  fi
 fi
 
 if [ "$DO_SAVE" = 1 ]; then
+  # ⚠️ A manifest list is not in the local docker at all, so there is nothing to save.
+  # The air-gap tar stays single-architecture (the host's) on purpose — it is a
+  # hand-off for one machine, not a distribution channel (ADR 0037).
+  if [ -n "$WS_PLATFORMS" ]; then
+    echo "ERROR: --save cannot be combined with WS_PLATFORMS (a manifest list is never loaded locally)" >&2
+    exit 1
+  fi
   echo "==> docker save (local hand-off) $CP_IMAGE + $WS_IMAGE"
   docker save "$CP_IMAGE" "$WS_IMAGE" | gzip > "$DIST/agent-fleet-images-$VERSION.tar.gz"
 fi
