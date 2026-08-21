@@ -175,6 +175,11 @@ export function AdminTab() {
           onOpenMember={setMember}
           onCloseMember={() => setMember(null)}
           onChanged={loadTenants}
+          // テナントが消えたら、その中の面に留まる意味が無い——一覧へ戻して読み直す。
+          onDeleted={() => {
+            leaveScope();
+            loadTenants();
+          }}
         />
       );
     }

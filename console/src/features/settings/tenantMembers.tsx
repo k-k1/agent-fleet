@@ -144,6 +144,7 @@ export function MemberView({
   const [confirmGrant, setConfirmGrant] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmDestroy, setConfirmDestroy] = useState(false);
+  const [confirmPurgeRow, setConfirmPurgeRow] = useState(false);
   // 退職処理のついでに破棄するかどうか。既定 false のまま出す——現行の契約
   // （home を残し、戻ってきたら再招待するだけ）を、チェックしない限り変えない。
   const [purge, setPurge] = useState(false);
@@ -328,6 +329,29 @@ export function MemberView({
       setBusy(false);
     }
   };
+  // 後始末の 3 段目（docs/61 §61.18）。除名（論理削除）→ Workspace の破棄 → ここ。
+  //
+  // ★ 出すのは「Workspace がもう無い」ときだけ。member.state は CP が
+  // workspaceStateByMembership で返しているもので、workspace 行が無ければ "none"。
+  // サーバも 409 で拒むが、押せるのに必ず失敗するボタンを置く理由が無い。
+  const deleteMemberRow = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON(
+        `api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}`,
+        "DELETE",
+        {},
+      );
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      setConfirmPurgeRow(false);
+      onRemoved(); // 行ごと消えたので、詳細を開いたままにしない
+    } finally {
+      setBusy(false);
+    }
+  };
   const setRoleTo = async (newRole: string) => {
     setBusy(true);
     try {
@@ -479,9 +503,13 @@ export function MemberView({
             <button className="danger-btn" disabled={busy} onClick={() => setConfirmRemove(true)}>
               <Icon name="close" /> {tr("admin.remove_member")}
             </button>
-          ) : (
+          ) : member.state !== "none" ? (
             <button className="danger-btn" disabled={busy} onClick={() => setConfirmDestroy(true)}>
               <Icon name="trash" /> {tr("admin.destroy_ws")}
+            </button>
+          ) : (
+            <button className="danger-btn" disabled={busy} onClick={() => setConfirmPurgeRow(true)}>
+              <Icon name="trash" /> {tr("admin.delete_member_row")}
             </button>
           )}
         </div>
@@ -626,6 +654,19 @@ export function MemberView({
           <p>{tr("admin.destroy_body")}</p>
           <p className="warn-text">{tr("admin.destroy_locks")}</p>
           <p className="muted">{tr("admin.destroy_efs")}</p>
+        </ConfirmDialog>
+      )}
+      {confirmPurgeRow && (
+        <ConfirmDialog
+          title={tr("admin.delete_member_row_title", { key })}
+          confirmLabel={tr("admin.delete_member_row_confirm")}
+          busy={busy}
+          onCancel={() => setConfirmPurgeRow(false)}
+          onConfirm={deleteMemberRow}
+        >
+          <p>{tr("admin.delete_member_row_body")}</p>
+          <p className="warn-text">{tr("admin.delete_member_row_gone")}</p>
+          <p className="muted">{tr("admin.delete_member_row_kept")}</p>
         </ConfirmDialog>
       )}
       {confirmGrant && (
