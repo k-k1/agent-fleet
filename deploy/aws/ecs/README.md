@@ -138,7 +138,16 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
      --name /af-cp/google-client-secret --value "<GOOGLE_OAUTH_CLIENT_SECRET>"   # your terminal, not shared
    aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
      --name /af-cp/oidc-client-secret   --value "<AF_OIDC_<ID>_CLIENT_SECRET>"
+   # optional, and NOT a sign-in method: the Bitbucket git connection (docs/dev/08 §8.4).
+   # Pair it with BitbucketOauthKey=<consumer key> at deploy.
+   aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
+     --name /af-cp/bitbucket-oauth-secret --value "<BITBUCKET_OAUTH_SECRET>"
    ```
+   ⚠️ The Bitbucket consumer's **Callback URL must be exactly**
+   `https://<your-fqdn>/api/oauth/bitbucket/callback` — Bitbucket matches it in full, and
+   the CP derives it from `PUBLIC_BASE_URL`, so it is not separately configurable. The
+   consumer needs a secret (authorization-code grant): the workspace credential helper
+   refreshes the access token, and a public consumer issues none.
 3. **The IdP client**: add `https://<your-fqdn>/oauth2/callback` to its Authorized
    redirect URIs — that single URI serves every provider you enable. Pass the
    fqdn/zone + client id + allowed/super-admin emails as parameters at deploy:
