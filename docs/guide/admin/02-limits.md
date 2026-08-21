@@ -60,6 +60,26 @@ that will actually be applied.
 
 Changes take effect **from the next workspace start**; a running workspace is not resized.
 
+### Machine (available on some deployments)
+
+Some deployments also offer a **"Machine"** choice above the numbers. It is not about how big the
+workspace is but about **what kind of box it runs on**, and the kinds differ in price and speed (Arm
+machines, for instance, cost around 20% less than Intel ones, and some of them feel slower for it).
+The names and what is behind them are chosen by your deployment administrator, so leaving it on the
+default is a perfectly good answer.
+
+- The **tenant-wide default** is picked from the "Limits" page of the tenant settings.
+- A **per-member** choice is made from that member's "Set limits" panel, and it wins: members who
+  chose for themselves are unaffected when you change the tenant default.
+- The memory number means the same thing in every machine. **The machine picks the ladder, memory
+  picks the rung on it.**
+
+> ⚠️ **Switching to a machine with a different CPU family (Intel / Arm) makes the next start take a
+> few minutes longer.** The home (`~`) is kept, but the agent CLIs, node, Chromium and so on inside
+> it were built for the old family, so they are reinstalled at startup. Nothing under `~/repos` is
+> deleted, but `node_modules` / `target` / `.venv` will not run until you reinstall them yourself.
+> The screen shows the same warning, and only when the family actually changes.
+
 > **The working disk does not persist.** Its contents are wiped when the workspace stops — only the
 > home directory (`~`) survives. It is a place for build output and caches, not for storing things.
 

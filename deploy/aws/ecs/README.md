@@ -34,7 +34,7 @@ platform changes:
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
-| `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand |
+| `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/70 §70.8) |
 
 > `00`/`10`/`20` are proven end-to-end (deploy→verify→`delete-stack`, no orphans).
 > `30-ingress` is authored and template-validated; standing it up needs a domain +
@@ -486,12 +486,46 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 |---|---|---|---|
 | `WsRuntime` | `AF_RUNTIME` | `ecs` | `ecs-ec2` switches the adapter. Rolling back is this value |
 | `Ec2SlotLaunchTemplate` | `AF_ECS_EC2_LAUNCH_TEMPLATE` | — | `SlotLaunchTemplateId` output of `40-ec2-pool`. The CP refuses to boot without it on this profile |
-| `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192:2,…` | `instanceType:memoryMiB[:vcpu]`, ascending. The vCPU field is optional and display-only (the Console shows which box a memory number lands on) |
-| `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap. Start fails at the cap rather than growing the bill |
+| `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192:2,…` | `instanceType:memoryMiB[:vcpu]`, ascending — or several named **classes**, see below. The vCPU field is optional and display-only (the Console shows which box a memory number lands on) |
+| `Ec2SlotAmiArm64` | `AF_ECS_EC2_AMI_ARM64` | `""` | `SlotAmiIdArm64` output of `40-ec2-pool`. Required only when a class declares `arm64` — the CP refuses to boot otherwise |
+| `Ec2DefaultSlotClass` | `AF_ECS_EC2_DEFAULT_SLOT_CLASS` | `""` (the first class) | Where a member with no per-user and no per-tenant choice lands |
+| `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap **across all classes**. Start fails at the cap rather than growing the bill |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
 | — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant can override it. See below |
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 決定 9-1). Set `0` and it becomes your job on every release |
 | — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
+
+**Offering a choice of machine (opt-in, docs/70).** `Ec2SlotTypes` also takes several
+named ladders, `id|label|arch|<ladder>` separated by `;`, and a tenant administrator then
+picks one per tenant and per member. Memory still picks the rung *within* the class, so
+"8 GB" keeps meaning the same thing:
+
+```
+standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;arm|Lower cost (Arm)|arm64|m7g.large:8192:2,m7g.xlarge:16384:4,m7g.2xlarge:32768:8
+```
+
+Measured on-demand prices in ap-northeast-1 (2026-08-22), against m7i: **m7g −19.0%,
+m6g −24.0%, m8g −11.0%, m6i −4.8%**. `$/vCPU-hour` is linear within every family, so the
+saving is the same on every rung.
+
+Before declaring an `arm64` class, in this order:
+
+1. **The workspace image needs an arm64 manifest.** Without it the slot launches fine and
+   the task cannot pull anything that runs on it. (`crane manifest <image>` — a single
+   `manifest.v2+json` is one architecture; a manifest list / OCI index is what you want.)
+2. **Set `Ec2SlotAmiArm64`.** A launch template pins one AMI and Graviton cannot boot the
+   x86_64 ECS-optimized one; the CP passes this as a `RunInstances` ImageId override.
+   `aws ssm get-parameter --name /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id --query Parameter.Value --output text`.
+   Like the x86_64 AMI, patching it means redeploying `40-ec2-pool`.
+3. **Expect a second golden bake.** A golden is a home full of binaries, so there is one
+   per architecture; until the arm64 one is baked, new members on an arm64 class start
+   from an empty home (slower, not broken). The pool screen lists them per architecture.
+
+Adding a class moves nobody by itself. Moving a member *across architectures* is safe but
+not free: their home is kept and its architecture-dependent contents (`~/.local` CLIs, nvm
+node, Chromium) are reinstalled on the next start, and anything they built under `~/repos`
+(`node_modules`, `target`, `.venv`) has to be reinstalled by them. The Console says so
+before saving.
 
 **Hibernating long-unused homes (opt-in).** An EBS home bills for what it is *provisioned*
 at, whether or not anyone opens it. With this enabled, a home that nobody has opened for
