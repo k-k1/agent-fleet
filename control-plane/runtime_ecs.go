@@ -265,6 +265,10 @@ func newECSFactory(m *manager) (RuntimeFactory, error) {
 		startTimeout: time.Duration(envInt("AF_ECS_START_TIMEOUT_SEC", 300)) * time.Second,
 	}
 	log.Printf("runtime=ecs region=%s cluster=%s namespace=%s efs=%s", cfg.region, cfg.cluster, cfg.namespaceArn, cfg.efsFileSystem)
+	// CP タスクより後に作られたワークスペースは Service Connect の別名で引けない
+	// （タスク起動時に書かれた /etc/hosts にしか載らない）。その取りこぼしを Cloud Map で
+	// 拾う（agent_dial.go）。失敗しても起動は続ける — 従来どおりの挙動に戻るだけ。
+	initAgentResolver(context.Background(), ac, cfg.namespaceArn)
 	return &ecsFactory{
 		cfg: cfg,
 		ecs: ecs.NewFromConfig(ac),

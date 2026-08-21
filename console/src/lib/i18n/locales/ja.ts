@@ -1859,6 +1859,7 @@ export const ja = {
   "wsbar.state.stopping": "停止中…",
   "wsbar.state.recreating": "再作成中…",
   "wsbar.state.unknown": "不明",
+  "wsbar.state.no_tenant": "未所属",
   // 起動中ダイアログ（WsStartingDialog・docs/35 §35.9-9）
   "wsstart.title": "ワークスペースを起動中",
   "wsstart.generic": "起動しています…",
@@ -1916,6 +1917,11 @@ export const ja = {
   "wsbar.state_title.starting":
     "起動中（初回はイメージ取得のため数分かかることがあります。完了すると自動で稼働中になります）",
   "wsbar.state_title.other": "状態: {state}",
+  "wsbar.state_title.no_tenant":
+    "どのテナントにも所属していないため、ワークスペースがまだありません。管理者に追加を依頼してください。",
+  "wsbar.state_title.no_tenant_admin":
+    "どのテナントにも所属していないため、ワークスペースがまだありません。管理 → テナント一覧 から、自分をメンバーとして追加してください。",
+  "wsbar.start_failed": "ワークスペースを起動できませんでした",
   // 「はじめる」／分割／全て閉じる
   "wsbar.start_here": "はじめる",
   "wsbar.start_here.running": "はじめる（チャット / リポジトリ / クローン / shell）",
