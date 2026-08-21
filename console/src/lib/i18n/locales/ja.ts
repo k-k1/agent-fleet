@@ -53,6 +53,16 @@ export const ja = {
   // 再サインイン導線を出すので、この文言はモーダル外で出た場合の保険。
   "err.provider_required": "このテナントには別のサインイン方法が必要です。サインインし直してください。",
   "err.not_provisioned": "所属するテナントがありません。管理者に追加を依頼してください。",
+  // 招待前の着地面（docs/61 §61.10.2・P7-2）。★ 失敗ではなく、招待制デプロイの正常な
+  // 最初の一歩として書く。管理者に伝えるべき「自分のアドレス」を必ず読ませる。
+  "notprov.title": "まだ招待されていません",
+  "notprov.lead":
+    "サインインはできています。あとは管理者があなたをチームの名簿に追加すると、ワークスペースが使えるようになります。",
+  "notprov.signed_in_as": "このアドレスでサインインしています:",
+  "notprov.hint":
+    "管理者には、上のアドレスをそのまま伝えてください。追加してもらったら「再読み込み」を押します。",
+  "notprov.retry": "再読み込み",
+  "notprov.switch_account": "別のアカウントでサインインする",
   "err.domain_not_allowed": "このテナントに招待できるメールアドレスのドメインではありません。",
   "err.email_required": "このテナントはドメインで招待を制限しています。メールアドレスで招待してください。",
   "err.auto_join_conflict": "その自動参加ドメインは既に別のテナントが使っています。",
@@ -761,6 +771,10 @@ export const ja = {
     "読み上げ音声をペインの横位置に合わせてステレオ配置します。左右端でも音は片側へ振り切らず、通知やファイル朗読などペインに属さない音声は中央で再生します。",
   "tts.note_engine":
     "「自動」は日本語をずんだもん（VOICEVOX）で読み、エンジンが起動していない間や日本語以外は AWS Polly に自動で切り替えます（次の文からずんだもんに復帰）。「Polly」は常に Polly で読みます。",
+  "tts.note_no_voicevox":
+    "この環境には VOICEVOX エンジンがありません。読み上げはすべて AWS Polly で行われるため、ずんだもんの話者・キャラクター・感情スタイルなど VOICEVOX 専用の設定は表示していません。",
+  "tts.warn_voicevox_missing":
+    "音声エンジンに「ずんだもん」が選ばれていますが、この環境には VOICEVOX エンジンがありません。このままでは読み上げに失敗します。「自動」または「Polly」に変更してください。",
   "tts.note_zundamon_volume":
     "ずんだもんは他のキャラより声が大きめなので、少し下げて他の声や通知音と音量を揃えられます。ずんだもんの声で読むときだけ効きます。",
   "tts.note_voice_per_session":
@@ -1111,7 +1125,6 @@ export const ja = {
   // --- 管理（features/settings/AdminTab.tsx。super_admin / tenant_admin）---
   "admin.title": "管理",
   "admin.forbidden": "権限がありません（super_admin のみ）。",
-  "admin.mode_manage": "テナント管理",
   "admin.mode_sessions": "セッション",
   "admin.mode_usage": "稼働時間",
   "admin.mode_audit": "監査",
@@ -1119,6 +1132,14 @@ export const ja = {
   "admin.mode_mcp": "MCP 配布",
   "admin.mode_tts": "読み上げ",
   "admin.mode_pool": "スロット",
+  // 左レールのグループ見出し（ルート）。テナント＝一覧と登録簿、デプロイ全体＝
+  // デプロイに 1 つしかない面、横断で見る＝全テナントを跨いで数える面。
+  "admin.group_tenants": "テナント",
+  "admin.group_deployment": "デプロイ全体",
+  "admin.group_across": "横断で見る",
+  "admin.all_tenants_back": "すべてのテナント",
+  // レールの項目名は短く（本文の見出しは admin.idp_register のまま）。
+  "admin.tab_register": "サインイン方法の登録簿",
   "admin.destroy_ws": "Workspace を破棄",
   "admin.destroy_title": "{key} の Workspace を破棄しますか？",
   "admin.destroy_confirm": "破棄する",
@@ -1168,7 +1189,9 @@ export const ja = {
   "pool.hibernating": "退避中（{state}）",
   "pool.detached": "未接続",
   "pool.golden_title": "golden snapshot",
-  "pool.golden_none": "ありません。新規 home は空から作られるので、新しいメンバーは初回起動で boot-install とキャッシュ空を払います。{image} 用に deploy/aws/ecs/bake-golden.sh で焼いてください。",
+  "pool.golden_none": "ありません。新規 home は空から作られるので、新しいメンバーは初回起動で boot-install とキャッシュ空を払います。通常は CP が {image} 用を自動で焼きます（スロットが 2 つ空くまで待ちます）。自動焼きを切っている場合は deploy/aws/ecs/bake-golden.sh で焼いてください。",
+  "pool.golden_baking": "{image} 用を用意しています。焼いたあと、それが本当に起動することを確かめてから使い始めます。それまで新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。",
+  "pool.golden_rejected": "{snapshot} は使いません: {reason}。起動を確かめられなかったものは配らないので、新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。同じイメージでの焼き直しは 2 回で打ち切ります。",
   "pool.golden_stale": "{snapshot} は {baked} から焼かれていますが、このデプロイは {running} を動かしています。この golden は使われず、焼き直すまで新規 home は空から作られます（初回起動が遅くなります）。",
   "pool.golden_ok": "{image} から焼いたもの",
   "pool.idle_min": "{n} 分",
@@ -1249,6 +1272,8 @@ export const ja = {
   "admin.tts_polly_ready": "利用可",
   "admin.tts_polly_unset": "未設定",
   "admin.tts_starting_note": "起動には 1〜2 分かかります。準備が整うまで、日本語の読み上げは Polly が代読します（Polly 未設定なら無音）。",
+  "admin.tts_no_engine":
+    "この環境には VOICEVOX エンジンがありません（ECS 管理下でもないため、この画面から起動することもできません）。有効にしてもずんだもんへは一切流れないので、無効で固定しています。エンジンを用意すれば自動で操作できるようになります。",
   "admin.tts_disable_note":
     "無効にすると、AWS では ECS の desired count を 0 にしてエンジンを停止します（停止中コスト 0）。読み上げ自体はユーザー設定（音声読み上げ）側で ON/OFF します。",
   "admin.tts_dict_title": "テナント共通の読み仮名辞書",
@@ -1461,8 +1486,6 @@ export const ja = {
   // とくに「招待できるドメイン」を「使えるドメイン」と読み違えると運用が壊れる。---
   "admin.login_rules": "ログイン規則",
   "admin.login_rules_note": "空欄 = 制限なし",
-  "admin.allowed_providers": "使えるサインイン方法",
-  "admin.allowed_providers_unit": "provider id をカンマ区切り。空 = 有効な全方式",
   "admin.auto_join_domains": "自動参加ドメイン",
   "admin.auto_join_domains_unit": "初回ログイン時にこのテナントへ自動で参加",
   "admin.invite_domains": "招待できるドメイン",
@@ -1472,23 +1495,34 @@ export const ja = {
     "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。",
   "admin.login_url": "このテナント専用のログイン URL:",
 
-  // --- 「使えるサインイン方法」に何が書けるか（docs/61 §61.11.8）。欄は自由入力で、
-  // 書ける値はデプロイの env にしか無かった。表示名を主に、打ち込む id は添える。---
-  "admin.providers_title": "このデプロイで使えるサインイン方法",
+  // --- デプロイの方式＝既定テナントの方式（docs/61 §61.17）。P7-0 で、テナントの
+  // サインイン方法の一覧に「デプロイ共通」の行として並ぶようになった。表示名を主に、
+  // id は <code> で添える（技術識別子を主役にしない）。---
   "admin.providers_none": "このデプロイにはサインイン方法が設定されていません（ログイン画面にボタンが出ません）。",
-  "admin.providers_hint":
-    "上の「使えるサインイン方法」には、この一覧の id をカンマ区切りで書きます。空欄ならすべて使えます。" +
-    "このテナント自身のサインイン方法（下の一覧）は、承認済みであれば t:テナント名:方法名 の形で同じ欄に書けます。",
+  // ★ 「0 件」と「読めなかった」を必ず別文言にする。以前は 403 を空配列に潰していて、
+  // 権限の無い相手に「設定されていません」と嘘を表示していた（docs/61 §61.17.9 ②）。
+  "admin.providers_unreadable": "サインイン方法の一覧を読み込めませんでした。権限が無いか、一時的に取得できていません。",
 
   // --- テナント定義の認証方式（docs/61 §61.11・P4）。子会社ごとに Entra が違う場合。
   // 作るのはテナント管理者、有効化はデプロイ管理者（決定 30）。この非対称が本体。---
-  "admin.idp_title": "このテナントのサインイン方法",
-  "admin.idp_note": "有効化にはデプロイ管理者の承認が必要",
+  "admin.idp_title": "このテナントで使えるサインイン方法",
+  "admin.idp_note": "自前の方式の有効化にはデプロイ管理者の承認が必要",
   "admin.idp_hint":
-    "自社の IdP（Entra / Okta / Keycloak など）や GitHub の組織を、このテナント専用のサインイン方法として登録できます。" +
+    "このテナントに入るのに使える方法の全部です。デプロイ共通の方式と、このテナント専用に登録した方式が並びます。" +
+    "自社の IdP（Entra / Okta / Keycloak など）や GitHub の組織は「サインイン方法を追加」から登録でき、" +
     "登録した時点では「承認待ち」で、デプロイ管理者が承認するまでログイン画面にボタンは出ず、サインインもできません。",
-  "admin.idp_none": "まだ登録されていません。",
+  "admin.idp_none": "このテナント専用の方式はまだありません（上のデプロイ共通の方式は使えます）。",
   "admin.idp_add": "サインイン方法を追加",
+  // --- 行ごとの 2 トグル（docs/61 §61.17.5）。DB は CSV 2 本のままで、画面だけが変わる。
+  // ★ 「出す」は「受け入れる」の従属 — 受け入れていない方式は ON にしても出ない。---
+  "admin.idp_accept": "受け入れる",
+  "admin.idp_show": "ボタンに出す",
+  "admin.idp_deployment_wide": "デプロイ共通",
+  "admin.idp_accept_last":
+    "最後の 1 つは外せません。すべて外すと「制限なし＝全部受け入れる」の意味になり、絞ったつもりで全開になります。",
+  "admin.idp_show_last":
+    "最後の 1 つは外せません。すべて隠すとボタンの無いログイン画面になるため、指定ごと無視されます。",
+  "admin.idp_show_needs_accept": "受け入れていないので、ログイン画面には出ません。",
   "admin.idp_approve": "承認して有効化",
   "admin.idp_suspend": "停止する",
   "admin.idp_reapply": "承認を申請する",
@@ -1538,25 +1572,36 @@ export const ja = {
   "admin.idp_repend_hint":
     "issuer / client_id / email の信頼方法・種類・同一アカウントの見分け方を変更したとき、または受け入れるドメイン・tid・GitHub 組織を追加したときは、" +
     "承認がやり直しになります（承認は「この発行元・この組織を、この範囲で信じてよい」に対して与えられたものなので）。",
-  "admin.hidden_providers": "ボタンを出さない方式",
-  "admin.hidden_providers_unit":
-    "カンマ区切り。受け入れたまま、このテナントのログイン画面にボタンだけ出しません。" +
-    "全部隠した場合は無視します（ボタンの無いログイン画面を作らないため）。",
-  "admin.hidden_providers_url_note":
-    "★ ボタンを隠しても、上の URL を付けない素のログイン画面にはデプロイ共通の方式が出続けます" +
-    "（そこはどのテナントの画面でもないため、隠すとどのテナントにも属さない人が入れなくなります）。" +
-    "隠す指定を活かすには、このテナントの人に上のサインイン URL を配ってください。",
+  // ★ P7-1（docs/61 §61.17.6）で「素の /login には効かない」の運用回避は消えた。
+  // 残すのは「隠した＝もう使えない」という誤読への一文だけ。
+  "admin.hidden_still_accepted_note":
+    "★ ボタンに出さない方式も、受け入れは続きます。その方式で入っている人（他テナントとの兼務など）は" +
+    "そのまま入れて、このテナントのログイン画面にボタンが出なくなるだけです。",
   "admin.allowed_providers_shared_note":
-    "★ ここを自テナントの方式だけに絞ると、他テナントの方式で入っている兼務の人は、このテナントに切り替えられなくなります" +
+    "★ 自テナントの方式だけに絞ると、他テナントの方式で入っている兼務の人は、このテナントに切り替えられなくなります" +
     "（同じアドレスでも、別の IdP のアカウントは別のログインとして扱われるため）。" +
-    "その人が使う方式は受け入れたまま、「ボタンを出さない方式」に書けば、このテナントのログイン画面には出ません。" +
+    "その人が使う方式は「受け入れる」のままにして「ボタンに出す」だけ外せば、このテナントのログイン画面には出ません。" +
     "受け入れても入れる人が増えるわけではありません — 誰がこのテナントに入れるかを決めるのは名簿です。",
+  "admin.login_rules_methods_moved":
+    "★ どのサインイン方法を受け入れるか・ログイン画面のボタンに出すかは、「サインイン方法」の面で行ごとに切り替えます。",
+  // ★ 停止の順序ガード（docs/61 §61.17.4）。拒否ではなく確認 — 停止は「漏れた IdP を
+  // 止める」手段でもあるので、常に始めるより速くあってよい。人数は CP の文言を出す。
+  "admin.idp_suspend_title": "{name} を停止する",
+  "admin.idp_suspend_body":
+    "先に、その人たちに別のサインイン方法を紐づけてもらってください（設定 → 個人設定 → アカウント）。" +
+    "停止したあとでは、本人が自分で足すことはできません — 紐づけにはサインインが必要で、そのサインインに使うのがこの方式だからです。",
+  "err.tenant_idp_link_claim_required":
+    "このデプロイには、同じ発行元のサインイン方法がすでにあります。この発行元はアプリ登録ごとに同じ人へ違う subject を割り当てるため、" +
+    "「同一アカウントの見分け方」を指定しないと、すでにこのデプロイを使っている人が全員ログインできなくなります（メールアドレス重複として拒否されます）。",
+  "admin.idp_suspend_members":
+    "この方式しか使ったことのない現役メンバーが {n} 人います。停止するとその人たちが締め出されます。",
   "admin.idp_delete_title": "{name} を削除する",
   "admin.idp_delete_body":
     "このサインイン方法を削除します。この方式で入っていた人はサインインできなくなりますが、" +
     "ワークスペース・home・保存済みの認証情報は残ります。",
   "admin.idp_register": "テナント定義のサインイン方法",
   "admin.idp_pending_count": "承認待ち {n} 件",
+  "admin.idp_register_none": "テナントが定義したサインイン方法はまだありません。",
   "admin.idp_register_hint":
     "各テナントが登録した IdP の一覧です。承認は一度きりの点検ですが、IdP 側の設定（セルフサインアップの有効化など）は承認後にも変わり得ます。" +
     "承認済みのものもここに残るので、定期的に issuer と受け入れドメインを見直してください。承認・停止はこの一覧から行えます。",
@@ -1573,6 +1618,8 @@ export const ja = {
   // パネル本体の文言は admin.* のまま（キー改名は移設と別に行う）。---
   "tenant.title": "テナント設定",
   "tenant.back": "テナント設定一覧",
+  "tenant.group_tenant": "テナント",
+  "tenant.tab_limits": "上限・自動停止",
   "tenant.group_login": "ログイン",
   "tenant.tab_signin": "サインイン方式",
   "tenant.tab_rules": "ログイン規則",
@@ -1605,7 +1652,6 @@ export const ja = {
     "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。" +
     "これらの規則そのものを変えるには、デプロイ管理者に依頼してください。",
   "tenant.rules_unset": "未設定（制限なし）",
-  "tenant.rules_providers_note": "このテナントで使えるサインイン方法。未設定なら有効な方式すべてが使えます。",
   "tenant.rules_autojoin_note": "このドメインのメールアドレスの人は、初回ログインでこのテナントに参加します。",
   "tenant.rules_invite_note": "メンバーを追加するときだけ効くガードです。既にメンバーの人には影響しません。",
 
@@ -1773,6 +1819,8 @@ export const ja = {
   "state.blocked": "上限で停止 — 操作が必要",
   // 利用上限のリセット待ち（docs/47 §4-9）。blocked と違い人の操作は要らないので、
   // 「操作が必要」とは言わずに、いつ動くか（予約済みの自動再開時刻）だけを添える。
+  // 支出・残高の上限（docs/47 §4-10）。待っても解けないので「制限解除待ち」とは別物にする。
+  "state.spend_limit": "残高上限 — 増枠が必要",
   "state.rate_limited": "制限解除待ち",
   "state.rate_limited_at": "制限解除待ち · {at}",
   "state.auth_expired": "認証切れ — 再認証が必要",
@@ -1813,6 +1861,7 @@ export const ja = {
   "wsbar.state.stopping": "停止中…",
   "wsbar.state.recreating": "再作成中…",
   "wsbar.state.unknown": "不明",
+  "wsbar.state.no_tenant": "未所属",
   // 起動中ダイアログ（WsStartingDialog・docs/35 §35.9-9）
   "wsstart.title": "ワークスペースを起動中",
   "wsstart.generic": "起動しています…",
@@ -1870,6 +1919,11 @@ export const ja = {
   "wsbar.state_title.starting":
     "起動中（初回はイメージ取得のため数分かかることがあります。完了すると自動で稼働中になります）",
   "wsbar.state_title.other": "状態: {state}",
+  "wsbar.state_title.no_tenant":
+    "どのテナントにも所属していないため、ワークスペースがまだありません。管理者に追加を依頼してください。",
+  "wsbar.state_title.no_tenant_admin":
+    "どのテナントにも所属していないため、ワークスペースがまだありません。管理 → テナント一覧 から、自分をメンバーとして追加してください。",
+  "wsbar.start_failed": "ワークスペースを起動できませんでした",
   // 「はじめる」／分割／全て閉じる
   "wsbar.start_here": "はじめる",
   "wsbar.start_here.running": "はじめる（チャット / リポジトリ / クローン / shell）",
@@ -3351,6 +3405,7 @@ export const ja = {
   "rp.launch_failed": "起動に失敗: {err}",
   "rp.image_upload_failed": "画像のアップロードに失敗しました: {err}",
   "rp.image_upload_failed_network": "画像のアップロードに失敗しました（通信エラー）",
+  "rp.first_prompt_failed": "セッションは起動しましたが、最初の指示を渡せませんでした: {err}",
   "rp.filter_branches": "フィルタ（ブランチ名 / コミット）",
   "rp.loading": "読み込み中…",
   "rp.no_branches": "該当するブランチがありません",

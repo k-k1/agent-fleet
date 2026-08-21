@@ -18,9 +18,20 @@ export PATH="$HOME/.local/bin:$PATH"
 #
 # claude/gh などが触る前に済ませる必要があるので、entrypoint の最初に置く。
 if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; then
-  for rel in ${AF_WS_KEEP_DIRS:-.config .ssh .claude .codex} ${AF_WS_KEEP_FILES:-.git-credentials .gitconfig .claude.json}; do
+  AF_KEEP_DIRS="${AF_WS_KEEP_DIRS:-.config .ssh .claude .codex}"
+  # keep_dir_exists — その rel が「ディレクトリとして keep 側に実体が要る」方かどうか。
+  # ファイル側（.gitconfig 等）は実体が無くてよいので対象外。
+  keep_is_dir() { case " $AF_KEEP_DIRS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+  for rel in $AF_KEEP_DIRS ${AF_WS_KEEP_FILES:-.git-credentials .gitconfig .claude.json}; do
     src="$HOME/$rel"; dst="$AF_WS_KEEP/$rel"
     if [ -L "$src" ] && [ "$(readlink "$src")" = "$dst" ]; then
+      # 既に正しい symlink。**ただし向き先が無いことがある。** golden snapshot から作った
+      # home は種が張った symlink を丸ごと持ってくるのに、keep 側（EFS）は新規ユーザーごとに
+      # 空だからである。ここで作らずに素通りすると `~/.config` は宙に浮いたままになり、
+      # 後段の `mkdir -p "$HOME/.config/opencode"` が **File exists** で落ちて、`set -e` で
+      # entrypoint ごと死ぬ —— タスクが延々と再起動するだけで、原因はどこにも出ない。
+      # （実機で踏んだ: <prod-deployment> の golden 初号機が起動不能になった。）
+      keep_is_dir "$rel" && mkdir -p "$dst" 2>/dev/null || true
       continue
     fi
     if [ -e "$src" ] || [ -L "$src" ]; then
@@ -33,9 +44,7 @@ if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; the
         rm -rf "$src" 2>/dev/null || continue
       fi
     fi
-    case " ${AF_WS_KEEP_DIRS:-.config .ssh .claude .codex} " in
-      *" $rel "*) mkdir -p "$dst" 2>/dev/null || true ;;
-    esac
+    keep_is_dir "$rel" && mkdir -p "$dst" 2>/dev/null || true
     # ファイル側は実体が無くても dangling symlink を張っておく: 後から普通に書けば
     # EFS 側にできる（O_CREAT は symlink を辿る）。
     ln -sfn "$dst" "$src" && echo "[entrypoint] keep: ~/$rel -> $dst"

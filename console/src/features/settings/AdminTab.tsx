@@ -2,113 +2,114 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, apiJSON, rawJSON, errText } from "../../core/api/client.ts";
 import { mobileMatches } from "../../lib/device.ts";
-import { adminDepthRef } from "./store.ts";
+import { useBackClose } from "../../lib/backClose.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { setTenantDict } from "../chat/ttsDict.ts";
-import { fmtGbHint } from "./adminShared.ts";
 import type { Member, Tenant } from "./adminShared.ts";
-// テナント管理者にも意味のある面は、テナント設定モーダルと実装を共有する。ここは
-// 「デプロイ管理者から見た」置き場として差すだけ。
-import { MembersPanel, MemberView } from "./tenantMembers.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
 import { CloudCostAdminView, useCostProfile } from "../cost/CloudCostView.tsx";
 import { McpAdminView } from "./mcpAdmin.tsx";
 import { PoolView } from "./ec2Pool.tsx";
-import { TenantLoginRules, TenantSignInMethods, SignInMethodRegister } from "./tenantLogin.tsx";
-import { TenantNetworkView } from "./tenantNetwork.tsx";
+import { SignInMethodRegister } from "./tenantLogin.tsx";
+// テナント 1 つ分の面（レールの並びも本文も）はテナント設定モーダルと共有する。
+// 同じテナントを別の入口から見るだけなので、IA を入口ごとに分けない。
+import { TenantScopeBody, tenantScopeGroups } from "./tenantScope.tsx";
 
-// Drill-down location: stage plus (optionally) the tenant slug / member being viewed.
-interface View {
-  stage: string;
-  slug?: string;
-  member?: Member;
+// AdminTab（super_admin の面）— 個人設定・テナント設定と同じ左レール＋本文の二枚看板。
+//
+// レールは 2 段になっている:
+//   ルート  … テナント一覧 / 登録簿・デプロイ全体（通信・読み上げ・スロット）・
+//              横断で見る（セッション・稼働時間・費用・監査・MCP 配布）
+//   テナント… 一覧からテナントを開くとレールごと切り替わり、そのテナントの
+//              上限 / ログイン / 運用の節が並ぶ（テナント設定モーダルと同じ並び）。
+//              メンバーは本文の中でもう 1 段ドリルする。
+//
+// ★ 旧実装は横一列のセグメントタブ 9 個＋その中だけパンくずドリルダウン、という
+// 二重のナビだった。設定モーダルが「タブ 6 超で破綻する」として捨てた形がここに
+// 残っていたもので、スマホでは横スクロールとスワイプの回避策まで要っていた。
+// レール化でその 2 つは不要になり、戻る（端末/ブラウザ）も ui/Modal と同じ
+// useBackClose の層に一本化した（独自 history エントリは撤去）。
+
+interface RailGroup {
+  key: string;
+  label: string;
+  items: [string, string][];
 }
 
-// AdminTab (super_admin only): a staged drill-down —
-//   テナント一覧 → テナント詳細 → メンバー詳細
-// Each stage stands on its own (no cramped two-column form); the breadcrumb walks
-// back. The member stage surfaces live Workspace resources (mem / CPU / disk) and
-// the member's session list, served by the per-member admin endpoints.
-
-const ADMIN_MODES = ["manage", "sessions", "usage", "audit", "egress", "mcp", "tts"]; // swipe order for the mode tabs
-// "pool" is appended at runtime (see hasPool): the EC2 slot pool exists on one runtime
-// profile, and an empty Slots tab on a Fargate deployment reads as "my slots vanished".
-// "cost" is appended the same way, for the same reason: docker / native deployments have
-// no AWS invoice at all, and a cost tab full of zeros there would read as "free"
-// (docs/67 §67.8, ADR 0048 決定 9).
+function rootGroups(opts: { pool: boolean; cost: boolean }): RailGroup[] {
+  return [
+    {
+      key: "tenants",
+      label: "admin.group_tenants",
+      items: [
+        ["tenants", "admin.tenants_list"],
+        // テナントが定義したサインイン方法の登録簿（docs/61 §61.11.6）。承認できるのは
+        // デプロイ管理者だけなので、デプロイ管理者にしか無い面。
+        ["register", "admin.tab_register"],
+      ],
+    },
+    {
+      key: "deployment",
+      label: "admin.group_deployment",
+      items: [
+        ["egress", "admin.mode_egress"],
+        ["tts", "admin.mode_tts"],
+        // スロットプールは 1 つのランタイムにしか無い。Fargate のデプロイに空の
+        // 「スロット」が出ると「自分のスロットが消えた」と読める。
+        ...(opts.pool ? ([["pool", "admin.mode_pool"]] as [string, string][]) : []),
+      ],
+    },
+    {
+      key: "across",
+      label: "admin.group_across",
+      items: [
+        ["sessions", "admin.mode_sessions"],
+        ["usage", "admin.mode_usage"],
+        // docker / native には AWS の請求が無い。0 が並ぶ費用の面は「無料」と読める
+        // ので、項目ごと作らない（docs/67 §67.8・ADR 0048 決定 9）。
+        ...(opts.cost ? ([["cost", "admin.mode_cost"]] as [string, string][]) : []),
+        ["audit", "admin.mode_audit"],
+        ["mcp", "admin.mode_mcp"],
+      ],
+    },
+  ];
+}
 
 export function AdminTab() {
   const tr = useT();
-  // shared with the settings store so closeAdmin can pop all drill levels at once
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [isSuper, setIsSuper] = useState(false); // super_admin: unlocks deployment-wide controls
-  const [mode, setMode] = useState("manage"); // manage (tenant drilldown) | usage (showback)
   // Whether this deployment HAS a slot pool. One cheap probe at mount; the endpoint
   // answers {"runtime":"other"} everywhere else.
   const [hasPool, setHasPool] = useState(false);
   // Whether this deployment HAS an AWS bill. Runtime-declared, not configured.
   const costProfile = useCostProfile();
-  // view: {stage:'tenants'} | {stage:'tenant', slug} | {stage:'member', slug, member}
-  const [view, setView] = useState<View>({ stage: "tenants" });
 
-  // Drill-down navigation is driven by browser history so back/forward (and the device
-  // back gesture) step through the levels. Each drill-in pushes an entry carrying the
-  // target view; a back pops it and this listener restores the parent view (state.tsx
-  // keeps the modal open while the entry is still modal:'admin'). depthOf feeds the
-  // shared adminDepthRef so the X/backdrop can pop all levels at once.
-  const depthOf = (v: View) => (v.stage === "member" ? 2 : v.stage === "tenant" ? 1 : 0);
-  useEffect(() => {
-    adminDepthRef.current = depthOf(view);
-  }, [adminDepthRef, view]);
-  useEffect(() => {
-    const onPop = (e: PopStateEvent) => {
-      if (e.state && e.state.modal === "admin") setView(e.state.adminView || { stage: "tenants" });
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+  // scope = 開いているテナントの slug（null＝ルート）。section はレールの現在地で、
+  // ルートとテナントで別々に覚える（テナントを閉じても一覧に戻ってくるだけ）。
+  const [scope, setScope] = useState<string | null>(null);
+  const [rootSection, setRootSection] = useState("tenants");
+  const [scopeSection, setScopeSection] = useState("limits");
+  const [member, setMember] = useState<Member | null>(null);
+  // スマホは個人設定と同じドリルダウン（レール → 本文、戻るでレールへ）。
+  const [entered, setEntered] = useState(false);
+
+  // 戻るの層は積んだ順に剥がれる（useBackClose の共有スタック）。宣言順＝
+  // レール ↓ テナント ↓ メンバーなので、端末の戻るは メンバー → テナント →
+  // レール → モーダルを閉じる、の順で 1 段ずつ戻る。
+  useBackClose(() => setEntered(false), mobileMatches() && entered);
+  const leaveScope = useCallback(() => {
+    setScope(null);
+    setMember(null);
+    // スマホではテナント一覧（本文）へ戻す。レールに戻してしまうと、どのテナントから
+    // 出てきたのか分からなくなる。
+    if (mobileMatches()) setEntered(true);
   }, []);
-  const drill = (next: View) => {
-    setView(next);
-    try {
-      history.pushState({ ...(history.state || {}), modal: "admin", adminView: next }, "");
-    } catch {}
-  };
-  // Mobile: a horizontal swipe anywhere in the (full-screen) admin modal switches the
-  // mode tabs (テナント管理 / セッション / 使用量). Window-level listeners are more
-  // reliable than element handlers over a scrolling body; the drawer-open swipe is
-  // suppressed while a modal is up, so there's no conflict.
-  useEffect(() => {
-    if (!mobileMatches()) return;
-    let sx = 0, sy = 0;
-    const start = (e: TouchEvent) => {
-      const t = e.touches[0];
-      if (t) {
-        sx = t.clientX;
-        sy = t.clientY;
-      }
-    };
-    const end = (e: TouchEvent) => {
-      const t = e.changedTouches[0];
-      if (!t) return;
-      const dx = t.clientX - sx;
-      const dy = t.clientY - sy;
-      if (Math.abs(dx) < 50 || Math.abs(dx) <= Math.abs(dy)) return; // horizontal only
-      setMode((m) => {
-        const i = ADMIN_MODES.indexOf(m);
-        const n = i + (dx < 0 ? 1 : -1);
-        return n >= 0 && n < ADMIN_MODES.length ? ADMIN_MODES[n] : m;
-      });
-    };
-    window.addEventListener("touchstart", start, { passive: true });
-    window.addEventListener("touchend", end, { passive: true });
-    return () => {
-      window.removeEventListener("touchstart", start);
-      window.removeEventListener("touchend", end);
-    };
-  }, []);
+  useBackClose(leaveScope, !!scope);
+  useBackClose(() => setMember(null), !!member);
 
   const loadTenants = useCallback(async () => {
     try {
@@ -137,136 +138,101 @@ export function AdminTab() {
   if (forbidden) return <p className="muted pad">{tr("admin.forbidden")}</p>;
   if (tenants === null) return <p className="muted pad">{tr("common.loading")}</p>;
 
-  const tenant = view.slug ? tenants.find((t) => t.slug === view.slug) : null;
-  const tenantName = tenant ? tenant.name : view.slug;
+  const cost = !!costProfile?.available;
+  const groups = scope ? tenantScopeGroups({ cost }) : rootGroups({ pool: hasPool, cost });
+  const section = scope ? scopeSection : rootSection;
+  const scopeTenant = scope ? tenants.find((t) => t.slug === scope) || null : null;
+  const currentLabel = tr(
+    (groups.flatMap((g) => g.items).find(([k]) => k === section)?.[1] ??
+      "admin.title") as Parameters<typeof tr>[0],
+  );
 
-  const goBack = () => history.back(); // step up one drill level via history
+  const openTenant = (slug: string) => {
+    setScope(slug);
+    setScopeSection("limits");
+    setMember(null);
+    // スマホ: テナントを開いたらそのテナントのレールを見せる（次に選ぶのは節）。
+    if (mobileMatches()) setEntered(false);
+  };
 
-  return (
-    <div className="admin">
-      <div className="seg admin-modes">
-        <button type="button" className={"seg-btn" + (mode === "manage" ? " active" : "")} onClick={() => setMode("manage")}>
-          <Icon name="organization" /> {tr("admin.mode_manage")}
-        </button>
-        <button type="button" className={"seg-btn" + (mode === "sessions" ? " active" : "")} onClick={() => setMode("sessions")}>
-          <Icon name="list-tree" /> {tr("admin.mode_sessions")}
-        </button>
-        <button type="button" className={"seg-btn" + (mode === "usage" ? " active" : "")} onClick={() => setMode("usage")}>
-          <Icon name="graph" /> {tr("admin.mode_usage")}
-        </button>
-        <button type="button" className={"seg-btn" + (mode === "audit" ? " active" : "")} onClick={() => setMode("audit")}>
-          <Icon name="history" /> {tr("admin.mode_audit")}
-        </button>
-        <button type="button" className={"seg-btn" + (mode === "egress" ? " active" : "")} onClick={() => setMode("egress")}>
-          <Icon name="globe" /> {tr("admin.mode_egress")}
-        </button>
-        <button type="button" className={"seg-btn" + (mode === "mcp" ? " active" : "")} onClick={() => setMode("mcp")}>
-          <Icon name="plug" /> {tr("admin.mode_mcp")}
-        </button>
-        <button type="button" className={"seg-btn" + (mode === "tts" ? " active" : "")} onClick={() => setMode("tts")}>
-          <Icon name="unmute" /> {tr("admin.mode_tts")}
-        </button>
-        {hasPool && (
-          <button type="button" className={"seg-btn" + (mode === "pool" ? " active" : "")} onClick={() => setMode("pool")}>
-            <Icon name="server" /> {tr("admin.mode_pool")}
-          </button>
-        )}
-        {costProfile?.available && (
-          <button type="button" className={"seg-btn" + (mode === "cost" ? " active" : "")} onClick={() => setMode("cost")}>
-            <Icon name="graph" /> {tr("admin.mode_cost")}
-          </button>
-        )}
-      </div>
+  const pick = (key: string) => {
+    if (scope) setScopeSection(key);
+    else setRootSection(key);
+    setMember(null);
+    setEntered(true);
+  };
 
-      {mode === "sessions" && <AllSessionsView tenants={tenants} isSuper={isSuper} />}
-      {mode === "usage" && <UsageView tenants={tenants} isSuper={isSuper} />}
-      {mode === "audit" && <AuditView tenants={tenants} isSuper={isSuper} />}
-      {mode === "egress" && <EgressView />}
-      {mode === "mcp" && <McpAdminView tenants={tenants} />}
-      {mode === "tts" && <TtsAdminView />}
-      {mode === "pool" && hasPool && <PoolView />}
-      {mode === "cost" && costProfile?.available && <CloudCostAdminView tenants={tenants} isSuper={isSuper} />}
-
-      {mode === "manage" && (
-      <>
-      <div className="admin-nav">
-        {view.stage !== "tenants" && (
-          <button className="admin-back" onClick={goBack}>
-            <Icon name="arrow-left" /> {tr("common.back")}
-          </button>
-        )}
-        <nav className="admin-crumbs">
-          <button
-            className={"crumb" + (view.stage === "tenants" ? " here" : "")}
-            onClick={() => {
-              const d = depthOf(view);
-              if (d > 0) history.go(-d);
-            }}
-          >
-            <Icon name="organization" /> {tr("admin.crumb_tenants")}
-          </button>
-          {view.slug && (
-            <>
-              <Icon name="chevron-right" className="crumb-sep" />
-              <button
-                className={"crumb" + (view.stage === "tenant" ? " here" : "")}
-                onClick={() => {
-                  if (view.stage === "member") history.back();
-                }}
-              >
-                {tenantName}
-              </button>
-            </>
-          )}
-          {view.stage === "member" && (
-            <>
-              <Icon name="chevron-right" className="crumb-sep" />
-              <span className="crumb here">{view.member?.user_key}</span>
-            </>
-          )}
-        </nav>
-      </div>
-
-      {view.stage === "tenants" && (
-        <>
-          <TenantsList
-            tenants={tenants}
-            isSuper={isSuper}
-            onReload={loadTenants}
-            onOpen={(slug) => drill({ stage: "tenant", slug })}
-          />
-          {/* The deployment-wide register of tenant-defined sign-in methods
-              (docs/61 §61.11.6). Only a super_admin approves one, so only a
-              super_admin sees the list. */}
-          {isSuper && <SignInMethodRegister />}
-        </>
-      )}
-      {view.stage === "tenant" && (
-        <TenantView
-          slug={view.slug!}
-          tenant={tenant}
+  const body = () => {
+    if (scope) {
+      return (
+        <TenantScopeBody
+          slug={scope}
+          tenant={scopeTenant}
+          section={scopeSection}
           isSuper={isSuper}
           hasPool={hasPool}
+          member={member}
+          onOpenMember={setMember}
+          onCloseMember={() => setMember(null)}
           onChanged={loadTenants}
-          onOpenMember={(member) => drill({ stage: "member", slug: view.slug, member })}
         />
-      )}
-      {view.stage === "member" && (
-        <MemberView
-          slug={view.slug!}
-          member={view.member!}
-          isSuper={isSuper}
-          onChanged={loadTenants}
-          onRemoved={() => {
-            // The member no longer exists at this stage — step back to the tenant
-            // rather than leave a detail view of somebody who is off the roster.
-            loadTenants();
-            goBack();
-          }}
-        />
-      )}
-      </>
-      )}
+      );
+    }
+    if (rootSection === "register") return <SignInMethodRegister />;
+    if (rootSection === "egress") return <EgressView />;
+    if (rootSection === "tts") return <TtsAdminView />;
+    if (rootSection === "pool" && hasPool) return <PoolView />;
+    if (rootSection === "sessions") return <AllSessionsView tenants={tenants} isSuper={isSuper} />;
+    if (rootSection === "usage") return <UsageView tenants={tenants} isSuper={isSuper} />;
+    if (rootSection === "cost" && cost) return <CloudCostAdminView tenants={tenants} isSuper={isSuper} />;
+    if (rootSection === "audit") return <AuditView tenants={tenants} isSuper={isSuper} />;
+    if (rootSection === "mcp") return <McpAdminView tenants={tenants} />;
+    return <TenantsList tenants={tenants} isSuper={isSuper} onReload={loadTenants} onOpen={openTenant} />;
+  };
+
+  return (
+    <div className={"settings-layout" + (entered ? " entered" : "")}>
+      <nav className="settings-rail" aria-label={tr("admin.title")}>
+        {/* テナントを開いている間はレールごとそのテナントの中身に入れ替わる。
+            見出しは今どこに居るか（テナント名）、その上が出口。 */}
+        {scope && (
+          <div className="settings-rail-group admin-scope-head">
+            <button type="button" className="admin-rail-back" onClick={leaveScope}>
+              <Icon name="arrow-left" /> {tr("admin.all_tenants_back")}
+            </button>
+            <div className="admin-scope-name">
+              <Icon name="organization" /> {scopeTenant?.name || scope}
+            </div>
+          </div>
+        )}
+        {groups.map((g) => (
+          <div key={g.key} className="settings-rail-group">
+            <div className="settings-rail-head">{tr(g.label as Parameters<typeof tr>[0])}</div>
+            {g.items.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={"settings-rail-item" + (section === key ? " active" : "")}
+                aria-current={section === key ? "page" : undefined}
+                onClick={() => pick(key)}
+              >
+                {tr(label as Parameters<typeof tr>[0])}
+              </button>
+            ))}
+          </div>
+        ))}
+      </nav>
+      <div className="settings-content">
+        <div className="settings-crumb">
+          <button type="button" className="settings-back" onClick={() => setEntered(false)}>
+            ‹ {scope ? scopeTenant?.name || scope : tr("admin.title")}
+          </button>
+          <span className="settings-current" aria-current="page">
+            {currentLabel}
+          </span>
+        </div>
+        <div className="admin">{body()}</div>
+      </div>
     </div>
   );
 }
@@ -504,9 +470,12 @@ function TtsAdminView() {
   useEffect(() => {
     load();
   }, [load]);
-  // 有効なのに未 ready（ECS 起動中）の間は自動更新して readiness を追う。
+  // 有効なのに未 ready（ECS 起動中）の間は自動更新して readiness を追う。エンジン不在で
+  // トグルを固定している間も追う — エンジンが現れたら固定が外れなければならない。
+  // 追う必要が無いのは「いま使える」か「管理下で意図して停止している」かのどちらか。
   useEffect(() => {
-    if (!data?.enabled || data?.engine?.ready) return;
+    if (!data || data.engine?.ready) return;
+    if (!data.enabled && data.managed) return;
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, [data, load]);
@@ -540,8 +509,13 @@ function TtsAdminView() {
     }
   };
 
-  const enabled = !!data?.enabled;
   const engine = data?.engine || {};
+  // エンジンが「無い」: ECS 管理下でもなく（＝この画面から起動する手段が無い）、URL にも
+  // 到達できない。有効にしたところで VOICEVOX へは一切流れず、auto は日本語まで Polly に
+  // 落ちるので、実効状態は無効そのもの。設定値を書き換えず、表示と操作だけを無効で固定する
+  // （エンジンが現れれば上のポーリングで固定が外れ、記録されていた意図がそのまま復活する）。
+  const noEngine = !!data && !data.managed && !engine.ready;
+  const enabled = !!data?.enabled && !noEngine;
   const engineLabel = !data
     ? "…"
     : engine.ready
@@ -563,7 +537,7 @@ function TtsAdminView() {
             <button
               type="button"
               className={"seg-btn" + (enabled ? " active" : "")}
-              disabled={busy || data === null}
+              disabled={busy || data === null || noEngine}
               onClick={() => setEnabled(true)}
             >
               {tr("admin.enable")}
@@ -571,7 +545,7 @@ function TtsAdminView() {
             <button
               type="button"
               className={"seg-btn" + (!enabled ? " active" : "")}
-              disabled={busy || data === null}
+              disabled={busy || data === null || noEngine}
               onClick={() => setEnabled(false)}
             >
               {tr("admin.disable")}
@@ -591,6 +565,7 @@ function TtsAdminView() {
             {enabled && !engine.ready && data.managed && (
               <p className="muted">{tr("admin.tts_starting_note")}</p>
             )}
+            {noEngine && <p className="muted">{tr("admin.tts_no_engine")}</p>}
             {engine.error && <p className="form-err">{engine.error}</p>}
           </>
         )}
@@ -624,7 +599,8 @@ function TtsAdminView() {
   );
 }
 
-// --- Stage 1: tenant list ---------------------------------------------------
+// --- テナント一覧（ルートの入口）-------------------------------------------
+// カードを開くとレールごとそのテナントの面に入る（ドリルダウンの 1 段目）。
 
 function TenantsList({
   tenants,
@@ -700,223 +676,5 @@ function NewTenant({ onCreated, onCancel }: { onCreated: () => void; onCancel: (
       <button type="submit" className="primary">{tr("admin.create")}</button>
       <button type="button" className="ghost" onClick={onCancel}>{tr("common.cancel")}</button>
     </form>
-  );
-}
-
-// --- Stage 2: tenant detail (limits + members) ------------------------------
-
-function TenantView({
-  slug,
-  tenant,
-  isSuper,
-  hasPool,
-  onChanged,
-  onOpenMember,
-}: {
-  slug: string;
-  tenant: Tenant | null | undefined;
-  isSuper: boolean;
-  // Home hibernation only exists on the EC2 slot pool runtime. Everywhere else the
-  // setting would be a field that quietly does nothing, so it is not shown at all.
-  hasPool: boolean;
-  onChanged: () => void;
-  onOpenMember: (m: Member) => void;
-}) {
-  const tr = useT();
-  const [maxWs, setMaxWs] = useState<number | string>(tenant?.max_workspaces || 0);
-  const [maxSs, setMaxSs] = useState<number | string>(tenant?.max_sessions || 0);
-  const [maxRepos, setMaxRepos] = useState<number | string>(tenant?.max_git_repos || 0);
-  // LFS cap is stored in bytes but edited in MB for usability.
-  const [maxLfsMb, setMaxLfsMb] = useState<number | string>(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
-  // Per-workspace RAM cap: stored in bytes, edited in MB.
-  const [maxWsMemMb, setMaxWsMemMb] = useState<number | string>(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
-  const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
-  const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
-  const [homeHib, setHomeHib] = useState(tenant?.home_hibernate_after || "");
-  const [homeBackup, setHomeBackup] = useState(tenant?.home_backup_every || "");
-  const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
-  const [termRetention, setTermRetention] = useState(tenant?.terminal_history_retention_days || 0);
-  const [saved, setSaved] = useState(false);
-  const toast = useToast();
-
-  useEffect(() => {
-    setMaxWs(tenant?.max_workspaces || 0);
-    setMaxSs(tenant?.max_sessions || 0);
-    setMaxRepos(tenant?.max_git_repos || 0);
-    setMaxLfsMb(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
-    setMaxWsMemMb(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
-    setSessIdle(tenant?.session_idle_timeout || "");
-    setWsIdle(tenant?.ws_idle_timeout || "");
-    setHomeHib(tenant?.home_hibernate_after || "");
-    setHomeBackup(tenant?.home_backup_every || "");
-    setAllowUpd(!!tenant?.allow_agent_self_update);
-    setTermRetention(tenant?.terminal_history_retention_days || 0);
-  }, [slug, tenant]);
-
-  const saveLimits = async () => {
-    const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/limits`, "PUT", {
-      max_workspaces: +maxWs || 0,
-      max_sessions: +maxSs || 0,
-      max_git_repos: +maxRepos || 0,
-      max_lfs_bytes: Math.round(+maxLfsMb || 0) * 1048576,
-      max_workspace_mem: Math.round(+maxWsMemMb || 0) * 1048576,
-      session_idle_timeout: sessIdle.trim(),
-      ws_idle_timeout: wsIdle.trim(),
-      home_hibernate_after: homeHib.trim(),
-      home_backup_every: homeBackup.trim(),
-      allow_agent_self_update: allowUpd,
-      terminal_history_retention_days: termRetention,
-    });
-    if (res?.error) {
-      toast(errText(res.error));
-      return;
-    }
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-    onChanged();
-  };
-
-  return (
-    <div className="admin-stage">
-      {isSuper && (
-        <section className="admin-panel">
-          <div className="admin-fgroup">
-            <h4>{tr("admin.limits")}<span className="af-note">{tr("admin.zero_unlimited")}</span></h4>
-            <div className="admin-fgrid">
-              <label className="admin-fld">
-                <span className="af-cap">{tr("admin.max_workspace")}</span>
-                <input type="number" min="0" value={maxWs} onChange={(e) => setMaxWs(e.target.value)} />
-              </label>
-              <label className="admin-fld">
-                <span className="af-cap">{tr("admin.max_session")}</span>
-                <input type="number" min="0" value={maxSs} onChange={(e) => setMaxSs(e.target.value)} />
-              </label>
-              <label className="admin-fld">
-                <span className="af-cap">{tr("admin.max_repos")}</span>
-                <input type="number" min="0" value={maxRepos} onChange={(e) => setMaxRepos(e.target.value)} />
-              </label>
-              <label className="admin-fld">
-                <span className="af-cap">{tr("admin.max_lfs")}</span>
-                <span className="af-inputwrap">
-                  <input type="number" min="0" value={maxLfsMb} onChange={(e) => setMaxLfsMb(e.target.value)} />
-                  <span className="af-suffix">MB</span>
-                </span>
-              </label>
-              <label className="admin-fld">
-                <span className="af-cap">{tr("admin.max_ws_mem")}</span>
-                <span className="af-inputwrap">
-                  <input type="number" min="0" step="256" value={maxWsMemMb} onChange={(e) => setMaxWsMemMb(e.target.value)} />
-                  <span className="af-suffix">MB</span>
-                </span>
-                <span className="af-unit">{+maxWsMemMb > 0 ? tr("admin.per_container", { hint: fmtGbHint(+maxWsMemMb) }) : tr("admin.zero_no_tenant_cap")}</span>
-              </label>
-            </div>
-            <p className="admin-hint">
-              {tr("admin.ws_mem_hint_1")}<code>WS_MEMORY</code>{tr("admin.ws_mem_hint_2")}<code>AF_MAX_WORKSPACE_MEM</code>{tr("admin.ws_mem_hint_3")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.ws_mem_hint_4")}
-            </p>
-          </div>
-
-          <div className="admin-fgroup">
-            <h4>{tr("admin.idle_autostop")}<span className="af-note">{tr("admin.empty_deploy_default")}</span></h4>
-            <div className="admin-fgrid">
-              <label className="admin-fld">
-                <span className="af-cap">{tr("admin.session_halt")}</span>
-                <input type="text" placeholder={tr("admin.idle_ph_30m")} value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
-              </label>
-              <label className="admin-fld">
-                <span className="af-cap">{tr("admin.ws_stop")}</span>
-                <input type="text" placeholder={tr("admin.idle_ph_60m")} value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
-              </label>
-            </div>
-            <p className="admin-hint">
-              {tr("admin.idle_hint_1")}<code>30m</code> / <code>2h</code> / <code>90s</code>{tr("admin.idle_hint_2")}<code>0</code>{tr("admin.idle_hint_3")}
-            </p>
-          </div>
-
-          {/* Only the EC2 slot pool has somewhere cheaper to put a home; on the other
-              runtimes this field would be a control that does nothing. */}
-          {hasPool && (
-            <div className="admin-fgroup">
-              <h4>{tr("admin.hibernate_title")}<span className="af-note">{tr("admin.empty_deploy_default")}</span></h4>
-              <div className="admin-fgrid">
-                <label className="admin-fld">
-                  <span className="af-cap">{tr("admin.hibernate_after")}</span>
-                  <input type="text" placeholder={tr("admin.hibernate_ph")} value={homeHib} onChange={(e) => setHomeHib(e.target.value)} />
-                </label>
-              </div>
-              <p className="admin-hint">{tr("admin.hibernate_hint")}</p>
-              <p className="admin-hint">{tr("admin.hibernate_warn")}</p>
-            </div>
-          )}
-
-          {/* home が 1 つの AZ に固定されるのはこのランタイムだけなので、AZ ごと失う話も
-              ここにしか無い。他では home はそもそも 1 AZ に縛られていない。 */}
-          {hasPool && (
-            <div className="admin-fgroup">
-              <h4>{tr("admin.backup_title")}<span className="af-note">{tr("admin.empty_deploy_default")}</span></h4>
-              <div className="admin-fgrid">
-                <label className="admin-fld">
-                  <span className="af-cap">{tr("admin.backup_every")}</span>
-                  <input type="text" placeholder={tr("admin.backup_ph")} value={homeBackup} onChange={(e) => setHomeBackup(e.target.value)} />
-                </label>
-              </div>
-              <p className="admin-hint">{tr("admin.backup_hint")}</p>
-              <p className="admin-hint">{tr("admin.backup_warn")}</p>
-            </div>
-          )}
-
-          <div className="admin-fgroup">
-            <h4>{tr("admin.term_log_title")}</h4>
-            <label className="admin-fld">
-              <span className="af-cap">{tr("admin.retention")}</span>
-              <select value={termRetention} onChange={(e) => setTermRetention(Number(e.target.value))}>
-                <option value={0}>{tr("admin.retention_off")}</option>
-                <option value={1}>{tr("admin.days_1")}</option>
-                <option value={7}>{tr("admin.days_7")}</option>
-                <option value={30}>{tr("admin.days_30")}</option>
-              </select>
-            </label>
-            <p className="admin-hint">{tr("admin.term_log_hint")}</p>
-          </div>
-
-          <div className="admin-fgroup">
-            <h4>{tr("admin.agent_cli_update")}</h4>
-            <label className="admin-check">
-              <input type="checkbox" checked={allowUpd} onChange={(e) => setAllowUpd(e.target.checked)} />
-              <span>{tr("admin.allow_self_update")}</span>
-            </label>
-            <p className="admin-hint">{tr("admin.allow_self_update_hint")}</p>
-          </div>
-
-          <div className="admin-actions">
-            <button onClick={saveLimits} className="primary">{tr("common.save")}</button>
-            {saved && <span className="saved-note"><Icon name="check" /> {tr("admin.saved")}</span>}
-          </div>
-        </section>
-      )}
-
-      {/* Per-tenant login rules (docs/61 §61.9). super_admin only: two of the
-          three reach past this tenant — an auto-join domain widens the whole
-          deployment's entry gate, and the provider list decides which IdP is
-          trusted to say who somebody is. */}
-      {isSuper && <TenantLoginRules slug={slug} tenant={tenant} onChanged={onChanged} />}
-
-      {/* Tenant-defined sign-in methods (docs/61 §61.11). The rows are the
-          tenant_admin's — they write them, including the client secret — so their
-          place is the tenant settings modal, and that is where a tenant_admin now
-          finds them. It stays here for the operator because approval is theirs and
-          nobody else's (決定 30) and because this screen shows one tenant's rows in
-          full — the register (tenant list, below) now carries 承認・停止 itself. */}
-      {isSuper && <TenantSignInMethods slug={slug} isSuper={isSuper} />}
-
-      {/* テナントの接続元制限（docs/66・ADR 0047）。持ち主は tenant_admin だが、
-          ★ 入口をテナント設定モーダルだけにすると、**tenant_admin の在籍が無い
-          super_admin からは一生見えない** —— アカウントメニューの「テナント設定」は
-          tenant_admin の在籍だけで出るため。実際にそれで「設定にも管理にも無い」に
-          なった。ログイン規則・サインイン方法と同じで面は両方に置く（権限はサーバ）。 */}
-      <TenantNetworkView key={slug} slug={slug} />
-
-      <MembersPanel slug={slug} isSuper={isSuper} onOpenMember={onOpenMember} />
-    </div>
   );
 }

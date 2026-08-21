@@ -153,7 +153,7 @@ type resolved struct {
 // default tenant keeps the flat af-ws-<key> scheme so the existing live
 // deployment is reused unchanged; other tenants are scoped by slug.
 func (m *manager) workspaceNames(slug, key string) (name, network, dataDir string) {
-	if slug == "default" {
+	if slug == defaultTenantSlug {
 		return "af-ws-" + key, "af-net-" + key, filepath.Join(m.dataRoot, key)
 	}
 	return "af-ws-" + slug + "-" + key, "af-net-" + slug + "-" + key, filepath.Join(m.dataRoot, slug, key)

@@ -30,6 +30,11 @@ import (
 // am/pm は必須 — 数字だけを拾うと本文中の無関係な数値に当たる。
 var resetClockRe = regexp.MustCompile(`(?i)resets\s+(?:[a-z]{3,9}\.?\s+\d{1,2},?\s+)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b\s*(?:\(([^)]+)\))?`)
 
+// weeklyBannerRe recognises the weekly window's banner — "You've hit your weekly limit ·
+// resets 9am (Asia/Tokyo)"（実測コーパス 2026-08-20）。日付を伴う形（"resets Aug 3 at 9am"）は
+// 壁時計だけの曖昧さが無いので除外する。
+var weeklyBannerRe = regexp.MustCompile(`(?i)weekly limit.*resets\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b`)
+
 // parseResetClock reads the banner's reset time. loc is the banner's own zone when it
 // names one (claude prints the IANA name), else the container's local zone — which is
 // the same zone claude renders in, so the fallback is not a guess about the user.
@@ -117,6 +122,23 @@ func resolveResetAt(msg string, abortedAt time.Time, captured []time.Time, now t
 			if c.After(base) && absDur(c.Sub(want)) <= resetMatchWindow {
 				return c, "banner+capture", true
 			}
+		}
+		// 週次の窓だけはバナー単独で決めない（docs/47 §4-10）。バナーは壁時計しか書かない
+		// ので "resets 9am" は「今日か明日の 9時」としか読めないが、週次のリセットは数日先に
+		// あり得る。firstAfter が返す明日の 9時に起こしても同じ 429 を踏み、そのたびに新しい
+		// エピソードが開いて予約し直す — 本当のリセットまで毎日 1 ターンずつ焼く。
+		//
+		// 上の一致判定は「同じ瞬間か」なので、数日先の週次リセットには当たらない。ここでは
+		// **壁時計だけ**を突き合わせて日付は捕捉の epoch に決めさせる。新しい方から見るのは、
+		// 捕捉が返す 2 つの窓（5時間・週次）のうち週次は必ず後ろだから。
+		if weeklyBannerRe.MatchString(msg) {
+			for i := len(captured) - 1; i >= 0; i-- {
+				c := captured[i]
+				if l := c.In(loc); c.After(base) && l.Hour() == h && l.Minute() == m {
+					return c, "banner+capture", true
+				}
+			}
+			return time.Time{}, "", false
 		}
 		return want, "banner", true
 	}

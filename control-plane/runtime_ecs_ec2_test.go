@@ -2756,3 +2756,65 @@ func TestECSEC2SizingProfile(t *testing.T) {
 		t.Errorf("ladder not reported: %+v", p.Slots)
 	}
 }
+
+// --- golden candidates (ADR 0045 決定 9-1) ---
+
+func (f *fakeEC2) addGoldenRole(id, pool, image, role string, state ec2types.SnapshotState, started time.Time) {
+	f.snapshots[id] = &ec2types.Snapshot{
+		SnapshotId: aws.String(id), State: state, StartTime: aws.Time(started),
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagPool), Value: aws.String(pool)},
+			{Key: aws.String(ec2TagRole), Value: aws.String(role)},
+			{Key: aws.String(ec2TagImage), Value: aws.String(image)},
+		},
+	}
+}
+
+// The property the whole verification phase rests on: an unpublished candidate is
+// reachable ONLY by something that has declared itself a probe. If an ordinary Start
+// could pick one up, a golden that cannot boot would reach real users before anything
+// had tried to boot it — which is the failure §64.28.3 was.
+func TestECSEC2GoldenCandidateIsInvisibleToOrdinaryStarts(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addGoldenRole("snap-cand", "clu", h.rt.base.cfg.workspaceImage,
+		ec2RoleGoldenCandidate, ec2types.SnapshotStateCompleted, time.Now())
+
+	if got := h.rt.goldenSnapshot(ctx); got != "" {
+		t.Fatalf("an ordinary workspace found the unpublished candidate %q", got)
+	}
+	vol, err := h.rt.createHomeVolume(ctx, "ap-northeast-1a")
+	if err != nil {
+		t.Fatalf("createHomeVolume: %v", err)
+	}
+	if got := aws.ToString(h.ec2.volumes[aws.ToString(vol.VolumeId)].SnapshotId); got != "" {
+		t.Fatalf("a new home was seeded from the unverified candidate %q", got)
+	}
+}
+
+func TestECSEC2ProbeReadsTheCandidateAndNotTheGolden(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	img := h.rt.base.cfg.workspaceImage
+	h.ec2.addGolden("snap-published", "clu", img, ec2types.SnapshotStateCompleted, time.Now())
+	h.ec2.addGoldenRole("snap-cand", "clu", img, ec2RoleGoldenCandidate, ec2types.SnapshotStateCompleted, time.Now())
+
+	h.rt.seedFromCandidate()
+	if got := h.rt.goldenSnapshot(ctx); got != "snap-cand" {
+		t.Fatalf("the probe read %q — it has to test the CANDIDATE or it proves nothing", got)
+	}
+}
+
+// A candidate stamped with another image is the baker's own bookkeeping (the image moved
+// mid-bake), not the standing "somebody must re-bake" warning a stale GOLDEN is.
+func TestECSEC2StaleCandidateIsNotUsed(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addGoldenRole("snap-old", "clu", "some/other:image",
+		ec2RoleGoldenCandidate, ec2types.SnapshotStateCompleted, time.Now())
+
+	h.rt.seedFromCandidate()
+	if got := h.rt.goldenSnapshot(ctx); got != "" {
+		t.Fatalf("the probe used a candidate baked from another image: %q", got)
+	}
+}

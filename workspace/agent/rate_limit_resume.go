@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
@@ -78,6 +79,10 @@ type rateLimitState struct {
 	Source        string `json:"source,omitempty"`        // 時刻の判断材料（banner / capture …）
 	ScheduleID    string `json:"scheduleId,omitempty"`    // CP 側スケジュール id
 	ScheduleTries int    `json:"scheduleTries,omitempty"` // 登録試行回数
+	// Spend: 支出・残高の上限（claude.LimitSpend）で開いたエピソード。窓の上限と違って
+	// **時刻では終わらない**ので、予約もしなければ ResumeAt も持たず、畳むのは転写の末尾が
+	// 上限でなくなったときだけ（episodeStale / rateLimitFollowUp）。
+	Spend bool `json:"spend,omitempty"`
 }
 
 var rateLimitStates = fstore.JSON[rateLimitState](paths.AgentConfigDir, "session-rate-limit", ".json")
@@ -122,18 +127,20 @@ func rateLimitTick(now time.Time) {
 			continue
 		}
 		st, has := rateLimitStates.Read(m.Name)
-		if sessionAlive(m) {
+		alive := sessionAlive(m)
+		if alive {
 			if tmuxx.ReadPane(m.Name).RateLimitMenu {
-				rateLimitRecover(m, st, now, true)
+				// メニューを出すのはアカウントの窓だけ（＝待てば解ける側）。
+				rateLimitRecover(m, st, now, true, claude.LimitWindow)
 				continue
 			}
-			if _, atLimit := claudeUsageLimitAbort(session.UUID(m.Dir, m.Name)); atLimit {
-				rateLimitRecover(m, st, now, false)
+			if _, kind, atLimit := claudeUsageLimitAbort(session.UUID(m.Dir, m.Name)); atLimit {
+				rateLimitRecover(m, st, now, false, kind)
 				continue
 			}
 		}
 		if has {
-			rateLimitFollowUp(m, st, now)
+			rateLimitFollowUp(m, st, now, alive)
 		}
 	}
 }
@@ -141,15 +148,18 @@ func rateLimitTick(now time.Time) {
 // rateLimitRecover handles a session stopped by its usage limit. onMenu says which form it
 // is: true = ペインが /rate-limit-options メニューで固定されている、false = 転写の末尾が
 // 上限で切れたターン（メニューは無く、セッションは入力を受け付けられる）。
-func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu bool) {
+func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu bool, kind claude.LimitKind) {
 	if episodeStale(st, now) {
 		st = rateLimitState{} // 前のエピソードは終わっている — 新しい上限として扱う
 	}
 	if st.At == "" {
 		st.At = now.Format(time.RFC3339)
-		if onMenu {
+		switch {
+		case onMenu:
 			log.Printf("rate-limit: %s が利用上限メニューで停止している", m.Name)
-		} else {
+		case kind == claude.LimitSpend:
+			log.Printf("rate-limit: %s のターンが支出・残高の上限で打ち切られている（増枠が要る）", m.Name)
+		default:
 			log.Printf("rate-limit: %s のターンが利用上限で打ち切られている", m.Name)
 		}
 	}
@@ -157,6 +167,16 @@ func rateLimitRecover(m session.Meta, st rateLimitState, now time.Time, onMenu b
 	// メニューのあるエピソードとして扱ってよい。逆に消えたのは解除できた印なので戻さない。
 	if onMenu {
 		st.Menu = true
+	}
+	if kind == claude.LimitSpend {
+		// 支出・残高の上限。**予約もしなければ「利用上限に達しました」通知も出さない** —
+		// どちらも「待てば解ける」という前提の上に立っていて、この形では嘘になる（起こしても
+		// 同じ 429 を踏み、待っても解けない）。利用者へはターンが失敗した通知と報告が、その
+		// 文言（"…monthly spend limit · run /usage-credits…"）ごと届いている。af が足せるのは
+		// 一覧で見て分かる状態＝ agents.StateSpendLimit のチップまで。
+		st.Spend = true
+		_ = rateLimitStates.Write(m.Name, st)
+		return
 	}
 	st = scheduleRateLimitResume(m, st, now)
 	notifyRateLimitReached(m, st)
@@ -220,7 +240,17 @@ func notifyRateLimitResumeDelivered(name, prompt, source string, now time.Time) 
 
 // rateLimitFollowUp runs for a session with an open episode whose menu is already gone:
 // retry a registration that failed while the menu was still up, then retire the episode.
-func rateLimitFollowUp(m session.Meta, st rateLimitState, now time.Time) {
+func rateLimitFollowUp(m session.Meta, st rateLimitState, now time.Time, alive bool) {
+	if st.Spend {
+		// 支出の上限は時刻で終わらないので、ここへ来たこと自体が唯一の終了条件:
+		// 生きているセッションの転写の末尾がもう上限ではない＝増枠された／別のターンが
+		// 走った。停止中のセッションでは畳まない（再開したら同じ上限のままかもしれず、
+		// 畳むと次の tick まで一覧が何も言わなくなる）。
+		if alive {
+			rateLimitStates.Remove(m.Name)
+		}
+		return
+	}
 	if next := scheduleRateLimitResume(m, st, now); next != st {
 		st = next
 		_ = rateLimitStates.Write(m.Name, st)
@@ -275,8 +305,13 @@ func scheduleRateLimitResume(m session.Meta, st rateLimitState, now time.Time) r
 }
 
 // rateLimitWaiting reports whether this claude session is sitting at its usage limit
-// **right now**, and when the reserved resume is due（"" = 予約なし）。表示側（wireSession /
-// driveState）が idle を agents.StateLimited に読み替えるための述語。
+// **right now**, which state that is, and when the reserved resume is due（"" = 予約なし）。
+// 表示側（wireSession / driveState）が idle を読み替えるための述語。
+//
+// 状態が 2 つあるのは、待てば解ける窓（agents.StateLimited）と、待っても解けない支出・
+// 残高の上限（agents.StateSpendLimit）で利用者の次の一手が正反対だから（docs/47 §4-10）。
+// 種別はエピソードファイルの `Spend` ではなく**転写から今引き直した値**を使う: 増枠されて
+// 別の上限（窓）に当たり直した、のような遷移でも表示が追随する。
 //
 // 材料を 2 つ重ねるのは、片方だけではどちらも嘘をつくから:
 //   - エピソードファイルだけ: 予約時刻や自動再開 OFF の TTL の間ずっと真になる。利用者が
@@ -287,15 +322,19 @@ func scheduleRateLimitResume(m session.Meta, st rateLimitState, now time.Time) r
 //
 // 転写側は放っておいても自然に false へ戻る（末尾が新しい user/assistant レコードに
 // 変わる）ので、「上限が解けたことを知る別経路」は要らない — StateBlocked と同じ設計。
-func rateLimitWaiting(m session.Meta, now time.Time) (string, bool) {
-	st, ok := rateLimitStates.Read(m.Name)
-	if !ok || episodeStale(st, now) {
-		return "", false
+func rateLimitWaiting(m session.Meta, now time.Time) (state, resumeAt string, ok bool) {
+	st, has := rateLimitStates.Read(m.Name)
+	if !has || episodeStale(st, now) {
+		return "", "", false
 	}
-	if _, atLimit := claudeUsageLimitAbort(session.UUID(m.Dir, m.Name)); !atLimit {
-		return "", false
+	_, kind, atLimit := claudeUsageLimitAbort(session.UUID(m.Dir, m.Name))
+	if !atLimit {
+		return "", "", false
 	}
-	return st.ResumeAt, true
+	if kind == claude.LimitSpend {
+		return agents.StateSpendLimit, "", true // 予約は存在しない（時刻では解けない）
+	}
+	return agents.StateLimited, st.ResumeAt, true
 }
 
 // triedRecently rate-limits the Enter presses inside one episode.
@@ -309,6 +348,9 @@ func triedRecently(st rateLimitState, now time.Time) bool {
 func episodeStale(st rateLimitState, now time.Time) bool {
 	if st.At == "" {
 		return true
+	}
+	if st.Spend {
+		return false // 時刻では終わらない — 転写が変わったときだけ畳む（rateLimitFollowUp）
 	}
 	if st.ResumeAt != "" {
 		t, err := time.Parse(time.RFC3339, st.ResumeAt)

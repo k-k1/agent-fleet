@@ -41,8 +41,12 @@ if [ "${SKIP_CONSOLE:-0}" != "1" ]; then
   . "$ROOT/deploy/local/console-build.sh"
   build_console
 fi
-echo "==> build control-plane"
-( cd "$ROOT/control-plane" && go build -o /tmp/af-cp . )
+# control-plane go build hits the same 2G cgroup cap as vite when a new/changed
+# dependency (e.g. an AWS SDK v2 service package) makes it spawn enough parallel
+# compile workers — see go-build.sh.
+# shellcheck disable=SC1091
+. "$ROOT/deploy/local/go-build.sh"
+build_go_binary "$ROOT/control-plane" /tmp/af-cp "control-plane"
 
 # --- restart in place --------------------------------------------------------
 # Stop the running af-cp by program name, NOT by scraping its pid from

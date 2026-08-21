@@ -95,6 +95,16 @@ platform changes:
      address, and activating it copies that into the billing data (CUR / Cost Explorer /
      invoice CSVs). `af-membership` is an opaque random id and is the join key the Control
      Plane uses.
+- **`10-data` needs `--capabilities CAPABILITY_AUTO_EXPAND`** — it declares
+  `Transform: AWS::LanguageExtensions`, and a template with a transform is rejected
+  without that capability (`Requires capabilities : [CAPABILITY_AUTO_EXPAND]`). It
+  creates no IAM, so this is the only capability it needs:
+  ```bash
+  aws cloudformation deploy --stack-name af-ecs-data \
+    --template-file cfn/10-data.yaml --capabilities CAPABILITY_AUTO_EXPAND \
+    --parameter-overrides Persistence=retain \
+    --profile af-sandbox --region ap-northeast-1
+  ```
 - **`20-platform` needs `--capabilities CAPABILITY_NAMED_IAM`** (it creates named IAM roles):
   ```bash
   aws cloudformation deploy --stack-name af-ecs-platform \
@@ -128,7 +138,16 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
      --name /af-cp/google-client-secret --value "<GOOGLE_OAUTH_CLIENT_SECRET>"   # your terminal, not shared
    aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
      --name /af-cp/oidc-client-secret   --value "<AF_OIDC_<ID>_CLIENT_SECRET>"
+   # optional, and NOT a sign-in method: the Bitbucket git connection (docs/dev/08 §8.4).
+   # Pair it with BitbucketOauthKey=<consumer key> at deploy.
+   aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
+     --name /af-cp/bitbucket-oauth-secret --value "<BITBUCKET_OAUTH_SECRET>"
    ```
+   ⚠️ The Bitbucket consumer's **Callback URL must be exactly**
+   `https://<your-fqdn>/api/oauth/bitbucket/callback` — Bitbucket matches it in full, and
+   the CP derives it from `PUBLIC_BASE_URL`, so it is not separately configurable. The
+   consumer needs a secret (authorization-code grant): the workspace credential helper
+   refreshes the access token, and a public consumer issues none.
 3. **The IdP client**: add `https://<your-fqdn>/oauth2/callback` to its Authorized
    redirect URIs — that single URI serves every provider you enable. Pass the
    fqdn/zone + client id + allowed/super-admin emails as parameters at deploy:
@@ -304,7 +323,9 @@ It does the three things the hand-typed sequence gets wrong:
 - **Points out a golden snapshot left behind** (`ecs-ec2` only). A golden baked from
   the previous image is not used at all — the CP builds new users' homes empty
   instead (ADR 0045 決定 9), which is not a failure, just a slow first start that
-  nothing but the CP log mentions. Re-bake with `bake-golden.sh`.
+  nothing but the CP log mentions. With auto-bake on (the default) the CP replaces it
+  within a few minutes of the deploy, as long as two slots are free; the pool panel
+  says so while it is happening. Otherwise re-bake with `bake-golden.sh`.
 
 ### What the users see
 
@@ -469,6 +490,8 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap. Start fails at the cap rather than growing the bill |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
 | — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant can override it. See below |
+| — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 決定 9-1). Set `0` and it becomes your job on every release |
+| — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
 
 **Hibernating long-unused homes (opt-in).** An EBS home bills for what it is *provisioned*
 at, whether or not anyone opens it. With this enabled, a home that nobody has opened for
@@ -527,15 +550,36 @@ wedged kernel holding a deleted volume's NVMe namespace, which no amount of retr
 
 **Golden snapshot: skip boot-install for new users.** A brand-new home pays boot-install
 (4 CLIs 41s + rtk 1s + agy 6s = 48s) and a cold npm cache. Bake one home that has already
-paid it and every later user starts from that copy (ADR 0045 決定 9):
+paid it and every later user starts from that copy (ADR 0045 決定 9).
+
+**The CP does this by itself** (決定 9-1, `AF_ECS_EC2_GOLDEN_AUTOBAKE=0` to switch off).
+When the image it runs has no golden, it boots a reserved seed through the ordinary Start
+path, captures its home as a *candidate*, boots a second reserved member from that
+candidate, and only publishes it once that one comes up. It will not start while the pool
+has fewer than two free slots, and it gives up on an image after two failed candidates —
+the pool panel says which of those is happening. Everything below is the manual path, for
+a deployment that has turned it off (or for baking one on the spot):
 
 ```bash
 # 1. create a seed member, start their workspace from the Console, let it finish booting
-# 2. stop it and wait for the sweeper to release the slot
+# 2. stop it and wait for the sweeper to STOP THE SLOT (see below — the home stays attached)
 ./bake-golden.sh --workspace af-ws-<tenant>-<seed> --image <the exact AF_ECS_WORKSPACE_IMAGE>
 # 3. destroy the seed workspace:  DELETE /api/admin/workspaces {tenant_slug,user_key}
 ```
 
+- **A seed member has to be somebody who can sign in.** There is no admin "start
+  this member's workspace" — `/api/workspace/start` always resolves to the caller's
+  own identity — so an invite-only address nobody holds gives you a membership whose
+  workspace can never be created. Adding an account you DO hold to a throwaway tenant
+  is the cheap way to get the fresh membership a seed needs.
+- **Step 2 waits for the slot to stop, not for the volume to detach.** A Stop keeps the
+  home attached on purpose (the attachment *is* that user's slot), and the sweeper only
+  stops the instance — it logs `stopping slot <id> (home stays attached)`. Nothing in the
+  normal lifecycle ever detaches it, so waiting for `available` never ends. Baking off a
+  **stopped** slot is correct: that shutdown unmounted the filesystem, which is the same
+  reasoning `releaseSlot` uses when it skips the umount on a stopped slot.
+- **Do not clone repositories into the seed.** `~/repos` lives on the home volume, so
+  anything cloned there is handed to every new user. Bake boot-install and nothing else.
 - **Re-bake on every release that moves the image or a CLI pin.** The CP compares the
   `af-image` tag against the image it runs and **refuses a stale golden**, falling back to
   an empty home — new users just get the slow first start, and the CP logs why. Forgetting

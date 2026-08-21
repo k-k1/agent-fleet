@@ -130,6 +130,7 @@ Active sessions refresh automatically every 4 seconds.
 | Plan ready | A proposed plan is waiting for your review |
 | Awaiting permission | It is asking for permission to act |
 | Waiting for limit reset | Stopped at a usage limit (when a time is shown, it resumes automatically around then) |
+| Spend limit — needs a raise | Stopped at the spend / credit limit (waiting will not clear it — raise the limit or add credit) |
 | Ready | Idle, waiting for your next instruction |
 | Ready · running in background | Awaiting input, but something is still running behind the scenes |
 | Running | shell and the like (kinds with no working / awaiting-input distinction) |

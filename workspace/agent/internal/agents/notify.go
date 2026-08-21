@@ -147,6 +147,19 @@ const StateAuth = "auth"
 // 次の poll が普通の状態を返せばよい（StateBlocked / StateAuth と同型）。
 const StateLimited = "limited"
 
+// StateSpendLimit is StateLimited's counterpart for the limit that **waiting never
+// clears**: 支出・残高の上限（実測 2026-08-20 — "You've hit your org's monthly spend limit ·
+// run /usage-credits to raise it, or visit claude.ai/admin-settings/usage"）。
+//
+// 同じ 429 / `error:"rate_limit"` で届き、転写のレコードも見分けが付かないので、文言だけが
+// 材料になる（claude.LimitSpend）。それでも別の状態にするのは、"制限解除待ち" と表示した
+// 瞬間に**来ないリセットを待たせる**から — 待っても解けず、増枠かクレジットの追加という
+// 課金側の一手が要る。自動再開も仕込まない（同じ 429 を踏むだけ）。
+//
+// 促す一手が「人が今やる」側なので、チップは blocked / auth と同じ注意色で出す。
+// status ストアには書かない（StateBlocked / StateAuth / StateLimited と同型）。
+const StateSpendLimit = "spend_limit"
+
 // MarkTurnEndErr is MarkTurnEnd carrying the reason a turn failed. failure is the
 // one-line summary the driver built (empty for a clean turn); it rides the notifier's
 // excerpt so the operator report can say the turn errored and the chat bridge can post

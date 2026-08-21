@@ -242,3 +242,19 @@ describe("layout v3 migration", () => {
     expect(normalizeStored(unsafe)!.cols[0].cells[0].views[0].content).toEqual({ kind: "terminal", chat: false });
   });
 });
+
+// ★ 初回ガイドの置き場所が依存している不変条件。新規ユーザーの初期レイアウトは
+// 「ビューを 1 つも持たないセル」で、端末ペインではない — だから TerminalView は
+// 一度もマウントされず、はじめかたガイドを TerminalView の空状態にだけ置いていた間は
+// いちばん見せたい相手にだけ出ていなかった（features/panes/Pane.tsx の EmptyPane が
+// 実際の初回画面）。ここが「最初から端末ペインがある」に戻るなら、ガイドの置き場所も
+// 見直すこと。
+describe("freshLayout", () => {
+  it("新規ユーザーにはペインが 1 枚も無い（初回画面は EmptyPane）", () => {
+    const l = ops.freshLayout();
+    expect(l.cols).toHaveLength(1);
+    expect(l.cols[0].cells).toHaveLength(1);
+    expect(l.cols[0].cells[0].views).toEqual([]);
+    expect(l.activeCellId).toBe(l.cols[0].cells[0].id);
+  });
+});

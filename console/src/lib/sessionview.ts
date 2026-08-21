@@ -131,6 +131,14 @@ export const stateInfo = (s: SessionState): StateInfo => {
         text: at ? t("state.rate_limited_at", { at }) : t("state.rate_limited"),
       };
     }
+    // The usage limit that WAITING never clears: the org's monthly spend limit / an
+    // exhausted credit balance (agent: agents.StateSpendLimit, docs/47 §4-10). It arrives
+    // as the same 429 as the time windows above, so only the wording tells them apart —
+    // and showing 制限解除待ち here would park the user on a reset that never comes. The
+    // next move is a billing one (raise the limit / add credits), so it takes the loud
+    // question colours like blocked / auth rather than the calmer limited tint.
+    case "spend_limit":
+      return { cls: "question", icon: "credit-card", text: t("state.spend_limit") };
     // The workspace's claude login expired (agent: agents.StateAuth). Separate from
     // "blocked" because the next move is the opposite one: a usage limit lifts on its
     // own, an expired login never does — it needs 再認証 now. NOT "idle" for the same

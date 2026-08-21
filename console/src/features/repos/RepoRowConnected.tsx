@@ -192,8 +192,8 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
           ? split ? openSessionChatSplit : openSessionChat
           : split ? openSessionTerminalSplit : openSessionTerminal)(res.name);
       }}
-      // 作業を始める: worktree (default) or in-place, with an optional first prompt
-      // auto-sent once the session is alive. Shared with the はじめる hub (useStartWork).
+      // 作業を始める: worktree (default) or in-place, with an optional first prompt the
+      // Agent delivers once the CLI is ready. Shared with the はじめる hub (useStartWork).
       onStartWork={(opts) => startWork({ dir: r.path || "", repo: r.name }, opts)}
       onBranchChanged={() => {
         // A checkout / new branch changed HEAD and the working tree.
