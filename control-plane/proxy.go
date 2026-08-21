@@ -111,6 +111,7 @@ func newAgentProxyAPI(m *manager) agentProxyAPI { return agentProxyAPI{memberAut
 // `..` reach Agent endpoints outside the CP's explicit route allowlist (and skip the
 // route-level audit classification).
 var agentRelayClient = &http.Client{
+	Transport:     newAgentTransport(),
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
@@ -378,7 +379,7 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 	if rt.Token() != "" {
 		hdr = http.Header{"Authorization": []string{"Bearer " + rt.Token()}} // CP↔Agent auth
 	}
-	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, EnableCompression: true}
+	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, EnableCompression: true, NetDialContext: dialAgent}
 	// Keep the Agent's response: it refuses with real statuses the user needs to see —
 	// notably 409 "session not running and no terminal history" for a stopped session
 	// whose replay has expired (terminal history is a /tmp ring buffer, so a container
