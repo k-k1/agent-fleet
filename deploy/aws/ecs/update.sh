@@ -188,6 +188,11 @@ done
 # 新規ユーザーの home の種。イメージが上がると CP は af-image の不一致で golden を
 # 「使わずに空 home を作る」側へ倒す（ADR 0045 決定 9）。壊れはしないが新規の初回起動が
 # 目に見えて遅くなり、気づけるのは CP のログだけ — だから更新のたびにここで出す。
+#
+# 0.9.2 以降、焼き直しは既定で CP がやる（決定 9-1）。それでもここで出すのは、自動焼きが
+# 「始まらない」条件が二つあるから: AF_ECS_EC2_GOLDEN_AUTOBAKE=0 と、プールの空きが
+# 2 スロット未満。どちらも静かに何も起きないだけなので、直後は必ず古いままに見える
+# （数分で追いつく）ことと合わせて、下のメッセージで断り書きにしている。
 ACCOUNT="$("${AWS[@]}" sts get-caller-identity --query Account --output text)"
 WS_IMAGE="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/af-workspace:$VERSION"
 golden_stale="$("${AWS[@]}" ec2 describe-snapshots --owner-ids self \
@@ -225,8 +230,12 @@ if [ -n "${golden_stale// /}" ]; then
 
 ⚠️ ecs-ec2: golden snapshot が古い（新規ユーザーの home の種）。CP は一致しない golden を
    使わず空 home を作るので、壊れはしないが**新規の初回起動だけが遅くなり**、気づけるのは
-   CP のログだけ。焼き直しは bake-golden.sh（ADR 0045 決定 9）:
+   CP のログだけ（ADR 0045 決定 9）:
 $(echo "$golden_stale" | sed 's/^/     /')
    いま走るべき image: $WS_IMAGE
+
+   通常はこのあと数分で CP が自分で焼き直す（決定 9-1）。焼き始めないのは
+   AF_ECS_EC2_GOLDEN_AUTOBAKE=0 のときと、プールの空きが 2 スロット未満のとき
+   （その 2 つは CP のログが理由を言う）。手で焼くなら bake-golden.sh。
 EOF
 fi
