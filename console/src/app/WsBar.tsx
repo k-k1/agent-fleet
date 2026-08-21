@@ -734,7 +734,10 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
 // OOM) or the ECS service sits at desired 0. Both read as 停止 to the user; the
 // raw state stays in the tooltip. Optimistic in-flight states (set by the store
 // around start/stop POSTs) end in "…".
-function wsLabel(s: string): string {
+// reason は state が読めなかった理由（workspace ストア）。"unknown" のままでは
+// 「取得に失敗した」しか言えず、招待前の super_admin には理由の無い「不明」だけが残る。
+function wsLabel(s: string, reason = ""): string {
+  if (s === "unknown" && reason === "not_provisioned") return t("wsbar.state.no_tenant");
   switch (s) {
     case "running":
       return t("wsbar.state.running");
@@ -793,8 +796,13 @@ export function WsBar() {
   const stopWs = useWorkspaceStore((s) => s.stop);
   const restartWs = useWorkspaceStore((s) => s.restart);
   const wsStale = useWorkspaceStore((s) => s.stale);
+  const wsReason = useWorkspaceStore((s) => s.reason);
   const tenant = useTenantStore((s) => s.tenant);
   const superAdmin = useTenantStore((s) => s.superAdmin);
+  // どのテナントにも所属していない＝ワークスペースがそもそも存在しない。招待前の
+  // super_admin だけがここに来る（他の人は NotProvisioned の面に降りる）ので、
+  // 案内は「管理からテナントに自分を足す」が正解になる。
+  const noTenant = wsState === "unknown" && wsReason === "not_provisioned";
   const layout = useLayoutStore((s) => s.layout);
   const splitRight = useLayoutStore((s) => s.splitRight);
   const splitDown = useLayoutStore((s) => s.splitDown);
@@ -1157,7 +1165,9 @@ export function WsBar() {
         onClick={onToggle}
         disabled={busy}
         title={
-          (running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")) + (staleShown ? " — " + tr("wsbar.stale.title") : "")
+          noTenant
+            ? tr(superAdmin ? "wsbar.state_title.no_tenant_admin" : "wsbar.state_title.no_tenant")
+            : (running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")) + (staleShown ? " — " + tr("wsbar.stale.title") : "")
         }
         aria-label={running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")}
       >
@@ -1188,7 +1198,9 @@ export function WsBar() {
       <span
         className={"ws-state" + (wsState === "stopped" && wsStats?.oom_killed ? " warn" : "")}
         title={
-          wsState === "none"
+          noTenant
+            ? tr(superAdmin ? "wsbar.state_title.no_tenant_admin" : "wsbar.state_title.no_tenant")
+            : wsState === "none"
             ? tr("wsbar.state_title.none")
             : wsState === "stopped"
               ? wsStats?.oom_killed
@@ -1201,7 +1213,7 @@ export function WsBar() {
                 : tr("wsbar.state_title.other", { state: wsState })
         }
       >
-        {wsLabel(wsState)}
+        {wsLabel(wsState, wsReason)}
       </span>
       {/* 要再起動 — the backend moved on while this container kept running. Sits
           right of the state chip (and dots the power button next to it) because the
