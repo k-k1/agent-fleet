@@ -3,6 +3,11 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.9.3](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.3) — 2026-08-21
+
+One fix for administrators: you can now take yourself off a tenant's roster, as long as
+it is not the last roster you are on.
+
 ## [0.9.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.2) — 2026-08-21
 
 A follow-up to the EC2-backed persistent workspaces of 0.9.0, from running one as a real
