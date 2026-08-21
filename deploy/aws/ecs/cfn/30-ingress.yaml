@@ -82,14 +82,58 @@ Parameters:
     Type: String
     Default: "m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8"
     Description: >-
-      The slot sizes the pool may run, as instanceType:memoryMiB[:vcpu], ascending. A
-      workspace lands on the smallest slot that holds its memory REQUEST and gets the
-      WHOLE box (the task reserves neither cpu nor memory — on EC2 those are
-      reservations against the instance). EC2 on-demand pricing is perfectly linear in
-      vCPU, so bigger slots are not more expensive per user (ADR 0045 決定 8). The vCPU
-      field is optional and display-only: the Console prints it so a tenant admin can
-      see which box a memory number lands on, and omitting it just omits the label
-      (ADR 0045 決定 21 — asking EC2 instead would mean an extra IAM action for a label).
+      The slot sizes the pool may run. A workspace lands on the smallest slot that
+      holds its memory REQUEST and gets the WHOLE box (the task reserves neither cpu
+      nor memory — on EC2 those are reservations against the instance). EC2 on-demand
+      pricing is perfectly linear in vCPU, so bigger slots are not more expensive per
+      user (ADR 0045 決定 8). The vCPU field is optional and display-only: the Console
+      prints it so a tenant admin can see which box a memory number lands on, and
+      omitting it just omits the label (ADR 0045 決定 21 — asking EC2 instead would
+      mean an extra IAM action for a label).
+
+      Two shapes, and the old one is not deprecated (docs/70 §70.4.2):
+
+        instanceType:memoryMiB[:vcpu],…                one unnamed class, x86_64
+        id|label|arch|<ladder>[;id|label|arch|<ladder>] one class per entry
+
+      With more than one class, a tenant admin chooses WHICH KIND of machine per
+      tenant and per member, and the memory number still picks the rung within it.
+      arch is x86_64 or arm64 and is DECLARED, never guessed from the family name.
+
+      A worked example — Intel as the default, Graviton as the cheaper choice (measured
+      in ap-northeast-1 on 2026-08-22: m7g is 19.0% cheaper than m7i, m6g 24.0%,
+      m8g 11.0%):
+
+        standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;arm|Lower cost (Arm)|arm64|m7g.large:8192:2,m7g.xlarge:16384:4,m7g.2xlarge:32768:8
+
+      ⚠️ The default here stays x86_64-only ON PURPOSE, and an arm64 class has TWO
+      prerequisites, in this order:
+
+        1. a workspace image with an arm64 manifest. Without it the slot launches and
+           the task cannot pull anything that runs on it.
+        2. Ec2SlotAmiArm64 below. The CP refuses to boot when an arm64 class is
+           declared and that is empty, rather than showing a class in the admin UI
+           that cannot launch.
+
+      ⚠️ Adding a class moves nobody: Ec2DefaultSlotClass still decides where a member
+      with no choice of their own lands. Changing the class of a member who already has
+      a home makes their next start reinstall its architecture-dependent tools
+      (docs/70 §70.5) — that is expected, and it costs them one slow start.
+  Ec2SlotAmiArm64:
+    Type: String
+    Default: ""
+    Description: >-
+      SlotAmiIdArm64 output of the 40-ec2-pool stack. Required only when Ec2SlotTypes
+      declares an arm64 class — the CP refuses to boot otherwise, rather than showing
+      a class in the admin UI that cannot launch.
+  Ec2DefaultSlotClass:
+    Type: String
+    Default: ""
+    Description: >-
+      The class id a member lands on with no per-user and no per-tenant value. Empty =
+      the first class declared in Ec2SlotTypes. ⚠️ Moving this on a running deployment
+      moves EVERY member who has not chosen for themselves, and each of their homes
+      then reinstalls its architecture-dependent tools on the next start.
   Ec2MaxSlots:
     Type: String
     Default: "8"
@@ -531,6 +575,8 @@ Resources:
             # --- EC2 slot pool (only read when WsRuntime=ecs-ec2) ---
             - { Name: AF_ECS_EC2_LAUNCH_TEMPLATE, Value: !Ref Ec2SlotLaunchTemplate }
             - { Name: AF_ECS_EC2_SLOT_TYPES, Value: !Ref Ec2SlotTypes }
+            - { Name: AF_ECS_EC2_AMI_ARM64, Value: !Ref Ec2SlotAmiArm64 }
+            - { Name: AF_ECS_EC2_DEFAULT_SLOT_CLASS, Value: !Ref Ec2DefaultSlotClass }
             - { Name: AF_ECS_EC2_MAX_SLOTS, Value: !Ref Ec2MaxSlots }
             - { Name: AF_ECS_EC2_SLOT_SLEEP_SEC, Value: !Ref Ec2SlotSleepSec }
             - { Name: AF_ECS_EC2_HOME_GB, Value: !Ref Ec2HomeGiB }

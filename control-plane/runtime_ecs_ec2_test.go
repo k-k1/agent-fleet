@@ -34,10 +34,13 @@ type fakeEC2 struct {
 	// refusal, which is how a slot behaves while it is still giving back its device.
 	attachFailures int
 	calls          []string
-	nextVol        int
-	nextInst       int
-	nextSnap       int
-	snapshots      map[string]*ec2types.Snapshot
+	// ranAMI is the ImageId of each RunInstances, in order — "" when the request did
+	// not override the launch template's own.
+	ranAMI    []string
+	nextVol   int
+	nextInst  int
+	nextSnap  int
+	snapshots map[string]*ec2types.Snapshot
 	// snapshotState overrides the state CreateSnapshot reports, so a test can hold a
 	// snapshot at `pending` and drive the wait.
 	snapshotState ec2types.SnapshotState
@@ -439,7 +442,8 @@ func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ .
 		State:        &ec2types.InstanceState{Name: ec2types.InstanceStateNamePending},
 		Placement:    &ec2types.Placement{AvailabilityZone: aws.String(f.subnetAZ[aws.ToString(in.SubnetId)])},
 	}
-	f.log("RunInstances %s type=%s subnet=%s", id, in.InstanceType, aws.ToString(in.SubnetId))
+	f.ranAMI = append(f.ranAMI, aws.ToString(in.ImageId))
+	f.log("RunInstances %s type=%s subnet=%s ami=%s", id, in.InstanceType, aws.ToString(in.SubnetId), aws.ToString(in.ImageId))
 	return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String(id)}}}, nil
 }
 

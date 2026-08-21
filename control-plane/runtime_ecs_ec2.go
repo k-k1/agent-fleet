@@ -294,22 +294,33 @@ type ecsContainerInstanceAPI interface {
 // af-mount/af-umount helpers), instance profile and security group all live there, so
 // the CP only ever says "run one of these, in this AZ, at this size".
 type ec2PoolConfig struct {
-	launchTemplate string // AF_ECS_EC2_LAUNCH_TEMPLATE (id or name) — the x86_64 slot
-	// launchTemplateArm64 is AF_ECS_EC2_LAUNCH_TEMPLATE_ARM64, required only when a
-	// declared class says arm64. A launch template pins an AMI, and an arm64 instance
-	// type cannot boot the x86_64 ECS-optimized AMI — so the architecture, not the
-	// class, is what needs a second template (docs/70 §70.8). Everything else about a
-	// slot (role, SG, user-data, root volume) is shared between the two.
-	launchTemplateArm64 string
-	pool                string         // AF_ECS_EC2_POOL tag value (defaults to the cluster name)
-	classes             []ec2SlotClass // AF_ECS_EC2_SLOT_TYPES, in declared order
-	defaultClass        string         // AF_ECS_EC2_DEFAULT_SLOT_CLASS (defaults to the first)
-	maxSlots            int            // AF_ECS_EC2_MAX_SLOTS: cap on instances this pool may run
-	homeGiB             int32          // AF_ECS_EC2_HOME_GB: default per-user home volume size
-	tmpfsMiB            int32          // AF_ECS_EC2_TMP_MB: size cap of the /tmp tmpfs
-	tmpfsOpts           []string       // AF_ECS_EC2_TMP_OPTS
-	claimTTL            time.Duration
-	releaseGrace        time.Duration
+	launchTemplate string // AF_ECS_EC2_LAUNCH_TEMPLATE (id or name)
+	// amiArm64 is AF_ECS_EC2_AMI_ARM64, required only when a declared class says
+	// arm64: the launch template pins the x86_64 ECS-optimized AMI, and an arm64
+	// instance type cannot boot it (docs/70 §70.8).
+	//
+	// An AMI ID rather than a second launch template, and resolved by CLOUDFORMATION
+	// rather than by the CP. Everything else about a slot — instance profile, security
+	// group, root volume, and the user-data that joins the cluster and installs
+	// af-mount/af-umount — is architecture-neutral, so a second template would be a
+	// ~90-line copy of the first whose only difference was one field, kept in step by
+	// hope. RunInstances lets a request parameter override the template, which is the
+	// same one field expressed once.
+	//
+	// ⚠️ Not read from SSM by the CP. That would put ssm:GetParameter on the task role
+	// for a value that changes only when the pool stack is redeployed, and it would
+	// break the rule that patching a slot's AMI IS redeploying that stack (ADR 0045
+	// 決定 7). The 40-ec2-pool stack resolves the public parameter and passes the id.
+	amiArm64     string
+	pool         string         // AF_ECS_EC2_POOL tag value (defaults to the cluster name)
+	classes      []ec2SlotClass // AF_ECS_EC2_SLOT_TYPES, in declared order
+	defaultClass string         // AF_ECS_EC2_DEFAULT_SLOT_CLASS (defaults to the first)
+	maxSlots     int            // AF_ECS_EC2_MAX_SLOTS: cap on instances this pool may run
+	homeGiB      int32          // AF_ECS_EC2_HOME_GB: default per-user home volume size
+	tmpfsMiB     int32          // AF_ECS_EC2_TMP_MB: size cap of the /tmp tmpfs
+	tmpfsOpts    []string       // AF_ECS_EC2_TMP_OPTS
+	claimTTL     time.Duration
+	releaseGrace time.Duration
 	// slotSleepAfter is how long a slot may sit with no running task before the sweeper
 	// STOPS the instance (never terminates it — the image cache lives on its root
 	// volume, and a stopped instance costs only that volume).
@@ -424,14 +435,14 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		return nil, fmt.Errorf("aws config: %w", err)
 	}
 	pool := ec2PoolConfig{
-		launchTemplate:      os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"),
-		launchTemplateArm64: os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE_ARM64"),
-		pool:                envOr("AF_ECS_EC2_POOL", base.cfg.cluster),
-		classes:             parseSlotClasses(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),
-		defaultClass:        os.Getenv("AF_ECS_EC2_DEFAULT_SLOT_CLASS"),
-		maxSlots:            envInt("AF_ECS_EC2_MAX_SLOTS", 8),
-		homeGiB:             int32(envInt("AF_ECS_EC2_HOME_GB", 50)),
-		tmpfsMiB:            int32(envInt("AF_ECS_EC2_TMP_MB", 2048)),
+		launchTemplate: os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"),
+		amiArm64:       os.Getenv("AF_ECS_EC2_AMI_ARM64"),
+		pool:           envOr("AF_ECS_EC2_POOL", base.cfg.cluster),
+		classes:        parseSlotClasses(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),
+		defaultClass:   os.Getenv("AF_ECS_EC2_DEFAULT_SLOT_CLASS"),
+		maxSlots:       envInt("AF_ECS_EC2_MAX_SLOTS", 8),
+		homeGiB:        int32(envInt("AF_ECS_EC2_HOME_GB", 50)),
+		tmpfsMiB:       int32(envInt("AF_ECS_EC2_TMP_MB", 2048)),
 		// noexec is deliberately NOT in the default set. ADR 0045 決定 8 names
 		// noexec,nosuid,nodev, but this is a developer container: installers, test
 		// runners and build tools routinely exec out of /tmp, and a noexec /tmp turns
@@ -464,8 +475,8 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		ci:   ecs.NewFromConfig(ac),
 		pool: pool,
 	}
-	log.Printf("runtime=ecs-ec2 pool=%s launch-template=%s/%s classes=%s default-class=%s max=%d home=%dGiB",
-		pool.pool, pool.launchTemplate, envOr("AF_ECS_EC2_LAUNCH_TEMPLATE_ARM64", "(none)"),
+	log.Printf("runtime=ecs-ec2 pool=%s launch-template=%s arm64-ami=%s classes=%s default-class=%s max=%d home=%dGiB",
+		pool.pool, pool.launchTemplate, envOr("AF_ECS_EC2_AMI_ARM64", "(none)"),
 		describeSlotClasses(pool.classes), pool.defaultClass, pool.maxSlots, pool.homeGiB)
 	go f.sweepLoop(context.Background())
 	return f, nil
@@ -1756,11 +1767,11 @@ func (p *ec2PoolConfig) validate() error {
 	if len(p.classes) == 0 {
 		return fmt.Errorf("AF_ECS_EC2_SLOT_TYPES has no usable entry (want type:memMiB,... or id|label|arch|type:memMiB,...)")
 	}
-	if p.launchTemplateArm64 == "" {
+	if p.amiArm64 == "" {
 		for _, c := range p.classes {
 			if c.arch == ec2ArchArm {
-				return fmt.Errorf("slot class %q is %s but AF_ECS_EC2_LAUNCH_TEMPLATE_ARM64 is empty "+
-					"(deploy cfn/40-ec2-pool.yaml and pass its SlotLaunchTemplateIdArm64 output)", c.id, c.arch)
+				return fmt.Errorf("slot class %q is %s but AF_ECS_EC2_AMI_ARM64 is empty "+
+					"(redeploy cfn/40-ec2-pool.yaml and pass its SlotAmiIdArm64 output)", c.id, c.arch)
 			}
 		}
 	}
@@ -1774,14 +1785,14 @@ func (p *ec2PoolConfig) validate() error {
 	return nil
 }
 
-// templateFor picks the launch template for an architecture. An empty arch (a
-// deployment that never declared classes) is x86_64, which is what the single
-// template has always been.
-func (p ec2PoolConfig) templateFor(arch string) string {
-	if arch == ec2ArchArm && p.launchTemplateArm64 != "" {
-		return p.launchTemplateArm64
+// amiFor is the AMI to override the launch template's with, or "" to use the
+// template's own. An empty arch (a deployment that never declared classes) is x86_64,
+// which is what the template has always pinned.
+func (p ec2PoolConfig) amiFor(arch string) string {
+	if arch == ec2ArchArm {
+		return p.amiArm64
 	}
-	return p.launchTemplate
+	return ""
 }
 
 // launchTemplateSpec accepts either an id (lt-…) or a name, the way every
@@ -1822,13 +1833,16 @@ func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	lt := launchTemplateSpec(e.pool.templateFor(e.arch))
+	lt := launchTemplateSpec(e.pool.launchTemplate)
 	out, err := e.ec2.RunInstances(ctx, &ec2.RunInstancesInput{
 		LaunchTemplate: lt,
-		InstanceType:   ec2types.InstanceType(e.instanceType),
-		SubnetId:       aws.String(subnet),
-		MinCount:       aws.Int32(1),
-		MaxCount:       aws.Int32(1),
+		// Overrides the template's ImageId on arm64 and is nil everywhere else, so an
+		// x86_64 launch is byte-for-byte the call it has always been.
+		ImageId:      strOrNil(e.pool.amiFor(e.arch)),
+		InstanceType: ec2types.InstanceType(e.instanceType),
+		SubnetId:     aws.String(subnet),
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeInstance,
 			Tags: []ec2types.Tag{
