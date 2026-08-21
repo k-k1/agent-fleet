@@ -245,12 +245,13 @@ shell `#46c9d0`（シアン）/ **ssm `#6d8bf5`（藍）**。
 
 - 起動: `acli rovodev run [--restore <uuid>]`（+ 必要なら `--config-file`）。`--worktree` は AF が
   worktree を作るので**使わない**（二重管理になる）。`--web` も使わない（AF のミラーが担当）。
-- **状態検出（⏳ 全部未測なので、実装は差し替え可能な形にする）**:
-  1. 一次 = **TUI の明示文字列契約**（`internal/agents/rovo/state.go`）。kiro と同じく
+- **状態検出（⏳ 全部未測なので、実装は差し替え可能な形にする）**——
+  **優先順位は §10.1 で入れ替えた**（ユーザー方針＝claude/codex/opencode を下敷きにする）:
+  1. 一次 = **hook（claude 型・`claude/hooks.go` の写し）**。TUI を一切パースしない。
+     ⚠️ **公式ドキュメントに載っていても出荷バイナリに無いことがある**（kiro の Stop hook・docs/43 §5.1）ので、
+     **実バイナリのトリガ enum を見るまで前提にしない**。
+  2. 二次 = **TUI の明示文字列契約**（`internal/agents/rovo/state.go`）。kiro と同じく
      スピナーグリフ regex は使わない（[[spinner-re-slash-command-miss]] / false-idle の教訓）。
-  2. 保険 = **`/hooks`**。⚠️ **公式ドキュメントに載っていても出荷バイナリに無いことがある**
-     （kiro の Stop hook は docs にあってバイナリに無かった・docs/43 §5.1）ので、
-     **実バイナリの hook トリガ enum を見るまで前提にしない**。
   3. 縮退 = `~/.rovodev/sessions/<uuid>/` の mtime と `driveState` の楽観 working。
 - **`ensureSettings`（冪等・プロセス内 1 回）**で `~/.rovodev/config.yml` に固定する候補:
   `toolPermissions.default: allow`（⚠️ 素の home だと許可待ちでペインが固着する。kiro の
@@ -261,7 +262,8 @@ shell `#46c9d0`（シアン）/ **ssm `#6d8bf5`（藍）**。
 
 ### 8.6 Track A2（Managed）— `serve` は「動的ポート＋自分の子だと確認」が要
 
-- `acli rovodev serve <port>` を **per-session child** で起動（cursor/kiro の driver 骨格を流用）。
+- `acli rovodev serve <port>` を **per-session child** で起動。⚠️ **骨格は opencode の Supervisor を写す**
+  （Ensure/adopt/generation/drain/SSE/exit recording）。**共有デーモン前提だけは移植できない**理由は §10.3。
 - ⚠️ **ポート番号は固定できない**（1 コンテナに複数セッション／他人のサーバを掴む）。設計:
   1. AF が空きポートを選ぶ（bind→close で番号を取る／衝突したら再試行）。⏳ **`serve 0` が使えるかは未測**
      — 使えるなら chromium の `DevToolsActivePort` と同じく「実際に listen した番号を読み戻す」方が安全。
@@ -405,6 +407,102 @@ shell `#46c9d0`（シアン）/ **ssm `#6d8bf5`（藍）**。
 | `/connections/kiro/install`（GET/POST） | **不要** | 同上 |
 | `materialize_kiro.go`（JSON 1 ファイル） | **2 ファイル＋YAML 部分更新** | `allowedMcpServers`（§8.8） |
 | `env_tool_versions` 1 行 | **2 行**（acli / 本体） | 本体は実行時 DL（§8.3） |
+
+## 10. 実装の下敷き = claude / codex / opencode（ユーザー方針 2026-08-21）
+
+「ミラー・Managed・TUI は claude / codex / opencode を参考にする」というユーザー方針を受け、
+3 種の実装を実際に読んで**どれをどこに移植するか**を確定した（kiro/cursor は per-session child の
+前例としてのみ参照する）。
+
+### 10.1 TUI の状態検出 = **claude の hook 型を第一候補にする**（文字列契約は縮退用に降格）
+
+`internal/agents/claude/hooks.go` の実装は、**TUI を一切パースしない**:
+
+| claude の hook | 記録される状態 |
+|---|---|
+| `UserPromptSubmit` | working |
+| `Stop` | idle（応答完了・入力待ち） |
+| `SessionStart` | boot |
+| `PreToolUse(AskUserQuestion)` | question |
+| `PostToolUse(*)` | working（**完了ツールごとに working を打ち直す＝ハートビート**） |
+
+配線は `settings.json` にフックを**マージ**（rtk の PreToolUse を壊さない冪等更新）→
+フックが `workspace-agent session-status <state>` を叩く → 実体は `internal/status`。
+
+- **Rovo Dev には `/hooks` がある**（§3.4）ので、**この型がそのまま狙える**＝ §8.5 で一次に置いた
+  「TUI 文字列契約」を**二次へ降格**できる。文字列契約はドリフトが宿命（[[report-arm-pitfalls]]）なので、
+  hook で取れるならそちらが本命。
+- ⚠️ **ただし kiro の教訓（docs/43 §5.1）を必ず踏む**: 公式ドキュメントに hook があっても
+  **出荷バイナリのトリガ enum に無い**ことがある。第2段で確認するのは
+  「**working に相当するトリガ**」と「**idle に相当する Stop 相当**」の 2 つの有無で、
+  この 2 つが無ければ claude 型は成立せず、文字列契約（＋ CI のドリフト検知 workflow）へ戻る。
+- 状態ストア（`internal/status`）と `session-status` サブコマンドは**既存資産をそのまま使える**
+  （kind 非依存）。＝ hook が在れば rovo の TUI 実装は claude の写しで済み、**最も安く済む経路**。
+
+### 10.2 ミラー（転写） = **opencode 型（ストア由来・行カーソル無し）**
+
+`internal/agents/opencode/transcript.go` の要点:
+
+- opencode は会話を**追記型テキストではなく SQLite** に持つ。よって **行カーソルが無い**——
+  「`/messages` の generic ハンドラが結果を窓で切る」形にしてある。
+- 読みは **read-only** で開き、`message`/`part` を **`transcript.Turn` へ正規化**して、
+  claude/codex と**同じモデル**で Console に食わせる。
+
+rovo の `session_context.json` は**単一 JSON を読み直す**形（§8.7）なので、
+**claude/codex の JSONL＋行カーソル型ではなく、この opencode 型に乗せる**のが正しい。
+
+- ⚠️ **`/prune`（ツール結果を捨てる）と fork がある**分、opencode より条件が悪い。
+  [[session-changed-files]] の「**store 系は最後の 1 ターンを畳むな**」（ポーリングの度に同じ編集を数える）が
+  そのまま効くので、**畳み込み・差分集計は「レコード数が減ったら作り直す」前提**で書く。
+- ⚠️ 正規化先は `transcript.Turn` 一択（[[transcript-render-layer]]＝描画層はミラーと共有ビューの共通資産）。
+  ここを独自形にすると共有・マーカー・変更ファイルの 3 機能が全部落ちる。
+
+### 10.3 Managed = **opencode Supervisor の骨格を、per-session で**（⚠️ 共有デーモン型は移植できない）
+
+`internal/agents/opencode/serve.go` と `codex/serve.go` は**同じ骨格**（docs/27 §3 RuntimeSupervisor）:
+
+1. **idempotent な Ensure**（起動 → health を 20 秒ポーリング → 失敗なら Kill＋Wait で reap）、
+2. **adopt**（既に listen していれば前世代のプロセスを引き取る＝Agent 再起動に耐える）、
+3. **generation カウンタ**（認証・設定変更は generation++ → drain → 再生成 → 全 handle 再 resume）、
+4. **drain**（busy な managed セッションの完走を待ち、タイムアウトしたら abort）、
+5. **SSE / WS の監視ループ**（切断時は health を見て「デーモンが死んだ」か「ソケットだけ落ちた」かを判別）、
+6. **exit recording**（`cmd.Wait()` の wait status → `status.PersistExit`・OOM 判定込み。
+   ⚠️ **意図的停止を crash と誤記録しない**ために `s.stopping` と `s.cmd != cmd` の**両方**を見る）。
+
+**⚠️ ただし「共有デーモン 1 本」という前提だけは rovo に移せない。**
+opencode（`:7799`）も codex（`:7798`）も**固定ポートに 1 プロセス**で、API が
+`/session/{id}` のようにセッションを引数に取るから成立している。一方
+**Rovo Dev の serve は「現在のセッション」を 1 つだけ持つ**——`/v3/set_chat_message`・
+`/v3/stream_chat`・`/v3/cancel` に **session id が無く**、切り替えは
+`/v3/sessions/{id}/restore` で*現在地を移す*操作（§3.1）。共有 1 本にすると
+**managed セッションが全部直列化し、ターンの度に restore で文脈を往復する**ことになる。
+
+したがって rovo は:
+
+- **per-session に 1 プロセス**（cursor/kiro と同じ形）だが、**中身は上の 1〜6 をそのまま**持つ。
+  `Supervisor` を「パッケージ変数の単数」から「**handle ごとの Supervisor**」に変えるだけで、
+  drain / exit recording / generation の設計は流用できる。
+- **ポートは払い出し**（固定ポート＋adopt は使えない）。⚠️ **adopt を捨てない**ために、
+  払い出したポートを handle（セッション台帳）に**永続**し、Agent 再起動後は
+  `GET /healthcheck` ＋ `GET /v3/sessions/current_session` の**両方**で
+  「そのポートに居るのが**自分のセッション**か」を照合してから引き取る。
+  ⚠️ health だけで adopt すると**同居する別セッションの serve を掴む**（§8.6）。
+- **メモリ**: 共有 1 本ではなく N プロセスになるので、`tuiMemoryCost`（codex 230MiB / opencode 300MiB の実測表示）と
+  同じ要領で **managed 側の 1 セッションあたり実測値**を第2段で採り、起動 UI に出す。
+  ⚠️ ホストは共有・メモリ逼迫が事故になる（[[host-oom-fleet-risk]]）ので、ここは「測ってから出す」。
+- SSE の読みは `streamEvents`（`data: ` 前置を剥がして JSON を配る・64KB〜1MB のバッファ設定）が
+  **そのまま使える**（`/v3/stream_chat` も SSE・§3.1）。
+- 許可待ちは `?pause_on_call_tools_start=true` → `/v3/resume_tool_calls`（§8.6）。
+  opencode の `question.asked` イベント → Interaction と同じ位置に嵌める。
+
+### 10.4 まとめ（どのファイルの写しか）
+
+| 面 | 下敷き | 移植度 |
+|---|---|---|
+| TUI 状態 | `claude/hooks.go`＋`internal/status`＋`session-status` | ⏳ hook トリガが在れば**ほぼ写し**。無ければ文字列契約へ |
+| 転写 | `opencode/transcript.go`（ストア由来・カーソル無し・`transcript.Turn` へ正規化） | 構造は写し。`/prune`・fork の分だけ追加 |
+| Managed | `opencode/serve.go`（Ensure/adopt/generation/drain/SSE/exit recording） | **骨格は写し・共有デーモン前提だけ捨てる**（per-session＋ポート台帳） |
+| 起動・resume | `codex/program.go`・`opencode/program.go` | `--restore <uuid>` があるので素直 |
 
 ## 参考
 
