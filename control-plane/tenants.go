@@ -77,6 +77,13 @@ func newAdminAPI(m *manager) adminAPI { return adminAPI{memberAuth{m}} }
 // super_admin sees every tenant; a tenant_admin sees only the tenants they
 // administer. The super_admin flag lets the Console hide deployment-wide controls
 // (create tenant, tenant quotas, clean-home, role grants) for tenant_admins.
+//
+// ★ 予約テナント（system_tenant.go）はここで落とす。落とすのが**この API 層**であって
+// `store.ListTenants` ではないのは意図的で、その store 呼び出しには監査ビューの
+// tenant_id → slug 解決（audit.go）と費用ポーラーの membership → tenant 解決
+// （cloudcost.go）が乗っている。store で消すと、そちらが「テナントの分からない行」を
+// 作りはじめる。Console は横断ビュー（セッション/稼働時間/費用/監査/MCP）のテナント
+// フィルタにもこの一覧を渡しているので、ここ 1 か所で全部の面から消える。
 func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Identity) {
 	isSuper := ident.Role == "super_admin"
 
@@ -87,7 +94,12 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Iden
 			writeAPIErr(w, internalErr(err))
 			return
 		}
-		tenants = ts
+		for _, t := range ts {
+			if isSystemTenantSlug(t.Slug) {
+				continue
+			}
+			tenants = append(tenants, t)
+		}
 	} else {
 		ms, err := a.mgr.store.ListMemberships(r.Context(), ident.ID)
 		if err != nil {
