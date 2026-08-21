@@ -29,6 +29,19 @@ export type PoolStatus = {
   bake_rejected?: string;
   bake_reason?: string;
   running_image?: string;
+  /** 宣言されたアーキ毎の golden（docs/70 §70.6）。上の 6 つはこの配列の先頭
+   *  （既定クラスのアーキ）と同じ値で、クラスが 1 つのデプロイでは配列も 1 要素。 */
+  goldens?: Golden[];
+  slot_classes?: { id: string; label: string; arch: string }[];
+};
+type Golden = {
+  arch: string;
+  snapshot_id?: string;
+  image?: string;
+  stale?: boolean;
+  baking?: boolean;
+  rejected?: string;
+  reason?: string;
 };
 type Slot = {
   instance_id: string;
@@ -238,7 +251,17 @@ export function PoolView() {
 
       <section className="admin-panel">
         <h4>{tr("pool.golden_title")}</h4>
-        {st.bake_rejected ? (
+        {/* ★ golden は「バイナリの詰まった home」なので、アーキ毎に別物である
+            （docs/70 §70.6）。複数アーキを宣言したデプロイでは 1 本だけ見せると
+            「golden はある」と読めてしまい、まだ焼けていない側のクラスの新規ユーザー
+            だけが毎回空の home から始まる——という、当人以外には見えない失敗になる。 */}
+        {(st.goldens?.length ?? 0) > 1 ? (
+          st.goldens!.map((g) => (
+            <p key={g.arch}>
+              <span className="mono">{g.arch}</span> <GoldenLine g={g} running={st.running_image || ""} />
+            </p>
+          ))
+        ) : st.bake_rejected ? (
           // 拒否は「イベント」ではなく「状態」である。焼けた golden が起動できなかった
           // ときの症状は再起動ループだけで、CP ログの 1 行は流れてしまう（§64.28.3）。
           // 直るまでこの面に出し続ける。
@@ -264,6 +287,33 @@ export function PoolView() {
       </section>
 
     </div>
+  );
+}
+
+// GoldenLine is the same four states as the single-golden block above, for one
+// architecture. Kept as its own component rather than a shared render of both paths:
+// the single-architecture block reads the SCALAR fields, which a Console pointed at an
+// older CP still gets, and folding them together would make the common deployment
+// depend on a field that CP does not send.
+function GoldenLine({ g, running }: { g: Golden; running: string }) {
+  const tr = useT();
+  if (g.rejected) {
+    return <span className="warn-text">{tr("pool.golden_rejected", { snapshot: g.rejected, reason: g.reason || "?" })}</span>;
+  }
+  if (g.baking) return <span className="muted">{tr("pool.golden_baking", { image: running })}</span>;
+  if (!g.snapshot_id) return <span className="muted">{tr("pool.golden_none", { image: running })}</span>;
+  if (g.stale) {
+    return (
+      <span className="warn-text">
+        {tr("pool.golden_stale", { snapshot: g.snapshot_id, baked: g.image || "?", running: running || "?" })}
+      </span>
+    );
+  }
+  return (
+    <>
+      <span className="mono">{g.snapshot_id}</span>{" "}
+      <span className="muted">{tr("pool.golden_ok", { image: g.image || "" })}</span>
+    </>
   );
 }
 

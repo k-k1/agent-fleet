@@ -2704,13 +2704,19 @@
 }
 /* Named sizes fill the three numeric fields above in one click. They are a shortcut,
    not a separate mode, so they sit next to the fields rather than replacing them. */
-.limit-edit .le-presets {
+/* ⚠️ The tenant's machine picker is the SAME chip row outside .limit-edit, so every
+   rule below names both. Dropping the `.limit-edit` scope instead would make
+   `.le-presets` a global class, and this stylesheet already learned what two
+   definitions of one global name do to each other (docs/70 §70.10 / .view-head). */
+.limit-edit .le-presets,
+.machine-picker .le-presets {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
 }
-.limit-edit .le-presets .chip {
+.limit-edit .le-presets .chip,
+.machine-picker .le-presets .chip {
   min-width: 44px;
   padding: 4px 10px;
   font-size: 12px;
@@ -2721,13 +2727,25 @@
   color: var(--fg);
   cursor: pointer;
 }
-.limit-edit .le-presets .chip:hover {
+.limit-edit .le-presets .chip:hover,
+.machine-picker .le-presets .chip:hover {
   border-color: var(--accent);
 }
-.limit-edit .le-presets .chip.on {
+.limit-edit .le-presets .chip.on,
+.machine-picker .le-presets .chip.on {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-fg, #fff);
+}
+/* The one-line spec under each machine chip: what the class actually buys. Monospace
+   for the instance types so the ranges line up down the list. */
+.machine-picker .machine-specs {
+  margin: 8px 0 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+.machine-picker .machine-specs li {
+  margin: 2px 0;
 }
 .role-now {
   display: inline-flex;

@@ -19,7 +19,7 @@ import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 import { MemberCostPanel } from "../cost/CloudCostView.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
-import { fmtG, fmtPct, fmtGbHint, slotFor, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
+import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
 import type { Member, WsSizing, WsSlot } from "./adminShared.ts";
 
 // MembersPanel — 名簿と「メンバー追加」。TenantView の中に直接書かれていたものを、
@@ -157,6 +157,10 @@ export function MemberView({
   const [memMb, setMemMb] = useState<number | string>(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
   const [cpuUnits, setCpuUnits] = useState<number | string>(member.cpu_limit ?? 0);
   const [diskGb, setDiskGb] = useState<number | string>(member.disk_gb ?? 0);
+  // Which KIND of machine, where the deployment offers a choice (docs/70). "" = the
+  // tenant default, which is a real value here and not "unset means smallest": there
+  // is no numeric fallback for a class.
+  const [slotClass, setSlotClass] = useState<string>(member.slot_class ?? "");
   // What those three numbers actually DO on this deployment's runtime (ADR 0045 決定 21).
   // Fetched rather than assumed: the same editor is shown for docker, native, Fargate and
   // the EC2 slot pool, and it used to describe all four as Fargate.
@@ -228,7 +232,19 @@ export function MemberView({
   // cap and keeps the wording it has always had.
   const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
   const slotSpec = (s: WsSlot) => (s.vcpu ? `${s.vcpu} vCPU / ${fmtGbHint(s.mem_mib)}` : fmtGbHint(s.mem_mib));
-  const landed = onSlots ? slotFor(sizing.slots, +memMb || 0) : null;
+  // The machine-class picker exists only where the operator declared more than one
+  // (docs/70 §70.10). The memory chips below are then the SELECTED class's ladder, so
+  // switching class re-draws them and "you land on" recomputes — the same number can
+  // land on a different box in a different class, and that is the whole point.
+  const classes = onSlots ? (sizing.slot_classes ?? []) : [];
+  const ladder = onSlots ? ladderFor(sizing, slotClass) : undefined;
+  const landed = onSlots ? slotFor(ladder, +memMb || 0) : null;
+  // Warn only when there is a home to migrate. A member who has never started has
+  // nothing architecture-dependent on disk yet, so the warning would be noise.
+  const classChanged = classes.length > 0 && slotClass !== (member.slot_class ?? "");
+  const archOf = (id: string) => classes.find((c) => c.id === id)?.arch ?? "";
+  const archChanged =
+    classChanged && archOf(slotClass || (sizing.default_slot_class ?? "")) !== archOf(member.slot_class || (sizing.default_slot_class ?? ""));
   const memHint = !landed
     ? +memMb > 0
       ? tr("admin.eq_hint", { hint: fmtGbHint(+memMb) })
@@ -281,6 +297,7 @@ export function MemberView({
       // Sent explicitly rather than omitted: the endpoint writes the whole quota row,
       // so leaving it out would silently reset a disk quota set elsewhere (MCP/API).
       disk_gb: Math.round(+diskGb || 0),
+      slot_class: slotClass,
     });
     setLimitOpen(false);
     poll(); // mem_max reflects the new cap after the next start; refresh sessions/stats
@@ -465,6 +482,7 @@ export function MemberView({
             setMemMb(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
             setCpuUnits(member.cpu_limit ?? 0);
             setDiskGb(member.disk_gb ?? 0);
+            setSlotClass(member.slot_class ?? "");
             setLimitOpen(true);
           }}>
             <Icon name="settings" /> {tr("admin.set_limits")}
@@ -488,6 +506,29 @@ export function MemberView({
         {limitOpen && (
           <div className="limit-edit">
             <div className="le-head">{tr("admin.limits_edit_title")}</div>
+            {/* Which KIND of machine, above the numbers — it changes what the numbers
+                below mean (docs/70 §70.10). The operator's own label is what is shown;
+                the instance type appears only in the "you land on" line. */}
+            {classes.length > 0 && (
+              <div className="le-presets">
+                <span className="af-cap">{tr("admin.ws_machine")}</span>
+                <button
+                  className={slotClass === "" ? "chip on" : "chip"}
+                  onClick={() => setSlotClass("")}
+                >
+                  {tr("admin.ws_machine_tenant_default")}
+                </button>
+                {classes.map((c) => (
+                  <button
+                    key={c.id}
+                    className={slotClass === c.id ? "chip on" : "chip"}
+                    onClick={() => setSlotClass(c.id)}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="admin-fgrid">
               <label className="admin-fld">
                 <span className="af-cap">{tr("admin.max_sessions_label")}</span>
@@ -531,7 +572,7 @@ export function MemberView({
             <div className="le-presets">
               <span className="af-cap">{tr("admin.ws_size_preset")}</span>
               {onSlots
-                ? sizing.slots!.map((s) => (
+                ? ladder!.map((s) => (
                     <button
                       key={s.instance_type}
                       className={+memMb === s.mem_mib ? "chip on" : "chip"}
@@ -554,7 +595,7 @@ export function MemberView({
                   })}
               <span className="af-unit">
                 {(onSlots
-                  ? sizing.slots!.some((s) => +memMb === s.mem_mib)
+                  ? ladder!.some((s) => +memMb === s.mem_mib)
                   : WS_SIZE_PRESETS.some((p) => +memMb === p.mem && +cpuUnits === p.cpu && +diskGb === p.disk))
                   ? ""
                   : tr("admin.ws_size_custom")}
@@ -562,6 +603,13 @@ export function MemberView({
             </div>
             {!sizing.cpu_effective && <p className="admin-hint">{tr("admin.ws_cpu_na")}</p>}
             {onSlots && <p className="admin-hint">{tr("admin.ws_slot_note")}</p>}
+            {/* ⚠️ The one destructive-ish consequence in this editor. `~` is a volume
+                that follows the member, and its ~/.local CLIs, nvm node, Chromium and
+                node_modules are architecture-dependent — a class change across
+                architectures makes the next start reinstall them (docs/70 §70.5).
+                Shown only when the architecture actually changes: within one
+                architecture the home is portable and there is nothing to warn about. */}
+            {archChanged && <p className="admin-hint warn">{tr("admin.ws_machine_arch_warn")}</p>}
             <p className="admin-hint">
               {tr("admin.mem_clamp_1")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.mem_clamp_2")}
             </p>

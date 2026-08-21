@@ -188,3 +188,104 @@ describe("メンバーの上限編集（ecs-ec2）", () => {
     expect(units.some((u) => u.includes("作業ディスクは停止すると消えます"))).toBe(false);
   });
 });
+
+// マシン種別（docs/70 §70.10）。押さえるのは 3 点。
+//   ① 1 クラスしか無いデプロイでは選択肢を出さない（答えが 1 つの質問を足さない）。
+//   ② クラスを変えるとメモリのチップ列がそのクラスの梯子で描き直され、「乗る箱」も
+//      そのクラスで再計算される —— 同じ MB でも別のクラスでは別の箱に乗る。
+//   ③ CPU の系統が変わるときだけ、home の入れ直しを警告する。
+const SIZING_CLASSES = {
+  ...SIZING_EC2,
+  default_slot_class: "standard",
+  slot_classes: [
+    {
+      id: "standard",
+      label: "標準（Intel）",
+      arch: "x86_64",
+      slots: [
+        { instance_type: "m7i.large", mem_mib: 8192, vcpu: 2 },
+        { instance_type: "m7i.xlarge", mem_mib: 16384, vcpu: 4 },
+      ],
+    },
+    {
+      id: "arm",
+      label: "省コスト（Arm）",
+      arch: "arm64",
+      slots: [
+        { instance_type: "m7g.large", mem_mib: 8192, vcpu: 2 },
+        { instance_type: "m7g.xlarge", mem_mib: 16384, vcpu: 4 },
+      ],
+    },
+    {
+      id: "big",
+      label: "大きい（Intel）",
+      arch: "x86_64",
+      slots: [{ instance_type: "m7i.2xlarge", mem_mib: 32768, vcpu: 8 }],
+    },
+  ],
+};
+
+describe("メンバーのマシン種別", () => {
+  const useSizing = (s: unknown) =>
+    api.mockImplementation((p: string) =>
+      p === "api/admin/workspace-sizing" ? Promise.resolve(s) : Promise.resolve({ running: false, sessions: [] }),
+    );
+
+  it("クラスが 1 つしか無いデプロイでは選択肢自体を出さない", async () => {
+    useSizing(SIZING_EC2);
+    await mount();
+    await openEditor();
+    expect(buttonWith("テナントの既定")).toBeUndefined();
+  });
+
+  it("クラスを選ぶとメモリの梯子と「乗る箱」がそのクラスのものになる", async () => {
+    useSizing(SIZING_CLASSES);
+    await mount();
+    await openEditor();
+
+    // 既定（テナントの既定 = standard）の梯子。
+    const chips = () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>(".limit-edit .le-presets")).at(-1)!;
+    expect(Array.from(chips().querySelectorAll(".chip")).map((b) => (b.textContent || "").trim())).toEqual([
+      "8 GiB",
+      "16 GiB",
+    ]);
+    let units = Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) => (e.textContent || "").trim());
+    expect(units).toContain("→ m7i.large（2 vCPU / 8 GiB・専有）");
+
+    await act(async () => buttonWith("省コスト（Arm）")!.click());
+    // 同じ 4096 MB が、arm クラスでは m7g.large に乗る。
+    units = Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) => (e.textContent || "").trim());
+    expect(units).toContain("→ m7g.large（2 vCPU / 8 GiB・専有）");
+
+    // 梯子の段数が違うクラスに移ると、チップ列も入れ替わる。
+    await act(async () => buttonWith("大きい（Intel）")!.click());
+    expect(Array.from(chips().querySelectorAll(".chip")).map((b) => (b.textContent || "").trim())).toEqual(["32 GiB"]);
+  });
+
+  it("保存すると slot_class が飛ぶ", async () => {
+    useSizing(SIZING_CLASSES);
+    await mount();
+    await openEditor();
+    await act(async () => buttonWith("省コスト（Arm）")!.click());
+    await act(async () => buttonWith("保存")!.click());
+    const [, , body] = apiJSON.mock.calls.find((c) => c[0] === "api/admin/user-limits")!;
+    expect(body).toMatchObject({ slot_class: "arm" });
+  });
+
+  // ⚠️ home の入れ直しはアーキが変わるときだけ起きる。同じアーキ内のクラス変更で
+  // 警告を出すと「毎回何か壊れる」と読まれ、本当に壊れる回に効かなくなる。
+  it("警告は CPU の系統が変わるときだけ出す", async () => {
+    useSizing(SIZING_CLASSES);
+    await mount();
+    await openEditor();
+    const warned = () => !!document.querySelector(".limit-edit .admin-hint.warn");
+    expect(warned()).toBe(false);
+
+    await act(async () => buttonWith("大きい（Intel）")!.click()); // x86_64 → x86_64
+    expect(warned()).toBe(false);
+
+    await act(async () => buttonWith("省コスト（Arm）")!.click()); // x86_64 → arm64
+    expect(warned()).toBe(true);
+  });
+});
