@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.9.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.1) — 2026-08-21
+
+AWS へのデプロイを一通り立ち上げる中で見つかった不具合をまとめた保守リリースです。ECS では
+読み上げがそもそも一度も動いておらず、コントロールプレーンより後に作られたワークスペースには
+到達できず、新しいデプロイが最初に見せる 2 つの画面——はじめかたガイドと、ワークスペースが
+起動できない理由——が空白でした。Bitbucket は ECS でも接続できるようになります。
+
 ## [0.9.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.0) — 2026-08-21
 
 ログインが Google 固定でなくなりました。任意の OpenID Connect プロバイダと GitHub を
