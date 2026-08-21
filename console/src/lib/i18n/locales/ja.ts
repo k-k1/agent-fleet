@@ -771,6 +771,10 @@ export const ja = {
     "読み上げ音声をペインの横位置に合わせてステレオ配置します。左右端でも音は片側へ振り切らず、通知やファイル朗読などペインに属さない音声は中央で再生します。",
   "tts.note_engine":
     "「自動」は日本語をずんだもん（VOICEVOX）で読み、エンジンが起動していない間や日本語以外は AWS Polly に自動で切り替えます（次の文からずんだもんに復帰）。「Polly」は常に Polly で読みます。",
+  "tts.note_no_voicevox":
+    "この環境には VOICEVOX エンジンがありません。読み上げはすべて AWS Polly で行われるため、ずんだもんの話者・キャラクター・感情スタイルなど VOICEVOX 専用の設定は表示していません。",
+  "tts.warn_voicevox_missing":
+    "音声エンジンに「ずんだもん」が選ばれていますが、この環境には VOICEVOX エンジンがありません。このままでは読み上げに失敗します。「自動」または「Polly」に変更してください。",
   "tts.note_zundamon_volume":
     "ずんだもんは他のキャラより声が大きめなので、少し下げて他の声や通知音と音量を揃えられます。ずんだもんの声で読むときだけ効きます。",
   "tts.note_voice_per_session":
@@ -1266,6 +1270,8 @@ export const ja = {
   "admin.tts_polly_ready": "利用可",
   "admin.tts_polly_unset": "未設定",
   "admin.tts_starting_note": "起動には 1〜2 分かかります。準備が整うまで、日本語の読み上げは Polly が代読します（Polly 未設定なら無音）。",
+  "admin.tts_no_engine":
+    "この環境には VOICEVOX エンジンがありません（ECS 管理下でもないため、この画面から起動することもできません）。有効にしてもずんだもんへは一切流れないので、無効で固定しています。エンジンを用意すれば自動で操作できるようになります。",
   "admin.tts_disable_note":
     "無効にすると、AWS では ECS の desired count を 0 にしてエンジンを停止します（停止中コスト 0）。読み上げ自体はユーザー設定（音声読み上げ）側で ON/OFF します。",
   "admin.tts_dict_title": "テナント共通の読み仮名辞書",

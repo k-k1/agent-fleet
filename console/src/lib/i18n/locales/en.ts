@@ -768,6 +768,10 @@ export const en: Record<keyof typeof ja, string> = {
     "Positions the read-aloud audio in stereo to match the pane's horizontal position. It never pans fully to one side even at the edges, and audio not tied to a pane (notifications, file read-aloud) plays center.",
   "tts.note_engine":
     "“Auto” reads Japanese with Zundamon (VOICEVOX) and switches to AWS Polly while the engine is down or for non-Japanese (returning to Zundamon from the next sentence). “Polly” always reads with Polly.",
+  "tts.note_no_voicevox":
+    "This deployment has no VOICEVOX engine, so everything is read by AWS Polly. VOICEVOX-only settings — the Zundamon speaker, characters and emotional styles — are therefore not shown.",
+  "tts.warn_voicevox_missing":
+    "The voice engine is set to Zundamon, but this deployment has no VOICEVOX engine. Read-aloud will fail as long as it stays on this setting — switch to “Auto” or “Polly”.",
   "tts.note_zundamon_volume":
     "Zundamon is louder than the other characters, so you can lower it a bit to match the other voices and notification sounds. It applies only when reading in Zundamon's voice.",
   "tts.note_voice_per_session":
@@ -1259,6 +1263,8 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.tts_polly_ready": "Available",
   "admin.tts_polly_unset": "Not set",
   "admin.tts_starting_note": "Startup takes 1–2 minutes. Until it's ready, Japanese read-aloud is covered by Polly (silent if Polly isn't set).",
+  "admin.tts_no_engine":
+    "This deployment has no VOICEVOX engine, and it is not ECS-managed either, so there is nothing this screen could start. Enabling it would route nothing to Zundamon, so the toggle is held at disabled. Provide an engine and it becomes operable again on its own.",
   "admin.tts_disable_note":
     "Disabling sets the ECS desired count to 0 on AWS to stop the engine (no cost while stopped). Read-aloud itself is turned on/off in the user setting (Read aloud).",
   "admin.tts_dict_title": "Tenant-wide reading dictionary",

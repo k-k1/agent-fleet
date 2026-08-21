@@ -470,9 +470,12 @@ function TtsAdminView() {
   useEffect(() => {
     load();
   }, [load]);
-  // 有効なのに未 ready（ECS 起動中）の間は自動更新して readiness を追う。
+  // 有効なのに未 ready（ECS 起動中）の間は自動更新して readiness を追う。エンジン不在で
+  // トグルを固定している間も追う — エンジンが現れたら固定が外れなければならない。
+  // 追う必要が無いのは「いま使える」か「管理下で意図して停止している」かのどちらか。
   useEffect(() => {
-    if (!data?.enabled || data?.engine?.ready) return;
+    if (!data || data.engine?.ready) return;
+    if (!data.enabled && data.managed) return;
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, [data, load]);
@@ -506,8 +509,13 @@ function TtsAdminView() {
     }
   };
 
-  const enabled = !!data?.enabled;
   const engine = data?.engine || {};
+  // エンジンが「無い」: ECS 管理下でもなく（＝この画面から起動する手段が無い）、URL にも
+  // 到達できない。有効にしたところで VOICEVOX へは一切流れず、auto は日本語まで Polly に
+  // 落ちるので、実効状態は無効そのもの。設定値を書き換えず、表示と操作だけを無効で固定する
+  // （エンジンが現れれば上のポーリングで固定が外れ、記録されていた意図がそのまま復活する）。
+  const noEngine = !!data && !data.managed && !engine.ready;
+  const enabled = !!data?.enabled && !noEngine;
   const engineLabel = !data
     ? "…"
     : engine.ready
@@ -529,7 +537,7 @@ function TtsAdminView() {
             <button
               type="button"
               className={"seg-btn" + (enabled ? " active" : "")}
-              disabled={busy || data === null}
+              disabled={busy || data === null || noEngine}
               onClick={() => setEnabled(true)}
             >
               {tr("admin.enable")}
@@ -537,7 +545,7 @@ function TtsAdminView() {
             <button
               type="button"
               className={"seg-btn" + (!enabled ? " active" : "")}
-              disabled={busy || data === null}
+              disabled={busy || data === null || noEngine}
               onClick={() => setEnabled(false)}
             >
               {tr("admin.disable")}
@@ -557,6 +565,7 @@ function TtsAdminView() {
             {enabled && !engine.ready && data.managed && (
               <p className="muted">{tr("admin.tts_starting_note")}</p>
             )}
+            {noEngine && <p className="muted">{tr("admin.tts_no_engine")}</p>}
             {engine.error && <p className="form-err">{engine.error}</p>}
           </>
         )}
