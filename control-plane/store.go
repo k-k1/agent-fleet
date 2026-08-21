@@ -72,6 +72,15 @@ type UserQuota struct {
 	// bounded by tenantLimits.MaxWorkspaceCPU. Independent of MemLimit so "8 GB with
 	// 4 vCPU" is expressible; fargateSize snaps the pair onto a valid Fargate size.
 	CPULimit int
+	// SlotClass is which KIND of machine the workspace lands on, as a
+	// deployment-declared class id ("" = unset → the tenant default, then the
+	// deployment default). Only ecs-ec2 reads it; everywhere else it is inert.
+	//
+	// It is a string and not a number because it is not a size — the three axes above
+	// say HOW BIG, this says WHICH LADDER (docs/70 §70.4). Still runtime-neutral in the
+	// sense that matters: the id is opaque here, and the operator alone maps it to
+	// instance types and an architecture (ADR 0044 決定 1).
+	SlotClass string
 }
 
 // UserLimit is a per-membership quota override (docs/16 P3-4) as stored.
@@ -303,6 +312,11 @@ type Workspace struct {
 	// user_limit and are resolved through the tenant cap on the way here (ADR 0044).
 	CPUUnits int
 	DiskGB   int
+	// SlotClass is the RESOLVED machine class for the next container start (docs/70).
+	// Same lifecycle as the three axes above — not a persisted column, filled by
+	// buildResolved through resolveSlotClass, and read only by the ecs-ec2 factory.
+	// "" means "the deployment default", which is also what every other runtime sees.
+	SlotClass string
 }
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
