@@ -291,6 +291,22 @@ covered by the admin volume for administrators.
 After starting their own Workspace, each member **logs in with their own Claude seat** from the
 Console (BYO). The operator never sets up members' Claude credentials on their behalf.
 
+**Deleting a tenant you no longer need.** Admin panel → open the tenant → **Limits** →
+*Delete tenant* (super_admin only). It only accepts a tenant that is already **empty**: it is
+refused while a member is still on the roster, while a workspace row still exists, and while an
+internal git repository is still there. That is deliberate — the database row is the only handle
+left on a home, an EBS volume or a bare repository, so deleting it first would leave those
+billing with nothing pointing at them. Work through the order instead: remove the members, then
+destroy their workspaces, then delete the tenant.
+
+> ⚠️ **Delete the internal git repositories while a member is still on the roster.** The screen
+> that deletes them is reached through a membership, so once the last member is removed, nobody
+> can get to it any more.
+
+The audit log, cloud cost and occupancy of a deleted tenant are kept (their tenant column simply
+goes blank). The reserved `golden snapshot (system)` tenant is not shown and cannot be deleted —
+it belongs to the deployment itself and is recreated automatically.
+
 For day-to-day operations after the build-out (backup, upgrades, shutdown), continue to
 [02-operations.md](02-operations.md), and for security operations, to
 [03-security.md](03-security.md).

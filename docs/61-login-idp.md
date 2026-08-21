@@ -733,6 +733,11 @@ tenant_admin の仕事**とする。情シス（super_admin）に毎回頼む形
   停止（`stopWorkspace`）は既に tenant_admin ができるので、揃うのは `clean-home` だけ。
 - 即時削除にしない扱い（棚 / 猶予）は [45-deletion-lock](45-deletion-lock.md) と掃除の段階制に合わせる。
 
+★ **2026-08-22 に 3 段目を足した（§61.18）。** 「外す → 破棄」の後に**行そのものを消す**手が
+無く、`SetMembershipStatus` のコメントは *"Hard deletion is deliberately not offered"* だった。
+あの文が本当に守っていたのは**履歴**（監査・費用・稼働時間）で、schedules と shares はその人の
+ものだから一緒に消えてよい。条件・消える表・残る表は §61.18.5。
+
 ### 61.10.7 `super_admin` の移譲・退職
 
 `super_admin` はホスト側の env（決定 24）なので、**移譲そのものはホストのファイルを書き換えて
@@ -2044,3 +2049,136 @@ CSV の羅列なので「参照を外した」も「絞った」も同じ形で�
 `/login` に効かないので、絞ったことに誰も気付いていない）。§61.17.6 の縮小案
 （素の `/login` には hidden だけ適用）を採ればここは何も起きない — **移行の心配が
 消えることも、あの案を採る理由の 1 つ**。
+
+## 61.18 後始末 — 消す操作をどこまで作るか（2026-08-22）
+
+管理画面には「作る」しかない操作が 3 つ残っていた。golden スナップショットの自動焼き直し
+（0.9.2・docs/64 §64.28）を実デプロイ 2 本（<dev-deployment> / <prod-deployment>）で実走させたときに、
+3 つとも同時に表に出た。
+
+1. 自動焼きが作る**予約テナント `af-golden`**（表示名 `golden snapshot (system)`）が、人の
+   テナントと並んで一覧に出る。中の `af-golden-seed` / `af-golden-probe` は**製品の通常の
+   Start 経路**で workspace を作る（そうでなければ焼けた golden は「製品が実際に作る home」の
+   複製ではなくなる）ので、`af-membership` タグが付き、人のメンバーとして費用画面にも出る。
+2. **テナントは作成しかできない。** <prod-deployment> で手焼き時代の捨てテナント 2 つがスロットを
+   塞ぎ、自動焼きまで止めた（利用者が Console から除名＋破棄して解消）。
+3. **除名は論理削除だけ**で、行を消す手段が無い。`SetMembershipStatus` のコメントが
+   *"Hard deletion is deliberately not offered — schedules, audit rows and shares reference
+   the membership id"* と言っていた。
+
+### 61.18.1 通した筋 — 守るのは「戻る道」と「実体への手掛かり」
+
+§61.10.6 で 2026-08-21 に直した「自分の*最後の*有効な membership だけ拒否する」と同じ考え方で
+3 件を揃えた。**守るのは"戻る道"であって「自分の行かどうか」ではない**——同じ言い方をすると、
+ここで守るのは次の 2 つで、それ以外は消してよい。
+
+- **戻る道**（サインインできなくなる／管理者が居なくなる）
+- **実体への手掛かり**。DB の行は、クラウドやディスクに残った資源（home・EBS ボリューム・
+  EFS アクセスポイント・bare リポジトリ）に対する**唯一のハンドル**であることがある。
+  行を先に消すと、資源は課金され続け、誰もそれを指せなくなる。ADR 0045 決定 13-2 が
+  「破棄できるのは inactive なメンバーだけ」と言っているのと同じ理由。
+
+その裏返しとして、**履歴は消さない**。監査ログ・クラウド費用・稼働時間の 3 つは、消す操作の
+副作用で変わってはいけない。とくに:
+
+- **監査**は、除名の後始末で除名の記録を消せてはいけない。幸い `audit_log` は
+  `membership_id` を持たない（actor は identity・`0007_audit.sql`）ので、放っておけば残る。
+- **費用**は `memberCloudCost` が membership_id だけで引く（`cloudcost.go`）。これは
+  「workspace を破棄された人の支出も消えない」ようにするための設計で、行を消すと
+  **過去月の合計が後から変わる**。
+
+### 61.18.2 予約テナントは「隠す」（消す物ではなく入れ物）
+
+`af-golden` は焼き直しのたびに**使い回される**。毎回破棄されるのは workspace と home と
+スロットだけで、テナントとメンバーシップの行は残る。だから正しい扱いは削除ではなく非表示。
+
+- 判定は `system_tenant.go` の `isSystemTenantSlug` に 1 か所だけ置く。同じ判定が
+  「一覧から外す」「削除させない」「費用を寄せる」の 3 面に効くので、slug を直書きすると
+  次に予約テナントが増えたとき 1 つだけ取り残される。
+- **落とすのは API 層**（`adminAPI.listTenants` と `adminAPI.usage`）で、
+  **`store.ListTenants` は素通しのまま**にする。★ あの store 呼び出しには監査ビューの
+  `tenant_id → slug` 解決（`audit.go`）と費用ポーラーの `membership → tenant` 解決
+  （`cloudcost.go`）が乗っている。store で消すと、そちらが「テナントの分からない行」を
+  作りはじめ、症状は管理画面ではなく監査と請求に出る。
+- Console は横断ビュー（セッション／稼働時間／費用／監査／MCP 配布）のテナントフィルタにも
+  この一覧をそのまま渡しているので、API 1 か所で全部の面から消える。
+- **プール画面の golden 表示（`pool.golden_*`）は別物**なので残す。あちらは
+  「いまの golden が実行中のイメージと合っているか」で、テナントの話ではない。
+
+### 61.18.3 予約メンバーシップの費用は SHARED へ（タグは打ったまま）
+
+`af-membership$<値>` でグループ化し、**値が空＝SHARED バケット**（ADR 0048・docs/67）。
+種と probe の分をそこへ寄せる。やり方は 2 つ考えられて、**タグを打たない案は採らない**。
+
+- ★ `af-membership` は**コスト配分キーであると同時に照合キー**でもある。ランタイムは
+  `tagValue(ap.Tags,"af-membership") == e.base.membershipID` で EFS アクセスポイントと home
+  ボリュームを引き当てる（`runtime_ecs_ec2.go` の `ensureAccessPoint` ほか）。値を空にすると
+  引き当てが壊れるか、次に現れた無タグ資源と衝突する。
+- → **タグは製品の通常経路のまま打ち、Cost Explorer から取り込む段で `""` へ畳む**
+  （`foldSystemMemberships`）。golden スナップショット自体は元から `af-membership` 無し＝
+  すでに shared（`deploy/aws/ecs/README.md`）なので、これで種・probe・スナップショットの
+  3 つが揃って共有インフラに入る。
+- ⚠️ **畳んだら Go 側で合算する。** `PutCloudCost` は `(day, membership_id, service)` を
+  **置き換える**実装（`ON CONFLICT ... DO UPDATE SET unblended=excluded.unblended`）なので、
+  足さずに 2 行渡すと**後の行が前の行の金額を消す**。CE は種の行と無タグの共有行を、同じ
+  (day, service) の別グループとして日常的に返す。
+- 取り込みの窓は既定 7 日なので、**それより古い既存行は畳まれない**。読み側
+  （`adminAPI.cloudCost`）でも同じ畳み方をする。財務データを書き換えるマイグレーションは
+  書かない。
+
+### 61.18.4 テナントの削除 — 空のものだけ
+
+`DELETE /api/admin/tenants/{slug}`（super_admin）。拒否は 5 つで、どれも §61.18.1 の
+「実体への手掛かりを先に消さない」の言い換え。
+
+| 条件 | code | 理由 |
+|---|---|---|
+| 予約テナント | `system_tenant` | 次のベイクで作り直されるだけ |
+| 既定テナント | `default_tenant` | `EnsureDefaultTenant` が起動時に作り直す |
+| active な membership がある | `tenant_not_empty` | 先に除名する。これは退職処理の道具ではない |
+| workspace 行がある | `workspace_present` | home・EBS・EFS が宛先を失って課金され続ける |
+| 内部 git リポジトリがある | `git_repos_present` | bare とその LFS がディスクに残る |
+
+⚠️ **内部 git リポジトリには順序の罠がある。** `DELETE /api/internal-git/repos/{name}` は
+`withMembership` ゲート（`internal_git.go`）なので、**最後のメンバーを外した後は誰も消せない**。
+だから拒否のメッセージが「メンバーが名簿に残っているうちに消してください」と順序を言う。
+ここから消してしまう案は採らなかった——「テナントを削除」という名前の操作が、黙って
+リポジトリを破壊してはいけない。
+
+消えるのは、残っていた inactive な membership（下の cascade と同じ）と、テナント設定の行
+（`mcp_server` / `tenant_idp` / `egress_allowlist`、そして tenant の列にあるログイン規則と
+`allowed_cidrs`）。⚠️ 監査ビューは `tenant_id → slug` を `ListTenants` で引くので、消えた
+テナントの過去行は**テナント欄が空**になる。したがって `tenant.delete` の監査行は
+Target に slug、Detail に表示名を入れる（削除**後**に書く）。
+
+### 61.18.5 「外したメンバー」を消す
+
+`DELETE /api/admin/tenants/{slug}/members/{key}`。ゲートは `tenantAdminFor` — すでに home ごと
+消せる `destroyWorkspace` と同じ線で、**その前提条件（破棄済み）を作れるのも同じ人**だから。
+
+後始末は 3 段で、画面に出る危険操作は常にそのうちの 1 つだけにする（`member.state` が
+`"none"`＝workspace 行が無い、で出し分ける）:
+
+```
+メンバーを外す（status='inactive'）→ Workspace を破棄 → メンバーを完全に削除
+```
+
+拒否は 3 つ: 予約メンバーシップ（`system_membership`・次のベイクで作り直される。焼いている
+最中ならスロットを掴んだまま宙に浮く）／active（`membership_active`）／workspace 行が残っている
+（`workspace_present`）。
+
+消えるのは `membershipCascade`（`store_sqlite.go`）が並べる表——`user_limit` / `pat` /
+`ssm_host` / `ssm_profile` / `schedule` / `schedule_run` / `memo` / `memo_category` /
+`notification` / `notification_usage_state` / セッション共有 4 表 / `workspace_stop_intent` /
+`membership`。★ `ON DELETE CASCADE` に頼らず明示的に並べるのは `DeleteWorkspace` と同じ理由で、
+宣言しているのは一部の表だけであり、スキーマ依存の「半分だけ消えた」は本番でしか出ない。
+
+**残るのは `audit_log` / `cloud_cost_daily` / `usage_daily`、そして `identity` 行**。
+identity を消さないのは、その人が別テナントの名簿に居るかもしれないことと、居なくても監査行が
+指しているため。membership は席であって人ではない。
+
+⚠️ **方言の差が 1 つある。** `memo_category` は `migrations/0020` にあって `migrations-pg` には
+**無い**（この機能自体が Postgres デプロイでは動いていないはずの、既存の取りこぼし）。
+cascade は表名を直接並べるので、方言で存在しない表を無条件に消しに行くと、**取り消せない操作の
+途中で 500 を踏む**。`membershipCascade` は SQLite のときだけこの 1 文を足し、
+`TestPostgresDeleteCascade` が実 Postgres に対して両方の削除を通す。
