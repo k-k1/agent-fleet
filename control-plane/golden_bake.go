@@ -208,7 +208,17 @@ func (b *goldenBaker) bake(ctx context.Context, image string) {
 	// The seed took too long to get anywhere. Tear it down rather than hold a slot;
 	// the next tick starts a clean one, and rejectedAttempts is untouched because
 	// nothing was baked — this is not evidence about the image.
-	if home.VolumeID != "" && !home.Baked && b.expired(home.Created, b.seedBudget) {
+	//
+	// ★ Two anchors, because there are two ways to be stuck and only one of them has a
+	// volume to date. A Start that fails BEFORE createHomeVolume (no capacity, no slot,
+	// an AWS error) leaves a workspace row and nothing else, and measuring from a volume
+	// that does not exist would retry that forever — a seed row nobody ever cleans up,
+	// re-Started once a minute for the life of the deployment.
+	since := home.Created
+	if since.IsZero() {
+		since, _ = time.Parse(time.RFC3339, seedRes.ws.CreatedAt)
+	}
+	if !home.Baked && b.expired(since, b.seedBudget) {
 		log.Printf("golden: the seed did not finish booting within %s; tearing it down and retrying later", b.seedBudget)
 		b.destroy(ctx, goldenSeedKey)
 		return

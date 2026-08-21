@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -32,7 +33,11 @@ func newFakeGoldenPool() *fakeGoldenPool {
 		snaps:   map[string]*goldenSnap{},
 		roles:   map[string]string{},
 		reasons: map[string]string{},
-		now:     time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC),
+		// Real time, not a fixed date: the baker also dates a seed from its WORKSPACE
+		// ROW when there is no volume yet, and that timestamp is written by the store
+		// with the real clock. A frozen fake clock hours away from it would make every
+		// seed look expired the moment it was created.
+		now: time.Now().UTC(),
 	}
 }
 
@@ -119,13 +124,19 @@ type fakeSeedRuntime struct {
 	released       bool
 	starts, stops  int
 	destroys       int
+	// failStart models a Start that dies BEFORE createHomeVolume — no slot, no capacity,
+	// an AWS error. The workspace row exists; nothing else does.
+	failStart bool
 }
 
 func (r *fakeSeedRuntime) Start(context.Context) error {
 	r.starts++
+	if r.failStart {
+		return errors.New("no capacity")
+	}
 	r.state = "running"
 	if r.home.VolumeID == "" {
-		r.home = goldenHome{VolumeID: "vol-" + r.name, Created: time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)}
+		r.home = goldenHome{VolumeID: "vol-" + r.name, Created: time.Now().UTC()}
 	}
 	return nil
 }
@@ -521,5 +532,32 @@ func TestGoldenBakerOnlyOnAPoolThatSeedsFromSnapshots(t *testing.T) {
 	}
 	if b := goldenBakerFor(&manager{rtFactory: &ecsEC2Factory{}}, true); b == nil {
 		t.Fatal("no baker on ecs-ec2")
+	}
+}
+
+// A Start that fails before the home volume exists leaves nothing to date the seed from.
+// Without a second anchor the baker would re-Start that row once a minute forever.
+func TestGoldenBakeTearsDownASeedWhoseStartNeverGotAVolume(t *testing.T) {
+	ctx := context.Background()
+	healthy := false
+	f := newGoldenFixture(t, &healthy)
+
+	f.baker.step(ctx) // creates the workspace row; the Start below will fail from now on
+	seed := f.rt(t, goldenSeedKey)
+	seed.failStart = true
+	seed.state, seed.home = "none", goldenHome{}
+	if !f.hasWorkspace(t, goldenSeedKey) {
+		t.Fatal("no seed workspace was created")
+	}
+
+	f.baker.step(ctx)
+	if !f.hasWorkspace(t, goldenSeedKey) {
+		t.Fatal("gave up on the seed inside its budget")
+	}
+
+	f.pool.now = f.pool.now.Add(f.baker.seedBudget + time.Minute)
+	f.baker.step(ctx)
+	if f.hasWorkspace(t, goldenSeedKey) {
+		t.Fatal("a seed that never got a home volume was retried forever")
 	}
 }
