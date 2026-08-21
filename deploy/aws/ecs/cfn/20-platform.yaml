@@ -283,6 +283,26 @@ Resources:
                 Action:
                   - ce:UpdateCostAllocationTagsStatus
                 Resource: "*"
+              # Text-to-speech (docs/24). The CP calls Polly with the task role — no key
+              # is ever stored (ADR 0013). SynthesizeSpeech has no resource-level
+              # permissions, hence "*".
+              #
+              # ⚠️ Do not remove this "because nobody uses TTS": the provider reports
+              # itself READY on the presence of a region alone (tts_polly.go Ready()),
+              # and AF_ECS_REGION is always set by 30-ingress. Without the grant the
+              # Console still offers voice playback and every attempt fails with a 502
+              # at synthesize time — a silent-looking capability, not a disabled one.
+              # On a deployment with no VOICEVOX service (AF_TTS_ECS_SERVICE unset),
+              # `auto` routes EVERY utterance here, Japanese included.
+              #
+              # Cost is per character and only while somebody is listening: neural
+              # $16 / 1M chars, standard $4 / 1M (~$0.008 for a 500-character reply).
+              # The admin toggle that actually turns the feature off is in the Console.
+              - Sid: PollySynthesize
+                Effect: Allow
+                Action:
+                  - polly:SynthesizeSpeech
+                Resource: "*"
 
 Outputs:
   EcrControlPlaneUri:
