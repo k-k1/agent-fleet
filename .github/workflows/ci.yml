@@ -123,6 +123,14 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test ./...
+      # entrypoint.sh は Go ではないが、壊れたときに死ぬのはこの job が守っている
+      # Workspace そのものである。identity 退避ブロックは golden snapshot から作った
+      # home で一度**起動不能**を出しているので、その形を回帰で押さえる。
+      - name: entrypoint.sh syntax + keep-relocation regression
+        working-directory: .
+        run: |
+          bash -n workspace/entrypoint.sh
+          ./deploy/local/keep-relocate-test.sh
 
   console:
     runs-on: ubuntu-latest
