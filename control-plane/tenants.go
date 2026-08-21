@@ -644,14 +644,6 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
 		return
 	}
-	// ★ Not yourself. Removing your own last admin membership from the UI is an
-	// easy misclick with no undo from inside the product — the remaining path
-	// would be another admin, or the host's env.
-	if ident.ID == caller.ID {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "self_removal",
-			"you cannot remove your own membership; ask another administrator"})
-		return
-	}
 	mem, ok, err := a.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -660,6 +652,33 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
 		return
+	}
+	// ★ Your own membership: allowed, but never the LAST one. What has no undo from
+	// inside the product is losing your own way back in, and that is a property of
+	// "the last one" rather than of "one of mine" — refusing every self-removal made
+	// a throwaway tenant impossible to clean up, because the operator who created it
+	// is the only member it has (docs/64 §64.28: the golden bake's seed has to be
+	// somebody who can sign in, so it IS your own account, and a single-admin
+	// deployment has no other administrator to ask). The count is of ACTIVE
+	// memberships other than this one, so a row that is already inactive is not
+	// counted as the way back in.
+	if ident.ID == caller.ID {
+		mine, err := a.mgr.store.ListMemberships(r.Context(), ident.ID) // active only
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		others := 0
+		for _, v := range mine {
+			if v.MembershipID != mem.ID {
+				others++
+			}
+		}
+		if others == 0 {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "self_removal",
+				"you cannot remove your own last membership; ask another administrator"})
+			return
+		}
 	}
 	if err := a.mgr.store.SetMembershipStatus(r.Context(), mem.ID, "inactive"); err != nil {
 		writeAPIErr(w, internalErr(err))
