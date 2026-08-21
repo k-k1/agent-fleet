@@ -266,6 +266,19 @@ func main() {
 		go newReaper(mgr, iv, sessDef, wsDef, hibDef, backupDef).run(context.Background())
 	}
 
+	// Golden snapshot auto-bake (ecs-ec2 only — ADR 0045 決定 9 / docs/64 §64.28).
+	// The CP already refuses a golden stamped with another image; this is the CP acting
+	// on what it knows instead of logging it and waiting for somebody to run
+	// bake-golden.sh. Default ON: the failure it removes is a release nobody re-baked
+	// for, and a feature that has to be switched on is a feature that stays off.
+	//
+	// It is deliberately NOT inside the reaper's `if` above: switching off idle-stop
+	// must not also switch this off. goldenBakerFor returns nil on every profile that
+	// does not seed homes from a shared snapshot, so no other deployment pays anything.
+	if b := goldenBakerFor(mgr, envBool("AF_ECS_EC2_GOLDEN_AUTOBAKE", true)); b != nil {
+		go b.run(context.Background(), time.Duration(envInt("AF_ECS_EC2_GOLDEN_BAKE_SEC", 60))*time.Second)
+	}
+
 	// Showback usage sampler (P3-9): credits running-seconds per workspace so the
 	// admin usage view can attribute infra occupancy per tenant/member. Non-
 	// destructive (DB writes only), so it is on by default; AF_USAGE_SAMPLE_INTERVAL=0
