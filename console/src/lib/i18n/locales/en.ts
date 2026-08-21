@@ -1451,6 +1451,16 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.ws_slot_lands": "→ {type} ({spec}, dedicated)",
   "admin.ws_slot_zero": "0 = smallest slot ({type})",
   "admin.ws_slot_note": "The slot is used by one person and the task reserves nothing, so the whole box is available — this number only chooses which box.",
+  "tenant.machine_title": "Default machine",
+  "tenant.machine_note":
+    "Which machine this tenant's members land on when they have no choice of their own. A per-member choice is made from the member's page and wins over this.",
+  "tenant.machine_deploy_default": "Deployment default",
+  "tenant.machine_member_note":
+    "Members who chose a machine themselves are unaffected. The change reaches each member at their next workspace start.",
+  "admin.ws_machine": "Machine",
+  "admin.ws_machine_tenant_default": "Tenant default",
+  "admin.ws_machine_arch_warn":
+    "This machine has a different CPU family. On the next start the home reinstalls the tools that were built for the old one (the agent CLIs, node, Chromium — a few minutes). Anything under ~/repos is left alone, so node_modules / target / .venv survive but will not run until you reinstall them yourself.",
   "admin.ws_cpu_na": "CPU is not selectable on this runtime: a workspace gets the whole box.",
   "admin.ws_disk_home": "Workspace home (persistent)",
   "admin.ws_disk_home_hint": "0 = deployment default {n} GiB. Applied when the home volume is created, and it cannot be shrunk afterwards.",

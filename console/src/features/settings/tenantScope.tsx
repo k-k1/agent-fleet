@@ -18,6 +18,7 @@ import { fmtGbHint } from "./adminShared.ts";
 import type { Member, Tenant } from "./adminShared.ts";
 import { TenantLoginRules, TenantLoginRulesView, TenantSignInMethods } from "./tenantLogin.tsx";
 import { TenantNetworkView } from "./tenantNetwork.tsx";
+import { TenantMachineView } from "./tenantMachine.tsx";
 import { MembersPanel, MemberView } from "./tenantMembers.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
 import { CloudCostAdminView } from "../cost/CloudCostView.tsx";
@@ -312,11 +313,19 @@ export function TenantScopeBody({
   onChanged: () => void;
 }) {
   const tr = useT();
+  // ★ マシン種別はテナント管理者のものなので、上限そのものと違って isSuper で
+  //   出し分けない（docs/70 §70.4.3・PUT は tenantAdminFor で門を張っている）。
+  //   クラスが 1 つしか無いデプロイでは部品自身が何も描かないので、ここに条件は無い。
   if (section === "limits") {
-    return isSuper ? (
-      <TenantLimits slug={slug} tenant={tenant} hasPool={hasPool} onChanged={onChanged} />
-    ) : (
-      <TenantSummary tenant={tenant} />
+    return (
+      <>
+        {isSuper ? (
+          <TenantLimits slug={slug} tenant={tenant} hasPool={hasPool} onChanged={onChanged} />
+        ) : (
+          <TenantSummary tenant={tenant} />
+        )}
+        <TenantMachineView key={slug} slug={slug} />
+      </>
     );
   }
   // ★ 規則は「テナント管理者には読み取り専用」（PUT が withSuperAdmin 固定）だが、
