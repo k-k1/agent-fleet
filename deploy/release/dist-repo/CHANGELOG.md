@@ -3,6 +3,15 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.9.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.2) — 2026-08-21
+
+A follow-up to the EC2-backed persistent workspaces of 0.9.0, from running one as a real
+deployment. A home created from the pre-baked *golden* snapshot could not start at all —
+the task restarted forever and no log said why — and baking a golden by hand ran into a
+step that never completes. Keeping the golden in step with the workspace image is no
+longer a promise somebody has to remember: the Control Plane does it, and refuses to
+publish a golden it could not boot.
+
 ## [0.9.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.1) — 2026-08-21
 
 A maintenance release for AWS deployments, from standing one up end to end. Read-aloud
