@@ -184,6 +184,9 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
     API だけが明示的に行う。同じ理由で **auto_join は「行が存在するなら（inactive でも）
     参加させない」** — 決定 15 の「membership があればそれが正」には「外した」も含まれる。
     あわせて**自分自身は外せない**ようにした（製品内に取り消し手段が無いため）。
+    → **2026-08-21 に「自分の*最後の*有効な membership だけ拒否」へ絞った**（docs/61
+    §61.10.6）。守っているのは戻る道であって自分の行かどうかではなく、全部拒否すると
+    自分で作った捨てテナントを製品から片付けられない（docs/64 §64.28）。
 23. **`super_admin` は membership が無くても管理画面に入れるようにする（P3）。**
     現状コードを追う限り、`AF_PROVISION=invite` で立ち上げると最初の 1 人が入れない —
     membership ゼロだと `GET /api/tenants` が 403 `not_provisioned`（`resolver.go:69`）、

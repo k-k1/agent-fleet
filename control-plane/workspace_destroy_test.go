@@ -158,6 +158,104 @@ func TestDestroyWorkspaceKeepsTheRowWhenTheRuntimeFails(t *testing.T) {
 	}
 }
 
+// Taking yourself off a roster is allowed — except for the last roster you are on.
+// The guard exists against a lockout with no undo from inside the product, and that is
+// the last membership, not any of them. Refusing all of them made the golden bake's
+// throwaway tenant impossible to clean up on a deployment with one administrator
+// (docs/64 §64.28: the seed has to be an account that can sign in, i.e. your own).
+func TestRemoveMembershipSelfKeepsTheLastOne(t *testing.T) {
+	ctx := context.Background()
+	call := func(mgr *manager, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodDelete, "/api/admin/memberships", strings.NewReader(body))
+		r.Header.Set("X-Forwarded-Email", "boss@acme.co.jp")
+		w := httptest.NewRecorder()
+		newAdminAPI(mgr).removeMembership(w, r)
+		return w
+	}
+	// The admin's own throwaway tenant, with a workspace of its own — the shape the
+	// bake runbook leaves behind.
+	seedTenant := func(t *testing.T, st *sqlStore, admin Identity) Tenant {
+		t.Helper()
+		tn, err := st.CreateTenant(ctx, "golden-seed", "焼き用")
+		if err != nil {
+			t.Fatalf("tenant: %v", err)
+		}
+		mem, err := st.EnsureMembership(ctx, admin.ID, tn.ID, "tenant_admin")
+		if err != nil {
+			t.Fatalf("membership: %v", err)
+		}
+		if err := st.CreateWorkspace(ctx, Workspace{
+			ID: "W-SEED", TenantID: tn.ID, MembershipID: mem.ID,
+			ContainerName: "af-ws-golden-seed-boss", Network: "af-net-golden-seed-boss",
+			DataDir: "/srv/data/golden-seed/boss", AgentPort: "7732", AgentToken: "tok",
+			State: "stopped", CreatedAt: nowTS(),
+		}); err != nil {
+			t.Fatalf("workspace: %v", err)
+		}
+		return tn
+	}
+	adminOf := func(t *testing.T, st *sqlStore) Identity {
+		t.Helper()
+		ident, ok, err := st.GetIdentityByUserKey(ctx, "boss-acme-co-jp")
+		if err != nil || !ok {
+			t.Fatalf("admin identity: %v", err)
+		}
+		return ident
+	}
+
+	t.Run("your own throwaway tenant can be cleaned up", func(t *testing.T) {
+		f := &destroyingFactory{}
+		st, mgr, _, sales := destroyFixture(t, f)
+		admin := adminOf(t, st)
+		seed := seedTenant(t, st, admin)
+		seedMem := membershipIDOf(t, st, admin, seed)
+
+		if w := call(mgr, `{"tenant_slug":"golden-seed","user_key":"boss-acme-co-jp","purge":true}`); w.Code != http.StatusOK {
+			t.Fatalf("self removal from a second tenant: %d %s", w.Code, w.Body.String())
+		}
+		if f.destroyed != 1 {
+			t.Errorf("Destroy calls = %d, want 1 (the home has to go, or it keeps billing)", f.destroyed)
+		}
+		if _, ok, _ := st.GetWorkspaceByMembership(ctx, seedMem); ok {
+			t.Error("the throwaway workspace row survived")
+		}
+		if got, ok, _ := st.GetMembership(ctx, admin.ID, sales.ID); !ok || got.Status != "active" {
+			t.Errorf("the admin's other membership = %+v, want it untouched and active", got)
+		}
+	})
+
+	t.Run("the last one is refused", func(t *testing.T) {
+		f := &destroyingFactory{}
+		st, mgr, _, sales := destroyFixture(t, f)
+		admin := adminOf(t, st)
+
+		w := call(mgr, `{"tenant_slug":"sales","user_key":"boss-acme-co-jp"}`)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "self_removal") {
+			t.Fatalf("removing your only membership = %d %s, want 400 self_removal", w.Code, w.Body.String())
+		}
+		if got, ok, _ := st.GetMembership(ctx, admin.ID, sales.ID); !ok || got.Status != "active" {
+			t.Errorf("membership = %+v, want it still active", got)
+		}
+	})
+
+	t.Run("an inactive membership elsewhere is not a way back in", func(t *testing.T) {
+		f := &destroyingFactory{}
+		st, mgr, _, sales := destroyFixture(t, f)
+		admin := adminOf(t, st)
+		seed := seedTenant(t, st, admin)
+		if err := st.SetMembershipStatus(ctx, membershipIDOf(t, st, admin, seed), "inactive"); err != nil {
+			t.Fatalf("deactivate: %v", err)
+		}
+
+		if w := call(mgr, `{"tenant_slug":"sales","user_key":"boss-acme-co-jp"}`); w.Code != http.StatusBadRequest {
+			t.Fatalf("= %d %s, want 400: the only remaining active membership is this one", w.Code, w.Body.String())
+		}
+		if got, ok, _ := st.GetMembership(ctx, admin.ID, sales.ID); !ok || got.Status != "active" {
+			t.Errorf("membership = %+v, want it still active", got)
+		}
+	})
+}
+
 // Offboarding keeps the home by default (docs/61 §61.10.6) and destroys it only when the
 // caller asks — the two are separate decisions that happen to be convenient in one click.
 func TestRemoveMembershipPurgeIsOptIn(t *testing.T) {
