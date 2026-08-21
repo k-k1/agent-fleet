@@ -95,6 +95,16 @@ platform changes:
      address, and activating it copies that into the billing data (CUR / Cost Explorer /
      invoice CSVs). `af-membership` is an opaque random id and is the join key the Control
      Plane uses.
+- **`10-data` needs `--capabilities CAPABILITY_AUTO_EXPAND`** — it declares
+  `Transform: AWS::LanguageExtensions`, and a template with a transform is rejected
+  without that capability (`Requires capabilities : [CAPABILITY_AUTO_EXPAND]`). It
+  creates no IAM, so this is the only capability it needs:
+  ```bash
+  aws cloudformation deploy --stack-name af-ecs-data \
+    --template-file cfn/10-data.yaml --capabilities CAPABILITY_AUTO_EXPAND \
+    --parameter-overrides Persistence=retain \
+    --profile af-sandbox --region ap-northeast-1
+  ```
 - **`20-platform` needs `--capabilities CAPABILITY_NAMED_IAM`** (it creates named IAM roles):
   ```bash
   aws cloudformation deploy --stack-name af-ecs-platform \

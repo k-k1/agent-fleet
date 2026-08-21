@@ -184,8 +184,14 @@ const VV_CHAR_NAMES: Record<string, string> = {
 
 // voiceCharName は再生に使う声のキャラ名ラベル。明示 polly は VoiceId をそのまま。
 // エンジン実カタログがあればそこから引く（新キャラ・新スタイルも正しく出る）。
-// auto ルーティングで Polly に落ちた場合までは追わない（設定ベースのベストエフォート）。
-export function voiceCharName(opts: TtsOptions): string {
+//
+// heard（実際に鳴らしたプロバイダ = heardProvider の値）を渡すと auto のフォールバックまで
+// 追う。設定が auto でも CP が Polly に落としていれば Polly の声名を返す — これを見ずに
+// 設定だけで名乗ると、VOICEVOX を立てていないデプロイで「Polly が喋っているのに TopBar は
+// ずんだもん」になる。空文字（未合成・旧 CP）は従来どおり設定ベースのベストエフォート。
+export function voiceCharName(opts: TtsOptions, heard = ""): string {
+  // 明示 polly と同じ扱い。既定の VoiceId は CP の pollyVoiceFor と揃える（en=Joanna / 他=Takumi）。
+  if (heard === "polly" && opts.provider !== "polly") return opts.pollyVoice || (opts.lang === "en" ? "Joanna" : "Takumi");
   if (opts.provider === "polly") return opts.pollyVoice || "Polly";
   const cat = speakersCatalog();
   if (cat) {
@@ -346,6 +352,17 @@ const SENTENCE_END = /[。．！？!?\n]/;
 
 const synthCache = makeAudioLru<AudioBuffer>(() => getSettings().ttsCacheSec);
 
+// バッファ → それを実際に合成したプロバイダ（レスポンスの X-TTS-Provider）。auto の行き先を
+// 決めるのは CP 側（エンジンの到達性・言語・管理トグル）なので、設定だけを見て「ずんだもんで
+// 鳴っている」と名乗ると嘘になる — VOICEVOX を立てていないデプロイでは日本語も Polly に落ちる。
+// WeakMap にしてあるので LRU から落ちたバッファの分は一緒に回収される。
+const bufProvider = new WeakMap<AudioBuffer, string>();
+
+// heardProvider は「そのバッファを実際に鳴らしたプロバイダ」。未知（旧 CP・キャッシュ外）は ""。
+export function heardProvider(ab: AudioBuffer | null | undefined): string {
+  return (ab && bufProvider.get(ab)) || "";
+}
+
 // キーは合成条件＋テキスト。区切りはテキストに現れない NUL。provider は設定値
 // （auto 含む）で持つため、auto のルーティング先が変わった直後は旧エンジンの声が
 // 再生されうる（エビクトで解消する程度の割り切り）。
@@ -387,6 +404,11 @@ async function synthToBuffer(
     if (!res.ok) return null;
     const arr = await res.arrayBuffer();
     const ab = await ctx.decodeAudioData(arr);
+    // 実際に鳴らしたプロバイダ。auto の行き先を決めるのは CP（エンジンの到達性・言語・管理
+    // トグル）なので、設定だけからは分からない。バッファに紐づけて憶えるのは、キャッシュに
+    // 当たった再生でも同じ判定を引き継ぐため（WeakMap なので LRU から落ちれば一緒に消える）。
+    const actual = res.headers.get("X-TTS-Provider");
+    if (actual) bufProvider.set(ab, actual);
     synthCache.put(key, ab);
     return ab;
   } catch {
@@ -407,15 +429,17 @@ function masterTarget(): number {
 
 // voiceLoudness は声ごとの出力音量倍率。ずんだもんは他キャラより素の音圧が高いため、設定
 // ttsZundamonVolume で少し下げて他の声・通知音と揃える（実機フィードバック）。Polly や他キャラは 1。
-function voiceLoudness(opts: TtsOptions): number {
-  if (voiceCharName(opts) === "ずんだもん") return Math.max(0, Math.min(1, getSettings().ttsZundamonVolume));
+// heard を見るのはラベルと同じ理由: auto が Polly に落ちているのにずんだもん向けの減衰を
+// 掛けると、鳴っていない声の設定で音量が下がる。
+function voiceLoudness(opts: TtsOptions, heard = ""): number {
+  if (voiceCharName(opts, heard) === "ずんだもん") return Math.max(0, Math.min(1, getSettings().ttsZundamonVolume));
   return 1;
 }
 
 // outputVolume は連結する再生ゲイン = 呼び手が指定した volume（作業過程の小声等）× 声ごとの
 // 音量倍率。3 つの connectOutput 呼び出し（ストリーム/朗読/告知）が共通で使う。
-function outputVolume(opts: TtsOptions): number {
-  return (opts.volume ?? 1) * voiceLoudness(opts);
+function outputVolume(opts: TtsOptions, heard = ""): number {
+  return (opts.volume ?? 1) * voiceLoudness(opts, heard);
 }
 
 function syncMasterGain(immediate = false): void {
@@ -535,6 +559,16 @@ export function startTts(
   const displays = new Map<number, string>(); // seq(文頭片) → 読み補正前の表示テキスト（onPiece 用）
   const pieceTimers = new Set<number>(); // onPiece の発火予約（stop で解除）
   let playCursor = 0; // 次に鳴らす seq
+  // 実際に合成したプロバイダ（X-TTS-Provider）。設定が auto のとき、行き先を決めるのは CP なので
+  // 最初の 1 文が返るまでは分からない。分かった時点で TopBar の声表示を名乗り直す。
+  let heard = "";
+  const noteHeard = (ab: AudioBuffer) => {
+    const h = heardProvider(ab);
+    if (!h || h === heard) return;
+    heard = h;
+    const st = useTtsStore.getState();
+    if (st.active === controller) st.setActive(controller, source, voiceCharName(opts, heard), sessionName, purpose);
+  };
   const srcs = new Set<AudioBufferSourceNode>(); // 再生中＋先行スケジュール済みのノード
   let nextStartAt = 0; // 次のバッファを開始する AudioContext 時刻
   let stopped = false;
@@ -703,9 +737,10 @@ export function startTts(
       preGaps.delete(sq);
       playCursor++;
       if (!ab) continue; // 失敗文はスキップして次へ
+      noteHeard(ab); // 実際の合成先が分かったので TopBar の声表示を直す（auto のフォールバック）
       const src = ctx.createBufferSource();
       src.buffer = ab;
-      connectOutput(ctx, src, outputVolume(opts), opts.paneId);
+      connectOutput(ctx, src, outputVolume(opts, heard), opts.paneId);
       src.onended = () => {
         srcs.delete(src);
         notify();
@@ -889,6 +924,16 @@ export function startNarration(
   let synthAt = 0; // 次に合成を仕掛ける index
   let cursor = 0; // 次に再生する index
   let epoch = 0; // 声の世代（setVoice で進む。古い声の合成結果を無効化する）
+  // 実際に合成したプロバイダ（X-TTS-Provider）。auto の行き先は CP が決めるので、最初の
+  // ユニットが返るまで分からない。分かった時点で TopBar の声表示を名乗り直す。
+  let heard = "";
+  const noteHeard = (ab: AudioBuffer) => {
+    const h = heardProvider(ab);
+    if (!h || h === heard) return;
+    heard = h;
+    const st = useTtsStore.getState();
+    if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts, heard), sessionName);
+  };
   let inflight = 0;
   let playing = false;
   let cur: AudioBufferSourceNode | null = null;
@@ -954,6 +999,7 @@ export function startNarration(
     acs.clear();
     buffers.clear();
     synthAt = cursor;
+    heard = ""; // 声が変われば行き先も変わりうる。次のユニットの応答で名乗り直す
     const st = useTtsStore.getState();
     if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts), sessionName); // TopBar の声表示を更新
     pump();
@@ -972,11 +1018,12 @@ export function startNarration(
       return;
     }
     const aopts = { ...ttsOptsFromSettings(getSettings()), ...a.voice };
+    let aheard = ""; // 告知側の実際の合成先（朗読本体の heard とは別に持つ）
     const label = (on: boolean) => {
       const st = useTtsStore.getState();
       if (st.active !== adapter) return;
-      if (on) st.setActive(adapter, a.source, voiceCharName(aopts), a.sessionName ?? "", a.purpose ?? "reading");
-      else st.setActive(adapter, source, voiceCharName(opts), sessionName);
+      if (on) st.setActive(adapter, a.source, voiceCharName(aopts, aheard), a.sessionName ?? "", a.purpose ?? "reading");
+      else st.setActive(adapter, source, voiceCharName(opts, heard), sessionName); // 朗読側の名乗りへ戻す
     };
     // 長い告知（要約など）も合成用に分割して順に鳴らす（1 回の合成が重いと無音の待ちになる）。
     const pieces = splitLongSentence(t);
@@ -1004,10 +1051,11 @@ export function startNarration(
           playNext(); // 失敗した片は飛ばして次へ
           return;
         }
+        aheard = heardProvider(ab) || aheard;
         label(true);
         const src = ctx!.createBufferSource();
         src.buffer = ab;
-        connectOutput(ctx!, src, outputVolume(aopts), aopts.paneId);
+        connectOutput(ctx!, src, outputVolume(aopts, aheard), aopts.paneId);
         src.onended = () => {
           cur = null;
           playNext();
@@ -1041,9 +1089,10 @@ export function startNarration(
       onUnit(idx);
       useTtsStore.getState().setSpeaking(true);
       useTtsStore.getState().setPreparing(false); // 音が出はじめた → 生成中を解除
+      noteHeard(ab); // 実際の合成先が分かったので TopBar の声表示を直す（auto のフォールバック）
       const src = ctx.createBufferSource();
       src.buffer = ab;
-      connectOutput(ctx, src, outputVolume(opts), opts.paneId);
+      connectOutput(ctx, src, outputVolume(opts, heard), opts.paneId);
       src.onended = () => {
         playing = false;
         cur = null;
