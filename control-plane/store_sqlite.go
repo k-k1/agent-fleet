@@ -1133,8 +1133,8 @@ func (s *sqlStore) AnyActiveMembership(ctx context.Context) (bool, error) {
 func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
 	var u UserLimit
 	err := s.db.QueryRowContext(ctx,
-		`SELECT membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, created_at FROM user_limit WHERE membership_id=?`, membershipID).
-		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.MemLimit, &u.CPULimit, &u.CreatedAt)
+		`SELECT membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at FROM user_limit WHERE membership_id=?`, membershipID).
+		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.MemLimit, &u.CPULimit, &u.SlotClass, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return UserLimit{}, false, nil
 	}
@@ -1146,11 +1146,11 @@ func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserL
 
 func (s *sqlStore) PutUserLimit(ctx context.Context, membershipID string, q UserQuota) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?)
+		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(membership_id) DO UPDATE SET max_sessions=excluded.max_sessions, disk_gb=excluded.disk_gb,
-		   mem_limit=excluded.mem_limit, cpu_limit=excluded.cpu_limit`,
-		membershipID, q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, nowTS())
+		   mem_limit=excluded.mem_limit, cpu_limit=excluded.cpu_limit, slot_class=excluded.slot_class`,
+		membershipID, q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass, nowTS())
 	return err
 }
 

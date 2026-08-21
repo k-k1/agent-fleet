@@ -51,6 +51,60 @@ if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; the
   done
 fi
 
+# --- home が別アーキの上に載ったときの自己修復（docs/70 §70.5） ---------------
+# home（`~`）は永続する。ecs-ec2 では EBS 1 本が人について回り、docs/70 で「どの箱に
+# 載るか」が per-member の設定になるので、**x86 で埋めた home が arm64 のスロットに付く**
+# ことが起こり得る。そのときファイルシステムは正常にマウントされ、壊れるのはバイナリ
+# だけである——症状は「昨日まで動いていた claude が Exec format error」で、原因（箱が
+# 変わった）はどこにも出ない。
+#
+# そこで `~` にアーキの刻印を置き、変わっていたら**製品が入れたものだけ**を捨てて、
+# 下の boot-install に入れ直させる。刻印が無い home（この変更より前からある home）は
+# 「いまのアーキで作られた」とみなして刻むだけ——それが唯一安全な既定である。
+#
+# ⚠️ 捨てる対象は下の boot-install ブロックが入れるものと 1:1 で対応する。
+#    CLI を足したらここにも足すこと（docs/70 §70.5 の表）。
+# ⚠️ `~/repos` には絶対に触らない（利用者の未コミットの作業がある）。`~/.local/bin` に
+#    利用者が自分で入れたツールも消さない——消せば「勝手に消えた」になる。壊れている
+#    事実だけ伝えて、入れ直すかは本人に委ねる。
+af_arch_now="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+case "$af_arch_now" in x86_64) af_arch_now=amd64 ;; aarch64) af_arch_now=arm64 ;; esac
+AF_ARCH_STAMP="$HOME/.local/share/agent-fleet/arch"
+af_arch_was="$(cat "$AF_ARCH_STAMP" 2>/dev/null || true)"
+if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
+  echo "[entrypoint] arch: この home は $af_arch_was で作られ、いま $af_arch_now の上に居ます"
+  echo "[entrypoint] arch: アーキ依存の導入物を入れ直します（初回は数分かかることがあります）"
+  for rel in \
+    .local/bin/claude .local/bin/codex .local/bin/opencode .local/bin/copilot \
+    .local/bin/rtk .local/bin/agy .local/bin/.agy.version \
+    .local/bin/cursor-agent \
+    .local/bin/kiro-cli .local/bin/kiro-cli-chat .local/bin/kiro-cli-term .local/bin/.kiro.version \
+    .local/lib/node_modules \
+    .local/share/claude .local/share/cursor-agent .local/share/kiro-cli \
+    .local/share/agent-fleet/chromium \
+    .cache/ms-playwright \
+    .nvm; do
+    { [ -e "$HOME/$rel" ] || [ -L "$HOME/$rel" ]; } || continue
+    rm -rf "${HOME:?}/$rel" && echo "[entrypoint] arch: 削除 ~/$rel"
+  done
+  # cursor の `agent` エイリアスは symlink のときだけ落とす（同名の自前スクリプトを
+  # 巻き込まないため）。
+  if [ -L "$HOME/.local/bin/agent" ]; then rm -f "$HOME/.local/bin/agent"; fi
+  # JDK は名前にアーキが入っている（temurin-<major>-jdk-<arch>）ので、他アーキの分だけ
+  # 落とせばよい。入れ直しは Console の toolchains / install-jdk の仕事。
+  for d in "$HOME"/.local/share/agent-fleet/jvm/temurin-*-jdk-*; do
+    [ -d "$d" ] || continue
+    case "$d" in *-jdk-"$af_arch_now") continue ;; esac
+    rm -rf "$d" && echo "[entrypoint] arch: 削除 ${d#"$HOME"/}"
+  done
+  echo "[entrypoint] arch: ⚠️ ~/repos 配下の node_modules / target / .venv と、自分で ~/.local へ入れた"
+  echo "[entrypoint] arch:    ツールは $af_arch_was 用のままです。使う前に入れ直してください（~/repos は触っていません）"
+fi
+if [ -n "$af_arch_now" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
+  mkdir -p "$(dirname "$AF_ARCH_STAMP")" 2>/dev/null || true
+  printf '%s\n' "$af_arch_now" > "$AF_ARCH_STAMP" 2>/dev/null || true
+fi
+
 # claude records installMethod="native" and self-checks its launcher at
 # ~/.local/bin/claude on every start, warning "claude command … missing or broken"
 # when it is gone/dangling. After the node→dev rename that launcher dangled (it
@@ -715,9 +769,22 @@ fi
 # everywhere, download it into the home volume now (persists on the volume / EFS, so
 # only the first launch pays the download). Soft-fail: no network → keep going.
 if [ -n "$JAVA_VER" ]; then
+  # ⚠️ 「glob して先頭」に戻さないこと。どちらの置き場も temurin-<major>-jdk-<arch> と
+  # いう名前で、"amd64" は "arm64" より先に並ぶ。x86 で埋めた home を arm64 のスロットに
+  # 付けた瞬間、先頭は**必ず動かない方**になる（docs/70 §70.5.1・workspace-agent 側の
+  # javaHomeFor も同じ規則）。自分のアーキの接尾辞を優先し、他アーキは採らない。
   find_jh() {
     for d in /usr/lib/jvm "$HOME/.local/share/agent-fleet/jvm"; do
-      jh=$(ls -d "$d"/temurin-"$JAVA_VER"-jdk* 2>/dev/null | head -1)
+      [ -d "$d" ] || continue
+      jh=""
+      for c in "$d"/temurin-"$JAVA_VER"-jdk*; do
+        [ -d "$c" ] || continue
+        case "$c" in
+          *-jdk-"$af_arch_now") printf '%s\n' "$c"; return 0 ;;
+          *-jdk-amd64 | *-jdk-arm64) continue ;;              # 他アーキ: 採らない
+          *) [ -n "$jh" ] || jh="$c" ;;                       # 接尾辞なし: 予備
+        esac
+      done
       [ -n "$jh" ] && { printf '%s\n' "$jh"; return 0; }
     done
     return 1

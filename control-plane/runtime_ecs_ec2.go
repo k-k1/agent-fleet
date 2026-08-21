@@ -64,9 +64,16 @@ type ecsEC2Runtime struct {
 	ci   ecsContainerInstanceAPI
 	pool ec2PoolConfig
 
-	// instanceType is the slot size this workspace needs (from its memory cap), and
+	// instanceType is the slot size this workspace needs (its memory request resolved
+	// against its CLASS's ladder), arch the CPU architecture that class runs on, and
 	// homeGiB the size of its persistent home volume.
+	//
+	// arch is carried rather than re-derived because two different places need it and
+	// neither can see the class: launchSlot picks the launch template (an arm64
+	// instance type cannot boot the x86_64 AMI) and buildTaskDef declares
+	// RuntimePlatform.
 	instanceType string
+	arch         string
 	homeGiB      int32
 
 	// azOfSubnet resolves the deployment's subnets to their AZ (cached in the factory):
@@ -231,6 +238,18 @@ const (
 	// tools, silently and only for them — so the CP compares and refuses a stale one
 	// instead of trusting that somebody remembered to re-bake (決定 9).
 	ec2TagImage = "af-image"
+	// ec2TagArch stamps the CPU architecture a golden snapshot was baked ON.
+	//
+	// ★ A golden is a HOME that has already paid boot-install — which means it is full
+	// of binaries: ~/.local/bin/{rtk,agy,cursor-agent,kiro}, the npm CLIs, nvm's node,
+	// the Chromium it downloaded. Handing an x86_64 golden to an arm64 slot produces a
+	// home that mounts perfectly and cannot exec anything, for every new user of that
+	// class, from their very first start (docs/70 §70.6). The image tag alone cannot
+	// catch it: both goldens are baked from the same image reference.
+	//
+	// Absent on goldens baked before this existed. Those are x86_64 by construction —
+	// there was no other kind of slot — so an empty tag reads as x86_64.
+	ec2TagArch = "af-arch"
 )
 
 // --- narrow AWS client ports (only the calls this adapter makes), so it is unit
@@ -275,15 +294,22 @@ type ecsContainerInstanceAPI interface {
 // af-mount/af-umount helpers), instance profile and security group all live there, so
 // the CP only ever says "run one of these, in this AZ, at this size".
 type ec2PoolConfig struct {
-	launchTemplate string    // AF_ECS_EC2_LAUNCH_TEMPLATE (id or name)
-	pool           string    // AF_ECS_EC2_POOL tag value (defaults to the cluster name)
-	slotSizes      []ec2Slot // AF_ECS_EC2_SLOT_TYPES, ascending by memory
-	maxSlots       int       // AF_ECS_EC2_MAX_SLOTS: cap on instances this pool may run
-	homeGiB        int32     // AF_ECS_EC2_HOME_GB: default per-user home volume size
-	tmpfsMiB       int32     // AF_ECS_EC2_TMP_MB: size cap of the /tmp tmpfs
-	tmpfsOpts      []string  // AF_ECS_EC2_TMP_OPTS
-	claimTTL       time.Duration
-	releaseGrace   time.Duration
+	launchTemplate string // AF_ECS_EC2_LAUNCH_TEMPLATE (id or name) — the x86_64 slot
+	// launchTemplateArm64 is AF_ECS_EC2_LAUNCH_TEMPLATE_ARM64, required only when a
+	// declared class says arm64. A launch template pins an AMI, and an arm64 instance
+	// type cannot boot the x86_64 ECS-optimized AMI — so the architecture, not the
+	// class, is what needs a second template (docs/70 §70.8). Everything else about a
+	// slot (role, SG, user-data, root volume) is shared between the two.
+	launchTemplateArm64 string
+	pool                string         // AF_ECS_EC2_POOL tag value (defaults to the cluster name)
+	classes             []ec2SlotClass // AF_ECS_EC2_SLOT_TYPES, in declared order
+	defaultClass        string         // AF_ECS_EC2_DEFAULT_SLOT_CLASS (defaults to the first)
+	maxSlots            int            // AF_ECS_EC2_MAX_SLOTS: cap on instances this pool may run
+	homeGiB             int32          // AF_ECS_EC2_HOME_GB: default per-user home volume size
+	tmpfsMiB            int32          // AF_ECS_EC2_TMP_MB: size cap of the /tmp tmpfs
+	tmpfsOpts           []string       // AF_ECS_EC2_TMP_OPTS
+	claimTTL            time.Duration
+	releaseGrace        time.Duration
 	// slotSleepAfter is how long a slot may sit with no running task before the sweeper
 	// STOPS the instance (never terminates it — the image cache lives on its root
 	// volume, and a stopped instance costs only that volume).
@@ -340,6 +366,28 @@ type ec2Slot struct {
 	vcpu         int
 }
 
+// CPU architectures a class may declare. They are the ECS/EC2 spellings, so the
+// value goes straight into RuntimePlatform without a second vocabulary.
+const (
+	ec2ArchX86 = "x86_64"
+	ec2ArchArm = "arm64"
+)
+
+// ec2SlotClass is one named ladder: which KIND of machine, as opposed to how big.
+//
+// The architecture is DECLARED, never derived from the instance type's name. "a
+// family ending in g is Graviton" reads well until m7gd, x2gd or g4dn, and a wrong
+// guess here does not misprint a label — it boots the wrong AMI. The operator
+// writing the ladder already knows (the same reasoning ADR 0045 決定 21 used for
+// vCPU), and newECSEC2Factory refuses to start when a declared arm64 class has no
+// launch template to run on.
+type ec2SlotClass struct {
+	id    string
+	label string
+	arch  string
+	slots []ec2Slot // ascending by memory
+}
+
 // ecsEC2Factory is the `ecs-ec2` RuntimeFactory.
 type ecsEC2Factory struct {
 	base *ecsFactory
@@ -376,12 +424,14 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		return nil, fmt.Errorf("aws config: %w", err)
 	}
 	pool := ec2PoolConfig{
-		launchTemplate: os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"),
-		pool:           envOr("AF_ECS_EC2_POOL", base.cfg.cluster),
-		slotSizes:      parseSlotSizes(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),
-		maxSlots:       envInt("AF_ECS_EC2_MAX_SLOTS", 8),
-		homeGiB:        int32(envInt("AF_ECS_EC2_HOME_GB", 50)),
-		tmpfsMiB:       int32(envInt("AF_ECS_EC2_TMP_MB", 2048)),
+		launchTemplate:      os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"),
+		launchTemplateArm64: os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE_ARM64"),
+		pool:                envOr("AF_ECS_EC2_POOL", base.cfg.cluster),
+		classes:             parseSlotClasses(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),
+		defaultClass:        os.Getenv("AF_ECS_EC2_DEFAULT_SLOT_CLASS"),
+		maxSlots:            envInt("AF_ECS_EC2_MAX_SLOTS", 8),
+		homeGiB:             int32(envInt("AF_ECS_EC2_HOME_GB", 50)),
+		tmpfsMiB:            int32(envInt("AF_ECS_EC2_TMP_MB", 2048)),
 		// noexec is deliberately NOT in the default set. ADR 0045 決定 8 names
 		// noexec,nosuid,nodev, but this is a developer container: installers, test
 		// runners and build tools routinely exec out of /tmp, and a noexec /tmp turns
@@ -404,11 +454,8 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		ghostAfter:     time.Duration(envInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
 		waitBudget:     time.Duration(envInt("AF_ECS_EC2_WAIT_SEC", 600)) * time.Second,
 	}
-	if pool.launchTemplate == "" {
-		return nil, fmt.Errorf("AF_ECS_EC2_LAUNCH_TEMPLATE is required for AF_RUNTIME=ecs-ec2")
-	}
-	if len(pool.slotSizes) == 0 {
-		return nil, fmt.Errorf("AF_ECS_EC2_SLOT_TYPES has no usable entry (want type:memMiB,...)")
+	if err := pool.validate(); err != nil {
+		return nil, err
 	}
 	f := &ecsEC2Factory{
 		base: base,
@@ -417,8 +464,9 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		ci:   ecs.NewFromConfig(ac),
 		pool: pool,
 	}
-	log.Printf("runtime=ecs-ec2 pool=%s launch-template=%s slots=%s max=%d home=%dGiB",
-		pool.pool, pool.launchTemplate, envOr("AF_ECS_EC2_SLOT_TYPES", "(default)"), pool.maxSlots, pool.homeGiB)
+	log.Printf("runtime=ecs-ec2 pool=%s launch-template=%s/%s classes=%s default-class=%s max=%d home=%dGiB",
+		pool.pool, pool.launchTemplate, envOr("AF_ECS_EC2_LAUNCH_TEMPLATE_ARM64", "(none)"),
+		describeSlotClasses(pool.classes), pool.defaultClass, pool.maxSlots, pool.homeGiB)
 	go f.sweepLoop(context.Background())
 	return f, nil
 }
@@ -428,13 +476,15 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 	if !ok { // unreachable: ecsFactory.New always returns *ecsRuntime
 		panic("ecs-ec2: base factory did not return *ecsRuntime")
 	}
+	instanceType, arch := f.pool.slotTypeFor(ws.SlotClass, ws.MemBytes)
 	return &ecsEC2Runtime{
 		base:         base,
 		ec2:          f.ec2,
 		ssmc:         f.ssmc,
 		ci:           f.ci,
 		pool:         f.pool,
-		instanceType: f.pool.slotTypeFor(ws.MemBytes),
+		instanceType: instanceType,
+		arch:         arch,
 		homeGiB:      f.homeGiB(ws),
 		azOfSubnet:   f.subnetAZs,
 		bg:           backgroundWithin(f.pool.waitBudget),
@@ -454,23 +504,104 @@ func (f *ecsEC2Factory) homeGiB(ws Workspace) int32 {
 	return f.pool.homeGiB
 }
 
-// slotTypeFor picks the smallest configured slot that holds the workspace's memory
-// request. Sizing on EC2 is a choice of instance type, not Fargate's 74 discrete (cpu,
-// memory) pairs (docs/64 §64.4.5): the task reserves neither cpu nor memory, so the
-// user gets the whole box (ADR 0045 決定 8).
-//
-// ⚠️ The argument is a REQUIREMENT, not a cap — "fit me into a box this big" — and the
-// person then gets whatever that box has. It is also why 0 (unset) lands on the
-// SMALLEST slot here, while 0 on Fargate means the deployment's task size and on
-// docker means WS_MEMORY. The Console says which of the three it is (ADR 0045 決定 21).
-func (p ec2PoolConfig) slotTypeFor(memBytes int64) string {
-	want := memBytes / mib
-	for _, s := range p.slotSizes {
-		if want <= s.memMiB {
-			return s.instanceType
+// classFor resolves a class id to its declared ladder, falling back to the default
+// class (and then to the first) so an id that no longer exists never fails a Start.
+// The CP is not the place to enforce that a stored id is still declared — the
+// operator can delete a class at any redeploy, and the person whose row still names
+// it must keep working. resolveSlotClass reports the substitution; this is the last
+// line of defence, not the check.
+func (p ec2PoolConfig) classFor(id string) ec2SlotClass {
+	for _, c := range p.classes {
+		if c.id == id {
+			return c
 		}
 	}
-	return p.slotSizes[len(p.slotSizes)-1].instanceType
+	for _, c := range p.classes {
+		if c.id == p.defaultClass {
+			return c
+		}
+	}
+	return p.classes[0]
+}
+
+// slotTypeFor picks the smallest slot IN THE GIVEN CLASS that holds the workspace's
+// memory request, and reports the class's architecture with it. Sizing on EC2 is a
+// choice of instance type, not Fargate's 74 discrete (cpu, memory) pairs (docs/64
+// §64.4.5): the task reserves neither cpu nor memory, so the user gets the whole box
+// (ADR 0045 決定 8).
+//
+// ⚠️ The memory argument is a REQUIREMENT, not a cap — "fit me into a box this big" —
+// and the person then gets whatever that box has. It is also why 0 (unset) lands on
+// the SMALLEST slot here, while 0 on Fargate means the deployment's task size and on
+// docker means WS_MEMORY. The Console says which of the three it is (ADR 0045 決定 21).
+//
+// The class only chooses the LADDER. Memory still chooses the rung, in every class,
+// which is what keeps "8 GB" meaning the same thing after a class change.
+func (p ec2PoolConfig) slotTypeFor(classID string, memBytes int64) (instanceType, arch string) {
+	c := p.classFor(classID)
+	want := memBytes / mib
+	for _, s := range c.slots {
+		if want <= s.memMiB {
+			return s.instanceType, c.arch
+		}
+	}
+	return c.slots[len(c.slots)-1].instanceType, c.arch
+}
+
+// parseSlotClasses reads AF_ECS_EC2_SLOT_TYPES.
+//
+// Two shapes, and the older one is not deprecated:
+//
+//	m7i.large:8192:2,m7i.xlarge:16384:4          → one class, id "default", x86_64
+//	id|label|arch|<ladder>[; id|label|arch|…]    → one class per entry, in order
+//
+// ⚠️ The bare form must keep parsing, unchanged, forever. Every deployed
+// 30-ingress stack passes it, and an operator upgrading the CP does not touch CFN
+// parameters — a spec that stopped parsing would leave the pool with no ladder at
+// all, which newECSEC2Factory turns into a refusal to boot.
+//
+// Entries are separated by ";" or a newline (a CFN parameter is one line, an env file
+// is easier to read multi-line). A class with no usable rung is dropped; a class with
+// an unknown architecture is dropped rather than defaulted, because defaulting it to
+// x86_64 would boot the wrong AMI for a typo'd "aarch64".
+func parseSlotClasses(spec string) []ec2SlotClass {
+	if !strings.Contains(spec, "|") {
+		if slots := parseSlotSizes(spec); len(slots) > 0 {
+			return []ec2SlotClass{{id: "default", arch: ec2ArchX86, slots: slots}}
+		}
+		return nil
+	}
+	var out []ec2SlotClass
+	for _, entry := range strings.FieldsFunc(spec, func(r rune) bool { return r == ';' || r == '\n' }) {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, "|", 4)
+		if len(parts) != 4 {
+			log.Printf("ecs-ec2: ignoring slot class %q (want id|label|arch|type:memMiB[:vcpu],…)", entry)
+			continue
+		}
+		id, label := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		arch := strings.TrimSpace(parts[2])
+		if id == "" {
+			continue
+		}
+		if arch != ec2ArchX86 && arch != ec2ArchArm {
+			log.Printf("ecs-ec2: ignoring slot class %q: arch %q is not %s or %s", id, arch, ec2ArchX86, ec2ArchArm)
+			continue
+		}
+		slots := parseSlotSizes(parts[3])
+		if len(slots) == 0 {
+			log.Printf("ecs-ec2: ignoring slot class %q: no usable rung in %q", id, parts[3])
+			continue
+		}
+		if label == "" {
+			label = id
+		}
+		out = append(out, ec2SlotClass{id: id, label: label, arch: arch, slots: slots})
+	}
+	return out
 }
 
 // parseSlotSizes reads "m7i.large:8192,m7i.xlarge:16384:4" into an ascending list.
@@ -1613,6 +1744,72 @@ func isEC2CapacityError(err error) bool {
 	return false
 }
 
+// validate refuses a pool configuration that cannot work, at BOOT, and fills in the
+// default class. Every failure here would otherwise surface as an error on somebody's
+// first Start — long after the operator stopped watching the logs — so this follows
+// the line AF_ECS_EC2_LAUNCH_TEMPLATE already drew: a CP that cannot run workspaces
+// says so instead of starting and running none.
+func (p *ec2PoolConfig) validate() error {
+	if p.launchTemplate == "" {
+		return fmt.Errorf("AF_ECS_EC2_LAUNCH_TEMPLATE is required for AF_RUNTIME=ecs-ec2")
+	}
+	if len(p.classes) == 0 {
+		return fmt.Errorf("AF_ECS_EC2_SLOT_TYPES has no usable entry (want type:memMiB,... or id|label|arch|type:memMiB,...)")
+	}
+	if p.launchTemplateArm64 == "" {
+		for _, c := range p.classes {
+			if c.arch == ec2ArchArm {
+				return fmt.Errorf("slot class %q is %s but AF_ECS_EC2_LAUNCH_TEMPLATE_ARM64 is empty "+
+					"(deploy cfn/40-ec2-pool.yaml and pass its SlotLaunchTemplateIdArm64 output)", c.id, c.arch)
+			}
+		}
+	}
+	if p.defaultClass == "" {
+		p.defaultClass = p.classes[0].id
+		return nil
+	}
+	if p.classFor(p.defaultClass).id != p.defaultClass {
+		return fmt.Errorf("AF_ECS_EC2_DEFAULT_SLOT_CLASS=%q is not one of the declared classes", p.defaultClass)
+	}
+	return nil
+}
+
+// templateFor picks the launch template for an architecture. An empty arch (a
+// deployment that never declared classes) is x86_64, which is what the single
+// template has always been.
+func (p ec2PoolConfig) templateFor(arch string) string {
+	if arch == ec2ArchArm && p.launchTemplateArm64 != "" {
+		return p.launchTemplateArm64
+	}
+	return p.launchTemplate
+}
+
+// launchTemplateSpec accepts either an id (lt-…) or a name, the way every
+// AF_ECS_EC2_LAUNCH_TEMPLATE* value may be written.
+func launchTemplateSpec(ref string) *ec2types.LaunchTemplateSpecification {
+	lt := &ec2types.LaunchTemplateSpecification{Version: aws.String("$Latest")}
+	if strings.HasPrefix(ref, "lt-") {
+		lt.LaunchTemplateId = aws.String(ref)
+	} else {
+		lt.LaunchTemplateName = aws.String(ref)
+	}
+	return lt
+}
+
+// describeSlotClasses renders the parsed ladders for the one boot log line — the
+// operator's only chance to see that the spec they wrote parsed the way they meant.
+func describeSlotClasses(cs []ec2SlotClass) string {
+	parts := make([]string, 0, len(cs))
+	for _, c := range cs {
+		types := make([]string, 0, len(c.slots))
+		for _, s := range c.slots {
+			types = append(types, s.instanceType)
+		}
+		parts = append(parts, fmt.Sprintf("%s(%s:%s)", c.id, c.arch, strings.Join(types, "/")))
+	}
+	return strings.Join(parts, " ")
+}
+
 func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) {
 	total, err := e.poolSize(ctx)
 	if err != nil {
@@ -1625,12 +1822,7 @@ func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	lt := &ec2types.LaunchTemplateSpecification{Version: aws.String("$Latest")}
-	if strings.HasPrefix(e.pool.launchTemplate, "lt-") {
-		lt.LaunchTemplateId = aws.String(e.pool.launchTemplate)
-	} else {
-		lt.LaunchTemplateName = aws.String(e.pool.launchTemplate)
-	}
+	lt := launchTemplateSpec(e.pool.templateFor(e.arch))
 	out, err := e.ec2.RunInstances(ctx, &ec2.RunInstancesInput{
 		LaunchTemplate: lt,
 		InstanceType:   ec2types.InstanceType(e.instanceType),
@@ -2187,13 +2379,30 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 			},
 		}
 	}
+	// The slot's CPU architecture, declared rather than left to chance.
+	//
+	// Measured: on an EC2-compatibility task definition, omitting runtimePlatform
+	// leaves it null — it does NOT default to X86_64 the way it does on Fargate — so
+	// this is not what makes an arm64 slot work (docs/70 §70.8). It is stated anyway
+	// for two reasons: ECS then refuses to PLACE a task on a box of the wrong
+	// architecture instead of starting it and letting the image fail to exec, and the
+	// field is part of what taskDefFingerprint hashes, so a member moved to another
+	// class provably gets a new revision rather than a reused one.
+	arch := ecstypes.CPUArchitectureX8664
+	if e.arch == ec2ArchArm {
+		arch = ecstypes.CPUArchitectureArm64
+	}
 	in := &ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String(e.base.name),
 		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityEc2},
 		NetworkMode:             ecstypes.NetworkModeAwsvpc,
-		ExecutionRoleArn:        strOrNil(e.base.cfg.execRole),
-		TaskRoleArn:             strOrNil(e.base.cfg.taskRole),
-		ContainerDefinitions:    []ecstypes.ContainerDefinition{container},
+		RuntimePlatform: &ecstypes.RuntimePlatform{
+			CpuArchitecture:       arch,
+			OperatingSystemFamily: ecstypes.OSFamilyLinux,
+		},
+		ExecutionRoleArn:     strOrNil(e.base.cfg.execRole),
+		TaskRoleArn:          strOrNil(e.base.cfg.taskRole),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{container},
 		PlacementConstraints: []ecstypes.TaskDefinitionPlacementConstraint{{
 			Type:       ecstypes.TaskDefinitionPlacementConstraintTypeMemberOf,
 			Expression: aws.String(fmt.Sprintf("ec2InstanceId == %s", p.instanceID)),
@@ -3398,6 +3607,25 @@ type ec2PoolStatus struct {
 	Baking       bool   `json:"baking"`
 	BakeRejected string `json:"bake_rejected"` // snapshot id of the last refused candidate
 	BakeReason   string `json:"bake_reason"`
+	// Goldens is the same story per CPU architecture, one entry per architecture this
+	// deployment's classes declare (docs/70 §70.6). The six scalars above are this
+	// list's FIRST entry — the default class's architecture — kept so nothing that
+	// reads them has to change on a deployment that has only one.
+	Goldens []ec2GoldenView `json:"goldens,omitempty"`
+	// SlotClasses names the declared classes for the pool screen. Absent when the
+	// deployment declared a single unnamed ladder.
+	SlotClasses []workspaceSlotClass `json:"slot_classes,omitempty"`
+}
+
+// ec2GoldenView is one architecture's golden situation.
+type ec2GoldenView struct {
+	Arch       string `json:"arch"`
+	SnapshotID string `json:"snapshot_id"`
+	Image      string `json:"image"`
+	Stale      bool   `json:"stale"`
+	Baking     bool   `json:"baking"`
+	Rejected   string `json:"rejected"`
+	Reason     string `json:"reason"`
 }
 
 // PoolStatus reports the live pool. Read-only and tolerant: a section that cannot be read
@@ -3416,6 +3644,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		HibernateS:  int(f.pool.hibernateAfter.Seconds()),
 		Slots:       []ec2SlotView{}, Homes: []ec2HomeView{},
 		RunningImage: f.base.cfg.workspaceImage,
+		SlotClasses:  f.SizingProfile().SlotClasses,
 	}
 	now := time.Now()
 
@@ -3508,26 +3737,41 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		log.Printf("ecs-ec2 pool status: snapshots unreadable: %v", err)
 		return st, nil
 	}
+	// One golden per architecture (docs/70 §70.6), so the screen answers "is every
+	// class covered" rather than "is there a golden". byArch is keyed by the snapshot's
+	// af-arch — absent means x86_64, the only kind that existed before classes.
+	byArch := map[string]*ec2GoldenView{}
+	golden := func(arch string) *ec2GoldenView {
+		g, ok := byArch[arch]
+		if !ok {
+			g = &ec2GoldenView{Arch: arch}
+			byArch[arch] = g
+		}
+		return g
+	}
 	for _, s := range snaps.Snapshots {
+		arch := snapshotArch(s)
 		switch ec2TagValue(s.Tags, ec2TagRole) {
 		case ec2RoleGolden:
 			// A matching golden wins over a stale one, so the screen shows what the Start
 			// path would actually use — and shows the stale one only when that is all
 			// there is, which is exactly when the operator needs to be told to re-bake.
+			g := golden(arch)
 			img := ec2TagValue(s.Tags, ec2TagImage)
-			if st.GoldenID == "" || img == st.RunningImage {
-				st.GoldenID, st.GoldenImage = aws.ToString(s.SnapshotId), img
+			if g.SnapshotID == "" || img == st.RunningImage {
+				g.SnapshotID, g.Image = aws.ToString(s.SnapshotId), img
 			}
 		case ec2RoleGoldenCandidate:
 			// Only a candidate for the image being RUN says a bake is under way. One
 			// stamped with anything else is a leftover the baker will sweep.
 			if ec2TagValue(s.Tags, ec2TagImage) == st.RunningImage {
-				st.Baking = true
+				golden(arch).Baking = true
 			}
 		case ec2RoleGoldenRejected:
 			if ec2TagValue(s.Tags, ec2TagImage) == st.RunningImage {
-				st.BakeRejected = aws.ToString(s.SnapshotId)
-				st.BakeReason = ec2TagValue(s.Tags, ec2TagBakeReason)
+				g := golden(arch)
+				g.Rejected = aws.ToString(s.SnapshotId)
+				g.Reason = ec2TagValue(s.Tags, ec2TagBakeReason)
 			}
 		case ec2RoleBackup:
 			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
@@ -3566,7 +3810,22 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			}
 		}
 	}
-	st.GoldenStale = st.GoldenID != "" && st.GoldenImage != st.RunningImage
+	// Report the architectures this deployment declares, in bake order, so an arch
+	// with NO golden at all appears as an empty row instead of not appearing — the
+	// whole question the operator has is which classes are still slow.
+	for _, arch := range f.bakeArches() {
+		g := golden(arch)
+		g.Stale = g.SnapshotID != "" && g.Image != st.RunningImage
+		st.Goldens = append(st.Goldens, *g)
+	}
+	// The scalar fields stay, as the DEFAULT architecture's answer: a Console built
+	// before classes existed reads them, and a single-class deployment has nothing
+	// else to say.
+	if len(st.Goldens) > 0 {
+		g := st.Goldens[0]
+		st.GoldenID, st.GoldenImage, st.GoldenStale = g.SnapshotID, g.Image, g.Stale
+		st.Baking, st.BakeRejected, st.BakeReason = g.Baking, g.Rejected, g.Reason
+	}
 	return st, nil
 }
 

@@ -118,6 +118,8 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Iden
 			"max_workspace_mem":     lim.MaxWorkspaceMem,
 			"max_workspace_cpu":     lim.MaxWorkspaceCPU,
 			"max_workspace_disk_gb": lim.MaxWorkspaceDiskGB,
+			"allowed_slot_classes":  lim.AllowedSlotClasses,
+			"slot_class":            lim.SlotClass,
 			"session_idle_timeout":  lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
 			"home_hibernate_after":            lim.HomeHibernateAfter,
 			"home_backup_every":               lim.HomeBackupEvery,
@@ -283,6 +285,7 @@ func (a adminAPI) listMembers(w http.ResponseWriter, r *http.Request) {
 				row["mem_limit"] = ul.MemLimit
 				row["cpu_limit"] = ul.CPULimit
 				row["disk_gb"] = ul.DiskGB
+				row["slot_class"] = ul.SlotClass
 			}
 			out = append(out, row)
 		}
@@ -733,6 +736,10 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		// Per-workspace CPU (Fargate units) and working disk (GiB) ceilings; 0 = no cap.
 		MaxWorkspaceCPU    int `json:"max_workspace_cpu"`
 		MaxWorkspaceDiskGB int `json:"max_workspace_disk_gb"`
+		// Which machine classes this tenant may choose from (docs/70 §70.4.3). Empty =
+		// no restriction. The tenant's own DEFAULT is not here: that is a tenant_admin's
+		// call and lives on PUT /api/admin/tenants/{slug}/slot-class.
+		AllowedSlotClasses []string `json:"allowed_slot_classes"`
 		// P3-9 idle-stop: duration strings ("30m"); "" => deployment default,
 		// "0" => disabled for this tenant.
 		SessionIdleTimeout string `json:"session_idle_timeout"`
@@ -772,13 +779,18 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		return
 	}
 	lj, _ := json.Marshal(tenantLimits{
-		MaxWorkspaces:                body.MaxWorkspaces,
-		MaxSessions:                  body.MaxSessions,
-		MaxGitRepos:                  body.MaxGitRepos,
-		MaxLFSBytes:                  body.MaxLFSBytes,
-		MaxWorkspaceMem:              body.MaxWorkspaceMem,
-		MaxWorkspaceCPU:              body.MaxWorkspaceCPU,
-		MaxWorkspaceDiskGB:           body.MaxWorkspaceDiskGB,
+		MaxWorkspaces:      body.MaxWorkspaces,
+		MaxSessions:        body.MaxSessions,
+		MaxGitRepos:        body.MaxGitRepos,
+		MaxLFSBytes:        body.MaxLFSBytes,
+		MaxWorkspaceMem:    body.MaxWorkspaceMem,
+		MaxWorkspaceCPU:    body.MaxWorkspaceCPU,
+		MaxWorkspaceDiskGB: body.MaxWorkspaceDiskGB,
+		AllowedSlotClasses: body.AllowedSlotClasses,
+		// ⚠️ SlotClass is NOT in the body: this handler rewrites the whole limits blob,
+		// so leaving it out of the struct would erase the tenant_admin's default on
+		// every super_admin edit. Carried over from what is stored.
+		SlotClass:                    a.tenantLimitsFor(r, t.ID).SlotClass,
 		SessionIdleTimeout:           body.SessionIdleTimeout,
 		WSIdleTimeout:                body.WSIdleTimeout,
 		HomeHibernateAfter:           body.HomeHibernateAfter,
@@ -798,6 +810,7 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		"max_workspace_mem":     body.MaxWorkspaceMem,
 		"max_workspace_cpu":     body.MaxWorkspaceCPU,
 		"max_workspace_disk_gb": body.MaxWorkspaceDiskGB,
+		"allowed_slot_classes":  body.AllowedSlotClasses,
 		"session_idle_timeout":  body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
 		"home_hibernate_after":            body.HomeHibernateAfter,
 		"home_backup_every":               body.HomeBackupEvery,
@@ -821,6 +834,9 @@ func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
 		// CPULimit is the per-workspace CPU cap in Fargate CPU units (1024 = 1 vCPU),
 		// independent of MemLimit. 0 = unset (ADR 0044 決定 1).
 		CPULimit int `json:"cpu_limit"`
+		// SlotClass is which machine class this member lands on ("" = the tenant
+		// default). Not a size — the three numbers above still decide that (docs/70).
+		SlotClass string `json:"slot_class"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
@@ -852,7 +868,10 @@ func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "user is not a member of " + t.Slug})
 		return
 	}
-	q := UserQuota{MaxSessions: body.MaxSessions, DiskGB: body.DiskGB, MemLimit: body.MemLimit, CPULimit: body.CPULimit}
+	q := UserQuota{
+		MaxSessions: body.MaxSessions, DiskGB: body.DiskGB,
+		MemLimit: body.MemLimit, CPULimit: body.CPULimit, SlotClass: strings.TrimSpace(body.SlotClass),
+	}
 	if err := a.mgr.store.PutUserLimit(r.Context(), mem.ID, q); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -863,10 +882,14 @@ func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
 	// what will actually be applied rather than what they typed.
 	a.mgr.evictMembershipCache(mem.ID)
 	effMem, effCPU, effDisk := a.mgr.resolveWorkspaceSize(r.Context(), Workspace{MembershipID: mem.ID, TenantID: t.ID})
+	effClass, classNote := a.mgr.resolveSlotClass(r.Context(), Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB,
 		"mem_limit": body.MemLimit, "mem_effective": effMem,
 		"cpu_limit": body.CPULimit, "cpu_effective": effCPU, "disk_effective": effDisk,
+		// The class the member will actually land on, and why it is not what was asked
+		// for when it is not. A substituted class is otherwise invisible until the bill.
+		"slot_class": q.SlotClass, "slot_class_effective": effClass, "slot_class_note": classNote,
 	})
 }
 
