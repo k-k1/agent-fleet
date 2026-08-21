@@ -621,7 +621,7 @@ P1 以前は**そもそも UI が無く**（組み込み 3 種は SRE アシス�
 
 ### 11.3 テナント配布の UI（P4 実装済み）
 
-**管理モーダルの「MCP 配布」モード**（`AdminTab.tsx` の `McpAdminView`、mode key = `mcp`）。
+**管理モーダルの「MCP 配布」**（`AdminTab.tsx` の `McpAdminView`、左レール「横断で見る」の section key = `mcp`）。
 テナントを選んで配布中の一覧・追加・編集・削除。`tenantAdminFor` でハンドラ内ゲートなので、
 super_admin は全テナント、tenant_admin は自分のテナントだけが見える。
 

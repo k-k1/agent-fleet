@@ -116,6 +116,58 @@ func (a memberAuth) withSuperAdmin(h func(http.ResponseWriter, *http.Request, Id
 	}
 }
 
+// anyTenantAdminFor gates a DEPLOYMENT-WIDE READ that a tenant administrator
+// legitimately needs in order to administer their own tenant — currently only the
+// list of the deployment's sign-in methods (docs/61 §61.17.9 ①). It allows a
+// super_admin, or anyone holding an active tenant_admin membership of ANY tenant.
+//
+// ★ It is a strictly weaker gate than withSuperAdmin, so it must never be put in
+// front of a WRITE: which tenant the caller administers is not checked here (there
+// is no slug to check it against), so the only thing it may authorize is reading
+// something that is the same for every tenant. Anything scoped to one tenant keeps
+// using tenantAdminFor, which does check.
+//
+// ★ Plain members are refused. The list is not secret — the ids and button labels
+// are on the unauthenticated /login — but "not secret" is not a reason to widen a
+// gate; the caller has to have a use for it (決定 19 の *編集* のゲートは別で、
+// そちらは withSuperAdmin のまま).
+func (a memberAuth) anyTenantAdminFor(w http.ResponseWriter, r *http.Request) (Identity, bool) {
+	ident, aerr := a.mgr.identityFor(r.Context(), r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return Identity{}, false
+	}
+	if ident.Role == "super_admin" {
+		return ident, true
+	}
+	// ListMemberships returns ACTIVE rows only, so a tenant_admin who was taken off
+	// the roster stops passing here as soon as the row is deactivated (docs/61
+	// §61.10.7 の穴 2 と同じ性質)。
+	ms, err := a.mgr.store.ListMemberships(r.Context(), ident.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return Identity{}, false
+	}
+	for _, mv := range ms {
+		if mv.Role == "tenant_admin" {
+			return ident, true
+		}
+	}
+	writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "tenant admin required"})
+	return Identity{}, false
+}
+
+// withAnyTenantAdmin is the wrapper form of anyTenantAdminFor.
+func (a memberAuth) withAnyTenantAdmin(h func(http.ResponseWriter, *http.Request, Identity)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ident, ok := a.anyTenantAdminFor(w, r)
+		if !ok {
+			return
+		}
+		h(w, r, ident)
+	}
+}
+
 // tenantAdminFor gates a per-tenant admin endpoint: allows a deployment
 // super_admin (any tenant) or a tenant_admin of `slug`. Resolves and returns the
 // caller's identity and the target tenant. Writes 401/403/404 and returns ok=false

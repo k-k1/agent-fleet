@@ -500,6 +500,18 @@ type TenantIdPStore interface {
 	// being approved.
 	SetTenantIdPStatus(ctx context.Context, tenantID, id, status, approvedBy, approvedAt, updatedAt string) error
 	DeleteTenantIdP(ctx context.Context, tenantID, id string) error
+	// TenantIdPIssuerInUse reports whether some OTHER row already names this issuer
+	// (any tenant). It is the "second app registration of the same directory" signal
+	// (docs/61 §61.17.4 (b)): the same person then arrives with a DIFFERENT subject
+	// if the issuer is pairwise, which rule 2' refuses as email_taken. Deployment-wide
+	// on purpose — identities are deployment-wide, so a row in another tenant splits
+	// the same person just as effectively.
+	TenantIdPIssuerInUse(ctx context.Context, issuer, excludeID string) (bool, error)
+	// CountMembersOnlyOnProvider counts a tenant's ACTIVE members whose only proven
+	// sign-in is this provider — the people who would have no way in if it stopped
+	// (docs/61 §61.17.4 の順序). Used to warn before suspending, never to refuse:
+	// stopping a compromised IdP must stay faster than starting one.
+	CountMembersOnlyOnProvider(ctx context.Context, tenantID, providerID string) (int, error)
 }
 
 // IdentityLink is one proven login, on its way to LinkIdentity. It is a struct

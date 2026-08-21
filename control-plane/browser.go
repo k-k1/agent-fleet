@@ -142,7 +142,7 @@ func (a browserAPI) socketToAgent(w http.ResponseWriter, r *http.Request, res *r
 	if token := res.rt.Token(); token != "" {
 		headers = http.Header{"Authorization": []string{"Bearer " + token}}
 	}
-	dialer := websocket.Dialer{HandshakeTimeout: browserHandshakeTimeout, EnableCompression: true}
+	dialer := websocket.Dialer{HandshakeTimeout: browserHandshakeTimeout, EnableCompression: true, NetDialContext: dialAgent}
 	up, agentResp, err := dialer.Dial(agentURL, headers)
 	if err != nil {
 		writeAgentHandshakeError(w, agentResp, "cannot reach workspace agent browser")

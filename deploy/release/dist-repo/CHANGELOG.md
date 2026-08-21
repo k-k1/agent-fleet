@@ -3,6 +3,33 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.9.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.2) — 2026-08-21
+
+A follow-up to the EC2-backed persistent workspaces of 0.9.0, from running one as a real
+deployment. A home created from the pre-baked *golden* snapshot could not start at all —
+the task restarted forever and no log said why — and baking a golden by hand ran into a
+step that never completes. Keeping the golden in step with the workspace image is no
+longer a promise somebody has to remember: the Control Plane does it, and refuses to
+publish a golden it could not boot.
+
+## [0.9.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.1) — 2026-08-21
+
+A maintenance release for AWS deployments, from standing one up end to end. Read-aloud
+never worked on ECS at all, a workspace created after the Control Plane started could
+not be reached from it, and the two screens a brand-new deployment shows first — the
+first-run guide and the reason a workspace will not start — were blank. Bitbucket can
+now be connected on ECS as well.
+
+## [0.9.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.9.0) — 2026-08-21
+
+Signing in is no longer tied to Google: any OpenID Connect provider or GitHub can be
+enabled, and one deployment can be divided into departments that own their own sign-in
+page, roster and permitted networks. On AWS there is a new runtime that keeps each
+person's home on a disk that survives a stop, with the cloud bill shown per member
+beside it. In the Console, `.drawio` files open as diagrams, every session lists the
+files it changed, and passages of a conversation can be highlighted for the people you
+shared it with.
+
 ## [0.8.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.8.0) — 2026-08-13
 
 A session's conversation can now be shown to another member of your tenant, a new

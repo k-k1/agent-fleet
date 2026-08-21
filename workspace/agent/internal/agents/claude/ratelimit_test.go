@@ -142,6 +142,26 @@ func TestResolveResetAt(t *testing.T) {
 		}
 	})
 
+	// 週次の窓（実測コーパス "You've hit your weekly limit · resets 9am (Asia/Tokyo)"）。
+	// バナーの壁時計は「今日か明日の 9時」としか読めないが、週次のリセットは数日先に
+	// あり得る。明日の 9時に起こしても同じ 429 を踏み、そのたび新しいエピソードが予約を
+	// 引き直す — 本当のリセットまで毎日 1 ターンずつ焼く（docs/47 §4-10）。
+	t.Run("週次はバナー単独では決めない", func(t *testing.T) {
+		weekly := "You've hit your weekly limit · resets 9am (Asia/Tokyo)"
+		if at, src, ok := resolveResetAt(weekly, abortedAt, nil, abortedAt.Add(time.Minute)); ok {
+			t.Errorf("resolveResetAt = %v (%s, ok=true) — 明日の 9時に賭けている", at, src)
+		}
+		// 捕捉の epoch が同じ壁時計を指していれば日付が確定するので、そのときは答える。
+		real := time.Date(2026, 8, 3, 9, 0, 0, 0, jst)
+		got, src, ok := resolveResetAt(weekly, abortedAt, []time.Time{real}, abortedAt.Add(time.Minute))
+		if !ok || !got.Equal(real) {
+			t.Fatalf("resolveResetAt = %v (%s, ok=%v), want %v", got, src, ok, real)
+		}
+		if src != "banner+capture" {
+			t.Errorf("source = %q, want banner+capture", src)
+		}
+	})
+
 	t.Run("材料が無ければ決めない", func(t *testing.T) {
 		if _, _, ok := resolveResetAt("", time.Time{}, nil, abortedAt); ok {
 			t.Error("ok = true — 当てずっぽうの時刻で起こしても、また上限に当たるだけ")

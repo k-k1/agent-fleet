@@ -318,8 +318,10 @@ func TestHealIdleRoutesAbortToNotifier(t *testing.T) {
 }
 
 // TestUsageLimitAbortIsTheLimitSubset: 上限エピソードの入口は blockedMarkers 全体では
-// なく「待てば解ける上限」だけ、という切り分けを固定する。プロンプト超過や認証エラーで
-// 「利用上限に達しました」と通知したら、利用者は来ないリセットを待つことになる。
+// なく「利用上限」だけ、という切り分けと、その中の**種別**（待てば解ける窓か、待っても
+// 解けない支出・残高か）を固定する。プロンプト超過や認証エラーで「利用上限に達しました」と
+// 通知したら利用者は来ないリセットを待つことになるし、支出の上限を窓と読み違えると
+// 「制限解除待ち」と表示したまま永久に解けない（docs/47 §4-10）。
 // retryable 側（"(not your usage limit)" と自称する 429）も落ちることが要点。
 func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
 	home := t.TempDir()
@@ -333,14 +335,21 @@ func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
 		name string
 		tail string
 		want bool
+		kind LimitKind
 	}{
-		{"モデル別上限", apiErr("You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.", 429), true},
-		{"アカウントの窓", apiErr("You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0), true},
-		{"一時的なレート制限は上限ではない", apiErr("API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited", 429), false},
-		{"プロンプト超過は待っても解けない", apiErr("Prompt is too long · the request is ~242785 tokens (limit 200000)", 400), false},
-		{"認証エラーは待っても解けない", apiErr("API Error (HTTP 401): authentication failed", 401), false},
-		{"接続断", apiErr("API Error: Connection closed mid-response.", 0), false},
-		{"通常の完了", asstLine("done"), false},
+		{"モデル別上限", apiErr("You've reached your Fable 5 limit. Run /usage-credits to continue or switch models with /model.", 429), true, LimitWindow},
+		{"アカウントの窓", apiErr("You've hit your session limit · resets 7:50pm (Asia/Tokyo)", 0), true, LimitWindow},
+		// 実測コーパス（2026-08-20）。既存 3 語のどれにも当たらず、週次だけがエピソードを
+		// 開けていなかった。
+		{"週次の窓", apiErr("You've hit your weekly limit · resets 9am (Asia/Tokyo)", 429), true, LimitWindow},
+		// 利用者報告（2026-08-20）。同じ 429 / rate_limit だが待っても解けない側。
+		{"組織の月次支出上限", apiErr("You've hit your org's monthly spend limit · run /usage-credits to raise it, or visit claude.ai/admin-settings/usage", 429), true, LimitSpend},
+		{"残高不足", apiErr("Your credit balance is too low to access the API", 429), true, LimitSpend},
+		{"一時的なレート制限は上限ではない", apiErr("API Error: Server is temporarily limiting requests (not your usage limit) · Rate limited", 429), false, ""},
+		{"プロンプト超過は待っても解けない", apiErr("Prompt is too long · the request is ~242785 tokens (limit 200000)", 400), false, ""},
+		{"認証エラーは待っても解けない", apiErr("API Error (HTTP 401): authentication failed", 401), false, ""},
+		{"接続断", apiErr("API Error: Connection closed mid-response.", 0), false, ""},
+		{"通常の完了", asstLine("done"), false, ""},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -349,9 +358,12 @@ func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			a, ok := UsageLimitAbort(sid)
+			a, kind, ok := UsageLimitAbort(sid)
 			if ok != tc.want {
 				t.Fatalf("UsageLimitAbort = %v, want %v", ok, tc.want)
+			}
+			if kind != tc.kind {
+				t.Errorf("種別 = %q, want %q（窓と支出で利用者の次の一手が正反対）", kind, tc.kind)
 			}
 			if ok && a.Msg == "" {
 				t.Error("上限と判定したのに理由の文言が空")

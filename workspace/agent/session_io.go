@@ -207,6 +207,15 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// otherwise. Set by unattended senders (the CP scheduler's reuse send) whose
 		// prompt is always a real task; NOT for turnless UI slash commands (/model …).
 		Confirm bool `json:"confirm"`
+		// WhenReady defers a {prompt} to the launch-task delivery loop
+		// (deliverInitialPrompt): wait for tmux + the CLI's own composer, type, nudge
+		// Enter once the paste window closed, verify. Answers 202 immediately — the
+		// caller does not wait for the boot. It is the create call's `initial_prompt`
+		// for the one case that cannot use it: the Console's 作業を始める uploads pasted
+		// attachments TO the session, so the prompt text only becomes final after the
+		// session exists. Plain {prompt} only, and not combined with report_to /
+		// peer_from / confirm (those own their own delivery semantics).
+		WhenReady bool `json:"when_ready"`
 		// Source attributes an injection's origin for the mirror badge (docs/38):
 		// "schedule" / "schedule-manual" from the CP scheduler; anything else alongside a
 		// report_to (incl. empty — the operator MCP) records as "operator". Whitelisted
@@ -308,6 +317,32 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source, body.PeerFrom)
 			return
 		}
+	}
+	// when_ready（起動直後のセッションへの最初の指示）: ここから下の「今すぐ打つ」経路には
+	// 載せない。tmux もペインもまだ無いことがあり（not_running で弾かれる）、有っても CLI が
+	// composer を描く前の打鍵は起動画面ごと食われる — 待ち・二度目 Enter・配達確認を持つ
+	// deliverInitialPrompt に渡し、202 で返す。managed は boot 画面が無く上の分岐で即送信
+	// 済みなので、ここへは tui だけが来る。
+	if body.WhenReady {
+		if len(body.Keys) > 0 || len(body.Seq) > 0 {
+			httpx.WriteErr(w, http.StatusBadRequest, "when_ready_needs_prompt",
+				"when_ready は {prompt} 経路でのみ使えます")
+			return
+		}
+		if body.ReportTo != "" || body.PeerFrom != "" || body.Confirm {
+			httpx.WriteErr(w, http.StatusBadRequest, "when_ready_conflict",
+				"when_ready は report_to / peer_from / confirm とは併用できません")
+			return
+		}
+		// 存在しないセッション名は待たせず落とす — deliverInitialPrompt は tmux が
+		// 現れるまで黙って待つので、typo は 30 秒後に無言で消えるだけになる。
+		if _, ok := session.ReadMeta(name); !ok {
+			httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session")
+			return
+		}
+		go deliverInitialPrompt(name, body.Prompt)
+		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"queued": name})
+		return
 	}
 	tn := session.TmuxName(name)
 	if !tmuxx.HasSession(tn) {

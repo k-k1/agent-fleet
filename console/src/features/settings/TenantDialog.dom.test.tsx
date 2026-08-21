@@ -122,13 +122,13 @@ describe("TenantDialog", () => {
     expect(content.querySelector("input")).toBeNull();
     expect(content.querySelector(".admin-actions")).toBeNull();
     const vals = Array.from(content.querySelectorAll(".af-val")).map((e) => e.textContent || "");
-    // 4 行目は「ボタンを出さない方式」（docs/61 §61.15.9）。受け入れる方式とは別の欄で、
-    // 表示だけを変えるもの。
-    expect(vals).toHaveLength(4);
-    expect(vals[0]).toBe("entra");
-    expect(vals[1]).toBe("@sales.acme.co.jp");
-    expect(vals[2]).toContain("未設定");
-    expect(vals[3]).toContain("未設定");
+    // ★ 残るのはドメインの 2 列だけ。方式の 2 列（受け入れる／ボタンに出す）は P7-0 で
+    // この面から出て、「サインイン方法」の行ごとのトグルになった（docs/61 §61.17.5）。
+    // CSV を読み取り専用で見せても「うちは何で入れるのか」には答えないため。
+    expect(vals).toHaveLength(2);
+    expect(vals[0]).toBe("@sales.acme.co.jp");
+    expect(vals[1]).toContain("未設定");
+    expect(content.textContent).toContain("「サインイン方法」の面で行ごとに切り替え");
     // このテナント専用のログイン URL は規則の面にも出る（人が配る導線・決定 28）。
     expect(content.textContent).toContain("login/acme");
   });
