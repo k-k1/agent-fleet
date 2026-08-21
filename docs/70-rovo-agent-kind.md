@@ -333,6 +333,79 @@ shell `#46c9d0`（シアン）/ **ssm `#6d8bf5`（藍）**。
 7. `run "<指示>"` の出力形式（headlessChat の可否／既定はスコープ外）。
 8. 1 ターンあたりの実消費クレジット（Free 350/月で第2段が何回回るか）。
 
+## 9. 第9種を足すときに触る箇所（実コードから洗い出した全数・2026-08-21）
+
+直近の追加（kiro）が実際に触っている場所を `rg` で総ざらいした結果。**認証待ちでも確定できる部分**なので先に固定する。
+数字は非テストの出現箇所数（テスト・リリースノート・履歴文書は除く）。kiro 参照 134 ファイルのうち、
+**配線として本当に足すのは以下**で、残りは「コメントで kind 名を列挙しているだけ」または kiro 固有の資産。
+
+### 9.1 workspace/agent（Go）
+
+- **新規パッケージ `internal/agents/rovo/`** — kiro は 15 ファイル構成:
+  `rovo.go`（agentImpl）/ `program.go`（起動コマンド・sid 解決）/ `state.go`（TUI 文字列分類）/
+  `transcript.go`（read 正本）/ `auth.go`（Status/login）/ `models.go` / `instructions.go` /
+  ＋ managed 用 `driver.go` / `acp.go`（rovo では `serve.go`＝HTTP+SSE）/ `mirror.go` / `context.go` ＋ テスト。
+- **kind enum と分岐**（`KindKiro` 相当が 24 箇所・非テスト）:
+  `internal/session/session.go`（`KindRovo`）/ `agent.go`（registry＋`driveState`・2）/
+  `session_io.go`（4・paneMode readiness / bracketed paste）/ `session_handlers.go`（4・ManagedAlive/Busy/DropHandle/RemoveLedger）/
+  `session_turn.go`（managedDrivers）/ `session_driver.go`（実行方式の切替）/ `session_usage.go` /
+  `session_skills.go`（skill picker の native/foreign 判定）/ `usage_fold.go`（転写にトークンが無い側）/
+  `shutdown.go`（AbortManaged/Shutdown）/ `main.go`（ReconcileManaged）。
+- **文字列で kind を列挙している所**: `connections.go`（Status）/ `agent_models.go`（Models）/
+  `agent_instructions.go`（5・`instrSupportedKinds`＝[[user-instructions-layer]]）/ `mcp_stdio.go`（2）/
+  `internal/bridge/format.go`（kindLabel）/ `env_tool_versions.go`（⚠️ rovo は **2 行**＝acli と本体・§8.3）。
+- **パス・denylist**: `internal/paths/paths.go`（`RovoHome()`）／`fs.go`（⚠️ **`~/.acli` と `~/.rovodev` の 2 つ**。
+  他 kind は 1〜2 だが rovo は**トークンが平文で載る方**を落とし忘れないこと）。
+- **MCP**: `internal/mcpreg/{def.go, materialize.go, project_spelling.go}` ＋ **`materialize_rovo.go`（新規）**。
+  ⚠️ §8.8 のとおり **2 ファイル・YAML 部分更新**なので、既存の `materialize_json.go` には乗り切らない。
+  プロジェクト MCP 側（`internal/mcpproj/{inspect.go, dialect.go, types.go}`）も kind 表を持つ。
+- **ルート**: `routes.go`（接続系）。⚠️ **rovo は `start`/`poll` が不要**（device flow が無い）＝
+  `POST /connections/rovo` と `DELETE /connections/rovo` の 2 本だけ。**install 系も不要**（焼き込み・§8.3）。
+
+### 9.2 control-plane（Go）
+
+- ⚠️ **`routes.go` は明示許可リスト**（[[cp-rest-proxy-allowlist]]・**再発常連**）。kiro は 6 本
+  （start/poll/DELETE/install POST/GET…）登録しているが、**rovo は 2 本で足りる**。
+- `mcp.go`（2・list_models whitelist／create_session の kind enum／get_session_usage の説明）/
+  `mcp_server.go` / `scheduler_wake.go`（定時実行の injectDriver）/ `enkana_dict.go`（TTS 読み。
+  kiro は `"kiro": "キロ"`。rovo は **「ロボ」と読ませない**——`"rovo": "ロヴォ"` 等を実音で決める）。
+
+### 9.3 Console（TS / CSS）
+
+- `types/session.ts`（SessionKind union＋`SESSION_KINDS`＋`ProviderConn.rovo`）/ **`agents/registry.ts`（descriptor 1 個）**。
+  ⚠️ **起動 UI（`LaunchModal` / `StartModal` / `ProjectActionPanels`）は registry 駆動なので触らない**
+  （kiro 名はコメントの列挙だけ）＝ descriptor を足せば導線は生える。
+- `lib/settings.ts`（LaunchDefaults の既定）/ `lib/agentModels.ts`（モデルを持つ kind）/ `lib/termcolor.ts`（端末の kind 色）/
+  `features/settings/AgentsTab.tsx`（**`RovoCard`**＋`LaunchDefaults` の kind union）/
+  `features/settings/mcpWire.ts`（`MCP_KINDS`）/ `features/schedules/ScheduleDetailModal.tsx`（定時実行の kind ピッカー）/
+  `features/usage/colors.ts`（⚠️ `KIND_STACK_ORDER`＝**色覚安全のためのスタック順**。青が 3 つになるので
+  agy / ssm / rovo を隣接させない並びにする）。
+- **色クラス twin 6 ファイル**（[[kind-color-css-checklist]]）: `styles/tokens.css`（dark/light の 2）/
+  `app/app.css` / `features/terminal/terminal.css`（2）/ `features/sessions/sessions.css`（2）/
+  `features/settings/settings.css`（3・`pb-<kind>` チップ含む）/ `ui/ui.css`。値は §8.2 で確定済み。
+- **i18n**: `lib/i18n/locales/{ja,en}.ts` に各 **16 キー前後**（kiro 実績）。⚠️ 裸和文 lint があるので
+  カード文言は必ずキー化（[[console-i18n]]）。rovo は install 系の文言が要らない分だけ少なくなる。
+
+### 9.4 配備・CI
+
+- `workspace/Dockerfile`（ARG＋versions.json への申告・§8.3）/ `workspace/entrypoint.sh`（設定の再固定）/
+  `deploy/local/e2e-smoke.sh`（焼き込み版の存在チェック）/ `deploy/local/cli-drift-check.sh` /
+  `.github/actions/setup-agent-cli/action.yml` / `.github/workflows/`（kiro は専用の
+  `kiro-contract.yml`＝**TUI 文字列契約のドリフト検知**を持つ。rovo も同型が要る＝[[report-arm-pitfalls]]
+  「TUI 文字列契約は毎版壊れる」）／`mcp-config-contract.yml` / `cli-release-watch.yml`。
+  ⚠️ CI 用の認証投入（kiro は `deploy/local/set-kiro-ci-auth.sh`）は rovo だと**メール＋トークン**なので簡単になる。
+- `README.md` と `workspace/agent/knowledge/af-usage.md`（利用ガイドの知識・毎ターン配布先を上書き＝[[af-usage-knowledge-doc]]）。
+
+### 9.5 kiro にあって rovo では要らない／形が変わるもの
+
+| kiro の資産 | rovo | 理由 |
+|---|---|---|
+| `install_kiro.go` / `kiro_install_http.go`（オンデマンド導入・flock・staging・marker） | **不要** | 16.6MB なので焼き込み（§8.3） |
+| `/connections/kiro/{start,poll}`（device flow） | **1 本の POST に統合** | device flow が無い（§8.4） |
+| `/connections/kiro/install`（GET/POST） | **不要** | 同上 |
+| `materialize_kiro.go`（JSON 1 ファイル） | **2 ファイル＋YAML 部分更新** | `allowedMcpServers`（§8.8） |
+| `env_tool_versions` 1 行 | **2 行**（acli / 本体） | 本体は実行時 DL（§8.3） |
+
 ## 参考
 
 - Rovo Dev CLI コマンド一覧: https://support.atlassian.com/rovo/docs/rovo-dev-cli-commands/
