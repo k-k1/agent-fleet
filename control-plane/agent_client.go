@@ -18,6 +18,9 @@ import (
 // endpoints (proxy/preview/browser) must NOT use this client.
 var agentHTTPClient = &http.Client{
 	Timeout: 2 * time.Minute,
+	// Service Connect の別名が引けないときに Cloud Map で引き直す共有 Transport
+	// （agent_dial.go）。CP→Agent の経路は全部これを通す。
+	Transport: newAgentTransport(),
 	// Never re-follow an Agent redirect with the bearer attached — control-loop
 	// paths are CP-built, so a 3xx is unexpected and surfaces as its status code.
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -29,6 +32,7 @@ var agentHTTPClient = &http.Client{
 // which may pause 4 min on a bridge approval — always gives up first). The
 // 2-minute shared timeout would fake-fail those turns.
 var agentLongCallClient = &http.Client{
+	Transport:     newAgentTransport(),
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
@@ -36,7 +40,7 @@ var agentLongCallClient = &http.Client{
 // re-issue every couple of seconds, so one hung request must not stall its
 // caller — a wedged probe inside a scheduler fire would otherwise hold the
 // tick's wg.Wait forever (the same failure mode agentHTTPClient closed).
-var healthzClient = &http.Client{Timeout: 5 * time.Second}
+var healthzClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgentTransport()}
 
 // countSessions asks the Agent how many sessions are currently running. The quota
 // caps concurrency, so only live (alive) sessions count — stopped/resumable ones,
