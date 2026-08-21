@@ -9,19 +9,30 @@
 #
 # 手順（全体）:
 #   1. 種にするメンバーを 1 人用意し、Console から Workspace を起動して**完全に立ち上がる**まで待つ
-#      （boot-install が終わり、必要なら一度 npm ci まで通しておく）
+#      （boot-install が終わるまで）
 #   2. その Workspace を停止する
-#   3. スロットから外れるまで待つ（掃除ループが返却するか、破棄する直前でもよい）
+#   3. **スロットが眠るまで待つ**（AF_ECS_EC2_SLOT_SLEEP_SEC・既定 15 分 ＋ 1 スイープ）。
+#      待つ対象は「インスタンスが stopped になること」であって、**ボリュームが外れることではない**
+#      —— 下の ★ を読むこと
 #   4. このスクリプトを実行する
 #   5. 種の Workspace を破棄する（DELETE /api/admin/workspaces）。golden は af-role=golden
 #      なので、per-membership の掃除には巻き込まれない
+#
+# ★ **停止しても home は外れない。** Stop はボリュームを付けたままにする設計で（affinity ＝
+# 「その人のスロット」そのもの）、スイーパーが 15 分後にやるのも**インスタンスの停止だけ**である
+# （runtime_ecs_ec2.go の `(home stays attached)`）。実際に外すのは eviction / Destroy /
+# ドリフト修復 / 退避だけなので、**「detached になるのを待つ」といつまでも始められない**。
+# 代わりに「**stopped なスロットに付いたまま**撮る」で正しい: インスタンスの停止は通常の
+# シャットダウンで、降りる途中でファイルシステムを umount する —— 製品自身が
+# releaseSlotSince で同じ根拠に立っている（停止済みスロットは SSM が届かないので umount を
+# 省く）。だから下のガードが拒むのは **running なスロットに付いている場合だけ**である。
 #
 # ⚠️ **リリースのたびに焼き直すこと。** イメージや CLI のピンが上がると golden は古くなる。
 # CP は af-image を突合し、一致しない golden は**使わずに空 home を作る**（起動が遅くなるだけで
 # 壊れはしないが、ログに警告が出続ける）。
 #
-# ⚠️ **未実機検証。** 中身は AWS CLI 4 コマンドだが、実際に焼いて新規ユーザーを起こすところまでは
-# まだ通していない。
+# ⚠️ **種に repo を clone しないこと。** `~/repos` は home 上にあるので、種で clone すると
+# **その clone が新規ユーザー全員の home に配られる**。焼く範囲は boot-install までとする。
 set -euo pipefail
 
 usage() {
@@ -57,14 +68,29 @@ if [ "$vol" = "None" ] || [ -z "$vol" ]; then
   exit 1
 fi
 
-# 付いたままのボリュームを撮ると、マウント中のファイルシステムのクラッシュ一貫コピーになる。
-# 全ユーザーの初期状態になるものでそれをやる理由は無い。
+# **動いているスロットに付いたまま**撮ると、マウント中のファイルシステムのクラッシュ一貫コピーに
+# なる。全ユーザーの初期状態になるものでそれをやる理由は無い。
+#
+# ★ stopped なスロットに付いたままは OK（ヘッダの ★ 参照）。ここを「detached でなければ拒否」
+# にしていた頃は、手順どおり停止して待った操作者が**絶対に抜けられなかった** —— 停止では外れず、
+# スイーパーも外さないため。live test は Go から releaseSlot() を直接呼んでこのガードを満たして
+# いたので、その穴は最後まで見えていなかった。
 attached=$(aws ec2 describe-volumes --volume-ids "$vol" \
   --query 'Volumes[0].Attachments[0].InstanceId' --output text)
 if [ "$attached" != "None" ] && [ -n "$attached" ]; then
-  echo "$vol is still attached to $attached. Stop the seed workspace and wait for the" >&2
-  echo "sweeper to release the slot (Ec2SlotSleepSec + a sweep) before baking." >&2
-  exit 1
+  state=$(aws ec2 describe-instances --instance-ids "$attached" \
+    --query 'Reservations[0].Instances[0].State.Name' --output text)
+  # stopping / pending の途中は駄目: シャットダウンが終わって初めて umount が済んでいる。
+  if [ "$state" != "stopped" ]; then
+    echo "$vol is attached to $attached, which is $state." >&2
+    echo "Stop the seed workspace and wait for the sweeper to put the slot to sleep" >&2
+    echo "(AF_ECS_EC2_SLOT_SLEEP_SEC, default 15m, + one sweep); the CP logs" >&2
+    echo "'stopping slot <id> (home stays attached)' when that happens. The home staying" >&2
+    echo "attached is expected — what has to be true is that the slot is stopped." >&2
+    exit 1
+  fi
+  echo "$vol is attached to the stopped slot $attached — its filesystem was unmounted by"
+  echo "that shutdown, so the snapshot is consistent."
 fi
 
 echo "baking $vol → golden (pool=$POOL image=$IMAGE)"
@@ -73,7 +99,11 @@ snap=$(aws ec2 create-snapshot --volume-id "$vol" \
   --tag-specifications \
     "ResourceType=snapshot,Tags=[{Key=af-pool,Value=$POOL},{Key=af-role,Value=golden},{Key=af-image,Value=$IMAGE},{Key=Name,Value=af-golden}]" \
   --query SnapshotId --output text)
-echo "snapshot $snap started; waiting for it to complete (30–40 min for a 45 GiB home)"
+# 待ち時間は**ボリュームのサイズではなく、使っているブロックの量**で決まる。boot-install だけの
+# home（種として正しい状態）なら 50 GiB のボリュームでも実測 **3 分弱**である。
+# 退避 snapshot の「45 GiB で 30〜40 分」を種にも当てはめて 30 分待つ気でいると、
+# 「進んでいないのでは」と余計な手を出す方に転ぶ。
+echo "snapshot $snap started; waiting for it to complete (~3 min for a boot-install-only home)"
 aws ec2 wait snapshot-completed --snapshot-ids "$snap"
 echo "$snap completed."
 
