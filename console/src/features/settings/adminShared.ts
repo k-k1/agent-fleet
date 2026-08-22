@@ -46,6 +46,10 @@ export interface Member {
   mem_limit?: number | null; // per-workspace RAM cap in bytes (0/undefined = unset)
   cpu_limit?: number | null; // per-workspace CPU cap in Fargate units, 1024 = 1 vCPU (0/undefined = unset)
   disk_gb?: number | null; // per-workspace working disk in GiB (0/undefined = unset → 20 GiB free default)
+  /** Which KIND of machine the workspace lands on, as a deployment-declared class id
+   *  ("" / undefined = the tenant default). Not a size — mem_limit still picks the
+   *  rung within the class (docs/70). */
+  slot_class?: string | null;
   /** "active" | "removed". A removed member is off the roster and can no longer
    *  sign in, but stays on THIS list so the rest of the offboarding sequence
    *  (stop workspace → clean home) is still reachable (docs/61 §61.10.6). */
@@ -69,7 +73,24 @@ export interface WsSizing {
   disk_meaning: "work" | "home" | "quota";
   disk_default_gb?: number;
   disk_create_only?: boolean;
+  /** The DEFAULT class's ladder when there is more than one class. */
   slots?: WsSlot[];
+  /** The machine classes this deployment offers. Absent on a deployment that declared
+   *  a single unnamed ladder — a picker with one entry is a question with one possible
+   *  answer, so there is no picker at all (docs/70 §70.10). */
+  slot_classes?: WsSlotClass[];
+  default_slot_class?: string;
+}
+
+/** One declared machine class: the operator's own label, a CPU architecture and its
+ *  own ladder. The LABEL is what the admin sees — they are choosing "省コスト（Arm）",
+ *  not an EC2 instance family; the instance type appears only in the "you land on"
+ *  line underneath. */
+export interface WsSlotClass {
+  id: string;
+  label: string;
+  arch: string;
+  slots: WsSlot[];
 }
 
 export interface WsSlot {
@@ -95,6 +116,17 @@ export const WS_SIZING_FALLBACK: WsSizing = {
 export function slotFor(slots: WsSlot[] | undefined, memMib: number): WsSlot | null {
   if (!slots || slots.length === 0) return null;
   return slots.find((s) => memMib <= s.mem_mib) ?? slots[slots.length - 1];
+}
+
+/** The ladder a class id lands on: its own rungs, or the profile's default ladder when
+ *  the deployment has no classes (or the id names one it no longer declares — the CP
+ *  falls back the same way, so the screen must not promise a class that will not be
+ *  used). */
+export function ladderFor(sizing: WsSizing, classID: string): WsSlot[] | undefined {
+  const cs = sizing.slot_classes;
+  if (!cs || cs.length === 0) return sizing.slots;
+  const want = classID || sizing.default_slot_class || cs[0].id;
+  return (cs.find((c) => c.id === want) ?? cs.find((c) => c.id === sizing.default_slot_class) ?? cs[0]).slots;
 }
 
 /** The workspace sizes offered as named choices. The three axes are stored as

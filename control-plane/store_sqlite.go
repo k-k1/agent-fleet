@@ -75,11 +75,27 @@ func (s *sqlStore) migrate(ctx context.Context) error {
 		}
 	}
 	sort.Strings(names)
+	// ⚠️ Two files with the same numeric prefix is a silent data loss, not a style
+	// problem: schema_migrations is keyed by the INTEGER below, so the first of the
+	// pair records that version and the second is skipped forever as "already
+	// applied" — the table it was supposed to create never exists, and the failure
+	// surfaces as a query error in production long after the merge.
+	//
+	// It happens whenever two branches add a migration in parallel, which is the
+	// normal way this repository works. Measured once (2026-08-22: develop's
+	// 0030_memo_category and a branch's 0030_user_limit_slot_class collided in
+	// migrations-pg). Refusing to start is the correct response — a CP that boots on
+	// a half-applied schema is worse than one that does not boot.
+	seen := map[int]string{}
 	for _, name := range names {
 		version, err := strconv.Atoi(strings.SplitN(name, "_", 2)[0])
 		if err != nil {
 			return fmt.Errorf("migration %q: bad version prefix", name)
 		}
+		if prev, dup := seen[version]; dup {
+			return fmt.Errorf("migrations %s and %s share version %d: one of them would be silently skipped; renumber the newer one", prev, name, version)
+		}
+		seen[version] = name
 		var one int
 		switch err := s.db.QueryRowContext(ctx, `SELECT 1 FROM schema_migrations WHERE version=?`, version).Scan(&one); {
 		case err == nil:
@@ -1273,8 +1289,8 @@ func (s *sqlStore) AnyActiveMembership(ctx context.Context) (bool, error) {
 func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
 	var u UserLimit
 	err := s.db.QueryRowContext(ctx,
-		`SELECT membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, created_at FROM user_limit WHERE membership_id=?`, membershipID).
-		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.MemLimit, &u.CPULimit, &u.CreatedAt)
+		`SELECT membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at FROM user_limit WHERE membership_id=?`, membershipID).
+		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.MemLimit, &u.CPULimit, &u.SlotClass, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return UserLimit{}, false, nil
 	}
@@ -1286,11 +1302,11 @@ func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserL
 
 func (s *sqlStore) PutUserLimit(ctx context.Context, membershipID string, q UserQuota) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?)
+		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(membership_id) DO UPDATE SET max_sessions=excluded.max_sessions, disk_gb=excluded.disk_gb,
-		   mem_limit=excluded.mem_limit, cpu_limit=excluded.cpu_limit`,
-		membershipID, q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, nowTS())
+		   mem_limit=excluded.mem_limit, cpu_limit=excluded.cpu_limit, slot_class=excluded.slot_class`,
+		membershipID, q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass, nowTS())
 	return err
 }
 

@@ -28,28 +28,41 @@ type goldenBakePool interface {
 	workspaceImage() string
 	// poolLabel identifies the slot pool, for logs.
 	poolLabel() string
+	// bakeArches lists the CPU architectures this deployment needs a golden for —
+	// one per distinct architecture among the declared slot classes, the default
+	// class's first. A golden is a home full of BINARIES, so there is no such thing
+	// as one golden for two architectures (docs/70 §70.6).
+	bakeArches() []string
 	// goldenFor returns the newest COMPLETED snapshot carrying this role for the
-	// running image, plus anything still pending. ("", false) means neither.
-	goldenFor(ctx context.Context, role string) (snap goldenSnap, found bool, err error)
+	// running image AND this architecture, plus anything still pending.
+	// ("", false) means neither.
+	goldenFor(ctx context.Context, role, arch string) (snap goldenSnap, found bool, err error)
 	// bakeBlocked reports that starting a NEW bake would take the last slot from a
 	// real user. It gates only the first step: abandoning a bake half way through
 	// would strand the seed's slot, which is the opposite of the intent.
 	bakeBlocked(ctx context.Context) (bool, string, error)
-	// snapshotHome captures a detached-or-stopped home as a golden CANDIDATE.
-	snapshotHome(ctx context.Context, volumeID, workspace string) (string, error)
+	// snapshotHome captures a detached-or-stopped home as a golden CANDIDATE for arch.
+	snapshotHome(ctx context.Context, volumeID, workspace, arch string) (string, error)
 	// setGoldenRole moves a snapshot between the golden roles (candidate → golden on a
 	// passing probe, candidate → rejected on a failing one). reason is recorded when
 	// non-empty.
 	setGoldenRole(ctx context.Context, snapshotID, role, reason string) error
 	// dropSupersededGoldens deletes every published golden AND every leftover candidate
-	// except keepID. Called only after a candidate has been promoted, so the pool never
-	// pays for two — and so that a second CP replica that baked its own candidate in the
-	// same window does not leave it billing forever.
-	dropSupersededGoldens(ctx context.Context, keepID string) error
+	// OF THIS ARCHITECTURE except keepID. Called only after a candidate has been
+	// promoted, so the pool never pays for two — and so that a second CP replica that
+	// baked its own candidate in the same window does not leave it billing forever.
+	//
+	// ⚠️ The arch scope is load-bearing, not tidiness: without it, publishing the arm64
+	// golden would delete the x86_64 one, and every new x86_64 member would silently
+	// go back to an empty home.
+	dropSupersededGoldens(ctx context.Context, keepID, arch string) error
 	// rejectedAttempts counts the candidates this image has already burned. It is the
 	// give-up counter: a bake that fails for a reason that is not going to change
 	// (an image whose home genuinely cannot boot) must stop taking a slot every tick.
-	rejectedAttempts(ctx context.Context) (int, error)
+	rejectedAttempts(ctx context.Context, arch string) (int, error)
+	// seedClassFor is a slot class that runs on arch, for the seed and probe
+	// workspaces to be placed with. "" when the deployment declared no classes.
+	seedClassFor(arch string) string
 }
 
 // goldenSnap is the little that the state machine needs to know about a snapshot.
@@ -106,7 +119,48 @@ var (
 func (f *ecsEC2Factory) workspaceImage() string { return f.base.WorkspaceImage() }
 func (f *ecsEC2Factory) poolLabel() string      { return f.pool.pool }
 
-func (f *ecsEC2Factory) goldenFor(ctx context.Context, role string) (goldenSnap, bool, error) {
+// bakeArches is the declared classes' distinct architectures, default class first
+// so the arch most members land on gets its golden soonest.
+func (f *ecsEC2Factory) bakeArches() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(a string) {
+		if a != "" && !seen[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+	}
+	add(f.pool.classFor(f.pool.defaultClass).arch)
+	for _, c := range f.pool.classes {
+		add(c.arch)
+	}
+	return out
+}
+
+// seedClassFor picks a class on the given architecture. The FIRST declared one, not
+// the cheapest or the biggest: the seed exists to run boot-install once, and which
+// rung it does that on changes nothing about the home it produces.
+func (f *ecsEC2Factory) seedClassFor(arch string) string {
+	for _, c := range f.pool.classes {
+		if c.arch == arch {
+			return c.id
+		}
+	}
+	return ""
+}
+
+// snapshotArch reads a snapshot's architecture. An untagged snapshot is x86_64:
+// goldens baked before classes existed could not have been anything else, and
+// treating them as "unknown" would orphan every deployment's existing golden on
+// upgrade (docs/70 §70.6).
+func snapshotArch(s ec2types.Snapshot) string {
+	if a := ec2TagValue(s.Tags, ec2TagArch); a != "" {
+		return a
+	}
+	return ec2ArchX86
+}
+
+func (f *ecsEC2Factory) goldenFor(ctx context.Context, role, arch string) (goldenSnap, bool, error) {
 	out, err := f.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
 		Filters: []ec2types.Filter{
@@ -122,6 +176,12 @@ func (f *ecsEC2Factory) goldenFor(ctx context.Context, role string) (goldenSnap,
 	found := false
 	for i := range out.Snapshots {
 		s := out.Snapshots[i]
+		// The architecture is matched HERE and not in the API filter: an EC2 tag filter
+		// cannot say "af-arch is x86_64 or absent", and absent is what every golden
+		// baked before this change looks like.
+		if snapshotArch(s) != arch {
+			continue
+		}
 		g := goldenSnap{
 			ID:        aws.ToString(s.SnapshotId),
 			Completed: s.State == ec2types.SnapshotStateCompleted,
@@ -169,18 +229,19 @@ func (f *ecsEC2Factory) bakeBlocked(ctx context.Context) (bool, string, error) {
 	return false, "", nil
 }
 
-func (f *ecsEC2Factory) snapshotHome(ctx context.Context, volumeID, workspace string) (string, error) {
+func (f *ecsEC2Factory) snapshotHome(ctx context.Context, volumeID, workspace, arch string) (string, error) {
 	out, err := f.ec2.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
 		VolumeId:    aws.String(volumeID),
-		Description: aws.String("agent-fleet golden home candidate (" + f.workspaceImage() + ")"),
+		Description: aws.String("agent-fleet golden home candidate (" + f.workspaceImage() + ", " + arch + ")"),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeSnapshot,
 			Tags: []ec2types.Tag{
 				{Key: aws.String(ec2TagPool), Value: aws.String(f.pool.pool)},
 				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleGoldenCandidate)},
 				{Key: aws.String(ec2TagImage), Value: aws.String(f.workspaceImage())},
+				{Key: aws.String(ec2TagArch), Value: aws.String(arch)},
 				{Key: aws.String(ec2TagBakeStarted), Value: aws.String(time.Now().UTC().Format(time.RFC3339))},
-				{Key: aws.String("Name"), Value: aws.String("af-golden-candidate")},
+				{Key: aws.String("Name"), Value: aws.String("af-golden-candidate-" + arch)},
 			},
 		}},
 	})
@@ -188,7 +249,7 @@ func (f *ecsEC2Factory) snapshotHome(ctx context.Context, volumeID, workspace st
 		return "", err
 	}
 	id := aws.ToString(out.SnapshotId)
-	log.Printf("golden: baking %s from %s (image %s)", id, workspace, f.workspaceImage())
+	log.Printf("golden: baking %s from %s (image %s, %s)", id, workspace, f.workspaceImage(), arch)
 	return id, nil
 }
 
@@ -213,7 +274,7 @@ func (f *ecsEC2Factory) setGoldenRole(ctx context.Context, snapshotID, role, rea
 	return err
 }
 
-func (f *ecsEC2Factory) rejectedAttempts(ctx context.Context) (int, error) {
+func (f *ecsEC2Factory) rejectedAttempts(ctx context.Context, arch string) (int, error) {
 	out, err := f.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
 		OwnerIds: []string{"self"},
 		Filters: []ec2types.Filter{
@@ -225,10 +286,18 @@ func (f *ecsEC2Factory) rejectedAttempts(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return len(out.Snapshots), nil
+	// Per architecture: an image whose home cannot boot on arm64 is not evidence about
+	// x86_64, and counting them together would stop the healthy arch from ever baking.
+	n := 0
+	for i := range out.Snapshots {
+		if snapshotArch(out.Snapshots[i]) == arch {
+			n++
+		}
+	}
+	return n, nil
 }
 
-func (f *ecsEC2Factory) dropSupersededGoldens(ctx context.Context, keepID string) error {
+func (f *ecsEC2Factory) dropSupersededGoldens(ctx context.Context, keepID, arch string) error {
 	// ★ Rejected candidates are NOT swept. They are the record of why an image has no
 	// golden, and they are also the give-up counter — deleting them would put the baker
 	// straight back into retrying an image it has already proven cannot boot.
@@ -245,7 +314,7 @@ func (f *ecsEC2Factory) dropSupersededGoldens(ctx context.Context, keepID string
 		}
 		for i := range out.Snapshots {
 			id := aws.ToString(out.Snapshots[i].SnapshotId)
-			if id == keepID {
+			if id == keepID || snapshotArch(out.Snapshots[i]) != arch {
 				continue
 			}
 			log.Printf("golden: deleting the superseded %s %s", role, id)

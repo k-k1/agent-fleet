@@ -22,6 +22,27 @@ Parameters:
     Description: ECS-optimized AMI. Resolved at stack update, so re-deploying this
       stack is how slots get patched (the one operational cost the EC2 launch type
       really does add — ADR 0045 決定 7).
+  SlotAmiIdArm64:
+    Type: String
+    Default: ""
+    Description: >-
+      arm64 ECS-optimized AMI, for slot classes that declare arch=arm64 (docs/70
+      §70.8). Leave EMPTY unless AF_ECS_EC2_SLOT_TYPES actually declares an arm64
+      class — the Control Plane refuses to start when one is declared and this is
+      not set, which is deliberate: a class that appears in the admin UI and cannot
+      launch is worse than a deployment that says so at boot.
+
+      To turn it on, set this to the SSM value
+      /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id
+      (`aws ssm get-parameter --name … --query Parameter.Value --output text`).
+      A plain String rather than an SSM::Parameter::Value type because that type
+      cannot be left empty, and empty is the default this has to have.
+
+      ⚠️ There is NO second launch template. Everything about a slot except the AMI —
+      instance profile, security group, root volume, and the user-data that joins the
+      cluster and installs af-mount/af-umount — is architecture-neutral, so the CP
+      passes this as a RunInstances ImageId override on the one template below.
+      Patching it is still "redeploy this stack" (ADR 0045 決定 7).
   SlotRootVolumeGiB:
     Type: Number
     Default: 100
@@ -159,6 +180,9 @@ Resources:
               Cleanup: !Ref TaskCleanupWait
 
 Outputs:
+  SlotAmiIdArm64:
+    Value: !Ref SlotAmiIdArm64
+    Export: { Name: !Sub "${AWS::StackName}-SlotAmiIdArm64" }
   SlotLaunchTemplateId:
     Value: !Ref SlotLaunchTemplate
     Export: { Name: !Sub "${AWS::StackName}-SlotLaunchTemplateId" }

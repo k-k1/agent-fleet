@@ -1472,6 +1472,16 @@ export const ja = {
   "admin.ws_slot_lands": "→ {type}（{spec}・専有）",
   "admin.ws_slot_zero": "0 = 最小スロット（{type}）",
   "admin.ws_slot_note": "スロットは 1 人で専有し、タスクに予約を掛けないので箱を丸ごと使えます。この値は箱を選ぶだけです。",
+  "tenant.machine_title": "既定のマシン種別",
+  "tenant.machine_note":
+    "このテナントのメンバーが、自分の指定を持たないときに載るマシンです。メンバー毎の指定はメンバー詳細から行い、そちらが優先されます。",
+  "tenant.machine_deploy_default": "デプロイの既定",
+  "tenant.machine_member_note":
+    "自分で種類を選んでいるメンバーは、ここを変えても影響を受けません。反映は各メンバーの次回起動時です。",
+  "admin.ws_machine": "マシンの種類",
+  "admin.ws_machine_tenant_default": "テナントの既定",
+  "admin.ws_machine_arch_warn":
+    "この種類は CPU の系統が変わります。次回起動時に、ホーム内のこの系統向けでない導入物（各エージェント CLI・node・Chromium など）を入れ直します（数分）。~/repos 配下の node_modules / target / .venv は消えませんが、そのままでは動かないので各自で入れ直してください。",
   "admin.ws_cpu_na": "このランタイムでは CPU を選べません（箱を丸ごと使うため）。",
   "admin.ws_disk_home": "ワークスペースの home（永続）",
   "admin.ws_disk_home_hint": "0 = デプロイ既定 {n} GiB。home の作成時にだけ反映され、あとから縮められません。",

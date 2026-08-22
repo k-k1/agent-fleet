@@ -4,8 +4,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 )
@@ -342,6 +344,71 @@ func (m *manager) resolveWorkspaceSize(ctx context.Context, ws Workspace) (memBy
 		}
 	}
 	return memBytes, cpuUnits, diskGB
+}
+
+// resolveSlotClass returns the machine class ws's NEXT container start lands on, and
+// a note when the stored answer could not be honoured (docs/70 §70.4.3).
+//
+// The chain is user → tenant default → deployment default, and each candidate must be
+// both DECLARED by the deployment and ALLOWED by the tenant. "" is returned on every
+// runtime that has no classes, which is every runtime but ecs-ec2 and every ecs-ec2
+// deployment that declared a single unnamed ladder — i.e. this is inert until an
+// operator opts in, and nothing about an existing deployment changes.
+//
+// ⚠️ The note exists because there is nothing to clamp TO. An out-of-range memory
+// value has a smaller version; a class that is not available has no "nearer" class,
+// so the person silently runs somewhere they did not ask for. That is invisible until
+// the bill arrives, which is why the substitution is reported rather than just done.
+func (m *manager) resolveSlotClass(ctx context.Context, ws Workspace) (id, note string) {
+	p := m.workspaceSizing()
+	if len(p.SlotClasses) == 0 {
+		return "", ""
+	}
+	declared := map[string]bool{}
+	for _, c := range p.SlotClasses {
+		declared[c.ID] = true
+	}
+	var lim tenantLimits
+	if t, err := m.store.GetTenant(ctx, ws.TenantID); err == nil {
+		lim = parseLimits(t.Limits)
+	}
+	ok := func(id string) bool {
+		if id == "" || !declared[id] {
+			return false
+		}
+		if len(lim.AllowedSlotClasses) == 0 {
+			return true
+		}
+		return slices.Contains(lim.AllowedSlotClasses, id)
+	}
+	// The fallback the tenant lands on when the per-user value cannot be used: the
+	// tenant's own default, else the deployment's, else the first class the tenant is
+	// allowed at all. The last step matters — a super_admin can restrict a tenant to a
+	// set that excludes the deployment default, and "no usable class" must not become
+	// a failed Start.
+	fallback := p.DefaultSlotClass
+	if ok(lim.SlotClass) {
+		fallback = lim.SlotClass
+	} else if !ok(fallback) {
+		fallback = ""
+		for _, c := range p.SlotClasses {
+			if ok(c.ID) {
+				fallback = c.ID
+				break
+			}
+		}
+		if fallback == "" {
+			fallback = p.DefaultSlotClass // the operator's list wins over a tenant restriction that leaves nothing
+		}
+	}
+	ul, found, err := m.store.GetUserLimit(ctx, ws.MembershipID)
+	if err != nil || !found || ul.SlotClass == "" {
+		return fallback, ""
+	}
+	if ok(ul.SlotClass) {
+		return ul.SlotClass, ""
+	}
+	return fallback, fmt.Sprintf("slot class %q is not available here; using %q", ul.SlotClass, fallback)
 }
 
 // resolveWorkspaceMemBytes is the memory axis alone, kept because the admin API and

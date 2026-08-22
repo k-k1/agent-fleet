@@ -80,16 +80,80 @@ Parameters:
       than silently running no workspaces.
   Ec2SlotTypes:
     Type: String
-    Default: "m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8"
+    Default: "standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,m6i.xlarge:16384:4,m6i.2xlarge:32768:8"
     Description: >-
-      The slot sizes the pool may run, as instanceType:memoryMiB[:vcpu], ascending. A
-      workspace lands on the smallest slot that holds its memory REQUEST and gets the
-      WHOLE box (the task reserves neither cpu nor memory — on EC2 those are
-      reservations against the instance). EC2 on-demand pricing is perfectly linear in
-      vCPU, so bigger slots are not more expensive per user (ADR 0045 決定 8). The vCPU
-      field is optional and display-only: the Console prints it so a tenant admin can
-      see which box a memory number lands on, and omitting it just omits the label
-      (ADR 0045 決定 21 — asking EC2 instead would mean an extra IAM action for a label).
+      The slot sizes the pool may run. A workspace lands on the smallest slot that
+      holds its memory REQUEST and gets the WHOLE box (the task reserves neither cpu
+      nor memory — on EC2 those are reservations against the instance). EC2 on-demand
+      pricing is perfectly linear in vCPU, so bigger slots are not more expensive per
+      user (ADR 0045 決定 8). The vCPU field is optional and display-only: the Console
+      prints it so a tenant admin can see which box a memory number lands on, and
+      omitting it just omits the label (ADR 0045 決定 21 — asking EC2 instead would
+      mean an extra IAM action for a label).
+
+      Two shapes, and the old one is not deprecated (docs/70 §70.4.2):
+
+        instanceType:memoryMiB[:vcpu],…                one unnamed class, x86_64
+        id|label|arch|<ladder>[;id|label|arch|<ladder>] one class per entry
+
+      With more than one class, a tenant admin chooses WHICH KIND of machine per
+      tenant and per member, and the memory number still picks the rung within it.
+      arch is x86_64 or arm64 and is DECLARED, never guessed from the family name.
+
+      The default above offers two x86_64 classes, because m6i needs NOTHING to work:
+      same architecture, so the same workspace image, the same AMI, the same golden
+      snapshot, and a member's home stays valid when they move (measured
+      ap-northeast-1 2026-08-22: m6i is 4.8% cheaper than m7i). It is the "cost over
+      speed" choice that is available today.
+
+      ⚠️ Changing this parameter moves nobody by itself — Ec2DefaultSlotClass decides
+      where members with no choice of their own land, and it defaults to the FIRST
+      class. An existing stack also keeps its own value on a redeploy unless you pass
+      this parameter, so upgrading does not add a picker to a running deployment.
+
+      Adding Graviton is a matter of appending a class. Measured in ap-northeast-1 on
+      2026-08-22 (price, and this repository's own build times on each family):
+
+        m8g  -11.0% per hour and 29% FASTER than m7i  <- strictly better than m7i
+        m7g  -19.0% per hour and 10% faster           <- no reason to pick over m8g
+        m6g  -24.0% per hour but 32% SLOWER           <- cheapest per HOUR, not per unit of work
+
+        …;arm|Faster and cheaper (Arm)|arm64|m8g.large:8192:2,m8g.xlarge:16384:4,m8g.2xlarge:32768:8
+
+      ⚠️ m6g is the cheapest per hour and the most expensive per build. Which one is
+      right depends on the member: a slot bills for the wall-clock time it is RUNNING,
+      and a workspace spends most of that idle, so the hourly price is what a
+      mostly-reading member pays — while a member who builds all day pays in time. If
+      you offer m6g, put the trade-off in its LABEL; "24% cheaper" on its own will be
+      read as free money.
+
+      ⚠️ Unlike m6i, an arm64 class has TWO prerequisites, in this order:
+
+        1. a workspace image with an arm64 manifest. Without it the slot launches and
+           the task cannot pull anything that runs on it.
+        2. Ec2SlotAmiArm64 below. The CP refuses to boot when an arm64 class is
+           declared and that is empty, rather than showing a class in the admin UI
+           that cannot launch.
+
+      ⚠️ Adding a class moves nobody: Ec2DefaultSlotClass still decides where a member
+      with no choice of their own lands. Changing the class of a member who already has
+      a home makes their next start reinstall its architecture-dependent tools
+      (docs/70 §70.5) — that is expected, and it costs them one slow start.
+  Ec2SlotAmiArm64:
+    Type: String
+    Default: ""
+    Description: >-
+      SlotAmiIdArm64 output of the 40-ec2-pool stack. Required only when Ec2SlotTypes
+      declares an arm64 class — the CP refuses to boot otherwise, rather than showing
+      a class in the admin UI that cannot launch.
+  Ec2DefaultSlotClass:
+    Type: String
+    Default: ""
+    Description: >-
+      The class id a member lands on with no per-user and no per-tenant value. Empty =
+      the first class declared in Ec2SlotTypes. ⚠️ Moving this on a running deployment
+      moves EVERY member who has not chosen for themselves, and each of their homes
+      then reinstalls its architecture-dependent tools on the next start.
   Ec2MaxSlots:
     Type: String
     Default: "8"
@@ -531,6 +595,8 @@ Resources:
             # --- EC2 slot pool (only read when WsRuntime=ecs-ec2) ---
             - { Name: AF_ECS_EC2_LAUNCH_TEMPLATE, Value: !Ref Ec2SlotLaunchTemplate }
             - { Name: AF_ECS_EC2_SLOT_TYPES, Value: !Ref Ec2SlotTypes }
+            - { Name: AF_ECS_EC2_AMI_ARM64, Value: !Ref Ec2SlotAmiArm64 }
+            - { Name: AF_ECS_EC2_DEFAULT_SLOT_CLASS, Value: !Ref Ec2DefaultSlotClass }
             - { Name: AF_ECS_EC2_MAX_SLOTS, Value: !Ref Ec2MaxSlots }
             - { Name: AF_ECS_EC2_SLOT_SLEEP_SEC, Value: !Ref Ec2SlotSleepSec }
             - { Name: AF_ECS_EC2_HOME_GB, Value: !Ref Ec2HomeGiB }

@@ -25,6 +25,11 @@ type fakeGoldenPool struct {
 	deleted  []string
 	nextID   int
 	now      time.Time
+	// arches is what the deployment declares. One entry keeps every pre-class test
+	// reading exactly as it did; the multi-arch tests set two.
+	arches   []string
+	snapArch map[string]string // id -> the arch it was baked on
+	seedArch []string          // seedClassFor calls, in order
 }
 
 func newFakeGoldenPool() *fakeGoldenPool {
@@ -37,18 +42,29 @@ func newFakeGoldenPool() *fakeGoldenPool {
 		// ROW when there is no volume yet, and that timestamp is written by the store
 		// with the real clock. A frozen fake clock hours away from it would make every
 		// seed look expired the moment it was created.
-		now: time.Now().UTC(),
+		now:      time.Now().UTC(),
+		arches:   []string{ec2ArchX86},
+		snapArch: map[string]string{},
 	}
 }
 
 func (f *fakeGoldenPool) workspaceImage() string { return f.image }
 func (f *fakeGoldenPool) poolLabel() string      { return "test-pool" }
 
-func (f *fakeGoldenPool) goldenFor(_ context.Context, role string) (goldenSnap, bool, error) {
+func (f *fakeGoldenPool) bakeArches() []string { return f.arches }
+
+// seedClassFor mirrors the real one: a class id on that arch. The tests only need it
+// to be distinct per arch and recorded.
+func (f *fakeGoldenPool) seedClassFor(arch string) string {
+	f.seedArch = append(f.seedArch, arch)
+	return "class-" + arch
+}
+
+func (f *fakeGoldenPool) goldenFor(_ context.Context, role, arch string) (goldenSnap, bool, error) {
 	var best goldenSnap
 	found := false
 	for id, r := range f.roles {
-		if r != role {
+		if r != role || f.archOf(id) != arch {
 			continue
 		}
 		s := *f.snaps[id]
@@ -63,11 +79,21 @@ func (f *fakeGoldenPool) bakeBlocked(context.Context) (bool, string, error) {
 	return f.blocked, f.blockWhy, nil
 }
 
-func (f *fakeGoldenPool) snapshotHome(_ context.Context, volumeID, _ string) (string, error) {
+// archOf defaults to x86_64 for a snapshot nothing stamped, exactly as the real
+// snapshotArch does for a golden baked before classes existed.
+func (f *fakeGoldenPool) archOf(id string) string {
+	if a := f.snapArch[id]; a != "" {
+		return a
+	}
+	return ec2ArchX86
+}
+
+func (f *fakeGoldenPool) snapshotHome(_ context.Context, volumeID, _, arch string) (string, error) {
 	f.nextID++
 	id := "snap-" + string(rune('a'+f.nextID-1))
 	f.snaps[id] = &goldenSnap{ID: id, Started: f.now}
 	f.roles[id] = ec2RoleGoldenCandidate
+	f.snapArch[id] = arch
 	f.baked = append(f.baked, volumeID)
 	return id, nil
 }
@@ -80,9 +106,9 @@ func (f *fakeGoldenPool) setGoldenRole(_ context.Context, id, role, reason strin
 	return nil
 }
 
-func (f *fakeGoldenPool) dropSupersededGoldens(_ context.Context, keepID string) error {
+func (f *fakeGoldenPool) dropSupersededGoldens(_ context.Context, keepID, arch string) error {
 	for id, r := range f.roles {
-		if id == keepID || (r != ec2RoleGolden && r != ec2RoleGoldenCandidate) {
+		if id == keepID || f.archOf(id) != arch || (r != ec2RoleGolden && r != ec2RoleGoldenCandidate) {
 			continue
 		}
 		f.deleted = append(f.deleted, id)
@@ -92,10 +118,10 @@ func (f *fakeGoldenPool) dropSupersededGoldens(_ context.Context, keepID string)
 	return nil
 }
 
-func (f *fakeGoldenPool) rejectedAttempts(context.Context) (int, error) {
+func (f *fakeGoldenPool) rejectedAttempts(_ context.Context, arch string) (int, error) {
 	n := 0
-	for _, r := range f.roles {
-		if r == ec2RoleGoldenRejected {
+	for id, r := range f.roles {
+		if r == ec2RoleGoldenRejected && f.archOf(id) == arch {
 			n++
 		}
 	}
@@ -375,7 +401,7 @@ func TestGoldenBakeRejectsACandidateThatWillNotBoot(t *testing.T) {
 	if f.role(candID) != ec2RoleGoldenRejected {
 		t.Fatalf("a probe that never came up must reject the candidate, got %q", f.role(candID))
 	}
-	if _, ok, _ := f.pool.goldenFor(ctx, ec2RoleGolden); ok {
+	if _, ok, _ := f.pool.goldenFor(ctx, ec2RoleGolden, ec2ArchX86); ok {
 		t.Fatal("published a golden despite the probe failing")
 	}
 	if !strings.Contains(f.pool.reasons[candID], "did not come up") {
@@ -442,7 +468,7 @@ func TestGoldenBakeTearsDownASeedThatNeverBoots(t *testing.T) {
 	if f.hasWorkspace(t, goldenSeedKey) {
 		t.Fatal("a seed that never booted was left holding its slot")
 	}
-	if n, _ := f.pool.rejectedAttempts(ctx); n != 0 {
+	if n, _ := f.pool.rejectedAttempts(ctx, ec2ArchX86); n != 0 {
 		t.Fatalf("a seed that never booted burned a rejection attempt (%d) — that is evidence about the slot, not the image", n)
 	}
 }
@@ -500,7 +526,7 @@ func TestGoldenBakeProbeStillReadsTheCandidateOnASecondRound(t *testing.T) {
 		f.baker.step(ctx)
 		f.pool.completeAnyCandidate()
 	}
-	if _, ok, _ := f.pool.goldenFor(ctx, ec2RoleGolden); !ok {
+	if _, ok, _ := f.pool.goldenFor(ctx, ec2RoleGolden, ec2ArchX86); !ok {
 		t.Fatal("the first round did not publish a golden")
 	}
 
@@ -559,5 +585,74 @@ func TestGoldenBakeTearsDownASeedWhoseStartNeverGotAVolume(t *testing.T) {
 	f.baker.step(ctx)
 	if f.hasWorkspace(t, goldenSeedKey) {
 		t.Fatal("a seed that never got a home volume was retried forever")
+	}
+}
+
+// --- per-architecture goldens (docs/70 §70.6) --------------------------------------
+
+// ★ The failure this guards: a golden is a home full of BINARIES, so an x86_64 one
+// handed to an arm64 slot mounts perfectly and cannot exec anything. Two goldens must
+// coexist, and publishing one must not touch the other — dropSupersededGoldens deletes
+// "every published golden except keepID", which without an architecture scope would
+// make the second bake silently un-golden the first.
+func TestGoldenBakeKeepsOneGoldenPerArch(t *testing.T) {
+	ctx := context.Background()
+	healthy := true
+	f := newGoldenFixture(t, &healthy)
+	f.pool.arches = []string{ec2ArchX86, ec2ArchArm}
+
+	// An x86_64 golden that some earlier round already published, with NO af-arch tag —
+	// exactly what a deployment upgrading into this change has.
+	f.pool.snaps["snap-old"] = &goldenSnap{ID: "snap-old", Completed: true, Started: f.pool.now}
+	f.pool.roles["snap-old"] = ec2RoleGolden
+
+	// Drive the arm64 bake to publication. Each step also runs the x86_64 machine,
+	// which finds its golden already published and only tidies.
+	for i := 0; i < 12; i++ {
+		f.baker.step(ctx)
+		for id, r := range f.pool.roles {
+			if r == ec2RoleGoldenCandidate {
+				f.pool.complete(id)
+			}
+		}
+	}
+
+	if f.role("snap-old") != ec2RoleGolden {
+		t.Fatalf("the pre-existing x86_64 golden was %s — publishing arm64 must not touch it", f.role("snap-old"))
+	}
+	armGolden := ""
+	for id, r := range f.pool.roles {
+		if r == ec2RoleGolden && f.pool.archOf(id) == ec2ArchArm {
+			armGolden = id
+		}
+	}
+	if armGolden == "" {
+		t.Fatalf("no arm64 golden was published (roles=%v arch=%v)", f.pool.roles, f.pool.snapArch)
+	}
+	// And the seed it was baked from was pinned to an arm64 class, not left on the
+	// default — otherwise the "arm64 golden" would be an x86_64 home under a new tag.
+	sawArm := false
+	for _, a := range f.pool.seedArch {
+		if a == ec2ArchArm {
+			sawArm = true
+		}
+	}
+	if !sawArm {
+		t.Fatalf("the arm64 seed was never placed on an arm64 class (seedClassFor calls: %v)", f.pool.seedArch)
+	}
+}
+
+// x86_64 keeps the ORIGINAL, unsuffixed reserved keys. Renaming them would orphan the
+// af-golden-seed membership (and its home volume) of every deployment that has ever
+// baked a golden — a workspace nobody can see and nothing will clean up.
+func TestGoldenArchKeysAreStableForX86(t *testing.T) {
+	if got := archKey(goldenSeedKey, ec2ArchX86); got != goldenSeedKey {
+		t.Errorf("x86_64 seed key = %q, want the original %q", got, goldenSeedKey)
+	}
+	if got := archKey(goldenSeedKey, ""); got != goldenSeedKey {
+		t.Errorf("an unset arch = %q, want the original %q", got, goldenSeedKey)
+	}
+	if got := archKey(goldenProbeKey, ec2ArchArm); got != goldenProbeKey+"-arm64" {
+		t.Errorf("arm64 probe key = %q", got)
 	}
 }

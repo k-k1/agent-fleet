@@ -30,6 +30,21 @@ type tenantLimits struct {
 	// value is clamped to it at container start. 0 = no tenant cap (ADR 0044).
 	MaxWorkspaceCPU    int `json:"max_workspace_cpu,omitempty"`
 	MaxWorkspaceDiskGB int `json:"max_workspace_disk_gb,omitempty"`
+	// SlotClass is the tenant's default machine class — which of the deployment's
+	// declared ladders a member of this tenant lands on when they have no per-user
+	// value (docs/70 §70.4.3). "" => the deployment default class. tenant_admin-set,
+	// like the idle timeouts; inert on every runtime but ecs-ec2.
+	SlotClass string `json:"slot_class,omitempty"`
+	// AllowedSlotClasses restricts which classes a tenant_admin may choose from,
+	// super_admin-set — the same two-stage shape as MaxWorkspace*: the operator's
+	// ceiling above, the tenant's choice below. Empty (the default) = no restriction,
+	// so a deployment that never sets it behaves exactly as before.
+	//
+	// ⚠️ This is a policy, not a cap on a number: an out-of-range memory value can be
+	// clamped down to something usable, but a class that is not allowed has no
+	// "smaller" version — resolveSlotClass falls back to the tenant default and SAYS
+	// so, rather than silently running the person somewhere they didn't ask for.
+	AllowedSlotClasses []string `json:"allowed_slot_classes,omitempty"`
 	// P3-9 idle-stop (docs/19): per-tenant, super_admin-editable.
 	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
 	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop
