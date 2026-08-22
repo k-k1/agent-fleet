@@ -306,6 +306,13 @@ jobs:
           pip install --quiet cfn-lint
           cfn-lint deploy/aws/ecs/cfn/*.yaml
 
+      # cfn-lint passes a template that exports an empty value (measured, 1.53.1) and
+      # so does validate-template — the failure only appears at CREATE, after every
+      # resource is built, and rolls the stack back. 0.10.0 shipped exactly that in
+      # 40-ec2-pool, which made a fresh ecs-ec2 deployment impossible.
+      - name: no empty CFN exports (would roll a fresh stack back)
+        run: python3 deploy/aws/ecs/check-cfn-exports.py deploy/aws/ecs/cfn/*.yaml deploy/aws/ec2-single/cfn.yaml
+
       - name: shellcheck + syntax
         run: |
           bash -n deploy/aws/ecs/release-ecr.sh
