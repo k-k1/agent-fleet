@@ -36,7 +36,7 @@ const MEMBER = {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-async function mount() {
+async function mount(member: typeof MEMBER & { state?: string } = MEMBER, onRemoved = () => {}) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -44,10 +44,10 @@ async function mount() {
     root!.render(
       <MemberView
         slug="acme"
-        member={MEMBER}
+        member={member}
         isSuper={false}
         onChanged={() => {}}
-        onRemoved={() => {}}
+        onRemoved={onRemoved}
       />,
     );
   });
@@ -122,6 +122,41 @@ describe("メンバーの上限編集", () => {
     await act(async () => save!.click());
     const [, , body] = apiJSON.mock.calls.find((c) => c[0] === "api/admin/user-limits")!;
     expect(body).toMatchObject({ mem_limit: 16384 * 1048576, cpu_limit: 4096, disk_gb: 80 });
+  });
+});
+
+// 後始末の 3 段（docs/61 §61.18）。段は「外す → Workspace を破棄 → 行を消す」で、
+// 画面に出る危険操作は常にそのうちの 1 つだけであること —— 3 つ並べると、どれが
+// 今できる操作なのかが押してみるまで分からない。
+describe("外したメンバーの後始末", () => {
+  it("在席中は「メンバーを外す」だけ", async () => {
+    await mount();
+    expect(buttonWith("メンバーを外す")).toBeTruthy();
+    expect(buttonWith("Workspace を破棄")).toBeFalsy();
+    expect(buttonWith("メンバーを完全に削除")).toBeFalsy();
+  });
+
+  it("外した直後・Workspace が残っている間は「破棄」だけ", async () => {
+    await mount({ ...MEMBER, status: "removed", state: "stopped" });
+    expect(buttonWith("Workspace を破棄")).toBeTruthy();
+    // まだ home もクラウド資源も生きている。行を消すとそれを指すものが無くなる。
+    expect(buttonWith("メンバーを完全に削除")).toBeFalsy();
+  });
+
+  it("破棄が済んだ（state=none）ときだけ「完全に削除」が出て、DELETE を投げる", async () => {
+    const onRemoved = vi.fn();
+    await mount({ ...MEMBER, status: "removed", state: "none" }, onRemoved);
+    expect(buttonWith("Workspace を破棄")).toBeFalsy();
+
+    await act(async () => buttonWith("メンバーを完全に削除")!.click());
+    const confirm = buttonWith("完全に削除する");
+    expect(confirm).toBeTruthy();
+    await act(async () => confirm!.click());
+
+    const call = apiJSON.mock.calls.find((c) => String(c[0]).includes("/members/"))!;
+    expect(call[0]).toBe("api/admin/tenants/acme/members/a-x-com");
+    expect(call[1]).toBe("DELETE");
+    expect(onRemoved).toHaveBeenCalled();
   });
 });
 

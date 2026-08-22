@@ -151,6 +151,21 @@ func aggregateUsage(rows []UsageRow) []usageTotal {
 	return out
 }
 
+// withoutSystemTenants drops the reserved tenants' occupancy rows from a showback
+// answer. Kept next to the aggregation rather than in the store: the ledger records
+// every running workspace on purpose (the sampler must not decide what counts), and
+// this is only about what an admin screen shows.
+func withoutSystemTenants(rows []UsageRow) []UsageRow {
+	out := rows[:0:0]
+	for _, r := range rows {
+		if isSystemTenantSlug(r.TenantSlug) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // hoursOf converts seconds to hours rounded to 2 decimals.
 func hoursOf(secs int) float64 {
 	h, _ := strconv.ParseFloat(fmt.Sprintf("%.2f", float64(secs)/3600), 64)
@@ -175,6 +190,10 @@ func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	// 予約テナントの稼働は人の稼働ではない（system_tenant.go）。テナント一覧から
+	// 消しておきながらここに「af-golden / af-golden-seed」の行が残ると、隠した意味が
+	// 無くなる。サンプラは記録し続ける（台帳は素のまま）ので、消すのは見せ方だけ。
+	rows = withoutSystemTenants(rows)
 	if r.URL.Query().Get("format") == "csv" {
 		writeUsageCSV(w, rows)
 		return

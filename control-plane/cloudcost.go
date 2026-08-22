@@ -184,6 +184,12 @@ func (p *cloudCostPoller) fetch(ctx context.Context) ([]CloudCostRow, []string, 
 	if err != nil {
 		return nil, nil, err
 	}
+	// 予約メンバーシップ（種と probe）は共有インフラ扱いにする。引けなければ畳まない
+	// だけで、取り込み自体は続ける。
+	system, err := p.mgr.systemMembershipIDs(ctx)
+	if err != nil {
+		log.Printf("cloud cost: system memberships could not be resolved, not folding: %v", err)
+	}
 
 	var rows []CloudCostRow
 	seen := map[string]bool{}
@@ -222,7 +228,50 @@ func (p *cloudCostPoller) fetch(ctx context.Context) ([]CloudCostRow, []string, 
 	for d := range seen {
 		days = append(days, d)
 	}
-	return rows, days, nil
+	return foldSystemMemberships(rows, system), days, nil
+}
+
+// foldSystemMemberships moves the reserved memberships' spend into the SHARED bucket
+// (ADR 0048 決定 12). The golden bake's seed and probe are built by the product's ordinary
+// Start path, so their workspaces carry `af-membership` like anybody's — and they are not
+// anybody. Their money is the deployment keeping its own snapshot warm.
+//
+// ★ Why the tag is not simply left off at creation instead: `af-membership` is not only a
+// cost allocation key, it is the MATCHING key the runtime uses to find a membership's EFS
+// access point and home volume again (runtime_ecs_ec2.go の ensureAccessPoint など).
+// An empty value there would either fail to match or collide with the next untagged
+// resource. So the tag is written exactly as the product writes it, and the fold happens
+// here, at ingest.
+//
+// ⚠️ The sum is NOT optional. PutCloudCost replaces `(day, membership_id, service)`
+// wholesale (ON CONFLICT ... DO UPDATE SET unblended=excluded.unblended), so once two
+// groups fold onto the same key, the second write would DELETE the first one's money
+// rather than add to it. Cost Explorer hands us the seed and the untagged shared line as
+// two separate groups of the same (day, service) all the time.
+func foldSystemMemberships(rows []CloudCostRow, system map[string]bool) []CloudCostRow {
+	if len(system) == 0 {
+		return rows
+	}
+	type key struct{ day, membership, service string }
+	out := make([]CloudCostRow, 0, len(rows))
+	at := map[key]int{}
+	for _, row := range rows {
+		if system[row.MembershipID] {
+			row.MembershipID = ""
+			row.TenantID = "" // 共有バケットにテナントは無い（テナント別画面に出さない）
+		}
+		k := key{row.Day, row.MembershipID, row.Service}
+		if i, ok := at[k]; ok {
+			out[i].Unblended += row.Unblended
+			out[i].Amortized += row.Amortized
+			// 片方でも未確定なら合計も未確定。
+			out[i].Estimated = out[i].Estimated || row.Estimated
+			continue
+		}
+		at[k] = len(out)
+		out = append(out, row)
+	}
+	return out
 }
 
 // costRowFrom turns one Cost Explorer group into a stored row, or reports that it is not
@@ -447,6 +496,11 @@ func (a adminAPI) oneMemberCloudCost(w http.ResponseWriter, r *http.Request, mem
 // bill (ALB, RDS, Route53, NAT, the CP's own task), which is information about the
 // deployment rather than about a tenant — handing it to a tenant_admin would be reading
 // outside their tenant, the same line ADR 0043 決定 24/25 draws.
+//
+// ★ 予約メンバーシップ（system_tenant.go）の分もここで SHARED に足す。取り込み側
+// （fetch）は既に畳んでいるが、畳むようになったのは窓（既定 7 日）の中だけで、それより
+// 古い行は membership 付きのまま残っている。この 1 行が無いと、過去の月を見たときだけ
+// 「af-golden-seed」という人がメンバー一覧に現れる。
 func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := a.tenantScope(w, r)
 	if !ok {
@@ -462,14 +516,18 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	// 引けなければ畳まないだけ（費用画面を落とすほどの話ではない）。
+	system, _ := a.mgr.systemMembershipIDs(r.Context())
 	deploymentWide := tenantID == "" // tenantScope already proved super_admin for this
 	members := make([]map[string]any, 0, len(totals))
-	var shared *CloudCostTotal
+	var sharedMicro int64
+	var sharedSeen bool
 	var attributed int64
 	for i := range totals {
 		t := totals[i]
-		if t.MembershipID == "" {
-			shared = &totals[i]
+		if t.MembershipID == "" || system[t.MembershipID] {
+			sharedMicro += t.Unblended
+			sharedSeen = true
 			continue
 		}
 		attributed += t.Unblended
@@ -490,7 +548,7 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 		"attributed_micro": attributed,
 		"meta":             a.cloudCostMeta(r.Context(), rows),
 	}
-	if deploymentWide && shared != nil {
+	if deploymentWide && sharedSeen {
 		byService := map[string]int64{}
 		sharedRows, err := a.mgr.store.ListCloudCost(r.Context(), "", "", from, to)
 		if err != nil {
@@ -498,11 +556,11 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, row := range sharedRows {
-			if row.MembershipID == "" {
+			if row.MembershipID == "" || system[row.MembershipID] {
 				byService[row.Service] += row.Unblended
 			}
 		}
-		resp["shared_micro"] = shared.Unblended
+		resp["shared_micro"] = sharedMicro
 		resp["shared_services"] = sortedCostServices(byService)
 	}
 	writeJSON(w, http.StatusOK, resp)
