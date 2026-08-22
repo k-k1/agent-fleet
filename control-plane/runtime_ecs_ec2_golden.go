@@ -13,6 +13,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -233,10 +235,124 @@ func (f *ecsEC2Factory) bakeBlocked(ctx context.Context) (bool, string, error) {
 	// One free slot is not enough: the bake needs one for the seed AND, later, one for
 	// the probe, and a bake that gets half way and then cannot place its probe would
 	// hold the seed's slot across every following tick.
-	if n+2 > f.pool.maxSlots {
-		return true, fmt.Sprintf("%d/%d slots in use; a bake needs two free", n, f.pool.maxSlots), nil
+	blocked, why := bakeCapacityBlocked(n, f.pool.maxSlots)
+	return blocked, why, nil
+}
+
+// bakeCapacityBlocked is the arithmetic above, on its own so that the pool SCREEN can
+// answer "why is nothing being baked" with the same rule the baker actually applies
+// (docs/64 §64.30). Two copies of "needs two free" would drift, and the screen's job is
+// precisely to explain the baker's decisions.
+func bakeCapacityBlocked(inUse, maxSlots int) (bool, string) {
+	if inUse+2 > maxSlots {
+		return true, fmt.Sprintf("%d/%d slots in use; a bake needs two free", inUse, maxSlots)
 	}
-	return false, "", nil
+	return false, ""
+}
+
+// --- what the pool screen shows about a bake in flight (docs/64 §64.30) -----------
+
+// ec2BakeHome is one reserved workspace's home as the SCREEN needs it: the two facts
+// the ordinary home view does not carry, both of which the baker itself steers by.
+type ec2BakeHome struct {
+	VolumeID   string
+	InstanceID string    // "" once the slot has been released
+	Baked      bool      // af-bake-ready: boot-install finished on this home
+	Created    time.Time // the anchor the seed's own deadline uses
+}
+
+// describeBake works out how far this architecture's bake has got, from what the pool
+// call has already read — no extra AWS calls, and no state in the CP (ADR 0012).
+//
+// The order of the cases is the order of the state machine in golden_bake.go, read
+// backwards: the furthest thing that exists is the phase we are in. A candidate exists
+// only after the home was captured, a captured home only after boot-install finished,
+// and so on, so the first case that matches is the truthful one even when a previous
+// step's leftovers are still around.
+func describeBake(g *ec2GoldenView, arch string, homes map[string]ec2BakeHome, slotRunning map[string]bool,
+	cand ec2types.SnapshotState, blocked bool, slotsInUse int) {
+	seedWS, seed, haveSeed := findBakeHome(homes, goldenSeedKey, arch)
+	if haveSeed {
+		g.Seed = &ec2BakeWorkspaceView{Workspace: seedWS, VolumeID: seed.VolumeID, InstanceID: seed.InstanceID}
+	}
+	if probeWS, probe, ok := findBakeHome(homes, goldenProbeKey, arch); ok {
+		g.Probe = &ec2BakeWorkspaceView{Workspace: probeWS, VolumeID: probe.VolumeID, InstanceID: probe.InstanceID}
+	}
+	switch {
+	case g.SnapshotID != "" && !g.Stale:
+		g.Phase = ec2BakePhasePublished
+	case g.Candidate != "" && cand == ec2types.SnapshotStateError:
+		// The copy itself failed. The baker rejects it on its next tick; reporting
+		// "snapshotting" until then would show a bake that is already over.
+		g.Phase = ec2BakePhaseRejected
+	case g.Candidate != "" && cand != ec2types.SnapshotStateCompleted:
+		g.Phase = ec2BakePhaseSnapshot
+	case g.Candidate != "":
+		// Completed. verify() does nothing until this point, so a completed candidate
+		// means the probe is what is being waited for — whether or not it exists yet.
+		g.Phase = ec2BakePhaseProbe
+	case haveSeed && seed.Baked:
+		g.Phase, g.PhaseSince = ec2BakePhaseCapture, bakeStamp(seed.Created)
+	case haveSeed && slotRunning[seed.InstanceID]:
+		g.Phase, g.PhaseSince = ec2BakePhaseBoot, bakeStamp(seed.Created)
+	case haveSeed:
+		// A home with no running slot under it: the seed is being placed, or its slot is
+		// still coming up. ⚠️ Before the home volume exists there is nothing in AWS to
+		// see at all, so the first moments of a bake still read as "idle" — one tick.
+		g.Phase, g.PhaseSince = ec2BakePhaseSeed, bakeStamp(seed.Created)
+	case g.Attempts >= 2:
+		g.Phase = ec2BakePhaseGaveUp
+	case g.Rejected != "":
+		g.Phase = ec2BakePhaseRejected
+	case blocked:
+		g.Phase, g.SlotsInUse = ec2BakePhaseBlocked, slotsInUse
+	default:
+		g.Phase = ec2BakePhaseIdle
+	}
+}
+
+// findBakeHome picks the reserved workspace's home out of the pool's homes. Matched on
+// the reserved USER KEY, which is what the workspace name ends with (workspaceNames:
+// af-ws-<tenant>-<key>) — and per architecture, because arm64's seed is a different
+// workspace from x86_64's (archKey).
+func findBakeHome(homes map[string]ec2BakeHome, key, arch string) (string, ec2BakeHome, bool) {
+	want := archKey(key, arch)
+	for ws, h := range homes {
+		if ws == want || strings.HasSuffix(ws, "-"+want) {
+			return ws, h, true
+		}
+	}
+	return "", ec2BakeHome{}, false
+}
+
+// snapshotProgress turns EBS's "63%" into 63. An unreadable value is 0, which the
+// screen shows as no percentage at all rather than as "0% done".
+func snapshotProgress(s ec2types.Snapshot) int {
+	n, err := strconv.Atoi(strings.TrimSuffix(aws.ToString(s.Progress), "%"))
+	if err != nil || n < 0 || n > 100 {
+		return 0
+	}
+	return n
+}
+
+// bakeStartedAt is when THIS deployment started waiting on the candidate — the CP's own
+// af-bake-started, the same value the probe deadline is measured from, so the elapsed
+// time on the screen and the tear-down it explains cannot disagree.
+func bakeStartedAt(s ec2types.Snapshot) string {
+	if ts := ec2TagValue(s.Tags, ec2TagBakeStarted); ts != "" {
+		return ts
+	}
+	if s.StartTime != nil {
+		return bakeStamp(*s.StartTime)
+	}
+	return ""
+}
+
+func bakeStamp(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func (f *ecsEC2Factory) snapshotHome(ctx context.Context, volumeID, workspace, arch string) (string, error) {

@@ -19,6 +19,7 @@ import { fmtGbHint } from "./adminShared.ts";
 import type { Member, Tenant } from "./adminShared.ts";
 import { TenantLoginRules, TenantLoginRulesView, TenantSignInMethods } from "./tenantLogin.tsx";
 import { TenantNetworkView } from "./tenantNetwork.tsx";
+import { TenantGitOAuthView } from "./tenantGitOAuth.tsx";
 import { TenantMachineView } from "./tenantMachine.tsx";
 import { MembersPanel, MemberView } from "./tenantMembers.tsx";
 import { AllSessionsView, AuditView, UsageView } from "./tenantOps.tsx";
@@ -64,6 +65,14 @@ export function tenantScopeGroups(opts: { cost: boolean }): ScopeGroup[] {
         // 上の 2 つ（読み取り専用 / super_admin 承認）とは持ち主が違う。
         ["network", "tenant.tab_network"],
       ],
+    },
+    // 連携 = 外部サービス側にテナントが用意した資格情報を、こちらに登録する面。
+    // ログインでも運用でもないので節を分けた（docs/71 §71.4）。今は git プロバイダの
+    // OAuth アプリ 1 項目だが、置き場所としてはここが増える側。
+    {
+      key: "integrations",
+      label: "tenant.group_integrations",
+      items: [["git-oauth", "tenant.tab_git_oauth"]],
     },
     { key: "manage", label: "tenant.group_manage", items: manage },
   ];
@@ -400,6 +409,9 @@ export function TenantScopeBody({
     );
   }
   if (section === "network") return <TenantNetworkView key={slug} slug={slug} />;
+  // ★ isSuper で出し分けない。git プロバイダの OAuth アプリはテナント管理者のもので、
+  //   PUT も tenantAdminFor で門を張っている（ADR 0052 決定 3）。
+  if (section === "git-oauth") return <TenantGitOAuthView key={slug} slug={slug} />;
   if (section === "members") {
     if (member) {
       return (

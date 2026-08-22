@@ -296,20 +296,9 @@ Parameters:
   GithubClientId:
     Type: String
     Default: ""
-    Description: GITHUB_OAUTH_CLIENT_ID (not secret; the secret comes from SSM). The
-      same OAuth App also drives the Console's GitHub "Connect" device flow.
-  BitbucketOauthKey:
-    Type: String
-    Default: ""
-    Description: >-
-      BITBUCKET_OAUTH_KEY — the OAuth consumer's Key (not secret; the secret comes from
-      SSM at <SsmPrefix>/bitbucket-oauth-secret). Setting this enables the Console's
-      Bitbucket "Connect" button; pasting an email + API token works without it.
-      ★ Bitbucket is a GIT connection, not a sign-in method — it never appears on the
-      login page. The consumer's Callback URL must be EXACTLY
-      https://<Fqdn>/api/oauth/bitbucket/callback (Bitbucket matches it in full), and the
-      consumer needs an authorization-code grant (i.e. a secret) because the credential
-      helper refreshes the access token. docs/dev/08-integrations.md §8.4.
+    Description: GITHUB_OAUTH_CLIENT_ID (not secret; the secret comes from SSM). Sign-in
+      only since docs/71 — the Console's GitHub "Connect" button reads the OAuth app the
+      TENANT registered (Tenant settings -> Integrations), not this one.
   GithubAllowedDomains:
     Type: String
     Default: ""
@@ -367,13 +356,11 @@ Conditions:
   # only when that IdP is actually configured.
   HasGoogle: !Not [ !Equals [ !Ref GoogleClientId, "" ] ]
   HasOidc: !Not [ !Equals [ !Ref OidcProviderId, "" ] ]
-  # The org list, not the client id: GITHUB_OAUTH_CLIENT_ID is also the Console's
-  # git-connect device flow, which many deployments set without wanting a login.
+  # The org list, not the client id — historically GITHUB_OAUTH_CLIENT_ID also drove
+  # the Console's git-connect device flow, which many deployments set without wanting a
+  # login. That flow reads the tenant's own app since docs/71, but the switch stays the
+  # org list: it is the thing that authorizes the sign-in.
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
-  # Bitbucket has no "orgs" split to make: the key exists only for the git connection,
-  # so the key itself is the switch. Without it the CP answers not_configured and the
-  # Console offers token paste only.
-  HasBitbucket: !Not [ !Equals [ !Ref BitbucketOauthKey, "" ] ]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
@@ -565,15 +552,14 @@ Resources:
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_ALLOWED_TIDS", Value: !Ref OidcAllowedTids }, !Ref "AWS::NoValue" ]
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_JA", Value: !Ref OidcLabelJa }, !Ref "AWS::NoValue" ]
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_EN", Value: !Ref OidcLabelEn }, !Ref "AWS::NoValue" ]
-            # GitHub sign-in (docs/61 §61.7). GITHUB_OAUTH_CLIENT_ID is passed
-            # unconditionally: it is also the Console's git-connect device flow.
+            # GitHub sign-in (docs/61 §61.7).
             - { Name: GITHUB_OAUTH_CLIENT_ID, Value: !Ref GithubClientId }
             - { Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs }
             - { Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains }
-            # Bitbucket git connection (docs/dev/08-integrations.md §8.4). The CP owns the
-            # callback (the Agent is internal-only), and it derives it from PUBLIC_BASE_URL
-            # above — nothing else to configure here.
-            - { Name: BITBUCKET_OAUTH_KEY, Value: !Ref BitbucketOauthKey }
+            # ★ No BITBUCKET_OAUTH_* and no workspace GITHUB_OAUTH_CLIENT_ID: the git
+            # providers' OAuth apps are per-tenant rows since docs/71, registered in the
+            # Console under Tenant settings -> Integrations -> Git provider OAuth. The CP
+            # still owns the Bitbucket callback and derives it from PUBLIC_BASE_URL above.
             # AF_RUNTIME=ecs = the P3-7 stage-2 adapter (Fargate). AF_RUNTIME=ecs-ec2
             # keeps the same substrate but puts workspaces on a pool of EC2 slots with a
             # persistent per-user EBS home (docs/64, ADR 0045 決定 10) — deploy the
@@ -629,11 +615,6 @@ Resources:
               - HasGithub
               - Name: GITHUB_OAUTH_CLIENT_SECRET
                 ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/github-client-secret"
-              - !Ref "AWS::NoValue"
-            - !If
-              - HasBitbucket
-              - Name: BITBUCKET_OAUTH_SECRET
-                ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/bitbucket-oauth-secret"
               - !Ref "AWS::NoValue"
             - Name: AF_COOKIE_SECRET
               ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/cookie-secret"
