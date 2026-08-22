@@ -111,10 +111,21 @@ Parameters:
       class. An existing stack also keeps its own value on a redeploy unless you pass
       this parameter, so upgrading does not add a picker to a running deployment.
 
-      Adding Graviton is a matter of appending a class (measured against m7i: m7g
-      -19.0%, m6g -24.0%, m8g -11.0%):
+      Adding Graviton is a matter of appending a class. Measured in ap-northeast-1 on
+      2026-08-22 (price, and this repository's own build times on each family):
 
-        …;arm|Lower cost (Arm)|arm64|m7g.large:8192:2,m7g.xlarge:16384:4,m7g.2xlarge:32768:8
+        m8g  -11.0% per hour and 29% FASTER than m7i  <- strictly better than m7i
+        m7g  -19.0% per hour and 10% faster           <- no reason to pick over m8g
+        m6g  -24.0% per hour but 32% SLOWER           <- cheapest per HOUR, not per unit of work
+
+        …;arm|Faster and cheaper (Arm)|arm64|m8g.large:8192:2,m8g.xlarge:16384:4,m8g.2xlarge:32768:8
+
+      ⚠️ m6g is the cheapest per hour and the most expensive per build. Which one is
+      right depends on the member: a slot bills for the wall-clock time it is RUNNING,
+      and a workspace spends most of that idle, so the hourly price is what a
+      mostly-reading member pays — while a member who builds all day pays in time. If
+      you offer m6g, put the trade-off in its LABEL; "24% cheaper" on its own will be
+      read as free money.
 
       ⚠️ Unlike m6i, an arm64 class has TWO prerequisites, in this order:
 
