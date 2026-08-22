@@ -544,6 +544,14 @@ matrix に `aarch64-unknown-linux-musl` を足し、Homebrew formula の Linux/A
 「別環境での再現」「checksum は通って実行だけ落ちる＝インストーラは成功を報告する」という、
 向こうがまだ持っていない事実を渡す場合に限る。
 
+**2026-08-22、その形で 1 度だけ添えた**（[PR #3318 のコメント](https://github.com/rtk-ai/rtk/pull/3318#issuecomment-5377768939)）。
+渡した事実は 3 つ: ① Raspberry Pi / RHEL ではなく **Debian 12 コンテナ on AWS Graviton4**
+でも同じであること、② **DL と checksums.txt 検証は両方成功し、実行だけが落ちる**ので
+sha256 で固定するインストーラは「検証済みの正常インストール」を報告してしまうこと、
+③ 同じイメージで `x86_64-unknown-linux-musl` は動いているので **musl 経路は姉妹ターゲットで
+実証済み**であること。あわせて Graviton での検証を申し出た。
+**これ以上こちらから押さない**——次に動くのは向こうのレビューである。
+
 ⚠️ triage ラベルを付けているのは **AI bot（wshm）** で、人間の maintainer が見た形跡は
 どのスレッドにも無い。**「triage 済み ＝ 人が判断した」と読まないこと。**
 
