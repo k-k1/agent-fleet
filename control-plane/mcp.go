@@ -1277,7 +1277,7 @@ func agentText(ctx context.Context, rt Runtime, method, path string, body []byte
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("workspace agent unreachable (is the workspace running?)")
 	}

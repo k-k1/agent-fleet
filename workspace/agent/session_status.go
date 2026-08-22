@@ -16,8 +16,9 @@ import (
 
 // Session liveness via claude hooks. claude fires UserPromptSubmit when work
 // starts and Stop when it finishes a response; we wire those to
-// `workspace-agent session-status <state>`, which records {state, ts} keyed by the
-// claude session_id (== our deterministic sid). wireSession surfaces the state so
+// `workspace-agent session-status <state>`, which records {state, ts} keyed by our
+// deterministic slot sid (claude's hook session_id, normalized — see below).
+// wireSession surfaces the state so
 // the Console can badge 進行中 / 応答あり and notify on arrival. Robust and cheap:
 // driven by claude's own events, no TUI parsing or transcript polling. With
 // --dangerously-skip-permissions there is no tool-approval QA state, so the two
@@ -30,7 +31,9 @@ import (
 // runSessionStatusHook is `workspace-agent session-status <state> [sid] [codex]`.
 // Three callers key the status differently:
 //   - claude:   `session-status <state>` — session_id comes from claude's hook JSON
-//     on stdin and equals our deterministic sid (we launch with --session-id).
+//     on stdin. It is our deterministic sid while claude honours the --session-id we
+//     launched with, and an id of claude's own once it has restarted itself;
+//     claude.NormalizeHookSID maps it back onto the slot (claude/sid.go).
 //   - opencode: `session-status <state> <sid>` — the bundled plugin passes OUR sid
 //     directly (no stdin JSON).
 //   - codex:    `session-status <state> <sid> codex` — codex generates its OWN
@@ -52,8 +55,14 @@ func runSessionStatusHook(args []string) {
 				codex.RememberSid(sid, in.sessionID)
 			}
 		} else {
-			h = in             // claude: sid + pending payloads come from stdin
-			sid = in.sessionID // claude's session_id == our deterministic sid
+			h = in // claude: sid + pending payloads come from stdin
+			// claude's session_id is normally our deterministic sid (we launch with
+			// --session-id), but claude drops that flag whenever it restarts itself and
+			// then announces an id of its own (internal/agents/claude/sid.go). Keying the
+			// status by that id makes the session vanish from the Console mid-run — the
+			// state, the pending question/plan and the report matching below are all read
+			// by slot sid. Pull it back onto the slot (and remember the drift).
+			sid = claude.NormalizeHookSID(in.sessionID)
 		}
 	}
 	if sid == "" {
