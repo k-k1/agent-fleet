@@ -377,3 +377,44 @@ func TestTaskDefDeclaresArchitecture(t *testing.T) {
 		t.Fatalf("x86_64 slot must declare X86_64, got %+v", in.RuntimePlatform)
 	}
 }
+
+// The exact string cfn/30-ingress.yaml ships as Ec2SlotTypes' default.
+//
+// ⚠️ Copied here on purpose. A CFN parameter is a STRING that nothing validates until
+// a CP boots on it, and this one is now long enough to get a `|` or a `;` wrong. The
+// failure mode is not a syntax error — parseSlotClasses drops what it cannot read — so
+// a typo would ship as "the picker is missing" or "the saver class vanished", on a
+// deployment nobody is watching. Keep this in step with the template.
+func TestShippedDefaultSlotClassesParse(t *testing.T) {
+	const shipped = "standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8" +
+		";saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,m6i.xlarge:16384:4,m6i.2xlarge:32768:8"
+
+	cs := parseSlotClasses(shipped)
+	if len(cs) != 2 {
+		t.Fatalf("the shipped default must declare two classes, got %d: %+v", len(cs), cs)
+	}
+	if cs[0].id != "standard" || cs[1].id != "saver" {
+		t.Fatalf("ids/order changed: %+v", cs)
+	}
+	for _, c := range cs {
+		// ⚠️ Both classes are x86_64, and that is the point: the shipped default must
+		// need no arm64 image and no arm64 AMI, so it works on every deployment as it
+		// stands. An arm64 class here would make the CP refuse to boot until the
+		// operator also set Ec2SlotAmiArm64 (validate()).
+		if c.arch != ec2ArchX86 {
+			t.Errorf("the shipped default must not require an arm64 AMI: %s is %s", c.id, c.arch)
+		}
+		if len(c.slots) != 3 || c.slots[0].vcpu != 2 || c.slots[2].vcpu != 8 {
+			t.Errorf("class %s lost rungs: %+v", c.id, c.slots)
+		}
+	}
+	// And it boots with nothing but the launch template every ecs-ec2 deployment
+	// already has.
+	p := ec2PoolConfig{launchTemplate: "lt-1", classes: cs}
+	if err := p.validate(); err != nil {
+		t.Fatalf("the shipped default must boot without any new parameter: %v", err)
+	}
+	if p.defaultClass != "standard" {
+		t.Errorf("the shipped default must land nobody on the cheaper class, got %q", p.defaultClass)
+	}
+}

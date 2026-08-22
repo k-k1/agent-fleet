@@ -495,18 +495,29 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 決定 9-1). Set `0` and it becomes your job on every release |
 | — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
 
-**Offering a choice of machine (opt-in, docs/70).** `Ec2SlotTypes` also takes several
-named ladders, `id|label|arch|<ladder>` separated by `;`, and a tenant administrator then
-picks one per tenant and per member. Memory still picks the rung *within* the class, so
-"8 GB" keeps meaning the same thing:
+**Offering a choice of machine (docs/70).** `Ec2SlotTypes` takes several named ladders,
+`id|label|arch|<ladder>` separated by `;`, and a tenant administrator then picks one per
+tenant and per member. Memory still picks the rung *within* the class, so "8 GB" keeps
+meaning the same thing. **The shipped default already declares two**, because "cost over
+speed" is a legitimate choice and one version of it costs nothing to offer:
 
 ```
-standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;arm|Lower cost (Arm)|arm64|m7g.large:8192:2,m7g.xlarge:16384:4,m7g.2xlarge:32768:8
+standard|Standard (Intel)|x86_64|m7i.large:8192:2,…;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,…
 ```
 
 Measured on-demand prices in ap-northeast-1 (2026-08-22), against m7i: **m7g −19.0%,
 m6g −24.0%, m8g −11.0%, m6i −4.8%**. `$/vCPU-hour` is linear within every family, so the
 saving is the same on every rung.
+
+**m6i is the one that needs nothing.** Same architecture as m7i, so: the same workspace
+image, the same AMI, the same golden snapshot, and a member's home keeps working when they
+move between the two. −4.8% for no prerequisites and no migration. Graviton is where the
+real money is, and it is also where every prerequisite below lives.
+
+⚠️ Adding a class moves nobody. `Ec2DefaultSlotClass` decides where members with no choice
+of their own land, and it defaults to the FIRST class. A running stack also keeps its own
+`Ec2SlotTypes` on a redeploy unless you pass the parameter, so upgrading the CP does not
+put a picker in front of anybody.
 
 Before declaring an `arm64` class, in this order:
 
