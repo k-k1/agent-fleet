@@ -50,6 +50,19 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
   （`internal/agents/claude/sid.go`）。`AF_SESSION_NAME` は tmux セッションの env なので**再起動をまたいで残る**——
   cwd 一致のような当て推量と違い取り違えようがない、というのがこの手掛かりを選ぶ理由。転写の所在も `--resume` の
   相手も、以降は台帳を通した `LiveSID()` で決める。
+- **会話 id の持ち方は 2 系統ある**。**捕捉型**（codex は hook、opencode は plugin、agy/kiro は
+  ディスク探索）は CLI 自身が採番した id を**イベントごとに再記録**するので、CLI が別セッションへ
+  移っても次のイベントで追従する（実測でドリフト 0: codex 58/58・opencode 16/16）。**押し付け型**
+  （claude `--session-id`・copilot `--session-id`・cursor `--resume`）は我々が採番した id を渡し、
+  以後それが使われている前提で転写も状態も引く——**CLI がその id を使わなくなった瞬間に静かに壊れる**
+  （上記の claude 実例）。押し付け型に新しい種別を足すときは、必ず取りこぼしの回収経路も一緒に用意すること。
+  claude は hook が session_id を名乗るのでそれを使い、**status hook を持たない copilot/cursor は
+  ディスクから拾い直す**（`internal/agents/imposedsid.go` の `ResolveImposedSID`）。回収は
+  「押し付けた id が CLI 側に**一つも存在しない**とき」に限り、cwd 一致・スロット作成時刻以降・
+  他スロット未取得の候補が**ちょうど 1 つ**のときだけ採用する（曖昧なら動かさない——誤採用で
+  他人の会話を映すのは、固まったままより悪い）。帰属の材料は copilot が
+  `session-state/<sid>/workspace.yaml` の `cwd`/`created_at`、cursor は転写パスに cwd が入っている
+  `projects/<slug>/agent-transcripts/<chatID>/`（作成時刻はそのディレクトリの mtime。追記では動かない——実測）。
 - ⚠️ **tmux の `-t` は前方一致**（exact→prefix→fnmatch）。`claude_foo` が `claude_foo-sh` に一致して
   誤判定・誤 kill しうるため、target 参照は全て `=name` の exact 形式で行うのが本リポジトリの規約。
 - **DB ミラー（B 案）**: CP の `GET /api/sessions` は running 時に Agent から取得して DB を洗い替え、
