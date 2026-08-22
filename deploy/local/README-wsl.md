@@ -97,16 +97,18 @@ needs).
    ```
 3. Re-run `run-dev.sh wsl`. On startup it auto-sources `deploy/local/oauth.env` and
    injects `GITHUB_OAUTH_CLIENT_ID` into workspaces via the CP (the startup log shows
-   `loaded .../oauth.env (GitHub device flow client_id: set)`).
-4. Start the GitHub integration from a workspace in the Console; it walks you through
+   `loaded .../oauth.env`).
+4. Register your GitHub OAuth App in the Console under **Tenant settings ->
+   Integrations -> Git provider OAuth** (client_id only — the app needs "Enable Device
+   Flow" ON). Then start the GitHub integration from a workspace: it walks you through
    a device code and verification URL. `gh auth login` is not needed (the
    transparent-auth wrapper injects the token).
 
 This WSL preset is fixed to a single user, so **`AUTH` is always `dev`** (writing
-`AUTH=oauth` into `oauth.env` is not honored = login auth never changes). The only
-values read from `oauth.env` are the git-provider ones: `GITHUB_OAUTH_CLIENT_ID` /
-`BITBUCKET_OAUTH_KEY,SECRET` / `PUBLIC_BASE_URL`. Token paste (PAT) also works for the
-integration, in which case no client_id is needed.
+`AUTH=oauth` into `oauth.env` is not honored = login auth never changes). That fixed
+user is a **super_admin**, which is what makes the tenant settings screen above
+reachable. The git providers' OAuth apps are no longer read from `oauth.env` at all
+(docs/71); token paste (PAT) also works, in which case nothing has to be registered.
 
 ## 3. Open in a browser
 

@@ -401,6 +401,7 @@ type Store interface {
 	MCPServerStore
 	SessionShareStore
 	TenantIdPStore
+	TenantGitOAuthStore
 
 	Close() error
 }
@@ -531,6 +532,37 @@ type TenantIdPStore interface {
 	// (docs/61 §61.17.4 の順序). Used to warn before suspending, never to refuse:
 	// stopping a compromised IdP must stay faster than starting one.
 	CountMembersOnlyOnProvider(ctx context.Context, tenantID, providerID string) (int, error)
+}
+
+// TenantGitOAuth is one tenant's OAuth app for a git provider (docs/71, migration
+// 0048). SecretEnc is opaque ciphertext here exactly like TenantIdP.SecretEnc: the
+// SQL layer stores and returns it, tenant_git_oauth.go owns the sealing.
+//
+// ★ There is no status. Unlike TenantIdP, this row declares nothing about who
+// anybody is — it only names the OAuth app a member's "connect GitHub / Bitbucket"
+// button talks to — so it takes effect the moment the tenant_admin saves it
+// (ADR0052 決定 3). An empty SecretEnc is normal for GitHub: its device flow
+// authenticates with the client_id alone.
+type TenantGitOAuth struct {
+	ID, TenantID, Provider string
+	ClientID               string
+	SecretEnc, KeyRef      string
+	UpdatedBy              string
+	CreatedAt, UpdatedAt   string
+}
+
+// TenantGitOAuthStore is the per-tenant git provider OAuth app registry (docs/71).
+// Every call carries tenant_id, the way TenantIdPStore does, so a tenant_admin of
+// one tenant can never read or write another's app — and the secret in particular
+// never leaves the tenant it was sealed for.
+type TenantGitOAuthStore interface {
+	ListTenantGitOAuth(ctx context.Context, tenantID string) ([]TenantGitOAuth, error)
+	GetTenantGitOAuth(ctx context.Context, tenantID, provider string) (TenantGitOAuth, bool, error)
+	// PutTenantGitOAuth is an upsert on (tenant_id, provider): a tenant has one app
+	// per host, so "create" and "edit" are the same act and splitting them would only
+	// invite a duplicate row the unique index then refuses.
+	PutTenantGitOAuth(ctx context.Context, row TenantGitOAuth) error
+	DeleteTenantGitOAuth(ctx context.Context, tenantID, provider string) error
 }
 
 // IdentityLink is one proven login, on its way to LinkIdentity. It is a struct

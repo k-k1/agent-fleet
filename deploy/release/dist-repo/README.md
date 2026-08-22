@@ -208,19 +208,19 @@ af start
 
 Each user connects their own GitHub / Bitbucket from the Console
 (**⚙ Settings → Git hosting**) — pasting a token works out of the box. To also light up
-the one-click **"Connect via OAuth"** buttons, set these in the environment
-**before `af start`** (the launcher passes them through to the control plane):
+the one-click **"Connect via OAuth"** buttons, register your OAuth app **in the
+Console**, under **Tenant settings → Integrations → Git provider OAuth**:
 
-| Provider | Variables | Notes |
+| Provider | What to enter | Notes |
 |---|---|---|
-| **GitHub** (device flow) | `GITHUB_OAUTH_CLIENT_ID` | Create an OAuth App with **"Enable Device Flow" ON**. The client_id is **not a secret**; no callback URL is needed, so it works on plain `localhost`. |
-| **Bitbucket** (auth code) | `BITBUCKET_OAUTH_KEY`, `BITBUCKET_OAUTH_SECRET`, `PUBLIC_BASE_URL` | The consumer's Callback URL must exactly equal `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`. |
+| **GitHub** (device flow) | `client_id` only | Create an OAuth App with **"Enable Device Flow" ON**. The client_id is **not a secret**; no callback URL is needed, so it works on plain `localhost`. |
+| **Bitbucket** (auth code) | Key + Secret | The consumer's Callback URL must exactly equal `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback` — the screen shows you the exact string. |
 
-```bash
-GITHUB_OAUTH_CLIENT_ID=<your-client-id> af start
-```
+There is **no environment variable** for this. `GITHUB_OAUTH_CLIENT_ID` and
+`BITBUCKET_OAUTH_KEY`/`_SECRET` are not read: the app is a per-tenant setting, so it
+applies the moment it is saved and needs no restart. On the native edition the single
+`AUTH=dev` user is a super_admin, so that screen is reachable right after `af start`.
 
-Under the systemd unit below, add them as `Environment=` lines in `[Service]`.
 Without any of this, token/PAT paste in the Console still works — OAuth is only a
 convenience.
 
@@ -276,9 +276,8 @@ Hosts that cannot reach a registry at all can build the images from source and
 `deploy/compose/release.sh --save` in the source repository.
 
 The bundled `README.md` is the full runbook: prerequisites, key generation,
-TLS/domain setup, git-provider OAuth (`GITHUB_OAUTH_CLIENT_ID` /
-`BITBUCKET_OAUTH_KEY` / `BITBUCKET_OAUTH_SECRET` in `.env`), backup/restore,
-upgrades and troubleshooting.
+TLS/domain setup, backup/restore, upgrades and troubleshooting. (Git-provider OAuth
+is not in `.env` — it is registered per tenant in the Console.)
 
 ## Uninstalling / removing data (native edition)
 

@@ -1226,6 +1226,7 @@ func (s *sqlStore) DeleteTenant(ctx context.Context, tenantID string) error {
 	for _, stmt := range []string{
 		`DELETE FROM mcp_server WHERE tenant_id=?`,
 		`DELETE FROM tenant_idp WHERE tenant_id=?`,
+		`DELETE FROM tenant_git_oauth WHERE tenant_id=?`,
 		`DELETE FROM egress_allowlist WHERE tenant_id=?`,
 		// ログイン規則と allowed_cidrs は tenant の列なので、この 1 行で一緒に消える。
 		`DELETE FROM tenant WHERE id=?`,
@@ -2956,6 +2957,64 @@ func (s *sqlStore) SetTenantIdPStatus(ctx context.Context, tenantID, id, status,
 
 func (s *sqlStore) DeleteTenantIdP(ctx context.Context, tenantID, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM tenant_idp WHERE tenant_id=? AND id=?`, tenantID, id)
+	return err
+}
+
+// --- tenant-owned git provider OAuth apps (docs/71 + ADR0052) ------------------
+
+const tenantGitOAuthCols = `SELECT id, tenant_id, provider, client_id, secret_enc, key_ref,
+       updated_by, created_at, updated_at FROM tenant_git_oauth`
+
+func scanTenantGitOAuth(sc scanner) (TenantGitOAuth, error) {
+	var g TenantGitOAuth
+	err := sc.Scan(&g.ID, &g.TenantID, &g.Provider, &g.ClientID, &g.SecretEnc, &g.KeyRef,
+		&g.UpdatedBy, &g.CreatedAt, &g.UpdatedAt)
+	return g, err
+}
+
+func (s *sqlStore) ListTenantGitOAuth(ctx context.Context, tenantID string) ([]TenantGitOAuth, error) {
+	rows, err := s.db.QueryContext(ctx, tenantGitOAuthCols+` WHERE tenant_id=? ORDER BY provider`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TenantGitOAuth
+	for rows.Next() {
+		g, err := scanTenantGitOAuth(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) GetTenantGitOAuth(ctx context.Context, tenantID, provider string) (TenantGitOAuth, bool, error) {
+	g, err := scanTenantGitOAuth(s.db.QueryRowContext(ctx,
+		tenantGitOAuthCols+` WHERE tenant_id=? AND provider=?`, tenantID, provider))
+	if err == sql.ErrNoRows {
+		return TenantGitOAuth{}, false, nil
+	}
+	return g, err == nil, err
+}
+
+// PutTenantGitOAuth upserts on the (tenant_id, provider) unique index. created_at is
+// left alone on conflict so the row keeps the date it was first registered.
+func (s *sqlStore) PutTenantGitOAuth(ctx context.Context, g TenantGitOAuth) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO tenant_git_oauth(id, tenant_id, provider, client_id, secret_enc, key_ref,
+		   updated_by, created_at, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?)
+		 ON CONFLICT(tenant_id, provider) DO UPDATE SET
+		   client_id=excluded.client_id, secret_enc=excluded.secret_enc, key_ref=excluded.key_ref,
+		   updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+		g.ID, g.TenantID, g.Provider, g.ClientID, g.SecretEnc, g.KeyRef,
+		g.UpdatedBy, g.CreatedAt, g.UpdatedAt)
+	return err
+}
+
+func (s *sqlStore) DeleteTenantGitOAuth(ctx context.Context, tenantID, provider string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM tenant_git_oauth WHERE tenant_id=? AND provider=?`, tenantID, provider)
 	return err
 }
 
