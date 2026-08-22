@@ -40,6 +40,12 @@ type manager struct {
 	// from "nothing was spent" if it is not shown.
 	costPoller *cloudCostPoller
 
+	// autoBakeGolden is AF_ECS_EC2_GOLDEN_AUTOBAKE, recorded at boot for the pool
+	// screen. It is the one thing about the golden that is NOT visible in AWS, and
+	// without it "no golden, nothing under way" cannot be told apart from "no golden,
+	// and nothing ever will be" (docs/64 §64.30).
+	autoBakeGolden bool
+
 	// nativeRuntime is true when AF_RUNTIME is native/wsl (containerless, single-user;
 	// docs/34). Native is a personal dev host with no shared-host contention, so the
 	// concurrent-session quota is not enforced there — see sessionQuotaExceeded.

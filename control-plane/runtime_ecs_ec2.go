@@ -3703,9 +3703,16 @@ type ec2PoolStatus struct {
 	// SlotClasses names the declared classes for the pool screen. Absent when the
 	// deployment declared a single unnamed ladder.
 	SlotClasses []workspaceSlotClass `json:"slot_classes,omitempty"`
+	// AutoBake is AF_ECS_EC2_GOLDEN_AUTOBAKE. Not derivable from AWS like everything
+	// else here, and filled in by the manager rather than this adapter — but without it
+	// "there is no golden and nothing is happening" has two very different meanings
+	// (the next tick will start one / nothing ever will) and the screen cannot tell
+	// them apart.
+	AutoBake bool `json:"auto_bake"`
 }
 
-// ec2GoldenView is one architecture's golden situation.
+// ec2GoldenView is one architecture's golden situation, including how far along a bake
+// that is under way has got (docs/64 §64.30).
 type ec2GoldenView struct {
 	Arch       string `json:"arch"`
 	SnapshotID string `json:"snapshot_id"`
@@ -3714,6 +3721,70 @@ type ec2GoldenView struct {
 	Baking     bool   `json:"baking"`
 	Rejected   string `json:"rejected"`
 	Reason     string `json:"reason"`
+
+	// --- how far the bake has got (docs/64 §64.30) ---
+	//
+	// A bake takes ~11 minutes end to end and spends most of it in steps that produce
+	// no snapshot at all (the seed's boot, boot-install, the slot release). Reporting
+	// only "baking" — which was true only once a candidate snapshot existed — meant the
+	// screen said "there is no golden" for the whole first half, i.e. exactly when an
+	// operator wondering why a new member is slow goes looking.
+	Phase string `json:"phase"`
+	// PhaseSince anchors the elapsed time, and is deliberately the SAME anchor the
+	// baker's own deadline uses: the seed's home volume while the seed is booting, the
+	// candidate's af-bake-started once one exists. A screen that counted from something
+	// else would disagree with the tear-down it is meant to explain.
+	PhaseSince string `json:"phase_since,omitempty"`
+	// Candidate is the snapshot being baked or verified — the one that becomes the
+	// golden if the probe comes up.
+	Candidate string `json:"candidate,omitempty"`
+	// Progress is EBS's own copy percentage while the candidate is pending.
+	Progress int `json:"progress,omitempty"`
+	// Attempts counts the candidates this image has already burned on this
+	// architecture. The baker gives up at 2, so 1 means "one more try left".
+	Attempts int `json:"attempts,omitempty"`
+	// SlotsInUse is what the capacity gate saw, reported only when it is what is
+	// holding the bake up.
+	SlotsInUse int `json:"slots_in_use,omitempty"`
+	// Seed / Probe are the reserved workspaces while they exist. They are on the screen
+	// because they hold a slot each: without them the pool table shows a box occupied by
+	// af-ws-af-golden-… with nothing to connect it to.
+	Seed  *ec2BakeWorkspaceView `json:"seed,omitempty"`
+	Probe *ec2BakeWorkspaceView `json:"probe,omitempty"`
+}
+
+// The steps of a bake, in order, plus the four ways there can be no bake. The Console
+// renders the first six as a progress line and the rest as a sentence.
+const (
+	ec2BakePhaseSeed      = "seed"      // the seed workspace is waiting for a slot
+	ec2BakePhaseBoot      = "boot"      // boot-install is running on the seed's home
+	ec2BakePhaseCapture   = "capture"   // boot-install done; the home is coming off its slot
+	ec2BakePhaseSnapshot  = "snapshot"  // EBS is copying the candidate
+	ec2BakePhaseProbe     = "probe"     // a probe workspace is being booted from the candidate
+	ec2BakePhasePublished = "published" // a golden for the running image is in use
+	ec2BakePhaseIdle      = "idle"      // nothing under way; the next tick starts one
+	ec2BakePhaseBlocked   = "blocked"   // a bake needs two free slots and cannot have them
+	ec2BakePhaseRejected  = "rejected"  // the last candidate could not boot; one attempt left
+	ec2BakePhaseGaveUp    = "gave_up"   // two candidates burned on this image — no more tries
+	ec2BakePhaseOff       = "off"       // AF_ECS_EC2_GOLDEN_AUTOBAKE=0
+)
+
+// ec2BakeWorkspaceView is one of the two reserved workspaces a bake stands up.
+type ec2BakeWorkspaceView struct {
+	Workspace  string `json:"workspace"`
+	VolumeID   string `json:"volume_id,omitempty"`
+	InstanceID string `json:"instance_id,omitempty"`
+}
+
+// bakePhaseActive reports the phases in which something is actually being baked. It is
+// what the legacy `baking` scalar now means: the old derivation (a candidate snapshot
+// exists) called the first half of a bake "no golden, nothing happening".
+func bakePhaseActive(phase string) bool {
+	switch phase {
+	case ec2BakePhaseSeed, ec2BakePhaseBoot, ec2BakePhaseCapture, ec2BakePhaseSnapshot, ec2BakePhaseProbe:
+		return true
+	}
+	return false
 }
 
 // PoolStatus reports the live pool. Read-only and tolerant: a section that cannot be read
@@ -3746,6 +3817,11 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		return st, err
 	}
 	occupant := map[string]*ec2HomeView{} // instance id → the home on it
+	// bakeHomes is the seed's and the probe's home, kept aside as the baker sees them —
+	// the af-bake-ready stamp and the creation time are not part of the ordinary home
+	// view, and they are what says whether boot-install has finished and how long this
+	// bake has been going.
+	bakeHomes := map[string]ec2BakeHome{} // workspace name → facts
 	for i := range vols.Volumes {
 		v := &vols.Volumes[i]
 		// A volume EC2 is still deleting is not a home any more, and listing it as one
@@ -3772,6 +3848,11 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		if h.AttachedTo != "" {
 			occupant[h.AttachedTo] = &st.Homes[len(st.Homes)-1]
 		}
+		bh := ec2BakeHome{VolumeID: h.VolumeID, InstanceID: h.AttachedTo, Baked: ec2TagValue(v.Tags, ec2TagBakeReady) != ""}
+		if v.CreateTime != nil {
+			bh.Created = *v.CreateTime
+		}
+		bakeHomes[h.Workspace] = bh
 	}
 
 	// Quarantined boxes are listed too, on purpose. They are out of the pool for
@@ -3829,6 +3910,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	// class covered" rather than "is there a golden". byArch is keyed by the snapshot's
 	// af-arch — absent means x86_64, the only kind that existed before classes.
 	byArch := map[string]*ec2GoldenView{}
+	candidateState := map[string]ec2types.SnapshotState{}
 	golden := func(arch string) *ec2GoldenView {
 		g, ok := byArch[arch]
 		if !ok {
@@ -3853,13 +3935,23 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			// Only a candidate for the image being RUN says a bake is under way. One
 			// stamped with anything else is a leftover the baker will sweep.
 			if ec2TagValue(s.Tags, ec2TagImage) == st.RunningImage {
-				golden(arch).Baking = true
+				g := golden(arch)
+				g.Candidate = aws.ToString(s.SnapshotId)
+				g.Progress = snapshotProgress(s)
+				// The candidate's own state IS the difference between "EBS is still
+				// copying" and "a probe is being booted from it" — the baker's verify
+				// step does nothing at all until the copy completes.
+				candidateState[arch] = s.State
+				g.PhaseSince = bakeStartedAt(s)
 			}
 		case ec2RoleGoldenRejected:
 			if ec2TagValue(s.Tags, ec2TagImage) == st.RunningImage {
 				g := golden(arch)
 				g.Rejected = aws.ToString(s.SnapshotId)
 				g.Reason = ec2TagValue(s.Tags, ec2TagBakeReason)
+				// The same count the baker gives up on (rejectedAttempts), derived from
+				// the snapshots this call already read rather than asked for again.
+				g.Attempts++
 			}
 		case ec2RoleBackup:
 			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
@@ -3901,9 +3993,20 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	// Report the architectures this deployment declares, in bake order, so an arch
 	// with NO golden at all appears as an empty row instead of not appearing — the
 	// whole question the operator has is which classes are still slow.
+	slotsInUse, slotRunning := 0, map[string]bool{}
+	for _, s := range st.Slots {
+		if s.Quarantined {
+			continue // the same set bakeBlocked counts: af-role=slot, quarantine excluded
+		}
+		slotsInUse++
+		slotRunning[s.InstanceID] = s.State == "running"
+	}
+	blocked, _ := bakeCapacityBlocked(slotsInUse, f.pool.maxSlots)
 	for _, arch := range f.bakeArches() {
 		g := golden(arch)
 		g.Stale = g.SnapshotID != "" && g.Image != st.RunningImage
+		describeBake(g, arch, bakeHomes, slotRunning, candidateState[arch], blocked, slotsInUse)
+		g.Baking = bakePhaseActive(g.Phase)
 		st.Goldens = append(st.Goldens, *g)
 	}
 	// The scalar fields stay, as the DEFAULT architecture's answer: a Console built

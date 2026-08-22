@@ -18,6 +18,11 @@ workspace, so the workspace must be started).
 OAuth (device flow) is three steps: **Copy the code** shown, **Open the link and paste**,
 then **Wait for approval**. Once connected, your handle and email are displayed.
 
+**If "Connect via OAuth" is not offered**, your tenant has not registered an OAuth app for that
+provider. It is a tenant setting, not something you can enable yourself: ask a tenant
+administrator to add it under **Tenant settings → Integrations → Git provider OAuth**. Connecting
+with a token works in the meantime and is not a lesser connection.
+
 After connecting, git authentication applies **transparently** to every git operation. You will
 never be asked for a token on each clone or push.
 
