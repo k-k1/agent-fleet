@@ -1203,6 +1203,32 @@ export const en: Record<keyof typeof ja, string> = {
   "pool.golden_rejected": "{snapshot} is not being used: {reason}. Nothing that could not be shown to boot is handed out, so new homes are built empty — a slow first start, nothing broken. Re-baking the same image stops after two attempts.",
   "pool.golden_stale": "{snapshot} was baked from {baked}, but this deployment runs {running}. It is NOT being used — new homes are built empty (slow first start) until it is re-baked.",
   "pool.golden_ok": "baked from {image}",
+  // How far a bake has got (docs/64 §64.30). A bake takes ~11 minutes and produces no
+  // snapshot at all for the first half of it, so a single "preparing one" line leaves an
+  // operator unable to tell progress from a stall.
+  "pool.bake_step_seed": "seed slot",
+  "pool.bake_step_boot": "boot-install",
+  "pool.bake_step_capture": "release home",
+  "pool.bake_step_snapshot": "snapshot",
+  "pool.bake_step_probe": "boot check",
+  "pool.bake_step_published": "published",
+  "pool.bake_running": "Baking one for {image}.",
+  "pool.bake_meanwhile":
+    "What is baked is only used once a workspace has actually started from it. Until then new homes are built empty — a slow first start, nothing broken.",
+  "pool.bake_detail_seed": "seed:",
+  "pool.bake_detail_probe_ws": "probe:",
+  "pool.bake_detail_probe": "Booting a probe from {snapshot} to confirm it really starts.",
+  "pool.bake_owner": "for the golden bake",
+  "pool.bake_blocked":
+    "Waiting for free slots ({used}/{max} in use). A bake needs two — one for the seed, one for the probe — and it will not evict anybody to get them. Until then new homes are built empty (slow first start).",
+  "pool.bake_gave_up":
+    "{snapshot} is not being used: {reason}. Two candidates failed on this image, so re-baking has stopped. New homes stay empty until the image is fixed and rolled out.",
+  "pool.bake_retry_left": "One more attempt will be made on this image.",
+  "pool.bake_off":
+    "Auto-baking is switched off (AF_ECS_EC2_GOLDEN_AUTOBAKE=0). With no golden, new homes are built empty (slow first start). To bake one, use deploy/aws/ecs/bake-golden.sh.",
+  "pool.elapsed_sec": "({s}s elapsed)",
+  "pool.elapsed_min": "({m}m {s}s elapsed)",
+  "pool.elapsed_hour": "({h}h {m}m elapsed)",
   "pool.idle_min": "{n} min",
   "pool.idle_hour": "{n} h",
   "pool.idle_day": "{n} d",
