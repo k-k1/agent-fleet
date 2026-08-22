@@ -320,9 +320,38 @@
   color: var(--muted);
   font-size: 11px;
   user-select: text;
+  /* A long image ref wraps instead of widening the whole menu — and the clamp is
+     viewport-relative because .acct-menu anchors to the button's right edge, so a row
+     wide enough to push the menu past the left edge of a phone would be unreadable. */
+  max-width: min(320px, calc(100vw - 48px));
+  overflow-wrap: anywhere;
 }
 .acct-build .codicon {
   font-size: 12px;
+}
+/* The zone is several rows on an image-based deployment (server version, CP image, WS
+   image, build). Each row keeps its own top padding when it stands alone; stacked, the
+   gap doubles and the block reads as four unrelated lines — so tighten the followers.
+   A long image ref wraps rather than widening the whole menu. */
+.acct-build + .acct-build {
+  padding-top: 1px;
+}
+/* Copy-the-whole-zone button. Sits at the end of the build row (the last line), muted
+   until hovered so it never competes with the menu's real actions. */
+.acct-ver-copy {
+  margin-left: auto;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0.7;
+}
+.acct-ver-copy:hover {
+  background: var(--hover-bg, var(--btn));
+  color: var(--fg);
+  opacity: 1;
 }
 /* Native host self-update nudge (docs/42). The account button carries an attention
    dot when a newer af is staged; the menu row deep-links into 設定 → ツールチェーン. */
