@@ -23,10 +23,12 @@ import (
 // carries the CP session cookie (the user is signed in to the Console), so
 // authGate lets it through like any other authenticated request.
 
-const (
-	bbAuthorizeURL = "https://bitbucket.org/site/oauth2/authorize"
-	bbTokenURL     = "https://bitbucket.org/site/oauth2/access_token"
-)
+const bbAuthorizeURL = "https://bitbucket.org/site/oauth2/authorize"
+
+// bbTokenURL is a var, not a const, for one reason: the refresh bridge
+// (git_oauth_bridge.go) is a real HTTP conversation with retry and status handling, and
+// the only honest way to pin that behaviour is to point it at a stub server.
+var bbTokenURL = "https://bitbucket.org/site/oauth2/access_token"
 
 // bbHTTPClient bounds the call OUT to bitbucket.org (http.DefaultClient has no
 // timeout — same reasoning as oidcHTTPClient). ★ It is not for the CP→Agent leg:
@@ -184,9 +186,14 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Hand the tokens to the Agent to store + install the refresh helper.
+	//
+	// ★ key/secret are deliberately NOT sent (docs/71 §71.8). They used to ride along so
+	// the Agent could run the refresh grant itself, which put the TENANT's client secret
+	// in every member's encrypted store. The Agent now posts its refresh token back to
+	// /internal/git-oauth/bitbucket/refresh instead (git_oauth_bridge.go).
 	payload, _ := json.Marshal(map[string]any{
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken,
-		"expires_in": tok.ExpiresIn, "key": key, "secret": secret,
+		"expires_in": tok.ExpiresIn,
 	})
 	rt, aerr := c.mgr.resolve(r.Context(), st.user, "", st.tenant)
 	if aerr != nil {
@@ -206,6 +213,17 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	defer aresp.Body.Close()
 	if aresp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(aresp.Body)
+		// ★ One upgrade window is visible here. A workspace container started before
+		// docs/71 runs an Agent that REQUIRES key+secret in this payload and refuses
+		// without them, and the raw refusal ("key, secret are required") reads like a
+		// configuration mistake the member should fix — which it is not. Matching the
+		// old message is a string contract and would normally be avoided, but it only
+		// ever improves the wording: behaviour is identical either way, and the check
+		// becomes dead code once no pre-docs/71 Agent is running.
+		if aresp.StatusCode == http.StatusBadRequest && strings.Contains(string(b), "secret are required") {
+			bbCallbackPage(w, t.staleAgent)
+			return
+		}
 		bbCallbackPage(w, t.saveFailed+string(b))
 		return
 	}
@@ -217,7 +235,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 // detail is appended verbatim. ja is the default; en is served when Accept-Language
 // prefers English (preferredUILang, defined in oauth_google.go).
 type bbStrings struct {
-	stateMismatch, noCode, notConfigured                                     string
+	stateMismatch, noCode, notConfigured, staleAgent                         string
 	tokenExchangeFailed, workspaceResolveFailed, saveUnreachable, saveFailed string
 	success                                                                  string
 }
@@ -227,6 +245,7 @@ var bbText = map[string]bbStrings{
 		stateMismatch:          "認証エラー: state が一致しません。Console からやり直してください。",
 		noCode:                 "認証エラー: code がありません（承認が拒否された可能性）。",
 		notConfigured:          "このテナントの Bitbucket OAuth アプリが見つかりません。テナント設定で登録し直してください。",
+		staleAgent:             "ワークスペースが古いまま動いているため保存できませんでした。ワークスペースを一度停止してから起動し直し、もう一度接続してください（設定の誤りではありません）。",
 		tokenExchangeFailed:    "トークン交換に失敗: ",
 		workspaceResolveFailed: "Workspace の解決に失敗しました: ",
 		saveUnreachable:        "保存に失敗（Workspace Agent に到達できません。Workspace は起動していますか）: ",
@@ -237,6 +256,7 @@ var bbText = map[string]bbStrings{
 		stateMismatch:          "Authentication error: state mismatch. Please retry from the Console.",
 		noCode:                 "Authentication error: no code (authorization may have been denied).",
 		notConfigured:          "This tenant has no Bitbucket OAuth app. Ask a tenant administrator to register one in tenant settings.",
+		staleAgent:             "Could not save: this workspace is still running an older agent. Stop and start the workspace, then connect again. (Nothing is misconfigured.)",
 		tokenExchangeFailed:    "Token exchange failed: ",
 		workspaceResolveFailed: "Failed to resolve the workspace: ",
 		saveUnreachable:        "Save failed (can't reach the Workspace Agent — is the Workspace running?): ",

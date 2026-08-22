@@ -286,7 +286,13 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 			// when nothing was bind-mounted — i.e. on ECS, where no host path exists to
 			// mount. Its own credential for the same reason as the others; a leak reads
 			// this member's docs subset and nothing else.
-			"AF_DOCS_TOKEN="+mintDocsToken(docsSignKey(m.tokenSignMaster()), ws.MembershipID))
+			"AF_DOCS_TOKEN="+mintDocsToken(docsSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// Git OAuth refresh bridge (docs/71 §71.8): the agent posts its Bitbucket
+			// refresh token here so the CP can add the TENANT's client secret, which
+			// therefore never reaches the container. Its own credential for the same
+			// reason as the others; a leak refreshes this member's git token and
+			// nothing else.
+			"AF_GIT_OAUTH_TOKEN="+mintGitOAuthToken(gitOAuthSignKey(m.tokenSignMaster()), ws.MembershipID))
 	}
 	return env
 }

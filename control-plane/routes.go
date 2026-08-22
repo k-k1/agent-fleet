@@ -671,6 +671,12 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// being looked at.
 	gitOAuth := newTenantGitOAuthAPI(cfg.mgr)
 	mux.HandleFunc("GET /api/git-oauth", gitOAuth.withMembership(gitOAuth.availability))
+	// The Agent's refresh bridge (docs/71 §71.8): the tenant's client secret stays in the
+	// CP, so the workspace posts its refresh token here instead of holding the secret.
+	// Session-exempt via the /internal/ prefix; authenticated by AF_GIT_OAUTH_TOKEN.
+	exemptPrefix("/internal/")
+	gob := newGitOAuthBridgeAPI(cfg.mgr)
+	mux.HandleFunc("POST /internal/git-oauth/bitbucket/refresh", gob.withGitOAuthToken(gob.refreshBitbucket))
 	mux.HandleFunc("POST /api/connections/claude/start", restLogin)
 	mux.HandleFunc("POST /api/connections/claude/complete", restLogin)
 	mux.HandleFunc("DELETE /api/connections/claude", rest)

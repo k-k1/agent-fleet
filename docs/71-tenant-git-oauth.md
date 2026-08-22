@@ -27,6 +27,8 @@ Console の「接続」タブにある **OAuth で接続** は 2 つの別実装
 4. **GitHub の device flow を CP へ移す。** コンテナ env を経由しなくなる（→ §71.5）。
 5. **`AUTH=dev` の固定ユーザーを super_admin にする。** そうしないと native / WSL で
    設定画面に入れる人が 1 人も居ない（→ §71.6）。
+6. **Bitbucket の refresh も CP へ移す。** テナントの client_secret を各メンバーの
+   ワークスペースに配らない（→ §71.8）。
 
 ## 71.3 データ
 
@@ -136,11 +138,61 @@ bitbucket.org からの素のリダイレクトで `X-AF-Tenant` を持たない
   意味する。docs/61 §61.7 の「git 連携の device flow が先に使っている env」という前提は
   もう成り立たない。
 
-## 71.8 やっていないこと
+## 71.8 Bitbucket の client_secret をワークスペースへ配るのをやめる
+
+**なぜ直したか。** Bitbucket の access token は ~2h で失効するので誰かが refresh grant を
+回す必要があり、その grant は OAuth アプリの key:secret で Basic 認証する。従来は接続時に
+CP が key と secret を Agent へ渡し、Agent が自前で refresh していた ——
+つまり**テナントの client_secret が全メンバーの `secrets.enc` に複製され**、自分の
+コンテナにシェルを持つ人なら誰でも読めた。運用者のアプリだった間は「運用者の秘密が
+運用者の作ったコンテナにある」で済んだが、docs/71 でアプリの持ち主が**テナント管理者**に
+なった以上、他人のディスクに置かれた他人の資格情報になる。
+
+**どう直したか。** refresh を CP に移した。
+
+```
+Agent ──(AF_GIT_OAUTH_TOKEN + refresh_token)──▶ CP /internal/git-oauth/bitbucket/refresh
+                                                  └─ テナントの secret を足して bitbucket.org へ
+Agent ◀────────────(access_token / refresh_token / expires_in)──────────────┘
+```
+
+- 認証は**メンバーシップ毎の決定的 HMAC トークン** `AF_GIT_OAUTH_TOKEN`（memo /
+  schedule / MCP / docs ブリッジと同じ形・**別の署名鍵**なので漏れても「この人の git
+  トークンを更新できる」だけ）。**テナントはトークンから引く**——リクエストで選ばせると
+  他テナントのアプリを使えてしまう。
+- ★ **refresh token は動かしていない。** ワークスペースに残り、CP は保存しない。
+  「CP は秘密を素通しさせるだけで保持しない」（[dev/08](dev/08-integrations.md)）を
+  保ったまま、**テナントの秘密は CP・本人のトークンはワークスペース**という分け方にした。
+- bitbucket.org 相手の再試行（transport / 429 / 5xx は再試行、4xx は永続）は grant と
+  一緒に CP へ移した。**`invalid_grant` は再試行しない**——Agent はそれを見て
+  「再接続を促す」と「後でまた試す」を区別する。
+
+**移行**（既存の接続を壊さない形）:
+
+- `secrets.enc` に既に入っている key/secret は**ブリッジが一度成功した時点で消す**
+  （`refreshBitbucketViaCP` が返す creds で両フィールドを空にし、保存側がそのまま書く）。
+  ★ 置き換えが動くことを確かめてから、置き換えられる物を消す順にしてある。
+- ブリッジが失敗し、**かつ**古い key/secret がまだ残っている場合だけ旧経路へフォールバック
+  する。新規接続には key/secret が無いので、フォールバックは構造的に一世代で消える。
+- ★ **ブリッジの座標は env ではなくストアに置く**（`secrets.Data.GitOAuthBridge`）。
+  cred helper は git が起動する**別プロセス**で、その環境変数は保証できない
+  （`seedInternalGit` が同じ理由で同じ予防をしている）。`seedGitOAuthBridge` が起動時に
+  env → ストアへ写す。冪等で、env が消えたらストアも消す（応答しない先を指したまま
+  残さない）。
+
+**代償を 2 つ、正直に**:
+
+- refresh に **CP への到達性が要る**ようになった（以前は bitbucket.org だけ）。access
+  token は ~2h 有効なので CP の再起動は見えないが、長時間落ちていると git が資格情報を
+  聞いてくる形で出る。
+- **アップグレードの窓が 1 つ見える。** docs/71 より前に起動したコンテナの Agent は
+  この保存 API で key/secret を**必須にしている**ので、新 CP から接続すると
+  `key, secret are required` で失敗する。設定の誤りに読めてしまうため、CP は
+  そのメッセージを検出して「ワークスペースを停止→起動してから接続し直してください」に
+  差し替える（`bbStrings.staleAgent`）。文字列契約なので通常は避けるが、**挙動は同じで
+  文言だけを良くする**用途に限っており、旧 Agent が居なくなれば死にコードになる。
+
+## 71.9 やっていないこと
 
 - **GitLab**。器（`provider` 列と `gitOAuthProviders`）は増やせる形にしてあるが、
   git 接続そのものが GitLab に未対応（Agent の `gitHosts` に無い）ので入れていない。
-- **Bitbucket の client_secret をワークスペースへ配るのをやめる**。refresh は
-  `workspace-agent cred` がオフラインで回すので key/secret がコンテナの暗号化ストアに
-  複製される（`bitbucketStoreReq`）。構造は運用者のアプリだった頃と同じで、露出の種類は
-  増えていない。CP 経由の refresh へ寄せるのは別作業。
