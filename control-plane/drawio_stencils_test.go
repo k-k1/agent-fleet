@@ -143,3 +143,112 @@ func TestDrawioStencilUpstreamDownIs502(t *testing.T) {
 		t.Fatal("到達不能な upstream でエラーにならなかった")
 	}
 }
+
+// 既定束の名前が 1 つでも台帳に無ければ、その行は**黙って何もしない**。
+// 綴りを間違えても動いてしまうので、ここで突き合わせる。
+func TestDrawioPreseedDefaultBundle(t *testing.T) {
+	m, err := loadDrawioManifest()
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	for _, n := range drawioPreseedExact {
+		if _, ok := m.Sets[n]; !ok {
+			t.Fatalf("既定束の %q が台帳に無い（綴り違いは黙って無視される）", n)
+		}
+	}
+	for _, p := range drawioPreseedPrefixes {
+		hit := false
+		for name := range m.Sets {
+			if strings.HasPrefix(name, p) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			t.Fatalf("既定束の接頭辞 %q に当たるセットが 1 つも無い", p)
+		}
+	}
+
+	names := drawioPreseedNames(m, false)
+	var total int64
+	for _, n := range names {
+		total += m.Sets[n].Size
+	}
+	// 既定束は「閉域の管理者がとりあえず入れる分」。全件（40.8 MB）に近づいたら
+	// 既定である意味が無いし、逆に極端に小さければ束の体をなしていない。
+	if total > 25<<20 {
+		t.Fatalf("既定束が %.1f MB —— 大きすぎる（--all との差が無い）", float64(total)/(1<<20))
+	}
+	if len(names) < 20 {
+		t.Fatalf("既定束が %d 件しかない", len(names))
+	}
+	// 巨大で用途の狭いものは既定に入れない。
+	for _, n := range names {
+		if strings.HasPrefix(n, "rack/hpe_aruba/") {
+			t.Fatalf("%q（3.67 MB）は既定束に入れない", n)
+		}
+	}
+	// --all は台帳と一致する。
+	if got := len(drawioPreseedNames(m, true)); got != len(m.Sets) {
+		t.Fatalf("--all が %d 件（台帳は %d 件）", got, len(m.Sets))
+	}
+	t.Logf("既定束 %d 件 / %.1f MB", len(names), float64(total)/(1<<20))
+}
+
+// 事前投入の眼目は「**外に出られなくても配れる**」こと。upstream を到達不能にしたまま
+// 投入済みキャッシュから返せることを見る（これが緑でなければ P1b は何の役にも立たない）。
+func TestDrawioStencilPreseededServesOffline(t *testing.T) {
+	body := []byte("<shapes name=\"mxgraph.test\"><shape name=\"a\"/></shapes>")
+	sum := sha256.Sum256(body)
+	entry := drawioStencilEntry{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body))}
+	// 台帳の base は解決すらできないホストにしておく。1 本でも外に出たら落ちる。
+	m := drawioStencilManifest{Base: "http://127.0.0.1:1/", Sets: map[string]drawioStencilEntry{"test.xml": entry}}
+
+	d := testStencils(t)
+	if err := d.store(d.pathFor(entry), body); err != nil {
+		t.Fatalf("事前投入: %v", err)
+	}
+
+	got, err := d.fetch(context.Background(), m, "test.xml", entry)
+	if err != nil {
+		t.Fatalf("投入済みなのに閉域で返せない: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("中身が違う")
+	}
+
+	// 投入されたものが台帳と食い違っていたら（版ずれ・壊れたコピー）、使わない。
+	if err := os.WriteFile(d.pathFor(entry), []byte("<shapes/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.fetch(context.Background(), m, "test.xml", entry); err == nil {
+		t.Fatal("台帳と食い違うキャッシュをそのまま配った")
+	}
+}
+
+// store は必ず一時名 → rename。書きかけが正規名で見えると、検証済みの顔をした
+// 壊れたバイト列が配られる（事前投入は稼働中の CP と同じディレクトリを触る）。
+func TestDrawioStencilStoreIsAtomic(t *testing.T) {
+	d := testStencils(t)
+	body := []byte("<shapes/>")
+	sum := sha256.Sum256(body)
+	entry := drawioStencilEntry{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body))}
+	if err := d.store(d.pathFor(entry), body); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	ents, err := os.ReadDir(d.cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 一時ファイルが残っていない ＝ rename されている。
+	if len(ents) != 1 || strings.HasPrefix(ents[0].Name(), ".tmp-") {
+		var names []string
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("キャッシュの中身が %v", names)
+	}
+	if ents[0].Name() != entry.SHA256+".xml" {
+		t.Fatalf("置き場所が %q（内容アドレスであるべき）", ents[0].Name())
+	}
+}
