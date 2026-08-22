@@ -274,6 +274,12 @@ export function MirrorView({
   const [finalizing, setFinalizing] = useState(false);
   const finalizingRef = useRef(false);
   const wasWorkingRef = useRef(false); // saw "working" since the last landed reply
+  // The exchange is still in flight. Everything that reacts to "is a turn running" must use
+  // THIS, not the bare polled status: the status alone drops to idle mid-answer (Stop hook /
+  // TUI heal) and says nothing about a background run. The typing indicator, the bottom
+  // follow and the 作業過程 fold all read it, so they can't disagree — a fold that flips
+  // while the spinner is still up is exactly what shifts the text under a reader.
+  const busy = status === "working" || bgBusy || finalizing;
   // Show a "jump to latest ↓" affordance whenever the user has scrolled up off the bottom
   // (auto-follow is paused) so new/streaming content below is discoverable with one click.
   const [showJump, setShowJump] = useState(false);
@@ -1091,7 +1097,7 @@ export function MirrorView({
       // Still working, a background run (サブエージェント/Workflow) is appending, or we're
       // bridging the idle→reply gap (finalizing) — follow the bottom so the streamed tail
       // (and the typing indicator) stay in view.
-      if (status === "working" || bgBusy || finalizing) {
+      if (busy) {
         toBottom();
         return;
       }
@@ -1695,7 +1701,7 @@ export function MirrorView({
   // when this session is 入力待ち (alive and idle: not working, no lingering background run,
   // not mid-finalize, composer not locked by an AUQ/plan). A busy session would just queue
   // the text unseen, so we refuse the drop there.
-  const sessionIdle = alive && !readOnly && !composerLocked && status !== "working" && !bgBusy && !finalizing;
+  const sessionIdle = alive && !readOnly && !composerLocked && !busy;
   const canDropMemo = sessionIdle;
   // Which kind of drop, if any, this drag offers here (types are readable on enter/over;
   // getData is not, so the branch is decided from the type list).
@@ -2787,7 +2793,7 @@ export function MirrorView({
           <TranscriptView
             groups={groups}
             caps={caps}
-            working={status === "working"}
+            working={busy}
             autoCollapseWork={atBottomRef.current}
             inlineCards={handoffs.map((h) => ({
               at: h.created_at,
@@ -2921,7 +2927,7 @@ export function MirrorView({
             </div>
           </div>
         )}
-        {(status === "working" || bgBusy || finalizing) && !pending && (
+        {busy && !pending && (
           <div className="mirror-typing" aria-label={tr("mirror.typing", { name: agentName })}>
             <span className="mt-who">{agentName}</span>
             <span className="typing-dots">

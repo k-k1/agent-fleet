@@ -36,10 +36,13 @@ platform changes:
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 | `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/70 §70.8) |
 
-> `00`/`10`/`20` are proven end-to-end (deploy→verify→`delete-stack`, no orphans).
-> `30-ingress` is authored and template-validated; standing it up needs a domain +
-> Google OAuth client + the CP image in ECR (see stand-up below). Each stack imports
-> the earlier ones' exports, so deploy in order `00 → 10 → 20 → 30`.
+> All five are proven end-to-end **including teardown**: two real deployments in two
+> separate AWS accounts (`WsRuntime=ecs-ec2`, one `Persistence=delete` and one
+> `=retain`) ran for days and were deleted on 2026-08-22 leaving zero orphans in
+> either account — the sweep in §Teardown came back empty on every counter. Standing
+> one up needs a domain + Google OAuth client + the CP image in ECR (see stand-up
+> below). Each stack imports the earlier ones' exports, so deploy in order
+> `00 → 10 → 20 → (40, ecs-ec2 only) → 30`.
 
 ### Prerequisites (once per account)
 
@@ -831,28 +834,114 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
 
 ## Teardown
 
+Most of what a live deployment owns is **not** in the stacks: the Control Plane
+creates workspace services, EFS access points, SSM parameters and — under
+`WsRuntime=ecs-ec2` — slot instances, home EBS volumes and golden snapshots at
+runtime. Deleting the stacks first leaves those behind and then **stalls on the
+dependencies they hold**. The order below was measured end-to-end on 2026-08-22
+against two real `ecs-ec2` deployments (one `Persistence=delete`, one `=retain`)
+and ended with every sweep counter at zero in both accounts.
+
+**1. Stop the Control Plane first.** Everything in steps 2–7 is *its* bookkeeping,
+and it launches slots on demand — a running CP can recreate what you just deleted.
+
 ```bash
-aws cloudformation delete-stack --stack-name af-ecs-ingress
-aws cloudformation delete-stack --stack-name af-ecs-platform
-aws cloudformation delete-stack --stack-name af-ecs-data
-aws cloudformation delete-stack --stack-name af-ecs-network   # last (others depend on it)
+CL=af-af-ecs-platform      # cluster = af-<platform stack name>
+aws ecs update-service --cluster $CL --service af-af-ecs-ingress-cp --desired-count 0
 ```
 
-Per-workspace resources the CP created at runtime (ECS Services, task defs, EFS
-access points, SSM params) are **not** in these stacks — deregister/delete them via
-the CP's own workspace-delete path, or sweep by the `af-ws*` name/tag prefix, before
-deleting `af-ecs-network`. Order that works (measured 2026-08-15):
+**2. Workspace services** — `af-ws-*`, one per member that ever started a
+workspace. `delete-service --force` also removes the service's Cloud Map entry, so
+do not delete that by hand (you get `ServiceNotFound`).
 
-1. ECS **Service** `af-ws*` — `update-service --desired-count 0`, then `delete-service --force`.
-2. **Task definitions** `af-ws*` — `deregister-task-definition` for every ACTIVE revision
-   (the adapter registers a new one per Start, so expect several).
-3. **EFS access points** — `describe-access-points --file-system-id <efs>` then delete each.
-   ⚠️ **Miss these and `delete-stack af-ecs-data` stalls.** The filesystem id is the
-   `EfsId` output of `af-ecs-data` (*not* `FileSystemId` — a sweep script keyed on the
-   wrong name silently deletes nothing).
-4. **SSM** `/af-ws/*` (per-workspace DEK/token) and `/af-cp/*` (the out-of-band CP
-   secrets you created before `30-ingress`).
-5. Then the four `delete-stack` calls above, in order.
+```bash
+for s in $(aws ecs list-services --cluster $CL --query 'serviceArns[]' --output text | tr '\t' '\n' | grep /af-ws-); do
+  aws ecs update-service --cluster $CL --service "$s" --desired-count 0 >/dev/null
+  aws ecs delete-service --cluster $CL --service "$s" --force >/dev/null
+done
+```
+
+**3. Slot instances and home volumes** (`ecs-ec2` only). Terminating a slot takes
+its root volume but **not the home volume** — homes are detached and kept on
+purpose (delayed return), so they survive and keep billing.
+
+```bash
+IDS=$(aws ec2 describe-instances --filters Name=tag:Name,Values='af-slot-*' \
+  Name=instance-state-name,Values=pending,running,stopping,stopped \
+  --query 'Reservations[].Instances[].InstanceId' --output text)
+aws ec2 terminate-instances --instance-ids $IDS && aws ec2 wait instance-terminated --instance-ids $IDS
+# then every leftover af-ws-*-home volume
+aws ec2 delete-volume --volume-id <vol-id>
+```
+
+**4. Container instances that stay registered.** After the EC2 instances are gone,
+the cluster can still list them (3 of 4 did, in one account) and the platform
+stack's cluster delete fails on that. `aws ecs deregister-container-instance
+--cluster $CL --container-instance <arn> --force` each one.
+
+**5. EFS access points** — `describe-access-points --file-system-id <efs>`, delete
+each. ⚠️ **Miss these and `delete-stack af-ecs-data` stalls.** The filesystem id is
+the `EfsId` output of `af-ecs-data` (*not* `FileSystemId` — a sweep script keyed on
+the wrong name silently deletes nothing).
+
+**6. SSM `/af-ws/*`** (per-workspace DEK/token). `/af-cp/*` are the out-of-band CP
+secrets you created *before* `30-ingress`: keep them to redeploy into the same
+account, delete them to rehearse the prerequisites from scratch.
+
+**7. Golden snapshots** — `describe-snapshots --owner-ids self`, delete each
+(50 GiB per baked home, one per image tag).
+
+**8. The stacks, in reverse order, one at a time.**
+
+```bash
+for s in af-ecs-ingress af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do
+  aws cloudformation delete-stack --stack-name $s
+  aws cloudformation wait stack-delete-complete --stack-name $s || break   # stop on the first failure
+done
+```
+
+⚠️ **Issue them one at a time and wait.** CloudFormation **cancels** the delete of
+an exporting stack while an importer still exists (`Cannot delete export … as it is
+in use by …`) — fire all five together and the last ones silently do nothing while
+your wait loop spins on a delete that was already cancelled. `af-ecs-pool` exists
+only under `ecs-ec2`; its stack name is whatever you deployed `40-ec2-pool.yaml` as.
+Wall clock: ~10 min (`delete` persistence) to ~16 min (`retain`, RDS snapshotting).
+
+**9. `Persistence=retain` needs three extra steps** — a plain `delete-stack` fails
+on the first one:
+
+```bash
+aws rds modify-db-instance --db-instance-identifier <db> --no-deletion-protection --apply-immediately
+# after af-ecs-data is deleted:
+aws rds delete-db-snapshot --db-snapshot-identifier af-ecs-data-snapshot-db-<suffix>  # DeletionPolicy: Snapshot leaves one
+aws efs delete-file-system --file-system-id <efs>                                     # DeletionPolicy: Retain keeps it
+```
+
+**10. Task definitions.** They cost nothing but they outlive every stack.
+⚠️ **`list-task-definitions --family-prefix af-ws` reported 0 while 9 ACTIVE
+revisions existed** — enumerate without the prefix and count. Deregister every
+ACTIVE revision, then `delete-task-definitions` the INACTIVE ones in batches of 10.
+⚠️ `--max-items` with `--output text` appends the pagination token (`None`) as a
+line of its own; pass that through to `delete-task-definitions` and the whole batch
+fails. Filter with `grep '^arn:'`.
+
+**11. The ACM validation CNAME survives the certificate.** `30-ingress` deletes the
+cert and the ALB alias record, but `_<hash>.<fqdn>` stays in the hosted zone
+forever. Harmless — but leave it and the next deployment's certificate validates
+off a record you never created, so an issuance bug goes unnoticed. Delete it with
+`change-resource-record-sets` (the DELETE needs the **exact** TTL and value; TTL is
+300).
+
+**12. What deliberately survives** anything above: the hosted zone itself, the
+`/af-cp/*` secrets if you kept them — and nothing else. Sweep to confirm: EC2
+instances / volumes / snapshots / AMIs / EIPs, ECS clusters + task definitions,
+EFS, RDS instances + manual snapshots, ALB, ACM, NAT, ECR, Cloud Map namespaces,
+`/af` log groups, `af-*` IAM roles and instance profiles, non-default VPCs.
+
+⚠️ **ECR cannot be preserved.** `af-control-plane` and `af-workspace` are resources
+of `20-platform` with `EmptyOnDelete: true` — the stack delete takes the
+repositories *and every image in them*. Redeploying starts from `release-ecr.sh` /
+`crane copy` again.
 
 ## Notes
 

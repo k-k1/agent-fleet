@@ -42,6 +42,32 @@ describe("drawioFrameSrcdoc", () => {
     expect(s).toContain("script-src 'unsafe-inline';");
   });
 
+  it("ステンシルもフレームには取りに行かせない（docs/65 §65.5.4）", () => {
+    const s = html();
+    // ビューア自身の遅延取得を切ったままにする。true に戻すと、認証を通れない要求・
+    // CSP の穴・失敗後に再試行しない詰まり方が **まとめて** 戻ってくる（どれも実測）。
+    expect(s).toContain("mxStencilRegistry.dynamicLoading = false");
+    // したがって STENCIL_PATH / SHAPES_PATH は dead value のまま。ここを CP へ向ける
+    // 変更は「フレームが自分で取りに行く」への逆戻りを意味する。
+    expect(s).toMatch(/window\.STENCIL_PATH = DEAD;/);
+    expect(s).toMatch(/window\.SHAPES_PATH = DEAD;/);
+    // 取得が親の仕事である以上、connect-src を開ける理由が無い（上のケースと二重）。
+    expect(s).toContain("connect-src 'none'");
+  });
+
+  it("必要なセットは basename ではなく libraries の読み替えで決める", () => {
+    const s = html();
+    // `basename + ".xml"` 決め打ちは rackGeneral → rack/general.xml のような
+    // 読み替えを落として 404 になる。実機で効くのは libraries を引く経路だけ。
+    expect(s).toContain("mxStencilRegistry.libraries");
+    // 割り出しは **展開済みのモデル**から。生 XML の走査は圧縮された <diagram> で
+    // 何も見つけられない（実測 rawSeen=0）。
+    expect(s).toContain("v.graph.model");
+    // 差し込みは render のやり直しではなく refresh（見ていた倍率と位置を壊さない）。
+    expect(s).toContain("parseStencilSets");
+    expect(s).toContain("viewer.graph.refresh()");
+  });
+
   it("lightbox をツールバーにも設定にも出さない", () => {
     const s = html();
     // 図面を app.diagrams.net へ持ち出す唯一のボタン。ツールバー文字列に現れたら赤。

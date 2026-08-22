@@ -83,6 +83,18 @@ order:
 Someone you removed stays on the roster marked "removed". That is so steps 2 and 3 remain reachable
 afterwards — they have not vanished.
 
+**Deleting the row for good.** After you have destroyed a removed member's workspace, the same
+"Operations" box offers **Delete this member**. It appears only once the workspace is gone: while
+it is still there, deleting the row would leave the home and its cloud resources with nothing
+pointing at them, and the server refuses for the same reason.
+
+- **Deleted:** their quotas, access tokens, SSM settings, schedules, memos, notifications and
+  session shares.
+- **Kept:** the audit log, cloud cost and occupancy. Offboarding must not be able to erase its own
+  record, and last month's cost total must not change after the fact.
+
+There is no undo. Inviting the same person again starts a brand new member.
+
 ## What the roles mean
 
 Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the first two below.

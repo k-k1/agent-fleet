@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { apiJSON, errText } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { fmtGbHint } from "./adminShared.ts";
 import type { Member, Tenant } from "./adminShared.ts";
@@ -287,6 +288,61 @@ export function TenantLimits({
   );
 }
 
+// TenantDeletePanel — テナントを消す（docs/61 §61.18・super_admin のみ）。
+//
+// ★ 上限の節の末尾に置く。ここが「テナントそのもの」の節で、メンバーでもログインでも
+// 運用でもないから。管理モーダルからしか出さない（テナント設定モーダルは onDelete を
+// 渡さない）——自分のテナントの設定画面に、そのテナントを消すボタンは要らない。
+//
+// ★ 拒否の理由はサーバの文言をそのまま出す。「先に○○してください」が本文で、
+// どれも「空になっていないものは消せない」の言い換え。
+function TenantDeletePanel({ slug, onDeleted }: { slug: string; onDeleted: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const del = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}`, "DELETE", {});
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      setConfirm(false);
+      onDeleted();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="admin-panel">
+      <div className="admin-fgroup">
+        <h4>{tr("admin.delete_tenant_title")}</h4>
+        <p className="admin-hint">{tr("admin.delete_tenant_hint")}</p>
+        <p className="admin-hint">{tr("admin.delete_tenant_repo_hint")}</p>
+        <div className="admin-actions">
+          <button className="danger-btn" disabled={busy} onClick={() => setConfirm(true)}>
+            <Icon name="trash" /> {tr("admin.delete_tenant")}
+          </button>
+        </div>
+      </div>
+      {confirm && (
+        <ConfirmDialog
+          title={tr("admin.delete_tenant_confirm_title", { slug })}
+          confirmLabel={tr("admin.delete_tenant_confirm")}
+          busy={busy}
+          onCancel={() => setConfirm(false)}
+          onConfirm={del}
+        >
+          <p>{tr("admin.delete_tenant_body")}</p>
+          <p className="muted">{tr("admin.delete_tenant_kept")}</p>
+        </ConfirmDialog>
+      )}
+    </section>
+  );
+}
+
 // TenantScopeBody — 選ばれたセクションの中身。メンバーは「一覧 → 詳細」の 2 段で、
 // 段の状態（member）は呼び出し側が持つ: 端末の戻るをどう積むかは面ごとに違うため
 // （テナント設定は詳細 → レール、管理はさらにテナント一覧まで戻る）。
@@ -300,6 +356,7 @@ export function TenantScopeBody({
   onOpenMember,
   onCloseMember,
   onChanged,
+  onDeleted,
 }: {
   slug: string;
   tenant: Tenant | null;
@@ -311,6 +368,8 @@ export function TenantScopeBody({
   onOpenMember: (m: Member) => void;
   onCloseMember: () => void;
   onChanged: () => void;
+  /** 渡されたときだけ「テナントを削除」を出す（管理モーダルのみ・docs/61 §61.18）。 */
+  onDeleted?: () => void;
 }) {
   const tr = useT();
   // ★ マシン種別はテナント管理者のものなので、上限そのものと違って isSuper で
@@ -325,6 +384,8 @@ export function TenantScopeBody({
           <TenantSummary tenant={tenant} />
         )}
         <TenantMachineView key={slug} slug={slug} />
+        {/* 削除は最後。破壊的な操作を、日常的に触る 2 つの面の上へ持ってこない。 */}
+        {isSuper && onDeleted && <TenantDeletePanel slug={slug} onDeleted={onDeleted} />}
       </>
     );
   }
