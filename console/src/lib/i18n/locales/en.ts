@@ -1474,6 +1474,8 @@ export const en: Record<keyof typeof ja, string> = {
   "tenant.machine_deploy_default": "Deployment default",
   "tenant.machine_member_note":
     "Members who chose a machine themselves are unaffected. The change reaches each member at their next workspace start.",
+  "admin.roster_spec": "{n} vCPU / {mem}",
+  "admin.roster_disk": "{n} GB disk",
   "admin.ws_machine": "Machine",
   "admin.ws_machine_tenant_default": "Tenant default",
   "admin.ws_machine_arch_warn":

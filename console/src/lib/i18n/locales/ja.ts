@@ -1478,6 +1478,8 @@ export const ja = {
   "tenant.machine_deploy_default": "デプロイの既定",
   "tenant.machine_member_note":
     "自分で種類を選んでいるメンバーは、ここを変えても影響を受けません。反映は各メンバーの次回起動時です。",
+  "admin.roster_spec": "{n} vCPU / {mem}",
+  "admin.roster_disk": "ディスク {n}GB",
   "admin.ws_machine": "マシンの種類",
   "admin.ws_machine_tenant_default": "テナントの既定",
   "admin.ws_machine_arch_warn":

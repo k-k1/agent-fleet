@@ -2399,6 +2399,16 @@
 .mr-lim {
   font-size: 11px;
 }
+/* What a member is sized to, on the roster row. Small and quiet: the row's subject is
+   the person, and these are the facts about them — never the other way round. They sit
+   before .mr-go so the chevron stays pinned to the right edge. */
+.mr-size {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.mr-size.mono {
+  color: var(--fg);
+}
 .mr-go {
   color: var(--muted2);
 }
