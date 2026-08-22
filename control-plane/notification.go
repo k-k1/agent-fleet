@@ -68,7 +68,7 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 	if tok := res.rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
 		return "offline"
 	}
@@ -106,7 +106,7 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 		if tok := res.rt.Token(); tok != "" {
 			req.Header.Set("Authorization", "Bearer "+tok)
 		}
-		if ackResp, err := http.DefaultClient.Do(req); err == nil {
+		if ackResp, err := agentHTTPClient.Do(req); err == nil {
 			ackResp.Body.Close()
 		}
 	}

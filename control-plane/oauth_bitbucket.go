@@ -28,6 +28,13 @@ const (
 	bbTokenURL     = "https://bitbucket.org/site/oauth2/access_token"
 )
 
+// bbHTTPClient bounds the call OUT to bitbucket.org (http.DefaultClient has no
+// timeout — same reasoning as oidcHTTPClient). ★ It is not for the CP→Agent leg:
+// that one goes through agentHTTPClient, whose Transport carries the Cloud Map
+// fallback (agent_dial.go). Using the default client there made the save fail with
+// "no such host" for every workspace created after the CP task started.
+var bbHTTPClient = &http.Client{Timeout: 20 * time.Second}
+
 type bbState struct {
 	user    string // identity user key
 	tenant  string // selected tenant (X-AF-Tenant) at start time
@@ -119,7 +126,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	req, _ := http.NewRequest("POST", bbTokenURL, strings.NewReader(form.Encode()))
 	req.SetBasicAuth(c.bbKey, c.bbSecret)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := bbHTTPClient.Do(req)
 	if err != nil {
 		bbCallbackPage(w, t.tokenExchangeFailed+err.Error())
 		return
@@ -154,7 +161,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	if rt.Token() != "" {
 		areq.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 	}
-	aresp, err := http.DefaultClient.Do(areq)
+	aresp, err := agentHTTPClient.Do(areq)
 	if err != nil {
 		bbCallbackPage(w, t.saveUnreachable+err.Error())
 		return
