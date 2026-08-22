@@ -236,6 +236,14 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 （封筒暗号の全体像は [07 §7.6](07-security.md)。Agent は暗号 provisioning に無関心）。
 起動時に旧平文資格の自動移行あり。`AF_MASTER_KEY` 未設定の dev では平文 `secrets.json`（同一経路）。
 
+★ **ここに置かない物が 1 つある: git プロバイダの OAuth アプリの client_secret**
+（[71](../71-tenant-git-oauth.md) §71.8）。テナントの資格情報なので、全メンバーの
+`secrets.enc` に複製されるのを避けて CP に残す。Bitbucket の refresh は Agent が
+`POST /internal/git-oauth/bitbucket/refresh` を呼んで代行させる（本人の refresh token は
+ここに残る）。★ ブリッジの座標（`AF_CP_BASE_URL` + `AF_GIT_OAUTH_TOKEN`）は起動時に
+`secrets.Data.GitOAuthBridge` へ写す——cred helper は git が起動する**別プロセス**で、
+その環境変数は保証できない（内部 git トークンが同じ理由で同じ扱い）。
+
 ## 4.9 Workspace イメージと entrypoint
 
 `workspace/Dockerfile`（multi-stage golang→node:22-slim。サイズは BAKE ノブで大きく変わる）。

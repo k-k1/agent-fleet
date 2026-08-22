@@ -182,6 +182,13 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/idp/{id}", idp.remove)
 	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp/{id}/status", idp.setStatus)
 	mux.HandleFunc("GET /api/admin/idp", idp.withSuperAdmin(idp.queue)) // approval queue (super_admin)
+	// The tenant's git provider OAuth apps (docs/71). tenant_admin end to end — no
+	// approval step, because an app for cloning repositories declares nothing about who
+	// anybody is (ADR0052 決定 3). The gate is taken mid-handler by tenantAdminFor.
+	gho := newTenantGitOAuthAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/git-oauth", gho.list)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/git-oauth/{provider}", gho.save)
+	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/git-oauth/{provider}", gho.remove)
 	// The deployment's own (env-defined) providers, read-only — since P7 these ARE
 	// the default tenant's methods, and every tenant's sign-in method panel lists
 	// them (docs/61 §61.17). Hence withAnyTenantAdmin rather than withSuperAdmin:
@@ -650,11 +657,26 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/connections/git/{host}", rest)
 	mux.HandleFunc("PUT /api/connections/git/{host}/identity", rest)
 	mux.HandleFunc("DELETE /api/connections/git/{host}", rest)
-	mux.HandleFunc("POST /api/connections/git/github/oauth/start", restLogin)
-	mux.HandleFunc("POST /api/connections/git/github/oauth/poll", restLogin)
-	// Bitbucket OAuth — CP-native (owns the public callback), not proxied.
+	// Git provider OAuth — CP-native for BOTH providers since docs/71: the OAuth app is
+	// the tenant's, and the tenant's row lives in the CP's database. GitHub's device
+	// flow used to be proxied to the Agent (restLogin), which is why the paths keep
+	// their shape — the Console calls exactly the same two endpoints.
+	mux.HandleFunc("POST /api/connections/git/github/oauth/start", cfg.handleGithubDeviceStart)
+	mux.HandleFunc("POST /api/connections/git/github/oauth/poll", cfg.handleGithubDevicePoll)
 	mux.HandleFunc("GET /api/connections/git/bitbucket/oauth/start", cfg.handleBitbucketOAuthStart)
 	mux.HandleFunc("GET /api/oauth/bitbucket/callback", cfg.handleBitbucketOAuthCallback)
+	// Which OAuth buttons this member's tenant can offer (docs/71 §71.4). CP-native and
+	// separate from GET /api/connections on purpose: that one is proxied to the Agent
+	// and answers 502 while the workspace is stopped, which is exactly when this tab is
+	// being looked at.
+	gitOAuth := newTenantGitOAuthAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/git-oauth", gitOAuth.withMembership(gitOAuth.availability))
+	// The Agent's refresh bridge (docs/71 §71.8): the tenant's client secret stays in the
+	// CP, so the workspace posts its refresh token here instead of holding the secret.
+	// Session-exempt via the /internal/ prefix; authenticated by AF_GIT_OAUTH_TOKEN.
+	exemptPrefix("/internal/")
+	gob := newGitOAuthBridgeAPI(cfg.mgr)
+	mux.HandleFunc("POST /internal/git-oauth/bitbucket/refresh", gob.withGitOAuthToken(gob.refreshBitbucket))
 	mux.HandleFunc("POST /api/connections/claude/start", restLogin)
 	mux.HandleFunc("POST /api/connections/claude/complete", restLogin)
 	mux.HandleFunc("DELETE /api/connections/claude", rest)
