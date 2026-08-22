@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -250,5 +251,82 @@ func TestDrawioStencilStoreIsAtomic(t *testing.T) {
 	}
 	if ents[0].Name() != entry.SHA256+".xml" {
 		t.Fatalf("置き場所が %q（内容アドレスであるべき）", ents[0].Name())
+	}
+}
+
+// upstream の瞬断は再試行する。**1 回の reset で 502 を返すと、Console 側は
+// そのセットを「頼んだ済み」にしたまま二度と要求せず、アイコンだけが欠けたままになる。**
+// 実測でも raw.githubusercontent の connection reset を踏んだ。
+func TestDrawioStencilRetriesTransient(t *testing.T) {
+	body := []byte("<shapes name=\"mxgraph.test\"><shape name=\"a\"/></shapes>")
+	sum := sha256.Sum256(body)
+	entry := drawioStencilEntry{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body))}
+
+	var tries int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&tries, 1) < 3 {
+			// 接続ごと切る（ネットワーク層の失敗＝再試行すべきもの）。
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Error("hijack できない")
+				return
+			}
+			conn, _, err := hj.Hijack()
+			if err == nil {
+				conn.Close()
+			}
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	d := testStencils(t)
+	m := drawioStencilManifest{Base: srv.URL + "/", Sets: map[string]drawioStencilEntry{"test.xml": entry}}
+	got, err := d.fetch(context.Background(), m, "test.xml", entry)
+	if err != nil {
+		t.Fatalf("2 回切られただけで諦めた: %v", err)
+	}
+	if string(got) != string(body) {
+		t.Fatal("中身が違う")
+	}
+	if n := atomic.LoadInt32(&tries); n != 3 {
+		t.Fatalf("試行 %d 回（3 回であるべき）", n)
+	}
+}
+
+// 逆に、何度やっても同じ失敗は繰り返さない（404 と、完全に取れたうえでの不一致）。
+func TestDrawioStencilDoesNotRetryPermanent(t *testing.T) {
+	body := []byte("<shapes/>")
+	sum := sha256.Sum256(body)
+	entry := drawioStencilEntry{SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body))}
+
+	for _, tc := range []struct {
+		name  string
+		hit   func(w http.ResponseWriter)
+		tries int32
+	}{
+		{"404", func(w http.ResponseWriter) { w.WriteHeader(http.StatusNotFound) }, 1},
+		// 長さは合っているのに中身が違う ＝ 途中で切れたのではなく別物。
+		{"改竄", func(w http.ResponseWriter) { _, _ = w.Write([]byte("<shapeX/>")) }, 1},
+		// 5xx は一時的なことがあるので再試行する。
+		{"503", func(w http.ResponseWriter) { w.WriteHeader(http.StatusServiceUnavailable) }, drawioFetchTries},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var tries int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&tries, 1)
+				tc.hit(w)
+			}))
+			defer srv.Close()
+			d := testStencils(t)
+			m := drawioStencilManifest{Base: srv.URL + "/", Sets: map[string]drawioStencilEntry{"test.xml": entry}}
+			if _, err := d.fetch(context.Background(), m, "test.xml", entry); err == nil {
+				t.Fatal("失敗するべきところで成功した")
+			}
+			if n := atomic.LoadInt32(&tries); n != tc.tries {
+				t.Fatalf("試行 %d 回（期待 %d）", n, tc.tries)
+			}
+		})
 	}
 }

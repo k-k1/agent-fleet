@@ -190,26 +190,8 @@ func (d *drawioStencils) fetch(ctx context.Context, m drawioStencilManifest, nam
 		return b, nil
 	}
 
-	url := m.Base + name
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	b, err := drawioFetchUpstream(ctx, m.Base+name, entry)
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "agent-fleet")
-	res, err := drawioStencilHTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("upstream HTTP %d", res.StatusCode)
-	}
-	// 台帳がサイズを持っているので、読む量にも上限を掛けられる（+1 で超過を検出）。
-	b, err := io.ReadAll(io.LimitReader(res.Body, entry.Size+1))
-	if err != nil {
-		return nil, err
-	}
-	if err := verifyDrawioStencil(b, entry); err != nil {
 		return nil, err
 	}
 
@@ -248,6 +230,74 @@ func (d *drawioStencils) store(path string, b []byte) error {
 		return err
 	}
 	return nil
+}
+
+// drawioFetchUpstream は 1 セットを upstream から取り、台帳と照合して返す。
+//
+// **リトライを持たせる。** raw.githubusercontent は実際に connection reset を返す
+// （実測: 台帳を焼くとき 8 並列で落ち、実機の初回取得でも 1 度出た）。1 回の瞬断で
+// 502 を返すと、Console 側はそのセットを「頼んだ済み」にしたまま二度と要求しないので、
+// **図のアイコンだけがそのペインの寿命いっぱい欠ける**。ビューア自身の遅延取得を
+// 否決した理由（§65.5.4-3）と同じ失敗をこちらで作らないための retry である。
+func drawioFetchUpstream(ctx context.Context, url string, entry drawioStencilEntry) ([]byte, error) {
+	var last error
+	for attempt := 1; attempt <= drawioFetchTries; attempt++ {
+		if attempt > 1 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt-1) * 400 * time.Millisecond):
+			}
+		}
+		b, err := drawioFetchOnce(ctx, url, entry)
+		if err == nil {
+			return b, nil
+		}
+		last = err
+		// 台帳と照合して落ちたものと 404 は、何度やっても同じ。すぐ諦める。
+		if errors.Is(err, errDrawioPermanent) {
+			break
+		}
+	}
+	return nil, last
+}
+
+const drawioFetchTries = 3
+
+// 再試行しても意味の無い失敗（内容の不一致・存在しない URL）に付ける印。
+var errDrawioPermanent = errors.New("permanent")
+
+func drawioFetchOnce(ctx context.Context, url string, entry drawioStencilEntry) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errDrawioPermanent, err)
+	}
+	req.Header.Set("User-Agent", "agent-fleet")
+	res, err := drawioStencilHTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusGone {
+		return nil, fmt.Errorf("%w: upstream HTTP %d", errDrawioPermanent, res.StatusCode)
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream HTTP %d", res.StatusCode)
+	}
+	// 台帳がサイズを持っているので、読む量にも上限を掛けられる（+1 で超過を検出）。
+	b, err := io.ReadAll(io.LimitReader(res.Body, entry.Size+1))
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyDrawioStencil(b, entry); err != nil {
+		// 途中で切れた応答は毎回長さが違うので、これは再試行する価値がある。
+		// 完全に取れたうえで中身が違うなら、何度やっても同じ。
+		if int64(len(b)) == entry.Size {
+			return nil, fmt.Errorf("%w: %v", errDrawioPermanent, err)
+		}
+		return nil, err
+	}
+	return b, nil
 }
 
 func verifyDrawioStencil(b []byte, entry drawioStencilEntry) error {

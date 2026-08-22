@@ -154,7 +154,11 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
           ),
         ).then((xmls) => {
           const got = xmls.filter((x): x is string => !!x);
-          if (got.length) post({ t: "stencils", xml: got });
+          // **取れなかったものは名前を返す。** フレームが「頼んだ済み」から外して
+          // 次の描画でもう一度頼めるようにするため —— 返さないと、upstream の 1 回の
+          // 瞬断でそのペインの寿命いっぱいアイコンが欠ける（実機で reset を踏んだ）。
+          const missing = msg.sets.filter((_, i) => !xmls[i]);
+          if (got.length || missing.length) post({ t: "stencils", xml: got, missing });
         });
         return;
       }

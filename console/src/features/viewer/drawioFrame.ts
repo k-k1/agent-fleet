@@ -40,9 +40,11 @@ export interface DrawioViewState {
 export type DrawioFrameRequest =
   | { af: typeof DRAWIO_MSG; t: "boot"; src: string }
   | { af: typeof DRAWIO_MSG; t: "render"; xml: string; dark: boolean; restore?: DrawioViewState | null }
-  /** フレームが申告したステンシルの中身。取れなかったものは単に入っていない
-   *  （閉域では空配列。**エラーではない** —— 枠と色だけの絵に静かに落ちる）。 */
-  | { af: typeof DRAWIO_MSG; t: "stencils"; xml: string[] };
+  /** フレームが申告したステンシルの中身と、取れなかったものの名前。
+   *  閉域では `xml` が空で `missing` が全部になる（**エラーではない** —— 枠と色だけの
+   *  絵に静かに落ちる）。`missing` を返すのは、フレームがそれを「頼んだ済み」から
+   *  外して次の描画でもう一度頼めるようにするため（docs/65 §65.5.4）。 */
+  | { af: typeof DRAWIO_MSG; t: "stencils"; xml: string[]; missing?: string[] };
 
 export type DrawioFrameEvent =
   | { af: typeof DRAWIO_MSG; t: "ready" }
@@ -348,7 +350,15 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   // 親から届いたステンシルを登録して描き直す。**render をやり直さない** ——
   // \`graph.refresh()\` で図案だけが差し替わり、見ていた倍率と位置がそのまま残る
   // （実測: 1.8221 倍のまま path が 1 → 3 に増えた）。
-  function addStencils(xmls) {
+  function addStencils(xmls, missing) {
+    // **取れなかったものは「頼んだ済み」から外す。** 外さないと、upstream の 1 回の
+    // 瞬断でそのフレームの寿命いっぱいアイコンが欠けたままになる —— ビューア自身の
+    // 遅延取得を否決した理由（§65.5.4-3 の \`packages[basename]=1\`）と、そっくり同じ
+    // 詰まり方をこちら側で作ることになる。実機の初回取得で raw.githubusercontent の
+    // connection reset を実際に踏んだ。
+    if (missing) {
+      for (var k = 0; k < missing.length; k++) delete stencilAsked[missing[k]];
+    }
     if (!viewer || !xmls || !xmls.length || !window.mxStencilRegistry) return;
     try {
       mxStencilRegistry.parseStencilSets(xmls);
@@ -586,7 +596,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
       return;
     }
     if (m.t === "stencils") {
-      addStencils(m.xml);
+      addStencils(m.xml, m.missing);
       return;
     }
     if (m.t !== "render") return;
