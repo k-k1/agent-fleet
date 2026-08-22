@@ -547,6 +547,42 @@ matrix に `aarch64-unknown-linux-musl` を足し、Homebrew formula の Linux/A
 ⚠️ triage ラベルを付けているのは **AI bot（wshm）** で、人間の maintainer が見た形跡は
 どのスレッドにも無い。**「triage 済み ＝ 人が判断した」と読まないこと。**
 
+#### E. ベースを Amazon Linux にする（ECS なんだから、という案）—— **却下**
+
+「デプロイが ECS なんだから、コンテナのベースも Amazon Linux にすれば揃うのでは」は自然な
+発想だが、実測すると **rtk については後退**で、他も壊れる。
+
+**⚠️ まず前提の整理: スロットのホストは既に Amazon Linux 2023 である。** ECS 最適化 AMI が
+それで、`uname -m` も `dnf` もそこの話。しかし**CLI が動くかどうかを決めるのはコンテナの中の
+glibc** であって、ホストのそれではない。ホストが AL2023 でも、コンテナが
+`node:22-bookworm-slim` なら中は Debian 12 である。**この 2 つは別のレイヤで、混ぜると
+「ECS なんだから Amazon Linux」という推論が成立してしまう。**
+
+実測（2026-08-22・`crane export amazonlinux:2023` と AL2023 の repodata）:
+
+| | glibc | chromium パッケージ |
+|---|---|---|
+| **Amazon Linux 2023** | **2.34** | **無い**（全 14,563 パッケージ中。あるのは `firefox` のみ） |
+| Debian 12（現行） | 2.36 | あり・**revision まで固定**（[31](31-container-browser-pane.md)） |
+| Debian 13 | 2.41 | あり（150 系＝現行より**古い**） |
+| rtk aarch64 gnu が要求 | **2.39** | — |
+
+1. **glibc が Debian 12 より古い（2.34 < 2.36）。** rtk は当然動かないままで、しかも
+   **問題の軸で後退する**。[43](43-kiro-agent-kind.md) の kiro は x86_64 gnu が glibc **2.34 以上**を
+   要求するので、余裕がちょうどゼロになる。
+2. **chromium パッケージが存在しない。** [31](31-container-browser-pane.md) は Debian の
+   `chromium` を（revision 固定 ＋ setuid sandbox helper の build 時検証込みで）採ると決めた。
+   AL2023 ではその根拠が丸ごと消え、**同文書が比較して退けた** Playwright 配布 / Chrome for
+   Testing へ戻ることになる。ブラウザペインは製品機能なので、これは小さくない。
+3. **ランタイム毎にベースを変えると、イメージが 2 系統に分岐する。** workspace イメージは
+   docker / native / Fargate / ecs-ec2 で**同じ 1 本**という前提で、GHCR のタグも
+   `versions.json` のピンも air-gap tar も L1 smoke もその上に乗っている。「ECS だけ別ベース」は
+   それを全部 2 倍にし、**同じ製品なのに動く場所によって中身が違う**状態を作る。
+   本書はいま「アーキが 2 つになるだけでこれだけ壊れる」（§70.5・§70.9）を記録している最中で
+   あり、そこへ**さらに軸をもう 1 本増やす**話になる。
+
+**ベースを動かすなら候補は Debian 13 だけ**（A）。そしてそれも rtk のためにやるものではない。
+
 **⚠️ A を「rtk のために」やってはいけない。** 効くのは事実だが、代償が rtk と無関係に大きい。
 
 - **chromium が 151 → 150 へ「下がる」。** bookworm の pin は `151.0.7922.137-1~deb12u1`、
