@@ -423,6 +423,11 @@ type TenantStore interface {
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
 	SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error
 	ListTenants(ctx context.Context) ([]Tenant, error)
+	// DeleteTenant removes an EMPTY tenant (its leftover inactive memberships, its
+	// configuration rows, and the row itself). Irreversible, super_admin only, and the
+	// emptiness is proved by the handler — see deleteTenant in tenants.go for the five
+	// refusals and why each one exists.
+	DeleteTenant(ctx context.Context, tenantID string) error
 	// SetTenantLogin stores the three CSV login rules (docs/61 §61.9.7). Values are
 	// normalized by the caller (lowercased, deduped); this only writes them.
 	// hiddenProviders is DISPLAY only (0042, docs/61 §61.15.9) — accepted methods to
@@ -660,9 +665,24 @@ type MembershipStore interface {
 	// LOGICAL delete: the workspace, its home and its secrets survive, but every
 	// path that resolves a membership already requires status='active', so the
 	// person is locked out on the next request (docs/61 §61.10.6 / 決定 22).
-	// Hard deletion is deliberately not offered — schedules, audit rows and shares
-	// reference the membership id.
+	// This is what offboarding means, and it stays the default: DeleteMembership
+	// below is a second, deliberate step taken later.
 	SetMembershipStatus(ctx context.Context, membershipID, status string) error
+	// DeleteMembership removes the row itself and everything keyed to it
+	// (membershipCascade). It is the last step of the clean-up sequence — remove →
+	// destroy the workspace → delete the row — and it is irreversible.
+	//
+	// ★ It used to be "deliberately not offered", on the grounds that schedules, audit
+	// rows and shares reference the membership id. Two of those three turned out not to
+	// be reasons: the schedules and shares ARE this person's and go with them, and
+	// audit_log never referenced a membership at all (its actor is an identity). What
+	// the reason really protected is the HISTORY — the audit ledger, and the cost and
+	// occupancy rows an admin may still have to answer for — so those are what is kept
+	// (docs/61 §61.18).
+	//
+	// Callers must have deactivated the membership and destroyed its workspace first;
+	// this does not release a home or any cloud resource.
+	DeleteMembership(ctx context.Context, membershipID string) error
 	// EmailHasActiveMembership reports whether the person at this address is on any
 	// tenant's roster. This is the term decision 16 adds to the entry gate: being
 	// invited is itself permission to reach the login, so an invite-run deployment
