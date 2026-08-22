@@ -444,19 +444,18 @@ func (p *githubProvider) Allowed(ctx context.Context, pr principal) (bool, error
 // Following 決定 11, an incomplete GitHub config disables GitHub only — it never
 // stops CP from starting, because that would let one IdP's typo lock out the
 // people signing in through the others.
-// ★ GITHUB_OAUTH_CLIENT_ID is NOT ours alone: it already carries the OAuth App
-// client_id of the GitHub *device flow* that connects git repos, and CP injects it
-// into every workspace container (main.go). One OAuth App can serve both flows —
-// scopes are granted per authorization, so the login asks for read:org+user:email
-// while the device flow asks for repo — and the doc's env names assume exactly
-// that. It only needs the callback URL <PUBLIC_BASE_URL>/oauth2/callback added.
-// An operator who would rather keep the two apart (approving one app for an org
-// approves it for both) sets AF_GITHUB_LOGIN_CLIENT_ID / _SECRET instead.
+// ★ GITHUB_OAUTH_CLIENT_ID means the SIGN-IN app, and since docs/71 it means only
+// that. It used to be shared with the git-connect device flow, which CP injected
+// into every workspace container; that flow now reads the app the TENANT registered
+// (tenant_git_oauth.go), so nothing else consumes this variable. A deployment that
+// still wants a separate registration for the login sets AF_GITHUB_LOGIN_CLIENT_ID /
+// _SECRET, which keeps winning here.
 //
-// ★ Which is why AF_GITHUB_ALLOWED_ORGS, not the client id, is the signal that a
-// GitHub *login* was wanted at all: a deployment that has only ever used the
-// device flow has GITHUB_OAUTH_CLIENT_ID set and must not be nagged at every
-// startup about a feature it never asked for.
+// ★ AF_GITHUB_ALLOWED_ORGS, not the client id, is nonetheless still the signal that a
+// GitHub *login* was wanted at all. Two reasons it stays that way: org membership is
+// what actually authorizes the sign-in (§61.3), and a deployment upgrading from before
+// docs/71 has GITHUB_OAUTH_CLIENT_ID set for the git flow and must not be nagged at
+// every startup about a feature it never asked for.
 func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.Context, string) bool, deployHasList bool) *githubProvider {
 	clientID := firstNonEmpty(os.Getenv("AF_GITHUB_LOGIN_CLIENT_ID"), os.Getenv("GITHUB_OAUTH_CLIENT_ID"))
 	clientSecret := firstNonEmpty(os.Getenv("AF_GITHUB_LOGIN_CLIENT_SECRET"), os.Getenv("GITHUB_OAUTH_CLIENT_SECRET"))

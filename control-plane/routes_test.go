@@ -93,8 +93,21 @@ func TestSmokeWhoami(t *testing.T) {
 	}
 }
 
+// smokeProxyEnv is smokeEnv in AUTH=proxy with a plain member — the only way to get a
+// NON-administrator now that AUTH=dev's fixed user is a super_admin (docs/71 §71.6).
+func smokeProxyEnv(t *testing.T) (config, *http.ServeMux) {
+	t.Helper()
+	cfg, _ := smokeEnv(t)
+	cfg.mgr.authMode = "proxy"
+	cfg.mgr.emailHeader = "X-Forwarded-Email"
+	cfg.mgr.superAdmins = map[string]bool{} // nobody: the caller below is a member
+	return cfg, buildMux(cfg)
+}
+
 // /api/tenants auto-provisions the dev user into the default tenant (AF_PROVISION=auto)
-// and reports super_admin=false — the Console picker path, store-only.
+// and reports super_admin=true — in dev mode the single fixed user IS the operator, so
+// the tenant settings screen is reachable on a native / WSL deployment (docs/71 §71.6).
+// The MEMBERSHIP role is a different axis and stays "member".
 func TestSmokeTenants(t *testing.T) {
 	_, mux := smokeEnv(t)
 	w := smokeGet(t, mux, "GET", "/api/tenants")
@@ -114,16 +127,19 @@ func TestSmokeTenants(t *testing.T) {
 	if len(got.Tenants) != 1 || got.Tenants[0].Slug != "default" || got.Tenants[0].Role != "member" {
 		t.Fatalf("tenants payload: %+v", got)
 	}
-	if got.SuperAdmin {
-		t.Fatal("dev user must not be super_admin")
+	if !got.SuperAdmin {
+		t.Fatal("dev user must be super_admin (docs/71 §71.6)")
 	}
 }
 
 // A super_admin-only route refuses a plain member with the shared error shape
 // {error:{code,message}} — the contract ERR_TEXT keys off (client.ts).
 func TestSmokeAdminForbidden(t *testing.T) {
-	_, mux := smokeEnv(t)
-	w := smokeGet(t, mux, "POST", "/api/admin/tenants")
+	_, mux := smokeProxyEnv(t)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/tenants", nil)
+	r.Header.Set("X-Forwarded-Email", "member@example.com")
+	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("admin create tenant: want 403 got %d %s", w.Code, w.Body.String())
 	}
