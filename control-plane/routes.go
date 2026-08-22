@@ -36,6 +36,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerConnectionRoutes(mux, cfg)
 	registerInternalGitRoutes(mux, cfg)
 	registerBrowserRoutes(mux, cfg)
+	registerDrawioStencilRoutes(mux, cfg)
 	registerTerminalPreviewRoutes(mux, cfg)
 	registerLegacyRedirect(mux)
 	registerStatic(mux, cfg)

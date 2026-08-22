@@ -133,6 +133,28 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
         );
         return;
       }
+      if (msg.t === "stencils") {
+        // フレームが申告したベンダーアイコンの図案を CP から取って渡す（docs/65 §65.5）。
+        // **フレームには取らせない** —— オリジンが無いので cookie が付かず authGate に
+        // 401 で弾かれる（§65.11-7 と同じ穴。実測済み）。
+        //
+        // 取れなかったものは黙って落とす: 閉域では図案だけが空になり、枠・色・ラベルは
+        // 残る（＝ステンシルを持たなかった頃と同じ絵）。**エラー表示にしてはいけない** ——
+        // 図は正しく開けているのだから、利用者に見せる異常ではない。
+        Promise.all(
+          msg.sets.map((name) =>
+            fetch(`api/drawio/stencils/${name.split("/").map(encodeURIComponent).join("/")}`, {
+              credentials: "same-origin",
+            })
+              .then((r) => (r.ok ? r.text() : null))
+              .catch(() => null),
+          ),
+        ).then((xmls) => {
+          const got = xmls.filter((x): x is string => !!x);
+          if (got.length) post({ t: "stencils", xml: got });
+        });
+        return;
+      }
       setFrameErr("");
       viewStateRef.current = {
         pageId: msg.pageId,

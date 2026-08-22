@@ -127,44 +127,141 @@ srcdoc はそれを `<script src>` で読む —— `<script src>` は CORS の�
 
 | 単位 | 実測 |
 |------|------|
-| ステンシル全体（`stencils/**`, v31.1.8） | **42.8 MB / 205 ファイル** |
-| 最大の 1 セット `aws4.xml` | 6.5 MB（gzip **1.1 MB**） |
-| 次点 | `rack/hpe_aruba/switches.xml` 3.8 MB、`cisco19.xml` 1.8 MB、`aws3.xml` 1.5 MB … |
+| ステンシル `.xml`（v31.1.8） | **203 ファイル / 40.8 MB** |
+| 最大の 1 セット `aws4.xml` | 6.21 MB |
+| 次点 | `rack/hpe_aruba/switches.xml` 3.67 MB、`cisco19.xml` 1.73 MB、`aws3.xml` 1.39 MB、`alibaba_cloud.xml` 1.29 MB、`gcp2.xml` 1.08 MB … |
+| 上位 20 件 / 上位 50 件 | 26.0 MB / 34.7 MB（＝**上位 20 件で全体の 64%**） |
 
-**42.8 MB をリポジトリとイメージに常時積むのは、使う人の割合に対して割に合わない。**
+**40.8 MB をリポジトリとイメージに常時積むのは、使う人の割合に対して割に合わない。**
 （`gh api repos/jgraph/drawio/git/trees/v31.1.8?recursive=1` で計測）
 
-### 65.5.3 採る形 — CP がプロキシしてディスクにキャッシュする
+> `stencils/` には `.xml` 以外に `LICENSE` と `clipart/Gear_128x128.png` も居る（合計 205
+> ファイル / 42.8 MB）。ビューアが要求するのは `<basename>.xml` だけなので、**台帳に入れる
+> のは `.xml` の 203 件**。それ以外を載せても届かないうえ、SSRF の防壁を無駄に緩める。
+
+### 65.5.2b 何が「セット名」で、何が要求されるのか（実測）
+
+台帳の鍵は **ビューアが実際に要求するパス**であって、シェイプ名でもディレクトリ一覧でもない。
+`viewer-static.min.js` v31.1.8 を読んで実ブラウザで裏を取った結果:
+
+1. `mxStencilRegistry.getBasenameForStencil("mxgraph.<a>.<b>.<name>")` は先頭の `mxgraph` と
+   末尾の `<name>` を落として **`<a>/<b>`** にする。
+2. **`mxStencilRegistry.libraries` に 62 セットの表がある**（実行時にも 62 件を確認）。
+   ここに載っている basename は、**ファイル名が basename と違うことがある**:
+   `ios7icons → ios7/icons.xml`、`rackGeneral → rack/general.xml`、`ibmcloud → ibm_cloud.xml`、
+   `pidFlowSensors → pid/flow_sensors.xml`、`veeam2 → veeam/veeam2.xml`。
+   **`basename + ".xml"` で組み立てる実装はここで 404 になる。**
+3. 表に無い basename はフォールバックで `basename.replace("_-_","_") + ".xml"`。
+   203 件のうち **157 件（21.6 MB）がこちら**。
+
+つまり解決規則はビューアの中にしかなく、**フレーム側でその表を引く以外に正しい実装は無い**
+（`drawioFrame.ts` の `stencilFilesFor()`）。`drawio:check` の `stencil-remap` ケースが
+この読み替えを 1 本で押さえている。
+
+**既知の不整合: `libraries.sap` は `sap.xml` を指すが、upstream v31.1.8 に `sap.xml` は存在
+しない**（`stencils/` に `sap` は 1 件も無い。SAP のシェイプは JS 側 `mxSAP.js` に全部ある）。
+台帳に無い＝ 404 が正しい挙動なので、「台帳の漏れ」と誤読して手で足さないこと。
+`TestDrawioManifestLoads` がこれを明示的に禁じている。
+
+### 65.5.2c `SHAPES_PATH` の `.js` は取りに行かない（当初の懸念は実測で否定された）
+
+`libraries` の各エントリは `.xml` と **`SHAPES_PATH` の `.js` を混ぜて並べている**
+（`libraries.aws4 = [SHAPES_PATH + "/mxAWS4.js", STENCIL_PATH + "/aws4.xml"]`）。しかも
+`getStencil` の分岐は **リスト内の全ファイルを読む**ので、素直に読むと「aws4 の図を開くだけで
+`mxAWS4.js` を取得して `eval` する」ように見える。
+
+**実測ではそうならない。** `viewer-static.min.js` の末尾（未圧縮のまま残っている部分）に
+`mxStencilRegistry.allowEval = false;` があり、実行時にも `allowEval === false` を確認した。
+`.js` の分岐はこのフラグの内側にあるので、**取得も eval も起きない**。実ブラウザで
+`STENCIL_PATH` / `SHAPES_PATH` の両方を自前サーバへ向けて `dynamicLoading` を戻しても、
+出た要求は `aws4.xml` **1 本だけ**だった。
+
+そしてこれらの JS シェイプは **viewer-static に焼き込み済み**である（`registerShape(` が
+829 箇所）。`libraries` の 62 件のうち **21 件は `.xml` を一切持たない純 JS セット**
+（`archimate3` / `sysml` / `c4` / `er` / `uml25` / `mockup/*` / `infographic` / `emoji` …）で、
+これらは**今も完全にオフラインで正しく描けている** —— 6 セットを並べた図を要求 0 本で
+描けることを実測した。**台帳にも事前投入にも、これらは一切関係しない。**
+
+> したがって `SHAPES_PATH` に何かを向ける必要は無い。dead value のまま塞いでおく
+> （§65.11-1）。`allowEval` をこちらから触る必要も無い —— ビューアが既に false にしている。
+
+### 65.5.3 採る形 — フレームが申告し、親が CP から取って渡す
 
 ```
-iframe ──GET /drawio/stencils/aws4.xml──▶ CP
-                                          ├ 台帳（同梱）で名前を照合  … 無ければ 404
-                                          ├ キャッシュにあればそれを返す
-                                          └ 無ければ pin した upstream から取得
-                                             → sha256 照合 → 保存 → 返す
+フレーム: 描画後にモデルを走査 → 足りないセットを申告
+   │  postMessage {t:"stencils", sets:["aws4.xml"]}
+   ▼
+親(Console, cookie を持つ) ──GET /api/drawio/stencils/aws4.xml──▶ CP
+   │                                    ├ 台帳(go:embed)で名前を照合 … 無ければ 404
+   │                                    ├ キャッシュにあればそれを返す
+   │                                    └ 無ければ pin した upstream から取得
+   │                                       → sha256 照合 → 保存 → 返す
+   │  postMessage {t:"stencils", xml:[...]}
+   ▼
+フレーム: parseStencilSets() → graph.refresh()（**倍率も位置もそのまま**）
 ```
 
-- **同梱するのは台帳だけ。** `stencils.json`（205 件の `名前 → sha256 → サイズ`、約 20 KB）を
-  リポジトリに置く。バイト列は持たない。
+- **同梱するのは台帳だけ。** `control-plane/assets/drawio-stencils.json`
+  （203 件の `名前 → sha256 → サイズ`、26 KB）。バイト列は持たない。
+  焼き直しは `node console/scripts/drawio/stencils-manifest.mjs --write`
+  （同梱ビューアの版と食い違うと自分で止まる）。
+- **台帳は CP 側に置く。照合するのが CP だからである。** Console 側に置いた台帳は飾りで、
+  防壁にはならない。
+- **台帳を絞ってはいけない。** 載せなかったセットは 404 ＝ その図が黙って劣化する。
+  全件で 26 KB しかないので、絞る動機（配布サイズ）はそもそも成り立たない。
+  **絞るのは事前投入（プリシード）の方**であって台帳ではない。
 - **台帳は完全性の担保と同時に SSRF の防壁である。** セット名は**信用できない `.drawio` の中身**
   から来る（`shape=mxgraph.<set>.<x>`）。台帳に無い名前は取りに行かない、が必須条件。
   これが無いと「図を開かせるだけで CP に任意 URL を叩かせる」道具になる。
+  **要求は URL を運ばない** —— CP は台帳の `base` とセット名から自分で URL を組み立てる。
 - **外向き通信は CP で 1 回・テナント全体で共有。** 利用者のブラウザからは出さない。
 - **閉域では黙って劣化する。** 取得に失敗したら 65.2 の「枠と色だけ」に落ちる＝ P0 と同じ絵。
-  壊れない。事前投入したい環境向けに、キャッシュディレクトリへ全件を流し込む
-  スクリプトを用意する（オフライン環境の管理者はこれを 1 回流す）。
-- iframe はオリジンを持たない（65.3）ので、**この経路にだけ `Access-Control-Allow-Origin: *`
-  が要る**。ステンシルは drawio の公開アセットで秘密を含まないため問題ない。
+  **エラー表示にしてはいけない** —— 図は正しく開けているのだから、利用者に見せる異常ではない。
+- **この経路は authGate の内側**（除外しない）。取りに来るのは cookie を持つ親であって
+  フレームではないので、CORS も認証除外も要らない。理由は次項。
+
+### 65.5.4 なぜフレームに直接取らせないのか（実測 3 点）
+
+当初の設計（`STENCIL_PATH` を CP へ向け、フレームが自分で取りに行く）は、実ブラウザで
+3 つとも壊れることを確認したので**捨てた**。
+
+1. **認証を通れない。** `STENCIL_PATH` を自前サーバへ向けて出た `GET /stencils/aws4.xml` には
+   **セッション cookie が付いていなかった**。オリジンを持たないフレームからの要求は cross-site
+   扱いになり SameSite=Lax の cookie が落ちる —— §65.11-7 で `<script src>` が 401 になったのと
+   まったく同じ穴である。CP 側を authGate 除外＋`Access-Control-Allow-Origin: *` にすれば通せるが、
+   それは「認証の外側に穴を開ける」という対価を払う話になる。
+2. **CSP を開けることになる。** `connect-src 'none'` のままだとフレームの取得は止まる
+   （実測: 要求 0 本・アイコンは空のまま）。通すには `connect-src` に自オリジンを足すしかなく、
+   フレームが自分で外を叩ける経路がそこで復活する。
+3. **一度失敗すると二度と再取得しない。** `loadStencilSet` の失敗は握り潰され、そのあと
+   `mxStencilRegistry.packages[basename] = 1` が立つ。実測では、CSP に阻まれて失敗したあとに
+   もう一度描画しても**要求は 1 本も出ず**、アイコンは空のままだった。一時的な失敗が
+   フレームの寿命いっぱい固定される。
+
+親が取って渡す形にすると 3 つとも消える。**そして絵は同じ**である —— フレーム直取り版と
+親から `parseStencilSets()` で流し込んだ版のスクリーンショットは**バイト単位で一致**した。
+
+差し込みの描き直しは **`graph.refresh()` で足りる。** `render` をやり直すと見ていた場所が
+飛ぶが、`refresh()` なら図案だけが差し替わる（実測: 利用者が 1.8221 倍に拡大した状態で
+差し込んで、倍率も位置もそのまま・`path` が 1 → 3 に増えた）。
+
+**必要なセットの割り出しは「展開済みのモデル」を見る。** 生の XML を走査する実装は、
+圧縮された `<diagram>`（deflate+base64）で何も見つけられない（実測: `rawSeen=0`）。
+`viewer.graph.model.cells` の `style` を見れば圧縮の有無を問わない（実測: 圧縮図で
+`need=["aws4"]` を正しく取り出せた）。**親は deflate を解く必要が無い**、というのも
+この形を採る理由のひとつ。
 
 ## 65.6 セキュリティ
 
 | 経路 | 扱い |
 |------|------|
 | 図面の外部持ち出し（lightbox） | ツールバーから外す ＋ `sandbox` に `allow-popups` を与えない（二重） |
-| `STENCIL_PATH` 既定の外部取得 | `viewer.html` で自オリジンへ固定。CP 経由以外へは出ない |
+| `STENCIL_PATH` / `SHAPES_PATH` 既定の外部取得 | **dead value で潰したまま**。フレームはステンシルも自分で取りに行かない（§65.5.4） |
 | ラベル内の HTML / `javascript:` リンク | ビューア同梱の DOMPurify ＋ オリジンなし iframe（`allow-same-origin` なし）で二重 |
-| 任意 URL 取得（SSRF） | ステンシル名を同梱台帳で照合（65.5.3） |
-| iframe からの通信 | `Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'`。**外部オリジンを script-src に載せない** —— 載せるとフレームが自分で取りに行く経路が復活し、§65.11-7 の欠陥に戻る。ステンシル（P1）も同じ理由で**親が取って渡す**（フレームの CSP は開けない） |
+| 任意 URL 取得（SSRF） | ステンシル名を CP 同梱の台帳で照合（65.5.3）。要求は URL を運ばず、CP が台帳の `base` から組み立てる |
+| ステンシル経路の認証 | **authGate の内側**。取りに来るのは cookie を持つ親で、CORS も認証除外も要らない（§65.5.4） |
+| ステンシルの改竄 | 取得バイト列を台帳の sha256 とサイズで照合してから保存・配布（`drawio_stencils.go`） |
+| iframe からの通信 | `Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'`。**外部オリジンを script-src に載せない** —— 載せるとフレームが自分で取りに行く経路が復活し、§65.11-7 の欠陥に戻る。ステンシルも同じ理由で**親が取って渡す**ので、`connect-src` は **`none` のまま**（§65.5.4） |
 | 外部 URL の既定値 | `PROXY_URL` / `STYLE_PATH` / `SHAPES_PATH` / `STENCIL_PATH` / `DRAW_MATH_URL` / `GRAPH_IMAGE_PATH` / `CSS_PATH` / `DRAWIO_BASE_URL` / `DRAWIO_SERVER_URL` / `DRAWIO_LIGHTBOX_URL` / `DRAWIO_LOG_URL` を **dead value で** 潰す（空文字では潰せない — §65.11-1） |
 
 ## 65.7 配布
@@ -186,7 +283,8 @@ iframe ──GET /drawio/stencils/aws4.xml──▶ CP
 | Phase | 内容 | 受け入れ基準 |
 |-------|------|--------------|
 | **P0** ✅ | ビューア同梱・iframe・図 ↔ XML ソース切替・テーマ追従・ページ送り・`.drawio`/`.dio`/`mxfile` 判定・i18n・dom テスト | 素の `.drawio` が図として開く／ラベルが日本語で出る／圧縮 `<diagram>` が開く／2 MiB 超が開く（`fs/download` 経由）／外向き通信が 0 件（CDP で確認）—— **すべて `drawio:check` が実ブラウザで判定**（実機の Console での目視は未） |
-| **P1** | ステンシルの CP プロキシ＋キャッシュ＋台帳（65.5.3）、事前投入スクリプト | `aws4` を含む図でアイコンが出る／台帳に無い名前が 404／2 回目はキャッシュから |
+| **P1** ✅ | ステンシルの CP プロキシ＋キャッシュ＋台帳（65.5.3）、フレーム申告 → 親取得の往復（65.5.4） | `aws4` を含む図でアイコンが出る／`rackGeneral` が `rack/general.xml` に読み替わる／圧縮図でも同じセットに行き着く／台帳に無い名前が 404／改竄バイト列を拒否／2 回目はキャッシュから／取れなくても図は開いたまま —— **`drawio:check` の 4 ケース＋ `drawio_stencils_test.go` の 5 本**（実機の Console での目視は未） |
+| **P1b** | 閉域向けの事前投入スクリプト（キャッシュへ全件／既定束を流し込む） | 外向き通信を全遮断した状態で `aws4` の図にアイコンが出る |
 | **P2** | `.drawio.svg` / `.drawio.png` の埋め込み XML から図モードを出す（今は画像として開く） | 同じファイルが画像／図の両モードで開ける |
 | **P3** | **編集**。drawio webapp を自ホストし embed（`?embed=1&proto=json`）、保存は docs/44 の revision/競合機構へ載せる | 別起票（配布サイズが桁で変わるため） |
 

@@ -39,7 +39,10 @@ export interface DrawioViewState {
 
 export type DrawioFrameRequest =
   | { af: typeof DRAWIO_MSG; t: "boot"; src: string }
-  | { af: typeof DRAWIO_MSG; t: "render"; xml: string; dark: boolean; restore?: DrawioViewState | null };
+  | { af: typeof DRAWIO_MSG; t: "render"; xml: string; dark: boolean; restore?: DrawioViewState | null }
+  /** フレームが申告したステンシルの中身。取れなかったものは単に入っていない
+   *  （閉域では空配列。**エラーではない** —— 枠と色だけの絵に静かに落ちる）。 */
+  | { af: typeof DRAWIO_MSG; t: "stencils"; xml: string[] };
 
 export type DrawioFrameEvent =
   | { af: typeof DRAWIO_MSG; t: "ready" }
@@ -60,12 +63,17 @@ export type DrawioFrameEvent =
       ty: number;
       adjusted: boolean;
     }
+  /** この図を描くのに要るステンシル集合のファイル名（`aws4.xml` / `rack/f5.xml`）。
+   *  **フレームは自分で取りに行かない** —— オリジンを持たないフレームからの要求は
+   *  cross-site 扱いで SameSite=Lax の cookie が付かず、CP の authGate に 401 で
+   *  弾かれる（§65.11-7 と同じ穴。実測で確認済み）。取得は資格情報を持つ親の仕事。 */
+  | { af: typeof DRAWIO_MSG; t: "stencils"; sets: string[] }
   /** `boot` はビューアを評価できなかった、`parse` は図として読めなかった。
    *  **この 2 つを混ぜてはいけない** —— 読み込み失敗を「図が壊れている」と表示すると、
    *  原因がファイル側にあるように見えて調査が丸ごと逸れる（実際に起きた）。 */
   | { af: typeof DRAWIO_MSG; t: "error"; code: "boot" | "parse" | "empty" };
 
-const FRAME_EVENTS = ["ready", "booted", "rendered", "error"];
+const FRAME_EVENTS = ["ready", "booted", "rendered", "stencils", "error"];
 
 /** フレームから来たイベントか判定する（postMessage は誰でも送れる）。 */
 export function isDrawioFrameEvent(data: unknown): data is DrawioFrameEvent {
@@ -87,9 +95,9 @@ export interface DrawioFrameOptions {
 /**
  * iframe に入れる HTML を組み立てる。
  *
- * CSP は default-src 'none' から始めて必要なものだけ開ける。**connect-src は 'none'**：
- * P0 ではステンシルを持たないので、フレームからの通信は 1 本も要らない
- * （ステンシルの遅延取得を入れる P1 で初めて開ける — docs/65 §65.5.3）。
+ * CSP は default-src 'none' から始めて必要なものだけ開ける。**connect-src は 'none'
+ * のまま** ——ステンシルも含め、フレームは何ひとつ自分で取りに行かない。ここを開ける
+ * 変更は、そのままフレームが外部を叩ける経路の復活を意味する（docs/65 §65.5.4）。
  */
 export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   // ビューアのソースは親が postMessage で渡し、インライン script として評価する。
@@ -251,6 +259,8 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
             adjusted = true;
           }
           postState(v);
+          // 図はもう出ている。足りないアイコンは後追いで差し込む（描画は待たせない）。
+          askForStencils(v);
         });
         // ページ送り・レイヤー操作の結果も同じ形で返す（ヘッダの「n / m」のため）。
         if (v.addListener) {
@@ -261,6 +271,91 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
       });
     } catch (e) {
       post({ t: "error", code: "parse" });
+    }
+  }
+
+  // ── ステンシル（docs/65 §65.5）───────────────────────────────────────
+  // ベンダーアイコン（\`shape=mxgraph.aws4.*\` 等）の図案はビューアに入っていない
+  // （全体で 40.8 MB あるので同梱しない）。**フレームは取りに行かない**：必要な
+  // ファイル名を親へ申告し、親が CP から取って postMessage で返す。
+  //
+  // dynamicLoading を true に戻してフレームに取らせる案は実測で否決した:
+  //   - オリジンが無いので CP の authGate に 401 で弾かれる（§65.11-7 と同じ穴）
+  //   - CSP の connect-src を開ける必要が出る（外部取得の経路が復活する）
+  //   - **一度失敗したセットは二度と再取得されない**（loadStencilSet の失敗は
+  //     握り潰され、その後 \`packages[basename] = 1\` が立つ。実測: 再描画しても
+  //     要求は 1 本も出ず、アイコンは空のまま）
+  var stencilAsked = {};
+
+  // ビューア自身の解決規則をなぞる。**basename + ".xml" だけでは足りない** ——
+  // \`mxStencilRegistry.libraries\` に載っているセットはファイル名が違う
+  // （ios7icons → ios7/icons.xml, rackGeneral → rack/general.xml, ibmcloud →
+  // ibm_cloud.xml など）。ここを外すと台帳に無い名前になり 404 になる。
+  function stencilFilesFor(basename) {
+    var reg = window.mxStencilRegistry;
+    var prefix = String(window.STENCIL_PATH) + "/";
+    var lib = reg && reg.libraries && reg.libraries[basename];
+    if (lib) {
+      var out = [];
+      for (var i = 0; i < lib.length; i++) {
+        var f = String(lib[i]);
+        // 同じ表に SHAPES_PATH の \`.js\` も並んでいるが、それらの図形は
+        // viewer-static に焼き込み済みで、ビューア自身が末尾で
+        // \`mxStencilRegistry.allowEval = false\` を立てている（実測）。取らない。
+        if (f.indexOf(prefix) === 0 && f.slice(-4) === ".xml") out.push(f.slice(prefix.length));
+      }
+      return out;
+    }
+    return [basename.replace("_-_", "_") + ".xml"];
+  }
+
+  // 描画後のモデルから「まだ持っていないセット」を割り出す。**生の XML ではなく
+  // モデルを見る** —— 圧縮された \`<diagram>\` では生 XML が deflate のままで
+  // 何も見つからない（実測）。モデルは展開済みなので圧縮の有無を問わない。
+  function neededStencils(v) {
+    var reg = window.mxStencilRegistry;
+    if (!reg || !v || !v.graph || !v.graph.model) return [];
+    var need = {};
+    var cells = v.graph.model.cells || {};
+    for (var id in cells) {
+      var style = cells[id].style;
+      if (!style || style.indexOf("mxgraph.") < 0) continue;
+      var re = /mxgraph\\.[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+/g;
+      var m;
+      while ((m = re.exec(style))) {
+        var full = m[0];
+        if (mxCellRenderer.defaultShapes[full]) continue;                  // JS 形状は焼き込み済み
+        if (reg.stencils[full] || reg.stencils[full.toLowerCase()]) continue; // もう持っている
+        var parts = full.split(".").slice(1);
+        if (parts.length < 2) continue;
+        var files = stencilFilesFor(parts.slice(0, -1).join("/"));
+        for (var i = 0; i < files.length; i++) {
+          if (!stencilAsked[files[i]]) need[files[i]] = true;
+        }
+      }
+    }
+    return Object.keys(need);
+  }
+
+  // 申告は 1 セットにつき 1 回だけ（親が空で返しても再要求しない）。
+  function askForStencils(v) {
+    var want = neededStencils(v);
+    if (!want.length) return;
+    for (var i = 0; i < want.length; i++) stencilAsked[want[i]] = true;
+    post({ t: "stencils", sets: want });
+  }
+
+  // 親から届いたステンシルを登録して描き直す。**render をやり直さない** ——
+  // \`graph.refresh()\` で図案だけが差し替わり、見ていた倍率と位置がそのまま残る
+  // （実測: 1.8221 倍のまま path が 1 → 3 に増えた）。
+  function addStencils(xmls) {
+    if (!viewer || !xmls || !xmls.length || !window.mxStencilRegistry) return;
+    try {
+      mxStencilRegistry.parseStencilSets(xmls);
+      viewer.graph.refresh();
+      postState(viewer);
+    } catch (e) {
+      // 図は既に出ている。アイコンが出ないだけなので、エラーにはしない。
     }
   }
 
@@ -467,8 +562,10 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     }
     booted = true;
     installGestures();
-    // ステンシルの遅延取得は P0 では行わない。connect-src 'none' で塞がってはいるが、
-    // 試行そのものを止めておく方が失敗の見え方が素直になる（docs/65 §65.5）。
+    // **ビューア自身にステンシルを取りに行かせない**（docs/65 §65.5.4）。必要な
+    // ものは neededStencils() が割り出し、親が CP から取って渡す。ここを true に
+    // 戻すと、認証を通れない要求・CSP の穴・失敗後に再試行しない詰まり方の 3 つが
+    // まとめて戻ってくる（どれも実測）。
     if (window.mxStencilRegistry) mxStencilRegistry.dynamicLoading = false;
     post({ t: "booted" });
     if (pending) {
@@ -486,6 +583,10 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     if (!m || m.af !== MSG) return;
     if (m.t === "boot") {
       boot(m.src);
+      return;
+    }
+    if (m.t === "stencils") {
+      addStencils(m.xml);
       return;
     }
     if (m.t !== "render") return;

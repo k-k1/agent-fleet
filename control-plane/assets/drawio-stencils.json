@@ -1,0 +1,818 @@
+{
+ "version": "v31.1.8",
+ "base": "https://raw.githubusercontent.com/jgraph/drawio/v31.1.8/src/main/webapp/stencils/",
+ "sets": {
+  "alibaba_cloud.xml": {
+   "sha256": "10d38d0451fd48a61c542a36a99f6a22fae588f3dad050c8224ebb0004ce03fd",
+   "size": 1347544
+  },
+  "android/android.xml": {
+   "sha256": "a038d58b6927fa22ec7daa4883709001ecbc1c210370abd510a9d5870e3bf2ca",
+   "size": 66092
+  },
+  "arrows.xml": {
+   "sha256": "608331127c21280a3dd495f3f8bd76014b953d0d92a0df961d94ad475054779a",
+   "size": 28424
+  },
+  "atlassian.xml": {
+   "sha256": "5642db2c8b75b5f17d9bbb528e4549a259df5f19a78ecd6b3f73245a210aacba",
+   "size": 31482
+  },
+  "aws/compute.xml": {
+   "sha256": "ac645cc824069ef01d467d3b0af84e707c0f0c26b3b5a747d09f86376562c694",
+   "size": 24313
+  },
+  "aws/content_delivery.xml": {
+   "sha256": "34d45851256c297f4d8fb397d8f2a74ba0bb78698cc49a7034af50b8f48e034c",
+   "size": 11821
+  },
+  "aws/database.xml": {
+   "sha256": "562add9d3341b2ad2d82cfb641260bafec7cb61ae841962a0485b81a76e4ff09",
+   "size": 50054
+  },
+  "aws/deployment_management.xml": {
+   "sha256": "fde48a1b06186638e4aa5d58cdef83297df79fc1cc959ddf7f497b15fbbc4ad5",
+   "size": 10896
+  },
+  "aws/groups.xml": {
+   "sha256": "b44e0871f3fff499e1091c1e323873d0c14a1d3cdb265fd3e07a76b94560915d",
+   "size": 65036
+  },
+  "aws/messaging.xml": {
+   "sha256": "40814d2941b3749e1c47cfc65972e34a1cdbe771d6a2d0b592451cda0fa4e448",
+   "size": 22571
+  },
+  "aws/misc.xml": {
+   "sha256": "181204eebc57380d3f2bae7ceb98e301447d32dbd3c4c42c930c50097080f72e",
+   "size": 9714
+  },
+  "aws/networking.xml": {
+   "sha256": "b9a0103c87e9fb8a2ad7c251ca0d65c1a2bca1bc9385b12f7b030f3c38d77ca9",
+   "size": 31617
+  },
+  "aws/non_service_specific.xml": {
+   "sha256": "3024c4f320ffca7d84148664a2322170dde9fd0b39a887ef8245ed218d10b991",
+   "size": 26517
+  },
+  "aws/on_demand_workforce.xml": {
+   "sha256": "f6b3ef60da6b2394a7bff24e6e9f20b36f4b8d34655ef2ac70e83c41baa277ae",
+   "size": 13366
+  },
+  "aws/storage.xml": {
+   "sha256": "093ea242612d434480e9b04cbf9ac71458c4f53ba12d14757def6d0c78b66d44",
+   "size": 12380
+  },
+  "aws2/administration_and_security.xml": {
+   "sha256": "ca00414486566f0abffa615a84498fbc9b568eefa59401b8b1260f0742fe0e4d",
+   "size": 10904
+  },
+  "aws2/analytics.xml": {
+   "sha256": "db20afba25c96b6aedb50604f273daf894800c120b9b44262c0eecfceedcb810",
+   "size": 47778
+  },
+  "aws2/app_services.xml": {
+   "sha256": "c6b6fbaa6fefc549b6d3dc4e2618c83b015a4fab1f11a835928bf9f124037a60",
+   "size": 84824
+  },
+  "aws2/compute_and_networking.xml": {
+   "sha256": "8147cd7b17db7e71ce9709306ba13282f73eb7719de9f88addec70f748d047ec",
+   "size": 253912
+  },
+  "aws2/database.xml": {
+   "sha256": "8d37411ece66f9c146181634e5f21e51aee3656c4421392d252e312f44a7087e",
+   "size": 283453
+  },
+  "aws2/deployment_and_management.xml": {
+   "sha256": "a6434afca8ec3b284d2981737ab6b7145b096dfa7e1c4e6cfebf8873f8793427",
+   "size": 118467
+  },
+  "aws2/developer_tools.xml": {
+   "sha256": "129f5bee932f49a4586eec922c15562927283519d22b90321c59d8e3c3484797",
+   "size": 8910
+  },
+  "aws2/enterprise_applications.xml": {
+   "sha256": "dee1ad5b61194fe0ffb978cea263d9ea8687e040028796b24f35e45f1d8da5ca",
+   "size": 8973
+  },
+  "aws2/game_development.xml": {
+   "sha256": "c446c227efb7d6e71d080bba43fdf850cbaa0d9d6e5ebb62d771411d5b3d9984",
+   "size": 3590
+  },
+  "aws2/internet_of_things.xml": {
+   "sha256": "2725f27b3e8570a2b7655768424ab0d23b8d17f3e0cfe1797b4a6439d2533728",
+   "size": 199715
+  },
+  "aws2/management_tools.xml": {
+   "sha256": "ba3659edfb1e63a14efbdee57908a150a8f73a809d04c0e340528b40b117fa90",
+   "size": 6209
+  },
+  "aws2/mobile_services.xml": {
+   "sha256": "ec640069fe14d34f17fcf8a17907bea51b075de9ca4061708ca63cbea61b5aad",
+   "size": 39214
+  },
+  "aws2/networking.xml": {
+   "sha256": "72e230f02a846d80d164b5e21091808a4c2055f7aad25ab4911e71d471cbe21b",
+   "size": 9781
+  },
+  "aws2/non-service_specific.xml": {
+   "sha256": "c000e6232894d7c8056fdc2d81330f1b87cd6df5c4c24fde63f0616a306da7f6",
+   "size": 114522
+  },
+  "aws2/on-demand_workforce.xml": {
+   "sha256": "bd56925a169bdc466c86dc479c9a91ff938319b2e60f9321ca45f4aef2396749",
+   "size": 35596
+  },
+  "aws2/sdks.xml": {
+   "sha256": "90be3a97bc615e2b194adf1bf31187deda71d872aee9e941cf27ffbc9ca4badd",
+   "size": 45175
+  },
+  "aws2/security_and_identity.xml": {
+   "sha256": "4d50601a46656cfdbf599521e50f62648436ea9ba3fc9f35d81e1a16ce6b2b1a",
+   "size": 22861
+  },
+  "aws2/storage_and_content_delivery.xml": {
+   "sha256": "ca137b720b9a53930885ebc4158f6c12ab933ab75c5f4e1cc70ff08f67d41e7b",
+   "size": 108208
+  },
+  "aws3.xml": {
+   "sha256": "e96c79d67bbb087a64aa94559f965c8af2707172e80e6ee36806a99456b75ede",
+   "size": 1461496
+  },
+  "aws3d.xml": {
+   "sha256": "dc391a06200857c42cd6a4f8a9b1f70ace906db687f0cd93d33528fe6aed0386",
+   "size": 31600
+  },
+  "aws4.xml": {
+   "sha256": "f0f4161ddaba2b10c1d49c34917a6ef8abc1288b552dade0475c5e805c98c919",
+   "size": 6507954
+  },
+  "azure.xml": {
+   "sha256": "9aec0b7e50b8ced8c68a30ef463c788019cbb85bcf01164cf55fd97040e1a030",
+   "size": 288543
+  },
+  "basic.xml": {
+   "sha256": "674166a4b4315f78cd6739bd5eb14869cc25abc48f71109d9a157976b5a1573f",
+   "size": 43925
+  },
+  "bootstrap.xml": {
+   "sha256": "41dbfdf852b8c31f0412932e21c0fd7cd454cb58e393383cfcf0de441217935b",
+   "size": 5818
+  },
+  "bpmn.xml": {
+   "sha256": "70b7e477e8ad6b7e3844d6c38936a0f9c908f73e07f562f23d3b101109aa0f9e",
+   "size": 43661
+  },
+  "cabinets.xml": {
+   "sha256": "d6e696cd452c0e89381f77ca8ace091b6b6da5115671fc812f97e19f43e76c4f",
+   "size": 76873
+  },
+  "cisco/buildings.xml": {
+   "sha256": "de9f83b5521c779c771e9b31f454a86bcae180631cee813675ad2468d16c18fb",
+   "size": 35021
+  },
+  "cisco/computers_and_peripherals.xml": {
+   "sha256": "0e3e410f0f4246db58a7a005ad9c7eadb823a86fe3c801c3b825fd42cc2bf373",
+   "size": 65662
+  },
+  "cisco/controllers_and_modules.xml": {
+   "sha256": "4f68dfc6d11920a1f345584775c4425490b67a5c3047cc9dff53c50f69b6fc29",
+   "size": 32756
+  },
+  "cisco/directors.xml": {
+   "sha256": "52291fcff774ee070bebc3248a404d49529c1c5c94238275cfa0230476dc87e9",
+   "size": 14854
+  },
+  "cisco/hubs_and_gateways.xml": {
+   "sha256": "a2d5fb9e9dbdf67fa5508b225e10d2f4f873aaf4c69f51f79aeb31fbb553829c",
+   "size": 21454
+  },
+  "cisco/misc.xml": {
+   "sha256": "86880ac664aaf9c7eac0eb5665a6614f80ceec8234729fd722fa041c8e13d909",
+   "size": 458142
+  },
+  "cisco/modems_and_phones.xml": {
+   "sha256": "26a6cb3f5d9ec72f4e075cdc0b1f52f123d33aea66a40e97466970c4eae4b9a0",
+   "size": 82775
+  },
+  "cisco/people.xml": {
+   "sha256": "fce10a2773e89b4baa0f3f52f6a666c85df563bc6fb827eb8b2658ffca27c237",
+   "size": 95665
+  },
+  "cisco/routers.xml": {
+   "sha256": "9f5b84ad6db1b2e6994e433858ab9b46e4e7c505f0c4175415b29784cce29971",
+   "size": 86743
+  },
+  "cisco/security.xml": {
+   "sha256": "67fd3081f085b48c79e607de2c3540dc1d8a54f43b229b62cdbb0a7aed3280b2",
+   "size": 26877
+  },
+  "cisco/servers.xml": {
+   "sha256": "75225655672e79637ac2881d18eaa0be87ba6b5a005b76ee35dbf8191fd1019d",
+   "size": 46328
+  },
+  "cisco/storage.xml": {
+   "sha256": "d284797dffdc12e94cf66e0f2a9412a2fde12859e37041fcabb26982caf0b54c",
+   "size": 52561
+  },
+  "cisco/switches.xml": {
+   "sha256": "4cba6dd097907a14abb6ec50cb17c80fb918c01e90fe3823a4383aa9439feccb",
+   "size": 86992
+  },
+  "cisco/wireless.xml": {
+   "sha256": "a202ce1ba51ba745bde17e343795189ecf185b6256a2f795c104d634a7776f47",
+   "size": 37411
+  },
+  "cisco19.xml": {
+   "sha256": "cba83882ca362016976e0e0220fc463fb9cbd9beda6b1c3299b2fd9bd28eb051",
+   "size": 1813219
+  },
+  "cisco_safe/architecture.xml": {
+   "sha256": "3c156a6675278a62fbf56ff5db0b20bc728882fc66f62771de8867677b433427",
+   "size": 568880
+  },
+  "cisco_safe/business_icons.xml": {
+   "sha256": "e3080dfba6310d3e138306b2bec240e6f23c2e5eb22bde0570536e995856796a",
+   "size": 104705
+  },
+  "cisco_safe/capability.xml": {
+   "sha256": "c0de6295594fde661d99e3581a5f072957e569aaf502d0972be655267a1e1ef9",
+   "size": 766247
+  },
+  "cisco_safe/design.xml": {
+   "sha256": "5c556269663b63e21d2dccde2598fa1debf2ab765b2c819d7a2374c301a8f81b",
+   "size": 1014711
+  },
+  "cisco_safe/iot_things_icons.xml": {
+   "sha256": "95e4c6e0f8f314af4a999a251589b40435c4a59685f20d2c9e6adf6b049d9cf9",
+   "size": 199951
+  },
+  "cisco_safe/people_places_things_icons.xml": {
+   "sha256": "238c141c96ffa59a5264394a8669678e9c2b2c44c038bf9806a5611b91f8a16c",
+   "size": 49920
+  },
+  "cisco_safe/security_icons.xml": {
+   "sha256": "e21a867d63c18b5a5c24a39d8713514f342903c712776cf3a9fafda70c7448cd",
+   "size": 548750
+  },
+  "cisco_safe/technology_icons.xml": {
+   "sha256": "37c7cb524d2751c144c365d3a0570fc3e1cd5790f93202f3de3e721f4fed7bdf",
+   "size": 129864
+  },
+  "cisco_safe/threat.xml": {
+   "sha256": "7301667c4831896024ed58dd0a4fb3253166621ea8c19187c42a459fded4b122",
+   "size": 664972
+  },
+  "citrix.xml": {
+   "sha256": "236e734c3017413e33cdc4682f2a45a98ca7dbf5e05aa49ad4c01155655ca7f6",
+   "size": 949574
+  },
+  "citrix2.xml": {
+   "sha256": "8f3d181a23df560ed211583f80f30ba3d55e473ff41b3b4862363b760eee75f9",
+   "size": 1074578
+  },
+  "eip.xml": {
+   "sha256": "fb0de1cd59235e675b60954985785e9bc5ac7dc6103f65637ad087ebdbb03b9f",
+   "size": 78736
+  },
+  "electrical/abstract.xml": {
+   "sha256": "858e37c04f9186b811edf9ff4710ad0c3abbe83cb67998be144ef4e7092a5dab",
+   "size": 19460
+  },
+  "electrical/capacitors.xml": {
+   "sha256": "59612332c298f4ae2e8d1e8c76ebf9279404b6667a3944087b2ecea9c49dc825",
+   "size": 12383
+  },
+  "electrical/diodes.xml": {
+   "sha256": "15ea88c1e0c4f1a05bd1b3fdad4ad16bea9edef2be09a644842c896875747c65",
+   "size": 8572
+  },
+  "electrical/electro-mechanical.xml": {
+   "sha256": "860a5faf1dc4f2551cdf0dc897576806a9706cbdee2a341acc443e0dc7c98e0e",
+   "size": 60656
+  },
+  "electrical/iec417.xml": {
+   "sha256": "1241b2a1394d6ad14526b511069b0fcd534e38e8f128df370887cc538c26b5f8",
+   "size": 32941
+  },
+  "electrical/iec_logic_gates.xml": {
+   "sha256": "99047118ec84c419c615693a9a32c6d835c659ac79f2260e21c659036d31df0c",
+   "size": 7257
+  },
+  "electrical/inductors.xml": {
+   "sha256": "dbfee3cde1210e3587cdfe56b2df46515ac0d53e58bdbd45bbdf9ae4fa513068",
+   "size": 44974
+  },
+  "electrical/instruments.xml": {
+   "sha256": "d8c653593f2a833d2febe5cd810bc3359fa9ffac6d8ae4537397588b16881fc9",
+   "size": 4917
+  },
+  "electrical/logic_gates.xml": {
+   "sha256": "ed09e21821cd60ac3d0cd641f424b5780d2988d9b3211e3da2f5308833219464",
+   "size": 24835
+  },
+  "electrical/miscellaneous.xml": {
+   "sha256": "4d3cee6b5294e9704618d6a2c3dd3c57a5851c165118a0cea43331e4ca1d4744",
+   "size": 62271
+  },
+  "electrical/mosfets1.xml": {
+   "sha256": "0387d587eef20bf9c785844735c04c4bda4c9f89403641e07ac96bb0118d2b09",
+   "size": 23927
+  },
+  "electrical/mosfets2.xml": {
+   "sha256": "bd2e896e4625f9b3830db30c7f024451695daf025c4774a8cf9521d2b4d2445a",
+   "size": 14796
+  },
+  "electrical/op_amps.xml": {
+   "sha256": "292aca1724e2f2eccbff1b27eddc2e8edb2e2efbf1c5ab36327d433a6a4895d8",
+   "size": 11280
+  },
+  "electrical/opto_electronics.xml": {
+   "sha256": "1e44ffed6aa88b2b273406ac0c9266e0aea88059d54c21828f24b6d52e627206",
+   "size": 21295
+  },
+  "electrical/plc_ladder.xml": {
+   "sha256": "f56ee51b09eb6d47f6af114c59aa9bd2cde08477c2d8ca3097f8b2b4baaf7bea",
+   "size": 3502
+  },
+  "electrical/power_semiconductors.xml": {
+   "sha256": "d417919030e2e5b505814faf3d9b993efb850f9efe0abd4baded62ec3be2776d",
+   "size": 19501
+  },
+  "electrical/radio.xml": {
+   "sha256": "ca291fada372ad1689cea9e81c3a4bfb698536d9916d240f94c06ecda43d0e11",
+   "size": 8386
+  },
+  "electrical/resistors.xml": {
+   "sha256": "97c29f334dd82d57c71bb72a8b70c0463252a93ecd37c9a2e91af1c464240424",
+   "size": 20053
+  },
+  "electrical/rot_mech.xml": {
+   "sha256": "54433e1c609e3a430ff7070cd6a3bc3103a8b51e4d5d8ad752617b107830e2b6",
+   "size": 11139
+  },
+  "electrical/signal_sources.xml": {
+   "sha256": "9d68b767a35088543657830791f0f72cf641a294c6aba57dd3a503fd4cacb8d7",
+   "size": 13558
+  },
+  "electrical/thermionic_devices.xml": {
+   "sha256": "c950c8b83c74f1b1d8cd4cb8be818d2ddb02ba3c6bb7e445c09e8481268d2f81",
+   "size": 8150
+  },
+  "electrical/transistors.xml": {
+   "sha256": "1542528261cfc2a0e1989a56804b786a1fd3d9b9802030d954aed458d24ea3fb",
+   "size": 29412
+  },
+  "electrical/transmission.xml": {
+   "sha256": "dd28176c1e8f2e2c3f3aa0d5be597031c78e534a75eea93db19baddc9fced231",
+   "size": 12347
+  },
+  "electrical/waveforms.xml": {
+   "sha256": "98b5ba704bc8a1ad12344c3d3f57e137d25f4cbf7a32bcca512d3b1b37c81793",
+   "size": 8300
+  },
+  "floorplan.xml": {
+   "sha256": "71cd9cd8273a2cdc6c14fcad9825e7f71a8370498795653eefc6f5321dc292bb",
+   "size": 89879
+  },
+  "flowchart.xml": {
+   "sha256": "fb3a97bb4c3c481c103206acb74802d09889a59bd3dedfea024e293d469ca39a",
+   "size": 33227
+  },
+  "fluid_power.xml": {
+   "sha256": "3135da7440eb4c0f5418e88a98f867da6394827293d22a11b6cbd1b492beed2e",
+   "size": 722197
+  },
+  "gcp/big_data.xml": {
+   "sha256": "3dd5a088ae8d66fb07de8c54da0f14817615dda2a15fb6404c76cade12b74835",
+   "size": 36614
+  },
+  "gcp/compute.xml": {
+   "sha256": "b7d811a48e7cde6b4711da114a724eaa9aec84df2cbc38402ba52c56e3a638d8",
+   "size": 33859
+  },
+  "gcp/developer_tools.xml": {
+   "sha256": "81b0845a36c985b3e83e72088471aed8e4c2cf9465b56fa07ed0834fb739637d",
+   "size": 15393
+  },
+  "gcp/extras.xml": {
+   "sha256": "2325a6c6cb155f10207cf2c71bb44975962467a778971975e25d1a58c29127d8",
+   "size": 38900
+  },
+  "gcp/identity_and_security.xml": {
+   "sha256": "fefd0d15da2b1965572864b8e3c13dc84ac102b85d5d9a8bdf0e0ff66dcc3a43",
+   "size": 38456
+  },
+  "gcp/machine_learning.xml": {
+   "sha256": "7b7ffd53a6bb4b01c9f2ac430550d69f3c4e46ad121c399bd871ad9db63dc498",
+   "size": 26607
+  },
+  "gcp/management_tools.xml": {
+   "sha256": "4c86c09b9315c784f29a3f6accb1afb87d28a5993641521bbe209fcb7f3c8f86",
+   "size": 32630
+  },
+  "gcp/networking.xml": {
+   "sha256": "6f9a0770507c30f47aeefed13a41053feea24668dc2e54fc2e2354fed5ee8ea3",
+   "size": 41513
+  },
+  "gcp/product_cards.xml": {
+   "sha256": "d1c16630304330c76651def1cab6e7b1f3acfeb7425299449180111ef1e63bf8",
+   "size": 3944
+  },
+  "gcp/storage_databases.xml": {
+   "sha256": "55cc30881aa1c442e7ffac5fa3f7b9f3abd87a0c8fc4f4c077edf6b5dcc3c575",
+   "size": 28846
+  },
+  "gcp2.xml": {
+   "sha256": "3e39dc047413760c47f9e241f3b575a58fb98aee7aab29db8a6d8a54c5941f7e",
+   "size": 1128624
+  },
+  "gcp3.xml": {
+   "sha256": "1f23d5b4d0d263e25d48d1ead59f4376945b17df12b927074fabadd38497560a",
+   "size": 276858
+  },
+  "gmdl.xml": {
+   "sha256": "89e2a622f02d3576a9c34d46babcbc435cafd88e6196fd7c81cc28faf460c804",
+   "size": 119222
+  },
+  "ibm.xml": {
+   "sha256": "c9d2f445005dc05b12180ce1759ca0f0f9a1155e887c3fe36aa0c3cd63fc987f",
+   "size": 28629
+  },
+  "ibm_cloud.xml": {
+   "sha256": "9236ffdc972c35e727ae4cb08ec76f38e4d319279211161e3811924caa5935c0",
+   "size": 299991
+  },
+  "ios7/icons.xml": {
+   "sha256": "7946a097cad90c70af0720648b6d1b999e083d517c475c0c62d7ea2cbe7613ff",
+   "size": 88991
+  },
+  "ios7/misc.xml": {
+   "sha256": "050d4830dbf06dcd216e6189955c49754914f0fea12b20d5e0c5b9c2bfc21d24",
+   "size": 91605
+  },
+  "kubernetes.xml": {
+   "sha256": "c84a602dbf0b14f3d55c44f5e74a8993d0b5f0424b329f87dc65719f66e2ee40",
+   "size": 180144
+  },
+  "kubernetes2.xml": {
+   "sha256": "86731dad98bc2f70a31c3435b13ba2baade1da7151d85adebb837709d56e0dec",
+   "size": 181171
+  },
+  "lean_mapping.xml": {
+   "sha256": "8fbe65668b84bcd18c39ece4879c06ccac1a3908a6bd5ec784a8911ab38909db",
+   "size": 14173
+  },
+  "mockup/advertising.xml": {
+   "sha256": "3d42b723d42987d2db84be2962804fd47d46f4beebe9bec90adbe4192f87e769",
+   "size": 9346
+  },
+  "mockup/calendars.xml": {
+   "sha256": "483e94ec4fec9514cf4c411444d57e908d8013f6ca02e3fc06e00fbafee9814b",
+   "size": 70991
+  },
+  "mockup/carousel.xml": {
+   "sha256": "55d8d65c9fddb0235eac04a60ad0eaeb6e4ba13bae751d8ff5cbc9e4f8b5c267",
+   "size": 23418
+  },
+  "mockup/charts_and_tables.xml": {
+   "sha256": "52294ee1190d9384b8e2d34e84091df9eee21fab49d05e72cf250cd5fdde86d3",
+   "size": 25092
+  },
+  "mockup/controls.xml": {
+   "sha256": "82fdef2c90564a388ac96069a04b8a1b1eb8b5b77a5099f8f5c86d6a2262f6d8",
+   "size": 23516
+  },
+  "mockup/form_elements.xml": {
+   "sha256": "ac13a18b803e1500a8a19d4a17eaa5ca45e381c7ebf6b5a328107e243b5edee5",
+   "size": 15178
+  },
+  "mockup/menus_and_buttons.xml": {
+   "sha256": "7ec69cfcc0c25230c75ee8db6eaa06bbfd4b1f5026e4899de9cde15db425fc33",
+   "size": 33161
+  },
+  "mockup/misc.xml": {
+   "sha256": "418d2784d2eb4da4cf44d33f7db960687801a6a3c34aa0c5252e615814720ba9",
+   "size": 82062
+  },
+  "mockup/tabs.xml": {
+   "sha256": "07aa97a6e1e95a02b554cd86f28e42bf4a735fadc4eecaf483a8e8120492a0ce",
+   "size": 6853
+  },
+  "mscae/cloud.xml": {
+   "sha256": "f6bbe1770d3af4f96bb57a4cc38922a4580e04cbaed089d8e21ff7b9f02a4c07",
+   "size": 551631
+  },
+  "mscae/deprecated.xml": {
+   "sha256": "ca351fffbb2e1fcf69fd22eb7f1326a855b7157c841c8f371641dcc48c37931c",
+   "size": 48754
+  },
+  "mscae/enterprise.xml": {
+   "sha256": "83dcfcb60db22e4999a12a14e3136e9f148a406fb28f1374156792e44162290e",
+   "size": 262896
+  },
+  "mscae/general.xml": {
+   "sha256": "5ebdf2dce5f9205ea2ec325a5a823260b3ba7c3838b5b6ad6ee059bc1376ba0e",
+   "size": 65848
+  },
+  "mscae/general_symbols.xml": {
+   "sha256": "8754d193a387c063f743867113ca67791781c08a46e86e3691940fad7afb3d76",
+   "size": 26183
+  },
+  "mscae/intune.xml": {
+   "sha256": "ee59b10c8ea3b6be2cc927930723e9293c2c4421f6a754bb47227ca334c165cd",
+   "size": 191363
+  },
+  "mscae/oms.xml": {
+   "sha256": "ff68d23aa4c77d83df852149c0de9c2cbcfef5575dff61ef8cc643a47340b315",
+   "size": 65639
+  },
+  "mscae/opsmanager.xml": {
+   "sha256": "9cf81aba70340ec5dbdb265841f51a55fd9e906daa52cdbe215496937ff4536c",
+   "size": 123720
+  },
+  "mscae/other.xml": {
+   "sha256": "c9a5bf34c9e9ddc0f888625602845e027bc92a5b12652abab9356744f4420abf",
+   "size": 66757
+  },
+  "mscae/system_center.xml": {
+   "sha256": "482ddd4952fefb8c25d87750910bffd64698ad178b88e172243332e5d3a61be1",
+   "size": 36167
+  },
+  "mscae/vm.xml": {
+   "sha256": "1bd235d91a4c94684733aa98b3c19dbfbb90ecd6c413634ae5193c2e59a24528",
+   "size": 92545
+  },
+  "networks.xml": {
+   "sha256": "2921086e1eec8cddcde937feec78caff85fa6b2b82670f29ded51e69b21e3711",
+   "size": 191647
+  },
+  "networks2.xml": {
+   "sha256": "22204512c28c9d31f6073e4b347561c7f40cbd0619633469c3b8e10b2cdb9d81",
+   "size": 1051502
+  },
+  "office/clouds.xml": {
+   "sha256": "3db0d3e3cf74cc9ce5b26d7244be178355e8088db19f789c104006aad6dd7847",
+   "size": 60539
+  },
+  "office/communications.xml": {
+   "sha256": "0fa7d1edb7b33c6fe846298ab92e76ea3277f064641dab44413d4362b40291cf",
+   "size": 402440
+  },
+  "office/concepts.xml": {
+   "sha256": "cf71c8fe500ea2f372aa01f8dfebd360c6343eeeaa231a87a3ddc991ae3891ce",
+   "size": 315881
+  },
+  "office/databases.xml": {
+   "sha256": "ce7375e7e350b0e404a9f77365b3fdb64ccdad6b6c8c5c8d1821b12494d72f9d",
+   "size": 82231
+  },
+  "office/devices.xml": {
+   "sha256": "94db10da0c6f21369fe688ef487a526f106dd943ebdb8daef4aa24dc7f54f54b",
+   "size": 158484
+  },
+  "office/security.xml": {
+   "sha256": "12a3ac2387bcbd395187ef3e0a9e3af00a7e42c73221a471d59cecea6c44fcbe",
+   "size": 115537
+  },
+  "office/servers.xml": {
+   "sha256": "8f19d5e9ab0773c6193ad4e00d52ee7d72e80a76f06755c29200e84e9ffb3e27",
+   "size": 412327
+  },
+  "office/services.xml": {
+   "sha256": "93ba8a91d2de754a6adf1a1846a77d12c83bfca279a4f6aa01b249a033c52e09",
+   "size": 177434
+  },
+  "office/sites.xml": {
+   "sha256": "d14690e95fb346830000848fa5d07096c71933fd2eff32f307d5c061b11e2cb9",
+   "size": 83001
+  },
+  "office/users.xml": {
+   "sha256": "77706aa7f13b3d9fa8ffe3de8dfd6f681ba04e4d836440c0b3347d1ab6ae982b",
+   "size": 131453
+  },
+  "openstack.xml": {
+   "sha256": "8b2255a569d79a1f0df142bd10c4d6fcaf5239313ff53e25bcc6effb0d926686",
+   "size": 103602
+  },
+  "pid/agitators.xml": {
+   "sha256": "6f7be7a0b62206828753ceba38214b0bef367334f53e421e28f6af8313ca4695",
+   "size": 5857
+  },
+  "pid/apparatus_elements.xml": {
+   "sha256": "67c6e3f87be5937fbd4f9ec5f09bfa69d98c0713a8d4339950d767872ac5d76f",
+   "size": 2550
+  },
+  "pid/centrifuges.xml": {
+   "sha256": "b8e64954e290a16fc956eb58baf4cf6a8b0817a2db41b8276489b9c97cb6cf46",
+   "size": 7396
+  },
+  "pid/compressors.xml": {
+   "sha256": "9acddc6dd374f2ece5fb7a9cdf0bdd3b917f9ce1a0039916a090a74cd26f34b3",
+   "size": 14166
+  },
+  "pid/compressors_iso.xml": {
+   "sha256": "dc73898d12a3e99334b27504736fe974ed29531feb197654ffaf657dfd5fb10a",
+   "size": 9779
+  },
+  "pid/crushers_grinding.xml": {
+   "sha256": "de3325ce8c5dd49da67bcb4bb495b2318f343d95ae5940f88be393590744d342",
+   "size": 12580
+  },
+  "pid/driers.xml": {
+   "sha256": "98baa676d86de9ea460e7cc467ca4a2557f4458df1b7288e09dba60992fc9687",
+   "size": 7437
+  },
+  "pid/engines.xml": {
+   "sha256": "962b32f5849475fdeb0a7e799ca725038647616d49abc51f3bd2c7fd17b6adfa",
+   "size": 4988
+  },
+  "pid/feeders.xml": {
+   "sha256": "655078455262a52e8418e6df884362dd3069b0ab052d6e118347691278be9192",
+   "size": 3392
+  },
+  "pid/filters.xml": {
+   "sha256": "6a52096d5b230ed1590d0288b9b6f18e3fd1691044167020042e9218d5c29d32",
+   "size": 13605
+  },
+  "pid/fittings.xml": {
+   "sha256": "02c34f41e73530edb1a5bac8b343ac37e46ed4575705fae9fcb26bb44de6986f",
+   "size": 23747
+  },
+  "pid/flow_sensors.xml": {
+   "sha256": "05a9c9a854e7a592360a38a9a84388f075c0279c60af7e8b6b8aebe790869a76",
+   "size": 10910
+  },
+  "pid/heat_exchangers.xml": {
+   "sha256": "44a7aa1b4a58c7c94275da5dee7ac4ae8994062df85364f27b93f7256e475256",
+   "size": 27985
+  },
+  "pid/instruments.xml": {
+   "sha256": "e2d6dc90bcdf11c802d54c72d894fdd60694684e02ea69695ba0641db9e2bfd4",
+   "size": 19591
+  },
+  "pid/misc.xml": {
+   "sha256": "c02eb8c17b3126bc086e7e3f7c896436114da79e2be838041006fa2a9ebebac0",
+   "size": 75720
+  },
+  "pid/mixers.xml": {
+   "sha256": "55678843bed9717c6c00175e8bc4c4a3575c87673f074eb9056595999656e6c8",
+   "size": 3079
+  },
+  "pid/piping.xml": {
+   "sha256": "a731a1bf4fd0d339bcb937c383e96f0f3c53ae7d8169bc711aa9ca45b8b8a14f",
+   "size": 27353
+  },
+  "pid/pumps.xml": {
+   "sha256": "0fc500774157f4cee50ff7e7ebb976f99468e31470bbc56a89a85bf8999fe098",
+   "size": 23151
+  },
+  "pid/pumps_din.xml": {
+   "sha256": "d8dbae6083b10621ec4f24efc85b6c8d62ae72fc6feb201d94c9e89b6df8c7a6",
+   "size": 7060
+  },
+  "pid/pumps_iso.xml": {
+   "sha256": "7adab054e7a442d12d885ef11edd2fb4ccffcf77804290e9cd3e46462122cdf8",
+   "size": 6538
+  },
+  "pid/separators.xml": {
+   "sha256": "ad9084ebcc2d77825f0d766a6da54aa223e5964f8d4d528b50827e24f7dc4c55",
+   "size": 19057
+  },
+  "pid/shaping_machines.xml": {
+   "sha256": "eed8375e325ec64428b76cf6dfa0f4cc642f468a62e48fc348f46a817d0a87fb",
+   "size": 5765
+  },
+  "pid/valves.xml": {
+   "sha256": "c334879f3b663fe49830a850b239db9daddaecb0e63b0e08117c768ad2628e17",
+   "size": 28023
+  },
+  "pid/vessels.xml": {
+   "sha256": "b4f54973e4c55fa0e859450474f39639bb6854698f9ac8d2628a8fa7ba3f2a07",
+   "size": 61723
+  },
+  "rack/apc.xml": {
+   "sha256": "f24d02c5f6a25bf8157288c90ccae59bd509f09c102dfffcfad7b23397706292",
+   "size": 9876
+  },
+  "rack/cisco.xml": {
+   "sha256": "172e01e15b756a1d3951e82e4476c5524d418d26ea189d96c284bb76b7239617",
+   "size": 546925
+  },
+  "rack/dell.xml": {
+   "sha256": "c9468189e5116894d90ed4eda8a08d3d3998bc79b867fc6ffdf22222005b39d9",
+   "size": 195035
+  },
+  "rack/f5.xml": {
+   "sha256": "b3212568db584bfd5d6a3a0b5c91c5018f4504dd17a843708ef91a558a1a16cb",
+   "size": 289774
+  },
+  "rack/general.xml": {
+   "sha256": "6d48e5d0fb96c1879bc49cc6d58f89e49c6df61eb134dd342e34ffe96441fb32",
+   "size": 138481
+  },
+  "rack/hp.xml": {
+   "sha256": "4c3cb0caee2c61a28accf1e207d04fd71f1bf4e681a9f2c4a582552bc070cebc",
+   "size": 64686
+  },
+  "rack/hpe_aruba/gateways_controllers.xml": {
+   "sha256": "b9cb6c96d54f5efd3ecdb82fa42345818961e7a74fb230a79b94632cf33f330f",
+   "size": 316060
+  },
+  "rack/hpe_aruba/security.xml": {
+   "sha256": "57726c8672ebd2ace8f253cb4fc2fa2668ce0a7d156cba3bcf72448539af735d",
+   "size": 99752
+  },
+  "rack/hpe_aruba/switches.xml": {
+   "sha256": "d1fad2af32c0a738b18a9a33b1b5d809d7a43cd4e253c2fa7beee010cd9eba7c",
+   "size": 3845942
+  },
+  "rack/ibm.xml": {
+   "sha256": "6c4c12288d13ceef40c8bb5cfca0f35ff8caa9b2cfcfc2d118fcd4e4f94bbb8c",
+   "size": 83013
+  },
+  "rack/oracle.xml": {
+   "sha256": "066e725144d6d1e8af2ece44997a9bd1a1f5fb92c0ff9e28aedac7cda41cd246",
+   "size": 175766
+  },
+  "salesforce.xml": {
+   "sha256": "1cfc80dbb2dfca37f22bf6143f413dec578fd74aaf296236138d5336e1a08b62",
+   "size": 512217
+  },
+  "signs/animals.xml": {
+   "sha256": "5f547b4a9fb4750d233dd7b45210c9e2caa1145fce939dfa1527e3f7c497a806",
+   "size": 75519
+  },
+  "signs/food.xml": {
+   "sha256": "65e2c7e632618cffdfd0feb8a87b606ec8733f4377fb0175302952e2f99969cc",
+   "size": 23576
+  },
+  "signs/healthcare.xml": {
+   "sha256": "87d0d90557d2886ae329722b3f3f6255177c33ccd51b889d36ae38483880897a",
+   "size": 247271
+  },
+  "signs/nature.xml": {
+   "sha256": "360d6ec2ccc3bd33504e6cfa470be35bac0bf7e9fdd9b90262f27bfda2becfb9",
+   "size": 36078
+  },
+  "signs/people.xml": {
+   "sha256": "dcb0b369c68b515293e3d624bd5b5855d9de2003e4268cd07d9922129bcede9c",
+   "size": 59999
+  },
+  "signs/safety.xml": {
+   "sha256": "c4064c968111dc608158ab44871e4488b5b83ece5159770979e770460a98675e",
+   "size": 67582
+  },
+  "signs/science.xml": {
+   "sha256": "506dde82b57b530a69e5cd1ff6560b1adc9c6ac67d08db62fd7c9649dff337e5",
+   "size": 18648
+  },
+  "signs/sports.xml": {
+   "sha256": "0d993702c4d7bdae9fbd921650857b5756e675e60a1155e87380c3861a01b141",
+   "size": 270168
+  },
+  "signs/tech.xml": {
+   "sha256": "4042f342cf7e9bc38026066799892477368af8b7110cd46baf82c8c5d9577316",
+   "size": 60640
+  },
+  "signs/transportation.xml": {
+   "sha256": "3c7451c5dd0169c7a00c6f217aff7a9416af3e7354104b257266a8d04a452611",
+   "size": 268244
+  },
+  "signs/travel.xml": {
+   "sha256": "161a7d239c2b55e609b277259f4309be598f7acbc7425102869bb0344c90aa60",
+   "size": 135471
+  },
+  "sitemap.xml": {
+   "sha256": "14bfe300abd5c35cb334285c755767cd8ae719166d72861e60595217f0f2bc7a",
+   "size": 191218
+  },
+  "veeam/2d.xml": {
+   "sha256": "d3ac1f162ea130ae797b1c9f1ac58b32064844aab74807dee22204b37d08c123",
+   "size": 519774
+  },
+  "veeam/3d.xml": {
+   "sha256": "24440e927802ae3f841da418008b5578ba8fd2181e9f4fd6e87cf1775589e8f2",
+   "size": 461401
+  },
+  "veeam/veeam.xml": {
+   "sha256": "1c50a1ab968132fddc9683b3f8cb5ebe1397869a45b4c37e6330ff5f31a5e4f2",
+   "size": 578311
+  },
+  "veeam/veeam2.xml": {
+   "sha256": "96d540a98d18905f78266e74aa5b9bed7be22dcbaa80d62e79747436d873dfec",
+   "size": 1031782
+  },
+  "vvd.xml": {
+   "sha256": "18d3fdf1d8cfc122eb68e91c74319b507e2dac3a78ce82c95780264c31865179",
+   "size": 648707
+  },
+  "webicons.xml": {
+   "sha256": "597e210504915905df313be2cc786c100f7fc6010f33946e7c8e42d9e7e0237d",
+   "size": 852186
+  },
+  "weblogos.xml": {
+   "sha256": "0bfb3f71fef8b8354d338a48158090d73dd29f7b146ebc80ce63d5720c4c4fa4",
+   "size": 682627
+  }
+ }
+}
