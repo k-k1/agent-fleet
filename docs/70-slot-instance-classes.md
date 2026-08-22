@@ -1,7 +1,8 @@
 # 70. スロットのインスタンス種別（アーキ / 世代）をテナント・ユーザー毎に選ぶ
 
-> 状態: **P0 / P2 / P3 / P4 完了**（2026-08-22）。残るは **P1（arm64 イメージ・仕組みだけ実装済みで
-> 一度も焼いていない）** と **P5（実機）**。arm64 クラスは P1 が終わるまで既定に載せない（§70.14-2）。
+> 状態: **P0〜P5 のほぼ全て完了**（2026-08-22）。0.10.0 の実デプロイ（lazmix）で arm64 の
+> end-to-end が通った（§70.14）。残るは **アーキ跨ぎの home 自己修復**と **arm64 の agy 実セッション**、
+> および **publish 経路（multi-arch を CI から出す）**。arm64 クラスは既定にはまだ載せない。
 > ADR は P1 着手時に `0051` として起票する。
 > 本書の価格・AMI・ECS API の記述は **ap-northeast-1 の実 AWS（sandbox 722507597273）で
 > 2026-08-22 に取得した一次情報**。残存リソースは 0（プローブしたタスク定義 2 本は
@@ -724,7 +725,79 @@ Workspace イメージと同じ `node:22-bookworm-slim` の中で実行・残存
 **OAuth 認証と実セッションは通していない**。FIPS 自己テストはプロセス起動時に走るので
 SIGABRT はこれで捕まるが、「実際に会話ができる」ことの証明ではない。そちらは P5 の仕事。
 
-## 70.14 フェーズ
+## 70.14 P5 —— 実デプロイで通した（lazmix・2026-08-22）
+
+0.10.0 を lazmix（sandbox 722507597273）と acrt に本デプロイした状態で実施。arm は
+**lazmix だけ**に入れた——acrt には実ユーザーの Workspace が動いており、イメージ参照を
+変えると「要再起動」バッジがその人に出るため。
+
+### 70.14.1 デプロイしただけで通ったもの
+
+CP の起動ログが、ユニットテストで固定した内容の実機版になっていた。
+
+```
+runtime=ecs-ec2 … arm64-ami=(none)
+classes=standard(x86_64:m7i.large/…) saver(x86_64:m6i.large/…) default-class=standard
+golden[x86_64]: no golden for …:0.10.0; baking one
+```
+
+- **出荷した既定の 2 クラス文字列が実 CP で意図どおりパースされた**（既定は `standard`＝誰も動かない）。
+- **`golden[x86_64]` の接頭辞**＝アーキ毎 golden の分岐が実機で動き、x86_64 1 本と判定。
+- ✅ **`saver` を選んだメンバーが実際に m6i のスロットに載った**（`af-slot-size=m6i.large`）。
+
+### 70.14.2 arm を入れるのに必要だったもの
+
+⚠️ **リリース済みの `0.10.0` タグは触っていない。** 別タグ `0.10.0-arm` を作って `ImageTag` を
+差し替えた（切り戻しはパラメータ 1 つ）。index の amd64 側は **released 0.10.0 と同一 digest**。
+
+1. arm64 イメージを **v0.10.0 から** Graviton 実機でビルドし ECR へ push
+   （`harness/push-arm64-image.sh`・116 秒・IAM ロールは使い捨てで自動削除）
+2. `crane index append` で 2 アーキの index を `0.10.0-arm` に作成
+3. `ImageTag=0.10.0-arm` / `Ec2SlotAmiArm64=ami-…` / `Ec2SlotTypes` に arm クラス追加
+
+⚠️ **ここで 1 度間違えた。** 検証用ハーネスから `BAKE_AGENT_CLIS=1` を引き継いでビルドして
+しまい、**arm64 だけ焼き込み variant**（2,536 MiB）になった。リリースが publish するのは
+**lean**（`release.sh` の既定は 0）で amd64 は 920 MiB。**動くし、テストも通る**——同じタグの
+下で amd64 と arm64 が別の製品になるだけである（CLI が `/usr/local` か `~/.local` か）。
+気づけたのはサイズが 2.7 倍だったからで、それが無ければ気づかなかった。
+`push-arm64-image.sh` の既定を 0 にし、理由をコメントに残した。
+
+### 70.14.3 arm64 の end-to-end（golden ベイカーが自動で走らせた）
+
+**Console を一度も触っていない。** arm クラスを足すと、ベイカーが 2 アーキを見つけて
+勝手に両方焼き始める——そしてそれが P5-arm の経路そのものである。
+
+```
+golden[arm64]: no golden for …:0.10.0-arm; baking one
+golden[arm64]: the seed finished boot-install; stopping it to capture the home
+golden[arm64]: releasing the seed's slot before the snapshot
+golden[arm64]: snap-04aba… is baked; booting a probe from it before publishing it
+golden[arm64]: snap-04aba… is now the golden — a probe started from it cleanly
+```
+
+これで通ったもの:
+
+| | 証拠 |
+|---|---|
+| arm64 スロットが arm64 AMI から起動 | `i-048dd841… m8g.large arm64 running` |
+| `RuntimePlatform=ARM64` でタスクが配置された | seed のタスクが動いた（配置に失敗していない） |
+| **multi-arch index から arm64 側が pull された** | 同上 |
+| entrypoint と boot-install が arm64 で完走 | `the seed finished boot-install` |
+| **Agent が arm64 で応答した** | 同上（`markHomeBaked` は `agentSessions` の成功が条件） |
+| home が `af-arch=arm64` で snapshot された | `golden`/`arm64` のタグ |
+| **履歴の無いメンバーシップで probe が起動した** | `a probe started from it cleanly`（§64.28.3 が必須と決めた検査） |
+| **arm64 の publish が x86_64 の golden を消さない** | golden が 2 本共存（`dropSupersededGoldens` のアーキ絞り） |
+| 予約鍵のアーキ分け | `af-golden-seed`（x86・従来のまま）と `af-golden-seed-arm64` |
+| seed/probe の後片付け | home ボリュームは利用者の 1 本だけ残った |
+
+### 70.14.4 それでも残っている 2 つ
+
+- ❌ **アーキ跨ぎの home 自己修復（§70.5）**。本書が「難所はここ」と言い続けた当のものが、
+  **まだ一度も走っていない**。必要なのは「既に home を持つメンバーを x86 → arm へ移す」ことで、
+  golden ベイカーは常に新規 home から始まるので**構造的にこの経路を通らない**。
+- ❌ **agy の OAuth と実セッション（arm64）**。§70.13 で確かめたのは `--version` と `--help` だけ。
+
+## 70.15 フェーズ
 
 | | 内容 | 出口 |
 |---|---|---|
@@ -733,13 +806,13 @@ SIGABRT はこれで捕まるが、「実際に会話ができる」ことの証
 | **P2** ✅ | §70.5 の home 修復（刻印 + 自己修復 + JDK glob の修正）。**arm を誰かに配る前に必ず**入れる | x86 の home を arm スロットに載せても壊れない |
 | **P3** ✅ | スロットクラス本体（parse / 解決 / クランプ / `RuntimePlatform` / golden のアーキ次元 / CFN パラメータ） | CP が複数クラスを持てる |
 | **P4** | Console / API / MCP / ガイド（§70.10） | テナント管理者が画面で選べる |
-| **P5** | 実 AWS で端から端まで（[ec2-live-harness](64-ec2-persistent-workspace.md) の手順・**プールを空にしてから**）。x86 → arm の切替を実機で 1 回通す | 実運用に出せる |
+| **P5** ◐ | 実 AWS で端から端まで（§70.14・0.10.0 の実デプロイ lazmix）。**arm64 の golden が probe 込みで publish された**。残 = **x86 → arm の切替**（home 自己修復）と agy の実セッション | 実運用に出せる |
 
 ⚠️ **P2 を P3 より先に置いているのは意図的**。クラスが選べるのに home が壊れる状態を
 一瞬でも出荷すると、壊れた `~` を持つ人が生まれ、後から入れた修復では**もう遅い**
 （`~/repos` の中身は戻せない）。
 
-## 70.15 未決
+## 70.16 未決
 
 1. **どのファミリをクラスとして出すか。** §70.3.1〜70.3.3 の実測で決まった。
    x86_64 は `standard = m7i` と `saver = m6i`（前提条件ゼロ・出荷済み）。arm64 は
