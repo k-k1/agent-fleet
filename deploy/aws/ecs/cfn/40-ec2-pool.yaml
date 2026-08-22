@@ -57,6 +57,9 @@ Parameters:
       3h, which would hand the next user a slot still holding the previous user's
       stopped containers (ADR 0045 決定 8 の代償 1). Keep it short.
 
+Conditions:
+  HasArm64Ami: !Not [ !Equals [ !Ref SlotAmiIdArm64, "" ] ]
+
 Resources:
   # --- IAM: what a slot may do. ECS join + SSM (the CP mounts/unmounts volumes over
   # SSM SendCommand) + ECR pull + logs. Nothing else: the slot is a rented box, not a
@@ -180,7 +183,12 @@ Resources:
               Cleanup: !Ref TaskCleanupWait
 
 Outputs:
+  # Conditional because CloudFormation REFUSES an empty export ("Exported values must
+  # not be empty or whitespace-only") and empty is this parameter's whole point — an
+  # unconditional export made the stack impossible to create at all without an arm64
+  # AMI, rolling back on the very last step (measured on a fresh 0.10.0 deployment).
   SlotAmiIdArm64:
+    Condition: HasArm64Ami
     Value: !Ref SlotAmiIdArm64
     Export: { Name: !Sub "${AWS::StackName}-SlotAmiIdArm64" }
   SlotLaunchTemplateId:
