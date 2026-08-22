@@ -123,10 +123,32 @@ userdata() {
   cat <<EOF
 #!/bin/bash
 exec 2>&1
+# ⚠️ cloud-init runs this as root in a NON-LOGIN shell, where HOME is unset. Go then
+# refuses to initialize its build cache ("\$HOME is not defined") and npm quietly falls
+# back to a different cache root — which is how the first run of this harness produced
+# "npm ci in 4 seconds" and a Go failure on all five boxes at once. A number that is
+# impossible is the useful kind of wrong; set HOME and it stops being possible.
+export HOME=/root
 say() { echo "AF-BENCH|\$1" > /dev/console; }
-t() { local k=\$1; shift; local s=\$SECONDS; if "\$@" >/tmp/\$k.log 2>&1; then say "\$k|\$((SECONDS-s))"; else say "\$k|FAIL"; tail -5 /tmp/\$k.log > /dev/console; fi; }
+# On failure the last lines go out through the SAME channel the collector greps, with
+# the step name on each one. A failure whose reason is only in /var/log is a failure
+# nobody can act on from here.
+t() {
+  local k=\$1; shift; local s=\$SECONDS
+  if "\$@" >/tmp/\$k.log 2>&1; then
+    say "\$k|\$((SECONDS-s))"
+  else
+    say "\$k|FAIL"
+    tail -6 /tmp/\$k.log | tr -d '|' | while IFS= read -r l; do say "\$k-err|\$l"; done
+  fi
+}
 
-say "cpu|\$(lscpu | sed -n 's/^Model name: *//p' | head -1 | tr -d '|')"
+# Graviton reports nothing in lscpu's "Model name" on some generations, so fall back to
+# the part number rather than printing an empty column.
+cpu=\$(lscpu | sed -n 's/^Model name: *//p' | head -1 | tr -d '|')
+[ -n "\$cpu" ] || cpu=\$(lscpu | sed -n 's/^BIOS Model name: *//p' | head -1 | tr -d '|')
+[ -n "\$cpu" ] || cpu=\$(sed -n 's/^CPU part.*: *//p' /proc/cpuinfo | head -1)
+say "cpu|\${cpu:-unknown}"
 say "nproc|\$(nproc)"
 
 dnf install -y git tar gzip gcc gcc-c++ make >/dev/null 2>&1
@@ -151,9 +173,14 @@ cd /root/repo || { say "clone|FAIL"; say "DONE"; exit 0; }
 
 # 1. npm ci — I/O plus single-thread CPU, and the command a member runs most often.
 t npm_ci bash -c 'cd console && npm ci --no-audit --no-fund'
+# ⚠️ Assert, do not assume. A step that exits 0 without doing the work is the failure
+# mode this harness actually hit, and it is invisible in a table of seconds: 20,905
+# files do not install in 4 seconds, but nothing says so unless something counts them.
+say "npm_ci_files|\$(find console/node_modules -type f 2>/dev/null | wc -l)"
 # 2. the Console build — Vite/Rollup, the most single-thread-bound step we have.
 #    NODE_OPTIONS matches what the Workspace guide tells members to use.
 t npm_build bash -c 'cd console && NODE_OPTIONS=--max-old-space-size=3072 npm run build'
+say "npm_build_bytes|\$(du -sb console/dist 2>/dev/null | cut -f1)"
 # 3. a cold Go build of the Control Plane — parallel CPU, no network after the modules
 #    are fetched (which is why the fetch is timed separately and excluded).
 t go_mod bash -c 'cd control-plane && go mod download'

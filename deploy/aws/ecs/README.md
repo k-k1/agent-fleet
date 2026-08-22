@@ -505,9 +505,27 @@ speed" is a legitimate choice and one version of it costs nothing to offer:
 standard|Standard (Intel)|x86_64|m7i.large:8192:2,…;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,…
 ```
 
-Measured on-demand prices in ap-northeast-1 (2026-08-22), against m7i: **m7g −19.0%,
-m6g −24.0%, m8g −11.0%, m6i −4.8%**. `$/vCPU-hour` is linear within every family, so the
-saving is the same on every rung.
+Measured in ap-northeast-1 on 2026-08-22 — the price from the Pricing API, the speed
+from this repository's own build on each family (`harness/bench-instance-classes.sh`,
+docs/70 §70.3):
+
+| against m7i | $/hour | build time | **cost per build** |
+|---|---|---|---|
+| m6i | −4.8% | +13% | +7.3% |
+| **m8g** (Graviton4) | **−11.0%** | **−29%** | **−37.1%** |
+| m7g (Graviton3) | −19.0% | −10% | −27.4% |
+| m6g (Graviton2) | **−24.0%** | **+32%** | ±0 |
+
+⚠️ **The cheapest box per hour is not the cheapest box.** m6g bills 24% less per hour
+and takes 32% longer, which nets out to no saving at all on work that keeps the CPU
+busy — and m8g is *both* cheaper and faster than m7i, so there is no reason to run m7g.
+
+⚠️ **Which column matters depends on the member.** A slot bills for the wall-clock time
+it is RUNNING, and a workspace spends most of that idle (reading, thinking, waiting on a
+model), so a mostly-reading member really does pay 24% less on m6g. A member who builds
+all day pays in time instead. That is the whole reason this is a per-member setting —
+and the reason a class's LABEL should carry the trade-off ("Cheapest — older, slower")
+rather than just the discount.
 
 **m6i is the one that needs nothing.** Same architecture as m7i, so: the same workspace
 image, the same AMI, the same golden snapshot, and a member's home keeps working when they
