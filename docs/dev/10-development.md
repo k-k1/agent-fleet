@@ -122,12 +122,15 @@ Go は **2 モジュール**（`control-plane/` と `workspace/agent/`）でそ�
   （[06 §6.4](06-data-model.md)）。Docker が要らない立て方（初回のみ数分）:
 
 ```bash
-PGT=~/.local/share/af-pgtest    # 無ければ initdb で作る（postgres スーパーユーザー）
-"$PGT"/dist/bin/pg_ctl -D "$PGT/data" -l "$PGT/pg.log" \
-  -o "-k $PGT/sock -h 127.0.0.1 -p 55432" start
-(cd control-plane && AF_TEST_DATABASE_URL='postgres://postgres@127.0.0.1:55432/postgres?sslmode=disable' \
+PGT=~/.local/share/af-pgtest    # 無ければ initdb -U postgres --auth=trust で作る
+# ★ TCP ポートではなく unix socket で上げる（-h '' で TCP を閉じる）。開発ホストを
+#   他のセッションと共有していると、ポートは高確率で衝突する。
+nohup "$PGT/dist/bin/postgres" -D "$PGT/data" -k "$PGT/sock" -h '' \
+  -c shared_buffers=32MB -c fsync=off > "$PGT/pg.log" 2>&1 &
+(cd control-plane && \
+  AF_TEST_DATABASE_URL="postgres://postgres@/postgres?host=$PGT/sock&sslmode=disable" \
   go test -run 'TestPostgres|TestSchemaDialectParity' ./...)
-"$PGT"/dist/bin/pg_ctl -D "$PGT/data" stop     # 共有ホストなので使い終わったら止める
+"$PGT/dist/bin/pg_ctl" -D "$PGT/data" stop -m fast   # 使い終わったら止める
 ```
 - CI（GitHub Actions）: `ci.yml` が push/PR ごとに 3 コンポーネント（CP / Agent / Console）の
   fmt・vet・test・build を検証。`e2e.yml`（下記 E2E）はイメージ build が重いため分離。
