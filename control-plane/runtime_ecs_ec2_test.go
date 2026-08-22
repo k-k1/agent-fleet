@@ -2815,6 +2815,67 @@ func TestECSEC2ProbeReadsTheCandidateAndNotTheGolden(t *testing.T) {
 	}
 }
 
+func (f *fakeEC2) addGoldenArch(id, pool, image, role, arch string, started time.Time) {
+	f.addGoldenRole(id, pool, image, role, ec2types.SnapshotStateCompleted, started)
+	f.snapshots[id].Tags = append(f.snapshots[id].Tags,
+		ec2types.Tag{Key: aws.String(ec2TagArch), Value: aws.String(arch)})
+}
+
+// Every arch's golden carries the SAME image stamp, so once a second arch is declared
+// the image filter stops discriminating and the tie-break is "newest wins" — a coin
+// toss decided by which bake happened to finish last.
+//
+// Measured on <dev-deployment> (docs/70 §70.14.5): baking x86_64 and arm64 together, the x86_64
+// probe was seeded from the arm64 candidate. It did not fail — §70.5's self-heal wipes
+// the wrong-arch bits and re-runs boot-install — which is what makes it worth a test:
+// the golden's entire purpose is thrown away silently, and the probe proves the wrong
+// snapshot.
+func TestECSEC2GoldenOfAnotherArchIsNotUsed(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	img := h.rt.base.cfg.workspaceImage
+	if archOrX86(h.rt.arch) != ec2ArchX86 {
+		t.Fatalf("harness arch is %q; this test is written from the x86_64 side", h.rt.arch)
+	}
+	// The arm64 one is NEWER — so "newest wins" would pick it, and did.
+	h.ec2.addGoldenArch("snap-x86", "clu", img, ec2RoleGolden, ec2ArchX86, time.Now().Add(-time.Minute))
+	h.ec2.addGoldenArch("snap-arm", "clu", img, ec2RoleGolden, ec2ArchArm, time.Now())
+
+	if got := h.rt.goldenSnapshot(ctx); got != "snap-x86" {
+		t.Fatalf("an x86_64 home was seeded from %q — the arm64 golden is not ours", got)
+	}
+
+	// The same has to hold for the probe, or a golden is "proven" by booting another
+	// architecture's snapshot (§64.28.3 checks nothing in that case).
+	h.ec2.addGoldenArch("snap-cand-arm", "clu", img, ec2RoleGoldenCandidate, ec2ArchArm, time.Now())
+	h.rt.seedFromCandidate()
+	if got := h.rt.goldenSnapshot(ctx); got != "" {
+		t.Fatalf("the x86_64 probe read the arm64 candidate %q", got)
+	}
+	h.ec2.addGoldenArch("snap-cand-x86", "clu", img, ec2RoleGoldenCandidate, ec2ArchX86, time.Now())
+	if got := h.rt.goldenSnapshot(ctx); got != "snap-cand-x86" {
+		t.Fatalf("the probe read %q, not its own arch's candidate", got)
+	}
+}
+
+// An untagged golden is x86_64 (docs/70 §70.6): deployments that baked one before
+// classes existed must keep working, and reading them as "unknown" would orphan every
+// existing golden on upgrade.
+func TestECSEC2UntaggedGoldenIsX86(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	img := h.rt.base.cfg.workspaceImage
+	h.ec2.addGolden("snap-legacy", "clu", img, ec2types.SnapshotStateCompleted, time.Now())
+
+	if got := h.rt.goldenSnapshot(ctx); got != "snap-legacy" {
+		t.Fatalf("the pre-classes golden stopped being found: %q", got)
+	}
+	h.rt.arch = ec2ArchArm
+	if got := h.rt.goldenSnapshot(ctx); got != "" {
+		t.Fatalf("an arm64 home was seeded from the untagged (=x86_64) golden %q", got)
+	}
+}
+
 // A candidate stamped with another image is the baker's own bookkeeping (the image moved
 // mid-bake), not the standing "somebody must re-bake" warning a stale GOLDEN is.
 func TestECSEC2StaleCandidateIsNotUsed(t *testing.T) {

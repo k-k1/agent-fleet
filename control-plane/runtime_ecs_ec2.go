@@ -3028,6 +3028,22 @@ func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
 			stale = append(stale, fmt.Sprintf("%s(%s)", aws.ToString(s.SnapshotId), got))
 			continue
 		}
+		// ⚠️ A golden of ANOTHER architecture is not a candidate for this home. The
+		// pool bakes one per declared arch and they all carry the same image stamp, so
+		// image alone stops discriminating the moment a second arch is declared — and
+		// what is left is "newest wins", which is a coin toss. This is NOT a stale
+		// golden and must not be reported as one: the other arch's golden is correct,
+		// it just is not ours.
+		//
+		// Measured on the real deployment (docs/70 §70.14.5): with x86_64 and arm64
+		// baking at the same time, the x86_64 probe was seeded from the arm64
+		// candidate. Nothing broke — §70.5's self-heal wipes the wrong-arch bits and
+		// re-runs boot-install — which is exactly why this had to be found in a log
+		// rather than by a failure: it silently throws away the whole point of the
+		// golden, and it makes the probe prove the wrong snapshot.
+		if snapshotArch(s) != archOrX86(e.arch) {
+			continue
+		}
 		if newest == nil || snapshotStartedAfter(s, *newest) {
 			newest = &out.Snapshots[i]
 		}
