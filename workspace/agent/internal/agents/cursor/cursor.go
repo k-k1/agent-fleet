@@ -43,7 +43,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if !session.DirExists(m.Dir) {
 		return agents.LaunchPlan{}, agents.DirGoneErr(m.Dir)
 	}
-	chatID := ChatID(m)
+	// 押し付けた id を cursor が使わなくなっていたら、起動前に拾い直す（sid.go）。
+	// ここで直さないと `--resume <使われていない id>` を渡し続け、ユーザーの会話は
+	// どこからも参照されないまま取り残される。
+	chatID := resolveSid(m)
 	if chatID == "" {
 		var err error
 		if chatID, err = newChatID(); err != nil {
@@ -60,6 +63,9 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// driver の runTurn 境界が状態源（Track A2）。
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
+		// 生存ポーリングがドリフトの検知点（cursor に hook は無い）。resolveSid は
+		// 台帳を直すので、以降の ChatID 読みが新しい会話を指す（sid.go）。
+		resolveSid(m)
 		if st := LiveState(m); st != "" {
 			li.State = st
 		}

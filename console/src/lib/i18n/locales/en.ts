@@ -2072,6 +2072,10 @@ export const en: Record<keyof typeof ja, string> = {
   "topbar.admin": "Admin",
   "topbar.logout": "Sign out",
   "topbar.build": "Build {label}",
+  "topbar.server_version": "Server v{v}",
+  "topbar.image_cp": "CP image {ref}",
+  "topbar.image_ws": "WS image {ref}",
+  "topbar.copy_version": "Copy version details",
   "topbar.host_version": "Agent Fleet v{v}",
   "topbar.update_ready": "Update available · restart to apply v{v}",
   "topbar.update_badge": "Update",
@@ -2817,6 +2821,7 @@ export const en: Record<keyof typeof ja, string> = {
   // === P2 session row (features/sessions/SessionRow.tsx) ===
   "srow.id_copied": "Copied the ID: {name}",
   "srow.cant_resume": "Can't resume — the working folder no longer exists",
+  "srow.resume_failed": "Could not resume the session. Wait a moment and try again",
   "srow.history_only": "Folder missing — history only (can't resume / click to open)",
   "srow.stopped_hint": "Stopped (click to view history / Ctrl or middle-click for a new pane)",
   "srow.open_pane_suffix": " (Ctrl / middle-click to open in a new pane)",
@@ -3317,6 +3322,7 @@ export const en: Record<keyof typeof ja, string> = {
   "onb.paste_confirm": "Paste",
   // Disconnect notice written straight into the terminal grid (term.ts)
   "onb.term_disconnected": "[disconnected]",
+  "onb.term_session_stopped": "[this session is stopped — use Resume at the bottom right to bring it back]",
 
   // === P5 プロジェクト（ProjectTree/FilesSection/FilesChanges/RepoNode ほか） ===
   "pj.st_untracked": "Untracked",

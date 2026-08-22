@@ -2090,6 +2090,10 @@ export const ja = {
   "topbar.admin": "管理",
   "topbar.logout": "ログアウト",
   "topbar.build": "ビルド {label}",
+  "topbar.server_version": "サーバー v{v}",
+  "topbar.image_cp": "CP イメージ {ref}",
+  "topbar.image_ws": "WS イメージ {ref}",
+  "topbar.copy_version": "バージョン情報をコピー",
   "topbar.host_version": "Agent Fleet v{v}",
   "topbar.update_ready": "更新あり · v{v} を再起動で適用",
   "topbar.update_badge": "更新",
@@ -2861,6 +2865,7 @@ export const ja = {
   // === P2 セッション行（features/sessions/SessionRow.tsx）===
   "srow.id_copied": "IDをコピーしました: {name}",
   "srow.cant_resume": "作業フォルダが存在しないため再開できません",
+  "srow.resume_failed": "セッションを再開できませんでした。しばらく待ってからもう一度お試しください",
   "srow.history_only": "フォルダ無し — 履歴のみ閲覧可（再開不可 / クリックで開く）",
   "srow.stopped_hint": "停止中（クリックで履歴を閲覧 / Ctrl・中クリックで新ペイン）",
   "srow.open_pane_suffix": "（Ctrl/中クリックで新ペインに開く）",
@@ -3363,6 +3368,7 @@ export const ja = {
   "onb.paste_confirm": "貼り付け",
   // ターミナルのグリッドへ直接書く切断通知（term.ts）
   "onb.term_disconnected": "[切断されました]",
+  "onb.term_session_stopped": "[このセッションは停止中です — 右下の「再開」で再開できます]",
 
   // === P5 プロジェクト（ProjectTree/FilesSection/FilesChanges/RepoNode ほか） ===
   "pj.st_untracked": "未追跡",
