@@ -39,6 +39,13 @@ type ctrlMsg struct {
 // apart from binary PTY output and consume it without writing to the terminal grid.
 var pongMsg = []byte(`{"type":"pong"}`)
 
+// ptyCloseSessionStopped is the close-frame reason for "this session is not running"
+// — the one thing that distinguishes an ended session from a dropped connection on
+// the client, which cannot see the HTTP status of an upgrade. WIRE CONTRACT with the
+// Console (console/src/terminal/term.ts) and relayed verbatim by the Control Plane
+// proxy (control-plane/proxy.go relay); changing the string here changes it there.
+const ptyCloseSessionStopped = "session stopped"
+
 // handlePTY bridges a browser terminal to a PTY. With ?session=<name> it
 // attaches the matching tmux session; otherwise it opens a login shell
 // (used for `claude /login` and ad-hoc commands).
@@ -60,19 +67,28 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 		if !tmuxx.HasSession(session.TmuxName(name)) {
 			// A finished session remains viewable without resuming it. This is a
 			// finite, read-only replay; no PTY process is created.
-			history, ok := readTerminalHistory(name)
-			if !ok {
-				http.Error(w, "session not running and no terminal history", http.StatusConflict)
-				return
-			}
+			//
+			// A stopped session is a STATE, not a transport failure, so we ACCEPT the
+			// upgrade and close cleanly — even with nothing to replay. Refusing the
+			// handshake (the old 409) told the browser nothing: a WebSocket exposes
+			// neither the status nor the body of a failed upgrade, so an ordinary
+			// stopped session was indistinguishable from a broken connection and the
+			// pane rendered "[disconnected]". That is how a container restart — which
+			// empties the /tmp history ring — turned every stopped session into a
+			// black, seemingly broken terminal whose only way back was a chip in the
+			// corner. The close REASON below is readable (CloseEvent.reason) and is
+			// what the Console keys on, so keep it in sync with term.ts.
+			history, hasHistory := readTerminalHistory(name)
 			conn, err := upgrader.Upgrade(w, r, nil)
 			if err != nil {
 				return
 			}
 			defer conn.Close()
-			_ = conn.WriteMessage(websocket.BinaryMessage, history)
+			if hasHistory {
+				_ = conn.WriteMessage(websocket.BinaryMessage, history)
+			}
 			_ = conn.WriteMessage(websocket.CloseMessage,
-				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "history complete"))
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ptyCloseSessionStopped))
 			return
 		}
 		// new-session -A attaches (the session exists per the check above).

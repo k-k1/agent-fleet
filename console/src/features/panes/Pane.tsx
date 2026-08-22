@@ -236,10 +236,23 @@ function PopulatedPane({
 
   // Resume a stopped session EXPLICITLY (the terminal WS is connect-only): POST
   // /start, then attach. An already-alive session just attaches.
+  //
+  // `resuming` exists so the in-flight state is its OWN fact rather than something
+  // inferred from `attached`. Reading the spinner off `attached` latched: a failed
+  // resume left attached=true, and the recovery effect above only fires on a CHANGE
+  // of sessionMeta.alive — which a failed resume never produces — so the pane sat on
+  // 再開中… forever with the button gone and no error. Now the spinner ends with the
+  // request, and `attached` is only latched when the backend actually accepted.
   const startSession = useSessionsStore((s) => s.start);
+  const [resuming, setResuming] = useState(false);
   const onResume = () => {
     void (async () => {
-      if (sessionMeta?.alive !== true && pane.session) await startSession(pane.session);
+      if (sessionMeta?.alive !== true && pane.session) {
+        setResuming(true);
+        const ok = await startSession(pane.session); // toasts on failure
+        setResuming(false);
+        if (!ok) return; // leave the 再開 button armed for a retry
+      }
       setAttached(true);
     })();
   };
@@ -540,6 +553,7 @@ function PopulatedPane({
             mirror={mirror}
             onToggleMirror={onToggleMirror}
             onResume={onResume}
+            resuming={resuming}
             headerActions={tabHeaderActions}
           />
         </div>
