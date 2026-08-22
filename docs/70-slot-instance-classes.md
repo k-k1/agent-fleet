@@ -641,11 +641,9 @@ chromium 151.0.7922.137。chromium は **headless の日本語スクリーンシ
 - [40](40-cursor-agent-kind.md) §10 が「配布資産は健全と検証したが**実 arm64 ハード起動のみ
   未検証**」として残していた項目は、**これで解消**した。
 - [43](43-kiro-agent-kind.md) の「arm64 は musl 変種必須」は正しく、その通りに動いた。
-- ⚠️ **agy だけは未検証のまま。** L1 smoke は agy の `--version` を**意図的に実行しない**
-  （[decisions/0008](decisions/0008-agy-rdrand.md) — RDRAND を提示しないホストで SIGABRT する
-  ため）。**Graviton には RDRAND が存在しない**ので、これは「まだ分かっていない」ではなく
-  **「一番怪しいまま残っている 1 件」**である。実行して確かめるのは P5（実機セッション）の
-  仕事になる。
+- ✅ **agy も動く**（§70.13 で別途実測）。L1 smoke は agy の `--version` を**意図的に実行
+  しない**（[decisions/0008](decisions/0008-antigravity-cli-agent-kind.md) — RDRAND を提示しない
+  ホストで SIGABRT するため）ので、イメージのビルドだけでは分からないまま残っていた。
 
 ⚠️ **未検証の山はここに残る。** [40](40-cursor-agent-kind.md) §10 は cursor-agent の
 arm64 実機起動が未確認（forum #148408）、[32](32-agy-agent-kind.md) の agy は
@@ -697,7 +695,36 @@ $ は Cost Explorer 由来の実費だけにする。
 - **`af-mount` / `af-umount` の SSM 経路**: AL2023 arm64 に同じコマンドがある。
 - **ドリフト印 / 要再起動バッジ**: §70.9 のとおり無改修。
 
-## 70.13 フェーズ
+## 70.13 agy は Graviton で動く（実測・2026-08-22）
+
+`deploy/aws/ecs/harness/probe-agy-arm64.sh`。agy は Go **BoringCrypto (FIPS)** ビルドで、
+x86 では FIPS 乱数の自己テストが **RDRAND を必須**とし、提示しないホストでは起動直後に
+`CRNGT failed` → SIGABRT する（[decisions/0008](decisions/0008-antigravity-cli-agent-kind.md)）。
+`hostcaps.AgyStatus` はそれを **`GOARCH == "amd64"` のときだけ**課していた——
+つまり **「arm64 では課さない」は一度も実行されていない仮定**だった。
+
+⚠️ **1 台で測ってはいけない理由**があった。arm64 の FIPS 乱数が x86 の RDRAND と同じように
+**RNDR**（ARMv8.5-RNG）を掴むなら、答えは Graviton の**世代で割れる**——そして割れる先は、
+§70.3.3 が費用重視のメンバーに勧めた **m6g** である。なので 3 世代とも測った。
+
+| | CPU | `/proc/cpuinfo` の `rng` | `agy --version` | `agy --help` |
+|---|---|---|---|---|
+| m8g.large | AWS Graviton4 | **yes** | `1.1.17`・**RC=0** | RC=0 |
+| m7g.large | AWS Graviton3 | **yes** | `1.1.17`・**RC=0** | RC=0 |
+| **m6g.large** | Neoverse-N1（Graviton2） | **no** | `1.1.17`・**RC=0** | RC=0 |
+
+（agy 1.1.17-5084709148033024・`linux-arm/cli_linux_arm64.tar.gz`・sha256 検証済み・
+Workspace イメージと同じ `node:22-bookworm-slim` の中で実行・残存リソース 0）
+
+**決め手は m6g である。** `rng` を**持たないのに動いた**——arm64 の BoringCrypto は乱数を
+命令からではなく**カーネルの `getrandom(2)` から**取っている。`hostcaps` の分岐は正しく、
+これで**仮定ではなく測った結果**になった（同じ内容をコード側のコメントにも書いた）。
+
+⚠️ **この測り方の限界**: 確かめたのは `--version` と `--help` の 2 つだけで、
+**OAuth 認証と実セッションは通していない**。FIPS 自己テストはプロセス起動時に走るので
+SIGABRT はこれで捕まるが、「実際に会話ができる」ことの証明ではない。そちらは P5 の仕事。
+
+## 70.14 フェーズ
 
 | | 内容 | 出口 |
 |---|---|---|
@@ -712,7 +739,7 @@ $ は Cost Explorer 由来の実費だけにする。
 一瞬でも出荷すると、壊れた `~` を持つ人が生まれ、後から入れた修復では**もう遅い**
 （`~/repos` の中身は戻せない）。
 
-## 70.14 未決
+## 70.15 未決
 
 1. **どのファミリをクラスとして出すか。** §70.3.1〜70.3.3 の実測で決まった。
    x86_64 は `standard = m7i` と `saver = m6i`（前提条件ゼロ・出荷済み）。arm64 は
