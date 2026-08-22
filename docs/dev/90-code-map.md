@@ -35,6 +35,7 @@
 | `login_provider_api.go` | デプロイが env で有効にしている provider の読み取り専用一覧（`GET /api/admin/providers`・super_admin）。`allowed_providers` に何が書けるかを画面へ出すためのもので、id・ボタン文言・issuer だけを返す（秘密は載せない） |
 | `oauth_bitbucket.go` | Bitbucket OAuth ブローカ（Connections 向けトークン取得の CP 側）。consumer key/secret は**テナントの行**から。state に tenant_id を載せる（コールバックに `X-AF-Tenant` は無い） |
 | `oauth_github_device.go` | GitHub の device flow（git 接続）。**docs/71 で Agent から CP へ移設**——env を経由せずテナントのアプリを使い、token は Agent の `PUT /connections/git/github.com` へ渡す |
+| `git_oauth_bridge.go` | Agent → CP の refresh ブリッジ（docs/71 §71.8）。`AF_GIT_OAUTH_TOKEN` で認証し、**テナントの client_secret を CP に残したまま** Bitbucket の refresh grant を代行する（再試行と invalid_grant の判定もここ） |
 | `tenant_git_oauth.go` / `tenant_git_oauth_api.go` | テナントが登録する git プロバイダの OAuth アプリ（docs/71）: provider の閉じた集合・封印済み secret の解決・tenant_admin の CRUD（承認なし）・メンバー向けの `GET /api/git-oauth` |
 | `pat.go` | PAT（Bearer トークン）発行・ハッシュ・スコープ天井 |
 | `tenants.go` | tenant / identity / membership の CRUD・limits・admin API |

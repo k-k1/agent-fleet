@@ -127,6 +127,41 @@ func seedInternalGit() {
 	_ = ensureCredHelper()
 }
 
+// seedGitOAuthBridge copies the CP-injected bridge coordinates into the store so the
+// `workspace-agent cred` PROCESS can reach the CP's refresh endpoint (docs/71 §71.8).
+//
+// ★ Env is read here, at agent startup, and never at the point of use. git spawns the
+// credential helper as its own binary, frequently from a shell under a tmux server, and
+// that process's environment is not ours to guarantee — the same reason seedInternalGit
+// exists rather than runCredHelper reading AF_INTERNAL_GIT_TOKEN directly.
+//
+// The token is deterministic per membership, so re-seeding on every start is idempotent;
+// it only writes when the stored value differs. An unset pair CLEARS a stored bridge:
+// otherwise a deployment that removed PUBLIC_BASE_URL would keep a workspace pointing at
+// an endpoint that no longer answers.
+func seedGitOAuthBridge() {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	token := strings.TrimSpace(os.Getenv("AF_GIT_OAUTH_TOKEN"))
+	var want *secrets.CPBridge
+	if base != "" && token != "" {
+		want = &secrets.CPBridge{BaseURL: base, Token: token}
+	}
+	err := secrets.Update(func(cur *secrets.Data) error {
+		have := cur.GitOAuthBridge
+		switch {
+		case want == nil && have == nil:
+			return nil
+		case want != nil && have != nil && *want == *have:
+			return nil
+		}
+		cur.GitOAuthBridge = want
+		return nil
+	})
+	if err != nil {
+		log.Printf("git oauth bridge: seed failed: %v", err)
+	}
+}
+
 // migrateLegacySecrets folds any pre-A3 plaintext files into the store on start
 // and deletes them, so the bind-mounted disk no longer holds plaintext. Runs
 // every start; a no-op once migrated.

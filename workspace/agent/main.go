@@ -121,6 +121,9 @@ func main() {
 	// into the cred store so clone/push against the tenant's self-hosted repos auth
 	// transparently. No-op when the CP didn't inject one.
 	seedInternalGit()
+	// Record where the git OAuth refresh bridge lives (docs/71 §71.8) so the separate
+	// `workspace-agent cred` process can reach it without depending on its own env.
+	seedGitOAuthBridge()
 	// Make claude emit working/idle/question via hooks into the status files.
 	claude.EnsureStatusHooks()
 	// Wire claude's statusLine to us so we capture its rate_limits (5h/weekly usage)

@@ -94,6 +94,15 @@ Console（テナント設定 › 連携 › git プロバイダ OAuth）で登�
   token は Agent の `PUT /connections/git/github.com`（PAT 貼付と同じ入口）へ渡す。
 - **メンバー向けの可否は `GET /api/git-oauth`**（CP ネイティブ）。`GET /api/connections` は
   Agent へのプロキシで停止中は 502 を返すので、ボタンの出し分けには使えない。
+- **Bitbucket の refresh も CP が回す**（`POST /internal/git-oauth/bitbucket/refresh`・
+  `git_oauth_bridge.go`）。以前は key/secret を Agent へ渡して自前で refresh させており、
+  **テナントの client_secret が全メンバーの `secrets.enc` に複製**されていた。今は Agent が
+  refresh token を送り、CP が secret を足して bitbucket.org を叩く。
+  ★ **refresh token は動かさない**——ワークスペースに残り CP は保存しない（「CP は秘密を
+  素通しさせるだけで保持しない」を保つ）。既存ストアの key/secret は**ブリッジが一度
+  成功した時点で破棄**し、それまでは失敗時のフォールバックとして残す。
+  ★ ブリッジの座標は env でなく `secrets.Data.GitOAuthBridge` に置く——cred helper は
+  git が起動する別プロセスで、その環境変数は保証できない（`seedInternalGit` と同じ理由）。
 
 ## 8.5 Claude 認証・オンボーディング（L2 の本丸）
 
