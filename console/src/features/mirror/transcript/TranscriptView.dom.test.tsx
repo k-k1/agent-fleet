@@ -23,12 +23,21 @@ import { t as tr } from "../../../lib/i18n/index.ts";
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-function render(turns: Turn[], caps: TranscriptCaps) {
+type LiveProps = { working?: boolean; autoCollapseWork?: boolean };
+
+function render(turns: Turn[], caps: TranscriptCaps, props: LiveProps = {}) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={caps} />));
+  act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={caps} {...props} />));
   return host;
+}
+
+// 同じ root へ描き直す（React が再マウントせず更新する経路）＝ポーリングで status が
+// 動くたびに実際に起きること。新しい root で描き直すと状態が消えて何も検出できない。
+function rerender(turns: Turn[], caps: TranscriptCaps, props: LiveProps) {
+  act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={caps} {...props} />));
+  return host!;
 }
 
 afterEach(() => {
@@ -178,6 +187,69 @@ describe("共有ビューでもミラーと同じ形で畳まれる", () => {
     ];
     const el = render(turns, RECIPIENT);
     expect(el.querySelector("details.mirror-compact")).not.toBeNull();
+  });
+});
+
+// ミラーの working は生きたポーリング値なので、1 ターンの最中でも往復する（claude の Stop
+// フックで一瞬 idle を拾う／operator・定時実行・peer の新しいプロンプトが転写へ届く前に
+// working が立つ）。そのたびに作業過程が展開⇄畳みで入れ替わると、読んでいる最中に本文の
+// 高さが跳ねて位置がズレる。畳み込みは片道・開閉は読者のもの、を固定する。
+describe("作業過程の畳み込みは往復しない", () => {
+  const WORK_TURN: Turn[] = [
+    { role: "user", text: "調べて", idx: 1, ts: "2026-08-22T10:00:00Z" },
+    {
+      role: "assistant",
+      idx: 2,
+      ts: "2026-08-22T10:01:00Z",
+      parts: [
+        { kind: "tool", tool: "Read" },
+        { kind: "tool", tool: "Bash" },
+        { kind: "text", text: "調べ終わりました。原因は設定ミスです。" },
+      ],
+    },
+  ];
+  const workState = (el: HTMLElement) => {
+    const head = el.querySelector<HTMLButtonElement>(".mt-work-head");
+    return head ? (head.getAttribute("aria-expanded") === "true" ? "open" : "closed") : "unfolded";
+  };
+
+  it("完了で畳んだあと status が working へ戻っても開き直さない", () => {
+    // 末尾を追いながら実行中を眺めている：作業過程は畳まずそのまま出ている。
+    const el = render(WORK_TURN, OWNER, { working: true, autoCollapseWork: true });
+    expect(workState(el)).toBe("unfolded");
+    // 完了 → 畳む（末尾追従中なので閉じた要約になる）。
+    expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("closed");
+    // ここで status がまた working を名乗っても、畳んだものは畳んだまま。
+    expect(workState(rerender(WORK_TURN, OWNER, { working: true, autoCollapseWork: true }))).toBe("closed");
+    expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("closed");
+  });
+
+  it("読者が開いた作業過程は、その後の status/追従の変化で閉じない", () => {
+    const el = render(WORK_TURN, OWNER, { working: false, autoCollapseWork: true });
+    expect(workState(el)).toBe("closed");
+    act(() => el.querySelector<HTMLButtonElement>(".mt-work-head")!.click());
+    expect(workState(el)).toBe("open");
+    // 追従が切れた／戻った、実行中に見えた — どれも読者の選択を上書きしない。
+    expect(workState(rerender(WORK_TURN, OWNER, { working: true, autoCollapseWork: false }))).toBe("open");
+    expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("open");
+  });
+
+  it("セッションを持ち替えたら畳み込みは持ち越さない（ミラーは再マウントされない）", () => {
+    const el = render(WORK_TURN, OWNER, { working: false, autoCollapseWork: true });
+    expect(workState(el)).toBe("closed");
+    // 同じ idx を持つ別セッションのターン。React が使い回すと、実行中の作業過程が
+    // 前のセッションの「畳んだ」状態を引き継いで最初から隠れてしまう。
+    const other = rerender(WORK_TURN, { ...OWNER, session: "s2" }, { working: true, autoCollapseWork: true });
+    expect(workState(other)).toBe("unfolded");
+  });
+
+  it("上へスクロールして読んでいる最中に完了したターンは開いたまま畳まれる", () => {
+    // autoCollapseWork=false ＝末尾から離れて読んでいる。要約行は出すが中身は閉じない。
+    const el = render(WORK_TURN, OWNER, { working: true, autoCollapseWork: false });
+    expect(workState(el)).toBe("unfolded");
+    expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: false }))).toBe("open");
+    // 途中で末尾へ戻っても、いま読んでいるものを閉じにはいかない。
+    expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("open");
   });
 });
 
