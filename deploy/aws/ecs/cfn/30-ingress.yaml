@@ -80,7 +80,7 @@ Parameters:
       than silently running no workspaces.
   Ec2SlotTypes:
     Type: String
-    Default: "m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8"
+    Default: "standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,m6i.xlarge:16384:4,m6i.2xlarge:32768:8"
     Description: >-
       The slot sizes the pool may run. A workspace lands on the smallest slot that
       holds its memory REQUEST and gets the WHOLE box (the task reserves neither cpu
@@ -100,14 +100,23 @@ Parameters:
       tenant and per member, and the memory number still picks the rung within it.
       arch is x86_64 or arm64 and is DECLARED, never guessed from the family name.
 
-      A worked example — Intel as the default, Graviton as the cheaper choice (measured
-      in ap-northeast-1 on 2026-08-22: m7g is 19.0% cheaper than m7i, m6g 24.0%,
-      m8g 11.0%):
+      The default above offers two x86_64 classes, because m6i needs NOTHING to work:
+      same architecture, so the same workspace image, the same AMI, the same golden
+      snapshot, and a member's home stays valid when they move (measured
+      ap-northeast-1 2026-08-22: m6i is 4.8% cheaper than m7i). It is the "cost over
+      speed" choice that is available today.
 
-        standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;arm|Lower cost (Arm)|arm64|m7g.large:8192:2,m7g.xlarge:16384:4,m7g.2xlarge:32768:8
+      ⚠️ Changing this parameter moves nobody by itself — Ec2DefaultSlotClass decides
+      where members with no choice of their own land, and it defaults to the FIRST
+      class. An existing stack also keeps its own value on a redeploy unless you pass
+      this parameter, so upgrading does not add a picker to a running deployment.
 
-      ⚠️ The default here stays x86_64-only ON PURPOSE, and an arm64 class has TWO
-      prerequisites, in this order:
+      Adding Graviton is a matter of appending a class (measured against m7i: m7g
+      -19.0%, m6g -24.0%, m8g -11.0%):
+
+        …;arm|Lower cost (Arm)|arm64|m7g.large:8192:2,m7g.xlarge:16384:4,m7g.2xlarge:32768:8
+
+      ⚠️ Unlike m6i, an arm64 class has TWO prerequisites, in this order:
 
         1. a workspace image with an arm64 manifest. Without it the slot launches and
            the task cannot pull anything that runs on it.
