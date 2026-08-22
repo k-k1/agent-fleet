@@ -71,8 +71,17 @@ membership ──< pat / user_limit / ssm_profile ──< ssm_host / memo / memo
 
 ## 6.4 マイグレーション作法
 
-- `//go:embed` で SQL を同梱し、起動時に**冪等適用**（適用済み番号を記録）。SQLite / Postgres の
-  両ディレクトリに同番号で置く。
+- `//go:embed` で SQL を同梱し、起動時に**冪等適用**（適用済み番号を記録）。**両ディレクトリに
+  置く**——番号は揃わない（`migrations-pg/0001` が SQLite の初期系列を畳んだ統合スキーマなので、
+  以降は番号が別々に進む）。対応関係はファイル冒頭のコメントで示す（例:
+  「Postgres mirror of migrations/0028_mcp_server.sql」）。
+- ⚠️ **片方に足して片方を忘れても、誰も気づかない。** 実際に `memo_category`（`migrations/0020`）が
+  Postgres 側へ写されないまま残り、ECS/RDS のデプロイではカテゴリの API が全部 500 を返していた
+  （Console は配列でない応答を空リストに畳むので、症状は「エラー」ではなく**「カテゴリが出ない」**
+  ——障害として報告しようがない形だった）。2026-08-22 に `migrations-pg/0030` で写し、
+  **`TestSchemaDialectParity`（`store_schema_parity_test.go`）が両系列の着地スキーマを実測で
+  突き合わせる**ようにした。`AF_TEST_DATABASE_URL` を与えたときだけ走るので、**マイグレーションを
+  足したら実 Postgres で 1 度は回すこと**（[postgres の立て方](10-development.md)）。
 - ⚠️ **マイグレータは `;` で素朴に分割する**ため、**SQL コメントにセミコロン（と引用符）を書かない**
   （0011 以降の各ファイル冒頭に同趣旨の注記あり）。
 - 破壊的変更は新テーブル + データ移行（0002 の `app_user`→`identity`+`membership` が先例）。
