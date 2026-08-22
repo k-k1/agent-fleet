@@ -34,11 +34,12 @@ func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{CanFork: true, CanForkAt: true, CanTranscript: true, UsesLabel: true}
 }
 
-// ForkSource resolves this session's conversation id (its deterministic sid) as the
-// fork source, refusing when the jsonl holds no real conversation yet — `claude
-// --resume` would die with "No conversation found".
+// ForkSource resolves this session's conversation id as the fork source, refusing when
+// the jsonl holds no real conversation yet — `claude --resume` would die with "No
+// conversation found". The id must be the one claude actually writes under (LiveSID),
+// not our slot sid: the fork command resumes it verbatim (sid.go).
 func (agentImpl) ForkSource(m session.Meta) (string, error) {
-	sid := session.UUID(m.Dir, m.Name)
+	sid := LiveSID(session.UUID(m.Dir, m.Name))
 	if !JSONLResumable(sid) {
 		return "", errors.New("分岐できる会話がまだありません")
 	}
