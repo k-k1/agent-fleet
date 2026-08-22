@@ -47,6 +47,9 @@ interface TerminalViewProps {
   mirror?: boolean;
   onToggleMirror?: (toChat: boolean) => void;
   onResume?: () => void;
+  /** A resume request is in flight (Pane owns it). Drives the spinner — reading that
+   * off `attached` latched the overlay on forever when a resume failed. */
+  resuming?: boolean;
   /** Pane popout/wrap/close (tabbed-grid mode only — see Pane.tsx tabHeaderActions). */
   headerActions?: ReactNode;
 }
@@ -61,6 +64,7 @@ export function TerminalView({
   mirror = false,
   onToggleMirror,
   onResume,
+  resuming = false,
   headerActions,
 }: TerminalViewProps) {
   const tr = useT();
@@ -244,7 +248,7 @@ export function TerminalView({
         )}
         {stopped && (
           <div className="term-history-actions">
-            {attached && running ? (
+            {resuming ? (
               <span className="term-mask-msg">
                 <span className="codicon codicon-loading codicon-spin" aria-hidden="true" /> {tr("onb.resuming")}
               </span>

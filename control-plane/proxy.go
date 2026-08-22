@@ -409,6 +409,20 @@ func relay(src, dst *websocket.Conn, errc chan<- error) {
 	for {
 		mt, data, err := src.ReadMessage()
 		if err != nil {
+			// Pass the peer's CLOSE frame through. gorilla answers the close handshake
+			// itself and surfaces it here as a CloseError, so the frame never reaches
+			// the other side on its own — the bridge just tore the socket down and the
+			// browser saw an abnormal 1006. That erased the only signal distinguishing
+			// "the session ended" (1000 + reason) from "the connection broke", which is
+			// why a stopped session's finite history replay rendered as [disconnected].
+			// 1005/1006 are status codes a close frame may never CARRY, so they are the
+			// one case we still drop.
+			if ce, ok := err.(*websocket.CloseError); ok &&
+				ce.Code != websocket.CloseNoStatusReceived && ce.Code != websocket.CloseAbnormalClosure {
+				// Best-effort and synchronous: WriteMessage flushes to the socket before
+				// the deferred Close() in ptyProxy tears the connection down.
+				_ = dst.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(ce.Code, ce.Text))
+			}
 			errc <- err
 			return
 		}

@@ -51,8 +51,8 @@ func handleStartSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	force := r.URL.Query().Get("force") == "1"
-	if !ensureSessionTmux(name, force) {
-		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", "could not start session")
+	if err := ensureSessionTmux(name, force); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
