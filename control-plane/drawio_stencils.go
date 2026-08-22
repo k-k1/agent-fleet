@@ -213,31 +213,41 @@ func (d *drawioStencils) fetch(ctx context.Context, m drawioStencilManifest, nam
 		return nil, err
 	}
 
-	if err := os.MkdirAll(d.cacheDir, 0o755); err != nil {
-		// キャッシュに置けなくても、この要求には答えられる。
-		log.Printf("drawio stencil cache dir: %v", err)
-		return b, nil
+	// キャッシュに置けなくても、この要求には答えられる。
+	if err := d.store(path, b); err != nil {
+		log.Printf("drawio stencil cache: %v", err)
 	}
-	// 名前は内容の sha256 なので、書きかけが正規名で見えると壊れたものを配る。
-	// 一時名に書いてから rename する（同一ディレクトリなので atomic）。
+	return b, nil
+}
+
+// store はキャッシュへ 1 件置く。**必ず一時名 → rename で置く。**
+// ファイル名は内容の sha256 なので、書きかけが正規名で見えた瞬間に「検証済み」の
+// 顔をした壊れたバイト列を配ることになる。事前投入（drawio_preseed.go）は稼働中の
+// CP と同じディレクトリを触るので、そちらからも必ずここを通す。
+func (d *drawioStencils) store(path string, b []byte) error {
+	if err := os.MkdirAll(d.cacheDir, 0o755); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(d.cacheDir, ".tmp-*")
 	if err != nil {
-		log.Printf("drawio stencil cache write: %v", err)
-		return b, nil
+		return err
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(b); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		log.Printf("drawio stencil cache write: %v", err)
-		return b, nil
+		return err
 	}
-	tmp.Close()
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	// 同一ディレクトリなので rename は atomic。
 	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
-		log.Printf("drawio stencil cache rename: %v", err)
+		return err
 	}
-	return b, nil
+	return nil
 }
 
 func verifyDrawioStencil(b []byte, entry drawioStencilEntry) error {

@@ -73,6 +73,13 @@ func main() {
 		runEgressProxy()
 		return
 	}
+	// Subcommand: `control-plane drawio-preseed` fills the stencil cache ahead of
+	// time (docs/65 §65.5.5). It runs where the cache lives and reuses the embedded
+	// manifest, so it cannot drift from what the server will verify against.
+	if len(os.Args) > 1 && os.Args[1] == "drawio-preseed" {
+		runDrawioPreseed(os.Args[2:])
+		return
+	}
 
 	portBase, _ := strconv.Atoi(envOr("WS_AGENT_PORT", "7700"))
 	mgr := &manager{

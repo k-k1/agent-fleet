@@ -21,7 +21,7 @@
 // **見ていた場所（ページ・倍率・位置）は引き継ぐ**ので体感は連続する。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import viewerAssetUrl from "../../../vendor/drawio/viewer-static.min.js?url";
-import { downloadURL } from "../../core/api/client.ts";
+import { downloadURL, rel } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { DRAWIO_MSG, drawioFrameSrcdoc, isDrawioFrameEvent, type DrawioViewState } from "./drawioFrame.ts";
 
@@ -141,9 +141,12 @@ export function DrawioView({ filePath, dark, onState, onShowSource }: DrawioView
         // 取れなかったものは黙って落とす: 閉域では図案だけが空になり、枠・色・ラベルは
         // 残る（＝ステンシルを持たなかった頃と同じ絵）。**エラー表示にしてはいけない** ——
         // 図は正しく開けているのだから、利用者に見せる異常ではない。
+        // **URL は rel() で組み立てる。** 素の相対パスは文書 URL に対して解決されるので、
+        // `/agent-fleet/` のようなパスを剥がすプロキシの下や `/open/...` の深い URL では
+        // 行き先がずれる（§65.7 でビューア資産について記録したのと同じ罠）。
         Promise.all(
           msg.sets.map((name) =>
-            fetch(`api/drawio/stencils/${name.split("/").map(encodeURIComponent).join("/")}`, {
+            fetch(rel(`api/drawio/stencils/${name.split("/").map(encodeURIComponent).join("/")}`), {
               credentials: "same-origin",
             })
               .then((r) => (r.ok ? r.text() : null))
