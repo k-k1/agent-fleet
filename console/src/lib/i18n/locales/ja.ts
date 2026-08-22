@@ -1213,6 +1213,32 @@ export const ja = {
   "pool.golden_rejected": "{snapshot} は使いません: {reason}。起動を確かめられなかったものは配らないので、新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。同じイメージでの焼き直しは 2 回で打ち切ります。",
   "pool.golden_stale": "{snapshot} は {baked} から焼かれていますが、このデプロイは {running} を動かしています。この golden は使われず、焼き直すまで新規 home は空から作られます（初回起動が遅くなります）。",
   "pool.golden_ok": "{image} から焼いたもの",
+  // 焼き込みの進み具合（docs/64 §64.30）。焼きは 11 分前後かかり、前半には snapshot が
+  // まだ存在しない——「用意しています」の 1 行だけでは、動いているのか固まっているのか
+  // 分からないまま待たせることになる。
+  "pool.bake_step_seed": "種を起動",
+  "pool.bake_step_boot": "boot-install",
+  "pool.bake_step_capture": "home を切り離し",
+  "pool.bake_step_snapshot": "snapshot",
+  "pool.bake_step_probe": "起動確認",
+  "pool.bake_step_published": "公開",
+  "pool.bake_running": "{image} 用を焼いています。",
+  "pool.bake_meanwhile":
+    "焼けたものは、そこから実際に workspace が起動できることを確かめてから使い始めます。それまで新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。",
+  "pool.bake_detail_seed": "種:",
+  "pool.bake_detail_probe_ws": "probe:",
+  "pool.bake_detail_probe": "{snapshot} から probe を起こして、本当に起動するか確かめています。",
+  "pool.bake_owner": "golden 焼き込み用",
+  "pool.bake_blocked":
+    "スロットの空きを待っています（{used}/{max} 使用中）。焼き込みには種と probe で 2 つ空きが必要で、誰かを立ち退かせてまでは焼きません。空くまで新規 home は空から作られます（初回起動が遅いだけ）。",
+  "pool.bake_gave_up":
+    "{snapshot} は使いません: {reason}。同じイメージで 2 回失敗したので、焼き直しは打ち切りました。イメージを直して入れ替えるまで、新規 home は空から作られます。",
+  "pool.bake_retry_left": "同じイメージであと 1 回だけ焼き直します。",
+  "pool.bake_off":
+    "自動焼きは切られています（AF_ECS_EC2_GOLDEN_AUTOBAKE=0）。golden が無い間、新規 home は空から作られます（初回起動が遅いだけ）。焼くなら deploy/aws/ecs/bake-golden.sh です。",
+  "pool.elapsed_sec": "（{s} 秒経過）",
+  "pool.elapsed_min": "（{m} 分 {s} 秒経過）",
+  "pool.elapsed_hour": "（{h} 時間 {m} 分経過）",
   "pool.idle_min": "{n} 分",
   "pool.idle_hour": "{n} 時間",
   "pool.idle_day": "{n} 日",
