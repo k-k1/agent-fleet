@@ -1081,6 +1081,146 @@ func (s *sqlStore) SetMembershipStatus(ctx context.Context, membershipID, status
 	return err
 }
 
+// membershipCascade is every row keyed to one membership, in the order they must be
+// deleted. It is a function rather than a constant because two statements need the id
+// twice (a share names both ends).
+//
+// The dependents are listed EXPLICITLY rather than left to ON DELETE CASCADE, for the
+// reason DeleteWorkspace gives: only a few of these tables declare one, and a delete that
+// half-works because of a schema detail shows up as a foreign-key error in production and
+// nowhere in tests.
+//
+// ★ What is NOT here is the point of the operation (docs/61 §61.18):
+//
+//   - audit_log — it has no membership_id at all; the actor is an identity
+//     (0007_audit.sql). Offboarding must not be able to erase its own record.
+//   - cloud_cost_daily / usage_daily — the money and the occupancy already happened.
+//     memberCloudCost looks them up by membership id alone precisely so that spend
+//     survives the workspace being destroyed (cloudcost.go); deleting them would change
+//     last month's total after the fact.
+//   - identity — the person may be on another tenant's roster, and even when they are
+//     not, audit rows point at them. A membership is a seat, not a person.
+//
+// Nor is `workspace`: the caller must have destroyed it first (its home and cloud
+// resources are not this function's to release), and that is checked in the handler.
+//
+// ⚠️ Every table named here must exist in BOTH dialects. A list of literal table names is
+// exactly as correct as the assumption that the two migration series agree, and they did
+// not: `memo_category` had been added to migrations/0020 and never mirrored on the
+// Postgres side, which would have meant a 500 in the middle of an irreversible delete.
+// The mirror is migrations-pg/0030 and `TestSchemaDialectParity` now fails if the two ever
+// diverge again — that guard is what lets this stay one flat list.
+func membershipCascade(membershipID string) []struct {
+	sql  string
+	args []any
+} {
+	id := []any{membershipID}
+	both := []any{membershipID, membershipID}
+	return []struct {
+		sql  string
+		args []any
+	}{
+		{`DELETE FROM user_limit WHERE membership_id=?`, id},
+		{`DELETE FROM pat WHERE membership_id=?`, id},
+		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
+		// sso_session は 0011 で DROP 済み（ssm_profile が置き換えた）。無い表を
+		// 消そうとすると SQLite は実行時に落ちるだけなので、ここは実在する表だけ。
+		{`DELETE FROM ssm_profile WHERE membership_id=?`, id},
+		{`DELETE FROM schedule_run WHERE membership_id=?`, id},
+		{`DELETE FROM schedule WHERE membership_id=?`, id},
+		{`DELETE FROM memo WHERE membership_id=?`, id},
+		{`DELETE FROM memo_category WHERE membership_id=?`, id},
+		{`DELETE FROM notification WHERE membership_id=?`, id},
+		{`DELETE FROM notification_usage_state WHERE membership_id=?`, id},
+		// 共有は両端を持つ。相手側が生きていても、片方が消えた共有は残せない。
+		{`DELETE FROM session_share_proposal WHERE owner_membership_id=? OR proposer_membership_id=?`, both},
+		{`DELETE FROM session_share WHERE owner_membership_id=? OR recipient_membership_id=?`, both},
+		{`DELETE FROM shared_session_catalog WHERE owner_membership_id=?`, id},
+		{`DELETE FROM session_share_owner_lease WHERE owner_membership_id=?`, id},
+		{`DELETE FROM workspace_stop_intent WHERE owner_membership_id=?`, id},
+		// 親は最後に。子を先に消してからでないと外部キーが立っている表で落ちる。
+		{`DELETE FROM membership WHERE id=?`, id},
+	}
+}
+
+// DeleteMembership removes a membership row and everything keyed to it. Irreversible,
+// and only ever reached from the explicit admin operation, which has already established
+// that the membership is inactive and its workspace destroyed (docs/61 §61.18).
+func (s *sqlStore) DeleteMembership(ctx context.Context, membershipID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.deleteMembershipTx(ctx, tx, membershipID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// deleteMembershipTx is the body above, inside somebody else's transaction — the tenant
+// delete runs it once per remaining membership so the whole tenant goes in one commit.
+func (s *sqlStore) deleteMembershipTx(ctx context.Context, tx *sqlTx, membershipID string) error {
+	for _, stmt := range membershipCascade(membershipID) {
+		if _, err := tx.ExecContext(ctx, stmt.sql, stmt.args...); err != nil {
+			return fmt.Errorf("%s: %w", stmt.sql, err)
+		}
+	}
+	return nil
+}
+
+// DeleteTenant removes an EMPTY tenant: whatever inactive memberships are left, the
+// tenant's own configuration rows, and the tenant itself — in one transaction.
+//
+// "Empty" is the handler's job to prove (no active member, no workspace row, no internal
+// git repo). This function does not re-check it, but it also cannot paper over it: it
+// deliberately does not touch `workspace`, so a tenant that still had one would fail on
+// the foreign key rather than orphan an EBS volume nobody is left to find.
+//
+// The tenant's history — audit_log, usage_daily, cloud_cost_daily — is deliberately kept,
+// exactly as for a membership.
+func (s *sqlStore) DeleteTenant(ctx context.Context, tenantID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM membership WHERE tenant_id=?`, tenantID)
+	if err != nil {
+		return err
+	}
+	var memberships []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		memberships = append(memberships, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range memberships {
+		if err := s.deleteMembershipTx(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	for _, stmt := range []string{
+		`DELETE FROM mcp_server WHERE tenant_id=?`,
+		`DELETE FROM tenant_idp WHERE tenant_id=?`,
+		`DELETE FROM egress_allowlist WHERE tenant_id=?`,
+		// ログイン規則と allowed_cidrs は tenant の列なので、この 1 行で一緒に消える。
+		`DELETE FROM tenant WHERE id=?`,
+	} {
+		if _, err = tx.ExecContext(ctx, stmt, tenantID); err != nil {
+			return fmt.Errorf("%s: %w", stmt, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // EmailHasActiveMembership answers the entry gate's membership term (決定 16).
 // LOWER() is applied to the COLUMN, not to the placeholder: Postgres cannot infer a
 // type for LOWER($1) and errors, which is the same reason identityByEmail lowercases
