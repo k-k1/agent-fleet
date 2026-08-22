@@ -289,6 +289,15 @@ if [ "$LEAN_CLIS" = 1 ]; then
       grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null
       tar xzf "${asset}"
       install -D -m 0755 rtk "$HOME/.local/bin/rtk"
+      # ⚠️ 実行して確かめてから残す。arm64 の配布は gnu ビルドだけで GLIBC_2.39 を要求し、
+      # このイメージ（Debian 12・glibc 2.36）では **DL も sha256 も通ったうえで起動だけが
+      # できない**（実測 2026-08-22・docs/70 §70.9.2）。確かめずに置くと、PATH の先頭に
+      # 動かない rtk が居座り、失敗するのは使った瞬間になる。
+      if ! err="$("$HOME/.local/bin/rtk" --version 2>&1)"; then
+        rm -f "$HOME/.local/bin/rtk"
+        echo "[entrypoint] rtk はこの環境では動かないため導入しません: $err"
+        exit 0
+      fi
     ) && echo "[entrypoint] boot-install rtk $(vj_pin rtk)" \
       || echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"
   elif cli_present rtk; then

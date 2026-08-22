@@ -457,6 +457,32 @@ GitHub ホストの **`ubuntu-24.04-arm` ランナーが無料で使える**の�
   マニフェストリストは `--load` できないので、ローカル開発と air-gap 配布は
   **ホストのアーキ 1 本**という現状を維持する（`--multi-arch` はリリース経路だけの旗）。
 
+### 70.9.1 arm64 で最初に落ちたのは他社の CLI ではなく**自分たちのコード**だった
+
+**実測（2026-08-22）**: Graviton4 の実機（m8g.2xlarge・ECS 最適化 arm64 AMI には docker が
+載っている）で `docker build --build-arg BAKE_AGENT_CLIS=1 workspace/` を回したところ、
+**3 分で落ちた**。原因は 9 種の CLI でも chromium でもなく、`workspace-agent` である。
+
+```
+./fs_fd_linux.go:257:29: cannot use st.Blksize (variable of type int32)
+                         as int64 value in struct literal
+```
+
+`unix.Stat_t` は**アーキごとに別の構造体**で、`Blksize` は amd64 で `int64`・arm64 で
+`int32`、`Nlink` は amd64 で `uint64`・arm64 で `uint32` である。`Nlink` は既に
+`uint64()` を通していたのに `Blksize` は素で代入していたので、**amd64 では通り arm64 では
+落ちる**。`int64()` を通して直した（`control-plane` は元から arm64 で通っていた）。
+
+⚠️ **教訓は「実機を立てる前にクロスコンパイルしろ」である。**
+`CGO_ENABLED=0 GOARCH=arm64 go build ./...` はこの開発 Workspace で**一瞬で終わり**、
+同じエラーを EC2 を 1 台も立てずに出す。実機が要るのは「動くか」であって「ビルドが通るか」
+ではない。`ci.yml` の control-plane / workspace-agent 両 job に arm64 のクロスビルドを
+足したので、次は誰かが $0.05 と 3 分を払う前に赤くなる。
+
+⚠️ この 1 件は、**「Dockerfile は両アーキ対応済み」と「イメージが両アーキでビルドできる」は
+別の主張である**ことの実例でもある。前者は 9 か所の `dpkg --print-architecture` 分岐が
+書いてあるという話で、後者は一度も試されていなかった。
+
 ⚠️ **未検証の山はここに残る。** [40](40-cursor-agent-kind.md) §10 は cursor-agent の
 arm64 実機起動が未確認（forum #148408）、[32](32-agy-agent-kind.md) の agy は
 [`host-no-rdrand-fips-blocker`](64-ec2-persistent-workspace.md) の別バージョンを踏む可能性、
