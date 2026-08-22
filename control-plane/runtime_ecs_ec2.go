@@ -1026,6 +1026,28 @@ type ec2Placement struct {
 // placeHome resolves the volume and the slot, attaching the two together when it can.
 // The order follows the AZ (docs/64 §64.15.3): the volume pins the AZ, the AZ picks
 // the candidate slots, and only a user with no volume yet is free to follow the pool.
+// slotTypeMatches reports whether an instance is still the size AND class this
+// workspace needs. One DescribeInstances, no caching — it is asked once per Start.
+//
+// An instance that has vanished (terminated between the volume read and here) counts
+// as NOT matching, so the caller releases and re-places rather than pinning a task to
+// a box that is gone.
+func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) (bool, error) {
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil {
+		if isAWSNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("describe slot %s: %w", instanceID, err)
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			return string(inst.InstanceType) == e.instanceType, nil
+		}
+	}
+	return false, nil
+}
+
 func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
@@ -1033,24 +1055,60 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	}
 	if vol != nil {
 		if inst := attachedInstance(vol); inst != "" {
-			// The home is still on a slot — the normal case now that Stop leaves it
-			// there (lazy release). This is both the affinity ("the same user gets the
-			// same slot") and the cheapest path: no attach, no mount to redo.
-			volID := aws.ToString(vol.VolumeId)
-			if err := e.claim(ctx, volID, inst); err != nil {
-				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
-			}
-			e.clearDormancy(ctx, volID)
-			running, err := e.instanceRunning(ctx, inst)
+			// ⚠️ The attachment is AFFINITY, not a decision. It records the slot this
+			// workspace used last time, for the size and class it had THEN — and both
+			// can change underneath it (a memory edit moves the rung, a class edit
+			// moves the ladder). Reusing a slot of the wrong instance type is not
+			// merely suboptimal:
+			//
+			//   ACROSS ARCHITECTURES IT STRANDS THE WORKSPACE. buildTaskDef declares
+			//   RuntimePlatform for the new class while the placement constraint still
+			//   pins THIS instance, so ECS refuses to place the task at all — "no
+			//   container instance met all of its requirements … missing an attribute
+			//   required by your task" — and keeps refusing, with desiredCount 1 and
+			//   nothing running, forever.
+			//
+			// Measured on a live deployment (docs/70 §70.14.5): a member moved from
+			// the saver class (m6i, x86_64) to arm (m8g, arm64) and their workspace
+			// could not start again. So the match is checked before the affinity is
+			// honoured, and a stale slot is released rather than reused.
+			matches, err := e.slotTypeMatches(ctx, inst)
 			if err != nil {
 				return ec2Placement{}, err
 			}
-			// A dormant slot keeps both the image cache and the attachment, so waking it
-			// is the ~90s path rather than the 135s of building a new one.
-			return ec2Placement{
-				volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
-				deferred: !running, wake: !running,
-			}, nil
+			if !matches {
+				log.Printf("ecs-ec2: %s now needs %s but its home is on %s; releasing that slot first",
+					e.base.name, e.instanceType, inst)
+				if err := e.releaseSlot(ctx); err != nil {
+					return ec2Placement{}, fmt.Errorf("release the slot after a size/class change: %w", err)
+				}
+				// Re-read and fall through: the volume is detached now, so the code below
+				// places it like any other homeless home. Note it keeps its AZ — an EBS
+				// volume can never leave the one it was created in — so the search below
+				// is correctly restricted to that AZ.
+				if vol, err = e.homeVolume(ctx); err != nil {
+					return ec2Placement{}, fmt.Errorf("describe home volume after release: %w", err)
+				}
+			} else {
+				// The home is still on a slot — the normal case now that Stop leaves it
+				// there (lazy release). This is both the affinity ("the same user gets the
+				// same slot") and the cheapest path: no attach, no mount to redo.
+				volID := aws.ToString(vol.VolumeId)
+				if err := e.claim(ctx, volID, inst); err != nil {
+					log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+				}
+				e.clearDormancy(ctx, volID)
+				running, err := e.instanceRunning(ctx, inst)
+				if err != nil {
+					return ec2Placement{}, err
+				}
+				// A dormant slot keeps both the image cache and the attachment, so waking it
+				// is the ~90s path rather than the 135s of building a new one.
+				return ec2Placement{
+					volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
+					deferred: !running, wake: !running,
+				}, nil
+			}
 		}
 	}
 	azFilter := ""
