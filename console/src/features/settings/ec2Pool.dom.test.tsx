@@ -110,6 +110,87 @@ describe("EC2 スロットプールの面", () => {
     expect(text()).toContain("bake-golden.sh");
   });
 
+  // --- 焼き込みの進み具合（docs/64 §64.30）---
+  //
+  // 焼きは 11 分前後かかり、前半（種の起動・boot-install・スロット解放）には snapshot が
+  // まだ無い。以前の画面はその間ずっと「golden はありません」と言っていて、初回起動が
+  // 遅い理由を見に来た運用者は**起きていることの逆**を読まされていた。
+  const baking = (g: Record<string, unknown>) => ({
+    ...POOL,
+    golden_id: "",
+    golden_image: "",
+    auto_bake: true,
+    goldens: [{ arch: "x86_64", ...g }],
+  });
+  const now = () => new Date(Date.now() - 4 * 60 * 1000).toISOString();
+  const current = () => host?.querySelector(".bake-step.now")?.textContent || "";
+
+  it("焼いている最中は、いまどの段にいるかが読める", async () => {
+    api.mockResolvedValue(
+      baking({
+        phase: "boot",
+        phase_since: now(),
+        seed: { workspace: "af-ws-af-golden-af-golden-seed", instance_id: "i-seed", volume_id: "vol-seed" },
+      }),
+    );
+    await mount();
+    expect(current()).toBe("boot-install");
+    // 経過時間が無いと、動いているのか固まっているのかが読めない。
+    expect(text()).toContain("4 分");
+    // 種はスロットを 1 つ握る。どの箱が何のために埋まっているのかを繋げる。
+    expect(text()).toContain("af-ws-af-golden-af-golden-seed");
+    expect(text()).toContain("i-seed");
+  });
+
+  it("snapshot 段では候補と進捗を出す（pending だけでは待つべきか分からない）", async () => {
+    api.mockResolvedValue(baking({ phase: "snapshot", phase_since: now(), candidate: "snap-cand", progress: 63 }));
+    await mount();
+    expect(current()).toBe("snapshot");
+    expect(text()).toContain("snap-cand");
+    expect(text()).toContain("63%");
+  });
+
+  it("公開済みなら進行線は出さず、使っているものを書く", async () => {
+    api.mockResolvedValue({
+      ...POOL,
+      auto_bake: true,
+      goldens: [{ arch: "x86_64", phase: "published", snapshot_id: "snap-golden", image: POOL.running_image }],
+    });
+    await mount();
+    expect(host?.querySelector(".bake-steps")).toBeNull();
+    expect(text()).toContain("snap-golden");
+  });
+
+  // 実デプロイ（af.acrt.link）で焼きを止めたのはこれ。歯止めは正しく効いていたのに、
+  // 効いたことが CP ログの 1 行にしか出ていなかった。
+  it("スロット不足で焼けないときは、その理由と数を出す", async () => {
+    api.mockResolvedValue({ ...baking({ phase: "blocked", slots_in_use: 3 }), max_slots: 4 });
+    await mount();
+    expect(host?.querySelector(".bake-steps")).toBeNull();
+    expect(text()).toContain("3/4 使用中");
+    expect(text()).toContain("2 つ空き");
+  });
+
+  it("2 回失敗して打ち切ったことと、自動焼きが切られていることは別の文で言う", async () => {
+    api.mockResolvedValue(baking({ phase: "gave_up", rejected: "snap-bad", reason: "did not come up", attempts: 2 }));
+    await mount();
+    expect(text()).toContain("打ち切りました");
+
+    api.mockResolvedValue({ ...baking({ phase: "off" }), auto_bake: false });
+    await act(async () => root?.unmount());
+    await mount();
+    expect(text()).toContain("AF_ECS_EC2_GOLDEN_AUTOBAKE=0");
+  });
+
+  it("予約 workspace はスロット表でも「焼き込み用」と分かる", async () => {
+    api.mockResolvedValue({
+      ...baking({ phase: "boot", seed: { workspace: "af-ws-acme-alice", instance_id: "i-hot" } }),
+    });
+    await mount();
+    const occupant = Array.from(host!.querySelectorAll("td")).find((td) => td.textContent?.includes("af-ws-acme-alice"));
+    expect(occupant?.textContent).toContain("焼き込み用");
+  });
+
   it("他のランタイムでは空の表を出さない（スロットが消えたと読めるため）", async () => {
     api.mockResolvedValue({ runtime: "other" });
     await mount();

@@ -492,5 +492,18 @@ func (m *manager) poolStatus(ctx context.Context) (ec2PoolStatus, bool, error) {
 		return ec2PoolStatus{}, false, nil
 	}
 	st, err := p.PoolStatus(ctx)
+	st.AutoBake = m.autoBakeGolden
+	// With the baker switched off, "nothing is being baked" is not a phase of a bake —
+	// it is the whole answer, and the pool being full is not what is stopping it. A
+	// bake already in flight (an operator who switched it off mid-round) keeps its real
+	// phase: those resources exist and somebody has to be told about them.
+	if !st.AutoBake {
+		for i := range st.Goldens {
+			switch st.Goldens[i].Phase {
+			case ec2BakePhaseIdle, ec2BakePhaseBlocked:
+				st.Goldens[i].Phase, st.Goldens[i].SlotsInUse = ec2BakePhaseOff, 0
+			}
+		}
+	}
 	return st, true, err
 }
