@@ -190,21 +190,22 @@ af start
 ### private リポジトリのクローン（git プロバイダ OAuth）
 
 各利用者は自分の GitHub / Bitbucket を Console（**⚙設定 → 「Gitホスティング」**）から接続します。
-アクセストークン（PAT）を貼り付ける方式はデプロイ側の設定なしで動きます。加えて
-ワンクリックの **「OAuth で接続」** ボタンを有効にするには、クライアント資格情報を
-**`af start` の前に**環境変数で渡します（`af` がそれを control plane へ引き渡します）:
+アクセストークン（PAT）を貼り付ける方式は何の設定もなしで動きます。加えて
+ワンクリックの **「OAuth で接続」** ボタンを有効にするには、OAuth アプリを **Console で**
+登録します（**テナント設定 → 連携 → git プロバイダ OAuth**）:
 
-| プロバイダ | 変数 | 補足 |
+| プロバイダ | 入力するもの | 補足 |
 |---|---|---|
-| **GitHub**（device flow） | `GITHUB_OAUTH_CLIENT_ID` | OAuth App を作り **「Enable Device Flow」を ON**。client_id は**秘密ではありません**。コールバック URL 不要なので `localhost` でもそのまま動きます。 |
-| **Bitbucket**（auth code） | `BITBUCKET_OAUTH_KEY`, `BITBUCKET_OAUTH_SECRET`, `PUBLIC_BASE_URL` | consumer の Callback URL を `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback` と完全一致で登録します。 |
+| **GitHub**（device flow） | `client_id` のみ | OAuth App を作り **「Enable Device Flow」を ON**。client_id は**秘密ではありません**。コールバック URL 不要なので `localhost` でもそのまま動きます。 |
+| **Bitbucket**（auth code） | Key と Secret | consumer の Callback URL を `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback` と完全一致で登録します（画面に貼り付け用の文字列が出ます）。 |
 
-```bash
-GITHUB_OAUTH_CLIENT_ID=<your-client-id> af start
-```
+**環境変数はありません。** `GITHUB_OAUTH_CLIENT_ID` や `BITBUCKET_OAUTH_KEY`/`_SECRET`
+は読まれません。テナント単位の設定なので、保存した時点で有効になり再起動も要りません。
+native 版は単一の `AUTH=dev` ユーザーが super_admin なので、`af start` 直後からこの画面を
+開けます。
 
-systemd 常駐時は `[Service]` に `Environment=` 行として追加します。これらは OAuth
-ボタンを点けるだけで、**未設定でもトークン貼付は使えます**（OAuth は利便性のため）。
+登録は OAuth
+ボタンを点けるだけで、**未登録でもトークン貼付は使えます**（OAuth は利便性のため）。
 
 フォアグラウンドの `af start` の代わりにサービス常駐させる場合（WSL2 は systemd が
 既定で有効）— `~/.config/systemd/user/agent-fleet.service` を作成:
@@ -257,8 +258,8 @@ native 版と違い**完全なワンライナーにはなりません**: `docker
 `deploy/compose/release.sh --save`）。
 
 同梱の `README.md` が完全な runbook です: 前提条件・鍵生成・TLS / ドメイン設定・
-git プロバイダ OAuth（`.env` の `GITHUB_OAUTH_CLIENT_ID` / `BITBUCKET_OAUTH_KEY` /
-`BITBUCKET_OAUTH_SECRET`）・バックアップ / リストア・アップグレード・トラブルシュート。
+バックアップ / リストア・アップグレード・トラブルシュート。（git プロバイダ OAuth は
+`.env` ではなく、Console でテナント毎に登録します。）
 
 ## アンインストール / データの消去（native 版）
 

@@ -104,29 +104,27 @@ cd agent-fleet-native-<v'>-linux-amd64 && ./af start
 
 To clone/push private repos, each user connects their own GitHub or Bitbucket
 from the Console (**⚙ Settings → Git hosting**). Pasting a Personal Access Token / app
-token works with no deployment config. To also enable the one-click **"Connect
-via OAuth"** buttons, set the client credentials in the environment **before
-`af start`** — `af` passes them through to the control plane (same mechanism as
-`AF_VOICEVOX_URL` in the TTS section below):
+token works with no configuration at all. To also enable the one-click **"Connect
+via OAuth"** buttons, register your OAuth app **in the Console**:
 
-| Provider | Variables | Setup |
+**Tenant settings → Integrations → Git provider OAuth**
+
+There is no environment variable for this any more (docs/71). `GITHUB_OAUTH_CLIENT_ID`
+and `BITBUCKET_OAUTH_KEY`/`_SECRET` are not read: the app is a per-tenant row, so it
+takes effect immediately and does not need workspaces restarted.
+
+| Provider | What to enter | Setup |
 |---|---|---|
-| **GitHub** (device flow) | `GITHUB_OAUTH_CLIENT_ID` | Create an OAuth App (GitHub → Settings → Developer settings → OAuth Apps) with **"Enable Device Flow" ON**. The client_id is **not a secret**, and device flow needs **no callback URL**, so it works as-is on `localhost`. |
-| **Bitbucket** (auth code grant) | `BITBUCKET_OAUTH_KEY`, `BITBUCKET_OAUTH_SECRET`, `PUBLIC_BASE_URL` | Create an OAuth consumer whose **Callback URL** exactly equals `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`. `PUBLIC_BASE_URL` must match how you reach the Console (e.g. `http://localhost:8099`). |
+| **GitHub** (device flow) | `client_id` only | Create an OAuth App (GitHub → Settings → Developer settings → OAuth Apps) with **"Enable Device Flow" ON**. The client_id is **not a secret**, and device flow needs **no callback URL**, so it works as-is on `localhost`. |
+| **Bitbucket** (auth code grant) | Key + Secret | Create an OAuth consumer whose **Callback URL** exactly equals `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`. Set `PUBLIC_BASE_URL` to how you reach the Console (e.g. `http://localhost:8099`) — the screen shows the exact URL to paste. |
 
-```bash
-# GitHub only (simplest — device flow, localhost-friendly):
-GITHUB_OAUTH_CLIENT_ID=<your-client-id> af start
+A native install runs `AUTH=dev` (one fixed user, no sign-in), and that user is a
+**super_admin**, so the tenant settings screen is reachable straight after `af start`
+with nothing else to configure.
 
-# Bitbucket (needs the callback registered against PUBLIC_BASE_URL):
-PUBLIC_BASE_URL=http://localhost:8099 \
-  BITBUCKET_OAUTH_KEY=<key> BITBUCKET_OAUTH_SECRET=<secret> af start
-```
-
-Under systemd (below), add them as `Environment=` lines in the `[Service]`
-section. These only light up the OAuth buttons; **token paste keeps working
-without them**, so OAuth is purely a convenience. GitHub's device flow is the
-easiest path for a single-user native install because it needs no callback.
+Token paste keeps working whether or not you do this, so OAuth is purely a
+convenience. GitHub's device flow is the easiest path for a single-user native
+install because it needs no callback.
 
 ## Text-to-speech (TTS / Zundamon) — optional
 

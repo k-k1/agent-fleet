@@ -116,8 +116,10 @@ Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）
 - ①**org メンバーシップ**（必須）: `GET /user/memberships/orgs/{org}` が `active`。
   `AF_GITHUB_ALLOWED_ORGS` が空なら provider ごと無効化する（決定 2 — メンバーシップ判定と
   セットでのみ採用した入口）。**この env が GitHub ログインを有効にする合図**でもある
-  （`GITHUB_OAUTH_CLIENT_ID` は git 連携の device flow が先に使っている env なので、それ単体では
-  ログインを有効にしない）。
+  （`GITHUB_OAUTH_CLIENT_ID` 単体ではログインを有効にしない。★ 歴史的には「git 連携の
+  device flow が先に使っていた env だから」だったが、[71](../71-tenant-git-oauth.md) で
+  git 側はテナントの行を読むようになったので、この env は**サインイン専用**になった。
+  合図が org 一覧である理由は今も同じ——許可を与えているのは org メンバーシップである）。
 - ②**email 許可リスト**: `AF_GITHUB_ALLOWED_{EMAILS,DOMAINS}` → 無ければデプロイ共通 →
   どちらも未設定なら email の門は無し（org が許可リストそのもの）。P3 の DB 由来の項
   （auto_join / membership）は**この②にだけ**足される — ①は別軸なので AND のまま。
