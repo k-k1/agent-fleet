@@ -2177,8 +2177,17 @@ Target に slug、Detail に表示名を入れる（削除**後**に書く）。
 identity を消さないのは、その人が別テナントの名簿に居るかもしれないことと、居なくても監査行が
 指しているため。membership は席であって人ではない。
 
-⚠️ **方言の差が 1 つある。** `memo_category` は `migrations/0020` にあって `migrations-pg` には
-**無い**（この機能自体が Postgres デプロイでは動いていないはずの、既存の取りこぼし）。
-cascade は表名を直接並べるので、方言で存在しない表を無条件に消しに行くと、**取り消せない操作の
-途中で 500 を踏む**。`membershipCascade` は SQLite のときだけこの 1 文を足し、
-`TestPostgresDeleteCascade` が実 Postgres に対して両方の削除を通す。
+⚠️ **表名を直に並べるということは、2 つのマイグレーション系列が一致しているという前提に
+賭けるということで、その前提は外れていた。** `memo_category` は `migrations/0020` にあって
+`migrations-pg` には無く、**Postgres デプロイ（＝ECS/RDS の実デプロイ）ではカテゴリの API が
+ずっと 500 を返していた**——しかも Console は配列でない応答を空リストに畳むので、症状は
+「エラー」ではなく「カテゴリが出ない」で、誰も障害として報告しようがなかった。この cascade を
+書かなければ、たぶん今も見つかっていない。
+
+→ **その場しのぎ（SQLite のときだけ 1 文足す）で出したあと、2026-08-22 に本体を直した**:
+`migrations-pg/0030` で写し、`TestSchemaDialectParity`（`store_schema_parity_test.go`）が
+**両系列の着地スキーマを実測で突き合わせる**。cascade は 1 本の平らなリストに戻した——
+方言分岐が消えたのは、分岐の理由が消えたからであって、諦めたからではない。
+実 Postgres への往復は `TestPostgresStore`（memo カテゴリの CRUD を追加）と
+`TestPostgresDeleteCascade`。3 本とも `AF_TEST_DATABASE_URL` が無ければ skip なので、
+**マイグレーションを足したら実 Postgres で 1 度回す**（docs/dev/06 §6.4・docs/dev/10 §10.4）。

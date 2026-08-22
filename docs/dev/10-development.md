@@ -116,6 +116,19 @@ Go は **2 モジュール**（`control-plane/` と `workspace/agent/`）でそ�
 
 - CP 側は `httptest` ベースのスモークを多数含む（audit / egress / 内部 git smart-HTTP / LFS /
   store 両実装など）。Postgres 系は `AF_TEST_DATABASE_URL` 未設定なら skip。
+- ⚠️ **マイグレーションを足したときは、実 Postgres でも 1 度回すこと。** skip される 3 本
+  （`TestPostgresStore` / `TestPostgresDeleteCascade` / **`TestSchemaDialectParity`**）が
+  「片方の系列にだけ足した」を捕まえる唯一の場所で、CI は `AF_TEST_DATABASE_URL` を持たない
+  （[06 §6.4](06-data-model.md)）。Docker が要らない立て方（初回のみ数分）:
+
+```bash
+PGT=~/.local/share/af-pgtest    # 無ければ initdb で作る（postgres スーパーユーザー）
+"$PGT"/dist/bin/pg_ctl -D "$PGT/data" -l "$PGT/pg.log" \
+  -o "-k $PGT/sock -h 127.0.0.1 -p 55432" start
+(cd control-plane && AF_TEST_DATABASE_URL='postgres://postgres@127.0.0.1:55432/postgres?sslmode=disable' \
+  go test -run 'TestPostgres|TestSchemaDialectParity' ./...)
+"$PGT"/dist/bin/pg_ctl -D "$PGT/data" stop     # 共有ホストなので使い終わったら止める
+```
 - CI（GitHub Actions）: `ci.yml` が push/PR ごとに 3 コンポーネント（CP / Agent / Console）の
   fmt・vet・test・build を検証。`e2e.yml`（下記 E2E）はイメージ build が重いため分離。
   上流 CLI の破壊検知は別系統（`cli-drift.yml` + エージェント毎の `*-contract.yml`・後述）。
