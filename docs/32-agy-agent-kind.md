@@ -94,6 +94,12 @@ Track B の `hostcaps.AgyStatus()` を `Status()`（supported/reason）と `Buil
    `hostcaps.AgyStatus() (supported bool, reason string)` を提供。
    reason 語彙は `"not_installed"`（agy バイナリ無し = 旧イメージ）/ `"no_rdrand"`。
    配備ドキュメントに要件明記済（`deploy/compose/README.md` Prerequisites・`deploy/local/README-wsl.md`）
+   - ✅ **「amd64 のみ要件化」は 2026-08-22 に実測で裏が取れた**（[70](70-slot-instance-classes.md) §70.13）。
+     Graviton 3 世代（Graviton4 / Graviton3 / Neoverse-N1）の Debian 12 コンテナで
+     `agy --version` `agy --help` が RC=0。**決め手は m6g** で、`/proc/cpuinfo` に `rng`
+     （ARMv8.5-RNG＝RNDR。x86 の rdrand に相当）が**無いのに動いた**——arm64 の BoringCrypto は
+     乱数を命令ではなく **`getrandom(2)`** から取る。したがって arm64 でガードを課さないのは正しい。
+     ⚠️ ただし確かめたのは起動 2 種で、**OAuth 認証と実セッションは arm64 では未通し**。
 
    **← Track A / C への契約（capability の配線）**:
    - Track A: `agy.Status()`（`GET /connections` の `agy` フィールド）に

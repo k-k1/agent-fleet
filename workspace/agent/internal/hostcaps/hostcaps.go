@@ -70,6 +70,13 @@ func AgyStatus() (supported bool, reason string) {
 		return false, "not_installed"
 	}
 	// RDRAND 要件は x86 の FIPS 乱数モジュール固有（0008）。arm64 等では課さない。
+	//
+	// ✅ 実測で確認済み（2026-08-22・docs/70 §70.13）: Graviton 3 世代（m8g=Graviton4 /
+	// m7g=Graviton3 / m6g=Neoverse-N1）の Debian 12 コンテナで `agy --version` と
+	// `agy --help` が終了コード 0。**決め手は m6g** で、`/proc/cpuinfo` に `rng`
+	// （ARMv8.5-RNG＝RNDR。x86 の rdrand に相当）が **無いのに動いた**——つまり arm64 の
+	// BoringCrypto FIPS 乱数は命令ではなくカーネルの getrandom(2) から取る。
+	// この分岐は仮定ではなく測った結果である。
 	if runtime.GOARCH == "amd64" && !RDRAND() {
 		return false, "no_rdrand"
 	}
