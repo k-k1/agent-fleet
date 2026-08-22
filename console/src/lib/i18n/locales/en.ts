@@ -2033,6 +2033,8 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.confirm.start.go": "Start",
   "wsbar.confirm.stop.body":
     "Stops the container. Running sessions become Stopped (resumable later), and opencode web / preview disconnect. Files are preserved.",
+  "wsbar.confirm.stop.starting_body":
+    "Cancels the start and stops the workspace. Nothing is lost — it has not come up yet. Files are preserved.",
   "wsbar.confirm.stop.go": "Stop",
   "wsbar.confirm.restart.title": "Restart the workspace",
   "wsbar.confirm.restart.body":

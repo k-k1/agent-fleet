@@ -2051,6 +2051,8 @@ export const ja = {
   "wsbar.confirm.start.go": "起動する",
   "wsbar.confirm.stop.body":
     "コンテナを停止します。実行中のセッションは停止（あとで再開可）になり、opencode web / プレビューは切断されます。ファイルは保持されます。",
+  "wsbar.confirm.stop.starting_body":
+    "起動を取りやめて停止します。まだ上がっていないので、失われるものはありません。ファイルは保持されます。",
   "wsbar.confirm.stop.go": "停止する",
   "wsbar.confirm.restart.title": "ワークスペースを再起動",
   "wsbar.confirm.restart.body":

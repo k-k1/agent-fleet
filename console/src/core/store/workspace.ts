@@ -203,6 +203,21 @@ export const wsRunning = (state: string): boolean => state === "running";
  * UI doesn't offer 起動 for a workspace that is already coming up. */
 export const wsStartBusy = (state: string): boolean => wsBusy(state) || state === "starting";
 
+/** True when the power toggle must STOP rather than start.
+ *
+ * ⚠️ Deliberately NOT `state === "running"`. The server-reported "starting" has no
+ * guaranteed exit: an ECS task the scheduler cannot place sits at desired=1/running=0
+ * and State() reports "starting" forever (measured on af.lazmix.jp — docs/70 §70.14.6,
+ * a task definition declaring ARM64 while pinned to an x86_64 slot). While the toggle
+ * sent START on everything that was not "running", the two exits the UI offered from
+ * that state were both "start", and the CP no-ops a Start for a workspace it already
+ * considers `starting`. There was no way to stop it from the Console at all.
+ *
+ * Cancelling a start is a legitimate operation on its own merits, so this is the rule
+ * even where a start does converge. wsStartBusy still guards every START affordance —
+ * that is what keeps a second Start from re-driving a deployment. */
+export const wsPowerStops = (state: string): boolean => state === "running" || state === "starting";
+
 /** True while the workspace is coming up and the starting dialog should show: an
  * optimistic "starting…"/"recreating…" transition, the server-reported "starting"
  * (ECS cold pull), OR a live boot phase (native rootfs boot-install — the process
