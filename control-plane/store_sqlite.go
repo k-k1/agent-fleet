@@ -1104,18 +1104,19 @@ func (s *sqlStore) SetMembershipStatus(ctx context.Context, membershipID, status
 // Nor is `workspace`: the caller must have destroyed it first (its home and cloud
 // resources are not this function's to release), and that is checked in the handler.
 //
-// ⚠️ `sqliteOnly` covers a table that exists in ONE dialect. `memo_category` was added
-// to migrations/0020 and never to migrations-pg — a pre-existing gap (the memo category
-// feature itself must already fail on a Postgres deployment), not something this
-// operation introduced. Naming it here rather than deleting it unconditionally is the
-// difference between "we know" and a 500 in the middle of an irreversible delete.
-func membershipCascade(membershipID string, sqliteOnly bool) []struct {
+// ⚠️ Every table named here must exist in BOTH dialects. A list of literal table names is
+// exactly as correct as the assumption that the two migration series agree, and they did
+// not: `memo_category` had been added to migrations/0020 and never mirrored on the
+// Postgres side, which would have meant a 500 in the middle of an irreversible delete.
+// The mirror is migrations-pg/0030 and `TestSchemaDialectParity` now fails if the two ever
+// diverge again — that guard is what lets this stay one flat list.
+func membershipCascade(membershipID string) []struct {
 	sql  string
 	args []any
 } {
 	id := []any{membershipID}
 	both := []any{membershipID, membershipID}
-	stmts := []struct {
+	return []struct {
 		sql  string
 		args []any
 	}{
@@ -1128,6 +1129,7 @@ func membershipCascade(membershipID string, sqliteOnly bool) []struct {
 		{`DELETE FROM schedule_run WHERE membership_id=?`, id},
 		{`DELETE FROM schedule WHERE membership_id=?`, id},
 		{`DELETE FROM memo WHERE membership_id=?`, id},
+		{`DELETE FROM memo_category WHERE membership_id=?`, id},
 		{`DELETE FROM notification WHERE membership_id=?`, id},
 		{`DELETE FROM notification_usage_state WHERE membership_id=?`, id},
 		// 共有は両端を持つ。相手側が生きていても、片方が消えた共有は残せない。
@@ -1136,18 +1138,9 @@ func membershipCascade(membershipID string, sqliteOnly bool) []struct {
 		{`DELETE FROM shared_session_catalog WHERE owner_membership_id=?`, id},
 		{`DELETE FROM session_share_owner_lease WHERE owner_membership_id=?`, id},
 		{`DELETE FROM workspace_stop_intent WHERE owner_membership_id=?`, id},
+		// 親は最後に。子を先に消してからでないと外部キーが立っている表で落ちる。
+		{`DELETE FROM membership WHERE id=?`, id},
 	}
-	if sqliteOnly {
-		stmts = append(stmts, struct {
-			sql  string
-			args []any
-		}{`DELETE FROM memo_category WHERE membership_id=?`, id})
-	}
-	// 親を最後に。子を先に消してからでないと外部キーが立っている表で落ちる。
-	return append(stmts, struct {
-		sql  string
-		args []any
-	}{`DELETE FROM membership WHERE id=?`, id})
 }
 
 // DeleteMembership removes a membership row and everything keyed to it. Irreversible,
@@ -1168,7 +1161,7 @@ func (s *sqlStore) DeleteMembership(ctx context.Context, membershipID string) er
 // deleteMembershipTx is the body above, inside somebody else's transaction — the tenant
 // delete runs it once per remaining membership so the whole tenant goes in one commit.
 func (s *sqlStore) deleteMembershipTx(ctx context.Context, tx *sqlTx, membershipID string) error {
-	for _, stmt := range membershipCascade(membershipID, s.dialect != "postgres") {
+	for _, stmt := range membershipCascade(membershipID) {
 		if _, err := tx.ExecContext(ctx, stmt.sql, stmt.args...); err != nil {
 			return fmt.Errorf("%s: %w", stmt.sql, err)
 		}
