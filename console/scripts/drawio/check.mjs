@@ -145,6 +145,9 @@ const CASES = [
   { name: "stencil-remap", xml: RACK, dark: false, pages: 1, stencils: ["rack/general.xml"] },
   // 閉域。取得に失敗しても **図は開いたまま**、エラーも出さない（枠と色だけに落ちる）。
   { name: "stencil-offline", xml: AWS4, dark: false, pages: 1, stencils: ["aws4.xml"], stencilFail: true },
+  // **瞬断のあとは頼み直せること。** 取れなかったセットを「頼んだ済み」に固定すると、
+  // upstream の 1 回の reset でそのペインの寿命いっぱいアイコンが欠ける（実機で踏んだ）。
+  { name: "stencil-retry", xml: AWS4, dark: false, pages: 1, stencils: ["aws4.xml"], stencilFail: true, retryAfterFail: true },
   // 暗いテーマは「既定色の文字が読めるか」まで見る（真偽値を渡すと黒地に黒になる）。
   { name: "plain-dark", xml: PLAIN, dark: true, pages: 2, scale: 1 },
   { name: "compressed", xml: compressed(PLAIN), dark: false, pages: 1, scale: 1 },
@@ -315,7 +318,11 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     Promise.all(d.sets.map(function(n){
       return fetch("/stencils/"+n.split("/").map(encodeURIComponent).join("/"),{credentials:"same-origin"})
         .then(function(r){ return r.ok?r.text():null }).catch(function(){ return null });
-    })).then(function(xs){ var got=xs.filter(Boolean); if(got.length) post({t:"stencils",xml:got}); });
+    })).then(function(xs){
+      var got=xs.filter(Boolean);
+      var missing=d.sets.filter(function(_,i){ return !xs[i] });
+      if(got.length||missing.length) post({t:"stencils",xml:got,missing:missing});
+    });
   }
 });
 </script></body></html>`;
@@ -380,6 +387,30 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     if (first && last && (first.scale !== last.scale || first.tx !== last.tx || first.ty !== last.ty)) {
       fail.push(`${c.name}: 差し込みで見ていた場所が動いた（${first.scale}@${first.tx},${first.ty} → ${last.scale}@${last.tx},${last.ty}）`);
     }
+    if (c.retryAfterFail) {
+      // 通じるようにしてから、もう一度描く。**同じセットをもう一度頼まなければならない。**
+      stencilFail = false;
+      stencilAsks.length = 0;
+      await b.call("Runtime.evaluate", {
+        expression: `post({t:"render",xml:${JSON.stringify(c.xml)},dark:false,restore:null})`,
+        returnByValue: true,
+      });
+      await sleep(2500);
+      const again = [...new Set(stencilAsks)];
+      if (JSON.stringify(again) !== JSON.stringify(c.stencils)) {
+        fail.push(`${c.name}: 取得に失敗したセットを頼み直さない（2 回目の要求 ${JSON.stringify(again)}）`);
+      } else {
+        console.log(`   stencils: 失敗後の再要求 ${JSON.stringify(again)}`);
+      }
+      const evs2 = JSON.parse(
+        (await b.call("Runtime.evaluate", { expression: "JSON.stringify(window.__ev)", returnByValue: true })).result?.value || "[]",
+      );
+      // 2 回目は届くので、差し込みの描き直しまで行き着く。
+      if (evs2.filter((e) => e.t === "rendered").length < 3) {
+        fail.push(`${c.name}: 頼み直したのに図案が載っていない（rendered ${evs2.filter((e) => e.t === "rendered").length} 通）`);
+      }
+    }
+
     // 絵そのもの。同じ図・同じ寸法なので、ステンシルの有無だけが差になる。
     const shot = await b.call("Page.captureScreenshot", {});
     stencilShots[c.name] = shot.data;

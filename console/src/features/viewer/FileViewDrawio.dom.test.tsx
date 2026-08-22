@@ -244,10 +244,15 @@ describe("フレームとの手順", () => {
       await Promise.resolve();
     });
     // 閉域では図案だけが空になり、枠と色は残る。**図は正しく開けているのだから、
-    // 利用者に見せる異常ではない** —— 何も送らず、何も表示しない。
-    expect(posts().filter((m) => m.t === "stencils")).toEqual([]);
+    // 利用者に見せる異常ではない** —— 画面には何も出さない。
     expect(host.textContent).not.toContain("stencil");
     expect(frame()!.hidden).toBe(false);
+    // ただしフレームには「取れなかった」と伝える。**伝えないと、upstream の 1 回の
+    // 瞬断でそのペインの寿命いっぱいアイコンが欠ける**（頼んだ済みのまま固定される）。
+    const back = posts().filter((m) => m.t === "stencils");
+    expect(back).toHaveLength(1);
+    expect(back[0].xml).toEqual([]);
+    expect(back[0].missing).toEqual(["aws4.xml"]);
   });
 
   it("ビューアを読み込めなかったときに「図が壊れている」と言わない", async () => {
