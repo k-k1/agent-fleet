@@ -97,7 +97,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// trust" dialog (実測: config.json trustedFolders への事前追記でスキップ)。
 	// 起動毎に再固定する（agy 5a19080 の教訓 — 一回きりの固定は後で剥がれる）。
 	EnsureFolderTrusted(m.Dir)
-	sid := SessionID(m)
+	// 押し付けた id を copilot が使わなくなっていたら、起動前に拾い直す（sid.go）。
+	// ここで直さないと `--session-id <使われていない id>` を渡し続け、ユーザーの会話は
+	// どこからも参照されないまま取り残される。
+	sid := resolveSid(m)
 	if sid == "" {
 		var err error
 		if sid, err = newSessionID(); err != nil {
@@ -122,6 +125,9 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// events.jsonl tail (state.go) — TUI 文字列非依存（false-idle 教訓に合致）。
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
+		// 生存ポーリングがドリフトの検知点（copilot に hook は無い）。resolveSid は
+		// 台帳を直すので、以降の SessionID 読みが新しい会話を指す（sid.go）。
+		resolveSid(m)
 		if st := LiveState(m); st != "" {
 			li.State = st
 		}
