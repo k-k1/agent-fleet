@@ -165,6 +165,12 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// on both is checked mid-handler by tenantAdminFor.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/network", adm.tenantNetwork)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/network", adm.setTenantNetwork)
+	// The tenant's DEFAULT machine class (docs/70). tenant_admin for the same reason
+	// as the network rule above — it reaches nothing outside this tenant, and the set
+	// it may choose from is bounded by allowed_slot_classes, which only a super_admin
+	// can write (on the limits endpoint).
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/slot-class", adm.tenantSlotClass)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/slot-class", adm.setTenantSlotClass)
 	// Tenant-defined sign-in methods (docs/61 §61.11). The rows are the tenant's, so
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
 	// which is the one super_admin step (決定 30). The queue is deployment-wide.

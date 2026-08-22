@@ -224,8 +224,21 @@ RUN set -eux; \
 # vendor/) is gone, so every deployment gets the same pinned rtk like the other
 # CLIs. BAKE_RTK=0 remains as an escape hatch for airgapped builds (no build-time
 # GitHub fetch); the entrypoint seeds the hook only when `rtk` is on PATH.
-# rtk-ai/rtk is public, so the asset + checksums download without auth. Static musl
-# (amd64) / gnu (arm64) binary → runs in the slim container.
+# rtk-ai/rtk is public, so the asset + checksums download without auth.
+#
+# ⚠️ amd64 gets a STATIC musl binary. arm64 does not exist: upstream publishes only
+# `rtk-aarch64-unknown-linux-gnu`, which requires **GLIBC_2.39**, and this image is
+# Debian 12 (**glibc 2.36**) — the download and the sha256 both pass and the binary
+# then cannot start (measured on Graviton4, 2026-08-22, docs/70 §70.9.2). Exactly the
+# shape docs/43 recorded for kiro, except kiro publishes an aarch64 musl variant and
+# rtk does not (checked across v0.45.0 and every dev-0.45.1-rc).
+#
+# So the binary is VERIFIED BY RUNNING IT, and a version that cannot run is removed
+# rather than shipped. That is deliberately not an `arch = arm64` check: the day
+# upstream ships a musl aarch64 build, or the base image moves to a newer glibc, this
+# starts working with no edit here. When rtk is dropped, the reason is written to
+# /usr/local/share/agent-fleet/rtk-unavailable so the image can say why (the L1 smoke
+# reads it, and "absent with no reason" stays a failure).
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
 # The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
 # BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
@@ -247,7 +260,13 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
       tar xzf "${asset}"; \
       install -m 0755 rtk /usr/local/bin/rtk; \
       rm -f "${asset}" checksums.txt rtk; \
-      rtk --version; \
+      if ! err="$(/usr/local/bin/rtk --version 2>&1)"; then \
+        mkdir -p /usr/local/share/agent-fleet; \
+        printf 'rtk %s does not run on %s in this base image: %s\n' "${RTK_VERSION}" "$arch" "$err" \
+          > /usr/local/share/agent-fleet/rtk-unavailable; \
+        cat /usr/local/share/agent-fleet/rtk-unavailable >&2; \
+        rm -f /usr/local/bin/rtk; \
+      fi; \
     fi
 
 # Coding-agent CLIs baked into the image (stable /usr/local install) for fast,

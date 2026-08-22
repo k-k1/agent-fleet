@@ -34,10 +34,13 @@ type fakeEC2 struct {
 	// refusal, which is how a slot behaves while it is still giving back its device.
 	attachFailures int
 	calls          []string
-	nextVol        int
-	nextInst       int
-	nextSnap       int
-	snapshots      map[string]*ec2types.Snapshot
+	// ranAMI is the ImageId of each RunInstances, in order — "" when the request did
+	// not override the launch template's own.
+	ranAMI    []string
+	nextVol   int
+	nextInst  int
+	nextSnap  int
+	snapshots map[string]*ec2types.Snapshot
 	// snapshotState overrides the state CreateSnapshot reports, so a test can hold a
 	// snapshot at `pending` and drive the wait.
 	snapshotState ec2types.SnapshotState
@@ -439,7 +442,8 @@ func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ .
 		State:        &ec2types.InstanceState{Name: ec2types.InstanceStateNamePending},
 		Placement:    &ec2types.Placement{AvailabilityZone: aws.String(f.subnetAZ[aws.ToString(in.SubnetId)])},
 	}
-	f.log("RunInstances %s type=%s subnet=%s", id, in.InstanceType, aws.ToString(in.SubnetId))
+	f.ranAMI = append(f.ranAMI, aws.ToString(in.ImageId))
+	f.log("RunInstances %s type=%s subnet=%s ami=%s", id, in.InstanceType, aws.ToString(in.SubnetId), aws.ToString(in.ImageId))
 	return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String(id)}}}, nil
 }
 
@@ -592,7 +596,8 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		pool: ec2PoolConfig{
 			launchTemplate: "lt-1",
 			pool:           "clu",
-			slotSizes:      parseSlotSizes("m7i.large:8192,m7i.xlarge:16384"),
+			classes:        parseSlotClasses("m7i.large:8192,m7i.xlarge:16384"),
+			defaultClass:   "default",
 			maxSlots:       4,
 			homeGiB:        50,
 			tmpfsMiB:       2048,
@@ -1341,7 +1346,7 @@ func TestECSEC2StartReusesExistingAttachment(t *testing.T) {
 
 // Sizing on EC2 is a choice of instance type, not one of Fargate's 74 discrete pairs.
 func TestECSEC2SlotTypeFor(t *testing.T) {
-	p := ec2PoolConfig{slotSizes: parseSlotSizes("m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")}
+	p := ec2PoolConfig{classes: parseSlotClasses("m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768"), defaultClass: "default"}
 	for _, c := range []struct {
 		bytes int64
 		want  string
@@ -1354,8 +1359,12 @@ func TestECSEC2SlotTypeFor(t *testing.T) {
 		{30 * gib, "m7i.2xlarge"},
 		{999 * gib, "m7i.2xlarge"}, // above the pool: the biggest slot, not a failure
 	} {
-		if got := p.slotTypeFor(c.bytes); got != c.want {
+		got, arch := p.slotTypeFor("", c.bytes)
+		if got != c.want {
 			t.Errorf("slotTypeFor(%d GiB) = %s, want %s", c.bytes/gib, got, c.want)
+		}
+		if arch != ec2ArchX86 {
+			t.Errorf("a bare ladder is x86_64, got %q", arch)
 		}
 	}
 }
@@ -2739,8 +2748,9 @@ func TestECSEC2ParseSlotSizesOptionalVCPU(t *testing.T) {
 // disk number is the PERSISTENT home — the opposite of what the UI used to say.
 func TestECSEC2SizingProfile(t *testing.T) {
 	f := &ecsEC2Factory{pool: ec2PoolConfig{
-		slotSizes: parseSlotSizes("m7i.large:8192:2,m7i.xlarge:16384:4"),
-		homeGiB:   50,
+		classes:      parseSlotClasses("m7i.large:8192:2,m7i.xlarge:16384:4"),
+		defaultClass: "default",
+		homeGiB:      50,
 	}}
 	p := f.SizingProfile()
 	if p.Runtime != "ecs-ec2" || p.CPUEffective {

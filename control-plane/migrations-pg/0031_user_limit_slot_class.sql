@@ -1,0 +1,13 @@
+-- Which KIND of machine this member's workspace lands on, as a deployment-declared
+-- class id (docs/70). "" = unset means the tenant default, and failing that the
+-- deployment default class.
+--
+-- Deliberately an opaque id and not an EC2 instance type. user_limit is the
+-- runtime-neutral place (ADR 0044 決定 1) and an "m7g.xlarge" here would be
+-- meaningless on docker/native/Fargate, would let an admin name a box the pool does
+-- not offer, and would compete with mem_limit over who picks the size. The operator
+-- declares id -> ladder in AF_ECS_EC2_SLOT_TYPES, the admin picks an id, and
+-- slotTypeFor still derives the actual instance type from the memory request.
+--
+-- Inert on every runtime but ecs-ec2, exactly like home_hibernate_after.
+ALTER TABLE user_limit ADD COLUMN slot_class TEXT NOT NULL DEFAULT ''

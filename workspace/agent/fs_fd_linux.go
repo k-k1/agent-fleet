@@ -250,11 +250,20 @@ type fileStatSnapshot struct {
 	ctimeSec, ctimeNsec         int64
 }
 
+// statSnapshot widens every field to a fixed width, because unix.Stat_t is NOT the
+// same struct on every architecture.
+//
+// ⚠️ The conversions are not decoration. On linux/amd64 Blksize is int64 and Nlink is
+// uint64; on linux/arm64 Blksize is int32 and Nlink is uint32. Assigning either
+// directly compiles on one architecture and fails on the other — which is exactly how
+// this was found: the first attempt to build the workspace image for arm64 stopped
+// here (docs/70 §70.9). `make arm64-build` / the ci.yml cross-compile step exists so
+// the next one is caught without an EC2 instance.
 func statSnapshot(st *unix.Stat_t) fileStatSnapshot {
 	return fileStatSnapshot{
 		dev: uint64(st.Dev), ino: st.Ino, mode: uint64(st.Mode), nlink: uint64(st.Nlink),
 		rdev: uint64(st.Rdev), uid: st.Uid, gid: st.Gid,
-		size: st.Size, blockSize: st.Blksize, blocks: st.Blocks,
+		size: st.Size, blockSize: int64(st.Blksize), blocks: st.Blocks,
 		mtimeSec: st.Mtim.Sec, mtimeNsec: st.Mtim.Nsec,
 		ctimeSec: st.Ctim.Sec, ctimeNsec: st.Ctim.Nsec,
 	}
