@@ -141,12 +141,11 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
      --name /af-cp/google-client-secret --value "<GOOGLE_OAUTH_CLIENT_SECRET>"   # your terminal, not shared
    aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
      --name /af-cp/oidc-client-secret   --value "<AF_OIDC_<ID>_CLIENT_SECRET>"
-   # optional, and NOT a sign-in method: the Bitbucket git connection (docs/dev/08 §8.4).
-   # Pair it with BitbucketOauthKey=<consumer key> at deploy.
-   aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
-     --name /af-cp/bitbucket-oauth-secret --value "<BITBUCKET_OAUTH_SECRET>"
    ```
-   ⚠️ The Bitbucket consumer's **Callback URL must be exactly**
+   ⚠️ The **git providers' OAuth apps are not deployment configuration** (docs/71). A
+   tenant administrator registers GitHub and Bitbucket in the Console under **Tenant
+   settings → Integrations → Git provider OAuth**; there is no CFN parameter and no SSM
+   entry for them. The Bitbucket consumer's **Callback URL must be exactly**
    `https://<your-fqdn>/api/oauth/bitbucket/callback` — Bitbucket matches it in full, and
    the CP derives it from `PUBLIC_BASE_URL`, so it is not separately configurable. The
    consumer needs a secret (authorization-code grant): the workspace credential helper

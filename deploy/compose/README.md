@@ -177,14 +177,19 @@ AF_GITHUB_ALLOWED_DOMAINS=example.com    # strongly recommended; see below
 
 ### Git provider OAuth (GitHub / Bitbucket) — optional
 
-Login above is for the **console**. To also enable the one-click
-"Connect via OAuth" buttons for cloning private repos, set the git-provider vars
-in `.env` (users can always paste a token instead, without these):
+Login above is for the **console**. The one-click "Connect via OAuth" buttons for
+cloning private repos are configured **in the Console, per tenant** — not in `.env`
+(docs/71). A tenant administrator opens **Tenant settings → Integrations → Git
+provider OAuth** and registers:
 
-- **GitHub** (device flow) — `GITHUB_OAUTH_CLIENT_ID` (client_id is not a secret;
-  the OAuth App must have "Enable Device Flow" ON; no callback URL needed).
-- **Bitbucket** (auth code) — `BITBUCKET_OAUTH_KEY` / `BITBUCKET_OAUTH_SECRET`;
-  the consumer's Callback URL must equal `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`.
+- **GitHub** (device flow) — `client_id` only (not a secret; the OAuth App must have
+  "Enable Device Flow" ON; no callback URL needed).
+- **Bitbucket** (auth code) — Key + Secret; the consumer's Callback URL must equal
+  `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`, which that screen shows you.
+
+`GITHUB_OAUTH_CLIENT_ID` / `BITBUCKET_OAUTH_KEY` / `BITBUCKET_OAUTH_SECRET` in `.env`
+are **not read** for this (the first still means the GitHub sign-in app). Users can
+always paste a token instead, with nothing registered.
 
 ## First administrator, tenants, members
 
