@@ -483,6 +483,104 @@ GitHub ホストの **`ubuntu-24.04-arm` ランナーが無料で使える**の�
 別の主張である**ことの実例でもある。前者は 9 か所の `dpkg --print-architecture` 分岐が
 書いてあるという話で、後者は一度も試されていなかった。
 
+### 70.9.2 2 件目: rtk は arm64 で**原理的に動かない**（上流に走る版が無い）
+
+1 件目（§70.9.1）を直して焼き直したら、次はこれで落ちた。
+
+```
+rtk: /lib/aarch64-linux-gnu/libc.so.6: version `GLIBC_2.39' not found (required by rtk)
+```
+
+rtk の arm64 配布は **gnu ビルドしか無く GLIBC_2.39 を要求する**のに、workspace イメージは
+Debian 12（**glibc 2.36**）である。**ダウンロードも sha256 検証も通り、起動だけができない。**
+[43](43-kiro-agent-kind.md) が kiro で記録したのと同じ型だが、**kiro には aarch64 の musl
+変種があり、rtk には無い**（`v0.45.0` と直近の `dev-0.45.1-rc` 全てを確認）。
+
+**直し方はアーキでの決め打ちではなく「実行して確かめてから残す」にした。** 上流が musl
+aarch64 を出すか、ベースイメージの glibc が上がれば、コードを触らずに動き出す。
+Dockerfile は焼いた後に `--version` を実行し、動かなければ削除して理由を
+`/usr/local/share/agent-fleet/rtk-unavailable` に残す。L1 smoke は「不在＋理由あり」を
+ok、「不在＋理由なし」を NG とする（rtk が黙って焼かれなくなる回帰は今までどおり落ちる）。
+
+⚠️ **entrypoint の lean boot-install は確かめずに置いていた。** つまり arm64 の lean では
+**PATH の先頭に動かない rtk が居座り、失敗するのは使った瞬間**だった。同じ検証を入れた。
+
+⚠️ **帰結: arm64 のメンバーは rtk（トークン削減）を使えない。** これは値段と速さの隣に
+並ぶ**第 3 の判断材料**で、§70.3.3 の表には出てこない。arm のクラスを出す運用者は
+これを知ったうえで出すこと。
+
+### 70.9.3 rtk を arm64 で動かすには（4 案・一次情報で確認）
+
+| | 何をする | 効くか | 代償 |
+|---|---|---|---|
+| **A. Debian 13 (trixie) へ上げる** | ベースを `node:22-bookworm-slim` → `node:22-trixie-slim` | ✅ trixie の glibc は **2.41**（≥2.39） | **イメージ全体・両アーキ**に及ぶ |
+| **B. rtk を自前で musl ビルド** | Rust の builder stage を足し `aarch64-unknown-linux-musl` を作る | ✅ | 他社の Rust をこちらが build/保守する |
+| **C. 上流に aarch64 musl を出してもらう** | issue を出す | ✅（出れば） | 時期が読めない |
+| **D. arm64 は rtk 無しで出す**（現状） | 何もしない | ❌ | arm のメンバーはトークン削減を失う |
+
+**実測で確認した一次情報**（2026-08-22）:
+
+- trixie `libc6` = **2.41-12+deb13u3**（bookworm は 2.36-9+deb12u14）。**A は確かに効く。**
+- `node:22-trixie-slim` は存在する。
+- rtk は **Apache 2.0 の公開 Rust**（`Cargo.toml` / `Cargo.lock` あり）。**B は技術的に可能。**
+- 上流は **x86_64 musl を既にビルドしている**ので、`aarch64-unknown-linux-musl` の追加は
+  向こうの CI のターゲット 1 行である。**C は最も安い本当の修正。**
+
+**⚠️ A を「rtk のために」やってはいけない。** 効くのは事実だが、代償が rtk と無関係に大きい。
+
+- **chromium が 151 → 150 へ「下がる」。** bookworm の pin は `151.0.7922.137-1~deb12u1`、
+  trixie は `150.0.7871.100-1~deb13u1`。[31](31-container-browser-pane.md) は
+  **Debian revision まで固定し**、setuid sandbox の検証込みで採用を決めている。その pin と
+  検証を全部やり直すことになる。
+- **python が 3.11 → 3.13 になる。** これは `~/.local/lib/python3.11/…` を持つ**全メンバーの
+  永続 home に対する ABI 破壊**で、**arm64 だけでなく amd64 のメンバーも巻き込む**。
+  §70.5 の「アーキが変わった人だけ入れ直す」自己修復では拾えない軸である。
+- つまり **1 つのツールを 1 つのアーキで動かすために、フリート全体の移行を払う**ことになる。
+
+**決め（推奨）**:
+
+1. **いま: C を出しつつ D で出荷する。** arm64 は rtk 無し、理由はイメージの中
+   （`/usr/local/share/agent-fleet/rtk-unavailable`）と §70.3.3 の判断材料に書いてある。
+2. **C が動かず、rtk が arm の採用条件になるなら B。** 外科的で、他に何も壊さない。
+   ⚠️ そのときは **amd64 も musl 自前ビルドに揃える**こと——片方だけ自前にすると、
+   アーキによって「違うビルドの rtk」が走ることになる。
+3. **A は独立した作業として、いずれやる。** bookworm の寿命・glibc・各種ツールチェーンの
+   ためであって、rtk のためではない。やるときは**両アーキで L1 smoke を通し直す**のが条件で、
+   python の ABI 破壊には §70.5 とは別の移行が要る。
+
+### 70.9.4 この 2 件から言えること
+
+**「Dockerfile は両アーキ対応済み」と「イメージが両アーキでビルドできる」は別の主張である。**
+前者は 9 か所の `dpkg --print-architecture` 分岐が書いてあるという話で、後者は
+**一度も試されていなかった**。試したら 2 件出て、1 件は自分たちのコード、1 件は上流の
+配布物の穴だった。どちらも「arm64 対応済み」という記述の下に隠れていた。
+
+### 70.9.5 3 度目で通った —— arm64 イメージは成立する
+
+上の 2 件を直して焼き直した結果（m8g.2xlarge・native・2026-08-22）:
+
+```
+build|193            # 3 分 13 秒。QEMU ではなくネイティブなので速い
+arch|arm64/linux
+size_mb|5717         # BAKE_AGENT_CLIS=1 の焼き込み variant
+smoke|PASS
+```
+
+**L1 image smoke が全項目 ok。** 9 種のエージェント CLI が **arm64 実機で実際に起動**した:
+claude 2.1.238 / opencode 1.18.19 / codex 0.149.0 / copilot 1.0.80 /
+**cursor 2026.08.11-e8db854** / **kiro 2.19.0**（musl 変種）/ go 1.26.7 / gh 2.98.0 /
+chromium 151.0.7922.137。chromium は **headless の日本語スクリーンショット・setuid sandbox・
+2 ページ同時 CDP** まで通った。
+
+- [40](40-cursor-agent-kind.md) §10 が「配布資産は健全と検証したが**実 arm64 ハード起動のみ
+  未検証**」として残していた項目は、**これで解消**した。
+- [43](43-kiro-agent-kind.md) の「arm64 は musl 変種必須」は正しく、その通りに動いた。
+- ⚠️ **agy だけは未検証のまま。** L1 smoke は agy の `--version` を**意図的に実行しない**
+  （[decisions/0008](decisions/0008-agy-rdrand.md) — RDRAND を提示しないホストで SIGABRT する
+  ため）。**Graviton には RDRAND が存在しない**ので、これは「まだ分かっていない」ではなく
+  **「一番怪しいまま残っている 1 件」**である。実行して確かめるのは P5（実機セッション）の
+  仕事になる。
+
 ⚠️ **未検証の山はここに残る。** [40](40-cursor-agent-kind.md) §10 は cursor-agent の
 arm64 実機起動が未確認（forum #148408）、[32](32-agy-agent-kind.md) の agy は
 [`host-no-rdrand-fips-blocker`](64-ec2-persistent-workspace.md) の別バージョンを踏む可能性、
