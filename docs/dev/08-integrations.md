@@ -12,8 +12,8 @@
 | 相手 | 用途 | 方式 | コールバック | 資格の保存先 |
 |------|------|------|--------------|--------------|
 | Google | L1 Console ログイン | OAuth Auth Code（CP ネイティブ）| CP `/oauth2/callback` | 署名 cookie（資格は保存しない）|
-| GitHub | git 認証 | PAT 貼付 / **Device Flow** | 不要 | `secrets.enc` |
-| Bitbucket | git 認証 | email+API token 貼付 / **OAuth Auth Code（CP 所有 callback）** | CP `/api/oauth/bitbucket/callback` | `secrets.enc`（refresh は専用 cred helper）|
+| GitHub | git 認証 | PAT 貼付 / **Device Flow（CP 実行・テナントのアプリ）** | 不要 | `secrets.enc` |
+| Bitbucket | git 認証 | email+API token 貼付 / **OAuth Auth Code（CP 所有 callback・テナントのアプリ）** | CP `/api/oauth/bitbucket/callback` | `secrets.enc`（refresh は専用 cred helper）|
 | 内部 git | git ホスティング | per-membership HMAC トークン（Basic）| — | 非保存（都度導出、[91](91-internal-git.md)）|
 | Anthropic / claude.ai | claude 認証（L2）| `claude auth login --claudeai`（コード貼り戻し）| 不要 | `CLAUDE_CONFIG_DIR/.credentials.json`（claude 所有）|
 | OpenAI | codex 認証 | API キー / **ChatGPT Device Flow** | 不要 | `~/.codex/auth.json`（codex 所有）|
@@ -72,10 +72,28 @@ CP ネイティブ実装。フロー・許可リスト・authGate の防御は [
 - **OAuth（Auth Code Grant）**: 唯一の CP 所有コールバック。`GET /api/connections/git/bitbucket/oauth/start`
   → 承認 → `GET /api/oauth/bitbucket/callback`（state に user を束ねて解決。ブラウザの CP セッション
   cookie で authGate を通過するため**除外設定不要**）→ token を Agent に渡して保存。
-  env: `BITBUCKET_OAUTH_KEY/SECRET`・`PUBLIC_BASE_URL`（consumer の Callback URL は完全一致が前提）。
+  consumer の key/secret は**テナントの行**から読む（[71](../71-tenant-git-oauth.md)）。
+  `PUBLIC_BASE_URL` は残る（consumer の Callback URL は完全一致が前提）。
+  ★ state に **tenant_id** を載せる。コールバックは bitbucket.org からの素のリダイレクトで
+  `X-AF-Tenant` を持たないので、そこで解決し直すと別テナントのアプリで code を交換しうる。
 - **refresh**: Bitbucket の access token は失効するため、git cred helper（`workspace-agent
   bitbucket-cred`）が保存済み refresh token で自動更新して `x-token-auth`+token を出力。
 - リモート列挙は `GET /2.0/user/workspaces` → 各 workspace の repos 集約（`?role=member` は廃止 API・410）。
+
+## 8.4.1 OAuth アプリの持ち主は**テナント**（docs/71 + ADR0052）
+
+GitHub / Bitbucket の OAuth アプリは `tenant_git_oauth` の行で、テナント管理者が
+Console（テナント設定 › 連携 › git プロバイダ OAuth）で登録する。**env は読まない**——
+`GITHUB_OAUTH_CLIENT_ID` は以降 GitHub **サインイン**専用で、`BITBUCKET_OAUTH_KEY/SECRET` は
+どこからも参照されない。
+
+- **GitHub の device flow は CP が回す**（`oauth_github_device.go`）。以前は Agent が
+  コンテナ env の client_id で回していたが、env はコンテナ起動時に固まりランタイム毎に
+  実装が 4 つあるため、per-tenant 化すると**反映に全員のワークスペース再起動**が要る。
+  パス（`POST /api/connections/git/github/oauth/{start,poll}`）は据え置きで、取得した
+  token は Agent の `PUT /connections/git/github.com`（PAT 貼付と同じ入口）へ渡す。
+- **メンバー向けの可否は `GET /api/git-oauth`**（CP ネイティブ）。`GET /api/connections` は
+  Agent へのプロキシで停止中は 502 を返すので、ボタンの出し分けには使えない。
 
 ## 8.5 Claude 認証・オンボーディング（L2 の本丸）
 

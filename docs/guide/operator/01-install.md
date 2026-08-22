@@ -79,6 +79,13 @@ Which keys you fill in depends on the IdP:
 | **Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab** | `AF_OIDC_PROVIDERS=<id>` plus `AF_OIDC_<ID>_ISSUER` / `_CLIENT_ID` / `_CLIENT_SECRET` / `_TRUST` |
 | **GitHub** | `AF_GITHUB_ALLOWED_ORGS` (required — it is also what turns the button on) plus `GITHUB_OAUTH_CLIENT_ID` / `_SECRET`, and `AF_GITHUB_ALLOWED_DOMAINS` |
 
+> **Not here: the git providers' OAuth apps.** The "Connect with OAuth" buttons for cloning
+> GitHub / Bitbucket repositories are **per-tenant**, registered in the Console by a tenant
+> administrator under **Tenant settings → Integrations → Git provider OAuth**. There is no
+> deployment-level setting for them and `BITBUCKET_OAUTH_KEY` / `_SECRET` are not read at all;
+> `GITHUB_OAUTH_CLIENT_ID` above means the sign-in app only. See
+> [docs/71](../../71-tenant-git-oauth.md).
+
 Three points decide whether this goes smoothly, and all three are covered in detail in
 [05](05-login-idp.md):
 

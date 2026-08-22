@@ -36,9 +36,15 @@ const (
 var bbHTTPClient = &http.Client{Timeout: 20 * time.Second}
 
 type bbState struct {
-	user    string // identity user key
-	tenant  string // selected tenant (X-AF-Tenant) at start time
-	created time.Time
+	user   string // identity user key
+	tenant string // selected tenant (X-AF-Tenant) at start time
+	// tenantID is the RESOLVED tenant, and it is what the callback looks the OAuth app
+	// up by. It has to be carried rather than re-derived: the callback is a plain
+	// browser redirect from bitbucket.org with no X-AF-Tenant header, so re-resolving
+	// there would land on whatever tenant happens to come first for this person and
+	// exchange the code against another tenant's app (docs/71 §71.5).
+	tenantID string
+	created  time.Time
 }
 
 // bbFlowRegistry owns the in-flight OAuth CSRF states（docs/23 P2-W4: 生の
@@ -72,37 +78,60 @@ func (b *bbFlowRegistry) take(state string) (bbState, bool) {
 
 var bbFlows = &bbFlowRegistry{states: map[string]bbState{}}
 
-func (c config) bbConfigured() bool {
-	return c.bbKey != "" && c.bbSecret != "" && c.publicBaseURL != ""
-}
-
 func (c config) bbRedirectURI() string {
-	return strings.TrimRight(c.publicBaseURL, "/") + "/api/oauth/bitbucket/callback"
+	return c.mgr.gitOAuthRedirectURI(gitOAuthBitbucket)
 }
 
 func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request) {
-	if !c.bbConfigured() {
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": map[string]string{"code": "not_configured", "message": "bitbucket oauth not configured (key/secret/PUBLIC_BASE_URL)"},
-		})
-		return
-	}
 	// The flow is keyed by the person's real user_key, not by sanitizeUser(email):
 	// since docs/61 §61.5 an identity keeps its key when the IdP changes the email,
 	// so the two can differ, and the callback would otherwise resolve a DIFFERENT
-	// workspace and install the token there.
-	ident, aerr := c.mgr.identityFor(r.Context(), r)
+	// workspace and install the token there. The membership comes from the same
+	// resolution so the tenant carried into the callback is the one the Console is
+	// actually showing.
+	id := c.mgr.resolveIdentity(r)
+	if id.key == "" {
+		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "no gateway identity"})
+		return
+	}
+	ident, mv, aerr := c.mgr.resolveMembership(r.Context(), id.key, id.email, tenantSel(r))
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	user := ident.UserKey
+	// docs/71: the OAuth app is the TENANT's, registered by its administrator. No env
+	// fallback — "not configured" here means this tenant has no app, and the Console
+	// says so pointing at the tenant admin rather than at the operator. Only the key is
+	// read: the callback re-reads the row for the secret, so the client secret never
+	// has to survive in the flow state.
+	key, _, ok, err := c.mgr.gitOAuthApp(r.Context(), mv.TenantID, gitOAuthBitbucket)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "not_configured",
+			"this tenant has no Bitbucket OAuth app (a tenant administrator registers it in tenant settings)"})
+		return
+	}
+	// ★ A missing PUBLIC_BASE_URL is a DIFFERENT failure and must not be reported as
+	// "not configured": the app is registered, and the tenant administrator would go
+	// re-enter a setting that is already correct. This one is the operator's — the code
+	// grant has nowhere to come back to without a public base.
+	redirect := c.bbRedirectURI()
+	if redirect == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "no_public_base_url",
+			"the Bitbucket code grant needs a callback URL, but this deployment has no PUBLIC_BASE_URL set — ask the operator"})
+		return
+	}
 	state := randHex(16)
-	bbFlows.put(state, bbState{user: user, tenant: r.Header.Get("X-AF-Tenant"), created: time.Now()})
+	bbFlows.put(state, bbState{
+		user: ident.UserKey, tenant: tenantSel(r), tenantID: mv.TenantID, created: time.Now(),
+	})
 
-	au := bbAuthorizeURL + "?client_id=" + url.QueryEscape(c.bbKey) +
+	au := bbAuthorizeURL + "?client_id=" + url.QueryEscape(key) +
 		"&response_type=code&state=" + url.QueryEscape(state) +
-		"&redirect_uri=" + url.QueryEscape(c.bbRedirectURI())
+		"&redirect_uri=" + url.QueryEscape(redirect)
 	writeJSON(w, http.StatusOK, map[string]any{"authorize_url": au})
 }
 
@@ -121,10 +150,18 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// The app is the one the tenant registered, resolved through the tenant carried in
+	// the state (see bbState.tenantID).
+	key, secret, ok, err := c.mgr.gitOAuthApp(r.Context(), st.tenantID, gitOAuthBitbucket)
+	if err != nil || !ok {
+		bbCallbackPage(w, t.notConfigured)
+		return
+	}
+
 	// Exchange the code for tokens (Basic auth = consumer key:secret).
 	form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {c.bbRedirectURI()}}
 	req, _ := http.NewRequest("POST", bbTokenURL, strings.NewReader(form.Encode()))
-	req.SetBasicAuth(c.bbKey, c.bbSecret)
+	req.SetBasicAuth(key, secret)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := bbHTTPClient.Do(req)
 	if err != nil {
@@ -149,7 +186,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	// Hand the tokens to the Agent to store + install the refresh helper.
 	payload, _ := json.Marshal(map[string]any{
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken,
-		"expires_in": tok.ExpiresIn, "key": c.bbKey, "secret": c.bbSecret,
+		"expires_in": tok.ExpiresIn, "key": key, "secret": secret,
 	})
 	rt, aerr := c.mgr.resolve(r.Context(), st.user, "", st.tenant)
 	if aerr != nil {
@@ -180,7 +217,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 // detail is appended verbatim. ja is the default; en is served when Accept-Language
 // prefers English (preferredUILang, defined in oauth_google.go).
 type bbStrings struct {
-	stateMismatch, noCode                                                    string
+	stateMismatch, noCode, notConfigured                                     string
 	tokenExchangeFailed, workspaceResolveFailed, saveUnreachable, saveFailed string
 	success                                                                  string
 }
@@ -189,6 +226,7 @@ var bbText = map[string]bbStrings{
 	"ja": {
 		stateMismatch:          "認証エラー: state が一致しません。Console からやり直してください。",
 		noCode:                 "認証エラー: code がありません（承認が拒否された可能性）。",
+		notConfigured:          "このテナントの Bitbucket OAuth アプリが見つかりません。テナント設定で登録し直してください。",
 		tokenExchangeFailed:    "トークン交換に失敗: ",
 		workspaceResolveFailed: "Workspace の解決に失敗しました: ",
 		saveUnreachable:        "保存に失敗（Workspace Agent に到達できません。Workspace は起動していますか）: ",
@@ -198,6 +236,7 @@ var bbText = map[string]bbStrings{
 	"en": {
 		stateMismatch:          "Authentication error: state mismatch. Please retry from the Console.",
 		noCode:                 "Authentication error: no code (authorization may have been denied).",
+		notConfigured:          "This tenant has no Bitbucket OAuth app. Ask a tenant administrator to register one in tenant settings.",
 		tokenExchangeFailed:    "Token exchange failed: ",
 		workspaceResolveFailed: "Failed to resolve the workspace: ",
 		saveUnreachable:        "Save failed (can't reach the Workspace Agent — is the Workspace running?): ",
