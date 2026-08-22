@@ -105,11 +105,12 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 	// reachable without a session, like /login itself.
 	exemptPrefix("/oauth2/", "/brand/", "/login/")
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
-	// Build version (docs/35 §35.6.1). Deliberately NOT auth-exempt: /healthz is
-	// frozen (restart-cp.sh compares the body to "ok" verbatim) and the version
-	// string shouldn't leak to unauthenticated callers.
-	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"version": buildVersion})
+	// Build version + the images this deployment runs (docs/35 §35.6.1,
+	// version_info.go). Deliberately NOT auth-exempt: /healthz is frozen
+	// (restart-cp.sh compares the body to "ok" verbatim) and none of this should
+	// leak to unauthenticated callers.
+	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, versionPayload(r.Context(), cfg.mgr))
 	})
 	mux.HandleFunc("GET /login", cfg.handleLogin)
 	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin) // per-tenant page (docs/61 §61.9.3)
