@@ -53,11 +53,15 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string) string {
 		flags += " --name " + session.ShellQuote(label)
 	}
 	// sid / forkFrom もシェルに埋めるので他のフラグ値と同様に quote する。
-	if SessionJSONLExists(sid) {
+	// Resume the id claude is actually writing under, not necessarily our own: when
+	// claude restarted itself it dropped --session-id and moved to an id of its own
+	// (sid.go). Resuming our slot sid there dies with "No conversation found" and the
+	// user silently loses the conversation on every restart.
+	if resume := LiveSID(sid); len(rawJSONLPaths(resume)) > 0 {
 		// Already materialized (normal session, or a fork after its first launch):
 		// resume our own jsonl. ForkFrom is intentionally ignored here so a restart
 		// never re-copies the source.
-		return fmt.Sprintf("claude --resume %s %s", session.ShellQuote(sid), flags)
+		return fmt.Sprintf("claude --resume %s %s", session.ShellQuote(resume), flags)
 	}
 	if forkFrom != "" {
 		// First launch of a fork: copy the source conversation into OUR sid via the
@@ -70,17 +74,25 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string) string {
 	return fmt.Sprintf("claude --session-id %s %s", session.ShellQuote(sid), flags)
 }
 
-// jsonlPaths returns the conversation log file(s) for sid. claude stores them
-// under ConfigDir()/projects/<project>/<sid>.jsonl (CLAUDE_CONFIG_DIR when
-// set, P3-5 段2) — NOT a hardcoded ~/.claude.
-func jsonlPaths(sid string) []string {
-	m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", sid+".jsonl"))
+// rawJSONLPaths returns the conversation log file(s) claude stores UNDER THAT EXACT
+// id, at ConfigDir()/projects/<project>/<id>.jsonl (CLAUDE_CONFIG_DIR when set,
+// P3-5 段2) — NOT a hardcoded ~/.claude. Takes the id at face value.
+func rawJSONLPaths(id string) []string {
+	m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", id+".jsonl"))
 	return m
 }
 
+// jsonlPaths returns the conversation log file(s) for OUR slot sid, following the
+// claude-sid ledger when claude restarted itself onto an id of its own (sid.go).
+// Everything transcript-shaped goes through here — ミラー・使用量・コンテキスト
+// 充填率・中断検知・BG 検知・Remote Control URL — so they all follow the drift.
+func jsonlPaths(sid string) []string {
+	return rawJSONLPaths(LiveSID(sid))
+}
+
 // SessionJSONLExists reports whether a conversation log for sid is on disk. When
-// it exists buildProgram uses --resume; otherwise --session-id starts new.
-// A wrong answer here makes claude exit ("Session ID is already in use").
+// it exists buildProgram uses --resume (of LiveSID(sid)); otherwise --session-id
+// starts new. A wrong answer here makes claude exit ("Session ID is already in use").
 func SessionJSONLExists(sid string) bool { return len(jsonlPaths(sid)) > 0 }
 
 // TranscriptSnapshot records the current byte size of each conversation log file for
