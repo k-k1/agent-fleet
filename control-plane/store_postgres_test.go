@@ -192,6 +192,47 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("ssm profile: %v", err)
 	}
 
+	// memo categories (docs/21 UI刷新 / migrations-pg/0030). ★ This whole table had
+	// only ever existed on SQLite: the mirror migration was never written, so on a
+	// Postgres deployment every category endpoint answered 500 and the Console — which
+	// folds a non-array answer into an empty list — simply showed no categories. The
+	// round trip below is what "the feature works here" means; TestSchemaDialectParity
+	// next door is what stops the two series diverging again.
+	cat := MemoCategory{ID: newID(), MembershipID: m1.ID, Repo: "app", Name: "後で", Position: 0, CreatedAt: nowTS()}
+	if err := st.CreateCategory(ctx, cat); err != nil {
+		t.Fatalf("create memo category: %v", err)
+	}
+	if got, ok, err := st.GetCategory(ctx, cat.ID); err != nil || !ok || got.Name != "後で" {
+		t.Fatalf("get memo category = (%+v,%v,%v)", got, ok, err)
+	}
+	cat.Name, cat.Position = "あとで", 3
+	if err := st.UpdateCategory(ctx, cat); err != nil {
+		t.Fatalf("update memo category: %v", err)
+	}
+	// The rename cascades onto the memos that carry the name (memo.category is the
+	// grouping key; this table holds the order and the empty ones).
+	if err := st.CreateMemo(ctx, Memo{ID: newID(), MembershipID: m1.ID, Repo: "app",
+		Category: "後で", Kind: "text", Body: "b", CreatedAt: nowTS()}); err != nil {
+		t.Fatalf("create memo: %v", err)
+	}
+	if err := st.ReassignMemoCategory(ctx, m1.ID, "app", "後で", "あとで"); err != nil {
+		t.Fatalf("reassign memo category: %v", err)
+	}
+	memos, err := st.ListMemos(ctx, m1.ID, "")
+	if err != nil || len(memos) != 1 || memos[0].Category != "あとで" {
+		t.Fatalf("memos after rename: %v %+v", err, memos)
+	}
+	cats, err := st.ListCategories(ctx, m1.ID)
+	if err != nil || len(cats) != 1 || cats[0].Name != "あとで" || cats[0].Position != 3 {
+		t.Fatalf("list memo categories: %v %+v", err, cats)
+	}
+	if err := st.DeleteCategory(ctx, cat.ID, m1.ID); err != nil {
+		t.Fatalf("delete memo category: %v", err)
+	}
+	if _, ok, _ := st.GetCategory(ctx, cat.ID); ok {
+		t.Fatal("memo category survived the delete")
+	}
+
 	// egress daily upsert + allowlist + setting
 	if err := st.RecordEgress(ctx, "2026-07-01", "github.com", true, 2); err != nil {
 		t.Fatalf("egress: %v", err)

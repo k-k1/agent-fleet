@@ -1141,6 +1141,23 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.destroy_leftovers": "Destroyed, but these could not be deleted: {list}",
   "admin.remove_purge": "Also destroy their workspace and home (irreversible)",
   "admin.remove_purge_warn": "Their home and everything the runtime created for them will be deleted. Re-inviting will not bring it back.",
+  // The third and last step of the clean-up (docs/61 §61.18); offered only once the
+  // workspace has been destroyed.
+  "admin.delete_member_row": "Delete this member",
+  "admin.delete_member_row_title": "Delete {key} from the roster for good?",
+  "admin.delete_member_row_confirm": "Delete for good",
+  "admin.delete_member_row_body": "Deletes this person's row, including the record that they were removed. This cannot be undone; inviting them again starts a brand new member.",
+  "admin.delete_member_row_gone": "Deleted: quotas, access tokens, SSM settings, schedules, memos, notifications and session shares.",
+  "admin.delete_member_row_kept": "Kept: the audit log, cloud cost and occupancy. Past records and invoices are not rewritten.",
+  // Deleting a tenant (super_admin; empty tenants only)
+  "admin.delete_tenant": "Delete tenant",
+  "admin.delete_tenant_title": "Delete this tenant",
+  "admin.delete_tenant_hint": "Only an empty tenant can be deleted. It is refused while a member is still on the roster, a workspace row still exists, or an internal git repository is still there — the database row is the only handle left on a resource that lives in the cloud or on disk.",
+  "admin.delete_tenant_repo_hint": "⚠️ Delete the internal git repositories while a member is still on the roster: once the last one is removed, nobody can reach the screen that deletes them.",
+  "admin.delete_tenant_confirm_title": "Delete the tenant {slug}?",
+  "admin.delete_tenant_confirm": "Delete",
+  "admin.delete_tenant_body": "Deletes the tenant's settings (quotas, login rules, source-network restriction, sign-in methods, MCP distribution) and the rows of members already removed. This cannot be undone.",
+  "admin.delete_tenant_kept": "The audit log, cloud cost and occupancy are kept (their tenant column will be blank).",
   // --- EC2 slot pool (features/settings/ec2Pool.tsx; AF_RUNTIME=ecs-ec2 only) ---
   "pool.not_ec2": "This deployment does not use the EC2 slot pool.",
   "pool.slots_title": "Slots",

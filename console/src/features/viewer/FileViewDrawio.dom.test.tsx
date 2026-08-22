@@ -33,7 +33,9 @@ vi.mock("../../core/api/client.ts", () => ({
   downloadURL: (p: string) => `/dl/${p}`,
   isTransientErr: () => false,
   errText: (e: unknown) => String(e),
-  rel: (p: string) => p,
+  // **恒等関数にしない。** rel() を通したかどうかを判定できなくなる（素の相対パスでも
+  // 同じ文字列になり、パスを剥がすプロキシ下で壊れる実装が緑のまま通る）。
+  rel: (p: string) => `/agent-fleet/${p}`,
 }));
 
 const { FileView } = await import("./FileView.tsx");
@@ -208,6 +210,49 @@ describe("フレームとの手順", () => {
     fromFrame({ t: "booted" });
     expect(posts().map((m) => m.t)).toEqual(["boot", "render"]);
     expect(posts()[1].xml).toBe(DIAGRAM);
+  });
+
+  it("ステンシルはフレームの申告を受けて親が CP から取り、中身を返す", async () => {
+    await render();
+    spyOnFrame();
+    fetched = [];
+    // フレームは「これが要る」としか言わない。**取りに行くのは親**（フレームからでは
+    // オリジンが無く Lax cookie が付かないので authGate に 401 で弾かれる）。
+    fromFrame({ t: "stencils", sets: ["aws4.xml", "rack/general.xml"] });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // **rel() を通すこと。** 素の相対パスは文書 URL に対して解決されるので、
+    // パスを剥がすプロキシの下や `/open/...` の深い URL で行き先がずれる。
+    expect(fetched).toEqual([
+      "/agent-fleet/api/drawio/stencils/aws4.xml",
+      "/agent-fleet/api/drawio/stencils/rack/general.xml",
+    ]);
+    const back = posts().filter((m) => m.t === "stencils");
+    expect(back).toHaveLength(1);
+    expect((back[0].xml as string[]).length).toBe(2);
+  });
+
+  it("ステンシルが取れなくても図はそのまま（エラーにしない）", async () => {
+    await render();
+    spyOnFrame();
+    vi.stubGlobal("fetch", () => Promise.resolve({ ok: false, status: 502, text: async () => "" } as Response));
+    fromFrame({ t: "stencils", sets: ["aws4.xml"] });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // 閉域では図案だけが空になり、枠と色は残る。**図は正しく開けているのだから、
+    // 利用者に見せる異常ではない** —— 画面には何も出さない。
+    expect(host.textContent).not.toContain("stencil");
+    expect(frame()!.hidden).toBe(false);
+    // ただしフレームには「取れなかった」と伝える。**伝えないと、upstream の 1 回の
+    // 瞬断でそのペインの寿命いっぱいアイコンが欠ける**（頼んだ済みのまま固定される）。
+    const back = posts().filter((m) => m.t === "stencils");
+    expect(back).toHaveLength(1);
+    expect(back[0].xml).toEqual([]);
+    expect(back[0].missing).toEqual(["aws4.xml"]);
   });
 
   it("ビューアを読み込めなかったときに「図が壊れている」と言わない", async () => {

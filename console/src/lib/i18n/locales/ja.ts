@@ -1149,6 +1149,22 @@ export const ja = {
   "admin.destroy_leftovers": "破棄しましたが、次のものは削除できませんでした: {list}",
   "admin.remove_purge": "Workspace と home も破棄する（取り消せません）",
   "admin.remove_purge_warn": "home と、ランタイムがこの人のために作ったものを削除します。再招待しても戻りません。",
+  // 後始末の 3 段目（docs/61 §61.18）。Workspace を破棄し終えた行にだけ出る。
+  "admin.delete_member_row": "メンバーを完全に削除",
+  "admin.delete_member_row_title": "{key} を名簿から完全に削除しますか？",
+  "admin.delete_member_row_confirm": "完全に削除する",
+  "admin.delete_member_row_body": "外した記録ごと、この人の行を削除します。取り消せません。もう一度招待すると、まっさらな新しいメンバーとして始まります。",
+  "admin.delete_member_row_gone": "消えるもの: 上限設定・アクセストークン・SSM の設定・定時実行・メモ・通知・セッション共有。",
+  "admin.delete_member_row_kept": "残るもの: 監査ログ・クラウド費用・稼働時間。過去の記録と請求は書き換えません。",
+  // テナントの削除（super_admin・空のテナントだけ）
+  "admin.delete_tenant": "テナントを削除",
+  "admin.delete_tenant_title": "テナントの削除",
+  "admin.delete_tenant_hint": "空になったテナントだけ削除できます。メンバーが 1 人でも残っている、Workspace が残っている、内部 git リポジトリが残っている場合は拒否します——DB の行は、クラウドやディスクに残った実体への唯一の手掛かりだからです。",
+  "admin.delete_tenant_repo_hint": "⚠️ 内部 git リポジトリは、メンバーが名簿に残っているうちに削除してください。最後の 1 人を外すと、リポジトリを削除する画面へ誰も入れなくなります。",
+  "admin.delete_tenant_confirm_title": "テナント {slug} を削除しますか？",
+  "admin.delete_tenant_confirm": "削除する",
+  "admin.delete_tenant_body": "テナントの設定（上限・ログイン規則・接続元制限・サインイン方法・MCP 配布）と、外したメンバーの行を削除します。取り消せません。",
+  "admin.delete_tenant_kept": "監査ログ・クラウド費用・稼働時間は残ります（テナント欄は空になります）。",
   // --- EC2 スロットプール（features/settings/ec2Pool.tsx・AF_RUNTIME=ecs-ec2 のみ）---
   "pool.not_ec2": "このデプロイは EC2 スロットプールを使っていません。",
   "pool.slots_title": "スロット",

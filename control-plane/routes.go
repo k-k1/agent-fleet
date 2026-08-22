@@ -36,6 +36,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerConnectionRoutes(mux, cfg)
 	registerInternalGitRoutes(mux, cfg)
 	registerBrowserRoutes(mux, cfg)
+	registerDrawioStencilRoutes(mux, cfg)
 	registerTerminalPreviewRoutes(mux, cfg)
 	registerLegacyRedirect(mux)
 	registerStatic(mux, cfg)
@@ -147,7 +148,11 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// keyed by membership instead of by the caller — the per-member LIST carries a total
 	// and nothing else, so the daily shape and the breakdown are not derivable from it.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/cost", adm.memberCloudCost)
+	// 後始末の 3 段目（docs/61 §61.18）。除名（DELETE /api/admin/memberships）と破棄
+	// （DELETE /api/admin/workspaces）を済ませた行だけを、ここで実際に消す。
+	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/members/{key}", adm.deleteMembership)
 	mux.HandleFunc("POST /api/admin/tenants", adm.withSuperAdmin(adm.createTenant))
+	mux.HandleFunc("DELETE /api/admin/tenants/{slug}", adm.withSuperAdmin(adm.deleteTenant)) // 空のテナントだけ (docs/61 §61.18)
 	mux.HandleFunc("POST /api/admin/memberships", adm.addMembership)
 	mux.HandleFunc("DELETE /api/admin/memberships", adm.removeMembership) // offboarding (docs/61 §61.10.6)
 	mux.HandleFunc("DELETE /api/admin/workspaces", adm.destroyWorkspace)  // irreversible; inactive members only (ADR 0045 決定 13)

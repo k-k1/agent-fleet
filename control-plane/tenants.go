@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -77,6 +78,13 @@ func newAdminAPI(m *manager) adminAPI { return adminAPI{memberAuth{m}} }
 // super_admin sees every tenant; a tenant_admin sees only the tenants they
 // administer. The super_admin flag lets the Console hide deployment-wide controls
 // (create tenant, tenant quotas, clean-home, role grants) for tenant_admins.
+//
+// ★ 予約テナント（system_tenant.go）はここで落とす。落とすのが**この API 層**であって
+// `store.ListTenants` ではないのは意図的で、その store 呼び出しには監査ビューの
+// tenant_id → slug 解決（audit.go）と費用ポーラーの membership → tenant 解決
+// （cloudcost.go）が乗っている。store で消すと、そちらが「テナントの分からない行」を
+// 作りはじめる。Console は横断ビュー（セッション/稼働時間/費用/監査/MCP）のテナント
+// フィルタにもこの一覧を渡しているので、ここ 1 か所で全部の面から消える。
 func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Identity) {
 	isSuper := ident.Role == "super_admin"
 
@@ -87,7 +95,12 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Iden
 			writeAPIErr(w, internalErr(err))
 			return
 		}
-		tenants = ts
+		for _, t := range ts {
+			if isSystemTenantSlug(t.Slug) {
+				continue
+			}
+			tenants = append(tenants, t)
+		}
 	} else {
 		ms, err := a.mgr.store.ListMemberships(r.Context(), ident.ID)
 		if err != nil {
@@ -720,6 +733,172 @@ func (a adminAPI) removeMembership(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed": ident.UserKey, "tenant": t.Slug,
 		"purged": body.Purge, "leftovers": leftovers,
+	})
+}
+
+// deleteMembership (DELETE /api/admin/tenants/{slug}/members/{key}) removes the row
+// itself — the third and last step of the clean-up sequence (docs/61 §61.18):
+//
+//	メンバーを外す → Workspace を破棄 → メンバーを完全に削除
+//
+// ★ Why this exists at all. `SetMembershipStatus` used to say hard deletion was
+// "deliberately not offered — schedules, audit rows and shares reference the membership
+// id". Two thirds of that turned out not to be a reason: the schedules and shares ARE
+// this person's and go with them. What the sentence was really protecting is the
+// HISTORY, and that is what is kept: audit_log (which never referenced a membership —
+// its actor is an identity), cloud_cost_daily and usage_daily. An offboarding that could
+// erase its own audit trail, or change last month's invoice total, would be a worse
+// product than one that leaves a dead row.
+//
+// ★ The two refusals are the same line ADR 0045 決定 13-2 draws, for the same reason.
+// An ACTIVE member is somebody at their desk. A membership whose workspace row is still
+// there owns a home, an EBS volume and EFS access points; deleting the row would leave
+// them billing with nothing in the database pointing at them — the exact leak
+// destroyWorkspace exists to close.
+//
+// ★ And a reserved membership is refused outright (system_tenant.go): the golden baker
+// recreates the seed and the probe on its next tick, so deleting them mid-bake only
+// strands the slot they are holding.
+//
+// tenant_admin (their own tenant) or super_admin — the same gate as destroyWorkspace,
+// which is what has to have happened first.
+func (a adminAPI) deleteMembership(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	caller, t, ok := a.tenantAdminFor(w, r, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	if isSystemTenantSlug(t.Slug) {
+		writeAPIErr(w, &apiError{http.StatusConflict, "system_membership",
+			"this membership belongs to the deployment, not to a person; the golden bake recreates it"})
+		return
+	}
+	mem, _, hasWS, aerr := a.resolveMember(r, t.Slug, key)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if mem.Status == "active" {
+		writeAPIErr(w, &apiError{http.StatusConflict, "membership_active",
+			"remove the membership first; an active member's row cannot be deleted"})
+		return
+	}
+	if hasWS {
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_present",
+			"destroy the workspace first; deleting the row would leave the home and its cloud resources billing"})
+		return
+	}
+	if err := a.mgr.store.DeleteMembership(r.Context(), mem.ID); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	a.mgr.evictMembershipCache(mem.ID)
+	a.mgr.tenantLogin.invalidate()
+	_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
+		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: caller.ID,
+		Action: "membership.delete", Target: key,
+		Detail: "membership row and its per-membership rows deleted; audit, cost and occupancy history kept",
+		At:     nowTS(),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": key, "tenant": t.Slug})
+}
+
+// deleteTenant (DELETE /api/admin/tenants/{slug}) removes an EMPTY tenant. super_admin
+// only, and it is the operation the product was missing entirely: tenants could be
+// created and never removed, so a throwaway one kept its slot — on <prod-deployment> two
+// left over from the hand-baking era blocked the pool until the golden bake stopped too.
+//
+// ★ It only ever deletes what is already empty (docs/61 §61.18). Every refusal below is
+// the same principle: the DB row is the only handle the deployment has on a cloud or
+// disk resource, so it must never be the first thing to go.
+//
+//   - a system tenant — recreated by the next bake, so deleting it achieves nothing
+//   - the default tenant — EnsureDefaultTenant recreates it at the next start
+//   - an ACTIVE member — offboard them first; this is not an offboarding tool
+//   - a workspace row — destroy it first, or its home/EBS/EFS keeps billing unreferenced
+//   - an internal git repo — its bare and LFS objects live on disk
+//
+// ⚠️ The git repo refusal has an ORDERING trap, and the message has to say so:
+// `DELETE /api/internal-git/repos/{name}` is gated by withMembership, so once the last
+// member is off the roster NOBODY can delete those repos any more. They have to go while
+// a member is still there. Deleting them from here instead was rejected: an operation
+// whose name is "delete this tenant" must not silently destroy repositories.
+func (a adminAPI) deleteTenant(w http.ResponseWriter, r *http.Request, ident Identity) {
+	ctx := r.Context()
+	slug := r.PathValue("slug")
+	if isSystemTenantSlug(slug) {
+		writeAPIErr(w, &apiError{http.StatusConflict, "system_tenant",
+			"this tenant belongs to the deployment itself and is recreated automatically"})
+		return
+	}
+	if slug == defaultTenantSlug {
+		writeAPIErr(w, &apiError{http.StatusConflict, "default_tenant",
+			"the default tenant is recreated at every start and cannot be deleted"})
+		return
+	}
+	t, ok, err := a.mgr.store.GetTenantBySlug(ctx, slug)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return
+	}
+	active, err := a.mgr.store.ListMembersByTenant(ctx, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if len(active) > 0 {
+		writeAPIErr(w, &apiError{http.StatusConflict, "tenant_not_empty",
+			"remove this tenant's members first (" + strconv.Itoa(len(active)) + " left)"})
+		return
+	}
+	wss, err := a.mgr.store.ListWorkspaces(ctx, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if len(wss) > 0 {
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_present",
+			"destroy the workspaces of this tenant's removed members first (" + strconv.Itoa(len(wss)) + " left)"})
+		return
+	}
+	repos, err := a.mgr.store.ListGitReposByTenant(ctx, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if len(repos) > 0 {
+		writeAPIErr(w, &apiError{http.StatusConflict, "git_repos_present",
+			"delete this tenant's " + strconv.Itoa(len(repos)) + " internal git repositories first — " +
+				"they can only be deleted while a member is still on the roster"})
+		return
+	}
+	removed, err := a.mgr.store.ListRemovedMembersByTenant(ctx, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if err := a.mgr.store.DeleteTenant(ctx, t.ID); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	a.mgr.evictTenantCache(t.ID)
+	a.mgr.tenantLogin.invalidate()
+	// ⚠️ Written AFTER the delete, and with the slug in Target: the audit view resolves
+	// tenant_id → slug through ListTenants (audit.go), so this row's tenant column will
+	// be blank from now on. The name has to be inside the entry itself.
+	_ = a.mgr.store.InsertAudit(ctx, AuditLog{
+		ID: newID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
+		Action: "tenant.delete", Target: t.Slug,
+		Detail: "tenant \"" + t.Name + "\" deleted; " + strconv.Itoa(len(removed)) +
+			" removed membership(s) deleted with it; audit, cost and occupancy history kept",
+		At: nowTS(),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deleted": t.Slug, "memberships_deleted": len(removed),
 	})
 }
 

@@ -97,8 +97,57 @@ const BIG = `<mxfile><diagram name="大" id="b1"><mxGraphModel page="1"><root>
   ${Array.from({ length: 24 }, (_, i) => `<mxCell id="b${i}" value="ノード${i}" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="${(i % 6) * 420}" y="${Math.floor(i / 6) * 320}" width="360" height="220" as="geometry"/></mxCell>`).join("")}
 </root></mxGraphModel></diagram></mxfile>`;
 
+// ── ステンシル（docs/65 §65.5）─────────────────────────────────────────
+// 本物の aws4.xml は 6.2 MB あるので、ハーネスは形だけ同じ最小のセットを配る
+// （バイト列の正しさは CP 側の sha256 照合と台帳のテストが持つ）。図案が付いたか
+// どうかは **path の本数**で見る: ステンシルが無いと枠だけの矩形になる。
+function stencilSet(setName, shapeName) {
+  return `<shapes name="mxgraph.${setName}">
+  <shape aspect="fixed" h="44" name="${shapeName}" strokewidth="inherit" w="44">
+    <connections/>
+    <foreground>
+      <path><move x="4" y="4"/><line x="40" y="4"/><line x="40" y="40"/><line x="4" y="40"/><close/></path>
+      <fillstroke/>
+      <path><move x="12" y="12"/><line x="32" y="32"/></path>
+      <stroke/>
+    </foreground>
+  </shape>
+</shapes>`;
+}
+
+// 台帳の鍵（＝ CP に要求するファイル名）→ 中身。
+const STENCIL_FILES = {
+  // 素直な例: basename "aws4" → "aws4.xml"。
+  "aws4.xml": stencilSet("aws4", "a1 instance"),
+  // **basename とファイル名が違う例**。ビューアの mxStencilRegistry.libraries が
+  // rackGeneral → rack/general.xml に読み替える。basename + ".xml" で組み立てる
+  // 実装はここで 404 になる（この 1 ケースがそれを捕まえる）。
+  "rack/general.xml": stencilSet("rackGeneral", "rack unit"),
+};
+
+function stencilDiagram(shapeStyle, name) {
+  return `<mxfile><diagram name="${name}" id="s1"><mxGraphModel page="1"><root>
+    <mxCell id="0"/><mxCell id="1" parent="0"/>
+    <mxCell id="v1" value="X" style="html=1;whiteSpace=wrap;shape=${shapeStyle};" vertex="1" parent="1"><mxGeometry x="40" y="40" width="80" height="80" as="geometry"/></mxCell>
+  </root></mxGraphModel></diagram></mxfile>`;
+}
+const AWS4 = stencilDiagram("mxgraph.aws4.a1_instance", "aws");
+const RACK = stencilDiagram("mxgraph.rackGeneral.rack_unit", "rack");
+
 const CASES = [
   { name: "plain-light", xml: PLAIN, dark: false, pages: 2, scale: 1, gestures: true },
+  // ベンダーアイコン: フレームが必要なセットを申告し、**親が**取って渡す。
+  { name: "stencil-aws4", xml: AWS4, dark: false, pages: 1, stencils: ["aws4.xml"] },
+  // 圧縮された図でも同じセットに行き着く（生 XML は deflate のままなので、
+  // 割り出しは展開済みのモデルを見ていなければならない）。
+  { name: "stencil-compressed", xml: compressed(AWS4), dark: false, pages: 1, stencils: ["aws4.xml"] },
+  // libraries の読み替え（rackGeneral → rack/general.xml）。
+  { name: "stencil-remap", xml: RACK, dark: false, pages: 1, stencils: ["rack/general.xml"] },
+  // 閉域。取得に失敗しても **図は開いたまま**、エラーも出さない（枠と色だけに落ちる）。
+  { name: "stencil-offline", xml: AWS4, dark: false, pages: 1, stencils: ["aws4.xml"], stencilFail: true },
+  // **瞬断のあとは頼み直せること。** 取れなかったセットを「頼んだ済み」に固定すると、
+  // upstream の 1 回の reset でそのペインの寿命いっぱいアイコンが欠ける（実機で踏んだ）。
+  { name: "stencil-retry", xml: AWS4, dark: false, pages: 1, stencils: ["aws4.xml"], stencilFail: true, retryAfterFail: true },
   // 暗いテーマは「既定色の文字が読めるか」まで見る（真偽値を渡すと黒地に黒になる）。
   { name: "plain-dark", xml: PLAIN, dark: true, pages: 2, scale: 1 },
   { name: "compressed", xml: compressed(PLAIN), dark: false, pages: 1, scale: 1 },
@@ -136,13 +185,31 @@ function serve(dir, port) {
     import("node:http").then(({ createServer }) => {
       const srv = createServer((req, res) => {
         const url = req.url.split("?")[0];
-        const gated = url.startsWith("/assets/");
+        // **CP と同じく、ステンシルも認証の内側**。親（cookie を持つ）は通り、
+        // オリジンを持たないフレームからの要求は 401 になる —— これがフレームに
+        // 直接取らせる設計を否決した理由そのものなので、ハーネスでも再現する。
+        const gated = url.startsWith("/assets/") || url.startsWith("/stencils/");
         if (gated && !(req.headers.cookie || "").includes("af_session=")) {
           unauthorized.push(url);
           res.writeHead(401, { "Content-Type": "application/json" }).end('{"error":"unauthenticated"}');
           return;
         }
-        const file = path.join(dir, decodeURIComponent(gated ? url.slice("/assets/".length) : url));
+        if (url.startsWith("/stencils/")) {
+          const name = decodeURIComponent(url.slice("/stencils/".length));
+          stencilAsks.push(name);
+          const body = stencilFail ? null : STENCIL_FILES[name];
+          if (!body) {
+            // 台帳に無い名前は CP が 404、閉域では 502。どちらも「取れない」。
+            res.writeHead(STENCIL_FILES[name] ? 502 : 404).end("no");
+            return;
+          }
+          res.writeHead(200, {
+            "Content-Type": "text/xml; charset=utf-8",
+            "Set-Cookie": "af_session=harness; Path=/; HttpOnly; SameSite=Lax",
+          }).end(body);
+          return;
+        }
+        const file = path.join(dir, decodeURIComponent(url.startsWith("/assets/") ? url.slice("/assets/".length) : url));
         fs.readFile(file, (err, buf) => {
           if (err) {
             res.writeHead(404).end("no");
@@ -162,6 +229,12 @@ function serve(dir, port) {
 
 /** cookie 無しで拒否した要求（＝フレームが自分で取りに行った証拠）。 */
 const unauthorized = [];
+/** 親が CP へ要求したステンシル名。 */
+const stencilAsks = [];
+/** true の間はステンシルを配らない（閉域の再現）。 */
+let stencilFail = false;
+/** ステンシル関係のケースの画面。取れた絵と取れなかった絵は違っていなければならない。 */
+const stencilShots = {};
 
 // ---------------------------------------------------------------- CDP
 async function browser() {
@@ -240,12 +313,25 @@ window.__dark=${c.dark}; window.__restore=null;
 window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-drawio")return; window.__ev.push(d);
   if(d.t==="ready") fetch("/assets/viewer.js",{credentials:"same-origin"}).then(function(r){return r.text()}).then(function(src){ post({t:"boot",src:src}); });
   if(d.t==="booted") post({t:"render",xml:${JSON.stringify(c.xml)},dark:window.__dark,restore:window.__restore?JSON.parse(window.__restore):null});
+  // DrawioView.tsx と同じ: フレームの申告を受けて **親が** 取り、中身を返す。
+  if(d.t==="stencils"){ window.__asked=(window.__asked||[]).concat(d.sets);
+    Promise.all(d.sets.map(function(n){
+      return fetch("/stencils/"+n.split("/").map(encodeURIComponent).join("/"),{credentials:"same-origin"})
+        .then(function(r){ return r.ok?r.text():null }).catch(function(){ return null });
+    })).then(function(xs){
+      var got=xs.filter(Boolean);
+      var missing=d.sets.filter(function(_,i){ return !xs[i] });
+      if(got.length||missing.length) post({t:"stencils",xml:got,missing:missing});
+    });
+  }
 });
 </script></body></html>`;
   fs.writeFileSync(path.join(work, `${c.name}.html`), page);
 
   b.events.length = 0;
   unauthorized.length = 0;
+  stencilAsks.length = 0;
+  stencilFail = !!c.stencilFail;
   await b.call("Page.navigate", { url: `${base}/${c.name}.html` });
   // 実時間で待つ（先頭のコメント参照）。4MB のビューアの読み込み + 描画で十分な余裕。
   await sleep(3500);
@@ -274,6 +360,61 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
   // cookie の付かない要求 ＝ オリジンを持たないフレームが自分で取りに行った要求。
   if (unauthorized.length) {
     fail.push(`${c.name}: フレームが資格情報無しで取りに行った ${JSON.stringify([...new Set(unauthorized)])}`);
+  }
+
+  // ── ステンシル（docs/65 §65.5）───────────────────────────────────────
+  if (c.stencils) {
+    const want = JSON.stringify(c.stencils);
+    const asked = JSON.stringify([...new Set(stencilAsks)]);
+    if (asked !== want) {
+      fail.push(`${c.name}: 要求したセットが ${asked}（期待 ${want}）—— basename とファイル名の読み替えを外していないか`);
+    }
+    // 図案が本当に載ったか。フレームは opaque origin なので親からは中を数えられない
+    // —— **描き直しが起きたか**（差し込み後の 2 通目の rendered）と **絵が変わったか**
+    // （画素）の 2 つで見る。要求が飛んだことだけを見る判定は、受け取った XML を
+    // 捨てていても緑になる。
+    const renders = evs.filter((e) => e.t === "rendered").length;
+    if (c.stencilFail) {
+      if (renders !== 1) fail.push(`${c.name}: 取れなかったのに描き直している（rendered ${renders} 通）`);
+      // 閉域は **図は出たまま・エラーは出さない**（枠と色だけに落ちるのが正しい）。
+      if (errors.length) fail.push(`${c.name}: 取得に失敗しただけでエラーにしている`);
+    } else if (renders < 2) {
+      fail.push(`${c.name}: ステンシルを渡したのに描き直されていない（rendered ${renders} 通）`);
+    }
+    // 倍率と位置は差し込みで動いてはいけない（refresh() であって render のやり直しではない）。
+    const first = evs.find((e) => e.t === "rendered");
+    const last = evs.filter((e) => e.t === "rendered").pop();
+    if (first && last && (first.scale !== last.scale || first.tx !== last.tx || first.ty !== last.ty)) {
+      fail.push(`${c.name}: 差し込みで見ていた場所が動いた（${first.scale}@${first.tx},${first.ty} → ${last.scale}@${last.tx},${last.ty}）`);
+    }
+    if (c.retryAfterFail) {
+      // 通じるようにしてから、もう一度描く。**同じセットをもう一度頼まなければならない。**
+      stencilFail = false;
+      stencilAsks.length = 0;
+      await b.call("Runtime.evaluate", {
+        expression: `post({t:"render",xml:${JSON.stringify(c.xml)},dark:false,restore:null})`,
+        returnByValue: true,
+      });
+      await sleep(2500);
+      const again = [...new Set(stencilAsks)];
+      if (JSON.stringify(again) !== JSON.stringify(c.stencils)) {
+        fail.push(`${c.name}: 取得に失敗したセットを頼み直さない（2 回目の要求 ${JSON.stringify(again)}）`);
+      } else {
+        console.log(`   stencils: 失敗後の再要求 ${JSON.stringify(again)}`);
+      }
+      const evs2 = JSON.parse(
+        (await b.call("Runtime.evaluate", { expression: "JSON.stringify(window.__ev)", returnByValue: true })).result?.value || "[]",
+      );
+      // 2 回目は届くので、差し込みの描き直しまで行き着く。
+      if (evs2.filter((e) => e.t === "rendered").length < 3) {
+        fail.push(`${c.name}: 頼み直したのに図案が載っていない（rendered ${evs2.filter((e) => e.t === "rendered").length} 通）`);
+      }
+    }
+
+    // 絵そのもの。同じ図・同じ寸法なので、ステンシルの有無だけが差になる。
+    const shot = await b.call("Page.captureScreenshot", {});
+    stencilShots[c.name] = shot.data;
+    console.log(`   stencils: asked=${asked} rendered=${renders} 通 scale=${last?.scale}`);
   }
 
   // ── 背景（docs/65 §65.11-13）──────────────────────────────────────────
@@ -422,6 +563,16 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     console.log(`  screenshot: ${file}`);
   }
   console.log(`${fail.length ? "…" : "ok"} ${c.name}: ${JSON.stringify(rendered || null)}`);
+}
+
+// ステンシルが効いた絵と、取れずに落ちた絵。**同じ図なので、違わなければ
+// 「渡した XML を使っていない」ということ**（要求が飛んだかだけ見ていると見逃す）。
+if (stencilShots["stencil-aws4"] && stencilShots["stencil-offline"]) {
+  if (stencilShots["stencil-aws4"] === stencilShots["stencil-offline"]) {
+    fail.push("stencil-aws4 と stencil-offline の絵が同一 —— 渡したステンシルが描画に効いていない");
+  } else {
+    console.log("ok stencil-pixels: ステンシル有り／無しで絵が変わっている");
+  }
 }
 
 b.close();

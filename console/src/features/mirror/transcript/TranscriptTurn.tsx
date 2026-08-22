@@ -8,7 +8,7 @@
 // types.ts, and the two only coexisted before because a value and a type can share a
 // name inside one file. Split across modules that overlap would be a trap.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import FileIcon from "../../../ui/FileIcon.tsx";
 import { fmtTok } from "../../../lib/fmttok.ts";
@@ -68,7 +68,30 @@ export function TranscriptTurn({
     if (!bodyEl.current || !marks) return;
     painted.current = paintTurnMarks(bodyEl.current, marks.byRoot, marks.authorSlot, painted.current);
   });
-  const split = !isUser && foldWork ? workSplit(turn.parts) : null;
+  // 作業過程の畳み込み（folded）と開閉（open）。ターン単位の状態だが、いま載っている
+  // ターンごと ref に持つ: ミラーはペインがセッションを持ち替えても再マウントされず
+  // （props が変わるだけ）、転写の idx はセッション毎に 0 から振られるので、同じ位置の
+  // コンポーネントに別の会話のターンが載る。id が変わったら前のターンの状態は捨てる。
+  //
+  // **folded は片道。** foldWork は生きたポーリング値（セッションの working）から来るので
+  // 平気で往復する — ストリーミング中に一瞬 idle を拾う、operator/定時実行/peer の新しい
+  // プロンプトが転写へ届く前に working が立つ、といった具合に。往復させるとそのたびに
+  // 作業過程が展開⇄畳みで入れ替わり、読んでいる最中に本文の高さが跳ねて位置がズレる。
+  // 一度畳んだターンは開き直さない（中身は summary をクリックすれば読める）。
+  //
+  // **open を決めるのは「初めて畳まれた瞬間の defaultWorkOpen」だけ** ＝そのとき末尾を
+  // 追っていたかどうか。以後は追従が切れても戻っても追随せず、読者のクリックだけが変える。
+  const work = useRef({ id: "", folded: false, open: false, defaulted: false });
+  const [, redrawWork] = useReducer((n: number) => n + 1, 0);
+  const workId = (caps.session || "") + "#" + turn.idx;
+  if (work.current.id !== workId) work.current = { id: workId, folded: false, open: false, defaulted: false };
+  if (foldWork) work.current.folded = true;
+  const split = !isUser && work.current.folded ? workSplit(turn.parts) : null;
+  if (split && !work.current.defaulted) {
+    work.current.defaulted = true;
+    work.current.open = defaultWorkOpen;
+  }
+  const workOpen = work.current.open;
   const edited = isUser ? [] : turnFiles(turn.parts);
   const copyText = split ? textOfParts(turn.parts.slice(split.at)) : turn.text;
   const renderAssistantParts = (parts: Part[]) =>
@@ -313,7 +336,15 @@ export function TranscriptTurn({
           })()
         ) : split ? (
           <>
-            <WorkDisclosure tools={split.tools} responses={split.responses} defaultOpen={defaultWorkOpen}>
+            <WorkDisclosure
+              tools={split.tools}
+              responses={split.responses}
+              open={workOpen}
+              onToggle={() => {
+                work.current.open = !work.current.open;
+                redrawWork();
+              }}
+            >
               {renderAssistantParts(turn.parts.slice(0, split.at))}
             </WorkDisclosure>
             {renderAssistantParts(turn.parts.slice(split.at))}

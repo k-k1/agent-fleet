@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -416,5 +418,43 @@ func TestShippedDefaultSlotClassesParse(t *testing.T) {
 	}
 	if p.defaultClass != "standard" {
 		t.Errorf("the shipped default must land nobody on the cheaper class, got %q", p.defaultClass)
+	}
+}
+
+// ⚠️ Two migrations with the same numeric prefix are a SILENT data loss:
+// schema_migrations is keyed by that integer, so the first of the pair records the
+// version and the second is skipped forever as "already applied" — the column it was
+// meant to add never exists, and the failure surfaces as a query error in production.
+//
+// It is the normal outcome of two branches adding a migration in parallel, which is
+// how this repository works. Measured once (2026-08-22: develop's 0030_memo_category
+// met a branch's 0030_user_limit_slot_class in migrations-pg). This test is the cheap
+// half of the fix — the other half refuses to start (sqlStore.migrate).
+func TestMigrationVersionsAreUniquePerDialect(t *testing.T) {
+	for _, dir := range []string{"migrations", "migrations-pg"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("%s: %v", dir, err)
+		}
+		seen := map[int]string{}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".sql") {
+				continue
+			}
+			v, err := strconv.Atoi(strings.SplitN(name, "_", 2)[0])
+			if err != nil {
+				t.Errorf("%s/%s: version prefix is not a number", dir, name)
+				continue
+			}
+			if prev, dup := seen[v]; dup {
+				t.Errorf("%s: %s and %s share version %d — one would be silently skipped; renumber the newer one",
+					dir, prev, name, v)
+			}
+			seen[v] = name
+		}
+		if len(seen) == 0 {
+			t.Errorf("%s: no migrations found (did the directory move?)", dir)
+		}
 	}
 }
