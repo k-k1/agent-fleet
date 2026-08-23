@@ -207,7 +207,7 @@ export const wsStartBusy = (state: string): boolean => wsBusy(state) || state ==
  *
  * ⚠️ Deliberately NOT `state === "running"`. The server-reported "starting" has no
  * guaranteed exit: an ECS task the scheduler cannot place sits at desired=1/running=0
- * and State() reports "starting" forever (measured on af.lazmix.jp — docs/70 §70.14.6,
+ * and State() reports "starting" forever (measured on the dev deployment — docs/70 §70.14.6,
  * a task definition declaring ARM64 while pinned to an x86_64 slot). While the toggle
  * sent START on everything that was not "running", the two exits the UI offered from
  * that state were both "start", and the CP no-ops a Start for a workspace it already

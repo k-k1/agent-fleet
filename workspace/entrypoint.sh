@@ -30,7 +30,7 @@ if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; the
       # 空だからである。ここで作らずに素通りすると `~/.config` は宙に浮いたままになり、
       # 後段の `mkdir -p "$HOME/.config/opencode"` が **File exists** で落ちて、`set -e` で
       # entrypoint ごと死ぬ —— タスクが延々と再起動するだけで、原因はどこにも出ない。
-      # （実機で踏んだ: af.acrt.link の golden 初号機が起動不能になった。）
+      # （実機で踏んだ: 本番配備の golden 初号機が起動不能になった。）
       keep_is_dir "$rel" && mkdir -p "$dst" 2>/dev/null || true
       continue
     fi

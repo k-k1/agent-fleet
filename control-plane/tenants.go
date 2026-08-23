@@ -805,7 +805,7 @@ func (a adminAPI) deleteMembership(w http.ResponseWriter, r *http.Request) {
 
 // deleteTenant (DELETE /api/admin/tenants/{slug}) removes an EMPTY tenant. super_admin
 // only, and it is the operation the product was missing entirely: tenants could be
-// created and never removed, so a throwaway one kept its slot — on af.acrt.link two
+// created and never removed, so a throwaway one kept its slot — on the production deployment two
 // left over from the hand-baking era blocked the pool until the golden bake stopped too.
 //
 // ★ It only ever deletes what is already empty (docs/61 §61.18). Every refusal below is

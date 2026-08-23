@@ -742,10 +742,10 @@ sleep 判定は `sweepVolume` の中、すなわち **`af-role=home` のボリ�
 `StopInstances` を撃たない（`quarantineSlot` は故障箱専用、`sweepGhostInstances` は
 **EC2 が既に消えた** container instance を deregister するだけ）。
 
-⚠️ **実デプロイで踏んだ**（lazmix・2026-08-23）: **タスク 0 の `m*.large` が 3 台、24 時間以上
+⚠️ **実デプロイで踏んだ**（開発配備・2026-08-23）: **タスク 0 の `m*.large` が 3 台、24 時間以上
 running のまま**。24 時間分のログに `sleep` の記録は **1 件も無い**。踏む経路は
 (a) 立ち退き (b) サイズ／クラス変更 (c) `Destroy` (d) **golden の seed / probe が終わったとき**。
-lazmix の 3 台は (c)(d) の残骸で、**`Ec2SlotSleepSec` の説明文が「〜$9.6/月」と書いている横で
+開発配備の 3 台は (c)(d) の残骸で、**`Ec2SlotSleepSec` の説明文が「〜$9.6/月」と書いている横で
 1 台あたり 〜$95/月 を焼いていた**。
 
 1. **スロット起点の走査を足す**（`sweepFreeSlots`）。`af-pool` ＋ `af-role=slot` ＋ running の

@@ -161,7 +161,7 @@ describe("EC2 スロットプールの面", () => {
     expect(text()).toContain("snap-golden");
   });
 
-  // 実デプロイ（af.acrt.link）で焼きを止めたのはこれ。歯止めは正しく効いていたのに、
+  // 実デプロイ（本番配備）で焼きを止めたのはこれ。歯止めは正しく効いていたのに、
   // 効いたことが CP ログの 1 行にしか出ていなかった。
   it("スロット不足で焼けないときは、その理由と数を出す", async () => {
     api.mockResolvedValue({ ...baking({ phase: "blocked", slots_in_use: 3 }), max_slots: 4 });

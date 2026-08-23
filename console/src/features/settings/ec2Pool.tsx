@@ -377,7 +377,7 @@ function GoldenBake({ g, st, showArch }: { g: Golden; st: PoolStatus; showArch: 
       ) : phase === "off" ? (
         <p className="muted">{tr("pool.bake_off")}</p>
       ) : phase === "blocked" ? (
-        // 実デプロイ（af.acrt.link）で焼きを止めたのはこれ。歯止めは正しく効いていた
+        // 実デプロイ（本番配備）で焼きを止めたのはこれ。歯止めは正しく効いていた
         // のに、効いたことがログの 1 行にしか出ていなかった。
         <p className="warn-text">
           {tr("pool.bake_blocked", { used: String(g.slots_in_use ?? 0), max: String(st.max_slots ?? 0) })}

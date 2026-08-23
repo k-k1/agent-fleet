@@ -301,7 +301,7 @@ func (e *ecsRuntime) Endpoint() string {
 // caller that treats "running" as "one Agent process, reachable" would otherwise
 // land on whichever task happens to answer — fatal for anything that stashes
 // per-request state in the Agent's memory (OAuth flow_id, PTY login flows: docs
-// investigation 2026-08-19, af.lazmix.jp — a task swap 8s into a Claude Code OAuth
+// investigation 2026-08-19, the dev deployment — a task swap 8s into a Claude Code OAuth
 // flow silently dropped it).
 func (e *ecsRuntime) State(ctx context.Context) string {
 	s, ok, err := e.describeService(ctx)
