@@ -1,0 +1,148 @@
+# Bake a DEV image to GHCR under a tag you name, for real-machine verification.
+#
+# ## Why this exists
+#
+# Every "does it actually work on the real thing" round (docs/64 §64.20, docs/70 §70.14,
+# docs/72 §72.6) needs an image that is not a release. Until now that meant renting an
+# EC2 box and running `docker build` on it by hand, because the workspace image cannot
+# be cross-compiled — it installs per-architecture binaries.
+#
+# ⚠️ The CONTROL PLANE image has no such excuse: it cross-compiles (docs/72 §72.3), so a
+# two-architecture CP index costs 166 seconds on an ordinary x86 runner (measured). Renting
+# a Graviton box to produce it would contradict the very design that makes it cheap.
+#
+# ## What this is NOT
+#
+# Not a release. It never touches the dist repo, never creates a GitHub Release, and never
+# runs the forbidden-token gate — which is exactly why it must not be allowed near a
+# release tag. The tag pattern below is the enforcement: a bare semver is refused.
+#
+#   publish a release        -> publish-dist.yml
+#   time a build             -> arm64-image-time.yml
+#   bake something to try    -> here
+name: dev-image
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag. MUST contain "-dev" (e.g. 0.10.2-dev-abc1234) — a bare semver is refused so a release tag can never be overwritten from here.'
+        required: true
+      image:
+        description: 'Which image to bake'
+        type: choice
+        options: [ control-plane, workspace, both ]
+        default: control-plane
+      platforms:
+        description: 'Architectures'
+        type: choice
+        options: [ 'linux/amd64,linux/arm64', 'linux/amd64', 'linux/arm64' ]
+        default: 'linux/amd64,linux/arm64'
+      bake_agent_clis:
+        description: 'workspace only: bake the agent CLIs into the image (internal, fat) instead of pin-installing them at start'
+        type: boolean
+        default: false
+
+concurrency:
+  group: dev-image-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      REG: ghcr.io/${{ github.repository }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      # ⚠️ The one guard that matters. A released tag is immutable by convention, not by
+      # the registry — pushing over `0.10.0` here would silently replace what users pull,
+      # and the artifact would never have passed scan-forbidden.sh (docs/35 §35.7.5).
+      # docs/70 §70.14 handled this by hand ("リリース済みタグは触らない"); make it a rule.
+      - name: refuse a tag that could be a release
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            *-dev*) ;;
+            *) echo "::error::'$TAG' does not contain '-dev'. Release tags are published by publish-dist.yml and must not be overwritten from here."; exit 1 ;;
+          esac
+          echo "$TAG" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z._-]*$' \
+            || { echo "::error::'$TAG' is not a usable image tag"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - name: set up QEMU (arm64)
+        if: ${{ contains(inputs.platforms, 'arm64') }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Through release.sh, deliberately — the same script publish-dist reaches. A second
+      # buildx invocation written here would drift from the real one, and the first thing
+      # to drift would be the docs staging (docs/.distignore), which is how internal
+      # documents would end up inside an image nobody thought was a distribution.
+      - name: bake
+        env:
+          REGISTRY: ghcr.io/${{ github.repository }}
+          CP_PLATFORMS: ${{ (inputs.image != 'workspace') && inputs.platforms || '' }}
+          WS_PLATFORMS: ${{ (inputs.image != 'control-plane') && inputs.platforms || '' }}
+          BAKE_AGENT_CLIS: ${{ inputs.bake_agent_clis && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          case "${{ inputs.image }}" in
+            control-plane) only=cp ;;
+            workspace)     only=ws ;;
+            *)             only=both ;;
+          esac
+          VERSION="$TAG" DIST_DIR="$RUNNER_TEMP/dist" \
+            deploy/compose/release.sh --push --only "$only"
+
+      # A manifest list is invisible to `docker images`, so the only place that can answer
+      # "did both architectures actually get pushed" is the registry.
+      - name: verify what landed
+        run: |
+          set -euo pipefail
+          want=$(echo "${{ inputs.platforms }}" | tr ',' '\n' | sed 's#linux/##' | sort | tr '\n' ',' | sed 's/,$//')
+          for img in control-plane workspace; do
+            case "${{ inputs.image }}" in
+              control-plane) [ "$img" = control-plane ] || continue ;;
+              workspace)     [ "$img" = workspace ] || continue ;;
+            esac
+            raw=$(docker buildx imagetools inspect --raw "$REG/$img:$TAG")
+            got=$(echo "$raw" | jq -r '[.manifests[]? | select(.platform.os=="linux") | .platform.architecture] | sort | join(",")')
+            echo "$img: ${got:-<single-platform manifest>}"
+            if [ -n "$got" ]; then
+              [ "$got" = "$want" ] || { echo "::error::$img is $got, asked for $want"; exit 1; }
+            elif [ "$want" != amd64 ] && [ "$want" != arm64 ]; then
+              echo "::error::$img came back as a single manifest but two architectures were asked for"; exit 1
+            fi
+          done
+
+      - name: how to use it
+        run: |
+          {
+            echo "## dev image \`$TAG\`"
+            echo ""
+            echo "Copy it into a deployment's ECR **index and all** (\`docker pull\`+\`push\` would"
+            echo "flatten it to one architecture), then move that deployment's \`ImageTag\`:"
+            echo ""
+            echo '```'
+            echo "crane copy $REG/control-plane:$TAG <acct>.dkr.ecr.<region>.amazonaws.com/af-control-plane:$TAG"
+            echo "# ImageTag is shared by both images (ADR 0045 決定 8) — the workspace side must"
+            echo "# exist at the same tag. Re-tagging the one already deployed is free:"
+            echo "crane copy <acct>.dkr.ecr.<region>.amazonaws.com/af-workspace:<current> \\"
+            echo "           <acct>.dkr.ecr.<region>.amazonaws.com/af-workspace:$TAG"
+            echo "VERSION=$TAG deploy/aws/ecs/update.sh --profile <p> --region <r>"
+            echo '```'
+            echo ""
+            echo "⚠️ This image did NOT pass the forbidden-token gate. Do not hand it to a user."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -208,10 +208,33 @@ pull エラーのログすら出ない（[70](70-slot-instance-classes.md) §70.
 ⚠️ **<prod-deployment> は触らない**（実ユーザーの Workspace が動いている。`ImageTag` を変えると
 その人に要再起動バッジが出る）。
 
-手順は [70](70-slot-instance-classes.md) §70.14 の実績どおり: イメージを焼く →
-`crane index append` → `ImageTag` 差し替え（`update-stack --use-previous-template` で
-**`ImageTag` だけ**上書き・他は `UsePreviousValue=true`・`--capabilities CAPABILITY_NAMED_IAM`）
-→ CP ログで `control-plane <tag>` を確認。
+### 72.6.1 焼き方を EC2 から CI に移した（`dev-image.yml`）
+
+[70](70-slot-instance-classes.md) §70.14 は dev イメージを**実 EC2 で手で焼いていた**。
+workspace はそうするしかない（アーキ毎のバイナリを入れるのでクロスできない）が、
+**CP にその言い訳は無い**——§72.5.1 のとおり普通の x86 ランナーで 166 秒である。
+**その CP のために Graviton を借りるのは、安く済ませている設計そのものと矛盾する。**
+
+そこで `dev-image.yml` を足した。GHCR の**自分で決めたタグ**へ 2 アーキで押すだけの
+ワークフローで、リリースではない（dist repo にも Release にも触らない）。
+
+⚠️ **だから forbidden-token ゲートを通っていない。** 通っていないものがリリースタグに
+乗ることだけは防ぐ必要があるので、**タグに `-dev` が含まれないと拒否する**
+（[70](70-slot-instance-classes.md) §70.14 の「リリース済みタグは触らない」を手の規律から
+仕掛けに変えたもの）。
+
+⚠️ **焼くのは `release.sh` 経由**にした。ここに 2 本目の `buildx` を書くと本番経路から
+ドリフトし、**最初にドリフトするのは docs のステージング**（`docs/.distignore`）である
+——それは「配布物だと誰も思っていないイメージの中に内部文書が入る」形になる。
+1 枚だけ焼きたいときのために `release.sh` に `--only cp|ws|both` を足した
+（workspace 側を焼き直すと QEMU で 12 分払うことになる）。
+
+### 72.6.2 手順
+
+イメージを焼く（`dev-image.yml`）→ `crane copy` で ECR へ**インデックスごと**
+（⚠️ `docker pull`＋`push` は 1 アーキに潰れる）→ **`ImageTag` は CP と workspace で
+共有**なので workspace 側も同じタグに置く（ECR 内の `crane copy` は実体を複製しないので
+ただの再タグ）→ `ImageTag` と `CpArch` を差し替え → CP ログで `control-plane <tag>` を確認。
 
 **arm64 に切り替えたら確かめること**:
 
