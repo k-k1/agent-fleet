@@ -76,6 +76,18 @@ describe("keyboard command registry invariants", () => {
     expect(clashes).toEqual([]);
   });
 
+  it("keeps direct keys off the chords the browser/OS owns (we'd never receive them)", () => {
+    // Alt is our accelerator namespace, but a handful of Alt chords never reach the page:
+    // Alt+D = address bar and Alt+E/F = the Chrome menu (Firefox's menu mnemonics add
+    // E/F/V/S/B/T/H on Windows/Linux), Alt+←/→/Home = browser history navigation.
+    // Anything listed here would look bound in the cheat-sheet and silently do nothing.
+    const reserved = ["alt+d", "alt+e", "alt+f", "alt+arrowleft", "alt+arrowright", "alt+home"].map(canonical);
+    const clashes = ALL_COMMANDS.flatMap((c) => c.keys ?? [])
+      .map(canonical)
+      .filter((k) => reserved.includes(k));
+    expect(clashes).toEqual([]);
+  });
+
   it("keeps group ids and single-key sequences disjoint (a key can't be both a group and an action)", () => {
     const groupIds = new Set(GROUPS.map((g) => g.id));
     const singleKeySeqs = ALL_COMMANDS.map((c) => c.seq).filter((s): s is string => !!s && !s.includes(" "));
