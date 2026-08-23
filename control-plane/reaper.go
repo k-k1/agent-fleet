@@ -355,25 +355,16 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 		// Agent unreachable (starting/unhealthy) — leave it be this pass.
 		return
 	}
-	// busy = any session working/question => workspace is active.
-	//
-	// "blocked" (claude の利用上限メニュー、または codex managed の usageLimitExceeded) は
-	// 意図的に除外する。question と違い、これは「すぐ答えが返ってくる対話」ではなく人が気づくまで
-	// 何日でも続きうる停止で、それでコンテナを起こし続けるのが元のバグの実害そのものだった
-	// （進行中 に貼り付いた1セッションが busy を立て続け、tier1・tier2 とも効かないまま
-	// 約16時間コンテナが占有された — 2026-07-31 実測）。ターンは既に終わっているので、
-	// ここで tier2 に停止させても失われる作業は無く、セッションは resumable のまま残る。
+	// busy = この Workspace を起こし続ける理由があるか。判定は sessionActivity
+	// （session_activity.go）に集約してある — 状態がどちらに属するかを reaper の中の
+	// インライン式で決めていた頃は、状態が増えるたび 2 箇所を手で合わせる必要があり、
+	// 実際 blocked / limited / spend_limit で 2 回ドリフトした。
 	busy := false
 	for _, s := range sessions {
-		if s.Alive && (s.State == "working" || s.State == "question") {
+		if holdsWorkspace(s) {
 			busy = true
 		}
-		// "limited"（利用上限のリセット待ち・docs/47 §4-9）と "spend_limit"（支出・残高の
-		// 上限・§4-10）は tier1 では idle と同じに扱う。ターンは終わっていて、前者の待ち
-		// 合わせは CP の定時実行が持っている（wake_policy=wake で起こしてから届く）ので、
-		// ここで畳んでも失われる作業は無い — むしろ数時間から数日の待ちでコンテナを起こし
-		// 続けるのが上限まわりの元の実害そのものだった。後者は増枠されるまで動きようがない。
-		if !sessOn || !s.Alive || s.Kind != "claude" || !reapableIdle(s.State) {
+		if !sessOn || s.Kind != "claude" || !tier1Reapable(s) {
 			continue
 		}
 		key := ws.ID + "|" + s.Name
@@ -486,7 +477,7 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, w
 		return
 	}
 	for _, s := range sessions {
-		if s.Alive && (s.State == "working" || s.State == "question") {
+		if holdsWorkspace(s) {
 			return
 		}
 	}
@@ -638,11 +629,6 @@ func (rp *reaper) homeIdleFor(wsID, dbLastActive string, hibTO time.Duration) bo
 	return time.Since(last) >= hibTO
 }
 
-// reapableIdle reports whether a session's live state means "the turn is over and
-// nothing is going to move on its own" — the tier1 idle sweep's population. idle plus
-// the two usage-limit waits (docs/47 §4-9 / §4-10), which are idle in every way that
-// matters here: the pane is at its prompt, the container is only being held open by a
-// clock (or by a billing decision) that does not need this workspace running.
-func reapableIdle(state string) bool {
-	return state == "idle" || state == "limited" || state == "spend_limit"
-}
+// tier1 / tier2 が見る述語は session_activity.go（sessionActivity / holdsWorkspace /
+// tier1Reapable）に移した。ここに reapableIdle があった頃の集合は tier1Reapable が
+// そのまま引き継いでいる。
