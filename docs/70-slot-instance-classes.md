@@ -1160,7 +1160,11 @@ AGY_CLI_DISABLE_AUTO_UPDATE=true  → auto_updater.go:218] Auto-update disabled 
   `--type m8g.xlarge`（4）に落として通した（build 123s と、2xlarge の 118s とほぼ変わらない）。
 - ⚠️ **`ImageTag` が同じなら再起動しても task def の revision は変わらない**
   （`taskDefFingerprint` が一致して再利用される）。「rev が変わるまで待つ」という
-  監視は永遠に終わらない。見るべきは `runningCount` の 1→0→1 である。
+  監視は永遠に終わらない。見るべきは `runningCount` の遷移である。
+  🔴 **その遷移を 1→0→1 と書いたのは誤りで、正しくは 1→2→1**（[72](72-cp-arch-and-availability.md)
+  §72.7.2 でサービスイベントを実測）。`minimumHealthyPercent=100` なので ECS は古いタスクを
+  止める**前に**新しいタスクを起こし、**新旧が約 51 秒重なる**——デプロイが無停止なのは
+  この重なりのおかげである。1→0→1 を前提にすると「一瞬落ちる」と誤って設計する。
 
 ## 70.15 フェーズ
 
