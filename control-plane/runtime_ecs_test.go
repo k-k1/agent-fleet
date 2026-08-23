@@ -419,7 +419,7 @@ func TestECSState(t *testing.T) {
 		// Connect load-balances across both until that settles, so this must NOT
 		// read as "running" — a caller that stashes per-request state in the Agent
 		// process (an OAuth flow_id) can land on either task and lose it (2026-08-19,
-		// af.lazmix.jp incident).
+		// the dev deployment incident).
 		{"running task but old deployment still draining", &ecstypes.Service{
 			Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1,
 			Deployments: []ecstypes.Deployment{

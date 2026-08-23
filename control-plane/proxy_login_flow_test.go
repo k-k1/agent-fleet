@@ -13,7 +13,7 @@ import (
 // opencode/codex/github start-poll-complete) on the workspace being fully rolled
 // out: their state (OAuth flow_id, device code, PTY login session) lives only in
 // the Workspace Agent process's memory, so a wake-triggered task swap mid-flow
-// silently drops it (docs investigation 2026-08-19, af.lazmix.jp).
+// silently drops it (docs investigation 2026-08-19, the dev deployment).
 func doCPRestLoginFlow(proxy agentProxyAPI, res *resolved, method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	rec := httptest.NewRecorder()

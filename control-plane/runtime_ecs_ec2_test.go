@@ -794,7 +794,7 @@ func TestECSEC2StartOnHotSlotIsSynchronous(t *testing.T) {
 // definition or force a new deployment — that pair is what retires the running
 // task and starts a fresh one, and the ~1-2 minutes Service Connect spends routing
 // to both is what silently dropped an in-flight Claude Code OAuth flow_id
-// (confirmed 2026-08-19 on af.lazmix.jp). A no-op Stop→Start on one slot is the
+// (confirmed 2026-08-19 on the dev deployment). A no-op Stop→Start on one slot is the
 // common case (every idle-timeout return), so it must take the cheap path.
 func TestECSEC2ReWakingTheSameSlotReusesTheTaskDefinition(t *testing.T) {
 	ctx := context.Background()
@@ -3063,7 +3063,7 @@ func TestECSEC2PoolStatusShowsTheBakeInFlight(t *testing.T) {
 
 // "No golden and nothing happening" has three different causes and only one of them
 // fixes itself. All three lived in a CP log line that scrolls away — and the pool being
-// full is the one that actually stopped a bake on a live deployment (af.acrt.link).
+// full is the one that actually stopped a bake on a live deployment (the production deployment).
 func TestECSEC2PoolStatusExplainsWhyNothingIsBaking(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
@@ -3290,7 +3290,7 @@ func (f *fakeEC2) addGoldenArch(id, pool, image, role, arch string, started time
 // the image filter stops discriminating and the tie-break is "newest wins" — a coin
 // toss decided by which bake happened to finish last.
 //
-// Measured on lazmix (docs/70 §70.14.5): baking x86_64 and arm64 together, the x86_64
+// Measured on the dev deployment (docs/70 §70.14.5): baking x86_64 and arm64 together, the x86_64
 // probe was seeded from the arm64 candidate. It did not fail — §70.5's self-heal wipes
 // the wrong-arch bits and re-runs boot-install — which is what makes it worth a test:
 // the golden's entire purpose is thrown away silently, and the probe proves the wrong

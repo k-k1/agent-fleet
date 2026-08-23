@@ -315,11 +315,27 @@ jobs:
 
       - name: shellcheck + syntax
         run: |
-          bash -n deploy/aws/ecs/release-ecr.sh
-          shellcheck deploy/aws/ecs/release-ecr.sh
+          set -euo pipefail
+          for f in deploy/aws/ecs/release-ecr.sh deploy/aws/ecs/update.sh \
+                   deploy/aws/ecs/dev-deploy.sh deploy/aws/ecs/capture-env.sh \
+                   deploy/aws/ecs/standup.sh deploy/aws/ecs/teardown.sh \
+                   deploy/aws/ecs/pause.sh; do
+            bash -n "$f"
+          done
+          # -x so the sourced env.sh is followed rather than warned about.
+          shellcheck -x deploy/aws/ecs/release-ecr.sh deploy/aws/ecs/update.sh \
+            deploy/aws/ecs/dev-deploy.sh deploy/aws/ecs/capture-env.sh \
+            deploy/aws/ecs/standup.sh deploy/aws/ecs/teardown.sh deploy/aws/ecs/pause.sh
 
       - name: release-ecr.sh stub run (call-sequence gate)
         run: deploy/local/release-ecr-stub-test.sh
+
+      # The lifecycle scripts are dangerous in one specific way: what they get wrong is
+      # ORDER (stop the CP last and it recreates what you deleted; delete the stacks
+      # together and CloudFormation cancels one silently). Fake aws/crane, real order
+      # assertions — including "a teardown without --yes writes nothing".
+      - name: standup/teardown/pause stub run (order gate)
+        run: deploy/local/ecs-lifecycle-stub-test.sh
 
   # Gate (i) (P4 — docs/35 §35.7.4): verifies the dist publish set. Lightweight
   # job, no docker: shellcheck + stub run of publish-dist.sh/install.sh (fake gh /

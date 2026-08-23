@@ -563,7 +563,7 @@ func logRequests(next http.Handler) http.Handler {
 // statusWriter captures the response status for the access log.
 //
 // Why it exists: a public deployment is found by vulnerability scanners within hours
-// (measured on af.lazmix.jp — 172 probes for /actuator/heapdump, /.env and friends in
+// (measured on the dev deployment — 172 probes for /actuator/heapdump, /.env and friends in
 // the first 9 hours), and the log could not answer the only question that matters about
 // them: was that a 401 or a 200? Every line looked identical.
 //

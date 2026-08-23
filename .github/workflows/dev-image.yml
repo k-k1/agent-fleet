@@ -22,6 +22,13 @@
 #   bake something to try    -> here
 name: dev-image
 
+# ⚠️ Load-bearing, not decoration. `gh workflow run` does not return a run id, so the
+# only way a caller can find the run it just started is to look one up by name —
+# dev-deploy.sh matches on the tag in here (the tag is unique per dispatch, unlike the
+# branch or the actor). Changing this line breaks that lookup silently: the script
+# waits, finds nothing, and gives up with the bake still running.
+run-name: dev-image ${{ inputs.tag }} (${{ inputs.image }})
+
 permissions:
   contents: read
   packages: write
@@ -132,8 +139,18 @@ jobs:
           {
             echo "## dev image \`$TAG\`"
             echo ""
-            echo "Copy it into a deployment's ECR **index and all** (\`docker pull\`+\`push\` would"
-            echo "flatten it to one architecture), then move that deployment's \`ImageTag\`:"
+            # The digest is what a deployment ends up running; printing it here is how a
+            # human can check afterwards that the ECR copy and the task are this build
+            # and not a same-named one from an earlier dispatch.
+            for img in control-plane workspace; do
+              d=$(docker buildx imagetools inspect "$REG/$img:$TAG" \
+                    --format '{{.Manifest.Digest}}' 2>/dev/null) || true
+              [ -n "${d:-}" ] && echo "- \`$img\` $d"
+            done
+            echo ""
+            echo "**Normally you do not run any of this by hand** — \`deploy/aws/ecs/dev-deploy.sh\`"
+            echo "bakes, copies and deploys in one command (and skips the bake when the tag is"
+            echo "already here). What it does, if you need to do it yourself:"
             echo ""
             echo '```'
             echo "crane copy $REG/control-plane:$TAG <acct>.dkr.ecr.<region>.amazonaws.com/af-control-plane:$TAG"

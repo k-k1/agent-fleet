@@ -434,7 +434,7 @@ RUN mkdir -p /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/do
 # アクセスポイントは PosixUser を付けられず（ensureAccessPoint のコメント参照）
 # Docker が「イメージ側パスの所有権をフレッシュボリュームへコピーする」動作に頼る
 # ため、イメージ側が root 所有のままだと dev（uid 1000）が一切書き込めなくなる
-# （実機 af.lazmix.jp で EACCES: permission denied を確認、2026-08-19）。この
+# （実機（開発配備）で EACCES: permission denied を確認、2026-08-19）。この
 # ロジックが効くのは「そのアクセスポイントの root が初めて中身を持つ瞬間」だけなので、
 # 既存の（既に root 所有で初期化済みの）EFS ディレクトリはイメージを直しても直らない
 # ——実機では `docker exec -u root … chown -R 1000:1000 /var/lib/af/claude` で別途
