@@ -1,11 +1,11 @@
-# Measure what a two-architecture workspace image actually costs on CI (docs/70 §70.9).
+# Measure what a two-architecture image actually costs on CI (docs/70 §70.9, docs/72 §72.3).
 #
 # ## Why this exists as its own workflow
 #
-# publish-dist.yml has had `workspace_arm64` since docs/70 P1, and it has NEVER been
-# run. The reason it stayed off is one unmeasured number: that job emulates arm64 with
-# QEMU on an x86_64 runner, and its timeout is 90 minutes. Nobody knows whether the
-# arm64 half takes four minutes or four hours.
+# publish-dist.yml has had `workspace_arm64` since docs/70 P1, and `control_plane_arm64`
+# since docs/72. Both stayed off for the same reason: one unmeasured number. Those jobs
+# emulate arm64 with QEMU on an x86_64 runner, and the timeout is 90 minutes. Nobody
+# knew whether the arm64 half takes four minutes or four hours.
 #
 # ⚠️ It cannot be measured by simply running publish-dist. That workflow PUBLISHES —
 # GHCR plus a public Release on the dist repo — and a release is not something to
@@ -14,12 +14,20 @@
 #
 # What it deliberately keeps identical to the real path (deploy/compose/release.sh):
 #   - `docker buildx build --platform linux/amd64,linux/arm64 --push --provenance=false`
-#   - the same build args, the same context (workspace/)
+#   - the same build args, the same context and -f
 #   - the same two-architecture assertion publish-dist makes afterwards
 #
 # What it deliberately does NOT do: touch the dist repo, or any tag a user could pull.
 # It pushes to a throwaway `armtime-<run id>` tag so the manifest list is real (buildx
 # cannot --load one) without any released tag ever changing meaning.
+#
+# ## Each measurement gets a FRESH builder
+#
+# Numbers from the same builder are not comparable: the second build reuses the first's
+# layers, and the variants below differ precisely in which stages they re-run. A fresh
+# builder per measurement is also what the real thing gets — publish-dist runs on a
+# clean hosted runner with an empty cache — so this is the honest number, not a
+# pessimistic one.
 name: arm64-image-time
 
 permissions:
@@ -29,8 +37,17 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      target:
+        description: 'Which image to time'
+        type: choice
+        options: [ control-plane, workspace ]
+        default: control-plane
       amd64_baseline:
         description: 'Also time an amd64-only build first, to separate the emulation tax from the build itself'
+        type: boolean
+        default: true
+      naive_counterfactual:
+        description: 'control-plane only: ALSO time the same build with the $BUILDPLATFORM pins stripped, i.e. compiling under QEMU. This is the number the cross-compiling Dockerfile exists to avoid.'
         type: boolean
         default: true
 
@@ -48,75 +65,143 @@ jobs:
     env:
       REG: ghcr.io/${{ github.repository }}
       TAG: armtime-${{ github.run_id }}
+      IMG: ${{ inputs.target }}
     steps:
       - uses: actions/checkout@v4
 
       - name: log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: set up buildx
-        uses: docker/setup-buildx-action@v3
-
-      # The baseline runs BEFORE QEMU is installed and pushes to its own tag, so the
-      # arm64 run below cannot reuse a layer from it. Without that separation the
-      # comparison would flatter arm64 by however much of the amd64 half was cached.
-      - name: time an amd64-only build (baseline)
-        if: ${{ inputs.amd64_baseline }}
-        run: |
-          set -euo pipefail
-          s=$SECONDS
-          docker buildx build --platform linux/amd64 --push \
-            -t "$REG/workspace:$TAG-amd64" \
-            --build-arg VERSION=0.0.0-armtime \
-            --build-arg BAKE_AGENT_CLIS=0 \
-            --provenance=false \
-            workspace
-          echo "AMD64_SEC=$((SECONDS-s))" >> "$GITHUB_ENV"
-
+      # QEMU is installed up front for every variant, including the amd64 baseline. It
+      # costs seconds and it is not what is being measured; installing it between two
+      # timed steps would put its cost inside one of them.
       - name: set up QEMU (arm64)
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
+      - name: set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      # The build command for the chosen image, in one place, so all three variants
+      # below differ ONLY in --platform and in which Dockerfile they read. $1 = builder
+      # name, $2 = platforms, $3 = tag suffix, $4 = optional -f override.
+      - name: write the build helper
+        run: |
+          cat > /tmp/timed-build.sh <<'SH'
+          set -euo pipefail
+          builder="$1"; platforms="$2"; suffix="$3"; dockerfile="${4:-}"
+          # Fresh builder => empty cache => comparable, and the same cold start a real
+          # release gets. Removed afterwards so the next variant cannot inherit it.
+          docker buildx create --name "$builder" --driver docker-container >/dev/null
+          args=( --builder "$builder" --platform "$platforms" --push
+                 -t "$REG/$IMG:$TAG$suffix" --provenance=false
+                 --build-arg "VERSION=0.0.0-armtime" )
+          case "$IMG" in
+            workspace)
+              args+=( --build-arg "BAKE_AGENT_CLIS=0" )
+              ctx=workspace ;;
+            control-plane)
+              args+=( -f "${dockerfile:-control-plane/Dockerfile}" )
+              ctx=. ;;
+          esac
+          s=$SECONDS
+          docker buildx build "${args[@]}" "$ctx"
+          echo $((SECONDS-s))
+          docker buildx rm "$builder" >/dev/null 2>&1 || true
+          SH
+          chmod +x /tmp/timed-build.sh
+
+      - name: time an amd64-only build (baseline)
+        if: ${{ inputs.amd64_baseline }}
+        run: |
+          set -euo pipefail
+          sec=$(bash /tmp/timed-build.sh b-amd64 linux/amd64 -amd64 | tail -1)
+          echo "AMD64_SEC=$sec" >> "$GITHUB_ENV"
+
       # The measurement. Same command publish-dist reaches through release.sh.
       - name: time the two-architecture build
         run: |
           set -euo pipefail
-          s=$SECONDS
-          docker buildx build --platform linux/amd64,linux/arm64 --push \
-            -t "$REG/workspace:$TAG" \
-            --build-arg VERSION=0.0.0-armtime \
-            --build-arg BAKE_AGENT_CLIS=0 \
-            --provenance=false \
-            workspace
-          echo "BOTH_SEC=$((SECONDS-s))" >> "$GITHUB_ENV"
+          sec=$(bash /tmp/timed-build.sh b-both linux/amd64,linux/arm64 "" | tail -1)
+          echo "BOTH_SEC=$sec" >> "$GITHUB_ENV"
+
+      # ⚠️ The counterfactual, and the whole reason the CP Dockerfile looks the way it
+      # does. Stripping `--platform=$BUILDPLATFORM` leaves a Dockerfile that is still
+      # CORRECT — it just runs the Vite build and the Go compiler inside the emulator.
+      # Without this number, "we cross-compile" is a belief. The measured workspace tax
+      # was ~5x, but docs/70 §70.9.2 says in as many words that the ratio holds only
+      # because that image is I/O-bound; the CP is the compile-bound case it warned about.
+      - name: time the same build WITHOUT the cross-compile pins (QEMU compiles)
+        if: ${{ inputs.naive_counterfactual && inputs.target == 'control-plane' }}
+        run: |
+          set -euo pipefail
+          sed -e 's/^FROM --platform=\$BUILDPLATFORM /FROM /' \
+            control-plane/Dockerfile > control-plane/Dockerfile.naive
+          # Fail loudly rather than silently timing the same build twice and reporting
+          # "cross-compiling saved 0 seconds".
+          if diff -q control-plane/Dockerfile control-plane/Dockerfile.naive >/dev/null; then
+            echo "::error::no \$BUILDPLATFORM pins found — this would time the identical build"
+            exit 1
+          fi
+          sec=$(bash /tmp/timed-build.sh b-naive linux/amd64,linux/arm64 -naive control-plane/Dockerfile.naive | tail -1)
+          rm -f control-plane/Dockerfile.naive
+          echo "NAIVE_SEC=$sec" >> "$GITHUB_ENV"
 
       # Same assertion publish-dist makes. A single-platform reply here would mean the
-      # multi-arch path silently produced something a Graviton slot cannot pull.
+      # multi-arch path silently produced something a Graviton box cannot pull.
       - name: verify the index covers both architectures
         run: |
           set -euo pipefail
-          got=$(docker buildx imagetools inspect --raw "$REG/workspace:$TAG" \
+          got=$(docker buildx imagetools inspect --raw "$REG/$IMG:$TAG" \
             | jq -r '[.manifests[]? | select(.platform.os=="linux") | .platform.architecture] | sort | join(",")')
           echo "architectures: ${got:-<single-platform manifest>}"
           [ "$got" = "amd64,arm64" ] || { echo "::error::not a two-architecture index (got '${got:-single}')"; exit 1; }
+
+      # An index that lists arm64 is not the same claim as an arm64 binary that runs.
+      # The cross-compile path is exactly where those two could come apart: a wrong
+      # GOARCH produces a perfectly well-formed index whose arm64 entry holds an amd64
+      # ELF, and nothing above would notice. QEMU is installed, so ask the binary.
+      - name: check the arm64 entry really holds arm64 binaries
+        run: |
+          set -euo pipefail
+          # (a) the image's own userland
+          got=$(docker run --rm --platform linux/arm64 --entrypoint /bin/sh \
+                  "$REG/$IMG:$TAG" -c 'uname -m')
+          echo "uname -m: $got"
+          [ "$got" = aarch64 ] || { echo "::error::the arm64 entry runs as $got"; exit 1; }
+          # (b) the binary this Dockerfile CROSS-COMPILED. ELF e_machine lives at offset
+          # 18 little-endian: 00b7 = AArch64, 003e = x86-64. `file` is not in the slim
+          # base, and `uname` above would still say aarch64 with an amd64 binary inside.
+          if [ "$IMG" = control-plane ]; then
+            m=$(docker run --rm --platform linux/arm64 --entrypoint /bin/sh \
+                  "$REG/$IMG:$TAG" -c \
+                  'od -An -tx1 -j18 -N2 /usr/local/bin/af-cp | tr -d " \n"')
+            echo "af-cp e_machine: $m (b700 = AArch64)"
+            [ "$m" = b700 ] || { echo "::error::af-cp in the arm64 entry is not an AArch64 ELF (e_machine=$m)"; exit 1; }
+          fi
 
       - name: verdict
         run: |
           both="${BOTH_SEC:-0}"
           {
-            echo "## arm64 image build time (docs/70 §70.9)"
+            echo "## $IMG: two-architecture build time (docs/70 §70.9, docs/72 §72.3)"
             echo ""
             echo "| | seconds | minutes |"
             echo "|---|---:|---:|"
             [ -n "${AMD64_SEC:-}" ] && echo "| amd64 only | $AMD64_SEC | $((AMD64_SEC/60)) |"
-            echo "| amd64 + arm64 (QEMU) | $both | $((both/60)) |"
+            echo "| amd64 + arm64 | $both | $((both/60)) |"
+            [ -n "${AMD64_SEC:-}" ] && echo "| arm64 increment | $((both-AMD64_SEC)) | $(((both-AMD64_SEC)/60)) |"
+            if [ -n "${NAIVE_SEC:-}" ]; then
+              echo "| amd64 + arm64, **compiling under QEMU** | $NAIVE_SEC | $((NAIVE_SEC/60)) |"
+              echo "| **saved by cross-compiling** | $((NAIVE_SEC-both)) | $(((NAIVE_SEC-both)/60)) |"
+            fi
             echo ""
             echo "publish-dist's other steps have measured ~10 min end to end, and its"
             echo "timeout is 90 min — so the budget for this step is roughly 80 min."
             if [ "$both" -lt 3600 ]; then
               echo ""
-              echo "✅ **Fits.** \`workspace_arm64: true\` on publish-dist is viable as one job."
+              echo "✅ **Fits.** The arm64 toggle on publish-dist is viable as one job."
             else
               echo ""
               echo "⚠️ **Does not fit comfortably.** Split publish-dist in two"
@@ -133,15 +218,15 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
-          pkg=$(echo "${{ github.repository }}" | cut -d/ -f2)/workspace
+          pkg=$(echo "${{ github.repository }}" | cut -d/ -f2)/$IMG
           enc=$(printf '%s' "$pkg" | jq -sRr @uri)
-          for want in "$TAG" "$TAG-amd64"; do
+          for want in "$TAG" "$TAG-amd64" "$TAG-naive"; do
             id=$(gh api "/user/packages/container/$enc/versions" --paginate \
                   -q ".[] | select(.metadata.container.tags[]? == \"$want\") | .id" 2>/dev/null | head -1) || true
             if [ -n "${id:-}" ]; then
               gh api --method DELETE "/user/packages/container/$enc/versions/$id" && echo "deleted $want"
             else
-              echo "::warning::could not resolve the package version for $want — delete ghcr.io/${{ github.repository }}/workspace:$want by hand"
+              echo "::warning::could not resolve the package version for $want — delete ghcr.io/${{ github.repository }}/$IMG:$want by hand"
             fi
           done
         env:
