@@ -25,6 +25,7 @@ import { useSettings } from "../../lib/settings.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { findScroller, VIEWER_KINDS } from "../../lib/keyScroll.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { hintSuffix } from "../keys/keyHint.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { cx } from "../../ui/cx.ts";
@@ -469,7 +470,10 @@ function PopulatedPane({
                 <button
                   type="button"
                   className="pane-tab-close"
-                  aria-label={tr("ui.close_pane_hint")}
+                  // ペインの × とは文言を分ける（タブの × に Ctrl+クリックの意味は無い）。
+                  // 併記するショートカットは同じ pane.close＝Alt+W。
+                  aria-label={tr("ui.close_tab_hint")}
+                  title={tr("ui.close_tab_hint") + hintSuffix("pane.close")}
                   onClick={(e) => { e.stopPropagation(); closeTab(view.id); }}
                 >
                   ×
@@ -512,6 +516,8 @@ function PopulatedPane({
           <IconButton
             icon="close"
             label={tr("ui.close_pane_hint")}
+            // title だけにショートカットを足す（aria-label は読み上げられるので素のまま）。
+            title={tr("ui.close_pane_hint") + hintSuffix("pane.close")}
             className="pane-close"
             onMouseDown={(e) => e.button === 1 && e.preventDefault()}
             onAuxClick={(e) => {
