@@ -177,7 +177,8 @@ logout・認証フロー・`/usage` 4 バー・RDRAND 非露出）を実機で�
 - **GCP プロジェクト経路の per-user ログイン**手順（`gcloud` 連携要否、env で渡す資格の形。
   TUI セレクタ選択肢 2 の中身は未走行）。
 - ~~イメージ同梱は root 設置か home 設置か~~ → **Track B で root 設置に確定**
-  （`--dir /usr/local/bin`＋`AGY_CLI_DISABLE_AUTO_UPDATE=1` で自己更新封殺）。
+  （`--dir /usr/local/bin`＋`AGY_CLI_DISABLE_AUTO_UPDATE=true` で自己更新封殺。
+  ⚠️ 値は `true` のみ有効 — `1` は無視される。docs/32 §（自己更新）／docs/70 §70.14.9）。
 - Managed 実行方式の可否は `agy` 側の構造化出力（`--output-format` 相当）の将来提供待ち。
 - CP・ブラウザ込みの L2 E2E（`e2e/`）は docker のあるホストで別途（本コンテナは docker 無し）。
 
