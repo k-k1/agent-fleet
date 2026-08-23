@@ -42,13 +42,13 @@
         <mxCell id="extclient" value="外部の Claude Code / Claude Desktop（利用者 PC）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="980" y="40" width="390" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="cpmcp" value="CP /mcp（Streamable HTTP）&lt;br&gt;Bearer PAT・member 4 + admin 6 ツール&lt;br&gt;role は呼び出し時に live 再解決" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+        <mxCell id="cpmcp" value="CP /mcp（Streamable HTTP）&lt;br&gt;Bearer PAT・member / admin ツール&lt;br&gt;role は呼び出し時に live 再解決" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
           <mxGeometry x="830" y="190" width="540" height="90" as="geometry" />
         </mxCell>
         <mxCell id="assistmcp" value="workspace-agent mcp-stdio ── アシスタント面&lt;br&gt;既定 read-only／--write のとき送信・相談などフリート操作も広告&lt;br&gt;（見えるツール集合そのものがゲート）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
           <mxGeometry x="830" y="310" width="540" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="sessmcp" value="workspace-agent mcp-stdio --self-report --chromium-attach&lt;br&gt;── セッション面 ＝ builtin『af』&lt;br&gt;af_report ＋ Chromium Attach View 7 種だけ&lt;br&gt;その他のフリート tool は広告も call も拒否" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
+        <mxCell id="sessmcp" value="workspace-agent mcp-stdio --self-report --chromium-attach&lt;br&gt;［＋ --peer-messaging：利用者設定 ON のときだけ後付け］&lt;br&gt;── セッション面 ＝ builtin『af』&lt;br&gt;af_report 1 ＋ Chromium Attach View 7 ＋ peer messaging 2（設定 ON 時）&lt;br&gt;広告した名前以外は call も拒否" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;" vertex="1" parent="1">
           <mxGeometry x="830" y="440" width="540" height="120" as="geometry" />
         </mxCell>
         <mxCell id="agentrest" value="Workspace Agent REST&lt;br&gt;127.0.0.1 + AGENT_TOKEN（子プロセスへ転送）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">

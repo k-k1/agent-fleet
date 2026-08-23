@@ -28,23 +28,23 @@
         <mxCell id="relay" value="REST / WS / SSE 中継&lt;br&gt;Console dist 静的配信" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="350" y="340" width="300" height="70" as="geometry" />
         </mxCell>
-        <mxCell id="cpmcp" value="/mcp（Streamable HTTP）&lt;br&gt;Bearer PAT・member 4 + admin 6 ツール" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+        <mxCell id="cpmcp" value="/mcp（Streamable HTTP）&lt;br&gt;Bearer PAT・member / admin ツール&lt;br&gt;role は呼び出し時に live 再解決" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="680" y="340" width="350" height="70" as="geometry" />
         </mxCell>
         <mxCell id="store" value="MetadataStore&lt;br&gt;SQLite 既定 / Postgres" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="90" y="440" width="230" height="70" as="geometry" />
         </mxCell>
-        <mxCell id="rta" value="Runtime アダプタ&lt;br&gt;docker ｜ native ｜ ecs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+        <mxCell id="rta" value="Runtime アダプタ（AF_RUNTIME）&lt;br&gt;local=docker ｜ native/wsl ｜ ecs/aws ｜ ecs-ec2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="350" y="440" width="240" height="70" as="geometry" />
         </mxCell>
 
         <mxCell id="agent" value="Workspace Agent（Go・AGENT_ADDR 既定 :7700 loopback）&lt;br&gt;session lifecycle / driver 選択・復旧 / git / fs / 暗号ストア secrets.enc&lt;br&gt;transcript / usage / チャット（headless CLI）/ preview 中継 /proxy/{port}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
           <mxGeometry x="90" y="650" width="940" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="managed" value="managed runtime（Workspace ごとに共有）&lt;br&gt;Codex app-server / opencode serve" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+        <mxCell id="managed" value="managed driver（5 kind・pane を持たない）&lt;br&gt;共有 runtime: Codex app-server / opencode serve&lt;br&gt;ACP 子プロセス: copilot / cursor / kiro" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
           <mxGeometry x="90" y="790" width="300" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="tmux" value="tmux / PTY&lt;br&gt;claude・shell・SSM・&lt;br&gt;CLI を選んだ Codex / opencode ほか" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+        <mxCell id="tmux" value="tmux / PTY&lt;br&gt;claude・agy・shell・SSM・&lt;br&gt;CLI を選んだ codex / opencode ほか" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;" vertex="1" parent="1">
           <mxGeometry x="420" y="790" width="300" height="80" as="geometry" />
         </mxCell>
         <mxCell id="chrome" value="Chromium / CDP&lt;br&gt;（BrowserManager・screencast）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
@@ -88,6 +88,15 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
+        <mxCell id="e_agent_cp" value="Agent → CP の内部ブリッジ（authGate 除外）&lt;br&gt;/internal/git-oauth/bitbucket/refresh（AF_GIT_OAUTH_TOKEN）&lt;br&gt;/internal/docs（AF_DOCS_TOKEN・docs が空のときだけ＝実質 ECS）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;dashed=1;strokeColor=#B85450;fontColor=#B85450;exitX=0;exitY=0.25;entryX=0.05;entryY=0;" edge="1" parent="1" source="agent" target="relay">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="40" y="670" />
+              <mxPoint x="40" y="320" />
+              <mxPoint x="365" y="320" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
         <mxCell id="e_agent_managed" value="driver=managed（構造化 API）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;fontSize=10;exitX=0.16;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="agent" target="managed">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
