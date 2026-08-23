@@ -686,8 +686,18 @@ they survive, and keep billing. The response and the audit entry list what was l
   slot; at the cap the longest-dormant occupant is evicted (a workspace with a running
   task is never touched). So `Ec2MaxSlots` bounds the number of *provisioned* slots, and
   `Ec2SlotSleepSec` bounds how many of them are *running*.
-- **No hot spare is kept.** The first person of the morning wakes a stopped slot (~90s,
-  estimated) or, if the pool has none, pays the full ~135s to build one.
+- **An EMPTY slot sleeps on the same timer.** A slot whose home has been released — by an
+  eviction, a size/class change, a `Destroy`, or the golden bake finishing with its seed
+  and probe — belongs to nobody, and `Ec2SlotSleepSec` stops it too. ⚠️ Before docs/64
+  §64.31 only *occupied* slots were ever stopped, so a released box ran until an operator
+  noticed: measured on a live deployment, three empty `m*.large` up for over 24h with zero
+  tasks, at ~$95/month each.
+- **No hot spare is kept.** The first person of the morning wakes a stopped slot (~110s)
+  or, if the pool has none, pays the full ~135s to build one. Keeping an empty slot *hot*
+  would save that person ~67s (43s vs 110s) for a full instance-hour, every hour; keeping
+  the box at all — stopped, image cache intact — is what buys the 110s instead of 135s,
+  and that is what the pool does. `Ec2SlotSleepSec=0` turns the timer off entirely if a
+  deployment wants the 67 seconds back on every slot.
 - **AZ is destiny.** An EBS volume cannot leave its AZ, so a user is pinned to the AZ
   their home was created in. If no slot can be run there, that user cannot start.
 - **A slot's root volume is shared with whoever had it before.** `/tmp` is a tmpfs
