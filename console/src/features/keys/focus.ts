@@ -39,3 +39,15 @@ export function focusRegion(region: Region): void {
   const root = document.querySelector<HTMLElement>(region === "rail" ? ".app-rail" : ".wsbar");
   root?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)?.focus();
 }
+
+/** Focus (and select) the left rail's quick-filter box — ProjectTree's search input,
+ * which narrows repos and sessions. Deliberately NOT coarsePointer-guarded: unlike
+ * navigation focus, this command exists to type into that box, and a tablet with a
+ * keyboard still reports a coarse pointer. Called on the frame after the rail is
+ * ensured open, so the input exists by then; a no-op if it doesn't. */
+export function focusRailFilter(): void {
+  const input = document.querySelector<HTMLInputElement>(".proj-filter input");
+  if (!input) return;
+  input.focus();
+  input.select();
+}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Layout } from "./types.ts";
-import { paneByOrdinal, neighborPane, cyclePane } from "./nav.ts";
+import type { View } from "./types.ts";
+import { paneByOrdinal, neighborPane, cyclePane, cycleTab } from "./nav.ts";
 
 // Two columns × two rows. paneRows numbers them in reading order:
 //   col0: a(1,r0) b(2,r1) · col1: c(3,r0) d(4,r1)
@@ -66,5 +67,42 @@ describe("cyclePane", () => {
     expect(cyclePane(grid("a"), 1)).toBe("b");
     expect(cyclePane(grid("d"), 1)).toBe("a");
     expect(cyclePane(grid("a"), -1)).toBe("d");
+  });
+});
+
+// Tabs mode: cell "a" owns three tabs, cell "b" one — cycling never leaves the
+// active cell (the pane axis is cyclePane's job).
+const view = (id: string): View => ({ id, session: null, content: { kind: "terminal", chat: false }, wrap: null });
+function tabs(activeId: string, selected: string | null): Layout {
+  return {
+    version: 3,
+    mode: "tabs",
+    cols: [
+      {
+        id: "c0",
+        rowRatio: 0.5,
+        cells: [
+          { id: "a", selectedViewId: selected, views: [view("v1"), view("v2"), view("v3")] },
+          { id: "b", selectedViewId: "v9", views: [view("v9")] },
+        ],
+      },
+    ],
+    colRatios: [1],
+    activeCellId: activeId,
+  };
+}
+
+describe("cycleTab", () => {
+  it("wraps forward and backward inside the active cell", () => {
+    expect(cycleTab(tabs("a", "v1"), 1)).toBe("v2");
+    expect(cycleTab(tabs("a", "v3"), 1)).toBe("v1");
+    expect(cycleTab(tabs("a", "v1"), -1)).toBe("v3");
+  });
+  it("gives up when there is nothing to cycle, so the key falls through to the terminal", () => {
+    expect(cycleTab(tabs("b", "v1"), 1)).toBeUndefined(); // single-tab cell
+    expect(cycleTab(grid("a"), 1)).toBeUndefined(); // split mode: cells hold no tabs
+  });
+  it("starts from the first tab when the cell has no selection", () => {
+    expect(cycleTab(tabs("a", null), 1)).toBe("v2");
   });
 });

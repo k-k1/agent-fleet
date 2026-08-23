@@ -954,6 +954,13 @@ export function getSettings(): Settings {
   return state;
 }
 
+/** ある設定キーの既定値。「既定に戻す」系の操作（キー操作の文字サイズリセット等）が
+ *  DEFAULTS を単一の真実源として読むための細い窓 —— 既定値をコピーして持つと、新規
+ *  ユーザーの初期値と静かにズレる（TTS_RESET も同じ理由で DEFAULTS から作っている）。 */
+export function defaultSetting<K extends keyof Settings>(key: K): Settings[K] {
+  return DEFAULTS[key];
+}
+
 // Debounced mirror of the full settings object to the per-user server store. Best
 // effort: if the workspace is stopped / agent unreachable, localStorage still holds it.
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
