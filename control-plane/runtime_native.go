@@ -246,6 +246,10 @@ func (n *nativeRuntime) State(ctx context.Context) string {
 // own environment carries deployment secrets (AF_MASTER_KEY, oauth secrets, DB
 // URLs) that must never leak into a workspace process that runs arbitrary user
 // sessions.
+// mountsStagedDocs: native ro-binds (or points AGENT_DOCS_DIR at) <dataDir>/docs, so it
+// needs the same per-start staging as docker (runtime.go runtimeDocsMounter).
+func (n *nativeRuntime) mountsStagedDocs() {}
+
 func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
 	if n.State(ctx) == "running" {
 		return nil
@@ -682,6 +686,26 @@ func (n *nativeRuntime) Stop(ctx context.Context) error {
 	// "normal stopped state is none" — same semantics as docker stop + rm.
 	removePidFileIfPID(n.pidFile(), pid)
 	return nil
+}
+
+// Destroy stops the agent process and removes the workspace's data directory (home,
+// pid file, boot phase, the lifecycle lock). Nothing else on the host belongs to this
+// workspace, so there is never a leftover to report.
+//
+// Stop must complete first: the lock file the operation fence uses lives under dataDir,
+// and killing the process after unlinking its home is how you get a half-written home
+// back on the next start.
+func (n *nativeRuntime) Destroy(ctx context.Context) ([]string, error) {
+	if err := n.Stop(ctx); err != nil {
+		return nil, err
+	}
+	if n.dataDir == "" {
+		return nil, nil
+	}
+	if err := os.RemoveAll(n.dataDir); err != nil {
+		return nil, fmt.Errorf("remove data dir %s: %w", n.dataDir, err)
+	}
+	return nil, nil
 }
 
 // readPidFile returns the recorded pid, or 0 when absent/garbled.

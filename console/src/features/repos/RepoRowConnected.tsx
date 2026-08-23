@@ -65,7 +65,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         else openTarget(target);
       }}
       // Right-click → フォルダを開く: expand + select the repo in the Files tree.
-      onOpenFolder={() => useFilesStore.getState().revealInFiles("repos/" + r.name)}
+      onOpenFolder={() => useFilesStore.getState().revealInFiles("repos/" + r.name, { focus: true })}
       onOpenChanges={() => openTarget({ content: { kind: "changes", scmRepo: r.name } })}
       onFF={async () => {
         const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/ff`, "POST", {});
@@ -192,8 +192,8 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
           ? split ? openSessionChatSplit : openSessionChat
           : split ? openSessionTerminalSplit : openSessionTerminal)(res.name);
       }}
-      // 作業を始める: worktree (default) or in-place, with an optional first prompt
-      // auto-sent once the session is alive. Shared with the はじめる hub (useStartWork).
+      // 作業を始める: worktree (default) or in-place, with an optional first prompt the
+      // Agent delivers once the CLI is ready. Shared with the はじめる hub (useStartWork).
       onStartWork={(opts) => startWork({ dir: r.path || "", repo: r.name }, opts)}
       onBranchChanged={() => {
         // A checkout / new branch changed HEAD and the working tree.

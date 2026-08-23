@@ -37,6 +37,32 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
   seed 既定は **新規 WS で Remote Control OFF**＝`remoteControlAtStartup: false`。既存 WS も
   settings.json に `remoteControlAtStartup` キーが無ければ起動時に一度だけ `false` を補って既定 OFF に揃える
   ——ただしユーザーが Console で明示設定した値（キー在り）は上書きせず尊重する。）
+- ⚠️ **claude は自分でセッションを作り直すことがあり、そのとき `--session-id` を落とす**。
+  フルスクリーン TUI への切替（`/tui`・切替ダイアログ）、サインイン後の再起動、モデル切替などで
+  claude は自身を起動し直すが、その再起動 argv は**設定系フラグだけ**から組み直され、`--session-id` と
+  `--name` は構造上そこに入らない（2.1.239 実測: 起動コマンドに両方あったのに、生きているプロセスの argv は
+  `claude.exe --allow-dangerously-skip-permissions --model opus --permission-mode bypassPermissions`）。
+  `--session-id` を失った claude は**ランダムな新 id でまっさらな会話**を始めるので、決定論 sid の jsonl は
+  二度と現れない。決定論 sid しか見ていないと、ミラーは「まだ会話はありません」のまま固まり、hook 由来の
+  status も別 id で書かれて Console からセッションが丸ごと消える（使用量・中断検知・報告リコンサイラも同時に落ちる）。
+  対処は `claude-sid` 台帳（slot sid → claude の実 id、codex/opencode と同じ `agents.SidStore`）で、
+  hook が名乗った id を `AF_SESSION_NAME` を手掛かりに slot へ引き戻して記録する
+  （`internal/agents/claude/sid.go`）。`AF_SESSION_NAME` は tmux セッションの env なので**再起動をまたいで残る**——
+  cwd 一致のような当て推量と違い取り違えようがない、というのがこの手掛かりを選ぶ理由。転写の所在も `--resume` の
+  相手も、以降は台帳を通した `LiveSID()` で決める。
+- **会話 id の持ち方は 2 系統ある**。**捕捉型**（codex は hook、opencode は plugin、agy/kiro は
+  ディスク探索）は CLI 自身が採番した id を**イベントごとに再記録**するので、CLI が別セッションへ
+  移っても次のイベントで追従する（実測でドリフト 0: codex 58/58・opencode 16/16）。**押し付け型**
+  （claude `--session-id`・copilot `--session-id`・cursor `--resume`）は我々が採番した id を渡し、
+  以後それが使われている前提で転写も状態も引く——**CLI がその id を使わなくなった瞬間に静かに壊れる**
+  （上記の claude 実例）。押し付け型に新しい種別を足すときは、必ず取りこぼしの回収経路も一緒に用意すること。
+  claude は hook が session_id を名乗るのでそれを使い、**status hook を持たない copilot/cursor は
+  ディスクから拾い直す**（`internal/agents/imposedsid.go` の `ResolveImposedSID`）。回収は
+  「押し付けた id が CLI 側に**一つも存在しない**とき」に限り、cwd 一致・スロット作成時刻以降・
+  他スロット未取得の候補が**ちょうど 1 つ**のときだけ採用する（曖昧なら動かさない——誤採用で
+  他人の会話を映すのは、固まったままより悪い）。帰属の材料は copilot が
+  `session-state/<sid>/workspace.yaml` の `cwd`/`created_at`、cursor は転写パスに cwd が入っている
+  `projects/<slug>/agent-transcripts/<chatID>/`（作成時刻はそのディレクトリの mtime。追記では動かない——実測）。
 - ⚠️ **tmux の `-t` は前方一致**（exact→prefix→fnmatch）。`claude_foo` が `claude_foo-sh` に一致して
   誤判定・誤 kill しうるため、target 参照は全て `=name` の exact 形式で行うのが本リポジトリの規約。
 - **DB ミラー（B 案）**: CP の `GET /api/sessions` は running 時に Agent から取得して DB を洗い替え、
@@ -210,6 +236,14 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 （封筒暗号の全体像は [07 §7.6](07-security.md)。Agent は暗号 provisioning に無関心）。
 起動時に旧平文資格の自動移行あり。`AF_MASTER_KEY` 未設定の dev では平文 `secrets.json`（同一経路）。
 
+★ **ここに置かない物が 1 つある: git プロバイダの OAuth アプリの client_secret**
+（[71](../71-tenant-git-oauth.md) §71.8）。テナントの資格情報なので、全メンバーの
+`secrets.enc` に複製されるのを避けて CP に残す。Bitbucket の refresh は Agent が
+`POST /internal/git-oauth/bitbucket/refresh` を呼んで代行させる（本人の refresh token は
+ここに残る）。★ ブリッジの座標（`AF_CP_BASE_URL` + `AF_GIT_OAUTH_TOKEN`）は起動時に
+`secrets.Data.GitOAuthBridge` へ写す——cred helper は git が起動する**別プロセス**で、
+その環境変数は保証できない（内部 git トークンが同じ理由で同じ扱い）。
+
 ## 4.9 Workspace イメージと entrypoint
 
 `workspace/Dockerfile`（multi-stage golang→node:22-slim。サイズは BAKE ノブで大きく変わる）。
@@ -268,8 +302,23 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   member のコンテナは内部 docs をディスク上に一切持たない（＝ provisioning 時点でロール分離）。
   露出範囲: `member`→`guide/member` と `dev/`、`tenant_admin`→`guide/` と `dev/`、
   `super_admin`→全 docs。decision / history などの非公開資料は super_admin に限る。毎起動で
-  再ステージ（ロール変更が次回起動で反映・イメージ版に追従）。ECS アダプタは未配線
-  （`<dataDir>` が EFS AP でホスト経路が異なるため。未配線でも起動は壊れず docs 無しになるだけ）。
+  再ステージ（ロール変更が次回起動で反映・イメージ版に追従）。
+  - **ECS は「マウント」ではなく「取得」**（旧: 未配線）。Fargate / EC2 のタスクには CP が
+    書けるホスト経路が無く、`<dataDir>` は EFS AP なので bind-mount の継ぎ目が存在しない。
+    その結果 ECS の Workspace は docs ディレクトリが**空のまま**で、Console の「利用ガイド」が
+    何も開かず、コンテナ内エージェントも環境仕様を引く先を失っていた。そこで CP に
+    `GET /internal/docs`（`control-plane/docs_bridge.go`・per-membership の `AF_DOCS_TOKEN`）を
+    置き、**同じ `roleDocsRoots` で切った同じ部分集合**を tar.gz で配る。Agent は起動時に
+    `docs_sync.go` が取得して `/usr/local/share/agent-fleet/docs` へ展開する。
+    - **マウントが常に勝つ**: docs ディレクトリが空でないときは取得しない（docker / native は
+      read-only マウント。native rootfs では `/` が read-only なので書けもしない）。
+    - ロール分離は変わらず **CP 側**（トークン→メンバーシップ→**その場で引く**ロール）。要求側は
+      範囲を選べないので、member が decision / history を引くことはできない。
+    - アーカイブは信用しない: 通常ファイルのみ・絶対パス/`..` を拒否・件数と総バイト数に上限。
+      展開はステージングへ行い、gzip の末尾まで読めた場合だけ本番へ rename する（切れた
+      ダウンロードが「途中まで入った docs」として公開されない）。
+    - このため workspace イメージは docs マウント点だけ `chown 1000:1000` してある
+      （docker / native ではその上にマウントが被るので無関係）。
 - claude の自己更新は `~/.local` 側のみ・焼き込み版は固定。壊れた symlink（旧 home パス）は
   entrypoint が検出して repair。
 - 反映ルール: image / entrypoint に触れたら **image 再ビルド + 利用者の Stop→Start**（[10](10-development.md)）。

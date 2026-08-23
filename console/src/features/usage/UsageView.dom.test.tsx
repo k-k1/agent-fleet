@@ -1,0 +1,125 @@
+// 使用量ビューの「鮮度」まわり。押さえるのは数字の中身ではなく、**古い数字を最新の顔で
+// 見せないこと** の 2 点:
+//   ① セッション本体の折り込み（fold-on-read）は非同期なので、走っている間の応答は直近
+//      ターンを含まない。サーバが folding を立てて返している間は、こちらが自動で取り直す。
+//      これが無いと「再取得を何度か押すまで最新にならない」画面になる（実際の苦情）。
+//   ② 明示的な再取得は fold=force を送る。送らないと 60 秒スロットルに当たり、押した
+//      時点で終わっているターンが最大1分ぶん入ってこない＝押しても何も変わらない。
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import type { UsageQuery, UsageSeries } from "./api.ts";
+
+const fetchUsageSeries = vi.fn();
+vi.mock("./api.ts", () => ({
+  fetchUsageSeries: (q: UsageQuery, s?: AbortSignal) => fetchUsageSeries(q, s),
+  // rtk 効果カードは別系（この面の鮮度とは無関係）。不在扱いで黙って隠させる。
+  fetchRtkGain: () => Promise.resolve({ available: false }),
+}));
+vi.mock("../../core/api/client.ts", () => ({
+  errText: (e: { message?: string }) => e?.message || "",
+  isTransientErr: () => false,
+}));
+vi.mock("../../core/store/workspace.ts", () => ({
+  useWorkspaceStore: (sel: (s: unknown) => unknown) => sel({ state: "running", start: () => {} }),
+  wsStartBusy: () => false,
+}));
+
+const { UsageView } = await import("./UsageView.tsx");
+
+const series = (spend: number, folding: boolean): UsageSeries => ({
+  from: "2026-08-18T00:00:00Z",
+  to: "2026-08-19T00:00:00Z",
+  bucket: "day",
+  by: "feature",
+  buckets: [
+    {
+      t: "2026-08-18T00:00:00Z",
+      series: { session: { spend, in: spend, out: 0, cread: 0, ccreate: 0, calls: 1 } },
+    },
+  ],
+  totals: { spend, in: spend, out: 0, cread: 0, ccreate: 0, calls: 1 },
+  coverage: {},
+  unmeasured_calls: 0,
+  folding,
+});
+
+let root: Root | null = null;
+let host: HTMLDivElement | null = null;
+
+const mount = async () => {
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(<UsageView />);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+};
+
+const folding = () => !!host?.querySelector(".uc-folding");
+const queries = (): UsageQuery[] => fetchUsageSeries.mock.calls.map((c) => c[0] as UsageQuery);
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  act(() => root?.unmount());
+  host?.remove();
+  root = null;
+  host = null;
+  fetchUsageSeries.mockReset();
+  vi.useRealTimers();
+});
+
+describe("UsageView の鮮度", () => {
+  it("折り込み中の応答は自動で取り直し、終わったら止める", async () => {
+    // 1巡目 = 折り込み走行中（古い数字）、2巡目以降 = 折り込み済み。
+    fetchUsageSeries.mockImplementation(() => Promise.resolve(series(100, true)));
+    await mount();
+    const first = fetchUsageSeries.mock.calls.length;
+    expect(first).toBe(3); // 1画面で3本（時系列 / 機能×モデル / エージェント×モデル）
+    expect(folding()).toBe(true);
+
+    fetchUsageSeries.mockImplementation(() => Promise.resolve(series(900, false)));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    expect(fetchUsageSeries.mock.calls.length).toBe(first + 3);
+    expect(folding()).toBe(false);
+
+    // 折り込みが落ちた後は取り直さない（ポーリングに化けさせない）。
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(fetchUsageSeries.mock.calls.length).toBe(first + 3);
+  });
+
+  it("自動の取り直しには fold=force を付けない", async () => {
+    fetchUsageSeries.mockImplementation(() => Promise.resolve(series(100, true)));
+    await mount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    // 付けると折り込みが終わるたびに次を起動して、永久に走り続ける。
+    expect(queries().some((q) => q.fold)).toBe(false);
+  });
+
+  it("明示的な再取得は fold=force を送る", async () => {
+    fetchUsageSeries.mockImplementation(() => Promise.resolve(series(100, false)));
+    await mount();
+    expect(queries().some((q) => q.fold)).toBe(false);
+
+    const btn = host!.querySelector<HTMLButtonElement>(".uc-reload")!;
+    await act(async () => {
+      btn.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(queries().filter((q) => q.fold === "force").length).toBe(3);
+  });
+});

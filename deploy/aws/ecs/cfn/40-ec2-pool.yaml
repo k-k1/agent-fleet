@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  agent-fleet ECS adapter — EC2 slot pool for AF_RUNTIME=ecs-ec2 (docs/64 §64.12 /
+  §64.15, ADR 0045 決定 10). Owns what a SLOT is: the launch template (ECS-optimized
+  AMI, the cluster-join user-data, the af-mount/af-umount helpers), the instance role
+  and the slot security group. It creates NO instances — the Control Plane runs them
+  on demand and tags them af-pool/af-role=slot, exactly as it creates services and
+  access points at runtime. Optional: deploy this only for the ecs-ec2 profile.
+
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: af-ecs-network
+    Description: Name of the 00-network stack (VPC + private subnets).
+  PlatformStackName:
+    Type: String
+    Default: af-ecs-platform
+    Description: Name of the 20-platform stack (ECS cluster).
+  SlotAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
+    Description: ECS-optimized AMI. Resolved at stack update, so re-deploying this
+      stack is how slots get patched (the one operational cost the EC2 launch type
+      really does add — ADR 0045 決定 7).
+  SlotAmiIdArm64:
+    Type: String
+    Default: ""
+    Description: >-
+      arm64 ECS-optimized AMI, for slot classes that declare arch=arm64 (docs/70
+      §70.8). Leave EMPTY unless AF_ECS_EC2_SLOT_TYPES actually declares an arm64
+      class — the Control Plane refuses to start when one is declared and this is
+      not set, which is deliberate: a class that appears in the admin UI and cannot
+      launch is worse than a deployment that says so at boot.
+
+      To turn it on, set this to the SSM value
+      /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id
+      (`aws ssm get-parameter --name … --query Parameter.Value --output text`).
+      A plain String rather than an SSM::Parameter::Value type because that type
+      cannot be left empty, and empty is the default this has to have.
+
+      ⚠️ There is NO second launch template. Everything about a slot except the AMI —
+      instance profile, security group, root volume, and the user-data that joins the
+      cluster and installs af-mount/af-umount — is architecture-neutral, so the CP
+      passes this as a RunInstances ImageId override on the one template below.
+      Patching it is still "redeploy this stack" (ADR 0045 決定 7).
+  SlotRootVolumeGiB:
+    Type: Number
+    Default: 100
+    MinValue: 40
+    Description: Root volume of a slot. This is the IMAGE CACHE (a warm pull is 0.045s
+      vs 32s cold) plus every container's write layer, and it is SHARED with whoever
+      had the slot before — /tmp is a tmpfs precisely so it does not land here.
+  TaskCleanupWait:
+    Type: String
+    Default: 5m
+    Description: ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION. The agent README's default is
+      3h, which would hand the next user a slot still holding the previous user's
+      stopped containers (ADR 0045 決定 8 の代償 1). Keep it short.
+
+Conditions:
+  HasArm64Ami: !Not [ !Equals [ !Ref SlotAmiIdArm64, "" ] ]
+
+Resources:
+  # --- IAM: what a slot may do. ECS join + SSM (the CP mounts/unmounts volumes over
+  # SSM SendCommand) + ECR pull + logs. Nothing else: the slot is a rented box, not a
+  # trusted component. ---
+  SlotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-slot"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  SlotInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [ !Ref SlotRole ]
+
+  # --- SG for the instance itself. No ingress at all: the workspace task has its own
+  # ENI and the ws SG (awsvpc), so nothing needs to reach the host. Egress covers the
+  # image pull, SSM and the agent's control channel. ---
+  SlotSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: agent-fleet EC2 slot (no ingress; egress for ECR/SSM/agent)
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      SecurityGroupEgress:
+        - { IpProtocol: -1, CidrIp: 0.0.0.0/0, Description: outbound only }
+      Tags:
+        - { Key: Name, Value: !Sub "af-${AWS::StackName}-slot" }
+
+  SlotLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "af-${AWS::StackName}-slot"
+      LaunchTemplateData:
+        ImageId: !Ref SlotAmiId
+        IamInstanceProfile: { Arn: !GetAtt SlotInstanceProfile.Arn }
+        SecurityGroupIds: [ !Ref SlotSg ]
+        # Private subnets + NAT only. A slot must never depend on an auto-assigned
+        # public IPv4: a task ENI that survives a stop makes the instance multi-ENI and
+        # the address silently stops being assigned — measured as 11 minutes of a
+        # disconnected agent (ADR 0045 決定 3-3).
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 2
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: !Ref SlotRootVolumeGiB
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - { Key: af-managed-by, Value: agent-fleet }
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              # agent-fleet slot bootstrap. A slot is generic: it joins the cluster and
+              # installs the two helpers the CP drives over SSM. It deliberately does
+              # NOT touch any data volume and writes NO fstab entry — whose home is on
+              # this box changes several times a day, and a stale fstab would make a
+              # slot fail to boot for the NEXT user.
+              exec > /var/log/af-userdata.log 2>&1
+              set -x
+              cat >> /etc/ecs/ecs.config <<EOF
+              ECS_CLUSTER=${Cluster}
+              ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION=${Cleanup}
+              ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION_JITTER=1m
+              ECS_IMAGE_CLEANUP_INTERVAL=30m
+              ECS_IMAGE_MINIMUM_CLEANUP_AGE=24h
+              EOF
+              cat > /usr/local/bin/af-mount <<'SH'
+              #!/bin/bash
+              # af-mount <volume-id> <mountpoint> [--mkfs]
+              # Nitro renames the device under /dev, so the volume is found by SERIAL
+              # (the volume id without dashes) rather than by the requested name.
+              set -euo pipefail
+              VID="${!1//-/}"; MP=$2; MKFS=${!3:-}
+              DEV=""
+              for i in $(seq 30); do
+                DEV=$(lsblk -ndo NAME,SERIAL | awk -v v="$VID" '$2==v{print "/dev/"$1}')
+                [ -n "$DEV" ] && break; sleep 1
+              done
+              [ -n "$DEV" ] || { echo "device for $1 not found"; exit 1; }
+              # Only formats a volume that has NO filesystem, which is what makes it safe
+              # for the CP to pass --mkfs on every mount, including retries.
+              if [ "$MKFS" = --mkfs ] && ! blkid "$DEV" >/dev/null 2>&1; then mkfs.xfs -q "$DEV"; fi
+              mkdir -p "$MP"
+              mountpoint -q "$MP" || mount -o nouuid "$DEV" "$MP"
+              mkdir -p "$MP/dev"; chown 1000:1000 "$MP/dev"
+              echo "mounted $DEV ($1) -> $MP"
+              SH
+              cat > /usr/local/bin/af-umount <<'SH'
+              #!/bin/bash
+              # af-umount <mountpoint>. Must succeed before the CP detaches: a forced
+              # detach of a mounted filesystem corrupts it, and this is someone's home.
+              set -euo pipefail
+              MP=$1
+              mountpoint -q "$MP" || { echo "$MP not mounted"; exit 0; }
+              for i in 1 2 3; do
+                umount "$MP" && { echo "umounted $MP"; exit 0; }
+                sleep 2
+              done
+              fuser -km "$MP" || true
+              sleep 2
+              umount "$MP" && echo "umounted $MP (after fuser -k)"
+              SH
+              chmod +x /usr/local/bin/af-mount /usr/local/bin/af-umount
+            - Cluster:
+                Fn::ImportValue: !Sub "${PlatformStackName}-ClusterName"
+              Cleanup: !Ref TaskCleanupWait
+
+Outputs:
+  # Conditional because CloudFormation REFUSES an empty export ("Exported values must
+  # not be empty or whitespace-only") and empty is this parameter's whole point — an
+  # unconditional export made the stack impossible to create at all without an arm64
+  # AMI, rolling back on the very last step (measured on a fresh 0.10.0 deployment).
+  SlotAmiIdArm64:
+    Condition: HasArm64Ami
+    Value: !Ref SlotAmiIdArm64
+    Export: { Name: !Sub "${AWS::StackName}-SlotAmiIdArm64" }
+  SlotLaunchTemplateId:
+    Value: !Ref SlotLaunchTemplate
+    Export: { Name: !Sub "${AWS::StackName}-SlotLaunchTemplateId" }
+  SlotRoleArn:
+    Value: !GetAtt SlotRole.Arn
+    Export: { Name: !Sub "${AWS::StackName}-SlotRoleArn" }
+  SlotSgId:
+    Value: !Ref SlotSg
+    Export: { Name: !Sub "${AWS::StackName}-SlotSgId" }

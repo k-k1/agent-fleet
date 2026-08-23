@@ -18,16 +18,26 @@ import { TranscriptView } from "./TranscriptView.tsx";
 import { groupTurns } from "./model.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import type { Turn } from "./types.ts";
+import { t as tr } from "../../../lib/i18n/index.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-function render(turns: Turn[], caps: TranscriptCaps) {
+type LiveProps = { working?: boolean; autoCollapseWork?: boolean };
+
+function render(turns: Turn[], caps: TranscriptCaps, props: LiveProps = {}) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={caps} />));
+  act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={caps} {...props} />));
   return host;
+}
+
+// 同じ root へ描き直す（React が再マウントせず更新する経路）＝ポーリングで status が
+// 動くたびに実際に起きること。新しい root で描き直すと状態が消えて何も検出できない。
+function rerender(turns: Turn[], caps: TranscriptCaps, props: LiveProps) {
+  act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={caps} {...props} />));
+  return host!;
 }
 
 afterEach(() => {
@@ -44,7 +54,9 @@ const EDIT_TURN: Turn[] = [
     idx: 2,
     ts: "2026-08-13T10:01:00Z",
     parts: [
-      { kind: "tool", tool: "Edit", info: "app.ts", edits: [{ old: "const a = 1", new: "const a = 2" }] },
+      // file は Agent が編集系ツールに必ず載せる座標（docs/68）。ここに無いと
+      // 「このターンが直したファイル」のチップが出ない。
+      { kind: "tool", tool: "Edit", info: "app.ts", file: "src/app.ts", edits: [{ old: "const a = 1", new: "const a = 2" }] },
       { kind: "text", text: "直しました" },
     ],
   },
@@ -67,6 +79,17 @@ describe("TranscriptCaps: 能力が無ければ操作要素を出さない", () 
     const el = render(EDIT_TURN, OWNER);
     expect(el.querySelector(".mt-tool-diff")).not.toBeNull();
     expect(el.querySelector(".mt-fork")).not.toBeNull();
+  });
+
+  it("所有者にはターン末尾に「このターンが直したファイル」のチップが出る（docs/68 P1）", () => {
+    const el = render(EDIT_TURN, OWNER);
+    const chips = el.querySelectorAll(".mtf-chip");
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent).toContain("app.ts");
+  });
+
+  it("受信者にはチップを出さない（共有 DTO はパスを落とすので開く座標が無い）", () => {
+    expect(render(EDIT_TURN, RECIPIENT).querySelector(".mirror-turn-files")).toBeNull();
   });
 
   it("受信者には分岐導線が出ない（叩ける相手のセッションが無い）", () => {
@@ -164,5 +187,127 @@ describe("共有ビューでもミラーと同じ形で畳まれる", () => {
     ];
     const el = render(turns, RECIPIENT);
     expect(el.querySelector("details.mirror-compact")).not.toBeNull();
+  });
+});
+
+// ミラーの working は生きたポーリング値なので、1 ターンの最中でも往復する（claude の Stop
+// フックで一瞬 idle を拾う／operator・定時実行・peer の新しいプロンプトが転写へ届く前に
+// working が立つ）。そのたびに作業過程が展開⇄畳みで入れ替わると、読んでいる最中に本文の
+// 高さが跳ねて位置がズレる。畳み込みは片道・開閉は読者のもの、を固定する。
+describe("作業過程の畳み込みは往復しない", () => {
+  const WORK_TURN: Turn[] = [
+    { role: "user", text: "調べて", idx: 1, ts: "2026-08-22T10:00:00Z" },
+    {
+      role: "assistant",
+      idx: 2,
+      ts: "2026-08-22T10:01:00Z",
+      parts: [
+        { kind: "tool", tool: "Read" },
+        { kind: "tool", tool: "Bash" },
+        { kind: "text", text: "調べ終わりました。原因は設定ミスです。" },
+      ],
+    },
+  ];
+  const workState = (el: HTMLElement) => {
+    const head = el.querySelector<HTMLButtonElement>(".mt-work-head");
+    return head ? (head.getAttribute("aria-expanded") === "true" ? "open" : "closed") : "unfolded";
+  };
+
+  it("完了で畳んだあと status が working へ戻っても開き直さない", () => {
+    // 末尾を追いながら実行中を眺めている：作業過程は畳まずそのまま出ている。
+    const el = render(WORK_TURN, OWNER, { working: true, autoCollapseWork: true });
+    expect(workState(el)).toBe("unfolded");
+    // 完了 → 畳む（末尾追従中なので閉じた要約になる）。
+    expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("closed");
+    // ここで status がまた working を名乗っても、畳んだものは畳んだまま。
+    expect(workState(rerender(WORK_TURN, OWNER, { working: true, autoCollapseWork: true }))).toBe("closed");
+    expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("closed");
+  });
+
+  it("読者が開いた作業過程は、その後の status/追従の変化で閉じない", () => {
+    const el = render(WORK_TURN, OWNER, { working: false, autoCollapseWork: true });
+    expect(workState(el)).toBe("closed");
+    act(() => el.querySelector<HTMLButtonElement>(".mt-work-head")!.click());
+    expect(workState(el)).toBe("open");
+    // 追従が切れた／戻った、実行中に見えた — どれも読者の選択を上書きしない。
+    expect(workState(rerender(WORK_TURN, OWNER, { working: true, autoCollapseWork: false }))).toBe("open");
+    expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("open");
+  });
+
+  it("セッションを持ち替えたら畳み込みは持ち越さない（ミラーは再マウントされない）", () => {
+    const el = render(WORK_TURN, OWNER, { working: false, autoCollapseWork: true });
+    expect(workState(el)).toBe("closed");
+    // 同じ idx を持つ別セッションのターン。React が使い回すと、実行中の作業過程が
+    // 前のセッションの「畳んだ」状態を引き継いで最初から隠れてしまう。
+    const other = rerender(WORK_TURN, { ...OWNER, session: "s2" }, { working: true, autoCollapseWork: true });
+    expect(workState(other)).toBe("unfolded");
+  });
+
+  it("上へスクロールして読んでいる最中に完了したターンは開いたまま畳まれる", () => {
+    // autoCollapseWork=false ＝末尾から離れて読んでいる。要約行は出すが中身は閉じない。
+    const el = render(WORK_TURN, OWNER, { working: true, autoCollapseWork: false });
+    expect(workState(el)).toBe("unfolded");
+    expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: false }))).toBe("open");
+    // 途中で末尾へ戻っても、いま読んでいるものを閉じにはいかない。
+    expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("open");
+  });
+});
+
+describe("peer 着信の見え方（docs/58 §58.14）", () => {
+  const peerTurn = (text: string): Turn[] => [{ role: "user", text, idx: 1, source: "peer" }];
+
+  it("送信元と種別の2つのチップが出る", () => {
+    const el = render(
+      peerTurn("[agent-fleet:peer from=build-api intent=request reply=only-if-blocked] 直して"),
+      RECIPIENT,
+    );
+    expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
+    const kind = el.querySelector(".mt-peer-kind");
+    // 文言はロケール依存なので、訳が引けている（キーが素通しされていない）ことを見る。
+    expect(kind?.textContent?.trim()).toBeTruthy();
+    expect(kind?.textContent).not.toContain("mirror.peer_intent");
+  });
+
+  it("種別の無い旧い封筒でも送信元バッジは出る（チップだけ消える）", () => {
+    const el = render(peerTurn("[agent-fleet:peer from=build-api] 直して"), RECIPIENT);
+    expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
+    expect(el.querySelector(".mt-peer-kind")).toBeNull();
+  });
+});
+
+// claude は AskUserQuestion / ExitPlanMode の tool_use を「訊いた時点」で転写に書く。
+// 「転写に出ている＝決着済み」は成り立たないので、決着のバッジは tool_result が来て
+// 初めて出す（これを決め打ちで出していたため、承認待ちのプランが「決定済み」を名乗った）。
+describe("決着していない質問/プランは決定済みを名乗らない", () => {
+  it("回答の無い質問カードに「回答済み」を出さない", () => {
+    const turns: Turn[] = [
+      {
+        role: "assistant",
+        idx: 1,
+        parts: [
+          {
+            kind: "question",
+            questions: [{ header: "方式", question: "どれにしますか？", options: [{ label: "案A" }, { label: "案B" }] }],
+          },
+        ],
+      },
+    ];
+    const el = render(turns, RECIPIENT);
+    expect(el.querySelector(".mt-question")).not.toBeNull(); // 問い自体は見える
+    expect(el.querySelector(".mq-done")).toBeNull();
+  });
+
+  it("tool_result の無いプランカードに「決定済み」を出さない", () => {
+    const turns: Turn[] = [{ role: "assistant", idx: 1, parts: [{ kind: "plan", plan: "# 移行計画\n\n棚卸しする" }] }];
+    const el = render(turns, RECIPIENT);
+    expect(el.querySelector(".mt-plan")).not.toBeNull();
+    expect(el.querySelector(".mt-plan-badge")).toBeNull();
+    expect(el.querySelector(".mt-plan.decided")).toBeNull();
+  });
+
+  it("却下の楽観マークが付いていれば tool_result より先に「却下」を出す", () => {
+    const turns: Turn[] = [{ role: "assistant", idx: 1, parts: [{ kind: "plan", plan: "# 移行計画" }] }];
+    const el = render(turns, { ...OWNER, isRejectedPlan: () => true });
+    expect(el.querySelector(".mt-plan-badge")?.textContent).toBe(tr("mirror.rejected"));
   });
 });

@@ -11,6 +11,8 @@ export const en: Record<keyof typeof ja, string> = {
   "region_theme.inherit": "Match app",
 
   // --- API errors (mirror of ERR_TEXT + inline fallbacks) ---
+  "err.ip_not_allowed":
+    "This tenant can only be used from the networks its administrator allows, and this one is not among them.",
   "err.ssm_search_forbidden":
     "You don't have permission to search AWS instances. Ask your AWS administrator to grant ssm:DescribeInstanceInformation.",
   "err.quota_sessions":
@@ -50,11 +52,22 @@ export const en: Record<keyof typeof ja, string> = {
   // offers the re-sign-in link; this string is the fallback outside it.
   "err.provider_required": "This tenant needs a different sign-in method. Please sign in again.",
   "err.not_provisioned": "You don't belong to any tenant yet. Ask an administrator to add you.",
+  // The pre-invitation landing (docs/61 §61.10.2 · P7-2). ★ Written as the normal
+  // first step on an invite-run deployment, not as a failure — and it must show the
+  // address to quote to the administrator.
+  "notprov.title": "You haven't been invited yet",
+  "notprov.lead":
+    "You are signed in. Once an administrator puts you on the team's roster, your workspace becomes available.",
+  "notprov.signed_in_as": "Signed in as:",
+  "notprov.hint":
+    "Give your administrator the address above, exactly as shown. Once they have added you, press Reload.",
+  "notprov.retry": "Reload",
+  "notprov.switch_account": "Sign in with another account",
   "err.domain_not_allowed": "That email domain can't be invited to this tenant.",
   "err.email_required": "This tenant restricts invites by domain. Invite by email address.",
   "err.auto_join_conflict": "That auto-join domain already belongs to another tenant.",
   "err.unknown_provider": "That sign-in method isn't enabled on this deployment.",
-  "err.self_removal": "You can't remove your own membership. Ask another administrator.",
+  "err.self_removal": "You can't remove your last membership — it is the way back in. Ask another administrator.",
   "err.bad_share": "That share request is invalid.",
   "err.member_not_found": "That recipient isn't a member of this tenant. Pick one from the search results.",
   "err.share_self": "You can't share with yourself.",
@@ -563,6 +576,13 @@ export const en: Record<keyof typeof ja, string> = {
   "env.node_default": "Default (image's node)",
   "env.no_jdk": "This workspace has no JDK.",
   "env.unselected": "Not selected",
+  "env.java_opt_absent": "Temurin {v} (not installed)",
+  "env.java_install": "Install",
+  "env.java_installing": "Installing…",
+  "env.java_install_note":
+    "Temurin {v} is not in this workspace yet. Install downloads it (~200MB) into your home volume, where it persists across restarts; sessions started afterwards get it as JAVA_HOME, with no Stop → Start.",
+  "env.java_install_failed": "JDK install failed: {msg}",
+  "env.java_install_timeout": "the download did not finish in time",
   "env.go_default": "Default (image's go)",
   "env.agent_update_title": "Agent CLI updates",
   "env.agent_update_label": "Update the agent CLIs and rtk to the latest on start",
@@ -748,6 +768,10 @@ export const en: Record<keyof typeof ja, string> = {
     "Positions the read-aloud audio in stereo to match the pane's horizontal position. It never pans fully to one side even at the edges, and audio not tied to a pane (notifications, file read-aloud) plays center.",
   "tts.note_engine":
     "“Auto” reads Japanese with Zundamon (VOICEVOX) and switches to AWS Polly while the engine is down or for non-Japanese (returning to Zundamon from the next sentence). “Polly” always reads with Polly.",
+  "tts.note_no_voicevox":
+    "This deployment has no VOICEVOX engine, so everything is read by AWS Polly. VOICEVOX-only settings — the Zundamon speaker, characters and emotional styles — are therefore not shown.",
+  "tts.warn_voicevox_missing":
+    "The voice engine is set to Zundamon, but this deployment has no VOICEVOX engine. Read-aloud will fail as long as it stays on this setting — switch to “Auto” or “Polly”.",
   "tts.note_zundamon_volume":
     "Zundamon is louder than the other characters, so you can lower it a bit to match the other voices and notification sounds. It applies only when reading in Zundamon's voice.",
   "tts.note_voice_per_session":
@@ -835,7 +859,10 @@ export const en: Record<keyof typeof ja, string> = {
   "git.browse_title": "Browse (no clone needed)",
   "git.rename": "Rename",
   "git.rename_cancel": "Cancel",
-  "git.github_oauth_unconfigured": "GitHub OAuth isn't configured (client_id). Use paste from “token” instead.",
+  "git.github_oauth_unconfigured": "This tenant has no GitHub OAuth app. Ask a tenant administrator to register one under Tenant settings › Integrations › Git provider OAuth, or connect by pasting an access token.",
+  // Shown when the OAuth option is not offered at all (docs/71). A button nobody can
+  // make work is worse than no button: the setting belongs to their tenant admin.
+  "git.oauth_unregistered": "Connecting with OAuth isn't offered because this tenant has no OAuth app registered. Ask a tenant administrator to add one under Tenant settings › Integrations › Git provider OAuth.",
   "git.oauth_start_failed": "Failed to start OAuth: {msg}",
   "git.oauth_waiting": "Waiting for approval…",
   "git.oauth_expired": "Expired. Please try again.",
@@ -851,7 +878,7 @@ export const en: Record<keyof typeof ja, string> = {
   "git.github_token_hint_read": " (private repos — covers clone & push; use ",
   "git.github_token_hint_pub": " for public repos only). For a fine-grained token, grant Repository permissions ",
   "git.github_token_hint_fg": " (Read-only for clone only).",
-  "git.bitbucket_oauth_unconfigured": "Bitbucket OAuth isn't configured (key/secret). Use paste from “token” instead.",
+  "git.bitbucket_oauth_unconfigured": "This tenant has no Bitbucket OAuth app. Ask a tenant administrator to register one under Tenant settings › Integrations › Git provider OAuth, or connect with your email + an app token.",
   "git.bb_waiting": "Approve it in the other tab…",
   "git.bb_timeout": "Timed out. Please try again.",
   "git.bitbucket_desc": "Connect via OAuth (code grant) or email + app token.",
@@ -1096,13 +1123,118 @@ export const en: Record<keyof typeof ja, string> = {
   // --- admin (AdminTab; super_admin / tenant_admin) ---
   "admin.title": "Admin",
   "admin.forbidden": "You don't have permission (super_admin only).",
-  "admin.mode_manage": "Tenants",
   "admin.mode_sessions": "Sessions",
-  "admin.mode_usage": "Usage",
+  "admin.mode_usage": "Running time",
   "admin.mode_audit": "Audit",
   "admin.mode_egress": "Egress",
   "admin.mode_mcp": "MCP",
   "admin.mode_tts": "Read aloud",
+  "admin.mode_pool": "Slots",
+  "admin.group_tenants": "Tenants",
+  "admin.group_deployment": "Deployment",
+  "admin.group_across": "Across tenants",
+  "admin.all_tenants_back": "All tenants",
+  "admin.tab_register": "Sign-in method register",
+  "admin.destroy_ws": "Destroy workspace",
+  "admin.destroy_title": "Destroy {key}'s workspace?",
+  "admin.destroy_confirm": "Destroy",
+  "admin.destroy_body": "This deletes their home and everything the runtime created for them — permanently. There is no undo, and re-inviting them gives them an empty workspace.",
+  "admin.destroy_locks": "It also overrides any deletion locks they set: those live inside the home, which cannot be read while the workspace is stopped.",
+  "admin.destroy_efs": "On the Fargate runtime the EFS directory behind the home survives and keeps billing; anything left over is listed afterwards and written to the audit log.",
+  "admin.destroy_leftovers": "Destroyed, but these could not be deleted: {list}",
+  "admin.remove_purge": "Also destroy their workspace and home (irreversible)",
+  "admin.remove_purge_warn": "Their home and everything the runtime created for them will be deleted. Re-inviting will not bring it back.",
+  // The third and last step of the clean-up (docs/61 §61.18); offered only once the
+  // workspace has been destroyed.
+  "admin.delete_member_row": "Delete this member",
+  "admin.delete_member_row_title": "Delete {key} from the roster for good?",
+  "admin.delete_member_row_confirm": "Delete for good",
+  "admin.delete_member_row_body": "Deletes this person's row, including the record that they were removed. This cannot be undone; inviting them again starts a brand new member.",
+  "admin.delete_member_row_gone": "Deleted: quotas, access tokens, SSM settings, schedules, memos, notifications and session shares.",
+  "admin.delete_member_row_kept": "Kept: the audit log, cloud cost and occupancy. Past records and invoices are not rewritten.",
+  // Deleting a tenant (super_admin; empty tenants only)
+  "admin.delete_tenant": "Delete tenant",
+  "admin.delete_tenant_title": "Delete this tenant",
+  "admin.delete_tenant_hint": "Only an empty tenant can be deleted. It is refused while a member is still on the roster, a workspace row still exists, or an internal git repository is still there — the database row is the only handle left on a resource that lives in the cloud or on disk.",
+  "admin.delete_tenant_repo_hint": "⚠️ Delete the internal git repositories while a member is still on the roster: once the last one is removed, nobody can reach the screen that deletes them.",
+  "admin.delete_tenant_confirm_title": "Delete the tenant {slug}?",
+  "admin.delete_tenant_confirm": "Delete",
+  "admin.delete_tenant_body": "Deletes the tenant's settings (quotas, login rules, source-network restriction, sign-in methods, MCP distribution) and the rows of members already removed. This cannot be undone.",
+  "admin.delete_tenant_kept": "The audit log, cloud cost and occupancy are kept (their tenant column will be blank).",
+  // --- EC2 slot pool (features/settings/ec2Pool.tsx; AF_RUNTIME=ecs-ec2 only) ---
+  "pool.not_ec2": "This deployment does not use the EC2 slot pool.",
+  "pool.slots_title": "Slots",
+  "pool.provisioned": "Provisioned",
+  "pool.of_max": "of {n} allowed",
+  "pool.running": "Running",
+  "pool.running_sub": "billed by the hour",
+  "pool.asleep": "Asleep",
+  "pool.asleep_sub": "stopped; root volume only",
+  "pool.free": "Free",
+  "pool.free_sub": "of the above, with no home on them",
+  "pool.at_cap": "The pool is at its cap. The next person to start takes a slot from the longest-dormant occupant instead of getting a new one.",
+  "pool.timers": "A slot sleeps after {sleep} without a task. Unless a tenant sets its own, a home hibernates to a snapshot after {hibernate} (the deployment default).",
+  "pool.timers_no_hibernate": "A slot sleeps after {sleep} without a task. Homes are never hibernated unless a tenant asks for it (Tenants → the tenant → Hibernate unused homes).",
+  "pool.off": "never",
+  "pool.no_slots": "No slots. The first Start will create one.",
+  "pool.col_instance": "Instance",
+  "pool.col_type": "Type",
+  "pool.col_state": "State",
+  "pool.col_occupant": "Occupied by",
+  "pool.col_dormant": "Dormant",
+  "pool.col_backup": "Spare copy",
+  "pool.backup_none": "none",
+  "pool.backup_count": "{n} copies kept",
+  "pool.state_asleep": "asleep",
+  "pool.state_quarantined": "quarantined",
+  "pool.quarantined_hint":
+    "{n} slot(s) could not mount a home and were taken out of the pool, so nobody else lands on them. They are stopped but still hold their root volume: terminate them once you have taken what you need from the box.",
+  "pool.not_registered": "(not accepting tasks yet)",
+  "pool.free_slot": "free",
+  "pool.homes_title": "Homes",
+  "pool.no_homes": "No homes yet.",
+  "pool.col_workspace": "Workspace",
+  "pool.col_volume": "Volume",
+  "pool.col_where": "Where",
+  "pool.no_volume": "no volume",
+  "pool.hibernated": "hibernated (snapshot)",
+  "pool.hibernating": "hibernating ({state})",
+  "pool.detached": "detached",
+  "pool.golden_title": "Golden snapshot",
+  "pool.golden_none": "None. New homes are built empty, so a new member pays boot-install and a cold cache on their first start. The CP normally bakes one for {image} by itself (it waits until two slots are free). If auto-baking is off, bake one with deploy/aws/ecs/bake-golden.sh.",
+  "pool.golden_baking": "Preparing one for {image}. Once it is baked, it is only used after something has actually started from it. Until then new homes are built empty — a slow first start, nothing broken.",
+  "pool.golden_rejected": "{snapshot} is not being used: {reason}. Nothing that could not be shown to boot is handed out, so new homes are built empty — a slow first start, nothing broken. Re-baking the same image stops after two attempts.",
+  "pool.golden_stale": "{snapshot} was baked from {baked}, but this deployment runs {running}. It is NOT being used — new homes are built empty (slow first start) until it is re-baked.",
+  "pool.golden_ok": "baked from {image}",
+  // How far a bake has got (docs/64 §64.30). A bake takes ~11 minutes and produces no
+  // snapshot at all for the first half of it, so a single "preparing one" line leaves an
+  // operator unable to tell progress from a stall.
+  "pool.bake_step_seed": "seed slot",
+  "pool.bake_step_boot": "boot-install",
+  "pool.bake_step_capture": "release home",
+  "pool.bake_step_snapshot": "snapshot",
+  "pool.bake_step_probe": "boot check",
+  "pool.bake_step_published": "published",
+  "pool.bake_running": "Baking one for {image}.",
+  "pool.bake_meanwhile":
+    "What is baked is only used once a workspace has actually started from it. Until then new homes are built empty — a slow first start, nothing broken.",
+  "pool.bake_detail_seed": "seed:",
+  "pool.bake_detail_probe_ws": "probe:",
+  "pool.bake_detail_probe": "Booting a probe from {snapshot} to confirm it really starts.",
+  "pool.bake_owner": "for the golden bake",
+  "pool.bake_blocked":
+    "Waiting for free slots ({used}/{max} in use). A bake needs two — one for the seed, one for the probe — and it will not evict anybody to get them. Until then new homes are built empty (slow first start).",
+  "pool.bake_gave_up":
+    "{snapshot} is not being used: {reason}. Two candidates failed on this image, so re-baking has stopped. New homes stay empty until the image is fixed and rolled out.",
+  "pool.bake_retry_left": "One more attempt will be made on this image.",
+  "pool.bake_off":
+    "Auto-baking is switched off (AF_ECS_EC2_GOLDEN_AUTOBAKE=0). With no golden, new homes are built empty (slow first start). To bake one, use deploy/aws/ecs/bake-golden.sh.",
+  "pool.elapsed_sec": "({s}s elapsed)",
+  "pool.elapsed_min": "({m}m {s}s elapsed)",
+  "pool.elapsed_hour": "({h}h {m}m elapsed)",
+  "pool.idle_min": "{n} min",
+  "pool.idle_hour": "{n} h",
+  "pool.idle_day": "{n} d",
   // --- Tenant-distributed MCP servers (docs/48 P4, AdminTab's McpAdminView) ---
   "admin.mcp_intro":
     "MCP servers distributed to every member of the tenant. Only remote (Streamable HTTP) servers can be distributed — a stdio server cannot, because distributing a command is equivalent to running arbitrary code in every member's container.",
@@ -1179,6 +1311,8 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.tts_polly_ready": "Available",
   "admin.tts_polly_unset": "Not set",
   "admin.tts_starting_note": "Startup takes 1–2 minutes. Until it's ready, Japanese read-aloud is covered by Polly (silent if Polly isn't set).",
+  "admin.tts_no_engine":
+    "This deployment has no VOICEVOX engine, and it is not ECS-managed either, so there is nothing this screen could start. Enabling it would route nothing to Zundamon, so the toggle is held at disabled. Provide an engine and it becomes operable again on its own.",
   "admin.tts_disable_note":
     "Disabling sets the ECS desired count to 0 on AWS to stop the engine (no cost while stopped). Read-aloud itself is turned on/off in the user setting (Read aloud).",
   "admin.tts_dict_title": "Tenant-wide reading dictionary",
@@ -1187,7 +1321,67 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.tts_dict_note":
     "A shared dictionary applied to every user's read-aloud (one “spelling=reading” per line; lines starting with # are comments). If a user's own reading dictionary (Read-aloud tab) has the same spelling, that user's entry wins. After saving, other users pick it up on the next Console load.",
   "admin.usage_load_error": "Failed to load.",
-  "admin.usage_title": "Usage (workspace running time)",
+  // --- Cloud cost (docs/67 + ADR 0048) ---
+  // ⚠️ Deliberately NOT called "Usage". Three surfaces already carry that name (agent
+  // tokens, and workspace running time in two places). This one is money, and it only
+  // exists where there is an AWS bill.
+  "admin.mode_cost": "Cloud cost",
+  "tenant.tab_cost": "Cloud cost",
+  "set.tab_cost": "Cloud cost",
+  "cost.admin_title": "Cloud cost by member",
+  "cost.admin_intro":
+    "The AWS invoice, attributed per member by cost allocation tag. Only what is tagged to a person appears here — shared infrastructure is listed separately and is never divided up.",
+  "cost.my_title": "Cloud cost for your workspace",
+  // ⚠️ This wording is the feature. Measured on a real deployment, roughly a fifth of
+  // the bill can be attributed to anyone at all; calling that "your cost" would name a
+  // number five times smaller than what is actually being paid.
+  "cost.my_intro":
+    "What your workspace is directly tagged for: its slot hours, its persistent home volume and its snapshots. Shared infrastructure (NAT, DNS, load balancer, database, idle pool) is NOT included, so this is not the full cost of running your workspace.",
+  "cost.my_total_label": "Directly attributable to your workspace (shared not included)",
+  "cost.attributed_label": "Attributable to members",
+  // メンバー詳細（管理）向け。⚠️ 二人称の cost.my_* とは別キーにしてある。
+  // 三人称に翻訳し直すのではなく、同じ規律（共有は含まない・実額の一部）を保った
+  // まま主語だけを変えるため。
+  "cost.member_title": "Cloud cost",
+  "cost.member_intro":
+    "What this member's workspace is directly tagged for: slot hours, its persistent home volume and its snapshots. Shared infrastructure (NAT, DNS, load balancer, database, idle pool) is NOT included.",
+  "cost.member_total_label": "Directly attributable to this member (shared not included)",
+  "cost.shared_title": "Shared infrastructure",
+  "cost.shared_intro":
+    "Costs that belong to no one person and are deliberately not split among members — splitting them would turn the invoice into an estimate. Warm slots nobody is holding land here too, which is what an oversized pool costs.",
+  "cost.shared_label": "Shared (not attributed)",
+  "cost.shared_centres": "Cost centres:",
+  "cost.account_scope": "Aggregated over this whole AWS account, so anything else running in it is included in the shared figure.",
+  "cost.breakdown": "What it was spent on",
+  "cost.no_records": "No cost recorded for this range.",
+  "cost.load_error": "Could not load cloud cost.",
+  "cost.lag": "Cost Explorer runs about {h} hours behind.",
+  "cost.estimated_note": "The most recent days are not final yet and will still change.",
+  // ⚠️ Activation is not retroactive, so this is permanent, not a loading state.
+  "cost.no_backfill":
+    "Nothing is available before {day}: cost allocation tags only apply from the moment they are switched on, and cannot be backfilled.",
+  "cost.unverified_runtime":
+    "Tagging for this runtime has not yet been confirmed against a live deployment, so figures may be incomplete.",
+  "cost.poll_error": "Cost Explorer could not be read, so these figures are stale or empty:",
+  "cost.tags_pending":
+    "Not yet counting {keys}: AWS has not finished registering the tag, so spend on that axis is being lost right now and cannot be recovered later. This usually clears within a day.",
+  "cost.tags_error":
+    "The cost allocation tags could not be switched on automatically, so spend is not being attributed and that gap is permanent:",
+  "cost.tags_declined": "Switched off in the billing console, so it is left alone: {keys}",
+  "cost.centre_slot_hours": "Slot hours",
+  "cost.centre_home_volume": "Home volume",
+  "cost.centre_snapshots": "Snapshots",
+  "cost.centre_task_compute": "Task compute",
+  "cost.centre_scratch": "Working disk",
+  "cost.centre_nat": "NAT gateway",
+  "cost.centre_dns": "DNS",
+  "cost.centre_lb": "Load balancer",
+  "cost.centre_db": "Database",
+  "cost.centre_efs": "Shared file system",
+  "cost.centre_idle_pool": "Idle slot pool",
+  "cost.centre_cp": "Control plane",
+  "cost.centre_tax": "Tax",
+  "admin.usage_title": "Running time (workspace occupancy)",
   "admin.usage_intro":
     "Infrastructure occupancy = the total time workspaces were running (Claude usage fees are on each person's own subscription and not included here). Sampled about every 5 minutes, so there's some error.",
   "admin.from": "From",
@@ -1227,11 +1421,30 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.empty_deploy_default": "empty = follow the deploy default",
   "admin.session_halt": "Session halt after",
   "admin.ws_stop": "Workspace stop after",
-  "admin.idle_ph_30m": "e.g. 30m (empty = disabled)",
-  "admin.idle_ph_60m": "e.g. 60m (empty = disabled)",
+  "admin.idle_ph_30m": "e.g. 30m (empty = the deploy default, 1h)",
+  "admin.idle_ph_60m": "e.g. 60m (empty = the deploy default, 2h)",
   "admin.idle_hint_1": "Idle claude sessions are folded to stopped (resumable) after Session halt after, and workspaces with no connection or activity are docker-stopped after Workspace stop after. Format: ",
-  "admin.idle_hint_2": ". Empty follows the deploy default (disabled by default); ",
+  "admin.idle_hint_2": ". Empty follows the deploy default (1h for a session, 2h for the workspace); ",
   "admin.idle_hint_3": " explicitly disables it.",
+  // Home hibernation (AF_RUNTIME=ecs-ec2 only; ADR 0045 決定 13-2). This is the one
+  // setting that moves a user's home off the disk it was on, so the copy has to say both
+  // that it is reversible and that the return is slower.
+  "admin.hibernate_title": "Hibernate unused homes",
+  "admin.hibernate_after": "Hibernate after",
+  "admin.hibernate_ph": "e.g. 720h = 30 days (empty = deploy default)",
+  "admin.hibernate_hint":
+    "A home nobody has opened for this long is captured as a snapshot and its disk released. The next start brings it back, so nothing is lost — but that start takes longer, and the disk is slower for a few hours afterwards.",
+  "admin.hibernate_warn":
+    "Only hibernation is automatic; nothing is ever destroyed this way. The unit goes up to hours, so write days as a multiple of 24h. Enter 0 to never hibernate this tenant's homes.",
+  // Home backups (ADR 0045 決定 17). Losing a whole AZ is a story only this runtime has,
+  // so lead with why it exists. Say "how far back" rather than "RPO".
+  "admin.backup_title": "Keep a spare copy of each home",
+  "admin.backup_every": "Copy every",
+  "admin.backup_ph": "e.g. 24h (empty = deploy default)",
+  "admin.backup_hint":
+    "A home lives inside one Availability Zone, and losing that zone loses the home with it. A spare copy is kept outside the zone, so the home can be rebuilt from it. What you are choosing here is how far back the worst case may throw someone.",
+  "admin.backup_warn":
+    "The copy is taken while the home is in use, so it is the same picture a power cut would leave. It is never restored automatically — that is an operator decision. Enter 0 to take no copies for this tenant.",
   "admin.term_log_title": "Terminal-log retention",
   "admin.retention": "Retention",
   "admin.retention_off": "Disabled (standard short-lived history only)",
@@ -1280,6 +1493,27 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.ws_disk_hint": "0 = default 20 GiB (free tier)",
   "admin.ws_disk_warn": "The working disk is wiped when the workspace stops. Only the home directory persists.",
   "admin.ws_cpu_vcpu": "= {n} vCPU",
+  "admin.ws_mem_req": "Workspace memory (required)",
+  "admin.ws_slot_lands": "→ {type} ({spec}, dedicated)",
+  "admin.ws_slot_zero": "0 = smallest slot ({type})",
+  "admin.ws_slot_note": "The slot is used by one person and the task reserves nothing, so the whole box is available — this number only chooses which box.",
+  "tenant.machine_title": "Default machine",
+  "tenant.machine_note":
+    "Which machine this tenant's members land on when they have no choice of their own. A per-member choice is made from the member's page and wins over this.",
+  "tenant.machine_deploy_default": "Deployment default",
+  "tenant.machine_member_note":
+    "Members who chose a machine themselves are unaffected. The change reaches each member at their next workspace start.",
+  "admin.roster_spec": "{n} vCPU / {mem}",
+  "admin.roster_disk": "{n} GB disk",
+  "admin.ws_machine": "Machine",
+  "admin.ws_machine_tenant_default": "Tenant default",
+  "admin.ws_machine_arch_warn":
+    "This machine has a different CPU family. On the next start the home reinstalls the tools that were built for the old one (the agent CLIs, node, Chromium — a few minutes). Anything under ~/repos is left alone, so node_modules / target / .venv survive but will not run until you reinstall them yourself.",
+  "admin.ws_cpu_na": "CPU is not selectable on this runtime: a workspace gets the whole box.",
+  "admin.ws_disk_home": "Workspace home (persistent)",
+  "admin.ws_disk_home_hint": "0 = deployment default {n} GiB. Applied when the home volume is created, and it cannot be shrunk afterwards.",
+  "admin.ws_disk_quota_hint": "0 = no quota. Reported for reference only — nothing enforces it.",
+  "admin.ws_disk_work_hint": "0 = deployment default {n} GiB",
   "admin.limits_edit_title": "Set limits",
   "admin.max_sessions_label": "Max sessions",
   "admin.ws_memory": "Workspace memory",
@@ -1306,8 +1540,6 @@ export const en: Record<keyof typeof ja, string> = {
   // mistake that breaks the operation. ---
   "admin.login_rules": "Login rules",
   "admin.login_rules_note": "empty = no restriction",
-  "admin.allowed_providers": "Sign-in methods",
-  "admin.allowed_providers_unit": "provider ids, comma-separated. Empty = every enabled method",
   "admin.auto_join_domains": "Auto-join domains",
   "admin.auto_join_domains_unit": "joins this tenant on first sign-in",
   "admin.invite_domains": "Invite domains",
@@ -1317,26 +1549,38 @@ export const en: Record<keyof typeof ja, string> = {
     "An auto-join domain can belong to only one tenant.",
   "admin.login_url": "Sign-in URL for this tenant:",
 
-  // --- what may be written in "Sign-in methods" (docs/61 §61.11.8). The field is
-  // free text and the answer lived only in the deployment's environment. The
-  // display name leads; the id you type is shown next to it. ---
-  "admin.providers_title": "Sign-in methods this deployment has",
+  // --- the deployment's methods = the default tenant's methods (docs/61 §61.17).
+  // Since P7-0 they appear as "deployment-wide" rows in every tenant's sign-in
+  // method list. The display name leads; the id is shown next to it in <code>. ---
   "admin.providers_none": "This deployment has no sign-in method configured (the login page shows no buttons).",
-  "admin.providers_hint":
-    "Write the ids from this list, comma-separated, in \"Sign-in methods\" above. Empty means every one of them. " +
-    "This tenant's own sign-in methods (listed below) go in the same field as t:tenant:method once they are approved.",
+  // ★ "none" and "could not read" must never share a string. The 403 used to collapse
+  // into an empty array, which told an unauthorized reader the deployment was
+  // unconfigured (docs/61 §61.17.9 ②).
+  "admin.providers_unreadable": "Could not load the list of sign-in methods — you may not have permission, or it is temporarily unavailable.",
 
   // --- tenant-defined sign-in methods (docs/61 §61.11 · P4), for a group whose
   // subsidiaries each have their own Entra tenant. The tenant admin writes the
   // definition, the deployment admin activates it (決定 30) — that asymmetry is the
   // feature. ---
-  "admin.idp_title": "Sign-in methods for this tenant",
-  "admin.idp_note": "activation needs a deployment administrator",
+  "admin.idp_title": "Sign-in methods this tenant can use",
+  "admin.idp_note": "activating a method of your own needs a deployment administrator",
   "admin.idp_hint":
-    "Register your own IdP (Entra ID / Okta / Keycloak …), or a GitHub organization, as a sign-in method for this tenant. " +
+    "Every way into this tenant: the deployment-wide methods, plus any method registered for this tenant alone. " +
+    "Register your own IdP (Entra ID / Okta / Keycloak …), or a GitHub organization, under \"Add a sign-in method\". " +
     "A new method starts as \"waiting for approval\": until a deployment administrator approves it, no button appears on the sign-in page and no one can sign in with it.",
-  "admin.idp_none": "None registered yet.",
+  "admin.idp_none": "This tenant has no method of its own yet (the deployment-wide ones above still work).",
   "admin.idp_add": "Add a sign-in method",
+  // --- the two per-row toggles (docs/61 §61.17.5). The DB still stores two CSV
+  // columns; only the screen changed. ★ "Show" is subordinate to "Accept" — a
+  // method that is not accepted never appears, however this is set. ---
+  "admin.idp_accept": "Accept",
+  "admin.idp_show": "Show button",
+  "admin.idp_deployment_wide": "Deployment-wide",
+  "admin.idp_accept_last":
+    "The last one cannot be cleared. Clearing them all means \"no restriction — accept every method\", so you would open it up while meaning to narrow it.",
+  "admin.idp_show_last":
+    "The last one cannot be cleared. Hiding every button would leave a sign-in page with no buttons, so the setting is ignored instead.",
+  "admin.idp_show_needs_accept": "Not accepted, so it never appears on the sign-in page.",
   "admin.idp_approve": "Approve and activate",
   "admin.idp_suspend": "Suspend",
   "admin.idp_reapply": "Request approval",
@@ -1384,18 +1628,31 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.idp_repend_hint":
     "Changing the issuer, the client ID, the trust rule, the kind or how the same account is recognised — or adding a domain, tenant id or GitHub organization — sends the method back for approval, " +
     "because the approval was given to that identity source for that scope.",
-  "admin.hidden_providers": "Methods to keep off the sign-in page",
-  "admin.hidden_providers_unit":
-    "Comma-separated. Still accepted — only the button is removed from this tenant's sign-in page. Ignored if it would hide every button.",
-  "admin.hidden_providers_url_note":
-    "★ Hiding a button does not remove it from the plain sign-in page (the one without the URL above): that page belongs to no tenant, and hiding methods there would lock out everybody who is not in one. For the setting to have any effect, hand this tenant's people the sign-in URL above.",
+  // ★ P7-1 (docs/61 §61.17.6) removed the "has no effect on the plain /login"
+  // workaround. What is left is the one misreading worth heading off: hidden ≠ gone.
+  "admin.hidden_still_accepted_note":
+    "★ A method without a button is still accepted. People signing in with it — someone who also belongs to another tenant, typically — keep getting in; it simply stops appearing on this tenant's sign-in page.",
   "admin.allowed_providers_shared_note":
-    "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Keep the method those people use accepted, and list it under \"methods to keep off the sign-in page\" so it does not appear here. Accepting a method does not widen who can enter — the roster decides that.",
+    "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Leave the method those people use on \"Accept\" and just clear \"Show button\", so it stays usable without appearing here. Accepting a method does not widen who can enter — the roster decides that.",
+  "admin.login_rules_methods_moved":
+    "★ Which sign-in methods this tenant accepts, and which of them get a button on the sign-in page, are set per row under \"Sign-in methods\".",
+  // ★ The suspend ordering guard (docs/61 §61.17.4). A confirmation, not a refusal —
+  // suspending is also how a compromised IdP is stopped, and stopping is always
+  // allowed to be faster than starting. The count comes from the CP's own message.
+  "admin.idp_suspend_title": "Suspend {name}",
+  "admin.idp_suspend_body":
+    "Have those people link another sign-in method first (Settings → Personal → Account). " +
+    "After you suspend it they cannot add one themselves — linking needs a session, and this is the method they sign in with.",
+  "err.tenant_idp_link_claim_required":
+    "This deployment already has a sign-in method for the same issuer. That issuer gives each app registration a different subject for the same person, so without \"how the same account is recognised\", everybody already using this deployment would be refused at login as a duplicate address.",
+  "admin.idp_suspend_members":
+    "{n} active member(s) have never used any other sign-in method. Suspending this one locks them out.",
   "admin.idp_delete_title": "Delete {name}",
   "admin.idp_delete_body":
     "This removes the sign-in method. People who used it can no longer sign in, but their workspaces, homes and stored credentials are kept.",
   "admin.idp_register": "Tenant-defined sign-in methods",
   "admin.idp_pending_count": "{n} waiting for approval",
+  "admin.idp_register_none": "No tenant has defined a sign-in method yet.",
   "admin.idp_register_hint":
     "Every IdP registered by a tenant. Approval is a point-in-time check, but the IdP's own settings (self-sign-up, for one) can change afterwards. " +
     "Approved methods stay listed here so their issuers and domains can be reviewed periodically. Approve or suspend right here.",
@@ -1413,14 +1670,46 @@ export const en: Record<keyof typeof ja, string> = {
   // change from moving). ---
   "tenant.title": "Tenant settings",
   "tenant.back": "All tenant settings",
+  "tenant.group_tenant": "Tenant",
+  "tenant.tab_limits": "Limits & idle",
   "tenant.group_login": "Sign-in",
   "tenant.tab_signin": "Sign-in methods",
   "tenant.tab_rules": "Login rules",
+  "tenant.tab_network": "Allowed networks",
+  "tenant.net_title": "Source networks",
+  "tenant.net_on": "restricted",
+  "tenant.net_off": "no restriction",
+  "tenant.net_allowed": "Allowed networks",
+  "tenant.net_allowed_unit": "Comma-separated CIDR ranges or single addresses (IPv4/IPv6). Empty = no restriction.",
+  "tenant.net_your_ip": "Your address, as this deployment sees it",
+  "tenant.net_your_ip_unit": "This is what a rule is matched against — not what your browser thinks its address is.",
+  "tenant.net_ip_unknown": "cannot be determined",
+  "tenant.net_ip_unknown_hint": "The control plane cannot work out where this request came from, so a rule could not be enforced. Ask the operator to check AF_TRUSTED_PROXY_HOPS.",
+  "tenant.net_proxy_not_configured": "A proxy sits in front of the control plane but the deployment has not declared it (AF_TRUSTED_PROXY_HOPS), so every request looks like it comes from that proxy. Saving a rule is blocked until an operator fixes it — otherwise the rule would let everyone in while appearing to restrict.",
+  "tenant.net_scope_hint": "This restricts USE of the tenant, not reaching the site: the sign-in page still loads and signing in still works from anywhere, but nothing in this tenant can be opened from a network that is not listed.",
+  "tenant.net_exempt_hint": "Not covered: MCP and the internal Git provider, which are called from inside a member's own workspace and say nothing about where the person is. Revoke those by deactivating the membership. Deployment administrators are exempt from this rule so a mistake here can always be undone.",
+  "tenant.net_layers_hint": "This is an access rule, not a network defence — the request still reaches the control plane and is refused after the session is verified. To stop traffic before it arrives, an operator restricts it at the load balancer instead.",
+  // Integrations (docs/71) — credentials the tenant created on the other service.
+  "tenant.group_integrations": "Integrations",
+  "tenant.tab_git_oauth": "Git provider OAuth",
+  "tenant.git_oauth_intro": "Decides which OAuth app the “Connect with OAuth” buttons for GitHub and Bitbucket use on your members' Connections tab. The app is created in your own GitHub org / Bitbucket workspace, so a tenant administrator registers it here. It takes effect the moment you save — there is no approval step.",
+  "tenant.git_oauth_optional": "Members can connect without this by pasting a token. Registering an app here is what makes “Connect with OAuth” appear for that provider.",
+  "tenant.git_oauth_on": "registered",
+  "tenant.git_oauth_off": "not registered",
+  "tenant.git_oauth_client_id": "client_id (Bitbucket calls it Key)",
+  "tenant.git_oauth_client_secret": "client_secret (Bitbucket calls it Secret)",
+  "tenant.git_oauth_secret_kept": "stored — leave empty to keep it",
+  "tenant.git_oauth_secret_unit": "Encrypted on save and never shown again. Fill this in only when you want to change it.",
+  "tenant.git_oauth_redirect": "Register this callback URL with the provider's app:",
+  "tenant.git_oauth_no_base_url": "This deployment has no PUBLIC_BASE_URL, so there is no callback URL to register with Bitbucket. Connecting via OAuth will fail even once you save this — the code grant has nowhere to come back to. Ask the operator to set PUBLIC_BASE_URL.",
+  "tenant.git_oauth_gh_device": "GitHub uses the device flow, so it needs neither a secret nor a callback — but the app must have “Enable Device Flow” ticked, or starting a connection fails.",
+  "tenant.git_oauth_where": "Where to register the app:",
+  "tenant.git_oauth_remove": "Remove registration",
   "tenant.summary_note": "a deployment administrator sets the tenant-wide caps",
   "tenant.group_manage": "Operations",
   "tenant.tab_members": "Members",
   "tenant.tab_sessions": "Sessions",
-  "tenant.tab_usage": "Usage",
+  "tenant.tab_usage": "Running time",
   "tenant.tab_audit": "Audit",
   "tenant.tab_mcp": "MCP distribution",
   "tenant.picker": "Tenant",
@@ -1431,7 +1720,6 @@ export const en: Record<keyof typeof ja, string> = {
     "An auto-join domain can belong to only one tenant. " +
     "To change any of these rules, ask a deployment administrator.",
   "tenant.rules_unset": "not set (no restriction)",
-  "tenant.rules_providers_note": "Sign-in methods usable in this tenant. When not set, every active method may be used.",
   "tenant.rules_autojoin_note": "People with an email address in this domain join this tenant on their first sign-in.",
   "tenant.rules_invite_note": "A guard that applies only when adding a member. It does not affect people who are already members.",
 
@@ -1503,6 +1791,9 @@ export const en: Record<keyof typeof ja, string> = {
   "keys.palette.empty": "No matches",
   "keys.palette.mode_command": "Commands",
   "keys.palette.mode_changed": "Changed files",
+  "keys.palette.mode_session": "Session changes",
+  "keys.palette.placeholder_session": "Search files this session changed…",
+  "keys.palette.session_empty": "This session hasn't changed any file yet",
   "keys.palette.mode_file": "Files",
   "keys.palette.mode_hint": "Tab / Ctrl+P to switch",
   "keys.palette.changed_loading": "Loading…",
@@ -1594,6 +1885,9 @@ export const en: Record<keyof typeof ja, string> = {
   "state.plan": "Plan ready",
   "state.permission": "Awaiting permission",
   "state.blocked": "Limit reached — action needed",
+  "state.spend_limit": "Spend limit — needs a raise",
+  "state.rate_limited": "Waiting for limit reset",
+  "state.rate_limited_at": "Waiting for limit reset · {at}",
   "state.auth_expired": "Login expired — sign in again",
   "state.idle_bg": "Ready · running in background",
   "state.idle": "Ready",
@@ -1628,12 +1922,20 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.state.stopping": "Stopping…",
   "wsbar.state.recreating": "Recreating…",
   "wsbar.state.unknown": "Unknown",
+  "wsbar.state.no_tenant": "No tenant",
   // Starting dialog (WsStartingDialog — docs/35 §35.9-9)
   "wsstart.title": "Starting workspace",
-  "wsstart.generic": "Starting… (the first start may take a few minutes to install agent CLIs)",
+  "wsstart.generic": "Starting…",
+  "wsstart.blocked": "Cannot start. Waiting will not help",
   "wsstart.installing_clis": "Installing agent CLIs… (first start only, can take a few minutes)",
   "wsstart.fetching_tool": "Fetching additional tools…",
   "wsstart.toolchain": "Installing toolchain…",
+  "wsstart.slot_creating": "Getting a machine ready for you… (a new one is being started; this takes a few minutes)",
+  "wsstart.slot_waking": "Waking your machine…",
+  "wsstart.slot_booting": "Waiting for the machine to come up…",
+  "wsstart.home_creating": "Creating your home disk… (first start only)",
+  "wsstart.home_restoring": "Restoring your home from its saved copy…",
+  "wsstart.home_attaching": "Attaching your home disk…",
   "wsstart.hint": "Progress is also recorded in agent.log. Closing this dialog does not stop the start.",
   "wsbar.usage.title": "{name} usage (5-hour / weekly)",
   "wsbar.usage.pop_title": "{name} usage",
@@ -1677,6 +1979,11 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.state_title.starting":
     "Starting (the first run can take a few minutes to pull the image. It flips to Running automatically when done)",
   "wsbar.state_title.other": "State: {state}",
+  "wsbar.state_title.no_tenant":
+    "You do not belong to any tenant yet, so there is no workspace. Ask an administrator to add you.",
+  "wsbar.state_title.no_tenant_admin":
+    "You do not belong to any tenant yet, so there is no workspace. Add yourself as a member from Admin → Tenants.",
+  "wsbar.start_failed": "Could not start the workspace",
   "wsbar.start_here": "Start",
   "wsbar.start_here.running": "Start (chat / repository / clone / shell)",
   "wsbar.start_here.queued": "Starting — opens when ready",
@@ -1772,6 +2079,8 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.confirm.start.go": "Start",
   "wsbar.confirm.stop.body":
     "Stops the container. Running sessions become Stopped (resumable later), and opencode web / preview disconnect. Files are preserved.",
+  "wsbar.confirm.stop.starting_body":
+    "Cancels the start and stops the workspace. Nothing is lost — it has not come up yet. Files are preserved.",
   "wsbar.confirm.stop.go": "Stop",
   "wsbar.confirm.restart.title": "Restart the workspace",
   "wsbar.confirm.restart.body":
@@ -1811,6 +2120,10 @@ export const en: Record<keyof typeof ja, string> = {
   "topbar.admin": "Admin",
   "topbar.logout": "Sign out",
   "topbar.build": "Build {label}",
+  "topbar.server_version": "Server v{v}",
+  "topbar.image_cp": "CP image {ref}",
+  "topbar.image_ws": "WS image {ref}",
+  "topbar.copy_version": "Copy version details",
   "topbar.host_version": "Agent Fleet v{v}",
   "topbar.update_ready": "Update available · restart to apply v{v}",
   "topbar.update_badge": "Update",
@@ -1986,6 +2299,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.dismiss_suggestion": "Don't show this suggestion again",
   "mirror.load_earlier": "Load earlier conversation",
   "mirror.jump_latest": "Jump to latest",
+  "mirror.jump_reply_top": "Start of reply",
   "mirror.ws_stopped_history": "The workspace is stopped. Start it from the top bar to view the history.",
   "mirror.no_history": "There is no history to show for this conversation.",
   "mirror.no_conversation":
@@ -2042,6 +2356,18 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.prev_input": "Previous input",
   "mirror.next_input": "Next input",
   "mirror.todo_dismiss": "Dismiss this ToDo list",
+  "mirror.files.title": "Changed files",
+  "mirror.files.st_unstaged": "Unstaged",
+  "mirror.files.st_staged": "Staged",
+  "mirror.files.st_clean": "No diff",
+  "mirror.files.st_committed": "Committed",
+  "mirror.files.st_outside": "Outside working copy",
+  "mirror.files.sort_recent": "Most recent",
+  "mirror.files.sort_path": "By path",
+  "mirror.files.sort_to_path": "Sort by path",
+  "mirror.files.sort_to_recent": "Sort by most recent",
+  "mirror.files.open_scm": "Open source control",
+  "mirror.files.sidechain": "Only a subagent edited this",
   "mirror.attach_file": "Attach a file (drag & drop works too)",
   "mirror.ph_plan_wait": "Plan awaiting approval: approve / reject in the card above",
   "mirror.ph_perm_wait": "Awaiting permission: respond in the card above",
@@ -2076,6 +2402,15 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.queued": "Queued",
   "mirror.pending_title": "Sent. It's reflected once claude starts processing.",
   "mirror.pending": "Pending",
+  "mirror.mark.pill": "Highlight",
+  "mirror.mark.strip_title": "Highlights",
+  "mirror.mark.strip_authors": "{n} people",
+  "mirror.mark.paint": "Highlight in {color}",
+  "mirror.mark.remove": "Remove highlight",
+  "mirror.mark.color.yellow": "yellow",
+  "mirror.mark.color.green": "green",
+  "mirror.mark.color.blue": "blue",
+  "mirror.mark.color.pink": "pink",
   "mirror.fork_at": "Branch here",
   "mirror.fork_at_title": "Start a new session from just before this message",
   "mirror.fork_at_intro":
@@ -2108,6 +2443,16 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.from_peer_named": "From {name}",
   "mirror.from_peer_title":
     "A message another session in this workspace sent — typed neither by you nor by the assistant. The agent is told it is not an instruction from you, and will not change permissions or config because a peer asked.",
+  "mirror.peer_intent.request": "Request",
+  "mirror.peer_intent.question": "Question",
+  "mirror.peer_intent.answer": "Answer",
+  "mirror.peer_intent.notice": "FYI",
+  "mirror.peer_intent_title.request":
+    "Asks this session to do something. The sender is told to expect an answer only if it cannot be done — silence means it was done.",
+  "mirror.peer_intent_title.question": "Asks for information. One short answer is expected.",
+  "mirror.peer_intent_title.answer":
+    "Answers a question this session asked. Nothing is sent back — the exchange ends here.",
+  "mirror.peer_intent_title.notice": "Information only. No reply is expected.",
   "mirror.effort_hint": "Reasoning effort (codex reasoning_effort / opencode variant)",
   "mirror.token_hint": "Input (context) ↑ / output ↓ tokens",
   "mirror.time_span_hint": "Started {start} — finished {end}",
@@ -2524,6 +2869,7 @@ export const en: Record<keyof typeof ja, string> = {
   // === P2 session row (features/sessions/SessionRow.tsx) ===
   "srow.id_copied": "Copied the ID: {name}",
   "srow.cant_resume": "Can't resume — the working folder no longer exists",
+  "srow.resume_failed": "Could not resume the session. Wait a moment and try again",
   "srow.history_only": "Folder missing — history only (can't resume / click to open)",
   "srow.stopped_hint": "Stopped (click to view history / Ctrl or middle-click for a new pane)",
   "srow.open_pane_suffix": " (Ctrl / middle-click to open in a new pane)",
@@ -2534,6 +2880,7 @@ export const en: Record<keyof typeof ja, string> = {
   "srow.resume": "Resume",
   "srow.relogin_resume": "Re-login and resume",
   "srow.stop": "Stop (resumable later)",
+  "srow.changed_files": "Changed files",
   "srow.open_remote": "Open the remote session",
   "srow.copy_id": "Copy the ID ({name})",
   "srow.rename": "Rename",
@@ -3023,6 +3370,7 @@ export const en: Record<keyof typeof ja, string> = {
   "onb.paste_confirm": "Paste",
   // Disconnect notice written straight into the terminal grid (term.ts)
   "onb.term_disconnected": "[disconnected]",
+  "onb.term_session_stopped": "[this session is stopped — use Resume at the bottom right to bring it back]",
 
   // === P5 プロジェクト（ProjectTree/FilesSection/FilesChanges/RepoNode ほか） ===
   "pj.st_untracked": "Untracked",
@@ -3093,6 +3441,7 @@ export const en: Record<keyof typeof ja, string> = {
   "rp.launch_failed": "Launch failed: {err}",
   "rp.image_upload_failed": "Image upload failed: {err}",
   "rp.image_upload_failed_network": "Image upload failed (network error)",
+  "rp.first_prompt_failed": "The session started, but its first instruction could not be delivered: {err}",
   "rp.filter_branches": "Filter (branch name / commit)",
   "rp.loading": "Loading…",
   "rp.no_branches": "No matching branches",
@@ -3320,6 +3669,9 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.metric_cread": "Cache read",
   "usage.metric_cost": "API-equivalent cost",
   "usage.reload": "Reload",
+  "usage.folding": "Catching up",
+  "usage.folding_hint":
+    "Session consumption is being folded from the transcripts into the ledger. This view refreshes itself once that finishes — no need to press reload again.",
   "usage.filters": "Filters:",
   "usage.filter_remove": "Remove this filter",
   "usage.filter_clear": "Clear all",
@@ -3521,6 +3873,7 @@ export const en: Record<keyof typeof ja, string> = {
   "view.open_in_pane_at_line": "Open {path}:{line} in a separate pane",
   "view.open_in_pane": "Open {path} in a separate pane",
   "view.open_in_pane_aria": "Open {label} in a separate pane",
+  "view.reveal_in_files": "Show {path} in the file browser",
   "view.cannot_resolve_link": "Cannot resolve link: {href}",
   "view.cannot_load": "Cannot load",
   "view.lines_meta": " · {n} lines",
@@ -3532,6 +3885,12 @@ export const en: Record<keyof typeof ja, string> = {
   "view.slides": "Slides",
   "view.preview": "Preview",
   "view.source": "Source",
+  "view.diagram": "Diagram",
+  "view.diagram_display_mode": "Diagram display mode",
+  "view.diagram_page": " · page {page} / {pages}",
+  "view.drawio.unreadable": "This file could not be shown as a diagram (not readable as drawio).",
+  "view.drawio.empty": "The diagram is empty.",
+  "view.drawio.viewer_unavailable": "Could not load the diagram viewer. Reload the page and try again.",
   "view.markdown_display_mode": "Markdown display mode",
   "view.image_display_mode": "Image display mode",
   "view.open_reader_tip": "Open in reader view (sequential read-aloud + vertical reading)",
@@ -3799,6 +4158,8 @@ export const en: Record<keyof typeof ja, string> = {
   "share.proposal_placeholder": "Propose a message to the owner…",
   "share.propose": "Propose to owner",
   "share.owner_approval_note": "Nothing is sent to the agent until the owner reviews and approves it.",
+  "share.handoff_intro":
+    "This session proposed the first prompt for a successor session. Only the owner can edit it or launch from it.",
   "share.proposal_failed": "Could not send the proposal.",
   "share.proposal_sent": "Proposal sent to the owner.",
   "share.pending": "{count} pending approval(s)",
@@ -3824,5 +4185,6 @@ export const en: Record<keyof typeof ja, string> = {
   "share.unshare": "Unshare",
   "share.save_failed": "Could not save the share.",
   "share.exposure_warning": "This shares the full conversation, including prompts, agent replies, and tool output. Secrets in a conversation cannot be detected reliably. Recipients can save what they view, and those copies cannot be recalled after unsharing. RW input reaches the agent only after owner approval.",
+  "share.marks_warning": "Highlights drawn on the conversation are shared too. An RW recipient can draw their own, and those appear without approval (they never reach the agent). The login id of whoever drew a highlight is shown to you and to every other recipient.",
 
 };

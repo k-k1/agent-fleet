@@ -182,15 +182,24 @@ func countReportCards(t *testing.T, convID string) int {
 // waitPastCursor blocks until the wall clock has passed the row cursor, so the NEXT
 // status marker（TS = 現在時刻・秒精度）はその指示より後に書かれたことになる。
 // 指示と証拠の前後関係が判定の核心なので、ここだけは実時間を進める必要がある。
+//
+// ★ 上限は「跨ぐのに必要な最悪時間」より確実に長く取る。比較は **秒精度の文字列**なので、
+// カーソルが now+2s のとき跨げるのは now の秒が 3 つ進んだ後＝最悪 3 秒弱かかる。旧実装の
+// 上限はちょうど 3 秒（50ms×60）で、ランナーが少し遅れるだけで足りず、product 側は無傷
+// なのに CI だけが落ちた（run 32489634863）。テストが自分の時計を測って落ちる型なので、
+// 余裕は待ち時間ではなく上限だけに足す（跨いだ瞬間に返るのは変わらない）。
 func waitPastCursor(t *testing.T, cursor string) {
 	t.Helper()
-	for i := 0; i < 60; i++ {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
 		if time.Now().Format(time.RFC3339) > cursor {
 			return
 		}
-		time.Sleep(50 * time.Millisecond)
+		if time.Now().After(deadline) {
+			t.Fatalf("カーソル %s を跨げなかった", cursor)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("カーソル %s を跨げなかった", cursor)
 }
 
 // --- 述語のテーブル ---------------------------------------------------------------

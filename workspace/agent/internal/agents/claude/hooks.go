@@ -9,8 +9,9 @@ import (
 
 // Session liveness via claude hooks. claude fires UserPromptSubmit when work
 // starts and Stop when it finishes a response; we wire those to
-// `workspace-agent session-status <state>`, which records {state, ts} keyed by the
-// claude session_id (== our deterministic sid). wireSession surfaces the state so
+// `workspace-agent session-status <state>`, which records {state, ts} keyed by our
+// deterministic slot sid (claude's hook session_id, normalized — sid.go).
+// wireSession surfaces the state so
 // the Console can badge 進行中 / 応答あり and notify on arrival. Robust and cheap:
 // driven by claude's own events, no TUI parsing or transcript polling. With
 // --dangerously-skip-permissions there is no tool-approval QA state, so the two

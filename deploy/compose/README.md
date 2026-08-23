@@ -96,6 +96,11 @@ and launch a workspace.
 
 ### Login IdP setup
 
+The condensed version is below. For the walk-through that includes **what to create
+on the IdP's side** (Google Cloud Console, the Entra app registration, a GitHub
+OAuth App), how to verify it, and the per-IdP failure modes, see
+[docs/guide/operator/05-login-idp.md](../../docs/guide/operator/05-login-idp.md).
+
 Whichever IdPs you enable, the redirect URI you register is always this one — it
 does not multiply with the number of providers:
 
@@ -172,14 +177,19 @@ AF_GITHUB_ALLOWED_DOMAINS=example.com    # strongly recommended; see below
 
 ### Git provider OAuth (GitHub / Bitbucket) — optional
 
-Login above is for the **console**. To also enable the one-click
-"Connect via OAuth" buttons for cloning private repos, set the git-provider vars
-in `.env` (users can always paste a token instead, without these):
+Login above is for the **console**. The one-click "Connect via OAuth" buttons for
+cloning private repos are configured **in the Console, per tenant** — not in `.env`
+(docs/71). A tenant administrator opens **Tenant settings → Integrations → Git
+provider OAuth** and registers:
 
-- **GitHub** (device flow) — `GITHUB_OAUTH_CLIENT_ID` (client_id is not a secret;
-  the OAuth App must have "Enable Device Flow" ON; no callback URL needed).
-- **Bitbucket** (auth code) — `BITBUCKET_OAUTH_KEY` / `BITBUCKET_OAUTH_SECRET`;
-  the consumer's Callback URL must equal `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`.
+- **GitHub** (device flow) — `client_id` only (not a secret; the OAuth App must have
+  "Enable Device Flow" ON; no callback URL needed).
+- **Bitbucket** (auth code) — Key + Secret; the consumer's Callback URL must equal
+  `<PUBLIC_BASE_URL>/api/oauth/bitbucket/callback`, which that screen shows you.
+
+`GITHUB_OAUTH_CLIENT_ID` / `BITBUCKET_OAUTH_KEY` / `BITBUCKET_OAUTH_SECRET` in `.env`
+are **not read** for this (the first still means the GitHub sign-in app). Users can
+always paste a token instead, with nothing registered.
 
 ## First administrator, tenants, members
 
@@ -189,10 +199,15 @@ in `.env` (users can always paste a token instead, without these):
 - Single-tenant is the default: everyone lands in the built-in `default` tenant
   with zero friction. Create additional tenants only if you need hard separation
   (e.g. departments) — each membership gets a fully isolated workspace.
-- `AF_PROVISION=auto` (default) auto-admits any allow-listed login into the
-  default tenant. Set `AF_PROVISION=invite` to require an admin to add people —
-  you can do that from the first boot, since a `SUPER_ADMIN_EMAILS` account
-  reaches the Admin panel with no membership of its own.
+- **`AF_PROVISION=invite` is what `.env.example` ships with**: nobody gets a
+  workspace until an admin adds them. It works from the first boot, since a
+  `SUPER_ADMIN_EMAILS` account reaches the Admin panel with no membership of its
+  own; everybody else lands on a page telling them which address to quote to you.
+  Set `AF_PROVISION=auto` instead to auto-admit any allow-listed login into the
+  default tenant — reasonable for a small single-team install, but then
+  `AF_OAUTH_ALLOWED_*` is the only thing between a stranger and a workspace.
+  (The *built-in* default is still `auto`, so an existing `.env` that says nothing
+  keeps behaving exactly as before — only new installs start closed.)
 - **An invitation is itself permission to sign in.** Somebody you add in the
   Admin panel gets past the login without also being in `AF_OAUTH_ALLOWED_*`, so
   an invite-run deployment keeps one roster rather than two lists that drift.

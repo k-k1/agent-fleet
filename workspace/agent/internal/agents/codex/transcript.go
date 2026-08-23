@@ -1092,7 +1092,14 @@ func patchParts(tool, input string) []transcript.Part {
 		if verb == "delete" {
 			info = "delete " + file
 		}
-		p := transcript.Part{Kind: "tool", Tool: tool, Info: transcript.Clip(info), File: file}
+		// A rename carries "<src> → <dst>" for the info line, which is not a path anything
+		// can open. File is the coordinate (the destination — where the content lives now),
+		// info keeps the arrow.
+		target := file
+		if i := strings.Index(target, " → "); i >= 0 {
+			target = strings.TrimSpace(target[i+len(" → "):])
+		}
+		p := transcript.Part{Kind: "tool", Tool: tool, Info: transcript.Clip(info), File: target, Verb: verb}
 		if verb != "delete" {
 			p.Edits = []transcript.Edit{{Old: transcript.CapEdit(strings.TrimRight(oldB.String(), "\n")),
 				New: transcript.CapEdit(strings.TrimRight(newB.String(), "\n"))}}

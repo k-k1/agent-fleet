@@ -21,9 +21,9 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | ↳ fork の任意ボディ | `POST …/fork` は `{"at": <anchorId>, "include": bool}` を取ると**発言時点からの分岐**になる（docs/55）。省略時は従来の会話まるごと分岐で後方互換。壊れた JSON は `400 bad_request`（黙って全体分岐に倒さない）。分岐点が使えない＝`400 fork_bad_anchor`、その種別/起動方式に機能が無い＝`400 fork_at_unsupported` | CP はボディを素通し中継 | [04](04-workspace-agent.md) |
 | repos (SCM) | `GET/POST /api/repos`・`/api/repos/{name}/{status,branches,checkout,fetch,ff,changes,diff,log,graph,show,stage,unstage,discard,commit,identity,prompt-templates}`・削除ロック `POST /api/repos/{name}/lock`（docs/45）| 中継 | [04](04-workspace-agent.md) |
 | fs | `GET /api/fs/{tree,file,download,changes,linemarks}`・`PUT /api/fs/file`・`POST /api/fs/{upload,mkdir,newfile,rename,delete,suggest-edit}` | 中継 | [04](04-workspace-agent.md) / [docs/44](../44-markdown-code-editor.md) |
-| connections | `GET /api/connections`・git `PUT/DELETE /api/connections/git/{host}`（+ GitHub Device / Bitbucket OAuth / claude / codex / opencode）| 中継（Bitbucket OAuth 開始と callback のみ CP）| [08](08-integrations.md) |
+| connections | `GET /api/connections`・git `PUT/DELETE /api/connections/git/{host}`（+ GitHub Device / Bitbucket OAuth / claude / codex / opencode）・`GET /api/git-oauth`（自テナントでどの OAuth ボタンを出せるか）| 中継。ただし **git プロバイダの OAuth は両方とも CP**（GitHub の device flow `start`/`poll`・Bitbucket の `start` と callback・`/api/git-oauth`）＝[71](../71-tenant-git-oauth.md) | [08](08-integrations.md) |
 | chat / assistants | `/api/chat/conversations*`（stream は SSE、削除ロック `POST …/{id}/lock`）・`POST /api/chat/ask`・`/api/assistants*` | 中継 | [04](04-workspace-agent.md) |
-| env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex,copilot}/usage`（各 WsBar 使用量チップ。claude/codex=サブスク枠、copilot=アカウント
+| env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`POST/GET /api/env/jdk-install`（JDK ワンボタン導入・[09 §JDK](09-deploy.md)）・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex,copilot}/usage`（各 WsBar 使用量チップ。claude/codex=サブスク枠、copilot=アカウント
 クレジット残量。応答にプランと利用アカウントを含む。agy は `GET /api/connections/agy/usage`）・`GET/PUT /api/agents/rtk`・`GET /api/agents/rtk/gain`（rtk 節約履歴＝使用量タブ「rtk 効果」カード、`rtk gain --all --format json` 素通し）| ws-settings=CP、他は中継 | [04](04-workspace-agent.md) |
 | memo | `GET/POST/PATCH/DELETE /api/memos*`・`POST /api/memos/flush` | CP（flush 時のみ Agent へ）| [03](03-control-plane.md) |
 | notifications | `GET /api/notifications`・`POST /api/notifications/{seen,usage-observations}` | CP（DB）| [03](03-control-plane.md) |
@@ -35,12 +35,13 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | pat | `GET/POST/DELETE /api/pat*` | CP | [07 §7.6](07-security.md) |
 | ssm | `GET/POST/PUT/DELETE /api/ssm/{profiles,hosts}*`・`GET /api/sessions/{name}/ssm-login` | CP（DB）+ Agent（セッション）| [08](08-integrations.md) |
 | internal git | `GET/POST/DELETE /api/internal-git/repos*`（管理）・`/git/{slug}/{repo...}` smart-HTTP・`/git/…/info/lfs/*` | CP（Agent を経由しない）| [91](91-internal-git.md) |
-| admin | `GET /api/admin/{tenants,sessions,usage,audit,host,egress*}`・`POST /api/admin/{tenants,memberships,stop-workspace,clean-home}`・`PUT /api/admin/{tenants/{slug}/limits,user-limits,membership-role,egress/mode}` | CP（super_admin / tenant_admin gate）| [03](03-control-plane.md) |
+| admin | `GET /api/admin/{tenants,sessions,usage,audit,host,egress*}`・`POST /api/admin/{tenants,memberships,stop-workspace,clean-home}`・`PUT /api/admin/{tenants/{slug}/limits,user-limits,membership-role,egress/mode}`・git プロバイダ OAuth `GET /api/admin/tenants/{slug}/git-oauth`＋`PUT/DELETE …/git-oauth/{provider}`（tenant_admin・承認なし・[71](../71-tenant-git-oauth.md)）| CP（super_admin / tenant_admin gate）| [03](03-control-plane.md) |
 | MCP | `POST /mcp`（Streamable HTTP JSON-RPC・Bearer PAT・authGate 除外）| CP | [03](03-control-plane.md) / [decisions/0006](../decisions/0006-mcp-unified.md) |
 | preview | `GET /preview/{port}/{rest...}`（`/preview/{port}` は 301 で末尾 `/` 付与）| CP → Agent `/proxy/{port}` | §5.3 |
 | browser | `POST/GET/DELETE /api/browser/pages*`・`GET /ws/browser?id=&tenant=` | CP → Agent `/browser/pages*`・`/ws/browser` | §5.3 / [設計31](../31-container-browser-pane.md) |
 | WebSocket | `GET /ws/terminal?session=&tenant=` | CP → Agent `/ws/pty` | §5.3 |
-| auth / その他 | `GET /login`・`/oauth2/{login,callback,logout}`・`GET /api/oauth/bitbucket/callback`・`GET /healthz`・`/internal/egress{,/policy}`（`AF_EGRESS_TOKEN`）・`/` = Console 静的配信（no-store）| CP | [07](07-security.md) |
+| internal（Agent → CP・per-membership トークン）| `GET /internal/{memos,schedules,mcp-servers,docs}`・**`POST /internal/git-oauth/bitbucket/refresh`**（`AF_GIT_OAUTH_TOKEN`。テナントの client_secret を CP に残したまま refresh grant を代行＝[71](../71-tenant-git-oauth.md) §71.8）| CP | [08](08-integrations.md) |
+| auth / その他 | `GET /login`・`/oauth2/{login,callback,logout}`・`GET /api/oauth/bitbucket/callback`・`GET /healthz`・`/internal/egress{,/policy}`（`AF_EGRESS_TOKEN`）・`GET /internal/docs`（`AF_DOCS_TOKEN`・ロール別 docs の tar.gz／[04 §4.9](04-workspace-agent.md)）・`/` = Console 静的配信（no-store）| CP | [07](07-security.md) |
 
 - 旧 `/agent-fleet` プレフィクスは**廃止**（ルート配信）。`/agent-fleet*` は互換リダイレクトのみ。
 - 非同期操作（起動・clone）は**同期 + ポーリング**で運用（`/jobs` 構想は未採用）。

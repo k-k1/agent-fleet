@@ -69,22 +69,26 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 
 // ensureSessionTmux (re)creates the tmux session from its recorded meta when it is
 // not currently alive — used on attach so a clicked-but-exited session relaunches
-// claude rather than the default shell. Reports whether a meta was found.
+// claude rather than the default shell. nil means the session is now running.
 // managed セッション（docs/27 P2）は tmux でなく driver.Resume（runtime handle の
 // 再接続＝§6 の reconciliation）で「起動」する — /start の意味論は両ドライバで同じ。
-func ensureSessionTmux(name string, ssmForce bool) bool {
+//
+// Every failure is REPORTED, never swallowed: /start answering {"ok":true} for a
+// launch that never happened is worse than a plain error, because the Console then
+// waits for a session that is not coming and offers the user no way to retry.
+func ensureSessionTmux(name string, ssmForce bool) error {
 	m, ok := session.ReadMeta(name)
 	if ok && m.DriverKind() == session.DriverManaged {
 		if managedAlive(m) {
-			return true
+			return nil
 		}
 		d, dok := driverOf(m)
 		if !dok {
-			return false
+			return fmt.Errorf("no driver for session %s (kind %q)", name, m.Kind)
 		}
 		if _, err := startManagedSession(d, m); err != nil {
 			log.Printf("managed resume %s: %v", name, err)
-			return false
+			return err
 		}
 		// 再開＝停止扱いの解除。次の一覧ポーリングでも clear されるが、/start 応答の
 		// 直後に halt 直前の StoppedAt が残っていると紛らわしいのでここで消す。
@@ -92,16 +96,19 @@ func ensureSessionTmux(name string, ssmForce bool) bool {
 			m.StoppedAt = ""
 			session.WriteMeta(m)
 		}
-		return true
+		return nil
 	}
 	if tmuxx.HasSession(session.TmuxName(name)) {
-		return true
+		return nil
 	}
 	if !ok {
-		return false
+		return fmt.Errorf("no meta for session %s", name)
 	}
-	_ = startSessionTmux(m, ssmForce)
-	return true
+	if err := startSessionTmux(m, ssmForce); err != nil {
+		log.Printf("resume %s: %v", name, err)
+		return err
+	}
+	return nil
 }
 
 // liveSessionsInDir returns the display names of running sessions whose cwd is at

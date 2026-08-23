@@ -20,6 +20,12 @@ export interface Tenant {
   max_workspace_mem?: number; // per-workspace RAM cap in bytes (0 = no tenant cap)
   session_idle_timeout?: string;
   ws_idle_timeout?: string;
+  // How long a home may sit unopened before it is put away as a snapshot (ecs-ec2 only;
+  // "" = deploy default, "0" = never). ADR 0045 決定 13-2.
+  home_hibernate_after?: string;
+  // How often to keep a copy of a home outside its AZ — the tenant's RPO (ecs-ec2 only;
+  // "" = deploy default, "0" = no backups). ADR 0045 決定 17.
+  home_backup_every?: string;
   allow_agent_self_update?: boolean;
   terminal_history_retention_days?: number;
   // Per-tenant login rules, stored as CSV (docs/61 §61.9.7).
@@ -40,10 +46,87 @@ export interface Member {
   mem_limit?: number | null; // per-workspace RAM cap in bytes (0/undefined = unset)
   cpu_limit?: number | null; // per-workspace CPU cap in Fargate units, 1024 = 1 vCPU (0/undefined = unset)
   disk_gb?: number | null; // per-workspace working disk in GiB (0/undefined = unset → 20 GiB free default)
+  /** Which KIND of machine the workspace lands on, as a deployment-declared class id
+   *  ("" / undefined = the tenant default). Not a size — mem_limit still picks the
+   *  rung within the class (docs/70). */
+  slot_class?: string | null;
   /** "active" | "removed". A removed member is off the roster and can no longer
    *  sign in, but stays on THIS list so the rest of the offboarding sequence
    *  (stop workspace → clean home) is still reachable (docs/61 §61.10.6). */
   status?: string;
+}
+
+/** What the three size axes MEAN on this deployment's runtime
+ *  (GET /api/admin/workspace-sizing, ADR 0045 決定 21).
+ *
+ *  The stored shape is the same everywhere — three independent numbers — but what a
+ *  stored number BECOMES is not. On the EC2 slot pool the CPU axis never reaches the
+ *  backend, memory picks a box instead of capping one, and the disk number sizes the
+ *  PERSISTENT home. The UI reads this instead of describing every deployment as if it
+ *  were Fargate, which is what it used to do (docs/64 §64.27). */
+export interface WsSizing {
+  runtime: string;
+  cpu_effective: boolean;
+  /** "limit" = a cap (docker/Fargate) · "slot" = a requirement that picks a box. */
+  mem_meaning: "limit" | "slot";
+  /** "work" = wiped on stop · "home" = the persistent home · "quota" = display only. */
+  disk_meaning: "work" | "home" | "quota";
+  disk_default_gb?: number;
+  disk_create_only?: boolean;
+  /** The DEFAULT class's ladder when there is more than one class. */
+  slots?: WsSlot[];
+  /** The machine classes this deployment offers. Absent on a deployment that declared
+   *  a single unnamed ladder — a picker with one entry is a question with one possible
+   *  answer, so there is no picker at all (docs/70 §70.10). */
+  slot_classes?: WsSlotClass[];
+  default_slot_class?: string;
+}
+
+/** One declared machine class: the operator's own label, a CPU architecture and its
+ *  own ladder. The LABEL is what the admin sees — they are choosing "省コスト（Arm）",
+ *  not an EC2 instance family; the instance type appears only in the "you land on"
+ *  line underneath. */
+export interface WsSlotClass {
+  id: string;
+  label: string;
+  arch: string;
+  slots: WsSlot[];
+}
+
+export interface WsSlot {
+  instance_type: string;
+  mem_mib: number;
+  /** 0/absent when the operator did not declare it — then no vCPU count is shown. */
+  vcpu?: number;
+}
+
+/** The runtime's own answer, used while the profile is still loading. It matches the
+ *  docker/Fargate description the UI has always shown, so nothing flickers into view. */
+export const WS_SIZING_FALLBACK: WsSizing = {
+  runtime: "",
+  cpu_effective: true,
+  mem_meaning: "limit",
+  disk_meaning: "work",
+};
+
+/** The slot a memory request (in MiB) lands on: the smallest rung that holds it, and
+ *  the top rung when nothing does — the same rule as the CP's slotTypeFor, including
+ *  0 landing on the SMALLEST slot (on Fargate/docker 0 means the deployment default
+ *  instead, which is why the caller must not reuse this for those runtimes). */
+export function slotFor(slots: WsSlot[] | undefined, memMib: number): WsSlot | null {
+  if (!slots || slots.length === 0) return null;
+  return slots.find((s) => memMib <= s.mem_mib) ?? slots[slots.length - 1];
+}
+
+/** The ladder a class id lands on: its own rungs, or the profile's default ladder when
+ *  the deployment has no classes (or the id names one it no longer declares — the CP
+ *  falls back the same way, so the screen must not promise a class that will not be
+ *  used). */
+export function ladderFor(sizing: WsSizing, classID: string): WsSlot[] | undefined {
+  const cs = sizing.slot_classes;
+  if (!cs || cs.length === 0) return sizing.slots;
+  const want = classID || sizing.default_slot_class || cs[0].id;
+  return (cs.find((c) => c.id === want) ?? cs.find((c) => c.id === sizing.default_slot_class) ?? cs[0]).slots;
 }
 
 /** The workspace sizes offered as named choices. The three axes are stored as

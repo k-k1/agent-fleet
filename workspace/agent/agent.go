@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -172,10 +174,10 @@ func driveState(m session.Meta, alive, heal bool) string {
 		return agents.StateBlocked
 	}
 	// codex managed: a turn rejected/failed with usageLimitExceeded leaves the
-	// session sitting at idle, but re-sending will hit the same limit. Surface it
-	// with the same "blocked" badge as Claude's usage-limit menu.
+	// session sitting at idle, but re-sending will hit the same limit. Surface it as
+	// 制限解除待ち — 消すべきメニューが無く、待てば窓が開く側（WireLive と同じ判定）。
 	if m.DriverKind() == session.DriverManaged && normalizeKind(m.Kind) == session.KindCodex && state == "idle" && codex.IsRateLimited(m.Name) {
-		return agents.StateBlocked
+		return agents.StateLimited
 	}
 	if heal && state != "idle" && pane.Idle {
 		state = "idle"
@@ -196,6 +198,15 @@ func driveState(m session.Meta, alive, heal bool) string {
 		// fires the answer-ready notification (recorded off the previous "working" state).
 		state = "working"
 		status.Persist(sid, "working")
+	}
+	// 上限で切れたターンの後（メニューは自動解除済み／モデル別上限はメニューを出さない）
+	// ペインは待機プロンプトへ戻るので、ここまでの状態は idle になる。一覧（wireSession）と
+	// 同じ読み替えをここでも行う — チップが一覧と本文で食い違うと、どちらが本当か利用者には
+	// 分からない（docs/47 §4-9）。送信は塞がない（agents.StateLimited のコメント）。
+	if isClaude && alive && state == "idle" {
+		if limited, _, waiting := rateLimitWaiting(m, time.Now()); waiting {
+			return limited
+		}
 	}
 	return state
 }

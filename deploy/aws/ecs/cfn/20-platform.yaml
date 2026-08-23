@@ -130,6 +130,24 @@ Resources:
                   - ecs:ListTasks
                   - ecs:TagResource
                 Resource: "*"          # ECS actions are not tightly resource-scopable; dev-acceptable
+              # --- Backend drift ("要再起動" badge; control-plane/runtime_ecs_stale.go) ---
+              # Read-only, one repository: resolve the workspace image TAG to the content
+              # it points at now, so the CP can tell that a running workspace was launched
+              # from an older image and the Console can offer a stop→start.
+              #
+              # ⚠️ This role, not the deployer's. The whole class of bug ADR 0045 決定 21 /
+              # docs/64 §64.22 documents is "it passed against real AWS" while the live
+              # test ran as the deployer — the CP task role is the only identity that
+              # matters here. Without this statement the probe fails with AccessDenied,
+              # which the CP treats as "unknown" and the badge simply never appears: a
+              # silent loss of the feature, not an error anyone would see.
+              - Sid: EcrImageRead
+                Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:DescribeImages
+                Resource:
+                  - !GetAtt EcrWorkspace.Arn
               - Sid: EfsAccessPoints
                 Effect: Allow
                 Action:
@@ -147,6 +165,63 @@ Resources:
                   - ssm:DeleteParameter
                   - ssm:AddTagsToResource
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
+              # --- EC2 slot pool (AF_RUNTIME=ecs-ec2 only; harmless on Fargate) ---
+              # The CP owns the whole swap: find slots and volumes by tag, attach the
+              # user's home, mount it over SSM, and hand the slot back. docs/64 §64.15.8.
+              - Sid: Ec2SlotPool
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeSubnets
+                  - ec2:CreateVolume
+                  - ec2:DeleteVolume
+                  - ec2:AttachVolume
+                  - ec2:DetachVolume
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                  - ec2:RunInstances
+                  - ec2:StartInstances
+                  - ec2:StopInstances
+                  # ⚠️ Snapshots were MISSING here until 2026-08-16, and nothing caught it:
+                  # the live E2E runs with a deployer credential, not with this role. Every
+                  # snapshot path would have failed with AccessDenied on a real deployment —
+                  # and not only the optional ones. createHomeVolume asks for the user's
+                  # hibernation snapshot FIRST, so a brand-new user's Start would have failed
+                  # outright, not merely started slowly. (docs/64 §64.22.)
+                  #   DescribeSnapshots — restore (決定 4), golden lookup (決定 9), backups (決定 17)
+                  #   CreateSnapshot    — hibernation and backups
+                  #   DeleteSnapshot    — retention, superseded captures, Destroy
+                  - ec2:DescribeSnapshots
+                  - ec2:CreateSnapshot
+                  - ec2:DeleteSnapshot
+                Resource: "*"          # Describe* cannot be resource-scoped; tags are the fence
+              - Sid: EcsContainerInstances
+                Effect: Allow
+                Action:
+                  - ecs:ListContainerInstances
+                  - ecs:DescribeContainerInstances
+                  # Stopped instances and disconnected agents are NOT deregistered
+                  # automatically, even on terminate (ADR 0045 決定 3-2). The sweeper
+                  # has to do it or ghosts accumulate and satisfy placement constraints.
+                  - ecs:DeregisterContainerInstance
+                Resource: "*"
+              - Sid: SsmSlotCommands
+                Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                Resource: "*"          # scoped by the AWS-RunShellScript document + slot tags
+              - Sid: PassSlotRole
+                Effect: Allow
+                Action: iam:PassRole
+                # The launch template carries the slot instance profile, so RunInstances
+                # needs to pass that role. Named by convention (the 40-ec2-pool stack
+                # creates af-<stack>-slot) to avoid a circular stack import.
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/af-*-slot"
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ec2.amazonaws.com
               - Sid: ServiceConnectDiscovery
                 Effect: Allow
                 Action:
@@ -163,6 +238,71 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: ecs-tasks.amazonaws.com
+              # --- Cloud cost (docs/67, ADR 0048 決定 8) ---
+              # ADR 0045 決定 21 refused to add IAM just to DISPLAY something (the vCPU
+              # count became an env declaration instead). This reverses that, on purpose:
+              # there the same number was obtainable another way, and here the alternative
+              # to real money is a DIFFERENT number (an estimate from operator-declared
+              # unit prices, which goes stale silently). There is no substitute for the
+              # invoice.
+              #
+              # Read-only, one action. Cost Explorer has no resource-level scoping, so
+              # Resource must be "*" — but what comes back is aggregated amounts, not
+              # access to any resource or secret.
+              #
+              # ⚠️ Account prerequisite, not expressible here: an IAM role can only call
+              # the Billing APIs when the account has "IAM user and role access to Billing
+              # Information" enabled. Without it this policy is present and every call
+              # still fails — see deploy/aws/ecs/README.md.
+              - Sid: CostExplorerRead
+                Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                  - ce:ListCostAllocationTags
+                Resource: "*"
+              # ⚠️ ACCOUNT-LEVEL BILLING CONFIGURATION — the one place the Control Plane
+              # writes something outside the resources it created itself. Read the reason
+              # before removing it (docs/67 §67.5, ADR 0048 決定 11).
+              #
+              # A cost allocation tag only applies from the moment it is switched on, and
+              # AWS will not activate a key it has not yet discovered on a real resource —
+              # so the step cannot be done at deploy time, only a day later, by hand, by
+              # someone who remembers. Every day it is missed is spend that can never be
+              # attributed to anyone. That is the trade this grant buys.
+              #
+              # What bounds it, in code (cost_tags.go), not in policy:
+              #   - a fixed allow-list of five keys. `af-workspace` is NEVER activated —
+              #     its value is built from a member's email address.
+              #   - a key a human set to Inactive is left alone (AWS stamps
+              #     LastUpdatedDate on any deliberate change).
+              #
+              # ⚠️ Removing this statement does NOT break the cost views. The CP reports
+              # "cannot activate" and the operator runs the CLI command instead.
+              - Sid: CostAllocationTagActivation
+                Effect: Allow
+                Action:
+                  - ce:UpdateCostAllocationTagsStatus
+                Resource: "*"
+              # Text-to-speech (docs/24). The CP calls Polly with the task role — no key
+              # is ever stored (ADR 0013). SynthesizeSpeech has no resource-level
+              # permissions, hence "*".
+              #
+              # ⚠️ Do not remove this "because nobody uses TTS": the provider reports
+              # itself READY on the presence of a region alone (tts_polly.go Ready()),
+              # and AF_ECS_REGION is always set by 30-ingress. Without the grant the
+              # Console still offers voice playback and every attempt fails with a 502
+              # at synthesize time — a silent-looking capability, not a disabled one.
+              # On a deployment with no VOICEVOX service (AF_TTS_ECS_SERVICE unset),
+              # `auto` routes EVERY utterance here, Japanese included.
+              #
+              # Cost is per character and only while somebody is listening: neural
+              # $16 / 1M chars, standard $4 / 1M (~$0.008 for a 500-character reply).
+              # The admin toggle that actually turns the feature off is in the Console.
+              - Sid: PollySynthesize
+                Effect: Allow
+                Action:
+                  - polly:SynthesizeSpeech
+                Resource: "*"
 
 Outputs:
   EcrControlPlaneUri:

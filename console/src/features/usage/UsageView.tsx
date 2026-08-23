@@ -59,6 +59,11 @@ const BY_DIMS: { dim: UsageDim; key: MsgKey }[] = [
   { dim: "trigger", key: "usage.by_trigger" },
 ];
 
+// 折り込み待ちの再取得。実測で十数秒かかる（158 セッションで ~20s）ので、2 秒 × 30 回 =
+// 最大 1 分待つ。上限に当たっても壊れた表示にはならない（申告バッジが残るだけ）。
+const FOLD_POLL_MS = 2000;
+const FOLD_POLL_MAX = 30;
+
 const METRICS: { metric: UsageMetric; key: MsgKey }[] = [
   { metric: "spend", key: "usage.metric_spend" },
   { metric: "calls", key: "usage.metric_calls" },
@@ -103,6 +108,15 @@ export function UsageView() {
   const [kindModel, setKindModel] = useState<UsageSeries | null>(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
+  // セッション本体の消費は「読まれた時に転写から台帳へ折り込む」— しかも**非同期**なので、
+  // 折り込みが走っている間の応答は直近ターンを含まない（docs/46 §3-b）。サーバはそれを
+  // folding で申告してくるので、落ち着くまでこちらで取り直す。これが無いと、利用者が
+  // 「最新にならない」まま再取得を何度も押して当てにいく画面になる（実際にそうなっていた）。
+  const [folding, setFolding] = useState(false);
+  const [foldTick, setFoldTick] = useState(0);
+  const foldTries = useRef(0);
+  // 明示的な再取得だけスロットルを飛ばす（自動の取り直しに付けると走り続ける）。
+  const forceFold = useRef(false);
 
   const filter = filterParam(filters);
 
@@ -111,7 +125,8 @@ export function UsageView() {
       if (!running) return true; // ワークスペース停止中は叩かない（起動後に deps で再実行）
       // now はリクエスト時刻で固定する（3本の系列が別々の "今" を見ないように）。
       const { from, to, bucket } = rangeOf(hours, new Date());
-      const common = { from, to, filter: filter || undefined };
+      const fold = forceFold.current ? ("force" as const) : undefined;
+      const common = { from, to, filter: filter || undefined, fold };
       const [a, b, c] = await Promise.all([
         fetchUsageSeries({ ...common, bucket, by }, signal),
         fetchUsageSeries({ ...common, by: "feature", split: "model" }, signal),
@@ -121,9 +136,13 @@ export function UsageView() {
       // 過渡的な 502（ワークスペース起動直後に CP が返す）は再試行に回す。ここで
       // 空データを確定させると、エージェントが上がっても「記録なし」のまま固まる。
       if (isTransientErr(a) || isTransientErr(b) || isTransientErr(c)) return false;
+      // ここから先は終端（成功でも本物のエラーでも）— force は消費済みにする。再試行に
+      // 回した分では消さない（502 で消すと、押した再取得がスロットルに当たって空振りする）。
+      forceFold.current = false;
       const bad = [a, b, c].find((r) => (r as { error?: unknown })?.error);
       if (bad) {
         setErr(errText((bad as { error: { code?: string; message?: string } }).error));
+        setFolding(false);
         setLoading(false);
         return true;
       }
@@ -131,12 +150,34 @@ export function UsageView() {
       setSeries(a as UsageSeries);
       setFeatModel(b as UsageSeries);
       setKindModel(c as UsageSeries);
+      setFolding([a, b, c].some((r) => (r as UsageSeries).folding));
       setLoading(false);
       return true;
     },
     [running, hours, by, filter],
   );
-  useRetryLoad(load, [running, hours, by, filter, reloadTick]);
+  useRetryLoad(load, [running, hours, by, filter, reloadTick, foldTick]);
+
+  // 折り込みが終わるまでの自動再取得。上限を置くのは、サーバが何かの理由で folding を
+  // 落とし損ねた時に永久ポーリングへ落ちないため（止まった先は「再取得」が救う）。
+  useEffect(() => {
+    if (!folding) {
+      foldTries.current = 0;
+      return;
+    }
+    if (foldTries.current >= FOLD_POLL_MAX) return;
+    const id = window.setTimeout(() => {
+      foldTries.current++;
+      setFoldTick((n) => n + 1);
+    }, FOLD_POLL_MS);
+    return () => window.clearTimeout(id);
+  }, [folding, foldTick]);
+
+  const reload = () => {
+    forceFold.current = true;
+    foldTries.current = 0;
+    setReloadTick((n) => n + 1);
+  };
 
   // 内訳は matrix から起こす（追加リクエスト無し）: 機能別 = 行合計、モデル別 = 列合計、
   // エージェント別 = kind×model の行合計。
@@ -223,9 +264,16 @@ export function UsageView() {
             ))}
           </select>
         </label>
-        <button type="button" className="ghost uc-reload" onClick={() => setReloadTick((n) => n + 1)}>
+        <button type="button" className="ghost uc-reload" onClick={reload}>
           <Icon name="refresh" /> {tr("usage.reload")}
         </button>
+        {/* 折り込み中である事実を出す。黙って古い数字を見せると「反映されない」になり、
+            利用者は再取得を連打する（それが直前までの挙動だった）。 */}
+        {folding && (
+          <span className="uc-folding muted" title={tr("usage.folding_hint")}>
+            <Icon name="sync" spin /> {tr("usage.folding")}
+          </span>
+        )}
       </div>
 
       {!!filters.length && (

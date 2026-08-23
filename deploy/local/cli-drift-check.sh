@@ -41,6 +41,8 @@ TARGETS=(
   "rtk|RTK_VERSION|github|rtk-ai/rtk"
 )
 
+CURL_RETRY=(--retry 3 --retry-delay 1 --retry-all-errors)
+
 arg_pin() {
   local v
   v="$(sed -n "s/^ARG $1=//p" "$DOCKERFILE" | head -1)"
@@ -71,21 +73,24 @@ for t in "${TARGETS[@]}"; do
     continue
   fi
   # Keep fetch failures separate so an empty response is never read as "no drift".
+  # 一発勝負にしない: 実測で kiro の CDN が直前の別ホストへの接続直後に
+  # `curl: (35) Send failure: Connection reset by peer` を返すことがあり、
+  # 単発 curl だと「取得失敗」= exit 2 で赤くなる（リトライで必ず通る）。
   case "$source" in
     npm)
       latest="$(npm view "$locator" version 2>/dev/null)" ;;
     github)
-      latest="$(curl -fsSL --max-time 20 \
+      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" \
         "https://api.github.com/repos/${locator}/releases/latest" 2>/dev/null |
         jq -r '.tag_name // empty | sub("^v";"")' 2>/dev/null)" ;;
     agy)
-      latest="$(curl -fsSL --max-time 20 "$locator" 2>/dev/null |
+      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
         jq -r '.version // empty' 2>/dev/null)" ;;
     cursor)
-      latest="$(curl -fsSL --max-time 20 "$locator" 2>/dev/null |
+      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
         sed -n 's|.*versions/\([0-9.]*-[a-f0-9]*\)/.*|\1|p' | head -1)" ;;
     kiro)
-      latest="$(curl -fsSL --max-time 20 "$locator" 2>/dev/null |
+      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
         jq -r '.version // .Version // empty' 2>/dev/null)" ;;
     *)
       latest="" ;;

@@ -109,6 +109,10 @@ test("テナント管理者: サインイン方式は編集できるが承認は
     // ★ isSuper の出どころ。テナント管理者だけの人には super_admin: false が返る。
     if (p === "/api/admin/tenants") return route.fulfill({ json: { tenants: [TENANT], super_admin: false } });
     if (p === "/api/admin/tenants/acme/idp") return route.fulfill({ json: { providers: [IDP] } });
+    // 一覧はテナント管理者にも開いている（§61.17.9 ①）。ただし issuer は super_admin
+    // にしか返らないので、ここでも載せない。
+    if (p === "/api/admin/providers")
+      return route.fulfill({ json: { providers: [{ id: "google", label_ja: "Google でサインイン", label_en: "Sign in with Google" }] } });
     // モックしていない API は握り潰さず落とす（path のタイポ／API 変更の検知）。
     return route.abort();
   });
@@ -119,20 +123,32 @@ test("テナント管理者: サインイン方式は編集できるが承認は
 
   const modal = page.locator(".tenant-modal");
   await expect(modal).toBeVisible();
-  // サインイン方式（既定セクション）。行は出る＝テナント管理者も自分の IdP を扱える。
-  await expect(modal.locator(".adm-mcp-row .as-name")).toHaveText("entra");
-  await expect(modal.locator(".idp-state")).toHaveText("承認待ち");
+  // サインイン方式（既定セクション）。デプロイ共通の方式と自前の行が 1 本のリストに
+  // 並ぶ（docs/61 §61.17.5）。
+  const rows = modal.locator(".adm-mcp-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0).locator(".as-name")).toHaveText("Google でサインイン");
+  await expect(rows.nth(0).locator("code")).toHaveText("google");
+  await expect(rows.nth(0).locator(".idp-state")).toHaveText("デプロイ共通");
+  // 自前の行は出る＝テナント管理者も自分の IdP を扱える。
+  await expect(rows.nth(1).locator(".as-name")).toHaveText("entra");
+  await expect(rows.nth(1).locator(".idp-state")).toHaveText("承認待ち");
   const acts = modal.locator(".allow-acts button");
   await expect(acts.filter({ hasText: "編集" })).toHaveCount(1);
   await expect(acts.filter({ hasText: "承認して有効化" })).toHaveCount(0);
+  // ★ 2 トグルは状態として見えるが倒せない（規則の PUT は withSuperAdmin 固定）。
+  // 押せないチェックボックスではなく、静的なチップとして出す。
+  await expect(modal.locator(".idp-flags .idp-flag")).toHaveCount(2);
+  await expect(modal.locator(".idp-flags input")).toHaveCount(0);
 
   // ログイン規則: 値は読めるが、入力欄も保存ボタンも無い。
   await modal.locator(".settings-rail-item", { hasText: "ログイン規則" }).click();
-  // 4 行目は「ボタンを出さない方式」（docs/61 §61.15.9）— 受け入れる方式とは別の欄。
-  await expect(modal.locator(".af-val")).toHaveCount(4);
-  await expect(modal.locator(".af-val").nth(0)).toHaveText("entra");
-  await expect(modal.locator(".af-val").nth(2)).toContainText("未設定");
-  await expect(modal.locator(".af-val").nth(3)).toContainText("未設定");
+  // 方式の 2 列は P7-0 でこの欄から出た（§61.17.5）— 残るのはドメインの 2 列だけで、
+  // 方式は「サインイン方式」の面を指す 1 行のヒントになる。
+  await expect(modal.locator(".af-val")).toHaveCount(2);
+  await expect(modal.locator(".af-val").nth(0)).toHaveText("@sales.acme.co.jp");
+  await expect(modal.locator(".af-val").nth(1)).toContainText("未設定");
+  await expect(modal.locator(".admin-hint", { hasText: "「サインイン方法」の面で行ごとに切り替えます" })).toHaveCount(1);
   await expect(modal.locator(".settings-content input")).toHaveCount(0);
   await expect(modal.locator(".settings-content .admin-actions")).toHaveCount(0);
 });
@@ -212,6 +228,8 @@ test("デプロイ管理者: 登録簿の行から承認して有効化できる
 
   await page.locator(".acct-btn").click();
   await page.locator(".acct-menu .acct-item", { hasText: "管理" }).click();
+  // 管理モーダルは左レール＋本文（テナント一覧が着地点）。台帳はレールの 1 項目。
+  await page.locator(".settings-rail-item", { hasText: "サインイン方法の登録簿" }).click();
 
   const register = page.locator(".admin-panel", { hasText: "テナント定義のサインイン方法" });
   await expect(register).toBeVisible();
@@ -281,11 +299,12 @@ test("テナント管理者: GitHub 行は組織を訊き、issuer / tid / 信�
   await expect(issuer).toHaveValue("");
 });
 
-// 「使えるサインイン方法」は自由入力で、何が書けるかは env にしか無かった（打ち間違えると
-// CP が 400 unknown_provider で弾くだけ）。GET /api/admin/providers を欄のすぐ下に出す。
-// バンドルを動かして見るのは、置き場（規則のパネルの中）と、tenant_admin の面に漏れて
-// いないことが、コンポーネント単体では確かめられないため。
-test("デプロイ管理者: ログイン規則の欄に、書ける provider id が並ぶ", async ({ page }) => {
+// 「使えるサインイン方法」はかつて自由入力の CSV で、何が書けるかは env にしか無かった
+// （打ち間違えると CP が 400 unknown_provider で弾くだけ）。P7-0 でその欄は消え、
+// GET /api/admin/providers が返すデプロイ共通の方式が**行として**並ぶようになった
+// （docs/61 §61.17.5）。バンドルを動かして見るのは、置き場（サインイン方式の面）と、
+// 自前の行と 1 本のリストに混ざる並び順が、コンポーネント単体では確かめられないため。
+test("デプロイ管理者: デプロイ共通の方式が、テナントの一覧に id つきで並ぶ", async ({ page }) => {
   await page.route("**/api/**", async (route) => {
     const p = new URL(route.request().url()).pathname;
     if (p === "/api/whoami") return route.fulfill({ json: { auth_mode: "dev", user: "root", email: "root@example.com" } });
@@ -313,32 +332,60 @@ test("デプロイ管理者: ログイン規則の欄に、書ける provider id
   await page.locator(".acct-btn").click();
   await page.locator(".acct-menu .acct-item", { hasText: "管理" }).click();
   await page.locator(".tc-name", { hasText: "Acme" }).first().click();
+  // テナントを開くとレールごと入れ替わる（着地は「上限」）。方式はログインの節。
+  await page.locator(".settings-rail-item", { hasText: "サインイン方式" }).click();
 
-  // 答えは欄と同じパネルの中にある（別の面に置くと、弾かれた人が辿り着けない）。
-  const rules = page.locator(".admin-panel", { hasText: "ログイン規則" });
-  const known = rules.locator(".idp-known");
-  await expect(known.locator(".adm-mcp-row")).toHaveCount(2);
-  await expect(known.locator(".adm-mcp-row").nth(1).locator(".as-name")).toHaveText("Microsoft でサインイン");
-  await expect(known.locator(".adm-mcp-row").nth(1).locator("code")).toHaveText("entra");
-  await expect(known.locator(".adm-mcp-row").nth(1).locator(".as-repo")).toHaveText(IDP.issuer);
+  // 答えは倒すトグルと同じ行にある（別の面に置くと、弾かれた人が辿り着けない）。
+  const methods = page.locator(".admin-panel", { hasText: "このテナントで使えるサインイン方法" });
+  // デプロイの 2 件 → 自前の 1 件、の順で 1 本のリストになる。
+  const rows = methods.locator(".adm-mcp-row");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(1).locator(".as-name")).toHaveText("Microsoft でサインイン");
+  await expect(rows.nth(1).locator("code")).toHaveText("entra");
+  // issuer は super_admin にしか返らない（§61.17.9 ①）。返ったなら行に出す。
+  await expect(rows.nth(1).locator(".as-repo")).toHaveText(IDP.issuer);
+  await expect(rows.nth(1).locator(".idp-state")).toHaveText("デプロイ共通");
+  // 自前の行は最後（承認前なので off）。デプロイの方式には編集も削除も無い。
+  await expect(rows.nth(2).locator(".as-name")).toHaveText("entra");
+  await expect(rows.nth(0).locator(".allow-acts")).toHaveCount(0);
 });
 
-// 「ボタンを出さない方式」は、そのテナントのログイン画面にしか効かない — 素の /login は
-// テナントを知らないので、デプロイ共通の方式はそこに出続ける（docs/61 §61.15.13）。
-// つまり隠す指定が効くのは `/login/<slug>` を配ったときだけで、それが読めるのは
-// 隠す欄と同じ画面しかない。★ 欄を埋めた「その場で」出ることを固定する。
-test("デプロイ管理者: 方式を隠すと、サインイン URL を配る必要がその場で読める", async ({ page }) => {
+// 「ボタンに出す」を倒すと、その方式はこのテナントのログイン画面から消えるが**受け入れは
+// 続く**（docs/61 §61.17.6・P7-1 で素の /login も既定テナントのページになった）。
+// 「隠した＝もう使えない」と読む人が居るので、倒したその場でそう書く。★ 自由入力の CSV を
+// 埋めるのではなく行のトグルを倒す — 何が起きたかは、送った 2 本の CSV で固定する。
+test("デプロイ管理者: ボタンに出すのを倒すと、受け入れは続くとその場で読める", async ({ page }) => {
+  // 規則の 4 列は PUT で丸ごと置き換わる。押した結果を読み直せるように、モックも
+  // 一度きりの JSON ではなく状態として持つ（onChanged → GET /api/admin/tenants）。
+  const tenant = { ...TENANT, allowed_providers: "", hidden_providers: "" };
+  let saved: unknown = null;
+  const ACTIVE_IDP = { ...IDP, status: "active", usable: true };
   await page.route("**/api/**", async (route) => {
-    const p = new URL(route.request().url()).pathname;
+    const req = route.request();
+    const p = new URL(req.url()).pathname;
+    if (req.method() === "PUT" && p === "/api/admin/tenants/acme/login") {
+      saved = req.postDataJSON();
+      Object.assign(tenant, saved);
+      return route.fulfill({ json: {} });
+    }
     if (p === "/api/whoami") return route.fulfill({ json: { auth_mode: "dev", user: "root", email: "root@example.com" } });
     if (p === "/api/tenants") return route.fulfill({ json: { tenants: [{ slug: "acme", name: "Acme", role: "tenant_admin" }], super_admin: true } });
     if (p === "/api/workspace") return route.fulfill({ json: { state: "running" } });
     if (p === "/api/sessions") return route.fulfill({ json: { sessions: [] } });
-    if (p === "/api/admin/tenants") return route.fulfill({ json: { tenants: [TENANT], super_admin: true } });
-    if (p === "/api/admin/tenants/acme/idp") return route.fulfill({ json: { providers: [IDP] } });
+    if (p === "/api/admin/tenants") return route.fulfill({ json: { tenants: [{ ...tenant }], super_admin: true } });
+    // active な自前の行が 1 つある＝この URL を配れば実際に入れる（＝URL を出す条件）。
+    if (p === "/api/admin/tenants/acme/idp") return route.fulfill({ json: { providers: [ACTIVE_IDP] } });
     if (p === "/api/admin/tenants/acme/members") return route.fulfill({ json: { members: MEMBERS } });
-    if (p === "/api/admin/idp") return route.fulfill({ json: { providers: [IDP] } });
-    if (p === "/api/admin/providers") return route.fulfill({ json: { providers: [] } });
+    if (p === "/api/admin/idp") return route.fulfill({ json: { providers: [ACTIVE_IDP] } });
+    if (p === "/api/admin/providers")
+      return route.fulfill({
+        json: {
+          providers: [
+            { id: "google", label_ja: "Google でサインイン", label_en: "Sign in with Google", issuer: "https://accounts.google.com" },
+            { id: "entra", label_ja: "Microsoft でサインイン", label_en: "Sign in with Microsoft", issuer: IDP.issuer },
+          ],
+        },
+      });
     return route.abort();
   });
   await page.goto(origin);
@@ -346,13 +393,32 @@ test("デプロイ管理者: 方式を隠すと、サインイン URL を配る�
   await page.locator(".acct-btn").click();
   await page.locator(".acct-menu .acct-item", { hasText: "管理" }).click();
   await page.locator(".tc-name", { hasText: "Acme" }).first().click();
+  await page.locator(".settings-rail-item", { hasText: "サインイン方式" }).click();
 
-  const rules = page.locator(".admin-panel", { hasText: "ログイン規則" });
-  const note = rules.locator(".admin-hint", { hasText: "素のログイン画面" });
+  const methods = page.locator(".admin-panel", { hasText: "このテナントで使えるサインイン方法" });
+  const note = methods.locator(".admin-hint", { hasText: "受け入れは続きます" });
   // 何も隠していないうちは出さない（読む理由が無いヒントは、他のヒントを薄める）。
   await expect(note).toHaveCount(0);
-  await rules.locator(".admin-fld", { hasText: "ボタンを出さない方式" }).locator("input").fill("google");
+  // 配るべき URL は、その上で誰かが実際に入れるようになって初めて出る。
+  await expect(methods.locator("code", { hasText: "/login/acme" })).toHaveCount(1);
+
+  const google = methods.locator(".adm-mcp-row").first();
+  const show = google.locator(".idp-flag", { hasText: "ボタンに出す" }).locator("input");
+  await expect(show).toBeChecked();
+  // ★ uncheck() ではなく click()。制御コンポーネントなので checked は PUT →
+  // 読み直しの後でしか変わらず、uncheck() の「押した直後に状態が変わったか」の
+  // 検査に間に合わない（実際には変わるのに "did not change its state" で落ちる）。
+  await show.click();
+  // 送るのは CSV 2 本 + ドメイン 2 列（この面が持っていない列も読んだ値をそのまま返す
+  // ＝送らないと空で上書きされる）。「全部 ON なら空」なので allowed は空のまま。
+  await expect.poll(() => saved).toEqual({
+    allowed_providers: "",
+    hidden_providers: "google",
+    auto_join_domains: TENANT.auto_join_domains,
+    allowed_domains: "",
+  });
+  await expect(show).not.toBeChecked();
   await expect(note).toHaveCount(1);
-  // 配るべき URL はすぐ上にある（別の面に置くと、読んだ人が探しに行くことになる）。
-  await expect(rules.locator("code", { hasText: "/login/acme" })).toHaveCount(1);
+  // 受け入れは続く＝「受け入れる」は倒れていない。
+  await expect(google.locator(".idp-flag", { hasText: "受け入れる" }).locator("input")).toBeChecked();
 });

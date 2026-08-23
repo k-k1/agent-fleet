@@ -8,7 +8,7 @@
 // types.ts, and the two only coexisted before because a value and a type can share a
 // name inside one file. Split across modules that overlap would be a trap.
 
-import { useRef } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import FileIcon from "../../../ui/FileIcon.tsx";
 import { fmtTok } from "../../../lib/fmttok.ts";
@@ -19,7 +19,9 @@ import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { textOfParts, workSplit } from "../mirrorParts.ts";
 import { footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
-import { foldParts, peerSenderOf, spendOf } from "./model.ts";
+import { foldParts, peerIntentOf, peerSenderOf, spendOf } from "./model.ts";
+import { paintTurnMarks } from "./markPaint.ts";
+import { chipPart, turnFiles } from "./turnFiles.ts";
 import type { Group, Part } from "./types.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
 import {
@@ -57,8 +59,40 @@ export function TranscriptTurn({
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   const spend = spendOf(turn);
   const maxSpend = caps.maxSpend || 0;
-  const bodyEl = useRef<HTMLDivElement>(null); // カラオケ朗読（turnTts）の本文 DOM
-  const split = !isUser && foldWork ? workSplit(turn.parts) : null;
+  const bodyEl = useRef<HTMLDivElement>(null); // カラオケ朗読（turnTts）とマーカーの本文 DOM
+  // 印を被せるのは MarkdownView が innerHTML を描いたあと（子の effect が先に走るので、
+  // この effect の時点では本文が出来ている — DocView のプランコメントと同じ作法）。
+  const painted = useRef("");
+  const marks = caps.marks;
+  useEffect(() => {
+    if (!bodyEl.current || !marks) return;
+    painted.current = paintTurnMarks(bodyEl.current, marks.byRoot, marks.authorSlot, painted.current);
+  });
+  // 作業過程の畳み込み（folded）と開閉（open）。ターン単位の状態だが、いま載っている
+  // ターンごと ref に持つ: ミラーはペインがセッションを持ち替えても再マウントされず
+  // （props が変わるだけ）、転写の idx はセッション毎に 0 から振られるので、同じ位置の
+  // コンポーネントに別の会話のターンが載る。id が変わったら前のターンの状態は捨てる。
+  //
+  // **folded は片道。** foldWork は生きたポーリング値（セッションの working）から来るので
+  // 平気で往復する — ストリーミング中に一瞬 idle を拾う、operator/定時実行/peer の新しい
+  // プロンプトが転写へ届く前に working が立つ、といった具合に。往復させるとそのたびに
+  // 作業過程が展開⇄畳みで入れ替わり、読んでいる最中に本文の高さが跳ねて位置がズレる。
+  // 一度畳んだターンは開き直さない（中身は summary をクリックすれば読める）。
+  //
+  // **open を決めるのは「初めて畳まれた瞬間の defaultWorkOpen」だけ** ＝そのとき末尾を
+  // 追っていたかどうか。以後は追従が切れても戻っても追随せず、読者のクリックだけが変える。
+  const work = useRef({ id: "", folded: false, open: false, defaulted: false });
+  const [, redrawWork] = useReducer((n: number) => n + 1, 0);
+  const workId = (caps.session || "") + "#" + turn.idx;
+  if (work.current.id !== workId) work.current = { id: workId, folded: false, open: false, defaulted: false };
+  if (foldWork) work.current.folded = true;
+  const split = !isUser && work.current.folded ? workSplit(turn.parts) : null;
+  if (split && !work.current.defaulted) {
+    work.current.defaulted = true;
+    work.current.open = defaultWorkOpen;
+  }
+  const workOpen = work.current.open;
+  const edited = isUser ? [] : turnFiles(turn.parts);
   const copyText = split ? textOfParts(turn.parts.slice(split.at)) : turn.text;
   const renderAssistantParts = (parts: Part[]) =>
     foldParts(parts).map((item) =>
@@ -67,23 +101,28 @@ export function TranscriptTurn({
       item.kind === "toolrun" ? (
         <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={caps.openDiff} />
       ) : item.p.kind === "question" ? (
-        // A question from the transcript is already answered (claude writes the
-        // tool_use only after the answer) — show it resolved, not clickable.
+        // A question from the transcript is history, never clickable. 回答済み is claimed
+        // only when the answer is actually here: claude writes the tool_use at ASK time,
+        // so a part CAN arrive still open (the Agent hides the one whose card is pending,
+        // but a shared/exported transcript has no such card to defer to). Badging that
+        // 回答済み with nothing to show was the old, hardcoded lie.
         <QuestionBlock
           key={item.i}
           questions={item.p.questions}
-          answered
+          answered={!!item.p.answer}
           answer={item.p.answer}
           declined={item.p.declined}
         />
       ) : item.p.kind === "plan" ? (
-        // A historical plan (already decided) — show the outcome, open in a pane when
-        // this view can (the shared view has no pane to open, so PlanBlock omits it).
+        // A historical plan — show the outcome, open in a pane when this view can (the
+        // shared view has no pane to open, so PlanBlock omits it). Same rule as the
+        // question above: 決定済み only once the tool_result (or the optimistic 却下 mark)
+        // says so, not merely because the plan reached the transcript.
         <PlanBlock
           key={item.i}
           plan={item.p.plan}
           session={caps.session}
-          answered
+          answered={!!item.p.answer}
           outcome={item.p.answer}
           forceRejected={caps.isRejectedPlan ? caps.isRejectedPlan(item.p.plan || "") : false}
           onOpen={caps.openPlan ? () => caps.openPlan!(item.p.plan || "") : undefined}
@@ -127,7 +166,17 @@ export function TranscriptTurn({
           onReauth={caps.onReauth}
         />
       ) : (
-        <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} repo={caps.repo} onOpenFile={caps.openFile} />
+        <MarkdownView
+          key={item.i}
+          source={item.p.text}
+          baseDir={turn.cwd}
+          repo={caps.repo}
+          onOpenFile={caps.openFile}
+          // マーカーを数える範囲はこの part ひとつ（docs/69 §69.3）。ブロック相対ではなく
+          // 元ターン由来の root なので、共有先の tail 窓がずれても同じ場所を指す。
+          markRoot={caps.marks ? turn.origins[item.i] : undefined}
+          markKind={item.p.kind}
+        />
       ),
     );
   const fromOperator = isUser && turn.source === "operator";
@@ -146,6 +195,7 @@ export function TranscriptTurn({
   // prefix, so read it back from the text.
   const fromPeer = isUser && turn.source === "peer";
   const peerFrom = fromPeer ? peerSenderOf(turn.text ?? "") : null;
+  const peerIntent = fromPeer ? peerIntentOf(turn.text ?? "") : null;
   // Chat-bridge origin (docs/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
@@ -201,6 +251,13 @@ export function TranscriptTurn({
             {peerFrom ? tr("mirror.from_peer_named", { name: peerFrom }) : tr("mirror.from_peer")}
           </span>
         )}
+        {peerIntent && (
+          // The message kind (docs/58 §58.14). Worth its own chip because it is the reason
+          // a message did or did not get an answer — answer / notice are terminal.
+          <span className="mt-op mt-peer mt-peer-kind" title={tr(`mirror.peer_intent_title.${peerIntent}`)}>
+            {tr(`mirror.peer_intent.${peerIntent}`)}
+          </span>
+        )}
         {chatProvider && (
           // Sent from a chat bridge (docs/37 P2a) — a phone reply, not typed at the console.
           <span className="mt-op mt-chat" title={tr("mirror.from_chat_title")}>
@@ -243,7 +300,17 @@ export function TranscriptTurn({
             return (
               <>
                 {text && (
-                  <MarkdownView source={text} breaks baseDir={turn.cwd} repo={caps.repo} onOpenFile={caps.openFile} />
+                  <MarkdownView
+                    source={text}
+                    breaks
+                    baseDir={turn.cwd}
+                    repo={caps.repo}
+                    onOpenFile={caps.openFile}
+                    // ユーザーの吹き出しが描くのは parts ではなくブロックの text なので、
+                    // 2 行以上畳んだブロックでは root が空になる（groupTurns 参照）。
+                    markRoot={caps.marks ? turn.bodyRoot : undefined}
+                    markKind=""
+                  />
                 )}
                 {images.length > 0 && caps.loadPastedImage && (
                   <div className="mt-imgs">
@@ -269,7 +336,15 @@ export function TranscriptTurn({
           })()
         ) : split ? (
           <>
-            <WorkDisclosure tools={split.tools} responses={split.responses} defaultOpen={defaultWorkOpen}>
+            <WorkDisclosure
+              tools={split.tools}
+              responses={split.responses}
+              open={workOpen}
+              onToggle={() => {
+                work.current.open = !work.current.open;
+                redrawWork();
+              }}
+            >
               {renderAssistantParts(turn.parts.slice(0, split.at))}
             </WorkDisclosure>
             {renderAssistantParts(turn.parts.slice(split.at))}
@@ -278,6 +353,28 @@ export function TranscriptTurn({
           renderAssistantParts(turn.parts)
         )}
       </div>
+      {/* Files this reply edited, as chips — the answer to 「さっき直したのはどれ」
+          without expanding a folded ToolRun and reading tool traces. Only where a diff
+          can actually be opened: the shared view has no pane, and its DTO drops the path
+          anyway (transcript/capabilities.ts — absent capability, no affordance). */}
+      {!isUser && caps.openDiff && edited.length > 0 && (
+        <div className="mirror-turn-files">
+          <Icon name="edit" className="mtf-mark" />
+          {edited.map((f) => (
+            <button
+              type="button"
+              key={f.file}
+              className={"mtf-chip" + (f.verb === "delete" ? " mtf-deleted" : "")}
+              title={f.file}
+              disabled={f.edits.length === 0}
+              onClick={() => caps.openDiff!(chipPart(f))}
+            >
+              <FileIcon name={f.name} />
+              <span className="mtf-name">{f.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="mirror-turn-foot">
         {/* The block's END: when this reply landed, not when the agent started working on
             it (turnTime.ts). The start stays reachable as a tooltip on a spanning turn. */}

@@ -76,6 +76,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	reclaim := r.URL.Query().Get("reclaim") == "1" || r.URL.Query().Get("reclaim") == "true"
 	if !reclaim {
 		session.RemoveMeta(name)
+		removeSessionSideFiles(name)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": name})
 		return
 	}
@@ -93,7 +94,21 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	session.RemoveMeta(name)
+	removeSessionSideFiles(name)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": name, "archive": arch})
+}
+
+// removeSessionSideFiles drops the per-session side files keyed by session NAME —
+// handoff proposals (session-handoffs/) and transcript marks (session-marks/).
+//
+// ⚠️ Session names are slot names and get REUSED. Left behind, they resurface on
+// whatever session lands in that slot next: someone else's handoff card in the middle
+// of an unrelated conversation, someone else's highlight on an unrelated sentence.
+// Neither is part of the cleanup archive — they are annotations about a conversation
+// that is being deleted, so a restore does not want them back either.
+func removeSessionSideFiles(name string) {
+	removeHandoffProposals(name)
+	removeSessionMarks(name)
 }
 
 // archiveSessionForDelete bundles a session's meta + jsonl(s) into a cleanup archive

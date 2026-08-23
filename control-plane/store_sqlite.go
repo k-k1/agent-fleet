@@ -75,11 +75,27 @@ func (s *sqlStore) migrate(ctx context.Context) error {
 		}
 	}
 	sort.Strings(names)
+	// ⚠️ Two files with the same numeric prefix is a silent data loss, not a style
+	// problem: schema_migrations is keyed by the INTEGER below, so the first of the
+	// pair records that version and the second is skipped forever as "already
+	// applied" — the table it was supposed to create never exists, and the failure
+	// surfaces as a query error in production long after the merge.
+	//
+	// It happens whenever two branches add a migration in parallel, which is the
+	// normal way this repository works. Measured once (2026-08-22: develop's
+	// 0030_memo_category and a branch's 0030_user_limit_slot_class collided in
+	// migrations-pg). Refusing to start is the correct response — a CP that boots on
+	// a half-applied schema is worse than one that does not boot.
+	seen := map[int]string{}
 	for _, name := range names {
 		version, err := strconv.Atoi(strings.SplitN(name, "_", 2)[0])
 		if err != nil {
 			return fmt.Errorf("migration %q: bad version prefix", name)
 		}
+		if prev, dup := seen[version]; dup {
+			return fmt.Errorf("migrations %s and %s share version %d: one of them would be silently skipped; renumber the newer one", prev, name, version)
+		}
+		seen[version] = name
 		var one int
 		switch err := s.db.QueryRowContext(ctx, `SELECT 1 FROM schema_migrations WHERE version=?`, version).Scan(&one); {
 		case err == nil:
@@ -307,11 +323,28 @@ func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProvider
 	return err
 }
 
+// SetTenantAllowedCIDRs writes the tenant's source-network restriction (docs/66).
+// Separate from SetTenantLogin on purpose: that one is super_admin-only because its
+// three fields reach outside the tenant, while this one is the tenant_admin's
+// (ADR 0047 決定 6). Empty = no restriction.
+func (s *sqlStore) SetTenantAllowedCIDRs(ctx context.Context, tenantID, cidrs string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET allowed_cidrs=? WHERE id=?`, cidrs, tenantID)
+	return err
+}
+
+// GetTenantAllowedCIDRs reads it back for the editing screen (the request path reads
+// it through the cache instead).
+func (s *sqlStore) GetTenantAllowedCIDRs(ctx context.Context, tenantID string) (string, error) {
+	var cidrs string
+	err := s.db.QueryRowContext(ctx, `SELECT allowed_cidrs FROM tenant WHERE id=?`, tenantID).Scan(&cidrs)
+	return cidrs, err
+}
+
 // ListTenantLoginRules loads every tenant's rules in one query, already split into
 // slices — the shape the entry-gate cache and the auto-join resolution want.
 func (s *sqlStore) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, slug, name, allowed_providers, auto_join_domains, allowed_domains, hidden_providers
+		`SELECT id, slug, name, allowed_providers, auto_join_domains, allowed_domains, hidden_providers, allowed_cidrs
 		 FROM tenant WHERE status='active' ORDER BY slug`)
 	if err != nil {
 		return nil, err
@@ -320,14 +353,15 @@ func (s *sqlStore) ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules
 	var out []TenantLoginRules
 	for rows.Next() {
 		var r TenantLoginRules
-		var provs, autoJoin, allowed, hidden string
-		if err := rows.Scan(&r.ID, &r.Slug, &r.Name, &provs, &autoJoin, &allowed, &hidden); err != nil {
+		var provs, autoJoin, allowed, hidden, cidrs string
+		if err := rows.Scan(&r.ID, &r.Slug, &r.Name, &provs, &autoJoin, &allowed, &hidden, &cidrs); err != nil {
 			return nil, err
 		}
 		r.AllowedProviders = splitCSVLower(provs)
 		r.AutoJoinDomains = splitDomainCSV(autoJoin)
 		r.AllowedDomains = splitDomainCSV(allowed)
 		r.HiddenProviders = splitCSVLower(hidden)
+		r.AllowedCIDRs = splitCSV(cidrs)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -1063,6 +1097,147 @@ func (s *sqlStore) SetMembershipStatus(ctx context.Context, membershipID, status
 	return err
 }
 
+// membershipCascade is every row keyed to one membership, in the order they must be
+// deleted. It is a function rather than a constant because two statements need the id
+// twice (a share names both ends).
+//
+// The dependents are listed EXPLICITLY rather than left to ON DELETE CASCADE, for the
+// reason DeleteWorkspace gives: only a few of these tables declare one, and a delete that
+// half-works because of a schema detail shows up as a foreign-key error in production and
+// nowhere in tests.
+//
+// ★ What is NOT here is the point of the operation (docs/61 §61.18):
+//
+//   - audit_log — it has no membership_id at all; the actor is an identity
+//     (0007_audit.sql). Offboarding must not be able to erase its own record.
+//   - cloud_cost_daily / usage_daily — the money and the occupancy already happened.
+//     memberCloudCost looks them up by membership id alone precisely so that spend
+//     survives the workspace being destroyed (cloudcost.go); deleting them would change
+//     last month's total after the fact.
+//   - identity — the person may be on another tenant's roster, and even when they are
+//     not, audit rows point at them. A membership is a seat, not a person.
+//
+// Nor is `workspace`: the caller must have destroyed it first (its home and cloud
+// resources are not this function's to release), and that is checked in the handler.
+//
+// ⚠️ Every table named here must exist in BOTH dialects. A list of literal table names is
+// exactly as correct as the assumption that the two migration series agree, and they did
+// not: `memo_category` had been added to migrations/0020 and never mirrored on the
+// Postgres side, which would have meant a 500 in the middle of an irreversible delete.
+// The mirror is migrations-pg/0030 and `TestSchemaDialectParity` now fails if the two ever
+// diverge again — that guard is what lets this stay one flat list.
+func membershipCascade(membershipID string) []struct {
+	sql  string
+	args []any
+} {
+	id := []any{membershipID}
+	both := []any{membershipID, membershipID}
+	return []struct {
+		sql  string
+		args []any
+	}{
+		{`DELETE FROM user_limit WHERE membership_id=?`, id},
+		{`DELETE FROM pat WHERE membership_id=?`, id},
+		{`DELETE FROM ssm_host WHERE membership_id=?`, id},
+		// sso_session は 0011 で DROP 済み（ssm_profile が置き換えた）。無い表を
+		// 消そうとすると SQLite は実行時に落ちるだけなので、ここは実在する表だけ。
+		{`DELETE FROM ssm_profile WHERE membership_id=?`, id},
+		{`DELETE FROM schedule_run WHERE membership_id=?`, id},
+		{`DELETE FROM schedule WHERE membership_id=?`, id},
+		{`DELETE FROM memo WHERE membership_id=?`, id},
+		{`DELETE FROM memo_category WHERE membership_id=?`, id},
+		{`DELETE FROM notification WHERE membership_id=?`, id},
+		{`DELETE FROM notification_usage_state WHERE membership_id=?`, id},
+		// 共有は両端を持つ。相手側が生きていても、片方が消えた共有は残せない。
+		{`DELETE FROM session_share_proposal WHERE owner_membership_id=? OR proposer_membership_id=?`, both},
+		{`DELETE FROM session_share WHERE owner_membership_id=? OR recipient_membership_id=?`, both},
+		{`DELETE FROM shared_session_catalog WHERE owner_membership_id=?`, id},
+		{`DELETE FROM session_share_owner_lease WHERE owner_membership_id=?`, id},
+		{`DELETE FROM workspace_stop_intent WHERE owner_membership_id=?`, id},
+		// 親は最後に。子を先に消してからでないと外部キーが立っている表で落ちる。
+		{`DELETE FROM membership WHERE id=?`, id},
+	}
+}
+
+// DeleteMembership removes a membership row and everything keyed to it. Irreversible,
+// and only ever reached from the explicit admin operation, which has already established
+// that the membership is inactive and its workspace destroyed (docs/61 §61.18).
+func (s *sqlStore) DeleteMembership(ctx context.Context, membershipID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.deleteMembershipTx(ctx, tx, membershipID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// deleteMembershipTx is the body above, inside somebody else's transaction — the tenant
+// delete runs it once per remaining membership so the whole tenant goes in one commit.
+func (s *sqlStore) deleteMembershipTx(ctx context.Context, tx *sqlTx, membershipID string) error {
+	for _, stmt := range membershipCascade(membershipID) {
+		if _, err := tx.ExecContext(ctx, stmt.sql, stmt.args...); err != nil {
+			return fmt.Errorf("%s: %w", stmt.sql, err)
+		}
+	}
+	return nil
+}
+
+// DeleteTenant removes an EMPTY tenant: whatever inactive memberships are left, the
+// tenant's own configuration rows, and the tenant itself — in one transaction.
+//
+// "Empty" is the handler's job to prove (no active member, no workspace row, no internal
+// git repo). This function does not re-check it, but it also cannot paper over it: it
+// deliberately does not touch `workspace`, so a tenant that still had one would fail on
+// the foreign key rather than orphan an EBS volume nobody is left to find.
+//
+// The tenant's history — audit_log, usage_daily, cloud_cost_daily — is deliberately kept,
+// exactly as for a membership.
+func (s *sqlStore) DeleteTenant(ctx context.Context, tenantID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM membership WHERE tenant_id=?`, tenantID)
+	if err != nil {
+		return err
+	}
+	var memberships []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		memberships = append(memberships, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range memberships {
+		if err := s.deleteMembershipTx(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	for _, stmt := range []string{
+		`DELETE FROM mcp_server WHERE tenant_id=?`,
+		`DELETE FROM tenant_idp WHERE tenant_id=?`,
+		`DELETE FROM tenant_git_oauth WHERE tenant_id=?`,
+		`DELETE FROM egress_allowlist WHERE tenant_id=?`,
+		// ログイン規則と allowed_cidrs は tenant の列なので、この 1 行で一緒に消える。
+		`DELETE FROM tenant WHERE id=?`,
+	} {
+		if _, err = tx.ExecContext(ctx, stmt, tenantID); err != nil {
+			return fmt.Errorf("%s: %w", stmt, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // EmailHasActiveMembership answers the entry gate's membership term (決定 16).
 // LOWER() is applied to the COLUMN, not to the placeholder: Postgres cannot infer a
 // type for LOWER($1) and errors, which is the same reason identityByEmail lowercases
@@ -1115,8 +1290,8 @@ func (s *sqlStore) AnyActiveMembership(ctx context.Context) (bool, error) {
 func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
 	var u UserLimit
 	err := s.db.QueryRowContext(ctx,
-		`SELECT membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, created_at FROM user_limit WHERE membership_id=?`, membershipID).
-		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.MemLimit, &u.CPULimit, &u.CreatedAt)
+		`SELECT membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at FROM user_limit WHERE membership_id=?`, membershipID).
+		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.MemLimit, &u.CPULimit, &u.SlotClass, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return UserLimit{}, false, nil
 	}
@@ -1128,11 +1303,11 @@ func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserL
 
 func (s *sqlStore) PutUserLimit(ctx context.Context, membershipID string, q UserQuota) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?)
+		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, mem_limit, cpu_limit, slot_class, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(membership_id) DO UPDATE SET max_sessions=excluded.max_sessions, disk_gb=excluded.disk_gb,
-		   mem_limit=excluded.mem_limit, cpu_limit=excluded.cpu_limit`,
-		membershipID, q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, nowTS())
+		   mem_limit=excluded.mem_limit, cpu_limit=excluded.cpu_limit, slot_class=excluded.slot_class`,
+		membershipID, q.MaxSessions, q.DiskGB, q.MemLimit, q.CPULimit, q.SlotClass, nowTS())
 	return err
 }
 
@@ -1264,6 +1439,39 @@ func (s *sqlStore) ClearWorkspaceIdleStop(ctx context.Context, workspaceID strin
 	return tx.Commit()
 }
 
+// DeleteWorkspace removes the workspace row and everything keyed to it. It is the DB
+// half of the irreversible destroy (ADR 0045 決定 13); the runtime half (home, cloud
+// resources) has already run by the time this is called.
+//
+// The dependents are deleted EXPLICITLY rather than left to ON DELETE CASCADE: only two
+// of the five tables declare one, and a delete that half-works because of a schema
+// detail is the kind of thing that shows up as a foreign-key error in production and
+// nowhere in tests. session_share_proposal does cascade off shared_session_catalog on
+// both dialects, so it is the one dependent left implicit.
+func (s *sqlStore) DeleteWorkspace(ctx context.Context, workspaceID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = lockWorkspace(ctx, tx, workspaceID); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`DELETE FROM workspace_stop_intent WHERE workspace_id=?`,
+		`DELETE FROM workspace_activity WHERE workspace_id=?`,
+		`DELETE FROM shared_session_catalog WHERE workspace_id=?`,
+		`DELETE FROM session WHERE workspace_id=?`,
+		`DELETE FROM wrapped_dek WHERE workspace_id=?`,
+		`DELETE FROM workspace WHERE id=?`,
+	} {
+		if _, err = tx.ExecContext(ctx, stmt, workspaceID); err != nil {
+			return fmt.Errorf("%s: %w", stmt, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // AcquireWorkspaceOperationFence holds a Postgres session advisory lock across
 // external Runtime I/O. Unlike a time-based lease it remains held while a CP is
 // paused and is released automatically if the process/connection dies. SQLite is
@@ -1320,7 +1528,7 @@ func discardSQLConn(conn *sql.Conn) {
 }
 
 func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {
-	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, workspaceCols+` WHERE membership_id=?`, membershipID))
+	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, workspaceCols+` WHERE w.membership_id=?`, membershipID))
 	if err == sql.ErrNoRows {
 		return Workspace{}, false, nil
 	}
@@ -1362,7 +1570,7 @@ func (s *sqlStore) MaxAgentPort(ctx context.Context) (int, error) {
 }
 
 func (s *sqlStore) ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error) {
-	rows, err := s.db.QueryContext(ctx, workspaceCols+` WHERE tenant_id=? ORDER BY created_at`, tenantID)
+	rows, err := s.db.QueryContext(ctx, workspaceCols+` WHERE w.tenant_id=? ORDER BY w.created_at`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -1984,15 +2192,22 @@ func nullable(s string) any {
 	return s
 }
 
-const workspaceCols = `SELECT id, tenant_id, membership_id, container_name, network, data_dir,
-	agent_port, agent_token, state, created_at, COALESCE(last_active_at,'') FROM workspace`
+// workspaceCols joins the tenant only for its slug (Workspace.TenantSlug). A LEFT
+// JOIN on purpose: a workspace whose tenant row is missing is already broken, but it
+// must still be readable — the alternative is that the sweeper and the reaper stop
+// seeing it, which turns a bad row into leaked AWS resources.
+const workspaceCols = `SELECT w.id, w.tenant_id, COALESCE(t.slug,''), w.membership_id,
+	w.container_name, w.network, w.data_dir, w.agent_port, w.agent_token, w.state,
+	w.created_at, COALESCE(w.last_active_at,'')
+	FROM workspace w LEFT JOIN tenant t ON t.id = w.tenant_id`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanWorkspace(row scanner) (Workspace, error) {
 	var ws Workspace
-	err := row.Scan(&ws.ID, &ws.TenantID, &ws.MembershipID, &ws.ContainerName, &ws.Network,
-		&ws.DataDir, &ws.AgentPort, &ws.AgentToken, &ws.State, &ws.CreatedAt, &ws.LastActiveAt)
+	err := row.Scan(&ws.ID, &ws.TenantID, &ws.TenantSlug, &ws.MembershipID, &ws.ContainerName,
+		&ws.Network, &ws.DataDir, &ws.AgentPort, &ws.AgentToken, &ws.State, &ws.CreatedAt,
+		&ws.LastActiveAt)
 	return ws, err
 }
 
@@ -2743,4 +2958,233 @@ func (s *sqlStore) SetTenantIdPStatus(ctx context.Context, tenantID, id, status,
 func (s *sqlStore) DeleteTenantIdP(ctx context.Context, tenantID, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM tenant_idp WHERE tenant_id=? AND id=?`, tenantID, id)
 	return err
+}
+
+// --- tenant-owned git provider OAuth apps (docs/71 + ADR0052) ------------------
+
+const tenantGitOAuthCols = `SELECT id, tenant_id, provider, client_id, secret_enc, key_ref,
+       updated_by, created_at, updated_at FROM tenant_git_oauth`
+
+func scanTenantGitOAuth(sc scanner) (TenantGitOAuth, error) {
+	var g TenantGitOAuth
+	err := sc.Scan(&g.ID, &g.TenantID, &g.Provider, &g.ClientID, &g.SecretEnc, &g.KeyRef,
+		&g.UpdatedBy, &g.CreatedAt, &g.UpdatedAt)
+	return g, err
+}
+
+func (s *sqlStore) ListTenantGitOAuth(ctx context.Context, tenantID string) ([]TenantGitOAuth, error) {
+	rows, err := s.db.QueryContext(ctx, tenantGitOAuthCols+` WHERE tenant_id=? ORDER BY provider`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TenantGitOAuth
+	for rows.Next() {
+		g, err := scanTenantGitOAuth(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) GetTenantGitOAuth(ctx context.Context, tenantID, provider string) (TenantGitOAuth, bool, error) {
+	g, err := scanTenantGitOAuth(s.db.QueryRowContext(ctx,
+		tenantGitOAuthCols+` WHERE tenant_id=? AND provider=?`, tenantID, provider))
+	if err == sql.ErrNoRows {
+		return TenantGitOAuth{}, false, nil
+	}
+	return g, err == nil, err
+}
+
+// PutTenantGitOAuth upserts on the (tenant_id, provider) unique index. created_at is
+// left alone on conflict so the row keeps the date it was first registered.
+func (s *sqlStore) PutTenantGitOAuth(ctx context.Context, g TenantGitOAuth) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO tenant_git_oauth(id, tenant_id, provider, client_id, secret_enc, key_ref,
+		   updated_by, created_at, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?)
+		 ON CONFLICT(tenant_id, provider) DO UPDATE SET
+		   client_id=excluded.client_id, secret_enc=excluded.secret_enc, key_ref=excluded.key_ref,
+		   updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+		g.ID, g.TenantID, g.Provider, g.ClientID, g.SecretEnc, g.KeyRef,
+		g.UpdatedBy, g.CreatedAt, g.UpdatedAt)
+	return err
+}
+
+func (s *sqlStore) DeleteTenantGitOAuth(ctx context.Context, tenantID, provider string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM tenant_git_oauth WHERE tenant_id=? AND provider=?`, tenantID, provider)
+	return err
+}
+
+// TenantIdPIssuerInUse — see the interface. Rows of every tenant, and every status:
+// a PENDING second registration is exactly the one worth catching, since the whole
+// point is to say something before it is approved and people start signing in.
+func (s *sqlStore) TenantIdPIssuerInUse(ctx context.Context, issuer, excludeID string) (bool, error) {
+	if issuer == "" {
+		return false, nil
+	}
+	var one int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM tenant_idp WHERE issuer=? AND id<>? LIMIT 1`, issuer, excludeID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// CountMembersOnlyOnProvider — see the interface.
+//
+// ★ "Only" is over identity_provider, not over this tenant: the row records a PROVEN
+// login, so a person with a second one can get back in through it even if that other
+// method belongs to another tenant. Somebody with no identity_provider row at all is
+// not counted either — they have never signed in (an invite placeholder), so this
+// provider is not what they would lose.
+func (s *sqlStore) CountMembersOnlyOnProvider(ctx context.Context, tenantID, providerID string) (int, error) {
+	if tenantID == "" || providerID == "" {
+		return 0, nil
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM membership m
+		 WHERE m.tenant_id=? AND m.status='active'
+		   AND EXISTS (SELECT 1 FROM identity_provider ip
+		               WHERE ip.identity_id=m.identity_id AND ip.provider=?)
+		   AND NOT EXISTS (SELECT 1 FROM identity_provider ip2
+		                   WHERE ip2.identity_id=m.identity_id AND ip2.provider<>?)`,
+		tenantID, providerID, providerID).Scan(&n)
+	return n, err
+}
+
+// --- cloud cost (docs/67, ADR 0048) --------------------------------------------
+
+// PutCloudCost replaces the given days wholesale. Cost Explorer restates recent days
+// (they arrive `Estimated` and keep moving for about a day), so the poller re-fetches a
+// trailing window every run and the latest answer must WIN, not accumulate. Deleting the
+// days first is also what makes a day that came back empty actually become empty —
+// otherwise a resource that lost its tag would leave its last attributed row frozen in
+// place forever, and the invoice would never stop blaming that person.
+func (s *sqlStore) PutCloudCost(ctx context.Context, days []string, rows []CloudCostRow) error {
+	if len(days) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, d := range days {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM cloud_cost_daily WHERE day=?`, d); err != nil {
+			return err
+		}
+	}
+	now := nowTS()
+	for _, r := range rows {
+		est := 0
+		if r.Estimated {
+			est = 1
+		}
+		if _, err = tx.ExecContext(ctx,
+			`INSERT INTO cloud_cost_daily(day, membership_id, tenant_id, service,
+			   unblended, amortized, currency, estimated, updated_at)
+			 VALUES(?,?,?,?,?,?,?,?,?)
+			 ON CONFLICT(day, membership_id, service) DO UPDATE SET
+			   tenant_id=excluded.tenant_id, unblended=excluded.unblended,
+			   amortized=excluded.amortized, currency=excluded.currency,
+			   estimated=excluded.estimated, updated_at=excluded.updated_at`,
+			r.Day, r.MembershipID, r.TenantID, r.Service,
+			r.Unblended, r.Amortized, r.Currency, est, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ListCloudCost returns the raw per-(day, member, service) rows in the window.
+// membershipID != "" is the member's own view; tenantID != "" scopes to one tenant.
+//
+// ⚠️ The shared bucket (membership_id=”) has no tenant, so a tenant-scoped query must
+// NOT return it — a tenant_admin seeing the deployment's ALB/RDS bill would be reading
+// outside their tenant (ADR 0048 決定 4). It falls out of the WHERE naturally, and that
+// is deliberate rather than accidental.
+func (s *sqlStore) ListCloudCost(ctx context.Context, tenantID, membershipID, fromDay, toDay string) ([]CloudCostRow, error) {
+	q := `SELECT day, membership_id, tenant_id, service, unblended, amortized, currency, estimated
+	      FROM cloud_cost_daily WHERE day BETWEEN ? AND ?`
+	args := []any{fromDay, toDay}
+	if tenantID != "" {
+		q += ` AND tenant_id=?`
+		args = append(args, tenantID)
+	}
+	if membershipID != "" {
+		q += ` AND membership_id=?`
+		args = append(args, membershipID)
+	}
+	q += ` ORDER BY day, membership_id, service`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CloudCostRow
+	for rows.Next() {
+		var r CloudCostRow
+		var est int
+		if err := rows.Scan(&r.Day, &r.MembershipID, &r.TenantID, &r.Service,
+			&r.Unblended, &r.Amortized, &r.Currency, &est); err != nil {
+			return nil, err
+		}
+		r.Estimated = est != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// CloudCostTotals sums the window per member, joining the labels in at read time (a
+// deleted membership keeps its spend and surfaces with empty key/email, like ListUsage).
+// The shared bucket is included as a row with an empty MembershipID; the API decides
+// who is allowed to see it.
+func (s *sqlStore) CloudCostTotals(ctx context.Context, tenantID, fromDay, toDay string) ([]CloudCostTotal, error) {
+	q := `SELECT COALESCE(t.slug,''), c.membership_id, COALESCE(i.user_key,''), COALESCE(i.email,''),
+	             SUM(c.unblended), SUM(c.amortized), COALESCE(MAX(c.currency),'')
+	      FROM cloud_cost_daily c
+	      LEFT JOIN tenant t ON t.id = c.tenant_id
+	      LEFT JOIN membership m ON m.id = c.membership_id
+	      LEFT JOIN identity i ON i.id = m.identity_id
+	      WHERE c.day BETWEEN ? AND ?`
+	args := []any{fromDay, toDay}
+	if tenantID != "" {
+		q += ` AND c.tenant_id=?`
+		args = append(args, tenantID)
+	}
+	q += ` GROUP BY t.slug, c.membership_id, i.user_key, i.email ORDER BY SUM(c.unblended) DESC`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CloudCostTotal
+	for rows.Next() {
+		var c CloudCostTotal
+		if err := rows.Scan(&c.TenantSlug, &c.MembershipID, &c.UserKey, &c.Email,
+			&c.Unblended, &c.Amortized, &c.Currency); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// CloudCostDays is the coverage window that actually exists. It is what lets the API say
+// "cost allocation was not switched on before this date" instead of drawing an honest-
+// looking zero — and that distinction is permanent, because activation is not
+// retroactive (docs/67 §67.5).
+func (s *sqlStore) CloudCostDays(ctx context.Context) (string, string, error) {
+	var first, last sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT MIN(day), MAX(day) FROM cloud_cost_daily`).Scan(&first, &last)
+	if err != nil {
+		return "", "", err
+	}
+	return first.String, last.String, nil
 }

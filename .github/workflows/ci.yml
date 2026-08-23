@@ -2,9 +2,17 @@
 # test / build). Verifies the 3 components in independent jobs. Extra linters
 # (golangci-lint etc.) may follow as opt-in.
 #
-# Billing spread (develop-trunk workflow; CONTRIBUTING "Commits & PRs"): hosted CI does
-# not run on pushes to develop (per-commit verification is each session's local runs).
-# Hosted CI is concentrated on the main gate (develop→main PRs and post-merge main pushes).
+# Runs on the develop trunk as well as the main gate. This file is free to run: the
+# repository is public, so GitHub-hosted standard runners cost nothing, and none of the
+# jobs below spend an external LLM quota. The billing spread described in
+# CONTRIBUTING "Commits & PRs" / docs/35-packaging.md therefore applies to e2e.yml and
+# the contract workflows (which do spend quota), not here.
+#
+# Why develop needs its own trigger: "done" means merged into develop, and main moves
+# only on a release train. Gating on main alone meant these checks did not run for a
+# month at a time while develop took 1500+ commits — long enough for a break to be
+# discovered only at release. Bursts are cheap: the concurrency group below cancels a
+# superseded develop run, so a rapid series of merges collapses onto the newest commit.
 name: ci
 
 # Least privilege for GITHUB_TOKEN. The repo default is already read-only, but this
@@ -15,7 +23,7 @@ permissions:
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -99,6 +107,15 @@ jobs:
         run: go vet ./...
       - name: go build
         run: go build ./...
+      - name: cross-compile for arm64
+        # ⚠️ `go build` on the runner only proves amd64. unix.Stat_t is a DIFFERENT
+        # struct per architecture (Blksize is int64 on amd64 and int32 on arm64), so
+        # code that touches syscall structs can compile here and fail on Graviton —
+        # which is exactly what happened the first time the workspace image was built
+        # for arm64 (docs/70 §70.9). An ecs-ec2 slot can be arm64, so both binaries
+        # have to build for it. CGO_ENABLED=0 matches how the images build them.
+        env: { CGO_ENABLED: "0", GOOS: linux, GOARCH: arm64 }
+        run: go build ./...
       - name: go test
         run: go test ./...
 
@@ -121,8 +138,25 @@ jobs:
         run: go vet ./...
       - name: go build
         run: go build ./...
+      - name: cross-compile for arm64
+        # ⚠️ `go build` on the runner only proves amd64. unix.Stat_t is a DIFFERENT
+        # struct per architecture (Blksize is int64 on amd64 and int32 on arm64), so
+        # code that touches syscall structs can compile here and fail on Graviton —
+        # which is exactly what happened the first time the workspace image was built
+        # for arm64 (docs/70 §70.9). An ecs-ec2 slot can be arm64, so both binaries
+        # have to build for it. CGO_ENABLED=0 matches how the images build them.
+        env: { CGO_ENABLED: "0", GOOS: linux, GOARCH: arm64 }
+        run: go build ./...
       - name: go test
         run: go test ./...
+      # entrypoint.sh は Go ではないが、壊れたときに死ぬのはこの job が守っている
+      # Workspace そのものである。identity 退避ブロックは golden snapshot から作った
+      # home で一度**起動不能**を出しているので、その形を回帰で押さえる。
+      - name: entrypoint.sh syntax + keep-relocation regression
+        working-directory: .
+        run: |
+          bash -n workspace/entrypoint.sh
+          ./deploy/local/keep-relocate-test.sh
 
   console:
     runs-on: ubuntu-latest

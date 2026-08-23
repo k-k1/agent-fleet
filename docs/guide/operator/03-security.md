@@ -130,7 +130,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
   pinned to your tenant GUID: on the `/common/` or `/organizations/` endpoints every Microsoft
   account on earth reaches the login and a personal account can rewrite its own email address,
   so the CP refuses to start there unless `AF_OIDC_<ID>_ALLOWED_TIDS` is set
-  ([01 §3](01-install.md) / [dev/07 §7.3](../../dev/07-security.md)).
+  ([05 §4](05-login-idp.md) / [dev/07 §7.3](../../dev/07-security.md)).
 - **Audit log.** Only mutating / destructive operations are recorded in `audit_log` (reads are
   off by default, and **raw terminal streams are never stored, due to the risk of secrets
   leaking into them**). super_admins / tenant_admins view it from the Audit tab of the Admin
@@ -189,7 +189,7 @@ account you cannot reach — the only immediate switch is to change the cookie s
 ```sh
 openssl rand -base64 32          # generate a new value
 # put it in AF_COOKIE_SECRET in .env / oauth.env / the SSM parameter, then restart the CP
-docker compose up -d control-plane
+docker compose up -d cp
 ```
 
 Every session cookie signed with the old key stops verifying, so **everybody is logged out and

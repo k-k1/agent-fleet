@@ -23,6 +23,10 @@ on:
       version:
         description: 'Release version (semver, e.g. 0.1.0)'
         required: true
+      workspace_arm64:
+        description: 'Also build the workspace image for arm64 (needed by ecs-ec2 Graviton slots — docs/70)'
+        type: boolean
+        default: false
 
 concurrency:
   group: publish-dist
@@ -47,6 +51,27 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # arm64 only. The workspace image is the one artifact that has to exist for a
+      # second CPU architecture (an ecs-ec2 slot can be Graviton — docs/70), and the
+      # Dockerfile has been arch-aware from the start; what has never happened is
+      # anyone BUILDING it that way.
+      #
+      # ⚠️ This emulates arm64 on an x86_64 runner. The image is download- and
+      # apt-heavy rather than compile-heavy, so the emulation tax lands on dpkg and
+      # tar — but it is UNMEASURED, and this job's timeout is 90 minutes. If it does
+      # not fit, the fix is not a longer timeout: it is to split this job in two
+      # (`ubuntu-latest` + `ubuntu-24.04-arm`, each pushing by digest) and join them
+      # with `docker buildx imagetools create`. Native arm64 runners are free for
+      # public repositories, which this one now is (docs/70 §70.9).
+      - name: set up QEMU + buildx (arm64)
+        if: ${{ inputs.workspace_arm64 }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: set up buildx
+        if: ${{ inputs.workspace_arm64 }}
+        uses: docker/setup-buildx-action@v3
+
       # ADR 0037: images are distributed through GHCR. GITHUB_TOKEN can push to
       # this repository's own package namespace; DIST_PUBLISH_TOKEN is scoped to
       # the dist repo's contents and deliberately cannot.
@@ -58,7 +83,25 @@ jobs:
         run: deploy/local/dist-stub-test.sh
 
       - name: build all artifacts (A+C+R+D) and push images to GHCR
+        env:
+          # Empty unless asked for, so an ordinary release is the single-architecture
+          # build it has always been.
+          WS_PLATFORMS: ${{ inputs.workspace_arm64 && 'linux/amd64,linux/arm64' || '' }}
         run: VERSION=$VERSION deploy/release/build.sh --all --push
+
+      # A manifest list is invisible to `docker images`, so "did the arm64 half
+      # actually get published" cannot be answered by looking at the local docker —
+      # ask the registry. A single-platform reply here means the tag was overwritten
+      # by a later single-arch push and every Graviton slot would fail to pull.
+      - name: verify the published workspace image covers both architectures
+        if: ${{ inputs.workspace_arm64 }}
+        run: |
+          set -euo pipefail
+          IMG="ghcr.io/k-k1/agent-fleet/workspace:$VERSION"
+          got=$(docker buildx imagetools inspect --raw "$IMG" \
+            | jq -r '[.manifests[]? | select(.platform.os=="linux") | .platform.architecture] | sort | join(",")')
+          echo "architectures: ${got:-<single-platform manifest>}"
+          [ "$got" = "amd64,arm64" ] || { echo "::error::$IMG is not a two-architecture index (got '${got:-single}')"; exit 1; }
 
       # Last line before anything becomes public and permanent: expand every
       # artifact (including the layers inside the images tar) and fail if a

@@ -29,7 +29,7 @@ whenever you want to know how things work.
 | See who changed what (audit log) | Audit | [03-audit-usage.md](03-audit-usage.md) |
 | View usage (running time) and export it as CSV | Usage | [03-audit-usage.md](03-audit-usage.md) |
 | Distribute a shared MCP server to the whole team | MCP distribution | [04-mcp-egress.md](04-mcp-egress.md) |
-| Let people sign in with your own company's IdP | Sign-in methods | [operator/01 Install](../operator/01-install.md) |
+| Let people sign in with your own company's IdP | Sign-in methods | [operator/05 Sign-in methods](../operator/05-login-idp.md) |
 
 ## How to enter tenant settings
 
@@ -46,7 +46,13 @@ tenants, tenant-wide limits, and so on. Everything that is yours to do lives in 
 
 ## Layout of tenant settings
 
-The rail on the left holds two groups.
+The rail on the left holds three groups.
+
+**Tenant**
+
+- **Limits & idle** — **read-only**: this tenant's member count, its running workspaces and the
+  limits currently in effect (workspaces / sessions). A deployment administrator decides them, so
+  ask when you want one changed. → [02-limits.md](02-limits.md)
 
 **Sign-in**
 
@@ -55,29 +61,28 @@ The rail on the left holds two groups.
   administrator has to approve it. With GitHub you list the **allowed organizations** instead of
   an issuer and use an OAuth App created in your own organization — the approval is read as
   "these organizations, these domains", so **adding an organization sends it back for approval**.
-  ★ **"How the same account is recognised"** only matters when head office and your company use
-  **the same IdP through different app registrations**. Entra's default `sub` differs per app
-  registration, so one person is two accounts across head office's button and this method;
+  ★ **"How the same account is recognised"** only matters when your company and the deployment's
+  own sign-in use **the same IdP through different app registrations**. Entra's default `sub`
+  differs per app registration, so one person is two accounts across that button and this method;
   picking `oid` makes them one. Only values the IdP assigns can be picked — never one somebody
   can **assert**, such as an email address (asserting it would be enough to reach another
   person's account). **Changing it sends the row back for approval.**
-  → [operator/01 Install](../operator/01-install.md)
-- **Login rules** — **read-only** view of what is in effect for this tenant: the usable sign-in
-  methods (★ narrowing these to your own methods locks out people who also belong to another
-  tenant and sign in there — the same address at a different IdP is a different login; keep their
-  method accepted and list it under *methods to keep off the sign-in page* instead), the
-  auto-join domains and the invitable domains. Changing them is a deployment
+  → [operator/05 Sign-in methods](../operator/05-login-idp.md)
+- **Login rules** — **read-only** view of the auto-join domains and the invitable domains in
+  effect for this tenant (which methods are accepted, and which get a button, are per row under
+  **Sign-in methods**). ★ Narrowing what this tenant accepts to your own methods locks out people
+  who also belong to another tenant and sign in there — the same address at a different IdP is a
+  different login; leave their method on **Accept** and just clear **Show button** instead.
+  Changing any of this is a deployment
   administrator's job; this panel exists so you can read *why* an invitation was refused without
   asking anyone. ★ If that person **holds both accounts**, they can instead link the second method
   to their own account under **Settings → Personal → Account → Add a sign-in method** (only a
   method asserting the same address, and its own entry rules still apply). Nothing for you to do.
   A method they no longer use can be **removed** from the same panel — except the only one left
   and the one they are signed in with, which would lock them out.
-  ★ **"Methods to keep off the sign-in page" has no effect on the plain `/login`.** The page
-  without a slug belongs to no tenant, so the deployment-wide methods stay on it (hiding them
-  there would lock out everybody not in a tenant). For the setting to do anything, hand this
-  tenant's people **its own sign-in URL (`/login/<slug>`)** — it is shown under Login rules on
-  this panel.
+  ★ Clearing **Show button** keeps the method **accepted**: people already signing in with it
+  still can, it just stops appearing on this tenant's sign-in page. You cannot clear it on every
+  method — a sign-in page with no buttons is a dead end, so the setting is ignored instead.
 
 **Operations**
 
@@ -126,8 +131,8 @@ when it matters.
    Ask a super_admin to grant them.
 2. **Look over the member list** — open "Members" and check who currently belongs.
    In auto-join mode, everyone who has logged in should already be listed. → [01-members.md](01-members.md)
-3. **Know the limits currently in effect** — look at "Limits — Workspace / Session" at the top of
-   that same "Members" section. If they feel too strict or too loose, tenant-wide limits are
+3. **Know the limits currently in effect** — look at "Limits — Workspace / Session" under
+   **Tenant › Limits & idle**. If they feel too strict or too loose, tenant-wide limits are
    adjusted by a super_admin, and per-person session limits by you yourself.
    → [02-limits.md](02-limits.md)
 4. **Learn how to read audit and usage** — looking at the logs and running time once during normal

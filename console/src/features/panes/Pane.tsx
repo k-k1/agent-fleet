@@ -42,6 +42,7 @@ import { paneTitle } from "./paneTitle.ts";
 import { acceptsPaneDrag, setTabDragShield, tabOwnsDrop } from "./paneDnd.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
 import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { OnboardingCard } from "../terminal/OnboardingCard.tsx";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -98,7 +99,13 @@ function EmptyPane({ cell, style, active, tabbed, canSplitRight, canSplitDown, c
     >
       {tabbed && <div className="pane-tabs" role="tablist" aria-label={tr("display.pane_layout_tabs")} />}
       {canDrag && <button type="button" className={cx("pane-grip", ordinal ? "pane-ord " + ordClass(ordinal) : "")} draggable onDragStart={(e) => { e.dataTransfer.setData(DND, cell.id); e.dataTransfer.effectAllowed = "move"; }}>{ordinal}</button>}
+      {/* ★ 新規ユーザーが最初に見るのはここ。初期レイアウトは emptyCell（views: []）＝
+          ペインが 1 枚も無い状態なので、TerminalView は一度もマウントされない — 初回の
+          ガイドを端末ペインの空状態だけに置いていたせいで、いちばん見せたい相手にだけ
+          出ていなかった。カード側が「設定済み / あとで / CP 不通」を自分で判定して
+          null を返すので、ここは出す場所を与えるだけでよい。 */}
       <div className="pane-empty">{tr("pane.no_session")}</div>
+      {active && <OnboardingCard />}
       {canClose && <div className="pane-controls"><IconButton icon="close" label={tr("ui.close_pane_hint")} onClick={() => onClose(cell.id, true)} /></div>}
     </div>
   );
@@ -229,10 +236,23 @@ function PopulatedPane({
 
   // Resume a stopped session EXPLICITLY (the terminal WS is connect-only): POST
   // /start, then attach. An already-alive session just attaches.
+  //
+  // `resuming` exists so the in-flight state is its OWN fact rather than something
+  // inferred from `attached`. Reading the spinner off `attached` latched: a failed
+  // resume left attached=true, and the recovery effect above only fires on a CHANGE
+  // of sessionMeta.alive — which a failed resume never produces — so the pane sat on
+  // 再開中… forever with the button gone and no error. Now the spinner ends with the
+  // request, and `attached` is only latched when the backend actually accepted.
   const startSession = useSessionsStore((s) => s.start);
+  const [resuming, setResuming] = useState(false);
   const onResume = () => {
     void (async () => {
-      if (sessionMeta?.alive !== true && pane.session) await startSession(pane.session);
+      if (sessionMeta?.alive !== true && pane.session) {
+        setResuming(true);
+        const ok = await startSession(pane.session); // toasts on failure
+        setResuming(false);
+        if (!ok) return; // leave the 再開 button armed for a retry
+      }
       setAttached(true);
     })();
   };
@@ -533,6 +553,7 @@ function PopulatedPane({
             mirror={mirror}
             onToggleMirror={onToggleMirror}
             onResume={onResume}
+            resuming={resuming}
             headerActions={tabHeaderActions}
           />
         </div>

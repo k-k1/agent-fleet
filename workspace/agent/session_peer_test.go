@@ -64,12 +64,70 @@ func TestPeerPolicyRejections(t *testing.T) {
 	}
 }
 
-func TestPeerEnvelopeNamesTheSender(t *testing.T) {
+func TestPeerEnvelopeNamesTheSenderAndTheReplyPolicy(t *testing.T) {
 	// 封筒はサーバが必ず付ける。受け取った側が「誰から来たのか」を本文だけで判断できる
-	// 唯一の手掛かりで、workspace-notes の常設ルールがこの目印に紐づく。
-	got := peerEnvelope("s7abc12", "  develop を rebase した  ")
-	if got != "[agent-fleet:peer from=s7abc12] develop を rebase した" {
+	// 唯一の手掛かりで、workspace-notes の常設ルールがこの目印に紐づく。intent / reply が
+	// 同じ行に乗るのは、返信規律が効くのが着信の瞬間だから（docs/58 §58.14）。
+	got := peerEnvelope("s7abc12", "notice", "none", "  develop を rebase した  ")
+	if got != "[agent-fleet:peer from=s7abc12 intent=notice reply=none] develop を rebase した" {
 		t.Fatalf("peerEnvelope = %q", got)
+	}
+	// ミラーは封筒を正規表現で読み戻す（console/.../transcript/model.ts）。名前の直後に
+	// 語が増えても壊れない形にしてあるが、from= が先頭であることは契約として守る。
+	if !strings.HasPrefix(got, "[agent-fleet:peer from=s7abc12 ") {
+		t.Fatalf("封筒の先頭が from= でない: %q", got)
+	}
+}
+
+func TestPeerResolveIntentDerivesReplyPolicy(t *testing.T) {
+	// 返信方針は送信側に選ばせない（notice なのに「返信を要求する」封筒を作れてしまう）。
+	for intent, want := range map[string]string{
+		"request": "only-if-blocked", "question": "required", "answer": "none", "notice": "none",
+	} {
+		got, err := peerResolveIntent(intent)
+		if err != nil || got != want {
+			t.Errorf("peerResolveIntent(%q) = %q, %v; want %q", intent, got, err, want)
+		}
+	}
+	// 空も未知も既定値へ倒さない。どちらへ倒しても必ず誤る（依頼が黙殺されるか、
+	// 単なる共有に返信が返ってくるか）。
+	for _, bad := range []string{"", "  ", "fyi", "REQUEST"} {
+		if _, err := peerResolveIntent(bad); err == nil {
+			t.Errorf("peerResolveIntent(%q) がエラーにならない", bad)
+		}
+	}
+}
+
+func TestSessionInputRequiresPeerIntent(t *testing.T) {
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	session.WriteMeta(session.Meta{Name: "peersrc", Dir: t.TempDir(), Kind: session.KindClaude})
+	session.WriteMeta(session.Meta{Name: "peerdst", Dir: t.TempDir(), Kind: session.KindClaude})
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/peerdst/input",
+		strings.NewReader(`{"prompt":"hi","peer_from":"peersrc"}`))
+	req.SetPathValue("name", "peerdst")
+	rec := httptest.NewRecorder()
+	handleSessionInput(rec, req)
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "bad_peer_intent") {
+		t.Fatalf("status = %d, body = %s, want 400 bad_peer_intent", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSessionInputRejectsPeerIntentWithoutPeerFrom(t *testing.T) {
+	// 素の投入に種別だけ載せても封筒は付かない。黙って無視すると、呼び出し元は
+	// 「返信規律を伝えた」つもりのまま普通の割り込みを打つことになる。
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	session.WriteMeta(session.Meta{Name: "peerdst", Dir: t.TempDir(), Kind: session.KindClaude})
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/peerdst/input",
+		strings.NewReader(`{"prompt":"hi","peer_intent":"notice"}`))
+	req.SetPathValue("name", "peerdst")
+	rec := httptest.NewRecorder()
+	handleSessionInput(rec, req)
+
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "peer_intent_without_from") {
+		t.Fatalf("status = %d, body = %s, want 400 peer_intent_without_from", rec.Code, rec.Body.String())
 	}
 }
 

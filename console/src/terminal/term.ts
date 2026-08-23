@@ -891,6 +891,12 @@ const HB_TIMEOUT = 45000; // no pong for this long ⇒ dead → re-attach
 // ever trips on a genuinely stuck one.
 const CONNECT_STALL = 3000;
 
+// Close reason the Agent sends when the session is not running (see
+// workspace/agent/terminal.go). A browser cannot read the status of a REFUSED
+// upgrade, so the reason on an ACCEPTED-then-closed socket is the only way this
+// layer can tell "the session ended" from "the connection broke".
+const PTY_CLOSE_SESSION_STOPPED = "session stopped";
+
 // connStalled reports a socket wedged in CONNECTING past CONNECT_STALL — the
 // "起動直後の黒ターミナル" that no drop/heartbeat path catches (no close frame ever
 // arrives). Both the focus/active reconnect and the reveal retry ladder use it to
@@ -1055,6 +1061,14 @@ export function attach(paneId: string, session: string) {
     if (ev.code === 1000) {
       clearHeartbeat(it);
       setSoftKeyboard(it, false);
+      // The Agent closes a STOPPED session's replay with this reason (wire contract:
+      // ptyCloseSessionStopped in workspace/agent/terminal.go, forwarded verbatim by
+      // the CP proxy). Say so in the grid: a pane that is simply blank — the normal
+      // case once a container restart has emptied the /tmp history ring — reads as a
+      // broken terminal, and the user has no reason to hunt for the 再開 chip.
+      if (ev.reason === PTY_CLOSE_SESSION_STOPPED) {
+        it.term!.write("\r\n" + tr("onb.term_session_stopped") + "\r\n");
+      }
       return;
     }
     it.dropped = true;

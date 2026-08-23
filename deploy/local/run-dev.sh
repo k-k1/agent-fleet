@@ -157,18 +157,17 @@ WS_IMAGE_DEFAULT="agent-fleet/workspace:dev"
 [ "$MODE" = wsl ] && WS_IMAGE_DEFAULT="agent-fleet/workspace:wsl"
 WS_IMAGE="${WS_IMAGE:-$WS_IMAGE_DEFAULT}"
 
-# git-provider OAuth config (contains a secret -> git-ignored). If present, export
-# GITHUB_OAUTH_CLIENT_ID / BITBUCKET_OAUTH_KEY / BITBUCKET_OAUTH_SECRET / PUBLIC_BASE_URL.
-# See deploy/local/oauth.env.example.
+# Control Plane config (contains secrets -> git-ignored): PUBLIC_BASE_URL, the login
+# provider env, AF_MASTER_KEY, ... See deploy/local/oauth.env.example.
+# ★ The git providers' OAuth apps are NOT in here since docs/71 — they are per-tenant
+# rows, registered in the Console under Tenant settings -> Integrations.
 OAUTH_ENV="$ROOT/deploy/local/oauth.env"
 if [ -f "$OAUTH_ENV" ]; then
   set -a
   # shellcheck disable=SC1090
   . "$OAUTH_ENV"
   set +a
-  gh_state="unset"
-  [ -n "${GITHUB_OAUTH_CLIENT_ID:-}" ] && gh_state="set"
-  echo "==> loaded $OAUTH_ENV (GitHub device flow client_id: $gh_state)"
+  echo "==> loaded $OAUTH_ENV"
 fi
 # The wsl preset is single-user only: AUTH=oauth in oauth.env is not honored.
 [ "$MODE" = wsl ] && AUTH=dev
@@ -204,6 +203,11 @@ fi
   exit 1
 }
 
+# go builds below (native workspace-agent, control-plane) can hit the fleet's
+# per-agent 2G cgroup cap on a new/changed dependency; see go-build.sh.
+# shellcheck disable=SC1091
+. "$ROOT/deploy/local/go-build.sh"
+
 # ---- prepare the Workspace runtime (per mode) --------------------------------
 # rtk is always baked into the image (Dockerfile BAKE_RTK=1 default, ARG-pinned).
 # The old host vendoring (update-rtk.sh -> vendor/rtk) is gone.
@@ -234,8 +238,7 @@ if [ "$MODE" != native ]; then
 else
   # native: no image — build the workspace-agent for this host instead, and check
   # the host provides what the Dockerfile normally would (warn-only; docs/34).
-  echo "==> build workspace-agent (native runtime)"
-  (cd "$ROOT/workspace/agent" && go build -o /tmp/af-agent .)
+  build_go_binary "$ROOT/workspace/agent" /tmp/af-agent "workspace-agent (native runtime)"
   AF_NATIVE_AGENT_BIN=/tmp/af-agent
   for c in tmux git claude; do
     command -v "$c" >/dev/null 2>&1 || echo "WARN: '$c' not found on host PATH (native workspaces need it)"
@@ -254,8 +257,7 @@ fi
 . "$ROOT/deploy/local/console-build.sh"
 build_console
 
-echo "==> build control-plane"
-(cd "$ROOT/control-plane" && go build -o /tmp/af-cp .)
+build_go_binary "$ROOT/control-plane" /tmp/af-cp "control-plane"
 
 echo "==> control-plane on $CP_ADDR  (console: http://${CP_ADDR/#:/localhost:})  mode=$MODE runtime=$AF_RUNTIME auth=${AUTH:-dev}"
 # The generic OIDC login providers (docs/61) are named at runtime — AF_OIDC_PROVIDERS
@@ -284,8 +286,6 @@ exec env \
   ${WS_ENV:+WS_ENV="$WS_ENV"} \
   ${GITHUB_OAUTH_CLIENT_ID:+GITHUB_OAUTH_CLIENT_ID="$GITHUB_OAUTH_CLIENT_ID"} \
   ${GITHUB_OAUTH_CLIENT_SECRET:+GITHUB_OAUTH_CLIENT_SECRET="$GITHUB_OAUTH_CLIENT_SECRET"} \
-  ${BITBUCKET_OAUTH_KEY:+BITBUCKET_OAUTH_KEY="$BITBUCKET_OAUTH_KEY"} \
-  ${BITBUCKET_OAUTH_SECRET:+BITBUCKET_OAUTH_SECRET="$BITBUCKET_OAUTH_SECRET"} \
   ${PUBLIC_BASE_URL:+PUBLIC_BASE_URL="$PUBLIC_BASE_URL"} \
   ${GOOGLE_OAUTH_CLIENT_ID:+GOOGLE_OAUTH_CLIENT_ID="$GOOGLE_OAUTH_CLIENT_ID"} \
   ${GOOGLE_OAUTH_CLIENT_SECRET:+GOOGLE_OAUTH_CLIENT_SECRET="$GOOGLE_OAUTH_CLIENT_SECRET"} \

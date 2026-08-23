@@ -24,6 +24,7 @@ import { useSessionsStore, startSessionsPolling } from "../features/sessions/sto
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
 import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.tsx";
+import { NotProvisioned } from "../features/auth/NotProvisioned.tsx";
 import { WsStartingDialog } from "./WsStartingDialog.tsx";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
@@ -45,7 +46,7 @@ import { FilesSection } from "../features/project/FilesSection.tsx";
 import { Section } from "../ui/Section.tsx";
 import { WsBar } from "./WsBar.tsx";
 import { TopBar } from "./TopBar.tsx";
-import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
+import { useSettingsUI } from "../features/settings/store.ts";
 import { SettingsDialog } from "../features/settings/SettingsDialog.tsx";
 import { AdminDialog } from "../features/settings/AdminDialog.tsx";
 import { TenantDialog } from "../features/settings/TenantDialog.tsx";
@@ -121,6 +122,7 @@ export function App() {
   const tr = useT();
   const tenant = useTenantStore((s) => s.tenant);
   const identityRev = useTenantStore((s) => s.identityRev);
+  const notProvisioned = useTenantStore((s) => s.notProvisioned);
   // Deployment gate: only show the schedules rail when the CP scheduler is enabled
   // (AF_SCHEDULER_INTERVAL set) — otherwise schedules can never fire, so hide the section.
   // An UNRESOLVED identity (whoami errored / the CP was down at boot) fails OPEN: hiding a
@@ -271,7 +273,6 @@ export function App() {
     document.addEventListener("visibilitychange", onPrefsVisible);
     window.addEventListener("focus", refreshPrefs);
     const unHistory = wireLayoutHistory();
-    const unModalHistory = wireSettingsHistory();
     const unKeys = wireKeys();
     const unReconcile = wireTerminalReconcile();
     const unBrowserReconcile = wireBrowserReconcile();
@@ -303,7 +304,6 @@ export function App() {
       document.removeEventListener("visibilitychange", onPrefsVisible);
       window.removeEventListener("focus", refreshPrefs);
       unHistory();
-      unModalHistory();
       unKeys();
       unReconcile();
       unBrowserReconcile();
@@ -400,6 +400,13 @@ export function App() {
   // suppresses them: the main console tab already fires the same notifications,
   // so a satellite tab would just duplicate every ping.
   useSessionNotifications(notificationSource === "unsupported" && popout !== "popout");
+
+  // ★ 所属ゼロ（招待前）は Console を開かず、そう言う画面に着地させる
+  // （docs/61 §61.10.2・P7-2）。招待制が新規インストールの既定になったので、これは
+  // 例外ではなく最初の一歩。開いてしまうと、以後すべてのリクエストが 403 で弾かれて
+  // トーストが 1 つずつ出るだけになる。
+  // popout より前に置く: 所属が無ければ開くべきペインも無い。
+  if (notProvisioned) return <NotProvisioned />;
 
   // Minimal pop-out chrome: title bar + the (1-pane) PaneHost, plus the overlay
   // layer (dialogs the reduced command set can still reach + auth/workspace

@@ -24,13 +24,18 @@
 //	二辺比較をすると、containerd イメージストアでは同一イメージ由来でも digest の
 //	表現が違って恒久点灯する（実測と詳細は runtime_docker.go）。
 //
+// ★ そして「実体」に digest を選んではならない。digest は内容ではなく表現で、内容が
+//
+//	変わらなくても動く。全層キャッシュヒットの docker build が provenance だけ付け
+//	直すとタグの {{.Id}} は別物になる（2026-08-16 実測・runtime_docker.go）。控えるのは
+//	層チェーン＋config のような内容そのものにする。
+//
 // 実装は Runtime の任意インタフェース staleRuntime。判らないときは必ず false に倒す。
 //
-//	docker: 起動時に控えたタグの Image ID ≠ いまのタグの Image ID（runtime_docker.go）
-//	native: 起動時に控えた spawn 実体 ≠ 現在の spawn 実体（runtime_native.go）
-//	ecs   : 未実装（＝常に false）。誤警告を出さない側に倒してある。実装するなら
-//	        「走っているタスクの task definition と、いま Start が使う task definition」
-//	        の比較で、版比較に流れないこと。
+//	docker : 起動時に控えたイメージの内容 ≠ いまのタグのイメージの内容（runtime_docker.go）
+//	native : 起動時に控えた spawn 実体 ≠ 現在の spawn 実体（runtime_native.go）
+//	ecs    : Start が登録したタスク定義に焼いた指紋 ≠ いまタグを ECR に引いた指紋
+//	ecs-ec2: 同上（同じ実装に委譲）。どちらも runtime_ecs_stale.go
 package main
 
 import (
@@ -101,4 +106,15 @@ func (c *ttlCache) set(key, v string) {
 	c.mu.Lock()
 	c.m[key] = ttlEntry{v: v, at: c.clock()}
 	c.mu.Unlock()
+}
+
+// peek returns the last value stored under key REGARDLESS of the TTL, or "" if
+// nothing was ever stored. It is the "last known good" reader: a caller that has
+// just probed and got nothing can prefer an old-but-real answer over "unknown",
+// where "unknown" would be more expensive than being slightly behind. Never use it
+// for the comparison itself — that is what get's TTL exists for.
+func (c *ttlCache) peek(key string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.m[key].v
 }

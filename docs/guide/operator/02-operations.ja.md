@@ -82,6 +82,11 @@ air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose
   したがって**アップグレードの前に必ず `backup.sh` を取る**こと。何かあれば「古い image に戻す」の
   ではなく「バックアップからリストアする」のが正しい後退経路です。
 - 破壊的変更の有無はリリースノートで確認してください。
+- **AWS（`ecs` / `ecs-ec2`）の場合は compose ではなく `deploy/aws/ecs/update.sh`** です
+  （`VERSION=<v> ./update.sh --profile <p> --region <r>`）。ECR へ push → ingress スタックを
+  `ImageTag` だけ上書きして deploy → CP サービスの入れ替わりを待つ、までを 1 コマンドで行います。
+  **走っているワークスペースは自動では新しくなりません**（次の「起動」から新しい image）。
+  該当する利用者の Console には「要再起動」バッジが出るので、停止のタイミングは本人に委ねます。
 
 ## 閉域網（air-gap）へのインストール
 
@@ -92,7 +97,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose
 image を手で持ち込みます（ネット接続のあるマシンで `release.sh --save` してビルド＆
 `docker save` → 対象ホストで `load-images.sh`）。コマンドは runbook の "Air-gapped install" 節。
 
-判断ポイントが 3 つあります。
+判断ポイントが 4 つあります。
 
 - **image の取得元**: 社内レジストリのミラーなら `docker compose pull` がそのまま使え、
   保守も軽くなります。手持ち込みの tar は、アップグレードのたびにビルド／コピー／load を
@@ -102,6 +107,25 @@ image を手で持ち込みます（ネット接続のあるマシンで `releas
 - **Claude のインストール**: Workspace image は既定でコンテナ起動時に最新の Claude を取得します。
   完全オフラインのホストでは `CLAUDE_INSTALL=0`（`WS_ENV` 経由）にし、Claude を焼き込んだ image を
   使ってください。
+
+- **図のアイコン（`.drawio`）**: 同梱の drawio ビューアはオフラインでも図を描けますが、
+  ベンダーアイコンの図案（`shape=mxgraph.aws4.*`・GCP・Azure・Kubernetes・ラック機器…）は
+  **同梱していません**（全部で 40.8 MB あるため）。通常は初回に Control Plane が取得して
+  キャッシュしますが、外に出られないとその取得が失敗し、図は**枠と色とラベルだけに黙って
+  劣化します**。避けるには、持ち込んだディレクトリからキャッシュを埋めておきます:
+
+  ```sh
+  # 外に出られるマシンで 1 回
+  git clone --depth 1 -b v31.1.8 https://github.com/jgraph/drawio
+  # drawio/src/main/webapp/stencils を持ち込み、CP のホストで:
+  control-plane drawio-preseed --from /path/to/stencils        # 既定束 49 件 / 17.0 MB
+  control-plane drawio-preseed --from /path/to/stencils --all  # 全件 203 件 / 40.8 MB
+  ```
+
+  **1 件ずつ同梱台帳の SHA-256 で照合してから置く**ので、持ち込みの経路が信用できなくても
+  中身は保証されます。キャッシュは内容アドレスで索引を持たないため、**埋めたディレクトリを
+  そのまま tar で別ホストへ運んでも同じ**です。何が既定束に入り何が入らないかは、`--list` で
+  先に確認できます。
 
 「閉域で動く」の意味を取り違えないでください。image がローカルにあればフリートは**起動**
 できますが、エージェント自身はモデルのエンドポイントに到達できなければ何もできません。この
@@ -125,11 +149,36 @@ image を手で持ち込みます（ネット接続のあるマシンで `releas
 - **長さはそのまま全セッションのコンテキスト費用になります。** 全エージェントが毎回読むので、
   増やす前に「本当に全員・毎回必要か」を確認してください。cursor にはこの層を配れません。
 
+## インターネットに公開したとき
+
+Control Plane を公開ホスト名で出すと、**数時間のうちに脆弱性スキャナが来ます**（実測: 公開から
+9 時間で `/actuator/heapdump` や `/.env` を狙う探索が 172 回）。慌てる必要はありませんが、
+知っておくべきことが 3 つあります。
+
+- **セッション無しで届くのは限られています**: `/healthz`・`/login`・`/oauth2/*`・`/brand/*` と
+  旧 URL の転送だけで、それ以外は 401 です。`/internal/*`（egress 取り込み）と `/mcp`・`/git/*` は
+  ゲートの外ですが、**それぞれ自前の認証**を持ちます（未有効なら 404）。
+- **アクセスログに状態コードが出ます**。`GET /actuator/heapdump 401 0s` のように読めるので、
+  「弾いたのか、返してしまったのか」をログだけで判断できます。探索を数えたいなら
+  `401` で絞ってください。
+- **IP 単位で見たい・遮断したいなら CP の外側で**。送信元別の分析は ALB のアクセスログ、
+  遮断は AWS WAF です。CP 側で個別に弾く仕組みは、認証の外に新しい判断を増やすだけなので
+  入れていません。AWS 版は `30-ingress` に**既定オフの WAF** があり、
+  `WafRateLimitPer5Min`（レート制限）と `WafIpReputation`（AWS の IP 評価リスト）の 2 つだけを
+  提供します。⚠️ **署名系（Core rule set・SQLi・XSS）は意図的に用意していません**——この製品は
+  チャット・ファイル書き込み・ターミナル入力という**普通の本文にコードとシェルコマンドが流れる**ので、
+  `'; DROP TABLE` や `../../etc/passwd` が正当な通信として現れ、正常な操作がランダムに 403 になります。
+  しかも原因が WAF だと気づくまでが長い。
+- **社内だけで使うなら、そもそも受け口を絞るのが一番強い**。`00-network` の `AlbIngressCidr` を
+  自社の範囲にすれば、探索は ALB に届きません（無料）。
+
 ## アイドル停止と force-stop
 
-- **アイドル自動停止（scale-to-zero）**: `AF_SESSION_IDLE_TIMEOUT` / `AF_WS_IDLE_TIMEOUT` を設定すると、
-  一定時間使われていない Workspace を自動で止めます（テナント単位の上書きは Admin UI）。既定は
-  無効。停止した Workspace は、ユーザーが次にターミナルを開くと自動起動します（`AF_AUTOSTART`）。
+- **アイドル自動停止（scale-to-zero）**: 使われていない claude セッションを **1 時間**で停止し、
+  何も動いていない Workspace を **2 時間**で停止します。**これが既定**で、
+  `AF_SESSION_IDLE_TIMEOUT` / `AF_WS_IDLE_TIMEOUT` で変えられます（テナント単位の上書きは Admin UI。
+  テナントが `0` を入れればそのテナントだけ無効、env に `0` を入れればデプロイ全体で無効）。
+  停止した Workspace は、ユーザーが次にターミナルを開くと自動起動します（`AF_AUTOSTART`）。
   資源の節約に有効です。env の意味は [.env.example](../../../deploy/compose/.env.example)、仕組みは
   [dev/09 §9.4](../../dev/09-deploy.md)。
 - **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose

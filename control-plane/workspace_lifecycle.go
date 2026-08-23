@@ -4,8 +4,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 )
@@ -41,6 +43,7 @@ func (m *manager) createWorkspace(ctx context.Context, mv MembershipView, userKe
 	ws := Workspace{
 		ID:            newID(),
 		TenantID:      mv.TenantID,
+		TenantSlug:    mv.TenantSlug, // not persisted; every later read joins it back
 		MembershipID:  mv.MembershipID,
 		ContainerName: name,
 		Network:       network,
@@ -278,7 +281,18 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 			// this tenant's distributed MCP definitions. Its own credential, because the
 			// response can carry tenant secrets (a user_secret=0 server's headers) — a leak
 			// must not also grant memo/schedule access, and vice versa.
-			"AF_MCP_TOKEN="+mintMCPToken(mcpSignKey(m.tokenSignMaster()), ws.MembershipID))
+			"AF_MCP_TOKEN="+mintMCPToken(mcpSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// Docs bridge (docs/dev/04 §4.9): the agent pulls its role-scoped docs subset
+			// when nothing was bind-mounted — i.e. on ECS, where no host path exists to
+			// mount. Its own credential for the same reason as the others; a leak reads
+			// this member's docs subset and nothing else.
+			"AF_DOCS_TOKEN="+mintDocsToken(docsSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// Git OAuth refresh bridge (docs/71 §71.8): the agent posts its Bitbucket
+			// refresh token here so the CP can add the TENANT's client secret, which
+			// therefore never reaches the container. Its own credential for the same
+			// reason as the others; a leak refreshes this member's git token and
+			// nothing else.
+			"AF_GIT_OAUTH_TOKEN="+mintGitOAuthToken(gitOAuthSignKey(m.tokenSignMaster()), ws.MembershipID))
 	}
 	return env
 }
@@ -338,9 +352,158 @@ func (m *manager) resolveWorkspaceSize(ctx context.Context, ws Workspace) (memBy
 	return memBytes, cpuUnits, diskGB
 }
 
+// resolveSlotClass returns the machine class ws's NEXT container start lands on, and
+// a note when the stored answer could not be honoured (docs/70 §70.4.3).
+//
+// The chain is user → tenant default → deployment default, and each candidate must be
+// both DECLARED by the deployment and ALLOWED by the tenant. "" is returned on every
+// runtime that has no classes, which is every runtime but ecs-ec2 and every ecs-ec2
+// deployment that declared a single unnamed ladder — i.e. this is inert until an
+// operator opts in, and nothing about an existing deployment changes.
+//
+// ⚠️ The note exists because there is nothing to clamp TO. An out-of-range memory
+// value has a smaller version; a class that is not available has no "nearer" class,
+// so the person silently runs somewhere they did not ask for. That is invisible until
+// the bill arrives, which is why the substitution is reported rather than just done.
+func (m *manager) resolveSlotClass(ctx context.Context, ws Workspace) (id, note string) {
+	p := m.workspaceSizing()
+	if len(p.SlotClasses) == 0 {
+		return "", ""
+	}
+	declared := map[string]bool{}
+	for _, c := range p.SlotClasses {
+		declared[c.ID] = true
+	}
+	var lim tenantLimits
+	if t, err := m.store.GetTenant(ctx, ws.TenantID); err == nil {
+		lim = parseLimits(t.Limits)
+	}
+	ok := func(id string) bool {
+		if id == "" || !declared[id] {
+			return false
+		}
+		if len(lim.AllowedSlotClasses) == 0 {
+			return true
+		}
+		return slices.Contains(lim.AllowedSlotClasses, id)
+	}
+	// The fallback the tenant lands on when the per-user value cannot be used: the
+	// tenant's own default, else the deployment's, else the first class the tenant is
+	// allowed at all. The last step matters — a super_admin can restrict a tenant to a
+	// set that excludes the deployment default, and "no usable class" must not become
+	// a failed Start.
+	fallback := p.DefaultSlotClass
+	if ok(lim.SlotClass) {
+		fallback = lim.SlotClass
+	} else if !ok(fallback) {
+		fallback = ""
+		for _, c := range p.SlotClasses {
+			if ok(c.ID) {
+				fallback = c.ID
+				break
+			}
+		}
+		if fallback == "" {
+			fallback = p.DefaultSlotClass // the operator's list wins over a tenant restriction that leaves nothing
+		}
+	}
+	ul, found, err := m.store.GetUserLimit(ctx, ws.MembershipID)
+	if err != nil || !found || ul.SlotClass == "" {
+		return fallback, ""
+	}
+	if ok(ul.SlotClass) {
+		return ul.SlotClass, ""
+	}
+	return fallback, fmt.Sprintf("slot class %q is not available here; using %q", ul.SlotClass, fallback)
+}
+
 // resolveWorkspaceMemBytes is the memory axis alone, kept because the admin API and
 // MCP echo the post-clamp memory value back to the caller.
 func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws Workspace) int64 {
 	b, _, _ := m.resolveWorkspaceSize(ctx, ws)
 	return b
+}
+
+// destroyWorkspaceByMembership is the irreversible half of ADR 0045 決定 13: it tears
+// down the runtime's resources (home, and on the cloud adapters the ECS service, EFS
+// access points, SSM secrets, EBS volume and any hibernation snapshot) and then removes
+// the DB row. It returns the resources the adapter could NOT remove, for the audit log.
+//
+// Only reachable from an explicit administrator action. In particular it does NOT run on
+// offboarding: removeMembership is a logical delete that keeps the home on purpose
+// (docs/61 §61.10.6), and the automatic sweep hibernates rather than destroys.
+//
+// ⚠️ This cannot honour the deletion locks of ADR 0028. They live inside the home
+// (~/.config/agent-fleet/), which is unreadable while the workspace is stopped — a
+// structural consequence of where the locks are kept, not an omission. Callers must
+// surface "this overrides deletion locks" in the UI.
+//
+// Order: runtime first, DB row last. The reverse would turn any runtime failure into an
+// orphaned cloud resource with nothing in the database pointing at it — exactly the leak
+// this operation exists to close. Every adapter's Destroy is idempotent, so the retry
+// after a partial failure is safe.
+func (m *manager) destroyWorkspaceByMembership(ctx context.Context, membershipID string) ([]string, error) {
+	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
+	if err != nil || !ok {
+		return nil, err
+	}
+	lock := m.startLockFor(ws.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	lease, err := acquireWorkspaceLifecycleLease(ctx, m.store, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.Close()
+	rt := m.runtimeFor(ws, "")
+	releaseFence, err := m.acquireWorkspaceOperationFence(lease.Context(), ws.ID, rt)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseFence()
+	if err := lease.checkpoint(ctx); err != nil {
+		return nil, err
+	}
+	leftovers, err := destroyRuntime(lease.Context(), rt)
+	if err != nil {
+		return nil, err
+	}
+	if err := lease.checkpoint(ctx); err != nil {
+		return leftovers, err
+	}
+	if err := m.store.DeleteWorkspace(ctx, ws.ID); err != nil {
+		return leftovers, err
+	}
+	m.evictMembershipCache(membershipID)
+	return leftovers, nil
+}
+
+// runtimePoolStatuser is implemented by the one adapter that has a POOL to report on.
+// Everything else in the product is per-workspace, so there is nothing to show — and the
+// admin UI hides the screen rather than showing an empty one.
+type runtimePoolStatuser interface {
+	PoolStatus(context.Context) (ec2PoolStatus, error)
+}
+
+// poolStatus reports the EC2 slot pool, or ok=false on every other runtime profile.
+func (m *manager) poolStatus(ctx context.Context) (ec2PoolStatus, bool, error) {
+	p, ok := m.rtFactory.(runtimePoolStatuser)
+	if !ok {
+		return ec2PoolStatus{}, false, nil
+	}
+	st, err := p.PoolStatus(ctx)
+	st.AutoBake = m.autoBakeGolden
+	// With the baker switched off, "nothing is being baked" is not a phase of a bake —
+	// it is the whole answer, and the pool being full is not what is stopping it. A
+	// bake already in flight (an operator who switched it off mid-round) keeps its real
+	// phase: those resources exist and somebody has to be told about them.
+	if !st.AutoBake {
+		for i := range st.Goldens {
+			switch st.Goldens[i].Phase {
+			case ec2BakePhaseIdle, ec2BakePhaseBlocked:
+				st.Goldens[i].Phase, st.Goldens[i].SlotsInUse = ec2BakePhaseOff, 0
+			}
+		}
+	}
+	return st, true, err
 }

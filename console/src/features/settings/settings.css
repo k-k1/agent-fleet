@@ -215,33 +215,35 @@
 
 /* テナント設定モーダル（TenantDialog）。骨格は個人設定と同じ settings-* をそのまま
    使い、ここでは中身が管理モーダル由来（.admin-*）であることの調整だけを足す。
-   .admin-surface が同じ理由で当てている「弱い文字をダイアログ用に持ち上げる」規則が
-   モーダル面には効かないため、テナントモーダルに限って同じ持ち上げを掛ける。 */
-.tenant-modal .admin-panel h4 .af-note,
-.tenant-modal .af-unit,
-.tenant-modal .af-val.unset,
-.tenant-modal .admin-hint,
-.tenant-modal .admin-hint code {
+   .admin-* 由来の弱い文字は素の --muted では薄すぎるので、この 2 つのモーダルに
+   限ってダイアログ用に持ち上げる（管理モーダルも同じ面を差すので同じ規則）。 */
+:is(.tenant-modal, .admin-modal) .tc-slug,
+:is(.tenant-modal, .admin-modal) .admin-panel h4 .af-note,
+:is(.tenant-modal, .admin-modal) .af-suffix,
+:is(.tenant-modal, .admin-modal) .af-unit,
+:is(.tenant-modal, .admin-modal) .af-val.unset,
+:is(.tenant-modal, .admin-modal) .admin-hint,
+:is(.tenant-modal, .admin-modal) .admin-hint code {
   color: var(--dialog-muted);
 }
-.tenant-modal .settings-content .admin-panel + .admin-panel {
+:is(.tenant-modal, .admin-modal) .settings-content .admin-panel + .admin-panel {
   margin-top: 12px;
 }
-/* メンバーの 2 段（一覧 → 詳細）。管理モーダルと同じ .admin-nav / .admin-crumbs を
-   使うが、あちらは .admin-surface で、settings-modal の button リセット（枠付きピル）
-   を通らない。ここでは「戻る」がピルになってしまうので、その分だけ戻す。
+/* メンバーの 2 段（一覧 → 詳細）。管理モーダルと同じ実装（tenantScope）を差すので
+   規則も両方に効かせる。settings-modal の button リセット（枠付きピル）を通ると
+   「戻る」がピルになってしまうので、その分だけ戻す。
    .settings-crumb（スマホのレール↔本文）はモーダル自体の段で、こちらは本文の中の段。
    両方出ても意味は重ならない。 */
-.tenant-modal .tenant-drill {
+:is(.tenant-modal, .admin-modal) .tenant-drill {
   margin: 0 0 12px;
 }
-.tenant-modal .admin-back {
+:is(.tenant-modal, .admin-modal) .admin-back {
   border: none;
   background: transparent;
   color: var(--dialog-muted);
   padding: 4px 6px;
 }
-.tenant-modal .admin-back:hover:not(:disabled) {
+:is(.tenant-modal, .admin-modal) .admin-back:hover:not(:disabled) {
   background: var(--btn);
   color: var(--fg);
 }
@@ -421,8 +423,8 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   line-height: 1.5;
-  /* 管理モーダル（admin-surface）は settings-modal のフォーム配色が及ばないため、
-     テーマ配色を自前で持つ（設定モーダル側では同値の再指定になるだけ）。 */
+  /* 読み上げ辞書の textarea はテーマ配色を自前で持つ（settings-modal 側では
+     同値の再指定になるだけ）。 */
   background: var(--btn);
   color: var(--fg);
   border: 1px solid var(--btn-border);
@@ -1857,121 +1859,57 @@
 }
 
 
-/* Admin surface (tenants / members / quotas / sessions) — extracted from the old
-   console's styles.css (region 6119–6902) for pixel parity (docs/22 P7c).
-   Trimmed at P8. */
-
-/* Legacy control styles (old element globals), scoped — the verbatim-ported
-   AdminTab keeps raw <button>/<input>/<select> markup (:where() = old 0-0-1). */
-:where(.admin-surface) button {
-  background: var(--btn);
-  color: var(--fg);
-  border: 1px solid var(--btn-border);
-  border-radius: 4px;
-  padding: 4px 10px;
-  cursor: pointer;
-  font: inherit;
+/* ===== 管理モーダル（AdminDialog）=====
+   器は個人設定・テナント設定と同じ ui/Modal + .settings-modal。以前は独自の全画面
+   サーフェス（.admin-surface）で、ボタン / 入力の配色まで自前に再定義していたが、
+   settings-modal の規則がそのまま効くようになったので撤去した。ここに残るのは
+   「管理は横が要る」という大きさの差だけ（旧サーフェスの 1100×900 を引き継ぐ）。 */
+.admin-modal.ui-modal {
+  width: min(1100px, 94vw);
+  max-width: min(1100px, 94vw);
+  height: min(900px, 92vh);
+  max-height: 92vh;
 }
-:where(.admin-surface) button:hover:not(:disabled) {
-  background: var(--btn-h);
+.admin-modal .ui-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-:where(.admin-surface) button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-:where(.admin-surface) button.ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--dialog-muted);
-  padding: 2px 6px;
-}
-:where(.admin-surface) button.ghost:hover:not(:disabled) {
-  background: var(--btn);
-  color: var(--fg);
-}
-:where(.admin-surface) button.icon {
-  padding: 1px 6px;
-  font-size: 12px;
-  line-height: 1.3;
-}
-:where(.admin-surface) button.primary {
-  background: var(--accent);
-  color: var(--on-accent);
-  border-color: var(--accent);
-  font-weight: 600;
-}
-:where(.admin-surface) button.primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 85%, #fff);
-}
-:where(.admin-surface) button.danger:hover:not(:disabled) {
-  background: #4a2222;
-  border-color: #6a3030;
-  color: #f3b6b6;
-}
-:where(.admin-surface) input,
-:where(.admin-surface) select {
-  background: var(--btn);
-  color: var(--fg);
-  border: 1px solid var(--btn-border);
-  border-radius: 4px;
-  padding: 4px 6px;
-  font: inherit;
-}
-:where(.admin-surface) input:focus,
-:where(.admin-surface) select:focus {
-  outline: 1px solid var(--accent);
-  border-color: var(--accent);
-}
-
-/* admin */
-/* ===== Admin surface (super_admin management) ===== */
-/* Near-full-screen overlay panel (not a small centered modal): the staged
-   drill-down + per-member resource/session views need the room. */
-.admin-surface {
-  position: relative;
+/* レールがテナントの中に入っている間の頭 —— 出口（‹ すべてのテナント）と、今どの
+   テナントを見ているかの見出し。レール項目と同じ幅・余白に合わせる。 */
+.admin-scope-head {
   display: flex;
   flex-direction: column;
-  width: min(1100px, 94vw);
-  height: min(900px, 92vh);
-  /* Neutral body (like any modal); only the head bar carries the top-bar surface color
-     so a strong custom color doesn't flood the whole dialog. */
-  background: var(--bg);
-  /* Retint everything inside (buttons, active tabs, usage bars, links) to the top-bar
-     surface's accent instead of the app blue, so the modal matches the chosen top-bar
-     theme. --topbar-accent is concrete (applyTheme / :root), so this rebind is safe. */
-  --accent: var(--topbar-accent);
-  /* Light-theme active seg-tabs fill with --active-bg (a fixed blue), not --accent, so
-     retint it to a soft accent tint too (theme-adaptive via --bg; matches the prior look
-     at the default blue). */
-  --active-bg: color-mix(in srgb, var(--topbar-accent) 18%, var(--bg));
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
+  gap: 2px;
+  margin-bottom: 6px;
 }
-.admin-surface-head {
+.settings-modal .admin-rail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dialog-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-modal .admin-rail-back:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+.admin-scope-name {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  /* Accent bar: match the top bar's surface (follows the user's 外観 top-bar color). */
-  background: var(--topbar-bg);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  gap: 6px;
+  padding: 2px 10px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border2);
 }
-.admin-surface-head .modal-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  flex: 1;
-}
-.admin-surface-body {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  padding: 16px;
-}
+
 .admin {
   display: flex;
   flex-direction: column;
@@ -2197,13 +2135,15 @@
   font-family: var(--mono);
   color: var(--muted);
 }
-.admin-surface .tc-slug,
-.admin-surface .admin-panel h4 .af-note,
-.admin-surface .af-suffix,
-.admin-surface .af-unit,
-.admin-surface .admin-hint,
-.admin-surface .admin-hint code {
-  color: var(--dialog-muted);
+/* 接続元制限の CIDR 一覧は 1 行に長い文字列が入るので、格子の 1 列では読めない
+   （docs/66）。ssm-fld.wide と同じ扱いで 1 行を丸ごと使う。 */
+.admin-fld.wide {
+  grid-column: 1 / -1;
+}
+/* 設定ミス（プロキシ未申告・送信元不明）はヒントではなく警告である —— 気づかない
+   ままだと「絞ったつもりで全員を通す」ので、色で他のヒントと分ける。 */
+.admin-hint.warn {
+  color: var(--warn);
 }
 .admin-actions {
   display: flex;
@@ -2220,19 +2160,6 @@
 }
 .admin-check input {
   flex: none;
-}
-
-/* top-level admin mode toggle (テナント管理 / 使用量) */
-.admin-modes {
-  align-self: flex-start;
-}
-.admin-modes .seg-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-  padding: 5px 14px;
-  font-size: 12px;
 }
 
 /* usage / showback */
@@ -2471,6 +2398,16 @@
 }
 .mr-lim {
   font-size: 11px;
+}
+/* What a member is sized to, on the roster row. Small and quiet: the row's subject is
+   the person, and these are the facts about them — never the other way round. They sit
+   before .mr-go so the chevron stays pinned to the right edge. */
+.mr-size {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.mr-size.mono {
+  color: var(--fg);
 }
 .mr-go {
   color: var(--muted2);
@@ -2777,13 +2714,19 @@
 }
 /* Named sizes fill the three numeric fields above in one click. They are a shortcut,
    not a separate mode, so they sit next to the fields rather than replacing them. */
-.limit-edit .le-presets {
+/* ⚠️ The tenant's machine picker is the SAME chip row outside .limit-edit, so every
+   rule below names both. Dropping the `.limit-edit` scope instead would make
+   `.le-presets` a global class, and this stylesheet already learned what two
+   definitions of one global name do to each other (docs/70 §70.10 / .view-head). */
+.limit-edit .le-presets,
+.machine-picker .le-presets {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
 }
-.limit-edit .le-presets .chip {
+.limit-edit .le-presets .chip,
+.machine-picker .le-presets .chip {
   min-width: 44px;
   padding: 4px 10px;
   font-size: 12px;
@@ -2794,13 +2737,25 @@
   color: var(--fg);
   cursor: pointer;
 }
-.limit-edit .le-presets .chip:hover {
+.limit-edit .le-presets .chip:hover,
+.machine-picker .le-presets .chip:hover {
   border-color: var(--accent);
 }
-.limit-edit .le-presets .chip.on {
+.limit-edit .le-presets .chip.on,
+.machine-picker .le-presets .chip.on {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-fg, #fff);
+}
+/* The one-line spec under each machine chip: what the class actually buys. Monospace
+   for the instance types so the ranges line up down the list. */
+.machine-picker .machine-specs {
+  margin: 8px 0 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+.machine-picker .machine-specs li {
+  margin: 2px 0;
 }
 .role-now {
   display: inline-flex;
@@ -2816,33 +2771,16 @@
   color: var(--muted); /* match .field-help / .ds-hint (was inherited fg) */
 }
 
-/* Admin surface on a phone: full-bleed, single column, stacked forms, and a big
-   tap-target back button. Scoped to .admin* so global form-row etc. are untouched. */
+/* 管理モーダルをスマホで: 1 列・フォームは縦積み・戻るは大きめのタップ領域。
+   .admin* に閉じてあるので global の form-row 等には触れない。 */
 @media (max-width: 760px) {
-  .admin-surface {
-    /* Match the settings modal: stay inside the backdrop's phone-sized content
-       box instead of forcing a 100vw child into a padded backdrop. */
+  .admin-modal.ui-modal {
+    /* 個人設定と同じ: 100vw の子を padding 付きの backdrop に押し込まず、
+       backdrop のスマホ用のコンテンツ箱に収める。 */
     width: 100%;
     max-width: 100%;
     height: min(900px, 88dvh);
     max-height: 88dvh;
-  }
-  .admin-surface-body {
-    padding: 12px;
-    /* Wide controls own their horizontal scrolling; the entire modal must not. */
-    overflow-x: hidden;
-  }
-  .admin-modes {
-    display: flex;
-    width: 100%;
-    max-width: 100%;
-    align-self: stretch;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-  }
-  .admin-modes::-webkit-scrollbar {
-    display: none;
   }
   .admin-back {
     padding: 8px 14px;
@@ -2960,6 +2898,18 @@
 }
 .tool-ver-reload {
   margin-left: 10px;
+  font-size: 11.5px;
+  padding: 2px 10px;
+}
+
+/* Java 行（EnvTab）: セレクトの右に「インストール」ボタンが出る。未導入の major を
+   選んだときだけ現れるので、常設の幅は取らせない（inline-flex）。 */
+.env-java-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.env-java-pick button {
   font-size: 11.5px;
   padding: 2px 10px;
 }
@@ -3438,7 +3388,13 @@
   letter-spacing: 0.04em;
   padding: 1px 6px;
   border-radius: 999px;
-  border: 1px solid var(--border2);
+  /* ★ var(--border2) では引けない。ライトでは #e6e8ec が .admin-panel の地
+     (var(--panel2) = #f4f5f7) とほぼ同色で、枠が消えてチップが宙に浮いた文字列に
+     なる（実測・.adm-mcp-row code の注記と同じ罠）。前景を薄く混ぜると、どちらの
+     テーマでも同じ濃さで浮く。
+     P7-0 まではこの素の見た目が出るのは suspended の行だけで目立たなかったが、
+     「デプロイ共通」バッジが同じ素の状態を全行に出すので、ここで直す。 */
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
   color: var(--muted);
   flex: none;
 }
@@ -3450,24 +3406,20 @@
   color: var(--warn, #d9a441);
   border-color: color-mix(in srgb, var(--warn, #d9a441) 45%, var(--border2));
 }
-/* What may be written in "使えるサインイン方法" (docs/61 §61.11.8 ·
-   tenantLogin.tsx DeploymentSignInMethods). It sits directly under the rules form
-   because that is the only place the person who mistyped an id will look. Rows
-   are the .adm-mcp-row family; only the id — the value actually typed — is mono,
-   the display name leads. */
-.idp-known {
-  margin-top: 14px;
-}
-.idp-known > .af-cap {
-  display: block;
-  font-size: 11.5px;
-  color: var(--fg);
-  margin-bottom: 2px;
-}
-/* ★ 枠は var(--border2) では引けない — ライトでは #e6e8ec が地の #f4f5f7 とほぼ同色で、
+/* The provider id on a sign-in method row (docs/61 §61.11.8 → §61.17.5). The display
+   name leads and only the id is mono, because the id is a technical identifier and
+   making it the subject sends the reader elsewhere to ask what "entra" is.
+
+   ★ The selector was `.idp-known code` while these rows lived in their own block
+   under the rules form. P7-0 moved them into the sign-in method list (.admin-panel),
+   and the rule silently stopped matching — the id then picked up the GLOBAL <code>
+   style (a bright highlight in dark) and stopped reading as the same chip. Scope it
+   to the row, which is where it actually lives now.
+
+   ★ 枠は var(--border2) では引けない — ライトでは #e6e8ec が地の #f4f5f7 とほぼ同色で、
    チップが消えて id が宙に浮いた文字列に見える（実測）。前景を薄く混ぜると、どちらの
    テーマでも同じ濃さで浮く。 */
-.idp-known code {
+.adm-mcp-row code {
   flex: none;
   font-family: var(--mono);
   font-size: 11px;
@@ -3476,6 +3428,53 @@
   border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
   border-radius: 4px;
   padding: 0 5px;
+}
+/* The two per-row toggles on the sign-in method list (docs/61 §61.17.5 ·
+   tenantLogin.tsx TenantSignInMethods): "accept" and "show button". They lead the
+   row because they are the only part of it this tenant decides — the rest (who the
+   issuer is, whether it is approved) is stated, not chosen.
+
+   ★ flex:none + nowrap. The labels are the same two strings on every row, so content
+   width already lines the names up; what this stops is the row's flexible middle
+   (.as-repo holds an issuer URL) squeezing the toggles into two illegible slivers
+   when the modal is narrow. Wrapping the row is the better failure. */
+.idp-flags {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+.idp-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--muted);
+  /* 枠は .idp-state と同じ理由で前景の混色（var(--border2) はライトで地に沈む）。 */
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+label.idp-flag {
+  cursor: pointer;
+}
+/* ★ 「効いている」を色で言うのは on だけ。両方を色付きにすると、行の意味（受け入れて
+   いるが出さない）が読めなくなる。 */
+.idp-flag.on {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 30%, var(--border2));
+}
+.idp-flag input {
+  width: 11px;
+  height: 11px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+/* 倒せない行は理由が title に入る（最後の 1 つ・受け入れていない）。薄くするだけで
+   隠さないのは、そこに状態が在ることは読めないといけないため。 */
+.idp-flag:has(input:disabled) {
+  opacity: 0.6;
+  cursor: default;
 }
 /* key/value secret editor (env vars / headers) */
 .mcp-kv {
@@ -3717,4 +3716,136 @@
   font-size: 11px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* EC2 slot pool (ecs-ec2 only; features/settings/ec2Pool.tsx) */
+.pool-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.pool-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding: 4px 8px 6px;
+  white-space: nowrap;
+}
+.pool-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border2);
+  vertical-align: middle;
+}
+.pool-table tr:last-child td {
+  border-bottom: none;
+}
+/* Hibernation is a state of the DATA, not a fault: muted, never the danger colour.
+   The one thing that IS a warning here is a stale golden snapshot, because nothing
+   else will ever tell the operator about it. */
+.pool-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+.pool-view .warn-text {
+  color: var(--warn);
+}
+/* 予約 workspace（種 / probe）の印。人の workspace と同じ見た目で並ぶと、上限に
+   近いプールで「知らない誰かが 2 枠使っている」に読める。 */
+.pool-badge.bake {
+  margin-left: 6px;
+  font-family: var(--sans);
+}
+
+/* golden の焼き込み（docs/64 §64.30）。1 アーキ 1 ブロック。 */
+.golden-arch + .golden-arch {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border2);
+}
+.golden-arch-name {
+  display: inline-block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.golden-arch p {
+  margin: 4px 0;
+}
+.golden-head .state-dot {
+  margin-right: 6px;
+}
+/* 進行線。段の名前は「いまどこか」が読めれば十分なので小さく、現在段だけ強調する。
+   ★ 折り返す（アーキ 2 本 × 6 段は狭いペインに収まらない）。 */
+.bake-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  margin: 8px 0 6px;
+  padding: 0;
+  list-style: none;
+}
+.bake-step {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-right: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.bake-step + .bake-step::before {
+  content: "";
+  width: 14px;
+  height: 1px;
+  margin-right: 10px;
+  background: var(--border);
+}
+.bake-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+}
+.bake-step.done .bake-dot {
+  background: var(--border);
+  border-color: var(--border);
+}
+.bake-step.now {
+  color: var(--fg);
+  font-weight: 500;
+}
+.bake-step.now .bake-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.bake-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  font-size: 11px;
+}
+.bake-detail:empty {
+  display: none;
+}
+/* purge opt-in inside the offboarding dialog: a checkbox, never a preselected one —
+   removing a membership and destroying a home are two different decisions. */
+.purge-opt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.warn-text {
+  color: var(--warn);
 }

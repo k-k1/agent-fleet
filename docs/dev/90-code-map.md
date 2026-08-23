@@ -33,7 +33,10 @@
 | `tenant_login.go` | テナント毎のログイン規則（docs/61 §61.9）: 入口の門の DB 由来の項・`allowed_providers` の突合・`auto_join_domains` の解決・30 秒 TTL キャッシュ |
 | `tenant_idp.go` / `tenant_idp_api.go` | テナント定義のサインイン方法（docs/61 §61.11）: provider id の名前空間（`t:<slug>:<name>`）・**実行時 provider レジストリ**（承認/停止が再起動なしで効く・30 秒 TTL）・`client_secret` の封印 / 開封 / admin CRUD と承認フロー（`active` にできるのは super_admin だけ） |
 | `login_provider_api.go` | デプロイが env で有効にしている provider の読み取り専用一覧（`GET /api/admin/providers`・super_admin）。`allowed_providers` に何が書けるかを画面へ出すためのもので、id・ボタン文言・issuer だけを返す（秘密は載せない） |
-| `oauth_bitbucket.go` | Bitbucket OAuth ブローカ（Connections 向けトークン取得の CP 側） |
+| `oauth_bitbucket.go` | Bitbucket OAuth ブローカ（Connections 向けトークン取得の CP 側）。consumer key/secret は**テナントの行**から。state に tenant_id を載せる（コールバックに `X-AF-Tenant` は無い） |
+| `oauth_github_device.go` | GitHub の device flow（git 接続）。**docs/71 で Agent から CP へ移設**——env を経由せずテナントのアプリを使い、token は Agent の `PUT /connections/git/github.com` へ渡す |
+| `git_oauth_bridge.go` | Agent → CP の refresh ブリッジ（docs/71 §71.8）。`AF_GIT_OAUTH_TOKEN` で認証し、**テナントの client_secret を CP に残したまま** Bitbucket の refresh grant を代行する（再試行と invalid_grant の判定もここ） |
+| `tenant_git_oauth.go` / `tenant_git_oauth_api.go` | テナントが登録する git プロバイダの OAuth アプリ（docs/71）: provider の閉じた集合・封印済み secret の解決・tenant_admin の CRUD（承認なし）・メンバー向けの `GET /api/git-oauth` |
 | `pat.go` | PAT（Bearer トークン）発行・ハッシュ・スコープ天井 |
 | `tenants.go` | tenant / identity / membership の CRUD・limits・admin API |
 | `manager.go` / `resolver.go` | 依存の保持 / identity・membership・RBAC 解決 |
@@ -60,7 +63,7 @@
 | `mcp_era.go` / `mcp_server.go` / `mcp_server_bridge.go` | MCP 新版（2026-07-28 ステートレス）の受理層（docs/49）/ テナント配布 MCP レジストリの admin CRUD と Workspace 向け内部ブリッジ（docs/48） |
 | `mem.go` / `limits.go` | Workspace RAM 上限の bytes 正規化・runtime 別整形 / テナント limits JSON パースとアイドルタイムアウト解決 |
 | `tts.go` / `tts_{polly,ecs}.go` / `enkana*.go` | 読み上げの共通面 / provider / 日本語読み正規化 |
-| `workspace_docs.go` | ロール別 docs を Workspace へ read-only ステージ |
+| `workspace_docs.go` / `docs_bridge.go` | ロール別 docs を Workspace へ read-only ステージ（docker/native）/ 同じ部分集合を `GET /internal/docs` で配る取得ブリッジ（ECS・docs/dev/04 §4.9） |
 | `mcp.go` | CP 側 MCP サーバ（`/mcp`） |
 | `ws_settings.go` | workspace 毎の設定（agent 自動更新など） |
 | `admin_sessions.go` / `admin_stats.go` | admin 横断セッション一覧 / メンバー統計 |
@@ -99,10 +102,12 @@
 | `fetch_loop.go` | origin 自動 fetch + FF 可否バッジ |
 | `fs.go` | ファイル閲覧・操作 API（`fs/*`） |
 | `cred_helper.go` | 暗号ストアを使う git credential helper の CLI 受け口 |
-| `connections.go` | Connections 状態 API（git ホスト / internal / bitbucket） |
+| `connections.go` | Connections 状態 API（git ホスト / internal / bitbucket）。GitHub の token は device flow でも `PUT /connections/git/{host}` から入る（docs/71） |
 | `mcp_stdio.go` / `mcp_run.go` | コンテナ内 stdio MCP サーバ / MCP プロセス実行 |
 | `mcp_servers.go` / `mcp_materialize.go` / `mcp_tenant.go` | MCP レジストリの REST 面 / CLI 設定への materialize 契機 / テナント配布の取得契機（docs/48。実装本体は `internal/mcpreg`） |
 | `preview.go` / `terminal.go` | `/proxy/{port}` コンテナ内中継 / `/ws/pty`（WebSocket PTY） |
+| `docs_sync.go` | マウントが無いとき（ECS）に CP からロール別 docs を取得して展開 |
+| `jdk_install_http.go` | 設定→ツールチェーンの JDK ワンボタン導入（`/env/jdk-install`・実体は `jdk.go` の `installJDK`） |
 | `env_toolchains.go` / `env_tool_versions.go` / `ui_prefs.go` / `repo_prompts.go` | Java/Node/TZ ツールチェーン解決 / バンドルツール版レポート（実効・焼き込み・~/.local・ピン）/ UI プリファレンス / リポの command・skill テンプレ列挙 |
 | `shutdown.go` / `record_exit.go` | graceful shutdown / tui pane の終了理由記録 |
 

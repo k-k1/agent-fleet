@@ -136,3 +136,20 @@ describe("echoNeedsResync", () => {
     expect(echoNeedsResync({ text: "x", sinceIdx: 0 }, now)).toBe(false);
   });
 });
+
+describe("起動時の最初の指示（launchSeed の表示用エコー）", () => {
+  // 配達は Agent 側（create の initial_prompt / when_ready）で、ミラーは「送った文面」を
+  // 見せるだけ。だからエコーが載る時点で実ターンが既に転写にあることがある（配達が速い、
+  // あるいはペインを後から開いた）。アンカーを newestIdx() から取るとその場合に
+  // idx > sinceIdx が成立せず、リロードするまで「反映待ち」が残り続ける — 2026-08-20 に
+  // 報告された「同じ指示が2つ出て、片方が反映待ちのまま」の正体がこれ（ペインは
+  // セルでキーされるので、前のセッションの転写を握ったまま session だけ差し替わり、
+  // アンカーが他所のセッションの最終 idx になっていた）。sinceIdx=-1 で必ず解消する。
+  it("エコーより前に載っていた実ターンでも解消する", () => {
+    expect(echoLanded({ text: "検討して", sinceIdx: -1 }, [{ role: "user", text: "検討して", idx: 7 }], notNoise)).toBe(true);
+  });
+
+  it("前のセッション由来のアンカーだと解消できない（回帰の形）", () => {
+    expect(echoLanded({ text: "検討して", sinceIdx: 500 }, [{ role: "user", text: "検討して", idx: 7 }], notNoise)).toBe(false);
+  });
+});

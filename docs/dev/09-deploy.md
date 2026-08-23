@@ -60,14 +60,14 @@ https 前置きが Secure cookie の前提。
 | L1 認証 | `AUTH`（dev）・`DEV_USER`（dev）・`AUTH_EMAIL_HEADER`・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_OIDC_PROVIDERS`＋`AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。許可リスト全空 = fail-closed。`TRUST` 未宣言の provider は無効化、有効な provider ゼロなら fatal | [07 §7.3](07-security.md) / [61](../61-login-idp.md) |
 | プロビジョン / 権限 | `AF_PROVISION`（auto）・`SUPER_ADMIN_EMAILS` | 未知 identity の自動受入ポリシー / 初期 super_admin | [06](06-data-model.md) |
 | at-rest 暗号 | `AF_MASTER_KEY` | 未設定 = 平文（dev のみ）。**紛失 = crypto-shred**・データ領域と別金庫 | [07 §7.6](07-security.md) |
-| git プロバイダ OAuth | `GITHUB_OAUTH_CLIENT_ID`・`BITBUCKET_OAUTH_KEY/SECRET` | Console の「OAuth 接続」ボタン有効化（無くても token 貼付で可）| [08](08-integrations.md) |
-| scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`・`AF_WS_IDLE_TIMEOUT`・`AF_IDLE_SWEEP_INTERVAL`・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング | [03](03-control-plane.md) |
+| git プロバイダ OAuth | **env は無い**（削除済み）| テナント管理者が Console（テナント設定 › 連携 › git プロバイダ OAuth）で登録する。`BITBUCKET_OAUTH_KEY/SECRET` は読まれず、`GITHUB_OAUTH_CLIENT_ID` は L1 の GitHub サインイン専用になった | [71](../71-tenant-git-oauth.md) |
+| scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`（1h）・`AF_WS_IDLE_TIMEOUT`（2h）・`AF_IDLE_SWEEP_INTERVAL`・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング | [03](03-control-plane.md) |
 | MCP | `AF_MCP_ENABLED` | CP `/mcp` エンドポイント有効化 | [08](08-integrations.md) |
 | egress 🚧 | `AF_EGRESS_LISTEN`（:3128）・`AF_EGRESS_TOKEN`・`AF_EGRESS_{INGEST,POLICY}_URL`・`AF_EGRESS_PROXY_ADDR`・`AF_EGRESS_ENFORCE`・`AF_EGRESS_ALLOWLIST` | forward proxy サブコマンドと CP 集約 | [07 §7.8](07-security.md) |
 | Postgres | `AF_DATABASE_URL` または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}` | Store=postgres 選択時のみ | [06](06-data-model.md) |
 | ECS アダプタ 🚧 | `AF_ECS_{CLUSTER,REGION,SUBNETS,SECURITY_GROUP,NAMESPACE_ARN,EFS_ID,EXEC_ROLE,TASK_ROLE,LOG_GROUP,TASK_CPU,TASK_MEMORY,POSIX_UID,POSIX_GID,START_TIMEOUT_SEC}` | CFN が作った静的基盤の座標を CP に渡す | [ecs runbook](../../deploy/aws/ecs/README.md) |
 | native アダプタ 🚧 | `AF_NATIVE_AGENT_BIN`（PATH の `workspace-agent`） | コンテナレス実行時の workspace-agent バイナリの所在 | [34](../34-native-runtime.md) |
-| コンテナ内（CP が注入・運用者は直接設定しない） | `AGENT_ADDR`（:7700）・`AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_TMUX_SOCKET`/`AGENT_DOCS_DIR`（native のみ） | CP↔Agent 認証・DEK・停止猶予ほか | [04](04-workspace-agent.md) / [07 §7.5](07-security.md) |
+| コンテナ内（CP が注入・運用者は直接設定しない） | `AGENT_ADDR`（:7700）・`AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_TMUX_SOCKET`/`AGENT_DOCS_DIR`（native のみ）・`AF_DOCS_TOKEN`（docs 取得ブリッジ・[04 §4.9](04-workspace-agent.md)） | CP↔Agent 認証・DEK・停止猶予ほか | [04](04-workspace-agent.md) / [07 §7.5](07-security.md) |
 
 網羅性の確認方法: 変数名そのものが grep アンカー。CP の読み値（`envOr` / `os.Getenv`）と
 `run-dev.sh` の透過リスト・`.env.example` を突き合わせる。
@@ -80,6 +80,11 @@ bind-mount する。**ECS はこのマウントが無い**（`home`・`claude` �
 install-jdk <major>` が Adoptium から Temurin を入れる。Console のツール選択（toolchains）で
 Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JAVA_HOME` を通す。`availableJava`
 相当（`GET /env/toolchains` の `java_available`）は「on-disk（両ディレクトリ）∪ install 可能 major」を返す。
+**未導入の major を選んだときは、その場で入れるボタンが出る**（`POST /env/jdk-install` →
+`GET` でポーリング・agent `jdk_install_http.go`）。選択だけでは次回のコンテナ起動まで何も
+起きなかったのを、Stop → Start もターミナルも要らない一手に畳んだもの。導入後は
+`resolvedToolchains` が起動のたびに JDK ディレクトリを glob するので、**次に起動する
+セッションから** `JAVA_HOME` に入る（再起動不要）。
 
 ## 9.5 aws ターゲットの設計（縮約）🚧
 

@@ -122,15 +122,37 @@ describe("TenantDialog", () => {
     expect(content.querySelector("input")).toBeNull();
     expect(content.querySelector(".admin-actions")).toBeNull();
     const vals = Array.from(content.querySelectorAll(".af-val")).map((e) => e.textContent || "");
-    // 4 行目は「ボタンを出さない方式」（docs/61 §61.15.9）。受け入れる方式とは別の欄で、
-    // 表示だけを変えるもの。
-    expect(vals).toHaveLength(4);
-    expect(vals[0]).toBe("entra");
-    expect(vals[1]).toBe("@sales.acme.co.jp");
-    expect(vals[2]).toContain("未設定");
-    expect(vals[3]).toContain("未設定");
+    // ★ 残るのはドメインの 2 列だけ。方式の 2 列（受け入れる／ボタンに出す）は P7-0 で
+    // この面から出て、「サインイン方法」の行ごとのトグルになった（docs/61 §61.17.5）。
+    // CSV を読み取り専用で見せても「うちは何で入れるのか」には答えないため。
+    expect(vals).toHaveLength(2);
+    expect(vals[0]).toBe("@sales.acme.co.jp");
+    expect(vals[1]).toContain("未設定");
+    expect(content.textContent).toContain("「サインイン方法」の面で行ごとに切り替え");
     // このテナント専用のログイン URL は規則の面にも出る（人が配る導線・決定 28）。
     expect(content.textContent).toContain("login/acme");
+  });
+
+  // ⚠️ 実際に「設定にも管理にも見当たらない」と言われた。接続元の制限（docs/66）は
+  // テナント設定モーダルにしか置いておらず、そのモーダルの入口は **tenant_admin の
+  // 在籍だけ**で出るので、在籍の無い super_admin からは一生見えなかった。面はレールに
+  // 並んでいること、そして管理モーダル側にも置いてあること（AdminTab 側）を固定する。
+  it("接続元の制限がレールに並び、開ける", async () => {
+    respond(false);
+    await mount("network");
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/network");
+    const rail = document.querySelector(".settings-rail, .settings-modal")!;
+    expect(rail.textContent).toContain("接続元の制限");
+  });
+
+  // super_admin がこのモーダルから入ってきたら、規則は読み取り専用にしない——
+  // 「変更できるのはデプロイ管理者だけです」と書かれた画面を当のデプロイ管理者が
+  // 眺めることになる。出し分けはサーバの super_admin フラグに従う。
+  it("super_admin には規則を編集できる形で出す", async () => {
+    respond(true);
+    await mount("rules");
+    const content = document.querySelector(".settings-content")!;
+    expect(content.querySelector("input")).not.toBeNull();
   });
 
   it("メンバーは一覧 → 詳細の 2 段で、戻ると一覧に戻る", async () => {

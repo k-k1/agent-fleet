@@ -207,9 +207,20 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// otherwise. Set by unattended senders (the CP scheduler's reuse send) whose
 		// prompt is always a real task; NOT for turnless UI slash commands (/model …).
 		Confirm bool `json:"confirm"`
-		// Source attributes a report_to-carrying injection's origin for the mirror badge
-		// (docs/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
-		// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
+		// WhenReady defers a {prompt} to the launch-task delivery loop
+		// (deliverInitialPrompt): wait for tmux + the CLI's own composer, type, nudge
+		// Enter once the paste window closed, verify. Answers 202 immediately — the
+		// caller does not wait for the boot. It is the create call's `initial_prompt`
+		// for the one case that cannot use it: the Console's 作業を始める uploads pasted
+		// attachments TO the session, so the prompt text only becomes final after the
+		// session exists. Plain {prompt} only, and not combined with report_to /
+		// peer_from / confirm (those own their own delivery semantics).
+		WhenReady bool `json:"when_ready"`
+		// Source attributes an injection's origin for the mirror badge (docs/38):
+		// "schedule" / "schedule-manual" from the CP scheduler; anything else alongside a
+		// report_to (incl. empty — the operator MCP) records as "operator". Whitelisted
+		// server-side. A schedule origin is remembered WITHOUT report_to as well: 完了報告
+		// OFF のスケジュールは report_to を持たないが、投入されたことに変わりはない。
 		Source string `json:"source"`
 		// PeerFrom marks this as a session-to-session message and names the SENDING
 		// session (docs/58 / ADR 0041). It is not a badge string the caller picks: the
@@ -217,6 +228,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// itself and applies the peer rate limit. See session_peer.go for why those
 		// invariants live server-side.
 		PeerFrom string `json:"peer_from"`
+		// PeerIntent is the message's kind (request / question / answer / notice) and is
+		// REQUIRED alongside peer_from. The server derives the reply policy from it and
+		// puts both in the envelope (docs/58 §58.14) — the sender picks what it is, never
+		// what the receiver owes back.
+		PeerIntent string `json:"peer_intent"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -238,6 +254,13 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// peer 送信（docs/58 / ADR 0041）。ここで全ての不変条件を満たしてから通常の投入経路へ
 	// 合流させる。managed/tui の分岐より前に置くのは自己申告1行と同じ理由で、片方の経路
 	// だけ素通しになるのを防ぐため。
+	if body.PeerFrom == "" && strings.TrimSpace(body.PeerIntent) != "" {
+		// peer 以外の投入に種別だけ載せても封筒は付かない。黙って無視すると呼び出し元は
+		// 「返信規律を伝えた」つもりのまま素の投入をしてしまうので、ここで落とす。
+		httpx.WriteErr(w, http.StatusBadRequest, "peer_intent_without_from",
+			"peer_intent は peer_from と一緒にのみ指定できます")
+		return
+	}
 	if body.PeerFrom != "" {
 		// arm 非干渉は構造で担保する: 両方が載った要求は通さない。呼び出し元の実装ミスで
 		// peer メッセージが指示台帳に載ると、リコンサイラが「利用者の新指示」と誤認する
@@ -260,12 +283,17 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			writePeerErr(w, err)
 			return
 		}
+		reply, err := peerResolveIntent(body.PeerIntent)
+		if err != nil {
+			writePeerErr(w, err)
+			return
+		}
 		if err := peerRate.allow(body.PeerFrom, name, strings.TrimSpace(body.Prompt), time.Now()); err != nil {
 			writePeerErr(w, err)
 			return
 		}
 		// 封筒はサーバが付ける（呼び出し元に組ませない＝付け忘れも名乗り詐称も起きない）。
-		body.Prompt = peerEnvelope(body.PeerFrom, body.Prompt)
+		body.Prompt = peerEnvelope(body.PeerFrom, strings.TrimSpace(body.PeerIntent), reply, body.Prompt)
 		// 無人経路なので配達検証は必須。打鍵 200 で「送れた」と返すと、送信側モデルは
 		// 伝わった前提で先へ進んでしまう。
 		body.Confirm = true
@@ -289,6 +317,32 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			handleManagedInputPrompt(w, meta, body.Prompt, body.ReportTo, body.Source, body.PeerFrom)
 			return
 		}
+	}
+	// when_ready（起動直後のセッションへの最初の指示）: ここから下の「今すぐ打つ」経路には
+	// 載せない。tmux もペインもまだ無いことがあり（not_running で弾かれる）、有っても CLI が
+	// composer を描く前の打鍵は起動画面ごと食われる — 待ち・二度目 Enter・配達確認を持つ
+	// deliverInitialPrompt に渡し、202 で返す。managed は boot 画面が無く上の分岐で即送信
+	// 済みなので、ここへは tui だけが来る。
+	if body.WhenReady {
+		if len(body.Keys) > 0 || len(body.Seq) > 0 {
+			httpx.WriteErr(w, http.StatusBadRequest, "when_ready_needs_prompt",
+				"when_ready は {prompt} 経路でのみ使えます")
+			return
+		}
+		if body.ReportTo != "" || body.PeerFrom != "" || body.Confirm {
+			httpx.WriteErr(w, http.StatusBadRequest, "when_ready_conflict",
+				"when_ready は report_to / peer_from / confirm とは併用できません")
+			return
+		}
+		// 存在しないセッション名は待たせず落とす — deliverInitialPrompt は tmux が
+		// 現れるまで黙って待つので、typo は 30 秒後に無言で消えるだけになる。
+		if _, ok := session.ReadMeta(name); !ok {
+			httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session")
+			return
+		}
+		go deliverInitialPrompt(name, body.Prompt)
+		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"queued": name})
+		return
 	}
 	tn := session.TmuxName(name)
 	if !tmuxx.HasSession(tn) {
@@ -461,6 +515,12 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	case body.ReportTo != "":
 		addInstruction(name, body.ReportTo, injectionSource(body.Source))
 		recordInjection(name, body.Prompt, injectionSource(body.Source))
+	case scheduleInjectionSource(body.Source) != "":
+		// 完了報告 OFF のスケジュール投入（report_to が空なので上の枝に入らない）。台帳へは
+		// 載せない — 報告先そのものが無い。覚えるのはミラーのバッジ用の由来だけで、これは
+		// peer と同じ扱い。Discord へ転記しないのも意図的: あのミラーは「利用者が Console で
+		// 打った入力」をスレッドへ反映するためのもので、定時実行の投入はそれではない。
+		recordInjection(name, body.Prompt, scheduleInjectionSource(body.Source))
 	default:
 		// Genuine Console-typed input (not an operator/MCP injection): mirror it into
 		// the session's Discord thread so the thread reflects both directions (docs/37
@@ -532,6 +592,8 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	case reportTo != "":
 		addInstruction(meta.Name, reportTo, injectionSource(source))
 		recordInjection(meta.Name, prompt, injectionSource(source))
+	case scheduleInjectionSource(source) != "":
+		recordInjection(meta.Name, prompt, scheduleInjectionSource(source)) // 報告 OFF の定時実行（TUI 側と同じ）
 	default:
 		go bridge.MirrorUserInput(meta.Name, prompt) // docs/37 Fix ②: Console-input mirror
 	}

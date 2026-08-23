@@ -15,6 +15,7 @@ import {
 } from "../../lib/settings.ts";
 import { voiceCharacters, isDefaultVoice, previewVoice } from "../chat/tts.ts";
 import { loadSpeakers, speakersCatalog } from "../chat/ttsSpeakers.ts";
+import { loadTtsStatus, ttsStatusCache, voicevoxAvailable } from "../chat/ttsStatus.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
@@ -31,6 +32,22 @@ export function TtsTab() {
   const s = useSettings();
   const tr = useT();
   const confirm = useConfirm();
+  // VOICEVOX エンジンを持たないデプロイ（ECS の既定構成など）では、ずんだもん系の設定は
+  // 並んでいても一切効かない — 話者もキャラクターも感情スタイルも VOICEVOX 専用で、auto は
+  // 日本語まで含めて Polly に落ちる。選べるのに効かない設定は出さない。
+  // 分かるまで（取得前・取得失敗）は従来どおり全部出す＝判断材料が無いときに隠さない。
+  const [engines, setEngines] = useState(ttsStatusCache());
+  useEffect(() => {
+    let alive = true;
+    void loadTtsStatus().then((st) => alive && st && setEngines(st));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const noVv = voicevoxAvailable(engines) === false;
+  // エンジン選択から voicevox を落とす。ただし現在値が voicevox のときだけは残す — 選択肢から
+  // 消すと現在値が表示できず、壊れた設定のまま黙って隠れてしまう（下で警告も出す）。
+  const engineOptions = TTS_PROVIDERS.filter(([id]) => !noVv || id !== "voicevox" || s.ttsProvider === "voicevox");
   // リセット＝音声読み上げ設定を「初期状態」(TTS_RESET = DEFAULTS の TTS キー) に戻す。キャラは
   // ttsVoicePool: {} ＝標準 14 キャラのスタートで、新規ユーザーの初期状態と揃う。読み仮名辞書は
   // ユーザーが打ち込んだ内容なので消さない（TTS_RESET に含めていない）。多数のキーを一度に書くため
@@ -79,12 +96,13 @@ export function TtsTab() {
             <Row label={tr("tts.engine")}>
               <Choice
                 value={s.ttsProvider}
-                options={TTS_PROVIDERS.map(([id, k]) => [id, tr(k)])}
+                options={engineOptions.map(([id, k]) => [id, tr(k)])}
                 onChange={(v) => setSetting("ttsProvider", v)}
               />
             </Row>
-            <p className="muted ds-note">{tr("tts.note_engine")}</p>
-            {s.ttsProvider !== "polly" && (
+            <p className="muted ds-note">{noVv ? tr("tts.note_no_voicevox") : tr("tts.note_engine")}</p>
+            {noVv && s.ttsProvider === "voicevox" && <p className="form-err">{tr("tts.warn_voicevox_missing")}</p>}
+            {!noVv && s.ttsProvider !== "polly" && (
               <>
                 <Row label={tr("tts.speaker_voicevox")}>
                   <Choice
@@ -99,7 +117,7 @@ export function TtsTab() {
                 <p className="muted ds-note">{tr("tts.note_zundamon_volume")}</p>
               </>
             )}
-            {s.ttsProvider !== "voicevox" && (
+            {(s.ttsProvider !== "voicevox" || noVv) && (
               <Row label={tr("tts.speaker_polly")}>
                 <Choice
                   value={s.ttsVoicePolly}
@@ -112,7 +130,7 @@ export function TtsTab() {
               <OnOff value={s.ttsVoicePerSession} onChange={(v) => setSetting("ttsVoicePerSession", v)} />
             </Row>
             <p className="muted ds-note">{tr("tts.note_voice_per_session")}</p>
-            {s.ttsProvider !== "polly" && (
+            {!noVv && s.ttsProvider !== "polly" && (
               <>
                 <div className="ds-row">
                   <span className="ds-label">{tr("tts.characters")}</span>
@@ -121,10 +139,15 @@ export function TtsTab() {
                 <p className="muted ds-note">{tr("tts.note_characters")}</p>
               </>
             )}
-            <Row label={tr("tts.emotion")}>
-              <OnOff value={s.ttsEmotion} onChange={(v) => setSetting("ttsEmotion", v)} />
-            </Row>
-            <p className="muted ds-note">{tr("tts.note_emotion")}</p>
+            {/* 感情スタイルは VOICEVOX の話者バリアント差し替え（emotionOpts）なので Polly には効かない */}
+            {!noVv && (
+              <>
+                <Row label={tr("tts.emotion")}>
+                  <OnOff value={s.ttsEmotion} onChange={(v) => setSetting("ttsEmotion", v)} />
+                </Row>
+                <p className="muted ds-note">{tr("tts.note_emotion")}</p>
+              </>
+            )}
             <Row label={tr("tts.speed")}>
               <Choice value={s.ttsSpeed} options={TTS_SPEEDS.map(([v, k]) => [v, tr(k)])} onChange={(v) => setSetting("ttsSpeed", v)} />
             </Row>
@@ -171,14 +194,20 @@ export function TtsTab() {
               <OnOff value={s.ttsAbbrevCode} onChange={(v) => setSetting("ttsAbbrevCode", v)} />
             </Row>
             <p className="muted ds-note">{tr("tts.note_abbrev_code")}</p>
-            <Row label={tr("tts.particle_pause")}>
-              <OnOff value={s.ttsParticlePause} onChange={(v) => setSetting("ttsParticlePause", v)} />
-            </Row>
-            <p className="muted ds-note">{tr("tts.note_particle_pause")}</p>
-            <Row label={tr("tts.english_kana")}>
-              <OnOff value={s.ttsEnglishKana} onChange={(v) => setSetting("ttsEnglishKana", v)} />
-            </Row>
-            <p className="muted ds-note">{tr("tts.note_english_kana")}</p>
+            {/* 助詞の小休止も英語カタカナ読みも VOICEVOX 経路だけの前処理（CP は voicevox に
+                決まったときしか適用しない）。エンジンが無ければ出さない。 */}
+            {!noVv && (
+              <>
+                <Row label={tr("tts.particle_pause")}>
+                  <OnOff value={s.ttsParticlePause} onChange={(v) => setSetting("ttsParticlePause", v)} />
+                </Row>
+                <p className="muted ds-note">{tr("tts.note_particle_pause")}</p>
+                <Row label={tr("tts.english_kana")}>
+                  <OnOff value={s.ttsEnglishKana} onChange={(v) => setSetting("ttsEnglishKana", v)} />
+                </Row>
+                <p className="muted ds-note">{tr("tts.note_english_kana")}</p>
+              </>
+            )}
             <div className="ds-userdict-block">
               <span className="ds-label">{tr("tts.userdict")}</span>
               <textarea

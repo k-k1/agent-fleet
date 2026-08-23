@@ -354,22 +354,34 @@ func foldAllSessionUsage() int {
 }
 
 // maybeFoldSessionUsage は fold-on-read。使用量が読まれた時にだけ、最短 60 秒間隔で走る。
+func maybeFoldSessionUsage() { startFoldSessionUsage(false) }
+
+// startFoldSessionUsage は fold-on-read の起動。
 //
 // 全セッションの転写を読み直すので実測で十数秒かかる（158 セッションで ~20s）。呼び出し元
 // （GET /sessions/usage）は既に同じ転写を読んでいて重いので、**折り込みは非同期に回して
 // 応答レイテンシを増やさない**。スロットルと走行中フラグで多重起動しない。
-func maybeFoldSessionUsage() {
+//
+// force=true は 60 秒スロットルを飛ばす（利用者が明示的に「再取得」を押した時だけ）。
+// 押した直後にもう一度押しても意味が無い状態を作らないため — 押す前に終わったターンは
+// この1回で必ず台帳へ入る。
+//
+// 戻り値は「**この読み出しの時点で折り込みが走っている**」＝呼び出し元が今から読む値は
+// 直近のターンをまだ含まないかもしれない、の申告。非同期にした代償を黙って利用者に
+// 押し付けない（＝最新になるまで再取得を何度も押させない）ための唯一の手掛かりなので、
+// 応答へ必ず載せること（usage_series.go の folding）。
+func startFoldSessionUsage(force bool) bool {
 	if !usageEnabled() {
-		return
+		return false
 	}
 	// 走行中の判定に usageFoldMu を使わない。使うと「走っているか?」を聞くだけの呼び出しが
 	// 折り込み本体のロック解放を待つことになり、非同期にした意味が無くなる（Console の
 	// 使用量ビューは1画面で /usage/series を3本撃つので、2本目以降がまるごと待たされていた）。
 	if usageFoldRunning.Load() {
-		return
+		return true
 	}
 	usageFoldGate.Lock()
-	skip := !usageFoldedAt.IsZero() && time.Since(usageFoldedAt) < usageFoldPeriod
+	skip := !force && !usageFoldedAt.IsZero() && time.Since(usageFoldedAt) < usageFoldPeriod
 	if !skip {
 		// CAS で勝った1本だけが走る（Load からここまでの隙間で別の呼び出しが起動しうる）。
 		skip = !usageFoldRunning.CompareAndSwap(false, true)
@@ -379,12 +391,14 @@ func maybeFoldSessionUsage() {
 	}
 	usageFoldGate.Unlock()
 	if skip {
-		return
+		// スロットルで見送った＝走っていない、CAS 負け＝別の1本が走っている。
+		return usageFoldRunning.Load()
 	}
 	go func() {
 		defer usageFoldRunning.Store(false)
 		foldAllSessionUsage()
 	}()
+	return true
 }
 
 // finalizeSessionUsage は転写が消える直前に呼ぶ確定（fold-on-delete）。末尾の開いた

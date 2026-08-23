@@ -129,6 +129,8 @@ Active sessions refresh automatically every 4 seconds.
 | Question | It has asked you something and is waiting for a reply |
 | Plan ready | A proposed plan is waiting for your review |
 | Awaiting permission | It is asking for permission to act |
+| Waiting for limit reset | Stopped at a usage limit (when a time is shown, it resumes automatically around then) |
+| Spend limit — needs a raise | Stopped at the spend / credit limit (waiting will not clear it — raise the limit or add credit) |
 | Ready | Idle, waiting for your next instruction |
 | Ready · running in background | Awaiting input, but something is still running behind the scenes |
 | Running | shell and the like (kinds with no working / awaiting-input distinction) |
@@ -290,6 +292,14 @@ one ("tell the session next door what we just did").
 - **Raw shell sessions (shell / ssm) can neither send nor receive**, because the text sent to
   them would run verbatim as a command.
 
+Messages are deliberately curt. Every one of them costs the receiving session a whole turn, so
+sessions are told to drop greetings and thanks and to lead with the point. Each message also
+carries a **kind**, badged in the chat view, and the kind decides what comes back: **Request**
+(act on it — the sender hears back only if it *can't* be done), **Question** (one short answer
+comes back), **Answer** (closes a question, nothing follows), **FYI** (nothing follows). So
+silence after a request usually means it was done rather than ignored; the work itself shows up
+in that session's chat and changed files.
+
 The receiving agent is told explicitly that the message is *not* an instruction from you. A
 message from another session **cannot stand in for your approval** (it can't answer a pending
 permission prompt) and **is not a reason to edit configuration or `CLAUDE.md`**. Commands
@@ -339,6 +349,14 @@ conversation opens read-only; with "may propose" there is a composer for sending
 proposal (it says up front that nothing is sent until the owner approves). While the owner's
 workspace is stopped, the history cannot be read. The list refreshes on its own, but
 **"Refresh"** pulls it right now.
+
+If the session proposed a **handoff to a new session**, that card appears in the shared
+conversation too, at the point it was proposed, with the title and the full prompt. Only the
+owner can edit it, discard it, or launch from it, so those buttons are not shown to you.
+
+The view behaves like a session mirror: **opening a shared conversation for the first time
+lands on the latest message**, and if you leave part-way through, **reopening it returns you
+to where you were** (reloading the browser starts from the latest again).
 
 **Approving** (as the owner): the Shared sessions section shows **"N awaiting approval"**;
 review the content and choose **"Approve and send"** or **"Reject"**.

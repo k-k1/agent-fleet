@@ -402,8 +402,15 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	// answer environment questions from the authoritative docs. Gated here because
 	// the CP knows the role — a member's container never holds private decision/history docs.
 	// Best-effort: a failure just means no docs mount, never a failed start.
-	if err := stageWorkspaceDocs(a.mgr.rootedDataDir(res.ws), res.mv.Role); err != nil {
-		log.Printf("stage workspace docs (ws=%s role=%s): %v", res.ws.ID, res.mv.Role, err)
+	//
+	// Only for the adapters that then MOUNT that directory. On ECS nothing would ever
+	// read it (the task has no path into the CP's filesystem), so staging there would
+	// just copy megabytes onto the CP's disk for nobody; that container pulls the same
+	// subset over /internal/docs instead (docs_bridge.go).
+	if _, mounts := rt.(runtimeDocsMounter); mounts {
+		if err := stageWorkspaceDocs(a.mgr.rootedDataDir(res.ws), res.mv.Role); err != nil {
+			log.Printf("stage workspace docs (ws=%s role=%s): %v", res.ws.ID, res.mv.Role, err)
+		}
 	}
 	if err := lease.checkpoint(ctx); err != nil {
 		return workspaceLifecycleLeaseError(err)
@@ -523,6 +530,11 @@ type sessionWire struct {
 	// still running" flag so the Console can badge it. Not persisted to the DB mirror
 	// (a stopped workspace has no live background work).
 	BackgroundBusy bool `json:"backgroundBusy"`
+	// RateLimitResumeAt passes through the Agent's「予約済み自動再開の時刻」(state ==
+	// "limited" のときだけ入る RFC3339)。これが落ちると Console のチップは
+	// 「制限解除待ち」とだけ言い、いつ動くのかを言えなくなる。DB ミラーには列が無い
+	// （停止中のワークスペースに進行中のエピソードは無い）。
+	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
 	// Context: claude のコンテキスト残量（ContextBar の元データ）。shape は Agent と
 	// Console（chat view）が所有し CP は解釈しないので RawMessage で素通しする。
 	// この struct に無かった頃は中継で drop され、CP 経由では ContextBar が出なかった。

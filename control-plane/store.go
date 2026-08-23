@@ -31,6 +31,12 @@ type TenantLoginRules struct {
 	// HiddenProviders is not a gate. It only removes buttons from /login/<slug>;
 	// the same method still admits its people (docs/61 §61.15.9 + 決定 14).
 	HiddenProviders []string
+	// AllowedCIDRs restricts which source networks may USE this tenant (docs/66,
+	// ADR 0047). Empty = no restriction, and that is how the feature is switched off.
+	// Unlike the fields above it belongs to the tenant_admin: it reaches nothing
+	// outside this tenant. It is stored here rather than in limits JSON because it is
+	// consulted on every request and these rules already have a cache in front of them.
+	AllowedCIDRs []string
 }
 
 // Identity is a person, unique by email within the deployment. role is the
@@ -66,6 +72,15 @@ type UserQuota struct {
 	// bounded by tenantLimits.MaxWorkspaceCPU. Independent of MemLimit so "8 GB with
 	// 4 vCPU" is expressible; fargateSize snaps the pair onto a valid Fargate size.
 	CPULimit int
+	// SlotClass is which KIND of machine the workspace lands on, as a
+	// deployment-declared class id ("" = unset → the tenant default, then the
+	// deployment default). Only ecs-ec2 reads it; everywhere else it is inert.
+	//
+	// It is a string and not a number because it is not a size — the three axes above
+	// say HOW BIG, this says WHICH LADDER (docs/70 §70.4). Still runtime-neutral in the
+	// sense that matters: the id is opaque here, and the operator alone maps it to
+	// instance types and an architecture (ADR 0044 決定 1).
+	SlotClass string
 }
 
 // UserLimit is a per-membership quota override (docs/16 P3-4) as stored.
@@ -275,8 +290,15 @@ type UsageNotificationState struct {
 type Workspace struct {
 	ID, TenantID, MembershipID      string
 	ContainerName, Network, DataDir string
-	AgentPort, AgentToken, State    string
-	CreatedAt, LastActiveAt         string
+	// TenantSlug is the owning tenant's slug, joined in by every read rather than
+	// stored on the row (the tenant table owns it). It exists because the AWS
+	// adapters stamp `af-tenant` on billable resources and the cost-allocation tag
+	// has to be READABLE in Cost Explorer — an opaque tenant id there would say
+	// nothing the membership id does not already imply (docs/67 §67.4, ADR 0048
+	// 決定 3)。Empty on a Workspace built in memory by a test.
+	TenantSlug                   string
+	AgentPort, AgentToken, State string
+	CreatedAt, LastActiveAt      string
 	// MemBytes is the RESOLVED per-workspace RAM cap in bytes for the NEXT container
 	// start (0 = use the runtime's deployment default). It is NOT a persisted column:
 	// buildResolved fills it via resolveWorkspaceMemBytes before the runtime is built,
@@ -290,6 +312,11 @@ type Workspace struct {
 	// user_limit and are resolved through the tenant cap on the way here (ADR 0044).
 	CPUUnits int
 	DiskGB   int
+	// SlotClass is the RESOLVED machine class for the next container start (docs/70).
+	// Same lifecycle as the three axes above — not a persisted column, filled by
+	// buildResolved through resolveSlotClass, and read only by the ecs-ec2 factory.
+	// "" means "the deployment default", which is also what every other runtime sees.
+	SlotClass string
 }
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
@@ -366,6 +393,7 @@ type Store interface {
 	EgressStore
 	SettingsStore
 	UsageStore
+	CloudCostStore
 	SSMStore
 	MemoStore
 	NotificationStore
@@ -373,6 +401,7 @@ type Store interface {
 	MCPServerStore
 	SessionShareStore
 	TenantIdPStore
+	TenantGitOAuthStore
 
 	Close() error
 }
@@ -409,6 +438,11 @@ type TenantStore interface {
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
 	SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error
 	ListTenants(ctx context.Context) ([]Tenant, error)
+	// DeleteTenant removes an EMPTY tenant (its leftover inactive memberships, its
+	// configuration rows, and the row itself). Irreversible, super_admin only, and the
+	// emptiness is proved by the handler — see deleteTenant in tenants.go for the five
+	// refusals and why each one exists.
+	DeleteTenant(ctx context.Context, tenantID string) error
 	// SetTenantLogin stores the three CSV login rules (docs/61 §61.9.7). Values are
 	// normalized by the caller (lowercased, deduped); this only writes them.
 	// hiddenProviders is DISPLAY only (0042, docs/61 §61.15.9) — accepted methods to
@@ -417,6 +451,11 @@ type TenantStore interface {
 	// ListTenantLoginRules is the entry gate's bulk read: one query behind a short
 	// TTL cache rather than a per-request lookup (§61.9.7).
 	ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error)
+	// The tenant's source-network restriction (docs/66, ADR 0047). Kept apart from
+	// SetTenantLogin because the owner differs: those three fields are the operator's,
+	// this one is the tenant_admin's. "" = no restriction.
+	GetTenantAllowedCIDRs(ctx context.Context, tenantID string) (string, error)
+	SetTenantAllowedCIDRs(ctx context.Context, tenantID, cidrs string) error
 }
 
 // TenantIdP is one tenant-defined login provider (docs/61 §61.11, migration 0040).
@@ -481,6 +520,49 @@ type TenantIdPStore interface {
 	// being approved.
 	SetTenantIdPStatus(ctx context.Context, tenantID, id, status, approvedBy, approvedAt, updatedAt string) error
 	DeleteTenantIdP(ctx context.Context, tenantID, id string) error
+	// TenantIdPIssuerInUse reports whether some OTHER row already names this issuer
+	// (any tenant). It is the "second app registration of the same directory" signal
+	// (docs/61 §61.17.4 (b)): the same person then arrives with a DIFFERENT subject
+	// if the issuer is pairwise, which rule 2' refuses as email_taken. Deployment-wide
+	// on purpose — identities are deployment-wide, so a row in another tenant splits
+	// the same person just as effectively.
+	TenantIdPIssuerInUse(ctx context.Context, issuer, excludeID string) (bool, error)
+	// CountMembersOnlyOnProvider counts a tenant's ACTIVE members whose only proven
+	// sign-in is this provider — the people who would have no way in if it stopped
+	// (docs/61 §61.17.4 の順序). Used to warn before suspending, never to refuse:
+	// stopping a compromised IdP must stay faster than starting one.
+	CountMembersOnlyOnProvider(ctx context.Context, tenantID, providerID string) (int, error)
+}
+
+// TenantGitOAuth is one tenant's OAuth app for a git provider (docs/71, migration
+// 0048). SecretEnc is opaque ciphertext here exactly like TenantIdP.SecretEnc: the
+// SQL layer stores and returns it, tenant_git_oauth.go owns the sealing.
+//
+// ★ There is no status. Unlike TenantIdP, this row declares nothing about who
+// anybody is — it only names the OAuth app a member's "connect GitHub / Bitbucket"
+// button talks to — so it takes effect the moment the tenant_admin saves it
+// (ADR0052 決定 3). An empty SecretEnc is normal for GitHub: its device flow
+// authenticates with the client_id alone.
+type TenantGitOAuth struct {
+	ID, TenantID, Provider string
+	ClientID               string
+	SecretEnc, KeyRef      string
+	UpdatedBy              string
+	CreatedAt, UpdatedAt   string
+}
+
+// TenantGitOAuthStore is the per-tenant git provider OAuth app registry (docs/71).
+// Every call carries tenant_id, the way TenantIdPStore does, so a tenant_admin of
+// one tenant can never read or write another's app — and the secret in particular
+// never leaves the tenant it was sealed for.
+type TenantGitOAuthStore interface {
+	ListTenantGitOAuth(ctx context.Context, tenantID string) ([]TenantGitOAuth, error)
+	GetTenantGitOAuth(ctx context.Context, tenantID, provider string) (TenantGitOAuth, bool, error)
+	// PutTenantGitOAuth is an upsert on (tenant_id, provider): a tenant has one app
+	// per host, so "create" and "edit" are the same act and splitting them would only
+	// invite a duplicate row the unique index then refuses.
+	PutTenantGitOAuth(ctx context.Context, row TenantGitOAuth) error
+	DeleteTenantGitOAuth(ctx context.Context, tenantID, provider string) error
 }
 
 // IdentityLink is one proven login, on its way to LinkIdentity. It is a struct
@@ -629,9 +711,24 @@ type MembershipStore interface {
 	// LOGICAL delete: the workspace, its home and its secrets survive, but every
 	// path that resolves a membership already requires status='active', so the
 	// person is locked out on the next request (docs/61 §61.10.6 / 決定 22).
-	// Hard deletion is deliberately not offered — schedules, audit rows and shares
-	// reference the membership id.
+	// This is what offboarding means, and it stays the default: DeleteMembership
+	// below is a second, deliberate step taken later.
 	SetMembershipStatus(ctx context.Context, membershipID, status string) error
+	// DeleteMembership removes the row itself and everything keyed to it
+	// (membershipCascade). It is the last step of the clean-up sequence — remove →
+	// destroy the workspace → delete the row — and it is irreversible.
+	//
+	// ★ It used to be "deliberately not offered", on the grounds that schedules, audit
+	// rows and shares reference the membership id. Two of those three turned out not to
+	// be reasons: the schedules and shares ARE this person's and go with them, and
+	// audit_log never referenced a membership at all (its actor is an identity). What
+	// the reason really protected is the HISTORY — the audit ledger, and the cost and
+	// occupancy rows an admin may still have to answer for — so those are what is kept
+	// (docs/61 §61.18).
+	//
+	// Callers must have deactivated the membership and destroyed its workspace first;
+	// this does not release a home or any cloud resource.
+	DeleteMembership(ctx context.Context, membershipID string) error
 	// EmailHasActiveMembership reports whether the person at this address is on any
 	// tenant's roster. This is the term decision 16 adds to the entry gate: being
 	// invited is itself permission to reach the login, so an invite-run deployment
@@ -657,6 +754,9 @@ type MembershipStore interface {
 type WorkspaceStore interface {
 	GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error)
 	CreateWorkspace(ctx context.Context, ws Workspace) error
+	// DeleteWorkspace removes the row and its dependents. Irreversible, and only ever
+	// reached through the explicit destroy operation (ADR 0045 決定 13-2).
+	DeleteWorkspace(ctx context.Context, workspaceID string) error
 	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
 	RecordWorkspaceActivity(ctx context.Context, workspaceID, lastSeenAt, connectedUntil, now string) (bool, error)
 	WorkspaceHasRecentActivity(ctx context.Context, workspaceID, cutoff, now string) (bool, error)
@@ -790,6 +890,50 @@ type SettingsStore interface {
 type UsageStore interface {
 	AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error
 	ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error)
+}
+
+// CloudCostRow is one (day, membership, service) slice of the AWS invoice, as landed
+// by the Cost Explorer poller (docs/67, ADR 0048). MembershipID=="" is the SHARED
+// bucket — infrastructure that belongs to nobody. Amounts are integer micro-units of
+// Currency; they are never converted to another currency and never divided among
+// people (決定 4 / 決定 6).
+type CloudCostRow struct {
+	Day, MembershipID, TenantID, Service string
+	Unblended, Amortized                 int64
+	Currency                             string
+	Estimated                            bool
+}
+
+// CloudCostTotal is one member's attributed spend over a window, enriched with the
+// labels needed to name them. The labels are resolved at READ time by join, exactly
+// like UsageRow: a membership that has been deleted leaves rows whose money is still
+// real, and they surface with empty UserKey/Email rather than vanishing.
+type CloudCostTotal struct {
+	TenantSlug, MembershipID, UserKey, Email string
+	Unblended, Amortized                     int64
+	Currency                                 string
+}
+
+// CloudCostStore holds the invoice slices the Cost Explorer poller writes.
+//
+// PutCloudCost REPLACES a day wholesale rather than accumulating: Cost Explorer
+// restates recent days (they arrive `Estimated` and move for ~24h), so the poller
+// re-fetches a trailing window every run and the newest answer has to win. An
+// accumulating write would double every re-fetch — the opposite of AddUsage next door,
+// and the reason these two look similar but must not share code.
+type CloudCostStore interface {
+	// PutCloudCost replaces every row for the given days with rows. days lists exactly
+	// the days the caller re-fetched, so a day that came back empty is emptied here too.
+	PutCloudCost(ctx context.Context, days []string, rows []CloudCostRow) error
+	// ListCloudCost returns rows in [fromDay,toDay]. tenantID=="" spans every tenant;
+	// membershipID!="" narrows to one person (the member's own view).
+	ListCloudCost(ctx context.Context, tenantID, membershipID, fromDay, toDay string) ([]CloudCostRow, error)
+	// CloudCostTotals aggregates the same window per member, with labels joined in.
+	CloudCostTotals(ctx context.Context, tenantID, fromDay, toDay string) ([]CloudCostTotal, error)
+	// CloudCostDays reports which days have any row at all, so the API can tell
+	// "nothing was spent" apart from "the poller has never covered this range" —
+	// the difference matters because cost allocation cannot be backfilled.
+	CloudCostDays(ctx context.Context) (first, last string, err error)
 }
 
 // SSMStore is the SSM login config (docs/history/p3-ssm-session.md), personal

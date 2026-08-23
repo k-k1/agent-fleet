@@ -726,7 +726,23 @@ func wantsHTML(r *http.Request) bool {
 //
 // ★ An unknown slug renders the GENERIC page rather than a 404. A 404 would tell
 // an unauthenticated visitor which department slugs exist, and the login page is
-// the one surface reachable without a session.
+// the one surface reachable without a session. For the same reason the unknown-slug
+// page must stay byte-identical to the tenant-less one — if only one of them applied
+// the default tenant's rules, comparing the two would say whether a slug exists.
+//
+// ★ P7-1 (docs/61 §61.17.6 + 決定 42): the tenant-less page takes the DEFAULT
+// tenant's hidden_providers — and ONLY those. This closes §61.15.13 ("hiding a
+// button has no effect on the bare /login"), which held merely because that page
+// belonged to no tenant.
+//
+// ★★ allowed_providers is deliberately NOT applied here, and that asymmetry is the
+// whole safety of this change. loginButtons has a valve on the hidden filter (all
+// hidden → ignore it) but NONE on the allowed filter: narrowing allowed_providers
+// until nothing matches renders a page with no buttons at all. This is the one entry
+// for people who belong to no tenant yet — a new super_admin, anyone not invited
+// yet — and the rule that would restore it is behind withSuperAdmin, which needs a
+// session, which needs this page. Applying it here would make it possible to lock a
+// deployment out of itself with no remedy short of editing the database.
 func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if _, ok := c.session(r); ok { // already signed in
 		http.Redirect(w, r, "/", http.StatusFound)
@@ -740,7 +756,15 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !known {
 		// Unknown (or absent) slug: generic page, and no tenant is carried forward
 		// — a typo must not pin the person to a department that does not exist.
+		// ★ Only HiddenProviders survives from the default tenant; AllowedProviders
+		// stays empty (= every enabled provider), see the note above. The slug stays
+		// empty too, so nothing here reaches the state cookie: the buttons carry no
+		// tenant, and the default tenant's own t:default:* rows are not appended
+		// (決定 32-4 keeps that list off the generic page).
 		slug, rules = "", TenantLoginRules{}
+		if d, ok := c.mgr.tenantLogin.rulesForSlug(r.Context(), defaultTenantSlug); ok {
+			rules.HiddenProviders = d.HiddenProviders
+		}
 	} else {
 		name := rules.Name
 		if name == "" {

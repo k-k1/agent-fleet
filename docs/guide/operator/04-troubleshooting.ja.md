@@ -9,28 +9,28 @@
 
 ## まず見る 2 か所
 
-- **CP のログ**: `docker compose logs -f control-plane`（起動失敗・認証拒否の理由はほぼここ）。
+- **CP のログ**: `docker compose logs -f cp`（起動失敗・認証拒否の理由はほぼここ）。
 - **CP のヘルス**: `curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか。
 
 ## 症状別・確認表
 
 | 症状 | 確認すること |
 |------|-------------|
-| CP が起動しない | `docker compose logs control-plane`。`curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか |
+| CP が起動しない | `docker compose logs cp`。`curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか |
 | docker.sock で "permission denied" | `DOCKER_GID` がホストの docker グループ GID と一致しているか（DooD 制約 C）|
 | Workspace は起動するのに home が空 | `DATA_DIR` が CP の内外で同一絶対パスか。リストア時も同じパスか（DooD 制約 B）|
 | 起動した Workspace に到達できない | CP と Caddy が両方 `network_mode: host` か（DooD 制約 A）|
 | ログインが常に拒否される | 許可リストが空で、**かつまだ誰も招待していない**（fail-closed）。`AF_OAUTH_ALLOWED_DOMAINS` / `_EMAILS` を設定するか、招待する |
-| 特定の人だけ「このテナントには別のサインインが必要です」 | そのテナントの**ログイン規則 → 使えるサインイン方法**に、その人が使った IdP が入っていない。`/login/<slug>` を案内する |
+| 特定の人だけ「このテナントには別のサインインが必要です」 | そのテナントの**サインイン方法**の面で、その人が使った IdP の「受け入れる」が外れている。`/login/<slug>` を案内する |
 | 外したはずの人がまだ使える | IdP 側で止めてもセッションは切れない。名簿から外す（管理 → テナント → メンバー → **メンバーを外す**）か許可リストから消す |
 | TLS 証明書が発行されない | DNS A/AAAA がこのホストを指すか。80/443 が到達可能か。Let's Encrypt のレート制限 |
 | redirect URI mismatch | IdP に登録した URI が `<PUBLIC_BASE_URL>/oauth2/callback` と一致しているか |
-| サインインのボタンが出ない | その provider が起動時に無効化された。`docker compose logs control-plane \| grep -i "login provider"` に不足している設定名が出る |
+| サインインのボタンが出ない | その provider が起動時に無効化された。`docker compose logs cp \| grep -i "login provider"` に不足している設定名が出る |
 | マルチテナント issuer を理由に CP が起動しない | Entra の `/common/` `/organizations/` issuer で `AF_OIDC_<ID>_ALLOWED_TIDS` が空。issuer を自社テナント GUID に固定する |
 | GitHub ログインが全員拒否される | org が OAuth App を未承認（CP ログの `returned 403`）か、本人の primary/verified アドレスが `AF_GITHUB_ALLOWED_DOMAINS` の外 |
 | CP 再起動後に GitHub の人だけ再サインインを求められる | 仕様。org メンバーシップのキャッシュはメモリ上。拒否ではなく再確認 |
-| テナントがサインイン方法を登録したのにボタンが出ない | まだ「承認待ち」か、承認済みだが設定に不備がある。管理 → そのテナント → **このテナントのサインイン方法**の状態表示で分かる。テナント一覧の下の登録簿でも同じ状態が読め、承認・停止もそこから打てる（テナントまで降りなくてよい）。不備の内容は CP ログの `tenant login provider` に出る |
-| 「このメールアドレスは、すでに別のサインイン方法で使われています」 | テナント定義の方式が、既にログイン実績のあるアドレスを名乗った。仕様です — その方式に既存アカウントを乗っ取らせないため。いつも使っているサインイン方法でログインしてもらう。**同じ GitHub アカウント**（デプロイ共通の GitHub ⇄ テナントの GitHub）なら同一人物として通るので、これが出るのは**別の IdP** を押したとき。その人が**両方のアカウントを持っている**なら、いつもの方法でログインしたうえで **設定 → 個人設定 → アカウント → サインイン方法を追加**で、その方式を自分のアカウントに紐づけてもらう（同じメールアドレスを名乗る方式だけ・その方式の org / ドメイン条件も満たす必要あり）。そもそも子会社側のアカウントを持っていない人がこれで詰む場合は、その人の方式をテナントの「使えるサインイン方法」に残し、ボタンが邪魔なら「ボタンを出さない方式」に書く |
+| テナントがサインイン方法を登録したのにボタンが出ない | まだ「承認待ち」か、承認済みだが設定に不備がある。管理 → そのテナント → **このテナントのサインイン方法**の状態表示で分かる。レールの**サインイン方法の登録簿**でも同じ状態が読め、承認・停止もそこから打てる（テナントまで降りなくてよい）。不備の内容は CP ログの `tenant login provider` に出る |
+| 「このメールアドレスは、すでに別のサインイン方法で使われています」 | テナント定義の方式が、既にログイン実績のあるアドレスを名乗った。仕様です — その方式に既存アカウントを乗っ取らせないため。いつも使っているサインイン方法でログインしてもらう。**同じ GitHub アカウント**（デプロイ共通の GitHub ⇄ テナントの GitHub）なら同一人物として通るので、これが出るのは**別の IdP** を押したとき。その人が**両方のアカウントを持っている**なら、いつもの方法でログインしたうえで **設定 → 個人設定 → アカウント → サインイン方法を追加**で、その方式を自分のアカウントに紐づけてもらう（同じメールアドレスを名乗る方式だけ・その方式の org / ドメイン条件も満たす必要あり）。そもそも相手側のアカウントを持っていない人がこれで詰む場合は、その人の方式を「受け入れる」のままにし、ボタンが邪魔なら「ボタンに出す」だけ外す |
 
 ## DooD の 3 制約の診断（「起動するのに静かに動かない」）
 
@@ -54,12 +54,16 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
 
 ## ログインできない
 
+> そもそも IdP をどう設定するか — Google / Entra ID / GitHub / その他 OIDC で何を作り、どの値を
+> どこに入れ、どう確認するか — は [05-login-idp.md](05-login-idp.ja.md) にあります。ここは
+> 「設定してあるのに拒否される」ときに読む場所です。
+
 - **常に拒否される** → 許可リスト（`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`）が
   **すべて空で、かつ誰もテナントに招待されていないと全拒否**です（fail-closed = 安全側に倒す設計）。
   少なくとも 1 つ設定するか、その人をメンバーとして追加します。`_EMAILS_FILE` はログインごとに
   再読込されるので追加は再起動不要で、招待も即時に効きます。
 - **「このテナントには別のサインインが必要です」（`provider_required`）** → そのテナントの
-  **ログイン規則 → 使えるサインイン方法**に、そのセッションの IdP が入っていません。故障では
+  **サインイン方法**の面で、そのセッションの IdP の「受け入れる」が外れています。故障では
   ありません — セッションは provider を 1 つしか持たないので、別の方法を要求するテナントへ移る
   には再サインインが要ります。Console が導線を出します。
   `https://<PUBLIC_DOMAIN>/login/<slug>` を開けば、そのテナントが受け付ける方法だけが並びます。
@@ -71,11 +75,11 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
   `AF_COOKIE_SECRET` のローテーション（[03 のオフボーディング節](03-security.ja.md)）。
 - **redirect URI mismatch** → IdP 側（Google Cloud Console、Entra のアプリ登録など）に登録した
   承認済みリダイレクト URI が `<PUBLIC_BASE_URL>/oauth2/callback` と**完全一致**しているか。
-  `PUBLIC_BASE_URL` を変えたら IdP 側も合わせます（[01 §3](01-install.ja.md)）。有効にする provider が
+  `PUBLIC_BASE_URL` を変えたら IdP 側も合わせます（[05 §1](05-login-idp.ja.md)）。有効にする provider が
   何個でも、この URI は 1 本だけです。
 - **設定したはずのサインインボタンがログイン画面に出ない** → 設定が不完全なため起動時に無効化
   されています（1 つの IdP の設定ミスで全員が締め出されないための挙動）。
-  `docker compose logs control-plane | grep -i "login provider"` に不足している変数名が出ます。
+  `docker compose logs cp | grep -i "login provider"` に不足している変数名が出ます。
   多いのは、既定値を持たない `AF_OIDC_<ID>_TRUST` の未設定です。
 - **マルチテナント issuer を理由に CP が終了する** → Entra ID の issuer が `/common/` または
   `/organizations/` で `AF_OIDC_<ID>_ALLOWED_TIDS` が空です。これらのエンドポイントでは Microsoft
@@ -85,7 +89,7 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
   列挙してください。
 - **設定は正しく見えるのに GitHub ログインが全員拒否される** → 多いのは、org 側がサードパーティ
   OAuth App を制限していて、まだ承認されていないケースです。承認されるまでメンバーシップは
-  見えません。`docker compose logs control-plane | grep "returned 403"` にその旨が出ます。
+  見えません。`docker compose logs cp | grep "returned 403"` にその旨が出ます。
   もう 1 つの原因はアドレスで、GitHub が渡すのはアカウントの **primary かつ verified** な
   メールアドレスです。これが個人用アドレスだと `AF_GITHUB_ALLOWED_DOMAINS` の外になります。
   本人が会社アドレスを GitHub に登録して verified・primary にするか、別のボタンでサインイン
@@ -163,7 +167,7 @@ A. 提供モデルは 1 社 = 1 デプロイ = 1 ホストです。CP はホス�
 **Q. Google 以外の認証（Microsoft 365 / LDAP / SAML など）を使いたい。**
 A. CP ネイティブ（`AUTH=oauth`）は OIDC を話すので、**Microsoft Entra ID・Okta・Keycloak・Auth0・
 Cognito・GitLab は設定だけで使えます** — `AF_OIDC_PROVIDERS` と数個の `AF_OIDC_<ID>_*`、そして
-IdP 側にリダイレクト URI を 1 本（[01 §3](01-install.ja.md)）。同時に複数有効化でき、その場合は
+IdP 側にリダイレクト URI を 1 本（[05](05-login-idp.ja.md)）。同時に複数有効化でき、その場合は
 ログイン画面に provider の数だけボタンが並びます。
 SAML のみの IdP（HENNGE One / TrustLogin / CloudGate など）と LDAP は CP には実装していません。
 既存のゲートウェイ（oauth2-proxy / Keycloak / ALB OIDC）を前段に置き、`AUTH=proxy` で上流のメール

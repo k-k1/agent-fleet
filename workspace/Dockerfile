@@ -167,7 +167,7 @@ RUN apt-get update \
 # Python wheels use the C toolchain (build-essential) installed above. `go install`
 # binaries and the module cache land under ~/go (home volume → persist). Keep
 # GO_VERSION in step with agent/go.mod's `go` directive; bump here to upgrade.
-ARG GO_VERSION=1.26.5
+ARG GO_VERSION=1.26.7
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) goarch=amd64 ;; arm64) goarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -184,7 +184,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/35
 # §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
-ARG AWSCLI_VERSION=2.36.22
+ARG AWSCLI_VERSION=2.36.28
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -209,7 +209,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # (gh-auth-wrapper.sh) にする。ラッパーが呼び出しのたびに git と同一の cred helper
 # からトークンを取り出し GH_TOKEN に注入するので、`gh auth login` 不要で gh が使える
 # （docs/dev/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
-ARG GH_VERSION=2.97.0
+ARG GH_VERSION=2.98.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -224,8 +224,21 @@ RUN set -eux; \
 # vendor/) is gone, so every deployment gets the same pinned rtk like the other
 # CLIs. BAKE_RTK=0 remains as an escape hatch for airgapped builds (no build-time
 # GitHub fetch); the entrypoint seeds the hook only when `rtk` is on PATH.
-# rtk-ai/rtk is public, so the asset + checksums download without auth. Static musl
-# (amd64) / gnu (arm64) binary → runs in the slim container.
+# rtk-ai/rtk is public, so the asset + checksums download without auth.
+#
+# ⚠️ amd64 gets a STATIC musl binary. arm64 does not exist: upstream publishes only
+# `rtk-aarch64-unknown-linux-gnu`, which requires **GLIBC_2.39**, and this image is
+# Debian 12 (**glibc 2.36**) — the download and the sha256 both pass and the binary
+# then cannot start (measured on Graviton4, 2026-08-22, docs/70 §70.9.2). Exactly the
+# shape docs/43 recorded for kiro, except kiro publishes an aarch64 musl variant and
+# rtk does not (checked across v0.45.0 and every dev-0.45.1-rc).
+#
+# So the binary is VERIFIED BY RUNNING IT, and a version that cannot run is removed
+# rather than shipped. That is deliberately not an `arch = arm64` check: the day
+# upstream ships a musl aarch64 build, or the base image moves to a newer glibc, this
+# starts working with no edit here. When rtk is dropped, the reason is written to
+# /usr/local/share/agent-fleet/rtk-unavailable so the image can say why (the L1 smoke
+# reads it, and "absent with no reason" stays a failure).
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
 # The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
 # BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
@@ -247,7 +260,13 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
       tar xzf "${asset}"; \
       install -m 0755 rtk /usr/local/bin/rtk; \
       rm -f "${asset}" checksums.txt rtk; \
-      rtk --version; \
+      if ! err="$(/usr/local/bin/rtk --version 2>&1)"; then \
+        mkdir -p /usr/local/share/agent-fleet; \
+        printf 'rtk %s does not run on %s in this base image: %s\n' "${RTK_VERSION}" "$arch" "$err" \
+          > /usr/local/share/agent-fleet/rtk-unavailable; \
+        cat /usr/local/share/agent-fleet/rtk-unavailable >&2; \
+        rm -f /usr/local/bin/rtk; \
+      fi; \
     fi
 
 # Coding-agent CLIs baked into the image (stable /usr/local install) for fast,
@@ -261,10 +280,10 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.231
-ARG OPENCODE_VERSION=1.18.18
-ARG CODEX_VERSION=0.147.0
-ARG COPILOT_VERSION=1.0.79
+ARG CLAUDE_CODE_VERSION=2.1.238
+ARG OPENCODE_VERSION=1.18.19
+ARG CODEX_VERSION=0.149.0
+ARG COPILOT_VERSION=1.0.80
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -288,10 +307,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと
 # 起動即 SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホスト
 # でもイメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
-ARG AGY_VERSION=1.1.12
-ARG AGY_RELEASE_BUILD=5877618327814144
-ARG AGY_SHA256_X64=c778ae4fd11e5dc2dbddfd7108ee1974ae60fd531afb246be41c6e4bb49c81ca
-ARG AGY_SHA256_ARM64=dbfcc9bb91716d68410d99027892d34cf412dae1d23b82e191549a8629ddab38
+ARG AGY_VERSION=1.1.19
+ARG AGY_RELEASE_BUILD=4894004681244672
+ARG AGY_SHA256_X64=a02132a7c6c647ef0ad483ecbe767619adf6b660a5589cba5c937b0c83909b97
+ARG AGY_SHA256_ARM64=15bd9959ec0c08bcbfee94b376f02bd8b552dcf17a539bcd210a443fb82443cb
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -311,7 +330,7 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # agy はインストール済みバイナリを通常実行中にバックグラウンド自己更新する
 # （install.sh の明記仕様）。版はイメージ再ビルドで管理するので封じる — claude の
 # DISABLE_AUTOUPDATER と同じ理屈（明示的な `agy update` は引き続き可能）。
-ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
 # Cursor CLI（kind="cursor"、docs/40 / docs/decisions/0023）。npm でも単一 Go バイナリ
 # でもなく、版付き tarball の Node.js バンドル（bundled node ＋ webpack chunk 群 ＋
@@ -373,9 +392,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.18.0
-ARG KIRO_SHA256_X64=05c880af3ce6b7c78e1eb23f7a90b4e29536e91989a92e2c7e960a74b80fe63d
-ARG KIRO_SHA256_ARM64=d0e89137d203f8723b0651514324d1afd18dbb2fa0589d7b0e6a68c073284784
+ARG KIRO_VERSION=2.19.0
+ARG KIRO_SHA256_X64=51f88c55c5231100049207961fab7e50ed958b80e03c08d825216c8fc08f6170
+ARG KIRO_SHA256_ARM64=bdea872bfb79bfb43a0f494ee0351a92eb619d822ae5d4c8b4e89b69cef034ef
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -407,8 +426,24 @@ ARG CHROMIUM_DL_VERSION=1228
 ARG NOTO_CJK_VERSION=Sans2.004
 # bind マウントポイントを rootfs に焼く: docker は -v 先のディレクトリを実行時に自動
 # 作成するが、native rootfs モード（bwrap --ro-bind で / が read-only — docs/35
-# §35.7.2）では bwrap が bind 先を mkdir できず起動が即死する。3 箇所とも空のまま焼く。
-RUN mkdir -p /var/lib/af/claude /usr/local/share/agent-fleet/docs /usr/lib/jvm
+# §35.7.2）では bwrap が bind 先を mkdir できず起動が即死する。4 箇所とも空のまま焼く。
+RUN mkdir -p /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/docs /usr/lib/jvm
+# claude / keep / docs は dev 所有にする: claude auth login が CLAUDE_CONFIG_DIR に
+# .credentials.json / settings.json を書く（claude/auth.go）。docker / native は
+# この上に host bind か EFS 直マウントが被さるので所有者は関係ないが、ECS の EFS
+# アクセスポイントは PosixUser を付けられず（ensureAccessPoint のコメント参照）
+# Docker が「イメージ側パスの所有権をフレッシュボリュームへコピーする」動作に頼る
+# ため、イメージ側が root 所有のままだと dev（uid 1000）が一切書き込めなくなる
+# （実機 <dev-deployment> で EACCES: permission denied を確認、2026-08-19）。この
+# ロジックが効くのは「そのアクセスポイントの root が初めて中身を持つ瞬間」だけなので、
+# 既存の（既に root 所有で初期化済みの）EFS ディレクトリはイメージを直しても直らない
+# ——実機では `docker exec -u root … chown -R 1000:1000 /var/lib/af/claude` で別途
+# 復旧した。keep（/var/lib/af/keep）はこれまでイメージに焼かれておらず、常に「初めて
+# 中身を持つ」側だったため元から dev 所有——このRUNは今後 keep 用アクセスポイントが
+# 新規作成される場合（決定 3-6）に同じ穴を未然に防ぐためのもの。
+# docs は ECS に bind-mount する経路が無く、Agent が CP からロール別 docs を
+# 取得してここへ展開する（docs/dev/04 §4.9・agent docs_sync.go）。
+RUN chown 1000:1000 /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/docs
 # /scratch = タスクローカルの作業ディスク（ADR 0044 決定 3）。ECS では ephemeral
 # storage 上の素のディレクトリ（>200 GiB のときだけ EBS のマウント先）で、entrypoint が
 # ここへ小ファイルの山（go-build / uv / go module）を逃がす。dev が書けないと意味が

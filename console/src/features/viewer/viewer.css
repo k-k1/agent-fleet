@@ -830,6 +830,19 @@
 :root[data-theme="light"] .markdown a.md-conv-link {
   color: #5b21b6;
 }
+/* An existing file path written as inline code (`docs/65-drawio-viewer.md`) → that file's
+   pane. The anchor lives INSIDE the <code>, so it inherits the code chip's font and
+   background and only takes the link color; green keeps it apart from the amber commit
+   hash, the blue session slug and the violet conversation slug. */
+.markdown code a.md-path-link {
+  color: #86c78f;
+}
+.markdown code a.md-path-link:hover {
+  color: #a9dcb0;
+}
+:root[data-theme="light"] .markdown code a.md-path-link {
+  color: #1f6b39;
+}
 .markdown code {
   font-family: var(--viewer-font, var(--mono));
   font-size: 0.88em;
@@ -1082,6 +1095,50 @@
     border-top: 1px solid var(--border);
   }
 }
+/* drawio の図の面（docs/65）。フレームはペインいっぱいに置く —— 図の収まりは
+   フレームの中のビューアが自分で計算するので、こちら側は寸法を与えるだけ。
+   畳むときは display:none（外さない）—— 作り直すと 4MB のビューアを読み直す。 */
+.file-diagram-shell[hidden] {
+  display: none;
+}
+.file-diagram-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+}
+.drawioview {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+}
+.drawio-frame {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  display: block;
+  background: var(--bg);
+}
+/* 読み込み中・読めなかったときの一行。図の上に重ねる（フレームは残したままにして
+   おきたい —— 作り直すと 4MB のビューアを読み直すことになる）。 */
+.drawio-note {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 90%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .file-viewer-shell,
 .file-editor-shell {
   flex: 1;

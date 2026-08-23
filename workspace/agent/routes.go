@@ -86,6 +86,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
 	mux.HandleFunc("POST /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
 	mux.HandleFunc("DELETE /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
+	// 転写のマーカー（docs/69 / ADR 0050）。所有者の Console と、CP 経由の共有先が読み書きする。
+	mux.HandleFunc("GET /sessions/{name}/marks", handleSessionMarks)
+	mux.HandleFunc("POST /sessions/{name}/marks", handleSessionMarks)
+	mux.HandleFunc("DELETE /sessions/{name}/marks", handleSessionMarks)
 	// Auto session-title suggestion (session_title.go): accept promotes it to Title,
 	// dismiss discards it — either way it's never offered again for this session.
 	mux.HandleFunc("POST /sessions/{name}/title/accept", handleAcceptSuggestedTitle)
@@ -98,6 +102,9 @@ func buildMux() *http.ServeMux {
 	// .claude/skills・commands を列挙する。
 	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
 	mux.HandleFunc("GET /sessions/{name}/skills", handleSessionSkills)
+	// 変更ファイル帯の「コミット済み」判定（docs/68 P2）。転写側の一覧とは別に、
+	// セッション開始以降のコミットに現れたパスだけを返す。
+	mux.HandleFunc("GET /sessions/{name}/committed", handleSessionCommittedFiles)
 	mux.HandleFunc("POST /sessions/{name}/rename-branch", handleSessionRenameBranch)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 	// Browser pane — ephemeral BrowserContext + Page ownership and a restricted
@@ -212,6 +219,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /fs/search", handleFSSearch)
 	mux.HandleFunc("GET /fs/file", handleFSFile)
 	mux.HandleFunc("PUT /fs/file", handleFSFilePut)
+	// ミラー本文のパス参照解決（fs_resolve.go）。読むのは stat だけの read-only。
+	mux.HandleFunc("POST /fs/resolve", handleFSResolve)
 	// エディタの AI 変更提案（docs/44 Phase 4）。fs は触らない read-only 生成チャネル。
 	mux.HandleFunc("POST /fs/suggest-edit", handleFSSuggestEdit)
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
@@ -265,6 +274,11 @@ func buildMux() *http.ServeMux {
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
 	mux.HandleFunc("PUT /env/toolchains", handleToolchainsPut)
+	// On-demand Temurin install (jdk_install_http.go): the picker offers majors that
+	// are not on disk yet, and this is the button that actually fetches one — the only
+	// source of a JDK at all on ECS, where /usr/lib/jvm is empty.
+	mux.HandleFunc("POST /env/jdk-install", handleJDKInstall)
+	mux.HandleFunc("GET /env/jdk-install", handleJDKInstall)
 	// バンドルツールの版レポート（実効 / 焼き込み / ~/.local override / ビルド時ピン）。
 	mux.HandleFunc("GET /env/tool-versions", handleToolVersions)
 
@@ -292,8 +306,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
 	mux.HandleFunc("PUT /connections/git/{host}/identity", handleGitProviderIdentityPut)
 	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)
-	mux.HandleFunc("POST /connections/git/github/oauth/start", handleGithubOAuthStart)
-	mux.HandleFunc("POST /connections/git/github/oauth/poll", handleGithubOAuthPoll)
+	// ★ No /connections/git/github/oauth/{start,poll} any more: both providers' OAuth
+	// flows run in the Control Plane since docs/71, where the app can be read per
+	// tenant. GitHub's token comes back through PUT /connections/git/github.com above.
 	mux.HandleFunc("PUT /connections/git/bitbucket/oauth", handleBitbucketStore)
 	mux.HandleFunc("POST /connections/claude/start", claude.HandleStart)
 	mux.HandleFunc("POST /connections/claude/complete", claude.HandleComplete)

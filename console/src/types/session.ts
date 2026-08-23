@@ -43,6 +43,10 @@ export interface Session {
   resumable?: boolean; // a stopped session whose dir still exists (false = archive only)
   backgroundBusy?: boolean; // idle by hook but a run_in_background task is still running
   backgroundBusyReason?: string;
+  // state === "limited"（利用上限のリセット待ち）のときだけ入る、予約済み自動再開の時刻
+  // （RFC3339）。空 = 再開は仕込まれていない（自動再開 OFF／時刻を決める材料が無い／
+  // モデル別上限）。チップに「いつ動くか」を出すためだけの表示用（docs/47 §4-9）。
+  rateLimitResumeAt?: string;
   createdAt?: string; // ISO timestamp
   model?: string; // claude model
   context?: SessionContextUsage; // claude context-window usage (Agent 側 session.ContextUsage)

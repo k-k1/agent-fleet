@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/aws/aws-sdk-go-v2/service/efs"
@@ -50,15 +51,21 @@ type ecsAPI interface {
 	CreateService(context.Context, *ecs.CreateServiceInput, ...func(*ecs.Options)) (*ecs.CreateServiceOutput, error)
 	UpdateService(context.Context, *ecs.UpdateServiceInput, ...func(*ecs.Options)) (*ecs.UpdateServiceOutput, error)
 	RegisterTaskDefinition(context.Context, *ecs.RegisterTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.RegisterTaskDefinitionOutput, error)
+	DeleteService(context.Context, *ecs.DeleteServiceInput, ...func(*ecs.Options)) (*ecs.DeleteServiceOutput, error)
+	// DescribeTaskDefinition reads back the revision a service currently runs, which is
+	// where the backend-drift check finds the image stamp Start left (runtime_ecs_stale.go).
+	DescribeTaskDefinition(context.Context, *ecs.DescribeTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.DescribeTaskDefinitionOutput, error)
 }
 
 type efsAPI interface {
 	DescribeAccessPoints(context.Context, *efs.DescribeAccessPointsInput, ...func(*efs.Options)) (*efs.DescribeAccessPointsOutput, error)
 	CreateAccessPoint(context.Context, *efs.CreateAccessPointInput, ...func(*efs.Options)) (*efs.CreateAccessPointOutput, error)
+	DeleteAccessPoint(context.Context, *efs.DeleteAccessPointInput, ...func(*efs.Options)) (*efs.DeleteAccessPointOutput, error)
 }
 
 type ssmAPI interface {
 	PutParameter(context.Context, *ssm.PutParameterInput, ...func(*ssm.Options)) (*ssm.PutParameterOutput, error)
+	DeleteParameter(context.Context, *ssm.DeleteParameterInput, ...func(*ssm.Options)) (*ssm.DeleteParameterOutput, error)
 }
 
 // ecsRuntime is the `aws` Runtime adapter (P3-7 段2). It maps one per-membership
@@ -69,15 +76,23 @@ type ssmAPI interface {
 // NO CP-side state: every resource is addressed by a deterministic name/tag and
 // created-or-got on Start, so there is no schema change vs the docker adapter.
 type ecsRuntime struct {
-	cfg          ecsConfig
-	ecs          ecsAPI
-	efs          efsAPI
-	ssm          ssmAPI
+	cfg ecsConfig
+	ecs ecsAPI
+	efs efsAPI
+	ssm ssmAPI
+	// ecr resolves the workspace image tag to its content identity, for the
+	// backend-drift ("要再起動") badge only (runtime_ecs_stale.go). nil = the feature
+	// is simply off, never an error.
+	ecr          ecrAPI
 	name         string // ECS service name / SC dnsName (Workspace.ContainerName)
 	membershipID string // EFS access-point tag key (af-membership)
-	token        string // CP↔Agent bearer (Workspace.AgentToken)
-	secretKey    string // per-workspace at-rest DEK (hex); "" in dev
-	extraEnv     []string
+	// tenantSlug is stamped as af-tenant on every billable resource this adapter
+	// creates. Read by nothing but the bill (docs/67, ADR 0048 決定 3); empty is a
+	// valid value and simply means the resource carries no tenant tag.
+	tenantSlug string
+	token      string // CP↔Agent bearer (Workspace.AgentToken)
+	secretKey  string // per-workspace at-rest DEK (hex); "" in dev
+	extraEnv   []string
 	// cpu / memory are the Fargate task size for THIS workspace: the cfg defaults, or
 	// a size snapped up to hold the per-workspace RAM/CPU caps (fargateSize) when one
 	// is set. registerTaskDef stamps them into the task definition revision.
@@ -125,6 +140,7 @@ type ecsFactory struct {
 	ecs ecsAPI
 	efs efsAPI
 	ssm ssmAPI
+	ecr ecrAPI
 }
 
 func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
@@ -155,8 +171,10 @@ func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runt
 		ecs:          f.ecs,
 		efs:          f.efs,
 		ssm:          f.ssm,
+		ecr:          f.ecr,
 		name:         ws.ContainerName,
 		membershipID: ws.MembershipID,
+		tenantSlug:   ws.TenantSlug,
 		token:        ws.AgentToken,
 		secretKey:    secretKey,
 		extraEnv:     extraEnv,
@@ -180,13 +198,34 @@ func pickDiskGiB(perWorkspace, deploymentDefault int) int {
 
 var _ RuntimeFactory = (*ecsFactory)(nil)
 
+// WorkspaceImage is the image THIS deployment will actually run for a workspace, so the
+// startup banner can say it. Without this it printed the docker runtime's WS_IMAGE
+// default (agent-fleet/workspace:m3) on an ECS deployment that runs an ECR image —
+// measured on a real deployment, where "which image is this running?" is exactly the
+// question the banner is read for.
+func (f *ecsFactory) WorkspaceImage() string { return f.cfg.workspaceImage }
+
+// awsConfigFor is where every AWS client this deployment builds gets its credentials.
+// In production it is the default chain — which on ECS means the CP task role, i.e. the
+// only identity that matters — and it exists as a variable for exactly one reason: so
+// the live E2E can run the PRODUCT under a copy of that task role while its own
+// verification calls keep the ambient (deployer) credentials.
+//
+// That distinction is not academic. Until 2026-08-16 the CP task role had no snapshot
+// permissions at all, and the live E2E went green through every round of it, because it
+// was running as the deployer. "Passed against real AWS" is not "passed with the
+// permissions of production". (docs/64 §64.22.3 / §64.23.)
+var awsConfigFor = func(ctx context.Context, region string) (aws.Config, error) {
+	return awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region))
+}
+
 // newECSFactory builds the AWS Runtime factory: it loads AWS config (region) and
 // constructs the ECS/EFS/SSM clients once, then reads the placement from AF_ECS_*.
 // Credentials are resolved lazily by the SDK (task role on ECS), so this does no
 // network I/O at boot.
 func newECSFactory(m *manager) (RuntimeFactory, error) {
 	region := os.Getenv("AF_ECS_REGION")
-	ac, err := awscfg.LoadDefaultConfig(context.Background(), awscfg.WithRegion(region))
+	ac, err := awsConfigFor(context.Background(), region)
 	if err != nil {
 		return nil, fmt.Errorf("aws config: %w", err)
 	}
@@ -226,11 +265,16 @@ func newECSFactory(m *manager) (RuntimeFactory, error) {
 		startTimeout: time.Duration(envInt("AF_ECS_START_TIMEOUT_SEC", 300)) * time.Second,
 	}
 	log.Printf("runtime=ecs region=%s cluster=%s namespace=%s efs=%s", cfg.region, cfg.cluster, cfg.namespaceArn, cfg.efsFileSystem)
+	// CP タスクより後に作られたワークスペースは Service Connect の別名で引けない
+	// （タスク起動時に書かれた /etc/hosts にしか載らない）。その取りこぼしを Cloud Map で
+	// 拾う（agent_dial.go）。失敗しても起動は続ける — 従来どおりの挙動に戻るだけ。
+	initAgentResolver(context.Background(), ac, cfg.namespaceArn)
 	return &ecsFactory{
 		cfg: cfg,
 		ecs: ecs.NewFromConfig(ac),
 		efs: efs.NewFromConfig(ac),
 		ssm: ssm.NewFromConfig(ac),
+		ecr: ecr.NewFromConfig(ac),
 	}, nil
 }
 
@@ -249,19 +293,45 @@ func (e *ecsRuntime) Endpoint() string {
 // RUNNING yet is "starting" — the workspace image cold-pulls for minutes on
 // Fargate, and reporting that window as "stopped" (the pre-revision §20b.7.8
 // mapping) made a legitimately starting workspace look dead in the Console.
+//
+// "running" additionally requires serviceRolledOut: every Start re-registers a
+// task definition and forces a new deployment (§ registerTaskDef), so a task can
+// go RUNNING while an old task of the outgoing deployment is still draining.
+// Service Connect load-balances across both until the old one fully stops, so a
+// caller that treats "running" as "one Agent process, reachable" would otherwise
+// land on whichever task happens to answer — fatal for anything that stashes
+// per-request state in the Agent's memory (OAuth flow_id, PTY login flows: docs
+// investigation 2026-08-19, <dev-deployment> — a task swap 8s into a Claude Code OAuth
+// flow silently dropped it).
 func (e *ecsRuntime) State(ctx context.Context) string {
 	s, ok, err := e.describeService(ctx)
 	if err != nil || !ok {
 		return "none"
 	}
 	switch {
-	case s.DesiredCount >= 1 && s.RunningCount >= 1:
+	case s.DesiredCount >= 1 && s.RunningCount >= 1 && serviceRolledOut(s):
 		return "running"
 	case s.DesiredCount >= 1:
 		return "starting"
 	default:
 		return "stopped"
 	}
+}
+
+// serviceRolledOut reports whether s has converged to a single task version: no
+// outgoing deployment still has tasks draining behind the new one. ECS keeps a
+// retired deployment in Service.Deployments until its last task stops, which can
+// be a minute or more after the new deployment's task went RUNNING.
+func serviceRolledOut(s ecstypes.Service) bool {
+	if len(s.Deployments) > 1 {
+		return false
+	}
+	for _, d := range s.Deployments {
+		if d.RolloutState != ecstypes.DeploymentRolloutStateCompleted {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *ecsRuntime) describeService(ctx context.Context) (ecstypes.Service, bool, error) {
@@ -300,6 +370,101 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 		DesiredCount: aws.Int32(0),
 	})
 	return err
+}
+
+// Destroy tears down everything this adapter created for the membership: the ECS
+// service, the two EFS access points and the two SSM SecureString parameters.
+// ecsEC2Runtime.Destroy calls it for the same resources (it shares this adapter as a
+// library) after it has released the slot and deleted the EBS home.
+//
+// ⚠️ It CANNOT delete the home itself. The EFS directories the access points pointed at
+// (/home/<membership>, /claude-config/<membership>) survive the access points, and EFS
+// keeps billing for them — deleting them needs a mount, i.e. a throwaway task
+// (docs/64 §64.18.4, ADR 0045 決定 13-3). They come back as leftovers rather than as an
+// error so the caller can record them; an error here would only make the operator retry
+// a teardown that already did everything it can.
+//
+// Every step is idempotent (already-gone is success): a partial Destroy must be safe to
+// re-run, which is the normal case after a CP restart mid-teardown.
+func (e *ecsRuntime) Destroy(ctx context.Context) ([]string, error) {
+	if err := e.Stop(ctx); err != nil {
+		return nil, err
+	}
+	// Force: the service is at desired 0 but its last task may still be draining, and
+	// DeleteService refuses a service with running tasks without it.
+	if _, ok, err := e.describeService(ctx); err != nil {
+		return nil, err
+	} else if ok {
+		if _, err := e.ecs.DeleteService(ctx, &ecs.DeleteServiceInput{
+			Cluster: aws.String(e.cfg.cluster),
+			Service: aws.String(e.name),
+			Force:   aws.Bool(true),
+		}); err != nil && !isAWSNotFound(err) {
+			return nil, fmt.Errorf("delete service %s: %w", e.name, err)
+		}
+	}
+	leftovers, err := e.destroySharedResources(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return leftovers, nil
+}
+
+// destroySharedResources removes the per-membership EFS access points and SSM secrets —
+// the part of the teardown that is identical on both launch types. Split out so the EC2
+// adapter can run it in its own order (slot and volume first, then this).
+func (e *ecsRuntime) destroySharedResources(ctx context.Context) ([]string, error) {
+	out, err := e.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
+		FileSystemId: aws.String(e.cfg.efsFileSystem),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var leftovers []string
+	for _, ap := range out.AccessPoints {
+		if tagValue(ap.Tags, "af-membership") != e.membershipID {
+			continue
+		}
+		if rd := ap.RootDirectory; rd != nil && aws.ToString(rd.Path) != "" {
+			leftovers = append(leftovers, "efs:"+e.cfg.efsFileSystem+aws.ToString(rd.Path))
+		}
+		if _, err := e.efs.DeleteAccessPoint(ctx, &efs.DeleteAccessPointInput{
+			AccessPointId: ap.AccessPointId,
+		}); err != nil && !isAWSNotFound(err) {
+			return nil, fmt.Errorf("delete access point %s: %w", aws.ToString(ap.AccessPointId), err)
+		}
+	}
+	for _, suffix := range []string{"agent-token", "secret-key"} {
+		name := fmt.Sprintf("/af-ws/%s/%s", e.name, suffix)
+		if _, err := e.ssm.DeleteParameter(ctx, &ssm.DeleteParameterInput{
+			Name: aws.String(name),
+		}); err != nil && !isAWSNotFound(err) {
+			return nil, fmt.Errorf("delete parameter %s: %w", name, err)
+		}
+	}
+	return leftovers, nil
+}
+
+// isAWSNotFound reports whether err is one of the "it is already gone" shapes the
+// teardown treats as success. Matching on the message rather than errors.As over a dozen
+// per-service NotFound types: the four services here spell it four different ways, and a
+// teardown that fails because something was already deleted is the bug we are avoiding.
+func isAWSNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	for _, needle := range []string{
+		"NotFound", // AccessPointNotFound, ParameterNotFound, InvalidVolume.NotFound, …
+		"ServiceNotActive",
+		"ServiceNotFoundException",
+		"does not exist",
+	} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // Start brings the workspace up: ensure the two EFS access points, push the token
@@ -410,11 +575,11 @@ func (e *ecsRuntime) ensureAccessPoint(ctx context.Context, role, path string) (
 			},
 		},
 		PosixUser: &efstypes.PosixUser{Uid: aws.Int64(e.cfg.posixUID), Gid: aws.Int64(e.cfg.posixGID)},
-		Tags: []efstypes.Tag{
+		Tags: appendEFSTenantTag(e.tenantSlug, []efstypes.Tag{
 			{Key: aws.String("af-membership"), Value: aws.String(e.membershipID)},
 			{Key: aws.String("af-role"), Value: aws.String(role)},
 			{Key: aws.String("Name"), Value: aws.String(e.name + "-" + role)},
-		},
+		}),
 	})
 	if err != nil {
 		return "", err
@@ -480,6 +645,10 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 		Name:      aws.String("agent"),
 		Image:     aws.String(e.cfg.workspaceImage),
 		Essential: aws.Bool(true),
+		// What this Start actually launched, recorded so a later poll can tell that the
+		// tag has moved since (runtime_ecs_stale.go). The task definition is the only
+		// per-start place the stateless adapter has.
+		DockerLabels: e.stampImage(ctx),
 		PortMappings: []ecstypes.PortMapping{
 			{ContainerPort: aws.Int32(ecsAgentPort), Name: aws.String("agent")},
 		},
@@ -570,13 +739,33 @@ func (e *ecsRuntime) volumeConfigurations() []ecstypes.ServiceVolumeConfiguratio
 			FilesystemType: ecstypes.TaskFilesystemTypeExt4,
 			TagSpecifications: []ecstypes.EBSTagSpecification{{
 				ResourceType: ecstypes.EBSResourceTypeVolume,
-				Tags: []ecstypes.Tag{
+				Tags: appendECSTenantTag(e.tenantSlug, []ecstypes.Tag{
 					{Key: aws.String("af-membership"), Value: aws.String(e.membershipID)},
 					{Key: aws.String("af-role"), Value: aws.String("scratch")},
-				},
+				}),
 			}},
 		},
 	}}
+}
+
+// appendEFSTenantTag / appendECSTenantTag add `af-tenant` when the workspace knows its
+// tenant slug. Split by SDK tag type rather than generics because each AWS service
+// ships its own Tag struct; an empty slug appends nothing so a Workspace built without
+// a store read (tests, the in-memory backfill path) simply carries no tenant tag
+// instead of an empty one — an empty cost allocation tag value is a real value in the
+// bill and would show up as its own group (docs/67 §67.10).
+func appendEFSTenantTag(slug string, tags []efstypes.Tag) []efstypes.Tag {
+	if slug == "" {
+		return tags
+	}
+	return append(tags, efstypes.Tag{Key: aws.String(ec2TagTenant), Value: aws.String(slug)})
+}
+
+func appendECSTenantTag(slug string, tags []ecstypes.Tag) []ecstypes.Tag {
+	if slug == "" {
+		return tags
+	}
+	return append(tags, ecstypes.Tag{Key: aws.String(ec2TagTenant), Value: aws.String(slug)})
 }
 
 func efsVolume(name, fsID, apID string) ecstypes.Volume {
@@ -625,6 +814,25 @@ func (e *ecsRuntime) upsertService(ctx context.Context, taskDefArn string) error
 		DesiredCount:         aws.Int32(1),
 		LaunchType:           ecstypes.LaunchTypeFargate,
 		VolumeConfigurations: e.volumeConfigurations(),
+		// Billing only (docs/67 §67.8). On Fargate the TASK is the billed thing, and a
+		// task inherits tags only when the service is told to propagate them — without
+		// this, af-membership exists nowhere on the Fargate path and the compute cannot
+		// be attributed to anyone. EnableECSManagedTags is what makes propagation legal.
+		//
+		// ⚠️ Applies to services created from here on. An ALREADY-EXISTING service is not
+		// retagged (CreateService is skipped above), so a deployment that predates this
+		// keeps untagged tasks until the service is recreated — deliberately not "fixed"
+		// with a TagResource call on every start, which would be a write per Start for a
+		// number only the invoice reads.
+		//
+		// ⚠️ NOT verified against real Fargate: the live deployment runs ecs-ec2
+		// (ADR 0048 決定 9).
+		EnableECSManagedTags: true,
+		PropagateTags:        ecstypes.PropagateTagsService,
+		Tags: appendECSTenantTag(e.tenantSlug, []ecstypes.Tag{
+			{Key: aws.String("af-membership"), Value: aws.String(e.membershipID)},
+			{Key: aws.String("af-role"), Value: aws.String("workspace")},
+		}),
 		NetworkConfiguration: &ecstypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 				Subnets:        e.cfg.subnets,

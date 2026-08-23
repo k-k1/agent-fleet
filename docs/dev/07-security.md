@@ -116,8 +116,10 @@ Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）
 - ①**org メンバーシップ**（必須）: `GET /user/memberships/orgs/{org}` が `active`。
   `AF_GITHUB_ALLOWED_ORGS` が空なら provider ごと無効化する（決定 2 — メンバーシップ判定と
   セットでのみ採用した入口）。**この env が GitHub ログインを有効にする合図**でもある
-  （`GITHUB_OAUTH_CLIENT_ID` は git 連携の device flow が先に使っている env なので、それ単体では
-  ログインを有効にしない）。
+  （`GITHUB_OAUTH_CLIENT_ID` 単体ではログインを有効にしない。★ 歴史的には「git 連携の
+  device flow が先に使っていた env だから」だったが、[71](../71-tenant-git-oauth.md) で
+  git 側はテナントの行を読むようになったので、この env は**サインイン専用**になった。
+  合図が org 一覧である理由は今も同じ——許可を与えているのは org メンバーシップである）。
 - ②**email 許可リスト**: `AF_GITHUB_ALLOWED_{EMAILS,DOMAINS}` → 無ければデプロイ共通 →
   どちらも未設定なら email の門は無し（org が許可リストそのもの）。P3 の DB 由来の項
   （auto_join / membership）は**この②にだけ**足される — ①は別軸なので AND のまま。
@@ -162,6 +164,25 @@ Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）
 認可は [05 §5.4](05-api-contracts.md): 自分のリソースのみ + membership 検証、admin は role gate
 （super_admin=デプロイ全体 / tenant_admin=自テナント）。role の階層は `identity.role` と
 `membership.role` の 2 段（[06 §6.2](06-data-model.md)）。
+
+### 7.3.2 テナントの接続元制限（`allowed_cidrs`）
+
+「誰か」の次に「どこから」を見る門（[docs/66](../66-tenant-network-restriction.md)・
+[ADR 0047](../decisions/0047-tenant-network-restriction.md)）。テナント管理者が Console から
+CIDR を並べると、そのテナントの解決経路（`resolveFull` / `resolveMembership`）で照合される。
+
+⚠️ **これはネットワーク防御ではない。** 要求は ALB を通り CP に届き、セッションが検証された
+**あとで** 403 になる。認証前の脆弱性・DoS・探索には効かない（そこは `AlbIngressCidr` と WAF）。
+守れるのは「資格情報を持った人が、許されていない場所からデータに触る」だけである。
+
+- **送信元 IP は `AF_TRUSTED_PROXY_HOPS`（既定 0）で決まる。** 0 = `RemoteAddr`、
+  N = `X-Forwarded-For` を**右から N 番目**。XFF は誰でも付けられるが、信頼するホップは
+  その**右に**追記するので、右から数える限り偽装が効かない。**左端を読む実装だけが危険**。
+  読むのは最外周ミドルウェア 1 箇所だけ（`authGate` が識別ヘッダを `Del` するのと同じ理由）。
+- **`/mcp` と `/git/*` は対象外。** 送信元が本人の Workspace コンテナであり、人の所在を
+  表さない。入れると自テナントのワークスペースからの MCP と git を全部塞ぐ。
+- **締め出しの逃げ道**: super_admin は対象外／保存時に編集者の現在 IP を必ず通す／
+  プロキシ未申告（`hops=0` なのに XFF 到着）は**保存そのものを拒否**する。
 
 ## 7.4 L2 エージェント認証との分離
 

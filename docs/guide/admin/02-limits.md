@@ -14,8 +14,9 @@ member**.
 ### Tenant-wide limits (set by super_admin)
 
 Tenant-wide limits and idle auto-stop are **set by a super_admin only** — the settings section lives
-in the Admin modal and never appears for you. What you can read is the current values, shown at the
-top of the "Members" roster ("Limits — Workspace / Session"). Just know what they contain.
+in the Admin modal and never appears for you. What you can read is the current values, under
+**Tenant › Limits & idle** in the tenant settings modal (member count, running workspaces and
+"Limits — Workspace / Session"). Just know what they contain.
 
 - **Max workspaces** — the number of workspaces that can run concurrently in this tenant
   (`0` = unlimited).
@@ -25,7 +26,7 @@ top of the "Members" roster ("Limits — Workspace / Session"). Just know what t
 - **Idle auto-stop** — how long before neglected sessions and workspaces are stopped automatically
   (next section).
 
-The "Limits — Workspace: X / Session: Y" shown at the top of the "Members" roster is the value
+The "Limits — Workspace: X / Session: Y" shown under **Tenant › Limits & idle** is the value
 currently in effect. When you want it changed, ask your IT department / deployment administrator
 ([operator/README.md](../operator/README.md)).
 
@@ -58,6 +59,38 @@ save, which is why **raising CPU can also raise memory**. The response after sav
 that will actually be applied.
 
 Changes take effect **from the next workspace start**; a running workspace is not resized.
+
+### Machine (available on some deployments)
+
+Some deployments also offer a **"Machine"** choice above the numbers. It is not about how big the
+workspace is but about **what kind of box it runs on**, and the kinds differ in price and speed. The
+names and what is behind them are chosen by your deployment administrator, so leaving it on the
+default is a perfectly good answer.
+
+**⚠️ "Cheaper per hour" is not the same as "cheaper".** What gets billed is the time the box is
+*running*, and a slower box takes longer over the same work. Measured on 2026-08-22 against this
+repository's own build: the machine that costs **24% less per hour is not cheaper at all per
+build**, because it is 32% slower. Another one is **11% cheaper per hour and 29% faster**.
+
+The question to ask is what that person spends their time on.
+
+| How they spend their time | What it costs them | What suits |
+|---|---|---|
+| Running builds and tests all day | cost per piece of work | the **faster** machine — a cheap slow one only costs them time |
+| Mostly reading, thinking, waiting on the agent | the hourly price | the **cheaper** machine — they really do pay that much less |
+| Somewhere in between | both | whichever wins on both, else the default |
+
+- The **tenant-wide default** is picked from the "Limits" page of the tenant settings.
+- A **per-member** choice is made from that member's "Set limits" panel, and it wins: members who
+  chose for themselves are unaffected when you change the tenant default.
+- The memory number means the same thing in every machine. **The machine picks the ladder, memory
+  picks the rung on it.**
+
+> ⚠️ **Switching to a machine with a different CPU family (Intel / Arm) makes the next start take a
+> few minutes longer.** The home (`~`) is kept, but the agent CLIs, node, Chromium and so on inside
+> it were built for the old family, so they are reinstalled at startup. Nothing under `~/repos` is
+> deleted, but `node_modules` / `target` / `.venv` will not run until you reinstall them yourself.
+> The screen shows the same warning, and only when the family actually changes.
 
 > **The working disk does not persist.** Its contents are wiped when the workspace stops — only the
 > home directory (`~`) survives. It is a place for build output and caches, not for storing things.

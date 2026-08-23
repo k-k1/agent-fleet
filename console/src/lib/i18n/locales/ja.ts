@@ -12,6 +12,8 @@ export const ja = {
 
   // --- API エラー（core/api/client.ts の ERR_TEXT ＋ インライン fallback）---
   // Go 側の安定コード（control-plane/errcodes.go, workspace/agent/errcodes.go）と対。
+  "err.ip_not_allowed":
+    "このテナントは管理者が許可したネットワークからしか使えません。現在の接続元は許可されていません。",
   "err.ssm_search_forbidden":
     "AWS上のインスタンスを検索する権限がありません。AWS管理者に ssm:DescribeInstanceInformation の付与を依頼してください。",
   "err.quota_sessions":
@@ -51,11 +53,21 @@ export const ja = {
   // 再サインイン導線を出すので、この文言はモーダル外で出た場合の保険。
   "err.provider_required": "このテナントには別のサインイン方法が必要です。サインインし直してください。",
   "err.not_provisioned": "所属するテナントがありません。管理者に追加を依頼してください。",
+  // 招待前の着地面（docs/61 §61.10.2・P7-2）。★ 失敗ではなく、招待制デプロイの正常な
+  // 最初の一歩として書く。管理者に伝えるべき「自分のアドレス」を必ず読ませる。
+  "notprov.title": "まだ招待されていません",
+  "notprov.lead":
+    "サインインはできています。あとは管理者があなたをチームの名簿に追加すると、ワークスペースが使えるようになります。",
+  "notprov.signed_in_as": "このアドレスでサインインしています:",
+  "notprov.hint":
+    "管理者には、上のアドレスをそのまま伝えてください。追加してもらったら「再読み込み」を押します。",
+  "notprov.retry": "再読み込み",
+  "notprov.switch_account": "別のアカウントでサインインする",
   "err.domain_not_allowed": "このテナントに招待できるメールアドレスのドメインではありません。",
   "err.email_required": "このテナントはドメインで招待を制限しています。メールアドレスで招待してください。",
   "err.auto_join_conflict": "その自動参加ドメインは既に別のテナントが使っています。",
   "err.unknown_provider": "そのサインイン方法はこのデプロイで有効になっていません。",
-  "err.self_removal": "自分自身を名簿から外すことはできません。他の管理者に依頼してください。",
+  "err.self_removal": "自分の最後のメンバーシップは外せません（戻る道が無くなるため）。他の管理者に依頼してください。",
   "err.bad_share": "共有リクエストが不正です。",
   "err.member_not_found": "指定した相手は同じテナントのメンバーではありません。検索候補から選び直してください。",
   "err.share_self": "自分自身を共有先に指定することはできません。",
@@ -564,6 +576,13 @@ export const ja = {
   "env.node_default": "既定 (image の node)",
   "env.no_jdk": "このワークスペースに JDK がありません",
   "env.unselected": "未選択",
+  "env.java_opt_absent": "Temurin {v}（未インストール）",
+  "env.java_install": "インストール",
+  "env.java_installing": "インストール中…",
+  "env.java_install_note":
+    "Temurin {v} はまだこのワークスペースにありません。「インストール」で今すぐ取得します（約 200MB／home ボリュームへ入るので再起動しても残ります）。完了後に起動したセッションから JAVA_HOME に入り、Stop → Start は不要です。",
+  "env.java_install_failed": "JDK のインストールに失敗しました: {msg}",
+  "env.java_install_timeout": "時間内にダウンロードが終わりませんでした",
   "env.go_default": "既定 (image の go)",
   "env.agent_update_title": "エージェント CLI の更新",
   "env.agent_update_label": "起動時にエージェント CLI と rtk を最新へ更新する",
@@ -752,6 +771,10 @@ export const ja = {
     "読み上げ音声をペインの横位置に合わせてステレオ配置します。左右端でも音は片側へ振り切らず、通知やファイル朗読などペインに属さない音声は中央で再生します。",
   "tts.note_engine":
     "「自動」は日本語をずんだもん（VOICEVOX）で読み、エンジンが起動していない間や日本語以外は AWS Polly に自動で切り替えます（次の文からずんだもんに復帰）。「Polly」は常に Polly で読みます。",
+  "tts.note_no_voicevox":
+    "この環境には VOICEVOX エンジンがありません。読み上げはすべて AWS Polly で行われるため、ずんだもんの話者・キャラクター・感情スタイルなど VOICEVOX 専用の設定は表示していません。",
+  "tts.warn_voicevox_missing":
+    "音声エンジンに「ずんだもん」が選ばれていますが、この環境には VOICEVOX エンジンがありません。このままでは読み上げに失敗します。「自動」または「Polly」に変更してください。",
   "tts.note_zundamon_volume":
     "ずんだもんは他のキャラより声が大きめなので、少し下げて他の声や通知音と音量を揃えられます。ずんだもんの声で読むときだけ効きます。",
   "tts.note_voice_per_session":
@@ -840,7 +863,10 @@ export const ja = {
   "git.browse_title": "参照（クローン不要）",
   "git.rename": "リネーム",
   "git.rename_cancel": "取消",
-  "git.github_oauth_unconfigured": "GitHub OAuth は未設定です（client_id）。「token」から貼付を使ってください。",
+  "git.github_oauth_unconfigured": "このテナントに GitHub の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼するか、アクセストークンの貼付で接続してください。",
+  // OAuth の導線そのものを出さないときの説明（docs/71）。押せないボタンを置いても、
+  // 押した本人には直せない（設定はテナント管理者のもの）。
+  "git.oauth_unregistered": "このテナントには OAuth アプリが登録されていないため、OAuth での接続は出していません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼してください。",
   "git.oauth_start_failed": "OAuth 開始に失敗: {msg}",
   "git.oauth_waiting": "承認待ち…",
   "git.oauth_expired": "期限切れ。やり直してください",
@@ -856,7 +882,7 @@ export const ja = {
   "git.github_token_hint_read": "（プライベートリポジトリのクローン・push 両対応。パブリックのみなら ",
   "git.github_token_hint_pub": " で可）。fine-grained トークンの場合は Repository permissions で ",
   "git.github_token_hint_fg": " を付与（クローンのみなら Read-only）。",
-  "git.bitbucket_oauth_unconfigured": "Bitbucket OAuth は未設定です（key/secret）。「token」から貼付を使ってください。",
+  "git.bitbucket_oauth_unconfigured": "このテナントに Bitbucket の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼するか、メール＋アプリトークンで接続してください。",
   "git.bb_waiting": "別タブで承認してください…",
   "git.bb_timeout": "タイムアウト。やり直してください",
   "git.bitbucket_desc": "OAuth（コードグラント）か メール＋アプリトークンで接続。",
@@ -1102,13 +1128,120 @@ export const ja = {
   // --- 管理（features/settings/AdminTab.tsx。super_admin / tenant_admin）---
   "admin.title": "管理",
   "admin.forbidden": "権限がありません（super_admin のみ）。",
-  "admin.mode_manage": "テナント管理",
   "admin.mode_sessions": "セッション",
-  "admin.mode_usage": "使用量",
+  "admin.mode_usage": "稼働時間",
   "admin.mode_audit": "監査",
   "admin.mode_egress": "通信",
   "admin.mode_mcp": "MCP 配布",
   "admin.mode_tts": "読み上げ",
+  "admin.mode_pool": "スロット",
+  // 左レールのグループ見出し（ルート）。テナント＝一覧と登録簿、デプロイ全体＝
+  // デプロイに 1 つしかない面、横断で見る＝全テナントを跨いで数える面。
+  "admin.group_tenants": "テナント",
+  "admin.group_deployment": "デプロイ全体",
+  "admin.group_across": "横断で見る",
+  "admin.all_tenants_back": "すべてのテナント",
+  // レールの項目名は短く（本文の見出しは admin.idp_register のまま）。
+  "admin.tab_register": "サインイン方法の登録簿",
+  "admin.destroy_ws": "Workspace を破棄",
+  "admin.destroy_title": "{key} の Workspace を破棄しますか？",
+  "admin.destroy_confirm": "破棄する",
+  "admin.destroy_body": "home と、ランタイムがこの人のために作ったものを完全に削除します。取り消せません。再招待しても空の Workspace になります。",
+  "admin.destroy_locks": "本人がかけた削除ロックも越えます。ロックは home の中にあり、停止中の Workspace からは読めないためです。",
+  "admin.destroy_efs": "Fargate では home の実体（EFS のディレクトリ）は残り、課金も続きます。消せなかったものは実行後に表示し、監査ログにも記録します。",
+  "admin.destroy_leftovers": "破棄しましたが、次のものは削除できませんでした: {list}",
+  "admin.remove_purge": "Workspace と home も破棄する（取り消せません）",
+  "admin.remove_purge_warn": "home と、ランタイムがこの人のために作ったものを削除します。再招待しても戻りません。",
+  // 後始末の 3 段目（docs/61 §61.18）。Workspace を破棄し終えた行にだけ出る。
+  "admin.delete_member_row": "メンバーを完全に削除",
+  "admin.delete_member_row_title": "{key} を名簿から完全に削除しますか？",
+  "admin.delete_member_row_confirm": "完全に削除する",
+  "admin.delete_member_row_body": "外した記録ごと、この人の行を削除します。取り消せません。もう一度招待すると、まっさらな新しいメンバーとして始まります。",
+  "admin.delete_member_row_gone": "消えるもの: 上限設定・アクセストークン・SSM の設定・定時実行・メモ・通知・セッション共有。",
+  "admin.delete_member_row_kept": "残るもの: 監査ログ・クラウド費用・稼働時間。過去の記録と請求は書き換えません。",
+  // テナントの削除（super_admin・空のテナントだけ）
+  "admin.delete_tenant": "テナントを削除",
+  "admin.delete_tenant_title": "テナントの削除",
+  "admin.delete_tenant_hint": "空になったテナントだけ削除できます。メンバーが 1 人でも残っている、Workspace が残っている、内部 git リポジトリが残っている場合は拒否します——DB の行は、クラウドやディスクに残った実体への唯一の手掛かりだからです。",
+  "admin.delete_tenant_repo_hint": "⚠️ 内部 git リポジトリは、メンバーが名簿に残っているうちに削除してください。最後の 1 人を外すと、リポジトリを削除する画面へ誰も入れなくなります。",
+  "admin.delete_tenant_confirm_title": "テナント {slug} を削除しますか？",
+  "admin.delete_tenant_confirm": "削除する",
+  "admin.delete_tenant_body": "テナントの設定（上限・ログイン規則・接続元制限・サインイン方法・MCP 配布）と、外したメンバーの行を削除します。取り消せません。",
+  "admin.delete_tenant_kept": "監査ログ・クラウド費用・稼働時間は残ります（テナント欄は空になります）。",
+  // --- EC2 スロットプール（features/settings/ec2Pool.tsx・AF_RUNTIME=ecs-ec2 のみ）---
+  "pool.not_ec2": "このデプロイは EC2 スロットプールを使っていません。",
+  "pool.slots_title": "スロット",
+  "pool.provisioned": "確保中",
+  "pool.of_max": "上限 {n} 台",
+  "pool.running": "起動中",
+  "pool.running_sub": "時間課金",
+  "pool.asleep": "休止中",
+  "pool.asleep_sub": "停止済み・root ボリュームのみ",
+  "pool.free": "空き",
+  "pool.free_sub": "上のうち home が付いていないもの",
+  "pool.at_cap": "上限に達しています。次に起動する人には新しいスロットではなく、最も長く休眠しているユーザーのスロットが割り当てられます（立ち退き）。",
+  "pool.timers": "タスクが無くなって {sleep} でスロットを停止します。home はテナント側で指定が無ければ {hibernate} で snapshot へ退避します（デプロイ既定）。",
+  "pool.timers_no_hibernate": "タスクが無くなって {sleep} でスロットを停止します。home の退避はテナント側で指定しない限り行いません（テナント → 使われない home の退避）。",
+  "pool.off": "しない",
+  "pool.no_slots": "スロットはありません。最初の起動で 1 台作られます。",
+  "pool.col_instance": "インスタンス",
+  "pool.col_type": "種別",
+  "pool.col_state": "状態",
+  "pool.col_occupant": "使用中",
+  "pool.col_dormant": "休眠",
+  "pool.col_backup": "予備",
+  "pool.backup_none": "無し",
+  "pool.backup_count": "予備 {n} 本",
+  "pool.state_asleep": "休止中",
+  "pool.state_quarantined": "隔離",
+  "pool.quarantined_hint":
+    "home をマウントできなかったスロットが {n} 台あり、プールから外しました（他の人がここに入ることはありません）。停止済みですが root ボリュームは残っているので、必要なものを取り終えたら終了させてください。",
+  "pool.not_registered": "（まだタスクを受け付けない）",
+  "pool.free_slot": "空き",
+  "pool.homes_title": "home",
+  "pool.no_homes": "home はまだありません。",
+  "pool.col_workspace": "Workspace",
+  "pool.col_volume": "ボリューム",
+  "pool.col_where": "位置",
+  "pool.no_volume": "ボリューム無し",
+  "pool.hibernated": "退避済み（snapshot）",
+  "pool.hibernating": "退避中（{state}）",
+  "pool.detached": "未接続",
+  "pool.golden_title": "golden snapshot",
+  "pool.golden_none": "ありません。新規 home は空から作られるので、新しいメンバーは初回起動で boot-install とキャッシュ空を払います。通常は CP が {image} 用を自動で焼きます（スロットが 2 つ空くまで待ちます）。自動焼きを切っている場合は deploy/aws/ecs/bake-golden.sh で焼いてください。",
+  "pool.golden_baking": "{image} 用を用意しています。焼いたあと、それが本当に起動することを確かめてから使い始めます。それまで新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。",
+  "pool.golden_rejected": "{snapshot} は使いません: {reason}。起動を確かめられなかったものは配らないので、新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。同じイメージでの焼き直しは 2 回で打ち切ります。",
+  "pool.golden_stale": "{snapshot} は {baked} から焼かれていますが、このデプロイは {running} を動かしています。この golden は使われず、焼き直すまで新規 home は空から作られます（初回起動が遅くなります）。",
+  "pool.golden_ok": "{image} から焼いたもの",
+  // 焼き込みの進み具合（docs/64 §64.30）。焼きは 11 分前後かかり、前半には snapshot が
+  // まだ存在しない——「用意しています」の 1 行だけでは、動いているのか固まっているのか
+  // 分からないまま待たせることになる。
+  "pool.bake_step_seed": "種を起動",
+  "pool.bake_step_boot": "boot-install",
+  "pool.bake_step_capture": "home を切り離し",
+  "pool.bake_step_snapshot": "snapshot",
+  "pool.bake_step_probe": "起動確認",
+  "pool.bake_step_published": "公開",
+  "pool.bake_running": "{image} 用を焼いています。",
+  "pool.bake_meanwhile":
+    "焼けたものは、そこから実際に workspace が起動できることを確かめてから使い始めます。それまで新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。",
+  "pool.bake_detail_seed": "種:",
+  "pool.bake_detail_probe_ws": "probe:",
+  "pool.bake_detail_probe": "{snapshot} から probe を起こして、本当に起動するか確かめています。",
+  "pool.bake_owner": "golden 焼き込み用",
+  "pool.bake_blocked":
+    "スロットの空きを待っています（{used}/{max} 使用中）。焼き込みには種と probe で 2 つ空きが必要で、誰かを立ち退かせてまでは焼きません。空くまで新規 home は空から作られます（初回起動が遅いだけ）。",
+  "pool.bake_gave_up":
+    "{snapshot} は使いません: {reason}。同じイメージで 2 回失敗したので、焼き直しは打ち切りました。イメージを直して入れ替えるまで、新規 home は空から作られます。",
+  "pool.bake_retry_left": "同じイメージであと 1 回だけ焼き直します。",
+  "pool.bake_off":
+    "自動焼きは切られています（AF_ECS_EC2_GOLDEN_AUTOBAKE=0）。golden が無い間、新規 home は空から作られます（初回起動が遅いだけ）。焼くなら deploy/aws/ecs/bake-golden.sh です。",
+  "pool.elapsed_sec": "（{s} 秒経過）",
+  "pool.elapsed_min": "（{m} 分 {s} 秒経過）",
+  "pool.elapsed_hour": "（{h} 時間 {m} 分経過）",
+  "pool.idle_min": "{n} 分",
+  "pool.idle_hour": "{n} 時間",
+  "pool.idle_day": "{n} 日",
   // --- テナント配布 MCP（docs/48 P4・AdminTab の McpAdminView）---
   "admin.mcp_intro":
     "テナントの全メンバーへ配布する MCP サーバーです。配布できるのはリモート（Streamable HTTP）だけで、コマンドを起動する stdio は配布できません（管理者が全員のコンテナで任意のコマンドを実行できることと等価になるため）。",
@@ -1184,6 +1317,8 @@ export const ja = {
   "admin.tts_polly_ready": "利用可",
   "admin.tts_polly_unset": "未設定",
   "admin.tts_starting_note": "起動には 1〜2 分かかります。準備が整うまで、日本語の読み上げは Polly が代読します（Polly 未設定なら無音）。",
+  "admin.tts_no_engine":
+    "この環境には VOICEVOX エンジンがありません（ECS 管理下でもないため、この画面から起動することもできません）。有効にしてもずんだもんへは一切流れないので、無効で固定しています。エンジンを用意すれば自動で操作できるようになります。",
   "admin.tts_disable_note":
     "無効にすると、AWS では ECS の desired count を 0 にしてエンジンを停止します（停止中コスト 0）。読み上げ自体はユーザー設定（音声読み上げ）側で ON/OFF します。",
   "admin.tts_dict_title": "テナント共通の読み仮名辞書",
@@ -1192,7 +1327,66 @@ export const ja = {
   "admin.tts_dict_note":
     "全ユーザーの読み上げに適用される共通辞書です（1 行に 1 件「表記=読み」、# 始まりはコメント）。各ユーザーが設定（読み上げタブ）の読み仮名辞書に同じ表記を持つ場合は、そのユーザーの指定が優先されます。保存後、他のユーザーには Console の次回ロードから反映されます。",
   "admin.usage_load_error": "読み込みに失敗しました。",
-  "admin.usage_title": "使用量（ワークスペース稼働時間）",
+  // --- クラウド費用（docs/67 + ADR 0048）---
+  // ⚠️ わざと「使用量」と呼ばない。その名前は既に 3 か所で使っている
+  //（エージェントのトークン、ワークスペース稼働時間が 2 か所）。ここは金額で、
+  // しかも AWS の請求があるデプロイにしか存在しない。
+  "admin.mode_cost": "クラウド費用",
+  "tenant.tab_cost": "クラウド費用",
+  "set.tab_cost": "クラウド費用",
+  "cost.admin_title": "メンバー別のクラウド費用",
+  "cost.admin_intro":
+    "AWS の請求を、コスト配分タグでメンバーごとに割り当てたものです。人にひも付いた分だけがここに出ます。共有インフラは別に出していて、頭割りはしません。",
+  "cost.my_title": "あなたのワークスペースのクラウド費用",
+  // ⚠️ この文言こそが本体である。実測では請求のうち人に紐づけられるのは 2 割ほどで、
+  // それを「あなたのコスト」と呼ぶと、実際に払っている額の 1/5 を指すことになる。
+  "cost.my_intro":
+    "あなたのワークスペースに直接ひも付いている分です（スロットの稼働時間・永続ホームのボリューム・そのスナップショット）。共有インフラ（NAT・DNS・ロードバランサ・データベース・空きスロット）は含みませんので、ワークスペースを動かす費用の全部ではありません。",
+  "cost.my_total_label": "あなたのワークスペースに直接ひも付く費用（共有分は含みません）",
+  "cost.attributed_label": "メンバーにひも付く費用",
+  // メンバー詳細（管理）向け。⚠️ 「このメンバーのコスト」とは絶対に書かない——
+  // 実測で人に紐づくのは請求の 2 割ほどなので、そう書くと会社が払っている額の
+  // 1/5 を指して「このメンバーのコスト」と呼ぶことになる（ADR 0048 決定 4）。
+  "cost.member_title": "クラウド費用",
+  "cost.member_intro":
+    "このメンバーのワークスペースに直接ひも付いている分（スロットの稼働時間・永続ホーム・スナップショット）です。共有インフラ（NAT・DNS・ロードバランサ・DB・空きスロット）は含みません。",
+  "cost.member_total_label": "このメンバーに直接ひも付く費用（共有分は含みません）",
+  "cost.shared_title": "共有インフラ",
+  "cost.shared_intro":
+    "誰か 1 人のものではない費用です。あえてメンバーに割り振っていません——割り振った時点で、それは請求ではなく見積になります。誰も使っていない空きスロットもここに入ります（プールを大きく持っている分の実費です）。",
+  "cost.shared_label": "共有（割り当てなし）",
+  "cost.shared_centres": "内訳の区分:",
+  "cost.account_scope": "この AWS アカウント全体を集計しています。同じアカウントで他のものを動かしていれば、それも共有の額に入ります。",
+  "cost.breakdown": "何に使ったか",
+  "cost.no_records": "この期間の費用はありません。",
+  "cost.load_error": "クラウド費用を取得できませんでした。",
+  "cost.lag": "Cost Explorer は約 {h} 時間遅れです。",
+  "cost.estimated_note": "直近の日はまだ確定しておらず、あとから変わります。",
+  // ⚠️ 有効化は遡らないので、これは読み込み中ではなく恒久的な欠測である。
+  "cost.no_backfill":
+    "{day} より前は取得できません。コスト配分タグは有効化した時点より後にしか効かず、遡って埋めることはできません。",
+  "cost.unverified_runtime":
+    "このランタイムでのタグ付けは実環境でまだ確認できていないため、数字が欠けている可能性があります。",
+  "cost.poll_error": "Cost Explorer を読めていないため、この数字は古いか空です:",
+  "cost.tags_pending":
+    "{keys} はまだ集計されていません。AWS 側の登録が終わっていないためで、この間の費用はいま失われつつあり、あとから取り戻せません。通常は 1 日以内に解消します。",
+  "cost.tags_error":
+    "コスト配分タグを自動で有効化できませんでした。費用が誰にも割り当てられておらず、この欠測は取り戻せません:",
+  "cost.tags_declined": "請求コンソールで無効にされているため、そのままにしています: {keys}",
+  "cost.centre_slot_hours": "スロット稼働時間",
+  "cost.centre_home_volume": "ホームボリューム",
+  "cost.centre_snapshots": "スナップショット",
+  "cost.centre_task_compute": "タスクの計算資源",
+  "cost.centre_scratch": "作業ディスク",
+  "cost.centre_nat": "NAT ゲートウェイ",
+  "cost.centre_dns": "DNS",
+  "cost.centre_lb": "ロードバランサ",
+  "cost.centre_db": "データベース",
+  "cost.centre_efs": "共有ファイルシステム",
+  "cost.centre_idle_pool": "空きスロット",
+  "cost.centre_cp": "コントロールプレーン",
+  "cost.centre_tax": "税",
+  "admin.usage_title": "稼働時間（ワークスペースの占有）",
   "admin.usage_intro":
     "インフラ占有＝ワークスペースが起動していた時間の集計です（Claude 利用料は各自のサブスクで、ここには含みません）。約 5 分ごとのサンプリングのため誤差があります。",
   "admin.from": "開始",
@@ -1232,11 +1426,29 @@ export const ja = {
   "admin.empty_deploy_default": "空 = デプロイ既定に従う",
   "admin.session_halt": "セッション停止まで",
   "admin.ws_stop": "ワークスペース停止まで",
-  "admin.idle_ph_30m": "例 30m（空=無効）",
-  "admin.idle_ph_60m": "例 60m（空=無効）",
+  "admin.idle_ph_30m": "例 30m（空=デプロイ既定 1h）",
+  "admin.idle_ph_60m": "例 60m（空=デプロイ既定 2h）",
   "admin.idle_hint_1": "放置された Claude セッションは「セッション停止まで」で停止中（再開可）になり、接続も稼働もないワークスペースは「ワークスペース停止まで」で停止します。書式は ",
-  "admin.idle_hint_2": "。空欄はデプロイ既定（既定は無効）に従い、",
+  "admin.idle_hint_2": "。空欄はデプロイ既定（セッション 1h／ワークスペース 2h）に従い、",
   "admin.idle_hint_3": " で明示的に無効化します。",
+  // home の退避（AF_RUNTIME=ecs-ec2 のみ・ADR 0045 決定 13-2）。ここだけが「利用者の home を
+  // 自動で今の置き場から動かす」設定なので、可逆であることと初日が遅くなることを必ず書く。
+  "admin.hibernate_title": "使われない home の退避",
+  "admin.hibernate_after": "退避するまで",
+  "admin.hibernate_ph": "例 720h＝30日（空=デプロイ既定）",
+  "admin.hibernate_hint":
+    "この期間だれも開かなかった home は snapshot にして、ディスクを解放します。次に起動したときに戻すので失われるものはありませんが、その回の起動は少し長くなり、戻した直後の数時間はディスクが遅くなります。",
+  "admin.hibernate_warn":
+    "自動で行うのは退避までで、破棄はしません。書式は時間まで（日は 24h の倍数で書きます）。0 と書くとこのテナントでは退避しません。",
+  // home の予備（ADR 0045 決定 17）。AZ ごと失う話はこのランタイムにしか無いので、
+  // 「なぜ要るのか」を先に書く。RPO の語は使わず「どれだけ巻き戻ってよいか」で言う。
+  "admin.backup_title": "home の予備を取る",
+  "admin.backup_every": "取る間隔",
+  "admin.backup_ph": "例 24h（空=デプロイ既定）",
+  "admin.backup_hint":
+    "home は 1 つのアベイラビリティゾーンの中にあり、そのゾーンごと失われると home も失われます。予備はゾーンの外に置かれるので、そこから作り直せます。ここで決めるのは「最悪どれだけ巻き戻ってよいか」です。",
+  "admin.backup_warn":
+    "使用中のまま取るので、電源が落ちた直後と同じ状態の写しになります（起動時に自動では戻しません。戻すのは管理者の操作です）。0 と書くとこのテナントでは取りません。",
   "admin.term_log_title": "ターミナルログの保存",
   "admin.retention": "保持期間",
   "admin.retention_off": "無効（標準の短命履歴のみ）",
@@ -1285,6 +1497,27 @@ export const ja = {
   "admin.ws_disk_hint": "0 = 既定 20 GiB（無料枠）",
   "admin.ws_disk_warn": "作業ディスクは停止すると消えます。永続するのはホームだけです。",
   "admin.ws_cpu_vcpu": "= {n} vCPU",
+  "admin.ws_mem_req": "ワークスペースのメモリ（必要量）",
+  "admin.ws_slot_lands": "→ {type}（{spec}・専有）",
+  "admin.ws_slot_zero": "0 = 最小スロット（{type}）",
+  "admin.ws_slot_note": "スロットは 1 人で専有し、タスクに予約を掛けないので箱を丸ごと使えます。この値は箱を選ぶだけです。",
+  "tenant.machine_title": "既定のマシン種別",
+  "tenant.machine_note":
+    "このテナントのメンバーが、自分の指定を持たないときに載るマシンです。メンバー毎の指定はメンバー詳細から行い、そちらが優先されます。",
+  "tenant.machine_deploy_default": "デプロイの既定",
+  "tenant.machine_member_note":
+    "自分で種類を選んでいるメンバーは、ここを変えても影響を受けません。反映は各メンバーの次回起動時です。",
+  "admin.roster_spec": "{n} vCPU / {mem}",
+  "admin.roster_disk": "ディスク {n}GB",
+  "admin.ws_machine": "マシンの種類",
+  "admin.ws_machine_tenant_default": "テナントの既定",
+  "admin.ws_machine_arch_warn":
+    "この種類は CPU の系統が変わります。次回起動時に、ホーム内のこの系統向けでない導入物（各エージェント CLI・node・Chromium など）を入れ直します（数分）。~/repos 配下の node_modules / target / .venv は消えませんが、そのままでは動かないので各自で入れ直してください。",
+  "admin.ws_cpu_na": "このランタイムでは CPU を選べません（箱を丸ごと使うため）。",
+  "admin.ws_disk_home": "ワークスペースの home（永続）",
+  "admin.ws_disk_home_hint": "0 = デプロイ既定 {n} GiB。home の作成時にだけ反映され、あとから縮められません。",
+  "admin.ws_disk_quota_hint": "0 = 制限なし。表示用の目安で、強制はされません。",
+  "admin.ws_disk_work_hint": "0 = デプロイ既定 {n} GiB",
   "admin.limits_edit_title": "上限の設定",
   "admin.max_sessions_label": "最大セッション数",
   "admin.ws_memory": "ワークスペースのメモリ",
@@ -1310,8 +1543,6 @@ export const ja = {
   // とくに「招待できるドメイン」を「使えるドメイン」と読み違えると運用が壊れる。---
   "admin.login_rules": "ログイン規則",
   "admin.login_rules_note": "空欄 = 制限なし",
-  "admin.allowed_providers": "使えるサインイン方法",
-  "admin.allowed_providers_unit": "provider id をカンマ区切り。空 = 有効な全方式",
   "admin.auto_join_domains": "自動参加ドメイン",
   "admin.auto_join_domains_unit": "初回ログイン時にこのテナントへ自動で参加",
   "admin.invite_domains": "招待できるドメイン",
@@ -1321,23 +1552,34 @@ export const ja = {
     "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。",
   "admin.login_url": "このテナント専用のログイン URL:",
 
-  // --- 「使えるサインイン方法」に何が書けるか（docs/61 §61.11.8）。欄は自由入力で、
-  // 書ける値はデプロイの env にしか無かった。表示名を主に、打ち込む id は添える。---
-  "admin.providers_title": "このデプロイで使えるサインイン方法",
+  // --- デプロイの方式＝既定テナントの方式（docs/61 §61.17）。P7-0 で、テナントの
+  // サインイン方法の一覧に「デプロイ共通」の行として並ぶようになった。表示名を主に、
+  // id は <code> で添える（技術識別子を主役にしない）。---
   "admin.providers_none": "このデプロイにはサインイン方法が設定されていません（ログイン画面にボタンが出ません）。",
-  "admin.providers_hint":
-    "上の「使えるサインイン方法」には、この一覧の id をカンマ区切りで書きます。空欄ならすべて使えます。" +
-    "このテナント自身のサインイン方法（下の一覧）は、承認済みであれば t:テナント名:方法名 の形で同じ欄に書けます。",
+  // ★ 「0 件」と「読めなかった」を必ず別文言にする。以前は 403 を空配列に潰していて、
+  // 権限の無い相手に「設定されていません」と嘘を表示していた（docs/61 §61.17.9 ②）。
+  "admin.providers_unreadable": "サインイン方法の一覧を読み込めませんでした。権限が無いか、一時的に取得できていません。",
 
   // --- テナント定義の認証方式（docs/61 §61.11・P4）。子会社ごとに Entra が違う場合。
   // 作るのはテナント管理者、有効化はデプロイ管理者（決定 30）。この非対称が本体。---
-  "admin.idp_title": "このテナントのサインイン方法",
-  "admin.idp_note": "有効化にはデプロイ管理者の承認が必要",
+  "admin.idp_title": "このテナントで使えるサインイン方法",
+  "admin.idp_note": "自前の方式の有効化にはデプロイ管理者の承認が必要",
   "admin.idp_hint":
-    "自社の IdP（Entra / Okta / Keycloak など）や GitHub の組織を、このテナント専用のサインイン方法として登録できます。" +
+    "このテナントに入るのに使える方法の全部です。デプロイ共通の方式と、このテナント専用に登録した方式が並びます。" +
+    "自社の IdP（Entra / Okta / Keycloak など）や GitHub の組織は「サインイン方法を追加」から登録でき、" +
     "登録した時点では「承認待ち」で、デプロイ管理者が承認するまでログイン画面にボタンは出ず、サインインもできません。",
-  "admin.idp_none": "まだ登録されていません。",
+  "admin.idp_none": "このテナント専用の方式はまだありません（上のデプロイ共通の方式は使えます）。",
   "admin.idp_add": "サインイン方法を追加",
+  // --- 行ごとの 2 トグル（docs/61 §61.17.5）。DB は CSV 2 本のままで、画面だけが変わる。
+  // ★ 「出す」は「受け入れる」の従属 — 受け入れていない方式は ON にしても出ない。---
+  "admin.idp_accept": "受け入れる",
+  "admin.idp_show": "ボタンに出す",
+  "admin.idp_deployment_wide": "デプロイ共通",
+  "admin.idp_accept_last":
+    "最後の 1 つは外せません。すべて外すと「制限なし＝全部受け入れる」の意味になり、絞ったつもりで全開になります。",
+  "admin.idp_show_last":
+    "最後の 1 つは外せません。すべて隠すとボタンの無いログイン画面になるため、指定ごと無視されます。",
+  "admin.idp_show_needs_accept": "受け入れていないので、ログイン画面には出ません。",
   "admin.idp_approve": "承認して有効化",
   "admin.idp_suspend": "停止する",
   "admin.idp_reapply": "承認を申請する",
@@ -1387,25 +1629,36 @@ export const ja = {
   "admin.idp_repend_hint":
     "issuer / client_id / email の信頼方法・種類・同一アカウントの見分け方を変更したとき、または受け入れるドメイン・tid・GitHub 組織を追加したときは、" +
     "承認がやり直しになります（承認は「この発行元・この組織を、この範囲で信じてよい」に対して与えられたものなので）。",
-  "admin.hidden_providers": "ボタンを出さない方式",
-  "admin.hidden_providers_unit":
-    "カンマ区切り。受け入れたまま、このテナントのログイン画面にボタンだけ出しません。" +
-    "全部隠した場合は無視します（ボタンの無いログイン画面を作らないため）。",
-  "admin.hidden_providers_url_note":
-    "★ ボタンを隠しても、上の URL を付けない素のログイン画面にはデプロイ共通の方式が出続けます" +
-    "（そこはどのテナントの画面でもないため、隠すとどのテナントにも属さない人が入れなくなります）。" +
-    "隠す指定を活かすには、このテナントの人に上のサインイン URL を配ってください。",
+  // ★ P7-1（docs/61 §61.17.6）で「素の /login には効かない」の運用回避は消えた。
+  // 残すのは「隠した＝もう使えない」という誤読への一文だけ。
+  "admin.hidden_still_accepted_note":
+    "★ ボタンに出さない方式も、受け入れは続きます。その方式で入っている人（他テナントとの兼務など）は" +
+    "そのまま入れて、このテナントのログイン画面にボタンが出なくなるだけです。",
   "admin.allowed_providers_shared_note":
-    "★ ここを自テナントの方式だけに絞ると、他テナントの方式で入っている兼務の人は、このテナントに切り替えられなくなります" +
+    "★ 自テナントの方式だけに絞ると、他テナントの方式で入っている兼務の人は、このテナントに切り替えられなくなります" +
     "（同じアドレスでも、別の IdP のアカウントは別のログインとして扱われるため）。" +
-    "その人が使う方式は受け入れたまま、「ボタンを出さない方式」に書けば、このテナントのログイン画面には出ません。" +
+    "その人が使う方式は「受け入れる」のままにして「ボタンに出す」だけ外せば、このテナントのログイン画面には出ません。" +
     "受け入れても入れる人が増えるわけではありません — 誰がこのテナントに入れるかを決めるのは名簿です。",
+  "admin.login_rules_methods_moved":
+    "★ どのサインイン方法を受け入れるか・ログイン画面のボタンに出すかは、「サインイン方法」の面で行ごとに切り替えます。",
+  // ★ 停止の順序ガード（docs/61 §61.17.4）。拒否ではなく確認 — 停止は「漏れた IdP を
+  // 止める」手段でもあるので、常に始めるより速くあってよい。人数は CP の文言を出す。
+  "admin.idp_suspend_title": "{name} を停止する",
+  "admin.idp_suspend_body":
+    "先に、その人たちに別のサインイン方法を紐づけてもらってください（設定 → 個人設定 → アカウント）。" +
+    "停止したあとでは、本人が自分で足すことはできません — 紐づけにはサインインが必要で、そのサインインに使うのがこの方式だからです。",
+  "err.tenant_idp_link_claim_required":
+    "このデプロイには、同じ発行元のサインイン方法がすでにあります。この発行元はアプリ登録ごとに同じ人へ違う subject を割り当てるため、" +
+    "「同一アカウントの見分け方」を指定しないと、すでにこのデプロイを使っている人が全員ログインできなくなります（メールアドレス重複として拒否されます）。",
+  "admin.idp_suspend_members":
+    "この方式しか使ったことのない現役メンバーが {n} 人います。停止するとその人たちが締め出されます。",
   "admin.idp_delete_title": "{name} を削除する",
   "admin.idp_delete_body":
     "このサインイン方法を削除します。この方式で入っていた人はサインインできなくなりますが、" +
     "ワークスペース・home・保存済みの認証情報は残ります。",
   "admin.idp_register": "テナント定義のサインイン方法",
   "admin.idp_pending_count": "承認待ち {n} 件",
+  "admin.idp_register_none": "テナントが定義したサインイン方法はまだありません。",
   "admin.idp_register_hint":
     "各テナントが登録した IdP の一覧です。承認は一度きりの点検ですが、IdP 側の設定（セルフサインアップの有効化など）は承認後にも変わり得ます。" +
     "承認済みのものもここに残るので、定期的に issuer と受け入れドメインを見直してください。承認・停止はこの一覧から行えます。",
@@ -1422,14 +1675,46 @@ export const ja = {
   // パネル本体の文言は admin.* のまま（キー改名は移設と別に行う）。---
   "tenant.title": "テナント設定",
   "tenant.back": "テナント設定一覧",
+  "tenant.group_tenant": "テナント",
+  "tenant.tab_limits": "上限・自動停止",
   "tenant.group_login": "ログイン",
   "tenant.tab_signin": "サインイン方式",
   "tenant.tab_rules": "ログイン規則",
+  "tenant.tab_network": "接続元の制限",
+  "tenant.net_title": "接続元ネットワーク",
+  "tenant.net_on": "制限あり",
+  "tenant.net_off": "制限なし",
+  "tenant.net_allowed": "許可するネットワーク",
+  "tenant.net_allowed_unit": "CIDR か単独アドレスをカンマ区切りで（IPv4/IPv6）。空 = 制限なし。",
+  "tenant.net_your_ip": "このデプロイから見えているあなたのアドレス",
+  "tenant.net_your_ip_unit": "規則はこの値と照合されます（ブラウザが自分で思っているアドレスではありません）。",
+  "tenant.net_ip_unknown": "判定できません",
+  "tenant.net_ip_unknown_hint": "この要求の送信元をコントロールプレーンが特定できないため、規則を適用できません。AF_TRUSTED_PROXY_HOPS の設定を運用者に確認してください。",
+  "tenant.net_proxy_not_configured": "コントロールプレーンの手前にプロキシがありますが、デプロイがそれを申告していません（AF_TRUSTED_PROXY_HOPS）。このままだと全員がそのプロキシから来ているように見えるため、保存を止めています——絞ったつもりで全員を通す設定になってしまいます。運用者に連絡してください。",
+  "tenant.net_scope_hint": "制限されるのはテナントの「利用」で、サイトへの到達ではありません。ログイン画面はどこからでも開けますしサインインも通りますが、一覧に無いネットワークからはこのテナントの中身を開けません。",
+  "tenant.net_exempt_hint": "対象外: MCP と内蔵 Git です（本人のワークスペースの中から呼ばれるので、人がどこにいるかを表しません）。これらを止めるにはメンバーシップを無効化してください。デプロイ管理者はこの規則の対象外で、設定を間違えても必ず戻せます。",
+  "tenant.net_layers_hint": "これはアクセス制限であってネットワーク防御ではありません（要求はコントロールプレーンまで届き、セッションを検証したあとで拒否されます）。届く前に止めるには、運用者がロードバランサ側で絞ります。",
+  // 連携（docs/71）— 外部サービス側にテナントが用意した資格情報の登録。
+  "tenant.group_integrations": "連携",
+  "tenant.tab_git_oauth": "git プロバイダ OAuth",
+  "tenant.git_oauth_intro": "メンバーの「接続」タブに出る GitHub / Bitbucket の「OAuth で接続」が、どの OAuth アプリを使うかを決めます。アプリは各社の GitHub org / Bitbucket ワークスペースに作るものなので、登録するのはテナント管理者です。保存した時点で有効になります（承認は要りません）。",
+  "tenant.git_oauth_optional": "未登録でも接続はできます（メンバーがトークンを貼り付ける方式）。ここに登録すると、そのプロバイダに「OAuth で接続」が出るようになります。",
+  "tenant.git_oauth_on": "登録済み",
+  "tenant.git_oauth_off": "未登録",
+  "tenant.git_oauth_client_id": "client_id（Bitbucket は Key）",
+  "tenant.git_oauth_client_secret": "client_secret（Bitbucket は Secret）",
+  "tenant.git_oauth_secret_kept": "保存済み（空のままなら変更しません）",
+  "tenant.git_oauth_secret_unit": "保存時に暗号化され、二度と表示されません。変更するときだけ入力してください。",
+  "tenant.git_oauth_redirect": "プロバイダ側のアプリ登録に、このコールバック URL を設定してください:",
+  "tenant.git_oauth_no_base_url": "このデプロイには PUBLIC_BASE_URL が設定されていないため、Bitbucket に登録するコールバック URL を組み立てられません。登録しても「OAuth で接続」は失敗します（コードグラントの戻り先が無いため）。運用者に PUBLIC_BASE_URL の設定を依頼してください。",
+  "tenant.git_oauth_gh_device": "GitHub はデバイスフローを使うため secret もコールバックも不要です。ただしアプリ側で「Enable Device Flow」を有効にしてください（無効だと接続開始で失敗します）。",
+  "tenant.git_oauth_where": "アプリの登録先:",
+  "tenant.git_oauth_remove": "登録を削除",
   "tenant.summary_note": "テナント全体の上限を決めるのはデプロイ管理者です",
   "tenant.group_manage": "運用",
   "tenant.tab_members": "メンバー",
   "tenant.tab_sessions": "セッション",
-  "tenant.tab_usage": "使用量",
+  "tenant.tab_usage": "稼働時間",
   "tenant.tab_audit": "監査",
   "tenant.tab_mcp": "MCP 配布",
   "tenant.picker": "テナント",
@@ -1440,7 +1725,6 @@ export const ja = {
     "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。" +
     "これらの規則そのものを変えるには、デプロイ管理者に依頼してください。",
   "tenant.rules_unset": "未設定（制限なし）",
-  "tenant.rules_providers_note": "このテナントで使えるサインイン方法。未設定なら有効な方式すべてが使えます。",
   "tenant.rules_autojoin_note": "このドメインのメールアドレスの人は、初回ログインでこのテナントに参加します。",
   "tenant.rules_invite_note": "メンバーを追加するときだけ効くガードです。既にメンバーの人には影響しません。",
 
@@ -1512,6 +1796,9 @@ export const ja = {
   "keys.palette.empty": "該当なし",
   "keys.palette.mode_command": "コマンド",
   "keys.palette.mode_changed": "変更ファイル",
+  "keys.palette.mode_session": "このセッションの変更",
+  "keys.palette.placeholder_session": "このセッションが直したファイルを検索…",
+  "keys.palette.session_empty": "このセッションはまだファイルを変更していません",
   "keys.palette.mode_file": "ファイル",
   "keys.palette.mode_hint": "Tab / Ctrl+P で切替",
   "keys.palette.changed_loading": "読み込み中…",
@@ -1603,6 +1890,12 @@ export const ja = {
   "state.plan": "プランあり",
   "state.permission": "許可待ち",
   "state.blocked": "上限で停止 — 操作が必要",
+  // 利用上限のリセット待ち（docs/47 §4-9）。blocked と違い人の操作は要らないので、
+  // 「操作が必要」とは言わずに、いつ動くか（予約済みの自動再開時刻）だけを添える。
+  // 支出・残高の上限（docs/47 §4-10）。待っても解けないので「制限解除待ち」とは別物にする。
+  "state.spend_limit": "残高上限 — 増枠が必要",
+  "state.rate_limited": "制限解除待ち",
+  "state.rate_limited_at": "制限解除待ち · {at}",
   "state.auth_expired": "認証切れ — 再認証が必要",
   "state.idle_bg": "入力待ち · BG実行中",
   "state.idle": "入力待ち",
@@ -1641,12 +1934,20 @@ export const ja = {
   "wsbar.state.stopping": "停止中…",
   "wsbar.state.recreating": "再作成中…",
   "wsbar.state.unknown": "不明",
+  "wsbar.state.no_tenant": "未所属",
   // 起動中ダイアログ（WsStartingDialog・docs/35 §35.9-9）
   "wsstart.title": "ワークスペースを起動中",
-  "wsstart.generic": "起動しています…（初回はエージェント CLI の導入で数分かかることがあります）",
+  "wsstart.generic": "起動しています…",
+  "wsstart.blocked": "起動できません。このまま待っても進みません",
   "wsstart.installing_clis": "エージェント CLI を導入中…（初回のみ・数分かかることがあります）",
   "wsstart.fetching_tool": "追加ツールを取得中…",
   "wsstart.toolchain": "ツールチェーンを導入中…",
+  "wsstart.slot_creating": "実行するマシンを用意しています…（新しく起動するので数分かかります）",
+  "wsstart.slot_waking": "マシンを起こしています…",
+  "wsstart.slot_booting": "マシンの起動を待っています…",
+  "wsstart.home_creating": "home のディスクを作成しています…（初回のみ）",
+  "wsstart.home_restoring": "退避してあった home を復元しています…",
+  "wsstart.home_attaching": "home のディスクを接続しています…",
   "wsstart.hint": "進捗は agent.log にも記録されます。このダイアログは閉じても起動は続きます。",
   // 使用状況チップ／ドロップダウン（UsageChip / UsageRow / USAGE_SOURCES）
   "wsbar.usage.title": "{name} 使用状況（5時間 / 週次）",
@@ -1692,6 +1993,11 @@ export const ja = {
   "wsbar.state_title.starting":
     "起動中（初回はイメージ取得のため数分かかることがあります。完了すると自動で稼働中になります）",
   "wsbar.state_title.other": "状態: {state}",
+  "wsbar.state_title.no_tenant":
+    "どのテナントにも所属していないため、ワークスペースがまだありません。管理者に追加を依頼してください。",
+  "wsbar.state_title.no_tenant_admin":
+    "どのテナントにも所属していないため、ワークスペースがまだありません。管理 → テナント一覧 から、自分をメンバーとして追加してください。",
+  "wsbar.start_failed": "ワークスペースを起動できませんでした",
   // 「はじめる」／分割／全て閉じる
   "wsbar.start_here": "はじめる",
   "wsbar.start_here.running": "はじめる（チャット / リポジトリ / クローン / shell）",
@@ -1791,6 +2097,8 @@ export const ja = {
   "wsbar.confirm.start.go": "起動する",
   "wsbar.confirm.stop.body":
     "コンテナを停止します。実行中のセッションは停止（あとで再開可）になり、opencode web / プレビューは切断されます。ファイルは保持されます。",
+  "wsbar.confirm.stop.starting_body":
+    "起動を取りやめて停止します。まだ上がっていないので、失われるものはありません。ファイルは保持されます。",
   "wsbar.confirm.stop.go": "停止する",
   "wsbar.confirm.restart.title": "ワークスペースを再起動",
   "wsbar.confirm.restart.body":
@@ -1830,6 +2138,10 @@ export const ja = {
   "topbar.admin": "管理",
   "topbar.logout": "ログアウト",
   "topbar.build": "ビルド {label}",
+  "topbar.server_version": "サーバー v{v}",
+  "topbar.image_cp": "CP イメージ {ref}",
+  "topbar.image_ws": "WS イメージ {ref}",
+  "topbar.copy_version": "バージョン情報をコピー",
   "topbar.host_version": "Agent Fleet v{v}",
   "topbar.update_ready": "更新あり · v{v} を再起動で適用",
   "topbar.update_badge": "更新",
@@ -2012,6 +2324,7 @@ export const ja = {
   // 履歴ロード
   "mirror.load_earlier": "以前の会話を読み込む",
   "mirror.jump_latest": "最新へ",
+  "mirror.jump_reply_top": "返信を頭から",
   "mirror.ws_stopped_history": "ワークスペースが停止しています。上部の Start で起動すると履歴を表示できます。",
   "mirror.no_history": "この会話に表示できる履歴はありません。",
   "mirror.no_conversation":
@@ -2071,6 +2384,18 @@ export const ja = {
   "mirror.prev_input": "前の入力",
   "mirror.next_input": "次の入力",
   "mirror.todo_dismiss": "このToDoリストを消す",
+  "mirror.files.title": "変更ファイル",
+  "mirror.files.st_unstaged": "未ステージ",
+  "mirror.files.st_staged": "ステージ済",
+  "mirror.files.st_clean": "差分なし",
+  "mirror.files.st_committed": "コミット済み",
+  "mirror.files.st_outside": "作業コピー外",
+  "mirror.files.sort_recent": "新しい順",
+  "mirror.files.sort_path": "パス順",
+  "mirror.files.sort_to_path": "パス順に並べ替える",
+  "mirror.files.sort_to_recent": "新しい順に並べ替える",
+  "mirror.files.open_scm": "ソース管理を開く",
+  "mirror.files.sidechain": "サブエージェントだけが編集しました",
   "mirror.attach_file": "ファイルを添付（ドラッグ&ドロップも可）",
   "mirror.ph_plan_wait": "プラン承認待ち：上のカードで承認 / 却下してください",
   "mirror.ph_perm_wait": "許可待ち：上のカードで応答してください",
@@ -2113,6 +2438,15 @@ export const ja = {
   "mirror.queued": "キュー済み",
   "mirror.pending_title": "送信済み。claude が処理を始めると反映されます",
   "mirror.pending": "反映待ち",
+  "mirror.mark.pill": "マーカーを引く",
+  "mirror.mark.strip_title": "マーカー",
+  "mirror.mark.strip_authors": "{n}人",
+  "mirror.mark.paint": "{color}のマーカーを引く",
+  "mirror.mark.remove": "マーカーを消す",
+  "mirror.mark.color.yellow": "黄",
+  "mirror.mark.color.green": "緑",
+  "mirror.mark.color.blue": "青",
+  "mirror.mark.color.pink": "桃",
   "mirror.fork_at": "ここから分岐",
   "mirror.fork_at_title": "この発言の直前から新しいセッションを始める",
   "mirror.fork_at_intro":
@@ -2145,6 +2479,16 @@ export const ja = {
   "mirror.from_peer_named": "{name} から",
   "mirror.from_peer_title":
     "同じワークスペースの別のセッションが送ったメッセージです。あなたもアシスタントも入力していません。エージェントには「利用者の指示ではない」と伝えてあり、これを根拠に権限設定や設定ファイルを変えることはしません。",
+  "mirror.peer_intent.request": "依頼",
+  "mirror.peer_intent.question": "質問",
+  "mirror.peer_intent.answer": "回答",
+  "mirror.peer_intent.notice": "共有",
+  "mirror.peer_intent_title.request":
+    "このセッションに行動を求めるメッセージです。送信側には「返事はできないときだけ来る」と伝えてあります（返事が無い＝やった、です）。",
+  "mirror.peer_intent_title.question": "情報を求めるメッセージです。結論だけが1通返ります。",
+  "mirror.peer_intent_title.answer":
+    "このセッションが送った質問への返答です。ここで打ち切りで、返信は送りません。",
+  "mirror.peer_intent_title.notice": "知らせるだけのメッセージです。返信はしません。",
   "mirror.effort_hint": "推論の努力度（codex reasoning_effort / opencode variant）",
   "mirror.token_hint": "入力(文脈)↑ / 出力↓ トークン",
   "mirror.time_span_hint": "開始 {start} — 完了 {end}",
@@ -2569,6 +2913,7 @@ export const ja = {
   // === P2 セッション行（features/sessions/SessionRow.tsx）===
   "srow.id_copied": "IDをコピーしました: {name}",
   "srow.cant_resume": "作業フォルダが存在しないため再開できません",
+  "srow.resume_failed": "セッションを再開できませんでした。しばらく待ってからもう一度お試しください",
   "srow.history_only": "フォルダ無し — 履歴のみ閲覧可（再開不可 / クリックで開く）",
   "srow.stopped_hint": "停止中（クリックで履歴を閲覧 / Ctrl・中クリックで新ペイン）",
   "srow.open_pane_suffix": "（Ctrl/中クリックで新ペインに開く）",
@@ -2579,6 +2924,7 @@ export const ja = {
   "srow.resume": "再開する",
   "srow.relogin_resume": "再ログインして再開",
   "srow.stop": "停止する（あとで再開できる）",
+  "srow.changed_files": "変更ファイル",
   "srow.open_remote": "リモートセッションを開く",
   "srow.copy_id": "ID（{name}）をコピー",
   "srow.rename": "タイトルを変更",
@@ -3070,6 +3416,7 @@ export const ja = {
   "onb.paste_confirm": "貼り付け",
   // ターミナルのグリッドへ直接書く切断通知（term.ts）
   "onb.term_disconnected": "[切断されました]",
+  "onb.term_session_stopped": "[このセッションは停止中です — 右下の「再開」で再開できます]",
 
   // === P5 プロジェクト（ProjectTree/FilesSection/FilesChanges/RepoNode ほか） ===
   "pj.st_untracked": "未追跡",
@@ -3140,6 +3487,7 @@ export const ja = {
   "rp.launch_failed": "起動に失敗: {err}",
   "rp.image_upload_failed": "画像のアップロードに失敗しました: {err}",
   "rp.image_upload_failed_network": "画像のアップロードに失敗しました（通信エラー）",
+  "rp.first_prompt_failed": "セッションは起動しましたが、最初の指示を渡せませんでした: {err}",
   "rp.filter_branches": "フィルタ（ブランチ名 / コミット）",
   "rp.loading": "読み込み中…",
   "rp.no_branches": "該当するブランチがありません",
@@ -3369,6 +3717,9 @@ export const ja = {
   "usage.metric_cread": "キャッシュ読取",
   "usage.metric_cost": "API換算相当額",
   "usage.reload": "再取得",
+  "usage.folding": "取り込み中",
+  "usage.folding_hint":
+    "セッション本体の消費を転写から台帳へ取り込んでいます。終わり次第この画面が自動で更新されるので、再取得を押し直す必要はありません。",
   "usage.filters": "絞り込み:",
   "usage.filter_remove": "この絞り込みを外す",
   "usage.filter_clear": "すべて解除",
@@ -3570,6 +3921,7 @@ export const ja = {
   "view.open_in_pane_at_line": "{path}:{line} を別ペインで開く",
   "view.open_in_pane": "{path} を別ペインで開く",
   "view.open_in_pane_aria": "{label}を別ペインで開く",
+  "view.reveal_in_files": "{path} をファイル一覧で表示",
   "view.cannot_resolve_link": "リンク先を解決できません: {href}",
   "view.cannot_load": "読み込めません",
   "view.lines_meta": " · {n} 行",
@@ -3581,6 +3933,12 @@ export const ja = {
   "view.slides": "スライド",
   "view.preview": "プレビュー",
   "view.source": "ソース",
+  "view.diagram": "図",
+  "view.diagram_display_mode": "図の表示モード",
+  "view.diagram_page": " · {page} / {pages} ページ",
+  "view.drawio.unreadable": "この図は読み込めませんでした（drawio の図として解釈できません）。",
+  "view.drawio.empty": "図が空です。",
+  "view.drawio.viewer_unavailable": "図のビューアを読み込めませんでした。ページを再読み込みしてください。",
   "view.markdown_display_mode": "Markdown表示モード",
   "view.image_display_mode": "画像表示モード",
   "view.open_reader_tip": "朗読ビューで開く（順次読み上げ＋縦書き閲覧）",
@@ -3847,6 +4205,7 @@ export const ja = {
   "share.proposal_placeholder": "所有者へ送信内容を提案…",
   "share.propose": "所有者へ提案",
   "share.owner_approval_note": "所有者が内容を確認して承認するまで、Agentには送信されません。",
+  "share.handoff_intro": "このセッションが次のセッションへ渡す初回プロンプトとして提案した内容です。編集と起動ができるのは共有元だけです。",
   "share.proposal_failed": "提案を送信できませんでした",
   "share.proposal_sent": "所有者へ提案しました",
   "share.pending": "承認待ち {count}件",
@@ -3872,5 +4231,6 @@ export const ja = {
   "share.unshare": "解除",
   "share.save_failed": "共有設定を保存できませんでした",
   "share.exposure_warning": "会話全文（プロンプト、Agentの回答、ツール出力）を共有します。会話内の秘密情報は自動検出できません。共有先は表示内容を保存でき、共有解除後も相手側のコピーは回収できません。RWの入力は所有者承認後にだけAgentへ送信されます。",
+  "share.marks_warning": "会話に引いたマーカーも共有されます。RWの共有先は自分でもマーカーを引けます（これは承認を経ずに反映されます — Agentには届かないため）。作成者のログインIDは、あなたにも他の共有先にも表示されます。",
 
 };

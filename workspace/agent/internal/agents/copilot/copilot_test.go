@@ -5,6 +5,7 @@ package copilot
 // live 状態分類。fixture のイベント形は v1.0.73 実測（docs/36）。
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -227,5 +228,39 @@ func TestParseModelPicker(t *testing.T) {
 	// 会話文などの混入行は id 形でないため拾わない。
 	if got := parseModelPicker("   Model\n   run echo and tell me\n ❯  Search models…"); len(got) != 0 {
 		t.Errorf("prose row leaked into catalog: %+v", got)
+	}
+}
+
+// docs/68: events.jsonl から「編集したファイル」を拾えること。`edit` の形は実測
+// （~/.copilot/session-state/*/events.jsonl に {"path","old_str","new_str"} で残っていた）。
+func TestToolEditsPicksEditFamilyOnly(t *testing.T) {
+	cases := []struct {
+		name     string
+		tool     string
+		args     string
+		wantFile string
+		wantOld  string
+	}{
+		{"edit（実測の形）", "edit", `{"path":"/a.tsx","old_str":"import x","new_str":"import y"}`, "/a.tsx", "import x"},
+		{"create は全追加", "create", `{"path":"/new.ts","content":"hello"}`, "/new.ts", ""},
+		// ⚠️ view を拾うと、読んだだけのファイルが「変更ファイル」に並ぶ。
+		{"view は拾わない", "view", `{"path":"/a.tsx"}`, "", ""},
+		{"bash は拾わない", "bash", `{"command":"rm /a.tsx"}`, "", ""},
+		{"grep は拾わない", "grep", `{"path":"/a.tsx","pattern":"x"}`, "", ""},
+		{"知らない名前は拾わない", "frobnicate", `{"path":"/a.tsx","content":"x"}`, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			file, _, edits := toolEdits(c.tool, json.RawMessage(c.args))
+			if file != c.wantFile {
+				t.Fatalf("toolEdits file = %q, want %q", file, c.wantFile)
+			}
+			if c.wantFile == "" {
+				return
+			}
+			if len(edits) != 1 || edits[0].Old != c.wantOld {
+				t.Fatalf("edits = %+v, want Old=%q", edits, c.wantOld)
+			}
+		})
 	}
 }

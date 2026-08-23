@@ -45,17 +45,18 @@ function taskIcon(status: string): string {
   return "circle-large-outline";
 }
 
-// Small localStorage accessors for the ToDo panel's per-session UI state (open/dismissed).
+// Small localStorage accessors for the per-session UI state of the strips that sit under
+// the mirror's head (the ToDo panel's open/dismissed, the changed-files panel's open).
 // Errors (private mode, quota) are swallowed — the state just won't persist. Mirrors the
 // swallow-and-continue pattern in lib/draft.ts.
-function readLS(key: string): string | null {
+export function readLS(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
     return null;
   }
 }
-function writeLS(key: string, value: string): void {
+export function writeLS(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
   } catch {
@@ -379,21 +380,28 @@ export function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) 
 // WorkDisclosure appears only once a response is complete and a final text exists after
 // tool activity. It therefore mounts at the completion boundary: users following the tail
 // get a closed summary, while someone who scrolled up to read the process keeps it open.
+//
+// Deliberately CONTROLLED (open/onToggle) rather than holding its own state off a
+// defaultOpen: the disclosure comes and goes with workSplit — a tool arriving after the
+// final text moves the boundary and makes the split vanish for a poll or two — and local
+// state would be destroyed on every such unmount, re-deciding the fold from whatever the
+// follow flag happens to be. The owner (TranscriptTurn) outlives that and keeps the choice.
 export function WorkDisclosure({
   tools,
   responses,
-  defaultOpen,
+  open,
+  onToggle,
   children,
 }: {
   tools: number;
   responses: number;
-  defaultOpen: boolean;
+  open: boolean;
+  onToggle: () => void;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
   return (
     <section className={"mt-work mirror-disclosure" + (open ? " open" : "")}>
-      <button type="button" className="mt-work-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <button type="button" className="mt-work-head" aria-expanded={open} onClick={onToggle}>
         <Icon name={open ? "chevron-down" : "chevron-right"} />
         <span className="mt-work-title">{tr("chat.work_process")}</span>
         <span className="mt-work-count muted">
@@ -761,8 +769,10 @@ export function OptionBody({ o }: { o: QuestionOption }) {
 // then stack in ONE column instead of the usual ~220px auto-fit grid.
 export const hasPreview = (qs: Question[]) => qs.some((q) => (q.options || []).some((o) => previewBody(o.preview) !== ""));
 
-// QuestionBlock renders an already-answered AskUserQuestion from the transcript:
-// header + prompt + options, inert, with the chosen option highlighted.
+// QuestionBlock renders an AskUserQuestion from the transcript: header + prompt +
+// options, inert, with the chosen option highlighted once `answered` says the answer is
+// here. It is NOT answered merely by being in the transcript — claude writes the tool_use
+// at ASK time, so an open (or abandoned) question can be in there too.
 export function QuestionBlock({
   questions,
   answered,
@@ -908,6 +918,11 @@ export function PlanBlock({
   const kind = planOutcome(outcome, !!forceRejected);
   const approved = kind === "approved";
   const rejected = kind === "rejected";
+  // 決着のバッジを出す条件。answered = tool_result が来た（＝転写に出ているだけでは
+  // 決着ではない。claude は ASK 時点で tool_use を書く）。楽観 却下 マークはそれより
+  // 先に付くので、承認待ちでない限りこれも決着として数える — でないと押した瞬間に
+  // バッジが消え、tool_result が来るまで宙に浮く。
+  const decided = !!answered || (!pending && !!forceRejected);
   // レビュー面（doc ペイン）で溜めたコメント。承認待ちに限らず引く — 却下したあとでも
   // 追加の指摘を送れるようにするため（plan モードのまま入力待ちに戻るので、そのときは
   // 普通の発話として届く）。
@@ -919,12 +934,12 @@ export function PlanBlock({
   const [expanded, setExpanded] = useState(false);
   const inline = !onOpen && !!plan;
   return (
-    <div className={"mt-plan" + (answered ? " decided" : "")}>
+    <div className={"mt-plan" + (decided ? " decided" : "")}>
       <div className="mt-plan-head">
         <Icon name="checklist" />
         <span className="mt-plan-title">{planTitle(plan)}</span>
         {pending && <span className="mt-plan-badge">{tr("mirror.approval_pending")}</span>}
-        {answered && (
+        {decided && (
           <span className={"mt-plan-badge" + (approved ? " ok" : rejected ? " no" : "")}>
             {approved ? tr("mirror.approved") : rejected ? tr("mirror.rejected") : tr("mirror.decided")}
           </span>

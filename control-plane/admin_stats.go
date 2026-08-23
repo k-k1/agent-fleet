@@ -59,6 +59,20 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := containerStats(r.Context(), ws.ContainerName)
+	// ⚠️ containerStats reads the host's cgroup through `docker inspect`, so on every
+	// ECS profile (no docker binary in the CP task) it answers running:false for a
+	// workspace that is plainly up — and the Console disables "force stop" on exactly
+	// that field, which made the button permanently unusable there (docs/64 §64.27).
+	// Ask the runtime whenever the docker read says "not running": on docker the two
+	// agree, and everywhere else this is the only source that knows.
+	if out["running"] != true {
+		switch a.mgr.runtimeFor(ws, "").State(r.Context()) {
+		case "running":
+			out["running"] = true
+		case "starting":
+			out["starting"] = true
+		}
+	}
 	if used, ok := dirDiskUsage(r.Context(), a.mgr.rootedDataDir(ws)); ok {
 		out["disk_used"] = used
 	}

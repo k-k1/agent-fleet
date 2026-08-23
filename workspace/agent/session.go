@@ -33,6 +33,18 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,
 		BackgroundBusy: li.BackgroundBusy, Context: li.Context, Locked: m.Locked, Archived: m.Archived,
 	}
+	// 上限で切れたターンの後始末が済んだ claude（メニューは自動解除済み／モデル別上限は
+	// そもそもメニューを出さない）はペインが待機プロンプトに戻るので、ここまでの状態は
+	// idle＝入力待ちになる。リセットを待っているだけなのに正常終了と見分けが付かない
+	// ので、開いているエピソードがある間は 制限解除待ち として名乗る（docs/47 §4-9）。
+	// WireLive ではなくここで見るのはエピソードの持ち主が package main だからで、
+	// driveState（チャット／ミラーのチップ）にも同じ読み替えが要る。
+	if alive && s.State == "idle" && normalizeKind(m.Kind) == session.KindClaude {
+		if state, at, waiting := rateLimitWaiting(m, time.Now()); waiting {
+			s.State = state
+			s.RateLimitResumeAt = at
+		}
+	}
 	// For a stopped session, surface WHY it ended (crash / OOM) if the pane recorder
 	// captured a cause. A clean quit (exited) or a deliberate stop (empty reason) leaves
 	// the fields unset so the row shows the plain 停止中 chip.

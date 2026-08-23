@@ -37,6 +37,35 @@ type Runtime interface {
 	Name() string                     // container / display name
 }
 
+// runtimeDestroyer tears down everything a Workspace owns that OUTLIVES its container:
+// the home data, and on the cloud adapters the per-membership resources the CP created
+// along the way (ECS service, EFS access points, SSM parameters, EBS volume, snapshot).
+//
+// It is a separate port from Runtime on purpose — `Destroy` is irreversible and must not
+// be reachable from a Runtime value by accident. Every adapter implements it (ADR 0045
+// 決定 13-3): a delete button that works on one deployment profile and silently does
+// nothing on another is worse than no button.
+//
+// The []string return is NOT an error channel — it lists resources this adapter KNOWS it
+// could not remove, so the caller can put them in the audit log instead of letting the
+// operator believe the data is gone. Today that is only the Fargate adapter's EFS
+// directories: an access point can be deleted from the API, but the directory it pointed
+// at cannot (docs/64 §64.18.4), and EFS keeps billing for it.
+type runtimeDestroyer interface {
+	Destroy(context.Context) ([]string, error)
+}
+
+// destroyRuntime runs the adapter's teardown. The "does not support" error is unreachable
+// with the four adapters in tree and exists so a future adapter fails loudly rather than
+// leaking resources quietly.
+func destroyRuntime(ctx context.Context, rt Runtime) ([]string, error) {
+	d, ok := rt.(runtimeDestroyer)
+	if !ok {
+		return nil, fmt.Errorf("runtime %T does not support destroy", rt)
+	}
+	return d.Destroy(ctx)
+}
+
 // runtimeOperationFencer is implemented by adapters whose lifecycle resource is
 // local to the CP host and needs an OS-level fence in addition to the DB lease.
 // nativeRuntime uses flock so a paused/expired CP cannot overlap a new holder.
@@ -73,6 +102,15 @@ func (m *manager) acquireWorkspaceOperationFence(ctx context.Context, workspaceI
 // the same contract. This assertion fails the build if either drifts.
 var _ Runtime = (*dockerRuntime)(nil)
 
+// Every adapter destroys (ADR 0045 決定 13-3). Asserted here rather than next to each
+// adapter so a new one cannot be added without meeting this list.
+var (
+	_ runtimeDestroyer = (*dockerRuntime)(nil)
+	_ runtimeDestroyer = (*nativeRuntime)(nil)
+	_ runtimeDestroyer = (*ecsRuntime)(nil)
+	_ runtimeDestroyer = (*ecsEC2Runtime)(nil)
+)
+
 // RuntimeFactory is the single construction seam for the Runtime port. Every call
 // site (handlers, manager, reaper, admin, mcp) builds its Runtime through the
 // factory rather than instantiating a concrete adapter, so swapping the local
@@ -89,13 +127,26 @@ type RuntimeFactory interface {
 
 var _ RuntimeFactory = (*dockerFactory)(nil)
 
+// runtimeDocsMounter marks the adapters that hand the container its role-scoped docs by
+// bind-mounting <dataDir>/docs (docker, native). The start path stages that directory
+// only for them; an adapter without a host seam — ECS — leaves it alone, and its
+// container pulls the same subset over the CP's /internal/docs (docs_bridge.go).
+type runtimeDocsMounter interface{ mountsStagedDocs() }
+
 // newRuntimeFactory selects the Runtime adapter by deployment profile (AF_RUNTIME):
 // "" / "local" / "docker" → Docker Engine (compose, the on-prem default); "ecs" /
-// "aws" → AWS ECS (P3-7); "native" / "wsl" → containerless host processes for
+// "aws" → AWS ECS on Fargate (P3-7); "ecs-ec2" → the same ECS substrate on the EC2
+// launch type with a pool of slots and a persistent per-user EBS home (docs/64,
+// ADR 0045 決定 10); "native" / "wsl" → containerless host processes for
 // Docker-less WSL2 / dev hosts (single-user only; docs/34). Unknown profiles fail
 // fast at boot rather than silently defaulting to Docker. The docker factory
 // captures the manager's template fields by value, so it MUST be built after
 // those fields are finalized (e.g. extraEnv appends in main.go).
+//
+// ecs and ecs-ec2 are separate profiles ON PURPOSE (ADR 0045 決定 10-1): the EC2 pool
+// trades a proven, two-resource Fargate workspace for a six-resource one on a
+// substrate with no production mileage, so a deployment must opt in and can fall back
+// by editing this one value — not by reverting code.
 func newRuntimeFactory(profile string, m *manager) (RuntimeFactory, error) {
 	switch profile {
 	case "", "local", "docker":
@@ -109,9 +160,11 @@ func newRuntimeFactory(profile string, m *manager) (RuntimeFactory, error) {
 		}, nil
 	case "ecs", "aws":
 		return newECSFactory(m)
+	case "ecs-ec2":
+		return newECSEC2Factory(m)
 	case "native", "wsl":
 		return newNativeFactory(m)
 	default:
-		return nil, fmt.Errorf("unknown AF_RUNTIME profile %q (want local|ecs|native)", profile)
+		return nil, fmt.Errorf("unknown AF_RUNTIME profile %q (want local|ecs|ecs-ec2|native)", profile)
 	}
 }

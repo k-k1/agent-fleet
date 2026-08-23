@@ -65,6 +65,26 @@ type oidcEndpoints struct {
 	Authorize string `json:"authorization_endpoint"`
 	Token     string `json:"token_endpoint"`
 	Userinfo  string `json:"userinfo_endpoint"`
+	// SubjectTypes is `subject_types_supported`. Nothing in the login flow reads it —
+	// it is here for the admin API, which asks one question before a tenant registers
+	// a SECOND app registration of a directory it already has: does this issuer hand
+	// the same person a different `sub` per client (docs/61 §61.17.4 (b))?
+	// Measured 2026-08-20: Google ["public"], Entra /common ["pairwise"].
+	SubjectTypes []string `json:"subject_types_supported"`
+}
+
+// pairwiseSubjects reports an issuer that mints a per-client `sub`, i.e. one where
+// two app registrations make the same person look like two people.
+//
+// ★ Read from discovery, never guessed from the issuer's hostname: "microsoftonline"
+// is not a rule, it is a coincidence that holds until the next IdP.
+func (ep oidcEndpoints) pairwiseSubjects() bool {
+	for _, t := range ep.SubjectTypes {
+		if strings.EqualFold(strings.TrimSpace(t), "pairwise") {
+			return true
+		}
+	}
+	return false
 }
 
 type oidcProvider struct {

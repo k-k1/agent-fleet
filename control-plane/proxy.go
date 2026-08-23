@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -110,6 +111,7 @@ func newAgentProxyAPI(m *manager) agentProxyAPI { return agentProxyAPI{memberAut
 // `..` reach Agent endpoints outside the CP's explicit route allowlist (and skip the
 // route-level audit classification).
 var agentRelayClient = &http.Client{
+	Transport:     newAgentTransport(),
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
@@ -169,6 +171,14 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 
 	resp, err := agentRelayClient.Do(req)
 	if err != nil {
+		// TEMP DIAGNOSTIC (2026-08-19): a long-blocking agent-CLI login complete
+		// (Claude ~40s, agy ~60s) has been observed failing here with the caller
+		// having already gotten a full response server-side (Agent's own access
+		// log shows the same request completing normally) — logging the
+		// underlying error distinguishes r.Context() cancellation (browser/ALB
+		// gave up) from a genuine transport failure (connection reset, i/o
+		// timeout) instead of collapsing both into one opaque message.
+		log.Printf("agent proxy: %s %s: %v (ctx err=%v)", r.Method, r.URL.Path, err, r.Context().Err())
 		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
 		return
 	}
@@ -219,6 +229,26 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		_, _ = io.Copy(w, bytes.NewReader(bufferedResponse))
 	}
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// restLoginFlow wraps rest for the agent-CLI login endpoints (Claude/agy/cursor/
+// kiro/opencode/codex/github start-poll-complete) whose state — an OAuth flow_id,
+// a device code, a PTY login session — lives only in the Workspace Agent
+// process's memory, not in the workspace's shared home volume. If the workspace
+// is still converging (rt.State() != "running": e.g. right after a wake, which
+// re-registers a task definition and force-deploys on every Start — see
+// serviceRolledOut in runtime_ecs.go), the request can be served by a task a
+// rolling deployment retires moments later, silently losing that state — the
+// user sees "unknown or expired flow_id" or a bare timeout with no clear cause
+// (confirmed 2026-08-19 on <dev-deployment>). Refuse up front instead so the client
+// can show "still starting, try again" rather than a confusing failure mid-flow.
+func (a agentProxyAPI) restLoginFlow(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if s := res.rt.State(r.Context()); s != "running" {
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_starting",
+			"workspace is still starting up — wait a moment and try connecting again"})
+		return
+	}
+	a.rest(w, r, res)
 }
 
 // stream is rest for a streaming (SSE) endpoint: it forwards to
@@ -349,7 +379,7 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 	if rt.Token() != "" {
 		hdr = http.Header{"Authorization": []string{"Bearer " + rt.Token()}} // CP↔Agent auth
 	}
-	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, EnableCompression: true}
+	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, EnableCompression: true, NetDialContext: dialAgent}
 	// Keep the Agent's response: it refuses with real statuses the user needs to see —
 	// notably 409 "session not running and no terminal history" for a stopped session
 	// whose replay has expired (terminal history is a /tmp ring buffer, so a container
@@ -379,6 +409,20 @@ func relay(src, dst *websocket.Conn, errc chan<- error) {
 	for {
 		mt, data, err := src.ReadMessage()
 		if err != nil {
+			// Pass the peer's CLOSE frame through. gorilla answers the close handshake
+			// itself and surfaces it here as a CloseError, so the frame never reaches
+			// the other side on its own — the bridge just tore the socket down and the
+			// browser saw an abnormal 1006. That erased the only signal distinguishing
+			// "the session ended" (1000 + reason) from "the connection broke", which is
+			// why a stopped session's finite history replay rendered as [disconnected].
+			// 1005/1006 are status codes a close frame may never CARRY, so they are the
+			// one case we still drop.
+			if ce, ok := err.(*websocket.CloseError); ok &&
+				ce.Code != websocket.CloseNoStatusReceived && ce.Code != websocket.CloseAbnormalClosure {
+				// Best-effort and synchronous: WriteMessage flushes to the socket before
+				// the deferred Close() in ptyProxy tears the connection down.
+				_ = dst.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(ce.Code, ce.Text))
+			}
 			errc <- err
 			return
 		}

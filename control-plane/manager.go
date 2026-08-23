@@ -34,6 +34,18 @@ type manager struct {
 	// ECS on AWS; P3-7). Every runtime is constructed through it — see runtimeFor.
 	rtFactory RuntimeFactory
 
+	// costPoller is the Cost Explorer poller when this deployment has an AWS bill and
+	// the credentials to read it (docs/67, ADR 0048), else nil. Held only so the API can
+	// surface the poller's last failure — an AccessDenied there is indistinguishable
+	// from "nothing was spent" if it is not shown.
+	costPoller *cloudCostPoller
+
+	// autoBakeGolden is AF_ECS_EC2_GOLDEN_AUTOBAKE, recorded at boot for the pool
+	// screen. It is the one thing about the golden that is NOT visible in AWS, and
+	// without it "no golden, nothing under way" cannot be told apart from "no golden,
+	// and nothing ever will be" (docs/64 §64.30).
+	autoBakeGolden bool
+
 	// nativeRuntime is true when AF_RUNTIME is native/wsl (containerless, single-user;
 	// docs/34). Native is a personal dev host with no shared-host contention, so the
 	// concurrent-session quota is not enforced there — see sessionQuotaExceeded.
@@ -147,7 +159,7 @@ type resolved struct {
 // default tenant keeps the flat af-ws-<key> scheme so the existing live
 // deployment is reused unchanged; other tenants are scoped by slug.
 func (m *manager) workspaceNames(slug, key string) (name, network, dataDir string) {
-	if slug == "default" {
+	if slug == defaultTenantSlug {
 		return "af-ws-" + key, "af-net-" + key, filepath.Join(m.dataRoot, key)
 	}
 	return "af-ws-" + slug + "-" + key, "af-net-" + slug + "-" + key, filepath.Join(m.dataRoot, slug, key)

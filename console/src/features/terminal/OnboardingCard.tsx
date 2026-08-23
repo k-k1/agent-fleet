@@ -8,7 +8,11 @@
 // The card hides once the user has a session OR a started chat, or on "あとで"
 // (remembered in localStorage). The same body is reused by GuideModal, reachable
 // from the account menu as 「はじめかたガイド」 after dismissal.
-// Rendered only on the active empty pane (see TerminalView) so it shows just once.
+// Rendered on the active empty pane so it shows just once — BOTH kinds of empty:
+// a blank terminal pane (TerminalView) and a cell with no view at all
+// (panes/Pane.tsx の EmptyPane)。★ 後者が新規ユーザーの初期レイアウト（ops.ts の
+// emptyCell は views: [] ＝ペインが 1 枚も無い）で、TerminalView 側にしか置いていな
+// かった間は、初回のガイドがいちばん見せたい相手にだけ出ていなかった。
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../../core/api/client.ts";

@@ -48,6 +48,10 @@ export interface Part {
   model?: string; // kind=delegation: explicitly selected child model
   file?: string;
   edits?: any[];
+  // verb qualifies `file` for the changed-files list (docs/68): "add" | "edit" | "delete".
+  // Only a parser that KNOWS sends it (codex reads it out of the patch header); absent
+  // means "derive it from the edits", never "deleted".
+  verb?: string;
   questions?: Question[];
   answer?: string;
   // declined marks kind=question only: the answer text is claude's own decline
@@ -118,6 +122,18 @@ export interface Group {
   // The FIRST folded turn's anchor — branching "from this block" means branching before
   // everything it shows, so a merged block must not adopt a later turn's anchor.
   anchorId?: string;
+  // origins[i] is the mark root key of parts[i] (docs/69 §69.3): "<元ターンの安定キー>#<その
+  // ターン内での part 番号>". It is a PARALLEL array rather than a field on Part because
+  // partsOf() hands back `t.parts` BY REFERENCE — writing to a part here would corrupt the
+  // held turn state. "" = this part cannot carry a mark (pending echo, no anchor and no text).
+  origins: string[];
+  // bodyRoot is the mark root for a user block's own text (the bubble renders `text`, not
+  // its parts). Empty when the block folded MORE THAN ONE turn: `text` is then a
+  // concatenation whose composition depends on the tail window, so an occurrence count
+  // taken here would not mean the same thing on the other side of a share.
+  bodyRoot: string;
+  // folded counts the turns merged into this block (1 = nothing was merged).
+  folded: number;
   pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
   queued?: boolean; // holds a prompt claude reports queued for the running turn
   source?: string; // user group origin: "operator" = fleet-operator injected (docs/30 ②)

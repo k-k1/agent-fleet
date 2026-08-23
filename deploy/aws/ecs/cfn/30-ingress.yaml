@@ -58,6 +58,158 @@ Parameters:
       relocation is ON — at 0 it can never arm, which is what shipped before and meant
       every deployment ran builds on EFS at ~9x the cost. Roughly $2.9/month per
       workspace at 24/7, and only while the task runs. Set 0 to opt out.
+  WsRuntime:
+    Type: String
+    Default: ecs
+    AllowedValues: [ ecs, ecs-ec2 ]
+    Description: >-
+      Which Runtime adapter the Control Plane uses. `ecs` = Fargate (the shipped
+      default: two resources per workspace, ~105s to start, home on EFS). `ecs-ec2` =
+      a pool of EC2 slots with a persistent per-user EBS home (docs/64 §64.12/§64.17,
+      ADR 0045 決定 10/12). Switch for I/O and persistence (small-file writes 8-30x faster
+      than EFS, a home that survives) and for sizes above Fargate's ceilings — NOT for
+      start latency: measured 43-110s against Fargate's ~105s. The price is six resource
+      kinds per workspace on a substrate with no production mileage. Requires the
+      40-ec2-pool stack and Ec2SlotLaunchTemplate below. Falling back is this one value.
+  Ec2SlotLaunchTemplate:
+    Type: String
+    Default: ""
+    Description: >-
+      SlotLaunchTemplateId output of the 40-ec2-pool stack (lt-…). Required when
+      WsRuntime=ecs-ec2 — the CP refuses to boot on that profile without it, rather
+      than silently running no workspaces.
+  Ec2SlotTypes:
+    Type: String
+    Default: "standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,m6i.xlarge:16384:4,m6i.2xlarge:32768:8"
+    Description: >-
+      The slot sizes the pool may run. A workspace lands on the smallest slot that
+      holds its memory REQUEST and gets the WHOLE box (the task reserves neither cpu
+      nor memory — on EC2 those are reservations against the instance). EC2 on-demand
+      pricing is perfectly linear in vCPU, so bigger slots are not more expensive per
+      user (ADR 0045 決定 8). The vCPU field is optional and display-only: the Console
+      prints it so a tenant admin can see which box a memory number lands on, and
+      omitting it just omits the label (ADR 0045 決定 21 — asking EC2 instead would
+      mean an extra IAM action for a label).
+
+      Two shapes, and the old one is not deprecated (docs/70 §70.4.2):
+
+        instanceType:memoryMiB[:vcpu],…                one unnamed class, x86_64
+        id|label|arch|<ladder>[;id|label|arch|<ladder>] one class per entry
+
+      With more than one class, a tenant admin chooses WHICH KIND of machine per
+      tenant and per member, and the memory number still picks the rung within it.
+      arch is x86_64 or arm64 and is DECLARED, never guessed from the family name.
+
+      The default above offers two x86_64 classes, because m6i needs NOTHING to work:
+      same architecture, so the same workspace image, the same AMI, the same golden
+      snapshot, and a member's home stays valid when they move (measured
+      ap-northeast-1 2026-08-22: m6i is 4.8% cheaper than m7i). It is the "cost over
+      speed" choice that is available today.
+
+      ⚠️ Changing this parameter moves nobody by itself — Ec2DefaultSlotClass decides
+      where members with no choice of their own land, and it defaults to the FIRST
+      class. An existing stack also keeps its own value on a redeploy unless you pass
+      this parameter, so upgrading does not add a picker to a running deployment.
+
+      Adding Graviton is a matter of appending a class. Measured in ap-northeast-1 on
+      2026-08-22 (price, and this repository's own build times on each family):
+
+        m8g  -11.0% per hour and 29% FASTER than m7i  <- strictly better than m7i
+        m7g  -19.0% per hour and 10% faster           <- no reason to pick over m8g
+        m6g  -24.0% per hour but 32% SLOWER           <- cheapest per HOUR, not per unit of work
+
+        …;arm|Faster and cheaper (Arm)|arm64|m8g.large:8192:2,m8g.xlarge:16384:4,m8g.2xlarge:32768:8
+
+      ⚠️ m6g is the cheapest per hour and the most expensive per build. Which one is
+      right depends on the member: a slot bills for the wall-clock time it is RUNNING,
+      and a workspace spends most of that idle, so the hourly price is what a
+      mostly-reading member pays — while a member who builds all day pays in time. If
+      you offer m6g, put the trade-off in its LABEL; "24% cheaper" on its own will be
+      read as free money.
+
+      ⚠️ Unlike m6i, an arm64 class has TWO prerequisites, in this order:
+
+        1. a workspace image with an arm64 manifest. Without it the slot launches and
+           the task cannot pull anything that runs on it.
+        2. Ec2SlotAmiArm64 below. The CP refuses to boot when an arm64 class is
+           declared and that is empty, rather than showing a class in the admin UI
+           that cannot launch.
+
+      ⚠️ Adding a class moves nobody: Ec2DefaultSlotClass still decides where a member
+      with no choice of their own lands. Changing the class of a member who already has
+      a home makes their next start reinstall its architecture-dependent tools
+      (docs/70 §70.5) — that is expected, and it costs them one slow start.
+  Ec2SlotAmiArm64:
+    Type: String
+    Default: ""
+    Description: >-
+      SlotAmiIdArm64 output of the 40-ec2-pool stack. Required only when Ec2SlotTypes
+      declares an arm64 class — the CP refuses to boot otherwise, rather than showing
+      a class in the admin UI that cannot launch.
+  Ec2DefaultSlotClass:
+    Type: String
+    Default: ""
+    Description: >-
+      The class id a member lands on with no per-user and no per-tenant value. Empty =
+      the first class declared in Ec2SlotTypes. ⚠️ Moving this on a running deployment
+      moves EVERY member who has not chosen for themselves, and each of their homes
+      then reinstalls its architecture-dependent tools on the next start.
+  Ec2MaxSlots:
+    Type: String
+    Default: "8"
+    Description: >-
+      Hard cap on instances in the pool. A slot is one concurrently RUNNING workspace,
+      so size this like "how many people work at once", not "how many accounts exist".
+      Start fails with a clear error at the cap instead of growing the bill.
+  Ec2SlotSleepSec:
+    Type: String
+    Default: "900"
+    Description: >-
+      How long a slot may sit with no running task before the instance is STOPPED (not
+      terminated — the image cache lives on its root volume). NOT the same thing as the
+      idle-stop the product already has: AF_WS_IDLE_TIMEOUT / the per-tenant
+      ws_idle_timeout watches the PERSON and stops their WORKSPACE on every runtime,
+      while this one starts counting after that has happened and puts the BOX to sleep.
+      They run in series (person leaves -> workspace stops -> slot sleeps). A sleeping
+      slot costs only its root volume (~$9.6/month at 100 GiB) instead of ~$95 running,
+      and its owner wakes it in ~110s. The home stays ATTACHED while the slot sleeps,
+      which is what keeps "the same user gets the same slot". Set 0 to keep slots
+      running forever (fastest returns, highest bill).
+  Ec2HomeGiB:
+    Type: String
+    Default: "50"
+    Description: >-
+      Default size of a user's persistent home volume (gp3). Unlike EFS this is billed
+      as PROVISIONED ($0.096/GB-month vs EFS $0.36 for what you use), so the break-even
+      fill rate is 26.7% — do not hand out volumes far larger than people fill.
+  # --- WAF (optional, OFF by default) ---------------------------------------
+  # ⚠️ ONLY rate limiting and IP reputation. The signature rule sets (Core rule
+  # set, SQLi, XSS, LFI) are deliberately NOT offered here: this product carries
+  # SOURCE CODE AND SHELL COMMANDS in ordinary request bodies — chat messages,
+  # file writes, terminal input — so strings like `'; DROP TABLE`, `../../etc/passwd`
+  # and `<script>` are legitimate traffic. Those rules would 403 real work at
+  # random, and it would look like a product bug rather than a WAF decision (the
+  # expensive part is the hours spent before anyone suspects the WAF). WAF also
+  # inspects only the first 8 KB of a body by default, so a signature set here
+  # buys less than it appears to.
+  #
+  # The cheaper, stronger control for a private deployment is upstream of this:
+  # 00-network's AlbIngressCidr, which stops the traffic at the security group.
+  WafRateLimitPer5Min:
+    Type: Number
+    Default: 0
+    Description: >-
+      Requests per 5 minutes from one IP before WAF blocks it (0 = no WAF at all).
+      Counts every request including Console polling, so keep it well above what a
+      whole office behind one NAT produces — 3000 is a sane starting point.
+  WafIpReputation:
+    Type: String
+    Default: "off"
+    AllowedValues: [ "off", "on" ]
+    Description: >-
+      Add AWS's managed IP reputation list (known scanners/botnets). Matches on the
+      SOURCE, not on the body, so it cannot mangle legitimate agent traffic.
+      Requires WafRateLimitPer5Min > 0 (that is what creates the web ACL).
   Fqdn:
     Type: String
     Description: >-
@@ -144,8 +296,9 @@ Parameters:
   GithubClientId:
     Type: String
     Default: ""
-    Description: GITHUB_OAUTH_CLIENT_ID (not secret; the secret comes from SSM). The
-      same OAuth App also drives the Console's GitHub "Connect" device flow.
+    Description: GITHUB_OAUTH_CLIENT_ID (not secret; the secret comes from SSM). Sign-in
+      only since docs/71 — the Console's GitHub "Connect" button reads the OAuth app the
+      TENANT registered (Tenant settings -> Integrations), not this one.
   GithubAllowedDomains:
     Type: String
     Default: ""
@@ -173,6 +326,20 @@ Parameters:
       treated as the only source of truth - an account removed from this list also
       loses the role in the database on the next start, so a handover completes for
       somebody who never signs in again. Changing it needs a service redeploy.
+  AfProvision:
+    Type: String
+    Default: invite
+    AllowedValues: [ invite, auto ]
+    Description: >-
+      AF_PROVISION - what happens to somebody who signs in with no tenant membership
+      yet. invite (the default here) = they land on a "you haven't been invited yet"
+      page until an admin adds them; auto = they are given a membership of the default
+      tenant on the spot, so AF_OAUTH_ALLOWED_* is the only thing between a stranger
+      and a workspace. A tenant's own auto_join_domains is checked BEFORE either.
+      ★ Switching an existing stack to invite does NOT affect anyone already working:
+      an existing membership is consulted first, so this only stops NEW auto-admissions.
+      (The CP's built-in default is still auto - it is this template that starts closed,
+      so a deployment that never set it keeps its behaviour until you redeploy.)
   AuthMode:
     Type: String
     Default: oauth
@@ -189,9 +356,14 @@ Conditions:
   # only when that IdP is actually configured.
   HasGoogle: !Not [ !Equals [ !Ref GoogleClientId, "" ] ]
   HasOidc: !Not [ !Equals [ !Ref OidcProviderId, "" ] ]
-  # The org list, not the client id: GITHUB_OAUTH_CLIENT_ID is also the Console's
-  # git-connect device flow, which many deployments set without wanting a login.
+  # The org list, not the client id — historically GITHUB_OAUTH_CLIENT_ID also drove
+  # the Console's git-connect device flow, which many deployments set without wanting a
+  # login. That flow reads the tenant's own app since docs/71, but the switch stays the
+  # org list: it is the thing that authorizes the sign-in.
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
+  # The rate limit is what creates the web ACL; reputation is an extra rule on it.
+  HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
+  HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
 
 Resources:
   Cert:
@@ -220,6 +392,54 @@ Resources:
       # handler block longer.
       LoadBalancerAttributes:
         - { Key: idle_timeout.timeout_seconds, Value: "60" }
+
+  # --- WAF (only when WafRateLimitPer5Min > 0) --------------------------------
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Condition: HasWaf
+    Properties:
+      Name: !Sub "af-${AWS::StackName}"
+      Scope: REGIONAL
+      DefaultAction: { Allow: {} }
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "af-${AWS::StackName}"
+      Rules:
+        # Rate limit first: it is the one rule that protects the login endpoint and
+        # the API from a flood, and it decides on the SOURCE rather than the body.
+        - Name: rate-limit
+          Priority: 0
+          Action: { Block: {} }
+          Statement:
+            RateBasedStatement:
+              Limit: !Ref WafRateLimitPer5Min
+              AggregateKeyType: IP
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: !Sub "af-${AWS::StackName}-rate"
+        - !If
+          - HasWafReputation
+          - Name: ip-reputation
+            Priority: 1
+            OverrideAction: { None: {} }
+            Statement:
+              ManagedRuleGroupStatement:
+                VendorName: AWS
+                Name: AWSManagedRulesAmazonIpReputationList
+            VisibilityConfig:
+              SampledRequestsEnabled: true
+              CloudWatchMetricsEnabled: true
+              MetricName: !Sub "af-${AWS::StackName}-reputation"
+          - !Ref AWS::NoValue
+
+  WebAclAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Condition: HasWaf
+    Properties:
+      ResourceArn: !Ref Alb
+      WebACLArn: !GetAtt WebAcl.Arn
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -308,6 +528,13 @@ Resources:
             - { Name: AF_DB_PORT, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbPort" } }
             - { Name: AF_DB_NAME, Value: agentfleet }
             - { Name: AF_DB_USER, Value: afadmin }
+            # ⚠️ Exactly one proxy sits in front of the CP here: this ALB. The CP needs
+            # to be TOLD, because it cannot tell — without this, r.RemoteAddr is the load
+            # balancer and every request looks like it comes from the same private
+            # address. That is what a tenant's source-network restriction is matched
+            # against (docs/66, ADR 0047 決定 2), so a wrong value here is either "the
+            # rule never matches anyone" or "the rule matches everyone".
+            - { Name: AF_TRUSTED_PROXY_HOPS, Value: "1" }
             - { Name: AUTH, Value: !Ref AuthMode }
             - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
             - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
@@ -315,6 +542,7 @@ Resources:
             - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
             - { Name: AF_OAUTH_ALLOWED_DOMAINS, Value: !Ref AllowedDomains }
             - { Name: SUPER_ADMIN_EMAILS, Value: !Ref SuperAdminEmails }
+            - { Name: AF_PROVISION, Value: !Ref AfProvision }
             # Generic OIDC IdP (docs/61). The redirect URI stays the single
             # https://<Fqdn>/oauth2/callback whether or not this is enabled.
             - { Name: AF_OIDC_PROVIDERS, Value: !Ref OidcProviderId }
@@ -324,14 +552,20 @@ Resources:
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_ALLOWED_TIDS", Value: !Ref OidcAllowedTids }, !Ref "AWS::NoValue" ]
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_JA", Value: !Ref OidcLabelJa }, !Ref "AWS::NoValue" ]
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_EN", Value: !Ref OidcLabelEn }, !Ref "AWS::NoValue" ]
-            # GitHub sign-in (docs/61 §61.7). GITHUB_OAUTH_CLIENT_ID is passed
-            # unconditionally: it is also the Console's git-connect device flow.
+            # GitHub sign-in (docs/61 §61.7).
             - { Name: GITHUB_OAUTH_CLIENT_ID, Value: !Ref GithubClientId }
             - { Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs }
             - { Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains }
-            # AF_RUNTIME=ecs = the P3-7 stage-2 adapter. The AF_ECS_* below give it the
-            # substrate placement it needs to provision per-workspace ECS services.
-            - { Name: AF_RUNTIME, Value: ecs }
+            # ★ No BITBUCKET_OAUTH_* and no workspace GITHUB_OAUTH_CLIENT_ID: the git
+            # providers' OAuth apps are per-tenant rows since docs/71, registered in the
+            # Console under Tenant settings -> Integrations -> Git provider OAuth. The CP
+            # still owns the Bitbucket callback and derives it from PUBLIC_BASE_URL above.
+            # AF_RUNTIME=ecs = the P3-7 stage-2 adapter (Fargate). AF_RUNTIME=ecs-ec2
+            # keeps the same substrate but puts workspaces on a pool of EC2 slots with a
+            # persistent per-user EBS home (docs/64, ADR 0045 決定 10) — deploy the
+            # 40-ec2-pool stack and set WsRuntime=ecs-ec2 + Ec2SlotLaunchTemplate.
+            # Rolling back is this one parameter. The AF_ECS_* below are shared by both.
+            - { Name: AF_RUNTIME, Value: !Ref WsRuntime }
             - { Name: AF_ECS_REGION, Value: !Ref "AWS::Region" }
             - { Name: AF_ECS_CLUSTER, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
             - { Name: AF_ECS_SUBNETS, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } }
@@ -344,6 +578,14 @@ Resources:
             - { Name: AF_ECS_TASK_CPU, Value: !Ref WsTaskCpu }
             - { Name: AF_ECS_TASK_MEMORY, Value: !Ref WsTaskMemory }
             - { Name: AF_ECS_WS_DISK_GB, Value: !Ref WsDiskGiB }
+            # --- EC2 slot pool (only read when WsRuntime=ecs-ec2) ---
+            - { Name: AF_ECS_EC2_LAUNCH_TEMPLATE, Value: !Ref Ec2SlotLaunchTemplate }
+            - { Name: AF_ECS_EC2_SLOT_TYPES, Value: !Ref Ec2SlotTypes }
+            - { Name: AF_ECS_EC2_AMI_ARM64, Value: !Ref Ec2SlotAmiArm64 }
+            - { Name: AF_ECS_EC2_DEFAULT_SLOT_CLASS, Value: !Ref Ec2DefaultSlotClass }
+            - { Name: AF_ECS_EC2_MAX_SLOTS, Value: !Ref Ec2MaxSlots }
+            - { Name: AF_ECS_EC2_SLOT_SLEEP_SEC, Value: !Ref Ec2SlotSleepSec }
+            - { Name: AF_ECS_EC2_HOME_GB, Value: !Ref Ec2HomeGiB }
             # Start returns as soon as the service is at desiredCount 1; the Agent
             # readiness poll runs in the background for the log line only, on the
             # AF_ECS_START_TIMEOUT_SEC budget (default 300s). Nothing waits on it,

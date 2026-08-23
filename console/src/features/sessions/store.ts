@@ -7,6 +7,8 @@ import { create } from "zustand";
 import { api } from "../../core/api/client.ts";
 import { pushHealthy, pushStamp } from "../../core/push/events.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
+import { toast } from "../../ui/toast.ts";
+import { t as tr } from "../../lib/i18n/index.ts";
 import type { Session } from "../../types/session.ts";
 
 interface SessionsStore {
@@ -22,8 +24,10 @@ interface SessionsStore {
   applyList(list: Session[]): void;
   /** Reflect a successful deletion-lock toggle before the next list refresh. */
   setLocked(name: string, locked: boolean): void;
-  /** Resume/launch a stopped session (POST start). The caller re-attaches. */
-  start(name: string): Promise<void>;
+  /** Resume/launch a stopped session (POST start). Resolves true when the backend
+   * accepted the resume; false (with a toast already shown) when it did not, so the
+   * caller can leave its 再開 affordance armed instead of waiting forever. */
+  start(name: string): Promise<boolean>;
 }
 
 let ser = ""; // last published serialization (module-level: not render state)
@@ -56,18 +60,27 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       if (pushStamp("sessions") !== stamp) return;
       get().applyList(d.sessions || []);
     } catch {
-      if (pushStamp("sessions") !== stamp) return;
-      get().applyList([]);
+      // KEEP the last known list. Publishing [] here wiped every row on any transient
+      // failure — most reliably in the 502 window while the workspace agent comes up
+      // after a restart — and the rows are what every resume affordance is gated on
+      // (a pane resolves its session by name out of this list; not finding it hides
+      // the 再開 button entirely). A stale row is recoverable on the next tick; a
+      // vanished one is a dead end the user can only escape by reloading.
     }
   },
 
   async start(name: string) {
+    let ok = true;
     try {
       await api(`api/sessions/${encodeURIComponent(name)}/start`, { method: "POST" });
     } catch {
-      /* attach still tries; a failure surfaces as [disconnected] */
+      // Never silent. Swallowing this left the caller to "resume" into a pane that
+      // waits on a session nobody started, with no error and no way to retry.
+      ok = false;
+      toast(tr("srow.resume_failed"), { kind: "error" });
     }
     await useSessionsStore.getState().refresh();
+    return ok;
   },
 }));
 

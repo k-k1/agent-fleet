@@ -8,7 +8,8 @@
 // optimistic in-flight transition (the old convention — pollers and buttons
 // treat it as busy and keep their hands off).
 import { create } from "zustand";
-import { api, isTransientErr } from "../api/client.ts";
+import { api, errText, isTransientErr } from "../api/client.ts";
+import { toast } from "../../ui/toast.ts";
 import { pushHealthy, pushStamp } from "../push/events.ts";
 import { t } from "../../lib/i18n/index.ts";
 import { confirmDirtyNavigation } from "../../features/editor/dirtyRegistry.ts";
@@ -27,6 +28,12 @@ interface WorkspaceStore {
    * back on the current build, so this is a STATE (WS-bar 要再起動 badge), not an
    * event. False whenever the CP can't tell — never guessed client-side. */
   stale: boolean;
+  /** なぜ state が読めなかったのかのエラーコード（"" = 正常に読めている）。"unknown" は
+   * 「取得に失敗した」以上のことを言えず、招待前の super_admin には**理由の書かれていない
+   * 「不明」と反応しない起動ボタン**だけが残る（招待済みでない人は NotProvisioned の面に
+   * 降りるので、ここに来るのは最初のテナントを作る人だけ）。コードを残して、バーが
+   * 「不明」ではなく実際の理由を出せるようにする。 */
+  reason: string;
   refresh(): Promise<void>;
   /** Apply a pushed workspace payload (api/events). Poll parity: an optimistic
    * "…" transition is never clobbered — while busy only bootPhase updates (the
@@ -55,6 +62,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   state: "…",
   bootPhase: "",
   stale: false,
+  reason: "",
 
   async refresh() {
     const stamp = pushStamp("workspace");
@@ -72,12 +80,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         // 楽観 "…" の settle 中に保持すると busy が固着する（4s ポーリングは busy 中スキップ）
         // ので、その間と terminal エラーは従来どおり unknown へ落とす。
         if (isTransientErr(w) && !wsBusy(get().state)) return;
-        set({ state: "unknown", bootPhase: "", stale: false });
+        set({ state: "unknown", bootPhase: "", stale: false, reason: String(w.error.code || "") });
         return;
       }
-      set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale });
+      set({ state: w.state || "unknown", bootPhase: w.bootPhase || "", stale: !!w.stale, reason: "" });
     } catch {
-      set({ state: "unknown" });
+      set({ state: "unknown" }); // 通信断: 理由は前回のまま（次のポーリングで確定する）
     }
   },
 
@@ -107,10 +115,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     // otherwise the bar sticks on 起動中… until a manual reload. api() only
     // rejects on network failure (HTTP errors come back as {error} JSON), so a
     // catch + unconditional refresh covers both.
+    // ★ 起動できなかった理由は必ず出す。api() は HTTP エラーを {error} JSON で返して
+    // reject しないので、戻り値を見ないと**何も起きなかったように見える**（楽観の
+    // 「起動中…」が一瞬出て「不明」に戻るだけ）。招待前の super_admin が押したときの
+    // 403 not_provisioned がまさにこれで、押しても無反応としか読めなかった。
     try {
-      await api("api/workspace/start", { method: "POST" });
+      const r = await api("api/workspace/start", { method: "POST" });
+      if (r?.error) toast(errText(r.error) || t("wsbar.start_failed"), { kind: "error" });
     } catch {
-      /* settled by the refresh below */
+      /* ネットワーク断。下の refresh が実状態に落とす */
     }
     clearInterval(iv);
     await get().refresh();
@@ -189,6 +202,21 @@ export const wsRunning = (state: string): boolean => state === "running";
  * The CP no-ops a re-Start anyway, but every start button disables on this so the
  * UI doesn't offer 起動 for a workspace that is already coming up. */
 export const wsStartBusy = (state: string): boolean => wsBusy(state) || state === "starting";
+
+/** True when the power toggle must STOP rather than start.
+ *
+ * ⚠️ Deliberately NOT `state === "running"`. The server-reported "starting" has no
+ * guaranteed exit: an ECS task the scheduler cannot place sits at desired=1/running=0
+ * and State() reports "starting" forever (measured on <dev-deployment> — docs/70 §70.14.6,
+ * a task definition declaring ARM64 while pinned to an x86_64 slot). While the toggle
+ * sent START on everything that was not "running", the two exits the UI offered from
+ * that state were both "start", and the CP no-ops a Start for a workspace it already
+ * considers `starting`. There was no way to stop it from the Console at all.
+ *
+ * Cancelling a start is a legitimate operation on its own merits, so this is the rule
+ * even where a start does converge. wsStartBusy still guards every START affordance —
+ * that is what keeps a second Start from re-driving a deployment. */
+export const wsPowerStops = (state: string): boolean => state === "running" || state === "starting";
 
 /** True while the workspace is coming up and the starting dialog should show: an
  * optimistic "starting…"/"recreating…" transition, the server-reported "starting"

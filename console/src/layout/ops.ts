@@ -1,4 +1,4 @@
-import type { Cell, Column, Layout, OpenTarget, Pane, PaneContent, View } from "./types.ts";
+import type { Cell, Column, Layout, OpenTarget, Pane, PaneContent, View, ViewId } from "./types.ts";
 import { blankPane, emptyCell } from "./types.ts";
 
 export const MAX_COLS = 4;
@@ -51,7 +51,38 @@ const mapCells = (l: Layout, fn: (cell: Cell) => Cell): Column[] =>
   l.cols.map((col) => ({ ...col, cells: col.cells.map(fn) }));
 const containingCell = (l: Layout, viewId: string): Cell | undefined =>
   allCells(l).find((cell) => cell.views.some((view) => view.id === viewId));
-const touch = (view: View): View => ({ ...view, lastUsedAt: Date.now() });
+// `lastUsedAt` is both the LRU victim order and the tab-back order, so two
+// touches inside one millisecond must not tie (opening a view from another view
+// stamps both). Keep the clock strictly increasing within this page session;
+// values persisted by an earlier session are real epoch ms and stay comparable.
+let lastStamp = 0;
+const stamp = (): number => (lastStamp = Math.max(Date.now(), lastStamp + 1));
+const touch = (view: View): View => ({ ...view, lastUsedAt: stamp() });
+
+/** Which tab a cell shows once the selected one leaves it (closed, moved out,
+ * torn off). The visual neighbor is the wrong answer for the common trip —
+ * opening a file from a mirror tab and closing it again must land back on the
+ * mirror, not on whatever happens to sit to the right — so the most recently
+ * used remaining view wins. Only a cell whose views carry no usage stamp at all
+ * (a layout persisted before they existed) falls back to the neighbor: right
+ * first, then left. `views` is what remains; `index` is the departing view's
+ * position in the original order. */
+function nextSelected(views: View[], index: number): ViewId | null {
+  if (!views.length) return null;
+  const mru = views.reduce((best, v) => ((v.lastUsedAt || 0) > (best.lastUsedAt || 0) ? v : best));
+  return mru.lastUsedAt ? mru.id : views[Math.min(index, views.length - 1)]?.id || null;
+}
+
+/** Remove one view from a cell, re-picking the shown tab when it was the
+ * selected one. The tab that takes over is touched: it is on screen now, so it
+ * must also be the cell's most recent for the NEXT close. */
+function withoutView(cell: Cell, viewId: string): { views: View[]; selectedViewId: ViewId | null } {
+  const index = cell.views.findIndex((v) => v.id === viewId);
+  const views = cell.views.filter((v) => v.id !== viewId);
+  if (cell.selectedViewId !== viewId) return { views, selectedViewId: cell.selectedViewId };
+  const selectedViewId = nextSelected(views, index);
+  return { views: views.map((v) => (v.id === selectedViewId ? touch(v) : v)), selectedViewId };
+}
 
 export function idAlloc(l: Layout) {
   let view = 0, cell = 0, col = 0;
@@ -207,7 +238,12 @@ const replaceCellViews = (l: Layout, cellId: string, views: View[], selectedView
 
 export function setPaneTarget(l: Layout, viewId: string, target: OpenTarget): Layout {
   const view = viewById(l, viewId);
-  return view ? replaceView(l, viewId, touch(applyTarget(view, target))) : l;
+  if (!view) return l;
+  // Retargeting the view a cell is SHOWING is a use. Retargeting one hidden behind
+  // another tab is not — the mirror rewrites an open plan pane in the background,
+  // and that must not make it the tab a later close falls back to.
+  const shown = containingCell(l, viewId)?.selectedViewId === viewId;
+  return replaceView(l, viewId, applyTarget(shown ? touch(view) : view, target));
 }
 export const setViewTarget = setPaneTarget;
 export function setPaneWrap(l: Layout, viewId: string, wrap: boolean | null): Layout {
@@ -230,10 +266,7 @@ function removeCells(l: Layout, ids: Set<string>): Layout {
 export function closeView(l: Layout, viewId: string): Layout {
   const cell = containingCell(l, viewId);
   if (!cell) return l;
-  const index = cell.views.findIndex((v) => v.id === viewId);
-  const views = cell.views.filter((v) => v.id !== viewId);
-  const selectedViewId = cell.selectedViewId === viewId
-    ? (views[Math.min(index, views.length - 1)]?.id || null) : cell.selectedViewId;
+  const { views, selectedViewId } = withoutView(cell, viewId);
   return replaceCellViews(l, cell.id, views, selectedViewId);
 }
 export function closeCell(l: Layout, cellId: string): Layout {
@@ -270,9 +303,7 @@ export function moveTab(l: Layout, viewId: string, targetCellId: string, beforeV
     if (views.every((v, i) => v === source.views[i])) return l;
     return replaceCellViews(l, source.id, views, source.selectedViewId);
   }
-  const sourceViews = source.views.filter((v) => v.id !== viewId);
-  const sourceSelected = source.selectedViewId === viewId
-    ? sourceViews[Math.min(source.views.indexOf(view), sourceViews.length - 1)]?.id || null : source.selectedViewId;
+  const { views: sourceViews, selectedViewId: sourceSelected } = withoutView(source, viewId);
   const targetViews = [...target.views];
   const at = beforeViewId ? targetViews.findIndex((v) => v.id === beforeViewId) : targetViews.length;
   targetViews.splice(at < 0 ? targetViews.length : at, 0, touch(view));
@@ -292,8 +323,7 @@ export function dropSplitTab(l: Layout, viewId: string, refCellId: string, dir: 
   if (dir === "right" && l.cols.length >= MAX_TAB_COLS) return l;
   if (dir === "down" && refCol.cells.length >= 2) return l;
   const alloc = idAlloc(l);
-  const sourceViews = source.views.filter((v) => v.id !== viewId);
-  const sourceSelected = source.selectedViewId === viewId ? sourceViews[0]?.id || null : source.selectedViewId;
+  const { views: sourceViews, selectedViewId: sourceSelected } = withoutView(source, viewId);
   const next = { ...l, cols: mapCells(l, (c) => c === source ? { ...c, views: sourceViews, selectedViewId: sourceSelected } : c) };
   const cell: Cell = { id: alloc.nextCell(), selectedViewId: viewId, views: [view] };
   if (dir === "right") {

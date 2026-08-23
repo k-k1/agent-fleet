@@ -579,7 +579,7 @@ const DEFAULTS: Settings = {
   claudeCustomModels: [],
   autoTitleSuggest: true,
   peerMessaging: false, // opt-in（docs/58 / ADR 0041）— 既定で増やしてよい面ではない
-  opencodeCatalog: "zen",
+  opencodeCatalog: "off",
   expandThinking: {},
   assistantTitleSuggest: true,
   outputLanguage: "auto",
@@ -958,22 +958,82 @@ export function getSettings(): Settings {
 // effort: if the workspace is stopped / agent unreachable, localStorage still holds it.
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let saveInFlight: Promise<void> | null = null;
+
+// サーバの ui-prefs を **一度でも読めたか**。保存は「まるごと PUT・最後の書き手が勝つ」
+// なので、読めていない間に送ってはいけない — 読めていない state は「この端末の
+// localStorage か DEFAULTS」であって利用者の設定とは限らず、そのまま PUT すると
+// サーバの実データ（学習済み候補・ピン・利用実績・キー割当…）を既定値で消し去る。
+// 実際にこれが起きた（返信サジェストが全端末で初期状態に戻った）: ワークスペース
+// 再起動直後で GET が 502、かつ localStorage が空（ログアウト直後 / 別ブラウザ /
+// 別オリジンの dev Console）だった面から、ミラーの返信 1 通の学習が既定値一式を
+// PUT してサーバを上書きした。以後の起動・フォーカス復帰で他端末にも伝播する。
+let prefsLoaded = false;
+// 読めるまでの間に起きたローカル変更。読めた直後にまとめて 1 回だけ送る。
+let savePending = false;
+let hydrateRetry: ReturnType<typeof setTimeout> | null = null;
+let hydrateAttempt = 0;
+// 取得できないまま放置すると変更が永久に同期されないので、短い間隔から数回だけ自力で
+// 追いかける。使い切った後は App の focus / visibilitychange（refreshUIPrefs）が拾う。
+const HYDRATE_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
+
+function scheduleHydrateRetry(): void {
+  if (prefsLoaded || hydrateRetry || hydrateAttempt >= HYDRATE_RETRY_MS.length) return;
+  const wait = HYDRATE_RETRY_MS[hydrateAttempt++];
+  hydrateRetry = setTimeout(() => {
+    hydrateRetry = null;
+    void hydrateUIPrefs();
+  }, wait);
+}
+
+// サーバの現在値を読めた瞬間に呼ぶ。保留していたローカル変更をここで初めて送り出す。
+function markPrefsLoaded(): void {
+  prefsLoaded = true;
+  hydrateAttempt = 0;
+  if (hydrateRetry) {
+    clearTimeout(hydrateRetry);
+    hydrateRetry = null;
+  }
+  if (savePending) {
+    savePending = false;
+    scheduleServerSave();
+  }
+}
+
 function scheduleServerSave(): void {
+  if (!prefsLoaded) {
+    savePending = true;
+    scheduleHydrateRetry();
+    return;
+  }
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
     // 端末ローカルキーはサーバへ送らない（この端末の外へ出さない）。
     saveInFlight = apiJSON("api/env/ui-prefs", "PUT", serverPrefs(state))
-      .then(() => {})
-      .catch(() => {})
+      // 失敗を握り潰すと「同期されていないのに同期されているつもり」になる。上限
+      // 64 KiB 超（413）のような恒久的な失敗もここでしか気づけないので必ず残す。
+      .then((res) => {
+        if (res && typeof res === "object" && res.error) warnPrefsSaveFailed(res.error);
+      })
+      .catch((e) => warnPrefsSaveFailed(e))
       .finally(() => { saveInFlight = null; });
   }, 600);
 }
+
+function warnPrefsSaveFailed(err: unknown): void {
+  try {
+    console.warn("[settings] failed to save ui-prefs to the server (kept locally)", err);
+  } catch {}
+}
+
+/** Exported for tests: has the server copy been read at least once this session? */
+export const uiPrefsLoaded = (): boolean => prefsLoaded;
 
 // Pull changes made on another device. Never race a local debounced/in-flight save:
 // an older server snapshot must not overwrite the value this tab is currently writing.
 export async function refreshUIPrefs(): Promise<void> {
   if (saveTimer || saveInFlight) return;
+  hydrateAttempt = 0; // 前景に戻った＝状況が変わった。自力リトライの権利も戻す。
   await hydrateUIPrefs();
 }
 
@@ -1004,6 +1064,41 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
  * must never cross the device boundary. */
 export const isDeviceLocalSetting = (key: keyof Settings): boolean => DEVICE_LOCAL.has(key);
 
+// 累積データ — トグルや色と違い「溜まっていく」設定で、失うと取り戻せない（学習済みの
+// 返信候補、ピン、SSM の利用実績、キー割当、作業グループ、読み仮名辞書…）。ふつうの設定は
+// サーバ優先で構わないが、これらだけは **空のサーバ値で非空のローカルを潰さない**。
+// サーバが空になる原因は「利用者が消した」より「まだ書かれていない / 事故で消えた」の方が
+// 圧倒的に多く、後者の被害は全端末に伝播して復旧不能だから（上の prefsLoaded のコメント参照）。
+// 代償: 端末 A の「全消去」は、まだ候補を持っている端末 B には伝わらず B から復元される。
+// 消し直せば済む側と、二度と戻らない側では、守る対象は後者。
+const ACCUMULATED = new Set<keyof Settings>([
+  "quickReplies",
+  "quickRepliesPinned",
+  "quickRepliesHidden",
+  "ssmHostUsage",
+  "ssmHostColors",
+  "keybindings",
+  "hiddenModels",
+  "expandThinking",
+  "claudeCustomModels",
+  "workingSets",
+  "ttsVoicePool",
+  "ttsUserDict",
+]);
+
+/** Exported as a policy seam so tests can pin which preferences must never be
+ * silently emptied by a server copy that has lost them. */
+export const isAccumulatedSetting = (key: keyof Settings): boolean => ACCUMULATED.has(key);
+
+// 「中身が無い」— null/undefined・空文字・空配列・空オブジェクト。数値/真偽値は対象外
+// （0 や false は「消えた」ではなく選択された値）。
+export function isEmptyPref(v: unknown): boolean {
+  if (v == null || v === "") return true;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === "object") return Object.keys(v as object).length === 0;
+  return false;
+}
+
 // serverPrefs は端末ローカルキーを除いた、サーバへ保存してよい設定だけの浅いコピー。
 function serverPrefs(s: Settings): Partial<Settings> {
   const out: Partial<Settings> = {};
@@ -1023,17 +1118,25 @@ function serverPrefs(s: Settings): Partial<Settings> {
 export function migrateOpencodeCatalog(v: unknown): "off" | "free" | "go" | "zen" {
   if (v === "off" || v === "free" || v === "go" || v === "zen") return v;
   if (v === "hide-zen") return "go"; // Zen を隠す = Go だけ使う意思
-  return "zen"; // go-first / all / 未設定 / 不明 = 従来の見え方
+  if (v === "go-first" || v === "all") return "zen"; // どちらも両方見たい意思
+  return "off"; // 未設定/不明 = 明示的に選ぶまで無効
 }
 
-export async function hydrateUIPrefs(): Promise<void> {
+export async function hydrateUIPrefs(): Promise<boolean> {
   let srv: any;
   try {
     srv = await api("api/env/ui-prefs");
   } catch {
-    return;
+    scheduleHydrateRetry();
+    return false;
   }
-  if (!srv || typeof srv !== "object" || srv.error) return;
+  // api() は HTTP エラーでも投げず {error:{code:"http_502"}} を返す（ワークスペース起動中の
+  // CP はまさにこれ）。取得できていないことを「サーバは空」と読み違えると、この後の保存が
+  // 既定値でサーバを上書きする — 失敗は失敗として扱い、prefsLoaded を立てない。
+  if (!srv || typeof srv !== "object" || srv.error) {
+    scheduleHydrateRetry();
+    return false;
+  }
   // サーバーに旧booleanだけが残るユーザーも、新しい3択へ一度だけ移行する。
   if (!("ttsBackgroundPlayback" in srv) && typeof srv.ttsQuietWhenHidden === "boolean") {
     srv.ttsBackgroundPlayback = srv.ttsQuietWhenHidden ? "quiet" : "normal";
@@ -1061,12 +1164,18 @@ export async function hydrateUIPrefs(): Promise<void> {
     a === b ||
     (typeof a === "object" && a !== null && typeof b === "object" && b !== null &&
       JSON.stringify(a) === JSON.stringify(b));
+  // サーバが失った累積データを手元が持っていたら、採らずに押し戻す（自己修復）。
+  let restore = false;
   for (const k of Object.keys(DEFAULTS)) {
-    if (isDeviceLocalSetting(k as keyof Settings)) continue; // 端末ローカルは復元しない
-    if (k in srv && !sameValue(srv[k], (merged as any)[k])) {
-      (merged as any)[k] = srv[k];
-      changed = true;
+    const key = k as keyof Settings;
+    if (isDeviceLocalSetting(key)) continue; // 端末ローカルは復元しない
+    if (!(k in srv) || sameValue(srv[k], (merged as any)[k])) continue;
+    if (isAccumulatedSetting(key) && isEmptyPref(srv[k]) && !isEmptyPref((merged as any)[k])) {
+      restore = true;
+      continue;
     }
+    (merged as any)[k] = srv[k];
+    changed = true;
   }
   const serverRows = srv.agentLaunchDefaults;
   const legacyClaudeModel = typeof srv.defaultModel === "string" ? srv.defaultModel : merged.defaultModel;
@@ -1089,7 +1198,13 @@ export async function hydrateUIPrefs(): Promise<void> {
     merged.claudeCustomModels = customClaude;
     changed = true;
   }
-  if (!changed) return;
+  // ここまで来た＝サーバの現在値を実際に読めた。保留していた保存はこの後で流れる
+  // （markPrefsLoaded → scheduleServerSave は 600ms 後に state を読むので、下の
+  // state = merged が先に効く）。
+  markPrefsLoaded();
+  // サーバに無かった累積データは、こちらから書き戻して復元する。
+  if (restore) scheduleServerSave();
+  if (!changed) return true;
   state = merged;
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
@@ -1097,6 +1212,7 @@ export async function hydrateUIPrefs(): Promise<void> {
   applyTheme(state);
   applyLocale(state);
   subs.forEach((fn) => fn());
+  return true;
 }
 
 // ジェネリック署名でキーと値の対応を型で縛る（"theme" に boolean を渡す類の不整合を防ぐ）。

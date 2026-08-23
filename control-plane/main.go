@@ -5,10 +5,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,9 +30,10 @@ type config struct {
 	addr       string
 	consoleDir string
 	mgr        *manager
-	// Bitbucket OAuth (Authorization Code Grant) — CP owns the public callback.
-	bbKey         string
-	bbSecret      string
+	// ★ The git providers' OAuth apps are NOT here. Since docs/71 they are per-tenant
+	// rows read from the database at the moment a member presses "connect"
+	// (tenant_git_oauth.go); BITBUCKET_OAUTH_KEY/SECRET and the workspace's
+	// GITHUB_OAUTH_CLIENT_ID are not read at all, not even as a fallback.
 	publicBaseURL string // external base, e.g. https://host (for redirect_uri)
 	// CP-native OIDC login (AUTH=oauth) — replaces oauth2-proxy. See oauth.go /
 	// oauth_oidc.go. Google keeps its historical env names and is one instance of
@@ -70,6 +74,13 @@ func main() {
 		runEgressProxy()
 		return
 	}
+	// Subcommand: `control-plane drawio-preseed` fills the stencil cache ahead of
+	// time (docs/65 §65.5.5). It runs where the cache lives and reuses the embedded
+	// manifest, so it cannot drift from what the server will verify against.
+	if len(os.Args) > 1 && os.Args[1] == "drawio-preseed" {
+		runDrawioPreseed(os.Args[2:])
+		return
+	}
 
 	portBase, _ := strconv.Atoi(envOr("WS_AGENT_PORT", "7700"))
 	mgr := &manager{
@@ -92,11 +103,12 @@ func main() {
 		// P3-9: live activity tracking for idle-stop.
 		conns: newConnRegistry(),
 	}
-	// OAuth App client_id (non-secret) for the GitHub device flow — injected into
-	// the Workspace so the Agent can run the flow. Reuses the extraEnv -> -e path.
-	if cid := os.Getenv("GITHUB_OAUTH_CLIENT_ID"); cid != "" {
-		mgr.extraEnv = append(mgr.extraEnv, "GITHUB_OAUTH_CLIENT_ID="+cid)
-	}
+	// ★ GITHUB_OAUTH_CLIENT_ID is deliberately NOT injected into the workspace any more
+	// (docs/71 §71.5). The GitHub device flow moved into the CP, where the app can be
+	// read per tenant from the database; container env is fixed at container start and
+	// is implemented once per runtime, so a per-tenant value delivered that way would
+	// have needed all four runtimes plumbed and a workspace restart to take effect. The
+	// env var still exists for GitHub SIGN-IN (oauth_github.go) — a different feature.
 	// Deployment master key for at-rest credential encryption (A3). Per-user
 	// subkeys are derived from its SHA-256 and injected as AF_SECRET_KEY. Unset
 	// => no encryption (dev: Agent stores secrets as plaintext JSON).
@@ -204,8 +216,6 @@ func main() {
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),
 		consoleDir:    envOr("CONSOLE_DIR", "./console"),
-		bbKey:         os.Getenv("BITBUCKET_OAUTH_KEY"),
-		bbSecret:      os.Getenv("BITBUCKET_OAUTH_SECRET"),
 		publicBaseURL: publicBaseURL,
 		mgr:           mgr,
 		// CP-native OIDC login (AUTH=oauth). Google's env names are unchanged.
@@ -230,14 +240,53 @@ func main() {
 	}
 
 	// P3-9 idle-stop (docs/19): a background reaper halts idle claude sessions
-	// (tier 1) and stops cold workspaces (tier 2). Deployment defaults are
-	// DISABLED (0) — safe by default, like the P3-4 quotas; an operator opts in
-	// per-tenant via limits (no restart needed) or deployment-wide via env.
-	// AF_IDLE_SWEEP_INTERVAL=0 disables the reaper entirely.
-	if iv := parseDurationOr(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
-		sessDef := parseDurationOr(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), 0)
-		wsDef := parseDurationOr(os.Getenv("AF_WS_IDLE_TIMEOUT"), 0)
-		go newReaper(mgr, iv, sessDef, wsDef).run(context.Background())
+	// (tier 1) and stops cold workspaces (tier 2).
+	//
+	// The deployment defaults are ON — 1h for a session, 2h for the workspace. They used
+	// to be 0 (off), which read as "safe by default" and was not: a workspace nobody had
+	// touched since the night before was still running the next morning, and on the EC2
+	// pool that also pins an m7i.large, because a slot only sleeps once its task is gone
+	// (measured on a real deployment, 9.4h — docs/64 §64.26). Nothing is lost when they
+	// fire: a halted claude session is resumable, and a stopped workspace restarts on the
+	// next visit.
+	//
+	// A tenant admin overrides either one in the tenant's limits, INCLUDING "0" to turn
+	// it off for that tenant (idleTimeout), and a deployment sets its own default in env.
+	// AF_IDLE_SWEEP_INTERVAL=0 disables the reaper entirely — see intervalOff, which is
+	// what makes that true (measured: it was not).
+	if iv := intervalOff(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
+		// intervalOff, not parseDurationOr: now that the default is non-zero, "0" has to
+		// mean OFF for the whole deployment. parseDurationOr treats any non-positive value
+		// as "use the default", which would have silently turned an operator's explicit
+		// off switch into 1h/2h — the same trap AF_IDLE_SWEEP_INTERVAL was in.
+		sessDef := intervalOff(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), time.Hour)
+		wsDef := intervalOff(os.Getenv("AF_WS_IDLE_TIMEOUT"), 2*time.Hour)
+		// Tier 3 (ecs-ec2 only): the deployment default for home hibernation. Kept in the
+		// AF_ECS_EC2_* namespace and in seconds because that is where it started life, as
+		// a setting of the pool sweeper; the trigger moved up here so a tenant can override
+		// it (ADR 0045 決定 13-2). Still 0 = off by default.
+		hibDef := time.Duration(envInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second
+		// Tier 4 (ecs-ec2 only): the deployment default for how often a home is copied
+		// somewhere its AZ is not. Also 0 = off — a backup is cheap but not free, and a
+		// deployment that has not thought about retention should not be paying for it.
+		backupDef := time.Duration(envInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
+		go newReaper(mgr, iv, sessDef, wsDef, hibDef, backupDef).run(context.Background())
+	}
+
+	// Golden snapshot auto-bake (ecs-ec2 only — ADR 0045 決定 9 / docs/64 §64.28).
+	// The CP already refuses a golden stamped with another image; this is the CP acting
+	// on what it knows instead of logging it and waiting for somebody to run
+	// bake-golden.sh. Default ON: the failure it removes is a release nobody re-baked
+	// for, and a feature that has to be switched on is a feature that stays off.
+	//
+	// It is deliberately NOT inside the reaper's `if` above: switching off idle-stop
+	// must not also switch this off. goldenBakerFor returns nil on every profile that
+	// does not seed homes from a shared snapshot, so no other deployment pays anything.
+	if b := goldenBakerFor(mgr, envBool("AF_ECS_EC2_GOLDEN_AUTOBAKE", true)); b != nil {
+		// Recorded, not re-read later: the pool screen has to say "switched off" rather
+		// than leave "there is no golden and nothing is happening" unexplained (§64.30).
+		mgr.autoBakeGolden = true
+		go b.run(context.Background(), time.Duration(envInt("AF_ECS_EC2_GOLDEN_BAKE_SEC", 60))*time.Second)
 	}
 
 	// Showback usage sampler (P3-9): credits running-seconds per workspace so the
@@ -247,6 +296,12 @@ func main() {
 	if iv := parseDurationOr(os.Getenv("AF_USAGE_SAMPLE_INTERVAL"), 5*time.Minute); iv > 0 {
 		go newUsageSampler(mgr, iv).run(context.Background())
 	}
+
+	// Cloud cost (docs/67 + ADR 0048): the AWS invoice, attributed per member by cost
+	// allocation tag. A different claim from the sampler above — that one counts
+	// seconds on every runtime, this one reads real money and only where there is a
+	// bill. No-op unless the runtime declares one (docker/native have no invoice).
+	startCloudCostPoller(context.Background(), mgr)
 
 	// docs/20 M5 (claude self-op audit, A-第2段): a sweeper that pulls each running
 	// claude session's transcript and records Write/Edit/Bash into the audit ledger
@@ -366,8 +421,21 @@ func main() {
 		log.Printf("WARNING: login provider config rejected (AUTH=%s so it is unused): %v", cfg.mgr.authMode, provErr)
 	}
 
-	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode, rtProfile)
-	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(gzipMiddleware(etagJSON(handler))), ReadHeaderTimeout: 10 * time.Second}
+	// Ask the runtime what it will really run rather than printing the docker default:
+	// on ECS the image comes from AF_ECS_WORKSPACE_IMAGE, and a banner naming the wrong
+	// one is worse than no banner when somebody is trying to tell which build is live.
+	wsImage := cfg.mgr.image
+	if f, ok := cfg.mgr.rtFactory.(interface{ WorkspaceImage() string }); ok {
+		if img := f.WorkspaceImage(); img != "" {
+			wsImage = img
+		}
+	}
+	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, wsImage, cfg.mgr.authMode, rtProfile)
+	log.Print("edge: " + clientIPBanner())
+	// withClientIP is OUTERMOST on purpose: it is the only place the forwarding
+	// headers are read, so nothing downstream can be tempted to trust a client's own
+	// claim about where it is calling from (docs/66 §66.6).
+	srv := &http.Server{Addr: cfg.addr, Handler: withClientIP(logRequests(gzipMiddleware(etagJSON(handler)))), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
@@ -428,6 +496,21 @@ func parseDurationOr(s string, def time.Duration) time.Duration {
 	return def
 }
 
+// intervalOff is parseDurationOr for the settings where an explicit "0" means OFF rather
+// than "use the default". parseDurationOr cannot say that: it falls back on anything that
+// is not a POSITIVE duration, so AF_IDLE_SWEEP_INTERVAL=0 — documented right where it is
+// read as "disables the reaper entirely" — quietly gave the 1-minute default instead
+// (measured: the reaper logged interval=1m0s with the variable set to 0).
+//
+// Garbage still falls back. A misspelled value should not silently switch a sweep off;
+// only a duration the operator actually wrote as non-positive does.
+func intervalOff(s string, def time.Duration) time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(s)); err == nil {
+		return d
+	}
+	return def
+}
+
 // emailSet parses a CSV of emails into a lowercased lookup set (SUPER_ADMIN_EMAILS).
 func emailSet(s string) map[string]bool {
 	m := map[string]bool{}
@@ -466,12 +549,66 @@ func splitCSV(s string) []string {
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
+		sw := &statusWriter{ResponseWriter: w}
+		next.ServeHTTP(sw, r)
 		uri := r.URL.RequestURI()
 		// OAuth 系パスのクエリには認可コード等の機微値が乗るためマスクする
 		if r.URL.RawQuery != "" && strings.Contains(r.URL.Path, "oauth") {
 			uri = r.URL.Path + "?<redacted>"
 		}
-		log.Printf("%s %s %s", r.Method, uri, time.Since(start).Round(time.Millisecond))
+		log.Printf("%s %s %d %s", r.Method, uri, sw.code(), time.Since(start).Round(time.Millisecond))
 	})
+}
+
+// statusWriter captures the response status for the access log.
+//
+// Why it exists: a public deployment is found by vulnerability scanners within hours
+// (measured on <dev-deployment> — 172 probes for /actuator/heapdump, /.env and friends in
+// the first 9 hours), and the log could not answer the only question that matters about
+// them: was that a 401 or a 200? Every line looked identical.
+//
+// It forwards the two optional interfaces the CP actually depends on. A wrapper that
+// hides them does not show up as a bad log line — it shows up as an SSE stream that
+// never streams (Flusher) or a terminal that never connects (Hijacker).
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) code() int {
+	if w.status == 0 {
+		return http.StatusOK // handler wrote nothing explicit; net/http sends 200
+	}
+	return w.status
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("connection does not support hijacking")
+	}
+	// The response never gets a status through WriteHeader after this point; the
+	// upgrade IS the outcome, so record it as one instead of logging a bare 200.
+	w.status = http.StatusSwitchingProtocols
+	return hj.Hijack()
 }

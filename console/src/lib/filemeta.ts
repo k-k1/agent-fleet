@@ -14,6 +14,9 @@ const EXT_LANG: Record<string, string> = {
   sh: "bash", bash: "bash", zsh: "bash", fish: "bash",
   yml: "yaml", yaml: "yaml", toml: "ini", ini: "ini", cfg: "ini", conf: "ini",
   xml: "xml", html: "xml", htm: "xml", svg: "xml", vue: "xml",
+  // .drawio / .dio は mxfile（XML）。図として開く面は別にあるが、ソース面では
+  // XML として色を付ける（docs/65 §65.4）。
+  drawio: "xml", dio: "xml",
   css: "css", scss: "scss", sass: "scss", less: "less",
   md: "markdown", markdown: "markdown",
   sql: "sql", graphql: "graphql", gql: "graphql",
@@ -177,6 +180,39 @@ export function imageFormat(path: string): string {
   const name = baseName(path).toLowerCase();
   const ext = name.includes(".") ? name.split(".").pop() ?? "" : "";
   return IMAGE_EXT[ext] || "";
+}
+
+// drawio の図か。拡張子で決まるのは .drawio / .dio の 2 つだけで、`.xml` は中身を
+// 見ないと分からない（mxfile を .xml で保存する運用がある）。`head` を渡せばその
+// 判定まで行う。**内容が無い / 取れないときは拡張子の判断だけ**を返す。
+export function isDrawioFile(path: string, head?: string | null): boolean {
+  const name = baseName(path).toLowerCase();
+  const ext = name.includes(".") ? (name.split(".").pop() ?? "") : "";
+  if (ext === "drawio" || ext === "dio") return true;
+  if (ext !== "xml" || !head) return false;
+  return looksLikeDrawioXml(head);
+}
+
+// mxfile / mxGraphModel で始まるか。XML 宣言・BOM・コメント・空白を読み飛ばす。
+// 先頭だけで判定できるので、呼び手は数 KB 渡せば足りる。
+export function looksLikeDrawioXml(head: string): boolean {
+  let s = head.replace(/^\uFEFF/, "").trimStart();
+  for (;;) {
+    if (s.startsWith("<?")) {
+      const end = s.indexOf("?>");
+      if (end < 0) return false;
+      s = s.slice(end + 2).trimStart();
+      continue;
+    }
+    if (s.startsWith("<!--")) {
+      const end = s.indexOf("-->");
+      if (end < 0) return false;
+      s = s.slice(end + 3).trimStart();
+      continue;
+    }
+    break;
+  }
+  return /^<(mxfile|mxGraphModel)[\s>]/.test(s);
 }
 
 export function langFor(path: string): string {

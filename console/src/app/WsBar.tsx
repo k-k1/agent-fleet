@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, previewURL } from "../core/api/client.ts";
 import { onPush, pushHealthy } from "../core/push/events.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
-import { useWorkspaceStore, wsStartBusy } from "../core/store/workspace.ts";
+import { useWorkspaceStore, wsBusy, wsPowerStops, wsStartBusy } from "../core/store/workspace.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { isBlankPane, MAX_TAB_COLS } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -734,7 +734,10 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
 // OOM) or the ECS service sits at desired 0. Both read as 停止 to the user; the
 // raw state stays in the tooltip. Optimistic in-flight states (set by the store
 // around start/stop POSTs) end in "…".
-function wsLabel(s: string): string {
+// reason は state が読めなかった理由（workspace ストア）。"unknown" のままでは
+// 「取得に失敗した」しか言えず、招待前の super_admin には理由の無い「不明」だけが残る。
+function wsLabel(s: string, reason = ""): string {
+  if (s === "unknown" && reason === "not_provisioned") return t("wsbar.state.no_tenant");
   switch (s) {
     case "running":
       return t("wsbar.state.running");
@@ -793,8 +796,13 @@ export function WsBar() {
   const stopWs = useWorkspaceStore((s) => s.stop);
   const restartWs = useWorkspaceStore((s) => s.restart);
   const wsStale = useWorkspaceStore((s) => s.stale);
+  const wsReason = useWorkspaceStore((s) => s.reason);
   const tenant = useTenantStore((s) => s.tenant);
   const superAdmin = useTenantStore((s) => s.superAdmin);
+  // どのテナントにも所属していない＝ワークスペースがそもそも存在しない。招待前の
+  // super_admin だけがここに来る（他の人は NotProvisioned の面に降りる）ので、
+  // 案内は「管理からテナントに自分を足す」が正解になる。
+  const noTenant = wsState === "unknown" && wsReason === "not_provisioned";
   const layout = useLayoutStore((s) => s.layout);
   const splitRight = useLayoutStore((s) => s.splitRight);
   const splitDown = useLayoutStore((s) => s.splitDown);
@@ -826,6 +834,11 @@ export function WsBar() {
   // server-reported "starting" (ECS cold pull — a second Start click must not
   // re-drive the deployment; the 4s poll flips the bar to 稼働中 on its own).
   const busy = wsStartBusy(wsState);
+  // ⚠️ …but only the OPTIMISTIC "…" states may disable the POWER button — those are
+  // momentary (one request in flight). The server-reported "starting" is not, and it
+  // must stay clickable so a wedged start can be cancelled (wsPowerStops).
+  const inFlight = wsBusy(wsState);
+  const powerStops = wsPowerStops(wsState);
 
   // "Close all panes" collapses the split layout back to one empty terminal pane.
   // Disabled when there's already just a single empty pane (nothing to close).
@@ -878,13 +891,16 @@ export function WsBar() {
   // Reversible (Start recreates; data persists in the bind mount), so it's a caution,
   // not a red destructive action.
   const onToggle = async () => {
-    if (!running) {
+    if (!powerStops) {
       void startWs();
       return;
     }
     const ok = await askConfirm({
       title: tr("wsbar.stop_ws"),
-      body: tr("wsbar.confirm.stop.body"),
+      // Stopping a start that has not landed yet loses nothing — there are no sessions
+      // to drop and no preview to disconnect — so it gets its own body rather than the
+      // running one's warning about both.
+      body: tr(running ? "wsbar.confirm.stop.body" : "wsbar.confirm.stop.starting_body"),
       confirmLabel: tr("wsbar.confirm.stop.go"),
       danger: false,
     });
@@ -1155,11 +1171,13 @@ export function WsBar() {
       <button
         className={"ws-power " + (running ? "on" : "off") + (staleShown ? " stale" : "")}
         onClick={onToggle}
-        disabled={busy}
+        disabled={inFlight}
         title={
-          (running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")) + (staleShown ? " — " + tr("wsbar.stale.title") : "")
+          noTenant
+            ? tr(superAdmin ? "wsbar.state_title.no_tenant_admin" : "wsbar.state_title.no_tenant")
+            : (powerStops ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")) + (staleShown ? " — " + tr("wsbar.stale.title") : "")
         }
-        aria-label={running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")}
+        aria-label={powerStops ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")}
       >
         {busy ? (
           <Icon name="loading" spin />
@@ -1188,7 +1206,9 @@ export function WsBar() {
       <span
         className={"ws-state" + (wsState === "stopped" && wsStats?.oom_killed ? " warn" : "")}
         title={
-          wsState === "none"
+          noTenant
+            ? tr(superAdmin ? "wsbar.state_title.no_tenant_admin" : "wsbar.state_title.no_tenant")
+            : wsState === "none"
             ? tr("wsbar.state_title.none")
             : wsState === "stopped"
               ? wsStats?.oom_killed
@@ -1201,7 +1221,7 @@ export function WsBar() {
                 : tr("wsbar.state_title.other", { state: wsState })
         }
       >
-        {wsLabel(wsState)}
+        {wsLabel(wsState, wsReason)}
       </span>
       {/* 要再起動 — the backend moved on while this container kept running. Sits
           right of the state chip (and dots the power button next to it) because the

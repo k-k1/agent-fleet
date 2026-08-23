@@ -14,6 +14,7 @@
 
 import type { FoldItem, Group, Part, Turn } from "./types.ts";
 import { carryEnd, endOf } from "../turnTime.ts";
+import { BODY_PART, MARKABLE_KINDS, markRootKey, turnKey } from "./marks.ts";
 
 // System-injected user lines that aren't real prompts: slash-command echoes, the
 // bash tool's stdin/stdout, task-notification frames, memory captures. We hide them
@@ -45,9 +46,24 @@ export function isNoise(t: Turn): boolean {
 // normally a smell, but the name genuinely lives nowhere else on this side: peer turns
 // are ordinary injected user turns whose only extra is the "peer" source tag. Returns
 // null for anything that doesn't match, and the badge then degrades to "別のセッション".
-const PEER_ENVELOPE_RE = /^\[agent-fleet:peer from=([A-Za-z0-9][A-Za-z0-9_-]*)\]/;
+// The envelope carries `intent=` / `reply=` after the name (docs/58 §58.14), so the name
+// match must tolerate further words before the "]" — pinning it to "]" is exactly how this
+// silently degraded to the unnamed badge when the envelope grew.
+const PEER_ENVELOPE_RE = /^\[agent-fleet:peer from=([A-Za-z0-9][A-Za-z0-9_-]*)(?: [^\]]*)?\]/;
 export function peerSenderOf(text: string): string | null {
   return PEER_ENVELOPE_RE.exec(text)?.[1] ?? null;
+}
+
+// peerIntentOf reads the message kind out of the same envelope. It is what tells a reader
+// why a message got no reply (answer / notice are terminal by protocol), so the mirror
+// shows it as a chip next to the sender. Unknown/absent → null, and the chip disappears
+// rather than guessing.
+const PEER_INTENT_RE = /^\[agent-fleet:peer [^\]]*\bintent=([a-z]+)/;
+export type PeerIntent = "request" | "question" | "answer" | "notice";
+const PEER_INTENTS: readonly string[] = ["request", "question", "answer", "notice"];
+export function peerIntentOf(text: string): PeerIntent | null {
+  const m = PEER_INTENT_RE.exec(text)?.[1];
+  return m && PEER_INTENTS.includes(m) ? (m as PeerIntent) : null;
 }
 
 // A `!`-run shell command is logged by Claude as a user turn `<bash-input>cmd</bash-input>`,
@@ -168,6 +184,16 @@ export function partsOf(t: Turn): Part[] {
   return t.text ? [{ kind: "text", text: t.text }] : [];
 }
 
+// originsOf builds the mark root key of every part, keyed to the SOURCE TURN rather than
+// to the block it is about to be folded into (docs/69 §69.3). "" for a part that cannot
+// carry a mark: no stable turn key (a pending echo), or a kind whose text does not survive
+// the shared DTO verbatim — a mark there would ship a coordinate the DTO deliberately
+// dropped (docs/69 §69.4).
+function originsOf(t: Turn, parts: Part[]): string[] {
+  const key = turnKey(t);
+  return parts.map((p, i) => (key && MARKABLE_KINDS.has(p.kind || "") ? markRootKey(key, i) : ""));
+}
+
 // groupTurns folds consecutive same-role turns into one block (concatenating their
 // ordered parts, and their text for copy) and drops noise. A block breaks on a role
 // OR sidechain change so a subagent's turns stay separate from the main thread. It
@@ -202,6 +228,11 @@ export function groupTurns(turns: Turn[]): Group[] {
       !t.cmd
     ) {
       last.parts.push(...parts);
+      last.origins.push(...originsOf(t, parts));
+      last.folded++;
+      // 2 行以上畳んだ時点で、ブロックの text は「窓に何行入っていたか」で変わる文字列に
+      // なる。そこに出現番号のアンカーは置けない（docs/69 §69.3.2）。
+      last.bodyRoot = "";
       carryEnd(last, t); // the block's end follows the last row folded in
       if (t.pending) last.pending = true;
       if (t.queued) last.queued = true;
@@ -238,6 +269,9 @@ export function groupTurns(turns: Turn[]): Group[] {
         endTs: endOf(t) || undefined,
         idx: t.idx,
         anchorId: t.anchorId,
+        origins: originsOf(t, parts),
+        bodyRoot: turnKey(t) ? markRootKey(turnKey(t), BODY_PART) : "",
+        folded: 1,
         pending: !!t.pending,
         queued: !!t.queued,
         source: t.source,

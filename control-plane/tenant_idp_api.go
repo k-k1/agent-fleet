@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Admin API for tenant-defined login providers (docs/61 §61.11.6 + ADR0043 決定 30).
@@ -23,9 +27,17 @@ import (
 // faster than starting.
 type tenantIdPAPI struct {
 	memberAuth
+	// provs is the env-defined set, for one question only: does the issuer being
+	// registered already have a door on this deployment (docs/61 §61.17.4 (b))?
+	// A tenant registering a second app registration of the SAME directory the
+	// deployment itself uses is the commonest form of that, and the DB rows alone
+	// would not see it.
+	provs []loginProvider
 }
 
-func newTenantIdPAPI(m *manager) tenantIdPAPI { return tenantIdPAPI{memberAuth{m}} }
+func newTenantIdPAPI(m *manager, provs []loginProvider) tenantIdPAPI {
+	return tenantIdPAPI{memberAuth{m}, provs}
+}
 
 // tenantIdPBody is the wire shape. Secret is write-only: it is never returned, and
 // an update that leaves it at the mask (or empty) keeps the stored value — the same
@@ -198,6 +210,10 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
+	if aerr := a.checkPairwiseNeedsLinkClaim(r, b, id); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 
 	// The secret: a blank (or still-masked) value on an edit keeps what is stored, so
 	// editing a label does not require re-typing the client_secret — and, more to the
@@ -366,6 +382,38 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// ★ Stopping a method that is somebody's ONLY door locks them out (docs/61
+	// §61.17.4 の順序). The commonest way to get here is the migration this whole
+	// section is about: a second app registration goes live, and the old row is
+	// suspended before everyone has linked the new one — and after that they cannot
+	// self-serve, because linking needs a session and their session needs this row.
+	//
+	// ★ It is a 409 the caller can override, NOT a refusal. Suspending is also how a
+	// compromised IdP is stopped, and "stopping is always allowed to be faster than
+	// starting" (see the type comment). So this buys one question, not a veto.
+	if status == "suspended" && row.Status == "active" && r.URL.Query().Get("confirm") != "1" {
+		n, err := a.mgr.store.CountMembersOnlyOnProvider(r.Context(), t.ID, tenantProviderID(t.Slug, row.Name))
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		if n > 0 {
+			// ★ Written by hand rather than through writeAPIErr: the COUNT has to reach
+			// the Console, and only the server can know it. The shared error envelope is
+			// {code, message} — widening it for one response would touch every handler,
+			// so the number rides alongside as its own field. `error` keeps its usual
+			// shape, so a caller that only reads that still gets a sentence.
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": map[string]string{
+					"code": "tenant_idp_last_method_for_members",
+					"message": "this is the only sign-in method " + strconv.Itoa(n) + " active member(s) have ever used; " +
+						"suspending it locks them out, and they cannot add another method without signing in first",
+				},
+				"members": n,
+			})
+			return
+		}
+	}
 	approvedBy, approvedAt := "", ""
 	if status == "active" {
 		approvedBy, approvedAt = ident.ID, nowTS()
@@ -449,6 +497,74 @@ func (a tenantIdPAPI) checkDomainsUnclaimed(r *http.Request, tenantID, rowID str
 		}
 	}
 	return nil
+}
+
+// checkPairwiseNeedsLinkClaim refuses a SECOND app registration of a directory whose
+// `sub` is pairwise, unless the row says which stable claim identifies the person
+// (docs/61 §61.17.4 (b) + 決定 41).
+//
+// The situation it catches: a tenant registers its own Entra app for a directory this
+// deployment already has a door to. Entra mints a per-client `sub`, so the same person
+// arrives with a DIFFERENT subject, rule 1.5 does not join them, and rule 2' refuses
+// the login outright — `email_taken`, with no session. ★ The failure lands on the
+// person, at login, weeks later, and reads like a bug. Refusing at save is the only
+// moment anybody who can fix it is present.
+//
+// Three deliberate narrowings:
+//
+//   - ★ pairwise is read from DISCOVERY (`subject_types_supported`), never guessed
+//     from the issuer's hostname. Measured 2026-08-20: Google public, Entra pairwise.
+//   - ★ It only fires when the issuer is ALREADY in use here. One registration of a
+//     pairwise IdP splits nobody, and demanding a claim from every Entra tenant would
+//     be noise on the common case.
+//   - ★ Discovery failing is NOT a refusal. The issuer may be unreachable from the CP
+//     at this moment (it is fetched lazily everywhere else for the same reason), and a
+//     network blip must not stop an administrator from saving a form.
+//
+// ☆ Why it does not also check that the claim is EMITTED: it cannot. `claims_supported`
+// under-reports — Entra's document does not list `oid` at all, though every v2 token
+// carries it (measured 2026-08-20). And naming a claim the IdP never sends is inert:
+// realm_subject stays empty, and identityIDForRealmClaim refuses an empty subject, so
+// nothing is joined by accident. Requiring the field costs nothing when it cannot help.
+func (a tenantIdPAPI) checkPairwiseNeedsLinkClaim(r *http.Request, b tenantIdPBody, rowID string) *apiError {
+	if b.Kind == tenantIdPKindGitHub || b.LinkClaim != "" || b.Issuer == "" {
+		return nil
+	}
+	inUse, err := a.mgr.store.TenantIdPIssuerInUse(r.Context(), b.Issuer, rowID)
+	if err != nil {
+		return internalErr(err)
+	}
+	if !inUse {
+		// The deployment's own providers are doors too, and the commonest second
+		// registration is "the tenant's app for the directory the deployment uses".
+		for _, p := range a.provs {
+			if providerRealm(p) == b.Issuer {
+				inUse = true
+				break
+			}
+		}
+	}
+	if !inUse {
+		return nil
+	}
+	// Bounded: this runs inside a form submit, and the answer is advisory enough that
+	// waiting on a slow IdP would be worse than not asking.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	probe := &oidcProvider{id: "probe", issuer: b.Issuer}
+	ep, err := probe.endpoints(ctx)
+	if err != nil {
+		log.Printf("tenant idp: %s: subject_types probe failed, saving without the pairwise check: %v", b.Issuer, err)
+		return nil
+	}
+	if !ep.pairwiseSubjects() {
+		return nil
+	}
+	return &apiError{http.StatusBadRequest, "tenant_idp_link_claim_required",
+		"this deployment already has a sign-in method for " + b.Issuer + ", and that issuer gives each app " +
+			"registration a different subject for the same person — so without a stable claim to match on, " +
+			"everybody who already signs in here would be refused with \"this email address is already used by " +
+			"another sign-in method\". Set how the same account is recognised (" + strings.Join(tenantLinkClaimList(), ", ") + ")"}
 }
 
 // validateTenantIdPBody is the save-time half of the rules the env path enforces at

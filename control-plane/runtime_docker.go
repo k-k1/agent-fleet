@@ -31,6 +31,10 @@ type dockerRuntime struct {
 	extraEnv   []string // KEY=VAL passed to the workspace container (e.g. CLAUDE_INSTALL=0)
 	// inspect overrides `docker inspect` (tests only); nil = the real docker CLI.
 	inspect func(ctx context.Context, typ, ref, format string) string
+	// stopFn overrides Stop (tests only; the CP's own test environment has no docker
+	// CLI, and Destroy's contract — never unlink the home while the container can still
+	// be writing to it — is exactly what needs asserting). nil = the real Stop.
+	stopFn func(ctx context.Context) error
 	// cpus is the per-workspace CPU cap as docker --cpus (fractional cores); "" = no
 	// flag = every core. Native has no cgroup, so it ignores this axis entirely.
 	cpus string
@@ -107,10 +111,10 @@ func (d *dockerRuntime) State(ctx context.Context) string {
 	}
 }
 
-// imageIDStampPath / recordImageStamp — what this container was actually launched
+// imageStampPath / recordImageStamp — what this container was actually launched
 // FROM, recorded at Start so Stale() can notice the tag moved (workspace_stale.go).
-// Same shape as the native runtime's spawnStamp; the reason it must be a stamp and
-// not a live two-sided comparison is the trap below.
+// Same shape as the native runtime's spawnStamp. Two traps decide both the stamp
+// and WHAT is stamped; both were paid for on the dev fleet.
 //
 // ★ Never compare the running container's `docker inspect {{.Image}}` against the
 //
@@ -124,39 +128,79 @@ func (d *dockerRuntime) State(ctx context.Context) string {
 //	    container started 3 min later   {{.Image}} = sha256:02a946de…
 //
 //	The original two-sided check therefore reported 要再起動 permanently on that
-//	host, whatever was (or was not) updated — the exact "badge nobody believes"
-//	failure this file exists to avoid. Comparing a value we recorded ourselves with
-//	one obtained the SAME way makes the check independent of that representation.
-func (d *dockerRuntime) imageIDStampPath() string { return filepath.Join(d.dataDir, "image.id-stamp") }
+//	host, whatever was (or was not) updated. (The container's digest is not even a
+//	usable ref: `docker image inspect <that digest>` answers "No such image", so
+//	there is no way to fingerprint the running image after the fact — the value has
+//	to be recorded at Start.)
+//
+// ★ Stamping the tag's {{.Id}} is not enough either — the ID is a REPRESENTATION,
+//
+//	not the content, and it moves without the image changing. Measured 2026-08-16:
+//	a fully cache-hit `docker build -t agent-fleet/workspace:dev` re-exported the
+//	same content with a fresh provenance attestation, so the tag stopped resolving
+//	to the plain config digest and started resolving to an index digest:
+//
+//	    stamp at container start 15:23   = sha256:97f63692…  (== container {{.Image}})
+//	    tag {{.Id}} after 15:43 rebuild  = sha256:d109f019…  (Created still 14:46:47)
+//	    image contents                   = byte-identical (sha256 of workspace-agent,
+//	                                       entrypoint.sh, CLAUDE.md all unchanged)
+//
+//	i.e. 要再起動 for an image where stop→start changes nothing. So stamp the
+//	CONTENT identity instead: the layer chain plus the config fields a Dockerfile
+//	can change without producing a layer (ENV/CMD/ENTRYPOINT/USER/WORKDIR/LABEL).
+//	Those are diffIDs and literal values — no digest representation involved.
+func (d *dockerRuntime) imageStampPath() string {
+	return filepath.Join(d.dataDir, "image.rootfs-stamp")
+}
 
-// recordImageStamp stores the image ID the tag resolves to right now. Called by
-// Start, straight after `docker run`. Best-effort: an unwritable/unreadable value
-// just means "unknown", and Stale then never nags. An empty result is written on
-// purpose — leaving a previous container's stamp in place would be a lie.
+// legacyImageIDStampPath is the pre-2026-08-16 stamp, which held the tag's {{.Id}}.
+// It is removed rather than read: an ID cannot be compared against a fingerprint,
+// and treating it as "unknown" is the safe side of the contract (never nag on a
+// guess) — the next Start writes a real fingerprint.
+func (d *dockerRuntime) legacyImageIDStampPath() string {
+	return filepath.Join(d.dataDir, "image.id-stamp")
+}
+
+// dockerImageFingerprint is the `docker inspect --type=image` format that yields the
+// content identity described above. Fields are named one by one on purpose: dumping
+// `{{.RootFS}}` or `{{json .Config}}` would fold the docker CLI's struct/JSON shape
+// into the stamp, so a CLI upgrade that adds a field would look like a moved image —
+// the very class of bug this comparison exists to avoid.
+const dockerImageFingerprint = "{{range .RootFS.Layers}}{{.}} {{end}}|" +
+	"{{.Config.User}}|{{.Config.WorkingDir}}|{{.Config.Entrypoint}}|" +
+	"{{.Config.Cmd}}|{{.Config.Env}}|{{.Config.Labels}}"
+
+// recordImageStamp stores the fingerprint of the image the tag resolves to right
+// now. Called by Start, straight after `docker run`. Best-effort: an unwritable/
+// unreadable value just means "unknown", and Stale then never nags. An empty result
+// is written on purpose — leaving a previous container's stamp in place would be a lie.
 func (d *dockerRuntime) recordImageStamp(ctx context.Context) {
-	id := d.imageID(ctx)
-	// Prime the TTL cache with the value we just probed: a cached PRE-rebuild ID
-	// would otherwise make this freshly started container look stale for up to a
-	// minute (Start is the one moment we know the truth).
-	freshness.set("img:"+d.image, id)
-	_ = os.WriteFile(d.imageIDStampPath(), []byte(id), 0o644)
+	fp := d.imageFingerprint(ctx)
+	// Prime the TTL cache with the value we just probed: a cached PRE-rebuild
+	// fingerprint would otherwise make this freshly started container look stale for
+	// up to a minute (Start is the one moment we know the truth).
+	freshness.set("img:"+d.image, fp)
+	_ = os.WriteFile(d.imageStampPath(), []byte(fp), 0o644)
+	_ = os.Remove(d.legacyImageIDStampPath())
 }
 
-func (d *dockerRuntime) imageID(ctx context.Context) string {
-	return d.inspectOne(ctx, "image", d.image, "{{.Id}}")
+func (d *dockerRuntime) imageFingerprint(ctx context.Context) string {
+	return d.inspectOne(ctx, "image", d.image, dockerImageFingerprint)
 }
 
-// Stale reports whether the tag now resolves to a different image than the one this
-// container was started from — i.e. stop→start would swap in new backend code while
-// the live container keeps the old. A moved tag is what a local `docker build` or a
-// pull of a new release produces, so this catches dev rebuilds that carry no version
-// stamp. Unknown (no stamp from a start that predates this, image not present
-// locally — e.g. a registry-only tag) → false: never nag on a guess.
+// Stale reports whether the tag now resolves to different image CONTENT than the one
+// this container was started from — i.e. stop→start would swap in new backend code
+// while the live container keeps the old. A rebuilt image is what a local
+// `docker build` or a pull of a new release produces, so this catches dev rebuilds
+// that carry no version stamp; a re-tag of identical content (cache-hit rebuild) is
+// correctly silent. Unknown (no stamp — a start that predates this, or one that only
+// left the legacy ID stamp; image not present locally — e.g. a registry-only tag)
+// → false: never nag on a guess.
 //
 // The probe is cached (workspace_stale.go) because /api/workspace is polled every 4s
-// per open Console; the tag's ID only moves on a build/pull.
+// per open Console; the fingerprint only moves on a build/pull.
 func (d *dockerRuntime) Stale(ctx context.Context) bool {
-	b, err := os.ReadFile(d.imageIDStampPath())
+	b, err := os.ReadFile(d.imageStampPath())
 	if err != nil {
 		return false
 	}
@@ -164,7 +208,7 @@ func (d *dockerRuntime) Stale(ctx context.Context) bool {
 	if was == "" {
 		return false
 	}
-	now := freshness.get("img:"+d.image, 60*time.Second, func() string { return d.imageID(ctx) })
+	now := freshness.get("img:"+d.image, 60*time.Second, func() string { return d.imageFingerprint(ctx) })
 	return now != "" && now != was
 }
 
@@ -187,6 +231,10 @@ func dockerInspectOne(ctx context.Context, typ, ref, format string) string {
 }
 
 // Start launches the Workspace container and waits for the Agent to be healthy.
+// mountsStagedDocs marks this adapter as one that bind-mounts <dataDir>/docs, so the
+// start path stages it (runtime.go runtimeDocsMounter).
+func (d *dockerRuntime) mountsStagedDocs() {}
+
 func (d *dockerRuntime) Start(ctx context.Context) error {
 	if d.State(ctx) == "running" {
 		return nil
@@ -402,6 +450,31 @@ func (d *dockerRuntime) Stop(ctx context.Context) error {
 		_ = exec.CommandContext(ctx, "docker", "network", "rm", d.network).Run()
 	}
 	return nil
+}
+
+// Destroy removes the container (Stop already does that, plus the per-user network) and
+// then the host data directory that holds the home bind-mount. Unlike the cloud adapters
+// there is nothing left over afterwards: the workspace's whole existence on this host is
+// the container and <dataDir>.
+//
+// The dataDir is removed AFTER Stop so nothing is writing through the bind-mount while we
+// unlink it. An already-absent directory is success, not an error — Destroy is retried by
+// the caller when a partial teardown left the DB row behind.
+func (d *dockerRuntime) Destroy(ctx context.Context) ([]string, error) {
+	stop := d.Stop
+	if d.stopFn != nil {
+		stop = d.stopFn
+	}
+	if err := stop(ctx); err != nil {
+		return nil, err
+	}
+	if d.dataDir == "" {
+		return nil, nil
+	}
+	if err := os.RemoveAll(d.dataDir); err != nil {
+		return nil, fmt.Errorf("remove data dir %s: %w", d.dataDir, err)
+	}
+	return nil, nil
 }
 
 // homeKeep are the top-level ~ entries preserved by an admin "home 掃除": connection

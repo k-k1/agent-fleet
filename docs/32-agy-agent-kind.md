@@ -82,8 +82,20 @@ Track B の `hostcaps.AgyStatus()` を `Status()`（supported/reason）と `Buil
      `AGY_SHA256_X64/ARM64` を固定し、焼き込み・lean boot-install とも同じ byte を検証する。
      この行の「ピン不可」制約は解消（self-update の latest 追従は manifest 経路のまま）
    - **バックグラウンド自己更新は実在**（install.sh に明記）。バイナリ実測で
-     `AGY_CLI_DISABLE_AUTO_UPDATE` 環境変数を発見 → Dockerfile で `=1` に設定して封殺
+     `AGY_CLI_DISABLE_AUTO_UPDATE` 環境変数を発見 → Dockerfile で **`=true`** に設定して封殺
      （claude の `DISABLE_AUTOUPDATER` と同じ理屈。明示的な `agy update` は可能なまま）
+   - 🔴 **ここは長らく `=1` で、まったく効いていなかった**（2026-08-23 に実測で発覚・
+     docs/70 §70.14.9）。受け付ける値は **`true` だけ**で、公式ドキュメントもそう書いている。
+     同じコマンドを値だけ変えて走らせた実測:
+
+     ```
+     AGY_CLI_DISABLE_AUTO_UPDATE=1     → auto_updater.go:305] Spawned background update process
+     AGY_CLI_DISABLE_AUTO_UPDATE=true  → auto_updater.go:218] Auto-update disabled via environment variable
+     ```
+
+     ⚠️ **教訓: バイナリから env 名を見つけただけでは「封殺した」ことにならない。**
+     名前は文字列として転がっているが、値の判定はコードの中にあって strings には出ない。
+     **効いたことをログで一度確かめるまでは、設定したという事実しか無い。**
    - RDRAND 非提示ビルドホストでは `agy --version` 自体が SIGABRT するため、
      **--version 検証は rdrand 提示時のみ**実行（非対応ホストでもイメージは焼ける）
    - `env_tool_versions.go` の toolSpecs にも `agy` 行を追加（ピン表示・実体プローブ）
@@ -94,6 +106,12 @@ Track B の `hostcaps.AgyStatus()` を `Status()`（supported/reason）と `Buil
    `hostcaps.AgyStatus() (supported bool, reason string)` を提供。
    reason 語彙は `"not_installed"`（agy バイナリ無し = 旧イメージ）/ `"no_rdrand"`。
    配備ドキュメントに要件明記済（`deploy/compose/README.md` Prerequisites・`deploy/local/README-wsl.md`）
+   - ✅ **「amd64 のみ要件化」は 2026-08-22 に実測で裏が取れた**（[70](70-slot-instance-classes.md) §70.13）。
+     Graviton 3 世代（Graviton4 / Graviton3 / Neoverse-N1）の Debian 12 コンテナで
+     `agy --version` `agy --help` が RC=0。**決め手は m6g** で、`/proc/cpuinfo` に `rng`
+     （ARMv8.5-RNG＝RNDR。x86 の rdrand に相当）が**無いのに動いた**——arm64 の BoringCrypto は
+     乱数を命令ではなく **`getrandom(2)`** から取る。したがって arm64 でガードを課さないのは正しい。
+     ⚠️ ただし確かめたのは起動 2 種で、**OAuth 認証と実セッションは arm64 では未通し**。
 
    **← Track A / C への契約（capability の配線）**:
    - Track A: `agy.Status()`（`GET /connections` の `agy` フィールド）に

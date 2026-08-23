@@ -10,6 +10,7 @@
 
 import type { ReactNode } from "react";
 import { CompactBlock, ContextLine } from "./blocks.tsx";
+import { MarkLayer } from "./MarkLayer.tsx";
 import { TranscriptTurn } from "./TranscriptTurn.tsx";
 import { ctxSizeAfter, ctxSizeBefore } from "./model.ts";
 import type { Group } from "./types.ts";
@@ -20,12 +21,19 @@ import { chronoInsertIndex } from "../handoffPlacement.ts";
 export interface TranscriptViewProps {
   groups: Group[];
   caps: TranscriptCaps;
-  /** The session is mid-turn: the live exchange keeps its work trace unfolded. */
+  /**
+   * The session is mid-turn: the live exchange keeps its work trace unfolded. Pass the
+   * WIDEST notion of busy available (the mirror adds background runs and the idle→reply
+   * bridge to the polled status) — a turn folding and unfolding as this flaps is what
+   * moves the text under a reader. TranscriptTurn latches the fold as a backstop, so a
+   * flap costs at most one fold, never a fold/unfold cycle.
+   */
   working?: boolean;
   /**
    * Fold completed work even for the live exchange. The mirror passes its "am I pinned to
    * the bottom" flag: someone who scrolled up to read a streaming tool trace shouldn't have
-   * it yanked closed when the turn completes.
+   * it yanked closed when the turn completes. Read once, when a turn's work trace first
+   * folds — afterwards only the reader's own click opens or closes it.
    */
   autoCollapseWork?: boolean;
   /**
@@ -88,7 +96,8 @@ export function TranscriptView({
           // trace shouldn't have it yanked closed when it folds. Every earlier turn — and
           // crucially any older page the infinite-scroll loader prepends while you're
           // scrolled up (atBottom=false) — must default CLOSED, or it mounts expanded with
-          // no click and the reflow jumps the scroll.
+          // no click and the reflow jumps the scroll. Only the value at the moment the turn
+          // first folds is used; later changes never re-open or re-close it.
           defaultWorkOpen={!autoCollapseWork && i > lastUser}
         />
       ),
@@ -97,5 +106,8 @@ export function TranscriptView({
   // Nothing in the transcript is newer than these cards (the normal case right after a
   // session proposes a handoff): they go last — until the next turn arrives.
   for (const c of cards) if (c.insertAt >= groups.length) els.push(c.node);
+  // 会話ぜんぶで 1 つの浮遊レイヤー（選択ピルとマーカーのカード）。印そのものは各ターンが
+  // 自分の本文へ被せる — ここに置くのは document 単位の操作だけ。
+  if (caps.marks) els.push(<MarkLayer key="marklayer" marks={caps.marks} />);
   return <>{els}</>;
 }

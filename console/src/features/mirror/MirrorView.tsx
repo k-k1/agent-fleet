@@ -78,13 +78,14 @@ import { t as tr, useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
 import { agentOf } from "../../agents/registry.ts";
-import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
+import { takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
 // workSplit はターン描画とともに transcript/ へ移った（TranscriptTurn が持つ）。
 import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts } from "./mirrorParts.ts";
 import { echoLanded, echoNeedsResync, type PendingEcho } from "./pendingEcho.ts";
+import { applyMark, captureMark, saveMark, scrollTopForTurn, loadMark, type ScrollMark } from "./scrollMark.ts";
 import { PLAN_APPROVE_KEYS } from "./planDecision.ts";
 import { deliverPlanComments, planKey } from "./planComments.ts";
 import { type InteractionAnswerWire, patchAnswers } from "./interactionAnswers.ts";
@@ -106,14 +107,18 @@ import type { ForkAtTarget } from "./ForkAtModal.tsx";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT } from "./HandoffProposal.tsx";
 import { PendingQuestions } from "./PendingQuestions.tsx";
+import { FileChangeStrip } from "./FileChangeStrip.tsx";
+import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
 // The transcript rendering layer, shared with the shared-session view (docs/59). What the
 // reader may DO here is expressed as TranscriptCaps — the mirror is the owner, so it fills
 // in every capability; a recipient fills in almost none. See transcript/capabilities.ts.
 import { TranscriptView } from "./transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "./transcript/capabilities.ts";
-import type { Group, Question, TaskItem, Turn, TurnTtsWiring } from "./transcript/types.ts";
+import type { Group, Part, Question, TaskItem, Turn, TurnTtsWiring } from "./transcript/types.ts";
 import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, spendOf } from "./transcript/model.ts";
 import { PlanBlock, TaskChecklist, planTitle } from "./transcript/blocks.tsx";
+import { useMarksController } from "./transcript/useMarks.ts";
+import { MarkStrip } from "./transcript/MarkStrip.tsx";
 
 const q = encodeURIComponent;
 
@@ -152,6 +157,9 @@ const NEAR_BOTTOM_PX = 80;
 // their position instead of snapping past it. Only needs to outlive the reflow the click
 // causes — everything else that grows the transcript is content, and is followed.
 const INTERACT_HOLD_MS = 600;
+
+// 「返信を頭から」の頭出しで、返信ブロックの上端に残す余白（px）。0 だと切り出しに見える。
+const REPLY_TOP_PAD = 8;
 
 // Optimistic send echoes ("反映待ち"), stashed per session at module level. MirrorView
 // unmounts on a チャット→ターミナル switch, so keeping them only in component state made a
@@ -220,6 +228,12 @@ export function MirrorView({
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
   const [turns, setTurns] = useState<Turn[]>([]); // {role:'user'|'assistant', text, ts, idx}
+  // Which session the accumulated view state (turns / alive / mode / echoes …) belongs to.
+  // A pane keeps this component mounted while its `session` prop changes (PaneHost keys a
+  // cell, not a session), and the per-session reset is a layout effect — so on that one
+  // commit every piece of state below is still the PREVIOUS session's. Anything that reads
+  // state to decide something about the NEW session must wait for `stateSession === session`.
+  const [stateSession, setStateSession] = useState(session);
   // Optimistic local echoes of just-sent prompts. While claude is working it queues a new
   // prompt WITHOUT logging it to the jsonl until the current turn finishes, so the mirror
   // (transcript-only) would show nothing — the message looks lost. We render these until
@@ -260,10 +274,23 @@ export function MirrorView({
   const [finalizing, setFinalizing] = useState(false);
   const finalizingRef = useRef(false);
   const wasWorkingRef = useRef(false); // saw "working" since the last landed reply
+  // The exchange is still in flight. Everything that reacts to "is a turn running" must use
+  // THIS, not the bare polled status: the status alone drops to idle mid-answer (Stop hook /
+  // TUI heal) and says nothing about a background run. The typing indicator, the bottom
+  // follow and the 作業過程 fold all read it, so they can't disagree — a fold that flips
+  // while the spinner is still up is exactly what shifts the text under a reader.
+  const busy = status === "working" || bgBusy || finalizing;
   // Show a "jump to latest ↓" affordance whenever the user has scrolled up off the bottom
   // (auto-follow is paused) so new/streaming content below is discoverable with one click.
   const [showJump, setShowJump] = useState(false);
+  // 「返信を頭から」— 最新の回答ブロックの先頭が画面より上に流れていて、かつ末尾追従が切れて
+  // いるときだけ出す（末尾では出さない: 押すべきボタンの上に被るため。syncReplyTop の注記）。
+  const [showReplyTop, setShowReplyTop] = useState(false);
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
+  // Files this session's agent edited (docs/68). Aggregated server-side over the WHOLE
+  // transcript and delivered on this same poll — deriving it from `turns` would count
+  // only the window the mirror happens to hold and grow as the reader scrolls up.
+  const [files, setFiles] = useState<SessionFile[]>([]);
   // Prompts claude reports queued into the RUNNING turn (queue-operation events) — sent
   // mid-run from this composer or typed in the raw terminal, not yet injected. Matching
   // echoes get a キュー済み badge; the rest render as synthetic queued bubbles.
@@ -377,6 +404,19 @@ export function MirrorView({
   const selfTopRef = useRef(0);
   // Until this ms, a geometry change is attributed to the reader's own click, not to content.
   const interactUntilRef = useRef(0);
+  // 位置復元（scrollMark）: このセッションに戻ってきたときに復元すべき位置。復元中（= restoring
+  // が true）は、末尾ピンではなくこのアンカーを保つ。
+  //
+  // 時間で切らないのは末尾ピンと同じ理由 — 高さは何段にも分かれて遅れて確定し、その最後の一段が
+  // いつ来るかは端末しだい。実測（4x スロットリング / 400 ターン）では、遅延レイアウトが 1 回の
+  // 大きなコミットで片付き、ResizeObserver が鳴ったのは着地の 3.6 秒後だった。3 秒で切る設計だと
+  // その 1 回を取りこぼし、目的地の 24〜729px 手前で固まる。抜けるのは「読者が触った」ときと
+  // 「末尾追従に戻った」とき（送信・最新へ）だけにする。
+  const restoreMarkRef = useRef<ScrollMark | null>(null);
+  const restoringRef = useRef(false);
+  // 「返信を頭から」の対象＝最新の回答ブロックの idx。レンダごとに書き、[] で作られる
+  // ResizeObserver / onScroll のクロージャからも今の値が読めるようにする（ttsCaptureRef と同型）。
+  const lastReplyIdxRef = useRef<number | undefined>(undefined);
   // The idx of the assistant block whose TOP we last brought to the viewport top. A fresh
   // reply is anchored there once (so the user reads it from its first line) and then left
   // alone as it streams; this remembers which reply we've already anchored.
@@ -607,6 +647,19 @@ export function MirrorView({
     announce(text, label, { ...(sessionVoiceOpts(session) ?? {}), paneId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, pending, pendingPlan, pendingPerm]);
+  // 会話へ引いたマーカー（docs/69 / ADR 0050）。ここは所有者なので、誰の印でも消せる側。
+  // ⚠️ ポーリングは増やさない — 転写のロードに合わせて reload() を呼ぶ（下の effect）。
+  const marks = useMarksController({
+    path: session ? `api/sessions/${q(session)}/marks` : "",
+    canEdit: true,
+    isOwner: true,
+    viewerId: "",
+    ownerLabel: tr("chat.you"),
+    youLabel: tr("chat.you"),
+  });
+  // 転写のポーリング effect は購読を張り直したくないので、最新の reload を ref で渡す。
+  const marksReloadRef = useRef(marks.reload);
+  marksReloadRef.current = marks.reload;
   const ttsWiring: TurnTtsWiring = {
     reading: ttsReading,
     start: ttsStart,
@@ -687,6 +740,7 @@ export function MirrorView({
   // state in place for one paint, so the incoming session can inherit an arbitrary
   // middle position instead of taking its normal initial-bottom path.
   useLayoutEffect(() => {
+    setStateSession(session); // …and from the next render on, the state below is this session's
     cursorRef.current = 0;
     firstLineRef.current = 0;
     loadingOlderRef.current = false;
@@ -707,6 +761,7 @@ export function MirrorView({
     finalizingRef.current = false;
     wasWorkingRef.current = false;
     setTasks([]);
+    setFiles([]);
     setQueuedPrompts([]);
     setAlive(!!sessionMeta?.alive);
     setPending(null);
@@ -729,7 +784,23 @@ export function MirrorView({
     // in the current mirror). Clear its physical offset in the same pre-paint phase;
     // the first transcript layout effect below then pins the new content to its end.
     if (bodyRef.current) { bodyRef.current.scrollTop = 0; selfTopRef.current = 0; }
+    // 「読者自身が広げた」窓は前のセッションの話なので、持ち越さない。スマホの横スワイプで
+    // セッションを持ち替えると、その指の pointerdown が transcript の上に降りて
+    // noteInteraction を 600ms 武装する（.mirror-scroll の capture ハンドラ）。ミラーの高さは
+    // ほぼ全部が遅れて入るので、窓が開いたままだと下の ResizeObserver の再ピンが握りつぶされ、
+    // 着地位置が中途半端なところで止まりうる。
+    //
+    // ただし正直に言うと、これは塞いだ穴であって再現した不具合ではない: mirror-scroll の
+    // swipe シナリオでは、この 1 行の有無にかかわらず末尾に着地した（fetch とレンダが毎回
+    // 600ms より長くかかり、窓が閉じたあとの成長で再ピンが効いてしまう）。窓が実際に効く
+    // 速さの端末では効く、という理屈のぶんだけの手当て。
+    interactUntilRef.current = 0;
+    // このセッションを最後に見ていた位置（あれば）。実際に戻すのは transcript が載ってから＝
+    // 下の初回 settle で、そこまでは末尾ピンのまま待つ。
+    restoreMarkRef.current = loadMark(session);
+    restoringRef.current = false;
     setShowJump(false); // …so no jump-to-latest affordance until they scroll up
+    setShowReplyTop(false); // 新しいセッションの回答が載るまで頭出しの対象が無い
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
     answerAnchoredRef.current = undefined; // …nor its final answer
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
@@ -742,6 +813,14 @@ export function MirrorView({
     ttsWorkDoneRef.current.clear();
     ttsPendingInitRef.current = false; // 確認読み上げの基準も取り直す
     ttsPendingSigRef.current = "";
+    // 離脱時（別セッションへの持ち替え・ターミナルへの切替・ペインを閉じる）に、いま見ていた
+    // 位置を控える。cleanup が読む session / DOM は「出ていく側」のもの: React はこの
+    // クリーンアップを、新しい props でのレンダを DOM に反映したあと・次の layout effect
+    // より前に走らせるが、transcript の中身は state（turns）なので、まだ古いセッションの
+    // ターンが載ったままで scrollTop も動いていない。
+    return () => {
+      saveMark(session, captureMark(bodyRef.current, atBottomRef.current));
+    };
   }, [session]);
 
   // Poll the transcript since our cursor while this view is mounted (Pane only mounts
@@ -768,6 +847,9 @@ export function MirrorView({
           : `api/sessions/${q(session)}/messages?since=${cursorRef.current}`;
         const d = await api(url);
         if (!alive) return;
+        // 印の取り直しは転写のポーリングに相乗りさせる（新しい周期を作らない）。実際の
+        // 往復は useMarksController 側で間引かれる。
+        marksReloadRef.current();
         if (d && !d.error) {
           if (typeof d.cursor === "number") cursorRef.current = d.cursor;
           // reset: the server's jsonl shrank or was replaced (compaction, or a
@@ -857,6 +939,7 @@ export function MirrorView({
           bgBusyRef.current = !!d.backgroundBusy;
           setBgBusy(!!d.backgroundBusy);
           setTasks(Array.isArray(d.tasks) ? d.tasks : []);
+          setFiles(Array.isArray(d.files) ? d.files : []);
           setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
           setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
@@ -949,6 +1032,7 @@ export function MirrorView({
   // (tracked by its idx), so it reads from the start instead of the tail. That upward scroll
   // honestly flips atBottomRef→false via onBodyScroll, so afterwards the user is left alone.
   useLayoutEffect(() => {
+    scheduleReplyTopSync(); // 内容が変わるたび「返信を頭から」の要否を採り直す（末尾追従の有無に依らない）
     if (!atBottomRef.current) return;
     const el = bodyRef.current;
     if (!el) return;
@@ -983,6 +1067,20 @@ export function MirrorView({
         didInitRef.current = true;
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = replyIdx; // a reply already present at open isn't re-anchored
+        // …ただし、このセッションを「途中まで読んだ状態」で離れていたなら、そこへ戻す
+        // （scrollMark）。末尾で離れていた（atBottom）ときは意図が「最新を見る」なので
+        // 従来どおり末尾。アンカーのターンが tail ウィンドウに載っていなければ復元は
+        // 諦めて末尾＝どのみち読み直せる位置に落とす。
+        const mark = restoreMarkRef.current;
+        if (mark && !mark.atBottom && applyMark(el, mark)) {
+          selfTopRef.current = el.scrollTop;
+          atBottomRef.current = false; // 末尾ではない ⇒ 追従は切れ、最新へ の導線が出る
+          restoringRef.current = true; // 以後、遅れて入る高さのたびにこのアンカーへ置き直す
+          setShowJump(true);
+          scheduleReplyTopSync();
+          return;
+        }
+        restoreMarkRef.current = null;
       }
       toBottom();
       return;
@@ -999,7 +1097,7 @@ export function MirrorView({
       // Still working, a background run (サブエージェント/Workflow) is appending, or we're
       // bridging the idle→reply gap (finalizing) — follow the bottom so the streamed tail
       // (and the typing indicator) stay in view.
-      if (status === "working" || bgBusy || finalizing) {
+      if (busy) {
         toBottom();
         return;
       }
@@ -1073,6 +1171,18 @@ export function MirrorView({
     const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
+      scheduleReplyTopSync();
+      // 位置復元中は、末尾ではなくアンカーを保つ。理由は末尾ピンと同じ（高さが遅れて入る）で、
+      // 向き先だけが違う。atBottomRef が立っていたら誰かが末尾追従へ戻した合図（送信・最新へ）
+      // なので、そちらを優先して復元を畳む。
+      if (restoringRef.current) {
+        const mark = restoreMarkRef.current;
+        if (mark && !atBottomRef.current && applyMark(el, mark)) {
+          selfTopRef.current = el.scrollTop;
+          return;
+        }
+        endRestore();
+      }
       if (!atBottomRef.current) return; // scrolled up, or parked at a completion anchor
       if (Date.now() < interactUntilRef.current) return; // the reader's own click grew it
       if (el.scrollHeight - el.scrollTop - el.clientHeight < 1) return;
@@ -1092,6 +1202,7 @@ export function MirrorView({
   // that WE change (foldWork on completion) is content, not interaction, and is followed.
   const noteInteraction = () => {
     interactUntilRef.current = Date.now() + INTERACT_HOLD_MS;
+    endRestoreOnInput(); // 読者が触った ⇒ 位置の復元より、その手を優先する
   };
 
   // Follow state, from user INTENT rather than from raw geometry.
@@ -1107,6 +1218,7 @@ export function MirrorView({
   const onBodyScroll = () => {
     const el = bodyRef.current;
     if (!el) return;
+    scheduleReplyTopSync();
     const movedUp = el.scrollTop < selfTopRef.current - 1;
     if (atBottomRef.current && !movedUp) {
       // Following, and the viewport did not move up — the gap (if any) is content that grew
@@ -1123,14 +1235,90 @@ export function MirrorView({
     setShowJump((s) => (s === !stuck ? s : !stuck));
   };
 
+  // 位置復元をやめる（ユーザーが触った／末尾追従へ戻った）。以後は従来どおり atBottomRef だけが
+  // 追従を決める。
+  const endRestore = () => {
+    restoringRef.current = false;
+    restoreMarkRef.current = null;
+  };
+
+  // 復元を打ち切るのは「ユーザーが入力した」ときだけ — scrollTop が自分の書いた値からズレた
+  // ことを根拠にしてはいけない。ブラウザ自身のスクロールアンカリング（上の内容が伸びた分だけ
+  // scrollTop を勝手に足して見た目を保つ機構）が遅延レイアウトのたびに動かすので、それを
+  // 「触られた」と読むと復元を途中でやめてしまう（実測: 目的地の 354px 手前で固まり、以後
+  // 二度と直らなかった）。入力（ホイール・タッチ・キー・ポインタ）だけを退出条件にすれば、
+  // アンカリングのズレは次の再適用で必ず上書きされる。
+  //
+  // 取りこぼすのはネイティブのスクロールバーをドラッグした場合（Chromium は要素へ
+  // pointerdown を出さない）。復元が畳まれるまで引っぱり合いになるが、掴み直せば済む。
+  const endRestoreOnInput = () => {
+    if (restoringRef.current) endRestore();
+  };
+
   // Jump-to-latest button: snap to the bottom and re-arm auto-follow.
   const jumpToBottom = () => {
     const el = bodyRef.current;
     if (!el) return;
+    endRestore(); // 明示的に末尾を選んだ ⇒ 復元アンカーは捨てる
     el.scrollTop = el.scrollHeight;
     selfTopRef.current = el.scrollTop;
     atBottomRef.current = true;
     setShowJump(false);
+    syncReplyTop();
+  };
+
+  // 「返信を頭から」— 最新の回答ブロックの上端を画面の一番上へ。長い回答の途中から 1 タップで
+  // 頭出しするための導線（末尾に貼り付いている間は出さない — syncReplyTop の注記）。
+  //
+  // 対象はユーザー発言ではなく回答ブロックの先頭（＝畳まれた 作業過程 の行から）。完了時の
+  // 自動アンカー（answerAnchoredRef、回答本文の 1 行目）より 1 段上を見せる位置で、「この
+  // 返信は何をやったのか」から読み直せる。
+  const jumpToReplyTop = () => {
+    const el = bodyRef.current;
+    const idx = lastReplyIdxRef.current;
+    if (!el || idx === undefined) return;
+    const top = scrollTopForTurn(el, idx, REPLY_TOP_PAD);
+    if (top === null) return;
+    endRestore();
+    el.scrollTop = top;
+    selfTopRef.current = el.scrollTop;
+    // 末尾から離れた ⇒ 追従は切る（ここで切らないと、次の poll でまた末尾へ引き戻される）。
+    atBottomRef.current = false;
+    setShowJump(true);
+    syncReplyTop();
+  };
+
+  // ピルの出し入れ（＝下の setState）は、必ず次のフレームへ逃がす。末尾ピンと同じフレームで
+  // DOM を足し引きすると着地を壊す — 実測: ResizeObserver や follow の layout effect から
+  // 直接呼んだ版は、末尾着地が 4 回に 1 回ほど 240px（＝画像 1 枚ぶんの遅延レイアウト）手前で
+  // 止まり、そのまま直らなかった。mirror-scroll ハーネスの long シナリオが赤くなる。
+  // 1 フレーム遅れて出ることに実害はないので、素直に逃がす。
+  const replyTopSyncRef = useRef(false);
+  const scheduleReplyTopSync = () => {
+    if (replyTopSyncRef.current) return;
+    replyTopSyncRef.current = true;
+    requestAnimationFrame(() => {
+      replyTopSyncRef.current = false;
+      syncReplyTop();
+    });
+  };
+
+  // 「返信を頭から」を出すべきか — 最新の回答ブロックの先頭が、ビューポート上端より上に
+  // 流れているときだけ。すでに頭が見えているなら押しても何も起きないので出さない。
+  const syncReplyTop = () => {
+    const el = bodyRef.current;
+    const idx = lastReplyIdxRef.current;
+    const turn = el && idx !== undefined ? el.querySelector<HTMLElement>(`[data-turn-idx="${idx}"]`) : null;
+    const on = !!(
+      el &&
+      turn &&
+      // 末尾に貼り付いている間は出さない。末尾には押すべきものが並ぶ面（引き継ぎカードの
+      // 起動ボタン、質問 / プラン / 許可の回答ボタン、コピー…）で、その上に浮くピルが被って
+      // 押せなくなる。読んでいる途中＝追従が切れているときだけの導線にする。
+      !atBottomRef.current &&
+      turn.getBoundingClientRect().top < el.getBoundingClientRect().top - REPLY_TOP_PAD
+    );
+    setShowReplyTop((s) => (s === on ? s : on));
   };
 
   // Page older history in (P2): fetch the window before the oldest line we hold and
@@ -1312,102 +1500,69 @@ export function MirrorView({
     return res.ok;
   };
 
-  // seedSubmit reliably fires the launch seed's first prompt. A freshly-launched CLI
-  // coalesces the pasted text and SWALLOWS an Enter that arrives inside that paste
-  // window — the prompt then sits in the composer unsent (the reported bug; the server's
-  // 20ms claude gap is far too short right after boot). So type the text on its own
-  // (seq, no bundled Enter), then submit with a couple of delayed Enters once the paste
-  // window has closed. Enter on an empty composer is a no-op, so the later nudge is
-  // harmless if the first one already submitted.
-  const seedSubmit = async (text: string) => {
-    const t = (text || "").trim();
-    if (!t) return;
-    statusRef.current = "working";
-    setStatus("working");
-    const echoId = ++echoSeqCounter; // optimistic echo, reconciled when the real turn lands
-    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), at: Date.now() }]);
-    try {
-      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq: [{ t }] });
-    } catch {
-      applyEchoes((p) => p.filter((e) => e.id !== echoId));
-      return;
-    }
-    const enter = () => apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys: ["Enter"] }).catch(() => {});
-    setTimeout(enter, 450);
-    setTimeout(enter, 1100);
-    setTimeout(() => tickRef.current?.(), 1400);
-  };
-
-  // Launch seed: a session started from a repo row's 起動 modal carries a first prompt
-  // (keyed by slug in launchSeed). Send it exactly once, and only after the session is
-  // actually alive and not mid-resume/compacting. takeLaunchSeed is one-shot, so we only
-  // take it when about to send (the guards below return before taking it). seededRef
-  // prevents a re-send across the polls that flip `alive`.
+  // Launch seed: a session started from 作業を始める carries a first prompt. The mirror no
+  // longer SENDS it — the Agent does, from the create call's initial_prompt (or /input
+  // {when_ready} when attachments made the text final only after create; useStartWork.ts).
+  // That matters because this view is mounted only while its tab is the selected one:
+  // typing it from here meant a session launched into a background tab sat idle until the
+  // user came back to it, and then looked as if opening the tab is what sent the message.
   //
-  // Readiness gate: `alive` only means the tmux session exists — that's true seconds
-  // before the CLI can accept input, and text/Enter typed into the boot screen gets
-  // buffered into one paste burst whose Enter is coalesced away (or eaten with the boot
-  // screen entirely): the launch prompt was intermittently lost. `mode` (paneMode) is
-  // non-empty exactly when the agent has drawn its composer/status line — for claude,
-  // codex and opencode alike — so wait for it. seedForce is the escape hatch if the
-  // status line never becomes detectable (odd pane state): fall back to sending anyway.
+  // What is left here is display: show the sent text as an optimistic echo so the chat
+  // isn't empty for the seconds between 起動 and the first turn reaching the transcript.
+  // It is dropped by the normal reconciliation once that turn lands.
+  //
+  // sinceIdx is -1 on purpose. An echo's anchor exists to keep it from matching a turn
+  // that predates the send, but this one can only ever match the first turn of a brand-new
+  // session — while an anchor taken from newestIdx() would strand it forever whenever the
+  // turn is ALREADY in the transcript (delivery won the race, or the pane was opened
+  // later). stateSession likewise: on the commit where the `session` prop changes this
+  // component still holds the PREVIOUS session's state (the reset below is a layout effect,
+  // so it lands one render later), and appending an echo there would both anchor it against
+  // a foreign transcript and copy the old session's pending echoes into the new one's stash.
   const seededRef = useRef(false);
-  const [seedForce, setSeedForce] = useState(false);
-  const seedForceTimer = useRef<number | null>(null);
   useEffect(() => {
     seededRef.current = false; // new session → allow its own seed
-    setSeedForce(false);
-    if (seedForceTimer.current != null) {
-      clearTimeout(seedForceTimer.current);
-      seedForceTimer.current = null;
-    }
   }, [session]);
-  useEffect(
-    () => () => {
-      if (seedForceTimer.current != null) clearTimeout(seedForceTimer.current);
-    },
-    [],
-  );
   useEffect(() => {
-    if (seededRef.current || readOnly || !alive || termState || sending) return;
-    if (!hasLaunchSeed(session)) return;
-    // managed（docs/27 §10.2-9）: boot 画面が存在しないので readiness スクレイプも
-    // 二重 Enter も不要 — /turn の start をそのまま投げる（駄目でも駄目と返る）。
-    if (managed) {
-      const seed = takeLaunchSeed(session);
-      if (!seed) return;
-      seededRef.current = true;
-      void sendPrompt(seed);
-      return;
-    }
-    if (!mode && !seedForce) {
-      if (seedForceTimer.current == null) {
-        seedForceTimer.current = window.setTimeout(() => setSeedForce(true), 15000);
-      }
-      return; // TUI not confirmed ready — the next poll's mode (or the timer) retries
-    }
+    if (seededRef.current || stateSession !== session) return;
     const seed = takeLaunchSeed(session);
     if (!seed) return;
     seededRef.current = true;
-    seedSubmit(seed);
+    const echoId = ++echoSeqCounter;
+    applyEchoes((p) => [...p, { id: echoId, text: seed.trim(), sinceIdx: -1, at: Date.now() }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alive, termState, session, readOnly, mode, seedForce, managed]);
+  }, [session, stateSession]);
+
+  // driveInput posts one modal-driving body ({keys} or {seq}) and — this is the point —
+  // does NOT swallow a rejection. api() resolves non-2xx as a value ({error:{code}}), so
+  // the old `try/await/catch {}` here never even ran its catch: a 400 (bad_key, view-nav
+  // guard, rate-limit modal) left the card sitting there with no keystroke delivered and
+  // no message, i.e. "ボタンを押しても無反応". Answering is the one place where silence is
+  // indistinguishable from success, so failures speak — same treatment as sendRespond's
+  // managed path. The optimistic 'working' is rolled back too, or the chip claims a turn
+  // that never started until the next poll.
+  const driveInput = async (body: { keys?: string[]; seq?: Array<{ k?: string; t?: string }> }) => {
+    if (sending) return;
+    if (wsDown()) return; // WS stopped: no agent to receive the keys
+    const prev = statusRef.current;
+    setSending(true);
+    statusRef.current = "working";
+    setStatus("working");
+    const res = await apiJSON(`api/sessions/${q(session)}/input`, "POST", body).catch(() => null);
+    if (!res || res.error) {
+      statusRef.current = prev;
+      setStatus(prev);
+      toast(res?.error ? errText(res.error) : tr("mirror.answer_send_failed"));
+    }
+    setSending(false);
+    setTimeout(() => tickRef.current?.(), 400);
+  };
 
   // sendKeys drives the AskUserQuestion modal via named keys (Down/Space/Enter), the
   // only way to answer multi-select / multi-question forms (free text can't).
   const sendKeys = async (keys: string[]) => {
-    if (!keys || !keys.length || sending) return;
-    if (wsDown()) return; // WS stopped: no agent to receive keys (and the optimistic 'working' below would stick)
-    setSending(true);
-    statusRef.current = "working";
-    setStatus("working");
-    try {
-      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys });
-    } catch {
-      /* next poll reconciles */
-    }
-    setSending(false);
-    setTimeout(() => tickRef.current?.(), 400);
+    if (!keys || !keys.length) return;
+    await driveInput({ keys });
   };
 
   // sendSeq drives the modal with an ORDERED mix of named keys and literal text — the
@@ -1415,18 +1570,8 @@ export function MirrorView({
   // it, type, Enter). Built by PendingQuestions.submit for multi-question / multi-select
   // forms where free text and option navigation are interleaved.
   const sendSeq = async (seq: Array<{ k?: string; t?: string }>) => {
-    if (!seq || !seq.length || sending) return;
-    if (wsDown()) return; // WS stopped: the AUQ free-text sequence can't reach the agent
-    setSending(true);
-    statusRef.current = "working";
-    setStatus("working");
-    try {
-      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq });
-    } catch {
-      /* next poll reconciles */
-    }
-    setSending(false);
-    setTimeout(() => tickRef.current?.(), 400);
+    if (!seq || !seq.length) return;
+    await driveInput({ seq });
   };
 
   // sendInterrupt stops the running turn — turn/interrupt 相当。tui では Escape に
@@ -1556,7 +1701,7 @@ export function MirrorView({
   // when this session is 入力待ち (alive and idle: not working, no lingering background run,
   // not mid-finalize, composer not locked by an AUQ/plan). A busy session would just queue
   // the text unseen, so we refuse the drop there.
-  const sessionIdle = alive && !readOnly && !composerLocked && status !== "working" && !bgBusy && !finalizing;
+  const sessionIdle = alive && !readOnly && !composerLocked && !busy;
   const canDropMemo = sessionIdle;
   // Which kind of drop, if any, this drag offers here (types are readable on enter/over;
   // getData is not, so the branch is decided from the type list).
@@ -1919,6 +2064,28 @@ export function MirrorView({
       true,
     );
 
+  // Open an edit trace's captured before/after in a diff pane. The mirror HAS panes, so
+  // it must pass this capability: without it ToolTrace silently takes the degraded path
+  // meant for the pane-less shared view (transcript/capabilities.ts) and an edit becomes
+  // an inline expansion with nothing to open — which is how it behaved until docs/68.
+  const openDiff = (p: Part) => {
+    const title = p.file ? p.file.split("/").pop() || p.file : p.tool || tr("view.diff");
+    const target = { content: { kind: "diff" as const, docTitle: title, diffTool: p.tool || "", diffEdits: p.edits || [] } };
+    const open = findDiffPane();
+    if (open) {
+      setPaneTarget(open, target);
+      setActivePane(open);
+      return;
+    }
+    openTargetInNew(target, true);
+  };
+
+  // Publish the edited-file list for readers outside this pane (the command palette's
+  // このセッションの変更 mode), so they don't have to poll the transcript themselves.
+  useEffect(() => {
+    if (session) useSessionFilesStore.getState().set(session, files);
+  }, [session, files]);
+
   // Auto-suggested title (session_title.go): 採用 promotes it to the session's real
   // title (bumpSessions so the left-pane label updates without waiting for its own
   // poll); 却下 discards it. Either way the server never offers one again.
@@ -2189,6 +2356,9 @@ export function MirrorView({
   const lastUserGi = latestWorkPromptIndex(groups);
   const replyGroup = lastUserGi >= 0 ? groups[lastUserGi + 1] : undefined;
   const lastReplyText = replyGroup && replyGroup.role === "assistant" ? textOfParts(replyGroup.parts) : "";
+  // 「返信を頭から」の対象。レンダ中に ref へ落とすのは、[] で 1 度だけ作られる
+  // ResizeObserver / onScroll のクロージャからも今の値を読ませるため（ttsCaptureRef と同型）。
+  lastReplyIdxRef.current = replyGroup && replyGroup.role !== "user" ? replyGroup.idx : undefined;
   // Tab 補完サイクル中は、絞り込みキーを「ユーザーが打った文字」に凍結する（入力欄は補完で
   // 候補そのものに変わっているので、そのまま渡すとチップ列が1件に痩せてサイクルが崩れる）。
   const suggestDraft = suggestFilterDraft(cycle, draft);
@@ -2381,6 +2551,7 @@ export function MirrorView({
     fileURL: downloadURL,
     openFile,
     openImage: setLightbox,
+    openDiff,
     openPlan,
     session,
     sendPlanComments: (plan: string) => void sendPlanComments(plan),
@@ -2391,6 +2562,7 @@ export function MirrorView({
     expandThinking: expandThinking(settings, sessionMeta?.kind),
     isRejectedPlan: (p: string) => rejectedPlansRef.current.has(p.trim()),
     maxSpend,
+    marks,
   };
 
   // Whether the session is in Plan mode. Case-insensitive so it holds against either the
@@ -2399,8 +2571,16 @@ export function MirrorView({
   const isPlan = mode.toLowerCase() === "plan";
 
   // Status chip: prefer the live polled status, fall back to the session meta.
+  // rateLimitResumeAt rides along from the meta: the polled status is a bare string, so
+  // without it the 制限解除待ち chip here could not say when the session moves again.
   const chip = status
-    ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status, backgroundBusy: bgBusy } as any)
+    ? stateInfo({
+        kind: "claude",
+        alive: status !== "stopped",
+        state: status,
+        backgroundBusy: bgBusy,
+        rateLimitResumeAt: sessionMeta?.rateLimitResumeAt,
+      } as any)
     : sessionMeta
       ? stateInfo(sessionMeta)
       : null;
@@ -2466,7 +2646,14 @@ export function MirrorView({
       </ViewHead>
 
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
-      {tasks.length > 0 && <TaskChecklist key={session} tasks={tasks} session={session} />}
+      {/* 帯の key は「セッション毎に作り直す」ためのもの。★ 兄弟で同じ key を使ってはいけない —
+          持ち替えで key が変わると React は残った旧 fiber を key の Map に集めて消すが、同じ key は
+          後勝ちで上書きされ、前のほう（ToDo）が Map から落ちて **DOM に取り残される**。実測では
+          セッションを持ち替えるたびに前のセッションの ToDo 帯が 1 枚ずつ積み上がった（dev は
+          「two children with the same key」を警告するが、本番ビルドは無言）。だから接頭辞を付ける。 */}
+      {tasks.length > 0 && <TaskChecklist key={"todo-" + session} tasks={tasks} session={session} />}
+      <FileChangeStrip key={"files-" + session} session={session} files={files} />
+      <MarkStrip key={"marks-" + session} marks={marks} storageKey={session} />
       {isPlan && (
         <div className="mirror-planmode">
           <Icon name="debug-pause" /> {tr("mirror.plan_mode_note")}
@@ -2539,7 +2726,19 @@ export function MirrorView({
         </div>
       )}
 
-      <div className="mirror-body" ref={bodyRef} onScroll={onBodyScroll} onMouseUp={captureTtsSel}>
+      <div
+        className="mirror-body"
+        // 転写は「縦へ送って読む面」。折り返せない長い文字列が 1 つ混ざって横へはみ出しても、
+        // それを理由にスマホの横スワイプ（セッションの持ち替え）を殺さない（app/swipeGuard.ts）。
+        data-swipe-y=""
+        ref={bodyRef}
+        onScroll={onBodyScroll}
+        onMouseUp={captureTtsSel}
+        // 位置復元の打ち切り条件（endRestoreOnInput の注記）。ホイールとタッチはここで拾う —
+        // .mirror-scroll の pointerdown/keydown（noteInteraction）はホイールでは出ない。
+        onWheelCapture={endRestoreOnInput}
+        onTouchStartCapture={endRestoreOnInput}
+      >
         {/* Wrapper whose height == the transcript's total height, so a ResizeObserver can
             re-pin a bottom-stuck view to the true bottom as late content lays out — that's
             what makes opening a session land at the bottom, and keeps streaming glued to the
@@ -2599,7 +2798,7 @@ export function MirrorView({
           <TranscriptView
             groups={groups}
             caps={caps}
-            working={status === "working"}
+            working={busy}
             autoCollapseWork={atBottomRef.current}
             inlineCards={handoffs.map((h) => ({
               at: h.created_at,
@@ -2733,7 +2932,7 @@ export function MirrorView({
             </div>
           </div>
         )}
-        {(status === "working" || bgBusy || finalizing) && !pending && (
+        {busy && !pending && (
           <div className="mirror-typing" aria-label={tr("mirror.typing", { name: agentName })}>
             <span className="mt-who">{agentName}</span>
             <span className="typing-dots">
@@ -2756,19 +2955,48 @@ export function MirrorView({
           </div>
         )}
         </div>
-        {showJump && (
-          // Sticky so it floats just above the composer at the viewport bottom while the
-          // user reads up-thread; one click re-arms follow and snaps to the newest content.
+        {(showJump || showReplyTop) && (
+          // 入力欄のすぐ上に浮くピル。sticky で本文の最後に置く（bottom 指定の sticky は
+          // 「本来の位置より下へ行きそうなときだけ上へ留める」ので、先頭に置くと二度と
+          // 降りてこない — 実測で本文の 42,000px 上に取り残された）。
+          //
+          // ラッパは height:0、ボタンはその中で absolute。in-flow のまま置くと、はみ出した
+          // ボタンぶん（実測 12px）がスクロール可能領域を伸ばし、末尾に貼り付いているのに
+          // 12px の余白が残る。「最新へ」は末尾から離れたときしか出ないので誰も踏まなかったが、
+          // 「返信を頭から」は末尾でも出るので表に出た。bottom:0 の absolute なら、ボタンの箱は
+          // ラッパの上へ伸びる＝末尾より下へはみ出さない。
+          //
+          // 「返信を頭から」は逆向きの導線で、条件も別（最新の回答の先頭が画面より上にある）。
+          // 同じ帯に並べる — 両方出る場面（回答の途中を読んでいて、かつ末尾から離れている）
+          // では、上へ・下への 2 択がそのまま並んで見える。
           <div className="mirror-jump-wrap">
-            <button
-              type="button"
-              className="mirror-jump"
-              onClick={jumpToBottom}
-              title={tr("mirror.jump_latest")}
-              aria-label={tr("mirror.jump_latest")}
-            >
-              <Icon name="arrow-down" /> {tr("mirror.jump_latest")}
-            </button>
+            <div className="mirror-jump-row">
+              {showReplyTop && (
+                <button
+                  type="button"
+                  // 見た目は 最新へ と同じピル。クラスを足すのは検証のため — mirror-scroll の
+                  // ハーネスは「最新へ が出ていないこと」で末尾着地を判定しており、素の
+                  // .mirror-jump が 2 種類あると区別が付かない。
+                  className="mirror-jump mirror-jump-top"
+                  onClick={jumpToReplyTop}
+                  title={tr("mirror.jump_reply_top")}
+                  aria-label={tr("mirror.jump_reply_top")}
+                >
+                  <Icon name="arrow-up" /> {tr("mirror.jump_reply_top")}
+                </button>
+              )}
+              {showJump && (
+                <button
+                  type="button"
+                  className="mirror-jump"
+                  onClick={jumpToBottom}
+                  title={tr("mirror.jump_latest")}
+                  aria-label={tr("mirror.jump_latest")}
+                >
+                  <Icon name="arrow-down" /> {tr("mirror.jump_latest")}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -3213,6 +3441,19 @@ function findPlanPane(session: string): string | null {
   for (const col of layout?.cols || []) {
     for (const cell of col.cells) for (const pane of cell.views) {
       if (pane.content.kind === "doc" && pane.content.docSession === session) return pane.id;
+    }
+  }
+  return null;
+}
+
+// findDiffPane returns the id of an already-open captured-edit diff pane. Clicking one
+// edit trace after another retargets that single pane instead of spawning one each — the
+// same reuse the SCM list does for working diffs (features/scm/open.ts).
+function findDiffPane(): string | null {
+  const layout = useLayoutStore.getState().layout;
+  for (const col of layout?.cols || []) {
+    for (const cell of col.cells) for (const pane of cell.views) {
+      if (pane.content.kind === "diff") return pane.id;
     }
   }
   return null;

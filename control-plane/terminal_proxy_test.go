@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -20,11 +21,13 @@ func newTerminalTestServer(t *testing.T, agentURL string) *httptest.Server {
 	return cp
 }
 
-// The Agent refuses a stopped session with no replay (409 "session not running and no
-// terminal history"). The CP used to discard that response and answer 502 "cannot reach
-// workspace agent terminal" — a reachable, correctly-answering Agent reported as
-// unreachable, which is undiagnosable from the Console (browsers do not expose a failed
-// WebSocket handshake's status to JS at all).
+// When the Agent REFUSES the upgrade, the CP must keep its status instead of masking
+// it as 502 "cannot reach workspace agent terminal" — a reachable, correctly-answering
+// Agent reported as unreachable is undiagnosable. (A stopped session is no longer one
+// of these refusals: the Agent now accepts and closes cleanly, see
+// TestTerminalWebSocketForwardsAgentCloseFrame. This still covers every genuine
+// refusal — bad name, auth — and 409 stands in for them here.) Note the status only
+// ever reaches a human: browsers do not expose a failed handshake's status to JS.
 func TestTerminalWebSocketPreservesAgentHandshakeError(t *testing.T) {
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer agent-secret" {
@@ -72,5 +75,48 @@ func TestTerminalWebSocketUnreachableAgentIsBadGateway(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", resp.StatusCode)
+	}
+}
+
+// The bridge must pass the Agent's CLOSE frame through. gorilla answers the close
+// handshake itself and surfaces it to relay() as a CloseError, so without explicit
+// forwarding the browser only ever saw an abnormal 1006 — and 1006 is what the
+// Console renders as "[disconnected]". That erased the whole distinction between "the
+// session ended" (1000 + reason) and "the connection broke", which is why a stopped
+// session's finite replay looked like a broken terminal.
+func TestTerminalWebSocketForwardsAgentCloseFrame(t *testing.T) {
+	const reason = "session stopped"
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+		c, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_ = c.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, reason))
+		// Stay up until the peer's close handshake comes back, so the handler does not
+		// tear the connection down underneath the frame it just wrote.
+		_, _, _ = c.ReadMessage()
+	}))
+	defer agent.Close()
+	cp := newTerminalTestServer(t, agent.URL)
+
+	wsURL := "ws" + cp.URL[len("http"):] + "/ws/terminal?session=gone&tenant=default"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, _, rerr := conn.ReadMessage()
+	ce, ok := rerr.(*websocket.CloseError)
+	if !ok {
+		t.Fatalf("read = %v, want a close frame", rerr)
+	}
+	if ce.Code != websocket.CloseNormalClosure || ce.Text != reason {
+		t.Fatalf("close = %d %q, want %d %q (1006/empty means the frame was dropped again)",
+			ce.Code, ce.Text, websocket.CloseNormalClosure, reason)
 	}
 }

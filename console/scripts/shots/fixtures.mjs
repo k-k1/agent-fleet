@@ -362,6 +362,7 @@ export function messages(locale, session) {
     hasMore: false,
     mode: "Default",
     tasks: tasks(locale),
+    files: sessionFiles(),
     pendingQuestions: pendingQuestions(locale),
     pendingText: pendingText(locale),
     jsonlLines: 23,
@@ -372,6 +373,36 @@ export function messages(locale, session) {
 export function scmStatus(locale, repo) {
   const r = repos(locale).find((x) => x.name === repo);
   return { branch: r?.branch || "main", ahead: r?.ahead || 0, behind: r?.behind || 0 };
+}
+
+// 変更ファイル帯（docs/68）: the files the session's agent edited, as the Agent aggregates
+// them. Deliberately overlaps `changes()` above only in part — the point of the strip is
+// that the transcript's list and the working tree's list are DIFFERENT sets:
+//   validate.ts / messages.ts  … edited and still dirty (staged / unstaged)
+//   checkout-validation.md     … edited and still untracked
+//   PriceLine.tsx              … edited, then committed → no working-tree diff left
+//   legacy/round.ts            … deleted by the agent
+export function sessionFiles() {
+  const at = (m) => ago(m);
+  return [
+    { path: "repos/webshop@checkout-validation/src/checkout/messages.ts", repo: "webshop@checkout-validation",
+      rel: "src/checkout/messages.ts", verb: "edit", added: 18, removed: 4, count: 3, lastIdx: 21, lastTs: at(2) },
+    { path: "repos/webshop@checkout-validation/src/checkout/validate.ts", repo: "webshop@checkout-validation",
+      rel: "src/checkout/validate.ts", verb: "edit", added: 42, removed: 9, count: 5, lastIdx: 17, lastTs: at(6) },
+    { path: "repos/webshop@checkout-validation/docs/checkout-validation.md", repo: "webshop@checkout-validation",
+      rel: "docs/checkout-validation.md", verb: "add", added: 61, removed: 0, count: 1, lastIdx: 14, lastTs: at(11) },
+    { path: "repos/webshop@checkout-validation/src/cart/PriceLine.tsx", repo: "webshop@checkout-validation",
+      rel: "src/cart/PriceLine.tsx", verb: "edit", added: 7, removed: 7, count: 2, lastIdx: 9, lastTs: at(24) },
+    { path: "repos/webshop@checkout-validation/src/legacy/round.ts", repo: "webshop@checkout-validation",
+      rel: "src/legacy/round.ts", verb: "delete", count: 1, lastIdx: 8, lastTs: at(26), sidechain: true },
+  ];
+}
+
+// 変更ファイル帯の「コミット済み」(docs/68 P2): PriceLine.tsx は直したあとコミットまで
+// 済んでいる —— 作業ツリーには何も残っていないが「取り消された」わけではない、という
+// 区別がこの一覧の要点。
+export function committedFiles() {
+  return { committed: ["src/cart/PriceLine.tsx", "src/cart/useCartCount.ts"] };
 }
 
 export function changes(locale, repo) {
@@ -942,3 +973,112 @@ export function cleanupArchives(locale) {
     },
   ];
 }
+
+// --- クラウド費用（docs/67 + ADR 0048）------------------------------------------
+// ⚠️ 共有が請求の大半を占めるという実測の形をそのまま持たせている。ここを小さくすると
+// ハーネスの画面が「ほとんど個人に紐づく」ように見えて、この機能の一番大事な事実
+// （個人に出る額は全体の一部でしかない）が確認できなくなる。
+export const costProfile = () => ({
+  runtime: "ecs-ec2",
+  available: true,
+  verified: true,
+  attributable: ["slot_hours", "home_volume", "snapshots"],
+  shared: ["nat", "dns", "lb", "db", "efs", "idle_pool", "cp", "tax"],
+});
+
+const costMeta = () => ({
+  currency: "USD",
+  first_day: "2026-08-17",
+  last_day: "2026-09-15",
+  estimated: true,
+  lag_hours: 24,
+  profile: costProfile(),
+});
+
+// 30 日ぶんの日次。末尾 1 日だけ未確定（縞の塗り分けが見えるように）。
+const costDays = () => {
+  const out = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(Date.UTC(2026, 8, 15) - i * 86400000).toISOString().slice(0, 10);
+    const weekend = [0, 6].includes(new Date(d + "T00:00:00Z").getUTCDay());
+    out.push({ day: d, unblended_micro: weekend ? 120_000 + i * 900 : 640_000 + i * 4_200, estimated: i === 0 });
+  }
+  return out;
+};
+
+export const myCloudCost = () => ({
+  from: "2026-08-17",
+  to: "2026-09-15",
+  total_micro: costDays().reduce((s, d) => s + d.unblended_micro, 0),
+  days: costDays(),
+  services: [
+    { service: "Amazon Elastic Compute Cloud - Compute", unblended_micro: 12_480_000 },
+    { service: "EC2 - Other", unblended_micro: 2_910_000 },
+    { service: "Amazon Elastic Block Store", unblended_micro: 640_000 },
+  ],
+  meta: costMeta(),
+});
+
+// --- 管理のメンバー詳細（docs/67 §67.15）---------------------------------------
+// ⚠️ このドリルダウンはこれまでスタブが 1 本も無く、管理の面は目視で確かめられな
+// かった。DOM テストが全部通っていても目視でしか出ないバグが実際に 2 件あったので、
+// 詳細（リソース → 費用 → セッション）まで描けるところまで足す。
+export const adminTenants = () => ({
+  tenants: [{ slug: "demo", name: "Demo Team", users: 3, running: 1, max_sessions: 8 }],
+  super_admin: false,
+});
+
+export const adminMembers = () => ({
+  members: [
+    { user_key: "aoi-tanaka", email: "aoi@example.com", role: "tenant_admin", state: "running", max_sessions: 8, disk_gb: 50 },
+    { user_key: "ren-sato", email: "ren@example.com", role: "member", state: "stopped", max_sessions: 4 },
+    { user_key: "mio-kubo", email: "mio@example.com", role: "member", state: "stopped" },
+  ],
+});
+
+export const adminMemberStats = () => ({
+  running: true,
+  mem_used: 5_100_000_000,
+  mem_max: 8_589_934_592,
+  cpu_pct: 34,
+  disk_used: 21_500_000_000,
+  disk_quota: 53_687_091_200,
+});
+
+export const adminMemberSessions = (locale) => ({ sessions: sessions(locale).slice(0, 3) });
+
+// 1 人分の費用。⚠️ 形は myCloudCost と同一（CP 側も同じ集計を返す）。金額を一覧の
+// 1 位（aoi-tanaka）に合わせてあるので、一覧と詳細で数字が食い違わないか目で見られる。
+export const memberCloudCost = () => ({
+  from: "2026-08-17",
+  to: "2026-09-15",
+  total_micro: 16_030_000,
+  days: costDays().map((d) => ({ ...d, unblended_micro: Math.round(d.unblended_micro * 0.55) })),
+  services: [
+    { service: "Amazon Elastic Compute Cloud - Compute", unblended_micro: 12_480_000 },
+    { service: "EC2 - Other", unblended_micro: 2_910_000 },
+    { service: "Amazon Elastic Block Store", unblended_micro: 640_000 },
+  ],
+  meta: costMeta(),
+});
+
+export const adminCloudCost = () => ({
+  from: "2026-08-17",
+  to: "2026-09-15",
+  members: [
+    { tenant: "demo", membership_id: "m1", user_key: "aoi-tanaka", email: "aoi@example.com", unblended_micro: 16_030_000 },
+    { tenant: "demo", membership_id: "m2", user_key: "ren-sato", email: "ren@example.com", unblended_micro: 9_240_000 },
+    { tenant: "demo", membership_id: "m3", user_key: "mio-kubo", email: "mio@example.com", unblended_micro: 3_870_000 },
+  ],
+  attributed_micro: 29_140_000,
+  shared_micro: 96_500_000,
+  shared_services: [
+    { service: "Amazon Virtual Private Cloud", unblended_micro: 41_200_000 },
+    { service: "Amazon Route 53", unblended_micro: 22_500_000 },
+    { service: "Amazon Elastic File System", unblended_micro: 12_800_000 },
+    { service: "Amazon Elastic Load Balancing", unblended_micro: 8_900_000 },
+    { service: "Amazon Relational Database Service", unblended_micro: 7_100_000 },
+    { service: "Tax", unblended_micro: 4_000_000 },
+  ],
+  meta: costMeta(),
+});
