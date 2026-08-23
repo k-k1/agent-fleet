@@ -296,6 +296,10 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// 投入まで面倒を見る（承認ダイアログが開いたまま /input へ送ると本文がモーダルに
 	// 飲まれ Enter が承認になるため、この経路でしか安全に届けられない）。
 	mux.HandleFunc("POST /api/sessions/{name}/plan-respond", rest)
+	// 持ち越した対話への回答（docs/75）— 停止時に未応答だった質問/プラン/許可へ答え、
+	// Agent が**セッションを再開したうえで文章として**配達する。停止した Workspace が
+	// 相手になりうるので、他の write と違って auto-start を通す（下の restStart）。
+	mux.HandleFunc("POST /api/sessions/{name}/carried-answer", ws.withResolved(ws.sessionCarriedAnswer))
 	// managed セッションの ThreadSettings 取得・動的更新（docs/27 P2 §9.4-3）— proxied verbatim.
 	mux.HandleFunc("GET /api/sessions/{name}/settings", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/settings", rest)

@@ -61,6 +61,7 @@ var (
 	pendingPerms     = fstore.Strings(paths.AgentConfigDir, "pending-perm", ".txt")
 	lastTools        = fstore.Strings(paths.AgentConfigDir, "pending-perm", ".tool")
 	pendingTexts     = fstore.Strings(paths.AgentConfigDir, "pending-text", ".txt")
+	carriedFiles     = fstore.JSON[Carried](paths.AgentConfigDir, "carried-interaction", ".json")
 )
 
 // PersistExit / ReadExit / RemoveExit manage the per-session exit record (keyed by
