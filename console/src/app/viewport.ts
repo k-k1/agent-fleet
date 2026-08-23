@@ -25,9 +25,17 @@ export function wireViewport() {
   const root = document.documentElement;
   let kbOpen = false;
   const sync = () => {
-    const kb = window.innerHeight - vv.height; // ~0 unless a soft keyboard is up
+    // A pinch zoom shrinks the visual viewport just like a keyboard does: at 2x it
+    // covers half the layout viewport, so the raw difference below reads as a 400px
+    // "keyboard" on a phone that has none (measured in Chromium). Scaling vv.height
+    // back up by the zoom gives the visible area in LAYOUT px — ~innerHeight
+    // when nothing but a zoom happened, and the keyboard-free area when a keyboard
+    // really is up (zoomed or not). That is also the unit --app-h has to be in: a zoom
+    // must not change the layout.
+    const visible = vv.height * zoom(vv);
+    const kb = window.innerHeight - visible; // ~0 unless a soft keyboard is up
     kbOpen = kb > 150; // ignore URL-bar show/hide; only react to a keyboard
-    if (kbOpen) root.style.setProperty("--app-h", `${vv.height}px`);
+    if (kbOpen) root.style.setProperty("--app-h", `${Math.round(visible)}px`);
     else root.style.removeProperty("--app-h"); // fall back to height:100%
   };
   vv.addEventListener("resize", sync);
@@ -40,9 +48,27 @@ export function wireViewport() {
   window.addEventListener(
     "scroll",
     () => {
-      if (kbOpen && window.scrollY) window.scrollTo(0, 0);
+      // While the page is pinch-zoomed the window scroll is the user panning to the
+      // part they zoomed in to read, not the browser's focus auto-scroll — snapping
+      // it back to the top would fight the gesture.
+      if (kbOpen && window.scrollY && zoom(vv) <= 1.01) window.scrollTo(0, 0);
     },
     { passive: true },
   );
   sync();
+}
+
+// How much the page is zoomed relative to its LAYOUT viewport (1 = not zoomed).
+//
+// Deliberately not `vv.scale`: that is the absolute page scale, and it only equals
+// the zoom when the page's initial scale is 1. Measured in Chromium — a page laid out
+// at 980px on a 400px screen sits at scale 0.408 with no zoom at all, and
+// `vv.height * 0.408` would then claim a 1160px keyboard. The width ratio has no such
+// baseline to get wrong, because a soft keyboard is bottom-docked and never changes
+// the viewport's width: whatever fraction of the layout width the visual viewport
+// shows is exactly the zoom.
+export function zoom(vv: VisualViewport) {
+  const w = vv.width;
+  if (!(w > 0) || !(window.innerWidth > 0)) return 1;
+  return window.innerWidth / w;
 }
