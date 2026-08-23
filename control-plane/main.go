@@ -283,6 +283,9 @@ func main() {
 	// must not also switch this off. goldenBakerFor returns nil on every profile that
 	// does not seed homes from a shared snapshot, so no other deployment pays anything.
 	if b := goldenBakerFor(mgr, envBool("AF_ECS_EC2_GOLDEN_AUTOBAKE", true)); b != nil {
+		// Recorded, not re-read later: the pool screen has to say "switched off" rather
+		// than leave "there is no golden and nothing is happening" unexplained (§64.30).
+		mgr.autoBakeGolden = true
 		go b.run(context.Background(), time.Duration(envInt("AF_ECS_EC2_GOLDEN_BAKE_SEC", 60))*time.Second)
 	}
 

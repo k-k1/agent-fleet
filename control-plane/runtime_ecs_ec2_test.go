@@ -2676,6 +2676,162 @@ func TestECSEC2PoolStatusHidesVolumesBeingDeleted(t *testing.T) {
 	}
 }
 
+// --- how far the bake has got (docs/64 §64.30) ---
+
+// The half of a bake that produces no snapshot — the seed's slot, boot-install, the
+// slot release — is about 6 of its 11 minutes, and the screen used to call all of it
+// "there is no golden". An operator looking at a slow first start in that window is
+// told the opposite of what is happening.
+func TestECSEC2PoolStatusShowsTheBakeInFlight(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	f := h.factory()
+	seedWS := "af-ws-af-golden-af-golden-seed"
+	h.ec2.addSlot("i-seed", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.addHomeVolume("vol-seed", "M-SEED", seedWS, "ap-northeast-1a").CreateTime =
+		aws.Time(time.Now().Add(-4 * time.Minute)) // the anchor the baker's own deadline uses
+	h.ec2.attach("vol-seed", "i-seed", time.Now())
+
+	// 1. The seed is up and boot-install is running on its home.
+	st, err := f.PoolStatus(ctx)
+	if err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	g := st.Goldens[0]
+	if g.Phase != ec2BakePhaseBoot || !st.Baking {
+		t.Fatalf("phase = %q baking=%v, want %q while boot-install runs", g.Phase, st.Baking, ec2BakePhaseBoot)
+	}
+	// The seed holds a slot. Without saying which workspace that is, the pool table
+	// shows a box occupied by a name nothing on the screen accounts for.
+	if g.Seed == nil || g.Seed.Workspace != seedWS || g.Seed.InstanceID != "i-seed" {
+		t.Errorf("seed = %+v, want %s on i-seed", g.Seed, seedWS)
+	}
+	if g.PhaseSince == "" {
+		t.Error("no anchor for the elapsed time; the screen cannot say how long this has been going")
+	}
+
+	// 2. boot-install finished: the home is being taken off its slot for the capture.
+	h.ec2.setTag("vol-seed", ec2TagBakeReady, time.Now().UTC().Format(time.RFC3339))
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if got := st.Goldens[0].Phase; got != ec2BakePhaseCapture {
+		t.Errorf("phase = %q, want %q once af-bake-ready is on the home", got, ec2BakePhaseCapture)
+	}
+
+	// 3. EBS is copying the candidate. The percentage is EBS's own — a snapshot of a
+	//    50 GiB home took ~3 minutes on the live deployment, and "pending" alone does
+	//    not tell an operator whether to wait or to go looking.
+	h.ec2.addGoldenRole("snap-cand", "clu", h.rt.base.cfg.workspaceImage, ec2RoleGoldenCandidate,
+		ec2types.SnapshotStatePending, time.Now())
+	h.ec2.snapshots["snap-cand"].Progress = aws.String("63%")
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g = st.Goldens[0]; g.Phase != ec2BakePhaseSnapshot || g.Candidate != "snap-cand" || g.Progress != 63 {
+		t.Errorf("golden = %+v, want the candidate snapshot at 63%%", g)
+	}
+
+	// 4. Copied. Nothing is published yet — a probe has to come up from it first, and
+	//    that is the step §64.28.3 exists for.
+	h.ec2.snapshots["snap-cand"].State = ec2types.SnapshotStateCompleted
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g = st.Goldens[0]; g.Phase != ec2BakePhaseProbe || g.SnapshotID != "" {
+		t.Errorf("golden = %+v, want the probe phase and NOTHING published yet", g)
+	}
+
+	// 5. Published.
+	h.ec2.addGolden("snap-golden", "clu", h.rt.base.cfg.workspaceImage, ec2types.SnapshotStateCompleted, time.Now())
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g = st.Goldens[0]; g.Phase != ec2BakePhasePublished || st.Baking {
+		t.Errorf("golden = %+v baking=%v, want it reported as in use", g, st.Baking)
+	}
+}
+
+// "No golden and nothing happening" has three different causes and only one of them
+// fixes itself. All three lived in a CP log line that scrolls away — and the pool being
+// full is the one that actually stopped a bake on a live deployment (af.acrt.link).
+func TestECSEC2PoolStatusExplainsWhyNothingIsBaking(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	f := h.factory()
+	img := h.rt.base.cfg.workspaceImage
+
+	// Nothing in the way: the next tick starts a bake.
+	st, err := f.PoolStatus(ctx)
+	if err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if got := st.Goldens[0].Phase; got != ec2BakePhaseIdle {
+		t.Errorf("phase = %q on an empty pool, want %q", got, ec2BakePhaseIdle)
+	}
+
+	// 3 of 4 slots taken. A bake needs two free, so it will not start — and the same
+	// arithmetic the baker applies has to be what the screen reports.
+	for _, id := range []string{"i-1", "i-2", "i-3"} {
+		h.ec2.addSlot(id, "ap-northeast-1a", "m7i.large", true, false)
+	}
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g := st.Goldens[0]; g.Phase != ec2BakePhaseBlocked || g.SlotsInUse != 3 {
+		t.Errorf("golden = %+v, want blocked with 3 slots in use", g)
+	}
+	blocked, _, err := f.bakeBlocked(ctx)
+	if err != nil || !blocked {
+		t.Errorf("bakeBlocked = (%v, %v), want the baker to agree with the screen", blocked, err)
+	}
+
+	// One candidate burned. The baker has one attempt left, so this is not the end.
+	h.ec2.addGoldenRole("snap-bad1", "clu", img, ec2RoleGoldenRejected, ec2types.SnapshotStateCompleted, time.Now())
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g := st.Goldens[0]; g.Phase != ec2BakePhaseRejected || g.Attempts != 1 {
+		t.Errorf("golden = %+v, want one rejected attempt", g)
+	}
+
+	// Two. The baker stops trying, and an operator who is not told that waits forever
+	// for a bake that is never coming.
+	h.ec2.addGoldenRole("snap-bad2", "clu", img, ec2RoleGoldenRejected, ec2types.SnapshotStateCompleted, time.Now())
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g := st.Goldens[0]; g.Phase != ec2BakePhaseGaveUp || g.Attempts != 2 {
+		t.Errorf("golden = %+v, want the baker reported as having given up", g)
+	}
+	if n, err := f.rejectedAttempts(ctx, ec2ArchX86); err != nil || n != 2 {
+		t.Errorf("rejectedAttempts = (%d, %v), want the baker to agree with the screen", n, err)
+	}
+}
+
+// AF_ECS_EC2_GOLDEN_AUTOBAKE=0 is the one thing about the golden that is not visible in
+// AWS. Left unsaid, "no golden, nothing under way" reads as "wait a few minutes".
+func TestPoolStatusSaysWhenAutoBakeIsOff(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	m := &manager{rtFactory: h.factory(), autoBakeGolden: false}
+	st, ok, err := m.poolStatus(ctx)
+	if !ok || err != nil {
+		t.Fatalf("poolStatus = (ok=%v, err=%v)", ok, err)
+	}
+	if st.AutoBake || st.Goldens[0].Phase != ec2BakePhaseOff {
+		t.Errorf("auto_bake=%v phase=%q, want the screen to say the baker is switched off",
+			st.AutoBake, st.Goldens[0].Phase)
+	}
+	m.autoBakeGolden = true
+	if st, _, err = m.poolStatus(ctx); err != nil {
+		t.Fatalf("poolStatus: %v", err)
+	}
+	if !st.AutoBake || st.Goldens[0].Phase != ec2BakePhaseIdle {
+		t.Errorf("auto_bake=%v phase=%q, want a bake to be expected", st.AutoBake, st.Goldens[0].Phase)
+	}
+}
+
 // What the "starting" dialog reads. The infrastructure half of a start on this runtime
 // (a new slot, a new or restored home, an SSM mount) used to be invisible to the
 // Console, which could only offer the native runtime's line about installing agent

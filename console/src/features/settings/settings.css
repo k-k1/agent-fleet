@@ -3747,6 +3747,86 @@ label.idp-flag {
 .pool-view .warn-text {
   color: var(--warn);
 }
+/* 予約 workspace（種 / probe）の印。人の workspace と同じ見た目で並ぶと、上限に
+   近いプールで「知らない誰かが 2 枠使っている」に読める。 */
+.pool-badge.bake {
+  margin-left: 6px;
+  font-family: var(--sans);
+}
+
+/* golden の焼き込み（docs/64 §64.30）。1 アーキ 1 ブロック。 */
+.golden-arch + .golden-arch {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border2);
+}
+.golden-arch-name {
+  display: inline-block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.golden-arch p {
+  margin: 4px 0;
+}
+.golden-head .state-dot {
+  margin-right: 6px;
+}
+/* 進行線。段の名前は「いまどこか」が読めれば十分なので小さく、現在段だけ強調する。
+   ★ 折り返す（アーキ 2 本 × 6 段は狭いペインに収まらない）。 */
+.bake-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  margin: 8px 0 6px;
+  padding: 0;
+  list-style: none;
+}
+.bake-step {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-right: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.bake-step + .bake-step::before {
+  content: "";
+  width: 14px;
+  height: 1px;
+  margin-right: 10px;
+  background: var(--border);
+}
+.bake-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+}
+.bake-step.done .bake-dot {
+  background: var(--border);
+  border-color: var(--border);
+}
+.bake-step.now {
+  color: var(--fg);
+  font-weight: 500;
+}
+.bake-step.now .bake-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.bake-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  font-size: 11px;
+}
+.bake-detail:empty {
+  display: none;
+}
 /* purge opt-in inside the offboarding dialog: a checkbox, never a preselected one —
    removing a membership and destroying a home are two different decisions. */
 .purge-opt {
