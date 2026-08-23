@@ -46,8 +46,9 @@ func TestParseModelsTwoColumn(t *testing.T) {
 	}
 }
 
-// イメージが固定しているのは 1.1.17 で、そちらは表示名しか出さず、その表示名が
-// そのまま --model に通る。`agy update` で先へ行った Workspace と両方が現場にいる。
+// 旧形式（表示名だけ・それがそのまま --model に通る）は死んだコードではない。
+// ~/.local は永続 home なので、古いイメージで boot-install した Workspace には
+// REPIN が前進させるまで 1.1.17 が残る。ピンを 1.1.19 に上げても両方が現場にいる。
 func TestParseModelsKeepsTheOldSingleColumnForm(t *testing.T) {
 	list := parseModels([]byte("Gemini 3.5 Flash (Medium)\nClaude Sonnet 4.6 (Thinking)\n"))
 	if len(list) != 2 || list[0].ID != "Gemini 3.5 Flash (Medium)" || list[0].Label != list[0].ID {
