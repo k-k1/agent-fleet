@@ -2646,8 +2646,13 @@ export function MirrorView({
       </ViewHead>
 
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
-      {tasks.length > 0 && <TaskChecklist key={session} tasks={tasks} session={session} />}
-      <FileChangeStrip key={session} session={session} files={files} />
+      {/* 帯の key は「セッション毎に作り直す」ためのもの。★ 兄弟で同じ key を使ってはいけない —
+          持ち替えで key が変わると React は残った旧 fiber を key の Map に集めて消すが、同じ key は
+          後勝ちで上書きされ、前のほう（ToDo）が Map から落ちて **DOM に取り残される**。実測では
+          セッションを持ち替えるたびに前のセッションの ToDo 帯が 1 枚ずつ積み上がった（dev は
+          「two children with the same key」を警告するが、本番ビルドは無言）。だから接頭辞を付ける。 */}
+      {tasks.length > 0 && <TaskChecklist key={"todo-" + session} tasks={tasks} session={session} />}
+      <FileChangeStrip key={"files-" + session} session={session} files={files} />
       <MarkStrip key={"marks-" + session} marks={marks} storageKey={session} />
       {isPlan && (
         <div className="mirror-planmode">
