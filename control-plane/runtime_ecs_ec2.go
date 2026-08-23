@@ -3536,6 +3536,26 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		}
 		return
 	}
+	// A Start is in flight on this home. Everything below reads "no live service" as
+	// "dormant", and for those few seconds that is exactly wrong (docs/64 §64.31.6):
+	// placeHome clears the dormancy marks FIRST and upsertService raises desiredCount
+	// LAST, with the mount — an SSM round trip, 10–30s — in between. A sweep landing in
+	// that window stamps af-idle-since back onto a workspace that is coming UP.
+	//
+	// It never caused a premature stop (re-stamping moves the clock forward, not back),
+	// but the mark then outlives the launch: a RUNNING workspace wears a dormancy mark
+	// until its next Stop, which makes the pool screen report it as idle and makes
+	// evictLongestIdle pick it as a victim — and releaseSlot refusing a live service
+	// turns that into a failed Start at the cap rather than a move to the next victim.
+	//
+	// The free-slot walk has honoured live claims from the start; this is the same rule
+	// on the other half of the same sweep. Deliberately AFTER the hibernation branch
+	// above: a claim must never be able to strand a capture half-way. An EXPIRED claim
+	// falls through (claimLive parses af-claim-at rather than trusting the tag's
+	// presence), so a launch that died cannot pin this walk either.
+	if rt.claimLive(vol) {
+		return
+	}
 	instanceID := aws.ToString(att.InstanceId)
 	s, ok, err := rt.base.describeService(ctx)
 	if err != nil {
