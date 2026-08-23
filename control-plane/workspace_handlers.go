@@ -673,6 +673,22 @@ func (a workspaceAPI) sessionStart(w http.ResponseWriter, r *http.Request, res *
 	a.proxy.rest(w, r, res)
 }
 
+// sessionCarriedAnswer answers a carried interaction (docs/75): the question / plan /
+// permission that was on screen when the session was folded away. Like sessionStart it
+// auto-starts a cold workspace first — this is the ONE write whose whole point is to
+// reach a workspace the idle-stop reaper turned off, and the user pressing 回答して再開
+// in the Console is exactly the deliberate "I am using this now" action auto-start is for.
+// The Agent then resumes the session and delivers the answer as ordinary prose.
+func (a workspaceAPI) sessionCarriedAnswer(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if a.autostart {
+		if aerr := a.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
+	a.proxy.rest(w, r, res)
+}
+
 // ssmInstances resolves a member-owned SSO profile and proxies an online-node
 // lookup to the workspace. AWS credentials never pass through the Control Plane.
 func (a workspaceAPI) ssmInstances(w http.ResponseWriter, r *http.Request, res *resolved) {
