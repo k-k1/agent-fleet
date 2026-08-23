@@ -229,6 +229,36 @@ Parameters:
   CpMemory:
     Type: String
     Default: "1024"
+  CpArch:
+    Type: String
+    Default: x86_64
+    AllowedValues: [ x86_64, arm64 ]
+    Description: >-
+      Which CPU architecture the Control Plane's own Fargate task runs on (docs/72).
+      arm64 = AWS Graviton: same task sizes, ~20% cheaper per vCPU-hour, and Service
+      Connect works on it (AWS added Fargate/Graviton support to Service Connect in
+      December 2022). Fargate platform version 1.4.0 or later is required, which
+      LATEST already is.
+
+      ⚠️ The prerequisite is the IMAGE, and there is exactly one: the tag in ImageTag
+      must carry an arm64 manifest. Releases publish one only when publish-dist is
+      run with control_plane_arm64 — it is off by default, so an ordinary release is
+      amd64-only and setting this to arm64 against it leaves the service unable to
+      place its task at all. Check before switching:
+
+        crane manifest <repo>/af-control-plane:<tag> | jq -r '.manifests[].platform'
+        (or: docker buildx imagetools inspect <repo>/af-control-plane:<tag>)
+
+      ⚠️ ImageTag is shared by the CP and the workspace image, and their architectures
+      are decided separately — this parameter for the CP, Ec2SlotTypes for the slots.
+      A deployment can perfectly well run an arm64 CP over x86_64 slots or the reverse;
+      neither reads the other's architecture.
+
+      This defaults to x86_64 rather than to "unset" on purpose. Fargate assigns X86_64
+      when runtimePlatform is omitted, so the default changes nothing about a running
+      deployment — but it is now WRITTEN DOWN. Left implicit, the day the image gains
+      an arm64 manifest is the day the architecture becomes a property of whatever
+      Fargate happened to pick, and nobody would see it in the template.
   SsmPrefix:
     Type: String
     Default: /af-cp
@@ -502,6 +532,18 @@ Resources:
       NetworkMode: awsvpc
       Cpu: !Ref CpCpu
       Memory: !Ref CpMemory
+      # Declared, not inferred (docs/72). Fargate defaults an omitted cpuArchitecture
+      # to X86_64 — which is why leaving this out has worked so far — but that default
+      # is applied when the TASK STARTS, not when the definition is registered, so
+      # `describe-task-definition` shows runtimePlatform: null and the architecture the
+      # CP actually runs on is nowhere in the template. Stating it also makes the value
+      # part of the definition's identity, so switching CpArch produces a new revision
+      # and a rolling deployment rather than a no-op.
+      # ⚠️ EC2 does NOT share this default (docs/70 §70.8): there an omitted
+      # runtimePlatform stays null and placement decides. Only Fargate fills it in.
+      RuntimePlatform:
+        CpuArchitecture: !Ref CpArch
+        OperatingSystemFamily: LINUX
       ExecutionRoleArn:
         Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
       TaskRoleArn:

@@ -21,6 +21,9 @@
 #      WS_PLATFORMS … CPU architectures for the WORKSPACE image, e.g.
 #      "linux/amd64,linux/arm64" (docs/70 §70.9). Empty = the host's, as before.
 #      Needs --push. The native package (C/R) stays amd64 (docs/35 §35.3.1).
+#      CP_PLATFORMS … the same, for the CONTROL PLANE image (docs/72), so a
+#      deployment can run the Fargate service itself on Graviton. Independent of
+#      WS_PLATFORMS; also needs --push.
 #
 # Output: deploy/release/dist/ (each artifact + SHA256SUMS).
 # Run real release builds on hosted CI (release-gate.yml) or a host with enough
@@ -74,11 +77,12 @@ if [ "$DO_COMPOSE" = 1 ]; then
   extra=()
   [ "$DO_PUSH" = 1 ] && extra+=(--push)
   [ "$DO_IMAGES_TAR" = 1 ] && extra+=(--save)
-  # WS_PLATFORMS passes straight through (docs/70 §70.9): the workspace image is the
-  # only artifact that has to exist for more than one CPU architecture, and it is
-  # release.sh that knows how to build one.
+  # WS_PLATFORMS / CP_PLATFORMS pass straight through (docs/70 §70.9, docs/72): the
+  # two images are the artifacts that can exist for more than one CPU architecture,
+  # and it is release.sh that knows how to build one that way. The native package
+  # (C/R) below stays amd64 — it is a single-host hand-off, not a fleet substrate.
   DIST_DIR="$DIST" VERSION="$VERSION" REGISTRY="${REGISTRY:-$DEFAULT_REGISTRY}" \
-    WS_PLATFORMS="${WS_PLATFORMS:-}" \
+    WS_PLATFORMS="${WS_PLATFORMS:-}" CP_PLATFORMS="${CP_PLATFORMS:-}" \
     bash "$ROOT/deploy/compose/release.sh" "${extra[@]+"${extra[@]}"}"
 fi
 
