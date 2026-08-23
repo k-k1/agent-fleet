@@ -118,6 +118,11 @@ tier2 は state のほかに `connRegistry` を見る（`reaper.go:400`）。
   Agent のアウトボックスは **Console が見に来たときにしか drain されない**
   （`notification.go:63` の `drainAgent` は `State != "running"` で即 `offline`）ので、
   停止直前に発生した通知は次に Workspace を起こすまで届かない。
+- **D9 — 保留ファイルに寿命が無い**。実開発機の `~/.config/agent-fleet/pending-question/` には
+  **5〜6 週間前の未回答ペイロードが 2 件**残っていた（どちらも `state:"permission"` のまま、
+  対応する転写は既に無い。sid は v4＝claude が自分を起動し直したときの id＝
+  [claude-self-relaunch] の系統）。掃除する経路が無いので、同じ sid を持つセッションが
+  現れれば亡霊の質問が surface しうる。持ち越しストアを足すなら TTL と GC を最初から付ける。
 
 ## 75.4 設計の 3 原則
 
@@ -185,6 +190,11 @@ activity = machineBusy | humanWait | idleWait | unknown
 `--resume` してもモーダルは戻らないし、戻す手段も無い（API 契約上、`tool_result` の無い
 `tool_use` を含む枝はそのまま送れない）。したがって復元できるのは**モーダルではなく意図**だけである。
 
+この結論は §75.10 で **実 TUI を立てた対照実験**（claude 2.1.241）でも再現した。あわせて、
+そこでしか分からなかった 4 点（再開時の自動ターン、C-c がモーダルを閉じないこと、
+ExitPlanMode は保留中の転写に**現れない**こと、プラン承認は文章で通って**二度目の関門が無い**
+こと）が出たので、以下の設計はそれを織り込んである。
+
 ### 75.6.2 保留(pending)と持ち越し(carried)は別物として持つ
 
 現状の `pending-question` / `pending-plan` / `pending-perm` は「**今まさにモーダルが出ている**」
@@ -213,6 +223,8 @@ Console は**別のカード**として描く（見出しは「停止時に未�
 
 1. `handleHaltSession`（`session_handlers.go:944` / managed は `:914`）の `status.Remove` の**前**。
 2. `gracefulShutdown`（`shutdown.go`）— C-c を撒く前。Workspace 停止の正常系。
+   **C-c はモーダルを閉じない**（§75.10 実測 B）ので、撒いた後でも保留ファイルはそのまま残る。
+   つまりこの契機は「必須」ではなく「早い」だけで、正しさは 3 が担保する。
 3. **Agent 起動時の reconcile** — meta はあるがペインが無いセッションについて、
    残っている `pending-*` を carried へ昇格させる。SIGKILL（ECS の stop timeout 超過、
    ホスト OOM、EC2 の強制停止）では 1 も 2 も走らないので、**これが受け皿**になる。
@@ -224,16 +236,26 @@ Console は**別のカード**として描く（見出しは「停止時に未�
 
 | 保留 | 持ち越すか | 再開時にすること |
 |---|---|---|
-| `question` | **回答そのもの** | Console で選ばせ、再開後に文章として配達: `（停止前の質問への回答）Q1「見出し」= ラベル / 補足: …`。`recordInjection` で由来を記録し、ミラーが注入バッジを出す |
-| `plan` | **意図だけ** | 「承認」→ 再開して `この計画で進めてください` を配達。**モードは変えない**（plan モードのまま再開すれば claude が ExitPlanMode を出し直し、生きたモーダルで承認できる＝権限面が勝手に広がらない）。「却下」→ 修正指示を配達 |
+| `question` | **回答そのもの** | Console で選ばせ、再開後に文章として配達。**文面は「質問し直すな」を含む 1 行**（§75.10 実測 C：これが無いと質問し直す）。`recordInjection` で由来を記録し、ミラーが注入バッジを出す |
+| `plan` | **承認/却下そのもの** | 「承認」→ 再開して `（停止前に承認待ちだった計画を承認します）さきほどの計画のとおり進めてください` を配達。★**これは実行そのもの**（§75.10 実測 E：文章の承認で claude はそのまま実行し、ExitPlanMode の関門は二度と出ない）。よって Console 側は取り消せない決定として扱う（確認を挟む・注入として記録する）。「却下」→ 修正指示を配達 |
 | `permission` | **事実のみ** | 許可の答えは死んだツール呼び出しには届かない。カードは「停止時に `Bash · …` の許可を求めていました」と表示し、操作は「続けて」だけ |
 | `blocked` / `auth` / `limited` / `spend_limit` | 持ち越さない | 再開後に再導出される（`auth` は Workspace 単位の事実、`limited` は時計、`blocked` のメニューは死んでいる） |
+
+★ **plan は転写に痕跡が残らない**（§75.10 実測 D：保留中の ExitPlanMode は `tool_use` として
+転写に現れない。AUQ は現れる）。つまりプランでは `pending-plan/<sid>.md` が**唯一の記録**で、
+これを消したら計画本文は Console からも履歴からも復元できない。question は転写に
+孤児の `tool_use` が残るので、カードと履歴の突合は AUQ だけの問題として扱えばよい。
 
 配達には既存の seam をそのまま使う: 再開は `ensureSessionTmux`（`session_tmux.go:107`）、
 配達は `deliverInitialPrompt`（CLI の起動を待って打鍵する既存実装）。新規 API は
 `POST /sessions/{name}/carried-answer` 1 本で、**CP 側では `ensureWorkspaceStarted` を通す**
 （停止中の Workspace を明示操作で起こす。端末アタッチが auto-start しないのと同じ理屈で、
 これは利用者の明示操作なので起こしてよい）。
+
+**再開そのものが 1 ターン焼く**（§75.10 実測 A/E）: 中断された会話を `--resume` すると claude は
+`Continue from where you left off.` を自分で投げ、モデルが `No response requested.` と答える。
+小さいが 0 ではないので、`interaction_idle_timeout` を極端に短くすると「畳んでは起こす」で
+かえって高くつく。既定を `session_idle_timeout` と同値（1h）にするのはこの理由でもある。
 
 ### 75.6.5 停止中に「未回答がある」ことをどう見せるか（D8）
 
@@ -250,8 +272,9 @@ Console は**別のカード**として描く（見出しは「停止時に未�
 - **P0（安全側・非機能）**: 分類を `sessionActivity` 1 関数へ集約し、表駆動テストで固定する。
   `backgroundBusy` を machineBusy に入れる（D3・現状の実害を先に止める）。この段階では
   question はまだ busy のまま＝挙動不変。
-- **P1（持ち越し）**: carried ストア＋昇格 3 契機＋wire＋Console カード＋
+- **P1（持ち越し）**: carried ストア（TTL/GC 付き・D9）＋昇格 3 契機＋wire＋Console カード＋
   `POST /sessions/{name}/carried-answer`。SessionStart の消去を昇格の後ろへ。
+  配達文面は §75.10 の実測形を固定値として持つ（「質問し直すな」の 1 行が本体）。
 - **P2（条件の切り替え）**: question を busy から外し、humanWait を tier1 の対象に。
   `interaction_idle_timeout` を追加（既定は `session_idle_timeout`）。
   halt 時に「未回答のまま停止しました」通知＋停止直前の drain。
@@ -293,3 +316,76 @@ P1 抜きの P2 は禁止（原則 2）。
   自動オペレーター（[30](30-session-report.md)）が答える構成は既にあり、そちらは
   「人が設定した自動走行」なので別物。
 - **CRIU によるコンテナ hibernate**。p3-9 で不採用済み。
+
+## 75.10 実測（claude 2.1.241・2026-08-24）
+
+設計の前提を、実データの突合ではなく**実 TUI を立てた対照実験**で確かめた。手順の型は
+[92](dev/92-tui-modal-driving.md)。他セッションに触れないよう専用の tmux ソケット
+（`tmux -L probe75`）を使い、`af` と同じ起動形（`claude --session-id <uuid>
+--dangerously-skip-permissions` / プランは `--allow-dangerously-skip-permissions
+--permission-mode plan`）を再現。ワークスペース停止は `tmux kill-session`＝SIGKILL 相当で代替した。
+
+> **★ハーネスの罠（先に踏んだ）**: プローブの pane に `AF_SESSION_NAME` が継承されると、
+> `workspace-agent session-status` フックは `NormalizeHookSID`（`internal/agents/claude/sid.go`）で
+> **その名前のセッションの slot sid に付け替える**。結果、プローブの question 状態と
+> `pending-question` が**計測者自身のセッション**に書かれ、`claude-sid` 台帳もプローブの会話を
+> 指しかける（実際にそうなった。ホスト側セッションが自分のフックを撃つたびに
+> `sids.Remove` で自己修復されるため実害には至らなかった）。プローブは必ず
+> `env -u AF_SESSION_NAME`（＋`CLAUDECODE` などの `CLAUDE_CODE_*`）で起動すること。
+
+**A. AUQ の保留 → 強制終了 → 再開**
+
+| 時刻 | 観測 |
+|---|---|
+| t+4s | `session-status` = `question`、`pending-question/<sid>.json` あり |
+| t+12s | `session-status` = **`permission`**（AUQ 自身の permission_prompt）、`pending-question` は残る |
+| モーダル表示中 | 転写の**末尾が既に** `tool_use: AskUserQuestion`（＝ask 時点で書かれる） |
+| `kill-session` 後 | `session-status`（`permission`）も `pending-question` も `pending-perm` も**残る** |
+| `--resume` 後 | モーダルは**戻らない**。`session-status` = `idle`、`pending-question`・`pending-perm` は**消える**（SessionStart の `applyPendingPayloads`） |
+
+転写上の再開境界:
+
+```
+10 assistant 22:42:18 3c1ad2fb <- 8130fa36  USE:AskUserQuestion  ← 未応答のまま
+13 user      22:43:17 24347467 <- 8130fa36  "Continue from where you left off."   ← 親が AUQ を飛ばしている
+14 assistant 22:43:17 58c6d50b <- 24347467  "No response requested."
+```
+
+`EffectiveModal` が必要なこと・「ask 時点で転写に載る」こと・**再開が自動で 1 ターン焼く**ことが、
+いずれもこの 1 本で確認できる。
+
+**B. graceful shutdown の C-c**: モーダル表示中の pane に `C-c` を送っても**何も起きない**
+（モーダルはそのまま、`session-status` も `pending-question` も不変）。`gracefulShutdown` の
+「C-c を撒いて working が消えるのを待つ」は、人待ちセッションには素通りする（`anySessionWorking`
+は `working` しか見ないので待たない）。よって正常停止でも異常停止でも**ディスク上の状態は同じ**。
+
+**C. 持ち越した回答の配達（P1 の検証）**: 「AUQ で語を選ばせ、選ばれた語を `out.txt` に書く」
+タスクで、モーダル表示中に kill → resume → 回答を文章で配達した。
+
+- 文面が「（停止前の質問への回答）好きな色は？ = 青」だけだと、**質問し直した**
+  （モデルから見ると質問は会話木から消えているので、当然の反応）。
+- 文面に**「質問し直さず、この回答を使って作業を続けてください」を入れると**、質問し直さずに
+  分岐を実行して `out.txt` に「みかん」を書いた。**＝持ち越し方式は成立する。ただし文面が本体。**
+
+**D. プランは転写に載らない**: ExitPlanMode の承認待ち中、`pending-plan/<sid>.md` は書かれるが
+転写に `tool_use: ExitPlanMode` は**現れない**（保留中の転写の tool_use は `ToolSearch` と
+`Write`＝プラン本文の保存だけ）。AUQ と非対称。したがって
+`hidePendingInteraction`（`session_transcript.go`）が想定する「保留プランは転写にも居る」は
+この版では成立せず、**プラン本文はペイロードファイルだけが記録**である。
+kill → resume の挙動は AUQ と同じ（モーダルは戻らない・`pending-plan` は消える）で、
+**再開だけでは計画が勝手に実行されることはなかった**（ファイルは 0 件のまま）。
+
+**E. プラン承認は文章で通り、二度目の関門は出ない**: 上記の続きで
+「（停止前に承認待ちだった計画を承認します）さきほど提示した計画のとおり進めてください」を
+配達したところ、claude は ExitPlanMode を出し直さず**そのまま実行**して 2 ファイルを作成した
+（pane のフッタは `⏸ plan mode on` のまま）。当初案の「plan モードのまま再開すれば TUI が
+再提示するので、生きたモーダルで承認させればよい」は**この実測で否定**され、§75.6.4 を
+「carried plan の承認ボタン＝取り消せない実行の承認」に改めた。
+
+**F. 未解決の観測（本筋ではないが記録）**: 別の 1 本で、plan モードのセッションが第 1 ターンに
+「計画は不要なので直接作成します」と述べて `Write` を実行し、**承認前に実ファイルが作られた**。
+同じフラグ（`--allow-dangerously-skip-permissions --permission-mode plan`）で
+「いますぐ Write しろ」と直に指示する A/B を 2 本回した限りでは再現せず（どちらも
+ExitPlanMode の承認ダイアログで止まった。`--allow-dangerously-skip-permissions` の有無でも
+差は出なかった）。**再現していないので事実として扱わない**が、plan モードの実効性の話なので
+別途 1 本追うだけの価値はある。
