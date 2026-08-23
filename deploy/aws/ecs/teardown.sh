@@ -269,16 +269,30 @@ done
 # --- 9 後半) retain が残したもの --------------------------------------------
 if [ "$AF_PERSISTENCE" = retain ]; then
   if [ "$PURGE_RETAINED" = 1 ]; then
+    # ⚠️ **ここは失敗を握り潰してはいけない。** retain が残したものは「消えなかったこと」が
+    # 見えにくい——スタックはもう無いので CloudFormation は何も言わず、費用だけが残る。
+    # よくあるのは EFS がマウントターゲットを持ったままで `FileSystemInUse` になる形。
+    # だからエラーを捕まえて出し、最後に**実物を引いて**消えたことを確かめる。
     SNAP_ID="$("${AWS[@]}" rds describe-db-snapshots --snapshot-type manual \
       --query "DBSnapshots[?starts_with(DBSnapshotIdentifier,'$AF_STACK_DATA')].DBSnapshotIdentifier" \
       --output text 2>/dev/null | txt || true)"
     for s in $SNAP_ID; do
       echo "==> 9. deleting the RDS final snapshot $s"
-      af_run "${AWS[@]}" rds delete-db-snapshot --db-snapshot-identifier "$s" >/dev/null 2>&1 || true
+      if [ "$AF_DRY" = 1 ]; then
+        echo "DRY: rds delete-db-snapshot --db-snapshot-identifier $s"
+      else
+        err="$("${AWS[@]}" rds delete-db-snapshot --db-snapshot-identifier "$s" 2>&1)" \
+          || echo "    ⚠️ 消せていない: $(printf '%s' "$err" | tail -1)"
+      fi
     done
     if [ -n "$EFS_ID" ]; then
       echo "==> 9b. deleting the retained EFS $EFS_ID"
-      af_run "${AWS[@]}" efs delete-file-system --file-system-id "$EFS_ID" >/dev/null 2>&1 || true
+      if [ "$AF_DRY" = 1 ]; then
+        echo "DRY: efs delete-file-system --file-system-id $EFS_ID"
+      else
+        err="$("${AWS[@]}" efs delete-file-system --file-system-id "$EFS_ID" 2>&1)" \
+          || echo "    ⚠️ 消せていない: $(printf '%s' "$err" | tail -1)"
+      fi
     fi
   else
     echo "==> 9. persistence=retain: RDS の最終スナップショットと EFS $EFS_ID は残した（--purge-retained で消す）"
@@ -364,6 +378,26 @@ left "task definitions" "$("${AWS[@]}" ecs list-task-definitions --status ACTIVE
   --output text 2>/dev/null | txt | grep -E '/(af-ws-|af-.*-cp)' || true)"
 left "log groups /af" "$("${AWS[@]}" logs describe-log-groups --log-group-name-prefix /af \
   --query 'logGroups[].logGroupName' --output text 2>/dev/null | txt || true)"
+# ★ EFS と RDS はスタックの外で生き延びうる唯一の実体（Persistence=retain）なので、
+# **数えるところまでやる**。retain を残したままなら残骸ではないので、そう言い分ける。
+efs_left=""
+[ -n "$EFS_ID" ] && efs_left="$("${AWS[@]}" efs describe-file-systems --file-system-id "$EFS_ID" \
+  --query 'FileSystems[].FileSystemId' --output text 2>/dev/null | txt || true)"
+rds_left="$("${AWS[@]}" rds describe-db-instances \
+  --query "DBInstances[?starts_with(DBInstanceIdentifier,'$AF_STACK_DATA')].DBInstanceIdentifier" \
+  --output text 2>/dev/null | txt || true)"
+snap_left="$("${AWS[@]}" rds describe-db-snapshots --snapshot-type manual \
+  --query "DBSnapshots[?starts_with(DBSnapshotIdentifier,'$AF_STACK_DATA')].DBSnapshotIdentifier" \
+  --output text 2>/dev/null | txt || true)"
+if [ "$AF_PERSISTENCE" = retain ] && [ "$PURGE_RETAINED" != 1 ]; then
+  printf '    %-22s %s\n' "efs (retain で残す)" "$(count "$efs_left")"
+  printf '    %-22s %s\n' "rds snap (retain)" "$(count "$snap_left")"
+  left "rds instances" "$rds_left"
+else
+  left "efs filesystems" "$efs_left"
+  left "rds instances" "$rds_left"
+  left "rds snapshots" "$snap_left"
+fi
 
 cat <<EOF
 
