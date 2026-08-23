@@ -80,8 +80,23 @@ export AF_YES AF_DRY
 af_env_init "$PROFILE" "$REGION" "$STACK"
 CLUSTER="$(af_cluster)"
 CP_SERVICE="af-$AF_STACK_INGRESS-cp"
-SSM_PREFIX="$(af_stack_param "$AF_STACK_INGRESS" SsmPrefix)"; : "${SSM_PREFIX:=/af-cp}"
+# ⚠️ **撤収は途中から再実行される。** そのとき ingress スタックはもう無いので、引数は
+# 読めない——そして読めないまま黙って先へ進むと、**ホストゾーンの ACM 検証 CNAME が
+# 消し残る**（実際に残した）。残っても壊れはしないが、次に立てたとき証明書が
+# 「速すぎて」通り、発行経路を検証したことにならない。生きていなければ控えから読む。
+captured_param() {  # captured_param <key> — キャプチャした 30-ingress の引数
+  local f line
+  f="$(af_params_file 30-ingress)"
+  [ -r "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in "$1"=*) echo "${line#*=}"; return ;; esac
+  done < "$f"
+}
+SSM_PREFIX="$(af_stack_param "$AF_STACK_INGRESS" SsmPrefix)"
+[ -n "$SSM_PREFIX" ] || SSM_PREFIX="$(captured_param SsmPrefix)"
+: "${SSM_PREFIX:=/af-cp}"
 HOSTED_ZONE="$(af_stack_param "$AF_STACK_INGRESS" HostedZoneId)"
+[ -n "$HOSTED_ZONE" ] || HOSTED_ZONE="$(captured_param HostedZoneId)"
 EFS_ID="$(af_stack_output "$AF_STACK_DATA" EfsId)"
 DB_ID=""
 if af_stack_exists "$AF_STACK_DATA"; then
@@ -295,9 +310,15 @@ if [ -n "$HOSTED_ZONE" ]; then
       [ -n "$name" ] || continue
       case "$name" in _*) ;; *) continue ;; esac
       echo "    - $name"
-      af_run "${AWS[@]}" route53 change-resource-record-sets --hosted-zone-id "$HOSTED_ZONE" \
-        --change-batch "{\"Changes\":[{\"Action\":\"DELETE\",\"ResourceRecordSet\":{\"Name\":\"$name\",\"Type\":\"CNAME\",\"TTL\":$ttl,\"ResourceRecords\":[{\"Value\":\"$value\"}]}}]}" >/dev/null 2>&1 \
-        || echo "      (skip — 中身が変わっている。list-resource-record-sets で確かめること)"
+      # ⚠️ ここで af_run を使うと、その DRY 行まで >/dev/null に吸われて「何もしないように
+      # 見える dry-run」になる。分岐を書き下す方が正直である。
+      if [ "$AF_DRY" = 1 ]; then
+        echo "      DRY: route53 DELETE $name CNAME $value (TTL $ttl)"
+      else
+        "${AWS[@]}" route53 change-resource-record-sets --hosted-zone-id "$HOSTED_ZONE" \
+          --change-batch "{\"Changes\":[{\"Action\":\"DELETE\",\"ResourceRecordSet\":{\"Name\":\"$name\",\"Type\":\"CNAME\",\"TTL\":$ttl,\"ResourceRecords\":[{\"Value\":\"$value\"}]}}]}" >/dev/null 2>&1 \
+          || echo "      (skip — 中身が変わっている。list-resource-record-sets で確かめること)"
+      fi
     done
   fi
 fi
