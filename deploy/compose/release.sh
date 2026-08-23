@@ -30,6 +30,9 @@
 #   CP_PLATFORMS=linux/amd64,linux/arm64 VERSION=... ... --push  # same, for the control
 #                                                      #   plane image (docs/72). Also
 #                                                      #   implies --push.
+#   VERSION=... deploy/compose/release.sh --push --only cp   # build/push ONE image only
+#                                                      #   (dev images for real-machine
+#                                                      #   verification — docs/72 §72.6)
 #
 # Normally invoked via deploy/release/build.sh, the single entry point (docs/35 §35.6.2).
 set -euo pipefail
@@ -57,15 +60,30 @@ WS_PLATFORMS="${WS_PLATFORMS:-}"
 # either, both, or neither.
 CP_PLATFORMS="${CP_PLATFORMS:-}"
 
+# Which of the two images to build/push. Default `both` = every release ever made.
+# `cp` / `ws` exist for the dev-image path (docs/72 §72.6): verifying ONE image on a
+# real deployment should not pay for rebuilding the other, and for the workspace image
+# that difference is ~12 minutes of QEMU. ⚠️ It changes only what is BUILT — the bundle
+# below still pins both refs, because the deployment consumes them as a pair
+# (ImageTag is shared, ADR 0045 決定 8).
+ONLY=both
 DO_BUILD=1; DO_SAVE=0; DO_PUSH=0
-for a in "$@"; do
-  case "$a" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --no-build) DO_BUILD=0 ;;
     --save)     DO_SAVE=1 ;;
     --push)     DO_PUSH=1 ;;
-    *) echo "unknown arg: $a" >&2; exit 2 ;;
+    --only)     ONLY="${2:?--only needs cp|ws|both}"; shift ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
+  shift
 done
+case "$ONLY" in
+  cp|ws|both) ;;
+  *) echo "ERROR: --only takes cp, ws or both (got '$ONLY')" >&2; exit 2 ;;
+esac
+want_cp() { [ "$ONLY" = both ] || [ "$ONLY" = cp ]; }
+want_ws() { [ "$ONLY" = both ] || [ "$ONLY" = ws ]; }
 
 DIST="${DIST_DIR:-$HERE/dist}"
 OUT="$DIST/agent-fleet-$VERSION"
@@ -92,7 +110,9 @@ if [ "$DO_BUILD" = 1 ]; then
   # CP Dockerfile pins its console and Go stages to $BUILDPLATFORM and cross-compiles
   # (docs/72 §72.3), so the second architecture costs an emulated `apt-get install`
   # and nothing else — do not "simplify" that away.
-  if [ -n "$CP_PLATFORMS" ]; then
+  if ! want_cp; then
+    echo "==> skip $CP_IMAGE (--only $ONLY)"
+  elif [ -n "$CP_PLATFORMS" ]; then
     if [ "$DO_PUSH" != 1 ]; then
       echo "ERROR: CP_PLATFORMS needs --push (a manifest list cannot be loaded into the local docker)" >&2
       exit 1
@@ -121,7 +141,9 @@ if [ "$DO_BUILD" = 1 ]; then
   # into the local docker — it can only push it. So this path implies --push, and the
   # docker push below is skipped for the workspace image (it is already in the
   # registry, under the same tag, as an index).
-  if [ -n "$WS_PLATFORMS" ]; then
+  if ! want_ws; then
+    echo "==> skip $WS_IMAGE (--only $ONLY)"
+  elif [ -n "$WS_PLATFORMS" ]; then
     if [ "$DO_PUSH" != 1 ]; then
       echo "ERROR: WS_PLATFORMS needs --push (a manifest list cannot be loaded into the local docker)" >&2
       exit 1
@@ -162,12 +184,16 @@ if [ "$DO_PUSH" = 1 ]; then
     */*) ;;
     *) echo "ERROR: --push needs REGISTRY to be a real registry path (got '$REGISTRY')" >&2; exit 1 ;;
   esac
-  if [ -n "$CP_PLATFORMS" ]; then
+  if ! want_cp; then
+    :
+  elif [ -n "$CP_PLATFORMS" ]; then
     echo "    ($CP_IMAGE was pushed by buildx as a manifest list)"
   else
     docker push "$CP_IMAGE"
   fi
-  if [ -n "$WS_PLATFORMS" ]; then
+  if ! want_ws; then
+    :
+  elif [ -n "$WS_PLATFORMS" ]; then
     echo "    ($WS_IMAGE was pushed by buildx as a manifest list)"
   else
     docker push "$WS_IMAGE"
@@ -180,6 +206,10 @@ if [ "$DO_SAVE" = 1 ]; then
   # hand-off for one machine, not a distribution channel (ADR 0037).
   if [ -n "$WS_PLATFORMS" ] || [ -n "$CP_PLATFORMS" ]; then
     echo "ERROR: --save cannot be combined with WS_PLATFORMS/CP_PLATFORMS (a manifest list is never loaded locally)" >&2
+    exit 1
+  fi
+  if [ "$ONLY" != both ]; then
+    echo "ERROR: --save needs both images (got --only $ONLY)" >&2
     exit 1
   fi
   echo "==> docker save (local hand-off) $CP_IMAGE + $WS_IMAGE"
