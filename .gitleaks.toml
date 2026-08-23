@@ -41,3 +41,13 @@ upstream の配布物に元から入っている公開識別子で、こちら�
 condition = "AND"
 paths = ['''console/vendor/drawio/viewer-static\.min\.js''']
 regexes = ['''jg02tc0onwmhlgm''']
+
+[[allowlists]]
+description = """CloudFormation の出力名 `SlotAmiIdArm64`。偽 aws を並べたスタブの \
+`Outputs[?OutputKey=='...']` に現れるだけで秘密ではない —— テンプレート \
+（deploy/aws/ecs/cfn/40-ec2-pool.yaml）が公開している出力の名前である。\
+generic-api-key ルールが `Key=='...'` の右辺を値と読んで拾う。\
+原則どおりパスごとの除外はせず、その名前だけを外す。"""
+condition = "AND"
+paths = ['''deploy/local/ecs-lifecycle-stub-test\.sh''']
+regexes = ['''SlotAmiIdArm64''']
