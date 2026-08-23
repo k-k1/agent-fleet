@@ -8,7 +8,7 @@
 // を出すかどうかだけ。付与の PUT /api/admin/membership-role は withSuperAdmin 固定で、
 // ここでボタンを隠すのは案内でしかない。
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { api, apiJSON, rawJSON, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
@@ -19,7 +19,7 @@ import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 import { MemberCostPanel } from "../cost/CloudCostView.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
-import { fmtG, fmtPct, fmtGbHint, slotFor, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
+import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
 import type { Member, WsSizing, WsSlot } from "./adminShared.ts";
 
 // MembersPanel — 名簿と「メンバー追加」。TenantView の中に直接書かれていたものを、
@@ -36,6 +36,23 @@ export function MembersPanel({
 }) {
   const tr = useT();
   const [members, setMembers] = useState<Member[] | null>(null);
+  // The roster shows what each member is sized to, and that only reads correctly once
+  // the runtime has said what the numbers MEAN (ADR 0045 決定 21). Same fetch the member
+  // detail does — it is a small, cacheable, identity-agnostic document.
+  const [sizing, setSizing] = useState<WsSizing>(WS_SIZING_FALLBACK);
+  useEffect(() => {
+    let live = true;
+    api("api/admin/workspace-sizing")
+      .then((d) => {
+        if (live && d && !(d as any).error && d.runtime) setSizing(d);
+      })
+      .catch(() => {
+        /* keep the fallback; the roster then just shows the raw numbers */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const loadMembers = useCallback(async () => {
     try {
@@ -68,7 +85,7 @@ export function MembersPanel({
               </span>
               <span className="mr-email muted">{m.email || ""}</span>
               <span className="mr-role">{m.status === "removed" ? tr("admin.member_removed") : m.role}</span>
-              {m.max_sessions != null && <span className="mr-lim muted">s≤{m.max_sessions}</span>}
+              <MemberSizeChips m={m} sizing={sizing} />
               <Icon name="chevron-right" className="mr-go" />
             </button>
           ))}
@@ -77,6 +94,46 @@ export function MembersPanel({
       <AddMember slug={slug} isSuper={isSuper} onAdded={loadMembers} />
     </section>
   );
+}
+
+// MemberSizeChips — what this member is sized to, on the roster row.
+//
+// ★ It shows the BOX on a slot runtime and the NUMBERS everywhere else, because those
+// are different statements. On ecs-ec2 the memory figure is a requirement that picks a
+// machine and the person then gets the whole thing, so "m6i.large · 2 vCPU / 8 GiB" is
+// the true answer and "8192 MB" is a half-truth. On docker/Fargate the number IS the
+// cap, and there is no box to name.
+//
+// ⚠️ The CPU chip follows the same rule the member detail uses: when cpu_effective is
+// false the axis never reaches the backend, so showing it would put a number on screen
+// that does nothing. It is omitted rather than greyed out.
+//
+// ⚠️ Everything here is "unset → say nothing". A roster of rows all reading "0" teaches
+// people to stop reading the column.
+function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) {
+  const tr = useT();
+  const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
+  const cls = (sizing.slot_classes ?? []).find((c) => c.id === (m.slot_class || sizing.default_slot_class));
+  const box = onSlots ? slotFor(ladderFor(sizing, m.slot_class ?? ""), m.mem_limit ? Math.round(m.mem_limit / 1048576) : 0) : null;
+
+  const out: ReactNode[] = [];
+  if (box) {
+    out.push(
+      <span key="box" className="mr-size mono" title={cls ? cls.label : undefined}>
+        {box.instance_type}
+      </span>,
+      <span key="spec" className="mr-size muted">
+        {box.vcpu ? tr("admin.roster_spec", { n: String(box.vcpu), mem: fmtGbHint(box.mem_mib) }) : fmtGbHint(box.mem_mib)}
+      </span>,
+    );
+  } else {
+    if (m.mem_limit) out.push(<span key="mem" className="mr-size muted">{fmtGbHint(Math.round(m.mem_limit / 1048576))}</span>);
+    if (sizing.cpu_effective && m.cpu_limit)
+      out.push(<span key="cpu" className="mr-size muted">{tr("admin.ws_cpu_vcpu", { n: String(m.cpu_limit / 1024) })}</span>);
+  }
+  if (m.disk_gb) out.push(<span key="disk" className="mr-size muted">{tr("admin.roster_disk", { n: String(m.disk_gb) })}</span>);
+  if (m.max_sessions) out.push(<span key="s" className="mr-lim muted">s≤{m.max_sessions}</span>);
+  return <>{out}</>;
 }
 
 function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean; onAdded: () => void }) {
@@ -144,6 +201,7 @@ export function MemberView({
   const [confirmGrant, setConfirmGrant] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmDestroy, setConfirmDestroy] = useState(false);
+  const [confirmPurgeRow, setConfirmPurgeRow] = useState(false);
   // 退職処理のついでに破棄するかどうか。既定 false のまま出す——現行の契約
   // （home を残し、戻ってきたら再招待するだけ）を、チェックしない限り変えない。
   const [purge, setPurge] = useState(false);
@@ -157,6 +215,23 @@ export function MemberView({
   const [memMb, setMemMb] = useState<number | string>(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
   const [cpuUnits, setCpuUnits] = useState<number | string>(member.cpu_limit ?? 0);
   const [diskGb, setDiskGb] = useState<number | string>(member.disk_gb ?? 0);
+  // Which KIND of machine, where the deployment offers a choice (docs/70). "" = the
+  // tenant default, which is a real value here and not "unset means smallest": there
+  // is no numeric fallback for a class.
+  const [slotClass, setSlotClass] = useState<string>(member.slot_class ?? "");
+  // ⚠️ `member` is a SNAPSHOT taken when its row was clicked. The parent
+  // (TenantDialog / AdminTab) holds it in useState and `onChanged` reloads the tenant
+  // LIST, not the selection — so the prop never reflects anything saved from here.
+  // Re-seeding the editor from it after a save therefore shows the values from BEFORE
+  // the save. It is least visible on the numbers (an old figure looks like a typo) and
+  // most visible on the machine chips, which jump back to "tenant default" and read as
+  // "the setting did not save" — while it very much did.
+  //
+  // So: keep what the server confirmed and seed from that. The server echo is the right
+  // source rather than what was typed, because the stored value can differ from the
+  // input (an unknown class is refused, a number is clamped).
+  const [savedLimits, setSavedLimits] = useState<Partial<Member> | null>(null);
+  const cur = { ...member, ...(savedLimits ?? {}) };
   // What those three numbers actually DO on this deployment's runtime (ADR 0045 決定 21).
   // Fetched rather than assumed: the same editor is shown for docker, native, Fargate and
   // the EC2 slot pool, and it used to describe all four as Fargate.
@@ -228,7 +303,19 @@ export function MemberView({
   // cap and keeps the wording it has always had.
   const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
   const slotSpec = (s: WsSlot) => (s.vcpu ? `${s.vcpu} vCPU / ${fmtGbHint(s.mem_mib)}` : fmtGbHint(s.mem_mib));
-  const landed = onSlots ? slotFor(sizing.slots, +memMb || 0) : null;
+  // The machine-class picker exists only where the operator declared more than one
+  // (docs/70 §70.10). The memory chips below are then the SELECTED class's ladder, so
+  // switching class re-draws them and "you land on" recomputes — the same number can
+  // land on a different box in a different class, and that is the whole point.
+  const classes = onSlots ? (sizing.slot_classes ?? []) : [];
+  const ladder = onSlots ? ladderFor(sizing, slotClass) : undefined;
+  const landed = onSlots ? slotFor(ladder, +memMb || 0) : null;
+  // Warn only when there is a home to migrate. A member who has never started has
+  // nothing architecture-dependent on disk yet, so the warning would be noise.
+  const classChanged = classes.length > 0 && slotClass !== (cur.slot_class ?? "");
+  const archOf = (id: string) => classes.find((c) => c.id === id)?.arch ?? "";
+  const archChanged =
+    classChanged && archOf(slotClass || (sizing.default_slot_class ?? "")) !== archOf(cur.slot_class || (sizing.default_slot_class ?? ""));
   const memHint = !landed
     ? +memMb > 0
       ? tr("admin.eq_hint", { hint: fmtGbHint(+memMb) })
@@ -272,7 +359,7 @@ export function MemberView({
     }
   };
   const saveLimit = async () => {
-    await apiJSON("api/admin/user-limits", "PUT", {
+    const res = await apiJSON("api/admin/user-limits", "PUT", {
       user_key: key,
       tenant_slug: slug,
       max_sessions: +limit || 0,
@@ -281,6 +368,17 @@ export function MemberView({
       // Sent explicitly rather than omitted: the endpoint writes the whole quota row,
       // so leaving it out would silently reset a disk quota set elsewhere (MCP/API).
       disk_gb: Math.round(+diskGb || 0),
+      slot_class: slotClass,
+    });
+    setSavedLimits({
+      max_sessions: +limit || 0,
+      mem_limit: Math.round(+memMb || 0) * 1048576,
+      cpu_limit: Math.round(+cpuUnits || 0),
+      disk_gb: Math.round(+diskGb || 0),
+      // The stored id, not slot_class_effective: this editor edits what is STORED, and
+      // the substitution (when there is one) is reported separately rather than
+      // silently rewritten into the control.
+      slot_class: typeof res?.slot_class === "string" ? res.slot_class : slotClass,
     });
     setLimitOpen(false);
     poll(); // mem_max reflects the new cap after the next start; refresh sessions/stats
@@ -324,6 +422,29 @@ export function MemberView({
       if (res?.leftovers?.length) toast(tr("admin.destroy_leftovers", { list: res.leftovers.join(", ") }));
       onChanged();
       poll();
+    } finally {
+      setBusy(false);
+    }
+  };
+  // 後始末の 3 段目（docs/61 §61.18）。除名（論理削除）→ Workspace の破棄 → ここ。
+  //
+  // ★ 出すのは「Workspace がもう無い」ときだけ。member.state は CP が
+  // workspaceStateByMembership で返しているもので、workspace 行が無ければ "none"。
+  // サーバも 409 で拒むが、押せるのに必ず失敗するボタンを置く理由が無い。
+  const deleteMemberRow = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON(
+        `api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}`,
+        "DELETE",
+        {},
+      );
+      if (res?.error) {
+        toast(errText(res.error));
+        return;
+      }
+      setConfirmPurgeRow(false);
+      onRemoved(); // 行ごと消えたので、詳細を開いたままにしない
     } finally {
       setBusy(false);
     }
@@ -461,10 +582,11 @@ export function MemberView({
             <Icon name="debug-stop" /> {tr("admin.force_stop_ws")}
           </button>
           <button onClick={() => {
-            setLimit(member.max_sessions ?? 0);
-            setMemMb(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
-            setCpuUnits(member.cpu_limit ?? 0);
-            setDiskGb(member.disk_gb ?? 0);
+            setLimit(cur.max_sessions ?? 0);
+            setMemMb(cur.mem_limit ? Math.round(cur.mem_limit / 1048576) : 0);
+            setCpuUnits(cur.cpu_limit ?? 0);
+            setDiskGb(cur.disk_gb ?? 0);
+            setSlotClass(cur.slot_class ?? "");
             setLimitOpen(true);
           }}>
             <Icon name="settings" /> {tr("admin.set_limits")}
@@ -479,15 +601,42 @@ export function MemberView({
             <button className="danger-btn" disabled={busy} onClick={() => setConfirmRemove(true)}>
               <Icon name="close" /> {tr("admin.remove_member")}
             </button>
-          ) : (
+          ) : member.state !== "none" ? (
             <button className="danger-btn" disabled={busy} onClick={() => setConfirmDestroy(true)}>
               <Icon name="trash" /> {tr("admin.destroy_ws")}
+            </button>
+          ) : (
+            <button className="danger-btn" disabled={busy} onClick={() => setConfirmPurgeRow(true)}>
+              <Icon name="trash" /> {tr("admin.delete_member_row")}
             </button>
           )}
         </div>
         {limitOpen && (
           <div className="limit-edit">
             <div className="le-head">{tr("admin.limits_edit_title")}</div>
+            {/* Which KIND of machine, above the numbers — it changes what the numbers
+                below mean (docs/70 §70.10). The operator's own label is what is shown;
+                the instance type appears only in the "you land on" line. */}
+            {classes.length > 0 && (
+              <div className="le-presets">
+                <span className="af-cap">{tr("admin.ws_machine")}</span>
+                <button
+                  className={slotClass === "" ? "chip on" : "chip"}
+                  onClick={() => setSlotClass("")}
+                >
+                  {tr("admin.ws_machine_tenant_default")}
+                </button>
+                {classes.map((c) => (
+                  <button
+                    key={c.id}
+                    className={slotClass === c.id ? "chip on" : "chip"}
+                    onClick={() => setSlotClass(c.id)}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="admin-fgrid">
               <label className="admin-fld">
                 <span className="af-cap">{tr("admin.max_sessions_label")}</span>
@@ -531,7 +680,7 @@ export function MemberView({
             <div className="le-presets">
               <span className="af-cap">{tr("admin.ws_size_preset")}</span>
               {onSlots
-                ? sizing.slots!.map((s) => (
+                ? ladder!.map((s) => (
                     <button
                       key={s.instance_type}
                       className={+memMb === s.mem_mib ? "chip on" : "chip"}
@@ -554,7 +703,7 @@ export function MemberView({
                   })}
               <span className="af-unit">
                 {(onSlots
-                  ? sizing.slots!.some((s) => +memMb === s.mem_mib)
+                  ? ladder!.some((s) => +memMb === s.mem_mib)
                   : WS_SIZE_PRESETS.some((p) => +memMb === p.mem && +cpuUnits === p.cpu && +diskGb === p.disk))
                   ? ""
                   : tr("admin.ws_size_custom")}
@@ -562,6 +711,13 @@ export function MemberView({
             </div>
             {!sizing.cpu_effective && <p className="admin-hint">{tr("admin.ws_cpu_na")}</p>}
             {onSlots && <p className="admin-hint">{tr("admin.ws_slot_note")}</p>}
+            {/* ⚠️ The one destructive-ish consequence in this editor. `~` is a volume
+                that follows the member, and its ~/.local CLIs, nvm node, Chromium and
+                node_modules are architecture-dependent — a class change across
+                architectures makes the next start reinstall them (docs/70 §70.5).
+                Shown only when the architecture actually changes: within one
+                architecture the home is portable and there is nothing to warn about. */}
+            {archChanged && <p className="admin-hint warn">{tr("admin.ws_machine_arch_warn")}</p>}
             <p className="admin-hint">
               {tr("admin.mem_clamp_1")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.mem_clamp_2")}
             </p>
@@ -626,6 +782,19 @@ export function MemberView({
           <p>{tr("admin.destroy_body")}</p>
           <p className="warn-text">{tr("admin.destroy_locks")}</p>
           <p className="muted">{tr("admin.destroy_efs")}</p>
+        </ConfirmDialog>
+      )}
+      {confirmPurgeRow && (
+        <ConfirmDialog
+          title={tr("admin.delete_member_row_title", { key })}
+          confirmLabel={tr("admin.delete_member_row_confirm")}
+          busy={busy}
+          onCancel={() => setConfirmPurgeRow(false)}
+          onConfirm={deleteMemberRow}
+        >
+          <p>{tr("admin.delete_member_row_body")}</p>
+          <p className="warn-text">{tr("admin.delete_member_row_gone")}</p>
+          <p className="muted">{tr("admin.delete_member_row_kept")}</p>
         </ConfirmDialog>
       )}
       {confirmGrant && (

@@ -24,8 +24,16 @@ V=v31.2.0   # 上げたいタグ
 curl -sSL -o console/vendor/drawio/viewer-static.min.js \
   "https://raw.githubusercontent.com/jgraph/drawio/$V/src/main/webapp/js/viewer-static.min.js"
 sha256sum console/vendor/drawio/viewer-static.min.js   # この表の値を書き換える
+# ↑ を書き換えてから台帳（ステンシルの sha256）を焼き直す。版が食い違うと自分で止まる。
+node console/scripts/drawio/stencils-manifest.mjs --tag "$V" --write
 npm --prefix console run drawio:check                  # 実ブラウザで描画と外部通信 0 件を確認
+(cd control-plane && go test -run TestDrawio ./...)    # 台帳と SSRF の防壁
 ```
+
+**ビューアを上げたら台帳も必ず焼き直すこと。** ステンシルのバイト列は同梱せず
+`control-plane/assets/drawio-stencils.json`（名前 → sha256 → サイズ）だけを持ち、CP は
+その sha256 と照合してから配る（docs/65 §65.5.3）。版がずれると、名前の変わったセットが
+黙って 404 になったり、正しいバイト列が「改竄」として弾かれたりする。
 
 **上げたら必ず `drawio:check` を通すこと。** このファイルは外部 URL を既定値として
 持っており（`window.X = window.X || "https://viewer.diagrams.net/…"` の形）、版が変われば

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // JDK provisioning (docs/09-deploy portability). JDKs come from two sources,
@@ -45,8 +46,36 @@ var installableJava = []string{"8", "11", "17", "21", "25"}
 
 var javaMajorRe = regexp.MustCompile(`^temurin-(\d+)-jdk`)
 
+// jdkArchSuffixes are the architecture tokens a JDK directory can be named with.
+// Both sources use the same two: the Debian packages under /usr/lib/jvm are
+// temurin-<major>-jdk-<dpkg arch> and installJDK writes
+// temurin-<major>-jdk-<runtime.GOARCH> — amd64 / arm64 in both vocabularies.
+var jdkArchSuffixes = []string{"amd64", "arm64"}
+
+// foreignArchJDK reports whether a JDK directory name carries an architecture
+// suffix that is not this container's.
+//
+// ⚠️ This exists because the home volume OUTLIVES the architecture it was filled
+// on. On the ecs-ec2 runtime a member's `~` is an EBS volume that follows them,
+// and docs/70 makes the box they land on a per-member setting — so a home filled
+// on x86 can be attached to an arm64 slot, and then
+// ~/.local/share/agent-fleet/jvm holds temurin-21-jdk-amd64. Picking it would set
+// JAVA_HOME to a tree whose bin/java cannot exec, which surfaces as a gradle
+// build failing on a machine where `java -version` also fails — a long way from
+// the cause.
+func foreignArchJDK(name string) bool {
+	for _, a := range jdkArchSuffixes {
+		if a != runtime.GOARCH && strings.HasSuffix(name, "-"+a) {
+			return true
+		}
+	}
+	return false
+}
+
 // installedJavaMajors returns the sorted-ascending unique Temurin majors actually
-// present across the search dirs.
+// present across the search dirs AND runnable here — a wrong-architecture tree is
+// not "installed" for our purposes, because reporting it as present is what hides
+// the Console's Install button for a JDK that cannot run.
 func installedJavaMajors() []string {
 	seen := map[string]bool{}
 	for _, dir := range jvmSearchDirs() {
@@ -55,6 +84,9 @@ func installedJavaMajors() []string {
 			continue
 		}
 		for _, e := range entries {
+			if foreignArchJDK(e.Name()) {
+				continue
+			}
 			if m := javaMajorRe.FindStringSubmatch(e.Name()); m != nil {
 				seen[m[1]] = true
 			}
@@ -90,15 +122,43 @@ func sortMajors(seen map[string]bool) []string {
 }
 
 // javaHomeFor resolves a major to a concrete JAVA_HOME across the search dirs
-// (priority order), or "" when that major is not installed anywhere.
+// (priority order), or "" when that major is not installed anywhere FOR THIS
+// ARCHITECTURE.
+//
+// ⚠️ Do not go back to "glob, sort, take the first". Both sources name their
+// directories temurin-<major>-jdk-<arch>, and "amd64" sorts before "arm64", so on
+// an arm64 workspace holding a home that was filled on x86 the sorted-first entry
+// is always the unusable one (docs/70 §70.5.1).
 func javaHomeFor(major string) string {
 	for _, dir := range jvmSearchDirs() {
-		if m, _ := filepath.Glob(filepath.Join(dir, "temurin-"+major+"-jdk*")); len(m) > 0 {
-			sort.Strings(m)
-			return m[0]
+		m, _ := filepath.Glob(filepath.Join(dir, "temurin-"+major+"-jdk*"))
+		sort.Strings(m)
+		if hit := pickArchJDK(m); hit != "" {
+			return hit
 		}
 	}
 	return ""
+}
+
+// pickArchJDK chooses this architecture's JDK out of one directory's matches:
+// an exact -<GOARCH> suffix wins; a name with no architecture suffix at all is
+// accepted as a fallback (a hand-placed or differently-packaged tree); a name
+// carrying SOMEONE ELSE'S architecture is never returned.
+func pickArchJDK(matches []string) string {
+	var neutral string
+	for _, p := range matches {
+		name := filepath.Base(p)
+		if strings.HasSuffix(name, "-"+runtime.GOARCH) {
+			return p
+		}
+		if foreignArchJDK(name) {
+			continue
+		}
+		if neutral == "" {
+			neutral = p
+		}
+	}
+	return neutral
 }
 
 // adoptiumArch maps the container's GOARCH to the Adoptium API arch token.

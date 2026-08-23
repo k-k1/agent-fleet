@@ -64,9 +64,16 @@ type ecsEC2Runtime struct {
 	ci   ecsContainerInstanceAPI
 	pool ec2PoolConfig
 
-	// instanceType is the slot size this workspace needs (from its memory cap), and
+	// instanceType is the slot size this workspace needs (its memory request resolved
+	// against its CLASS's ladder), arch the CPU architecture that class runs on, and
 	// homeGiB the size of its persistent home volume.
+	//
+	// arch is carried rather than re-derived because two different places need it and
+	// neither can see the class: launchSlot picks the launch template (an arm64
+	// instance type cannot boot the x86_64 AMI) and buildTaskDef declares
+	// RuntimePlatform.
 	instanceType string
+	arch         string
 	homeGiB      int32
 
 	// azOfSubnet resolves the deployment's subnets to their AZ (cached in the factory):
@@ -146,6 +153,23 @@ const (
 	// without the CP remembering anything: the attachment IS the affinity, and this tag
 	// is how long it has been dormant (for the idle-stop and for picking a victim).
 	ec2TagIdleSince = "af-idle-since"
+	// ec2TagSlotIdleSince is af-idle-since's counterpart for a slot that holds NO home:
+	// the moment the box went back to the free pool. It is on the INSTANCE because there
+	// is nowhere else to put it — a free slot has no volume, and the CP holds no state
+	// (ADR 0012). Two replicas and a restarted CP therefore read the same answer.
+	//
+	// ★ Why it has to exist at all (docs/64 §64.31): the sleep test used to live only in
+	// sweepVolume, which walks HOMES. A slot whose home was released — an eviction, a
+	// class change, the golden baker's seed and probe — left that walk entirely and no
+	// other path stopped a running instance. Measured on the live deployment: three empty
+	// m*.large sat running for over 24h with zero tasks, at ~$95/month each, while the
+	// parameter that was supposed to stop them promised ~$9.6.
+	//
+	// Written by releaseSlot (the moment it knows) and re-stamped by the sweeper when it
+	// is missing — the same "the doer writes it, the sweeper repairs it" split af-idle-since
+	// already uses. Cleared when a workspace takes the slot, so a short tenancy does not
+	// leave the box looking free since before it was busy.
+	ec2TagSlotIdleSince = "af-slot-idle-since"
 	// ec2TagHibernating marks a home that has entered hibernation (§64.18.2) and the
 	// moment it did. It exists because hibernation spans several sweeps and cannot lean
 	// on af-idle-since: releaseSlot — hibernation's own first step — clears that tag.
@@ -231,6 +255,37 @@ const (
 	// tools, silently and only for them — so the CP compares and refuses a stale one
 	// instead of trusting that somebody remembered to re-bake (決定 9).
 	ec2TagImage = "af-image"
+	// ec2TagImageFP stamps the CONTENT the image reference above resolved to when the
+	// golden was baked — `sha256:<hex>` over imageFingerprint()'s per-platform manifest
+	// digests (goldenIdentity).
+	//
+	// ★ Why a second tag at all: ec2TagImage is a REFERENCE, and a reference is not an
+	// identity. Measured on the real deployment (docs/72 §72.6.4): re-tagging the
+	// workspace image so that CP and workspace share one ImageTag left the digest
+	// byte-identical (`sha256:497ca29360ed…` on both tags) and the CP still said
+	// `no golden for …; baking one`, then spent ~10 minutes and two EC2 slots
+	// rebuilding a home it already had. The error runs the other way too, and that one
+	// is not merely expensive: push new content over a MUTABLE tag (`:dev`) and the
+	// string still matches, so every new member is seeded from a home baked out of the
+	// old image — silently, and only for them.
+	//
+	// Absent on goldens baked before this existed, and unknowable when the image is
+	// not in ECR or ECR cannot be read. Both fall back to comparing ec2TagImage, i.e.
+	// exactly the old behaviour: unknown must never be read as "does not match", which
+	// would throw away every existing golden on upgrade.
+	ec2TagImageFP = "af-image-fp"
+	// ec2TagArch stamps the CPU architecture a golden snapshot was baked ON.
+	//
+	// ★ A golden is a HOME that has already paid boot-install — which means it is full
+	// of binaries: ~/.local/bin/{rtk,agy,cursor-agent,kiro}, the npm CLIs, nvm's node,
+	// the Chromium it downloaded. Handing an x86_64 golden to an arm64 slot produces a
+	// home that mounts perfectly and cannot exec anything, for every new user of that
+	// class, from their very first start (docs/70 §70.6). The image tag alone cannot
+	// catch it: both goldens are baked from the same image reference.
+	//
+	// Absent on goldens baked before this existed. Those are x86_64 by construction —
+	// there was no other kind of slot — so an empty tag reads as x86_64.
+	ec2TagArch = "af-arch"
 )
 
 // --- narrow AWS client ports (only the calls this adapter makes), so it is unit
@@ -275,15 +330,33 @@ type ecsContainerInstanceAPI interface {
 // af-mount/af-umount helpers), instance profile and security group all live there, so
 // the CP only ever says "run one of these, in this AZ, at this size".
 type ec2PoolConfig struct {
-	launchTemplate string    // AF_ECS_EC2_LAUNCH_TEMPLATE (id or name)
-	pool           string    // AF_ECS_EC2_POOL tag value (defaults to the cluster name)
-	slotSizes      []ec2Slot // AF_ECS_EC2_SLOT_TYPES, ascending by memory
-	maxSlots       int       // AF_ECS_EC2_MAX_SLOTS: cap on instances this pool may run
-	homeGiB        int32     // AF_ECS_EC2_HOME_GB: default per-user home volume size
-	tmpfsMiB       int32     // AF_ECS_EC2_TMP_MB: size cap of the /tmp tmpfs
-	tmpfsOpts      []string  // AF_ECS_EC2_TMP_OPTS
-	claimTTL       time.Duration
-	releaseGrace   time.Duration
+	launchTemplate string // AF_ECS_EC2_LAUNCH_TEMPLATE (id or name)
+	// amiArm64 is AF_ECS_EC2_AMI_ARM64, required only when a declared class says
+	// arm64: the launch template pins the x86_64 ECS-optimized AMI, and an arm64
+	// instance type cannot boot it (docs/70 §70.8).
+	//
+	// An AMI ID rather than a second launch template, and resolved by CLOUDFORMATION
+	// rather than by the CP. Everything else about a slot — instance profile, security
+	// group, root volume, and the user-data that joins the cluster and installs
+	// af-mount/af-umount — is architecture-neutral, so a second template would be a
+	// ~90-line copy of the first whose only difference was one field, kept in step by
+	// hope. RunInstances lets a request parameter override the template, which is the
+	// same one field expressed once.
+	//
+	// ⚠️ Not read from SSM by the CP. That would put ssm:GetParameter on the task role
+	// for a value that changes only when the pool stack is redeployed, and it would
+	// break the rule that patching a slot's AMI IS redeploying that stack (ADR 0045
+	// 決定 7). The 40-ec2-pool stack resolves the public parameter and passes the id.
+	amiArm64     string
+	pool         string         // AF_ECS_EC2_POOL tag value (defaults to the cluster name)
+	classes      []ec2SlotClass // AF_ECS_EC2_SLOT_TYPES, in declared order
+	defaultClass string         // AF_ECS_EC2_DEFAULT_SLOT_CLASS (defaults to the first)
+	maxSlots     int            // AF_ECS_EC2_MAX_SLOTS: cap on instances this pool may run
+	homeGiB      int32          // AF_ECS_EC2_HOME_GB: default per-user home volume size
+	tmpfsMiB     int32          // AF_ECS_EC2_TMP_MB: size cap of the /tmp tmpfs
+	tmpfsOpts    []string       // AF_ECS_EC2_TMP_OPTS
+	claimTTL     time.Duration
+	releaseGrace time.Duration
 	// slotSleepAfter is how long a slot may sit with no running task before the sweeper
 	// STOPS the instance (never terminates it — the image cache lives on its root
 	// volume, and a stopped instance costs only that volume).
@@ -294,6 +367,18 @@ type ec2PoolConfig struct {
 	// counting only once the workspace is already stopped, and it acts on the BOX the
 	// workspace was using. The two run in series: person goes away → (reaper) workspace
 	// stops → (this) slot sleeps.
+	//
+	// It governs BOTH kinds of dormant slot, from the same value (docs/64 §64.31):
+	//   - a slot still holding its owner's home (af-idle-since on the volume) — sweepVolume;
+	//   - a slot holding nothing at all (af-slot-idle-since on the instance) — sweepFreeSlots.
+	// The second used to have no timer of any kind, which made the "~$9.6 instead of ~$95"
+	// this parameter is sold on untrue for every slot that had been released.
+	//
+	// 0 = OFF (slots never sleep), matching hibernateAfter and what the parameter has
+	// always been documented to mean. ⚠️ It used to mean "stop at the very first sweep" —
+	// the exact opposite — because the test was a bare `idle < slotSleepAfter`. Same shape
+	// as the AF_WS_IDLE_TIMEOUT=0 trap in §64.26: an operator's explicit "off" has to be
+	// read as off.
 	slotSleepAfter time.Duration
 	// hibernateAfter is the THIRD timer in the same series, and the only one that
 	// touches the user's data: once a home has been dormant this long it is snapshotted
@@ -340,6 +425,28 @@ type ec2Slot struct {
 	vcpu         int
 }
 
+// CPU architectures a class may declare. They are the ECS/EC2 spellings, so the
+// value goes straight into RuntimePlatform without a second vocabulary.
+const (
+	ec2ArchX86 = "x86_64"
+	ec2ArchArm = "arm64"
+)
+
+// ec2SlotClass is one named ladder: which KIND of machine, as opposed to how big.
+//
+// The architecture is DECLARED, never derived from the instance type's name. "a
+// family ending in g is Graviton" reads well until m7gd, x2gd or g4dn, and a wrong
+// guess here does not misprint a label — it boots the wrong AMI. The operator
+// writing the ladder already knows (the same reasoning ADR 0045 決定 21 used for
+// vCPU), and newECSEC2Factory refuses to start when a declared arm64 class has no
+// launch template to run on.
+type ec2SlotClass struct {
+	id    string
+	label string
+	arch  string
+	slots []ec2Slot // ascending by memory
+}
+
 // ecsEC2Factory is the `ecs-ec2` RuntimeFactory.
 type ecsEC2Factory struct {
 	base *ecsFactory
@@ -377,8 +484,10 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 	}
 	pool := ec2PoolConfig{
 		launchTemplate: os.Getenv("AF_ECS_EC2_LAUNCH_TEMPLATE"),
+		amiArm64:       os.Getenv("AF_ECS_EC2_AMI_ARM64"),
 		pool:           envOr("AF_ECS_EC2_POOL", base.cfg.cluster),
-		slotSizes:      parseSlotSizes(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),
+		classes:        parseSlotClasses(envOr("AF_ECS_EC2_SLOT_TYPES", "m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")),
+		defaultClass:   os.Getenv("AF_ECS_EC2_DEFAULT_SLOT_CLASS"),
 		maxSlots:       envInt("AF_ECS_EC2_MAX_SLOTS", 8),
 		homeGiB:        int32(envInt("AF_ECS_EC2_HOME_GB", 50)),
 		tmpfsMiB:       int32(envInt("AF_ECS_EC2_TMP_MB", 2048)),
@@ -404,11 +513,8 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		ghostAfter:     time.Duration(envInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
 		waitBudget:     time.Duration(envInt("AF_ECS_EC2_WAIT_SEC", 600)) * time.Second,
 	}
-	if pool.launchTemplate == "" {
-		return nil, fmt.Errorf("AF_ECS_EC2_LAUNCH_TEMPLATE is required for AF_RUNTIME=ecs-ec2")
-	}
-	if len(pool.slotSizes) == 0 {
-		return nil, fmt.Errorf("AF_ECS_EC2_SLOT_TYPES has no usable entry (want type:memMiB,...)")
+	if err := pool.validate(); err != nil {
+		return nil, err
 	}
 	f := &ecsEC2Factory{
 		base: base,
@@ -417,8 +523,9 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		ci:   ecs.NewFromConfig(ac),
 		pool: pool,
 	}
-	log.Printf("runtime=ecs-ec2 pool=%s launch-template=%s slots=%s max=%d home=%dGiB",
-		pool.pool, pool.launchTemplate, envOr("AF_ECS_EC2_SLOT_TYPES", "(default)"), pool.maxSlots, pool.homeGiB)
+	log.Printf("runtime=ecs-ec2 pool=%s launch-template=%s arm64-ami=%s classes=%s default-class=%s max=%d home=%dGiB",
+		pool.pool, pool.launchTemplate, envOr("AF_ECS_EC2_AMI_ARM64", "(none)"),
+		describeSlotClasses(pool.classes), pool.defaultClass, pool.maxSlots, pool.homeGiB)
 	go f.sweepLoop(context.Background())
 	return f, nil
 }
@@ -428,13 +535,15 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 	if !ok { // unreachable: ecsFactory.New always returns *ecsRuntime
 		panic("ecs-ec2: base factory did not return *ecsRuntime")
 	}
+	instanceType, arch := f.pool.slotTypeFor(ws.SlotClass, ws.MemBytes)
 	return &ecsEC2Runtime{
 		base:         base,
 		ec2:          f.ec2,
 		ssmc:         f.ssmc,
 		ci:           f.ci,
 		pool:         f.pool,
-		instanceType: f.pool.slotTypeFor(ws.MemBytes),
+		instanceType: instanceType,
+		arch:         arch,
 		homeGiB:      f.homeGiB(ws),
 		azOfSubnet:   f.subnetAZs,
 		bg:           backgroundWithin(f.pool.waitBudget),
@@ -454,23 +563,104 @@ func (f *ecsEC2Factory) homeGiB(ws Workspace) int32 {
 	return f.pool.homeGiB
 }
 
-// slotTypeFor picks the smallest configured slot that holds the workspace's memory
-// request. Sizing on EC2 is a choice of instance type, not Fargate's 74 discrete (cpu,
-// memory) pairs (docs/64 §64.4.5): the task reserves neither cpu nor memory, so the
-// user gets the whole box (ADR 0045 決定 8).
-//
-// ⚠️ The argument is a REQUIREMENT, not a cap — "fit me into a box this big" — and the
-// person then gets whatever that box has. It is also why 0 (unset) lands on the
-// SMALLEST slot here, while 0 on Fargate means the deployment's task size and on
-// docker means WS_MEMORY. The Console says which of the three it is (ADR 0045 決定 21).
-func (p ec2PoolConfig) slotTypeFor(memBytes int64) string {
-	want := memBytes / mib
-	for _, s := range p.slotSizes {
-		if want <= s.memMiB {
-			return s.instanceType
+// classFor resolves a class id to its declared ladder, falling back to the default
+// class (and then to the first) so an id that no longer exists never fails a Start.
+// The CP is not the place to enforce that a stored id is still declared — the
+// operator can delete a class at any redeploy, and the person whose row still names
+// it must keep working. resolveSlotClass reports the substitution; this is the last
+// line of defence, not the check.
+func (p ec2PoolConfig) classFor(id string) ec2SlotClass {
+	for _, c := range p.classes {
+		if c.id == id {
+			return c
 		}
 	}
-	return p.slotSizes[len(p.slotSizes)-1].instanceType
+	for _, c := range p.classes {
+		if c.id == p.defaultClass {
+			return c
+		}
+	}
+	return p.classes[0]
+}
+
+// slotTypeFor picks the smallest slot IN THE GIVEN CLASS that holds the workspace's
+// memory request, and reports the class's architecture with it. Sizing on EC2 is a
+// choice of instance type, not Fargate's 74 discrete (cpu, memory) pairs (docs/64
+// §64.4.5): the task reserves neither cpu nor memory, so the user gets the whole box
+// (ADR 0045 決定 8).
+//
+// ⚠️ The memory argument is a REQUIREMENT, not a cap — "fit me into a box this big" —
+// and the person then gets whatever that box has. It is also why 0 (unset) lands on
+// the SMALLEST slot here, while 0 on Fargate means the deployment's task size and on
+// docker means WS_MEMORY. The Console says which of the three it is (ADR 0045 決定 21).
+//
+// The class only chooses the LADDER. Memory still chooses the rung, in every class,
+// which is what keeps "8 GB" meaning the same thing after a class change.
+func (p ec2PoolConfig) slotTypeFor(classID string, memBytes int64) (instanceType, arch string) {
+	c := p.classFor(classID)
+	want := memBytes / mib
+	for _, s := range c.slots {
+		if want <= s.memMiB {
+			return s.instanceType, c.arch
+		}
+	}
+	return c.slots[len(c.slots)-1].instanceType, c.arch
+}
+
+// parseSlotClasses reads AF_ECS_EC2_SLOT_TYPES.
+//
+// Two shapes, and the older one is not deprecated:
+//
+//	m7i.large:8192:2,m7i.xlarge:16384:4          → one class, id "default", x86_64
+//	id|label|arch|<ladder>[; id|label|arch|…]    → one class per entry, in order
+//
+// ⚠️ The bare form must keep parsing, unchanged, forever. Every deployed
+// 30-ingress stack passes it, and an operator upgrading the CP does not touch CFN
+// parameters — a spec that stopped parsing would leave the pool with no ladder at
+// all, which newECSEC2Factory turns into a refusal to boot.
+//
+// Entries are separated by ";" or a newline (a CFN parameter is one line, an env file
+// is easier to read multi-line). A class with no usable rung is dropped; a class with
+// an unknown architecture is dropped rather than defaulted, because defaulting it to
+// x86_64 would boot the wrong AMI for a typo'd "aarch64".
+func parseSlotClasses(spec string) []ec2SlotClass {
+	if !strings.Contains(spec, "|") {
+		if slots := parseSlotSizes(spec); len(slots) > 0 {
+			return []ec2SlotClass{{id: "default", arch: ec2ArchX86, slots: slots}}
+		}
+		return nil
+	}
+	var out []ec2SlotClass
+	for _, entry := range strings.FieldsFunc(spec, func(r rune) bool { return r == ';' || r == '\n' }) {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		parts := strings.SplitN(entry, "|", 4)
+		if len(parts) != 4 {
+			log.Printf("ecs-ec2: ignoring slot class %q (want id|label|arch|type:memMiB[:vcpu],…)", entry)
+			continue
+		}
+		id, label := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		arch := strings.TrimSpace(parts[2])
+		if id == "" {
+			continue
+		}
+		if arch != ec2ArchX86 && arch != ec2ArchArm {
+			log.Printf("ecs-ec2: ignoring slot class %q: arch %q is not %s or %s", id, arch, ec2ArchX86, ec2ArchArm)
+			continue
+		}
+		slots := parseSlotSizes(parts[3])
+		if len(slots) == 0 {
+			log.Printf("ecs-ec2: ignoring slot class %q: no usable rung in %q", id, parts[3])
+			continue
+		}
+		if label == "" {
+			label = id
+		}
+		out = append(out, ec2SlotClass{id: id, label: label, arch: arch, slots: slots})
+	}
+	return out
 }
 
 // parseSlotSizes reads "m7i.large:8192,m7i.xlarge:16384:4" into an ascending list.
@@ -633,14 +823,88 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	// service with an old task that Service Connect hasn't stopped routing to
 	// yet. Reporting "running" before that settles let a client's OAuth
 	// start/complete land on two different Agent processes and lose the
-	// in-memory flow_id (confirmed 2026-08-19 on af.lazmix.jp).
+	// in-memory flow_id (confirmed 2026-08-19 on the dev deployment).
 	case s.DesiredCount >= 1 && s.RunningCount >= 1 && serviceRolledOut(s):
+		e.clearBlockedPhase()
 		return "running"
 	case s.DesiredCount >= 1:
+		e.notePlacementBlocked(s)
 		return "starting"
 	default:
 		return "stopped"
 	}
+}
+
+// notePlacementBlocked surfaces "the scheduler cannot place this task" as a phase, so a
+// start that is never going to converge says WHY instead of spinning.
+//
+// ⚠️ This is the one place State() writes something, which is worth the exception.
+// `starting` here means only "desired >= 1 and nothing is running yet", and it has no
+// timeout — a task ECS refuses to place holds that forever (docs/70 §70.14.6: a task
+// definition declaring ARM64 while pinned to an x86_64 slot). ECS says exactly why in
+// the service events; the CP was throwing that away and reporting a bare `starting`,
+// so the only way to find out was `aws ecs describe-services` by hand. Nothing else in
+// the read path can reach the events — BootPhase() takes no context and cannot call
+// AWS — so it is written from here or not at all.
+//
+// No extra API call: the events come from the DescribeServices the caller already made.
+func (e *ecsEC2Runtime) notePlacementBlocked(s ecstypes.Service) {
+	why := ecsPlacementBlocked(s)
+	if why == "" {
+		// Still coming up normally. Do NOT clear the phase here: an ordinary Start is
+		// concurrently writing its own progress ("slot: creating", "home: attaching")
+		// and this poll must not wipe it.
+		return
+	}
+	phase := blockedPhasePrefix + why
+	if e.BootPhase() == phase {
+		return // already said, and this runs every 4s
+	}
+	e.setPhase(phase)
+	log.Printf("ecs-ec2: %s cannot be placed and will stay `starting` until this is fixed: %s", e.base.name, why)
+}
+
+// clearBlockedPhase removes a blocked phase once the task is actually running. Scoped to
+// the prefix on purpose: any other phase belongs to a Start that is still in flight, and
+// clearing that from a poll would blank the starting dialog mid-boot.
+func (e *ecsEC2Runtime) clearBlockedPhase() {
+	if strings.HasPrefix(e.BootPhase(), blockedPhasePrefix) {
+		e.setPhase("")
+	}
+}
+
+// blockedPhasePrefix is the contract with the Console: WsStartingDialog maps this
+// prefix to a localized headline and prints the rest — the raw ECS sentence — beneath
+// it. The raw text is the valuable half; it names the constraint that failed.
+const blockedPhasePrefix = "blocked: "
+
+// ecsPlacementBlocked returns the ECS event explaining why the CURRENT deployment cannot
+// be placed, or "" if there is no such event.
+//
+// Scoped to events newer than the PRIMARY deployment: a service that was wedged, got
+// fixed and redeployed still carries the old complaint in its event list, and reporting
+// that would turn a normal cold start into a fake diagnosis.
+//
+// ⚠️ ECS de-duplicates its own events, so the message appears once and then goes quiet
+// for a long while. That is exactly why this is matched against the deployment rather
+// than "was there an event recently": the wedge is permanent but the event is not
+// repeated (measured — the run that prompted this had a single event and then silence).
+func ecsPlacementBlocked(s ecstypes.Service) string {
+	var since time.Time
+	for _, d := range s.Deployments {
+		if aws.ToString(d.Status) == "PRIMARY" && d.CreatedAt != nil {
+			since = *d.CreatedAt
+		}
+	}
+	for _, ev := range s.Events {
+		if ev.CreatedAt == nil || ev.CreatedAt.Before(since) {
+			continue
+		}
+		if msg := aws.ToString(ev.Message); strings.Contains(msg, "unable to place a task") {
+			return strings.TrimSpace(msg)
+		}
+	}
+	return ""
 }
 
 // Start brings the workspace up on a slot. Everything that can be slow is pushed off
@@ -884,6 +1148,28 @@ type ec2Placement struct {
 // placeHome resolves the volume and the slot, attaching the two together when it can.
 // The order follows the AZ (docs/64 §64.15.3): the volume pins the AZ, the AZ picks
 // the candidate slots, and only a user with no volume yet is free to follow the pool.
+// slotTypeMatches reports whether an instance is still the size AND class this
+// workspace needs. One DescribeInstances, no caching — it is asked once per Start.
+//
+// An instance that has vanished (terminated between the volume read and here) counts
+// as NOT matching, so the caller releases and re-places rather than pinning a task to
+// a box that is gone.
+func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) (bool, error) {
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil {
+		if isAWSNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("describe slot %s: %w", instanceID, err)
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			return string(inst.InstanceType) == e.instanceType, nil
+		}
+	}
+	return false, nil
+}
+
 func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
@@ -891,24 +1177,60 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	}
 	if vol != nil {
 		if inst := attachedInstance(vol); inst != "" {
-			// The home is still on a slot — the normal case now that Stop leaves it
-			// there (lazy release). This is both the affinity ("the same user gets the
-			// same slot") and the cheapest path: no attach, no mount to redo.
-			volID := aws.ToString(vol.VolumeId)
-			if err := e.claim(ctx, volID, inst); err != nil {
-				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
-			}
-			e.clearDormancy(ctx, volID)
-			running, err := e.instanceRunning(ctx, inst)
+			// ⚠️ The attachment is AFFINITY, not a decision. It records the slot this
+			// workspace used last time, for the size and class it had THEN — and both
+			// can change underneath it (a memory edit moves the rung, a class edit
+			// moves the ladder). Reusing a slot of the wrong instance type is not
+			// merely suboptimal:
+			//
+			//   ACROSS ARCHITECTURES IT STRANDS THE WORKSPACE. buildTaskDef declares
+			//   RuntimePlatform for the new class while the placement constraint still
+			//   pins THIS instance, so ECS refuses to place the task at all — "no
+			//   container instance met all of its requirements … missing an attribute
+			//   required by your task" — and keeps refusing, with desiredCount 1 and
+			//   nothing running, forever.
+			//
+			// Measured on a live deployment (docs/70 §70.14.5): a member moved from
+			// the saver class (m6i, x86_64) to arm (m8g, arm64) and their workspace
+			// could not start again. So the match is checked before the affinity is
+			// honoured, and a stale slot is released rather than reused.
+			matches, err := e.slotTypeMatches(ctx, inst)
 			if err != nil {
 				return ec2Placement{}, err
 			}
-			// A dormant slot keeps both the image cache and the attachment, so waking it
-			// is the ~90s path rather than the 135s of building a new one.
-			return ec2Placement{
-				volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
-				deferred: !running, wake: !running,
-			}, nil
+			if !matches {
+				log.Printf("ecs-ec2: %s now needs %s but its home is on %s; releasing that slot first",
+					e.base.name, e.instanceType, inst)
+				if err := e.releaseSlot(ctx); err != nil {
+					return ec2Placement{}, fmt.Errorf("release the slot after a size/class change: %w", err)
+				}
+				// Re-read and fall through: the volume is detached now, so the code below
+				// places it like any other homeless home. Note it keeps its AZ — an EBS
+				// volume can never leave the one it was created in — so the search below
+				// is correctly restricted to that AZ.
+				if vol, err = e.homeVolume(ctx); err != nil {
+					return ec2Placement{}, fmt.Errorf("describe home volume after release: %w", err)
+				}
+			} else {
+				// The home is still on a slot — the normal case now that Stop leaves it
+				// there (lazy release). This is both the affinity ("the same user gets the
+				// same slot") and the cheapest path: no attach, no mount to redo.
+				volID := aws.ToString(vol.VolumeId)
+				if err := e.claim(ctx, volID, inst); err != nil {
+					log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+				}
+				e.clearDormancy(ctx, volID)
+				running, err := e.instanceRunning(ctx, inst)
+				if err != nil {
+					return ec2Placement{}, err
+				}
+				// A dormant slot keeps both the image cache and the attachment, so waking it
+				// is the ~90s path rather than the 135s of building a new one.
+				return ec2Placement{
+					volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
+					deferred: !running, wake: !running,
+				}, nil
+			}
 		}
 	}
 	azFilter := ""
@@ -1073,6 +1395,8 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	// there — stamp it for the bill. Deliberately AFTER the mount and best-effort: the
 	// tag is read by Cost Explorer and by nothing else (ADR 0048 決定 3).
 	e.tagSlotOwner(ctx, p.instanceID)
+	// …and it is no longer free, so its free-pool clock stops. Same moment, opposite tag.
+	e.clearSlotFree(ctx, p.instanceID)
 	e.setPhase("task: starting")
 	taskDefArn, reused, err := e.reuseOrRegisterTaskDef(ctx, p, prep)
 	if err != nil {
@@ -1394,6 +1718,42 @@ func (e *ecsEC2Runtime) untagSlotOwner(ctx context.Context, instanceID string) {
 	}
 }
 
+// markSlotFree / clearSlotFree move a SLOT in and out of the free set's dormancy clock,
+// exactly as markIdle / clearIdle do for a home. They are the instance-side pair because
+// a free slot has no volume to carry the mark (see ec2TagSlotIdleSince).
+//
+// ⚠️ Best-effort like the owner tags, and for the same reason: neither a Start nor a Stop
+// may fail because a bookkeeping tag could not be written. The sweeper re-stamps a missing
+// mark on its next pass, which costs one sweep of extra running time and nothing else.
+func (e *ecsEC2Runtime) markSlotFree(ctx context.Context, instanceID string) {
+	if instanceID == "" {
+		return
+	}
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{instanceID},
+		Tags: []ec2types.Tag{{
+			Key: aws.String(ec2TagSlotIdleSince), Value: aws.String(e.now().UTC().Format(time.RFC3339)),
+		}},
+	}); err != nil {
+		log.Printf("ecs-ec2: marking slot %s free failed (the sweeper will stamp it): %v", instanceID, err)
+	}
+}
+
+// clearSlotFree is called when a workspace takes the slot. Without it a box that is used
+// for less than one sweep interval keeps the mark from BEFORE that tenancy, and the next
+// release would look older than it is — the slot would sleep with no grace at all.
+func (e *ecsEC2Runtime) clearSlotFree(ctx context.Context, instanceID string) {
+	if instanceID == "" {
+		return
+	}
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{instanceID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotIdleSince)}},
+	}); err != nil {
+		log.Printf("ecs-ec2: clearing the free mark on slot %s failed (sweeper will): %v", instanceID, err)
+	}
+}
+
 // claimLive reports whether the volume carries a claim that has not expired. The TTL
 // matters: a claim that outlives its failed launch pins the workspace at `starting`
 // forever, and Start returns early on `starting`, so the user could never recover.
@@ -1613,6 +1973,72 @@ func isEC2CapacityError(err error) bool {
 	return false
 }
 
+// validate refuses a pool configuration that cannot work, at BOOT, and fills in the
+// default class. Every failure here would otherwise surface as an error on somebody's
+// first Start — long after the operator stopped watching the logs — so this follows
+// the line AF_ECS_EC2_LAUNCH_TEMPLATE already drew: a CP that cannot run workspaces
+// says so instead of starting and running none.
+func (p *ec2PoolConfig) validate() error {
+	if p.launchTemplate == "" {
+		return fmt.Errorf("AF_ECS_EC2_LAUNCH_TEMPLATE is required for AF_RUNTIME=ecs-ec2")
+	}
+	if len(p.classes) == 0 {
+		return fmt.Errorf("AF_ECS_EC2_SLOT_TYPES has no usable entry (want type:memMiB,... or id|label|arch|type:memMiB,...)")
+	}
+	if p.amiArm64 == "" {
+		for _, c := range p.classes {
+			if c.arch == ec2ArchArm {
+				return fmt.Errorf("slot class %q is %s but AF_ECS_EC2_AMI_ARM64 is empty "+
+					"(redeploy cfn/40-ec2-pool.yaml and pass its SlotAmiIdArm64 output)", c.id, c.arch)
+			}
+		}
+	}
+	if p.defaultClass == "" {
+		p.defaultClass = p.classes[0].id
+		return nil
+	}
+	if p.classFor(p.defaultClass).id != p.defaultClass {
+		return fmt.Errorf("AF_ECS_EC2_DEFAULT_SLOT_CLASS=%q is not one of the declared classes", p.defaultClass)
+	}
+	return nil
+}
+
+// amiFor is the AMI to override the launch template's with, or "" to use the
+// template's own. An empty arch (a deployment that never declared classes) is x86_64,
+// which is what the template has always pinned.
+func (p ec2PoolConfig) amiFor(arch string) string {
+	if arch == ec2ArchArm {
+		return p.amiArm64
+	}
+	return ""
+}
+
+// launchTemplateSpec accepts either an id (lt-…) or a name, the way every
+// AF_ECS_EC2_LAUNCH_TEMPLATE* value may be written.
+func launchTemplateSpec(ref string) *ec2types.LaunchTemplateSpecification {
+	lt := &ec2types.LaunchTemplateSpecification{Version: aws.String("$Latest")}
+	if strings.HasPrefix(ref, "lt-") {
+		lt.LaunchTemplateId = aws.String(ref)
+	} else {
+		lt.LaunchTemplateName = aws.String(ref)
+	}
+	return lt
+}
+
+// describeSlotClasses renders the parsed ladders for the one boot log line — the
+// operator's only chance to see that the spec they wrote parsed the way they meant.
+func describeSlotClasses(cs []ec2SlotClass) string {
+	parts := make([]string, 0, len(cs))
+	for _, c := range cs {
+		types := make([]string, 0, len(c.slots))
+		for _, s := range c.slots {
+			types = append(types, s.instanceType)
+		}
+		parts = append(parts, fmt.Sprintf("%s(%s:%s)", c.id, c.arch, strings.Join(types, "/")))
+	}
+	return strings.Join(parts, " ")
+}
+
 func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) {
 	total, err := e.poolSize(ctx)
 	if err != nil {
@@ -1625,18 +2051,16 @@ func (e *ecsEC2Runtime) runSlot(ctx context.Context, az string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	lt := &ec2types.LaunchTemplateSpecification{Version: aws.String("$Latest")}
-	if strings.HasPrefix(e.pool.launchTemplate, "lt-") {
-		lt.LaunchTemplateId = aws.String(e.pool.launchTemplate)
-	} else {
-		lt.LaunchTemplateName = aws.String(e.pool.launchTemplate)
-	}
+	lt := launchTemplateSpec(e.pool.launchTemplate)
 	out, err := e.ec2.RunInstances(ctx, &ec2.RunInstancesInput{
 		LaunchTemplate: lt,
-		InstanceType:   ec2types.InstanceType(e.instanceType),
-		SubnetId:       aws.String(subnet),
-		MinCount:       aws.Int32(1),
-		MaxCount:       aws.Int32(1),
+		// Overrides the template's ImageId on arm64 and is nil everywhere else, so an
+		// x86_64 launch is byte-for-byte the call it has always been.
+		ImageId:      strOrNil(e.pool.amiFor(e.arch)),
+		InstanceType: ec2types.InstanceType(e.instanceType),
+		SubnetId:     aws.String(subnet),
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeInstance,
 			Tags: []ec2types.Tag{
@@ -2042,7 +2466,7 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 // retire the running task and start a fresh one — Service Connect load-balances
 // across both for the ~1-2 minutes it takes to settle, which silently drops
 // anything a caller stashed in the Agent process's memory (an OAuth flow_id;
-// confirmed 2026-08-19 on af.lazmix.jp). Most re-wakes change nothing (same image,
+// confirmed 2026-08-19 on the dev deployment). Most re-wakes change nothing (same image,
 // same env, same secrets ARNs), so most re-wakes can skip that window entirely.
 //
 // Same shape as startGen/startPhase for the same reason: the Runtime object is
@@ -2187,13 +2611,30 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 			},
 		}
 	}
+	// The slot's CPU architecture, declared rather than left to chance.
+	//
+	// Measured: on an EC2-compatibility task definition, omitting runtimePlatform
+	// leaves it null — it does NOT default to X86_64 the way it does on Fargate — so
+	// this is not what makes an arm64 slot work (docs/70 §70.8). It is stated anyway
+	// for two reasons: ECS then refuses to PLACE a task on a box of the wrong
+	// architecture instead of starting it and letting the image fail to exec, and the
+	// field is part of what taskDefFingerprint hashes, so a member moved to another
+	// class provably gets a new revision rather than a reused one.
+	arch := ecstypes.CPUArchitectureX8664
+	if e.arch == ec2ArchArm {
+		arch = ecstypes.CPUArchitectureArm64
+	}
 	in := &ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String(e.base.name),
 		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityEc2},
 		NetworkMode:             ecstypes.NetworkModeAwsvpc,
-		ExecutionRoleArn:        strOrNil(e.base.cfg.execRole),
-		TaskRoleArn:             strOrNil(e.base.cfg.taskRole),
-		ContainerDefinitions:    []ecstypes.ContainerDefinition{container},
+		RuntimePlatform: &ecstypes.RuntimePlatform{
+			CpuArchitecture:       arch,
+			OperatingSystemFamily: ecstypes.OSFamilyLinux,
+		},
+		ExecutionRoleArn:     strOrNil(e.base.cfg.execRole),
+		TaskRoleArn:          strOrNil(e.base.cfg.taskRole),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{container},
 		PlacementConstraints: []ecstypes.TaskDefinitionPlacementConstraint{{
 			Type:       ecstypes.TaskDefinitionPlacementConstraintTypeMemberOf,
 			Expression: aws.String(fmt.Sprintf("ec2InstanceId == %s", p.instanceID)),
@@ -2337,8 +2778,11 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 		log.Printf("ecs-ec2: %s detached from %s but the device is still held: %v", volumeID, instanceID, err)
 	}
 	e.clearIdle(ctx, volumeID)
-	// The box is back in the pool, so it stops being this person's cost from here on.
+	// The box is back in the pool, so it stops being this person's cost from here on —
+	// and starts its OWN dormancy clock, which is what eventually stops it. Before this
+	// existed a released slot simply left every path that could ever stop it (§64.31).
 	e.untagSlotOwner(ctx, instanceID)
+	e.markSlotFree(ctx, instanceID)
 	log.Printf("ecs-ec2: released slot %s from %s", instanceID, e.base.name)
 	return nil
 }
@@ -2736,6 +3180,10 @@ func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
 		return ""
 	}
 	want := e.base.cfg.workspaceImage
+	// The comparison is by CONTENT where the content is knowable (goldenIdentity):
+	// a golden re-stamped for a new tag that resolves to the same bytes is still ours,
+	// and one stamped with our tag that no longer resolves to the same bytes is not.
+	id := goldenIdentityFor(ctx, e.base.ecr, want)
 	var stale []string
 	var newest *ec2types.Snapshot
 	for i := range out.Snapshots {
@@ -2743,8 +3191,24 @@ func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
 		if s.State != ec2types.SnapshotStateCompleted {
 			continue
 		}
-		if got := ec2TagValue(s.Tags, ec2TagImage); got != want {
-			stale = append(stale, fmt.Sprintf("%s(%s)", aws.ToString(s.SnapshotId), got))
+		if !id.matches(s.Tags) {
+			stale = append(stale, fmt.Sprintf("%s(%s)", aws.ToString(s.SnapshotId), ec2TagValue(s.Tags, ec2TagImage)))
+			continue
+		}
+		// ⚠️ A golden of ANOTHER architecture is not a candidate for this home. The
+		// pool bakes one per declared arch and they all carry the same image stamp, so
+		// image alone stops discriminating the moment a second arch is declared — and
+		// what is left is "newest wins", which is a coin toss. This is NOT a stale
+		// golden and must not be reported as one: the other arch's golden is correct,
+		// it just is not ours.
+		//
+		// Measured on the real deployment (docs/70 §70.14.5): with x86_64 and arm64
+		// baking at the same time, the x86_64 probe was seeded from the arm64
+		// candidate. Nothing broke — §70.5's self-heal wipes the wrong-arch bits and
+		// re-runs boot-install — which is exactly why this had to be found in a log
+		// rather than by a failure: it silently throws away the whole point of the
+		// golden, and it makes the probe prove the wrong snapshot.
+		if snapshotArch(s) != archOrX86(e.arch) {
 			continue
 		}
 		if newest == nil || snapshotStartedAfter(s, *newest) {
@@ -2989,6 +3453,7 @@ func (f *ecsEC2Factory) sweep(ctx context.Context) error {
 	// Repair the billing tags BEFORE the volume sweep's own releases are re-read: the
 	// truth is "who is attached right now", and that is exactly what `vols` holds.
 	f.sweepSlotOwnerTags(ctx, vols.Volumes)
+	f.sweepFreeSlots(ctx, vols.Volumes)
 	return f.sweepGhostInstances(ctx)
 }
 
@@ -3094,6 +3559,26 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		}
 		return
 	}
+	// A Start is in flight on this home. Everything below reads "no live service" as
+	// "dormant", and for those few seconds that is exactly wrong (docs/64 §64.31.6):
+	// placeHome clears the dormancy marks FIRST and upsertService raises desiredCount
+	// LAST, with the mount — an SSM round trip, 10–30s — in between. A sweep landing in
+	// that window stamps af-idle-since back onto a workspace that is coming UP.
+	//
+	// It never caused a premature stop (re-stamping moves the clock forward, not back),
+	// but the mark then outlives the launch: a RUNNING workspace wears a dormancy mark
+	// until its next Stop, which makes the pool screen report it as idle and makes
+	// evictLongestIdle pick it as a victim — and releaseSlot refusing a live service
+	// turns that into a failed Start at the cap rather than a move to the next victim.
+	//
+	// The free-slot walk has honoured live claims from the start; this is the same rule
+	// on the other half of the same sweep. Deliberately AFTER the hibernation branch
+	// above: a claim must never be able to strand a capture half-way. An EXPIRED claim
+	// falls through (claimLive parses af-claim-at rather than trusting the tag's
+	// presence), so a launch that died cannot pin this walk either.
+	if rt.claimLive(vol) {
+		return
+	}
 	instanceID := aws.ToString(att.InstanceId)
 	s, ok, err := rt.base.describeService(ctx)
 	if err != nil {
@@ -3136,8 +3621,8 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 	// answer and this loop has no database (ADR 0012). The reaper stamps af-hibernating
 	// and starts the capture; from then on the branch above (att == nil) advances it.
 	// A hibernation whose first step has run therefore never reaches this point.
-	if idle < f.pool.slotSleepAfter {
-		return
+	if f.pool.slotSleepAfter <= 0 || idle < f.pool.slotSleepAfter {
+		return // 0 = never sleep (see slotSleepAfter)
 	}
 	running, err := rt.instanceRunning(ctx, instanceID)
 	if err != nil || !running {
@@ -3162,6 +3647,169 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 	}
 }
 
+// sweepFreeSlots is the sleep test for slots that hold NO home — the half sweepVolume
+// structurally cannot do, because it walks homes and a released slot has none
+// (docs/64 §64.31, ADR 0045 決定 22).
+//
+// ★ The bug it fixes: Ec2SlotSleepSec promises "a slot with no running task is STOPPED,
+// ~$9.6/month instead of ~$95". That was only ever true for a slot with a home still
+// attached. The moment releaseSlot ran — an eviction, a size/class change, a Destroy, the
+// golden baker finishing with its seed and its probe — the box left every path that could
+// stop it and ran until an operator noticed. On the live deployment three of them had been
+// up for over a day with zero tasks.
+//
+// The shape mirrors sweepVolume deliberately: stamp on first sighting, act only on the
+// NEXT pass. That is what makes it safe across CP restarts and across the two replicas a
+// rolling deploy always overlaps — both read the same tag and reach the same verdict, and
+// StopInstances is idempotent, so a double call is a no-op rather than a race.
+//
+// ⚠️ No warm spare is kept, and that is not an omission (§64.17.2, "プレウォームは入れない").
+// A free RUNNING slot buys the next arrival 43s instead of 110s; the box itself — stopped,
+// never terminated, image cache intact on its root volume — is what buys the 110s instead
+// of 135s, and that is kept. A deployment that wants the 67 seconds back sets
+// Ec2SlotSleepSec=0, which turns the whole timer off.
+func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Volume) {
+	if f.pool.slotSleepAfter <= 0 {
+		return // 0 = never sleep (see slotSleepAfter)
+	}
+	probe := f.probeRuntime()
+	busy := map[string]bool{}
+	for i := range homes {
+		if inst := attachedInstance(&homes[i]); inst != "" {
+			busy[inst] = true
+		}
+		// A slot some other workspace is LAUNCHING onto holds no attachment yet; only the
+		// claim says so. Missing it would stop a box mid-Start.
+		if inst := ec2TagValue(homes[i].Tags, ec2TagClaim); inst != "" && probe.claimLive(&homes[i]) {
+			busy[inst] = true
+		}
+	}
+	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, f.pool.pool),
+			// af-role=slot excludes quarantined boxes on purpose: quarantineSlot already
+			// stopped those, and re-stopping them would only add noise to the log.
+			tagFilter(ec2TagRole, ec2RoleSlot),
+			{Name: aws.String("instance-state-name"), Values: []string{"running"}},
+		},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: listing running slots: %v", err)
+		return
+	}
+	now := time.Now()
+	type candidate struct {
+		id   string
+		idle time.Duration
+	}
+	var due []candidate
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			id := aws.ToString(inst.InstanceId)
+			stamp := ec2TagValue(inst.Tags, ec2TagSlotIdleSince)
+			if busy[id] {
+				// Occupied. Repair the other direction too — a mark left on a taken slot
+				// would otherwise stop it the moment its home is released next time, with
+				// no grace at all.
+				if stamp != "" {
+					probe.clearSlotFree(ctx, id)
+				}
+				continue
+			}
+			at, err := time.Parse(time.RFC3339, stamp)
+			if stamp == "" || err != nil {
+				// First sighting (or a mark nobody can read): stamp it and let the NEXT
+				// sweep decide. releaseSlot normally does this; this is the repair path for
+				// a CP that died between the detach and the tag, and for the slots that
+				// predate this code — which is exactly what the live deployment had.
+				probe.markSlotFree(ctx, id)
+				continue
+			}
+			if idle := now.Sub(at); idle >= f.pool.slotSleepAfter {
+				due = append(due, candidate{id: id, idle: idle})
+			}
+		}
+	}
+	if len(due) == 0 {
+		return
+	}
+	// Re-read occupancy immediately before acting. `homes` was read at the top of the
+	// sweep and a Start takes ~seconds to attach; without this the window between the two
+	// is the whole sweep, and stopping a box a launch has just landed on strands that
+	// workspace until the release grace expires.
+	fresh, err := probe.occupiedInstances(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: re-reading slot occupancy before sleeping free slots: %v", err)
+		return // unknown occupancy is never a reason to stop something
+	}
+	// The ECS side of the same question. A task can be RUNNING on a slot whose home is
+	// not in `homes` at all (the baker's probe, or drift), and the instance's own view of
+	// its ENIs lags — so both are asked, and either one answering "busy" is enough.
+	tasks, err := f.slotTaskCounts(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: reading task counts before sleeping free slots: %v", err)
+		return
+	}
+	for _, c := range due {
+		if fresh[c.id] {
+			continue // taken between the two reads
+		}
+		if tasks[c.id] > 0 {
+			log.Printf("ecs-ec2 sweep: free slot %s still runs %d task(s); leaving it", c.id, tasks[c.id])
+			continue
+		}
+		// Never stop a slot that still carries a task ENI — the same guard the occupied
+		// path uses, and for the same reason: an instance stopped inside that window comes
+		// back MULTI-ENI and silently loses its auto-assigned public IPv4 and its egress
+		// (ADR 0045 決定 3-3, reproduced on real hardware). Skipping just means the next
+		// sweep stops it.
+		if held, err := f.taskENIsAttached(ctx, c.id); err != nil || held {
+			if held {
+				log.Printf("ecs-ec2 sweep: free slot %s still has a task ENI; leaving it running for now", c.id)
+			}
+			continue
+		}
+		log.Printf("ecs-ec2 sweep: slot %s has held no home for %.0fm; stopping it", c.id, c.idle.Minutes())
+		if _, err := f.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{c.id}}); err != nil {
+			log.Printf("ecs-ec2 sweep: stopping the free slot %s failed: %v", c.id, err)
+		}
+	}
+}
+
+// slotTaskCounts maps EC2 instance id → tasks ECS believes are on it (running + pending).
+// A slot the cluster does not know about is simply absent, which reads as 0 — correct,
+// since nothing can be placed on it.
+func (f *ecsEC2Factory) slotTaskCounts(ctx context.Context) (map[string]int, error) {
+	rt := f.probeRuntime()
+	arns, err := rt.listContainerInstanceARNs(ctx)
+	if err != nil || len(arns) == 0 {
+		return map[string]int{}, err
+	}
+	counts := map[string]int{}
+	for _, chunk := range chunkStrings(arns, 100) {
+		out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
+			Cluster:            aws.String(f.base.cfg.cluster),
+			ContainerInstances: chunk,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, ci := range out.ContainerInstances {
+			counts[aws.ToString(ci.Ec2InstanceId)] = int(ci.RunningTasksCount + ci.PendingTasksCount)
+		}
+	}
+	return counts, nil
+}
+
+// probeRuntime is a throwaway ecsEC2Runtime used purely as the library for pool-wide tag
+// queries. It is bound to no workspace, so only the pool-wide calls are valid on it.
+func (f *ecsEC2Factory) probeRuntime() *ecsEC2Runtime {
+	return &ecsEC2Runtime{
+		base: &ecsRuntime{cfg: f.base.cfg, ecs: f.base.ecs}, ci: f.ci, ec2: f.ec2, pool: f.pool,
+		bg: backgroundWithin(f.pool.waitBudget), now: time.Now, sleep: sleepCtx,
+	}
+}
+
 // runtimeForVolume rebuilds just enough of an ecsEC2Runtime to act on a volume found by
 // tag — the sweeper starts from AWS, not from the database, so it can clean up after a
 // workspace the CP has not looked at since it restarted.
@@ -3183,10 +3831,7 @@ func (f *ecsEC2Factory) runtimeForVolume(vol *ec2types.Volume) *ecsEC2Runtime {
 // even when they are terminated (ADR 0045 決定 3-2), and the ghosts satisfy placement
 // constraints — the scheduler keeps aiming tasks at a box that is not there.
 func (f *ecsEC2Factory) sweepGhostInstances(ctx context.Context) error {
-	rt := &ecsEC2Runtime{
-		base: &ecsRuntime{cfg: f.base.cfg, ecs: f.base.ecs}, ci: f.ci, ec2: f.ec2, pool: f.pool,
-		bg: backgroundWithin(f.pool.waitBudget), now: time.Now, sleep: sleepCtx,
-	}
+	rt := f.probeRuntime()
 	arns, err := rt.listContainerInstanceARNs(ctx)
 	if err != nil || len(arns) == 0 {
 		return err
@@ -3398,6 +4043,96 @@ type ec2PoolStatus struct {
 	Baking       bool   `json:"baking"`
 	BakeRejected string `json:"bake_rejected"` // snapshot id of the last refused candidate
 	BakeReason   string `json:"bake_reason"`
+	// Goldens is the same story per CPU architecture, one entry per architecture this
+	// deployment's classes declare (docs/70 §70.6). The six scalars above are this
+	// list's FIRST entry — the default class's architecture — kept so nothing that
+	// reads them has to change on a deployment that has only one.
+	Goldens []ec2GoldenView `json:"goldens,omitempty"`
+	// SlotClasses names the declared classes for the pool screen. Absent when the
+	// deployment declared a single unnamed ladder.
+	SlotClasses []workspaceSlotClass `json:"slot_classes,omitempty"`
+	// AutoBake is AF_ECS_EC2_GOLDEN_AUTOBAKE. Not derivable from AWS like everything
+	// else here, and filled in by the manager rather than this adapter — but without it
+	// "there is no golden and nothing is happening" has two very different meanings
+	// (the next tick will start one / nothing ever will) and the screen cannot tell
+	// them apart.
+	AutoBake bool `json:"auto_bake"`
+}
+
+// ec2GoldenView is one architecture's golden situation, including how far along a bake
+// that is under way has got (docs/64 §64.30).
+type ec2GoldenView struct {
+	Arch       string `json:"arch"`
+	SnapshotID string `json:"snapshot_id"`
+	Image      string `json:"image"`
+	Stale      bool   `json:"stale"`
+	Baking     bool   `json:"baking"`
+	Rejected   string `json:"rejected"`
+	Reason     string `json:"reason"`
+
+	// --- how far the bake has got (docs/64 §64.30) ---
+	//
+	// A bake takes ~11 minutes end to end and spends most of it in steps that produce
+	// no snapshot at all (the seed's boot, boot-install, the slot release). Reporting
+	// only "baking" — which was true only once a candidate snapshot existed — meant the
+	// screen said "there is no golden" for the whole first half, i.e. exactly when an
+	// operator wondering why a new member is slow goes looking.
+	Phase string `json:"phase"`
+	// PhaseSince anchors the elapsed time, and is deliberately the SAME anchor the
+	// baker's own deadline uses: the seed's home volume while the seed is booting, the
+	// candidate's af-bake-started once one exists. A screen that counted from something
+	// else would disagree with the tear-down it is meant to explain.
+	PhaseSince string `json:"phase_since,omitempty"`
+	// Candidate is the snapshot being baked or verified — the one that becomes the
+	// golden if the probe comes up.
+	Candidate string `json:"candidate,omitempty"`
+	// Progress is EBS's own copy percentage while the candidate is pending.
+	Progress int `json:"progress,omitempty"`
+	// Attempts counts the candidates this image has already burned on this
+	// architecture. The baker gives up at 2, so 1 means "one more try left".
+	Attempts int `json:"attempts,omitempty"`
+	// SlotsInUse is what the capacity gate saw, reported only when it is what is
+	// holding the bake up.
+	SlotsInUse int `json:"slots_in_use,omitempty"`
+	// Seed / Probe are the reserved workspaces while they exist. They are on the screen
+	// because they hold a slot each: without them the pool table shows a box occupied by
+	// af-ws-af-golden-… with nothing to connect it to.
+	Seed  *ec2BakeWorkspaceView `json:"seed,omitempty"`
+	Probe *ec2BakeWorkspaceView `json:"probe,omitempty"`
+}
+
+// The steps of a bake, in order, plus the four ways there can be no bake. The Console
+// renders the first six as a progress line and the rest as a sentence.
+const (
+	ec2BakePhaseSeed      = "seed"      // the seed workspace is waiting for a slot
+	ec2BakePhaseBoot      = "boot"      // boot-install is running on the seed's home
+	ec2BakePhaseCapture   = "capture"   // boot-install done; the home is coming off its slot
+	ec2BakePhaseSnapshot  = "snapshot"  // EBS is copying the candidate
+	ec2BakePhaseProbe     = "probe"     // a probe workspace is being booted from the candidate
+	ec2BakePhasePublished = "published" // a golden for the running image is in use
+	ec2BakePhaseIdle      = "idle"      // nothing under way; the next tick starts one
+	ec2BakePhaseBlocked   = "blocked"   // a bake needs two free slots and cannot have them
+	ec2BakePhaseRejected  = "rejected"  // the last candidate could not boot; one attempt left
+	ec2BakePhaseGaveUp    = "gave_up"   // two candidates burned on this image — no more tries
+	ec2BakePhaseOff       = "off"       // AF_ECS_EC2_GOLDEN_AUTOBAKE=0
+)
+
+// ec2BakeWorkspaceView is one of the two reserved workspaces a bake stands up.
+type ec2BakeWorkspaceView struct {
+	Workspace  string `json:"workspace"`
+	VolumeID   string `json:"volume_id,omitempty"`
+	InstanceID string `json:"instance_id,omitempty"`
+}
+
+// bakePhaseActive reports the phases in which something is actually being baked. It is
+// what the legacy `baking` scalar now means: the old derivation (a candidate snapshot
+// exists) called the first half of a bake "no golden, nothing happening".
+func bakePhaseActive(phase string) bool {
+	switch phase {
+	case ec2BakePhaseSeed, ec2BakePhaseBoot, ec2BakePhaseCapture, ec2BakePhaseSnapshot, ec2BakePhaseProbe:
+		return true
+	}
+	return false
 }
 
 // PoolStatus reports the live pool. Read-only and tolerant: a section that cannot be read
@@ -3405,17 +4140,15 @@ type ec2PoolStatus struct {
 // operator opens this screen is when something is already wrong.
 func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	// One throwaway runtime as the library for the tag queries — the same trick the
-	// sweeper uses. It is bound to no workspace, so only pool-wide calls are valid on it.
-	probe := &ecsEC2Runtime{
-		base: &ecsRuntime{cfg: f.base.cfg, ecs: f.base.ecs}, ec2: f.ec2, ci: f.ci, pool: f.pool,
-		bg: backgroundWithin(f.pool.waitBudget), now: time.Now, sleep: sleepCtx,
-	}
+	// sweeper uses.
+	probe := f.probeRuntime()
 	st := ec2PoolStatus{
 		Runtime: "ecs-ec2", Pool: f.pool.pool, MaxSlots: f.pool.maxSlots,
 		SleepAfterS: int(f.pool.slotSleepAfter.Seconds()),
 		HibernateS:  int(f.pool.hibernateAfter.Seconds()),
 		Slots:       []ec2SlotView{}, Homes: []ec2HomeView{},
 		RunningImage: f.base.cfg.workspaceImage,
+		SlotClasses:  f.SizingProfile().SlotClasses,
 	}
 	now := time.Now()
 
@@ -3429,6 +4162,11 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		return st, err
 	}
 	occupant := map[string]*ec2HomeView{} // instance id → the home on it
+	// bakeHomes is the seed's and the probe's home, kept aside as the baker sees them —
+	// the af-bake-ready stamp and the creation time are not part of the ordinary home
+	// view, and they are what says whether boot-install has finished and how long this
+	// bake has been going.
+	bakeHomes := map[string]ec2BakeHome{} // workspace name → facts
 	for i := range vols.Volumes {
 		v := &vols.Volumes[i]
 		// A volume EC2 is still deleting is not a home any more, and listing it as one
@@ -3455,6 +4193,11 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		if h.AttachedTo != "" {
 			occupant[h.AttachedTo] = &st.Homes[len(st.Homes)-1]
 		}
+		bh := ec2BakeHome{VolumeID: h.VolumeID, InstanceID: h.AttachedTo, Baked: ec2TagValue(v.Tags, ec2TagBakeReady) != ""}
+		if v.CreateTime != nil {
+			bh.Created = *v.CreateTime
+		}
+		bakeHomes[h.Workspace] = bh
 	}
 
 	// Quarantined boxes are listed too, on purpose. They are out of the pool for
@@ -3488,6 +4231,11 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			}
 			if h := occupant[id]; h != nil {
 				s.Workspace, s.IdleMinutes = h.Workspace, h.IdleMinutes
+			} else if at, err := time.Parse(time.RFC3339, ec2TagValue(inst.Tags, ec2TagSlotIdleSince)); err == nil {
+				// A FREE slot has its own clock (af-slot-idle-since), and the operator's
+				// question about a running box with no workspace on it is "how long has it
+				// been like that" — which used to read as 0 whatever the answer was.
+				s.IdleMinutes = int(now.Sub(at).Minutes())
 			}
 			if ec2TagValue(inst.Tags, ec2TagRole) == ec2RoleQuarantined {
 				s.Quarantined = true
@@ -3508,26 +4256,58 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		log.Printf("ecs-ec2 pool status: snapshots unreadable: %v", err)
 		return st, nil
 	}
+	// One golden per architecture (docs/70 §70.6), so the screen answers "is every
+	// class covered" rather than "is there a golden". byArch is keyed by the snapshot's
+	// af-arch — absent means x86_64, the only kind that existed before classes.
+	byArch := map[string]*ec2GoldenView{}
+	candidateState := map[string]ec2types.SnapshotState{}
+	// The screen has to agree with the Start path about what "for the running image"
+	// means, or it reports a golden as stale that goldenSnapshot happily uses (and the
+	// operator re-bakes for nothing). Same identity, same rule (goldenIdentity).
+	imgID := f.imageIdentity(ctx)
+	goldenMatched := map[string]bool{}
+	golden := func(arch string) *ec2GoldenView {
+		g, ok := byArch[arch]
+		if !ok {
+			g = &ec2GoldenView{Arch: arch}
+			byArch[arch] = g
+		}
+		return g
+	}
 	for _, s := range snaps.Snapshots {
+		arch := snapshotArch(s)
 		switch ec2TagValue(s.Tags, ec2TagRole) {
 		case ec2RoleGolden:
 			// A matching golden wins over a stale one, so the screen shows what the Start
 			// path would actually use — and shows the stale one only when that is all
 			// there is, which is exactly when the operator needs to be told to re-bake.
+			g := golden(arch)
 			img := ec2TagValue(s.Tags, ec2TagImage)
-			if st.GoldenID == "" || img == st.RunningImage {
-				st.GoldenID, st.GoldenImage = aws.ToString(s.SnapshotId), img
+			if match := imgID.matches(s.Tags); g.SnapshotID == "" || match {
+				g.SnapshotID, g.Image = aws.ToString(s.SnapshotId), img
+				goldenMatched[arch] = match
 			}
 		case ec2RoleGoldenCandidate:
 			// Only a candidate for the image being RUN says a bake is under way. One
 			// stamped with anything else is a leftover the baker will sweep.
-			if ec2TagValue(s.Tags, ec2TagImage) == st.RunningImage {
-				st.Baking = true
+			if imgID.matches(s.Tags) {
+				g := golden(arch)
+				g.Candidate = aws.ToString(s.SnapshotId)
+				g.Progress = snapshotProgress(s)
+				// The candidate's own state IS the difference between "EBS is still
+				// copying" and "a probe is being booted from it" — the baker's verify
+				// step does nothing at all until the copy completes.
+				candidateState[arch] = s.State
+				g.PhaseSince = bakeStartedAt(s)
 			}
 		case ec2RoleGoldenRejected:
-			if ec2TagValue(s.Tags, ec2TagImage) == st.RunningImage {
-				st.BakeRejected = aws.ToString(s.SnapshotId)
-				st.BakeReason = ec2TagValue(s.Tags, ec2TagBakeReason)
+			if imgID.matches(s.Tags) {
+				g := golden(arch)
+				g.Rejected = aws.ToString(s.SnapshotId)
+				g.Reason = ec2TagValue(s.Tags, ec2TagBakeReason)
+				// The same count the baker gives up on (rejectedAttempts), derived from
+				// the snapshots this call already read rather than asked for again.
+				g.Attempts++
 			}
 		case ec2RoleBackup:
 			ws := ec2TagValue(s.Tags, ec2TagWorkspace)
@@ -3566,7 +4346,33 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			}
 		}
 	}
-	st.GoldenStale = st.GoldenID != "" && st.GoldenImage != st.RunningImage
+	// Report the architectures this deployment declares, in bake order, so an arch
+	// with NO golden at all appears as an empty row instead of not appearing — the
+	// whole question the operator has is which classes are still slow.
+	slotsInUse, slotRunning := 0, map[string]bool{}
+	for _, s := range st.Slots {
+		if s.Quarantined {
+			continue // the same set bakeBlocked counts: af-role=slot, quarantine excluded
+		}
+		slotsInUse++
+		slotRunning[s.InstanceID] = s.State == "running"
+	}
+	blocked, _ := bakeCapacityBlocked(slotsInUse, f.pool.maxSlots)
+	for _, arch := range f.bakeArches() {
+		g := golden(arch)
+		g.Stale = g.SnapshotID != "" && !goldenMatched[arch]
+		describeBake(g, arch, bakeHomes, slotRunning, candidateState[arch], blocked, slotsInUse)
+		g.Baking = bakePhaseActive(g.Phase)
+		st.Goldens = append(st.Goldens, *g)
+	}
+	// The scalar fields stay, as the DEFAULT architecture's answer: a Console built
+	// before classes existed reads them, and a single-class deployment has nothing
+	// else to say.
+	if len(st.Goldens) > 0 {
+		g := st.Goldens[0]
+		st.GoldenID, st.GoldenImage, st.GoldenStale = g.SnapshotID, g.Image, g.Stale
+		st.Baking, st.BakeRejected, st.BakeReason = g.Baking, g.Rejected, g.Reason
+	}
 	return st, nil
 }
 

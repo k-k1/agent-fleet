@@ -13,6 +13,28 @@ import { useT } from "../../lib/i18n/index.ts";
 interface RowProps {
   st: any;
   reload: () => void;
+  /** テナントがこのプロバイダの OAuth アプリを登録しているか（docs/71）。 */
+  oauthAvailable: boolean;
+}
+
+// useGitOAuthAvailability — 「OAuth で接続」を出してよいか。
+//
+// ★ 押してから not_configured が返る形にはしない。設定を持っているのはテナント
+// 管理者で、押した本人には直せないため、押す前に「テナント管理者に登録を頼む」と
+// 言えないと詰む（docs/71 §71.4）。
+//
+// ★ /api/connections（Agent へプロキシ）ではなく CP 直の /api/git-oauth を見る。
+// 答えは CP の DB にあり、ワークスペースが止まっている間もこの面は開かれる。
+function useGitOAuthAvailability() {
+  const [avail, setAvail] = useState<Record<string, { configured?: boolean }> | null>(null);
+  useEffect(() => {
+    api("api/git-oauth")
+      .then((d) => {
+        if (d && !d.error) setAvail(d);
+      })
+      .catch(() => {});
+  }, []);
+  return avail;
 }
 
 // GitTab: git-hosting CONNECTIONS (GitHub / Bitbucket) used for clone / fetch / push,
@@ -31,6 +53,7 @@ export function GitTab() {
   const startWs = useWorkspaceStore((s) => s.start);
   const running = wsState === "running";
   const { conns, reload } = useConnections();
+  const oauth = useGitOAuthAvailability();
   useEffect(() => {
     if (running) reload();
   }, [running, reload]);
@@ -52,8 +75,10 @@ export function GitTab() {
       ) : (
         <>
           <div className="conn-cat">{tr("git.cat_hosting")}</div>
-          <GithubRow st={conns.github} reload={reload} />
-          <BitbucketRow st={conns.bitbucket} reload={reload} />
+          {/* 未取得（null）の間は出す側に倒す。取得できないだけで導線を消すと、
+              「登録済みなのにボタンが無い」という直しようのない画面になる。 */}
+          <GithubRow st={conns.github} reload={reload} oauthAvailable={oauth?.github?.configured !== false} />
+          <BitbucketRow st={conns.bitbucket} reload={reload} oauthAvailable={oauth?.bitbucket?.configured !== false} />
           <GlobalIdentity />
         </>
       )}
@@ -154,7 +179,7 @@ function GlobalIdentity() {
   );
 }
 
-function GithubRow({ st, reload }: RowProps) {
+function GithubRow({ st, reload, oauthAvailable }: RowProps) {
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
@@ -265,17 +290,20 @@ function GithubRow({ st, reload }: RowProps) {
           <div className="p-desc">{tr("git.github_desc")}</div>
           <div className="p-body">
             <div className="p-opts">
-              <button type="button" className="p-opt" onClick={startOAuth}>
-                <span className="p-opt-t">
-                  {tr("git.connect_oauth")} <span className="p-rec">{tr("git.recommended")}</span>
-                </span>
-                <span className="p-opt-s">{tr("git.github_oauth_sub")}</span>
-              </button>
+              {oauthAvailable && (
+                <button type="button" className="p-opt" onClick={startOAuth}>
+                  <span className="p-opt-t">
+                    {tr("git.connect_oauth")} <span className="p-rec">{tr("git.recommended")}</span>
+                  </span>
+                  <span className="p-opt-s">{tr("git.github_oauth_sub")}</span>
+                </button>
+              )}
               <button type="button" className="p-opt" onClick={() => setMode("token")}>
                 <span className="p-opt-t">{tr("git.connect_token")}</span>
                 <span className="p-opt-s">{tr("git.github_token_sub")}</span>
               </button>
             </div>
+            {!oauthAvailable && <Hint>{tr("git.oauth_unregistered")}</Hint>}
           </div>
         </>
       )}
@@ -283,7 +311,7 @@ function GithubRow({ st, reload }: RowProps) {
   );
 }
 
-function BitbucketRow({ st, reload }: RowProps) {
+function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
@@ -413,17 +441,20 @@ function BitbucketRow({ st, reload }: RowProps) {
           <div className="p-desc">{tr("git.bitbucket_desc")}</div>
           <div className="p-body">
             <div className="p-opts">
-              <button type="button" className="p-opt" onClick={startOAuth}>
-                <span className="p-opt-t">
-                  {tr("git.connect_oauth")} <span className="p-rec">{tr("git.recommended")}</span>
-                </span>
-                <span className="p-opt-s">{tr("git.bb_oauth_sub")}</span>
-              </button>
+              {oauthAvailable && (
+                <button type="button" className="p-opt" onClick={startOAuth}>
+                  <span className="p-opt-t">
+                    {tr("git.connect_oauth")} <span className="p-rec">{tr("git.recommended")}</span>
+                  </span>
+                  <span className="p-opt-s">{tr("git.bb_oauth_sub")}</span>
+                </button>
+              )}
               <button type="button" className="p-opt" onClick={() => setMode("token")}>
                 <span className="p-opt-t">{tr("git.connect_apptoken")}</span>
                 <span className="p-opt-s">{tr("git.bb_token_sub")}</span>
               </button>
             </div>
+            {!oauthAvailable && <Hint>{tr("git.oauth_unregistered")}</Hint>}
           </div>
         </>
       )}

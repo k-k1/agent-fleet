@@ -68,7 +68,7 @@
 - ◐ **段4 — IaC + Ingress/Auth**（substrate 実証済・残＝CP を substrate に配線）: **CloudFormation** で
   VPC/ECS/EFS/RDS/ALB(ACM)/ECR/SG/roles/SC namespace。`deploy/aws/ecs/cfn/`（`00-network`/`10-data`/`20-platform`/
   `30-ingress`）を **sandbox(ap-northeast-1) で deploy→検証→teardown 実証済**（30 は ACM+ALB+CP Fargate で
-  `af-dev.lazmix.jp` に実ログイン到達、認証は CP ネイティブ Google OAuth＝ALB は TLS 終端のみ・OIDC 不使用）。CFN は
+  `af-dev.<domain>` に実ログイン到達、認証は CP ネイティブ Google OAuth＝ALB は TLS 終端のみ・OIDC 不使用）。CFN は
   **static substrate のみ**を作り、per-workspace リソース（Service/TaskDef/EFS AP/SSM param）は CP が実行時に動的払い出し（[§20b.7.1](#20b71-凍結した不変条件)）。
   ツールは CFN に寄せた（`ec2-single/cfn.yaml` の前例と一貫、顧客 footprint 最小＝creds+`aws cloudformation deploy` のみ）。
   実地の学び: SG 説明文は `<>` 不可 / 新規アカウントは ECS service-linked role 事前作成 / Fargate は WS_DATA 親ディレクトリを

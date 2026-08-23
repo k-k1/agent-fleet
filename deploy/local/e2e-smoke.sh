@@ -163,6 +163,12 @@ if [ "${1:-}" = "--inner" ]; then
   if [ "${EXPECT_AGENT_CLIS:-1}" = "1" ]; then
     if [ "${EXPECT_RTK:-1}" = "1" ]; then
       if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)"
+      # ⚠️ Absent WITH a reason is a pass, absent without one is not. On arm64 upstream
+      # ships no runnable binary for this base image (docs/70 §70.9.2), and the build
+      # records that instead of shipping something that cannot start — but "rtk quietly
+      # stopped being baked" must still fail, so the marker is what tells them apart.
+      elif [ -f /usr/local/share/agent-fleet/rtk-unavailable ]; then
+        echo "ok  rtk absent: $(cat /usr/local/share/agent-fleet/rtk-unavailable)"
       else echo "NG  rtk: should always be baked in but is missing from the image"; fail=1; fi
     else
       if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver) (present in image)"

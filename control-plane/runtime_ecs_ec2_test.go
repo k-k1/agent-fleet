@@ -34,10 +34,13 @@ type fakeEC2 struct {
 	// refusal, which is how a slot behaves while it is still giving back its device.
 	attachFailures int
 	calls          []string
-	nextVol        int
-	nextInst       int
-	nextSnap       int
-	snapshots      map[string]*ec2types.Snapshot
+	// ranAMI is the ImageId of each RunInstances, in order — "" when the request did
+	// not override the launch template's own.
+	ranAMI    []string
+	nextVol   int
+	nextInst  int
+	nextSnap  int
+	snapshots map[string]*ec2types.Snapshot
 	// snapshotState overrides the state CreateSnapshot reports, so a test can hold a
 	// snapshot at `pending` and drive the wait.
 	snapshotState ec2types.SnapshotState
@@ -129,6 +132,19 @@ func (f *fakeEC2) setTag(volID, key, value string) {
 		}
 	}
 	v.Tags = append(v.Tags, ec2types.Tag{Key: aws.String(key), Value: aws.String(value)})
+}
+
+// setInstanceTag is setTag's counterpart for a SLOT. The free-pool dormancy mark
+// (af-slot-idle-since) lives on the instance, because a free slot has no volume.
+func (f *fakeEC2) setInstanceTag(instID, key, value string) {
+	i := f.instances[instID]
+	for n := range i.Tags {
+		if aws.ToString(i.Tags[n].Key) == key {
+			i.Tags[n].Value = aws.String(value)
+			return
+		}
+	}
+	i.Tags = append(i.Tags, ec2types.Tag{Key: aws.String(key), Value: aws.String(value)})
 }
 
 func filterMatch(filters []ec2types.Filter, get func(name string) []string) bool {
@@ -439,7 +455,8 @@ func (f *fakeEC2) RunInstances(_ context.Context, in *ec2.RunInstancesInput, _ .
 		State:        &ec2types.InstanceState{Name: ec2types.InstanceStateNamePending},
 		Placement:    &ec2types.Placement{AvailabilityZone: aws.String(f.subnetAZ[aws.ToString(in.SubnetId)])},
 	}
-	f.log("RunInstances %s type=%s subnet=%s", id, in.InstanceType, aws.ToString(in.SubnetId))
+	f.ranAMI = append(f.ranAMI, aws.ToString(in.ImageId))
+	f.log("RunInstances %s type=%s subnet=%s ami=%s", id, in.InstanceType, aws.ToString(in.SubnetId), aws.ToString(in.ImageId))
 	return &ec2.RunInstancesOutput{Instances: []ec2types.Instance{{InstanceId: aws.String(id)}}}, nil
 }
 
@@ -503,7 +520,11 @@ func (f *fakeSSMCmd) GetCommandInvocation(_ context.Context, in *ssm.GetCommandI
 
 type fakeContainerInstances struct {
 	// registered maps EC2 instance id -> agentConnected
-	registered   map[string]bool
+	registered map[string]bool
+	// tasks maps EC2 instance id -> running task count. The free-slot sweep asks ECS
+	// "is anything on this box" as well as asking EC2 "is a home on it", because a task
+	// can be running on a slot no home is attached to at all.
+	tasks        map[string]int32
 	deregistered []string
 }
 
@@ -524,6 +545,7 @@ func (f *fakeContainerInstances) DescribeContainerInstances(_ context.Context, i
 			Ec2InstanceId:        aws.String(id),
 			Status:               aws.String("ACTIVE"),
 			AgentConnected:       f.registered[id],
+			RunningTasksCount:    f.tasks[id],
 		})
 	}
 	return out, nil
@@ -579,7 +601,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		efs:  &fakeEFS{},
 		ssm:  &fakeSSM{},
 		ssmc: &fakeSSMCmd{fail: map[string]bool{}},
-		ci:   &fakeContainerInstances{registered: map[string]bool{}},
+		ci:   &fakeContainerInstances{registered: map[string]bool{}, tasks: map[string]int32{}},
 	}
 	h.ssmc.sink = h.ec2
 	base := newTestECS(h.ecs, h.efs, h.ssm)
@@ -592,7 +614,8 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		pool: ec2PoolConfig{
 			launchTemplate: "lt-1",
 			pool:           "clu",
-			slotSizes:      parseSlotSizes("m7i.large:8192,m7i.xlarge:16384"),
+			classes:        parseSlotClasses("m7i.large:8192,m7i.xlarge:16384"),
+			defaultClass:   "default",
 			maxSlots:       4,
 			homeGiB:        50,
 			tmpfsMiB:       2048,
@@ -771,7 +794,7 @@ func TestECSEC2StartOnHotSlotIsSynchronous(t *testing.T) {
 // definition or force a new deployment — that pair is what retires the running
 // task and starts a fresh one, and the ~1-2 minutes Service Connect spends routing
 // to both is what silently dropped an in-flight Claude Code OAuth flow_id
-// (confirmed 2026-08-19 on af.lazmix.jp). A no-op Stop→Start on one slot is the
+// (confirmed 2026-08-19 on the dev deployment). A no-op Stop→Start on one slot is the
 // common case (every idle-timeout return), so it must take the cheap path.
 func TestECSEC2ReWakingTheSameSlotReusesTheTaskDefinition(t *testing.T) {
 	ctx := context.Background()
@@ -1341,7 +1364,7 @@ func TestECSEC2StartReusesExistingAttachment(t *testing.T) {
 
 // Sizing on EC2 is a choice of instance type, not one of Fargate's 74 discrete pairs.
 func TestECSEC2SlotTypeFor(t *testing.T) {
-	p := ec2PoolConfig{slotSizes: parseSlotSizes("m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768")}
+	p := ec2PoolConfig{classes: parseSlotClasses("m7i.large:8192,m7i.xlarge:16384,m7i.2xlarge:32768"), defaultClass: "default"}
 	for _, c := range []struct {
 		bytes int64
 		want  string
@@ -1354,8 +1377,12 @@ func TestECSEC2SlotTypeFor(t *testing.T) {
 		{30 * gib, "m7i.2xlarge"},
 		{999 * gib, "m7i.2xlarge"}, // above the pool: the biggest slot, not a failure
 	} {
-		if got := p.slotTypeFor(c.bytes); got != c.want {
+		got, arch := p.slotTypeFor("", c.bytes)
+		if got != c.want {
 			t.Errorf("slotTypeFor(%d GiB) = %s, want %s", c.bytes/gib, got, c.want)
+		}
+		if arch != ec2ArchX86 {
+			t.Errorf("a bare ladder is x86_64, got %q", arch)
 		}
 	}
 }
@@ -1467,6 +1494,297 @@ func TestECSEC2SweeperWaitsForTaskENIsBeforeStopping(t *testing.T) {
 	}
 	if !stopped {
 		t.Error("the slot was never stopped after its task ENI went away")
+	}
+}
+
+// A Start is in flight: placeHome clears the dormancy marks first and upsertService
+// raises desiredCount last, with the mount (an SSM round trip) in between. The home walk
+// used to read that window as "dormant" — see docs/64 §64.31.6.
+func TestECSEC2SweeperLeavesAHomeAloneWhileItsStartIsInFlight(t *testing.T) {
+	ctx := context.Background()
+
+	// The claim is what says "a launch owns this home right now".
+	claim := func(h *ec2Harness, at time.Time) {
+		h.ec2.setTag("vol-1", ec2TagClaim, "i-hot")
+		h.ec2.setTag("vol-1", ec2TagClaimAt, at.UTC().Format(time.RFC3339))
+	}
+
+	t.Run("does not re-stamp the dormancy mark a Start just cleared", func(t *testing.T) {
+		h := newEC2Harness(t)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+		h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+		claim(h, time.Now())
+		// The service is still at the value Stop left; upsertService has not run yet.
+		h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+		h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
+
+		if v := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince); v != "" {
+			t.Errorf("af-idle-since = %q on a home whose Start is in flight; the mark would "+
+				"outlive the launch and make a RUNNING workspace an eviction victim", v)
+		}
+	})
+
+	t.Run("does not release the slot before the service exists", func(t *testing.T) {
+		h := newEC2Harness(t)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+		// Attached longer ago than releaseGrace, so only the claim can save it.
+		h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+		claim(h, time.Now())
+
+		h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
+
+		if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-hot" {
+			t.Error("the sweeper released a home mid-launch; the Start it interrupted has no service yet")
+		}
+	})
+
+	// …but an EXPIRED claim must not pin the walk, or a launch that died would keep its
+	// slot forever. claimLive reads af-claim-at, so the tag's mere presence is not enough.
+	t.Run("an expired claim still falls through", func(t *testing.T) {
+		h := newEC2Harness(t)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+		h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+		claim(h, time.Now().Add(-2*time.Hour)) // claimTTL is 15m in the harness
+		h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+		h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
+
+		if v := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince); v == "" {
+			t.Error("a home whose claim had expired was never stamped; its slot would never sleep")
+		}
+	})
+}
+
+// --- free slots (docs/64 §64.31, ADR 0045 決定 22) ---
+//
+// A slot whose home has been released leaves the home walk entirely, so before
+// sweepFreeSlots existed NOTHING stopped it. Measured on the live deployment: three
+// m*.large with zero tasks, running for over 24 hours, at ~$95/month each — while
+// Ec2SlotSleepSec's own description promised ~$9.6.
+
+// stoppedInstances is what every test below actually asserts on.
+func stoppedInstances(h *ec2Harness) []string {
+	var ids []string
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "StopInstances ") {
+			ids = append(ids, strings.TrimPrefix(c, "StopInstances "))
+		}
+	}
+	return ids
+}
+
+// freeSlotHarness builds the exact shape of the live incident: a slot in the pool, no
+// home attached to it, nothing running on it.
+func freeSlotHarness(t *testing.T, freeFor time.Duration) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-free", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-free"] = true
+	h.ec2.setInstanceTag("i-free", ec2TagSlotIdleSince,
+		time.Now().Add(-freeFor).UTC().Format(time.RFC3339))
+	return h
+}
+
+func TestECSEC2SweeperStopsAFreeSlot(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, 30*time.Minute)
+
+	f := h.factory()
+	if err := f.sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+
+	got := stoppedInstances(h)
+	if len(got) != 1 || got[0] != "i-free" {
+		t.Fatalf("StopInstances = %v, want [i-free] — an empty slot ran for 30m and nothing stopped it", got)
+	}
+}
+
+// The mark is what makes the decision reproducible across a CP restart and across the two
+// replicas every rolling deploy overlaps (ADR 0012). A slot that predates this code — or
+// one whose CP died between the detach and the tag — has none, so the sweeper stamps it
+// and acts only on the NEXT pass. That is also the grace: no slot is ever stopped by the
+// first sweep that sees it.
+func TestECSEC2SweeperStampsAnUnmarkedFreeSlotBeforeStoppingIt(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-free", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-free"] = true
+
+	f := h.factory()
+	if err := f.sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 0 {
+		t.Fatalf("StopInstances = %v, want none — the first sighting must only stamp the slot", got)
+	}
+	stamp := ec2TagValue(h.ec2.instances["i-free"].Tags, ec2TagSlotIdleSince)
+	if stamp == "" {
+		t.Fatal("the sweeper neither stamped nor stopped the free slot; it will never be stopped")
+	}
+	if _, err := time.Parse(time.RFC3339, stamp); err != nil {
+		t.Fatalf("af-slot-idle-since = %q, not RFC3339: %v", stamp, err)
+	}
+
+	// Backdate the mark the sweeper itself wrote and sweep again: now it is due.
+	h.ec2.setInstanceTag("i-free", ec2TagSlotIdleSince,
+		time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	if err := f.sweep(ctx); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 1 || got[0] != "i-free" {
+		t.Fatalf("StopInstances = %v, want [i-free] on the sweep after the mark aged out", got)
+	}
+}
+
+func TestECSEC2SweeperLeavesAFreshlyFreedSlotAlone(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, time.Minute)
+
+	if err := h.factory().sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 0 {
+		t.Fatalf("StopInstances = %v, want none — a slot free for a minute is inside the grace", got)
+	}
+}
+
+// ⚠️ The one guard that must never be skipped. A slot stopped while ECS still has a task
+// ENI on it comes back MULTI-ENI and silently loses its auto-assigned public IPv4 and, on
+// a deployment without NAT, its egress (ADR 0045 決定 3-3 — reproduced on real hardware
+// through the occupied path). The free path can reach the same window.
+func TestECSEC2SweeperWaitsForTaskENIsOnAFreeSlot(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, 30*time.Minute)
+	h.ec2.instances["i-free"].NetworkInterfaces = []ec2types.InstanceNetworkInterface{
+		{Description: aws.String("")},
+		{Description: aws.String("arn:aws:ecs:ap-northeast-1:1234:attachment/abc")},
+	}
+
+	f := h.factory()
+	if err := f.sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 0 {
+		t.Fatalf("StopInstances = %v — stopped a free slot that still carried a task ENI", got)
+	}
+
+	// ECS detaches it a little after the task is gone; the next sweep stops the slot.
+	h.ec2.instances["i-free"].NetworkInterfaces = []ec2types.InstanceNetworkInterface{{Description: aws.String("")}}
+	if err := f.sweep(ctx); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 1 || got[0] != "i-free" {
+		t.Fatalf("StopInstances = %v, want [i-free] once the task ENI was gone", got)
+	}
+}
+
+// A task can be running on a slot that no home is attached to — the golden baker's probe,
+// or plain drift. "No home" is therefore not the same statement as "nothing on it", and
+// asking only EC2 would kill a live container.
+func TestECSEC2SweeperLeavesAFreeSlotThatStillRunsATask(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, 30*time.Minute)
+	h.ci.tasks["i-free"] = 1
+
+	if err := h.factory().sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 0 {
+		t.Fatalf("StopInstances = %v — stopped a slot ECS still had a task on", got)
+	}
+}
+
+// Occupancy comes from the volumes, and both of its forms have to count: a home already
+// attached, and a home whose Start has only got as far as the claim.
+func TestECSEC2SweeperNeverStopsAnOccupiedOrClaimedSlot(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a home is attached", func(t *testing.T) {
+		h := freeSlotHarness(t, 30*time.Minute) // stale mark left over from a past tenancy
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.attach("vol-1", "i-free", time.Now())
+		h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+
+		if err := h.factory().sweep(ctx); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		if got := stoppedInstances(h); len(got) != 0 {
+			t.Fatalf("StopInstances = %v — stopped a slot with a live workspace on it", got)
+		}
+		// …and the stale mark is cleared, or the slot would sleep with no grace at all the
+		// next time it is released.
+		if v := ec2TagValue(h.ec2.instances["i-free"].Tags, ec2TagSlotIdleSince); v != "" {
+			t.Errorf("af-slot-idle-since = %q on an occupied slot; want it cleared", v)
+		}
+	})
+
+	t.Run("a Start has claimed it", func(t *testing.T) {
+		h := freeSlotHarness(t, 30*time.Minute)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.setTag("vol-1", ec2TagClaim, "i-free")
+		h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+
+		if err := h.factory().sweep(ctx); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		if got := stoppedInstances(h); len(got) != 0 {
+			t.Fatalf("StopInstances = %v — stopped a slot a Start was landing on", got)
+		}
+	})
+}
+
+// releaseSlot is where a slot BECOMES free, and it is the only place that knows the exact
+// moment. Before this it handed the box back to the pool with no clock on it at all —
+// which is precisely how the live deployment ended up with three of them.
+func TestECSEC2ReleaseStartsTheSlotsOwnDormancyClock(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+	h.ec2.setInstanceTag("i-hot", ec2TagMembership, "M-1")
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.rt.releaseSlot(ctx); err != nil {
+		t.Fatalf("releaseSlot: %v", err)
+	}
+	stamp := ec2TagValue(h.ec2.instances["i-hot"].Tags, ec2TagSlotIdleSince)
+	if stamp == "" {
+		t.Fatal("the released slot carries no af-slot-idle-since; nothing will ever stop it")
+	}
+	at, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		t.Fatalf("af-slot-idle-since = %q, not RFC3339: %v", stamp, err)
+	}
+	if d := time.Since(at); d > time.Minute {
+		t.Errorf("af-slot-idle-since is %s old right after the release; it must be now", d)
+	}
+}
+
+// 0 means OFF for every kind of slot, which is what Ec2SlotSleepSec has always been
+// documented to mean. The bare `idle < slotSleepAfter` test made it mean the exact
+// opposite — stop at the first sweep — the same trap AF_WS_IDLE_TIMEOUT=0 sprang in
+// §64.26.
+func TestECSEC2SlotSleepZeroKeepsEverySlotRunning(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, 30*time.Minute)
+	h.rt.pool.slotSleepAfter = 0
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.factory().sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 0 {
+		t.Fatalf("StopInstances = %v with Ec2SlotSleepSec=0, which means never sleep", got)
 	}
 }
 
@@ -2667,6 +2985,162 @@ func TestECSEC2PoolStatusHidesVolumesBeingDeleted(t *testing.T) {
 	}
 }
 
+// --- how far the bake has got (docs/64 §64.30) ---
+
+// The half of a bake that produces no snapshot — the seed's slot, boot-install, the
+// slot release — is about 6 of its 11 minutes, and the screen used to call all of it
+// "there is no golden". An operator looking at a slow first start in that window is
+// told the opposite of what is happening.
+func TestECSEC2PoolStatusShowsTheBakeInFlight(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	f := h.factory()
+	seedWS := "af-ws-af-golden-af-golden-seed"
+	h.ec2.addSlot("i-seed", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.addHomeVolume("vol-seed", "M-SEED", seedWS, "ap-northeast-1a").CreateTime =
+		aws.Time(time.Now().Add(-4 * time.Minute)) // the anchor the baker's own deadline uses
+	h.ec2.attach("vol-seed", "i-seed", time.Now())
+
+	// 1. The seed is up and boot-install is running on its home.
+	st, err := f.PoolStatus(ctx)
+	if err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	g := st.Goldens[0]
+	if g.Phase != ec2BakePhaseBoot || !st.Baking {
+		t.Fatalf("phase = %q baking=%v, want %q while boot-install runs", g.Phase, st.Baking, ec2BakePhaseBoot)
+	}
+	// The seed holds a slot. Without saying which workspace that is, the pool table
+	// shows a box occupied by a name nothing on the screen accounts for.
+	if g.Seed == nil || g.Seed.Workspace != seedWS || g.Seed.InstanceID != "i-seed" {
+		t.Errorf("seed = %+v, want %s on i-seed", g.Seed, seedWS)
+	}
+	if g.PhaseSince == "" {
+		t.Error("no anchor for the elapsed time; the screen cannot say how long this has been going")
+	}
+
+	// 2. boot-install finished: the home is being taken off its slot for the capture.
+	h.ec2.setTag("vol-seed", ec2TagBakeReady, time.Now().UTC().Format(time.RFC3339))
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if got := st.Goldens[0].Phase; got != ec2BakePhaseCapture {
+		t.Errorf("phase = %q, want %q once af-bake-ready is on the home", got, ec2BakePhaseCapture)
+	}
+
+	// 3. EBS is copying the candidate. The percentage is EBS's own — a snapshot of a
+	//    50 GiB home took ~3 minutes on the live deployment, and "pending" alone does
+	//    not tell an operator whether to wait or to go looking.
+	h.ec2.addGoldenRole("snap-cand", "clu", h.rt.base.cfg.workspaceImage, ec2RoleGoldenCandidate,
+		ec2types.SnapshotStatePending, time.Now())
+	h.ec2.snapshots["snap-cand"].Progress = aws.String("63%")
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g = st.Goldens[0]; g.Phase != ec2BakePhaseSnapshot || g.Candidate != "snap-cand" || g.Progress != 63 {
+		t.Errorf("golden = %+v, want the candidate snapshot at 63%%", g)
+	}
+
+	// 4. Copied. Nothing is published yet — a probe has to come up from it first, and
+	//    that is the step §64.28.3 exists for.
+	h.ec2.snapshots["snap-cand"].State = ec2types.SnapshotStateCompleted
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g = st.Goldens[0]; g.Phase != ec2BakePhaseProbe || g.SnapshotID != "" {
+		t.Errorf("golden = %+v, want the probe phase and NOTHING published yet", g)
+	}
+
+	// 5. Published.
+	h.ec2.addGolden("snap-golden", "clu", h.rt.base.cfg.workspaceImage, ec2types.SnapshotStateCompleted, time.Now())
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g = st.Goldens[0]; g.Phase != ec2BakePhasePublished || st.Baking {
+		t.Errorf("golden = %+v baking=%v, want it reported as in use", g, st.Baking)
+	}
+}
+
+// "No golden and nothing happening" has three different causes and only one of them
+// fixes itself. All three lived in a CP log line that scrolls away — and the pool being
+// full is the one that actually stopped a bake on a live deployment (the production deployment).
+func TestECSEC2PoolStatusExplainsWhyNothingIsBaking(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	f := h.factory()
+	img := h.rt.base.cfg.workspaceImage
+
+	// Nothing in the way: the next tick starts a bake.
+	st, err := f.PoolStatus(ctx)
+	if err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if got := st.Goldens[0].Phase; got != ec2BakePhaseIdle {
+		t.Errorf("phase = %q on an empty pool, want %q", got, ec2BakePhaseIdle)
+	}
+
+	// 3 of 4 slots taken. A bake needs two free, so it will not start — and the same
+	// arithmetic the baker applies has to be what the screen reports.
+	for _, id := range []string{"i-1", "i-2", "i-3"} {
+		h.ec2.addSlot(id, "ap-northeast-1a", "m7i.large", true, false)
+	}
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g := st.Goldens[0]; g.Phase != ec2BakePhaseBlocked || g.SlotsInUse != 3 {
+		t.Errorf("golden = %+v, want blocked with 3 slots in use", g)
+	}
+	blocked, _, err := f.bakeBlocked(ctx)
+	if err != nil || !blocked {
+		t.Errorf("bakeBlocked = (%v, %v), want the baker to agree with the screen", blocked, err)
+	}
+
+	// One candidate burned. The baker has one attempt left, so this is not the end.
+	h.ec2.addGoldenRole("snap-bad1", "clu", img, ec2RoleGoldenRejected, ec2types.SnapshotStateCompleted, time.Now())
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g := st.Goldens[0]; g.Phase != ec2BakePhaseRejected || g.Attempts != 1 {
+		t.Errorf("golden = %+v, want one rejected attempt", g)
+	}
+
+	// Two. The baker stops trying, and an operator who is not told that waits forever
+	// for a bake that is never coming.
+	h.ec2.addGoldenRole("snap-bad2", "clu", img, ec2RoleGoldenRejected, ec2types.SnapshotStateCompleted, time.Now())
+	if st, err = f.PoolStatus(ctx); err != nil {
+		t.Fatalf("PoolStatus: %v", err)
+	}
+	if g := st.Goldens[0]; g.Phase != ec2BakePhaseGaveUp || g.Attempts != 2 {
+		t.Errorf("golden = %+v, want the baker reported as having given up", g)
+	}
+	if n, err := f.rejectedAttempts(ctx, ec2ArchX86); err != nil || n != 2 {
+		t.Errorf("rejectedAttempts = (%d, %v), want the baker to agree with the screen", n, err)
+	}
+}
+
+// AF_ECS_EC2_GOLDEN_AUTOBAKE=0 is the one thing about the golden that is not visible in
+// AWS. Left unsaid, "no golden, nothing under way" reads as "wait a few minutes".
+func TestPoolStatusSaysWhenAutoBakeIsOff(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	m := &manager{rtFactory: h.factory(), autoBakeGolden: false}
+	st, ok, err := m.poolStatus(ctx)
+	if !ok || err != nil {
+		t.Fatalf("poolStatus = (ok=%v, err=%v)", ok, err)
+	}
+	if st.AutoBake || st.Goldens[0].Phase != ec2BakePhaseOff {
+		t.Errorf("auto_bake=%v phase=%q, want the screen to say the baker is switched off",
+			st.AutoBake, st.Goldens[0].Phase)
+	}
+	m.autoBakeGolden = true
+	if st, _, err = m.poolStatus(ctx); err != nil {
+		t.Fatalf("poolStatus: %v", err)
+	}
+	if !st.AutoBake || st.Goldens[0].Phase != ec2BakePhaseIdle {
+		t.Errorf("auto_bake=%v phase=%q, want a bake to be expected", st.AutoBake, st.Goldens[0].Phase)
+	}
+}
+
 // What the "starting" dialog reads. The infrastructure half of a start on this runtime
 // (a new slot, a new or restored home, an SSM mount) used to be invisible to the
 // Console, which could only offer the native runtime's line about installing agent
@@ -2739,8 +3213,9 @@ func TestECSEC2ParseSlotSizesOptionalVCPU(t *testing.T) {
 // disk number is the PERSISTENT home — the opposite of what the UI used to say.
 func TestECSEC2SizingProfile(t *testing.T) {
 	f := &ecsEC2Factory{pool: ec2PoolConfig{
-		slotSizes: parseSlotSizes("m7i.large:8192:2,m7i.xlarge:16384:4"),
-		homeGiB:   50,
+		classes:      parseSlotClasses("m7i.large:8192:2,m7i.xlarge:16384:4"),
+		defaultClass: "default",
+		homeGiB:      50,
 	}}
 	p := f.SizingProfile()
 	if p.Runtime != "ecs-ec2" || p.CPUEffective {
@@ -2805,6 +3280,67 @@ func TestECSEC2ProbeReadsTheCandidateAndNotTheGolden(t *testing.T) {
 	}
 }
 
+func (f *fakeEC2) addGoldenArch(id, pool, image, role, arch string, started time.Time) {
+	f.addGoldenRole(id, pool, image, role, ec2types.SnapshotStateCompleted, started)
+	f.snapshots[id].Tags = append(f.snapshots[id].Tags,
+		ec2types.Tag{Key: aws.String(ec2TagArch), Value: aws.String(arch)})
+}
+
+// Every arch's golden carries the SAME image stamp, so once a second arch is declared
+// the image filter stops discriminating and the tie-break is "newest wins" — a coin
+// toss decided by which bake happened to finish last.
+//
+// Measured on the dev deployment (docs/70 §70.14.5): baking x86_64 and arm64 together, the x86_64
+// probe was seeded from the arm64 candidate. It did not fail — §70.5's self-heal wipes
+// the wrong-arch bits and re-runs boot-install — which is what makes it worth a test:
+// the golden's entire purpose is thrown away silently, and the probe proves the wrong
+// snapshot.
+func TestECSEC2GoldenOfAnotherArchIsNotUsed(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	img := h.rt.base.cfg.workspaceImage
+	if archOrX86(h.rt.arch) != ec2ArchX86 {
+		t.Fatalf("harness arch is %q; this test is written from the x86_64 side", h.rt.arch)
+	}
+	// The arm64 one is NEWER — so "newest wins" would pick it, and did.
+	h.ec2.addGoldenArch("snap-x86", "clu", img, ec2RoleGolden, ec2ArchX86, time.Now().Add(-time.Minute))
+	h.ec2.addGoldenArch("snap-arm", "clu", img, ec2RoleGolden, ec2ArchArm, time.Now())
+
+	if got := h.rt.goldenSnapshot(ctx); got != "snap-x86" {
+		t.Fatalf("an x86_64 home was seeded from %q — the arm64 golden is not ours", got)
+	}
+
+	// The same has to hold for the probe, or a golden is "proven" by booting another
+	// architecture's snapshot (§64.28.3 checks nothing in that case).
+	h.ec2.addGoldenArch("snap-cand-arm", "clu", img, ec2RoleGoldenCandidate, ec2ArchArm, time.Now())
+	h.rt.seedFromCandidate()
+	if got := h.rt.goldenSnapshot(ctx); got != "" {
+		t.Fatalf("the x86_64 probe read the arm64 candidate %q", got)
+	}
+	h.ec2.addGoldenArch("snap-cand-x86", "clu", img, ec2RoleGoldenCandidate, ec2ArchX86, time.Now())
+	if got := h.rt.goldenSnapshot(ctx); got != "snap-cand-x86" {
+		t.Fatalf("the probe read %q, not its own arch's candidate", got)
+	}
+}
+
+// An untagged golden is x86_64 (docs/70 §70.6): deployments that baked one before
+// classes existed must keep working, and reading them as "unknown" would orphan every
+// existing golden on upgrade.
+func TestECSEC2UntaggedGoldenIsX86(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	img := h.rt.base.cfg.workspaceImage
+	h.ec2.addGolden("snap-legacy", "clu", img, ec2types.SnapshotStateCompleted, time.Now())
+
+	if got := h.rt.goldenSnapshot(ctx); got != "snap-legacy" {
+		t.Fatalf("the pre-classes golden stopped being found: %q", got)
+	}
+	h.rt.arch = ec2ArchArm
+	if got := h.rt.goldenSnapshot(ctx); got != "" {
+		t.Fatalf("an arm64 home was seeded from the untagged (=x86_64) golden %q", got)
+	}
+}
+
 // A candidate stamped with another image is the baker's own bookkeeping (the image moved
 // mid-bake), not the standing "somebody must re-bake" warning a stale GOLDEN is.
 func TestECSEC2StaleCandidateIsNotUsed(t *testing.T) {
@@ -2816,5 +3352,78 @@ func TestECSEC2StaleCandidateIsNotUsed(t *testing.T) {
 	h.rt.seedFromCandidate()
 	if got := h.rt.goldenSnapshot(ctx); got != "" {
 		t.Fatalf("the probe used a candidate baked from another image: %q", got)
+	}
+}
+
+// --- 配置できない起動が「なぜ」を言う（docs/70 §70.14.6） ---
+
+func svcWithEvents(desired, running int32, deployAt time.Time, events ...ecstypes.ServiceEvent) ecstypes.Service {
+	return ecstypes.Service{
+		DesiredCount: desired,
+		RunningCount: running,
+		Deployments: []ecstypes.Deployment{
+			{Status: aws.String("PRIMARY"), CreatedAt: aws.Time(deployAt)},
+		},
+		Events: events,
+	}
+}
+
+func placeEvent(at time.Time, msg string) ecstypes.ServiceEvent {
+	return ecstypes.ServiceEvent{CreatedAt: aws.Time(at), Message: aws.String(msg)}
+}
+
+const unplaceable = "(service af-ws-x) was unable to place a task because no container " +
+	"instance met all of its requirements. The closest matching (container-instance abc) is " +
+	"missing an attribute required by your task."
+
+// 配置できない起動には期限が無い。ECS は理由をイベントに書いているのに CP がそれを
+// 捨てて素の starting を返していたので、`aws ecs describe-services` を手で読む以外に
+// 原因を知る方法が無かった。
+func TestECSPlacementBlockedReadsTheCurrentDeployment(t *testing.T) {
+	now := time.Now()
+	deploy := now.Add(-2 * time.Minute)
+
+	got := ecsPlacementBlocked(svcWithEvents(1, 0, deploy, placeEvent(now.Add(-time.Minute), unplaceable)))
+	if !strings.Contains(got, "missing an attribute") {
+		t.Fatalf("the placement failure was not surfaced: %q", got)
+	}
+
+	// 直った後の再デプロイ。古い苦情はイベント一覧に残り続けるので、デプロイより前の
+	// ものを読むと通常のコールドスタートが偽の診断になる。
+	if got := ecsPlacementBlocked(svcWithEvents(1, 0, now, placeEvent(now.Add(-time.Minute), unplaceable))); got != "" {
+		t.Fatalf("an event older than the current deployment was reported: %q", got)
+	}
+
+	// ふつうに上がってくる最中は何も言わない。
+	if got := ecsPlacementBlocked(svcWithEvents(1, 0, deploy,
+		placeEvent(now, "(service af-ws-x) has started 1 tasks: (task abc)."))); got != "" {
+		t.Fatalf("a healthy start was reported as blocked: %q", got)
+	}
+}
+
+// phase に載って初めて Console に出る。running になったら消えることまでが契約——
+// 消えないと bootPhase != "" のせいで起動ダイアログが出たままになる。
+func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
+	h := newEC2Harness(t)
+	now := time.Now()
+	defer h.rt.setPhase("")
+
+	h.rt.notePlacementBlocked(svcWithEvents(1, 0, now.Add(-time.Minute), placeEvent(now, unplaceable)))
+	ph := h.rt.BootPhase()
+	if !strings.HasPrefix(ph, blockedPhasePrefix) || !strings.Contains(ph, "missing an attribute") {
+		t.Fatalf("phase does not carry the reason: %q", ph)
+	}
+
+	h.rt.clearBlockedPhase()
+	if got := h.rt.BootPhase(); got != "" {
+		t.Fatalf("the blocked phase survived the task starting: %q", got)
+	}
+
+	// ⚠️ 進行中の Start が書いた phase は消してはいけない。4 秒ごとのポーリングが
+	// これを消すと、起動ダイアログが起動の最中に真っ白になる。
+	h.rt.setPhase("home: attaching")
+	h.rt.clearBlockedPhase()
+	if got := h.rt.BootPhase(); got != "home: attaching" {
+		t.Fatalf("a live Start's phase was wiped by a poll: %q", got)
 	}
 }

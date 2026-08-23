@@ -107,6 +107,15 @@ jobs:
         run: go vet ./...
       - name: go build
         run: go build ./...
+      - name: cross-compile for arm64
+        # ⚠️ `go build` on the runner only proves amd64. unix.Stat_t is a DIFFERENT
+        # struct per architecture (Blksize is int64 on amd64 and int32 on arm64), so
+        # code that touches syscall structs can compile here and fail on Graviton —
+        # which is exactly what happened the first time the workspace image was built
+        # for arm64 (docs/70 §70.9). An ecs-ec2 slot can be arm64, so both binaries
+        # have to build for it. CGO_ENABLED=0 matches how the images build them.
+        env: { CGO_ENABLED: "0", GOOS: linux, GOARCH: arm64 }
+        run: go build ./...
       - name: go test
         run: go test ./...
 
@@ -128,6 +137,15 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: go build
+        run: go build ./...
+      - name: cross-compile for arm64
+        # ⚠️ `go build` on the runner only proves amd64. unix.Stat_t is a DIFFERENT
+        # struct per architecture (Blksize is int64 on amd64 and int32 on arm64), so
+        # code that touches syscall structs can compile here and fail on Graviton —
+        # which is exactly what happened the first time the workspace image was built
+        # for arm64 (docs/70 §70.9). An ecs-ec2 slot can be arm64, so both binaries
+        # have to build for it. CGO_ENABLED=0 matches how the images build them.
+        env: { CGO_ENABLED: "0", GOOS: linux, GOARCH: arm64 }
         run: go build ./...
       - name: go test
         run: go test ./...

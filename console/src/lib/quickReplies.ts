@@ -110,6 +110,32 @@ export function forgetQuickReply(map: QuickReplyMap, text: string): QuickReplyMa
   return next;
 }
 
+// 「1回しか送っていない」学習エントリの表示テキストを返す（純関数・設定画面の一括削除用）。
+// 学習は送信のたび黙って増えるので、一度きりの言い回しが大半を占めて一覧が読めなくなる。常用の
+// 候補を残したまま、その使い捨てだけを落とすための対象リスト。
+//
+// - 回数は保存キーではなく綴りから引き直したキーで畳んでから数える（全角/半角違いで2キーに
+//   割れた同じ文は合わせて2回＝一度きりではない）。一覧の行の作り方と同じ。
+// - ピン留めは明示の指定なので、回数に関わらず対象外（ピンは何にも負けない、が要件）。
+// 呼び出し側は forgetQuickReply で消す。隠しリストには積まない — これは「二度と出すな」ではなく
+// 学習ノイズの掃除で、同じ文をまた送れば普通に学習し直すのが期待される挙動だから（シードと同じ
+// 綴りが1回だけ学習されていた場合に、隠しへ積むとシードごと消えてしまうのも防ぐ）。
+export function oneTimeQuickReplies(map: QuickReplyMap, pinned?: string[]): string[] {
+  const byKey = new Map<string, { text: string; count: number; at: number }>();
+  for (const e of Object.values(map)) {
+    const k = keyOf(e.text);
+    const prev = byKey.get(k);
+    byKey.set(
+      k,
+      prev
+        ? { text: e.at >= prev.at ? e.text : prev.text, count: prev.count + e.count, at: Math.max(prev.at, e.at) }
+        : { ...e },
+    );
+  }
+  const pins = new Set((pinned ?? []).map((p) => keyOf(p)));
+  return [...byKey.entries()].filter(([k, e]) => e.count <= 1 && !pins.has(k)).map(([, e]) => e.text);
+}
+
 // 隠しリストにキーを積む。上限は学習エントリと同じ（際限なく増やさない・古いものから落とす）。
 export function hideQuickReply(hidden: string[], text: string): string[] {
   const k = keyOf(text);

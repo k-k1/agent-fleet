@@ -240,7 +240,7 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 // serviceRolledOut in runtime_ecs.go), the request can be served by a task a
 // rolling deployment retires moments later, silently losing that state — the
 // user sees "unknown or expired flow_id" or a bare timeout with no clear cause
-// (confirmed 2026-08-19 on af.lazmix.jp). Refuse up front instead so the client
+// (confirmed 2026-08-19 on the dev deployment). Refuse up front instead so the client
 // can show "still starting, try again" rather than a confusing failure mid-flow.
 func (a agentProxyAPI) restLoginFlow(w http.ResponseWriter, r *http.Request, res *resolved) {
 	if s := res.rt.State(r.Context()); s != "running" {
@@ -409,6 +409,20 @@ func relay(src, dst *websocket.Conn, errc chan<- error) {
 	for {
 		mt, data, err := src.ReadMessage()
 		if err != nil {
+			// Pass the peer's CLOSE frame through. gorilla answers the close handshake
+			// itself and surfaces it here as a CloseError, so the frame never reaches
+			// the other side on its own — the bridge just tore the socket down and the
+			// browser saw an abnormal 1006. That erased the only signal distinguishing
+			// "the session ended" (1000 + reason) from "the connection broke", which is
+			// why a stopped session's finite history replay rendered as [disconnected].
+			// 1005/1006 are status codes a close frame may never CARRY, so they are the
+			// one case we still drop.
+			if ce, ok := err.(*websocket.CloseError); ok &&
+				ce.Code != websocket.CloseNoStatusReceived && ce.Code != websocket.CloseAbnormalClosure {
+				// Best-effort and synchronous: WriteMessage flushes to the socket before
+				// the deferred Close() in ptyProxy tears the connection down.
+				_ = dst.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(ce.Code, ce.Text))
+			}
 			errc <- err
 			return
 		}

@@ -7,6 +7,7 @@ import { useLayoutStore } from "../layout/store.ts";
 import { useTtsStore, toggleTtsPlayback } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { useHostUpdate } from "../features/settings/hostUpdate.ts";
+import { useDeploymentVersion, imageLabel } from "../features/settings/deploymentVersion.ts";
 import { rel, clearLocalState } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES, PANE_LAYOUTS } from "../lib/settings.ts";
 import { useT, getLocale } from "../lib/i18n/index.ts";
@@ -110,6 +111,28 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   // 設定 → ツールチェーン, where the actual "再起動して適用" action lives.
   const hostUpdate = useHostUpdate();
   const updateReady = !!hostUpdate?.restartRequired;
+  // Deployment identity (version + images). Fetched only once the menu is opened —
+  // nothing outside this menu shows it. The image half exists only where code arrives
+  // as an image (ECS); elsewhere the CP omits the keys and these lines stay away.
+  const deployment = useDeploymentVersion(menuOpen);
+  const deployImages = !!(deployment?.image || deployment?.workspace_image);
+  const [verCopied, setVerCopied] = useState(false);
+  // One block with every fact a bug report needs — the point of the version zone
+  // (docs/35 §35.6.1). Built at click time so it always matches what is on screen.
+  const copyVersions = () => {
+    const lines = [
+      deployment?.version
+        ? `Agent Fleet ${deployment.version}${deployment.runtime ? ` (${deployment.runtime})` : ""}`
+        : "",
+      deployment?.image ? `control-plane: ${imageLabel(deployment.image)}` : "",
+      deployment?.workspace_image ? `workspace: ${imageLabel(deployment.workspace_image)}` : "",
+      `console: ${buildLabel()}`,
+    ].filter(Boolean);
+    void navigator.clipboard?.writeText(lines.join("\n")).then(() => {
+      setVerCopied(true);
+      window.setTimeout(() => setVerCopied(false), 1500);
+    });
+  };
   const openGuide = useSettingsUI((st) => st.openGuide);
   // The guide ships per language: English is canonical (README.md), Japanese
   // lives beside it as README.ja.md — open the one matching the UI locale.
@@ -384,10 +407,47 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                       <Icon name="rocket" /> {tr("topbar.host_version", { v: hostUpdate.current })}
                     </div>
                   ))}
+                {/* Deployment identity, ECS only (see useDeploymentVersion): on a
+                    deployment where code ships as an image, "which version" and "which
+                    image" are two different questions and a report needs both — the CP
+                    and the workspace share one ImageTag by convention, but a rollback
+                    can move just one of them. The digest rides along because `:dev` is
+                    mutable. Nothing here is compared against anything: backend drift is
+                    the WS-bar 要再起動 badge's job, and a second opinion here would be
+                    the version-comparison trap workspace_stale.go warns about. */}
+                {deployImages && (
+                  <>
+                    <div className="acct-build">
+                      <Icon name="rocket" /> {tr("topbar.server_version", { v: deployment!.version })}
+                    </div>
+                    {deployment!.image && (
+                      <div className="acct-build" title={deployment!.image.digest}>
+                        <Icon name="package" /> {tr("topbar.image_cp", { ref: imageLabel(deployment!.image) })}
+                      </div>
+                    )}
+                    {deployment!.workspace_image && (
+                      <div className="acct-build" title={deployment!.workspace_image.digest}>
+                        <Icon name="package" />{" "}
+                        {tr("topbar.image_ws", { ref: imageLabel(deployment!.workspace_image) })}
+                      </div>
+                    )}
+                  </>
+                )}
                 {/* Build stamp — so the running version is visible at a glance (no more
-                    guessing which build a phone is on). Selectable for easy reporting. */}
+                    guessing which build a phone is on). Selectable for easy reporting,
+                    with a copy button that takes the whole zone in one go (typing a
+                    digest off a phone screen is how reports end up without one). */}
                 <div className="acct-build" title={buildInfo.sha ? `commit ${buildInfo.sha}` : undefined}>
                   <Icon name="tag" /> {tr("topbar.build", { label: buildLabel() })}
+                  <button
+                    type="button"
+                    className="acct-ver-copy"
+                    title={tr("topbar.copy_version")}
+                    aria-label={tr("topbar.copy_version")}
+                    onClick={copyVersions}
+                  >
+                    <Icon name={verCopied ? "check" : "copy"} />
+                  </button>
                 </div>
               </div>
             )}

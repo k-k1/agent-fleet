@@ -14,3 +14,5 @@
 *.md   text diff
 *.yml  text diff
 *.yaml text diff
+# 図（drawio）は圧縮せず素の XML でコミットしているので、差分もテキストで読める。
+*.drawio text diff

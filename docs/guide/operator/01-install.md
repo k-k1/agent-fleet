@@ -79,6 +79,13 @@ Which keys you fill in depends on the IdP:
 | **Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab** | `AF_OIDC_PROVIDERS=<id>` plus `AF_OIDC_<ID>_ISSUER` / `_CLIENT_ID` / `_CLIENT_SECRET` / `_TRUST` |
 | **GitHub** | `AF_GITHUB_ALLOWED_ORGS` (required — it is also what turns the button on) plus `GITHUB_OAUTH_CLIENT_ID` / `_SECRET`, and `AF_GITHUB_ALLOWED_DOMAINS` |
 
+> **Not here: the git providers' OAuth apps.** The "Connect with OAuth" buttons for cloning
+> GitHub / Bitbucket repositories are **per-tenant**, registered in the Console by a tenant
+> administrator under **Tenant settings → Integrations → Git provider OAuth**. There is no
+> deployment-level setting for them and `BITBUCKET_OAUTH_KEY` / `_SECRET` are not read at all;
+> `GITHUB_OAUTH_CLIENT_ID` above means the sign-in app only. See
+> [docs/71](../../71-tenant-git-oauth.md).
+
 Three points decide whether this goes smoothly, and all three are covered in detail in
 [05](05-login-idp.md):
 
@@ -290,6 +297,22 @@ covered by the admin volume for administrators.
 
 After starting their own Workspace, each member **logs in with their own Claude seat** from the
 Console (BYO). The operator never sets up members' Claude credentials on their behalf.
+
+**Deleting a tenant you no longer need.** Admin panel → open the tenant → **Limits** →
+*Delete tenant* (super_admin only). It only accepts a tenant that is already **empty**: it is
+refused while a member is still on the roster, while a workspace row still exists, and while an
+internal git repository is still there. That is deliberate — the database row is the only handle
+left on a home, an EBS volume or a bare repository, so deleting it first would leave those
+billing with nothing pointing at them. Work through the order instead: remove the members, then
+destroy their workspaces, then delete the tenant.
+
+> ⚠️ **Delete the internal git repositories while a member is still on the roster.** The screen
+> that deletes them is reached through a membership, so once the last member is removed, nobody
+> can get to it any more.
+
+The audit log, cloud cost and occupancy of a deleted tenant are kept (their tenant column simply
+goes blank). The reserved `golden snapshot (system)` tenant is not shown and cannot be deleted —
+it belongs to the deployment itself and is recreated automatically.
 
 For day-to-day operations after the build-out (backup, upgrades, shutdown), continue to
 [02-operations.md](02-operations.md), and for security operations, to

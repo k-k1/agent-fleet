@@ -70,6 +70,12 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 | **Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab** | `AF_OIDC_PROVIDERS=<id>` と `AF_OIDC_<ID>_ISSUER` / `_CLIENT_ID` / `_CLIENT_SECRET` / `_TRUST` |
 | **GitHub** | `AF_GITHUB_ALLOWED_ORGS`（必須。ボタンを有効にする合図でもある）と `GITHUB_OAUTH_CLIENT_ID` / `_SECRET`、`AF_GITHUB_ALLOWED_DOMAINS` |
 
+> **ここには無いもの: git プロバイダの OAuth アプリ。** GitHub / Bitbucket のリポジトリを
+> クローンするための「OAuth で接続」ボタンは**テナント単位**で、テナント管理者が Console の
+> **テナント設定 → 連携 → git プロバイダ OAuth** で登録します。デプロイ側の設定は無く、
+> `BITBUCKET_OAUTH_KEY` / `_SECRET` は一切読まれません。上の `GITHUB_OAUTH_CLIENT_ID` は
+> サインイン用アプリだけを意味します。詳細は [docs/71](../../71-tenant-git-oauth.md)。
+
 うまくいくかどうかを分けるのは次の 3 点で、いずれも [05](05-login-idp.ja.md) に詳細があります。
 
 - **`AF_OIDC_<ID>_TRUST` に既定値はありません（意図的です）** — 「その IdP のメールアドレスを
@@ -270,6 +276,20 @@ super_admin として Admin パネルから、テナントの作成、メンバ�
 
 各メンバーは自分の Workspace を起動したあと、Console から**自分の Claude シートでログイン**します
 （BYO）。運用者がメンバーの Claude 資格情報を代理設定することはありません。
+
+**不要になったテナントを削除する。** Admin パネル → テナントを開く → **上限** → 「テナントを削除」
+（super_admin のみ）。受け付けるのは**すでに空になったテナントだけ**で、メンバーが 1 人でも
+残っている・Workspace が残っている・内部 git リポジトリが残っている場合は拒否します。これは
+意図した動作です——DB の行は home や EBS ボリューム、bare リポジトリに対する**唯一の手掛かり**
+であることがあり、先に消すと実体だけが課金され続けて誰も指せなくなります。順に片付けてください:
+メンバーを外す → その Workspace を破棄する → テナントを削除する。
+
+> ⚠️ **内部 git リポジトリは、メンバーが名簿に残っているうちに削除してください。** 削除画面には
+> メンバーシップ経由でしか入れないので、最後の 1 人を外すと誰も辿り着けなくなります。
+
+削除したテナントの監査ログ・クラウド費用・稼働時間は残ります（テナント欄が空になるだけです）。
+予約テナント `golden snapshot (system)` は一覧に出ず、削除もできません——デプロイ自身のもので、
+自動的に作り直されます。
 
 構築後の日常運用（バックアップ・アップグレード・停止）は [02-operations.md](02-operations.ja.md) へ、
 セキュリティ運用は [03-security.md](03-security.ja.md) へ進んでください。

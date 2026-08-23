@@ -34,12 +34,15 @@ platform changes:
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
-| `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand |
+| `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/70 §70.8) |
 
-> `00`/`10`/`20` are proven end-to-end (deploy→verify→`delete-stack`, no orphans).
-> `30-ingress` is authored and template-validated; standing it up needs a domain +
-> Google OAuth client + the CP image in ECR (see stand-up below). Each stack imports
-> the earlier ones' exports, so deploy in order `00 → 10 → 20 → 30`.
+> All five are proven end-to-end **including teardown**: two real deployments in two
+> separate AWS accounts (`WsRuntime=ecs-ec2`, one `Persistence=delete` and one
+> `=retain`) ran for days and were deleted on 2026-08-22 leaving zero orphans in
+> either account — the sweep in §Teardown came back empty on every counter. Standing
+> one up needs a domain + Google OAuth client + the CP image in ECR (see stand-up
+> below). Each stack imports the earlier ones' exports, so deploy in order
+> `00 → 10 → 20 → (40, ecs-ec2 only) → 30`.
 
 ### Prerequisites (once per account)
 
@@ -138,12 +141,11 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
      --name /af-cp/google-client-secret --value "<GOOGLE_OAUTH_CLIENT_SECRET>"   # your terminal, not shared
    aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
      --name /af-cp/oidc-client-secret   --value "<AF_OIDC_<ID>_CLIENT_SECRET>"
-   # optional, and NOT a sign-in method: the Bitbucket git connection (docs/dev/08 §8.4).
-   # Pair it with BitbucketOauthKey=<consumer key> at deploy.
-   aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
-     --name /af-cp/bitbucket-oauth-secret --value "<BITBUCKET_OAUTH_SECRET>"
    ```
-   ⚠️ The Bitbucket consumer's **Callback URL must be exactly**
+   ⚠️ The **git providers' OAuth apps are not deployment configuration** (docs/71). A
+   tenant administrator registers GitHub and Bitbucket in the Console under **Tenant
+   settings → Integrations → Git provider OAuth**; there is no CFN parameter and no SSM
+   entry for them. The Bitbucket consumer's **Callback URL must be exactly**
    `https://<your-fqdn>/api/oauth/bitbucket/callback` — Bitbucket matches it in full, and
    the CP derives it from `PUBLIC_BASE_URL`, so it is not separately configurable. The
    consumer needs a secret (authorization-code grant): the workspace credential helper
@@ -327,6 +329,34 @@ It does the three things the hand-typed sequence gets wrong:
   within a few minutes of the deploy, as long as two slots are free; the pool panel
   says so while it is happening. Otherwise re-bake with `bake-golden.sh`.
 
+### A development deployment: `dev-deploy.sh`
+
+`update.sh` deploys a **released** tag. A deployment kept for development wants the
+opposite: whatever is on `develop` right now, without cutting a version. That is
+`dev-deploy.sh` (docs/73), and it ends by calling `update.sh` — the pre-flight checks
+above are the reason, and writing a second copy of them for the dev path would mean the
+checks are what drifts.
+
+```bash
+./dev-deploy.sh --profile <p> --region <r>            # origin/develop → the dev deployment
+./dev-deploy.sh --profile <p> --region <r> --dry-run  # just the plan
+```
+
+It names the tag (`<next patch>-dev-<sha8>`), bakes it through `dev-image.yml` (GHCR,
+never a release tag), copies it into ECR **index and all**, and moves `ImageTag`.
+Three things it decides for you:
+
+- **Whether the workspace image needs baking at all.** Only when `workspace/` changed
+  since the deployed tag; otherwise the workspace image is re-tagged inside ECR, which
+  copies no bytes. Baking it costs ~10 minutes of QEMU.
+- **That the golden snapshot does not have to be re-baked** when those bytes are
+  identical (docs/72 §72.6.4 paid 10 minutes and two slots for exactly that).
+- **That this is not somebody's live deployment.** It refuses any `Fqdn` but the dev
+  one unless `--allow-fqdn` says otherwise: moving `ImageTag` puts a "restart required"
+  badge in front of everyone running a workspace there.
+
+⚠️ It bakes **origin's** ref. Local commits that are not pushed are silently not in it.
+
 ### What the users see
 
 Two different signals, and they mean different things:
@@ -486,12 +516,75 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 |---|---|---|---|
 | `WsRuntime` | `AF_RUNTIME` | `ecs` | `ecs-ec2` switches the adapter. Rolling back is this value |
 | `Ec2SlotLaunchTemplate` | `AF_ECS_EC2_LAUNCH_TEMPLATE` | — | `SlotLaunchTemplateId` output of `40-ec2-pool`. The CP refuses to boot without it on this profile |
-| `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192:2,…` | `instanceType:memoryMiB[:vcpu]`, ascending. The vCPU field is optional and display-only (the Console shows which box a memory number lands on) |
-| `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap. Start fails at the cap rather than growing the bill |
+| `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192:2,…` | `instanceType:memoryMiB[:vcpu]`, ascending — or several named **classes**, see below. The vCPU field is optional and display-only (the Console shows which box a memory number lands on) |
+| `Ec2SlotAmiArm64` | `AF_ECS_EC2_AMI_ARM64` | `""` | `SlotAmiIdArm64` output of `40-ec2-pool`. Required only when a class declares `arm64` — the CP refuses to boot otherwise |
+| `Ec2DefaultSlotClass` | `AF_ECS_EC2_DEFAULT_SLOT_CLASS` | `""` (the first class) | Where a member with no per-user and no per-tenant choice lands |
+| `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap **across all classes**. Start fails at the cap rather than growing the bill |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
 | — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant can override it. See below |
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 決定 9-1). Set `0` and it becomes your job on every release |
 | — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
+
+**Offering a choice of machine (docs/70).** `Ec2SlotTypes` takes several named ladders,
+`id|label|arch|<ladder>` separated by `;`, and a tenant administrator then picks one per
+tenant and per member. Memory still picks the rung *within* the class, so "8 GB" keeps
+meaning the same thing. **The shipped default already declares two**, because "cost over
+speed" is a legitimate choice and one version of it costs nothing to offer:
+
+```
+standard|Standard (Intel)|x86_64|m7i.large:8192:2,…;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,…
+```
+
+Measured in ap-northeast-1 on 2026-08-22 — the price from the Pricing API, the speed
+from this repository's own build on each family (`harness/bench-instance-classes.sh`,
+docs/70 §70.3):
+
+| against m7i | $/hour | build time | **cost per build** |
+|---|---|---|---|
+| m6i | −4.8% | +13% | +7.3% |
+| **m8g** (Graviton4) | **−11.0%** | **−29%** | **−37.1%** |
+| m7g (Graviton3) | −19.0% | −10% | −27.4% |
+| m6g (Graviton2) | **−24.0%** | **+32%** | ±0 |
+
+⚠️ **The cheapest box per hour is not the cheapest box.** m6g bills 24% less per hour
+and takes 32% longer, which nets out to no saving at all on work that keeps the CPU
+busy — and m8g is *both* cheaper and faster than m7i, so there is no reason to run m7g.
+
+⚠️ **Which column matters depends on the member.** A slot bills for the wall-clock time
+it is RUNNING, and a workspace spends most of that idle (reading, thinking, waiting on a
+model), so a mostly-reading member really does pay 24% less on m6g. A member who builds
+all day pays in time instead. That is the whole reason this is a per-member setting —
+and the reason a class's LABEL should carry the trade-off ("Cheapest — older, slower")
+rather than just the discount.
+
+**m6i is the one that needs nothing.** Same architecture as m7i, so: the same workspace
+image, the same AMI, the same golden snapshot, and a member's home keeps working when they
+move between the two. −4.8% for no prerequisites and no migration. Graviton is where the
+real money is, and it is also where every prerequisite below lives.
+
+⚠️ Adding a class moves nobody. `Ec2DefaultSlotClass` decides where members with no choice
+of their own land, and it defaults to the FIRST class. A running stack also keeps its own
+`Ec2SlotTypes` on a redeploy unless you pass the parameter, so upgrading the CP does not
+put a picker in front of anybody.
+
+Before declaring an `arm64` class, in this order:
+
+1. **The workspace image needs an arm64 manifest.** Without it the slot launches fine and
+   the task cannot pull anything that runs on it. (`crane manifest <image>` — a single
+   `manifest.v2+json` is one architecture; a manifest list / OCI index is what you want.)
+2. **Set `Ec2SlotAmiArm64`.** A launch template pins one AMI and Graviton cannot boot the
+   x86_64 ECS-optimized one; the CP passes this as a `RunInstances` ImageId override.
+   `aws ssm get-parameter --name /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id --query Parameter.Value --output text`.
+   Like the x86_64 AMI, patching it means redeploying `40-ec2-pool`.
+3. **Expect a second golden bake.** A golden is a home full of binaries, so there is one
+   per architecture; until the arm64 one is baked, new members on an arm64 class start
+   from an empty home (slower, not broken). The pool screen lists them per architecture.
+
+Adding a class moves nobody by itself. Moving a member *across architectures* is safe but
+not free: their home is kept and its architecture-dependent contents (`~/.local` CLIs, nvm
+node, Chromium) are reinstalled on the next start, and anything they built under `~/repos`
+(`node_modules`, `target`, `.venv`) has to be reinstalled by them. The Console says so
+before saving.
 
 **Hibernating long-unused homes (opt-in).** An EBS home bills for what it is *provisioned*
 at, whether or not anyone opens it. With this enabled, a home that nobody has opened for
@@ -572,6 +665,13 @@ a deployment that has turned it off (or for baking one on the spot):
   own identity — so an invite-only address nobody holds gives you a membership whose
   workspace can never be created. Adding an account you DO hold to a throwaway tenant
   is the cheap way to get the fresh membership a seed needs.
+- **Step 3 is a membership of your own, and that is allowed.** The roster refuses only
+  your *last* membership (docs/61 §61.10.6), so you take yourself off the throwaway
+  tenant from the Console — *Remove member* with *destroy the workspace and home*
+  ticked, or remove then destroy. Until that rule was narrowed, every self-removal was
+  refused and a deployment with a single administrator could not free the seed's slot at
+  all — which then blocks the automatic bake, because it will not start with fewer than
+  two free slots.
 - **Step 2 waits for the slot to stop, not for the volume to detach.** A Stop keeps the
   home attached on purpose (the attachment *is* that user's slot), and the sweeper only
   stops the instance — it logs `stopping slot <id> (home stays attached)`. Nothing in the
@@ -614,8 +714,18 @@ they survive, and keep billing. The response and the audit entry list what was l
   slot; at the cap the longest-dormant occupant is evicted (a workspace with a running
   task is never touched). So `Ec2MaxSlots` bounds the number of *provisioned* slots, and
   `Ec2SlotSleepSec` bounds how many of them are *running*.
-- **No hot spare is kept.** The first person of the morning wakes a stopped slot (~90s,
-  estimated) or, if the pool has none, pays the full ~135s to build one.
+- **An EMPTY slot sleeps on the same timer.** A slot whose home has been released — by an
+  eviction, a size/class change, a `Destroy`, or the golden bake finishing with its seed
+  and probe — belongs to nobody, and `Ec2SlotSleepSec` stops it too. ⚠️ Before docs/64
+  §64.31 only *occupied* slots were ever stopped, so a released box ran until an operator
+  noticed: measured on a live deployment, three empty `m*.large` up for over 24h with zero
+  tasks, at ~$95/month each.
+- **No hot spare is kept.** The first person of the morning wakes a stopped slot (~110s)
+  or, if the pool has none, pays the full ~135s to build one. Keeping an empty slot *hot*
+  would save that person ~67s (43s vs 110s) for a full instance-hour, every hour; keeping
+  the box at all — stopped, image cache intact — is what buys the 110s instead of 135s,
+  and that is what the pool does. `Ec2SlotSleepSec=0` turns the timer off entirely if a
+  deployment wants the 67 seconds back on every slot.
 - **AZ is destiny.** An EBS volume cannot leave its AZ, so a user is pinned to the AZ
   their home was created in. If no slot can be run there, that user cannot start.
 - **A slot's root volume is shared with whoever had it before.** `/tmp` is a tmpfs
@@ -759,30 +869,151 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
   `retain` (production: EFS `Retain`, RDS `Snapshot` + 7-day backups + deletion
   protection). **Deploy production with `Persistence=retain`.**
 
-## Teardown
+## Lifecycle scripts (stand up / pause / tear down)
+
+The runbooks in this file are the source of truth; these four are their executable
+form (docs/73). A deployment is addressed the way `update.sh` already addresses one —
+by **AWS profile** — and everything else is read from the live deployment, which
+matters because two deployments built from these same templates can differ in ways a
+hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
+`af-ecs-ec2-pool`).
 
 ```bash
-aws cloudformation delete-stack --stack-name af-ecs-ingress
-aws cloudformation delete-stack --stack-name af-ecs-platform
-aws cloudformation delete-stack --stack-name af-ecs-data
-aws cloudformation delete-stack --stack-name af-ecs-network   # last (others depend on it)
+./capture-env.sh --profile <p> --region <r>            # record a live deployment
+./pause.sh       --profile <p> --region <r> [--up]     # stop / resume (data stays)
+./teardown.sh    --profile <p> --region <r> [--yes]    # delete everything
+./standup.sh     --profile <p> --region <r> [--yes]    # build it back
 ```
 
-Per-workspace resources the CP created at runtime (ECS Services, task defs, EFS
-access points, SSM params) are **not** in these stacks — deregister/delete them via
-the CP's own workspace-delete path, or sweep by the `af-ws*` name/tag prefix, before
-deleting `af-ecs-network`. Order that works (measured 2026-08-15):
+- **`capture-env.sh` first, always.** It writes the parameters each stack was deployed
+  with to `~/.config/agent-fleet/deploy/<profile>.<region>/` (outside the repository —
+  the values are account-specific). The templates live here; **what was passed to them
+  lives only inside the deployment**, and `delete-stack` takes it away. `teardown.sh`
+  refuses to run without it, and `standup.sh` has nothing to deploy with.
+- **Nothing happens without `--yes`.** They print the plan (and, for teardown, an
+  inventory of what would go) and exit. With `--yes` on a terminal they also make you
+  type the FQDN.
+- **Secrets are neither captured nor restored.** The SSM SecureStrings are not CFN
+  parameters; `standup.sh` only checks that they *exist*. Teardown keeps `/af-cp/*` by
+  default so the same account can be redeployed into.
+- **Which deployment is the development one is not in this repository.** `dev-deploy.sh`
+  (docs/73) only touches a deployment whose local capture says `AF_DEV_DEPLOY=1`.
+- The order these run in is what the stub test in `deploy/local/ecs-lifecycle-stub-test.sh`
+  pins — see the next section for why each step is where it is.
 
-1. ECS **Service** `af-ws*` — `update-service --desired-count 0`, then `delete-service --force`.
-2. **Task definitions** `af-ws*` — `deregister-task-definition` for every ACTIVE revision
-   (the adapter registers a new one per Start, so expect several).
-3. **EFS access points** — `describe-access-points --file-system-id <efs>` then delete each.
-   ⚠️ **Miss these and `delete-stack af-ecs-data` stalls.** The filesystem id is the
-   `EfsId` output of `af-ecs-data` (*not* `FileSystemId` — a sweep script keyed on the
-   wrong name silently deletes nothing).
-4. **SSM** `/af-ws/*` (per-workspace DEK/token) and `/af-cp/*` (the out-of-band CP
-   secrets you created before `30-ingress`).
-5. Then the four `delete-stack` calls above, in order.
+## Teardown
+
+> The executable version is `./teardown.sh --profile <p> --region <r>` (above). Read this section
+> anyway: the script does exactly these steps, and when one fails you are back here.
+
+Most of what a live deployment owns is **not** in the stacks: the Control Plane
+creates workspace services, EFS access points, SSM parameters and — under
+`WsRuntime=ecs-ec2` — slot instances, home EBS volumes and golden snapshots at
+runtime. Deleting the stacks first leaves those behind and then **stalls on the
+dependencies they hold**. The order below was measured end-to-end on 2026-08-22
+against two real `ecs-ec2` deployments (one `Persistence=delete`, one `=retain`)
+and ended with every sweep counter at zero in both accounts.
+
+**1. Stop the Control Plane first.** Everything in steps 2–7 is *its* bookkeeping,
+and it launches slots on demand — a running CP can recreate what you just deleted.
+
+```bash
+CL=af-af-ecs-platform      # cluster = af-<platform stack name>
+aws ecs update-service --cluster $CL --service af-af-ecs-ingress-cp --desired-count 0
+```
+
+**2. Workspace services** — `af-ws-*`, one per member that ever started a
+workspace. `delete-service --force` also removes the service's Cloud Map entry, so
+do not delete that by hand (you get `ServiceNotFound`).
+
+```bash
+for s in $(aws ecs list-services --cluster $CL --query 'serviceArns[]' --output text | tr '\t' '\n' | grep /af-ws-); do
+  aws ecs update-service --cluster $CL --service "$s" --desired-count 0 >/dev/null
+  aws ecs delete-service --cluster $CL --service "$s" --force >/dev/null
+done
+```
+
+**3. Slot instances and home volumes** (`ecs-ec2` only). Terminating a slot takes
+its root volume but **not the home volume** — homes are detached and kept on
+purpose (delayed return), so they survive and keep billing.
+
+```bash
+IDS=$(aws ec2 describe-instances --filters Name=tag:Name,Values='af-slot-*' \
+  Name=instance-state-name,Values=pending,running,stopping,stopped \
+  --query 'Reservations[].Instances[].InstanceId' --output text)
+aws ec2 terminate-instances --instance-ids $IDS && aws ec2 wait instance-terminated --instance-ids $IDS
+# then every leftover af-ws-*-home volume
+aws ec2 delete-volume --volume-id <vol-id>
+```
+
+**4. Container instances that stay registered.** After the EC2 instances are gone,
+the cluster can still list them (3 of 4 did, in one account) and the platform
+stack's cluster delete fails on that. `aws ecs deregister-container-instance
+--cluster $CL --container-instance <arn> --force` each one.
+
+**5. EFS access points** — `describe-access-points --file-system-id <efs>`, delete
+each. ⚠️ **Miss these and `delete-stack af-ecs-data` stalls.** The filesystem id is
+the `EfsId` output of `af-ecs-data` (*not* `FileSystemId` — a sweep script keyed on
+the wrong name silently deletes nothing).
+
+**6. SSM `/af-ws/*`** (per-workspace DEK/token). `/af-cp/*` are the out-of-band CP
+secrets you created *before* `30-ingress`: keep them to redeploy into the same
+account, delete them to rehearse the prerequisites from scratch.
+
+**7. Golden snapshots** — `describe-snapshots --owner-ids self`, delete each
+(50 GiB per baked home, one per image tag).
+
+**8. The stacks, in reverse order, one at a time.**
+
+```bash
+for s in af-ecs-ingress af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do
+  aws cloudformation delete-stack --stack-name $s
+  aws cloudformation wait stack-delete-complete --stack-name $s || break   # stop on the first failure
+done
+```
+
+⚠️ **Issue them one at a time and wait.** CloudFormation **cancels** the delete of
+an exporting stack while an importer still exists (`Cannot delete export … as it is
+in use by …`) — fire all five together and the last ones silently do nothing while
+your wait loop spins on a delete that was already cancelled. `af-ecs-pool` exists
+only under `ecs-ec2`; its stack name is whatever you deployed `40-ec2-pool.yaml` as.
+Wall clock: ~10 min (`delete` persistence) to ~16 min (`retain`, RDS snapshotting).
+
+**9. `Persistence=retain` needs three extra steps** — a plain `delete-stack` fails
+on the first one:
+
+```bash
+aws rds modify-db-instance --db-instance-identifier <db> --no-deletion-protection --apply-immediately
+# after af-ecs-data is deleted:
+aws rds delete-db-snapshot --db-snapshot-identifier af-ecs-data-snapshot-db-<suffix>  # DeletionPolicy: Snapshot leaves one
+aws efs delete-file-system --file-system-id <efs>                                     # DeletionPolicy: Retain keeps it
+```
+
+**10. Task definitions.** They cost nothing but they outlive every stack.
+⚠️ **`list-task-definitions --family-prefix af-ws` reported 0 while 9 ACTIVE
+revisions existed** — enumerate without the prefix and count. Deregister every
+ACTIVE revision, then `delete-task-definitions` the INACTIVE ones in batches of 10.
+⚠️ `--max-items` with `--output text` appends the pagination token (`None`) as a
+line of its own; pass that through to `delete-task-definitions` and the whole batch
+fails. Filter with `grep '^arn:'`.
+
+**11. The ACM validation CNAME survives the certificate.** `30-ingress` deletes the
+cert and the ALB alias record, but `_<hash>.<fqdn>` stays in the hosted zone
+forever. Harmless — but leave it and the next deployment's certificate validates
+off a record you never created, so an issuance bug goes unnoticed. Delete it with
+`change-resource-record-sets` (the DELETE needs the **exact** TTL and value; TTL is
+300).
+
+**12. What deliberately survives** anything above: the hosted zone itself, the
+`/af-cp/*` secrets if you kept them — and nothing else. Sweep to confirm: EC2
+instances / volumes / snapshots / AMIs / EIPs, ECS clusters + task definitions,
+EFS, RDS instances + manual snapshots, ALB, ACM, NAT, ECR, Cloud Map namespaces,
+`/af` log groups, `af-*` IAM roles and instance profiles, non-default VPCs.
+
+⚠️ **ECR cannot be preserved.** `af-control-plane` and `af-workspace` are resources
+of `20-platform` with `EmptyOnDelete: true` — the stack delete takes the
+repositories *and every image in them*. Redeploying starts from `release-ecr.sh` /
+`crane copy` again.
 
 ## Notes
 

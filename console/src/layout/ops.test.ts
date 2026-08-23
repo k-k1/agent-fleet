@@ -110,6 +110,17 @@ describe("open/close/reset", () => {
     expect(ops.allViews(one)).toHaveLength(0);
   });
 
+  // The keyboard "close" command (pane.close / Alt+W) passes the ACTIVE VIEW id for
+  // exactly this reason: in tabs mode the same call with a CELL id takes closePane's
+  // closeCell branch and takes every sibling tab down with it.
+  it("in tabs mode closes one tab by view id, but the whole cell by cell id", () => {
+    const l = layout([cell("g1", [view("p1"), view("p2")], "p1"), cell("g2", [view("p3")])], "tabs");
+    const byView = ops.closePane(l, "p1");
+    expect(ops.allViews(byView).map((v) => v.id)).toEqual(["p2", "p3"]);
+    const byCell = ops.closePane(l, "g1");
+    expect(ops.allViews(byCell).map((v) => v.id)).toEqual(["p3"]);
+  });
+
   it("reset preserves the selected profile and drops every saved cell/view", () => {
     for (const mode of ["split", "tabs"] as const) {
       const after = ops.resetLayout(layout([cell("g1", [view("p1")]), cell("g2", [view("p2")])], mode));

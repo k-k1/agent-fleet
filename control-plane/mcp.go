@@ -908,17 +908,19 @@ func adminTools() []mcpTool {
 		},
 		{
 			name: "set_user_quota", minScope: scopeWrite, admin: true,
-			desc: "Set a member's per-user quota within the tenant (admin): max_sessions plus the three workspace size axes — mem_mib (RAM in MiB), cpu_units (Fargate CPU units, 1024 = 1 vCPU) and disk_gb (working disk in GiB). 0 = unset on every axis. Each is clamped to the tenant cap and applied at the next container start; the reply echoes the post-clamp values.",
+			desc: "Set a member's per-user quota within the tenant (admin): max_sessions plus the three workspace size axes — mem_mib (RAM in MiB), cpu_units (Fargate CPU units, 1024 = 1 vCPU) and disk_gb (working disk in GiB) — plus slot_class, which machine the workspace runs ON where the deployment offers a choice. 0 = unset on every numeric axis. Each is clamped to the tenant cap and applied at the next container start; the reply echoes the post-clamp values.",
 			schema: userKeyArg(map[string]any{
 				"max_sessions": map[string]any{"type": "integer", "description": "max concurrent sessions (0 = unset)"},
 				"disk_gb":      map[string]any{"type": "integer", "description": "workspace working disk in GiB (0 = unset → deployment default). On ECS 21-200 becomes task ephemeral storage; above 200 an ECS-managed EBS volume. NOT persistent storage - it is wiped when the workspace stops."},
 				"mem_mib":      map[string]any{"type": "integer", "description": "workspace RAM cap in MiB (0 = unset → deployment default); applied at next container start"},
 				"cpu_units":    map[string]any{"type": "integer", "description": "workspace CPU cap in Fargate CPU units (0 = unset; 1024 = 1 vCPU). Valid Fargate values are 256/512/1024/2048/4096/8192/16384 and the pair is snapped onto a valid (cpu, memory) combination, so asking for more CPU can also raise memory."},
+				"slot_class":   map[string]any{"type": "string", "description": "which KIND of machine the workspace lands on, as one of the deployment's declared class ids (\"\" = the tenant default). NOT a size — mem_mib still picks the rung within the class. Only the ecs-ec2 runtime has classes; read the ids from GET /api/admin/workspace-sizing. ⚠️ Changing it changes the CPU architecture on some deployments, and the member's home reinstalls its architecture-dependent tools on the next start."},
 			}, "user_key"),
 			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
 				return a.mcpSetUserQuota(ctx, ac, argStr(args, "user_key"), UserQuota{
 					MaxSessions: argInt(args, "max_sessions"), DiskGB: argInt(args, "disk_gb"),
 					MemLimit: int64(argInt(args, "mem_mib")) * mib, CPULimit: argInt(args, "cpu_units"),
+					SlotClass: argStr(args, "slot_class"),
 				})
 			},
 		},
@@ -1244,14 +1246,17 @@ func (a mcpAPI) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey strin
 	}
 	// The size axes feed the built runtime, so drop the cached one → applied at next start.
 	a.mgr.evictMembershipCache(mem.ID)
-	effMem, effCPU, effDisk := a.mgr.resolveWorkspaceSize(ctx, Workspace{MembershipID: mem.ID, TenantID: ac.tenant.ID})
-	a.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d mem=%s cpu=%d",
-		q.MaxSessions, effDisk, formatMemHuman(effMem), effCPU))
+	ws := Workspace{MembershipID: mem.ID, TenantID: ac.tenant.ID}
+	effMem, effCPU, effDisk := a.mgr.resolveWorkspaceSize(ctx, ws)
+	effClass, classNote := a.mgr.resolveSlotClass(ctx, ws)
+	a.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d mem=%s cpu=%d class=%s",
+		q.MaxSessions, effDisk, formatMemHuman(effMem), effCPU, effClass))
 	return jsonText(map[string]any{
 		"user_key": userKey, "tenant": ac.tenant.Slug, "max_sessions": q.MaxSessions,
 		"disk_gb": q.DiskGB, "disk_effective_gb": effDisk,
 		"mem_mib": q.MemLimit / mib, "mem_effective_mib": effMem / mib,
 		"cpu_units": q.CPULimit, "cpu_effective_units": effCPU,
+		"slot_class": q.SlotClass, "slot_class_effective": effClass, "slot_class_note": classNote,
 	})
 }
 
@@ -1272,7 +1277,7 @@ func agentText(ctx context.Context, rt Runtime, method, path string, body []byte
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("workspace agent unreachable (is the workspace running?)")
 	}

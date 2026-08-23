@@ -176,10 +176,20 @@ func (e *ecsRuntime) runningImageStamp(ctx context.Context) string {
 // identity. "" means unknown (not an ECR ref, call failed, tag gone) — never an error,
 // because every caller's right answer for unknown is "do not report a change".
 func (e *ecsRuntime) imageFingerprint(ctx context.Context) string {
-	if e.ecr == nil {
+	return ecrImageFingerprint(ctx, e.ecr, e.cfg.workspaceImage)
+}
+
+// ecrImageFingerprint is the body of the above, with the image and the client passed in
+// rather than read off a workspace runtime. The golden baker asks the same question
+// about the same image from the POOL side (runtime_ecs_ec2_golden.go), where there is
+// no per-workspace runtime to ask — and two ways of computing "the content this tag
+// resolves to" would be two things to keep in step (the badge's own doc comment says
+// why both sides of a comparison must come from one function).
+func ecrImageFingerprint(ctx context.Context, api ecrAPI, image string) string {
+	if api == nil {
 		return ""
 	}
-	ref, ok := parseECRRef(e.cfg.workspaceImage)
+	ref, ok := parseECRRef(image)
 	if !ok {
 		return ""
 	}
@@ -188,7 +198,7 @@ func (e *ecsRuntime) imageFingerprint(ctx context.Context) string {
 	if ref.digest != "" {
 		return ref.digest
 	}
-	out, err := e.ecr.BatchGetImage(ctx, &ecr.BatchGetImageInput{
+	out, err := api.BatchGetImage(ctx, &ecr.BatchGetImageInput{
 		RegistryId:         aws.String(ref.registryID),
 		RepositoryName:     aws.String(ref.repository),
 		ImageIds:           []ecrtypes.ImageIdentifier{{ImageTag: aws.String(ref.tag)}},

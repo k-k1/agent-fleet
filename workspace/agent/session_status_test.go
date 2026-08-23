@@ -366,3 +366,49 @@ func TestStopHookOnUsageLimitReportsFailure(t *testing.T) {
 		t.Errorf("status = %q, want idle", st.State)
 	}
 }
+
+// claude が自分でセッションを作り直すと（フルスクリーン TUI への切替など）、再起動
+// 後の argv から --session-id が落ち、以降の hook は claude 自身が採番した別 id を
+// 名乗る（internal/agents/claude/sid.go）。それをそのままキーにすると status も通知も
+// Console が読まない場所に書かれ、セッションが丸ごと消えたように見える — 実際に
+// s56ynzz で起きた（status は claude 側の id で書かれ、slot 側は空だった）。
+// hook は AF_SESSION_NAME で slot に引き戻し、そのうえでドリフトを台帳に記録する。
+func TestClaudeHookSIDDriftStaysOnSlotAndIsRecorded(t *testing.T) {
+	home := t.TempDir()
+	cfg := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	m := session.Meta{Name: "s56ynzz", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Novel"}
+	session.WriteMeta(m)
+	t.Setenv("AF_SESSION_NAME", m.Name)
+	slot := session.UUID(m.Dir, m.Name)
+
+	// claude が実際に書いているログ（ランダムな新 id）。
+	const drifted = "47153840-14be-4739-9326-93e8657df1bd"
+	projects := filepath.Join(cfg, "projects", "-tmp-repo")
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projects, drifted+".jsonl"),
+		[]byte(`{"type":"user","message":{"content":"hi"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status.Persist(slot, "working")
+	feedStatusHook(t, "idle", `{"session_id":"`+drifted+`"}`)
+
+	if st, _ := status.Read(slot); st.State != "idle" {
+		t.Fatalf("slot status = %q, want idle — ドリフトした id 側に書かれている", st.State)
+	}
+	if _, ok := status.Read(drifted); ok {
+		t.Fatal("claude 自身の id で status が書かれている — Console からは見えない")
+	}
+	events := notice.List()
+	if len(events) != 1 || events[0].Kind != "answer-ready" || events[0].SessionName != "s56ynzz" {
+		t.Fatalf("events=%+v, want one answer-ready for the slot", events)
+	}
+	// 記録されたので、転写もこれ以降は claude が書いている方を見に行く。
+	if got := claude.LiveSID(slot); got != drifted {
+		t.Fatalf("LiveSID = %q, want the drifted id %q", got, drifted)
+	}
+}

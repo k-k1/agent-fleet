@@ -112,7 +112,7 @@ the images carried in by hand: build and `docker save` them on a networked machi
 `release.sh --save`, then `load-images.sh` on the target host. The commands are in the
 runbook's "Air-gapped install" section.
 
-There are three decision points.
+There are four decision points.
 
 - **Where the images come from**: an internal registry mirror keeps `docker compose pull`
   working as normal and is the lower-maintenance option. The hand-carried tar means repeating
@@ -123,6 +123,25 @@ There are three decision points.
 - **Installing Claude**: the Workspace image by default fetches the latest Claude at container
   startup. On a fully offline host, set `CLAUDE_INSTALL=0` (via `WS_ENV`) and use an image with
   Claude baked in.
+
+- **Diagram icons (`.drawio`)**: the vendored drawio viewer draws diagrams offline, but the
+  vendor icon artwork (`shape=mxgraph.aws4.*`, GCP, Azure, Kubernetes, rack gear …) is **not**
+  bundled — all of it together is 40.8 MB. Normally the Control Plane fetches a set on first
+  use and caches it; with no external network that fetch fails and diagrams degrade quietly to
+  outlines, colours and labels. To avoid that, seed the cache from a directory you carry in:
+
+  ```sh
+  # on a networked machine, once
+  git clone --depth 1 -b v31.1.8 https://github.com/jgraph/drawio
+  # carry drawio/src/main/webapp/stencils to the target host, then, on the CP host:
+  control-plane drawio-preseed --from /path/to/stencils        # default bundle, 49 files / 17.0 MB
+  control-plane drawio-preseed --from /path/to/stencils --all  # everything, 203 files / 40.8 MB
+  ```
+
+  Every file is checked against the bundled manifest's SHA-256 before it is stored, so the
+  carry-in path does not have to be trusted. The cache is content-addressed and has no index,
+  so you can equally well `tar` a seeded cache directory and unpack it on another host. Run
+  `--list` first to see exactly what the default bundle covers, and what it leaves out.
 
 Be clear-eyed about what "air-gapped" buys you: local images let the fleet **start**, but the
 agents themselves cannot do any work without reaching their model endpoints. The offline

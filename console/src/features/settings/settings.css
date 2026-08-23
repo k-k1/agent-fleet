@@ -2399,6 +2399,16 @@
 .mr-lim {
   font-size: 11px;
 }
+/* What a member is sized to, on the roster row. Small and quiet: the row's subject is
+   the person, and these are the facts about them — never the other way round. They sit
+   before .mr-go so the chevron stays pinned to the right edge. */
+.mr-size {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.mr-size.mono {
+  color: var(--fg);
+}
 .mr-go {
   color: var(--muted2);
 }
@@ -2704,13 +2714,19 @@
 }
 /* Named sizes fill the three numeric fields above in one click. They are a shortcut,
    not a separate mode, so they sit next to the fields rather than replacing them. */
-.limit-edit .le-presets {
+/* ⚠️ The tenant's machine picker is the SAME chip row outside .limit-edit, so every
+   rule below names both. Dropping the `.limit-edit` scope instead would make
+   `.le-presets` a global class, and this stylesheet already learned what two
+   definitions of one global name do to each other (docs/70 §70.10 / .view-head). */
+.limit-edit .le-presets,
+.machine-picker .le-presets {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
 }
-.limit-edit .le-presets .chip {
+.limit-edit .le-presets .chip,
+.machine-picker .le-presets .chip {
   min-width: 44px;
   padding: 4px 10px;
   font-size: 12px;
@@ -2721,13 +2737,25 @@
   color: var(--fg);
   cursor: pointer;
 }
-.limit-edit .le-presets .chip:hover {
+.limit-edit .le-presets .chip:hover,
+.machine-picker .le-presets .chip:hover {
   border-color: var(--accent);
 }
-.limit-edit .le-presets .chip.on {
+.limit-edit .le-presets .chip.on,
+.machine-picker .le-presets .chip.on {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-fg, #fff);
+}
+/* The one-line spec under each machine chip: what the class actually buys. Monospace
+   for the instance types so the ranges line up down the list. */
+.machine-picker .machine-specs {
+  margin: 8px 0 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+.machine-picker .machine-specs li {
+  margin: 2px 0;
 }
 .role-now {
   display: inline-flex;
@@ -2895,6 +2923,18 @@
 }
 .kb-reset-all {
   font-size: 12px;
+  white-space: nowrap;
+}
+/* 見出しの右に複数のボタンを並べる（kb-head の space-between で1つの塊として右端へ寄せる）。
+   日本語のラベルは長いので、幅が足りなければ折り返して右寄せのまま2行にする（横に溢れさせない）。 */
+.keys-settings .kb-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.keys-settings .kb-head-actions button {
   white-space: nowrap;
 }
 .kb-sec {
@@ -3728,6 +3768,86 @@ label.idp-flag {
 }
 .pool-view .warn-text {
   color: var(--warn);
+}
+/* 予約 workspace（種 / probe）の印。人の workspace と同じ見た目で並ぶと、上限に
+   近いプールで「知らない誰かが 2 枠使っている」に読める。 */
+.pool-badge.bake {
+  margin-left: 6px;
+  font-family: var(--sans);
+}
+
+/* golden の焼き込み（docs/64 §64.30）。1 アーキ 1 ブロック。 */
+.golden-arch + .golden-arch {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border2);
+}
+.golden-arch-name {
+  display: inline-block;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.golden-arch p {
+  margin: 4px 0;
+}
+.golden-head .state-dot {
+  margin-right: 6px;
+}
+/* 進行線。段の名前は「いまどこか」が読めれば十分なので小さく、現在段だけ強調する。
+   ★ 折り返す（アーキ 2 本 × 6 段は狭いペインに収まらない）。 */
+.bake-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 0;
+  margin: 8px 0 6px;
+  padding: 0;
+  list-style: none;
+}
+.bake-step {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-right: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.bake-step + .bake-step::before {
+  content: "";
+  width: 14px;
+  height: 1px;
+  margin-right: 10px;
+  background: var(--border);
+}
+.bake-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+}
+.bake-step.done .bake-dot {
+  background: var(--border);
+  border-color: var(--border);
+}
+.bake-step.now {
+  color: var(--fg);
+  font-weight: 500;
+}
+.bake-step.now .bake-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.bake-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  font-size: 11px;
+}
+.bake-detail:empty {
+  display: none;
 }
 /* purge opt-in inside the offboarding dialog: a checkbox, never a preselected one —
    removing a membership and destroying a home are two different decisions. */

@@ -306,8 +306,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
 	mux.HandleFunc("PUT /connections/git/{host}/identity", handleGitProviderIdentityPut)
 	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)
-	mux.HandleFunc("POST /connections/git/github/oauth/start", handleGithubOAuthStart)
-	mux.HandleFunc("POST /connections/git/github/oauth/poll", handleGithubOAuthPoll)
+	// ★ No /connections/git/github/oauth/{start,poll} any more: both providers' OAuth
+	// flows run in the Control Plane since docs/71, where the app can be read per
+	// tenant. GitHub's token comes back through PUT /connections/git/github.com above.
 	mux.HandleFunc("PUT /connections/git/bitbucket/oauth", handleBitbucketStore)
 	mux.HandleFunc("POST /connections/claude/start", claude.HandleStart)
 	mux.HandleFunc("POST /connections/claude/complete", claude.HandleComplete)

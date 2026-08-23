@@ -28,6 +28,17 @@ even when they're displayed wrapped. No need to copy a long URL and paste it bac
 ## Shortcuts
 
 - **Ctrl+PgUp / Ctrl+PgDn** — switch to the previous / next session.
+- **Alt** covers the everyday actions, one keypress each: **Alt+N** start a session,
+  **Alt+W** close this tab / pane, **Alt+Shift+W** close them all, **Alt+1..8** jump to a
+  pane by its number, **Alt+[ / Alt+]** previous / next pane, **Alt+PgUp / Alt+PgDn**
+  previous / next tab, **Alt+A** add a memo, **Alt+G** cycle working sets, **Alt+/** jump to
+  the rail's filter box, **Alt+Q** mute the read-aloud, **Alt+,** open settings.
+  All of them are rebindable in Settings › Keyboard.
+- **Alt+= / Alt+- / Alt+0** — make the text you're looking at **bigger / smaller / default
+  size**. The terminal, the file viewer, the conversation (mirror) and the read-aloud view
+  each keep their own size, and the one belonging to the focused pane is what moves (the
+  same number you see in Settings › Display). Zooming the whole browser is still
+  **Ctrl+= / Ctrl+-**.
 - When the file tree has focus: **↑ ↓ ← → / Enter** to move and open/close, **Ctrl+↑ ↓** to jump between folders, **Shift+↑ ↓** to scroll the viewer ([05 Files](05-files.md)).
 
 ### Command palette
