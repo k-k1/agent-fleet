@@ -11,6 +11,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"strconv"
@@ -116,10 +118,84 @@ var (
 	_ goldenSeedRuntime = (*ecsEC2Runtime)(nil)
 )
 
+// --- golden の同一性（docs/72 §72.6.4） ------------------------------------------
+
+// goldenIdentity answers "is this golden a golden for the image we are about to run".
+//
+// image is the reference (what the deployment is configured with); fp is the content it
+// resolved to, or "" when that could not be established. The asymmetry is the whole
+// design: the fingerprint decides when BOTH sides have one, and everything else falls
+// back to the reference — a golden baked before this existed, a deployment whose image
+// is not in ECR, an ECR call that failed. Unknown means "carry on as before", never
+// "mismatch"; the cost of the former is a stale-looking golden, the cost of the latter
+// is every existing deployment rebuilding every golden from scratch on upgrade.
+type goldenIdentity struct {
+	image string
+	fp    string
+}
+
+// goldenFPCacheKey is deliberately NOT ecrFingerprintKey: that cache holds the RAW
+// fingerprint for the restart badge, and this one holds the hashed form that fits in an
+// EC2 tag. Same underlying ECR read, one extra call per TTL — worth it to keep the two
+// values from being mistaken for each other.
+func goldenFPCacheKey(image string) string { return "golden-img-fp:" + image }
+
+// goldenIdentityFor resolves the running workspace image to its identity, memoised for
+// ecsStaleTTL. Called on the Start path (goldenSnapshot) and on every baker tick, so it
+// must not turn into an ECR call per workspace start.
+func goldenIdentityFor(ctx context.Context, api ecrAPI, image string) goldenIdentity {
+	id := goldenIdentity{image: image}
+	if api == nil || image == "" {
+		return id
+	}
+	id.fp = freshness.get(goldenFPCacheKey(image), ecsStaleTTL, func() string {
+		return hashImageFingerprint(ecrImageFingerprint(ctx, api, image))
+	})
+	return id
+}
+
+// hashImageFingerprint compresses the fingerprint into a tag value. The raw form is
+// `linux/amd64=sha256:… linux/arm64=sha256:…`, ~180 characters for two architectures —
+// under the 256-character EC2 tag limit today and over it at four. Hashing also makes
+// the value opaque, which is right: it is only ever compared for equality.
+func hashImageFingerprint(fp string) string {
+	if fp == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(fp))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// matches is the comparison, and the order of the two branches is the contract above.
+func (id goldenIdentity) matches(tags []ec2types.Tag) bool {
+	if id.fp != "" {
+		if got := ec2TagValue(tags, ec2TagImageFP); got != "" {
+			return got == id.fp
+		}
+	}
+	return ec2TagValue(tags, ec2TagImage) == id.image
+}
+
+// stampTags is what a newly baked snapshot carries. Both are written: the reference so
+// a human (and every existing tool, including bake-golden.sh and dev-deploy.sh) can see
+// what it was baked from, the fingerprint so the CP compares content.
+func (id goldenIdentity) stampTags() []ec2types.Tag {
+	tags := []ec2types.Tag{{Key: aws.String(ec2TagImage), Value: aws.String(id.image)}}
+	if id.fp != "" {
+		tags = append(tags, ec2types.Tag{Key: aws.String(ec2TagImageFP), Value: aws.String(id.fp)})
+	}
+	return tags
+}
+
 // --- pool side -----------------------------------------------------------------
 
 func (f *ecsEC2Factory) workspaceImage() string { return f.base.WorkspaceImage() }
 func (f *ecsEC2Factory) poolLabel() string      { return f.pool.pool }
+
+// imageIdentity is workspaceImage() plus the content it currently resolves to.
+func (f *ecsEC2Factory) imageIdentity(ctx context.Context) goldenIdentity {
+	return goldenIdentityFor(ctx, f.base.ecr, f.workspaceImage())
+}
 
 // bakeArches is the declared classes' distinct architectures, default class first
 // so the arch most members land on gets its golden soonest.
@@ -178,20 +254,22 @@ func (f *ecsEC2Factory) goldenFor(ctx context.Context, role, arch string) (golde
 		Filters: []ec2types.Filter{
 			tagFilter(ec2TagPool, f.pool.pool),
 			tagFilter(ec2TagRole, role),
-			tagFilter(ec2TagImage, f.workspaceImage()),
 		},
 	})
 	if err != nil {
 		return goldenSnap{}, false, err
 	}
+	id := f.imageIdentity(ctx)
 	var best goldenSnap
 	found := false
 	for i := range out.Snapshots {
 		s := out.Snapshots[i]
 		// The architecture is matched HERE and not in the API filter: an EC2 tag filter
 		// cannot say "af-arch is x86_64 or absent", and absent is what every golden
-		// baked before this change looks like.
-		if snapshotArch(s) != arch {
+		// baked before this change looks like. The image is matched here for a second
+		// reason — the identity is "af-image-fp if both sides have one, else af-image",
+		// which no single tag filter can express (goldenIdentity).
+		if snapshotArch(s) != arch || !id.matches(s.Tags) {
 			continue
 		}
 		g := goldenSnap{
@@ -356,19 +434,23 @@ func bakeStamp(t time.Time) string {
 }
 
 func (f *ecsEC2Factory) snapshotHome(ctx context.Context, volumeID, workspace, arch string) (string, error) {
+	// ⚠️ The identity is taken HERE, at capture time, and both halves are stamped in the
+	// same CreateSnapshot call. Reading it again later would let an image that moved
+	// mid-bake stamp a candidate with content it was not baked from.
+	tags := []ec2types.Tag{
+		{Key: aws.String(ec2TagPool), Value: aws.String(f.pool.pool)},
+		{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleGoldenCandidate)},
+		{Key: aws.String(ec2TagArch), Value: aws.String(arch)},
+		{Key: aws.String(ec2TagBakeStarted), Value: aws.String(time.Now().UTC().Format(time.RFC3339))},
+		{Key: aws.String("Name"), Value: aws.String("af-golden-candidate-" + arch)},
+	}
+	tags = append(tags, f.imageIdentity(ctx).stampTags()...)
 	out, err := f.ec2.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{
 		VolumeId:    aws.String(volumeID),
 		Description: aws.String("agent-fleet golden home candidate (" + f.workspaceImage() + ", " + arch + ")"),
 		TagSpecifications: []ec2types.TagSpecification{{
 			ResourceType: ec2types.ResourceTypeSnapshot,
-			Tags: []ec2types.Tag{
-				{Key: aws.String(ec2TagPool), Value: aws.String(f.pool.pool)},
-				{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleGoldenCandidate)},
-				{Key: aws.String(ec2TagImage), Value: aws.String(f.workspaceImage())},
-				{Key: aws.String(ec2TagArch), Value: aws.String(arch)},
-				{Key: aws.String(ec2TagBakeStarted), Value: aws.String(time.Now().UTC().Format(time.RFC3339))},
-				{Key: aws.String("Name"), Value: aws.String("af-golden-candidate-" + arch)},
-			},
+			Tags:         tags,
 		}},
 	})
 	if err != nil {
@@ -406,7 +488,6 @@ func (f *ecsEC2Factory) rejectedAttempts(ctx context.Context, arch string) (int,
 		Filters: []ec2types.Filter{
 			tagFilter(ec2TagPool, f.pool.pool),
 			tagFilter(ec2TagRole, ec2RoleGoldenRejected),
-			tagFilter(ec2TagImage, f.workspaceImage()),
 		},
 	})
 	if err != nil {
@@ -414,9 +495,13 @@ func (f *ecsEC2Factory) rejectedAttempts(ctx context.Context, arch string) (int,
 	}
 	// Per architecture: an image whose home cannot boot on arm64 is not evidence about
 	// x86_64, and counting them together would stop the healthy arch from ever baking.
+	// Per image identity for the same reason the lookup uses it: the give-up counter
+	// belongs to the CONTENT that failed, so re-tagging the same bytes must not reset
+	// it, and new content under the same tag must not inherit it.
+	id := f.imageIdentity(ctx)
 	n := 0
 	for i := range out.Snapshots {
-		if snapshotArch(out.Snapshots[i]) == arch {
+		if snapshotArch(out.Snapshots[i]) == arch && id.matches(out.Snapshots[i].Tags) {
 			n++
 		}
 	}
