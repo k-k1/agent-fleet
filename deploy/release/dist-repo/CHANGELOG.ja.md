@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.11.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.11.0) — 2026-08-24
+
+git の OAuth アプリをテナント管理者が自分で登録できるようになり、Control Plane を
+Graviton で動かせるようになりました。「起動中」から進まなくなる、あるいは黙って費用が
+かかり続ける `ecs-ec2` の不具合もまとめて直しています。
+
 ## [0.10.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.10.0) — 2026-08-22
 
 Workspace が動くマシンを、テナントがメンバーごとに選べるようになりました（Graviton
