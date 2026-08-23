@@ -1,0 +1,148 @@
+# Measure what a two-architecture workspace image actually costs on CI (docs/70 §70.9).
+#
+# ## Why this exists as its own workflow
+#
+# publish-dist.yml has had `workspace_arm64` since docs/70 P1, and it has NEVER been
+# run. The reason it stayed off is one unmeasured number: that job emulates arm64 with
+# QEMU on an x86_64 runner, and its timeout is 90 minutes. Nobody knows whether the
+# arm64 half takes four minutes or four hours.
+#
+# ⚠️ It cannot be measured by simply running publish-dist. That workflow PUBLISHES —
+# GHCR plus a public Release on the dist repo — and a release is not something to
+# create in order to time a build. So this runs the ONE step whose cost is unknown,
+# with the same command publish-dist uses, and throws the result away.
+#
+# What it deliberately keeps identical to the real path (deploy/compose/release.sh):
+#   - `docker buildx build --platform linux/amd64,linux/arm64 --push --provenance=false`
+#   - the same build args, the same context (workspace/)
+#   - the same two-architecture assertion publish-dist makes afterwards
+#
+# What it deliberately does NOT do: touch the dist repo, or any tag a user could pull.
+# It pushes to a throwaway `armtime-<run id>` tag so the manifest list is real (buildx
+# cannot --load one) without any released tag ever changing meaning.
+name: arm64-image-time
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      amd64_baseline:
+        description: 'Also time an amd64-only build first, to separate the emulation tax from the build itself'
+        type: boolean
+        default: true
+
+concurrency:
+  group: arm64-image-time
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    # Deliberately ABOVE publish-dist's 90. The question being asked is "does it fit in
+    # 90 minutes" — capping at 90 would answer it with a cancelled job instead of a
+    # number, and a number is what decides whether the two-job split is needed.
+    timeout-minutes: 150
+    env:
+      REG: ghcr.io/${{ github.repository }}
+      TAG: armtime-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      # The baseline runs BEFORE QEMU is installed and pushes to its own tag, so the
+      # arm64 run below cannot reuse a layer from it. Without that separation the
+      # comparison would flatter arm64 by however much of the amd64 half was cached.
+      - name: time an amd64-only build (baseline)
+        if: ${{ inputs.amd64_baseline }}
+        run: |
+          set -euo pipefail
+          s=$SECONDS
+          docker buildx build --platform linux/amd64 --push \
+            -t "$REG/workspace:$TAG-amd64" \
+            --build-arg VERSION=0.0.0-armtime \
+            --build-arg BAKE_AGENT_CLIS=0 \
+            --provenance=false \
+            workspace
+          echo "AMD64_SEC=$((SECONDS-s))" >> "$GITHUB_ENV"
+
+      - name: set up QEMU (arm64)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      # The measurement. Same command publish-dist reaches through release.sh.
+      - name: time the two-architecture build
+        run: |
+          set -euo pipefail
+          s=$SECONDS
+          docker buildx build --platform linux/amd64,linux/arm64 --push \
+            -t "$REG/workspace:$TAG" \
+            --build-arg VERSION=0.0.0-armtime \
+            --build-arg BAKE_AGENT_CLIS=0 \
+            --provenance=false \
+            workspace
+          echo "BOTH_SEC=$((SECONDS-s))" >> "$GITHUB_ENV"
+
+      # Same assertion publish-dist makes. A single-platform reply here would mean the
+      # multi-arch path silently produced something a Graviton slot cannot pull.
+      - name: verify the index covers both architectures
+        run: |
+          set -euo pipefail
+          got=$(docker buildx imagetools inspect --raw "$REG/workspace:$TAG" \
+            | jq -r '[.manifests[]? | select(.platform.os=="linux") | .platform.architecture] | sort | join(",")')
+          echo "architectures: ${got:-<single-platform manifest>}"
+          [ "$got" = "amd64,arm64" ] || { echo "::error::not a two-architecture index (got '${got:-single}')"; exit 1; }
+
+      - name: verdict
+        run: |
+          both="${BOTH_SEC:-0}"
+          {
+            echo "## arm64 image build time (docs/70 §70.9)"
+            echo ""
+            echo "| | seconds | minutes |"
+            echo "|---|---:|---:|"
+            [ -n "${AMD64_SEC:-}" ] && echo "| amd64 only | $AMD64_SEC | $((AMD64_SEC/60)) |"
+            echo "| amd64 + arm64 (QEMU) | $both | $((both/60)) |"
+            echo ""
+            echo "publish-dist's other steps have measured ~10 min end to end, and its"
+            echo "timeout is 90 min — so the budget for this step is roughly 80 min."
+            if [ "$both" -lt 3600 ]; then
+              echo ""
+              echo "✅ **Fits.** \`workspace_arm64: true\` on publish-dist is viable as one job."
+            else
+              echo ""
+              echo "⚠️ **Does not fit comfortably.** Split publish-dist in two"
+              echo "(\`ubuntu-latest\` + \`ubuntu-24.04-arm\`, each pushing by digest, joined with"
+              echo "\`docker buildx imagetools create\`). Native arm64 runners are free for public repos."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Best effort: the throwaway tags are worthless the moment the number is read,
+      # but GITHUB_TOKEN cannot always delete package versions. A leftover
+      # `armtime-<run id>` tag is harmless — never warn-free silence about it, though,
+      # or they accumulate unnoticed.
+      - name: drop the throwaway tags
+        if: always()
+        continue-on-error: true
+        run: |
+          pkg=$(echo "${{ github.repository }}" | cut -d/ -f2)/workspace
+          enc=$(printf '%s' "$pkg" | jq -sRr @uri)
+          for want in "$TAG" "$TAG-amd64"; do
+            id=$(gh api "/user/packages/container/$enc/versions" --paginate \
+                  -q ".[] | select(.metadata.container.tags[]? == \"$want\") | .id" 2>/dev/null | head -1) || true
+            if [ -n "${id:-}" ]; then
+              gh api --method DELETE "/user/packages/container/$enc/versions/$id" && echo "deleted $want"
+            else
+              echo "::warning::could not resolve the package version for $want — delete ghcr.io/${{ github.repository }}/workspace:$want by hand"
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -324,3 +324,46 @@ describe("メンバーのマシン種別", () => {
     expect(warned()).toBe(true);
   });
 });
+
+// ⚠️ `member` is a snapshot taken when its row was clicked — the parent never refreshes
+// it (onChanged reloads the tenant LIST, not the selection). Re-seeding the editor from
+// that prop after a save shows the values from BEFORE the save, which on the machine
+// chips reads as "the setting did not save" while it very much did. Measured on a live
+// deployment (docs/70 §70.14.6).
+describe("保存した値が編集を開き直しても残る", () => {
+  beforeEach(() => {
+    api.mockImplementation((p: string) =>
+      p === "api/admin/workspace-sizing" ? Promise.resolve(SIZING_CLASSES) : Promise.resolve({ running: false, sessions: [] }),
+    );
+    apiJSON.mockImplementation((p: string, _m?: string, b?: Record<string, unknown>) =>
+      p === "api/admin/user-limits" ? Promise.resolve({ slot_class: b?.slot_class }) : Promise.resolve({}),
+    );
+  });
+
+  it("マシン種別も数値も、保存後に開き直すと保存した値になっている", async () => {
+    await mount();
+    await openEditor();
+    await act(async () => buttonWith("省コスト（Arm）")!.click());
+    // 数値はチップ経由で動かす。制御 input への .value 直代入は React の値トラッカを
+    // 更新しないので変更として拾われない（この面の既存テストも全てチップを押している）。
+    await act(async () => buttonWith("16 GiB")!.click());
+    await act(async () => buttonWith("保存")!.click());
+
+    // 開き直す。prop（member）は古いままなので、ここが実装の分かれ目になる。
+    await openEditor();
+    expect(buttonWith("省コスト（Arm）")!.className).toContain("on");
+    expect(buttonWith("テナントの既定")!.className).not.toContain("on");
+    expect(numbers()[1]).toBe("16384");
+  });
+
+  it("保存した直後はアーキ変更の警告を出し続けない", async () => {
+    await mount();
+    await openEditor();
+    await act(async () => buttonWith("省コスト（Arm）")!.click());
+    expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(true);
+    await act(async () => buttonWith("保存")!.click());
+    await openEditor();
+    // 既に arm なのだから、開いた時点では「変わる」ものが無い。
+    expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(false);
+  });
+});
