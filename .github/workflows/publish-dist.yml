@@ -27,6 +27,10 @@ on:
         description: 'Also build the workspace image for arm64 (needed by ecs-ec2 Graviton slots — docs/70)'
         type: boolean
         default: false
+      control_plane_arm64:
+        description: 'Also build the control-plane image for arm64 (lets a deployment run the CP Fargate service on Graviton — docs/72)'
+        type: boolean
+        default: false
 
 concurrency:
   group: publish-dist
@@ -63,13 +67,19 @@ jobs:
       # (`ubuntu-latest` + `ubuntu-24.04-arm`, each pushing by digest) and join them
       # with `docker buildx imagetools create`. Native arm64 runners are free for
       # public repositories, which this one now is (docs/70 §70.9).
+      #
+      # The control-plane image is the second one that can want arm64 (docs/72) —
+      # there the reason is the CP's own Fargate service, not a slot. It needs QEMU
+      # too, but only for the runtime stage's apt: its console and Go stages are
+      # pinned to $BUILDPLATFORM and cross-compile, so the emulator never runs a
+      # compiler. Both toggles share this one setup step.
       - name: set up QEMU + buildx (arm64)
-        if: ${{ inputs.workspace_arm64 }}
+        if: ${{ inputs.workspace_arm64 || inputs.control_plane_arm64 }}
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
       - name: set up buildx
-        if: ${{ inputs.workspace_arm64 }}
+        if: ${{ inputs.workspace_arm64 || inputs.control_plane_arm64 }}
         uses: docker/setup-buildx-action@v3
 
       # ADR 0037: images are distributed through GHCR. GITHUB_TOKEN can push to
@@ -87,6 +97,7 @@ jobs:
           # Empty unless asked for, so an ordinary release is the single-architecture
           # build it has always been.
           WS_PLATFORMS: ${{ inputs.workspace_arm64 && 'linux/amd64,linux/arm64' || '' }}
+          CP_PLATFORMS: ${{ inputs.control_plane_arm64 && 'linux/amd64,linux/arm64' || '' }}
         run: VERSION=$VERSION deploy/release/build.sh --all --push
 
       # A manifest list is invisible to `docker images`, so "did the arm64 half
@@ -98,6 +109,21 @@ jobs:
         run: |
           set -euo pipefail
           IMG="ghcr.io/k-k1/agent-fleet/workspace:$VERSION"
+          got=$(docker buildx imagetools inspect --raw "$IMG" \
+            | jq -r '[.manifests[]? | select(.platform.os=="linux") | .platform.architecture] | sort | join(",")')
+          echo "architectures: ${got:-<single-platform manifest>}"
+          [ "$got" = "amd64,arm64" ] || { echo "::error::$IMG is not a two-architecture index (got '${got:-single}')"; exit 1; }
+
+      # Same question for the CP image, and it has a sharper failure mode: the ECS
+      # task definition names one image tag and one RuntimePlatform (docs/72). If an
+      # operator sets CpArch=arm64 against a tag that turned out to be amd64-only,
+      # the service does not serve a broken page — it cannot place the task at all,
+      # and the whole deployment is down until the parameter goes back.
+      - name: verify the published control-plane image covers both architectures
+        if: ${{ inputs.control_plane_arm64 }}
+        run: |
+          set -euo pipefail
+          IMG="ghcr.io/k-k1/agent-fleet/control-plane:$VERSION"
           got=$(docker buildx imagetools inspect --raw "$IMG" \
             | jq -r '[.manifests[]? | select(.platform.os=="linux") | .platform.architecture] | sort | join(",")')
           echo "architectures: ${got:-<single-platform manifest>}"

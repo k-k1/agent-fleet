@@ -10,6 +10,7 @@ import {
   unpinQuickReply,
   isQuickReplyPinned,
   quickReplyKey,
+  oneTimeQuickReplies,
   type QuickReplyMap,
 } from "./quickReplies.ts";
 
@@ -255,6 +256,39 @@ describe("forget / hide / unhide", () => {
     expect(isQuickReplyPinned(["ＯＫ"], "ok")).toBe(true);
     expect(unpinQuickReply(["ＯＫ", "進めて"], "ok")).toEqual(["進めて"]);
     expect(pinQuickReply(["OK"], "ＯＫ")).toEqual(["OK"]); // 同じピンは増やさない
+  });
+});
+
+describe("oneTimeQuickReplies", () => {
+  it("picks only the entries sent once, keeping the spelling", () => {
+    const m: QuickReplyMap = {
+      ok: { text: "OK", count: 3, at: 30 },
+      "進めて": { text: "進めて", count: 1, at: 20 },
+      "あとで見る": { text: "あとで見る", count: 1, at: 10 },
+    };
+    expect(oneTimeQuickReplies(m).sort()).toEqual(["あとで見る", "進めて"]);
+    // 消した結果は常用だけが残る（設定画面はこのリストを forgetQuickReply に流す）。
+    const next = oneTimeQuickReplies(m).reduce((acc, text) => forgetQuickReply(acc, text), m);
+    expect(Object.keys(next)).toEqual(["ok"]);
+  });
+
+  it("counts full-width and half-width as one entry (1回 + 1回 = 一度きりではない)", () => {
+    const m: QuickReplyMap = {
+      "ｏｋ": { text: "ＯＫ", count: 1, at: 10 }, // キー正規化前に積まれた旧キー
+      ok: { text: "ok", count: 1, at: 20 },
+      "進めて": { text: "進めて", count: 1, at: 30 },
+    };
+    expect(oneTimeQuickReplies(m)).toEqual(["進めて"]); // OK は合算2回なので残る
+  });
+
+  it("never touches pinned suggestions", () => {
+    const m: QuickReplyMap = {
+      "後で": { text: "後で", count: 1, at: 10 },
+      ok: { text: "ok", count: 1, at: 20 },
+    };
+    expect(oneTimeQuickReplies(m, [])).toHaveLength(2);
+    expect(oneTimeQuickReplies(m, ["後で"])).toEqual(["ok"]);
+    expect(oneTimeQuickReplies(m, ["ＯＫ"])).toEqual(["後で"]); // ピンの綴りが全角でも当たる
   });
 });
 
