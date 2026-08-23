@@ -769,6 +769,16 @@ lazmix の 3 台は (c)(d) の残骸で、**`Ec2SlotSleepSec` の説明文が「
    `hibernateAfter` の 0=OFF と揃え、§64.26 の `AF_WS_IDLE_TIMEOUT=0` と同じく
    **運用者の明示的な off を off として読む**。
 
+6. **掃除ループの両側が「起動中（生きた `af-claim`）」を同じに扱う**（docs/64 §64.31.6）。
+   空き側は最初から見ていたが、**home 側（`sweepVolume`）は期限切れ claim を消すだけで
+   生きた claim を見ていなかった**。`Start` は `clearDormancy` が先・`upsertService` が最後で
+   間に mount の SSM 往復（10〜30 秒）が入るので、その窓のスイープが**起動中の WS に
+   `af-idle-since` を刻み直す**。早すぎる停止は起きない（時計は前に戻る）が、**マークが起動を
+   生き延び**、運用画面が running を「アイドル」と表示し、`evictLongestIdle` の犠牲者候補になる。
+   ⚠️ 置き場所は**退避の分岐より後**（claim が捕獲を途中で止めてはいけない）で、
+   **期限切れ claim は素通し**（`claimLive` は `af-claim-at` を見る。「タグが在れば return」と
+   書くと死んだ launch がスロットを永久に固定する）。
+
 **やらなかったこと**: 空き専用の 2 つ目の猶予パラメータ（`slotSleepAfter` で足りる。空きの
 温かさは占有中の休眠より**価値が低い**ので、別枠で長くするのは逆向き）。**terminate**（この
 アダプタは設計上 `TerminateInstances` を持たない——箱を捨てるのは運用者の判断で、
