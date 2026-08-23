@@ -4,8 +4,10 @@ status: **Track 0 第1段（認証不要の範囲）完了（2026-08-20）**。�
 本 Workspace に導入して実測したが、**`acli rovodev` 配下は `auth` 以外すべて認証ゲートで閉じている**ため、
 判定を分ける軸（TUI 文字列契約・転写正本の実体・serve モードの実挙動・モデル/使用量）は**未実測**。
 継続には Atlassian アカウント＋Rovo Dev スコープ API トークンが要る（§6）。**採否は未決**。
-**設計は文献ベースで先に詰めた（§8・2026-08-20 ユーザー判断）**——実測待ちの前提は ⏳ で明示してあり、
+**設計は文献ベースで先に詰めた（§8〜§10・2026-08-20〜21 ユーザー判断）**——実測待ちの前提は ⏳ で明示してあり、
 そこが覆ると設計も変わる。ADR は採用が決まってから `decisions/0051` で起票する。
+⏸ **Track 0 第2段（実測）は保留**（2026-08-21・**Atlassian アカウントを用意できないため**）。
+再開手順は §11。**採否判定の材料はまだ揃っていない**ので、この状態のまま実装に入らないこと。
 関連: docs/43（kiro・直近の雛形）/ docs/40（cursor）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）。
 
 ## 0. 対象と背景
@@ -39,6 +41,10 @@ status: **Track 0 第1段（認証不要の範囲）完了（2026-08-20）**。�
 
 - 単一バイナリ 16.6MB、amd64/arm64 とも `linux/latest/acli_linux_{amd64,arm64}/acli` が到達可（200 / 206）。
 - **版付き URL は 403**（`…/linux/1.3.23/acli_linux_amd64/acli`）、`.sha256` も公開されていない。
+- ⚠️ **ドリフトの実例（2026-08-21 実測）**: 同じ `linux/latest` URL から取り直したら **1.3.23-stable → 1.3.29-stable**
+  ——**1 日で 6 版動いた**（sha256 `e4f6f91f…`＝2026-08-21 時点の amd64）。「latest しか無い」は理論上の不都合ではなく、
+  **実際に日単位で中身が変わる**。焼き込み（§8.3）が「ピンではなく latest 追従」になる事実の裏取りであり、
+  **CI の契約テストが無いと版差に気づけない**（§9.4 の `rovo-contract.yml` が要る理由）。
   → **AF の焼き込みピンは「取得物を自前で固定して自前 sha256 を versions.json に書く」しかできない**
   （同じ URL が将来別の版を返すので再現ビルドにならない）。「6か月でサポート終了・随時更新推奨」が公式方針。
 - ⚠️ **自動更新が二重**: acli 自身の更新に加え、**acli が実行時に Rovo Dev 本体を落とす**
@@ -503,6 +509,43 @@ opencode（`:7799`）も codex（`:7798`）も**固定ポートに 1 プロセ�
 | 転写 | `opencode/transcript.go`（ストア由来・カーソル無し・`transcript.Turn` へ正規化） | 構造は写し。`/prune`・fork の分だけ追加 |
 | Managed | `opencode/serve.go`（Ensure/adopt/generation/drain/SSE/exit recording） | **骨格は写し・共有デーモン前提だけ捨てる**（per-session＋ポート台帳） |
 | 起動・resume | `codex/program.go`・`opencode/program.go` | `--restore <uuid>` があるので素直 |
+
+## 11. 第2段（実測）の再開手順 — 保留中（2026-08-21）
+
+アカウントが用意できず保留。再開する人が**同じ設計をやり直さずに済む**よう、手順だけ確定させておく。
+
+### 11.1 要るもの
+
+- Rovo Dev が有効な Atlassian サイトのメンバー資格 ＋ **Rovo Dev スコープの API トークン**
+  （https://go.atlassian.com/rovo-dev-api-token）。
+- クレジット: Free は **350/月**＝CLI タスク 1〜10 回。**プローブ B はターンを回すので消費する**
+  （プローブ A は消費しない）。第2段を通すだけなら Free で足りる見込みだが、**実装の反復には足りない**（§7-2）。
+
+### 11.2 手順
+
+1. **導入**: `curl -sSL https://acli.atlassian.com/linux/latest/acli_linux_amd64/acli -o ~/.local/bin/acli && chmod +x`。
+   ⚠️ 取得した版と sha256 を**その場で記録**する（latest しか無く、§2.1 のとおり日単位で動く）。
+2. **認証**（⚠️ **トークンをエージェントの会話に貼らない**。平文資格の禁止に触れるうえ転写に残る）:
+   `printf '%s' '<token>' | acli rovodev auth login --email '<mail> ' --token` を**利用者自身のシェル**で実行し、
+   エージェント側は `acli rovodev auth status` の**成否だけ**を見る。
+3. **プローブ A（クレジット消費なし）** — §8.11 の 1・4・5・6 を埋める:
+   隠れていた `run`/`serve`/`mcp`/`config` の全フラグ ／ **Rovo Dev 本体の落ち先・サイズ・初回 DL 所要**
+   ／ **hook トリガの実 enum を本体バイナリの `strings` で直接確認**（⚠️ docs を信じない＝kiro の教訓）
+   ／ `config.yml`・`mcp.json` の実既定値 ／ **`serve` のポート指定（`0` が使えるか）と bind（loopback か）と無認証か**
+   ／ `/v3/tools`・`/v3/sessions/list`・`/v3/sessions/current_session`。
+   ⚠️ 後片付けは**自分が起こした PID だけ**を落とす（`pkill -f` は同居セッションを巻き込む）。
+4. **プローブ B（1 ターンだけ）** — 極小プロンプト 1 回で 3 つまとめて取る:
+   `/v3/set_chat_message` ＋ `/v3/stream_chat` の **SSE イベント形** ／ 直後の
+   `~/.rovodev/sessions/<uuid>/session_context.json` の**実スキーマ** ／ `/usage` の**消費クレジット**。
+5. 結果で §8 の ⏳ を潰し、**§8.11 の上位 3 つが通ったら**着工判断（§8.10 の順序）。通らなければ
+   managed 不成立（1）／Terminal 不成立（2）／転写設計のやり直し（3）。
+
+### 11.3 保留中に散らかしたもの
+
+- `~/.local/bin/acli`（1.3.29-stable・**認証していないので何も持っていない**）と
+  `~/.local/share/af-rovo-probe/`（プローブ A のスクリプト）。**消しても本文の情報は失われない**。
+- ⚠️ `~/.acli` / `~/.rovodev` は**作られていない**（認証していないため）。認証したら
+  トークンが平文 YAML で載るので、片付け時は**この 2 つを消す**（§8.4）。
 
 ## 参考
 
