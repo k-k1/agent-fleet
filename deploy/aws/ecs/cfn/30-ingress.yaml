@@ -172,9 +172,14 @@ Parameters:
       while this one starts counting after that has happened and puts the BOX to sleep.
       They run in series (person leaves -> workspace stops -> slot sleeps). A sleeping
       slot costs only its root volume (~$9.6/month at 100 GiB) instead of ~$95 running,
-      and its owner wakes it in ~110s. The home stays ATTACHED while the slot sleeps,
-      which is what keeps "the same user gets the same slot". Set 0 to keep slots
-      running forever (fastest returns, highest bill).
+      and its owner wakes it in ~110s.
+      It governs BOTH kinds of dormant slot, from this one value: a slot still holding
+      its owner's home (which stays ATTACHED while the slot sleeps — that is what keeps
+      "the same user gets the same slot"), and a slot holding NO home at all, freed by an
+      eviction, a size/class change, a Destroy, or the golden bake. No warm spare is kept:
+      an empty RUNNING slot saves the next arrival ~67s and costs a full instance-hour,
+      and this deployment keeps the box STOPPED instead (docs/64 §64.31).
+      Set 0 to keep every slot running forever (fastest returns, highest bill).
   Ec2HomeGiB:
     Type: String
     Default: "50"

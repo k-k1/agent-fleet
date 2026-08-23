@@ -153,6 +153,23 @@ const (
 	// without the CP remembering anything: the attachment IS the affinity, and this tag
 	// is how long it has been dormant (for the idle-stop and for picking a victim).
 	ec2TagIdleSince = "af-idle-since"
+	// ec2TagSlotIdleSince is af-idle-since's counterpart for a slot that holds NO home:
+	// the moment the box went back to the free pool. It is on the INSTANCE because there
+	// is nowhere else to put it — a free slot has no volume, and the CP holds no state
+	// (ADR 0012). Two replicas and a restarted CP therefore read the same answer.
+	//
+	// ★ Why it has to exist at all (docs/64 §64.31): the sleep test used to live only in
+	// sweepVolume, which walks HOMES. A slot whose home was released — an eviction, a
+	// class change, the golden baker's seed and probe — left that walk entirely and no
+	// other path stopped a running instance. Measured on the live deployment: three empty
+	// m*.large sat running for over 24h with zero tasks, at ~$95/month each, while the
+	// parameter that was supposed to stop them promised ~$9.6.
+	//
+	// Written by releaseSlot (the moment it knows) and re-stamped by the sweeper when it
+	// is missing — the same "the doer writes it, the sweeper repairs it" split af-idle-since
+	// already uses. Cleared when a workspace takes the slot, so a short tenancy does not
+	// leave the box looking free since before it was busy.
+	ec2TagSlotIdleSince = "af-slot-idle-since"
 	// ec2TagHibernating marks a home that has entered hibernation (§64.18.2) and the
 	// moment it did. It exists because hibernation spans several sweeps and cannot lean
 	// on af-idle-since: releaseSlot — hibernation's own first step — clears that tag.
@@ -331,6 +348,18 @@ type ec2PoolConfig struct {
 	// counting only once the workspace is already stopped, and it acts on the BOX the
 	// workspace was using. The two run in series: person goes away → (reaper) workspace
 	// stops → (this) slot sleeps.
+	//
+	// It governs BOTH kinds of dormant slot, from the same value (docs/64 §64.31):
+	//   - a slot still holding its owner's home (af-idle-since on the volume) — sweepVolume;
+	//   - a slot holding nothing at all (af-slot-idle-since on the instance) — sweepFreeSlots.
+	// The second used to have no timer of any kind, which made the "~$9.6 instead of ~$95"
+	// this parameter is sold on untrue for every slot that had been released.
+	//
+	// 0 = OFF (slots never sleep), matching hibernateAfter and what the parameter has
+	// always been documented to mean. ⚠️ It used to mean "stop at the very first sweep" —
+	// the exact opposite — because the test was a bare `idle < slotSleepAfter`. Same shape
+	// as the AF_WS_IDLE_TIMEOUT=0 trap in §64.26: an operator's explicit "off" has to be
+	// read as off.
 	slotSleepAfter time.Duration
 	// hibernateAfter is the THIRD timer in the same series, and the only one that
 	// touches the user's data: once a home has been dormant this long it is snapshotted
@@ -1347,6 +1376,8 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	// there — stamp it for the bill. Deliberately AFTER the mount and best-effort: the
 	// tag is read by Cost Explorer and by nothing else (ADR 0048 決定 3).
 	e.tagSlotOwner(ctx, p.instanceID)
+	// …and it is no longer free, so its free-pool clock stops. Same moment, opposite tag.
+	e.clearSlotFree(ctx, p.instanceID)
 	e.setPhase("task: starting")
 	taskDefArn, reused, err := e.reuseOrRegisterTaskDef(ctx, p, prep)
 	if err != nil {
@@ -1665,6 +1696,42 @@ func (e *ecsEC2Runtime) untagSlotOwner(ctx context.Context, instanceID string) {
 		},
 	}); err != nil {
 		log.Printf("ecs-ec2: clearing the owner of slot %s failed (sweeper will): %v", instanceID, err)
+	}
+}
+
+// markSlotFree / clearSlotFree move a SLOT in and out of the free set's dormancy clock,
+// exactly as markIdle / clearIdle do for a home. They are the instance-side pair because
+// a free slot has no volume to carry the mark (see ec2TagSlotIdleSince).
+//
+// ⚠️ Best-effort like the owner tags, and for the same reason: neither a Start nor a Stop
+// may fail because a bookkeeping tag could not be written. The sweeper re-stamps a missing
+// mark on its next pass, which costs one sweep of extra running time and nothing else.
+func (e *ecsEC2Runtime) markSlotFree(ctx context.Context, instanceID string) {
+	if instanceID == "" {
+		return
+	}
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{instanceID},
+		Tags: []ec2types.Tag{{
+			Key: aws.String(ec2TagSlotIdleSince), Value: aws.String(e.now().UTC().Format(time.RFC3339)),
+		}},
+	}); err != nil {
+		log.Printf("ecs-ec2: marking slot %s free failed (the sweeper will stamp it): %v", instanceID, err)
+	}
+}
+
+// clearSlotFree is called when a workspace takes the slot. Without it a box that is used
+// for less than one sweep interval keeps the mark from BEFORE that tenancy, and the next
+// release would look older than it is — the slot would sleep with no grace at all.
+func (e *ecsEC2Runtime) clearSlotFree(ctx context.Context, instanceID string) {
+	if instanceID == "" {
+		return
+	}
+	if _, err := e.ec2.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{instanceID},
+		Tags:      []ec2types.Tag{{Key: aws.String(ec2TagSlotIdleSince)}},
+	}); err != nil {
+		log.Printf("ecs-ec2: clearing the free mark on slot %s failed (sweeper will): %v", instanceID, err)
 	}
 }
 
@@ -2692,8 +2759,11 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 		log.Printf("ecs-ec2: %s detached from %s but the device is still held: %v", volumeID, instanceID, err)
 	}
 	e.clearIdle(ctx, volumeID)
-	// The box is back in the pool, so it stops being this person's cost from here on.
+	// The box is back in the pool, so it stops being this person's cost from here on —
+	// and starts its OWN dormancy clock, which is what eventually stops it. Before this
+	// existed a released slot simply left every path that could ever stop it (§64.31).
 	e.untagSlotOwner(ctx, instanceID)
+	e.markSlotFree(ctx, instanceID)
 	log.Printf("ecs-ec2: released slot %s from %s", instanceID, e.base.name)
 	return nil
 }
@@ -3360,6 +3430,7 @@ func (f *ecsEC2Factory) sweep(ctx context.Context) error {
 	// Repair the billing tags BEFORE the volume sweep's own releases are re-read: the
 	// truth is "who is attached right now", and that is exactly what `vols` holds.
 	f.sweepSlotOwnerTags(ctx, vols.Volumes)
+	f.sweepFreeSlots(ctx, vols.Volumes)
 	return f.sweepGhostInstances(ctx)
 }
 
@@ -3507,8 +3578,8 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 	// answer and this loop has no database (ADR 0012). The reaper stamps af-hibernating
 	// and starts the capture; from then on the branch above (att == nil) advances it.
 	// A hibernation whose first step has run therefore never reaches this point.
-	if idle < f.pool.slotSleepAfter {
-		return
+	if f.pool.slotSleepAfter <= 0 || idle < f.pool.slotSleepAfter {
+		return // 0 = never sleep (see slotSleepAfter)
 	}
 	running, err := rt.instanceRunning(ctx, instanceID)
 	if err != nil || !running {
@@ -3533,6 +3604,169 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 	}
 }
 
+// sweepFreeSlots is the sleep test for slots that hold NO home — the half sweepVolume
+// structurally cannot do, because it walks homes and a released slot has none
+// (docs/64 §64.31, ADR 0045 決定 22).
+//
+// ★ The bug it fixes: Ec2SlotSleepSec promises "a slot with no running task is STOPPED,
+// ~$9.6/month instead of ~$95". That was only ever true for a slot with a home still
+// attached. The moment releaseSlot ran — an eviction, a size/class change, a Destroy, the
+// golden baker finishing with its seed and its probe — the box left every path that could
+// stop it and ran until an operator noticed. On the live deployment three of them had been
+// up for over a day with zero tasks.
+//
+// The shape mirrors sweepVolume deliberately: stamp on first sighting, act only on the
+// NEXT pass. That is what makes it safe across CP restarts and across the two replicas a
+// rolling deploy always overlaps — both read the same tag and reach the same verdict, and
+// StopInstances is idempotent, so a double call is a no-op rather than a race.
+//
+// ⚠️ No warm spare is kept, and that is not an omission (§64.17.2, "プレウォームは入れない").
+// A free RUNNING slot buys the next arrival 43s instead of 110s; the box itself — stopped,
+// never terminated, image cache intact on its root volume — is what buys the 110s instead
+// of 135s, and that is kept. A deployment that wants the 67 seconds back sets
+// Ec2SlotSleepSec=0, which turns the whole timer off.
+func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Volume) {
+	if f.pool.slotSleepAfter <= 0 {
+		return // 0 = never sleep (see slotSleepAfter)
+	}
+	probe := f.probeRuntime()
+	busy := map[string]bool{}
+	for i := range homes {
+		if inst := attachedInstance(&homes[i]); inst != "" {
+			busy[inst] = true
+		}
+		// A slot some other workspace is LAUNCHING onto holds no attachment yet; only the
+		// claim says so. Missing it would stop a box mid-Start.
+		if inst := ec2TagValue(homes[i].Tags, ec2TagClaim); inst != "" && probe.claimLive(&homes[i]) {
+			busy[inst] = true
+		}
+	}
+	out, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, f.pool.pool),
+			// af-role=slot excludes quarantined boxes on purpose: quarantineSlot already
+			// stopped those, and re-stopping them would only add noise to the log.
+			tagFilter(ec2TagRole, ec2RoleSlot),
+			{Name: aws.String("instance-state-name"), Values: []string{"running"}},
+		},
+	})
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: listing running slots: %v", err)
+		return
+	}
+	now := time.Now()
+	type candidate struct {
+		id   string
+		idle time.Duration
+	}
+	var due []candidate
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			id := aws.ToString(inst.InstanceId)
+			stamp := ec2TagValue(inst.Tags, ec2TagSlotIdleSince)
+			if busy[id] {
+				// Occupied. Repair the other direction too — a mark left on a taken slot
+				// would otherwise stop it the moment its home is released next time, with
+				// no grace at all.
+				if stamp != "" {
+					probe.clearSlotFree(ctx, id)
+				}
+				continue
+			}
+			at, err := time.Parse(time.RFC3339, stamp)
+			if stamp == "" || err != nil {
+				// First sighting (or a mark nobody can read): stamp it and let the NEXT
+				// sweep decide. releaseSlot normally does this; this is the repair path for
+				// a CP that died between the detach and the tag, and for the slots that
+				// predate this code — which is exactly what the live deployment had.
+				probe.markSlotFree(ctx, id)
+				continue
+			}
+			if idle := now.Sub(at); idle >= f.pool.slotSleepAfter {
+				due = append(due, candidate{id: id, idle: idle})
+			}
+		}
+	}
+	if len(due) == 0 {
+		return
+	}
+	// Re-read occupancy immediately before acting. `homes` was read at the top of the
+	// sweep and a Start takes ~seconds to attach; without this the window between the two
+	// is the whole sweep, and stopping a box a launch has just landed on strands that
+	// workspace until the release grace expires.
+	fresh, err := probe.occupiedInstances(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: re-reading slot occupancy before sleeping free slots: %v", err)
+		return // unknown occupancy is never a reason to stop something
+	}
+	// The ECS side of the same question. A task can be RUNNING on a slot whose home is
+	// not in `homes` at all (the baker's probe, or drift), and the instance's own view of
+	// its ENIs lags — so both are asked, and either one answering "busy" is enough.
+	tasks, err := f.slotTaskCounts(ctx)
+	if err != nil {
+		log.Printf("ecs-ec2 sweep: reading task counts before sleeping free slots: %v", err)
+		return
+	}
+	for _, c := range due {
+		if fresh[c.id] {
+			continue // taken between the two reads
+		}
+		if tasks[c.id] > 0 {
+			log.Printf("ecs-ec2 sweep: free slot %s still runs %d task(s); leaving it", c.id, tasks[c.id])
+			continue
+		}
+		// Never stop a slot that still carries a task ENI — the same guard the occupied
+		// path uses, and for the same reason: an instance stopped inside that window comes
+		// back MULTI-ENI and silently loses its auto-assigned public IPv4 and its egress
+		// (ADR 0045 決定 3-3, reproduced on real hardware). Skipping just means the next
+		// sweep stops it.
+		if held, err := f.taskENIsAttached(ctx, c.id); err != nil || held {
+			if held {
+				log.Printf("ecs-ec2 sweep: free slot %s still has a task ENI; leaving it running for now", c.id)
+			}
+			continue
+		}
+		log.Printf("ecs-ec2 sweep: slot %s has held no home for %.0fm; stopping it", c.id, c.idle.Minutes())
+		if _, err := f.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{c.id}}); err != nil {
+			log.Printf("ecs-ec2 sweep: stopping the free slot %s failed: %v", c.id, err)
+		}
+	}
+}
+
+// slotTaskCounts maps EC2 instance id → tasks ECS believes are on it (running + pending).
+// A slot the cluster does not know about is simply absent, which reads as 0 — correct,
+// since nothing can be placed on it.
+func (f *ecsEC2Factory) slotTaskCounts(ctx context.Context) (map[string]int, error) {
+	rt := f.probeRuntime()
+	arns, err := rt.listContainerInstanceARNs(ctx)
+	if err != nil || len(arns) == 0 {
+		return map[string]int{}, err
+	}
+	counts := map[string]int{}
+	for _, chunk := range chunkStrings(arns, 100) {
+		out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
+			Cluster:            aws.String(f.base.cfg.cluster),
+			ContainerInstances: chunk,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, ci := range out.ContainerInstances {
+			counts[aws.ToString(ci.Ec2InstanceId)] = int(ci.RunningTasksCount + ci.PendingTasksCount)
+		}
+	}
+	return counts, nil
+}
+
+// probeRuntime is a throwaway ecsEC2Runtime used purely as the library for pool-wide tag
+// queries. It is bound to no workspace, so only the pool-wide calls are valid on it.
+func (f *ecsEC2Factory) probeRuntime() *ecsEC2Runtime {
+	return &ecsEC2Runtime{
+		base: &ecsRuntime{cfg: f.base.cfg, ecs: f.base.ecs}, ci: f.ci, ec2: f.ec2, pool: f.pool,
+		bg: backgroundWithin(f.pool.waitBudget), now: time.Now, sleep: sleepCtx,
+	}
+}
+
 // runtimeForVolume rebuilds just enough of an ecsEC2Runtime to act on a volume found by
 // tag — the sweeper starts from AWS, not from the database, so it can clean up after a
 // workspace the CP has not looked at since it restarted.
@@ -3554,10 +3788,7 @@ func (f *ecsEC2Factory) runtimeForVolume(vol *ec2types.Volume) *ecsEC2Runtime {
 // even when they are terminated (ADR 0045 決定 3-2), and the ghosts satisfy placement
 // constraints — the scheduler keeps aiming tasks at a box that is not there.
 func (f *ecsEC2Factory) sweepGhostInstances(ctx context.Context) error {
-	rt := &ecsEC2Runtime{
-		base: &ecsRuntime{cfg: f.base.cfg, ecs: f.base.ecs}, ci: f.ci, ec2: f.ec2, pool: f.pool,
-		bg: backgroundWithin(f.pool.waitBudget), now: time.Now, sleep: sleepCtx,
-	}
+	rt := f.probeRuntime()
 	arns, err := rt.listContainerInstanceARNs(ctx)
 	if err != nil || len(arns) == 0 {
 		return err
@@ -3866,11 +4097,8 @@ func bakePhaseActive(phase string) bool {
 // operator opens this screen is when something is already wrong.
 func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	// One throwaway runtime as the library for the tag queries — the same trick the
-	// sweeper uses. It is bound to no workspace, so only pool-wide calls are valid on it.
-	probe := &ecsEC2Runtime{
-		base: &ecsRuntime{cfg: f.base.cfg, ecs: f.base.ecs}, ec2: f.ec2, ci: f.ci, pool: f.pool,
-		bg: backgroundWithin(f.pool.waitBudget), now: time.Now, sleep: sleepCtx,
-	}
+	// sweeper uses.
+	probe := f.probeRuntime()
 	st := ec2PoolStatus{
 		Runtime: "ecs-ec2", Pool: f.pool.pool, MaxSlots: f.pool.maxSlots,
 		SleepAfterS: int(f.pool.slotSleepAfter.Seconds()),
@@ -3960,6 +4188,11 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			}
 			if h := occupant[id]; h != nil {
 				s.Workspace, s.IdleMinutes = h.Workspace, h.IdleMinutes
+			} else if at, err := time.Parse(time.RFC3339, ec2TagValue(inst.Tags, ec2TagSlotIdleSince)); err == nil {
+				// A FREE slot has its own clock (af-slot-idle-since), and the operator's
+				// question about a running box with no workspace on it is "how long has it
+				// been like that" — which used to read as 0 whatever the answer was.
+				s.IdleMinutes = int(now.Sub(at).Minutes())
 			}
 			if ec2TagValue(inst.Tags, ec2TagRole) == ec2RoleQuarantined {
 				s.Quarantined = true

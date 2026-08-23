@@ -134,6 +134,19 @@ func (f *fakeEC2) setTag(volID, key, value string) {
 	v.Tags = append(v.Tags, ec2types.Tag{Key: aws.String(key), Value: aws.String(value)})
 }
 
+// setInstanceTag is setTag's counterpart for a SLOT. The free-pool dormancy mark
+// (af-slot-idle-since) lives on the instance, because a free slot has no volume.
+func (f *fakeEC2) setInstanceTag(instID, key, value string) {
+	i := f.instances[instID]
+	for n := range i.Tags {
+		if aws.ToString(i.Tags[n].Key) == key {
+			i.Tags[n].Value = aws.String(value)
+			return
+		}
+	}
+	i.Tags = append(i.Tags, ec2types.Tag{Key: aws.String(key), Value: aws.String(value)})
+}
+
 func filterMatch(filters []ec2types.Filter, get func(name string) []string) bool {
 	for _, fl := range filters {
 		name := aws.ToString(fl.Name)
@@ -507,7 +520,11 @@ func (f *fakeSSMCmd) GetCommandInvocation(_ context.Context, in *ssm.GetCommandI
 
 type fakeContainerInstances struct {
 	// registered maps EC2 instance id -> agentConnected
-	registered   map[string]bool
+	registered map[string]bool
+	// tasks maps EC2 instance id -> running task count. The free-slot sweep asks ECS
+	// "is anything on this box" as well as asking EC2 "is a home on it", because a task
+	// can be running on a slot no home is attached to at all.
+	tasks        map[string]int32
 	deregistered []string
 }
 
@@ -528,6 +545,7 @@ func (f *fakeContainerInstances) DescribeContainerInstances(_ context.Context, i
 			Ec2InstanceId:        aws.String(id),
 			Status:               aws.String("ACTIVE"),
 			AgentConnected:       f.registered[id],
+			RunningTasksCount:    f.tasks[id],
 		})
 	}
 	return out, nil
@@ -583,7 +601,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		efs:  &fakeEFS{},
 		ssm:  &fakeSSM{},
 		ssmc: &fakeSSMCmd{fail: map[string]bool{}},
-		ci:   &fakeContainerInstances{registered: map[string]bool{}},
+		ci:   &fakeContainerInstances{registered: map[string]bool{}, tasks: map[string]int32{}},
 	}
 	h.ssmc.sink = h.ec2
 	base := newTestECS(h.ecs, h.efs, h.ssm)
@@ -1476,6 +1494,235 @@ func TestECSEC2SweeperWaitsForTaskENIsBeforeStopping(t *testing.T) {
 	}
 	if !stopped {
 		t.Error("the slot was never stopped after its task ENI went away")
+	}
+}
+
+// --- free slots (docs/64 §64.31, ADR 0045 決定 22) ---
+//
+// A slot whose home has been released leaves the home walk entirely, so before
+// sweepFreeSlots existed NOTHING stopped it. Measured on the live deployment: three
+// m*.large with zero tasks, running for over 24 hours, at ~$95/month each — while
+// Ec2SlotSleepSec's own description promised ~$9.6.
+
+// stoppedInstances is what every test below actually asserts on.
+func stoppedInstances(h *ec2Harness) []string {
+	var ids []string
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "StopInstances ") {
+			ids = append(ids, strings.TrimPrefix(c, "StopInstances "))
+		}
+	}
+	return ids
+}
+
+// freeSlotHarness builds the exact shape of the live incident: a slot in the pool, no
+// home attached to it, nothing running on it.
+func freeSlotHarness(t *testing.T, freeFor time.Duration) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-free", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-free"] = true
+	h.ec2.setInstanceTag("i-free", ec2TagSlotIdleSince,
+		time.Now().Add(-freeFor).UTC().Format(time.RFC3339))
+	return h
+}
+
+func TestECSEC2SweeperStopsAFreeSlot(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, 30*time.Minute)
+
+	f := h.factory()
+	if err := f.sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+
+	got := stoppedInstances(h)
+	if len(got) != 1 || got[0] != "i-free" {
+		t.Fatalf("StopInstances = %v, want [i-free] — an empty slot ran for 30m and nothing stopped it", got)
+	}
+}
+
+// The mark is what makes the decision reproducible across a CP restart and across the two
+// replicas every rolling deploy overlaps (ADR 0012). A slot that predates this code — or
+// one whose CP died between the detach and the tag — has none, so the sweeper stamps it
+// and acts only on the NEXT pass. That is also the grace: no slot is ever stopped by the
+// first sweep that sees it.
+func TestECSEC2SweeperStampsAnUnmarkedFreeSlotBeforeStoppingIt(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-free", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-free"] = true
+
+	f := h.factory()
+	if err := f.sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 0 {
+		t.Fatalf("StopInstances = %v, want none — the first sighting must only stamp the slot", got)
+	}
+	stamp := ec2TagValue(h.ec2.instances["i-free"].Tags, ec2TagSlotIdleSince)
+	if stamp == "" {
+		t.Fatal("the sweeper neither stamped nor stopped the free slot; it will never be stopped")
+	}
+	if _, err := time.Parse(time.RFC3339, stamp); err != nil {
+		t.Fatalf("af-slot-idle-since = %q, not RFC3339: %v", stamp, err)
+	}
+
+	// Backdate the mark the sweeper itself wrote and sweep again: now it is due.
+	h.ec2.setInstanceTag("i-free", ec2TagSlotIdleSince,
+		time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	if err := f.sweep(ctx); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 1 || got[0] != "i-free" {
+		t.Fatalf("StopInstances = %v, want [i-free] on the sweep after the mark aged out", got)
+	}
+}
+
+func TestECSEC2SweeperLeavesAFreshlyFreedSlotAlone(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, time.Minute)
+
+	if err := h.factory().sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 0 {
+		t.Fatalf("StopInstances = %v, want none — a slot free for a minute is inside the grace", got)
+	}
+}
+
+// ⚠️ The one guard that must never be skipped. A slot stopped while ECS still has a task
+// ENI on it comes back MULTI-ENI and silently loses its auto-assigned public IPv4 and, on
+// a deployment without NAT, its egress (ADR 0045 決定 3-3 — reproduced on real hardware
+// through the occupied path). The free path can reach the same window.
+func TestECSEC2SweeperWaitsForTaskENIsOnAFreeSlot(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, 30*time.Minute)
+	h.ec2.instances["i-free"].NetworkInterfaces = []ec2types.InstanceNetworkInterface{
+		{Description: aws.String("")},
+		{Description: aws.String("arn:aws:ecs:ap-northeast-1:1234:attachment/abc")},
+	}
+
+	f := h.factory()
+	if err := f.sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 0 {
+		t.Fatalf("StopInstances = %v — stopped a free slot that still carried a task ENI", got)
+	}
+
+	// ECS detaches it a little after the task is gone; the next sweep stops the slot.
+	h.ec2.instances["i-free"].NetworkInterfaces = []ec2types.InstanceNetworkInterface{{Description: aws.String("")}}
+	if err := f.sweep(ctx); err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 1 || got[0] != "i-free" {
+		t.Fatalf("StopInstances = %v, want [i-free] once the task ENI was gone", got)
+	}
+}
+
+// A task can be running on a slot that no home is attached to — the golden baker's probe,
+// or plain drift. "No home" is therefore not the same statement as "nothing on it", and
+// asking only EC2 would kill a live container.
+func TestECSEC2SweeperLeavesAFreeSlotThatStillRunsATask(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, 30*time.Minute)
+	h.ci.tasks["i-free"] = 1
+
+	if err := h.factory().sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 0 {
+		t.Fatalf("StopInstances = %v — stopped a slot ECS still had a task on", got)
+	}
+}
+
+// Occupancy comes from the volumes, and both of its forms have to count: a home already
+// attached, and a home whose Start has only got as far as the claim.
+func TestECSEC2SweeperNeverStopsAnOccupiedOrClaimedSlot(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a home is attached", func(t *testing.T) {
+		h := freeSlotHarness(t, 30*time.Minute) // stale mark left over from a past tenancy
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.attach("vol-1", "i-free", time.Now())
+		h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+
+		if err := h.factory().sweep(ctx); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		if got := stoppedInstances(h); len(got) != 0 {
+			t.Fatalf("StopInstances = %v — stopped a slot with a live workspace on it", got)
+		}
+		// …and the stale mark is cleared, or the slot would sleep with no grace at all the
+		// next time it is released.
+		if v := ec2TagValue(h.ec2.instances["i-free"].Tags, ec2TagSlotIdleSince); v != "" {
+			t.Errorf("af-slot-idle-since = %q on an occupied slot; want it cleared", v)
+		}
+	})
+
+	t.Run("a Start has claimed it", func(t *testing.T) {
+		h := freeSlotHarness(t, 30*time.Minute)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.setTag("vol-1", ec2TagClaim, "i-free")
+		h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+
+		if err := h.factory().sweep(ctx); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		if got := stoppedInstances(h); len(got) != 0 {
+			t.Fatalf("StopInstances = %v — stopped a slot a Start was landing on", got)
+		}
+	})
+}
+
+// releaseSlot is where a slot BECOMES free, and it is the only place that knows the exact
+// moment. Before this it handed the box back to the pool with no clock on it at all —
+// which is precisely how the live deployment ended up with three of them.
+func TestECSEC2ReleaseStartsTheSlotsOwnDormancyClock(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+	h.ec2.setInstanceTag("i-hot", ec2TagMembership, "M-1")
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.rt.releaseSlot(ctx); err != nil {
+		t.Fatalf("releaseSlot: %v", err)
+	}
+	stamp := ec2TagValue(h.ec2.instances["i-hot"].Tags, ec2TagSlotIdleSince)
+	if stamp == "" {
+		t.Fatal("the released slot carries no af-slot-idle-since; nothing will ever stop it")
+	}
+	at, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		t.Fatalf("af-slot-idle-since = %q, not RFC3339: %v", stamp, err)
+	}
+	if d := time.Since(at); d > time.Minute {
+		t.Errorf("af-slot-idle-since is %s old right after the release; it must be now", d)
+	}
+}
+
+// 0 means OFF for every kind of slot, which is what Ec2SlotSleepSec has always been
+// documented to mean. The bare `idle < slotSleepAfter` test made it mean the exact
+// opposite — stop at the first sweep — the same trap AF_WS_IDLE_TIMEOUT=0 sprang in
+// §64.26.
+func TestECSEC2SlotSleepZeroKeepsEverySlotRunning(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, 30*time.Minute)
+	h.rt.pool.slotSleepAfter = 0
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.factory().sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := stoppedInstances(h); len(got) != 0 {
+		t.Fatalf("StopInstances = %v with Ec2SlotSleepSec=0, which means never sleep", got)
 	}
 }
 
