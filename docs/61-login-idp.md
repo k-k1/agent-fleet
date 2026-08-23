@@ -2053,14 +2053,14 @@ CSV の羅列なので「参照を外した」も「絞った」も同じ形で�
 ## 61.18 後始末 — 消す操作をどこまで作るか（2026-08-22）
 
 管理画面には「作る」しかない操作が 3 つ残っていた。golden スナップショットの自動焼き直し
-（0.9.2・docs/64 §64.28）を実デプロイ 2 本（<dev-deployment> / <prod-deployment>）で実走させたときに、
+（0.9.2・docs/64 §64.28）を実デプロイ 2 本（開発配備 / 本番配備）で実走させたときに、
 3 つとも同時に表に出た。
 
 1. 自動焼きが作る**予約テナント `af-golden`**（表示名 `golden snapshot (system)`）が、人の
    テナントと並んで一覧に出る。中の `af-golden-seed` / `af-golden-probe` は**製品の通常の
    Start 経路**で workspace を作る（そうでなければ焼けた golden は「製品が実際に作る home」の
    複製ではなくなる）ので、`af-membership` タグが付き、人のメンバーとして費用画面にも出る。
-2. **テナントは作成しかできない。** <prod-deployment> で手焼き時代の捨てテナント 2 つがスロットを
+2. **テナントは作成しかできない。** 本番配備で手焼き時代の捨てテナント 2 つがスロットを
    塞ぎ、自動焼きまで止めた（利用者が Console から除名＋破棄して解消）。
 3. **除名は論理削除だけ**で、行を消す手段が無い。`SetMembershipStatus` のコメントが
    *"Hard deletion is deliberately not offered — schedules, audit rows and shares reference

@@ -823,7 +823,7 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	// service with an old task that Service Connect hasn't stopped routing to
 	// yet. Reporting "running" before that settles let a client's OAuth
 	// start/complete land on two different Agent processes and lose the
-	// in-memory flow_id (confirmed 2026-08-19 on <dev-deployment>).
+	// in-memory flow_id (confirmed 2026-08-19 on the dev deployment).
 	case s.DesiredCount >= 1 && s.RunningCount >= 1 && serviceRolledOut(s):
 		e.clearBlockedPhase()
 		return "running"
@@ -2466,7 +2466,7 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 // retire the running task and start a fresh one — Service Connect load-balances
 // across both for the ~1-2 minutes it takes to settle, which silently drops
 // anything a caller stashed in the Agent process's memory (an OAuth flow_id;
-// confirmed 2026-08-19 on <dev-deployment>). Most re-wakes change nothing (same image,
+// confirmed 2026-08-19 on the dev deployment). Most re-wakes change nothing (same image,
 // same env, same secrets ARNs), so most re-wakes can skip that window entirely.
 //
 // Same shape as startGen/startPhase for the same reason: the Runtime object is
