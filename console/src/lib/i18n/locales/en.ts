@@ -1926,6 +1926,7 @@ export const en: Record<keyof typeof ja, string> = {
   // Starting dialog (WsStartingDialog — docs/35 §35.9-9)
   "wsstart.title": "Starting workspace",
   "wsstart.generic": "Starting…",
+  "wsstart.blocked": "Cannot start. Waiting will not help",
   "wsstart.installing_clis": "Installing agent CLIs… (first start only, can take a few minutes)",
   "wsstart.fetching_tool": "Fetching additional tools…",
   "wsstart.toolchain": "Installing toolchain…",

@@ -3045,3 +3045,76 @@ func TestECSEC2StaleCandidateIsNotUsed(t *testing.T) {
 		t.Fatalf("the probe used a candidate baked from another image: %q", got)
 	}
 }
+
+// --- 配置できない起動が「なぜ」を言う（docs/70 §70.14.6） ---
+
+func svcWithEvents(desired, running int32, deployAt time.Time, events ...ecstypes.ServiceEvent) ecstypes.Service {
+	return ecstypes.Service{
+		DesiredCount: desired,
+		RunningCount: running,
+		Deployments: []ecstypes.Deployment{
+			{Status: aws.String("PRIMARY"), CreatedAt: aws.Time(deployAt)},
+		},
+		Events: events,
+	}
+}
+
+func placeEvent(at time.Time, msg string) ecstypes.ServiceEvent {
+	return ecstypes.ServiceEvent{CreatedAt: aws.Time(at), Message: aws.String(msg)}
+}
+
+const unplaceable = "(service af-ws-x) was unable to place a task because no container " +
+	"instance met all of its requirements. The closest matching (container-instance abc) is " +
+	"missing an attribute required by your task."
+
+// 配置できない起動には期限が無い。ECS は理由をイベントに書いているのに CP がそれを
+// 捨てて素の starting を返していたので、`aws ecs describe-services` を手で読む以外に
+// 原因を知る方法が無かった。
+func TestECSPlacementBlockedReadsTheCurrentDeployment(t *testing.T) {
+	now := time.Now()
+	deploy := now.Add(-2 * time.Minute)
+
+	got := ecsPlacementBlocked(svcWithEvents(1, 0, deploy, placeEvent(now.Add(-time.Minute), unplaceable)))
+	if !strings.Contains(got, "missing an attribute") {
+		t.Fatalf("the placement failure was not surfaced: %q", got)
+	}
+
+	// 直った後の再デプロイ。古い苦情はイベント一覧に残り続けるので、デプロイより前の
+	// ものを読むと通常のコールドスタートが偽の診断になる。
+	if got := ecsPlacementBlocked(svcWithEvents(1, 0, now, placeEvent(now.Add(-time.Minute), unplaceable))); got != "" {
+		t.Fatalf("an event older than the current deployment was reported: %q", got)
+	}
+
+	// ふつうに上がってくる最中は何も言わない。
+	if got := ecsPlacementBlocked(svcWithEvents(1, 0, deploy,
+		placeEvent(now, "(service af-ws-x) has started 1 tasks: (task abc)."))); got != "" {
+		t.Fatalf("a healthy start was reported as blocked: %q", got)
+	}
+}
+
+// phase に載って初めて Console に出る。running になったら消えることまでが契約——
+// 消えないと bootPhase != "" のせいで起動ダイアログが出たままになる。
+func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
+	h := newEC2Harness(t)
+	now := time.Now()
+	defer h.rt.setPhase("")
+
+	h.rt.notePlacementBlocked(svcWithEvents(1, 0, now.Add(-time.Minute), placeEvent(now, unplaceable)))
+	ph := h.rt.BootPhase()
+	if !strings.HasPrefix(ph, blockedPhasePrefix) || !strings.Contains(ph, "missing an attribute") {
+		t.Fatalf("phase does not carry the reason: %q", ph)
+	}
+
+	h.rt.clearBlockedPhase()
+	if got := h.rt.BootPhase(); got != "" {
+		t.Fatalf("the blocked phase survived the task starting: %q", got)
+	}
+
+	// ⚠️ 進行中の Start が書いた phase は消してはいけない。4 秒ごとのポーリングが
+	// これを消すと、起動ダイアログが起動の最中に真っ白になる。
+	h.rt.setPhase("home: attaching")
+	h.rt.clearBlockedPhase()
+	if got := h.rt.BootPhase(); got != "home: attaching" {
+		t.Fatalf("a live Start's phase was wiped by a poll: %q", got)
+	}
+}
