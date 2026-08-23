@@ -27,6 +27,9 @@
 #                                                      #   image (docs/70 §70.9). Implies
 #                                                      #   --push: buildx cannot load a
 #                                                      #   manifest list locally.
+#   CP_PLATFORMS=linux/amd64,linux/arm64 VERSION=... ... --push  # same, for the control
+#                                                      #   plane image (docs/72). Also
+#                                                      #   implies --push.
 #
 # Normally invoked via deploy/release/build.sh, the single entry point (docs/35 §35.6.2).
 set -euo pipefail
@@ -47,6 +50,12 @@ BAKE_AGENT_CLIS="${BAKE_AGENT_CLIS:-0}"
 # "linux/amd64,linux/arm64" to publish one tag holding both — ECS and docker then pull
 # whichever matches the box, and the CP needs no second image reference.
 WS_PLATFORMS="${WS_PLATFORMS:-}"
+# Same, for the CONTROL PLANE image (docs/72). Independent of WS_PLATFORMS on
+# purpose: the two images answer different questions. The workspace image needs
+# arm64 because a slot can be Graviton; the CP image needs it because an operator
+# may want to run the Fargate service itself on ARM64. A deployment can want
+# either, both, or neither.
+CP_PLATFORMS="${CP_PLATFORMS:-}"
 
 DO_BUILD=1; DO_SAVE=0; DO_PUSH=0
 for a in "$@"; do
@@ -78,15 +87,35 @@ if [ "$DO_BUILD" = 1 ]; then
   tar -C "$ROOT/docs" -cf - "${EXCLUDES[@]}" . | tar -C "$DOCS_STAGE" -xf -
   echo "==> staged docs (distignore applied) -> $DOCS_STAGE_REL"
 
-  echo "==> build $CP_IMAGE (context=repo root, docs=staged)"
-  docker build -f "$ROOT/control-plane/Dockerfile" -t "$CP_IMAGE" \
-    --build-arg "VERSION=$VERSION" \
-    --build-arg "DOCS_SRC=$DOCS_STAGE_REL" \
-    "$ROOT"
-  # The workspace image is the only one that has to exist for more than one CPU
-  # architecture: on the ecs-ec2 runtime a slot can be Graviton (docs/70), and the CP
-  # itself runs on Fargate x86_64 wherever it is deployed. WS_PLATFORMS is empty by
-  # default, so a plain build is byte-for-byte what it has always been.
+  # Same rule as the workspace image below: a multi-platform build produces a
+  # manifest LIST, which buildx can only push. ⚠️ Unlike the workspace image, the
+  # CP Dockerfile pins its console and Go stages to $BUILDPLATFORM and cross-compiles
+  # (docs/72 §72.3), so the second architecture costs an emulated `apt-get install`
+  # and nothing else — do not "simplify" that away.
+  if [ -n "$CP_PLATFORMS" ]; then
+    if [ "$DO_PUSH" != 1 ]; then
+      echo "ERROR: CP_PLATFORMS needs --push (a manifest list cannot be loaded into the local docker)" >&2
+      exit 1
+    fi
+    echo "==> buildx $CP_IMAGE (platforms=$CP_PLATFORMS, context=repo root, docs=staged) -> pushed"
+    docker buildx build --platform "$CP_PLATFORMS" --push \
+      -f "$ROOT/control-plane/Dockerfile" -t "$CP_IMAGE" \
+      --build-arg "VERSION=$VERSION" \
+      --build-arg "DOCS_SRC=$DOCS_STAGE_REL" \
+      --provenance=false \
+      "$ROOT"
+  else
+    echo "==> build $CP_IMAGE (context=repo root, docs=staged)"
+    docker build -f "$ROOT/control-plane/Dockerfile" -t "$CP_IMAGE" \
+      --build-arg "VERSION=$VERSION" \
+      --build-arg "DOCS_SRC=$DOCS_STAGE_REL" \
+      "$ROOT"
+  fi
+  # The workspace image needs a second CPU architecture for its own reason: on the
+  # ecs-ec2 runtime a slot can be Graviton (docs/70). That is a different question from
+  # CP_PLATFORMS above (which architecture the CP's own Fargate task runs on, docs/72),
+  # which is why the two are separate switches. WS_PLATFORMS is empty by default, so a
+  # plain build is byte-for-byte what it has always been.
   #
   # ⚠️ A multi-platform build produces a manifest LIST, and buildx cannot `--load` one
   # into the local docker — it can only push it. So this path implies --push, and the
@@ -133,7 +162,11 @@ if [ "$DO_PUSH" = 1 ]; then
     */*) ;;
     *) echo "ERROR: --push needs REGISTRY to be a real registry path (got '$REGISTRY')" >&2; exit 1 ;;
   esac
-  docker push "$CP_IMAGE"
+  if [ -n "$CP_PLATFORMS" ]; then
+    echo "    ($CP_IMAGE was pushed by buildx as a manifest list)"
+  else
+    docker push "$CP_IMAGE"
+  fi
   if [ -n "$WS_PLATFORMS" ]; then
     echo "    ($WS_IMAGE was pushed by buildx as a manifest list)"
   else
@@ -145,8 +178,8 @@ if [ "$DO_SAVE" = 1 ]; then
   # ⚠️ A manifest list is not in the local docker at all, so there is nothing to save.
   # The air-gap tar stays single-architecture (the host's) on purpose — it is a
   # hand-off for one machine, not a distribution channel (ADR 0037).
-  if [ -n "$WS_PLATFORMS" ]; then
-    echo "ERROR: --save cannot be combined with WS_PLATFORMS (a manifest list is never loaded locally)" >&2
+  if [ -n "$WS_PLATFORMS" ] || [ -n "$CP_PLATFORMS" ]; then
+    echo "ERROR: --save cannot be combined with WS_PLATFORMS/CP_PLATFORMS (a manifest list is never loaded locally)" >&2
     exit 1
   fi
   echo "==> docker save (local hand-off) $CP_IMAGE + $WS_IMAGE"

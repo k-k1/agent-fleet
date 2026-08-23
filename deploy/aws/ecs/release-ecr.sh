@@ -73,6 +73,19 @@ fi
 for pair in "control-plane=af-control-plane" "workspace=af-workspace"; do
   local_name="$LOCAL_REGISTRY/${pair%%=*}:$VERSION"
   ecr_uri="$ECR_HOST/${pair#*=}:$VERSION"
+  # ⚠️ This path goes through the LOCAL docker, so it is single-architecture by
+  # construction: a multi-arch build (WS_PLATFORMS / CP_PLATFORMS — docs/70 §70.9,
+  # docs/72) produces a manifest LIST, which buildx pushes straight to a registry and
+  # never loads locally. The image is then simply absent here, and `docker tag`'s
+  # "No such image" reads like a failed build rather than the wrong tool. Say so.
+  if ! docker image inspect "$local_name" >/dev/null 2>&1; then
+    echo "ERROR: $local_name is not in the local docker." >&2
+    echo "       If it was built multi-arch, it never will be — a manifest list cannot be" >&2
+    echo "       loaded locally. Copy the index registry-to-registry instead:" >&2
+    echo "         crane copy ghcr.io/k-k1/agent-fleet/${pair%%=*}:$VERSION $ecr_uri" >&2
+    echo "       Otherwise build it first (deploy/release/build.sh) or pass --images-tar." >&2
+    exit 1
+  fi
   echo "==> push $local_name -> $ecr_uri"
   docker tag "$local_name" "$ecr_uri"
   docker push "$ecr_uri"
