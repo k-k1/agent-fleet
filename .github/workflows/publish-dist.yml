@@ -27,10 +27,17 @@ on:
         description: 'Also build the workspace image for arm64 (needed by ecs-ec2 Graviton slots — docs/70)'
         type: boolean
         default: false
+      # ON by default, unlike workspace_arm64 above, and the asymmetry is the point.
+      # The CP cross-compiles (docs/72 §72.3), so the arm64 half costs a MEASURED 71
+      # seconds — against a 90 minute timeout. The workspace image cannot cross-compile
+      # and pays 593. At 71 seconds there is no case for making an operator ask: leaving
+      # it off would mean CpArch=arm64 only works on a specially-baked image, which is
+      # ADR 0044 決定 3 (a feature shipped off is a feature that does not exist).
+      # ⚠️ Turn it OFF only to reproduce a pre-0.10.1 single-architecture release.
       control_plane_arm64:
-        description: 'Also build the control-plane image for arm64 (lets a deployment run the CP Fargate service on Graviton — docs/72)'
+        description: 'Build the control-plane image for arm64 as well as amd64, so a deployment can set CpArch=arm64 (docs/72). On by default: it costs ~71s because the CP cross-compiles.'
         type: boolean
-        default: false
+        default: true
 
 concurrency:
   group: publish-dist
