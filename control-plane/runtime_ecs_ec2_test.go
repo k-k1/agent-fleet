@@ -1497,6 +1497,68 @@ func TestECSEC2SweeperWaitsForTaskENIsBeforeStopping(t *testing.T) {
 	}
 }
 
+// A Start is in flight: placeHome clears the dormancy marks first and upsertService
+// raises desiredCount last, with the mount (an SSM round trip) in between. The home walk
+// used to read that window as "dormant" — see docs/64 §64.31.6.
+func TestECSEC2SweeperLeavesAHomeAloneWhileItsStartIsInFlight(t *testing.T) {
+	ctx := context.Background()
+
+	// The claim is what says "a launch owns this home right now".
+	claim := func(h *ec2Harness, at time.Time) {
+		h.ec2.setTag("vol-1", ec2TagClaim, "i-hot")
+		h.ec2.setTag("vol-1", ec2TagClaimAt, at.UTC().Format(time.RFC3339))
+	}
+
+	t.Run("does not re-stamp the dormancy mark a Start just cleared", func(t *testing.T) {
+		h := newEC2Harness(t)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+		h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+		claim(h, time.Now())
+		// The service is still at the value Stop left; upsertService has not run yet.
+		h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+		h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
+
+		if v := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince); v != "" {
+			t.Errorf("af-idle-since = %q on a home whose Start is in flight; the mark would "+
+				"outlive the launch and make a RUNNING workspace an eviction victim", v)
+		}
+	})
+
+	t.Run("does not release the slot before the service exists", func(t *testing.T) {
+		h := newEC2Harness(t)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+		// Attached longer ago than releaseGrace, so only the claim can save it.
+		h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+		claim(h, time.Now())
+
+		h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
+
+		if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-hot" {
+			t.Error("the sweeper released a home mid-launch; the Start it interrupted has no service yet")
+		}
+	})
+
+	// …but an EXPIRED claim must not pin the walk, or a launch that died would keep its
+	// slot forever. claimLive reads af-claim-at, so the tag's mere presence is not enough.
+	t.Run("an expired claim still falls through", func(t *testing.T) {
+		h := newEC2Harness(t)
+		h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+		h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+		h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+		claim(h, time.Now().Add(-2*time.Hour)) // claimTTL is 15m in the harness
+		h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+		h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
+
+		if v := ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagIdleSince); v == "" {
+			t.Error("a home whose claim had expired was never stamped; its slot would never sleep")
+		}
+	})
+}
+
 // --- free slots (docs/64 §64.31, ADR 0045 決定 22) ---
 //
 // A slot whose home has been released leaves the home walk entirely, so before
