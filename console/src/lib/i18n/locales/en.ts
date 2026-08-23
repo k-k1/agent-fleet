@@ -1831,6 +1831,8 @@ export const en: Record<keyof typeof ja, string> = {
     "When on, chips above the composer suggest your frequent short replies (OK, proceed, commit, …) plus candidates tuned to the latest reply. Click to drop one into the input, or Ctrl/⌘/Alt-click to send immediately. Keyboard-only works too: from an empty input press Tab to reach the chips; Tab/Shift+Tab cycle input → chips → input (the ✨ button is part of the ring), while ←/→ cycle among the chips only. Enter inserts, Ctrl(⌘)+Enter sends (the two swap if you send with plain Enter), Enter on ✨ generates candidates, and Escape returns to the input. Suggestions are learned from the short messages you send. Right-click a chip (long-press on touch, Menu key from the keyboard) to pin it — pinned chips always show first, ahead of ranking — or to remove it. Default on.",
   "keys.kt.qrLearnedTitle": "Learned suggestions ({n})",
   "keys.kt.qrClearAll": "Clear all learned",
+  "keys.kt.qrClearOnce": "Clear used-once ({n})",
+  "keys.kt.qrClearOnceHint": "Removes only suggestions you sent just once (pinned ones stay). Sending one again learns it back.",
   "keys.kt.qrHiddenNote": "{n} suggestion(s) dismissed.",
   "keys.kt.qrUnhideAll": "Restore dismissed",
   "keys.kt.qrPinnedNote": "{n} suggestion(s) pinned (always shown).",
