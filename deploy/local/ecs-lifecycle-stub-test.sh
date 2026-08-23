@@ -85,6 +85,9 @@ case "$args" in
   *"ParameterKey=='Ec2SlotSleepSec'"*) echo "900" ;;
   *"cloudformation describe-stacks"*) echo "STACK" ;;
   *"ecs list-services"*) echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice" ;;
+  # runningCount の問い合わせ（CP が止まったかの待ち）と、desired>0 のサービス一覧を
+  # 取り違えないこと。前者に名前を返すと、待ちループが 5 分回る。
+  *"ecs describe-services"*"runningCount"*) echo "0" ;;
   *"ecs describe-services"*) echo "af-ws-alice" ;;
   *"ecs list-container-instances"*) echo "arn:aws:ecs:x:1:container-instance/ci-1" ;;
   *"ecs list-task-definitions"*) echo "arn:aws:ecs:x:1:task-definition/af-ws-alice:1" ;;
@@ -126,11 +129,18 @@ fail() { echo "NG: $1"; echo "--- log ---"; cat "$LOG"; exit 1; }
 # set -e が**アサーションを報告する前に**スクリプトを殺す。見つからないことは
 # ここでは正常な入力なので、明示的に握り潰す。
 lineno() { local n; n="$(grep -nF -- "$1" "$LOG" | head -1 | cut -d: -f1)" || true; echo "$n"; }
+lineno_last() { local n; n="$(grep -nF -- "$1" "$LOG" | tail -1 | cut -d: -f1)" || true; echo "$n"; }
 has() { grep -qF -- "$1" "$LOG" || fail "missing: $1"; }
 hasnt() { ! grep -qF -- "$1" "$LOG" || fail "must not happen: $1"; }
 order() { # order <earlier> <later>
   local a b; a="$(lineno "$1")"; b="$(lineno "$2")"
   [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] || fail "order: '$1' must precede '$2' (a=${a:-?} b=${b:-?})"
+}
+# 同じ呼び出しが 2 回出る（計画時の列挙と、CP が止まってからの再列挙）ときに使う。
+# 「最後の 1 回が後に来ている」＝再列挙が確かに走っている、を見る。
+order_again() { # order_again <earlier> <repeated-later>
+  local a b; a="$(lineno "$1")"; b="$(lineno_last "$2")"
+  [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ] || fail "order: '$2' must be re-read after '$1' (a=${a:-?} b=${b:-?})"
 }
 
 echo "== case 1: teardown without --yes touches nothing =="
@@ -159,10 +169,14 @@ order "cloudformation wait stack-delete-complete --stack-name t-ingress" "cloudf
 order "cloudformation wait stack-delete-complete --stack-name t-pool" "cloudformation delete-stack --stack-name t-platform"
 order "cloudformation wait stack-delete-complete --stack-name t-platform" "cloudformation delete-stack --stack-name t-data"
 order "cloudformation wait stack-delete-complete --stack-name t-data" "cloudformation delete-stack --stack-name t-network"
-# 5. 既定では秘密を消さない（同じアカウントに立て直せる）
+# 5. ★ CP が止まったことを確かめてから残置を数え直す（撤収の最中に CP が golden を
+#    焼き直してスロットを起こすことがあり、走る前の一覧で terminate すると孤児が残る）
+order_again "ecs update-service --cluster t-cluster --service af-t-ingress-cp --desired-count 0" \
+            "ec2 describe-instances"
+# 6. 既定では秘密を消さない（同じアカウントに立て直せる）
 has "ssm delete-parameter --name /af-ws/alice"
 hasnt "ssm delete-parameter --name /af-cp"
-# 6. ACM の検証 CNAME は TTL と値を完全一致で送り返す
+# 7. ACM の検証 CNAME は TTL と値を完全一致で送り返す
 has '"TTL":300'
 has "val.acm-validations.aws."
 
