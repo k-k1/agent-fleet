@@ -97,20 +97,21 @@ echo "==> teardown plan: ${AF_FQDN:-<no live ingress stack>} (profile=$AF_PROFIL
 echo "    stacks   : $AF_STACK_INGRESS${AF_STACK_POOL:+ / $AF_STACK_POOL} / $AF_STACK_PLATFORM / $AF_STACK_DATA / $AF_STACK_NETWORK"
 echo "    cluster  : $CLUSTER   persistence=$AF_PERSISTENCE   runtime=$AF_WS_RUNTIME"
 
-WS_SVCS="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null | txt | grep '/af-ws-' || true)"
-SLOTS="$("${AWS[@]}" ec2 describe-instances \
+list_ws_svcs() { "${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null | txt | grep '/af-ws-' || true; }
+list_slots() { "${AWS[@]}" ec2 describe-instances \
   --filters "Name=tag:af-pool,Values=$CLUSTER" \
     "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-  --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null | txt || true)"
-HOMES="$("${AWS[@]}" ec2 describe-volumes --filters "Name=tag:af-pool,Values=$CLUSTER" \
-  --query 'Volumes[].VolumeId' --output text 2>/dev/null | txt || true)"
-SNAPS="$("${AWS[@]}" ec2 describe-snapshots --owner-ids self --filters "Name=tag:af-pool,Values=$CLUSTER" \
-  --query 'Snapshots[].SnapshotId' --output text 2>/dev/null | txt || true)"
-APS=""
-if [ -n "$EFS_ID" ]; then
-  APS="$("${AWS[@]}" efs describe-access-points --file-system-id "$EFS_ID" \
-    --query 'AccessPoints[].AccessPointId' --output text 2>/dev/null | txt || true)"
-fi
+  --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null | txt || true; }
+list_homes() { "${AWS[@]}" ec2 describe-volumes --filters "Name=tag:af-pool,Values=$CLUSTER" \
+  --query 'Volumes[].VolumeId' --output text 2>/dev/null | txt || true; }
+list_snaps() { "${AWS[@]}" ec2 describe-snapshots --owner-ids self --filters "Name=tag:af-pool,Values=$CLUSTER" \
+  --query 'Snapshots[].SnapshotId' --output text 2>/dev/null | txt || true; }
+list_aps() {
+  [ -n "$EFS_ID" ] || return 0
+  "${AWS[@]}" efs describe-access-points --file-system-id "$EFS_ID" \
+    --query 'AccessPoints[].AccessPointId' --output text 2>/dev/null | txt || true
+}
+WS_SVCS="$(list_ws_svcs)"; SLOTS="$(list_slots)"; HOMES="$(list_homes)"; SNAPS="$(list_snaps)"; APS="$(list_aps)"
 count() {
   if [ -z "${1// /}" ]; then echo 0; else printf '%s\n' "$1" | wc -l | tr -d ' '; fi
 }
@@ -139,6 +140,25 @@ fi
 # --- 1) CP を止める ----------------------------------------------------------
 echo "==> 1. stopping the control plane ($CP_SERVICE)"
 af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$CP_SERVICE" --desired-count 0 >/dev/null 2>&1 || true
+
+# ★ **止まったことを確かめてから数える。** desired=0 はタスクに死ねと言うだけで、死ぬまでの
+# 間 CP は普通に働き続ける——そしてこの掃除そのものが CP を働かせる: golden スナップショット
+# を消せば「この配備には golden が無い」に見えるので、**CP は焼き直しを始めてスロットを
+# 起こす**（実測: 撤収の最中に m7i と m8g が 1 台ずつ生えた）。走る前に数えた一覧で
+# terminate すると、そのあとに生えたものが**課金され続ける孤児**として残る。
+if [ "$AF_DRY" != 1 ]; then
+  for _ in $(seq 1 30); do
+    running="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "$CP_SERVICE" \
+      --query 'services[0].runningCount' --output text 2>/dev/null || echo 0)"
+    # ⚠️ 読めなかったとき（サービスが既に消えている・権限が無い）に粘らない。
+    # 数でない答えは「もう見えない」であって「まだ走っている」ではない。
+    case "$running" in ""|None|0) break ;; *[!0-9]*) break ;; esac
+    sleep 10
+  done
+  echo "==> 1b. re-reading the residue now that the CP is down"
+  WS_SVCS="$(list_ws_svcs)"; SLOTS="$(list_slots)"; HOMES="$(list_homes)"; SNAPS="$(list_snaps)"; APS="$(list_aps)"
+  echo "    workspaces=$(count "$WS_SVCS") slots=$(count "$SLOTS") volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
+fi
 
 # --- 2) Workspace サービス ---------------------------------------------------
 echo "==> 2. deleting workspace services ($(count "$WS_SVCS"))"
@@ -283,6 +303,29 @@ if [ -n "$HOSTED_ZONE" ]; then
 fi
 
 # --- 12) スイープ（ゼロを確かめる） -----------------------------------------
+# ⚠️ ここでもう一度**刈る**。数えるだけでは足りない——スタックを消し終えるまでの間に
+# CP が起こしたスロットや、そのスロットが作った home が残っていることがある（上の 1b と
+# 同じ理由で、こちらは「消し始めてから死ぬまで」の窓）。もう誰も動いていないので、
+# ここに居るものは定義上すべて残骸である。
+if [ "$AF_DRY" != 1 ]; then
+  late_slots="$(list_slots)"
+  if [ -n "${late_slots// /}" ]; then
+    echo "==> late arrivals: terminating $late_slots"
+    # shellcheck disable=SC2086
+    "${AWS[@]}" ec2 terminate-instances --instance-ids $late_slots >/dev/null 2>&1 || true
+    # shellcheck disable=SC2086
+    "${AWS[@]}" ec2 wait instance-terminated --instance-ids $late_slots 2>/dev/null || true
+  fi
+  for v in $(list_homes); do
+    echo "==> late arrival: deleting volume $v"
+    "${AWS[@]}" ec2 delete-volume --volume-id "$v" >/dev/null 2>&1 || echo "    (skip $v)"
+  done
+  for sn in $(list_snaps); do
+    echo "==> late arrival: deleting snapshot $sn"
+    "${AWS[@]}" ec2 delete-snapshot --snapshot-id "$sn" >/dev/null 2>&1 || echo "    (skip $sn)"
+  done
+fi
+
 echo ""
 echo "==> sweep（0 でないものが残骸）"
 left() { printf '    %-22s %s\n' "$1" "$(count "$2")"; }
