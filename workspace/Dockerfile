@@ -307,10 +307,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと
 # 起動即 SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホスト
 # でもイメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
-ARG AGY_VERSION=1.1.17
-ARG AGY_RELEASE_BUILD=5084709148033024
-ARG AGY_SHA256_X64=15443966494cd62938320900acfd16df906cf4da56279e4dd8f4846c09f849df
-ARG AGY_SHA256_ARM64=28822f4ba6d5914064dcab3a1b953b2d10e1c9fc938178c478911b5f0b5b06a4
+ARG AGY_VERSION=1.1.19
+ARG AGY_RELEASE_BUILD=4894004681244672
+ARG AGY_SHA256_X64=a02132a7c6c647ef0ad483ecbe767619adf6b660a5589cba5c937b0c83909b97
+ARG AGY_SHA256_ARM64=15bd9959ec0c08bcbfee94b376f02bd8b552dcf17a539bcd210a443fb82443cb
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -330,7 +330,7 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # agy はインストール済みバイナリを通常実行中にバックグラウンド自己更新する
 # （install.sh の明記仕様）。版はイメージ再ビルドで管理するので封じる — claude の
 # DISABLE_AUTOUPDATER と同じ理屈（明示的な `agy update` は引き続き可能）。
-ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
 # Cursor CLI（kind="cursor"、docs/40 / docs/decisions/0023）。npm でも単一 Go バイナリ
 # でもなく、版付き tarball の Node.js バンドル（bundled node ＋ webpack chunk 群 ＋
