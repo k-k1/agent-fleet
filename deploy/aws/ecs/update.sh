@@ -99,6 +99,58 @@ if [ -n "$missing" ]; then
 fi
 echo "==> ECR has af-control-plane:$VERSION and af-workspace:$VERSION"
 
+# --- 1b) CP イメージのアーキが CpArch と噛み合っているか（落とし穴 1 の兄弟） -----
+# 落とし穴 1 は「タグが無い」。こちらは「タグはあるが、そのアーキが無い」で、症状は
+# もっと悪い: CannotPullContainerError ですらなく、ECS はタスクを**配置できない**まま
+# desired=1 / running=0 で回り続ける（docs/72）。CpArch=arm64 にできるのは
+# publish-dist を control_plane_arm64 で回した版だけで、それは既定 OFF。
+# ⚠️ 判定は「証明できたときだけ落とす」。確かめられなかったときに通すのは、
+# ここが公開ゲートではなく更新の前検査だからで、AF_CP_ARCH_CHECK=0 で丸ごと外せる。
+if [ "${AF_CP_ARCH_CHECK:-1}" = 1 ]; then
+  # パラメータ自体が無い旧スタックは x86_64（Fargate が省略時に入れる既定と同じ）。
+  cp_arch="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
+    --query "Stacks[0].Parameters[?ParameterKey=='CpArch'].ParameterValue" \
+    --output text 2>/dev/null || true)"
+  case "$cp_arch" in ""|None) cp_arch=x86_64 ;; esac
+  want=amd64; [ "$cp_arch" = arm64 ] && want=arm64   # CFN の語彙 → OCI の語彙
+  manifest="$("${AWS[@]}" ecr batch-get-image --repository-name af-control-plane \
+    --image-ids "imageTag=$VERSION" \
+    --accepted-media-types \
+      "application/vnd.docker.distribution.manifest.v2+json" \
+      "application/vnd.oci.image.manifest.v1+json" \
+      "application/vnd.docker.distribution.manifest.list.v2+json" \
+      "application/vnd.oci.image.index.v1+json" \
+    --query 'images[0].imageManifest' --output text 2>/dev/null || true)"
+  case "$manifest" in
+    *'"manifests"'*)   # マニフェストリスト＝中身のアーキが読める。ここは断定できる。
+      # jq を足さないための読み方（運用者の手元に必ずあるとは限らない）。platform 側の
+      # "architecture" しか出てこないので、カンマで割って拾えば十分。
+      archs="$(printf '%s' "$manifest" | tr ',' '\n' \
+        | sed -n 's/.*"architecture"[[:space:]]*:[[:space:]]*"\([a-z0-9_]*\)".*/\1/p' \
+        | sort -u | tr '\n' ' ')"
+      echo "==> af-control-plane:$VERSION is an index of: ${archs:-<none read>}"
+      case " $archs " in
+        *" $want "*) ;;
+        *)
+          echo "ERROR: CpArch=$cp_arch needs a '$want' entry, and af-control-plane:$VERSION has: ${archs:-<none>}" >&2
+          echo "       Deploying this puts the service in desired=1 / running=0 with no pull error to read." >&2
+          echo "       Publish with control_plane_arm64, or set CpArch back (docs/72)." >&2
+          exit 1 ;;
+      esac
+      ;;
+    *)                 # 単一マニフェスト＝1 アーキ分しか無い。中身は読めない。
+      if [ "$want" = arm64 ]; then
+        echo "ERROR: CpArch=arm64 but af-control-plane:$VERSION is a SINGLE manifest — it can only" >&2
+        echo "       serve one architecture, and this pipeline's single-arch builds are the build" >&2
+        echo "       host's (amd64). Re-publish with control_plane_arm64 (docs/72)." >&2
+        echo "       Check by hand: crane manifest <ecr>/af-control-plane:$VERSION" >&2
+        echo "       Override with AF_CP_ARCH_CHECK=0 if you know better." >&2
+        exit 1
+      fi
+      ;;
+  esac
+fi
+
 # どのクラスタのどのサービスが CP か。スタックが持っている実体（AWS::ECS::Service の
 # physical id ＝ arn:…:service/<cluster>/<name>）から引く。名前の規約
 # （`af-${AWS::StackName}-cp`）を書き写すと、スタック名を変えた瞬間に静かに外れて
