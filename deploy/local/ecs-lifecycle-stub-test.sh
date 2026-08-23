@@ -41,6 +41,11 @@ AF_PERSISTENCE=delete
 AF_IMAGE_TAG=9.9.9-dev-test
 AF_DEV_DEPLOY=1
 EOF
+# 2 つめ: Persistence=retain の配備（プロファイル p2）。retain の経路はここでしか踏めない。
+STATE2="$AF_DEPLOY_STATE_DIR/p2.ap-northeast-1.t-ingress"
+mkdir -p "$STATE2/params"
+sed 's/^AF_PERSISTENCE=delete$/AF_PERSISTENCE=retain/' "$STATE/env" > "$STATE2/env" 2>/dev/null || true
+
 echo "VpcCidr=10.20.0.0/16"       > "$STATE/params/00-network"
 echo "Persistence=delete"         > "$STATE/params/10-data"
 echo "NetworkStackName=t-network" > "$STATE/params/20-platform"
@@ -56,6 +61,8 @@ Ec2SlotAmiArm64=
 CpArch=x86_64
 BitbucketOauthKey=must-not-be-printed
 EOF
+cp -a "$STATE/params/." "$STATE2/params/"
+sed -i 's/^AF_PERSISTENCE=delete$/AF_PERSISTENCE=retain/' "$STATE2/env"
 
 # --- 偽 aws。問い合わせには「実物と同じ形」を返す ---------------------------
 cat > "$STUB/aws" <<'FAKE'
@@ -66,6 +73,7 @@ case "$args" in
   *"sts get-caller-identity"*) echo "123456789012" ;;
   *"cloudformation list-exports"*"SlotLaunchTemplateId"*) echo "t-pool-SlotLaunchTemplateId" ;;
   *"cloudformation list-exports"*) echo "t-cluster" ;;
+  *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
   *"describe-stack-resource"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EfsId']"*) echo "fs-1" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotLaunchTemplateId']"*) echo "lt-NEW" ;;
@@ -77,6 +85,7 @@ case "$args" in
   *"ParameterKey=='PlatformStackName'"*) echo "t-platform" ;;
   *"ParameterKey=='WsRuntime'"*) echo "ecs-ec2" ;;
   *"ParameterKey=='ImageTag'"*) echo "9.9.9-dev-test" ;;
+  *"--profile p2"*"ParameterKey=='Persistence'"*) echo "retain" ;;
   *"ParameterKey=='Persistence'"*) echo "delete" ;;
   *"ParameterKey=='CpArch'"*) echo "x86_64" ;;
   *"ParameterKey=='Ec2SlotLaunchTemplate'"*) echo "lt-OLD" ;;
@@ -106,6 +115,9 @@ case "$args" in
   *"route53 list-resource-record-sets"*) printf '_abc.af.example.test.\t300\tval.acm-validations.aws.\n' ;;
   *"logs describe-log-groups"*) echo "" ;;
   *"ecs list-clusters"*) echo "" ;;
+  *"rds describe-db-snapshots"*) echo "t-data-snapshot-db-xyz" ;;
+  *"rds describe-db-instances"*) echo "" ;;
+  *"efs describe-file-systems"*) echo "" ;;   # 消えたあとの確認＝空
 esac
 FAKE
 cat > "$STUB/crane" <<'FAKE'
@@ -210,5 +222,28 @@ echo "== case 5: nothing prints a secret-looking parameter =="
 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --dry-run > "$WORK/out5" </dev/null
 if grep -q "must-not-be-printed" "$WORK/out5"; then fail "a secret-looking parameter value was printed"; fi
 grep -q "BitbucketOauthKey=\*\*\*" "$WORK/out5" || fail "the masked form is missing"
+
+echo "== case 6: retain — 削除保護は外すが、残したものは消さない =="
+: > "$LOG"
+"$ECS/teardown.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out6" </dev/null
+# 削除保護を外すのは **スタック削除より前**（外さないと delete-stack がそこで落ちる）
+order "rds modify-db-instance --db-instance-identifier t-db --no-deletion-protection" \
+      "cloudformation delete-stack --stack-name t-data"
+# retain が残したものには触らない
+hasnt "rds delete-db-snapshot"
+hasnt "efs delete-file-system"
+grep -q "retain" "$WORK/out6" || fail "retain で残したことを言っていない"
+
+echo "== case 7: retain + --purge-retained — 全部消し、消えたことを確かめる =="
+: > "$LOG"
+"$ECS/teardown.sh" --profile p2 --region ap-northeast-1 --stack t-ingress --yes --purge-retained > "$WORK/out7" </dev/null
+# ★ 消すのは **スタックが全部消えたあと**（先に消すと delete-stack が最終スナップショットを
+#   作り直す/掴んだままになる）
+order "cloudformation wait stack-delete-complete --stack-name t-network" "rds delete-db-snapshot"
+order "cloudformation wait stack-delete-complete --stack-name t-network" "efs delete-file-system"
+has "rds delete-db-snapshot --db-snapshot-identifier t-data-snapshot-db-xyz"
+has "efs delete-file-system --file-system-id fs-1"
+# スイープで実物を引き直して数えている（黙って消え残らせない）
+order "efs delete-file-system" "efs describe-file-systems --file-system-id fs-1"
 
 echo "OK: deployment lifecycle stub test passed"
