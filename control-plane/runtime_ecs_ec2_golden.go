@@ -156,10 +156,20 @@ func (f *ecsEC2Factory) seedClassFor(arch string) string {
 // treating them as "unknown" would orphan every deployment's existing golden on
 // upgrade (docs/70 §70.6).
 func snapshotArch(s ec2types.Snapshot) string {
-	if a := ec2TagValue(s.Tags, ec2TagArch); a != "" {
-		return a
+	return archOrX86(ec2TagValue(s.Tags, ec2TagArch))
+}
+
+// archOrX86 applies the same rule to the READING side. A pool with no classes declared
+// is x86_64 (parseSlotClasses' bare form says so, and it drops an entry whose arch it
+// does not recognise rather than defaulting it), so an empty arch here means the same
+// thing an untagged snapshot does. Keeping the two symmetric is the point: compare a
+// normalised arch against a normalised arch, or a legacy deployment matches nothing
+// and every home is built empty.
+func archOrX86(a string) string {
+	if a == "" {
+		return ec2ArchX86
 	}
-	return ec2ArchX86
+	return a
 }
 
 func (f *ecsEC2Factory) goldenFor(ctx context.Context, role, arch string) (goldenSnap, bool, error) {

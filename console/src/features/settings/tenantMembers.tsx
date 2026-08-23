@@ -8,7 +8,7 @@
 // を出すかどうかだけ。付与の PUT /api/admin/membership-role は withSuperAdmin 固定で、
 // ここでボタンを隠すのは案内でしかない。
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { api, apiJSON, rawJSON, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
@@ -36,6 +36,23 @@ export function MembersPanel({
 }) {
   const tr = useT();
   const [members, setMembers] = useState<Member[] | null>(null);
+  // The roster shows what each member is sized to, and that only reads correctly once
+  // the runtime has said what the numbers MEAN (ADR 0045 決定 21). Same fetch the member
+  // detail does — it is a small, cacheable, identity-agnostic document.
+  const [sizing, setSizing] = useState<WsSizing>(WS_SIZING_FALLBACK);
+  useEffect(() => {
+    let live = true;
+    api("api/admin/workspace-sizing")
+      .then((d) => {
+        if (live && d && !(d as any).error && d.runtime) setSizing(d);
+      })
+      .catch(() => {
+        /* keep the fallback; the roster then just shows the raw numbers */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const loadMembers = useCallback(async () => {
     try {
@@ -68,7 +85,7 @@ export function MembersPanel({
               </span>
               <span className="mr-email muted">{m.email || ""}</span>
               <span className="mr-role">{m.status === "removed" ? tr("admin.member_removed") : m.role}</span>
-              {m.max_sessions != null && <span className="mr-lim muted">s≤{m.max_sessions}</span>}
+              <MemberSizeChips m={m} sizing={sizing} />
               <Icon name="chevron-right" className="mr-go" />
             </button>
           ))}
@@ -77,6 +94,46 @@ export function MembersPanel({
       <AddMember slug={slug} isSuper={isSuper} onAdded={loadMembers} />
     </section>
   );
+}
+
+// MemberSizeChips — what this member is sized to, on the roster row.
+//
+// ★ It shows the BOX on a slot runtime and the NUMBERS everywhere else, because those
+// are different statements. On ecs-ec2 the memory figure is a requirement that picks a
+// machine and the person then gets the whole thing, so "m6i.large · 2 vCPU / 8 GiB" is
+// the true answer and "8192 MB" is a half-truth. On docker/Fargate the number IS the
+// cap, and there is no box to name.
+//
+// ⚠️ The CPU chip follows the same rule the member detail uses: when cpu_effective is
+// false the axis never reaches the backend, so showing it would put a number on screen
+// that does nothing. It is omitted rather than greyed out.
+//
+// ⚠️ Everything here is "unset → say nothing". A roster of rows all reading "0" teaches
+// people to stop reading the column.
+function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) {
+  const tr = useT();
+  const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
+  const cls = (sizing.slot_classes ?? []).find((c) => c.id === (m.slot_class || sizing.default_slot_class));
+  const box = onSlots ? slotFor(ladderFor(sizing, m.slot_class ?? ""), m.mem_limit ? Math.round(m.mem_limit / 1048576) : 0) : null;
+
+  const out: ReactNode[] = [];
+  if (box) {
+    out.push(
+      <span key="box" className="mr-size mono" title={cls ? cls.label : undefined}>
+        {box.instance_type}
+      </span>,
+      <span key="spec" className="mr-size muted">
+        {box.vcpu ? tr("admin.roster_spec", { n: String(box.vcpu), mem: fmtGbHint(box.mem_mib) }) : fmtGbHint(box.mem_mib)}
+      </span>,
+    );
+  } else {
+    if (m.mem_limit) out.push(<span key="mem" className="mr-size muted">{fmtGbHint(Math.round(m.mem_limit / 1048576))}</span>);
+    if (sizing.cpu_effective && m.cpu_limit)
+      out.push(<span key="cpu" className="mr-size muted">{tr("admin.ws_cpu_vcpu", { n: String(m.cpu_limit / 1024) })}</span>);
+  }
+  if (m.disk_gb) out.push(<span key="disk" className="mr-size muted">{tr("admin.roster_disk", { n: String(m.disk_gb) })}</span>);
+  if (m.max_sessions) out.push(<span key="s" className="mr-lim muted">s≤{m.max_sessions}</span>);
+  return <>{out}</>;
 }
 
 function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean; onAdded: () => void }) {
@@ -162,6 +219,19 @@ export function MemberView({
   // tenant default, which is a real value here and not "unset means smallest": there
   // is no numeric fallback for a class.
   const [slotClass, setSlotClass] = useState<string>(member.slot_class ?? "");
+  // ⚠️ `member` is a SNAPSHOT taken when its row was clicked. The parent
+  // (TenantDialog / AdminTab) holds it in useState and `onChanged` reloads the tenant
+  // LIST, not the selection — so the prop never reflects anything saved from here.
+  // Re-seeding the editor from it after a save therefore shows the values from BEFORE
+  // the save. It is least visible on the numbers (an old figure looks like a typo) and
+  // most visible on the machine chips, which jump back to "tenant default" and read as
+  // "the setting did not save" — while it very much did.
+  //
+  // So: keep what the server confirmed and seed from that. The server echo is the right
+  // source rather than what was typed, because the stored value can differ from the
+  // input (an unknown class is refused, a number is clamped).
+  const [savedLimits, setSavedLimits] = useState<Partial<Member> | null>(null);
+  const cur = { ...member, ...(savedLimits ?? {}) };
   // What those three numbers actually DO on this deployment's runtime (ADR 0045 決定 21).
   // Fetched rather than assumed: the same editor is shown for docker, native, Fargate and
   // the EC2 slot pool, and it used to describe all four as Fargate.
@@ -242,10 +312,10 @@ export function MemberView({
   const landed = onSlots ? slotFor(ladder, +memMb || 0) : null;
   // Warn only when there is a home to migrate. A member who has never started has
   // nothing architecture-dependent on disk yet, so the warning would be noise.
-  const classChanged = classes.length > 0 && slotClass !== (member.slot_class ?? "");
+  const classChanged = classes.length > 0 && slotClass !== (cur.slot_class ?? "");
   const archOf = (id: string) => classes.find((c) => c.id === id)?.arch ?? "";
   const archChanged =
-    classChanged && archOf(slotClass || (sizing.default_slot_class ?? "")) !== archOf(member.slot_class || (sizing.default_slot_class ?? ""));
+    classChanged && archOf(slotClass || (sizing.default_slot_class ?? "")) !== archOf(cur.slot_class || (sizing.default_slot_class ?? ""));
   const memHint = !landed
     ? +memMb > 0
       ? tr("admin.eq_hint", { hint: fmtGbHint(+memMb) })
@@ -289,7 +359,7 @@ export function MemberView({
     }
   };
   const saveLimit = async () => {
-    await apiJSON("api/admin/user-limits", "PUT", {
+    const res = await apiJSON("api/admin/user-limits", "PUT", {
       user_key: key,
       tenant_slug: slug,
       max_sessions: +limit || 0,
@@ -299,6 +369,16 @@ export function MemberView({
       // so leaving it out would silently reset a disk quota set elsewhere (MCP/API).
       disk_gb: Math.round(+diskGb || 0),
       slot_class: slotClass,
+    });
+    setSavedLimits({
+      max_sessions: +limit || 0,
+      mem_limit: Math.round(+memMb || 0) * 1048576,
+      cpu_limit: Math.round(+cpuUnits || 0),
+      disk_gb: Math.round(+diskGb || 0),
+      // The stored id, not slot_class_effective: this editor edits what is STORED, and
+      // the substitution (when there is one) is reported separately rather than
+      // silently rewritten into the control.
+      slot_class: typeof res?.slot_class === "string" ? res.slot_class : slotClass,
     });
     setLimitOpen(false);
     poll(); // mem_max reflects the new cap after the next start; refresh sessions/stats
@@ -502,11 +582,11 @@ export function MemberView({
             <Icon name="debug-stop" /> {tr("admin.force_stop_ws")}
           </button>
           <button onClick={() => {
-            setLimit(member.max_sessions ?? 0);
-            setMemMb(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
-            setCpuUnits(member.cpu_limit ?? 0);
-            setDiskGb(member.disk_gb ?? 0);
-            setSlotClass(member.slot_class ?? "");
+            setLimit(cur.max_sessions ?? 0);
+            setMemMb(cur.mem_limit ? Math.round(cur.mem_limit / 1048576) : 0);
+            setCpuUnits(cur.cpu_limit ?? 0);
+            setDiskGb(cur.disk_gb ?? 0);
+            setSlotClass(cur.slot_class ?? "");
             setLimitOpen(true);
           }}>
             <Icon name="settings" /> {tr("admin.set_limits")}

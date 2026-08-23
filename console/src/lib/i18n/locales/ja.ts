@@ -1507,6 +1507,8 @@ export const ja = {
   "tenant.machine_deploy_default": "デプロイの既定",
   "tenant.machine_member_note":
     "自分で種類を選んでいるメンバーは、ここを変えても影響を受けません。反映は各メンバーの次回起動時です。",
+  "admin.roster_spec": "{n} vCPU / {mem}",
+  "admin.roster_disk": "ディスク {n}GB",
   "admin.ws_machine": "マシンの種類",
   "admin.ws_machine_tenant_default": "テナントの既定",
   "admin.ws_machine_arch_warn":
@@ -1936,6 +1938,7 @@ export const ja = {
   // 起動中ダイアログ（WsStartingDialog・docs/35 §35.9-9）
   "wsstart.title": "ワークスペースを起動中",
   "wsstart.generic": "起動しています…",
+  "wsstart.blocked": "起動できません。このまま待っても進みません",
   "wsstart.installing_clis": "エージェント CLI を導入中…（初回のみ・数分かかることがあります）",
   "wsstart.fetching_tool": "追加ツールを取得中…",
   "wsstart.toolchain": "ツールチェーンを導入中…",
@@ -2094,6 +2097,8 @@ export const ja = {
   "wsbar.confirm.start.go": "起動する",
   "wsbar.confirm.stop.body":
     "コンテナを停止します。実行中のセッションは停止（あとで再開可）になり、opencode web / プレビューは切断されます。ファイルは保持されます。",
+  "wsbar.confirm.stop.starting_body":
+    "起動を取りやめて停止します。まだ上がっていないので、失われるものはありません。ファイルは保持されます。",
   "wsbar.confirm.stop.go": "停止する",
   "wsbar.confirm.restart.title": "ワークスペースを再起動",
   "wsbar.confirm.restart.body":

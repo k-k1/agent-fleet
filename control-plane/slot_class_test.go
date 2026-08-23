@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
@@ -456,5 +457,66 @@ func TestMigrationVersionsAreUniquePerDialect(t *testing.T) {
 		if len(seen) == 0 {
 			t.Errorf("%s: no migrations found (did the directory move?)", dir)
 		}
+	}
+}
+
+// ★ The bug P5 found on a live deployment (docs/70 §70.14.5).
+//
+// The attachment is AFFINITY, not a decision: it records the slot this workspace used
+// last time, for the size and class it had THEN. When a member moves to a class on
+// another architecture, buildTaskDef declares RuntimePlatform for the NEW class while
+// the placement constraint still pins the OLD instance — and ECS then refuses to place
+// the task at all, forever, with desiredCount 1 and nothing running:
+//
+//	"no container instance met all of its requirements … the closest matching
+//	 (container-instance …) is missing an attribute required by your task"
+//
+// So placeHome must check the match before honouring the affinity.
+func TestPlaceHomeReleasesASlotOfTheWrongType(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.classes = parseSlotClasses(
+		"saver|S|x86_64|m6i.large:8192\narm|A|arm64|m8g.large:8192")
+	h.rt.pool.defaultClass = "saver"
+	h.rt.pool.amiArm64 = "ami-arm"
+
+	// The member's home sits on an m6i slot from when they were on the saver class.
+	h.ec2.addSlot("i-old", "ap-northeast-1a", "m6i.large", true, false)
+	h.ec2.addHomeVolume("vol-1", h.rt.base.membershipID, h.rt.base.name, "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-old", time.Now())
+
+	// They have since moved to the arm class.
+	h.rt.instanceType, h.rt.arch = "m8g.large", ec2ArchArm
+	// A free arm slot is available in the same AZ (an EBS volume never leaves its AZ).
+	h.ec2.addSlot("i-arm", "ap-northeast-1a", "m8g.large", true, false)
+
+	p, err := h.rt.placeHome(ctx)
+	if err != nil {
+		t.Fatalf("placeHome: %v", err)
+	}
+	if p.instanceID == "i-old" {
+		t.Fatalf("reused the m6i slot for an arm64 workspace — ECS would refuse to place the task forever")
+	}
+	if p.instanceID != "i-arm" {
+		t.Fatalf("placed on %q, want the free m8g slot", p.instanceID)
+	}
+}
+
+// The other side of the same rule: a slot that still matches is reused, because that
+// affinity is what makes a restart cheap (no attach, no mount to redo).
+func TestPlaceHomeKeepsAMatchingSlot(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-mine", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.addHomeVolume("vol-1", h.rt.base.membershipID, h.rt.base.name, "ap-northeast-1a")
+	h.ec2.attach("vol-1", "i-mine", time.Now())
+	h.rt.instanceType, h.rt.arch = "m7i.large", ec2ArchX86
+
+	p, err := h.rt.placeHome(ctx)
+	if err != nil {
+		t.Fatalf("placeHome: %v", err)
+	}
+	if p.instanceID != "i-mine" {
+		t.Fatalf("placed on %q, want the slot the home is already on", p.instanceID)
 	}
 }

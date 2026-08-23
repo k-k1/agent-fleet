@@ -777,12 +777,86 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	// start/complete land on two different Agent processes and lose the
 	// in-memory flow_id (confirmed 2026-08-19 on af.lazmix.jp).
 	case s.DesiredCount >= 1 && s.RunningCount >= 1 && serviceRolledOut(s):
+		e.clearBlockedPhase()
 		return "running"
 	case s.DesiredCount >= 1:
+		e.notePlacementBlocked(s)
 		return "starting"
 	default:
 		return "stopped"
 	}
+}
+
+// notePlacementBlocked surfaces "the scheduler cannot place this task" as a phase, so a
+// start that is never going to converge says WHY instead of spinning.
+//
+// ⚠️ This is the one place State() writes something, which is worth the exception.
+// `starting` here means only "desired >= 1 and nothing is running yet", and it has no
+// timeout — a task ECS refuses to place holds that forever (docs/70 §70.14.6: a task
+// definition declaring ARM64 while pinned to an x86_64 slot). ECS says exactly why in
+// the service events; the CP was throwing that away and reporting a bare `starting`,
+// so the only way to find out was `aws ecs describe-services` by hand. Nothing else in
+// the read path can reach the events — BootPhase() takes no context and cannot call
+// AWS — so it is written from here or not at all.
+//
+// No extra API call: the events come from the DescribeServices the caller already made.
+func (e *ecsEC2Runtime) notePlacementBlocked(s ecstypes.Service) {
+	why := ecsPlacementBlocked(s)
+	if why == "" {
+		// Still coming up normally. Do NOT clear the phase here: an ordinary Start is
+		// concurrently writing its own progress ("slot: creating", "home: attaching")
+		// and this poll must not wipe it.
+		return
+	}
+	phase := blockedPhasePrefix + why
+	if e.BootPhase() == phase {
+		return // already said, and this runs every 4s
+	}
+	e.setPhase(phase)
+	log.Printf("ecs-ec2: %s cannot be placed and will stay `starting` until this is fixed: %s", e.base.name, why)
+}
+
+// clearBlockedPhase removes a blocked phase once the task is actually running. Scoped to
+// the prefix on purpose: any other phase belongs to a Start that is still in flight, and
+// clearing that from a poll would blank the starting dialog mid-boot.
+func (e *ecsEC2Runtime) clearBlockedPhase() {
+	if strings.HasPrefix(e.BootPhase(), blockedPhasePrefix) {
+		e.setPhase("")
+	}
+}
+
+// blockedPhasePrefix is the contract with the Console: WsStartingDialog maps this
+// prefix to a localized headline and prints the rest — the raw ECS sentence — beneath
+// it. The raw text is the valuable half; it names the constraint that failed.
+const blockedPhasePrefix = "blocked: "
+
+// ecsPlacementBlocked returns the ECS event explaining why the CURRENT deployment cannot
+// be placed, or "" if there is no such event.
+//
+// Scoped to events newer than the PRIMARY deployment: a service that was wedged, got
+// fixed and redeployed still carries the old complaint in its event list, and reporting
+// that would turn a normal cold start into a fake diagnosis.
+//
+// ⚠️ ECS de-duplicates its own events, so the message appears once and then goes quiet
+// for a long while. That is exactly why this is matched against the deployment rather
+// than "was there an event recently": the wedge is permanent but the event is not
+// repeated (measured — the run that prompted this had a single event and then silence).
+func ecsPlacementBlocked(s ecstypes.Service) string {
+	var since time.Time
+	for _, d := range s.Deployments {
+		if aws.ToString(d.Status) == "PRIMARY" && d.CreatedAt != nil {
+			since = *d.CreatedAt
+		}
+	}
+	for _, ev := range s.Events {
+		if ev.CreatedAt == nil || ev.CreatedAt.Before(since) {
+			continue
+		}
+		if msg := aws.ToString(ev.Message); strings.Contains(msg, "unable to place a task") {
+			return strings.TrimSpace(msg)
+		}
+	}
+	return ""
 }
 
 // Start brings the workspace up on a slot. Everything that can be slow is pushed off
@@ -1026,6 +1100,28 @@ type ec2Placement struct {
 // placeHome resolves the volume and the slot, attaching the two together when it can.
 // The order follows the AZ (docs/64 §64.15.3): the volume pins the AZ, the AZ picks
 // the candidate slots, and only a user with no volume yet is free to follow the pool.
+// slotTypeMatches reports whether an instance is still the size AND class this
+// workspace needs. One DescribeInstances, no caching — it is asked once per Start.
+//
+// An instance that has vanished (terminated between the volume read and here) counts
+// as NOT matching, so the caller releases and re-places rather than pinning a task to
+// a box that is gone.
+func (e *ecsEC2Runtime) slotTypeMatches(ctx context.Context, instanceID string) (bool, error) {
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+	if err != nil {
+		if isAWSNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("describe slot %s: %w", instanceID, err)
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			return string(inst.InstanceType) == e.instanceType, nil
+		}
+	}
+	return false, nil
+}
+
 func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	vol, err := e.homeVolume(ctx)
 	if err != nil {
@@ -1033,24 +1129,60 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 	}
 	if vol != nil {
 		if inst := attachedInstance(vol); inst != "" {
-			// The home is still on a slot — the normal case now that Stop leaves it
-			// there (lazy release). This is both the affinity ("the same user gets the
-			// same slot") and the cheapest path: no attach, no mount to redo.
-			volID := aws.ToString(vol.VolumeId)
-			if err := e.claim(ctx, volID, inst); err != nil {
-				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
-			}
-			e.clearDormancy(ctx, volID)
-			running, err := e.instanceRunning(ctx, inst)
+			// ⚠️ The attachment is AFFINITY, not a decision. It records the slot this
+			// workspace used last time, for the size and class it had THEN — and both
+			// can change underneath it (a memory edit moves the rung, a class edit
+			// moves the ladder). Reusing a slot of the wrong instance type is not
+			// merely suboptimal:
+			//
+			//   ACROSS ARCHITECTURES IT STRANDS THE WORKSPACE. buildTaskDef declares
+			//   RuntimePlatform for the new class while the placement constraint still
+			//   pins THIS instance, so ECS refuses to place the task at all — "no
+			//   container instance met all of its requirements … missing an attribute
+			//   required by your task" — and keeps refusing, with desiredCount 1 and
+			//   nothing running, forever.
+			//
+			// Measured on a live deployment (docs/70 §70.14.5): a member moved from
+			// the saver class (m6i, x86_64) to arm (m8g, arm64) and their workspace
+			// could not start again. So the match is checked before the affinity is
+			// honoured, and a stale slot is released rather than reused.
+			matches, err := e.slotTypeMatches(ctx, inst)
 			if err != nil {
 				return ec2Placement{}, err
 			}
-			// A dormant slot keeps both the image cache and the attachment, so waking it
-			// is the ~90s path rather than the 135s of building a new one.
-			return ec2Placement{
-				volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
-				deferred: !running, wake: !running,
-			}, nil
+			if !matches {
+				log.Printf("ecs-ec2: %s now needs %s but its home is on %s; releasing that slot first",
+					e.base.name, e.instanceType, inst)
+				if err := e.releaseSlot(ctx); err != nil {
+					return ec2Placement{}, fmt.Errorf("release the slot after a size/class change: %w", err)
+				}
+				// Re-read and fall through: the volume is detached now, so the code below
+				// places it like any other homeless home. Note it keeps its AZ — an EBS
+				// volume can never leave the one it was created in — so the search below
+				// is correctly restricted to that AZ.
+				if vol, err = e.homeVolume(ctx); err != nil {
+					return ec2Placement{}, fmt.Errorf("describe home volume after release: %w", err)
+				}
+			} else {
+				// The home is still on a slot — the normal case now that Stop leaves it
+				// there (lazy release). This is both the affinity ("the same user gets the
+				// same slot") and the cheapest path: no attach, no mount to redo.
+				volID := aws.ToString(vol.VolumeId)
+				if err := e.claim(ctx, volID, inst); err != nil {
+					log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+				}
+				e.clearDormancy(ctx, volID)
+				running, err := e.instanceRunning(ctx, inst)
+				if err != nil {
+					return ec2Placement{}, err
+				}
+				// A dormant slot keeps both the image cache and the attachment, so waking it
+				// is the ~90s path rather than the 135s of building a new one.
+				return ec2Placement{
+					volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
+					deferred: !running, wake: !running,
+				}, nil
+			}
 		}
 	}
 	azFilter := ""
@@ -2968,6 +3100,22 @@ func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
 		}
 		if got := ec2TagValue(s.Tags, ec2TagImage); got != want {
 			stale = append(stale, fmt.Sprintf("%s(%s)", aws.ToString(s.SnapshotId), got))
+			continue
+		}
+		// ⚠️ A golden of ANOTHER architecture is not a candidate for this home. The
+		// pool bakes one per declared arch and they all carry the same image stamp, so
+		// image alone stops discriminating the moment a second arch is declared — and
+		// what is left is "newest wins", which is a coin toss. This is NOT a stale
+		// golden and must not be reported as one: the other arch's golden is correct,
+		// it just is not ours.
+		//
+		// Measured on the real deployment (docs/70 §70.14.5): with x86_64 and arm64
+		// baking at the same time, the x86_64 probe was seeded from the arm64
+		// candidate. Nothing broke — §70.5's self-heal wipes the wrong-arch bits and
+		// re-runs boot-install — which is exactly why this had to be found in a log
+		// rather than by a failure: it silently throws away the whole point of the
+		// golden, and it makes the probe prove the wrong snapshot.
+		if snapshotArch(s) != archOrX86(e.arch) {
 			continue
 		}
 		if newest == nil || snapshotStartedAfter(s, *newest) {

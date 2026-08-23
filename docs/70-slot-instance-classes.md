@@ -1,7 +1,9 @@
 # 70. スロットのインスタンス種別（アーキ / 世代）をテナント・ユーザー毎に選ぶ
 
-> 状態: **P0 / P2 / P3 / P4 完了**（2026-08-22）。残るは **P1（arm64 イメージ・仕組みだけ実装済みで
-> 一度も焼いていない）** と **P5（実機）**。arm64 クラスは P1 が終わるまで既定に載せない（§70.14-2）。
+> 状態: **P0〜P5 のほぼ全て完了**（2026-08-23）。実デプロイ（lazmix）で arm64 の
+> end-to-end が通り（§70.14）、**難所と言い続けたアーキ跨ぎの home 自己修復も通った**
+> （§70.14.5）。残るは **arm64 の agy 実セッション**と
+> **publish 経路（multi-arch を CI から出す）**。arm64 クラスは既定にはまだ載せない。
 > ADR は P1 着手時に `0051` として起票する。
 > 本書の価格・AMI・ECS API の記述は **ap-northeast-1 の実 AWS（sandbox 722507597273）で
 > 2026-08-22 に取得した一次情報**。残存リソースは 0（プローブしたタスク定義 2 本は
@@ -457,6 +459,26 @@ GitHub ホストの **`ubuntu-24.04-arm` ランナーが無料で使える**の�
   マニフェストリストは `--load` できないので、ローカル開発と air-gap 配布は
   **ホストのアーキ 1 本**という現状を維持する（`--multi-arch` はリリース経路だけの旗）。
 
+**計測の段取り（2026-08-23・`arm64-image-time.yml`）**。上の未計測がこの経路を止めて
+いる唯一のものなので、そこだけを測るワークフローを足した。
+
+⚠️ **`publish-dist` をそのまま走らせて測ることはできない。** あれは GHCR と dist repo
+への**公開**までやるもので、ビルド時間を知るためにリリースを作るわけにはいかない。
+なので所要が未知の 1 ステップだけを**実経路と同じコマンド**で走らせて捨てる。
+実経路（`deploy/compose/release.sh`）と同じに保つのは buildx の `--platform` と
+`--provenance=false`・build-arg・コンテキスト・後段の 2 アーキ検証。触らないのは
+dist repo と、利用者が pull できるタグ（使い捨ての `armtime-<run id>` へ push するので
+manifest list は本物のまま、リリース済みタグの意味は変わらない）。
+
+- **基準値も測る**: QEMU を入れる**前**に amd64 単独を別タグへ。同じジョブで後から
+  測るとレイヤが効いて arm64 を実際より安く見せる。
+- `timeout-minutes` は**わざと 150**（`publish-dist` の 90 より上）。問いは
+  「90 分に入るか」なので、90 で切ると答えが**数字ではなくキャンセル**になる。
+- **予算の目安**: `publish-dist` の実績は 9〜11 分（直近 8 回・全 success）で timeout は
+  90 分。つまりこのステップに使える余裕は**およそ 80 分**。
+- ⚠️ **workflow_dispatch はデフォルトブランチにファイルが無いと起動できない**
+  （`--ref` でブランチを指しても 404）。だから**計測は develop へマージした後**になる。
+
 ### 70.9.1 arm64 で最初に落ちたのは他社の CLI ではなく**自分たちのコード**だった
 
 **実測（2026-08-22）**: Graviton4 の実機（m8g.2xlarge・ECS 最適化 arm64 AMI には docker が
@@ -724,7 +746,191 @@ Workspace イメージと同じ `node:22-bookworm-slim` の中で実行・残存
 **OAuth 認証と実セッションは通していない**。FIPS 自己テストはプロセス起動時に走るので
 SIGABRT はこれで捕まるが、「実際に会話ができる」ことの証明ではない。そちらは P5 の仕事。
 
-## 70.14 フェーズ
+## 70.14 P5 —— 実デプロイで通した（lazmix・2026-08-22）
+
+0.10.0 を lazmix（sandbox 722507597273）と acrt に本デプロイした状態で実施。arm は
+**lazmix だけ**に入れた——acrt には実ユーザーの Workspace が動いており、イメージ参照を
+変えると「要再起動」バッジがその人に出るため。
+
+### 70.14.1 デプロイしただけで通ったもの
+
+CP の起動ログが、ユニットテストで固定した内容の実機版になっていた。
+
+```
+runtime=ecs-ec2 … arm64-ami=(none)
+classes=standard(x86_64:m7i.large/…) saver(x86_64:m6i.large/…) default-class=standard
+golden[x86_64]: no golden for …:0.10.0; baking one
+```
+
+- **出荷した既定の 2 クラス文字列が実 CP で意図どおりパースされた**（既定は `standard`＝誰も動かない）。
+- **`golden[x86_64]` の接頭辞**＝アーキ毎 golden の分岐が実機で動き、x86_64 1 本と判定。
+- ✅ **`saver` を選んだメンバーが実際に m6i のスロットに載った**（`af-slot-size=m6i.large`）。
+
+### 70.14.2 arm を入れるのに必要だったもの
+
+⚠️ **リリース済みの `0.10.0` タグは触っていない。** 別タグ `0.10.0-arm` を作って `ImageTag` を
+差し替えた（切り戻しはパラメータ 1 つ）。index の amd64 側は **released 0.10.0 と同一 digest**。
+
+1. arm64 イメージを **v0.10.0 から** Graviton 実機でビルドし ECR へ push
+   （`harness/push-arm64-image.sh`・116 秒・IAM ロールは使い捨てで自動削除）
+2. `crane index append` で 2 アーキの index を `0.10.0-arm` に作成
+3. `ImageTag=0.10.0-arm` / `Ec2SlotAmiArm64=ami-…` / `Ec2SlotTypes` に arm クラス追加
+
+⚠️ **ここで 1 度間違えた。** 検証用ハーネスから `BAKE_AGENT_CLIS=1` を引き継いでビルドして
+しまい、**arm64 だけ焼き込み variant**（2,536 MiB）になった。リリースが publish するのは
+**lean**（`release.sh` の既定は 0）で amd64 は 920 MiB。**動くし、テストも通る**——同じタグの
+下で amd64 と arm64 が別の製品になるだけである（CLI が `/usr/local` か `~/.local` か）。
+気づけたのはサイズが 2.7 倍だったからで、それが無ければ気づかなかった。
+`push-arm64-image.sh` の既定を 0 にし、理由をコメントに残した。
+
+### 70.14.3 arm64 の end-to-end（golden ベイカーが自動で走らせた）
+
+**Console を一度も触っていない。** arm クラスを足すと、ベイカーが 2 アーキを見つけて
+勝手に両方焼き始める——そしてそれが P5-arm の経路そのものである。
+
+```
+golden[arm64]: no golden for …:0.10.0-arm; baking one
+golden[arm64]: the seed finished boot-install; stopping it to capture the home
+golden[arm64]: releasing the seed's slot before the snapshot
+golden[arm64]: snap-04aba… is baked; booting a probe from it before publishing it
+golden[arm64]: snap-04aba… is now the golden — a probe started from it cleanly
+```
+
+これで通ったもの:
+
+| | 証拠 |
+|---|---|
+| arm64 スロットが arm64 AMI から起動 | `i-048dd841… m8g.large arm64 running` |
+| `RuntimePlatform=ARM64` でタスクが配置された | seed のタスクが動いた（配置に失敗していない） |
+| **multi-arch index から arm64 側が pull された** | 同上 |
+| entrypoint と boot-install が arm64 で完走 | `the seed finished boot-install` |
+| **Agent が arm64 で応答した** | 同上（`markHomeBaked` は `agentSessions` の成功が条件） |
+| home が `af-arch=arm64` で snapshot された | `golden`/`arm64` のタグ |
+| **履歴の無いメンバーシップで probe が起動した** | `a probe started from it cleanly`（§64.28.3 が必須と決めた検査） |
+| **arm64 の publish が x86_64 の golden を消さない** | golden が 2 本共存（`dropSupersededGoldens` のアーキ絞り） |
+| 予約鍵のアーキ分け | `af-golden-seed`（x86・従来のまま）と `af-golden-seed-arm64` |
+| seed/probe の後片付け | home ボリュームは利用者の 1 本だけ残った |
+
+### 70.14.4 それでも残っている 2 つ
+
+- ✅ → **アーキ跨ぎの home 自己修復（§70.5）は §70.14.5 で通した。**
+- ❌ **agy の OAuth と実セッション（arm64）**。§70.13 で確かめたのは `--version` と `--help` だけ。
+
+## 70.14.5 アーキ跨ぎの home 自己修復 —— 通した（lazmix・2026-08-23）
+
+本書が「難所はここ」と言い続けた経路。**既に home を持つメンバーを x86 → arm へ移す**もので、
+golden ベイカーは常に新規 home から始まるため構造的にこの経路を通らず、ここまで一度も
+走っていなかった。`ImageTag=0.10.1-dev-b5ea1085`（`temp/sg4h6cj`＝placeHome 修正入り）で実施。
+
+利用者 `af-ws-k1-kami-gmail-com` を `saver`(m6i.large/x86_64) → `arm`(m8g.large/arm64) へ。
+
+```
+15:35:29 ecs-ec2: … now needs m8g.large but its home is on i-0711ed3e5de6d168e; releasing that slot first
+15:35:35 ecs-ec2: released slot i-0711ed3e5de6d168e from af-ws-k1-kami-gmail-com
+15:35:37 ecs-ec2: grew the pool with slot i-05ec4df1eedbfe787 (m8g.large, ap-northeast-1a)
+15:38:42 ecs start: service af-ws-k1-kami-gmail-com Agent healthy 163s after Start
+```
+
+| | 証拠 |
+|---|---|
+| 合わなくなったスロットの解放 | `released slot i-0711ed3e5de6d168e`（`e1c3c59b` が実機で効いた） |
+| m8g のスロットに載る | `i-05ec4df1eedbfe787` m8g.large arm64・`af-slot-size=m8g.large` |
+| **home が同じボリュームのまま付け替わる** | `vol-00753f1f9376b8ee4`（新規作成されていない） |
+| task def の矛盾が解消 | `:22` = ARM64＋制約が新 m8g＋image は新タグ（`:21` は **ARM64＋m6i 制約**だった） |
+| 刻印を読んで自己修復 | `[entrypoint] arch: この home は amd64 で作られ、いま arm64 の上に居ます` → `削除 ~/.local/bin/{claude,codex,opencode,copilot,rtk,agy,cursor-agent}`・`~/.local/lib/node_modules` |
+| boot-install の走り直し | `boot-install ok` → `claude 2.1.238 (Claude Code)` |
+| Workspace が正常に上がる | `Agent healthy 163s after Start` |
+| **JDK がアーキ毎に解決される（P2）** | 実機で `install-jdk 21` → `downloading Temurin 21 (aarch64)` → `…/jvm/temurin-21-jdk-arm64`・`java -version` が起動。**`pickArchJDK` 前なら glob の先頭＝amd64 を掴んで `Exec format error`** になっていた |
+| rtk は arm64 で入らない | `GLIBC_2.39 not found` を検出して**導入せず理由を残す**（§70.13 の設計どおり） |
+
+⚠️ **`~/repos` の保全はこの回では確かめていない。** 対象の home に clone が 1 つも無かった。
+entrypoint は `~/repos は触っていません` と言い、削除対象は `~/.local` 配下に限られているが、
+**実物で確認したわけではない**ので未検証として残す。
+
+### 70.14.6 ⚠️ 収束しない `starting` は Console から停止できなかった
+
+**この検証にたどり着く前に、まず利用者の Workspace が操作不能になっていた。** 症状は
+「停止を押しても起動中のまま進まない」。原因は 4 段の連鎖で、**どれも単体では正しい**:
+
+1. §70.14.2 の placeHome バグが task def `:21` に **`RuntimePlatform=ARM64` ＋
+   `placementConstraints: ec2InstanceId == <m6i の箱>`** という矛盾を焼き付けた。
+   ECS は永久に配置を拒否する（`missing an attribute required by your task`）。
+2. `State()` は `case s.DesiredCount >= 1: return "starting"`。配置できない以上
+   `RunningCount` は永久に 0 で、**`starting` から出る経路が無い**。
+3. CP の `Start` は `case "starting": return nil`（「Already converging」）。
+4. Console の電源トグルは `if (!running) { startWs() }` で、`running` は
+   `wsState === "running"` だけ。**`starting` では停止ではなく起動を投げ**、それを 3 が
+   捨てる。さらに `wsStartBusy` が `starting` で true になりボタン自体が `disabled`。
+
+**UI から出せる操作が「起動」しか無く、その起動が no-op になる。**復旧には CP を経由しない
+`aws ecs update-service --desired-count 0` が要った。
+
+⚠️ 教訓は「**`starting` を一時状態だと決めてかかっていた**」こと。ECS の cold pull は分単位
+という想定はしていたが、**終わらない `starting`** は想定になく、二度押し防止という正しい配慮が
+そのまま行き止まりになった。placeHome の修正は「次の Start で正しいスロットを選ぶ」ものだが、
+**その次の Start が永久に来ない**ので届いていなかった。
+
+直し（`wsPowerStops`）: 電源トグルは `running` に加えて **`starting` でも停止側を向く**。
+無効化してよいのは楽観的な `"…"` 遷移だけ（`wsBusy`）で、サーバ報告の `starting` では
+押せるままにする。起動のキャンセルはそれ自体まっとうな操作でもある。`wsStartBusy` は
+そのままなので**二重 Start は依然として防がれる**（3 者を固定する契約テストを追加）。
+
+✅ **もう一方の弱点も直した: 配置できない理由が Console から見えなかった。** ECS は
+イベントに理由を書いているのに CP はそれを捨てて素の `starting` を返しており、今回
+突き止められたのは `describe-services` を手で読んだからだった。運用者に同じことは
+させられない。
+
+`State()` が `starting` を返すとき、**現デプロイ以降**のイベントに配置失敗があれば
+phase に載せる（`blocked: <ECS の原文>`）。Console は接頭辞を訳語の見出しに写し、
+原文をその下に技術的詳細として出す**既存の仕組みにそのまま乗る**——原文の方が価値が
+ある側で、落ちた制約の名前が書いてある。CP ログにも 1 度だけ出す。AWS 呼び出しは
+増やしていない（呼び出し元が既に取った `DescribeServices` の `Events` を使う）。
+
+- ⚠️ **`State()` が書き込みをする唯一の場所**になる。`BootPhase()` は ctx を取らず
+  AWS を呼べないので、読み取り経路でここ以外にイベントへ手が届かない。
+- ⚠️ **「最近イベントが出たか」では判定できない。** ECS はイベントを重複排除するので
+  **詰まりは永続するのにイベントは 1 度きり**（実測: 今回の詰まりもイベント 1 本で
+  あとは沈黙だった）。だから現デプロイの `CreatedAt` と突き合わせる。
+- ⚠️ 直って再デプロイしても古い苦情はイベント一覧に残る。そこを読むと**通常の
+  コールドスタートが偽の診断になる**。
+- `running` になったら blocked の phase は消す。**接頭辞に限定する**のは、他の phase は
+  進行中の Start のもので、4 秒ごとのポーリングがそれを消すと起動ダイアログが
+  起動の最中に真っ白になるため。
+
+### 70.14.7 ⚠️ golden は「image が同じ」だけで選ばれていた（同じデプロイのログで発見）
+
+`ImageTag` を差し替えた直後、ベイカーが 2 アーキ分を同時に焼いた。そのログ:
+
+```
+15:17:28 golden[x86_64]: snap-00da9f0a86d2fc7a9 is baked; booting a probe from it before publishing it
+15:17:30 ecs-ec2: seeding a new home for af-golden-probe from the golden snapshot snap-0fd69a1e3a4c1384b
+15:17:38 golden[arm64]: snap-0fd69a1e3a4c1384b is baked; booting a probe from it …
+```
+
+**x86_64 の probe が arm64 の候補から seed されている。** `goldenSnapshot`（新しい home を
+どのスナップショットから作るか）は pool・role・**image** で絞っており、**アーキで絞って
+いなかった**。golden はアーキ毎に 1 本焼かれて**どれも同じ image スタンプを持つ**ので、
+2 つ目のアーキを宣言した瞬間に image が判別力を失い、残る決め手が `snapshotStartedAfter`＝
+**「後に焼き終わった方が勝つ」**になる。ベイカー側の `goldenFor` は最初から `arch` を
+引数に取っていたので、**読む側だけに穴が空いていた**。
+
+⚠️ **壊れないのが厄介だった。** §70.5 の自己修復が違うアーキの中身を消して boot-install を
+やり直すので、この probe は `Agent healthy 96s` で**成功**している。実際 WS ログ側には
+対になる `この home は arm64 で作られ、いま amd64 の上に居ます` が残っていた。実害は 2 つ:
+
+- golden の存在意義（boot-install を飛ばすこと）が**まるごと捨てられる**。それでいて
+  「golden から seed した」とログは言うので、速くならない理由が読み取れない。
+- **§64.28.3 の probe が別アーキのスナップショットを「検証済み」にしてしまう。**
+  publish されるのは自分のアーキの候補なので、**起動を確かめていない golden が公開される**。
+
+直し: `goldenSnapshot` も `snapshotArch(s)` で絞る。読む側にも同じ既定を置いた
+（`archOrX86`）——タグの無いスナップショットが x86_64 なのと同じ理由でクラス未宣言のプールも
+x86_64 であり、**正規化した値どうしを比べないと旧デプロイの golden が一切引けなくなる**。
+
+⚠️ 一般則として: **「同じ image」で一意になる前提は、次元が 1 本増えた瞬間に黙って壊れる。**
+壊れ方が例外ではなく「新しい方が勝つ」なので、テストも実機も緑のまま通る。
+
+## 70.15 フェーズ
 
 | | 内容 | 出口 |
 |---|---|---|
@@ -733,13 +939,13 @@ SIGABRT はこれで捕まるが、「実際に会話ができる」ことの証
 | **P2** ✅ | §70.5 の home 修復（刻印 + 自己修復 + JDK glob の修正）。**arm を誰かに配る前に必ず**入れる | x86 の home を arm スロットに載せても壊れない |
 | **P3** ✅ | スロットクラス本体（parse / 解決 / クランプ / `RuntimePlatform` / golden のアーキ次元 / CFN パラメータ） | CP が複数クラスを持てる |
 | **P4** | Console / API / MCP / ガイド（§70.10） | テナント管理者が画面で選べる |
-| **P5** | 実 AWS で端から端まで（[ec2-live-harness](64-ec2-persistent-workspace.md) の手順・**プールを空にしてから**）。x86 → arm の切替を実機で 1 回通す | 実運用に出せる |
+| **P5** ◐ | 実 AWS で端から端まで（§70.14・lazmix）。**arm64 の golden が probe 込みで publish され**、**x86 → arm の切替も home 自己修復ごと通った**（§70.14.5）。残 = **agy の OAuth と実セッション** | 実運用に出せる |
 
 ⚠️ **P2 を P3 より先に置いているのは意図的**。クラスが選べるのに home が壊れる状態を
 一瞬でも出荷すると、壊れた `~` を持つ人が生まれ、後から入れた修復では**もう遅い**
 （`~/repos` の中身は戻せない）。
 
-## 70.15 未決
+## 70.16 未決
 
 1. **どのファミリをクラスとして出すか。** §70.3.1〜70.3.3 の実測で決まった。
    x86_64 は `standard = m7i` と `saver = m6i`（前提条件ゼロ・出荷済み）。arm64 は

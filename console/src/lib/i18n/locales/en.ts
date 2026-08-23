@@ -1503,6 +1503,8 @@ export const en: Record<keyof typeof ja, string> = {
   "tenant.machine_deploy_default": "Deployment default",
   "tenant.machine_member_note":
     "Members who chose a machine themselves are unaffected. The change reaches each member at their next workspace start.",
+  "admin.roster_spec": "{n} vCPU / {mem}",
+  "admin.roster_disk": "{n} GB disk",
   "admin.ws_machine": "Machine",
   "admin.ws_machine_tenant_default": "Tenant default",
   "admin.ws_machine_arch_warn":
@@ -1924,6 +1926,7 @@ export const en: Record<keyof typeof ja, string> = {
   // Starting dialog (WsStartingDialog — docs/35 §35.9-9)
   "wsstart.title": "Starting workspace",
   "wsstart.generic": "Starting…",
+  "wsstart.blocked": "Cannot start. Waiting will not help",
   "wsstart.installing_clis": "Installing agent CLIs… (first start only, can take a few minutes)",
   "wsstart.fetching_tool": "Fetching additional tools…",
   "wsstart.toolchain": "Installing toolchain…",
@@ -2076,6 +2079,8 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.confirm.start.go": "Start",
   "wsbar.confirm.stop.body":
     "Stops the container. Running sessions become Stopped (resumable later), and opencode web / preview disconnect. Files are preserved.",
+  "wsbar.confirm.stop.starting_body":
+    "Cancels the start and stops the workspace. Nothing is lost — it has not come up yet. Files are preserved.",
   "wsbar.confirm.stop.go": "Stop",
   "wsbar.confirm.restart.title": "Restart the workspace",
   "wsbar.confirm.restart.body":
