@@ -777,12 +777,86 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	// start/complete land on two different Agent processes and lose the
 	// in-memory flow_id (confirmed 2026-08-19 on af.lazmix.jp).
 	case s.DesiredCount >= 1 && s.RunningCount >= 1 && serviceRolledOut(s):
+		e.clearBlockedPhase()
 		return "running"
 	case s.DesiredCount >= 1:
+		e.notePlacementBlocked(s)
 		return "starting"
 	default:
 		return "stopped"
 	}
+}
+
+// notePlacementBlocked surfaces "the scheduler cannot place this task" as a phase, so a
+// start that is never going to converge says WHY instead of spinning.
+//
+// ⚠️ This is the one place State() writes something, which is worth the exception.
+// `starting` here means only "desired >= 1 and nothing is running yet", and it has no
+// timeout — a task ECS refuses to place holds that forever (docs/70 §70.14.6: a task
+// definition declaring ARM64 while pinned to an x86_64 slot). ECS says exactly why in
+// the service events; the CP was throwing that away and reporting a bare `starting`,
+// so the only way to find out was `aws ecs describe-services` by hand. Nothing else in
+// the read path can reach the events — BootPhase() takes no context and cannot call
+// AWS — so it is written from here or not at all.
+//
+// No extra API call: the events come from the DescribeServices the caller already made.
+func (e *ecsEC2Runtime) notePlacementBlocked(s ecstypes.Service) {
+	why := ecsPlacementBlocked(s)
+	if why == "" {
+		// Still coming up normally. Do NOT clear the phase here: an ordinary Start is
+		// concurrently writing its own progress ("slot: creating", "home: attaching")
+		// and this poll must not wipe it.
+		return
+	}
+	phase := blockedPhasePrefix + why
+	if e.BootPhase() == phase {
+		return // already said, and this runs every 4s
+	}
+	e.setPhase(phase)
+	log.Printf("ecs-ec2: %s cannot be placed and will stay `starting` until this is fixed: %s", e.base.name, why)
+}
+
+// clearBlockedPhase removes a blocked phase once the task is actually running. Scoped to
+// the prefix on purpose: any other phase belongs to a Start that is still in flight, and
+// clearing that from a poll would blank the starting dialog mid-boot.
+func (e *ecsEC2Runtime) clearBlockedPhase() {
+	if strings.HasPrefix(e.BootPhase(), blockedPhasePrefix) {
+		e.setPhase("")
+	}
+}
+
+// blockedPhasePrefix is the contract with the Console: WsStartingDialog maps this
+// prefix to a localized headline and prints the rest — the raw ECS sentence — beneath
+// it. The raw text is the valuable half; it names the constraint that failed.
+const blockedPhasePrefix = "blocked: "
+
+// ecsPlacementBlocked returns the ECS event explaining why the CURRENT deployment cannot
+// be placed, or "" if there is no such event.
+//
+// Scoped to events newer than the PRIMARY deployment: a service that was wedged, got
+// fixed and redeployed still carries the old complaint in its event list, and reporting
+// that would turn a normal cold start into a fake diagnosis.
+//
+// ⚠️ ECS de-duplicates its own events, so the message appears once and then goes quiet
+// for a long while. That is exactly why this is matched against the deployment rather
+// than "was there an event recently": the wedge is permanent but the event is not
+// repeated (measured — the run that prompted this had a single event and then silence).
+func ecsPlacementBlocked(s ecstypes.Service) string {
+	var since time.Time
+	for _, d := range s.Deployments {
+		if aws.ToString(d.Status) == "PRIMARY" && d.CreatedAt != nil {
+			since = *d.CreatedAt
+		}
+	}
+	for _, ev := range s.Events {
+		if ev.CreatedAt == nil || ev.CreatedAt.Before(since) {
+			continue
+		}
+		if msg := aws.ToString(ev.Message); strings.Contains(msg, "unable to place a task") {
+			return strings.TrimSpace(msg)
+		}
+	}
+	return ""
 }
 
 // Start brings the workspace up on a slot. Everything that can be slow is pushed off

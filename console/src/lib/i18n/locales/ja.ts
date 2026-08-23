@@ -1938,6 +1938,7 @@ export const ja = {
   // 起動中ダイアログ（WsStartingDialog・docs/35 §35.9-9）
   "wsstart.title": "ワークスペースを起動中",
   "wsstart.generic": "起動しています…",
+  "wsstart.blocked": "起動できません。このまま待っても進みません",
   "wsstart.installing_clis": "エージェント CLI を導入中…（初回のみ・数分かかることがあります）",
   "wsstart.fetching_tool": "追加ツールを取得中…",
   "wsstart.toolchain": "ツールチェーンを導入中…",
