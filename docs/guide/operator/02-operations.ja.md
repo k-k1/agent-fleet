@@ -97,7 +97,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose
 image を手で持ち込みます（ネット接続のあるマシンで `release.sh --save` してビルド＆
 `docker save` → 対象ホストで `load-images.sh`）。コマンドは runbook の "Air-gapped install" 節。
 
-判断ポイントが 3 つあります。
+判断ポイントが 4 つあります。
 
 - **image の取得元**: 社内レジストリのミラーなら `docker compose pull` がそのまま使え、
   保守も軽くなります。手持ち込みの tar は、アップグレードのたびにビルド／コピー／load を
@@ -107,6 +107,25 @@ image を手で持ち込みます（ネット接続のあるマシンで `releas
 - **Claude のインストール**: Workspace image は既定でコンテナ起動時に最新の Claude を取得します。
   完全オフラインのホストでは `CLAUDE_INSTALL=0`（`WS_ENV` 経由）にし、Claude を焼き込んだ image を
   使ってください。
+
+- **図のアイコン（`.drawio`）**: 同梱の drawio ビューアはオフラインでも図を描けますが、
+  ベンダーアイコンの図案（`shape=mxgraph.aws4.*`・GCP・Azure・Kubernetes・ラック機器…）は
+  **同梱していません**（全部で 40.8 MB あるため）。通常は初回に Control Plane が取得して
+  キャッシュしますが、外に出られないとその取得が失敗し、図は**枠と色とラベルだけに黙って
+  劣化します**。避けるには、持ち込んだディレクトリからキャッシュを埋めておきます:
+
+  ```sh
+  # 外に出られるマシンで 1 回
+  git clone --depth 1 -b v31.1.8 https://github.com/jgraph/drawio
+  # drawio/src/main/webapp/stencils を持ち込み、CP のホストで:
+  control-plane drawio-preseed --from /path/to/stencils        # 既定束 49 件 / 17.0 MB
+  control-plane drawio-preseed --from /path/to/stencils --all  # 全件 203 件 / 40.8 MB
+  ```
+
+  **1 件ずつ同梱台帳の SHA-256 で照合してから置く**ので、持ち込みの経路が信用できなくても
+  中身は保証されます。キャッシュは内容アドレスで索引を持たないため、**埋めたディレクトリを
+  そのまま tar で別ホストへ運んでも同じ**です。何が既定束に入り何が入らないかは、`--list` で
+  先に確認できます。
 
 「閉域で動く」の意味を取り違えないでください。image がローカルにあればフリートは**起動**
 できますが、エージェント自身はモデルのエンドポイントに到達できなければ何もできません。この

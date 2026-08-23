@@ -30,9 +30,10 @@ type config struct {
 	addr       string
 	consoleDir string
 	mgr        *manager
-	// Bitbucket OAuth (Authorization Code Grant) — CP owns the public callback.
-	bbKey         string
-	bbSecret      string
+	// ★ The git providers' OAuth apps are NOT here. Since docs/71 they are per-tenant
+	// rows read from the database at the moment a member presses "connect"
+	// (tenant_git_oauth.go); BITBUCKET_OAUTH_KEY/SECRET and the workspace's
+	// GITHUB_OAUTH_CLIENT_ID are not read at all, not even as a fallback.
 	publicBaseURL string // external base, e.g. https://host (for redirect_uri)
 	// CP-native OIDC login (AUTH=oauth) — replaces oauth2-proxy. See oauth.go /
 	// oauth_oidc.go. Google keeps its historical env names and is one instance of
@@ -73,6 +74,13 @@ func main() {
 		runEgressProxy()
 		return
 	}
+	// Subcommand: `control-plane drawio-preseed` fills the stencil cache ahead of
+	// time (docs/65 §65.5.5). It runs where the cache lives and reuses the embedded
+	// manifest, so it cannot drift from what the server will verify against.
+	if len(os.Args) > 1 && os.Args[1] == "drawio-preseed" {
+		runDrawioPreseed(os.Args[2:])
+		return
+	}
 
 	portBase, _ := strconv.Atoi(envOr("WS_AGENT_PORT", "7700"))
 	mgr := &manager{
@@ -95,11 +103,12 @@ func main() {
 		// P3-9: live activity tracking for idle-stop.
 		conns: newConnRegistry(),
 	}
-	// OAuth App client_id (non-secret) for the GitHub device flow — injected into
-	// the Workspace so the Agent can run the flow. Reuses the extraEnv -> -e path.
-	if cid := os.Getenv("GITHUB_OAUTH_CLIENT_ID"); cid != "" {
-		mgr.extraEnv = append(mgr.extraEnv, "GITHUB_OAUTH_CLIENT_ID="+cid)
-	}
+	// ★ GITHUB_OAUTH_CLIENT_ID is deliberately NOT injected into the workspace any more
+	// (docs/71 §71.5). The GitHub device flow moved into the CP, where the app can be
+	// read per tenant from the database; container env is fixed at container start and
+	// is implemented once per runtime, so a per-tenant value delivered that way would
+	// have needed all four runtimes plumbed and a workspace restart to take effect. The
+	// env var still exists for GitHub SIGN-IN (oauth_github.go) — a different feature.
 	// Deployment master key for at-rest credential encryption (A3). Per-user
 	// subkeys are derived from its SHA-256 and injected as AF_SECRET_KEY. Unset
 	// => no encryption (dev: Agent stores secrets as plaintext JSON).
@@ -207,8 +216,6 @@ func main() {
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),
 		consoleDir:    envOr("CONSOLE_DIR", "./console"),
-		bbKey:         os.Getenv("BITBUCKET_OAUTH_KEY"),
-		bbSecret:      os.Getenv("BITBUCKET_OAUTH_SECRET"),
 		publicBaseURL: publicBaseURL,
 		mgr:           mgr,
 		// CP-native OIDC login (AUTH=oauth). Google's env names are unchanged.
@@ -276,6 +283,9 @@ func main() {
 	// must not also switch this off. goldenBakerFor returns nil on every profile that
 	// does not seed homes from a shared snapshot, so no other deployment pays anything.
 	if b := goldenBakerFor(mgr, envBool("AF_ECS_EC2_GOLDEN_AUTOBAKE", true)); b != nil {
+		// Recorded, not re-read later: the pool screen has to say "switched off" rather
+		// than leave "there is no golden and nothing is happening" unexplained (§64.30).
+		mgr.autoBakeGolden = true
 		go b.run(context.Background(), time.Duration(envInt("AF_ECS_EC2_GOLDEN_BAKE_SEC", 60))*time.Second)
 	}
 
@@ -553,7 +563,7 @@ func logRequests(next http.Handler) http.Handler {
 // statusWriter captures the response status for the access log.
 //
 // Why it exists: a public deployment is found by vulnerability scanners within hours
-// (measured on <dev-deployment> — 172 probes for /actuator/heapdump, /.env and friends in
+// (measured on the dev deployment — 172 probes for /actuator/heapdump, /.env and friends in
 // the first 9 hours), and the log could not answer the only question that matters about
 // them: was that a 401 or a 200? Every line looked identical.
 //

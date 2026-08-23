@@ -15,7 +15,7 @@
 import type { Command, Group, Region } from "../../lib/keys/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
-import { paneByOrdinal, neighborPane, cyclePane } from "../../layout/nav.ts";
+import { paneByOrdinal, neighborPane, cyclePane, cycleTab } from "../../layout/nav.ts";
 import { PANE_ORD_COUNT } from "../../layout/badges.ts";
 import type { Dir } from "../../layout/nav.ts";
 import { useLeftRail } from "../../core/store/leftRail.ts";
@@ -23,14 +23,16 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useMemoStore } from "../memo/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
-import { getSettings, setSetting } from "../../lib/settings.ts";
+import { getSettings, setSetting, defaultSetting } from "../../lib/settings.ts";
+import { fontSettingFor, stepFontSize } from "../../lib/viewFont.ts";
+import type { FontSetting } from "../../lib/viewFont.ts";
 import { cycleActiveWorkingSet, workingSetList } from "../../lib/workingSetsStore.ts";
 import { useKeysStore } from "./store.ts";
 import { useUiOpen } from "../../core/store/uiOpen.ts";
 import { toggleTtsPlayback } from "../../core/store/tts.ts";
 import { paneViewActions } from "../viewer/paneViewActions.ts";
 import { langFor, imageFormat, isDrawioFile } from "../../lib/filemeta.ts";
-import { focusPaneContent, focusRegion } from "./focus.ts";
+import { focusPaneContent, focusRegion, focusRailFilter } from "./focus.ts";
 import { api, apiJSON } from "../../core/api/client.ts";
 import { toast } from "../../ui/toast.ts";
 import { t, getLocale } from "../../lib/i18n/index.ts";
@@ -63,6 +65,42 @@ function focusPane(id: string | undefined): void {
   requestAnimationFrame(() => focusPaneContent(id));
 }
 const focusDir = (dir: Dir) => focusPane(neighborPane(getLayout(), dir));
+
+const tabbedMode = () => getLayout().mode === "tabs";
+
+/** 「いま見えているもの」を閉じる。閉じる対象は **ビュー（＝タブ）** であって、セルでは
+ * ない —— タブモードで activeCellId を渡すと `ops.closePane` は closeCell 分岐に入り、
+ * 同じセルのタブが黙って全部消える（タブの × ボタンは view id を渡すので挙動が食い違う）。
+ * 分割モードは 1 セル 1 ビューなので、view id 経由でも従来どおりペインが空になる。
+ * ビューを持たない空セルだけは cell id を渡してセルごと畳む。 */
+function closeActiveView(): void {
+  const l = getLayout();
+  const view = activePane(l);
+  layoutStore().closePane(view ? view.id : l.activeCellId);
+}
+
+/** Select the tab `delta` steps away inside the active cell (tabs mode only) and put
+ * keyboard focus on the newly shown content. The cell doesn't change, so focus targets
+ * the active cell itself. */
+function focusTab(delta: number): void {
+  const id = cycleTab(getLayout(), delta);
+  if (!id) return;
+  layoutStore().selectTab(id);
+  useKeysStore.getState().setRegion("main");
+  const cellId = getLayout().activeCellId;
+  requestAnimationFrame(() => focusPaneContent(cellId));
+}
+// Only claim Alt+PageUp/PageDown when there is more than one tab to cycle — otherwise
+// the key flows to the terminal (same rule as Alt+N for a missing pane).
+const canCycleTabs = () => notMinimalPopout() && cycleTab(getLayout(), 1) != null;
+
+/** レールの絞り込み欄へ。畳んであるレールは開いてから（描画された次のフレームで）狙う。 */
+function openRailFilter(): void {
+  useLeftRail.getState().ensureOpen();
+  requestAnimationFrame(focusRailFilter);
+}
+// ProjectTree（＝絞り込み欄）はワークスペース起動中しか描画されない。停止中は握らない。
+const canFilterRail = () => notMinimalPopout() && useWorkspaceStore.getState().state === "running";
 
 const REGION_CYCLE: Region[] = ["rail", "main", "bars"];
 function cycleRegion(delta: number): void {
@@ -113,6 +151,21 @@ function toggleReader(): void {
   if (c.kind === "read") layoutStore().openTarget({ content: { kind: "file", filePath: c.filePath } });
   else if (c.kind === "file") layoutStore().openTarget({ content: { kind: "read", filePath: c.filePath } });
 }
+// 文字サイズの拡大 / 縮小 / 既定へ。対象は「アクティブなペインが属する面」の設定
+// （端末＝termSize、ミラー/チャット＝chatSize、朗読＝readerSize、それ以外のビューア＝
+// viewerSize）。文字組みを持たない面（ブラウザ・画像）では null が返り、`when` が閉じて
+// キーは端末へ素通しする。docs/29 §5.7。
+const fontTarget = (): FontSetting | null => fontSettingFor(activePane(getLayout())?.content);
+const bumpFont = (delta: number) => {
+  const key = fontTarget();
+  if (!key) return;
+  setSetting(key, stepFontSize(getSettings()[key], delta));
+};
+const resetFont = () => {
+  const key = fontTarget();
+  if (key) setSetting(key, defaultSetting(key));
+};
+
 function toggleWorkspace(): void {
   const ws = useWorkspaceStore.getState();
   if (ws.state === "running") void ws.stop();
@@ -222,8 +275,13 @@ export const ALL_COMMANDS: Command[] = [
   // ---- Pane / layout (leader p, + Alt accelerators) ----
   { id: "pane.splitRight", title: "keys.cmd.splitRight", seq: "p r", when: notMinimalPopout, run: () => layoutStore().splitRight() },
   { id: "pane.splitDown", title: "keys.cmd.splitDown", seq: "p d", when: notMinimalPopout, run: () => layoutStore().splitDown(getLayout().activeCellId) },
-  { id: "pane.close", title: "keys.cmd.close", seq: "p w", run: () => layoutStore().closePane(getLayout().activeCellId) },
-  { id: "pane.closeAll", title: "keys.cmd.closeAll", seq: "p a", when: notMinimalPopout, run: () => layoutStore().resetToTerminal() },
+  // Alt+W = ブラウザのタブを閉じる慣習に合わせた「いま見えているタブ／ペインを閉じる」。
+  { id: "pane.close", title: "keys.cmd.close", keys: ["alt+w"], seq: "p w", run: closeActiveView },
+  // タブモードだけの上位動作＝セルごと（＝そのペインの全タブ）閉じる。分割モードでは
+  // pane.close と同義になるので出さない。タブ UI にはセルを畳むボタンが無いので、これが
+  // タブモードでセルを減らす唯一の導線になる。
+  { id: "pane.closeCell", title: "keys.cmd.closeCell", seq: "p c", when: () => notMinimalPopout() && tabbedMode(), run: () => layoutStore().closePane(getLayout().activeCellId) },
+  { id: "pane.closeAll", title: "keys.cmd.closeAll", keys: ["alt+shift+w"], seq: "p a", when: notMinimalPopout, run: () => layoutStore().resetToTerminal() },
   { id: "pane.wrap", title: "keys.cmd.wrap", seq: "p \\", run: toggleWrap },
   { id: "pane.popout", title: "keys.cmd.popout", seq: "p t", when: canPopoutActive, run: () => popoutActive("popout") },
   { id: "pane.popoutFull", title: "keys.cmd.popoutFull", seq: "p f", when: canPopoutActive, run: () => popoutActive("full") },
@@ -234,13 +292,17 @@ export const ALL_COMMANDS: Command[] = [
   ...paneOrdinalCommands,
   { id: "pane.next", title: "keys.cmd.next", keys: ["alt+]"], seq: "p ]", when: notMinimalPopout, run: () => focusPane(cyclePane(getLayout(), 1)) },
   { id: "pane.prev", title: "keys.cmd.prev", keys: ["alt+["], seq: "p [", when: notMinimalPopout, run: () => focusPane(cyclePane(getLayout(), -1)) },
+  // タブ巡回はペイン巡回（Alt+[ ]）とは別の軸なので別キーに分ける。Alt+PageUp/PageDown は
+  // ブラウザのタブ切替（Ctrl+PageUp/Down）に近い並びで、かつどのブラウザにも予約が無い。
+  { id: "tab.next", title: "keys.cmd.tabNext", keys: ["alt+pagedown"], seq: "p n", when: canCycleTabs, run: () => focusTab(1) },
+  { id: "tab.prev", title: "keys.cmd.tabPrev", keys: ["alt+pageup"], seq: "p p", when: canCycleTabs, run: () => focusTab(-1) },
 
   // ---- Region focus (direct only) ----
   { id: "region.next", title: "keys.cmd.regionNext", keys: ["f6"], when: notMinimalPopout, run: () => cycleRegion(1) },
   { id: "region.prev", title: "keys.cmd.regionPrev", keys: ["shift+f6"], when: notMinimalPopout, run: () => cycleRegion(-1) },
 
   // ---- Session (leader s) ----
-  { id: "session.new", title: "keys.cmd.sessionNew", seq: "s n", when: notMinimalPopout, run: () => useSessionsStore.getState().openStart() },
+  { id: "session.new", title: "keys.cmd.sessionNew", keys: ["alt+n"], seq: "s n", when: notMinimalPopout, run: () => useSessionsStore.getState().openStart() },
 
   // ---- Memo (leader m = memo) ----
   // The most-used quick action gets the top-level single key "m" (m = memo). The leader "n"
@@ -248,6 +310,8 @@ export const ALL_COMMANDS: Command[] = [
   {
     id: "memo.add",
     title: "keys.cmd.memoAdd",
+    // Alt+M は Markdown 表示切替が持っているので、直キーは A（＝Add）を当てる。
+    keys: ["alt+a"],
     seq: "m",
     when: notMinimalPopout,
     run: () => {
@@ -262,10 +326,13 @@ export const ALL_COMMANDS: Command[] = [
   { id: "workspace.railMode", title: "keys.cmd.railMode", seq: "w m", when: notMinimalPopout, run: () => useLeftRail.getState().toggleMode() },
   { id: "workspace.fullscreen", title: "keys.cmd.fullscreen", seq: "w f", run: toggleFullscreen },
   { id: "workspace.theme", title: "keys.cmd.theme", seq: "w t", run: toggleTheme },
-  { id: "workspace.workingSet", title: "keys.cmd.wsetCycle", seq: "w w", when: notMinimalPopout, run: cycleWorkingSet },
+  { id: "workspace.workingSet", title: "keys.cmd.wsetCycle", keys: ["alt+g"], seq: "w w", when: notMinimalPopout, run: cycleWorkingSet },
+  // レールの絞り込み欄へ飛ぶ（レールが畳んであれば開いてから）。
+  { id: "rail.filter", title: "keys.cmd.railFilter", keys: ["alt+/"], seq: "w /", when: canFilterRail, run: openRailFilter },
 
   // ---- Top-level leader actions ----
-  { id: "settings.open", title: "keys.cmd.settingsOpen", seq: ",", run: () => useSettingsUI.getState().openSettings() },
+  // Alt+, ＝ VS Code の Ctrl+, 相当。Ctrl は端末の制御コードとぶつかるので Alt 側に置く。
+  { id: "settings.open", title: "keys.cmd.settingsOpen", keys: ["alt+,"], seq: ",", run: () => useSettingsUI.getState().openSettings() },
   // Palette is normally on its own accelerator (Ctrl/⌘+P), but a leader path keeps it
   // reachable when terminal-input priority suppresses that accelerator in the terminal —
   // the leader is the one chord that still escapes. Also makes it discoverable in which-key.
@@ -290,7 +357,8 @@ export const ALL_COMMANDS: Command[] = [
   // master. n m = mute (shares TopBar's stop+OFF logic); n a = session voice notification;
   // n r = limit-reset notification; n s / n d flip Slack / Discord notifications. All match
   // Settings › Notifications and toast their result. ----
-  { id: "tts.toggle", title: "keys.cmd.ttsToggle", seq: "n m", run: toggleTtsPlayback },
+  // Alt+Q（Quiet）＝鳴っている読み上げを即黙らせる。Alt+M は Markdown が持っている。
+  { id: "tts.toggle", title: "keys.cmd.ttsToggle", keys: ["alt+q"], seq: "n m", run: toggleTtsPlayback },
   { id: "notify.ttsSession", title: "keys.cmd.ttsSessionToggle", seq: "n a", run: toggleTtsSessionNotify },
   { id: "notify.usageReset", title: "keys.cmd.usageResetToggle", seq: "n r", run: toggleUsageResetNotify },
   { id: "notify.slack", title: "keys.cmd.slackToggle", seq: "n s", run: () => runChatNotify("slack") },
@@ -308,4 +376,33 @@ export const ALL_COMMANDS: Command[] = [
   // per-view toggle lives under one leader) with a direct Alt+Z (VS Code parity). Unified
   // across every text view.
   { id: "viewer.wrap", title: "keys.cmd.wrap", keys: ["alt+z"], seq: "v w", run: toggleWrap },
+  // 文字サイズ。US 配列の「+」は Shift+= なので `alt+=` と `alt+shift+=` の両方を持つ
+  // （どちらのつもりで押しても拡大になる）。テンキーも同じ扱い。JIS の `=` は物理的に
+  // `^` キーだが、ディスパッチャの「e.key を先に、無ければ e.code」の候補順で alt+= に
+  // 落ちるので同じく効く（Alt+[ ] の JIS 対応と同じ経路）。Ctrl 側は端末がブラウザズーム
+  // へ通す約束なので使えない（terminal/term.ts の NO_GRAB）。
+  {
+    id: "viewer.fontBigger",
+    title: "keys.cmd.fontBigger",
+    keys: ["alt+=", "alt+shift+=", "alt+numpadadd"],
+    seq: "v =",
+    when: () => fontTarget() != null,
+    run: () => bumpFont(1),
+  },
+  {
+    id: "viewer.fontSmaller",
+    title: "keys.cmd.fontSmaller",
+    keys: ["alt+-", "alt+numpadsubtract"],
+    seq: "v -",
+    when: () => fontTarget() != null,
+    run: () => bumpFont(-1),
+  },
+  {
+    id: "viewer.fontReset",
+    title: "keys.cmd.fontReset",
+    keys: ["alt+0"],
+    seq: "v 0",
+    when: () => fontTarget() != null,
+    run: resetFont,
+  },
 ];

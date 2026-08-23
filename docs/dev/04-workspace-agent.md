@@ -37,6 +37,32 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
   seed 既定は **新規 WS で Remote Control OFF**＝`remoteControlAtStartup: false`。既存 WS も
   settings.json に `remoteControlAtStartup` キーが無ければ起動時に一度だけ `false` を補って既定 OFF に揃える
   ——ただしユーザーが Console で明示設定した値（キー在り）は上書きせず尊重する。）
+- ⚠️ **claude は自分でセッションを作り直すことがあり、そのとき `--session-id` を落とす**。
+  フルスクリーン TUI への切替（`/tui`・切替ダイアログ）、サインイン後の再起動、モデル切替などで
+  claude は自身を起動し直すが、その再起動 argv は**設定系フラグだけ**から組み直され、`--session-id` と
+  `--name` は構造上そこに入らない（2.1.239 実測: 起動コマンドに両方あったのに、生きているプロセスの argv は
+  `claude.exe --allow-dangerously-skip-permissions --model opus --permission-mode bypassPermissions`）。
+  `--session-id` を失った claude は**ランダムな新 id でまっさらな会話**を始めるので、決定論 sid の jsonl は
+  二度と現れない。決定論 sid しか見ていないと、ミラーは「まだ会話はありません」のまま固まり、hook 由来の
+  status も別 id で書かれて Console からセッションが丸ごと消える（使用量・中断検知・報告リコンサイラも同時に落ちる）。
+  対処は `claude-sid` 台帳（slot sid → claude の実 id、codex/opencode と同じ `agents.SidStore`）で、
+  hook が名乗った id を `AF_SESSION_NAME` を手掛かりに slot へ引き戻して記録する
+  （`internal/agents/claude/sid.go`）。`AF_SESSION_NAME` は tmux セッションの env なので**再起動をまたいで残る**——
+  cwd 一致のような当て推量と違い取り違えようがない、というのがこの手掛かりを選ぶ理由。転写の所在も `--resume` の
+  相手も、以降は台帳を通した `LiveSID()` で決める。
+- **会話 id の持ち方は 2 系統ある**。**捕捉型**（codex は hook、opencode は plugin、agy/kiro は
+  ディスク探索）は CLI 自身が採番した id を**イベントごとに再記録**するので、CLI が別セッションへ
+  移っても次のイベントで追従する（実測でドリフト 0: codex 58/58・opencode 16/16）。**押し付け型**
+  （claude `--session-id`・copilot `--session-id`・cursor `--resume`）は我々が採番した id を渡し、
+  以後それが使われている前提で転写も状態も引く——**CLI がその id を使わなくなった瞬間に静かに壊れる**
+  （上記の claude 実例）。押し付け型に新しい種別を足すときは、必ず取りこぼしの回収経路も一緒に用意すること。
+  claude は hook が session_id を名乗るのでそれを使い、**status hook を持たない copilot/cursor は
+  ディスクから拾い直す**（`internal/agents/imposedsid.go` の `ResolveImposedSID`）。回収は
+  「押し付けた id が CLI 側に**一つも存在しない**とき」に限り、cwd 一致・スロット作成時刻以降・
+  他スロット未取得の候補が**ちょうど 1 つ**のときだけ採用する（曖昧なら動かさない——誤採用で
+  他人の会話を映すのは、固まったままより悪い）。帰属の材料は copilot が
+  `session-state/<sid>/workspace.yaml` の `cwd`/`created_at`、cursor は転写パスに cwd が入っている
+  `projects/<slug>/agent-transcripts/<chatID>/`（作成時刻はそのディレクトリの mtime。追記では動かない——実測）。
 - ⚠️ **tmux の `-t` は前方一致**（exact→prefix→fnmatch）。`claude_foo` が `claude_foo-sh` に一致して
   誤判定・誤 kill しうるため、target 参照は全て `=name` の exact 形式で行うのが本リポジトリの規約。
 - **DB ミラー（B 案）**: CP の `GET /api/sessions` は running 時に Agent から取得して DB を洗い替え、
@@ -209,6 +235,14 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 サブコマンドによる**平文ファイルを作らない**資格供給。鍵 `AF_SECRET_KEY` は CP が起動時注入
 （封筒暗号の全体像は [07 §7.6](07-security.md)。Agent は暗号 provisioning に無関心）。
 起動時に旧平文資格の自動移行あり。`AF_MASTER_KEY` 未設定の dev では平文 `secrets.json`（同一経路）。
+
+★ **ここに置かない物が 1 つある: git プロバイダの OAuth アプリの client_secret**
+（[71](../71-tenant-git-oauth.md) §71.8）。テナントの資格情報なので、全メンバーの
+`secrets.enc` に複製されるのを避けて CP に残す。Bitbucket の refresh は Agent が
+`POST /internal/git-oauth/bitbucket/refresh` を呼んで代行させる（本人の refresh token は
+ここに残る）。★ ブリッジの座標（`AF_CP_BASE_URL` + `AF_GIT_OAUTH_TOKEN`）は起動時に
+`secrets.Data.GitOAuthBridge` へ写す——cred helper は git が起動する**別プロセス**で、
+その環境変数は保証できない（内部 git トークンが同じ理由で同じ扱い）。
 
 ## 4.9 Workspace イメージと entrypoint
 

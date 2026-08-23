@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, previewURL } from "../core/api/client.ts";
 import { onPush, pushHealthy } from "../core/push/events.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
-import { useWorkspaceStore, wsStartBusy } from "../core/store/workspace.ts";
+import { useWorkspaceStore, wsBusy, wsPowerStops, wsStartBusy } from "../core/store/workspace.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { isBlankPane, MAX_TAB_COLS } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -834,6 +834,11 @@ export function WsBar() {
   // server-reported "starting" (ECS cold pull — a second Start click must not
   // re-drive the deployment; the 4s poll flips the bar to 稼働中 on its own).
   const busy = wsStartBusy(wsState);
+  // ⚠️ …but only the OPTIMISTIC "…" states may disable the POWER button — those are
+  // momentary (one request in flight). The server-reported "starting" is not, and it
+  // must stay clickable so a wedged start can be cancelled (wsPowerStops).
+  const inFlight = wsBusy(wsState);
+  const powerStops = wsPowerStops(wsState);
 
   // "Close all panes" collapses the split layout back to one empty terminal pane.
   // Disabled when there's already just a single empty pane (nothing to close).
@@ -886,13 +891,16 @@ export function WsBar() {
   // Reversible (Start recreates; data persists in the bind mount), so it's a caution,
   // not a red destructive action.
   const onToggle = async () => {
-    if (!running) {
+    if (!powerStops) {
       void startWs();
       return;
     }
     const ok = await askConfirm({
       title: tr("wsbar.stop_ws"),
-      body: tr("wsbar.confirm.stop.body"),
+      // Stopping a start that has not landed yet loses nothing — there are no sessions
+      // to drop and no preview to disconnect — so it gets its own body rather than the
+      // running one's warning about both.
+      body: tr(running ? "wsbar.confirm.stop.body" : "wsbar.confirm.stop.starting_body"),
       confirmLabel: tr("wsbar.confirm.stop.go"),
       danger: false,
     });
@@ -1163,13 +1171,13 @@ export function WsBar() {
       <button
         className={"ws-power " + (running ? "on" : "off") + (staleShown ? " stale" : "")}
         onClick={onToggle}
-        disabled={busy}
+        disabled={inFlight}
         title={
           noTenant
             ? tr(superAdmin ? "wsbar.state_title.no_tenant_admin" : "wsbar.state_title.no_tenant")
-            : (running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")) + (staleShown ? " — " + tr("wsbar.stale.title") : "")
+            : (powerStops ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")) + (staleShown ? " — " + tr("wsbar.stale.title") : "")
         }
-        aria-label={running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")}
+        aria-label={powerStops ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")}
       >
         {busy ? (
           <Icon name="loading" spin />

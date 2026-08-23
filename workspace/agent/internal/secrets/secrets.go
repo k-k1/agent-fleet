@@ -48,14 +48,34 @@ type GitIdentity struct {
 
 // BitbucketCreds are the Bitbucket OAuth refresh creds (access tokens expire in
 // ~2h; the cred helper refreshes on demand — git_oauth.go in package main).
+//
+// ★ Key/Secret are the TENANT's OAuth app and are no longer written here (docs/71
+// §71.8): the refresh grant runs in the CP, which holds the secret, so a member's
+// container never sees another tenant-wide credential. They remain in the struct only
+// to read — and then clear — what stores written before that change still hold; see
+// refreshBitbucket, which drops them the first time the CP bridge answers.
 type BitbucketCreds struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
-	Expiry       int64  `json:"expiry"` // unix seconds
-	Key          string `json:"key"`
-	Secret       string `json:"secret"`
+	Expiry       int64  `json:"expiry"`            // unix seconds
+	Key          string `json:"key,omitempty"`     // legacy: pre-docs/71 stores only
+	Secret       string `json:"secret,omitempty"`  // legacy: pre-docs/71 stores only
 	Account      string `json:"account,omitempty"` // cached real Bitbucket handle (resolved from the API)
 	Email        string `json:"email,omitempty"`   // cached account email (resolved from the API)
+}
+
+// CPBridge is how a SEPARATE process reaches the Control Plane's /internal face: the
+// public base plus this membership's bridge token, both injected as container env at
+// start and copied here at agent startup.
+//
+// ★ It is in the store rather than read from env at the point of use because the git
+// credential helper is its own binary, spawned by git — which may be running under a
+// tmux server that was started before (or without) those variables. seedInternalGit
+// takes the same precaution for the same reason: runCredHelper reads the store and
+// nothing else.
+type CPBridge struct {
+	BaseURL string `json:"baseUrl"`
+	Token   string `json:"token"`
 }
 
 // PagerDutyCreds is the user's PagerDuty API credential (docs/25 Phase 1). The
@@ -285,15 +305,19 @@ type Data struct {
 	GitIdentity map[string]GitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
 	Claude      string                 `json:"claude"`                // CLAUDE_CODE_OAUTH_TOKEN
 	Bitbucket   *BitbucketCreds        `json:"bitbucket"`             // OAuth refresh creds (bitbucket.org)
-	Opencode    map[string]string      `json:"opencode"`              // provider env var name -> API key (injected for opencode sessions)
-	PagerDuty   *PagerDutyCreds        `json:"pagerduty,omitempty"`   // ops MCP credential (docs/25)
-	Grafana     *GrafanaCreds          `json:"grafana,omitempty"`     // ops MCP credential (docs/25)
-	CloudWatch  *CloudWatchConn        `json:"cloudwatch,omitempty"`  // ops MCP settings (docs/25; no secret — AWS cred chain)
-	AWS         *AWSConn               `json:"aws,omitempty"`         // Agent Toolkit for AWS MCP settings (docs/25; no secret — AWS cred chain)
-	Discord     *DiscordCreds          `json:"discord,omitempty"`     // chat-bridge connection (docs/37)
-	Slack       *SlackCreds            `json:"slack,omitempty"`       // chat-bridge connection (docs/37 Slack 追随)
-	SVN         []SVNCred              `json:"svn,omitempty"`         // SVN basic-auth creds by URL prefix (docs/41)
-	MCP         []MCPServer            `json:"mcp,omitempty"`         // user-registered MCP servers (docs/48)
+	// GitOAuthBridge points at the CP endpoint that runs the git OAuth refresh grant on
+	// this workspace's behalf (docs/71 §71.8). Not a provider credential — it is how the
+	// cred helper reaches the CP without holding the tenant's client secret.
+	GitOAuthBridge *CPBridge         `json:"gitOAuthBridge,omitempty"`
+	Opencode       map[string]string `json:"opencode"`             // provider env var name -> API key (injected for opencode sessions)
+	PagerDuty      *PagerDutyCreds   `json:"pagerduty,omitempty"`  // ops MCP credential (docs/25)
+	Grafana        *GrafanaCreds     `json:"grafana,omitempty"`    // ops MCP credential (docs/25)
+	CloudWatch     *CloudWatchConn   `json:"cloudwatch,omitempty"` // ops MCP settings (docs/25; no secret — AWS cred chain)
+	AWS            *AWSConn          `json:"aws,omitempty"`        // Agent Toolkit for AWS MCP settings (docs/25; no secret — AWS cred chain)
+	Discord        *DiscordCreds     `json:"discord,omitempty"`    // chat-bridge connection (docs/37)
+	Slack          *SlackCreds       `json:"slack,omitempty"`      // chat-bridge connection (docs/37 Slack 追随)
+	SVN            []SVNCred         `json:"svn,omitempty"`        // SVN basic-auth creds by URL prefix (docs/41)
+	MCP            []MCPServer       `json:"mcp,omitempty"`        // user-registered MCP servers (docs/48)
 	// MCPSecrets holds the member's OWN header values for tenant-distributed servers
 	// marked user_secret (docs/48 §5.2): server id -> header name -> value. Keyed by the
 	// tenant definition's id, so it survives the tenant editing the label/URL and is

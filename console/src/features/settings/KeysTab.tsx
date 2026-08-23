@@ -26,6 +26,7 @@ import {
   unpinQuickReply,
   isQuickReplyPinned,
   quickReplyKey,
+  oneTimeQuickReplies,
 } from "../../lib/quickReplies.ts";
 import { Icon } from "../../ui/Icon.tsx";
 
@@ -58,6 +59,9 @@ function KeyCapture({ onCapture, onCancel }: { onCapture: (chord: string) => voi
 // 長タップのメニューに集約したが、まとめて見直すのはここ。並びは実際のランキングと同じ
 // 「ピン留め（ピンした順）→ 使用回数 → 最近」。「すべて消去」は学習と隠しを落として初期状態
 // （シードだけ）へ戻す — ピンは明示的な指定なので、外すのは別のボタンにする。
+// 「1回だけの候補を消去」はその中間で、常用の候補を残したまま使い捨ての言い回しだけを落とす
+// （全消しは常用まで巻き添えにするので、掃除のたびに学習をやり直すことになる）。こちらは隠しに
+// 積まない＝また送れば学習し直す（oneTimeQuickReplies の注記）。
 function LearnedQuickReplies() {
   const s = useSettings();
   const learned = s.quickReplies || {};
@@ -84,21 +88,40 @@ function LearnedQuickReplies() {
     return hit ?? { key: "pin:" + text, text, count: 0, at: 0 };
   });
   const rows = [...pinnedRows, ...learnedRows.filter((r) => !isQuickReplyPinned(pinned, r.text))];
+  // 消える行と件数は同じ判定から出す（ボタンの「{n}件」と実際に消える数がズレないように）。
+  const onceTexts = oneTimeQuickReplies(learned, pinned);
   if (!rows.length && !hidden.length) return null;
   return (
     <div className="qr-learned">
       <div className="kb-head">
         <h5 className="kb-sec-title">{t("keys.kt.qrLearnedTitle", { n: rows.length })}</h5>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => {
-            setSetting("quickReplies", {});
-            setSetting("quickRepliesHidden", []);
-          }}
-        >
-          {t("keys.kt.qrClearAll")}
-        </button>
+        <span className="kb-head-actions">
+          {onceTexts.length > 0 && (
+            <button
+              type="button"
+              className="btn-ghost qr-clear-once"
+              title={t("keys.kt.qrClearOnceHint")}
+              onClick={() =>
+                setSetting(
+                  "quickReplies",
+                  onceTexts.reduce((m, text) => forgetQuickReply(m, text), learned),
+                )
+              }
+            >
+              {t("keys.kt.qrClearOnce", { n: onceTexts.length })}
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn-ghost qr-clear-all"
+            onClick={() => {
+              setSetting("quickReplies", {});
+              setSetting("quickRepliesHidden", []);
+            }}
+          >
+            {t("keys.kt.qrClearAll")}
+          </button>
+        </span>
       </div>
       <div className="qr-list">
         {rows.map((r) => {

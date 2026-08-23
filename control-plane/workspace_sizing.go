@@ -45,7 +45,32 @@ type workspaceSizing struct {
 	DiskCreateOnly bool `json:"disk_create_only"`
 	// Slots is the ladder a memory request lands on, ascending. Only ecs-ec2 has one;
 	// everywhere else it is absent and the Console shows no box.
+	//
+	// ⚠️ With more than one class (below) this is the DEFAULT class's ladder. It stays
+	// because a Console built before classes existed reads it, and because the common
+	// deployment has exactly one class — SlotClasses then holds the same rungs once.
 	Slots []workspaceSlot `json:"slots,omitempty"`
+	// SlotClasses are the machine classes this deployment offers (docs/70 §70.4).
+	// Absent when the deployment declared a single unnamed ladder, which is what every
+	// existing AF_ECS_EC2_SLOT_TYPES value parses to — so a one-class deployment shows
+	// no picker rather than a picker with one entry.
+	SlotClasses []workspaceSlotClass `json:"slot_classes,omitempty"`
+	// DefaultSlotClass is the id a member with no per-user and no per-tenant value
+	// lands on.
+	DefaultSlotClass string `json:"default_slot_class,omitempty"`
+}
+
+// workspaceSlotClass is one declared machine class: a display name, a CPU
+// architecture and its own ladder.
+//
+// Label is the operator's words, not a generated one. The Console shows THIS, and
+// `m7g.xlarge` only as the "you land on" detail — a tenant admin is choosing
+// "省コスト（Arm）", not an EC2 instance family (docs/70 §70.10).
+type workspaceSlotClass struct {
+	ID    string          `json:"id"`
+	Label string          `json:"label"`
+	Arch  string          `json:"arch"` // x86_64 | arm64
+	Slots []workspaceSlot `json:"slots"`
 }
 
 // workspaceSlot is one rung of the ladder. VCPU is 0 when the operator did not
@@ -110,16 +135,31 @@ func (f *ecsFactory) SizingProfile() workspaceSizing {
 // SizingProfile — the EC2 slot pool. Memory picks a box, CPU is not used, and the
 // disk number is the persistent home's EBS size, honoured only at creation.
 func (f *ecsEC2Factory) SizingProfile() workspaceSizing {
-	slots := make([]workspaceSlot, 0, len(f.pool.slotSizes))
-	for _, s := range f.pool.slotSizes {
-		slots = append(slots, workspaceSlot{InstanceType: s.instanceType, MemMiB: s.memMiB, VCPU: s.vcpu})
+	rungs := func(slots []ec2Slot) []workspaceSlot {
+		out := make([]workspaceSlot, 0, len(slots))
+		for _, s := range slots {
+			out = append(out, workspaceSlot{InstanceType: s.instanceType, MemMiB: s.memMiB, VCPU: s.vcpu})
+		}
+		return out
 	}
-	return workspaceSizing{
+	p := workspaceSizing{
 		Runtime: "ecs-ec2", CPUEffective: false,
 		MemMeaning: memMeaningSlot, DiskMeaning: diskMeaningHome,
 		DiskDefaultGB: int(f.pool.homeGiB), DiskCreateOnly: true,
-		Slots: slots,
+		DefaultSlotClass: f.pool.defaultClass,
+		Slots:            rungs(f.pool.classFor(f.pool.defaultClass).slots),
 	}
+	// A single unnamed ladder is reported the way it always was — no class list, so
+	// the Console shows the memory chips and no picker. Offering a picker with one
+	// entry would be a new question with only one possible answer (docs/70 §70.10).
+	if len(f.pool.classes) > 1 {
+		for _, c := range f.pool.classes {
+			p.SlotClasses = append(p.SlotClasses, workspaceSlotClass{
+				ID: c.id, Label: c.label, Arch: c.arch, Slots: rungs(c.slots),
+			})
+		}
+	}
+	return p
 }
 
 // workspaceSizingHandler (GET /api/admin/workspace-sizing) — read-only description of

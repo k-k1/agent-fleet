@@ -36,7 +36,7 @@ const MEMBER = {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-async function mount() {
+async function mount(member: typeof MEMBER & { state?: string } = MEMBER, onRemoved = () => {}) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -44,10 +44,10 @@ async function mount() {
     root!.render(
       <MemberView
         slug="acme"
-        member={MEMBER}
+        member={member}
         isSuper={false}
         onChanged={() => {}}
-        onRemoved={() => {}}
+        onRemoved={onRemoved}
       />,
     );
   });
@@ -125,6 +125,41 @@ describe("メンバーの上限編集", () => {
   });
 });
 
+// 後始末の 3 段（docs/61 §61.18）。段は「外す → Workspace を破棄 → 行を消す」で、
+// 画面に出る危険操作は常にそのうちの 1 つだけであること —— 3 つ並べると、どれが
+// 今できる操作なのかが押してみるまで分からない。
+describe("外したメンバーの後始末", () => {
+  it("在席中は「メンバーを外す」だけ", async () => {
+    await mount();
+    expect(buttonWith("メンバーを外す")).toBeTruthy();
+    expect(buttonWith("Workspace を破棄")).toBeFalsy();
+    expect(buttonWith("メンバーを完全に削除")).toBeFalsy();
+  });
+
+  it("外した直後・Workspace が残っている間は「破棄」だけ", async () => {
+    await mount({ ...MEMBER, status: "removed", state: "stopped" });
+    expect(buttonWith("Workspace を破棄")).toBeTruthy();
+    // まだ home もクラウド資源も生きている。行を消すとそれを指すものが無くなる。
+    expect(buttonWith("メンバーを完全に削除")).toBeFalsy();
+  });
+
+  it("破棄が済んだ（state=none）ときだけ「完全に削除」が出て、DELETE を投げる", async () => {
+    const onRemoved = vi.fn();
+    await mount({ ...MEMBER, status: "removed", state: "none" }, onRemoved);
+    expect(buttonWith("Workspace を破棄")).toBeFalsy();
+
+    await act(async () => buttonWith("メンバーを完全に削除")!.click());
+    const confirm = buttonWith("完全に削除する");
+    expect(confirm).toBeTruthy();
+    await act(async () => confirm!.click());
+
+    const call = apiJSON.mock.calls.find((c) => String(c[0]).includes("/members/"))!;
+    expect(call[0]).toBe("api/admin/tenants/acme/members/a-x-com");
+    expect(call[1]).toBe("DELETE");
+    expect(onRemoved).toHaveBeenCalled();
+  });
+});
+
 // EC2 スロットプール（ADR 0045 決定 21）。ここで押さえるのは「効かない入力欄を出さない」
 // ことと、「隠した副作用で保存済みの値を 0 に落とさない」ことの 2 点である —— 前者だけ
 // 直すと、CPU 欄を隠した瞬間に他ランタイム用に設定された cpu_limit が消える。
@@ -186,5 +221,149 @@ describe("メンバーの上限編集（ecs-ec2）", () => {
     // ディスクは作業ディスクではなく永続 home である、と言う。
     expect(units.some((u) => u.includes("home の作成時にだけ反映され"))).toBe(true);
     expect(units.some((u) => u.includes("作業ディスクは停止すると消えます"))).toBe(false);
+  });
+});
+
+// マシン種別（docs/70 §70.10）。押さえるのは 3 点。
+//   ① 1 クラスしか無いデプロイでは選択肢を出さない（答えが 1 つの質問を足さない）。
+//   ② クラスを変えるとメモリのチップ列がそのクラスの梯子で描き直され、「乗る箱」も
+//      そのクラスで再計算される —— 同じ MB でも別のクラスでは別の箱に乗る。
+//   ③ CPU の系統が変わるときだけ、home の入れ直しを警告する。
+const SIZING_CLASSES = {
+  ...SIZING_EC2,
+  default_slot_class: "standard",
+  slot_classes: [
+    {
+      id: "standard",
+      label: "標準（Intel）",
+      arch: "x86_64",
+      slots: [
+        { instance_type: "m7i.large", mem_mib: 8192, vcpu: 2 },
+        { instance_type: "m7i.xlarge", mem_mib: 16384, vcpu: 4 },
+      ],
+    },
+    {
+      id: "arm",
+      label: "省コスト（Arm）",
+      arch: "arm64",
+      slots: [
+        { instance_type: "m7g.large", mem_mib: 8192, vcpu: 2 },
+        { instance_type: "m7g.xlarge", mem_mib: 16384, vcpu: 4 },
+      ],
+    },
+    {
+      id: "big",
+      label: "大きい（Intel）",
+      arch: "x86_64",
+      slots: [{ instance_type: "m7i.2xlarge", mem_mib: 32768, vcpu: 8 }],
+    },
+  ],
+};
+
+describe("メンバーのマシン種別", () => {
+  const useSizing = (s: unknown) =>
+    api.mockImplementation((p: string) =>
+      p === "api/admin/workspace-sizing" ? Promise.resolve(s) : Promise.resolve({ running: false, sessions: [] }),
+    );
+
+  it("クラスが 1 つしか無いデプロイでは選択肢自体を出さない", async () => {
+    useSizing(SIZING_EC2);
+    await mount();
+    await openEditor();
+    expect(buttonWith("テナントの既定")).toBeUndefined();
+  });
+
+  it("クラスを選ぶとメモリの梯子と「乗る箱」がそのクラスのものになる", async () => {
+    useSizing(SIZING_CLASSES);
+    await mount();
+    await openEditor();
+
+    // 既定（テナントの既定 = standard）の梯子。
+    const chips = () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>(".limit-edit .le-presets")).at(-1)!;
+    expect(Array.from(chips().querySelectorAll(".chip")).map((b) => (b.textContent || "").trim())).toEqual([
+      "8 GiB",
+      "16 GiB",
+    ]);
+    let units = Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) => (e.textContent || "").trim());
+    expect(units).toContain("→ m7i.large（2 vCPU / 8 GiB・専有）");
+
+    await act(async () => buttonWith("省コスト（Arm）")!.click());
+    // 同じ 4096 MB が、arm クラスでは m7g.large に乗る。
+    units = Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) => (e.textContent || "").trim());
+    expect(units).toContain("→ m7g.large（2 vCPU / 8 GiB・専有）");
+
+    // 梯子の段数が違うクラスに移ると、チップ列も入れ替わる。
+    await act(async () => buttonWith("大きい（Intel）")!.click());
+    expect(Array.from(chips().querySelectorAll(".chip")).map((b) => (b.textContent || "").trim())).toEqual(["32 GiB"]);
+  });
+
+  it("保存すると slot_class が飛ぶ", async () => {
+    useSizing(SIZING_CLASSES);
+    await mount();
+    await openEditor();
+    await act(async () => buttonWith("省コスト（Arm）")!.click());
+    await act(async () => buttonWith("保存")!.click());
+    const [, , body] = apiJSON.mock.calls.find((c) => c[0] === "api/admin/user-limits")!;
+    expect(body).toMatchObject({ slot_class: "arm" });
+  });
+
+  // ⚠️ home の入れ直しはアーキが変わるときだけ起きる。同じアーキ内のクラス変更で
+  // 警告を出すと「毎回何か壊れる」と読まれ、本当に壊れる回に効かなくなる。
+  it("警告は CPU の系統が変わるときだけ出す", async () => {
+    useSizing(SIZING_CLASSES);
+    await mount();
+    await openEditor();
+    const warned = () => !!document.querySelector(".limit-edit .admin-hint.warn");
+    expect(warned()).toBe(false);
+
+    await act(async () => buttonWith("大きい（Intel）")!.click()); // x86_64 → x86_64
+    expect(warned()).toBe(false);
+
+    await act(async () => buttonWith("省コスト（Arm）")!.click()); // x86_64 → arm64
+    expect(warned()).toBe(true);
+  });
+});
+
+// ⚠️ `member` is a snapshot taken when its row was clicked — the parent never refreshes
+// it (onChanged reloads the tenant LIST, not the selection). Re-seeding the editor from
+// that prop after a save shows the values from BEFORE the save, which on the machine
+// chips reads as "the setting did not save" while it very much did. Measured on a live
+// deployment (docs/70 §70.14.6).
+describe("保存した値が編集を開き直しても残る", () => {
+  beforeEach(() => {
+    api.mockImplementation((p: string) =>
+      p === "api/admin/workspace-sizing" ? Promise.resolve(SIZING_CLASSES) : Promise.resolve({ running: false, sessions: [] }),
+    );
+    apiJSON.mockImplementation((p: string, _m?: string, b?: Record<string, unknown>) =>
+      p === "api/admin/user-limits" ? Promise.resolve({ slot_class: b?.slot_class }) : Promise.resolve({}),
+    );
+  });
+
+  it("マシン種別も数値も、保存後に開き直すと保存した値になっている", async () => {
+    await mount();
+    await openEditor();
+    await act(async () => buttonWith("省コスト（Arm）")!.click());
+    // 数値はチップ経由で動かす。制御 input への .value 直代入は React の値トラッカを
+    // 更新しないので変更として拾われない（この面の既存テストも全てチップを押している）。
+    await act(async () => buttonWith("16 GiB")!.click());
+    await act(async () => buttonWith("保存")!.click());
+
+    // 開き直す。prop（member）は古いままなので、ここが実装の分かれ目になる。
+    await openEditor();
+    expect(buttonWith("省コスト（Arm）")!.className).toContain("on");
+    expect(buttonWith("テナントの既定")!.className).not.toContain("on");
+    expect(numbers()[1]).toBe("16384");
+  });
+
+  it("保存した直後はアーキ変更の警告を出し続けない", async () => {
+    await mount();
+    await openEditor();
+    await act(async () => buttonWith("省コスト（Arm）")!.click());
+    expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(true);
+    await act(async () => buttonWith("保存")!.click());
+    await openEditor();
+    // 既に arm なのだから、開いた時点では「変わる」ものが無い。
+    expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(false);
   });
 });

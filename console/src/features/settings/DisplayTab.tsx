@@ -15,6 +15,7 @@ import {
   LOCALES,
   PANE_LAYOUTS,
 } from "../../lib/settings.ts";
+import { FONT_MIN, FONT_MAX } from "../../lib/viewFont.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
@@ -234,11 +235,12 @@ function ChipChoice({ value, options, onChange }: ChoiceProps) {
 }
 
 // Stepper keeps font size button-driven but allows any size in range.
+// 範囲は lib/viewFont.ts と共有する（キーボードの Alt+= / Alt+- が同じ上下限で止まる）。
 function Stepper({
   value,
   onChange,
-  min = 9,
-  max = 28,
+  min = FONT_MIN,
+  max = FONT_MAX,
 }: {
   value: number;
   onChange: (v: number) => void;

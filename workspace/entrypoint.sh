@@ -30,7 +30,7 @@ if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; the
       # 空だからである。ここで作らずに素通りすると `~/.config` は宙に浮いたままになり、
       # 後段の `mkdir -p "$HOME/.config/opencode"` が **File exists** で落ちて、`set -e` で
       # entrypoint ごと死ぬ —— タスクが延々と再起動するだけで、原因はどこにも出ない。
-      # （実機で踏んだ: <prod-deployment> の golden 初号機が起動不能になった。）
+      # （実機で踏んだ: 本番配備の golden 初号機が起動不能になった。）
       keep_is_dir "$rel" && mkdir -p "$dst" 2>/dev/null || true
       continue
     fi
@@ -49,6 +49,60 @@ if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; the
     # EFS 側にできる（O_CREAT は symlink を辿る）。
     ln -sfn "$dst" "$src" && echo "[entrypoint] keep: ~/$rel -> $dst"
   done
+fi
+
+# --- home が別アーキの上に載ったときの自己修復（docs/70 §70.5） ---------------
+# home（`~`）は永続する。ecs-ec2 では EBS 1 本が人について回り、docs/70 で「どの箱に
+# 載るか」が per-member の設定になるので、**x86 で埋めた home が arm64 のスロットに付く**
+# ことが起こり得る。そのときファイルシステムは正常にマウントされ、壊れるのはバイナリ
+# だけである——症状は「昨日まで動いていた claude が Exec format error」で、原因（箱が
+# 変わった）はどこにも出ない。
+#
+# そこで `~` にアーキの刻印を置き、変わっていたら**製品が入れたものだけ**を捨てて、
+# 下の boot-install に入れ直させる。刻印が無い home（この変更より前からある home）は
+# 「いまのアーキで作られた」とみなして刻むだけ——それが唯一安全な既定である。
+#
+# ⚠️ 捨てる対象は下の boot-install ブロックが入れるものと 1:1 で対応する。
+#    CLI を足したらここにも足すこと（docs/70 §70.5 の表）。
+# ⚠️ `~/repos` には絶対に触らない（利用者の未コミットの作業がある）。`~/.local/bin` に
+#    利用者が自分で入れたツールも消さない——消せば「勝手に消えた」になる。壊れている
+#    事実だけ伝えて、入れ直すかは本人に委ねる。
+af_arch_now="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+case "$af_arch_now" in x86_64) af_arch_now=amd64 ;; aarch64) af_arch_now=arm64 ;; esac
+AF_ARCH_STAMP="$HOME/.local/share/agent-fleet/arch"
+af_arch_was="$(cat "$AF_ARCH_STAMP" 2>/dev/null || true)"
+if [ -n "$af_arch_now" ] && [ -n "$af_arch_was" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
+  echo "[entrypoint] arch: この home は $af_arch_was で作られ、いま $af_arch_now の上に居ます"
+  echo "[entrypoint] arch: アーキ依存の導入物を入れ直します（初回は数分かかることがあります）"
+  for rel in \
+    .local/bin/claude .local/bin/codex .local/bin/opencode .local/bin/copilot \
+    .local/bin/rtk .local/bin/agy .local/bin/.agy.version \
+    .local/bin/cursor-agent \
+    .local/bin/kiro-cli .local/bin/kiro-cli-chat .local/bin/kiro-cli-term .local/bin/.kiro.version \
+    .local/lib/node_modules \
+    .local/share/claude .local/share/cursor-agent .local/share/kiro-cli \
+    .local/share/agent-fleet/chromium \
+    .cache/ms-playwright \
+    .nvm; do
+    { [ -e "$HOME/$rel" ] || [ -L "$HOME/$rel" ]; } || continue
+    rm -rf "${HOME:?}/$rel" && echo "[entrypoint] arch: 削除 ~/$rel"
+  done
+  # cursor の `agent` エイリアスは symlink のときだけ落とす（同名の自前スクリプトを
+  # 巻き込まないため）。
+  if [ -L "$HOME/.local/bin/agent" ]; then rm -f "$HOME/.local/bin/agent"; fi
+  # JDK は名前にアーキが入っている（temurin-<major>-jdk-<arch>）ので、他アーキの分だけ
+  # 落とせばよい。入れ直しは Console の toolchains / install-jdk の仕事。
+  for d in "$HOME"/.local/share/agent-fleet/jvm/temurin-*-jdk-*; do
+    [ -d "$d" ] || continue
+    case "$d" in *-jdk-"$af_arch_now") continue ;; esac
+    rm -rf "$d" && echo "[entrypoint] arch: 削除 ${d#"$HOME"/}"
+  done
+  echo "[entrypoint] arch: ⚠️ ~/repos 配下の node_modules / target / .venv と、自分で ~/.local へ入れた"
+  echo "[entrypoint] arch:    ツールは $af_arch_was 用のままです。使う前に入れ直してください（~/repos は触っていません）"
+fi
+if [ -n "$af_arch_now" ] && [ "$af_arch_was" != "$af_arch_now" ]; then
+  mkdir -p "$(dirname "$AF_ARCH_STAMP")" 2>/dev/null || true
+  printf '%s\n' "$af_arch_now" > "$AF_ARCH_STAMP" 2>/dev/null || true
 fi
 
 # claude records installMethod="native" and self-checks its launcher at
@@ -151,6 +205,35 @@ fi
 VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
+# agy_effective_version — 「いま在る agy は何版か」。
+#
+# ⚠️ マーカー（.agy.version）は **AF が最後に入れた版**であって、**いま在る版ではない**。
+# agy は自分を書き換えることがあり（実測・docs/70 §70.14.9: 1.1.17 で起動した 34 秒後に
+# 1.1.19 になり、ログに `auto_updater.go:305 Spawned background update process` が
+# 残っていた）、マーカーは AF が書くファイルなのでその更新では動かない。
+#
+# その自己更新の直接の原因は `AGY_CLI_DISABLE_AUTO_UPDATE=1` という**値の誤り**で、
+# 受け付けるのは `true` だけだった（Dockerfile で修正済み）。ここを実体比較のままに
+# しておくのは、封殺が外れる経路が他にもあるから: 利用者の明示的な `agy update`、
+# 自己更新 opt-in（下の shadow ブロック）、そして**古いイメージで焼かれた home**は
+# 封殺が効いていなかった時代の版を抱えたまま永続する。
+#
+# だから marker だけで repin を判定すると **marker == pin なのに実体が違う**状態が
+# 固着する。しかも実害は静かで、その版で出力形式が変わっていれば「セッションは動く
+# のに黙って別のモデル」になる（§70.14.8 で実際にそうなった）。
+#
+# 実体を問えるなら実体を問う。問えないのは RDRAND 非提示の x86 ホストだけで、そこは
+# 起動即 SIGABRT する（decisions/0008）ので marker に落ちる。arm64 は §70.13 の実測で
+# 安全と確定している（BoringCrypto が乱数を命令でなく getrandom(2) から取るため、
+# `rng` を持たない Graviton2 でも RC=0 だった）。
+agy_effective_version() {
+  local bin="$HOME/.local/bin/agy" v=""
+  if [ -x "$bin" ] && { [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo 2>/dev/null; }; then
+    v="$(timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
+  fi
+  [ -n "$v" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
+  printf '%s' "$v"
+}
 # lean 判定: claude が焼かれておらず versions.json にピンがある = lean variant。
 # lean では下の CLAUDE_INSTALL ブロックの起動時 update も抑止してピン版を維持する
 # （最新への追従は self-update opt-in の仕事）。
@@ -235,6 +318,15 @@ if [ "$LEAN_CLIS" = 1 ]; then
       grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null
       tar xzf "${asset}"
       install -D -m 0755 rtk "$HOME/.local/bin/rtk"
+      # ⚠️ 実行して確かめてから残す。arm64 の配布は gnu ビルドだけで GLIBC_2.39 を要求し、
+      # このイメージ（Debian 12・glibc 2.36）では **DL も sha256 も通ったうえで起動だけが
+      # できない**（実測 2026-08-22・docs/70 §70.9.2）。確かめずに置くと、PATH の先頭に
+      # 動かない rtk が居座り、失敗するのは使った瞬間になる。
+      if ! err="$("$HOME/.local/bin/rtk" --version 2>&1)"; then
+        rm -f "$HOME/.local/bin/rtk"
+        echo "[entrypoint] rtk はこの環境では動かないため導入しません: $err"
+        exit 0
+      fi
     ) && echo "[entrypoint] boot-install rtk $(vj_pin rtk)" \
       || echo "[entrypoint] WARN: rtk boot-install failed (retrying next start)"
   elif cli_present rtk; then
@@ -243,15 +335,12 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # agy: 公式installer manifestが示す不変GCS objectのピン版。
   # （versions.json の agy + agy_build + agy_sha256 で取得・検証 — Dockerfile焼き込みと同じ経路）。
   # self-update の版比較マーカーも書いておく（ピン導入直後の無駄な再取得を防ぐ）。
-  # repin 判定もこのマーカーで行う: `agy --version` は RDRAND 非提示ホストで SIGABRT
-  # する（decisions/0008）ため実バイナリは叩かない。マーカー欠落は一度ピン再導入して
-  # 書き直すので収束する。
   AGY_NEED=0
   if [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_build)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
     if ! cli_present agy; then
       AGY_NEED=1
     elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/agy" ] \
-         && [ "$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)" != "$(vj_pin agy)" ]; then
+         && [ "$(agy_effective_version)" != "$(vj_pin agy)" ]; then
       AGY_NEED=1
     fi
   fi
@@ -433,17 +522,21 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   # 焼き込みは root 所有の /usr/local/bin のため ~/.local/bin へ入れて PATH 先勝ちで
   # 差し替える（shadow 方式）。版比較スキップ: install.sh と同じ配布 manifest（軽量
   # JSON）から latest を取り、前回導入時に記録したマーカーと一致なら ~187MB の再取得を
-  # 省く。`agy --version` は RDRAND 非提示ホストで SIGABRT する（decisions/0008）ため、
-  # 実バイナリでなくマーカー比較にしている（agy 自身の自己更新で進んでいたら比較が
-  # ズレて再導入されるだけで無害）。install.sh は既存バイナリがあると更新せず即 exit 0
-  # する仕様なので、空の temp dir へ導入してから差し替える（失敗時は旧 shadow 温存）。
+  # 省く。比較は agy_effective_version()（実体を問えるホストでは実体・そうでなければ
+  # マーカー）。⚠️ かつてここは marker 決め打ちで、「agy 自身の自己更新で進んでいたら
+  # 比較がズレて再導入されるだけで無害」と書いてあった。無害ではなかった——自己更新は
+  # marker を動かさないので、ピン側（repin）では marker == pin のまま実体だけが先へ
+  # 行って固着する（docs/70 §70.14.9）。ここ（opt-in ON 側）では逆に、実体が既に
+  # latest でも marker が古いせいで毎回 ~187MB を取り直していた。
+  # install.sh は既存バイナリがあると更新せず即 exit 0 する仕様なので、空の temp dir
+  # へ導入してから差し替える（失敗時は旧 shadow 温存）。
   AGY_MARK="$HOME/.local/bin/.agy.version"
   agy_arch="$(dpkg --print-architecture 2>/dev/null || uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
   agy_latest="$(curl -fsSL --max-time 15 \
     "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_${agy_arch}.json" 2>/dev/null \
     | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
   if [ -n "$agy_latest" ] && [ -x "$HOME/.local/bin/agy" ] \
-     && [ "$(cat "$AGY_MARK" 2>/dev/null)" = "$agy_latest" ]; then
+     && [ "$(agy_effective_version)" = "$agy_latest" ]; then
     echo "[entrypoint] agy already latest ($agy_latest); skip"
   else
     agy_tmp="$(mktemp -d)"
@@ -715,9 +808,22 @@ fi
 # everywhere, download it into the home volume now (persists on the volume / EFS, so
 # only the first launch pays the download). Soft-fail: no network → keep going.
 if [ -n "$JAVA_VER" ]; then
+  # ⚠️ 「glob して先頭」に戻さないこと。どちらの置き場も temurin-<major>-jdk-<arch> と
+  # いう名前で、"amd64" は "arm64" より先に並ぶ。x86 で埋めた home を arm64 のスロットに
+  # 付けた瞬間、先頭は**必ず動かない方**になる（docs/70 §70.5.1・workspace-agent 側の
+  # javaHomeFor も同じ規則）。自分のアーキの接尾辞を優先し、他アーキは採らない。
   find_jh() {
     for d in /usr/lib/jvm "$HOME/.local/share/agent-fleet/jvm"; do
-      jh=$(ls -d "$d"/temurin-"$JAVA_VER"-jdk* 2>/dev/null | head -1)
+      [ -d "$d" ] || continue
+      jh=""
+      for c in "$d"/temurin-"$JAVA_VER"-jdk*; do
+        [ -d "$c" ] || continue
+        case "$c" in
+          *-jdk-"$af_arch_now") printf '%s\n' "$c"; return 0 ;;
+          *-jdk-amd64 | *-jdk-arm64) continue ;;              # 他アーキ: 採らない
+          *) [ -n "$jh" ] || jh="$c" ;;                       # 接尾辞なし: 予備
+        esac
+      done
       [ -n "$jh" ] && { printf '%s\n' "$jh"; return 0; }
     done
     return 1

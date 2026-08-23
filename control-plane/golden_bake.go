@@ -125,53 +125,83 @@ func (b *goldenBaker) run(ctx context.Context, every time.Duration) {
 	}
 }
 
-// step advances the bake by at most one move. Errors are logged and dropped: a bake is
-// housekeeping, and there is no caller who could do anything about a failed step that
-// the next tick will not do anyway.
+// seedKey / probeKey name the reserved workspace for one architecture.
+//
+// ⚠️ x86_64 keeps the ORIGINAL, unsuffixed keys. Every deployment that has ever baked
+// a golden has an af-golden-seed membership, and renaming it would orphan that row
+// (and its home volume) with nothing left pointing at it — a workspace nobody can see
+// and nothing will ever clean up.
+func (b *goldenBaker) seedKey(arch string) string  { return archKey(goldenSeedKey, arch) }
+func (b *goldenBaker) probeKey(arch string) string { return archKey(goldenProbeKey, arch) }
+
+func archKey(base, arch string) string {
+	if arch == "" || arch == ec2ArchX86 {
+		return base
+	}
+	return base + "-" + arch
+}
+
+// step advances the bake by at most one move PER ARCHITECTURE. Errors are logged and
+// dropped: a bake is housekeeping, and there is no caller who could do anything about
+// a failed step that the next tick will not do anyway.
+//
+// The architectures do not need explicit serialisation: bakeBlocked counts the whole
+// pool, so the second arch's seed simply is not created while the first one holds a
+// slot, and it starts on a later tick.
 func (b *goldenBaker) step(ctx context.Context) {
+	arches := b.pool.bakeArches()
+	if len(arches) == 0 {
+		arches = []string{ec2ArchX86}
+	}
+	for _, arch := range arches {
+		b.stepArch(ctx, arch)
+	}
+}
+
+func (b *goldenBaker) stepArch(ctx context.Context, arch string) {
 	image := b.pool.workspaceImage()
 
 	// 1. Already published and current? Then the only thing left is to make sure a
 	//    previous round did not leave its seed or probe behind (a CP that died between
 	//    "promote" and "destroy" would otherwise pay for two homes forever).
-	if _, ok, err := b.pool.goldenFor(ctx, ec2RoleGolden); err != nil {
-		log.Printf("golden: reading the published golden failed: %v", err)
+	if _, ok, err := b.pool.goldenFor(ctx, ec2RoleGolden, arch); err != nil {
+		log.Printf("golden[%s]: reading the published golden failed: %v", arch, err)
 		return
 	} else if ok {
-		b.tidy(ctx)
+		b.tidy(ctx, arch)
 		return
 	}
 
 	// 2. Have we already burned this image? Twice is the give-up point: once can be an
 	//    AZ having a bad day, twice is the image.
-	if n, err := b.pool.rejectedAttempts(ctx); err != nil {
-		log.Printf("golden: counting rejected candidates failed: %v", err)
+	if n, err := b.pool.rejectedAttempts(ctx, arch); err != nil {
+		log.Printf("golden[%s]: counting rejected candidates failed: %v", arch, err)
 		return
 	} else if n >= 2 {
-		b.tidy(ctx)
+		b.tidy(ctx, arch)
 		return
 	}
 
-	cand, haveCand, err := b.pool.goldenFor(ctx, ec2RoleGoldenCandidate)
+	cand, haveCand, err := b.pool.goldenFor(ctx, ec2RoleGoldenCandidate, arch)
 	if err != nil {
-		log.Printf("golden: reading the candidate failed: %v", err)
+		log.Printf("golden[%s]: reading the candidate failed: %v", arch, err)
 		return
 	}
 	if haveCand {
-		b.verify(ctx, cand, image)
+		b.verify(ctx, cand, image, arch)
 		return
 	}
-	b.bake(ctx, image)
+	b.bake(ctx, image, arch)
 }
 
 // --- baking ---------------------------------------------------------------------
 
-func (b *goldenBaker) bake(ctx context.Context, image string) {
+func (b *goldenBaker) bake(ctx context.Context, image, arch string) {
 	// The capacity gate belongs HERE and only here: once a seed exists, abandoning it
 	// because the pool filled up would leave its slot held across every later tick.
-	seedRes, seedExists, err := b.existing(ctx, goldenSeedKey)
+	seedRes, seedExists, err := b.existing(ctx, b.seedKey(arch), arch)
 	if err != nil {
-		log.Printf("golden: resolving the seed failed: %v", err)
+		log.Printf("golden[%s]: resolving the seed failed: %v", arch, err)
 		return
 	}
 	if !seedExists {
@@ -182,16 +212,16 @@ func (b *goldenBaker) bake(ctx context.Context, image string) {
 		}
 		if blocked {
 			if b.loggedBlocked != why {
-				log.Printf("golden: no golden for %s, but not baking one now — %s", image, why)
+				log.Printf("golden[%s]: no golden for %s, but not baking one now — %s", arch, image, why)
 				b.loggedBlocked = why
 			}
 			return
 		}
 		b.loggedBlocked = ""
-		log.Printf("golden: no golden for %s; baking one (ADR 0045 決定 9)", image)
-		seedRes, err = b.create(ctx, goldenSeedKey)
+		log.Printf("golden[%s]: no golden for %s; baking one (ADR 0045 決定 9)", arch, image)
+		seedRes, err = b.create(ctx, b.seedKey(arch), arch)
 		if err != nil {
-			log.Printf("golden: creating the seed workspace failed: %v", err)
+			log.Printf("golden[%s]: creating the seed workspace failed: %v", arch, err)
 			return
 		}
 	}
@@ -202,7 +232,7 @@ func (b *goldenBaker) bake(ctx context.Context, image string) {
 
 	home, err := seed.homeForBake(ctx)
 	if err != nil {
-		log.Printf("golden: reading the seed's home failed: %v", err)
+		log.Printf("golden[%s]: reading the seed's home failed: %v", arch, err)
 		return
 	}
 	// The seed took too long to get anywhere. Tear it down rather than hold a slot;
@@ -219,8 +249,8 @@ func (b *goldenBaker) bake(ctx context.Context, image string) {
 		since, _ = time.Parse(time.RFC3339, seedRes.ws.CreatedAt)
 	}
 	if !home.Baked && b.expired(since, b.seedBudget) {
-		log.Printf("golden: the seed did not finish booting within %s; tearing it down and retrying later", b.seedBudget)
-		b.destroy(ctx, goldenSeedKey)
+		log.Printf("golden[%s]: the seed did not finish booting within %s; tearing it down and retrying later", arch, b.seedBudget)
+		b.destroy(ctx, b.seedKey(arch))
 		return
 	}
 
@@ -236,15 +266,15 @@ func (b *goldenBaker) bake(ctx context.Context, image string) {
 				return // running but no home yet visible — next tick
 			}
 			if err := seed.markHomeBaked(ctx, home.VolumeID); err != nil {
-				log.Printf("golden: marking the seed's home baked failed: %v", err)
+				log.Printf("golden[%s]: marking the seed's home baked failed: %v", arch, err)
 				return
 			}
-			log.Printf("golden: the seed finished boot-install; stopping it to capture the home")
+			log.Printf("golden[%s]: the seed finished boot-install; stopping it to capture the home", arch)
 			b.stop(ctx, seedRes)
 			return
 		}
 		if aerr := b.wsAPI.ensureWorkspaceStartedRT(ctx, seedRes, seedRes.rt); aerr != nil {
-			log.Printf("golden: starting the seed failed: %s", aerr.message)
+			log.Printf("golden[%s]: starting the seed failed: %s", arch, aerr.message)
 		}
 	case !home.Capturable:
 		// Booted and stopped, but the home is still on a running slot — a Stop keeps it
@@ -254,37 +284,37 @@ func (b *goldenBaker) bake(ctx context.Context, image string) {
 			b.stop(ctx, seedRes)
 			return
 		}
-		log.Printf("golden: releasing the seed's slot before the snapshot")
+		log.Printf("golden[%s]: releasing the seed's slot before the snapshot", arch)
 		if err := seed.releaseForBake(ctx); err != nil {
-			log.Printf("golden: releasing the seed's slot failed: %v", err)
+			log.Printf("golden[%s]: releasing the seed's slot failed: %v", arch, err)
 		}
 	default:
-		if _, err := b.pool.snapshotHome(ctx, home.VolumeID, seedRes.ws.ContainerName); err != nil {
-			log.Printf("golden: snapshotting the seed's home failed: %v", err)
+		if _, err := b.pool.snapshotHome(ctx, home.VolumeID, seedRes.ws.ContainerName, arch); err != nil {
+			log.Printf("golden[%s]: snapshotting the seed's home failed: %v", arch, err)
 		}
 	}
 }
 
 // --- verifying ------------------------------------------------------------------
 
-func (b *goldenBaker) verify(ctx context.Context, cand goldenSnap, image string) {
+func (b *goldenBaker) verify(ctx context.Context, cand goldenSnap, image, arch string) {
 	if cand.Failed {
-		b.reject(ctx, cand, "the snapshot itself failed")
+		b.reject(ctx, cand, "the snapshot itself failed", arch)
 		return
 	}
 	if !cand.Completed {
 		return // EBS is still copying blocks; nothing to do but wait
 	}
-	probeRes, exists, err := b.existing(ctx, goldenProbeKey)
+	probeRes, exists, err := b.existing(ctx, b.probeKey(arch), arch)
 	if err != nil {
-		log.Printf("golden: resolving the probe failed: %v", err)
+		log.Printf("golden[%s]: resolving the probe failed: %v", arch, err)
 		return
 	}
 	if !exists {
-		log.Printf("golden: %s is baked; booting a probe from it before publishing it", cand.ID)
-		probeRes, err = b.create(ctx, goldenProbeKey)
+		log.Printf("golden[%s]: %s is baked; booting a probe from it before publishing it", arch, cand.ID)
+		probeRes, err = b.create(ctx, b.probeKey(arch), arch)
 		if err != nil {
-			log.Printf("golden: creating the probe workspace failed: %v", err)
+			log.Printf("golden[%s]: creating the probe workspace failed: %v", arch, err)
 			return
 		}
 	}
@@ -302,47 +332,47 @@ func (b *goldenBaker) verify(ctx context.Context, cand goldenSnap, image string)
 
 	if state := probeRes.rt.State(ctx); state == "running" {
 		if _, err := b.mgr.agentSessions(ctx, probeRes.rt); err == nil {
-			b.publish(ctx, cand, image)
+			b.publish(ctx, cand, image, arch)
 			return
 		}
 	}
 	// Not healthy yet. The deadline is anchored on the candidate's own af-bake-started,
 	// so a CP restart in the middle does not hand the probe a fresh budget.
 	if b.expired(cand.Started, b.probeBudget) {
-		b.reject(ctx, cand, "a workspace built from it did not come up within "+b.probeBudget.String())
+		b.reject(ctx, cand, "a workspace built from it did not come up within "+b.probeBudget.String(), arch)
 		return
 	}
 	if aerr := b.wsAPI.ensureWorkspaceStartedRT(ctx, probeRes, probeRes.rt); aerr != nil {
-		log.Printf("golden: starting the probe failed: %s", aerr.message)
+		log.Printf("golden[%s]: starting the probe failed: %s", arch, aerr.message)
 	}
 }
 
-func (b *goldenBaker) publish(ctx context.Context, cand goldenSnap, image string) {
+func (b *goldenBaker) publish(ctx context.Context, cand goldenSnap, image, arch string) {
 	if err := b.pool.setGoldenRole(ctx, cand.ID, ec2RoleGolden, ""); err != nil {
-		log.Printf("golden: publishing %s failed: %v", cand.ID, err)
+		log.Printf("golden[%s]: publishing %s failed: %v", arch, cand.ID, err)
 		return
 	}
-	log.Printf("golden: %s is now the golden for %s — a probe started from it cleanly", cand.ID, image)
+	log.Printf("golden[%s]: %s is now the golden for %s — a probe started from it cleanly", arch, cand.ID, image)
 	// Only after the promotion succeeded: deleting the old one first would leave the
 	// pool with no golden at all if the CreateTags above had failed.
-	if err := b.pool.dropSupersededGoldens(ctx, cand.ID); err != nil {
-		log.Printf("golden: dropping the superseded golden failed: %v", err)
+	if err := b.pool.dropSupersededGoldens(ctx, cand.ID, arch); err != nil {
+		log.Printf("golden[%s]: dropping the superseded golden failed: %v", arch, err)
 	}
-	b.tidy(ctx)
+	b.tidy(ctx, arch)
 }
 
 // reject leaves the candidate in place under a role nothing seeds from. It is not
 // deleted: it is the answer to "why does this deployment have no golden", and the CP
 // log line scrolls away long before an operator goes looking.
-func (b *goldenBaker) reject(ctx context.Context, cand goldenSnap, reason string) {
+func (b *goldenBaker) reject(ctx context.Context, cand goldenSnap, reason, arch string) {
 	if err := b.pool.setGoldenRole(ctx, cand.ID, ec2RoleGoldenRejected, reason); err != nil {
-		log.Printf("golden: rejecting %s failed: %v", cand.ID, err)
+		log.Printf("golden[%s]: rejecting %s failed: %v", arch, cand.ID, err)
 		return
 	}
-	log.Printf("golden: REJECTED the candidate %s — %s. New homes stay empty (slow first start, "+
+	log.Printf("golden[%s]: REJECTED the candidate %s — %s. New %s homes stay empty (slow first start, "+
 		"nothing broken) until this is looked at; the reason is on the snapshot as %s.",
-		cand.ID, reason, ec2TagBakeReason)
-	b.tidy(ctx)
+		arch, cand.ID, reason, arch, ec2TagBakeReason)
+	b.tidy(ctx, arch)
 }
 
 // --- shared plumbing --------------------------------------------------------------
@@ -350,9 +380,9 @@ func (b *goldenBaker) reject(ctx context.Context, cand goldenSnap, reason string
 // tidy removes the seed and the probe. Called on every terminal outcome AND on the
 // happy no-op path, because "the CP died right after promoting" leaves exactly the same
 // mess as "the CP died right after rejecting".
-func (b *goldenBaker) tidy(ctx context.Context) {
-	b.destroy(ctx, goldenSeedKey)
-	b.destroy(ctx, goldenProbeKey)
+func (b *goldenBaker) tidy(ctx context.Context, arch string) {
+	b.destroy(ctx, b.seedKey(arch))
+	b.destroy(ctx, b.probeKey(arch))
 }
 
 func (b *goldenBaker) destroy(ctx context.Context, key string) {
@@ -383,7 +413,7 @@ func (b *goldenBaker) stop(ctx context.Context, res *resolved) {
 
 // existing resolves one of the reserved workspaces WITHOUT creating it, so that the
 // capacity gate can run before anything exists.
-func (b *goldenBaker) existing(ctx context.Context, key string) (*resolved, bool, error) {
+func (b *goldenBaker) existing(ctx context.Context, key, arch string) (*resolved, bool, error) {
 	mem, ok, err := b.membership(ctx, key, false)
 	if err != nil || !ok {
 		return nil, false, err
@@ -391,14 +421,35 @@ func (b *goldenBaker) existing(ctx context.Context, key string) (*resolved, bool
 	if _, ok, err := b.mgr.store.GetWorkspaceByMembership(ctx, mem.MembershipID); err != nil || !ok {
 		return nil, false, err
 	}
-	res, err := b.create(ctx, key) // the workspace exists; this only builds the runtime
+	res, err := b.create(ctx, key, arch) // the workspace exists; this only builds the runtime
 	return res, err == nil, err
 }
 
-func (b *goldenBaker) create(ctx context.Context, key string) (*resolved, error) {
+func (b *goldenBaker) create(ctx context.Context, key, arch string) (*resolved, error) {
 	mem, _, err := b.membership(ctx, key, true)
 	if err != nil {
 		return nil, err
+	}
+	// Pin the reserved member to a class on the architecture being baked, BEFORE the
+	// runtime is built — buildResolved reads the quota and then memoizes the runtime,
+	// so a class written afterwards would not reach this round's seed.
+	//
+	// It is written on every pass rather than once at creation: the operator can
+	// rename or drop a class at any redeploy, and a seed left pinned to a class that
+	// no longer exists would quietly bake on the default architecture instead — i.e.
+	// publish an x86_64 home as the arm64 golden.
+	if class := b.pool.seedClassFor(arch); class != "" {
+		cur, _, err := b.mgr.store.GetUserLimit(ctx, mem.MembershipID)
+		if err != nil {
+			return nil, err
+		}
+		if cur.SlotClass != class {
+			cur.SlotClass = class
+			if err := b.mgr.store.PutUserLimit(ctx, mem.MembershipID, cur.UserQuota); err != nil {
+				return nil, err
+			}
+			b.mgr.evictMembershipCache(mem.MembershipID)
+		}
 	}
 	ident, ok, err := b.mgr.store.GetIdentityByUserKey(ctx, key)
 	if err != nil {

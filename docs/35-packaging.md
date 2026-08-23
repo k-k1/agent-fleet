@@ -503,6 +503,45 @@ per-file ヘッダは**入れない**方針とする。対処:
 - すべてのビルド経路（release オーケストレータ・両 Dockerfile・run-dev.sh）で
   `-ldflags -X` を配線。Dockerfile は `ARG VERSION=dev` で受ける。
 
+#### 35.6.1.1 Console 表示（アカウントメニューの版帯）— 実装済み
+
+§35.6.1 が「後続でよい」とした表示側。アカウントメニュー最下部にはもともと
+**Console バンドルのビルド刻印**（`lib/version.ts`・vite define）しか出ておらず、
+これは FE の時刻と短 SHA であって CP の版でもイメージでもない。ECS では
+**コードはイメージとして届く**（CP も workspace も `30-ingress.yaml` の単一
+`ImageTag` から作られ、運用者が上げ下げするのはそのタグ）ので、「版」と「イメージ」は
+別の問いになる。障害報告にはどちらも要る。
+
+- **API は `GET /api/version` の追記**（新設ではない）。`{"version": ...}` はそのまま
+  残すので既存の読み手（`routes_test.go`・§35.8 の実機手順）が壊れず、新 REST を
+  足したときの「agent 側と CP プロキシの allowlist 両方に登録」も発生しない。
+
+  ```json
+  { "version": "0.6.0", "runtime": "ecs-ec2",
+    "image":           { "repo": "af-control-plane", "tag": "0.6.0", "digest": "sha256:…" },
+    "workspace_image": { "repo": "af-workspace",     "tag": "0.6.0" } }
+  ```
+
+- **CP 自身のイメージの出どころは ECS タスクメタデータ v4**（`ECS_CONTAINER_METADATA_URI_V4`）。
+  CFN は `ImageTag` をコンテナの `Image` に渡すだけで env には入れないので、CP が自分の
+  イメージを名乗れる経路はこれしかない。IAM も SDK も不要（link-local）。成功は永久に
+  キャッシュ（走っているタスクのイメージは変わらない）、失敗は 60 秒後に再試行。
+- **workspace イメージは `AF_ECS_WORKSPACE_IMAGE`**（既存の `WorkspaceImage()` 能力）。
+- **判らない項目はキーごと落とす**。docker/native にはどちらの経路も無いので、
+  プロファイル文字列で分岐しなくても行が自然に消える（能力で判定する）。Console 側も
+  キーの有無だけで描画を決め、`useDeploymentVersion` は**メニューを開いたときだけ**
+  取りに行く（起動時 fetch を全タブぶん増やさない）。
+- **レジストリ host は CP 側で落として返す**。全メンバーが読む面に AWS アカウント ID を
+  載せる理由が無い。タグ + digest 先頭 7 桁で「どの実体か」は言える（`:dev` は MUTABLE
+  なのでタグだけでは足りない）。
+- ★ **ここで版を比較しない**。CP と Agent の版が意図的にずれるのは正常で、比較すれば
+  恒久点灯する（`workspace_stale.go` の禁じ手）。バックエンドのドリフト検知は
+  既存の stale 機構（`runtime_ecs_stale.go` → WS バーの「要再起動」バッジ）の担当で、
+  版帯は表示だけに徹する。
+- 帯の末尾にコピーボタン（版・両イメージ・Console ビルドを 1 ブロック）。
+  §35.6.1 の目的が「障害報告に必ず版を添えられるようにする」ことなので、
+  スマホで digest を読み上げさせない方をとる。
+
 ### 35.6.2 オーケストレータ
 
 `deploy/release/build.sh`（新設）を単一入口にする:
@@ -761,7 +800,7 @@ P3 = ECS 配布のリリース作法（§35.3.4）。CFN・アダプタ本体（
   head_commit.message 一致で誤発火する（説明文にも書かない）。
   ゲート h での `AuthMode` 追加後（8e065fd）にも最終フル run 29810696327 で
   4 job 全緑を再実証。
-- (h) ✅ **sandbox 実走一巡完了**（account <account>・ap-northeast-1・
+- (h) ✅ **sandbox 実走一巡完了**（開発配備のアカウント・ap-northeast-1・
   `af-h.<domain>`）。この Workspace に docker が無いため、イメージは sandbox 内の
   使い捨て EC2（t3.xlarge）で `build.sh --compose` ×2 版（0.0.1-h / 0.0.2-h・lean 配布
   variant）をビルドし、**release-ecr.sh 実物**で push（repo 存在確認→login→tag/push。

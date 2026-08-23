@@ -18,8 +18,11 @@ vi.stubGlobal("window", { fetch: fetchMock });
 vi.stubGlobal("fetch", fetchMock);
 
 let useWorkspaceStore: typeof import("./workspace.ts")["useWorkspaceStore"];
+let wsBusy: typeof import("./workspace.ts")["wsBusy"];
+let wsPowerStops: typeof import("./workspace.ts")["wsPowerStops"];
+let wsStartBusy: typeof import("./workspace.ts")["wsStartBusy"];
 beforeAll(async () => {
-  ({ useWorkspaceStore } = await import("./workspace.ts"));
+  ({ useWorkspaceStore, wsBusy, wsPowerStops, wsStartBusy } = await import("./workspace.ts"));
 });
 
 describe("workspace store applyPush", () => {
@@ -81,5 +84,34 @@ describe("workspace store restart", () => {
     expect(posts[0]).toContain("api/workspace/stop");
     expect(posts[1]).toContain("api/workspace/start");
     expect(calls.some((u) => u.includes("recreate") || u.includes("clean-home"))).toBe(false);
+  });
+});
+
+// 収束しない `starting` から抜ける導線を固定する。ECS でタスクが配置できないと
+// desired=1/running=0 のまま State() が永久に "starting" を返す（実測・docs/70
+// §70.14.6）。電源トグルが running のときしか停止を出さないと、その状態で UI から
+// 出せる操作が「起動」だけになり、CP は starting の Start を no-op で捨てるので
+// **Console から停止する手段が一つも無くなる**。
+describe("wsPowerStops / wsStartBusy", () => {
+  it("stops — not starts — on the server-reported starting", () => {
+    expect(wsPowerStops("starting")).toBe(true);
+    expect(wsPowerStops("running")).toBe(true);
+    expect(wsPowerStops("stopped")).toBe(false);
+    expect(wsPowerStops("none")).toBe(false);
+  });
+
+  it("leaves the power button clickable while the server says starting", () => {
+    // 無効化してよいのは楽観的な "…" だけ。"starting" で disabled にすると、
+    // 上の停止導線があってもクリックできず同じ行き止まりに戻る。
+    expect(wsBusy("starting")).toBe(false);
+    expect(wsBusy("starting…")).toBe(true);
+    expect(wsBusy("stopping…")).toBe(true);
+  });
+
+  it("still refuses to fire a second START while starting", () => {
+    // 停止できるようにしたことで二重起動が復活していないこと。
+    expect(wsStartBusy("starting")).toBe(true);
+    expect(wsStartBusy("starting…")).toBe(true);
+    expect(wsStartBusy("stopped")).toBe(false);
   });
 });

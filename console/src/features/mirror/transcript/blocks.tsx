@@ -380,21 +380,28 @@ export function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) 
 // WorkDisclosure appears only once a response is complete and a final text exists after
 // tool activity. It therefore mounts at the completion boundary: users following the tail
 // get a closed summary, while someone who scrolled up to read the process keeps it open.
+//
+// Deliberately CONTROLLED (open/onToggle) rather than holding its own state off a
+// defaultOpen: the disclosure comes and goes with workSplit — a tool arriving after the
+// final text moves the boundary and makes the split vanish for a poll or two — and local
+// state would be destroyed on every such unmount, re-deciding the fold from whatever the
+// follow flag happens to be. The owner (TranscriptTurn) outlives that and keeps the choice.
 export function WorkDisclosure({
   tools,
   responses,
-  defaultOpen,
+  open,
+  onToggle,
   children,
 }: {
   tools: number;
   responses: number;
-  defaultOpen: boolean;
+  open: boolean;
+  onToggle: () => void;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
   return (
     <section className={"mt-work mirror-disclosure" + (open ? " open" : "")}>
-      <button type="button" className="mt-work-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <button type="button" className="mt-work-head" aria-expanded={open} onClick={onToggle}>
         <Icon name={open ? "chevron-down" : "chevron-right"} />
         <span className="mt-work-title">{tr("chat.work_process")}</span>
         <span className="mt-work-count muted">

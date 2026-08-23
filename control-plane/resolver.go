@@ -83,7 +83,26 @@ func identityErr(err error) *apiError {
 	return internalErr(err)
 }
 
+// roleHintFor names the DEPLOYMENT role a resolution should upgrade this person to.
+//
+// ★ AUTH=dev is super_admin, and that is a decision rather than a shortcut (docs/71
+// §71.6). In dev mode every request is the same fixed user (DEV_USER) with no
+// authentication and no email at all, so SUPER_ADMIN_EMAILS — which matches on the
+// address — can never name anybody: a native / WSL deployment (deploy/native/af pins
+// AUTH=dev) had NO administrator, and therefore no way into the tenant settings screen.
+// That was tolerable only while every deployment-wide setting lived in env. Now that
+// the git providers' OAuth apps are per-tenant rows (docs/71), a deployment with no
+// administrator would be one where they cannot be configured at all.
+//
+// Nothing is given away by it: in dev mode the single user already owns the host and
+// answers to no credential, so "everyone is the operator" is a description of the mode,
+// not a privilege it grants. Note also that this identity's email is empty, so
+// DemoteSuperAdmins — which only considers rows WITH an address — leaves it alone
+// across restarts.
 func (m *manager) roleHintFor(email string) string {
+	if m.authMode == "dev" {
+		return "super_admin"
+	}
 	if email != "" && m.superAdmins[strings.ToLower(email)] {
 		return "super_admin"
 	}
@@ -367,6 +386,7 @@ func (m *manager) buildResolved(ctx context.Context, ident Identity, mv Membersh
 	// Resolve the per-workspace size axes (0 = deployment default) so the factory can
 	// size the next container start; the built runtime captures them by value.
 	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
+	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
 	rt := m.runtimeFor(ws, dekHex, m.workspaceExtraEnv(ctx, ws)...)
 	m.mu.Lock()
 	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws}

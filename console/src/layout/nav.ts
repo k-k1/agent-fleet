@@ -6,6 +6,7 @@
 // effects (TerminalView focusTerm etc.), so nav never touches the DOM. vitest-covered.
 import type { Layout } from "./types.ts";
 import { paneRows } from "./badges.ts";
+import { activeCell, orderedTabViews } from "./ops.ts";
 
 export type Dir = "left" | "right" | "up" | "down";
 
@@ -47,4 +48,19 @@ export function cyclePane(layout: Layout, delta: number): string | undefined {
   const cur = idx < 0 ? 0 : idx;
   // 二重 mod: |delta| > rows.length の負方向でも負インデックスにならない。
   return rows[(((cur + delta) % rows.length) + rows.length) % rows.length].id;
+}
+
+/** The view (tab) id `delta` steps from the active cell's selected tab, wrapping
+ * around. Tabs live inside one cell, so this stays in the active pane — the pane axis
+ * is cyclePane's job. Returns undefined when there is nothing to cycle (a cell with
+ * 0 or 1 tab, i.e. every cell in split mode), which is what lets the caller leave the
+ * key to the terminal. */
+export function cycleTab(layout: Layout, delta: number): string | undefined {
+  const cell = activeCell(layout);
+  if (!cell) return undefined;
+  const views = orderedTabViews(cell);
+  if (views.length < 2) return undefined;
+  const idx = views.findIndex((v) => v.id === cell.selectedViewId);
+  const cur = idx < 0 ? 0 : idx;
+  return views[(((cur + delta) % views.length) + views.length) % views.length].id;
 }

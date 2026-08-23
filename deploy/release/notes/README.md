@@ -27,6 +27,27 @@ Lead each bullet with the user-visible effect, in bold when it is a headline ite
 For a fix, say what went wrong rather than which function was patched — that is what
 tells a reader whether they were affected.
 
+## Keep it short
+
+These notes are read to answer "is there anything in here for me?", not to explain the
+work. Earlier releases grew into essays nobody finishes, so:
+
+- **One or two sentences per bullet.** A bullet that needs a third is carrying
+  background, and background belongs in `docs/`.
+- **No causes, no measurements, no internals.** Not the design that was wrong, not the
+  before/after milliseconds, not what a component is called. Name the symptom and the
+  outcome and stop.
+- **Never list a fix to something new in the same release.** The reader only ever sees
+  the shipped state, so a bullet about it describes a version nobody ran. If the repair
+  left a limitation, say that in the feature's own bullet instead.
+- **Collect the small stuff.** Several minor fixes in one area are one bullet, not six.
+  A bullet nobody would act on can simply go.
+- **Only write `### Upgrade notes` when there is something to do.** When there is not,
+  one line ("Nothing to do.") is the whole section — do not restate the release.
+
+Bold is for headline items, not for every bullet: if most of a section is bold, none of
+it stands out.
+
 Do **not** put the download links, asset names or the rootfs tag in these files:
 `notes-body.sh` appends that footer, because the rootfs content hash is only known at
 build time.

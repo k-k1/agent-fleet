@@ -92,7 +92,9 @@ land in the same workspace, the same home and the same settings.
 - **Send key** — **Ctrl+Enter to send (Enter for a newline — the default)** or **Enter to send
   (Shift+Enter for a newline)**. It applies to both session chat and assistant chat.
 - **Reply suggestions** — chips with short replies above the composer ([07](07-chat-memo.md)). This is also
-  where you clear what has been learned or unpin pinned chips.
+  where you clear what has been learned or unpin pinned chips. There are two ways to clear: **Clear used-once**
+  drops only the throwaway phrasings you sent exactly once (pinned ones stay, and sending one again learns it
+  back), while **Clear all learned** wipes both what was learned and the dismissed list, back to the initial state.
 - **✨ AI reply suggestions button** — the button that generates suggestions from the recent conversation. On by
   default.
 

@@ -72,6 +72,15 @@ type UserQuota struct {
 	// bounded by tenantLimits.MaxWorkspaceCPU. Independent of MemLimit so "8 GB with
 	// 4 vCPU" is expressible; fargateSize snaps the pair onto a valid Fargate size.
 	CPULimit int
+	// SlotClass is which KIND of machine the workspace lands on, as a
+	// deployment-declared class id ("" = unset → the tenant default, then the
+	// deployment default). Only ecs-ec2 reads it; everywhere else it is inert.
+	//
+	// It is a string and not a number because it is not a size — the three axes above
+	// say HOW BIG, this says WHICH LADDER (docs/70 §70.4). Still runtime-neutral in the
+	// sense that matters: the id is opaque here, and the operator alone maps it to
+	// instance types and an architecture (ADR 0044 決定 1).
+	SlotClass string
 }
 
 // UserLimit is a per-membership quota override (docs/16 P3-4) as stored.
@@ -303,6 +312,11 @@ type Workspace struct {
 	// user_limit and are resolved through the tenant cap on the way here (ADR 0044).
 	CPUUnits int
 	DiskGB   int
+	// SlotClass is the RESOLVED machine class for the next container start (docs/70).
+	// Same lifecycle as the three axes above — not a persisted column, filled by
+	// buildResolved through resolveSlotClass, and read only by the ecs-ec2 factory.
+	// "" means "the deployment default", which is also what every other runtime sees.
+	SlotClass string
 }
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
@@ -387,6 +401,7 @@ type Store interface {
 	MCPServerStore
 	SessionShareStore
 	TenantIdPStore
+	TenantGitOAuthStore
 
 	Close() error
 }
@@ -423,6 +438,11 @@ type TenantStore interface {
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
 	SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error
 	ListTenants(ctx context.Context) ([]Tenant, error)
+	// DeleteTenant removes an EMPTY tenant (its leftover inactive memberships, its
+	// configuration rows, and the row itself). Irreversible, super_admin only, and the
+	// emptiness is proved by the handler — see deleteTenant in tenants.go for the five
+	// refusals and why each one exists.
+	DeleteTenant(ctx context.Context, tenantID string) error
 	// SetTenantLogin stores the three CSV login rules (docs/61 §61.9.7). Values are
 	// normalized by the caller (lowercased, deduped); this only writes them.
 	// hiddenProviders is DISPLAY only (0042, docs/61 §61.15.9) — accepted methods to
@@ -512,6 +532,37 @@ type TenantIdPStore interface {
 	// (docs/61 §61.17.4 の順序). Used to warn before suspending, never to refuse:
 	// stopping a compromised IdP must stay faster than starting one.
 	CountMembersOnlyOnProvider(ctx context.Context, tenantID, providerID string) (int, error)
+}
+
+// TenantGitOAuth is one tenant's OAuth app for a git provider (docs/71, migration
+// 0048). SecretEnc is opaque ciphertext here exactly like TenantIdP.SecretEnc: the
+// SQL layer stores and returns it, tenant_git_oauth.go owns the sealing.
+//
+// ★ There is no status. Unlike TenantIdP, this row declares nothing about who
+// anybody is — it only names the OAuth app a member's "connect GitHub / Bitbucket"
+// button talks to — so it takes effect the moment the tenant_admin saves it
+// (ADR0052 決定 3). An empty SecretEnc is normal for GitHub: its device flow
+// authenticates with the client_id alone.
+type TenantGitOAuth struct {
+	ID, TenantID, Provider string
+	ClientID               string
+	SecretEnc, KeyRef      string
+	UpdatedBy              string
+	CreatedAt, UpdatedAt   string
+}
+
+// TenantGitOAuthStore is the per-tenant git provider OAuth app registry (docs/71).
+// Every call carries tenant_id, the way TenantIdPStore does, so a tenant_admin of
+// one tenant can never read or write another's app — and the secret in particular
+// never leaves the tenant it was sealed for.
+type TenantGitOAuthStore interface {
+	ListTenantGitOAuth(ctx context.Context, tenantID string) ([]TenantGitOAuth, error)
+	GetTenantGitOAuth(ctx context.Context, tenantID, provider string) (TenantGitOAuth, bool, error)
+	// PutTenantGitOAuth is an upsert on (tenant_id, provider): a tenant has one app
+	// per host, so "create" and "edit" are the same act and splitting them would only
+	// invite a duplicate row the unique index then refuses.
+	PutTenantGitOAuth(ctx context.Context, row TenantGitOAuth) error
+	DeleteTenantGitOAuth(ctx context.Context, tenantID, provider string) error
 }
 
 // IdentityLink is one proven login, on its way to LinkIdentity. It is a struct
@@ -660,9 +711,24 @@ type MembershipStore interface {
 	// LOGICAL delete: the workspace, its home and its secrets survive, but every
 	// path that resolves a membership already requires status='active', so the
 	// person is locked out on the next request (docs/61 §61.10.6 / 決定 22).
-	// Hard deletion is deliberately not offered — schedules, audit rows and shares
-	// reference the membership id.
+	// This is what offboarding means, and it stays the default: DeleteMembership
+	// below is a second, deliberate step taken later.
 	SetMembershipStatus(ctx context.Context, membershipID, status string) error
+	// DeleteMembership removes the row itself and everything keyed to it
+	// (membershipCascade). It is the last step of the clean-up sequence — remove →
+	// destroy the workspace → delete the row — and it is irreversible.
+	//
+	// ★ It used to be "deliberately not offered", on the grounds that schedules, audit
+	// rows and shares reference the membership id. Two of those three turned out not to
+	// be reasons: the schedules and shares ARE this person's and go with them, and
+	// audit_log never referenced a membership at all (its actor is an identity). What
+	// the reason really protected is the HISTORY — the audit ledger, and the cost and
+	// occupancy rows an admin may still have to answer for — so those are what is kept
+	// (docs/61 §61.18).
+	//
+	// Callers must have deactivated the membership and destroyed its workspace first;
+	// this does not release a home or any cloud resource.
+	DeleteMembership(ctx context.Context, membershipID string) error
 	// EmailHasActiveMembership reports whether the person at this address is on any
 	// tenant's roster. This is the term decision 16 adds to the entry gate: being
 	// invited is itself permission to reach the login, so an invite-run deployment
