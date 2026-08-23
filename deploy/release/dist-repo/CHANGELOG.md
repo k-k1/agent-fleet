@@ -3,7 +3,7 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
-## [0.11.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.11.0) — 2026-08-24
+## [0.11.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.11.0) — 2026-08-23
 
 Tenant administrators register their own GitHub and Bitbucket OAuth apps, the Control
 Plane can run on Graviton, and a set of `ecs-ec2` workspaces that hung on "starting" or
