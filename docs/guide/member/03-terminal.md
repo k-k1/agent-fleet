@@ -28,6 +28,12 @@ even when they're displayed wrapped. No need to copy a long URL and paste it bac
 ## Shortcuts
 
 - **Ctrl+PgUp / Ctrl+PgDn** — switch to the previous / next session.
+- **Alt** covers the everyday actions, one keypress each: **Alt+N** start a session,
+  **Alt+W** close this tab / pane, **Alt+Shift+W** close them all, **Alt+1..8** jump to a
+  pane by its number, **Alt+[ / Alt+]** previous / next pane, **Alt+PgUp / Alt+PgDn**
+  previous / next tab, **Alt+A** add a memo, **Alt+G** cycle working sets, **Alt+/** jump to
+  the rail's filter box, **Alt+Q** mute the read-aloud, **Alt+,** open settings.
+  All of them are rebindable in Settings › Keyboard.
 - When the file tree has focus: **↑ ↓ ← → / Enter** to move and open/close, **Ctrl+↑ ↓** to jump between folders, **Shift+↑ ↓** to scroll the viewer ([05 Files](05-files.md)).
 
 ### Command palette

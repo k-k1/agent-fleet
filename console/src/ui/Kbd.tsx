@@ -14,6 +14,10 @@ const SYMBOL: Record<string, string> = {
   backspace: "⌫",
   space: "Space",
   tab: "Tab",
+  pageup: "PgUp",
+  pagedown: "PgDn",
+  home: "Home",
+  end: "End",
 };
 
 function keyLabel(key: string): string {
