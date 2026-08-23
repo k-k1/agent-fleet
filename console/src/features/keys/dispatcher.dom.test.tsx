@@ -10,6 +10,8 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { getSettings, setSetting, defaultSetting } from "../../lib/settings.ts";
+import { FONT_MIN, FONT_MAX } from "../../lib/viewFont.ts";
 import type { Layout } from "../../layout/types.ts";
 import { wireKeys } from "./dispatcher.ts";
 import { effectiveCommands } from "./bindings.ts";
@@ -99,6 +101,41 @@ describe("Alt accelerators (real dispatcher, real KeyboardEvents)", () => {
     useLayoutStore.setState({ layout: { ...tabsLayout(), activeCellId: "g1" } });
     expect(press("PageDown", { alt: true })).toBe(false); // 未登録扱い＝素通し
     expect(selected("g1")).toBe("p9");
+  });
+
+  it("Alt+= / Alt+- / Alt+0 drive the font size of the ACTIVE pane's surface", () => {
+    // アクティブは端末ペイン（tabsLayout の p0）→ 動くのは termSize であって viewerSize ではない。
+    setSetting("termSize", 13);
+    setSetting("viewerSize", 13);
+    expect(press("Equal", { alt: true })).toBe(true);
+    expect(getSettings().termSize).toBe(14);
+    expect(getSettings().viewerSize).toBe(13); // 別の面は巻き添えにしない
+    // US 配列の「+」は Shift+= ——同じ拡大に落ちること。
+    expect(press("Equal", { alt: true, shift: true })).toBe(true);
+    expect(getSettings().termSize).toBe(15);
+    expect(press("Minus", { alt: true })).toBe(true);
+    expect(getSettings().termSize).toBe(14);
+    expect(press("Digit0", { alt: true })).toBe(true);
+    expect(getSettings().termSize).toBe(defaultSetting("termSize"));
+  });
+
+  it("stops at the bounds instead of running away", () => {
+    setSetting("termSize", FONT_MAX);
+    press("Equal", { alt: true });
+    expect(getSettings().termSize).toBe(FONT_MAX);
+    setSetting("termSize", FONT_MIN);
+    press("Minus", { alt: true });
+    expect(getSettings().termSize).toBe(FONT_MIN);
+    setSetting("termSize", 13);
+  });
+
+  it("leaves the font keys to the terminal on a pane with no text (browser)", () => {
+    const l = tabsLayout();
+    l.cols[0].cells[0].views[0].content = { kind: "browser", port: 5173, path: "/" };
+    useLayoutStore.setState({ layout: l });
+    setSetting("termSize", 13);
+    expect(press("Equal", { alt: true })).toBe(false); // 未登録扱い＝素通し
+    expect(getSettings().termSize).toBe(13);
   });
 
   it("resolves the punctuation and letter accelerators to the intended commands", () => {

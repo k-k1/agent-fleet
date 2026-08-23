@@ -23,7 +23,9 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useMemoStore } from "../memo/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
-import { getSettings, setSetting } from "../../lib/settings.ts";
+import { getSettings, setSetting, defaultSetting } from "../../lib/settings.ts";
+import { fontSettingFor, stepFontSize } from "../../lib/viewFont.ts";
+import type { FontSetting } from "../../lib/viewFont.ts";
 import { cycleActiveWorkingSet, workingSetList } from "../../lib/workingSetsStore.ts";
 import { useKeysStore } from "./store.ts";
 import { useUiOpen } from "../../core/store/uiOpen.ts";
@@ -149,6 +151,21 @@ function toggleReader(): void {
   if (c.kind === "read") layoutStore().openTarget({ content: { kind: "file", filePath: c.filePath } });
   else if (c.kind === "file") layoutStore().openTarget({ content: { kind: "read", filePath: c.filePath } });
 }
+// 文字サイズの拡大 / 縮小 / 既定へ。対象は「アクティブなペインが属する面」の設定
+// （端末＝termSize、ミラー/チャット＝chatSize、朗読＝readerSize、それ以外のビューア＝
+// viewerSize）。文字組みを持たない面（ブラウザ・画像）では null が返り、`when` が閉じて
+// キーは端末へ素通しする。docs/29 §5.7。
+const fontTarget = (): FontSetting | null => fontSettingFor(activePane(getLayout())?.content);
+const bumpFont = (delta: number) => {
+  const key = fontTarget();
+  if (!key) return;
+  setSetting(key, stepFontSize(getSettings()[key], delta));
+};
+const resetFont = () => {
+  const key = fontTarget();
+  if (key) setSetting(key, defaultSetting(key));
+};
+
 function toggleWorkspace(): void {
   const ws = useWorkspaceStore.getState();
   if (ws.state === "running") void ws.stop();
@@ -359,4 +376,33 @@ export const ALL_COMMANDS: Command[] = [
   // per-view toggle lives under one leader) with a direct Alt+Z (VS Code parity). Unified
   // across every text view.
   { id: "viewer.wrap", title: "keys.cmd.wrap", keys: ["alt+z"], seq: "v w", run: toggleWrap },
+  // 文字サイズ。US 配列の「+」は Shift+= なので `alt+=` と `alt+shift+=` の両方を持つ
+  // （どちらのつもりで押しても拡大になる）。テンキーも同じ扱い。JIS の `=` は物理的に
+  // `^` キーだが、ディスパッチャの「e.key を先に、無ければ e.code」の候補順で alt+= に
+  // 落ちるので同じく効く（Alt+[ ] の JIS 対応と同じ経路）。Ctrl 側は端末がブラウザズーム
+  // へ通す約束なので使えない（terminal/term.ts の NO_GRAB）。
+  {
+    id: "viewer.fontBigger",
+    title: "keys.cmd.fontBigger",
+    keys: ["alt+=", "alt+shift+=", "alt+numpadadd"],
+    seq: "v =",
+    when: () => fontTarget() != null,
+    run: () => bumpFont(1),
+  },
+  {
+    id: "viewer.fontSmaller",
+    title: "keys.cmd.fontSmaller",
+    keys: ["alt+-", "alt+numpadsubtract"],
+    seq: "v -",
+    when: () => fontTarget() != null,
+    run: () => bumpFont(-1),
+  },
+  {
+    id: "viewer.fontReset",
+    title: "keys.cmd.fontReset",
+    keys: ["alt+0"],
+    seq: "v 0",
+    when: () => fontTarget() != null,
+    run: resetFont,
+  },
 ];
