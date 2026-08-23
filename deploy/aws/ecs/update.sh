@@ -231,6 +231,7 @@ while [ $# -gt 0 ]; do
   i=0
   while [ $# -gt 0 ] && [ $i -lt 10 ]; do batch="$batch $1"; shift; i=$((i + 1)); done
   # shellcheck disable=SC2086
+  # shellcheck disable=SC2016  # backticks are JMESPath's literal syntax, not a subshell
   got="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services $batch \
     --query 'services[?desiredCount>`0`].serviceName' --output text 2>/dev/null || true)"
   running="$running $got"
@@ -283,7 +284,7 @@ if [ -n "${golden_stale// /}" ]; then
 ⚠️ ecs-ec2: golden snapshot が古い（新規ユーザーの home の種）。CP は一致しない golden を
    使わず空 home を作るので、壊れはしないが**新規の初回起動だけが遅くなり**、気づけるのは
    CP のログだけ（ADR 0045 決定 9）:
-$(echo "$golden_stale" | sed 's/^/     /')
+$(printf '%s\n' "$golden_stale" | while IFS= read -r l; do echo "     $l"; done)
    いま走るべき image: $WS_IMAGE
 
    通常はこのあと数分で CP が自分で焼き直す（決定 9-1）。焼き始めないのは
