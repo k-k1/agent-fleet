@@ -330,7 +330,7 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # agy はインストール済みバイナリを通常実行中にバックグラウンド自己更新する
 # （install.sh の明記仕様）。版はイメージ再ビルドで管理するので封じる — claude の
 # DISABLE_AUTOUPDATER と同じ理屈（明示的な `agy update` は引き続き可能）。
-ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
 # Cursor CLI（kind="cursor"、docs/40 / docs/decisions/0023）。npm でも単一 Go バイナリ
 # でもなく、版付き tarball の Node.js バンドル（bundled node ＋ webpack chunk 群 ＋

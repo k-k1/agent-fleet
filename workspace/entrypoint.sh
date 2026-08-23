@@ -208,10 +208,15 @@ cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 # agy_effective_version — 「いま在る agy は何版か」。
 #
 # ⚠️ マーカー（.agy.version）は **AF が最後に入れた版**であって、**いま在る版ではない**。
-# agy は AGY_CLI_DISABLE_AUTO_UPDATE=1 を設定してあっても自分を書き換える（実測・
-# docs/70 §70.14.9: 1.1.17 で起動した 34 秒後に 1.1.19 になり、ログに
-# `auto_updater.go:305 Spawned background update process` が残っていた）。マーカーは
-# AF が書くファイルなので、その更新では動かない。
+# agy は自分を書き換えることがあり（実測・docs/70 §70.14.9: 1.1.17 で起動した 34 秒後に
+# 1.1.19 になり、ログに `auto_updater.go:305 Spawned background update process` が
+# 残っていた）、マーカーは AF が書くファイルなのでその更新では動かない。
+#
+# その自己更新の直接の原因は `AGY_CLI_DISABLE_AUTO_UPDATE=1` という**値の誤り**で、
+# 受け付けるのは `true` だけだった（Dockerfile で修正済み）。ここを実体比較のままに
+# しておくのは、封殺が外れる経路が他にもあるから: 利用者の明示的な `agy update`、
+# 自己更新 opt-in（下の shadow ブロック）、そして**古いイメージで焼かれた home**は
+# 封殺が効いていなかった時代の版を抱えたまま永続する。
 #
 # だから marker だけで repin を判定すると **marker == pin なのに実体が違う**状態が
 # 固着する。しかも実害は静かで、その版で出力形式が変わっていれば「セッションは動く

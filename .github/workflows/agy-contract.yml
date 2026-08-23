@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      AGY_CLI_DISABLE_AUTO_UPDATE: "1"
+      AGY_CLI_DISABLE_AUTO_UPDATE: "true"
     steps:
       - uses: actions/checkout@v4
       - name: guard signed-in composer credential
