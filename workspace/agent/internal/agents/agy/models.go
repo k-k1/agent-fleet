@@ -12,11 +12,16 @@ import (
 
 // Models enumerates agy's launch-time model choices via `agy models`.
 //
-// ⚠️ The output shape changed under us, and the two forms have to both keep working
-// because the image pins 1.1.17 while `agy update` moves a live workspace past it:
+// ⚠️ The output shape changed under us, and BOTH forms have to keep working:
 //
 //	1.1.17:  Gemini 3.5 Flash (Medium)                       ← display name only
 //	1.1.19:  gemini-3.5-flash-low<TAB>Gemini 3.5 Flash (Low) ← id, then display name
+//
+// The pin is 1.1.19 now, but that does not make the old form dead code. `~/.local` is
+// a persistent home: a workspace boot-installed under an older image still has 1.1.17
+// on disk until the REPIN path pulls it forward, and agy self-updates in the field
+// besides (measured — it moved 1.1.17 → 1.1.19 with AGY_CLI_DISABLE_AUTO_UPDATE=1 set;
+// docs/70 §70.14.9). Whichever way a box drifts, the parser has to cope.
 //
 // On the old form the display name IS the id — `agy --model` accepts it verbatim
 // (実機検証 2026-07-20). On the new one it is not, and passing the whole line is what

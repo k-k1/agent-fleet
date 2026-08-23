@@ -205,6 +205,30 @@ fi
 VJ=/usr/local/share/agent-fleet/versions.json
 vj_pin() { node -e 'try{process.stdout.write(String(require(process.argv[1])[process.argv[2]]||""))}catch{}' "$VJ" "$1" 2>/dev/null; }
 cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
+# agy_effective_version — 「いま在る agy は何版か」。
+#
+# ⚠️ マーカー（.agy.version）は **AF が最後に入れた版**であって、**いま在る版ではない**。
+# agy は AGY_CLI_DISABLE_AUTO_UPDATE=1 を設定してあっても自分を書き換える（実測・
+# docs/70 §70.14.9: 1.1.17 で起動した 34 秒後に 1.1.19 になり、ログに
+# `auto_updater.go:305 Spawned background update process` が残っていた）。マーカーは
+# AF が書くファイルなので、その更新では動かない。
+#
+# だから marker だけで repin を判定すると **marker == pin なのに実体が違う**状態が
+# 固着する。しかも実害は静かで、その版で出力形式が変わっていれば「セッションは動く
+# のに黙って別のモデル」になる（§70.14.8 で実際にそうなった）。
+#
+# 実体を問えるなら実体を問う。問えないのは RDRAND 非提示の x86 ホストだけで、そこは
+# 起動即 SIGABRT する（decisions/0008）ので marker に落ちる。arm64 は §70.13 の実測で
+# 安全と確定している（BoringCrypto が乱数を命令でなく getrandom(2) から取るため、
+# `rng` を持たない Graviton2 でも RC=0 だった）。
+agy_effective_version() {
+  local bin="$HOME/.local/bin/agy" v=""
+  if [ -x "$bin" ] && { [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo 2>/dev/null; }; then
+    v="$(timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
+  fi
+  [ -n "$v" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
+  printf '%s' "$v"
+}
 # lean 判定: claude が焼かれておらず versions.json にピンがある = lean variant。
 # lean では下の CLAUDE_INSTALL ブロックの起動時 update も抑止してピン版を維持する
 # （最新への追従は self-update opt-in の仕事）。
@@ -306,15 +330,12 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # agy: 公式installer manifestが示す不変GCS objectのピン版。
   # （versions.json の agy + agy_build + agy_sha256 で取得・検証 — Dockerfile焼き込みと同じ経路）。
   # self-update の版比較マーカーも書いておく（ピン導入直後の無駄な再取得を防ぐ）。
-  # repin 判定もこのマーカーで行う: `agy --version` は RDRAND 非提示ホストで SIGABRT
-  # する（decisions/0008）ため実バイナリは叩かない。マーカー欠落は一度ピン再導入して
-  # 書き直すので収束する。
   AGY_NEED=0
   if [ -n "$(vj_pin agy)" ] && [ -n "$(vj_pin agy_build)" ] && [ -n "$(vj_pin agy_sha256)" ]; then
     if ! cli_present agy; then
       AGY_NEED=1
     elif [ "$REPIN" = 1 ] && [ -x "$HOME/.local/bin/agy" ] \
-         && [ "$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)" != "$(vj_pin agy)" ]; then
+         && [ "$(agy_effective_version)" != "$(vj_pin agy)" ]; then
       AGY_NEED=1
     fi
   fi
@@ -496,17 +517,21 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   # 焼き込みは root 所有の /usr/local/bin のため ~/.local/bin へ入れて PATH 先勝ちで
   # 差し替える（shadow 方式）。版比較スキップ: install.sh と同じ配布 manifest（軽量
   # JSON）から latest を取り、前回導入時に記録したマーカーと一致なら ~187MB の再取得を
-  # 省く。`agy --version` は RDRAND 非提示ホストで SIGABRT する（decisions/0008）ため、
-  # 実バイナリでなくマーカー比較にしている（agy 自身の自己更新で進んでいたら比較が
-  # ズレて再導入されるだけで無害）。install.sh は既存バイナリがあると更新せず即 exit 0
-  # する仕様なので、空の temp dir へ導入してから差し替える（失敗時は旧 shadow 温存）。
+  # 省く。比較は agy_effective_version()（実体を問えるホストでは実体・そうでなければ
+  # マーカー）。⚠️ かつてここは marker 決め打ちで、「agy 自身の自己更新で進んでいたら
+  # 比較がズレて再導入されるだけで無害」と書いてあった。無害ではなかった——自己更新は
+  # marker を動かさないので、ピン側（repin）では marker == pin のまま実体だけが先へ
+  # 行って固着する（docs/70 §70.14.9）。ここ（opt-in ON 側）では逆に、実体が既に
+  # latest でも marker が古いせいで毎回 ~187MB を取り直していた。
+  # install.sh は既存バイナリがあると更新せず即 exit 0 する仕様なので、空の temp dir
+  # へ導入してから差し替える（失敗時は旧 shadow 温存）。
   AGY_MARK="$HOME/.local/bin/.agy.version"
   agy_arch="$(dpkg --print-architecture 2>/dev/null || uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
   agy_latest="$(curl -fsSL --max-time 15 \
     "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_${agy_arch}.json" 2>/dev/null \
     | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
   if [ -n "$agy_latest" ] && [ -x "$HOME/.local/bin/agy" ] \
-     && [ "$(cat "$AGY_MARK" 2>/dev/null)" = "$agy_latest" ]; then
+     && [ "$(agy_effective_version)" = "$agy_latest" ]; then
     echo "[entrypoint] agy already latest ($agy_latest); skip"
   else
     agy_tmp="$(mktemp -d)"
