@@ -255,6 +255,25 @@ const (
 	// tools, silently and only for them — so the CP compares and refuses a stale one
 	// instead of trusting that somebody remembered to re-bake (決定 9).
 	ec2TagImage = "af-image"
+	// ec2TagImageFP stamps the CONTENT the image reference above resolved to when the
+	// golden was baked — `sha256:<hex>` over imageFingerprint()'s per-platform manifest
+	// digests (goldenIdentity).
+	//
+	// ★ Why a second tag at all: ec2TagImage is a REFERENCE, and a reference is not an
+	// identity. Measured on the real deployment (docs/72 §72.6.4): re-tagging the
+	// workspace image so that CP and workspace share one ImageTag left the digest
+	// byte-identical (`sha256:497ca29360ed…` on both tags) and the CP still said
+	// `no golden for …; baking one`, then spent ~10 minutes and two EC2 slots
+	// rebuilding a home it already had. The error runs the other way too, and that one
+	// is not merely expensive: push new content over a MUTABLE tag (`:dev`) and the
+	// string still matches, so every new member is seeded from a home baked out of the
+	// old image — silently, and only for them.
+	//
+	// Absent on goldens baked before this existed, and unknowable when the image is
+	// not in ECR or ECR cannot be read. Both fall back to comparing ec2TagImage, i.e.
+	// exactly the old behaviour: unknown must never be read as "does not match", which
+	// would throw away every existing golden on upgrade.
+	ec2TagImageFP = "af-image-fp"
 	// ec2TagArch stamps the CPU architecture a golden snapshot was baked ON.
 	//
 	// ★ A golden is a HOME that has already paid boot-install — which means it is full
@@ -804,7 +823,7 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 	// service with an old task that Service Connect hasn't stopped routing to
 	// yet. Reporting "running" before that settles let a client's OAuth
 	// start/complete land on two different Agent processes and lose the
-	// in-memory flow_id (confirmed 2026-08-19 on <dev-deployment>).
+	// in-memory flow_id (confirmed 2026-08-19 on the dev deployment).
 	case s.DesiredCount >= 1 && s.RunningCount >= 1 && serviceRolledOut(s):
 		e.clearBlockedPhase()
 		return "running"
@@ -2447,7 +2466,7 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 // retire the running task and start a fresh one — Service Connect load-balances
 // across both for the ~1-2 minutes it takes to settle, which silently drops
 // anything a caller stashed in the Agent process's memory (an OAuth flow_id;
-// confirmed 2026-08-19 on <dev-deployment>). Most re-wakes change nothing (same image,
+// confirmed 2026-08-19 on the dev deployment). Most re-wakes change nothing (same image,
 // same env, same secrets ARNs), so most re-wakes can skip that window entirely.
 //
 // Same shape as startGen/startPhase for the same reason: the Runtime object is
@@ -3161,6 +3180,10 @@ func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
 		return ""
 	}
 	want := e.base.cfg.workspaceImage
+	// The comparison is by CONTENT where the content is knowable (goldenIdentity):
+	// a golden re-stamped for a new tag that resolves to the same bytes is still ours,
+	// and one stamped with our tag that no longer resolves to the same bytes is not.
+	id := goldenIdentityFor(ctx, e.base.ecr, want)
 	var stale []string
 	var newest *ec2types.Snapshot
 	for i := range out.Snapshots {
@@ -3168,8 +3191,8 @@ func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
 		if s.State != ec2types.SnapshotStateCompleted {
 			continue
 		}
-		if got := ec2TagValue(s.Tags, ec2TagImage); got != want {
-			stale = append(stale, fmt.Sprintf("%s(%s)", aws.ToString(s.SnapshotId), got))
+		if !id.matches(s.Tags) {
+			stale = append(stale, fmt.Sprintf("%s(%s)", aws.ToString(s.SnapshotId), ec2TagValue(s.Tags, ec2TagImage)))
 			continue
 		}
 		// ⚠️ A golden of ANOTHER architecture is not a candidate for this home. The
@@ -4238,6 +4261,11 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	// af-arch — absent means x86_64, the only kind that existed before classes.
 	byArch := map[string]*ec2GoldenView{}
 	candidateState := map[string]ec2types.SnapshotState{}
+	// The screen has to agree with the Start path about what "for the running image"
+	// means, or it reports a golden as stale that goldenSnapshot happily uses (and the
+	// operator re-bakes for nothing). Same identity, same rule (goldenIdentity).
+	imgID := f.imageIdentity(ctx)
+	goldenMatched := map[string]bool{}
 	golden := func(arch string) *ec2GoldenView {
 		g, ok := byArch[arch]
 		if !ok {
@@ -4255,13 +4283,14 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 			// there is, which is exactly when the operator needs to be told to re-bake.
 			g := golden(arch)
 			img := ec2TagValue(s.Tags, ec2TagImage)
-			if g.SnapshotID == "" || img == st.RunningImage {
+			if match := imgID.matches(s.Tags); g.SnapshotID == "" || match {
 				g.SnapshotID, g.Image = aws.ToString(s.SnapshotId), img
+				goldenMatched[arch] = match
 			}
 		case ec2RoleGoldenCandidate:
 			// Only a candidate for the image being RUN says a bake is under way. One
 			// stamped with anything else is a leftover the baker will sweep.
-			if ec2TagValue(s.Tags, ec2TagImage) == st.RunningImage {
+			if imgID.matches(s.Tags) {
 				g := golden(arch)
 				g.Candidate = aws.ToString(s.SnapshotId)
 				g.Progress = snapshotProgress(s)
@@ -4272,7 +4301,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 				g.PhaseSince = bakeStartedAt(s)
 			}
 		case ec2RoleGoldenRejected:
-			if ec2TagValue(s.Tags, ec2TagImage) == st.RunningImage {
+			if imgID.matches(s.Tags) {
 				g := golden(arch)
 				g.Rejected = aws.ToString(s.SnapshotId)
 				g.Reason = ec2TagValue(s.Tags, ec2TagBakeReason)
@@ -4331,7 +4360,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	blocked, _ := bakeCapacityBlocked(slotsInUse, f.pool.maxSlots)
 	for _, arch := range f.bakeArches() {
 		g := golden(arch)
-		g.Stale = g.SnapshotID != "" && g.Image != st.RunningImage
+		g.Stale = g.SnapshotID != "" && !goldenMatched[arch]
 		describeBake(g, arch, bakeHomes, slotRunning, candidateState[arch], blocked, slotsInUse)
 		g.Baking = bakePhaseActive(g.Phase)
 		st.Goldens = append(st.Goldens, *g)

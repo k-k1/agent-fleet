@@ -209,9 +209,9 @@ pull エラーのログすら出ない（[70](70-slot-instance-classes.md) §70.
   クロスコンパイルが本当に AArch64 の ELF を吐いていることまで見えている。
 - 使い捨てタグ 3 本（`armtime-<run id>` / `-amd64` / `-naive`）は自動削除された。
 
-## 72.6 実機（<dev-deployment>）
+## 72.6 実機（開発配備）
 
-⚠️ **<prod-deployment> は触らない**（実ユーザーの Workspace が動いている。`ImageTag` を変えると
+⚠️ **本番配備は触らない**（実ユーザーの Workspace が動いている。`ImageTag` を変えると
 その人に要再起動バッジが出る）。
 
 ### 72.6.1 焼き方を EC2 から CI に移した（`dev-image.yml`）
@@ -242,13 +242,13 @@ workspace はそうするしかない（アーキ毎のバイナリを入れる�
 共有**なので workspace 側も同じタグに置く（ECR 内の `crane copy` は実体を複製しないので
 ただの再タグ）→ `ImageTag` と `CpArch` を差し替え → CP ログで `control-plane <tag>` を確認。
 
-### 72.6.3 ✅ 通った（2026-08-23・<dev-deployment>・`ImageTag=0.10.1-dev-d7e0173c` / `CpArch=arm64`）
+### 72.6.3 ✅ 通った（2026-08-23・開発配備・`ImageTag=0.10.1-dev-d7e0173c` / `CpArch=arm64`）
 
 ```
 runtimePlatform: {cpuArchitecture: arm64, operatingSystemFamily: LINUX}   ← rev 19
 task ecs.cpu-architecture: arm64 / RUNNING / HEALTHY
 control-plane 0.10.1-dev-d7e0173c on 0.0.0.0:8099 (runtime=ecs-ec2)
-https://<dev-deployment>/healthz → 200
+https://<fqdn>/healthz → 200
 ```
 
 **⚠️ 「既定は起動時に入る」を実物で見た。** 切替の**前**の rev 18 は
@@ -318,9 +318,13 @@ CpArch=arm64  → :54033c64   ERROR: … is a SINGLE manifest …（exit 1）   
 
 ### 72.6.6 やり残し
 
+✅ **§72.6.2 の手順は 1 本になった** —— `deploy/aws/ecs/dev-deploy.sh`
+（[73](73-dev-deploy.md)）。焼く・運ぶ・置き換えるを繋いだだけでなく、
+§72.6.4 の焼き直しも消えている。
+
 ⚠️ **`CpArch` を明示しても、`ImageTag` を単独で動かす経路は依然として危ない。**
 上の前検査は `update.sh` の中にあるので、`aws cloudformation deploy` を直接叩けば通り抜ける。
-**いま <dev-deployment> は arm64 で走っているので、次に正規リリース（amd64 単独）の `ImageTag` を
+**いま開発配備は arm64 で走っているので、次に正規リリース（amd64 単独）の `ImageTag` を
 当てる人は `CpArch` も戻す必要がある。**
 
 **旧: arm64 に切り替えたら確かめること**（すべて上で消化済み）:
@@ -342,7 +346,7 @@ CpArch=arm64  → :54033c64   ERROR: … is a SINGLE manifest …（exit 1）   
 ## 72.7 CP のオートスケールと冗長化——実状
 
 アーキを切り替える操作はローリングデプロイであり、その挙動は台数の設計そのものである。
-**実物を見た（2026-08-23・<dev-deployment>）。**
+**実物を見た（2026-08-23・開発配備）。**
 
 ### 72.7.1 測ったこと
 
@@ -432,7 +436,7 @@ CpArch=arm64  → :54033c64   ERROR: … is a SINGLE manifest …（exit 1）   
 | **P0** ✅ | Fargate ARM64 の一次情報（リージョン・PV・**Service Connect 併用可否**）と価格実測 | §72.2。**通る**。ap-northeast-1 に制限なし・SC は 2022-12 から対応 |
 | **P1** ✅ | `arm64-image-time.yml` で CP のビルド時間を実測（クロスコンパイルあり／なし） | §72.5.1。**増分 +71 秒**（素直に焼くと +569 秒＝**8.0 倍**）。arm64 の中身が AArch64 であることも確認 |
 | **P2** ✅ | Dockerfile / `release.sh` / `build.sh` / `publish-dist.yml` / `30-ingress.yaml` / `update.sh` | index を作れて、`CpArch` で選べて、噛み合わない組合せは deploy 前に落ちる |
-| **P3** ✅ | 実機（<dev-deployment>）: arm64 の CP が上がり、**両アーキの Workspace を端から端まで面倒を見た** | §72.6.3。選択肢が本物になった。⚠️ 届いた経路は**別名ではなく Cloud Map フォールバック**（切替前も同じ） |
+| **P3** ✅ | 実機（開発配備）: arm64 の CP が上がり、**両アーキの Workspace を端から端まで面倒を見た** | §72.6.3。選択肢が本物になった。⚠️ 届いた経路は**別名ではなく Cloud Map フォールバック**（切替前も同じ） |
 | **P4** — | §72.7.3 の 🔴 2 件 ＋ `MultiAZ` パラメータ ＋ `CpDesiredCount` | 冗長化を語れるようになる（**本書では実装しない**） |
 
 ## 72.9 未決
@@ -448,9 +452,12 @@ CpArch=arm64  → :54033c64   ERROR: … is a SINGLE manifest …（exit 1）   
    公開しない」と同じ形）→ ③**P3 でその面が実機で上がった**（§72.6.3）ので両方消えた。
    **①が解けた時点で倒していたら「動くはずの arm64」を配っていた。
    税の問いと「確かめたか」の問いは別で、後者の方が遅く片付く。**
-3. **`golden` の同一性を digest で持つか**（§72.6.4）。文字列の再タグで 2 アーキ分が
-   焼き直された。⚠️ ただし digest に変えると「同じ内容を別タグで配った」ときに**焼き直さなく
-   なる**ので、それが望みかは別の問いである。
+3. ~~**`golden` の同一性を digest で持つか**（§72.6.4）。~~ **✅ 内容で持つことにした**
+   （[73](73-dev-deploy.md) 決定 3・`af-image-fp`）。⚠️ 「同じ内容を別タグで配ったら
+   焼き直さない」は**副作用ではなく狙い**である（開発デプロイは毎回それをやる）。
+   同時に**逆向きの穴**——可変タグへ新しい内容を push すると文字列は一致したままで
+   新規メンバーだけが古い home を配られる——も塞がった。指紋が読めないときは
+   これまでどおり文字列で比べる（unknown を不一致と読むと全配備の golden が飛ぶ）。
 4. **§72.7.4 の順序を実際にやるか。** 「1 台で足りている」なら何もしないのが正しい。
    ⚠️ ただし**足りているかどうかを測っていない**（CP タスクの CPU/メモリの実績も、
    単一障害点が実際に落ちた回数も見ていない）。やらない判断をするにも数字が要る。

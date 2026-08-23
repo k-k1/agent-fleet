@@ -800,7 +800,7 @@ P3 = ECS 配布のリリース作法（§35.3.4）。CFN・アダプタ本体（
   head_commit.message 一致で誤発火する（説明文にも書かない）。
   ゲート h での `AuthMode` 追加後（8e065fd）にも最終フル run 29810696327 で
   4 job 全緑を再実証。
-- (h) ✅ **sandbox 実走一巡完了**（account <account>・ap-northeast-1・
+- (h) ✅ **sandbox 実走一巡完了**（開発配備のアカウント・ap-northeast-1・
   `af-h.<domain>`）。この Workspace に docker が無いため、イメージは sandbox 内の
   使い捨て EC2（t3.xlarge）で `build.sh --compose` ×2 版（0.0.1-h / 0.0.2-h・lean 配布
   variant）をビルドし、**release-ecr.sh 実物**で push（repo 存在確認→login→tag/push。

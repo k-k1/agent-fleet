@@ -7,7 +7,7 @@
 #
 #   ★ ブロックを抜けた後、`mkdir -p "$HOME/.config/<何か>"` が必ず成功すること。
 #
-# これが破れたのが <prod-deployment> の golden 初号機だった: golden から作った home は種が張った
+# これが破れたのが本番配備の golden 初号機だった: golden から作った home は種が張った
 # symlink（~/.config -> $AF_WS_KEEP/.config）を丸ごと持ってくる一方、keep 側の EFS は新規
 # ユーザーごとに空である。当時のブロックは「もう正しい symlink だ」と判断して early-continue し、
 # **向き先を作る mkdir を飛ばしていた**。~/.config は宙に浮いたままになり、後段の

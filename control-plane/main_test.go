@@ -34,7 +34,7 @@ func TestIntervalOffHonoursAnExplicitZero(t *testing.T) {
 
 // The access log has to answer "was that probe refused?" — a public deployment is found
 // by scanners within hours (172 probes for /actuator/heapdump, /.env and friends in the
-// first 9 hours of <dev-deployment>), and every line used to look the same whether the CP
+// first 9 hours of the dev deployment), and every line used to look the same whether the CP
 // returned 401 or 200.
 func TestAccessLogRecordsTheStatus(t *testing.T) {
 	cases := []struct {

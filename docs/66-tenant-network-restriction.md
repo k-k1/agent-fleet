@@ -200,7 +200,7 @@ git も `git clone http://<cp>/git/...` をコンテナの中から叩く。オ�
 
 ## 66.8 実機で確かめること
 
-**入れたところまで（2026-08-17・<dev-deployment>）**: `30-ingress` の CP タスクに
+**入れたところまで（2026-08-17・開発配備）**: `30-ingress` の CP タスクに
 `AF_TRUSTED_PROXY_HOPS=1` が入り、起動ログに
 `edge: trusted-proxy-hops=1 (client IP = X-Forwarded-For counted from the right)` が出た。
 `GET/PUT /api/admin/tenants/{slug}/network` は 404 ではなく **401**（ルートは生きている）。

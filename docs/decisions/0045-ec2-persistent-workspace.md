@@ -206,6 +206,12 @@ boot-install（4CLI 41s ＋ rtk 1s ＋ agy 6s ＝ **48s**）とキャッシュ�
 - **焼き直しをリリースに紐づけること。** イメージや CLI のピンが上がったら golden も焼き直す
   （1 台起こして entrypoint を通し snapshot を取るだけ）。忘れると新規ユーザーだけ古い CLI で
   始まるので、**golden にイメージタグを刻んで CP が突合する。**
+  - **追記（2026-08-23・[docs/73](../73-dev-deploy.md) 決定 3）**: 突合は**内容**で行う。
+    刻むのは `af-image`（参照文字列）に加えて **`af-image-fp`（プラットフォーム毎の manifest
+    digest から作る指紋）**で、両側にあるときは指紋が決め、無ければこれまでどおり文字列で
+    比べる。**参照は同一性ではない**——同じ digest を別タグに置き直しただけで焼き直しが走り
+    （docs/72 §72.6.4 で 10 分・スロット 2 本）、逆に可変タグへ新しい内容を push すると
+    文字列は一致したまま**古い home が新規メンバーに配られる**。
 
 ### 9-1 — 焼き直しは CP がやる（2026-08-21・docs/64 §64.29）
 
@@ -736,10 +742,10 @@ sleep 判定は `sweepVolume` の中、すなわち **`af-role=home` のボリ�
 `StopInstances` を撃たない（`quarantineSlot` は故障箱専用、`sweepGhostInstances` は
 **EC2 が既に消えた** container instance を deregister するだけ）。
 
-⚠️ **実デプロイで踏んだ**（<dev-deployment>・2026-08-23）: **タスク 0 の `m*.large` が 3 台、24 時間以上
+⚠️ **実デプロイで踏んだ**（開発配備・2026-08-23）: **タスク 0 の `m*.large` が 3 台、24 時間以上
 running のまま**。24 時間分のログに `sleep` の記録は **1 件も無い**。踏む経路は
 (a) 立ち退き (b) サイズ／クラス変更 (c) `Destroy` (d) **golden の seed / probe が終わったとき**。
-<dev-deployment> の 3 台は (c)(d) の残骸で、**`Ec2SlotSleepSec` の説明文が「〜$9.6/月」と書いている横で
+開発配備の 3 台は (c)(d) の残骸で、**`Ec2SlotSleepSec` の説明文が「〜$9.6/月」と書いている横で
 1 台あたり 〜$95/月 を焼いていた**。
 
 1. **スロット起点の走査を足す**（`sweepFreeSlots`）。`af-pool` ＋ `af-role=slot` ＋ running の

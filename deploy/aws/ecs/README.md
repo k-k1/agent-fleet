@@ -329,6 +329,34 @@ It does the three things the hand-typed sequence gets wrong:
   within a few minutes of the deploy, as long as two slots are free; the pool panel
   says so while it is happening. Otherwise re-bake with `bake-golden.sh`.
 
+### A development deployment: `dev-deploy.sh`
+
+`update.sh` deploys a **released** tag. A deployment kept for development wants the
+opposite: whatever is on `develop` right now, without cutting a version. That is
+`dev-deploy.sh` (docs/73), and it ends by calling `update.sh` — the pre-flight checks
+above are the reason, and writing a second copy of them for the dev path would mean the
+checks are what drifts.
+
+```bash
+./dev-deploy.sh --profile <p> --region <r>            # origin/develop → the dev deployment
+./dev-deploy.sh --profile <p> --region <r> --dry-run  # just the plan
+```
+
+It names the tag (`<next patch>-dev-<sha8>`), bakes it through `dev-image.yml` (GHCR,
+never a release tag), copies it into ECR **index and all**, and moves `ImageTag`.
+Three things it decides for you:
+
+- **Whether the workspace image needs baking at all.** Only when `workspace/` changed
+  since the deployed tag; otherwise the workspace image is re-tagged inside ECR, which
+  copies no bytes. Baking it costs ~10 minutes of QEMU.
+- **That the golden snapshot does not have to be re-baked** when those bytes are
+  identical (docs/72 §72.6.4 paid 10 minutes and two slots for exactly that).
+- **That this is not somebody's live deployment.** It refuses any `Fqdn` but the dev
+  one unless `--allow-fqdn` says otherwise: moving `ImageTag` puts a "restart required"
+  badge in front of everyone running a workspace there.
+
+⚠️ It bakes **origin's** ref. Local commits that are not pushed are silently not in it.
+
 ### What the users see
 
 Two different signals, and they mean different things:
@@ -841,7 +869,42 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
   `retain` (production: EFS `Retain`, RDS `Snapshot` + 7-day backups + deletion
   protection). **Deploy production with `Persistence=retain`.**
 
+## Lifecycle scripts (stand up / pause / tear down)
+
+The runbooks in this file are the source of truth; these four are their executable
+form (docs/73). A deployment is addressed the way `update.sh` already addresses one —
+by **AWS profile** — and everything else is read from the live deployment, which
+matters because two deployments built from these same templates can differ in ways a
+hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
+`af-ecs-ec2-pool`).
+
+```bash
+./capture-env.sh --profile <p> --region <r>            # record a live deployment
+./pause.sh       --profile <p> --region <r> [--up]     # stop / resume (data stays)
+./teardown.sh    --profile <p> --region <r> [--yes]    # delete everything
+./standup.sh     --profile <p> --region <r> [--yes]    # build it back
+```
+
+- **`capture-env.sh` first, always.** It writes the parameters each stack was deployed
+  with to `~/.config/agent-fleet/deploy/<profile>.<region>/` (outside the repository —
+  the values are account-specific). The templates live here; **what was passed to them
+  lives only inside the deployment**, and `delete-stack` takes it away. `teardown.sh`
+  refuses to run without it, and `standup.sh` has nothing to deploy with.
+- **Nothing happens without `--yes`.** They print the plan (and, for teardown, an
+  inventory of what would go) and exit. With `--yes` on a terminal they also make you
+  type the FQDN.
+- **Secrets are neither captured nor restored.** The SSM SecureStrings are not CFN
+  parameters; `standup.sh` only checks that they *exist*. Teardown keeps `/af-cp/*` by
+  default so the same account can be redeployed into.
+- **Which deployment is the development one is not in this repository.** `dev-deploy.sh`
+  (docs/73) only touches a deployment whose local capture says `AF_DEV_DEPLOY=1`.
+- The order these run in is what the stub test in `deploy/local/ecs-lifecycle-stub-test.sh`
+  pins — see the next section for why each step is where it is.
+
 ## Teardown
+
+> The executable version is `./teardown.sh --profile <p> --region <r>` (above). Read this section
+> anyway: the script does exactly these steps, and when one fails you are back here.
 
 Most of what a live deployment owns is **not** in the stacks: the Control Plane
 creates workspace services, EFS access points, SSM parameters and — under
