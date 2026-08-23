@@ -2925,6 +2925,18 @@
   font-size: 12px;
   white-space: nowrap;
 }
+/* 見出しの右に複数のボタンを並べる（kb-head の space-between で1つの塊として右端へ寄せる）。
+   日本語のラベルは長いので、幅が足りなければ折り返して右寄せのまま2行にする（横に溢れさせない）。 */
+.keys-settings .kb-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.keys-settings .kb-head-actions button {
+  white-space: nowrap;
+}
 .kb-sec {
   margin-top: 14px;
 }
