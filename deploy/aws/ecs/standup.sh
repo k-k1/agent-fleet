@@ -32,18 +32,23 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat >&2 <<'EOF'
-usage: standup.sh --profile <p> --region <r> [--yes] [--image-tag <tag>] [--from <prefix>] [--dry-run]
+usage: standup.sh --profile <p> --region <r> [--yes] [--image-tag <tag>] [--cp-arch <a>]
+                  [--from <prefix>] [--dry-run]
   --profile    aws cli profile (this is how a deployment is addressed)
   --region     region to build it in
   --stack      ingress stack name (default af-ecs-ingress)
   --yes        actually deploy (without it: preflight + plan only)
   --image-tag  image tag to run (default: the captured AF_IMAGE_TAG)
+  --cp-arch    x86_64 | arm64 — which architecture the Control Plane's own task runs on
+               (default: the captured CpArch). ⚠️ arm64 needs a CP image that is a
+               two-architecture index at this tag; the check below refuses the pair
   --from       registry to copy the images from (default ghcr.io/k-k1/agent-fleet)
   --dry-run    print every write instead of making it
 EOF
 }
 
-PROFILE=""; REGION=""; STACK="af-ecs-ingress"; AF_YES=0; AF_DRY=0; TAG=""; FROM="ghcr.io/k-k1/agent-fleet"
+PROFILE=""; REGION=""; STACK="af-ecs-ingress"; AF_YES=0; AF_DRY=0; TAG=""; CP_ARCH_ARG=""
+FROM="ghcr.io/k-k1/agent-fleet"
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)   PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -51,6 +56,7 @@ while [ $# -gt 0 ]; do
     --stack)     STACK="${2:?--stack needs a value}"; shift ;;
     --yes)       AF_YES=1 ;;
     --image-tag) TAG="${2:?--image-tag needs a value}"; shift ;;
+    --cp-arch)   CP_ARCH_ARG="${2:?--cp-arch needs x86_64|arm64}"; shift ;;
     --from)      FROM="${2:?--from needs a value}"; shift ;;
     --dry-run)   AF_DRY=1 ;;
     -h|--help)   usage; exit 0 ;;
@@ -94,7 +100,8 @@ af_read_params 30-ingress
 p30() { local p; for p in ${AF_PARAMS[@]+"${AF_PARAMS[@]}"}; do case "$p" in "$1"=*) echo "${p#*=}"; return ;; esac; done; }
 SSM_PREFIX="$(p30 SsmPrefix)"; : "${SSM_PREFIX:=/af-cp}"
 HOSTED_ZONE="$(p30 HostedZoneId)"
-CP_ARCH="$(p30 CpArch)"; : "${CP_ARCH:=x86_64}"
+CP_ARCH="${CP_ARCH_ARG:-$(p30 CpArch)}"; : "${CP_ARCH:=x86_64}"
+case "$CP_ARCH" in x86_64|arm64) ;; *) echo "--cp-arch takes x86_64|arm64 (got '$CP_ARCH')" >&2; exit 2 ;; esac
 
 have_ssm() { "${AWS[@]}" ssm get-parameter --name "$1" --query 'Parameter.Name' --output text >/dev/null 2>&1; }
 # ⚠️ 値は読まない（--with-decryption を付けない）。要るのは「有るか」だけで、
@@ -111,6 +118,46 @@ if [ -n "$HOSTED_ZONE" ]; then
     || say_missing "ホストゾーン $HOSTED_ZONE が引けない（ACM の DNS 検証と alias がここに入る）"
 fi
 command -v crane >/dev/null || say_missing "crane が無い（GHCR → ECR を index ごと運ぶのに要る）"
+
+# ★ イメージが**両方**そのタグで手に入るか。ここを見ないと 00〜20 を立てたあと、
+# 「workspace が GHCR に無い」で止まる。実際にそうなる経路がある: dev-deploy は
+# workspace を焼かない回に **ECR 内で再タグ**するだけなので、その dev タグの workspace は
+# GHCR に存在しない。撤収で ECR ごと消えた時点で、その実体はどこにも無くなる。
+if [ "$AF_DRY" != 1 ] && command -v crane >/dev/null; then
+  for pair in "control-plane=af-control-plane" "workspace=af-workspace"; do
+    if "${AWS[@]}" ecr describe-images --repository-name "${pair#*=}" --image-ids "imageTag=$TAG" >/dev/null 2>&1; then
+      continue    # 既に ECR にある（立て直しの途中からの再実行）
+    fi
+    crane manifest "$FROM/${pair%%=*}:$TAG" >/dev/null 2>&1 \
+      || say_missing "$FROM/${pair%%=*}:$TAG が無い（ECR にも GHCR にも）。dev-image.yml を image=both で焼くか、両方が揃っているタグを --image-tag で指定する"
+  done
+fi
+
+# arm64 のスロットクラスを宣言しているなら、arm64 の AMI と **arm64 の workspace イメージ**の
+# 両方が要る。どちらが欠けても CFN は成功し、症状だけが後から出る（前者は CP が起動を拒否、
+# 後者は arm スロットが pull できない）。⚠️ **証明できたときだけ落とす**——イメージのアーキが
+# 読めなかったことを理由に止めない。
+case "$(p30 Ec2SlotTypes)" in
+  *"|arm64|"*)
+    [ -n "$(p30 Ec2SlotAmiArm64)" ] || say_missing "Ec2SlotTypes が arm64 クラスを宣言しているのに Ec2SlotAmiArm64 が空（CP が起動を拒否する）"
+    if [ "$AF_DRY" != 1 ] && command -v crane >/dev/null; then
+      ws_manifest="$(crane manifest "$FROM/workspace:$TAG" 2>/dev/null || true)"
+      case "$ws_manifest" in
+        "") ;;                       # 読めなかった（GHCR に無い＝別の検査が既に言っている）
+        *'"manifests"'*)             # インデックス＝中身のアーキが読める。ここは断定できる
+          ws_archs="$(printf '%s' "$ws_manifest" | tr ',' '\n' \
+            | sed -n 's/.*"architecture"[[:space:]]*:[[:space:]]*"\([a-z0-9_]*\)".*/\1/p' | sort -u | tr '\n' ' ')"
+          case " $ws_archs " in
+            *" arm64 "*) ;;
+            *) say_missing "Ec2SlotTypes が arm64 クラスを宣言しているのに workspace:$TAG は ${ws_archs}のみ（arm スロットがイメージを引けない）" ;;
+          esac ;;
+        *)                           # 単一マニフェスト＝1 アーキ分しか無い。この経路の
+                                     # 単一ビルドはビルドホストの amd64 である（update.sh と同じ判断）
+          say_missing "Ec2SlotTypes が arm64 クラスを宣言しているのに workspace:$TAG は単一マニフェスト（arm スロットがイメージを引けない）。arm クラスを外すか、両アーキで焼いたタグを使う" ;;
+      esac
+    fi
+    ;;
+esac
 
 if [ "$fail" = 1 ]; then
   echo ""
@@ -195,7 +242,16 @@ if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   [ -n "$lt" ] || { echo "ERROR: $AF_STACK_POOL に SlotLaunchTemplateId の出力が無い" >&2; exit 1; }
   echo "==> slot launch template: $lt${ami:+ / arm64 ami $ami}"
   af_param_override Ec2SlotLaunchTemplate "$lt"
-  af_param_override Ec2SlotAmiArm64 "$ami"
+  # ⚠️ **空で上書きしない。** arm64 AMI はプール層の出力から来るとは限らず、30 へ直接
+  # 渡されている配備が実在する（40 の SlotAmiIdArm64 が空のまま、30 の Ec2SlotAmiArm64 に
+  # ami-… が入っている）。ここで空を被せると、arm64 クラスを宣言しているのに arm64 AMI が
+  # 無い状態になり、**CP は起動を拒否する**（runtime_ecs_ec2.go: "refuses to start when a
+  # declared arm64 class has no launch template to run on"）。捕まえた値の方を残す。
+  if [ -n "$ami" ]; then
+    af_param_override Ec2SlotAmiArm64 "$ami"
+  else
+    echo "    · $AF_STACK_POOL は arm64 AMI を出力しない — 控えの Ec2SlotAmiArm64 をそのまま使う"
+  fi
 fi
 echo "==> deploy $AF_STACK_INGRESS (30-ingress)"
 if [ "$AF_DRY" = 1 ]; then
