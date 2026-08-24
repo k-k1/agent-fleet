@@ -48,6 +48,19 @@ type tenantLimits struct {
 	// P3-9 idle-stop (docs/19): per-tenant, super_admin-editable.
 	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
 	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop
+	// InteractionIdleTimeout is tier-1's clock for a session parked on a HUMAN decision —
+	// a question, a plan awaiting approval, a permission prompt, the usage-limit menu, an
+	// expired login (docs/75 §75.5). Separate from SessionIdleTimeout because the two
+	// answer different questions: "how long may an idle session hold RAM" vs "how long do
+	// we keep a container up for someone who hasn't come back to decide". A tenant that
+	// wants questions folded away quickly (they cost a running container until answered)
+	// but plain idle sessions kept warm, or the reverse, needs both knobs.
+	//
+	// "" => the tenant's own SessionIdleTimeout when they set one, else the deployment
+	// default (AF_INTERACTION_IDLE_TIMEOUT, itself defaulting to the session default).
+	// "0" => never fold a human-wait session for this tenant. 畳まれた対話は失われない —
+	// 保留ペイロードは持ち越しへ退避され、Console から答えれば再開して届く（docs/75 §75.6）。
+	InteractionIdleTimeout string `json:"interaction_idle_timeout,omitempty"`
 	// HomeHibernateAfter is the third step of the same series and the only one that
 	// touches the user's data: a home nobody has opened for this long is snapshotted and
 	// its volume deleted, and the next Start restores it (ADR 0045 決定 13-2, docs/64
@@ -87,6 +100,20 @@ func parseLimits(s string) tenantLimits {
 // idle-stop is enabled. Empty => the deployment default (def); an explicit "0"
 // (or any non-positive value) disables idle-stop for that tenant; a bad string
 // falls back to the default rather than silently disabling.
+// interactionTimeout resolves tier-1's clock for a human-wait session. The fallback
+// chain is deliberate: an admin who set only session_idle_timeout has expressed a
+// tempo for that tenant, and silently running human waits on the DEPLOYMENT default
+// instead would make one of the two numbers on the screen a lie.
+func interactionTimeout(lim tenantLimits, sessTO time.Duration, sessOn bool, def time.Duration) (time.Duration, bool) {
+	if lim.InteractionIdleTimeout != "" {
+		return idleTimeout(lim.InteractionIdleTimeout, def)
+	}
+	if lim.SessionIdleTimeout != "" {
+		return sessTO, sessOn
+	}
+	return idleTimeout("", def)
+}
+
 func idleTimeout(tenantVal string, def time.Duration) (d time.Duration, enabled bool) {
 	d = def
 	if tenantVal != "" {
