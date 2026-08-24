@@ -178,7 +178,11 @@ Control Plane を公開ホスト名で出すと、**数時間のうちに脆弱�
   何も動いていない Workspace を **2 時間**で停止します。**これが既定**で、
   `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT`（質問や承認待ちで止まっているセッション）/ `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT`（打鍵の無い端末を在席と数える猶予・既定 30 分）で変えられます（テナント単位の上書きは Admin UI。
   テナントが `0` を入れればそのテナントだけ無効、env に `0` を入れればデプロイ全体で無効）。
-  停止した Workspace は、ユーザーが次にターミナルを開くと自動起動します（`AF_AUTOSTART`）。
+  停止した Workspace は、ユーザーが**「起動」を押せば**戻ります。加えて `AF_AUTOSTART`（既定 on）が、
+  「今から使う」が明確な操作 — セッションの作成・fork・再開、持ち越し質問への回答、SSM ノード探索 —
+  のときだけ自動で起こします。**ターミナルを開いても起動しませんし、閲覧や Console のリロードでも
+  起動しません**（「停止しています。起動してください」を返します）。開きっぱなしのタブが Workspace を
+  温め続けることはありません。
   資源の節約に有効です。env の意味は [.env.example](../../../deploy/compose/.env.example)、仕組みは
   [dev/09 §9.4](../../dev/09-deploy.md)。
 - **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose

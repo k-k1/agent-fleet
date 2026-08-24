@@ -12,23 +12,31 @@ import (
 // (host-published 127.0.0.1:port locally vs Service Connect on ECS).
 type Runtime interface {
 	// Start brings the workspace up and returns once the launch is COMMITTED — which
-	// is not the same as "the Agent answers". The local adapters boot in seconds and
-	// do wait for /healthz, but ECS commits a desiredCount-1 service and converges
-	// asynchronously (every Fargate launch pays a full image pull), so callers must
-	// not read a nil error as "Agent reachable": poll State(), or let the Agent call
-	// itself fail and retry. Start runs inside an HTTP request, so no adapter may
-	// block it past the ingress idle timeout (docs/62 §62.5 — a 90s wait here is
-	// exactly what made a cold ECS Start come back as a 504).
+	// is not the same as "the Agent answers". The local adapters block for a courtesy
+	// grace on /healthz so the common start comes back already usable, but ECS commits
+	// a desiredCount-1 service and converges asynchronously (every Fargate launch pays
+	// a full image pull), so callers must not read a nil error as "Agent reachable":
+	// poll State(), use ensureWorkspaceReady, or let the Agent call itself fail and
+	// retry. Start runs inside an HTTP request, so no adapter may block it past the
+	// ingress idle timeout (docs/62 §62.5 — a 90s wait here is exactly what made a
+	// cold ECS Start come back as a 504).
+	//
+	// ★ A readiness overrun is NOT an error. Returning one flips a workspace that is
+	//   merely still booting into "start failed" — a red toast in front of the user,
+	//   a dropped scheduled fire, and a DB row left at "stopped" while the container
+	//   runs (runtime_health.go の冒頭に経緯).
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	// State reports the live container/service state:
-	//   running  — up and the Agent is reachable (or about to be)
-	//   starting — a launch is converging (ECS: desired 1 but no task RUNNING yet,
-	//              e.g. a multi-minute Fargate cold image pull). Callers must NOT
-	//              re-Start (the adapter would force a new deployment) and must
-	//              NOT idle-stop it; read paths treat it like stopped (Agent not
-	//              reachable yet). The docker adapter starts in seconds and in
-	//              practice never reports it.
+	//   running  — up and the Agent answers
+	//   starting — a launch is converging: ECS has desired 1 but no task RUNNING yet
+	//              (a multi-minute Fargate cold image pull), or a local container /
+	//              process is up but its entrypoint has not reached the Agent yet
+	//              (pinned boot-install, opt-in CLI self-update). Callers must NOT
+	//              re-Start (the adapter would force a new deployment / kill the boot)
+	//              and must NOT idle-stop it; read paths treat it like stopped (Agent
+	//              not reachable yet). Always time-boxed by the adapter — a "starting"
+	//              that never converges is a workspace nobody can operate.
 	//   stopped  — exists but not running (docker: exited container; ECS: desired 0)
 	//   none     — no container / service
 	State(ctx context.Context) string // running | starting | stopped | none
@@ -36,6 +44,12 @@ type Runtime interface {
 	Token() string                    // Bearer secret for CP→Agent (may be "")
 	Name() string                     // container / display name
 }
+
+// workspaceAlive reports whether a State() value means "there is a live container /
+// process behind this workspace right now". Anything that would destroy state under a
+// running workspace (wiping the home bind-mount) must test THIS, not `== "running"`:
+// a workspace whose Agent has not answered yet is still a container writing to disk.
+func workspaceAlive(state string) bool { return state == "running" || state == "starting" }
 
 // runtimeDestroyer tears down everything a Workspace owns that OUTLIVES its container:
 // the home data, and on the cloud adapters the per-membership resources the CP created

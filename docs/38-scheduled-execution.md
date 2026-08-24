@@ -301,6 +301,48 @@ reuse セッションでは driver 切替中 `409 busy_switch` にも遭遇し�
    （従来は起動が期限超過すると keep-alive 未確保のまま return し、★1 の reaper が
    その発火で起こしたばかりの WS を回収し得た）。
 
+**恒久対応（2026-08-24・同じ 15 秒が人の Start でも出ていた）**:
+
+上の 3 段は wake を救ったが、**予算の数字を調整しただけ**なので同じ穴が人手の起動側に
+残っていた。実報告: ローカル docker デプロイの一部の利用者だけが、Workspace を起動する
+たびに赤いトースト `agent did not become healthy within 15s` を踏み、しかも**数秒後には
+普通に使えていた**。300 秒に伸びるのは自己更新 opt-in が ON の起動だけなので、
+**OFF の人だけ**が 15 秒固定のまま lean/cold 起動・遅い回線・ネットワーク home で踏む
+（＝「一部の人だけ、たまに」に見える）。
+
+真因は数字ではなく契約だった: **到達待ちの超過を「起動の失敗」にしていた**こと。
+ECS アダプタだけは最初から違う作りで、`watchReady` に
+「A readiness failure must still NEVER fail Start — that would flip a legitimately
+starting workspace to failed」と書いてある（docs/62 §62.5）。docker / native の
+ローカル 2 つがそこから外れていた。合わせた内容:
+
+1. **Start は到達待ちで失敗しない**（`control-plane/runtime_health.go`）。予算は
+   「同期で待ってあげる猶予」に格下げし、超えたら `starting` を名乗って nil を返す。
+   native では失敗扱いの副作用がさらに重く、`defer` が **boot-install 中のプロセスを
+   kill** していた（遅い初回起動ほど確実に殺す）。
+   - これに伴い docker の 15 秒 / 300 秒の分岐は **45 秒ひとつ**へ畳んだ（無人起動だけ
+     15 秒 = 誰も待っていないので、寛容な `awaitAgentReady` に任せる）。300 秒は
+     「失敗にしない」ための延命だったが、HTTP リクエストの中で 300 秒待つのは
+     Runtime port が禁じている当のもの（ingress の idle timeout 超え = 504）。
+2. **docker / native の `State()` が `starting` を返せるようにした**。コンテナ/プロセスは
+   走っているが `/healthz` がまだ 200 を返さない窓を、`<dataDir>/.agent-starting`
+   （中身は期限）で表す。印がある間だけ 1 回 probe し、上がっていれば消す＝Start を
+   走らせた CP がもう居なくても収束する。**必ず時限式**（`agentBootBudget` 300 秒）に
+   するのが肝で、収束しない `starting` は Console から何もできない箱になる（docs/70 §70.14.6）。
+   これで「起動中なのに稼働中と表示され、ターミナルが誰も居ないソケットに繋ぎに行く」も
+   同時に消える。
+3. **Agent を要する API は待ち先を移した**。session 作成 / fork / 再開 / 持ち越し回答 /
+   SSM ノード探索は `ensureWorkspaceReady` を通り、`agentReadyWait`（既定 55 秒・
+   `AF_AGENT_READY_WAIT_SEC`）だけ待って、届かなければ **409 `workspace_starting`**
+   （Console 訳「起動中です。準備ができてからもう一度」）を返す。55 秒は ALB の idle
+   timeout 60 秒の内側（docs/62 §62.5 — 超えると応答自体が 504 で消える）。
+4. **home を消す判断は `workspaceAlive()` へ**。recreate / clean-home の「Stop 失敗かつ
+   まだ running なら中断」は `starting` を取りこぼすと**生きた bind-mount を消しに行く**。
+
+副産物として、失敗扱いが作っていた**状態の嘘**も消えた: 以前は Start がエラーだと
+`SetWorkspaceState("running")` も `touchWorkspace` も通らず、コンテナは走っているのに
+DB は stopped・reaper の in-memory lastSeen も古いまま、だった。
+
 ### その他
 
 - **TZ / DST**: cron はユーザー TZ 基準で評価。夏時間跨ぎの二重/欠落時刻の扱いを規定。
