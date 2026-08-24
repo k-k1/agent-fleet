@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expandThinking, getSettings, isDeviceLocalSetting, normalizeClaudeCustomModels, type Settings } from "./settings.ts";
+import { expandThinking, getSettings, isDeviceLocalSetting, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, type Settings } from "./settings.ts";
 
 // 純ロジックだが jsdom プロジェクト（.dom.test.tsx）に置く: settings.ts は API クライアント
 // 経由で読み込み時に localStorage を触るため、node 環境では import 自体が落ちる。
@@ -63,5 +63,26 @@ describe("device-local settings", () => {
     for (const key of ["mirrorTheme", "sharedTheme", "assistantTheme", "chatColor", "sharedColor"] as const) {
       expect(isDeviceLocalSetting(key)).toBe(true);
     }
+  });
+});
+
+// 権限確認の既定（docs/76）。**欠落は「スキップする」**でなければならない — 既存の
+// prefs を読んだ端末で全セッションが承認待ちになるのは「既定は現状のまま」の破り方の
+// 中で一番目立たない。明示 false のときだけ承認あり。
+describe("normalizeAgentLaunchDefaults / skipPermissions", () => {
+  it("defaults to skipping approvals when the key is absent or broken", () => {
+    const rows = normalizeAgentLaunchDefaults({ claude: { model: "opus" }, cursor: { skipPermissions: "no" } });
+    expect(rows.claude.skipPermissions).toBe(true);
+    expect(rows.cursor.skipPermissions).toBe(true);
+    // 一度も設定されていない kind も同じ（DEFAULT_AGENT_LAUNCH の行）。
+    expect(rows.kiro.skipPermissions).toBe(true);
+  });
+
+  it("keeps an explicit opt-in to approvals, per kind", () => {
+    const rows = normalizeAgentLaunchDefaults({ claude: { skipPermissions: false }, kiro: { skipPermissions: true } });
+    expect(rows.claude.skipPermissions).toBe(false);
+    expect(rows.kiro.skipPermissions).toBe(true);
+    // 他 kind に漏れない。
+    expect(rows.cursor.skipPermissions).toBe(true);
   });
 });

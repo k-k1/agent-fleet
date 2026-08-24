@@ -31,7 +31,7 @@ func (agentImpl) Kind() string { return session.KindClaude }
 // 切り詰めて分岐先を作る（forkat.go）。TUI 起動しか無いので、他の kind と違って managed の
 // 条件は付かない — 経路の可否は ResolveForkAt が kind ごとに答える。
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanFork: true, CanForkAt: true, CanTranscript: true, UsesLabel: true}
+	return agents.Caps{CanFork: true, CanForkAt: true, CanTranscript: true, UsesLabel: true, PermissionChoice: true}
 }
 
 // ForkSource resolves this session's conversation id as the fork source, refusing when
@@ -116,7 +116,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// No env token is injected: the interactive TUI authenticates from claude's own
 	// .credentials.json, written by `claude auth login` via the Connections flow
 	// (auth.go). CLAUDE_CODE_OAUTH_TOKEN is headless-only.
-	return agents.LaunchPlan{Program: buildProgram(sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom), Cwd: m.CWD()}, nil
+	return agents.LaunchPlan{
+		Program: buildProgram(sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m)),
+		Cwd:     m.CWD(),
+	}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

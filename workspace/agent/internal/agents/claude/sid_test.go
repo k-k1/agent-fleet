@@ -91,7 +91,7 @@ func TestBuildProgramResumesDriftedSID(t *testing.T) {
 	writeSlotJSONL(t, cfg, "-tmp-repo", testLiveSID)
 	sids.Write(testSlotSID, testLiveSID)
 
-	got := buildProgram(testSlotSID, "", "", "", "", "")
+	got := buildProgram(testSlotSID, "", "", "", "", "", true)
 	if !strings.Contains(got, "--resume '"+testLiveSID+"'") {
 		t.Fatalf("program = %q, want --resume of the drifted id %q", got, testLiveSID)
 	}

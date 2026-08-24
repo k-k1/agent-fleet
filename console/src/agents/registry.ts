@@ -40,6 +40,11 @@ export interface AgentCaps {
   // codex "$skill" is a plain text mention, channel-agnostic by construction.
   slashSkillsManaged: boolean;
   planMode: boolean; // chat offers a plan-mode toggle (drives the TUI's mode-cycle key)
+  // 起動時に「権限確認をスキップするか」を選べる（docs/76）。立てる条件はフラグを
+  // 外せることではなく、**承認待ちを Console から答えられること** — 答えられない
+  // kind でオフにすると、利用者から見れば黙って固まる。Go 側の Caps.PermissionChoice と
+  // 対で、サーバも同じ規則で create を断る（permission_choice_unsupported）。
+  permissionChoice: boolean;
   // the mirror offers 「ここから分岐」 on a past user turn — a new session carrying the
   // history up to just before it (docs/55). Needs the kind to send transcript anchors
   // (Turn.anchorId); the mirror also checks the turn itself (canBranchFrom).
@@ -130,6 +135,7 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     slashSkills: false,
     slashSkillsManaged: false,
     planMode: false,
+    permissionChoice: false,
     forkAt: false,
     forkAtManagedOnly: true,
     ephemeral: false,
@@ -159,6 +165,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({
+      permissionChoice: true, // 承認は status hook の permission 状態＋ミラーの許可カードで答えられる
       chat: true,
       headlessChat: true, // Phase A: claude -p backs assistant chat (docs/19)
       transcript: true,
@@ -253,6 +260,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // （どちらも cursor 1 プロセス/セッション）— 追加コスト表示なし（copilot 同型）。
     tuiMemoryCost: "",
     caps: caps({
+      permissionChoice: true, // 承認は ACP session/request_permission → Interaction で答えられる
       chat: true,
       headlessChat: true, // `cursor-agent -p --mode ask` backs assistant chat, read-only (docs/40 Track D)
       transcript: true,
@@ -298,6 +306,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     managedDriver: false,
     tuiMemoryCost: "",
     caps: caps({
+      permissionChoice: true, // 承認は pending.go の permission 状態で答えられる
       chat: true,
       headlessChat: true,
       transcript: true,
@@ -342,6 +351,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // （どちらも copilot 1 プロセス/セッション）— 追加コスト表示なし。
     tuiMemoryCost: "",
     caps: caps({
+      permissionChoice: true, // 承認は ACP session/request_permission → Interaction で答えられる
       chat: true,
       transcript: true,
       model: true,
@@ -405,6 +415,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // 1 プロセス/セッション）— 追加コスト表示なし（cursor/copilot 同型）。
     tuiMemoryCost: "",
     caps: caps({
+      permissionChoice: true, // 承認は ACP request_permission / TUI の requires approval で答えられる
       chat: true,
       transcript: true,
       model: true,

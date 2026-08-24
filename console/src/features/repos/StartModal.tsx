@@ -243,6 +243,8 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const [model, setModel] = useState(() => resolveModel(kinds[0] || "claude", "", initialDefault.model));
   const [effort, setEffort] = useState(() => resolveEffort(kinds[0] || "claude", "", initialDefault.effort));
   const [startMode, setStartMode] = useState(() => resolveStartMode(kinds[0] || "claude", "", initialDefault.startMode));
+  // 権限確認（docs/76）。undefined = 触っていない＝送らない（Agent 側の kind 毎の既定に任せる）。
+  const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
   const [prompt, setPrompt] = useState("");
   // kind is seeded once at mount, but kinds arrives asynchronously (the connection
   // check takes ~1.5-2s). Mounting during that window seeds the "claude" fallback,
@@ -257,6 +259,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     setModel(resolveModel(k, "", d.model));
     setEffort(resolveEffort(k, "", d.effort));
     setStartMode(resolveStartMode(k, "", d.startMode));
+    setSkipPerm(undefined);
   }, [kinds, kind, settings]);
   const startHome = async () => {
     if (busy) return;
@@ -270,6 +273,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
         model: agentOf(kind).caps.model ? model : "",
         effort: agentOf(kind).managedDriver || agentOf(kind).caps.tuiEffort ? effort : "",
         startMode: agentOf(kind).managedDriver || agentOf(kind).caps.tuiStartMode ? startMode : "normal",
+        skipPermissions: agentOf(kind).caps.permissionChoice ? skipPerm : undefined,
         prompt: prompt.trim(),
         title: "",
         images: [],
@@ -466,6 +470,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                         setModel(resolveModel(k, "", defaults.model));
                         setEffort(resolveEffort(k, "", defaults.effort));
                         setStartMode(resolveStartMode(k, "", defaults.startMode));
+                        setSkipPerm(undefined);
                       }}
                     >
                       <Icon name={a.icon} className="seg-ic" />
@@ -495,7 +500,10 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               // planMode:false でも tuiStartMode:true（起動コマンド/driver が plan 起動対応 —
               // 各 program.go / driver.go 実装済み）なので、起動時モード選択はどちらかで出す。
               const showStartMode = (a.caps.planMode || a.caps.tuiStartMode) && (a.managedDriver || a.caps.tuiStartMode);
-              if (!showEffort && !showStartMode) return null;
+              // 権限確認は承認待ちを Console から答えられる kind だけ（docs/76）。
+              const showPerm = a.caps.permissionChoice;
+              const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
+              if (!showEffort && !showStartMode && !showPerm) return null;
               return (
                 <div className="ui-field-row">
                   {showEffort && (
@@ -511,6 +519,18 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                       <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
                         <option value="normal">{a.defaultModeLabel || tr("launch.mode_normal")}</option>
                         <option value="plan">Plan</option>
+                      </select>
+                    </div>
+                  )}
+                  {showPerm && (
+                    <div className="ui-field">
+                      <span className="ui-field-label">{tr("launch.field.permissions")}</span>
+                      <select
+                        value={skipPermEffective ? "skip" : "ask"}
+                        onChange={(e) => setSkipPerm(e.target.value === "skip")}
+                      >
+                        <option value="skip">{tr("launch.perm_skip")}</option>
+                        <option value="ask">{tr("launch.perm_ask")}</option>
                       </select>
                     </div>
                   )}

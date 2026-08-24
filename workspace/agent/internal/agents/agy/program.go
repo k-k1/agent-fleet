@@ -60,15 +60,19 @@ func LastConversationIn(stateRoot, dir string) string {
 // NOT `--continue`, whose cwd→last mapping any other agy run in the dir
 // overwrites (docs/32 Track D-3). --model stays at agy's default in M1 unless
 // the create request pinned one.
-func buildProgram(model, mode, resumeID string) string {
+// bypass=false は「権限確認をスキップしない」（docs/76 の利用者選択、または plan 起動）。
+// 承認待ちは pending.go が "permission" として拾い、Console の許可カードで答えられる。
+func buildProgram(model, mode, resumeID string, bypass bool) string {
 	if override := os.Getenv("AGENT_AGY_CMD"); override != "" {
 		return override
 	}
 	flags := envOr("AGENT_AGY_FLAGS", "--dangerously-skip-permissions")
-	if mode == "plan" {
-		// agy has a native execution-mode flag; plan replaces the bypass default
-		// (auto-approving edits would defeat a plan start).
+	if !bypass {
 		flags = strings.TrimSpace(strings.ReplaceAll(flags, "--dangerously-skip-permissions", ""))
+	}
+	if mode == "plan" {
+		// agy has a native execution-mode flag（bypass は上で外れている — 全ツールを
+		// 自動承認しては plan で始める意味が無い）。
 		flags = strings.TrimSpace(flags + " --mode plan")
 	}
 	if model != "" {
