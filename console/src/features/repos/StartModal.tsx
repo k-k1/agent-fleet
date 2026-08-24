@@ -12,7 +12,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { agentOf } from "../../agents/registry.ts";
+import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings, setSetting } from "../../lib/settings.ts";
@@ -517,7 +517,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                     <div className="ui-field">
                       <span className="ui-field-label">{tr("launch.field.start_mode")}</span>
                       <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
-                        <option value="normal">{a.defaultModeLabel || tr("launch.mode_normal")}</option>
+                        <option value="normal">{nonPlanModeLabel(kind, skipPermEffective) || tr("launch.mode_normal")}</option>
                         <option value="plan">Plan</option>
                       </select>
                     </div>

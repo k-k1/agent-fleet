@@ -101,8 +101,10 @@ export interface AgentDescriptor {
   // cycle key. Exiting plan still uses planCycleKey.
   planEnterCmd: string;
   // the agent's non-plan mode name, shown optimistically in the mode chip when leaving
-  // plan (the real label follows from the next poll). claude "Bypass", codex "Default",
-  // opencode "Build". "" for agents without a mode chip.
+  // plan (the real label follows from the next poll) and as the "normal" option in the
+  // launch dialogs. claude "Bypass", codex "Default", opencode "Build". "" for agents
+  // without a mode chip. ⚠️ claude のこれは**権限確認をスキップして起動したとき**の名前
+  // なので、そのまま出さず nonPlanModeLabel() を通すこと（docs/76）。
   defaultModeLabel: string;
   // the head-of-input character that opens the skill picker while typing ("/" for
   // slash-command kinds, "$" for codex skill mentions). "" = the picker opens from
@@ -539,6 +541,23 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
 // kinds (mirrors the old ternary chains that fell back to claude).
 export function agentOf(kind: string | null | undefined): AgentDescriptor {
   return (kind && AGENTS[kind as SessionKind]) || AGENTS.claude;
+}
+
+// nonPlanModeLabel は「plan ではない側」のモード表示名（docs/76）。
+//
+// claude の既定ラベル "Bypass" は**権限確認をスキップして起動したときの状態名**で、承認あり
+// で起動したセッションの状態行は "bypass permissions on" にならない（paneMode は "Default" を
+// 返す）。ラベルを固定で出すと、起動ダイアログの中で「権限確認: 毎回たずねる」と
+// 「開始モード: Bypass」が並ぶ、という食い違いになる。
+//
+// 他 kind の既定ラベル（cursor/kiro "Agent"、copilot/codex "Default"、opencode "Build"）は
+// 権限確認と無関係な語なのでそのまま。判定を "Bypass" という値で行うのは、**権限の状態を
+// 名前に含めている kind がそれだけ**だから — caps で分けても増えるのはフラグ 1 つで、
+// 対応関係は結局この 1 行に戻る。
+export function nonPlanModeLabel(kind: string | null | undefined, skipPermissions: boolean): string {
+  const a = agentOf(kind);
+  if (a.caps.permissionChoice && !skipPermissions && a.defaultModeLabel === "Bypass") return "Default";
+  return a.defaultModeLabel;
 }
 
 // availableKinds returns the set of kinds launchable in the given context. shell

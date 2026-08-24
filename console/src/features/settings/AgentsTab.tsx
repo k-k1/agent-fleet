@@ -16,7 +16,7 @@ import {
 import { useEffortOptions, useModelOptions } from "../../lib/agentModels.ts";
 import { modelMatchesHidden } from "../../lib/modelDeny.ts";
 import { forgetHiddenRepoModels } from "../../lib/repoLast.ts";
-import { agentOf } from "../../agents/registry.ts";
+import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { useConnections } from "./useConnections.ts";
 import { useSettingsUI } from "./store.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
@@ -265,7 +265,7 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
         <SettingRow label={tr("agents.start_mode")}>
           <Choice
             value={row.startMode}
-            options={[["normal", desc.defaultModeLabel || tr("agents.mode_normal")], ["plan", "Plan"]]}
+            options={[["normal", nonPlanModeLabel(kind, row.skipPermissions) || tr("agents.mode_normal")], ["plan", "Plan"]]}
             onChange={(startMode) => update({ startMode: startMode === "plan" ? "plan" : "normal" })}
           />
         </SettingRow>
