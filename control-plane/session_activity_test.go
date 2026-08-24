@@ -190,3 +190,18 @@ func TestKeepAwakePin(t *testing.T) {
 		t.Error("空はピンではない")
 	}
 }
+
+// tier1 の kind の門（docs/75 P5）。shell / ssm だけが例外で、そこを間違えると
+// 走行中のジョブを halt で殺す（しかも af からは何が走っているか見えない）。
+func TestTier1Foldable(t *testing.T) {
+	for _, k := range []string{"claude", "codex", "opencode", "copilot", "cursor", "kiro", "agy", ""} {
+		if !tier1Foldable(k) {
+			t.Errorf("tier1Foldable(%q) = false, want true（halt は resumable）", k)
+		}
+	}
+	for _, k := range []string{"shell", "ssm"} {
+		if tier1Foldable(k) {
+			t.Errorf("tier1Foldable(%q) = true, want false（走っているジョブを殺す）", k)
+		}
+	}
+}

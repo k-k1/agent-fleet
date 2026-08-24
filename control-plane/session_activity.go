@@ -116,3 +116,20 @@ func keepAwake(until string, now time.Time) bool {
 	}
 	return now.Before(t)
 }
+
+// tier1Foldable は kind を「halt して安全か」で分ける（docs/75 P5）。
+//
+// halt は resumable な停止（claude は --resume、managed は runtime handle の再接続）
+// なので、エージェントのセッションはどの kind でも畳んでよい。**shell / ssm だけが
+// 例外**で、こちらの halt は走っているジョブごと殺すことを意味し、しかも af からは
+// 何が走っているのか見えない（前景コマンド名では放置された less とビルドが区別できず、
+// ssm は常に aws を張る）。守りたいものがあるときは「自動停止しない」ピンで宣言する。
+//
+// 空文字は kind を持たない古いセッション＝ claude（normalizeKind と同じ既定）。
+func tier1Foldable(kind string) bool {
+	switch kind {
+	case "shell", "ssm":
+		return false
+	}
+	return true
+}

@@ -169,10 +169,12 @@ export const stateInfo = (s: SessionState): StateInfo => {
   }
 };
 
-// 停止しないピン（docs/75）の残り時間を人が読める形にする。掛かっていない／期限切れ／
-// 壊れた値はすべて "" — **切れたピンをバッジに残さない**のが要点で、残すと利用者は
-// 「守られているつもり」で放置する（ピンが時刻なのは、消し忘れが黙って課金しないため）。
-export const keepAwakeLeft = (until: string | undefined, now: Date = new Date()): string => {
+// 未来の時刻までの残りを「1h20m」「12m」に畳む。過ぎている／空／壊れた値はすべて ""。
+//
+// この "" が要件: 停止しないピン（docs/75）のバッジは**切れたら消える**必要がある —
+// 残すと利用者は「守られているつもり」で放置する。管理画面の停止予定も同じで、負の
+// 残り時間を出しても意味が無い（次のスイープで止まるか、止まらない理由が付く）。
+export const remainingShort = (until: string | undefined, now: Date = new Date()): string => {
   const t = new Date(until ?? "");
   if (isNaN(t.getTime())) return "";
   const ms = t.getTime() - now.getTime();
