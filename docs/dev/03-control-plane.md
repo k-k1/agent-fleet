@@ -53,7 +53,9 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 5. **handler or proxy** — CP 完結（memo / pat / ssm / admin / ws-settings / 内蔵 git）はここで処理、
    他は5経路（[05 §5.3](05-api-contracts.md)）で Agent へ。中継は workspace running が前提（stopped=409）だが、
    意図の明確な操作（セッション作成 / fork / start）だけは `AF_AUTOSTART`（既定 on）が冷えた workspace を
-   起こしてから通す。端末接続や読み取りは自動起動しない。
+   起こしてから通す。端末接続や読み取りは自動起動しない。auto-start 側は `ensureWorkspaceReady`
+   （起動 → Agent 到達待ち、既定 55 秒 = ingress idle timeout の内側）を通り、間に合わなければ
+   409 `workspace_starting` で返す — 起動自体は裏で続くので、再試行が次に通る（docs/38 ★6 恒久対応）。
 
 ## 3.3 manager と Runtime 抽象
 
