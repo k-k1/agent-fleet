@@ -542,16 +542,26 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClock
 		}
 	}
 
-	if !cl.wsOn {
-		return
-	}
 	// Tier 2: stop the whole workspace once it is fully cold.
 	_, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
 	// 在席は「接続の有無」ではなく「直近に人が触ったか」で見る（docs/75 P3）。
-	if rp.mgr.conns.watched(ws.ID, presenceGrace, now) || busy {
+	watched := rp.mgr.conns.watched(ws.ID, presenceGrace, now)
+	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
+	// ★観測をそのまま公開する（docs/75 P4）。管理画面はこれを読むだけで判定をやり直さない
+	// ので、「なぜ止まらないか」を調べる画面が reaper と別の答えを出すことがない。
+	// wsOn が false のときも記録する — 「予定なし」と「機能が切ってある」は別物。
+	rp.mgr.putIdleForecast(ws.ID, idleForecast{
+		Enabled:    cl.wsOn,
+		StopAt:     base.Add(cl.ws),
+		Holders:    holdersOf(sessions, watched, now),
+		ObservedAt: now,
+	})
+	if !cl.wsOn {
+		return
+	}
+	if watched || busy {
 		return // being watched or actively working
 	}
-	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
 	if now.Sub(base) >= cl.ws {
 		rp.stopWorkspace(ctx, rt, ws, cl.ws)
 	}

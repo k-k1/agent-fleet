@@ -56,6 +56,23 @@ export interface Member {
    *  sign in, but stays on THIS list so the rest of the offboarding sequence
    *  (stop workspace → clean home) is still reachable (docs/61 §61.10.6). */
   status?: string;
+  /** 自動停止の見通し（docs/75 P4）。reaper が最後に観測したもので、稼働中の
+   *  Workspace にだけ入る。**画面はこれを再計算しない** — 自前で導出すると reaper が
+   *  実際に見ているもの（在席・ピン・背景作業）とズレて、「なぜ止まらないのか」を
+   *  調べるための画面が別の答えを出す。 */
+  idle?: MemberIdle;
+}
+
+export interface MemberIdle {
+  /** このテナントで tier2（Workspace 停止）が有効か。false は「予定なし」ではなく
+   *  「機能が切ってある」— 設定ミスと区別できる必要がある。 */
+  enabled: boolean;
+  /** 今の観測が続いた場合の停止予定時刻（RFC3339）。holders が空のときだけ意味を持つ。 */
+  stopAt?: string;
+  /** 止めない理由。空 = 何も止めていない（stopAt に向かって数えている）。 */
+  holders?: Array<{ kind: string; session?: string; until?: string }>;
+  /** 観測時刻。スイープ間隔ぶん古いので、秒単位の断言をさせないために出す。 */
+  observedAt: string;
 }
 
 /** What the three size axes MEAN on this deployment's runtime
