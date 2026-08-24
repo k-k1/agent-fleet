@@ -314,6 +314,8 @@ export function MirrorView({
   // two later — otherwise it sits at the neutral 決定済み until then.
   const rejectedPlansRef = useRef<Set<string>>(new Set());
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
+  // 直近に端末が名乗った非 plan モード名。plan を抜けたときの楽観ラベルに使う（docs/76）。
+  const lastNonPlanMode = useRef("");
   // Session-level context fill reported by the agent itself (agy /context scrape) —
   // the ContextBar's fallback when the transcript has no per-turn token usage.
   const [agentCtx, setAgentCtx] = useState<{ tokens: number; window: number } | null>(null);
@@ -773,6 +775,7 @@ export function MirrorView({
     setPendingPlan(null);
     setPendingPerm(null);
     setMode("");
+    lastNonPlanMode.current = "";
     setSuggestedTitle("");
     setTitleActing(false);
     setManagedSettingsOpen(false);
@@ -953,7 +956,12 @@ export function MirrorView({
           setCarried(d.carried && typeof d.carried === "object" ? (d.carried as CarriedInteraction) : null);
           // Mode comes from the terminal (paneMode) in real time, so trust every poll —
           // the optimistic set on click just gives instant feedback until this confirms.
-          setMode(typeof d.mode === "string" ? d.mode : "");
+          const nextMode = typeof d.mode === "string" ? d.mode : "";
+          // 非 plan のときの実際の名前を覚えておく（plan を抜けたときの楽観ラベル用）。
+          // 種別の既定ラベルを使うと、権限確認ありで起動した claude に "Bypass" と出る
+          // （docs/76）。端末が名乗った値なら、その取り違えが起こらない。
+          if (nextMode && nextMode.toLowerCase() !== "plan") lastNonPlanMode.current = nextMode;
+          setMode(nextMode);
           setAgentCtx(
             d.context && typeof d.context.tokens === "number" && typeof d.context.window === "number" && d.context.window > 0
               ? { tokens: d.context.tokens, window: d.context.window }
@@ -3363,7 +3371,7 @@ export function MirrorView({
                   const toPlan = !isPlan;
                   // Optimistic label (codex/opencode only report the new mode after a turn);
                   // the poll reconciles from the terminal via paneMode.
-                  setMode(toPlan ? "Plan" : agent.defaultModeLabel);
+                  setMode(toPlan ? "Plan" : lastNonPlanMode.current || agent.defaultModeLabel);
                   // managed のモード切替は ThreadSettings の更新（POST /settings →
                   // UpdateSettings、docs/27 §9.4-3）— 次 turn の agent/mode に効く。
                   // tui は従来どおりキー駆動（planEnterCmd / planCycleKey）。
