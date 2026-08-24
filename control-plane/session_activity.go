@@ -49,6 +49,21 @@ const (
 	stateSpendLimit = "spend_limit"
 )
 
+// busyState は state 単独で「機械が動いている」を意味するか。
+//
+// **一覧はここだけを見ること**（idle_forecast.go の holdersOf）。この集合を 2 箇所に
+// 書くと、増えた状態を片方に入れ忘れる: 実際 stateCompacting は sessionActivity に
+// だけ足され、holdersOf は working しか見ないままだった＝ reaper は正しく止めないのに
+// 画面は「もうすぐ止まります」と言う、という docs/75 決定 11（画面は reaper の決定を
+// そのまま公開する）違反が再発している。
+func busyState(state string) bool {
+	switch state {
+	case stateWorking, stateCompacting:
+		return true
+	}
+	return false
+}
+
 // sessionActivity classifies one live session row.
 //
 // 生きていない行は activityUnknown（畳む対象でも、起こし続ける理由でもない）。
@@ -70,9 +85,10 @@ func sessionActivity(s sessionWire) activity {
 	if s.BackgroundBusy {
 		return activityMachineBusy
 	}
-	switch s.State {
-	case stateWorking, stateCompacting:
+	if busyState(s.State) {
 		return activityMachineBusy
+	}
+	switch s.State {
 	case stateIdle, stateLimited:
 		// limited は「時計待ち」。リセット時刻に CP の定時実行が起こす（docs/47 §4-9）
 		// ので、畳んでも失われるものは無い＝ idle と同じ扱い。

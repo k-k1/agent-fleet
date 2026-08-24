@@ -50,6 +50,22 @@ func TestHoldersOf(t *testing.T) {
 		}
 	})
 
+	// ★ reaper が busy と見る状態は working だけではない。compacting（codex の文脈圧縮）
+	// を holders が落とすと、reaper は止めないのに画面は StopAt を出す＝「もうすぐ
+	// 止まります」と言いながら止まらない、という docs/75 決定 11 違反になる。
+	t.Run("reaper が busy と見る状態は全部挙げる", func(t *testing.T) {
+		for _, st := range []string{stateWorking, stateCompacting} {
+			s := sessionWire{Alive: true, Name: "s1", State: st}
+			got := holdersOf([]sessionWire{s}, false, now)
+			if len(got) != 1 || got[0].Kind != "working" {
+				t.Errorf("state %q: holders = %+v, want working（holdsWorkspace=%v）", st, got, holdsWorkspace(s))
+			}
+			if !holdsWorkspace(s) {
+				t.Errorf("state %q が reaper 側で busy でなくなっている（前提が変わった）", st)
+			}
+		}
+	})
+
 	t.Run("ピンは working より先に説明される", func(t *testing.T) {
 		got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: stateWorking, KeepAwakeUntil: future}}, false, now)
 		if len(got) != 1 || got[0].Kind != "pin" || got[0].Until != future {
