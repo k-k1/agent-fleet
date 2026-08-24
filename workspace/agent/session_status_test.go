@@ -114,9 +114,86 @@ func TestPermissionPromptKeepsPendingQuestion(t *testing.T) {
 	}
 
 	// 3) PostToolUse(AskUserQuestion) → working clears the question via its own lifecycle.
-	feedStatusHook(t, "working", `{"session_id":"`+sid+`"}`)
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","tool_name":"AskUserQuestion"}`)
 	if _, ok := status.ReadPendingQuestion(sid); ok {
 		t.Fatal("pending question not cleared when the question was answered")
+	}
+}
+
+// BG サブエージェント / Workflow が走っている最中に AUQ が出ると回答できない、という
+// 利用者報告（2026-08-24）の回帰テスト。実測: サブエージェントの道具は**親と同じ
+// session_id** で PostToolUse を鳴らすので、質問モーダルが出たままハートビートの
+// working が飛んでくる。それで保留ペイロードを消すと、書き直す機会は二度と無く
+// （WritePendingQuestion は AskUserQuestion の PreToolUse 一箇所だけ）、Console には
+// 転写由来の不活性なカードしか残らない = 回答フォームが消える。
+func TestBackgroundToolHeartbeatKeepsPendingQuestion(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-bg-auq", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	feedStatusHook(t, "question", `{"session_id":"`+sid+`","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Pick"}]}}`)
+
+	// 裏で走っているサブエージェントの Bash が終わった（PostToolUse(*) ハートビート）。
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","tool_name":"Bash"}`)
+
+	if _, ok := status.ReadPendingQuestion(sid); !ok {
+		t.Fatal("BG ツールの PostToolUse が保留中の質問を消した（回答フォームが出なくなる）")
+	}
+	// 表示と判断も「質問待ち」で一致すること — state だけ working に化けると、一覧は
+	// 進行中 を名乗り、promptBlocker のガードも外れて自由文が黙ってモーダルに吸われる。
+	if got := wireSession(m, true).State; got != "question" {
+		t.Errorf("sessions-list badge = %q, want question", got)
+	}
+	if got := driveState(m, true, false); got != "question" {
+		t.Errorf("chat chip = %q, want question", got)
+	}
+	if got := promptBlocker(m.Name); got != "question" {
+		t.Errorf("promptBlocker = %q, want question（自由文は質問カードへ誘導する）", got)
+	}
+
+	// 回答したときは、その質問自身の PostToolUse でちゃんと消える。
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","tool_name":"AskUserQuestion"}`)
+	if _, ok := status.ReadPendingQuestion(sid); ok {
+		t.Fatal("回答後も保留の質問が残っている（ゴーストカード）")
+	}
+	if got := driveState(m, true, false); got != "working" {
+		t.Errorf("chat chip = %q, want working（回答後は進行中に戻る）", got)
+	}
+}
+
+// 同型: ExitPlanMode の承認カードも BG ツールのハートビートで消えてはならない。
+func TestBackgroundToolHeartbeatKeepsPendingPlan(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-bg-plan", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	feedStatusHook(t, "plan", `{"session_id":"`+sid+`","tool_name":"ExitPlanMode","tool_input":{"plan":"## やること"}}`)
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","tool_name":"Read"}`)
+
+	if plan, ok := status.ReadPendingPlan(sid); !ok || plan == "" {
+		t.Fatal("BG ツールの PostToolUse が保留中のプランを消した")
+	}
+	if got := driveState(m, true, false); got != "plan" {
+		t.Errorf("chat chip = %q, want plan", got)
+	}
+
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","tool_name":"ExitPlanMode"}`)
+	if plan, ok := status.ReadPendingPlan(sid); ok && plan != "" {
+		t.Fatal("承認後も保留のプランが残っている")
+	}
+}
+
+// ツールを伴わない working（UserPromptSubmit = 新しいターンの開始）は従来どおり消す。
+// ここを残したままにすると、次のターンに前の質問のゴーストカードが持ち越される。
+func TestUserPromptSubmitClearsPendingQuestion(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const sid = "sess-newturn"
+	feedStatusHook(t, "question", `{"session_id":"`+sid+`","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"x"}]}}`)
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`"}`) // UserPromptSubmit: tool_name 無し
+	if _, ok := status.ReadPendingQuestion(sid); ok {
+		t.Fatal("新しいターンの開始で保留の質問が消えていない")
 	}
 }
 
