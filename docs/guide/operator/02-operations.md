@@ -194,7 +194,7 @@ hours** (measured: 172 probes for `/actuator/heapdump`, `/.env` and friends in t
 
 - **Automatic idle stop (scale-to-zero)**: an idle claude session is halted after **1 hour**
   and a Workspace with nothing running is stopped after **2 hours**. That is the default;
-  `AF_SESSION_IDLE_TIMEOUT` / `AF_WS_IDLE_TIMEOUT` change it (per-tenant overrides are in the
+  `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT` (a session parked on a question or an approval) / `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT` (how long a terminal with no typing still counts as someone being there; 30m) change it (per-tenant overrides are in the
   Admin UI — a tenant setting `0` opts that tenant out, and `0` in the env turns it off for the
   whole deployment). A stopped Workspace starts automatically the next time the user opens a
   terminal (`AF_AUTOSTART`). This is effective for

@@ -46,16 +46,34 @@ import (
 // was last touched by any request. All in-memory (resets on CP restart, which
 // the reaper treats as a fresh grace window via bootTime).
 type connRegistry struct {
-	mu       sync.Mutex
-	wsConns  map[string]int            // workspaceID -> open long-lived conns (terminal/preview)
-	attached map[string]map[string]int // workspaceID -> session name -> attached terminals
-	lastSeen map[string]time.Time      // workspaceID -> last request activity
+	mu      sync.Mutex
+	wsConns map[string]int // workspaceID -> open long-lived conns (terminal/preview)
+	// wsAttn は wsConns のうち「人が触っていること」を条件に在席と数える接続の数
+	// （＝端末）。定時実行の起床が張る presence は無条件側に残る（人の打鍵が無いのは
+	// 当たり前で、それを不在と読むと配達中に Workspace を止めてしまう）。
+	wsAttn    map[string]int
+	attached  map[string]map[string]int // workspaceID -> session name -> attached terminals
+	lastSeen  map[string]time.Time      // workspaceID -> last request activity
+	lastInput map[string]time.Time      // workspaceID -> last TERMINAL keystroke
 }
 
 const (
 	workspacePresenceHeartbeat = 5 * time.Second
 	workspacePresenceTTL       = 15 * time.Second
 )
+
+// presenceGrace は「打鍵の無い端末を、あと何分だけ在席と見なすか」（docs/75 P3）。
+//
+// なぜ要るか: 端末ペインを開いた Console のタブを 1 枚閉じ忘れると、presence lease が
+// 5 秒ごとに更新され続け、**Workspace は永久に停止しない**。これは question と並ぶ
+// 「止まらない」の主因で、しかも question と違って利用者は自分が課金を続けていることに
+// 気づけない（画面は何も言わない）。
+//
+// テナント別にしないのは、これが課金方針ではなく**人の注意**の定数だから — 30 分
+// 打鍵が無ければキーボードの前に人は居ない。実際に止まるまでの時間を決めるのは
+// 従来どおり ws_idle_timeout（テナント別）で、この値はその時計を「開きっぱなしの
+// ソケット」が止めてしまうのを防ぐだけ。0 で無効（＝従来どおりソケットがある限り在席）。
+var presenceGrace = 30 * time.Minute
 
 var errWorkspaceStopping = errors.New("workspace idle stop is in progress")
 
@@ -68,9 +86,11 @@ func workspaceActivityAPIError(err error) *apiError {
 
 func newConnRegistry() *connRegistry {
 	return &connRegistry{
-		wsConns:  map[string]int{},
-		attached: map[string]map[string]int{},
-		lastSeen: map[string]time.Time{},
+		wsConns:   map[string]int{},
+		wsAttn:    map[string]int{},
+		attached:  map[string]map[string]int{},
+		lastSeen:  map[string]time.Time{},
+		lastInput: map[string]time.Time{},
 	}
 }
 
@@ -88,13 +108,18 @@ func (r *connRegistry) touch(wsID string) {
 // addConn/doneConn bracket a long-lived connection. session may be "" (preview /
 // a fresh shell with no session name); a non-empty session also marks
 // that specific session as terminal-attached so tier 1 won't halt it.
-func (r *connRegistry) addConn(wsID, session string) {
+func (r *connRegistry) addConn(wsID, session string, attention bool) {
 	if r == nil || wsID == "" {
 		return
 	}
 	r.mu.Lock()
 	r.wsConns[wsID]++
 	r.lastSeen[wsID] = time.Now()
+	if attention {
+		r.wsAttn[wsID]++
+		// 開いた瞬間は「人が今そこに居る」— 打鍵を待たずに在席から始める。
+		r.lastInput[wsID] = time.Now()
+	}
 	if session != "" {
 		if r.attached[wsID] == nil {
 			r.attached[wsID] = map[string]int{}
@@ -104,7 +129,7 @@ func (r *connRegistry) addConn(wsID, session string) {
 	r.mu.Unlock()
 }
 
-func (r *connRegistry) doneConn(wsID, session string) {
+func (r *connRegistry) doneConn(wsID, session string, attention bool) {
 	if r == nil || wsID == "" {
 		return
 	}
@@ -114,6 +139,15 @@ func (r *connRegistry) doneConn(wsID, session string) {
 	}
 	if r.wsConns[wsID] == 0 {
 		delete(r.wsConns, wsID)
+		delete(r.lastInput, wsID)
+	}
+	if attention {
+		if r.wsAttn[wsID] > 0 {
+			r.wsAttn[wsID]--
+		}
+		if r.wsAttn[wsID] == 0 {
+			delete(r.wsAttn, wsID)
+		}
 	}
 	r.lastSeen[wsID] = time.Now() // a disconnect is itself recent activity
 	if session != "" && r.attached[wsID] != nil {
@@ -139,6 +173,57 @@ func (r *connRegistry) snapshot(wsID string) (conns int, lastSeen time.Time, ok 
 	defer r.mu.Unlock()
 	ls, has := r.lastSeen[wsID]
 	return r.wsConns[wsID], ls, has
+}
+
+// noteInput records a terminal keystroke — the one signal that says a human is
+// actually there. Pings and resizes deliberately do NOT come through here: a
+// background tab sends both, and counting them would restore exactly the "an
+// open socket warms the workspace forever" behaviour this exists to remove.
+func (r *connRegistry) noteInput(wsID string) {
+	if r == nil || wsID == "" {
+		return
+	}
+	r.mu.Lock()
+	now := time.Now()
+	r.lastInput[wsID] = now
+	r.lastSeen[wsID] = now
+	r.mu.Unlock()
+}
+
+// watched reports whether someone is present at this workspace right now.
+//
+// 接続の**有無**ではなく「人が触っているか」で答える（docs/75 原則 3）。端末以外の
+// 長命接続（定時実行の起床）は打鍵という概念を持たないので無条件に在席とする。
+func (r *connRegistry) watched(wsID string, grace time.Duration, now time.Time) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	total := r.wsConns[wsID]
+	if total == 0 {
+		return false
+	}
+	if total > r.wsAttn[wsID] {
+		return true // 端末以外の接続が 1 本でもあれば在席
+	}
+	if grace <= 0 {
+		return true // 機能オフ＝従来どおりソケットがある限り在席
+	}
+	li, ok := r.lastInput[wsID]
+	return ok && now.Sub(li) < grace
+}
+
+// attentionFresh は presence lease を更新し続けてよいかの判定（heartbeat から）。
+// 純関数に切ってあるのは、5 秒周期の goroutine を待たずにテストで固定するため。
+func (r *connRegistry) attentionFresh(wsID string, grace time.Duration, now time.Time) bool {
+	if r == nil || grace <= 0 {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	li, ok := r.lastInput[wsID]
+	return ok && now.Sub(li) < grace
 }
 
 func (r *connRegistry) isAttached(wsID, session string) bool {
@@ -205,12 +290,39 @@ func (m *manager) recordWorkspaceActivity(ctx context.Context, wsID string, forc
 }
 
 // trackWorkspaceConnection publishes a renewable cross-replica presence lease
-// for a terminal/scheduler keepalive. One goroutine per long-lived connection is
+// for a scheduler keepalive. One goroutine per long-lived connection is
 // bounded by the number of actual connections; DB storage remains one row per WS.
 func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session string) (func(), error) {
-	m.conns.addConn(wsID, session)
+	return m.trackPresence(ctx, wsID, session, false)
+}
+
+// trackWorkspaceTerminal is the same lease for an attached TERMINAL, with one
+// difference that decides whether idle-stop works at all: the lease is renewed only
+// while the human is still typing (docs/75 P3).
+//
+// なぜ端末だけ別扱いか: 端末ペインを開いた Console のタブを閉じ忘れると、この lease が
+// 5 秒ごとに更新され続け、**Workspace は永久に停止しない**。lease は「ソケットがある」
+// ことしか語れないのに、reaper はそれを「人が見ている」と読んでいた。返る noteInput を
+// 打鍵のたびに呼ぶことで、lease は「人が触っている」を語るようになる。
+func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session string) (release func(), noteInput func(), err error) {
+	rel, err := m.trackPresence(ctx, wsID, session, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rel, func() {
+		m.conns.noteInput(wsID)
+		// 打鍵は本物のアクティビティ: 共有ウォーターマーク（last_seen_at）も進める。
+		// force=false なので 5 秒に 1 回へ畳まれる — 1 打鍵 1 DB 書き込みにはならない。
+		ctxHB, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = m.recordWorkspaceActivity(ctxHB, wsID, false)
+		cancel()
+	}, nil
+}
+
+func (m *manager) trackPresence(ctx context.Context, wsID, session string, attention bool) (func(), error) {
+	m.conns.addConn(wsID, session, attention)
 	if err := m.recordWorkspaceActivity(ctx, wsID, true); err != nil {
-		m.conns.doneConn(wsID, session)
+		m.conns.doneConn(wsID, session, attention)
 		return nil, err
 	}
 	stop := make(chan struct{})
@@ -222,6 +334,11 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 		for {
 			select {
 			case <-ticker.C:
+				// 打鍵が途絶えた端末は在席を名乗るのをやめる。ticker は止めない —
+				// また打ち始めたら次の tick から lease が復活する。
+				if attention && !m.conns.attentionFresh(wsID, presenceGrace, time.Now()) {
+					continue
+				}
 				hbCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				if err := m.recordWorkspaceActivity(hbCtx, wsID, true); err != nil {
 					log.Printf("workspace presence: %s: %v", wsID, err)
@@ -237,7 +354,7 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 		once.Do(func() {
 			close(stop)
 			<-done
-			m.conns.doneConn(wsID, session)
+			m.conns.doneConn(wsID, session, attention)
 			flushCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			_ = m.recordWorkspaceActivity(flushCtx, wsID, true)
 			cancel()
@@ -429,8 +546,9 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClock
 		return
 	}
 	// Tier 2: stop the whole workspace once it is fully cold.
-	conns, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
-	if conns > 0 || busy {
+	_, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
+	// 在席は「接続の有無」ではなく「直近に人が触ったか」で見る（docs/75 P3）。
+	if rp.mgr.conns.watched(ws.ID, presenceGrace, now) || busy {
 		return // being watched or actively working
 	}
 	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
@@ -522,8 +640,9 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, w
 			return
 		}
 	}
-	conns, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
-	if conns > 0 || time.Since(rp.idleBase(seen, lastSeen, freshWS.LastActiveAt)) < wsTO {
+	_, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
+	if rp.mgr.conns.watched(ws.ID, presenceGrace, time.Now()) ||
+		time.Since(rp.idleBase(seen, lastSeen, freshWS.LastActiveAt)) < wsTO {
 		return
 	}
 	checkNow := time.Now().UTC()
