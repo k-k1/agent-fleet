@@ -9,8 +9,10 @@ describe("nonPlanModeLabel", () => {
     expect(nonPlanModeLabel("claude", true)).toBe("Bypass");
   });
 
-  it("drops the bypass label when the session asks for approvals", () => {
-    expect(nonPlanModeLabel("claude", false)).toBe("Default");
+  // 承認ありの claude は claude 自身の既定モード manual で始まる（実測 2.1.241）。
+  // ミラーのチップも端末を読んで "Manual" と出すので、語を揃える。
+  it("names the mode approvals-on sessions actually start in", () => {
+    expect(nonPlanModeLabel("claude", false)).toBe("Manual");
   });
 
   it("leaves other kinds' labels alone — they don't name a permission state", () => {
