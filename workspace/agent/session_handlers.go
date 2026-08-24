@@ -915,11 +915,14 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 		disarmSessionReport(name)
 	}
 	if m.DriverKind() == session.DriverManaged {
+		// ★持ち越しは **DropHandle より前**（docs/75 P5）。保留中の Interaction は
+		// runtime handle の中にしか無く、handle を落とした瞬間に消える — 後で呼んでも
+		// managedAlive が false になって何も取れない。
+		promoteCarriedFor(m)
 		// managed の halt = runtime handle を落とす（daemon は共有なので止めない）。
 		// メタは残るので row は 停止中（再開可能）になる — tui の kill-session と同じ
 		// 意味論。実行中 turn は DropHandle が abort する。
 		dropManagedRuntime(m)
-		promoteCarriedFor(m) // status.Remove がペイロードを消す前に持ち越す（docs/75）
 		status.Remove(session.UUID(m.Dir, name))
 		m.StoppedAt = time.Now().Format(time.RFC3339)
 		// Re-merge the on-disk lock: the meta snapshot above is seconds old by now and a
@@ -938,6 +941,11 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	// pane, so a later resume's autoconnect registers fresh under the current
 	// title instead of resuming the stale one (see disconnectRemoteControl).
 	disconnectRemoteControl(name, m)
+	// ★持ち越しは **ペインを殺す前**（docs/75 P5）。claude の保留はディスク上の
+	// pending-* なので後でも読めるが、kiro の承認パネルは**ペインの文字列にしか無い**
+	// ので kill-session の後には何も残らない。claude 側は冪等で、ここで昇格しても
+	// status.Remove（下）が持ち越しを消すことはない。
+	promoteCarriedFor(m)
 	// Kinds that only flush their resume state on a graceful exit (agy) get a
 	// chance to quit on their own; true = the pane already ended, skip the kill.
 	stopped := false
@@ -950,7 +958,6 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	promoteCarriedFor(m) // status.Remove がペイロードを消す前に持ち越す（docs/75）
 	status.Remove(session.UUID(m.Dir, name))
 	// Stamp StoppedAt now so the prune TTL starts here (handleListSessions would
 	// otherwise stamp it on the next poll; doing it here keeps the wire consistent).

@@ -38,9 +38,25 @@ func LiveState(m session.Meta) string {
 }
 
 func liveStateFromFile(path string) string {
+	st, _ := liveStateDetailFromFile(path)
+	return st
+}
+
+// PendingPermission は未完了の許可要求の対象（"" = 許可待ちではない / 取れなかった）。
+// docs/75 P5 の持ち越しが「何を訊かれていたか」を出すために読む。
+func PendingPermission(m session.Meta) (string, bool) {
+	sid := SessionID(m)
+	if sid == "" {
+		return "", false
+	}
+	st, detail := liveStateDetailFromFile(EventsPath(sid))
+	return detail, st == "question"
+}
+
+func liveStateDetailFromFile(path string) (string, string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer f.Close()
 	if st, err := f.Stat(); err == nil && st.Size() > tailWindow {
@@ -48,15 +64,24 @@ func liveStateFromFile(path string) string {
 			// 途中から読むので最初の行は欠けている可能性が高い — 捨てる。
 			br := bufio.NewReader(f)
 			_, _ = br.ReadString('\n')
-			return classify(br)
+			return classifyDetail(br)
 		}
 	}
-	return classify(bufio.NewReader(f))
+	return classifyDetail(bufio.NewReader(f))
 }
 
 func classify(r io.Reader) string {
-	open := false              // user.message / turn_start 以後、turn_end 前
-	perms := map[string]bool{} // requested かつ未 completed の requestId
+	st, _ := classifyDetail(r)
+	return st
+}
+
+// classifyDetail は classify に「未完了の許可が何を求めていたか」を足したもの
+// （docs/75 P5 の持ち越し用）。detail は許可待ちのときだけ埋まり、取れなければ空。
+func classifyDetail(r io.Reader) (string, string) {
+	open := false                // user.message / turn_start 以後、turn_end 前
+	perms := map[string]bool{}   // requested かつ未 completed の requestId
+	detail := map[string]string{} // requestId → 何を求めていたか（取れた分だけ）
+	last := ""                   // 最後に requested された id（表示に使うのはこれ）
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
 	for sc.Scan() {
@@ -64,6 +89,13 @@ func classify(r io.Reader) string {
 			Type string `json:"type"`
 			Data struct {
 				RequestID string `json:"requestId"`
+				// 許可の対象。events.jsonl のスキーマは版で動くので、**取れたら使う**
+				// 程度に扱う（取れなくても許可待ちの判定そのものは requestId だけで
+				// 成立する）。空なら持ち越しカードは事実だけを述べる。
+				ToolName string `json:"toolName"`
+				Tool     string `json:"tool"`
+				Command  string `json:"command"`
+				Title    string `json:"title"`
 			} `json:"data"`
 		}
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
@@ -77,6 +109,10 @@ func classify(r io.Reader) string {
 		case "permission.requested":
 			if ev.Data.RequestID != "" {
 				perms[ev.Data.RequestID] = true
+				last = ev.Data.RequestID
+				if d := firstNonEmpty(ev.Data.Title, ev.Data.Command, ev.Data.ToolName, ev.Data.Tool); d != "" {
+					detail[ev.Data.RequestID] = d
+				}
 			}
 		case "permission.completed":
 			delete(perms, ev.Data.RequestID)
@@ -88,10 +124,25 @@ func classify(r io.Reader) string {
 		}
 	}
 	if len(perms) > 0 {
-		return "question"
+		if perms[last] {
+			return "question", detail[last]
+		}
+		for id := range perms {
+			return "question", detail[id]
+		}
+		return "question", ""
 	}
 	if open {
-		return "working"
+		return "working", ""
 	}
-	return "idle"
+	return "idle", ""
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

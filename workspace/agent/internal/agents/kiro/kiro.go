@@ -74,6 +74,32 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return li
 }
 
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。
+//
+// kiro の人待ちは承認だけで、在処は経路で違う: TUI はペインの承認パネル（文字列契約・
+// state.go）、managed は ACP の `session/request_permission`（driver の handle）。
+// どちらも**プロセスと一緒に消える**ので、halt / gracefulShutdown より遅い契機では
+// 何も取れない（コンテナごと SIGKILL された場合は素直に失われる — docs/75 §75.7）。
+//
+// Kind は **permission**: 可否の宛先（TUI のパネル / ACP の JSON-RPC id）が消えている
+// 以上、選ばせても届かない。持ち越すのは事実だけ（docs/75 §75.6.4）。
+func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
+	detail := ""
+	if m.DriverKind() == session.DriverManaged {
+		h := handleFor(m.Name)
+		if h == nil {
+			return agents.PendingModal{}, false
+		}
+		detail = h.pendingPermission()
+	} else {
+		detail = approvalDetail(m)
+	}
+	if detail == "" {
+		return agents.PendingModal{}, false
+	}
+	return agents.PendingModal{Kind: "permission", Detail: detail}, true
+}
+
 func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
 
 // resolveSid returns the slot's kiro session id, discovering it on first use. kiro

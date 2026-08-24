@@ -138,6 +138,23 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return li
 }
 
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。
+//
+// copilot の人待ちは許可要求だけで、TUI ルートも managed（ACP）も**同じ
+// events.jsonl** に `permission.requested` を刻む（state.go）ので、経路を分けずに
+// 1 本で読める。ファイルなのでプロセスが死んだ後でも残り、halt より遅い契機でも拾える。
+//
+// Kind は **permission**: 可否の宛先（TUI のメニュー / ACP の JSON-RPC id）は
+// プロセスと一緒に消えるので、持ち越せるのは事実だけ（docs/75 §75.6.4）。対象名は
+// events.jsonl のスキーマ次第で取れないことがあり、そのときは事実だけを述べる。
+func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
+	detail, pending := PendingPermission(m)
+	if !pending {
+		return agents.PendingModal{}, false
+	}
+	return agents.PendingModal{Kind: "permission", Detail: detail}, true
+}
+
 func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
 
 // SessionID returns the slot's copilot session UUID ("" when none allocated yet).

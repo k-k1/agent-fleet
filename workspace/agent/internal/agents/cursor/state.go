@@ -26,6 +26,11 @@ const tailWindow = 128 * 1024
 // LiveState classifies the session's live state ("" when unknowable —— チャット
 // 未採番／転写ファイル未生成＝起動直後）。
 func LiveState(m session.Meta) string {
+	// managed（ACP）は転写を書かないので、下の JSONL 分類は常に空を返す。turn 状態機械
+	// から供給しないと一覧のチップも reaper の分類も付かない（driver.go managedLiveState）。
+	if m.DriverKind() == session.DriverManaged {
+		return managedLiveState(m)
+	}
 	chatID := ChatID(m)
 	if chatID == "" {
 		return ""
