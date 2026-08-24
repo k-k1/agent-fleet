@@ -1239,6 +1239,38 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   return true;
 }
 
+// アイデンティティ境界（テナント切替・同一テナント内でのユーザー切替）をまたぐ再同期。
+// ACCUMULATED は「サーバが空でもローカル非空なら守って書き戻す」設計だが、それは
+// 同一ユーザーの複数端末を空更新の事故から守るための前提であって、別の持ち主に
+// 切り替わった直後に古い持ち主のデータがまだメモリに残っている状態には効いてはならない
+// （効くと、前の持ち主の累積データが新しい持ち主の ui-prefs.json へ書き戻されてしまう —
+// 作業グループが別アカウントに漏れた事故の真因）。ACCUMULATED を個別に列挙せず
+// isAccumulatedSetting 経由で回すことで、将来このセットに追加されるキーも自動的に
+// この保護に入り、キーごとの個別修正が要らなくなる。
+// 戻り値の Promise は呼び出し元(App.tsx)は待たない fire-and-forget 用途だが、
+// テストが完了を待てるように await 可能にしておく。
+export function resyncAccumulatedForIdentitySwitch(): Promise<boolean> {
+  // 保留中の保存（600ms デバウンス）は前の持ち主の値を運んでいる可能性があるので、
+  // 新しい持ち主へ向けて送らずに捨てる。
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  savePending = false;
+  const cleared: Partial<Settings> = {};
+  for (const k of Object.keys(DEFAULTS) as (keyof Settings)[]) {
+    if (isAccumulatedSetting(k)) (cleared as any)[k] = DEFAULTS[k];
+  }
+  state = { ...state, ...cleared };
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+  } catch {}
+  subs.forEach((fn) => fn());
+  // ローカルが既に空なので、上の restore ガードは働かず、新しい持ち主のサーバー値が
+  // 空でも非空でもそのまま採用される。
+  return hydrateUIPrefs();
+}
+
 // ジェネリック署名でキーと値の対応を型で縛る（"theme" に boolean を渡す類の不整合を防ぐ）。
 export function setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void {
   setSettings({ [key]: value } as Partial<Settings>);
