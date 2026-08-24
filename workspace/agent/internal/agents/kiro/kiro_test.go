@@ -15,33 +15,33 @@ import (
 
 func TestBuildProgram(t *testing.T) {
 	sid := "32595b50-8232-496c-8c30-e5669f5911cb"
-	got := buildProgram("", "", "", sid)
+	got := buildProgram("", "", "", sid, true)
 	for _, want := range []string{"kiro-cli ", "chat", "--agent-engine v2", "--trust-all-tools", "--resume-id", sid} {
 		if !strings.Contains(got+" ", want) {
 			t.Errorf("program %q lacks %q", got, want)
 		}
 	}
 	// plan は bypass（--trust-all-tools）を外す。engine ピンと chat は残す。
-	got = buildProgram("", "", "plan", sid)
+	got = buildProgram("", "", "plan", sid, false)
 	if strings.Contains(got, "--trust-all-tools") || !strings.Contains(got, "--agent-engine v2") ||
 		!strings.Contains(got, "chat") {
 		t.Errorf("plan program wrong: %q", got)
 	}
 	// model / effort を渡す。"auto" は無指定と同義（--model を付けない）。
-	got = buildProgram("claude-sonnet-4.5", "high", "", sid)
+	got = buildProgram("claude-sonnet-4.5", "high", "", sid, true)
 	if !strings.Contains(got, "--model") || !strings.Contains(got, "claude-sonnet-4.5") ||
 		!strings.Contains(got, "--effort") || !strings.Contains(got, "high") {
 		t.Errorf("model/effort program wrong: %q", got)
 	}
-	if got := buildProgram("auto", "", "", sid); strings.Contains(got, "--model") {
+	if got := buildProgram("auto", "", "", sid, true); strings.Contains(got, "--model") {
 		t.Errorf("auto must not emit --model: %q", got)
 	}
 	// fresh（resumeID 無し）は --resume-id を付けない。
-	if got := buildProgram("", "", "", ""); strings.Contains(got, "--resume-id") {
+	if got := buildProgram("", "", "", "", true); strings.Contains(got, "--resume-id") {
 		t.Errorf("fresh launch must not resume: %q", got)
 	}
 	t.Setenv("AGENT_KIRO_CMD", "echo override")
-	if got := buildProgram("", "", "", sid); got != "echo override" {
+	if got := buildProgram("", "", "", sid, true); got != "echo override" {
 		t.Errorf("override ignored: %q", got)
 	}
 }
@@ -52,7 +52,7 @@ func TestBuildProgram(t *testing.T) {
 // 「不在」しか見ないため、一度入った kiro が永久に古いままだった）。`;` 連結なので
 // 導入/更新に失敗しても既存バイナリでの起動は続く。AGENT_KIRO_BIN 差し替え時は付けない。
 func TestBuildProgramPinGuard(t *testing.T) {
-	got := buildProgram("", "", "", "")
+	got := buildProgram("", "", "", "", true)
 	want := "workspace-agent install-kiro --if-needed; "
 	if !strings.HasPrefix(got, want) {
 		t.Errorf("program %q must start with %q", got, want)
@@ -61,7 +61,7 @@ func TestBuildProgramPinGuard(t *testing.T) {
 		t.Errorf("guard must not be conditional on presence (pin drift would never be fixed): %q", got)
 	}
 	t.Setenv("AGENT_KIRO_BIN", "/tmp/fake-kiro")
-	if got := buildProgram("", "", "", ""); strings.Contains(got, "install-kiro") {
+	if got := buildProgram("", "", "", "", true); strings.Contains(got, "install-kiro") {
 		t.Errorf("AGENT_KIRO_BIN override must skip the bootstrap: %q", got)
 	}
 }
@@ -349,5 +349,21 @@ func TestApprovalLine(t *testing.T) {
 	}
 	if got := approvalLine(""); got != "" {
 		t.Errorf("空フレームから取った: %q", got)
+	}
+}
+
+// 権限確認あり（docs/76）。消えるのは --trust-all-tools だけで、chat サブコマンドと
+// v2 エンジンのピンは残る。初回の危険モード確認ダイアログの抑止は settings 側
+// （chat.disableTrustAllConfirmation）なのでフラグには現れない。
+func TestBuildProgramPermissionsOn(t *testing.T) {
+	sid := "32595b50-8232-496c-8c30-e5669f5911cb"
+	got := buildProgram("", "", "", sid, false)
+	if strings.Contains(got, "--trust-all-tools") {
+		t.Errorf("permissions-on program must drop the bypass: %q", got)
+	}
+	for _, want := range []string{"chat", "--agent-engine v2", "--resume-id"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("permissions-on program %q lacks %q", got, want)
+		}
 	}
 }

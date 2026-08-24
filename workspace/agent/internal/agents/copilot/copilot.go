@@ -41,7 +41,7 @@ func (agentImpl) Kind() string { return session.KindCopilot }
 // truncating events.jsonl (forkat.go) — events.jsonl is the restore source (実測,
 // docs/55 §55.5). No display label.
 func (agentImpl) Caps() agents.Caps {
-	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true}
+	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true, PermissionChoice: true}
 }
 
 // ForkSource resolves this session's copilot session id as the fork source, refusing when
@@ -117,7 +117,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 			return agents.LaunchPlan{}, fmt.Errorf("分岐を作成できませんでした: %w", err)
 		}
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, sid), Cwd: m.CWD()}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, m.Mode, sid, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

@@ -131,15 +131,16 @@ const defaultFlags = "chat --agent-engine v2 --trust-all-tools"
 
 // buildProgram returns the tmux pane program for a kiro TUI session. 認証は環境依存
 // （~/.local/share/kiro-cli を CLI 自身が拾う — 実測）なのでトークンは注入しない。
-func buildProgram(model, effort, mode, resumeID string) string {
+// bypass=false は「権限確認をスキップしない」（docs/76 の利用者選択、または plan 起動）。
+// 承認待ちは state.go が "question" として拾える（明示テキスト "requires approval"）。
+// 外すのは --trust-all-tools だけで、chat.disableTrustAllConfirmation（初回の危険モード
+// 確認ダイアログの抑止・ensureSettings が固定）は権限確認とは別軸なのでそのまま。
+func buildProgram(model, effort, mode, resumeID string, bypass bool) string {
 	if override := os.Getenv("AGENT_KIRO_CMD"); override != "" {
 		return override
 	}
 	flags := envOr("AGENT_KIRO_FLAGS", defaultFlags)
-	if mode == "plan" {
-		// Plan mode drops the bypass so tools require approval — auto-approving every
-		// tool would defeat a plan start（cursor/copilot/agy と同じ判断）。承認待ちは
-		// state.go が "question" として拾える（明示テキスト "requires approval"）。
+	if !bypass {
 		flags = strings.TrimSpace(strings.ReplaceAll(flags, "--trust-all-tools", ""))
 	}
 	// "auto"（既定・1M ctx）はフラグ無し。named モデルは Free でも指定可（実測）。

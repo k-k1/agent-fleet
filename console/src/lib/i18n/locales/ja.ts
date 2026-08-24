@@ -994,6 +994,11 @@ export const ja = {
   "agents.default_model": "既定モデル",
   "agents.default_effort": "既定 effort",
   "agents.start_mode": "開始モード",
+  // 権限確認をスキップするか（docs/76）。既定はスキップ＝従来どおり。
+  "agents.skip_permissions": "権限確認",
+  "agents.skip_permissions_sub": "ツール実行のたびに許可を求めるか",
+  "agents.skip_permissions_off_note":
+    "オフ（許可を求める）にすると、編集やコマンドのたびに承認待ちで止まります。承認はミラーの許可カードか端末で答えてください。答えないまま放置すると「判断待ち」の時計で畳まれます（畳まれても対話は持ち越されます）。無人で走らせる定時実行やオペレーターの起動には向きません。",
   "agents.mode_normal": "通常",
   "agents.note_launch_defaults":
     "新しいセッションの初期値です。リポジトリで前回使った設定があれば、そちらを優先します。ドライバが対応しない項目は起動時に適用されません。",
@@ -3014,6 +3019,7 @@ export const ja = {
   "launch.field.effort": "推論 effort",
   "launch.field.effort_hint": "未指定はモデル既定値。",
   "launch.field.start_mode": "開始モード",
+  "launch.field.permissions": "権限確認",
   "launch.mode_normal": "通常",
   "launch.field.location": "場所",
   // はじめる ハブへ戻る足。場所セクションの「変更」と紛れないよう、行き先を名乗る。
@@ -3036,6 +3042,10 @@ export const ja = {
   "launch.agents_checking": "エージェントの接続を確認中…",
   "launch.agents_none": "使用できるエージェントがありません。設定 > 接続 から認証してください。",
   "launch.plan_hint": "Plan は最初のターンを調査・計画に専念。",
+  // 選択肢の語は「何が起きるか」で書く（フラグ名を出さない）。
+  "launch.perm_skip": "スキップする（既定）",
+  "launch.perm_ask": "毎回たずねる",
+  "launch.perm_hint": "たずねる場合、編集やコマンドの前に承認待ちで止まります。",
   "launch.field.driver": "実行方式",
   "launch.driver_managed": "マネージド（推奨）",
   "launch.driver_terminal": "ターミナル（CLI）",
@@ -3090,6 +3100,7 @@ export const ja = {
   "launch.sum.effort": "effort {v}",
   "launch.sum.title": "名前「{name}」",
   "launch.sum.defaults": "既定のまま",
+  "launch.sum.permissions_on": "権限確認あり",
 
   // === P2 スタートモーダル（features/repos/StartModal.tsx）===
   "start.aws_search_failed": "AWSの検索に失敗: {msg}",

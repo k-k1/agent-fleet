@@ -31,7 +31,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo }, { kind, driver, model, effort, startMode, prompt, title, images, worktree, subdir, base, newBranch, useExisting }) => {
+  return async ({ dir, repo }, { kind, driver, model, effort, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting }) => {
     const hasModel = agentOf(kind).caps.model;
     // 添付があるときは、保存パスを本文へ織り込むために「セッションができてから」でないと
     // 最初の指示の本文が確定しない（アップロード先がそのセッション）。それ以外は作成要求に
@@ -42,6 +42,12 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     if (hasModel && model) body.model = model;
     if (effort) body.effort = effort;
     if (startMode) body.mode = startMode;
+    // 権限確認（docs/76）。**既定と同じときは送らない**: 未指定なら Agent が kind 毎の
+    // 既定（ui-prefs）で解決するので、設定を変えたあとに立てたセッションにも新しい既定が
+    // 効く。ここで毎回値を焼き込むと、その kind の既定を後から変えても効かなくなる。
+    if (typeof skipPermissions === "boolean" && agentOf(kind).caps.permissionChoice) {
+      body.skip_permissions = skipPermissions;
+    }
 		if (title) body.title = title;
     // 作業ディレクトリ（Meta.Subdir）: the Agent resolves it INSIDE whatever working
     // copy the launch lands in — including a worktree it creates in this same call —

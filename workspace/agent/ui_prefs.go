@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
@@ -141,6 +142,39 @@ func init() { mcpreg.PeerMessagingEnabled = peerMessagingPref }
 // OPENCODE_API_KEY at all（無料枠は注入しない）and what to report to /connections.
 // It lives under internal/agents, which must not read main's config files itself.
 func init() { opencode.UsagePref = opencodeCatalogPref }
+
+// skipPermissionsPref is the per-kind default for「権限確認をスキップする」（設定 >
+// エージェント > 各カード、ui-prefs agentLaunchDefaults[<kind>].skipPermissions — docs/76）。
+// ok=false は「その kind に設定が無い」で、既定値そのものは agents.SkipPermissions が
+// 持つ（従来どおり true）。
+//
+// HTTP ではなくプロセス内で読むのは、Console 以外の起動経路 — MCP の create_session、
+// 定時実行、停止セッションの再起動、fork/recreate — にも同じ既定を効かせるため。ここを
+// Console 側だけの解決にすると「設定でオフにしたのに、定時実行で立ったセッションだけ
+// bypass で走る」が起きる。
+func skipPermissionsPref(kind string) (bool, bool) {
+	k := normalizeKind(kind)
+	// 承認待ちを Console から答えられない kind（codex / opencode）は選択の対象外。
+	// 古い/壊れた prefs がその kind に false を書いていても、ここで落として従来どおり
+	// bypass で起動する — 答えようのない承認ダイアログで固まるより確実に良い。
+	if !agentOf(k).Caps().PermissionChoice {
+		return false, false
+	}
+	defs, ok := readUIPrefs()["agentLaunchDefaults"].(map[string]any)
+	if !ok {
+		return false, false
+	}
+	row, ok := defs[k].(map[string]any)
+	if !ok {
+		return false, false
+	}
+	v, ok := row["skipPermissions"].(bool)
+	return v, ok
+}
+
+// internal/agents は main の設定ファイルを自分で読まない方針なので、opencode.UsagePref /
+// mcpreg.PeerMessagingEnabled と同じくフックで渡す。
+func init() { agents.SkipPermissionsPref = skipPermissionsPref }
 
 // claudeCustomModelsPref is the user's durable extension to Claude's fixed tier
 // aliases. Claude Code OAuth has no account-aware catalog endpoint, so only explicitly
