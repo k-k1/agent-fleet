@@ -106,12 +106,13 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 			if aerr.code == "quota_workspaces" {
 				return "skipped_quota", "", nil // soft: tenant is at its running cap
 			}
-			// NOT fatal on its own. ensureWorkspaceStarted's health budget is a fixed
-			// per-start deadline, while the very next step polls the Agent patiently for
-			// readyTimeout — so a container that is merely slow to boot used to be failed
-			// here and never reach the tolerant wait behind it. Remember the error and let
-			// awaitAgentReady adjudicate: if the Agent does come up, the fire proceeds; if
-			// it does not, the failure below reports both causes.
+			// NOT fatal on its own. A readiness overrun is no longer reported as a start
+			// failure at all (runtime_health.go), so this now only catches real ones —
+			// but the tolerance stays: the very next step polls the Agent patiently for
+			// readyTimeout, and a start error that the Agent then contradicts by coming
+			// up must not lose the fire. Remember the error and let awaitAgentReady
+			// adjudicate: if the Agent does come up, the fire proceeds; if it does not,
+			// the failure below reports both causes.
 			wakeErr = fmt.Errorf("wake: %s", aerr.message)
 		}
 	}

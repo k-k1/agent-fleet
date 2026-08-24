@@ -730,6 +730,11 @@ playwright CDN の実 DL 確認）は §35.8 native ゲート（P4）のまま�
   agent の listen より先に走るため必ず超過する。`AF_AGENT_HEALTH_WAIT_SEC` で上書き
   可能にし、**rootfs モードの既定は 300s**（docker は既定 15s のまま — lean B を CP 配下で
   動かす場合はこの env を設定する）。
+  - **その後（2026-08-24）**: この予算は「超えたら失敗」ではなく「超えたら
+    `starting` を名乗って返る」に変わった（docs/38 ★6 の恒久対応）。env を設定し
+    忘れた lean デプロイが赤いエラーになることは無くなり、値は「同期で待つ猶予」
+    だけを決める。docker の既定は **45 秒**（ingress の idle timeout 60 秒の内側。
+    無人起動だけ 15 秒）、native rootfs は進捗表示のため 300 秒のまま。
 - versions.json に **`noto_cjk` ピンを新設**（`NOTO_CJK_VERSION` ARG → install-chromium
   の CJK フォント供給元 = notofonts/noto-cjk の versioned tag。e2e-smoke の全ピン検証にも追加）。
 - ペイン自動導入の Console 側は新 state を増やさず **error code `browser_installing`

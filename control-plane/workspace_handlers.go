@@ -169,10 +169,10 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved) map[s
 	rt := res.rt
 	m := map[string]any{"name": rt.Name(), "state": rt.State(ctx)}
 	// Live boot-install phase for the "starting" dialog (native rootfs only —
-	// docs/35 §35.9-9). Native State() reports "running" the instant the process
-	// spawns (pid-alive, not health), so state alone can't tell the Console the
-	// agent is still boot-installing; bootPhase is the real signal. Only the
-	// native runtime implements it; a non-empty value means a boot is in progress.
+	// docs/35 §35.9-9). State() now says "starting" for that window too, but only
+	// bootPhase can say WHAT is taking minutes (どの CLI を落としているか), which is
+	// the difference between a progress dialog and a silent spinner. Only the native
+	// runtime implements it; a non-empty value means a boot is in progress.
 	if bp, ok := rt.(interface{ BootPhase() string }); ok {
 		if phase := bp.BootPhase(); phase != "" {
 			m["bootPhase"] = phase
@@ -225,9 +225,10 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	// Stop は「まだ存在しない」等は許容する(best-effort)が、まだ running のまま
-	// なら中断する — ライブ bind-mount 配下の削除は不整合を起こすため。
-	if err := res.rt.Stop(lease.Context()); err != nil && res.rt.State(r.Context()) == "running" {
+	// Stop は「まだ存在しない」等は許容する(best-effort)が、まだ生きているなら中断する
+	// — ライブ bind-mount 配下の削除は不整合を起こすため。"starting"（起動途中で
+	// Agent 未応答）も生きている側: コンテナは走っていて home に書き込みうる。
+	if err := res.rt.Stop(lease.Context()); err != nil && workspaceAlive(res.rt.State(r.Context())) {
 		log.Printf("recreate: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; recreate aborted"})
 		return
@@ -287,9 +288,9 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 		writeAPIErr(w, workspaceLifecycleLeaseError(err))
 		return
 	}
-	// recreate と同じく、Stop 失敗かつまだ running なら中断(ライブ bind-mount 配下
+	// recreate と同じく、Stop 失敗かつまだ生きているなら中断(ライブ bind-mount 配下
 	// の削除を避ける)。
-	if err := res.rt.Stop(lease.Context()); err != nil && res.rt.State(r.Context()) == "running" {
+	if err := res.rt.Stop(lease.Context()); err != nil && workspaceAlive(res.rt.State(r.Context())) {
 		log.Printf("clean-home: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; clean-home aborted"})
 		return
@@ -325,6 +326,41 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 // explicit start/recreate handlers and P3-9 auto-start.
 func (a workspaceAPI) ensureWorkspaceStarted(ctx context.Context, res *resolved) *apiError {
 	return a.ensureWorkspaceStartedRT(ctx, res, res.rt)
+}
+
+// ensureWorkspaceReady is ensureWorkspaceStarted for the callers that immediately need
+// the AGENT, not merely a running container: session create / fork / start, carried
+// answers, the SSM node lookup. All of them proxy to the workspace in the very next
+// line, and Start deliberately no longer guarantees reachability (Runtime port doc) —
+// a cold boot can still be installing when it returns.
+//
+// So this is where the waiting lives now, and it is bounded twice over:
+//   - agentReadyWait (既定 55 秒) keeps the response inside the ingress idle timeout;
+//     blocking past it does not deliver a slower success, it delivers a 504.
+//   - past that we answer 409 workspace_starting — a code the Console already renders
+//     as「起動中です」and a caller can retry — instead of the old 500 whose body was the
+//     raw "agent did not become healthy within 15s". The boot keeps going either way.
+func (a workspaceAPI) ensureWorkspaceReady(ctx context.Context, res *resolved) *apiError {
+	// 期限は **入口で 1 回** 決める。Start 自身も同期猶予ぶん待つので、そこを数えないと
+	// 「起動の待ち＋到達の待ち」で合計が ingress の上限を越え、応答ごと消える。
+	deadline := time.Now().Add(agentReadyWait())
+	if aerr := a.ensureWorkspaceStarted(ctx, res); aerr != nil {
+		return aerr
+	}
+	if res.rt.State(ctx) == "running" {
+		return nil // 既に応答している(=印が落ちている)。追加の probe すら要らない。
+	}
+	if remaining := time.Until(deadline); remaining > 0 {
+		err := waitAgentHealthy(ctx, res.rt.Endpoint(), remaining)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return internalErr(err)
+		}
+	}
+	return &apiError{http.StatusConflict, "workspace_starting",
+		"workspace is still starting — try again in a moment"}
 }
 
 // ensureWorkspaceStartedUnattended is ensureWorkspaceStarted for a start nobody is
@@ -640,7 +676,7 @@ func (a workspaceAPI) sessionCreate(w http.ResponseWriter, r *http.Request, res 
 	// P3-9 auto-start: creating a session needs a running Agent, so bring a cold
 	// (idle-stopped or manually stopped) workspace back up on demand first.
 	if a.autostart {
-		if aerr := a.ensureWorkspaceStarted(ctx, res); aerr != nil {
+		if aerr := a.ensureWorkspaceReady(ctx, res); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -660,7 +696,7 @@ func (a workspaceAPI) sessionCreate(w http.ResponseWriter, r *http.Request, res 
 func (a workspaceAPI) sessionFork(w http.ResponseWriter, r *http.Request, res *resolved) {
 	ctx := r.Context()
 	if a.autostart {
-		if aerr := a.ensureWorkspaceStarted(ctx, res); aerr != nil {
+		if aerr := a.ensureWorkspaceReady(ctx, res); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -678,7 +714,7 @@ func (a workspaceAPI) sessionFork(w http.ResponseWriter, r *http.Request, res *r
 // check: resuming doesn't create a new session slot the user didn't already have.
 func (a workspaceAPI) sessionStart(w http.ResponseWriter, r *http.Request, res *resolved) {
 	if a.autostart {
-		if aerr := a.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
+		if aerr := a.ensureWorkspaceReady(r.Context(), res); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -715,7 +751,7 @@ func (a workspaceAPI) attention(w http.ResponseWriter, r *http.Request, res *res
 // The Agent then resumes the session and delivers the answer as ordinary prose.
 func (a workspaceAPI) sessionCarriedAnswer(w http.ResponseWriter, r *http.Request, res *resolved) {
 	if a.autostart {
-		if aerr := a.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
+		if aerr := a.ensureWorkspaceReady(r.Context(), res); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
@@ -743,7 +779,7 @@ func (a workspaceAPI) ssmInstances(w http.ResponseWriter, r *http.Request, res *
 		return
 	}
 	if a.autostart {
-		if aerr := a.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
+		if aerr := a.ensureWorkspaceReady(r.Context(), res); aerr != nil {
 			writeAPIErr(w, aerr)
 			return
 		}
