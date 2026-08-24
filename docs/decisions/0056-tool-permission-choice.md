@@ -57,8 +57,10 @@ agy から始める。codex と opencode は導線を作ってから（[docs/76]
 ## 影響と残り
 
 - 既定 ON のままなので、何も設定しなければ挙動は変わらない。
-- ⚠️ **claude 以外で承認ありにすると、承認待ちのまま `interaction_idle_timeout` を超えたときに
-  保留中の対話が失われる**（ADR 0055 の持ち越しが claude 専用のため）。docs/75 P5 で解消する。
+- ⚠️ **claude 以外を TUI で起動して承認ありにすると、承認待ちのまま `interaction_idle_timeout` を
+  超えたときに保留中の対話が失われる**。ADR 0055 の持ち越しは claude の `pending-*` と managed の
+  Interaction を覆う（P5）が、claude 以外の TUI はどちらにも入らない。cursor / copilot / kiro は
+  Console の既定が managed なので通常の経路は覆われており、残るのは CLI(TUI) を明示した場合と agy。
 - 承認ありのセッションは無人運転（定時実行 / オペレーター / MCP drive）では完了しない。設定 UI に
   注記を出している。
 - 残り: codex / opencode の導線、一覧・ミラーでの「承認あり」表示、実 TUI での 1 周確認。
