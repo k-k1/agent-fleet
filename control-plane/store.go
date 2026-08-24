@@ -363,6 +363,24 @@ type SessionShareProposal struct {
 	CreatedAt, ExpiresAt, DecidedAt, DecidedBy                       string
 }
 
+// SessionHandoffOffer は「この続きをやってほしい」を共有先へ差し出したもの（docs/77 /
+// ADR 0057）。
+//
+// ⚠️ SessionShareProposal と方向が逆である。あちらは共有先 → 所有者（提案し、所有者が承認）、
+// こちらは所有者 → 共有先（差し出し、共有先が承認）。owner / recipient の役割が入れ替わるので
+// 表も型も分けてある。
+//
+// Ciphertext は本文（title は平文の見出し、prompt が中身）。custodian がある環境では暗号化され、
+// 辞退・失効・撤回で空になる。RepoRemote / Branch / HeadSha は Agent が git に聞いた事実で、
+// 受け手が自分の作業コピーを同定するための座標。
+type SessionHandoffOffer struct {
+	ID, TenantID, CatalogID, OwnerMembershipID, RecipientMembershipID string
+	Title, Ciphertext, KeyRef                                         string
+	RepoRemote, Branch, HeadSha                                       string
+	SourceSessionName, SourceSessionKind                              string
+	Status, CreatedAt, ExpiresAt, DecidedAt, AcceptedSessionName      string
+}
+
 // GitRepo is one internal bare repository owned by a tenant (docs/reference/
 // internal-git-provider). The on-disk bare lives at ${DATA_DIR}/git/<slug>/<name>.git;
 // this row is the ledger the list/serve paths trust over an FS walk.
@@ -430,6 +448,13 @@ type SessionShareStore interface {
 	TransitionSessionShareProposal(ctx context.Context, id, from, to, decidedBy, decidedAt string, clearBody bool) (bool, error)
 	ClaimSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, now, leaseUntil string) (SessionShareProposal, SharedSessionCatalog, string, error)
 	FinalizeSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, decidedAt string) (bool, error)
+	// メンバーへの引き継ぎ（docs/77）。共有 ACL の派生物なので同じサブインターフェースに置く。
+	CreateSessionHandoffOffer(ctx context.Context, row SessionHandoffOffer) (bool, error)
+	GetSessionHandoffOffer(ctx context.Context, id string) (SessionHandoffOffer, bool, error)
+	ListSessionHandoffOffersByOwner(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error)
+	ListSessionHandoffOffersByRecipient(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error)
+	TransitionSessionHandoffOffer(ctx context.Context, id, from, to, decidedAt, acceptedSessionName string) (bool, error)
+	ExpireSessionHandoffOffers(ctx context.Context, now string) ([]SessionHandoffOffer, error)
 	AcquireSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID, now, leaseUntil string) (bool, error)
 	RenewSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID, now, leaseUntil string) (bool, error)
 	ReleaseSessionShareOwnerLease(ctx context.Context, ownerMembershipID, operationID string) error

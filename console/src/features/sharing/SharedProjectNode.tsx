@@ -15,11 +15,15 @@ import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { openSharedSession } from "./open.ts";
 import type { SharedProjectGroup, SharedWorkingCopy } from "./sharedProject.ts";
 import { ownerLabel, type SharedSession } from "./store.ts";
+import { useHandoffStore } from "./handoffStore.ts";
 import "../project/project.css";
 import "./sharing.css";
 
 function SharedSessionRow({ s }: { s: SharedSession }) {
   const tr = useT();
+  // 未処理の引き継ぎ（docs/77）。⚠️ **既読では消さない** —— 「読んだが決めていない」で
+  // 消えると引き継ぎが忘れられる。消えるのは受諾/辞退/失効のときだけ（§77.10）。
+  const handoff = useHandoffStore((st) => st.received.some((o) => o.sessionId === s.id));
   const st = stateInfo({ kind: s.kind, alive: s.state === "running", state: s.activity });
   const sessionName = (s.title || s.label || s.name).replace(/^\[AF\]\s*/, "");
   return (
@@ -38,6 +42,11 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
         {/* claude の --name 由来の label は "[AF] " 接頭辞付きのことがある。 */}
         <span className="name">{sessionName}</span>
         <small>{tr(s.permission === "rw" ? "share.permission_rw" : "share.permission_ro")}</small>
+        {handoff && (
+          <span className="shared-rail-handoff" title={tr("handoff.row_badge")}>
+            <Icon name="git-branch" />
+          </span>
+        )}
         {/* アーカイブ済み/削除済みは CP 側で一覧から外れる(docs/59 §1)ので、ここに
             並ぶのは所有者の手元に今ある会話だけ。
             状態チップは所有者側の SessionRow と同じ stateInfo。所有者 Workspace が

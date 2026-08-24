@@ -69,6 +69,17 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       speech: t("notif.carried.speech", { name, what: kindText }),
     };
   }
+  if (n.kind === "handoff-offer") {
+    // 別メンバーから引き継ぎが届いた（docs/77）。body は引き継ぎの表示名で、遷移先は共有ビュー。
+    return { title: t("notif.handoff_offer.title"), body: name, speech: t("notif.handoff_offer.speech") };
+  }
+  if (n.kind === "handoff-accepted") {
+    return { title: t("notif.handoff_accepted.title"), body: name, speech: t("notif.handoff_accepted.speech") };
+  }
+  if (n.kind === "handoff-expired") {
+    // 受領されないまま失効した。理由は求めない代わりに「宙に浮いた」ことだけは知らせる。
+    return { title: t("notif.handoff_expired.title"), body: name, speech: t("notif.handoff_expired.speech") };
+  }
   if (n.kind === "rate-limit-reached") {
     return {
       title: t("notif.rate_limit_reached.title"),

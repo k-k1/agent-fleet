@@ -5,6 +5,8 @@ import { Modal } from "../../ui/Modal.tsx";
 import { api } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { startSharedSessionsPolling, startMySharesPolling, useMySharesStore, useSharedSessionsStore } from "./store.ts";
+import { pendingHandoffCount, startHandoffPolling, useHandoffStore } from "./handoffStore.ts";
+import { HandoffInboxModal } from "./HandoffInboxModal.tsx";
 import { ShareListModal } from "./ShareListModal.tsx";
 import { SharedProjectNode } from "./SharedProjectNode.tsx";
 import { groupedSharedSessions } from "./sharedProject.ts";
@@ -27,6 +29,8 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [open, setOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const handoffs = useHandoffStore((s) => pendingHandoffCount(s.received));
   const [reloading, setReloading] = useState(false);
   const loadProposals = () => api("api/session-share-proposals").then((d) => {
     if (!d?.error) setProposals((d.proposals || []).filter((p: Proposal) => p.status === "pending" || p.status === "processing"));
@@ -39,9 +43,10 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
   useEffect(() => {
     const stop = startSharedSessionsPolling();
     const stopMine = startMySharesPolling();
+    const stopHandoff = startHandoffPolling();
     void loadProposals();
     const timer = window.setInterval(() => void loadProposals(), 5000);
-    return () => { stop(); stopMine(); window.clearInterval(timer); };
+    return () => { stop(); stopMine(); stopHandoff(); window.clearInterval(timer); };
   }, []);
 
   const decide = async (id: string, decision: "approve" | "reject") => {
@@ -50,12 +55,17 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
   };
   const groups = useMemo(() => groupedSharedSessions(sessions), [sessions]);
 
-  if (sessions.length === 0 && proposals.length === 0 && ownedShares === 0) return null;
+  if (sessions.length === 0 && proposals.length === 0 && ownedShares === 0 && handoffs === 0) return null;
   return (
     <>
       <Section id="shared-sessions" title={tr("share.shared_sessions")} icon="broadcast" count={sessions.length}
         actions={<>
           {proposals.length > 0 && <IconButton icon="mail" label={tr("share.pending", { count: proposals.length })} onClick={() => setOpen(true)} />}
+          {/* ⚠️ 上の mail は「自分が出した RW 提案の承認待ち」で**方向が逆**。同じバッジに
+              合流させると意味が壊れるので、引き継ぎ（docs/77）は別のアイコンで並べる。 */}
+          {handoffs > 0 && (
+            <IconButton icon="git-branch" label={tr("handoff.inbox_pending", { count: handoffs })} onClick={() => setInboxOpen(true)} />
+          )}
           {/* 明示リロード。定期ポーリングは CP のスナップショットを読むだけで、所有者
               Workspace の在庫は最大60秒に1回しか取り直さない(docs/59 §3)ので、状態や
               増減を今すぐ反映したいときの出口をここに置く。 */}
@@ -67,6 +77,7 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
           {groups.map((g) => <SharedProjectNode key={`${g.ownerUserKey}:${g.copies[0].workingCopyId}`} group={g} />)}
         </ul>
       </Section>
+      {inboxOpen && <HandoffInboxModal onClose={() => setInboxOpen(false)} />}
       {open && (
         <Modal title={tr("share.pending_title")} onClose={() => setOpen(false)} className="share-proposals-modal">
           <div className="ui-modal-body">

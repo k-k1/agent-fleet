@@ -13,6 +13,7 @@ import { StartModal } from "./StartModal.tsx";
 import { LaunchModal } from "./LaunchModal.tsx";
 import { useLaunchTarget, useLaunchSeed } from "./store.ts";
 import { markHandoffLaunched } from "../mirror/HandoffProposal.tsx";
+import { acceptHandoffOffer } from "../sharing/acceptHandoff.ts";
 
 export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
@@ -27,6 +28,7 @@ export function StartHost() {
   const seedTitle = useLaunchSeed((s) => s.title);
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const seedHandoffId = useLaunchSeed((s) => s.handoffId);
+  const seedOfferId = useLaunchSeed((s) => s.handoffOfferId);
   const clearSeed = useLaunchSeed((s) => s.clear);
   // Open the hub whenever the global tick changes (skip the mount value).
   const lastTickRef = useRef(startTick);
@@ -86,6 +88,9 @@ export function StartHost() {
               // Seeded by a handoff proposal: badge it 起動済み now that a session
               // really exists. The proposal itself stays — discarding is the user's call.
               if (seedHandoff && seedHandoffId) void markHandoffLaunched(seedHandoff, seedHandoffId);
+              // メンバーから受け取った引き継ぎ（docs/77）は、起動できた**あと**に受諾を
+              // 申告する。ここが唯一「本当にセッションができた」と分かる地点である。
+              if (seedOfferId) void acceptHandoffOffer(seedOfferId, r.name || "");
               setShow(false); // launched — drop the hub underneath too
               clearSeed();
             }

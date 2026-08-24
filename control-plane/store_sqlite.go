@@ -1150,6 +1150,9 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM notification_usage_state WHERE membership_id=?`, id},
 		// 共有は両端を持つ。相手側が生きていても、片方が消えた共有は残せない。
 		{`DELETE FROM session_share_proposal WHERE owner_membership_id=? OR proposer_membership_id=?`, both},
+		// 引き継ぎ（docs/77）も両端を持つ。catalog の CASCADE は所有者側しか掃除しないので、
+		// 受け手だけが消えた場合を取りこぼさないよう明示的に両端で消す。
+		{`DELETE FROM session_handoff_offer WHERE owner_membership_id=? OR recipient_membership_id=?`, both},
 		{`DELETE FROM session_share WHERE owner_membership_id=? OR recipient_membership_id=?`, both},
 		{`DELETE FROM shared_session_catalog WHERE owner_membership_id=?`, id},
 		{`DELETE FROM session_share_owner_lease WHERE owner_membership_id=?`, id},

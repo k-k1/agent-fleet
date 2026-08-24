@@ -74,6 +74,9 @@ export interface LaunchResult {
   ok: boolean;
   conflict?: "local" | "remote" | "in_use";
   worktree?: string;
+  /** 作られたセッション名（ok のときだけ）。引き継ぎの受諾（docs/77）が「どのセッションで
+   *  受けたか」を差し出した側へ返すのに要る。 */
+  name?: string;
 }
 
 interface LaunchModalProps {

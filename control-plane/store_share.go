@@ -115,7 +115,7 @@ func (s *sqlStore) PutSessionShare(ctx context.Context, r SessionShare) error {
 	if err != nil {
 		return err
 	}
-	if err = invalidateUnauthorizedProposals(ctx, tx, r.OwnerMembershipID, r.UpdatedAt); err != nil {
+	if err = invalidateUnauthorizedShareDerivatives(ctx, tx, r.OwnerMembershipID, r.UpdatedAt); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -177,7 +177,7 @@ func (s *sqlStore) DeleteSessionShare(ctx context.Context, id, owner string) err
 	if _, err = tx.ExecContext(ctx, `DELETE FROM session_share WHERE id=? AND owner_membership_id=?`, id, owner); err != nil {
 		return err
 	}
-	if err = invalidateUnauthorizedProposals(ctx, tx, owner, nowTS()); err != nil {
+	if err = invalidateUnauthorizedShareDerivatives(ctx, tx, owner, nowTS()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -197,7 +197,7 @@ func (s *sqlStore) DeleteSessionSharesByScope(ctx context.Context, owner, scopeT
 	if _, err = tx.ExecContext(ctx, `DELETE FROM session_share WHERE owner_membership_id=? AND scope_type=? AND scope_key=?`, owner, scopeType, scopeKey); err != nil {
 		return err
 	}
-	if err = invalidateUnauthorizedProposals(ctx, tx, owner, nowTS()); err != nil {
+	if err = invalidateUnauthorizedShareDerivatives(ctx, tx, owner, nowTS()); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -208,7 +208,28 @@ type sqlExecQuery interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func invalidateUnauthorizedProposals(ctx context.Context, q sqlExecQuery, owner, now string) error {
+// invalidateUnauthorizedShareDerivatives は、共有規則が変わった直後に**共有から派生した
+// 未処理の約束**をすべて失効させ、本文を消す。所有者の共有変更と同じトランザクションで
+// 呼ばれるので、「ACL 変更が先なら提案/引き継ぎは失効、承認が先ならその副作用の完了後に
+// ACL 変更が通る」という順序（docs/59 §2）が一意に決まる。
+//
+// ⚠️ 派生物は 2 種類ある。RW 提案（共有先 → 所有者）と引き継ぎ offer（所有者 → 共有先）で、
+// **必要な権限が違う**: 提案は rw が要るが、引き継ぎは会話が読めれば足りるので ro でも成立する。
+// 1 つの関数にまとめてあるのは、呼び出し側が 4 か所あり、片方だけ足し忘れると「共有を切ったのに
+// 相手の受信箱に引き継ぎが残る」形で無言に壊れるため。3 つ目が増えてもここに足す。
+func invalidateUnauthorizedShareDerivatives(ctx context.Context, q sqlExecQuery, owner, now string) error {
+	if _, err := q.ExecContext(ctx, `UPDATE session_handoff_offer SET status='expired',ciphertext='',decided_at=?
+		WHERE owner_membership_id=? AND status='pending' AND NOT EXISTS (
+			SELECT 1 FROM shared_session_catalog c JOIN session_share s
+			  ON s.owner_membership_id=c.owner_membership_id
+			 AND s.recipient_membership_id=session_handoff_offer.recipient_membership_id
+			 AND ((s.scope_type='session' AND s.scope_key=c.name)
+			   OR (s.scope_type IN ('repo','worktree') AND s.scope_key=c.working_copy_id)
+			   OR (s.scope_type='repo' AND s.scope_key=c.parent_working_copy_id AND c.parent_working_copy_id<>''))
+			WHERE c.id=session_handoff_offer.catalog_id
+		)`, now, owner); err != nil {
+		return err
+	}
 	_, err := q.ExecContext(ctx, `UPDATE session_share_proposal SET status='expired',ciphertext='',decided_at=?
 		WHERE owner_membership_id=? AND status IN ('pending','processing') AND NOT EXISTS (
 			SELECT 1 FROM shared_session_catalog c JOIN session_share s
@@ -239,7 +260,7 @@ func (s *sqlStore) UpdateSessionSharePermission(ctx context.Context, id, owner, 
 	if err != nil {
 		return false, err
 	}
-	if err = invalidateUnauthorizedProposals(ctx, tx, owner, updatedAt); err != nil {
+	if err = invalidateUnauthorizedShareDerivatives(ctx, tx, owner, updatedAt); err != nil {
 		return false, err
 	}
 	if err = tx.Commit(); err != nil {
