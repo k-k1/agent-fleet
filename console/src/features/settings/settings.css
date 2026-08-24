@@ -3861,3 +3861,24 @@ label.idp-flag {
 .warn-text {
   color: var(--warn);
 }
+
+/* 自動停止の見通し（docs/75 P4）。名簿の行では控えめだが、**止まらない理由**（.hold）は
+   注意色にする — 「あと 20 分で停止」と「止まらない」は運用者にとって意味が正反対で、
+   同じ静かさで並ぶと、コストが出続けている行を見落とす。 */
+.mr-idle {
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.mr-idle.hold {
+  color: var(--warn);
+}
+
+/* 止めている理由の一覧（メンバー詳細）。運用者はここから次の一手（待つ / ピンを外して
+   もらう / セッションを止める）を決めるので、装飾より読みやすさを優先した素の箇条書き。 */
+.idle-holders {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+}
