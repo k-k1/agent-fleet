@@ -202,7 +202,15 @@ type Meta struct {
 	// by fork/recreate. TUI sessions leave both empty.
 	Effort string `json:"effort,omitempty"`
 	Mode   string `json:"mode,omitempty"`
-	Kind   string `json:"kind"`
+	// SkipPermissions is this session's answer to「権限確認をスキップするか」（docs/76）:
+	// true = fleet 既定の bypass 起動（claude --dangerously-skip-permissions と各 kind の
+	// 同格フラグ）、false = ツール実行のたびに承認を求めさせる。**3 値**である点が要で、
+	// nil は「未指定＝ ui-prefs の kind 毎の既定に従う」。false と nil を分けないと、
+	// 設定でオフにしたあと個別セッションだけオンに戻す、が表現できない。
+	// 起動時にだけ効く（TUI は再起動が要る）。plan 起動は kind を問わず bypass を外すので、
+	// この値が true でも mode=plan なら承認は出る。
+	SkipPermissions *bool  `json:"skipPermissions,omitempty"`
+	Kind            string `json:"kind"`
 	// Driver selects the control route（docs/27）: "" | "tui" = tmux 内 TUI（従来）、
 	// "managed" = 共有 runtime＋構造化 RPC（pane なし。P2 で opencode から解禁）。
 	// 既定の tui は "" で永続化し、既存メタとディスク上バイト同一を保つ。
