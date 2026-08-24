@@ -3007,3 +3007,14 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
   white-space: pre-wrap;
   opacity: 0.85;
 }
+
+/* 引き継ぎの状態行（docs/77 §77.10）。通知は流れ物なので、二重作業を防ぐのはここの役目。 */
+.mirror-handoff-offer {
+  margin: 0.35rem 0 0;
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+.mirror-handoff-offer.is-pending {
+  opacity: 1;
+  font-weight: 600;
+}

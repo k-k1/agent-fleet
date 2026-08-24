@@ -1,6 +1,7 @@
 # 77. 同一テナントの別メンバーへセッションを引き継ぐ
 
-- 状態: 📝 **設計のみ・未実装**（P0〜P3 は §77.14）
+- 状態: ✅ **P0 実装済み**（差し出し / 撤回 / 受諾 / 辞退・push ゲート・受信箱）・
+  ⏸ P1〜P3 は §77.14。⚠️ 実フリートでの 2 アカウント通しは未実施
 - 設計判断: [decisions/0057](decisions/0057-member-handoff.md)
 - 関連: [docs/59 セッション共有](59-session-sharing.md)（本機能が乗る土台・ACL と失効の規律）、
   [docs/58 セッション間メッセージ](58-cross-session-messaging.md)（**同一 Workspace 内**の別機能・境界は §77.2）、
@@ -80,14 +81,24 @@ docs/59 の RW 提案が必要とした owner lease・冪等 ledger・二重実�
   動き出すので、これは黙って劣化させてはいけない。
 - **未コミット（dirty）→ 警告に留める**。意図的に捨てる引き継ぎがあるため。
 
-⚠️ **検査するのは Console（サーバ側）で、モデルではない。** repo の座標（remote URL / branch / HEAD sha）も
-同じ理由でエージェント入力から取らない —— 座標を**モデルが書ける構造化フィールド**にすると、Console が
-それをクローン導線に変えた瞬間、「汚染されたリポジトリを読んだセッションが、B に別の remote をクローン
-させる」道具になる。座標は送信時に Agent の catalog と git から取る。
+⚠️ **判定するのは Agent で、モデルでも Console でもない。** `GET /sessions/{name}/handoff-context`
+（`workspace/agent/session_handoff_context.go`）が git に聞き、`blocked` / `warning` という**結論**まで
+組み立てて返す。CP はそれを送信時に評価し、Console は表示するだけ —— 条件を 3 層に分けて書くと必ずずれる。
+repo の座標（remote URL / branch / HEAD sha）も同じ理由でエージェント入力から取らない: 座標を
+**モデルが書ける構造化フィールド**にすると、Console がそれをクローン導線に変えた瞬間、「汚染された
+リポジトリを読ませるだけで、B に別の remote をクローンさせる」道具になる。
+
+⚠️ **`ahead > 0` だけを見るゲートは、一度も push していないブランチを素通しする。** upstream が無い
+ブランチでは `git status --porcelain=v2 --branch` が `# branch.ab` 行そのものを出さないので ahead は 0 に
+なる —— 引き継ぎで最も起きる形をちょうど見逃す。`no_upstream` と `detached_head` も止める側へ倒してある
+（`TestHandoffContextBlocksBranchNeverPushed`）。
+
+⚠️ **remote URL は資格情報を落としてから載せる**（`sanitizeRemoteURL`）。`https://x-access-token:…@host/…`
+のまま offer に入れると、引き継ぎが**トークンの受け渡し**になる。
 
 ⚠️ `shared_session_catalog` が持っているのは `working_copy_id / worktree / branch` までで **remote URL は無い**
 （`control-plane/store_share.go:335`）。B 側で作業コピーを同定するには remote URL が要るので、offer の
-スナップショット（§77.11）に足す。
+スナップショット（§77.11）に足してある。
 
 ## 77.6 MCP ツールは増やさない
 
@@ -116,8 +127,10 @@ offer の状態は `pending / accepted / declined / withdrawn / expired`。
 | `declined` / `expired` / `withdrawn` | 注意なしで普通に起動。並べて「別の共有先へ投げ直す」 |
 | `accepted` | 起動は可能だが二重作業の警告。禁止はしない（A の Workspace は A のもの） |
 
-⚠️ **自動撤回は起動と同一トランザクションで行う。** 「A が痺れを切らして自分で始めた」と「B が受け取った」が
-競合するのが最悪の形（同じ仕事が 2 つ走る）なので、この窓を閉じる。
+⚠️ **撤回は起動の「前」に、`pending → withdrawn` の条件付き更新として通す。** 「A が痺れを切らして
+自分で始めた」と「B が受け取った」が競合するのが最悪の形（同じ仕事が 2 つ走る）で、この更新に負けた側
+——つまり相手が先に受け取っていた側——は**起動をやめる**。撤回してから起動する順序でなければ、撤回に
+失敗したことに気づいた時にはもうセッションが立っている。
 
 **B 側の受諾は「1 クリックで受諾フローに入る」**という意味であって、押した瞬間に起動するのではない。
 開くのは前埋めされた起動モーダル（本文は編集可、repo・worktree・エージェント・モデルは B の選択）。
@@ -234,11 +247,17 @@ session_handoff_offer
 
 ## 77.14 段階
 
-- **P0**: `session_handoff_offer` テーブル＋ CP API（差し出す / 撤回 / 受諾 / 辞退）、A の送信 UI
-  （共有先ピッカー＋ push ゲート）、B の受諾 UI（前埋め起動モーダル）、A のカードの三態。
-- **P1**: 通知 2 kind（`handoff-offer` / `handoff-accepted`）＋ `openNotificationTarget` の分岐。
-- **P2**: バッジ（B のセクション / 行、A の行チップ）と台帳（A の「出した引き継ぎ」一覧）。
-- **P3**: 失効直前の 1 回通知、GC、`propose_session_handoff` の任意 `to` ヒント。
+- ✅ **P0**: `session_handoff_offer` テーブル（両方言）＋ CP API（差し出す / 撤回 / 受諾 / 辞退 /
+  宛先候補）、Agent の `GET /sessions/{name}/handoff-context`（push ゲートの素）、A の送信 UI
+  （共有先ピッカー＋ゲート表示）、B の受信箱と受諾（前埋め起動モーダル）、A のカードの三態。
+  通知 3 kind とバッジも P0 に前倒しで入れた —— 受信箱への入口が無いと B は届いたことに
+  気づけず、P0 だけでは機能として閉じないため。
+- ⏸ **P1**: 台帳（A の「出した引き継ぎ」一覧・`ShareListModal` の隣）。今は A のカードの
+  状態行が代わりを務めているが、セッションが消えた引き継ぎは辿れない。
+- ⏸ **P2**: `api/shared-sessions` の DTO に `handoffOffer` を載せる（今は受信箱の
+  `sessionId` と突き合わせて行バッジを出しているので追加リクエストは無いが、決着済みの
+  状態は受信側に出ない）。
+- ⏸ **P3**: 失効直前通知の実運用調整、GC、`propose_session_handoff` の任意 `to` ヒント。
 
 ## 77.15 採らなかった案
 

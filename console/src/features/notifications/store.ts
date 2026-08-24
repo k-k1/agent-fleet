@@ -10,6 +10,7 @@ import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionChatSplit, openSessionTerminal, openSessionTerminalSplit } from "../sessions/open.ts";
 import { openChat } from "../chat/open.ts";
 import { openRepoScm } from "../scm/open.ts";
+import { openSharedSession } from "../sharing/open.ts";
 import { unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
 
@@ -72,7 +73,10 @@ async function deliver(n: FleetNotification): Promise<void> {
   if (n.kind === "usage-reset") {
     if (s.usageResetNotify && s.ttsEnabled) announce(text.speech, text.body, undefined, "", "usage-notification");
   } else if (s.ttsSessionNotify) {
-    announce(text.speech, n.displayName, sessionVoiceOpts(n.target.id), n.target.id, "session-notification");
+    // ⚠️ target.id を自分のセッション名として声色を引くので、共有セッション宛（引き継ぎ）は
+    // 通さない。他人のセッション id で voice を引くと、無関係な設定が当たる。
+    const mine = n.target.type === "session";
+    announce(text.speech, n.displayName, mine ? sessionVoiceOpts(n.target.id) : undefined, mine ? n.target.id : "", "session-notification");
   }
 }
 
@@ -88,6 +92,13 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // submodules and whether they are fetched.
   if (n.kind === "submodule-sync" && typeof n.payload.repo === "string" && n.payload.repo) {
     openRepoScm(n.payload.repo);
+    return true;
+  }
+  // メンバーから受け取った引き継ぎ（docs/77）。行き先は自分のセッションではなく**共有ビュー**
+  // なので、下の session 解決には落とせない。共有が切れたあとは開けないが、それは正しい
+  // （offer は共有 ACL の派生物で、ACL が消えれば本文も消えている）。
+  if (n.kind === "handoff-offer" && typeof n.payload.catalogId === "string" && n.payload.catalogId) {
+    openSharedSession(n.payload.catalogId, split);
     return true;
   }
   if (n.target.type !== "session" || !n.target.id) return false;
