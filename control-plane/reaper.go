@@ -522,7 +522,11 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClock
 		// session_idle_timeout、人の判断待ちは interaction_idle_timeout。テナントは
 		// 「質問は早く畳んで安くしたい／うちは数時間待ってほしい」を独立に決められる。
 		to, on := cl.tier1For(s)
-		if !on || s.Kind != "claude" || !tier1Reapable(s) {
+		// kind の門（docs/75 P5）: shell / ssm は halt が「走っているジョブを殺す」意味に
+		// なるので tier1 の対象にしない（p3-9 からの割り切り。守りたいときは
+		// 「自動停止しない」ピン）。それ以外＝エージェントのセッションは、claude も
+		// managed（codex / opencode / …）も halt が resumable なので畳んでよい。
+		if !on || !tier1Foldable(s.Kind) || !tier1Reapable(s) {
 			continue
 		}
 		key := ws.ID + "|" + s.Name
@@ -542,16 +546,26 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClock
 		}
 	}
 
-	if !cl.wsOn {
-		return
-	}
 	// Tier 2: stop the whole workspace once it is fully cold.
 	_, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
 	// 在席は「接続の有無」ではなく「直近に人が触ったか」で見る（docs/75 P3）。
-	if rp.mgr.conns.watched(ws.ID, presenceGrace, now) || busy {
+	watched := rp.mgr.conns.watched(ws.ID, presenceGrace, now)
+	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
+	// ★観測をそのまま公開する（docs/75 P4）。管理画面はこれを読むだけで判定をやり直さない
+	// ので、「なぜ止まらないか」を調べる画面が reaper と別の答えを出すことがない。
+	// wsOn が false のときも記録する — 「予定なし」と「機能が切ってある」は別物。
+	rp.mgr.putIdleForecast(ws.ID, idleForecast{
+		Enabled:    cl.wsOn,
+		StopAt:     base.Add(cl.ws),
+		Holders:    holdersOf(sessions, watched, now),
+		ObservedAt: now,
+	})
+	if !cl.wsOn {
+		return
+	}
+	if watched || busy {
 		return // being watched or actively working
 	}
-	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
 	if now.Sub(base) >= cl.ws {
 		rp.stopWorkspace(ctx, rt, ws, cl.ws)
 	}
@@ -674,6 +688,13 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, w
 		log.Printf("idle-stop: lifecycle lost after claim %s: %v", ws.ContainerName, err)
 		return
 	}
+	// 止める前にアウトボックスを吸い出す（docs/75）。Agent の通知は Console が見に来た
+	// ときにしか drain されないので、ここで拾っておかないと「未回答のまま停止しました」が
+	// 次に Workspace を起こすまで誰にも届かない — 費用のために止めた結果、止めたことを
+	// 知らせる通知だけが止めたせいで消える。失敗しても停止は続ける（通知は次回拾える）。
+	drainCtx, cancelDrain := context.WithTimeout(lease.Context(), 5*time.Second)
+	drainAgentOutbox(drainCtx, rp.mgr.store, rt, ws.MembershipID)
+	cancelDrain()
 	if err := rt.Stop(lease.Context()); err != nil {
 		log.Printf("idle-stop: stop %s: %v", ws.ContainerName, err)
 		return

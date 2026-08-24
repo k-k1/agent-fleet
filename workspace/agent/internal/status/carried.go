@@ -134,3 +134,25 @@ func SweepCarried() int {
 	}
 	return dropped
 }
+
+// PutCarriedQuestion は「保留ペイロードのファイルを経由せずに」持ち越しを書く入口。
+//
+// managed セッション（docs/27）のためにある: 保留中の質問は runtime handle の中の
+// Interaction にしか無く、claude のような pending-question ファイルが存在しない。
+// PromoteCarried と同じく**上書きはしない**（既に鮮度のある持ち越しがあるなら残す）。
+func PutCarriedQuestion(sid string, questions json.RawMessage, text, reason string) bool {
+	if sid == "" || len(questions) == 0 {
+		return false
+	}
+	if prev, ok := ReadCarried(sid); ok && prev.Kind != "" {
+		return false
+	}
+	c := Carried{
+		Kind:       "question",
+		CapturedAt: time.Now().Format(time.RFC3339),
+		Reason:     reason,
+		Questions:  append(json.RawMessage(nil), questions...),
+		Text:       text,
+	}
+	return carriedFiles.Write(sid, c) == nil
+}

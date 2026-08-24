@@ -12,28 +12,61 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // promoteCarriedFor は畳まれようとしている（あるいは既に畳まれた）セッションの
-// 保留ペイロードを持ち越しへ昇格させる。claude 以外は pending-* を持たないので何もしない。
+// 保留ペイロードを持ち越しへ昇格させる。
+//
+// managed（codex / opencode / …）は claude の pending-* を持たない — 保留中の質問は
+// **runtime handle の中の Interaction にしか無い**（docs/27 §5）。ハンドルを落とせば
+// 一緒に消えるので、落とす前にここで写し取る。ハンドルが既に死んでいるとき（コンテナ
+// 停止後の一覧経路）は何も取れない — 取れないものを取れたことにはしないので、その場合は
+// 素直に false を返す。
 func promoteCarriedFor(m session.Meta) bool {
-	if normalizeKind(m.Kind) != session.KindClaude {
-		return false
+	promoted := false
+	switch {
+	case m.DriverKind() == session.DriverManaged:
+		promoted = promoteCarriedManaged(m)
+	case normalizeKind(m.Kind) == session.KindClaude:
+		// まだ生きている＝これから halt が殺すところ。既に死んでいる＝ Workspace 停止 /
+		// クラッシュ / 利用者の /exit を一覧が見つけたところ。
+		reason := "stopped"
+		if sessionAlive(m) {
+			reason = "halt"
+		}
+		promoted = status.PromoteCarried(session.UUID(m.Dir, m.Name), reason)
 	}
-	// まだ生きている＝これから halt が殺すところ。既に死んでいる＝ Workspace 停止 /
-	// クラッシュ / 利用者の /exit を一覧が見つけたところ。
-	reason := "stopped"
-	if sessionAlive(m) {
-		reason = "halt"
+	if promoted {
+		notifyCarried(m)
 	}
-	return status.PromoteCarried(session.UUID(m.Dir, m.Name), reason)
+	return promoted
+}
+
+// notifyCarried は「答えを待っていた対話を抱えたまま畳んだ」を通知センターへ流す。
+//
+// 畳むことそのものは無害（持ち越してあるので失われない）が、**利用者はそれを知らない**。
+// 一覧のバッジは Console を開いている人にしか見えず、質問が出たときの通知は「答えて
+// ください」としか言っていない。畳んだ側から 1 通出しておかないと、答えたつもりの無い
+// 質問が静かに保留のまま残る。
+func notifyCarried(m session.Meta) {
+	c, ok := status.ReadCarried(session.UUID(m.Dir, m.Name))
+	if !ok {
+		return
+	}
+	ev := notice.New("carried-interaction", m.Name, m.Kind, session.Display(m))
+	ev.Payload["interaction"] = c.Kind // question | plan | permission
+	ev.Payload["reason"] = c.Reason    // halt | stopped
+	_ = notice.Put(ev)
 }
 
 // oneLine は TUI へ打鍵する文字列を 1 行へ畳む。
@@ -225,6 +258,62 @@ func handleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 	// バッジは付けない（recordInjection しない）: これは利用者自身の決定で、Console の
 	// 質問カードから答えた場合と同じ「ふつうの user 発言」である。オペレーターや peer の
 	// 注入と混ぜると、誰の指示かの区別が壊れる。
+	if m.DriverKind() == session.DriverManaged {
+		// managed には打鍵する pane が無い。thread へ直接 1 ターン送る（create の
+		// initial_prompt と同じ経路）。ここは既に ensureSessionTmux（managed では
+		// Resume）を通っているので handle は生きている。
+		if err := sendManagedPrompt(m, prompt); err != nil {
+			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			return
+		}
+		markSessionWorking(name)
+		httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"delivering": true, "prompt": prompt, "kind": c.Kind})
+		return
+	}
 	go deliverInitialPrompt(name, prompt)
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"delivering": true, "prompt": prompt, "kind": c.Kind})
+}
+
+// promoteCarriedManaged copies a managed session's live pending question into the
+// carried store, before its runtime handle is dropped.
+//
+// ハンドルを**起こし直さない**のが要点: ここは halt / shutdown の直前で、既に死んで
+// いるハンドルを Resume すると、畳もうとしている thread をわざわざ立ち上げてしまう。
+// 生きているものだけを覗く。
+func promoteCarriedManaged(m session.Meta) bool {
+	if !managedAlive(m) {
+		return false
+	}
+	d, ok := driverOf(m)
+	if !ok {
+		return false
+	}
+	h, err := d.Resume(m) // Resume は冪等（生きた handle があればそれを返す・session_turn.go）
+	if err != nil {
+		return false
+	}
+	snap, err := h.Snapshot()
+	if err != nil || snap.Interaction == nil || snap.Interaction.Kind != "question" ||
+		len(snap.Interaction.Questions) == 0 {
+		return false
+	}
+	raw, err := json.Marshal(snap.Interaction.Questions)
+	if err != nil {
+		return false
+	}
+	return status.PutCarriedQuestion(session.UUID(m.Dir, m.Name), raw,
+		strings.TrimSpace(snap.Interaction.Prompt), "halt")
+}
+
+// sendManagedPrompt delivers one prose turn to a managed thread.
+func sendManagedPrompt(m session.Meta, prompt string) error {
+	d, ok := driverOf(m)
+	if !ok {
+		return fmt.Errorf("managed driver はこの kind ではまだ利用できません: %s", m.Kind)
+	}
+	h, err := d.Resume(m)
+	if err != nil {
+		return err
+	}
+	return h.Send(agents.TurnInput{Prompt: prompt})
 }
