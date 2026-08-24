@@ -1,6 +1,8 @@
 # 75. アイドル自動停止の条件整理と、保留中の対話の持ち越し
 
-> 状態: **設計検討（未実装）**。実装に着手する時点で ADR 0055 を起票する。
+> 状態: **P0〜P2 実装済み**（2026-08-24・develop 未マージ）。設計判断は
+> [decisions/0055](decisions/0055-idle-stop-and-carried-interactions.md)。
+> 残り = P3（在席の TTL）/ P4（観測 API）/ P5（他 kind）＋ halt 時の通知と停止直前の drain。
 > 前提となる既存実装は [history/p3-9-idle-stop](history/p3-9-idle-stop.md)（二段構えの導入）と
 > `control-plane/reaper.go`（現在は四段）。関連: [47](47-turn-abort-auto-resume.md)（limited /
 > spend_limit / auth の live 状態）、[64](64-ec2-persistent-workspace.md)（停止＝スロット解放）、
@@ -261,27 +263,30 @@ Console は**別のカード**として描く（見出しは「停止時に未�
 
 持ち越しがあっても、Workspace が停止していれば Agent に誰も聞けない。最小の追加は 2 つ:
 
-- **DB ミラーに 1 列**: `SessionRow` に `pending_interaction`（`""|question|plan|permission`）を足し、
-  停止中の一覧にもバッジを出す。`sessionsPayload` は running のとき Agent から作るので、
-  停止直前の最後のポーリングで自然に入る。
+- **✅ DB ミラーに 1 列**: `SessionRow.Carried`（`""|question|plan|permission`）を足し、
+  停止中の一覧にもバッジ（停止中・質問あり）を出す。`sessionsPayload` は running のとき
+  Agent から作るので、停止直前の最後のポーリングで自然に入る。**中継とミラーの両方**に
+  要る点に注意 — `sessionWire` に足し忘れれば silent drop、ミラーに列が無ければ
+  「Workspace を止めた瞬間にバッジが消える」。
 - **停止直前に通知を吸い出す**: tier2 が `rt.Stop` を呼ぶ前に `drainAgent` 相当を 1 回叩く。
   これが無いと「未回答のまま停止しました」通知が、次に Workspace を起こすまで届かない。
 
 ## 75.7 段階
 
-- **P0（安全側・非機能）**: 分類を `sessionActivity` 1 関数へ集約し、表駆動テストで固定する。
+- **✅ P0（安全側・非機能）**: 分類を `sessionActivity` 1 関数へ集約し、表駆動テストで固定する。
   `backgroundBusy` を machineBusy に入れる（D3・現状の実害を先に止める）。この段階では
-  question はまだ busy のまま＝挙動不変。
-- **P1（持ち越し）**: carried ストア（TTL/GC 付き・D9）＋昇格 3 契機＋wire＋Console カード＋
+  question はまだ busy のまま＝挙動不変。（`control-plane/session_activity.go`）
+- **✅ P1（持ち越し）**: carried ストア（TTL/GC 付き・D9）＋昇格 3 契機＋wire＋Console カード＋
   `POST /sessions/{name}/carried-answer`。SessionStart の消去を昇格の後ろへ。
   配達文面は §75.10 の実測形を固定値として持つ（「質問し直すな」の 1 行が本体）。
-- **P2（条件の切り替え）**: question を busy から外し、humanWait を tier1 の対象に。
-  `interaction_idle_timeout` を追加（既定は `session_idle_timeout`）。
-  halt 時に「未回答のまま停止しました」通知＋停止直前の drain。
-- **P3（在席の TTL）**: `presence_idle_timeout` と、端末入力に基づく attention 判定（D5）。
-- **P4（観測）**: `GET /api/admin/workspaces/{id}/idle-holders` — この Workspace を起こし続けて
+- **◐ P2（条件の切り替え）**: question を busy から外し、humanWait を tier1 の対象に。
+  `interaction_idle_timeout` を追加（既定は `session_idle_timeout`。テナント設定＋管理 UI 込み）。
+  停止中の一覧バッジ（§75.6.5 の DB ミラー 1 列）も入れた。
+  **残**: halt 時の「未回答のまま停止しました」通知と、停止直前の通知 drain。
+- **P3（在席の TTL・未着手）**: `presence_idle_timeout` と、端末入力に基づく attention 判定（D5）。
+- **P4（観測・未着手）**: `GET /api/admin/workspaces/{id}/idle-holders` — この Workspace を起こし続けて
   いるもの（接続 N 本 / セッション X が working / 最終 mutating 3 分前）を返す（D7）。
-- **P5（他 kind）**: managed / kiro / agy の人待ちを tier1 の対象に（D4）。持ち越しは
+- **P5（他 kind・未着手）**: managed / kiro / agy の人待ちを tier1 の対象に（D4）。持ち越しは
   driver の Interaction を構造化で持てないため、question は文章配達へフォールバックする。
 
 P0〜P2 で「止まらない」と「黙って消える」の両方が閉じる。費用に直接効くのは P2 で、
