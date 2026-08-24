@@ -311,3 +311,14 @@ describe("front matter", () => {
     expect(host.querySelector(".md-frontmatter-note")).toBeNull();
   });
 });
+
+// The delimiter fix lives in lib/markdown.ts; this is the check that the rendered view
+// actually goes through that instance, sanitizer and all.
+describe("emphasis in Japanese prose", () => {
+  it("renders bold whose run begins and ends on Japanese punctuation", async () => {
+    await render("あ**「強調」**です。~~取り消し。~~続く");
+    expect([...host.querySelectorAll("strong")].map((el) => el.textContent)).toEqual(["「強調」"]);
+    expect([...host.querySelectorAll("del")].map((el) => el.textContent)).toEqual(["取り消し。"]);
+    expect(host.textContent).not.toContain("**");
+  });
+});
