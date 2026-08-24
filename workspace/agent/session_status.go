@@ -299,6 +299,7 @@ type hookInput struct {
 	toolDetail string
 	delta      string // MessageDisplay: a streaming chunk of the assistant's text
 	source     string // SessionStart: startup | resume | clear | compact
+	toolName   string // PreToolUse/PostToolUse: which tool fired this hook ("" = not a tool event)
 }
 
 func decodeHookStdin() hookInput {
@@ -327,6 +328,7 @@ func decodeHookStdin() hookInput {
 		ntype:      in.NotificationType,
 		delta:      in.Delta,
 		source:     in.Source,
+		toolName:   in.ToolName,
 		toolDetail: permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command),
 	}
 }
@@ -339,16 +341,16 @@ func decodeHookStdin() hookInput {
 // and its PostToolUse, overwriting state to "permission" with an empty questions
 // payload. Clearing here would destroy the captured question, so the Console loses the
 // options. The question/plan is instead cleared by its own lifecycle
-// (PostToolUse→working, idle).
+// (PostToolUse→working, idle) — see clearsInteraction for WHICH working counts.
 func applyPendingPayloads(sid, state string, h hookInput) {
 	if state == "question" && len(h.questions) > 0 {
 		status.WritePendingQuestion(sid, h.questions)
-	} else if state != "permission" {
+	} else if state != "permission" && clearsInteraction(h.toolName, "AskUserQuestion") {
 		status.RemovePendingQuestion(sid)
 	}
 	if state == "plan" && h.plan != "" {
 		status.WritePendingPlan(sid, h.plan)
-	} else if state != "permission" {
+	} else if state != "permission" && clearsInteraction(h.toolName, "ExitPlanMode") {
 		status.RemovePendingPlan(sid)
 	}
 	if state == "permission" {
@@ -371,6 +373,28 @@ func applyPendingPayloads(sid, state string, h hookInput) {
 	if state == "working" || state == "idle" {
 		status.RemovePendingText(sid)
 	}
+}
+
+// clearsInteraction reports whether the hook event that carried toolName may clear the
+// captured payload of the interaction tool `own` (AskUserQuestion / ExitPlanMode).
+//
+// PostToolUse(*) は「完了ツールごとに working を打ち直す」ハートビート（claude/hooks.go）で、
+// モーダルを畳んだのもそのツール自身の PostToolUse なのだから、素直に消して構わない —
+// **ターンが一本道なら**。バックグラウンドのサブエージェント / Workflow が走っていると
+// その前提が崩れる: 実測（2026-08-24、claude 2.1.241）で、サブエージェントの道具は
+// **親と同じ session_id** で PreToolUse/PostToolUse を鳴らす。
+//
+//	{"ev":"pre", tool:"Agent"} → {"ev":"pre", tool:"Bash"} → {"ev":"post", tool:"Bash"} → …
+//
+// つまり質問モーダルが出たままでも裏の道具が終わるたびに working が飛んできて、保留中の
+// 質問ペイロードが消えていた。ペイロードを書くのは AskUserQuestion の PreToolUse ただ一度
+// きり（WritePendingQuestion の呼び出しはここだけ）なので、一度消えると二度と戻らず、
+// Console には転写由来の**不活性な**カードだけが残る＝「回答できない」（利用者報告）。
+//
+// 消してよいのは、そのモーダル自身の PostToolUse か、ツールを伴わない状態遷移
+// （UserPromptSubmit の working / Stop の idle / SessionStart の boot）だけ。
+func clearsInteraction(toolName, own string) bool {
+	return toolName == "" || toolName == own
 }
 
 // effectiveModal は status.EffectiveModal（question > plan > permission の優先順位）

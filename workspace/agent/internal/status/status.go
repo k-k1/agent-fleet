@@ -174,11 +174,17 @@ func LiveState(sid string) string {
 // and left the AUQ 中のセッションのバッジを「許可待ち」と表示させた — 出ているカードは
 // 質問なのにチップだけ許可を名乗る、という食い違い。
 //
-// Non-permission states pass through unchanged, so callers keep switching on it as
-// before. Only the claude/codex hook route writes these payloads, so no other kind can
-// hit the override.
+// "working" は同じ理由でもう一つの嘘つき状態である。PostToolUse(*) は完了ツールごとに
+// working を打ち直すハートビート（claude/hooks.go）で、**バックグラウンドのサブエージェント
+// / Workflow の道具も親と同じ session_id でそれを鳴らす**（実測 2026-08-24）。つまり質問
+// モーダルが出たまま裏で BG が回っていると、state だけが working に化ける。ここで拾わないと
+// 一覧もチップも「進行中」を名乗り、promptBlocker のガードも外れて自由文が黙ってモーダルに
+// 吸われる（利用者報告「BG 実行中に AUQ が出ると回答できない」）。
+//
+// その他の状態は素通しなので、呼び出し側は従来どおり switch できる。Only the claude/codex
+// hook route writes these payloads, so no other kind can hit the override.
 func EffectiveModal(sid, state string) string {
-	if state != "permission" {
+	if state != "permission" && state != "working" {
 		return state
 	}
 	// A question outranks a plan (surfacePendingPayloads shows the question card first,

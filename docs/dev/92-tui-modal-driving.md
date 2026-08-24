@@ -1,6 +1,6 @@
 # 92 — TUI モーダル駆動の実測検証プレイブック（AUQ ほか）
 
-正: コード（本書は検証手法と実測記録）/ 主な更新トリガ: claude CLI のバージョン更新・AUQ 駆動経路（`PendingQuestions` / `handleSessionInput`）の変更 / 最終確認: 2026-08（claude v2.1.232、§6 追加）
+正: コード（本書は検証手法と実測記録）/ 主な更新トリガ: claude CLI のバージョン更新・AUQ 駆動経路（`PendingQuestions` / `handleSessionInput`）の変更 / 最終確認: 2026-08（claude 2.1.241、§8 追加）
 
 Console のチャットは、エージェント TUI のモーダル（claude の AskUserQuestion=AUQ、プラン承認、
 許可プロンプト）を **tmux send-keys で代理操作**して回答する。この結合は claude CLI 側の
@@ -270,3 +270,65 @@ The user answered: "定義の表現形式は？"=(no option selected) notes: コ
 （末尾の質問は閉じ引用符が無いので、claude の定型文 "Read the answers carefully" /
 "You can now continue" で切る。未知の文言なら丸ごと残す＝嘘はつかない）。
 テストは `questionAnswers.test.ts`（実データそのままの3例）。
+
+## 8. BG 実行中に出た AUQ が答えられない — サブエージェントの道具は**親の**フックを鳴らす（2026-08-24、claude 2.1.241 で実測・修正済み）
+
+**症状**: バックグラウンドのサブエージェント / Workflow が走っている最中に AUQ が出ると、
+ミラーにはラジオの並んだカードが出るのに「回答を送信」が無く、**回答できない**。
+チップは「進行中」、質問カードの体裁だけが残る（利用者報告）。
+
+**実測（隔離プローブ）**: §3.1 と同じ形で、自分のセッション状態を汚さないよう
+`AF_SESSION_NAME` を落とし、AF のフックを読ませずに（`--setting-sources project`）
+自前のログ用フックだけを載せて回した。
+
+```bash
+# hooks.json: Pre/PostToolUse(*) を {ev,sid,tool} で追記するだけ
+env -u AF_SESSION_NAME claude -p --setting-sources project --settings ./hooks.json \
+  --dangerously-skip-permissions --model sonnet \
+  "まず Bash で 'echo parent-tool'。次に Agent ツールでサブエージェントに Bash を1回やらせて。"
+```
+
+```json
+{"ev":"pre","sid":"cd155514-…","tool":"Bash"}     // 親
+{"ev":"post","sid":"cd155514-…","tool":"Bash"}
+{"ev":"pre","sid":"cd155514-…","tool":"Agent"}
+{"ev":"pre","sid":"cd155514-…","tool":"Bash"}     // ★サブエージェント側の道具
+{"ev":"post","sid":"cd155514-…","tool":"Bash"}    // ★親と同じ session_id
+{"ev":"post","sid":"cd155514-…","tool":"Agent"}
+```
+
+→ **サブエージェントの道具呼び出しは、親と同じ `session_id` で PreToolUse/PostToolUse を
+鳴らす。** BG 実行はメインの claude プロセス**内**で回る（`claude.SubagentBusy` が
+/proc ではなく転写鮮度で BG を検出しているのと同じ事実の別の面）ので、
+モーダルが出たままでもフックだけは並行して飛んでくる。
+
+**根因**: `PostToolUse(*)` は「完了ツールごとに working を打ち直す」ハートビート
+（`claude/hooks.go`）で、**ターンが一本道**という前提に立っていた。BG の道具が終わるたび
+`session-status working` が親 sid で走り、`applyPendingPayloads` が
+`RemovePendingQuestion` する。ペイロードを書くのは AskUserQuestion の PreToolUse
+**ただ一度きり**なので、一度消えると二度と戻らない:
+
+- 回答フォーム（`PendingQuestions`）は `surfacePendingPayloads` が返す
+  `pendingQuestions` だけを見て出る → 出ない。
+- 残るのは転写由来の `QuestionBlock`（`disabled`＝**不活性**）だけ → 「ラジオはあるが
+  送信ボタンが無いカード」。
+- state も `working` に化けるので、`EffectiveModal`（permission しか救っていなかった）を
+  素通りし、一覧・チップは「進行中」。`promptBlocker` の `question_pending` ガードも外れ、
+  自由文はモーダルに吸われて**無言で消える**（§2 の「モーダルは文字を飲む」）。
+
+**修正**:
+1. 消してよいのは「そのモーダル自身の PostToolUse」か「ツールを伴わない状態遷移」
+   （UserPromptSubmit の working / Stop の idle / SessionStart の boot）だけ、と
+   `clearsInteraction(toolName, own)` で絞る（`session_status.go`）。フック stdin の
+   `tool_name` は元から読んでいた（permtool の説明用）ので、追加の配線は不要。
+2. `status.EffectiveModal` の救済対象に `working` を追加。「捕捉済みペイロードが正・生の
+   state は嘘をつく」という理屈が、permission だけでなく working にも要る（AUQ 自身の
+   permission_prompt で state が化ける件と同型）。
+
+回帰テストは `session_status_test.go`（`TestBackgroundToolHeartbeatKeepsPendingQuestion` /
+`…KeepsPendingPlan` / `TestUserPromptSubmitClearsPendingQuestion`）。前 2 者は消去規則と
+表示（`wireSession` / `driveState` / `promptBlocker`）の両方を固定してある。
+
+**教訓**: 「ターンは一本道」という前提を置いたフック配線は、BG サブエージェント /
+Workflow / Monitor が入った時点で崩れる。フックで状態を書く経路を足すときは
+**「裏で並行に鳴りうるか」**を必ず一度問うこと。
