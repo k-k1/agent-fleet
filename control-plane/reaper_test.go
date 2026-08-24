@@ -176,7 +176,7 @@ func TestReaperRevalidatesActivityAfterFenceWait(t *testing.T) {
 		activate func(*manager, *reaperFenceRuntime, Workspace) error
 	}{
 		{name: "connection resumed", activate: func(m *manager, _ *reaperFenceRuntime, ws Workspace) error {
-			m.conns.addConn(ws.ID, "")
+			m.conns.addConn(ws.ID, "", false)
 			return nil
 		}},
 		{name: "request touched workspace", activate: func(m *manager, _ *reaperFenceRuntime, ws Workspace) error {
