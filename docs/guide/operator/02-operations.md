@@ -196,8 +196,12 @@ hours** (measured: 172 probes for `/actuator/heapdump`, `/.env` and friends in t
   and a Workspace with nothing running is stopped after **2 hours**. That is the default;
   `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT` (a session parked on a question or an approval) / `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT` (how long a terminal with no typing still counts as someone being there; 30m) change it (per-tenant overrides are in the
   Admin UI — a tenant setting `0` opts that tenant out, and `0` in the env turns it off for the
-  whole deployment). A stopped Workspace starts automatically the next time the user opens a
-  terminal (`AF_AUTOSTART`). This is effective for
+  whole deployment). A stopped Workspace comes back when the user presses **Start**, and
+  `AF_AUTOSTART` (on by default) additionally starts it for the deliberate "I am using this
+  now" actions — creating, forking or resuming a session, answering a carried question, the
+  SSM node lookup. **Opening a terminal does not start it, and neither does reading or
+  reloading the Console**: those answer "the workspace is stopped — start it first", so a tab
+  left open never keeps a Workspace warm. This is effective for
   saving resources. For the meaning of the env vars, see
   [.env.example](../../../deploy/compose/.env.example); for how it works, see
   [dev/09 §9.4](../../dev/09-deploy.md).
