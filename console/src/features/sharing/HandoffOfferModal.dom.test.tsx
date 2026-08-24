@@ -96,11 +96,17 @@ describe("HandoffOfferModal", () => {
     expect(sendButton()?.disabled).toBe(false);
   });
 
-  it("共有していないセッションは行き止まりにせず共有導線を出す", async () => {
+  // ⚠️ 実利用で最初に踏まれた形。共有していないのは**正常な状態**なので、CP は 200 ＋ 空の
+  // 候補で答える。画面はそれを「先に共有してください」と言い切り、共有の導線をその場に置く
+  // ——「取得に失敗しました」や読み込み中のままでは、利用者は次の一手が分からない。
+  it("共有していないセッションは、先に共有する旨を説明して導線を出す", async () => {
     await render({ members: [], context: { vcs: "git", branch: "main", ahead: 0 } });
     expect(sendButton()?.disabled).toBe(true);
+    const notShared = find(".handoff-blocked");
+    expect(notShared?.textContent || "").toContain("共有");
     const labels = [...document.querySelectorAll("button")].map((b) => b.textContent || "");
-    expect(labels.some((t) => t.length > 0)).toBe(true);
-    expect(find(".handoff-blocked")).toBeTruthy();
+    expect(labels.some((t) => t.includes("共有"))).toBe(true);
+    // 読み込み中の表示が残っていないこと（残ると「進まない」に見える）。
+    expect(document.body.textContent || "").not.toContain("読み込み中");
   });
 });
