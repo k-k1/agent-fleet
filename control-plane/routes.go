@@ -359,6 +359,18 @@ func registerSessionShareRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/session-share-proposals", a.withMembership(a.listProposals))
 	mux.HandleFunc("POST /api/session-share-proposals/{id}/approve", a.withMembership(a.approve))
 	mux.HandleFunc("POST /api/session-share-proposals/{id}/reject", a.withMembership(a.reject))
+
+	// メンバーへの引き継ぎ（docs/77 / ADR 0057）。共有 ACL の派生物なのでここに同居させ、
+	// 在庫同期のスロットルを共有 API の**同じインスタンス**と分け合う。
+	h := newSessionHandoffAPI(cfg.mgr, a)
+	mux.HandleFunc("GET /api/sessions/{name}/handoff-recipients", h.withResolved(h.recipients))
+	mux.HandleFunc("POST /api/session-handoff-offers", h.withResolved(h.create))
+	mux.HandleFunc("GET /api/session-handoff-offers", h.withMembership(h.listOwned))
+	// 受け手の受信箱。リテラルは {id} より優先されるので、この並びで衝突しない。
+	mux.HandleFunc("GET /api/session-handoff-offers/received", h.withMembership(h.listReceived))
+	mux.HandleFunc("DELETE /api/session-handoff-offers/{id}", h.withMembership(h.withdraw))
+	mux.HandleFunc("POST /api/session-handoff-offers/{id}/accept", h.withMembership(h.accept))
+	mux.HandleFunc("POST /api/session-handoff-offers/{id}/decline", h.withMembership(h.decline))
 }
 
 // Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the

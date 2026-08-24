@@ -14,6 +14,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLaunchSeed, useLaunchTarget, useReposStore, type Repo } from "../repos/store.ts";
+import { HandoffOfferModal } from "../sharing/HandoffOfferModal.tsx";
+import { offerForSession, useHandoffStore } from "../sharing/handoffStore.ts";
 import type { Session } from "../../types/session.ts";
 
 export interface Proposal {
@@ -118,7 +120,14 @@ export function HandoffProposal({
   // targets the PARENT working copy with a new worktree branched from this session's
   // current branch, so the handoff lands isolated rather than sharing the source's dir.
   const [newWorktree, setNewWorktree] = useState(false);
+  const [offerOpen, setOfferOpen] = useState(false);
   const repos = useReposStore((s) => s.repos);
+  // メンバーへの引き継ぎ（docs/77）は**セッション単位**の事実で、提案 1 件ごとには紐付かない
+  // （未処理は 1 セッション 1 件）。だからカードには「このセッションは今こうなっている」を出す。
+  const offer = useHandoffStore((st) => offerForSession(st.owned, session));
+  // 左ペインの共有セクションが定期取得しているが、そこが描かれていない配置でもカードの
+  // 状態が空にならないよう、開いた時点で 1 回だけ取り直す。
+  useEffect(() => { void useHandoffStore.getState().refresh(); }, [session]);
 
   // Follow the server copy while not editing (the poll above refreshes it), so an edit
   // made in another tab shows up — but never clobber what the user is typing here.
@@ -158,7 +167,18 @@ export function HandoffProposal({
     }
     onChange(null);
   };
-  const launch = () => {
+  const launch = async () => {
+    // ⚠️ 受領待ちのまま自分で起動すると、同じ仕事が 2 つ走る。撤回を**起動の前に条件付きで**
+    // 通し、負けた（＝相手が先に受け取っていた）ら起動をやめる（ADR 0057 決定 6）。
+    if (offer?.status === "pending") {
+      if (!window.confirm(tr("handoff.withdraw_confirm", { who: offer.recipientUserKey }))) return;
+      const d = await apiJSON(`api/session-handoff-offers/${encodeURIComponent(offer.id)}`, "DELETE");
+      void useHandoffStore.getState().refresh();
+      if (d?.error) {
+        toast(tr("handoff.withdraw_lost"));
+        return;
+      }
+    }
     const path = sessionMeta?.dir || sessionMeta?.path || "";
     if (!path) {
       toast(tr("mirror.handoff_no_dir"));
@@ -239,10 +259,40 @@ export function HandoffProposal({
         <button type="button" className="ghost xs" disabled={busy} onClick={() => void discard()}>
           <Icon name="trash" /> {tr("mirror.handoff_discard")}
         </button>
-        <button type="button" className={proposal.launched_at ? "ghost xs" : "primary xs"} disabled={busy} onClick={launch}>
+        <button type="button" className="ghost xs" disabled={busy} onClick={() => setOfferOpen(true)}>
+          <Icon name="broadcast" /> {tr("handoff.offer_action")}
+        </button>
+        <button type="button" className={proposal.launched_at ? "ghost xs" : "primary xs"} disabled={busy} onClick={() => void launch()}>
           <Icon name="run" /> {proposal.launched_at ? tr("mirror.handoff_launch_again") : tr("mirror.handoff_launch")}
         </button>
       </div>
+      {offer && <HandoffOfferStatus offer={offer} />}
+      {offerOpen && (
+        <HandoffOfferModal
+          session={session}
+          initialTitle={proposal.title}
+          initialPrompt={proposal.prompt}
+          onClose={() => setOfferOpen(false)}
+        />
+      )}
     </HandoffCard>
   );
+}
+
+/** 引き継ぎの状態チップ。通知は流れ物なので、**二重作業を防ぐ**のはこの行の役目である
+ *  （docs/77 §77.10）。 */
+function HandoffOfferStatus({ offer }: { offer: ReturnType<typeof offerForSession> }) {
+  const tr = useT();
+  if (!offer) return null;
+  const key =
+    offer.status === "pending"
+      ? "handoff.state_pending"
+      : offer.status === "accepted"
+        ? "handoff.state_accepted"
+        : offer.status === "declined"
+          ? "handoff.state_declined"
+          : offer.status === "withdrawn"
+            ? "handoff.state_withdrawn"
+            : "handoff.state_expired";
+  return <p className={"mirror-handoff-offer" + (offer.status === "pending" ? " is-pending" : "")}>{tr(key, { who: offer.recipientUserKey })}</p>;
 }
