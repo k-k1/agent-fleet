@@ -52,7 +52,11 @@ func holdersOf(sessions []sessionWire, watched bool, now time.Time) []idleHolder
 			out = append(out, idleHolder{Kind: "pin", Session: s.Name, Until: s.KeepAwakeUntil})
 		case s.BackgroundBusy:
 			out = append(out, idleHolder{Kind: "background", Session: s.Name})
-		case s.State == stateWorking:
+		case busyState(s.State):
+			// 状態名を直接並べない: reaper の busy 判定（sessionActivity）と同じ
+			// 述語を見る。working だけを見ていた頃、compacting は reaper では
+			// machineBusy なのに画面では holders が空＝ StopAt が出ていた
+			// （docs/75 決定 11 違反）。
 			out = append(out, idleHolder{Kind: "working", Session: s.Name})
 		}
 	}
