@@ -81,6 +81,15 @@ func gracefulShutdown(budget time.Duration) {
 	// Attachments own neither Page nor Chromium. Closing them detaches AF's target
 	// sessions and WebSockets only; the external owner remains responsible for exit.
 	workspaceBrowserAttachmentManager.Close()
+	// ★保留中の対話を持ち越す（docs/75 §75.6.3 の契機 2）。**abort と kill より前**に
+	// 置くのが要点で、ここが claude 以外にとっては最後の機会になる: claude の保留は
+	// pending-* としてホームに残るので後の契機（一覧・boot フック）が拾えるが、kiro の
+	// 承認パネルはペインの文字列、ACP 3 種の許可要求は runtime handle のメモリにしか
+	// 無く、下の AbortManaged / kill-session を通った時点で消える。
+	//
+	// tier2（Workspace 停止）はここを通る唯一の正常系なので、これが無いと「費用のために
+	// 止めたら、止めたことで人の判断が消えた」になる（ADR 0055 決定 2）。
+	promoteCarriedOnShutdown()
 	owned := ownedLiveSessions()
 	// managed セッション（docs/27 §10.2-8）: pane の C-c に相当する abort を配る。
 	// turn goroutine が cancelled を刻み status ストアが idle へ戻るので、下の
@@ -126,6 +135,22 @@ func gracefulShutdown(budget time.Duration) {
 	kiro.Shutdown()
 	for _, tn := range owned {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
+	}
+}
+
+// promoteCarriedOnShutdown snapshots every LIVE session's pending modal into the
+// carried store before the shutdown tears the panes and runtime handles down.
+//
+// 生きているものだけを見る: 停止中のセッションには覗く先が無く、覗こうとすると
+// managed では Resume が走って**畳もうとしている thread を立ち上げてしまう**
+// （promoteCarriedOther はそれをしないが、生存判定をここでも先に置いて意図を明示する）。
+// 昇格は冪等・非上書きなので、halt で既に昇格済みのものはそのまま残る。
+func promoteCarriedOnShutdown() {
+	for _, m := range session.ListMetas() {
+		if m.Archived || !sessionAlive(m) {
+			continue
+		}
+		promoteCarriedFor(m)
 	}
 }
 

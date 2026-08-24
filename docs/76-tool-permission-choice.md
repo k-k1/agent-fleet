@@ -74,15 +74,22 @@ ADR 0055 で、人待ち（question / plan / **permission** / blocked / auth / s
 「コンテナを起こし続ける理由」ではなくなり、`interaction_idle_timeout`（既定 1h）で tier1 halt される。
 畳んでも失われないことは**持ち越し**が担保する。
 
-持ち越しの守備範囲は docs/75 P5 で広がり、いま覆われているのは **claude（`pending-*`）** と
-**managed の runtime handle が持つ Interaction**（`promoteCarriedManaged`）。ACP 3 種の承認は
-`Kind:"question"` の Interaction なので、**managed で起動していれば承認待ちも持ち越される**。
+持ち越しの守備範囲は docs/75 P5 で**全 kind・両ルート**へ広がった。保留の在処は kind ごとに
+違う（会話 DB / `events.jsonl` / ペインのフッタ / ACP handle / ネイティブストア）ので、
+畳む側は `agents.ModalReporter`（`PendingModal`）1 つに訊く — 一覧は docs/75 §75.7.2。
+claude だけは従来どおり hooks が書く `pending-*` が正。
 
-⚠️ **残る穴は「claude 以外の TUI」**。cursor / copilot / kiro を CLI(TUI) で起動した場合と、
-managed を持たない agy は、承認待ちのまま `interaction_idle_timeout` を超えると**保留中の対話が
-失われる**（セッション自体は再開できる）。cursor / copilot / kiro は Console の既定が managed なので
-通常の経路は覆われている。⚠️ また **コンテナ停止で daemon ごと落ちた managed** も取れない
-（Interaction はメモリにしかない — docs/75 P5）。
+★**承認待ちが持ち越すのは「何を訊かれていたか」だけ**である（ADR 0055 決定 13）。ACP の
+Interaction は Console に選択カードを描かせるため `Kind:"question"` を名乗るが、**可否の
+宛先（JSON-RPC の id・TUI のモーダル）はプロセスと一緒に死んでいる**。畳んだ後に Yes/No を
+選ばせると「許可したのに実行されない」を作るので、持ち越しは `permission`＝事実だけへ落とし、
+再開後の配達は「必要ならもう一度実行を試みて、作業を続けてください」になる。つまり本機能で
+承認をオンにしたセッションは、畳まれても**何を訊かれていたかは残るが、承認そのものはやり直し**
+になる。費用（畳む）と安全（届かない承認を偽装しない）のどちらを採るかで、後者を採った。
+
+⚠️ **取れない経路**: コンテナごと SIGKILL（ECS の stop timeout 超過・ホスト OOM・EC2 の強制停止）
+されると、ACP handle とペインにしかない承認待ちは失われる。`halt`（tier1）と `gracefulShutdown`
+を通る正常停止（tier2 の停止はこちら）では取れる。
 
 ## 76.6 無人運転との相性
 
@@ -117,4 +124,7 @@ managed を持たない agy は、承認待ちのまま `interaction_idle_timeou
 - P1: codex / opencode（§76.4）。
 - 一覧やミラーで「このセッションは承認あり」を常時見せるか。claude はモードチップが
   `Bypass` / `Default` を出す（`paneMode`）が、他 kind と managed には出ない。
-- claude 以外の **TUI** 起動の持ち越し（§76.5 の残る穴）。managed と claude は docs/75 P5 で覆われた。
+- 承認待ちの**可否そのもの**を持ち越すこと（§76.5）。現状は事実だけで、承認はやり直しになる。
+  やるなら「再開後に同じツール呼び出しを再現して、生きたモーダルで訊き直す」形になるが、
+  それは docs/75 決定 4（復元するのはモーダルではなく意図）を承認だけ例外にする話なので、
+  実際に「やり直しが煩わしい」という声が出てから考える。

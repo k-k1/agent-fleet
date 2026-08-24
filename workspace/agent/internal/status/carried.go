@@ -135,24 +135,32 @@ func SweepCarried() int {
 	return dropped
 }
 
-// PutCarriedQuestion は「保留ペイロードのファイルを経由せずに」持ち越しを書く入口。
+// PutCarried は「保留ペイロードのファイルを経由せずに」持ち越しを書く入口。
 //
-// managed セッション（docs/27）のためにある: 保留中の質問は runtime handle の中の
-// Interaction にしか無く、claude のような pending-question ファイルが存在しない。
+// claude 以外の kind のためにある（docs/75 P5）: 保留中の対話は pending-question /
+// pending-perm ではなく、会話 DB・events.jsonl・ペインのフッタ・runtime handle の
+// Interaction のいずれかにしか無い。どこから来たかは kind 側（agents.ModalReporter）が
+// 知っており、ここはその結果を受け取るだけ。
+//
 // PromoteCarried と同じく**上書きはしない**（既に鮮度のある持ち越しがあるなら残す）。
-func PutCarriedQuestion(sid string, questions json.RawMessage, text, reason string) bool {
-	if sid == "" || len(questions) == 0 {
+// 昇格の契機は複数あり、halt で昇格した後に一覧経路がもう一度呼ぶ順序があるため。
+func PutCarried(sid string, c Carried, reason string) bool {
+	if sid == "" {
+		return false
+	}
+	switch c.Kind {
+	case "question":
+		if len(c.Questions) == 0 {
+			return false // 回答フォームの無い質問は運んでも押せない
+		}
+	case "plan", "permission":
+	default:
 		return false
 	}
 	if prev, ok := ReadCarried(sid); ok && prev.Kind != "" {
 		return false
 	}
-	c := Carried{
-		Kind:       "question",
-		CapturedAt: time.Now().Format(time.RFC3339),
-		Reason:     reason,
-		Questions:  append(json.RawMessage(nil), questions...),
-		Text:       text,
-	}
+	c.CapturedAt = time.Now().Format(time.RFC3339)
+	c.Reason = reason
 	return carriedFiles.Write(sid, c) == nil
 }

@@ -25,19 +25,22 @@ import (
 )
 
 // promoteCarriedFor は畳まれようとしている（あるいは既に畳まれた）セッションの
-// 保留ペイロードを持ち越しへ昇格させる。
+// 保留中の対話を持ち越しへ昇格させる。
 //
-// managed（codex / opencode / …）は claude の pending-* を持たない — 保留中の質問は
-// **runtime handle の中の Interaction にしか無い**（docs/27 §5）。ハンドルを落とせば
-// 一緒に消えるので、落とす前にここで写し取る。ハンドルが既に死んでいるとき（コンテナ
-// 停止後の一覧経路）は何も取れない — 取れないものを取れたことにはしないので、その場合は
-// 素直に false を返す。
+// 保留の在処が kind で違うので、入口は 2 つある:
+//
+//   - claude — hooks が ask 時点で pending-question / pending-plan / pending-perm を
+//     ディスクへ書いているので、それを読むだけでよい（プロセスが死んだ後でも残る）。
+//   - それ以外 — 保留は会話 DB・events.jsonl・ペインのフッタ・runtime handle の
+//     Interaction のいずれかにあり、kind 自身に訊く（agents.ModalReporter）。
+//     このうちペインと handle は**プロセスと一緒に消える**ので、畳む前に呼ぶこと。
+//
+// ★ tier1 の門は kind ではなく「halt が resumable か」になっている（tier1Foldable・
+// docs/75 P5）。つまり claude 以外も畳まれる以上、claude 以外の持ち越しが無いと
+// ADR 0055 決定 2（畳んでよいのは失われないときだけ）が成立しない。
 func promoteCarriedFor(m session.Meta) bool {
 	promoted := false
-	switch {
-	case m.DriverKind() == session.DriverManaged:
-		promoted = promoteCarriedManaged(m)
-	case normalizeKind(m.Kind) == session.KindClaude:
+	if normalizeKind(m.Kind) == session.KindClaude {
 		// まだ生きている＝これから halt が殺すところ。既に死んでいる＝ Workspace 停止 /
 		// クラッシュ / 利用者の /exit を一覧が見つけたところ。
 		reason := "stopped"
@@ -45,6 +48,8 @@ func promoteCarriedFor(m session.Meta) bool {
 			reason = "halt"
 		}
 		promoted = status.PromoteCarried(session.UUID(m.Dir, m.Name), reason)
+	} else {
+		promoted = promoteCarriedOther(m)
 	}
 	if promoted {
 		notifyCarried(m)
@@ -274,35 +279,42 @@ func handleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"delivering": true, "prompt": prompt, "kind": c.Kind})
 }
 
-// promoteCarriedManaged copies a managed session's live pending question into the
-// carried store, before its runtime handle is dropped.
+// promoteCarriedOther copies a NON-claude session's live pending modal into the
+// carried store, before whatever holds it goes away（docs/75 P5）。
 //
-// ハンドルを**起こし直さない**のが要点: ここは halt / shutdown の直前で、既に死んで
-// いるハンドルを Resume すると、畳もうとしている thread をわざわざ立ち上げてしまう。
-// 生きているものだけを覗く。
-func promoteCarriedManaged(m session.Meta) bool {
-	if !managedAlive(m) {
-		return false
+// claude だけが保留をディスク（pending-question / pending-plan / pending-perm）に
+// 持っている。他の kind の保留は会話 DB・events.jsonl・ペインのフッタ・runtime handle の
+// Interaction のいずれかにあり、どれかは kind 自身しか知らない。だから訊く相手は
+// agents.ModalReporter 1 つに寄せてある — 畳む側は kind ごとの事情を持たない。
+//
+// ★**ハンドルもペインも起こし直さない**: ここは halt / shutdown の直前であり、既に
+// 死んでいるものを Resume すると、畳もうとしている thread をわざわざ立ち上げてしまう。
+// ModalReporter の実装はどれも「今あるものを覗く」だけで、無ければ false を返す。
+//
+// 取れないもの（コンテナごと SIGKILL された後の ACP / ペイン）は素直に失われる。
+// 取れないものを取れたことにはしない。
+func promoteCarriedOther(m session.Meta) bool {
+	mr, ok := agentOf(m.Kind).(agents.ModalReporter)
+	if !ok {
+		return false // 保留という概念を持たない kind（shell / ssm）
 	}
-	d, ok := driverOf(m)
+	pm, ok := mr.PendingModal(m)
 	if !ok {
 		return false
 	}
-	h, err := d.Resume(m) // Resume は冪等（生きた handle があればそれを返す・session_turn.go）
-	if err != nil {
-		return false
+	reason := "stopped"
+	if sessionAlive(m) {
+		reason = "halt"
 	}
-	snap, err := h.Snapshot()
-	if err != nil || snap.Interaction == nil || snap.Interaction.Kind != "question" ||
-		len(snap.Interaction.Questions) == 0 {
-		return false
+	c := status.Carried{Kind: pm.Kind, Permission: strings.TrimSpace(pm.Detail), Text: strings.TrimSpace(pm.Text)}
+	if pm.Kind == "question" {
+		raw, err := json.Marshal(pm.Questions)
+		if err != nil {
+			return false
+		}
+		c.Questions = raw
 	}
-	raw, err := json.Marshal(snap.Interaction.Questions)
-	if err != nil {
-		return false
-	}
-	return status.PutCarriedQuestion(session.UUID(m.Dir, m.Name), raw,
-		strings.TrimSpace(snap.Interaction.Prompt), "halt")
+	return status.PutCarried(session.UUID(m.Dir, m.Name), c, reason)
 }
 
 // sendManagedPrompt delivers one prose turn to a managed thread.

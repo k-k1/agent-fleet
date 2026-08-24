@@ -78,6 +78,34 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return li
 }
 
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。
+//
+// cursor の人待ちは ACP の `session/request_permission`（plan 起動 / bypass を外した
+// とき）だけで、TUI ルートの許可メニューは JSONL に痕跡を残さない（state.go の
+// 冒頭コメント）ので観測できない — 取れないものは取れないと答える。
+//
+// Kind は **permission**。Interaction 自体は "question" を名乗るが、それは Console に
+// 選択カードを描かせるための形であって、答えの宛先は ACP の JSON-RPC id である。
+// 子プロセスごと消えた後にその可否を選ばせても届かない（docs/75 §75.6.4）ので、
+// 持ち越すのは「何を訊かれていたか」という事実だけにする。
+//
+// ★ handle はメモリ上にしか無い。**畳む前に**呼ばれなければ何も残らない（昇格の契機は
+// halt と gracefulShutdown。コンテナごと SIGKILL された場合だけは拾えない）。
+func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
+	if m.DriverKind() != session.DriverManaged {
+		return agents.PendingModal{}, false
+	}
+	h := handleFor(m.Name)
+	if h == nil {
+		return agents.PendingModal{}, false
+	}
+	detail := h.pendingPermission()
+	if detail == "" {
+		return agents.PendingModal{}, false
+	}
+	return agents.PendingModal{Kind: "permission", Detail: detail}, true
+}
+
 func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
 
 // ChatID returns the slot's cursor chat UUID ("" when none allocated yet).

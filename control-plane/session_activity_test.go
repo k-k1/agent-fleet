@@ -14,6 +14,9 @@ func TestSessionActivityClassification(t *testing.T) {
 		want activity
 	}{
 		{"working は機械が動いている", sessionWire{Alive: true, State: stateWorking}, activityMachineBusy},
+		// codex の文脈圧縮。表から漏れていて unknown に落ちており、圧縮の最中に
+		// Workspace ごと止まりうる状態だった（docs/75 P5 で追加）。
+		{"compacting も機械が動いている", sessionWire{Alive: true, State: stateCompacting}, activityMachineBusy},
 		{"idle は畳んでよい", sessionWire{Alive: true, State: stateIdle}, activityIdleWait},
 		{"limited は時計待ちで idle と同じ", sessionWire{Alive: true, State: stateLimited}, activityIdleWait},
 		{"question は人待ち", sessionWire{Alive: true, State: stateQuestion}, activityHumanWait},
@@ -60,6 +63,7 @@ func TestHoldsWorkspace(t *testing.T) {
 		{stateBlocked, false, false},
 		{stateAuth, false, false},
 		{stateSpendLimit, false, false},
+		{stateCompacting, false, true}, // 圧縮中は止めない
 		{"", false, false},
 	}
 	for _, c := range cases {
@@ -81,8 +85,8 @@ func TestTier1Reapable(t *testing.T) {
 		stateQuestion: true, statePlan: true, statePermission: true,
 		stateBlocked: true, stateAuth: true,
 	}
-	for _, st := range []string{stateWorking, stateIdle, stateQuestion, statePlan, statePermission,
-		stateBlocked, stateAuth, stateLimited, stateSpendLimit, ""} {
+	for _, st := range []string{stateWorking, stateCompacting, stateIdle, stateQuestion, statePlan,
+		statePermission, stateBlocked, stateAuth, stateLimited, stateSpendLimit, ""} {
 		s := sessionWire{Alive: true, State: st}
 		if got := tier1Reapable(s); got != reapable[st] {
 			t.Errorf("tier1Reapable(%q) = %v, want %v", st, got, reapable[st])
