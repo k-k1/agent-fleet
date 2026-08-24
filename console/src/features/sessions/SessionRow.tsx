@@ -22,7 +22,7 @@ import { useSettings } from "../../lib/settings.ts";
 import { workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import { displayName, stateInfo, exitLabel, keepAwakeLeft, KEEP_AWAKE_HOURS } from "../../lib/sessionview.ts";
+import { displayName, stateInfo, exitLabel, remainingShort, KEEP_AWAKE_HOURS } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { ordClass } from "../../layout/badges.ts";
@@ -210,11 +210,11 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
         {/* 停止しないピン（docs/75）: 期限が生きている間だけ出す。切れたピンをバッジに
             残すと「守られているつもり」で放置されるので、時計は表示側でも見る。 */}
-        {keepAwakeLeft(s.keepAwakeUntil) && (
+        {remainingShort(s.keepAwakeUntil) && (
           <Icon
             name="debug-pause"
             className="sess-awake"
-            title={tr("srow.keep_awake_badge", { left: keepAwakeLeft(s.keepAwakeUntil) })}
+            title={tr("srow.keep_awake_badge", { left: remainingShort(s.keepAwakeUntil) })}
           />
         )}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
@@ -455,11 +455,11 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                   title={tr("srow.keep_awake_hint")}
                   onClick={() => {
                     setMenuOpen(false);
-                    void actions.setKeepAwake(s, keepAwakeLeft(s.keepAwakeUntil) ? 0 : KEEP_AWAKE_HOURS);
+                    void actions.setKeepAwake(s, remainingShort(s.keepAwakeUntil) ? 0 : KEEP_AWAKE_HOURS);
                   }}
                 >
                   <Icon name="watch" />{" "}
-                  {keepAwakeLeft(s.keepAwakeUntil)
+                  {remainingShort(s.keepAwakeUntil)
                     ? tr("srow.keep_awake_off")
                     : tr("srow.keep_awake_on", { hours: KEEP_AWAKE_HOURS })}
                 </button>

@@ -29,6 +29,14 @@ type manager struct {
 	activityProtectedUntil map[string]time.Time
 	store                  Store
 	conns                  *connRegistry // P3-9: live activity/attachment tracking for idle-stop
+	// idleForecasts は reaper が毎スイープで置いていく「この Workspace はいつ止まるか /
+	// なぜ止まらないか」（docs/75 P4）。管理画面はここを読むだけで、判定をやり直さない。
+	//
+	// ★再導出しないことが要件そのもの: 画面が自前で計算すると、reaper が実際に見ている
+	// もの（在席・保留中の対話・ピン・共有ウォーターマーク）とズレて、「止まらない理由」を
+	// 調べるための画面が別の答えを出す。それなら無い方がましなので、reaper の**決定を
+	// そのまま**公開する。鮮度はスイープ間隔（既定 60 秒）。
+	idleForecasts map[string]idleForecast
 
 	// rtFactory is the profile-selected Runtime adapter builder (Docker locally,
 	// ECS on AWS; P3-7). Every runtime is constructed through it — see runtimeFor.

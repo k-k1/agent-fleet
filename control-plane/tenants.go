@@ -294,6 +294,15 @@ func (a adminAPI) listMembers(w http.ResponseWriter, r *http.Request) {
 				"container":   container, "state": state,
 				"status": status,
 			}
+			// 自動停止の見通し（docs/75 P4）: reaper が最後に観測した「いつ止まるか /
+			// 誰が止めているか」。ここで再計算しないのが要点で、画面が自前で導出すると
+			// reaper が実際に見ているもの（在席・ピン・背景作業）とズレて、調べるための
+			// 画面が別の答えを出す。稼働中の Workspace にしか意味が無い。
+			if wsRow, ok, _ := a.mgr.store.GetWorkspaceByMembership(r.Context(), m.MembershipID); ok {
+				if f, has := a.mgr.idleForecastFor(wsRow.ID); has && state == "running" {
+					row["idle"] = f
+				}
+			}
 			if ul, ok, _ := a.mgr.store.GetUserLimit(r.Context(), m.MembershipID); ok {
 				row["max_sessions"] = ul.MaxSessions
 				row["mem_limit"] = ul.MemLimit
