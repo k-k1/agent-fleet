@@ -18,9 +18,9 @@ import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 // 何も描かないので、ここで出し分けは持たない。
 import { MemberCostPanel } from "../cost/CloudCostView.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { stateInfo } from "../../lib/sessionview.ts";
+import { remainingShort, stateInfo } from "../../lib/sessionview.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
-import type { Member, WsSizing, WsSlot } from "./adminShared.ts";
+import type { Member, MemberIdle, WsSizing, WsSlot } from "./adminShared.ts";
 
 // MembersPanel — 名簿と「メンバー追加」。TenantView の中に直接書かれていたものを、
 // テナント設定モーダルからも同じ実装を差せるように 1 つの部品にした（描画も
@@ -86,12 +86,107 @@ export function MembersPanel({
               <span className="mr-email muted">{m.email || ""}</span>
               <span className="mr-role">{m.status === "removed" ? tr("admin.member_removed") : m.role}</span>
               <MemberSizeChips m={m} sizing={sizing} />
+              <MemberIdleChip idle={m.idle} state={m.state} />
               <Icon name="chevron-right" className="mr-go" />
             </button>
           ))}
         </div>
       )}
       <AddMember slug={slug} isSuper={isSuper} onAdded={loadMembers} />
+    </section>
+  );
+}
+
+// MemberIdleChip — 自動停止の見通し（docs/75 P4）。
+//
+// なぜ名簿に出すのか: 自動停止が効かないとき、これまで運用者に見えるものが何も無かった。
+// reaper はログを出すだけで、調べる唯一の手段が他人のコンテナへ docker exec して status
+// ファイルを読むことだった。止まる予定と「止めているもの」は同じ場所に出す — 「あと 20 分」
+// と「セッション s5 が実行中だから止まらない」は同じ問いへの答えで、別々に置くと
+// 「予定が出ていない＝壊れている」と読まれる。
+//
+// ⚠️ ここで再計算はしない。自前で導出すると reaper が実際に見ているもの（在席・ピン・
+// 背景作業・共有ウォーターマーク）とズレて、原因調査のための画面が別の答えを出す。
+// 出すのは reaper が最後に観測した値そのもの。
+function MemberIdleChip({ idle, state }: { idle?: MemberIdle; state?: string }) {
+  const tr = useT();
+  // 稼働していない Workspace に停止予定は無い（CP も running のときしか載せない）。
+  if (state !== "running" || !idle) return null;
+  if (!idle.enabled) {
+    return <span className="mr-idle muted" title={tr("admin.idle_off_hint")}>{tr("admin.idle_off")}</span>;
+  }
+  const holders = idle.holders ?? [];
+  if (holders.length > 0) {
+    const h = holders[0];
+    const label =
+      h.kind === "pin"
+        ? tr("admin.idle_hold_pin")
+        : h.kind === "working"
+          ? tr("admin.idle_hold_working")
+          : h.kind === "background"
+            ? tr("admin.idle_hold_background")
+            : tr("admin.idle_hold_watching");
+    // 2 件目以降は件数だけ（名簿の行は 1 行に収める）。詳細はメンバー詳細で出す。
+    const more = holders.length > 1 ? tr("admin.idle_hold_more", { n: String(holders.length - 1) }) : "";
+    return (
+      <span className="mr-idle hold" title={holdersTitle(holders, tr)}>
+        {(h.session ? `${label} (${h.session})` : label) + more}
+      </span>
+    );
+  }
+  const left = remainingShort(idle.stopAt);
+  if (!left) return null;
+  return (
+    <span className="mr-idle" title={tr("admin.idle_stop_at", { at: new Date(idle.stopAt!).toLocaleString() })}>
+      {tr("admin.idle_stop_in", { left })}
+    </span>
+  );
+}
+
+function holdersTitle(holders: NonNullable<MemberIdle["holders"]>, tr: (k: never, p?: never) => string): string {
+  return holders.map((h) => (h.session ? `${h.kind}: ${h.session}` : h.kind)).join(" / ");
+}
+
+// MemberIdleDetail — メンバー詳細の「自動停止の見通し」。
+//
+// 名簿のチップ（MemberIdleChip）が 1 行に畳んでいるものを開いて出すだけで、判定は
+// どちらも reaper の観測そのもの。**観測時刻を必ず添える**: スイープ間隔（既定 60 秒）
+// ぶん古いので、秒単位で断言させると「画面ではまだ 3 分あったのに止まった」になる。
+function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: string }) {
+  const tr = useT();
+  if (state !== "running" || !idle) return null;
+  const holders = idle.holders ?? [];
+  const left = remainingShort(idle.stopAt);
+  return (
+    <section className="admin-panel">
+      <h4>{tr("admin.idle_heading")}</h4>
+      {!idle.enabled ? (
+        <p className="muted">{tr("admin.idle_off_hint")}</p>
+      ) : holders.length === 0 ? (
+        <p className="muted">
+          {left
+            ? tr("admin.idle_stop_in", { left }) + tr("admin.idle_stop_at_paren", { at: new Date(idle.stopAt!).toLocaleString() })
+            : tr("admin.idle_stopping_soon")}
+        </p>
+      ) : (
+        <>
+          <p className="muted">{tr("admin.idle_held")}</p>
+          <ul className="idle-holders">
+            {holders.map((h, i) => (
+              <li key={i}>
+                {h.kind === "pin"
+                  ? tr("admin.idle_hold_pin_row", { session: h.session ?? "", left: remainingShort(h.until) || "–" })
+                  : h.kind === "working"
+                    ? tr("admin.idle_hold_working_row", { session: h.session ?? "" })
+                    : h.kind === "background"
+                      ? tr("admin.idle_hold_background_row", { session: h.session ?? "" })
+                      : tr("admin.idle_hold_watching_row")}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <p className="admin-hint">{tr("admin.idle_observed", { at: new Date(idle.observedAt).toLocaleTimeString() })}</p>
     </section>
   );
 }
@@ -477,6 +572,11 @@ export function MemberView({
         </span>
         {member.email && <span className="mh-email muted">{member.email}</span>}
       </header>
+
+      {/* 自動停止の見通し（docs/75 P4）。名簿の行は 1 件しか出せないので、詳細では
+          止めている理由を全部並べる — 「s5 が実行中」と「s3 にピンが掛かっている」は
+          運用者の次の一手が違う（待つ / 外してもらう）。 */}
+      <MemberIdleDetail idle={member.idle} state={member.state} />
 
       <section className="admin-panel">
         <h4>{tr("admin.ws_resources")}</h4>
