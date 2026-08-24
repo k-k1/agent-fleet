@@ -131,6 +131,24 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readTranscript(m)
 }
 
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。
+//
+// codex の人待ちは `request_user_input`（質問）**だけ**である。ツール承認は
+// managed では app-server の `item/permissions/requestApproval` を appclient.go が
+// 自動応答し、TUI ルートは bypass 起動なので許可プロンプトそのものが出ない。
+// よって permission は返さない（docs/75 §75.7 P5 に判断を明記）。
+//
+// 保留の在処は TUI（rollout 末尾の未応答 function_call）と managed（handle の
+// Interaction）で違うが、readTranscript が managedEnrich で両方を Pending に畳んで
+// くれるので、ここはその 1 本を読むだけでよい。
+func (a agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
+	td, _ := a.Transcript(m)
+	if len(td.Pending) == 0 {
+		return agents.PendingModal{}, false
+	}
+	return agents.PendingModal{Kind: "question", Questions: td.Pending}, true
+}
+
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// codex resumes (or starts) in its real project dir; refuse if it's gone.
 	if !session.DirExists(m.Dir) {

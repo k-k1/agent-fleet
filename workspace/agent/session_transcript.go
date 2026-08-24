@@ -384,6 +384,11 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if alive && len(td.Pending) > 0 {
 		resp["pendingQuestions"] = td.Pending
 	}
+	// 畳まれたときに答えを待っていた対話（docs/75 §75.6）。claude の /messages と同じ
+	// キー・同じ「保留が生きているあいだは出さない」規則で載せる — 出さないと、tier1 が
+	// 畳んだ非 claude セッションの持ち越しは**書かれるだけで誰にも見えない**（一覧の
+	// バッジは「質問あり」と言うのに、開いても答える口が無い）。
+	surfaceCarried(resp, session.UUID(meta.Dir, meta.Name))
 	// Prompts queued into the running turn (typed mid-run, not yet injected as a user
 	// message) so the mirror can badge them キュー済み — same gate as claude's path: the
 	// queue only means anything while a turn runs, and this hides stale leftovers.

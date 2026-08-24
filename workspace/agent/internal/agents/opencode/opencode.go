@@ -130,6 +130,22 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readTranscript(m)
 }
 
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。
+//
+// opencode の人待ちは question ツール**だけ**である。許可（`permission.asked`）は
+// managed driver が無条件 auto-allow するので、人が答える許可プロンプトは存在しない
+// （docs/75 §75.7 P5 に判断を明記）。
+//
+// 保留は opencode 自身のストア（part テーブルの running な question ツール）にあり、
+// プロセスが死んでも残る — halt より遅い契機でも拾える。
+func (a agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
+	td, _ := a.Transcript(m)
+	if len(td.Pending) == 0 {
+		return agents.PendingModal{}, false
+	}
+	return agents.PendingModal{Kind: "question", Questions: td.Pending}, true
+}
+
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// opencode resumes (or starts) in its real project dir; refuse if it's gone.
 	if !session.DirExists(m.Dir) {

@@ -23,6 +23,7 @@ import (
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in opencode
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -108,6 +109,34 @@ func Probe(m session.Meta) (string, []transcript.Question) {
 		return "question", qs
 	}
 	return "permission", permissionQuestions(payload)
+}
+
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。Probe の上の
+// 薄い写像だが、Kind の落とし方だけは Probe と違う: 許可は **permission** になる。
+//
+// Probe が許可に対して合成メニュー（Yes / No …）を返すのは、**生きている TUI へ
+// キー列を撃つため**である。畳まれた後にそのメニューを描くと、当てる先がもう無い
+// 答えを利用者に選ばせることになる（docs/75 §75.6.4）。運べるのは「どのコマンドを
+// 訊かれていたか」という事実だけで、それは合成した質問文がそのまま持っている。
+//
+// agy の保留は**会話 DB に残る**ので、ペインが死んだ後でも読める — ACP 3 種と違い、
+// halt より遅い契機（一覧が停止を見つけたとき）でも拾える。
+func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
+	st, qs := Probe(m)
+	switch st {
+	case "question":
+		if len(qs) == 0 {
+			return agents.PendingModal{}, false
+		}
+		return agents.PendingModal{Kind: "question", Questions: qs}, true
+	case "permission":
+		detail := ""
+		if len(qs) > 0 {
+			detail = qs[0].Question
+		}
+		return agents.PendingModal{Kind: "permission", Detail: detail}, true
+	}
+	return agents.PendingModal{}, false
 }
 
 // permissionQuestions synthesizes the pending permission menu as a Question so

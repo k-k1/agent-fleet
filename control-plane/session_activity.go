@@ -32,7 +32,13 @@ const (
 // 状態名。Agent 側（internal/agents/notify.go・internal/status）が正で、ここは
 // ワイヤ越しに来る文字列の写し。
 const (
-	stateWorking    = "working"
+	stateWorking = "working"
+	// stateCompacting は codex が文脈圧縮を走らせている（agents/codex の WireLive）。
+	// ワイヤに出る 10 個目の状態で、§75.2.1 の 9 状態の表から漏れていた — 分類が
+	// 無いと unknown に落ち、**圧縮の最中に Workspace ごと止まる**（機械が動いている
+	// のに起こし続ける理由に数えられない）。決定 9 のとおり、分からないものは
+	// どちらにも倒さないが、これは分かっている: 明確に machineBusy である。
+	stateCompacting = "compacting"
 	stateIdle       = "idle"
 	stateQuestion   = "question"
 	statePlan       = "plan"
@@ -65,7 +71,7 @@ func sessionActivity(s sessionWire) activity {
 		return activityMachineBusy
 	}
 	switch s.State {
-	case stateWorking:
+	case stateWorking, stateCompacting:
 		return activityMachineBusy
 	case stateIdle, stateLimited:
 		// limited は「時計待ち」。リセット時刻に CP の定時実行が起こす（docs/47 §4-9）

@@ -265,6 +265,27 @@ func TestToolEditsPicksEditFamilyOnly(t *testing.T) {
 	}
 }
 
+// 持ち越し（docs/75 P5）は「何の許可を求めていたか」を出す。events.jsonl の
+// スキーマは版で動くので**取れたら使う**扱いで、取れなくても許可待ちの判定そのものは
+// requestId だけで成立すること（detail が空でも state は question のまま）。
+func TestPendingPermissionDetail(t *testing.T) {
+	base := `{"type":"user.message","data":{"content":"x"},"timestamp":"2026-07-21T01:00:11Z"}` + "\n"
+	withDetail := base + `{"type":"permission.requested","data":{"requestId":"p1","command":"npm ci"},"timestamp":"2026-07-21T01:00:12Z"}` + "\n"
+	if st, d := liveStateDetailFromFile(writeFixture(t, withDetail)); st != "question" || d != "npm ci" {
+		t.Errorf("liveStateDetailFromFile = (%q,%q), want (question,npm ci)", st, d)
+	}
+	// 対象名が載っていない版でも許可待ちは許可待ち。
+	bare := base + `{"type":"permission.requested","data":{"requestId":"p1"},"timestamp":"2026-07-21T01:00:12Z"}` + "\n"
+	if st, d := liveStateDetailFromFile(writeFixture(t, bare)); st != "question" || d != "" {
+		t.Errorf("liveStateDetailFromFile = (%q,%q), want (question,\"\")", st, d)
+	}
+	// 完了したものの detail を引きずらない。
+	done := withDetail + `{"type":"permission.completed","data":{"requestId":"p1"},"timestamp":"2026-07-21T01:00:13Z"}` + "\n"
+	if st, d := liveStateDetailFromFile(writeFixture(t, done)); st == "question" || d != "" {
+		t.Errorf("完了後も許可待ちのまま: (%q,%q)", st, d)
+	}
+}
+
 // 権限確認あり（docs/76）。消えるのは --allow-all だけ。--no-remote / --no-remote-export
 // （会話のフリート外流出と二重操縦の防止）は権限確認とは別軸なので残る。
 func TestBuildProgramPermissionsOn(t *testing.T) {

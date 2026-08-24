@@ -26,7 +26,34 @@ import (
 // LiveState classifies the running TUI's state from its visible pane ("" when
 // unknowable —— pane 未取得／ブート直後でフッタ未描画)。
 func LiveState(m session.Meta) string {
+	// managed（ACP）にはペインが無いので、下の文字列契約は常に空を返す。turn 状態機械
+	// から供給しないと一覧のチップも reaper の分類も付かない（driver.go managedLiveState）。
+	if m.DriverKind() == session.DriverManaged {
+		return managedLiveState(m)
+	}
 	return classifyPane(tmuxx.CapturePane(session.TmuxName(m.Name)))
+}
+
+// approvalDetail は TUI の承認パネルが「何を承認しろと言っているか」を 1 行で返す
+// （docs/75 P5 の持ち越し用）。承認待ちでなければ ""。
+//
+// 契約句を含む行そのものを返す（"shell requires approval" のような 1 行）。パネルの
+// 体裁は版で動くので、行を丸ごと運んで**解釈しない** — 持ち越しカードが出すのは
+// 事実であって、構造化された選択肢ではない（可否の宛先はペインごと消えている）。
+func approvalDetail(m session.Meta) string {
+	return approvalLine(tmuxx.CapturePane(session.TmuxName(m.Name)))
+}
+
+func approvalLine(s string) string {
+	if classifyPane(s) != "question" {
+		return ""
+	}
+	for _, ln := range strings.Split(tailLines(s, footerWindow), "\n") {
+		if strings.Contains(ln, "requires approval") {
+			return strings.TrimSpace(ln)
+		}
+	}
+	return ""
 }
 
 // footerWindow bounds classification to the composer footer region（下端の非空行）。

@@ -1,8 +1,9 @@
 # 75. アイドル自動停止の条件整理と、保留中の対話の持ち越し
 
-> 状態: **P0〜P2 実装済み**（2026-08-24・develop 未マージ）。設計判断は
+> 状態: **P0〜P5 実装済み**（2026-08-24）。設計判断は
 > [decisions/0055](decisions/0055-idle-stop-and-carried-interactions.md)。
-> 残り = P3（在席の TTL）/ P4（観測 API）/ P5（他 kind）＋ halt 時の通知と停止直前の drain。
+> 残り = ECS 実配備での 1 周確認（§75.8 の「実機」）と、許可の写し取りのうち実機で
+> 再現できなかった経路（§75.10.1 J）。
 > 前提となる既存実装は [history/p3-9-idle-stop](history/p3-9-idle-stop.md)（二段構えの導入）と
 > `control-plane/reaper.go`（現在は四段）。関連: [47](47-turn-abort-auto-resume.md)（limited /
 > spend_limit / auth の live 状態）、[64](64-ec2-persistent-workspace.md)（停止＝スロット解放）、
@@ -42,7 +43,8 @@ ECS のタスクも EC2 スロットも保持されたままになる（reaper �
 
 ### 75.2.1 状態の一覧
 
-live 状態は 9 つ（`internal/agents/notify.go` と `internal/status/status.go`）。
+live 状態は 9 つ（`internal/agents/notify.go` と `internal/status/status.go`）——に、
+kind 固有の `compacting` を足して 10。
 `permission` は AUQ / ExitPlanMode 自身の permission_prompt で上書きされるため、
 読む側は必ず `status.EffectiveModal`（question > plan > permission）を通す。
 
@@ -57,6 +59,7 @@ live 状態は 9 つ（`internal/agents/notify.go` と `internal/status/status.g
 | `auth` | claude のログイン期限切れ（Workspace 単位の事実） | 人待ち |
 | `limited` | 利用上限のリセット待ち | 時計待ち |
 | `spend_limit` | 支出上限（増枠されるまで動かない） | 人待ち |
+| `compacting` | codex が文脈圧縮中（ワイヤに出る 10 個目。この表から漏れていた — P5 で追加） | 動く |
 
 これに wire 上のフラグ `backgroundBusy`（`run_in_background` のジョブ・in-process の
 サブエージェント / Workflow・S 状態の背景シェル）が直交する。
@@ -364,15 +367,64 @@ tier2 が止めるのは「在席でない」かつ「アイドル時計が `ws_
 - **✅ P5（他 kind）**: tier1 の門を `kind == "claude"` から「halt が resumable な kind」へ
   広げた（`tier1Foldable`）。**shell / ssm だけが例外**で、こちらの halt は走っている
   ジョブごと殺すことを意味し、しかも何が走っているかは af から見えない（§75.5.1）。
-  managed（codex / opencode / …）の保留質問は claude の `pending-*` を持たず
-  **runtime handle の中の Interaction にしか無い**ので、ハンドルを落とす前に写し取る
-  （`promoteCarriedManaged`。ハンドルを起こし直さない — 畳もうとしている thread を
-  わざわざ立ち上げないため）。配達は打鍵ではなく `ThreadHandle.Send` の 1 ターン。
-  **コンテナ停止で daemon ごと落ちた場合は取れない**（Interaction はメモリにしか無い）—
-  取れないものを取れたことにはしないので、その経路は素直に失われる。
+  持ち越しは kind ごとに在処が違うので `agents.ModalReporter` 1 つへ寄せた（§75.7.2）。
+  配達は claude/TUI が打鍵、managed が `ThreadHandle.Send` の 1 ターン。
 
 P0〜P2 で「止まらない」と「黙って消える」の両方が閉じる。費用に直接効くのは P2 で、
 P1 抜きの P2 は禁止（原則 2）。
+
+### 75.7.2 保留の在処は kind ごとに違う（P5 の本体）
+
+門を広げた瞬間、**claude 以外も畳まれるようになる**。よって原則 2（畳んでよいのは
+失われないときだけ）を満たすには、claude 以外の持ち越しが同時に要る。ところが保留の
+在処は kind ごとにばらばらで、しかも**寿命が違う**:
+
+| kind / 経路 | 保留の在処 | プロセスが死んだ後も読めるか | 持ち越しの Kind |
+|---|---|---|---|
+| claude | `pending-question` / `pending-plan` / `pending-perm`（hooks が ask 時点で書く） | **読める** | question / plan / permission |
+| agy | 会話 DB の最終 step（status=9） | **読める** | ASK_QUESTION → question / ツール許可 → permission |
+| codex | rollout 末尾の未応答 `request_user_input`（TUI）/ handle の Interaction（managed） | TUI は読める / managed は不可 | question |
+| opencode | ストアの running な question ツール | **読める** | question |
+| copilot | `events.jsonl` の未完了 `permission.requested`（TUI・managed 共通） | **読める** | permission |
+| cursor | ACP `session/request_permission`（managed のみ。TUI は観測不能） | 不可 | permission |
+| kiro | ペインのフッタ `requires approval`（TUI）/ ACP の許可（managed） | 不可 | permission |
+
+読み方を畳む側に散らさないため、入口は **`agents.ModalReporter`（`PendingModal`）1 つ**に
+寄せてある（`internal/agents/modal.go`）。claude だけは実装しない — そちらは hooks が書く
+`pending-*` が正で、同じことを 2 か所から主張させない。
+
+要点が 3 つある。
+
+1. **許可は question として運ばない。** ACP の Interaction も agy の合成メニューも、Console に
+   選択カードを描かせるために `question` の形をしているが、可否の宛先（JSON-RPC の id・
+   TUI のモーダル）は**プロセスと一緒に消えている**。畳んだ後に選ばせると、届かない答えを
+   利用者に選ばせることになる（許可したのに実行されない／その逆）。よって持ち越しは
+   `permission`＝**事実だけ**へ落とす（§75.6.4 と同じ判断）。
+2. **写し取りは畳む前。** ペインと ACP handle はプロセスと寿命を共にするので、
+   `halt` は **`DropHandle` / `kill-session` より前**に、`gracefulShutdown` は
+   **`AbortManaged` より前**に昇格する。順序を逆にすると呼ばれても必ず空になる
+   （実際 PR #165 の managed 経路は `dropManagedRuntime` の後に昇格しており、
+   `managedAlive` が false になるため一度も発火していなかった）。
+3. **codex / opencode に許可の持ち越しは無い** — 承認導線そのものが無いからである。
+   codex managed は `item/permissions/requestApproval` を `appclient.go` が自動応答し、
+   TUI ルートは bypass 起動。opencode managed は `permission.asked` を無条件 auto-allow。
+   **人が答える許可プロンプトが存在しない**ので、持ち越すものも無い。両者の人待ちは
+   質問ツール（`request_user_input` / `question`）だけで、そちらは持ち越す。
+
+**取れない経路（既知の割り切り）**: コンテナごと SIGKILL（ECS の stop timeout 超過・
+ホスト OOM・EC2 の強制停止）されると、cursor / kiro の許可要求と kiro TUI の承認パネルは
+失われる。ディスクに痕跡を残す設計は可能だが、**可否の宛先はどちらにせよ死んでいる**ので
+戻せるのは事実だけであり、そのために ask 時点の書き込みを増やす価値は薄いと判断した。
+`gracefulShutdown` を通る正常停止（tier2 の停止はこちら）では取れる。
+
+**表示側**: 停止中バッジ（`state.stopped_question` ほか）と `CarriedBlock` は元から kind 非依存
+だったが、**非 claude の `/messages`（generic 経路）が `surfaceCarried` を呼んでいなかった**。
+そのままだと持ち越しは書かれるだけで、一覧のバッジは「質問あり」と言うのに開いても
+答えるカードが無い＝ `POST /carried-answer` への入口がどこにも無い状態だった。
+
+**分類の穴を 1 つ塞いだ**: codex の `compacting` が §75.2.1 の 9 状態の表から漏れており、
+`sessionActivity` で unknown に落ちていた。**文脈圧縮の最中に Workspace ごと止まりうる**
+（機械が動いているのに起こし続ける理由に数えられない）ので machineBusy に入れた。
 
 ## 75.8 テスト計画
 
@@ -477,7 +529,47 @@ ExitPlanMode の承認ダイアログで止まった。`--allow-dangerously-skip
 差は出なかった）。**再現していないので事実として扱わない**が、plan モードの実効性の話なので
 別途 1 本追うだけの価値はある。
 
-## 75.11 状態別「畳まれた後、再開すると何が起きるか」
+## 75.10.1 実測（P5・非 claude の 1 周・codex 0.149.0 / cursor・2026-08-24）
+
+§75.10 が claude を対象にしたのと同じことを、**claude 以外**で 1 周させた。専用の
+tmux ソケット（`AF_TMUX_SOCKET=p5probe`）と使い捨て HOME で本物の `workspace-agent` を
+立て、資格情報は `~/.codex` / `~/.config/cursor` を**symlink して CLI 自身に読ませた**
+（コピーも読み出しもしない）。§75.10 の罠どおり `env -u AF_SESSION_NAME` で起動している。
+
+**G. managed codex の質問 → halt → 持ち越し → 回答 → 文章配達（本命）**
+
+| 段 | 観測 |
+|---|---|
+| 質問が出た | wire `state=question`、`/messages` に `pendingQuestions`（`call_zViSr5…`・選択肢 2 つ） |
+| `POST /halt`（tier1 が撃つのと同じ） | 応答が `alive=false, carried=question`。`carried-interaction/<sid>.json` に**選択肢ごと**保存された |
+| 停止中の一覧 | `alive=false, carried=question`（停止中バッジの材料） |
+| 停止中の `/messages`（**generic 経路**） | `carried` が載る ← **この行が無いと持ち越しは書かれるだけで見えない** |
+| `POST /carried-answer {"labels":["りんご"]}` | 配達文 `（停止前に未回答だった質問への回答です。質問し直さず…）「out.txt に書き込む語を選んでください。」= りんご` |
+| 再開後 | codex は**質問し直さず** `out.txt` に `りんご` を書いた。`carried` は消え `pendingQuestions` も出ない |
+
+**「質問し直すな」の一文は claude 以外でも効く**（§75.10 C と同じ結論）。
+
+**H. 昇格は `DropHandle` より前でなければ一度も発火しない**: managed の保留は handle の
+メモリにしかなく、`DropHandle` は `handles` から消して `alive=false` を立てるので、
+その後に呼ぶ `promoteCarriedManaged` は先頭の `!managedAlive(m)` で必ず抜ける。
+PR #165 の `handleHaltSession` はこの順序だったため、**managed の持ち越しは書かれたことが
+一度も無かった**。順序を入れ替えた後の実測が G。同じ理由で TUI 側も `kill-session` の前へ
+移した（kiro の承認パネルはペインの文字列にしかない）。
+
+**I. managed cursor の live 状態はここで初めて付いた**: 同じ probe で managed cursor
+（plan 起動）にターンを流すと wire は `working` → `idle` と動いた。この working ディレクトリに
+cursor の TUI 転写 JSONL は**存在しない**ことを確認済み（`find … -name '*.jsonl'` が 0 件）
+——つまり従来の JSONL 末尾分類は空を返す経路で、値は新設の `managedLiveState`（turn 状態機械）
+から来ている。従来はここが空＝ `activityUnknown` で、**tier1 が畳むことも tier2 が起こし続ける
+こともない**行だった。
+
+**J. 取れなかったもの（正直な記録）**: cursor は `--trust` 付きの plan 起動でも、`ls` にも
+ファイル作成にも `session/request_permission` を出さなかった（実測 2 ターン）。codex の
+**TUI ルート**は `-c features.default_mode_request_user_input=true` を渡しているにも
+かかわらず 0.149.0 が「Default モードでは利用できない」と答え、`request_user_input` を
+呼べなかった（**フラグのドリフト。本件とは別の課題**）。よって cursor / kiro / copilot の
+**許可**の写し取りと codex TUI の質問は、実機では未確認で単体テスト止まりである。
+「動くはず」とは書かない。
 
 条件表（§75.5）の裏返し。**止めた後に何が戻り、何が戻らないか**を状態ごとに並べる。
 実装前（現状）と実装後（P0〜P2 適用後）を分けて書く — 現状の欄がそのまま「今そこにある損失」である。
@@ -521,7 +613,7 @@ ExitPlanMode の承認ダイアログで止まった。`--allow-dangerously-skip
 | `permission` | **畳む**（事実だけ carried） | 止まる | カードは「停止時に `Bash · …` の許可を求めていました」と事実を出すだけ。操作は「続けて」1 つ |
 | `blocked` / `auth` / `spend_limit` | **畳む**（安い回収へ寄せる） | 止まる | 持ち越すものは無い。再開の判断材料（メニュー/再認証/増枠）は Console 側の表示で足りる。`auth` は再開そのものを促さない |
 | shell / ssm | 畳まない | 止める | 現状と同じ（走行中ジョブの喪失は未解決のまま。§75.5 の `unknown`） |
-| managed | P5 で畳む | 止まる | P5 まで現状のまま。持ち越しは構造化 Interaction を再現できないので文章配達へフォールバックする |
+| managed / 他 kind | **畳む**（`tier1Foldable`。shell / ssm だけ例外） | 止まる | 保留は kind ごとに在処が違う（§75.7.2）。質問は回答フォームごと持ち越して**文章で配達**し、許可は**事実だけ**持ち越す（可否の宛先はプロセスと一緒に死んでいる）。ペイン / ACP handle にしか無い保留は、`halt` と正常停止では取れるが**コンテナごと SIGKILL された場合は失われる** |
 
 **要するに実装後は、どの人待ち状態でも「畳まれてよい」に変わり、失われるのは
 `permission` の答えだけになる**（それも事実は残る）。逆に、**現状で最も静かに損をしているのは
