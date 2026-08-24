@@ -31,7 +31,7 @@ import { useSessionNotifications } from "../features/sessions/useSessionNotifica
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
-import { hydrateUIPrefs, refreshUIPrefs, setSetting, useSettings } from "../lib/settings.ts";
+import { hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setSetting, useSettings } from "../lib/settings.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
@@ -149,6 +149,11 @@ export function App() {
   // identity-reload effect below.
   const popoutSeedRef = useRef<PopoutDescriptor | null>(null);
   const identityRevDoneRef = useRef(0);
+  // Which tenant ui-prefs were last synced for — boot's own hydrateUIPrefs() already
+  // covers the first tenant, so the per-tenant sync effect below must only resync
+  // (clear + re-hydrate) the accumulated keys on an ACTUAL tenant change, not on the
+  // effect's initial post-boot run.
+  const prefsSyncedTenantRef = useRef<string | null>(null);
   const browserAttachmentActionHandledRef = useRef(false);
 
   // Detect a newer deployed build and offer a one-tap, cache-busting reload.
@@ -330,6 +335,14 @@ export function App() {
   // and refetch tenant-scoped data.
   useEffect(() => {
     if (!booted) return;
+    // ui-prefs の累積キー（作業グループ等）は前テナントの持ち主のデータをメモリに
+    // 残したままにしない — 新テナントの ui-prefs.json が空でも「消失事故」として
+    // 書き戻してしまうと、前テナントのデータが漏れる。boot 直後のこの効果の初回実行は
+    // 除く（起動時の hydrateUIPrefs() が既にこのテナント分を読み込み済み）。
+    if (prefsSyncedTenantRef.current !== null && prefsSyncedTenantRef.current !== tenant) {
+      void resyncAccumulatedForIdentitySwitch();
+    }
+    prefsSyncedTenantRef.current = tenant;
     // pane ids are tab-local, not tenant-global. Never carry an ephemeral Page
     // owned by the previous membership into a same-named pane in the next tenant.
     disposeAllBrowsers();
@@ -389,9 +402,13 @@ export function App() {
   // disposeAllBrowsers() would kill live browser pages, restartPush()+reset()
   // would drop unread notifications, and a pop-out tab (descriptor consumed at
   // boot) would fall through to load() and lose its detached pane.
+  // ui-prefs の累積キーの再同期だけは例外で、ここでも要る — 同一テナント内で
+  // ユーザーだけが切り替わるケース（tenant は変わらないので上の per-tenant sync
+  // effect は発火しない）が、まさにこの identityRev だけの変化として現れるため。
   useEffect(() => {
     if (!booted || identityRev === identityRevDoneRef.current) return;
     identityRevDoneRef.current = identityRev;
+    void resyncAccumulatedForIdentitySwitch();
     void confirmDirtyNavigation("layout").then((proceed) => {
       if (!proceed) return; // keep the shared-key layout rather than drop unsaved buffers
       const popped = popoutSeedRef.current;

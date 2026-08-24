@@ -108,6 +108,82 @@ describe("ui-prefs: 空で累積データを潰さない", () => {
     expect(apiJSONMock).not.toHaveBeenCalled(); // 採れたなら書き戻す理由は無い
   });
 
+});
+
+// 実際に起きた事故: 別アカウントで作った作業グループが、同じブラウザ/ワークスペースで
+// 別アカウントに切り替えた後もメモリに残り続け、上の「空で潰さない」自己修復ロジックが
+// 誤って新アカウントの ui-prefs.json へ書き戻してしまった。identity/tenant の切替では、
+// この自己修復を先に迂回する必要がある。
+describe("ui-prefs: 持ち主が切り替わったら前の持ち主の累積データを漏らさない", () => {
+  it("clears every accumulated key locally instead of showing the previous owner's data", async () => {
+    const s = await freshSettings({ workingSets: [{ id: "g1", name: "旧アカウントのグループ", repos: [], convs: [], sessions: [], schedules: [] }] });
+    apiMock.mockResolvedValueOnce({}); // 新しい持ち主のサーバー値はまだ空（本来の姿）
+    void s.resyncAccumulatedForIdentitySwitch();
+    // hydrate の応答を待つ前に、ローカルはもう空になっている（前の持ち主のグループを
+    // 一瞬たりとも新しい持ち主の画面に出さない）。
+    expect(s.getSettings().workingSets).toEqual([]);
+  });
+
+  it("does not restore the previous owner's data via the empty-server self-heal path", async () => {
+    const s = await freshSettings({ workingSets: [{ id: "g1", name: "旧アカウントのグループ", repos: [], convs: [], sessions: [], schedules: [] }] });
+    apiMock.mockResolvedValueOnce({}); // 新しい持ち主は本当に空
+    await s.resyncAccumulatedForIdentitySwitch();
+    expect(s.getSettings().workingSets).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    // 復元(restore)が誤って発火していれば、ここで旧アカウントのグループが書き戻される。
+    expect(apiJSONMock).not.toHaveBeenCalled();
+  });
+
+  it("adopts the new owner's own accumulated data, not the previous owner's", async () => {
+    const s = await freshSettings({ workingSets: [{ id: "g1", name: "旧アカウントのグループ", repos: [], convs: [], sessions: [], schedules: [] }] });
+    apiMock.mockResolvedValueOnce({ workingSets: [{ id: "g2", name: "新アカウントのグループ", repos: [], convs: [], sessions: [], schedules: [] }] });
+    await s.resyncAccumulatedForIdentitySwitch();
+    expect(s.getSettings().workingSets).toEqual([{ id: "g2", name: "新アカウントのグループ", repos: [], convs: [], sessions: [], schedules: [] }]);
+  });
+
+  it("discards a pending debounced save instead of sending the previous owner's value to the new owner", async () => {
+    const s = await freshSettings({});
+    apiMock.mockResolvedValueOnce({});
+    await s.hydrateUIPrefs();
+    s.setSetting("workingSets", [{ id: "g1", name: "旧アカウントのグループ", repos: [], convs: [], sessions: [], schedules: [] }]); // 600ms 後に保存予定
+    apiMock.mockResolvedValueOnce({});
+    await s.resyncAccumulatedForIdentitySwitch(); // 保留中の保存はここで捨てられるはず
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(apiJSONMock).not.toHaveBeenCalled();
+  });
+
+  it("covers every ACCUMULATED key generically (no per-key wiring needed for new ones)", async () => {
+    const s = await freshSettings({
+      quickReplies: learned,
+      quickRepliesPinned: ["OK"],
+      quickRepliesHidden: ["NG"],
+      keybindings: { save: "mod+s" },
+      hiddenModels: { claude: ["opus"] },
+      claudeCustomModels: ["claude-custom"],
+      workingSets: [{ id: "g1", name: "旧", repos: [], convs: [], sessions: [], schedules: [] }],
+      ttsVoicePool: { zundamon: { use: true } },
+      ttsUserDict: "旧アカウントの辞書",
+      ssmHostUsage: { host1: 3 },
+      ssmHostColors: { host1: "#fff" },
+      expandThinking: { claude: true },
+    });
+    apiMock.mockResolvedValueOnce({});
+    await s.resyncAccumulatedForIdentitySwitch();
+    const after = s.getSettings();
+    for (const key of [
+      "quickReplies", "quickRepliesPinned", "quickRepliesHidden", "keybindings",
+      "claudeCustomModels", "workingSets", "ttsVoicePool", "ttsUserDict",
+      "ssmHostUsage", "ssmHostColors", "expandThinking",
+    ] as const) {
+      expect(s.isEmptyPref((after as any)[key])).toBe(true);
+    }
+    // hiddenModels の既定値は {claude:["fable"]}（空ではなく初期おすすめ）— 「空」ではなく
+    // 「初期値」であることを確認する。
+    expect(after.hiddenModels).toEqual({ claude: ["fable"] });
+  });
+});
+
+describe("ui-prefs: ACCUMULATED の分類", () => {
   it("classifies which keys are protected and what counts as empty", async () => {
     const s = await freshSettings({});
     expect(s.isAccumulatedSetting("quickReplies")).toBe(true);
