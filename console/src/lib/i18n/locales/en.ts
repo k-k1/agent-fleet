@@ -1890,6 +1890,9 @@ export const en: Record<keyof typeof ja, string> = {
   // === P2 shared: session status chip (lib/sessionview.ts stateInfo). ===
   "state.folder_missing": "Folder missing — can't resume",
   "state.stopped": "Stopped",
+  "state.stopped_question": "Stopped · question",
+  "state.stopped_plan": "Stopped · approval",
+  "state.stopped_permission": "Stopped · permission",
   "state.running": "Running",
   "state.compacting": "Compacting…",
   "state.working": "Working…",

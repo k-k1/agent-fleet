@@ -325,6 +325,10 @@ type Workspace struct {
 type SessionRow struct {
 	WorkspaceID, Name, Kind, Dir, Repo, Label string
 	CreatedAt, State, LastSeen                string
+	// Carried: 畳まれたときに答えを待っていた対話の種類（docs/75 §75.6.5）。停止中の
+	// Workspace ではこのミラーが一覧の唯一のソースなので、ここに無い情報は「無かった」
+	// ことになる。
+	Carried string
 }
 
 type SessionShare struct {

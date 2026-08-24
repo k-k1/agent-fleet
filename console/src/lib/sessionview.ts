@@ -40,6 +40,8 @@ export interface SessionState {
   exitCode?: number;
   exitSignal?: number;
   rateLimitResumeAt?: string;
+  /** 畳まれたときに答えを待っていた対話（docs/75）。停止中の行にだけ入る。 */
+  carried?: string;
 }
 
 // resumeClock renders a reserved resume instant for the 制限解除待ち chip: "19:50",
@@ -90,6 +92,19 @@ export const stateInfo = (s: SessionState): StateInfo => {
     // clean 停止中; the reason detail rides the row tooltip.
     const ex = exitLabel(s);
     if (ex) return { cls: "off warn", icon: "warning", text: ex.text };
+    // 畳まれたときに答えを待っていた対話がある（docs/75）。停止中を 停止中 の 1 語で
+    // 済ませると、未回答の質問を抱えた行が「ただ畳まれた行」と見分けられない —
+    // 人待ちも畳めるようにした以上（docs/75 P2）、これが無いと利用者から見て
+    // 「静かに失われた」のと同じになる。色は question 系（注意を引く側）だが、
+    // off を残して「今は動いていない」ことは崩さない。
+    switch (s.carried) {
+      case "question":
+        return { cls: "off question", icon: "question", text: t("state.stopped_question") };
+      case "plan":
+        return { cls: "off question", icon: "checklist", text: t("state.stopped_plan") };
+      case "permission":
+        return { cls: "off question", icon: "shield", text: t("state.stopped_permission") };
+    }
     return { cls: "off", icon: "debug-pause", text: t("state.stopped") };
   }
   // shell has no working/idle state model — alive means it's running.

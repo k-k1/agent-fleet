@@ -98,3 +98,36 @@ describe("resumeClock", () => {
     expect(resumeClock("nonsense", now)).toBe("");
   });
 });
+
+// 停止中でも「答えを待っている対話がある」ことは出す（docs/75 §75.6.5）。人待ちも
+// 畳めるようにした以上、停止中 の 1 語に丸めると未回答の質問が静かに消える。
+describe("stateInfo（停止中の持ち越し）", () => {
+  const dead = { kind: "claude", alive: false };
+
+  it("持ち越しの種類ごとにバッジが変わる", () => {
+    expect(stateInfo({ ...dead, carried: "question" }).text).toBe(t("state.stopped_question"));
+    expect(stateInfo({ ...dead, carried: "plan" }).text).toBe(t("state.stopped_plan"));
+    expect(stateInfo({ ...dead, carried: "permission" }).text).toBe(t("state.stopped_permission"));
+  });
+
+  it("停止中であることは崩さない（off を保ったまま注意色を足す）", () => {
+    const chip = stateInfo({ ...dead, carried: "question" });
+    expect(chip.cls).toContain("off");
+    expect(chip.cls).toContain("question");
+  });
+
+  it("持ち越しが無ければ従来どおり 停止中", () => {
+    expect(stateInfo(dead).text).toBe(t("state.stopped"));
+    expect(stateInfo({ ...dead, carried: "" }).text).toBe(t("state.stopped"));
+  });
+
+  // 異常終了は「なぜ死んだか」の方が先。持ち越しでその警告を隠さない。
+  it("クラッシュ表示は持ち越しより優先する", () => {
+    expect(stateInfo({ ...dead, carried: "question", exitReason: "oom" }).text).toBe(t("exit.oom.text"));
+  });
+
+  // 稼働中の行は state が今出ているモーダルを語る。二重に見せない。
+  it("生きている行には持ち越しを出さない", () => {
+    expect(stateInfo({ kind: "claude", alive: true, state: "idle", carried: "question" }).text).toBe(t("state.idle"));
+  });
+});
