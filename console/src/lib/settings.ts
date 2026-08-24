@@ -575,7 +575,10 @@ const DEFAULTS: Settings = {
   mirrorSend: "mod-enter",
   defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
   agentLaunchDefaults: DEFAULT_AGENT_LAUNCH,
-  hiddenModels: {},
+  // 新規アカウントは claude の Fable を既定で除外しておく。Claude Team プランでは
+  // Fable が API クレジット扱いになるため、初回から誤選択の事故を防ぐ（既存ユーザーの
+  // 保存済み設定は上書きしない — load()/hydrateUIPrefs() は未保存キーにだけ既定値を使う）。
+  hiddenModels: { claude: ["fable"] },
   claudeCustomModels: [],
   autoTitleSuggest: true,
   peerMessaging: false, // opt-in（docs/58 / ADR 0041）— 既定で増やしてよい面ではない
