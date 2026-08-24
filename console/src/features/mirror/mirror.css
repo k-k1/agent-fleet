@@ -2879,6 +2879,7 @@ button.mt-bash-toggle:hover {
 .mirror-handoff-title { box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--border); border-radius: 5px; background: var(--input); color: var(--fg); }
 .mirror-handoff-edit { min-height: 140px; resize: vertical; }
 .mirror-handoff-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.mirror-handoff-newwt { display: flex; align-items: center; gap: 6px; margin-top: 9px; font-size: 12.5px; color: var(--muted); }
 
 /* ── 転写のマーカー（docs/69 / ADR 0050）─────────────────────────────────────
    色は利用者が選ぶ「意味」の軸、作成者は下線の色。2つを1つの軸へ押し込むと、

@@ -2273,6 +2273,8 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.handoff_intro_launched": "A session was already started from this handoff. It is kept here so you can re-read or reuse it — discard it when you no longer need it.",
   "mirror.handoff_discard": "Discard",
   "mirror.handoff_no_dir": "This session's working folder is unknown, so its handoff cannot be launched.",
+  "mirror.handoff_new_worktree": "Start in a new worktree (uncommitted changes won't carry over)",
+  "mirror.handoff_no_parent": "This session's base working copy is unknown, so a new worktree can't be launched.",
   "mirror.handoff_save_failed": "Couldn't save the handoff proposal: {msg}",
   "mirror.handoff_discard_failed": "Couldn't discard the handoff proposal: {msg}",
   "chat.plan.empty": "No plan yet. Use Refresh to derive one from the recent conversation, or Edit to write it yourself.",
