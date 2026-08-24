@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -181,5 +184,159 @@ func TestSurfaceCarriedYieldsToLivePending(t *testing.T) {
 	}
 	if c["kind"] != "question" {
 		t.Errorf("kind = %v, want question", c["kind"])
+	}
+}
+
+// --- P5: claude 以外の持ち越し（docs/75）------------------------------------------
+
+// fakeModalAgent は ModalReporter を実装しただけのダミー kind。promoteCarriedOther が
+// 「kind に訊く」ところだけを固定する（実 kind の探知手段＝会話 DB / events.jsonl /
+// ペイン / ACP handle はそれぞれの package のテストが持つ）。
+type fakeModalAgent struct {
+	agents.Agent
+	modal agents.PendingModal
+	ok    bool
+}
+
+func (f fakeModalAgent) PendingModal(session.Meta) (agents.PendingModal, bool) {
+	return f.modal, f.ok
+}
+
+// withFakeAgent swaps one kind's registry entry for the duration of a test.
+func withFakeAgent(t *testing.T, kind string, a agents.Agent) {
+	t.Helper()
+	prev, had := agentRegistry[kind]
+	agentRegistry[kind] = a
+	t.Cleanup(func() {
+		if had {
+			agentRegistry[kind] = prev
+			return
+		}
+		delete(agentRegistry, kind)
+	})
+}
+
+// 質問を持つ非 claude kind は、選択肢ごと持ち越される（再開後に文章で配達できる）。
+func TestPromoteCarriedOtherCarriesQuestionForm(t *testing.T) {
+	withTempHome(t)
+	m := session.Meta{Name: "slot-q", Dir: t.TempDir(), Kind: session.KindCodex}
+	qs := []transcript.Question{{Question: "どちらで進めますか？",
+		Options: []transcript.Option{{Label: "A 案"}, {Label: "B 案"}}}}
+	withFakeAgent(t, m.Kind, fakeModalAgent{modal: agents.PendingModal{Kind: "question", Questions: qs}, ok: true})
+
+	if !promoteCarriedOther(m) {
+		t.Fatal("promoteCarriedOther = false, want true")
+	}
+	c, ok := status.ReadCarried(session.UUID(m.Dir, m.Name))
+	if !ok {
+		t.Fatal("持ち越しが読めない")
+	}
+	if c.Kind != "question" {
+		t.Fatalf("Kind = %q, want question", c.Kind)
+	}
+	// 回答フォームが往復すること: Console はこれを描いて選ばせ、選ばれたラベルが
+	// 配達文になる。ここが壊れると「答えられない持ち越しカード」が出る。
+	got := carriedQuestions(c)
+	if len(got) != 1 || len(got[0].Options) != 2 || got[0].Options[1].Label != "B 案" {
+		t.Fatalf("質問フォームが往復していない: %+v", got)
+	}
+	if p := buildCarriedQuestionPrompt(got, []CarriedAnswer{{Labels: []string{"B 案"}}}); !strings.Contains(p, "B 案") ||
+		!strings.Contains(p, "質問し直さず") {
+		t.Errorf("配達文が組み立たない: %q", p)
+	}
+}
+
+// ★許可は **question として運ばない**。可否の宛先（ACP の JSON-RPC id / TUI の
+// メニュー）はプロセスと一緒に消えているので、選ばせても届かない。運ぶのは事実だけ。
+func TestPromoteCarriedOtherCarriesPermissionAsFactOnly(t *testing.T) {
+	withTempHome(t)
+	m := session.Meta{Name: "slot-p", Dir: t.TempDir(), Kind: session.KindKiro}
+	withFakeAgent(t, m.Kind, fakeModalAgent{
+		modal: agents.PendingModal{Kind: "permission", Detail: "shell requires approval"}, ok: true})
+
+	if !promoteCarriedOther(m) {
+		t.Fatal("promoteCarriedOther = false, want true")
+	}
+	c, _ := status.ReadCarried(session.UUID(m.Dir, m.Name))
+	if c.Kind != "permission" {
+		t.Fatalf("Kind = %q, want permission（許可を question で運ぶと届かない答えを選ばせる）", c.Kind)
+	}
+	if c.Permission != "shell requires approval" {
+		t.Errorf("何を訊かれていたかが落ちている: %q", c.Permission)
+	}
+	if len(c.Questions) != 0 {
+		t.Errorf("許可に回答フォームを付けた: %s", c.Questions)
+	}
+}
+
+// 保留が無ければ何も書かない。ここが漏れると、畳むたびに空のカードが増える。
+func TestPromoteCarriedOtherNoopWithoutModal(t *testing.T) {
+	withTempHome(t)
+	m := session.Meta{Name: "slot-n", Dir: t.TempDir(), Kind: session.KindAgy}
+	withFakeAgent(t, m.Kind, fakeModalAgent{ok: false})
+	if promoteCarriedOther(m) {
+		t.Error("保留が無いのに昇格した")
+	}
+	if _, ok := status.ReadCarried(session.UUID(m.Dir, m.Name)); ok {
+		t.Error("空の持ち越しを書いた")
+	}
+}
+
+// ModalReporter を実装しない kind（shell / ssm）は対象外 — 保留という概念が無い。
+func TestPromoteCarriedOtherSkipsKindsWithoutReporter(t *testing.T) {
+	withTempHome(t)
+	m := session.Meta{Name: "slot-s", Dir: t.TempDir(), Kind: session.KindShell}
+	if promoteCarriedOther(m) {
+		t.Error("shell を昇格した")
+	}
+}
+
+// 非 claude の /messages（generic 経路）にも持ち越しが載ること。載らないと、一覧の
+// バッジは「質問あり」と言うのに開いても答える口が無い＝書かれるだけで見えない。
+func TestPutCarriedRejectsUnanswerableShapes(t *testing.T) {
+	withTempHome(t)
+	if status.PutCarried("sid-x", status.Carried{Kind: "question"}, "halt") {
+		t.Error("回答フォームの無い question を書いた（押せないカードになる）")
+	}
+	if status.PutCarried("sid-x", status.Carried{Kind: "teleport"}, "halt") {
+		t.Error("知らない Kind を書いた")
+	}
+	if !status.PutCarried("sid-x", status.Carried{Kind: "permission", Permission: "Bash · ls"}, "halt") {
+		t.Fatal("permission が書けない")
+	}
+	// ★上書きしない（halt で昇格した後、shutdown / 一覧経路がもう一度呼ぶ）。
+	if status.PutCarried("sid-x", status.Carried{Kind: "permission", Permission: "別のもの"}, "stopped") {
+		t.Error("既存の持ち越しを上書きした")
+	}
+	if c, _ := status.ReadCarried("sid-x"); c.Permission != "Bash · ls" || c.Reason != "halt" {
+		t.Errorf("最初の持ち越しが残っていない: %+v", c)
+	}
+}
+
+// 非 claude の /messages（generic 経路）にも持ち越しが載ること。
+//
+// ここが抜けていると、tier1 が畳んだ非 claude セッションの持ち越しは**書かれるだけで
+// 誰にも見えない**: 一覧のバッジは「停止中・質問あり」と言うのに、開いても答える
+// カードが出ず、POST /carried-answer への入口がどこにも無い。
+func TestGenericMessagesSurfacesCarried(t *testing.T) {
+	withTempHome(t)
+	m := session.Meta{Name: "slot-g", Dir: t.TempDir(), Kind: session.KindCodex}
+	sid := session.UUID(m.Dir, m.Name)
+	if !status.PutCarried(sid, status.Carried{Kind: "permission", Permission: "shell requires approval"}, "halt") {
+		t.Fatal("持ち越しを書けない")
+	}
+
+	rec := httptest.NewRecorder()
+	handleGenericMessages(rec, httptest.NewRequest("GET", "/sessions/slot-g/messages", nil), m, false, "stopped")
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("応答が JSON でない: %v (%s)", err, rec.Body.String())
+	}
+	c, ok := resp["carried"].(map[string]any)
+	if !ok {
+		t.Fatalf("carried が載っていない: %v", resp)
+	}
+	if c["kind"] != "permission" || c["permission"] != "shell requires approval" {
+		t.Errorf("carried の中身が違う: %v", c)
 	}
 }

@@ -1105,6 +1105,44 @@ func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method
 	h.emit(agents.Event{Kind: "interaction", TurnState: agents.TurnWaitingInteraction, Interaction: inter})
 }
 
+// pendingPermission は保留中の ACP `session/request_permission` を「何を訊かれて
+// いたか」の 1 行へ畳む（docs/75 P5）。保留が無ければ ""。
+func (h *threadHandle) pendingPermission() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.inter == nil {
+		return ""
+	}
+	if len(h.inter.Questions) > 0 && strings.TrimSpace(h.inter.Questions[0].Question) != "" {
+		return h.inter.Questions[0].Question
+	}
+	return h.inter.Prompt
+}
+
+// managedLiveState は managed ルートの live 状態（state.go の LiveState が読む）。
+//
+// なぜ要るか: managed にはペインが無いので TUI 文字列契約は常に空を返し、**一覧の
+// チップも reaper の分類材料も無いまま**だった。結果、承認待ちで固まった managed
+// セッションは「状態不明」に落ち、tier1 が畳むことも無い（docs/75 の unknown）。
+// turn 状態機械が唯一の情報源なので、そこから供給する（cursor と同型）。
+//
+// 承認待ちを **question** と名乗るのは、ミラーが描く許可カード（td.Pending）および
+// TUI ルートの分類（classifyPane の "requires approval" → question）と語彙を揃える
+// ため。持ち越しの Kind が permission なのは別の軸（再開後に何を配達できるか）。
+func managedLiveState(m session.Meta) string {
+	h := handleFor(m.Name)
+	if h == nil {
+		return "" // 停止中 / 未接続 — 状態については意見を持たない
+	}
+	switch h.currentState() {
+	case agents.TurnWaitingInteraction:
+		return "question"
+	case agents.TurnQueued, agents.TurnStarting, agents.TurnRunning, agents.TurnInterrupting:
+		return "working"
+	}
+	return "idle"
+}
+
 // queuedPrompts surfaces the driver-held queue for the mirror's キュー済み badge.
 func (h *threadHandle) queuedPrompts() []string {
 	h.mu.Lock()

@@ -335,3 +335,19 @@ func TestDiscoverSidFence(t *testing.T) {
 		t.Errorf("predecessor with newer mtime must stay excluded by the fence, got %q", got)
 	}
 }
+
+// 承認パネルの本文（docs/75 P5 の持ち越し）。ペインの文字列にしか無いので halt より
+// 後では取れない — ここで固定するのは「取れるときに何を取るか」だけ。
+func TestApprovalLine(t *testing.T) {
+	pane := "some earlier output\n\n  shell requires approval\n  > Enter to allow\n"
+	if got := approvalLine(pane); got != "shell requires approval" {
+		t.Errorf("approvalLine = %q, want %q", got, "shell requires approval")
+	}
+	// 承認待ちでないフレームからは何も取らない（idle 句が最優先されるのは classifyPane と同じ）。
+	if got := approvalLine("  ask a question or describe a task ↵\n"); got != "" {
+		t.Errorf("idle のフレームから承認本文を取った: %q", got)
+	}
+	if got := approvalLine(""); got != "" {
+		t.Errorf("空フレームから取った: %q", got)
+	}
+}
