@@ -18,7 +18,7 @@ import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
-import { agentOf } from "../../agents/registry.ts";
+import { agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
@@ -776,7 +776,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                 <div className="ui-field">
                   <span className="ui-field-label">{tr("launch.field.start_mode")}</span>
                   <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
-                    <option value="normal">{agentOf(kind).defaultModeLabel || tr("launch.mode_normal")}</option>
+                    <option value="normal">{nonPlanModeLabel(kind, skipPermEffective) || tr("launch.mode_normal")}</option>
                     <option value="plan">Plan</option>
                   </select>
                   <span className="ui-field-hint">{tr("launch.plan_hint")}</span>
