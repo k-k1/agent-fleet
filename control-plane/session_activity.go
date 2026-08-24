@@ -72,27 +72,21 @@ func sessionActivity(s sessionWire) activity {
 
 // holdsWorkspace: この行があるあいだ tier2 は Workspace を止めてはならないか。
 //
-// ★過渡的な例外つき（docs/75 P0）: question は本来 humanWait だが、持ち越し（P1）が
-// 入るまでは畳むと利用者の判断が無言で消えるので、今はまだ「起こし続ける」側に残す。
-// P2 でこの例外を外すと、この関数は machineBusy だけを見る形になる。
+// **機械が動いているときだけ**。人待ち（question / plan / permission / blocked / auth /
+// spend_limit）は理由にならない — 人待ちは何日でも続きうるので、それでコンテナを起こし
+// 続けるとそのまま課金になる（docs/75 §75.1。question が唯一の例外として残っていた頃が
+// 「AUQ が出ていると Workspace が永久に停止しない」の原因そのものだった）。
+//
+// 畳んでも失われないことは持ち越し（docs/75 §75.6）が担保する: 保留中の質問/プラン/許可は
+// halt の直前に carried へ退避され、Console から答えれば再開して届く。
 func holdsWorkspace(s sessionWire) bool {
-	if sessionActivity(s) == activityMachineBusy {
-		return true
-	}
-	return s.Alive && s.State == stateQuestion
+	return sessionActivity(s) == activityMachineBusy
 }
 
-// tier1Reapable: tier1（セッション halt）の対象か。
-//
-// ★過渡的（docs/75 P0）: 現行の reapableIdle と同じ集合を、分類の言葉で書き直しただけ。
-// spend_limit は分類上 humanWait だが、既に tier1 の対象なので明示的に残す。P2 で
-// humanWait 全体へ広げるときにこの例外は消える。
+// tier1Reapable: tier1（セッション halt）の対象か。畳んでよい＝ machineBusy でも
+// unknown でもないもの。どのタイムアウトを当てるかは呼び出し側が分類で決める
+// （idleWait は session_idle_timeout、humanWait は interaction_idle_timeout）。
 func tier1Reapable(s sessionWire) bool {
-	switch sessionActivity(s) {
-	case activityIdleWait:
-		return true
-	case activityHumanWait:
-		return s.State == stateSpendLimit
-	}
-	return false
+	a := sessionActivity(s)
+	return a == activityIdleWait || a == activityHumanWait
 }

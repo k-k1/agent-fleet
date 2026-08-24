@@ -251,10 +251,13 @@ type reaper struct {
 	mgr        *manager
 	interval   time.Duration
 	sessionDef time.Duration
-	wsDef      time.Duration
-	hibDef     time.Duration
-	backupDef  time.Duration
-	bootTime   time.Time
+	// interactionDef は「人の判断待ちで止まっているセッション」用の既定（docs/75 §75.5）。
+	// idle と分けるのは、答えが返るまでコンテナを起こし続けるのが費用そのものだから。
+	interactionDef time.Duration
+	wsDef          time.Duration
+	hibDef         time.Duration
+	backupDef      time.Duration
+	bootTime       time.Time
 
 	// idleSince tracks, per live claude session, when it was first observed
 	// idle-and-unattached. Reset when it goes busy/attached/away. Reaper is the
@@ -262,22 +265,23 @@ type reaper struct {
 	idleSince map[string]time.Time // workspaceID|session -> first idle
 }
 
-func newReaper(mgr *manager, interval, sessionDef, wsDef, hibDef, backupDef time.Duration) *reaper {
+func newReaper(mgr *manager, interval, sessionDef, interactionDef, wsDef, hibDef, backupDef time.Duration) *reaper {
 	return &reaper{
-		mgr:        mgr,
-		interval:   interval,
-		sessionDef: sessionDef,
-		wsDef:      wsDef,
-		hibDef:     hibDef,
-		backupDef:  backupDef,
-		bootTime:   time.Now(),
-		idleSince:  map[string]time.Time{},
+		mgr:            mgr,
+		interval:       interval,
+		sessionDef:     sessionDef,
+		interactionDef: interactionDef,
+		wsDef:          wsDef,
+		hibDef:         hibDef,
+		backupDef:      backupDef,
+		bootTime:       time.Now(),
+		idleSince:      map[string]time.Time{},
 	}
 }
 
 func (rp *reaper) run(ctx context.Context) {
-	log.Printf("idle-stop reaper: interval=%s session_default=%s ws_default=%s hibernate_default=%s backup_default=%s",
-		rp.interval, rp.sessionDef, rp.wsDef, rp.hibDef, rp.backupDef)
+	log.Printf("idle-stop reaper: interval=%s session_default=%s interaction_default=%s ws_default=%s hibernate_default=%s backup_default=%s",
+		rp.interval, rp.sessionDef, rp.interactionDef, rp.wsDef, rp.hibDef, rp.backupDef)
 	t := time.NewTicker(rp.interval)
 	defer t.Stop()
 	for {
@@ -300,11 +304,13 @@ func (rp *reaper) sweep(ctx context.Context) {
 	live := map[string]bool{} // sessions seen this pass, to prune idleSince
 	for _, t := range tenants {
 		lim := parseLimits(t.Limits)
-		sessTO, sessOn := idleTimeout(lim.SessionIdleTimeout, rp.sessionDef)
-		wsTO, wsOn := idleTimeout(lim.WSIdleTimeout, rp.wsDef)
-		hibTO, hibOn := idleTimeout(lim.HomeHibernateAfter, rp.hibDef)
-		backupTO, backupOn := idleTimeout(lim.HomeBackupEvery, rp.backupDef)
-		if !sessOn && !wsOn && !hibOn && !backupOn {
+		var cl tierClocks
+		cl.session, cl.sessionOn = idleTimeout(lim.SessionIdleTimeout, rp.sessionDef)
+		cl.interaction, cl.interactionOn = interactionTimeout(lim, cl.session, cl.sessionOn, rp.interactionDef)
+		cl.ws, cl.wsOn = idleTimeout(lim.WSIdleTimeout, rp.wsDef)
+		cl.hibernate, cl.hibernateOn = idleTimeout(lim.HomeHibernateAfter, rp.hibDef)
+		cl.backup, cl.backupOn = idleTimeout(lim.HomeBackupEvery, rp.backupDef)
+		if !cl.anyOn() {
 			continue // nothing enabled for this tenant
 		}
 		wss, err := rp.mgr.store.ListWorkspaces(ctx, t.ID)
@@ -313,7 +319,7 @@ func (rp *reaper) sweep(ctx context.Context) {
 			continue
 		}
 		for _, ws := range wss {
-			rp.sweepWorkspace(ctx, ws, sessTO, sessOn, wsTO, wsOn, hibTO, hibOn, backupTO, backupOn, live)
+			rp.sweepWorkspace(ctx, ws, cl, live)
 		}
 	}
 	// Drop trackers for sessions that no longer exist so a resumed session
@@ -325,13 +331,44 @@ func (rp *reaper) sweep(ctx context.Context) {
 	}
 }
 
-func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.Duration, sessOn bool, wsTO time.Duration, wsOn bool, hibTO time.Duration, hibOn bool, backupTO time.Duration, backupOn bool, live map[string]bool) {
+// tierClocks は 1 テナントぶんの解決済みタイムアウト。5 つの (duration, enabled) を位置引数で
+// 回すと、段を足すたび全呼び出しを直すことになり、しかも取り違えても型は通る。
+type tierClocks struct {
+	session     time.Duration // tier1: ターンが終わっただけの idle
+	interaction time.Duration // tier1: 人の判断待ち（docs/75 §75.5）
+	ws          time.Duration // tier2
+	hibernate   time.Duration // tier3
+	backup      time.Duration // tier4（唯一「アイドル」ではない — 周期）
+
+	sessionOn     bool
+	interactionOn bool
+	wsOn          bool
+	hibernateOn   bool
+	backupOn      bool
+}
+
+// tier1For は 1 セッションに当てる時計を分類から選ぶ。畳んでよくないものは on=false。
+func (c tierClocks) tier1For(s sessionWire) (time.Duration, bool) {
+	switch sessionActivity(s) {
+	case activityIdleWait:
+		return c.session, c.sessionOn
+	case activityHumanWait:
+		return c.interaction, c.interactionOn
+	}
+	return 0, false
+}
+
+func (c tierClocks) anyOn() bool {
+	return c.sessionOn || c.interactionOn || c.wsOn || c.hibernateOn || c.backupOn
+}
+
+func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClocks, live map[string]bool) {
 	rt := rp.mgr.runtimeFor(ws, "") // secretKey unused for read/halt calls
 	// Tier 4 first, and outside every state test below: a backup is not about whether
 	// anybody is using this workspace. It takes no locks and changes nothing — a snapshot
 	// of a volume is invisible to the volume — so there is no fence to wait behind either.
-	if backupOn {
-		rp.backupHome(ctx, rt, ws, backupTO)
+	if cl.backupOn {
+		rp.backupHome(ctx, rt, ws, cl.backup)
 	}
 	// Only a "running" workspace is swept by tiers 1–2. "starting" (ECS cold pull) is
 	// deliberately left alone — idle-stopping a workspace that is still converging would
@@ -342,8 +379,8 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 		// stopped, which is why it lives on this side of the return. "starting" and "none"
 		// are excluded on purpose — the first is a launch in flight, the second has no home
 		// to put away (it may already be a snapshot).
-		if hibOn && state == "stopped" {
-			rp.hibernateHome(ctx, rt, ws, hibTO)
+		if cl.hibernateOn && state == "stopped" {
+			rp.hibernateHome(ctx, rt, ws, cl.hibernate)
 		}
 		return
 	}
@@ -364,7 +401,11 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 		if holdsWorkspace(s) {
 			busy = true
 		}
-		if !sessOn || s.Kind != "claude" || !tier1Reapable(s) {
+		// 畳むまでの時間は分類で変わる: ターンが終わっただけの idle は
+		// session_idle_timeout、人の判断待ちは interaction_idle_timeout。テナントは
+		// 「質問は早く畳んで安くしたい／うちは数時間待ってほしい」を独立に決められる。
+		to, on := cl.tier1For(s)
+		if !on || s.Kind != "claude" || !tier1Reapable(s) {
 			continue
 		}
 		key := ws.ID + "|" + s.Name
@@ -378,13 +419,13 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 			rp.idleSince[key] = now
 			continue
 		}
-		if now.Sub(since) >= sessTO {
+		if now.Sub(since) >= to {
 			rp.haltSession(ctx, rt, ws, s.Name)
 			delete(rp.idleSince, key)
 		}
 	}
 
-	if !wsOn {
+	if !cl.wsOn {
 		return
 	}
 	// Tier 2: stop the whole workspace once it is fully cold.
@@ -393,8 +434,8 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 		return // being watched or actively working
 	}
 	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
-	if now.Sub(base) >= wsTO {
-		rp.stopWorkspace(ctx, rt, ws, wsTO)
+	if now.Sub(base) >= cl.ws {
+		rp.stopWorkspace(ctx, rt, ws, cl.ws)
 	}
 }
 

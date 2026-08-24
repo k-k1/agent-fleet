@@ -136,6 +136,8 @@ export function TenantLimits({
   const [maxWsMemMb, setMaxWsMemMb] = useState<number | string>(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
   const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
   const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
+  // 人の判断待ち（質問・プラン承認・許可…）専用の時計。空 = 上の「セッション halt まで」に従う。
+  const [interIdle, setInterIdle] = useState(tenant?.interaction_idle_timeout || "");
   const [homeHib, setHomeHib] = useState(tenant?.home_hibernate_after || "");
   const [homeBackup, setHomeBackup] = useState(tenant?.home_backup_every || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
@@ -150,6 +152,7 @@ export function TenantLimits({
     setMaxWsMemMb(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
     setSessIdle(tenant?.session_idle_timeout || "");
     setWsIdle(tenant?.ws_idle_timeout || "");
+    setInterIdle(tenant?.interaction_idle_timeout || "");
     setHomeHib(tenant?.home_hibernate_after || "");
     setHomeBackup(tenant?.home_backup_every || "");
     setAllowUpd(!!tenant?.allow_agent_self_update);
@@ -165,6 +168,7 @@ export function TenantLimits({
       max_workspace_mem: Math.round(+maxWsMemMb || 0) * 1048576,
       session_idle_timeout: sessIdle.trim(),
       ws_idle_timeout: wsIdle.trim(),
+      interaction_idle_timeout: interIdle.trim(),
       home_hibernate_after: homeHib.trim(),
       home_backup_every: homeBackup.trim(),
       allow_agent_self_update: allowUpd,
@@ -225,6 +229,10 @@ export function TenantLimits({
             <input type="text" placeholder={tr("admin.idle_ph_30m")} value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
           </label>
           <label className="admin-fld">
+            <span className="af-cap">{tr("admin.interaction_halt")}</span>
+            <input type="text" placeholder={tr("admin.interaction_ph")} value={interIdle} onChange={(e) => setInterIdle(e.target.value)} />
+          </label>
+          <label className="admin-fld">
             <span className="af-cap">{tr("admin.ws_stop")}</span>
             <input type="text" placeholder={tr("admin.idle_ph_60m")} value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
           </label>
@@ -232,6 +240,7 @@ export function TenantLimits({
         <p className="admin-hint">
           {tr("admin.idle_hint_1")}<code>30m</code> / <code>2h</code> / <code>90s</code>{tr("admin.idle_hint_2")}<code>0</code>{tr("admin.idle_hint_3")}
         </p>
+        <p className="admin-hint">{tr("admin.interaction_hint")}</p>
       </div>
 
       {/* Only the EC2 slot pool has somewhere cheaper to put a home; on the other

@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // この表が docs/75 §75.5 の条件表そのもの。状態を足したら**必ずここに 1 行足す**
 // （足し忘れると activityUnknown に落ちる＝畳まれず、起こし続けもしない）。
@@ -37,8 +40,9 @@ func TestSessionActivityClassification(t *testing.T) {
 	}
 }
 
-// tier2 が止めてよいか。★P0 時点では question だけが過渡的な例外として
-// 「起こし続ける」側に残る（持ち越し = P1 が入るまで畳めないため）。
+// tier2 が止めてよいか＝**機械が動いているときだけ止めない**。
+// question を含む人待ちが false であることがこの機能の核心（docs/75 §75.1: これが true
+// だった間、AUQ の出ているワークスペースは永久に停止せず課金され続けた）。
 func TestHoldsWorkspace(t *testing.T) {
 	cases := []struct {
 		state string
@@ -46,8 +50,9 @@ func TestHoldsWorkspace(t *testing.T) {
 		want  bool
 	}{
 		{stateWorking, false, true},
-		{stateIdle, true, true},      // 背景作業中（D3 の修正）
-		{stateQuestion, false, true}, // 過渡的例外（P2 で false になる）
+		{stateIdle, true, true}, // 背景作業中（D3 の修正）
+		{stateQuestion, true, true},
+		{stateQuestion, false, false}, // ★本件
 		{stateIdle, false, false},
 		{stateLimited, false, false},
 		{statePlan, false, false},
@@ -68,9 +73,14 @@ func TestHoldsWorkspace(t *testing.T) {
 	}
 }
 
-// tier1 の対象。★P0 では旧 reapableIdle と同一集合（idle / limited / spend_limit）。
-func TestTier1ReapablePreservesLegacySet(t *testing.T) {
-	reapable := map[string]bool{stateIdle: true, stateLimited: true, stateSpendLimit: true}
+// tier1 の対象＝畳んでよいもの全部（idle 系＋人待ち）。畳んだ対話は持ち越しへ退避される
+// ので失われない（docs/75 §75.6）。unknown（shell/ssm・未知の状態）だけが対象外。
+func TestTier1Reapable(t *testing.T) {
+	reapable := map[string]bool{
+		stateIdle: true, stateLimited: true, stateSpendLimit: true,
+		stateQuestion: true, statePlan: true, statePermission: true,
+		stateBlocked: true, stateAuth: true,
+	}
 	for _, st := range []string{stateWorking, stateIdle, stateQuestion, statePlan, statePermission,
 		stateBlocked, stateAuth, stateLimited, stateSpendLimit, ""} {
 		s := sessionWire{Alive: true, State: st}
@@ -84,5 +94,61 @@ func TestTier1ReapablePreservesLegacySet(t *testing.T) {
 	}
 	if tier1Reapable(sessionWire{State: stateIdle}) {
 		t.Error("tier1Reapable(dead) = true, want false")
+	}
+}
+
+// どの時計が当たるかは分類で決まる（idle 系 = session、人待ち = interaction）。
+// 取り違えると「質問だけ 4 時間待つ」設定が idle にも効いてしまう。
+func TestTierClocksTier1For(t *testing.T) {
+	cl := tierClocks{session: 1, sessionOn: true, interaction: 2, interactionOn: true}
+	for _, c := range []struct {
+		state string
+		want  time.Duration
+	}{
+		{stateIdle, 1}, {stateLimited, 1},
+		{stateQuestion, 2}, {statePlan, 2}, {statePermission, 2}, {stateBlocked, 2}, {stateAuth, 2}, {stateSpendLimit, 2},
+	} {
+		got, on := cl.tier1For(sessionWire{Alive: true, State: c.state})
+		if !on || got != c.want {
+			t.Errorf("tier1For(%q) = (%v,%v), want (%v,true)", c.state, got, on, c.want)
+		}
+	}
+	// 片方だけ無効にできる: 人待ちは畳まないが idle は畳む、という設定が成立すること。
+	off := tierClocks{session: 1, sessionOn: true}
+	if _, on := off.tier1For(sessionWire{Alive: true, State: stateQuestion}); on {
+		t.Error("interaction_idle_timeout=0 なのに人待ちを畳もうとした")
+	}
+	if _, on := off.tier1For(sessionWire{Alive: true, State: stateIdle}); !on {
+		t.Error("idle まで畳まなくなった")
+	}
+	if _, on := cl.tier1For(sessionWire{Alive: true, State: stateWorking}); on {
+		t.Error("working を畳もうとした")
+	}
+}
+
+// テナントが session だけを設定したら、人待ちもその値に従う（画面に出ている数字が
+// 嘘にならないように）。明示値 > テナントの session > デプロイ既定。
+func TestInteractionTimeoutFallbackChain(t *testing.T) {
+	def := 9 * time.Minute
+	cases := []struct {
+		name    string
+		lim     tenantLimits
+		wantDur time.Duration
+		wantOn  bool
+	}{
+		{"未設定はデプロイ既定", tenantLimits{}, def, true},
+		{"session だけ設定したらそれに従う", tenantLimits{SessionIdleTimeout: "5m"}, 5 * time.Minute, true},
+		{"明示値が最優先", tenantLimits{SessionIdleTimeout: "5m", InteractionIdleTimeout: "4h"}, 4 * time.Hour, true},
+		{"明示 0 で人待ちだけ無効", tenantLimits{SessionIdleTimeout: "5m", InteractionIdleTimeout: "0"}, 0, false},
+		{"session が 0 なら人待ちも 0", tenantLimits{SessionIdleTimeout: "0"}, 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sessTO, sessOn := idleTimeout(c.lim.SessionIdleTimeout, time.Hour)
+			got, on := interactionTimeout(c.lim, sessTO, sessOn, def)
+			if on != c.wantOn || (on && got != c.wantDur) {
+				t.Errorf("interactionTimeout = (%v,%v), want (%v,%v)", got, on, c.wantDur, c.wantOn)
+			}
+		})
 	}
 }
