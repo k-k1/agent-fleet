@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, ReactNode } from "react";
 import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, sessionSkills, downloadURL } from "../../core/api/client.ts";
-import type { InteractionAnswer, ManagedThreadSettings, SessionSkill, TurnResult } from "../../core/api/client.ts";
+import type { CarriedInteraction, InteractionAnswer, ManagedThreadSettings, SessionSkill, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
 import { buildImagePrompt } from "../../lib/pastedImages.ts";
@@ -107,6 +107,7 @@ import type { ForkAtTarget } from "./ForkAtModal.tsx";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT } from "./HandoffProposal.tsx";
 import { PendingQuestions } from "./PendingQuestions.tsx";
+import { CarriedBlock } from "./CarriedBlock.tsx";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
 import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
 // The transcript rendering layer, shared with the shared-session view (docs/59). What the
@@ -304,6 +305,10 @@ export function MirrorView({
   const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
+  // 持ち越し（docs/75）: セッションが畳まれたときに画面に出ていた対話。保留（上の 3 つ）と
+  // 違ってモーダルはもう無いので、答えはキーではなく文章として配達される。サーバは保留が
+  // あるあいだ carried を出さないので、両方が同時に立つことはない。
+  const [carried, setCarried] = useState<CarriedInteraction | null>(null);
   // Plans the user just 却下'd (keyed by plan text). Lets the historical plan badge show
   // 却下 immediately, before the interrupt tool_result (its real signal) lands a poll or
   // two later — otherwise it sits at the neutral 決定済み until then.
@@ -945,6 +950,7 @@ export function MirrorView({
           setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
           setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
+          setCarried(d.carried && typeof d.carried === "object" ? (d.carried as CarriedInteraction) : null);
           // Mode comes from the terminal (paneMode) in real time, so trust every poll —
           // the optimistic set on click just gives instant feedback until this confirms.
           setMode(typeof d.mode === "string" ? d.mode : "");
@@ -2785,7 +2791,7 @@ export function MirrorView({
               {tr("mirror.ws_stopped_history")}
             </div>
           )
-        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && handoffs.length === 0 ? (
+        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm && !carried && handoffs.length === 0 ? (
           // handoffs.length === 0: with an empty transcript the proposals are the only
           // thing to show, and they now live inside renderGroups (which the empty branch
           // would skip).
@@ -2812,6 +2818,18 @@ export function MirrorView({
                 />
               ),
             }))}
+          />
+        )}
+        {carried && (
+          // 持ち越し（docs/75）。保留カードと違い**キーは 1 つも送らない** — 当てる先の
+          // モーダルはもう無く、回答は Agent が再開してから文章として届ける。
+          <CarriedBlock
+            carried={carried}
+            session={session}
+            agentName={agentName}
+            onOpenPlan={openPlan}
+            onError={(m) => toast(m)}
+            onDone={() => setCarried(null)}
           />
         )}
         {pendingPlan && (

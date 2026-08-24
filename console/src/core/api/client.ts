@@ -369,6 +369,44 @@ export async function sessionPlanRespond(
   return { ok: true, delivered: feedback ? r?.feedback_delivered === true : true, message: r?.hint };
 }
 
+// 持ち越した対話（docs/75）— 停止時に画面に出ていた質問 / プラン / 許可。モーダルは
+// 再開しても戻らない（未応答の tool_use は会話木から外れる）ので、これは**キー列で
+// 答えるものではない**: 回答は Agent が再開後に文章として配達する。
+import type { Question } from "../../features/mirror/transcript/types.ts";
+
+export interface CarriedInteraction {
+  kind: "question" | "plan" | "permission";
+  capturedAt?: string;
+  reason?: string;
+  questions?: Question[];
+  plan?: string;
+  permission?: string;
+  text?: string;
+}
+
+export interface CarriedAnswerInput {
+  labels?: string[];
+  notes?: string;
+}
+
+// sessionCarriedAnswer は持ち越しへの回答を送る。停止中の Workspace が相手になりうる
+// ので、CP はこの 1 本だけ auto-start を通す（利用者の明示操作＝「今から使う」）。
+export async function sessionCarriedAnswer(
+  session: string,
+  body: {
+    decision: "answer" | "approve" | "reject" | "continue" | "discard";
+    answers?: CarriedAnswerInput[];
+    feedback?: string;
+  },
+): Promise<{ ok: boolean; message?: string }> {
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/carried-answer`, "POST", body).catch(
+    () => ({ error: { message: t("err.network") } }),
+  );
+  const err = r?.error as ApiError | undefined;
+  if (err) return { ok: false, message: errText(err) || t("err.send_failed") };
+  return { ok: true };
+}
+
 // One question's structured answer inside an Interaction reply (docs/27 §5).
 // A multi-question form replies with one entry per question, in order.
 export interface InteractionAnswer {
