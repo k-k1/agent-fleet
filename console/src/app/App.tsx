@@ -15,6 +15,7 @@ import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireKeys } from "../features/keys/dispatcher.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
+import { wireAttentionBeacon } from "../lib/attention.ts";
 import { disposeAllBrowsers, resetBrowserRuntime, wireBrowserReconcile } from "../features/browser/service.ts";
 import {
   disposeAllBrowserAttachments,
@@ -275,6 +276,9 @@ export function App() {
     const unHistory = wireLayoutHistory();
     const unKeys = wireKeys();
     const unReconcile = wireTerminalReconcile();
+    // 操作ビーコン（docs/75 P3）: 可視のときの実操作を 60 秒に 1 回だけ CP へ。
+    // 「読んでいるだけ」の人が不在に見えてコンテナを止められるのを防ぐ。
+    const unAttention = wireAttentionBeacon();
     const unBrowserReconcile = wireBrowserReconcile();
     const unBrowserAttachmentReconcile = wireBrowserAttachmentReconcile();
     const unWsRefresh = wireWorkspaceRefresh();
@@ -301,6 +305,7 @@ export function App() {
     consumeSessionDeepLink();
     return () => {
       alive = false;
+      unAttention();
       document.removeEventListener("visibilitychange", onPrefsVisible);
       window.removeEventListener("focus", refreshPrefs);
       unHistory();
