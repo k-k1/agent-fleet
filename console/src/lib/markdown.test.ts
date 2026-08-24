@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isLinkDestination, marked, repairFullwidthTables, splitYamlFrontMatter } from "./markdown.ts";
+import { Marked } from "marked";
+import {
+  asciiPunctuationRule,
+  isLinkDestination,
+  marked,
+  repairFullwidthTables,
+  splitYamlFrontMatter,
+} from "./markdown.ts";
 
 describe("splitYamlFrontMatter", () => {
   it("extracts a leading YAML front matter block", () => {
@@ -165,5 +172,87 @@ describe("link reference definitions", () => {
     const source = "```\n[保留]: 幕間の再配置。\n```";
     expect(html(source)).toContain("[保留]: 幕間の再配置。");
     expect(html(source)).toContain("<code>");
+  });
+});
+
+// Emphasis around Japanese punctuation. CommonMark reads 「、。… as punctuation, and a
+// delimiter with punctuation on one side and a letter on the other flanks neither way —
+// so bold written the way Japanese is written came out as literal asterisks. See
+// asciiPunctuationRule in markdown.ts.
+describe("emphasis next to non-ASCII punctuation", () => {
+  const inline = (source: string) => marked.parseInline(source) as string;
+
+  it("bolds a run that starts or ends on Japanese punctuation", () => {
+    expect(inline("あ**「強調」**です")).toBe("あ<strong>「強調」</strong>です");
+    expect(inline("あ**（強調）**です")).toBe("あ<strong>（強調）</strong>です");
+    expect(inline("**強調。**続く")).toBe("<strong>強調。</strong>続く");
+    expect(inline("**強調、**続く")).toBe("<strong>強調、</strong>続く");
+    expect(inline("あ**【強調】**い")).toBe("あ<strong>【強調】</strong>い");
+    expect(inline("あ**…強調…**い")).toBe("あ<strong>…強調…</strong>い");
+  });
+
+  it("does the same for italics and strikethrough", () => {
+    expect(inline("あ*「強調」*です")).toBe("あ<em>「強調」</em>です");
+    expect(inline("あ~~「取り消し」~~です")).toBe("あ<del>「取り消し」</del>です");
+    expect(inline("~~取り消し。~~続く")).toBe("<del>取り消し。</del>続く");
+  });
+
+  it("leaves `_` alone, so a filename stays a filename", () => {
+    expect(inline("Ph0_声の増量設計_改.md")).toBe("Ph0_声の増量設計_改.md");
+    expect(inline("あ_強調_です")).toBe("あ_強調_です");
+    expect(inline("__太字__")).toBe("<strong>太字</strong>");
+  });
+
+  // The whole point of rewriting only the Unicode classes: over ASCII the rules are
+  // character-for-character what marked shipped, so nothing an English document does can
+  // parse differently than before.
+  it("parses ASCII exactly as marked does", () => {
+    const cases = [
+      "a**b**c",
+      "**bold** text",
+      "*em*",
+      "a * b * c",
+      "2 * 3 * 4",
+      "snake_case_name",
+      "**a_b**",
+      "a~~b~~c",
+      "**(x)**y",
+      "x**(y)**z",
+      "**a**b**c**",
+      "***both***",
+      "a *b* c",
+      "5*6*7",
+      "* list item",
+      "foo**bar**baz",
+      "**\"q\"**",
+      "a**\"q\"**b",
+    ];
+    for (const source of cases) expect(inline(source)).toBe(new Marked().parseInline(source) as string);
+  });
+
+  it("keeps the emphasis marked already got right", () => {
+    expect(inline("これは**強調**です")).toBe("これは<strong>強調</strong>です");
+    expect(inline("「**強調**」です")).toBe("「<strong>強調</strong>」です");
+    expect(inline("**強調**（注）")).toBe("<strong>強調</strong>（注）");
+    expect(inline("あ**強調**！")).toBe("あ<strong>強調</strong>！");
+  });
+
+  // Why the relaxed rules are a second attempt and not a replacement. Read with them
+  // alone, the closing run here sits between a backtick — ASCII, still punctuation — and a
+  // 。 that is no longer punctuation, which makes it an opener and nothing closes. This is
+  // not a corner case: 150 spans across this repository's own documents move, and these
+  // used to be among them.
+  it("keeps bold that begins or ends on a code span", () => {
+    expect(inline("**`--read-only`**。")).toBe("<strong><code>--read-only</code></strong>。");
+    expect(inline("**既定は `--read-only`**。")).toBe("<strong>既定は <code>--read-only</code></strong>。");
+    expect(inline("**`mcp-proxy-for-aws`**（PyPI）")).toBe("<strong><code>mcp-proxy-for-aws</code></strong>（PyPI）");
+  });
+
+  it("rewrites the character classes it was built against", () => {
+    // A no-op means marked now spells its delimiter rules differently and the fix above
+    // is silently doing nothing — the tests before this one would go red with it.
+    const rule = /(?:[^\s\p{P}\p{S}]|~)(\*+)(?=(?!~)[\s\p{P}\p{S}]|$)/u;
+    expect(asciiPunctuationRule(rule).source).not.toBe(rule.source);
+    expect(asciiPunctuationRule(/^nothing to do$/).source).toBe("^nothing to do$");
   });
 });
