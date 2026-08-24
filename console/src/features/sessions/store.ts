@@ -24,6 +24,7 @@ interface SessionsStore {
   applyList(list: Session[]): void;
   /** Reflect a successful deletion-lock toggle before the next list refresh. */
   setLocked(name: string, locked: boolean): void;
+  setKeepAwake(name: string, keepAwakeUntil: string): void;
   /** Resume/launch a stopped session (POST start). Resolves true when the backend
    * accepted the resume; false (with a toast already shown) when it did not, so the
    * caller can leave its 再開 affordance armed instead of waiting forever. */
@@ -47,6 +48,13 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
   setLocked(name: string, locked: boolean) {
     const list = get().sessions.map((s) => (s.name === name ? { ...s, locked } : s));
+    ser = JSON.stringify(list);
+    set({ sessions: list });
+  },
+
+  // 受理された POST が正。次の一覧ポーリングを待たせない（ロックと同じ流儀）。
+  setKeepAwake(name: string, keepAwakeUntil: string) {
+    const list = get().sessions.map((s) => (s.name === name ? { ...s, keepAwakeUntil } : s));
     ser = JSON.stringify(list);
     set({ sessions: list });
   },

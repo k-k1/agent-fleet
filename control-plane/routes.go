@@ -300,6 +300,8 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Agent が**セッションを再開したうえで文章として**配達する。停止した Workspace が
 	// 相手になりうるので、他の write と違って auto-start を通す（下の restStart）。
 	mux.HandleFunc("POST /api/sessions/{name}/carried-answer", ws.withResolved(ws.sessionCarriedAnswer))
+	// 停止しないピン（docs/75）— アイドル自動停止からセッションと Workspace を期限付きで守る。
+	mux.HandleFunc("POST /api/sessions/{name}/keep-awake", rest)
 	// managed セッションの ThreadSettings 取得・動的更新（docs/27 P2 §9.4-3）— proxied verbatim.
 	mux.HandleFunc("GET /api/sessions/{name}/settings", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/settings", rest)

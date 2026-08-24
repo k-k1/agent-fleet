@@ -168,3 +168,21 @@ export const stateInfo = (s: SessionState): StateInfo => {
       return { cls: "on", icon: "check", text: t("state.idle") };
   }
 };
+
+// 停止しないピン（docs/75）の残り時間を人が読める形にする。掛かっていない／期限切れ／
+// 壊れた値はすべて "" — **切れたピンをバッジに残さない**のが要点で、残すと利用者は
+// 「守られているつもり」で放置する（ピンが時刻なのは、消し忘れが黙って課金しないため）。
+export const keepAwakeLeft = (until: string | undefined, now: Date = new Date()): string => {
+  const t = new Date(until ?? "");
+  if (isNaN(t.getTime())) return "";
+  const ms = t.getTime() - now.getTime();
+  if (ms <= 0) return "";
+  const mins = Math.ceil(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h${m}m` : `${h}h`;
+};
+
+// 1 回のピンで張る長さ。Agent 側の上限は 24h で、延長は押し直す（docs/75）。
+export const KEEP_AWAKE_HOURS = 4;

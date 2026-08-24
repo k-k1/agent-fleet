@@ -2,7 +2,7 @@
 // drive a session row wherever it renders (the flat list AND the per-working-copy
 // nodes of the project tree). Each op hits the Agent, then refreshes the store and
 // closes any stale panes; confirmations and error toasts are built in.
-import { raw, sessionSetLock } from "../../core/api/client.ts";
+import { raw, sessionSetLock, sessionKeepAwake } from "../../core/api/client.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -25,6 +25,7 @@ export interface SessionActions {
   /** 削除ロック（docs/45）の切替。ON の間、この行はどの削除経路（Console・掃除・
    *  7日自動prune・オペレーター）からも消せなくなる。 */
   setLocked(s: Session, locked: boolean): Promise<void>;
+  setKeepAwake(s: Session, hours: number): Promise<void>;
   /** Bulk-clear every "その他のセッション" (orphan whose working copy is gone):
    * agent sessions archive (restorable), shell/ssm delete. Repo-scoped stopped
    * sessions are bulk-cleared from the Cleanup modal's stage ① instead. */
@@ -93,6 +94,19 @@ export function useSessionActions(): SessionActions {
     // cached or in-flight list refresh.
     useSessionsStore.getState().setLocked(s.name, res?.locked ?? locked);
     toast(locked ? t("sess.locked_on") : t("sess.locked_off"), { kind: "success" });
+    void refreshSessions();
+  };
+
+  // 停止しないピン（docs/75）: hours>0 で期限を張り、0 で解除。shell / ssm の走行中ジョブを
+  // af 側から見分けられないので、推測でコンテナを守る代わりに利用者に宣言してもらう。
+  const setKeepAwake = async (s: Session, hours: number) => {
+    const res = await sessionKeepAwake(s.name, hours);
+    if (res?.error) {
+      toast(t("sess.keep_awake_failed"));
+      return;
+    }
+    useSessionsStore.getState().setKeepAwake(s.name, res?.keepAwakeUntil ?? "");
+    toast(hours > 0 ? t("sess.keep_awake_on", { hours }) : t("sess.keep_awake_off"), { kind: "success" });
     void refreshSessions();
   };
 
@@ -307,5 +321,5 @@ export function useSessionActions(): SessionActions {
     }
   };
 
-  return { archive, deleteSession, setLocked, clearOrphans, archiveStopped, halt, recreate, handoff, switchDriver };
+  return { archive, deleteSession, setLocked, setKeepAwake, clearOrphans, archiveStopped, halt, recreate, handoff, switchDriver };
 }

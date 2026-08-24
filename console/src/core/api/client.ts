@@ -692,6 +692,15 @@ export async function chatStream(
 // するだけ — 判定の正は常にサーバー。
 export const sessionSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/lock`, "POST", { locked });
+// 停止しないピン（docs/75）: アイドル自動停止（tier1 のセッション halt / tier2 の
+// Workspace 停止）から、期限付きでこのセッションを守る。hours<=0 で解除。
+// **時刻で切れる**のが本体 — 消し忘れたピンは閉じ忘れた端末タブと同じで、黙って
+// 課金し続けるものになる。延長は押し直す。
+export const sessionKeepAwake = (
+  name: string,
+  hours: number,
+): Promise<{ keepAwakeUntil?: string; error?: ApiError }> =>
+  apiJSON(`api/sessions/${encodeURIComponent(name)}/keep-awake`, "POST", { hours });
 export const repoSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/repos/${encodeURIComponent(name)}/lock`, "POST", { locked });
 export const chatSetLock = (id: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>

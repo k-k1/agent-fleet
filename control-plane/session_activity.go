@@ -1,5 +1,7 @@
 package main
 
+import "time"
+
 // セッション 1 行を「コンテナを起こし続ける理由になるか」「畳んでよいか」へ落とす分類
 // （docs/75 §75.5）。reaper の 2 段はここだけを見る。
 //
@@ -48,6 +50,13 @@ func sessionActivity(s sessionWire) activity {
 	if !s.Alive {
 		return activityUnknown
 	}
+	// 利用者の「停止しない」ピン（docs/75）。分類の一番外に置くのは、これが**唯一の
+	// 逃げ道**である shell / ssm では state が空＝ unknown で、その先の分岐に一切
+	// 引っかからないから。生きている行にしか効かない（上の !Alive で落ちる）ので、
+	// 死んだセッションのピンがコンテナを抱え込むことはない。
+	if keepAwake(s.KeepAwakeUntil, time.Now()) {
+		return activityMachineBusy
+	}
 	// BackgroundBusy は state と直交する: state は idle でも run_in_background の
 	// ジョブ・in-process のサブエージェント / Workflow・S 状態の背景シェルが走って
 	// いることがある（Agent の WireLive が立てる）。reaper はこれを一度も見ておらず、
@@ -89,4 +98,21 @@ func holdsWorkspace(s sessionWire) bool {
 func tier1Reapable(s sessionWire) bool {
 	a := sessionActivity(s)
 	return a == activityIdleWait || a == activityHumanWait
+}
+
+// keepAwake reports whether a user pin is still in force.
+//
+// 読めない値は「ピンされていない」に倒す: この文字列は af 自身の Agent が書くので、
+// 壊れているのはバグであり、そのバグが「Workspace が永久に止まらない」＝黙って課金し
+// 続ける、という形で表に出るのは最悪の縮退である。逆側（守り損ねる）はジョブが 1 本
+// 落ちるだけで、利用者が押し直せる。
+func keepAwake(until string, now time.Time) bool {
+	if until == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, until)
+	if err != nil {
+		return false
+	}
+	return now.Before(t)
 }

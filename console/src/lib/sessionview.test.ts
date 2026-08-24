@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resumeClock, stateInfo } from "./sessionview.ts";
+import { keepAwakeLeft, resumeClock, stateInfo } from "./sessionview.ts";
 import { t } from "./i18n/index.ts";
 
 // 状態チップの写像。ここで固定したいのは「認証切れ（docs/47 §4-8）が独立したチップに
@@ -129,5 +129,24 @@ describe("stateInfo（停止中の持ち越し）", () => {
   // 稼働中の行は state が今出ているモーダルを語る。二重に見せない。
   it("生きている行には持ち越しを出さない", () => {
     expect(stateInfo({ kind: "claude", alive: true, state: "idle", carried: "question" }).text).toBe(t("state.idle"));
+  });
+});
+
+// 停止しないピンの残り時間（docs/75）。**切れたピンをバッジに残さない**のが要点 —
+// 残すと利用者は「守られているつもり」で放置し、実際には次のスイープで畳まれる。
+describe("keepAwakeLeft", () => {
+  const now = new Date(2026, 7, 24, 12, 0, 0);
+
+  it("残りを人が読める形にする", () => {
+    expect(keepAwakeLeft(new Date(2026, 7, 24, 12, 30, 0).toISOString(), now)).toBe("30m");
+    expect(keepAwakeLeft(new Date(2026, 7, 24, 16, 0, 0).toISOString(), now)).toBe("4h");
+    expect(keepAwakeLeft(new Date(2026, 7, 24, 14, 15, 0).toISOString(), now)).toBe("2h15m");
+  });
+
+  it("切れている・掛かっていない・壊れている は空", () => {
+    expect(keepAwakeLeft(new Date(2026, 7, 24, 11, 59, 0).toISOString(), now)).toBe("");
+    expect(keepAwakeLeft(undefined, now)).toBe("");
+    expect(keepAwakeLeft("", now)).toBe("");
+    expect(keepAwakeLeft("いつまでも", now)).toBe("");
   });
 });
