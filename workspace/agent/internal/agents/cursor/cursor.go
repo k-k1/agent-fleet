@@ -37,7 +37,9 @@ func (agentImpl) Kind() string { return session.KindCursor }
 // No fork (cursor's `/fork` is TUI-only) and no display label. The chat mirror IS
 // supported: transcript.go reads the Claude Code-compatible JSONL, which cursor
 // appends live in the TUI/-p routes.
-func (agentImpl) Caps() agents.Caps { return agents.Caps{CanTranscript: true} }
+func (agentImpl) Caps() agents.Caps {
+	return agents.Caps{CanTranscript: true, PermissionChoice: true}
+}
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	if !session.DirExists(m.Dir) {
@@ -54,7 +56,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		}
 		sids.Write(session.UUID(m.Dir, m.Name), chatID)
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, chatID), Cwd: m.CWD()}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, chatID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

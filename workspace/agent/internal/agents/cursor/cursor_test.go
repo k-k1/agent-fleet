@@ -14,28 +14,28 @@ import (
 
 func TestBuildProgram(t *testing.T) {
 	id := "9eb73605-3f4a-4a46-84bc-35e6d300a9df"
-	got := buildProgram("", "", id)
+	got := buildProgram("", "", id, true)
 	for _, want := range []string{"cursor-agent ", "--disable-auto-update", "--force", "--trust", "--resume", id} {
 		if !strings.Contains(got+" ", want) {
 			t.Errorf("program %q lacks %q", got, want)
 		}
 	}
 	// plan は bypass（--force）を外し --plan を足す。--trust と自己更新封殺は残す。
-	got = buildProgram("", "plan", id)
+	got = buildProgram("", "plan", id, false)
 	if strings.Contains(got, "--force") || !strings.Contains(got, "--plan") ||
 		!strings.Contains(got, "--trust") || !strings.Contains(got, "--disable-auto-update") {
 		t.Errorf("plan program wrong: %q", got)
 	}
 	// model はそのまま。"auto" は無指定と同義（フラグを付けない）。
-	got = buildProgram("claude-opus-4-8-thinking-high", "", id)
+	got = buildProgram("claude-opus-4-8-thinking-high", "", id, true)
 	if !strings.Contains(got, "--model") || !strings.Contains(got, "claude-opus-4-8-thinking-high") {
 		t.Errorf("model program wrong: %q", got)
 	}
-	if got := buildProgram("auto", "", id); strings.Contains(got, "--model") {
+	if got := buildProgram("auto", "", id, true); strings.Contains(got, "--model") {
 		t.Errorf("auto must not emit --model: %q", got)
 	}
 	t.Setenv("AGENT_CURSOR_CMD", "echo override")
-	if got := buildProgram("", "", id); got != "echo override" {
+	if got := buildProgram("", "", id, true); got != "echo override" {
 		t.Errorf("override ignored: %q", got)
 	}
 }
@@ -287,5 +287,21 @@ func TestEditsFromInputIgnoresToolName(t *testing.T) {
 	}
 	if _, es := editsFromInput(json.RawMessage(`{"path":"/a.ts"}`)); len(es) != 0 {
 		t.Fatalf("payload の無い入力から差分を作ってはいけない: %+v", es)
+	}
+}
+
+// 権限確認あり（docs/76）。消えるのは --force だけで、--trust（未信頼ワークスペースの
+// 確認スキップ）と自己更新封殺は残す — --trust を落とすと ACP でも TUI でも trust
+// プロンプトで固まる（実測）。plan ではないので --plan も付かない。
+func TestBuildProgramPermissionsOn(t *testing.T) {
+	id := "9eb73605-3f4a-4a46-84bc-35e6d300a9df"
+	got := buildProgram("", "", id, false)
+	if strings.Contains(got, "--force") || strings.Contains(got, "--plan") {
+		t.Errorf("permissions-on program must drop the bypass and stay off plan: %q", got)
+	}
+	for _, want := range []string{"--trust", "--disable-auto-update", "--resume"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("permissions-on program %q lacks %q", got, want)
+		}
 	}
 }

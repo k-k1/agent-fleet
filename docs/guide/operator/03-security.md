@@ -17,6 +17,13 @@ that "a user's session runs untrusted code," and what we protect is "other users
 CP/host infrastructure, secrets, and data exfiltration." The primary isolation boundary sits
 between the **Workspace container (low trust)** and the **CP/host infrastructure (high trust)**.
 
+Skipping every tool approval is the **default, not a fixed rule**: each user can turn approvals
+back on per agent kind (Settings > Agents) or for a single session at launch. That changes how
+much a mistake costs, **not where the boundary is** — the choice covers five kinds, the mode can
+be cycled back from inside the TUI, and the CLI's own settings are not locked down. Treat tool
+approval as a way to catch accidents, and keep treating the container boundary as the only real
+containment.
+
 - **`docker.sock` = equivalent to host root.** The CP drives the host's daemon through the
   mounted Docker socket and injects plaintext DEKs at Workspace startup. Consequently, **if the
   CP or the host is compromised, isolation within that deployment collapses all at once**.

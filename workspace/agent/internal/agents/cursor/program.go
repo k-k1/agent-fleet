@@ -91,15 +91,20 @@ func Bin() string { return bin() }
 // buildProgram returns the tmux pane program for a cursor TUI session. Auth is
 // ambient（~/.config/cursor/auth.json を CLI 自身が拾う — 実測）なのでトークンは
 // 注入しない。--resume は新規作成と resume の両方を同じ形でまかなう。
-func buildProgram(model, mode, chatID string) string {
+// bypass=false は「権限確認をスキップしない」（docs/76 の利用者選択、または plan 起動）。
+// 外すのは --force だけで、--trust（ワークスペース信頼）は必ず残す — 信頼プロンプトは
+// 権限確認ではなく、外すと ACP でも TUI でも起動が固まる（実測）。
+func buildProgram(model, mode, chatID string, bypass bool) string {
 	if override := os.Getenv("AGENT_CURSOR_CMD"); override != "" {
 		return override
 	}
 	flags := envOr("AGENT_CURSOR_FLAGS", defaultFlags)
-	if mode == "plan" {
-		// Plan mode replaces the bypass default: auto-approving every tool would
-		// defeat a plan start（copilot/agy と同じ判断）。--trust は残す。
+	if !bypass {
 		flags = strings.TrimSpace(strings.ReplaceAll(flags, "--force", ""))
+	}
+	if mode == "plan" {
+		// Plan は bypass 無しが前提（auto-approving every tool would defeat a plan start
+		// — copilot/agy と同じ判断）。
 		flags = strings.TrimSpace(flags + " --plan")
 	}
 	// cursor のモデル ID は effort 込み（例 claude-opus-4-8-thinking-high）——

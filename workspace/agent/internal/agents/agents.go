@@ -21,6 +21,50 @@ func DirGoneErr(dir string) error {
 // ErrSSMNoTarget is returned when an ssm session has no connection target recorded.
 var ErrSSMNoTarget = errors.New("SSM セッションの接続先が指定されていません")
 
+// --- 権限確認をスキップするか（docs/76） ---------------------------------------
+//
+// fleet の既定は「スキップする」＝ claude なら --dangerously-skip-permissions、他 kind も
+// 同格のフラグ（cursor --force / copilot --allow-all / kiro --trust-all-tools /
+// agy --dangerously-skip-permissions）。コンテナ自体がサンドボックスで、承認ダイアログで
+// TUI が止まっても Console から答えられない時期があったための判断だった。
+// docs/76 でこれを**利用者の選択**にする。既定は変えない（true）。
+//
+// 値は 3 層で解決する。上から順に、最初に決まったものが勝つ:
+//
+//	① session.Meta.SkipPermissions — 起動時にこのセッションだけ明示した値
+//	② ui-prefs agentLaunchDefaults[kind].skipPermissions — 設定 > エージェントの kind 毎の既定
+//	③ true — 従来どおり
+//
+// ②を HTTP でなくプロセス内で読むのは、Console 以外の起動経路（MCP の create_session・
+// 定時実行・再起動・fork・recreate）にも同じ既定を効かせるため。ここを Console 側だけの
+// 解決にすると「設定でオフにしたのに定時実行のセッションだけ bypass で走る」が起きる。
+
+// SkipPermissionsPref is the ui-prefs lookup seam (層②). package main が起動時に
+// 実体（ui_prefs.go の skipPermissionsPref）を差す。ok=false は「その kind に設定が無い」。
+// 既定値がここに書いていないのは、prefs を読めない/持たないビルド（テスト）でも
+// 従来どおりに倒すため — 解決の既定は SkipPermissions が持つ。
+var SkipPermissionsPref = func(kind string) (v bool, ok bool) { return false, false }
+
+// SkipPermissions resolves the 3 層 for m. 「plan 起動なら承認を出す」は各 kind の
+// buildProgram/spawn 側の判断（plan フラグの付与と対で扱う必要がある）なので、ここでは
+// 見ない — この関数が答えるのは利用者の選択だけ。
+func SkipPermissions(m session.Meta) bool {
+	if m.SkipPermissions != nil {
+		return *m.SkipPermissions
+	}
+	if v, ok := SkipPermissionsPref(m.Kind); ok {
+		return v
+	}
+	return true
+}
+
+// BypassPermissions folds in plan mode: plan 起動は kind を問わず bypass を外す
+// （全ツールを自動承認しては plan で始める意味が無い）。各 kind の BuildLaunch /
+// Driver.Resume はこれを呼んで「bypass フラグを付けるか」を 1 つの bool で決める。
+func BypassPermissions(m session.Meta) bool {
+	return m.Mode != "plan" && SkipPermissions(m)
+}
+
 // Coding-agent abstraction. A session's "kind" (claude/opencode/codex/shell/ssm)
 // used to be a bare string branched on in ~50 places — a new agent meant touching
 // every switch/if. This package makes kind a canonical const list (now
@@ -37,6 +81,12 @@ type Caps struct {
 	CanFork       bool // POST /fork — copy the conversation into a new session (claude)
 	CanTranscript bool // GET /output & /messages — read the jsonl transcript (claude)
 	UsesLabel     bool // set a claude --name display label at create/recreate (claude)
+	// PermissionChoice: 利用者が「権限確認をスキップするか」を選べる kind（docs/76）。
+	// 立てる条件は**承認待ちが Console から答えられること**——フラグを外すだけなら
+	// どの kind でもできるが、ペインしか無い（あるいはペインすら無い managed の）承認
+	// ダイアログで止まったセッションは、利用者から見れば黙って固まったのと同じ。
+	// 実測で導線がある kind にだけ立てる（「未検証の caps を立てない」— 1854d の教訓）。
+	PermissionChoice bool
 	// CanForkAt narrows CanFork: POST /fork {"at": …} can branch at a PAST turn instead
 	// of copying the whole conversation (docs/55). Implies the kind also implements
 	// ForkAtResolver and fills transcript.Turn.AnchorID. Never true without CanFork.
