@@ -52,6 +52,23 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       speech: t("notif.submodules_incomplete.speech", { repo }),
     };
   }
+  if (n.kind === "carried-interaction") {
+    // 答えを待っていた対話を抱えたままセッションが畳まれた（docs/75）。畳むこと自体は
+    // 無害（持ち越してあるので失われない）が、利用者はそれを知らない — 一覧のバッジは
+    // Console を開いている人にしか見えず、質問時の通知は「答えてください」としか言って
+    // いない。だから「まだ保留のままだ」と、どこで答えられるかを言う。
+    const kindText =
+      n.payload.interaction === "plan"
+        ? t("notif.carried.plan")
+        : n.payload.interaction === "permission"
+          ? t("notif.carried.permission")
+          : t("notif.carried.question");
+    return {
+      title: t("notif.carried.title", { what: kindText }),
+      body: t("notif.carried.body", { name }),
+      speech: t("notif.carried.speech", { name, what: kindText }),
+    };
+  }
   if (n.kind === "rate-limit-reached") {
     return {
       title: t("notif.rate_limit_reached.title"),

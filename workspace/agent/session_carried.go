@@ -18,6 +18,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -32,19 +33,40 @@ import (
 // 停止後の一覧経路）は何も取れない — 取れないものを取れたことにはしないので、その場合は
 // 素直に false を返す。
 func promoteCarriedFor(m session.Meta) bool {
-	if m.DriverKind() == session.DriverManaged {
-		return promoteCarriedManaged(m)
+	promoted := false
+	switch {
+	case m.DriverKind() == session.DriverManaged:
+		promoted = promoteCarriedManaged(m)
+	case normalizeKind(m.Kind) == session.KindClaude:
+		// まだ生きている＝これから halt が殺すところ。既に死んでいる＝ Workspace 停止 /
+		// クラッシュ / 利用者の /exit を一覧が見つけたところ。
+		reason := "stopped"
+		if sessionAlive(m) {
+			reason = "halt"
+		}
+		promoted = status.PromoteCarried(session.UUID(m.Dir, m.Name), reason)
 	}
-	if normalizeKind(m.Kind) != session.KindClaude {
-		return false
+	if promoted {
+		notifyCarried(m)
 	}
-	// まだ生きている＝これから halt が殺すところ。既に死んでいる＝ Workspace 停止 /
-	// クラッシュ / 利用者の /exit を一覧が見つけたところ。
-	reason := "stopped"
-	if sessionAlive(m) {
-		reason = "halt"
+	return promoted
+}
+
+// notifyCarried は「答えを待っていた対話を抱えたまま畳んだ」を通知センターへ流す。
+//
+// 畳むことそのものは無害（持ち越してあるので失われない）が、**利用者はそれを知らない**。
+// 一覧のバッジは Console を開いている人にしか見えず、質問が出たときの通知は「答えて
+// ください」としか言っていない。畳んだ側から 1 通出しておかないと、答えたつもりの無い
+// 質問が静かに保留のまま残る。
+func notifyCarried(m session.Meta) {
+	c, ok := status.ReadCarried(session.UUID(m.Dir, m.Name))
+	if !ok {
+		return
 	}
-	return status.PromoteCarried(session.UUID(m.Dir, m.Name), reason)
+	ev := notice.New("carried-interaction", m.Name, m.Kind, session.Display(m))
+	ev.Payload["interaction"] = c.Kind // question | plan | permission
+	ev.Payload["reason"] = c.Reason    // halt | stopped
+	_ = notice.Put(ev)
 }
 
 // oneLine は TUI へ打鍵する文字列を 1 行へ畳む。

@@ -64,8 +64,19 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 	if res.rt.State(ctx) != "running" {
 		return "offline"
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, res.rt.Endpoint()+"/notifications", nil)
-	if tok := res.rt.Token(); tok != "" {
+	return drainAgentOutbox(ctx, a.store, res.rt, res.mv.MembershipID)
+}
+
+// drainAgentOutbox pulls the Agent's notification outbox into the store and acks it.
+//
+// res を取らないのは、**Workspace を止める直前にも呼ぶ**から（docs/75）。Agent の
+// アウトボックスは Console が見に来たときにしか drain されないので、畳んだ直後に
+// 止めると「未回答のまま停止しました」の通知が、次に Workspace を起こすまで誰にも
+// 届かない — 費用のために止めた結果、止めたことを知らせる通知だけが止めたせいで
+// 消える、という一番まずい形になる。
+func drainAgentOutbox(ctx context.Context, store NotificationStore, rt Runtime, membershipID string) string {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
+	if tok := rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := agentHTTPClient.Do(req)
@@ -88,22 +99,22 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 	acked := make([]string, 0, len(body.Notifications))
 	for _, in := range body.Notifications {
 		payload, _ := json.Marshal(in.Payload)
-		n := Notification{EventID: in.ID, MembershipID: res.mv.MembershipID, Kind: in.Kind,
+		n := Notification{EventID: in.ID, MembershipID: membershipID, Kind: in.Kind,
 			TargetType: "session", TargetID: in.SessionName, TargetKind: in.SessionKind,
 			DisplayName: in.DisplayName, Payload: string(payload), CreatedAt: in.CreatedAt}
 		if n.CreatedAt == "" {
 			n.CreatedAt = nowTS()
 		}
-		if err := a.store.InsertNotification(ctx, n); err != nil {
+		if err := store.InsertNotification(ctx, n); err != nil {
 			return "offline"
 		}
 		acked = append(acked, in.ID)
 	}
 	if len(acked) > 0 {
 		b, _ := json.Marshal(map[string]any{"ids": acked})
-		req, _ = http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+"/notifications/ack", bytes.NewReader(b))
+		req, _ = http.NewRequestWithContext(ctx, http.MethodPost, rt.Endpoint()+"/notifications/ack", bytes.NewReader(b))
 		req.Header.Set("Content-Type", "application/json")
-		if tok := res.rt.Token(); tok != "" {
+		if tok := rt.Token(); tok != "" {
 			req.Header.Set("Authorization", "Bearer "+tok)
 		}
 		if ackResp, err := agentHTTPClient.Do(req); err == nil {
