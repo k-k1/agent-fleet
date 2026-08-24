@@ -91,13 +91,40 @@ Interaction は Console に選択カードを描かせるため `Kind:"question"
 されると、ACP handle とペインにしかない承認待ちは失われる。`halt`（tier1）と `gracefulShutdown`
 を通る正常停止（tier2 の停止はこちら）では取れる。
 
-## 76.6 無人運転との相性
+## 76.6 「毎回たずねる」で claude は何モードになるか（実測）
+
+claude 2.1.241 を実 tmux で 1 本ずつ起動して採取（2026-08-24）。`--permission-mode` を渡さない
+＝ AF の「毎回たずねる」起動は **manual** で始まる。auto は既定ではない（選択肢としては在る）。
+
+| `--permission-mode` | 状態行 | チップ |
+| --- | --- | --- |
+| （無指定＝既定）/ `manual` | `⏸ manual mode on · ← for agents` | Manual |
+| `auto` | `⏵⏵ auto mode on (shift+tab to cycle) · …` | Auto |
+| `acceptEdits` | `⏵⏵ accept edits on (shift+tab to cycle) · …` | Accept Edits |
+| `bypassPermissions` | `⏵⏵ bypass permissions on (shift+tab to cycle) · …` | Bypass |
+| `dontAsk` | `⏵⏵ don't ask on (shift+tab to cycle) · …` | Don't ask |
+| `plan` | `⏸ plan mode on (shift+tab to cycle) · …` | Plan |
+
+⚠️ **manual だけ `(shift+tab to cycle)` を出さない。** `paneMode` の claude 分岐は
+「4 つの名前 ＋ `shift+tab to cycle` の合言葉」で判定していたので、**承認ありのセッションは
+モード不明（空文字）**になっていた。空文字は「コンポーザ未描画」の意味も兼ねており
+（`session_io.go` の launch-seed readiness ゲート）、**初回プロンプトの配達が 30 秒待たされてから
+best-effort に落ちる**。`internal/tmuxx` の `modeFooterRe` は 2.1.212 で同じ罠を踏んで直して
+いたが、`paneMode` 側には反映されていなかった。→ `claudeModeLabel` にモード名を並べ、最後の砦を
+**フッタ帯そのもの**（`tmuxx.ClaudeModeFooter`）にした。名前が増えても「描画済み・Default」に
+倒れるので、配達だけは止まらない。
+
+✅ `--allow-dangerously-skip-permissions` を残す判断も実測で確認した。manual 起動から
+shift+tab を 4 回送ると **manual → accept edits → plan → bypass permissions → auto** と巡り、
+利用者は再起動せずに自分で bypass へ入れる。
+
+## 76.7 無人運転との相性
 
 承認ありのセッションは、定時実行・フリートオペレーター・MCP の drive ツールでは**完了しない**。
 `session_io.go` は保留中の許可があるとき送信を `permission_pending` で断るので黙ってハングは
 しないが、ターンは進まない。設定 UI にはその旨の注記を出す（`agents.skip_permissions_off_note`）。
 
-## 76.7 触っていないもの（意図的）
+## 76.8 触っていないもの（意図的）
 
 - **信頼／オンボーディング系**: claude の `hasTrustDialogAccepted` / `hasCompletedOnboarding`、
   cursor `--trust`、kiro `chat.disableTrustAllConfirmation`、copilot `--no-remote`。これらは権限確認
@@ -107,7 +134,7 @@ Interaction は Console に選択カードを描かせるため `Kind:"question"
 - **稼働中セッションの動的変更**。この選択は起動時にだけ効く（TUI は再起動が要る）。managed は
   再 spawn 時に解決し直す。
 
-## 76.8 実装（P0）
+## 76.9 実装（P0）
 
 - `internal/agents/agents.go` — `SkipPermissionsPref`（ui-prefs フック）/ `SkipPermissions` /
   `BypassPermissions` / `Caps.PermissionChoice`。表テストは `permissions_test.go`。
@@ -118,14 +145,16 @@ Interaction は Console に選択カードを描かせるため `Kind:"question"
 - Console — `caps.permissionChoice`、設定 > エージェント > 各カードのトグル、起動ダイアログ
   （LaunchModal / StartModal）の「権限確認」欄。**起動ダイアログで触らなければ値を送らない**ので、
   あとから既定を変えれば新しいセッションに効く。
+- `session_io.go` — `claudeModeLabel`（§76.6 の実測表）と、`internal/tmuxx` の
+  `ClaudeModeFooter`（未知のモード名でも「描画済み」と読む最後の砦）。
 - Console — **モードの表示名**（`nonPlanModeLabel`）。claude の非 plan ラベル `Bypass` は
-  「権限確認をスキップして起動したときの状態名」なので、承認ありのときは `Default` に読み替える。
+  「権限確認をスキップして起動したときの状態名」なので、承認ありのときは `Manual` に読み替える。
   これをやらないと、同じ起動ダイアログの中で「権限確認: 毎回たずねる」と「開始モード: Bypass」が
   並ぶ。ミラーのモードチップ自体は端末の状態行（`paneMode`）由来なので**元から正しい**（承認あり
   なら `Default` と出る）が、plan を抜けたときの楽観ラベルだけが種別の既定ラベルを使っていたので、
   **端末が直近に名乗った非 plan 名**を覚えて使うようにした。
 
-## 76.9 残り
+## 76.10 残り
 
 - P1: codex / opencode（§76.4）。
 - 一覧やミラーで「このセッションは承認あり」を常時見せるか。claude はモードチップが

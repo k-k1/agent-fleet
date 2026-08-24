@@ -65,21 +65,7 @@ func paneMode(kind, tn string) string {
 	}
 	switch kind {
 	case session.KindClaude:
-		// claude's status line (last line) shows the active mode: "⏸ plan mode on
-		// (shift+tab to cycle)" vs "⏵⏵ bypass permissions on …" / "accept edits on …".
-		t := paneTail(s, 3)
-		if strings.Contains(t, "plan mode on") {
-			return "Plan"
-		}
-		if strings.Contains(t, "accept edits on") {
-			return "Accept Edits"
-		}
-		if strings.Contains(t, "bypass permissions on") {
-			return "Bypass"
-		}
-		if strings.Contains(t, "shift+tab to cycle") {
-			return "Default"
-		}
+		return claudeModeLabel(paneTail(s, 3))
 	case session.KindOpencode:
 		// The composer status line ("<Agent> auto · …") sits a few lines above the very
 		// bottom (above the border + token/commands footer). The agent name IS the mode.
@@ -157,6 +143,47 @@ func paneMode(kind, tn string) string {
 				return "Default"
 			}
 		}
+	}
+	return ""
+}
+
+// claudeModeLabel maps claude's status-line mode strip to the chip label.
+//
+// 実測（claude 2.1.241・2026-08-24。左が --permission-mode の値）:
+//
+//	(無指定＝既定) / manual  "⏸ manual mode on · ← for agents"
+//	auto                     "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents"
+//	acceptEdits              "⏵⏵ accept edits on (shift+tab to cycle) · …"
+//	bypassPermissions        "⏵⏵ bypass permissions on (shift+tab to cycle) · …"
+//	dontAsk                  "⏵⏵ don't ask on (shift+tab to cycle) · …"
+//	plan                     "⏸ plan mode on (shift+tab to cycle) · …"
+//
+// ★**manual だけ "(shift+tab to cycle)" を出さない**（tmuxx の modeFooterRe が 2.1.212 で
+// 同じことを踏んでいる）。そして manual は「権限確認あり」で起動したセッションが落ちる先
+// （docs/76）そのものなので、旧実装の「4 つの名前 ＋ shift+tab の合言葉」では**空文字**に
+// なる。paneMode の空文字は「コンポーザ未描画」を意味し、launch-seed の readiness ゲート
+// （submitPromptTUI / 初回プロンプト配達）が 30 秒待ってから best-effort に落ちる。
+//
+// なので名前を並べるだけで終わらせず、**フッタ帯そのもの**（tmuxx.ClaudeModeFooter）を
+// 最後の砦に置く: 名前が増えても改名されても「描画済み・モード名は Default 扱い」に倒れ、
+// 配達だけは止まらない。
+func claudeModeLabel(tail string) string {
+	switch {
+	case strings.Contains(tail, "plan mode on"):
+		return "Plan"
+	case strings.Contains(tail, "accept edits on"):
+		return "Accept Edits"
+	case strings.Contains(tail, "bypass permissions on"):
+		return "Bypass"
+	case strings.Contains(tail, "auto mode on"):
+		return "Auto"
+	case strings.Contains(tail, "manual mode on"):
+		return "Manual"
+	case strings.Contains(tail, "don't ask on"):
+		return "Don't ask"
+	case tmuxx.ClaudeModeFooter(tail), strings.Contains(tail, "shift+tab to cycle"):
+		// 未知のモード名、または古いビルドの合言葉だけが残っている場合。
+		return "Default"
 	}
 	return ""
 }
