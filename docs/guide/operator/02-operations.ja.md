@@ -176,7 +176,7 @@ Control Plane を公開ホスト名で出すと、**数時間のうちに脆弱�
 
 - **アイドル自動停止（scale-to-zero）**: 使われていない claude セッションを **1 時間**で停止し、
   何も動いていない Workspace を **2 時間**で停止します。**これが既定**で、
-  `AF_SESSION_IDLE_TIMEOUT` / `AF_WS_IDLE_TIMEOUT` で変えられます（テナント単位の上書きは Admin UI。
+  `AF_SESSION_IDLE_TIMEOUT` / `AF_INTERACTION_IDLE_TIMEOUT`（質問や承認待ちで止まっているセッション）/ `AF_WS_IDLE_TIMEOUT` / `AF_PRESENCE_IDLE_TIMEOUT`（打鍵の無い端末を在席と数える猶予・既定 30 分）で変えられます（テナント単位の上書きは Admin UI。
   テナントが `0` を入れればそのテナントだけ無効、env に `0` を入れればデプロイ全体で無効）。
   停止した Workspace は、ユーザーが次にターミナルを開くと自動起動します（`AF_AUTOSTART`）。
   資源の節約に有効です。env の意味は [.env.example](../../../deploy/compose/.env.example)、仕組みは

@@ -343,7 +343,9 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 	// P3-9: an attached terminal keeps the workspace warm and pins its session
 	// (tier 1 won't halt a session someone is watching).
 	session := r.URL.Query().Get("session")
-	releasePresence, err := a.mgr.trackWorkspaceConnection(r.Context(), res.ws.ID, session)
+	// 在席は「ソケットがある」ではなく「人が触っている」で数える（docs/75 P3）。
+	// noteInput は下の browser→agent 中継が打鍵フレームを見たときだけ呼ぶ。
+	releasePresence, noteInput, err := a.mgr.trackWorkspaceTerminal(r.Context(), res.ws.ID, session)
 	if err != nil {
 		writeAPIErr(w, workspaceActivityAPIError(err))
 		return
@@ -400,12 +402,33 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 	defer down.Close()
 
 	errc := make(chan error, 2)
-	go relay(up, down, errc) // agent -> browser
-	go relay(down, up, errc) // browser -> agent
-	<-errc                   // first side to close ends the bridge
+	go relay(up, down, errc, nil)       // agent -> browser
+	go relay(down, up, errc, noteInput) // browser -> agent（打鍵だけ在席として数える）
+	<-errc                              // first side to close ends the bridge
 }
 
-func relay(src, dst *websocket.Conn, errc chan<- error) {
+// terminalFrame is the browser→agent control envelope (console/src/terminal/term.ts):
+// {"type":"input"|"resize"|"ping", …}. Only "input" means a human is at the keyboard.
+//
+// ★ping と resize を数えてはいけない: Console は開いているソケットへ定期的に ping を
+// 送るので、「何かフレームが来た＝在席」にすると、閉じ忘れたタブが永久に Workspace を
+// 温める従来の挙動がそのまま戻る（docs/75 P3 が消そうとしているもの）。
+type terminalFrame struct {
+	Type string `json:"type"`
+}
+
+func isTerminalInput(mt int, data []byte) bool {
+	if mt != websocket.TextMessage {
+		return false
+	}
+	var f terminalFrame
+	if json.Unmarshal(data, &f) != nil {
+		return false
+	}
+	return f.Type == "input"
+}
+
+func relay(src, dst *websocket.Conn, errc chan<- error, onInput func()) {
 	for {
 		mt, data, err := src.ReadMessage()
 		if err != nil {
@@ -425,6 +448,9 @@ func relay(src, dst *websocket.Conn, errc chan<- error) {
 			}
 			errc <- err
 			return
+		}
+		if onInput != nil && isTerminalInput(mt, data) {
+			onInput()
 		}
 		if err := dst.WriteMessage(mt, data); err != nil {
 			errc <- err
