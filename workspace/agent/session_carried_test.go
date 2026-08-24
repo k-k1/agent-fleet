@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -310,6 +313,106 @@ func TestPutCarriedRejectsUnanswerableShapes(t *testing.T) {
 	}
 	if c, _ := status.ReadCarried("sid-x"); c.Permission != "Bash · ls" || c.Reason != "halt" {
 		t.Errorf("最初の持ち越しが残っていない: %+v", c)
+	}
+}
+
+// --- 畳む経路は halt だけではない（archive / recreate）--------------------------
+
+// orderingModalAgent は PendingModal が**いつ**呼ばれたかを記録する ModalReporter。
+// 呼ばれた時点で tmux ログに kill-session が載っていたら、保留はもう存在しない —
+// 順序そのものを検査するための仕掛け（ADR 0055 決定 12。過去に dropManagedRuntime の
+// **後**で昇格していて一度も発火しなかった、という同型のバグを出している）。
+type orderingModalAgent struct {
+	agents.Agent
+	modal     agents.PendingModal
+	logPath   string
+	calls     *int
+	afterKill *bool
+}
+
+func (a orderingModalAgent) PendingModal(session.Meta) (agents.PendingModal, bool) {
+	*a.calls++
+	if b, err := os.ReadFile(a.logPath); err == nil && strings.Contains(string(b), "kill-session") {
+		*a.afterKill = true
+	}
+	return a.modal, true
+}
+
+// fakeTmuxOnlyFor は fakeTmux と同じ tmux スタブだが、has-session が **指定した 1 つ**
+// だけを「生きている」と答える。fakeTmux は has-session に常に成功を返すので、recreate が
+// 新しいスラグを引く allocSessionName（空いているスラグを探して回る）が終わらない。
+func fakeTmuxOnlyFor(t *testing.T, tn string) string {
+	t.Helper()
+	bin := t.TempDir()
+	logPath := filepath.Join(bin, "tmux.log")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  has-session) [ "$3" = "$TMUX_TEST_ALIVE" ] || exit 1 ;;
+  list-panes) printf '1 %%7\n' ;;
+  capture-pane) printf '\n' ;;
+  load-buffer) /bin/cat > /dev/null ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("TMUX_TEST_LOG", logPath)
+	t.Setenv("TMUX_TEST_ALIVE", session.ExactTarget(tn))
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	isolateAgentConfigDirs(t)
+	return logPath
+}
+
+// アーカイブ / 作り直しも「モーダルを出したまま畳む」経路である。halt だけが正しくても、
+// 日常操作のこの 2 つが同じ順序を守らなければ同じデータロスになる（ADR 0055 決定 2:
+// 畳んでよいのは失われないときだけ）。ハンドラを実際に叩いて carried-interaction が
+// 書かれること、かつ**ペインを殺す前**に書かれることを見る。
+func TestArchiveAndRecreatePromoteCarriedBeforeKill(t *testing.T) {
+	for _, tc := range []struct {
+		route  string
+		handle func(http.ResponseWriter, *http.Request)
+	}{
+		{"archive", handleArchiveSession},
+		{"recreate", handleRecreateSession},
+	} {
+		t.Run(tc.route, func(t *testing.T) {
+			const name = "slot_carried"
+			// このスロットだけが生きている＝畳む前に殺されるペインがある状態。
+			logPath := fakeTmuxOnlyFor(t, session.TmuxName(name))
+			m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindCodex}
+			session.WriteMeta(m)
+
+			calls, afterKill := 0, false
+			withFakeAgent(t, m.Kind, orderingModalAgent{
+				Agent:   agentOf(m.Kind),
+				modal:   agents.PendingModal{Kind: "permission", Detail: "shell requires approval"},
+				logPath: logPath, calls: &calls, afterKill: &afterKill,
+			})
+
+			req := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/"+tc.route, nil)
+			req.SetPathValue("name", name)
+			rec := httptest.NewRecorder()
+			tc.handle(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s: status = %d, body = %s", tc.route, rec.Code, rec.Body.String())
+			}
+
+			if calls == 0 {
+				t.Fatalf("%s が持ち越しの昇格を呼んでいない（保留中の質問が無言で消える）", tc.route)
+			}
+			if afterKill {
+				t.Errorf("%s が kill-session の**後**で昇格した（ペインと一緒に保留は消えている）", tc.route)
+			}
+			c, ok := status.ReadCarried(session.UUID(m.Dir, name))
+			if !ok {
+				t.Fatalf("%s: carried-interaction が書かれていない", tc.route)
+			}
+			if c.Kind != "permission" || c.Permission != "shell requires approval" {
+				t.Errorf("%s: 持ち越しの中身が違う: %+v", tc.route, c)
+			}
+		})
 	}
 }
 
