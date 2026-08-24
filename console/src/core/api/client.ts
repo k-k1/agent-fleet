@@ -692,6 +692,12 @@ export async function chatStream(
 // するだけ — 判定の正は常にサーバー。
 export const sessionSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/lock`, "POST", { locked });
+// 操作ビーコン（docs/75 P3）: 「人が今 Console を触っている」を Workspace のアイドル時計へ
+// 伝える。応答は見ない（在席の記録が 1 回落ちても次の操作で届く）。auto-start は通らない
+// ので、停止中の Workspace がこれで起き上がることは無い。
+export const workspaceAttention = (): Promise<unknown> =>
+  apiJSON("api/workspace/attention", "POST", {}).catch(() => null);
+
 // 停止しないピン（docs/75）: アイドル自動停止（tier1 のセッション halt / tier2 の
 // Workspace 停止）から、期限付きでこのセッションを守る。hours<=0 で解除。
 // **時刻で切れる**のが本体 — 消し忘れたピンは閉じ忘れた端末タブと同じで、黙って

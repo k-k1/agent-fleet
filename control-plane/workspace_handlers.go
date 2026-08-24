@@ -686,6 +686,27 @@ func (a workspaceAPI) sessionStart(w http.ResponseWriter, r *http.Request, res *
 	a.proxy.rest(w, r, res)
 }
 
+// attention は「人が今この Console を触っている」という 1 ビット（docs/75 P3）。
+//
+// なぜ要るか: 在席の判定を端末の打鍵に絞った結果、**打鍵も送信もせずミラーで過去ログを
+// 読み続けている人**が不在に見える。読んでいる最中に Workspace が止まると、Agent ごと
+// 落ちるので転写すら取れなくなる（ミラーは「停止中は履歴を取得できません」に変わる）。
+//
+// ★「タブが開いている」ではなく「人が操作した」を送る。Console は document が可視の
+// あいだの実操作（pointerdown / keydown / wheel）を 60 秒に 1 回だけここへ投げる。
+// 開きっぱなしのタブは何も送らないので、P3 が消した「ソケットがあるだけで温まる」は
+// 戻らない。
+//
+// ★auto-start は通さない。ここを通すと、停止した Workspace のタブを開いて画面を
+// クリックしただけでコンテナが起き上がる（端末アタッチが auto-start しないのと同じ理屈）。
+// 起こすのは利用者の明示操作だけ。
+func (a workspaceAPI) attention(w http.ResponseWriter, r *http.Request, res *resolved) {
+	// 停止処理と競合したときの 409 は無視してよい: 在席の記録が 1 回落ちるだけで、
+	// 次の操作でまた届く。呼び出し側（ビーコン）も応答を見ない。
+	_ = a.mgr.touchWorkspace(r.Context(), res.ws.ID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // sessionCarriedAnswer answers a carried interaction (docs/75): the question / plan /
 // permission that was on screen when the session was folded away. Like sessionStart it
 // auto-starts a cold workspace first — this is the ONE write whose whole point is to

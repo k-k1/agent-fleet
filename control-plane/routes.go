@@ -257,6 +257,9 @@ func registerWorkspaceRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/workspace/clean-home", ws.withResolved(ws.cleanHome)) // deeper reset: wipe home except logins/connections
 	// Own-workspace resource chip (mem / CPU vs quota) — host-read cgroup, all users.
 	mux.HandleFunc("GET /api/workspace/stats", ws.withResolved(ws.stats))
+	// 操作ビーコン（docs/75 P3）: 「人が今 Console を触っている」をアイドル時計へ伝える。
+	// 打鍵に絞った在席判定だけだと、読んでいるだけの人が不在に見えるため。
+	mux.HandleFunc("POST /api/workspace/attention", ws.withResolved(ws.attention))
 }
 
 // Session ops — proxied to the Workspace Agent.
