@@ -102,22 +102,41 @@ func handoffOfferDTO(o SessionHandoffOffer, recipientKey string) map[string]any 
 	}
 }
 
-// catalogForOwnedSession は所有者自身の catalog 行を名前で引く。live 在庫と突き合わせてから
-// 引くのは、消えたセッション/作業コピーへ引き継ぎを差し出させないため（put と同じ作法）。
-func (a sessionHandoffAPI) catalogForOwnedSession(r *http.Request, res *resolved, name string) (SharedSessionCatalog, *apiError) {
-	if _, err := a.share.syncCatalogLocked(r.Context(), res); err != nil {
-		return SharedSessionCatalog{}, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to hand off"}
+// catalogForOwnedSession は所有者自身の catalog 行を名前で引く。ok=false は「その行が無い」で、
+// **エラーではない**（呼び出し側が意味を決める。読みは「まだ誰にも共有していない」、
+// 書きは 404）。
+//
+// ⚠️ sync の頻度で性格が変わる。`syncCatalogLocked` は所有者 Agent への往復 2 本
+// （`/sessions/catalog` と `/repos`）で、`/repos` は作業コピーごとに git を回すため
+// **worktree が増えるほど重い**。共有の読み取りが `freshCatalog` で間引いているのはこれが
+// 理由（session_share.go の注記）で、宛先一覧のような読みで毎回走らせるとモーダルが
+// 「読み込み中」のまま止まって見える。だから読みは**同じスロットルに乗せる**。
+//
+// ⚠️ 逆に、同期を丸ごと省くことはできない。repo/worktree スコープの共有は**後から作られた
+// セッションにも動的に効く**（docs/59 §1）ので、catalog に行が無いことは「共有されていない」
+// の証明にならない —— 省くと、共有済みの新しいセッションに「まだ誰にも共有していません」と
+// 表示してしまう。
+func (a sessionHandoffAPI) catalogForOwnedSession(r *http.Request, res *resolved, name string, exact bool) (SharedSessionCatalog, bool, *apiError) {
+	if exact || !a.share.freshCatalog(res.mv.MembershipID, shareCatalogTTL) {
+		lock := a.mgr.shareLockFor(res.mv.MembershipID)
+		lock.Lock()
+		_, err := a.share.syncCatalogLocked(r.Context(), res)
+		lock.Unlock()
+		if err != nil {
+			a.share.invalidateCatalog(res.mv.MembershipID) // 失敗した同期を「新鮮」に数えない
+			return SharedSessionCatalog{}, false, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to hand off"}
+		}
 	}
 	rows, err := a.mgr.store.ListSharedSessionCatalogByOwner(r.Context(), res.mv.MembershipID)
 	if err != nil {
-		return SharedSessionCatalog{}, internalErr(err)
+		return SharedSessionCatalog{}, false, internalErr(err)
 	}
 	for _, c := range rows {
 		if c.Name == name && !c.Archived {
-			return c, nil
+			return c, true, nil
 		}
 	}
-	return SharedSessionCatalog{}, &apiError{http.StatusNotFound, "handoff_session_not_shared", "session is not shared with anyone"}
+	return SharedSessionCatalog{}, false, nil
 }
 
 // recipientsFor は「このセッションを見られる人」＝宛先候補。**共有 ACL の逆引き**であり、
@@ -163,18 +182,21 @@ func (a sessionHandoffAPI) recipients(w http.ResponseWriter, r *http.Request, re
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to hand off"})
 		return
 	}
-	shareLock := a.mgr.shareLockFor(res.mv.MembershipID)
-	shareLock.Lock()
-	c, e := a.catalogForOwnedSession(r, res, name)
-	shareLock.Unlock()
+	c, found, e := a.catalogForOwnedSession(r, res, name, false)
 	if e != nil {
 		writeAPIErr(w, e)
 		return
 	}
-	members, err := a.recipientsFor(r.Context(), res.mv, c)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
+	// 「まだ誰にも共有していない」は**正常な状態**なのでエラーにしない。エラーで返すと
+	// 画面はそれを「取得に失敗した」としか言えず、利用者は次に何をすればよいか分からない
+	// （実利用で最初に踏まれた）。空の候補で答え、先に共有する導線は Console 側が出す。
+	members := []map[string]string{}
+	if found {
+		var err error
+		if members, err = a.recipientsFor(r.Context(), res.mv, c); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
 	}
 	ctx, _, e := a.handoffContext(r.Context(), res, name)
 	if e != nil {
@@ -182,11 +204,13 @@ func (a sessionHandoffAPI) recipients(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	pending := ""
-	if rows, err := a.mgr.store.ListSessionHandoffOffersByOwner(r.Context(), res.mv.MembershipID); err == nil {
-		for _, o := range rows {
-			if o.CatalogID == c.ID && o.Status == "pending" {
-				pending = o.ID
-				break
+	if found {
+		if rows, err := a.mgr.store.ListSessionHandoffOffersByOwner(r.Context(), res.mv.MembershipID); err == nil {
+			for _, o := range rows {
+				if o.CatalogID == c.ID && o.Status == "pending" {
+					pending = o.ID
+					break
+				}
 			}
 		}
 	}
@@ -202,8 +226,14 @@ func (a sessionHandoffAPI) handoffContext(ctx context.Context, res *resolved, na
 	if e != nil {
 		return nil, "", e
 	}
-	if status >= 400 {
-		// 作業コピーを持たないセッションは引き継げない（座標が無い）。
+	// ⚠️ 上流の 404 と 409 を混ぜない。「そんなセッションは無い」と「作業コピーが無いので
+	// 引き継げない」は利用者の次の一手が違う（前者は名前が違う／消えた、後者は共有や
+	// push の話ですらない）。混ぜると、消えたセッションに対して「作業コピーがありません」と
+	// 出て原因が追えなくなる。
+	switch {
+	case status == http.StatusNotFound:
+		return nil, "", &apiError{http.StatusNotFound, "not_found", "no such session"}
+	case status >= 400:
 		return nil, "", &apiError{http.StatusConflict, "handoff_no_working_copy", "session has no working copy to hand off"}
 	}
 	blocked, _ := payload["blocked"].(string)
@@ -235,12 +265,13 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to hand off"})
 		return
 	}
-	shareLock := a.mgr.shareLockFor(res.mv.MembershipID)
-	shareLock.Lock()
-	c, e := a.catalogForOwnedSession(r, res, strings.TrimSpace(in.SessionName))
-	shareLock.Unlock()
+	c, found, e := a.catalogForOwnedSession(r, res, strings.TrimSpace(in.SessionName), true)
 	if e != nil {
 		writeAPIErr(w, e)
+		return
+	}
+	if !found {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "handoff_session_not_shared", "session is not shared with anyone"})
 		return
 	}
 	// 宛先は共有先に限る。名簿から引くのではなく ACL の逆引きに含まれるかで判定する。
