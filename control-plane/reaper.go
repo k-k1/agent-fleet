@@ -522,7 +522,11 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClock
 		// session_idle_timeout、人の判断待ちは interaction_idle_timeout。テナントは
 		// 「質問は早く畳んで安くしたい／うちは数時間待ってほしい」を独立に決められる。
 		to, on := cl.tier1For(s)
-		if !on || s.Kind != "claude" || !tier1Reapable(s) {
+		// kind の門（docs/75 P5）: shell / ssm は halt が「走っているジョブを殺す」意味に
+		// なるので tier1 の対象にしない（p3-9 からの割り切り。守りたいときは
+		// 「自動停止しない」ピン）。それ以外＝エージェントのセッションは、claude も
+		// managed（codex / opencode / …）も halt が resumable なので畳んでよい。
+		if !on || !tier1Foldable(s.Kind) || !tier1Reapable(s) {
 			continue
 		}
 		key := ws.ID + "|" + s.Name
