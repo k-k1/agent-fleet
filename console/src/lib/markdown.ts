@@ -1,5 +1,5 @@
 import { load } from "js-yaml";
-import { Marked } from "marked";
+import { Marked, Tokenizer } from "marked";
 
 export interface YamlFrontMatter {
   attributes: Record<string, unknown>;
@@ -197,6 +197,92 @@ export function isLinkDestination(destination: string): boolean {
   return destination.startsWith("<") || ASCII_DESTINATION.test(destination) || EXPLICIT_DESTINATION.test(destination);
 }
 
+// CommonMark decides whether `**` opens or closes emphasis from the two characters around
+// it: a delimiter next to punctuation only counts when the character on its other side is
+// whitespace or punctuation too. Every CJK bracket, 、。！？…・ and every fullwidth form is
+// Unicode punctuation, and Japanese prose has no spaces to rescue them — so
+//   あ**「強調」**です     **強調。**続く     あ~~「取り消し」~~です
+// come out as literal asterisks and tildes. The author sees plain text with the markers
+// showing and no way to tell why; the identical sentence in English works.
+//
+// The fix, in the `*` and `~~` delimiter rules only: count ASCII punctuation as
+// punctuation and nothing else, so a CJK mark counts as ordinary text the way the kanji
+// beside it does. Because those classes are identical to marked's over the ASCII range, a
+// document written wholly in ASCII cannot parse differently than before.
+//
+// That reading is applied as a SECOND ATTEMPT, never as a replacement: marked's own rules
+// run first and whatever they find is kept untouched, and only a position where they found
+// no emphasis at all is read again with the relaxed ones. The difference is not
+// hypothetical — relaxing outright loses `**\`code\`**。`, where the closing run sits
+// between an ASCII backtick and a 。 and stops being able to close. Second-attempt means
+// the fix can only ever add emphasis that was not being rendered.
+//
+// Deliberately left alone:
+//   - `_` (emStrongRDelimUnd), whose intraword rule is what keeps a filename like
+//     Ph0_声の増量設計.md from turning into emphasis mid-sentence. The retry below is
+//     entered for `*` only.
+//   - `punctuation`, the "character BEFORE the opener" test, which is permissive: it lets
+//     an opener follow punctuation, so narrowing it there would lose emphasis, not gain it.
+const ASCII_PUNCT = "!-\\/:-@\\[-`{-~";
+// The three character classes marked substitutes into its delimiter rules, verbatim.
+// Rewriting the built regexes (rather than re-deriving the rules ourselves) keeps every
+// other part of them — the rule-of-three bookkeeping, the `~` guards — marked's own. If an
+// upgrade spells these differently the replacements simply stop matching, so the tests
+// fail loudly instead of the viewer quietly regressing.
+const CLASS_REWRITES: [RegExp, string][] = [
+  [/\[\^\\s\\p\{P\}\\p\{S\}\]/g, `[^\\s${ASCII_PUNCT}]`], // notPunctSpace
+  [/\[\\s\\p\{P\}\\p\{S\}\]/g, `[\\s${ASCII_PUNCT}]`], // punctSpace
+  [/\[\\p\{P\}\\p\{S\}\]/g, `[${ASCII_PUNCT}]`], // punct
+];
+// Order matters: the negated class contains the other two as substrings.
+export function asciiPunctuationRule(rule: RegExp): RegExp {
+  let source = rule.source;
+  for (const [pattern, replacement] of CLASS_REWRITES) source = source.replace(pattern, replacement);
+  return source === rule.source ? rule : new RegExp(source, rule.flags);
+}
+
+type Rules = Tokenizer["rules"];
+const CJK_FRIENDLY_RULES = ["emStrongLDelim", "emStrongRDelimAst", "delLDelim", "delRDelim"] as const;
+// Marked hands the tokenizer a fresh `rules` object per Lexer, holding the shared rule set
+// for the active options (gfm / breaks / pedantic) — which must not be mutated, or every
+// other importer of "marked" would see it. So keep a rewritten copy per rule set, and one
+// entry per copy as well: an inner inlineTokens() call re-enters the tokenizer while the
+// relaxed set is installed, and has to be able to find its way back to marked's own.
+const variants = new WeakMap<Rules, [stock: Rules, relaxed: Rules]>();
+
+function rulePair(rules: Rules): [Rules, Rules] {
+  const known = variants.get(rules);
+  if (known) return known;
+  const inline = { ...rules.inline };
+  for (const name of CJK_FRIENDLY_RULES) {
+    const rule = rules.inline[name];
+    if (rule instanceof RegExp) inline[name] = asciiPunctuationRule(rule);
+  }
+  const pair: [Rules, Rules] = [rules, { ...rules, inline }];
+  variants.set(pair[0], pair);
+  variants.set(pair[1], pair);
+  return pair;
+}
+
+// Run one of marked's own inline tokenizers against marked's rules, then — only if it
+// found nothing — against the CJK-friendly ones.
+function retryWithCjkRules<T>(
+  tokenizer: Tokenizer,
+  read: (this: Tokenizer) => T | undefined,
+  relaxable: boolean,
+): T | undefined {
+  const [stock, relaxed] = rulePair(tokenizer.rules);
+  try {
+    tokenizer.rules = stock;
+    const token = read.call(tokenizer);
+    if (token || !relaxable) return token;
+    tokenizer.rules = relaxed;
+    return read.call(tokenizer);
+  } finally {
+    tokenizer.rules = stock;
+  }
+}
+
 // The Marked instance the app renders with. A separate instance rather than the package
 // singleton, because `marked.use()` would apply process-wide, and this tokenizer belongs
 // to the viewer, not to anyone else who imports "marked" later.
@@ -223,6 +309,26 @@ export const marked = new Marked({
       // `undefined` disables the rule for this line alone, so the block falls through to
       // paragraph / text and the author's line renders as it was written.
       return isLinkDestination(cap[2]) ? false : undefined;
+    },
+    // The two tokenizers that read `*`/`**` and `~~`. Each one is marked's own, called
+    // twice at most — see retryWithCjkRules. `_` never takes the second attempt.
+    emStrong(src, maskedSrc, prevChar) {
+      return retryWithCjkRules(
+        this,
+        function () {
+          return Tokenizer.prototype.emStrong.call(this, src, maskedSrc, prevChar);
+        },
+        src.startsWith("*"),
+      );
+    },
+    del(src, maskedSrc, prevChar) {
+      return retryWithCjkRules(
+        this,
+        function () {
+          return Tokenizer.prototype.del.call(this, src, maskedSrc, prevChar);
+        },
+        src.startsWith("~"),
+      );
     },
   },
 });
