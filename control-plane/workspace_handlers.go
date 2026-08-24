@@ -559,6 +559,16 @@ type sessionWire struct {
 	ExitReason string `json:"exitReason,omitempty"`
 	ExitCode   int    `json:"exitCode,omitempty"`
 	ExitSignal int    `json:"exitSignal,omitempty"`
+	// KeepAwakeUntil: 利用者が「アイドル自動停止から守れ」と宣言した期限（RFC3339・
+	// docs/75）。この struct に無いと silent drop で、押したピンが reaper に届かない
+	// ＝「押したのに止まった」になる。DB ミラーには列を作らない — 停止中の Workspace に
+	// 守るべき走行中のジョブは無い（次に起きたとき Agent が改めて申告する）。
+	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
+	// Carried は「畳まれたときに答えを待っていた対話」の種類（docs/75 §75.6.5）。
+	// 中継漏れは silent drop なので、この struct と DB ミラーの**両方**に要る:
+	// 稼働中は Agent 由来のこの値、停止中は ReplaceSessions で焼いた列が一覧を作る。
+	// 片方だけだと「Workspace を止めた瞬間にバッジが消える」形の嘘になる。
+	Carried string `json:"carried,omitempty"`
 }
 
 func fmtStarted(createdAt string) string {
@@ -585,6 +595,7 @@ func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[st
 				rows = append(rows, SessionRow{
 					Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
 					Label: s.Label, CreatedAt: s.CreatedAt, State: state,
+					Carried: s.Carried,
 				})
 			}
 			_ = a.mgr.store.ReplaceSessions(ctx, res.ws.ID, rows)
@@ -601,6 +612,8 @@ func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[st
 		out = append(out, sessionWire{
 			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
 			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
+			// 停止中でも「答えを待っている質問がある」ことは出す（docs/75 §75.6.5）。
+			Carried: r0.Carried,
 			// Container is down: we can't check the dir, so assume resumable; the
 			// Agent re-checks and refuses on actual attach if the dir is gone.
 			Resumable: true,
@@ -664,6 +677,22 @@ func (a workspaceAPI) sessionFork(w http.ResponseWriter, r *http.Request, res *r
 // workspace first, then proxies to the Agent (which runs ensureSessionTmux). No quota
 // check: resuming doesn't create a new session slot the user didn't already have.
 func (a workspaceAPI) sessionStart(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if a.autostart {
+		if aerr := a.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
+	a.proxy.rest(w, r, res)
+}
+
+// sessionCarriedAnswer answers a carried interaction (docs/75): the question / plan /
+// permission that was on screen when the session was folded away. Like sessionStart it
+// auto-starts a cold workspace first — this is the ONE write whose whole point is to
+// reach a workspace the idle-stop reaper turned off, and the user pressing 回答して再開
+// in the Console is exactly the deliberate "I am using this now" action auto-start is for.
+// The Agent then resumes the session and delivers the answer as ordinary prose.
+func (a workspaceAPI) sessionCarriedAnswer(w http.ResponseWriter, r *http.Request, res *resolved) {
 	if a.autostart {
 		if aerr := a.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
 			writeAPIErr(w, aerr)

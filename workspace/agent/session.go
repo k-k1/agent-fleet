@@ -32,6 +32,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
 		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,
 		BackgroundBusy: li.BackgroundBusy, Context: li.Context, Locked: m.Locked, Archived: m.Archived,
+		KeepAwakeUntil: m.KeepAwakeUntil,
 	}
 	// 上限で切れたターンの後始末が済んだ claude（メニューは自動解除済み／モデル別上限は
 	// そもそもメニューを出さない）はペインが待機プロンプトに戻るので、ここまでの状態は
@@ -53,6 +54,13 @@ func wireSession(m session.Meta, alive bool) session.Session {
 			s.ExitReason = e.Reason
 			s.ExitCode = e.Code
 			s.ExitSignal = e.Signal
+		}
+		// 畳まれたときに答えを待っていた対話（docs/75）。生きている行には出さない —
+		// そちらは State（question / plan / permission）が今まさに出ているモーダルを
+		// 語っており、持ち越しと二重に見せると「もう答えたはずのものがまだ出ている」
+		// ように読める。
+		if c, ok := status.ReadCarried(session.UUID(m.Dir, m.Name)); ok {
+			s.Carried = c.Kind
 		}
 	}
 	return s

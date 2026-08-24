@@ -71,6 +71,36 @@ tmux capture-pane -p -t auqtest -S -60 | grep -A3 "answered"
 tmux kill-session -t auqtest
 ```
 
+### 3.1 プローブの隔離（2026-08-24 追記・実際に踏んだ罠）
+
+上の素の形は**同じセッションの中から実行すると危ない**。2 つ直しておくこと。
+
+1. **専用ソケットで立てる** — `tmux -L probe75 new-session …`。既定ソケットは Agent が
+   所有する tmux サーバーそのもので、`tmux kill-server` を打てば**フリート全部が死ぬ**し、
+   検証セッションは Agent 側から meta 無しの孤児として見える。`-L` なら完全に別サーバー。
+2. **`AF_SESSION_NAME` を必ず落とす** — `env -u AF_SESSION_NAME …`。これを継承したまま
+   プローブを起動すると、プローブの `workspace-agent session-status` フックが
+   `NormalizeHookSID`（`internal/agents/claude/sid.go`）で**呼び出し元セッションの slot sid**
+   に付け替えられる。実測での症状: プローブの `question` 状態と `pending-question` が
+   **計測者自身のセッション**に書かれ（Console にはありもしない質問カードが出る／
+   `promptBlocker` が自分のコンポーザを `question_pending` 409 で塞ぐ）、`claude-sid` 台帳が
+   プローブの会話を指す（次の再開で**別の会話が復元されうる**）。ホスト側セッションが
+   自分のフックを撃つたびに `sids.Remove` で自己修復されるため今回は実害に至らなかったが、
+   アイドルなセッションから測ると残る。ついでに `CLAUDECODE` / `CLAUDE_CODE_*` も落とす
+   （継承すると子セッション扱いになり、**フックがそもそも鳴らない**）。
+
+```bash
+env -u AF_SESSION_NAME -u CLAUDECODE -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT \
+    -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_EXECPATH -u CLAUDE_PID -u AI_AGENT \
+  tmux -L probe new-session -d -s p1 -x 200 -y 50 -c /tmp/probe \
+  "claude --session-id $(uuidgen) --model sonnet --dangerously-skip-permissions"
+```
+
+`--session-id` を明示すると status / pending ファイルの所在が確定するので、
+`~/.config/agent-fleet/{session-status,pending-question,pending-plan,pending-perm}/<sid>.*` を
+そのまま観測でき、後片付けもその sid だけ消せばよい（転写は
+`$CLAUDE_CONFIG_DIR/projects/<slug>/<sid>.jsonl`）。
+
 質問を出させるプロンプト雛形（1セッションで「次: …」と追い質問すると1起動で複数パターン回せる）:
 
 - 単一選択: 「AskUserQuestionツールで質問を1つ。header=対応方針、question=…、選択肢は次の3つ

@@ -22,7 +22,7 @@ import { useSettings } from "../../lib/settings.ts";
 import { workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import { displayName, stateInfo, exitLabel } from "../../lib/sessionview.ts";
+import { displayName, stateInfo, exitLabel, keepAwakeLeft, KEEP_AWAKE_HOURS } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { ordClass } from "../../layout/badges.ts";
@@ -208,6 +208,15 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         )}
         {/* 削除ロック（docs/45）: 鍵バッジ。「なぜ削除が押せないのか」を行の上で示す。 */}
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
+        {/* 停止しないピン（docs/75）: 期限が生きている間だけ出す。切れたピンをバッジに
+            残すと「守られているつもり」で放置されるので、時計は表示側でも見る。 */}
+        {keepAwakeLeft(s.keepAwakeUntil) && (
+          <Icon
+            name="debug-pause"
+            className="sess-awake"
+            title={tr("srow.keep_awake_badge", { left: keepAwakeLeft(s.keepAwakeUntil) })}
+          />
+        )}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
@@ -435,6 +444,24 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                 >
                   <Icon name={s.locked ? "unlock" : "lock"} />{" "}
                   {s.locked ? tr("srow.unlock") : tr("srow.lock")}
+                </button>
+                {/* 停止しないピン（docs/75）: アイドル自動停止からこのセッションと Workspace を
+                    期限付きで守る。shell / ssm では「ジョブが走っているか」を af が判定できない
+                    （放置された less と実行中のビルドが前景コマンド名で区別できず、ssm は常に
+                    aws を張る）ため、推測ではなく宣言に倒した逃げ道。 */}
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  title={tr("srow.keep_awake_hint")}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void actions.setKeepAwake(s, keepAwakeLeft(s.keepAwakeUntil) ? 0 : KEEP_AWAKE_HOURS);
+                  }}
+                >
+                  <Icon name="watch" />{" "}
+                  {keepAwakeLeft(s.keepAwakeUntil)
+                    ? tr("srow.keep_awake_off")
+                    : tr("srow.keep_awake_on", { hours: KEEP_AWAKE_HOURS })}
                 </button>
                 {agentOf(s.kind).caps.ephemeral ? (
                   <button

@@ -625,11 +625,11 @@ func TestReaperSweepReachesTier3OnAStoppedWorkspace(t *testing.T) {
 	rp := &reaper{mgr: mgr, bootTime: time.Now()}
 
 	// Tiers 1 and 2 on, tier 3 off: nothing may happen to a stopped workspace's home.
-	rp.sweepWorkspace(ctx, ws, time.Minute, true, time.Minute, true, 0, false, 0, false, map[string]bool{})
+	rp.sweepWorkspace(ctx, ws, tierClocks{session: time.Minute, sessionOn: true, ws: time.Minute, wsOn: true}, map[string]bool{})
 	if rt.begins.Load() != 0 {
 		t.Fatal("hibernated a home although the tenant never asked for it")
 	}
-	rp.sweepWorkspace(ctx, ws, time.Minute, true, time.Minute, true, 30*24*time.Hour, true, 0, false, map[string]bool{})
+	rp.sweepWorkspace(ctx, ws, tierClocks{session: time.Minute, sessionOn: true, ws: time.Minute, wsOn: true, hibernate: 30 * 24 * time.Hour, hibernateOn: true}, map[string]bool{})
 	if rt.begins.Load() != 1 {
 		t.Fatalf("tier 3 was never reached from sweepWorkspace (calls = %d)", rt.begins.Load())
 	}
@@ -638,7 +638,7 @@ func TestReaperSweepReachesTier3OnAStoppedWorkspace(t *testing.T) {
 	for _, state := range []string{"starting", "none", "running"} {
 		rt.state = state
 		before := rt.begins.Load()
-		rp.sweepWorkspace(ctx, ws, time.Minute, true, time.Minute, true, 30*24*time.Hour, true, 0, false, map[string]bool{})
+		rp.sweepWorkspace(ctx, ws, tierClocks{session: time.Minute, sessionOn: true, ws: time.Minute, wsOn: true, hibernate: 30 * 24 * time.Hour, hibernateOn: true}, map[string]bool{})
 		if rt.begins.Load() != before {
 			t.Errorf("state %q was hibernated", state)
 		}

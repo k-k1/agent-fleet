@@ -134,6 +134,7 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Iden
 			"allowed_slot_classes":  lim.AllowedSlotClasses,
 			"slot_class":            lim.SlotClass,
 			"session_idle_timeout":  lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
+			"interaction_idle_timeout":        lim.InteractionIdleTimeout,
 			"home_hibernate_after":            lim.HomeHibernateAfter,
 			"home_backup_every":               lim.HomeBackupEvery,
 			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
@@ -922,7 +923,11 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		// P3-9 idle-stop: duration strings ("30m"); "" => deployment default,
 		// "0" => disabled for this tenant.
 		SessionIdleTimeout string `json:"session_idle_timeout"`
-		WSIdleTimeout      string `json:"ws_idle_timeout"`
+		// tier-1 の 2 本目の時計: 人の判断待ち（質問・プラン承認・許可・上限メニュー・
+		// 認証切れ）で止まっているセッション（docs/75 §75.5）。"" => テナントの
+		// session_idle_timeout、それも無ければデプロイ既定。
+		InteractionIdleTimeout string `json:"interaction_idle_timeout"`
+		WSIdleTimeout          string `json:"ws_idle_timeout"`
 		// Tier-3 home hibernation (ecs-ec2 only): "" => deployment default, "0" => never.
 		HomeHibernateAfter string `json:"home_hibernate_after"`
 		// Tier-4 home backup (ecs-ec2 only): the tenant's RPO. Same resolution.
@@ -940,7 +945,7 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		return
 	}
 	// Reject unparseable durations up front (empty stays empty = use default).
-	for _, v := range []string{body.SessionIdleTimeout, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery} {
+	for _, v := range []string{body.SessionIdleTimeout, body.InteractionIdleTimeout, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery} {
 		if v != "" {
 			if _, err := time.ParseDuration(v); err != nil {
 				writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_duration", "invalid idle timeout: " + v})
@@ -971,6 +976,7 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		// every super_admin edit. Carried over from what is stored.
 		SlotClass:                    a.tenantLimitsFor(r, t.ID).SlotClass,
 		SessionIdleTimeout:           body.SessionIdleTimeout,
+		InteractionIdleTimeout:       body.InteractionIdleTimeout,
 		WSIdleTimeout:                body.WSIdleTimeout,
 		HomeHibernateAfter:           body.HomeHibernateAfter,
 		HomeBackupEvery:              body.HomeBackupEvery,
@@ -991,6 +997,7 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		"max_workspace_disk_gb": body.MaxWorkspaceDiskGB,
 		"allowed_slot_classes":  body.AllowedSlotClasses,
 		"session_idle_timeout":  body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
+		"interaction_idle_timeout":        body.InteractionIdleTimeout,
 		"home_hibernate_after":            body.HomeHibernateAfter,
 		"home_backup_every":               body.HomeBackupEvery,
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,

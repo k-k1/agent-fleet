@@ -171,6 +171,8 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// de-duplication below needs to know what was surfaced, and may withdraw it.
 	pending := map[string]any{}
 	surfacePendingPayloads(pending, sid, state)
+	// 畳まれたときに画面に出ていたもの（docs/75）。保留が無いときだけ載る。
+	surfaceCarried(pending, sid)
 	// The pending question/plan above is ALSO in the transcript already (ask-time tool_use),
 	// so the same card would render twice. Drop the duplicate and hold the cursor short of
 	// its line, so it comes back — decided — once it resolves.
@@ -567,6 +569,46 @@ func surfacePendingPayloads(resp map[string]any, sid, state string) {
 	if hasP {
 		resp["pendingPlan"] = pp
 	}
+}
+
+// surfaceCarried adds the CARRIED interaction (docs/75 §75.6) — what was on screen when
+// the session was folded away, which the resumed CLI no longer knows about.
+//
+// pending-* とは**別のキー**で出す。同じキーに相乗りさせると、Console 側は「今モーダルが
+// 出ている（キー列で答える）」と「もう出ていない（文章で答える）」を alive の有無で
+// 見分けることになり、その見分けは一度も実装されたことがない（保留カードは今も alive を
+// 見ていない）。別キーなら、キーを撃つコードが持ち越しに到達し得ない。
+//
+// 保留が生きているあいだは持ち越しを出さない: 昇格は畳むときにしか起きないので普通は
+// 同時に存在しないが、halt 直後に再開して新しい質問が出た、のような順序では両方揃いうる。
+// そのときに正しいのは常に「今出ているモーダル」。
+func surfaceCarried(resp map[string]any, sid string) {
+	if _, hasQ := resp["pendingQuestions"]; hasQ {
+		return
+	}
+	if _, hasP := resp["pendingPlan"]; hasP {
+		return
+	}
+	if _, hasPerm := resp["pendingPermission"]; hasPerm {
+		return
+	}
+	c, ok := status.ReadCarried(sid)
+	if !ok {
+		return
+	}
+	out := map[string]any{"kind": c.Kind, "capturedAt": c.CapturedAt, "reason": c.Reason}
+	switch c.Kind {
+	case "question":
+		out["questions"] = c.Questions
+	case "plan":
+		out["plan"] = c.Plan
+	case "permission":
+		out["permission"] = c.Permission
+	}
+	if c.Text != "" {
+		out["text"] = c.Text
+	}
+	resp["carried"] = out
 }
 
 // hidePendingInteraction removes the transcript part that DUPLICATES a still-pending
