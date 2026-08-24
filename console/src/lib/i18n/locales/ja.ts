@@ -1895,6 +1895,9 @@ export const ja = {
   // === P2 共有: セッション状態チップ（lib/sessionview.ts の stateInfo）===
   "state.folder_missing": "フォルダ無し — 再開不可",
   "state.stopped": "停止中",
+  "state.stopped_question": "停止中・質問あり",
+  "state.stopped_plan": "停止中・承認待ち",
+  "state.stopped_permission": "停止中・許可待ち",
   "state.running": "起動中",
   "state.compacting": "圧縮中…",
   "state.working": "進行中…",

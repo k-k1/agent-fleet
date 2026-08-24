@@ -138,6 +138,14 @@ type Session struct {
 	ExitReason string `json:"exitReason,omitempty"`
 	ExitCode   int    `json:"exitCode,omitempty"`
 	ExitSignal int    `json:"exitSignal,omitempty"`
+	// Carried は「畳まれたときに画面に出ていた対話」の種類（"question" | "plan" |
+	// "permission"）。停止中の行にだけ入る（docs/75 §75.6.5）。
+	//
+	// なぜ一覧に要るか: 停止中セッションの状態は 停止中 の 1 語しか無く、答えを待って
+	// いる質問があることは**どこにも出ていなかった**。人待ちを畳めるようにした以上
+	// （docs/75 P2）、畳まれた質問が一覧から見えないのは「静かに失われた」のと区別が
+	// つかない。ミラーを開けばカードは出るが、開く理由が無ければ開かない。
+	Carried string `json:"carried,omitempty"`
 	// Locked mirrors Meta.Locked: the user pinned this session against deletion, so
 	// every removal path (stop=forget meta / delete / TTL prune / a working-copy
 	// delete that would take it down with it) refuses until it is unlocked. The

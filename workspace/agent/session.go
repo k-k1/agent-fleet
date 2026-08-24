@@ -54,6 +54,13 @@ func wireSession(m session.Meta, alive bool) session.Session {
 			s.ExitCode = e.Code
 			s.ExitSignal = e.Signal
 		}
+		// 畳まれたときに答えを待っていた対話（docs/75）。生きている行には出さない —
+		// そちらは State（question / plan / permission）が今まさに出ているモーダルを
+		// 語っており、持ち越しと二重に見せると「もう答えたはずのものがまだ出ている」
+		// ように読める。
+		if c, ok := status.ReadCarried(session.UUID(m.Dir, m.Name)); ok {
+			s.Carried = c.Kind
+		}
 	}
 	return s
 }
