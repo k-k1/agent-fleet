@@ -68,6 +68,8 @@ export interface Session {
   // 7日自動prune・作業コピー削除の巻き添え）を Agent が 403 で拒否する。停止/
   // アーカイブは可逆なので通る。行の鍵バッジと削除項目の無効化はこれを見る。
   locked?: boolean;
+  // 停止しないピン（docs/75）: この時刻までアイドル自動停止の対象外。過去/空 = 掛かっていない。
+  keepAwakeUntil?: string;
 }
 
 // A session's current context fill — the wire shape of the Agent's

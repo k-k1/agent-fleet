@@ -48,6 +48,9 @@ func buildMux() *http.ServeMux {
 	// （/stop のメタ忘却・DELETE・TTL 自動 prune・作業コピー削除の巻き添え）だけで、
 	// halt / archive は従来どおり通る。
 	mux.HandleFunc("POST /sessions/{name}/lock", handleSessionLock)
+	// 停止しないピン（docs/75）: アイドル自動停止からセッションと Workspace を
+	// 期限付きで守る。shell / ssm の走行中ジョブを af 側から見分けられないことへの答え。
+	mux.HandleFunc("POST /sessions/{name}/keep-awake", handleSessionKeepAwake)
 	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)
 	mux.HandleFunc("POST /sessions/{name}/restore", handleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).

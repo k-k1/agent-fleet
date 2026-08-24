@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -148,14 +149,61 @@ func handleSessionLock(w http.ResponseWriter, r *http.Request) {
 // StoppedAt bookkeeping from GET /sessions) without allowing an older snapshot
 // to overwrite the user's newer lock choice. Callers must use this rather than
 // session.WriteMeta when they started from a listed meta.
+//
+// 停止しないピン（KeepAwakeUntil）も同じ扱い: 一覧のポーリングは秒単位で走るので、
+// その最中に押されたピンを古いスナップショットが巻き戻すと、利用者から見て
+// 「押したのに効いていない」になる（ロックで一度踏んだのと同じ穴）。
 func writeSessionMetaKeepingLock(m session.Meta) session.Meta {
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
 	if current, ok := session.ReadMeta(m.Name); ok {
 		m.Locked = current.Locked
+		m.KeepAwakeUntil = current.KeepAwakeUntil
 	}
 	session.WriteMeta(m)
 	return m
+}
+
+// keepAwakeMaxHours は 1 回のピンで延ばせる上限。延長は押し直せばよく、上限があることで
+// 「押しっぱなしで永久に課金」が構造的に起きない（docs/75 §75.5 の原則 3 と同じ理由）。
+const keepAwakeMaxHours = 24
+
+// handleSessionKeepAwake (POST /sessions/{name}/keep-awake) pins a session against the
+// idle-stop reaper for a bounded window. Body: {"hours": 4} — 0 以下で解除。
+//
+// これは shell / ssm のための逃げ道である（docs/75）: 走行中のジョブを af 側から
+// 見分ける手段が無いので、推測でコンテナを守る代わりに、利用者に宣言してもらう。
+// claude セッションにも同じように効く（長い自動走行を止めたくないとき）。
+func handleSessionKeepAwake(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	var req struct {
+		Hours float64 `json:"hours"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	sessionLockMu.Lock()
+	defer sessionLockMu.Unlock()
+	m, ok := session.ReadMeta(name)
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	if req.Hours <= 0 {
+		m.KeepAwakeUntil = ""
+	} else {
+		h := req.Hours
+		if h > keepAwakeMaxHours {
+			h = keepAwakeMaxHours
+		}
+		m.KeepAwakeUntil = time.Now().Add(time.Duration(h * float64(time.Hour))).Format(time.RFC3339)
+	}
+	session.WriteMeta(m)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "keepAwakeUntil": m.KeepAwakeUntil})
 }
 
 // handleRepoLock (POST /repos/{name}/lock) pins/unpins a working copy (a clone or

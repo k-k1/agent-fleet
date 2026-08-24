@@ -152,3 +152,41 @@ func TestInteractionTimeoutFallbackChain(t *testing.T) {
 		})
 	}
 }
+
+// 停止しないピン（docs/75）。shell / ssm には state が無い＝分類の先の分岐に一切
+// 引っかからないので、ピンは**分類の一番外**で効かなければ意味を持たない。
+func TestKeepAwakePin(t *testing.T) {
+	future := time.Now().Add(time.Hour).Format(time.RFC3339)
+	past := time.Now().Add(-time.Minute).Format(time.RFC3339)
+
+	// shell（state 空）でも守られる — これがこの機能の存在理由。
+	shell := sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: future}
+	if got := sessionActivity(shell); got != activityMachineBusy {
+		t.Errorf("ピンされた shell = %v, want machineBusy", got)
+	}
+	if !holdsWorkspace(shell) {
+		t.Error("ピンされた shell が Workspace を守っていない")
+	}
+	if tier1Reapable(shell) {
+		t.Error("ピンされた行を tier1 が畳もうとした")
+	}
+	// idle な claude も同じく守られる（長い自動走行を止めたくないとき）。
+	if !holdsWorkspace(sessionWire{Alive: true, Kind: "claude", State: stateIdle, KeepAwakeUntil: future}) {
+		t.Error("ピンされた idle セッションが守られていない")
+	}
+	// 期限切れは効かない — 消し忘れたピンが永久に課金しないための本体。
+	if holdsWorkspace(sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: past}) {
+		t.Error("期限切れのピンがまだ効いている")
+	}
+	// 死んだセッションのピンはコンテナを抱え込まない。
+	if holdsWorkspace(sessionWire{Kind: "shell", KeepAwakeUntil: future}) {
+		t.Error("停止中のセッションのピンが Workspace を守った")
+	}
+	// 壊れた値は「ピンされていない」に倒す（黙って課金し続ける側に倒さない）。
+	if holdsWorkspace(sessionWire{Alive: true, Kind: "shell", KeepAwakeUntil: "いつまでも"}) {
+		t.Error("読めない期限がピンとして効いた")
+	}
+	if keepAwake("", time.Now()) {
+		t.Error("空はピンではない")
+	}
+}
