@@ -135,6 +135,8 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     }
     void refreshSessions();
     (chat ? openSessionChat : openSessionTerminal)(res.name);
-    return { ok: true };
+    // 作られたセッション名を返すのは、引き継ぎの受諾（docs/77）が「どのセッションで
+    // 受けたか」を所有者へ返すため。呼び出し側は ok だけ見ていてもよい。
+    return { ok: true, name: res.name };
   };
 }

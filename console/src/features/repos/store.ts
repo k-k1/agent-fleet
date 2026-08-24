@@ -126,7 +126,11 @@ interface LaunchSeedStore {
 	 *  session may propose more than one handoff in a turn, so the session name alone
 	 *  no longer identifies the card to badge. */
 	handoffId: string;
-	set(p: string, title?: string, handoffSession?: string, handoffId?: string): void;
+	/** メンバーから受け取った引き継ぎ（docs/77）の offer id ("" = 該当なし)。起動が成功した
+	 *  時点で受諾を申告するために持つ —— キャンセルされた起動で受諾済みにしてはいけないので、
+	 *  handoffId と同じく「種を置く時点」では申告できない。 */
+	handoffOfferId: string;
+	set(p: string, title?: string, handoffSession?: string, handoffId?: string, handoffOfferId?: string): void;
   clear(): void;
 }
 
@@ -135,8 +139,10 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	title: "",
 	handoffSession: "",
 	handoffId: "",
-	set: (prompt, title = "", handoffSession = "", handoffId = "") => set({ prompt, title, handoffSession, handoffId }),
-	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "" }),
+	handoffOfferId: "",
+	set: (prompt, title = "", handoffSession = "", handoffId = "", handoffOfferId = "") =>
+		set({ prompt, title, handoffSession, handoffId, handoffOfferId }),
+	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "" }),
 }));
 
 /** Poll every 60s while the tab is visible AND the workspace is running, so the
