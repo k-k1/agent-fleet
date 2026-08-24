@@ -75,6 +75,11 @@ idle-stop の**対**。停止中 WS へユーザーが**意図的にアクセス
 - **トリガは 2 つの明確な "今から使う" 動作のみ**: 端末 WS アタッチ（`proxyTerminal`）とセッション作成
   （`handleSessionCreate`）。**背景 GET ポーリング（session list / workspace state）は通さない**ので idle-stop の
   意味論（開きっぱなしタブで温め続けない）を壊さない。
+  - > 🗄 **その後、端末アタッチは外れた**（現行 = `proxy.go` の `proxyTerminal`「No auto-start」）。
+    > セッションを 1 つクリックしただけで（= `/ws/pty` が開くだけで）WS 全体が黙って起き上がるため。
+    > 現在の auto-start はセッション作成 / fork / start / 持ち越し回答 / SSM ノード探索の 5 本で、
+    > 停止中の端末は 409 `workspace_stopped` を返して「起動してから」に倒す。現行の正は
+    > [dev/03 §3.2](../dev/03-control-plane.md)。
 - **共有コア** `config.ensureWorkspaceStarted`: State!=running なら max_workspaces クォータ（P3-4）を課してから
   `Runtime.Start`（healthz 待ち）→ DB state=running。手動 start/recreate もこれに集約。`res.rt` は DEK 付きで
   ビルド済ゆえ Start が `AF_SECRET_KEY` を正しく注入。
@@ -91,4 +96,5 @@ idle-stop の**対**。停止中 WS へユーザーが**意図的にアクセス
   `main.go`（env 既定 + reaper 起動）、`console/src/settings/AdminTab.jsx`（編集 UI）。
 - **スキーマ変更なし**（既存 `tenant.limits` JSON 列を再利用）。**Agent 無改修**（既存 halt / `GET /sessions` を利用）。
 - auto-start（19.4）: `runtime.go`（`ensureWorkspaceStarted` 抽出・`startResolved` 委譲・`handleSessionCreate` 注入）、
-  `proxy.go`（`proxyTerminal` 注入）、`main.go`（`config.autostart` + `envBool` + `AF_AUTOSTART`）。**Agent 無改修**。
+  `proxy.go`（`proxyTerminal` 注入 — **後に撤去。19.4 の注記参照**）、
+  `main.go`（`config.autostart` + `envBool` + `AF_AUTOSTART`）。**Agent 無改修**。
