@@ -121,6 +121,12 @@ func spinnerActive(s string) bool {
 // manual/plan.
 var modeFooterRe = regexp.MustCompile(`(?m)^\s*(?:\x{23F5}\x{23F5}|\x{23F8}) .*\bon\b`)
 
+// ClaudeModeFooter reports whether s carries claude's permission-mode footer strip,
+// regardless of WHICH mode is named. paneMode（session_io.go）の最後の砦で、モード名が
+// 増えた／改名されたときに「未描画」と読み違えないためにある — paneMode の空文字は
+// launch-seed の readiness ゲートでもあるので、読み違えると初回プロンプトが 30 秒待たされる。
+func ClaudeModeFooter(s string) bool { return modeFooterRe.MatchString(s) }
+
 // atPromptFooter reports whether the capture shows claude's input-box footer — the
 // permission-mode strip, or the older builds' mode-cycle / shortcuts hints (kept so a
 // pinned-older CLI still reads correctly). Modals draw over the strip instead of under

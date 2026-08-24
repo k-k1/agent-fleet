@@ -545,10 +545,11 @@ export function agentOf(kind: string | null | undefined): AgentDescriptor {
 
 // nonPlanModeLabel は「plan ではない側」のモード表示名（docs/76）。
 //
-// claude の既定ラベル "Bypass" は**権限確認をスキップして起動したときの状態名**で、承認あり
-// で起動したセッションの状態行は "bypass permissions on" にならない（paneMode は "Default" を
-// 返す）。ラベルを固定で出すと、起動ダイアログの中で「権限確認: 毎回たずねる」と
-// 「開始モード: Bypass」が並ぶ、という食い違いになる。
+// claude の既定ラベル "Bypass" は**権限確認をスキップして起動したときの状態名**。承認ありで
+// 起動したセッションは claude 自身の既定モード＝ **manual**（実測 2.1.241: 状態行は
+// "⏸ manual mode on"）で始まるので、ラベルを固定で出すと起動ダイアログの中で
+// 「権限確認: 毎回たずねる」と「開始モード: Bypass」が並ぶ、という食い違いになる。
+// ミラーのチップは端末を読んで "Manual" と出すので、そちらと同じ語を出す。
 //
 // 他 kind の既定ラベル（cursor/kiro "Agent"、copilot/codex "Default"、opencode "Build"）は
 // 権限確認と無関係な語なのでそのまま。判定を "Bypass" という値で行うのは、**権限の状態を
@@ -556,7 +557,7 @@ export function agentOf(kind: string | null | undefined): AgentDescriptor {
 // 対応関係は結局この 1 行に戻る。
 export function nonPlanModeLabel(kind: string | null | undefined, skipPermissions: boolean): string {
   const a = agentOf(kind);
-  if (a.caps.permissionChoice && !skipPermissions && a.defaultModeLabel === "Bypass") return "Default";
+  if (a.caps.permissionChoice && !skipPermissions && a.defaultModeLabel === "Bypass") return "Manual";
   return a.defaultModeLabel;
 }
 
