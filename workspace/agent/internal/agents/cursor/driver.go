@@ -121,6 +121,10 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if h.settings.Mode == "" {
 		h.settings.Mode = m.Mode
 	}
+	// 権限確認をスキップするか（docs/76）は meta と ui-prefs から毎 Resume 解決する。
+	// ThreadSettings に載せないのは、あちらが「空 = 変更しない」の動的更新用で bool を
+	// 3 値にできないから — 設定変更後の再 spawn でも、ここで解決し直した値が効く。
+	h.bypass = agents.SkipPermissions(m)
 	st := h.settings
 	h.mu.Unlock()
 
@@ -289,6 +293,11 @@ type threadHandle struct {
 
 	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・kiro A2-4 と同型）
 
+	// bypass は「権限確認をスキップする」か（docs/76）。Resume が meta から解決して
+	// 置く — spawn は meta を持たないので、ここに載せて渡す。plan は Resume 時点では
+	// なく spawn の st.Mode で見る（稼働中のモード変更で再 spawn されるため）。
+	bypass bool
+
 	mu       sync.Mutex
 	cmd      *exec.Cmd
 	cl       *acpClient
@@ -310,12 +319,20 @@ type threadHandle struct {
 
 // spawn starts the child runtime, initializes ACP and loads/creates the cursor
 // session. Caller must NOT hold h.mu.
+// bypassNow reports the resolved「権限確認をスキップする」choice (docs/76). Resume writes
+// it under h.mu; spawn runs without the lock, so read it through here.
+func (h *threadHandle) bypassNow() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.bypass
+}
+
 func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// base: 背景自己更新の封殺（root option なので acp の前に必須 — 実測）＋ acp サブ
 	// コマンド ＋ workspace trust スキップ（実測: --trust が無いと ACP でも trust
 	// プロンプトで固まる）。plan では --force を外し、承認を Interaction として表面化。
 	args := []string{disableAutoUpdateFlag, "acp", "--trust"}
-	if st.Mode != "plan" {
+	if h.bypassNow() && st.Mode != "plan" {
 		args = append(args, "--force") // fleet 既定の bypass（"unless explicitly denied"）
 	}
 	if st.Model != "" && st.Model != "auto" {

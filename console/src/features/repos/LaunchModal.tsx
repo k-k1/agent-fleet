@@ -47,6 +47,9 @@ export interface LaunchOpts {
   model: string;
   effort: string;
   startMode: "normal" | "plan";
+  /** 権限確認をスキップして起動するか（docs/76）。undefined = 既定に従う（サーバへ送らない）。
+   *  caps.permissionChoice を持つ kind でのみ選べる。 */
+  skipPermissions?: boolean;
   prompt: string;
 	/** Optional user-visible session name, supplied by a handoff proposal or edited here. */
   title: string;
@@ -149,6 +152,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     setModel(resolveModel(k, repo, d.model));
     setEffort(resolveEffort(k, repo, d.effort));
     setStartMode(resolveStartMode(k, repo, d.startMode));
+    setSkipPerm(undefined);
     setDriver(agentOf(k).managedDriver ? "managed" : "");
   }, [kinds, kind, settings, repo]);
   const tr = useT();
@@ -157,6 +161,10 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const [model, setModel] = useState(() => resolveModel(initialKind, repo, initialDefault.model));
   const [effort, setEffort] = useState(() => resolveEffort(initialKind, repo, initialDefault.effort));
   const [startMode, setStartMode] = useState(() => resolveStartMode(initialKind, repo, initialDefault.startMode));
+  // 権限確認（docs/76）。**undefined = このダイアログでは触っていない**で、その場合は
+  // 値を送らず Agent 側の kind 毎の既定に任せる（設定を後から変えても効くように）。
+  // 触ったときだけ、このセッション限りの上書きとして送る。
+  const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
   // ドライバ（docs/27 P2/P3）: managed 対応 kind は managed が既定（§9.2）。
   // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
   const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
@@ -245,6 +253,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     (agentOf(kind).caps.planMode || agentOf(kind).caps.tuiStartMode) &&
     (driverManaged || agentOf(kind).caps.tuiStartMode);
   const canPasteImage = agentOf(kind).caps.imagePaste;
+  // 承認待ちを Console から答えられる kind だけに出す（Go 側 Caps.PermissionChoice と対）。
+  const hasPermChoice = agentOf(kind).caps.permissionChoice;
+  const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
 
   // 畳んだセクションの要約 — 開かなくても「何が起きるか」が読み取れる一行。場所は
@@ -266,6 +277,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
     agentOf(kind).managedDriver ? tr(driverManaged ? "launch.sum.driver_managed" : "launch.sum.driver_terminal") : "",
     hasEffort && effort ? tr("launch.sum.effort", { v: effortOptions.find(([v]) => v === effort)?.[1] || effort }) : "",
     hasStartMode && startMode === "plan" ? "Plan" : "",
+    hasPermChoice && !skipPermEffective ? tr("launch.sum.permissions_on") : "",
     title.trim() ? tr("launch.sum.title", { name: title.trim() }) : "",
   ].filter(Boolean);
   const advSummary = advParts.length ? advParts.join(" · ") : tr("launch.sum.defaults");
@@ -361,6 +373,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
       model: hasModel ? model : "",
       effort: hasEffort ? effort : "",
       startMode: hasStartMode ? startMode : "normal",
+      skipPermissions: hasPermChoice ? skipPerm : undefined,
       prompt: prompt.trim(),
       title: title.trim(),
       images: canPasteImage ? images.map((x) => x.file) : [],
@@ -439,6 +452,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                     setModel(resolveModel(k, repo, defaults.model));
                     setEffort(resolveEffort(k, repo, defaults.effort));
                     setStartMode(resolveStartMode(k, repo, defaults.startMode));
+                    setSkipPerm(undefined);
                     setDriver(a.managedDriver ? "managed" : "");
                   }}
                 >
@@ -749,7 +763,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
             </div>
           )}
 
-          {(hasEffort || hasStartMode) && (
+          {(hasEffort || hasStartMode || hasPermChoice) && (
             <div className="ui-field-row">
               {hasEffort && (
                 <div className="ui-field">
@@ -766,6 +780,19 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                     <option value="plan">Plan</option>
                   </select>
                   <span className="ui-field-hint">{tr("launch.plan_hint")}</span>
+                </div>
+              )}
+              {hasPermChoice && (
+                <div className="ui-field">
+                  <span className="ui-field-label">{tr("launch.field.permissions")}</span>
+                  <select
+                    value={skipPermEffective ? "skip" : "ask"}
+                    onChange={(e) => setSkipPerm(e.target.value === "skip")}
+                  >
+                    <option value="skip">{tr("launch.perm_skip")}</option>
+                    <option value="ask">{tr("launch.perm_ask")}</option>
+                  </select>
+                  <span className="ui-field-hint">{tr("launch.perm_hint")}</span>
                 </div>
               )}
             </div>

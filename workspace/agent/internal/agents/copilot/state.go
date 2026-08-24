@@ -78,10 +78,10 @@ func classify(r io.Reader) string {
 // classifyDetail は classify に「未完了の許可が何を求めていたか」を足したもの
 // （docs/75 P5 の持ち越し用）。detail は許可待ちのときだけ埋まり、取れなければ空。
 func classifyDetail(r io.Reader) (string, string) {
-	open := false                // user.message / turn_start 以後、turn_end 前
-	perms := map[string]bool{}   // requested かつ未 completed の requestId
+	open := false                 // user.message / turn_start 以後、turn_end 前
+	perms := map[string]bool{}    // requested かつ未 completed の requestId
 	detail := map[string]string{} // requestId → 何を求めていたか（取れた分だけ）
-	last := ""                   // 最後に requested された id（表示に使うのはこれ）
+	last := ""                    // 最後に requested された id（表示に使うのはこれ）
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
 	for sc.Scan() {

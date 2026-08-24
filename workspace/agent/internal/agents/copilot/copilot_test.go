@@ -14,36 +14,36 @@ import (
 
 func TestBuildProgram(t *testing.T) {
 	sid := "3336143a-bf0b-4db3-a0b8-15957462ce0c"
-	got := buildProgram("", "", "", sid)
+	got := buildProgram("", "", "", sid, true)
 	for _, want := range []string{"copilot ", "--allow-all", "--no-remote ", "--no-remote-export", "--session-id", sid} {
 		if !strings.Contains(got+" ", want) {
 			t.Errorf("program %q lacks %q", got, want)
 		}
 	}
 	// plan は bypass（--allow-all）を外し --mode plan を足す（agy と同じ判断）。
-	got = buildProgram("", "", "plan", sid)
+	got = buildProgram("", "", "plan", sid, false)
 	if strings.Contains(got, "--allow-all") || !strings.Contains(got, "--mode plan") {
 		t.Errorf("plan program wrong: %q", got)
 	}
 	// model/effort はそのまま。"auto" は無指定と同義（フラグを付けない）。
-	got = buildProgram("claude-sonnet-4.6", "high", "", sid)
+	got = buildProgram("claude-sonnet-4.6", "high", "", sid, true)
 	if !strings.Contains(got, "--model") || !strings.Contains(got, "claude-sonnet-4.6") ||
 		!strings.Contains(got, "--effort") || !strings.Contains(got, "high") {
 		t.Errorf("model/effort program wrong: %q", got)
 	}
-	if got := buildProgram("auto", "", "", sid); strings.Contains(got, "--model") {
+	if got := buildProgram("auto", "", "", sid, true); strings.Contains(got, "--model") {
 		t.Errorf("auto must not emit --model: %q", got)
 	}
 	// Auto rejects --effort (Free's only model), so effort must be suppressed unless a
 	// concrete model is set — else the session errors on launch.
-	if got := buildProgram("auto", "high", "", sid); strings.Contains(got, "--effort") {
+	if got := buildProgram("auto", "high", "", sid, true); strings.Contains(got, "--effort") {
 		t.Errorf("auto+effort must not emit --effort: %q", got)
 	}
-	if got := buildProgram("", "high", "", sid); strings.Contains(got, "--effort") {
+	if got := buildProgram("", "high", "", sid, true); strings.Contains(got, "--effort") {
 		t.Errorf("default(auto)+effort must not emit --effort: %q", got)
 	}
 	t.Setenv("AGENT_COPILOT_CMD", "echo override")
-	if got := buildProgram("", "", "", sid); got != "echo override" {
+	if got := buildProgram("", "", "", sid, true); got != "echo override" {
 		t.Errorf("override ignored: %q", got)
 	}
 }
@@ -283,5 +283,20 @@ func TestPendingPermissionDetail(t *testing.T) {
 	done := withDetail + `{"type":"permission.completed","data":{"requestId":"p1"},"timestamp":"2026-07-21T01:00:13Z"}` + "\n"
 	if st, d := liveStateDetailFromFile(writeFixture(t, done)); st == "question" || d != "" {
 		t.Errorf("完了後も許可待ちのまま: (%q,%q)", st, d)
+	}
+}
+
+// 権限確認あり（docs/76）。消えるのは --allow-all だけ。--no-remote / --no-remote-export
+// （会話のフリート外流出と二重操縦の防止）は権限確認とは別軸なので残る。
+func TestBuildProgramPermissionsOn(t *testing.T) {
+	sid := "3336143a-bf0b-4db3-a0b8-15957462ce0c"
+	got := buildProgram("", "", "", sid, false)
+	if strings.Contains(got, "--allow-all") || strings.Contains(got, "--mode plan") {
+		t.Errorf("permissions-on program must drop the bypass and stay off plan: %q", got)
+	}
+	for _, want := range []string{"--no-remote", "--no-remote-export", "--session-id"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("permissions-on program %q lacks %q", got, want)
+		}
 	}
 }
