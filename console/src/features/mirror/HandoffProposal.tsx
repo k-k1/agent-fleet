@@ -13,7 +13,7 @@ import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { useLaunchSeed, useLaunchTarget, type Repo } from "../repos/store.ts";
+import { useLaunchSeed, useLaunchTarget, useReposStore, type Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 
 export interface Proposal {
@@ -112,6 +112,13 @@ export function HandoffProposal({
   const [title, setTitle] = useState(proposal.title || "");
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The source session's own worktree can't offer "new worktree" itself (LaunchModal's
+  // allowWorktree=false for a worktree row — spawning a worktree off a worktree is
+  // confusing, see RepoRow.tsx). Offer it here explicitly instead: checked, the launch
+  // targets the PARENT working copy with a new worktree branched from this session's
+  // current branch, so the handoff lands isolated rather than sharing the source's dir.
+  const [newWorktree, setNewWorktree] = useState(false);
+  const repos = useReposStore((s) => s.repos);
 
   // Follow the server copy while not editing (the poll above refreshes it), so an edit
   // made in another tab shows up — but never clobber what the user is typing here.
@@ -157,12 +164,25 @@ export function HandoffProposal({
       toast(tr("mirror.handoff_no_dir"));
       return;
     }
-    const repo: Repo = {
-      name: sessionMeta?.repo || path.split("/").filter(Boolean).at(-1) || session,
-      path,
-      branch: sessionMeta?.currentBranch || sessionMeta?.branch,
-      worktree: sessionMeta?.worktree,
-    };
+    let repo: Repo;
+    if (newWorktree && sessionMeta?.worktree) {
+      // Resolve the base clone from the repos rail's list (it carries `parent` for a
+      // worktree row) — the new worktree is created off that, not off this worktree.
+      const mine = repos.find((r) => r.name === sessionMeta?.repo);
+      const base = mine?.parent ? repos.find((r) => r.name === mine.parent) : undefined;
+      if (!base?.path) {
+        toast(tr("mirror.handoff_no_parent"));
+        return;
+      }
+      repo = { name: base.name, path: base.path, branch: sessionMeta?.currentBranch || sessionMeta?.branch };
+    } else {
+      repo = {
+        name: sessionMeta?.repo || path.split("/").filter(Boolean).at(-1) || session,
+        path,
+        branch: sessionMeta?.currentBranch || sessionMeta?.branch,
+        worktree: sessionMeta?.worktree,
+      };
+    }
     // Carry WHICH session/proposal this is, so the dialog's success path can badge it.
     useLaunchSeed.getState().set(proposal.prompt, proposal.title, session, proposal.id);
     useLaunchTarget.getState().open(repo);
@@ -185,6 +205,12 @@ export function HandoffProposal({
         </>
       ) : (
         <HandoffBody title={proposal.title} prompt={proposal.prompt} />
+      )}
+      {sessionMeta?.worktree && (
+        <label className="mirror-handoff-newwt">
+          <input type="checkbox" checked={newWorktree} onChange={(e) => setNewWorktree(e.target.checked)} />
+          {tr("mirror.handoff_new_worktree")}
+        </label>
       )}
       <div className="mirror-handoff-actions">
         {editing ? (

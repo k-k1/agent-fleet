@@ -2293,6 +2293,8 @@ export const ja = {
   "mirror.handoff_intro_launched": "この引き継ぎからセッションを起動済みです。読み返し・再利用のために残してあります。不要になったら破棄してください。",
   "mirror.handoff_discard": "破棄",
   "mirror.handoff_no_dir": "このセッションの作業フォルダが分からないため、引き継ぎ先を起動できません。",
+  "mirror.handoff_new_worktree": "新しい worktree で開始する（未コミットの変更は引き継がれません）",
+  "mirror.handoff_no_parent": "このセッションの元になった作業コピーが分からないため、新しい worktree を起動できません。",
   "mirror.handoff_save_failed": "引き継ぎ案を保存できませんでした: {msg}",
   "mirror.handoff_discard_failed": "引き継ぎ案を破棄できませんでした: {msg}",
   "chat.plan.empty": "まだ計画がありません。「更新」で直近の会話から起こすか、「編集」で直接書けます。",
