@@ -46,16 +46,19 @@ const defaultFlags = "--allow-all --no-remote --no-remote-export"
 // buildProgram returns the tmux pane program for a copilot session. Auth is
 // ambient（gh 透過認証のトークンを copilot 自身が拾う — 実測）なのでトークンは
 // 注入しない。--session-id は新規作成と resume の両方を同じ形でまかなう。
-func buildProgram(model, effort, mode, sid string) string {
+// bypass=false は「権限確認をスキップしない」（docs/76 の利用者選択、または plan 起動）。
+// 外すのは --allow-all だけ。--no-remote / --no-remote-export（会話のフリート外流出と
+// 二重操縦の防止）は権限確認とは別軸なので必ず残す。
+func buildProgram(model, effort, mode, sid string, bypass bool) string {
 	if override := os.Getenv("AGENT_COPILOT_CMD"); override != "" {
 		return override
 	}
 	flags := envOr("AGENT_COPILOT_FLAGS", defaultFlags)
-	if mode == "plan" {
-		// Plan mode replaces the bypass default: auto-approving every tool would
-		// defeat a plan start（agy と同じ判断）。TUI 側の許可メニューはユーザーが
-		// 端末/ミラーで操作する。
+	if !bypass {
+		// TUI 側の許可メニューはユーザーが端末/ミラーで操作する。
 		flags = strings.TrimSpace(strings.ReplaceAll(flags, "--allow-all", ""))
+	}
+	if mode == "plan" {
 		flags = strings.TrimSpace(flags + " --mode plan")
 	}
 	concreteModel := model != "" && model != "auto"

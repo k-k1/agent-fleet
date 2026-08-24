@@ -270,6 +270,17 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
           />
         </SettingRow>
       )}
+      {/* 権限確認をスキップするか（docs/76）。承認待ちを Console から答えられる kind
+          （claude / cursor / copilot / kiro / agy）だけに出す — 答えられない kind で
+          オフにできると、固まったセッションを作れてしまう。 */}
+      {desc.caps.permissionChoice && (
+        <SettingRow label={tr("agents.skip_permissions")} sub={tr("agents.skip_permissions_sub")}>
+          <OnOff value={row.skipPermissions} onChange={(skipPermissions) => update({ skipPermissions })} />
+        </SettingRow>
+      )}
+      {desc.caps.permissionChoice && !row.skipPermissions && (
+        <p className="ps-note">{tr("agents.skip_permissions_off_note")}</p>
+      )}
       <p className="ps-note">{tr("agents.note_launch_defaults")}</p>
     </>
   );

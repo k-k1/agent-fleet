@@ -180,6 +180,16 @@ export interface AgentLaunchDefault {
   model: string;
   effort: string;
   startMode: "normal" | "plan";
+  /**
+   * 権限確認をスキップして起動するか（docs/76）。true = fleet 従来の既定（claude なら
+   * --dangerously-skip-permissions、他 kind も同格のフラグ）、false = ツール実行のたびに
+   * 承認を求めさせる。**既定は true で、挙動は変えない。**
+   *
+   * Agent もこの値をプロセス内で読む（ui_prefs.go skipPermissionsPref）ので、Console を
+   * 通らない起動（MCP の create_session・定時実行・再起動・fork）にも同じ既定が効く。
+   * caps.permissionChoice を持たない kind（codex / opencode）では無視される。
+   */
+  skipPermissions: boolean;
 }
 
 export type AgentLaunchDefaults = Record<string, AgentLaunchDefault>;
@@ -536,13 +546,13 @@ export function normalizeAssistantOrder(v: unknown): string[] {
 }
 
 const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
-  claude: { model: DEFAULT_MODEL, effort: "", startMode: "normal" },
-  codex: { model: "", effort: "", startMode: "normal" },
-  cursor: { model: "", effort: "", startMode: "normal" },
-  copilot: { model: "", effort: "", startMode: "normal" },
-  kiro: { model: "", effort: "", startMode: "normal" },
-  agy: { model: "", effort: "", startMode: "normal" },
-  opencode: { model: "", effort: "", startMode: "normal" },
+  claude: { model: DEFAULT_MODEL, effort: "", startMode: "normal", skipPermissions: true },
+  codex: { model: "", effort: "", startMode: "normal", skipPermissions: true },
+  cursor: { model: "", effort: "", startMode: "normal", skipPermissions: true },
+  copilot: { model: "", effort: "", startMode: "normal", skipPermissions: true },
+  kiro: { model: "", effort: "", startMode: "normal", skipPermissions: true },
+  agy: { model: "", effort: "", startMode: "normal", skipPermissions: true },
+  opencode: { model: "", effort: "", startMode: "normal", skipPermissions: true },
 };
 
 const DEFAULTS: Settings = {
@@ -856,7 +866,7 @@ export function normalizeClaudeCustomModels(value: unknown): string[] {
   return out;
 }
 
-function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = DEFAULT_MODEL): AgentLaunchDefaults {
+export function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = DEFAULT_MODEL): AgentLaunchDefaults {
   const src = rows && typeof rows === "object" ? rows as Record<string, Partial<AgentLaunchDefault>> : {};
   const out: AgentLaunchDefaults = {};
   // Drive the set of normalized kinds from DEFAULT_AGENT_LAUNCH — the single source of
@@ -870,13 +880,17 @@ function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = DEFAULT
       model: typeof row.model === "string" ? row.model : kind === "claude" ? legacyClaudeModel : base.model,
       effort: typeof row.effort === "string" ? row.effort : base.effort,
       startMode: row.startMode === "plan" ? "plan" : "normal",
+      // 既定は「スキップする」。明示的に false のときだけ承認ありにする — 欠落や
+      // 壊れた値を承認ありに倒すと、古い prefs を読んだ端末で全セッションが承認待ちに
+      // なる（挙動を変えない、が本機能の前提）。
+      skipPermissions: row.skipPermissions !== false,
     };
   }
   return out;
 }
 
 export function agentLaunchDefault(s: Settings, kind: string): AgentLaunchDefault {
-  return s.agentLaunchDefaults[kind] || { model: "", effort: "", startMode: "normal" };
+  return s.agentLaunchDefaults[kind] || { model: "", effort: "", startMode: "normal", skipPermissions: true };
 }
 
 // expandThinking は kind の「思考を最初から展開する」設定。未設定・不明 kind・壊れた

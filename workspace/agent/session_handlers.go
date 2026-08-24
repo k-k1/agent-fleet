@@ -227,7 +227,11 @@ type createReq struct {
 	Model          string `json:"model"`
 	Effort         string `json:"effort"`
 	Mode           string `json:"mode"` // "plan" | "normal"
-	Kind           string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
+	// SkipPermissions は「権限確認をスキップするか」（docs/76）。**3 値**で、未指定(null)は
+	// 「設定 > エージェントの kind 毎の既定に従う」。Console はトグルを触ったときだけ送る。
+	// 未指定を false と同じに畳むと、設定でオンにしている kind まで承認ありで立ってしまう。
+	SkipPermissions *bool  `json:"skip_permissions"`
+	Kind            string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
 	// Driver selects the control route（docs/27 §9.2）: "" | "tui"（従来の tmux 内
 	// TUI、既定）| "managed"（共有 runtime＋構造化 RPC・pane なし）。managed の起動は
 	// P2（opencode serve）/ P3（codex app-server）で解禁。未対応 kind は明示拒否する。
@@ -421,6 +425,14 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Mode != "" && req.Mode != "normal" && req.Mode != "plan" {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_mode", `mode must be "plan" or "normal"`)
+		return
+	}
+	// 「権限確認を出す」は承認待ちを Console から答えられる kind でしか受けない（docs/76）。
+	// 黙って無視すると、頼んだ側は承認ありで走っていると思い込む — 断る方が正直。
+	// スキップ側（true）は従来の既定なのでどの kind でも通す。
+	if req.SkipPermissions != nil && !*req.SkipPermissions && !agentOf(normalizeKind(req.Kind)).Caps().PermissionChoice {
+		httpx.WriteErr(w, http.StatusBadRequest, "permission_choice_unsupported",
+			"this agent kind cannot surface tool approvals to the Console; skip_permissions must stay true")
 		return
 	}
 	// Driver validation up-front（副作用 — clone / worktree — より前に落とす）。既定の
@@ -620,7 +632,8 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	origin, originConv := createOrigin(&req)
 	meta := session.Meta{
 		Name: name, Dir: req.Dir, Subdir: subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
-		Repo: filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
+		SkipPermissions: req.SkipPermissions,
+		Repo:            filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 		Origin: origin, OriginConv: originConv,
 	}
@@ -798,7 +811,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	// fork API で複製、docs/27 P2）。tui は従来の CLI fork 起動。
 	meta := session.Meta{
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
-		Kind: src.Kind, Driver: src.Driver, Title: title,
+		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
@@ -1053,7 +1066,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// まま作り直す — docs/27 P2）。
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
-		Kind: m.Kind, Driver: m.Driver,
+		Kind: m.Kind, Driver: m.Driver, SkipPermissions: m.SkipPermissions,
 		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate は「同じ枠を空で作り直す」なので出自は引き継ぐ（ADR 0029 §6）。

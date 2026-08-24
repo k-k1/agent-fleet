@@ -984,6 +984,10 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.default_model": "Default model",
   "agents.default_effort": "Default effort",
   "agents.start_mode": "Start mode",
+  "agents.skip_permissions": "Tool permissions",
+  "agents.skip_permissions_sub": "Ask for approval before each tool run",
+  "agents.skip_permissions_off_note":
+    "With approvals on, the agent stops before every edit or command. Answer from the mirror's permission card or the terminal. Left unanswered, the session is folded by the interaction timeout (the pending prompt is carried over, not lost). Not suited to unattended launches such as scheduled runs or the operator.",
   "agents.mode_normal": "Normal",
   "agents.note_launch_defaults":
     "The initial values for new sessions. If a repository has settings you last used, those win. Options the driver doesn't support aren't applied at launch.",
@@ -2946,6 +2950,7 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.field.effort": "Reasoning effort",
   "launch.field.effort_hint": "Unset uses the model default.",
   "launch.field.start_mode": "Start mode",
+  "launch.field.permissions": "Tool permissions",
   "launch.mode_normal": "Normal",
   "launch.field.location": "Location",
   // Back to the Start hub. Named after where it goes, so it is not mistaken for the
@@ -2967,6 +2972,9 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.agents_checking": "Checking agent connections…",
   "launch.agents_none": "No agents available. Authenticate one in Settings > Connections.",
   "launch.plan_hint": "Plan devotes the first turn to investigation and planning.",
+  "launch.perm_skip": "Skip approvals (default)",
+  "launch.perm_ask": "Ask every time",
+  "launch.perm_hint": "When asking, the session pauses for approval before edits and commands.",
   "launch.field.driver": "Execution method",
   "launch.driver_managed": "Managed (recommended)",
   "launch.driver_terminal": "Terminal (CLI)",
@@ -3021,6 +3029,7 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.sum.effort": "effort {v}",
   "launch.sum.title": "name “{name}”",
   "launch.sum.defaults": "Defaults",
+  "launch.sum.permissions_on": "Approvals on",
 
   // === P2 start modal (features/repos/StartModal.tsx) ===
   "start.aws_search_failed": "AWS search failed: {msg}",

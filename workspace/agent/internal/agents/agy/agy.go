@@ -47,7 +47,9 @@ func (agentImpl) Kind() string { return session.KindAgy }
 // No fork (agy exposes no fork affordance) and no display label (agy has no
 // --name). The chat mirror IS supported: transcript.go reads the per-conversation
 // brain/…/transcript_full.jsonl, which agy appends live.
-func (agentImpl) Caps() agents.Caps { return agents.Caps{CanTranscript: true} }
+func (agentImpl) Caps() agents.Caps {
+	return agents.Caps{CanTranscript: true, PermissionChoice: true}
+}
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// Same host gate as the Console's kind selector: on a host where agy can't run
@@ -75,7 +77,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		prelaunch.Write(slotSid, LastConversationFor(m.Dir))
 		brainPrelaunch.Write(slotSid, strings.Join(listBrainDirs(), "\n"))
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, resumeID), Cwd: m.CWD()}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, resumeID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
