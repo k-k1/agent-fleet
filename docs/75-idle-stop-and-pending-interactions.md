@@ -166,11 +166,12 @@ activity = machineBusy | humanWait | idleWait | unknown
 - `interaction_idle_timeout` は新しいテナント別ノブ。既定は `session_idle_timeout` と同値。
   「質問は早めに畳んで安くしたい」「うちは 4 時間は待ってほしい」の両方を、
   通常のアイドルとは独立に決められるようにする。
-- 在席（`isAttached` / `wsConns`）には **attention TTL** を入れる: 端末 WS が開いていても、
-  その接続に**入力**（PTY への text フレーム）が `presence_idle_timeout`（既定 =
-  `ws_idle_timeout`）以上無ければ、tier2 の在席としては数えない。tier1 の
-  「見られているセッションは畳まない」は従来どおり接続の有無で判定してよい
-  （畳んでも安いものしか失わないため）。
+- 在席（`wsConns`）には **attention TTL** を入れる（実装済み）: 端末 WS が開いていても、
+  その接続に**打鍵**（`{"type":"input"}` フレーム）が `AF_PRESENCE_IDLE_TIMEOUT` 以上
+  無ければ、tier2 の在席としては数えない。tier1 の「見られているセッションは畳まない」
+  （`isAttached`）は従来どおり接続の有無で判定してよい（畳んでも安いものしか失わない）。
+  端末以外の長命接続（定時実行の起床・ブラウザペイン）は無条件のまま — 前者に打鍵という
+  概念は無く、後者は**見えている間だけ**接続を張るので可視性そのものが在席の合図になっている。
 - `unknown`（shell / ssm）は自動判定しない。代わりに**利用者の宣言**＝「自動停止しない」
   ピン（`keepAwakeUntil`・下記）を逃げ道にする。
 
@@ -311,7 +312,14 @@ Console は**別のカード**として描く（見出しは「停止時に未�
   `interaction_idle_timeout` を追加（既定は `session_idle_timeout`。テナント設定＋管理 UI 込み）。
   停止中の一覧バッジ（§75.6.5 の DB ミラー 1 列）も入れた。
   **残**: halt 時の「未回答のまま停止しました」通知と、停止直前の通知 drain。
-- **P3（在席の TTL・未着手）**: `presence_idle_timeout` と、端末入力に基づく attention 判定（D5）。
+- **✅ P3（在席の TTL）**: 端末の presence を「ソケットがある」から「人が触っている」へ。
+  `AF_PRESENCE_IDLE_TIMEOUT`（既定 30m・0 で無効）。テナント別にしなかったのは、これが
+  課金方針ではなく**人の注意の定数**だから — 実際に止まるまでの時間は従来どおり
+  `ws_idle_timeout` が決め、この値はその時計を「開きっぱなしのソケット」が止めてしまうのを
+  防ぐだけ。**★ping と resize を打鍵と数えない**のが要（Console は開いたソケットへ定期的に
+  ping を送るので、「フレームが来た＝在席」にすると元の挙動がそのまま戻る）。
+  DB の presence lease（`connected_until`）も打鍵が途絶えたら更新を止める — ここを直さないと
+  in-memory 側だけ直しても `WorkspaceHasRecentActivity` が常に true を返し、何も変わらない。
 - **P4（観測・未着手）**: `GET /api/admin/workspaces/{id}/idle-holders` — この Workspace を起こし続けて
   いるもの（接続 N 本 / セッション X が working / 最終 mutating 3 分前）を返す（D7）。
 - **P5（他 kind・未着手）**: managed / kiro / agy の人待ちを tier1 の対象に（D4）。持ち越しは

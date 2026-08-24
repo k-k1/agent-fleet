@@ -254,6 +254,12 @@ func main() {
 	// it off for that tenant (idleTimeout), and a deployment sets its own default in env.
 	// AF_IDLE_SWEEP_INTERVAL=0 disables the reaper entirely — see intervalOff, which is
 	// what makes that true (measured: it was not).
+	// 在席の猶予（docs/75 P3）: 打鍵の無い端末を、あと何分だけ「人が居る」と数えるか。
+	// 0 で無効＝従来どおり「ソケットがある限り在席」に戻る。テナント別にしないのは
+	// これが課金方針ではなく人の注意の定数だから（実際に止まるまでの時間を決めるのは
+	// 従来どおり ws_idle_timeout）。reaper が動かない構成でも presence の意味は同じ
+	// なので、この if の外で解決する。
+	presenceGrace = intervalOff(os.Getenv("AF_PRESENCE_IDLE_TIMEOUT"), presenceGrace)
 	if iv := intervalOff(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
 		// intervalOff, not parseDurationOr: now that the default is non-zero, "0" has to
 		// mean OFF for the whole deployment. parseDurationOr treats any non-positive value
