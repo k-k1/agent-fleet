@@ -995,6 +995,11 @@ func handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// ★持ち越しは **ペインを殺す前**（docs/75 P5・ADR 0055 決定 12）。アーカイブも
+	// halt と同じく「保留中のモーダルを抱えたまま畳む」経路であり、cursor の ACP 要求・
+	// kiro の承認パネル・managed の Interaction はプロセスの中にしか無いので、
+	// kill-session / DropHandle の後に呼んでも何も取れない（=質問が無言で失われる）。
+	promoteCarriedFor(m)
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
@@ -1059,6 +1064,10 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
 	// the active list. Keep the meta + jsonl (and any captured resume id) so it restores.
+	// ★持ち越しは **ペインを殺す前**（docs/75 P5・ADR 0055 決定 12）。作り直しは古い
+	// セッションを畳む操作でもあり、保留中の質問 / 承認要求は kill-session /
+	// DropHandle の後には残っていない — 後で呼んでも何も取れない。
+	promoteCarriedFor(m)
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
