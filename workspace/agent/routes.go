@@ -92,6 +92,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
 	mux.HandleFunc("POST /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
 	mux.HandleFunc("DELETE /sessions/{name}/handoff-proposal", handleSessionHandoffProposal)
+	// メンバーへの引き継ぎ（docs/77）の座標。CP が offer を作る前にここへ聞く — 引き継ぎ先の
+	// Workspace から所有者のディスクは見えないので、remote / branch / HEAD と「push 済みか」は
+	// git に聞いた事実だけを載せる（モデルにも Console にも書かせない）。
+	mux.HandleFunc("GET /sessions/{name}/handoff-context", handleSessionHandoffContext)
 	// 転写のマーカー（docs/69 / ADR 0050）。所有者の Console と、CP 経由の共有先が読み書きする。
 	mux.HandleFunc("GET /sessions/{name}/marks", handleSessionMarks)
 	mux.HandleFunc("POST /sessions/{name}/marks", handleSessionMarks)
