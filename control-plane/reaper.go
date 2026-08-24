@@ -688,6 +688,13 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, w
 		log.Printf("idle-stop: lifecycle lost after claim %s: %v", ws.ContainerName, err)
 		return
 	}
+	// 止める前にアウトボックスを吸い出す（docs/75）。Agent の通知は Console が見に来た
+	// ときにしか drain されないので、ここで拾っておかないと「未回答のまま停止しました」が
+	// 次に Workspace を起こすまで誰にも届かない — 費用のために止めた結果、止めたことを
+	// 知らせる通知だけが止めたせいで消える。失敗しても停止は続ける（通知は次回拾える）。
+	drainCtx, cancelDrain := context.WithTimeout(lease.Context(), 5*time.Second)
+	drainAgentOutbox(drainCtx, rp.mgr.store, rt, ws.MembershipID)
+	cancelDrain()
 	if err := rt.Stop(lease.Context()); err != nil {
 		log.Printf("idle-stop: stop %s: %v", ws.ContainerName, err)
 		return
