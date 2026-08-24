@@ -74,10 +74,15 @@ ADR 0055 で、人待ち（question / plan / **permission** / blocked / auth / s
 「コンテナを起こし続ける理由」ではなくなり、`interaction_idle_timeout`（既定 1h）で tier1 halt される。
 畳んでも失われないことは**持ち越し**が担保する。
 
-⚠️ **持ち越しは現状 claude 専用**（`session_carried.go` の `promoteCarriedFor` が kind で弾く）。
-claude 以外で承認ありにしたセッションが承認待ちのまま 1h を超えると、**保留中の対話は消える**
-（セッション自体は再開できる）。これは docs/75 の残タスク P5 が埋める。それまでの間、claude 以外の
-「毎回たずねる」は**人が見ている前提の設定**として扱う。
+持ち越しの守備範囲は docs/75 P5 で広がり、いま覆われているのは **claude（`pending-*`）** と
+**managed の runtime handle が持つ Interaction**（`promoteCarriedManaged`）。ACP 3 種の承認は
+`Kind:"question"` の Interaction なので、**managed で起動していれば承認待ちも持ち越される**。
+
+⚠️ **残る穴は「claude 以外の TUI」**。cursor / copilot / kiro を CLI(TUI) で起動した場合と、
+managed を持たない agy は、承認待ちのまま `interaction_idle_timeout` を超えると**保留中の対話が
+失われる**（セッション自体は再開できる）。cursor / copilot / kiro は Console の既定が managed なので
+通常の経路は覆われている。⚠️ また **コンテナ停止で daemon ごと落ちた managed** も取れない
+（Interaction はメモリにしかない — docs/75 P5）。
 
 ## 76.6 無人運転との相性
 
@@ -112,4 +117,4 @@ claude 以外で承認ありにしたセッションが承認待ちのまま 1h 
 - P1: codex / opencode（§76.4）。
 - 一覧やミラーで「このセッションは承認あり」を常時見せるか。claude はモードチップが
   `Bypass` / `Default` を出す（`paneMode`）が、他 kind と managed には出ない。
-- docs/75 P5（他 kind の持ち越し）が入ったら §76.5 の注意書きを外す。
+- claude 以外の **TUI** 起動の持ち越し（§76.5 の残る穴）。managed と claude は docs/75 P5 で覆われた。
