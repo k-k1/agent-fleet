@@ -260,6 +260,10 @@ func main() {
 		// as "use the default", which would have silently turned an operator's explicit
 		// off switch into 1h/2h — the same trap AF_IDLE_SWEEP_INTERVAL was in.
 		sessDef := intervalOff(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), time.Hour)
+		// 人の判断待ち（質問・プラン承認・許可・上限メニュー・認証切れ）の既定。未設定なら
+		// セッションの既定と同値 — 「質問を出したまま席を立った」を idle より優遇する理由も、
+		// 冷遇する理由も既定としては無い。畳んでも失われない（持ち越し・docs/75 §75.6）。
+		interDef := intervalOff(os.Getenv("AF_INTERACTION_IDLE_TIMEOUT"), sessDef)
 		wsDef := intervalOff(os.Getenv("AF_WS_IDLE_TIMEOUT"), 2*time.Hour)
 		// Tier 3 (ecs-ec2 only): the deployment default for home hibernation. Kept in the
 		// AF_ECS_EC2_* namespace and in seconds because that is where it started life, as
@@ -270,7 +274,7 @@ func main() {
 		// somewhere its AZ is not. Also 0 = off — a backup is cheap but not free, and a
 		// deployment that has not thought about retention should not be paying for it.
 		backupDef := time.Duration(envInt("AF_ECS_EC2_BACKUP_EVERY_SEC", 0)) * time.Second
-		go newReaper(mgr, iv, sessDef, wsDef, hibDef, backupDef).run(context.Background())
+		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef).run(context.Background())
 	}
 
 	// Golden snapshot auto-bake (ecs-ec2 only — ADR 0045 決定 9 / docs/64 §64.28).

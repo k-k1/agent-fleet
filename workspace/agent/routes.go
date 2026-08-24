@@ -48,6 +48,9 @@ func buildMux() *http.ServeMux {
 	// （/stop のメタ忘却・DELETE・TTL 自動 prune・作業コピー削除の巻き添え）だけで、
 	// halt / archive は従来どおり通る。
 	mux.HandleFunc("POST /sessions/{name}/lock", handleSessionLock)
+	// 停止しないピン（docs/75）: アイドル自動停止からセッションと Workspace を
+	// 期限付きで守る。shell / ssm の走行中ジョブを af 側から見分けられないことへの答え。
+	mux.HandleFunc("POST /sessions/{name}/keep-awake", handleSessionKeepAwake)
 	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)
 	mux.HandleFunc("POST /sessions/{name}/restore", handleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
@@ -59,6 +62,9 @@ func buildMux() *http.ServeMux {
 	// オペレーターの AUQ 回答（docs/30）: 質問フォーム全体を choices（1-based）で
 	// 一括回答。TUI claude はキー駆動、managed は Interaction 応答に落ちる。
 	mux.Handle("POST /sessions/{name}/answer-question", withShareOperationIdempotency(http.HandlerFunc(handleSessionAnswerQuestion)))
+	// 持ち越した対話への回答（docs/75）: 停止時に未応答だった質問/プラン/許可を、
+	// 再開したうえで**文章として**配達する。キー列は 1 つも送らない。
+	mux.HandleFunc("POST /sessions/{name}/carried-answer", handleSessionCarriedAnswer)
 	// オペレーターのプラン承認/却下（docs/30）: approve=Enter、reject=中断＋feedback 送信。
 	mux.Handle("POST /sessions/{name}/plan-respond", withShareOperationIdempotency(http.HandlerFunc(handleSessionPlanRespond)))
 	// ThreadSettings の動的更新（docs/27 §9.4-3、managed 専用 — 稼働中セッションの

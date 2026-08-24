@@ -31,6 +31,9 @@ export function PendingQuestions({
   onSubmitSeq,
   onRespond,
   onCancel,
+  onSubmitAnswers,
+  submitLabel,
+  cancelLabel,
   sending,
   answerMode = "claude",
   multiPage = false,
@@ -46,6 +49,15 @@ export function PendingQuestions({
   // onCancel: dismiss the pending question without answering (Escape / Interrupt) so the
   // conversation can continue with a fresh prompt instead of an answer.
   onCancel?: () => void;
+  // onSubmitAnswers（持ち越し・docs/75）: **モーダルがもう無い**質問への回答。渡されたら
+  // 他のどの submit 経路よりも優先し、キー列も seq も組み立てない — 当てる先の無いキーは、
+  // 生きたペインに落ちれば別のものを決めてしまう。回答は Agent が再開後に文章として配達する。
+  // 選択 UI（複数選択・自由入力・preview 比較）はそのまま使い回す。
+  onSubmitAnswers?: (answers: Array<{ labels: string[]; notes: string }>) => void;
+  // 持ち越しではボタンの意味が変わる（「回答を送信」→「回答して再開」、
+  // 「キャンセル」→「破棄」）ので、文言だけ差し替えられるようにする。
+  submitLabel?: string;
+  cancelLabel?: string;
   sending: boolean;
   // "claude": AskUserQuestion's tabbed modal (free-text single / Down-Enter-Right multi).
   // "menu": codex/opencode ask via a simple option menu — a single-select question is
@@ -81,7 +93,9 @@ export function PendingQuestions({
   // hint to answer in the terminal. Semantic (managed) answers aren't bound by the
   // TUI modal's key behavior, so every form is drivable.
   const menuDrivable =
-    semantic || (menu && (single || (multiPage && qs.length > 1 && qs.every((q) => !q.multiSelect))));
+    semantic ||
+    !!onSubmitAnswers || // 持ち越しは TUI モーダルの制約を受けない（キーを撃たないので）
+    (menu && (single || (multiPage && qs.length > 1 && qs.every((q) => !q.multiSelect))));
 
   const clearFree = (qi: number) =>
     setFreeText((prev) => (prev[qi] ? prev.map((v, i) => (i === qi ? "" : v)) : prev));
@@ -128,12 +142,18 @@ export function PendingQuestions({
   // structured per-question answers — no TUI key encoding, no modal quirks.
   const submitRespond = () => onRespond!(buildRespondAnswers(qs, sel, freeText));
 
+  // 持ち越し（docs/75）: 選択と自由入力をそのまま渡す。キー列には一切変換しない。
+  const submitCarried = () =>
+    onSubmitAnswers!(qs.map((_, qi) => ({ labels: sel[qi] || [], notes: (freeText[qi] || "").trim() })));
+
   const submitMenu = () => {
+    if (onSubmitAnswers) return submitCarried();
     if (semantic) return submitRespond();
     onSubmitSeq(buildMenuSeq(qs, sel, freeText, writeIn));
   };
 
   const submit = () => {
+    if (onSubmitAnswers) return submitCarried();
     if (semantic) return submitRespond();
     // Which keys a built selection becomes is the modal's contract, so it lives in
     // questionKeys (and is pinned by its tests); the card only routes the result.
@@ -214,7 +234,7 @@ export function PendingQuestions({
             title={tr("mirror.question_cancel_title")}
             onClick={onCancel}
           >
-            <Icon name="close" /> {tr("mirror.question_cancel")}
+            <Icon name="close" /> {cancelLabel || tr("mirror.question_cancel")}
           </button>
         )}
         {!menu && (
@@ -226,7 +246,7 @@ export function PendingQuestions({
             disabled={sending || !canSubmit}
             onClick={submit}
           >
-            {tr("mirror.submit_answer")}
+            {submitLabel || tr("mirror.submit_answer")}
           </button>
         )}
         {menu && menuDrivable && (
@@ -239,7 +259,7 @@ export function PendingQuestions({
             disabled={sending || !canSubmit}
             onClick={submitMenu}
           >
-            {tr("mirror.submit_answer")}
+            {submitLabel || tr("mirror.submit_answer")}
           </button>
         )}
         {menu && !menuDrivable && (

@@ -138,12 +138,24 @@ type Session struct {
 	ExitReason string `json:"exitReason,omitempty"`
 	ExitCode   int    `json:"exitCode,omitempty"`
 	ExitSignal int    `json:"exitSignal,omitempty"`
+	// Carried は「畳まれたときに画面に出ていた対話」の種類（"question" | "plan" |
+	// "permission"）。停止中の行にだけ入る（docs/75 §75.6.5）。
+	//
+	// なぜ一覧に要るか: 停止中セッションの状態は 停止中 の 1 語しか無く、答えを待って
+	// いる質問があることは**どこにも出ていなかった**。人待ちを畳めるようにした以上
+	// （docs/75 P2）、畳まれた質問が一覧から見えないのは「静かに失われた」のと区別が
+	// つかない。ミラーを開けばカードは出るが、開く理由が無ければ開かない。
+	Carried string `json:"carried,omitempty"`
 	// Locked mirrors Meta.Locked: the user pinned this session against deletion, so
 	// every removal path (stop=forget meta / delete / TTL prune / a working-copy
 	// delete that would take it down with it) refuses until it is unlocked. The
 	// Console badges the row and disables its delete item off this flag.
 	Locked   bool `json:"locked,omitempty"`
 	Archived bool `json:"archived,omitempty"`
+	// KeepAwakeUntil mirrors Meta.KeepAwakeUntil: while it is in the future the
+	// idle-stop reaper leaves this session AND its workspace alone (docs/75)。
+	// 停止中の行にも載せる — 掛かっているピンは、切れる前に見えていないと外せない。
+	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
 }
 
 // ContextUsage is a claude session's current context fill — the newest assistant
@@ -223,6 +235,17 @@ type Meta struct {
 	// 保護は Agent の REST 層で効くので、Console・オペレーター（MCP）・ブリッジのどこから
 	// 来た削除でも同じように止まる。
 	Locked bool `json:"locked,omitempty"`
+	// KeepAwakeUntil pins the session (and with it the workspace) against the idle-stop
+	// reaper until this instant (RFC3339). Empty / past = not pinned.
+	//
+	// なぜ「時刻」で、真偽値ではないのか（docs/75 §75.5）: 消し忘れたピンは、閉じ忘れた
+	// 端末タブと同じ「黙って課金し続けるもの」になる。止めない理由が本物なら数時間で済み、
+	// 本物でなければ勝手に切れてほしい。延長は押し直せばよい。
+	//
+	// なぜ要るのか: shell / ssm のセッションは「今ジョブが走っているか」を af から見分けられ
+	// ない（前景コマンド名では放置された less とビルドが同じに見え、ssm は常に aws を張る）。
+	// 推測で守るのではなく、利用者に宣言してもらう側に倒した判断。
+	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
 	// ForkFrom is the SOURCE conversation id this session was forked from, in the
 	// kind's own id space: claude = the source slot's sid (jsonl), opencode = its
 	// ses_… id, codex = its session uuid. It only affects the FIRST launch — each

@@ -78,6 +78,11 @@ func runSessionStatusHook(args []string) {
 		if h.source == "compact" {
 			return
 		}
+		// 消す前に持ち越す（docs/75 §75.6.3 の契機 3）。ここは「モーダルを出したまま
+		// 畳まれたセッションが再開した」瞬間で、直後の applyPendingPayloads が
+		// pending-question/plan/perm を消してしまう — 一覧も halt も通らなかった経路
+		// （SIGKILL 直後の再開など）の最後の受け皿。既に昇格済みなら上書きしない。
+		status.PromoteCarried(sid, "stopped")
 		status.Persist(sid, "idle")
 		applyPendingPayloads(sid, "idle", h)
 		return

@@ -2979,3 +2979,30 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
   background: transparent; color: var(--muted); cursor: pointer;
 }
 .tmark-row-del:hover { color: var(--fg); background: var(--hover, var(--panel2)); }
+
+/* 持ち越した対話（docs/75）— 停止時に画面に出ていたが答えが届かなかったもの。
+   保留カード（.mt-question / .mt-perm）と**見た目で区別できること**が要件:
+   同じ質問文が同じ形で出ていると、利用者は「さっき答えたのにまた出ている」と読み、
+   キーで答えられるカードとの違いに気づけない。注意色ではなく中立の枠にして、
+   1 行目の説明文（.mt-carried-note）で「まだ届いていない」ことを言う。 */
+.mt-carried .mirror-turn-body {
+  border: 1px dashed color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+.mt-carried-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+.mt-carried-text {
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+  opacity: 0.85;
+}

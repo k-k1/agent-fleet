@@ -139,12 +139,19 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 		// Stopped (exited): stamp when first noticed, prune once older than the TTL,
 		// otherwise keep it listed as resumable.
 		if m.StoppedAt == "" {
+			// ここが「ペインが消えているのを af が初めて見つけた」唯一の点で、
+			// Workspace 停止・コンテナの SIGKILL・claude のクラッシュ・利用者の /exit を
+			// まとめて拾う。モーダルを出したまま消えたなら、ここで持ち越しへ昇格させる
+			// （docs/75 §75.6.3 の契機 2）。再開の boot フックがペイロードを消す前に
+			// 通る — 停止中のセッションを一覧に出す時点で必ずこちらが先に走るため。
+			promoteCarriedFor(m)
 			m.StoppedAt = now.Format(time.RFC3339)
 			m = writeSessionMetaKeepingLock(m)
 		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl && !m.Locked {
 			// 削除ロック（docs/45）は自動削除にも効く — locked な行は TTL を過ぎても
 			// prune せず、停止中のまま一覧に残す。
 			finalizeSessionUsage(m) // 使用量台帳へ確定してから忘れる（docs/46 §3-b）
+			status.RemoveCarried(session.UUID(m.Dir, name))
 			session.RemoveMeta(name)
 			maybePruneWorktree(m.Dir) // last reference expired → clean up its worktree if clean
 			continue
@@ -868,6 +875,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 		// 最後のイベントまで転写に乗せてから読むため。
 		finalizeSessionUsage(meta)
 	}
+	status.RemoveCarried(session.UUID(meta.Dir, name))
 	session.RemoveMeta(name)
 	removeTerminalHistory(name)
 	// Stopping forgets the session; if it was the last one in a worktree and that
@@ -911,6 +919,7 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 		// メタは残るので row は 停止中（再開可能）になる — tui の kill-session と同じ
 		// 意味論。実行中 turn は DropHandle が abort する。
 		dropManagedRuntime(m)
+		promoteCarriedFor(m) // status.Remove がペイロードを消す前に持ち越す（docs/75）
 		status.Remove(session.UUID(m.Dir, name))
 		m.StoppedAt = time.Now().Format(time.RFC3339)
 		// Re-merge the on-disk lock: the meta snapshot above is seconds old by now and a
@@ -941,6 +950,7 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	promoteCarriedFor(m) // status.Remove がペイロードを消す前に持ち越す（docs/75）
 	status.Remove(session.UUID(m.Dir, name))
 	// Stamp StoppedAt now so the prune TTL starts here (handleListSessions would
 	// otherwise stamp it on the next poll; doing it here keeps the wire consistent).

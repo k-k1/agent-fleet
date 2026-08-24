@@ -20,6 +20,8 @@ export interface Tenant {
   max_workspace_mem?: number; // per-workspace RAM cap in bytes (0 = no tenant cap)
   session_idle_timeout?: string;
   ws_idle_timeout?: string;
+  /** 人の判断待ち専用の tier1 タイムアウト（docs/75）。空 = session_idle_timeout に従う。 */
+  interaction_idle_timeout?: string;
   // How long a home may sit unopened before it is put away as a snapshot (ecs-ec2 only;
   // "" = deploy default, "0" = never). ADR 0045 決定 13-2.
   home_hibernate_after?: string;

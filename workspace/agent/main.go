@@ -19,6 +19,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // buildVersion is stamped by the release pipeline via
@@ -126,6 +127,11 @@ func main() {
 	seedGitOAuthBridge()
 	// Make claude emit working/idle/question via hooks into the status files.
 	claude.EnsureStatusHooks()
+	// 持ち越し（docs/75）の寿命切れを落とす。ここでしか消えない — セッションが消えた後の
+	// 持ち越しを掃除する経路が他に無く、寿命の無い pending-* は実際に 5〜6 週間分たまっていた。
+	if n := status.SweepCarried(); n > 0 {
+		log.Printf("carried-interaction: dropped %d expired entr(y|ies)", n)
+	}
 	// Wire claude's statusLine to us so we capture its rate_limits (5h/weekly usage)
 	// locally for the WsBar chip. Wraps a user's own statusLine rather than clobbering.
 	claude.EnsureStatusLine()
