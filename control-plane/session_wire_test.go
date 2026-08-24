@@ -18,11 +18,15 @@ import (
 type stubRuntime struct {
 	endpoint string
 	token    string
+	state    string // "" = running（既存の呼び出しはこの既定に依存している）
 }
 
 func (s stubRuntime) Start(context.Context) error { return nil }
 func (s stubRuntime) Stop(context.Context) error  { return nil }
 func (s stubRuntime) State(context.Context) string {
+	if s.state != "" {
+		return s.state
+	}
 	return "running"
 }
 func (s stubRuntime) Endpoint() string { return s.endpoint }

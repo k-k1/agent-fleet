@@ -229,16 +229,28 @@ func (n *nativeRuntime) AcquireOperationFence(ctx context.Context) (func(), erro
 // State mirrors the docker adapter's semantics: a live process is "running", a
 // stale pidfile (crashed / SIGKILLed agent) is "stopped", and no pidfile at all
 // is "none" — Stop removes the pidfile, so the normal stopped state is "none",
-// which the Console relies on. Never "starting" (a process spawn is instant).
+// which the Console relies on.
+//
+// A spawn is instant but READINESS is not: on the rootfs path the entrypoint runs
+// the pinned boot-install (minutes) before the agent listens, and pid-alive would
+// call that "running" (docs/35 §35.9-9). So the boot window is reported as
+// "starting" while Start's marker is armed — same contract as the docker adapter.
 func (n *nativeRuntime) State(ctx context.Context) string {
 	pid := readPidFile(n.pidFile())
 	if pid <= 0 {
 		return "none"
 	}
 	if pidAlive(pid, n.agentBin) {
+		if n.startingMarker().active(ctx, n.Endpoint()) {
+			return "starting"
+		}
 		return "running"
 	}
 	return "stopped"
+}
+
+func (n *nativeRuntime) startingMarker() agentStartingMarker {
+	return agentStartingMarkerIn(n.dataDir)
 }
 
 // Start launches the workspace-agent as a detached host process and waits for it
@@ -251,7 +263,13 @@ func (n *nativeRuntime) State(ctx context.Context) string {
 func (n *nativeRuntime) mountsStagedDocs() {}
 
 func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
-	if n.State(ctx) == "running" {
+	switch n.State(ctx) {
+	case "running":
+		return nil
+	case "starting":
+		// A boot is already converging (the agent process is alive, /healthz is not
+		// answering yet). Re-spawning would kill a legitimate first start mid
+		// boot-install; the marker is time-boxed so this cannot wedge.
 		return nil
 	}
 	_ = os.Remove(n.pidFile()) // clear a stale (crashed) remnant, like docker rm -f
@@ -338,9 +356,24 @@ func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
 		defer stopTail()
 		go n.mirrorBootProgress(tailCtx, off)
 	}
-	if err := waitAgentHealthy(ctx, n.Endpoint(), healthWait); err != nil {
-		return fmt.Errorf("%w (see %s)", err, filepath.Join(n.dataDir, "agent.log"))
+	// 到達待ちは起動の成否ではない（runtime_health.go 冒頭の契約）。印を先に立ててから
+	// 待つので、待っている最中の State() は "starting" を返す。予算切れで失敗を返して
+	// いた頃は、この関数の defer が **まだ boot-install 中のプロセスを kill** していた
+	// ので、遅い初回起動ほど確実に殺していた。
+	marker := n.startingMarker()
+	marker.arm(time.Now().Add(maxDuration(agentBootBudget, healthWait)))
+	waitErr := waitAgentHealthy(ctx, n.Endpoint(), healthWait)
+	if waitErr == nil {
+		marker.clear()
+		return nil
 	}
+	if ctx.Err() != nil {
+		// 呼び出し側が去った/lease を失った。ここは従来どおり失敗＝この spawn は
+		// コミットされず、defer の abortSpawn が片付ける。
+		return fmt.Errorf("%w (see %s)", waitErr, filepath.Join(n.dataDir, "agent.log"))
+	}
+	log.Printf("[ws %s] agent not answering yet after %s; still starting (budget %s, progress in %s)",
+		n.name, healthWait, agentBootBudget, filepath.Join(n.dataDir, "agent.log"))
 	return nil
 }
 
@@ -644,6 +677,7 @@ func (n *nativeRuntime) Stop(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	n.startingMarker().clear() // 起動途中で止めた場合に古い印を残さない
 	pid := readPidFile(n.pidFile())
 	startID := nativeProcessStartID(pid)
 	if pid > 0 && sameNativeProcess(pid, n.agentBin, startID) {

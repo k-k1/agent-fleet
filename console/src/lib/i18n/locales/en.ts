@@ -43,6 +43,9 @@ export const en: Record<keyof typeof ja, string> = {
   "err.auth_expired":
     "This workspace's Claude login has expired. Re-authenticate from Settings > Agents before sending (sent now, the terminal would take the text but no turn would ever start).",
   "err.not_running": "The session is stopped. Resume it before sending.",
+  // The workspace is mid-boot (container up, Agent not answering yet) and something
+  // that needs the Agent arrived. Not a failure — a "not yet", so it asks for a retry.
+  "err.workspace_starting": "The workspace is still starting. Try again once it is ready.",
   "err.driver_unavailable": "Managed execution isn't available for this agent.",
   "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
   "err.send_failed": "Failed to send.",

@@ -5,7 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,20 +95,37 @@ func (d *dockerRuntime) Endpoint() string {
 func (d *dockerRuntime) Token() string { return d.token }
 func (d *dockerRuntime) Name() string  { return d.name }
 
-// State returns running | stopped | none. The docker adapter never reports
-// "starting": `docker run -d` returns with the container already running, so the
-// transient created/restarting statuses are collapsed into "stopped" as before.
+// State returns running | starting | stopped | none.
+//
+// `docker run -d` returns with the container already running, so the transient
+// created/restarting statuses collapse into "stopped" as before — but a running
+// CONTAINER is not a reachable AGENT. The entrypoint still has to finish (pinned
+// CLI boot-install, the opt-in self-update: 約60 秒 実測, docs/38 ★6) before
+// workspace-agent listens, and during that window every caller that gates on
+// "running" (terminal WS, file proxy, browser, session create) used to be waved
+// through to a socket nobody answers.
+//
+// So the boot window is a state now: while Start's marker is armed and /healthz
+// has not answered yet, this reports "starting" — the value the whole codebase
+// already knows how to treat ("wait", never re-Start, never idle-stop). The probe
+// only runs while the marker exists, and clearing it there makes the state
+// self-healing even if the CP that armed it is gone.
 func (d *dockerRuntime) State(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Status}}", d.name).Output()
-	if err != nil {
-		return "none"
-	}
-	switch strings.TrimSpace(string(out)) {
+	switch d.inspectOne(ctx, "container", d.name, "{{.State.Status}}") {
+	case "":
+		return "none" // docker inspect が引けない = そんなコンテナは無い
 	case "running":
+		if d.startingMarker().active(ctx, d.Endpoint()) {
+			return "starting"
+		}
 		return "running"
 	default:
 		return "stopped"
 	}
+}
+
+func (d *dockerRuntime) startingMarker() agentStartingMarker {
+	return agentStartingMarkerIn(d.dataDir)
 }
 
 // imageStampPath / recordImageStamp — what this container was actually launched
@@ -236,7 +253,15 @@ func dockerInspectOne(ctx context.Context, typ, ref, format string) string {
 func (d *dockerRuntime) mountsStagedDocs() {}
 
 func (d *dockerRuntime) Start(ctx context.Context) error {
-	if d.State(ctx) == "running" {
+	switch d.State(ctx) {
+	case "running":
+		return nil
+	case "starting":
+		// A boot is already in flight (this adapter reports it while the Agent has not
+		// answered yet). Falling through would `docker rm -f` a container that is in the
+		// middle of its entrypoint — killing a legitimate start and losing whatever the
+		// boot-install had already downloaded. Let the poller observe the transition;
+		// the marker is time-boxed (agentBootBudget) so this can never wedge.
 		return nil
 	}
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", d.name).Run() // clear any stopped remnant
@@ -325,7 +350,35 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	// Record which image this container actually came from, so Stale() can later
 	// tell that the tag moved on while it keeps running the old code.
 	d.recordImageStamp(ctx)
-	return waitAgentHealthy(ctx, d.Endpoint(), agentHealthWait(d.startHealthWait()))
+
+	// ここから先は「待つ」だけで、もう起動は確定している。だから到達しなくても
+	// **エラーにしない**（runtime_health.go 冒頭の契約）。印を先に立ててから待つので、
+	// 待っている最中に別経路（Console の 4 秒ポーリング・ターミナル起動）が State() を
+	// 引いても "starting" が返り、死んだソケットに繋ぎに行かない。
+	grace := agentHealthWait(d.startHealthWait())
+	marker := d.startingMarker()
+	marker.arm(time.Now().Add(maxDuration(agentBootBudget, grace)))
+	err := waitAgentHealthy(ctx, d.Endpoint(), grace)
+	if err == nil {
+		marker.clear()
+		return nil
+	}
+	if ctx.Err() != nil {
+		// 呼び出し側が去った（リクエスト打ち切り・lease 喪失）。コンテナはそのまま
+		// 起き続けるので印は残し、エラーはそのまま返す（後段の checkpoint が判断する）。
+		return err
+	}
+	// 予算切れ。失敗ではない — 状態として表に出し、ポーラーに収束を任せる。
+	log.Printf("docker start: container %s is up but the Agent has not answered within %s; still starting (budget %s)",
+		d.name, grace, agentBootBudget)
+	return nil
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // writeSecretEnvFile writes the secret env entries to a 0600 temp file for
@@ -354,31 +407,35 @@ func (d *dockerRuntime) writeSecretEnvFile() (string, error) {
 	return f.Name(), nil
 }
 
-// startHealthWait is how long this container gets to answer /healthz after `docker
-// run`. The classic flat 15s only holds for a boot that cannot run a long pre-agent
-// install. When the member's agent self-update opt-in is ON, the entrypoint's update
-// block runs SYNCHRONOUSLY before `exec workspace-agent`, so its whole cost lands in
-// this wait: measured on a fast link, npm @latest for the 4 CLIs is ~35s cold (~15s
-// warm), agy ~15s, cursor ~6s — ~60s with everything updating, and proportionally
-// worse on a slow link or a network-backed home volume. 15s there is a FALSE failure
-// (the container is fine, just still installing), which is what dropped a scheduled
-// fire with "agent did not become healthy within 15s". runtime_native.go already
-// carries 300s for the identical reason on its rootfs path; this aligns the docker
-// adapter. AF_AGENT_HEALTH_WAIT_SEC still overrides either branch.
+// startHealthWait is how long Start BLOCKS waiting for /healthz after `docker run`.
+// It is a courtesy, not a deadline: overrunning it means "answer starting and let the
+// poller finish the job" (see Start), so this number only decides how often a start
+// comes back already-running instead of already-starting.
+//
+// Which is why the old 15s / 300s split is gone. The 300s branch existed because a
+// self-updating boot (the entrypoint runs the update SYNCHRONOUSLY before
+// `exec workspace-agent`: npm @latest for the 4 CLIs ~35s cold, agy ~15s, cursor ~6s —
+// 約60 秒 with everything updating, worse on a slow link or a network-backed home)
+// would otherwise be FAILED at 15s. Nothing fails here now, and a 300s block is the
+// thing the Runtime port forbids: Start runs inside an HTTP request, and a wait past
+// the ingress idle timeout does not deliver a slower success, it deletes the response
+// (docs/62 §62.5, measured as a 504 on ECS). So one budget, sized to sit inside that
+// timeout, and the boot window is carried by State() == "starting" instead.
+//
+// AF_AGENT_HEALTH_WAIT_SEC still overrides it — a deployment that knows its ingress
+// tolerates more (or has none) can buy a synchronous answer for a slower boot.
+const dockerStartGrace = 45 * time.Second
+
 func (d *dockerRuntime) startHealthWait() time.Duration {
 	for _, kv := range d.extraEnv {
-		// An unattended start skips the update block entirely (unattendedStartEnv), so
-		// it keeps the short budget even with the opt-in ON.
+		// An unattended start (scheduler wake) skips the update block entirely and has
+		// nobody waiting on the answer — the fire path polls the Agent itself, patiently
+		// (AF_SCHEDULE_WAKE_TIMEOUT). Blocking the tick goroutine longer buys nothing.
 		if kv == unattendedStartEnv {
 			return 15 * time.Second
 		}
 	}
-	for _, kv := range d.extraEnv {
-		if kv == "AF_AGENT_SELF_UPDATE=1" {
-			return 300 * time.Second
-		}
-	}
-	return 15 * time.Second
+	return dockerStartGrace
 }
 
 // ensureNetwork creates the per-user network if it does not already exist.
@@ -430,6 +487,10 @@ func agentStopGraceSec() int {
 // errors (missing container, wedged daemon) fall back to the old hard remove so
 // Stop still converges.
 func (d *dockerRuntime) Stop(ctx context.Context) error {
+	// 起動途中の停止（利用者が「起動中…」のまま止めた）でも印を残さない。State() は
+	// コンテナが居なければ印を見ないので実害は無いが、次の Start が自分で立て直す
+	// 印を古いまま置いておく理由も無い。
+	d.startingMarker().clear()
 	// 「No such container」は冪等成功扱い: 停止済み(=コンテナ無し)WSへの stop API を
 	// 500 にしない。
 	noSuch := func(out []byte) bool {
@@ -585,38 +646,5 @@ func dockerEnvValue(name, key string) string {
 	return ""
 }
 
-// agentHealthWait returns the Start health-wait budget: the adapter default,
-// overridable via AF_AGENT_HEALTH_WAIT_SEC. Lean (boot-install) deployments
-// need more than the classic 15s on FIRST start — the entrypoint downloads the
-// pinned CLIs before the agent listens (docs/35 §35.4.1); the native rootfs
-// adapter defaults higher for the same reason.
-func agentHealthWait(def time.Duration) time.Duration {
-	if n := envInt("AF_AGENT_HEALTH_WAIT_SEC", 0); n > 0 {
-		return time.Duration(n) * time.Second
-	}
-	return def
-}
-
-// waitAgentHealthy polls the Agent's /healthz until it answers 200 or the
-// timeout lapses. Shared by the docker and native local adapters (ECS has its
-// own converge loop).
-func waitAgentHealthy(ctx context.Context, endpoint string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		// キャンセル済み ctx で最大タイムアウトまでポーリングし続けない
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("agent health wait canceled: %w", err)
-		}
-		req, _ := http.NewRequestWithContext(ctx, "GET", endpoint+"/healthz", nil)
-		// healthzClient (5s cap): ポーリングは再発行されるので、1 本のハングした probe が
-		// 呼び出し元(scheduler fire の wg.Wait 等)を巻き込んで固まらないようにする。
-		if resp, err := healthzClient.Do(req); err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-	return fmt.Errorf("agent did not become healthy within %s", timeout)
-}
+// agentHealthWait / waitAgentHealthy / agentStartingMarker は runtime_health.go へ
+// 移した（docker と native の両方が使う共通部品なので）。
