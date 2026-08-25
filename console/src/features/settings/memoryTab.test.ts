@@ -73,6 +73,18 @@ describe("設定モーダルのエージェントメモリタブ", () => {
     expect(tab).toContain('body?.error ? errDetail(body.error) : tr("mem.export_failed")');
   });
 
+  it("移設（履歴ごと取り込み）の mode 値が Agent 側の定数と一致する", () => {
+    // apply は REST を増やさず mode 1 キーで分岐する（新 REST は CP の許可リスト登録漏れ
+    // という既知の罠を踏むため）。綴りがずれると 400 になるので両側を突き合わせる。
+    const importGo = read("../../../../workspace/agent/memory_import.go");
+    expect(importGo).toContain('memoryImportModeMigrate = "migrate"');
+    expect(importGo).toContain('memoryImportModeReplace = "replace"');
+    expect(tab).toContain('useState<"replace" | "migrate">("replace")');
+    expect(tab).toMatch(/mode,\s*\n\s*scope:/); // apply 本文に mode を載せている
+    // 移設は bundle のときだけ出す（tar は 1 世代しか無く、選ぶと履歴を捨てるだけになる）。
+    expect(tab).toContain('preview.format === "bundle"');
+  });
+
   it("契機バッジのキーは Agent の AF-Trigger 値を網羅する", () => {
     // Agent 側の定数（memory_snapshot.go）と 1:1。"-" は "_" に置換して引く。
     for (const trigger of ["auto", "manual", "pre-restore", "restore", "import"]) {
