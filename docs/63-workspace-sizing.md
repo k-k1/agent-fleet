@@ -371,3 +371,122 @@ EFS / cluster / SG / log group / IAM role / task definition がすべて 0 件�
 変えるのは「その値が何になるか」を**ランタイムが申告し、画面がその通りに言う**ことだけである。
 調査は [64](64-ec2-persistent-workspace.md) §64.27、決定は
 [ADR 0045](decisions/0045-ec2-persistent-workspace.md) 決定 21。
+
+## 63.9 リソースの実測値は、ランタイムを問わず「中から」読む（2026-08-25）
+
+§63.8 までは 3 軸を**指定する**側の話だった。ここは同じ 3 軸を**観測する**側である。
+
+### 63.9.1 症状 — 稼働中なのにタイルが 3 つとも「–」
+
+`ecs-ec2` 構成のメンバー詳細（テナント設定 > メンバー > 個人）で、「ワークスペースのリソース」の
+メモリ・CPU・ディスクが**全部「–」のまま**だった。状態表示は「稼働中」なので、画面としては
+「動いているのに何一つ測れていない」形になる。
+
+原因は 1 か所で、`control-plane/metrics.go` の `containerStats` である。
+
+| 軸 | 読み方 | 成立する前提 |
+|---|---|---|
+| メモリ / CPU | `docker inspect` で ID → ホストの `/sys/fs/cgroup/system.slice/docker-<id>.scope` | CP と Workspace が**同じホスト**にいる |
+| ディスク | CP のローカル FS に `du -sb <dataDir>/home` | home のパスが**CP から見える** |
+
+ECS のタスクには docker バイナリも対象の cgroup も home のパスも無い。**Fargate でも `ecs-ec2` でも
+同じ**で、`ecs-ec2` 固有の話ではない。
+
+`running` だけは既に手当て済みだった（§64.27 — `rt.State()` で上書きしないと強制停止ボタンが永久に
+押せない）。ただしそれは真偽値 1 つを直しただけで、**ゲージ 3 本は誰も埋めていなかった**。
+
+### 63.9.2 出どころは 1 つしか無い
+
+コンテナの**中**では `/sys/fs/cgroup` が cgroup 名前空間でその Workspace 自身に張り替えられている。
+つまりランタイムが何であれ、同じ 2 ファイル（`memory.current` / `cpu.stat`）を読むだけで済む。
+ディスクも、中からなら home は自分のボリュームなので `statfs` 1 発で**使用量も容量も**分かる。
+
+先例もある: `status.OOMKillCount` は以前からこの読み方で自分の `oom_kill` を数えていた
+（docs/27 §10.2-2）。今回はそこへ軸を足しただけである。
+
+- Agent: `workspace/agent/internal/resources`（cgroup を読む口をここへ集約。`status.OOMKillCount` は
+  委譲するだけの薄い口になった）＋ `GET /workspace/stats`
+- CP: `agent_client.go` の `agentStats` と、`metrics.go` の `workspaceStats`
+
+⚠️ **`Runtime` インターフェースに `Stats()` は足していない。** 足しても分岐が生まれないからである
+——docker と native は既にホスト側で読めており、ECS 系 3 つは AWS API から cgroup を取る手段が無い
+ので**どれも同じ HTTP 呼び出しに落ちる**。5 実装のうち 4 つが同じ 1 行を書くインターフェースは
+抽象ではなく重複である（[ADR 0058](decisions/0058-workspace-resource-observation.md) 決定 2）。
+`workspaceStats` は安い順に「ホストの cgroup → State で稼働確認 → Agent へ問い合わせ」と落ちるので、
+**docker / native の既存挙動は 1 バイトも変わらない**。
+
+### 63.9.3 実装で効いた 3 つ
+
+**① 測れなかった軸は 0 で埋めず、キーごと落とす。** `cpu_pct: 0`（本当に暇）と「CPU が測れない」は
+別の事実である。ゼロで潰すと画面は測れないものを 0% として描き、**壊れたことが誰にも見えなくなる**
+——今回の「–」は少なくとも異常を主張していたが、0% は何も主張しない。Agent 側の JSON は軸ごとに
+ポインタ（`omitempty`）で、CP のデコードもポインタで受ける。`oom_kill_total: 0` も「present な 0」
+として通す。
+
+**② `State()` は 1 tick 1 回に束ねる。** `ecs-ec2` の `State()` は DescribeVolumes ＋
+DescribeServices の実 API 呼び出しで**キャッシュが無い**。`/api/events` の tick は 4 秒で、そこでは
+`workspacePayload` が既に State を引いている。stats 側で 2 本目を引くと購読者 1 人あたりの AWS
+呼び出しがそのまま倍になるので、tick で 1 回引いた値を両方へ渡す形に変えた（`workspacePayload` は
+state を引数で受け取る）。State をまだ引いていない呼び出し元は、値ではなく **thunk**
+（`sync.OnceValue`）を渡す——ホスト側の読みが成功する構成では State を引かずに済む。
+
+**③ 止まっている Workspace には問い合わせない。** 届かない相手を毎 tick 叩くと、タイムアウトぶん
+だけ tick が遅れる（4 秒周期に 5 秒の待ちが入る）。Agent への問い合わせ用クライアントは共有の
+2 分ではなく**専用の 5 秒**にしてある。共有クライアントのままだと、詰まった Agent 1 つが SSE の
+tick を 2 分止める。
+
+### 63.9.4 依存しているのは「イメージの中身」ではなく cgroup の版
+
+この読み方はイメージに何も要求しない。`statfs` はコマンドではなく**システムコール**で、
+Go の `syscall.Statfs` は libc も外部バイナリも介さず `SYS_STATFS` を直接呼ぶだけである
+（CP が使う `du` の方はイメージ依存のバイナリで、そこが違う）。amd64 / arm64 の両方で
+`CGO_ENABLED=0` のビルドが通ることを確認済み。
+
+**実際に効く依存は `/sys/fs/cgroup` が v2 か v1 か**である。
+
+- **`ecs-ec2` は v2 で確定。** スロットの AMI は `amazon-linux-2023` の ECS-optimized に
+  固定されており（`deploy/aws/ecs/cfn/40-ec2-pool.yaml:21`）、AL2023 は cgroup v2 が既定。
+- **Fargate は分からない。** CP は `PlatformVersion` を一切渡していない（＝ LATEST）ので、
+  下回りの版を我々が選んでいない。
+
+そこで軸ごとに **v2 → v1 の順**で読む。v1 のホストに当たったときの症状は「メモリと CPU
+だけ黙って –」＝**この修正が直したはずの見た目にそのまま戻る**ので、名前の違いだけで
+そこへ落ちるのは割に合わない。
+
+| | v2 | v1 |
+|---|---|---|
+| メモリ | `memory.current` | `memory/memory.usage_in_bytes` |
+| 上限 | `memory.max`（`"max"` = 無制限） | `memory/memory.limit_in_bytes`（**巨大値**が無制限） |
+| CPU | `cpu.stat` の `usage_usec`（**µs**） | `cpuacct/cpuacct.usage`（**ns**） |
+| OOM | `memory.events` の `oom_kill` | `memory/memory.oom_control` の `oom_kill` |
+
+⚠️ 表の右列に罠が 2 つある。**v1 の「上限なし」は数値として読めてしまう**
+（`9223372036854771712`）ので、閾値で弾かないと「上限 8 EiB」を分母にした使用率 0% を
+描く——v2 の `"max"` のように読めずに落ちてはくれない。**単位も違う**（ns と µs）ので、
+揃え忘れると使用率が 1000 倍になり、静止中の Workspace が数万 % に見える。どちらも
+テストで固定した（外すと実際に 50000% と 8 EiB が出ることを確認済み）。
+
+⚠️ **実機で測ったのは v2 側だけ**である。v1 側はフィクスチャでの検証にとどまり、v1 の
+ホストを用意して確かめたわけではない。
+
+### 63.9.5 ディスクの分母
+
+`user_limit.disk_gb` は設定値であって実測ではなく、`ecs-ec2` では**作成時にしか効かない**
+（ADR 0045 決定 21）。したがって画面の割合は**実測の容量（`disk_total`）を優先**し、無いときだけ
+設定値（`disk_quota`）へ落ちる。
+
+ホスト側の `du` が使える構成では `du` の値を優先し続ける。停止中の Workspace でも読める唯一の
+数字で、棚卸しに要るからである。
+
+| 構成 | `disk_used` | `disk_total` |
+|---|---|---|
+| docker / native | CP の `du -sb <dataDir>/home`（60 秒キャッシュ） | 無し（表示上のクォータのみ） |
+| `ecs-ec2` | Agent の `statfs`（永続 home の EBS） | **有り**（EBS のサイズそのもの） |
+| Fargate | Agent の `statfs`（作業ディスク） | 有り |
+
+### 63.9.6 ついでに直ったもの
+
+同じ経路を WS バーの自分用リソースチップ（`/api/workspace/stats`）も通るので、**ECS 構成では出て
+いなかったチップが出るようになる**（Console は `mem_used` の有無でチップの表示を決めている）。
+コンテナ内 OOM の検出（`oom_recent`）も同様に ECS で効くようになった——累積カウンタの「増加」を
+見る導出は CP 側にあるので、コンテナ ID の代わりに Workspace 名で追跡する。

@@ -295,11 +295,74 @@ func containerStats(ctx context.Context, name string) map[string]any {
 	return out
 }
 
+// --- The runtime-neutral view (docs/63 §63.9) ---
+//
+// containerStats above only works where the CP and the workspace share a host:
+// it shells out to `docker inspect` and reads the host's cgroup tree. On every ECS
+// profile (Fargate and ecs-ec2) neither exists in the CP task, so it answered
+// running:false with no gauges at all — three "–" tiles under a workspace that was
+// plainly up.
+//
+// The fix is not another runtime adapter. Whatever the runtime, the numbers can
+// only come from ONE place — inside the container, where /sys/fs/cgroup is
+// namespaced to that workspace — so the Runtime port gains nothing by carrying a
+// Stats method that four of five implementations would answer with the same HTTP
+// call. workspaceStats keeps the cheap local read as the fast path and asks the
+// Agent when it comes up empty.
+
+// workspaceStats returns a workspace's live gauges regardless of runtime.
+//
+// state is a THUNK, not a value, because rt.State costs real money on ecs-ec2 (a
+// DescribeVolumes plus a DescribeServices, uncached) and this runs on the 4-second
+// events tick. Callers that already know the state pass a closure over it; the rest
+// pass a memoized one so it is paid at most once, and only when the local read
+// already failed.
+func workspaceStats(ctx context.Context, m *manager, rt Runtime, state func() string) map[string]any {
+	out := containerStats(ctx, rt.Name())
+	if out["running"] != true {
+		// ⚠️ The Console disables 強制停止 on exactly this field, so a docker read that
+		// cannot see the container must not be the last word — on ECS it never can
+		// (docs/64 §64.27).
+		switch state() {
+		case "running":
+			out["running"] = true
+		case "starting":
+			out["starting"] = true
+		}
+	}
+	// mem_used is the marker for "the local read saw this workspace". Absent means
+	// the CP is not on the workspace's host; the Agent is then the only source.
+	// Asking a workspace that is not running would just burn a 5s timeout per tick.
+	if _, ok := out["mem_used"]; ok || out["running"] != true {
+		return out
+	}
+	s, err := m.agentStats(ctx, rt)
+	if err != nil {
+		return out // still running, just unmeasured — the tiles stay "–"
+	}
+	for k, v := range s {
+		out[k] = v
+	}
+	// oom_recent is a CP-side derivative (a RISE in the cumulative counter), so it
+	// has to be tracked here for the Agent path too — otherwise an in-container OOM
+	// is invisible on ECS. Keyed by workspace name rather than container id: the id
+	// is exactly what this path does not have. A restart resets the container's
+	// counter, and observe() only ever flags an increase, so the stale baseline
+	// cannot produce a false alarm.
+	if total, ok := out["oom_kill_total"].(uint64); ok && oomKills.observe(rt.Name(), total, time.Now()) {
+		out["oom_recent"] = true
+	}
+	return out
+}
+
 // stats serves the own-workspace resource chip（docs/23 残③: workspaceAPI の
 // メソッドとして登録側で withResolved に包む）.
 func (a workspaceAPI) stats(w http.ResponseWriter, r *http.Request, res *resolved) {
+	ctx := r.Context()
 	rt := res.rt
-	writeJSON(w, http.StatusOK, containerStats(r.Context(), rt.Name()))
+	writeJSON(w, http.StatusOK, workspaceStats(ctx, a.mgr, rt, sync.OnceValue(func() string {
+		return rt.State(ctx)
+	})))
 }
 
 // --- Disk usage (admin per-member view) ---

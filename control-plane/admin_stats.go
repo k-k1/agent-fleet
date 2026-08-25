@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"sync"
 )
 
 // gib / mib / kib are defined in mem.go (package-wide 1024-based size constants).
@@ -58,25 +59,23 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"running": false})
 		return
 	}
-	out := containerStats(r.Context(), ws.ContainerName)
-	// ⚠️ containerStats reads the host's cgroup through `docker inspect`, so on every
-	// ECS profile (no docker binary in the CP task) it answers running:false for a
-	// workspace that is plainly up — and the Console disables "force stop" on exactly
-	// that field, which made the button permanently unusable there (docs/64 §64.27).
-	// Ask the runtime whenever the docker read says "not running": on docker the two
-	// agree, and everywhere else this is the only source that knows.
-	if out["running"] != true {
-		switch a.mgr.runtimeFor(ws, "").State(r.Context()) {
-		case "running":
-			out["running"] = true
-		case "starting":
-			out["starting"] = true
-		}
-	}
-	if used, ok := dirDiskUsage(r.Context(), a.mgr.rootedDataDir(ws)); ok {
+	ctx := r.Context()
+	rt := a.mgr.runtimeFor(ws, "")
+	// running / mem / CPU は runtime 中立の合成に任せる（metrics.go の workspaceStats）:
+	// ホストの cgroup が読める構成ならそれを、読めない構成（ECS 全般）なら Agent が
+	// 自分の cgroup から読んだ値を載せる。State() は docker の読みが空振ったときだけ
+	// 引く（メンバー詳細は 4 秒ごとにポーリングされる画面なので、docker 構成で毎回
+	// `docker inspect` を 2 度走らせないための遅延評価）。
+	out := workspaceStats(ctx, a.mgr, rt, sync.OnceValue(func() string { return rt.State(ctx) }))
+	// ディスクはホスト側の du を優先する。CP と Workspace が同じホストに載っている
+	// 構成では、これが「ホーム木そのものの大きさ」——コンテナが止まっていても読める
+	// 唯一の数字で、停止中の棚卸しに要る。ECS では対象のパスが CP に無いので、
+	// Agent が statfs で返した disk_used / disk_total（永続 home の EBS そのもの）が
+	// 既に out に載っている。
+	if used, ok := dirDiskUsage(ctx, a.mgr.rootedDataDir(ws)); ok {
 		out["disk_used"] = used
 	}
-	if ul, ok, _ := a.mgr.store.GetUserLimit(r.Context(), mem.ID); ok && ul.DiskGB > 0 {
+	if ul, ok, _ := a.mgr.store.GetUserLimit(ctx, mem.ID); ok && ul.DiskGB > 0 {
 		out["disk_quota"] = uint64(ul.DiskGB) * gib
 	}
 	writeJSON(w, http.StatusOK, out)

@@ -19,6 +19,9 @@ import (
 func buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealth)
+	// Workspace 自身のリソース実測値（docs/63 §63.9）。CP がホストの cgroup を
+	// 読めない構成（ECS 全般）で、メモリ / CPU / ディスクの唯一の出どころになる。
+	mux.HandleFunc("GET /workspace/stats", handleWorkspaceStats)
 	mux.HandleFunc("GET /sessions", handleListSessions)
 	mux.HandleFunc("GET /sessions/catalog", handleSessionCatalog)
 	mux.HandleFunc("GET /notifications", handleNotifications)

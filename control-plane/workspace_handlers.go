@@ -165,9 +165,13 @@ func (a workspaceAPI) whoami(w http.ResponseWriter, r *http.Request) {
 
 // workspacePayload composes the GET /api/workspace body. Shared by the REST
 // handler and the /api/events push channel so both emit the identical shape.
-func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved) map[string]any {
+//
+// state は呼び出し側が引いて渡す。events の tick では stats 側でも同じ状態が要り、
+// ecs-ec2 の State() は実 AWS 呼び出しなので、1 tick 1 回に束ねている
+// （docs/63 §63.9）。
+func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state string) map[string]any {
 	rt := res.rt
-	m := map[string]any{"name": rt.Name(), "state": rt.State(ctx)}
+	m := map[string]any{"name": rt.Name(), "state": state}
 	// Live boot-install phase for the "starting" dialog (native rootfs only —
 	// docs/35 §35.9-9). State() now says "starting" for that window too, but only
 	// bootPhase can say WHAT is taking minutes (どの CLI を落としているか), which is
@@ -190,7 +194,8 @@ func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved) map[s
 }
 
 func (a workspaceAPI) get(w http.ResponseWriter, r *http.Request, res *resolved) {
-	writeJSON(w, http.StatusOK, a.workspacePayload(r.Context(), res))
+	ctx := r.Context()
+	writeJSON(w, http.StatusOK, a.workspacePayload(ctx, res, res.rt.State(ctx)))
 }
 
 func (a workspaceAPI) start(w http.ResponseWriter, r *http.Request, res *resolved) {
