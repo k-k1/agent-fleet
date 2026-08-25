@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.12.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.1) — 2026-08-25
+
+Three fixes found while bringing a real `ecs-ec2` deployment up on 0.12.0: a Graviton
+Control Plane that quietly came up on x86_64, per-member cost figures that never
+settled on a member account of an AWS organization, and agent memory that could not be
+imported into a workspace that had just been created.
+
 ## [0.12.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.0) — 2026-08-25
 
 A workspace no longer stays up — and billed — because a session is waiting for a
