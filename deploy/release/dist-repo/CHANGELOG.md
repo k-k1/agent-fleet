@@ -3,6 +3,11 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.12.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.2) — 2026-08-25
+
+Agent memory can be imported with the history it came with, workspace resource figures
+appear on ECS deployments, and the admin Egress screen works on Postgres.
+
 ## [0.12.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.1) — 2026-08-25
 
 Three fixes found while bringing a real `ecs-ec2` deployment up on 0.12.0: a Graviton
