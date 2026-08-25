@@ -126,7 +126,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # 落ちる（＝別の ARG を触った瞬間に無関係に見える形で発火する）。上流のセキュリティ
 # 更新に追随して bump すること。現行版は
 # `curl -fsSL http://security.debian.org/debian-security/dists/bookworm-security/main/binary-<arch>/Packages.xz | xz -dc | grep -A5 '^Package: chromium$'` で確認できる。
-ARG CHROMIUM_VERSION=151.0.7922.137-1~deb12u1
+ARG CHROMIUM_VERSION=151.0.7922.173-1~deb12u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
@@ -282,7 +282,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.241
 ARG OPENCODE_VERSION=1.18.21
-ARG CODEX_VERSION=0.149.0
+ARG CODEX_VERSION=0.149.1
 ARG COPILOT_VERSION=1.0.80
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
