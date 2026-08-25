@@ -367,3 +367,69 @@ describe("保存した値が編集を開き直しても残る", () => {
     expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(false);
   });
 });
+
+// リソースのタイル（docs/63 §63.9）。ECS 構成では実測値が Agent から来るので、
+// ホストの cgroup が読めない＝タイルが 3 つとも「–」だった状態からの回復がここ。
+// 押さえるのは「測れない軸を 0 として描かない」ことと、割合の分母である。
+describe("ワークスペースのリソースのタイル", () => {
+  const tiles = () =>
+    Array.from(document.querySelectorAll<HTMLElement>(".res-tiles .res-tile")).map((t) => ({
+      value: t.querySelector(".rt-value")?.textContent ?? "",
+      sub: t.querySelector(".rt-sub")?.textContent ?? "",
+    }));
+
+  const withStats = (stats: Record<string, unknown>) =>
+    api.mockImplementation((p: string) =>
+      p.endsWith("/stats") ? Promise.resolve(stats) : Promise.resolve({ sessions: [] }),
+    );
+
+  it("メモリ・CPU・ディスクの実測値を描く", async () => {
+    withStats({
+      running: true,
+      mem_used: 2 * 1024 ** 3,
+      mem_max: 8 * 1024 ** 3,
+      cpu_pct: 42,
+      disk_used: 20 * 1024 ** 3,
+      disk_total: 40 * 1024 ** 3,
+    });
+    await mount();
+    const [mem, cpu, disk] = tiles();
+    expect(mem.value).toBe("2.00G");
+    expect(mem.sub).toContain("8.00G");
+    expect(cpu.value).toBe("42%");
+    expect(disk.value).toBe("20.0G");
+    // 分母は実測の容量。docs/63 §63.9 の要点は「稼働中なのに – のまま」を無くすこと。
+    expect(disk.sub).toContain("/ 40.0G");
+    expect(disk.sub).toContain("50%");
+  });
+
+  // 分母は実測（disk_total）が設定値（disk_quota）に優先する。ecs-ec2 の disk_gb は
+  // 作成時にしか効かないので、後から数字だけ変えられていると設定値は嘘になる。
+  it("実測の容量があれば設定値の上限より優先する", async () => {
+    withStats({
+      running: true,
+      disk_used: 30 * 1024 ** 3,
+      disk_total: 60 * 1024 ** 3,
+      disk_quota: 40 * 1024 ** 3,
+    });
+    await mount();
+    expect(tiles()[2].sub).toContain("/ 60.0G");
+  });
+
+  // 実測が無い構成（docker: du + 表示上のクォータ）は従来どおり設定値を分母にする。
+  it("実測の容量が無ければ設定値の上限を分母にする", async () => {
+    withStats({ running: true, disk_used: 10 * 1024 ** 3, disk_quota: 40 * 1024 ** 3 });
+    await mount();
+    expect(tiles()[2].sub).toContain("/ 40.0G");
+    expect(tiles()[2].sub).toContain("25%");
+  });
+
+  // 測れなかった軸は「–」。0 と書くと、測れていないことが画面から消える。
+  it("測れなかった軸は 0 ではなく – のままにする", async () => {
+    withStats({ running: true, mem_used: 1024 ** 3 });
+    await mount();
+    const [, cpu, disk] = tiles();
+    expect(cpu.value).toBe("–");
+    expect(disk.value).toBe("–");
+  });
+});
