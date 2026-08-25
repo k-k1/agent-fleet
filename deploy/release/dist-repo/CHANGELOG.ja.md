@@ -3,6 +3,11 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.12.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.2) — 2026-08-25
+
+エージェントのメモリを履歴ごと引き継げるようになり、ワークスペースのリソースが ECS 構成でも
+測れるようになりました。管理画面の「通信」が Postgres 配備で開けなかったのも直しています。
+
 ## [0.12.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.1) — 2026-08-25
 
 0.12.0 で実際の `ecs-ec2` 配備を立てて見つかった修正が 3 件です。Graviton で立てたはずの
