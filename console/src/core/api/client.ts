@@ -147,6 +147,16 @@ export const errText = (error: ApiError | string | null | undefined): string => 
   return String(error ?? "");
 };
 
+// errDetail は errText の文言にサーバの生メッセージを併記する。`*_failed` のような
+// 汎用コードは「何に失敗したか」しか表せず、**なぜ**失敗したかは message にしか無い
+// （エージェントメモリの取り込みのように、利用者の環境でしか再現しない失敗はここを
+// 落とすと現地調査の手がかりが消える）。既に同じ文言なら重ねない。
+export const errDetail = (error: ApiError | string | null | undefined): string => {
+  const head = errText(error);
+  const detail = error && typeof error === "object" ? (error.message ?? "").trim() : "";
+  return detail && detail !== head ? head + ": " + detail : head;
+};
+
 // api() resolves the path against baseURI and parses JSON. Mirrors the legacy
 // helper: callers handle `res.error` shapes themselves. Returns `any` on purpose —
 // the response shape is per-endpoint and validated at the call site.

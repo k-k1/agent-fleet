@@ -63,6 +63,16 @@ describe("設定モーダルのエージェントメモリタブ", () => {
     expect(agentRoutes).toContain("/agents/memory/import/apply");
   });
 
+  it("書き出し / 取り込みの失敗は原因（サーバの message）まで出す", () => {
+    // `memory_import_failed` のような汎用コードは i18n が定型文へ畳むので、errText の
+    // ままだと「取り込みに失敗しました」だけが出て原因が消える。実際にこれで
+    // 「ENOENT（live のルート未作成）」が画面からも調査からも見えなくなった。
+    const failures = [...tab.matchAll(/toast\((?:body\?\.error \? )?errDetail\(/g)];
+    expect(failures.length).toBeGreaterThanOrEqual(4);
+    expect(tab).toContain('body?.error ? errDetail(body.error) : tr("mem.import_failed")');
+    expect(tab).toContain('body?.error ? errDetail(body.error) : tr("mem.export_failed")');
+  });
+
   it("契機バッジのキーは Agent の AF-Trigger 値を網羅する", () => {
     // Agent 側の定数（memory_snapshot.go）と 1:1。"-" は "_" に置換して引く。
     for (const trigger of ["auto", "manual", "pre-restore", "restore", "import"]) {
