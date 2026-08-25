@@ -58,6 +58,16 @@ type memoryScopeTarget struct {
 	Rel  string
 }
 
+// memoryApplyOpts は適用の変種。既定（ゼロ値）は docs/39 ④ そのままの「内容だけ採る」で、
+// Adopt はそこに**系譜の付け替え**を足す（= 移設。取り込んだ履歴をこの環境の履歴にする）。
+// 取り込んだ内容を live へ書く手順は 1 バイトも変えない — 変わるのは main がどの系譜を
+// 指すかだけなので、allowlist 由来の防御（★1 の裏返し）はそのまま効く。
+type memoryApplyOpts struct {
+	// Adopt=true: 適用後に main を from の系譜へ付け替える。元の main は退避 ref
+	// （refs/premigrate/<ts>）へ逃がすので、履歴が消えることはない。
+	Adopt bool
+}
+
 // memoryRestoreResult は restore 1 回の結果。pre-restore と restore の 2 つの rev を
 // 返すので、UI は「戻した」だけでなく「戻す前の状態はここ」も提示できる。
 type memoryRestoreResult struct {
@@ -70,6 +80,12 @@ type memoryRestoreResult struct {
 	Deleted    []string           `json:"deleted"`              // live から消したパス（同上）
 	Projects   []memoryProjectRef `json:"projects"`             // restore commit が触ったプロジェクト
 	Busy       bool               `json:"busy"`                 // 対象 kind に実行中セッションがあった
+	// 以下は移設（Adopt）のときだけ。Replaced は退避した元 main の sha、ReplacedRef は
+	// その退避先。UI が「移設前の履歴はここにある」と示せないと、入れ替えが取り返しの
+	// つかない操作に見えてしまう。
+	Adopted     bool   `json:"adopted,omitempty"`
+	Replaced    string `json:"replaced,omitempty"`
+	ReplacedRef string `json:"replacedRef,omitempty"`
 }
 
 // memoryRestore は docs/39 ④ の手順をそのまま実行する。now はテストが決定的に検証
@@ -90,23 +106,23 @@ func memoryRestore(sc memoryRestoreScope, rev, at string, now time.Time) (memory
 	if err != nil {
 		return res, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRev, "%s", err.Error())
 	}
-	return memoryApplyRevLocked(sc, from, memoryTriggerRestore, nil, now)
+	return memoryApplyRevLocked(sc, from, memoryTriggerRestore, nil, now, memoryApplyOpts{})
 }
 
 // memoryApplyRev は「解決済みの commit の内容を scope 単位で live へ書き戻す」共通経路。
 // restore（履歴上の時点へ戻す）と import の apply（取り込んだ系譜の内容を採る）は、
 // 出どころの commit が違うだけで手順は同一なので、契機と trailer だけを引数で受ける。
-func memoryApplyRev(sc memoryRestoreScope, from, trigger string, extraTrailers []string, now time.Time) (memoryRestoreResult, error) {
+func memoryApplyRev(sc memoryRestoreScope, from, trigger string, extraTrailers []string, now time.Time, opts memoryApplyOpts) (memoryRestoreResult, error) {
 	memorySnapshotMu.Lock()
 	defer memorySnapshotMu.Unlock()
 	if err := memoryEnsureRepo(); err != nil {
 		return memoryRestoreResult{}, err
 	}
-	return memoryApplyRevLocked(sc, from, trigger, extraTrailers, now)
+	return memoryApplyRevLocked(sc, from, trigger, extraTrailers, now, opts)
 }
 
 // memoryApplyRevLocked は memorySnapshotMu を握った状態の本体（docs/39 ④ の手順そのもの）。
-func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrailers []string, now time.Time) (memoryRestoreResult, error) {
+func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrailers []string, now time.Time, opts memoryApplyOpts) (memoryRestoreResult, error) {
 	res := memoryRestoreResult{From: from, Scopes: []string{}, Written: []string{}, Deleted: []string{}, Projects: []memoryProjectRef{}}
 	targets, err := memoryResolveScope(sc)
 	if err != nil {
@@ -168,11 +184,33 @@ func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrai
 	sort.Strings(res.Written)
 	sort.Strings(res.Deleted)
 
+	// ③.5 移設（Adopt）: ここで初めて main を from の系譜へ付け替える。live を書き終えた
+	//     後に置くのは、①〜③ のどこで失敗しても履歴が動かないようにするため（失敗した
+	//     移設が「履歴だけ入れ替わって中身は古い」状態を作らない）。元の main は退避 ref
+	//     へ逃がすので、入れ替え前の履歴は repo に残り続ける（gc の対象にもならない）。
+	if opts.Adopt {
+		prev, _ := memoryGitRun("rev-parse", "--verify", "--quiet", memoryBranch)
+		if prev != "" {
+			ref := "refs/premigrate/" + now.UTC().Format("20060102T150405Z")
+			if _, err := memoryGitRun("update-ref", ref, prev); err != nil {
+				return res, fmt.Errorf("stash the replaced lineage: %w", err)
+			}
+			res.Replaced, res.ReplacedRef = prev, ref
+		}
+		if _, err := memoryGitRun("update-ref", "refs/heads/"+memoryBranch, from); err != nil {
+			return res, fmt.Errorf("adopt the imported lineage: %w", err)
+		}
+		res.Adopted = true
+	}
+
 	// ④ 適用後の live を restore commit として積む。ここは live を読み直すので、
 	//    「実際に何が起きたか」が履歴の側で確定する（③ の結果を信用しない）。
 	trailers := []string{"AF-Restore-Rev: " + from}
 	for _, t := range targets {
 		trailers = append(trailers, "AF-Restore-Scope: "+t.Repo)
+	}
+	if res.Replaced != "" {
+		trailers = append(trailers, "AF-Premigrate-Rev: "+res.Replaced)
 	}
 	trailers = append(trailers, extraTrailers...)
 	done, err := memorySnapshotLocked(trigger, now, trailers...)
@@ -180,6 +218,22 @@ func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrai
 		return res, fmt.Errorf("restore snapshot: %w", err)
 	}
 	res.Committed, res.Rev, res.Projects = done.Committed, done.Rev, done.Projects
+
+	// 移設は「内容が同じでも起きた事実」を残す。付け替え後の live は取り込んだ head と
+	// 一致するのが普通なので、★8 の無変更 skip をそのまま通すと**系譜を入れ替えた記録が
+	// どこにも残らない**（退避 ref だけになる）。ここだけ空 commit を許し、どの系譜を
+	// いつ採用し何と入れ替えたかを trailer で履歴に刻む。
+	if opts.Adopt && !done.Committed {
+		msg := memoryCommitMessage(trigger, now, nil, nil, trailers)
+		if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "--allow-empty", "-m", msg); err != nil {
+			return res, fmt.Errorf("record the migration: %w", err)
+		}
+		rev, err := memoryGitRun("rev-parse", memoryBranch)
+		if err != nil {
+			return res, fmt.Errorf("record the migration: %w", err)
+		}
+		res.Committed, res.Rev = true, rev
+	}
 	return res, nil
 }
 

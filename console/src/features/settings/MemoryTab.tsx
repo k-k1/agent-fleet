@@ -614,6 +614,9 @@ function TransferSection({
   const [format, setFormat] = useState<"bundle" | "tar">("bundle");
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [picked, setPicked] = useState<Record<string, boolean>>({});
+  // 適用のしかた。replace = 選んだ範囲の内容だけ採る（既定）。migrate = 履歴ごと入れ替える。
+  // 移設は bundle（履歴を運ぶ形式）でしか意味を持たないので tar では選ばせない。
+  const [mode, setMode] = useState<"replace" | "migrate">("replace");
   const fileRef = useRef<HTMLInputElement>(null);
 
   // 保存は fetch → Blob → 一時 URL。素のリンク遷移にしないのは、409（secret 検出）を
@@ -686,6 +689,7 @@ function TransferSection({
         return;
       }
       setPicked({});
+      setMode("replace");
       setPreview(body as ImportPreview);
     } finally {
       setBusy(false);
@@ -699,7 +703,10 @@ function TransferSection({
   const projects = preview?.projects ?? [];
   const pickedProjects = projects.filter((p) => picked["project:" + p.slug]).map((p) => p.slug);
   const pickedKinds = wholeKinds.filter((k) => picked["kind:" + k.kind]).map((k) => k.kind);
-  const canApply = !!preview && (pickedProjects.length > 0 || pickedKinds.length > 0);
+  // 移設は「全体を履歴ごと入れ替える」操作なので、範囲の選択は要らない（サーバ側でも
+  // 全体固定にしている — 一部だけ入れ替えると履歴と live が食い違うため）。
+  const migrating = mode === "migrate";
+  const canApply = !!preview && (migrating || pickedProjects.length > 0 || pickedKinds.length > 0);
 
   const applyImport = async () => {
     if (!preview) return;
@@ -708,14 +715,19 @@ function TransferSection({
       ...wholeKinds.filter((k) => picked["kind:" + k.kind]).map((k) => tr("mem.scope_whole_root", { label: k.label })),
     ].join(tr("common.list_sep"));
     const ok = await askConfirm({
-      title: tr("mem.import_confirm_title"),
-      body: (
+      title: tr(migrating ? "mem.import_migrate_confirm_title" : "mem.import_confirm_title"),
+      body: migrating ? (
+        <>
+          <p>{tr("mem.import_migrate_confirm_body", { snapshots: preview.snapshots })}</p>
+          <p className="muted">{tr("mem.import_migrate_confirm_note")}</p>
+        </>
+      ) : (
         <>
           <p>{tr("mem.import_confirm_body", { scope: label })}</p>
           <p className="muted">{tr("mem.restore_undo_hint")}</p>
         </>
       ),
-      confirmLabel: tr("mem.import_do"),
+      confirmLabel: tr(migrating ? "mem.import_migrate_do" : "mem.import_do"),
       danger: true,
     });
     if (!ok) return;
@@ -725,19 +737,25 @@ function TransferSection({
       const res = await apiJSON(
         "api/agents/memory/import/apply?importId=" + encodeURIComponent(preview.importId),
         "POST",
-        { importId: preview.importId, scope: { projects: pickedProjects, kinds: pickedKinds } },
+        {
+          importId: preview.importId,
+          mode,
+          scope: { projects: pickedProjects, kinds: pickedKinds },
+        },
       );
       if (res?.error) {
         toast(errDetail(res.error));
         return;
       }
       toast(
-        res.committed
-          ? tr("mem.import_done", {
-              written: res.written?.length ?? 0,
-              deleted: res.deleted?.length ?? 0,
-            })
-          : tr("mem.import_nochange"),
+        res.adopted
+          ? tr("mem.import_migrated", { snapshots: preview.snapshots })
+          : res.committed
+            ? tr("mem.import_done", {
+                written: res.written?.length ?? 0,
+                deleted: res.deleted?.length ?? 0,
+              })
+            : tr("mem.import_nochange"),
         { kind: "success", persist: true },
       );
       setPreview(null);
@@ -815,6 +833,22 @@ function TransferSection({
               {tr("mem.import_rejected", { n: preview.rejected.length })}
             </p>
           )}
+          {/* 適用のしかた。移設は履歴を運ぶ bundle でしか意味を持たない（tar は 1 世代
+              しか無いので、選ばせると「履歴を捨てるだけ」の選択肢になる）。 */}
+          {preview.format === "bundle" && (
+            <div className="mem-scope">
+              <span className="muted">{tr("mem.import_mode_label")}</span>
+              <label>
+                <input type="radio" checked={!migrating} onChange={() => setMode("replace")} />
+                {tr("mem.import_mode_replace")}
+              </label>
+              <label>
+                <input type="radio" checked={migrating} onChange={() => setMode("migrate")} />
+                {tr("mem.import_mode_migrate")}
+              </label>
+            </div>
+          )}
+          {migrating && <p className="muted ds-hint">{tr("mem.import_mode_migrate_hint")}</p>}
           {projects.length === 0 && wholeKinds.length === 0 ? (
             <p className="muted pad">{tr("mem.import_none")}</p>
           ) : (
@@ -824,6 +858,7 @@ function TransferSection({
                   <label title={p.slug}>
                     <input
                       type="checkbox"
+                      disabled={migrating}
                       checked={!!picked["project:" + p.slug]}
                       onChange={() =>
                         setPicked((cur) => ({ ...cur, ["project:" + p.slug]: !cur["project:" + p.slug] }))
@@ -842,6 +877,7 @@ function TransferSection({
                   <label>
                     <input
                       type="checkbox"
+                      disabled={migrating}
                       checked={!!picked["kind:" + k.kind]}
                       onChange={() =>
                         setPicked((cur) => ({ ...cur, ["kind:" + k.kind]: !cur["kind:" + k.kind] }))
@@ -859,7 +895,7 @@ function TransferSection({
           )}
           <div className="flow">
             <button type="button" disabled={busy || !canApply} onClick={() => void applyImport()}>
-              {tr("mem.import_do")}
+              {tr(migrating ? "mem.import_migrate_do" : "mem.import_do")}
             </button>
             <button type="button" className="ghost" onClick={() => setPreview(null)}>
               {tr("common.cancel")}

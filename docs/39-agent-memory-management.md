@@ -74,7 +74,7 @@ Antigravity CLI に一本化。Enterprise ライセンス・有償 API キーの
 | ロールバック | **履歴は書き換えない**。restore は「新しい snapshot commit」として積む。適用前に pre-restore snapshot 自動取得 | ロールバックのロールバックが常に可能 |
 | スコープ | claude: 全体 / プロジェクト単位（`projects/<slug>/`）。codex: **ワークスペース全体のみ**（プロジェクト区分がファイル内エントリのためディレクトリ粒度が存在しない） | 日時指定は「その時刻以前の直近 snapshot」に解決 |
 | export | **git bundle（全履歴）を既定**、tar.gz（最新ツリーのみ）も選択可。**v1 は平文 DL**（暗号化なし） | bundle は 1 ファイル・履歴込み・`git bundle verify` で検証可能 |
-| import | bundle → `refs/imports/<ts>` に fetch / tar → staging 展開。適用は**プロジェクト選択式の置き換え（=新 commit）** | 3-way merge はしない（v1）。ローカル履歴は保全される |
+| import | bundle → `refs/imports/<ts>` に fetch / tar → staging 展開。適用は**プロジェクト選択式の置き換え（=新 commit）**、または**移設**（`mode=migrate`・履歴ごと入れ替え・2026-08-25 追加） | 3-way merge はしない（v1）。既定の置き換えではローカル履歴は保全される。移設は main を取り込んだ系譜へ付け替える（元の main は `refs/premigrate/<ts>` へ退避＝消さない） |
 | UI | 設定モーダル「ワークスペース」グループに「エージェントメモリ」タブ | 破壊操作は P4a の統一確認ダイアログ |
 | 監査 | `proxy.go auditActionTarget` に restore / import / import.apply / export をマップ | export は GET だが「持ち出しの唯一の経路」なので読み取りの例外として監査する。target は URL 由来のヒントのみ（本文は読まない） |
 
@@ -243,6 +243,22 @@ CP 側は `control-plane/routes.go` に同パスを `rest` で登録（**登録�
     実装は **restore と同じ経路**（`memoryApplyRev`）で契機と trailer だけが違う
     （`AF-Trigger: import` / `AF-Import-Id` / `AF-Import-Ref`）。したがって取り込みでも
     pre-restore snapshot が積まれ、**取り込み自体を巻き戻せる**。
+  - **apply の第 2 のかたち = 移設（`mode=migrate`・2026-08-25 追加・ADR 0022 決定 5-b）**:
+    選択置き換えは**最新ツリーしか使わない**ので、bundle が運んできた全 snapshot は
+    `refs/imports` に埋もれたまま 10 本を超えると刈られていた。「前の環境の履歴ごと
+    引っ越したい」に応えるのが移設で、live へ書く手順は 1 バイトも変えず（＝★1 の
+    裏返しの防御はそのまま）、**main をその系譜へ付け替える**。これだけで履歴一覧・差分・
+    巻き戻しが相手の履歴に対してそのまま効く（`memoryResolveRev` は repo 内の任意 commit
+    を受けるので復元側は無改修）。設計上の要点は 4 つ:
+    ① 付け替えは **live を書き終えた後**に置く（①〜③ のどこで失敗しても履歴は動かない
+    ＝「履歴だけ入れ替わって中身は古い」状態を作らない）。② 元の main は
+    `refs/premigrate/<ts>` へ退避＝履歴は消さない（gc の対象にもならない）。③ 範囲は
+    **全体固定**（一部だけ入れ替えると履歴と live が食い違う）。④ 付け替え後の live は
+    取り込んだ head と一致するのが普通なので、★8 の無変更 skip をそのまま通すと
+    **移設した事実がどこにも残らない**——ここだけ空 commit を許し、`AF-Import-Mode: migrate`
+    と `AF-Premigrate-Rev` を刻む。REST は経路を増やさず apply に `mode` を 1 キー足す
+    （新 REST は CP 許可リストの片側漏れという既知の罠を踏むため）。UI は bundle の
+    ときだけ選択肢を出す（tar は 1 世代しか無く、選べば履歴を捨てるだけになる）。
 - **slug 互換性**: リポジトリは全環境で `~/repos/<repo>` 規約なので、同名リポジトリなら
   slug（パス由来）が環境間で一致する。worktree suffix 付き slug はメモリを持たない
   （claude のメモリディレクトリは git リポジトリ由来で worktree 間共有）ため衝突しない。

@@ -300,15 +300,25 @@ func handleMemoryImport(w http.ResponseWriter, r *http.Request) {
 
 // handleMemoryImportApply は取り込んだ系譜から、選んだプロジェクト / kind だけを live へ
 // 適用する（置き換え = 新しい commit。3-way merge はしない — ADR 0022 決定 5）。
+// mode="migrate" は移設 = 内容に加えて**履歴も**取り込んだ系譜へ入れ替える（範囲は全体固定）。
+// 経路を増やさず 1 キーで分けるのは、REST を足すと CP 側の許可リスト登録漏れという既知の
+// 罠（memory_handlers.go 冒頭の ⚠️）を踏むため。
 func handleMemoryImportApply(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ImportID string             `json:"importId"`
 		Scope    memoryRestoreScope `json:"scope"`
+		Mode     string             `json:"mode"`
 	}
 	if !httpx.DecodeJSON(w, r, &body) {
 		return
 	}
-	res, err := memoryImportApply(body.ImportID, body.Scope, time.Now())
+	if body.Mode != "" && body.Mode != memoryImportModeReplace && body.Mode != memoryImportModeMigrate {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeMemoryBadRequest,
+			"mode must be \""+memoryImportModeReplace+"\" or \""+memoryImportModeMigrate+"\"")
+		return
+	}
+	opts := memoryApplyOpts{Adopt: body.Mode == memoryImportModeMigrate}
+	res, err := memoryImportApply(body.ImportID, body.Scope, time.Now(), opts)
 	if err != nil {
 		memoryWriteErr(w, err, errCodeMemoryImportFailed)
 		return

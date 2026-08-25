@@ -4211,6 +4211,18 @@ export const en: Record<keyof typeof ja, string> = {
   "mem.import_unavailable": "Cannot import — this environment has no destination for: {kinds}",
   "mem.import_secrets": "The imported contents include {n} item(s) that look like secrets.",
   "mem.import_do": "Import",
+  "mem.import_mode_label": "How to apply",
+  "mem.import_mode_replace": "Replace only the selected scope (keep this environment's history)",
+  "mem.import_mode_migrate": "Migrate with history (replace this environment's history)",
+  "mem.import_mode_migrate_hint":
+    "The imported snapshots become this environment's history, so you can roll back to any of them. The scope is always everything.",
+  "mem.import_migrate_confirm_title": "Migrate with history?",
+  "mem.import_migrate_confirm_body":
+    "This environment's memory will be replaced entirely by the imported contents and history ({snapshots} snapshots).",
+  "mem.import_migrate_confirm_note":
+    "The history being replaced is stashed rather than deleted, but it no longer appears in this list.",
+  "mem.import_migrate_do": "Migrate",
+  "mem.import_migrated": "Migrated ({snapshots} snapshots).",
   "mem.import_confirm_title": "Import these contents?",
   "mem.import_confirm_body": "Memory for {scope} will be replaced with the imported contents.",
   "mem.import_done": "Imported ({written} updated, {deleted} removed).",
