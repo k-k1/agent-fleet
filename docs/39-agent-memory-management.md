@@ -481,6 +481,19 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
   パイプラインが外部変更として再消化する。逆に sqlite まで巻き戻すと thread 由来の
   watermark が実 rollout と食い違い、抽出済みデータを失う方向に壊れる——含めないのが正。
   codex 統合と snapshot/restore の同時実行だけは避ける（codex セッション実行中警告が兼ねる）。
+- **★10 受け側の live ルートはまだ無いことがある**（2026-08-25 実機で発覚・修正済）:
+  claude の live ルート `<CLAUDE_CONFIG_DIR>/projects` は claude が一度起動して初めて
+  出来る。ところが import の本命は「新しい環境を立てて、真っ先に前の環境のメモリを
+  持ち込む」であり、そこではルート自体が存在しない。`memoryPrepareDest` は rel の各段を
+  1 段ずつ `os.Mkdir`（経路上の symlink 検査のため）していたので、ルートが無いと
+  **プレビューまでは通り、適用だけが ENOENT で落ちる**。ルートだけは `os.MkdirAll` で
+  用意する（作るのは自分の config 配下なので ★1 の防御は緩まない）。
+  併せて**診断可能性**の穴も同時に塞いだ: Agent は原因を message に載せていたのに、
+  Console の `errText` は `err.<code>` の訳があると message を捨てるため、画面には
+  「取り込みに失敗しました」しか出ず、Agent 側にもログが残っていなかった。
+  → 汎用コードは `errDetail`（定型文＋message 併記）で出し、500 は Agent 側でも
+  `log.Printf` する。**原因がコードで一意に定まらない `*_failed` 系で message を畳むと、
+  利用者の環境でしか起きない失敗は永久に追えない。**
 
 ## フェーズ
 
@@ -488,7 +501,7 @@ per-repo コミット型ストア（xChuCx 型。リポジトリに個人メモ�
 |----------|------|----------|
 | P1 ✅ | snapshot エンジン（roots 宣言 = claude+codex・staging・bare repo・自動/手動契機）＋ REST（roots/snapshots/diff）＋ dual allowlist 登録 | 自動 snapshot が実データで積まれ、一覧/差分が API で取れる（codex は dir 存在環境で） |
 | P2 ✅ | restore（全体/プロジェクト・pre-restore・scope 限定の適用）＋ `tree` / `settings` REST ＋ Console タブ（履歴/差分/復元/自動取得トグル） | UI から日時指定・プロジェクト単位の巻き戻しが往復できる |
-| P3 ✅ | export/import（bundle/tar・preview・選択適用・検証・監査）＋ **★4 secret スキャン**（決着 #2 で v1 必須へ格上げ）＋ ★8 `git gc --auto` | 2 環境間で bundle 持ち回りの移送が実際に通る（隔離 HOME を 2 つ演じる往復テストで担保。実データでの実機往復は未実施） |
+| P3 ✅ | export/import（bundle/tar・preview・選択適用・検証・監査）＋ **★4 secret スキャン**（決着 #2 で v1 必須へ格上げ）＋ ★8 `git gc --auto` | 2 環境間で bundle 持ち回りの移送が実際に通る（隔離 HOME を 2 つ演じる往復テストで担保。**実機往復は 2026-08-25 に実施し ★10 を検出→修正**） |
 | P4 ✅ | 拡張: codex memories のフリート有効化配線（`[features] memories` の Console トグル＋`[memories]` チューニング seed）／operator MCP ツール（読み取り＋restore）。CP mirror は阻害要因つきで将来トラックへ、scheduler 連携は不要と判断して削除（下記「P4 の実際」） | 有効化トグルが実バイナリで効くこと（drift テスト）・MCP から履歴閲覧と復元が通ること |
 
 ## 決着した未決事項（2026-07-27 利用者承認・実装はこの前提で進める）

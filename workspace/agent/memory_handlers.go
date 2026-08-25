@@ -9,6 +9,7 @@ package main
 import (
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -37,13 +38,15 @@ type memoryRootView struct {
 }
 
 // memoryWriteErr は memoryUserErr（入力起因の失敗）を安定コードへ、それ以外を
-// fallback（500）へ写す。
+// fallback（500）へ写す。500 側はログにも残す — 応答の message は Console の i18n が
+// 汎用文言へ畳んでしまうので、現地で起きた失敗を後から追える場所がここしかない。
 func memoryWriteErr(w http.ResponseWriter, err error, fallback string) {
 	var ue *memoryUserErr
 	if errors.As(err, &ue) {
 		httpx.WriteErr(w, ue.Status, ue.Code, ue.Msg)
 		return
 	}
+	log.Printf("memory: %s: %v", fallback, err)
 	httpx.WriteErr(w, http.StatusInternalServerError, fallback, err.Error())
 }
 
