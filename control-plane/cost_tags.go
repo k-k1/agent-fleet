@@ -69,12 +69,30 @@ type costTagState struct {
 	// Error — why the CP could not do it (no permission, or a member account under
 	// AWS Organizations where only the payer may activate).
 	Error string `json:"error,omitempty"`
+	// Attributed are keys whose activation state could NOT be read, but whose values
+	// are actually coming back in the bill — i.e. **proven on by evidence**.
+	//
+	// ★ これが要るのは、メンバー（linked）アカウントでは `ListCostAllocationTags` が
+	// 構造的に AccessDenied になるからである（実測）。有効化は payer にしかできず、
+	// **payer がやったことをこの CP は読めない**。それでも「効いているか」は分かる——
+	// 按分されているなら、ポーラーが毎回引いている費用データに**値の入った
+	// af-membership が返ってくる**。読めないなら、実際に按分できているかで判定する。
+	// 追加の Cost Explorer 呼び出しは要らない（1 リクエスト $0.01 なので、確認のためだけに
+	// 叩き足さない）。
+	Attributed []string `json:"attributed,omitempty"`
 }
 
 // settled reports whether there is anything left to do. Once every key is either Active
 // or Declined the poller stops calling Cost Explorer for this — a permanent no-op that
 // bills $0.01 every six hours forever would be its own small bug.
-func (s costTagState) settled() bool { return len(s.Pending) == 0 && s.Error == "" }
+func (s costTagState) settled() bool {
+	if len(s.Attributed) > 0 {
+		// 状態は読めないが、按分が効いていることは分かった。これ以上 List を叩いても
+		// 答えは変わらない（linked アカウントである限り永久に AccessDenied）。
+		return true
+	}
+	return len(s.Pending) == 0 && s.Error == ""
+}
 
 // ensureCostTagsActive brings the allow-listed keys to Active and reports what is left.
 // Idempotent, and a no-op once settled.
@@ -166,4 +184,38 @@ func (p *cloudCostPoller) ensureCostTagsActive(ctx context.Context) costTagState
 func (p *cloudCostPoller) costTags() costTagState {
 	s, _ := p.tagState.Load().(costTagState)
 	return s
+}
+
+// noteAttribution は「按分できているか」を**費用データの実物**から判定する。ポーラーが
+// 毎ティック引いている結果（af-membership で group by 済み）を渡すだけで、Cost Explorer
+// への追加リクエストは無い。
+//
+// 呼ぶのは活性化状態が**読めなかったとき**だけ。読めているならそちらが正であり、
+// 「値がまだ来ていない＝有効化直後の最大 24 時間」を不活性と誤読してはいけない。
+func (p *cloudCostPoller) noteAttribution(rows []CloudCostRow) {
+	s, _ := p.tagState.Load().(costTagState)
+	if s.Error == "" || len(s.Attributed) > 0 {
+		return // 読めている／既に証拠で決着している
+	}
+	attributed := false
+	for _, r := range rows {
+		if r.MembershipID != "" {
+			attributed = true
+			break
+		}
+	}
+	if !attributed {
+		return
+	}
+	s.Attributed = []string{ceTagMembership}
+	s.Pending = nil
+	// ★ 生の AWS エラーを出し続けるのをやめ、読み手が取れる行動に置き換える。
+	// ⚠️ 断定するのは af-membership だけ。ポーラーが group by しているのはその 1 軸で、
+	// 他のキーは「有効化されているはずだ」としか言えない——linked アカウントからは
+	// 確かめる手段が無いので、確かめていないことを確かめたと書かない。
+	s.Error = "activation state is not readable from a member account (only the payer may " +
+		"activate), but " + ceTagMembership + " values are coming back in the bill — the axis is on"
+	p.tagState.Store(s)
+	log.Printf("cost tags: %s is attributed in the bill; the activation state stays unreadable "+
+		"from this account (member of an organization) — not retrying", ceTagMembership)
 }
