@@ -391,7 +391,12 @@ export function MemberView({
 
   const running = stats?.running;
   const memRatio = stats?.mem_max ? stats.mem_used / stats.mem_max : null;
-  const diskRatio = stats?.disk_quota ? stats.disk_used / stats.disk_quota : null;
+  // ディスクの分母は実測（disk_total = home が載る FS の容量）を優先し、無ければ
+  // 設定値の上限（disk_quota）に落ちる。ecs-ec2 では disk_gb は作成時にしか効かない
+  // ので、後から数字だけ変えられた場合に「設定値」を分母にすると割合が嘘になる
+  // ——実測が取れているならそちらが真である（docs/63 §63.9）。
+  const diskTotal = stats?.disk_total ?? stats?.disk_quota ?? null;
+  const diskRatio = diskTotal && stats?.disk_used != null ? stats.disk_used / diskTotal : null;
 
   // --- how to describe the three size axes on THIS runtime (ADR 0045 決定 21) ------
   // A ladder exists only on the EC2 slot pool; everywhere else the memory number is a
@@ -605,7 +610,7 @@ export function MemberView({
           <ResTile
             label={tr("admin.res_disk")}
             value={stats?.disk_used != null ? fmtG(stats.disk_used) : "–"}
-            sub={stats?.disk_quota ? `/ ${fmtG(stats.disk_quota)} · ${fmtPct(diskRatio == null ? null : diskRatio * 100)}` : tr("admin.disk_home_sub")}
+            sub={diskTotal ? `/ ${fmtG(diskTotal)} · ${fmtPct(diskRatio == null ? null : diskRatio * 100)}` : tr("admin.disk_home_sub")}
             ratio={diskRatio}
             warn={0.75}
             crit={0.9}

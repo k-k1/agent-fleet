@@ -131,6 +131,12 @@ Running or Stopped, and below that, **"Workspace resources"** with 3 meters.
 The meters change color as utilization rises (warning → danger), so pressure is visible at a
 glance. Values refresh every few seconds.
 
+A meter reads "–" when that figure cannot be measured right now, which is not the same as zero.
+The most common cases: CPU needs two samples, so it stays "–" for the first few seconds after a
+workspace starts; and on the AWS deployments the figures are read from inside the workspace, so
+a stopped workspace shows no meters at all — including disk, which on those deployments lives on
+the workspace's own volume rather than on a disk the platform can read while it is down.
+
 ## Viewing sessions / getting the whole picture
 
 **"Sessions"** in the member detail lists that person's sessions along with their kind

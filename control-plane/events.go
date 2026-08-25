@@ -55,8 +55,13 @@ func registerEventsRoutes(mux *http.ServeMux, cfg config) {
 // would push a stats frame every tick and defeat the suppression. The WS-bar
 // chip displays rounded percent / 0.1 GiB anyway — an 8 MiB floor and integer
 // CPU percent lose nothing visible. The REST endpoint keeps serving raw values.
-func statsPayload(ctx context.Context, name string) map[string]any {
-	return roundStats(containerStats(ctx, name))
+//
+// state はこの tick で workspacePayload が既に引いた State をそのまま渡す
+// （docs/63 §63.9）。ecs-ec2 の State() は DescribeVolumes + DescribeServices の
+// 実 API 呼び出しで、購読者 1 人 × 4 秒ごとに走る——同じ tick の中で 2 度引けば
+// その AWS 呼び出しも 2 倍になる。値は同じなのだから 1 回でよい。
+func statsPayload(ctx context.Context, m *manager, rt Runtime, state string) map[string]any {
+	return roundStats(workspaceStats(ctx, m, rt, func() string { return state }))
 }
 
 func roundStats(m map[string]any) map[string]any {
@@ -110,8 +115,9 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 		return true
 	}
 	tickAll := func() {
-		wrote := emit("workspace", a.ws.workspacePayload(ctx, res))
-		wrote = emit("stats", statsPayload(ctx, res.rt.Name())) || wrote
+		state := res.rt.State(ctx)
+		wrote := emit("workspace", a.ws.workspacePayload(ctx, res, state))
+		wrote = emit("stats", statsPayload(ctx, a.mgr, res.rt, state)) || wrote
 		wrote = emit("sessions", a.ws.sessionsPayload(ctx, res)) || wrote
 		// 通知 drain の一時失敗（DB エラー等）はこの tick を落とすだけで
 		// ストリーム自体は生かす — 次の tick で回復する。

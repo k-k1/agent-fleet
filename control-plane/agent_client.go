@@ -42,6 +42,77 @@ var agentLongCallClient = &http.Client{
 // tick's wg.Wait forever (the same failure mode agentHTTPClient closed).
 var healthzClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgentTransport()}
 
+// agentStatsClient bounds the resource-gauge poll. It must be its own client: the
+// stats read sits inside the 4-second /api/events tick, so a wedged Agent would
+// otherwise hold a subscriber's tick for the shared client's 2 MINUTES — the SSE
+// stream would go silent and the Console would show stale everything. A gauge that
+// cannot be read in a few seconds is simply "not measurable this tick".
+var agentStatsClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgentTransport()}
+
+// agentStats asks the Agent for the workspace's own resource gauges — the only
+// source that works on a runtime the CP cannot see into (every ECS profile: no
+// docker binary, no cgroup for that workspace on the CP's host). The Agent reads
+// its OWN cgroup namespace, so the numbers mean the same thing as the host-side
+// read (docs/63 §63.9 / workspace/agent/internal/resources).
+//
+// The returned map carries only the axes the Agent could actually read — a missing
+// key means "not measurable", never zero. Callers merge it into the stats map, so
+// keys are deliberately identical to the docker path's.
+func (m *manager) agentStats(ctx context.Context, rt Runtime) (map[string]any, error) {
+	if rt.Endpoint() == "" {
+		return nil, fmt.Errorf("agent /workspace/stats: no endpoint")
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET", rt.Endpoint()+"/workspace/stats", nil)
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token())
+	}
+	resp, err := agentStatsClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		// An older Agent has no such route (404). Report it as an error so the caller
+		// leaves the axes unmeasured rather than merging an error body's fields — a
+		// CP newer than the image it launched must degrade, not lie.
+		return nil, fmt.Errorf("agent /workspace/stats: %s", resp.Status)
+	}
+	var body struct {
+		MemUsed      *uint64  `json:"mem_used"`
+		MemMax       *uint64  `json:"mem_max"`
+		CPUPct       *float64 `json:"cpu_pct"`
+		OOMKillTotal *uint64  `json:"oom_kill_total"`
+		DiskUsed     *uint64  `json:"disk_used"`
+		DiskTotal    *uint64  `json:"disk_total"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	out := map[string]any{}
+	// Decoded into pointers on purpose: cpu_pct 0 and oom_kill_total 0 are real
+	// readings, so "present but zero" must not be dropped the way a bare zero value
+	// would be.
+	if body.MemUsed != nil {
+		out["mem_used"] = *body.MemUsed
+	}
+	if body.MemMax != nil {
+		out["mem_max"] = *body.MemMax
+	}
+	if body.CPUPct != nil {
+		out["cpu_pct"] = *body.CPUPct
+	}
+	if body.OOMKillTotal != nil {
+		out["oom_kill_total"] = *body.OOMKillTotal
+	}
+	if body.DiskUsed != nil {
+		out["disk_used"] = *body.DiskUsed
+	}
+	if body.DiskTotal != nil {
+		out["disk_total"] = *body.DiskTotal
+	}
+	return out, nil
+}
+
 // countSessions asks the Agent how many sessions are currently running. The quota
 // caps concurrency, so only live (alive) sessions count — stopped/resumable ones,
 // which the Agent keeps listed for the stopped-TTL window, do not occupy a slot.
