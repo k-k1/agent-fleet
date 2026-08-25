@@ -4260,6 +4260,18 @@ export const ja = {
   "mem.import_unavailable": "この環境に受け皿がないため取り込めません: {kinds}",
   "mem.import_secrets": "取り込む内容に、秘密情報らしき記述が{n}件あります。",
   "mem.import_do": "取り込む",
+  "mem.import_mode_label": "適用のしかた",
+  "mem.import_mode_replace": "選んだ範囲だけ置き換える（履歴はこの環境のまま）",
+  "mem.import_mode_migrate": "履歴ごと移設する（この環境の履歴を置き換える）",
+  "mem.import_mode_migrate_hint":
+    "取り込んだスナップショットがこの環境の履歴になり、その時点へ巻き戻せるようになります。範囲は全体固定です。",
+  "mem.import_migrate_confirm_title": "履歴ごと移設しますか？",
+  "mem.import_migrate_confirm_body":
+    "この環境のメモリを、取り込んだ内容と履歴でまるごと置き換えます（スナップショット{snapshots}件）。",
+  "mem.import_migrate_confirm_note":
+    "入れ替え前の履歴は退避されるので消えませんが、この一覧には出なくなります。",
+  "mem.import_migrate_do": "移設する",
+  "mem.import_migrated": "移設しました（履歴{snapshots}件）",
   "mem.import_confirm_title": "取り込みますか？",
   "mem.import_confirm_body": "{scope} のメモリを、取り込んだ内容で置き換えます。",
   "mem.import_done": "取り込みました（更新{written}・削除{deleted}）",
