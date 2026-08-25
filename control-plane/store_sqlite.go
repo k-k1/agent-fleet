@@ -2012,6 +2012,12 @@ func (s *sqlStore) RecordEgress(ctx context.Context, day, host string, allowed b
 
 // ListEgress returns the busiest destination hosts on/after sinceDay, each with its
 // would-allow / would-block totals, most-hit first (docs/20 M2).
+//
+// ORDER BY must not reference the SELECT aliases inside an expression: Postgres
+// resolves names in an ORDER BY *expression* against the input columns only, so
+// ORDER BY (allowed+blocked) failed there with 42703 (allowed is a real column,
+// blocked is only an alias) while SQLite accepted it. SUM(count) is the same
+// ordering key and is legal in both dialects.
 func (s *sqlStore) ListEgress(ctx context.Context, sinceDay string, limit int) ([]EgressStat, error) {
 	if limit <= 0 {
 		limit = 200
@@ -2021,7 +2027,7 @@ func (s *sqlStore) ListEgress(ctx context.Context, sinceDay string, limit int) (
 		        SUM(CASE WHEN allowed=1 THEN count ELSE 0 END) AS allowed,
 		        SUM(CASE WHEN allowed=0 THEN count ELSE 0 END) AS blocked
 		 FROM egress_daily WHERE day >= ?
-		 GROUP BY host ORDER BY (allowed+blocked) DESC, host ASC LIMIT ?`, sinceDay, limit)
+		 GROUP BY host ORDER BY SUM(count) DESC, host ASC LIMIT ?`, sinceDay, limit)
 	if err != nil {
 		return nil, err
 	}
