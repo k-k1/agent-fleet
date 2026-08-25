@@ -59,10 +59,10 @@ type Stats struct {
 // 現に存在する: cgroup v1 のホスト、home が読めない権限、など）。
 func Read() Stats {
 	var s Stats
-	if v, ok := readCgroupUint("memory.current"); ok {
+	if v, ok := memUsed(); ok {
 		s.MemUsed = &v
 	}
-	if v, ok := readCgroupUint("memory.max"); ok {
+	if v, ok := memMax(); ok {
 		s.MemMax = &v
 	}
 	if v, ok := cpu.pct(time.Now()); ok {
@@ -77,7 +77,50 @@ func Read() Stats {
 	return s
 }
 
-// readCgroupUint は cgroup v2 の単一値ファイルを読む。"max"（無制限）は !ok —
+// --- cgroup v2 / v1 の両対応 ---
+//
+// fleet が自分で用意するホストは cgroup v2 である（EC2 スロットの AMI は
+// `amazon-linux-2023` の ECS-optimized に固定 —— deploy/aws/ecs/cfn/40-ec2-pool.yaml）。
+// ただし **Fargate はプラットフォーム版を指定していない**（CP は `PlatformVersion` を
+// 渡しておらず LATEST に従う）ので、下回りが v1 のホストに当たる可能性を我々は
+// 制御できない。v2 のファイル名しか読まない実装だと、そのとき症状は「メモリと CPU
+// だけ黙って –」——つまり**この修正が直したはずの見た目にそのまま戻る**。
+//
+// 名前も単位も違うので、軸ごとに v2 → v1 の順で読む。
+//
+//	          v2                         v1
+//	メモリ    memory.current             memory/memory.usage_in_bytes
+//	上限      memory.max（"max"=無制限） memory/memory.limit_in_bytes（巨大値=無制限）
+//	CPU       cpu.stat usage_usec（µs）  cpuacct/cpuacct.usage（**ns**）
+//	OOM       memory.events oom_kill     memory/memory.oom_control oom_kill
+//
+// ⚠️ 実機で確かめたのは v2 側だけである（このコンテナの実 cgroup と `df` に一致）。
+// v1 側はフィクスチャでの検証にとどまる —— v1 のホストを用意して測ったわけではない。
+
+// v1Unlimited: cgroup v1 は「上限なし」を巨大な数値（典型的には
+// 9223372036854771712 = PAGE_COUNTER_MAX）で表す。v2 の "max" と違って**数値として
+// 読めてしまう**ので、閾値で弾かないと「上限 8 EiB」を分母にした使用率 0% を描く。
+const v1Unlimited = uint64(1) << 62
+
+func memUsed() (uint64, bool) {
+	if v, ok := readCgroupUint("memory.current"); ok {
+		return v, true
+	}
+	return readCgroupUint("memory/memory.usage_in_bytes")
+}
+
+func memMax() (uint64, bool) {
+	if v, ok := readCgroupUint("memory.max"); ok {
+		return v, true
+	}
+	v, ok := readCgroupUint("memory/memory.limit_in_bytes")
+	if !ok || v >= v1Unlimited {
+		return 0, false
+	}
+	return v, true
+}
+
+// readCgroupUint は cgroup の単一値ファイルを読む。"max"（無制限）は !ok —
 // 上限が無いことを巨大な数値として画面に出さないため。
 func readCgroupUint(name string) (uint64, bool) {
 	b, err := os.ReadFile(cgroupDir() + "/" + name)
@@ -115,7 +158,16 @@ func readCgroupKV(name, key string) (uint64, bool) {
 // instead of guessing OOM.（record_exit.go → internal/status → 本パッケージへ二度目の
 // 移設。cgroup を読む実装を 1 つに束ねるため。status.OOMKillCount は互換のため
 // 残してあり、ここへ委譲するだけ。）
-func OOMKillCount() (uint64, bool) { return readCgroupKV("memory.events", "oom_kill") }
+//
+// v1 の `memory.oom_control` は "oom_kill_disable 0 / under_oom 0 / oom_kill N" の 3 行で、
+// 3 行目は比較的新しいカーネルにしか無い。無ければ !ok ＝「OOM だったか分からない」で、
+// 呼び出し側（record_exit / supervisor）は死因を crashed 側に倒す。
+func OOMKillCount() (uint64, bool) {
+	if v, ok := readCgroupKV("memory.events", "oom_kill"); ok {
+		return v, true
+	}
+	return readCgroupKV("memory/memory.oom_control", "oom_kill")
+}
 
 // --- CPU ---
 
@@ -166,8 +218,17 @@ func (m *cpuMeter) pct(now time.Time) (float64, bool) {
 	return m.last, true
 }
 
+// readUsageUsec は累積 CPU 時間を**マイクロ秒**で返す。⚠️ v1 の cpuacct.usage は
+// **ナノ秒**なので、ここで単位を揃えないと使用率が 1000 倍になる（静止中の
+// Workspace が数万 % に見える）。呼び出し側は単位を知らなくてよい。
 func readUsageUsec() (uint64, bool) {
-	return readCgroupKV("cpu.stat", "usage_usec")
+	if v, ok := readCgroupKV("cpu.stat", "usage_usec"); ok {
+		return v, true
+	}
+	if ns, ok := readCgroupUint("cpuacct/cpuacct.usage"); ok {
+		return ns / 1000, true
+	}
+	return 0, false
 }
 
 // --- Disk ---

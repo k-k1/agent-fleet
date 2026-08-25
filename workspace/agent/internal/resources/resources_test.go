@@ -153,3 +153,93 @@ func TestHomeUsageReportsUsedWithinTotal(t *testing.T) {
 		t.Errorf("used=%d total=%d — want 0 < used <= total", used, total)
 	}
 }
+
+// --- cgroup v1 のフォールバック ---
+//
+// fleet 自身のホストは v2（EC2 スロットは AL2023 固定）だが、Fargate は
+// プラットフォーム版を指定していないので下回りを我々が選べない。v1 に当たったとき
+// 黙って「メモリと CPU だけ –」に戻らないことをフィクスチャで固定する。
+// ⚠️ ここで確かめられるのはファイル名と単位の対応だけで、実際の v1 ホストで
+// 測ったわけではない。
+
+// fakeV1Cgroup は v1 のサブシステム別レイアウト（memory/ と cpuacct/）を作る。
+func fakeV1Cgroup(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("AF_CGROUP_DIR", dir)
+	return dir
+}
+
+func TestFallsBackToCgroupV1(t *testing.T) {
+	fakeV1Cgroup(t, map[string]string{
+		"memory/memory.usage_in_bytes": "1073741824\n",
+		"memory/memory.limit_in_bytes": "4294967296\n",
+		"memory/memory.oom_control":    "oom_kill_disable 0\nunder_oom 0\noom_kill 2\n",
+	})
+	s := Read()
+	if s.MemUsed == nil || *s.MemUsed != 1073741824 {
+		t.Errorf("mem_used = %v, want 1073741824", s.MemUsed)
+	}
+	if s.MemMax == nil || *s.MemMax != 4294967296 {
+		t.Errorf("mem_max = %v, want 4294967296", s.MemMax)
+	}
+	if s.OOMKillTotal == nil || *s.OOMKillTotal != 2 {
+		t.Errorf("oom_kill_total = %v, want 2", s.OOMKillTotal)
+	}
+}
+
+// v1 の「上限なし」は "max" ではなく巨大な数値。数値として読めてしまうので、
+// 閾値で弾かないと「上限 8 EiB」を分母にした使用率 0% を描いてしまう。
+func TestV1UnlimitedSentinelIsNotALimit(t *testing.T) {
+	fakeV1Cgroup(t, map[string]string{
+		"memory/memory.usage_in_bytes": "1000\n",
+		"memory/memory.limit_in_bytes": "9223372036854771712\n",
+	})
+	if s := Read(); s.MemMax != nil {
+		t.Errorf("mem_max = %v, want nil for v1's unlimited sentinel", *s.MemMax)
+	}
+}
+
+// ⚠️ v1 の cpuacct.usage は **ナノ秒**、v2 の usage_usec は **マイクロ秒**。
+// 揃え忘れると使用率が 1000 倍になり、静止中の Workspace が数万 % に見える。
+func TestV1CPUIsNanosecondsNotMicroseconds(t *testing.T) {
+	dir := fakeV1Cgroup(t, map[string]string{"cpuacct/cpuacct.usage": "1000000000\n"}) // 1 秒
+	m := &cpuMeter{}
+	base := time.Unix(1700000000, 0)
+	if _, ok := m.pct(base); ok {
+		t.Fatal("first sample reported a percentage")
+	}
+	// 壁時計 2 秒で CPU を +1 秒 = 50%。ns を µs と読み違えていればここが 50000% になる。
+	if err := os.WriteFile(filepath.Join(dir, "cpuacct/cpuacct.usage"), []byte("2000000000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pct, ok := m.pct(base.Add(2 * time.Second))
+	if !ok {
+		t.Fatal("second sample reported no percentage")
+	}
+	if pct < 49.9 || pct > 50.1 {
+		t.Errorf("cpu_pct = %v, want ~50 (単位換算が抜けていると ~50000)", pct)
+	}
+}
+
+// v2 が読めるホストでは v1 を見に行かない（両方あるハイブリッド構成で二重に
+// 読まない・v2 の値が勝つ）。
+func TestV2WinsWhenBothLayoutsExist(t *testing.T) {
+	fakeV1Cgroup(t, map[string]string{
+		"memory.current":               "111\n",
+		"memory/memory.usage_in_bytes": "999\n",
+	})
+	s := Read()
+	if s.MemUsed == nil || *s.MemUsed != 111 {
+		t.Errorf("mem_used = %v, want 111 (v2 の値)", s.MemUsed)
+	}
+}
