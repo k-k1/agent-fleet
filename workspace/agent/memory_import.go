@@ -43,6 +43,11 @@ const (
 	memoryImportMaxEntries = 20000    // tar のエントリ数上限
 	memoryImportMaxFile    = 8 << 20  // tar の 1 ファイル上限
 	memoryImportKeepRefs   = 10       // 保持する取り込み系譜の本数
+
+	// 適用の仕方（REST の mode）。replace = 選んだ範囲の内容だけ採る（既定・履歴は自分の
+	// まま）。migrate = 履歴ごと入れ替える（移設・範囲は全体固定）。
+	memoryImportModeReplace = "replace"
+	memoryImportModeMigrate = "migrate"
 )
 
 // memoryImportIDRe は importId の形（生成側と同じ）。apply は URL/本文から来た値を
@@ -428,7 +433,13 @@ func memoryPruneImportRefs(keep int) {
 // memoryImportApply は取り込んだ系譜から選んだ範囲だけを live へ適用する。
 // 実体は restore と同じ経路（= pre-restore snapshot を取り、allowlist の内側だけ書き、
 // 結果を commit する）で、契機だけ import になる — つまり取り込みも巻き戻せる。
-func memoryImportApply(importID string, sc memoryRestoreScope, now time.Time) (memoryRestoreResult, error) {
+//
+// opts.Adopt=true は**移設**（docs/39 ⑤-移設）: 内容だけでなく履歴も引き継ぐ。bundle は
+// 相手の全 snapshot を運んでいるのに、既定の適用では最新ツリーしか使わず、運んできた
+// 過去は refs/imports に埋もれたまま（10 本を超えると刈られる）だった。移設は main を
+// その系譜へ付け替えるので、相手の履歴がそのまま「この環境の履歴」になり、一覧・差分・
+// 巻き戻しの既存機能が全部そのまま効く。
+func memoryImportApply(importID string, sc memoryRestoreScope, now time.Time, opts memoryApplyOpts) (memoryRestoreResult, error) {
 	var res memoryRestoreResult
 	if !memoryImportIDRe.MatchString(importID) {
 		return res, memoryErrf(http.StatusBadRequest, errCodeMemoryBadImport, "invalid importId")
@@ -441,7 +452,15 @@ func memoryImportApply(importID string, sc memoryRestoreScope, now time.Time) (m
 	if err != nil || sha == "" {
 		return res, memoryErrf(http.StatusNotFound, errCodeMemoryBadImport, "import %s is no longer available", importID)
 	}
-	return memoryApplyRev(sc, sha, memoryTriggerImport, []string{"AF-Import-Id: " + importID, "AF-Import-Ref: " + ref}, now)
+	trailers := []string{"AF-Import-Id: " + importID, "AF-Import-Ref: " + ref}
+	if opts.Adopt {
+		// 移設の範囲は**全体で固定**する。一部だけ置き換えると、履歴（相手の系譜）と
+		// live（自分と相手の混在）が食い違い、以後の巻き戻しが何を意味するのか説明
+		// できなくなる。範囲を選びたい場合は既定の適用（履歴は自分のまま）を使う。
+		sc = memoryRestoreScope{All: true}
+		trailers = append(trailers, "AF-Import-Mode: migrate")
+	}
+	return memoryApplyRev(sc, sha, memoryTriggerImport, trailers, now, opts)
 }
 
 // memoryImportRef は importId に対応する ref を引く（main 優先）。

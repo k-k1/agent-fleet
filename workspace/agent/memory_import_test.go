@@ -92,7 +92,7 @@ func TestMemoryImportBundleRoundTrip(t *testing.T) {
 	}
 
 	// --- 選択適用: claude のこのプロジェクトだけを置き換える ---
-	res, err := memoryImportApply(pv.ImportID, memoryRestoreScope{Projects: []string{slug}}, time.Now())
+	res, err := memoryImportApply(pv.ImportID, memoryRestoreScope{Projects: []string{slug}}, time.Now(), memoryApplyOpts{})
 	if err != nil {
 		t.Fatalf("import apply: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestMemoryImportAppliesWhenLiveRootMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import prepare: %v", err)
 	}
-	res, err := memoryImportApply(pv.ImportID, memoryRestoreScope{Projects: []string{slug}}, time.Now())
+	res, err := memoryImportApply(pv.ImportID, memoryRestoreScope{Projects: []string{slug}}, time.Now(), memoryApplyOpts{})
 	if err != nil {
 		t.Fatalf("import apply into an empty workspace: %v", err)
 	}
@@ -186,6 +186,104 @@ func TestMemoryImportAppliesWhenLiveRootMissing(t *testing.T) {
 	} else if st.Mode().Perm() != 0o700 {
 		t.Errorf("projects/ mode = %v, want 0700", st.Mode().Perm())
 	}
+}
+
+// 移設（mode=migrate）: bundle が運んできた**履歴ごと**この環境の履歴にする。
+// 既定の適用は最新ツリーしか使わないので、相手の過去は refs/imports に埋もれたままだった
+// （10 本を超えると刈られる）。移設後は相手の各 snapshot が履歴一覧に並び、**その途中の
+// 時点へ巻き戻せる**ことまでを見る。入れ替えた元の履歴は退避 ref に残る。
+func TestMemoryImportMigrateAdoptsLineage(t *testing.T) {
+	share := t.TempDir()
+
+	// --- 環境 A: 2 世代の履歴を作って bundle を書き出す ---
+	_, cfgA, slug := memoryTestEnv(t)
+	memoryWrite(t, memoryProjectMemPath(cfgA, slug, "a.md"), "A1\n")
+	if _, err := memorySnapshot(memoryTriggerManual, time.Now().Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	memoryWrite(t, memoryProjectMemPath(cfgA, slug, "a.md"), "A2\n")
+	if _, err := memorySnapshot(memoryTriggerManual, time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	countA := memoryCommitCount(t)
+	if countA < 2 {
+		t.Fatalf("env A history = %d commits, want >= 2", countA)
+	}
+	src, err := memoryExportBundle()
+	if err != nil {
+		t.Fatalf("export bundle: %v", err)
+	}
+	bundle := filepath.Join(share, "af-memory.bundle")
+	if err := memoryCopyFile(src, bundle); err != nil {
+		t.Fatalf("stash bundle: %v", err)
+	}
+
+	// --- 環境 B: 自分の履歴を 1 つ持つ環境へ移設する ---
+	_, cfgB, _ := memoryTestEnv(t)
+	memoryWrite(t, memoryProjectMemPath(cfgB, slug, "a.md"), "from env B\n")
+	if _, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	localHead, err := memoryGitRun("rev-parse", memoryBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pv, err := memoryImportPrepare(bundle, "af-memory.bundle", time.Now())
+	if err != nil {
+		t.Fatalf("import prepare: %v", err)
+	}
+	res, err := memoryImportApply(pv.ImportID, memoryRestoreScope{}, time.Now(), memoryApplyOpts{Adopt: true})
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	// 系譜が入れ替わり、元の main は退避 ref に残っている（履歴は消さない）。
+	if !res.Adopted || res.Replaced != localHead || res.ReplacedRef == "" {
+		t.Fatalf("migrate result = %+v (local head was %s)", res, localHead)
+	}
+	if got, err := memoryGitRun("rev-parse", "--verify", "--quiet", res.ReplacedRef); err != nil || got != localHead {
+		t.Fatalf("replaced lineage was not stashed: %q %v", got, err)
+	}
+	if _, err := memoryGitRun("merge-base", "--is-ancestor", pv.Head, memoryBranch); err != nil {
+		t.Fatalf("main does not descend from the imported head: %v", err)
+	}
+	// 入れ替え前の main は新しい系譜には含まれない（内容の混合はしていない）。
+	if err := memoryGitRun2(t, "merge-base", "--is-ancestor", localHead, memoryBranch); err == nil {
+		t.Errorf("migrate must not graft the local lineage onto main")
+	}
+
+	// 相手の履歴が「この環境の履歴」として一覧に出る（範囲は全体固定なので kind も跨ぐ）。
+	list, err := memoryListSnapshots(50, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) < countA {
+		t.Fatalf("history after migrate = %d entries, want >= %d (the imported lineage)", len(list), countA)
+	}
+	if list[0].Trigger != memoryTriggerImport {
+		t.Errorf("newest snapshot trigger = %q, want import", list[0].Trigger)
+	}
+	if got := memoryLiveOrEmpty(t, memoryProjectMemPath(cfgB, slug, "a.md")); got != "A2\n" {
+		t.Fatalf("live after migrate = %q, want the imported head", got)
+	}
+
+	// **本命**: 相手の履歴の途中（1 世代前）へ巻き戻せる。
+	older := list[len(list)-1].Rev // 取り込んだ系譜の最初の snapshot
+	if _, err := memoryRestore(memoryRestoreScope{All: true}, older, "", time.Now()); err != nil {
+		t.Fatalf("restore to an imported point: %v", err)
+	}
+	if got := memoryLiveOrEmpty(t, memoryProjectMemPath(cfgB, slug, "a.md")); got != "A1\n" {
+		t.Fatalf("a.md after rolling back into the imported history = %q, want A1", got)
+	}
+}
+
+// memoryGitRun2 は「失敗を期待する」git 呼び出し用の薄い包み（t を取るのは呼び出し側の
+// 意図を読みやすくするためだけ）。
+func memoryGitRun2(t *testing.T, args ...string) error {
+	t.Helper()
+	_, err := memoryGitRun(args...)
+	return err
 }
 
 // tar.gz の取り込み（★3 外部入力）: traversal・allowlist 外・通常ファイル以外は
@@ -233,7 +331,7 @@ func TestMemoryImportTarRejectsHostileEntries(t *testing.T) {
 		t.Fatalf("imported tree = %q, want only %q", files, ok)
 	}
 
-	res, err := memoryImportApply(pv.ImportID, memoryRestoreScope{Projects: []string{slug}}, time.Now())
+	res, err := memoryImportApply(pv.ImportID, memoryRestoreScope{Projects: []string{slug}}, time.Now(), memoryApplyOpts{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -270,7 +368,7 @@ func TestMemoryImportRejectsUnknownFormat(t *testing.T) {
 		t.Fatalf("import of junk: err=%v", err)
 	}
 	// apply の importId も検証される（ref 名として git へ渡るため）。
-	if _, err := memoryImportApply("../../evil", memoryRestoreScope{All: true}, time.Now()); err == nil {
+	if _, err := memoryImportApply("../../evil", memoryRestoreScope{All: true}, time.Now(), memoryApplyOpts{}); err == nil {
 		t.Error("apply accepted a traversal-shaped importId")
 	}
 }
