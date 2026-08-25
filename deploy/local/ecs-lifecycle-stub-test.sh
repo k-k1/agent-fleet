@@ -124,7 +124,9 @@ cat > "$STUB/crane" <<'FAKE'
 #!/usr/bin/env bash
 echo "crane $*" >> "$STUB_LOG"
 case "$1" in
-  manifest) echo '{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}}]}' ;;
+  # 2 アーキの index を返す（リリース版の CP イメージと同じ形）。片方しか返さないと
+  # --cp-arch arm64 の経路が前検査で落ちて、その先を試せない。
+  manifest) echo '{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}},{"platform":{"architecture":"arm64","os":"linux"}}]}' ;;
   auth) cat >/dev/null ;;
 esac
 FAKE
@@ -210,6 +212,11 @@ grep -q "deploy --stack-name t-pool .*CAPABILITY_NAMED_IAM" "$LOG" || fail "40-e
 grep -q "deploy --stack-name t-ingress .*Ec2SlotLaunchTemplate=lt-NEW" "$LOG" || fail "30-ingress got a stale launch template"
 hasnt "Ec2SlotLaunchTemplate=lt-OLD"
 grep -q "deploy --stack-name t-ingress .*ImageTag=9.9.9-dev-test" "$LOG" || fail "30-ingress did not get the deployed tag"
+# ★ フラグが**渡す値**まで届いているか。検査だけ通って既定値で立つ、が実際に起きた。
+: > "$LOG"
+"$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --cp-arch arm64 > /dev/null </dev/null
+grep -q "deploy --stack-name t-ingress .*CpArch=arm64" "$LOG" || fail "--cp-arch did not reach the CFN parameters"
+if grep -q "deploy --stack-name t-ingress .*CpArch=x86_64" "$LOG"; then fail "the captured CpArch overrode the flag"; fi
 
 echo "== case 4: pause stops the control plane LAST =="
 : > "$LOG"
