@@ -236,6 +236,11 @@ fi
 # --- 6) ingress（物理 ID を持つ引数は新しい出力で上書き） --------------------
 af_read_params 30-ingress
 af_param_override ImageTag "$TAG"
+# ★ **フラグは検査だけでなく、渡す値そのものを動かさなければ意味が無い。**
+# ここを忘れると `--cp-arch arm64` は「arm64 で立てられることを確かめて x86_64 で立てる」
+# という、成功して見える最悪の形になる（実測: 立ち上がった CP の runtimePlatform が
+# x86_64 だった）。控えに CpArch の行が無い配備もあるので、無ければ足す形で上書きする。
+af_param_override CpArch "$CP_ARCH"
 if [ -n "$AF_STACK_POOL" ] && [ "$AF_DRY" != 1 ]; then
   lt="$(af_stack_output "$AF_STACK_POOL" SlotLaunchTemplateId)"
   ami="$(af_stack_output "$AF_STACK_POOL" SlotAmiIdArm64)"
