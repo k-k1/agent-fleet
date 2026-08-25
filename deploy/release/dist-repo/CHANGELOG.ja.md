@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.12.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.0) — 2026-08-25
+
+人の返事を待っているだけの Workspace が、起動したまま課金され続けることはなくなりました。
+畳むときに画面に出ていた質問・計画の承認・許可要求は取っておき、あとからセッション一覧で
+答えられます。ツールの承認は「毎回スキップ」ではなく選べるようになり、セッションを同じ
+テナントの別メンバーへ引き継げるようになりました。
+
 ## [0.11.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.11.0) — 2026-08-23
 
 git の OAuth アプリをテナント管理者が自分で登録できるようになり、Control Plane を

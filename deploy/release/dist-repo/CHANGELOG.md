@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.12.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.0) — 2026-08-25
+
+A workspace no longer stays up — and billed — because a session is waiting for a
+person. Questions, plan approvals and permission requests are kept when the session is
+folded and answered afterwards in the session list, tool approvals are a choice rather
+than always skipped, and a session can be handed to another member of the tenant.
+
 ## [0.11.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.11.0) — 2026-08-23
 
 Tenant administrators register their own GitHub and Bitbucket OAuth apps, the Control
