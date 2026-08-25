@@ -344,6 +344,12 @@ func memoryApplyScopeToLive(t memoryScopeTarget, stagingRoot string) (written, d
 // 経路上にシンボリックリンクがあれば拒否する — allowlist の内側に外向きのリンクを
 // 置かれた状態で restore すると、live の外（資格情報等）を上書きしかねないため（★1 の裏返し）。
 func memoryPrepareDest(rootDir, rel string) (string, error) {
+	// ルート自体がまだ無い環境がある: claude を一度も起動していないワークスペース（起動
+	// 直後に別環境のメモリを import するのが正にその状況）には <config>/projects が無い。
+	// 以降の段は 1 段ずつ Mkdir して経路の symlink を検査するので、MkdirAll はここだけ。
+	if err := os.MkdirAll(rootDir, 0o700); err != nil {
+		return "", err
+	}
 	segs := strings.Split(rel, "/")
 	cur := rootDir
 	for _, s := range segs[:len(segs)-1] {

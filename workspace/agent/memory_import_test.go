@@ -134,6 +134,60 @@ func TestMemoryImportBundleRoundTrip(t *testing.T) {
 	}
 }
 
+// 取り込み先が**まだ空のワークスペース**でも適用できること。live のルート
+// （<CLAUDE_CONFIG_DIR>/projects）は claude が一度起動して初めて出来るので、
+// 「新しい環境を立てて、真っ先に前の環境のメモリを持ち込む」という本命の使い方では
+// ルート自体が存在しない。ここを作らずに書きに行くと ENOENT で適用だけが失敗する。
+func TestMemoryImportAppliesWhenLiveRootMissing(t *testing.T) {
+	share := t.TempDir()
+
+	// --- 環境 A: 持ち出す側 ---
+	_, cfgA, slug := memoryTestEnv(t)
+	memoryWrite(t, memoryProjectMemPath(cfgA, slug, "a.md"), "from env A\n")
+	if res, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil || !res.Committed {
+		t.Fatalf("env A snapshot: %+v err=%v", res, err)
+	}
+	src, err := memoryExportBundle()
+	if err != nil {
+		t.Fatalf("export bundle: %v", err)
+	}
+	bundle := filepath.Join(share, "af-memory.bundle")
+	if err := memoryCopyFile(src, bundle); err != nil {
+		t.Fatalf("stash bundle: %v", err)
+	}
+
+	// --- 環境 B: 起動直後のワークスペース（projects/ がまだ無い） ---
+	homeB := t.TempDir()
+	cfgB := filepath.Join(homeB, "claude-config")
+	memoryMkdirAll(t, cfgB)
+	t.Setenv("HOME", homeB)
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgB)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(homeB, "sessions"))
+	if _, err := os.Stat(filepath.Join(cfgB, "projects")); !os.IsNotExist(err) {
+		t.Fatalf("precondition: projects/ must not exist yet (err=%v)", err)
+	}
+
+	pv, err := memoryImportPrepare(bundle, "af-memory.bundle", time.Now())
+	if err != nil {
+		t.Fatalf("import prepare: %v", err)
+	}
+	res, err := memoryImportApply(pv.ImportID, memoryRestoreScope{Projects: []string{slug}}, time.Now())
+	if err != nil {
+		t.Fatalf("import apply into an empty workspace: %v", err)
+	}
+	if !res.Committed || len(res.Written) == 0 {
+		t.Fatalf("apply result = %+v", res)
+	}
+	if got := memoryLiveOrEmpty(t, memoryProjectMemPath(cfgB, slug, "a.md")); got != "from env A\n" {
+		t.Fatalf("a.md after import = %q", got)
+	}
+	if st, err := os.Stat(filepath.Join(cfgB, "projects")); err != nil || !st.IsDir() {
+		t.Fatalf("projects/ was not created: %v", err)
+	} else if st.Mode().Perm() != 0o700 {
+		t.Errorf("projects/ mode = %v, want 0700", st.Mode().Perm())
+	}
+}
+
 // tar.gz の取り込み（★3 外部入力）: traversal・allowlist 外・通常ファイル以外は
 // **書かずに rejected へ落とす**。適用されるのは許可された md だけ。
 func TestMemoryImportTarRejectsHostileEntries(t *testing.T) {

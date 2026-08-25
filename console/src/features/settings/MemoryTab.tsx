@@ -13,7 +13,7 @@
 // （docs/39 ★2）。つまりこの画面のどの操作も後から取り消せる — 確認ダイアログの
 // 文面もその前提で書いている。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, errText, isTransientErr, raw } from "../../core/api/client.ts";
+import { api, apiJSON, errDetail, errText, isTransientErr, raw } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -214,7 +214,7 @@ export function MemoryTab() {
     try {
       const res = await apiJSON("api/agents/memory/snapshots", "POST", { trigger: "manual" });
       if (res?.error) {
-        toast(errText(res.error));
+        toast(errDetail(res.error));
         return;
       }
       toast(res.committed ? tr("mem.snapshot_taken") : tr("mem.snapshot_unchanged"));
@@ -266,7 +266,7 @@ export function MemoryTab() {
         body,
       );
       if (res?.error) {
-        toast(errText(res.error));
+        toast(errDetail(res.error));
         return;
       }
       toast(
@@ -664,7 +664,7 @@ function TransferSection({
       }
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        toast(body?.error ? errText(body.error) : tr("mem.export_failed"));
+        toast(body?.error ? errDetail(body.error) : tr("mem.export_failed"));
         return;
       }
       await saveBlob(res);
@@ -682,7 +682,7 @@ function TransferSection({
       const res = await raw("api/agents/memory/import", { method: "POST", body: fd });
       const body = await res.json().catch(() => null);
       if (!res.ok) {
-        toast(body?.error ? errText(body.error) : tr("mem.import_failed"));
+        toast(body?.error ? errDetail(body.error) : tr("mem.import_failed"));
         return;
       }
       setPicked({});
@@ -728,7 +728,7 @@ function TransferSection({
         { importId: preview.importId, scope: { projects: pickedProjects, kinds: pickedKinds } },
       );
       if (res?.error) {
-        toast(errText(res.error));
+        toast(errDetail(res.error));
         return;
       }
       toast(
