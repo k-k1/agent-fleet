@@ -240,6 +240,21 @@ func TestPostgresStore(t *testing.T) {
 	if err := st.RecordEgress(ctx, "2026-07-01", "github.com", true, 3); err != nil { // accumulate
 		t.Fatalf("egress upsert: %v", err)
 	}
+	if err := st.RecordEgress(ctx, "2026-07-01", "evil.example", false, 1); err != nil {
+		t.Fatalf("egress blocked: %v", err)
+	}
+	// Read side too: the aggregate + ORDER BY is where the dialects differ, and the
+	// admin 通信 page is the only caller. Ordering must put the busiest host first.
+	eg, err := st.ListEgress(ctx, "2026-01-01", 100)
+	if err != nil {
+		t.Fatalf("list egress: %v", err)
+	}
+	if len(eg) != 2 || eg[0].Host != "github.com" || eg[0].Allowed != 5 || eg[0].Blocked != 0 {
+		t.Fatalf("list egress: %+v", eg)
+	}
+	if eg[1].Host != "evil.example" || eg[1].Allowed != 0 || eg[1].Blocked != 1 {
+		t.Fatalf("list egress blocked row: %+v", eg)
+	}
 	if err := st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "github.com", State: "active", AddedAt: nowTS()}); err != nil {
 		t.Fatalf("allowlist: %v", err)
 	}
