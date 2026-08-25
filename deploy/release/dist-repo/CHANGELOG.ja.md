@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.12.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.1) — 2026-08-25
+
+0.12.0 で実際の `ecs-ec2` 配備を立てて見つかった修正が 3 件です。Graviton で立てたはずの
+Control Plane が黙って x86_64 で上がる、AWS Organizations のメンバーアカウントでは
+メンバー別の費用が出ない、作ったばかりのワークスペースにエージェントのメモリを取り込めない、
+の 3 つを直しました。
+
 ## [0.12.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.0) — 2026-08-25
 
 人の返事を待っているだけの Workspace が、起動したまま課金され続けることはなくなりました。
