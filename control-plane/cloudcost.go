@@ -158,6 +158,9 @@ func (p *cloudCostPoller) pollOnce(ctx context.Context) {
 		return
 	}
 	p.lastErr.Store("")
+	// 活性化状態が読めなかったとき（＝ payer にしか触れない linked アカウント）は、
+	// いま引いたこの結果そのものが証拠になる（cost_tags.go の noteAttribution）。
+	p.noteAttribution(rows)
 	if err := p.mgr.store.PutCloudCost(ctx, days, rows); err != nil {
 		log.Printf("cloud cost: storing %d rows: %v", len(rows), err)
 		return
