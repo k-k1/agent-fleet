@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 )
@@ -122,4 +123,94 @@ func idleTimeout(tenantVal string, def time.Duration) (d time.Duration, enabled 
 		}
 	}
 	return d, d > 0
+}
+
+// --- テナント上限とスロットプールの突き合わせ（docs/64 §64.35）---
+//
+// ⚠️ この 2 つは**別の分母を数えている**。混ぜて 1 つの数字にしてはいけない。
+//
+//   max_workspaces  … そのテナントの**同時に running / starting な Workspace の数**
+//                     （countRunningInTenant）。停止中の WS は数えない。
+//   Ec2MaxSlots     … **存在してよい箱の数**。停止中の WS も、遅延返却で箱を掴んだまま
+//                     なので、こちらには数えられている。
+//
+// 比べられるのは「running な WS はちょうど 1 つの箱を要る」からで、差分は**停止中の WS が
+// 握っている箱**である。したがって Σ ≤ 容量 は**必要条件であって十分条件ではない**：
+// 枠内でも休眠中の箱が上限を埋めて立ち退きが起きうる（`Ec2SlotTerminateAfterSec` を
+// 入れると差分は「最後の N 時間ぶん」に縮むが、0 にはならない）。
+//
+// 画面でも 2 つを 1 つの言葉にしないこと——「同時利用」と「占有スロット」は別物である。
+
+// slotCapacityReporter is implemented by the one runtime whose boxes are a FIXED,
+// deployment-wide pool. Everything else provisions per workspace and has no number to
+// compare a tenant quota against, which is why the check below simply does not exist
+// there (rather than passing vacuously).
+type slotCapacityReporter interface {
+	MaxSlots() int
+}
+
+// poolBudget is the comparison, as the API and the pool screen both need it. The pieces
+// are separate on purpose: an operator who is told only "over" cannot tell whether to
+// raise the cap, lower a tenant, or stop worrying.
+type poolBudget struct {
+	// MaxSlots is the pool's hard cap — how many boxes may EXIST.
+	MaxSlots int `json:"max_slots"`
+	// Reserved is what a golden bake needs free at once (seed + probe). Subtracted
+	// because a deployment that allocates every slot can never re-bake its golden, and
+	// the symptom of that is "new members start slowly", weeks later.
+	Reserved int `json:"reserved_slots"`
+	// Capacity is MaxSlots - Reserved: the concurrency the tenants may share out.
+	Capacity int `json:"capacity"`
+	// Allocated is Σ(max_workspaces) over ACTIVE tenants — how many workspaces could be
+	// running at once if every tenant used its full quota.
+	Allocated int `json:"allocated"`
+	// Unbounded names the active tenants whose max_workspaces is 0. ⚠️ 0 means UNLIMITED
+	// here (like every other int quota), so ONE of these makes Allocated meaningless as
+	// a bound — it is a different problem from "over", and needs saying differently.
+	Unbounded []string `json:"unbounded_tenants,omitempty"`
+	// Over reports Allocated > Capacity, and is false whenever Unbounded is non-empty:
+	// there is no sum to compare.
+	Over bool `json:"over"`
+}
+
+// OK reports whether this deployment's tenant quotas fit its pool. Both failure modes
+// are WARNINGS, never rejections — see setTenantLimits for why.
+func (b poolBudget) OK() bool { return !b.Over && len(b.Unbounded) == 0 }
+
+// poolBudget totals the tenants' concurrency quotas against the pool cap.
+//
+// overrideTenantID / overrideMax substitute a value that is not stored yet, so the
+// warning an admin gets on save is about the number they just typed rather than about
+// the one it replaced. Pass "" to read what is stored.
+//
+// ok=false on every runtime without a pool. That is the whole answer there, not "fine".
+func (m *manager) poolBudget(ctx context.Context, overrideTenantID string, overrideMax int) (poolBudget, bool, error) {
+	cap, ok := m.rtFactory.(slotCapacityReporter)
+	if !ok {
+		return poolBudget{}, false, nil
+	}
+	ts, err := m.store.ListTenants(ctx)
+	if err != nil {
+		return poolBudget{}, true, err
+	}
+	b := poolBudget{MaxSlots: cap.MaxSlots(), Reserved: bakeReservedSlots}
+	b.Capacity = b.MaxSlots - b.Reserved
+	for _, t := range ts {
+		// A suspended tenant runs nothing, so counting it would make an operator lower
+		// a live tenant to make room for one that is switched off.
+		if t.Status != "" && t.Status != "active" {
+			continue
+		}
+		n := parseLimits(t.Limits).MaxWorkspaces
+		if t.ID == overrideTenantID {
+			n = overrideMax
+		}
+		if n <= 0 {
+			b.Unbounded = append(b.Unbounded, t.Slug)
+			continue
+		}
+		b.Allocated += n
+	}
+	b.Over = len(b.Unbounded) == 0 && b.Allocated > b.Capacity
+	return b, true, nil
 }

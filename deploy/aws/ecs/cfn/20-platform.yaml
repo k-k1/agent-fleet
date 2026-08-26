@@ -183,6 +183,14 @@ Resources:
                   - ec2:RunInstances
                   - ec2:StartInstances
                   - ec2:StopInstances
+                  # TerminateInstances is the dormancy series' last step
+                  # (Ec2SlotTerminateAfterSec): stopping a slot ends the compute
+                  # charge, only terminating it ends the ROOT VOLUME charge, and
+                  # nothing else in the product ever removes a box. Without this the
+                  # sweeper's terminate stage fails with AccessDenied on every pass —
+                  # visible only in the CP log, while the bill keeps growing to
+                  # Ec2MaxSlots x SlotRootVolumeGiB (docs/64 §64.32).
+                  - ec2:TerminateInstances
                   # ⚠️ Snapshots were MISSING here until 2026-08-16, and nothing caught it:
                   # the live E2E runs with a deployer credential, not with this role. Every
                   # snapshot path would have failed with AccessDenied on a real deployment —
