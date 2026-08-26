@@ -14,7 +14,7 @@ import { CanvasAddon } from "@xterm/addon-canvas";
 import "@xterm/xterm/css/xterm.css";
 import { wsURL, rel } from "../core/api/client.ts";
 import { isAuthExpired } from "../core/auth/authExpired.ts";
-import { getSettings, subscribe as subscribeSettings, fontStack } from "../lib/settings.ts";
+import { getSettings, subscribe as subscribeSettings, termFontStack } from "../lib/settings.ts";
 import { askConfirm } from "../ui/confirmBridge.ts";
 import { t as tr } from "../lib/i18n/index.ts";
 import { zoom } from "../app/viewport.ts";
@@ -120,7 +120,7 @@ function applyTermSettingsAll() {
   const s = getSettings();
   for (const it of insts.values()) {
     if (!it.term) continue;
-    it.term.options.fontFamily = fontStack(s.termFont);
+    it.term.options.fontFamily = termFontStack(s.termFont);
     it.term.options.fontSize = s.termSize;
     fitInst(it);
     try {
@@ -388,7 +388,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   const s0 = getSettings();
   const term = new Terminal({
     fontSize: s0.termSize,
-    fontFamily: fontStack(s0.termFont),
+    fontFamily: termFontStack(s0.termFont),
     theme: { background: "#1e1e1e" },
     cursorBlink: true,
     allowProposedApi: true,

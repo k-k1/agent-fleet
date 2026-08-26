@@ -21,6 +21,69 @@ export const CODE_FONTS = [
   "システム等幅", // i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳）
 ];
 
+// ── 和文フォント（Ambiguous 幅の文字をどのフォントで描くか）─────────────────
+//
+// フォントのフォールバックは書体単位ではなく 1 文字ごとに効く。漢字・かなは欧文
+// フォントに無いのでスタック末尾の CJK フォントまで落ちるが、①②③（U+2460…）や
+// ■ ○ ★ Ⅰ Ⅱ は DejaVu Sans Mono / Menlo / Consolas が“持っている”ので、そこで
+// 止まって和文フォントまで落ちない。それらは East Asian Width = Ambiguous で、
+// 欧文フォントは半角として細く小さく描くため、隣の全角の漢字と並ぶと丸数字だけが
+// 痩せて見える——これが「diff の○数字が小さい」の正体。
+//
+// 直し方は、その範囲だけを unicode-range で和文フォントに割り当てた @font-face を
+// 作り、スタックの先頭に置くこと。src は利用者の選択で変わるので、CSS には書かず
+// applyCjkFont() が <style> を張り替える（tokens.css の --mono も同じ名前を前置する）。
+export const CJK_FAMILY = "AF CJK Ambiguous";
+export const CJK_FAMILY_PROSE = "AF CJK Ambiguous Prose";
+
+// 和文へ回す範囲は 2 段。桁揃えを壊さない側（等幅の面）と、文章の面。
+//
+// 等幅（diff・ビューア・コードブロック）＝ 列がずれてはいけない面には、ASCII 図の
+// 部品として使われない「日本語の採番記号」だけを回す：
+//   U+2160-217F 数字のローマ数字（Ⅰ Ⅱ ⅰ）
+//   U+2460-24FF 囲み英数字（① ⑴ Ⓐ）— 今回の主目的
+//   U+3200-32FF 囲み CJK 文字・月（㊀ ㈱ ㍻）
+export const CJK_UNICODE_RANGE = "U+2160-217F, U+2460-24FF, U+3200-32FF";
+
+// 文章の面（ミラーやチャットの地の文＝プロポーショナル）は桁が無いので、日本語の
+// 箇条書きでよく使う記号まで広げる：
+//   U+25A0-25FF 幾何学模様（■ □ ○ ● ◇ ▲）
+//   U+2600-26FF その他の記号（★ ☆ ☎）
+// これらを等幅側に入れないのは、CLI 出力の枠（├─┤）の中の ● ■ が全角になると
+// 枠の右端がずれるから。CLI は Ambiguous を 1 桁として数えて出力を組んでいる。
+export const CJK_UNICODE_RANGE_PROSE = `${CJK_UNICODE_RANGE}, U+25A0-25FF, U+2600-26FF`;
+
+// 意図的にどちらからも外したもの：矢印(U+2190-21FF)と罫線(U+2500-257F)。ASCII 図や
+// 樹形図の骨格そのものなので、全角にすると図が崩れる。ギリシャ文字・アクセント付き
+// ラテン文字も Ambiguous だが、コード中の識別子が全角になるので対象外。
+
+// 選べる和文フォント。"自動" は OS 任せ（GENERIC_CJK をそのまま使う）、"欧文優先" は
+// @font-face を張らない＝従来どおり欧文フォントの半角グリフ。それ以外は実フォント名で、
+// 未インストールなら GENERIC_CJK へ落ちる。
+// i18n-exempt-start: 値は保存される生フォント値（表示は font.* で翻訳・docs/28 §2.4）
+export const CJK_FONT_AUTO = "自動";
+export const CJK_FONT_OFF = "欧文優先";
+export const CJK_FONTS = [
+  CJK_FONT_AUTO,
+  "Noto Sans Mono CJK JP",
+  "Hiragino Kaku Gothic ProN",
+  "Yu Gothic",
+  "Meiryo",
+  CJK_FONT_OFF,
+];
+// i18n-exempt-end
+
+// 選択フォントの後ろに必ず積む汎用の和文チェーン。Mac で "Meiryo" を選んだ人も
+// ここでヒラギノに落ちるので、「選んだのに直らない」が起きない。
+const GENERIC_CJK = [
+  "Noto Sans Mono CJK JP",
+  "Noto Sans CJK JP",
+  "Hiragino Kaku Gothic ProN",
+  "Yu Gothic",
+  "Meiryo",
+  "MS Gothic",
+];
+
 // Chat fonts: unlike the code viewer, the chat reads as prose, so proportional
 // families are offered first ("システム" = system sans, "セリフ" = serif), with the
 // monospace code fonts still available for anyone who prefers them.
@@ -197,6 +260,10 @@ export type AgentLaunchDefaults = Record<string, AgentLaunchDefault>;
 export interface Settings {
   termFont: string;
   termSize: number;
+  /** 和文フォント。①②③ など East Asian Width = Ambiguous の文字だけを、欧文の
+   * コードフォントではなくこのフォントで描く（applyCjkFont / CJK_UNICODE_RANGE）。
+   * 値は CJK_FONTS のいずれか。"自動" = OS 任せ、"欧文優先" = 従来どおり欧文側。 */
+  cjkFont: string;
   viewerFont: string;
   viewerSize: number;
   chatFont: string;
@@ -558,6 +625,7 @@ const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
 const DEFAULTS: Settings = {
   termFont: "Source Code Pro",
   termSize: 13,
+  cjkFont: CJK_FONT_AUTO,
   viewerFont: "JetBrains Mono",
   viewerSize: 13,
   chatFont: "システム", // i18n-exempt: fontStack 突合用の生フォント値
@@ -790,19 +858,60 @@ export const CLAUDE_MODELS: [string, string][] = [
   ["haiku", "Haiku"],
 ];
 
-// Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
-export function fontStack(name: string): string {
+// applyCjkFont — CJK_FAMILY の @font-face を現在の設定で張り替える。applyTheme と
+// 同じ 3 箇所（初回・変更時・サーバ hydrate 時）から呼ぶ。"欧文優先" のときは規則ごと
+// 外す（未定義のフォント名はスタック中で単に読み飛ばされるので、それで従来の見た目に戻る）。
+export function applyCjkFont(s: Settings): void {
+  if (typeof document === "undefined") return;
+  const id = "af-cjk-font";
+  const prev = document.getElementById(id);
+  const name = s.cjkFont || CJK_FONT_AUTO;
+  if (name === CJK_FONT_OFF) {
+    prev?.remove();
+    return;
+  }
+  const families = name === CJK_FONT_AUTO ? GENERIC_CJK : [name, ...GENERIC_CJK];
+  const src = families.map((f) => `local("${f}")`).join(", ");
+  const face = (family: string, range: string) =>
+    `@font-face{font-family:"${family}";src:${src};unicode-range:${range};}`;
+  const css = face(CJK_FAMILY, CJK_UNICODE_RANGE) + face(CJK_FAMILY_PROSE, CJK_UNICODE_RANGE_PROSE);
+  const el = (prev as HTMLStyleElement | null) ?? document.createElement("style");
+  el.id = id;
+  if (el.textContent !== css) el.textContent = css;
+  if (!el.isConnected) document.head.appendChild(el);
+}
+
+// 欧文フォント側の等幅スタック（和文優先の @font-face を前置しない素の形）。
+function codeFontStack(name: string): string {
   if (!name || name === "システム等幅") { // i18n-exempt: fontStack 突合用の生フォント値
     return 'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace';
   }
   return `"${name}", "Noto Sans Mono CJK JP", ui-monospace, Menlo, Consolas, monospace`;
 }
 
+// Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
+// 先頭の CJK_FAMILY は applyCjkFont() が張る unicode-range 限定の @font-face で、
+// ①②③ など「東アジア文字幅=Ambiguous」の文字だけを和文フォントへ回す（下記参照）。
+export function fontStack(name: string): string {
+  return `"${CJK_FAMILY}", ${codeFontStack(name)}`;
+}
+
+// ターミナル用スタック — fontStack と違い CJK_FAMILY を前置しない。xterm は
+// Ambiguous を桁幅 1 として数え（CLI 側の折り返し計算も同じ前提）、和文フォントの
+// 全角グリフを 1 セルに描くと文字が隣へはみ出して行が崩れるため、端末だけは
+// 欧文フォントの半角グリフのままにする。
+export function termFontStack(name: string): string {
+  return codeFontStack(name);
+}
+
 // Chat font stack — proportional by default. "システム"/"セリフ" map to sans/serif
 // system stacks (with CJK fallbacks); any other name is a code font (monospace).
 export function chatFontStack(name: string): string {
   if (!name || name === "システム") { // i18n-exempt: fontStack 突合用の生フォント値
-    return 'system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", sans-serif';
+    // ゴシック系なので、和文優先の CJK_FAMILY（ゴシック）を前置しても字面が揃う。
+    // 桁が無い面なので広い方（PROSE = ■ ○ ★ まで）を使う。"セリフ" 側は前置しない
+    // （明朝の地に丸数字だけゴシックが混ざるのを避ける）。
+    return `"${CJK_FAMILY_PROSE}", system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", sans-serif`;
   }
   if (name === "セリフ") { // i18n-exempt: fontStack 突合用の生フォント値
     return 'Georgia, "Times New Roman", "Hiragino Mincho ProN", "Noto Serif CJK JP", serif';
@@ -966,6 +1075,7 @@ export function applyLocale(s: Settings): void {
 }
 applyTheme(state);
 applyLocale(state);
+applyCjkFont(state);
 
 export function getSettings(): Settings {
   return state;
@@ -1235,6 +1345,7 @@ export async function hydrateUIPrefs(): Promise<boolean> {
   } catch {}
   applyTheme(state);
   applyLocale(state);
+  applyCjkFont(state);
   subs.forEach((fn) => fn());
   return true;
 }
@@ -1286,6 +1397,7 @@ export function setSettings(patch: Partial<Settings>): void {
   } catch {}
   applyTheme(state);
   applyLocale(state);
+  applyCjkFont(state);
   scheduleServerSave();
   subs.forEach((fn) => fn());
 }
