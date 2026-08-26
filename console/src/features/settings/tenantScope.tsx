@@ -18,6 +18,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { fmtGbHint } from "./adminShared.ts";
 import type { Member, Tenant } from "./adminShared.ts";
 import { TenantLoginRules, TenantLoginRulesView, TenantSignInMethods } from "./tenantLogin.tsx";
+import { PoolBudgetHint, type PoolBudget } from "./ec2Pool.tsx";
 import { TenantNetworkView } from "./tenantNetwork.tsx";
 import { TenantGitOAuthView } from "./tenantGitOAuth.tsx";
 import { TenantMachineView } from "./tenantMachine.tsx";
@@ -143,6 +144,8 @@ export function TenantLimits({
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
   const [termRetention, setTermRetention] = useState(tenant?.terminal_history_retention_days || 0);
   const [saved, setSaved] = useState(false);
+  // 保存の応答が「テナント上限の合計がプールに収まっていない」と言ってきたときだけ入る。
+  const [budget, setBudget] = useState<PoolBudget | null>(null);
 
   useEffect(() => {
     setMaxWs(tenant?.max_workspaces || 0);
@@ -178,6 +181,10 @@ export function TenantLimits({
       toast(errText(res.error));
       return;
     }
+    // 保存は通っている。超過は**拒否ではなく警告**なので（サーバ側 setTenantLimits の
+    // 理由を参照）、保存済みの表示と一緒に、いま打った数字についての注意を残す。
+    // トーストにしないのは、消えると「読まなかった」で終わるから。
+    setBudget(res?.pool_budget || null);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     onChanged();
@@ -191,6 +198,10 @@ export function TenantLimits({
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.max_workspace")}</span>
             <input type="number" min="0" value={maxWs} onChange={(e) => setMaxWs(e.target.value)} />
+            {/* ⚠️ 何を数える上限なのかを欄の隣に置く。スロットプールの配備では、これを
+                「このテナントが占有する箱の数」と読むと必ず外れる——停止中の Workspace は
+                箱を掴んだままここには数えられない。 */}
+            <span className="af-note">{tr("admin.max_workspace_note")}</span>
           </label>
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.max_session")}</span>
@@ -302,6 +313,9 @@ export function TenantLimits({
         <button onClick={saveLimits} className="primary">{tr("common.save")}</button>
         {saved && <span className="saved-note"><Icon name="check" /> {tr("admin.saved")}</span>}
       </div>
+      {/* 保存は済んでいる。「保存できなかった」ではなく「保存したが、この配備のスロットには
+          収まっていない」と読めるよう、保存ボタンの下に出す。 */}
+      {budget && <PoolBudgetHint budget={budget} />}
     </section>
   );
 }

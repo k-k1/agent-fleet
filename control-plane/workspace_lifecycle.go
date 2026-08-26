@@ -493,6 +493,14 @@ func (m *manager) poolStatus(ctx context.Context) (ec2PoolStatus, bool, error) {
 	}
 	st, err := p.PoolStatus(ctx)
 	st.AutoBake = m.autoBakeGolden
+	// Σ(tenant max_workspaces) against the cap. It belongs HERE rather than in the
+	// adapter for the same reason AutoBake does: the adapter has no database (ADR 0012),
+	// and this comparison is half quota rows and half deployment env. Only attached when
+	// it says something — a budget that fits is not news, and the screen already shows
+	// both numbers it is made of.
+	if b, ok, e := m.poolBudget(ctx, "", 0); ok && e == nil && !b.OK() {
+		st.Budget = &b
+	}
 	// With the baker switched off, "nothing is being baked" is not a phase of a bake —
 	// it is the whole answer, and the pool being full is not what is stopping it. A
 	// bake already in flight (an operator who switched it off mid-round) keeps its real

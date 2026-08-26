@@ -499,6 +499,11 @@ var _ RuntimeFactory = (*ecsEC2Factory)(nil)
 // WorkspaceImage passes the base factory's answer through (same deployment, same image).
 func (f *ecsEC2Factory) WorkspaceImage() string { return f.base.WorkspaceImage() }
 
+// MaxSlots exposes the pool cap to the CP layer, which has the DATABASE this adapter
+// deliberately does not (ADR 0012) and therefore is the only place that can compare the
+// cap against what the tenants are allowed to run at once (poolBudget).
+func (f *ecsEC2Factory) MaxSlots() int { return f.pool.maxSlots }
+
 // newECSEC2Factory builds the EC2-pool Runtime factory. It reuses the Fargate
 // factory's AWS config plumbing (region, cluster, subnets, EFS, Service Connect, log
 // group, image) and adds the EC2/SSM clients plus the pool settings; then it starts
@@ -4254,6 +4259,15 @@ type ec2PoolStatus struct {
 	// (the next tick will start one / nothing ever will) and the screen cannot tell
 	// them apart.
 	AutoBake bool `json:"auto_bake"`
+	// Budget is Σ(tenant max_workspaces) against MaxSlots, and it is present ONLY when
+	// something is wrong with it (over-subscribed, or a tenant with no cap at all).
+	// Filled in by the manager, which has the database this adapter does not.
+	//
+	// ⚠️ The two numbers count different things and the screen must not merge them:
+	// max_workspaces bounds CONCURRENT workspaces, MaxSlots bounds boxes that EXIST, and
+	// a stopped workspace still holds a box (lazy release) while counting toward neither
+	// tenant's concurrency. See poolBudget.
+	Budget *poolBudget `json:"budget,omitempty"`
 }
 
 // ec2GoldenView is one architecture's golden situation, including how far along a bake

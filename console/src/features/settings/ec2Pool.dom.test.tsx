@@ -108,6 +108,53 @@ describe("EC2 スロットプールの面", () => {
     expect(text()).toContain("135");
   });
 
+  // --- テナント上限の合計とプール上限の突き合わせ（docs/64 §64.35）---
+  //
+  // ⚠️ ここでいちばん間違えやすいのは**分母**である。テナント上限が数えるのは
+  // 「同時に動いている Workspace」、プール上限が数えるのは「存在している箱」で、
+  // 停止中の Workspace はどちらのテナント枠にも数えられないまま箱を掴んでいる。
+  // 「合計が枠内なら立ち退きは起きない」と読ませたら、この画面は嘘をついている。
+  it("超過しているときは、合計・容量・その内訳を出す", async () => {
+    api.mockResolvedValue({
+      ...POOL,
+      max_slots: 30,
+      budget: { max_slots: 30, reserved_slots: 2, capacity: 28, allocated: 54, over: true },
+    });
+    await mount();
+    expect(text()).toContain("54");
+    expect(text()).toContain("28");
+    // 「30 − 2」の内訳が無いと、28 という数字がどこから来たのか読めない。
+    expect(text()).toContain("30");
+    // 上限到達は「待たされる」ではなく「奪う／失敗する」。
+    expect(text()).toContain("立ち退き");
+  });
+
+  it("上限が無いテナントが居ることは、超過とは別の言い方で出す", async () => {
+    api.mockResolvedValue({
+      ...POOL,
+      budget: { max_slots: 30, reserved_slots: 2, capacity: 28, allocated: 5, over: false, unbounded_tenants: ["acme"] },
+    });
+    await mount();
+    expect(text()).toContain("acme");
+    expect(text()).toContain("無制限");
+    // over ではないので、超過の文は出さない。
+    expect(text()).not.toContain("超えています");
+  });
+
+  it("分母が違うことを、数字と同じ場所で言う", async () => {
+    api.mockResolvedValue({
+      ...POOL,
+      budget: { max_slots: 30, reserved_slots: 2, capacity: 28, allocated: 54, over: true },
+    });
+    await mount();
+    expect(text()).toContain("必要条件であって十分条件ではありません");
+  });
+
+  it("収まっているときはサーバが budget を返さないので、何も出ない", async () => {
+    await mount(); // POOL に budget は無い
+    expect(text()).not.toContain("必要条件");
+  });
+
   it("退避済みの home は「消えた」ではなく snapshot として見える", async () => {
     await mount();
     expect(text()).toContain("af-ws-acme-carol");

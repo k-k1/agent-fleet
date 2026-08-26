@@ -322,11 +322,17 @@ func (f *ecsEC2Factory) bakeBlocked(ctx context.Context) (bool, string, error) {
 // (docs/64 §64.30). Two copies of "needs two free" would drift, and the screen's job is
 // precisely to explain the baker's decisions.
 func bakeCapacityBlocked(inUse, maxSlots int) (bool, string) {
-	if inUse+2 > maxSlots {
+	if inUse+bakeReservedSlots > maxSlots {
 		return true, fmt.Sprintf("%d/%d slots in use; a bake needs two free", inUse, maxSlots)
 	}
 	return false, ""
 }
+
+// bakeReservedSlots is the "two free" above as a number other code can subtract. The
+// tenant-quota check (poolBudget) has to leave the same room, and a deployment that
+// allocated every slot would never re-bake its golden — a failure whose only symptom is
+// "new members start slowly", noticed weeks later if at all.
+const bakeReservedSlots = 2
 
 // --- what the pool screen shows about a bake in flight (docs/64 §64.30) -----------
 
