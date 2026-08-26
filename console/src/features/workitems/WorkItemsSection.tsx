@@ -20,10 +20,12 @@ import { useTenantStore } from "../../core/store/tenant.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useLaunchSeed, useLaunchTarget } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useSettings } from "../../lib/settings.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useWorkItemStore, startWorkItemPolling } from "./store.ts";
 import { WorkItemQueryModal } from "./WorkItemQueryModal.tsx";
+import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import {
   branchForItem,
   promptForItem,
@@ -45,9 +47,10 @@ interface RowProps {
   started: WorkItemSessionRef[];
   onStart(item: WorkItem): void;
   onOpenSession(name: string): void;
+  onReport(item: WorkItem): void;
 }
 
-const WorkItemRow = memo(function WorkItemRow({ item, started, onStart, onOpenSession }: RowProps) {
+const WorkItemRow = memo(function WorkItemRow({ item, started, onStart, onOpenSession, onReport }: RowProps) {
   const tr = useT();
   const tone = stateTone(item.state);
   const busy = started.length > 0;
@@ -88,6 +91,13 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, onStart, onOpenSe
           {started.length > 1 ? started.length : ""}
         </button>
       )}
+      {/* 書き戻しは着手した行にだけ出す。押しても投稿はされない —— 下書きを読む
+          モーダルが開くだけで、投稿はその中の 1 手（ADR 0061 決定 6）。 */}
+      {busy && (
+        <button type="button" className="wi-report" onClick={() => onReport(item)} title={tr("wi.report_title")}>
+          <Icon name="comment" />
+        </button>
+      )}
       <a className="wi-link" href={item.url} target="_blank" rel="noreferrer noopener" title={tr("wi.open_external")}>
         <Icon name="link-external" />
       </a>
@@ -108,11 +118,13 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const refreshing = useWorkItemStore((s) => s.refreshing);
   const reset = useWorkItemStore((s) => s.reset);
   const repos = useReposStore((s) => s.repos);
+  const settings = useSettings();
   const sessions = useSessionsStore((s) => s.sessions);
   const seed = useLaunchSeed((s) => s.set);
   const openLaunch = useLaunchTarget((s) => s.open);
   const startHub = useSessionsStore((s) => s.openStart);
   const [queries, setQueries] = useState(false);
+  const [reportOn, setReportOn] = useState<WorkItem | null>(null);
 
   // テナントを切り替えたら前のテナントの行を残さない（他のストアと同じ作法）。
   useEffect(() => {
@@ -137,7 +149,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     seed(promptForItem(item), titleForItem(item), "", "", "", {
       provider: item.provider,
       key: item.key,
-      branch: branchForItem(item),
+      branch: branchForItem(item, settings.workItemBranchTemplate),
     });
     const repo = repos.find((r) => r.name === folder);
     if (repo) openLaunch(repo);
@@ -213,9 +225,17 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
               started={sessionsForItem(ledger, item.key)}
               onStart={start}
               onOpenSession={openSession}
+              onReport={setReportOn}
             />
           ))}
         </div>
+      )}
+      {reportOn && (
+        <WorkItemReportModal
+          item={reportOn}
+          sessions={sessionsForItem(ledger, reportOn.key)}
+          onClose={() => setReportOn(null)}
+        />
       )}
       {queries && (
         <WorkItemQueryModal

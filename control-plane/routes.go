@@ -438,6 +438,8 @@ func registerWorkItemRoutes(mux *http.ServeMux, cfg config) {
 	wi := newWorkItemsAPI(cfg.mgr)
 	mux.HandleFunc("GET /api/work-items", wi.withResolved(wi.list))
 	mux.HandleFunc("POST /api/work-items/refresh", wi.withResolved(wi.refresh))
+	// 書き戻し（docs/80 §80.10）: 人が下書きを承認したときだけ。CP は Agent へ中継する。
+	mux.HandleFunc("POST /api/work-items/comment", wi.withResolved(wi.comment))
 	mux.HandleFunc("GET /api/work-item-queries", wi.withMembership(wi.listQueries))
 	mux.HandleFunc("POST /api/work-item-queries", wi.withMembership(wi.createQuery))
 	mux.HandleFunc("PATCH /api/work-item-queries/{id}", wi.withMembership(wi.updateQuery))

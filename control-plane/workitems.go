@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -359,6 +360,59 @@ type httpStatusError struct {
 }
 
 func (e *httpStatusError) Error() string { return e.msg }
+
+// --- comment back to the ticket ----------------------------------------------
+
+// comment relays a human-approved draft to the Agent, which holds the tokens.
+//
+// ★ Requires a running Workspace and does NOT start one. Everywhere else in this file
+// that rule protects the idle clock; here it also keeps the meaning of the button
+// honest — posting is a write against someone else's tracker, so it happens when the
+// user is present and their workspace is up, not as a side effect of pressing a button
+// on a stopped one.
+func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resolved) {
+	var in struct {
+		Provider string `json:"provider"`
+		Key      string `json:"key"`
+		Body     string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	if strings.TrimSpace(in.Key) == "" || strings.TrimSpace(in.Body) == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "key and body are required"})
+		return
+	}
+	ctx := r.Context()
+	if res.rt.State(ctx) != "running" {
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",
+			"start the workspace to post the comment (the tracker credentials live in it)"})
+		return
+	}
+	payload, _ := json.Marshal(in)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+"/work-items/comment", bytes.NewReader(payload))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := res.rt.Token(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadGateway, "agent_unreachable", err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	// Agent の応答（成功も失敗も）をそのまま返す — provider の断り文句が一番の情報で、
+	// CP が言い換えると「権限が無い」のか「課題が無い」のかが消える。
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
+}
 
 // --- saved queries -----------------------------------------------------------
 

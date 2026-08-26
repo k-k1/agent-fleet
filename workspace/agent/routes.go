@@ -30,6 +30,9 @@ func buildMux() *http.ServeMux {
 	// rows back. Called by the CP itself (like /notifications), never by the Console,
 	// so it needs no entry in the CP's agent-proxy allowlist.
 	mux.HandleFunc("POST /work-items/fetch", handleWorkItemsFetch)
+	// 唯一の書き戻し（docs/80 §80.10）。人が下書きを読んで押したときだけ CP 経由で来る。
+	// MCP ツールは無い＝エージェントからは到達できない。
+	mux.HandleFunc("POST /work-items/comment", handleWorkItemsComment)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
 	// Idempotency reconcile (session_idempotency.go): resolve a create whose POST
 	// response was lost to a client timeout, so the caller need not retry into a dup.
