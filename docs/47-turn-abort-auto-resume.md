@@ -374,13 +374,45 @@ claude 本体が statusLine へ詰める `rate_limits` は `five_hour` と `seve
 `model_scoped: [{display_name, utilization, resets_at}]`（"Per-model weekly windows"）が存在するが、
 statusline 面には出てこない。よって「上限に近づいている」の予告は現状の捕捉からは作れない。
 
-### 4-5-4. テスト
+### 4-5-4. 捕捉が死ぬ経路（実測 2026-08-26・第3次）
+
+WS バーの使用量チップが「5時間 0% / リセット 20:50」を出しているのに、実際のアカウントは
+14% だった。真因は 2 段。
+
+1. **設定に自分の exe パスを書いていた。** `settings.json` の `statusLine` が
+   `/tmp/af-agent statusline --af-capture` になっていた。13:07 に別セッションが
+   `go build -o /tmp/af-agent` して起動し（スモーク検証。`HOME` は差し替えたが
+   `CLAUDE_CONFIG_DIR` は**継承されたまま**で、隔離したつもりの書き込みが実 `settings.json` に
+   落ちた）、13:10 にそのバイナリを削除。以後 claude は毎レンダー statusLine の exec に失敗し、
+   捕捉は 6 時間止まった。**設定はバイナリより長生きする**。
+2. **窓明けの前送りが、止まった捕捉を「0%」と言い切っていた。** `adjustWindow` は
+   `resets_at` を過ぎた捕捉を「窓が明けた＝消費 0」として % を 0 にし、リセット時刻を次の
+   境界へ送る。捕捉が生きている限り妥当だが、**捕捉が死んだ場合と区別がつかない** —
+   しかも前送りしたリセット時刻は正しく見える（実測でも 20:50 は実際のリセットと一致した）ので、
+   利用者にも我々にも「新鮮な 0%」に見えた。唯一の手掛かりは「取得 6時間前」だけだった。
+
+対処:
+
+| 何を | どこ |
+|---|---|
+| 揮発パス（`/tmp`・`/var/tmp`・`$AF_WS_SCRATCH`）で走るビルドは、他プログラムの設定に**自分のパスを書かない**（インストール先 `/usr/local/bin/workspace-agent` があればそれを書く） | `internal/paths` `ConfigExePath()` |
+| 設定に残った死んだパス（消えた／揮発）を張り直す | `ExeUnusable()` ＋ hooks の `repairStatusHookExe`。hooks の設置判定は**内容一致**（`session-status` を含むか）なので、放置すると古いパスが永久に生き残る — 存在確認は別に要る |
+| 起動時だけでなく**セッション起動の直前**にも再確認（WS 再起動なしで直る） | `ensureClaudeSettingsWiring`（`session_tmux.go` / `startManagedSession`） |
+| 前送りした窓に `stale` を立て、Console は % ではなく `—` を出す。通知の観測値としても送らない（死んだ捕捉が「上限が解放された」に化ける） | `usageWindow.Stale` / `WsBar` `UsageRow` / `usageResetNotify` |
+
+statusLine の payload 自体は claude 2.1.246 でも `rate_limits.{five_hour,seven_day}` を
+そのまま運んでいる（delegate で stdin をダンプして実測）。CLI 更新は無関係だった。
+
+### 4-5-5. テスト
 
 | 対象 | 内容 |
 |---|---|
 | `internal/agents/claude/abort_test.go` | `UsageLimitAbort` が上限だけを拾う（一時的なレート制限・プロンプト超過・認証・接続断・通常完了は偽） |
 | `session_status_test.go` | `turnEndLabel` の 4 ケース、および実物の転写を植えた hook 経路で失敗の理由がブリッジ本文に乗ること（修正を外すと落ちることを確認済み） |
 | `rate_limit_resume_test.go` | メニュー無しでもエピソードが開き通知が 1 回だけ出ること・キーを送らないこと、時刻の材料（banner / capture）× 形（メニュー有無）の 4 組 |
+| `internal/paths/paths_test.go` | 揮発パスで走るバイナリは `ConfigExePath()` でインストール先に振り替わること・インストール先が無ければ自分のパスに戻ること・`ExeUnusable`（消えた／揮発／区切りを跨がない前方一致） |
+| `internal/agents/claude/hooks_test.go` | 消えたバイナリを指す自分の hook が張り直されること・利用者の hook（揮発ディレクトリにあっても）は触らないこと・張り直しが `settings.json` を毎回書き換えないこと |
+| `internal/agents/claude/usage_test.go` | `statuslineCmd()` が `/tmp` のテストバイナリでなくインストール先を書くこと・前送りした窓に `stale` が立ち、生きている窓には立たないこと |
 
 ## 4-6. 追補（2026-08-05）— 再開の一手目を Agent に移す
 

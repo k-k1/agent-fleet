@@ -7,6 +7,7 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func HomeDir() string {
@@ -98,7 +99,70 @@ func AgentDataDir() string {
 func ExePath() string {
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
-		return "/usr/local/bin/workspace-agent"
+		return InstalledExePath()
 	}
 	return exe
+}
+
+// InstalledExePath is where the workspace image puts the agent — the one path that
+// outlives any single build of it. The env override exists for tests and for a host
+// install that isn't in the image location.
+func InstalledExePath() string {
+	if p := os.Getenv("AF_AGENT_INSTALLED_BIN"); p != "" {
+		return p
+	}
+	return "/usr/local/bin/workspace-agent"
+}
+
+// ConfigExePath is the agent path to write into ANOTHER program's persistent config
+// (claude's statusLine and hooks, a CLI's MCP server command). Usually that is this
+// binary — but a build running from a volatile directory (a dev build in /tmp, an
+// e2e/smoke copy, anything under the scratch disk) must not pin ITS path there: the
+// config outlives the binary, and once the file is gone the CLI just fails to run the
+// command, silently. Measured: a smoke build in /tmp wrote `/tmp/af-agent statusline`
+// into the shared settings.json, was deleted two minutes later, and the usage capture
+// stopped dead — the chip then displayed a fabricated 0% for six hours. So when this
+// binary is ephemeral, persist the installed one instead (which resolves its own
+// state from the session's env exactly the same way).
+func ConfigExePath() string {
+	exe := ExePath()
+	if !volatilePath(exe) {
+		return exe
+	}
+	if fi, err := os.Stat(InstalledExePath()); err == nil && !fi.IsDir() {
+		return InstalledExePath()
+	}
+	return exe // nothing installed (host/native dev): our own path is all there is
+}
+
+// ExeUnusable reports whether an agent path already recorded in a config can no
+// longer be relied on — it is gone, or it lives where it will be wiped out from
+// under the config. Callers repoint such a command at ConfigExePath.
+func ExeUnusable(p string) bool {
+	if p == "" {
+		return true
+	}
+	if volatilePath(p) {
+		return true
+	}
+	_, err := os.Stat(p)
+	return err != nil
+}
+
+// volatilePath reports whether p sits under a directory whose contents do not
+// survive: the temp dirs, and the workspace scratch disk (wiped on every stop).
+func volatilePath(p string) bool {
+	roots := []string{os.TempDir(), "/tmp", "/var/tmp"}
+	if s := os.Getenv("AF_WS_SCRATCH"); s != "" {
+		roots = append(roots, s)
+	}
+	for _, r := range roots {
+		if r == "" || r == "/" {
+			continue
+		}
+		if strings.HasPrefix(p, strings.TrimSuffix(r, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }
