@@ -20,6 +20,7 @@ interface Src {
 interface Win {
   pct: number;
   resetsAt: string;
+  stale?: boolean;
 }
 
 // useUsageResetNotify tracks one agent's two windows and fires once each time a
@@ -48,7 +49,11 @@ export function useUsageResetNotify(
       { key: "7d", w: usage.sevenDay },
     ];
 
-    const observations = windows.filter((x) => x.w?.resetsAt).map(({ key, w }) => ({
+    // A stale window is not an observation: its 0% and its reset instant are both
+    // extrapolated from a reading that predates the window (the agent flags this when
+    // the capture went quiet). Submitting it would let a DEAD capture look like a reset
+    // and fire "上限が解放されました" while the user is still blocked.
+    const observations = windows.filter((x) => x.w?.resetsAt && !x.w.stale).map(({ key, w }) => ({
       windowKey: key, percent: w!.pct, resetsAt: w!.resetsAt,
     }));
     if (observations.length) {

@@ -137,3 +137,77 @@ func TestEnsureStatusHooksPreservesUserHooks(t *testing.T) {
 		t.Errorf("PostToolUse must keep the user matcher-less entry AND install the heartbeat: %s", post)
 	}
 }
+
+// A hook installed by a build that has since been deleted (a dev build under /tmp, an
+// e2e or smoke copy) must be repointed at the usable agent — otherwise every claude
+// event silently fails and the session looks frozen in the Console. The presence checks
+// match on the command CONTENT, so without an explicit repair a stale path survives
+// forever.
+func TestEnsureStatusHooksRepairsDeadExePath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	installed := filepath.Join(t.TempDir(), "workspace-agent")
+	if err := os.WriteFile(installed, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AF_AGENT_INSTALLED_BIN", installed)
+	want := statusHookCmd("idle")
+
+	// Ours, but pinned to a binary that is gone — plus a user hook that must not move.
+	seed := map[string]any{"hooks": map[string]any{
+		"Stop": []any{
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/tmp/af-agent session-status idle"}}},
+			map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "/tmp/notify.sh"}}},
+		},
+	}}
+	b, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	EnsureStatusHooks()
+	stop, _ := json.Marshal(readHooks(t, dir)["Stop"])
+	if strings.Contains(string(stop), "/tmp/af-agent") {
+		t.Errorf("dead exe path still wired: %s", stop)
+	}
+	if !strings.Contains(string(stop), want) {
+		t.Errorf("Stop = %s, want the repaired command %q", stop, want)
+	}
+	if !strings.Contains(string(stop), "/tmp/notify.sh") {
+		t.Errorf("a user hook in a volatile dir is their business, not ours to rewrite: %s", stop)
+	}
+	// Repair is idempotent: a second pass leaves settings.json byte-identical.
+	first, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	EnsureStatusHooks()
+	second, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if string(first) != string(second) {
+		t.Errorf("repair churns settings.json:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+func TestRepointStatusHookCmd(t *testing.T) {
+	const want = "/usr/local/bin/workspace-agent"
+	// A different but WORKING path is left alone (a host install is legitimate).
+	// It has to live outside the volatile roots to count as working, so: /bin/sh.
+	const live = "/bin/sh"
+	for _, c := range []struct {
+		cmd, out string
+		ok       bool
+	}{
+		{"/tmp/af-agent session-status idle", want + " session-status idle", true},
+		{"/tmp/af-agent session-status working sid123 codex", want + " session-status working sid123 codex", true},
+		{want + " session-status idle", "", false},           // already right
+		{live + " session-status idle", "", false},           // other path, still runnable
+		{"/tmp/notify.sh --loud", "", false},                 // not ours
+		{"/tmp/af-agent statusline --af-capture", "", false}, // ours, but not a status hook
+		{"", "", false},
+	} {
+		out, ok := repointStatusHookCmd(c.cmd, want)
+		if ok != c.ok || out != c.out {
+			t.Errorf("repointStatusHookCmd(%q) = (%q,%v) want (%q,%v)", c.cmd, out, ok, c.out, c.ok)
+		}
+	}
+}

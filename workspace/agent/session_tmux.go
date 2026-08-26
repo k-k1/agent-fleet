@@ -25,6 +25,10 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// (docs/48 §8.3). Doing it here rather than in BuildLaunch keeps it out of the
 	// per-kind agents, and covers every tui launch — create, start, recreate, handoff.
 	materializeMCP(m.Kind)
+	// Same timing for claude's own settings.json wiring (hooks + statusLine): it is
+	// shared state that another build of the agent can leave pointing at a binary that
+	// no longer exists.
+	ensureClaudeSettingsWiring(m.Kind)
 	// The kind decides the pane program and launch dir; the agent builds both.
 	plan, err := agentOf(m.Kind).BuildLaunch(m, agents.LaunchOpts{SSMForce: ssmForce})
 	if err != nil {
