@@ -3034,3 +3034,72 @@ NAT 版ハーネスを立て、**deploy → 検証 → teardown を 1 セッシ�
   `deployments[]` は各デプロイの `taskDefinition` と `running`/`pending` を持つので、
   **帰属は推測ではなく事実として取れる**。この帰属を入れて初めて「降格側が count を持って
   いるが立てられない」という上の残存挙動が見えた。イベントを数えるだけでは見えない。
+
+### 64.39.12 ⚠️ 本番障害——`maximumPercent 100` は AZ リバランシングと両立しない（0.12.3・2026-08-27）
+
+0.12.3 を配備した直後、**既存ワークスペースの Start がすべて失敗した**。
+
+```
+InvalidParameterException: The service couldn't be updated because Availability Zone
+Rebalancing does not support maximumPercent <= 100 % as deployment configuration.
+Update deployment configuration and try again.
+```
+
+ECS の **AZ リバランシング**（2024 年に既定 ON になった機能）は `maximumPercent <= 100` を
+受け付けない。そして `availabilityZoneRebalancing` は**作成時に決まる属性**で、
+`UpdateService` は既定では**既存の値を維持する**（AWS SDK のドキュメントに明記されている）。
+
+| サービス | 作った版 | `availabilityZoneRebalancing` | 0.12.3 の `UpdateService` |
+|---|---|---|---|
+| 本番の既存 WS サービス 6 本 | 0.12.2 以前 | **ENABLED** | **400 で拒否＝起動不能** |
+| 配備後に CP が作った golden seed | 0.12.3 | **DISABLED** | 通る |
+
+**新しい版が作ったサービスは通り、古い版が作ったサービスだけが落ちる。**
+`CreateService` は「その `deploymentConfiguration` ではリバランスできない」ときに**黙って
+DISABLED で作る**（エラーにしない）ので、新規は自動的に整合するからである。
+
+#### ★ なぜ §64.39.11 の実機テストが緑だったのか（この章の本題）
+
+★ラウンドの「アップグレード前のサービス」は、**新コードが作ったサービスに後から
+`UpdateService` で `200/100` を送って作っていた**。`deploymentConfiguration` は再現できるが、
+**`availabilityZoneRebalancing` は動かない**——DISABLED のまま、つまり
+**`maximumPercent 100` が唯一許される状態**で「アップグレード前」を名乗っていた。
+
+> **自分で作った新しい物を編集して作った状態は、古い物ではない。**
+> アップグレードを試すには、**古い形を、それを作った呼び出しで作る**しかない。ここでは
+> `UpdateService` ではなく **`CreateService`** である。
+
+`TestECSEC2LivePreUpgradeService` はそう書き直した——テスト側が `CreateService` で
+（`deploymentConfiguration` を指定せず＝ECS 既定の 200/100・リバランシング ENABLED）
+サービスを建て、**0.12.3 と同じ呼び出しが 400 になることを確かめてから**、製品の Start を通す。
+
+#### 直し
+
+`ec2NoAZRebalancing`（`DISABLED`）を **`ec2SingleTaskDeployment` と同じ 4 か所すべてに同送**する。
+片方だけでは意味が無い——`UpdateService` で省略することは「既存の値を維持」であって
+「既定に戻す」ではないので、**古いサービスは誰かが明示的に送るまで永久に ENABLED のまま**である。
+
+DISABLED は回避策ではなく**正しい値**でもある。タスク定義は `ec2InstanceId ==` で 1 台に固定され、
+home の EBS はその AZ から動けない（ADR 0045）。**リバランスする先が存在しない。**
+
+#### 本番の応急処置（2026-08-27・手作業）
+
+6 本の WS サービスに `aws ecs update-service --availability-zone-rebalancing DISABLED` を送って
+復旧させた（`k1` のサービスで `100/0` の `UpdateService` が通ることまで確認）。
+⚠️ **これは手作業なので、他のデプロイ先には効いていない。** 0.12.4 の CP は起動のたびに
+自分で送るので、以後は同じことが起きない。
+
+#### 実機で確かめた（ハーネス・2026-08-27・`TestECSEC2LivePreUpgradeService`）
+
+| 段 | 結果 |
+|---|---|
+| テスト側が `CreateService` で建てた「古い形」 | `availabilityZoneRebalancing=ENABLED`・`200/100` |
+| **WITNESS**＝0.12.3 と同じ呼び出し（`100/0` だけ送る） | **400・本番と同一のメッセージ**——substrate がバグを再現している |
+| 製品（0.12.4）の Start | **成功**・`100/0` ＋ `DISABLED`・タスク 1 本・空振り 0・降格デプロイのタスク 0 |
+| 順序 | `max=100` が +9s、`desiredCount=1` が +27s |
+
+★ **今度はバグ側を撃つ段が赤い**（§64.39.11 の反省）。緑だけの走行は「直った」と「そもそも
+起きない」を区別できない——**本番障害はまさにその区別が付いていなかったところで起きた。**
+
+⚠️ Fargate 側（`runtime_ecs`）は `deploymentConfiguration` を送っていないので**この問題とは無縁**。
+§64.39.6.3 の課題（2 本立つ）は残るが、AZ リバランシングとは衝突しない。

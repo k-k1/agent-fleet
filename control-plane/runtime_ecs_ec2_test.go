@@ -4110,12 +4110,19 @@ func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 	}
 }
 
-// Every service call must carry the single-task deployment configuration, not just the
-// one that creates the service: the defect docs/64 §64.39 describes needs maximumPercent
-// 200, that is the AWS default, and a deployment that predates this change keeps the
-// default until something sends the new one. Measured A/B on one substrate (§64.39.10):
-// 200% produced two tasks with the FIRST from the old revision, 2 of 2; 100% produced one
-// task from the new revision, 2 of 2.
+// Every service call must carry the single-task deployment configuration AND the
+// availabilityZoneRebalancing that ECS demands with it — not just the call that creates
+// the service. The defect docs/64 §64.39 describes needs maximumPercent 200, that is the
+// AWS default, and a deployment that predates this change keeps the default until
+// something sends the new one. Measured A/B on one substrate (§64.39.10): 200% produced
+// two tasks with the FIRST from the old revision, 2 of 2; 100% produced one task from the
+// new revision, 2 of 2.
+//
+// ⚠️ The pair is the point. A service created before this change also carries
+// availabilityZoneRebalancing ENABLED, and ECS rejects maximumPercent <= 100 on such a
+// service with a 400 — which is how 0.12.3 stopped every existing workspace from starting
+// (§64.39.12). Both halves are asserted on every call for the same reason: the value that
+// is wrong is only wrong on services this build did not create.
 func TestECSEC2EveryServiceCallPinsOneTaskPerWorkspace(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
@@ -4136,7 +4143,7 @@ func TestECSEC2EveryServiceCallPinsOneTaskPerWorkspace(t *testing.T) {
 		t.Fatalf("second Start: %v", err)
 	}
 
-	check := func(what string, dc *ecstypes.DeploymentConfiguration) {
+	check := func(what string, dc *ecstypes.DeploymentConfiguration, azr ecstypes.AvailabilityZoneRebalancing) {
 		t.Helper()
 		if dc == nil {
 			t.Errorf("%s sent no deploymentConfiguration; ECS then keeps the 200%% default that allows a second task", what)
@@ -4148,9 +4155,18 @@ func TestECSEC2EveryServiceCallPinsOneTaskPerWorkspace(t *testing.T) {
 		if aws.ToInt32(dc.MinimumHealthyPercent) != 0 {
 			t.Errorf("%s minimumHealthyPercent = %d, want 0 — at 100%% there is no room to start before stopping", what, aws.ToInt32(dc.MinimumHealthyPercent))
 		}
+		// ⚠️ The two must travel together. Sending maximumPercent 100 to a service that
+		// has Availability Zone rebalancing on is a 400, and that is not hypothetical:
+		// it took production down on 0.12.3, for every workspace whose service predated
+		// the change (§64.39.12). Omitting the field does not help — on UPDATE it means
+		// "keep whatever the service has", which for those services is ENABLED.
+		if azr != ecstypes.AvailabilityZoneRebalancingDisabled {
+			t.Errorf("%s availabilityZoneRebalancing = %q, want DISABLED; ECS rejects maximumPercent <= 100 "+
+				"while rebalancing is on, so a service created by an older build fails its first Start", what, azr)
+		}
 	}
 	for i, c := range h.ecs.createCalls {
-		check(fmt.Sprintf("createCalls[%d]", i), c.DeploymentConfiguration)
+		check(fmt.Sprintf("createCalls[%d]", i), c.DeploymentConfiguration, c.AvailabilityZoneRebalancing)
 	}
 	for i, c := range h.ecs.updateCalls {
 		// Only calls that can raise the count or move the revision matter; Stop's
@@ -4158,6 +4174,6 @@ func TestECSEC2EveryServiceCallPinsOneTaskPerWorkspace(t *testing.T) {
 		if c.TaskDefinition == nil && aws.ToInt32(c.DesiredCount) == 0 {
 			continue
 		}
-		check(fmt.Sprintf("updateCalls[%d]", i), c.DeploymentConfiguration)
+		check(fmt.Sprintf("updateCalls[%d]", i), c.DeploymentConfiguration, c.AvailabilityZoneRebalancing)
 	}
 }

@@ -495,6 +495,185 @@ func TestECSEC2LiveDeploymentConfig(t *testing.T) {
 	stop()
 }
 
+// TestECSEC2LivePreUpgradeService starts a workspace whose service was created by an
+// OLDER BUILD, and is the round TestECSEC2LiveDeploymentConfig could not be:
+//
+//	source ~/af-ec2c/state.env
+//	AF_ECS_EC2_LIVE_DEPLOY=1 go test -run TestECSEC2LivePreUpgradeService -v -timeout 40m .
+//
+// ⚠️ Why a separate test rather than one more round over there. That test made its
+// "pre-upgrade" service by pushing 200/100 back onto a service the NEW code had created,
+// and reported green twice. Production then broke on the first Start of every existing
+// workspace: `availabilityZoneRebalancing` is decided at CREATE time and an UpdateService
+// does not move it, so the service under test had DISABLED — the one value that makes
+// maximumPercent 100 legal — while every real pre-upgrade service has ENABLED and answers
+// 400 (§64.39.12).
+//
+// The lesson is bigger than the field: **a state you produced by editing the new thing is
+// not the old thing.** The only way to test an upgrade is to build the old shape with the
+// call that built it, which here means CreateService, not UpdateService.
+func TestECSEC2LivePreUpgradeService(t *testing.T) {
+	if os.Getenv("AF_ECS_EC2_LIVE") != "1" || os.Getenv("AF_ECS_EC2_LIVE_DEPLOY") != "1" {
+		t.Skip("set AF_ECS_EC2_LIVE=1 AF_ECS_EC2_LIVE_DEPLOY=1 (and source the harness state.env)")
+	}
+	ctx := context.Background()
+	useCPTaskRole(t)
+	factory, err := newECSEC2Factory(&manager{})
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	f := factory.(*ecsEC2Factory)
+	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(f.base.cfg.region))
+	if err != nil {
+		t.Fatalf("aws config: %v", err)
+	}
+	live := &liveEC2{t: t, ctx: ctx, ec2: ec2.NewFromConfig(ac), ecs: ecs.NewFromConfig(ac),
+		ssm: ssm.NewFromConfig(ac), cluster: f.base.cfg.cluster}
+	d := &liveDeploy{t: t, ctx: ctx, ecs: ecs.NewFromConfig(ac), cluster: f.base.cfg.cluster}
+
+	name := "af-ec2c-oz" + os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
+	ws := Workspace{ContainerName: name, MembershipID: "m-oz1", AgentToken: "tok-oz1"}
+	u := f.New(ws, "", nil).(*ecsEC2Runtime)
+	defer func() {
+		if err := u.Stop(ctx); err != nil {
+			t.Logf("cleanup Stop: %v", err)
+		}
+	}()
+
+	// --- 1. build the OLD shape, with CreateService, before the product ever sees this
+	// name: 200/100 and Availability Zone rebalancing on — i.e. what an 0.12.2 control
+	// plane left behind. desiredCount 0, so the placeholder revision never runs. ---
+	d.createLegacyService(name, f.base.cfg.namespaceArn)
+	s := d.describe(name)
+	if s.AvailabilityZoneRebalancing != ecstypes.AvailabilityZoneRebalancingEnabled {
+		t.Fatalf("the substrate is not a pre-upgrade service: availabilityZoneRebalancing = %q, want ENABLED",
+			s.AvailabilityZoneRebalancing)
+	}
+	d.requireDeploymentConfig(name, 200, 100, "the service an older build would have left")
+	t.Logf("pre-upgrade service ready: availabilityZoneRebalancing=%s, 200/100, desired=%d",
+		s.AvailabilityZoneRebalancing, s.DesiredCount)
+
+	// --- 2. WITNESS (does not gate): the exact call 0.12.3 made. maximumPercent 100
+	// WITHOUT saying anything about rebalancing — which on an update means "keep what the
+	// service has", i.e. ENABLED. This is the production 400, reproduced deliberately. ---
+	_, werr := d.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
+		Cluster: aws.String(f.base.cfg.cluster), Service: aws.String(name),
+		DeploymentConfiguration: &ecstypes.DeploymentConfiguration{
+			MaximumPercent: aws.Int32(100), MinimumHealthyPercent: aws.Int32(0),
+		},
+	})
+	switch {
+	case werr == nil:
+		t.Logf("NOTE: the witness call SUCCEEDED — ECS no longer rejects maximumPercent 100 while "+
+			"rebalancing is on. This substrate no longer reproduces §64.39.12, so the round below "+
+			"shows what the product sends rather than what it survives. (service is now %s)",
+			d.describe(name).AvailabilityZoneRebalancing)
+	case strings.Contains(werr.Error(), "Availability Zone Rebalancing"):
+		t.Logf("[WITNESS] the 0.12.3 call is refused exactly as in production: %v", werr)
+	default:
+		t.Fatalf("the witness failed for some OTHER reason, so the substrate is not what this test "+
+			"thinks it is: %v", werr)
+	}
+
+	// --- 3. the PRODUCT starts this workspace. Nothing here is a percentage check first:
+	// if the pair is not sent together, Start itself fails, which is what users saw. ---
+	w := d.watch(name)
+	from := time.Now()
+	if err := u.Start(ctx); err != nil {
+		t.Fatalf("PRE-UPGRADE SERVICE: Start failed — this is the production symptom: %v", err)
+	}
+	live.waitState(u, "running", 12*time.Minute)
+	time.Sleep(90 * time.Second)
+	r := w.finish()
+	n, b := d.countSince(name, from)
+	after := d.describe(name)
+	d.requireDeploymentConfig(name, 100, 0, "the pre-upgrade service after the product Started it")
+	if after.AvailabilityZoneRebalancing != ecstypes.AvailabilityZoneRebalancingDisabled {
+		t.Errorf("availabilityZoneRebalancing is still %q; the product must turn it off in the same call "+
+			"that sets maximumPercent 100", after.AvailabilityZoneRebalancing)
+	}
+	t.Logf("[PRE-UPGRADE SERVICE started by the product] tasks created = %d, 'unable to place' = %d, "+
+		"most tasks seen at once = %d, availabilityZoneRebalancing = %s",
+		n, b, r.maxTasks, after.AvailabilityZoneRebalancing)
+	for _, line := range d.tasksSince(name, from) {
+		t.Logf("    task %s", line)
+	}
+	r.report(t)
+	r.requireOrdered(t, "the first Start of a pre-upgrade service")
+	r.requireNoDemotedTask(t, "the first Start of a pre-upgrade service")
+	if n != 1 || b != 0 {
+		t.Errorf("the first Start of a pre-upgrade service created %d tasks and %d placement complaints, want 1/0", n, b)
+	}
+}
+
+// createLegacyService creates the service the way a build BEFORE ec2SingleTaskDeployment
+// did: no deployment configuration of our own (so ECS applies its 200/100 default) and
+// Availability Zone rebalancing left at the create-time default, ENABLED.
+//
+// ⚠️ It has to be CreateService. `availabilityZoneRebalancing` cannot be reached by
+// pushing values onto an existing service — that is precisely the mistake that let
+// §64.39.11 report green while production was about to break.
+func (d *liveDeploy) createLegacyService(name, namespaceArn string) {
+	d.t.Helper()
+	if s, err := d.ecs.DescribeServices(d.ctx, &ecs.DescribeServicesInput{
+		Cluster: aws.String(d.cluster), Services: []string{name},
+	}); err == nil && len(s.Services) == 1 && aws.ToString(s.Services[0].Status) == "ACTIVE" {
+		d.t.Fatalf("%s already exists; this test needs a name the product has never created "+
+			"(use AF_ECS_EC2_LIVE_SUFFIX)", name)
+	}
+	// A placeholder revision, only ever pointed at: desiredCount 0 means it never runs,
+	// and the product replaces it on the first Start.
+	td, err := d.ecs.RegisterTaskDefinition(d.ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String(name),
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityEc2},
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:              aws.String("agent"),
+			Image:             aws.String(os.Getenv("AF_ECS_WORKSPACE_IMAGE")),
+			MemoryReservation: aws.Int32(512),
+			PortMappings: []ecstypes.PortMapping{
+				{ContainerPort: aws.Int32(ecsAgentPort), Name: aws.String("agent")},
+			},
+		}},
+	})
+	if err != nil {
+		d.t.Fatalf("placeholder task definition for %s: %v", name, err)
+	}
+	subnets := strings.Split(os.Getenv("AF_ECS_SUBNETS"), ",")
+	if len(subnets) < 2 {
+		// Rebalancing is about spreading across zones; one subnet is not the shape a real
+		// deployment has, and ECS may not even enable it.
+		d.t.Fatalf("AF_ECS_SUBNETS has %d subnet(s); this test needs the two-AZ harness", len(subnets))
+	}
+	if _, err := d.ecs.CreateService(d.ctx, &ecs.CreateServiceInput{
+		Cluster:        aws.String(d.cluster),
+		ServiceName:    aws.String(name),
+		TaskDefinition: td.TaskDefinition.TaskDefinitionArn,
+		DesiredCount:   aws.Int32(0),
+		LaunchType:     ecstypes.LaunchTypeEc2,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+				Subnets:        subnets,
+				SecurityGroups: []string{os.Getenv("AF_ECS_SECURITY_GROUP")},
+				AssignPublicIp: ecstypes.AssignPublicIpDisabled,
+			},
+		},
+		ServiceConnectConfiguration: &ecstypes.ServiceConnectConfiguration{
+			Enabled:   true,
+			Namespace: aws.String(namespaceArn),
+			Services: []ecstypes.ServiceConnectService{{
+				PortName:      aws.String("agent"),
+				DiscoveryName: aws.String(name),
+				ClientAliases: []ecstypes.ServiceConnectClientAlias{
+					{DnsName: aws.String(name), Port: aws.Int32(ecsAgentPort)},
+				},
+			}},
+		},
+	}); err != nil {
+		d.t.Fatalf("creating the pre-upgrade service %s: %v", name, err)
+	}
+}
+
 // liveDeploy reads what ECS did, with the deployer's own credentials — never the
 // product's. The product's view is exactly what this test must not trust.
 type liveDeploy struct {
