@@ -27,14 +27,26 @@ type fakeECS struct {
 	// its ARN so DescribeTaskDefinition can read the image stamp back out of it, the
 	// way the drift check does (runtime_ecs_stale.go).
 	taskDefs map[string]*ecstypes.TaskDefinition
+	// activeDeploymentPolls makes DescribeServices report a left-over ACTIVE deployment
+	// for the next N answers, which is what ECS does for 10-23 seconds after a task
+	// definition changes (docs/64 §64.39.4). Nothing else models deployments, because
+	// nothing else looks at them.
+	activeDeploymentPolls int
 }
 
 func (f *fakeECS) DescribeServices(_ context.Context, in *ecs.DescribeServicesInput, _ ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
 	out := &ecs.DescribeServicesOutput{}
 	for _, n := range in.Services {
-		if s, ok := f.services[n]; ok {
-			out.Services = append(out.Services, s)
+		s, ok := f.services[n]
+		if !ok {
+			continue
 		}
+		if f.activeDeploymentPolls > 0 {
+			f.activeDeploymentPolls--
+			s.Deployments = append(append([]ecstypes.Deployment(nil), s.Deployments...),
+				ecstypes.Deployment{Status: aws.String("ACTIVE")})
+		}
+		out.Services = append(out.Services, s)
 	}
 	return out, nil
 }
