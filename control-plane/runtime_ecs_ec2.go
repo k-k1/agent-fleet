@@ -2715,9 +2715,27 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 			return fmt.Errorf("ssm send %q to %s: %w", command, instanceID, err)
 		}
 	}
+	// Poll on a ramp rather than a flat 2s, and ask EARLY. Measured on the <prod-deployment>
+	// production pool (docs/64 §64.38, n=37 mounts over 5 days): `af-mount` itself runs
+	// in 0.6s median / 3.0s max, and SSM queues it in another 0.2–0.7s — so the command
+	// is almost always finished before the CP has even asked once. A flat 2s pre-sleep
+	// therefore spent ~1.5s per call doing nothing, twice on the swap path (umount on the
+	// old slot, mount on the new one). The ramp keeps the tail cheap: the poll widens to
+	// the same 2s within a few rounds, so a mount that genuinely takes a minute (mkfs on
+	// a fresh 50 GiB home) costs the same number of API calls it always did.
+	//
+	// ⚠️ This is a small win on purpose. The measurement it comes from is that the mount
+	// was NEVER the 10–30s the earlier estimate charged it (§64.17.5); it is ~2–4s out of
+	// a 110–147s Start. Do not expect a Start to get noticeably faster from this.
+	delay := 300 * time.Millisecond
 	for {
-		if err := e.sleep(ctx, 2*time.Second); err != nil {
+		if err := e.sleep(ctx, delay); err != nil {
 			return err
+		}
+		if delay < 2*time.Second {
+			if delay *= 2; delay > 2*time.Second {
+				delay = 2 * time.Second
+			}
 		}
 		inv, err := e.ssmc.GetCommandInvocation(ctx, &ssm.GetCommandInvocationInput{
 			CommandId:  aws.String(cmdID),
