@@ -123,6 +123,26 @@ var ec2SingleTaskDeployment = &ecstypes.DeploymentConfiguration{
 	MinimumHealthyPercent: aws.Int32(0),
 }
 
+// ec2NoAZRebalancing must travel WITH ec2SingleTaskDeployment on every call, because
+// ECS refuses the two together in the other order:
+//
+//	InvalidParameterException: The service couldn't be updated because Availability
+//	Zone Rebalancing does not support maximumPercent <= 100 % as deployment
+//	configuration.
+//
+// ⚠️ This broke production on 0.12.3 (docs/64 §64.39.12), and it broke ONLY the
+// services that already existed: `CreateService` quietly settles on DISABLED when the
+// deployment configuration cannot support rebalancing, so every service the new build
+// creates is fine — while every service created by an older build carries ENABLED and
+// rejects the very first UpdateService the new build sends it. A pre-upgrade service is
+// therefore not reproduced by pushing 200/100 back onto a new one: this attribute is
+// decided at CREATE time and an update does not move it.
+//
+// DISABLED is also the honest value rather than a workaround. The task definition pins
+// the task to one instance (`ec2InstanceId ==`), so there is no AZ for ECS to rebalance
+// to; the home volume is in that instance's AZ and cannot follow it anyway (ADR 0045).
+const ec2NoAZRebalancing = ecstypes.AvailabilityZoneRebalancingDisabled
+
 const (
 	// ec2HomeDevice is the ONE device name every user's home volume is attached at,
 	// on every slot. This single constant IS the slot allocator (docs/64 §64.15.2):
@@ -3134,11 +3154,12 @@ func (e *ecsEC2Runtime) pointServiceAt(ctx context.Context, taskDefArn string, p
 		return false
 	}
 	if _, err := e.base.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
-		Cluster:                 aws.String(e.base.cfg.cluster),
-		Service:                 aws.String(e.base.name),
-		TaskDefinition:          aws.String(taskDefArn),
-		NetworkConfiguration:    netCfg,
-		DeploymentConfiguration: ec2SingleTaskDeployment,
+		Cluster:                     aws.String(e.base.cfg.cluster),
+		Service:                     aws.String(e.base.name),
+		TaskDefinition:              aws.String(taskDefArn),
+		NetworkConfiguration:        netCfg,
+		DeploymentConfiguration:     ec2SingleTaskDeployment,
+		AvailabilityZoneRebalancing: ec2NoAZRebalancing,
 	}); err != nil {
 		log.Printf("ecs-ec2 start: could not pre-point %s at %s (falling back to the slower single update): %v",
 			e.base.name, taskDefArn, err)
@@ -3158,7 +3179,8 @@ func (e *ecsEC2Runtime) scaleUpService(ctx context.Context) error {
 		DesiredCount: aws.Int32(1),
 		// Sent here too: this is the ONLY call on the path that raises the count, so a
 		// service that somehow missed the setting must not raise it at 200%.
-		DeploymentConfiguration: ec2SingleTaskDeployment,
+		DeploymentConfiguration:     ec2SingleTaskDeployment,
+		AvailabilityZoneRebalancing: ec2NoAZRebalancing,
 	})
 	return err
 }
@@ -3187,24 +3209,26 @@ func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p 
 	}
 	if ok && aws.ToString(s.Status) == "ACTIVE" {
 		_, err = e.base.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
-			Cluster:                 aws.String(e.base.cfg.cluster),
-			Service:                 aws.String(e.base.name),
-			DesiredCount:            aws.Int32(1),
-			TaskDefinition:          aws.String(taskDefArn),
-			NetworkConfiguration:    netCfg,
-			ForceNewDeployment:      forceNewDeployment,
-			DeploymentConfiguration: ec2SingleTaskDeployment,
+			Cluster:                     aws.String(e.base.cfg.cluster),
+			Service:                     aws.String(e.base.name),
+			DesiredCount:                aws.Int32(1),
+			TaskDefinition:              aws.String(taskDefArn),
+			NetworkConfiguration:        netCfg,
+			ForceNewDeployment:          forceNewDeployment,
+			DeploymentConfiguration:     ec2SingleTaskDeployment,
+			AvailabilityZoneRebalancing: ec2NoAZRebalancing,
 		})
 		return err
 	}
 	_, err = e.base.ecs.CreateService(ctx, &ecs.CreateServiceInput{
-		Cluster:                 aws.String(e.base.cfg.cluster),
-		ServiceName:             aws.String(e.base.name),
-		TaskDefinition:          aws.String(taskDefArn),
-		DesiredCount:            aws.Int32(1),
-		LaunchType:              ecstypes.LaunchTypeEc2,
-		NetworkConfiguration:    netCfg,
-		DeploymentConfiguration: ec2SingleTaskDeployment,
+		Cluster:                     aws.String(e.base.cfg.cluster),
+		ServiceName:                 aws.String(e.base.name),
+		TaskDefinition:              aws.String(taskDefArn),
+		DesiredCount:                aws.Int32(1),
+		LaunchType:                  ecstypes.LaunchTypeEc2,
+		NetworkConfiguration:        netCfg,
+		DeploymentConfiguration:     ec2SingleTaskDeployment,
+		AvailabilityZoneRebalancing: ec2NoAZRebalancing,
 		ServiceConnectConfiguration: &ecstypes.ServiceConnectConfiguration{
 			Enabled:   true,
 			Namespace: strOrNil(e.base.cfg.namespaceArn),

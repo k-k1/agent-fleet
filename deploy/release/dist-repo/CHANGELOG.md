@@ -3,6 +3,11 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.12.4](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.4) — 2026-08-26
+
+A workspace on an `ecs-ec2` deployment could not start after upgrading to 0.12.3. This
+release fixes that; upgrade straight to it.
+
 ## [0.12.3](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.3) — 2026-08-26
 
 Importing a repository is an asynchronous job now, so a large clone or checkout no

@@ -3,6 +3,11 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.12.4](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.4) — 2026-08-26
+
+0.12.3 に上げると `ecs-ec2` の Workspace が起動できなくなる不具合を直しました。0.12.3 を
+使っている場合は、こちらへ上げてください。
+
 ## [0.12.3](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.3) — 2026-08-26
 
 リポジトリの取り込みが非同期のジョブになり、大きな clone / checkout が「失敗したのに成功に
