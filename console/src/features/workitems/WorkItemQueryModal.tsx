@@ -19,25 +19,37 @@ interface Props {
   onSaved(): void;
 }
 
-// 既定の 1 本。ここが「自分にアサインされた未完了だけ」という既定の絞り込みそのもの
-// （docs/80 §80.7）— 全件同期をしないという設計を、初期値の側で表している。
-const DEFAULT_QUERY = "assignee:@me is:open";
+// provider ごとの既定クエリ。ここが「自分にアサインされた未完了だけ」という既定の
+// 絞り込みそのもの（docs/80 §80.7）—— 全件同期をしないという設計を初期値で表している。
+// GitHub は検索構文、Jira は JQL。af は写像を持つだけで、方言はそのまま保存する。
+const DEFAULT_QUERY: Record<string, string> = {
+  github: "assignee:@me is:open",
+  jira: "assignee = currentUser() AND statusCategory != Done",
+};
 
 export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Props) {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
   const repos = useReposStore((s) => s.repos);
+  const [provider, setProvider] = useState("github");
   const [label, setLabel] = useState("");
-  const [query, setQuery] = useState(queries.length ? "" : DEFAULT_QUERY);
+  const [query, setQuery] = useState(queries.length ? "" : DEFAULT_QUERY.github);
   const [repoHint, setRepoHint] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // provider を切り替えたら、まだ手を入れていないクエリ欄だけ既定を差し替える
+  // （書きかけの JQL を勝手に消さない）。
+  const pickProvider = (next: string) => {
+    setProvider(next);
+    setQuery((cur) => (cur === "" || Object.values(DEFAULT_QUERY).includes(cur) ? DEFAULT_QUERY[next] || "" : cur));
+  };
 
   const add = async () => {
     if (!query.trim() || busy) return;
     setBusy(true);
     try {
-      const res = await workItemQueryCreate({ provider: "github", label: label.trim(), query: query.trim(), repoHint, enabled: true });
+      const res = await workItemQueryCreate({ provider, label: label.trim(), query: query.trim(), repoHint, enabled: true });
       if (res && typeof res === "object" && "error" in res && res.error) {
         toast(errText(res.error) || t("wi.query_save_failed"), { kind: "warn" });
         return;
@@ -91,7 +103,10 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
           {queries.map((q) => (
             <li className={"wi-qrow" + (q.enabled ? "" : " off")} key={q.id}>
               <div className="wi-qinfo">
-                <div className="wi-qlabel">{q.label}</div>
+                <div className="wi-qlabel">
+                  <span className="wi-qprov">{q.provider}</span>
+                  {q.label}
+                </div>
                 <code className="wi-qquery">{q.query}</code>
                 {q.repoHint && <span className="wi-qhint">{tr("wi.repo_hint_is", { repo: q.repoHint })}</span>}
                 {q.lastError && <div className="wi-qerr">{q.lastError}</div>}
@@ -104,15 +119,24 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
       )}
       <div className="wi-qform">
         <label>
+          <span>{tr("wi.query_provider")}</span>
+          <select value={provider} onChange={(e) => pickProvider(e.target.value)}>
+            <option value="github">GitHub</option>
+            <option value="jira">Jira</option>
+          </select>
+        </label>
+        <label>
           <span>{tr("wi.query_label")}</span>
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={tr("wi.query_label_ph")} />
         </label>
         <label>
           <span>{tr("wi.query_expr")}</span>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={DEFAULT_QUERY} spellCheck={false} />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={DEFAULT_QUERY[provider]} spellCheck={false} />
         </label>
         <label>
-          <span>{tr("wi.query_repo_hint")}</span>
+          {/* Jira は課題がリポジトリに紐づかないので、起動先はここが唯一の手がかりに
+              なる（プロジェクト → 作業コピーの対応表がこれ）。 */}
+          <span>{provider === "jira" ? tr("wi.query_repo_hint_jira") : tr("wi.query_repo_hint")}</span>
           <select value={repoHint} onChange={(e) => setRepoHint(e.target.value)}>
             <option value="">{tr("wi.query_repo_any")}</option>
             {repos

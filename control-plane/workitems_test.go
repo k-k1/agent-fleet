@@ -228,8 +228,13 @@ func TestWorkItemsDisabledQueryNotFetched(t *testing.T) {
 
 func TestWorkItemQueryValidation(t *testing.T) {
 	mv := MembershipView{MembershipID: "m1"}
-	if _, aerr := validateWorkItemQuery(mv, workItemQueryDTO{Provider: "jira", Query: "x"}); aerr == nil {
-		t.Error("jira must be refused in v1 rather than saved as a row that can never fetch")
+	// jira は P1 で受け付けるようになった。未知の provider は今も拒む —— 取得できない
+	// 行として保存されるより、その場で断る方がよい。
+	if _, aerr := validateWorkItemQuery(mv, workItemQueryDTO{Provider: "jira", Query: "assignee = currentUser()"}); aerr != nil {
+		t.Errorf("jira must be accepted since P1: %v", aerr)
+	}
+	if _, aerr := validateWorkItemQuery(mv, workItemQueryDTO{Provider: "backlog", Query: "x"}); aerr == nil {
+		t.Error("an unknown provider must be refused rather than saved as a row that can never fetch")
 	}
 	if _, aerr := validateWorkItemQuery(mv, workItemQueryDTO{Query: "   "}); aerr == nil {
 		t.Error("empty query accepted")

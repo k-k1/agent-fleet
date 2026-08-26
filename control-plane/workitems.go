@@ -390,8 +390,8 @@ func validateWorkItemQuery(mv MembershipView, in workItemQueryDTO) (WorkItemQuer
 	if q.Provider == "" {
 		q.Provider = "github"
 	}
-	if q.Provider != "github" {
-		return WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_provider", "provider must be github"}
+	if q.Provider != "github" && q.Provider != "jira" {
+		return WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_provider", "provider must be github or jira"}
 	}
 	if q.Query == "" {
 		return WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_query", "query is required"}

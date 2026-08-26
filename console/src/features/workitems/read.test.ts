@@ -161,3 +161,32 @@ describe("sessionsForItem", () => {
     expect(sessionsForItem(led, "acme/web#1")).toEqual([]);
   });
 });
+
+describe("promptForItem — provider ごとの読み方", () => {
+  it("Jira は MCP を指す（gh ではない）", () => {
+    const p = promptForItem(item({ provider: "jira", key: "PROJ-123", url: "https://x.atlassian.net/browse/PROJ-123" }));
+    expect(p).toContain("PROJ-123");
+    expect(p).toContain("https://x.atlassian.net/browse/PROJ-123");
+    expect(p).not.toContain("gh issue view");
+  });
+
+  it("未知の provider でも URL と汎用の読み方は必ず出る", () => {
+    const p = promptForItem(item({ provider: "backlog", key: "BL-9" }));
+    expect(p).toContain("BL-9");
+    expect(p.split("\n").filter(Boolean).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("repoForItem — Jira", () => {
+  it("Jira は repo を持たないので repoHint だけが手がかり", () => {
+    const jira = item({ provider: "jira", key: "PROJ-123", repo: "" });
+    expect(repoForItem(jira, "webshop", ["webshop"])).toBe("webshop");
+    expect(repoForItem(jira, "", ["webshop"])).toBe("");
+  });
+});
+
+describe("branchForItem — Jira", () => {
+  it("Jira キーはそのままブランチ名に使える", () => {
+    expect(branchForItem({ key: "PROJ-123", title: "ログイン後に一覧が空になる" })).toBe("feature/proj-123");
+  });
+});

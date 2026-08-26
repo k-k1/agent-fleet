@@ -840,6 +840,13 @@
 .conn-cat:first-child {
   margin-top: 0;
 }
+/* カテゴリ直下の一言。タブ冒頭の説明が「SRE アシスタント向けの連携」を名乗っている
+   ので、そうでないカテゴリ（課題管理＝作業項目レールの取得元）はここで言い直す。 */
+.conn-cat-sub {
+  margin: 2px 0 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
 
 /* ── Connection provider cards (設定 > 接続). Each provider is a card: a colored
    2-char badge + name + status pill, then a description and its connect/flow UI.
@@ -888,13 +895,15 @@
 .p-badge.pb-discord { background: #5865f2; }
 .p-badge.pb-slack { background: #4a154b; }
 .p-badge.pb-grafana { background: #f46800; }
+.p-badge.pb-jira { background: #0052cc; } /* Atlassian blue — dark in both themes, so it takes the white monogram below (6.8:1 measured) */
 .p-badge.pb-cloudwatch { background: #d1126f; } /* brand pink, one step down: the stock #e7157b left neither a white nor a black monogram at 4.5:1 */
 .p-badge.pb-aws { background: #ff9900; } /* AWS orange — light enough that the default near-black monogram clears 4.5:1 in both themes */
 /* Brand fills that are dark in BOTH themes — Slack aubergine, Discord blurple,
    CloudWatch pink — carried a near-black monogram at 1.4–4.4:1. */
 .p-badge.pb-slack,
 .p-badge.pb-discord,
-.p-badge.pb-cloudwatch {
+.p-badge.pb-cloudwatch,
+.p-badge.pb-jira {
   --pb-fg: #fff;
 }
 /* The agent-kind fills follow --kind-*, which flips with the theme: light hues in the

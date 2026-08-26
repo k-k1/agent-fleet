@@ -165,13 +165,26 @@ export function promptForItem(item: WorkItem, body?: string): string {
     t("wi.prompt_target", { key: item.key, title: item.title }),
     t("wi.prompt_url", { url: item.url }),
     "",
-    item.provider === "github" ? t("wi.prompt_read_github", { key: shortKey(item.key).replace("#", "") }) : t("wi.prompt_read_generic"),
+    readLine(item),
     t("wi.prompt_investigate"),
   ];
   if (body && body.trim()) {
     lines.push("", t("wi.prompt_body_notice"), "", ...body.trim().split("\n").map((l) => `> ${l}`));
   }
   return lines.join("\n");
+}
+
+// 本文の読み方は provider ごとに違う道具を指す。★ af が本文を運ばない代わりに、
+// 「どこにあるか」は必ず書く —— これが無いと、エージェントはタイトルだけで作業を始める。
+function readLine(item: WorkItem): string {
+  switch (item.provider) {
+    case "github":
+      return t("wi.prompt_read_github", { key: shortKey(item.key).replace("#", "") });
+    case "jira":
+      return t("wi.prompt_read_jira");
+    default:
+      return t("wi.prompt_read_generic");
+  }
 }
 
 /** Session title suggestion: the key plus a trimmed title, so the rail and the session

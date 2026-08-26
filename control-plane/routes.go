@@ -769,6 +769,10 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// Ops connections (docs/25 Phase 1): the credentials are stored in the
 	// Workspace's encrypted secrets and injected into the ops MCP servers at
 	// spawn; the CP only proxies here, never holds the secrets.
+	// Jira（docs/80 P1）— 作業項目の取得元。⚠️ GET /api/connections には相乗りするが、
+	// 保存/削除はここに 1 本ずつ要る（CP は catch-all ではなく明示許可リスト）。
+	mux.HandleFunc("PUT /api/connections/jira", rest)
+	mux.HandleFunc("DELETE /api/connections/jira", rest)
 	mux.HandleFunc("PUT /api/connections/pagerduty", rest)
 	mux.HandleFunc("DELETE /api/connections/pagerduty", rest)
 	mux.HandleFunc("PUT /api/connections/grafana", rest)

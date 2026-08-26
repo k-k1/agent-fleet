@@ -203,6 +203,18 @@
 .wi-qlabel {
   font-size: 13px;
 }
+/* 取得元。1 本ずつ provider が違いうるので、行のどこかに出しておかないと
+   「なぜこのクエリだけ JQL なのか」が読めない。 */
+.wi-qprov {
+  display: inline-block;
+  margin-right: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 5px;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
 .wi-qquery {
   display: block;
   font-size: 11px;
