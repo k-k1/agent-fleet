@@ -2715,8 +2715,8 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 			return fmt.Errorf("ssm send %q to %s: %w", command, instanceID, err)
 		}
 	}
-	// Poll on a ramp rather than a flat 2s, and ask EARLY. Measured on the acrt
-	// production pool (docs/64 §64.38, n=37 mounts over 5 days): `af-mount` itself runs
+	// Poll on a ramp rather than a flat 2s, and ask EARLY. Measured on the production
+	// deployment's pool (docs/64 §64.38, n=37 mounts over 5 days): `af-mount` itself runs
 	// in 0.6s median / 3.0s max, and SSM queues it in another 0.2–0.7s — so the command
 	// is almost always finished before the CP has even asked once. A flat 2s pre-sleep
 	// therefore spent ~1.5s per call doing nothing, twice on the swap path (umount on the
