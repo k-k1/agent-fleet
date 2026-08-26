@@ -806,6 +806,13 @@
   flex-wrap: wrap;
   gap: 4px 14px;
 }
+/* 和文フォントの見本。--mono で描くのは、この設定が効く代表的な面（diff・ビューア・
+   ミラー）が等幅だから。丸数字と漢字を並べて字面の大きさを比べられるようにしている。 */
+.cjk-preview {
+  font-family: var(--mono);
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
 .icon-preview-item {
   display: inline-flex;
   align-items: center;
