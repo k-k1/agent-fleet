@@ -232,6 +232,8 @@ export const ja = {
   "font.serif": "セリフ",
   "font.mincho": "明朝",
   "font.gothic": "ゴシック",
+  "font.cjk_auto": "自動",
+  "font.cjk_off": "欧文優先",
 
   // --- アイコンセット（lib/settings.ts ICON_SETS）---
   "iconset.vscode": "VS Code Icons（カラー）",
@@ -279,6 +281,10 @@ export const ja = {
   "display.assistant_theme": "アシスタントのテーマ",
   "display.region_theme_note":
     "セッションのチャットとアシスタントのチャットは、アプリ本体とは別のテーマ（ダーク／ライト）で表示できます（「アプリに合わせる」で本体に追従）。背景色も下でそれぞれ指定できます。",
+  "display.cjk_font": "和文フォント",
+  "display.cjk_font_sample": "①②③⑩ ㈱ ㍻ Ⅰ Ⅱ Ⅲ と漢字とかなの並び",
+  "display.cjk_font_note":
+    "①②③ や Ⅰ ㈱ は欧文フォントも持っているため、そのままだと半角の細い字で描かれ、隣の漢字より小さく見えます。ここで選んだ和文フォントを、その範囲の文字にだけ優先して使います。■ ○ ★ は文章の面だけが対象で、ターミナルと、ずれてはいけない等幅の面（diff・コードブロック）では従来どおりです——CLI が半角として桁を数えて出力を組んでいるため。「欧文優先」で全体を従来の見た目に戻せます。",
   "display.terminal": "ターミナル",
   "display.font": "フォント",
   "display.font_size": "文字サイズ",
