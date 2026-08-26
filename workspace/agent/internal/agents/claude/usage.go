@@ -16,9 +16,12 @@ import (
 
 // usageWindow is one limit window: percent used (0–100) and the ISO reset instant
 // (the Console formats it as a relative "あとN時間/N日" + an absolute date-time).
+// Stale marks a window whose capture is older than the window itself: the percent is
+// then a guess, not a reading (see adjustWindow), and the Console shows it as unknown.
 type usageWindow struct {
 	Pct      float64 `json:"pct"`
 	ResetsAt string  `json:"resetsAt"`
+	Stale    bool    `json:"stale,omitempty"`
 }
 
 // HandleUsage serves GET /claude/usage for the Console's WsBar chip. It converts the
@@ -62,14 +65,22 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 
 // adjustWindow maps one captured rate-limit window onto a usageWindow, correcting for
 // staleness. A capture is a snapshot from the last statusLine render; if its window has
-// since reset (resetEpoch is at/before now), the recorded % no longer applies — usage is
-// back to 0 — so we zero it and roll the reset forward by whole windows to the next
-// boundary. A window still in the future passes through unchanged. (Same semantics as
-// codex's adjustWindow.)
+// since reset (resetEpoch is at/before now), the recorded % no longer applies — so we
+// zero it and roll the reset forward by whole windows to the next boundary. A window
+// still in the future passes through unchanged. (Same semantics as codex's adjustWindow.)
+//
+// The rolled-forward window is also flagged Stale, because 0% is an ASSUMPTION, not a
+// reading: it holds only if nothing was spent since the capture, and the quota is shared
+// with everything else on the account (claude.ai, another machine). Worse, capture stops
+// entirely when the statusLine command breaks — and then this same rollforward produced a
+// confident "0%, resets at 20:50" while the account was actually at 14%. Percent and
+// reset instant alone can't distinguish "genuinely idle" from "we stopped looking", so
+// say which one it is instead of dressing a guess up as a measurement.
 func adjustWindow(pct float64, windowMin int, resetEpoch int64, now time.Time) *usageWindow {
 	reset := time.Unix(resetEpoch, 0).UTC()
+	stale := false
 	if !reset.After(now) {
-		pct = 0
+		pct, stale = 0, true
 		if windowMin > 0 {
 			step := time.Duration(windowMin) * time.Minute
 			// Advance directly (not a loop) so a very stale capture can't spin.
@@ -77,7 +88,7 @@ func adjustWindow(pct float64, windowMin int, resetEpoch int64, now time.Time) *
 			reset = reset.Add(step * n)
 		}
 	}
-	return &usageWindow{Pct: pct, ResetsAt: reset.Format(time.RFC3339)}
+	return &usageWindow{Pct: pct, ResetsAt: reset.Format(time.RFC3339), Stale: stale}
 }
 
 // oauthToken reads the subscription OAuth access token from the credentials file claude

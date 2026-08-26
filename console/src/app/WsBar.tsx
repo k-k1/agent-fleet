@@ -65,6 +65,10 @@ interface HostStats {
 interface UsageWindow {
   pct: number;
   resetsAt: string;
+  // 捕捉より後に窓が明けている＝% は「その後の消費ゼロ」を仮定した推定。読み取り値では
+  // ないので、チップも行も 0% と言い切らず "—" で出す（捕捉が死んでいる場合と区別が
+  // つかない）。claude のみ返す。
+  stale?: boolean;
 }
 interface UsageReading {
   ok?: boolean;
@@ -274,19 +278,26 @@ function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
 }
 
 // UsageRow: one limit window in the usage dropdown — label + percent, a fill bar, and
-// the reset shown both relatively ("あとN時間") and as an absolute date-time.
-function UsageRow({ label, w }: { label: string; w: { pct: number; until: string; when: string } }) {
-  const level = w.pct >= 95 ? " crit" : w.pct >= 80 ? " warn" : "";
+// the reset shown both relatively ("あとN時間") and as an absolute date-time. A stale
+// window (the reading predates the window it describes, so its 0% is an assumption the
+// agent could not verify) shows "—" and an empty bar instead: a confident 0% next to a
+// reset time is indistinguishable from a real one, which is exactly how a dead capture
+// went unnoticed for hours.
+function UsageRow({ label, w }: { label: string; w: { pct: number; until: string; when: string; stale?: boolean } }) {
+  const level = w.stale ? "" : w.pct >= 95 ? " crit" : w.pct >= 80 ? " warn" : "";
   return (
     <div className="wu-row">
       <div className="wu-row-head">
         <span className="wu-label">{label}</span>
-        <span className={"wu-pct" + level}>{w.pct}%</span>
+        <span className={"wu-pct" + (w.stale ? " muted" : level)} title={w.stale ? t("wsbar.usage.stale_note") : undefined}>
+          {w.stale ? "—" : `${w.pct}%`}
+        </span>
       </div>
       <div className="wu-bar">
-        <span className={"wu-bar-fill" + level} style={{ width: Math.min(100, w.pct) + "%" }} />
+        <span className={"wu-bar-fill" + level} style={{ width: (w.stale ? 0 : Math.min(100, w.pct)) + "%" }} />
       </div>
       <div className="wu-reset muted">{t("wsbar.usage.reset_at", { until: w.until, when: w.when })}</div>
+      {w.stale && <div className="wu-note muted">{t("wsbar.usage.stale_note")}</div>}
     </div>
   );
 }
@@ -393,10 +404,11 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   // not the dropdown is open — the chip stays mounted while the workspace is up.
   useUsageResetNotify(src, usage, refresh);
 
-  const win = (w: { pct: number; resetsAt: string }) => ({
+  const win = (w: UsageWindow) => ({
     pct: Math.round(w.pct),
     until: untilText(w.resetsAt),
     when: whenText(w.resetsAt),
+    stale: !!w.stale,
   });
   const uh = usage && usage.fiveHour && win(usage.fiveHour);
   const uw = usage && usage.sevenDay && win(usage.sevenDay);
@@ -427,7 +439,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
     ? "—"
     : bind
       ? resetChipText(bind.resetsAt)
-      : [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
+      : [uh && (uh.stale ? "—" : `${uh.pct}%`), uw && (uw.stale ? "—" : `${uw.pct}%`)].filter(Boolean).join(" / ");
   const chipTitle = unavailable
     ? tr("wsbar.usage.unavailable_title", { name: src.name })
     : bind
