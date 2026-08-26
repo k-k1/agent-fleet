@@ -411,6 +411,14 @@ function PopulatedPane({
           role="tablist"
           aria-label={tr("display.pane_layout_tabs")}
           onWheel={onTabsWheel}
+          // タブが溢れて strip が実際にスクロール可能になった瞬間だけ、中ボタン
+          // 押下が Chrome の自動スクロール（オートスクロール）を起動し、続く
+          // mouseup はその解除に使われて auxclick が飛ばなくなる＝「横スクロール
+          // バーが出ているときだけ中クリックで閉じられない」。既定動作を止めれば
+          // auxclick は通常どおり発火する。タブ自身ではなく strip に置くのは、
+          // タブの余白や × の上で押した場合も同じ罠を踏むため。
+          // 中ボタン限定なので、左ボタンで始まるタブの drag には影響しない。
+          onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
         >
           {tabInfo.map(({ view, label, state, kic }) => {
             return (
@@ -474,6 +482,10 @@ function PopulatedPane({
                   // 併記するショートカットは同じ pane.close＝Alt+W。
                   aria-label={tr("ui.close_tab_hint")}
                   title={tr("ui.close_tab_hint") + hintSuffix("pane.close")}
+                  // × はタブ本体のボタンの子ではなく兄弟なので、タブ側の
+                  // onAuxClick までバブリングしてこない。× の上で中クリックした
+                  // ときだけ無反応、を避ける。
+                  onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(view.id); } }}
                   onClick={(e) => { e.stopPropagation(); closeTab(view.id); }}
                 >
                   ×
