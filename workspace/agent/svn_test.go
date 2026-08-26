@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -283,5 +284,60 @@ func TestSvnCheckoutFailureKeepsResumableCopy(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(reposRoot(), "ghost")); !os.IsNotExist(err) {
 		t.Error("作業コピーになっていない残骸は掃除されるべき")
+	}
+}
+
+// ★ 一覧の dirty 判定は作業コピー全体を走査する。11.4GB の作業コピー（実例）では
+// これが GET /repos を握ったままになりうるので、同じフォルダへの同時要求は 1 本の走査に
+// 相乗りさせる —— さもないと画面の操作のたびに全走査が重なる（走行中の checkout と
+// wc.db を奪い合ったのと同じ形を、今度は自分で作ることになる）。docs/78。
+func TestSvnDirtySharesOneScan(t *testing.T) {
+	if !svnAvailable() {
+		t.Skip("svn not installed")
+	}
+	if _, err := exec.LookPath("svnadmin"); err != nil {
+		t.Skip("svnadmin not installed")
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "srv")
+	if out, err := exec.Command("svnadmin", "create", repo).CombinedOutput(); err != nil {
+		t.Fatalf("svnadmin create: %v: %s", err, out)
+	}
+	seed := filepath.Join(root, "seed")
+	if err := os.MkdirAll(seed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("svn", "import", "--non-interactive", "-m", "seed", seed, "file://"+repo).CombinedOutput(); err != nil {
+		t.Fatalf("svn import: %v: %s", err, out)
+	}
+	wc := filepath.Join(root, "wc")
+	if out, err := runSvnAuthed(context.Background(), nil, "checkout", "file://"+repo, wc); err != nil {
+		t.Fatalf("checkout: %v: %s", err, out)
+	}
+
+	var wg sync.WaitGroup
+	got := make([]bool, 8)
+	for i := range got {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got[i] = svnDirty(wc)
+		}(i)
+	}
+	wg.Wait()
+	for i, d := range got {
+		if d {
+			t.Fatalf("caller %d saw dirty on a fresh checkout", i)
+		}
+	}
+	// キャッシュではないので、変更は次の呼び出しで見える（手動の 更新 が効かなくなっては困る）。
+	if err := os.WriteFile(filepath.Join(wc, "a.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !svnDirty(wc) {
+		t.Error("変更が次の判定に出ていない（TTL キャッシュを入れると手動更新が古い答えを返す）")
 	}
 }
