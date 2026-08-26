@@ -3478,7 +3478,10 @@ func TestECSEC2PoolStatusExplainsWhyNothingIsBaking(t *testing.T) {
 func TestPoolStatusSaysWhenAutoBakeIsOff(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
-	m := &manager{rtFactory: h.factory(), autoBakeGolden: false}
+	// store は poolStatus が Σ(tenant max_workspaces) を突き合わせるのに要る（決定 25）。
+	// テナントが 0 件でも「読めた」ことは要る——読めなければ突き合わせを載せない、が
+	// 正しい振る舞いで、それは「読む先が無い」とは別である。
+	m := &manager{rtFactory: h.factory(), autoBakeGolden: false, store: p3Store(t)}
 	st, ok, err := m.poolStatus(ctx)
 	if !ok || err != nil {
 		t.Fatalf("poolStatus = (ok=%v, err=%v)", ok, err)
