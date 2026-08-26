@@ -381,6 +381,52 @@ probe fails, the CP reports "unknown", and the badge simply never appears — a
 silent loss, not an error. A deployment whose `AF_ECS_WORKSPACE_IMAGE` is not an
 ECR reference (mirroring GHCR directly, say) gets no badge either, by design.
 
+## Egress IP (the address a customer allow-lists)
+
+A deployment egresses from **exactly one address**: the Elastic IP on `00-network`'s
+NAT gateway. Everything outbound goes through it — every workspace's git, model API
+and package traffic, and the CP's own calls — because the slots and the CP task sit
+in private subnets with **no public IPv4** (`AssignPublicIp: DISABLED`; the slot
+launch template deliberately assigns none, ADR 0045 決定 3-3) and the only VPC
+endpoint is the free S3 gateway. So this is the value to hand to a corporate
+firewall or a SaaS IP allow-list.
+
+```bash
+alloc=$(aws cloudformation describe-stacks --stack-name af-ecs-network \
+  --query "Stacks[0].Outputs[?OutputKey=='NatEipAllocationId'].OutputValue" --output text)
+aws ec2 describe-addresses --allocation-ids "$alloc" --query "Addresses[0].PublicIp" --output text
+```
+
+⚠️ **`describe-addresses` also shows the ALB's addresses** (`ServiceManaged: alb`).
+Those are inbound, AWS-owned, and not contractually stable — never publish them.
+Inbound is the FQDN's job.
+
+**Keeping the address across a rebuild.** `NatEip` carries `DeletionPolicy: Retain`
+and `UpdateReplacePolicy: Retain`, so no stack operation — including a full
+`teardown.sh` — can release it. Capture the allocation id (`capture-env.sh` stores
+it as a `00-network` parameter) and pass it back at the next stand-up:
+
+```bash
+aws cloudformation deploy --stack-name af-ecs-network --template-file cfn/00-network.yaml \
+  --parameter-overrides NatEipAllocationId=eipalloc-...
+```
+
+🔴 **Do NOT set that parameter on a running deployment — not even to the address the
+stack already created.** Measured on a live deployment (2026-08-26, via
+`--no-execute-changeset`): CFN sees the `AllocationId` property's source change from
+`!GetAtt NatEip.AllocationId` to a parameter, evaluates it `Static` /
+`RequiresRecreation: Always`, and plans `ReplaceAndDelete` on the **NAT gateway** —
+with the same allocation still attached to the old one. Egress drops and the create
+cannot succeed. The parameter is for a *fresh* stand-up, where it is an ordinary
+create. On a live stack, retention alone already guarantees the address.
+
+⚠️ **One NAT means one AZ.** `00-network` puts a single NAT gateway in the first AZ
+for cost; if that AZ is lost, *every* workspace loses egress, including those in the
+second AZ. Adding a NAT per AZ is the fix — and it makes the deployment egress from
+**two** addresses. Decide before the allow-list is published: an unattached EIP costs
+~$3.6/month, so allocating the second address up front and registering both is the
+cheap way to keep that door open.
+
 ## Minimal IAM (deploying principal)
 
 What the human/CI principal running `release-ecr.sh` + `cloudformation deploy`
@@ -1005,7 +1051,12 @@ off a record you never created, so an issuance bug goes unnoticed. Delete it wit
 300).
 
 **12. What deliberately survives** anything above: the hosted zone itself, the
-`/af-cp/*` secrets if you kept them — and nothing else. Sweep to confirm: EC2
+`/af-cp/*` secrets if you kept them, **the NAT gateway's Elastic IP** — and nothing
+else. ⚠️ The EIP is new to this list: it is retained on purpose so a rebuild can
+egress from the same address (see §Egress IP), which also means an unattached EIP is
+now billed (~$3.6/month) until you release it. Finishing with a deployment for good
+is therefore one extra deliberate step: `aws ec2 release-address --allocation-id
+eipalloc-...`. Sweep to confirm the rest: EC2
 instances / volumes / snapshots / AMIs / EIPs, ECS clusters + task definitions,
 EFS, RDS instances + manual snapshots, ALB, ACM, NAT, ECR, Cloud Map namespaces,
 `/af` log groups, `af-*` IAM roles and instance profiles, non-default VPCs.

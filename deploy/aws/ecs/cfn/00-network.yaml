@@ -23,6 +23,18 @@ Parameters:
     Type: Number
     Default: 7700
     Description: Workspace Agent container port the CP reaches over Service Connect.
+  NatEipAllocationId:
+    Type: String
+    Default: ""
+    Description: >-
+      Elastic IP allocation id (eipalloc-…) to give the NAT gateway — that address is
+      the deployment's ONLY egress source IP, so it is what a customer registers in a
+      corporate firewall allow-list. Empty = the stack allocates one and retains it.
+      Pass an address allocated OUTSIDE this stack (or one retained from an earlier
+      one) to keep the same egress IP across a full teardown and rebuild, so the
+      registered value never has to change. ⚠️ Changing it on a live stack REPLACES
+      the NAT gateway: egress drops for the duration and the source IP becomes the
+      new address.
 
 Mappings:
   Subnets:
@@ -30,6 +42,10 @@ Mappings:
     Public1:  { Cidr: 10.20.1.0/24 }
     Private0: { Cidr: 10.20.10.0/24 }
     Private1: { Cidr: 10.20.11.0/24 }
+
+Conditions:
+  # No allocation handed in -> the stack owns the address (and retains it, below).
+  CreateNatEip: !Equals [ !Ref NatEipAllocationId, "" ]
 
 Resources:
   Vpc:
@@ -102,15 +118,25 @@ Resources:
 
   # One NAT gateway (single-AZ) — the main standing cost. Enough for a dev loop;
   # a prod env would put one NAT per AZ. Workspaces egress to git/Anthropic through it.
+  # ⚠️ Retained on purpose. This address is the deployment's ONLY egress source IP
+  # (every workspace reaches git / the model APIs through it), so it is the value a
+  # customer registers in a corporate firewall allow-list. Releasing it silently cuts
+  # everyone's outbound traffic and the replacement is a different address, so the
+  # stack must never take it away — not on delete, not on replacement. Retaining it
+  # is also what makes the address reusable: hand it back as NatEipAllocationId and
+  # the rebuilt deployment egresses from the same IP.
   NatEip:
     Type: AWS::EC2::EIP
+    Condition: CreateNatEip
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Domain: vpc
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-nat-eip" } ]
   Nat:
     Type: AWS::EC2::NatGateway
     Properties:
-      AllocationId: !GetAtt NatEip.AllocationId
+      AllocationId: !If [ CreateNatEip, !GetAtt NatEip.AllocationId, !Ref NatEipAllocationId ]
       SubnetId: !Ref PublicSubnet0
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-nat" } ]
   PrivateRt:
@@ -184,6 +210,13 @@ Resources:
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-ws-sg" } ]
 
 Outputs:
+  # The egress source IP's allocation, whoever created it. Capture it (capture-env.sh
+  # stores it as a 00-network parameter) and pass it back as NatEipAllocationId to
+  # rebuild the deployment behind the same address. Never empty: the false branch is
+  # a non-empty parameter by construction, and an empty Export fails the whole stack.
+  NatEipAllocationId:
+    Value: !If [ CreateNatEip, !GetAtt NatEip.AllocationId, !Ref NatEipAllocationId ]
+    Export: { Name: !Sub "${AWS::StackName}-NatEipAllocationId" }
   VpcId:
     Value: !Ref Vpc
     Export: { Name: !Sub "${AWS::StackName}-VpcId" }
