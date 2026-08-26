@@ -302,16 +302,55 @@
 }
 
 /* ---- Repos section rows ---- */
-.repo-cloning {
+/* リポジトリ取り込みジョブの行（docs/78）。進行中と、既読にするまで残る結末。
+   （旧 .repo-cloning は「押している間だけのスピナー」で、接続が切れれば消えていた） */
+.repo-job {
+  padding: 6px 8px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+.repo-job.settled {
+  background: var(--lp-hover-bg, var(--hover-bg));
+}
+.repo-job-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  color: var(--muted);
-  font-size: 13px;
 }
-.repo-cloning .codicon {
+.repo-job-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-job.running .repo-job-head > .codicon {
   color: var(--accent);
+}
+.repo-job.settled .codicon-warning {
+  color: var(--warn);
+}
+.repo-job-progress,
+.repo-job-error,
+.repo-job-hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+  padding-left: 24px;
+}
+/* 進捗の最終行はパスなので、折り返さず 1 行に収める（行の高さが暴れると木が跳ねる）。 */
+.repo-job-line {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-family: var(--mono);
+}
+.repo-job-error {
+  color: var(--del);
+  word-break: break-word;
 }
 .repo-row {
   position: relative;
@@ -841,7 +880,7 @@
   font-size: 12px;
 }
 .pmcp-file-path {
-  font-family: var(--mono-font, monospace);
+  font-family: var(--mono);
   font-weight: 600;
 }
 .pmcp-kind-chip {
@@ -877,7 +916,7 @@
 .pmcp-matrix th {
   color: var(--muted);
   font-weight: 600;
-  font-family: var(--mono-font, monospace);
+  font-family: var(--mono);
 }
 .pmcp-server-name {
   display: flex;

@@ -14,7 +14,7 @@ English | [日本語](12-settings.ja.md)
 |---|---|
 | **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / Agent instructions |
 | **Connections** | Agents / Git hosting / Ops & monitoring / Chat integration / MCP servers / MCP tokens |
-| **Workspace** | Usage / Agent memory / Toolchain / AWS SSM / Internal repositories / Danger zone |
+| **Workspace** | Usage / Agent memory / Toolchain / AWS SSM / Internal repositories / Export & import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
 - **On a phone it is a list → detail drill-down.** Back returns to the list; back again closes the dialog.
@@ -266,6 +266,23 @@ Create, rename, delete and browse git repositories that **live entirely inside t
 git hosting. The clone URL authenticates itself, so there is no connect step (and it works while the workspace
 is stopped). → [04 Repositories and git](04-git.md)
 
+### Export / import
+
+Collect your own settings into **a single file**, take it away, and read it back on another deployment or
+account. It carries three things: **personal settings** (display, keys, notifications, agent defaults, …),
+your **AWS SSM** registrations, and your **agent instructions**.
+
+- **Connections (Git / agent / AWS tokens and API keys) are NOT included.** Sign in again wherever you
+  import. The flip side is that **this file is safe to hand to someone else** — handing a team the whole
+  set of SSM registrations works.
+- Importing only **adds**. A profile with the same name, or the same host (alias + instance), is left as it
+  is and reported back as "already there".
+- Personal settings are **merged onto** what you have now. Things that accumulate — learned quick replies,
+  key bindings — are never emptied just because the imported file has none.
+- Agent instructions are the one exception: they **replace** the text you have now (you are asked to
+  confirm first).
+- The result stays on screen as counts, and **what did not go in is on the same line**.
+
 ### Danger zone
 
 **Recreate the workspace** (delete `~/repos` only and rebuild from the latest image) and **clean home** (a
@@ -301,6 +318,7 @@ deeper reset that also removes home except logins and connections). Both lose un
 | Change the Java / Node version | Toolchain |
 | Get into another server | AWS SSM |
 | Keep code that cannot leave the building | Internal repositories |
+| Take my settings to another environment | Export / import |
 | The environment is broken | Danger zone |
 
 ---

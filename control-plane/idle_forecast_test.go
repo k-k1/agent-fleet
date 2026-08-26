@@ -14,7 +14,7 @@ func TestHoldersOf(t *testing.T) {
 	past := now.Add(-time.Minute).Format(time.RFC3339)
 
 	t.Run("何も無ければ空", func(t *testing.T) {
-		got := holdersOf([]sessionWire{{Alive: true, State: stateIdle}}, false, now)
+		got := holdersOf([]sessionWire{{Alive: true, State: stateIdle}}, false, now, 0)
 		if len(got) != 0 {
 			t.Errorf("holders = %+v, want empty", got)
 		}
@@ -23,7 +23,7 @@ func TestHoldersOf(t *testing.T) {
 	t.Run("人待ちは止める理由にならない", func(t *testing.T) {
 		// docs/75 の本題そのもの: 質問が出ていても Workspace は止まる。
 		for _, st := range []string{stateQuestion, statePlan, statePermission, stateBlocked, stateAuth, stateSpendLimit, stateLimited} {
-			if got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: st}}, false, now); len(got) != 0 {
+			if got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: st}}, false, now, 0); len(got) != 0 {
 				t.Errorf("state %q が止める理由になっている: %+v", st, got)
 			}
 		}
@@ -34,7 +34,7 @@ func TestHoldersOf(t *testing.T) {
 			{Alive: true, Name: "s2", State: stateWorking},
 			{Alive: true, Name: "s1", State: stateIdle, BackgroundBusy: true},
 			{Alive: false, Name: "s9", State: stateWorking}, // 停止中は数えない
-		}, true, now)
+		}, true, now, 0)
 		if len(got) != 3 {
 			t.Fatalf("holders = %+v, want 3", got)
 		}
@@ -56,7 +56,7 @@ func TestHoldersOf(t *testing.T) {
 	t.Run("reaper が busy と見る状態は全部挙げる", func(t *testing.T) {
 		for _, st := range []string{stateWorking, stateCompacting} {
 			s := sessionWire{Alive: true, Name: "s1", State: st}
-			got := holdersOf([]sessionWire{s}, false, now)
+			got := holdersOf([]sessionWire{s}, false, now, 0)
 			if len(got) != 1 || got[0].Kind != "working" {
 				t.Errorf("state %q: holders = %+v, want working（holdsWorkspace=%v）", st, got, holdsWorkspace(s))
 			}
@@ -67,16 +67,25 @@ func TestHoldersOf(t *testing.T) {
 	})
 
 	t.Run("ピンは working より先に説明される", func(t *testing.T) {
-		got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: stateWorking, KeepAwakeUntil: future}}, false, now)
+		got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: stateWorking, KeepAwakeUntil: future}}, false, now, 0)
 		if len(got) != 1 || got[0].Kind != "pin" || got[0].Until != future {
 			t.Errorf("holders = %+v, want pin（解除すれば止まる、が正しい説明）", got)
 		}
 	})
 
 	t.Run("期限切れのピンは理由にならない", func(t *testing.T) {
-		got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: stateIdle, KeepAwakeUntil: past}}, false, now)
+		got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: stateIdle, KeepAwakeUntil: past}}, false, now, 0)
 		if len(got) != 0 {
 			t.Errorf("holders = %+v, want empty", got)
+		}
+	})
+
+	// ★ セッションが 1 つも無い Workspace でも、取り込み中なら止まらない（docs/78）。
+	// reaper 側の busy と対で入れてある — 片方だけだと「止まらないのに理由が空」になる。
+	t.Run("取り込み中はセッションが無くても理由になる", func(t *testing.T) {
+		got := holdersOf(nil, false, now, 1)
+		if len(got) != 1 || got[0].Kind != "repojob" {
+			t.Errorf("holders = %+v, want repojob", got)
 		}
 	})
 }
