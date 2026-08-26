@@ -280,8 +280,8 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.243
-ARG OPENCODE_VERSION=1.18.22
+ARG CLAUDE_CODE_VERSION=2.1.246
+ARG OPENCODE_VERSION=1.18.23
 ARG CODEX_VERSION=0.149.1
 ARG COPILOT_VERSION=1.0.80
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
@@ -307,10 +307,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと
 # 起動即 SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホスト
 # でもイメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
-ARG AGY_VERSION=1.1.19
-ARG AGY_RELEASE_BUILD=4894004681244672
-ARG AGY_SHA256_X64=a02132a7c6c647ef0ad483ecbe767619adf6b660a5589cba5c937b0c83909b97
-ARG AGY_SHA256_ARM64=15bd9959ec0c08bcbfee94b376f02bd8b552dcf17a539bcd210a443fb82443cb
+ARG AGY_VERSION=1.1.21
+ARG AGY_RELEASE_BUILD=6424454201475072
+ARG AGY_SHA256_X64=4806a347119d36be6d8ab5cc3f03319bc6aa8407a8d9203de7976a42954cabde
+ARG AGY_SHA256_ARM64=8626b97aec1ef96abdabd234c0b8259a2fdf2a3f3918c927641f8c821342d5e4
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -392,9 +392,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.19.0
-ARG KIRO_SHA256_X64=51f88c55c5231100049207961fab7e50ed958b80e03c08d825216c8fc08f6170
-ARG KIRO_SHA256_ARM64=bdea872bfb79bfb43a0f494ee0351a92eb619d822ae5d4c8b4e89b69cef034ef
+ARG KIRO_VERSION=2.19.2
+ARG KIRO_SHA256_X64=940d1d348d990ac9d479fd7b41d6ec51f3aafe345a40bff22f5744893f1438aa
+ARG KIRO_SHA256_ARM64=84df9ddcf02156d9563910850c7a07805ea41cf6a32bc30438741878f10a5af5
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \

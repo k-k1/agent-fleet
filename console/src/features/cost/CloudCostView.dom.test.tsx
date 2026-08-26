@@ -210,6 +210,29 @@ describe("コスト配分タグの状態", () => {
     expect(host?.querySelector(".cc-notes .form-err")).toBeNull();
   });
 
+  // 組織のメンバーアカウントでは有効化状態が永久に読めず、CP は `error` に理由を
+  // 入れたまま `attributed` で「実物で効いていると分かった」を伝えてくる。ここを
+  // 見落とすと、按分済みの金額の真上に「割り当てられていません」と出し続ける。
+  it("按分が実物で確かめられているなら、読めない旨の警告は出さない", async () => {
+    api.mockResolvedValue({
+      total_micro: 730_000,
+      days: [],
+      services: [],
+      meta: meta({
+        tags: {
+          attributed: ["af-membership"],
+          error: "activation state is not readable from a member account (only the payer may activate)",
+        },
+      }),
+    });
+    await mount(<MyCloudCostView />);
+    expect(text()).not.toContain("自動で有効化できませんでした");
+    expect(text()).not.toContain("取り戻せません");
+    // 生の英文（CP の説明文）も画面には出さない。
+    expect(text()).not.toContain("payer");
+    expect(host?.querySelector(".cc-notes .form-err")).toBeNull();
+  });
+
   it("全部 active なら何も足さない", async () => {
     api.mockResolvedValue({
       total_micro: 1_000_000,

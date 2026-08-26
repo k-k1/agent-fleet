@@ -155,10 +155,12 @@ func builtinDefs(s *secrets.Data) []ServerDef {
 			Label:     spec.label,
 			Origin:    OriginBuiltin,
 			Transport: TransportStdio,
-			Command:   paths.ExePath(),
-			Args:      builtinRunArgsFor(id, spec),
-			Enabled:   true,
-			Targets:   targets,
+			// Materialized into each CLI's own config file, which outlives any single
+			// build of the agent — so never a volatile path (paths.ConfigExePath).
+			Command: paths.ConfigExePath(),
+			Args:    builtinRunArgsFor(id, spec),
+			Enabled: true,
+			Targets: targets,
 		})
 	}
 	return out
