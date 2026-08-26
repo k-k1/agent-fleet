@@ -52,6 +52,21 @@ func TestSpinnerActive(t *testing.T) {
 		// is punctuation, so \p{L}\p{N} alone missed it. Real capture (claude_sqchdhn): a
 		// 20-minute /copyedit turn read idle for its whole duration.
 		"· /copyedit 02-noir A6… (20m 1s · almost done thinking with high effort)",
+		// A narrow pane drops the elapsed timer, not the status phrase: claude fits the
+		// phrase first and adds the timer only if the remaining width allows. At the 60
+		// columns the Console gives a phone session, "almost done thinking with high
+		// effort" alone uses the budget up. Real captures (claude_s36uuiv, 60x46) — the
+		// first read idle for the whole "almost done" window of a 14-minute turn, while
+		// the second, same turn, same pane, read busy once the phrase shortened.
+		"✳ Calculating… (almost done thinking with high effort)",
+		"✶ Calculating… (14m 25s · thinking with high effort)",
+		"✻ Zigzagging… (thinking some more with high effort)",
+		"✽ Perusing… (still thinking)",
+		"· 検証ハーネスを作成中… (almost done thinking with high effort)",
+		"· /copyedit 02-noir A6… (almost done thinking with high effort)",
+		// The tokens can outlive the timer too (they are laid out after it, but each
+		// segment is tested against the width on its own).
+		"✳ Calculating… (↓ 45.2k tokens · almost done thinking with high effort)",
 	}
 	for _, s := range busy {
 		if !spinnerActive(s) {
@@ -96,6 +111,17 @@ func TestSpinnerActive(t *testing.T) {
 		"// /copyedit 02-noir A6… (20m 1s · almost done thinking with high effort)",
 		// ...and the ≥2-space-indented-quote guard must still hold for the new alternative.
 		"  · /copyedit 02-noir A6… (20m 1s · almost done thinking with high effort)",
+		// The timer-less (narrow-pane) form must keep every guard the timer-bearing one
+		// has: an indented or commented quote of it is still a quote.
+		"  ✳ Calculating… (almost done thinking with high effort)",
+		"//\t✳ Calculating… (almost done thinking with high effort)",
+		"// /copyedit 02-noir A6… (almost done thinking with high effort)",
+		// It also carries one guard of its own: with no timer to vouch for the line, only
+		// the closing paren at end-of-line separates a spinner from col-0 prose that
+		// happens to run "…" into a parenthetical. A stuck false busy never clears — the
+		// transcript line stays in the pane — so this is the more expensive direction.
+		"● Read the plan… (thinking it over) and then rewrote the section",
+		"❯ 直した… (thinking の訳語をどうするか) を決めてから続けます",
 	}
 	for _, s := range idle {
 		if spinnerActive(s) {
