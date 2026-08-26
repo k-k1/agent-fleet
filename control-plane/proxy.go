@@ -90,6 +90,9 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		switch {
 		case p == "/api/fs/delete":
 			return "fs.delete", q.Get("path"), true
+		case strings.HasPrefix(p, "/api/repo-jobs/"):
+			// 取り込みの中止／既読（docs/78）。target は job id（URL だけから採る）。
+			return "repo.job.cancel", strings.TrimPrefix(p, "/api/repo-jobs/"), true
 		case name != "" && p == "/api/repos/"+name:
 			return "repo.delete", name, true
 		}

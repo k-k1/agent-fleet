@@ -4,8 +4,12 @@ import {
   setSetting,
   CODE_FONTS,
   CHAT_FONTS,
+  CJK_FONTS,
+  CJK_FONT_AUTO,
+  CJK_FONT_OFF,
   READER_FONTS,
   fontStack,
+  termFontStack,
   chatFontStack,
   readerFontStack,
   ICON_SETS,
@@ -86,10 +90,29 @@ export function DisplayTab() {
         ))}
       </section>
 
+      {/* 和文フォントは 1 か所で全面に効く（--mono と fontStack の先頭に入る
+          unicode-range 限定の @font-face）。①②③ のように「欧文フォントも持っている
+          が半角で描いてしまう」文字だけを和文側へ回す指定なので、面ごとのフォント
+          選択より上位に置く。端末だけは対象外（settings.ts の termFontStack 参照）。 */}
+      <section className="ds-group">
+        <h4 className="ds-title">{tr("display.cjk_font")}</h4>
+        <Row label={tr("display.font")}>
+          <ChipChoice
+            value={s.cjkFont}
+            options={CJK_FONTS.map((f) => [f, FONT_LABEL_KEYS[f] ? tr(FONT_LABEL_KEYS[f]) : f])}
+            onChange={(v) => setSetting("cjkFont", String(v))}
+          />
+        </Row>
+        <Row label={tr("display.preview")}>
+          <span className="cjk-preview">{tr("display.cjk_font_sample")}</span>
+        </Row>
+        <p className="muted ds-note">{tr("display.cjk_font_note")}</p>
+      </section>
+
       <section className="ds-group">
         <h4 className="ds-title">{tr("display.terminal")}</h4>
         <Row label={tr("display.font")}>
-          <FontSelect value={s.termFont} onChange={(v) => setSetting("termFont", v)} />
+          <FontSelect value={s.termFont} onChange={(v) => setSetting("termFont", v)} stack={termFontStack} />
         </Row>
         <Row label={tr("display.font_size")}>
           <Stepper value={s.termSize} onChange={(v) => setSetting("termSize", v)} />
@@ -181,6 +204,8 @@ const FONT_LABEL_KEYS: Record<string, MsgKey> = {
   "セリフ": "font.serif",
   "明朝": "font.mincho",
   "ゴシック": "font.gothic",
+  [CJK_FONT_AUTO]: "font.cjk_auto",
+  [CJK_FONT_OFF]: "font.cjk_off",
 };
 // i18n-exempt-end
 

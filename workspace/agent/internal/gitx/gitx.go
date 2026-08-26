@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -58,6 +59,16 @@ func Run(dir string, args ...string) (string, error) {
 func Combined(dir string, args ...string) (string, error) {
 	out, err := Cmd(dir, args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// Stream runs git bound to ctx with stdout+stderr going to w as they are produced,
+// instead of being accumulated. For the long network ops whose output IS the progress
+// (clone), where buffering it all would both hide the progress and hold a large
+// repository's per-file lines in memory.
+func Stream(ctx context.Context, w io.Writer, dir string, args ...string) error {
+	cmd := CmdContext(ctx, dir, args...)
+	cmd.Stdout, cmd.Stderr = w, w
+	return cmd.Run()
 }
 
 // OK reports whether git exits 0 — for existence/state probes where the
