@@ -36,6 +36,11 @@ type CostTagState = {
   pending?: string[];
   declined?: string[];
   error?: string;
+  // 有効化状態は読めなかったが、その軸の値が請求に実際に返ってきている＝**効いている
+  // ことが実物で分かった**キー（CP の noteAttribution）。組織のメンバーアカウントでは
+  // `ListCostAllocationTags` が構造的に AccessDenied になり、payer がやった有効化を
+  // CP からは永久に読めないので、この経路でしか「効いている」と言えない。
+  attributed?: string[];
 };
 
 type CostMeta = {
@@ -143,7 +148,12 @@ function CostNotes({ meta, from }: { meta: CostMeta; from: string }) {
           <Icon name="warning" /> {tr("cost.tags_pending", { keys: (meta.tags?.pending || []).join(", ") })}
         </p>
       )}
-      {meta.tags?.error && (
+      {/* ⚠️ 按分が効いていることが実物で分かっているなら、ここは**何も出さない**。
+          メンバーアカウントでは有効化状態が読めないので `error` は永久に空にならず、
+          それをそのまま描くと「費用が誰にも割り当てられておらず取り戻せません」という
+          真逆の警告を、按分済みの金額の真上に出し続けることになる（acrt で発生）。
+          効いているのは正常な状態であり、正常な状態は黙っている。証拠は数字そのもの。 */}
+      {meta.tags?.error && !(meta.tags?.attributed?.length || 0) && (
         <p className="form-err">
           <Icon name="warning" /> {tr("cost.tags_error")} <span className="mono">{meta.tags.error}</span>
         </p>
