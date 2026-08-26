@@ -143,6 +143,99 @@
   }
 }
 
+.wi-report {
+  flex: 0 0 auto;
+  color: var(--muted);
+  opacity: 0;
+  display: inline-flex;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 2px;
+}
+.wi-row:hover .wi-report,
+.wi-report:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .wi-report {
+    opacity: 1;
+  }
+}
+
+.wi-qbranch {
+  margin: 0 0 12px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.wi-qbranch label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+.wi-qbranch input {
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--input-bg, transparent);
+  color: inherit;
+  font-size: 13px;
+}
+.wi-qbranch .wi-qhint {
+  display: block;
+  margin-top: 5px;
+}
+
+/* --- report modal --------------------------------------------------------- */
+
+.wi-rtarget {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.wi-rlabel {
+  color: var(--muted);
+  font-size: 11px;
+}
+.wi-rsession,
+.wi-rnote,
+.wi-rbody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.wi-rsession select,
+.wi-rnote input,
+.wi-rbody textarea {
+  padding: 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--input-bg, transparent);
+  color: inherit;
+  font-size: 13px;
+}
+.wi-rbody textarea {
+  font-family: var(--mono, ui-monospace, monospace);
+  line-height: 1.5;
+  resize: vertical;
+}
+.wi-rhint {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.wi-ractions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .wi-start {
   flex: 0 0 auto;
   border: 1px solid var(--border);

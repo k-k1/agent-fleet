@@ -1,6 +1,6 @@
 # 80. 外部の作業項目（GitHub Issue / Jira チケット）を左ペインに出し、そこから始める
 
-- 状態: ✅ **P0〜P1 実装済み**（2026-08-26）。⏸ 残り = 実機目視と P2 以降。
+- 状態: ✅ **P0〜P2 実装済み**（2026-08-26）。⏸ 残り = 実機目視・作業グループ自動作成の判断（§80.16-5）・P3 以降。
   採否と判断は [decisions/0061](decisions/0061-work-item-inbox.md)。
 - ゴール: 人の仕事の起点である**チケット**を左ペインに置き、そこから 1 クリックで
   文脈込みのセッションを立てられるようにする。Workspace が停止していても一覧は見え、
@@ -322,16 +322,32 @@ URL: https://example.atlassian.net/browse/PROJ-123
   インジェクション面が「エージェントが自分で読みに行った結果」に限定されること。
 - 欠点も明記する: 本文を読むために **1 ターン余分に焼く**。だから opt-in を残す。
 
-## 80.10 書き戻し
+## 80.10 書き戻し（P2 実装済み）
 
-**読み取り専用が既定。** v1 の上限は「このセッションの報告をコメント下書きにする → プレビュー →
-人が承認して投稿」まで（P2）。材料は指示台帳（[51](51-session-report-v2-ledger.md)）と
-変更ファイル一覧（[68](68-session-changed-files.md)）で既に揃っている。
+**読み取り専用が既定。** 唯一の書き戻しが「作業の報告をコメントする」で、**人が下書きを読んで
+押したときだけ**走る。MCP ツールは無く（エージェントからは到達できない）、自動の発火も無く、
+状態遷移も担当者変更もクローズもしない。
 
-**自動でチケットを閉じない・自動でコメントしない。** 課題本文は第三者が書ける入力なので、
-「本文を読んだエージェントが、その指示に従ってチケットを操作する」経路を作らないこと自体が
-対策になる（[25](25-ops-monitoring.md) §5 と同じ判断）。投稿そのものは `gh` / MCP が持っている
-ので、af は下書きを作るところまでで十分でもある。
+**af が下書くのは事実だけ。** ブランチと変更ファイル（[68](68-session-changed-files.md) の
+「転写 × git」）——セッション単位でこれを知っているのは af だけで、手で集めるのが面倒な部分。
+**要約は生成しない**: 他人のチケットに載るコメントは利用者自身の発言で、もっともらしく読める
+生成文は「読まずに投稿される」典型だからである。冒頭の「ひとこと」欄が人の担当。
+
+⚠️ **パスはリポジトリ相対で書く。** 実描画で見つけた —— 作業項目からの起動は worktree を作るので
+`repo` は `webshop@checkout-validation` になり、下書きに
+`webshop@checkout-validation/src/checkout/validate.ts` と並んでいた。課題の読み手には無意味な
+ローカルのフォルダ名で、こちらの作業コピーの並べ方を公開してもいる。ただし**作業コピーを 2 つ
+またいだセッションだけは base 名を前置する**（`src/index.ts` が衝突して片方が黙って消えるため。
+前置するのは base であって worktree ではない）。
+
+⚠️ **Jira の投稿は ADF**（Atlassian Document Format）。REST v3 はコメント本文にプレーン文字列を
+受け付けず 400 になる —— この経路が壊れる一番ありがちな形。空行で段落、段落内の改行は
+`hardBreak` に写す。
+
+**PR 起票はここでは作らない**（当初 P2 に挙げていたが取り下げ）。理由は
+[ADR 0061](decisions/0061-work-item-inbox.md) 決定 4 そのもので、**セッションの中の `gh` が既に
+できる**（透過認証済み）。af 側に 2 つ目の実装を置くと、push 済みかの判定・既定ブランチの解決・
+既存 PR の検出を af が抱えることになり、`gh pr create` の劣化コピーが増える。
 
 ## 80.11 セキュリティ
 
@@ -361,7 +377,7 @@ URL: https://example.atlassian.net/browse/PROJ-123
 |---|---|---|
 | **P0** ✅ | モデル・**GitHub アダプタ**（既存トークン流用＝追加認証ゼロ）・CP キャッシュ・SSE stream・左ペイン独立セクション・`LaunchModal` 前埋め・`work_item_session` 台帳 | `workspace/agent/workitems.go`（新設）/ `control-plane/workitems.go`（新設）+ `{store,store_sqlite,routes,events}.go` ＋ migrations 0051 / pg 0035 / `console/src/features/workitems/`（新設）/ `App.tsx`・`core/push/*`・`StartHost`・`LaunchModal` |
 | **P1** | **Jira 接続 kind**（email + API トークン）・JQL 保存クエリ・repo マッピング | `connections.go`・`ConnectionsTab`・アダプタ追加 |
-| **P2** | 作業グループ自動作成・ブランチ名テンプレ設定・報告コメントの下書き／PR 起票 | `workingSetsStore.ts`・`session_report` 周辺 |
+| **P2** ◐ | **報告コメントの下書き → 人が承認して投稿**（GitHub / Jira）＋**ブランチ名テンプレート**（`{key}`/`{slug}`・プレビュー付き）。⏸ 作業グループ自動作成は保留（§80.16-5）、**PR 起票は取り下げ**（§80.10） | `workspace/agent/workitems_comment.go`（新設）・`control-plane/workitems.go`・`features/workitems/{report.ts,WorkItemReportModal.tsx}`・`lib/settings.ts` |
 | **P3** | webhook 受信・通知・（opt-in の）自動初動 | [25](25-ops-monitoring.md) §4.6 と合流 |
 | **P4** | 汎用アダプタ（API トークンで動く stdio MCP を `mcpreg` の `tools/call` で叩く / URL テンプレ＋JSON 写像） | `internal/mcpreg/` |
 
@@ -405,3 +421,14 @@ URL: https://example.atlassian.net/browse/PROJ-123
    「始める」対象として自然だが、行数が増える。既定 off で始める。
 4. **通知**。アサインされた瞬間に通知するかは、通知センターの語彙（流れ物 / バッジ）を
    [77](77-member-handoff.md) §77.9 に合わせて決める。P3。
+5. **★ 作業グループの自動作成（P2 で保留）。** 「1 チケット = 1 作業グループ」は
+   [52](52-working-sets.md) の所属モデルと噛み合わない —— 所属は**リポジトリ粒度**で、
+   `ProjectTree` は `repoInSet(base)` で群ごと絞る。だからチケット用のグループに
+   セッション（や worktree）だけを入れると、**そのセッションはツリーから消える**（親の
+   リポジトリ群が除外されるため）。かといって base を入れると、そのリポジトリの他の
+   セッションが全部入ってきて、案件別に分ける意味が消える。
+   選択肢は 2 つで、どちらも docs/52 の決定に触るので単独では進めない:
+   (a) 所属モデルを**作業コピー粒度**へ広げる（set が worktree を持てる／直接割当された
+   セッションはその群を引き連れて出る）。1 チケット 1 worktree なので意味は素直。
+   (b) 自動作成はやめ、既存グループへの手動割当だけを残す（グループ一覧が
+   チケットの数だけ増えるのを避けられる副次効果もある）。

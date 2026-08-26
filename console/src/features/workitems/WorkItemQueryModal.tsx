@@ -9,7 +9,9 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { useReposStore } from "../repos/store.ts";
+import { setSetting, useSettings } from "../../lib/settings.ts";
 import { workItemQueryCreate, workItemQueryDelete, workItemQueryUpdate } from "./api.ts";
+import { DEFAULT_BRANCH_TEMPLATE, branchForItem } from "./read.ts";
 import type { WorkItemQuery } from "./read.ts";
 
 interface Props {
@@ -32,6 +34,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
   const toast = useToast();
   const askConfirm = useConfirm();
   const repos = useReposStore((s) => s.repos);
+  const settings = useSettings();
   const [provider, setProvider] = useState("github");
   const [label, setLabel] = useState("");
   const [query, setQuery] = useState(queries.length ? "" : DEFAULT_QUERY.github);
@@ -117,6 +120,27 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
           ))}
         </ul>
       )}
+      {/* ブランチ名テンプレート（docs/80 P2）。プレビューを添えるのは、{slug} が
+          日本語タイトルで空になる（＝結果が feature/issue-45 になる）ことが、
+          説明文よりも 1 行の実例で伝わるから。 */}
+      <div className="wi-qbranch">
+        <label>
+          <span>{tr("wi.branch_template")}</span>
+          <input
+            value={settings.workItemBranchTemplate}
+            placeholder={DEFAULT_BRANCH_TEMPLATE}
+            spellCheck={false}
+            onChange={(e) => setSetting("workItemBranchTemplate", e.target.value)}
+          />
+        </label>
+        <p className="wi-qhint">
+          {tr("wi.branch_preview", {
+            branch: branchForItem({ key: "acme/web#45", title: "Fix the empty list" }, settings.workItemBranchTemplate),
+            // i18n-exempt: 非 ASCII のタイトル見本そのもの（訳すと例が例でなくなる・docs/28 §4）
+            branch2: branchForItem({ key: "PROJ-123", title: "ログイン後に一覧が空になる" }, settings.workItemBranchTemplate),
+          })}
+        </p>
+      </div>
       <div className="wi-qform">
         <label>
           <span>{tr("wi.query_provider")}</span>

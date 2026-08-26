@@ -190,3 +190,31 @@ describe("branchForItem — Jira", () => {
     expect(branchForItem({ key: "PROJ-123", title: "ログイン後に一覧が空になる" })).toBe("feature/proj-123");
   });
 });
+
+describe("branchForItem — テンプレート（P2）", () => {
+  it("既定は feature/{key}-{slug}", () => {
+    expect(branchForItem({ key: "acme/web#45", title: "Fix it" })).toBe("feature/issue-45-fix-it");
+    expect(branchForItem({ key: "acme/web#45", title: "Fix it" }, "")).toBe("feature/issue-45-fix-it");
+    expect(branchForItem({ key: "acme/web#45", title: "Fix it" }, "   ")).toBe("feature/issue-45-fix-it");
+  });
+
+  it("差し込みは {key} と {slug}", () => {
+    expect(branchForItem({ key: "PROJ-123", title: "Fix it" }, "{key}")).toBe("proj-123");
+    expect(branchForItem({ key: "PROJ-123", title: "Fix it" }, "bugfix/{key}/{slug}")).toBe("bugfix/proj-123/fix-it");
+  });
+
+  it("★ {slug} が空でも区切りが取り残されない（日本語タイトル）", () => {
+    expect(branchForItem({ key: "PROJ-1", title: "日本語のみ" }, "feature/{key}-{slug}")).toBe("feature/proj-1");
+    expect(branchForItem({ key: "PROJ-1", title: "日本語のみ" }, "{slug}/{key}")).toBe("proj-1");
+  });
+
+  it("git が拒む形にはしない", () => {
+    const b = branchForItem({ key: "PROJ-1", title: "x" }, "feat ure/{key}~^:?*[/{slug}");
+    expect(b).toMatch(/^[A-Za-z0-9._/-]+$/);
+    expect(b).not.toMatch(/\/\/|\/$|^\//);
+  });
+
+  it("テンプレートが空文字に潰れても既定へ落ちる", () => {
+    expect(branchForItem({ key: "PROJ-1", title: "日本語" }, "{slug}")).toBe("feature/proj-1");
+  });
+});

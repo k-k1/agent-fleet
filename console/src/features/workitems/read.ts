@@ -144,13 +144,38 @@ export function titleSlug(title: string, max = 32): string {
   return s.length > max ? s.slice(0, max).replace(/-+$/, "") : s;
 }
 
-/** Branch name for a work item: `feature/<key>-<slug>`. The key's owner/name prefix is
- * dropped (the working copy already says which repo it is) and "#" cannot appear in a
- * git ref, so it becomes a dash. */
-export function branchForItem(item: { key: string; title: string }): string {
-  const base = shortKey(item.key).replace(/^#/, "issue-").replace(/[^A-Za-z0-9._-]+/g, "-").toLowerCase();
+/** The default branch template. `{key}` is the item key with the owner/name prefix
+ * dropped (the working copy already says which repo it is) and "#" turned into
+ * "issue-" — "#" cannot appear in a git ref. `{slug}` is the ASCII slug of the title. */
+export const DEFAULT_BRANCH_TEMPLATE = "feature/{key}-{slug}";
+
+/** Branch name for a work item, from the user's template (docs/80 P2).
+ *
+ * ⚠️ A template that yields something git would refuse is worse than no template, so the
+ * result is sanitised: only [A-Za-z0-9._/-] survives, empty path segments collapse, and
+ * an empty `{slug}` (every Japanese title) must not leave a trailing separator behind —
+ * "feature/issue-45-" is not a name anyone typed on purpose. */
+export function branchForItem(item: { key: string; title: string }, template?: string): string {
+  const key = shortKey(item.key).replace(/^#/, "issue-").replace(/[^A-Za-z0-9._-]+/g, "-").toLowerCase();
   const slug = titleSlug(item.title);
-  return `feature/${slug ? `${base}-${slug}` : base}`;
+  const raw = (template && template.trim() ? template.trim() : DEFAULT_BRANCH_TEMPLATE)
+    .replace(/\{key\}/g, key)
+    .replace(/\{slug\}/g, slug);
+  return sanitizeBranch(raw) || `feature/${key}`;
+}
+
+/** Trim a rendered template into something git accepts. Kept separate so the settings
+ * field can show the user what their template actually produces. */
+export function sanitizeBranch(raw: string): string {
+  const cleaned = raw
+    .replace(/[^A-Za-z0-9._/-]+/g, "-")
+    .split("/")
+    .map((seg) => seg.replace(/[-.]+$/g, "").replace(/^[-.]+/g, ""))
+    .filter(Boolean)
+    .join("/");
+  // git は末尾 ".lock"・".." ・"@{" を拒む。ここまで来る形ではまず出ないが、テンプレート
+  // は自由入力なので落としておく。
+  return cleaned.replace(/\.\.+/g, ".").replace(/\.lock$/i, "");
 }
 
 /** The first prompt (docs/80 §80.9).

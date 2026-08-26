@@ -33,6 +33,13 @@ export function workItemQueryDelete(id: string): Promise<Response> {
   return raw(`api/work-item-queries/${q(id)}`, { method: "DELETE" });
 }
 
+/** Post a human-approved draft back to the ticket (docs/80 §80.10). The CP relays it to
+ * the Agent, which holds the tokens; a stopped workspace answers 409 rather than being
+ * started for it. */
+export function workItemComment(rec: { provider: string; key: string; body: string }): Promise<unknown> {
+  return apiJSON("api/work-items/comment", "POST", rec);
+}
+
 /** Ledger: record that a session was started for an item. Idempotent per
  * (itemKey, sessionName) on the CP, so a retried launch does not double the row. */
 export function workItemSessionCreate(rec: {
