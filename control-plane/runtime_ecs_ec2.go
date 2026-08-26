@@ -119,6 +119,20 @@ const (
 	// out of the container — same layout the sandbox harness measured (docs/64 §64.14).
 	ec2HomeMountBase = "/af-home"
 
+	// ec2DeploymentRetireBudget caps the wait between "point the service at the new task
+	// definition" and "set desiredCount 1" (see launch()). Measured on a throwaway
+	// cluster: the replaced deployment leaves ACTIVE in 10-23s at desiredCount 0
+	// (docs/64 §64.39.4). Overshooting scales up anyway, which is exactly the behavior
+	// this whole split replaced.
+	//
+	// ⚠️ Why 25s and not "as long as it takes": on the re-attach-to-the-same-running-slot
+	// path launch() is NOT backgrounded — it runs inside the Start HTTP request (see
+	// Start's `deferred` branch), and the ALB in front of the CP has the default 60s idle
+	// timeout, which is what turned an earlier 90s wait into a 504 while the workspace
+	// converged fine behind it (watchReady). That path also skips this wait entirely
+	// whenever the task definition was reused, which is most re-wakes.
+	ec2DeploymentRetireBudget = 25 * time.Second
+
 	// Where the credentials-only EFS access point lands inside the task. home now lives
 	// on a single-AZ EBS volume, so the auth/identity set is kept on EFS as well and the
 	// entrypoint symlinks it back into ~ (ADR 0045 決定 3-6 のハイブリッド).
@@ -1431,10 +1445,43 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 	}
 }
 
-// launch takes an attached volume to a running task: wait for the slot to be a usable
-// ECS container instance, mount the home, register a task definition pinned to that
-// instance, and put the service at desiredCount 1.
+// launch takes an attached volume to a running task: register the task definition and
+// point the service at it, wait for the slot to be a usable ECS container instance,
+// mount the home, and only then put the service at desiredCount 1.
+//
+// ⚠️ The ORDER of those two service calls is the whole point, and it is worth ~40
+// seconds on 40% of Starts (docs/64 §64.39, measured on the production pool).
+//
+// This used to be one call — `UpdateService(desiredCount=1 + taskDefinition=new +
+// forceNewDeployment)` — issued after the mount. ECS answers a task-definition change by
+// demoting the current deployment to ACTIVE and making the new one PRIMARY, and it then
+// satisfies the desiredCount increase from the ACTIVE (i.e. OLD) deployment first:
+//
+//   - if the old revision's slot is still alive, a task from the OLD task definition
+//     (old image, old env) actually RUNS for a minute or two next to the real one, and
+//     Service Connect load-balances across both — the same window that silently dropped
+//     an in-flight OAuth flow_id (see lastTaskDef), except it opens on EVERY Start whose
+//     task definition changed, not just on a forced deployment;
+//   - if that slot is gone (terminated, rebuilt in another class), the old revision's
+//     `ec2InstanceId` constraint matches nothing, ECS logs "MemberOf placement constraint
+//     unsatisfied" naming some OTHER instance, and the real task waits out a ~41s retry.
+//
+// Splitting the call fixes both, and the wait it introduces is free because it hides
+// behind work we already do. Measured on a throwaway cluster (§64.39.4): the old
+// deployment stops accepting tasks as soon as it leaves ACTIVE — 10-23s — while the
+// slot needs ~18s to register with ECS plus the mount. Waiting for it to DISAPPEAR
+// (59s) or for rolloutState=COMPLETED (90s) would cost more than the bug.
 func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep) error {
+	// Everything this needs — the instance the constraint pins, the AZ the ENI must land
+	// in — is already decided, so it can all happen while the slot is still booting.
+	taskDefArn, reused, err := e.reuseOrRegisterTaskDef(ctx, p, prep)
+	if err != nil {
+		return fmt.Errorf("register task def: %w", err)
+	}
+	// Best-effort: on failure `prepared` stays false and the tail below falls back to the
+	// old single call, which is a slower Start rather than a broken one.
+	prepared := !reused && e.pointServiceAt(ctx, taskDefArn, p)
+
 	e.setPhase("slot: joining the cluster")
 	if err := e.waitSlotRegistered(ctx, p.instanceID); err != nil {
 		return fmt.Errorf("slot %s not registered with the cluster: %w", p.instanceID, err)
@@ -1454,11 +1501,14 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	// …and it is no longer free, so its free-pool clock stops. Same moment, opposite tag.
 	e.clearSlotFree(ctx, p.instanceID)
 	e.setPhase("task: starting")
-	taskDefArn, reused, err := e.reuseOrRegisterTaskDef(ctx, p, prep)
-	if err != nil {
-		return fmt.Errorf("register task def: %w", err)
-	}
-	if err := e.upsertService(ctx, taskDefArn, p, !reused); err != nil {
+	if prepared {
+		// Normally already true by now — the slot took longer to join than the old
+		// deployment took to retire — so this returns on its first look.
+		e.waitOldDeploymentRetired(ctx)
+		if err := e.scaleUpService(ctx); err != nil {
+			return fmt.Errorf("service: %w", err)
+		}
+	} else if err := e.upsertService(ctx, taskDefArn, p, !reused); err != nil {
 		return fmt.Errorf("service: %w", err)
 	}
 	// The service now carries the state; drop the claim so State() reads the real thing,
@@ -2948,20 +2998,14 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 	return in
 }
 
-// upsertService creates or updates the workspace's service at desiredCount 1 on the EC2
-// launch type. The awsvpc ENI must land in the slot's own AZ, so the network config
-// carries only that AZ's subnet — and Service Connect stays exactly as on Fargate,
-// which is why Endpoint() did not have to change (docs/64 §64.4.4).
-// forceNewDeployment should be false only when taskDefArn is a task definition
-// reuseOrRegisterTaskDef found unchanged from what this service is already running —
-// specifying it without forcing lets ECS notice nothing actually changed and skip
-// the rolling replacement, instead of retiring a perfectly good running task.
-func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p ec2Placement, forceNewDeployment bool) error {
+// netConfig is the awsvpc configuration every service call carries. The ENI must land in
+// the slot's own AZ, so it names only that AZ's subnet.
+func (e *ecsEC2Runtime) netConfig(ctx context.Context, p ec2Placement) (*ecstypes.NetworkConfiguration, error) {
 	subnet, err := e.subnetIn(ctx, p.az)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	netCfg := &ecstypes.NetworkConfiguration{
+	return &ecstypes.NetworkConfiguration{
 		AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
 			Subnets:        []string{subnet},
 			SecurityGroups: []string{e.base.cfg.securityGroup},
@@ -2971,6 +3015,123 @@ func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p 
 			// (ADR 0045 決定 3-3, measured: 11 minutes offline).
 			AssignPublicIp: ecstypes.AssignPublicIpDisabled,
 		},
+	}, nil
+}
+
+// pointServiceAt moves an EXISTING service onto taskDefArn WITHOUT touching
+// desiredCount, so the deployment ECS spawns for the revision change can retire while
+// the slot is still booting. See launch() for why the two halves must not be one call.
+//
+// It reports whether the caller may finish with a bare scaleUpService. Everything that
+// makes that unsafe answers false and leaves the old single-call path in charge:
+//   - no service yet (first ever Start) — CreateService has no old deployment to fight;
+//   - the service already points here — no deployment is spawned, nothing to wait for;
+//   - the call failed — say so and take the slow path rather than scaling up a service
+//     that may still be on the previous revision.
+//
+// ⚠️ Leaving desiredCount alone is also what makes this safe to issue this early: it
+// cannot start a workspace that is not being started, so a Start that dies before the
+// mount just leaves a stopped service pointing at a revision nobody runs. The next Start
+// recomputes it. Same reason it is safe when the mount later quarantines the slot.
+func (e *ecsEC2Runtime) pointServiceAt(ctx context.Context, taskDefArn string, p ec2Placement) bool {
+	s, ok, err := e.base.describeService(ctx)
+	if err != nil || !ok || aws.ToString(s.Status) != "ACTIVE" {
+		return false
+	}
+	if aws.ToString(s.TaskDefinition) == taskDefArn {
+		return false
+	}
+	netCfg, err := e.netConfig(ctx, p)
+	if err != nil {
+		return false
+	}
+	if _, err := e.base.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
+		Cluster:              aws.String(e.base.cfg.cluster),
+		Service:              aws.String(e.base.name),
+		TaskDefinition:       aws.String(taskDefArn),
+		NetworkConfiguration: netCfg,
+	}); err != nil {
+		log.Printf("ecs-ec2 start: could not pre-point %s at %s (falling back to the slower single update): %v",
+			e.base.name, taskDefArn, err)
+		return false
+	}
+	return true
+}
+
+// waitOldDeploymentRetired blocks until no deployment of this service is ACTIVE — that
+// is, until the revision we just replaced can no longer be handed the desiredCount we
+// are about to set (docs/64 §64.39.4: DRAINING does not take new tasks, so this is the
+// whole condition; PRIMARY-only is not required and costs 3-4x longer to reach).
+//
+// Best-effort and bounded on purpose. Overshooting the budget scales up anyway, which is
+// exactly today's behavior — the bug this avoids is a slow Start, and waiting longer for
+// it would be trading the same seconds back.
+func (e *ecsEC2Runtime) waitOldDeploymentRetired(ctx context.Context) {
+	started := e.now()
+	deadline := started.Add(ec2DeploymentRetireBudget)
+	for {
+		s, ok, err := e.base.describeService(ctx)
+		if err != nil || !ok {
+			return
+		}
+		active := false
+		for _, d := range s.Deployments {
+			if aws.ToString(d.Status) == "ACTIVE" {
+				active = true
+				break
+			}
+		}
+		if !active {
+			// Worth a line: this is the only number that says whether the split is
+			// actually free on this deployment, or whether the slot work stopped
+			// covering it (docs/64 §64.39.6.1). Silent when it cost nothing.
+			if waited := e.now().Sub(started); waited >= 2*time.Second {
+				log.Printf("ecs-ec2 start: %s waited %.0fs for the replaced deployment to retire",
+					e.base.name, waited.Seconds())
+			}
+			return
+		}
+		if !e.now().Before(deadline) {
+			log.Printf("ecs-ec2 start: %s still has an ACTIVE old deployment after %s; scaling up anyway",
+				e.base.name, ec2DeploymentRetireBudget)
+			return
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return
+		}
+	}
+}
+
+// scaleUpService is the second half of the split: desiredCount ONLY, on a service
+// pointServiceAt has already moved onto the right revision. Sending the task definition
+// again here would be harmless, but sending ForceNewDeployment would not — it spawns the
+// very ACTIVE deployment the split exists to retire first.
+func (e *ecsEC2Runtime) scaleUpService(ctx context.Context) error {
+	_, err := e.base.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
+		Cluster:      aws.String(e.base.cfg.cluster),
+		Service:      aws.String(e.base.name),
+		DesiredCount: aws.Int32(1),
+	})
+	return err
+}
+
+// upsertService creates or updates the workspace's service at desiredCount 1 on the EC2
+// launch type. Service Connect stays exactly as on Fargate, which is why Endpoint() did
+// not have to change (docs/64 §64.4.4).
+// forceNewDeployment should be false only when taskDefArn is a task definition
+// reuseOrRegisterTaskDef found unchanged from what this service is already running —
+// specifying it without forcing lets ECS notice nothing actually changed and skip
+// the rolling replacement, instead of retiring a perfectly good running task.
+//
+// ⚠️ Since §64.39 this is no longer the ordinary path for a CHANGED revision: launch()
+// splits that into pointServiceAt + scaleUpService, and only falls back here when the
+// service does not exist yet (CreateService, which has no old deployment to fight) or
+// when the pre-point failed. Sending a new revision together with desiredCount 1 is the
+// thing that costs 40 seconds, so do not route more traffic back through it.
+func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p ec2Placement, forceNewDeployment bool) error {
+	netCfg, err := e.netConfig(ctx, p)
+	if err != nil {
+		return err
 	}
 	s, ok, err := e.base.describeService(ctx)
 	if err != nil {
