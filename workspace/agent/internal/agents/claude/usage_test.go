@@ -235,3 +235,63 @@ func TestDelegateArg(t *testing.T) {
 		t.Errorf("dangling --delegate: got %q want empty", got)
 	}
 }
+
+// The statusLine we install must never pin a volatile path: settings.json outlives any
+// single build of the agent, and claude fails such a command silently — capture stops,
+// and the rollforward below then reports a confident, wrong 0%.
+func TestStatusLineCmdAvoidsVolatileExe(t *testing.T) {
+	installed := filepath.Join(t.TempDir(), "workspace-agent")
+	if err := os.WriteFile(installed, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AF_AGENT_INSTALLED_BIN", installed)
+	// The test binary runs from the build cache under the temp dir — the very shape
+	// this guards against — so the installed path must win.
+	if want := installed + " statusline " + captureFlag; statuslineCmd() != want {
+		t.Errorf("statuslineCmd()=%q want %q", statuslineCmd(), want)
+	}
+}
+
+// A stale window's 0% is an assumption (nothing spent since the capture), not a reading.
+// The Console needs to be told which one it has: a fabricated "0%, resets 20:50" is
+// indistinguishable from a real one, which is how a dead capture went unnoticed for
+// six hours.
+func TestAdjustWindowFlagsStale(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	if w := adjustWindow(30, 5*60, now.Add(2*time.Hour).Unix(), now); w.Stale {
+		t.Error("a window still in the future is a real reading, not stale")
+	}
+	w := adjustWindow(80, 5*60, now.Add(-2*time.Hour).Unix(), now)
+	if !w.Stale || w.Pct != 0 {
+		t.Errorf("rolled-forward window: %+v want pct 0 + stale", w)
+	}
+}
+
+func TestHandleUsageMarksStaleWindow(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	writeCreds(t, dir, "tok-123")
+
+	// The incident's shape: a capture whose 5h window expired hours ago (statusLine
+	// dead), while the weekly window is still live.
+	past := time.Now().Add(-3 * time.Hour).Unix()
+	future := time.Now().Add(12 * time.Hour).Unix()
+	captureFromStatusLine([]byte(`{"rate_limits":{` +
+		`"five_hour":{"used_percentage":17,"resets_at":` + strconv.FormatInt(past, 10) + `},` +
+		`"seven_day":{"used_percentage":65,"resets_at":` + strconv.FormatInt(future, 10) + `}}}`))
+
+	rec := httptest.NewRecorder()
+	HandleUsage(rec, httptest.NewRequest(http.MethodGet, "/claude/usage", nil))
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	fh, _ := out["fiveHour"].(map[string]any)
+	if fh == nil || fh["stale"] != true || fh["pct"].(float64) != 0 {
+		t.Errorf("expired window must be flagged stale: %+v", out["fiveHour"])
+	}
+	sd, _ := out["sevenDay"].(map[string]any)
+	if sd == nil || sd["stale"] == true || sd["pct"].(float64) != 65 {
+		t.Errorf("live window must pass through unflagged: %+v", out["sevenDay"])
+	}
+}

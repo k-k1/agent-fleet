@@ -22,9 +22,10 @@ import (
 // サブコマンドの入口（hook stdin の解読）は package main の session_status.go。
 
 // statusHookCmd is the absolute command claude runs for an event (absolute so it
-// resolves in claude's hook context regardless of PATH).
+// resolves in claude's hook context regardless of PATH — and never a volatile path,
+// see paths.ConfigExePath).
 func statusHookCmd(state string) string {
-	return paths.ExePath() + " session-status " + state
+	return paths.ConfigExePath() + " session-status " + state
 }
 
 // permToolMatcher is the PreToolUse regex for edit/command tools whose permission
@@ -43,7 +44,7 @@ const permToolMatcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
 func EnsureStatusHooks() {
 	m := readSettings()
 	hooks := hooksMap(m)
-	changed := false
+	changed := repairStatusHookExe(hooks)
 
 	// Simple (matcher-less) events. MessageDisplay fires as the assistant's text streams
 	// (before the turn's tool_use); we buffer it (state "message" never changes status)
@@ -129,6 +130,47 @@ func postToolUseHasAF(hooks map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// repairStatusHookExe repoints OUR hook commands whose agent binary can no longer
+// run — deleted, or sitting in a volatile directory. Every install check in
+// EnsureStatusHooks matches on the CONTENT ("session-status"), which is what kept the
+// exponential re-wrapping of the statusLine out of the hooks; the flip side is that a
+// stale path passes those checks forever, so a hook written by a build that has since
+// been removed would stay in settings.json and fail on every event (no working/idle,
+// no question — the session looks frozen in the Console). Reports whether it changed
+// anything. A user's own hooks are untouched: only `<exe> session-status <state>` matches.
+func repairStatusHookExe(hooks map[string]any) bool {
+	want := paths.ConfigExePath()
+	changed := false
+	for _, ev := range hooks {
+		entries, _ := ev.([]any)
+		for _, e := range entries {
+			em, _ := e.(map[string]any)
+			list, _ := em["hooks"].([]any)
+			for _, h := range list {
+				hm, _ := h.(map[string]any)
+				cmd, _ := hm["command"].(string)
+				if next, ok := repointStatusHookCmd(cmd, want); ok {
+					hm["command"] = next
+					changed = true
+				}
+			}
+		}
+	}
+	return changed
+}
+
+// repointStatusHookCmd rewrites `<exe> session-status <state>` onto want when the
+// recorded exe is unusable. "" / false when the command isn't ours or is still fine
+// (a different but working path — e.g. a host install — is left alone).
+func repointStatusHookCmd(cmd, want string) (string, bool) {
+	f := strings.Fields(cmd)
+	if len(f) < 2 || f[1] != "session-status" || f[0] == want || !paths.ExeUnusable(f[0]) {
+		return "", false
+	}
+	f[0] = want
+	return strings.Join(f, " "), true
 }
 
 // stripSessionStatusEntries removes OUR entries (command contains session-status)

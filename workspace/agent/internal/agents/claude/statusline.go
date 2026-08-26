@@ -148,8 +148,10 @@ const captureFlag = "--af-capture"
 const maxStatusLineCmd = 8192
 
 // statuslineCmd is the command we point claude's statusLine at (absolute exe so it
-// resolves in claude's spawn context regardless of PATH).
-func statuslineCmd() string { return paths.ExePath() + " statusline " + captureFlag }
+// resolves in claude's spawn context regardless of PATH — and never a volatile one,
+// see paths.ConfigExePath: a dev/smoke build that pinned its own /tmp path here took
+// the capture down with it when it was deleted).
+func statuslineCmd() string { return paths.ConfigExePath() + " statusline " + captureFlag }
 
 // EnsureStatusLine wires claude's statusLine to statuslineCmd so we capture rate_limits.
 // Idempotent, called at startup. If the user already configured their OWN statusLine we
