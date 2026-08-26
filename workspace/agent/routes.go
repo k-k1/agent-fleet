@@ -26,6 +26,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/catalog", handleSessionCatalog)
 	mux.HandleFunc("GET /notifications", handleNotifications)
 	mux.HandleFunc("POST /notifications/ack", handleNotificationsAck)
+	// Work items (docs/80): the CP posts the saved queries it owns and gets non-secret
+	// rows back. Called by the CP itself (like /notifications), never by the Console,
+	// so it needs no entry in the CP's agent-proxy allowlist.
+	mux.HandleFunc("POST /work-items/fetch", handleWorkItemsFetch)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
 	// Idempotency reconcile (session_idempotency.go): resolve a create whose POST
 	// response was lost to a client timeout, so the caller need not retry into a dup.

@@ -90,6 +90,7 @@ func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 
 	mgr := &manager{store: st}
 	a := eventsAPI{memberAuth{mgr}, newWorkspaceAPI(mgr, false), notificationAPI{memberAuth{mgr}, st},
+		workItemsAPI{memberAuth{mgr}, st},
 		5 * time.Millisecond, time.Hour /* ping 実質 OFF（ping テストだけ上書き） */}
 	res := &resolved{rt: stubRuntime{endpoint: srv.URL, token: "tok"}, ws: ws,
 		mv: MembershipView{MembershipID: m.ID}}
