@@ -716,6 +716,42 @@ export const en: Record<keyof typeof ja, string> = {
   "ssm.f_region_placeholder": "Uses the profile default",
   "ssm.add_host": "Add host",
 
+  // --- settings export / import (features/settings/BackupTab.tsx, docs/79) ---
+  "backup.intro":
+    "Collect your settings into a single file and read them back on another deployment or account.",
+  "backup.secrets_note":
+    "Connections (Git / agent / AWS tokens and API keys) are NOT included. Sign in again wherever you import.",
+  "backup.export_title": "Export",
+  "backup.import_title": "Import",
+  "backup.cat_prefs": "Personal settings",
+  "backup.cat_ssm": "AWS SSM",
+  "backup.cat_instructions": "Agent instructions",
+  "backup.n_keys_one": "{count} setting",
+  "backup.n_keys_other": "{count} settings",
+  "backup.n_ssm": "profiles {profiles} / hosts {hosts}",
+  "backup.n_bytes_one": "{count} byte",
+  "backup.n_bytes_other": "{count} bytes",
+  "backup.needs_ws": "Only while the workspace is running",
+  "backup.export_do": "Export",
+  "backup.export_done": "Exported",
+  "backup.import_do": "Import",
+  "backup.import_done": "Imported",
+  "backup.import_hint": "Pick a file exported with the button above. You can review it before importing.",
+  "backup.preview_head": "Exported at {when}",
+  "backup.confirm_title": "Import these settings?",
+  "backup.confirm_body":
+    "The selected sections are merged into your current settings. Existing SSM profiles and hosts are left untouched.",
+  "backup.confirm_instructions": "Agent instructions will REPLACE the text you have now.",
+  "backup.res_prefs": "Personal settings: {applied} applied ({skipped} skipped)",
+  "backup.res_ssm": "AWS SSM: added profiles {profiles} / hosts {hosts} ({skipped} already there or skipped)",
+  "backup.res_ssm_failed": "AWS SSM: {n} entries could not be registered",
+  "backup.res_instructions": "Agent instructions: saved {bytes} bytes",
+  "backup.res_instructions_failed": "Agent instructions: could not save ({msg})",
+  "backup.err_bad_json": "Could not read the file (not JSON)",
+  "backup.err_bad_kind": "This is not a settings export file",
+  "backup.err_bad_version": "This file's format version is unknown to this Console",
+  "backup.err_empty": "Nothing in this file can be imported",
+
   // --- common (default) ---
   "common.default": "Default",
 
@@ -3709,6 +3745,7 @@ export const en: Record<keyof typeof ja, string> = {
   "set.tab_git": "Git hosting",
   "set.tab_ssm": "AWS SSM",
   "set.tab_internalrepos": "Internal repos",
+  "set.tab_backup": "Export / import",
   "set.tab_danger": "Danger zone",
   "set.tab_ops": "Ops & monitoring",
   "set.tab_chat": "Chat",
