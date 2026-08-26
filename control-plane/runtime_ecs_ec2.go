@@ -2818,8 +2818,11 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 //
 // Same shape as startGen/startPhase for the same reason: the Runtime object is
 // rebuilt per request, so this cannot live on it. Process-local scratch, keyed by
-// workspace name — a CP restart or another replica answering just means a cache
-// miss, which falls back to today's always-register-and-deploy behavior. Never
+// workspace name — so a CP restart or a second replica misses it, and that miss used
+// to mean "register a redundant revision and roll the service for nothing", which
+// every workspace paid on its first Start after every deploy. It is now only a miss of
+// the FAST path: serviceTaskDefIfFingerprint asks AWS the same question by reading the
+// fingerprint back off the revision the service is already on. Never
 // incorrect (the fingerprint covers every per-Start-dynamic input, including the
 // ws-settings/tenant-limits env that workspaceExtraEnv recomputes on every Start —
 // see registerConnectionRoutes… no, see manager.workspaceExtraEnv), only sometimes
@@ -2863,6 +2866,19 @@ func (e *ecsEC2Runtime) reuseOrRegisterTaskDef(ctx context.Context, p ec2Placeme
 				return entry.arn, true, nil
 			}
 		}
+		// Process-local miss, which is not the same thing as "something changed": the
+		// map is empty after every CP restart and on whichever replica did not serve the
+		// last Start. Ask AWS the same question before paying for a revision nobody
+		// needs — see serviceTaskDefIfFingerprint for what that costs and buys.
+		if arn := e.serviceTaskDefIfFingerprint(ctx, fp); arn != "" {
+			lastTaskDef.Store(e.base.name, ecTaskDefCacheEntry{instanceID: p.instanceID, fingerprint: fp, arn: arn})
+			return arn, true, nil
+		}
+		// ⚠️ AFTER the hash, never inside buildTaskDef. The label is the hash, so a
+		// revision that carried it into the hash could never match the next Start's
+		// freshly built (unlabelled) input, and reuse would be dead again — silently,
+		// since the only symptom is a slower Start.
+		stampTaskDefFingerprint(in, fp)
 	}
 	out, err := e.base.ecs.RegisterTaskDefinition(ctx, in)
 	if err != nil {
@@ -2873,6 +2889,64 @@ func (e *ecsEC2Runtime) reuseOrRegisterTaskDef(ctx context.Context, p ec2Placeme
 		lastTaskDef.Store(e.base.name, ecTaskDefCacheEntry{instanceID: p.instanceID, fingerprint: fp, arn: arn})
 	}
 	return arn, false, nil
+}
+
+// afTaskDefFingerprintLabel carries taskDefFingerprint on the revision it describes, so
+// "have we already registered exactly this?" can be answered from AWS instead of only
+// from lastTaskDef. Same trick and the same reason as afImageStampLabel
+// (runtime_ecs_stale.go): a docker label rather than a task-definition tag, so reading it
+// back needs neither include=TAGS nor ecs:TagResource.
+const afTaskDefFingerprintLabel = "af.taskdef.fingerprint"
+
+// stampTaskDefFingerprint writes fp onto the revision about to be registered. Must be
+// called after taskDefFingerprint, never before — see the caller.
+func stampTaskDefFingerprint(in *ecs.RegisterTaskDefinitionInput, fp string) {
+	for i := range in.ContainerDefinitions {
+		if in.ContainerDefinitions[i].DockerLabels == nil {
+			in.ContainerDefinitions[i].DockerLabels = map[string]string{}
+		}
+		in.ContainerDefinitions[i].DockerLabels[afTaskDefFingerprintLabel] = fp
+	}
+}
+
+// serviceTaskDefIfFingerprint returns the revision the service already points at, but
+// only when that revision was registered from byte-identical input — i.e. only when
+// registering again would produce the same thing. "" means "register a fresh one".
+//
+// This is what makes reuse survive a CP restart, and that matters more than it sounds:
+// lastTaskDef is process-local, so before this every workspace's FIRST Start after a
+// deploy registered a redundant revision, which made launch() split-and-wait (and, before
+// §64.39, cost the full 40 seconds) for a task definition that had not changed at all.
+// Everyone paid it, every deploy.
+//
+// Two AWS reads on the Start path, both already made elsewhere for other reasons, and
+// only on a cache miss. Deliberately NOT wired into the /api/workspace poll.
+//
+// ⚠️ It must refuse an INACTIVE revision. Nothing here deregisters task definitions, but
+// an operator's cleanup does, and UpdateService onto a deregistered revision fails — a
+// reuse that turns a Start into an error is far worse than a redundant registration.
+func (e *ecsEC2Runtime) serviceTaskDefIfFingerprint(ctx context.Context, fp string) string {
+	s, ok, err := e.base.describeService(ctx)
+	if err != nil || !ok {
+		return ""
+	}
+	arn := aws.ToString(s.TaskDefinition)
+	if arn == "" {
+		return ""
+	}
+	out, err := e.base.ecs.DescribeTaskDefinition(ctx, &ecs.DescribeTaskDefinitionInput{
+		TaskDefinition: aws.String(arn),
+	})
+	if err != nil || out.TaskDefinition == nil ||
+		out.TaskDefinition.Status != ecstypes.TaskDefinitionStatusActive {
+		return ""
+	}
+	for _, c := range out.TaskDefinition.ContainerDefinitions {
+		if c.DockerLabels[afTaskDefFingerprintLabel] == fp {
+			return arn
+		}
+	}
+	return ""
 }
 
 // buildTaskDef assembles (without submitting) a fresh EC2-launch-type revision

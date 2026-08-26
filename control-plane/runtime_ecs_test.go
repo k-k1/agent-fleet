@@ -79,6 +79,9 @@ func (f *fakeECS) RegisterTaskDefinition(_ context.Context, in *ecs.RegisterTask
 	td := &ecstypes.TaskDefinition{
 		TaskDefinitionArn:    aws.String(arn),
 		ContainerDefinitions: in.ContainerDefinitions,
+		// The real API answers ACTIVE for a freshly registered revision, and
+		// serviceTaskDefIfFingerprint refuses to reuse anything else.
+		Status: ecstypes.TaskDefinitionStatusActive,
 	}
 	if f.taskDefs == nil {
 		f.taskDefs = map[string]*ecstypes.TaskDefinition{}
