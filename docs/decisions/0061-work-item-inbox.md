@@ -1,6 +1,6 @@
 # 0061. 外部の作業項目は「Agent が取り、CP は非機密メタだけを預かる」— 一覧に CLI と MCP を使わない
 
-- 状態: **採用（設計）・実装未着手**（2026-08-26）。設計と経緯は [docs/80](../80-work-item-inbox.md)。
+- 状態: **採用・P0 実装済み**（2026-08-26）。設計と経緯は [docs/80](../80-work-item-inbox.md)。
 - 関連: [0031-mcp-registry.md](0031-mcp-registry.md)（MCP は「各 CLI が直接喋り、af は定義を配るだけ」。
   OAuth MCP は非目的）/ [0036-working-sets.md](0036-working-sets.md)（“案件”という単位）/
   [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md)
@@ -55,6 +55,15 @@ MCP で読める」。貼るときは引用ブロックで包み「以下は外�
 **6. 書き戻しは既定で行わない。** v1 の上限は「報告をコメント下書きにする → 人が承認して投稿」。
 自動でチケットを閉じない・自動でコメントしない。投稿そのものは `gh` / MCP が持っているので、
 af は下書きまでで足りる。
+
+**6.5. 向きは CP → Agent。** 起票時は「Agent が取って CP へ push する」と書いたが、実装で逆に
+した。CP が自分の持っているクエリを渡し、Agent が解決して返す。**この向きだと新しい資格情報が
+1 つも要らない** —— Agent → CP を作ると memo / schedule と同じく専用トークンを 1 種類増やし、
+4 つのランタイム全部の env 注入に手を入れることになる。CP → Agent なら既存の
+`rt.Endpoint()` + `rt.Token()` で足りる（`drainAgentOutbox` と同じ形）。副産物として、
+**Agent はこの機能のために何も永続しない**し、Console が触らないので**エージェント・プロキシの
+許可リストに足すものも無い**（新しい agent REST の二重登録漏れという既知の事故経路を、通らない
+設計にできる）。
 
 **7. 取得ジョブは busy に数えない。** [0059](0059-repo-import-jobs.md) が取り込みジョブを busy に
 足したのとは逆向きの判断。5 分ごとに自分で走る処理を活動に数えたら Workspace は永久に止まらない。

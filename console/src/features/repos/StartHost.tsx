@@ -14,6 +14,7 @@ import { LaunchModal } from "./LaunchModal.tsx";
 import { useLaunchTarget, useLaunchSeed } from "./store.ts";
 import { markHandoffLaunched } from "../mirror/HandoffProposal.tsx";
 import { acceptHandoffOffer } from "../sharing/acceptHandoff.ts";
+import { recordWorkItemLaunch } from "../workitems/launch.ts";
 
 export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
@@ -29,6 +30,8 @@ export function StartHost() {
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const seedHandoffId = useLaunchSeed((s) => s.handoffId);
   const seedOfferId = useLaunchSeed((s) => s.handoffOfferId);
+  // 作業項目（docs/80）から来た起動。台帳への記帳は「起動できたあと」だけ。
+  const seedWorkItem = useLaunchSeed((s) => s.workItem);
   const clearSeed = useLaunchSeed((s) => s.clear);
   // Open the hub whenever the global tick changes (skip the mount value).
   const lastTickRef = useRef(startTick);
@@ -76,6 +79,7 @@ export function StartHost() {
           isSvn={launch.vcs === "svn"}
           initialPrompt={seedPrompt || undefined}
           initialTitle={seedTitle || undefined}
+          initialNewBranch={seedWorkItem?.branch || undefined}
           initialExistingBranch={launchExisting || undefined}
           onClose={() => {
             clearLaunch();
@@ -91,6 +95,11 @@ export function StartHost() {
               // メンバーから受け取った引き継ぎ（docs/77）は、起動できた**あと**に受諾を
               // 申告する。ここが唯一「本当にセッションができた」と分かる地点である。
               if (seedOfferId) void acceptHandoffOffer(seedOfferId, r.name || "");
+              // 作業項目の台帳（docs/80 §80.8）。ここが「本当にセッションができた」と
+              // 分かる唯一の地点で、次の人に「着手済み」と見せられるようになる。
+              if (seedWorkItem && r.name) {
+                void recordWorkItemLaunch(seedWorkItem, r.name, launch.name, o.newBranch || o.base || "");
+              }
               setShow(false); // launched — drop the hub underneath too
               clearSeed();
             }

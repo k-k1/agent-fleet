@@ -9,6 +9,7 @@ import { useWorkspaceStore } from "../store/workspace.ts";
 import { useTenantStore } from "../store/tenant.ts";
 import { useSessionsStore } from "../../features/sessions/store.ts";
 import { applyPushedNotifications } from "../../features/notifications/store.ts";
+import { useWorkItemStore } from "../../features/workitems/store.ts";
 
 /** Register the store-apply handlers. Returns the cleanup (StrictMode-safe). */
 export function wirePushApply(): () => void {
@@ -16,6 +17,9 @@ export function wirePushApply(): () => void {
     onPush("workspace", (d) => useWorkspaceStore.getState().applyPush(d || {})),
     onPush("sessions", (d) => useSessionsStore.getState().applyList(d?.sessions || [])),
     onPush("notifications", (d) => applyPushedNotifications(d || {})),
+    // 作業項目（docs/80）: フレームは CP のキャッシュそのもの。取得は CP 側の
+    // 別 goroutine が回すので、ここで届くのは「もう入っている行」だけ。
+    onPush("workitems", (d) => useWorkItemStore.getState().applyPush(d)),
     // 再接続は「CP が再起動したかもしれない」の合図 — フレームでは運ばれない
     // whoami（デプロイ capability 込み）を読み直す。本体側で間引く。
     onPushConnect(() => void useTenantStore.getState().refreshWhoami()),
