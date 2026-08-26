@@ -17,7 +17,19 @@ set -euo pipefail
 export AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1
 N=af-ec2c
 NAT=${AF_HARNESS_NAT:-0}
-REPO_DIR=/home/dev/repos/agent-fleet@wip-sdcg4ag
+# Where the checkout is. ⚠️ NOT a hardcoded path: this script is meant to be COPIED to
+# the work dir (see README), so it cannot always find the repo relative to itself, and a
+# path baked in from whoever ran it last points at a worktree that no longer exists —
+# which is exactly how it was found (a dead `@wip-…` path, months later). Resolve it, and
+# say so instead of failing three stack-creations later.
+if [ -z "${AF_HARNESS_REPO_DIR:-}" ] && [ -f "$(dirname "$0")/../cfn/20-platform.yaml" ]; then
+  AF_HARNESS_REPO_DIR=$(cd "$(dirname "$0")/../../../.." && pwd)   # running in place
+fi
+REPO_DIR=${AF_HARNESS_REPO_DIR:-}
+if [ ! -f "$REPO_DIR/deploy/aws/ecs/cfn/20-platform.yaml" ]; then
+  echo "set AF_HARNESS_REPO_DIR to the agent-fleet checkout (this script needs cfn/20-platform.yaml and cfn/40-ec2-pool.yaml)" >&2
+  exit 2
+fi
 cd ~/af-ec2c
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 

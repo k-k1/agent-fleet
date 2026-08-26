@@ -123,6 +123,19 @@ func (f *fakeEC2) attach(volID, instID string, at time.Time) {
 	}
 }
 
+// detach is what releaseSlot (and the sweeper) leave behind: the home is nobody's slot
+// tenant any more, and the device name is free for the next workspace.
+func (f *fakeEC2) detach(volID string) {
+	v := f.volumes[volID]
+	for _, at := range v.Attachments {
+		if inst := f.instances[aws.ToString(at.InstanceId)]; inst != nil {
+			inst.BlockDeviceMappings = nil
+		}
+	}
+	v.State = ec2types.VolumeStateAvailable
+	v.Attachments = nil
+}
+
 func (f *fakeEC2) setTag(volID, key, value string) {
 	v := f.volumes[volID]
 	for i := range v.Tags {
@@ -897,6 +910,9 @@ func TestECSEC2MovingSlotsSplitsTheServiceUpdate(t *testing.T) {
 	if err := h.rt.Start(ctx); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
+	// The scale-up half is handed to the background so it can outlive the HTTP request
+	// (launch()); the harness collects that instead of running it.
+	h.runDeferred(ctx)
 	if len(h.ecs.regCalls) != 2 {
 		t.Fatalf("regCalls after moving slots = %d, want 2 (a new instance needs a new placement constraint)", len(h.ecs.regCalls))
 	}
@@ -1031,6 +1047,7 @@ func TestECSEC2ScaleUpWaitsForTheDemotedDeployment(t *testing.T) {
 	if err := h.rt.Start(ctx); err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
+	h.runDeferred(ctx)
 	if h.ecs.activeDeploymentPolls != 0 {
 		t.Errorf("scale-up did not wait: %d ACTIVE answers were never consumed", h.ecs.activeDeploymentPolls)
 	}
@@ -1820,6 +1837,7 @@ func TestECSEC2StartReusesExistingAttachment(t *testing.T) {
 	if err := h.rt.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	h.runDeferred(ctx)
 	for _, c := range h.ec2.calls {
 		if strings.HasPrefix(c, "AttachVolume") || strings.HasPrefix(c, "DetachVolume") {
 			t.Errorf("unnecessary %s on a slot that already holds the home", c)
@@ -4107,5 +4125,41 @@ func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 	h.rt.clearBlockedPhase()
 	if got := h.rt.BootPhase(); got != "home: attaching" {
 		t.Fatalf("a live Start's phase was wiped by a poll: %q", got)
+	}
+}
+
+// The scale-up half now outlives the Start call, so it has to check that the workspace
+// is still the thing it was launching. A Stop that got as far as taking the home off the
+// slot must not be undone by a background call that started before it.
+func TestECSEC2DeferredScaleUpStopsIfTheSlotWasReleased(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	h.runDeferred(ctx)
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.ec2.addSlot("i-hot-2", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot-2"] = true
+	h.ec2.attach("vol-1", "i-hot-2", time.Now())
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	// …and before the deferred half runs, the home leaves the slot (what releaseSlot does
+	// on a Stop, and what the sweeper does to a drifting workspace).
+	h.ec2.detach("vol-1")
+	h.runDeferred(ctx)
+
+	for i, c := range h.ecs.updateCalls {
+		if aws.ToInt32(c.DesiredCount) == 1 {
+			t.Fatalf("updateCalls[%d] scaled up a workspace whose home had already left the slot: %+v", i, c)
+		}
 	}
 }
