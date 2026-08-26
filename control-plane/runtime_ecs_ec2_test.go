@@ -865,11 +865,16 @@ func TestECSEC2ReWakingTheSameSlotReusesTheTaskDefinition(t *testing.T) {
 	}
 }
 
-// Anything that actually changes the task definition (here: the slot changes, so
-// the placement constraint must point at the new instance) must still register a
-// fresh revision and force the deployment — reuse must never paper over a real
-// change.
-func TestECSEC2MovingSlotsForcesAFreshTaskDefinition(t *testing.T) {
+// Anything that actually changes the task definition (here: the slot changes, so the
+// placement constraint must point at the new instance) must register a fresh revision —
+// reuse must never paper over a real change — and it must reach the service as TWO
+// calls: the revision first, desiredCount last.
+//
+// One call carrying both is what ECS answers by scaling the deployment it just demoted,
+// so a task from the OLD revision either runs alongside the real one for a minute or
+// stalls the real one for ~41s on a MemberOf that no longer matches anything
+// (docs/64 §64.39). ForceNewDeployment on the second call would put it straight back.
+func TestECSEC2MovingSlotsSplitsTheServiceUpdate(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
 	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
@@ -895,8 +900,182 @@ func TestECSEC2MovingSlotsForcesAFreshTaskDefinition(t *testing.T) {
 	if len(h.ecs.regCalls) != 2 {
 		t.Fatalf("regCalls after moving slots = %d, want 2 (a new instance needs a new placement constraint)", len(h.ecs.regCalls))
 	}
-	if len(h.ecs.updateCalls) != 2 || !h.ecs.updateCalls[1].ForceNewDeployment {
-		t.Errorf("moving slots must force a new deployment, updateCalls = %+v", h.ecs.updateCalls)
+	if len(h.ecs.updateCalls) != 3 {
+		t.Fatalf("updateCalls = %d, want 3 (Stop, then the revision, then desiredCount) — %+v",
+			len(h.ecs.updateCalls), h.ecs.updateCalls)
+	}
+	wantArn := "arn:task/" + aws.ToString(h.ecs.regCalls[1].Family) + ":2"
+	point := h.ecs.updateCalls[1]
+	if aws.ToString(point.TaskDefinition) != wantArn {
+		t.Errorf("first Start-side update should carry the NEW revision %q, got %q", wantArn, aws.ToString(point.TaskDefinition))
+	}
+	if point.DesiredCount != nil {
+		t.Errorf("the revision update must not touch desiredCount (that is what makes ECS scale the old deployment), got %d", aws.ToInt32(point.DesiredCount))
+	}
+	if point.ForceNewDeployment {
+		t.Error("the revision update must not force: changing the revision already starts the deployment")
+	}
+	up := h.ecs.updateCalls[2]
+	if aws.ToInt32(up.DesiredCount) != 1 {
+		t.Errorf("second Start-side update DesiredCount = %d, want 1", aws.ToInt32(up.DesiredCount))
+	}
+	if up.ForceNewDeployment {
+		t.Error("scaling up must never force — that spawns exactly the ACTIVE deployment the split just retired")
+	}
+	if up.TaskDefinition != nil {
+		t.Errorf("scaling up should send desiredCount only, got TaskDefinition %q", aws.ToString(up.TaskDefinition))
+	}
+}
+
+// lastTaskDef is process-local, so it is empty after every CP restart and on whichever
+// replica did not serve the last Start. That miss must not turn into a redundant
+// revision: the fingerprint is stamped on the revision itself, so AWS can answer
+// "already registered exactly this" (docs/64 §64.39.6). Before this, every workspace's
+// FIRST Start after every deploy rolled the service for a task definition that had not
+// changed at all.
+func TestECSEC2ReuseSurvivesACPRestart(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls after first Start = %d, want 1", len(h.ecs.regCalls))
+	}
+	if got := h.ecs.regCalls[0].ContainerDefinitions[0].DockerLabels[afTaskDefFingerprintLabel]; got == "" {
+		t.Fatal("the revision was registered without its fingerprint label; nothing can read it back")
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	// A stopped service still POINTS at the revision it last ran — that is the whole
+	// thing being read back — so drop only the desired count.
+	stopped := h.ecs.services["af-ws-acme-alice"]
+	stopped.DesiredCount, stopped.RunningCount = 0, 0
+	h.ecs.services["af-ws-acme-alice"] = stopped
+
+	// The CP restarts: same AWS, empty process cache.
+	lastTaskDef.Delete("af-ws-acme-alice")
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls after a restart with nothing changed = %d, want 1 — a redundant revision rolls the service for nothing", len(h.ecs.regCalls))
+	}
+	last := h.ecs.updateCalls[len(h.ecs.updateCalls)-1]
+	if aws.ToInt32(last.DesiredCount) != 1 || last.ForceNewDeployment {
+		t.Errorf("the reused path must just scale up, got %+v", last)
+	}
+}
+
+// …but only when it really is the same thing. A changed input must still register,
+// restart or no restart: reuse that papers over a change would launch the wrong image.
+func TestECSEC2ReuseAfterRestartStillNoticesAChange(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	stopped := h.ecs.services["af-ws-acme-alice"]
+	stopped.DesiredCount, stopped.RunningCount = 0, 0
+	h.ecs.services["af-ws-acme-alice"] = stopped
+	lastTaskDef.Delete("af-ws-acme-alice")
+
+	// The home moved to another slot, so the placement constraint — and therefore the
+	// fingerprint — must differ.
+	h.ec2.addSlot("i-hot-2", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot-2"] = true
+	h.ec2.attach("vol-1", "i-hot-2", time.Now())
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 2 {
+		t.Fatalf("regCalls = %d, want 2 — a different slot needs a different placement constraint", len(h.ecs.regCalls))
+	}
+}
+
+// The scale-up must wait out the deployment the revision change demoted. While one is
+// still ACTIVE, ECS satisfies a desiredCount increase from it — the whole bug — so the
+// split only helps if the second call is held until it is gone (docs/64 §64.39.4).
+func TestECSEC2ScaleUpWaitsForTheDemotedDeployment(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.ec2.addSlot("i-hot-2", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot-2"] = true
+	h.ec2.attach("vol-1", "i-hot-2", time.Now())
+
+	// Three answers still carry the demoted deployment; the poll has to outlast them.
+	h.ecs.activeDeploymentPolls = 3
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if h.ecs.activeDeploymentPolls != 0 {
+		t.Errorf("scale-up did not wait: %d ACTIVE answers were never consumed", h.ecs.activeDeploymentPolls)
+	}
+	last := h.ecs.updateCalls[len(h.ecs.updateCalls)-1]
+	if aws.ToInt32(last.DesiredCount) != 1 {
+		t.Errorf("the workspace must still end up at desiredCount 1, got %+v", last)
+	}
+}
+
+// A Start that dies at the mount has already pointed the service at the new revision.
+// That is safe ONLY because the revision update leaves desiredCount alone: the service
+// stays at 0, so nothing runs on the slot that just got quarantined, and the next Start
+// recomputes the revision anyway.
+func TestECSEC2FailedMountLeavesTheServiceStopped(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.ec2.addSlot("i-hot-2", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot-2"] = true
+	h.ec2.attach("vol-1", "i-hot-2", time.Now())
+	h.ssmc.fail["af-mount"] = true
+
+	// Start surfaces the mount failure on this (hot-slot) path; what matters here is
+	// what it left behind.
+	_ = h.rt.Start(ctx)
+	pointed := false
+	for i, c := range h.ecs.updateCalls {
+		if aws.ToInt32(c.DesiredCount) == 1 {
+			t.Fatalf("updateCalls[%d] scaled a workspace up whose mount failed: %+v", i, c)
+		}
+		if c.TaskDefinition != nil && c.DesiredCount == nil {
+			pointed = true
+		}
+	}
+	if !pointed {
+		t.Error("the revision update should already have gone out before the mount — that is what buys the overlap")
 	}
 }
 
@@ -1646,8 +1825,17 @@ func TestECSEC2StartReusesExistingAttachment(t *testing.T) {
 			t.Errorf("unnecessary %s on a slot that already holds the home", c)
 		}
 	}
-	if len(h.ecs.updateCalls) != 1 || aws.ToInt32(h.ecs.updateCalls[0].DesiredCount) != 1 {
+	// Two calls now, not one: the revision first, desiredCount last (docs/64 §64.39).
+	// Asserted as an invariant rather than a count so this does not re-break the day a
+	// reused task definition makes the first call unnecessary.
+	last := h.ecs.updateCalls[len(h.ecs.updateCalls)-1]
+	if aws.ToInt32(last.DesiredCount) != 1 {
 		t.Fatalf("expected the service to be brought to 1, got %+v", h.ecs.updateCalls)
+	}
+	for i, c := range h.ecs.updateCalls {
+		if c.TaskDefinition != nil && c.DesiredCount != nil {
+			t.Errorf("updateCalls[%d] carries a revision AND a desiredCount; that pair is what makes ECS scale the deployment it just demoted: %+v", i, c)
+		}
 	}
 }
 
@@ -3919,5 +4107,57 @@ func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 	h.rt.clearBlockedPhase()
 	if got := h.rt.BootPhase(); got != "home: attaching" {
 		t.Fatalf("a live Start's phase was wiped by a poll: %q", got)
+	}
+}
+
+// Every service call must carry the single-task deployment configuration, not just the
+// one that creates the service: the defect docs/64 §64.39 describes needs maximumPercent
+// 200, that is the AWS default, and a deployment that predates this change keeps the
+// default until something sends the new one. Measured A/B on one substrate (§64.39.10):
+// 200% produced two tasks with the FIRST from the old revision, 2 of 2; 100% produced one
+// task from the new revision, 2 of 2.
+func TestECSEC2EveryServiceCallPinsOneTaskPerWorkspace(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	if err := h.rt.Start(ctx); err != nil { // CreateService
+		t.Fatalf("first Start: %v", err)
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.ec2.addSlot("i-hot-2", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot-2"] = true
+	h.ec2.attach("vol-1", "i-hot-2", time.Now())
+	if err := h.rt.Start(ctx); err != nil { // the revision + the scale-up
+		t.Fatalf("second Start: %v", err)
+	}
+
+	check := func(what string, dc *ecstypes.DeploymentConfiguration) {
+		t.Helper()
+		if dc == nil {
+			t.Errorf("%s sent no deploymentConfiguration; ECS then keeps the 200%% default that allows a second task", what)
+			return
+		}
+		if aws.ToInt32(dc.MaximumPercent) != 100 {
+			t.Errorf("%s maximumPercent = %d, want 100 (200 is what lets the demoted deployment run a task)", what, aws.ToInt32(dc.MaximumPercent))
+		}
+		if aws.ToInt32(dc.MinimumHealthyPercent) != 0 {
+			t.Errorf("%s minimumHealthyPercent = %d, want 0 — at 100%% there is no room to start before stopping", what, aws.ToInt32(dc.MinimumHealthyPercent))
+		}
+	}
+	for i, c := range h.ecs.createCalls {
+		check(fmt.Sprintf("createCalls[%d]", i), c.DeploymentConfiguration)
+	}
+	for i, c := range h.ecs.updateCalls {
+		// Only calls that can raise the count or move the revision matter; Stop's
+		// scale-to-zero cannot produce a second task whatever the percentages say.
+		if c.TaskDefinition == nil && aws.ToInt32(c.DesiredCount) == 0 {
+			continue
+		}
+		check(fmt.Sprintf("updateCalls[%d]", i), c.DeploymentConfiguration)
 	}
 }
