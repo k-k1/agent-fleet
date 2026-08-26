@@ -41,8 +41,9 @@ func Cmd(args ...string) *exec.Cmd {
 //	✽ Perusing… (5m 42s · ↓ 17.8k tokens · thought for 3s)
 //	✢ Adding regression tests… (13m 31s · ↓ 48.5k tokens)
 //
-// Only two parts of that line are dependable, and this regex uses exactly those: the
-// gerund + "…", and the parenthesised elapsed timer. Everything else rotates:
+// Only the gerund + "…" is truly dependable; this regex adds the parenthesised elapsed
+// timer, which is dependable only while the pane is wide enough to hold it (see
+// spinnerThinkingRe for the narrow-pane frame that has no timer). Everything else rotates:
 //
 //   - "esc to interrupt" is swapped out for a random Tip (hence the separate check in
 //     spinnerActive, which still honours it on older builds);
@@ -93,13 +94,48 @@ func Cmd(args ...string) *exec.Cmd {
 // renders at column 0, so a ≥2-space-indented transcript line that merely quotes a
 // spinner — including this file's own examples, when a session is asked to debug the TUI
 // — can't match). Best-effort; one captured frame.
-var spinnerRe = regexp.MustCompile(`(?m)^(?:\S? ?[\p{L}\p{N}]|\S /)[^\n\x{2026}]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
+// spinnerHead is the shared prefix of both spinner patterns: the head discipline above,
+// the phrase run, the ellipsis, and the opening paren. What may follow inside the parens
+// is what the two patterns disagree about.
+const spinnerHead = `^(?:\S? ?[\p{L}\p{N}]|\S /)[^\n\x{2026}]*\x{2026} \(`
+
+var spinnerRe = regexp.MustCompile(`(?m)` + spinnerHead + `[^)\n]*[0-9]+(?:h|m|s)\b`)
+
+// spinnerThinkingRe matches the one live-turn frame that carries NO timer at all:
+//
+//	✳ Calculating… (almost done thinking with high effort)
+//
+// (real 60-column capture, claude_s36uuiv — the Console badged that session 入力待ち for
+// the whole "almost done thinking" window of a 14-minute turn).
+//
+// The parenthesised segments are NOT a fixed set that merely gains and loses members with
+// the turn's phase — they are laid out against the pane width, and the status phrase wins.
+// claude 2.1.246 computes an available width from the columns and the gerund, fits the
+// status phrase ("thinking" / "still thinking" / "thinking more" / "thinking some more" /
+// "almost done thinking", each + the effort suffix) FIRST, and only then adds the elapsed
+// timer if what is left still fits, and the token count after that. So on a narrow pane —
+// 60 columns is what the Console gives a session on a phone — a long status phrase alone
+// exceeds the budget and the timer is dropped, not the phrase. Requiring the timer (as
+// spinnerRe does) therefore false-idles by pane width: the same turn reads busy in a wide
+// pane and idle in a narrow one, which is why this survived every earlier fix.
+//
+// Keyed on "thinking" because that is the only timer-less content the layout can produce:
+// every other status ("running tool for 5s", "ran tool for 5s", "thought for 3s") embeds a
+// timer of its own and is already spinnerRe's business, and a token count is wider than
+// the timer it would have to displace, so it can never be the sole survivor.
+//
+// Tightened with a ")" end-of-line anchor that spinnerRe does not need: without a timer to
+// vouch for it, "…" + "(thinking" is weak enough that col-0 prose could reach it, and the
+// cost of a false positive here is a session stuck badged 実行中 (the transcript line does
+// not scroll away by itself). The real spinner always ends its line at the closing paren.
+var spinnerThinkingRe = regexp.MustCompile(`(?m)` + spinnerHead + `[^)\n]*\bthinking\b[^)\n]*\)[ \t]*$`)
 
 // spinnerActive reports whether the captured pane text shows a turn actively running —
-// either the classic "esc to interrupt" affordance or the live spinner header (see
-// spinnerRe).
+// the classic "esc to interrupt" affordance, or the live spinner header with a timer
+// (spinnerRe) or with the timer squeezed out by a narrow pane (spinnerThinkingRe).
 func spinnerActive(s string) bool {
-	return strings.Contains(s, "esc to interrupt") || spinnerRe.MatchString(s)
+	return strings.Contains(s, "esc to interrupt") ||
+		spinnerRe.MatchString(s) || spinnerThinkingRe.MatchString(s)
 }
 
 // modeFooterRe matches claude's permission-mode footer strip — the "⏸ manual mode on" /
