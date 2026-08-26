@@ -63,6 +63,10 @@ const (
 	errCodeConnAWSProfileRequired = "conn_aws_profile_required"
 	errCodeConnSSORegionMissing   = "conn_sso_region_missing"
 
+	// Jira 接続（connections_jira.go, docs/80 P1）
+	errCodeConnJiraFields   = "conn_jira_fields_required"
+	errCodeConnJiraRejected = "conn_jira_rejected"
+
 	// チャットブリッジ接続（connections.go, docs/37 P1）
 	errCodeConnDiscordTokenRequired = "conn_discord_token_required"
 	errCodeConnDiscordDestRequired  = "conn_discord_destination_required"

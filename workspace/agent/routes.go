@@ -331,6 +331,10 @@ func buildMux() *http.ServeMux {
 	// flows run in the Control Plane since docs/71, where the app can be read per
 	// tenant. GitHub's token comes back through PUT /connections/git/github.com above.
 	mux.HandleFunc("PUT /connections/git/bitbucket/oauth", handleBitbucketStore)
+	// Jira（docs/80 P1）: 作業項目の 2 つ目の取得元。site+email+token は保存前に
+	// /rest/api/3/myself で検証する（3 項目あって打ち間違いが起きやすい）。
+	mux.HandleFunc("PUT /connections/jira", handlePutJiraConn)
+	mux.HandleFunc("DELETE /connections/jira", handleDeleteJiraConn)
 	mux.HandleFunc("POST /connections/claude/start", claude.HandleStart)
 	mux.HandleFunc("POST /connections/claude/complete", claude.HandleComplete)
 	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)

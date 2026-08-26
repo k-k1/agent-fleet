@@ -111,7 +111,8 @@ func TestWorkItemsFetchPerQueryErrors(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	body := `{"queries":[{"id":"q1","provider":"github","query":"assignee:@me"},
 	                     {"id":"q2","provider":"jira","query":"assignee = currentUser()"},
-	                     {"id":"q3","provider":"github","query":"  "}]}`
+	                     {"id":"q3","provider":"github","query":"  "},
+	                     {"id":"q4","provider":"backlog","query":"x"}]}`
 	req := httptest.NewRequest("POST", "/work-items/fetch", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	handleWorkItemsFetch(w, req)
@@ -125,8 +126,8 @@ func TestWorkItemsFetchPerQueryErrors(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v (%s)", err, w.Body.String())
 	}
-	if len(out.Errors) != 3 {
-		t.Fatalf("want 3 per-query errors, got %d (%s)", len(out.Errors), w.Body.String())
+	if len(out.Errors) != 4 {
+		t.Fatalf("want 4 per-query errors, got %d (%s)", len(out.Errors), w.Body.String())
 	}
 	byID := map[string]string{}
 	for _, e := range out.Errors {
@@ -135,11 +136,16 @@ func TestWorkItemsFetchPerQueryErrors(t *testing.T) {
 	if !strings.Contains(byID["q1"], "not connected") {
 		t.Errorf("q1 (no GitHub connection) = %q", byID["q1"])
 	}
-	if !strings.Contains(byID["q2"], "unsupported provider") {
-		t.Errorf("q2 (jira is P1) = %q", byID["q2"])
+	// jira は P1 で対応済み。未接続は「未接続」と言う —— ここが "unsupported" のままだと、
+	// 接続すれば直る話を「af が Jira に対応していない」と読ませてしまう。
+	if !strings.Contains(byID["q2"], "Jira is not connected") {
+		t.Errorf("q2 (jira, no connection) = %q", byID["q2"])
 	}
 	if !strings.Contains(byID["q3"], "empty") {
 		t.Errorf("q3 (blank query) = %q", byID["q3"])
+	}
+	if !strings.Contains(byID["q4"], "unsupported provider") {
+		t.Errorf("q4 (unknown provider) = %q", byID["q4"])
 	}
 }
 

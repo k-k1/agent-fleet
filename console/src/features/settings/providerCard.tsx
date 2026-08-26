@@ -20,6 +20,7 @@ export const BADGE_SHORT: Record<string, string> = {
   discord: "dc",
   slack: "sl",
   grafana: "gf",
+  jira: "ji",
   cloudwatch: "cw",
   aws: "aw",
 };

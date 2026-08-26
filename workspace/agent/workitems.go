@@ -117,6 +117,11 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, erro
 			return nil, fmt.Errorf("GitHub is not connected")
 		}
 		return githubSearchWorkItems(e.Token, q.ID, query)
+	case "jira":
+		if s.Jira == nil || s.Jira.Token == "" {
+			return nil, fmt.Errorf("Jira is not connected")
+		}
+		return jiraSearchWorkItems(s.Jira, q.ID, query)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", q.Provider)
 	}
