@@ -27,6 +27,12 @@ The fix is a Condition on the Output, not the removal of the export:
         Condition: HasArm64Ami
         ...
 
+`!If` is modelled too, because an optional parameter usually reaches an export
+through one: with `CreateX: !Equals [ !Ref P, "" ]`, exporting `!If [CreateX, ...,
+!Ref P]` is safe (that branch only runs when P was supplied) while the same export
+with the branches swapped is the fatal case. Everything else — `!GetAtt`, `!Sub`, a
+literal — is assumed non-empty.
+
 usage: check-cfn-exports.py <template.yaml> [...]
 exit 0 clean, 1 a template can produce an empty export, 2 the check could not run.
 """
@@ -68,18 +74,78 @@ def empty_parameters(doc):
     return out
 
 
+def emptiness_conditions(doc):
+    """Conditions of the form `!Equals [ !Ref P, "" ]` (and its `!Not`), by name.
+
+    They are how a template says "the operator did not supply P", so inside such a
+    Condition's branches the emptiness of P is *known* — which is what makes an
+    `!If` export safe or fatal rather than merely suspicious.
+    """
+    out = {}
+
+    def equals_empty(node):
+        if not isinstance(node, dict):
+            return None
+        args = node.get("Fn::Equals")
+        if not isinstance(args, list) or len(args) != 2:
+            return None
+        refs = [a for a in args if isinstance(a, dict) and isinstance(a.get("Ref"), str)]
+        blanks = [a for a in args if isinstance(a, str) and not a.strip()]
+        return refs[0]["Ref"] if len(refs) == 1 and len(blanks) == 1 else None
+
+    for name, node in (doc.get("Conditions") or {}).items():
+        param = equals_empty(node)
+        if param:
+            out[name] = (param, True)          # true branch => param IS empty
+            continue
+        if isinstance(node, dict) and isinstance(node.get("Fn::Not"), list) and len(node["Fn::Not"]) == 1:
+            param = equals_empty(node["Fn::Not"][0])
+            if param:
+                out[name] = (param, False)     # true branch => param is NOT empty
+    return out
+
+
+def value_can_be_empty(value, may_be_empty, conds, known):
+    """Can this Output Value evaluate to ''? `known` maps param -> is-empty so far.
+
+    Only `!Ref` and `!If` are modelled: everything else (`!GetAtt`, `!Sub`, a
+    literal) is treated as non-empty, exactly as this check has always done.
+    """
+    if not isinstance(value, dict):
+        return None
+    ref = value.get("Ref")
+    if isinstance(ref, str):
+        if ref in known:
+            return ref if known[ref] else None
+        return ref if ref in may_be_empty else None
+    branches = value.get("Fn::If")
+    if isinstance(branches, list) and len(branches) == 3:
+        cond, when_true, when_false = branches
+        fact = conds.get(cond) if isinstance(cond, str) else None
+        for taken, is_true_branch in ((when_true, True), (when_false, False)):
+            scoped = dict(known)
+            if fact:
+                param, empty_when_true = fact
+                scoped[param] = empty_when_true if is_true_branch else not empty_when_true
+            hit = value_can_be_empty(taken, may_be_empty, conds, scoped)
+            if hit:
+                return hit
+    return None
+
+
 def offenders(path):
     with open(path) as fh:
         doc = yaml.load(fh, Loader=CfnLoader) or {}
     may_be_empty = empty_parameters(doc)
+    conds = emptiness_conditions(doc)
     for name, spec in (doc.get("Outputs") or {}).items():
         if not isinstance(spec, dict) or "Export" not in spec:
             continue
         if spec.get("Condition"):          # gated — cannot export the empty case
             continue
-        value = spec.get("Value")
-        if isinstance(value, dict) and value.get("Ref") in may_be_empty:
-            yield name, value["Ref"]
+        param = value_can_be_empty(spec.get("Value"), may_be_empty, conds, {})
+        if param:
+            yield name, param
 
 
 def main(argv):
@@ -91,7 +157,8 @@ def main(argv):
         for output, param in offenders(path):
             bad = True
             print(
-                f"{path}: Output {output} exports !Ref {param}, which can be empty — "
+                f"{path}: Output {output} can export {param}, which is empty on that "
+                f"path — "
                 f"the stack rolls back at CREATE. Gate the Output with a Condition.",
                 file=sys.stderr,
             )
