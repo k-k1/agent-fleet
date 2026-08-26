@@ -31,6 +31,11 @@ export function phaseKey(phase: string): MsgKey {
   // EC2 pool runtime (ADR 0045): the first minutes are infrastructure, not CLIs — a
   // new slot, a new/restored home disk, an SSM mount. Saying "installing agent CLIs"
   // there names the wrong wait, which is what an operator judges "stuck" against.
+  // The slowest path there is, and the one most likely to be judged "stuck": the pool is
+  // at its cap holding only boxes of a size this member cannot run on, so one is being
+  // taken out before theirs can be built. Falling through to the generic "starting" here
+  // would name no cause for the longest wait the product has.
+  if (p.startsWith("slot: making room")) return "wsstart.slot_making_room";
   if (p.startsWith("slot: creating")) return "wsstart.slot_creating";
   if (p.startsWith("slot: waking")) return "wsstart.slot_waking";
   if (p.startsWith("slot: booting") || p.startsWith("slot: joining")) return "wsstart.slot_booting";

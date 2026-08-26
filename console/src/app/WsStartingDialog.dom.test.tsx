@@ -8,6 +8,10 @@ import { en } from "../lib/i18n/locales/en.ts";
 // "installing agent CLIs" is how a normal start reads as stuck (ADR 0045 / docs/64).
 describe("phaseKey", () => {
   it("names the infrastructure waits of the EC2 pool runtime", () => {
+    // ⚠️ 「片付けてから作る」は起動の中でいちばん長い経路（上限に張り付いたプールが、
+    // この人が乗れない大きさの箱で埋まっている）。ここを generic に落とすと、
+    // **最長の待ちだけが理由を名乗らない**ことになる。
+    expect(phaseKey("slot: making room")).toBe("wsstart.slot_making_room");
     expect(phaseKey("slot: creating")).toBe("wsstart.slot_creating");
     expect(phaseKey("slot: waking")).toBe("wsstart.slot_waking");
     expect(phaseKey("slot: booting")).toBe("wsstart.slot_booting");

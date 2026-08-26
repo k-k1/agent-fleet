@@ -2026,6 +2026,7 @@ export const en: Record<keyof typeof ja, string> = {
   "wsstart.installing_clis": "Installing agent CLIs… (first start only, can take a few minutes)",
   "wsstart.fetching_tool": "Fetching additional tools…",
   "wsstart.toolchain": "Installing toolchain…",
+  "wsstart.slot_making_room": "Clearing an unused machine to make space for one your size… (this is the slowest path)",
   "wsstart.slot_creating": "Getting a machine ready for you… (a new one is being started; this takes a few minutes)",
   "wsstart.slot_waking": "Waking your machine…",
   "wsstart.slot_booting": "Waiting for the machine to come up…",

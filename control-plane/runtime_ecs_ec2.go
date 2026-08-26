@@ -1341,31 +1341,44 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 		// azFilter is "" for a home that does not exist yet, so the victim is the
 		// longest-dormant one in the WHOLE pool rather than the longest-dormant one in an
 		// AZ that was picked before anybody looked.
-		victim, victimAZ, err := e.evictLongestIdle(ctx, azFilter)
-		if err != nil {
-			return ec2Placement{}, err
-		}
-		if vol == nil {
-			if err := create(victimAZ); err != nil {
+		victim, victimAZ, evictErr := e.evictLongestIdle(ctx, azFilter)
+		if evictErr != nil {
+			// Nothing of this SIZE can be taken back — but the cap may be held by boxes
+			// this workspace could never run on, and reuse cannot turn one of those into
+			// what it needs. Terminate one and build the right box instead of failing:
+			// "slower" is a cost the operator accepted, "cannot start at all" is not
+			// (docs/64 §64.33). Falls through to growPool below.
+			e.setPhase("slot: making room")
+			freed, err := e.makeRoom(ctx)
+			if err != nil {
+				log.Printf("ecs-ec2 start: could not free a slot for %s: %v", e.base.name, err)
+			}
+			if !freed {
+				return ec2Placement{}, evictErr // the original message is the useful one
+			}
+		} else {
+			if vol == nil {
+				if err := create(victimAZ); err != nil {
+					return ec2Placement{}, err
+				}
+			}
+			volID := aws.ToString(vol.VolumeId)
+			if err := e.waitVolumeAttachable(ctx, volID); err != nil {
 				return ec2Placement{}, err
 			}
+			if err := e.attachHomeWithRetry(ctx, volID, victim); err != nil {
+				return ec2Placement{}, fmt.Errorf("attach %s to the reclaimed slot %s: %w", volID, victim, err)
+			}
+			if err := e.claim(ctx, volID, victim); err != nil {
+				log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
+			}
+			e.clearDormancy(ctx, volID)
+			running, err := e.instanceRunning(ctx, victim)
+			if err != nil {
+				return ec2Placement{}, err
+			}
+			return ec2Placement{volumeID: volID, instanceID: victim, az: azFilter, deferred: true, wake: !running}, nil
 		}
-		volID := aws.ToString(vol.VolumeId)
-		if err := e.waitVolumeAttachable(ctx, volID); err != nil {
-			return ec2Placement{}, err
-		}
-		if err := e.attachHomeWithRetry(ctx, volID, victim); err != nil {
-			return ec2Placement{}, fmt.Errorf("attach %s to the reclaimed slot %s: %w", volID, victim, err)
-		}
-		if err := e.claim(ctx, volID, victim); err != nil {
-			log.Printf("ecs-ec2 start: could not mark %s as converging: %v", volID, err)
-		}
-		e.clearDormancy(ctx, volID)
-		running, err := e.instanceRunning(ctx, victim)
-		if err != nil {
-			return ec2Placement{}, err
-		}
-		return ec2Placement{volumeID: volID, instanceID: victim, az: azFilter, deferred: true, wake: !running}, nil
 	}
 	// RunInstances answers immediately with a PENDING instance that cannot accept a
 	// volume yet, so the claim tag carries the "starting" state until the background
@@ -2254,6 +2267,185 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 		return "", "", fmt.Errorf("reclaim slot %s: %w", victimSlot, err)
 	}
 	return victimSlot, victimAZ, nil
+}
+
+// makeRoom frees ONE place under the cap by TERMINATING a dormant box of a size this
+// workspace cannot use, so that growPool can build one it can. It is the last thing tried
+// before a Start fails at the cap, and it exists because the alternative is a member who
+// simply cannot work — the one outcome this deployment's operator ruled out.
+//
+// ⚠️ Terminate rather than take the box over, because an instance type is not something a
+// running box can change. evictLongestIdle has already had first refusal on every box of
+// the RIGHT size, so whatever is left is a box no amount of reuse can turn into what this
+// workspace needs — while it still holds one of the maxSlots places. Before this, that
+// state failed the Start and went on failing until an operator noticed and terminated
+// something by hand (docs/64 §64.33).
+//
+// ⚠️ NOT filtered by AZ, unlike evictLongestIdle, and the difference is the whole point:
+// there the box is REUSED, so it has to be where the volume is pinned; here it is
+// destroyed to buy a place under a cap that counts the entire pool. A box freed in another
+// AZ is worth exactly as much, and refusing to look there would leave the requester stuck
+// for nothing.
+//
+// ⚠️ Deliberately NOT gated on slotTerminateAfter. That knob is about idle COST — how long
+// to keep paying for a box nobody is using — and its 0 means "keep them". This is a
+// capacity deadlock, it only ever runs when the alternative is a failed Start, and what it
+// costs the victim is the image cache (their return goes from ~110s to ~135s), never their
+// home: releaseSlot detaches it first, and the volume is DeleteOnTermination=false either
+// way. Reading "never terminate" as "leave the deadlock in place" would answer a question
+// the parameter was never asked.
+//
+// Empty boxes are taken before occupied ones — those spend nobody's affinity at all.
+func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
+	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, e.pool.pool),
+			// af-role=slot leaves quarantined boxes alone, as everywhere else: those are
+			// evidence an operator has not looked at yet (決定 20).
+			tagFilter(ec2TagRole, ec2RoleSlot),
+			{Name: aws.String("instance-state-name"), Values: []string{"running", "stopped"}},
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+	vols, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, e.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+	// The ECS side as well as the EC2 side, for the reason sweepFreeSlots gives: a task can
+	// be running on a box no home is attached to at all (the golden baker's probe).
+	tasks, err := e.slotTaskCounts(ctx)
+	if err != nil {
+		return false, err
+	}
+	now := e.now()
+	type occupant struct {
+		vol     *ec2types.Volume
+		idle    time.Duration
+		dormant bool
+	}
+	occupied, claimed := map[string]occupant{}, map[string]bool{}
+	for i := range vols.Volumes {
+		v := &vols.Volumes[i]
+		// A box a Start is landing on holds no attachment yet; only the claim says so.
+		if inst := ec2TagValue(v.Tags, ec2TagClaim); inst != "" && e.claimLive(v) {
+			claimed[inst] = true
+		}
+		if inst := attachedInstance(v); inst != "" {
+			idle, ok := idleSince(v, now)
+			occupied[inst] = occupant{vol: v, idle: idle, dormant: ok}
+		}
+	}
+	type candidate struct {
+		id, itype string
+		free      bool
+		idle      time.Duration
+		vol       *ec2types.Volume
+	}
+	var best *candidate
+	take := func(c candidate) {
+		switch {
+		case best == nil:
+		case best.free != c.free:
+			if !c.free {
+				return // an empty box always wins over somebody's dormant one
+			}
+		case c.idle <= best.idle:
+			return
+		}
+		best = &c
+	}
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			id := aws.ToString(inst.InstanceId)
+			if string(inst.InstanceType) == e.instanceType {
+				continue // evictLongestIdle already had first refusal on this size
+			}
+			if claimed[id] || tasks[id] > 0 {
+				continue
+			}
+			occ, taken := occupied[id]
+			switch {
+			case !taken:
+				// Free, so the only clock is how long it has been free. An unreadable or
+				// missing mark reads as 0 and simply loses every tie-break — this walk is
+				// about capacity, not about timing, so a fresh box is still eligible when
+				// it is the only one.
+				var freeFor time.Duration
+				if at, err := time.Parse(time.RFC3339, ec2TagValue(inst.Tags, ec2TagSlotIdleSince)); err == nil {
+					freeFor = now.Sub(at)
+				}
+				take(candidate{id: id, itype: string(inst.InstanceType), free: true, idle: freeFor})
+			case occ.dormant && ec2TagValue(occ.vol.Tags, ec2TagMembership) != e.base.membershipID:
+				take(candidate{id: id, itype: string(inst.InstanceType), idle: occ.idle, vol: occ.vol})
+			}
+		}
+	}
+	if best == nil {
+		return false, nil
+	}
+	if best.vol != nil {
+		victim := e.siblingFor(best.vol)
+		if victim == nil {
+			return false, fmt.Errorf("slot %s holds an unidentifiable home %s", best.id, aws.ToString(best.vol.VolumeId))
+		}
+		log.Printf("ecs-ec2: the pool is full of slots %s cannot use; taking %s (%s, %s's, dormant %.0fm) out of it",
+			e.instanceType, best.id, best.itype, victim.base.name, best.idle.Minutes())
+		// Same order and the same reason as the sweeper's terminate stage: releaseSlot is
+		// anchored to the victim's Start generation, so a Start racing this aborts the
+		// release instead of losing its home to a box that is going away.
+		if err := victim.releaseSlot(ctx); err != nil {
+			return false, fmt.Errorf("release %s before terminating slot %s: %w",
+				aws.ToString(best.vol.VolumeId), best.id, err)
+		}
+	} else {
+		log.Printf("ecs-ec2: the pool is full of slots %s cannot use; taking the empty %s (%s) out of it",
+			e.instanceType, best.id, best.itype)
+	}
+	e.terminateSlot(ctx, best.id, "made room for a "+e.instanceType)
+	return true, e.waitSlotGone(ctx, best.id)
+}
+
+// waitSlotGone waits until a terminated box stops counting toward the cap.
+// TerminateInstances returns as soon as the request is accepted and DescribeInstances can
+// still answer `stopped` for a moment afterwards — runSlot re-reads poolSize, so without
+// this the Start we just freed a place for would fail on the box we freed it with.
+func (e *ecsEC2Runtime) waitSlotGone(ctx context.Context, instanceID string) error {
+	for i := 0; i < 30; i++ {
+		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+		if err != nil {
+			if isAWSNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		counted := false
+		for _, r := range out.Reservations {
+			for _, inst := range r.Instances {
+				if inst.State == nil {
+					continue
+				}
+				switch inst.State.Name {
+				case ec2types.InstanceStateNameShuttingDown, ec2types.InstanceStateNameTerminated:
+				default:
+					counted = true
+				}
+			}
+		}
+		if !counted {
+			return nil
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("slot %s still counts toward the pool after being terminated", instanceID)
 }
 
 // siblingFor builds the runtime of ANOTHER workspace from its home volume's tags — the
@@ -3734,7 +3926,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 			log.Printf("ecs-ec2 sweep: releasing %s before terminating slot %s: %v", volumeID, instanceID, err)
 			return
 		}
-		f.terminateSlot(ctx, instanceID, fmt.Sprintf("%s dormant %.0fm", rt.base.name, idle.Minutes()))
+		rt.terminateSlot(ctx, instanceID, fmt.Sprintf("%s dormant %.0fm", rt.base.name, idle.Minutes()))
 		return
 	}
 	if f.pool.slotSleepAfter <= 0 || idle < f.pool.slotSleepAfter {
@@ -3874,7 +4066,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 	// The ECS side of the same question. A task can be RUNNING on a slot whose home is
 	// not in `homes` at all (the baker's probe, or drift), and the instance's own view of
 	// its ENIs lags — so both are asked, and either one answering "busy" is enough.
-	tasks, err := f.slotTaskCounts(ctx)
+	tasks, err := probe.slotTaskCounts(ctx)
 	if err != nil {
 		log.Printf("ecs-ec2 sweep: reading task counts before sleeping free slots: %v", err)
 		return
@@ -3902,7 +4094,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			// Nothing to release: this walk is BY DEFINITION the slots holding no home, and
 			// the three checks above have just re-confirmed it against volumes, ECS tasks
 			// and the instance's own ENIs.
-			f.terminateSlot(ctx, c.id, fmt.Sprintf("free for %.0fm", c.idle.Minutes()))
+			probe.terminateSlot(ctx, c.id, fmt.Sprintf("free for %.0fm", c.idle.Minutes()))
 			continue
 		}
 		log.Printf("ecs-ec2 sweep: slot %s has held no home for %.0fm; stopping it", c.id, c.idle.Minutes())
@@ -3927,9 +4119,9 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 //
 // The caller owns the safety argument (no tasks, no home, not claimed); this function
 // only carries it out.
-func (f *ecsEC2Factory) terminateSlot(ctx context.Context, instanceID, why string) {
-	f.deregisterSlot(ctx, instanceID)
-	if _, err := f.ec2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+func (e *ecsEC2Runtime) terminateSlot(ctx context.Context, instanceID, why string) {
+	e.deregisterSlot(ctx, instanceID)
+	if _, err := e.ec2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
 		InstanceIds: []string{instanceID},
 	}); err != nil {
 		log.Printf("ecs-ec2 sweep: terminating slot %s failed: %v", instanceID, err)
@@ -3944,14 +4136,14 @@ func (f *ecsEC2Factory) terminateSlot(ctx context.Context, instanceID, why strin
 //
 // A box the cluster does not know about is not an error: a slot that never finished
 // registering is exactly the kind we terminate.
-func (f *ecsEC2Factory) deregisterSlot(ctx context.Context, instanceID string) {
-	arns, err := f.probeRuntime().listContainerInstanceARNs(ctx)
+func (e *ecsEC2Runtime) deregisterSlot(ctx context.Context, instanceID string) {
+	arns, err := e.listContainerInstanceARNs(ctx)
 	if err != nil || len(arns) == 0 {
 		return
 	}
 	for _, chunk := range chunkStrings(arns, 100) {
-		out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
-			Cluster:            aws.String(f.base.cfg.cluster),
+		out, err := e.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
+			Cluster:            aws.String(e.base.cfg.cluster),
 			ContainerInstances: chunk,
 		})
 		if err != nil {
@@ -3962,8 +4154,8 @@ func (f *ecsEC2Factory) deregisterSlot(ctx context.Context, instanceID string) {
 			if aws.ToString(ci.Ec2InstanceId) != instanceID {
 				continue
 			}
-			if _, err := f.ci.DeregisterContainerInstance(ctx, &ecs.DeregisterContainerInstanceInput{
-				Cluster:           aws.String(f.base.cfg.cluster),
+			if _, err := e.ci.DeregisterContainerInstance(ctx, &ecs.DeregisterContainerInstanceInput{
+				Cluster:           aws.String(e.base.cfg.cluster),
 				ContainerInstance: ci.ContainerInstanceArn,
 				Force:             aws.Bool(true),
 			}); err != nil {
@@ -3978,16 +4170,15 @@ func (f *ecsEC2Factory) deregisterSlot(ctx context.Context, instanceID string) {
 // slotTaskCounts maps EC2 instance id → tasks ECS believes are on it (running + pending).
 // A slot the cluster does not know about is simply absent, which reads as 0 — correct,
 // since nothing can be placed on it.
-func (f *ecsEC2Factory) slotTaskCounts(ctx context.Context) (map[string]int, error) {
-	rt := f.probeRuntime()
-	arns, err := rt.listContainerInstanceARNs(ctx)
+func (e *ecsEC2Runtime) slotTaskCounts(ctx context.Context) (map[string]int, error) {
+	arns, err := e.listContainerInstanceARNs(ctx)
 	if err != nil || len(arns) == 0 {
 		return map[string]int{}, err
 	}
 	counts := map[string]int{}
 	for _, chunk := range chunkStrings(arns, 100) {
-		out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
-			Cluster:            aws.String(f.base.cfg.cluster),
+		out, err := e.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
+			Cluster:            aws.String(e.base.cfg.cluster),
 			ContainerInstances: chunk,
 		})
 		if err != nil {
