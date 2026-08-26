@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -257,6 +260,241 @@ func TestECSFargateLiveStartDeployments(t *testing.T) {
 	}
 }
 
+// TestECSEC2LiveDeploymentConfig checks the ONE part of docs/64 §64.39.10 that unit tests
+// cannot: that `ec2SingleTaskDeployment` (maximumPercent 100 / minimumHealthyPercent 0)
+// actually reaches the real service — including a service that was created BEFORE this
+// change and therefore still carries the AWS default 200/100, which is the state every
+// service in the production pool is in right now.
+//
+//	source ~/af-ec2c/state.env
+//	AF_ECS_EC2_LIVE_DEPLOY=1 go test -run TestECSEC2LiveDeploymentConfig -v -timeout 75m .
+//
+// The rounds, and what each is worth:
+//
+//	1. a service the product CREATES must carry 100/0.
+//	2. an A/B of the setting ITSELF on this substrate, driven from the test side. Not the
+//	   40-second bug — the PROPERTY that made it possible: can this service ever run two
+//	   tasks at once? A revision swap on a service with a running task is the deterministic
+//	   way to ask (200/100 must start the replacement before stopping the old one; 100/0
+//	   has no room to and must stop first). ⚠️ Round 2 does not gate the test — see the
+//	   note on TestECSEC2LiveStartDeployments: the defect itself is a race, and the first
+//	   version of that test reported three meaningless greens because its substrate never
+//	   reproduced anything. This round exists so a green below is not read that way.
+//	3. ★ the real question: force the service back to 200/100 (a pre-upgrade service), then
+//	   Start it through the PRODUCT with a changed task definition. It must come back at
+//	   100/0 — and, because that is what "is the first Start after the deploy still on the
+//	   old behaviour?" really asks, the 100 must be in place NO LATER than the moment the
+//	   desiredCount goes to 1. A watcher samples the service throughout to see the order.
+//	4. the `!prepared` fallback (reuse → a single upsertService carrying the setting AND
+//	   the count), where nothing orders the two and only ECS's own atomicity is left.
+func TestECSEC2LiveDeploymentConfig(t *testing.T) {
+	if os.Getenv("AF_ECS_EC2_LIVE") != "1" || os.Getenv("AF_ECS_EC2_LIVE_DEPLOY") != "1" {
+		t.Skip("set AF_ECS_EC2_LIVE=1 AF_ECS_EC2_LIVE_DEPLOY=1 (and source the harness state.env)")
+	}
+	ctx := context.Background()
+	useCPTaskRole(t)
+	factory, err := newECSEC2Factory(&manager{})
+	if err != nil {
+		t.Fatalf("factory: %v", err)
+	}
+	f := factory.(*ecsEC2Factory)
+	// The test's own eyes and cleanup stay the deployer's; only the product runs as the
+	// CP task role. A configuration this test READ with the product's client would be the
+	// product's opinion of what it sent, which is the thing under test.
+	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(f.base.cfg.region))
+	if err != nil {
+		t.Fatalf("aws config: %v", err)
+	}
+	live := &liveEC2{t: t, ctx: ctx, ec2: ec2.NewFromConfig(ac), ecs: ecs.NewFromConfig(ac),
+		ssm: ssm.NewFromConfig(ac), cluster: f.base.cfg.cluster}
+	d := &liveDeploy{t: t, ctx: ctx, ecs: ecs.NewFromConfig(ac), cluster: f.base.cfg.cluster}
+
+	name := "af-ec2c-dc" + os.Getenv("AF_ECS_EC2_LIVE_SUFFIX")
+	ws := Workspace{ContainerName: name, MembershipID: "m-dc1", AgentToken: "tok-dc1"}
+	u := f.New(ws, "", nil).(*ecsEC2Runtime)
+
+	// A second task shows up ~40s after the first, so "converged" is not far enough to
+	// look: every round watches past that before counting.
+	const settle = 90 * time.Second
+
+	stop := func() {
+		t.Helper()
+		if err := u.Stop(ctx); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+		live.waitTasksGone(u, 5*time.Minute)
+		d.settle(name, 4*time.Minute)
+	}
+	// A left-behind desiredCount 1 bills for as long as it runs, and a failed round
+	// t.Fatalf's straight past the stop() at the end of it.
+	defer func() {
+		if err := u.Stop(ctx); err != nil {
+			t.Logf("cleanup Stop: %v", err)
+		}
+	}()
+
+	// --- 1. a brand-new service (CreateService). ---
+	w := d.watch(name)
+	from := time.Now()
+	if err := u.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	live.waitState(u, "running", 12*time.Minute)
+	time.Sleep(settle)
+	r := w.finish()
+	d.requireDeploymentConfig(name, 100, 0, "a service the product just CREATED")
+	n, b := d.countSince(name, from)
+	t.Logf("[NEW SERVICE] deploymentConfiguration = 100/0, tasks created = %d, 'unable to place' = %d, "+
+		"most tasks seen at once = %d", n, b, r.maxTasks)
+	for _, line := range d.tasksSince(name, from) {
+		t.Logf("    task %s", line)
+	}
+	r.report(t)
+	if n != 1 || b != 0 {
+		t.Errorf("a first Start created %d tasks and %d placement complaints, want 1/0", n, b)
+	}
+
+	// --- 2. A/B of the SETTING on this substrate, with the service left running.
+	//
+	// A revision swap on a service that has a task running is the deterministic form of
+	// "may this service run two tasks?": at 200/100 ECS MUST bring the replacement up
+	// before it takes the old one down, at 100/0 it has nowhere to put it and must go
+	// down to zero first. That is the same headroom the demoted deployment used in
+	// production — asked directly, instead of hoping the scheduler race fires. ---
+	ab := func(label string, max, min int32) int32 {
+		t.Helper()
+		d.setDeploymentConfig(name, max, min)
+		d.requireDeploymentConfig(name, max, min, label+": the test's own setup")
+		d.settle(name, 3*time.Minute)
+		since := time.Now()
+		wa := d.watch(name)
+		if _, err := d.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
+			Cluster: aws.String(f.base.cfg.cluster), Service: aws.String(name),
+			TaskDefinition: aws.String(d.copyRevision(d.serviceTaskDef(name))),
+		}); err != nil {
+			t.Fatalf("%s: revision swap: %v", label, err)
+		}
+		time.Sleep(settle)
+		res := wa.finish()
+		created, blocked := d.countSince(name, since)
+		t.Logf("[A/B %s] most tasks seen at once = %d, started = %d, 'unable to place' = %d",
+			label, res.maxTasks, created, blocked)
+		for _, line := range d.tasksSince(name, since) {
+			t.Logf("    task %s", line)
+		}
+		res.report(t)
+		// ⚠️ Do not hand the next round a service whose deployment is still rolling. The
+		// first run of this test did, and round 3 then started from a state no production
+		// Start is ever in: a PRIMARY deployment that had never placed a task. Leave the
+		// substrate converged, so what the next round measures is its own.
+		d.settle(name, 4*time.Minute)
+		return res.maxTasks
+	}
+	atDefault := ab("maximumPercent 200 (the AWS default, i.e. every pre-upgrade service)", 200, 100)
+	atFixed := ab("maximumPercent 100 (ec2SingleTaskDeployment)", 100, 0)
+	switch {
+	case atDefault >= 2 && atFixed < 2:
+		t.Logf("A/B RESULT: 200%% ran %d tasks at once, 100%% ran %d — on this substrate the setting is "+
+			"what decides whether a second task can exist at all (docs/64 §64.39.10).", atDefault, atFixed)
+	case atDefault < 2:
+		t.Logf("A/B RESULT: even at 200%% this substrate never showed two tasks at once (%d), so it does "+
+			"NOT reproduce the production condition; the rounds below show what the product SENDS, not "+
+			"that it prevented anything here.", atDefault)
+	default:
+		t.Errorf("A/B RESULT: 100%% still showed %d tasks at once — ec2SingleTaskDeployment does not do "+
+			"what §64.39.10 says it does", atFixed)
+	}
+	stop()
+
+	// --- 3. ★ the pre-upgrade service: forced back to 200/100, then started BY THE
+	// PRODUCT with a changed task definition. A different env is the smallest honest
+	// change (image, settings and slot all reach the fingerprint the same way).
+	//
+	// Run TWICE, with a different env each time. Once is a data point; the defect it
+	// stands in for fired on 40% of production Starts, so a single green would sit
+	// comfortably inside its miss rate. ---
+	preUpgradeStart := func(round int, probe string) {
+		t.Helper()
+		d.setDeploymentConfig(name, 200, 100)
+		d.requireDeploymentConfig(name, 200, 100, fmt.Sprintf("★%d: the pre-upgrade service this round needs", round))
+		d.settle(name, 3*time.Minute)
+		d.logDeployments(name, fmt.Sprintf("★%d: what the product is about to Start from", round))
+		lastTaskDef.Delete(name)
+		changed := f.New(ws, "", []string{"AF_LIVE_DC_PROBE=" + probe}).(*ecsEC2Runtime)
+		u = changed
+		revsBefore := d.revisions(name)
+		w := d.watch(name)
+		from := time.Now()
+		if err := changed.Start(ctx); err != nil {
+			t.Fatalf("★%d: changed-taskdef Start on a 200%% service: %v", round, err)
+		}
+		live.waitState(u, "running", 12*time.Minute)
+		time.Sleep(settle)
+		r := w.finish()
+		n, b := d.countSince(name, from)
+		d.requireDeploymentConfig(name, 100, 0,
+			fmt.Sprintf("★%d: a service that was at 200/100 when the product Started it", round))
+		t.Logf("[★%d PRE-UPGRADE SERVICE, changed task definition] tasks created = %d, 'unable to place' = %d, "+
+			"most tasks seen at once = %d", round, n, b, r.maxTasks)
+		for _, line := range d.tasksSince(name, from) {
+			t.Logf("    task %s", line)
+		}
+		r.report(t)
+		what := fmt.Sprintf("★%d: the FIRST Start after the deploy", round)
+		r.requireOrdered(t, what)
+		r.requireNoDemotedTask(t, what)
+		if n != 1 || b != 0 {
+			t.Errorf("%s: created %d tasks and %d placement complaints, want 1/0", what, n, b)
+		}
+		if after := d.revisions(name); after <= revsBefore {
+			t.Errorf("%s: a changed env should have registered a new revision, still %d", what, after)
+		}
+		stop()
+	}
+	preUpgradeStart(1, "1")
+	preUpgradeStart(2, "2")
+
+	var revsBefore int
+
+	// --- 4. the `!prepared` fallback: nothing changed, so reuseOrRegisterTaskDef reuses
+	// and launch() goes through upsertService — one UpdateService carrying the setting and
+	// desiredCount 1 together, the only place on the path where nothing orders them. ---
+	d.setDeploymentConfig(name, 200, 100)
+	d.requireDeploymentConfig(name, 200, 100, "the pre-upgrade service round 4 needs")
+	d.settle(name, 3*time.Minute)
+	d.logDeployments(name, "!prepared: what the product is about to Start from")
+	revsBefore = d.revisions(name)
+	w = d.watch(name)
+	from = time.Now()
+	if err := u.Start(ctx); err != nil {
+		t.Fatalf("re-wake Start on a 200%% service: %v", err)
+	}
+	live.waitState(u, "running", 12*time.Minute)
+	time.Sleep(settle)
+	r = w.finish()
+	n, b = d.countSince(name, from)
+	d.requireDeploymentConfig(name, 100, 0, "a re-wake of a 200/100 service")
+	if after := d.revisions(name); after == revsBefore {
+		t.Logf("[!prepared] no new revision (still %d): the task definition was reused, so this round did "+
+			"go through upsertService's single call", after)
+	} else {
+		t.Logf("NOTE: this round registered %d new revision(s) — the slot changed, so the fingerprint did "+
+			"and launch() took the split path again. The `!prepared` fallback was NOT exercised.", after-revsBefore)
+	}
+	t.Logf("[!prepared re-wake] tasks created = %d, 'unable to place' = %d, most tasks seen at once = %d",
+		n, b, r.maxTasks)
+	for _, line := range d.tasksSince(name, from) {
+		t.Logf("    task %s", line)
+	}
+	r.report(t)
+	r.requireOrdered(t, "the !prepared fallback")
+	r.requireNoDemotedTask(t, "the !prepared fallback")
+	if n != 1 || b != 0 {
+		t.Errorf("a re-wake of a pre-upgrade service created %d tasks and %d placement complaints, want 1/0", n, b)
+	}
+	stop()
+}
+
 // liveDeploy reads what ECS did, with the deployer's own credentials — never the
 // product's. The product's view is exactly what this test must not trust.
 type liveDeploy struct {
@@ -353,6 +591,266 @@ func (d *liveDeploy) revisions(family string) int {
 			return n
 		}
 	}
+}
+
+// --- deployment configuration: read it, force it, and watch it move ---
+
+// requireDeploymentConfig fails the test unless the service really carries max/min. Read
+// with the deployer's credentials, from the service itself: what the product believes it
+// sent is exactly the claim under test (the unit tests already cover that half).
+func (d *liveDeploy) requireDeploymentConfig(service string, wantMax, wantMin int32, what string) {
+	d.t.Helper()
+	dc := d.describe(service).DeploymentConfiguration
+	if dc == nil {
+		d.t.Fatalf("%s: %s has no deploymentConfiguration at all", what, service)
+		return
+	}
+	max, min := aws.ToInt32(dc.MaximumPercent), aws.ToInt32(dc.MinimumHealthyPercent)
+	if max != wantMax || min != wantMin {
+		d.t.Errorf("%s: %s is at maximumPercent=%d minimumHealthyPercent=%d, want %d/%d",
+			what, service, max, min, wantMax, wantMin)
+		return
+	}
+	d.t.Logf("%s: %s is at %d/%d", what, service, max, min)
+}
+
+// setDeploymentConfig puts the service back the way AWS would have left it before this
+// change (200/100) — the only honest way to test the upgrade path, since every service in
+// the production pool was created by a build that never sent the setting.
+func (d *liveDeploy) setDeploymentConfig(service string, max, min int32) {
+	d.t.Helper()
+	if _, err := d.ecs.UpdateService(d.ctx, &ecs.UpdateServiceInput{
+		Cluster: aws.String(d.cluster), Service: aws.String(service),
+		DeploymentConfiguration: &ecstypes.DeploymentConfiguration{
+			MaximumPercent: aws.Int32(max), MinimumHealthyPercent: aws.Int32(min),
+		},
+	}); err != nil {
+		d.t.Fatalf("forcing %s to %d/%d: %v", service, max, min, err)
+	}
+}
+
+// logDeployments records the state a round STARTS from. The first run of this test made
+// its ★ round start from a service whose deployment was still rolling and had never
+// placed a task — a state no production Start is ever in — and the round then measured
+// that instead of what it was asked to.
+func (d *liveDeploy) logDeployments(service string, what string) {
+	d.t.Helper()
+	s := d.describe(service)
+	d.t.Logf("%s: desired=%d running=%d pending=%d", what, s.DesiredCount, s.RunningCount, s.PendingCount)
+	for _, dep := range s.Deployments {
+		rev := aws.ToString(dep.TaskDefinition)
+		if i := strings.LastIndex(rev, ":"); i >= 0 {
+			rev = "rev " + rev[i+1:]
+		}
+		d.t.Logf("    %s %s %s d=%d r=%d p=%d", aws.ToString(dep.Status), rev, dep.RolloutState,
+			dep.DesiredCount, dep.RunningCount, dep.PendingCount)
+	}
+}
+
+// serviceWatch samples the service while someone else drives it. Two facts are only
+// visible here: whether the deployment configuration was already at 100% by the time the
+// desiredCount went to 1 (the ORDER is what makes the very first Start after a deploy
+// safe), and whether two tasks ever coexisted (the end state says nothing — the extra
+// task in production was gone again a couple of minutes later).
+type serviceWatch struct {
+	d       *liveDeploy
+	service string
+	begin   time.Time
+	stop    chan struct{}
+	done    chan struct{}
+
+	mu            sync.Mutex
+	first100      time.Time
+	firstDesired1 time.Time
+	maxTasks      int32
+	// Every distinct (deployment, status, revision, counts) the service passed through.
+	// ⚠️ This is the part event counting cannot do: "two tasks" does not say WHOSE, and
+	// the whole of §64.39 is about a task belonging to the DEMOTED deployment. A
+	// deployment carries its own taskDefinition and its own running/pending counts, so
+	// attribution is a fact here rather than an inference from timing.
+	trail    []string
+	seen     map[string]bool
+	demoted  []string
+	lastLine string
+}
+
+type watchResult struct {
+	to100, toCount   time.Duration
+	saw100, sawCount bool
+	maxTasks         int32
+	trail            []string
+	// demoted lists the moments an ACTIVE (i.e. superseded) deployment held a task —
+	// exactly the production symptom, whether or not it overlapped the real one.
+	demoted []string
+}
+
+func (d *liveDeploy) watch(service string) *serviceWatch {
+	w := &serviceWatch{d: d, service: service, begin: time.Now(),
+		stop: make(chan struct{}), done: make(chan struct{}), seen: map[string]bool{}}
+	go func() {
+		defer close(w.done)
+		for {
+			// A service that does not exist yet is the normal state at the start of the
+			// first round; keep sampling rather than deciding anything about it.
+			out, err := d.ecs.DescribeServices(d.ctx, &ecs.DescribeServicesInput{
+				Cluster: aws.String(d.cluster), Services: []string{service},
+			})
+			if err == nil && len(out.Services) == 1 {
+				s := out.Services[0]
+				w.mu.Lock()
+				if dc := s.DeploymentConfiguration; dc != nil && aws.ToInt32(dc.MaximumPercent) == 100 && w.first100.IsZero() {
+					w.first100 = time.Now()
+				}
+				if s.DesiredCount >= 1 && w.firstDesired1.IsZero() {
+					w.firstDesired1 = time.Now()
+				}
+				if n := s.RunningCount + s.PendingCount; n > w.maxTasks {
+					w.maxTasks = n
+				}
+				var line string
+				for _, dep := range s.Deployments {
+					rev := aws.ToString(dep.TaskDefinition)
+					if i := strings.LastIndex(rev, ":"); i >= 0 {
+						rev = "rev " + rev[i+1:]
+					}
+					status := aws.ToString(dep.Status)
+					entry := fmt.Sprintf("%s %s d=%d r=%d p=%d", status, rev,
+						dep.DesiredCount, dep.RunningCount, dep.PendingCount)
+					line += entry + " | "
+					if status == "ACTIVE" && dep.RunningCount+dep.PendingCount > 0 && !w.seen["demoted:"+entry] {
+						w.seen["demoted:"+entry] = true
+						w.demoted = append(w.demoted, fmt.Sprintf("+%.0fs  %s", time.Since(w.begin).Seconds(), entry))
+					}
+				}
+				if line != w.lastLine {
+					w.lastLine = line
+					w.trail = append(w.trail, fmt.Sprintf("+%.0fs  %s", time.Since(w.begin).Seconds(), line))
+				}
+				w.mu.Unlock()
+			}
+			select {
+			case <-w.stop:
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}()
+	return w
+}
+
+func (w *serviceWatch) finish() watchResult {
+	close(w.stop)
+	<-w.done
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	res := watchResult{maxTasks: w.maxTasks, trail: w.trail, demoted: w.demoted}
+	if !w.first100.IsZero() {
+		res.saw100, res.to100 = true, w.first100.Sub(w.begin)
+	}
+	if !w.firstDesired1.IsZero() {
+		res.sawCount, res.toCount = true, w.firstDesired1.Sub(w.begin)
+	}
+	return res
+}
+
+// report prints the deployment trail the watcher recorded and names, plainly, every
+// moment a superseded (ACTIVE) deployment held a task — the production symptom.
+func (r watchResult) report(t *testing.T) {
+	t.Helper()
+	for _, line := range r.trail {
+		t.Logf("    deployments  %s", line)
+	}
+	for _, line := range r.demoted {
+		t.Logf("    ⚠ a SUPERSEDED deployment held a task:  %s", line)
+	}
+}
+
+// requireNoDemotedTask is the §64.39 defect stated as an assertion. Not "two tasks at
+// once": a task from the demoted revision costs its start-up and its replacement even
+// when maximumPercent 100 keeps it from overlapping the real one, and that is what the
+// production pool was paying 40 seconds for.
+func (r watchResult) requireNoDemotedTask(t *testing.T, what string) {
+	t.Helper()
+	if len(r.demoted) == 0 {
+		return
+	}
+	t.Errorf("%s: a superseded (ACTIVE) deployment was handed %d task(s) — the count reached the OLD "+
+		"revision, which is docs/64 §64.39 still happening: %v", what, len(r.demoted), r.demoted)
+}
+
+// requireOrdered is the answer to "does the first Start after the deploy still behave like
+// the old build?": the service must be at maximumPercent 100 no later than the moment its
+// desiredCount becomes 1, or the count is raised on a service that still has room for a
+// second task. Sampling is 2s, so equal timestamps mean "the same call" — which is what
+// the `!prepared` path genuinely does.
+func (r watchResult) requireOrdered(t *testing.T, what string) {
+	t.Helper()
+	if !r.sawCount {
+		t.Errorf("%s: never observed desiredCount reaching 1 — the watcher missed the Start", what)
+		return
+	}
+	if !r.saw100 {
+		t.Errorf("%s: the service never showed maximumPercent 100 while it was being started", what)
+		return
+	}
+	if r.to100 > r.toCount {
+		t.Errorf("%s: maximumPercent reached 100 at +%.0fs, AFTER desiredCount reached 1 at +%.0fs — "+
+			"the count was raised while the service could still run two tasks",
+			what, r.to100.Seconds(), r.toCount.Seconds())
+		return
+	}
+	t.Logf("%s: maximumPercent was 100 at +%.0fs, desiredCount reached 1 at +%.0fs (sampled every 2s) — "+
+		"the count is never raised at 200%%", what, r.to100.Seconds(), r.toCount.Seconds())
+}
+
+// tasksSince names the REVISION every task the service created after `since` came from —
+// what "two tasks" alone does not say, and the detail that identified the production bug:
+// the extra task ran the OLD revision.
+func (d *liveDeploy) tasksSince(service string, since time.Time) []string {
+	d.t.Helper()
+	var arns []string
+	for _, st := range []ecstypes.DesiredStatus{ecstypes.DesiredStatusRunning, ecstypes.DesiredStatusStopped} {
+		out, err := d.ecs.ListTasks(d.ctx, &ecs.ListTasksInput{
+			Cluster: aws.String(d.cluster), ServiceName: aws.String(service), DesiredStatus: st,
+		})
+		if err != nil {
+			d.t.Logf("list %s tasks of %s: %v", st, service, err)
+			continue
+		}
+		arns = append(arns, out.TaskArns...)
+	}
+	if len(arns) == 0 {
+		return nil
+	}
+	out, err := d.ecs.DescribeTasks(d.ctx, &ecs.DescribeTasksInput{
+		Cluster: aws.String(d.cluster), Tasks: arns,
+	})
+	if err != nil {
+		d.t.Logf("describe tasks of %s: %v", service, err)
+		return nil
+	}
+	type rec struct {
+		at   time.Time
+		line string
+	}
+	var recs []rec
+	for _, task := range out.Tasks {
+		if task.CreatedAt == nil || task.CreatedAt.Before(since) {
+			continue
+		}
+		rev := aws.ToString(task.TaskDefinitionArn)
+		if i := strings.LastIndex(rev, "/"); i >= 0 {
+			rev = rev[i+1:]
+		}
+		recs = append(recs, rec{*task.CreatedAt, fmt.Sprintf("%s  %s  %s (%s)",
+			task.CreatedAt.Format(time.TimeOnly), rev, aws.ToString(task.LastStatus), aws.ToString(task.StoppedReason))})
+	}
+	sort.Slice(recs, func(i, j int) bool { return recs[i].at.Before(recs[j].at) })
+	lines := make([]string, 0, len(recs))
+	for _, r := range recs {
+		lines = append(lines, r.line)
+	}
+	return lines
 }
 
 func (d *liveDeploy) serviceTaskDef(service string) string {
