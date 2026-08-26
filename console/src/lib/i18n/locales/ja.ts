@@ -3208,7 +3208,7 @@ export const ja = {
   "repo.locked_off": "{name} の削除ロックを解除しました",
   "repo.delete_wc": "作業コピーを削除",
   "repo.svn_update": "更新（svn）",
-  "repo.svn_cleanup": "ロックを解除",
+  "repo.svn_cleanup": "ロックを解除（svn）",
   "repo.revision": "リビジョン {rev}",
   "repo.project_settings": "プロジェクト設定…",
   "repo.share": "共有する…",
