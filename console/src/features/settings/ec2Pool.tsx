@@ -19,6 +19,7 @@ export type PoolStatus = {
   pool?: string;
   max_slots?: number;
   slot_sleep_sec?: number;
+  slot_terminate_sec?: number;
   hibernate_after_sec?: number;
   slots?: Slot[];
   homes?: Home[];
@@ -175,7 +176,13 @@ export function PoolView() {
                 sleep: fmtDuration(st.slot_sleep_sec ?? 0, tr),
                 hibernate: fmtDuration(st.hibernate_after_sec ?? 0, tr),
               })
-            : tr("pool.timers_no_hibernate", { sleep: fmtDuration(st.slot_sleep_sec ?? 0, tr) })}
+            : tr("pool.timers_no_hibernate", { sleep: fmtDuration(st.slot_sleep_sec ?? 0, tr) })}{" "}
+          {/* 「終了しない」は事象ではなく常態なので、オフのときこそ書く。停止で止まるのは
+              compute だけで、root ボリュームは箱が消えるまで課金され続ける——そしてそれは
+              画面のどこにも出ない（AutoBake を出しているのと同じ理由）。 */}
+          {(st.slot_terminate_sec ?? 0) > 0
+            ? tr("pool.timers_terminate", { terminate: fmtDuration(st.slot_terminate_sec ?? 0, tr) })
+            : tr("pool.timers_no_terminate", { max: String(st.max_slots ?? 0) })}
         </p>
         {slots.length === 0 ? (
           <p className="muted">{tr("pool.no_slots")}</p>

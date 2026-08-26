@@ -246,6 +246,10 @@ export AF_ECS_EC2_POOL=$N
 export AF_ECS_EC2_SLOT_TYPES=m7i.large:8192
 export AF_ECS_EC2_MAX_SLOTS=4
 export AF_ECS_EC2_SLOT_SLEEP_SEC=60
+# 就寝の次の段（ADR 0045 決定 23）。本番の推奨は 4h だが、ここは就寝 60 秒に合わせて
+# 300 秒に縮める——実機で確かめたいのは「時間の長さ」ではなく **home を外してから
+# terminate し、ECS の登録も残さない**という順序の方なので。
+export AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC=300
 export AF_ECS_EC2_RELEASE_GRACE_SEC=60
 export AF_ECS_EC2_HOME_GB=8
 export AF_ECS_EC2_SWEEP_SEC=3600

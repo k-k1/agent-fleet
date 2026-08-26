@@ -484,6 +484,32 @@ func (f *fakeEC2) StopInstances(_ context.Context, in *ec2.StopInstancesInput, _
 	return &ec2.StopInstancesOutput{}, nil
 }
 
+// TerminateInstances models the two things about a real terminate that the sweeper's
+// safety argument rests on: the box leaves every instance-state filter, and its HOME
+// survives as an unattached volume (the launch template sets DeleteOnTermination only on
+// the root device, so a home left attached would come back `available`, not disappear).
+// A fake that only flipped the state would let a test "prove" a release-then-terminate
+// ordering that AWS does not actually give us.
+func (f *fakeEC2) TerminateInstances(_ context.Context, in *ec2.TerminateInstancesInput, _ ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, id := range in.InstanceIds {
+		f.log("TerminateInstances %s", id)
+		if i := f.instances[id]; i != nil {
+			i.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNameTerminated}
+			i.BlockDeviceMappings = nil
+		}
+		for _, v := range f.volumes {
+			if attachedInstance(v) != id {
+				continue
+			}
+			v.Attachments = nil
+			v.State = ec2types.VolumeStateAvailable
+		}
+	}
+	return &ec2.TerminateInstancesOutput{}, nil
+}
+
 type fakeSSMCmd struct {
 	mu       sync.Mutex
 	commands []string
@@ -1785,6 +1811,208 @@ func TestECSEC2SlotSleepZeroKeepsEverySlotRunning(t *testing.T) {
 	}
 	if got := stoppedInstances(h); len(got) != 0 {
 		t.Fatalf("StopInstances = %v with Ec2SlotSleepSec=0, which means never sleep", got)
+	}
+}
+
+func terminatedInstances(h *ec2Harness) []string {
+	var ids []string
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "TerminateInstances ") {
+			ids = append(ids, strings.TrimPrefix(c, "TerminateInstances "))
+		}
+	}
+	return ids
+}
+
+// --- slotTerminateAfter: the stage that gives the ROOT volume back (docs/64 §64.32) ---
+//
+// Before this existed nothing ever removed a box, so the number of retained roots only
+// grew and its ceiling was maxSlots — raising maxSlots to 30 to serve more people also
+// signed the deployment up for 30 × 40 GiB of gp3, permanently. On the live deployment the
+// only cure was an operator terminating boxes by hand.
+
+// The home comes off through releaseSlot BEFORE the terminate, and the order is the
+// assertion: placeHome derives placement from the attachment, so a home still attached to
+// a shutting-down box reads as "your slot is right here" to the owner's next Start.
+func TestECSEC2SweeperTerminatesALongDormantSlot(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.slotTerminateAfter = 4 * time.Hour
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-cold", "ap-northeast-1a", "m7i.large", false, false)
+	h.ec2.attach("vol-1", "i-cold", time.Now().Add(-9*time.Hour))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-5*time.Hour).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
+
+	if got := terminatedInstances(h); len(got) != 1 || got[0] != "i-cold" {
+		t.Fatalf("TerminateInstances = %v, want [i-cold] — a box dormant 5h still bills its root volume", got)
+	}
+	detach, terminate := -1, -1
+	for i, c := range h.ec2.calls {
+		switch {
+		case strings.HasPrefix(c, "DetachVolume vol-1"):
+			detach = i
+		case strings.HasPrefix(c, "TerminateInstances i-cold"):
+			terminate = i
+		}
+	}
+	if detach < 0 || detach > terminate {
+		t.Fatalf("calls = %v — the home must be detached BEFORE the box is terminated", h.ec2.calls)
+	}
+	// The home is the user's and survives either way (DeleteOnTermination=false); what
+	// must not survive is any belief that it is still on a slot.
+	if v := h.ec2.volumes["vol-1"]; attachedInstance(v) != "" || v.State != ec2types.VolumeStateAvailable {
+		t.Fatalf("home is %s attached to %q; the next Start would try to wake a terminated box",
+			v.State, attachedInstance(v))
+	}
+}
+
+// A terminated instance stays in the cluster as ACTIVE with agentConnected=false, and a
+// ghost that looks ACTIVE still satisfies placement constraints — ECS picks it for a task
+// that then never starts (ADR 0045 決定 3-2, seen again when the three live boxes were
+// terminated by hand). sweepGhostInstances is the repair path; when the sweeper is itself
+// the one removing the box there is no reason to leave the window open at all.
+func TestECSEC2SweeperDeregistersTheBoxItTerminates(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.slotTerminateAfter = 4 * time.Hour
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-cold", "ap-northeast-1a", "m7i.large", false, false)
+	h.ec2.attach("vol-1", "i-cold", time.Now().Add(-9*time.Hour))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-5*time.Hour).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.ci.registered["i-cold"] = true
+
+	h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
+
+	if got := h.ci.deregistered; len(got) != 1 || got[0] != "arn:ci/i-cold" {
+		t.Fatalf("DeregisterContainerInstance = %v, want [arn:ci/i-cold]", got)
+	}
+}
+
+// The sleep stage keeps working, and terminate does not swallow it: inside the window a
+// dormant box is stopped and KEPT, which is the 110s-instead-of-135s the image cache buys.
+func TestECSEC2SweeperOnlyStopsADormantSlotInsideTheTerminateWindow(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.slotTerminateAfter = 4 * time.Hour
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-hot", time.Now().Add(-time.Hour))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	h.factory().sweepVolume(ctx, h.ec2.volumes["vol-1"])
+
+	if got := stoppedInstances(h); len(got) != 1 || got[0] != "i-hot" {
+		t.Fatalf("StopInstances = %v, want [i-hot]", got)
+	}
+	if got := terminatedInstances(h); len(got) != 0 {
+		t.Fatalf("TerminateInstances = %v — 30m dormant is inside the 4h window", got)
+	}
+	if attachedInstance(h.ec2.volumes["vol-1"]) != "i-hot" {
+		t.Error("the home was released although only the sleep stage was due")
+	}
+}
+
+// ⚠️ The free-slot walk used to list only `running` boxes, which was consistent while
+// stopping was the last thing that could happen to one. With a terminate stage that filter
+// means a slot leaves the walk forever the moment it is stopped — exactly the boxes this
+// timer exists to collect.
+func TestECSEC2SweeperTerminatesALongFreeSlotEvenWhenAlreadyStopped(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.slotTerminateAfter = 4 * time.Hour
+	h.ec2.addSlot("i-free", "ap-northeast-1a", "m7i.large", false /* stopped */, false)
+	h.ci.registered["i-free"] = true
+	h.ec2.setInstanceTag("i-free", ec2TagSlotIdleSince,
+		time.Now().Add(-5*time.Hour).UTC().Format(time.RFC3339))
+
+	if err := h.factory().sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := terminatedInstances(h); len(got) != 1 || got[0] != "i-free" {
+		t.Fatalf("TerminateInstances = %v, want [i-free] — a stopped free box bills its root forever", got)
+	}
+}
+
+// Occupancy is re-read immediately before acting for the stop stage; terminate is
+// irreversible, so it runs behind the same three guards (a home attached, an ECS task, a
+// live claim) rather than a weaker set.
+func TestECSEC2SweeperNeverTerminatesAnOccupiedOrClaimedSlot(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.slotTerminateAfter = 4 * time.Hour
+	old := time.Now().Add(-5 * time.Hour).UTC().Format(time.RFC3339)
+
+	// A box someone's home sits on, marked free by a stale tag.
+	h.ec2.addSlot("i-taken", "ap-northeast-1a", "m7i.large", false, false)
+	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
+	h.ec2.attach("vol-bob", "i-taken", time.Now().Add(-9*time.Hour))
+	h.ec2.setInstanceTag("i-taken", ec2TagSlotIdleSince, old)
+	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}
+
+	// A box a Start is landing on right now: no attachment yet, only the claim says so.
+	h.ec2.addSlot("i-claimed", "ap-northeast-1a", "m7i.large", false, false)
+	h.ec2.addHomeVolume("vol-carol", "M-CAROL", "af-ws-carol", "ap-northeast-1a")
+	h.ec2.setTag("vol-carol", ec2TagClaim, "i-claimed")
+	h.ec2.setTag("vol-carol", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+	h.ec2.setInstanceTag("i-claimed", ec2TagSlotIdleSince, old)
+
+	// A box with no home but a task ECS still counts.
+	h.ec2.addSlot("i-busy", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-busy"] = true
+	h.ci.tasks["i-busy"] = 1
+	h.ec2.setInstanceTag("i-busy", ec2TagSlotIdleSince, old)
+
+	if err := h.factory().sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := terminatedInstances(h); len(got) != 0 {
+		t.Fatalf("TerminateInstances = %v — every one of those boxes is in use", got)
+	}
+}
+
+// 0 is the default and it has to mean OFF, not "terminate at the first sweep" — the same
+// trap Ec2SlotSleepSec fell into (§64.31.4) and AF_WS_IDLE_TIMEOUT before it (§64.26).
+func TestECSEC2SlotTerminateZeroNeverTerminatesAnything(t *testing.T) {
+	ctx := context.Background()
+	h := freeSlotHarness(t, 30*24*time.Hour)
+	h.rt.pool.slotTerminateAfter = 0
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-cold", "ap-northeast-1a", "m7i.large", false, false)
+	h.ec2.attach("vol-1", "i-cold", time.Now().Add(-60*24*time.Hour))
+	h.ec2.setTag("vol-1", ec2TagIdleSince, time.Now().Add(-30*24*time.Hour).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	if err := h.factory().sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := terminatedInstances(h); len(got) != 0 {
+		t.Fatalf("TerminateInstances = %v with the timer off, after a month of dormancy", got)
+	}
+}
+
+// With sleeping switched off there is no stopped stage to pass through, so the terminate
+// stage has to be reachable from a RUNNING box or a deployment that sets only this one
+// reclaims nothing.
+func TestECSEC2SlotTerminateWorksWithSleepingOff(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.slotSleepAfter = 0
+	h.rt.pool.slotTerminateAfter = 4 * time.Hour
+	h.ec2.addSlot("i-free", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-free"] = true
+	h.ec2.setInstanceTag("i-free", ec2TagSlotIdleSince,
+		time.Now().Add(-5*time.Hour).UTC().Format(time.RFC3339))
+
+	if err := h.factory().sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := terminatedInstances(h); len(got) != 1 || got[0] != "i-free" {
+		t.Fatalf("TerminateInstances = %v, want [i-free] with Ec2SlotSleepSec=0", got)
 	}
 }
 

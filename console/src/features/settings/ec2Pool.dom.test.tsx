@@ -87,6 +87,27 @@ describe("EC2 スロットプールの面", () => {
     expect(text()).not.toContain("立ち退き");
   });
 
+  // --- スロットを終了する段（docs/64 §64.32）---
+  //
+  // 停止で止まるのは compute だけで、root ボリュームは箱が消えるまで課金され続ける。
+  // 終了する設定になっていないことは**事象ではなく常態**なので、この画面以外に気づく
+  // 場所が無い——「golden が無くて誰も焼いていない」を出しているのと同じ理由で、
+  // オフのときこそ書く。
+  it("終了しない設定なら、root ボリュームが上限まで残り続けると書く", async () => {
+    await mount(); // POOL は slot_terminate_sec を持たない = 既定のオフ
+    expect(text()).toContain("終了しない");
+    expect(text()).toContain("2"); // max_slots——何本ぶん払うのかが分からないと読めない
+  });
+
+  it("終了する設定なら、閾値と次の人が払う待ち時間を書く", async () => {
+    api.mockResolvedValue({ ...POOL, slot_terminate_sec: 4 * 3600 });
+    await mount();
+    expect(text()).toContain("4.0 時間"); // この画面の既存の刻み（fmtIdle）に合わせる
+    expect(text()).not.toContain("終了しない");
+    // 「速くなる/遅くなる」を書かないと、運用者は値を決められない。
+    expect(text()).toContain("135");
+  });
+
   it("退避済みの home は「消えた」ではなく snapshot として見える", async () => {
     await mount();
     expect(text()).toContain("af-ws-acme-carol");
