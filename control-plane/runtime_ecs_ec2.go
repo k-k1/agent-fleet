@@ -104,6 +104,25 @@ type ecsEC2Runtime struct {
 
 var _ Runtime = (*ecsEC2Runtime)(nil)
 
+// ec2SingleTaskDeployment is what makes "one workspace, one task" a property of the
+// SERVICE rather than of our call ordering.
+//
+// maximumPercent 100 with desiredCount 1 means ECS may never run a second task for
+// this service — so the demoted deployment cannot be handed one, which is the entire
+// mechanism of docs/64 §64.39. minimumHealthyPercent 0 is the other half: at max 100%
+// there is no room to start a replacement before stopping the old one, so ECS has to
+// be allowed to reach zero. For a single-user workspace that is the RIGHT semantics
+// anyway — two tasks means two Agents behind one Service Connect alias, which is how
+// an in-flight OAuth flow_id was lost (see lastTaskDef), never something we want.
+//
+// ⚠️ The default is 200/100, and 200 is what allows the second task. It is sent on
+// every service call, not once at creation, because services created before this
+// change would otherwise keep the default forever.
+var ec2SingleTaskDeployment = &ecstypes.DeploymentConfiguration{
+	MaximumPercent:        aws.Int32(100),
+	MinimumHealthyPercent: aws.Int32(0),
+}
+
 const (
 	// ec2HomeDevice is the ONE device name every user's home volume is attached at,
 	// on every slot. This single constant IS the slot allocator (docs/64 §64.15.2):
@@ -118,18 +137,6 @@ const (
 	// `dev` subdirectory (owned by uid 1000) as /home/dev, so the filesystem root stays
 	// out of the container — same layout the sandbox harness measured (docs/64 §64.14).
 	ec2HomeMountBase = "/af-home"
-
-	// ec2DeploymentRetireBudget caps the wait between "point the service at the new task
-	// definition" and "set desiredCount 1" (see launch()). Overshooting scales up anyway,
-	// which is exactly the behavior this whole split replaced.
-	//
-	// ⚠️ It was 25s first, sized to fit inside the Start HTTP request. On the live harness
-	// that turned out to be too short — the wait ran past it, the bounded wait gave up,
-	// and ECS produced the two tasks the split exists to prevent, 10 seconds apart. The
-	// distribution has a tail: 10-23s on a throwaway cluster (docs/64 §64.39.4), >25s on
-	// the harness. So the wait moved OFF the request instead (launch() hands it to bg),
-	// and the budget is sized for the tail rather than for the ALB.
-	ec2DeploymentRetireBudget = 90 * time.Second
 
 	// Where the credentials-only EFS access point lands inside the task. home now lives
 	// on a single-AZ EBS volume, so the auth/identity set is kept on EFS as well and the
@@ -1499,49 +1506,21 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	// …and it is no longer free, so its free-pool clock stops. Same moment, opposite tag.
 	e.clearSlotFree(ctx, p.instanceID)
 	e.setPhase("task: starting")
-	if !prepared {
-		if err := e.upsertService(ctx, taskDefArn, p, !reused); err != nil {
+	if prepared {
+		// No wait here any more, and that is the whole point of ec2SingleTaskDeployment:
+		// the service cannot run two tasks, so raising the count past a not-yet-retired
+		// deployment can no longer hand one to the old revision. Measured A/B on one
+		// substrate, same sequence, same moment (docs/64 §64.39.10):
+		//   maximumPercent 200 → 2 tasks, the FIRST from the old revision (2 of 2)
+		//   maximumPercent 100 → 1 task, always the new revision  (2 of 2)
+		// Before that this spot waited 53-55s for the old deployment to leave ACTIVE.
+		if err := e.scaleUpService(ctx); err != nil {
 			return fmt.Errorf("service: %w", err)
 		}
-		e.finishLaunch(ctx, p)
-		return nil
+	} else if err := e.upsertService(ctx, taskDefArn, p, !reused); err != nil {
+		return fmt.Errorf("service: %w", err)
 	}
-	// The split's second half. It has to outlast the caller when the caller is an HTTP
-	// request — see scaleUpWhenRetired.
-	gen := e.generation().Load()
-	tail := func(c context.Context) {
-		e.waitOldDeploymentRetired(c)
-		// Two cheap guards before the one call that can resurrect a workspace nobody
-		// asked to run. ⚠️ They do not close the race — a Stop that has set desiredCount
-		// 0 but not yet reached the detach is still ahead of us — but that window is the
-		// deferred path's from the day it was written (finishStart → launch →
-		// upsertService), not something this split introduced, and the sweeper puts a
-		// service whose home has gone back to 0.
-		if e.generation().Load() != gen {
-			log.Printf("ecs-ec2 start: %s was started again while its deployment retired; not scaling up", e.base.name)
-			return
-		}
-		if vol, err := e.homeVolume(c); err != nil || vol == nil || attachedInstance(vol) != p.instanceID {
-			log.Printf("ecs-ec2 start: %s no longer holds slot %s; not scaling up", e.base.name, p.instanceID)
-			return
-		}
-		if err := e.scaleUpService(c); err != nil {
-			log.Printf("ecs-ec2 start: %s could not be scaled up: %v", e.base.name, err)
-			return
-		}
-		e.finishLaunch(c, p)
-	}
-	if p.deferred {
-		tail(ctx) // finishStart already runs off the request
-		return nil
-	}
-	// ⚠️ The re-attach-to-the-same-running-slot path runs INSIDE the Start HTTP request,
-	// and the ALB in front of the CP cuts at 60s (watchReady). Measured on the live
-	// harness: the wait exceeded 25s, the bounded wait gave up, scaled up anyway — and
-	// ECS produced the two tasks this whole change exists to prevent (10s apart). So the
-	// wait cannot be squeezed to fit the request; it has to leave it. The claim placeHome
-	// took keeps State() at `starting` meanwhile, exactly as on the deferred path.
-	e.bg(ctx, tail)
+	e.finishLaunch(ctx, p)
 	return nil
 }
 
@@ -3155,60 +3134,17 @@ func (e *ecsEC2Runtime) pointServiceAt(ctx context.Context, taskDefArn string, p
 		return false
 	}
 	if _, err := e.base.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
-		Cluster:              aws.String(e.base.cfg.cluster),
-		Service:              aws.String(e.base.name),
-		TaskDefinition:       aws.String(taskDefArn),
-		NetworkConfiguration: netCfg,
+		Cluster:                 aws.String(e.base.cfg.cluster),
+		Service:                 aws.String(e.base.name),
+		TaskDefinition:          aws.String(taskDefArn),
+		NetworkConfiguration:    netCfg,
+		DeploymentConfiguration: ec2SingleTaskDeployment,
 	}); err != nil {
 		log.Printf("ecs-ec2 start: could not pre-point %s at %s (falling back to the slower single update): %v",
 			e.base.name, taskDefArn, err)
 		return false
 	}
 	return true
-}
-
-// waitOldDeploymentRetired blocks until no deployment of this service is ACTIVE — that
-// is, until the revision we just replaced can no longer be handed the desiredCount we
-// are about to set (docs/64 §64.39.4: DRAINING does not take new tasks, so this is the
-// whole condition; PRIMARY-only is not required and costs 3-4x longer to reach).
-//
-// Best-effort and bounded on purpose. Overshooting the budget scales up anyway, which is
-// exactly today's behavior — the bug this avoids is a slow Start, and waiting longer for
-// it would be trading the same seconds back.
-func (e *ecsEC2Runtime) waitOldDeploymentRetired(ctx context.Context) {
-	started := e.now()
-	deadline := started.Add(ec2DeploymentRetireBudget)
-	for {
-		s, ok, err := e.base.describeService(ctx)
-		if err != nil || !ok {
-			return
-		}
-		active := false
-		for _, d := range s.Deployments {
-			if aws.ToString(d.Status) == "ACTIVE" {
-				active = true
-				break
-			}
-		}
-		if !active {
-			// Worth a line: this is the only number that says whether the split is
-			// actually free on this deployment, or whether the slot work stopped
-			// covering it (docs/64 §64.39.6.1). Silent when it cost nothing.
-			if waited := e.now().Sub(started); waited >= 2*time.Second {
-				log.Printf("ecs-ec2 start: %s waited %.0fs for the replaced deployment to retire",
-					e.base.name, waited.Seconds())
-			}
-			return
-		}
-		if !e.now().Before(deadline) {
-			log.Printf("ecs-ec2 start: %s still has an ACTIVE old deployment after %s; scaling up anyway",
-				e.base.name, ec2DeploymentRetireBudget)
-			return
-		}
-		if err := e.sleep(ctx, 2*time.Second); err != nil {
-			return
-		}
-	}
 }
 
 // scaleUpService is the second half of the split: desiredCount ONLY, on a service
@@ -3220,6 +3156,9 @@ func (e *ecsEC2Runtime) scaleUpService(ctx context.Context) error {
 		Cluster:      aws.String(e.base.cfg.cluster),
 		Service:      aws.String(e.base.name),
 		DesiredCount: aws.Int32(1),
+		// Sent here too: this is the ONLY call on the path that raises the count, so a
+		// service that somehow missed the setting must not raise it at 200%.
+		DeploymentConfiguration: ec2SingleTaskDeployment,
 	})
 	return err
 }
@@ -3248,22 +3187,24 @@ func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p 
 	}
 	if ok && aws.ToString(s.Status) == "ACTIVE" {
 		_, err = e.base.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
-			Cluster:              aws.String(e.base.cfg.cluster),
-			Service:              aws.String(e.base.name),
-			DesiredCount:         aws.Int32(1),
-			TaskDefinition:       aws.String(taskDefArn),
-			NetworkConfiguration: netCfg,
-			ForceNewDeployment:   forceNewDeployment,
+			Cluster:                 aws.String(e.base.cfg.cluster),
+			Service:                 aws.String(e.base.name),
+			DesiredCount:            aws.Int32(1),
+			TaskDefinition:          aws.String(taskDefArn),
+			NetworkConfiguration:    netCfg,
+			ForceNewDeployment:      forceNewDeployment,
+			DeploymentConfiguration: ec2SingleTaskDeployment,
 		})
 		return err
 	}
 	_, err = e.base.ecs.CreateService(ctx, &ecs.CreateServiceInput{
-		Cluster:              aws.String(e.base.cfg.cluster),
-		ServiceName:          aws.String(e.base.name),
-		TaskDefinition:       aws.String(taskDefArn),
-		DesiredCount:         aws.Int32(1),
-		LaunchType:           ecstypes.LaunchTypeEc2,
-		NetworkConfiguration: netCfg,
+		Cluster:                 aws.String(e.base.cfg.cluster),
+		ServiceName:             aws.String(e.base.name),
+		TaskDefinition:          aws.String(taskDefArn),
+		DesiredCount:            aws.Int32(1),
+		LaunchType:              ecstypes.LaunchTypeEc2,
+		NetworkConfiguration:    netCfg,
+		DeploymentConfiguration: ec2SingleTaskDeployment,
 		ServiceConnectConfiguration: &ecstypes.ServiceConnectConfiguration{
 			Enabled:   true,
 			Namespace: strOrNil(e.base.cfg.namespaceArn),
