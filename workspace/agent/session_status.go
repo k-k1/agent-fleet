@@ -28,6 +28,23 @@ import (
 // claude settings への hook 配線（EnsureStatusHooks）は internal/agents/claude
 // （同 Wave F）; このファイルは session-status サブコマンドの入口だけを持つ。
 
+// ensureClaudeSettingsWiring re-asserts what claude's settings.json must carry for us
+// — the status hooks and the statusLine that captures rate_limits — right before a
+// claude session launches. Both are also wired at agent startup, but settings.json is
+// shared and can go stale while the agent keeps running: another build of the agent (a
+// dev build under /tmp, an e2e or smoke copy) writes ITS path in, and once that file is
+// deleted claude's hooks and statusLine silently stop running — session state freezes
+// and the usage capture dies (measured: 6 hours of a fabricated 0% in the usage chip,
+// unrecoverable until a workspace restart). Two small JSON reads per launch, writing
+// only when something actually changed, repairs it without one.
+func ensureClaudeSettingsWiring(kind string) {
+	if kind != session.KindClaude {
+		return
+	}
+	claude.EnsureStatusHooks()
+	claude.EnsureStatusLine()
+}
+
 // runSessionStatusHook is `workspace-agent session-status <state> [sid] [codex]`.
 // Three callers key the status differently:
 //   - claude:   `session-status <state>` — session_id comes from claude's hook JSON

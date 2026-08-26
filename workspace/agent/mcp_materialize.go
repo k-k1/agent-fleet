@@ -27,6 +27,7 @@ import (
 // for a registry read on every message.
 func startManagedSession(d agents.Driver, m session.Meta) (agents.ThreadHandle, error) {
 	materializeMCP(m.Kind)
+	ensureClaudeSettingsWiring(m.Kind) // see session_status.go: repairs a stale hook/statusLine path
 	return d.Resume(m)
 }
 

@@ -2059,6 +2059,7 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.usage.count_ken": "{count}",
   "wsbar.usage.expires": "Expires {date}",
   "wsbar.usage.fetched": "Fetched {ago}",
+  "wsbar.usage.stale_note": "Unknown — the last reading predates this window. Run a session to read it again.",
   "wsbar.usage.refresh": "Refresh",
   "wsbar.usage.open_page": "Open usage page",
   "wsbar.usage.breakdown": "Usage by feature",

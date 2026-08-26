@@ -2074,6 +2074,7 @@ export const ja = {
   "wsbar.usage.count_ken": "{count}件",
   "wsbar.usage.expires": "有効期限 {date}",
   "wsbar.usage.fetched": "取得 {ago}",
+  "wsbar.usage.stale_note": "不明（最後の取得がこの枠より前です）。セッションを動かすと取り直します。",
   "wsbar.usage.refresh": "更新",
   "wsbar.usage.open_page": "使用状況ページを開く",
   "wsbar.usage.breakdown": "機能別の内訳",
