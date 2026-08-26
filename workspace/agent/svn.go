@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -53,6 +54,14 @@ func runSvn(dir string, args ...string) (string, error) {
 	full := append([]string{"--non-interactive"}, args...)
 	out, err := exec.Command("svn", full...).CombinedOutput()
 	_ = dir // args carry an explicit path; cwd is irrelevant
+	return strings.TrimSpace(string(out)), err
+}
+
+// runSvnCtx is runSvn bound to a context — for a local probe whose cost scales with
+// the size of the working copy (status), where an unbounded run would hold a handler.
+func runSvnCtx(ctx context.Context, args ...string) (string, error) {
+	full := append([]string{"--non-interactive"}, args...)
+	out, err := exec.CommandContext(ctx, "svn", full...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
 
@@ -183,16 +192,74 @@ func svnInfoItem(dir, item string) string {
 }
 
 // svnInfo returns a working copy's current revision and repository URL (both local).
+// Two `--show-item` runs rather than one parsed `svn info`: the field names in the
+// human-readable output are LOCALE-DEPENDENT, and parsing them would break on a
+// workspace whose LC_MESSAGES is not English. Measured, the second process costs ~5ms
+// on a 20k-file working copy — not a trade worth making.
 func svnInfo(dir string) (revision, url string) {
 	return svnInfoItem(dir, "revision"), svnInfoItem(dir, "url")
 }
 
+// svnDirtyTimeout bounds the list view's `svn status`. Unlike info (one wc.db read),
+// status walks the WHOLE working copy and stats every file — on a big checkout over
+// network storage that is seconds to minutes, and GET /repos would block on it for
+// every row. Measured locally: 20k files ≈ 0.24s; an 11.4 GB documents checkout is an
+// order of magnitude more files, on EFS, where every stat is a network round trip.
+const svnDirtyTimeout = 20 * time.Second
+
+// svnDirtyScan は「同じ作業コピーの走査は 1 本だけ」にするための相乗り。一覧は 60 秒の
+// ポーリングに加えて画面の操作でも refresh されるので、素直に書くと大きな作業コピーに対して
+// 全走査が重なる（走行中の checkout と wc.db を奪い合ったのと同じ形を、今度は自分で作る）。
+// TTL キャッシュにしないのは、手動の 更新 を押した直後に古い判定を返さないため。
+type svnDirtyScan struct {
+	done  chan struct{}
+	dirty bool
+}
+
+var svnDirtyState = struct {
+	mu      sync.Mutex
+	running map[string]*svnDirtyScan
+	last    map[string]bool // 直近の「実際に測れた」答え
+}{running: map[string]*svnDirtyScan{}, last: map[string]bool{}}
+
 // svnDirty reports whether the working copy has local modifications. `svn status`
 // is local; any non-empty output (modified/added/deleted/unversioned) counts, so a
 // clean copy shows no dirty dot (mirrors git's Dirty incl. untracked).
+//
+// Bounded by svnDirtyTimeout, and concurrent callers for the same working copy share
+// one scan. On timeout the LAST KNOWN answer is reused rather than reporting "clean":
+// a working copy too big to scan in 20 seconds is not a clean one, and a dot that
+// flickers off on a slow filesystem is worse than a slightly stale one.
 func svnDirty(dir string) bool {
-	out, err := runSvn(dir, "status", dir)
-	return err == nil && out != ""
+	svnDirtyState.mu.Lock()
+	if scan, ok := svnDirtyState.running[dir]; ok {
+		svnDirtyState.mu.Unlock()
+		<-scan.done
+		return scan.dirty
+	}
+	scan := &svnDirtyScan{done: make(chan struct{})}
+	svnDirtyState.running[dir] = scan
+	prev, seen := svnDirtyState.last[dir]
+	svnDirtyState.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), svnDirtyTimeout)
+	defer cancel()
+	out, err := runSvnCtx(ctx, "status", dir)
+	dirty := err == nil && out != ""
+	measured := err == nil
+	if err != nil && ctx.Err() != nil && seen {
+		dirty = prev // scan outran the budget — keep the last real answer
+	}
+
+	svnDirtyState.mu.Lock()
+	if measured {
+		svnDirtyState.last[dir] = dirty
+	}
+	delete(svnDirtyState.running, dir)
+	svnDirtyState.mu.Unlock()
+	scan.dirty = dirty
+	close(scan.done)
+	return dirty
 }
 
 // svnRepoEntry builds the list-view representation of an SVN working copy for

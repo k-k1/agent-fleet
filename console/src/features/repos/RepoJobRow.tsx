@@ -7,12 +7,14 @@
 // 中断は既読にするまで残る。以前はトーストを見逃せば終わりで、残るのは半端なフォルダだけだった。
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { useRepoJobsStore, isRepoJobRunning, type RepoJob } from "./jobs.ts";
 
 export function RepoJobRow({ job }: { job: RepoJob }) {
   const tr = useT();
   const remove = useRepoJobsStore((s) => s.remove);
+  const askConfirm = useConfirm();
   const running = isRepoJobRunning(job);
   const svn = job.kind === "svn";
 
@@ -30,6 +32,21 @@ export function RepoJobRow({ job }: { job: RepoJob }) {
   // 途中から再開できない（残骸は消えている）。言い分を分けないと誤った指示になる。
   const kept = !running && job.state !== "done" && job.kept;
 
+  // 中止は確認を挟む。取り込みは数十分〜数時間の実測があり（11.4GB の作業コピー）、
+  // 誤クリック 1 回で全部やり直しになる。何が失われるかは VCS で違うので、そこまで言う:
+  // svn は途中まで残って 更新 で続きから取れるが、git の clone は再開できない。
+  const onClick = async () => {
+    if (running && !(await askConfirm({
+      title: tr("pj.job_cancel_confirm_title", { name: job.name }),
+      body: tr(svn ? "pj.job_cancel_confirm_svn" : "pj.job_cancel_confirm_git"),
+      confirmLabel: tr("pj.job_cancel"),
+      danger: true,
+    }))) {
+      return;
+    }
+    await remove(job.id);
+  };
+
   return (
     <li className={"repo-job" + (running ? " running" : " settled")}>
       <div className="repo-job-head">
@@ -44,7 +61,7 @@ export function RepoJobRow({ job }: { job: RepoJob }) {
         <IconButton
           icon={running ? "stop-circle" : "close"}
           label={running ? tr("pj.job_cancel") : tr("pj.job_dismiss")}
-          onClick={() => void remove(job.id)}
+          onClick={() => void onClick()}
         />
       </div>
       {running && (job.items || job.progress) && (
