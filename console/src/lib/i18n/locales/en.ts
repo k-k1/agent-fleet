@@ -233,6 +233,8 @@ export const en: Record<keyof typeof ja, string> = {
   "font.serif": "Serif",
   "font.mincho": "Mincho (serif)",
   "font.gothic": "Gothic (sans)",
+  "font.cjk_auto": "Automatic",
+  "font.cjk_off": "Latin font",
 
   // --- icon sets ---
   "iconset.vscode": "VS Code Icons (color)",
@@ -279,6 +281,10 @@ export const en: Record<keyof typeof ja, string> = {
   "display.assistant_theme": "Assistant theme",
   "display.region_theme_note":
     "The session chat and the assistant chat can use their own theme (dark/light), separate from the app itself (“Match app” follows the app). You can also set each one's background color below.",
+  "display.cjk_font": "Japanese font",
+  "display.cjk_font_sample": "①②③⑩ ㈱ ㍻ Ⅰ Ⅱ Ⅲ と漢字とかなの並び",
+  "display.cjk_font_note":
+    "Latin fonts do carry ①②③, Ⅰ and ㈱, so they are drawn as narrow half-width glyphs and look smaller than the kanji next to them. The font chosen here is used for those characters only. ■ ○ ★ follow it in prose but not in the terminal or in width-critical monospace (diffs, code blocks) — the CLI lays its output out counting them as one column. Choose \"Latin font\" to keep the previous look everywhere.",
   "display.terminal": "Terminal",
   "display.font": "Font",
   "display.font_size": "Font size",

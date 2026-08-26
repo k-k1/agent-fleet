@@ -95,8 +95,12 @@
      settings → カラーテーマ). Default to the theme's bar / panel. */
   --topbar-bg: var(--bar);
   --leftpane-bg: var(--panel);
-  --mono: "Source Code Pro", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono",
-    "Noto Sans Mono CJK JP", monospace;
+  /* 先頭の "AF CJK Ambiguous" は settings.ts の applyCjkFont() が張る unicode-range
+     限定の @font-face。①②③ ■ ○ Ⅰ など East Asian Width = Ambiguous の文字だけを
+     和文フォントへ回し、欧文等幅フォントの半角グリフで痩せて見えるのを防ぐ。設定が
+     「欧文優先」のときは規則自体が無くなり、未定義の名前として読み飛ばされる。 */
+  --mono: "AF CJK Ambiguous", "Source Code Pro", "SF Mono", Menlo, Consolas,
+    "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace;
   /* Per-agent kind hues — single source of truth for the color every agent reads
      wherever it appears (kind-tag pane headers, session badges, launch seg icons,
      LayoutMap, settings badges). Tints are derived via color-mix at the use sites. */
