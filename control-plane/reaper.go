@@ -504,16 +504,20 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClock
 	now := time.Now()
 
 	// Ask the Agent for the live session list once; drives both tiers.
-	sessions, err := rp.mgr.agentSessions(ctx, rt)
+	env, err := rp.mgr.agentSessionsEnv(ctx, rt)
 	if err != nil {
 		// Agent unreachable (starting/unhealthy) — leave it be this pass.
 		return
 	}
+	sessions := env.Sessions
 	// busy = この Workspace を起こし続ける理由があるか。判定は sessionActivity
 	// （session_activity.go）に集約してある — 状態がどちらに属するかを reaper の中の
 	// インライン式で決めていた頃は、状態が増えるたび 2 箇所を手で合わせる必要があり、
 	// 実際 blocked / limited / spend_limit で 2 回ドリフトした。
-	busy := false
+	// 取り込み中（docs/78）はセッションが 1 つも無くても仕事中。ここを見落とすと、
+	// 1 時間かかる clone / checkout の途中で Workspace が止まり、作業コピーは半端なまま
+	// 残る（中断そのものは検出できるが、失われた時間は戻らない）。
+	busy := env.RepoJobs > 0
 	for _, s := range sessions {
 		if holdsWorkspace(s) {
 			busy = true
@@ -557,7 +561,7 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClock
 	rp.mgr.putIdleForecast(ws.ID, idleForecast{
 		Enabled:    cl.wsOn,
 		StopAt:     base.Add(cl.ws),
-		Holders:    holdersOf(sessions, watched, now),
+		Holders:    holdersOf(sessions, watched, now, env.RepoJobs),
 		ObservedAt: now,
 	})
 	if !cl.wsOn {
