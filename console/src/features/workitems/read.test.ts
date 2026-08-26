@@ -81,27 +81,22 @@ describe("shortKey", () => {
 });
 
 describe("branchForItem", () => {
-  it("feature/<key>-<slug>", () => {
-    expect(branchForItem({ key: "acme/web#45", title: "Empty list after login" })).toBe(
-      "feature/issue-45-empty-list-after-login",
-    );
-  });
-
-  it("★ 日本語タイトルでもブランチ名が壊れない（slug が空なら key だけ）", () => {
+  it("既定は feature/{key}（タイトルは混ぜない）", () => {
+    expect(branchForItem({ key: "acme/web#45", title: "Empty list after login" })).toBe("feature/issue-45");
     expect(branchForItem({ key: "acme/web#45", title: "ログイン後に一覧が空になる" })).toBe("feature/issue-45");
   });
 
   it("Jira キーはそのまま使える形にする", () => {
-    expect(branchForItem({ key: "PROJ-123", title: "Fix it" })).toBe("feature/proj-123-fix-it");
+    expect(branchForItem({ key: "PROJ-123", title: "Fix it" })).toBe("feature/proj-123");
   });
 
   it("git の ref に使えない文字が残らない", () => {
-    const b = branchForItem({ key: "acme/web#45", title: "a b:c?d*e[f]" });
+    const b = branchForItem({ key: "acme/web#45", title: "a b:c?d*e[f]" }, "feature/{key}-{slug}");
     expect(b).toMatch(/^feature\/[A-Za-z0-9._-]+$/);
   });
 
   it("長いタイトルは切り詰め、末尾のダッシュを残さない", () => {
-    const b = branchForItem({ key: "#1", title: "a".repeat(80) });
+    const b = branchForItem({ key: "#1", title: "a".repeat(80) }, "feature/{key}-{slug}");
     expect(b.length).toBeLessThan(60);
     expect(b.endsWith("-")).toBe(false);
   });
@@ -192,10 +187,14 @@ describe("branchForItem — Jira", () => {
 });
 
 describe("branchForItem — テンプレート（P2）", () => {
-  it("既定は feature/{key}-{slug}", () => {
-    expect(branchForItem({ key: "acme/web#45", title: "Fix it" })).toBe("feature/issue-45-fix-it");
-    expect(branchForItem({ key: "acme/web#45", title: "Fix it" }, "")).toBe("feature/issue-45-fix-it");
-    expect(branchForItem({ key: "acme/web#45", title: "Fix it" }, "   ")).toBe("feature/issue-45-fix-it");
+  it("既定は feature/{key}", () => {
+    expect(branchForItem({ key: "acme/web#45", title: "Fix it" })).toBe("feature/issue-45");
+    expect(branchForItem({ key: "acme/web#45", title: "Fix it" }, "")).toBe("feature/issue-45");
+    expect(branchForItem({ key: "acme/web#45", title: "Fix it" }, "   ")).toBe("feature/issue-45");
+  });
+
+  it("{slug} は既定に無いだけで、テンプレートに書けば使える", () => {
+    expect(branchForItem({ key: "acme/web#45", title: "Fix it" }, "feature/{key}-{slug}")).toBe("feature/issue-45-fix-it");
   });
 
   it("差し込みは {key} と {slug}", () => {

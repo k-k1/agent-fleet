@@ -21,6 +21,7 @@ export function StartHost() {
   const [show, setShow] = useState(false);
   const launch = useLaunchTarget((s) => s.target);
   const launchExisting = useLaunchTarget((s) => s.existingBranch);
+  const launchInPlace = useLaunchTarget((s) => s.inPlace);
   const openLaunch = useLaunchTarget((s) => s.open);
   const clearLaunch = useLaunchTarget((s) => s.clear);
   // First-prompt seed (memo send modal → 新規セッションを起動). Read once into the
@@ -80,6 +81,7 @@ export function StartHost() {
           initialPrompt={seedPrompt || undefined}
           initialTitle={seedTitle || undefined}
           initialNewBranch={seedWorkItem?.branch || undefined}
+          initialWorktree={launchInPlace ? false : undefined}
           initialExistingBranch={launchExisting || undefined}
           onClose={() => {
             clearLaunch();
@@ -98,7 +100,10 @@ export function StartHost() {
               // 作業項目の台帳（docs/80 §80.8）。ここが「本当にセッションができた」と
               // 分かる唯一の地点で、次の人に「着手済み」と見せられるようになる。
               if (seedWorkItem && r.name) {
-                void recordWorkItemLaunch(seedWorkItem, r.name, launch.name, o.newBranch || o.base || "");
+                // 既存の作業コピーで始めたときは新しいブランチができないので、その
+                // コピーが今いるブランチを記録する（報告の下書きが空のブランチ行を
+                // 出さないため）。
+                void recordWorkItemLaunch(seedWorkItem, r.name, launch.name, o.newBranch || launch.branch || "");
               }
               setShow(false); // launched — drop the hub underneath too
               clearSeed();
