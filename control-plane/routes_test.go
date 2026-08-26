@@ -262,3 +262,25 @@ func TestFSSuggestEditProxyRouteRegistered(t *testing.T) {
 		t.Fatalf("route pattern=%q", pattern)
 	}
 }
+
+// ★ CP は明示許可リストなので、Agent 側にルートを足しただけでは Console から届かない
+// （再発常習: docs/78 の取り込みジョブも Agent → CP の順で 2 か所要る）。ここは CP 側の
+// 登録と、監査分類が付いていることを固定する。
+func TestCPRegistersRepoJobRoutes(t *testing.T) {
+	_, mux := smokeEnv(t)
+	for _, tc := range []struct{ method, path, want string }{
+		{http.MethodGet, "/api/repo-jobs", "GET /api/repo-jobs"},
+		{http.MethodDelete, "/api/repo-jobs/rj123", "DELETE /api/repo-jobs/{id}"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		if _, pattern := mux.Handler(req); pattern != tc.want {
+			t.Errorf("%s %s → pattern=%q, want %q", tc.method, tc.path, pattern, tc.want)
+		}
+	}
+	// 中止／既読は変更操作なので監査に載る（誰が取り込みを止めたかは後から要る）。
+	req := httptest.NewRequest(http.MethodDelete, "/api/repo-jobs/rj123", nil)
+	action, target, ok := auditActionTarget(req)
+	if !ok || action != "repo.job.cancel" || target != "rj123" {
+		t.Errorf("audit = %q/%q/%v, want repo.job.cancel/rj123/true", action, target, ok)
+	}
+}

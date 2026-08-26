@@ -181,7 +181,11 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 	})
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+	// repoJobs は「セッションは無いが Workspace は仕事中」を CP に伝える唯一の口
+	// （docs/78）。取り込みは分〜時間かかるのに GET のポーリングは活動と数えない規約
+	// なので、これが無いと idle-stop が走行中の clone / checkout を殺す。reaper は
+	// 毎スイープでこの一覧を読むので、専用のリクエストは増やさない。
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions, "repoJobs": repoJobsRunning()})
 }
 
 // handleSessionCatalog is the sharing inventory. Unlike the ordinary list it

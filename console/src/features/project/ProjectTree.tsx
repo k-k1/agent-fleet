@@ -17,6 +17,8 @@ import { NewRepoModal } from "../repos/NewRepoModal.tsx";
 import { cloneRepo, svnCheckout } from "../repos/clone.ts";
 import type { CloneRequest, SvnCheckoutRequest } from "../repos/clone.ts";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
+import { useRepoJobsStore } from "../repos/jobs.ts";
+import { RepoJobRow } from "../repos/RepoJobRow.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionUI } from "../sessions/ui.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
@@ -27,13 +29,6 @@ import { RepoNode } from "./RepoNode.tsx";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { ShareListModal } from "../sharing/ShareListModal.tsx";
-
-// guessRepoName derives a display name from a clone URL for the in-progress
-// spinner row, before the server reports the real name.
-const guessRepoName = (u: string | null | undefined) => {
-  const s = String(u || "").replace(/\.git$/, "").replace(/\/+$/, "");
-  return s.split(/[/:]/).pop() || "repo";
-};
 
 export const ProjectTree = memo(function ProjectTree() {
   const tr = useT();
@@ -50,9 +45,7 @@ export const ProjectTree = memo(function ProjectTree() {
 
   const [showClone, setShowClone] = useState(false);
   const [showShares, setShowShares] = useState(false);
-  // 進行中の取り込み。svn は「クローン」ではなく「チェックアウト」なので、
-  // 進行行と完了トーストの文言を VCS で振り分ける。
-  const [cloning, setCloning] = useState<{ name: string; svn?: boolean } | null>(null);
+  const jobs = useRepoJobsStore((s) => s.jobs);
   const q = useProjectFilter((f) => f.q);
   const setQ = useProjectFilter((f) => f.setQ);
   const nq = normQuery(q);
@@ -89,53 +82,31 @@ export const ProjectTree = memo(function ProjectTree() {
     .filter((g) => !nq || g.some(visible))
     .map((g) => (nq ? [g[0], ...g.slice(1).filter(visible)] : g));
 
-  const doClone = async (req: CloneRequest) => {
-    setCloning({ name: req.name || guessRepoName(req.remote_url) });
-    try {
-      const res = await cloneRepo(req, toast); // proxy-timeout re-check + reveal live in clone.ts
-      // グループ選択中の clone はそのグループへ自動所属（docs/52 §1 — さもないと
-      // 作った直後に絞り込みで見えなくなる）。
-      if (res.ok && res.name) autoAddToActiveWorkingSet("repos", res.name);
-      // clone-only path: bridge straight into 作業を始める (起動導線 Ph3) so
-      // "clone してから起動" doesn't require hunting for the row's 起動 button.
-      const repo = res.ok && res.name ? useReposStore.getState().repos.find((r) => r.name === res.name) : undefined;
-      if (repo) {
-        toast(
-          <span className="clone-done-toast">
-            {tr("pj.cloned", { name: repo.name })}
-            <Button small icon="play" onClick={() => useLaunchTarget.getState().open(repo)}>
-              {tr("pj.start_now")}
-            </Button>
-          </span>,
-          { kind: "success", duration: 10000 },
-        );
-      }
-    } finally {
-      setCloning(null);
+  // 取り込みの進行は Agent 側のジョブが正（docs/78）。ここは開始して結末を待つだけで、
+  // 「取り込み中」の行は下の RepoJobRow が一覧から描く（タブを閉じても続いている）。
+  const doImport = async (start: () => Promise<{ ok: boolean; name: string }>, doneKey: "pj.cloned" | "pj.checked_out") => {
+    const res = await start();
+    // グループ選択中の取り込みはそのグループへ自動所属（docs/52 §1 — さもないと
+    // 作った直後に絞り込みで見えなくなる）。
+    if (res.ok && res.name) autoAddToActiveWorkingSet("repos", res.name);
+    // clone-only path: bridge straight into 作業を始める (起動導線 Ph3) so
+    // "clone してから起動" doesn't require hunting for the row's 起動 button.
+    const repo = res.ok && res.name ? useReposStore.getState().repos.find((r) => r.name === res.name) : undefined;
+    if (repo) {
+      toast(
+        <span className="clone-done-toast">
+          {tr(doneKey, { name: repo.name })}
+          <Button small icon="play" onClick={() => useLaunchTarget.getState().open(repo)}>
+            {tr("pj.start_now")}
+          </Button>
+        </span>,
+        { kind: "success", duration: 10000 },
+      );
     }
   };
 
-  const doSvnCheckout = async (req: SvnCheckoutRequest) => {
-    setCloning({ name: req.name || guessRepoName(req.url), svn: true });
-    try {
-      const res = await svnCheckout(req, toast); // proxy-timeout re-check + reveal live in clone.ts
-      if (res.ok && res.name) autoAddToActiveWorkingSet("repos", res.name); // docs/52 §1
-      const repo = res.ok && res.name ? useReposStore.getState().repos.find((r) => r.name === res.name) : undefined;
-      if (repo) {
-        toast(
-          <span className="clone-done-toast">
-            {tr("pj.checked_out", { name: repo.name })}
-            <Button small icon="play" onClick={() => useLaunchTarget.getState().open(repo)}>
-              {tr("pj.start_now")}
-            </Button>
-          </span>,
-          { kind: "success", duration: 10000 },
-        );
-      }
-    } finally {
-      setCloning(null);
-    }
-  };
+  const doClone = (req: CloneRequest) => doImport(() => cloneRepo(req, toast), "pj.cloned");
+  const doSvnCheckout = (req: SvnCheckoutRequest) => doImport(() => svnCheckout(req, toast), "pj.checked_out");
 
   return (
     <Section
@@ -150,7 +121,7 @@ export const ProjectTree = memo(function ProjectTree() {
             variant="ghost"
             icon="add"
             title={running ? tr("pj.clone") : tr("pj.clone_ws_stopped")}
-            disabled={!!cloning || !running}
+            disabled={!running}
             onClick={() => setShowClone((s) => !s)}
           >
             {tr("pj.clone")}
@@ -191,12 +162,10 @@ export const ProjectTree = memo(function ProjectTree() {
       {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} onSvnCheckout={doSvnCheckout} repos={repos} />}
       {showShares && <ShareListModal onClose={() => setShowShares(false)} />}
       <ul className="sess-list proj-tree" ref={rail.ref} role="tree" onKeyDown={rail.onKeyDown}>
-        {cloning && (
-          <li className="repo-cloning">
-            <Icon name="loading" spin /> {tr(cloning.svn ? "pj.checking_out" : "pj.cloning", { name: cloning.name })}
-          </li>
-        )}
-        {groups.length === 0 && !cloning && (
+        {jobs.map((j) => (
+          <RepoJobRow key={j.id} job={j} />
+        ))}
+        {groups.length === 0 && jobs.length === 0 && (
           nq ? (
             <li className="proj-sub-empty">{tr("pj.no_match", { q: q.trim() })}</li>
           ) : wset && repos.length > 0 ? (

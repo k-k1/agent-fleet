@@ -185,6 +185,10 @@ func buildMux() *http.ServeMux {
 	// Repository management — git ops on working copies under ~/repos.
 	mux.HandleFunc("GET /repos", handleListRepos)
 	mux.HandleFunc("POST /repos", handleCloneRepo)
+	// リポジトリ取り込みジョブ（docs/78）。clone / svn checkout は 202 でここへ移り、
+	// 進捗と結末はこの一覧で観測する。DELETE は走行中なら中止、終端済みなら既読。
+	mux.HandleFunc("GET /repo-jobs", handleListRepoJobs)
+	mux.HandleFunc("DELETE /repo-jobs/{id}", handleDeleteRepoJob)
 	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
 	mux.HandleFunc("POST /repos/{name}/lock", handleRepoLock) // 削除ロック（docs/45）
 	mux.HandleFunc("GET /repos/{name}/status", handleRepoStatus)

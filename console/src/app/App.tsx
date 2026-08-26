@@ -29,6 +29,7 @@ import { NotProvisioned } from "../features/auth/NotProvisioned.tsx";
 import { WsStartingDialog } from "./WsStartingDialog.tsx";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
+import { startRepoJobsPolling } from "../features/repos/jobs.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
 import { hydrateUIPrefs, refreshUIPrefs, resyncAccumulatedForIdentitySwitch, setSetting, useSettings } from "../lib/settings.ts";
@@ -295,6 +296,9 @@ export function App() {
     const stopWsPoll = startWorkspacePolling();
     const stopSessPoll = startSessionsPolling();
     const stopReposPoll = startReposPolling();
+    // 取り込みジョブ（docs/78）: 走行中だけ速く回る。ブラウザを閉じても続く処理なので、
+    // 再読み込み後もここが行を復元する。
+    const stopRepoJobsPoll = startRepoJobsPolling();
     const stopChatPoll = startChatPolling();
     const stopNotificationPoll = startNotificationPolling();
     const unNotificationRead = wireNotificationReadOnActiveSession();
@@ -324,6 +328,7 @@ export function App() {
       stopWsPoll();
       stopSessPoll();
       stopReposPoll();
+      stopRepoJobsPoll();
       stopChatPoll();
       stopNotificationPoll();
       unNotificationRead();

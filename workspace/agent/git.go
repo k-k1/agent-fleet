@@ -318,6 +318,14 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 		if !e.IsDir() {
 			continue
 		}
+		if repoJobActive(e.Name()) {
+			// Being imported right now (docs/78). A half-written working copy must not
+			// appear here: the list is what can be launched in, updated, deleted — and
+			// for svn every entry costs an `svn status` over the whole tree, which
+			// fights the running checkout for the same wc.db lock. The Console draws
+			// this folder from GET /repos/jobs instead.
+			continue
+		}
 		dir := filepath.Join(reposRoot(), e.Name())
 		if !isGitRepo(dir) {
 			// An SVN working copy (docs/41) is a flat folder with a .svn dir; surface it
@@ -414,6 +422,15 @@ var sanitizeSegRe = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 // GIT_TERMINAL_PROMPT=0 fails fast instead of blocking on an interactive
 // credential/host-key prompt. A failed clone leaves no half-written directory behind.
 func gitClone(dir, remoteURL, branch, newBranch string) error {
+	return gitCloneCtx(context.Background(), nil, dir, remoteURL, branch, newBranch)
+}
+
+// gitCloneCtx is gitClone bound to a context, optionally reporting progress into a
+// repo-import job's sink (docs/78). With a sink, `git clone` is asked for --progress
+// (it stays silent when stderr is not a terminal) and its output is streamed rather
+// than buffered, so the Console can show a live line instead of a spinner that says
+// nothing for twenty minutes.
+func gitCloneCtx(ctx context.Context, sink *repoJobSink, dir, remoteURL, branch, newBranch string) error {
 	if err := os.MkdirAll(reposRoot(), 0o755); err != nil {
 		return err
 	}
@@ -423,11 +440,18 @@ func gitClone(dir, remoteURL, branch, newBranch string) error {
 	// best-effort (over HTTPS via the token helper; see gitSubmodulesUpdate).
 	run := func(withBranch string) (string, error) {
 		args := []string{"clone"}
+		if sink != nil {
+			args = append(args, "--progress")
+		}
 		if withBranch != "" {
 			args = append(args, "--branch", withBranch)
 		}
 		args = append(args, "--", remoteURL, dir)
-		return gitx.Combined("", args...)
+		if sink == nil {
+			return gitx.Combined("", args...)
+		}
+		err := gitx.Stream(ctx, sink, "", args...)
+		return sink.tailString(), err
 	}
 	b := strings.TrimSpace(branch)
 	if strings.HasPrefix(b, "-") {
@@ -1075,14 +1099,18 @@ func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "exists", "repo already exists: "+name)
 		return
 	}
-	if err := gitClone(dir, req.RemoteURL, req.Branch, req.NewBranch); err != nil {
-		httpx.WriteErr(w, http.StatusBadGateway, "clone_failed", err.Error())
+	if repoJobActive(name) {
+		httpx.WriteErr(w, http.StatusConflict, "job_running", "an import is already running for: "+name)
 		return
 	}
-	st, _ := gitStatus(dir)
-	httpx.WriteJSON(w, http.StatusCreated, Repo{
-		Name: name, Path: dir, Branch: st.Branch, Dirty: st.Dirty, Ahead: st.Ahead, Behind: st.Behind,
+	// The clone runs as a background job (docs/78), same as an SVN checkout: cloning a
+	// large repository outlives the proxies in front of this handler, and answering
+	// "done" from a request that merely survived is how a half-written working copy got
+	// reported as a finished one.
+	job := startRepoJob("git", name, dir, req.RemoteURL, func(ctx context.Context, sink *repoJobSink) error {
+		return gitCloneCtx(ctx, sink, dir, req.RemoteURL, req.Branch, req.NewBranch)
 	})
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"job": job})
 }
 
 // repoDirFromPath validates {name} and ensures the working copy exists.
@@ -1368,6 +1396,14 @@ func handleRepoFetch(w http.ResponseWriter, r *http.Request) {
 func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	dir, ok := repoAnyDirFromPath(w, r)
 	if !ok {
+		return
+	}
+	// An import in flight is writing into this very folder; deleting it underneath
+	// leaves the git/svn process writing into a removed tree. Cancel the job first
+	// (DELETE /repos/jobs/{id}) — then the folder is an ordinary working copy again.
+	if repoJobActive(filepath.Base(dir)) {
+		httpx.WriteErr(w, http.StatusConflict, "job_running",
+			"this working copy is still being imported; cancel the import first")
 		return
 	}
 	// Deleting the working copy out from under live sessions is even worse than a

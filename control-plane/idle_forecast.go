@@ -30,7 +30,8 @@ type idleForecast struct {
 // Session はセッション名（あれば）。
 type idleHolder struct {
 	// Kind: "working"（ターン実行中）/ "background"（背景ジョブ・サブエージェント）/
-	// "pin"（自動停止しないピン）/ "watching"（人が触っている）/ "recent"（直近の操作）
+	// "pin"（自動停止しないピン）/ "watching"（人が触っている）/ "recent"（直近の操作）/
+	// "repojob"（リポジトリ取り込み中 — docs/78）
 	Kind    string `json:"kind"`
 	Session string `json:"session,omitempty"`
 	// Until はピンの期限（Kind=="pin" のときだけ）。
@@ -39,7 +40,7 @@ type idleHolder struct {
 
 // holdersOf は 1 スイープぶんのセッション一覧と在席から「止めない理由」を作る。
 // 純関数 — reaper の判定と同じ材料から、同じ順序で並べる。
-func holdersOf(sessions []sessionWire, watched bool, now time.Time) []idleHolder {
+func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs int) []idleHolder {
 	var out []idleHolder
 	for _, s := range sessions {
 		if !s.Alive {
@@ -61,6 +62,11 @@ func holdersOf(sessions []sessionWire, watched bool, now time.Time) []idleHolder
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Session < out[j].Session })
+	if repoJobs > 0 {
+		// セッション由来でない唯一の「仕事中」。これを出さないと、取り込み中の Workspace が
+		// 「holders は空なのに StopAt を過ぎても止まらない」に見え、運用者は説明できない。
+		out = append(out, idleHolder{Kind: "repojob"})
+	}
 	if watched {
 		// セッション由来の理由の後ろに置く: 「誰かが見ている」は外しようがないが、
 		// 走っているセッションは具体的な対処（待つ・止める）につながる。

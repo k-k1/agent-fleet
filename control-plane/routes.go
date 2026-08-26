@@ -552,6 +552,9 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos/{name}/fetch", rest)
 	mux.HandleFunc("POST /api/repos/{name}/ff", rest)
 	mux.HandleFunc("POST /api/repos/{name}/parent-ff", rest)
+	// リポジトリ取り込みジョブ（docs/78）— clone / svn checkout の進捗と結末。
+	mux.HandleFunc("GET /api/repo-jobs", rest)
+	mux.HandleFunc("DELETE /api/repo-jobs/{id}", rest)
 	// Subversion (docs/41) — checkout / update / cleanup, proxied to the Agent.
 	mux.HandleFunc("POST /api/repos/svn", rest)
 	mux.HandleFunc("POST /api/repos/{name}/svn-update", rest)
