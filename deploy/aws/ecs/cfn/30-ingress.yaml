@@ -207,6 +207,26 @@ Parameters:
       110s path, come back tomorrow and you pay 135s.
       Must be >= Ec2SlotSleepSec to mean "sleep, then terminate"; a smaller value simply
       skips the sleeping stage.
+  Ec2HibernateAfterSec:
+    Type: String
+    Default: "0"
+    Description: >-
+      The DEPLOYMENT DEFAULT for how long a home may sit unopened before it is
+      snapshotted and its volume deleted; the next start restores it (ADR 0045 決定 4
+      and 13-2). A tenant overrides it from the Console (Tenants > the tenant >
+      "Hibernate unused homes"), so this is only what a tenant that has not chosen gets.
+      ⚠️ This is the only automatic path in the product that moves a user's HOME, which
+      is why 0 (off) is the default and why it is reversible: hibernation snapshots
+      first and deletes only once the snapshot completes, so nothing is destroyed. What
+      the user pays is the restore on their next start (about 122s) and a slower first
+      day (restored blocks hydrate from S3 lazily, ~2.3x on first touch).
+      What it saves: a home is billed on PROVISIONED size ($0.096/GB-month) and a
+      snapshot on USED blocks ($0.05/GB-month), so a 50 GiB volume holding 20 GiB goes
+      from $4.80 to about $1.00 a month. Judge it by last-opened date, not by size.
+      Until this parameter existed the value could not be set on an ECS deployment at
+      all -- there was no CFN parameter and a hand-edited task definition is overwritten
+      by the next deploy. 2160h (90 days) is a reasonable starting point; leave it 0 and
+      set it per tenant if the retention is theirs to choose.
   Ec2HomeGiB:
     Type: String
     Default: "50"
@@ -660,6 +680,7 @@ Resources:
             - { Name: AF_ECS_EC2_MAX_SLOTS, Value: !Ref Ec2MaxSlots }
             - { Name: AF_ECS_EC2_SLOT_SLEEP_SEC, Value: !Ref Ec2SlotSleepSec }
             - { Name: AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC, Value: !Ref Ec2SlotTerminateAfterSec }
+            - { Name: AF_ECS_EC2_HIBERNATE_AFTER_SEC, Value: !Ref Ec2HibernateAfterSec }
             - { Name: AF_ECS_EC2_HOME_GB, Value: !Ref Ec2HomeGiB }
             # Start returns as soon as the service is at desiredCount 1; the Agent
             # readiness poll runs in the background for the log line only, on the

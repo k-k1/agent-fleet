@@ -913,3 +913,16 @@ running 0 のまま永久に止まる。決定 21 の「アーキ跨ぎで実機
 - `workspace/workspace-notes.md` — 永続モデルの記述（home が EBS になり、`/scratch` は存在しない）
 - [docs/62](../62-ecs-start-latency.md) §62.5 — (d) の却下理由を改訂（実施済み）
 - [docs/63](../63-workspace-sizing.md) §63.5.5 — 「別セッションで検討する」の結論へのリンク（実施済み）
+
+**決定 23〜25 で足した面（2026-08-26）**
+
+- `deploy/aws/ecs/cfn/30-ingress.yaml` — `Ec2SlotTerminateAfterSec`（決定 23・既定 0）と
+  `Ec2HibernateAfterSec`（既定 0）。⚠️ 後者は**決定 4 の機能そのものは最初から在ったのに
+  CFN パラメータが無く、ECS 配備ではデプロイ既定を設定する方法が存在しなかった**（手で
+  タスク定義を書き換えても次の deploy で消える）。「既定 0」は既定ではなく、その配備が
+  持ちうる唯一の値だった。テナント毎の `home_hibernate_after` は最初から Console で
+  設定でき、そちらはデプロイ不要（docs/64 §64.36）。
+- `deploy/aws/ecs/cfn/20-platform.yaml` — CP タスクロールに `ec2:TerminateInstances`。
+  無いと毎スイープ AccessDenied で、CP のログにしか出ないまま課金だけ増える。
+- `control-plane/limits.go` — `poolBudget`（決定 25）。テナント上限とプール上限は
+  **DB と env** に分かれて互いを知らないので、突き合わせは CP 層にしか置けない。

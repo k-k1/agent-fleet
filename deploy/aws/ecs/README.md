@@ -569,7 +569,7 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2SlotSleepSec` | `AF_ECS_EC2_SLOT_SLEEP_SEC` | `900` | How long a box may sit with no task before it is **stopped**. Ends the compute charge; the root volume keeps billing. `0` = never |
 | `Ec2SlotTerminateAfterSec` | `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` | `0` (off) | The next step on the same clock: past it the box is **terminated** and its root volume goes too. `0` means boxes are kept forever, so retained roots grow to `Ec2MaxSlots` — see below. `14400` (4h) recommended |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
-| — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant can override it. See below |
+| `Ec2HibernateAfterSec` | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant overrides it from the Console. Nothing is destroyed — the snapshot completes before the volume goes, and the next start restores it. See below |
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 決定 9-1). Set `0` and it becomes your job on every release |
 | — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
 
@@ -649,6 +649,12 @@ it from the snapshot. For a 20 GiB-used / 50 GiB-provisioned home that is
   Settings → Admin → a tenant → *Hibernate unused homes* takes a duration string
   (`720h`); empty follows this env and `0` means never for that tenant. The trigger lives
   in the idle-stop reaper, so **`AF_IDLE_SWEEP_INTERVAL=0` disables hibernation too**.
+- **Two ways to turn it on, and the tenant one needs no deploy.** A retention window is
+  usually the tenant's answer, so setting it in the Console is both quicker and more
+  correct. Use `Ec2HibernateAfterSec` when you want a floor for tenants that never choose.
+  ⚠️ Until that parameter existed the deployment default could not be set on ECS at all —
+  there was no CFN parameter, and a hand-edited task definition is overwritten by the next
+  deploy — so a deployment reading "default 0 (off)" was reading the *only* value it had.
 - A snapshot of a 45 GiB home takes 30–40 minutes; the sweeper advances one step per pass
   and the state lives entirely in AWS tags, so a CP restart mid-way resumes rather than
   strands. If the owner comes back first, the hibernation is abandoned and the volume is
