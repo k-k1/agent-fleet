@@ -1817,6 +1817,34 @@ type ec2SlotCandidate struct {
 	registered bool
 }
 
+// slotsOfMyType lists the pool's slots THIS workspace could actually run on: the right
+// instance type, and (when az is set) the AZ its home is pinned to. Both placement paths
+// start here — freeSlots for an empty box, evictLongestIdle for one it has to take back.
+//
+// ⚠️ It exists because those two did NOT agree. freeSlots filtered on instance-type from
+// the start; evictLongestIdle filtered only by AZ and by "not me", so at the cap a member
+// on a bigger rung could take a SMALLER box and be attached to it. ECS then refuses to
+// place the task — "no container instance met all of its requirements" — and the service
+// stays at desiredCount 1 / runningCount 0 forever, which is a stuck workspace rather than
+// a slow one. Across architectures placeHome's own header records the same symptom
+// measured on a live deployment (docs/70 §70.14.5). Two copies of one rule is how that
+// happened, so there is now one.
+//
+// az == "" means the whole pool: a home that does not exist yet is not pinned anywhere,
+// and where a slot can be had is what decides its AZ.
+func (e *ecsEC2Runtime) slotsOfMyType(ctx context.Context, az string) (*ec2.DescribeInstancesOutput, error) {
+	filters := []ec2types.Filter{
+		tagFilter(ec2TagPool, e.pool.pool),
+		tagFilter(ec2TagRole, ec2RoleSlot),
+		{Name: aws.String("instance-state-name"), Values: []string{"running", "stopped"}},
+		{Name: aws.String("instance-type"), Values: []string{e.instanceType}},
+	}
+	if az != "" {
+		filters = append(filters, ec2types.Filter{Name: aws.String("availability-zone"), Values: []string{az}})
+	}
+	return e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{Filters: filters})
+}
+
 // freeSlots lists the pool's slots that nobody's home is on, hot ones first (22–27s to
 // swap) and stopped ones after (~50s).
 //
@@ -1831,16 +1859,7 @@ type ec2SlotCandidate struct {
 // Claims cover the rest: a slot some other workspace is launching onto has no attachment
 // yet, and only its claim says so.
 func (e *ecsEC2Runtime) freeSlots(ctx context.Context, az string) ([]ec2SlotCandidate, error) {
-	filters := []ec2types.Filter{
-		tagFilter(ec2TagPool, e.pool.pool),
-		tagFilter(ec2TagRole, ec2RoleSlot),
-		{Name: aws.String("instance-state-name"), Values: []string{"running", "stopped"}},
-		{Name: aws.String("instance-type"), Values: []string{e.instanceType}},
-	}
-	if az != "" {
-		filters = append(filters, ec2types.Filter{Name: aws.String("availability-zone"), Values: []string{az}})
-	}
-	out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{Filters: filters})
+	out, err := e.slotsOfMyType(ctx, az)
 	if err != nil {
 		return nil, err
 	}
@@ -2161,11 +2180,26 @@ func (e *ecsEC2Runtime) poolFull(ctx context.Context) (bool, error) {
 // az is a filter, not a preference: pass the AZ an existing home is pinned to, or "" to
 // consider the whole pool.
 //
+// ⚠️ A victim has to be a box this workspace can actually RUN on, which means the same
+// instance type — see slotsOfMyType for what taking the wrong one does. The
+// longest-dormant box overall is therefore not always the victim: a member on the xlarge
+// rung skips past a large that has been asleep for days.
+//
 // Only dormant homes are candidates (the af-idle-since tag, written by Stop), and
 // releaseSlot refuses any victim whose service is not actually at desiredCount 0 — so a
 // workspace that woke up between the pick and the release keeps its slot and we simply
 // report that there was nothing to take.
 func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string, string, error) {
+	usable, err := e.slotsOfMyType(ctx, az)
+	if err != nil {
+		return "", "", err
+	}
+	canRunHere := map[string]bool{}
+	for _, r := range usable.Reservations {
+		for _, inst := range r.Instances {
+			canRunHere[aws.ToString(inst.InstanceId)] = true
+		}
+	}
 	out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(ec2TagPool, e.pool.pool),
@@ -2180,7 +2214,10 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 	now := e.now()
 	for i := range out.Volumes {
 		v := &out.Volumes[i]
-		if attachedInstance(v) == "" || (az != "" && aws.ToString(v.AvailabilityZone) != az) {
+		if inst := attachedInstance(v); inst == "" || !canRunHere[inst] {
+			continue
+		}
+		if az != "" && aws.ToString(v.AvailabilityZone) != az {
 			continue
 		}
 		if aws.ToString(v.VolumeId) == "" || ec2TagValue(v.Tags, ec2TagMembership) == e.base.membershipID {
@@ -2193,7 +2230,12 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 		best, bestIdle = v, idle
 	}
 	if best == nil {
-		return "", "", fmt.Errorf("slot pool is full (%d) and every slot is in use; raise AF_ECS_EC2_MAX_SLOTS", e.pool.maxSlots)
+		// Say which size, because "full" and "full of the wrong size" call for different
+		// actions: the first is raise the cap, the second is wait for a box of this size
+		// to fall dormant (or for Ec2SlotTerminateAfterSec to collect one and free room to
+		// build the right one).
+		return "", "", fmt.Errorf("slot pool is full (%d) and no dormant %s slot can be reclaimed; raise AF_ECS_EC2_MAX_SLOTS",
+			e.pool.maxSlots, e.instanceType)
 	}
 	victimSlot := attachedInstance(best)
 	victimAZ := aws.ToString(best.AvailabilityZone)
