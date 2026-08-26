@@ -14,12 +14,62 @@ import { api, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 
+export type PoolBudget = {
+  max_slots: number;
+  reserved_slots: number;
+  capacity: number;
+  allocated: number;
+  unbounded_tenants?: string[];
+  over: boolean;
+};
+
+/**
+ * PoolBudgetHint は上の警告を出す 1 か所。プール画面（常態として）と、テナントの上限を
+ * 保存した直後（いま打った数字について）の両方が使うので、文言は 1 つしかない。
+ */
+export function PoolBudgetHint({ budget }: { budget: PoolBudget }) {
+  const tr = useT();
+  const unbounded = budget.unbounded_tenants || [];
+  return (
+    <>
+      {budget.over && (
+        <p className="admin-hint warn-text">
+          {tr("pool.budget_over", {
+            allocated: String(budget.allocated),
+            capacity: String(budget.capacity),
+            max: String(budget.max_slots),
+            reserved: String(budget.reserved_slots),
+          })}
+        </p>
+      )}
+      {unbounded.length > 0 && (
+        <p className="admin-hint warn-text">
+          {tr("pool.budget_unbounded", { tenants: unbounded.join(", ") })}
+        </p>
+      )}
+      {/* 分母が違うことを、数字と同じ場所で言う。ここを書かないと運用者は
+          「合計が枠内なら立ち退きは起きない」と読む——起きる。 */}
+      <p className="admin-hint">{tr("pool.budget_denominator")}</p>
+    </>
+  );
+}
+
 export type PoolStatus = {
   runtime: string;
   pool?: string;
   max_slots?: number;
   slot_sleep_sec?: number;
+  slot_terminate_sec?: number;
   hibernate_after_sec?: number;
+  /**
+   * テナント上限の合計とプール上限の突き合わせ。**問題があるときだけ**返る
+   * （収まっている合計はニュースではなく、材料の 2 つは既にこの画面に出ている）。
+   *
+   * ⚠️ 2 つは別の分母を数えている。`allocated` は *同時に動いている* Workspace の数、
+   * `max_slots` は *存在してよい箱* の数で、停止中の Workspace はどちらのテナント枠にも
+   * 数えられないまま箱を掴んでいる。1 つの数字に混ぜないこと。
+   */
+  budget?: PoolBudget;
   slots?: Slot[];
   homes?: Home[];
   golden_id?: string;
@@ -175,8 +225,17 @@ export function PoolView() {
                 sleep: fmtDuration(st.slot_sleep_sec ?? 0, tr),
                 hibernate: fmtDuration(st.hibernate_after_sec ?? 0, tr),
               })
-            : tr("pool.timers_no_hibernate", { sleep: fmtDuration(st.slot_sleep_sec ?? 0, tr) })}
+            : tr("pool.timers_no_hibernate", { sleep: fmtDuration(st.slot_sleep_sec ?? 0, tr) })}{" "}
+          {/* 「終了しない」は事象ではなく常態なので、オフのときこそ書く。停止で止まるのは
+              compute だけで、root ボリュームは箱が消えるまで課金され続ける——そしてそれは
+              画面のどこにも出ない（AutoBake を出しているのと同じ理由）。 */}
+          {(st.slot_terminate_sec ?? 0) > 0
+            ? tr("pool.timers_terminate", { terminate: fmtDuration(st.slot_terminate_sec ?? 0, tr) })
+            : tr("pool.timers_no_terminate", { max: String(st.max_slots ?? 0) })}
         </p>
+        {/* テナントに配った同時利用の合計が、この箱の数に収まっているか。サーバが
+            「問題があるとき」にだけ載せてくる。 */}
+        {st.budget && <PoolBudgetHint budget={st.budget} />}
         {slots.length === 0 ? (
           <p className="muted">{tr("pool.no_slots")}</p>
         ) : (

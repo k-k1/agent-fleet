@@ -87,6 +87,74 @@ describe("EC2 スロットプールの面", () => {
     expect(text()).not.toContain("立ち退き");
   });
 
+  // --- スロットを終了する段（docs/64 §64.32）---
+  //
+  // 停止で止まるのは compute だけで、root ボリュームは箱が消えるまで課金され続ける。
+  // 終了する設定になっていないことは**事象ではなく常態**なので、この画面以外に気づく
+  // 場所が無い——「golden が無くて誰も焼いていない」を出しているのと同じ理由で、
+  // オフのときこそ書く。
+  it("終了しない設定なら、root ボリュームが上限まで残り続けると書く", async () => {
+    await mount(); // POOL は slot_terminate_sec を持たない = 既定のオフ
+    expect(text()).toContain("終了しない");
+    expect(text()).toContain("2"); // max_slots——何本ぶん払うのかが分からないと読めない
+  });
+
+  it("終了する設定なら、閾値と次の人が払う待ち時間を書く", async () => {
+    api.mockResolvedValue({ ...POOL, slot_terminate_sec: 4 * 3600 });
+    await mount();
+    expect(text()).toContain("4.0 時間"); // この画面の既存の刻み（fmtIdle）に合わせる
+    expect(text()).not.toContain("終了しない");
+    // 「速くなる/遅くなる」を書かないと、運用者は値を決められない。
+    expect(text()).toContain("135");
+  });
+
+  // --- テナント上限の合計とプール上限の突き合わせ（docs/64 §64.35）---
+  //
+  // ⚠️ ここでいちばん間違えやすいのは**分母**である。テナント上限が数えるのは
+  // 「同時に動いている Workspace」、プール上限が数えるのは「存在している箱」で、
+  // 停止中の Workspace はどちらのテナント枠にも数えられないまま箱を掴んでいる。
+  // 「合計が枠内なら立ち退きは起きない」と読ませたら、この画面は嘘をついている。
+  it("超過しているときは、合計・容量・その内訳を出す", async () => {
+    api.mockResolvedValue({
+      ...POOL,
+      max_slots: 30,
+      budget: { max_slots: 30, reserved_slots: 2, capacity: 28, allocated: 54, over: true },
+    });
+    await mount();
+    expect(text()).toContain("54");
+    expect(text()).toContain("28");
+    // 「30 − 2」の内訳が無いと、28 という数字がどこから来たのか読めない。
+    expect(text()).toContain("30");
+    // 上限到達は「待たされる」ではなく「奪う／失敗する」。
+    expect(text()).toContain("立ち退き");
+  });
+
+  it("上限が無いテナントが居ることは、超過とは別の言い方で出す", async () => {
+    api.mockResolvedValue({
+      ...POOL,
+      budget: { max_slots: 30, reserved_slots: 2, capacity: 28, allocated: 5, over: false, unbounded_tenants: ["acme"] },
+    });
+    await mount();
+    expect(text()).toContain("acme");
+    expect(text()).toContain("無制限");
+    // over ではないので、超過の文は出さない。
+    expect(text()).not.toContain("超えています");
+  });
+
+  it("分母が違うことを、数字と同じ場所で言う", async () => {
+    api.mockResolvedValue({
+      ...POOL,
+      budget: { max_slots: 30, reserved_slots: 2, capacity: 28, allocated: 54, over: true },
+    });
+    await mount();
+    expect(text()).toContain("必要条件であって十分条件ではありません");
+  });
+
+  it("収まっているときはサーバが budget を返さないので、何も出ない", async () => {
+    await mount(); // POOL に budget は無い
+    expect(text()).not.toContain("必要条件");
+  });
+
   it("退避済みの home は「消えた」ではなく snapshot として見える", async () => {
     await mount();
     expect(text()).toContain("af-ws-acme-carol");
