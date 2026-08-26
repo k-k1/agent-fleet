@@ -271,22 +271,22 @@ func TestECSFargateLiveStartDeployments(t *testing.T) {
 //
 // The rounds, and what each is worth:
 //
-//	1. a service the product CREATES must carry 100/0.
-//	2. an A/B of the setting ITSELF on this substrate, driven from the test side. Not the
-//	   40-second bug — the PROPERTY that made it possible: can this service ever run two
-//	   tasks at once? A revision swap on a service with a running task is the deterministic
-//	   way to ask (200/100 must start the replacement before stopping the old one; 100/0
-//	   has no room to and must stop first). ⚠️ Round 2 does not gate the test — see the
-//	   note on TestECSEC2LiveStartDeployments: the defect itself is a race, and the first
-//	   version of that test reported three meaningless greens because its substrate never
-//	   reproduced anything. This round exists so a green below is not read that way.
-//	3. ★ the real question: force the service back to 200/100 (a pre-upgrade service), then
-//	   Start it through the PRODUCT with a changed task definition. It must come back at
-//	   100/0 — and, because that is what "is the first Start after the deploy still on the
-//	   old behaviour?" really asks, the 100 must be in place NO LATER than the moment the
-//	   desiredCount goes to 1. A watcher samples the service throughout to see the order.
-//	4. the `!prepared` fallback (reuse → a single upsertService carrying the setting AND
-//	   the count), where nothing orders the two and only ECS's own atomicity is left.
+//  1. a service the product CREATES must carry 100/0.
+//  2. an A/B of the setting ITSELF on this substrate, driven from the test side. Not the
+//     40-second bug — the PROPERTY that made it possible: can this service ever run two
+//     tasks at once? A revision swap on a service with a running task is the deterministic
+//     way to ask (200/100 must start the replacement before stopping the old one; 100/0
+//     has no room to and must stop first). ⚠️ Round 2 does not gate the test — see the
+//     note on TestECSEC2LiveStartDeployments: the defect itself is a race, and the first
+//     version of that test reported three meaningless greens because its substrate never
+//     reproduced anything. This round exists so a green below is not read that way.
+//  3. ★ the real question: force the service back to 200/100 (a pre-upgrade service), then
+//     Start it through the PRODUCT with a changed task definition. It must come back at
+//     100/0 — and, because that is what "is the first Start after the deploy still on the
+//     old behaviour?" really asks, the 100 must be in place NO LATER than the moment the
+//     desiredCount goes to 1. A watcher samples the service throughout to see the order.
+//  4. the `!prepared` fallback (reuse → a single upsertService carrying the setting AND
+//     the count), where nothing orders the two and only ECS's own atomicity is left.
 func TestECSEC2LiveDeploymentConfig(t *testing.T) {
 	if os.Getenv("AF_ECS_EC2_LIVE") != "1" || os.Getenv("AF_ECS_EC2_LIVE_DEPLOY") != "1" {
 		t.Skip("set AF_ECS_EC2_LIVE=1 AF_ECS_EC2_LIVE_DEPLOY=1 (and source the harness state.env)")
