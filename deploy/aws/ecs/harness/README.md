@@ -4,11 +4,17 @@
 docs/64 §64.16 の計測はこれで取った。
 
 ```bash
-./setup.sh                    # 基盤を作る（state.env を書き出す）
-source ~/af-ec2c/state.env    # setup.sh の出力先
-cd ../../../../control-plane && go test -run TestECSEC2Live -v -timeout 40m .
-./teardown.sh                 # 全消去 → 残存 0 を表示
+# 作業ディレクトリ（~/af-ec2c）へ写して使う想定なので、checkout の場所は渡す
+cp deploy/aws/ecs/harness/*.sh ~/af-ec2c/
+AF_HARNESS_REPO_DIR=$PWD AF_HARNESS_NAT=1 ~/af-ec2c/setup.sh   # 基盤を作る（state.env を書き出す）
+(set -a; . ~/af-ec2c/state.env; set +a; cd control-plane && go test -run TestECSEC2Live -v -timeout 40m .)
+~/af-ec2c/teardown.sh                                          # 全消去 → 残存 0 を表示
 ```
+
+⚠️ **`AF_HARNESS_REPO_DIR` は checkout の場所**（`cfn/20-platform.yaml` と
+`cfn/40-ec2-pool.yaml` を読む）。repo の中でそのまま実行するときだけ省略できる。
+以前はここが**特定の worktree への絶対パス**で埋められており、その worktree が消えた後は
+誰が動かしても動かなかった。**自分の作業場のパスを焼き込まないこと。**
 
 守ること:
 
