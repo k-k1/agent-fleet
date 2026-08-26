@@ -953,6 +953,25 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_retention", "terminal history retention must be 0, 1, 7, or 30 days"})
 		return
 	}
+	// The int quotas were stored with NO validation at all. 0 means unlimited on every
+	// one of them, so a negative is not a smaller quota — it is a quota nothing can
+	// satisfy: max_workspaces=-1 makes `running >= limit` true before anyone starts, and
+	// that tenant can never open a workspace again. Reject it here; a typo in a number
+	// field is not something to discover from a member's failed Start.
+	for _, q := range []struct {
+		name string
+		v    int64
+	}{
+		{"max_workspaces", int64(body.MaxWorkspaces)}, {"max_sessions", int64(body.MaxSessions)},
+		{"max_git_repos", int64(body.MaxGitRepos)}, {"max_lfs_bytes", body.MaxLFSBytes},
+		{"max_workspace_mem", body.MaxWorkspaceMem}, {"max_workspace_cpu", int64(body.MaxWorkspaceCPU)},
+		{"max_workspace_disk_gb", int64(body.MaxWorkspaceDiskGB)},
+	} {
+		if q.v < 0 {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_limit", q.name + " cannot be negative (0 = unlimited)"})
+			return
+		}
+	}
 	// Reject unparseable durations up front (empty stays empty = use default).
 	for _, v := range []string{body.SessionIdleTimeout, body.InteractionIdleTimeout, body.WSIdleTimeout, body.HomeHibernateAfter, body.HomeBackupEvery} {
 		if v != "" {
@@ -999,7 +1018,22 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 	// Rebuild cached runtimes for this tenant so the new gate reaches the next
 	// container start (the gate is injected as env when the runtime is built).
 	a.mgr.evictTenantCache(t.ID)
-	writeJSON(w, http.StatusOK, map[string]any{
+	// ⚠️ A WARNING, not a gate, and the save above has already happened. Three reasons:
+	//
+	//  1. It is not an invariant this endpoint can hold. Ec2MaxSlots is CP env and the
+	//     quotas are rows; an operator lowering the cap makes no API call at all, so a
+	//     400 here would guard one direction of a two-sided relationship and read as a
+	//     guarantee it cannot give.
+	//  2. Over-subscription is a legitimate policy. max_workspaces bounds CONCURRENT
+	//     workspaces, and tenants that never peak together are exactly who you would
+	//     over-subscribe on purpose.
+	//  3. A deployment that already exceeds it would be frozen out of editing anything
+	//     else on this screen — terminal history retention, an idle timeout — by a
+	//     condition the admin did not create and cannot fix from here.
+	//
+	// Computed AFTER the write and with no override, so what comes back describes the
+	// state that now exists rather than a prediction about it.
+	resp := map[string]any{
 		"tenant": t.Slug, "max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions,
 		"max_workspace_mem":     body.MaxWorkspaceMem,
 		"max_workspace_cpu":     body.MaxWorkspaceCPU,
@@ -1011,7 +1045,13 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		"home_backup_every":               body.HomeBackupEvery,
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,
 		"terminal_history_retention_days": body.TerminalHistoryRetentionDays,
-	})
+	}
+	// A failure to read it is not a reason to fail the save — the save is done, and the
+	// budget is advice. Say nothing rather than something wrong.
+	if b, ok, err := a.mgr.poolBudget(r.Context(), "", 0); ok && err == nil && !b.OK() {
+		resp["pool_budget"] = b
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // setUserLimit (PUT /api/admin/user-limits) — per-membership override.
