@@ -50,7 +50,9 @@ export const ProjectTree = memo(function ProjectTree() {
 
   const [showClone, setShowClone] = useState(false);
   const [showShares, setShowShares] = useState(false);
-  const [cloning, setCloning] = useState<{ name: string } | null>(null);
+  // 進行中の取り込み。svn は「クローン」ではなく「チェックアウト」なので、
+  // 進行行と完了トーストの文言を VCS で振り分ける。
+  const [cloning, setCloning] = useState<{ name: string; svn?: boolean } | null>(null);
   const q = useProjectFilter((f) => f.q);
   const setQ = useProjectFilter((f) => f.setQ);
   const nq = normQuery(q);
@@ -114,7 +116,7 @@ export const ProjectTree = memo(function ProjectTree() {
   };
 
   const doSvnCheckout = async (req: SvnCheckoutRequest) => {
-    setCloning({ name: req.name || guessRepoName(req.url) });
+    setCloning({ name: req.name || guessRepoName(req.url), svn: true });
     try {
       const res = await svnCheckout(req, toast); // proxy-timeout re-check + reveal live in clone.ts
       if (res.ok && res.name) autoAddToActiveWorkingSet("repos", res.name); // docs/52 §1
@@ -122,7 +124,7 @@ export const ProjectTree = memo(function ProjectTree() {
       if (repo) {
         toast(
           <span className="clone-done-toast">
-            {tr("pj.cloned", { name: repo.name })}
+            {tr("pj.checked_out", { name: repo.name })}
             <Button small icon="play" onClick={() => useLaunchTarget.getState().open(repo)}>
               {tr("pj.start_now")}
             </Button>
@@ -191,7 +193,7 @@ export const ProjectTree = memo(function ProjectTree() {
       <ul className="sess-list proj-tree" ref={rail.ref} role="tree" onKeyDown={rail.onKeyDown}>
         {cloning && (
           <li className="repo-cloning">
-            <Icon name="loading" spin /> {tr("pj.cloning", { name: cloning.name })}
+            <Icon name="loading" spin /> {tr(cloning.svn ? "pj.checking_out" : "pj.cloning", { name: cloning.name })}
           </li>
         )}
         {groups.length === 0 && !cloning && (
