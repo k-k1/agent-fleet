@@ -65,9 +65,11 @@ func runSvn(dir string, args ...string) (string, error) {
 // per-server opt-in (docs/41).
 const svnTrustFailures = "--trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other"
 
-// svnNetTimeout bounds a network op (checkout/update) so a hung/slow server can't
-// occupy the handler indefinitely; generous because a first checkout of a large
-// repo legitimately takes long.
+// svnNetTimeout bounds a SYNCHRONOUS network op (update) so a hung/slow server can't
+// occupy the handler indefinitely; generous because updating a large working copy
+// legitimately takes long. The first checkout does NOT use it — it runs as a job on
+// repoJobTimeout, because killing a long checkout at a handler-shaped deadline is what
+// deleted a half-hour-old working copy (docs/78).
 const svnNetTimeout = 30 * time.Minute
 
 // svnAuthedArgs builds the full argv (after "svn") for a network op: the
@@ -92,22 +94,54 @@ func svnAuthedArgs(creds *secrets.SVNCred, args ...string) (full []string, authe
 // keeps the password out of ~/.subversion/auth (no plaintext on disk). Returns
 // trimmed combined output so the handler can surface svn's own message verbatim.
 func runSvnAuthed(ctx context.Context, creds *secrets.SVNCred, args ...string) (string, error) {
+	return runSvnAuthedSink(ctx, nil, creds, args...)
+}
+
+// runSvnAuthedSink is runSvnAuthed with an optional progress sink. With a sink the
+// output is STREAMED (line-counted, tail-buffered) instead of accumulated: a first
+// checkout of a large repository prints one line per file, and holding all of them in
+// memory is both wasteful and invisible — the sink turns the same bytes into a live
+// "N files, last: …" and keeps only the tail for the error message.
+func runSvnAuthedSink(ctx context.Context, sink *repoJobSink, creds *secrets.SVNCred, args ...string) (string, error) {
 	full, authed := svnAuthedArgs(creds, args...)
 	cmd := exec.CommandContext(ctx, "svn", full...)
 	if authed {
 		cmd.Stdin = strings.NewReader(creds.Password + "\n")
 	}
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	if sink == nil {
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	// svn prints each added path relative to the CWD. Rooting the command at ~/repos
+	// makes the progress line read "bigdocs/sub/f1.bin" instead of leaking whatever
+	// directory the Agent happened to start in. Every path we pass is absolute, so the
+	// CWD changes nothing else.
+	if root := reposRoot(); root != "" {
+		if _, err := os.Stat(root); err == nil {
+			cmd.Dir = root
+		}
+	}
+	cmd.Stdout, cmd.Stderr = sink, sink
+	err := cmd.Run()
+	return sink.tailString(), err
 }
 
 // svnLocked reports whether svn output signals a wedged working-copy lock (an
 // interrupted/killed op leaves .svn locked — very common under OOM churn). The fix
 // is a local `svn cleanup`; callers auto-heal by running it and retrying once.
+//
+// ★ E155037 を必ず含めること。中断された checkout/update の後始末が要る状態で svn が実際に
+// 出すのは「E155037: Previous operation has not finished; run 'cleanup' if it was interrupted」で、
+// **`svn cleanup` ではなく `cleanup`** と書く。E155004 系の文言だけを見ていた頃、これが素通りして
+// 自動修復が一度も走らず、利用者は毎回 更新 が失敗するのを手動で ロックを解除 するしかなかった
+// （実測: svn 1.14.2 / docs/78）。
 func svnLocked(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(out, "E155004") ||
+		strings.Contains(out, "E155037") ||
 		strings.Contains(s, "run 'svn cleanup'") ||
+		strings.Contains(s, "run 'cleanup'") ||
+		strings.Contains(s, "previous operation has not finished") ||
 		strings.Contains(s, "working copy locked") ||
 		strings.Contains(s, "is already locked")
 }
@@ -122,10 +156,17 @@ func svnCleanup(dir string) (string, error) {
 // runs `svn cleanup <dir>` once and retries — so a killed checkout/update self-heals
 // without the user (or the agent) having to notice.
 func runSvnAuthedHealing(ctx context.Context, dir string, creds *secrets.SVNCred, args ...string) (string, error) {
-	out, err := runSvnAuthed(ctx, creds, args...)
-	if err != nil && dir != "" && svnLocked(out) {
+	return runSvnAuthedHealingSink(ctx, nil, dir, creds, args...)
+}
+
+// runSvnAuthedHealingSink is runSvnAuthedHealing with a progress sink (job path).
+func runSvnAuthedHealingSink(ctx context.Context, sink *repoJobSink, dir string, creds *secrets.SVNCred, args ...string) (string, error) {
+	out, err := runSvnAuthedSink(ctx, sink, creds, args...)
+	// A cancelled/timed-out job also fails "locked" (we killed it mid-write); healing it
+	// would restart the very work the user just stopped.
+	if err != nil && dir != "" && ctx.Err() == nil && svnLocked(out) {
 		if _, cerr := svnCleanup(dir); cerr == nil {
-			out, err = runSvnAuthed(ctx, creds, args...)
+			out, err = runSvnAuthedSink(ctx, sink, creds, args...)
 		}
 	}
 	return out, err
@@ -303,10 +344,12 @@ func svnBuildURL(base, subpath string) string {
 	return u
 }
 
-// handleSvnCheckout (POST /repos/svn) checks out an SVN URL into ~/repos/<name>.
-// Mirrors handleCloneRepo: derive/validate a folder name, refuse an existing dir,
-// run the checkout, remove a half-written dir on failure. Credentials are used
-// once and, when Save is set, upserted into the encrypted store for later updates.
+// handleSvnCheckout (POST /repos/svn) starts an SVN checkout into ~/repos/<name>.
+// Mirrors handleCloneRepo: derive/validate a folder name, refuse an existing dir, then
+// hand the network work to a background job and answer 202 with it (docs/78) — a first
+// checkout routinely outlives every proxy in the path, and the synchronous shape made
+// the Console call a still-running checkout "done". Credentials are used once and, when
+// Save is set, upserted into the encrypted store for later updates.
 func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
 	if !svnAvailable() {
 		httpx.WriteErr(w, http.StatusNotImplemented, "svn_missing", "the 'svn' command is not available in this workspace")
@@ -355,21 +398,18 @@ func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
 		}
 		creds.TrustCert = true
 	}
-	// Upper-bound only (not r.Context()): a client disconnect must not kill a half-done
-	// checkout, but a hung server must not pin this handler forever either.
-	ctx, cancel := context.WithTimeout(context.Background(), svnNetTimeout)
-	defer cancel()
-	out, err := runSvnAuthedHealing(ctx, dir, creds, "checkout", full, dir)
-	if err != nil {
-		_ = os.RemoveAll(dir)
-		httpx.WriteErr(w, http.StatusBadGateway, "checkout_failed", fmt.Sprintf("%v: %s", err, out))
+	if repoJobActive(name) {
+		httpx.WriteErr(w, http.StatusConflict, "job_running", "an import is already running for: "+name)
 		return
 	}
-	// Persist only after a successful checkout proves it works (base URL as the
-	// prefix, so a later `svn update` of any subtree matches it). The password is
-	// saved only on the explicit Save opt-in; cert trust — not a secret — persists
-	// whenever it was used, so updates keep trusting the server's cert.
-	if creds != nil {
+	saveCred := func() {
+		// Persist only after a successful checkout proves it works (base URL as the
+		// prefix, so a later `svn update` of any subtree matches it). The password is
+		// saved only on the explicit Save opt-in; cert trust — not a secret — persists
+		// whenever it was used, so updates keep trusting the server's cert.
+		if creds == nil {
+			return
+		}
 		saveUser, savePass := "", ""
 		if req.Save && creds.Username != "" {
 			saveUser, savePass = creds.Username, creds.Password
@@ -378,7 +418,21 @@ func handleSvnCheckout(w http.ResponseWriter, r *http.Request) {
 			_ = svnSaveCred(base, saveUser, savePass, creds.TrustCert)
 		}
 	}
-	httpx.WriteJSON(w, http.StatusCreated, svnRepoEntry(name, dir))
+	job := startRepoJob("svn", name, dir, full, func(ctx context.Context, sink *repoJobSink) error {
+		out, err := runSvnAuthedHealingSink(ctx, sink, dir, creds, "checkout", full, dir)
+		if err != nil {
+			// Keep a working copy that svn can resume (cleanup + update picks up where
+			// it stopped); only a checkout that never produced one is swept away. The
+			// old unconditional RemoveAll is exactly how a half-hour download vanished.
+			if !isSvnRepo(dir) {
+				_ = os.RemoveAll(dir)
+			}
+			return fmt.Errorf("%v: %s", err, out)
+		}
+		saveCred()
+		return nil
+	})
+	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"job": job})
 }
 
 // svnDirFromPath validates {name} and ensures it is an SVN working copy.
