@@ -17,7 +17,7 @@ import { IconButton } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
-import { useReposStore } from "../repos/store.ts";
+import { useReposStore, type Repo } from "../repos/store.ts";
 import { useLaunchSeed, useLaunchTarget } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSettings } from "../../lib/settings.ts";
@@ -26,6 +26,7 @@ import { agentOf } from "../../agents/registry.ts";
 import { useWorkItemStore, startWorkItemPolling } from "./store.ts";
 import { WorkItemQueryModal } from "./WorkItemQueryModal.tsx";
 import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
+import { WorkItemStartModal } from "./WorkItemStartModal.tsx";
 import {
   branchForItem,
   promptForItem,
@@ -125,6 +126,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const startHub = useSessionsStore((s) => s.openStart);
   const [queries, setQueries] = useState(false);
   const [reportOn, setReportOn] = useState<WorkItem | null>(null);
+  const [startOn, setStartOn] = useState<WorkItem | null>(null);
 
   // テナントを切り替えたら前のテナントの行を残さない（他のストアと同じ作法）。
   useEffect(() => {
@@ -141,19 +143,31 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     (agentOf(s?.kind || "claude").caps.chat ? openSessionChat : openSessionTerminal)(name);
   };
 
-  // 始める: 既存の起動スタックに種を置いて渡す。作業コピーが分かるなら
-  // LaunchModal を直接、分からないなら はじめる ハブに選ばせる。
+  // 始める: まず「どこで」を聞く（docs/80 §80.8）。チケットは作業コピーを知らない —
+  // GitHub 項目はリポジトリまで、Jira はそれすら持たない — ので、リポジトリと
+  // 新規 worktree / 既存コピー を選んでから既存の起動スタックへ渡す。
+  // 作業コピーが 1 つも無いときだけ はじめる ハブ（clone 導線）に委ねる。
   const start = (item: WorkItem) => {
-    const hint = payload?.queries.find((q) => q.id === item.queryId)?.repoHint || "";
-    const folder = repoForItem(item, hint, folders);
+    if (!repos.some((r) => !r.worktree)) {
+      seedFor(item);
+      startHub();
+      return;
+    }
+    setStartOn(item);
+  };
+
+  const seedFor = (item: WorkItem) => {
     seed(promptForItem(item), titleForItem(item), "", "", "", {
       provider: item.provider,
       key: item.key,
       branch: branchForItem(item, settings.workItemBranchTemplate),
     });
-    const repo = repos.find((r) => r.name === folder);
-    if (repo) openLaunch(repo);
-    else startHub();
+  };
+
+  const pickTarget = (item: WorkItem, target: Repo, inPlace: boolean) => {
+    seedFor(item);
+    setStartOn(null);
+    openLaunch(target, "", inPlace);
   };
 
   const count = items.filter((i) => i.state !== "done").length;
@@ -229,6 +243,15 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
             />
           ))}
         </div>
+      )}
+      {startOn && (
+        <WorkItemStartModal
+          item={startOn}
+          repos={repos}
+          defaultRepo={repoForItem(startOn, payload?.queries.find((q) => q.id === startOn.queryId)?.repoHint || "", folders)}
+          onClose={() => setStartOn(null)}
+          onPick={(target, inPlace) => pickTarget(startOn, target, inPlace)}
+        />
       )}
       {reportOn && (
         <WorkItemReportModal

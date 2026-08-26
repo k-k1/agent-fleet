@@ -146,8 +146,12 @@ export function titleSlug(title: string, max = 32): string {
 
 /** The default branch template. `{key}` is the item key with the owner/name prefix
  * dropped (the working copy already says which repo it is) and "#" turned into
- * "issue-" — "#" cannot appear in a git ref. `{slug}` is the ASCII slug of the title. */
-export const DEFAULT_BRANCH_TEMPLATE = "feature/{key}-{slug}";
+ * "issue-" — "#" cannot appear in a git ref. `{slug}` is the ASCII slug of the title and
+ * is available, but NOT in the default: the key already identifies the work, the title
+ * is often non-ASCII (so the slug is empty anyway), and a long English title made names
+ * like feature/issue-45-empty-list-after-login-when. Add {slug} in the setting if you
+ * want it. */
+export const DEFAULT_BRANCH_TEMPLATE = "feature/{key}";
 
 /** Branch name for a work item, from the user's template (docs/80 P2).
  *

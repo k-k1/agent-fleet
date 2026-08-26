@@ -101,15 +101,20 @@ interface LaunchTargetStore {
    * new-branch flow ("" = new branch). Set by the SCM view's「このブランチで作業を
    * 始める」, which knows the branch before the dialog exists. */
   existingBranch: string;
-  open(r: Repo, existingBranch?: string): void;
+  /** The caller already chose 「このコピーで直接」 (docs/80: the work item flow picks the
+   * working copy — new worktree or an existing one — before the launch dialog opens).
+   * The dialog would otherwise re-default to "new worktree" and undo that answer. */
+  inPlace: boolean;
+  open(r: Repo, existingBranch?: string, inPlace?: boolean): void;
   clear(): void;
 }
 
 export const useLaunchTarget = create<LaunchTargetStore>((set) => ({
   target: null,
   existingBranch: "",
-  open: (r, existingBranch = "") => set({ target: r, existingBranch }),
-  clear: () => set({ target: null, existingBranch: "" }),
+  inPlace: false,
+  open: (r, existingBranch = "", inPlace = false) => set({ target: r, existingBranch, inPlace }),
+  clear: () => set({ target: null, existingBranch: "", inPlace: false }),
 }));
 
 /** A first-prompt seed for the next launch (docs/21 UI刷新): the memo send modal's

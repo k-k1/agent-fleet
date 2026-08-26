@@ -109,6 +109,11 @@ interface LaunchModalProps {
    * from a work item proposes feature/<key>-<slug>). Only a suggestion — clearing the
    * field falls back to the server-minted temp/<slug>. */
   initialNewBranch?: string;
+  /** Pre-answer the 場所 choice. Omitted = the usual default (a new worktree wherever
+   * one is offered). false = このコピーで直接, for a caller that already asked — the work
+   * item flow picks the working copy first (docs/80 §80.8), and re-defaulting to
+   * "new worktree" here would silently undo that answer. */
+  initialWorktree?: boolean;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
@@ -141,7 +146,7 @@ function LaunchSection({ label, summary, warn = false, open, onToggle, children 
   );
 }
 
-export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, initialWorktree, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -189,7 +194,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // WHERE: default to an isolated worktree — a branch switch can't corrupt other
   // sessions when each task has its own dir. From a worktree row (allowWorktree
   // false) there's no worktree choice: launch in place.
-  const [worktree, setWorktree] = useState(allowWorktree);
+  const [worktree, setWorktree] = useState(initialWorktree ?? allowWorktree);
   // 作業ディレクトリ: "" = the working copy root (the usual case). Seeded from what
   // this repo was last launched in, since a monorepo user keeps returning to the same
   // package — the field shows the value, so a remembered folder is never silent.
