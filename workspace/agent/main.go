@@ -179,6 +179,10 @@ func main() {
 	// 分を拾い直す。busy/idle の settle 判定を持たないので上のリコンサイラとは
 	// 無関係に一度きりでよい。
 	sweepUndeliveredBrowserHandoffs()
+	// リポジトリ取り込みジョブ（docs/78）: 前回の clone / checkout は Agent ごと死ぬ
+	// （タスク入れ替え・idle-stop）。生き残った marker を「中断」として復元しないと、
+	// 半端な作業コピーだけが普通のリポジトリ顔で一覧に戻る。
+	sweepRepoJobMarkers()
 	// Codex sessions use a shared local app-server when available（P3 からは
 	// codex.Serve() の RuntimeSupervisor が daemon を所有する）。AF attaches
 	// a read-only observer per loaded thread: compaction state, rate limits, and

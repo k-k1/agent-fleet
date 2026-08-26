@@ -39,6 +39,8 @@ SVN は中断/kill で作業コピーがすぐロックする（`E155004: … ru
 `svn-update` エンドポイント自体を塞ぐため、エージェント任せにできない。
 
 - checkout/update が locked で落ちたら `svn cleanup` を挟んで 1 回だけ自動リトライ（`runSvnAuthedHealing`）。
+  判定文字列は `E155037`（中断された取り込み — 「run **'cleanup'**」と書く）を含むこと。詳細は
+  [docs/78 §8](78-repo-import-jobs.md#8-自動修復の文字列svnlocked)。
 - 明示操作: `POST /repos/{name}/svn-cleanup`（svn 行の「ロックを解除」）。ローカル・認証不要。
 - リポジトリ側ロック（`svn lock`/`svn:needs-lock`）はスコープ外。必要ならセッション内で `svn unlock`。
 
@@ -46,7 +48,7 @@ SVN は中断/kill で作業コピーがすぐロックする（`E155004: … ru
 
 | ルート | 内容 |
 |---|---|
-| `POST /repos/svn` | チェックアウト（`{url, subpath, name, username, password, save}`）|
+| `POST /repos/svn` | チェックアウトを**開始**（`{url, subpath, name, username, password, save}`）。`202 {job}` — 実処理は取り込みジョブ（[docs/78](78-repo-import-jobs.md)）|
 | `POST /repos/{name}/svn-update` | 最新リビジョンへ更新 |
 | `POST /repos/{name}/svn-cleanup` | working-copy ロック解除 |
 | `DELETE /repos/{name}` | 削除（既存を流用・svn は worktree ロジックを飛ばし `RemoveAll`）|
@@ -67,7 +69,9 @@ Agent（`workspace/agent/routes.go`）・CP 許可リスト（`control-plane/rou
 
 - `Repo` 型に `vcs?/revision?/url?`。
 - チェックアウトモーダル（`NewRepoModal`）に Git/SVN 切替。SVN は URL・サブパス・ユーザー／パスワード・
-  保存チェック・フォルダ名。送信は `svnCheckout()`（`clone.ts`・プロキシタイムアウト再確認込み）。
+  保存チェック・フォルダ名。送信は `svnCheckout()`（`clone.ts`）。**完了の根拠は取り込みジョブの
+  `state`** であって POST の応答ではない（[docs/78](78-repo-import-jobs.md)）。走行中の作業コピーは
+  `GET /repos` に出ないので、一覧に現れた時点で使える物である。
 - `RepoRow`: svn 行は `r<rev>`＋URL ツールチップ、操作は起動（その場のみ）／更新／ロック解除／削除に限定
   （ブランチ切替・SCM・FF は非表示）。
 - i18n: `rp.vcs*` / `rp.svn_*` / `repo.svn_update` / `repo.svn_cleanup` / `repo.revision`（ja/en 両方）。

@@ -125,7 +125,9 @@ function MemberIdleChip({ idle, state }: { idle?: MemberIdle; state?: string }) 
           ? tr("admin.idle_hold_working")
           : h.kind === "background"
             ? tr("admin.idle_hold_background")
-            : tr("admin.idle_hold_watching");
+            : h.kind === "repojob"
+              ? tr("admin.idle_hold_repojob")
+              : tr("admin.idle_hold_watching");
     // 2 件目以降は件数だけ（名簿の行は 1 行に収める）。詳細はメンバー詳細で出す。
     const more = holders.length > 1 ? tr("admin.idle_hold_more", { n: String(holders.length - 1) }) : "";
     return (
@@ -180,7 +182,9 @@ function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: string }
                     ? tr("admin.idle_hold_working_row", { session: h.session ?? "" })
                     : h.kind === "background"
                       ? tr("admin.idle_hold_background_row", { session: h.session ?? "" })
-                      : tr("admin.idle_hold_watching_row")}
+                      : h.kind === "repojob"
+                        ? tr("admin.idle_hold_repojob_row")
+                        : tr("admin.idle_hold_watching_row")}
               </li>
             ))}
           </ul>

@@ -161,26 +161,40 @@ func isUnmeteredKind(kind string) bool {
 
 // agentSessions fetches the Agent's full session list (for the DB mirror).
 func (m *manager) agentSessions(ctx context.Context, rt Runtime) ([]sessionWire, error) {
+	env, err := m.agentSessionsEnv(ctx, rt)
+	return env.Sessions, err
+}
+
+// agentSessionsEnvelope is the Agent's GET /sessions body. RepoJobs is the count of
+// running repository imports (docs/78) — a workspace with none of its own sessions can
+// still be busy for an hour cloning, and the reaper must not stop it (the import dies
+// with the container and leaves a half-written working copy).
+type agentSessionsEnvelope struct {
+	Sessions []sessionWire `json:"sessions"`
+	RepoJobs int           `json:"repoJobs"`
+}
+
+// agentSessionsEnv is agentSessions plus the workspace-level busy signals that ride
+// the same response, so the reaper needs no extra request per sweep.
+func (m *manager) agentSessionsEnv(ctx context.Context, rt Runtime) (agentSessionsEnvelope, error) {
+	var body agentSessionsEnvelope
 	req, _ := http.NewRequestWithContext(ctx, "GET", rt.Endpoint()+"/sessions", nil)
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
 	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
-		return nil, err
+		return body, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		// An error body would decode as an empty list and read as "no sessions" —
 		// the reaper would mark a busy workspace cold and ReplaceSessions would
 		// wipe the DB mirror.
-		return nil, fmt.Errorf("agent /sessions: %s", resp.Status)
-	}
-	var body struct {
-		Sessions []sessionWire `json:"sessions"`
+		return body, fmt.Errorf("agent /sessions: %s", resp.Status)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil, err
+		return agentSessionsEnvelope{}, err
 	}
-	return body.Sessions, nil
+	return body, nil
 }
