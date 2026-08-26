@@ -716,6 +716,43 @@ export const ja = {
   "ssm.f_region_placeholder": "プロファイル既定を使用",
   "ssm.add_host": "ホストを追加",
 
+  // --- 設定の書き出し / 取り込み（features/settings/BackupTab.tsx・docs/79）---
+  "backup.intro":
+    "自分の設定を 1 個のファイルにまとめて持ち出し、別の環境やアカウントで読み戻せます。",
+  "backup.secrets_note":
+    "接続（Git・エージェント・AWS のトークンや API キー）は含みません。移った先ではもう一度サインインしてください。",
+  "backup.export_title": "書き出す",
+  "backup.import_title": "取り込む",
+  "backup.cat_prefs": "個人設定",
+  "backup.cat_ssm": "AWS SSM",
+  "backup.cat_instructions": "エージェントへの指示",
+  "backup.n_keys_one": "{count}項目",
+  "backup.n_keys_other": "{count}項目",
+  "backup.n_ssm": "プロファイル{profiles}件・ホスト{hosts}件",
+  "backup.n_bytes_one": "{count}バイト",
+  "backup.n_bytes_other": "{count}バイト",
+  "backup.needs_ws": "ワークスペース起動中のみ",
+  "backup.export_do": "書き出す",
+  "backup.export_done": "書き出しました",
+  "backup.import_do": "取り込む",
+  "backup.import_done": "取り込みました",
+  "backup.import_hint":
+    "このボタンで書き出したファイルを選びます。中身を確かめてから取り込みます。",
+  "backup.preview_head": "書き出し日時: {when}",
+  "backup.confirm_title": "取り込みますか？",
+  "backup.confirm_body":
+    "選んだ範囲を今の設定に重ねます。既にある SSM のプロファイル・ホストは書き換えません。",
+  "backup.confirm_instructions": "エージェントへの指示は、今の文章を置き換えます。",
+  "backup.res_prefs": "個人設定: {applied}項目を反映（対象外 {skipped}）",
+  "backup.res_ssm": "AWS SSM: プロファイル{profiles}件・ホスト{hosts}件を追加（既存・対象外 {skipped}）",
+  "backup.res_ssm_failed": "AWS SSM: {n}件は登録できませんでした",
+  "backup.res_instructions": "エージェントへの指示: {bytes}バイトを保存",
+  "backup.res_instructions_failed": "エージェントへの指示: 保存できませんでした（{msg}）",
+  "backup.err_bad_json": "ファイルを読めませんでした（JSON ではありません）",
+  "backup.err_bad_kind": "設定の書き出しファイルではありません",
+  "backup.err_bad_version": "この Console が知らない版のファイルです",
+  "backup.err_empty": "取り込める内容がありません",
+
   // --- 共通（既定）---
   "common.default": "既定",
 
@@ -3757,6 +3794,7 @@ export const ja = {
   "set.tab_git": "Gitホスティング",
   "set.tab_ssm": "AWS SSM",
   "set.tab_internalrepos": "内部リポジトリ",
+  "set.tab_backup": "書き出し / 取り込み",
   "set.tab_danger": "危険な操作",
   "set.tab_ops": "運用・監視",
   "set.tab_chat": "チャット連携",
