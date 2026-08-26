@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.12.3](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.3) — 2026-08-26
+
+Importing a repository is an asynchronous job now, so a large clone or checkout no
+longer looks like it succeeded when it did not. Settings can be carried to another
+environment in one file, an `ecs-ec2` deployment keeps its outbound IP across a rebuild,
+and a workspace that could not start — or started slowly — on `ecs-ec2` behaves.
+
 ## [0.12.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.2) — 2026-08-25
 
 Agent memory can be imported with the history it came with, workspace resource figures
