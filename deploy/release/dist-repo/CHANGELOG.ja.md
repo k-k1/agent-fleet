@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.12.3](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.3) — 2026-08-26
+
+リポジトリの取り込みが非同期のジョブになり、大きな clone / checkout が「失敗したのに成功に
+見える」ことがなくなりました。設定を 1 個のファイルで別の環境へ持っていけるようになり、
+`ecs-ec2` の配備は作り直しても外向きの IP を保ちます。`ecs-ec2` で Workspace が起動できない、
+起動が遅い、という不具合もまとめて直しています。
+
 ## [0.12.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.2) — 2026-08-25
 
 エージェントのメモリを履歴ごと引き継げるようになり、ワークスペースのリソースが ECS 構成でも
