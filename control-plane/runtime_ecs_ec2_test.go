@@ -1239,6 +1239,133 @@ func TestECSEC2EvictsLongestDormantAtTheCap(t *testing.T) {
 	}
 }
 
+// ⚠️ The eviction path has to check the instance type, and for a while it did not.
+// freeSlots filters on instance-type because a slot of the wrong size cannot run the
+// task — but evictLongestIdle only filtered by AZ and by "not me", so at the cap a
+// member on a bigger rung could take a SMALLER box and land on it. ECS then refuses to
+// place the task ("no container instance met all of its requirements") and the service
+// sits at desiredCount 1 / runningCount 0 forever. Across architectures placeHome's own
+// header records the same symptom measured on a live deployment (docs/70 §70.14.5).
+//
+// It only ever shows at the cap, which is why it survived: below the cap growPool runs
+// and the new box is the right size by construction.
+func TestECSEC2NeverEvictsASlotOfTheWrongType(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.maxSlots = 1
+	// The only box in the pool is a large, and it is dormant — a perfect victim by every
+	// test the eviction path used to apply.
+	h.ec2.addSlot("i-large", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-large"] = true
+	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
+	h.ec2.attach("vol-bob", "i-large", time.Now().Add(-3*time.Hour))
+	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	// dave asked for more memory, so he is on the xlarge rung.
+	h.rt.base.name = "af-ws-dave"
+	h.rt.base.membershipID = "M-DAVE"
+	h.rt.instanceType = "m7i.xlarge"
+	h.ec2.addHomeVolume("vol-dave", "M-DAVE", "af-ws-dave", "ap-northeast-1a")
+
+	err := h.rt.Start(ctx)
+	if err == nil {
+		t.Fatal("Start landed dave on a box that cannot run his task; it must fail at the cap instead")
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-dave"]); inst != "" {
+		t.Fatalf("dave's home was attached to %q, an m7i.large — ECS will never place his task there", inst)
+	}
+	// And bob keeps his slot: taking it bought nobody anything.
+	if inst := attachedInstance(h.ec2.volumes["vol-bob"]); inst != "i-large" {
+		t.Error("bob was evicted for a placement that could not work anyway")
+	}
+	// "full" is the honest answer here, and it is the one the operator can act on.
+	if !strings.Contains(err.Error(), "full") {
+		t.Errorf("Start error = %v, want it to say the pool is full", err)
+	}
+}
+
+// The other side of the same check: a victim of the RIGHT type is still taken. Without
+// this the fix above could quietly turn every eviction into a failure.
+func TestECSEC2StillEvictsASlotOfTheRightType(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.maxSlots = 2
+	// Longest-dormant is the large; dave is on the xlarge rung and must skip past it to
+	// the xlarge, even though that one has been dormant for less time.
+	h.ec2.addSlot("i-large", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.addSlot("i-xl", "ap-northeast-1a", "m7i.xlarge", true, false)
+	h.ci.registered["i-large"] = true
+	h.ci.registered["i-xl"] = true
+	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-bob", "ap-northeast-1a")
+	h.ec2.attach("vol-bob", "i-large", time.Now().Add(-4*time.Hour))
+	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-3*time.Hour).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	h.ec2.addHomeVolume("vol-carol", "M-CAROL", "af-ws-carol", "ap-northeast-1a")
+	h.ec2.attach("vol-carol", "i-xl", time.Now().Add(-4*time.Hour))
+	h.ec2.setTag("vol-carol", ec2TagIdleSince, time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-carol"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	h.rt.base.name = "af-ws-dave"
+	h.rt.base.membershipID = "M-DAVE"
+	h.rt.instanceType = "m7i.xlarge"
+	h.ec2.addHomeVolume("vol-dave", "M-DAVE", "af-ws-dave", "ap-northeast-1a")
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-dave"]); inst != "i-xl" {
+		t.Fatalf("dave landed on %q, want i-xl — the longest-dormant box is the wrong size for him", inst)
+	}
+}
+
+// Eviction crosses TENANT boundaries, and that is a decision rather than an oversight
+// (ADR 0045 決定 24). The pool is one deployment-wide resource: forbidding the crossing
+// would mean tenant A's dormant box cannot serve tenant B even when nothing else can,
+// which produces the one outcome the operator ruled out — a member who cannot start at
+// all. What bounds a tenant is max_workspaces (how many of its people run AT ONCE), not
+// which physical box they land on; nothing of the victim's is exposed, because releaseSlot
+// unmounts and detaches their home first and the root volume is shared with whoever had
+// the slot before by design.
+//
+// This test exists so the crossing cannot be removed by accident, and so that anyone who
+// wants to remove it on purpose has to read why.
+func TestECSEC2EvictionCrossesTenantsOnPurpose(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.maxSlots = 1
+	h.ec2.addSlot("i-a", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-a"] = true
+	h.ec2.addHomeVolume("vol-bob", "M-BOB", "af-ws-other-bob", "ap-northeast-1a")
+	h.ec2.setTag("vol-bob", ec2TagTenant, "other-corp")
+	h.ec2.attach("vol-bob", "i-a", time.Now().Add(-3*time.Hour))
+	h.ec2.setTag("vol-bob", ec2TagIdleSince, time.Now().Add(-2*time.Hour).UTC().Format(time.RFC3339))
+	h.ecs.services["af-ws-other-bob"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+
+	h.rt.base.name = "af-ws-acme-dave"
+	h.rt.base.membershipID = "M-DAVE"
+	h.rt.base.tenantSlug = "acme"
+	h.ec2.addHomeVolume("vol-dave", "M-DAVE", "af-ws-acme-dave", "ap-northeast-1a")
+	h.ec2.setTag("vol-dave", ec2TagTenant, "acme")
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-dave"]); inst != "i-a" {
+		t.Fatalf("dave landed on %q; a dormant box in another tenant is still a box", inst)
+	}
+	// The victim's home is off the box before dave's goes on, and unmounted before that.
+	umounted := false
+	for _, c := range h.ssmc.commands {
+		if strings.Contains(c, "af-umount") {
+			umounted = true
+		}
+	}
+	if !umounted {
+		t.Error("the other tenant's home was detached without being unmounted first")
+	}
+}
+
 func TestECSEC2NeverEvictsALiveWorkspace(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
