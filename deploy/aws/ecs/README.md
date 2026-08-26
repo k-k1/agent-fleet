@@ -566,6 +566,8 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2SlotAmiArm64` | `AF_ECS_EC2_AMI_ARM64` | `""` | `SlotAmiIdArm64` output of `40-ec2-pool`. Required only when a class declares `arm64` — the CP refuses to boot otherwise |
 | `Ec2DefaultSlotClass` | `AF_ECS_EC2_DEFAULT_SLOT_CLASS` | `""` (the first class) | Where a member with no per-user and no per-tenant choice lands |
 | `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap **across all classes**. Start fails at the cap rather than growing the bill |
+| `Ec2SlotSleepSec` | `AF_ECS_EC2_SLOT_SLEEP_SEC` | `900` | How long a box may sit with no task before it is **stopped**. Ends the compute charge; the root volume keeps billing. `0` = never |
+| `Ec2SlotTerminateAfterSec` | `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` | `0` (off) | The next step on the same clock: past it the box is **terminated** and its root volume goes too. `0` means boxes are kept forever, so retained roots grow to `Ec2MaxSlots` — see below. `14400` (4h) recommended |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
 | — | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant can override it. See below |
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 決定 9-1). Set `0` and it becomes your job on every release |
@@ -748,9 +750,19 @@ they survive, and keep billing. The response and the audit entry list what was l
 - **A workspace keeps its slot while it is stopped, and the slot goes to sleep with it.**
   Stopping a workspace does not detach its home ("lazy release"): the attachment IS the
   affinity, so the same person comes back to the same slot without re-attaching or
-  re-mounting. After `Ec2SlotSleepSec` (default 15m) the sweeper **stops** that slot —
-  never terminates it, so the image cache survives on its root volume. A stopped slot
-  costs only that volume (~$9.6/month at 100 GiB) instead of ~$95 for a running one.
+  re-mounting. After `Ec2SlotSleepSec` (default 15m) the sweeper **stops** that slot, so
+  the image cache survives on its root volume. A stopped slot costs only that volume
+  ($3.84/month at 40 GiB) instead of ~$95 for a running one.
+- **Stopping ends the compute charge; only terminating ends the ROOT VOLUME charge.**
+  `Ec2SlotTerminateAfterSec` (default `0` = off) is the next step on the same clock: past
+  it the box is terminated and its root volume goes with it. ⚠️ Leave it off and the
+  number of retained roots only ever grows, with `Ec2MaxSlots` as its ceiling — so raising
+  `Ec2MaxSlots` to serve more people also signs you up for that many root volumes,
+  permanently and whether or not anyone is working (30 × 40 GiB ≈ **$115/month**). That was
+  measured on a live deployment, where the only cure was terminating boxes by hand
+  (docs/64 §64.32). **14400 (4h) is the recommended value**, and it costs your users 25
+  seconds: come back the same day and you wake the box (~110s), come back tomorrow and one
+  is built for you (~135s).
 - **Two different idle timers, in series.** `AF_WS_IDLE_TIMEOUT` / the per-tenant
   `ws_idle_timeout` is the product's existing idle-stop: it watches the person and stops
   their *workspace* (every runtime has it). `Ec2SlotSleepSec` only starts counting after
@@ -758,20 +770,24 @@ they survive, and keep billing. The response and the audit entry list what was l
   tenant's timeout and their box sleeps 15 minutes later.
 - **Slots are reclaimed only at the cap.** Below `Ec2MaxSlots` a new user gets a new
   slot; at the cap the longest-dormant occupant is evicted (a workspace with a running
-  task is never touched). So `Ec2MaxSlots` bounds the number of *provisioned* slots, and
-  `Ec2SlotSleepSec` bounds how many of them are *running*.
+  task is never touched). So `Ec2MaxSlots` bounds how many people work *at once*,
+  `Ec2SlotSleepSec` bounds how many boxes are *running*, and `Ec2SlotTerminateAfterSec`
+  bounds how many *exist* — without the third, "how many exist" is `Ec2MaxSlots` too.
 - **An EMPTY slot sleeps on the same timer.** A slot whose home has been released — by an
   eviction, a size/class change, a `Destroy`, or the golden bake finishing with its seed
   and probe — belongs to nobody, and `Ec2SlotSleepSec` stops it too. ⚠️ Before docs/64
   §64.31 only *occupied* slots were ever stopped, so a released box ran until an operator
   noticed: measured on a live deployment, three empty `m*.large` up for over 24h with zero
   tasks, at ~$95/month each.
-- **No hot spare is kept.** The first person of the morning wakes a stopped slot (~110s)
-  or, if the pool has none, pays the full ~135s to build one. Keeping an empty slot *hot*
-  would save that person ~67s (43s vs 110s) for a full instance-hour, every hour; keeping
-  the box at all — stopped, image cache intact — is what buys the 110s instead of 135s,
-  and that is what the pool does. `Ec2SlotSleepSec=0` turns the timer off entirely if a
-  deployment wants the 67 seconds back on every slot.
+- **No hot spare is kept, and no warm floor either.** The first person of the morning
+  wakes a stopped slot (~110s) or, if the pool has none, pays the full ~135s to build one.
+  Keeping an empty slot *hot* would save them ~92s (43s vs 135s) for a full instance-hour,
+  every hour — `Ec2SlotSleepSec=0` buys that if you want it. Keeping stopped boxes around
+  instead ("keep at least N warm") buys much less than it looks: a dormant box is only
+  reusable **by its owner** (its home is still attached, so `freeSlots` never offers it to
+  anyone else), and making one generic means the next user pays the wake plus the attach
+  plus the mount SSM round trip — 123–143s against 135s for a fresh box. So there is no
+  floor parameter; `Ec2SlotTerminateAfterSec` alone decides how long a box is kept.
 - **AZ is destiny.** An EBS volume cannot leave its AZ, so a user is pinned to the AZ
   their home was created in. If no slot can be run there, that user cannot start.
 - **A slot's root volume is shared with whoever had it before.** `/tmp` is a tmpfs

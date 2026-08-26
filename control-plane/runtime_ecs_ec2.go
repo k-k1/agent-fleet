@@ -306,6 +306,11 @@ type ec2API interface {
 	RunInstances(context.Context, *ec2.RunInstancesInput, ...func(*ec2.Options)) (*ec2.RunInstancesOutput, error)
 	StartInstances(context.Context, *ec2.StartInstancesInput, ...func(*ec2.Options)) (*ec2.StartInstancesOutput, error)
 	StopInstances(context.Context, *ec2.StopInstancesInput, ...func(*ec2.Options)) (*ec2.StopInstancesOutput, error)
+	// TerminateInstances is the LAST step of the dormancy series and the only one that
+	// gives the root volume back (slotTerminateAfter). It is deliberately reachable from
+	// exactly one place — the sweeper — so that "a box disappeared" always has the same
+	// explanation. See terminateSlot.
+	TerminateInstances(context.Context, *ec2.TerminateInstancesInput, ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error)
 	// Snapshots serve two features that share one mechanism: hibernating a long-unused
 	// home (ADR 0045 決定 4) and seeding a new one from the golden image (決定 9).
 	DescribeSnapshots(context.Context, *ec2.DescribeSnapshotsInput, ...func(*ec2.Options)) (*ec2.DescribeSnapshotsOutput, error)
@@ -380,6 +385,36 @@ type ec2PoolConfig struct {
 	// as the AF_WS_IDLE_TIMEOUT=0 trap in §64.26: an operator's explicit "off" has to be
 	// read as off.
 	slotSleepAfter time.Duration
+	// slotTerminateAfter is the step AFTER slotSleepAfter on the same clock, and the only
+	// one that ends the ROOT volume charge: past it the box is TERMINATED rather than left
+	// stopped (AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC).
+	//
+	// Why it has to exist: nothing else in this adapter ever removes a box, so the number
+	// of retained roots only ever grows, and its ceiling is maxSlots. A deployment that
+	// raises maxSlots to serve more people is therefore also signing up for maxSlots × the
+	// root volume, permanently — 30 × 40 GiB × $0.096/GB-month ≈ $115/month of slots that
+	// may all be stopped and idle. Measured on the live deployment (docs/64 §64.32): the
+	// only way to get those back was an operator terminating boxes by hand.
+	//
+	// What it costs the user is 25 seconds, once, and only for the first arrival:
+	//   dormant box, home still attached, woken   → 110s  (StartInstances → re-register)
+	//   no box at all, built from scratch         → 135s  (RunInstances → boot → … → task)
+	// The image cache on the root volume saves the 32s cold pull; instance boot (19s) plus
+	// ECS re-registration spends it again. That is the whole trade this timer makes.
+	//
+	// ⚠️ NO WARM FLOOR, deliberately — "keep N stopped boxes" does not buy what a warm pool
+	// usually buys. A dormant box is only reusable BY ITS OWNER (occupiedInstances reads the
+	// attachment, so freeSlots never offers it to anyone else; only evictLongestIdle can
+	// take it, and only at the cap). Making one generic instead means the next user pays
+	// attach + the mount SSM round trip on top of the wake — 123–143s against 135s for a new
+	// box — so a shared warm box is worth ≈0. A floor would therefore hold specific people's
+	// boxes forever, including through a shutdown when nothing is running at all. The 92s
+	// that IS worth having belongs to a RUNNING free slot, which costs ~$95/month, not $3.84.
+	//
+	// 0 = OFF (boxes are never terminated), which is the default and the behaviour every
+	// deployment had before this existed. Read the same way as slotSleepAfter and
+	// hibernateAfter: an operator's explicit "off" is off (§64.31.4).
+	slotTerminateAfter time.Duration
 	// hibernateAfter is the THIRD timer in the same series, and the only one that
 	// touches the user's data: once a home has been dormant this long it is snapshotted
 	// and its volume deleted (ADR 0045 決定 4 + 決定 13-2). The next Start restores it —
@@ -505,6 +540,9 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		claimTTL:       time.Duration(envInt("AF_ECS_EC2_CLAIM_TTL_SEC", 300)) * time.Second,
 		releaseGrace:   time.Duration(envInt("AF_ECS_EC2_RELEASE_GRACE_SEC", 600)) * time.Second,
 		slotSleepAfter: time.Duration(envInt("AF_ECS_EC2_SLOT_SLEEP_SEC", 900)) * time.Second,
+		// Default 0 = never terminate. See the field comment: this is the step that gives
+		// the root volume back, and it is the pre-existing behaviour, so it is opt-in.
+		slotTerminateAfter: time.Duration(envInt("AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC", 0)) * time.Second,
 		// Default 0 = no hibernation. See the field comment: this is the one automatic
 		// path that moves a user's home, so it is opt-in.
 		hibernateAfter: time.Duration(envInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second,
@@ -1428,8 +1466,10 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 //     claim TTL on a slot that will never work.
 //  4. stop the instance. It cannot run tasks, and a wedged kernel is not something the CP
 //     can repair — but it bills by the hour until an operator looks. Stopping keeps the
-//     root volume (and the evidence) while ending the compute charge; terminating is the
-//     operator's call, and this adapter has no TerminateInstances by design.
+//     root volume (and the evidence) while ending the compute charge; terminating it is
+//     still the operator's call. ⚠️ The sweeper's own terminate stage (slotTerminateAfter)
+//     will NOT collect this box either: quarantineSlot re-tags it af-role=quarantined, and
+//     both sweeper walks filter on af-role=slot. The evidence survives on purpose.
 func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, cause error) {
 	reason := cause.Error()
 	if len(reason) > 200 {
@@ -3621,6 +3661,35 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 	// answer and this loop has no database (ADR 0012). The reaper stamps af-hibernating
 	// and starts the capture; from then on the branch above (att == nil) advances it.
 	// A hibernation whose first step has run therefore never reaches this point.
+
+	// Past slotTerminateAfter the box goes away entirely. This is checked BEFORE the sleep
+	// test, not after: the two are stages of one clock, and by the time this fires the box
+	// is normally already stopped — but a deployment with slotSleepAfter=0 must still be
+	// able to reclaim roots, and there the box is running and skips straight to here.
+	if f.pool.slotTerminateAfter > 0 && idle >= f.pool.slotTerminateAfter {
+		// The home comes OFF first, through releaseSlot, rather than by letting
+		// TerminateInstances drop it (the home is DeleteOnTermination=false, so it would
+		// survive either way). Both reasons are about what the OWNER sees if they Start
+		// during the ~60s a terminate takes:
+		//
+		//   - releaseSlot is anchored to the Start generation, so a Start racing this
+		//     aborts the release — and re-mounts — instead of losing its home mid-launch.
+		//     Nothing about TerminateInstances can be taken back.
+		//   - placeHome derives placement from the ATTACHMENT. A volume still attached to a
+		//     shutting-down instance reads as branch ①: it would claim that box, find its
+		//     instance type still matching, and then fail to wake it.
+		//
+		// releaseSlot also skips the umount on an already-stopped box (SSM cannot reach
+		// one) and refuses while any task remains, which is exactly the guard this branch
+		// would otherwise have to repeat. On failure we leave the box alone: a slot that
+		// could not be released is not one to terminate.
+		if err := rt.releaseSlot(ctx); err != nil {
+			log.Printf("ecs-ec2 sweep: releasing %s before terminating slot %s: %v", volumeID, instanceID, err)
+			return
+		}
+		f.terminateSlot(ctx, instanceID, fmt.Sprintf("%s dormant %.0fm", rt.base.name, idle.Minutes()))
+		return
+	}
 	if f.pool.slotSleepAfter <= 0 || idle < f.pool.slotSleepAfter {
 		return // 0 = never sleep (see slotSleepAfter)
 	}
@@ -3664,13 +3733,20 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 // StopInstances is idempotent, so a double call is a no-op rather than a race.
 //
 // ⚠️ No warm spare is kept, and that is not an omission (§64.17.2, "プレウォームは入れない").
-// A free RUNNING slot buys the next arrival 43s instead of 110s; the box itself — stopped,
-// never terminated, image cache intact on its root volume — is what buys the 110s instead
-// of 135s, and that is kept. A deployment that wants the 67 seconds back sets
-// Ec2SlotSleepSec=0, which turns the whole timer off.
+// A free RUNNING slot buys the next arrival 43s instead of 110s, and costs ~$95/month to
+// hold. A free STOPPED one buys almost nothing: waking it and then attaching and mounting
+// somebody's home is 123–143s against the 135s of building a box from scratch, because the
+// 32s of cold pull it saves is spent again on the boot and the mount SSM round trip. So a
+// free slot is stopped after slotSleepAfter and TERMINATED after slotTerminateAfter, and
+// the second timer is the one that gives its root volume back (docs/64 §64.32).
+//
+// This walk sees BOTH states for that reason. It used to list only `running` boxes, which
+// was consistent while stopping was the last thing that could happen to one — but it means
+// a slot leaves this walk forever the moment it is stopped, so the terminate stage would
+// never see the boxes it exists for.
 func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Volume) {
-	if f.pool.slotSleepAfter <= 0 {
-		return // 0 = never sleep (see slotSleepAfter)
+	if f.pool.slotSleepAfter <= 0 && f.pool.slotTerminateAfter <= 0 {
+		return // both off (see slotSleepAfter / slotTerminateAfter)
 	}
 	probe := f.probeRuntime()
 	busy := map[string]bool{}
@@ -3690,17 +3766,18 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			// af-role=slot excludes quarantined boxes on purpose: quarantineSlot already
 			// stopped those, and re-stopping them would only add noise to the log.
 			tagFilter(ec2TagRole, ec2RoleSlot),
-			{Name: aws.String("instance-state-name"), Values: []string{"running"}},
+			{Name: aws.String("instance-state-name"), Values: []string{"running", "stopped"}},
 		},
 	})
 	if err != nil {
-		log.Printf("ecs-ec2 sweep: listing running slots: %v", err)
+		log.Printf("ecs-ec2 sweep: listing free slots: %v", err)
 		return
 	}
 	now := time.Now()
 	type candidate struct {
-		id   string
-		idle time.Duration
+		id        string
+		idle      time.Duration
+		terminate bool
 	}
 	var due []candidate
 	for _, r := range out.Reservations {
@@ -3725,7 +3802,12 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 				probe.markSlotFree(ctx, id)
 				continue
 			}
-			if idle := now.Sub(at); idle >= f.pool.slotSleepAfter {
+			idle := now.Sub(at)
+			running := inst.State != nil && inst.State.Name == ec2types.InstanceStateNameRunning
+			switch {
+			case f.pool.slotTerminateAfter > 0 && idle >= f.pool.slotTerminateAfter:
+				due = append(due, candidate{id: id, idle: idle, terminate: true})
+			case running && f.pool.slotSleepAfter > 0 && idle >= f.pool.slotSleepAfter:
 				due = append(due, candidate{id: id, idle: idle})
 			}
 		}
@@ -3769,9 +3851,79 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 			}
 			continue
 		}
+		if c.terminate {
+			// Nothing to release: this walk is BY DEFINITION the slots holding no home, and
+			// the three checks above have just re-confirmed it against volumes, ECS tasks
+			// and the instance's own ENIs.
+			f.terminateSlot(ctx, c.id, fmt.Sprintf("free for %.0fm", c.idle.Minutes()))
+			continue
+		}
 		log.Printf("ecs-ec2 sweep: slot %s has held no home for %.0fm; stopping it", c.id, c.idle.Minutes())
 		if _, err := f.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{c.id}}); err != nil {
 			log.Printf("ecs-ec2 sweep: stopping the free slot %s failed: %v", c.id, err)
+		}
+	}
+}
+
+// terminateSlot ends a dormant box for good: out of the cluster first, then out of EC2.
+// It is the only caller of TerminateInstances, and the last step of the dormancy series
+// (see slotTerminateAfter).
+//
+// ⚠️ The ECS half is not optional and not automatic. A terminated instance stays in the
+// cluster as ACTIVE with agentConnected=false (ADR 0045 決定 3-2, and observed again on
+// the live deployment when the three boxes were terminated by hand) — and a ghost that
+// looks ACTIVE still satisfies placement constraints, so ECS can pick it for a task that
+// then never starts. sweepGhostInstances is the repair path for boxes that vanished some
+// other way; when WE are the one removing it, saying so up front is cheaper and leaves no
+// window. Deregistering first also means a failed TerminateInstances degrades into the
+// case sweepGhostInstances already handles, rather than into a live box ECS won't use.
+//
+// The caller owns the safety argument (no tasks, no home, not claimed); this function
+// only carries it out.
+func (f *ecsEC2Factory) terminateSlot(ctx context.Context, instanceID, why string) {
+	f.deregisterSlot(ctx, instanceID)
+	if _, err := f.ec2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+		InstanceIds: []string{instanceID},
+	}); err != nil {
+		log.Printf("ecs-ec2 sweep: terminating slot %s failed: %v", instanceID, err)
+		return
+	}
+	log.Printf("ecs-ec2 sweep: terminated slot %s (%s); its root volume goes with it", instanceID, why)
+}
+
+// deregisterSlot takes one box out of the ECS cluster by its EC2 id. Force, because the
+// point of the call is that nothing may be placed here again — and by the time we ask,
+// the box is about to stop existing, so a graceful drain has nothing to drain.
+//
+// A box the cluster does not know about is not an error: a slot that never finished
+// registering is exactly the kind we terminate.
+func (f *ecsEC2Factory) deregisterSlot(ctx context.Context, instanceID string) {
+	arns, err := f.probeRuntime().listContainerInstanceARNs(ctx)
+	if err != nil || len(arns) == 0 {
+		return
+	}
+	for _, chunk := range chunkStrings(arns, 100) {
+		out, err := f.ci.DescribeContainerInstances(ctx, &ecs.DescribeContainerInstancesInput{
+			Cluster:            aws.String(f.base.cfg.cluster),
+			ContainerInstances: chunk,
+		})
+		if err != nil {
+			log.Printf("ecs-ec2 sweep: looking up the container instance of %s: %v", instanceID, err)
+			return
+		}
+		for _, ci := range out.ContainerInstances {
+			if aws.ToString(ci.Ec2InstanceId) != instanceID {
+				continue
+			}
+			if _, err := f.ci.DeregisterContainerInstance(ctx, &ecs.DeregisterContainerInstanceInput{
+				Cluster:           aws.String(f.base.cfg.cluster),
+				ContainerInstance: ci.ContainerInstanceArn,
+				Force:             aws.Bool(true),
+			}); err != nil {
+				// Not fatal: sweepGhostInstances re-tries this once the EC2 side is gone.
+				log.Printf("ecs-ec2 sweep: deregistering %s before terminating it failed: %v", instanceID, err)
+			}
+			return
 		}
 	}
 }
@@ -4024,17 +4176,20 @@ type ec2HomeView struct {
 }
 
 type ec2PoolStatus struct {
-	Runtime      string        `json:"runtime"`
-	Pool         string        `json:"pool"`
-	MaxSlots     int           `json:"max_slots"`
-	SleepAfterS  int           `json:"slot_sleep_sec"`
-	HibernateS   int           `json:"hibernate_after_sec"`
-	Slots        []ec2SlotView `json:"slots"`
-	Homes        []ec2HomeView `json:"homes"`
-	GoldenID     string        `json:"golden_id"`
-	GoldenImage  string        `json:"golden_image"`
-	GoldenStale  bool          `json:"golden_stale"`
-	RunningImage string        `json:"running_image"`
+	Runtime     string `json:"runtime"`
+	Pool        string `json:"pool"`
+	MaxSlots    int    `json:"max_slots"`
+	SleepAfterS int    `json:"slot_sleep_sec"`
+	// TerminateAfterS is the stage after SleepAfterS: 0 = boxes are kept forever, which
+	// is what makes MaxSlots double as "how many root volumes this deployment pays for".
+	TerminateAfterS int           `json:"slot_terminate_sec"`
+	HibernateS      int           `json:"hibernate_after_sec"`
+	Slots           []ec2SlotView `json:"slots"`
+	Homes           []ec2HomeView `json:"homes"`
+	GoldenID        string        `json:"golden_id"`
+	GoldenImage     string        `json:"golden_image"`
+	GoldenStale     bool          `json:"golden_stale"`
+	RunningImage    string        `json:"running_image"`
 	// Baking / BakeRejected report what the automatic baker is doing, because the two
 	// states an operator cannot otherwise account for are "there is no golden yet and
 	// something is working on it" and "there is no golden because the last candidate
@@ -4144,9 +4299,10 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 	probe := f.probeRuntime()
 	st := ec2PoolStatus{
 		Runtime: "ecs-ec2", Pool: f.pool.pool, MaxSlots: f.pool.maxSlots,
-		SleepAfterS: int(f.pool.slotSleepAfter.Seconds()),
-		HibernateS:  int(f.pool.hibernateAfter.Seconds()),
-		Slots:       []ec2SlotView{}, Homes: []ec2HomeView{},
+		SleepAfterS:     int(f.pool.slotSleepAfter.Seconds()),
+		TerminateAfterS: int(f.pool.slotTerminateAfter.Seconds()),
+		HibernateS:      int(f.pool.hibernateAfter.Seconds()),
+		Slots:           []ec2SlotView{}, Homes: []ec2HomeView{},
 		RunningImage: f.base.cfg.workspaceImage,
 		SlotClasses:  f.SizingProfile().SlotClasses,
 	}

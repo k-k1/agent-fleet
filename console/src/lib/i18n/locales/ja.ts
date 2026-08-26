@@ -1196,6 +1196,8 @@ export const ja = {
   "pool.at_cap": "上限に達しています。次に起動する人には新しいスロットではなく、最も長く休眠しているユーザーのスロットが割り当てられます（立ち退き）。",
   "pool.timers": "タスクが無くなって {sleep} でスロットを停止します。home はテナント側で指定が無ければ {hibernate} で snapshot へ退避します（デプロイ既定）。",
   "pool.timers_no_hibernate": "タスクが無くなって {sleep} でスロットを停止します。home の退避はテナント側で指定しない限り行いません（テナント → 使われない home の退避）。",
+  "pool.timers_terminate": "停止したまま {terminate} 経過したスロットは終了し、root ボリュームの課金も終わります（次にその大きさを使う人の起動は 110 秒ではなく 135 秒になります）。",
+  "pool.timers_no_terminate": "スロットを終了しない設定です。箱は上限 {max} 台まで残り続け、その root ボリュームを課金し続けます（Ec2SlotTerminateAfterSec）。",
   "pool.off": "しない",
   "pool.no_slots": "スロットはありません。最初の起動で 1 台作られます。",
   "pool.col_instance": "インスタンス",
