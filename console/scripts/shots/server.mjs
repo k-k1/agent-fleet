@@ -74,6 +74,9 @@ const exact = {
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/chat/conversations": () => ({ conversations: fx.conversations(LOCALE) }),
   "/api/assistants": () => fx.assistants(LOCALE),
+  // 作業項目（docs/80）。★ 未対応ルートは {} を返すだけなので、これが無いと
+  // レールの新しい面は「常に空」で描かれ、検証にならない。
+  "/api/work-items": () => fx.workItems(LOCALE),
   "/api/memos": () => fx.memos(LOCALE),
   "/api/memo-categories": () => fx.memoCategories(LOCALE),
   "/api/schedules": () => fx.schedules(LOCALE),

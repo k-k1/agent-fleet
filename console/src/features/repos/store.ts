@@ -130,7 +130,12 @@ interface LaunchSeedStore {
 	 *  時点で受諾を申告するために持つ —— キャンセルされた起動で受諾済みにしてはいけないので、
 	 *  handoffId と同じく「種を置く時点」では申告できない。 */
 	handoffOfferId: string;
-	set(p: string, title?: string, handoffSession?: string, handoffId?: string, handoffOfferId?: string): void;
+	/** 作業項目（docs/80）から起動したときの相手。起動が**成功したあと**に台帳へ
+	 *  1 行入れるために持つ —— handoffOfferId と同じ理由で、種を置く時点では
+	 *  「着手した」と言ってはいけない（キャンセルされうる）。branch は
+	 *  LaunchModal の新規ブランチ欄に入る提案値。 */
+	workItem: { provider: string; key: string; branch: string } | null;
+	set(p: string, title?: string, handoffSession?: string, handoffId?: string, handoffOfferId?: string, workItem?: { provider: string; key: string; branch: string } | null): void;
   clear(): void;
 }
 
@@ -140,9 +145,10 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	handoffSession: "",
 	handoffId: "",
 	handoffOfferId: "",
-	set: (prompt, title = "", handoffSession = "", handoffId = "", handoffOfferId = "") =>
-		set({ prompt, title, handoffSession, handoffId, handoffOfferId }),
-	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "" }),
+	workItem: null,
+	set: (prompt, title = "", handoffSession = "", handoffId = "", handoffOfferId = "", workItem = null) =>
+		set({ prompt, title, handoffSession, handoffId, handoffOfferId, workItem }),
+	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "", workItem: null }),
 }));
 
 /** Poll every 60s while the tab is visible AND the workspace is running, so the

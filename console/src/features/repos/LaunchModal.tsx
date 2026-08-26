@@ -105,6 +105,10 @@ interface LaunchModalProps {
   /** Open straight into 既存ブランチ mode with this branch picked — the SCM view's
    * "start work on this branch" actions land here. */
   initialExistingBranch?: string;
+  /** Suggested NEW branch name, prefilled into the branch field (docs/80: a launch
+   * from a work item proposes feature/<key>-<slug>). Only a suggestion — clearing the
+   * field falls back to the server-minted temp/<slug>. */
+  initialNewBranch?: string;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
@@ -137,7 +141,7 @@ function LaunchSection({ label, summary, warn = false, open, onToggle, children 
   );
 }
 
-export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -191,7 +195,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // package — the field shows the value, so a remembered folder is never silent.
   const [subdir, setSubdir] = useState(() => resolveSubdir(repo));
   const [base, setBase] = useState(branch || "");
-  const [branchName, setBranchName] = useState(""); // "" => derived from the prompt
+  // "" => the server mints temp/<slug>. 作業項目から来た起動（docs/80）は
+  // feature/<key>-<slug> を提案値として入れる —— 提案なので、ここで消せば従来どおり。
+  const [branchName, setBranchName] = useState(initialNewBranch || "");
   const [conflict, setConflict] = useState<"local" | "remote" | "in_use" | null>(null);
   const [conflictWt, setConflictWt] = useState(""); // for "in_use": the copy holding it
   // ブランチ: 新規作成（既定）か、既に存在するブランチをそのまま使うか。後者は

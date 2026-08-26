@@ -1,7 +1,7 @@
 # 80. 外部の作業項目（GitHub Issue / Jira チケット）を左ペインに出し、そこから始める
 
-- 状態: 📋 **設計（実装未着手）**。2026-08-26 起草。採否と判断は
-  [decisions/0061](decisions/0061-work-item-inbox.md)。
+- 状態: ✅ **P0 実装済み**（2026-08-26 設計・同日 P0）。⏸ 残り = 実機目視と P1 以降。
+  採否と判断は [decisions/0061](decisions/0061-work-item-inbox.md)。
 - ゴール: 人の仕事の起点である**チケット**を左ペインに置き、そこから 1 クリックで
   文脈込みのセッションを立てられるようにする。Workspace が停止していても一覧は見え、
   「始める」を押したときに初めて起きる。
@@ -68,15 +68,18 @@
 ### 80.3.2 決定：取得は Agent、キャッシュは CP
 
 ```
-[WS 稼働中]  Agent が保存クエリを回す（5〜10 分）
-                │  非機密メタだけを push
-                ▼
-[CP]  work_item_cache（membership scoped）── SSE /api/events の新 stream ──▶ [Console 左ペイン]
+[WS 稼働中]  CP がクエリを渡す ──▶ Agent がトークンで解決 ──▶ 非機密メタだけ返す（5 分間隔）
+                                                        │
+                                                        ▼
+[CP]  work_item_cache（membership scoped）── SSE /api/events の workitems stream ──▶ [Console 左ペイン]
                                                         ▲
-[WS 停止中]  更新は止まる。行は残り、「最終取得 14:20」を必ず添える
+[WS 停止中]  取得は走らない。行は残り、「最終取得 14:20」を必ず添える
                                                         │
              「始める」を押したときだけ ensureWorkspaceStarted で起きる
 ```
+
+（実装では取得の**向き**を CP → Agent にした。理由は §80.6。取得が Agent 内で走ることと、
+トークンがコンテナから出ないことは変わらない。）
 
 これで **「止まっている Workspace を、チケットから起こす」**という、この機能で一番価値のある
 導線が成立する。追加で必要なのは「最終取得時刻の明示」だけ — 古いかもしれない一覧を、
@@ -155,46 +158,48 @@ CP 側（`migrations/0051_work_item.sql` ＋ ⚠️ `migrations-pg/0035_work_ite
 方言 2 系列の片方忘れは既知の事故経路）。
 
 ```sql
--- 保存済みクエリ（何を一覧に出すか）。per-membership。
-CREATE TABLE work_item_query (
+CREATE TABLE IF NOT EXISTS work_item_query(
   id            TEXT PRIMARY KEY,
   membership_id TEXT NOT NULL,
-  provider      TEXT NOT NULL,          -- 'github' | 'jira' | …
-  label         TEXT NOT NULL,          -- 表示名（「自分の未完了」）
-  query         TEXT NOT NULL,          -- GitHub: search 構文 / Jira: JQL
-  repo_hint     TEXT NOT NULL DEFAULT '', -- 既定の作業コピー（'' = 起動時に選ばせる）
+  provider      TEXT NOT NULL,
+  label         TEXT NOT NULL DEFAULT '',
+  query         TEXT NOT NULL,
+  repo_hint     TEXT NOT NULL DEFAULT '',
   enabled       INTEGER NOT NULL DEFAULT 1,
-  position      INTEGER NOT NULL,
-  created_at    INTEGER NOT NULL
+  position      INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL,
+  fetched_at    TEXT NOT NULL DEFAULT '',
+  last_error    TEXT NOT NULL DEFAULT ''
 );
-
--- 取得結果のキャッシュ。★非機密メタのみ。本文は入れない。
-CREATE TABLE work_item_cache (
-  id            TEXT PRIMARY KEY,       -- provider + external id のハッシュ
+CREATE INDEX IF NOT EXISTS idx_work_item_query_membership ON work_item_query(membership_id);
+CREATE TABLE IF NOT EXISTS work_item_cache(
+  id            TEXT PRIMARY KEY,
   membership_id TEXT NOT NULL,
   query_id      TEXT NOT NULL,
   provider      TEXT NOT NULL,
-  key           TEXT NOT NULL,          -- 'PROJ-123' / 'owner/repo#45'
-  title         TEXT NOT NULL,
-  state         TEXT NOT NULL,          -- 正規化: open / in_progress / done / other
-  url           TEXT NOT NULL,
+  item_kind     TEXT NOT NULL DEFAULT 'issue',
+  item_key      TEXT NOT NULL,
+  title         TEXT NOT NULL DEFAULT '',
+  state         TEXT NOT NULL DEFAULT 'open',
+  url           TEXT NOT NULL DEFAULT '',
   assignee      TEXT NOT NULL DEFAULT '',
-  labels        TEXT NOT NULL DEFAULT '', -- カンマ区切り
-  updated_at    INTEGER NOT NULL,       -- 元サービス側の更新時刻
-  fetched_at    INTEGER NOT NULL        -- ★「最終取得」の根拠
+  labels        TEXT NOT NULL DEFAULT '',
+  repo          TEXT NOT NULL DEFAULT '',
+  updated_at    TEXT NOT NULL DEFAULT '',
+  fetched_at    TEXT NOT NULL
 );
-
--- 項目 ↔ セッションの台帳。着手済みを可視化する。
-CREATE TABLE work_item_session (
+CREATE INDEX IF NOT EXISTS idx_work_item_cache_membership ON work_item_cache(membership_id);
+CREATE TABLE IF NOT EXISTS work_item_session(
   id            TEXT PRIMARY KEY,
   membership_id TEXT NOT NULL,
-  item_key      TEXT NOT NULL,          -- work_item_cache.key（キャッシュが消えても残す）
   provider      TEXT NOT NULL,
+  item_key      TEXT NOT NULL,
   session_name  TEXT NOT NULL,
   repo          TEXT NOT NULL DEFAULT '',
   branch        TEXT NOT NULL DEFAULT '',
-  created_at    INTEGER NOT NULL
+  created_at    TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_work_item_session_membership ON work_item_session(membership_id)
 ```
 
 ⚠️ `work_item_session` は `work_item_cache` に **FK を張らない**。キャッシュはクエリの結果で
@@ -204,21 +209,39 @@ CREATE TABLE work_item_session (
 正規化した 1 行（`key / title / state / url / assignee / labels / updated_at / repo_hint`）は
 プロバイダ非依存にしておく。GitHub Issue・PR・Jira・Backlog・Redmine・GitLab が同型に載る。
 
-## 80.6 API
+## 80.6 API — ★ 向きは「CP が渡して、CP が引き取る」
+
+起票時は「Agent がクエリを持ち、CP へ push する」と書いていたが、実装で**逆向き**にした。
+CP がクエリを渡し、Agent がトークンで解決して返す。
+
+```
+[CP]  work_item_query（自分が持っている） ──POST /work-items/fetch {queries}──▶ [Agent]
+      work_item_cache  ◀────────────── 非機密の行 ─────────────────────────────
+```
+
+**この向きだと新しい資格情報が 1 つも要らない。** Agent → CP の方向を作ると、memo /
+schedule と同じく**専用トークンを 1 種類増やし、4 つのランタイム全部の env 注入に手を入れる**
+ことになる（`AF_MEMO_TOKEN` / `AF_SCHEDULE_TOKEN` の前例）。CP → Agent なら既存の
+`rt.Endpoint()` + `rt.Token()` でそのまま呼べる（`drainAgentOutbox` と同じ形）。
+副産物として **Agent はこの機能のために何も永続しない**（クエリも状態も持たない）。
 
 | 面 | パス | 役割 |
 |---|---|---|
-| Agent | `GET /work-items/refresh`（POST） | 保存クエリを回して CP へ push。手動更新もこれ |
-| Agent | `GET/POST/PUT/DELETE /work-item-queries` | クエリ CRUD（秘密に触るので Agent 側が正） |
+| Agent | `POST /work-items/fetch` | CP から渡されたクエリを provider で解決し、非機密の行を返す。**呼ぶのは CP だけ** |
 | Agent | `POST /connections/jira` ほか | Jira 接続カード（P1） |
-| CP | `GET /api/work-items` | キャッシュの一覧（**停止中でも 200**） |
-| CP | `GET /api/work-item-queries` ほか | 上記 Agent REST のプロキシ |
-| CP | `POST /internal/work-items` | Agent からの push（memo ブリッジと同型） |
-| CP | `/api/events` に `workitems` stream | 差分があるときだけフレームを送る |
+| CP | `GET /api/work-items` | 一覧（**停止中でも 200**。稼働中なら期限切れのクエリを非同期で更新） |
+| CP | `POST /api/work-items/refresh` | 更新ボタン。間隔を無視し、**同期**で取ってから返す |
+| CP | `GET/POST/PATCH/DELETE /api/work-item-queries[/{id}]` | 保存クエリ CRUD（CP 完結＝停止中でも編集できる） |
+| CP | `POST/DELETE /api/work-item-sessions[/{id}]` | 着手台帳 |
+| CP | `/api/events` の `workitems` stream | 変化したときだけフレームを送る |
 
-⚠️ **CP は Agent の REST を明示許可リストでプロキシする**（catch-all ではない）。
-`workspace/agent/routes.go` だけに足すと FE から見て 404 になり、「実装したのに何も出ない」で
-何度も詰まっている経路なので、`control-plane/routes.go` と**必ずセットで**編集する。
+⚠️ **Console は Agent の `/work-items/fetch` を叩かない**ので、**CP のエージェント・プロキシ
+許可リストに足すものが無い**（新しい agent REST を足すと `control-plane/routes.go` にも登録が
+要る、という毎回踏む穴を、そもそも通らない設計になっている）。
+
+⚠️ **一覧経路の取得は goroutine（membership ごとに 1 本）**。SSE の tick は 4 秒で、そこで
+provider の往復を待つと**その購読者の他の stream（workspace / sessions / 通知）ごと止まる**。
+更新ボタンだけは同期でよい（tick の中ではないし、押した人は結果を待っている）。
 
 ## 80.7 左ペイン（IA）
 
@@ -314,7 +337,7 @@ URL: https://example.atlassian.net/browse/PROJ-123
 
 | Phase | 中身 | 触る場所 |
 |---|---|---|
-| **P0** | モデル・**GitHub アダプタ**（既存トークン流用＝追加認証ゼロ）・CP キャッシュ・SSE stream・左ペイン独立セクション・`LaunchModal` 前埋め・`work_item_session` 台帳 | `workspace/agent/workitems*.go`（新設）/ `control-plane/{store_sqlite,routes,events}.go` ＋ migrations 2 系列 / `console/src/features/workitems/`（新設）/ `App.tsx` |
+| **P0** ✅ | モデル・**GitHub アダプタ**（既存トークン流用＝追加認証ゼロ）・CP キャッシュ・SSE stream・左ペイン独立セクション・`LaunchModal` 前埋め・`work_item_session` 台帳 | `workspace/agent/workitems.go`（新設）/ `control-plane/workitems.go`（新設）+ `{store,store_sqlite,routes,events}.go` ＋ migrations 0051 / pg 0035 / `console/src/features/workitems/`（新設）/ `App.tsx`・`core/push/*`・`StartHost`・`LaunchModal` |
 | **P1** | **Jira 接続 kind**（email + API トークン）・JQL 保存クエリ・repo マッピング | `connections.go`・`ConnectionsTab`・アダプタ追加 |
 | **P2** | 作業グループ自動作成・ブランチ名テンプレ設定・報告コメントの下書き／PR 起票 | `workingSetsStore.ts`・`session_report` 周辺 |
 | **P3** | webhook 受信・通知・（opt-in の）自動初動 | [25](25-ops-monitoring.md) §4.6 と合流 |
