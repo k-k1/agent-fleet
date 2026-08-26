@@ -927,6 +927,85 @@ func TestECSEC2MovingSlotsSplitsTheServiceUpdate(t *testing.T) {
 	}
 }
 
+// lastTaskDef is process-local, so it is empty after every CP restart and on whichever
+// replica did not serve the last Start. That miss must not turn into a redundant
+// revision: the fingerprint is stamped on the revision itself, so AWS can answer
+// "already registered exactly this" (docs/64 §64.39.6). Before this, every workspace's
+// FIRST Start after every deploy rolled the service for a task definition that had not
+// changed at all.
+func TestECSEC2ReuseSurvivesACPRestart(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls after first Start = %d, want 1", len(h.ecs.regCalls))
+	}
+	if got := h.ecs.regCalls[0].ContainerDefinitions[0].DockerLabels[afTaskDefFingerprintLabel]; got == "" {
+		t.Fatal("the revision was registered without its fingerprint label; nothing can read it back")
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	// A stopped service still POINTS at the revision it last ran — that is the whole
+	// thing being read back — so drop only the desired count.
+	stopped := h.ecs.services["af-ws-acme-alice"]
+	stopped.DesiredCount, stopped.RunningCount = 0, 0
+	h.ecs.services["af-ws-acme-alice"] = stopped
+
+	// The CP restarts: same AWS, empty process cache.
+	lastTaskDef.Delete("af-ws-acme-alice")
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls after a restart with nothing changed = %d, want 1 — a redundant revision rolls the service for nothing", len(h.ecs.regCalls))
+	}
+	last := h.ecs.updateCalls[len(h.ecs.updateCalls)-1]
+	if aws.ToInt32(last.DesiredCount) != 1 || last.ForceNewDeployment {
+		t.Errorf("the reused path must just scale up, got %+v", last)
+	}
+}
+
+// …but only when it really is the same thing. A changed input must still register,
+// restart or no restart: reuse that papers over a change would launch the wrong image.
+func TestECSEC2ReuseAfterRestartStillNoticesAChange(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if err := h.rt.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	stopped := h.ecs.services["af-ws-acme-alice"]
+	stopped.DesiredCount, stopped.RunningCount = 0, 0
+	h.ecs.services["af-ws-acme-alice"] = stopped
+	lastTaskDef.Delete("af-ws-acme-alice")
+
+	// The home moved to another slot, so the placement constraint — and therefore the
+	// fingerprint — must differ.
+	h.ec2.addSlot("i-hot-2", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot-2"] = true
+	h.ec2.attach("vol-1", "i-hot-2", time.Now())
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 2 {
+		t.Fatalf("regCalls = %d, want 2 — a different slot needs a different placement constraint", len(h.ecs.regCalls))
+	}
+}
+
 // The scale-up must wait out the deployment the revision change demoted. While one is
 // still ACTIVE, ECS satisfies a desiredCount increase from it — the whole bug — so the
 // split only helps if the second call is held until it is gone (docs/64 §64.39.4).
