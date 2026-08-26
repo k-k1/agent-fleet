@@ -3161,7 +3161,7 @@ export const en: Record<keyof typeof ja, string> = {
   "repo.locked_off": "Removed the deletion lock on {name}",
   "repo.delete_wc": "Delete the working copy",
   "repo.svn_update": "Update (svn)",
-  "repo.svn_cleanup": "Clean up lock",
+  "repo.svn_cleanup": "Clean up lock (svn)",
   "repo.revision": "Revision {rev}",
   "repo.project_settings": "Project settings…",
   "repo.share": "Share…",
