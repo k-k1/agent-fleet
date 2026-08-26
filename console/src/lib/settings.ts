@@ -1088,6 +1088,13 @@ export function defaultSetting<K extends keyof Settings>(key: K): Settings[K] {
   return DEFAULTS[key];
 }
 
+/** 既定値一式のコピー。設定の書き出し / 取り込み（docs/79）が「知っているキーと、その
+ *  値の形」を突き合わせるための窓 —— 取り込む側が独自にキー一覧を持つと、設定を足した
+ *  日に静かに運ばれなくなる。 */
+export function settingsDefaults(): Settings {
+  return { ...DEFAULTS };
+}
+
 // Debounced mirror of the full settings object to the per-user server store. Best
 // effort: if the workspace is stopped / agent unreachable, localStorage still holds it.
 let saveTimer: ReturnType<typeof setTimeout> | null = null;

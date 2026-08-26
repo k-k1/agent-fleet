@@ -3889,3 +3889,44 @@ label.idp-flag {
   font-size: 12px;
   line-height: 1.7;
 }
+
+/* 設定の書き出し / 取り込み（docs/79）。持ち出す範囲と取り込む範囲は同じ見た目のチェック
+   リストにしてある —— 「何が入っているファイルなのか」を、書き出したときと同じ並びで
+   確かめられる方が、片方だけ凝った表にするより安心して使える。 */
+.backup-tab .backup-picks {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+.backup-tab .backup-picks label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.backup-tab .backup-picks input[disabled] + * {
+  opacity: 0.6;
+}
+.backup-tab input[type="file"] {
+  font-size: 12px;
+  padding: 3px;
+}
+.backup-preview {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+/* 取り込みの結果。件数だけの素の箇条書きにしてある — 入った数より **入らなかった数**を
+   同じ行で読ませたいので、成功を強調する装飾は入れない。 */
+.backup-result {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+}
