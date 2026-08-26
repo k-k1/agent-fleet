@@ -1146,6 +1146,9 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM schedule WHERE membership_id=?`, id},
 		{`DELETE FROM memo WHERE membership_id=?`, id},
 		{`DELETE FROM memo_category WHERE membership_id=?`, id},
+		{`DELETE FROM work_item_cache WHERE membership_id=?`, id},
+		{`DELETE FROM work_item_query WHERE membership_id=?`, id},
+		{`DELETE FROM work_item_session WHERE membership_id=?`, id},
 		{`DELETE FROM notification WHERE membership_id=?`, id},
 		{`DELETE FROM notification_usage_state WHERE membership_id=?`, id},
 		// 共有は両端を持つ。相手側が生きていても、片方が消えた共有は残せない。
@@ -3196,4 +3199,187 @@ func (s *sqlStore) CloudCostDays(ctx context.Context) (string, string, error) {
 		return "", "", err
 	}
 	return first.String, last.String, nil
+}
+
+// ---------------------------------------------------------------------------
+// Work item inbox (docs/80 / ADR 0061). The CP owns the saved queries and a cache
+// of non-secret metadata; the provider tokens stay in the Workspace.
+// ---------------------------------------------------------------------------
+
+const workItemQueryCols = `SELECT id, membership_id, provider, label, query, repo_hint,
+	enabled, position, created_at, fetched_at, last_error FROM work_item_query`
+
+func scanWorkItemQuery(sc interface{ Scan(...any) error }) (WorkItemQuery, error) {
+	var q WorkItemQuery
+	var enabled int
+	err := sc.Scan(&q.ID, &q.MembershipID, &q.Provider, &q.Label, &q.Query, &q.RepoHint,
+		&enabled, &q.Position, &q.CreatedAt, &q.FetchedAt, &q.LastError)
+	q.Enabled = enabled != 0
+	return q, err
+}
+
+func (s *sqlStore) ListWorkItemQueries(ctx context.Context, membershipID string) ([]WorkItemQuery, error) {
+	rows, err := s.db.QueryContext(ctx,
+		workItemQueryCols+` WHERE membership_id=? ORDER BY position, created_at`, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkItemQuery
+	for rows.Next() {
+		q, err := scanWorkItemQuery(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) GetWorkItemQuery(ctx context.Context, id string) (WorkItemQuery, bool, error) {
+	q, err := scanWorkItemQuery(s.db.QueryRowContext(ctx, workItemQueryCols+` WHERE id=?`, id))
+	if err == sql.ErrNoRows {
+		return WorkItemQuery{}, false, nil
+	}
+	return q, err == nil, err
+}
+
+func (s *sqlStore) CreateWorkItemQuery(ctx context.Context, q WorkItemQuery) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO work_item_query(id, membership_id, provider, label, query, repo_hint,
+		 enabled, position, created_at, fetched_at, last_error)
+		 VALUES(?,?,?,?,?,?,?,?,?,'','')`,
+		q.ID, q.MembershipID, q.Provider, q.Label, q.Query, q.RepoHint,
+		b2i(q.Enabled), q.Position, q.CreatedAt)
+	return err
+}
+
+// UpdateWorkItemQuery is ownership-guarded by membership_id and deliberately leaves
+// fetched_at / last_error alone — editing the label must not claim a fresh fetch.
+func (s *sqlStore) UpdateWorkItemQuery(ctx context.Context, q WorkItemQuery) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE work_item_query SET provider=?, label=?, query=?, repo_hint=?, enabled=?, position=?
+		 WHERE id=? AND membership_id=?`,
+		q.Provider, q.Label, q.Query, q.RepoHint, b2i(q.Enabled), q.Position,
+		q.ID, q.MembershipID)
+	return err
+}
+
+// DeleteWorkItemQuery drops the query and the rows it cached. The ledger
+// (work_item_session) is NOT touched: the sessions someone started are not a
+// property of the search that surfaced them.
+func (s *sqlStore) DeleteWorkItemQuery(ctx context.Context, id, membershipID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM work_item_cache WHERE query_id=? AND membership_id=?`, id, membershipID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM work_item_query WHERE id=? AND membership_id=?`, id, membershipID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *sqlStore) MarkWorkItemQueryFetched(ctx context.Context, id, fetchedAt, errMsg string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE work_item_query SET fetched_at=?, last_error=? WHERE id=?`, fetchedAt, errMsg, id)
+	return err
+}
+
+const workItemCols = `SELECT id, membership_id, query_id, provider, item_kind, item_key,
+	title, state, url, assignee, labels, repo, updated_at, fetched_at FROM work_item_cache`
+
+func scanWorkItem(sc interface{ Scan(...any) error }) (WorkItem, error) {
+	var w WorkItem
+	err := sc.Scan(&w.ID, &w.MembershipID, &w.QueryID, &w.Provider, &w.Kind, &w.Key,
+		&w.Title, &w.State, &w.URL, &w.Assignee, &w.Labels, &w.Repo, &w.UpdatedAt, &w.FetchedAt)
+	return w, err
+}
+
+func (s *sqlStore) ListWorkItems(ctx context.Context, membershipID string) ([]WorkItem, error) {
+	rows, err := s.db.QueryContext(ctx,
+		workItemCols+` WHERE membership_id=? ORDER BY updated_at DESC, item_key`, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkItem
+	for rows.Next() {
+		w, err := scanWorkItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// ReplaceWorkItems swaps the cached rows of `queryIDs` for `items` in one transaction.
+// ★ Only the named queries are cleared: a refresh where one query failed must keep the
+// other queries' rows, otherwise one 401 blanks the whole rail.
+func (s *sqlStore) ReplaceWorkItems(ctx context.Context, membershipID string, queryIDs []string, items []WorkItem) error {
+	if len(queryIDs) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, qid := range queryIDs {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM work_item_cache WHERE membership_id=? AND query_id=?`, membershipID, qid); err != nil {
+			return err
+		}
+	}
+	for _, w := range items {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO work_item_cache(id, membership_id, query_id, provider, item_kind, item_key,
+			 title, state, url, assignee, labels, repo, updated_at, fetched_at)
+			 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			w.ID, membershipID, w.QueryID, w.Provider, w.Kind, w.Key, w.Title, w.State,
+			w.URL, w.Assignee, w.Labels, w.Repo, w.UpdatedAt, w.FetchedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *sqlStore) ListWorkItemSessions(ctx context.Context, membershipID string) ([]WorkItemSession, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, membership_id, provider, item_key, session_name, repo, branch, created_at
+		 FROM work_item_session WHERE membership_id=? ORDER BY created_at DESC`, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkItemSession
+	for rows.Next() {
+		var s WorkItemSession
+		if err := rows.Scan(&s.ID, &s.MembershipID, &s.Provider, &s.ItemKey,
+			&s.SessionName, &s.Repo, &s.Branch, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) CreateWorkItemSession(ctx context.Context, w WorkItemSession) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO work_item_session(id, membership_id, provider, item_key, session_name,
+		 repo, branch, created_at) VALUES(?,?,?,?,?,?,?,?)`,
+		w.ID, w.MembershipID, w.Provider, w.ItemKey, w.SessionName, w.Repo, w.Branch, w.CreatedAt)
+	return err
+}
+
+func (s *sqlStore) DeleteWorkItemSession(ctx context.Context, id, membershipID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM work_item_session WHERE id=? AND membership_id=?`, id, membershipID)
+	return err
 }

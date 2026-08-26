@@ -37,12 +37,14 @@ type eventsAPI struct {
 	memberAuth
 	ws    workspaceAPI
 	notif notificationAPI
+	wi    workItemsAPI
 	tick  time.Duration
 	ping  time.Duration
 }
 
 func newEventsAPI(m *manager, autostart bool) eventsAPI {
-	return eventsAPI{memberAuth{m}, newWorkspaceAPI(m, autostart), newNotificationAPI(m), eventsTick, eventsPingEvery}
+	return eventsAPI{memberAuth{m}, newWorkspaceAPI(m, autostart), newNotificationAPI(m),
+		newWorkItemsAPI(m), eventsTick, eventsPingEvery}
 }
 
 func registerEventsRoutes(mux *http.ServeMux, cfg config) {
@@ -123,6 +125,12 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 		// ストリーム自体は生かす — 次の tick で回復する。
 		if p, aerr := a.notif.listPayload(ctx, res); aerr == nil {
 			wrote = emit("notifications", p) || wrote
+		}
+		// 作業項目（docs/80）。この payload は DB のキャッシュを読むだけで、
+		// プロバイダへの取得は refreshAsync が別 goroutine で回す —— tick が
+		// 外部 API の往復を待つと、この購読者の他の stream まで丸ごと止まる。
+		if p, aerr := a.wi.workItemsPayload(ctx, res, state); aerr == nil {
+			wrote = emit("workitems", p) || wrote
 		}
 		if wrote {
 			lastWrite = time.Now()

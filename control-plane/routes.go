@@ -27,6 +27,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerTTSRoutes(mux, cfg)
 	registerSSMRoutes(mux, cfg)
 	registerMemoRoutes(mux, cfg)
+	registerWorkItemRoutes(mux, cfg)
 	registerScheduleRoutes(mux, cfg)
 	registerMCPServerRoutes(mux, cfg)
 	registerNotificationRoutes(mux, cfg)
@@ -423,6 +424,26 @@ func registerSSMRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/ssm/hosts", ssm.withMembership(ssm.createHost))
 	mux.HandleFunc("PUT /api/ssm/hosts/{id}", ssm.withMembership(ssm.updateHost))
 	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", ssm.withMembership(ssm.deleteHost))
+}
+
+// Work item inbox (docs/80) — external tickets in the left rail. The list and the 更新
+// button need the Runtime handle (the Agent does the fetching, holding the tokens), so
+// they are withResolved; the saved queries and the ledger are pure CP rows and stay on
+// withMembership so they work while the Workspace is stopped.
+//
+// ⚠️ There is deliberately NO agent-proxy entry here: the CP calls the Agent's
+// /work-items/fetch itself (like drainAgentOutbox), so the Console never reaches it and
+// the allowlist stays out of the picture.
+func registerWorkItemRoutes(mux *http.ServeMux, cfg config) {
+	wi := newWorkItemsAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/work-items", wi.withResolved(wi.list))
+	mux.HandleFunc("POST /api/work-items/refresh", wi.withResolved(wi.refresh))
+	mux.HandleFunc("GET /api/work-item-queries", wi.withMembership(wi.listQueries))
+	mux.HandleFunc("POST /api/work-item-queries", wi.withMembership(wi.createQuery))
+	mux.HandleFunc("PATCH /api/work-item-queries/{id}", wi.withMembership(wi.updateQuery))
+	mux.HandleFunc("DELETE /api/work-item-queries/{id}", wi.withMembership(wi.deleteQuery))
+	mux.HandleFunc("POST /api/work-item-sessions", wi.withMembership(wi.createSession))
+	mux.HandleFunc("DELETE /api/work-item-sessions/{id}", wi.withMembership(wi.deleteSession))
 }
 
 // Memo queue (docs/21) — per-member notes accumulated across devices, then flushed
