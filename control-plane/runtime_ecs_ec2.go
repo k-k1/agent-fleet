@@ -120,18 +120,16 @@ const (
 	ec2HomeMountBase = "/af-home"
 
 	// ec2DeploymentRetireBudget caps the wait between "point the service at the new task
-	// definition" and "set desiredCount 1" (see launch()). Measured on a throwaway
-	// cluster: the replaced deployment leaves ACTIVE in 10-23s at desiredCount 0
-	// (docs/64 §64.39.4). Overshooting scales up anyway, which is exactly the behavior
-	// this whole split replaced.
+	// definition" and "set desiredCount 1" (see launch()). Overshooting scales up anyway,
+	// which is exactly the behavior this whole split replaced.
 	//
-	// ⚠️ Why 25s and not "as long as it takes": on the re-attach-to-the-same-running-slot
-	// path launch() is NOT backgrounded — it runs inside the Start HTTP request (see
-	// Start's `deferred` branch), and the ALB in front of the CP has the default 60s idle
-	// timeout, which is what turned an earlier 90s wait into a 504 while the workspace
-	// converged fine behind it (watchReady). That path also skips this wait entirely
-	// whenever the task definition was reused, which is most re-wakes.
-	ec2DeploymentRetireBudget = 25 * time.Second
+	// ⚠️ It was 25s first, sized to fit inside the Start HTTP request. On the live harness
+	// that turned out to be too short — the wait ran past it, the bounded wait gave up,
+	// and ECS produced the two tasks the split exists to prevent, 10 seconds apart. The
+	// distribution has a tail: 10-23s on a throwaway cluster (docs/64 §64.39.4), >25s on
+	// the harness. So the wait moved OFF the request instead (launch() hands it to bg),
+	// and the budget is sized for the tail rather than for the ALB.
+	ec2DeploymentRetireBudget = 90 * time.Second
 
 	// Where the credentials-only EFS access point lands inside the task. home now lives
 	// on a single-AZ EBS volume, so the auth/identity set is kept on EFS as well and the
@@ -1501,22 +1499,59 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	// …and it is no longer free, so its free-pool clock stops. Same moment, opposite tag.
 	e.clearSlotFree(ctx, p.instanceID)
 	e.setPhase("task: starting")
-	if prepared {
-		// Normally already true by now — the slot took longer to join than the old
-		// deployment took to retire — so this returns on its first look.
-		e.waitOldDeploymentRetired(ctx)
-		if err := e.scaleUpService(ctx); err != nil {
+	if !prepared {
+		if err := e.upsertService(ctx, taskDefArn, p, !reused); err != nil {
 			return fmt.Errorf("service: %w", err)
 		}
-	} else if err := e.upsertService(ctx, taskDefArn, p, !reused); err != nil {
-		return fmt.Errorf("service: %w", err)
+		e.finishLaunch(ctx, p)
+		return nil
 	}
-	// The service now carries the state; drop the claim so State() reads the real thing,
-	// and make sure this home is not counted as dormant while its task runs.
+	// The split's second half. It has to outlast the caller when the caller is an HTTP
+	// request — see scaleUpWhenRetired.
+	gen := e.generation().Load()
+	tail := func(c context.Context) {
+		e.waitOldDeploymentRetired(c)
+		// Two cheap guards before the one call that can resurrect a workspace nobody
+		// asked to run. ⚠️ They do not close the race — a Stop that has set desiredCount
+		// 0 but not yet reached the detach is still ahead of us — but that window is the
+		// deferred path's from the day it was written (finishStart → launch →
+		// upsertService), not something this split introduced, and the sweeper puts a
+		// service whose home has gone back to 0.
+		if e.generation().Load() != gen {
+			log.Printf("ecs-ec2 start: %s was started again while its deployment retired; not scaling up", e.base.name)
+			return
+		}
+		if vol, err := e.homeVolume(c); err != nil || vol == nil || attachedInstance(vol) != p.instanceID {
+			log.Printf("ecs-ec2 start: %s no longer holds slot %s; not scaling up", e.base.name, p.instanceID)
+			return
+		}
+		if err := e.scaleUpService(c); err != nil {
+			log.Printf("ecs-ec2 start: %s could not be scaled up: %v", e.base.name, err)
+			return
+		}
+		e.finishLaunch(c, p)
+	}
+	if p.deferred {
+		tail(ctx) // finishStart already runs off the request
+		return nil
+	}
+	// ⚠️ The re-attach-to-the-same-running-slot path runs INSIDE the Start HTTP request,
+	// and the ALB in front of the CP cuts at 60s (watchReady). Measured on the live
+	// harness: the wait exceeded 25s, the bounded wait gave up, scaled up anyway — and
+	// ECS produced the two tasks this whole change exists to prevent (10s apart). So the
+	// wait cannot be squeezed to fit the request; it has to leave it. The claim placeHome
+	// took keeps State() at `starting` meanwhile, exactly as on the deferred path.
+	e.bg(ctx, tail)
+	return nil
+}
+
+// finishLaunch is what every successful launch ends with: the service carries the state
+// now, so drop the claim and make sure the home is not counted as dormant while its task
+// runs.
+func (e *ecsEC2Runtime) finishLaunch(ctx context.Context, p ec2Placement) {
 	e.unclaim(ctx, p.volumeID)
 	e.clearDormancy(ctx, p.volumeID)
 	e.base.watchReady(ctx)
-	return nil
 }
 
 // quarantineSlot takes a slot that failed to mount a home out of the pool, and frees the

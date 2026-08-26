@@ -143,6 +143,16 @@ if [ -n "$VPC" ] && [ "$VPC" != None ]; then
   aws ec2 delete-vpc --vpc-id "$VPC" >/dev/null 2>&1 && echo "vpc $VPC deleted"
 fi
 
+# ⚠️ タスク定義は他の何とも違って**スタックにもクラスタにも属さない**ので、上のどの削除にも
+# 引っかからない。課金はしないが、残せば次の run の family に混ざり、残存確認が「0 件」と
+# 言い切っているのに 13 個残っていた（実測 2026-08-26）——**確認が数えない物は消えない。**
+say task-definitions
+# ⚠️ `--family-prefix` では引けない。前方一致に見えて **family の完全一致**で、`af-ec2c` を
+# 渡すと `af-ec2c-dv1` は 0 件で返る（実測）。全件引いて手元で絞る。
+for td in $(aws ecs list-task-definitions --status ACTIVE --query 'taskDefinitionArns[]' --output text 2>/dev/null | tr '\t' '\n' | grep "/$N"); do
+  aws ecs deregister-task-definition --task-definition "$td" >/dev/null 2>&1 && echo "deregistered ${td##*/}"
+done
+
 say "残存確認（すべて空であること）"
 echo -n "instances: "; aws ec2 describe-instances --filters Name=instance-state-name,Values=pending,running,stopping,stopped --query 'Reservations[].Instances[].InstanceId' --output json
 echo -n "volumes:   "; aws ec2 describe-volumes --query 'Volumes[].VolumeId' --output json
@@ -159,4 +169,5 @@ echo -n "vpc:       "; aws ec2 describe-vpcs --query "Vpcs[?!(IsDefault)].VpcId"
 echo -n "nat:       "; aws ec2 describe-nat-gateways --query "NatGateways[?State!='deleted'].NatGatewayId" --output json
 echo -n "eip:       "; aws ec2 describe-addresses --query 'Addresses[].AllocationId' --output json
 echo -n "logs:      "; aws logs describe-log-groups --query 'logGroups[].logGroupName' --output json
+echo -n "taskdefs:  "; aws ecs list-task-definitions --status ACTIVE --query 'taskDefinitionArns' --output json
 echo TEARDOWN_DONE
