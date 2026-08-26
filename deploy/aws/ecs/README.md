@@ -775,10 +775,22 @@ they survive, and keep billing. The response and the audit entry list what was l
   that, and it stops the *slot*. Someone who walks away is therefore idle-stopped on the
   tenant's timeout and their box sleeps 15 minutes later.
 - **Slots are reclaimed only at the cap.** Below `Ec2MaxSlots` a new user gets a new
-  slot; at the cap the longest-dormant occupant is evicted (a workspace with a running
-  task is never touched). So `Ec2MaxSlots` bounds how many people work *at once*,
-  `Ec2SlotSleepSec` bounds how many boxes are *running*, and `Ec2SlotTerminateAfterSec`
-  bounds how many *exist* — without the third, "how many exist" is `Ec2MaxSlots` too.
+  slot; at the cap the longest-dormant occupant **of the same instance type** is evicted
+  (a workspace with a running task is never touched). So `Ec2MaxSlots` bounds how many
+  people work *at once*, `Ec2SlotSleepSec` bounds how many boxes are *running*, and
+  `Ec2SlotTerminateAfterSec` bounds how many *exist* — without the third, "how many
+  exist" is `Ec2MaxSlots` too.
+- **At the cap, a box of the wrong size is removed rather than handed over.** An instance
+  type is not something a running box can change, so if the cap is held entirely by sizes
+  a member cannot run on, eviction has nothing to offer. Rather than fail their start, the
+  CP terminates one dormant box of a size they cannot use — an empty one first, otherwise
+  the longest-dormant — and builds theirs in its place. What that costs its former owner is
+  the image cache (~110s becomes ~135s on their return), never their home: it is detached
+  first and never deleted. ⚠️ This is **not** gated on `Ec2SlotTerminateAfterSec`: that
+  parameter is about idle cost, this only ever runs when the alternative is a member who
+  cannot start at all — and its default of `0` is exactly the deployment that sits at the
+  cap. If nothing can be freed (everything running, or claimed by a start in flight) the
+  start still fails, and says the pool is full.
 - **An EMPTY slot sleeps on the same timer.** A slot whose home has been released — by an
   eviction, a size/class change, a `Destroy`, or the golden bake finishing with its seed
   and probe — belongs to nobody, and `Ec2SlotSleepSec` stops it too. ⚠️ Before docs/64

@@ -2040,6 +2040,7 @@ export const ja = {
   "wsstart.installing_clis": "エージェント CLI を導入中…（初回のみ・数分かかることがあります）",
   "wsstart.fetching_tool": "追加ツールを取得中…",
   "wsstart.toolchain": "ツールチェーンを導入中…",
+  "wsstart.slot_making_room": "空いているマシンを片付けて、あなたに合う大きさのものを用意しています…（この経路がいちばん時間がかかります）",
   "wsstart.slot_creating": "実行するマシンを用意しています…（新しく起動するので数分かかります）",
   "wsstart.slot_waking": "マシンを起こしています…",
   "wsstart.slot_booting": "マシンの起動を待っています…",
