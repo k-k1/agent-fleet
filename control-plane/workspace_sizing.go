@@ -80,6 +80,15 @@ type workspaceSlot struct {
 	InstanceType string `json:"instance_type"`
 	MemMiB       int64  `json:"mem_mib"`
 	VCPU         int    `json:"vcpu,omitempty"`
+	// UsableMemMiB is what the WORKSPACE gets, as opposed to what the box has: the
+	// rung less the reserve held back for the box's own daemons (ADR 0045 決定 28).
+	//
+	// It exists because the two stopped being the same number. While the container was
+	// uncapped, "8 GiB" described both the machine and the workspace and one figure was
+	// honest; now the workspace's limit is lower, and printing only the box would tell
+	// a member they have memory the cgroup will not give them. Omitted (0) when the
+	// deployment runs uncapped, which is the one case where the box IS the answer.
+	UsableMemMiB int64 `json:"usable_mem_mib,omitempty"`
 }
 
 // sizingProfiler is the optional RuntimeFactory capability. Same shape as
@@ -138,7 +147,10 @@ func (f *ecsEC2Factory) SizingProfile() workspaceSizing {
 	rungs := func(slots []ec2Slot) []workspaceSlot {
 		out := make([]workspaceSlot, 0, len(slots))
 		for _, s := range slots {
-			out = append(out, workspaceSlot{InstanceType: s.instanceType, MemMiB: s.memMiB, VCPU: s.vcpu})
+			out = append(out, workspaceSlot{
+				InstanceType: s.instanceType, MemMiB: s.memMiB, VCPU: s.vcpu,
+				UsableMemMiB: f.pool.workspaceMemCapMiB(s.memMiB),
+			})
 		}
 		return out
 	}

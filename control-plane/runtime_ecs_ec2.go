@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -74,7 +75,10 @@ type ecsEC2Runtime struct {
 	// RuntimePlatform.
 	instanceType string
 	arch         string
-	homeGiB      int32
+	// memCapMiB is the hard memory limit the workspace container gets, resolved once
+	// from the rung above (workspaceMemCapMiB). 0 = uncapped.
+	memCapMiB int64
+	homeGiB   int32
 
 	// azOfSubnet resolves the deployment's subnets to their AZ (cached in the factory):
 	// an EBS volume never leaves its AZ, so the volume pins the AZ and the AZ picks
@@ -484,7 +488,70 @@ type ec2PoolConfig struct {
 	// waitBudget bounds every background convergence (slot boot → ECS registration →
 	// mount → task). Past it the attempt gives up and leaves the state for the sweeper.
 	waitBudget time.Duration
+	// slotLostAfter is how long a slot may be EC2-`running` while the CLUSTER cannot
+	// reach its agent before the CP declares the box lost and rebuilds the workspace
+	// somewhere else (AF_ECS_EC2_SLOT_LOST_AFTER_SEC, default 5m).
+	//
+	// 🔥 The incident it exists for (<prod-deployment>, 2026-08-27, docs/64 §64.40): something in
+	// one workspace took several GB of anonymous memory, and with no swap the kernel's only
+	// way to reclaim was to throw away page cache — so every process on the box spent the
+	// next three hours re-reading its own executable pages off disk. The root volume holds
+	// 8.0 GB of data in total and was read at 39.34 GB every five minutes: the whole disk,
+	// five times over, per bucket, for three hours. Everything that needed a disk starved,
+	// and the box's daemons died within fifteen seconds of each other — the EFS
+	// transit-encryption stunnel (`nfs: server 127.0.0.1 not responding`), the ECS agent,
+	// SSM. EC2 still said `running` and every status check still passed; the box was simply
+	// gone as far as the cluster was concerned.
+	//
+	// ⚠️ The OOM killer never fired, and that is not evidence against memory being the
+	// cause — in this state it CANNOT fire, because reclaim keeps succeeding (by destroying
+	// the cache). Containing that blast radius is a separate fix (a cgroup memory limit on
+	// the workspace container, which ecs-ec2 alone does not apply). What this field bounds
+	// is only the CP's reaction to a slot that has stopped answering, which is the same
+	// problem whichever resource ran out.
+	//
+	// Nothing could recover from that on its own, and each layer was individually correct:
+	//   - ECS could not stop the ghost task (no agent), so its ENI never detached;
+	//   - the sweeper refuses to stop a slot that still holds a task ENI (multi-ENI/egress
+	//     loss, 決定 3-3), so it logged "leaving it running for now" every 5 minutes forever;
+	//   - Start reused the slot by affinity and waited for a registration that was never
+	//     coming, which the ingress cut at 60s — the user got a 504 per attempt, for hours.
+	// So the missing piece was a TIME LIMIT on "not registered yet": past it the box is not
+	// slow, it is lost, and the home has to be moved rather than waited on (abandonLostSlot).
+	//
+	// Sized well above every legitimate wait — a hot slot answers on the first poll, a woken
+	// one in ~20s, a brand-new one in ~35s from RunInstances — because the cost of being
+	// wrong is asymmetric: too eager throws away a healthy box mid-boot, too patient only
+	// makes a doomed Start take a few minutes longer than it had to.
+	//
+	// 0 = OFF, read the same way as the other timers (§64.31.4): wait as long as the
+	// caller's budget allows, i.e. exactly the behaviour before this existed.
+	slotLostAfter time.Duration
+	// hostReserveMiB is how much of a slot is held back from the workspace container so
+	// the box's own daemons cannot be starved by it (AF_ECS_EC2_HOST_RESERVE_MB).
+	// See workspaceMemCapMiB for what it buys and how the default was sized.
+	//
+	//	unset / "auto"  → -1 < 0: a fifth of the rung, clamped (the default)
+	//	"off"           → the sentinel below: no cap at all, the pre-2026-08 behaviour
+	//	<n>             → exactly n MiB
+	hostReserveMiB int64
 }
+
+const (
+	// ec2HostReserveOff is hostReserveMiB's "leave the workspace uncapped" sentinel.
+	// Negative rather than 0 because 0 is a meaningful answer ("reserve nothing, cap at
+	// the full rung"), and an operator's explicit off has to be distinguishable from it.
+	ec2HostReserveOff = -1
+	// The auto reserve's bounds. Floor: the daemons were measured at ~869 MiB idle and
+	// ~1.2-1.4 GiB with a workspace and its Service Connect sidecars running, and the
+	// rung overstates the real MemTotal by ~5% on top. Ceiling: that cost does not grow
+	// with the box, so a big rung should not donate more than a small one.
+	ec2HostReserveFloorMiB = 1024
+	ec2HostReserveCeilMiB  = 2048
+	// ec2MinWorkspaceMemMiB is the least a capped workspace may be left with. Below it
+	// the rung is simply too small to share, and the cap is dropped rather than applied.
+	ec2MinWorkspaceMemMiB = 512
+)
 
 // ec2Slot is one purchasable slot size.
 //
@@ -594,6 +661,11 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		sweepEvery:     time.Duration(envInt("AF_ECS_EC2_SWEEP_SEC", 300)) * time.Second,
 		ghostAfter:     time.Duration(envInt("AF_ECS_EC2_GHOST_AFTER_SEC", 3600)) * time.Second,
 		waitBudget:     time.Duration(envInt("AF_ECS_EC2_WAIT_SEC", 600)) * time.Second,
+		// Default ON, unlike the other timers here: this one does not change what the
+		// product does in the normal case, it only puts an end to a wait that was
+		// previously unbounded in practice. See the field comment for the incident.
+		slotLostAfter:  time.Duration(envInt("AF_ECS_EC2_SLOT_LOST_AFTER_SEC", 300)) * time.Second,
+		hostReserveMiB: parseHostReserveMiB(envOr("AF_ECS_EC2_HOST_RESERVE_MB", "auto")),
 	}
 	if err := pool.validate(); err != nil {
 		return nil, err
@@ -617,7 +689,7 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 	if !ok { // unreachable: ecsFactory.New always returns *ecsRuntime
 		panic("ecs-ec2: base factory did not return *ecsRuntime")
 	}
-	instanceType, arch := f.pool.slotTypeFor(ws.SlotClass, ws.MemBytes)
+	instanceType, arch, slotMemMiB := f.pool.slotRungFor(ws.SlotClass, ws.MemBytes)
 	return &ecsEC2Runtime{
 		base:         base,
 		ec2:          f.ec2,
@@ -626,6 +698,7 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 		pool:         f.pool,
 		instanceType: instanceType,
 		arch:         arch,
+		memCapMiB:    f.pool.workspaceMemCapMiB(slotMemMiB),
 		homeGiB:      f.homeGiB(ws),
 		azOfSubnet:   f.subnetAZs,
 		bg:           backgroundWithin(f.pool.waitBudget),
@@ -679,14 +752,95 @@ func (p ec2PoolConfig) classFor(id string) ec2SlotClass {
 // The class only chooses the LADDER. Memory still chooses the rung, in every class,
 // which is what keeps "8 GB" meaning the same thing after a class change.
 func (p ec2PoolConfig) slotTypeFor(classID string, memBytes int64) (instanceType, arch string) {
+	t, a, _ := p.slotRungFor(classID, memBytes)
+	return t, a
+}
+
+// slotRungFor is slotTypeFor plus the rung's DECLARED memory, which the workspace's
+// memory cap is derived from (workspaceMemCapMiB).
+func (p ec2PoolConfig) slotRungFor(classID string, memBytes int64) (instanceType, arch string, slotMemMiB int64) {
 	c := p.classFor(classID)
 	want := memBytes / mib
 	for _, s := range c.slots {
 		if want <= s.memMiB {
-			return s.instanceType, c.arch
+			return s.instanceType, c.arch, s.memMiB
 		}
 	}
-	return c.slots[len(c.slots)-1].instanceType, c.arch
+	last := c.slots[len(c.slots)-1]
+	return last.instanceType, c.arch, last.memMiB
+}
+
+// workspaceMemCapMiB is the hard memory limit put on the workspace container: the
+// slot's declared memory, less a reserve kept for the box's own daemons. 0 = no cap
+// (the behaviour every deployment had before this existed).
+//
+// 🔥 Why a cap exists at all (<prod-deployment>, 2026-08-27, docs/64 §64.40): a workspace
+// took several GB of anonymous memory, and with no swap the kernel's only way to
+// reclaim was to throw away page cache — so every process on the box spent three hours
+// re-reading its own executable pages off disk (the root volume holds 8.0 GB of data
+// in total and was read at 39.34 GB per five minutes). The workspace's OWN pain is not
+// what this fixes; it is the collateral: dockerd, containerd, the ECS agent, SSM and
+// the EFS stunnel all starved and died within fifteen seconds of each other, and the
+// box became unmanageable — ECS could not stop the task, SSM could not run a command,
+// and the owner got a 504 on every Start for hours.
+//
+// A cgroup limit is the fix because of WHERE the pressure then lands: reclaim for an
+// over-limit cgroup happens INSIDE that cgroup, so the daemons keep their pages
+// whatever the workspace does. The runaway gets OOM-killed in its own cgroup — visible
+// as OOMKilled, which is a diagnosis rather than a mystery.
+//
+// ⚠️ Derived from the LADDER's declared MiB, not from what the box really has, and the
+// two differ by more than you would guess: an "8192 MiB" m7i.large reports MemTotal
+// 7784 MiB (measured). The reserve therefore has to absorb that ~5% as well as the
+// daemons, which is why the default is a fifth rather than the ~1.2-1.4 GiB the daemons
+// were measured at:
+//
+//	nominal 8192 → reserve 1638 → cap 6554 MiB, real headroom 7784-6554 = 1230 MiB ✅
+//	nominal 8192 → reserve 1024 → cap 7168 MiB, real headroom 7784-7168 =  616 MiB ✗
+//
+// Reading the true figure is possible (DescribeContainerInstances reports the
+// registered MEMORY) but it is not worth it here: the task definition is built BEFORE
+// the slot is known to be registered, so using it would mean reordering launch() for
+// an accuracy this reserve already covers.
+//
+// Clamped at both ends. The floor keeps a small rung from being left with nothing for
+// its daemons; the ceiling stops a large rung from donating gigabytes it does not need
+// — the daemons cost the same on every size.
+// parseHostReserveMiB reads AF_ECS_EC2_HOST_RESERVE_MB. Anything unrecognised is
+// "auto" rather than an error: this knob decides how much RAM a workspace gets, and a
+// typo must not be the reason a deployment stops capping (or stops starting).
+func parseHostReserveMiB(s string) int64 {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return 0
+	case "off", "none", "false":
+		return ec2HostReserveOff
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil || n < 0 {
+		log.Printf("ecs-ec2: AF_ECS_EC2_HOST_RESERVE_MB=%q is not auto|off|<MiB>; using auto", s)
+		return 0
+	}
+	return n
+}
+
+func (p ec2PoolConfig) workspaceMemCapMiB(slotMemMiB int64) int64 {
+	if slotMemMiB <= 0 || p.hostReserveMiB < 0 {
+		return 0
+	}
+	reserve := p.hostReserveMiB
+	if reserve == 0 { // "auto"
+		reserve = min(max(slotMemMiB/5, ec2HostReserveFloorMiB), ec2HostReserveCeilMiB)
+	}
+	cap := slotMemMiB - reserve
+	if cap < ec2MinWorkspaceMemMiB {
+		// A rung too small to leave both a workspace and its daemons room. Capping it
+		// to something unusable would break the deployment; say so and leave it alone.
+		log.Printf("ecs-ec2: slot rung %d MiB is too small to reserve %d MiB for the host; leaving the workspace uncapped",
+			slotMemMiB, reserve)
+		return 0
+	}
+	return cap
 }
 
 // parseSlotClasses reads AF_ECS_EC2_SLOT_TYPES.
@@ -1020,13 +1174,35 @@ func (e *ecsEC2Runtime) Start(ctx context.Context) error {
 	}
 	if place.deferred {
 		// The slot is not attachable yet (pending instance) or not registered with ECS
-		// yet (just started). Finish in the background; the claim tag / the attachment
-		// is what keeps State() at `starting` until it lands.
+		// yet (just started, waking, or gone dark). Finish in the background; the claim
+		// tag / the attachment is what keeps State() at `starting` until it lands.
 		e.bg(ctx, func(c context.Context) { e.finishStart(c, place, prep) })
 		return nil
 	}
-	defer e.setPhase("")
-	return e.launch(ctx, place, prep)
+	if err := e.launch(ctx, place, prep); err != nil {
+		if errors.Is(err, errSlotLost) {
+			// The slot answered placeHome and was gone by the time launch looked again.
+			// abandonLostSlot has freed the home; finding it another box is minutes of
+			// work, which is exactly what may not happen on this thread — so hand off and
+			// let State() keep saying `starting` off the claim.
+			e.setPhase("slot: replacing")
+			e.bg(ctx, func(c context.Context) {
+				defer e.setPhase("")
+				next, perr := e.placeHome(c)
+				if perr != nil {
+					log.Printf("ecs-ec2 start: re-placing %s after losing slot %s: %v", e.base.name, place.instanceID, perr)
+					e.unclaim(c, place.volumeID)
+					return
+				}
+				e.converge(c, next, prep, 0)
+			})
+			return nil
+		}
+		e.setPhase("")
+		return err
+	}
+	e.setPhase("")
+	return nil
 }
 
 // Stop scales the service to zero and LEAVES THE HOME ATTACHED — "lazy release".
@@ -1306,11 +1482,31 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 				if err != nil {
 					return ec2Placement{}, err
 				}
+				// ⚠️ RUNNING IS NOT ENOUGH, and asking only EC2 is what turned one wedged
+				// box into hours of 504s (docs/64 §64.40). `deferred` decides whether the
+				// rest of this Start happens on the CALLER'S THREAD, and the caller is an
+				// HTTP handler behind a 60s-idle ingress — so it may only stay inline for
+				// work that is measured in seconds. launch()'s first act is to wait for the
+				// slot to be a usable container instance; on a box whose ECS agent has died
+				// that wait cannot finish, and holding the request through it delivers a
+				// 504 instead of the `starting` the Console knows how to show.
+				//
+				// The homeless path below has always asked both questions (s.running &&
+				// s.registered). This branch asked only the first, which is the asymmetry
+				// the incident found: the difference is invisible on a healthy pool,
+				// because a running slot is normally a registered one.
+				reg, err := e.registeredSlots(ctx)
+				if err != nil {
+					// Unknown, not "no": defer rather than fail. Deferring costs a
+					// background hand-off; failing costs the user their Start.
+					log.Printf("ecs-ec2 start: could not tell whether slot %s is registered (%v); converging in the background", inst, err)
+				}
+				ready := running && reg[inst]
 				// A dormant slot keeps both the image cache and the attachment, so waking it
 				// is the ~90s path rather than the 135s of building a new one.
 				return ec2Placement{
 					volumeID: volID, instanceID: inst, az: aws.ToString(vol.AvailabilityZone),
-					deferred: !running, wake: !running,
+					deferred: !ready, wake: !running,
 				}, nil
 			}
 		}
@@ -1446,6 +1642,20 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 	// Whatever happens — converged, failed, or gave up — the workspace is no longer
 	// mid-provisioning, and the Console's dialog keys off exactly this.
 	defer e.setPhase("")
+	e.converge(ctx, p, prep, 1)
+}
+
+// converge is finishStart's body, plus one budgeted retry for the single failure a Start
+// can fix by itself: the slot turned out to be lost, so the home was moved off it and
+// there is nothing wrong with simply trying another box.
+//
+// retries is 1 for a normal Start and 0 for the replacement it spawns, so one Start can
+// quarantine at most one extra slot. That bound is the point: a pool failing for a reason
+// this code has not understood (a bad AMI, a broken cluster) would otherwise walk every
+// box into quarantine one Start at a time, turning a degraded deployment into an empty
+// one. Giving up after two leaves the workspace `stopped` with the reason in the log —
+// a state the user can retry from, and the operator can read.
+func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Prep, retries int) {
 	if p.wake {
 		e.setPhase("slot: waking")
 		if err := e.wakeSlot(ctx, p.instanceID); err != nil {
@@ -1465,8 +1675,31 @@ func (e *ecsEC2Runtime) finishStart(ctx context.Context, p ec2Placement, prep ec
 			return
 		}
 	}
-	if err := e.launch(ctx, p, prep); err != nil {
-		log.Printf("ecs-ec2 start: %s did not converge on slot %s: %v", e.base.name, p.instanceID, err)
+	err := e.launch(ctx, p, prep)
+	if err == nil {
+		return
+	}
+	if errors.Is(err, errSlotLost) && retries > 0 {
+		// abandonLostSlot has already detached the home and taken the box out of the
+		// pool, so placeHome now sees an ordinary homeless home and puts it somewhere
+		// healthy — including growing the pool if that is what it takes.
+		log.Printf("ecs-ec2 start: slot %s is not coming back; re-placing %s", p.instanceID, e.base.name)
+		e.setPhase("slot: replacing")
+		next, perr := e.placeHome(ctx)
+		if perr != nil {
+			log.Printf("ecs-ec2 start: re-placing %s after losing slot %s: %v", e.base.name, p.instanceID, perr)
+			e.unclaim(ctx, p.volumeID)
+			return
+		}
+		e.converge(ctx, next, prep, retries-1)
+		return
+	}
+	log.Printf("ecs-ec2 start: %s did not converge on slot %s: %v", e.base.name, p.instanceID, err)
+	if errors.Is(err, errSlotLost) {
+		// Out of retries: the claim abandonLostSlot deliberately kept alive has no
+		// replacement coming, so drop it now instead of pinning the workspace at
+		// `starting` until it expires.
+		e.unclaim(ctx, p.volumeID)
 	}
 }
 
@@ -1509,6 +1742,13 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 
 	e.setPhase("slot: joining the cluster")
 	if err := e.waitSlotRegistered(ctx, p.instanceID); err != nil {
+		if errors.Is(err, errSlotLost) {
+			// The box is up and the cluster cannot reach it: no amount of waiting fixes
+			// that. Get the home off it and out of the blast radius, then tell the caller
+			// to try a different slot rather than reporting a failed Start.
+			e.abandonLostSlot(ctx, p, err)
+			return err
+		}
 		return fmt.Errorf("slot %s not registered with the cluster: %w", p.instanceID, err)
 	}
 	e.setPhase("home: mounting")
@@ -1573,28 +1813,9 @@ func (e *ecsEC2Runtime) finishLaunch(ctx context.Context, p ec2Placement) {
 //     will NOT collect this box either: quarantineSlot re-tags it af-role=quarantined, and
 //     both sweeper walks filter on af-role=slot. The evidence survives on purpose.
 func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, cause error) {
-	reason := cause.Error()
-	if len(reason) > 200 {
-		reason = reason[:200]
-	}
 	log.Printf("ecs-ec2: QUARANTINING slot %s — it could not mount %s for %s: %v",
 		p.instanceID, p.volumeID, e.base.name, cause)
-	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
-		Resources: []string{p.instanceID},
-		Tags: []ec2types.Tag{
-			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleQuarantined)},
-			{Key: aws.String(ec2TagQuarantineReason), Value: aws.String(reason)},
-			{Key: aws.String(ec2TagQuarantineAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
-		},
-	}); err != nil {
-		// This is the step that stops the bleeding; say so loudly when it fails, because
-		// nothing else here prevents the next user from landing on the same box.
-		log.Printf("ecs-ec2: could not quarantine slot %s (it will be offered again): %v", p.instanceID, err)
-	}
-	// A quarantined box is nobody's. It reaches here before launch stamps the owner, so
-	// normally there is nothing to remove — but a previous tenancy whose release failed
-	// would otherwise keep billing a person for a box they can no longer use.
-	e.untagSlotOwner(ctx, p.instanceID)
+	e.markQuarantined(ctx, p.instanceID, cause)
 	if p.volumeID != "" {
 		if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
 			VolumeId:   aws.String(p.volumeID),
@@ -1607,6 +1828,178 @@ func (e *ecsEC2Runtime) quarantineSlot(ctx context.Context, p ec2Placement, caus
 	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{InstanceIds: []string{p.instanceID}}); err != nil {
 		log.Printf("ecs-ec2: stopping the quarantined slot %s: %v", p.instanceID, err)
 	}
+}
+
+// markQuarantined is step 1 of both quarantine paths: the single tag write that takes a
+// box out of the world, plus the owner tags that must not keep billing somebody for it.
+// Split out because abandonLostSlot has to do it in a different ORDER from the rest.
+func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, cause error) {
+	reason := cause.Error()
+	if len(reason) > 200 {
+		reason = reason[:200]
+	}
+	if _, err := e.ec2.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{instanceID},
+		Tags: []ec2types.Tag{
+			{Key: aws.String(ec2TagRole), Value: aws.String(ec2RoleQuarantined)},
+			{Key: aws.String(ec2TagQuarantineReason), Value: aws.String(reason)},
+			{Key: aws.String(ec2TagQuarantineAt), Value: aws.String(e.now().UTC().Format(time.RFC3339))},
+		},
+	}); err != nil {
+		// This is the step that stops the bleeding; say so loudly when it fails, because
+		// nothing else here prevents the next user from landing on the same box.
+		log.Printf("ecs-ec2: could not quarantine slot %s (it will be offered again): %v", instanceID, err)
+	}
+	// A quarantined box is nobody's. On the mount-failure path it reaches here before
+	// launch stamps the owner, so normally there is nothing to remove — but a previous
+	// tenancy whose release failed would otherwise keep billing a person for a box they
+	// can no longer use.
+	e.untagSlotOwner(ctx, instanceID)
+}
+
+// abandonLostSlot is quarantineSlot for a box whose OPERATING SYSTEM is gone rather than
+// one that merely failed a mount, and the difference is why it cannot reuse that path:
+// there, nothing is running on the slot yet and the kernel still answers. Here a task is
+// still nominally on it, the ECS agent is unreachable, and every step of the ordinary
+// teardown quietly does the wrong thing (docs/64 §64.40, reproduced by hand during the
+// incident before it was written down):
+//
+//	quarantineSlot                     what a wedged box actually does
+//	─────────────────────────────────  ────────────────────────────────────────────────
+//	DetachVolume on a running box      hangs in `detaching` forever — the kernel can
+//	                                   never flush and unmount the filesystem
+//	StopInstances (graceful)           waits out an ACPI shutdown nobody is listening for
+//	StopInstances while a task ENI     the box comes back MULTI-ENI and silently loses
+//	  is still attached                its egress (決定 3-3) — the very trap the sweeper
+//	                                   refuses to go near
+//
+// So the order is inverted and one step is added at the front:
+//
+//  1. tag af-role → quarantined. First, as always: one write and the box is out of
+//     freeSlots, out of poolSize and out of placement, whatever happens below.
+//  2. DEREGISTER the container instance, forced. This is the new step and the one that
+//     breaks the deadlock: ECS cannot stop a task whose agent is gone, so it holds the
+//     task — and its ENI — indefinitely. Forcing the deregistration makes ECS give up on
+//     it, and the ENI then detaches on its own. Safe to force here because a slot holds
+//     exactly one home and therefore at most one workspace's task: the only task this
+//     can kill is the caller's own, and it is already unreachable.
+//  3. wait for the task ENI to go, THEN stop the box — forced, because there is nothing
+//     alive in it to shut down politely.
+//  4. only once it is off, detach the home. A powered-down instance gives the volume
+//     back cleanly; a forced detach is the fallback for when it will not stop.
+//
+// The claim is deliberately LEFT IN PLACE (and refreshed): the caller is about to place
+// this home somewhere else, and State() reads the claim to keep saying `starting` while
+// that happens. Dropping it here would flash `stopped` at the Console mid-recovery and
+// invite a second, racing Start. If the replacement never happens the claim expires on
+// its own (claimTTL) and the workspace becomes startable again — the same safety valve
+// State() already documents.
+func (e *ecsEC2Runtime) abandonLostSlot(ctx context.Context, p ec2Placement, cause error) {
+	log.Printf("ecs-ec2: ABANDONING slot %s — it is running but the cluster cannot reach it, so %s is being moved off it: %v",
+		p.instanceID, e.base.name, cause)
+	e.markQuarantined(ctx, p.instanceID, cause)
+	e.deregisterSlot(ctx, p.instanceID)
+	if err := e.waitTaskENIsGone(ctx, p.instanceID); err != nil {
+		// Not fatal, but it changes what we may do next: stopping now is the multi-ENI
+		// trap, so leave the box running and let the operator (or the sweeper, once ECS
+		// does release the ENI) finish. The home still has to come off, forcibly.
+		log.Printf("ecs-ec2: slot %s still holds a task ENI (%v); leaving it running and forcing the home off",
+			p.instanceID, err)
+		e.forceDetachHome(ctx, p)
+		return
+	}
+	if _, err := e.ec2.StopInstances(ctx, &ec2.StopInstancesInput{
+		InstanceIds: []string{p.instanceID},
+		// A graceful stop asks the OS to shut down; that is precisely what is broken.
+		Force: aws.Bool(true),
+	}); err != nil {
+		log.Printf("ecs-ec2: force-stopping the lost slot %s: %v", p.instanceID, err)
+	}
+	if err := e.waitInstanceStopped(ctx, p.instanceID); err != nil {
+		log.Printf("ecs-ec2: lost slot %s did not stop (%v); forcing the home off it", p.instanceID, err)
+		e.forceDetachHome(ctx, p)
+		return
+	}
+	// The box is off: an ordinary detach now, which is the one that cannot corrupt
+	// anything — nothing is holding the filesystem open any more.
+	if p.volumeID != "" {
+		if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
+			VolumeId:   aws.String(p.volumeID),
+			InstanceId: aws.String(p.instanceID),
+		}); err != nil {
+			log.Printf("ecs-ec2: detaching %s from the stopped lost slot %s: %v", p.volumeID, p.instanceID, err)
+			e.forceDetachHome(ctx, p)
+		}
+	}
+}
+
+// forceDetachHome is the fallback when the box could not be powered off first. A forced
+// detach is a yanked cable — ext4 replays its journal on the next mount — and it is still
+// the better outcome, because the alternative is a home bolted to a machine that will
+// never run anything again.
+func (e *ecsEC2Runtime) forceDetachHome(ctx context.Context, p ec2Placement) {
+	if p.volumeID == "" {
+		return
+	}
+	if _, err := e.ec2.DetachVolume(ctx, &ec2.DetachVolumeInput{
+		VolumeId:   aws.String(p.volumeID),
+		InstanceId: aws.String(p.instanceID),
+		Force:      aws.Bool(true),
+	}); err != nil {
+		log.Printf("ecs-ec2: force-detaching %s from the lost slot %s: %v", p.volumeID, p.instanceID, err)
+	}
+}
+
+// waitTaskENIsGone polls until ECS has taken its task ENIs off the instance. Same check
+// the sweeper makes before stopping a slot, and for the same reason (決定 3-3).
+func (e *ecsEC2Runtime) waitTaskENIsGone(ctx context.Context, instanceID string) error {
+	for i := 0; i < 60; i++ {
+		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+		if err == nil && !instancesHoldTaskENI(out) {
+			return nil
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("task ENIs still attached to %s", instanceID)
+}
+
+func (e *ecsEC2Runtime) waitInstanceStopped(ctx context.Context, instanceID string) error {
+	for i := 0; i < 90; i++ {
+		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
+		if err == nil {
+			for _, r := range out.Reservations {
+				for _, inst := range r.Instances {
+					if inst.State != nil && (inst.State.Name == ec2types.InstanceStateNameStopped ||
+						inst.State.Name == ec2types.InstanceStateNameTerminated) {
+						return nil
+					}
+				}
+			}
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("slot %s did not reach `stopped`", instanceID)
+}
+
+// instancesHoldTaskENI reports whether any listed instance still carries an ENI that ECS
+// attached for a task. The description is the only marker AWS gives us — the sweeper's
+// taskENIsAttached has read it this way since 決定 3-3 — so both callers share it rather
+// than keeping two copies of the same string match.
+func instancesHoldTaskENI(out *ec2.DescribeInstancesOutput) bool {
+	for _, r := range out.Reservations {
+		for _, inst := range r.Instances {
+			for _, ni := range inst.NetworkInterfaces {
+				if strings.Contains(aws.ToString(ni.Description), ":ecs:") {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // --- volumes ---
@@ -2731,20 +3124,58 @@ func (e *ecsEC2Runtime) waitInstanceRunning(ctx context.Context, instanceID stri
 	}
 }
 
+// errSlotLost marks the one failure a Start can recover from by itself: the slot is
+// EC2-`running` but the cluster cannot reach its agent, and has not been able to for
+// slotLostAfter. Everything above it treats this as "use a different box", not as "this
+// Start failed" — see abandonLostSlot and converge.
+var errSlotLost = errors.New("slot lost")
+
+// slotRegisterPoll is the interval every registration wait uses. Named because the grace
+// below is expressed in TIME and has to be converted into polls.
+const slotRegisterPoll = 3 * time.Second
+
 // waitSlotRegistered waits until the slot is an ACTIVE, agent-connected container
 // instance. Measured at ~20s after an instance start (docs/64 §64.12.1); a hot slot
 // returns on the first poll.
+//
+// Two different failures come out of here and the caller must be able to tell them apart:
+//
+//   - errSlotLost — the box is running and simply not answering the cluster any more.
+//     Waiting longer cannot help (docs/64 §64.40); the workspace has to be moved.
+//   - anything else — still converging when the budget ran out, or the poll itself
+//     failed. The slot may well be fine, so nothing is torn down.
+//
+// The grace is counted in POLLS rather than off the clock on purpose: `sleep` is injected,
+// and a wall-clock deadline would make every test that stubs it out wait for real.
 func (e *ecsEC2Runtime) waitSlotRegistered(ctx context.Context, instanceID string) error {
 	// Bounded as well as context-scoped. The caller's budget is the real limit in
 	// production, but an unbounded "poll until" hangs anything that drives this with a
 	// context that never expires.
-	for i := 0; i < 400; i++ {
+	limit := 400
+	if e.pool.slotLostAfter > 0 {
+		// At least one poll: a grace shorter than the interval still means "look once,
+		// then decide", not "decide without looking".
+		if n := int(e.pool.slotLostAfter / slotRegisterPoll); n < limit {
+			limit = max(n, 1)
+		}
+	}
+	for i := 0; i < limit; i++ {
 		ready, err := e.registeredSlots(ctx)
 		if err == nil && ready[instanceID] {
 			return nil
 		}
-		if err := e.sleep(ctx, 3*time.Second); err != nil {
+		if err := e.sleep(ctx, slotRegisterPoll); err != nil {
 			return err
+		}
+	}
+	// Out of patience. Whether this box is merely slow or actually gone is decided by
+	// EC2, not by the cluster: a slot that is still `pending` (or one whose state we
+	// could not read) gets the benefit of the doubt, because tearing down a box that is
+	// mid-boot would turn a slow Start into a destroyed one.
+	if e.pool.slotLostAfter > 0 {
+		if running, err := e.instanceRunning(ctx, instanceID); err == nil && running {
+			return fmt.Errorf("slot %s has been running without reaching the cluster for %s: %w",
+				instanceID, e.pool.slotLostAfter, errSlotLost)
 		}
 	}
 	return fmt.Errorf("slot %s never registered with the cluster", instanceID)
@@ -3033,8 +3464,8 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 		// Backend-drift stamp — same contract as the Fargate revision
 		// (runtime_ecs_stale.go).
 		DockerLabels: e.base.stampImage(ctx),
-		// A soft reservation only: ECS requires a memory figure somewhere, and a hard
-		// limit here would cap the user below the slot they are paying for.
+		// The soft reservation ECS requires; the hard cap is set below when the pool
+		// declares a host reserve.
 		MemoryReservation: aws.Int32(512),
 		PortMappings: []ecstypes.PortMapping{
 			{ContainerPort: aws.Int32(ecsAgentPort), Name: aws.String("agent")},
@@ -3055,6 +3486,16 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 				MountOptions:  e.pool.tmpfsOpts,
 			}},
 		},
+	}
+	// The hard cap. Deliberately on the CONTAINER rather than the task: a task-level
+	// memory limit would also have to cover the Service Connect sidecar ECS injects,
+	// and that sidecar's size is not ours to predict.
+	//
+	// ⚠️ This is part of the task definition's fingerprint, so the first Start after a
+	// deployment that changes the reserve registers a new revision and replaces the
+	// running task — the same thing an image or env change already does.
+	if e.memCapMiB > 0 {
+		container.Memory = aws.Int32(int32(e.memCapMiB))
 	}
 	if e.base.cfg.logGroup != "" {
 		container.LogConfiguration = &ecstypes.LogConfiguration{
@@ -4521,16 +4962,7 @@ func (f *ecsEC2Factory) taskENIsAttached(ctx context.Context, instanceID string)
 	if err != nil {
 		return false, err
 	}
-	for _, r := range out.Reservations {
-		for _, inst := range r.Instances {
-			for _, ni := range inst.NetworkInterfaces {
-				if strings.Contains(aws.ToString(ni.Description), ":ecs:") {
-					return true, nil
-				}
-			}
-		}
-	}
-	return false, nil
+	return instancesHoldTaskENI(out), nil
 }
 
 func (f *ecsEC2Factory) instanceAlive(ctx context.Context, instanceID string) (bool, error) {
