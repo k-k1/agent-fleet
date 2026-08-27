@@ -122,6 +122,10 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, erro
 			return nil, fmt.Errorf("Jira is not connected")
 		}
 		return jiraSearchWorkItems(s.Jira, q.ID, query)
+	case "bitbucket":
+		// ★ 接続の有無は bitbucketAuthHeader が見る（OAuth と API トークンの 2 経路が
+		// あり、「接続済み」の定義がそこにしかない）。
+		return bitbucketSearchWorkItems(s, q.ID, query)
 	default:
 		return nil, fmt.Errorf("unsupported provider: %s", q.Provider)
 	}

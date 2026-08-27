@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   branchForItem,
+  canComment,
   matchWorkItem,
   promptForItem,
   readWorkItems,
@@ -247,6 +248,20 @@ describe("repoForItem", () => {
 
   it("当たらなければ空（起動ハブで選ばせる）", () => {
     expect(repoForItem(item(), "", ["other"])).toBe("");
+  });
+
+  it("Bitbucket の workspace/repo も GitHub と同じ形で当たる", () => {
+    const pr = item({ provider: "bitbucket", kind: "pr", key: "acme/web#7", repo: "acme/web" });
+    expect(repoForItem(pr, "", ["web"])).toBe("web");
+    expect(shortKey(pr.key)).toBe("#7");
+  });
+});
+
+describe("canComment", () => {
+  it("★ 投稿できない provider には報告ボタンを出さない（押した先で必ず断られる）", () => {
+    expect(canComment(item())).toBe(true);
+    expect(canComment(item({ provider: "jira", key: "PROJ-1" }))).toBe(true);
+    expect(canComment(item({ provider: "bitbucket" }))).toBe(false);
   });
 });
 

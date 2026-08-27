@@ -216,6 +216,13 @@ const chrome = spawn(
     "--font-render-hinting=none",
     `--remote-debugging-port=${CDP_PORT}`,
     "--remote-allow-origins=*",
+    // ⚠️ headless は粗いポインタを名乗るので `@media (hover: none)` が当たり、ホバー時
+    // だけ出る操作要素が全行に出た「実際より混んだ絵」になる（docs/80 §80.18.7）。
+    // README のスクショ集を変えないよう既定では入れず、デスクトップの見え方を確かめ
+    // たいときだけ SHOTS_DESKTOP_HOVER=1 で付ける。
+    ...(process.env.SHOTS_DESKTOP_HOVER
+      ? ["--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"]
+      : []),
     `--lang=${LOCALE === "ja" ? "ja-JP" : "en-US"}`,
     "about:blank",
   ],
