@@ -1,7 +1,8 @@
-# 80. 外部の作業項目（GitHub Issue / Jira チケット）を左ペインに出し、そこから始める
+# 80. 外部の作業項目（GitHub Issue / Jira チケット / Bitbucket の PR）を左ペインに出し、そこから始める
 
 - 状態: ✅ **P0〜P2 実装済み**（2026-08-26）＋ **P2.5＝実データを見ての情報設計のやり直し**
-  （2026-08-27・§80.18）。⏸ 残り = **実機目視**（CP と workspace の両方の再ビルドが要る）と P3 以降。
+  （2026-08-27・§80.18）＋ **P2.6＝Bitbucket の Pull Request**（2026-08-27・§80.19）。
+  ⏸ 残り = **実機目視**（CP と workspace の両方の再ビルドが要る）と P3 以降。
   採否と判断は [decisions/0061](decisions/0061-work-item-inbox.md)。
 - ゴール: 人の仕事の起点である**チケット**を左ペインに置き、そこから 1 クリックで
   文脈込みのセッションを立てられるようにする。Workspace が停止していても一覧は見え、
@@ -404,6 +405,7 @@ URL: https://example.atlassian.net/browse/PROJ-123
 | **P1** | **Jira 接続 kind**（email + API トークン）・JQL 保存クエリ・repo マッピング | `connections.go`・`ConnectionsTab`・アダプタ追加 |
 | **P2** ✅ | **報告コメントの下書き → 人が承認して投稿**（GitHub / Jira）＋**ブランチ名テンプレート**（既定 `feature/{key}`・プレビュー付き）＋**起動先ピッカー**（リポジトリ・新規/既存 worktree）。作業グループ自動作成は**不採用**（§80.16-5）、**PR 起票は取り下げ**（§80.10） | `workspace/agent/workitems_comment.go`（新設）・`control-plane/workitems.go`・`features/workitems/{report.ts,WorkItemReportModal.tsx,WorkItemStartModal.tsx}`・`lib/settings.ts` |
 | **P2.5** ✅ | **実データで行の情報設計をやり直す**（§80.18）: 全行で同じメタを落とす・メタが空なら 1 行・更新の相対時刻・既定 10 行 ＋ さらに表示・レール内 1 行の絞り込み・JQL の既定 `ORDER BY updated DESC` | `features/workitems/{read.ts,WorkItemsSection.tsx,workitems.css}`・`workspace/agent/connections_jira.go`・`scripts/shots/fixtures.mjs` |
+| **P2.6** ✅ | **Bitbucket の Pull Request**（§80.19）: 保存クエリの先頭に `workspace[/repo]`・`@me` の展開・`pullrequest` スコープの名指し拒否・読み取りのみ（投稿ボタンは出さない） | `workspace/agent/workitems_bitbucket.go`（新設）・`workitems.go`・`git_remote.go`（`bitbucketGetStatus` 分割）・`control-plane/workitems.go`（provider 集合 1 行）・`features/workitems/{read.ts,WorkItemQueryModal.tsx,WorkItemsSection.tsx}`・`features/settings/{GitTab,tenantGitOAuth}.tsx` |
 | **P3** | webhook 受信・通知・（opt-in の）自動初動 | [25](25-ops-monitoring.md) §4.6 と合流 |
 | **P4** | 汎用アダプタ（API トークンで動く stdio MCP を `mcpreg` の `tools/call` で叩く / URL テンプレ＋JSON 写像） | `internal/mcpreg/` |
 
@@ -723,14 +725,152 @@ Agent → CP → Console の 3 層の DTO を広げる必要があり、実測�
 ⚠️ **ライトモードでも見た**（利用者の常用がこちら）。絞り込みの枠線と「さらに表示」の
 muted 文字はどちらも読める。
 
+## 80.19 Bitbucket の Pull Request（P2.6・実装済み）
+
+3 本目の取得アダプタ。**接続はもうあった**（`tenant_git_oauth` の 3 provider・
+[71](71-tenant-git-oauth.md)）ので、無かったのはアダプタだけ —— しかし
+「保存クエリ 1 本 = provider の検索 1 回」という [ADR 0061](decisions/0061-work-item-inbox.md)
+の土台が、Bitbucket でだけ**そのままでは載らなかった**。
+
+### 80.19.1 ★ Bitbucket に「横断検索」は無い（ここが設計を決めた）
+
+GitHub は `/search/issues`、Jira は JQL で**アカウント横断の 1 本のクエリ**が書ける。
+Bitbucket Cloud API 2.0 で PR を列挙できる経路は、**公式スキーマ
+（`api.bitbucket.org/swagger.json`）に 2 つしか無い**:
+
+| 経路 | 範囲 | 誰の PR か | 要スコープ |
+|---|---|---|---|
+| `/2.0/repositories/{ws}/{repo}/pullrequests` | **リポジトリ 1 つ** | `q` で自由（`reviewers.uuid` / `author.uuid` / `state`） | `pullrequest` |
+| `/2.0/workspaces/{ws}/pullrequests/{user}` | ワークスペース 1 つ | **その人が作った物だけ** | `pullrequest` |
+
+⚠️ **`/2.0/pullrequests/{selected_user}`（アカウント横断）はスキーマに無い。** 実際に
+叩くと 404 が返るが、その 404 は「そんな API は無い」の意味とは限らない ——
+**Bitbucket は認証が要る経路も未認証には同じ 404 で隠す**（`/2.0/user/permissions/repositories`
+が実測で同じ文面を返す）。だから 404 だけを根拠に「無い」と書かず、公式スキーマの
+`paths` を突き合わせて確定させた。
+
+**⛔ 「ワークスペース横断で、自分がレビューアの PR」を 1 本で取る手段は無い。**
+Bitbucket 本家のダッシュボードはそれを出しているが、使っているのは公開 API ではない。
+
+**決定: 保存クエリの先頭に「どこを見るか」を書かせる**（＝利用者の第一候補）。
+
+```
+<workspace>/<repo> [Bitbucket の絞り込み式]   → リポジトリの経路（1 リクエスト）
+<workspace>        [Bitbucket の絞り込み式]   → ワークスペースの経路（自分が作った PR）
+```
+
+これで「1 クエリ = 1 検索」は**崩れない**。そして新しい列も DTO もマイグレーションも
+要らない —— GitHub のクエリは既に `repo:owner/name` を、JQL は `project = X` を
+自分の中に持っている。**「クエリ欄にはその provider のやり方で『どこを』も書く」は
+既存の規則であって、Bitbucket のために作った例外ではない**。
+
+⛔ **却下: リポジトリを N 個舐める。** 1 本の保存クエリが N 回の往復になり、
+`workItemFetchQueries`（1 リクエスト 10 クエリ）× `workItemFetchPerQuery`（1 クエリ 50 件）で
+囲ったはずの予算が、クエリの中身で決まる無限になる。「af の中にクエリ UI を作らない」
+（§80.1）と同じ理由で、af が provider の代わりに検索を組み立て始める道に入る。
+
+### 80.19.2 `@me` —— 無いと肝心のクエリが人に書けない
+
+Bitbucket の絞り込み式には Jira の `currentUser()` も GitHub の `@me` も無く、
+欲しいのは `reviewers.uuid="{b8ceb65c-4e2e-43d3-8a54-fe5f9cd2b3b2}"` という**中括弧つきの
+UUID** である。誰も手元に持っていない値なので、`@me` を接続アカウントの UUID
+（`GET /2.0/user`・`account` スコープ＝接続カードが名前を出すのに既に使っている）へ
+展開する。ワークスペースの経路はパスに UUID が要るので、そこでも同じ値を使う。
+
+キャッシュは **1 組だけ**・Authorization ヘッダをキーにする。OAuth のアクセストークンは
+2 時間ごとに置き換わるので、トークンでキーにした map は無限に伸び、逆にトークンを
+無視したキャッシュは**差し替え後の別アカウントに古い答えを返す**。
+
+### 80.19.3 ★ スコープ: 足りないが、「全員に再認可させる」変更ではない
+
+PR の読み取りには **`pullrequest`**（OAuth）/ **`read:pullrequest:bitbucket`**（API トークン）が
+要る。clone / push のために作られた既存の接続には**入っていない**。
+
+⚠️ Bitbucket は**認可 URL に scope を載せない**（`oauth_bitbucket.go` の authorize URL に
+`scope=` は無い）—— コンシューマの Permissions でチェックした物がそのまま渡り、
+**後から権限を足しても既存トークンには焼かれた古い権限しか無い**。つまり本来なら
+「テナント管理者がアプリを直し、全員が接続し直す」という
+[ADR 0061 決定 13](decisions/0061-work-item-inbox.md)（Jira の 3LO を足したとき）と同じ重さになる。
+
+**そうならないのは、この機能が既定で何も取りに行かないからである。**
+保存クエリを 1 本も作らなければ Bitbucket は 1 回も叩かれない。だから:
+
+- **既存の接続には手を入れない。** 接続時のスコープ検査（`bitbucketConnectCheck`）が
+  必須にするのは今も `read:repository:bitbucket` だけで、`pullrequest` を必須に足すと
+  **clone しかしない人の正常な接続を「不足」と言い出す**＝嘘になる。
+- **足りない人には、足りないと分かる断り方をする。** 403 は
+  「`pullrequest` / `read:pullrequest:bitbucket` が要る・アプリに足すのはテナント管理者・
+  そのあと接続し直す」と名指しで返す。⚠️ ここを generic な「再接続してください」に
+  すると、貼り直しても直らない輪の中に人を置く。
+- 案内は**足す側の画面に置く**: テナント管理の Bitbucket 行（Permissions で何をチェックするか・
+  後から足したら再接続が要ること）と、API トークンの説明（`read:pullrequest:bitbucket` は
+  **任意**であることを明記）。
+
+### 80.19.4 正規化（行に出るまで）
+
+| 欄 | Bitbucket | 備考 |
+|---|---|---|
+| `Kind` | 常に `"pr"` | 既存の枝アイコンがそのまま出る |
+| `Key` | `destination.repository.full_name` + `#id` | GitHub と同型なので `shortKey` が効いて行は `#204` |
+| `State` | `OPEN`→open（`draft:true` は **in_progress**）/ `MERGED`・`DECLINED`・`SUPERSEDED`→done | draft を open にすると「誰かの返事待ち」と読める（GitHub の draft PR と同じ判断） |
+| `Assignee` | **`author.display_name`** | PR に担当者は無い。レビュー待ちの一覧で行ごとに違う唯一の情報が作者で、自分の PR だけのクエリでは全行同じになり `uniformMeta` が自動で落とす（§80.18.2） |
+| `Labels` | **常に空スライス** | Bitbucket の PR にラベルは無い。⚠️ nil は JSON の `null` になり Console が真っ白（§80.17.5） |
+| `Repo` | `destination.repository.full_name` | 起動先の種。fork からの PR でも「取り込む側」を指す |
+| `UpdatedAt` | `updated_on` → **UTC RFC3339** | ⚠️ 実データは `2026-08-24T07:10:55.049604+00:00`。`sortWorkItems` は provider を見ずに**文字列比較**するので、オフセット付きのまま混ぜると GitHub / Jira の行と並んだ瞬間に順序が壊れる |
+
+リクエストは `sort=-updated_on`（50 件で切る以上、どの 50 件かを provider に委ねない・
+決定 15 と同じ理由）と **`fields=` による射影**を必ず付ける。射影は転送量の話だけではない ——
+**PR オブジェクトは本文を丸ごと運んでくる**ので、必要な列だけを名指しすることが
+「本文は預からない」（決定 2）をリクエストの側に書いた形になる。
+
+### 80.19.5 やらなかったこと
+
+- **コメントの投稿（書き戻し）。** `pullrequest:write` が要り、それは §80.19.3 が回避した
+  「全員の再認可」そのもの。一覧を出すために払う値段ではない。**Console 側は bitbucket の
+  行に 💬 を出さない** —— 押した先で必ず断られる操作要素を出さないため。
+- **セッション内で本文を読む道具を指す**（決定 4）。Bitbucket には `gh` にあたる物が
+  コンテナに無いので、最初の指示が指せるのは URL だけである（`wi.prompt_read_generic`）。
+  無い道具の名前を書かないのが要点で、ここは GitHub / Jira より弱いままにした。
+- **Bitbucket の Issue。** ほぼ使われておらず、Bitbucket を使うチームの課題は Jira にある
+  （＝既に対応済みの provider）。要望が出てから。
+
+### 80.19.6 検証（何を実測し、何をスタブで固定したか）
+
+⚠️ **この環境にも CI にも実 Bitbucket アカウントは無い**（Jira と同じ状況）。そこで
+**認証の要らない半分は本物の `api.bitbucket.org` で実測**した（公開リポジトリ
+`atlassian/aui`）:
+
+- 応答の形（`draft` / `state` / `updated_on` の**小数 6 桁 + `+00:00`** / `links.html.href` /
+  `destination.repository.full_name` / `reviewers[].uuid`）
+- `q=reviewers.uuid="{…}"` が効く（303 件）
+- **`q` の中の `state` は既定の OPEN を上書きする**（`q=state="MERGED"` で 4436 件。
+  `q` 無しなら OPEN の 5 件）——「既定と AND される」なら `state="MERGED"` は常に 0 件になり、
+  利用者は理由の分からない空の行を見ることになっていた
+- `sort=-updated_on` と `fields=` が併用できる
+- 文法エラーは **400 ＋ Bitbucket 自身の説明文**（`Invalid filter query expression: …`）→
+  そのまま行に出す（JQL の 400 と同じ扱い）
+- 公式スキーマ `paths` にアカウント横断の PR 経路が**無い**こと（§80.19.1）
+
+**認証が要る半分**（ワークスペースの経路・`@me` の展開・403 のスコープ拒否・401 の
+更新と再試行）は `httptest` のスタブで固定してある。**「af が組み立てる物」までは緑で、
+「Bitbucket が実際にどう答えるか」は利用者の実機が最初の証拠**である。
+
+⚠️ 実測は**この環境の外向き通信が 2 回に 1 回 reset される**中で取った（`curl (35)`）。
+アダプタが `bitbucketGetStatus` の再試行に乗っているのはそのためで、ここは飾りではない。
+
 ## 80.16 未決
 
 1. **クエリの UI をどこに置くか。** 接続カード内 / セクションの歯車 / 設定タブ。P0 では
    セクションの歯車に最小フォーム（ラベル＋クエリ＋既定リポジトリ）で足りると見ている。
 2. **チーム共有のクエリ**（テナント管理者が配る「このチームの未対応」）。P1 以降。
    [48](48-mcp-registry.md) のテナントスコープ配布と同型にできる。
-3. **PR を項目として出すか。** GitHub では Issue と PR が同じ検索に乗る。レビュー待ちの PR は
-   「始める」対象として自然だが、行数が増える。既定 off で始める。
+3. **✅ PR を項目として出すか（P2.6 で決着）。** 結論は「**出す。ただし on/off の設定は作らない**」。
+   起票時の「既定 off で始める」は設定項目を 1 つ増やす話に見えていたが、**保存クエリを
+   作ったかどうかが既に既定 off そのもの**である —— GitHub でも `is:pr` を書かなければ PR は
+   出ないし、Bitbucket の provider は 1 本もクエリが無ければ 1 回も叩かれない。
+   「行数が増える」も §80.18.4 の既定 10 行 ＋ 折りたたみ ＋ レール内絞り込みで前提が変わった。
+   ★ **「PR は既にセッションがある作業の続きでは」という懸念は、自分の PR にしか当たらない**:
+   人の PR のレビューは、こちら側にセッションがまだ無い作業である（§80.19）。
 4. **通知**。アサインされた瞬間に通知するかは、通知センターの語彙（流れ物 / バッジ）を
    [77](77-member-handoff.md) §77.9 に合わせて決める。P3。
 5. **✅ 作業グループの自動作成（P2 で不採用）。** 利用者の判断で「グループは分けない」に決着。
