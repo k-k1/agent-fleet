@@ -712,6 +712,7 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/git/github/oauth/poll", cfg.handleGithubDevicePoll)
 	mux.HandleFunc("GET /api/connections/git/bitbucket/oauth/start", cfg.handleBitbucketOAuthStart)
 	mux.HandleFunc("GET /api/oauth/bitbucket/callback", cfg.handleBitbucketOAuthCallback)
+	mux.HandleFunc("GET /api/oauth/jira/callback", cfg.handleJiraOAuthCallback)
 	// Which OAuth buttons this member's tenant can offer (docs/71 §71.4). CP-native and
 	// separate from GET /api/connections on purpose: that one is proxied to the Agent
 	// and answers 502 while the workspace is stopped, which is exactly when this tab is
@@ -724,6 +725,7 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	exemptPrefix("/internal/")
 	gob := newGitOAuthBridgeAPI(cfg.mgr)
 	mux.HandleFunc("POST /internal/git-oauth/bitbucket/refresh", gob.withGitOAuthToken(gob.refreshBitbucket))
+	mux.HandleFunc("POST /internal/git-oauth/jira/refresh", gob.withGitOAuthToken(gob.refreshJira))
 	mux.HandleFunc("POST /api/connections/claude/start", restLogin)
 	mux.HandleFunc("POST /api/connections/claude/complete", restLogin)
 	mux.HandleFunc("DELETE /api/connections/claude", rest)
@@ -775,6 +777,11 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// 保存/削除はここに 1 本ずつ要る（CP は catch-all ではなく明示許可リスト）。
 	mux.HandleFunc("PUT /api/connections/jira", rest)
 	mux.HandleFunc("DELETE /api/connections/jira", rest)
+	// OAuth（docs/80 §80.17）: start は CP が認可 URL を組み、callback は CP が受けて
+	// トークンを Agent へ渡す（Bitbucket と同型・oauth_jira.go）。site の選択だけは
+	// Console → Agent のプロキシ。
+	mux.HandleFunc("POST /api/connections/jira/oauth/start", cfg.handleJiraOAuthStart)
+	mux.HandleFunc("PUT /api/connections/jira/site", rest)
 	mux.HandleFunc("PUT /api/connections/pagerduty", rest)
 	mux.HandleFunc("DELETE /api/connections/pagerduty", rest)
 	mux.HandleFunc("PUT /api/connections/grafana", rest)

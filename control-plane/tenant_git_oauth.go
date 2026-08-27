@@ -32,10 +32,22 @@ import (
 const (
 	gitOAuthGitHub    = "github"
 	gitOAuthBitbucket = "bitbucket"
+	// gitOAuthJira is Jira Cloud (docs/80 §80.17). ⚠️ It is not a git host, so it sits
+	// oddly under a table called tenant_git_oauth — but what the table actually models
+	// is "an OAuth app this tenant registered, whose secret stays in the CP while the
+	// member's token lives in their workspace", and Jira needs exactly that. A parallel
+	// table would duplicate the row, the admin API, the availability endpoint and the
+	// refresh bridge to gain a better name.
+	//
+	// ⚠️ It also cannot ride on the Bitbucket app even though both are Atlassian: the
+	// authorization servers and the app registries are different (bitbucket.org's OAuth
+	// consumer vs an Atlassian 3LO app on developer.atlassian.com), so one client_id
+	// cannot authorize the other's scopes.
+	gitOAuthJira = "jira"
 )
 
 // gitOAuthProviders is the closed set, in display order.
-var gitOAuthProviders = []string{gitOAuthGitHub, gitOAuthBitbucket}
+var gitOAuthProviders = []string{gitOAuthGitHub, gitOAuthBitbucket, gitOAuthJira}
 
 // gitOAuthNeedsSecret reports whether the provider's flow needs a client_secret.
 //
@@ -43,7 +55,9 @@ var gitOAuthProviders = []string{gitOAuthGitHub, gitOAuthBitbucket}
 // client_id alone — there is no secret to store, and asking for one would make every
 // GitHub row look half-finished. Bitbucket's is the authorization code grant, whose
 // token exchange is Basic-authenticated with key:secret.
-func gitOAuthNeedsSecret(provider string) bool { return provider == gitOAuthBitbucket }
+func gitOAuthNeedsSecret(provider string) bool {
+	return provider == gitOAuthBitbucket || provider == gitOAuthJira
+}
 
 // validGitOAuthProvider keeps the path segment inside the closed set.
 func validGitOAuthProvider(p string) bool {

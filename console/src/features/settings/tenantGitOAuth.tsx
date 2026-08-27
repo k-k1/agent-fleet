@@ -28,7 +28,7 @@ interface GitOAuthApp {
   redirect_uri?: string;
 }
 
-const PROVIDER_LABEL: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket" };
+const PROVIDER_LABEL: Record<string, string> = { github: "GitHub", bitbucket: "Bitbucket", jira: "Jira" };
 
 // 登録の入口。「client_id をどこで取るのか」が分からないと詰まるので、行き先を出す。
 // ★ Bitbucket の OAuth コンシューマはワークスペース配下（/{workspace}/workspace/
@@ -37,6 +37,9 @@ const PROVIDER_LABEL: Record<string, string> = { github: "GitHub", bitbucket: "B
 const REGISTER_URL: Record<string, string> = {
   github: "https://github.com/settings/developers",
   bitbucket: "https://support.atlassian.com/bitbucket-cloud/docs/use-oauth-on-bitbucket-cloud/",
+  // ⚠️ Jira は Bitbucket と同じ Atlassian でも登録先が別（3LO アプリは Developer
+  // Console）。Bitbucket のコンシューマを流用することはできない（docs/80 §80.17）。
+  jira: "https://developer.atlassian.com/console/myapps/",
 };
 
 export function TenantGitOAuthView({ slug }: { slug: string }) {
@@ -146,6 +149,7 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
           <p className="admin-hint warn">{tr("tenant.git_oauth_no_base_url")}</p>
         ))}
       {app.provider === "github" && <p className="admin-hint">{tr("tenant.git_oauth_gh_device")}</p>}
+      {app.provider === "jira" && <p className="admin-hint">{tr("tenant.git_oauth_jira_scopes")}</p>}
       <p className="admin-hint">
         {tr("tenant.git_oauth_where")}{" "}
         <a href={REGISTER_URL[app.provider]} target="_blank" rel="noopener noreferrer">

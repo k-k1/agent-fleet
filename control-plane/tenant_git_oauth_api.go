@@ -190,11 +190,16 @@ func (a tenantGitOAuthAPI) availability(w http.ResponseWriter, r *http.Request, 
 // gitOAuthRedirectURI is the callback the tenant has to register with the provider, or
 // "" when the flow has none. One definition, used by the admin form and by the flow
 // itself (oauth_bitbucket.go), so the value shown can never drift from the value sent.
+// (GitHub uses the device flow and has none; Bitbucket and Jira are code grants.)
 func (m *manager) gitOAuthRedirectURI(provider string) string {
-	if provider != gitOAuthBitbucket || m.publicBaseURL == "" {
+	if m.publicBaseURL == "" {
 		return ""
 	}
-	return strings.TrimRight(m.publicBaseURL, "/") + "/api/oauth/bitbucket/callback"
+	switch provider {
+	case gitOAuthBitbucket, gitOAuthJira:
+		return strings.TrimRight(m.publicBaseURL, "/") + "/api/oauth/" + provider + "/callback"
+	}
+	return ""
 }
 
 func boolWord(b bool) string {
