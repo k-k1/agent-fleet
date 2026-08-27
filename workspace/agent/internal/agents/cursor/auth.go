@@ -61,7 +61,7 @@ func probeStatus() statusOut {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin(), disableAutoUpdateFlag, "status", "--format", "json").Output()
+	out, err := probeCmd(ctx, disableAutoUpdateFlag, "status", "--format", "json").Output()
 	if err != nil {
 		// stale-if-error: 一時失敗で接続状態を落とさない（前回値を維持）。
 		return statusVal
@@ -130,7 +130,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	loginFlows.Reap()
 	cmd := exec.Command(bin(), disableAutoUpdateFlag, "login")
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "NO_OPEN_BROWSER=1")
+	cmd.Env = EnvWithoutCI(append(os.Environ(), "TERM=xterm-256color", "NO_OPEN_BROWSER=1")) // CI は外す（ci_env.go）
 	f, err := agents.StartFlow(cmd)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
@@ -187,7 +187,7 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	// logout はネットワークを叩き得る — タイムアウト無しだとハンドラが無期限に塞がる。
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	_ = exec.CommandContext(ctx, bin(), disableAutoUpdateFlag, "logout").Run()
+	_ = probeCmd(ctx, disableAutoUpdateFlag, "logout").Run()
 	invalidateStatus()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "cursor"})
 }
@@ -197,7 +197,7 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 func loggedInFresh() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin(), disableAutoUpdateFlag, "status", "--format", "json").Output()
+	out, err := probeCmd(ctx, disableAutoUpdateFlag, "status", "--format", "json").Output()
 	if err != nil {
 		return false
 	}
