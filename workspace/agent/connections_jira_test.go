@@ -75,6 +75,14 @@ func TestParseJiraSearchIssues(t *testing.T) {
 	if rows[2].State != "open" {
 		t.Errorf("row3 = %q, want open", rows[2].State)
 	}
+	// ★ labels を持たない課題でも nil を載せない。nil スライスは JSON の null になり、
+	// 受け手が配列として扱えない（Console を真っ白にした形と同じ）。
+	if rows[2].Labels == nil {
+		t.Error("a label-less issue produced a nil slice, which marshals as null")
+	}
+	if enc, _ := json.Marshal(rows[2]); strings.Contains(string(enc), `"labels":null`) {
+		t.Errorf("row wire carries a null array: %s", enc)
+	}
 	// 本文（description）は取りにも行かないし返しもしない（ADR 0061 決定 2）。
 	enc, _ := json.Marshal(rows)
 	if strings.Contains(string(enc), `"description"`) {
