@@ -583,15 +583,14 @@ button.wu-manage {
 /* ---- left pane ---- */
 
 /* ---- starting dialog (WsStartingDialog — docs/35 §35.9-9) ---- */
-.ws-starting .ws-starting-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: min(440px, 80vw);
-}
+/* 縦並び・間隔・左右の余白は共有の .ui-modal-body が持つ（min-width も要らない —
+   .ui-modal が幅を固定している）。 */
 .ws-starting-line {
   display: flex;
-  align-items: center;
+  /* ★ center ではなく flex-start。見出しは 1 行に収まる保証が無く（日本語の長い
+     フェーズ名・狭い画面）、2 行になった瞬間に center だとスピナーが行間に浮く。
+     1 行目に乗せるのが正で、行数に依らない。 */
+  align-items: flex-start;
   gap: 10px;
   font-size: 14px;
   color: var(--fg);
@@ -600,6 +599,8 @@ button.wu-manage {
   font-size: 16px;
   opacity: 0.85;
   flex: 0 0 auto;
+  /* 16px のアイコンを 21px の行ボックスの中で目の高さに合わせる。 */
+  margin-top: 3px;
 }
 .ws-starting-phase {
   font-family: var(--mono, ui-monospace, monospace);

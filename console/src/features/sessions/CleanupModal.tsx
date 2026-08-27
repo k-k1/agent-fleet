@@ -372,163 +372,167 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
 
   return (
     <Modal title={tr("clean.title")} onClose={onClose} className="clean-modal">
-      <p className="clean-subtitle">{tr("clean.subtitle")}</p>
+      {/* ★ 共有の ui-modal-body に載せる。ui-modal 自身に padding は無く（見出しが
+          自分で持つ形）、直に子を置くと本文だけが枠に貼りつく。 */}
+      <div className="ui-modal-body">
+        <p className="clean-subtitle">{tr("clean.subtitle")}</p>
 
-      <div className="clean-tabs" role="tablist">
-        <button
-          role="tab"
-          aria-selected={tab === "candidates"}
-          className={"clean-tab" + (tab === "candidates" ? " is-active" : "")}
-          onClick={() => setTab("candidates")}
-        >
-          {tr("clean.tab_candidates")}
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === "archives"}
-          className={"clean-tab" + (tab === "archives" ? " is-active" : "")}
-          onClick={() => setTab("archives")}
-        >
-          {tr("clean.tab_archives")}
-        </button>
-        <span className="clean-tabs-spacer" />
-        <IconButton
-          icon="refresh"
-          label={tr("clean.reload")}
-          onClick={() => {
-            void loadCandidates();
-            void loadArchives();
-          }}
-        />
+        <div className="clean-tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={tab === "candidates"}
+            className={"clean-tab" + (tab === "candidates" ? " is-active" : "")}
+            onClick={() => setTab("candidates")}
+          >
+            {tr("clean.tab_candidates")}
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === "archives"}
+            className={"clean-tab" + (tab === "archives" ? " is-active" : "")}
+            onClick={() => setTab("archives")}
+          >
+            {tr("clean.tab_archives")}
+          </button>
+          <span className="clean-tabs-spacer" />
+          <IconButton
+            icon="refresh"
+            label={tr("clean.reload")}
+            onClick={() => {
+              void loadCandidates();
+              void loadArchives();
+            }}
+          />
+        </div>
+
+        {tab === "candidates" && (
+          <div className="clean-body">
+            {items === null ? (
+              <div className="clean-empty">{tr("clean.loading")}</div>
+            ) : items.length === 0 ? (
+              <div className="clean-empty">{tr("clean.empty")}</div>
+            ) : (
+              <>
+                <div className="clean-toolbar">
+                  <Button variant="ghost" onClick={selectAllSafe} disabled={busy}>
+                    {tr("clean.select_all_safe")}
+                  </Button>
+                  <Button variant="ghost" onClick={clearSelection} disabled={busy || checked.size === 0}>
+                    {tr("clean.clear_selection")}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    icon={allCollapsed ? "expand-all" : "collapse-all"}
+                    title={allCollapsed ? tr("clean.expand_all") : tr("clean.collapse_all")}
+                    onClick={toggleAll}
+                  >
+                    {allCollapsed ? tr("clean.expand_all") : tr("clean.collapse_all")}
+                  </Button>
+                  <span className="clean-toolbar-spacer" />
+                  {selectedCount > 0 && (
+                    <span className="clean-selected">{tr("clean.selected_n", { count: selectedCount })}</span>
+                  )}
+                  <Button variant="danger" onClick={runSelected} disabled={busy || selectedCount === 0}>
+                    {tr("clean.run_selected")}
+                  </Button>
+                </div>
+
+                <section className="clean-stage">
+                  <div className="clean-stage-head">
+                    <span className="clean-stage-title">{tr("clean.stage1_title")}</span>
+                    <span className="clean-toolbar-spacer" />
+                    <Button
+                      small
+                      disabled={busy || stage1Targets.length === 0}
+                      title={tr("clean.stage1_run_title")}
+                      onClick={() => void runStage1()}
+                    >
+                      {tr("clean.stage1_run")}
+                      {stage1Targets.length ? tr("common.paren", { v: stage1Targets.length }) : ""}
+                    </Button>
+                  </div>
+                  {repos1.length === 0 ? (
+                    <p className="clean-stage-empty">{tr("clean.stage1_empty")}</p>
+                  ) : (
+                    renderTree(repos1, "1|")
+                  )}
+                </section>
+
+                <section className="clean-stage">
+                  <div className="clean-stage-head">
+                    <span className="clean-stage-title">{tr("clean.stage2_title")}</span>
+                    <span className="clean-toolbar-spacer" />
+                    <Button
+                      small
+                      variant="danger"
+                      disabled={busy || stage2Safe.length === 0}
+                      title={tr("clean.stage2_run_title")}
+                      onClick={() => void runStage2()}
+                    >
+                      {tr("clean.stage2_run")}
+                      {stage2Safe.length ? tr("common.paren", { v: stage2Safe.length }) : ""}
+                    </Button>
+                  </div>
+                  {repos2.length === 0 ? (
+                    <p className="clean-stage-empty">{tr("clean.stage2_empty")}</p>
+                  ) : (
+                    renderTree(repos2, "2|")
+                  )}
+                </section>
+
+                {shelfCount > 0 && (
+                  <div className="clean-shelf">
+                    <Icon name="archive" />
+                    <span className="clean-shelf-text">{tr("clean.shelf_n", { count: shelfCount })}</span>
+                    <Button small variant="ghost" onClick={openShelf}>
+                      {tr("clean.open_shelf")}
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {tab === "archives" && (
+          <div className="clean-body">
+            {archives === null ? (
+              <div className="clean-empty">{tr("clean.loading")}</div>
+            ) : archives.length === 0 ? (
+              <div className="clean-empty">{tr("clean.archives_empty")}</div>
+            ) : (
+              <ul className="clean-list">
+                {archives.map((a) => (
+                  <li key={a.id} className="clean-row clean-archive-row">
+                    {/* at は Agent の RFC3339(UTC) — 生加工では 9 時間ずれるのでロケール日時へ。
+                        at 欠落時の id は日時として不正なので fmtDateTime がそのまま返す。 */}
+                    <span className="clean-arch-when">{fmtDateTime(a.at || a.id, DATETIME_FULL)}</span>
+                    <span className="clean-arch-what">
+                      {a.reason === "delete_branch"
+                        ? tr("clean.archive_reason_delete_branch")
+                        : tr("clean.archive_reason_delete_session")}
+                      {a.sessions && a.sessions.length > 0
+                        ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
+                        : ""}
+                      {a.branches && a.branches.length > 0
+                        ? " · " + tr("clean.archive_branches_n", { count: a.branches.length })
+                        : ""}
+                    </span>
+                    <span className="clean-arch-actions">
+                      <Button variant="ghost" onClick={() => void restore(a.id)} disabled={busy}>
+                        {tr("clean.restore")}
+                      </Button>
+                      <Button variant="danger" onClick={() => void purge(a.id)} disabled={busy}>
+                        {tr("clean.purge")}
+                      </Button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
-
-      {tab === "candidates" && (
-        <div className="clean-body">
-          {items === null ? (
-            <div className="clean-empty">{tr("clean.loading")}</div>
-          ) : items.length === 0 ? (
-            <div className="clean-empty">{tr("clean.empty")}</div>
-          ) : (
-            <>
-              <div className="clean-toolbar">
-                <Button variant="ghost" onClick={selectAllSafe} disabled={busy}>
-                  {tr("clean.select_all_safe")}
-                </Button>
-                <Button variant="ghost" onClick={clearSelection} disabled={busy || checked.size === 0}>
-                  {tr("clean.clear_selection")}
-                </Button>
-                <Button
-                  variant="ghost"
-                  icon={allCollapsed ? "expand-all" : "collapse-all"}
-                  title={allCollapsed ? tr("clean.expand_all") : tr("clean.collapse_all")}
-                  onClick={toggleAll}
-                >
-                  {allCollapsed ? tr("clean.expand_all") : tr("clean.collapse_all")}
-                </Button>
-                <span className="clean-toolbar-spacer" />
-                {selectedCount > 0 && (
-                  <span className="clean-selected">{tr("clean.selected_n", { count: selectedCount })}</span>
-                )}
-                <Button variant="danger" onClick={runSelected} disabled={busy || selectedCount === 0}>
-                  {tr("clean.run_selected")}
-                </Button>
-              </div>
-
-              <section className="clean-stage">
-                <div className="clean-stage-head">
-                  <span className="clean-stage-title">{tr("clean.stage1_title")}</span>
-                  <span className="clean-toolbar-spacer" />
-                  <Button
-                    small
-                    disabled={busy || stage1Targets.length === 0}
-                    title={tr("clean.stage1_run_title")}
-                    onClick={() => void runStage1()}
-                  >
-                    {tr("clean.stage1_run")}
-                    {stage1Targets.length ? tr("common.paren", { v: stage1Targets.length }) : ""}
-                  </Button>
-                </div>
-                {repos1.length === 0 ? (
-                  <p className="clean-stage-empty">{tr("clean.stage1_empty")}</p>
-                ) : (
-                  renderTree(repos1, "1|")
-                )}
-              </section>
-
-              <section className="clean-stage">
-                <div className="clean-stage-head">
-                  <span className="clean-stage-title">{tr("clean.stage2_title")}</span>
-                  <span className="clean-toolbar-spacer" />
-                  <Button
-                    small
-                    variant="danger"
-                    disabled={busy || stage2Safe.length === 0}
-                    title={tr("clean.stage2_run_title")}
-                    onClick={() => void runStage2()}
-                  >
-                    {tr("clean.stage2_run")}
-                    {stage2Safe.length ? tr("common.paren", { v: stage2Safe.length }) : ""}
-                  </Button>
-                </div>
-                {repos2.length === 0 ? (
-                  <p className="clean-stage-empty">{tr("clean.stage2_empty")}</p>
-                ) : (
-                  renderTree(repos2, "2|")
-                )}
-              </section>
-
-              {shelfCount > 0 && (
-                <div className="clean-shelf">
-                  <Icon name="archive" />
-                  <span className="clean-shelf-text">{tr("clean.shelf_n", { count: shelfCount })}</span>
-                  <Button small variant="ghost" onClick={openShelf}>
-                    {tr("clean.open_shelf")}
-                  </Button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {tab === "archives" && (
-        <div className="clean-body">
-          {archives === null ? (
-            <div className="clean-empty">{tr("clean.loading")}</div>
-          ) : archives.length === 0 ? (
-            <div className="clean-empty">{tr("clean.archives_empty")}</div>
-          ) : (
-            <ul className="clean-list">
-              {archives.map((a) => (
-                <li key={a.id} className="clean-row clean-archive-row">
-                  {/* at は Agent の RFC3339(UTC) — 生加工では 9 時間ずれるのでロケール日時へ。
-                      at 欠落時の id は日時として不正なので fmtDateTime がそのまま返す。 */}
-                  <span className="clean-arch-when">{fmtDateTime(a.at || a.id, DATETIME_FULL)}</span>
-                  <span className="clean-arch-what">
-                    {a.reason === "delete_branch"
-                      ? tr("clean.archive_reason_delete_branch")
-                      : tr("clean.archive_reason_delete_session")}
-                    {a.sessions && a.sessions.length > 0
-                      ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
-                      : ""}
-                    {a.branches && a.branches.length > 0
-                      ? " · " + tr("clean.archive_branches_n", { count: a.branches.length })
-                      : ""}
-                  </span>
-                  <span className="clean-arch-actions">
-                    <Button variant="ghost" onClick={() => void restore(a.id)} disabled={busy}>
-                      {tr("clean.restore")}
-                    </Button>
-                    <Button variant="danger" onClick={() => void purge(a.id)} disabled={busy}>
-                      {tr("clean.purge")}
-                    </Button>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
     </Modal>
   );
 }
