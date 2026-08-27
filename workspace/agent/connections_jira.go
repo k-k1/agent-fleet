@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -348,7 +349,7 @@ func jiraAccount(c *secrets.JiraCreds) (string, error) {
 // provider look broken.
 func jiraSearchWorkItems(c *secrets.JiraCreds, queryID, jql string) ([]workItemOut, error) {
 	fields := "summary,status,assignee,labels,updated"
-	q := "?jql=" + url.QueryEscape(jql) + "&maxResults=" + fmt.Sprint(workItemFetchPerQuery) + "&fields=" + url.QueryEscape(fields)
+	q := "?jql=" + url.QueryEscape(jiraOrderedJQL(jql)) + "&maxResults=" + fmt.Sprint(workItemFetchPerQuery) + "&fields=" + url.QueryEscape(fields)
 	base := jiraAPIBase(c)
 	body, err := jiraGet(c, base+"/rest/api/3/search/jql"+q)
 	if isJiraNotFound(err) {
@@ -359,6 +360,28 @@ func jiraSearchWorkItems(c *secrets.JiraCreds, queryID, jql string) ([]workItemO
 	}
 	return parseJiraSearchIssues(body, c.Site, queryID)
 }
+
+// jiraOrderedJQL appends `ORDER BY updated DESC` to a query that does not order itself
+// (docs/80 §80.18.6).
+//
+// ★ Because the fetch is capped at workItemFetchPerQuery, an unordered JQL means WHICH
+// 50 rows survive is up to Jira. The rail says "the newest N" — the GitHub adapter passes
+// sort=updated&order=desc for exactly this reason — so an arbitrary cut would make the
+// rail lie. A user-written ORDER BY is left alone: they said what they wanted.
+func jiraOrderedJQL(jql string) string {
+	q := strings.TrimSpace(jql)
+	if q == "" {
+		return q
+	}
+	// "ORDER BY" は JQL のどこにでも書けるわけではなく末尾だけなので、大小文字と
+	// 空白の揺れだけ吸って探せば足りる。
+	if jiraOrderBy.MatchString(q) {
+		return q
+	}
+	return q + " ORDER BY updated DESC"
+}
+
+var jiraOrderBy = regexp.MustCompile(`(?i)\border\s+by\b`)
 
 type jiraHTTPError struct {
 	code int

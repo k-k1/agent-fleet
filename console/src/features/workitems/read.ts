@@ -119,6 +119,100 @@ export function sortWorkItems(items: WorkItem[]): WorkItem[] {
   });
 }
 
+/** How many rows the rail draws before folding, and the threshold above which the
+ * one-line filter appears (docs/80 §80.18.4).
+ *
+ * ★ The fold is a DISPLAY decision, not a fetch one: the stopped rail draws the CP cache
+ * and cannot go and get "more" — going would mean waking the Workspace to render a list,
+ * which ADR 0061 decision 1 forbids. So the payload stays whole and the section folds. */
+export const RAIL_VISIBLE = 10;
+
+/** Which meta fields carry no information for a given query's rows (docs/80 §80.18.2).
+ *
+ * ★ The bug this fixes: a Jira query of `assignee = currentUser()` put the SAME
+ * `@display name` on all 41 rows — 41 second lines that say one thing, paid for by
+ * ellipsising the titles. The rule is not "hide me", it is **a value every row shares is
+ * not row information**; that also covers a team query where 40 rows happen to be one
+ * colleague, and needs nothing from the server (the stopped rail has no idea who "me" is).
+ *
+ * Scoped per query: two saved queries in one rail must not cancel each other's meta out.
+ * A query with a single row is left alone (one row cannot be repetitive). */
+export function uniformMeta(items: WorkItem[]): Record<string, { repo: boolean; assignee: boolean }> {
+  const seen: Record<string, { repo: Set<string>; assignee: Set<string>; n: number }> = {};
+  for (const it of items) {
+    const g = (seen[it.queryId] ||= { repo: new Set(), assignee: new Set(), n: 0 });
+    g.n++;
+    if (it.repo) g.repo.add(it.repo);
+    if (it.assignee) g.assignee.add(it.assignee);
+  }
+  const out: Record<string, { repo: boolean; assignee: boolean }> = {};
+  for (const [q, g] of Object.entries(seen)) {
+    out[q] = { repo: g.n > 1 && g.repo.size <= 1, assignee: g.n > 1 && g.assignee.size <= 1 };
+  }
+  return out;
+}
+
+/** Rail filter: a substring search over what the row is ABOUT (docs/80 §80.18.4).
+ *
+ * ★ Not a query. It never reaches the provider, is never saved, has no operators and does
+ * not reorder — it only helps the eye find one row among 41. Assignee and repo are matched
+ * even when `uniformMeta` hid them from the row: what was dropped is the rendering, not
+ * the data. */
+export function matchWorkItem(item: WorkItem, needle: string): boolean {
+  const q = needle.trim().toLowerCase();
+  if (!q) return true;
+  const hay = [item.key, item.title, item.assignee, item.repo, ...item.labels].join(" ").toLowerCase();
+  return q.split(/\s+/).every((w) => hay.includes(w));
+}
+
+/** Relative "last updated" for the head line (docs/80 §80.18.2). Gives the sort order a
+ * visible reason and makes a three-month-old ticket obvious; the absolute stamp stays in
+ * the row's tooltip. Coarse on purpose — this is 4 characters at the end of a rail row,
+ * not a timestamp. */
+export function relTime(iso: string, now = Date.now()): string {
+  if (!iso) return "";
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "";
+  const sec = Math.max(0, Math.round((now - ms) / 1000));
+  if (sec < 60) return t("wi.rel_now");
+  const min = Math.round(sec / 60);
+  if (min < 60) return t("wi.rel_min", { n: min });
+  const hour = Math.round(min / 60);
+  if (hour < 24) return t("wi.rel_hour", { n: hour });
+  const day = Math.round(hour / 24);
+  if (day < 7) return t("wi.rel_day", { n: day });
+  if (day < 30) return t("wi.rel_week", { n: Math.round(day / 7) });
+  if (day < 365) return t("wi.rel_month", { n: Math.round(day / 30) });
+  return t("wi.rel_year", { n: Math.floor(day / 365) });
+}
+
+/** A row is "stale" once it has not moved for a day. */
+const RAIL_STALE_MS = 24 * 3600_000;
+
+/** What the row's right edge says about age — "" for anything touched today.
+ *
+ * ★ Measured, not assumed (docs/80 §80.18.2): at the default rail width the title gets
+ * ~130px and this chip takes 38px of it. Spending a quarter of the title to say 「3時間前」
+ * on the freshest rows re-commits the very sin this pass is fixing — and the list is
+ * already sorted newest-first, so for the top rows the position says it. What position
+ * canNOT say is "this one has been sitting for three months", so the chip appears exactly
+ * there. Same rule as the meta line: shown when it carries information, gone when it does
+ * not. The exact stamp stays in the tooltip either way. */
+export function railWhen(iso: string, now = Date.now()): string {
+  if (!iso) return "";
+  const ms = new Date(iso).getTime();
+  if (Number.isNaN(ms) || now - ms < RAIL_STALE_MS) return "";
+  return relTime(iso, now);
+}
+
+/** Full local stamp for the row's tooltip — `relTime` is deliberately coarse, so the exact
+ * value has to stay reachable somewhere. */
+export function fullLocal(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
 /** State → the rail's existing tone vocabulary (same words the session chips use). */
 export function stateTone(state: string): "ok" | "warn" | "muted" {
   switch (state) {

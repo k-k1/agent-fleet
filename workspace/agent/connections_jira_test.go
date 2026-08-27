@@ -490,3 +490,25 @@ func TestJiraRefreshIsSerializedAndNotRepeated(t *testing.T) {
 		t.Errorf("expiry not moved forward: %d", after.Jira.Expiry)
 	}
 }
+
+// docs/80 §80.18.6 — 取得は 1 クエリ 50 件で切るので、並び順が無い JQL では
+// 「どの 50 件が残るか」が Jira 任せになる。レールは「新しい順の上位 N 件」を
+// 名乗っているので、そこを不定にしたままにはできない。
+func TestJiraOrderedJQL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"assignee = currentUser() AND statusCategory != Done",
+			"assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"},
+		// 利用者が書いた並び順はそのまま（大小文字・空白の揺れも同じ扱い）。
+		{"project = G3M ORDER BY priority DESC", "project = G3M ORDER BY priority DESC"},
+		{"project = G3M order by created", "project = G3M order by created"},
+		{"project = G3M ORDER   BY created", "project = G3M ORDER   BY created"},
+		// 語の一部に order を含むだけの JQL は「並び順あり」ではない。
+		{`summary ~ "reorder"`, `summary ~ "reorder" ORDER BY updated DESC`},
+		{"  ", ""},
+	}
+	for _, c := range cases {
+		if got := jiraOrderedJQL(c.in); got != c.want {
+			t.Errorf("jiraOrderedJQL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
