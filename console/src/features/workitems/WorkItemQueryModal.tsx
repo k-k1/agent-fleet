@@ -107,86 +107,90 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
 
   return (
     <Modal title={tr("wi.queries")} onClose={onClose} className="wi-qmodal">
-      <p className="wi-qhelp">{tr("wi.queries_help")}</p>
-      {queries.length > 0 && (
-        <ul className="wi-qlist">
-          {queries.map((q) => (
-            <li className={"wi-qrow" + (q.enabled ? "" : " off")} key={q.id}>
-              <div className="wi-qinfo">
-                <div className="wi-qlabel">
-                  <span className="wi-qprov">{q.provider}</span>
-                  {q.label}
+      {/* ★ 中身は ui-modal-body に載せる。ui-modal 自身に padding は無く（見出しが
+          自分で持つ形）、直に子を置くと本文だけが枠に貼りつく。 */}
+      <div className="ui-modal-body">
+        <p className="wi-qhelp">{tr("wi.queries_help")}</p>
+        {queries.length > 0 && (
+          <ul className="wi-qlist">
+            {queries.map((q) => (
+              <li className={"wi-qrow" + (q.enabled ? "" : " off")} key={q.id}>
+                <div className="wi-qinfo">
+                  <div className="wi-qlabel">
+                    <span className="wi-qprov">{q.provider}</span>
+                    {q.label}
+                  </div>
+                  <code className="wi-qquery">{q.query}</code>
+                  {q.repoHint && <span className="wi-qhint">{tr("wi.repo_hint_is", { repo: q.repoHint })}</span>}
+                  {q.lastError && <div className="wi-qerr">{q.lastError}</div>}
                 </div>
-                <code className="wi-qquery">{q.query}</code>
-                {q.repoHint && <span className="wi-qhint">{tr("wi.repo_hint_is", { repo: q.repoHint })}</span>}
-                {q.lastError && <div className="wi-qerr">{q.lastError}</div>}
-              </div>
-              <IconButton icon={q.enabled ? "eye" : "eye-closed"} label={tr(q.enabled ? "wi.query_disable" : "wi.query_enable")} onClick={() => void toggle(q)} />
-              <IconButton icon="trash" label={tr("common.delete")} onClick={() => void remove(q)} />
-            </li>
-          ))}
-        </ul>
-      )}
-      {/* ブランチ名テンプレート（docs/80 P2）。プレビューを添えるのは、{slug} が
-          日本語タイトルで空になる（＝結果が feature/issue-45 になる）ことが、
-          説明文よりも 1 行の実例で伝わるから。 */}
-      <div className="wi-qbranch">
-        <label>
-          <span>{tr("wi.branch_template")}</span>
-          <input
-            value={settings.workItemBranchTemplate}
-            placeholder={DEFAULT_BRANCH_TEMPLATE}
-            spellCheck={false}
-            onChange={(e) => setSetting("workItemBranchTemplate", e.target.value)}
-          />
-        </label>
-        <p className="wi-qhint">
-          {tr("wi.branch_preview", {
-            branch: branchForItem({ key: "acme/web#45", title: "Fix the empty list" }, settings.workItemBranchTemplate),
-            // i18n-exempt: 非 ASCII のタイトル見本そのもの（訳すと例が例でなくなる・docs/28 §4）
-            branch2: branchForItem({ key: "PROJ-123", title: "ログイン後に一覧が空になる" }, settings.workItemBranchTemplate),
-          })}
-        </p>
-      </div>
-      <div className="wi-qform">
-        <label>
-          <span>{tr("wi.query_provider")}</span>
-          <select value={provider} onChange={(e) => pickProvider(e.target.value)}>
-            <option value="github">GitHub</option>
-            <option value="jira">Jira</option>
-            <option value="bitbucket">Bitbucket</option>
-          </select>
-        </label>
-        <label>
-          <span>{tr("wi.query_label")}</span>
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={tr("wi.query_label_ph")} />
-        </label>
-        <label>
-          <span>{tr("wi.query_expr")}</span>
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={DEFAULT_QUERY[provider]} spellCheck={false} />
-        </label>
-        {/* ★ Bitbucket にだけ説明が要る。GitHub と Jira は「どこを見るか」をクエリの
-            外に置けるが、Bitbucket の API は横断検索を持たないので先頭に対象を書く
-            （docs/80 §80.19.1）。ここを書かないと、利用者は 400 を見てから学ぶことになる。 */}
-        {provider === "bitbucket" && <p className="wi-qhint">{tr("wi.query_bb_hint")}</p>}
-        <label>
-          {/* Jira は課題がリポジトリに紐づかないので、起動先はここが唯一の手がかりに
-              なる（プロジェクト → 作業コピーの対応表がこれ）。 */}
-          <span>{provider === "jira" ? tr("wi.query_repo_hint_jira") : tr("wi.query_repo_hint")}</span>
-          <select value={repoHint} onChange={(e) => setRepoHint(e.target.value)}>
-            <option value="">{tr("wi.query_repo_any")}</option>
-            {repos
-              .filter((r) => !r.worktree)
-              .map((r) => (
-                <option key={r.name} value={r.name}>
-                  {r.name}
-                </option>
-              ))}
-          </select>
-        </label>
-        <Button onClick={() => void add()} disabled={!query.trim() || busy}>
-          {tr("wi.add_query")}
-        </Button>
+                <IconButton icon={q.enabled ? "eye" : "eye-closed"} label={tr(q.enabled ? "wi.query_disable" : "wi.query_enable")} onClick={() => void toggle(q)} />
+                <IconButton icon="trash" label={tr("common.delete")} onClick={() => void remove(q)} />
+              </li>
+            ))}
+          </ul>
+        )}
+        {/* ブランチ名テンプレート（docs/80 P2）。プレビューを添えるのは、{slug} が
+            日本語タイトルで空になる（＝結果が feature/issue-45 になる）ことが、
+            説明文よりも 1 行の実例で伝わるから。 */}
+        <div className="wi-qbranch">
+          <label>
+            <span>{tr("wi.branch_template")}</span>
+            <input
+              value={settings.workItemBranchTemplate}
+              placeholder={DEFAULT_BRANCH_TEMPLATE}
+              spellCheck={false}
+              onChange={(e) => setSetting("workItemBranchTemplate", e.target.value)}
+            />
+          </label>
+          <p className="wi-qhint">
+            {tr("wi.branch_preview", {
+              branch: branchForItem({ key: "acme/web#45", title: "Fix the empty list" }, settings.workItemBranchTemplate),
+              // i18n-exempt: 非 ASCII のタイトル見本そのもの（訳すと例が例でなくなる・docs/28 §4）
+              branch2: branchForItem({ key: "PROJ-123", title: "ログイン後に一覧が空になる" }, settings.workItemBranchTemplate),
+            })}
+          </p>
+        </div>
+        <div className="wi-qform">
+          <label>
+            <span>{tr("wi.query_provider")}</span>
+            <select value={provider} onChange={(e) => pickProvider(e.target.value)}>
+              <option value="github">GitHub</option>
+              <option value="jira">Jira</option>
+              <option value="bitbucket">Bitbucket</option>
+            </select>
+          </label>
+          <label>
+            <span>{tr("wi.query_label")}</span>
+            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={tr("wi.query_label_ph")} />
+          </label>
+          <label>
+            <span>{tr("wi.query_expr")}</span>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={DEFAULT_QUERY[provider]} spellCheck={false} />
+          </label>
+          {/* ★ Bitbucket にだけ説明が要る。GitHub と Jira は「どこを見るか」をクエリの
+              外に置けるが、Bitbucket の API は横断検索を持たないので先頭に対象を書く
+              （docs/80 §80.19.1）。ここを書かないと、利用者は 400 を見てから学ぶことになる。 */}
+          {provider === "bitbucket" && <p className="wi-qhint">{tr("wi.query_bb_hint")}</p>}
+          <label>
+            {/* Jira は課題がリポジトリに紐づかないので、起動先はここが唯一の手がかりに
+                なる（プロジェクト → 作業コピーの対応表がこれ）。 */}
+            <span>{provider === "jira" ? tr("wi.query_repo_hint_jira") : tr("wi.query_repo_hint")}</span>
+            <select value={repoHint} onChange={(e) => setRepoHint(e.target.value)}>
+              <option value="">{tr("wi.query_repo_any")}</option>
+              {repos
+                .filter((r) => !r.worktree)
+                .map((r) => (
+                  <option key={r.name} value={r.name}>
+                    {r.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <Button onClick={() => void add()} disabled={!query.trim() || busy}>
+            {tr("wi.add_query")}
+          </Button>
+        </div>
       </div>
     </Modal>
   );
