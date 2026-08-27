@@ -34,6 +34,7 @@ import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import { WorkItemStartModal } from "./WorkItemStartModal.tsx";
 import {
   branchForItem,
+  canComment,
   fullLocal,
   matchWorkItem,
   promptForItem,
@@ -123,7 +124,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onStart,
       )}
       {/* 書き戻しは着手した行にだけ出す。押しても投稿はされない —— 下書きを読む
           モーダルが開くだけで、投稿はその中の 1 手（ADR 0061 決定 6）。 */}
-      {busy && (
+      {busy && canComment(item) && (
         <button type="button" className="wi-report" onClick={() => onReport(item)} title={tr("wi.report_title")}>
           <Icon name="comment" />
         </button>

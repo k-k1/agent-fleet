@@ -62,6 +62,14 @@ func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		url, err = jiraPostIssueComment(s.Jira, key, body)
+	case "bitbucket":
+		// ★ 読み取りだけを足した（docs/80 §80.19）。投稿には `pullrequest:write` が要り、
+		// それはテナント管理者がアプリの権限を広げ、全員が再認可する変更である —— 一覧を
+		// 出すために払う値段ではない。Console 側は bitbucket の行に報告ボタンを出さないので、
+		// ここに来るのは古い Console だけ。
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_provider",
+			"posting a comment to Bitbucket is not supported yet (the connection is read-only)")
+		return
 	default:
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_provider", "unsupported provider: "+in.Provider)
 		return

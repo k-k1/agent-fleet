@@ -434,6 +434,12 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
             <code>read:account</code> <code>read:workspace:bitbucket</code> <code>read:repository:bitbucket</code>
             {tr("git.bb_token_hint_read")} <code>write:repository:bitbucket</code>
             {tr("git.bb_token_hint_write")}
+            {/* ★ 必須には足さない。PR を読む権限は作業項目レールにだけ要るもので、
+                clone しかしない人の接続を「不足」と言い出すのは嘘になる
+                （docs/80 §80.19.3）。 */}
+            <br />
+            <code>read:pullrequest:bitbucket</code>
+            {tr("git.bb_token_hint_pr")}
           </Hint>
         </div>
       ) : (

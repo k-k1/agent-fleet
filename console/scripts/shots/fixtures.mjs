@@ -688,6 +688,35 @@ export function workItems(locale) {
         "Revisit font embedding in reports", "Make the timezone a user setting",
       ];
   const PROJECTS = ["G3M", "RCS", "AAC", "NIS", "LINE"];
+  // Bitbucket の 1 行。★ レビュー待ちの PR＝「担当者」の欄には作者が入り、行ごとに
+  // 違う（自分の PR を並べたクエリなら全行同じになり uniformMeta が落とす）。
+  // ラベルは Bitbucket の PR に存在しないので常に空（docs/80 §80.19.4）。
+  const bb = (n, key, title, author, over = {}) => ({
+    id: "wb" + n,
+    queryId: "wq3",
+    provider: "bitbucket",
+    kind: "pr",
+    key,
+    title,
+    state: "open",
+    url: "https://bitbucket.org/" + key.split("#")[0] + "/pull-requests/" + key.split("#")[1],
+    assignee: author,
+    labels: [],
+    repo: key.split("#")[0],
+    updatedAt: ago(60 * n + 20),
+    ...over,
+  });
+  const bbRows = ja
+    ? [
+        bb(1, "acme/ledger#204", "締め処理のロックを行単位にする", "Sora Ueda"),
+        bb(2, "acme/ledger#201", "仕訳インポートの重複検知", "Kenta Mori", { state: "in_progress" }),
+        bb(3, "acme/gateway#88", "レート制限のヘッダを返す", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
+      ]
+    : [
+        bb(1, "acme/ledger#204", "Lock the closing run per row", "Sora Ueda"),
+        bb(2, "acme/ledger#201", "Detect duplicate journal imports", "Kenta Mori", { state: "in_progress" }),
+        bb(3, "acme/gateway#88", "Return the rate limit headers", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
+      ];
   // 38 件 = 5 プロジェクト混在・全行同じ担当者。GitHub の 3 件と合わせて 41 件。
   const jiraRows = Array.from({ length: 38 }, (_, i) =>
     jira(i + 1, `${PROJECTS[i % PROJECTS.length]}-${50 + i * 17}`, JIRA_TITLES[i % JIRA_TITLES.length], {
@@ -713,6 +742,7 @@ export function workItems(locale) {
         updatedAt: ago(400),
       }),
       ...jiraRows,
+      ...bbRows,
     ],
     queries: [
       {
@@ -734,6 +764,17 @@ export function workItems(locale) {
         repoHint: "",
         enabled: true,
         position: 1,
+        fetchedAt: ago(6),
+        lastError: "",
+      },
+      {
+        id: "wq3",
+        provider: "bitbucket",
+        label: ja ? "レビュー待ち" : "Waiting on my review",
+        query: 'acme/ledger reviewers.uuid="@me"',
+        repoHint: "",
+        enabled: true,
+        position: 2,
         fetchedAt: ago(6),
         lastError: "",
       },

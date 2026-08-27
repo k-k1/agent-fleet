@@ -515,20 +515,27 @@ func bitbucketConnectCheckAt(base, user, token string) (warn string, err error) 
 	return "", nil // no scope header to inspect: leave unverified rather than false-block
 }
 
-// bitbucketGet does an authorized GET and returns the body, mapping common errors. Transient
-// failures — a transport error, HTTP 429, or a 5xx — are retried a few times with a short
-// backoff. Without this, the Console's repo/branch pickers surface an intermittent
-// "取得に失敗" that a manual re-open (or switching provider away and back) merely papers over.
-func bitbucketGet(client *http.Client, auth, url string) ([]byte, error) {
+// bitbucketGetStatus does an authorized GET and returns the body AND the HTTP status
+// without interpreting it. Transient failures — a transport error, HTTP 429, or a 5xx —
+// are retried a few times with a short backoff. Without this, the Console's repo/branch
+// pickers surface an intermittent "取得に失敗" that a manual re-open (or switching provider
+// away and back) merely papers over.
+//
+// ★ Split from bitbucketGet so callers can differ on what a status MEANS: a 403 is "that
+// repo is private" to the picker and "this connection has no pull request permission" to
+// the work item rail (workitems_bitbucket.go). Same split as jiraRequest / jiraGet.
+func bitbucketGetStatus(client *http.Client, auth, url string) ([]byte, int, error) {
 	const attempts = 3
 	var lastErr error
+	var lastBody []byte
+	lastStatus := 0
 	for i := 0; i < attempts; i++ {
 		if i > 0 {
 			time.Sleep(retryBackoff(i))
 		}
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
-			return nil, err // malformed request URL: not retriable
+			return nil, 0, err // malformed request URL: not retriable
 		}
 		req.Header.Set("Authorization", auth)
 		req.Header.Set("Accept", "application/json")
@@ -539,23 +546,51 @@ func bitbucketGet(client *http.Client, auth, url string) ([]byte, error) {
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			return body, nil
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, errBitbucketUnauthorized // let the caller refresh + retry, don't spin here
-		}
-		msg := strings.TrimSpace(string(body))
-		if len(msg) > 300 {
-			msg = msg[:300]
-		}
-		lastErr = fmt.Errorf("bitbucket %d: %s", resp.StatusCode, msg)
+		lastBody, lastStatus, lastErr = body, resp.StatusCode, nil
 		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
-			return nil, lastErr // other 4xx: permanent, don't retry
+			return body, resp.StatusCode, nil // 2xx and permanent 4xx: the caller decides
 		}
 		// 429 / 5xx: transient — fall through to the next attempt
 	}
-	return nil, lastErr
+	if lastErr != nil {
+		return nil, 0, lastErr
+	}
+	return lastBody, lastStatus, nil
+}
+
+// bitbucketGet does an authorized GET and returns the body, mapping common errors — the
+// shape the repo/branch pickers want.
+func bitbucketGet(client *http.Client, auth, url string) ([]byte, error) {
+	body, status, err := bitbucketGetStatus(client, auth, url)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case status == http.StatusOK:
+		return body, nil
+	case status == http.StatusUnauthorized:
+		return nil, errBitbucketUnauthorized // let the caller refresh + retry, don't spin here
+	}
+	return nil, fmt.Errorf("bitbucket %d: %s", status, bitbucketErrText(body))
+}
+
+// bitbucketErrText trims a Bitbucket error body down to something a person can read on
+// one row. Bitbucket answers `{"type":"error","error":{"message":"…"}}`; the message is
+// the whole of the information, so prefer it and fall back to the raw body.
+func bitbucketErrText(body []byte) string {
+	var e struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	msg := strings.TrimSpace(string(body))
+	if json.Unmarshal(body, &e) == nil && strings.TrimSpace(e.Error.Message) != "" {
+		msg = strings.TrimSpace(e.Error.Message)
+	}
+	if len(msg) > 300 {
+		msg = msg[:300]
+	}
+	return msg
 }
 
 // retryBackoff is the pause before retry attempt i (1-based): a short, linearly growing wait
