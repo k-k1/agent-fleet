@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -411,5 +413,72 @@ func TestJiraEnsureFreshOnlyWhenOAuthAndDue(t *testing.T) {
 	expired := &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at", RefreshToken: "rt", Expiry: 1}
 	if err := jiraEnsureFresh(expired); err == nil {
 		t.Error("an expired token was used without a refresh")
+	}
+}
+
+// ★ ローテートする更新トークンは 1 回きり。使い終わったものをもう一度出すのは
+// Atlassian が「盗用」とみなす操作で、認可ごと取り消されうる（＝利用者からは
+// 「Jira が勝手に切れた」に見える）。同時に 2 か所が期限切れに気づいても、交換は
+// 1 回だけ走ることを固定する。
+func TestJiraRefreshIsSerializedAndNotRepeated(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var mu sync.Mutex
+	var seen []string // 受け取った refresh token の並び
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		seen = append(seen, body.RefreshToken)
+		n := len(seen)
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond) // 交換に時間がかかる状況を作る
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"at%d","refresh_token":"rt%d","expires_in":3600}`, n, n)))
+	}))
+	defer srv.Close()
+
+	// ブリッジをストアに置く（CP 経由の更新経路）。
+	s, err := secrets.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.GitOAuthBridge = &secrets.CPBridge{BaseURL: srv.URL, Token: "afo_x"}
+	s.Jira = &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "old", RefreshToken: "rt0", Expiry: 1,
+		CloudID: "cid", Site: "https://x.atlassian.net"}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// レールの取得とコメント投稿が同時に期限切れに気づいた、という形。
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cur, _ := secrets.Load()
+			if cur == nil || cur.Jira == nil {
+				return
+			}
+			c := *cur.Jira
+			_ = jiraEnsureFresh(&c)
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("refresh grant ran %d times (%v) — a rotated token must not be presented twice", len(seen), seen)
+	}
+	if seen[0] != "rt0" {
+		t.Errorf("exchanged %q, want the stored refresh token", seen[0])
+	}
+	after, _ := secrets.Load()
+	if after.Jira.RefreshToken != "rt1" || after.Jira.AccessToken != "at1" {
+		t.Errorf("rotation not persisted: %+v", after.Jira)
+	}
+	if after.Jira.Expiry <= time.Now().Unix() {
+		t.Errorf("expiry not moved forward: %d", after.Jira.Expiry)
 	}
 }

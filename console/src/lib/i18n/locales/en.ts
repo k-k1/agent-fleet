@@ -1786,6 +1786,7 @@ export const en: Record<keyof typeof ja, string> = {
   "tenant.git_oauth_secret_unit": "Encrypted on save and never shown again. Fill this in only when you want to change it.",
   "tenant.git_oauth_redirect": "Register this callback URL with the provider's app:",
   "tenant.git_oauth_no_base_url": "This deployment has no PUBLIC_BASE_URL, so there is no callback URL to register with Bitbucket. Connecting via OAuth will fail even once you save this — the code grant has nowhere to come back to. Ask the operator to set PUBLIC_BASE_URL.",
+  "tenant.git_oauth_jira_access": "Choose Resource-level as the Access type when creating the app — it limits the grant to the one site authorized. Account-level hands the app permanent access to every site in the account.",
   "tenant.git_oauth_jira_scopes": "Jira uses an Atlassian 3LO app, registered separately from the Bitbucket consumer. Grant read:jira-work, read:jira-user, write:jira-work and offline_access — write is for “comment the work back”, offline_access for token renewal.",
   "tenant.git_oauth_gh_device": "GitHub uses the device flow, so it needs neither a secret nor a callback — but the app must have “Enable Device Flow” ticked, or starting a connection fails.",
   "tenant.git_oauth_where": "Where to register the app:",

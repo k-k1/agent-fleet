@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -449,12 +450,35 @@ func jiraEnsureFresh(c *secrets.JiraCreds) error {
 	return jiraRefreshNow(c)
 }
 
+// jiraRefreshMu serializes the refresh grant within this process.
+//
+// ★ Not an optimisation — a correctness requirement of ROTATING refresh tokens, which
+// Atlassian now mandates for new integrations. Rotation means each refresh token is
+// single-use AND its reuse is treated as theft: presenting the same one twice can revoke
+// the whole chain, and the member sees Jira spontaneously disconnect. Two callers can
+// reach here at the same moment (a rail fetch and a 投稿 both notice the hour-old token),
+// so without this lock the normal case is two identical grants racing.
+var jiraRefreshMu sync.Mutex
+
 // jiraRefreshNow runs the refresh grant through the CP bridge and PERSISTS the result.
 //
 // ⚠️ Atlassian rotates the refresh token: the response carries a new one and retires the
 // old. Not saving it strands the connection at the next expiry with nothing to renew, so
 // the store write is part of the refresh, not an afterthought.
 func jiraRefreshNow(c *secrets.JiraCreds) error {
+	jiraRefreshMu.Lock()
+	defer jiraRefreshMu.Unlock()
+	// 待っている間に別の呼び出しが更新し終えていることがある。その場合は**もう一度
+	// 交換しない** —— 使い終わった更新トークンをもう一度出すのが、まさに rotation が
+	// 「盗用」とみなす操作だからである。ディスクの新しい値を取り込んで戻る。
+	if fresh, err := secrets.Load(); err == nil && fresh.Jira != nil && fresh.Jira.AuthKind == "oauth" {
+		if fresh.Jira.Expiry > time.Now().Add(jiraFreshWindow).Unix() && fresh.Jira.AccessToken != "" {
+			c.AccessToken = fresh.Jira.AccessToken
+			c.RefreshToken = fresh.Jira.RefreshToken
+			c.Expiry = fresh.Jira.Expiry
+			return nil
+		}
+	}
 	b := loadGitOAuthBridge()
 	if b == nil {
 		return fmt.Errorf("no CP bridge to refresh the Jira token")
