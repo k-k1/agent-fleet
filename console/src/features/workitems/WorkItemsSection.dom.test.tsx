@@ -279,7 +279,7 @@ describe("WorkItemsSection", () => {
   });
 
   it("担当者が割れていれば出す（チームのクエリ）", async () => {
-    const mixed = jiraRows(41).map((r, i) => (i === 3 ? { ...r, assignee: "Rin Aoyagi" } : r));
+    const mixed = jiraRows(41).map((r, i) => (i === 3 ? { ...r, assignee: "Sora Ueda" } : r));
     workItemList.mockResolvedValue({ items: mixed, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
     expect(text()).toContain("@Rin Aoyagi");
