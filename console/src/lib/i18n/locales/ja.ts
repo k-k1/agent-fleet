@@ -1794,7 +1794,7 @@ export const ja = {
   "tenant.git_oauth_redirect": "プロバイダ側のアプリ登録に、このコールバック URL を設定してください:",
   "tenant.git_oauth_no_base_url": "このデプロイには PUBLIC_BASE_URL が設定されていないため、登録するコールバック URL を組み立てられません。登録しても「OAuth で接続」は失敗します（コードグラントの戻り先が無いため）。運用者に PUBLIC_BASE_URL の設定を依頼してください。",
   "tenant.git_oauth_jira_access": "アプリ作成時の Access type は Resource-level を推奨します（認可したサイト 1 つだけに権限が限られます）。Account-level はアカウント内の全サイトに恒久的な権限を渡すことになります。",
-  "tenant.git_oauth_jira_scopes": "Jira は Atlassian の 3LO アプリです（Bitbucket のコンシューマとは別に登録します）。スコープに read:jira-work / read:jira-user / write:jira-work / offline_access を許可してください。write は「作業の報告をコメントする」に、offline_access はトークンの自動更新に要ります。",
+  "tenant.git_oauth_jira_scopes": "Jira は Atlassian の 3LO アプリです（Bitbucket のコンシューマとは別に登録します）。Permissions に Jira API を追加し、read:jira-work / read:jira-user / write:jira-work の 3 つを許可してください（write は「作業の報告をコメントする」に要ります）。offline_access は Permissions の一覧には出てきません —— OAuth 側のスコープで、af が認可 URL に付けるので設定は不要です。",
   "tenant.git_oauth_gh_device": "GitHub はデバイスフローを使うため secret もコールバックも不要です。ただしアプリ側で「Enable Device Flow」を有効にしてください（無効だと接続開始で失敗します）。",
   "tenant.git_oauth_where": "アプリの登録先:",
   "tenant.git_oauth_remove": "登録を削除",

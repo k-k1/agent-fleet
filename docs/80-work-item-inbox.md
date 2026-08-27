@@ -471,7 +471,12 @@ Atlassian 側にもう 1 つアプリを登録する**。ここが実質的な�
    選ばせる。★ GitHub 側に同じ選択は要らない —— 1 つのトークンがアカウントの見える
    組織を全部覆い、絞り込みは検索クエリ（`org:foo`）が担うので、サイト（＝別ホスト）の
    選択とは問題が違う。GHE のような別ホストは今も対象外（§80.4.2）。
-4. **⚠️ 認可 URL の 4 点がどれも欠かせない。** `audience=api.atlassian.com`（無いと API 用の
+4. **⚠️ 認可 URL の 4 点がどれも欠かせない。**★ このうち **Permissions（アプリの権限）に
+   登録するのは 3 つだけ**である —— `read:jira-work` / `read:jira-user` / `write:jira-work`。
+   **`offline_access` は Permissions の一覧に出てこない**（Jira の製品スコープではなく
+   OAuth 側のスコープで、認可リクエストに載せるもの）。af が認可 URL に付けているので
+   アプリ側の設定は要らない。⚠️ ここを「4 つ許可する」と説明すると、管理者は存在しない
+   チェックボックスを探すことになる（実際に踏んだ）。 `audience=api.atlassian.com`（無いと API 用の
    トークンにならない）・`offline_access`（無いと refresh token が返らず 1 時間で死ぬ）・
    `prompt=consent`（無いと**再認可で** refresh token が返らない）・`write:jira-work`
    （利用者の選択でコメント投稿まで含める・§80.10）。どれが欠けても症状は「連携したのに
