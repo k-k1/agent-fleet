@@ -149,7 +149,12 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
           <p className="admin-hint warn">{tr("tenant.git_oauth_no_base_url")}</p>
         ))}
       {app.provider === "github" && <p className="admin-hint">{tr("tenant.git_oauth_gh_device")}</p>}
-      {app.provider === "jira" && <p className="admin-hint">{tr("tenant.git_oauth_jira_scopes")}</p>}
+      {app.provider === "jira" && (
+        <>
+          <p className="admin-hint">{tr("tenant.git_oauth_jira_access")}</p>
+          <p className="admin-hint">{tr("tenant.git_oauth_jira_scopes")}</p>
+        </>
+      )}
       <p className="admin-hint">
         {tr("tenant.git_oauth_where")}{" "}
         <a href={REGISTER_URL[app.provider]} target="_blank" rel="noopener noreferrer">
