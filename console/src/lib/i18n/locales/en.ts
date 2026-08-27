@@ -1775,8 +1775,8 @@ export const en: Record<keyof typeof ja, string> = {
   "tenant.net_layers_hint": "This is an access rule, not a network defence — the request still reaches the control plane and is refused after the session is verified. To stop traffic before it arrives, an operator restricts it at the load balancer instead.",
   // Integrations (docs/71) — credentials the tenant created on the other service.
   "tenant.group_integrations": "Integrations",
-  "tenant.tab_git_oauth": "Git provider OAuth",
-  "tenant.git_oauth_intro": "Decides which OAuth app the “Connect with OAuth” buttons for GitHub and Bitbucket use on your members' Connections tab. The app is created in your own GitHub org / Bitbucket workspace, so a tenant administrator registers it here. It takes effect the moment you save — there is no approval step.",
+  "tenant.tab_git_oauth": "Integration OAuth apps",
+  "tenant.git_oauth_intro": "Decides which OAuth app the “Connect with OAuth” buttons use for your members (GitHub and Bitbucket under Connections › Git, Jira under Connections › Issue tracker). The app is created in your own GitHub org / Bitbucket workspace / Atlassian account, so a tenant administrator registers it here. It takes effect the moment you save — there is no approval step.",
   "tenant.git_oauth_optional": "Members can connect without this by pasting a token. Registering an app here is what makes “Connect with OAuth” appear for that provider.",
   "tenant.git_oauth_on": "registered",
   "tenant.git_oauth_off": "not registered",
