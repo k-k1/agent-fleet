@@ -490,11 +490,20 @@ type ec2PoolConfig struct {
 	// somewhere else (AF_ECS_EC2_SLOT_LOST_AFTER_SEC, default 5m).
 	//
 	// 🔥 The incident it exists for (af.acrt.link, 2026-08-27, docs/64 §64.40): a runaway
-	// process inside one workspace exhausted its slot's memory. The container has no hard
-	// limit on purpose, so the pressure hit the whole box and took the host's daemons with
-	// it — the EFS transit-encryption stunnel first (`nfs: server 127.0.0.1 not
-	// responding`), then the ECS agent, then SSM. EC2 still said `running` and every status
-	// check still passed; the box was simply gone as far as the cluster was concerned.
+	// read loop inside one workspace pinned BOTH of its slot's disks at the gp3 throughput
+	// ceiling for three hours (the root volume, where the container's overlayfs lives, read
+	// 39.34 GB every 5 minutes — the same figure to four digits, twenty buckets running).
+	// Everything on the box that needed a disk starved behind it and died in order: the EFS
+	// transit-encryption stunnel (`nfs: server 127.0.0.1 not responding`), then the ECS
+	// agent, then SSM, all within 15 seconds of each other. EC2 still said `running` and
+	// every status check still passed; the box was simply gone as far as the cluster was
+	// concerned.
+	//
+	// ⚠️ NOT memory exhaustion, which is what it was first diagnosed as: the persistent
+	// journal on that box records zero OOM kills, no hung_task, no swap, and docker reports
+	// OOMKilled=false. Worth keeping straight, because the two point at different fixes —
+	// but NOT at a different fix HERE. What this field bounds is the CP's reaction to a slot
+	// that has stopped answering, and that is the same problem whichever resource ran out.
 	//
 	// Nothing could recover from that on its own, and each layer was individually correct:
 	//   - ECS could not stop the ghost task (no agent), so its ENI never detached;
