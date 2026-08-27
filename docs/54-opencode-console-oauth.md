@@ -139,6 +139,37 @@ active 数）:
 `deprecated` と `enabled:false` を落として CLI と同じ形の id 列にする。daemon が無いときだけ
 従来の CLI にフォールバックする（一覧の更新のために daemon を起こしはしない）。
 
+### `deprecated` は「一覧から隠れているだけ」ではない — 提供終了そのもの
+
+カタログを落とす基準の `status:"deprecated"`（models.dev 由来）は、実測（2026-08-27・
+1.18.23）で **opencode.ai 側の退役**と一致した。認証が要らない無料モデルで割れたので、
+鍵の有無や残高では説明がつかない:
+
+| モデル | models.dev の `status` | `opencode run` |
+| --- | --- | --- |
+| `opencode/nemotron-3-ultra-free` | （なし） | ✅ 応答 |
+| `opencode/mimo-v2.5-free` | （なし） | ✅ 応答 |
+| `opencode/glm-5-free` | deprecated | ❌ サーバエラー |
+| `opencode/kimi-k2.5-free` | deprecated | ❌ サーバエラー |
+| `opencode/minimax-m3-free` | deprecated | ❌ サーバエラー |
+
+同じ規則を opencode 自身も使っている: 鍵なしの `opencode models` が出す 6 件は、
+models.dev の「コスト 0 かつ非 deprecated」6 件と**完全に一致**する。つまり
+`filterDaemonModels` が落とすのは正しく、通したところで起動後に API 呼び出しが死ぬだけ。
+
+ただし**起動ガードの文言は分けた**。退役は id も課金経路も合っているのに起きるので、
+打ち間違いと同じ「利用できません」だと利用者は綴りを疑って同じ指定を繰り返す
+（実例: 2026-08-21 公開のステルスモデル `opencode-go/ox-alpha-free` が 1 週間で
+deprecated になり、worktree 起動が落ちた）。`Models()` は落とした id の**名前だけ**を
+`retiredIDs` に残し、`Retired()` が真なら「提供終了しています（opencode.ai 側で退役）」と
+言う。CLI フォールバック時は daemon の `status` を見ていないので常に偽 — その場合は
+従来の文言に落ちる。
+
+なお同じ起動ガードは、失敗時にカタログ全件を並べていた（opencode では約 60 件）。
+Console のトーストとスマホの通知では理由が読めなくなるので、**近い候補 5 件＋「ほか N 件」**に
+切り詰めてある（`nearestModels` — 共有トークン数、同点は共通接頭辞長で並べ替え。
+`opencode-go/…` を指定したら候補も `opencode-go/…` から出る）。
+
 ## 54.5 使う枠の4択（オフ / 無料枠 / Go / Zen）
 
 opencode.ai は 3 つの課金経路を持ち、実測でそれぞれ独立していた（§54.4）。どれを使うかは
