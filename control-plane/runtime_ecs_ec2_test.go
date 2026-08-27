@@ -4450,3 +4450,102 @@ func TestECSEC2EveryServiceCallPinsOneTaskPerWorkspace(t *testing.T) {
 		check(fmt.Sprintf("updateCalls[%d]", i), c.DeploymentConfiguration, c.AvailabilityZoneRebalancing)
 	}
 }
+
+// --- the workspace memory cap (ADR 0045 決定 28, docs/64 §64.41) ---
+
+// The numbers, and why they are these numbers. A cap that is too generous does not
+// contain anything (the incident's whole point was that the daemons had nowhere to
+// live); one that is too mean takes RAM off a member for nothing.
+func TestECSEC2WorkspaceMemCap(t *testing.T) {
+	auto := ec2PoolConfig{hostReserveMiB: 0}
+	for _, tc := range []struct {
+		name string
+		pool ec2PoolConfig
+		rung int64
+		want int64
+	}{
+		// ⚠️ The load-bearing case. An "8192 MiB" m7i.large really reports MemTotal 7784
+		// (measured), so the reserve has to cover that ~5% AND the ~1.2-1.4 GiB the
+		// daemons need. A fifth of the rung leaves 7784-6553 = 1231 MiB of real headroom.
+		{"m7i.large lands at 6.4 GiB", auto, 8192, 6554},
+		// The ceiling: the daemons cost the same on a big box, so it must not donate
+		// proportionally more (a fifth of 32768 would be 6.5 GiB thrown away).
+		{"a large rung is clamped to 2 GiB of reserve", auto, 32768, 30720},
+		// The floor: a fifth of a small rung would not house the daemons at all.
+		{"a small rung gets the 1 GiB floor", auto, 4096, 3072},
+		{"explicit reserve is honoured", ec2PoolConfig{hostReserveMiB: 1536}, 8192, 6656},
+		{"off means uncapped", ec2PoolConfig{hostReserveMiB: ec2HostReserveOff}, 8192, 0},
+		// Capping a rung this small would leave a workspace that cannot run; better to
+		// leave the deployment as it was than to break every Start on it.
+		{"a rung too small to share is left uncapped", auto, 1024, 0},
+		{"an undeclared rung is left uncapped", auto, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.pool.workspaceMemCapMiB(tc.rung); got != tc.want {
+				t.Errorf("workspaceMemCapMiB(%d) = %d, want %d", tc.rung, got, tc.want)
+			}
+		})
+	}
+}
+
+// A typo in the knob that decides how much RAM a workspace gets must not be the reason
+// a deployment stops capping — or stops starting.
+func TestECSEC2HostReserveParsing(t *testing.T) {
+	for in, want := range map[string]int64{
+		"": 0, "auto": 0, "AUTO": 0, " auto ": 0,
+		"off": ec2HostReserveOff, "none": ec2HostReserveOff,
+		"1536": 1536, "0": 0,
+		"banana": 0, "-5": 0,
+	} {
+		if got := parseHostReserveMiB(in); got != want {
+			t.Errorf("parseHostReserveMiB(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// The cap has to reach the task definition, because that is the only place it does
+// anything: ECS turns container.Memory into the cgroup limit that keeps a runaway
+// workspace from evicting the box's daemons out of memory (docs/64 §64.40).
+func TestECSEC2TaskDefinitionCarriesTheMemoryCap(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	h.rt.memCapMiB = h.rt.pool.workspaceMemCapMiB(8192)
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(h.ecs.regCalls) != 1 {
+		t.Fatalf("regCalls = %d, want 1", len(h.ecs.regCalls))
+	}
+	c := h.ecs.regCalls[0].ContainerDefinitions[0]
+	limit := aws.ToInt32(c.Memory)
+	if limit != 6554 {
+		t.Errorf("container Memory = %d MiB, want 6554", limit)
+	}
+	// The soft reservation is what ECS schedules on and must stay BELOW the hard cap;
+	// a reservation above the limit is a task definition ECS rejects outright.
+	if res := aws.ToInt32(c.MemoryReservation); res > limit {
+		t.Errorf("MemoryReservation %d exceeds the hard limit %d", res, limit)
+	}
+}
+
+// A deployment that has switched the cap off must produce exactly the task definition
+// it produced before the cap existed — no field, not a zero.
+func TestECSEC2UncappedTaskDefinitionOmitsMemory(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-hot"] = true
+	h.rt.memCapMiB = 0
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if m := h.ecs.regCalls[0].ContainerDefinitions[0].Memory; m != nil {
+		t.Errorf("container Memory = %d, want unset", *m)
+	}
+}

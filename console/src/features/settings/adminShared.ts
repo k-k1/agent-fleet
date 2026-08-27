@@ -6,6 +6,7 @@
 //
 // ★ ここには権限の判断を置かない。サーバが持っているものを UI に写す道具だけ。
 import { fmtGiB } from "../../lib/bytes.ts";
+import type { MsgKey } from "../../lib/i18n/index.ts";
 
 // Admin API shapes (only the fields the UI reads; server responses may carry more).
 export interface Tenant {
@@ -117,6 +118,10 @@ export interface WsSlot {
   mem_mib: number;
   /** 0/absent when the operator did not declare it — then no vCPU count is shown. */
   vcpu?: number;
+  /** What the WORKSPACE gets, as opposed to what the box has: the rung less the reserve
+   *  held back for the box's own daemons (ADR 0045 決定 28). Absent on a deployment that
+   *  runs uncapped — there the box IS the answer and one number is honest. */
+  usable_mem_mib?: number;
 }
 
 /** The runtime's own answer, used while the profile is still loading. It matches the
@@ -127,6 +132,16 @@ export const WS_SIZING_FALLBACK: WsSizing = {
   mem_meaning: "limit",
   disk_meaning: "work",
 };
+
+/** How much memory a rung is worth SAYING. Two numbers exist once the workspace is
+ *  capped — the machine's and the cgroup's — and the one a member can spend is the
+ *  cgroup's, so that leads and the box follows in parentheses. While a deployment runs
+ *  uncapped they are the same number and only one is printed. */
+export function slotMemLabel(tr: (k: MsgKey, v?: Record<string, string>) => string, s: WsSlot): string {
+  const usable = s.usable_mem_mib ?? 0;
+  if (!usable || usable === s.mem_mib) return fmtGbHint(s.mem_mib);
+  return tr("admin.ws_slot_usable", { n: fmtGbHint(usable), box: fmtGbHint(s.mem_mib) });
+}
 
 /** The slot a memory request (in MiB) lands on: the smallest rung that holds it, and
  *  the top rung when nothing does — the same rule as the CP's slotTypeFor, including

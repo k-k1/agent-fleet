@@ -570,8 +570,34 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 | `Ec2SlotTerminateAfterSec` | `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` | `0` (off) | The next step on the same clock: past it the box is **terminated** and its root volume goes too. `0` means boxes are kept forever, so retained roots grow to `Ec2MaxSlots` — see below. `14400` (4h) recommended |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
 | `Ec2HibernateAfterSec` | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant overrides it from the Console. Nothing is destroyed — the snapshot completes before the volume goes, and the next start restores it. See below |
+| `Ec2HostReserveMb` | `AF_ECS_EC2_HOST_RESERVE_MB` | `auto` | How much of a slot is held back from the workspace so the box's own daemons cannot be starved by it. `auto` = a fifth of the rung, clamped to 1–2 GiB, which puts an 8 GiB slot's workspace at 6.4 GiB. `off` = uncapped (what every deployment did before 0.12.5, and what melted one). See below |
+| — | `AF_ECS_EC2_SLOT_LOST_AFTER_SEC` | `300` | How long a slot may be EC2-`running` while the cluster cannot reach its agent before the CP gives up on it and rebuilds the workspace elsewhere. `0` = wait as long as the caller allows |
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 決定 9-1). Set `0` and it becomes your job on every release |
 | — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
+
+**What a workspace actually gets (`Ec2HostReserveMb`).** A slot's memory is not all the
+workspace's: dockerd, containerd, the ECS agent, SSM and the EFS stunnel live on the same
+box, and the rung overstates what the machine has (an "8192 MiB" m7i.large reports 7784).
+So the container is capped at the rung less a reserve, and the Console prints the number
+the workspace can actually spend with the box beside it — `6.4 GiB (of 8 GiB)`.
+
+⚠️ **Turning it off is not free.** Uncapped, one workspace taking several GB of anonymous
+memory can push the box into refault thrash: with no swap the kernel throws away page
+cache, every daemon spends its time re-reading its own executable off disk, and the slot
+stops answering the cluster entirely while still looking healthy to EC2. That happened on
+a live deployment (docs/64 §64.40) — nobody could start that workspace again for hours.
+
+⚠️ **Changing the reserve replaces running tasks.** It is part of the task definition, so
+the first start after the change registers a new revision — the same as an image change.
+
+**Alarms (`PoolAlarmEmail` on `40-ec2-pool`).** Off by default. When set, the stack creates
+an SNS topic and two CloudWatch alarms on the pool's I/O — a deep EBS queue sustained for
+15 minutes, and an instance that has spent a fifth of its EBS byte credits. Both were
+unmistakable during that incident and nobody was looking. ⚠️ **They cannot be scoped to
+this stack**: the metrics are dimensioned by volume and instance id, the pool creates those
+at runtime, and Metrics Insights filters on dimension values rather than tags — so the
+queries are account-wide within the region. Turn them on where the account is the
+deployment's own.
 
 **Offering a choice of machine (docs/70).** `Ec2SlotTypes` takes several named ladders,
 `id|label|arch|<ladder>` separated by `;`, and a tenant administrator then picks one per

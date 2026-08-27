@@ -1580,6 +1580,7 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.ws_mem_req": "Workspace memory (required)",
   "admin.ws_slot_lands": "→ {type} ({spec}, dedicated)",
   "admin.ws_slot_zero": "0 = smallest slot ({type})",
+  "admin.ws_slot_usable": "{n} (of {box})",
   "admin.ws_slot_note": "The slot is used by one person and the task reserves nothing, so the whole box is available — this number only chooses which box.",
   "tenant.machine_title": "Default machine",
   "tenant.machine_note":

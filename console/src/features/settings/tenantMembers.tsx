@@ -19,7 +19,7 @@ import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 import { MemberCostPanel } from "../cost/CloudCostView.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { remainingShort, stateInfo } from "../../lib/sessionview.ts";
-import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
+import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
 import type { Member, MemberIdle, WsSizing, WsSlot } from "./adminShared.ts";
 
 // MembersPanel — 名簿と「メンバー追加」。TenantView の中に直接書かれていたものを、
@@ -222,7 +222,7 @@ function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) {
         {box.instance_type}
       </span>,
       <span key="spec" className="mr-size muted">
-        {box.vcpu ? tr("admin.roster_spec", { n: String(box.vcpu), mem: fmtGbHint(box.mem_mib) }) : fmtGbHint(box.mem_mib)}
+        {box.vcpu ? tr("admin.roster_spec", { n: String(box.vcpu), mem: slotMemLabel(tr, box) }) : slotMemLabel(tr, box)}
       </span>,
     );
   } else {
@@ -406,7 +406,7 @@ export function MemberView({
   // A ladder exists only on the EC2 slot pool; everywhere else the memory number is a
   // cap and keeps the wording it has always had.
   const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
-  const slotSpec = (s: WsSlot) => (s.vcpu ? `${s.vcpu} vCPU / ${fmtGbHint(s.mem_mib)}` : fmtGbHint(s.mem_mib));
+  const slotSpec = (s: WsSlot) => (s.vcpu ? `${s.vcpu} vCPU / ${slotMemLabel(tr, s)}` : slotMemLabel(tr, s));
   // The machine-class picker exists only where the operator declared more than one
   // (docs/70 §70.10). The memory chips below are then the SELECTED class's ladder, so
   // switching class re-draws them and "you land on" recomputes — the same number can

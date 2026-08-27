@@ -1586,6 +1586,9 @@ export const ja = {
   "admin.ws_mem_req": "ワークスペースのメモリ（必要量）",
   "admin.ws_slot_lands": "→ {type}（{spec}・専有）",
   "admin.ws_slot_zero": "0 = 最小スロット（{type}）",
+  // 上限が入って以降、箱の容量とワークスペースが使える量は別の数になった（ADR 0045 決定 28）。
+  // 本人が使えるのは後者なので、そちらを先に出し、箱は括弧で添える。
+  "admin.ws_slot_usable": "{n}（箱 {box}）",
   "admin.ws_slot_note": "スロットは 1 人で専有し、タスクに予約を掛けないので箱を丸ごと使えます。この値は箱を選ぶだけです。",
   "tenant.machine_title": "既定のマシン種別",
   "tenant.machine_note":

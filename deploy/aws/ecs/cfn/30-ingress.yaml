@@ -161,6 +161,21 @@ Parameters:
       Hard cap on instances in the pool. A slot is one concurrently RUNNING workspace,
       so size this like "how many people work at once", not "how many accounts exist".
       Start fails with a clear error at the cap instead of growing the bill.
+  Ec2HostReserveMb:
+    Type: String
+    Default: auto
+    Description: >-
+      How much of a slot is held back from the WORKSPACE so the box's own daemons
+      (dockerd, containerd, the ECS agent, SSM, the EFS stunnel) cannot be starved by
+      it. "auto" = a fifth of the rung, clamped to 1-2 GiB: an 8 GiB slot's workspace is
+      capped at 6.4 GiB, and the Console prints that number with the box beside it.
+      "off" = uncapped, which is what every deployment did before this existed — and what
+      melted a live slot on 2026-08-27 (docs/64 section 64.40): one workspace took enough
+      anonymous memory that the kernel evicted all page cache, every daemon spent hours
+      re-reading its own executable off disk, and the box stopped answering the cluster
+      while still looking healthy to EC2. A plain number is that many MiB.
+      NOTE: this is part of the task definition, so changing it replaces the running task
+      at the owner's next start, exactly as an image change does.
   Ec2SlotSleepSec:
     Type: String
     Default: "900"
@@ -678,6 +693,7 @@ Resources:
             - { Name: AF_ECS_EC2_AMI_ARM64, Value: !Ref Ec2SlotAmiArm64 }
             - { Name: AF_ECS_EC2_DEFAULT_SLOT_CLASS, Value: !Ref Ec2DefaultSlotClass }
             - { Name: AF_ECS_EC2_MAX_SLOTS, Value: !Ref Ec2MaxSlots }
+            - { Name: AF_ECS_EC2_HOST_RESERVE_MB, Value: !Ref Ec2HostReserveMb }
             - { Name: AF_ECS_EC2_SLOT_SLEEP_SEC, Value: !Ref Ec2SlotSleepSec }
             - { Name: AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC, Value: !Ref Ec2SlotTerminateAfterSec }
             - { Name: AF_ECS_EC2_HIBERNATE_AFTER_SEC, Value: !Ref Ec2HibernateAfterSec }

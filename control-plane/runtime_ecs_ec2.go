@@ -75,7 +75,10 @@ type ecsEC2Runtime struct {
 	// RuntimePlatform.
 	instanceType string
 	arch         string
-	homeGiB      int32
+	// memCapMiB is the hard memory limit the workspace container gets, resolved once
+	// from the rung above (workspaceMemCapMiB). 0 = uncapped.
+	memCapMiB int64
+	homeGiB   int32
 
 	// azOfSubnet resolves the deployment's subnets to their AZ (cached in the factory):
 	// an EBS volume never leaves its AZ, so the volume pins the AZ and the AZ picks
@@ -524,7 +527,31 @@ type ec2PoolConfig struct {
 	// 0 = OFF, read the same way as the other timers (§64.31.4): wait as long as the
 	// caller's budget allows, i.e. exactly the behaviour before this existed.
 	slotLostAfter time.Duration
+	// hostReserveMiB is how much of a slot is held back from the workspace container so
+	// the box's own daemons cannot be starved by it (AF_ECS_EC2_HOST_RESERVE_MB).
+	// See workspaceMemCapMiB for what it buys and how the default was sized.
+	//
+	//	unset / "auto"  → -1 < 0: a fifth of the rung, clamped (the default)
+	//	"off"           → the sentinel below: no cap at all, the pre-2026-08 behaviour
+	//	<n>             → exactly n MiB
+	hostReserveMiB int64
 }
+
+const (
+	// ec2HostReserveOff is hostReserveMiB's "leave the workspace uncapped" sentinel.
+	// Negative rather than 0 because 0 is a meaningful answer ("reserve nothing, cap at
+	// the full rung"), and an operator's explicit off has to be distinguishable from it.
+	ec2HostReserveOff = -1
+	// The auto reserve's bounds. Floor: the daemons were measured at ~869 MiB idle and
+	// ~1.2-1.4 GiB with a workspace and its Service Connect sidecars running, and the
+	// rung overstates the real MemTotal by ~5% on top. Ceiling: that cost does not grow
+	// with the box, so a big rung should not donate more than a small one.
+	ec2HostReserveFloorMiB = 1024
+	ec2HostReserveCeilMiB  = 2048
+	// ec2MinWorkspaceMemMiB is the least a capped workspace may be left with. Below it
+	// the rung is simply too small to share, and the cap is dropped rather than applied.
+	ec2MinWorkspaceMemMiB = 512
+)
 
 // ec2Slot is one purchasable slot size.
 //
@@ -637,7 +664,8 @@ func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 		// Default ON, unlike the other timers here: this one does not change what the
 		// product does in the normal case, it only puts an end to a wait that was
 		// previously unbounded in practice. See the field comment for the incident.
-		slotLostAfter: time.Duration(envInt("AF_ECS_EC2_SLOT_LOST_AFTER_SEC", 300)) * time.Second,
+		slotLostAfter:  time.Duration(envInt("AF_ECS_EC2_SLOT_LOST_AFTER_SEC", 300)) * time.Second,
+		hostReserveMiB: parseHostReserveMiB(envOr("AF_ECS_EC2_HOST_RESERVE_MB", "auto")),
 	}
 	if err := pool.validate(); err != nil {
 		return nil, err
@@ -661,7 +689,7 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 	if !ok { // unreachable: ecsFactory.New always returns *ecsRuntime
 		panic("ecs-ec2: base factory did not return *ecsRuntime")
 	}
-	instanceType, arch := f.pool.slotTypeFor(ws.SlotClass, ws.MemBytes)
+	instanceType, arch, slotMemMiB := f.pool.slotRungFor(ws.SlotClass, ws.MemBytes)
 	return &ecsEC2Runtime{
 		base:         base,
 		ec2:          f.ec2,
@@ -670,6 +698,7 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 		pool:         f.pool,
 		instanceType: instanceType,
 		arch:         arch,
+		memCapMiB:    f.pool.workspaceMemCapMiB(slotMemMiB),
 		homeGiB:      f.homeGiB(ws),
 		azOfSubnet:   f.subnetAZs,
 		bg:           backgroundWithin(f.pool.waitBudget),
@@ -723,14 +752,95 @@ func (p ec2PoolConfig) classFor(id string) ec2SlotClass {
 // The class only chooses the LADDER. Memory still chooses the rung, in every class,
 // which is what keeps "8 GB" meaning the same thing after a class change.
 func (p ec2PoolConfig) slotTypeFor(classID string, memBytes int64) (instanceType, arch string) {
+	t, a, _ := p.slotRungFor(classID, memBytes)
+	return t, a
+}
+
+// slotRungFor is slotTypeFor plus the rung's DECLARED memory, which the workspace's
+// memory cap is derived from (workspaceMemCapMiB).
+func (p ec2PoolConfig) slotRungFor(classID string, memBytes int64) (instanceType, arch string, slotMemMiB int64) {
 	c := p.classFor(classID)
 	want := memBytes / mib
 	for _, s := range c.slots {
 		if want <= s.memMiB {
-			return s.instanceType, c.arch
+			return s.instanceType, c.arch, s.memMiB
 		}
 	}
-	return c.slots[len(c.slots)-1].instanceType, c.arch
+	last := c.slots[len(c.slots)-1]
+	return last.instanceType, c.arch, last.memMiB
+}
+
+// workspaceMemCapMiB is the hard memory limit put on the workspace container: the
+// slot's declared memory, less a reserve kept for the box's own daemons. 0 = no cap
+// (the behaviour every deployment had before this existed).
+//
+// 🔥 Why a cap exists at all (af.acrt.link, 2026-08-27, docs/64 §64.40): a workspace
+// took several GB of anonymous memory, and with no swap the kernel's only way to
+// reclaim was to throw away page cache — so every process on the box spent three hours
+// re-reading its own executable pages off disk (the root volume holds 8.0 GB of data
+// in total and was read at 39.34 GB per five minutes). The workspace's OWN pain is not
+// what this fixes; it is the collateral: dockerd, containerd, the ECS agent, SSM and
+// the EFS stunnel all starved and died within fifteen seconds of each other, and the
+// box became unmanageable — ECS could not stop the task, SSM could not run a command,
+// and the owner got a 504 on every Start for hours.
+//
+// A cgroup limit is the fix because of WHERE the pressure then lands: reclaim for an
+// over-limit cgroup happens INSIDE that cgroup, so the daemons keep their pages
+// whatever the workspace does. The runaway gets OOM-killed in its own cgroup — visible
+// as OOMKilled, which is a diagnosis rather than a mystery.
+//
+// ⚠️ Derived from the LADDER's declared MiB, not from what the box really has, and the
+// two differ by more than you would guess: an "8192 MiB" m7i.large reports MemTotal
+// 7784 MiB (measured). The reserve therefore has to absorb that ~5% as well as the
+// daemons, which is why the default is a fifth rather than the ~1.2-1.4 GiB the daemons
+// were measured at:
+//
+//	nominal 8192 → reserve 1638 → cap 6554 MiB, real headroom 7784-6554 = 1230 MiB ✅
+//	nominal 8192 → reserve 1024 → cap 7168 MiB, real headroom 7784-7168 =  616 MiB ✗
+//
+// Reading the true figure is possible (DescribeContainerInstances reports the
+// registered MEMORY) but it is not worth it here: the task definition is built BEFORE
+// the slot is known to be registered, so using it would mean reordering launch() for
+// an accuracy this reserve already covers.
+//
+// Clamped at both ends. The floor keeps a small rung from being left with nothing for
+// its daemons; the ceiling stops a large rung from donating gigabytes it does not need
+// — the daemons cost the same on every size.
+// parseHostReserveMiB reads AF_ECS_EC2_HOST_RESERVE_MB. Anything unrecognised is
+// "auto" rather than an error: this knob decides how much RAM a workspace gets, and a
+// typo must not be the reason a deployment stops capping (or stops starting).
+func parseHostReserveMiB(s string) int64 {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return 0
+	case "off", "none", "false":
+		return ec2HostReserveOff
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil || n < 0 {
+		log.Printf("ecs-ec2: AF_ECS_EC2_HOST_RESERVE_MB=%q is not auto|off|<MiB>; using auto", s)
+		return 0
+	}
+	return n
+}
+
+func (p ec2PoolConfig) workspaceMemCapMiB(slotMemMiB int64) int64 {
+	if slotMemMiB <= 0 || p.hostReserveMiB < 0 {
+		return 0
+	}
+	reserve := p.hostReserveMiB
+	if reserve == 0 { // "auto"
+		reserve = min(max(slotMemMiB/5, ec2HostReserveFloorMiB), ec2HostReserveCeilMiB)
+	}
+	cap := slotMemMiB - reserve
+	if cap < ec2MinWorkspaceMemMiB {
+		// A rung too small to leave both a workspace and its daemons room. Capping it
+		// to something unusable would break the deployment; say so and leave it alone.
+		log.Printf("ecs-ec2: slot rung %d MiB is too small to reserve %d MiB for the host; leaving the workspace uncapped",
+			slotMemMiB, reserve)
+		return 0
+	}
+	return cap
 }
 
 // parseSlotClasses reads AF_ECS_EC2_SLOT_TYPES.
@@ -3354,8 +3464,8 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 		// Backend-drift stamp — same contract as the Fargate revision
 		// (runtime_ecs_stale.go).
 		DockerLabels: e.base.stampImage(ctx),
-		// A soft reservation only: ECS requires a memory figure somewhere, and a hard
-		// limit here would cap the user below the slot they are paying for.
+		// The soft reservation ECS requires; the hard cap is set below when the pool
+		// declares a host reserve.
 		MemoryReservation: aws.Int32(512),
 		PortMappings: []ecstypes.PortMapping{
 			{ContainerPort: aws.Int32(ecsAgentPort), Name: aws.String("agent")},
@@ -3376,6 +3486,16 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 				MountOptions:  e.pool.tmpfsOpts,
 			}},
 		},
+	}
+	// The hard cap. Deliberately on the CONTAINER rather than the task: a task-level
+	// memory limit would also have to cover the Service Connect sidecar ECS injects,
+	// and that sidecar's size is not ours to predict.
+	//
+	// ⚠️ This is part of the task definition's fingerprint, so the first Start after a
+	// deployment that changes the reserve registers a new revision and replaces the
+	// running task — the same thing an image or env change already does.
+	if e.memCapMiB > 0 {
+		container.Memory = aws.Int32(int32(e.memCapMiB))
 	}
 	if e.base.cfg.logGroup != "" {
 		container.LogConfiguration = &ecstypes.LogConfiguration{
