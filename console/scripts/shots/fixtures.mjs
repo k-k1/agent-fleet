@@ -651,8 +651,10 @@ export function workItems(locale) {
         labels: ["ui"],
         updatedAt: ago(150),
       }),
+      // ★ ラベルの無い行を 1 件混ぜておく。CP が nil スライス（JSON の null）を出して
+      // いた頃、この形が来ると Console 全体が真っ白になった。
       it("wi3", "demo/payments-api#77", ja ? "返金の冪等キーを再設計する" : "Redesign the refund idempotency key", {
-        labels: ["design"],
+        labels: null,
         updatedAt: ago(400),
       }),
     ],

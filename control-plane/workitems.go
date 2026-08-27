@@ -105,9 +105,15 @@ func workItemSessionToDTO(s WorkItemSession) workItemSessionDTO {
 		SessionName: s.SessionName, Repo: s.Repo, Branch: s.Branch, CreatedAt: s.CreatedAt}
 }
 
+// splitLabels turns the stored comma-separated column into a slice.
+//
+// ⚠️ It returns an EMPTY slice, never nil. A nil slice marshals to JSON `null`, and the
+// Console then does `item.labels.slice(...)` on it — which took the whole Console to a
+// white screen the first time a ticket without labels reached the rail (there is no
+// error boundary, so one null field kills the app, not just the section).
 func splitLabels(s string) []string {
 	if strings.TrimSpace(s) == "" {
-		return nil
+		return []string{}
 	}
 	out := []string{}
 	for _, p := range strings.Split(s, ",") {
