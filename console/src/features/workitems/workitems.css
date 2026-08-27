@@ -79,12 +79,20 @@
   flex-direction: column;
 }
 
+/* ★ 行そのものが詳細を開く（§80.20）。ボタンを並べるのをやめた代わりに、行が押せる
+   ことは hover の地色とカーソルで言う —— レールの他の押せる行（sched-main）と同じ作法。 */
 .wi-row {
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 4px 8px;
   border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  text-align: left;
+}
+.wi-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .wi-row:last-child {
   border-bottom: none;
@@ -197,26 +205,6 @@
   }
 }
 
-.wi-report {
-  flex: 0 0 auto;
-  color: var(--muted);
-  opacity: 0;
-  display: inline-flex;
-  border: none;
-  background: none;
-  cursor: pointer;
-  padding: 2px;
-}
-.wi-row:hover .wi-report,
-.wi-report:focus-visible {
-  opacity: 1;
-}
-@media (hover: none) {
-  .wi-report {
-    opacity: 1;
-  }
-}
-
 .wi-qbranch {
   margin: 0;
   padding: 8px;
@@ -242,15 +230,115 @@
   margin-top: 5px;
 }
 
-/* --- start-target modal --------------------------------------------------- */
+/* --- detail modal (行を押すと開く 1 枚・§80.20) ----------------------------- */
 
-.wi-shead {
+.wi-dhead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+/* ★ ここだけは省略しない。レールの行が 1 行で切っているものを読みに来る面なので、
+   折り返してでも全文を出す（行の .wi-title とは正反対の扱い）。 */
+.wi-dtitle {
   margin: 0;
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.wi-dfacts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 12px;
+  align-items: baseline;
+}
+.wi-dfacts dt {
+  color: var(--muted);
   white-space: nowrap;
 }
+.wi-dfacts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* 取得元。保存クエリの行と同じ見た目にして、どこから来た行かを 1 語で言う。 */
+.wi-dprov {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 5px;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.wi-dlabels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* 本文を持たない代わりに、読みに行く先は必ず出す（§80.9 と同じ理由）。 */
+.wi-dlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  width: fit-content;
+}
+
+.wi-dstarted,
+.wi-dstart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.wi-dstarted h4,
+.wi-dstart h4 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.wi-dstarted ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.wi-dsession {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+.wi-dsession .codicon {
+  color: var(--ok);
+  font-size: 10px;
+}
+.wi-dsession:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.wi-dbranch {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* --- start-target picker (詳細モーダルの中) --------------------------------- */
+
 .wi-sfield {
   display: flex;
   flex-direction: column;
@@ -310,21 +398,6 @@
   margin: 0;
   font-size: 11px;
   color: var(--muted);
-}
-
-.wi-start {
-  flex: 0 0 auto;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: none;
-  color: inherit;
-  cursor: pointer;
-  font-size: 11px;
-  padding: 1px 7px;
-}
-.wi-start:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 .wi-add-first {
