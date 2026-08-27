@@ -513,8 +513,8 @@
 
 /* === 掃除パネル（CleanupModal・docs/32）=== */
 .clean-modal { width: min(760px, 94vw); }
-.clean-subtitle { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
-.clean-tabs { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.clean-subtitle { margin: 0; color: var(--muted); font-size: 12px; }
+.clean-tabs { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--border); }
 .clean-tab { appearance: none; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); padding: 6px 10px; cursor: pointer; font: inherit; }
 .clean-tab.is-active { color: var(--fg); border-bottom-color: var(--accent); }
 .clean-tabs-spacer { flex: 1; }
