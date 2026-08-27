@@ -514,6 +514,13 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			confirmBase = deliveryBaseline(m)
 		}
 	}
+	// ミラーのバッジ用の由来は**打つ前に**記録する（recordInjection のコメント参照）。
+	// 配達の後ろに置くと、転写に user 行が現れてから記録が済むまでの隙間にポーリングが
+	// 当たったターンは、由来なしのまま利用者の画面に固定される。peer は配達確認を必ず
+	// 通る＝その隙間が確実に開く経路なので、ここが唯一の正しい位置になる。
+	if src := badgeOriginOf(body.PeerFrom, body.ReportTo, body.Source); src != "" {
+		recordInjection(name, body.Prompt, src)
+	}
 	if !submitPromptTUI(w, name, pane, body.Prompt) {
 		return
 	}
@@ -536,18 +543,17 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case body.PeerFrom != "":
 		// peer は台帳に載せない（arm 非干渉 — ADR 0041 決定4）。覚えるのはミラーの
-		// バッジ用の由来だけ。Discord への転記もしない: あれは「利用者が Console で
-		// 打った入力」をスレッドへ反映するためのもので、peer はどちらでもない。
-		recordInjection(name, body.Prompt, turnSourcePeer)
+		// バッジ用の由来だけで、それは配達の前に済ませてある。Discord への転記もしない:
+		// あれは「利用者が Console で打った入力」をスレッドへ反映するためのもので、
+		// peer はどちらでもない。
 	case body.ReportTo != "":
 		addInstruction(name, body.ReportTo, injectionSource(body.Source))
-		recordInjection(name, body.Prompt, injectionSource(body.Source))
 	case scheduleInjectionSource(body.Source) != "":
 		// 完了報告 OFF のスケジュール投入（report_to が空なので上の枝に入らない）。台帳へは
-		// 載せない — 報告先そのものが無い。覚えるのはミラーのバッジ用の由来だけで、これは
-		// peer と同じ扱い。Discord へ転記しないのも意図的: あのミラーは「利用者が Console で
-		// 打った入力」をスレッドへ反映するためのもので、定時実行の投入はそれではない。
-		recordInjection(name, body.Prompt, scheduleInjectionSource(body.Source))
+		// 載せない — 報告先そのものが無い。由来だけを覚えるのは peer と同じ扱いで、これも
+		// 配達の前に済ませてある。Discord へ転記しないのも意図的: あのミラーは「利用者が
+		// Console で打った入力」をスレッドへ反映するためのもので、定時実行の投入はそれ
+		// ではない。
 	default:
 		// Genuine Console-typed input (not an operator/MCP injection): mirror it into
 		// the session's Discord thread so the thread reflects both directions (docs/37
@@ -603,6 +609,12 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
 		return
 	}
+	// TUI 側と同じ理由で、由来は送る前に記録する（recordInjection のコメント）。managed は
+	// Send が返った時点でストアに user ターンが載っているので、後ろに置くと隙間は tmux 経路
+	// より短いだけで同じ形で開く。
+	if src := badgeOriginOf(peerFrom, reportTo, source); src != "" {
+		recordInjection(meta.Name, prompt, src)
+	}
 	if err := h.Send(agents.TurnInput{Prompt: prompt}); err != nil {
 		if errors.Is(err, agents.ErrQuestionPending) {
 			httpx.WriteErr(w, http.StatusConflict, "question_pending",
@@ -615,12 +627,11 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	markSessionWorking(meta.Name)
 	switch {
 	case peerFrom != "":
-		recordInjection(meta.Name, prompt, turnSourcePeer) // 台帳には載せない（ADR 0041 決定4）
+		// 台帳には載せない（ADR 0041 決定4）。由来は上で記録済み。
 	case reportTo != "":
 		addInstruction(meta.Name, reportTo, injectionSource(source))
-		recordInjection(meta.Name, prompt, injectionSource(source))
 	case scheduleInjectionSource(source) != "":
-		recordInjection(meta.Name, prompt, scheduleInjectionSource(source)) // 報告 OFF の定時実行（TUI 側と同じ）
+		// 報告 OFF の定時実行（TUI 側と同じ）— 台帳も Discord も無し。
 	default:
 		go bridge.MirrorUserInput(meta.Name, prompt) // docs/37 Fix ②: Console-input mirror
 	}

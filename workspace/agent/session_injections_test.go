@@ -116,6 +116,28 @@ func TestScheduleInjectionSource(t *testing.T) {
 	}
 }
 
+// badgeOriginOf は投入1件をミラーのバッジ1つへ対応させる唯一の場所。TUI と managed で
+// 別々に switch を書いていたときの取りこぼし（片方だけ由来を落とす）を作らないための表。
+// "" は「利用者が自分で打った入力＝バッジ無し」で、ここだけは決して埋めてはいけない
+// — 埋めると素の入力が operator バッジになる。
+func TestBadgeOriginOf(t *testing.T) {
+	cases := []struct{ peerFrom, reportTo, source, want string }{
+		{peerFrom: "sender", want: turnSourcePeer},
+		{peerFrom: "sender", source: "schedule", want: turnSourcePeer}, // peer が最優先
+		{reportTo: "conv1", want: turnSourceOperator},
+		{reportTo: "conv1", source: "schedule", want: turnSourceSchedule},
+		{source: "schedule", want: turnSourceSchedule},              // 完了報告 OFF の定時実行
+		{source: "schedule-manual", want: turnSourceScheduleManual}, // 手動発火
+		{want: ""},                       // 素の Console 入力
+		{source: "evil-badge", want: ""}, // report_to 無しの未知は素の入力扱い
+	}
+	for _, c := range cases {
+		if got := badgeOriginOf(c.peerFrom, c.reportTo, c.source); got != c.want {
+			t.Errorf("badgeOriginOf(%q, %q, %q) = %q, want %q", c.peerFrom, c.reportTo, c.source, got, c.want)
+		}
+	}
+}
+
 // injectionSource whitelists what callers may record: schedule origins pass through,
 // anything unknown (or empty) degrades to operator — no arbitrary badge strings.
 func TestInjectionSourceWhitelist(t *testing.T) {
