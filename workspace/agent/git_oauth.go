@@ -151,6 +151,53 @@ func loadGitOAuthBridge() *secrets.CPBridge {
 	return s.GitOAuthBridge
 }
 
+// cpRefreshedToken is what the CP bridge answers with — the three fields worth storing.
+// The app's client id/secret are deliberately not among them (docs/71 §71.8).
+type cpRefreshedToken struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int64  `json:"expires_in"`
+}
+
+// refreshOAuthViaCP runs one provider's refresh grant through the CP bridge. The
+// provider is a path segment (bitbucket / jira, docs/80 §80.17) — the bridge token and
+// base URL are shared, because what the bridge authorizes is "refresh THIS member's
+// tokens", not one provider's.
+//
+// Bounded on purpose: this call sits in front of every git clone once the access token
+// is near expiry (and in front of every work item refresh for Jira), so a hung CP must
+// fail rather than wedge the caller. The CP's own retries fit inside this budget.
+func refreshOAuthViaCP(b secrets.CPBridge, provider, refreshToken string) (cpRefreshedToken, error) {
+	if refreshToken == "" {
+		return cpRefreshedToken{}, fmt.Errorf("no refresh token stored")
+	}
+	body, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
+	req, err := http.NewRequest("POST",
+		strings.TrimRight(b.BaseURL, "/")+"/internal/git-oauth/"+provider+"/refresh", strings.NewReader(string(body)))
+	if err != nil {
+		return cpRefreshedToken{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+b.Token)
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return cpRefreshedToken{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return cpRefreshedToken{}, fmt.Errorf("cp refresh failed: %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var out cpRefreshedToken
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return cpRefreshedToken{}, err
+	}
+	if out.AccessToken == "" {
+		return cpRefreshedToken{}, fmt.Errorf("cp refresh returned no access_token")
+	}
+	return out, nil
+}
+
 // refreshBitbucketViaCP posts the refresh token to the CP and returns the refreshed
 // creds with the legacy client key/secret CLEARED — the caller persists the result, so
 // the scrub of a pre-docs/71 store happens as a side effect of the first refresh that

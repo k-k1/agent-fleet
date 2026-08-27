@@ -146,6 +146,97 @@ func (a gitOAuthBridgeAPI) refreshBitbucket(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, tok)
 }
 
+// refreshJira (POST /internal/git-oauth/jira/refresh) is the same grant for Jira's 3LO
+// app. It exists separately from refreshBitbucket for one reason only: the request shape
+// differs (JSON body with client_id/client_secret vs form + Basic auth).
+//
+// ⚠️ Atlassian ROTATES the refresh token — every refresh returns a new one and retires
+// the old. The Agent must persist what comes back; dropping it strands the connection at
+// the next expiry with no way to renew. (Bitbucket may or may not rotate, so the Agent's
+// store-what-you-get behaviour already covers both.)
+func (a gitOAuthBridgeAPI) refreshJira(w http.ResponseWriter, r *http.Request, mv MembershipView) {
+	var body struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	body.RefreshToken = strings.TrimSpace(body.RefreshToken)
+	if body.RefreshToken == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "refresh_token is required"})
+		return
+	}
+	key, secret, ok, err := a.mgr.gitOAuthApp(r.Context(), mv.TenantID, gitOAuthJira)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "not_configured",
+			"this tenant no longer has a Jira OAuth app, so the token cannot be refreshed"})
+		return
+	}
+	tok, aerr := jiraRefreshGrant(key, secret, body.RefreshToken)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, tok)
+}
+
+// jiraRefreshGrant mirrors bbRefreshGrant's retry policy for the same reason: this call
+// sits in front of every rail refresh once the hour-old access token expires, and one
+// blip should not read as "reconnect Jira".
+func jiraRefreshGrant(key, secret, refreshToken string) (bbRefreshToken, *apiError) {
+	payload, _ := json.Marshal(map[string]string{
+		"grant_type": "refresh_token", "client_id": key, "client_secret": secret,
+		"refresh_token": refreshToken,
+	})
+	const attempts = 3
+	var last *apiError
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			time.Sleep(time.Duration(i) * 300 * time.Millisecond)
+		}
+		req, err := http.NewRequest("POST", jiraTokenURL, strings.NewReader(string(payload)))
+		if err != nil {
+			return bbRefreshToken{}, internalErr(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := bbHTTPClient.Do(req)
+		if err != nil {
+			last = &apiError{http.StatusBadGateway, "jira_unreachable", err.Error()}
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
+				return bbRefreshToken{}, &apiError{http.StatusBadRequest, "invalid_grant",
+					fmt.Sprintf("jira refused the refresh (%d): %s", resp.StatusCode, strings.TrimSpace(string(b)))}
+			}
+			last = &apiError{http.StatusBadGateway, "jira_error",
+				fmt.Sprintf("jira refresh failed: %d", resp.StatusCode)}
+			continue
+		}
+		var out bbRefreshToken
+		derr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out)
+		resp.Body.Close()
+		if derr != nil {
+			return bbRefreshToken{}, &apiError{http.StatusBadGateway, "jira_error", derr.Error()}
+		}
+		if out.AccessToken == "" {
+			return bbRefreshToken{}, &apiError{http.StatusBadGateway, "jira_error", "refresh returned no access_token"}
+		}
+		if out.ExpiresIn <= 0 {
+			out.ExpiresIn = 3600
+		}
+		return out, nil
+	}
+	return bbRefreshToken{}, last
+}
+
 // bbRefreshToken is the wire shape returned to the Agent — deliberately only the three
 // fields it has to store. The app's key/secret are NOT among them: putting them here
 // would re-create the very distribution this bridge removes.

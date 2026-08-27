@@ -57,7 +57,7 @@ func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
 		}
 		url, err = githubPostIssueComment(e.Token, key, body)
 	case "jira":
-		if s.Jira == nil || s.Jira.Token == "" {
+		if !jiraConnected(s.Jira) {
 			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "Jira is not connected")
 			return
 		}
@@ -128,28 +128,32 @@ func githubPostIssueComment(token, key, body string) (string, error) {
 
 func jiraPostIssueComment(c *secrets.JiraCreds, key, body string) (string, error) {
 	payload, _ := json.Marshal(map[string]any{"body": jiraADF(body)})
-	u := c.Site + "/rest/api/3/issue/" + key + "/comment"
-	req, err := http.NewRequest("POST", u, bytes.NewReader(payload))
+	u := jiraAPIBase(c) + "/rest/api/3/issue/" + key + "/comment"
+	if err := jiraEnsureFresh(c); err != nil {
+		return "", err
+	}
+	raw, status, err := jiraRequest(c, "POST", u, payload)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", jiraAuthHeader(c))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := jiraHTTPClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("could not reach %s", c.Site)
+	if status == http.StatusUnauthorized && c.AuthKind == "oauth" {
+		if rerr := jiraRefreshNow(c); rerr == nil {
+			raw, status, err = jiraRequest(c, "POST", u, payload)
+			if err != nil {
+				return "", err
+			}
+		}
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		switch resp.StatusCode {
+	if status != http.StatusCreated && status != http.StatusOK {
+		switch status {
 		case http.StatusUnauthorized, http.StatusForbidden:
-			return "", fmt.Errorf("jira refused the comment (%d) — the account may lack the Add Comments permission", resp.StatusCode)
+			// ⚠️ OAuth では「スコープに write:jira-work が無い」もここに来る。読み取りは
+			// 通るのに投稿だけ 403 という形になるので、権限の話だと分かる言い方にする。
+			return "", fmt.Errorf("jira refused the comment (%d) — the account or the OAuth app may lack write access", status)
 		case http.StatusNotFound:
 			return "", fmt.Errorf("jira has no %s", key)
 		}
-		return "", fmt.Errorf("jira comment %d: %s", resp.StatusCode, jiraErrText(raw))
+		return "", fmt.Errorf("jira comment %d: %s", status, jiraErrText(raw))
 	}
 	var out struct {
 		ID string `json:"id"`

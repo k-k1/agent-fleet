@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -217,5 +218,198 @@ func TestJiraConnectVerifiesBeforeSaving(t *testing.T) {
 	s, _ := secrets.Load()
 	if s.Jira != nil {
 		t.Error("a rejected connection was still written to the store")
+	}
+}
+
+// --- OAuth（docs/80 §80.17）-------------------------------------------------
+
+// ★ 3LO のトークンはサイトのホストでは通らない。API のベースが認証方式で変わることを
+// 固定する —— ここを間違えると症状は 401 になり、「トークンが違う」と読めてしまう。
+func TestJiraAPIBaseSwitchesWithAuthKind(t *testing.T) {
+	tokenAuth := &secrets.JiraCreds{Site: "https://example.atlassian.net", Email: "a@example.com", Token: "t"}
+	if got := jiraAPIBase(tokenAuth); got != "https://example.atlassian.net" {
+		t.Errorf("token base = %q", got)
+	}
+	oauth := &secrets.JiraCreds{AuthKind: "oauth", Site: "https://example.atlassian.net", CloudID: "cid-1", AccessToken: "at"}
+	if got := jiraAPIBase(oauth); got != "https://api.atlassian.com/ex/jira/cid-1" {
+		t.Errorf("oauth base = %q", got)
+	}
+	// 認証ヘッダも切り替わる。
+	if h := jiraAuthHeader(oauth); h != "Bearer at" {
+		t.Errorf("oauth header = %q", h)
+	}
+	if h := jiraAuthHeader(tokenAuth); !strings.HasPrefix(h, "Basic ") {
+		t.Errorf("token header = %q", h)
+	}
+	// Site は人が見る URL のまま（browse リンクは api.atlassian.com ではない）。
+	if oauth.Site != "https://example.atlassian.net" {
+		t.Errorf("oauth site = %q", oauth.Site)
+	}
+}
+
+// 「接続済み」の判定に Token 欄を使うと、OAuth 接続が未接続に見える。
+func TestJiraConnected(t *testing.T) {
+	if jiraConnected(nil) {
+		t.Error("nil is connected")
+	}
+	if jiraConnected(&secrets.JiraCreds{Site: "https://x"}) {
+		t.Error("a site alone is not a connection")
+	}
+	if !jiraConnected(&secrets.JiraCreds{Token: "t"}) {
+		t.Error("api token path not recognised")
+	}
+	if !jiraConnected(&secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at"}) {
+		t.Error("oauth path not recognised")
+	}
+	// アクセストークンが切れていても、更新トークンがあるなら接続は生きている。
+	if !jiraConnected(&secrets.JiraCreds{AuthKind: "oauth", RefreshToken: "rt"}) {
+		t.Error("an expired-but-refreshable connection reads as disconnected")
+	}
+}
+
+// 認可のあと何が起きるかを丸ごと固定する。★ サイトの解決は「保存の一部」——
+// cloud id が無い 3LO 接続は API を 1 本も叩けないので、トークンだけ保存して
+// あとで解決する形にすると「カードは接続済み・レールは 401」という一番分かりにくい
+// 状態になる。
+func TestJiraOAuthStoreResolvesSitesAndPicksOne(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var authSeen string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authSeen = r.Header.Get("Authorization")
+		switch r.URL.Path {
+		case "/oauth/token/accessible-resources":
+			_, _ = w.Write([]byte(`[{"id":"cid-1","url":"https://one.atlassian.net/","name":"One"},
+			                        {"id":"cid-2","url":"https://two.atlassian.net","name":"Two"}]`))
+		case "/ex/jira/cid-1/rest/api/3/myself":
+			_, _ = w.Write([]byte(`{"displayName":"山田 太郎"}`))
+		case "/ex/jira/cid-2/rest/api/3/myself":
+			_, _ = w.Write([]byte(`{"displayName":"Taro on Two"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	old := jiraCloudAPIBase
+	jiraCloudAPIBase = srv.URL
+	defer func() { jiraCloudAPIBase = old }()
+
+	w := httptest.NewRecorder()
+	handleJiraOAuthStore(w, httptest.NewRequest("PUT", "/connections/jira/oauth",
+		strings.NewReader(`{"access_token":"at","refresh_token":"rt","expires_in":3600}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("store = %d (%s)", w.Code, w.Body.String())
+	}
+	if authSeen != "Bearer at" {
+		t.Errorf("site resolution used %q, want a Bearer token", authSeen)
+	}
+	s, _ := secrets.Load()
+	if s.Jira == nil || s.Jira.AuthKind != "oauth" {
+		t.Fatalf("stored = %+v", s.Jira)
+	}
+	if len(s.Jira.Sites) != 2 {
+		t.Fatalf("sites = %+v", s.Jira.Sites)
+	}
+	// 既定は先頭。URL の末尾スラッシュは落とす（browse リンクが // になる）。
+	if s.Jira.CloudID != "cid-1" || s.Jira.Site != "https://one.atlassian.net" {
+		t.Errorf("default site = %q / %q", s.Jira.CloudID, s.Jira.Site)
+	}
+	if s.Jira.Account != "山田 太郎" {
+		t.Errorf("account = %q", s.Jira.Account)
+	}
+	if s.Jira.Expiry <= time.Now().Unix() {
+		t.Errorf("expiry not stamped: %d", s.Jira.Expiry)
+	}
+
+	// サイトの切り替え —— 認可に含まれるものだけ。
+	w = httptest.NewRecorder()
+	handlePutJiraSite(w, httptest.NewRequest("PUT", "/connections/jira/site", strings.NewReader(`{"cloudId":"cid-2"}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("site switch = %d (%s)", w.Code, w.Body.String())
+	}
+	s, _ = secrets.Load()
+	if s.Jira.CloudID != "cid-2" || s.Jira.Site != "https://two.atlassian.net" {
+		t.Errorf("after switch = %q / %q", s.Jira.CloudID, s.Jira.Site)
+	}
+	if s.Jira.Account != "Taro on Two" {
+		t.Errorf("account not re-resolved for the new site: %q", s.Jira.Account)
+	}
+	w = httptest.NewRecorder()
+	handlePutJiraSite(w, httptest.NewRequest("PUT", "/connections/jira/site", strings.NewReader(`{"cloudId":"cid-999"}`)))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("a site outside the authorization was accepted: %d", w.Code)
+	}
+}
+
+// 認可は通ったのにサイトが 0 件 —— スコープ不足かサイト未所属。接続済みにしない。
+func TestJiraOAuthStoreRefusesWhenNoSites(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	old := jiraCloudAPIBase
+	jiraCloudAPIBase = srv.URL
+	defer func() { jiraCloudAPIBase = old }()
+
+	w := httptest.NewRecorder()
+	handleJiraOAuthStore(w, httptest.NewRequest("PUT", "/connections/jira/oauth",
+		strings.NewReader(`{"access_token":"at","refresh_token":"rt"}`)))
+	if w.Code == http.StatusOK {
+		t.Fatalf("stored a connection that cannot call anything: %s", w.Body.String())
+	}
+	s, _ := secrets.Load()
+	if s.Jira != nil {
+		t.Error("a refused authorization was written to the store")
+	}
+}
+
+func TestJiraStatusHidesSecretsAndNamesTheAuthKind(t *testing.T) {
+	s := &secrets.Data{Jira: &secrets.JiraCreds{
+		AuthKind: "oauth", AccessToken: "super-secret", RefreshToken: "also-secret",
+		Site: "https://example.atlassian.net", CloudID: "cid-1", Account: "山田 太郎",
+		Sites: []secrets.JiraSite{{CloudID: "cid-1", URL: "https://example.atlassian.net", Name: "Example"}},
+	}}
+	st := jiraStatus(s)
+	enc, _ := json.Marshal(st)
+	for _, secret := range []string{"super-secret", "also-secret"} {
+		if strings.Contains(string(enc), secret) {
+			t.Fatalf("status leaked a token: %s", enc)
+		}
+	}
+	if st["authKind"] != "oauth" {
+		t.Errorf("authKind = %v", st["authKind"])
+	}
+	if st["cloudId"] != "cid-1" {
+		t.Errorf("cloudId = %v", st["cloudId"])
+	}
+	// ⚠️ OAuth 側にメールは無い。空文字を出すと「メールが消えた」と読める。
+	if _, ok := st["email"]; ok {
+		t.Errorf("oauth status carries an email field: %v", st)
+	}
+	// 旧ストア（authKind 無し）は token 扱いのまま動く。
+	old := &secrets.Data{Jira: &secrets.JiraCreds{Site: "https://x", Email: "a@example.com", Token: "t"}}
+	if got := jiraStatus(old)["authKind"]; got != "token" {
+		t.Errorf("legacy store authKind = %v, want token", got)
+	}
+}
+
+// 期限が近ければ要求の前に更新する。⚠️ 更新の結果は保存する —— Atlassian は更新トークンを
+// ローテートするので、保存を落とすと次の期限で接続が詰む。
+func TestJiraEnsureFreshOnlyWhenOAuthAndDue(t *testing.T) {
+	// token 認証は期限を持たないので、何もしない（ブリッジが無くてもエラーにしない）。
+	tokenAuth := &secrets.JiraCreds{Site: "https://x", Token: "t"}
+	if err := jiraEnsureFresh(tokenAuth); err != nil {
+		t.Errorf("token path tried to refresh: %v", err)
+	}
+	// 期限が十分先なら触らない。
+	future := &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at", Expiry: time.Now().Add(time.Hour).Unix()}
+	if err := jiraEnsureFresh(future); err != nil {
+		t.Errorf("fresh token refreshed anyway: %v", err)
+	}
+	// 期限切れならブリッジを探しに行き、無ければその旨のエラー（黙って古い token で叩かない）。
+	t.Setenv("HOME", t.TempDir())
+	expired := &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at", RefreshToken: "rt", Expiry: 1}
+	if err := jiraEnsureFresh(expired); err == nil {
+		t.Error("an expired token was used without a refresh")
 	}
 }

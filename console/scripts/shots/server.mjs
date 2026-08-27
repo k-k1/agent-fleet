@@ -77,6 +77,13 @@ const exact = {
   // 作業項目（docs/80）。★ 未対応ルートは {} を返すだけなので、これが無いと
   // レールの新しい面は「常に空」で描かれ、検証にならない。
   "/api/work-items": () => fx.workItems(LOCALE),
+  // テナントが OAuth アプリを登録済みの状態（docs/80 §80.17）。これが無いと Jira の
+  // 「OAuth で接続」は常に無効で描かれ、導線を確かめられない。
+  "/api/git-oauth": () => ({
+    github: { configured: true },
+    bitbucket: { configured: true },
+    jira: { configured: true },
+  }),
   "/api/memos": () => fx.memos(LOCALE),
   "/api/memo-categories": () => fx.memoCategories(LOCALE),
   "/api/schedules": () => fx.schedules(LOCALE),

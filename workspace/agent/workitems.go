@@ -118,7 +118,7 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, erro
 		}
 		return githubSearchWorkItems(e.Token, q.ID, query)
 	case "jira":
-		if s.Jira == nil || s.Jira.Token == "" {
+		if !jiraConnected(s.Jira) {
 			return nil, fmt.Errorf("Jira is not connected")
 		}
 		return jiraSearchWorkItems(s.Jira, q.ID, query)

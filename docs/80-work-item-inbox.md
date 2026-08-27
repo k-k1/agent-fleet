@@ -423,6 +423,66 @@ URL: https://example.atlassian.net/browse/PROJ-123
 - ⚠️ `console/scripts/shots/` のスタブに新ルートを足す（未対応ルートは `{}` を返すだけなので、
   足し忘れると UI 検証で**空のセクション**が出て気付けない）。
 
+## 80.17 Jira の認証を OAuth にする（P1.5・実装済み）
+
+API トークンの手貼りは 3 項目あり、**メールもトークンの片割れ**（Basic 認証）なので、
+その人のほぼ全権に近い資格情報がコンテナに置かれる。Bitbucket と同じ形の OAuth を足した。
+
+### 80.17.1 ★ Bitbucket に相乗りはできない
+
+同じ Atlassian でも**認可サーバもアプリ登録先も別**である。
+
+| | Bitbucket | Jira Cloud |
+|---|---|---|
+| アプリ登録 | Bitbucket ワークスペース設定の OAuth consumer | developer.atlassian.com（3LO アプリ） |
+| authorize | `bitbucket.org/site/oauth2/authorize` | `auth.atlassian.com/authorize` |
+| token | `bitbucket.org/site/oauth2/access_token`（form + Basic） | `auth.atlassian.com/oauth/token`（**JSON ボディに client_secret**） |
+| API ベース | `api.bitbucket.org` | **`api.atlassian.com/ex/jira/{cloudId}`** |
+
+1 つの client_id で相手のスコープを認可することはできないので、**テナント管理者は
+Atlassian 側にもう 1 つアプリを登録する**。ここが実質的な前提条件で、だから
+**API トークン経路は残す**（アプリ未登録のテナントには他に入口が無く、どの配備も
+その状態から始まる）。
+
+### 80.17.2 型は全部あった
+
+- `tenant_git_oauth` は `(tenant, provider)` の表で、provider は Go 側の閉じた集合。
+  **`"jira"` を足すだけでマイグレーション不要**。⚠️ 表の名前は「git」だが、実際に
+  モデル化しているのは「テナントが登録した OAuth アプリ・秘密は CP・利用者のトークンは
+  ワークスペース」で、Jira が要るのはまさにそれ。名前のために表・管理 API・可用性
+  エンドポイント・リフレッシュ橋渡しを二重化する方が高くつく。
+- 認可コードフロー（CSRF state → コールバック → コード交換 → Agent へ PUT）は
+  `oauth_bitbucket.go` と同型。コールバックの文言は 9 本 × 2 言語を provider 名で
+  差し替える 1 か所に畳んだ（手書きで 2 組持つと必ずずれる）。
+- **リフレッシュ橋渡しが既にある**（`git_oauth_bridge.go` ＋ `AF_GIT_OAUTH_TOKEN`）。
+  **新しいブリッジトークン種別は増やしていない** —— ブリッジが認可しているのは
+  「このメンバーのトークンを更新する」ことであって、1 つの provider ではないから。
+
+### 80.17.3 実装で効いた 4 点
+
+1. **⚠️ API のベースが認証方式で変わる。** 3LO のトークンは `<site>.atlassian.net` では
+   通らず、`api.atlassian.com/ex/jira/{cloudId}` を叩く。間違えると症状は 401 で、
+   「トークンが違う」と読めてしまう。一方 `/browse/<KEY>` のリンクはサイトの URL のまま
+   なので、`Site`（人が見る URL）と API ベースは別々に持つ。
+2. **⚠️ サイトの解決は「保存の一部」。** cloud id の無い 3LO 接続は API を 1 本も叩けない。
+   トークンだけ保存して後で解決する形にすると「カードは接続済み・レールは 401」という
+   一番分かりにくい状態になるので、`accessible-resources` が 0 件なら**接続済みにしない**。
+3. **⚠️ 1 回の認可が複数サイトを含みうる。** どれに自分の作業があるかは本人しか知らないので
+   選ばせる。★ GitHub 側に同じ選択は要らない —— 1 つのトークンがアカウントの見える
+   組織を全部覆い、絞り込みは検索クエリ（`org:foo`）が担うので、サイト（＝別ホスト）の
+   選択とは問題が違う。GHE のような別ホストは今も対象外（§80.4.2）。
+4. **⚠️ 認可 URL の 4 点がどれも欠かせない。** `audience=api.atlassian.com`（無いと API 用の
+   トークンにならない）・`offline_access`（無いと refresh token が返らず 1 時間で死ぬ）・
+   `prompt=consent`（無いと**再認可で** refresh token が返らない）・`write:jira-work`
+   （利用者の選択でコメント投稿まで含める・§80.10）。どれが欠けても症状は「連携したのに
+   動かない」で、原因が認可 URL だとは分からない。
+   ⚠️ Atlassian は **refresh token をローテートする**ので、更新の応答に入っている新しい
+   refresh token を保存し損ねると次の期限で詰む。
+
+⚠️ **実 Jira アカウントがこの環境に無い**ので、ここまで固定できたのは「af が組み立てる物」と
+「スタブ相手の経路」だけである。実インスタンスとの疎通・スコープ名・`accessible-resources`
+の実際の応答は**実機でしか確かめられない**。
+
 ## 80.16 未決
 
 1. **クエリの UI をどこに置くか。** 接続カード内 / セクションの歯車 / 設定タブ。P0 では
