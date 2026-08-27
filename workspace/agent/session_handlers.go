@@ -341,14 +341,95 @@ func resolveLiveModel(requested string, choices []agents.ModelChoice) (string, e
 	if len(matches) == 1 {
 		return matches[0], nil
 	}
-	available := make([]string, 0, len(choices))
-	for _, choice := range choices {
-		available = append(available, choice.ID)
-	}
 	if len(matches) > 1 {
-		return "", fmt.Errorf("モデル %q は曖昧です。利用可能なモデルから完全名を指定してください: %s", requested, strings.Join(matches, ", "))
+		return "", fmt.Errorf("モデル %q は曖昧です。利用可能なモデルから完全名を指定してください: %s",
+			requested, joinModelIDs(matches, modelAmbiguousLimit))
 	}
-	return "", fmt.Errorf("モデル %q は利用できません。利用可能なモデル: %s", requested, strings.Join(available, ", "))
+	return "", fmt.Errorf("モデル %q は利用できません。近い候補: %s。"+
+		"一覧は起動ダイアログのモデル選択（アシスタントは list_models）で確認してください。",
+		requested, joinModelIDs(nearestModels(want, choices), modelSuggestLimit))
+}
+
+// retiredModelError は「id は正しいが提供が終わった」場合の文言。opencode だけが持つ
+// 状況で（カタログに status を持つ唯一の種）、利用者は退役を知らずに再指定を繰り返す。
+func retiredModelError(requested string, choices []agents.ModelChoice) string {
+	return fmt.Sprintf("モデル %q は提供終了しています（opencode.ai 側で退役）。近い候補: %s。",
+		requested, joinModelIDs(nearestModels(strings.ToLower(requested), choices), modelSuggestLimit))
+}
+
+// Rejection messages are read in a Console toast and in a phone notification, so the
+// id list has to fit there: the live opencode catalog alone runs to ~60 entries, and
+// spelling all of them out pushed the actual reason off the top of the notification
+// （実測: opencode の起動失敗通知が全文モデル名で埋まった）。So name a few ids and say
+// how many were left out — the full list already has a home (起動ダイアログ / list_models).
+const (
+	modelSuggestLimit   = 5  // 不明なモデル: 近い候補だけ
+	modelAmbiguousLimit = 10 // 曖昧: 利用者はこの中から選ぶので多めに出す
+)
+
+// joinModelIDs renders at most limit ids, appending how many were dropped.
+func joinModelIDs(ids []string, limit int) string {
+	if len(ids) <= limit {
+		return strings.Join(ids, ", ")
+	}
+	return fmt.Sprintf("%s（ほか %d 件）", strings.Join(ids[:limit], ", "), len(ids)-limit)
+}
+
+// nearestModels reorders the catalog by rough similarity to what was requested, so a
+// truncated message names plausible ids rather than whichever ones sort first. The
+// scoring is deliberately crude — shared dot/dash/slash tokens, then a longest-common-
+// prefix tie-break — because it only has to ORDER the list; resolveLiveModel has
+// already decided that nothing here matches. Returns every id (the caller truncates)
+// so the "ほか N 件" count stays the size of the real catalog.
+func nearestModels(want string, choices []agents.ModelChoice) []string {
+	wanted := make(map[string]bool)
+	for _, tok := range modelTokens(want) {
+		wanted[tok] = true
+	}
+	type scored struct {
+		id             string
+		shared, prefix int
+	}
+	rows := make([]scored, 0, len(choices))
+	for _, choice := range choices {
+		row := scored{id: choice.ID, prefix: commonPrefixLen(strings.ToLower(choice.ID), want)}
+		for _, tok := range modelTokens(choice.ID) {
+			if wanted[tok] {
+				row.shared++
+			}
+		}
+		rows = append(rows, row)
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].shared != rows[j].shared {
+			return rows[i].shared > rows[j].shared
+		}
+		return rows[i].prefix > rows[j].prefix
+	})
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.id)
+	}
+	return out
+}
+
+// modelTokens splits an id into its comparable parts: "opencode-go/glm-5.2" =>
+// opencode, go, glm, 5, 2。英数字以外はすべて区切り扱い — 種ごとに / - . _ の流儀が
+// 違うので、どれを使っていても同じ粒度に割れるほうが都合がよい。
+func modelTokens(id string) []string {
+	return strings.FieldsFunc(strings.ToLower(id), func(r rune) bool {
+		return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9')
+	})
+}
+
+// commonPrefixLen is the byte-wise tie-break for nearestModels: 同じ数のトークンを
+// 共有するなら、指定された文字列に長く一致するほうが近い（＝同じ課金経路の id が先に出る）。
+func commonPrefixLen(a, b string) int {
+	n := 0
+	for n < len(a) && n < len(b) && a[n] == b[n] {
+		n++
+	}
+	return n
 }
 
 // createOrigin resolves a new session's origin (ADR 0029 §6) from the create request.
@@ -492,6 +573,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		model, err := resolveLiveModel(req.Model, choices)
 		if err != nil {
+			// 退役したモデルは「打ち間違い」と同じ文言だと原因に辿り着けない — opencode.ai が
+			// 提供をやめただけで、id も課金経路も合っているので、そう言う（models.go Retired）。
+			if requested := strings.TrimSpace(req.Model); opencode.Retired(requested) {
+				httpx.WriteErr(w, http.StatusBadRequest, "bad_model", retiredModelError(requested, choices))
+				return
+			}
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
 			return
 		}
