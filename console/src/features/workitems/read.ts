@@ -70,12 +70,39 @@ export function readWorkItems(res: unknown): { payload: WorkItemPayload | null; 
     payload: {
       ...EMPTY,
       ...d,
-      items: d.items as WorkItem[],
+      items: (d.items as unknown[]).map(normalizeItem),
       queries: d.queries as WorkItemQuery[],
       sessions: Array.isArray(d.sessions) ? (d.sessions as WorkItemSessionRef[]) : [],
       fetchedAt: typeof d.fetchedAt === "string" ? d.fetchedAt : "",
       running: !!d.running,
     },
+  };
+}
+
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/** Make one row safe to render.
+ *
+ * ★ This exists because of a real white screen: Go marshals a nil slice as JSON `null`,
+ * the CP's DTO did that for a ticket with no labels, and `item.labels.slice(0, 2)` in the
+ * row took the WHOLE Console down — there is no error boundary, so one null field is not
+ * a broken section, it is a blank app. The producers were fixed too; this is the boundary
+ * that makes the rail survive the next one (including an older CP still sending null). */
+function normalizeItem(raw: unknown): WorkItem {
+  const r = (raw || {}) as Partial<WorkItem> & Record<string, unknown>;
+  return {
+    id: str(r.id),
+    queryId: str(r.queryId),
+    provider: str(r.provider),
+    kind: str(r.kind),
+    key: str(r.key),
+    title: str(r.title),
+    state: str(r.state),
+    url: str(r.url),
+    assignee: str(r.assignee),
+    labels: Array.isArray(r.labels) ? r.labels.filter((l): l is string => typeof l === "string") : [],
+    repo: str(r.repo),
+    updatedAt: str(r.updatedAt),
   };
 }
 

@@ -217,3 +217,34 @@ describe("branchForItem — テンプレート（P2）", () => {
     expect(branchForItem({ key: "PROJ-1", title: "日本語" }, "{slug}")).toBe("feature/proj-1");
   });
 });
+
+describe("readWorkItems — 配列が null で来ても落ちない", () => {
+  it("★ labels が null の行を素通しさせない（Console が真っ白になった実バグ）", () => {
+    // Go の nil スライスは JSON の null になる。CP の DTO がそれを出していたため、
+    // ラベルの無い課題が 1 件でもあると item.labels.slice(...) で TypeError になり、
+    // セクションどころか Console 全体が落ちた（アプリに ErrorBoundary が無い）。
+    const { payload } = readWorkItems({
+      items: [{ ...item(), labels: null }, { ...item(), id: "2", labels: undefined }],
+      queries: [],
+      fetchedAt: "",
+      running: true,
+    });
+    expect(payload).not.toBeNull();
+    for (const row of payload!.items) {
+      expect(Array.isArray(row.labels)).toBe(true);
+      expect(() => row.labels.slice(0, 2)).not.toThrow();
+    }
+  });
+
+  it("行に必要な文字列フィールドが欠けていても文字列として扱える", () => {
+    const { payload } = readWorkItems({
+      items: [{ id: "1", key: "PROJ-1" }],
+      queries: [],
+    });
+    const row = payload!.items[0];
+    expect(row.title).toBe("");
+    expect(row.state).toBe("");
+    expect(row.repo).toBe("");
+    expect(Array.isArray(row.labels)).toBe(true);
+  });
+});
