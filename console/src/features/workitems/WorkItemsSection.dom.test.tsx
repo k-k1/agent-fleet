@@ -243,7 +243,7 @@ describe("WorkItemsSection", () => {
         provider: "jira",
         key: `G3M-${100 + i}`,
         title: `課題 ${i}`,
-        assignee: "Keiichi Kamikawa",
+        assignee: "Rin Aoyagi",
         repo: "",
         labels: [],
         // ★ 明確に古い日付にする。「24 時間以内なら時刻を出さない」を入れたので、
@@ -270,19 +270,19 @@ describe("WorkItemsSection", () => {
   it("★ 全行が同じ担当者なら行から消え、メタが空なら 2 行目そのものを描かない", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
-    expect(text()).not.toContain("@Keiichi Kamikawa");
+    expect(text()).not.toContain("@Rin Aoyagi");
     expect(host.querySelectorAll(".wi-meta").length).toBe(0);
     // 消したのは表示だけ —— 担当者は行の tooltip に残っている。
-    expect(host.querySelector(".wi-title")?.getAttribute("title")).toContain("Keiichi Kamikawa");
+    expect(host.querySelector(".wi-title")?.getAttribute("title")).toContain("Rin Aoyagi");
     // 空いた高さの代わりに、並び順の理由（更新の相対時刻）が出る。
     expect(host.querySelectorAll(".wi-when").length).toBe(10);
   });
 
   it("担当者が割れていれば出す（チームのクエリ）", async () => {
-    const mixed = jiraRows(41).map((r, i) => (i === 3 ? { ...r, assignee: "Rin Aoyagi" } : r));
+    const mixed = jiraRows(41).map((r, i) => (i === 3 ? { ...r, assignee: "Sora Ueda" } : r));
     workItemList.mockResolvedValue({ items: mixed, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
-    expect(text()).toContain("@Keiichi Kamikawa");
+    expect(text()).toContain("@Rin Aoyagi");
   });
 
   it("★ レール内の絞り込みは行を減らすだけ（絞ってから畳む）", async () => {
