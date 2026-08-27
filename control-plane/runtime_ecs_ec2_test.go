@@ -134,6 +134,35 @@ func (f *fakeEC2) setTag(volID, key, value string) {
 	v.Tags = append(v.Tags, ec2types.Tag{Key: aws.String(key), Value: aws.String(value)})
 }
 
+// giveTaskENI puts the pair of interfaces a slot running a task actually has on it: its
+// own primary, and the one ECS attached for the awsvpc task.
+func (f *fakeEC2) giveTaskENI(instID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if inst := f.instances[instID]; inst != nil {
+		inst.NetworkInterfaces = []ec2types.InstanceNetworkInterface{
+			{Description: aws.String("")},
+			{Description: aws.String("arn:aws:ecs:ap-northeast-1:1234:attachment/abc")},
+		}
+	}
+}
+
+func (f *fakeEC2) dropTaskENIs(instID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	inst := f.instances[instID]
+	if inst == nil {
+		return
+	}
+	var kept []ec2types.InstanceNetworkInterface
+	for _, ni := range inst.NetworkInterfaces {
+		if !strings.Contains(aws.ToString(ni.Description), ":ecs:") {
+			kept = append(kept, ni)
+		}
+	}
+	inst.NetworkInterfaces = kept
+}
+
 // setInstanceTag is setTag's counterpart for a SLOT. The free-pool dormancy mark
 // (af-slot-idle-since) lives on the instance, because a free slot has no volume.
 func (f *fakeEC2) setInstanceTag(instID, key, value string) {
@@ -360,7 +389,13 @@ func (f *fakeEC2) AttachVolume(_ context.Context, in *ec2.AttachVolumeInput, _ .
 func (f *fakeEC2) DetachVolume(_ context.Context, in *ec2.DetachVolumeInput, _ ...func(*ec2.Options)) (*ec2.DetachVolumeOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.log("DetachVolume %s", aws.ToString(in.VolumeId))
+	// The FORCE flag is part of what a test needs to see: a forced detach is the yanked
+	// cable, only correct once the box has been proved unstoppable (abandonLostSlot).
+	if aws.ToBool(in.Force) {
+		f.log("DetachVolume %s force", aws.ToString(in.VolumeId))
+	} else {
+		f.log("DetachVolume %s", aws.ToString(in.VolumeId))
+	}
 	if v := f.volumes[aws.ToString(in.VolumeId)]; v != nil {
 		v.Attachments = nil
 		v.State = ec2types.VolumeStateAvailable
@@ -552,6 +587,14 @@ type fakeContainerInstances struct {
 	// can be running on a slot no home is attached to at all.
 	tasks        map[string]int32
 	deregistered []string
+	// sink lets a forced deregistration do to the fake world what ECS does to the real
+	// one: once ECS gives up on the task, it takes the task's ENI off the instance.
+	// abandonLostSlot's whole ordering argument rests on that happening, so the fake has
+	// to model it rather than leave the ENI there forever.
+	sink *fakeEC2
+	// stickyENI models the opposite: ECS acknowledges the deregistration but the ENI
+	// stays attached. The teardown must then refuse to stop the box (決定 3-3).
+	stickyENI bool
 }
 
 func (f *fakeContainerInstances) ListContainerInstances(_ context.Context, _ *ecs.ListContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.ListContainerInstancesOutput, error) {
@@ -578,7 +621,13 @@ func (f *fakeContainerInstances) DescribeContainerInstances(_ context.Context, i
 }
 
 func (f *fakeContainerInstances) DeregisterContainerInstance(_ context.Context, in *ecs.DeregisterContainerInstanceInput, _ ...func(*ecs.Options)) (*ecs.DeregisterContainerInstanceOutput, error) {
-	f.deregistered = append(f.deregistered, aws.ToString(in.ContainerInstance))
+	arn := aws.ToString(in.ContainerInstance)
+	f.deregistered = append(f.deregistered, arn)
+	id := strings.TrimPrefix(arn, "arn:ci/")
+	delete(f.registered, id)
+	if f.sink != nil && !f.stickyENI {
+		f.sink.dropTaskENIs(id)
+	}
 	return &ecs.DeregisterContainerInstanceOutput{}, nil
 }
 
@@ -630,6 +679,7 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		ci:   &fakeContainerInstances{registered: map[string]bool{}, tasks: map[string]int32{}},
 	}
 	h.ssmc.sink = h.ec2
+	h.ci.sink = h.ec2
 	base := newTestECS(h.ecs, h.efs, h.ssm)
 	base.cfg.subnets = []string{"sub-1a", "sub-1c"}
 	h.rt = &ecsEC2Runtime{
@@ -650,6 +700,10 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 			releaseGrace:   10 * time.Minute,
 			slotSleepAfter: 15 * time.Minute,
 			waitBudget:     time.Minute,
+			// The production default, so the ordinary paths here are the ordinary paths
+			// there. `sleep` is a no-op in this harness, so the 100 polls it works out to
+			// cost nothing; the lost-slot tests shorten it only to keep their logs small.
+			slotLostAfter: 5 * time.Minute,
 		},
 		instanceType: "m7i.large",
 		homeGiB:      50,
@@ -1076,6 +1130,225 @@ func TestECSEC2FailedMountLeavesTheServiceStopped(t *testing.T) {
 	}
 	if !pointed {
 		t.Error("the revision update should already have gone out before the mount — that is what buys the overlap")
+	}
+}
+
+// --- a slot whose OS has died (docs/64 §64.40) ---
+
+// wedge is the shape of the incident: the workspace's own slot is EC2-`running`, its
+// task's ENI is still bolted to it, and the cluster cannot reach its agent. Every AWS
+// status check passes; the box is simply gone.
+func wedgedSlotHarness(t *testing.T) *ec2Harness {
+	t.Helper()
+	h := newEC2Harness(t)
+	// Three polls is plenty to prove the point and keeps the intent readable.
+	h.rt.pool.slotLostAfter = 3 * slotRegisterPoll
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-dead", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-dead", time.Now().Add(-time.Hour))
+	h.ec2.giveTaskENI("i-dead")
+	// Registered with the cluster, but the agent stopped answering — which is exactly
+	// what DescribeContainerInstances reports for a box whose OS has wedged.
+	h.ci.registered["i-dead"] = false
+	h.ecs.services["af-ws-acme-alice"] = ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}
+	return h
+}
+
+// 🔥 The 504. Start runs in an HTTP handler behind a 60s-idle ingress, so it may only do
+// work measured in seconds inline — and reusing the home's existing slot is normally the
+// FASTEST path there is, which is why this branch used to run inline unconditionally.
+// It asked EC2 "is the box running" and never asked the cluster "can you reach it", so a
+// wedged slot sent the whole convergence down the synchronous path, where launch()'s first
+// act is a wait that could not finish. The user got a 504 per attempt, for hours.
+func TestECSEC2StartDoesNotRunInlineOnAnUnreachableSlot(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlotHarness(t)
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if len(h.deferred) != 1 {
+		t.Fatalf("deferred %d background steps, want 1: a slot the cluster cannot reach must never be waited on inline", len(h.deferred))
+	}
+	// Nothing may have been torn down yet either — Start's job here is to get off the
+	// request thread, and the decision about the box belongs to the convergence.
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "StopInstances") || strings.HasPrefix(c, "DetachVolume") {
+			t.Fatalf("Start tore down %q on the request thread", c)
+		}
+	}
+}
+
+// The recovery, end to end: the box is declared lost, taken out of the world in an order
+// that is safe for a machine whose kernel is not answering, and the workspace comes up on
+// a different slot — without the user pressing anything a second time.
+func TestECSEC2LostSlotIsAbandonedAndTheWorkspaceMovesOn(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlotHarness(t)
+	h.ec2.addSlot("i-good", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-good"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+
+	// 1. the box is out of the pool, with the reason recorded on it
+	if role := ec2TagValue(h.ec2.instances["i-dead"].Tags, ec2TagRole); role != ec2RoleQuarantined {
+		t.Errorf("af-role on the lost slot = %q, want %q — it is still in freeSlots", role, ec2RoleQuarantined)
+	}
+	if why := ec2TagValue(h.ec2.instances["i-dead"].Tags, ec2TagQuarantineReason); !strings.Contains(why, "cluster") {
+		t.Errorf("af-quarantine-reason = %q, want it to say why the box was abandoned", why)
+	}
+	// 2. ECS was forced to give up on the ghost task — the step that releases the ENI and
+	//    the only thing that can break the deadlock
+	if len(h.ci.deregistered) != 1 || h.ci.deregistered[0] != "arn:ci/i-dead" {
+		t.Fatalf("deregistered = %v, want [arn:ci/i-dead]", h.ci.deregistered)
+	}
+	// 3. …before the box was stopped, and stopped forcibly (nothing in it is listening)
+	stopIdx, deregDone := -1, false
+	for i, c := range h.ec2.calls {
+		if c == "StopInstances i-dead" {
+			stopIdx = i
+		}
+	}
+	deregDone = len(h.ci.deregistered) > 0
+	if stopIdx < 0 || !deregDone {
+		t.Fatalf("the lost slot was never stopped (calls=%v)", h.ec2.calls)
+	}
+	// 4. the home came off cleanly — the box was already powered down, so no forced
+	//    detach was needed — and landed on the healthy slot
+	for _, c := range h.ec2.calls {
+		if c == "DetachVolume vol-1 force" {
+			t.Error("forced the home off a box that had already stopped; the clean detach is the one that cannot corrupt it")
+		}
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-good" {
+		t.Fatalf("home ended up on %q, want i-good", inst)
+	}
+	// 5. and the workspace actually came up there, with no second Start from the user
+	if !strings.HasPrefix(h.ssmc.commands[len(h.ssmc.commands)-1], "af-mount vol-1 /af-home/M-1") {
+		t.Errorf("home was never mounted on the replacement slot: %v", h.ssmc.commands)
+	}
+	up := false
+	for _, c := range h.ecs.updateCalls {
+		if aws.ToInt32(c.DesiredCount) == 1 {
+			up = true
+		}
+	}
+	if !up && len(h.ecs.createCalls) == 0 {
+		t.Error("the service was never scaled up on the replacement slot")
+	}
+	// 6. the claim is gone: the workspace is `running` now, and a claim left behind would
+	//    keep answering `starting`
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagClaim) != "" {
+		t.Error("the claim outlived the recovery")
+	}
+}
+
+// ⚠️ The one thing this teardown may NOT do. A slot stopped while ECS still holds a task
+// ENI comes back MULTI-ENI and silently loses its egress (ADR 0045 決定 3-3) — the same
+// trap the sweeper refuses to go near. If the deregistration does not free the ENI, the
+// box stays up and only the HOME is taken back, forcibly, because leaving it bolted to a
+// machine that will never run anything again is the worse outcome.
+func TestECSEC2LostSlotIsLeftRunningWhileItHoldsATaskENI(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlotHarness(t)
+	h.ci.stickyENI = true
+	h.ec2.addSlot("i-good", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-good"] = true
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+
+	for _, c := range h.ec2.calls {
+		if c == "StopInstances i-dead" {
+			t.Fatal("stopped a slot that still had a task ENI attached")
+		}
+	}
+	forced := false
+	for _, c := range h.ec2.calls {
+		if c == "DetachVolume vol-1 force" {
+			forced = true
+		}
+	}
+	if !forced {
+		t.Errorf("the home was never forced off the unstoppable slot: %v", h.ec2.calls)
+	}
+	// It is still out of the pool, and the user still gets their workspace.
+	if role := ec2TagValue(h.ec2.instances["i-dead"].Tags, ec2TagRole); role != ec2RoleQuarantined {
+		t.Errorf("af-role = %q, want %q", role, ec2RoleQuarantined)
+	}
+	if inst := attachedInstance(h.ec2.volumes["vol-1"]); inst != "i-good" {
+		t.Errorf("home ended up on %q, want i-good", inst)
+	}
+}
+
+// The bound. "The slot was lost, take another" is only safe because it is budgeted: a
+// pool that is failing for a reason this code does not model would otherwise walk every
+// box into quarantine, one Start at a time, and turn a degraded deployment into an empty
+// one. Two boxes tried, then it stops and leaves a state the user can retry from.
+func TestECSEC2LostSlotRecoveryQuarantinesAtMostOneSpare(t *testing.T) {
+	ctx := context.Background()
+	h := wedgedSlotHarness(t)
+	// The "healthy" spare is just as dead — a cluster-wide failure, not a bad box.
+	h.ec2.addSlot("i-dead-2", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-dead-2"] = false
+	h.ec2.addSlot("i-dead-3", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-dead-3"] = false
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+
+	quarantined := 0
+	for id, inst := range h.ec2.instances {
+		if ec2TagValue(inst.Tags, ec2TagRole) == ec2RoleQuarantined {
+			quarantined++
+			if id == "i-dead-3" {
+				t.Error("a third box was taken out; the retry budget is one")
+			}
+		}
+	}
+	if quarantined != 2 {
+		t.Errorf("quarantined %d slots, want exactly 2 (the original and one replacement)", quarantined)
+	}
+	// Giving up must leave the workspace STARTABLE. The claim abandonLostSlot keeps alive
+	// for the hand-off has no replacement coming now, and a claim that outlives its launch
+	// pins State() at `starting` — which Start early-returns on, so nobody could recover.
+	if ec2TagValue(h.ec2.volumes["vol-1"].Tags, ec2TagClaim) != "" {
+		t.Error("the claim was left behind: the workspace is stuck at `starting` until it expires")
+	}
+	if st := h.rt.State(ctx); st != "stopped" {
+		t.Errorf("State after giving up = %q, want stopped", st)
+	}
+}
+
+// A slot that has not registered YET is not a slot that is gone. The grace only starts a
+// teardown for a box EC2 says is `running`; anything still coming up gets the benefit of
+// the doubt, because tearing down a mid-boot box turns a slow Start into a destroyed one.
+func TestECSEC2SlotStillBootingIsNeverAbandoned(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.slotLostAfter = 3 * slotRegisterPoll
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	inst := h.ec2.addSlot("i-booting", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.attach("vol-1", "i-booting", time.Now())
+	inst.State = &ec2types.InstanceState{Name: ec2types.InstanceStateNamePending}
+
+	if err := h.rt.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	h.runDeferred(ctx)
+
+	if role := ec2TagValue(h.ec2.instances["i-booting"].Tags, ec2TagRole); role != ec2RoleSlot {
+		t.Errorf("af-role = %q: a slot that is still `pending` was thrown away", role)
+	}
+	if len(h.ci.deregistered) != 0 {
+		t.Errorf("deregistered %v while the box was still booting", h.ci.deregistered)
 	}
 }
 
