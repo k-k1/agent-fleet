@@ -40,6 +40,38 @@ func TestBuildProgram(t *testing.T) {
 	}
 }
 
+// ペインのプログラムは CI を外して CLI を起動する。CI が生きていると cursor は
+// 対話 UI を出さず（バナーだけ・打鍵無視）、セッションが死んだペインになる
+// （ci_env.go）。tmux の -e では unset できないので、シェル側の `env -u` が要る。
+func TestBuildProgramUnsetsCI(t *testing.T) {
+	id := "9eb73605-3f4a-4a46-84bc-35e6d300a9df"
+	got := buildProgram("", "", id, true)
+	if !strings.HasPrefix(got, "env -u CI ") {
+		t.Errorf("program must unset CI before exec: %q", got)
+	}
+	// `CI=` と空にするのでは死んだままなので、空代入に退化していないことを見る。
+	if strings.Contains(got, "CI=") {
+		t.Errorf("blanking CI does not revive the UI; it must be unset: %q", got)
+	}
+}
+
+func TestEnvWithoutCI(t *testing.T) {
+	in := []string{"PATH=/usr/bin", "CI=true", "CI_NAME=github", "MY_CI=1", "HOME=/home/dev"}
+	got := EnvWithoutCI(in)
+	want := []string{"PATH=/usr/bin", "CI_NAME=github", "MY_CI=1", "HOME=/home/dev"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("EnvWithoutCI = %v, want %v", got, want)
+	}
+	// 空の CI も殺しに来る（実測: 値ではなく存在で判定される）ので、これも落とす。
+	if got := EnvWithoutCI([]string{"CI=", "TZ=Asia/Tokyo"}); len(got) != 1 || got[0] != "TZ=Asia/Tokyo" {
+		t.Errorf("empty CI must be dropped too: %v", got)
+	}
+	// 入力を破壊しない（呼び出し側は os.Environ() を渡す）。
+	if len(in) != 5 || in[1] != "CI=true" {
+		t.Errorf("input was mutated: %v", in)
+	}
+}
+
 func TestNewChatID(t *testing.T) {
 	a, err := newChatID()
 	if err != nil {

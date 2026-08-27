@@ -269,6 +269,22 @@ chatId は別空間）。
    未検証**（本コンテナは x64・RPi5 起動不能報告 forum #148408 は実機で要確認 — agy の
    RDRAND 実機ガードと同格の残課題）。
 
+8. **`CI` 環境変数を渡さない（2026-08-27 追加）**。cursor CLI は `CI` を見つけると
+   **対話 UI を出さない**: バナーだけ描いて composer を描画せず、打鍵も無視する
+   （実測・v2026.08.25）。しかも CLI 自身の起動ログ（`/tmp/cursor-agent-logs-<uid>/
+   session-*.log`）は `first_paint_ms` を出して**正常完了を報告する**ので、プロセスも
+   API もヘッドレス `-p` も健康なまま UI だけが無い＝外からは「固まっている」ようにしか
+   見えない。**判定は値ではなく存在**で行われ、`CI=`（空）でも死に、生き返るのは unset
+   か `CI=false` だけ（実測）。Workspace のコンテナ自体は CI を設定しないが、利用者が
+   Console の環境変数で足せてしまうため、AF 側で全経路から外す
+   （`internal/agents/cursor/ci_env.go`）。TUI はペインのプログラム文字列を `env -u CI`
+   で前置（tmux の `-e` は設定しかできず unset できない）、それ以外（ACP ドライバ・
+   ログイン PTY・status/about/models プローブ・アシスタントチャットの headless）は
+   `EnvWithoutCI` で `cmd.Env` から落とす。**他の kind には広げない** — copilot は
+   CI 検出を自己更新の抑止に使っており（docs/36）、一律に外すと前提が壊れる。
+   発見の経緯は CI の TUI 契約テストが runner でだけ 2 分間 readiness 未検出で落ち続けた
+   こと（旧ピンでも同一失敗・同版がローカルでは 19.5 秒で PASS＝版ドリフトではなかった）。
+
 ### Track C — control-plane + Console — **実装済（2026-07-23）**
 
 **実装時に確定した設計（計画からの差分）**:

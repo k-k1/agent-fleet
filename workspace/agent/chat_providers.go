@@ -1204,6 +1204,7 @@ func (cursorChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	args = append(args, "--resume", c.CursorSessionID)
 	cmd := exec.CommandContext(ctx, cursor.Bin(), args...)
 	cmd.Dir = chatWorkdir()
+	cmd.Env = cursor.EnvWithoutCI(os.Environ()) // CI を渡さない（cursor/ci_env.go）
 	cmd.Stdin = strings.NewReader(headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
 	out, err := cmd.Output()
 	if err != nil {
@@ -1572,6 +1573,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		}
 		cmd := exec.CommandContext(ctx, cursor.Bin(), args...)
 		cmd.Dir = chatWorkdir()
+		cmd.Env = cursor.EnvWithoutCI(os.Environ()) // CI を渡さない（cursor/ci_env.go）
 		cmd.Stdin = strings.NewReader(headlessPrompt(persona, nil, prompt))
 		out, err := cmd.Output()
 		if err != nil {

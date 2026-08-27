@@ -17,7 +17,6 @@ package cursor
 
 import (
 	"context"
-	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -95,7 +94,7 @@ var aboutTierRe = regexp.MustCompile(`(?mi)^\s*Subscription Tier\s+(\S+)`)
 func probeFreePlan() (free bool, ok bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin(), disableAutoUpdateFlag, "about").Output()
+	out, err := probeCmd(ctx, disableAutoUpdateFlag, "about").Output()
 	if err != nil {
 		return false, false
 	}
@@ -116,7 +115,7 @@ func probeModels() ([]agents.ModelChoice, error) {
 	defer cancel()
 	// --disable-auto-update を前置（models は最大 20s 走り得て、起動2秒後の背景更新
 	// トリガに掛かる可能性がある — root option なのでサブコマンドの前）。
-	out, err := exec.CommandContext(ctx, bin(), disableAutoUpdateFlag, "models").Output()
+	out, err := probeCmd(ctx, disableAutoUpdateFlag, "models").Output()
 	if err != nil {
 		return nil, err
 	}
