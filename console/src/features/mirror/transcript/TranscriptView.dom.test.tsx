@@ -273,6 +273,23 @@ describe("peer 着信の見え方（docs/58 §58.14）", () => {
     expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
     expect(el.querySelector(".mt-peer-kind")).toBeNull();
   });
+
+  // 由来タグが落ちていても封筒があればバッジは出す。タグは別ストア由来で、記録より前に
+  // 取ってきたターン（ミラーは持っているターンを取り直さない）や、上限で押し出された
+  // 古い記録では消える。ここで諦めると、着信の唯一の可視化が黙って無くなる。
+  it("source が落ちていても封筒があればバッジは出る", () => {
+    const el = render(
+      [{ role: "user", text: "[agent-fleet:peer from=build-api intent=notice reply=none] 出た", idx: 1 }],
+      RECIPIENT,
+    );
+    expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
+    expect(el.querySelector(".mt-peer-kind")?.textContent?.trim()).toBeTruthy();
+  });
+
+  it("封筒も由来タグも無い自分の入力にはバッジを出さない", () => {
+    const el = render([{ role: "user", text: "自分で打った指示", idx: 1 }], RECIPIENT);
+    expect(el.querySelector(".mt-peer")).toBeNull();
+  });
 });
 
 // claude は AskUserQuestion / ExitPlanMode の tool_use を「訊いた時点」で転写に書く。

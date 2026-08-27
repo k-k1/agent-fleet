@@ -193,8 +193,14 @@ export function TranscriptTurn({
   // user nor the operator sent it, and this badge is its ONLY visualisation — the
   // sender's name exists nowhere else on this side except the server-built envelope
   // prefix, so read it back from the text.
-  const fromPeer = isUser && turn.source === "peer";
-  const peerFrom = fromPeer ? peerSenderOf(turn.text ?? "") : null;
+  //
+  // 由来タグ(source)が無くても封筒があれば peer と見なす。タグはサーバが投入時に覚える
+  // 別ストア由来で、①記録が済む前に取ってきたターン（増分ポーリングは持っているターンを取り直さ
+  // ないので、そのまま固定される）②長寿命セッションで記録が上限を超えて押し出された、のどちらでも
+  // 落ちる（docs/58 §58.15）。封筒はサーバが本文の先頭に必ず付ける（呼び出し元には組ませない）
+  // ので、表示の根拠としてはタグと同格 — そして落ちたときに残る唯一の痕跡。
+  const peerFrom = isUser ? peerSenderOf(turn.text ?? "") : null;
+  const fromPeer = isUser && (turn.source === "peer" || !!peerFrom);
   const peerIntent = fromPeer ? peerIntentOf(turn.text ?? "") : null;
   // Chat-bridge origin (docs/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
