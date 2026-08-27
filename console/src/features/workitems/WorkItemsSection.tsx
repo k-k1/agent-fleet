@@ -13,8 +13,13 @@
 // over the rows it already has. Neither touches the provider, is saved, or reorders —
 // that is the whole distinction between "the rail's job" and "the query's job".
 //
-// The row's primary action opens the existing launch stack (seed → StartHost) rather than
-// a dialog of its own, so worktree/branch/agent behaviour stays in one place.
+// ★ 行にボタンを並べない（§80.20・利用者からの指摘）。41 行の右端に「始める」が 41 個
+// 並ぶと、レールが「押すと何かが起きる面」に見えて怖い —— 一覧は読む物なので、行は情報に
+// 戻し、操作は行を押して開く詳細モーダルに集めた。行に残すのは 🔗（トラッカーを直接見る）と
+// 着手済みバッジ（同じ課題の 2 人目を止める情報）だけ。
+//
+// 起動そのものは詳細モーダルからも既存の起動スタック（seed → useLaunchTarget → LaunchModal）
+// に渡すだけで、worktree/branch/agent の実装は 1 か所のまま。
 import { memo, useEffect, useMemo, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -31,10 +36,9 @@ import { agentOf } from "../../agents/registry.ts";
 import { useWorkItemStore, startWorkItemPolling } from "./store.ts";
 import { WorkItemQueryModal } from "./WorkItemQueryModal.tsx";
 import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
-import { WorkItemStartModal } from "./WorkItemStartModal.tsx";
+import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
 import {
   branchForItem,
-  canComment,
   fullLocal,
   matchWorkItem,
   promptForItem,
@@ -59,12 +63,11 @@ interface RowProps {
   started: WorkItemSessionRef[];
   /** Meta this query repeats on every row — dropped from the line (docs/80 §80.18.2). */
   uniform: { repo: boolean; assignee: boolean };
-  onStart(item: WorkItem): void;
+  onOpen(item: WorkItem): void;
   onOpenSession(name: string): void;
-  onReport(item: WorkItem): void;
 }
 
-const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onStart, onOpenSession, onReport }: RowProps) {
+const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, onOpenSession }: RowProps) {
   const tr = useT();
   const tone = stateTone(item.state);
   const busy = started.length > 0;
@@ -77,7 +80,21 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onStart,
   const meta = !!(repo || assignee || labels.length);
   const when = railWhen(item.updatedAt);
   return (
-    <div className={"wi-row" + (item.state === "done" ? " done" : "")}>
+    // 行全体が詳細を開く。★ 中の 🔗 / 着手済みバッジは入れ子の操作要素なので、
+    // クリックを止めてから自分の仕事をする（押した先が 2 つ開く形にしない）。
+    <div
+      className={"wi-row" + (item.state === "done" ? " done" : "")}
+      role="button"
+      tabIndex={0}
+      aria-label={tr("wi.open_detail", { key: item.key })}
+      onClick={() => onOpen(item)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(item);
+        }
+      }}
+    >
       <span className={`wi-dot tone-${tone}`} title={stateLabel(item.state)}>
         <Icon name={item.kind === "pr" ? "git-pull-request" : "issues"} />
       </span>
@@ -110,31 +127,33 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onStart,
         )}
       </div>
       {/* 着手済みバッジ。台帳の一番の実利がこれ —— 同じ課題に 2 人目が入るのを、
-          起動する前に止める（docs/80 §80.8）。 */}
+          起動する前に止める（docs/80 §80.8）。★ 行から消さないのは、これが操作では
+          なく「この行はもう誰かが持っている」という情報だから。 */}
       {busy && (
         <button
           type="button"
           className="wi-started"
           title={tr("wi.started_at", { name: started[0].sessionName })}
-          onClick={() => onOpenSession(started[0].sessionName)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenSession(started[0].sessionName);
+          }}
         >
           <Icon name="circle-filled" />
           {started.length > 1 ? started.length : ""}
         </button>
       )}
-      {/* 書き戻しは着手した行にだけ出す。押しても投稿はされない —— 下書きを読む
-          モーダルが開くだけで、投稿はその中の 1 手（ADR 0061 決定 6）。 */}
-      {busy && canComment(item) && (
-        <button type="button" className="wi-report" onClick={() => onReport(item)} title={tr("wi.report_title")}>
-          <Icon name="comment" />
-        </button>
-      )}
-      <a className="wi-link" href={item.url} target="_blank" rel="noreferrer noopener" title={tr("wi.open_external")}>
+      {/* トラッカーを直接見るだけの導線は行に残す（af を経由しない、いちばん軽い操作）。 */}
+      <a
+        className="wi-link"
+        href={item.url}
+        target="_blank"
+        rel="noreferrer noopener"
+        title={tr("wi.open_external")}
+        onClick={(e) => e.stopPropagation()}
+      >
         <Icon name="link-external" />
       </a>
-      <button type="button" className="wi-start" onClick={() => onStart(item)} title={tr("wi.start")}>
-        {tr("wi.start")}
-      </button>
     </div>
   );
 });
@@ -156,7 +175,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   const startHub = useSessionsStore((s) => s.openStart);
   const [queries, setQueries] = useState(false);
   const [reportOn, setReportOn] = useState<WorkItem | null>(null);
-  const [startOn, setStartOn] = useState<WorkItem | null>(null);
+  const [detailOn, setDetailOn] = useState<WorkItem | null>(null);
   const [needle, setNeedle] = useState("");
   const [expanded, setExpanded] = useState(false);
 
@@ -184,19 +203,6 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     (agentOf(s?.kind || "claude").caps.chat ? openSessionChat : openSessionTerminal)(name);
   };
 
-  // 始める: まず「どこで」を聞く（docs/80 §80.8）。チケットは作業コピーを知らない —
-  // GitHub 項目はリポジトリまで、Jira はそれすら持たない — ので、リポジトリと
-  // 新規 worktree / 既存コピー を選んでから既存の起動スタックへ渡す。
-  // 作業コピーが 1 つも無いときだけ はじめる ハブ（clone 導線）に委ねる。
-  const start = (item: WorkItem) => {
-    if (!repos.some((r) => !r.worktree)) {
-      seedFor(item);
-      startHub();
-      return;
-    }
-    setStartOn(item);
-  };
-
   const seedFor = (item: WorkItem) => {
     seed(promptForItem(item), titleForItem(item), "", "", "", {
       provider: item.provider,
@@ -205,10 +211,20 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     });
   };
 
+  // 詳細で「どこで」まで決まってから既存の起動スタックへ渡す（docs/80 §80.8）。
+  // チケットは作業コピーを知らない —— GitHub 項目はリポジトリまで、Jira はそれすら
+  // 持たない —— ので、リポジトリと 新規 worktree / 既存コピー はここで決まっている。
   const pickTarget = (item: WorkItem, target: Repo, inPlace: boolean) => {
     seedFor(item);
-    setStartOn(null);
+    setDetailOn(null);
     openLaunch(target, "", inPlace);
+  };
+
+  // 作業コピーが 1 つも無いときだけ はじめる ハブ（clone 導線）に委ねる。
+  const toStartHub = (item: WorkItem) => {
+    seedFor(item);
+    setDetailOn(null);
+    startHub();
   };
 
   const count = items.filter((i) => i.state !== "done").length;
@@ -294,9 +310,8 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
                 item={item}
                 started={sessionsForItem(ledger, item.key)}
                 uniform={uniform[item.queryId] || { repo: false, assignee: false }}
-                onStart={start}
+                onOpen={setDetailOn}
                 onOpenSession={openSession}
-                onReport={setReportOn}
               />
             ))}
           </div>
@@ -315,13 +330,25 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
           )}
         </>
       )}
-      {startOn && (
-        <WorkItemStartModal
-          item={startOn}
+      {detailOn && (
+        <WorkItemDetailModal
+          item={detailOn}
           repos={repos}
-          defaultRepo={repoForItem(startOn, payload?.queries.find((q) => q.id === startOn.queryId)?.repoHint || "", folders)}
-          onClose={() => setStartOn(null)}
-          onPick={(target, inPlace) => pickTarget(startOn, target, inPlace)}
+          defaultRepo={repoForItem(detailOn, payload?.queries.find((q) => q.id === detailOn.queryId)?.repoHint || "", folders)}
+          started={sessionsForItem(ledger, detailOn.key)}
+          onClose={() => setDetailOn(null)}
+          onPick={(target, inPlace) => pickTarget(detailOn, target, inPlace)}
+          onStartHub={() => toStartHub(detailOn)}
+          onOpenSession={(name) => {
+            setDetailOn(null);
+            openSession(name);
+          }}
+          // 報告は詳細を閉じてから開く。★ モーダルを 2 枚重ねない —— Esc の層も
+          // フォーカストラップも 1 枚ずつを前提にしている。
+          onReport={() => {
+            setDetailOn(null);
+            setReportOn(detailOn);
+          }}
         />
       )}
       {reportOn && (

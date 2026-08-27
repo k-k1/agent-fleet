@@ -1,8 +1,9 @@
-// 作業項目レール（docs/80 P0）の描画テスト。芯は 3 つ:
+// 作業項目レール（docs/80 P0）の描画テスト。芯は 4 つ:
 //   ① Workspace 停止中でもキャッシュの行が出て、「最終取得」と停止中の断りが付く
 //      —— この画面が使えないなら機能そのものが無い（ADR 0061 決定 1）
 //   ② 着手済みの行にバッジが出る（同じ課題に 2 人目が入るのを起動前に止める）
-//   ③ 始める が既存の起動スタックへ種（プロンプト・タイトル・ブランチ）を渡す
+//   ③ 行にボタンを並べない（§80.20）。行を押すと詳細が開き、操作はそこに集まる
+//   ④ 詳細の 始める が既存の起動スタックへ種（プロンプト・タイトル・ブランチ）を渡す
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -63,6 +64,15 @@ async function render(): Promise<void> {
 
 const text = () => host.textContent || "";
 const rows = () => host.querySelectorAll(".wi-row").length;
+/** 行を押す＝詳細を開く（§80.20 でボタンから置き換わった導線）。 */
+const openRow = async (n = 0) => {
+  await act(async () => {
+    host.querySelectorAll<HTMLElement>(".wi-row")[n].click();
+  });
+};
+/** 詳細モーダルの footer 右端＝始める。 */
+const detailStart = () =>
+  [...document.querySelectorAll<HTMLButtonElement>(".wi-dmodal .ui-modal-foot button")].pop()!;
 
 // 制御された input に打つ。★ `el.value = x` だけでは React の value tracker が
 // 「変わっていない」と見なして onChange が鳴らない（絞り込みが効いていないのに
@@ -172,7 +182,54 @@ describe("WorkItemsSection", () => {
     expect(badges[0].getAttribute("title")).toContain("sk7f3q9");
   });
 
-  it("★ 始める はまず起動先を聞く（チケットは作業コピーを知らない）", async () => {
+  // --- §80.20: 行はボタンを並べない。押すと詳細が開き、操作はそこに集まる ---
+
+  it("★ 行に「始める」ボタンを並べない（41 行 × 1 ボタンをやめた）", async () => {
+    useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+    workItemList.mockResolvedValue({ items: jiraRows(5), queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    expect(host.querySelectorAll(".wi-start").length).toBe(0);
+    expect(host.querySelectorAll(".wi-report").length).toBe(0);
+    // 行に残るのは 🔗 と（着手済みなら）バッジだけ。行そのものが押せる。
+    expect(host.querySelectorAll(".wi-link").length).toBe(5);
+    expect(host.querySelector(".wi-row")?.getAttribute("role")).toBe("button");
+  });
+
+  it("★ 行を押すと詳細が開き、CP が持っている項目がそのまま並ぶ（本文は取りに行かない）", async () => {
+    useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    await openRow();
+    const modal = document.querySelector(".wi-dmodal")!;
+    const shown = modal.textContent || "";
+    expect(shown).toContain("ログイン後に一覧が空になる");
+    expect(shown).toContain("acme/web#45");
+    expect(shown).toContain(t("wi.state_open"));
+    expect(shown).toContain("@taro");
+    expect(shown).toContain("bug");
+    expect(modal.querySelector<HTMLAnchorElement>(".wi-dlink")?.href).toBe("https://github.com/acme/web/issues/45");
+  });
+
+  it("★ 行の 🔗 と着手済みバッジは詳細を開かない（入れ子の操作要素）", async () => {
+    workItemList.mockResolvedValue({
+      items: [item()],
+      queries: [query],
+      sessions: [{ id: "l1", provider: "github", itemKey: "acme/web#45", sessionName: "sk7f3q9", repo: "web", branch: "", createdAt: "" }],
+      fetchedAt: "",
+      running: true,
+    });
+    await render();
+    await act(async () => {
+      host.querySelector<HTMLElement>(".wi-link")!.click();
+    });
+    expect(document.querySelector(".wi-dmodal")).toBeNull();
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(".wi-started")!.click();
+    });
+    expect(document.querySelector(".wi-dmodal")).toBeNull();
+  });
+
+  it("★ 詳細はまず起動先を聞く（チケットは作業コピーを知らない）", async () => {
     useReposStore.setState({
       repos: [
         { name: "web", path: "/home/dev/repos/web" },
@@ -181,10 +238,8 @@ describe("WorkItemsSection", () => {
     });
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
-    await act(async () => {
-      host.querySelector<HTMLButtonElement>(".wi-start")!.click();
-    });
-    // 押しただけでは起動しない。種もまだ置かない（キャンセルされうる）。
+    await openRow();
+    // 開いただけでは起動しない。種もまだ置かない（キャンセルされうる）。
     expect(useLaunchTarget.getState().target).toBeNull();
     expect(useLaunchSeed.getState().workItem).toBeNull();
     const selects = document.querySelectorAll<HTMLSelectElement>(".wi-sfield select");
@@ -198,12 +253,9 @@ describe("WorkItemsSection", () => {
     useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
+    await openRow();
     await act(async () => {
-      host.querySelector<HTMLButtonElement>(".wi-start")!.click();
-    });
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>(".wi-smodal .ui-modal-foot button")];
-    await act(async () => {
-      buttons[buttons.length - 1].click();
+      detailStart().click();
     });
     const seed = useLaunchSeed.getState();
     expect(seed.prompt).toContain("acme/web#45");
@@ -224,17 +276,14 @@ describe("WorkItemsSection", () => {
     });
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
-    await act(async () => {
-      host.querySelector<HTMLButtonElement>(".wi-start")!.click();
-    });
+    await openRow();
     const where = document.querySelectorAll<HTMLSelectElement>(".wi-sfield select")[1];
     await act(async () => {
       where.value = "web@wip-abc";
       where.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>(".wi-smodal .ui-modal-foot button")];
     await act(async () => {
-      buttons[buttons.length - 1].click();
+      detailStart().click();
     });
     expect(useLaunchTarget.getState().target?.name).toBe("web@wip-abc");
     expect(useLaunchTarget.getState().inPlace).toBe(true);
@@ -248,13 +297,16 @@ describe("WorkItemsSection", () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
 
+    await openRow();
+    const detail = document.querySelector(".wi-dmodal")!;
+    expect(detail.querySelector(":scope > .ui-modal-body .wi-sfield")).not.toBeNull();
+    expect(detail.querySelector(":scope > .ui-modal-foot button")).not.toBeNull();
+    expect(strayChildren(detail)).toEqual([]);
+
+    // 詳細は Esc / キャンセルで閉じる。歯車を開く前に畳んでおかないと 2 枚重なる。
     await act(async () => {
-      host.querySelector<HTMLButtonElement>(".wi-start")!.click();
+      [...document.querySelectorAll<HTMLButtonElement>(".wi-dmodal .ui-modal-foot button")][0].click();
     });
-    const start = document.querySelector(".wi-smodal")!;
-    expect(start.querySelector(":scope > .ui-modal-body .wi-sfield")).not.toBeNull();
-    expect(start.querySelector(":scope > .ui-modal-foot button")).not.toBeNull();
-    expect(strayChildren(start)).toEqual([]);
 
     // 保存したクエリ（歯車）も同じ形であること。
     const gear = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -342,10 +394,58 @@ describe("WorkItemsSection", () => {
   it("作業コピーが 1 つも無いときだけ はじめる ハブに委ねる", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
+    await openRow();
+    // 選ばせるものが無いので選択肢は出さず、始める がそのまま clone 導線へ渡す。
+    expect(document.querySelector(".wi-sfield")).toBeNull();
     await act(async () => {
-      host.querySelector<HTMLButtonElement>(".wi-start")!.click();
+      detailStart().click();
     });
     expect(useLaunchTarget.getState().target).toBeNull();
     expect(useLaunchSeed.getState().workItem?.key).toBe("acme/web#45");
+  });
+
+  it("★ 報告は着手済みのときだけ詳細に出て、押すと下書きモーダルへ入れ替わる", async () => {
+    useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+    workItemList.mockResolvedValue({
+      items: [item(), item({ id: "2", key: "acme/web#46", title: "まだ誰も見ていない" })],
+      queries: [query],
+      sessions: [{ id: "l1", provider: "github", itemKey: "acme/web#45", sessionName: "sk7f3q9", repo: "web", branch: "feature/issue-45", createdAt: "" }],
+      fetchedAt: "",
+      running: true,
+    });
+    await render();
+    // 着手していない行の詳細には報告も着手中セクションも出ない。
+    await openRow(1);
+    expect(document.querySelector(".wi-dstarted")).toBeNull();
+    await act(async () => {
+      [...document.querySelectorAll<HTMLButtonElement>(".wi-dmodal .ui-modal-foot button")][0].click();
+    });
+
+    await openRow(0);
+    const started = document.querySelector(".wi-dstarted")!;
+    expect(started.textContent).toContain("sk7f3q9");
+    expect(started.textContent).toContain("feature/issue-45");
+    const report = [...started.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      (b.textContent || "").includes(t("wi.report_title")),
+    )!;
+    await act(async () => report.click());
+    // ★ 2 枚重ねない —— 詳細は閉じ、報告だけが残る。
+    expect(document.querySelector(".wi-dmodal")).toBeNull();
+    expect(document.querySelector(".wi-rmodal")).not.toBeNull();
+  });
+
+  it("bitbucket の項目には報告を出さない（押した先で必ず断られる操作要素を出さない）", async () => {
+    useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+    workItemList.mockResolvedValue({
+      items: [item({ provider: "bitbucket", kind: "pr", key: "acme/web#45" })],
+      queries: [query],
+      sessions: [{ id: "l1", provider: "bitbucket", itemKey: "acme/web#45", sessionName: "sk7f3q9", repo: "web", branch: "", createdAt: "" }],
+      fetchedAt: "",
+      running: true,
+    });
+    await render();
+    await openRow();
+    expect(document.querySelector(".wi-dstarted")).not.toBeNull();
+    expect(document.querySelector(".wi-dmodal")?.textContent).not.toContain(t("wi.report_title"));
   });
 });
