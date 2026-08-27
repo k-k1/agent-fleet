@@ -57,8 +57,19 @@ Parameters:
       3h, which would hand the next user a slot still holding the previous user's
       stopped containers (ADR 0045 決定 8 の代償 1). Keep it short.
 
+  PoolAlarmEmail:
+    Type: String
+    Default: ""
+    Description: >-
+      Where to send the slot-pool I/O alarms (ADR 0045 決定 28). Empty = no alarms and
+      no SNS topic, which is what every deployment had before they existed. The address
+      gets a confirmation mail from SNS; until it is confirmed the alarms fire into
+      nothing. See the SlotIoAlarm resources for what they watch and their one caveat
+      (CloudWatch cannot scope these metrics to this stack's volumes).
+
 Conditions:
   HasArm64Ami: !Not [ !Equals [ !Ref SlotAmiIdArm64, "" ] ]
+  HasPoolAlarms: !Not [ !Equals [ !Ref PoolAlarmEmail, "" ] ]
 
 Resources:
   # --- IAM: what a slot may do. ECS join + SSM (the CP mounts/unmounts volumes over
@@ -181,6 +192,88 @@ Resources:
             - Cluster:
                 Fn::ImportValue: !Sub "${PlatformStackName}-ClusterName"
               Cleanup: !Ref TaskCleanupWait
+
+  # --- Slot I/O alarms (ADR 0045 決定 28 / docs/64 §64.41.4) ---
+  #
+  # 🔥 What they are for: on 2026-08-27 one workspace's runaway drove its slot into
+  # refault thrash — the root volume, which holds 8.0 GB of data in total, was read at
+  # 39.34 GB every five minutes for three hours (docs/64 §64.40). Every daemon on the
+  # box starved and the workspace could not be started again for hours.
+  #
+  # ⚠️ The metrics were ALL there the whole time. `VolumeQueueLength` went from 0.005
+  # to a flat 2.0 at the first minute of it; `EBSByteBalance%` fell 99 → 70. Nothing was
+  # missing except somebody looking. That is the whole reason these exist — the fix for
+  # "we could not see it" is not more telemetry, it is an alarm on the telemetry.
+  #
+  # ⚠️ THE CAVEAT, and it is a real one: CloudWatch cannot scope these to this stack.
+  # The metrics are dimensioned by VolumeId / InstanceId, the pool creates those at
+  # runtime, and Metrics Insights filters on dimension VALUES — not on tags. So the
+  # queries below are ACCOUNT-WIDE within the region: another workload's busy volume
+  # will trip them. Off by default for exactly that reason; turn them on where the
+  # account is the deployment's own.
+  PoolAlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasPoolAlarms
+    Properties:
+      TopicName: !Sub "af-${AWS::StackName}-pool-alarms"
+      DisplayName: agent-fleet slot pool
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref PoolAlarmEmail
+
+  # The FAST one. A queue this deep, sustained, is a device that cannot keep up — which
+  # is what thrash looks like from outside. Measured for the threshold: an ordinary busy
+  # workspace peaked at 1.52 for a single five-minute bucket, while the incident sat at
+  # a flat 2.0 (root) and 6.7 (home) for three hours. Requiring THREE consecutive
+  # breaches is what separates them: real work is spiky, thrash is flat.
+  SlotIoAlarmQueueDepth:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasPoolAlarms
+    Properties:
+      AlarmName: !Sub "af-${AWS::StackName}-slot-io-queue"
+      AlarmDescription: >-
+        An EBS volume has had a deep queue for 15 minutes. On the slot pool this means a
+        workspace is thrashing its box; see docs/64 §64.40 for what that does to it.
+      Metrics:
+        - Id: q
+          # No GROUP BY on purpose: the aggregate collapses every volume into the one
+          # time series an alarm can evaluate, and "the worst volume right now" is
+          # exactly the question.
+          Expression: 'SELECT MAX(VolumeQueueLength) FROM SCHEMA("AWS/EBS", VolumeId)'
+          Period: 300
+          ReturnData: true
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 2
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      TreatMissingData: notBreaching
+      AlarmActions: [ !Ref PoolAlarmTopic ]
+      OKActions: [ !Ref PoolAlarmTopic ]
+
+  # The UNAMBIGUOUS one, and the slower of the two. Burning EBS byte credits is not
+  # something a healthy slot does at all: the pool sat at 99% for its whole life and
+  # only the incident moved it (99 → 83 in 35 minutes, → 70 by the third hour). It needs
+  # no per-instance-type tuning because it is already a percentage.
+  SlotIoAlarmByteBalance:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasPoolAlarms
+    Properties:
+      AlarmName: !Sub "af-${AWS::StackName}-slot-io-credits"
+      AlarmDescription: >-
+        An instance has spent a fifth of its EBS bandwidth credits. Healthy slots stay
+        at 99%; anything else is a sustained read or write nobody asked for.
+      Metrics:
+        - Id: q
+          Expression: 'SELECT MIN(EBSByteBalance%) FROM SCHEMA("AWS/EC2", InstanceId)'
+          Period: 300
+          ReturnData: true
+      ComparisonOperator: LessThanThreshold
+      Threshold: 80
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      TreatMissingData: notBreaching
+      AlarmActions: [ !Ref PoolAlarmTopic ]
+      OKActions: [ !Ref PoolAlarmTopic ]
 
 Outputs:
   # Conditional because CloudFormation REFUSES an empty export ("Exported values must
