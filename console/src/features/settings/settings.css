@@ -840,13 +840,6 @@
 .conn-cat:first-child {
   margin-top: 0;
 }
-/* カテゴリ直下の一言。タブ冒頭の説明が「SRE アシスタント向けの連携」を名乗っている
-   ので、そうでないカテゴリ（課題管理＝作業項目レールの取得元）はここで言い直す。 */
-.conn-cat-sub {
-  margin: 2px 0 6px;
-  font-size: 11px;
-  color: var(--muted);
-}
 
 /* ── Connection provider cards (設定 > 接続). Each provider is a card: a colored
    2-char badge + name + status pill, then a description and its connect/flow UI.

@@ -140,7 +140,7 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
-	t := bbText[preferredUILang(r)] // docs/28 P3: Accept-Language で ja/en
+	t := oauthCallbackText(preferredUILang(r), "Bitbucket") // docs/28 P3: Accept-Language で ja/en
 
 	st, ok := bbFlows.take(state)
 	if !ok {
@@ -230,39 +230,45 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	bbCallbackPage(w, t.success)
 }
 
-// bbText holds the localized strings for the CP-rendered Bitbucket OAuth callback
-// page (docs/28 P3). The detail-bearing entries are prefixes; the underlying error
-// detail is appended verbatim. ja is the default; en is served when Accept-Language
-// prefers English (preferredUILang, defined in oauth_google.go).
+// oauthCallbackText holds the localized strings for the CP-rendered OAuth callback page
+// (docs/28 P3). The detail-bearing entries are prefixes; the underlying error detail is
+// appended verbatim. ja is the default; en is served when Accept-Language prefers
+// English (preferredUILang, defined in oauth_google.go).
+//
+// Parameterized by provider display name because Bitbucket and Jira run the SAME code
+// grant with the same failure modes (docs/80 §80.17) — two hand-written copies of nine
+// strings would drift, and the only per-provider word is the name itself.
 type bbStrings struct {
 	stateMismatch, noCode, notConfigured, staleAgent                         string
 	tokenExchangeFailed, workspaceResolveFailed, saveUnreachable, saveFailed string
 	success                                                                  string
 }
 
-var bbText = map[string]bbStrings{
-	"ja": {
+func oauthCallbackText(lang, provider string) bbStrings {
+	if lang == "en" {
+		return bbStrings{
+			stateMismatch:          "Authentication error: state mismatch. Please retry from the Console.",
+			noCode:                 "Authentication error: no code (authorization may have been denied).",
+			notConfigured:          "This tenant has no " + provider + " OAuth app. Ask a tenant administrator to register one in tenant settings.",
+			staleAgent:             "Could not save: this workspace is still running an older agent. Stop and start the workspace, then connect again. (Nothing is misconfigured.)",
+			tokenExchangeFailed:    "Token exchange failed: ",
+			workspaceResolveFailed: "Failed to resolve the workspace: ",
+			saveUnreachable:        "Save failed (can't reach the Workspace Agent — is the Workspace running?): ",
+			saveFailed:             "Save failed: ",
+			success:                provider + " connection complete. Close this tab and return to the Console.",
+		}
+	}
+	return bbStrings{
 		stateMismatch:          "認証エラー: state が一致しません。Console からやり直してください。",
 		noCode:                 "認証エラー: code がありません（承認が拒否された可能性）。",
-		notConfigured:          "このテナントの Bitbucket OAuth アプリが見つかりません。テナント設定で登録し直してください。",
+		notConfigured:          "このテナントの " + provider + " OAuth アプリが見つかりません。テナント設定で登録し直してください。",
 		staleAgent:             "ワークスペースが古いまま動いているため保存できませんでした。ワークスペースを一度停止してから起動し直し、もう一度接続してください（設定の誤りではありません）。",
 		tokenExchangeFailed:    "トークン交換に失敗: ",
 		workspaceResolveFailed: "Workspace の解決に失敗しました: ",
 		saveUnreachable:        "保存に失敗（Workspace Agent に到達できません。Workspace は起動していますか）: ",
 		saveFailed:             "保存に失敗: ",
-		success:                "Bitbucket 接続が完了しました。このタブを閉じて Console に戻ってください。",
-	},
-	"en": {
-		stateMismatch:          "Authentication error: state mismatch. Please retry from the Console.",
-		noCode:                 "Authentication error: no code (authorization may have been denied).",
-		notConfigured:          "This tenant has no Bitbucket OAuth app. Ask a tenant administrator to register one in tenant settings.",
-		staleAgent:             "Could not save: this workspace is still running an older agent. Stop and start the workspace, then connect again. (Nothing is misconfigured.)",
-		tokenExchangeFailed:    "Token exchange failed: ",
-		workspaceResolveFailed: "Failed to resolve the workspace: ",
-		saveUnreachable:        "Save failed (can't reach the Workspace Agent — is the Workspace running?): ",
-		saveFailed:             "Save failed: ",
-		success:                "Bitbucket connection complete. Close this tab and return to the Console.",
-	},
+		success:                provider + " 接続が完了しました。このタブを閉じて Console に戻ってください。",
+	}
 }
 
 func bbCallbackPage(w http.ResponseWriter, msg string) {

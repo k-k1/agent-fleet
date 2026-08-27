@@ -338,6 +338,10 @@ func buildMux() *http.ServeMux {
 	// /rest/api/3/myself で検証する（3 項目あって打ち間違いが起きやすい）。
 	mux.HandleFunc("PUT /connections/jira", handlePutJiraConn)
 	mux.HandleFunc("DELETE /connections/jira", handleDeleteJiraConn)
+	// OAuth（docs/80 §80.17）: /oauth は CP がコード交換のあとに叩く（Console は触らない）。
+	// /site は Console → CP プロキシ —— 1 回の認可が複数サイトを含みうる。
+	mux.HandleFunc("PUT /connections/jira/oauth", handleJiraOAuthStore)
+	mux.HandleFunc("PUT /connections/jira/site", handlePutJiraSite)
 	mux.HandleFunc("POST /connections/claude/start", claude.HandleStart)
 	mux.HandleFunc("POST /connections/claude/complete", claude.HandleComplete)
 	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)

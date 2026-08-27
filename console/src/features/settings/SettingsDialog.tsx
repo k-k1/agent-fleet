@@ -31,6 +31,7 @@ import { TtsTab } from "./TtsTab.tsx";
 import { GitTab } from "./GitTab.tsx";
 import { SsmTab } from "./SsmTab.tsx";
 import { OpsTab } from "./OpsTab.tsx";
+import { TrackerTab } from "./TrackerTab.tsx";
 import { ChatTab } from "./ChatTab.tsx";
 import { McpTab } from "./McpTab.tsx";
 import { TokensTab } from "./TokensTab.tsx";
@@ -69,6 +70,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       ["agents", "set.tab_agents"],
       ["git", "set.tab_git"],
       ["ops", "set.tab_ops"],
+      ["tracker", "set.tab_tracker"],
       ["chat", "set.tab_chat"],
       ["mcp", "set.tab_mcp"],
       ["tokens", "set.tab_tokens"],
@@ -194,6 +196,7 @@ export function SettingsDialog() {
             {section === "env" && <EnvTab />}
             {section === "ssm" && <SsmTab />}
             {section === "ops" && <OpsTab />}
+            {section === "tracker" && <TrackerTab />}
             {section === "chat" && <ChatTab />}
             {section === "mcp" && <McpTab />}
             {section === "tokens" && <TokensTab />}

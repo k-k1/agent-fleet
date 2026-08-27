@@ -99,12 +99,37 @@ type PagerDutyCreds struct {
 // with HTTP Basic over those two, so BOTH are credentials and neither leaves the
 // container. A read-only account is recommended (see guide): af only ever reads.
 type JiraCreds struct {
+	// AuthKind is "oauth" (Atlassian 3LO, docs/80 §80.17) or "token" (email + API
+	// token). "" reads as "token": stores written before OAuth existed have no field
+	// and must keep working untouched.
+	AuthKind string `json:"authKind,omitempty"`
+	// Site is the base URL of the site in use — typed by the member on the token path,
+	// picked from Sites on the OAuth path. Both paths need it for /browse/<KEY> links,
+	// which are NOT api.atlassian.com URLs even when the API calls are.
 	Site  string `json:"site"`
-	Email string `json:"email"`
-	Token string `json:"token"`
+	Email string `json:"email"` // token auth only (and a credential — half of the Basic pair)
+	Token string `json:"token"` // token auth only
 	// Account is the resolved display name, cached at connect time so the card can
 	// name the account instead of echoing the email back at the user. Not a secret.
 	Account string `json:"account,omitempty"`
+
+	// --- OAuth (3LO) only ---
+	AccessToken  string `json:"accessToken,omitempty"`
+	RefreshToken string `json:"refreshToken,omitempty"`
+	// Expiry is the unix second the access token dies. ~1h out, which is why the CP
+	// refresh bridge is load-bearing here rather than an optimisation.
+	Expiry int64 `json:"expiry,omitempty"`
+	// CloudID selects which site the API calls address
+	// (api.atlassian.com/ex/jira/<CloudID>). One authorization can cover several.
+	CloudID string     `json:"cloudId,omitempty"`
+	Sites   []JiraSite `json:"sites,omitempty"`
+}
+
+// JiraSite is one Jira site the authorization covers (accessible-resources). No secret.
+type JiraSite struct {
+	CloudID string `json:"cloudId"`
+	URL     string `json:"url"`
+	Name    string `json:"name"`
 }
 
 type GrafanaCreds struct {
