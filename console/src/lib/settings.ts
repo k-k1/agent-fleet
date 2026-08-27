@@ -460,6 +460,11 @@ export interface Settings {
   // ピン留め（常に表示）した候補。キーではなく表示綴りをピンした順で持つ — 学習が間引かれても
   // ピンだけで復元でき、並びもユーザーが決めた順のまま出せる（lib/quickReplies）。
   quickRepliesPinned: string[];
+  // 作業項目から起動するときのブランチ名テンプレート（docs/80 P2）。差し込みは
+  // {key}（PROJ-123 / issue-45）と {slug}（タイトル由来の ASCII slug・日本語なら空）。
+  // 空文字 = 既定（feature/{key}-{slug}）。ここを空にすればサーバの temp/<slug> に戻る
+  // わけではない —— 起動ダイアログのブランチ欄を空にするのがその操作。
+  workItemBranchTemplate: string;
   // 音声読み上げ（TTS, docs/24 + ADR0013）。エージェント回答を VOICEVOX（ずんだもん）で
   // 読み上げる。CP-native な /api/tts/synthesize を句点区切りで逐次呼ぶ（features/chat/tts.ts）。
   ttsEnabled: boolean;
@@ -738,6 +743,7 @@ const DEFAULTS: Settings = {
   quickReplies: {},
   quickRepliesHidden: [],
   quickRepliesPinned: [],
+  workItemBranchTemplate: "",
   workingSets: [],
   workingSetActive: "",
 };

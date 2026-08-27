@@ -27,6 +27,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerTTSRoutes(mux, cfg)
 	registerSSMRoutes(mux, cfg)
 	registerMemoRoutes(mux, cfg)
+	registerWorkItemRoutes(mux, cfg)
 	registerScheduleRoutes(mux, cfg)
 	registerMCPServerRoutes(mux, cfg)
 	registerNotificationRoutes(mux, cfg)
@@ -425,6 +426,28 @@ func registerSSMRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", ssm.withMembership(ssm.deleteHost))
 }
 
+// Work item inbox (docs/80) — external tickets in the left rail. The list and the 更新
+// button need the Runtime handle (the Agent does the fetching, holding the tokens), so
+// they are withResolved; the saved queries and the ledger are pure CP rows and stay on
+// withMembership so they work while the Workspace is stopped.
+//
+// ⚠️ There is deliberately NO agent-proxy entry here: the CP calls the Agent's
+// /work-items/fetch itself (like drainAgentOutbox), so the Console never reaches it and
+// the allowlist stays out of the picture.
+func registerWorkItemRoutes(mux *http.ServeMux, cfg config) {
+	wi := newWorkItemsAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/work-items", wi.withResolved(wi.list))
+	mux.HandleFunc("POST /api/work-items/refresh", wi.withResolved(wi.refresh))
+	// 書き戻し（docs/80 §80.10）: 人が下書きを承認したときだけ。CP は Agent へ中継する。
+	mux.HandleFunc("POST /api/work-items/comment", wi.withResolved(wi.comment))
+	mux.HandleFunc("GET /api/work-item-queries", wi.withMembership(wi.listQueries))
+	mux.HandleFunc("POST /api/work-item-queries", wi.withMembership(wi.createQuery))
+	mux.HandleFunc("PATCH /api/work-item-queries/{id}", wi.withMembership(wi.updateQuery))
+	mux.HandleFunc("DELETE /api/work-item-queries/{id}", wi.withMembership(wi.deleteQuery))
+	mux.HandleFunc("POST /api/work-item-sessions", wi.withMembership(wi.createSession))
+	mux.HandleFunc("DELETE /api/work-item-sessions/{id}", wi.withMembership(wi.deleteSession))
+}
+
 // Memo queue (docs/21) — per-member notes accumulated across devices, then flushed
 // to a session as one message. Scoped by membership (no workspace build for CRUD).
 func registerMemoRoutes(mux *http.ServeMux, cfg config) {
@@ -748,6 +771,10 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// Ops connections (docs/25 Phase 1): the credentials are stored in the
 	// Workspace's encrypted secrets and injected into the ops MCP servers at
 	// spawn; the CP only proxies here, never holds the secrets.
+	// Jira（docs/80 P1）— 作業項目の取得元。⚠️ GET /api/connections には相乗りするが、
+	// 保存/削除はここに 1 本ずつ要る（CP は catch-all ではなく明示許可リスト）。
+	mux.HandleFunc("PUT /api/connections/jira", rest)
+	mux.HandleFunc("DELETE /api/connections/jira", rest)
 	mux.HandleFunc("PUT /api/connections/pagerduty", rest)
 	mux.HandleFunc("DELETE /api/connections/pagerduty", rest)
 	mux.HandleFunc("PUT /api/connections/grafana", rest)

@@ -181,6 +181,46 @@ type Memo struct {
 	CreatedAt, SentAt string
 }
 
+// WorkItemQuery is one saved search that feeds the work item inbox (docs/80). af holds
+// the query, not a copy of the tracker: GitHub gets search syntax, Jira gets JQL. Full
+// synchronisation is deliberately not a thing (docs/80 §80.12) — the query is what keeps
+// the rail short. FetchedAt/LastError record the last attempt (see
+// MarkWorkItemQueryFetched for why the stamp is written even when the fetch failed).
+type WorkItemQuery struct {
+	ID, MembershipID, Provider string
+	Label, Query, RepoHint     string
+	Enabled                    bool
+	Position                   int
+	CreatedAt                  string
+	FetchedAt, LastError       string
+}
+
+// WorkItem is one cached row of a query's result. ★ Non-secret metadata ONLY: the
+// description, comments and attachments of a ticket are customer data and stay out of
+// the CP (ADR 0061 decision 2) — they are read inside the session, where the Workspace
+// is running and `gh` / the Jira MCP can fetch them. Kind is "issue" or "pr"; State is
+// normalised to open / in_progress / done / other; Repo is "owner/name" when the
+// provider has one (it seeds the launch target).
+type WorkItem struct {
+	ID, MembershipID, QueryID, Provider string
+	Kind, Key, Title, State, URL        string
+	Assignee                            string
+	Labels                              string // comma separated
+	Repo                                string
+	UpdatedAt, FetchedAt                string
+}
+
+// WorkItemSession is the ledger row written when a session is started from an item.
+// It is keyed by ItemKey rather than a cache row id, and has no foreign key onto the
+// cache, because the cache is a volatile query result while "someone started this"
+// outlives it. Its main value is telling the next person that a ticket is already
+// being worked on, before they start a second session on it.
+type WorkItemSession struct {
+	ID, MembershipID, Provider, ItemKey string
+	SessionName, Repo, Branch           string
+	CreatedAt                           string
+}
+
 // MemoCategory persists a memo category as a first-class row (docs/21 UI刷新), so a
 // category can exist while empty and carry an explicit order. Name is unique within a
 // (MembershipID, Repo) and stays the grouping key that Memo.Category references.
@@ -418,6 +458,7 @@ type Store interface {
 	CloudCostStore
 	SSMStore
 	MemoStore
+	WorkItemStore
 	NotificationStore
 	ScheduleStore
 	MCPServerStore
@@ -1006,6 +1047,31 @@ type MemoStore interface {
 	// ReassignMemoCategory moves every owned memo in (repo, from) to category `to`
 	// (to="" empties them). Used by rename/merge and by category delete.
 	ReassignMemoCategory(ctx context.Context, membershipID, repo, from, to string) error
+}
+
+// WorkItemStore is the work item inbox (docs/80 / ADR 0061), personal scope. The CP
+// owns the saved queries and a cache of non-secret metadata; the Workspace Agent owns
+// the provider tokens and does the fetching. Everything is scoped by membership.
+type WorkItemStore interface {
+	ListWorkItemQueries(ctx context.Context, membershipID string) ([]WorkItemQuery, error)
+	GetWorkItemQuery(ctx context.Context, id string) (WorkItemQuery, bool, error)
+	CreateWorkItemQuery(ctx context.Context, q WorkItemQuery) error
+	UpdateWorkItemQuery(ctx context.Context, q WorkItemQuery) error
+	DeleteWorkItemQuery(ctx context.Context, id, membershipID string) error
+	// MarkWorkItemQueryFetched records the attempt (errMsg="" on success). fetchedAt is
+	// stamped even on failure — it is the rate limiter as well as the "last fetched"
+	// label, so a provider that 500s must not turn into a fetch on every 4s tick.
+	MarkWorkItemQueryFetched(ctx context.Context, id, fetchedAt, errMsg string) error
+
+	ListWorkItems(ctx context.Context, membershipID string) ([]WorkItem, error)
+	// ReplaceWorkItems swaps the cached rows of the given queries for `items` in one
+	// transaction. Only the listed queries are touched, so a partially failed refresh
+	// keeps the other queries' rows instead of blanking the rail.
+	ReplaceWorkItems(ctx context.Context, membershipID string, queryIDs []string, items []WorkItem) error
+
+	ListWorkItemSessions(ctx context.Context, membershipID string) ([]WorkItemSession, error)
+	CreateWorkItemSession(ctx context.Context, s WorkItemSession) error
+	DeleteWorkItemSession(ctx context.Context, id, membershipID string) error
 }
 
 type NotificationStore interface {

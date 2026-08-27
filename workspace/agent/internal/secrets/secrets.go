@@ -93,6 +93,20 @@ type PagerDutyCreds struct {
 // endpoint — AMG uses the same service-account token auth, just with a max
 // 30-day token life). Token is a service-account token (Viewer recommended),
 // injected into mcp-grafana at spawn by `mcp-run grafana`.
+// JiraCreds is the user's Jira (Atlassian Cloud) connection for the work item inbox
+// (docs/80 P1). Site is the instance base URL (https://<tenant>.atlassian.net), Email
+// the Atlassian account address and Token an API token — Jira's REST v3 authenticates
+// with HTTP Basic over those two, so BOTH are credentials and neither leaves the
+// container. A read-only account is recommended (see guide): af only ever reads.
+type JiraCreds struct {
+	Site  string `json:"site"`
+	Email string `json:"email"`
+	Token string `json:"token"`
+	// Account is the resolved display name, cached at connect time so the card can
+	// name the account instead of echoing the email back at the user. Not a secret.
+	Account string `json:"account,omitempty"`
+}
+
 type GrafanaCreds struct {
 	URL   string `json:"url"`
 	Token string `json:"token"`
@@ -312,6 +326,7 @@ type Data struct {
 	Opencode       map[string]string `json:"opencode"`             // provider env var name -> API key (injected for opencode sessions)
 	PagerDuty      *PagerDutyCreds   `json:"pagerduty,omitempty"`  // ops MCP credential (docs/25)
 	Grafana        *GrafanaCreds     `json:"grafana,omitempty"`    // ops MCP credential (docs/25)
+	Jira           *JiraCreds        `json:"jira,omitempty"`       // work item inbox source (docs/80 P1)
 	CloudWatch     *CloudWatchConn   `json:"cloudwatch,omitempty"` // ops MCP settings (docs/25; no secret — AWS cred chain)
 	AWS            *AWSConn          `json:"aws,omitempty"`        // Agent Toolkit for AWS MCP settings (docs/25; no secret — AWS cred chain)
 	Discord        *DiscordCreds     `json:"discord,omitempty"`    // chat-bridge connection (docs/37)

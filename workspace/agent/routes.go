@@ -26,6 +26,13 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/catalog", handleSessionCatalog)
 	mux.HandleFunc("GET /notifications", handleNotifications)
 	mux.HandleFunc("POST /notifications/ack", handleNotificationsAck)
+	// Work items (docs/80): the CP posts the saved queries it owns and gets non-secret
+	// rows back. Called by the CP itself (like /notifications), never by the Console,
+	// so it needs no entry in the CP's agent-proxy allowlist.
+	mux.HandleFunc("POST /work-items/fetch", handleWorkItemsFetch)
+	// 唯一の書き戻し（docs/80 §80.10）。人が下書きを読んで押したときだけ CP 経由で来る。
+	// MCP ツールは無い＝エージェントからは到達できない。
+	mux.HandleFunc("POST /work-items/comment", handleWorkItemsComment)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
 	// Idempotency reconcile (session_idempotency.go): resolve a create whose POST
 	// response was lost to a client timeout, so the caller need not retry into a dup.
@@ -327,6 +334,10 @@ func buildMux() *http.ServeMux {
 	// flows run in the Control Plane since docs/71, where the app can be read per
 	// tenant. GitHub's token comes back through PUT /connections/git/github.com above.
 	mux.HandleFunc("PUT /connections/git/bitbucket/oauth", handleBitbucketStore)
+	// Jira（docs/80 P1）: 作業項目の 2 つ目の取得元。site+email+token は保存前に
+	// /rest/api/3/myself で検証する（3 項目あって打ち間違いが起きやすい）。
+	mux.HandleFunc("PUT /connections/jira", handlePutJiraConn)
+	mux.HandleFunc("DELETE /connections/jira", handleDeleteJiraConn)
 	mux.HandleFunc("POST /connections/claude/start", claude.HandleStart)
 	mux.HandleFunc("POST /connections/claude/complete", claude.HandleComplete)
 	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)

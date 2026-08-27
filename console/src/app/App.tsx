@@ -39,6 +39,7 @@ import { LayoutMap } from "../features/panes/LayoutMap.tsx";
 import { WorkingSetBar } from "./WorkingSetBar.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
+import { WorkItemsSection } from "../features/workitems/WorkItemsSection.tsx";
 import { SchedulesSection } from "../features/schedules/SchedulesSection.tsx";
 import { ProjectTree } from "../features/project/ProjectTree.tsx";
 import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
@@ -497,6 +498,7 @@ export function App() {
             {workspaceRunning ? (
               <>
                 <AssistantSection />
+                <WorkItemsSection />
                 <MemoQueueSection />
                 {schedulerEnabled && <SchedulesSection />}
                 <ProjectTree />
@@ -507,6 +509,9 @@ export function App() {
             ) : (
               <>
                 <StoppedRailSection id="assistant" title={tr("ui.assistant")} icon="comment-discussion" />
+                {/* 停止中こそ本番（docs/80）: CP のキャッシュを読むので、止まっている
+                    Workspace をチケットから起こす導線がここで成立する。 */}
+                <WorkItemsSection />
                 <MemoQueueSection />
                 {schedulerEnabled && <SchedulesSection />}
                 <StoppedRailSection id="repos" title={tr("ui.repositories")} icon="repo" />

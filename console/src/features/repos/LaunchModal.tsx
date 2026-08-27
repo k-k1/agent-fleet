@@ -105,6 +105,15 @@ interface LaunchModalProps {
   /** Open straight into 既存ブランチ mode with this branch picked — the SCM view's
    * "start work on this branch" actions land here. */
   initialExistingBranch?: string;
+  /** Suggested NEW branch name, prefilled into the branch field (docs/80: a launch
+   * from a work item proposes feature/<key>-<slug>). Only a suggestion — clearing the
+   * field falls back to the server-minted temp/<slug>. */
+  initialNewBranch?: string;
+  /** Pre-answer the 場所 choice. Omitted = the usual default (a new worktree wherever
+   * one is offered). false = このコピーで直接, for a caller that already asked — the work
+   * item flow picks the working copy first (docs/80 §80.8), and re-defaulting to
+   * "new worktree" here would silently undo that answer. */
+  initialWorktree?: boolean;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
@@ -137,7 +146,7 @@ function LaunchSection({ label, summary, warn = false, open, onToggle, children 
   );
 }
 
-export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, initialWorktree, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -185,13 +194,15 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // WHERE: default to an isolated worktree — a branch switch can't corrupt other
   // sessions when each task has its own dir. From a worktree row (allowWorktree
   // false) there's no worktree choice: launch in place.
-  const [worktree, setWorktree] = useState(allowWorktree);
+  const [worktree, setWorktree] = useState(initialWorktree ?? allowWorktree);
   // 作業ディレクトリ: "" = the working copy root (the usual case). Seeded from what
   // this repo was last launched in, since a monorepo user keeps returning to the same
   // package — the field shows the value, so a remembered folder is never silent.
   const [subdir, setSubdir] = useState(() => resolveSubdir(repo));
   const [base, setBase] = useState(branch || "");
-  const [branchName, setBranchName] = useState(""); // "" => derived from the prompt
+  // "" => the server mints temp/<slug>. 作業項目から来た起動（docs/80）は
+  // feature/<key>-<slug> を提案値として入れる —— 提案なので、ここで消せば従来どおり。
+  const [branchName, setBranchName] = useState(initialNewBranch || "");
   const [conflict, setConflict] = useState<"local" | "remote" | "in_use" | null>(null);
   const [conflictWt, setConflictWt] = useState(""); // for "in_use": the copy holding it
   // ブランチ: 新規作成（既定）か、既に存在するブランチをそのまま使うか。後者は

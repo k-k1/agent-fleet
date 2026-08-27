@@ -1,7 +1,7 @@
 // core/push/events — 統合 push チャネルの受信ハブ（通信量削減 P3）。
 //
 // CP の GET /api/events (SSE) 1 本から workspace / sessions / stats /
-// notifications のフレームを受け、登録されたハンドラ（wire.ts がストアへ配線）
+// notifications / workitems のフレームを受け、登録されたハンドラ（wire.ts がストアへ配線）
 // に配る。フレームの data は既存 REST 応答と同一 shape なので、適用ロジックは
 // ポーリング経路と共用できる。
 //
@@ -15,7 +15,7 @@
 // を注入してくれるので、WS のような query param 認証の別扱いが要らない。
 import { rel } from "../api/client.ts";
 
-export type PushStream = "workspace" | "sessions" | "stats" | "notifications";
+export type PushStream = "workspace" | "sessions" | "stats" | "notifications" | "workitems";
 // data は stream 毎の REST 応答 shape そのもの。検証は適用側（ストア）の責務。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Handler = (data: any) => void;
