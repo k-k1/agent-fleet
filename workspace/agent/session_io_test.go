@@ -305,6 +305,93 @@ esac
 	}
 }
 
+// バッジの由来は**打つ前に**記録されていなければならない（recordInjection のコメント）。
+// タグ付けは要求のたびにストアを読み直すので、記録が転写の user 行より後になると、その
+// 隙間に来たポーリングは同じターンを由来なしで返し、ミラーは持っているターンを取り直さない
+// ので peer バッジが画面から永久に消える。peer は配達確認（＝user 行が現れるまで待つ）を
+// 必ず通るため、記録が後ろにあるとこの隙間は毎回開いた（実測 524ms）。
+//
+// 偽 tmux は「打鍵の瞬間」にストアを写し取り、同時に claude が user 行を書いたことにする。
+// 写しに由来が入っていることが、順序そのものの証明になる。
+func TestPeerInputRecordsBadgeOriginBeforeDelivery(t *testing.T) {
+	home := t.TempDir()
+	bin := t.TempDir()
+	snapshot := filepath.Join(bin, "store-at-typing-time.json")
+
+	const name = "peer_to"
+	const from = "peer_from"
+	dir := t.TempDir()
+	// 配達確認の証拠になる会話 jsonl（claude.jsonlPaths のグロブに合わせた置き場）。
+	jsonl := filepath.Join(home, "claude", "projects", "p", session.UUID(dir, name)+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(jsonl), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(jsonl, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$AF_TEST_SNAPSHOT.log"
+case "$1" in
+  has-session) exit 0 ;;
+  list-panes) printf '1 %%9\n'; exit 0 ;;
+esac
+case "$*" in
+  *" -l "*)
+    /bin/cp "$AF_TEST_STORE" "$AF_TEST_SNAPSHOT" 2>/dev/null
+    printf '{"type":"user"}\n' >> "$AF_TEST_JSONL"
+    ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, "claude"))
+	t.Setenv("AGENT_INPUT_SUBMIT_DELAY_MS", "0")
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
+	t.Setenv("AF_TEST_STORE", injectionStore.Path(name))
+	t.Setenv("AF_TEST_SNAPSHOT", snapshot)
+	t.Setenv("AF_TEST_JSONL", jsonl)
+
+	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindClaude})
+	session.WriteMeta(session.Meta{Name: from, Dir: t.TempDir(), Kind: session.KindClaude})
+
+	body := `{"prompt":"CI が赤いので直してほしい","peer_from":"` + from + `","peer_intent":"request"}`
+	if rec := postInput(t, name, body); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	at, err := os.ReadFile(snapshot)
+	if err != nil {
+		lg, _ := os.ReadFile(snapshot + ".log")
+		t.Fatalf("打鍵の時点で由来ストアが無い（記録が配達より後ろにある）: %v\ntmux=%s\nstore=%s", err, lg, injectionStore.Path(name))
+	}
+	if !strings.Contains(string(at), `"source":"peer"`) {
+		t.Fatalf("打鍵の時点のストア = %s, want peer 由来", at)
+	}
+
+	// そして実際にタグが付くこと。照合は**封筒付きの本文**で行われる（転写に残るのは
+	// サーバが前置した後の文字列なので、素の message を覚えると一生一致しない）。
+	list, _ := injectionStore.Read(name)
+	if len(list) != 1 {
+		t.Fatalf("記録 = %+v, want 1 件", list)
+	}
+	if !strings.HasPrefix(list[0].Text, "[agent-fleet:peer from="+from+" ") {
+		t.Fatalf("記録した本文 = %q, want 封筒付き", list[0].Text)
+	}
+	turns := []transcript.Turn{{Role: "user", Text: list[0].Text}}
+	tagInjectedTurns(name, turns)
+	if turns[0].Source != turnSourcePeer {
+		t.Errorf("Source = %q, want %q（ミラーのバッジ）", turns[0].Source, turnSourcePeer)
+	}
+	if rows := readInstrRows(name); len(rows) != 0 {
+		t.Errorf("指示台帳 = %d 行, want 0（peer は arm に触らない — ADR 0041 決定4）", len(rows))
+	}
+}
+
 // Regression for the sx37vu7 引継ぎ bug (assistant chat's send_to_session): a managed
 // session's {prompt} must route to its ThreadHandle, not the tmux not_running check —
 // a live managed session has no tmux pane, so the old code 409'd on every send. claude
