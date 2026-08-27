@@ -205,12 +205,22 @@ export function railWhen(iso: string, now = Date.now()): string {
   return relTime(iso, now);
 }
 
-/** Full local stamp for the row's tooltip — `relTime` is deliberately coarse, so the exact
- * value has to stay reachable somewhere. */
+/** Full local stamp for the row's tooltip and the detail modal — `relTime` is deliberately
+ * coarse, so the exact value has to stay reachable somewhere.
+ *
+ * ★ 秒は落とす。素の `toLocaleString()` は "10:49:02 PM" まで書くが、チケットの更新時刻に
+ * 秒の意味は無く、詳細では**読む文字列**として出るので桁が増えるだけである（実描画で確認）。 */
 export function fullLocal(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 /** State → the rail's existing tone vocabulary (same words the session chips use). */
