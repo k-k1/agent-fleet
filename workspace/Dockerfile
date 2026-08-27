@@ -186,7 +186,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/35
 # §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
-ARG AWSCLI_VERSION=2.36.32
+ARG AWSCLI_VERSION=2.36.33
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -285,7 +285,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 ARG CLAUDE_CODE_VERSION=2.1.247
 ARG OPENCODE_VERSION=1.18.23
 ARG CODEX_VERSION=0.150.1
-ARG COPILOT_VERSION=1.0.80
+ARG COPILOT_VERSION=1.0.81
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
@@ -394,9 +394,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.20.0
-ARG KIRO_SHA256_X64=e52fd90c531c7168ef8effc3e542e430f11d92551b9f0a17436d4763e2767d35
-ARG KIRO_SHA256_ARM64=c5fa25a2f3cb5025476c0ce026854a1e89ef9559ce29800dd35cc56c317d016d
+ARG KIRO_VERSION=2.20.1
+ARG KIRO_SHA256_X64=40c49223ce9844746f9cebadbc17dfd2491fa9e46fc19ccd527be70d44798371
+ARG KIRO_SHA256_ARM64=94bf6ffb7b745b9faa7cf0ca2ad4851c617a237fd71dd05dc548c0f567365c29
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
