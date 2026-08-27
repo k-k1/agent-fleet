@@ -76,6 +76,24 @@ func scheduleInjectionSource(s string) string {
 	}
 }
 
+// badgeOriginOf は「この投入をミラーでどのバッジにするか」を1か所で決める。"" は
+// 利用者が自分で打った入力＝バッジ無し。
+//
+// 投入経路（TUI / managed）ごとに switch を書き分けていたのを1つにまとめてあるのは、
+// **記録を配達より前へ動かす**ため（下の警告を参照）。片方の経路だけ動かすと、同じ
+// バッジが kind によって出たり出なかったりする。
+func badgeOriginOf(peerFrom, reportTo, source string) string {
+	switch {
+	case peerFrom != "":
+		return turnSourcePeer
+	case reportTo != "":
+		return injectionSource(source)
+	default:
+		// 報告 OFF の定時実行だけがここで拾われる（それ以外は ""＝素の入力）。
+		return scheduleInjectionSource(source)
+	}
+}
+
 // maxOperatorInjections caps the per-session record. Membership is all the tagging needs,
 // so we keep the newest N distinct texts (a long-lived session steered many times stays
 // bounded).
@@ -103,6 +121,13 @@ var injectionMu sync.Mutex
 // transcript can attribute the matching user turn. Deduped by text (a resend needn't
 // duplicate; a re-injection from a different source updates the origin) and capped (newest
 // kept).
+//
+// **必ず投入より前に呼ぶこと。** タグ付けは要求のたびにこのファイルを読み直すので、記録が
+// 転写の user 行より後になると、その隙間に来たポーリングは同じターンを**由来なし**で返す。
+// ミラーは既に持っているターンを取り直さない（増分は since 以降しか送らない）ので、一度
+// 素で配ったターンは画面を開き直すまで永久にバッジ無しのままになる。peer 送信は配達確認
+// （＝user 行が転写に現れるまで待つ）を必ず通るので、後ろに置くとこの隙間が構造的に開く
+// — 実測 524ms（2026-08-27 sopx6gc 宛の着信）。
 func recordInjection(name, text, source string) {
 	text = strings.TrimSpace(text)
 	if !session.ValidName(name) || text == "" {
