@@ -64,6 +64,14 @@ async function render(): Promise<void> {
 const text = () => host.textContent || "";
 const rows = () => host.querySelectorAll(".wi-row").length;
 
+// 制御された input に打つ。★ `el.value = x` だけでは React の value tracker が
+// 「変わっていない」と見なして onChange が鳴らない（絞り込みが効いていないのに
+// テストは緑、という一番いらない形になる）ので、プロトタイプ側の setter を使う。
+const typeInto = (el: HTMLInputElement, value: string) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+};
+
 beforeEach(() => {
   workItemList.mockReset();
   useWorkItemStore.getState().reset();
@@ -223,6 +231,79 @@ describe("WorkItemsSection", () => {
     });
     expect(useLaunchTarget.getState().target?.name).toBe("web@wip-abc");
     expect(useLaunchTarget.getState().inPlace).toBe(true);
+  });
+
+  // --- docs/80 §80.18: 実データ（Jira 41 件・全行同じ担当者）で作り直した情報設計 ---
+
+  const jiraRows = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      item({
+        id: "j" + i,
+        queryId: "q1",
+        provider: "jira",
+        key: `G3M-${100 + i}`,
+        title: `課題 ${i}`,
+        assignee: "Rin Aoyagi",
+        repo: "",
+        labels: [],
+        // ★ 明確に古い日付にする。「24 時間以内なら時刻を出さない」を入れたので、
+        // 実行日に近い値だと走らせる日によって .wi-when の数が変わってしまう。
+        updatedAt: new Date(Date.UTC(2025, 11, 1, 0, i)).toISOString(),
+      }),
+    );
+
+  it("★ 41 件でも既定は 10 行。件数バッジは全件のままで、残りは数で書く", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    expect(rows()).toBe(10);
+    // 畳んでいるだけで隠していない —— 見出しのバッジは 41 のまま。
+    expect(host.querySelector(".ui-section-count")?.textContent).toBe("41");
+    const more = host.querySelector<HTMLButtonElement>(".wi-more")!;
+    expect(more.textContent).toBe(t("wi.show_more", { n: 31 }));
+    await act(async () => more.click());
+    expect(rows()).toBe(41);
+    // たたむ で戻れる（開きっぱなしにしない）。
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    expect(rows()).toBe(10);
+  });
+
+  it("★ 全行が同じ担当者なら行から消え、メタが空なら 2 行目そのものを描かない", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    expect(text()).not.toContain("@Rin Aoyagi");
+    expect(host.querySelectorAll(".wi-meta").length).toBe(0);
+    // 消したのは表示だけ —— 担当者は行の tooltip に残っている。
+    expect(host.querySelector(".wi-title")?.getAttribute("title")).toContain("Rin Aoyagi");
+    // 空いた高さの代わりに、並び順の理由（更新の相対時刻）が出る。
+    expect(host.querySelectorAll(".wi-when").length).toBe(10);
+  });
+
+  it("担当者が割れていれば出す（チームのクエリ）", async () => {
+    const mixed = jiraRows(41).map((r, i) => (i === 3 ? { ...r, assignee: "Rin Aoyagi" } : r));
+    workItemList.mockResolvedValue({ items: mixed, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    expect(text()).toContain("@Rin Aoyagi");
+  });
+
+  it("★ レール内の絞り込みは行を減らすだけ（絞ってから畳む）", async () => {
+    const mixed = [...jiraRows(40), item({ id: "gh", key: "acme/web#45", title: "ログイン後に一覧が空になる" })];
+    workItemList.mockResolvedValue({ items: mixed, queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
+    await render();
+    const input = host.querySelector<HTMLInputElement>(".wi-filter input")!;
+    await act(async () => typeInto(input, "ログイン"));
+    expect(rows()).toBe(1);
+    expect(host.querySelector(".wi-more")).toBeNull(); // 1 件しか残らなければ折りたたみは要らない
+    await act(async () => typeInto(input, "存在しない語"));
+    expect(rows()).toBe(0);
+    expect(text()).toContain(t("wi.filter_empty"));
+  });
+
+  it("混んでいないレールに検索窓を出さない", async () => {
+    workItemList.mockResolvedValue({ items: jiraRows(4), queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    expect(host.querySelector(".wi-filter")).toBeNull();
+    expect(host.querySelector(".wi-more")).toBeNull();
+    expect(rows()).toBe(4);
   });
 
   it("作業コピーが 1 つも無いときだけ はじめる ハブに委ねる", async () => {

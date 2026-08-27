@@ -621,7 +621,13 @@ export function assistants(locale) {
 }
 
 // 作業項目（docs/80）。すべて架空 —— 実在の課題やアカウントは載せない。
-// state は正規化後の語彙（open / in_progress / done）、key は "owner/name#n"。
+// state は正規化後の語彙（open / in_progress / done）、key は "owner/name#n"（GitHub）か
+// "PROJ-123"（Jira）。
+//
+// ⚠️ ここは実データの「形」に寄せてある（docs/80 §80.18）。3 件のスタブで作っていた頃、
+// テストも実描画も緑なのに実機は使えなかった —— 41 件が並ぶ圧も、全行が同じ担当者に
+// なることも、3 件では 1 つも再現しないからである。だから Jira 側は
+// **同一担当者・複数プロジェクト・40 件超**で置く。
 export function workItems(locale) {
   const ja = locale === "ja";
   const it = (id, key, title, over = {}) => ({
@@ -639,6 +645,55 @@ export function workItems(locale) {
     updatedAt: ago(90),
     ...over,
   });
+  // Jira の 1 行。★ repo を持たず、ラベルも普通は無い —— メタ行が「担当者だけ」に
+  // なる（＝実機で 41 行が全部同じ 1 語を出していた）形をそのまま再現する。
+  const jira = (n, key, title, over = {}) => ({
+    id: "wj" + n,
+    queryId: "wq2",
+    provider: "jira",
+    kind: "issue",
+    key,
+    title,
+    state: "open",
+    url: "https://demo.atlassian.net/browse/" + key,
+    assignee: "Rin Aoyagi",
+    labels: [],
+    repo: "",
+    updatedAt: ago(120 * n + 40),
+    ...over,
+  });
+  const JIRA_TITLES = ja
+    ? [
+        "[LABO] OpenAI Chat の応答が途中で切れる", "月次バッチの再実行で二重計上になる",
+        "SSO 連携後にプロフィール画像が消える", "検索結果のページングが 2 ページ目で崩れる",
+        "iOS の共有シートから添付できない", "請求書 PDF の桁区切りがロケール依存",
+        "通知メールの差出人名が英語のまま", "在庫同期の遅延を監視に載せる",
+        "管理画面のCSV書き出しがタイムアウトする", "退会後もリマインダが届く",
+        "audit ログに操作者が入っていない", "権限テンプレートの複製ができない",
+        "画面幅 1280 でサイドバーが重なる", "ダークモードでグラフの凡例が読めない",
+        "住所の全角数字を正規化する", "決済リトライの上限を設定可能にする",
+        "Webhook の再送がべき等でない", "セッション期限の警告を出す",
+        "帳票のフォント埋め込みを見直す", "タイムゾーンをユーザー設定にする",
+      ]
+    : [
+        "[LABO] OpenAI chat replies get truncated", "Monthly batch double-counts on re-run",
+        "Avatar disappears after SSO linking", "Search paging breaks on page two",
+        "Cannot attach from the iOS share sheet", "Invoice PDF digit grouping is locale-bound",
+        "Notification sender name stays English", "Put stock-sync lag on the dashboard",
+        "Admin CSV export times out", "Reminders still sent after account closure",
+        "Audit log is missing the actor", "Permission templates cannot be duplicated",
+        "Sidebar overlaps at 1280px", "Chart legend unreadable in dark mode",
+        "Normalise full-width digits in addresses", "Make the payment retry cap configurable",
+        "Webhook redelivery is not idempotent", "Warn before the session expires",
+        "Revisit font embedding in reports", "Make the timezone a user setting",
+      ];
+  const PROJECTS = ["G3M", "RCS", "AAC", "NIS", "LINE"];
+  // 38 件 = 5 プロジェクト混在・全行同じ担当者。GitHub の 3 件と合わせて 41 件。
+  const jiraRows = Array.from({ length: 38 }, (_, i) =>
+    jira(i + 1, `${PROJECTS[i % PROJECTS.length]}-${50 + i * 17}`, JIRA_TITLES[i % JIRA_TITLES.length], {
+      state: i % 9 === 4 ? "in_progress" : "open",
+    }),
+  );
   return {
     items: [
       it("wi1", "demo/webshop#312", ja ? "クーポン併用時に税額がずれる" : "Tax is off when coupons stack", {
@@ -652,11 +707,12 @@ export function workItems(locale) {
         updatedAt: ago(150),
       }),
       // ★ ラベルの無い行を 1 件混ぜておく。CP が nil スライス（JSON の null）を出して
-      // いた頃、この形が来ると Console 全体が真っ白になった。
+      // いた頃、この形が来ると Console 全体が真っ白になった（docs/80 §80.17.5）。消さないこと。
       it("wi3", "demo/payments-api#77", ja ? "返金の冪等キーを再設計する" : "Redesign the refund idempotency key", {
         labels: null,
         updatedAt: ago(400),
       }),
+      ...jiraRows,
     ],
     queries: [
       {
@@ -667,6 +723,17 @@ export function workItems(locale) {
         repoHint: "",
         enabled: true,
         position: 0,
+        fetchedAt: ago(6),
+        lastError: "",
+      },
+      {
+        id: "wq2",
+        provider: "jira",
+        label: ja ? "自分の課題" : "My issues",
+        query: "assignee = currentUser() AND statusCategory != Done",
+        repoHint: "",
+        enabled: true,
+        position: 1,
         fetchedAt: ago(6),
         lastError: "",
       },
