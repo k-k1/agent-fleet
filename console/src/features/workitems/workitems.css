@@ -29,6 +29,51 @@
   white-space: nowrap;
 }
 
+/* 混んでいるレールにだけ出る 1 行の絞り込み（docs/80 §80.18.4）。クエリ UI ではないので
+   見た目も控えめに —— セクションの中に沈む地味な帯で、ボタンも演算子も持たない。 */
+.wi-filter {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 8px 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.wi-filter input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 2px 0;
+  outline: none;
+}
+.wi-filter input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+/* 「さらに表示（残り N 件）」/「たたむ」。件数バッジは全件のままなので、この行が
+   「畳んでいるだけで隠していない」ことの説明になる。 */
+.wi-more {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 4px 8px 2px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  text-align: center;
+}
+.wi-more:hover {
+  color: var(--accent);
+}
+
 .wi-list {
   display: flex;
   flex-direction: column;
@@ -89,6 +134,15 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 更新の相対時刻。★ 縮まない（flex 0 0 auto）—— 縮ませると「3日…」になって、
+   4 文字のために幅を取った意味が消える。省略されるのはタイトル側でよい。 */
+.wi-when {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 /* ★ 1 行を 1 回だけ省略する。flex + 各要素 overflow:hidden にすると、実測で
