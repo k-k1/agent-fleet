@@ -116,5 +116,8 @@ func buildProgram(model, mode, chatID string, bypass bool) string {
 	if chatID != "" {
 		flags += " --resume " + session.ShellQuote(chatID)
 	}
-	return strings.TrimSpace(bin() + " " + flags)
+	// CI が生きていると対話 UI ごと消える（ci_env.go）。AGENT_CURSOR_CMD の上書きには
+	// 付けない — あちらは「このコマンドをそのまま実行する」逃がし口で、組み立てには
+	// 関与しないため（上で早期 return 済み）。
+	return unsetCIPrefix + strings.TrimSpace(bin()+" "+flags)
 }

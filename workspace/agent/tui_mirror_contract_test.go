@@ -54,21 +54,6 @@ func runTUIMirrorContract(t *testing.T, spec tuiMirrorContractSpec) {
 		}
 	}
 
-	// A Workspace container never sets CI, but a hosted runner always does — and a
-	// TUI that detects CI may drop its interactive UI entirely, so the pane would
-	// then show something production never shows. Measured with cursor 2026.08.25 on
-	// ubuntu-latest: with CI present the CLI prints only its banner, never draws the
-	// composer, ignores keystrokes — while its own startup log still reports
-	// first_paint, so nothing looks wrong from the outside. It tests for the
-	// variable's PRESENCE: CI= (empty) reproduces the dead TUI too, and only
-	// unsetting (or CI=false) restores it. claude / agy / kiro were unaffected.
-	// This must happen before the first tmux command below, because the tmux SERVER
-	// inherits the environment and hands it to every pane it later spawns.
-	if prev, ok := os.LookupEnv("CI"); ok {
-		_ = os.Unsetenv("CI")
-		t.Cleanup(func() { _ = os.Setenv("CI", prev) })
-	}
-
 	name := fmt.Sprintf("contract-%s-%d", spec.kind, os.Getpid())
 	// A fresh tmux server inherits this test process's isolated HOME and auth env;
 	// a pre-existing default server would retain the workspace's old environment and

@@ -344,7 +344,8 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	// worker-server の取り残しをグループごと落とせるよう、専用プロセスグループにする。
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// 認証は ambient（~/.config/cursor/auth.json を CLI 自身が拾う — 実測: env 注入なしで完走）。
-	cmd.Env = os.Environ()
+	// CI だけは外す（ci_env.go）。
+	cmd.Env = EnvWithoutCI(os.Environ())
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
