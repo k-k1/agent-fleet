@@ -70,7 +70,7 @@ ARG BAKE_OPTIONAL_TOOLS=1
 # stored URL + service-account token and -disable-write -disable-admin). Works
 # against self-hosted / Grafana Cloud / Amazon Managed Grafana. Bump
 # MCP_GRAFANA_VERSION to upgrade (ARG pin busts the cache; same idiom as GH_VERSION).
-ARG MCP_GRAFANA_VERSION=1.1.0
+ARG MCP_GRAFANA_VERSION=1.2.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) mgarch=x86_64 ;; arm64) mgarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -89,9 +89,11 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # world-readable, which is all the runtime user needs.
 # `test -x` では捕まらない壊れ方があるので import まで踏む: 0.1.4 の依存宣言は
 # `mcp[cli]>=1.23.0` と上限が無く、mcp 2.0.0 が出た今ビルドすると 2.0.0 が入って
-# `mcp.server.fastmcp` を失い、実行時に ModuleNotFoundError で即死する（実測）。
-# 0.1.8 は `<2.0.0` で上限を持つ。ピンは版だけでなく解決結果まで含めて検証する。
-ARG CLOUDWATCH_MCP_VERSION=0.1.8
+# `mcp.server.fastmcp` を失い、実行時に ModuleNotFoundError で即死した（実測）。
+# 0.1.8 は `<2.0.0` で上限を持ち 1.x に留まる。0.2.0 は逆に `>=2.0.0,<3.0.0` へ移り、
+# mcp 2.x 側の API へ移植済み（system python 3.11 + mcp 2.1.1 の解決で下の import が
+# 通ることを bump 時に実測）。ピンは版だけでなく解決結果まで含めて検証する。
+ARG CLOUDWATCH_MCP_VERSION=0.2.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
@@ -184,7 +186,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/35
 # §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
-ARG AWSCLI_VERSION=2.36.28
+ARG AWSCLI_VERSION=2.36.32
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -244,7 +246,7 @@ RUN set -eux; \
 # BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
 # が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/35 §35.4.1）。
 ARG BAKE_RTK=1
-ARG RTK_VERSION=0.45.0
+ARG RTK_VERSION=0.46.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -280,9 +282,9 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.246
+ARG CLAUDE_CODE_VERSION=2.1.247
 ARG OPENCODE_VERSION=1.18.23
-ARG CODEX_VERSION=0.149.1
+ARG CODEX_VERSION=0.150.1
 ARG COPILOT_VERSION=1.0.80
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
@@ -307,10 +309,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと
 # 起動即 SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホスト
 # でもイメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
-ARG AGY_VERSION=1.1.21
-ARG AGY_RELEASE_BUILD=6424454201475072
-ARG AGY_SHA256_X64=4806a347119d36be6d8ab5cc3f03319bc6aa8407a8d9203de7976a42954cabde
-ARG AGY_SHA256_ARM64=8626b97aec1ef96abdabd234c0b8259a2fdf2a3f3918c927641f8c821342d5e4
+ARG AGY_VERSION=1.1.22
+ARG AGY_RELEASE_BUILD=5711547746615296
+ARG AGY_SHA256_X64=1e1a219a86e75d7c6351f96d182ca2105302d5c34d8fa9c31265dc0adf24145f
+ARG AGY_SHA256_ARM64=a68925bc7336eb0b90de1e1aefd44d535f5487b7cf606a76fdb982207aef9a2e
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -353,9 +355,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/40 Track B）。
-ARG CURSOR_VERSION=2026.08.11-e8db854
-ARG CURSOR_SHA256_X64=bfff4bf6f4e9dd30c1d0ef0a70b6077b074015dd2948e4c50685d53afdcfce5a
-ARG CURSOR_SHA256_ARM64=ea13f92e295f523a99ce8d8f57d6894d21e5d1e2d030ffad718ccd5955ca2eed
+ARG CURSOR_VERSION=2026.08.25-3e8eec8
+ARG CURSOR_SHA256_X64=7a212e5a17ff9316f5acc78808e33c536940d5455645022e6388d99ba48c8425
+ARG CURSOR_SHA256_ARM64=f1c1c2330d89fa4ef5b6cc04fcffba15012ff50eacd07e0f3baec0716f25ac5d
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -392,9 +394,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.19.2
-ARG KIRO_SHA256_X64=940d1d348d990ac9d479fd7b41d6ec51f3aafe345a40bff22f5744893f1438aa
-ARG KIRO_SHA256_ARM64=84df9ddcf02156d9563910850c7a07805ea41cf6a32bc30438741878f10a5af5
+ARG KIRO_VERSION=2.20.0
+ARG KIRO_SHA256_X64=e52fd90c531c7168ef8effc3e542e430f11d92551b9f0a17436d4763e2767d35
+ARG KIRO_SHA256_ARM64=c5fa25a2f3cb5025476c0ce026854a1e89ef9559ce29800dd35cc56c317d016d
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
