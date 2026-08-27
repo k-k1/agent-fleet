@@ -79,6 +79,27 @@ type daemonModel struct {
 // （UsageFree）の判定材料。CLI 由来の一覧には価格が無いので空のままになる。
 var freeIDs map[string]bool
 
+// retiredIDs is the set of ids the last daemon read reported as gone (status
+// "deprecated" / enabled:false). They are dropped from the catalog by
+// filterDaemonModels — opencode's own `opencode models` drops them too — but keeping
+// the NAMES lets a launch that asks for one say why instead of a bare 「利用できません」。
+//
+// 実測（2026-08-27）: deprecated は「一覧から隠れているだけ」ではなく提供終了そのもの。
+// 認証不要の無料モデルで割れた — deprecated の glm-5-free / kimi-k2.5-free /
+// minimax-m3-free は実行するとゲートウェイがサーバエラーを返し、付いていない
+// nemotron-3-ultra-free / mimo-v2.5-free は通った。
+var retiredIDs map[string]bool
+
+// Retired reports whether id was in the live catalog but is no longer usable. Always
+// false when the catalog came from the CLI: `opencode models` never prints a retired
+// id, so there is nothing to tell apart from a typo — the caller falls back to its
+// generic "unavailable" message.
+func Retired(id string) bool {
+	modelsMu.Lock()
+	defer modelsMu.Unlock()
+	return retiredIDs[strings.TrimSpace(id)]
+}
+
 // isFreeModel reports whether id is billed at zero. 価格を知らないとき（daemon から
 // 読めていない＝CLI 由来）は true: 無料枠では OPENCODE_API_KEY を注入しないので、
 // その CLI が返す opencode.ai の一覧はそもそも無料枠のものだけになる（実測）。
@@ -108,12 +129,21 @@ func modelsFromDaemon() []string {
 	// Refresh the zero-cost set from the same read, so 無料枠 の判定と一覧が同じ
 	// スナップショットに揃う。
 	free := make(map[string]bool, len(ids))
+	retired := make(map[string]bool)
 	for _, m := range env.Data {
+		if m.ID == "" || m.ProviderID == "" {
+			continue
+		}
+		id := m.ProviderID + "/" + m.ID
 		if freeCost(m.Cost) {
-			free[m.ProviderID+"/"+m.ID] = true
+			free[id] = true
+		}
+		if m.Status == "deprecated" || (m.Enabled != nil && !*m.Enabled) {
+			retired[id] = true
 		}
 	}
-	freeIDs = free // caller (Models) already holds modelsMu — 二重ロックしない
+	// caller (Models) already holds modelsMu — 二重ロックしない
+	freeIDs, retiredIDs = free, retired
 	return ids
 }
 
