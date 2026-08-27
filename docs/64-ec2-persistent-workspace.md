@@ -3103,3 +3103,132 @@ home の EBS はその AZ から動けない（ADR 0045）。**リバランス�
 
 ⚠️ Fargate 側（`runtime_ecs`）は `deploymentConfiguration` を送っていないので**この問題とは無縁**。
 §64.39.6.3 の課題（2 本立つ）は残るが、AZ リバランシングとは衝突しない。
+
+## 64.40 スロットの OS が死ぬと「起動が必ず 504」になる——待つのをやめて箱を捨てる（本番事故・2026-08-27）
+
+af.acrt.link の利用者 1 名から「昼休憩のあと再開しようとしたら **504 gateway time-out**、
+何度試しても起動できない。でもインスタンスは稼働中に見える」という申告。**箱は生きているが
+中の OS が死んでいる**という型で、**製品の 3 つの層がそれぞれ正しく振る舞った結果、
+誰も回復できないデッドロックになっていた。**
+
+### 64.40.1 何が起きたか（実測・時刻は JST）
+
+| 時刻 | 事象 | 根拠 |
+|---|---|---|
+| 13:25〜 | home EBS の **read が 5 分あたり 15.9→38.3 GB**（write は 0・キュー長 6.7） | CloudWatch `AWS/EBS` |
+| 13:29頃 | `nfs: server 127.0.0.1 not responding` | `get-console-output --latest` |
+| 13:34:36 | SSM エージェント `ConnectionLost` | `ssm describe-instance-information` |
+| 13:34:47 | Agent の最終ログ（`GET /sessions` が 42ms→1m41s と劣化した末に沈黙） | ws ロググループ |
+| 13:35〜13:50 | CPU 100%。以降 1 時間半 **65〜70% で張り付き**（利用者も Agent も居ないのに） | `AWS/EC2` |
+| 14:17〜 | CP→Agent の全 API が 60 秒ハングして 502 | CP ログ |
+| 14:31 | 利用者が「停止」→ API は 200。**しかしタスクは 1 時間半 `STOPPING` のまま** | `ecs describe-tasks` |
+| 14:32/14:38/14:49/14:57 | 「起動」×4 → すべて `POST /api/workspace/start 500 1m0.0s` | CP ログ |
+
+⚠️ **`write` がほぼ 0 で `read` だけ爆発するのはメモリ枯渇の指紋であって、EBS 障害ではない。**
+ページキャッシュが壊滅して同じブロックを読み直し続けるので、gp3 の 125 MiB/s 上限に張り付く。
+EFS 側は無傷（バーストクレジット満タン・IO 使用率 2% 以下）で、壊れていたのはスロットの内側だけ。
+
+### 64.40.2 引き金——ハードリミットの無いコンテナが箱の管理系を道連れにする
+
+`buildTaskDef` はワークスペースのコンテナに `MemoryReservation: 512` しか付けない
+（**ハードリミット無し**）。これは意図的で、コメントのとおり「利用者が払っている箱より
+小さく縛らない」ため。だが結果として、**コンテナ内の暴走が 8 GiB のスロット全体に波及し、
+同じ箱に同居している管理系を全部道連れにする**：
+
+- **efs-utils の stunnel** —— task def は `claude`(`/var/lib/af/claude`) と `keep` を
+  `TransitEncryption: ENABLED` で mount する。転送時暗号化の NFS は **`127.0.0.1` の
+  ローカルプロキシ経由**なので、これが死ぬと当該パスを触る全プロセスが D 状態になる。
+  Agent は Claude の設定/メモリを常時読むので、真っ先に固まる
+- **ECS エージェント** → `agentConnected: false`
+- **SSM エージェント** → `ConnectionLost`
+
+**EC2 のステータスチェックは 3 つとも `passed` のまま**（reachability も EBS も）。
+外形監視では健全に見える。
+
+### 64.40.3 なぜ誰も回復できなかったか——3 つの正しい判断が組み合わさる
+
+```
+ECS: エージェントが居ないのでタスクを止められない
+       → タスクは STOPPING のまま、ENI は ATTACHED のまま
+スイープ: 「task ENI を持つスロットは停止しない」(決定 3-3・§64.39 系の multi-ENI/egress 喪失回避)
+       → `still has a task ENI; leaving it running for now` を 5 分ごとに永久ループ
+Start:  placeHome の親和性分岐が同じスロットを再利用し、waitSlotRegistered で
+        二度と登録されない箱を 3 秒間隔で待ち続ける
+       → ingress が 60 秒で切る = 利用者は 504、CP のログは 500
+```
+
+⚠️ **CP ログの `500 1m0.0s` と利用者の 504 は同じ事象**。ALB が先に諦めて 504 を返し、
+そのとき切られたリクエストの ctx が CP 側で `context canceled` になって 500 が記録される。
+**片方だけ見ていると別々の障害に見える。**
+
+### 64.40.4 手作業の復旧手順（Console に導線が無い＝AWS CLI 一択）
+
+`GET /api/admin/ec2-pool` は読み取り専用で、スロットを捨てる操作は製品側に存在しない。
+
+1. `ec2 create-snapshot`（home の復旧点）。⚠️ **「各ホームの予備コピー」が未有効だと
+   スナップショットは 1 つも無い**ので、必ず最初に取る
+2. `ecs deregister-container-instance --force` → 幽霊タスクが
+   `STOPPING`→`DEPROVISIONING`→`STOPPED`、**ENI が `DETACHING`**。サービスの
+   PRIMARY デプロイも `IN_PROGRESS` から `COMPLETED` に落ちる
+3. **ENI がプライマリ 1 本だけになったのを確認してから** `ec2 stop-instances --force`
+   （順序を逆にすると自分で multi-ENI 事故を踏む）
+4. 停止後に `ec2 detach-volume`（停止済みなら `--force` 不要＝一番穏当）
+5. 箱を残すなら **`af-role=quarantined` に付け替える**。両方のスイープ walk が
+   `af-role=slot` で絞るので、残骸が次の人に配られなくなる。home は
+   `DeleteOnTermination=false` なので terminate しても消えない
+6. 利用者が「起動」を押すと homeless 経路で空きスロットに再配置される
+
+### 64.40.5 直したこと——「まだ登録されていない」に時間制限を入れる
+
+**① `placeHome` の親和性分岐が ECS 登録を見ていなかった**（504 の直接原因）
+
+homeless 経路は最初から `s.running && s.registered` の両方を見ていたのに、
+親和性で同じスロットを再利用する分岐は **EC2 の `running` しか見ていなかった**。
+`deferred` は「この Start の残りを呼び出し側のスレッドで走らせるか」を決める旗なので、
+ここを間違えると **60 秒の ingress の内側で終わらない仕事が同期実行される**。
+健全なプールでは running なスロットは登録済みなので、**この非対称は普段まったく見えない。**
+
+**② `waitSlotRegistered` に猶予（`slotLostAfter`・既定 5 分）を入れ、`errSlotLost` を返す**
+
+猶予を過ぎたとき **EC2 が `running` と言っている**なら、その箱は遅いのではなく失われている。
+`pending` の箱は対象外——起動途中の箱を壊すのは「遅い Start」を「壊れた Start」に変える。
+⚠️ 猶予は**時計ではなくポーリング回数**で数える。`sleep` は注入されており、
+壁時計の期限にするとスタブしたテストが実時間だけ待つことになる。
+
+**③ `abandonLostSlot`——OS が死んだ箱専用のテアダウン**
+
+`quarantineSlot`（mount 失敗用）は流用できない。あちらはまだ何も走っておらずカーネルも
+生きている前提で、**この箱に対しては全ステップが静かに間違ったことをする**：
+
+| `quarantineSlot` | 固まった箱で実際に起きること |
+|---|---|
+| 走っている箱に `DetachVolume` | `detaching` のまま永久に返らない（unmount できない） |
+| 通常の `StopInstances` | 誰も聞いていない ACPI shutdown を待ち続ける |
+| task ENI が付いたまま停止 | 箱が **multi-ENI** で戻り egress を失う（決定 3-3） |
+
+なので順序を反転し、先頭に 1 段足した：**タグ→強制 deregister→ENI 消滅待ち→強制停止→
+停止後に通常 detach**。強制 deregister が安全なのは、**1 スロットは home 1 本＝
+ワークスペース 1 つ**なので、消えるのは呼び出し元自身の（既に到達不能な）タスクだけだから。
+
+**④ 自動再配置（予算 1 回）**
+
+home が外れた時点で `placeHome` から見れば普通の homeless な home なので、健全なスロットに
+置き直して立ち上げ直す。**利用者はボタンを押し直さなくてよい。**
+⚠️ 予算を 1 回に絞るのが肝で、**このコードが理解していない理由でプール全体が壊れている場合、
+無制限だと Start のたびに 1 台ずつ全箱を隔離して「劣化したデプロイ」を「空のデプロイ」に変える。**
+2 台試して駄目なら諦め、claim を落として `stopped` に戻す（利用者が再試行できる状態）。
+
+⚠️ **claim は `abandonLostSlot` では敢えて残す**。`State()` は claim を見て `starting` と
+答えるので、ここで落とすと再配置の最中に Console が一瞬 `stopped` を出し、二重 Start を招く。
+再配置が成功すれば `finishLaunch` が落とし、失敗すれば `converge` が落とす。どちらも
+漏れたら claimTTL で失効する（`State()` が元から持っている安全弁）。
+
+### 64.40.6 まだ残っている穴
+
+- **スロットにホストのメモリ計測が無い**（CWAgent も Container Insights も未導入）。
+  今回もメモリ枯渇は EBS read の形から**推定**するしかなかった。直接の証拠は取れていない
+- **コンテナのハードリミット無し**は設計判断として妥当だが、巻き添えで死ぬのが
+  「そのスロットの管理系全部」なのは割に合っていない。ECS/SSM/stunnel を保護する余地はある
+- ジャーナルは tmpfs（AL2023 の既定・`/var/log/journal` を作っていない）なので、
+  **箱を停止した時点で dmesg も OOM killer の記録も失われる**。root ボリュームに残るのは
+  `/var/log/ecs/`・`/var/log/amazon/ssm/`・`/var/log/amazon/efs/` だけ
