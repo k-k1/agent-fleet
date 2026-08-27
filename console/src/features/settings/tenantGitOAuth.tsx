@@ -149,6 +149,11 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
           <p className="admin-hint warn">{tr("tenant.git_oauth_no_base_url")}</p>
         ))}
       {app.provider === "github" && <p className="admin-hint">{tr("tenant.git_oauth_gh_device")}</p>}
+      {/* ★ Bitbucket は認可 URL に scope を載せない —— コンシューマの Permissions で
+          チェックした物がそのまま渡る。だから「どれを入れるか」はここで言うしかなく、
+          Pull requests: Read を後から足した場合はメンバーの再接続が要る
+          （既存トークンには古い権限が焼かれている・docs/80 §80.19.3）。 */}
+      {app.provider === "bitbucket" && <p className="admin-hint">{tr("tenant.git_oauth_bb_scopes")}</p>}
       {app.provider === "jira" && (
         <>
           <p className="admin-hint">{tr("tenant.git_oauth_jira_access")}</p>

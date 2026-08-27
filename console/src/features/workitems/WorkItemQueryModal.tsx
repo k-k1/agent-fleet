@@ -24,9 +24,16 @@ interface Props {
 // provider ごとの既定クエリ。ここが「自分にアサインされた未完了だけ」という既定の
 // 絞り込みそのもの（docs/80 §80.7）—— 全件同期をしないという設計を初期値で表している。
 // GitHub は検索構文、Jira は JQL。af は写像を持つだけで、方言はそのまま保存する。
+//
+// ★ Bitbucket だけ「そのまま使える既定」を書けない（docs/80 §80.19.1）。account 横断の
+// 検索が無く、どこを見るかを先頭に書く必要があるからで、既定は**置き換えるべき語**を
+// そのまま置いた形にしてある —— 消し忘れたときのエラーが
+// 「bitbucket has no workspace/repo visible to this connection」になり、何をし忘れたかを
+// それ自体が言う。
 const DEFAULT_QUERY: Record<string, string> = {
   github: "assignee:@me is:open",
   jira: "assignee = currentUser() AND statusCategory != Done",
+  bitbucket: 'workspace/repo reviewers.uuid="@me"',
 };
 
 export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Props) {
@@ -147,6 +154,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
           <select value={provider} onChange={(e) => pickProvider(e.target.value)}>
             <option value="github">GitHub</option>
             <option value="jira">Jira</option>
+            <option value="bitbucket">Bitbucket</option>
           </select>
         </label>
         <label>
@@ -157,6 +165,10 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
           <span>{tr("wi.query_expr")}</span>
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={DEFAULT_QUERY[provider]} spellCheck={false} />
         </label>
+        {/* ★ Bitbucket にだけ説明が要る。GitHub と Jira は「どこを見るか」をクエリの
+            外に置けるが、Bitbucket の API は横断検索を持たないので先頭に対象を書く
+            （docs/80 §80.19.1）。ここを書かないと、利用者は 400 を見てから学ぶことになる。 */}
+        {provider === "bitbucket" && <p className="wi-qhint">{tr("wi.query_bb_hint")}</p>}
         <label>
           {/* Jira は課題がリポジトリに紐づかないので、起動先はここが唯一の手がかりに
               なる（プロジェクト → 作業コピーの対応表がこれ）。 */}

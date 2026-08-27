@@ -333,8 +333,19 @@ function readLine(item: WorkItem): string {
     case "jira":
       return t("wi.prompt_read_jira");
     default:
+      // Bitbucket はここ。`gh` にあたるセッション内の道具が無いので、指せるのは URL
+      // だけである（docs/80 §80.19.5）。無い道具の名前を書かないのが要点。
       return t("wi.prompt_read_generic");
   }
+}
+
+/** Whether af can post the 報告 comment back to this item's tracker.
+ *
+ * ★ 能力が無い provider には操作要素を出さない。Bitbucket は読み取りだけを足したので
+ * （投稿には `pullrequest:write` が要り、テナント管理者の再登録と全員の再認可を伴う —
+ * docs/80 §80.19.3）、その行に 💬 を出すと押した先で必ず断られる。 */
+export function canComment(item: WorkItem): boolean {
+  return item.provider !== "bitbucket";
 }
 
 /** Session title suggestion: the key plus a trimmed title, so the rail and the session

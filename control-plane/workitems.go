@@ -36,6 +36,11 @@ const (
 	workItemsFetchTimeout = 30 * time.Second
 )
 
+// workItemProviders is the set a saved query may name. The Agent holds the adapters
+// (workspace/agent/workitems*.go); this is only the gate that stops a query being stored
+// which nothing could ever resolve.
+var workItemProviders = map[string]bool{"github": true, "jira": true, "bitbucket": true}
+
 // workItemFetchInFlight guards against stacking refreshes: every open tab's SSE tick
 // asks whether a refresh is due, and without this each of them would spawn one.
 // Package level (not a field) because the REST face and the events face construct
@@ -435,8 +440,13 @@ func (a workItemsAPI) listQueries(w http.ResponseWriter, r *http.Request, _ Iden
 	writeJSON(w, http.StatusOK, out)
 }
 
-// validateWorkItemQuery normalizes an incoming query. v1 accepts github only — an
-// unknown provider is refused rather than saved as a row that can never fetch.
+// validateWorkItemQuery normalizes an incoming query. An unknown provider is refused
+// rather than saved as a row that can never fetch.
+//
+// ★ This list is the ONLY place the Control Plane knows a provider exists. Everything
+// else here is pass-through — the query text, the rows and the per-query error message
+// all belong to the Agent, which is the only side holding a token (ADR 0061 決定 6.5). So
+// adding Bitbucket cost one line here and nothing else in the CP.
 func validateWorkItemQuery(mv MembershipView, in workItemQueryDTO) (WorkItemQuery, *apiError) {
 	q := WorkItemQuery{
 		MembershipID: mv.MembershipID,
@@ -450,8 +460,8 @@ func validateWorkItemQuery(mv MembershipView, in workItemQueryDTO) (WorkItemQuer
 	if q.Provider == "" {
 		q.Provider = "github"
 	}
-	if q.Provider != "github" && q.Provider != "jira" {
-		return WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_provider", "provider must be github or jira"}
+	if !workItemProviders[q.Provider] {
+		return WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_provider", "provider must be github, jira or bitbucket"}
 	}
 	if q.Query == "" {
 		return WorkItemQuery{}, &apiError{http.StatusBadRequest, "bad_query", "query is required"}
