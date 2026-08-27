@@ -72,6 +72,13 @@ const typeInto = (el: HTMLInputElement, value: string) => {
   el.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
+// ui-modal の直下に居てよいのは shell の 3 つだけ。それ以外がここに出るということは、
+// padding を持つ器の外に中身が落ちているということ。
+const strayChildren = (panel: Element) =>
+  [...panel.children]
+    .filter((el) => !el.matches(".ui-modal-head, .ui-modal-body, .ui-modal-foot"))
+    .map((el) => el.className);
+
 beforeEach(() => {
   workItemList.mockReset();
   useWorkItemStore.getState().reset();
@@ -194,7 +201,7 @@ describe("WorkItemsSection", () => {
     await act(async () => {
       host.querySelector<HTMLButtonElement>(".wi-start")!.click();
     });
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>(".wi-sactions button")];
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>(".wi-smodal .ui-modal-foot button")];
     await act(async () => {
       buttons[buttons.length - 1].click();
     });
@@ -225,12 +232,38 @@ describe("WorkItemsSection", () => {
       where.value = "web@wip-abc";
       where.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>(".wi-sactions button")];
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>(".wi-smodal .ui-modal-foot button")];
     await act(async () => {
       buttons[buttons.length - 1].click();
     });
     expect(useLaunchTarget.getState().target?.name).toBe("web@wip-abc");
     expect(useLaunchTarget.getState().inPlace).toBe(true);
+  });
+
+  // ★ 余白の回帰はここで止める。ui-modal 自身に padding は無く（見出しと footer が
+  // 自分で持つ形）、中身を直下に置くと本文だけが枠に貼りつく —— 実機で「はじめる」が
+  // その形になっていた。構造で書けば、見た目を見なくても壊れたと分かる。
+  it("★ モーダルの中身は共有の ui-modal-body / ui-modal-foot に載る（他のダイアログと余白が揃う）", async () => {
+    useReposStore.setState({ repos: [{ name: "web", path: "/home/dev/repos/web" }] });
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(".wi-start")!.click();
+    });
+    const start = document.querySelector(".wi-smodal")!;
+    expect(start.querySelector(":scope > .ui-modal-body .wi-sfield")).not.toBeNull();
+    expect(start.querySelector(":scope > .ui-modal-foot button")).not.toBeNull();
+    expect(strayChildren(start)).toEqual([]);
+
+    // 保存したクエリ（歯車）も同じ形であること。
+    const gear = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.getAttribute("aria-label") === t("wi.queries"),
+    )!;
+    await act(async () => gear.click());
+    const queries = document.querySelector(".wi-qmodal")!;
+    expect(queries.querySelector(":scope > .ui-modal-body .wi-qform")).not.toBeNull();
+    expect(strayChildren(queries)).toEqual([]);
   });
 
   // --- docs/80 §80.18: 実データ（Jira 41 件・全行同じ担当者）で作り直した情報設計 ---

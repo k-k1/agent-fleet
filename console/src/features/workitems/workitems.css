@@ -218,7 +218,7 @@
 }
 
 .wi-qbranch {
-  margin: 0 0 12px;
+  margin: 0;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -245,7 +245,7 @@
 /* --- start-target modal --------------------------------------------------- */
 
 .wi-shead {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -255,7 +255,6 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin-bottom: 10px;
   font-size: 12px;
 }
 .wi-sfield select {
@@ -267,14 +266,9 @@
   font-size: 13px;
 }
 .wi-shint {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 11px;
   color: var(--muted);
-}
-.wi-sactions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 /* --- report modal --------------------------------------------------------- */
@@ -283,7 +277,6 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 10px;
   font-size: 13px;
 }
 .wi-rlabel {
@@ -296,7 +289,6 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin-bottom: 10px;
   font-size: 12px;
 }
 .wi-rsession select,
@@ -315,14 +307,9 @@
   resize: vertical;
 }
 .wi-rhint {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 11px;
   color: var(--muted);
-}
-.wi-ractions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .wi-start {
@@ -355,13 +342,13 @@
 /* --- saved-query modal ---------------------------------------------------- */
 
 .wi-qhelp {
-  margin: 0 0 10px;
+  margin: 0;
   font-size: 12px;
   color: var(--muted);
 }
 .wi-qlist {
   list-style: none;
-  margin: 0 0 12px;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;

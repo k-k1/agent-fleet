@@ -279,6 +279,13 @@ try {
       await cdp.send("Runtime.evaluate", { expression: scene.action, awaitPromise: true });
       await sleep(scene.settle || 800);
     }
+    // ★ 見た目の判断を目で決めない口（docs/80 §80.18.7）。scene.measure に式を書くと
+    // その戻りを標準出力に出す —— 余白やタイトル幅が「揃っている」かは感想では決着せず、
+    // getBoundingClientRect() で測るしかない。常設のシーンでは使っていない。
+    if (scene.measure) {
+      const m = await cdp.send("Runtime.evaluate", { expression: scene.measure, returnByValue: true });
+      console.log("[measure]", scene.name, m.result?.value);
+    }
 
     // WebP straight out of Chromium — no post-processing step, and a fifth of the PNG
     // size at a quality where the UI text stays crisp at 2x.
