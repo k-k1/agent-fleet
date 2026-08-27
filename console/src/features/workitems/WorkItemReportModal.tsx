@@ -89,53 +89,57 @@ export function WorkItemReportModal({ item, sessions, onClose }: Props) {
 
   return (
     <Modal title={tr("wi.report_title")} onClose={onClose} className="wi-rmodal">
-      {/* 宛先が最初。押してから「どこに出たのか」を考える形にしない。 */}
-      <div className="wi-rtarget">
-        <span className="wi-rlabel">{tr("wi.report_to")}</span>
-        <a href={item.url} target="_blank" rel="noreferrer noopener">
-          {reportTarget(item)}
-        </a>
+      {/* ★ 中身は ui-modal-body / ui-modal-foot に載せる。ui-modal 自身に padding は
+          無く（見出しと footer が自分で持つ形）、直に子を置くと本文だけが枠に貼りつく。 */}
+      <div className="ui-modal-body">
+        {/* 宛先が最初。押してから「どこに出たのか」を考える形にしない。 */}
+        <div className="wi-rtarget">
+          <span className="wi-rlabel">{tr("wi.report_to")}</span>
+          <a href={item.url} target="_blank" rel="noreferrer noopener">
+            {reportTarget(item)}
+          </a>
+        </div>
+        {sessions.length > 1 && (
+          <label className="wi-rsession">
+            <span>{tr("wi.report_session")}</span>
+            <select value={sessionName} onChange={(e) => setSessionName(e.target.value)}>
+              {sessions.map((s) => (
+                <option key={s.id} value={s.sessionName}>
+                  {s.sessionName}
+                  {s.branch ? ` (${s.branch})` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {!edited && (
+          <label className="wi-rnote">
+            <span>{tr("wi.report_note")}</span>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder={tr("wi.report_note_ph")} />
+          </label>
+        )}
+        <label className="wi-rbody">
+          <span>{tr("wi.report_body")}</span>
+          <textarea
+            rows={12}
+            value={body}
+            spellCheck={false}
+            onChange={(e) => {
+              setBody(e.target.value);
+              setEdited(true);
+            }}
+          />
+        </label>
+        <p className="wi-rhint">{loadingFiles ? tr("wi.report_loading_files") : tr("wi.report_hint")}</p>
       </div>
-      {sessions.length > 1 && (
-        <label className="wi-rsession">
-          <span>{tr("wi.report_session")}</span>
-          <select value={sessionName} onChange={(e) => setSessionName(e.target.value)}>
-            {sessions.map((s) => (
-              <option key={s.id} value={s.sessionName}>
-                {s.sessionName}
-                {s.branch ? ` (${s.branch})` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {!edited && (
-        <label className="wi-rnote">
-          <span>{tr("wi.report_note")}</span>
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder={tr("wi.report_note_ph")} />
-        </label>
-      )}
-      <label className="wi-rbody">
-        <span>{tr("wi.report_body")}</span>
-        <textarea
-          rows={12}
-          value={body}
-          spellCheck={false}
-          onChange={(e) => {
-            setBody(e.target.value);
-            setEdited(true);
-          }}
-        />
-      </label>
-      <p className="wi-rhint">{loadingFiles ? tr("wi.report_loading_files") : tr("wi.report_hint")}</p>
-      <div className="wi-ractions">
+      <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={onClose}>
           {tr("common.cancel")}
         </Button>
         <Button onClick={() => void post()} disabled={busy || !body.trim()}>
           {busy ? tr("wi.report_posting") : tr("wi.report_post")}
         </Button>
-      </div>
+      </footer>
     </Modal>
   );
 }
