@@ -556,12 +556,18 @@ func parseJiraSearchIssues(body []byte, site, queryID string) ([]workItemOut, er
 		if is.Fields.Assignee != nil {
 			assignee = is.Fields.Assignee.DisplayName
 		}
+		// ⚠️ fields.labels が無い課題では nil のまま。nil スライスは JSON の null に
+		// なり、受け手が配列として扱えない（同じ形で Console を落とした）。
+		labels := is.Fields.Labels
+		if labels == nil {
+			labels = []string{}
+		}
 		out = append(out, workItemOut{
 			QueryID: queryID, Provider: "jira", Kind: "issue", Key: is.Key,
 			Title:    is.Fields.Summary,
 			State:    normalizeJiraState(is.Fields.Status.StatusCategory.Key),
 			URL:      site + "/browse/" + is.Key,
-			Assignee: assignee, Labels: is.Fields.Labels,
+			Assignee: assignee, Labels: labels,
 			// Jira はリポジトリを持たない。起動先はクエリの repoHint が決める
 			// （プロジェクト → 作業コピーの対応表がそれ）。
 			Repo: "", UpdatedAt: jiraTimeToRFC3339(is.Fields.Updated),

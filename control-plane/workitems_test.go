@@ -299,3 +299,27 @@ func TestDeleteQueryKeepsLedger(t *testing.T) {
 		t.Errorf("ledger rows = %d, want the started-work record to outlive the query", len(rows))
 	}
 }
+
+// ★ 実バグの回帰（Console が真っ白になった）。Go の nil スライスは JSON の null になり、
+// Console 側の item.labels.slice(...) が TypeError で落ちる —— しかもアプリに
+// ErrorBoundary が無いので、セクションではなく **Console 全体**が消える。
+// 「ラベルの無い課題が 1 件でも来たら」起きるので、ワイヤに null を出さないことを固定する。
+func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
+	if got := splitLabels(""); got == nil {
+		t.Error("splitLabels(\"\") returned nil — it marshals as JSON null")
+	}
+	if got := splitLabels("   "); got == nil {
+		t.Error("splitLabels(blank) returned nil")
+	}
+	dto := workItemToDTO(WorkItem{ID: "1", Key: "PROJ-1", Labels: ""})
+	enc, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(enc), `"labels":null`) {
+		t.Fatalf("row wire carries a null array: %s", enc)
+	}
+	if !strings.Contains(string(enc), `"labels":[]`) {
+		t.Errorf("want an empty array, got: %s", enc)
+	}
+}

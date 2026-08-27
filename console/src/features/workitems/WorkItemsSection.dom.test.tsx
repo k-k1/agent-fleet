@@ -92,6 +92,24 @@ describe("WorkItemsSection", () => {
     expect(host.querySelector(".wi-stamp")?.textContent || "").not.toBe("");
   });
 
+  it("★ labels が null の行でもレールが落ちない（Console が真っ白になった実バグ）", async () => {
+    // CP が Go の nil スライスを JSON の null として出していた。行の
+    // item.labels.slice(0, 2) が TypeError になり、アプリに ErrorBoundary が
+    // 無いので Console 全体が消えた。生成側は直したが、古い CP から来ても
+    // 描けることをここで固定する。
+    workItemList.mockResolvedValue({
+      items: [{ ...item(), labels: null }, { ...item(), id: "2", key: "acme/web#46", labels: ["bug"] }],
+      queries: [query],
+      sessions: [],
+      fetchedAt: "2026-08-26T09:00:00Z",
+      running: true,
+    });
+    await render();
+    expect(rows()).toBe(2);
+    expect(text()).toContain("ログイン後に一覧が空になる");
+    expect(text()).toContain("bug");
+  });
+
   it("取得失敗は「空」と別物として出し、直前の行を残す", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     await render();
