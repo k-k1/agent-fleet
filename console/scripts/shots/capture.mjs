@@ -40,8 +40,8 @@ const mirrorOf = (s) => pane("p0", s, { kind: "terminal", chat: true });
 // Rail sections to force open/closed per scene (localStorage af-section-<id>, see
 // console/src/ui/Section.tsx). Keeps the shot focused: the hero shows the repo tree,
 // the rail scene shows the global tools.
-const FOCUS_TREE = { assistant: 1, memos: 0, schedules: 0, repos: 1, files: 0 };
-const SHOW_TOOLS = { assistant: 1, memos: 1, schedules: 1, repos: 1, files: 0 };
+const FOCUS_TREE = { assistant: 1, workitems: 0, memos: 0, schedules: 0, repos: 1, files: 0 };
+const SHOW_TOOLS = { assistant: 1, workitems: 1, memos: 1, schedules: 1, repos: 1, files: 0 };
 
 const SCENES = [
   {

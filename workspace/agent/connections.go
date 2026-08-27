@@ -57,6 +57,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"agy":       agy.Status(),
 		// copilot は GitHub 連携相乗り（docs/36 契約）: 専用フロー無し。
 		"copilot":    copilot.Status(ghConnected),
+		"jira":       jiraStatus(s), // 作業項目の取得元（docs/80 P1）
 		"pagerduty":  pagerdutyStatus(s),
 		"grafana":    grafanaStatus(s),
 		"cloudwatch": cloudwatchStatus(s),

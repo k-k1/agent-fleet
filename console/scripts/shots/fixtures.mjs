@@ -620,6 +620,64 @@ export function assistants(locale) {
   ];
 }
 
+// 作業項目（docs/80）。すべて架空 —— 実在の課題やアカウントは載せない。
+// state は正規化後の語彙（open / in_progress / done）、key は "owner/name#n"。
+export function workItems(locale) {
+  const ja = locale === "ja";
+  const it = (id, key, title, over = {}) => ({
+    id,
+    queryId: "wq1",
+    provider: "github",
+    kind: "issue",
+    key,
+    title,
+    state: "open",
+    url: "https://github.com/" + key.split("#")[0] + "/issues/" + key.split("#")[1],
+    assignee: "demo",
+    labels: [],
+    repo: key.split("#")[0],
+    updatedAt: ago(90),
+    ...over,
+  });
+  return {
+    items: [
+      it("wi1", "demo/webshop#312", ja ? "クーポン併用時に税額がずれる" : "Tax is off when coupons stack", {
+        labels: ["bug", "checkout"],
+        updatedAt: ago(35),
+      }),
+      it("wi2", "demo/webshop#308", ja ? "住所フォームの郵便番号補完" : "Autofill the postcode in the address form", {
+        state: "in_progress",
+        kind: "pr",
+        labels: ["ui"],
+        updatedAt: ago(150),
+      }),
+      it("wi3", "demo/payments-api#77", ja ? "返金の冪等キーを再設計する" : "Redesign the refund idempotency key", {
+        labels: ["design"],
+        updatedAt: ago(400),
+      }),
+    ],
+    queries: [
+      {
+        id: "wq1",
+        provider: "github",
+        label: ja ? "自分の未完了" : "Assigned to me",
+        query: "assignee:@me is:open",
+        repoHint: "",
+        enabled: true,
+        position: 0,
+        fetchedAt: ago(6),
+        lastError: "",
+      },
+    ],
+    // 1 件だけ着手済み — レールの「着手済み」バッジが絵に出る。
+    sessions: [
+      { id: "wl1", provider: "github", itemKey: "demo/webshop#312", sessionName: "sk4rq2f", repo: "webshop", branch: "feature/issue-312", createdAt: ago(30) },
+    ],
+    fetchedAt: ago(6),
+    running: true,
+  };
+}
+
 export function memos(locale) {
   const ja = locale === "ja";
   const m = (id, repo, category, body, pos) => ({

@@ -57,9 +57,109 @@ export function OpsTab() {
           <CloudWatchCard st={conns.cloudwatch} reload={reload} />
           <div className="conn-cat">{tr("ops.cat_cloud")}</div>
           <AWSCard st={conns.aws} reload={reload} />
+          <div className="conn-cat">{tr("ops.cat_tracker")}</div>
+          <div className="conn-cat-sub">{tr("ops.cat_tracker_sub")}</div>
+          <JiraCard st={conns.jira} reload={reload} />
         </>
       )}
     </div>
+  );
+}
+
+// JiraCard: the work item inbox's second source (docs/80 P1). Three fields, because
+// Jira's REST v3 is HTTP Basic over "<account email>:<API token>" — so the email is a
+// credential too, and both stay container-side like every other card here.
+//
+// ★ The credentials are verified against /rest/api/3/myself before they are stored, and
+// the card then names the account. Three fields are three chances to typo, and without
+// the check the first sign of a bad paste would be an error on a rail row minutes later.
+//
+// ⚠️ A Jira MCP server does NOT remove the need for this: MCP only runs inside a
+// conversation, so it cannot produce the rail's list. The two are complements — this
+// feeds the list, the MCP reads the ticket body in-session.
+function JiraCard({ st, reload }: { st: any; reload: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const [site, setSite] = useState("");
+  const [email, setEmail] = useState("");
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ready = !!site.trim() && !!email.trim() && !!token.trim();
+
+  const save = async () => {
+    if (!ready) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/jira", "PUT", {
+        site: site.trim(),
+        email: email.trim(),
+        token: token.trim(),
+      });
+      if (res && res.error) {
+        toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
+        return;
+      }
+      setSite("");
+      setEmail("");
+      setToken("");
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    await raw("api/connections/jira", { method: "DELETE" });
+    reload();
+  };
+
+  return (
+    <ProviderCard
+      id="jira"
+      name="Jira"
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
+    >
+      {st?.connected ? (
+        <div className="p-who">
+          <span className="p-em">{st.account || st.email}</span>
+          {st.site && <span className="p-pl">{String(st.site).replace(/^https:\/\//, "")}</span>}
+          <DisconnectButton onClick={disconnect} />
+        </div>
+      ) : (
+        <div className="p-body">
+          <div className="flow">
+            <input
+              className="cinput"
+              type="url"
+              placeholder={tr("ops.jira_site_placeholder")}
+              value={site}
+              onChange={(e) => setSite(e.target.value)}
+            />
+          </div>
+          <div className="flow">
+            <input
+              className="cinput"
+              type="email"
+              placeholder={tr("ops.jira_email_placeholder")}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </div>
+          <div className="flow">
+            <input
+              className="cinput"
+              type="password"
+              placeholder={tr("ops.jira_token_placeholder")}
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+            <button disabled={busy || !ready} onClick={save}>
+              {busy ? tr("admin.checking") : tr("conn.connect")}
+            </button>
+          </div>
+          <Hint>{tr("ops.jira_hint")}</Hint>
+        </div>
+      )}
+    </ProviderCard>
   );
 }
 

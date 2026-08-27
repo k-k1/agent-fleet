@@ -1,0 +1,379 @@
+/* Work item inbox rail section (docs/80). Follows the schedules / memo-queue idiom:
+   one dense line per row, muted secondary text, tone-colored icon on the shared
+   --ok/--warn/--muted tokens, actions revealed on hover. */
+
+.wi-stamp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 5px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.wi-stopped::before {
+  content: "·";
+  margin-right: 5px;
+}
+
+.wi-err {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--warn);
+}
+.wi-err span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wi-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.wi-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.wi-row:last-child {
+  border-bottom: none;
+}
+.wi-row:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.08));
+}
+/* 完了行は消さずに沈める（クエリが求めた行を黙って隠さない）。 */
+.wi-row.done {
+  opacity: 0.55;
+}
+
+.wi-dot {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+}
+.wi-dot.tone-ok {
+  color: var(--ok);
+}
+.wi-dot.tone-warn {
+  color: var(--warn);
+}
+.wi-dot.tone-muted {
+  color: var(--muted);
+}
+
+.wi-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.wi-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.wi-key {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.wi-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ★ 1 行を 1 回だけ省略する。flex + 各要素 overflow:hidden にすると、実測で
+   「demo/we… @d… b… chec…」のように**チップごとに**省略が入り、全部が読めない
+   のに全部が居座る（実描画で確認）。行末で 1 回だけ切る。 */
+.wi-meta {
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wi-meta > * {
+  margin-right: 6px;
+}
+.wi-label {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 5px;
+}
+
+/* 着手済み: 台帳に行があるあいだ出る。押すとそのセッションを開く。 */
+.wi-started {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--ok);
+  font-size: 10px;
+  padding: 2px;
+}
+
+.wi-link {
+  flex: 0 0 auto;
+  color: var(--muted);
+  opacity: 0;
+  display: inline-flex;
+  padding: 2px;
+}
+.wi-row:hover .wi-link,
+.wi-link:focus-visible {
+  opacity: 1;
+}
+/* 粗いポインタ（タッチ）はホバーが無いので常時表示 —— でないと到達できない。 */
+@media (hover: none) {
+  .wi-link {
+    opacity: 1;
+  }
+}
+
+.wi-report {
+  flex: 0 0 auto;
+  color: var(--muted);
+  opacity: 0;
+  display: inline-flex;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 2px;
+}
+.wi-row:hover .wi-report,
+.wi-report:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .wi-report {
+    opacity: 1;
+  }
+}
+
+.wi-qbranch {
+  margin: 0 0 12px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.wi-qbranch label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+.wi-qbranch input {
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--input-bg, transparent);
+  color: inherit;
+  font-size: 13px;
+}
+.wi-qbranch .wi-qhint {
+  display: block;
+  margin-top: 5px;
+}
+
+/* --- start-target modal --------------------------------------------------- */
+
+.wi-shead {
+  margin: 0 0 12px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wi-sfield {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.wi-sfield select {
+  padding: 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--input-bg, transparent);
+  color: inherit;
+  font-size: 13px;
+}
+.wi-shint {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.wi-sactions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* --- report modal --------------------------------------------------------- */
+
+.wi-rtarget {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.wi-rlabel {
+  color: var(--muted);
+  font-size: 11px;
+}
+.wi-rsession,
+.wi-rnote,
+.wi-rbody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.wi-rsession select,
+.wi-rnote input,
+.wi-rbody textarea {
+  padding: 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--input-bg, transparent);
+  color: inherit;
+  font-size: 13px;
+}
+.wi-rbody textarea {
+  font-family: var(--mono, ui-monospace, monospace);
+  line-height: 1.5;
+  resize: vertical;
+}
+.wi-rhint {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.wi-ractions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.wi-start {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 7px;
+}
+.wi-start:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wi-add-first {
+  display: block;
+  margin: 6px auto 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+/* --- saved-query modal ---------------------------------------------------- */
+
+.wi-qhelp {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wi-qlist {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wi-qrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.wi-qrow.off {
+  opacity: 0.55;
+}
+.wi-qinfo {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.wi-qlabel {
+  font-size: 13px;
+}
+/* 取得元。1 本ずつ provider が違いうるので、行のどこかに出しておかないと
+   「なぜこのクエリだけ JQL なのか」が読めない。 */
+.wi-qprov {
+  display: inline-block;
+  margin-right: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 5px;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.wi-qquery {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.wi-qhint,
+.wi-qerr {
+  font-size: 11px;
+  color: var(--muted);
+}
+.wi-qerr {
+  color: var(--warn);
+}
+.wi-qform {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.wi-qform label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+.wi-qform input,
+.wi-qform select {
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--input-bg, transparent);
+  color: inherit;
+  font-size: 13px;
+}
