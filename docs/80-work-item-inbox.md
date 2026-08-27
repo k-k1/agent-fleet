@@ -1,6 +1,6 @@
 # 80. 外部の作業項目（GitHub Issue / Jira チケット）を左ペインに出し、そこから始める
 
-- 状態: ✅ **P0〜P2 実装済み**（2026-08-26）。⏸ 残り = 実機目視・作業グループ自動作成の判断（§80.16-5）・P3 以降。
+- 状態: ✅ **P0〜P2 実装済み**（2026-08-26）。⏸ 残り = **実機目視**（CP と workspace の両方の再ビルドが要る）と P3 以降。
   採否と判断は [decisions/0061](decisions/0061-work-item-inbox.md)。
 - ゴール: 人の仕事の起点である**チケット**を左ペインに置き、そこから 1 クリックで
   文脈込みのセッションを立てられるようにする。Workspace が停止していても一覧は見え、
@@ -383,7 +383,7 @@ URL: https://example.atlassian.net/browse/PROJ-123
 |---|---|---|
 | **P0** ✅ | モデル・**GitHub アダプタ**（既存トークン流用＝追加認証ゼロ）・CP キャッシュ・SSE stream・左ペイン独立セクション・`LaunchModal` 前埋め・`work_item_session` 台帳 | `workspace/agent/workitems.go`（新設）/ `control-plane/workitems.go`（新設）+ `{store,store_sqlite,routes,events}.go` ＋ migrations 0051 / pg 0035 / `console/src/features/workitems/`（新設）/ `App.tsx`・`core/push/*`・`StartHost`・`LaunchModal` |
 | **P1** | **Jira 接続 kind**（email + API トークン）・JQL 保存クエリ・repo マッピング | `connections.go`・`ConnectionsTab`・アダプタ追加 |
-| **P2** ◐ | **報告コメントの下書き → 人が承認して投稿**（GitHub / Jira）＋**ブランチ名テンプレート**（`{key}`/`{slug}`・プレビュー付き）。⏸ 作業グループ自動作成は保留（§80.16-5）、**PR 起票は取り下げ**（§80.10） | `workspace/agent/workitems_comment.go`（新設）・`control-plane/workitems.go`・`features/workitems/{report.ts,WorkItemReportModal.tsx}`・`lib/settings.ts` |
+| **P2** ✅ | **報告コメントの下書き → 人が承認して投稿**（GitHub / Jira）＋**ブランチ名テンプレート**（既定 `feature/{key}`・プレビュー付き）＋**起動先ピッカー**（リポジトリ・新規/既存 worktree）。作業グループ自動作成は**不採用**（§80.16-5）、**PR 起票は取り下げ**（§80.10） | `workspace/agent/workitems_comment.go`（新設）・`control-plane/workitems.go`・`features/workitems/{report.ts,WorkItemReportModal.tsx,WorkItemStartModal.tsx}`・`lib/settings.ts` |
 | **P3** | webhook 受信・通知・（opt-in の）自動初動 | [25](25-ops-monitoring.md) §4.6 と合流 |
 | **P4** | 汎用アダプタ（API トークンで動く stdio MCP を `mcpreg` の `tools/call` で叩く / URL テンプレ＋JSON 写像） | `internal/mcpreg/` |
 

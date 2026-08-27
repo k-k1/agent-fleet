@@ -1,6 +1,6 @@
 # 0061. 外部の作業項目は「Agent が取り、CP は非機密メタだけを預かる」— 一覧に CLI と MCP を使わない
 
-- 状態: **採用・P0〜P2 実装済み**（2026-08-26。P2 のうち作業グループ自動作成は保留・PR 起票は取り下げ）。設計と経緯は [docs/80](../80-work-item-inbox.md)。
+- 状態: **採用・P0〜P2 実装済み**（2026-08-26。P2 のうち作業グループ自動作成は**不採用**＝決定 11、PR 起票は**取り下げ**＝決定 6.1）。設計と経緯は [docs/80](../80-work-item-inbox.md)。
 - 関連: [0031-mcp-registry.md](0031-mcp-registry.md)（MCP は「各 CLI が直接喋り、af は定義を配るだけ」。
   OAuth MCP は非目的）/ [0036-working-sets.md](0036-working-sets.md)（“案件”という単位）/
   [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md)
