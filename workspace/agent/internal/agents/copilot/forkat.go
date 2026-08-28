@@ -2,12 +2,18 @@ package copilot
 
 // 発言時点からの分岐（docs/55 §55.5）。copilot にも公式の分岐口が無いので、claude と同じく
 // 転写を切り詰めて分岐先を作る。違いは単位で、claude は 1 ファイル、copilot は
-// `session-state/<sid>/` ディレクトリ一式（events.jsonl のほか session.db・checkpoints・
-// files・workspace.yaml）。
+// `session-state/<sid>/` ディレクトリ一式（events.jsonl のほか checkpoints・files・
+// research・rewind-file-snapshots・workspace.yaml。1.0.81 までに廃れたが、それ以前に
+// 作られたセッションには session.db も入っている）。
 //
-// **復元元が events.jsonl であることは実測済み**（docs/55 §55.5）: session.db を無改変のまま
-// 残しても、切り詰めた events.jsonl のほうが文脈を決めた。だから db は「コピーして触らない」
-// でよい — 我々が意味を知らないものを書き換えないのが、この手術を安全に保つ線引き。
+// **復元元が events.jsonl であることは実測済み**（docs/55 §55.5）: 両ターン分を持つ
+// SQLite（かつては隣の session.db、現在は COPILOT_HOME 直下の session-store.db）が
+// 残っていても、切り詰めた events.jsonl のほうが文脈を決めた（2026-08-28 に 1.0.81 で
+// 再実測・contract テストで担保）。だから DB は「コピーして触らない」でよい — 我々が
+// 意味を知らないものを書き換えないのが、この手術を安全に保つ線引き。
+//
+// ⚠️ 中身の置き場所は上流の都合で動く。**個別のファイル名に依存した検査を書かない**こと
+// （session.db の消滅で contract が「コピーが壊れた」と誤報した実例がある）。
 //
 // 未登録の session-state ディレクトリを resume しても copilot は問題なく読み、root の
 // session-store.db へ自動登録する（実測）。索引を我々が書く必要は無い。
