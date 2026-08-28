@@ -271,7 +271,7 @@ export function planSsmImport(
   const plan: SsmPlan = { profiles: [], hosts: [], skippedProfiles: [], skippedHosts: [] };
   const haveProfile = new Set((existingProfiles || []).map((p) => key(str(p?.label))));
   const haveHost = new Set(
-    (existingHosts || []).map((h) => key(str(h?.alias)) + " " + key(str(h?.instanceId))),
+    (existingHosts || []).map((h) => key(str(h?.alias)) + "\u0000" + key(str(h?.instanceId))),
   );
   // 取り込み後に参照できるプロファイル名 = 既存 ∪ これから作る分。
   const willHave = new Set(haveProfile);
@@ -310,7 +310,7 @@ export function planSsmImport(
       plan.skippedHosts.push({ alias: h.alias, reason: "invalid" });
       continue;
     }
-    const id = key(h.alias) + " " + key(h.instanceId);
+    const id = key(h.alias) + "\u0000" + key(h.instanceId);
     if (seenHost.has(id)) {
       plan.skippedHosts.push({ alias: h.alias, reason: "exists" });
       continue;
