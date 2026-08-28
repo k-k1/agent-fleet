@@ -48,6 +48,17 @@ jobs:
           E2E_REQUIRE: "1"
         run: go test -tags drift -run '^TestDriftAgyPaneMode$' -count=1 -v -timeout 12m ./...
 
+      # ⚠️ スクレイプ経路の契約。上の pane 契約は BuildLaunch しか通らないので、
+      # /usage スクレイプ（scratch dir の事前 trust → TUI 起動 → /usage → パネル解析）
+      # は誰も実 CLI に当てていなかった。ここは trust プロンプトへの応答
+      # （internal/agents/agy/trustprompt.go）が乗る唯一の実機経路でもある —— 事前
+      # trust が効いていればプロンプトは出ず、効かなくなった日にここが赤くなる。
+      - name: real /usage scrape contract
+        working-directory: workspace/agent
+        env:
+          AF_AGY_LIVE: "1"
+        run: go test -run '^TestScrapeUsageLive$' -count=1 -v -timeout 5m ./internal/agents/agy/
+
       # ⚠️ カタログの契約。ペインのフッタだけ見ていたので、1.1.19 で
       # `agy models` が「表示名だけ」→「id<TAB>表示名」に変わったのを
       # 誰も検知できなかった（docs/70 §70.14.8）。しかもその壊れ方は
