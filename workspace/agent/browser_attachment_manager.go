@@ -999,6 +999,12 @@ func (a *browserAttachment) startScreencast() error {
 	// on the owned-page path in browser_manager.go. Retry briefly on that one
 	// error; any other error, or an attachment that has gone away, returns
 	// immediately. See screencastFrameNotActive.
+	//
+	// The generation is published BEFORE the command for the reason spelled out on
+	// browserPage.startScreencast: a frame that arrives while gen is still 0 is
+	// dropped without an ACK, and Chromium then stops capturing for good. An attach
+	// target is the worse case — it is somebody else's page, so nothing is animating
+	// it into producing a replacement frame.
 	var err error
 	for attempt := 0; attempt < 12; attempt++ {
 		a.mu.Lock()
@@ -1017,15 +1023,16 @@ func (a *browserAttachment) startScreencast() error {
 		if !a.manager.owns(a) {
 			return errBrowserNotFound
 		}
+		a.castGen.Store(a.castEpoch.Add(1))
 		err = a.manager.call(cdp, sessionID, "Page.startScreencast", map[string]any{
 			"format": "jpeg", "quality": a.manager.config.JPEGQuality,
 			"maxWidth": image.Width, "maxHeight": image.Height,
 		}, nil)
 		if err == nil {
 			a.casting = true
-			a.castGen.Store(a.castEpoch.Add(1))
 			return nil
 		}
+		a.castGen.Store(0)
 		if !screencastFrameNotActive(err) {
 			return err
 		}
