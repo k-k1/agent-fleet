@@ -25,8 +25,10 @@
 package tmuxx
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -77,6 +79,14 @@ func runContract(t *testing.T, mode string, args []string) {
 	name := "tuictr-" + mode
 	tn := session.TmuxName(name) // AtIdlePrompt/IsBusy は claude_<name> を見るので合わせる
 	dir := t.TempDir()
+
+	// 起動前にフォルダ信頼を書いておく（production の claude.ensureFolderTrusted と同じ形）。
+	// ダイアログを「出させない」のが目的である点が大事: 2.1.248 で選択肢の並びが反転し
+	// 既定が **「No, exit」** になったため（実測・2.1.247 は「Yes, I trust this folder」が
+	// 既定）、「出てから Enter で承認」は承認どころか終了になる。実際それで pane が消え、
+	// 空フレームのまま 90 秒待って落ちていた。本番は必ず先に書くので、ここを合わせる方が
+	// 契約としても正しい（このテストが見たいのはフッタであってオンボーディングではない）。
+	preTrustFolder(t, dir)
 
 	argv := append([]string{"new-session", "-d", "-s", tn, "-x", "200", "-y", "50", "-c", dir, "claude"}, args...)
 	if out, err := exec.Command("tmux", argv...).CombinedOutput(); err != nil {
@@ -191,8 +201,11 @@ func waitReady(t *testing.T, name, tn string) {
 			continue
 		}
 		// 起動時のフォルダ信頼ダイアログ（--dangerously-skip-permissions でも出る）。
+		// preTrustFolder が効いていれば出ないが、上流が保存形式を変えれば出る。**盲打ちの
+		// Enter は絶対にしない** — 既定の選択肢は上流の都合で入れ替わり（2.1.248 で実際に
+		// 反転した）、その日から「承認」が「終了」になる。必ず Yes の行を選んでから押す。
 		if strings.Contains(s, "trust this folder") || strings.Contains(s, "Do you trust the files") {
-			_ = exec.Command("tmux", "send-keys", "-t", tn, "Enter").Run()
+			chooseTrustYes(t, tn)
 			time.Sleep(2 * time.Second)
 			continue
 		}
@@ -320,3 +333,80 @@ func frameDump(tn string) string {
 
 var _ = os.Getenv // 認証は env（CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY）か既存の
 // .credentials.json 任せ。ここでは読まない（打鍵・ログに載せないため）。
+
+// claudeStateFile is where claude keeps per-user state (onboarding + per-dir trust).
+// Mirrors the CLI's own resolution: $CLAUDE_CONFIG_DIR/.claude.json when set (the
+// Workspace sets it), else ~/.claude.json at the home ROOT — not ~/.claude/.
+func claudeStateFile(t *testing.T) string {
+	t.Helper()
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		return filepath.Join(d, ".claude.json")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("home が引けません: %v", err)
+	}
+	return filepath.Join(home, ".claude.json")
+}
+
+// preTrustFolder pre-accepts the folder-trust dialog for dir, the way production's
+// claude.ensureFolderTrusted does before every TUI launch. Merges into the existing
+// file: the harness's own onboarding seed and whatever claude has written since must
+// survive.
+func preTrustFolder(t *testing.T, dir string) {
+	t.Helper()
+	p := claudeStateFile(t)
+	root := map[string]any{}
+	if b, err := os.ReadFile(p); err == nil {
+		_ = json.Unmarshal(b, &root)
+	}
+	root["hasCompletedOnboarding"] = true
+	if _, ok := root["theme"]; !ok {
+		root["theme"] = "dark"
+	}
+	projects, _ := root["projects"].(map[string]any)
+	if projects == nil {
+		projects = map[string]any{}
+	}
+	entry, _ := projects[dir].(map[string]any)
+	if entry == nil {
+		entry = map[string]any{}
+	}
+	entry["hasTrustDialogAccepted"] = true
+	projects[dir] = entry
+	root["projects"] = projects
+	b, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		t.Fatalf("%s を組み立てられません: %v", p, err)
+	}
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatalf("%s を書けません: %v", p, err)
+	}
+}
+
+// chooseTrustYes moves the selection onto "Yes, I trust this folder" and only then
+// presses Enter. The highlighted row is marked with ❯; the option order is NOT stable
+// across CLI versions, so the row is found by its text, never by position.
+func chooseTrustYes(t *testing.T, tn string) {
+	t.Helper()
+	const yes = "Yes, I trust"
+	for i := 0; i < 4; i++ {
+		var cur string
+		for _, ln := range strings.Split(CapturePane(tn), "\n") {
+			if strings.Contains(ln, "❯") {
+				cur = ln
+				break
+			}
+		}
+		if cur == "" {
+			break // 選択マーカーが見つからない — 下でフレームごと報告する
+		}
+		if strings.Contains(cur, yes) {
+			_ = exec.Command("tmux", "send-keys", "-t", tn, "Enter").Run()
+			return
+		}
+		_ = exec.Command("tmux", "send-keys", "-t", tn, "Down").Run()
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("信頼ダイアログで %q の行を選べませんでした（選択肢の形が変わった可能性）\n%s", yes, frameDump(tn))
+}
