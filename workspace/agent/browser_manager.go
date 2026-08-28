@@ -932,6 +932,20 @@ func (p *browserPage) startScreencast() error {
 	// otherwise crash the whole pane with zero frames. Retry briefly on that one
 	// transient error; the main frame goes live within a few tens of milliseconds.
 	// Any other error, or a page that has gone away, is returned immediately.
+	//
+	// The generation is published BEFORE the command, not after it. Chromium emits
+	// the first screencastFrame while Page.startScreencast is still in flight, and
+	// the CDP read loop hands that event to the manager without waiting for this
+	// goroutine to return from the call — so with the generation published afterwards
+	// the first frame can land while gen is still 0, and gen 0 drops it WITHOUT an
+	// ACK. That is not a lossy-but-harmless drop: Chromium stops capturing once its
+	// frames in flight are unacknowledged, and a page that has finished painting
+	// produces no further frames on its own, so the cast dies for good and the pane
+	// stays black. Measured against real Chromium: delaying this store by 3 s drops
+	// 3 frames and no frame arrives again in 60 s (a stop/start restart revives it —
+	// Chromium resets its in-flight count per Page.startScreencast). Publishing first
+	// makes a frame only ever *early*, never lost; the generation is retired again
+	// when the command fails.
 	var err error
 	for attempt := 0; attempt < 12; attempt++ {
 		p.manager.mu.Lock()
@@ -950,16 +964,17 @@ func (p *browserPage) startScreencast() error {
 			image = p.viewport
 		}
 		p.mu.Unlock()
+		// A fresh generation, so frames from any prior cast are still dropped and only
+		// this cast's frames are decoded and acknowledged.
+		p.castGen.Store(p.castEpoch.Add(1))
 		err = p.manager.call(cdp, p.sessionID, "Page.startScreencast", map[string]any{
 			"format": "jpeg", "quality": p.manager.config.JPEGQuality, "maxWidth": image.Width, "maxHeight": image.Height,
 		}, nil)
 		if err == nil {
 			p.casting = true
-			// Publish a fresh generation so frames from any prior cast are dropped and
-			// only this cast's frames are decoded and acknowledged.
-			p.castGen.Store(p.castEpoch.Add(1))
 			return nil
 		}
+		p.castGen.Store(0)
 		if !screencastFrameNotActive(err) {
 			return err
 		}

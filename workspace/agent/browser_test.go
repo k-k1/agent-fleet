@@ -44,6 +44,13 @@ type fakeBrowserCDP struct {
 	// value per instance so the two sessions stay distinguishable instead of
 	// both defaulting to "session-1".
 	attachSessionID string
+	// onCall runs while the named method is being served, before its reply reaches
+	// the caller. Real Chromium answers on the same connection its events arrive
+	// on, and the CDP read loop dispatches an event without waiting for whoever is
+	// blocked in Call — so an event can reach the manager before the command that
+	// caused it has returned. This hook is the only way to pin that ordering down
+	// deterministically instead of racing for it.
+	onCall map[string]func()
 }
 
 func newFakeBrowserCDP() *fakeBrowserCDP {
@@ -65,9 +72,13 @@ func (f *fakeBrowserCDP) Call(_ context.Context, method string, params any, sess
 		return terr
 	}
 	err := f.fail[method]
+	hook := f.onCall[method]
 	f.mu.Unlock()
 	if err != nil {
 		return err
+	}
+	if hook != nil {
+		hook()
 	}
 	var response any = map[string]any{}
 	switch method {
@@ -121,6 +132,14 @@ func (f *fakeBrowserCDP) methods() []string {
 		methods[i] = f.calls[i].Method
 	}
 	return methods
+}
+func (f *fakeBrowserCDP) setOnCall(method string, fn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.onCall == nil {
+		f.onCall = make(map[string]func())
+	}
+	f.onCall[method] = fn
 }
 func (f *fakeBrowserCDP) last(method string) (fakeBrowserCall, bool) {
 	f.mu.Lock()
@@ -257,6 +276,53 @@ func TestBrowserInputConversionAndLatestFrame(t *testing.T) {
 		}
 	default:
 		t.Fatal("unknown control did not return protocol-error")
+	}
+}
+
+// TestBrowserScreencastFrameArrivingBeforeStartReturns: Page.startScreencast の
+// 応答より**先**に届いたフレームを取りこぼさない。
+//
+// Chromium は startScreencast を処理した時点で最初のフレームを出し、CDP の読み取り
+// ループはその event を、call から戻るのを待たずにマネージャへ渡す。世代を call の
+// **後**に publish していると、このフレームは gen==0 として ACK なしで捨てられる。
+// 捨てた 1 枚は戻ってこない: Chromium は未 ACK のフレームが溜まると撮影を止め、描画
+// が済んだページは自分では次のフレームを作らないので、cast はそのまま死ぬ（実測:
+// 世代の publish を 3 秒遅らせると実 Chromium 相手に 3 枚落ちて 60 秒フレーム無し）。
+func TestBrowserScreencastFrameArrivingBeforeStartReturns(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeBrowserManager(cdp)
+	t.Cleanup(m.Close)
+	created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	p := m.pages[created.ID]
+	m.mu.Unlock()
+	v := &browserViewer{page: p, control: make(chan browserOutbound, 4), done: make(chan struct{})}
+	p.mu.Lock()
+	p.viewer, p.visible = v, true
+	p.mu.Unlock()
+
+	raw, _ := json.Marshal(map[string]any{
+		"data": base64.StdEncoding.EncodeToString([]byte{0xff, 0xd8, 0xff}), "sessionId": 1,
+	})
+	cdp.setOnCall("Page.startScreencast", func() {
+		m.handleEvent(cdp, browserCDPEvent{Method: "Page.screencastFrame", SessionID: p.sessionID, Params: raw})
+	})
+	if err := p.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case frame := <-p.latestFrame:
+		if !reflect.DeepEqual(frame, []byte{0xff, 0xd8, 0xff}) {
+			t.Fatalf("decoded frame = %x", frame)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a frame that arrived before Page.startScreencast returned was dropped")
+	}
+	if !waitFor(2*time.Second, func() bool { _, ok := cdp.last("Page.screencastFrameAck"); return ok }) {
+		t.Fatal("the frame was not acknowledged; Chromium stops capturing once frames in flight go unacknowledged")
 	}
 }
 
@@ -742,7 +808,12 @@ func TestBrowserChromiumIntegration(t *testing.T) {
 		if len(frame) < 2 || frame[0] != 0xff || frame[1] != 0xd8 {
 			t.Fatalf("screencast frame is not JPEG: %x", frame[:min(len(frame), 8)])
 		}
-	case <-time.After(5 * time.Second):
+	// 10s は上の readiness 待ちと同じ値、つまり「ハングの backstop」であって測定では
+	// ない。armed な cast の 1 枚目は idle な手元で 42〜58ms で届き、届かないときは
+	// 5s でも 60s でも届かない（TestBrowserScreencastFrameArrivingBeforeStartReturns
+	// の未 ACK 取りこぼしがその形）。混んだランナーのマージンをここで買うより、
+	// 隣の待ちと値を揃えて読みやすくしておく。
+	case <-time.After(10 * time.Second):
 		t.Fatal("Chromium did not emit a screencast frame")
 	}
 	if err := m.call(cdp, p.sessionID, "Runtime.evaluate", map[string]any{"expression": `document.querySelector('#ime').focus()`}, nil); err != nil {
