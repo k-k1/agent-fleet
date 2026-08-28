@@ -137,10 +137,12 @@ func scrapeContext(conv string) (*transcript.Context, error) {
 	}
 	defer f.Close()
 
+	// 事前 trust が効いていればこの画面は出ない。出た場合でも Enter は盲打ちしない
+	// （既定の選択肢は上流の都合で入れ替わる — trustprompt.go）。
 	if m := f.WaitFor(regexp.MustCompile(trustRe.String()+`|`+readyRe.String()), 25*time.Second); m == "" {
 		return nil, errString("agy did not reach the prompt (timeout)")
 	} else if trustRe.MatchString(m) {
-		if _, err := f.Ptmx.Write([]byte("\r")); err != nil {
+		if err := answerTrustPrompt(f); err != nil {
 			return nil, err
 		}
 		if f.WaitFor(readyRe, 20*time.Second) == "" {

@@ -198,8 +198,8 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !driveOnboarding(f, 60*time.Second) {
-		httpx.WriteErr(w, http.StatusBadGateway, "login_failed", "ログインが完了しませんでした（コードの誤り/期限切れ、またはオンボーディング画面の変化）")
+	if err := driveOnboarding(f, 60*time.Second); err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "login_failed", "ログインが完了しませんでした（"+err.Error()+"）")
 		return
 	}
 	// The main-screen header shows "email (plan)" — capture it for Status()'s
@@ -214,9 +214,10 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 
 // driveOnboarding answers the post-code onboarding screens as they appear, each
 // exactly once, until the main screen is reached with the token on disk. A
-// re-login (already onboarded) shows none of them. Timeout ⇒ false (wrong or
-// expired code — agy prints no scrapeable error line, it just stays put).
-func driveOnboarding(f *agents.Flow, timeout time.Duration) bool {
+// re-login (already onboarded) shows none of them. Returns nil on success;
+// a timeout is the usual failure (wrong or expired code — agy prints no
+// scrapeable error line, it just stays put).
+func driveOnboarding(f *agents.Flow, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	done := map[string]bool{}
 	// step answers screen `name` (matched by re on the accumulated output) once,
@@ -234,19 +235,26 @@ func driveOnboarding(f *agents.Flow, timeout time.Duration) bool {
 	for time.Now().Before(deadline) {
 		out := f.Clean()
 		if readyRe.MatchString(out) && SignedIn() {
-			return true
+			return nil
 		}
 		// カラースキーム: 既定 "terminal" を Enter で確定。
 		step(out, "color", colorRe, keyEnter)
 		// ToS: フォーカスはトグル上 → Enter でオフ（[x]→[ ]）、↓ で [Previous]、
 		// → で [Done]、Enter で確定（実測列）。
 		step(out, "tos", tosRe, keyEnter, keyDown, keyRight, keyEnter)
-		// workspace trust: "Yes, I trust this folder" が既定 → Enter。
-		// （login-flow dir は事前 trust 済みで通常出ないが、出ても答える。）
-		step(out, "trust", trustRe, keyEnter)
+		// workspace trust: login-flow dir は事前 trust 済みで通常出ないが、出ても答える。
+		// **Enter は盲打ちしない** — 既定の選択肢は上流の都合で入れ替わり、その日から
+		// 「承認」が「終了」になる（claude 2.1.248 で実際に起きた）。必ず「Yes, I trust」
+		// の行に乗ってから押す（trustprompt.go）。
+		if !done["trust"] && trustRe.MatchString(out) {
+			done["trust"] = true
+			if err := answerTrustPrompt(f); err != nil {
+				return err
+			}
+		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	return false
+	return errString("コードの誤り/期限切れ、またはオンボーディング画面の変化")
 }
 
 // HandleDisconnect logs agy out. v1.1.4 has no logout subcommand (TUI /logout
