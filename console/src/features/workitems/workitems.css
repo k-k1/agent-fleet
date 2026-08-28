@@ -487,6 +487,55 @@
   gap: 3px;
   font-size: 12px;
 }
+/* 「何を出すか」（Bitbucket・§80.23）。排他ではないのでチェック。行の器は他のダイアログと
+   同じ .ssm-check で、名前と説明を 1 行に並べる —— 3 つしかないので、選んだ物の説明だけを
+   出すより**全部の説明を常に出す**方が短く済み、選ぶ前に違いが読める。 */
+.wi-qchecks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* ⚠️ flex-direction を明示する。ここは `.wi-qform label`（見出しの上下並び）の中なので、
+   指定しないと 1 行が縦積みになり、チェックがラベルの上に浮く（実描画で確認）。 */
+.wi-qchecks .ssm-check {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+}
+.wi-qchecks input {
+  /* baseline 揃えの行で、チェック自体は文字の高さに合わせる。 */
+  align-self: center;
+  margin: 0;
+}
+.wi-qcheck-name {
+  color: var(--fg);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.wi-qcheck-desc {
+  font-size: 11px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* 組み立て / 手書きの切り替え（Bitbucket・§80.23）。フォームの他の行と同じ左端に置き、
+   ボタンらしく見せない —— 「今の入力を捨てる」操作ではなく、書き方を選ぶ導線なので。 */
+.wi-qform .wi-qmode {
+  align-self: flex-start;
+  font-size: 12px;
+}
+/* 組み立て結果のプレビュー。行のクエリ（.wi-qquery）と同じ字面にしてあるのは、
+   保存後の行と見比べられるようにするため。 */
+.wi-qform .wi-qfield code.wi-qquery {
+  padding: 4px 7px;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+}
+/* 2 本目以降は詰めて置く（1 回の追加で何本できるかが、行数でそのまま読める）。 */
+.wi-qform .wi-qfield code.wi-qquery + code.wi-qquery {
+  margin-top: 3px;
+}
 /* ★ 背景は必ず不透明の token を敷く。--input-bg は存在しない変数で、フォールバックの
    transparent のままだとネイティブのドロップダウンが暗色テーマで読めなくなる
    （選択肢が地に沈む）。他のダイアログ（ui.css .ui-field select）と同じ組み合わせ。 */
