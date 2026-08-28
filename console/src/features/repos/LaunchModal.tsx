@@ -34,6 +34,7 @@ import { BranchList } from "./BranchList.tsx";
 import { SubdirPicker } from "./SubdirPicker.tsx";
 import type { Branch } from "./BranchList.tsx";
 import { sanitizeSeg } from "../../lib/reponame.ts";
+import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts";
 import { coarsePointer } from "../../lib/device.ts";
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
@@ -181,7 +182,10 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
   const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
   const [prompt, setPrompt] = useState(initialPrompt ?? "");
-  const [title, setTitle] = useState(initialTitle ?? "");
+  // 初期値は人が打った文字とは限らない（引き継ぎ提案・作業項目・メンバー引き継ぎ）。
+  // maxLength は打鍵にしか効かないので、流し込まれた値はここで作成 API の規則へ詰める —
+  // さもないと「編集もできたのに起動だけ bad_title で落ちる」になる。
+  const [title, setTitle] = useState(() => clampSessionTitle(initialTitle ?? ""));
   // Pasted images awaiting the launch: raw File + an object URL for the chip preview.
   // Uploaded only after the session is minted (in onStartWork), then referenced in the
   // first prompt. Agents without the imagePaste cap (shell/ssm) make paste a no-op.
@@ -814,7 +818,12 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
 
           <div className="ui-field">
             <span className="ui-field-label">{tr("launch.field.title")}</span>
-            <input value={title} maxLength={512} onChange={(e) => setTitle(e.target.value)} placeholder={tr("launch.title_ph")} />
+            <input
+              value={title}
+              maxLength={SESSION_TITLE_MAX}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder={tr("launch.title_ph")}
+            />
           </div>
         </LaunchSection>
       </div>

@@ -114,13 +114,20 @@ func sessionLabelFor(dir, title string) string {
 	return fmt.Sprintf("[AF] %s @%s", filepath.Base(dir), time.Now().Format("0102-1504"))
 }
 
+// sessionTitleMaxRunes is THE limit for a session's display title, in runes. Every
+// layer that can end up as a session title must use this one — a proposal stored under
+// a laxer cap (the handoff card once allowed 512 bytes) is accepted, shown and edited
+// fine, and only fails at the launch that finally hands it to POST /sessions. The
+// Console mirrors this value in console/src/lib/sessionTitle.ts.
+const sessionTitleMaxRunes = 80
+
 // cleanTitle trims and validates a user-supplied display title. It rejects control
 // characters (which would corrupt the tmux title / claude --name) and caps the length.
 // An empty title is valid (the session uses the auto default label). Returns ok=false
 // only for an over-long or control-laden title.
 func cleanTitle(s string) (string, bool) {
 	s = strings.TrimSpace(s)
-	if len([]rune(s)) > 80 {
+	if len([]rune(s)) > sessionTitleMaxRunes {
 		return "", false
 	}
 	for _, r := range s {

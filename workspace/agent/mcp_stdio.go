@@ -373,7 +373,7 @@ var mcpStdioSelfReportTools = []map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
 				"prompt": map[string]any{"type": "string", "minLength": 1, "description": "次セッションの最初のユーザー指示として渡す引き継ぎ本文"},
-				"title":  map[string]any{"type": "string", "minLength": 1, "description": "新規セッションの表示名。利用者は起動前に編集できる"},
+				"title":  map[string]any{"type": "string", "minLength": 1, "maxLength": sessionTitleMaxRunes, "description": "新規セッションの表示名。80 文字以内・改行なしの短い一行にすること（これがそのままセッション名になる）。利用者は起動前に編集できる"},
 			},
 			"required": []string{"title", "prompt"},
 		},
@@ -1280,6 +1280,12 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		if strings.TrimSpace(a.Title) == "" {
 			return mcpToolErr(req.ID, "title（新規セッションの表示名）が必要です")
+		}
+		// 表示名はそのままセッション名になるので、**提案の時点で**作成 API と同じ規則
+		// （80 文字以内・制御文字なし）で断る。ここを通してしまうと、長い名前のまま保存
+		// され、利用者が起動を押した瞬間に初めて失敗する（呼び出し側はもう居ない）。
+		if _, ok := cleanTitle(a.Title); !ok {
+			return mcpToolErr(req.ID, fmt.Sprintf("title は %d 文字以内・改行なしにしてください（そのままセッションの表示名になります）", sessionTitleMaxRunes))
 		}
 		name, err := mcpOwningSession()
 		if err != nil {

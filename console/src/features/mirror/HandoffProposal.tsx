@@ -12,6 +12,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLaunchSeed, useLaunchTarget, useReposStore, type Repo } from "../repos/store.ts";
 import { HandoffOfferModal } from "../sharing/HandoffOfferModal.tsx";
@@ -111,7 +112,9 @@ export function HandoffProposal({
   const tr = useT();
   const toast = useToast();
   const [draft, setDraft] = useState(proposal.prompt);
-  const [title, setTitle] = useState(proposal.title || "");
+  // 編集欄に載せる時点で作成 API の規則へ詰める。古い提案（80 文字の検査が入る前に
+  // 保存されたもの）はそのままでは保存も起動もできないので、「直せる形」で見せる。
+  const [title, setTitle] = useState(clampSessionTitle(proposal.title || ""));
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   // The source session's own worktree can't offer "new worktree" itself (LaunchModal's
@@ -134,7 +137,7 @@ export function HandoffProposal({
   useEffect(() => {
     if (editing) return;
     setDraft(proposal.prompt);
-    setTitle(proposal.title || "");
+    setTitle(clampSessionTitle(proposal.title || ""));
   }, [proposal, editing]);
 
   const save = async () => {
@@ -217,7 +220,7 @@ export function HandoffProposal({
           <input
             className="mirror-handoff-title"
             value={title}
-            maxLength={512}
+            maxLength={SESSION_TITLE_MAX}
             placeholder={tr("mirror.handoff_title_ph")}
             onChange={(e) => setTitle(e.target.value)}
           />

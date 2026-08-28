@@ -9,6 +9,7 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { SESSION_TITLE_MAX } from "../../lib/sessionTitle.ts";
 import { apiJSON, errText } from "../../core/api/client.ts";
 import { agentOf } from "../../agents/registry.ts";
 
@@ -79,7 +80,7 @@ export function SessionTitleModal({ name, kind, title, onClose, onSaved }: Sessi
             onChange={(e) => setValue(e.target.value)}
             onFocus={(e) => e.target.select()}
             placeholder={tr("sx.title_ph")}
-            maxLength={80}
+            maxLength={SESSION_TITLE_MAX}
             autoFocus
           />
           <span className="ui-field-hint">{tr("sx.title_hint")}</span>
