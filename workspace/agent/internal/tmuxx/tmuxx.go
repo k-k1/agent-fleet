@@ -560,16 +560,27 @@ func DismissRateLimitModal(name string) bool {
 // not be read (no session / capture failed) — every verdict is then false, which is what
 // each individual predicate returns in that case too.
 type PaneRead struct {
-	Busy          bool // a turn is in flight (IsBusy)
-	Idle          bool // sitting at the ready input box (AtIdlePrompt)
+	Busy bool // a turn is in flight (IsBusy)
+	Idle bool // this ONE frame looks like the ready input box (AtIdlePrompt)
+	// IdleSettled: Idle AND the pane has not been repainted for idleSettleWindow. Use
+	// this — not Idle — to conclude "the turn is over" (self-heal, turn-end events),
+	// because a frame that merely LOOKS idle is also what claude draws while it renders
+	// an answer, for up to 21s at a time (idlesettle.go).
+	IdleSettled   bool
 	RateLimitMenu bool // parked on the usage-limit menu (AtRateLimitModal)
 	OK            bool
 }
 
 // ReadPane captures a session's pane once and returns all pane-derived verdicts.
+//
+// It also records the frame for the idle-settle clock (idlesettle.go), so callers that
+// poll get IdleSettled for free. That makes ReadPane stateful across calls by design:
+// the only thing that separates "waiting for input" from "printing the answer" is how
+// long the same picture has stood still.
 func ReadPane(name string) PaneRead {
 	pane := SessionPaneID(session.TmuxName(name))
 	if pane == "" {
+		ForgetPane(name)
 		return PaneRead{}
 	}
 	out, err := Cmd("capture-pane", "-p", "-t", pane).Output()
@@ -577,7 +588,15 @@ func ReadPane(name string) PaneRead {
 		return PaneRead{}
 	}
 	s := string(out)
-	return PaneRead{Busy: spinnerActive(s), Idle: atIdlePrompt(s), RateLimitMenu: atRateLimitModal(s), OK: true}
+	idle := atIdlePrompt(s)
+	settled := observeFrame(name, s)
+	return PaneRead{
+		Busy:          spinnerActive(s),
+		Idle:          idle,
+		IdleSettled:   idle && settled,
+		RateLimitMenu: atRateLimitModal(s),
+		OK:            true,
+	}
 }
 
 // IsBusy reports whether a claude pane is actively running a turn — its transcript shows
