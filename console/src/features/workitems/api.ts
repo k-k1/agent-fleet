@@ -16,6 +16,16 @@ export function workItemRefresh(): Promise<unknown> {
   return apiJSON("api/work-items/refresh", "POST");
 }
 
+/** Bitbucket の「どこを見るか」の候補（docs/80 §80.22）。クローン用のリポジトリ一覧と
+ *  同じ経路で、トークンを持つ Agent が答える。
+ *
+ *  ⚠️ **Workspace が停止中だと取れない**（レール本体は CP のキャッシュなので停止中でも
+ *  開ける）。呼び手は取れなかったら手書きのクエリ欄に落ちること —— ここで詰まらせると、
+ *  「停止中の Workspace をチケットから起こす」という機能の芯を、設定側で塞ぐことになる。 */
+export function bitbucketRepoList(): Promise<unknown> {
+  return api("api/connections/git/bitbucket.org/repos");
+}
+
 export function workItemQueryCreate(
   patch: Partial<WorkItemQuery>,
 ): Promise<WorkItemQuery | { error?: unknown }> {
