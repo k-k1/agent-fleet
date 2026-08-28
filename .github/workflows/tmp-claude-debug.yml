@@ -1,0 +1,69 @@
+# TEMPORARY — claude 2.1.248 が runner でだけ TUI 契約に落ちる件の切り分け。
+# 原因が分かったら削除する。workflow_dispatch は既定ブランチにある物しか起動できない
+# ので、このブランチへの push で回す。
+on:
+  push:
+    branches: [temp/sndzbp4]
+    paths: [".github/workflows/tmp-claude-debug.yml"]
+  workflow_dispatch:
+
+name: tmp-claude-debug
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DISABLE_AUTOUPDATER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: seed the same onboarding state the contract seeds
+        run: |
+          set -euo pipefail
+          jq -n '{hasCompletedOnboarding:true,theme:"dark"}' > "$HOME/.claude.json"
+          mkdir -p "$HOME/.claude"
+          jq -n '{skipDangerousModePermissionPrompt:true}' > "$HOME/.claude/settings.json"
+          sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+      - name: A/B 2.1.247 vs 2.1.248 on this runner
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+        run: |
+          redact() { sed -E -e 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/<redacted-email>/g' \
+                            -e 's/(Welcome back )[^!]*!/\1<redacted-account>!/g'; }
+          probe() {
+            v="$1"
+            echo "==================== claude $v ===================="
+            npm i --silent --prefix "/tmp/c$v" "@anthropic-ai/claude-code@$v" >/dev/null 2>&1
+            bin="/tmp/c$v/node_modules/.bin/claude"
+            "$bin" --version || true
+            d="$(mktemp -d)"; rm -f "/tmp/err-$v" "/tmp/rc-$v"
+            # 本番の契約と同じ形（200x50・一時 dir・引数なし=manual）。終了コードと
+            # stderr を残すため sh -c で包む（包んでも pane の中身は変わらない）。
+            tmux -L "p$v" new-session -d -s t -x 200 -y 50 -c "$d" \
+              "$bin 2>/tmp/err-$v; echo EXIT=\$? > /tmp/rc-$v"
+            for s in 5 10 15 30; do
+              sleep "$s"
+              if tmux -L "p$v" has-session -t t 2>/dev/null; then
+                echo "--- $v: pane alive, lines=$(tmux -L p$v capture-pane -p -t t | grep -cvE '^\s*$') ---"
+              else
+                echo "--- $v: SESSION GONE ---"
+                break
+              fi
+            done
+            echo "--- $v: pane ---"
+            tmux -L "p$v" capture-pane -p -t t 2>/dev/null | grep -vE '^\s*$' | redact || echo "(no pane)"
+            echo "--- $v: exit code ---"; cat "/tmp/rc-$v" 2>/dev/null || echo "(still running)"
+            echo "--- $v: stderr ---"; redact < "/tmp/err-$v" 2>/dev/null | head -40 || true
+            echo "--- $v: ~/.claude.json after ---"; jq -c 'keys' "$HOME/.claude.json" 2>/dev/null || cat "$HOME/.claude.json"
+            echo "--- $v: ~/.claude entries ---"; ls -a "$HOME/.claude" 2>/dev/null | tr '\n' ' '; echo
+            tmux -L "p$v" kill-server 2>/dev/null || true
+            rm -rf "$d"
+          }
+          probe 2.1.247
+          # 2 本目は 1 本目が書き換えた state を引き継ぐ（本番の contract も同じ home を
+          # 使い回す）。順序の影響を疑う余地は残るが、まずは素直に並べる。
+          probe 2.1.248
