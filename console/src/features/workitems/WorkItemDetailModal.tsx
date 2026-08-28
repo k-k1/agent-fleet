@@ -112,7 +112,13 @@ export function WorkItemDetailModal({
     // ★ タイトルは短縮しない。レールの行は repo を落として `#312` だけを出すが、
     // 41 行のうちどれを開いたかを言えるのは**完全なキー**である（`#312` は 3 リポジトリ
     // 分ありうる）。
-    <Modal title={tr("wi.detail_title", { key: item.key })} onClose={onClose} className="wi-dmodal">
+    // 見出しの語は種別そのもの（課題 / プルリクエスト）。「作業項目」という 3 つ目の
+    // 名前を面に出さないため —— レールと設定タブは「課題管理」の 1 語で揃えてある。
+    <Modal
+      title={tr("wi.detail_title", { kind: tr(item.kind === "pr" ? "wi.kind_pr" : "wi.kind_issue"), key: item.key })}
+      onClose={onClose}
+      className="wi-dmodal"
+    >
       {/* ★ 中身は ui-modal-body / ui-modal-foot に載せる。ui-modal 自身に padding は
           無く（見出しと footer が自分で持つ形）、直に子を置くと本文だけが枠に貼りつく。 */}
       <div className="ui-modal-body">
