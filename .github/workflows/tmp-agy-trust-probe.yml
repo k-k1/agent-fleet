@@ -1,0 +1,116 @@
+# TEMPORARY — agy 1.1.22 の workspace trust プロンプトの**現物**を採る。
+# 製品コード（auth.go / context.go / usage.go）は「Yes が preselected」前提で Enter を
+# 盲打ちしている。claude 2.1.248 で同型の仮定が反転して「承認」が「終了」になったので、
+# agy でも並び・既定・マーカーを実測してから直す。採れたら削除する。
+#
+# workflow_dispatch は既定ブランチにある物しか起動できないので、このブランチへの push で回す。
+on:
+  push:
+    branches: [temp/stdhnji]
+    paths: [".github/workflows/tmp-agy-trust-probe.yml"]
+  workflow_dispatch:
+
+name: tmp-agy-trust-probe
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AGY_CLI_DISABLE_AUTO_UPDATE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - name: seed the signed-in credential (agy-contract と同じ形)
+        env:
+          TOKEN: ${{ secrets.E2E_AGY_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$TOKEN" ] || { echo '::error::register secrets.E2E_AGY_OAUTH_TOKEN'; exit 1; }
+          install -d -m 700 "$HOME/.gemini/antigravity-cli"
+          umask 077
+          printf '%s' "$TOKEN" > "$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+      - uses: ./.github/actions/setup-agent-cli
+        id: cli
+        with:
+          agent: agy
+          version: pinned
+
+      # ① tmux で「1 フレーム」として採る。並び・既定・選択マーカーを目で読むにはこれが速い。
+      - name: A) untrusted dir の起動フレーム（trust プロンプトの現物）
+        run: |
+          set -euo pipefail
+          redact() { sed -E -e 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/<redacted-email>/g'; }
+          d="$(mktemp -d)"
+          echo "dir=$d"
+          echo "--- settings.json before ---"; cat "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null || echo "(none)"
+          tmux new-session -d -s a -x 200 -y 50 -c "$d" "agy 2>/tmp/agy-err; echo EXIT=\$? >/tmp/agy-rc"
+          for s in 5 5 5 10; do
+            sleep "$s"
+            if tmux has-session -t a 2>/dev/null; then
+              echo "--- t+: alive ---"
+            else
+              echo "--- t+: SESSION GONE ---"; break
+            fi
+          done
+          echo "--- pane (cat -A で不可視も出す) ---"
+          tmux capture-pane -p -t a 2>/dev/null | redact | cat -A || echo "(no pane)"
+          echo "--- pane (plain) ---"
+          tmux capture-pane -p -t a 2>/dev/null | redact || true
+          echo "--- exit / stderr ---"; cat /tmp/agy-rc 2>/dev/null || echo "(running)"; redact < /tmp/agy-err | head -20 || true
+          tmux kill-server 2>/dev/null || true
+
+      # ② 製品と同じ PTY 経路（agents.Flow）で採る。Clean() は再描画を全部連結した
+      #    バッファなので、「最後の 1 フレームだけ見る」実装が要るかどうかがここで分かる。
+      - name: B) agents.Flow で見える生バッファ（untrusted / pre-trusted の 2 本）
+        working-directory: workspace/agent
+        run: |
+          set -euo pipefail
+          mkdir -p cmd/agyprobe
+          cat > cmd/agyprobe/main.go <<'EOF'
+          package main
+
+          import (
+          	"fmt"
+          	"os"
+          	"os/exec"
+          	"time"
+
+          	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+          	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
+          )
+
+          func main() {
+          	dir, _ := os.MkdirTemp("", "agyprobe")
+          	if len(os.Args) > 1 && os.Args[1] == "trusted" {
+          		agy.EnsureWorkspaceTrusted(dir)
+          		fmt.Println("### pre-trusted:", dir)
+          	} else {
+          		fmt.Println("### untrusted:", dir)
+          	}
+          	cmd := exec.Command("agy")
+          	cmd.Dir = dir
+          	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+          	f, err := agents.StartFlow(cmd)
+          	if err != nil {
+          		fmt.Println("StartFlow:", err)
+          		return
+          	}
+          	defer f.Close()
+          	time.Sleep(20 * time.Second)
+          	out := f.Clean()
+          	fmt.Printf("### Clean() bytes=%d\n", len(out))
+          	fmt.Println("### ---- begin ----")
+          	fmt.Println(out)
+          	fmt.Println("### ---- end ----")
+          }
+          EOF
+          redact() { sed -E -e 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/<redacted-email>/g'; }
+          go run ./cmd/agyprobe untrusted 2>&1 | redact
+          echo "=========================================================="
+          go run ./cmd/agyprobe trusted 2>&1 | redact
+          echo "--- settings.json after ---"
+          redact < "$HOME/.gemini/antigravity-cli/settings.json" || true
+          rm -rf cmd/agyprobe
