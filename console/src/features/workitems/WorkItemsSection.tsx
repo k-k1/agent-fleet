@@ -39,6 +39,7 @@ import { WorkItemReportModal } from "./WorkItemReportModal.tsx";
 import { WorkItemDetailModal } from "./WorkItemDetailModal.tsx";
 import {
   branchForItem,
+  dedupeWorkItems,
   fullLocal,
   matchWorkItem,
   promptForItem,
@@ -185,7 +186,9 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   }, [tenant, reset]);
   useEffect(() => startWorkItemPolling(), [tenant]);
 
-  const items = useMemo(() => sortWorkItems(payload?.items || []), [payload]);
+  // 並べ替えてから畳む（同じチケットは 1 行・docs/80 §80.20）。並べ替えの後にやるのは、
+  // 「残す 1 行」が棚の先頭に来る行 —— 未完了で一番新しい方 —— になるようにするため。
+  const items = useMemo(() => dedupeWorkItems(sortWorkItems(payload?.items || [])), [payload]);
   const ledger = payload?.sessions || [];
   const folders = useMemo(() => repos.map((r) => r.name), [repos]);
 

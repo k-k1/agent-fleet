@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   branchForItem,
   canComment,
+  dedupeWorkItems,
   matchWorkItem,
   promptForItem,
   readWorkItems,
@@ -164,6 +165,51 @@ describe("sortWorkItems", () => {
   it("元の配列を破壊しない", () => {
     const rows = [item({ id: "a" }), item({ id: "b", updatedAt: "2026-08-27T00:00:00Z" })];
     sortWorkItems(rows);
+    expect(rows.map((r) => r.id)).toEqual(["a", "b"]);
+  });
+});
+
+// docs/80 §80.20 —— 実機で「同じ JQL を 2 本保存していて、41 件が 82 行になった」ことへの回帰。
+describe("dedupeWorkItems", () => {
+  const jira = (over: Partial<WorkItem> = {}) =>
+    item({ provider: "jira", kind: "issue", key: "G3M-897", repo: "", ...over });
+
+  it("2 本のクエリに当たった同じチケットは 1 行にする", () => {
+    const rows = [jira({ id: "a", queryId: "q1" }), jira({ id: "b", queryId: "q2" })];
+    expect(dedupeWorkItems(rows).map((r) => r.id)).toEqual(["a"]);
+  });
+
+  it("残るのは未完了・更新が新しい方（＝棚の先頭に来る行）", () => {
+    const rows = [
+      jira({ id: "stale", queryId: "q1", state: "done", updatedAt: "2026-08-27T00:00:00Z" }),
+      jira({ id: "fresh", queryId: "q2", state: "open", updatedAt: "2026-08-20T00:00:00Z" }),
+    ];
+    expect(dedupeWorkItems(rows).map((r) => r.id)).toEqual(["fresh"]);
+  });
+
+  it("同着なら queryId で決める（取得のたびに勝つ行が入れ替わらない）", () => {
+    const rows = [jira({ id: "b", queryId: "q2" }), jira({ id: "a", queryId: "q1" })];
+    expect(dedupeWorkItems(rows).map((r) => r.queryId)).toEqual(["q1"]);
+    expect(dedupeWorkItems([...rows].reverse()).map((r) => r.queryId)).toEqual(["q1"]);
+  });
+
+  it("別のチケット・別の provider は畳まない", () => {
+    const rows = [
+      jira({ id: "a", key: "G3M-897" }),
+      jira({ id: "b", key: "G3M-898" }),
+      item({ id: "c", provider: "github", key: "G3M-897" }),
+    ];
+    expect(dedupeWorkItems(rows).map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("key が空の行は畳まない（同じものだと言い切れない）", () => {
+    const rows = [jira({ id: "a", key: "" }), jira({ id: "b", key: "" })];
+    expect(dedupeWorkItems(rows).map((r) => r.id)).toEqual(["a", "b"]);
+  });
+
+  it("元の配列を破壊しない", () => {
+    const rows = [jira({ id: "a", queryId: "q1" }), jira({ id: "b", queryId: "q2" })];
+    dedupeWorkItems(rows);
     expect(rows.map((r) => r.id)).toEqual(["a", "b"]);
   });
 });
