@@ -526,11 +526,10 @@ describe("WorkItemsSection", () => {
     bitbucketRepoList.mockResolvedValue({ repos: [{ full_name: "acme/web" }, { full_name: "acme/api" }] });
     const modal = await openBitbucket();
 
-    // 手書きのクエリ欄は出ない。フォームの入力欄は表示名だけ。
-    expect(modal.querySelectorAll(".wi-qform input").length).toBe(1);
-    const segs = modal.querySelectorAll(".wi-qform .ui-seg");
-    expect(segs.length).toBe(2); // 取得元 ＋ 何を出すか
-    expect([...segs[1].querySelectorAll("button")].length).toBe(3);
+    // 手書きのクエリ欄は出ない。text 入力は表示名だけで、何を出すかはチェック 3 つ。
+    expect(modal.querySelectorAll<HTMLInputElement>('.wi-qform input[type="text"], .wi-qform input:not([type])').length).toBe(1);
+    expect(modal.querySelectorAll(".wi-qform .ui-seg").length).toBe(1); // 取得元だけ
+    expect(modal.querySelectorAll('.wi-qchecks input[type="checkbox"]').length).toBe(3);
 
     // 対象を選ぶと、保存される文字列が組み上がって見える。
     const target = modal.querySelectorAll<HTMLSelectElement>(".wi-qform select")[0];
@@ -550,8 +549,9 @@ describe("WorkItemsSection", () => {
     bitbucketRepoList.mockResolvedValue({ repos: [{ full_name: "acme/web" }, { full_name: "acme/api" }] });
     const modal = await openBitbucket();
 
-    const intents = [...modal.querySelectorAll<HTMLButtonElement>(".wi-qform .ui-seg")[1].querySelectorAll("button")];
-    await act(async () => intents[2].click()); // 自分の PR
+    const checks = [...modal.querySelectorAll<HTMLInputElement>('.wi-qchecks input[type="checkbox"]')];
+    await act(async () => checks[0].click()); // レビュー待ちを外す
+    await act(async () => checks[2].click()); // 自分の PR を入れる
     // ワークスペースは 1 つしかないので、選ばずに決まっている。
     const target = modal.querySelectorAll<HTMLSelectElement>(".wi-qform select")[0];
     expect([...target.options].map((o) => o.value)).toEqual(["", "acme"]);
@@ -559,12 +559,35 @@ describe("WorkItemsSection", () => {
     expect(modal.querySelector(".wi-qfield code.wi-qquery")?.textContent).toBe("acme");
   });
 
+  it("★ 何を出すかは複数選べる（3 つは排他ではない）。1 回の追加でクエリが 2 本増える", async () => {
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    bitbucketRepoList.mockResolvedValue({ repos: [{ full_name: "acme/web" }] });
+    const modal = await openBitbucket();
+
+    const checks = [...modal.querySelectorAll<HTMLInputElement>('.wi-qchecks input[type="checkbox"]')];
+    await act(async () => checks[2].click()); // レビュー待ち ＋ 自分の PR
+    // 対象はリポジトリのまま（リポジトリが要る意図が残っている）。ワークスペースは af が畳む。
+    expect([...modal.querySelectorAll(".wi-qfield code.wi-qquery")].map((c) => c.textContent)).toEqual([
+      'acme/web reviewers.uuid="@me"',
+      "acme",
+    ]);
+    // まとめて足すので表示名は使わない（同じ名前の行が 2 本並ぶのを避ける）。
+    expect(modal.querySelector<HTMLInputElement>(".wi-qform input")?.disabled).toBe(true);
+
+    await act(async () => [...modal.querySelectorAll<HTMLButtonElement>(".wi-qform button")].pop()!.click());
+    expect(workItemQueryCreate).toHaveBeenCalledTimes(2);
+    expect(workItemQueryCreate.mock.calls.map((c) => (c[0] as { query: string }).query)).toEqual([
+      'acme/web reviewers.uuid="@me"',
+      "acme",
+    ]);
+  });
+
   it("★ 一覧が取れないとき（停止中・未接続）は手書きに落ちる。設定側で詰まらせない", async () => {
     workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
     bitbucketRepoList.mockResolvedValue({ error: { code: "workspace_stopped" } });
     const modal = await openBitbucket();
 
-    expect(modal.querySelectorAll(".wi-qform .ui-seg").length).toBe(1); // 取得元だけ
+    expect(modal.querySelectorAll(".wi-qchecks").length).toBe(0); // 組み立て UI は出ない
     const expr = [...modal.querySelectorAll<HTMLInputElement>(".wi-qform input")].pop()!;
     expect(expr.placeholder).toContain("workspace/repo");
     expect(modal.textContent).toContain(t("wi.bb_list_failed"));

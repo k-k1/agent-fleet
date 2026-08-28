@@ -1,7 +1,7 @@
 // Bitbucket の保存クエリを組み立てる純ロジック（docs/80 §80.23）。ここで固定したいのは
 // 「人が書けない書式を af が代わりに書く」ことなので、**出力の文字列そのもの**を見る。
 import { describe, expect, it } from "vitest";
-import { bbNeedsRepo, bbQuery, bbRepoNames, bbWorkspaceOf, bbWorkspaces } from "./bitbucketQuery.ts";
+import { bbNeedsRepo, bbQueries, bbQuery, bbRepoNames, bbWorkspaceOf, bbWorkspaces } from "./bitbucketQuery.ts";
 
 describe("bbQuery", () => {
   it("レビュー待ちは repo ＋ reviewers.uuid=\"@me\"（人が UUID を知らなくてよい形）", () => {
@@ -31,6 +31,29 @@ describe("bbQuery", () => {
     expect(bbNeedsRepo("reviewing")).toBe(true);
     expect(bbNeedsRepo("repo_open")).toBe(true);
     expect(bbNeedsRepo("authored")).toBe(false);
+  });
+});
+
+describe("bbQueries", () => {
+  it("★ 複数選べる。レビュー待ち＋自分の PR は 1 回の追加で 2 本になる", () => {
+    expect(bbQueries(["reviewing", "authored"], "acme/web")).toEqual(['acme/web reviewers.uuid="@me"', "acme"]);
+  });
+
+  it("並びは選んだ順ではなく画面の順（同じ選択なら毎回同じ結果）", () => {
+    expect(bbQueries(["authored", "repo_open", "reviewing"], "acme/web")).toEqual([
+      'acme/web reviewers.uuid="@me"',
+      "acme/web",
+      "acme",
+    ]);
+  });
+
+  it("組み立てられない意図は落とす（対象がワークスペースだけのとき）", () => {
+    expect(bbQueries(["reviewing", "authored"], "acme")).toEqual(["acme"]);
+  });
+
+  it("1 つも選んでいない / 対象が空なら 0 本（＝追加させない）", () => {
+    expect(bbQueries([], "acme/web")).toEqual([]);
+    expect(bbQueries(["reviewing"], "")).toEqual([]);
   });
 });
 
