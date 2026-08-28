@@ -318,6 +318,9 @@ func (f *fakeEC2) DescribeSnapshots(_ context.Context, in *ec2.DescribeSnapshots
 			if strings.HasPrefix(name, "tag:") {
 				return []string{ec2TagValue(s.Tags, strings.TrimPrefix(name, "tag:"))}
 			}
+			if name == "volume-id" {
+				return []string{aws.ToString(s.VolumeId)}
+			}
 			return nil
 		}) {
 			continue

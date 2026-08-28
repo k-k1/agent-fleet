@@ -3661,6 +3661,15 @@ func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p 
 		})
 		return err
 	}
+	// DRAINING: the same name is being deleted and ECS has not finished. CreateService
+	// answers "Create service is not idempotent" here — measured on a live deployment,
+	// where a destroy and a re-create one minute apart collided (docs/64 §64.29.5) —
+	// and that error reads like a bug in the caller rather than "come back shortly".
+	// Neither call can succeed until the delete completes, so say so and let the retry
+	// that already exists (the bake tick, a second Start) be the wait.
+	if ok && aws.ToString(s.Status) == "DRAINING" {
+		return fmt.Errorf("the previous %s service is still being deleted; retry once it is gone", e.base.name)
+	}
 	_, err = e.base.ecs.CreateService(ctx, &ecs.CreateServiceInput{
 		Cluster:                     aws.String(e.base.cfg.cluster),
 		ServiceName:                 aws.String(e.base.name),

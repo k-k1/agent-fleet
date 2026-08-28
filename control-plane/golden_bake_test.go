@@ -30,6 +30,11 @@ type fakeGoldenPool struct {
 	arches   []string
 	snapArch map[string]string // id -> the arch it was baked on
 	seedArch []string          // seedClassFor calls, in order
+	// orphans is the AWS side of a workspace the database has forgotten: name -> what
+	// sweepOrphans would remove. swept is every name it was asked about.
+	orphans  map[string][]string
+	swept    []string
+	sweepErr error
 }
 
 func newFakeGoldenPool() *fakeGoldenPool {
@@ -45,6 +50,7 @@ func newFakeGoldenPool() *fakeGoldenPool {
 		now:      time.Now().UTC(),
 		arches:   []string{ec2ArchX86},
 		snapArch: map[string]string{},
+		orphans:  map[string][]string{},
 	}
 }
 
@@ -116,6 +122,22 @@ func (f *fakeGoldenPool) dropSupersededGoldens(_ context.Context, keepID, arch s
 		delete(f.snaps, id)
 	}
 	return nil
+}
+
+// sweepOrphans stands in for "what is still in AWS under this name". orphans is what
+// the deployment has; swept records the names the baker asked about, so a test can tell
+// "it looked and found nothing" from "it never looked".
+func (f *fakeGoldenPool) sweepOrphans(_ context.Context, workspace string) ([]string, error) {
+	f.swept = append(f.swept, workspace)
+	if f.sweepErr != nil {
+		return nil, f.sweepErr
+	}
+	left := f.orphans[workspace]
+	if len(left) == 0 {
+		return nil, nil
+	}
+	delete(f.orphans, workspace)
+	return left, nil
 }
 
 func (f *fakeGoldenPool) rejectedAttempts(_ context.Context, arch string) (int, error) {
@@ -654,5 +676,75 @@ func TestGoldenArchKeysAreStableForX86(t *testing.T) {
 	}
 	if got := archKey(goldenProbeKey, ec2ArchArm); got != goldenProbeKey+"-arm64" {
 		t.Errorf("arm64 probe key = %q", got)
+	}
+}
+
+// The leak measured on a live deployment (docs/64 §64.28.6): the bake finished and the
+// golden was published, but the seed's SERVICE and 50 GiB HOME stayed in AWS because the
+// workspace row that pointed at them had gone. destroy read "no row" as "nothing to do"
+// and said so in no log line at all, so the only way to find them was to go looking.
+func TestGoldenBakeSweepsAWSLeftoversTheDatabaseForgot(t *testing.T) {
+	ctx := context.Background()
+	healthy := true
+	f := newGoldenFixture(t, &healthy)
+
+	f.baker.step(ctx) // makes the seed workspace
+	seedName, _, _ := f.baker.mgr.workspaceNames(goldenTenantSlug, goldenSeedKey)
+
+	// The row disappears while its service and home live on — a destroy racing a
+	// re-create, or a CP that died between the two.
+	mem, ok, err := f.baker.membership(ctx, goldenSeedKey, false)
+	if err != nil || !ok {
+		t.Fatalf("seed membership: %v (found=%v)", err, ok)
+	}
+	ws, ok, err := f.store.GetWorkspaceByMembership(ctx, mem.MembershipID)
+	if err != nil || !ok {
+		t.Fatalf("seed workspace: %v (found=%v)", err, ok)
+	}
+	if err := f.store.DeleteWorkspace(ctx, ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.pool.orphans[seedName] = []string{"service " + seedName, "volume vol-seed"}
+
+	// A published golden puts the next tick on the tidy path.
+	f.pool.snaps["snap-g"] = &goldenSnap{ID: "snap-g", Completed: true, Started: f.pool.now}
+	f.pool.roles["snap-g"] = ec2RoleGolden
+	f.baker.step(ctx)
+
+	if _, still := f.pool.orphans[seedName]; still {
+		t.Fatalf("left %s behind in AWS although no row owned it", seedName)
+	}
+	var asked bool
+	for _, n := range f.pool.swept {
+		if n == seedName {
+			asked = true
+		}
+	}
+	if !asked {
+		t.Fatalf("never looked for %s in AWS (asked about %v)", seedName, f.pool.swept)
+	}
+}
+
+// The sweep is for the case the database CANNOT answer. While the row is there, the
+// ordinary destroy owns the teardown — going behind it would delete a service and a home
+// that a live workspace is using.
+func TestGoldenBakeDoesNotSweepAWorkspaceItStillHasARowFor(t *testing.T) {
+	ctx := context.Background()
+	healthy := true
+	f := newGoldenFixture(t, &healthy)
+
+	f.baker.step(ctx) // makes the seed workspace
+	seedName, _, _ := f.baker.mgr.workspaceNames(goldenTenantSlug, goldenSeedKey)
+	f.pool.snaps["snap-g"] = &goldenSnap{ID: "snap-g", Completed: true, Started: f.pool.now}
+	f.pool.roles["snap-g"] = ec2RoleGolden
+
+	f.baker.step(ctx) // tidy: destroys the seed through its row
+	if f.hasWorkspace(t, goldenSeedKey) {
+		t.Fatal("the seed workspace was not destroyed")
+	}
+	for _, n := range f.pool.swept {
+		if n == seedName {
+			t.Fatal("swept AWS for a workspace the database still had a row for")
+		}
 	}
 }
