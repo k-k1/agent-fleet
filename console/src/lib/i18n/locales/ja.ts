@@ -1787,7 +1787,7 @@ export const ja = {
   // 連携（docs/71）— 外部サービス側にテナントが用意した資格情報の登録。
   "tenant.group_integrations": "連携",
   "tenant.tab_git_oauth": "連携アプリの OAuth",
-  "tenant.git_oauth_intro": "メンバーの画面に出る「OAuth で接続」が、どの OAuth アプリを使うかを決めます（GitHub / Bitbucket は 接続 > Git、Jira は 接続 > 課題管理）。アプリは各社の GitHub org / Bitbucket ワークスペース / Atlassian に作るものなので、登録するのはテナント管理者です。保存した時点で有効になります（承認は要りません）。",
+  "tenant.git_oauth_intro": "メンバーの画面に出る「OAuth で接続」が、どの OAuth アプリを使うかを決めます（GitHub / Bitbucket は 接続 > Git、Jira は 接続 > 作業項目）。アプリは各社の GitHub org / Bitbucket ワークスペース / Atlassian に作るものなので、登録するのはテナント管理者です。保存した時点で有効になります（承認は要りません）。",
   "tenant.git_oauth_optional": "未登録でも接続はできます（メンバーがトークンを貼り付ける方式）。ここに登録すると、そのプロバイダに「OAuth で接続」が出るようになります。",
   "tenant.git_oauth_on": "登録済み",
   "tenant.git_oauth_off": "未登録",
@@ -3918,7 +3918,7 @@ export const ja = {
   "set.tab_backup": "書き出し / 取り込み",
   "set.tab_danger": "危険な操作",
   "set.tab_ops": "運用・監視",
-  "set.tab_tracker": "課題管理",
+  "set.tab_tracker": "作業項目",
   "set.tab_chat": "チャット連携",
   "chat.intro": "セッションの通知を Discord / Slack に送ります。通知の ON/OFF は 個人設定 › 通知 で切り替えます。",
   "chat.settings": "通知設定",
