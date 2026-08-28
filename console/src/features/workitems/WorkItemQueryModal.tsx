@@ -36,6 +36,13 @@ const DEFAULT_QUERY: Record<string, string> = {
   bitbucket: 'workspace/repo reviewers.uuid="@me"',
 };
 
+// 取得元の並び。製品名なので i18n 対象ではない（docs/28 §4）。
+const PROVIDERS = [
+  { id: "github", name: "GitHub" },
+  { id: "jira", name: "Jira" },
+  { id: "bitbucket", name: "Bitbucket" },
+];
+
 export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Props) {
   const tr = useT();
   const toast = useToast();
@@ -152,14 +159,25 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
           </p>
         </div>
         <div className="wi-qform">
-          <label>
+          {/* ★ select ではなくセグメント（他のモーダルと同じ ui-seg）。取得元は 3 つで
+              増えないので畳む理由が無く、ネイティブのドロップダウンは暗色テーマで
+              選択肢が読めなかった（背景が透明のまま描かれる）。 */}
+          <div className="wi-qfield">
             <span>{tr("wi.query_provider")}</span>
-            <select value={provider} onChange={(e) => pickProvider(e.target.value)}>
-              <option value="github">GitHub</option>
-              <option value="jira">Jira</option>
-              <option value="bitbucket">Bitbucket</option>
-            </select>
-          </label>
+            <div className="ui-seg" role="group" aria-label={tr("wi.query_provider")}>
+              {PROVIDERS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={"seg-btn" + (provider === p.id ? " active" : "")}
+                  aria-pressed={provider === p.id}
+                  onClick={() => pickProvider(p.id)}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          </div>
           <label>
             <span>{tr("wi.query_label")}</span>
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={tr("wi.query_label_ph")} />
