@@ -179,7 +179,11 @@ func driveState(m session.Meta, alive, heal bool) string {
 	if m.DriverKind() == session.DriverManaged && normalizeKind(m.Kind) == session.KindCodex && state == "idle" && codex.IsRateLimited(m.Name) {
 		return agents.StateLimited
 	}
-	if heal && state != "idle" && pane.Idle {
+	// pane.IdleSettled（生の pane.Idle ではない）で畳む理由は WireLive 側と同じ: 本文を
+	// 描いている最中の claude は待機プロンプトと同じ絵を出すので、1 フレームでは区別が
+	// 付かない（tmuxx/idlesettle.go の実測）。ここを Idle のままにすると、一覧は 進行中 の
+	// ままなのにミラー／チャットのチップだけ 入力待ち になる。
+	if heal && state != "idle" && pane.IdleSettled {
 		state = "idle"
 		// claude は「API エラーでターンが落ちた」を transcript 末尾から見分けられるので、
 		// その 1 ケースだけ黙って消さず終端イベントとして通知する（docs/47）。判別材料が
