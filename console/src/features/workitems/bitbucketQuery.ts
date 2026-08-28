@@ -47,6 +47,22 @@ export function bbQuery(intent: BbIntent, target: string): string {
   return intent === "reviewing" ? `${t} reviewers.uuid="@me"` : t;
 }
 
+/** 選んだ意図（複数可）＋対象 → 保存されるクエリの並び。
+ *
+ * ★ 複数まとめて足せるようにしてあるのは、**この 3 つが排他ではない**から ——「レビュー待ち」と
+ * 「自分の PR」は普通どちらも見たい物で、1 本ずつ足させると同じ対象を 2 回選ばせることになる。
+ * 出力は BB_INTENTS の順で、重複は落とす（「レビュー待ち」と「リポジトリの PR」を両方選んでも
+ * 別の 2 本になるが、同じ文字列になり得る組み合わせが将来増えても行が二重にならない）。 */
+export function bbQueries(intents: BbIntent[], target: string): string[] {
+  const out: string[] = [];
+  for (const intent of BB_INTENTS) {
+    if (!intents.includes(intent)) continue;
+    const q = bbQuery(intent, target);
+    if (q && !out.includes(q)) out.push(q);
+  }
+  return out;
+}
+
 /** `/connections/git/bitbucket.org/repos` の応答から full_name だけを取り出す境界。
  *
  * ★ 形が違う・`error` が入っている・null が来た、を全部「候補なし」に潰す。呼び手は

@@ -15,7 +15,7 @@ import { errText } from "../../core/api/client.ts";
 import { useReposStore } from "../repos/store.ts";
 import { setSetting, useSettings } from "../../lib/settings.ts";
 import { bitbucketRepoList, workItemQueryCreate, workItemQueryDelete, workItemQueryUpdate } from "./api.ts";
-import { BB_INTENTS, bbNeedsRepo, bbQuery, bbRepoNames, bbWorkspaceOf, bbWorkspaces } from "./bitbucketQuery.ts";
+import { BB_INTENTS, bbNeedsRepo, bbQueries, bbRepoNames, bbWorkspaceOf, bbWorkspaces } from "./bitbucketQuery.ts";
 import type { BbIntent } from "./bitbucketQuery.ts";
 import { DEFAULT_BRANCH_TEMPLATE, branchForItem } from "./read.ts";
 import type { WorkItemQuery } from "./read.ts";
@@ -73,9 +73,11 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
   const [query, setQuery] = useState(queries.length ? "" : DEFAULT_QUERY.github);
   const [repoHint, setRepoHint] = useState("");
   const [busy, setBusy] = useState(false);
-  // Bitbucket の組み立て（docs/80 §80.22）。`bbRepos === null` は「まだ引いていない」、
+  // Bitbucket の組み立て（docs/80 §80.23）。`bbRepos === null` は「まだ引いていない」、
   // 空配列は「引いたが候補が無い（＝停止中・未接続・エラー）」で、後者は手書きに落ちる。
-  const [bbIntent, setBbIntent] = useState<BbIntent>("reviewing");
+  // ★ 意図は**複数選べる**（排他ではない）。「レビュー待ち」と「自分の PR」はどちらも見たい物で、
+  //   1 本ずつ足させると同じ対象を 2 回選ばせることになる。
+  const [bbIntents, setBbIntents] = useState<BbIntent[]>(["reviewing"]);
   const [bbTarget, setBbTarget] = useState("");
   const [bbRepos, setBbRepos] = useState<string[] | null>(null);
   const [bbRaw, setBbRaw] = useState(false);
@@ -99,36 +101,53 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
     };
   }, [provider, bbRepos]);
 
+  // 対象の粒度は「選んだ中に**リポジトリが要る意図**が 1 つでもあるか」で決まる。
+  // 1 つも選んでいないときはリポジトリ側（既定の粒度）を出しておく。
+  const bbNeedRepo = bbIntents.length === 0 || bbIntents.some(bbNeedsRepo);
+  const bbOptions = bbRepos ? (bbNeedRepo ? bbRepos : bbWorkspaces(bbRepos)) : [];
   // 候補が 1 つしか無いなら選ばせない（ワークスペースが 1 つ＝ほとんどの人）。
-  const bbOptions = bbRepos ? (bbNeedsRepo(bbIntent) ? bbRepos : bbWorkspaces(bbRepos)) : [];
   useEffect(() => {
     if (bbOptions.length === 1 && !bbTarget) setBbTarget(bbOptions[0]);
   }, [bbOptions.length, bbTarget]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 意図を変えても対象は捨てない。リポジトリ → ワークスペースは畳めるが、逆は決められない。
-  const pickIntent = (next: BbIntent) => {
-    setBbIntent(next);
-    setBbTarget((cur) => (!cur ? cur : bbNeedsRepo(next) ? (cur.includes("/") ? cur : "") : bbWorkspaceOf(cur)));
+  // 意図を足し引きしても対象は捨てない。リポジトリ → ワークスペースは畳めるが、逆は決められない
+  // （ワークスペースしか選んでいない状態でリポジトリが要る意図を足したら、選び直してもらう）。
+  const toggleIntent = (it: BbIntent) => {
+    const next = bbIntents.includes(it) ? bbIntents.filter((x) => x !== it) : [...bbIntents, it];
+    setBbIntents(next);
+    const needRepo = next.length === 0 || next.some(bbNeedsRepo);
+    setBbTarget((cur) => (!cur ? cur : needRepo ? (cur.includes("/") ? cur : "") : bbWorkspaceOf(cur)));
   };
 
   // 一覧から組み立てられるのは「Bitbucket ＋ 候補があり ＋ 手書きに降りていない」ときだけ。
   const bbBuild = provider === "bitbucket" && !bbRaw && !!bbRepos && bbRepos.length > 0;
-  const effQuery = bbBuild ? bbQuery(bbIntent, bbTarget) : query;
+  const effQueries = bbBuild ? bbQueries(bbIntents, bbTarget) : query.trim() ? [query.trim()] : [];
 
+  // 複数まとめて足せるのは Bitbucket の組み立てのときだけ（他は今までどおり 1 本）。
+  // ★ 表示名は 1 本のときだけ効かせる —— 同じ名前の行が 2 本並んでも見分けられないので、
+  //   複数のときは CP の既定（クエリ文字列そのもの）に任せる。
   const add = async () => {
-    if (!effQuery.trim() || busy) return;
+    if (!effQueries.length || busy) return;
     setBusy(true);
     try {
-      const res = await workItemQueryCreate({ provider, label: label.trim(), query: effQuery.trim(), repoHint, enabled: true });
-      if (res && typeof res === "object" && "error" in res && res.error) {
-        toast(errText(res.error) || t("wi.query_save_failed"), { kind: "warn" });
+      const one = effQueries.length === 1;
+      let failed = "";
+      for (const q of effQueries) {
+        const res = await workItemQueryCreate({ provider, label: one ? label.trim() : "", query: q, repoHint, enabled: true });
+        // ⚠️ 途中で落ちても残りは足す。3 本のうち 1 本が弾かれたときに「何も増えていない」より、
+        //    「2 本増えて 1 本だけ断られた」の方が、次に何をすればよいかが分かる。
+        if (res && typeof res === "object" && "error" in res && res.error) failed = errText(res.error) || t("wi.query_save_failed");
+      }
+      if (failed) {
+        toast(failed, { kind: "warn" });
+        onChanged();
         return;
       }
       setLabel("");
       setQuery("");
       setRepoHint("");
-      // ★ bbTarget は残す。同じリポジトリに「レビュー待ち」と「全 PR」を続けて足すのが
-      //   ありふれた流れで、そのたびに選び直させる理由が無い。
+      // ★ bbTarget と選んだ意図は残す。同じ対象で足し直す流れがありふれているのと、
+      //   選択が消えると「本当に足せたのか」を一覧で数え直させることになる。
       onSaved();
       onChanged();
     } catch {
@@ -235,34 +254,40 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
           </div>
           <label>
             <span>{tr("wi.query_label")}</span>
-            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={tr("wi.query_label_ph")} />
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder={tr("wi.query_label_ph")}
+              disabled={effQueries.length > 1}
+            />
           </label>
-          {/* ★ Bitbucket だけ、クエリ欄そのものを出さずに組み立てる（docs/80 §80.22）。
+          {effQueries.length > 1 && <p className="wi-qhint">{tr("wi.bb_label_auto")}</p>}
+          {/* ★ Bitbucket だけ、クエリ欄そのものを出さずに組み立てる（docs/80 §80.23）。
               先頭の `<workspace>/<repo>` も `reviewers.uuid="@me"` も **af の発明**で、
               利用者が普段書いている方言ではない —— 既定値の `workspace/repo` を
-              置き換えないまま保存され 404 になった、が実際に起きた（§80.22）。
+              置き換えないまま保存され 404 になった、が実際に起きた（§80.23）。
               GitHub の検索構文と JQL は本物の方言なので、これまでどおり素通しの入力欄。 */}
           {bbBuild ? (
             <>
+              {/* ★ セグメント（1 つ選ぶ）ではなくチェック。3 つは排他ではなく、
+                  「レビュー待ち」と「自分の PR」はどちらも見たい物だから。 */}
               <div className="wi-qfield">
                 <span>{tr("wi.bb_intent")}</span>
-                <div className="ui-seg" role="group" aria-label={tr("wi.bb_intent")}>
+                <div className="wi-qchecks" role="group" aria-label={tr("wi.bb_intent")}>
                   {BB_INTENTS.map((it) => (
-                    <button
-                      key={it}
-                      type="button"
-                      className={"seg-btn" + (bbIntent === it ? " active" : "")}
-                      aria-pressed={bbIntent === it}
-                      onClick={() => pickIntent(it)}
-                    >
-                      {tr(BB_LABEL[it])}
-                    </button>
+                    <label key={it} className="ssm-check">
+                      <input type="checkbox" checked={bbIntents.includes(it)} onChange={() => toggleIntent(it)} />
+                      <span className="wi-qcheck-name">{tr(BB_LABEL[it])}</span>
+                      <span className="wi-qcheck-desc">{tr(BB_DESC[it])}</span>
+                    </label>
                   ))}
                 </div>
               </div>
-              <p className="wi-qhint">{tr(BB_DESC[bbIntent])}</p>
+              {/* ⚠️ これは af の制限ではなく Bitbucket の制限。選んだ人が「書き方を間違えた」と
+                  読まないよう、選んだときだけ 1 行で断る。 */}
+              {bbIntents.includes("authored") && <p className="wi-qhint">{tr("wi.bb_authored_note")}</p>}
               <label>
-                <span>{tr(bbNeedsRepo(bbIntent) ? "wi.bb_target_repo" : "wi.bb_target_ws")}</span>
+                <span>{tr(bbNeedRepo ? "wi.bb_target_repo" : "wi.bb_target_ws")}</span>
                 <select value={bbTarget} onChange={(e) => setBbTarget(e.target.value)}>
                   <option value="">{tr("wi.bb_target_none")}</option>
                   {bbOptions.map((o) => (
@@ -272,12 +297,16 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
                   ))}
                 </select>
               </label>
-              {/* 保存されるのはあくまで 1 本のクエリ文字列（列は増えていない）。出しておくのは
+              {/* 保存されるのは 1 本 1 行のクエリ文字列（列は増えていない）。出しておくのは
                   ★ 後で行のエラーを読むときに、この文字列と突き合わせられるようにするため。 */}
-              {effQuery && (
+              {effQueries.length > 0 && (
                 <div className="wi-qfield">
                   <span>{tr("wi.bb_preview")}</span>
-                  <code className="wi-qquery">{effQuery}</code>
+                  {effQueries.map((q) => (
+                    <code className="wi-qquery" key={q}>
+                      {q}
+                    </code>
+                  ))}
                 </div>
               )}
               <button type="button" className="linklike wi-qmode" onClick={() => setBbRaw(true)}>
@@ -319,7 +348,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
                 ))}
             </select>
           </label>
-          <Button onClick={() => void add()} disabled={!effQuery.trim() || busy}>
+          <Button onClick={() => void add()} disabled={!effQueries.length || busy}>
             {tr("wi.add_query")}
           </Button>
         </div>
