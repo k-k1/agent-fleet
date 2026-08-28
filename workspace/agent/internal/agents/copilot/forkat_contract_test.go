@@ -108,10 +108,20 @@ func TestContractLiveCopilotForkAt(t *testing.T) {
 	if err := MaterializeForkAt(src, dst, resolved); err != nil {
 		t.Fatalf("MaterializeForkAt against a REAL session failed: %v", err)
 	}
-	// session.db は無改変のまま運ばれている＝両ターンが入っている。それでも切り詰めた
-	// events.jsonl のほうが勝つ、というのがこのテストの主張。
-	if _, err := os.Stat(filepath.Join(home, "session-state", dst, "session.db")); err != nil {
-		t.Fatalf("branch has no session.db (the copy is incomplete): %v", err)
+	// 分岐元にあった要素が全部運ばれている＝コピーが完全。**個別のファイル名で判定
+	// しない**: copilot は per-session の `session.db` を 1.0.81 までに廃し、状態を
+	// COPILOT_HOME 直下の `session-store.db`（グローバル）へ移した（実測 2026-08-28。
+	// それ以前に作られたセッションには session.db がある）。名前で書くと、この手の
+	// 置き場所の移動のたびに「コピーが壊れた」と誤報する。運んだ物の中身が両ターン分
+	// でも、切り詰めた events.jsonl のほうが勝つ、というのがこのテストの主張。
+	srcEntries, err := os.ReadDir(filepath.Join(home, "session-state", src))
+	if err != nil {
+		t.Fatalf("分岐元の session-state を読めません: %v", err)
+	}
+	for _, e := range srcEntries {
+		if _, err := os.Stat(filepath.Join(home, "session-state", dst, e.Name())); err != nil {
+			t.Fatalf("branch is missing %q from the source session-state (the copy is incomplete): %v", e.Name(), err)
+		}
 	}
 
 	out := copilotPrompt(t, home, work, dst, "What is the codeword? Answer with one word.")
