@@ -175,7 +175,14 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// case that IS a real turn end — an API error cut the turn off, so no Stop hook
 		// ever fired — and routes it through the notifier instead of silently dropping
 		// the completion (docs/47).
-		if li.State != "idle" && pane.Idle {
+		//
+		// IdleSettled, not Idle: while claude renders an answer it hides the spinner and
+		// draws a frame indistinguishable from the ready prompt (measured: 21s per block
+		// boundary, byte-identical for up to 11.4s). Healing on that frame badged a
+		// session 入力待ち mid-answer — and took the stop button away, fired the
+		// completion notification early, and let the idle rules count it as done. The
+		// settle window (idlesettle.go) is what tells the two apart.
+		if li.State != "idle" && pane.IdleSettled {
 			li.State = "idle"
 			HealIdle(sid)
 		}
