@@ -346,6 +346,50 @@ func TestBrowserAttachmentHiddenPendingHandoffKeepsHandoffTTL(t *testing.T) {
 	m.Delete(created.ID)
 }
 
+// TestBrowserAttachmentScreencastFrameArrivingBeforeStartReturns: attach 側でも、
+// Page.startScreencast の応答より先に届いたフレームを取りこぼさない。
+//
+// 事情は所有ページ側（TestBrowserScreencastFrameArrivingBeforeStartReturns）と同じ
+// で、attach 先はより悪い: 他人のページなので、落とした 1 枚を埋め合わせる再描画を
+// こちらから起こせない。
+func TestBrowserAttachmentScreencastFrameArrivingBeforeStartReturns(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	m := fakeAttachmentManager(cdp, 0)
+	created := createFakeAttachment(t, m)
+	a, err := m.lookupActive(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.viewer = &browserAttachmentViewer{attachment: a, control: make(chan browserOutbound, 8), done: make(chan struct{})}
+	a.visible = true
+	a.mu.Unlock()
+
+	_, sessionID := a.currentSession()
+	raw, _ := json.Marshal(map[string]any{
+		"data": base64.StdEncoding.EncodeToString([]byte{0xff, 0xd8, 0xff}), "sessionId": 1,
+	})
+	cdp.setOnCall("Page.startScreencast", func() {
+		m.handleEvent(a, sessionID, "target-1", browserCDPEvent{
+			Method: "Page.screencastFrame", SessionID: sessionID, Params: raw,
+		})
+	})
+	if err := a.startScreencast(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case frame := <-a.latestFrame:
+		if string(frame) != string([]byte{0xff, 0xd8, 0xff}) {
+			t.Fatalf("decoded frame = %x", frame)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a frame that arrived before Page.startScreencast returned was dropped")
+	}
+	if !waitFor(2*time.Second, func() bool { _, ok := cdp.last("Page.screencastFrameAck"); return ok }) {
+		t.Fatal("the frame was not acknowledged; Chromium stops capturing once frames in flight go unacknowledged")
+	}
+}
+
 func TestBrowserAttachmentResumesScreencastAfterUnsupportedURL(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := fakeAttachmentManager(cdp, 0)
