@@ -1,4 +1,6 @@
-// TrackerTab — 課題管理: the connections that feed the work item rail (docs/80).
+// TrackerTab — 作業項目: the connections that feed the work item rail (docs/80).
+// ★ タブ名は左ペインのレール名（wi.title = 作業項目）と同じ語にしてある。以前は
+// 「課題管理」で、同じものを指す語が 2 つあり、どちらの設定なのかが読めなかった。
 //
 // ★ Its own tab rather than a category inside 運用・監視. Those cards are monitoring /
 // incident integrations the SRE assistant reads over MCP; this one feeds a rail the

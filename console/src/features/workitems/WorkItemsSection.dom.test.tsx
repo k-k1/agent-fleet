@@ -448,4 +448,32 @@ describe("WorkItemsSection", () => {
     expect(document.querySelector(".wi-dstarted")).not.toBeNull();
     expect(document.querySelector(".wi-dmodal")?.textContent).not.toContain(t("wi.report_title"));
   });
+
+  // --- 保存クエリの取得元（3 択なので select をやめてセグメントにした） ---
+
+  const openQueries = async () => {
+    const gear = [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.getAttribute("aria-label") === t("wi.queries"),
+    )!;
+    await act(async () => gear.click());
+    return document.querySelector(".wi-qmodal")!;
+  };
+
+  it("★ 取得元は select ではなくボタン 3 つ（畳む理由が無く、暗色で選択肢が読めなかった）", async () => {
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    const modal = await openQueries();
+
+    const segs = [...modal.querySelectorAll<HTMLButtonElement>(".wi-qform .ui-seg .seg-btn")];
+    expect(segs.map((b) => b.textContent)).toEqual(["GitHub", "Jira", "Bitbucket"]);
+    expect(segs.map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
+    // 残ってよい select は「既定の作業コピー」の 1 つだけ（取得元は消えている）。
+    expect(modal.querySelectorAll(".wi-qform select").length).toBe(1);
+
+    await act(async () => segs[1].click());
+    expect(segs.map((b) => b.getAttribute("aria-pressed"))).toEqual(["false", "true", "false"]);
+    // 押した取得元の既定クエリ（JQL）に入れ替わる＝ select と同じ副作用が生きている。
+    const expr = [...modal.querySelectorAll<HTMLInputElement>(".wi-qform input")].pop()!;
+    expect(expr.value).toContain("currentUser()");
+  });
 });

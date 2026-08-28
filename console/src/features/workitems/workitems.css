@@ -221,8 +221,8 @@
   padding: 5px 7px;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: var(--input-bg, transparent);
-  color: inherit;
+  background: var(--panel2);
+  color: var(--fg);
   font-size: 13px;
 }
 .wi-qbranch .wi-qhint {
@@ -349,8 +349,10 @@
   padding: 6px 7px;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: var(--input-bg, transparent);
-  color: inherit;
+  /* 不透明の token（--input-bg は未定義。transparent だと暗色でドロップダウンの
+     選択肢が読めない）。 */
+  background: var(--panel2);
+  color: var(--fg);
   font-size: 13px;
 }
 .wi-shint {
@@ -385,8 +387,8 @@
   padding: 6px 7px;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: var(--input-bg, transparent);
-  color: inherit;
+  background: var(--panel2);
+  color: var(--fg);
   font-size: 13px;
 }
 .wi-rbody textarea {
@@ -476,18 +478,24 @@
   flex-direction: column;
   gap: 8px;
 }
-.wi-qform label {
+.wi-qform label,
+/* 取得元はセグメント（button 3 つ）なので label で包めない。見出し＋コントロールの
+   縦並びだけ label と揃える。 */
+.wi-qform .wi-qfield {
   display: flex;
   flex-direction: column;
   gap: 3px;
   font-size: 12px;
 }
+/* ★ 背景は必ず不透明の token を敷く。--input-bg は存在しない変数で、フォールバックの
+   transparent のままだとネイティブのドロップダウンが暗色テーマで読めなくなる
+   （選択肢が地に沈む）。他のダイアログ（ui.css .ui-field select）と同じ組み合わせ。 */
 .wi-qform input,
 .wi-qform select {
   padding: 5px 7px;
   border: 1px solid var(--border);
   border-radius: 5px;
-  background: var(--input-bg, transparent);
-  color: inherit;
+  background: var(--panel2);
+  color: var(--fg);
   font-size: 13px;
 }
