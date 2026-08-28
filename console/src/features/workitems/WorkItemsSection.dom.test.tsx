@@ -352,6 +352,23 @@ describe("WorkItemsSection", () => {
     expect(rows()).toBe(10);
   });
 
+  // docs/80 §80.20: 同じ JQL を 2 本保存していて 41 件が 82 行になった、という実機の報告。
+  it("★ 2 本のクエリが同じチケットを返しても 1 行（バッジも重複を数えない）", async () => {
+    const q2 = { ...query, id: "q2", provider: "jira" };
+    const dup = jiraRows(41).map((r) => ({ ...r, id: r.id + "-dup", queryId: "q2" }));
+    workItemList.mockResolvedValue({
+      items: [...jiraRows(41), ...dup],
+      queries: [query, q2],
+      sessions: [],
+      fetchedAt: "2026-08-26T09:00:00Z",
+      running: true,
+    });
+    await render();
+    expect(host.querySelector(".ui-section-count")?.textContent).toBe("41");
+    await act(async () => host.querySelector<HTMLButtonElement>(".wi-more")!.click());
+    expect(rows()).toBe(41);
+  });
+
   it("★ 全行が同じ担当者なら行から消え、メタが空なら 2 行目そのものを描かない", async () => {
     workItemList.mockResolvedValue({ items: jiraRows(41), queries: [query], sessions: [], fetchedAt: "2026-08-26T09:00:00Z", running: true });
     await render();
