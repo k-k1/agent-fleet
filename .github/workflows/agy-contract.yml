@@ -57,7 +57,13 @@ jobs:
         working-directory: workspace/agent
         env:
           AF_AGY_LIVE: "1"
-        run: go test -run '^TestScrapeUsageLive$' -count=1 -v -timeout 5m ./internal/agents/agy/
+        # -v はパネルの中身をログに残すため。ただしこのテストはアカウント行も出すので、
+        # public リポジトリのログに素で流さない。pipefail が要る —— 既定の `bash -e` は
+        # pipefail を立てないので、sed に通すと **go test が落ちても緑に見える**。
+        run: |
+          set -euo pipefail
+          go test -run '^TestScrapeUsageLive$' -count=1 -v -timeout 5m ./internal/agents/agy/ \
+            | sed -E 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/<redacted-email>/g'
 
       # ⚠️ カタログの契約。ペインのフッタだけ見ていたので、1.1.19 で
       # `agy models` が「表示名だけ」→「id<TAB>表示名」に変わったのを
