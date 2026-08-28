@@ -87,6 +87,12 @@ func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 		}
 	}))
 	t.Cleanup(srv.Close)
+	// ★ 掃除の順番がすべて。t.TempDir() の RemoveAll は**その呼び出し時**に
+	// t.Cleanup へ積まれ、Cleanup は LIFO で走る。だから RemoveAll より先に走らせ
+	// たい停止処理は、TempDir を取った**後**に積まなければならない（前に積むと
+	// 掃除の後になって手遅れ）。同じ罠と対処が
+	// workspace/agent/tui_mirror_contract_test.go の tmux kill-server にもある。
+	t.Cleanup(func() { waitWorkItemFetchIdle(t, m.ID) })
 
 	mgr := &manager{store: st}
 	a := eventsAPI{memberAuth{mgr}, newWorkspaceAPI(mgr, false), notificationAPI{memberAuth{mgr}, st},
@@ -95,6 +101,34 @@ func eventsTestEnv(t *testing.T, stub *eventsStub) (eventsAPI, *resolved) {
 	res := &resolved{rt: stubRuntime{endpoint: srv.URL, token: "tok"}, ws: ws,
 		mv: MembershipView{MembershipID: m.ID}}
 	return a, res
+}
+
+// waitWorkItemFetchIdle blocks until the detached work-item fetch for this
+// membership has finished.
+//
+// tickAll は state=="running" のとき workItemsPayload 経由で refreshAsync を撃つ。
+// その goroutine は**リクエスト ctx から意図的に切り離した** context.Background()
+// で DB を引く（workitems.go の refreshAsync）ので、a.stream が返ってテスト関数が
+// return した後もまだ sqlite を触っている。sqlite は WAL なので、その 1 本の
+// SELECT が RemoveAll の最中に -wal/-shm を作り直し、テスト本体は成功したのに
+// 「TempDir RemoveAll cleanup: … directory not empty」だけが落ちる（develop の ci
+// で断続的に観測。手元でも -count=30 で 30 回中 5 回再現した）。
+//
+// refreshAsync は goroutine の最後に（refreshNow が返り、ctx を cancel した後に）
+// キーを Delete するので、キーが消えている＝もう DB を触らない、と言い切れる。
+func waitWorkItemFetchIdle(t *testing.T, membershipID string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, busy := workItemFetchInFlight.Load(membershipID); !busy {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("work-item fetch still in flight after 10s (membership %s)", membershipID)
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // runStream drives a.stream until the stub Agent has served `polls` polls, then
