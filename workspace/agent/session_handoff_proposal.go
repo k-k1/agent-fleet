@@ -22,7 +22,6 @@ import (
 )
 
 const handoffProposalMaxBytes = 64 << 10
-const handoffProposalTitleMaxBytes = 512
 
 // handoffProposalMaxCount guards against a runaway loop growing the file unboundedly.
 // It is far above any real fan-out (a several-way split is the motivating case).
@@ -267,8 +266,14 @@ func handleSessionHandoffProposal(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusBadRequest, "handoff_title_empty", "title is empty")
 			return
 		}
-		if len(title) > handoffProposalTitleMaxBytes {
-			httpx.WriteErr(w, http.StatusBadRequest, "handoff_title_too_large", "title is too large")
+		// この title は「起動したら**そのままセッション表示名になる**」値なので、検査は
+		// 作成 API と同じ cleanTitle に揃える。ここが緩いと、提案は保存も編集もできるのに
+		// 起動の瞬間だけ bad_title で落ちる — 利用者には「worktree 起動に失敗」としか
+		// 見えない実障害（提案側は 512 バイト、作成側は 80 runes だった）。
+		title, ok := cleanTitle(title)
+		if !ok {
+			httpx.WriteErr(w, http.StatusBadRequest, "handoff_title_too_large",
+				fmt.Sprintf("title must be at most %d characters and contain no control characters", sessionTitleMaxRunes))
 			return
 		}
 		var p *sessionHandoffProposal

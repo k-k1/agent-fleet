@@ -8,6 +8,7 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { SESSION_TITLE_MAX } from "../../lib/sessionTitle.ts";
 import { errText, type ApiError } from "../../core/api/client.ts";
 import { chatRename, chatSuggestTitle } from "./api.ts";
 
@@ -78,7 +79,7 @@ export function ChatTitleModal({ id, title, onClose, onSaved }: ChatTitleModalPr
             onChange={(e) => setValue(e.target.value)}
             onFocus={(e) => e.target.select()}
             placeholder={tr("asst.title_ph")}
-            maxLength={80}
+            maxLength={SESSION_TITLE_MAX}
             autoFocus
           />
         </label>
