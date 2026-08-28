@@ -487,6 +487,20 @@
   gap: 3px;
   font-size: 12px;
 }
+/* 組み立て / 手書きの切り替え（Bitbucket・§80.22）。フォームの他の行と同じ左端に置き、
+   ボタンらしく見せない —— 「今の入力を捨てる」操作ではなく、書き方を選ぶ導線なので。 */
+.wi-qform .wi-qmode {
+  align-self: flex-start;
+  font-size: 12px;
+}
+/* 組み立て結果のプレビュー。行のクエリ（.wi-qquery）と同じ字面にしてあるのは、
+   保存後の行と見比べられるようにするため。 */
+.wi-qform .wi-qfield code.wi-qquery {
+  padding: 4px 7px;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+}
 /* ★ 背景は必ず不透明の token を敷く。--input-bg は存在しない変数で、フォールバックの
    transparent のままだとネイティブのドロップダウンが暗色テーマで読めなくなる
    （選択肢が地に沈む）。他のダイアログ（ui.css .ui-field select）と同じ組み合わせ。 */
