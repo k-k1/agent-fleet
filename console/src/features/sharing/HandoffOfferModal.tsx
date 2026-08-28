@@ -13,6 +13,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts";
 import { ShareCreateModal } from "./ShareCreateModal.tsx";
 import { useHandoffStore } from "./handoffStore.ts";
 import "./sharing.css";
@@ -66,7 +67,9 @@ export function HandoffOfferModal({
   const [ctx, setCtx] = useState<HandoffContext | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [recipient, setRecipient] = useState("");
-  const [title, setTitle] = useState(initialTitle || "");
+  // 相手のワークスペースでそのままセッション名になるので、差し出す時点で作成 API の
+  // 規則へ詰める（長い名前のまま送ると、失敗するのは受け取った**相手側**になる）。
+  const [title, setTitle] = useState(() => clampSessionTitle(initialTitle || ""));
   const [prompt, setPrompt] = useState(initialPrompt);
   const [ackWarning, setAckWarning] = useState(false);
   const [sending, setSending] = useState(false);
@@ -176,7 +179,7 @@ export function HandoffOfferModal({
               )}
               <label className="ui-field">
                 <span className="ui-field-label">{tr("handoff.offer_title_label")}</span>
-                <input value={title} maxLength={512} onChange={(e) => setTitle(e.target.value)} />
+                <input value={title} maxLength={SESSION_TITLE_MAX} onChange={(e) => setTitle(e.target.value)} />
               </label>
               <label className="ui-field">
                 <span className="ui-field-label">{tr("handoff.offer_prompt_label")}</span>

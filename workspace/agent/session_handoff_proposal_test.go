@@ -128,3 +128,47 @@ func findProposal(list []map[string]any, id string) map[string]any {
 	}
 	return nil
 }
+
+// 提案のタイトル検査は**セッション作成 API と同じ規則**でなければならない。緩いと、提案は
+// 保存も編集もできるのに起動の瞬間だけ bad_title で落ち、利用者には「worktree 起動に失敗」
+// としか見えない（実障害）。だからここでは「保存を通ったタイトルは cleanTitle も通る」を
+// 直接確かめる。
+func TestSessionHandoffProposalTitleMatchesCreateRule(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const name = "handoff2"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude})
+	post := func(title string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"prompt": "続きをお願いします", "title": title})
+		r := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/handoff-proposal", strings.NewReader(string(body)))
+		r.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		handleSessionHandoffProposal(w, r)
+		return w
+	}
+	// 80 文字ちょうどは通る（日本語＝1 文字 3 バイトなので、旧 512 バイト規則とは別物）。
+	if got := post(strings.Repeat("あ", sessionTitleMaxRunes)); got.Code != http.StatusOK {
+		t.Fatalf("80 runes should be accepted: status=%d body=%s", got.Code, got.Body.String())
+	}
+	for _, title := range []string{
+		strings.Repeat("あ", sessionTitleMaxRunes+1), // 1 文字超過
+		"改行を\n含むタイトル",                               // 制御文字
+	} {
+		got := post(title)
+		if got.Code != http.StatusBadRequest {
+			t.Fatalf("title %q should be refused at proposal time: status=%d body=%s", title, got.Code, got.Body.String())
+		}
+	}
+	// 保存されているタイトルは、そのまま作成 API に渡して通ること。
+	for _, p := range decodeProposalsField(t, func() string {
+		r := httptest.NewRequest(http.MethodGet, "/sessions/"+name+"/handoff-proposal", nil)
+		r.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		handleSessionHandoffProposal(w, r)
+		return w.Body.String()
+	}()) {
+		title, _ := p["title"].(string)
+		if _, ok := cleanTitle(title); !ok {
+			t.Fatalf("stored title would be rejected by POST /sessions: %q", title)
+		}
+	}
+}
