@@ -83,11 +83,12 @@
    control cluster (the head already reserves 84px on the right for it). */
 .mirror-toggle {
   margin-left: auto;
-  /* The チャット/ターミナル switch lives on the terminal (and chat) surface, so its
-     selected segment follows the viewer/terminal accent rather than the top bar's.
-     Needs the sel-scope class on the element (MirrorToggle.tsx) — rebinding
-     --sel-accent alone can't reach the :root-derived --sel-bg/--sel-fg (tokens.css). */
-  --sel-accent: var(--viewer-accent, var(--topbar-accent));
+  /* This switch is a global chrome control (like the top bar), not part of the
+     viewer surface, so its selected segment follows the top bar accent, not
+     --viewer-accent. Needs the sel-scope class on the element (MirrorToggle.tsx) —
+     rebinding --sel-accent alone can't reach the :root-derived --sel-bg/--sel-fg
+     (tokens.css). */
+  --sel-accent: var(--topbar-accent);
 }
 /* The head's action cluster is .view-head-actions (ui/ui.css) — it was declared
    identically here and in terminal.css. */
