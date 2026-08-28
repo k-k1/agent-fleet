@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
 )
 
 // goldenBakePool is what the baker needs from the deployment's runtime profile. Only
@@ -67,6 +68,11 @@ type goldenBakePool interface {
 	// seedClassFor is a slot class that runs on arch, for the seed and probe
 	// workspaces to be placed with. "" when the deployment declared no classes.
 	seedClassFor(arch string) string
+	// sweepOrphans deletes the AWS side of a reserved bake workspace that the database
+	// has no row for — the service (only while it is carrying no task) and its detached
+	// home volume — and returns what it removed, empty when there was nothing. The
+	// caller has already established that nothing owns the name.
+	sweepOrphans(ctx context.Context, workspace string) ([]string, error)
 }
 
 // goldenSnap is the little that the state machine needs to know about a snapshot.
@@ -585,6 +591,101 @@ func (e *ecsEC2Runtime) markHomeBaked(ctx context.Context, volumeID string) erro
 		}},
 	})
 	return err
+}
+
+// sweepOrphans deletes what is left in AWS of a reserved bake workspace whose database
+// row is gone. It exists because the two sides can come apart: the bake creates a
+// service and a 50 GiB home under a name, and if the row that pointed at them is
+// deleted while they survive — a destroy racing a re-create, a CP that died between the
+// two — nothing ever looks at them again. The drift sweeper will not: it walks home
+// volumes by tag but never DELETES one, because a detached home is exactly what every
+// stopped workspace looks like (sweepVolume), and it cannot tell a person's home from a
+// dead seed's. Only the baker can, because only the baker owns these two names.
+//
+// Measured on a live deployment (docs/64 §64.29.5): after a promoted bake the seed's
+// service (desiredCount 0) and its home stayed behind and billed until an operator
+// found them by hand.
+//
+// The safety is in the caller (the name is reserved, the database has just said no row
+// owns it) plus two refusals here: a service still carrying a task is left alone, and so
+// is a volume that is attached or that a snapshot is still reading — a bake in flight
+// must not be swept out from under itself.
+func (f *ecsEC2Factory) sweepOrphans(ctx context.Context, workspace string) ([]string, error) {
+	var removed []string
+	svc, err := f.base.ecs.DescribeServices(ctx, &ecs.DescribeServicesInput{
+		Cluster:  aws.String(f.base.cfg.cluster),
+		Services: []string{workspace},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("describe service %s: %w", workspace, err)
+	}
+	for i := range svc.Services {
+		s := svc.Services[i]
+		if aws.ToString(s.Status) == "INACTIVE" {
+			continue // already deleted; ECS keeps answering for a while
+		}
+		if s.DesiredCount > 0 || s.RunningCount > 0 || s.PendingCount > 0 {
+			return removed, fmt.Errorf("%s has no workspace row but is running a task; leaving it alone", workspace)
+		}
+		// No Force, unlike Destroy: there is nothing to destroy on a deadline here, and
+		// a service that still has a draining task is one the next tick can delete.
+		if _, err := f.base.ecs.DeleteService(ctx, &ecs.DeleteServiceInput{
+			Cluster: aws.String(f.base.cfg.cluster),
+			Service: aws.String(workspace),
+		}); err != nil && !isAWSNotFound(err) {
+			return removed, fmt.Errorf("delete service %s: %w", workspace, err)
+		}
+		removed = append(removed, "service "+workspace)
+	}
+	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(ec2TagPool, f.pool.pool),
+			tagFilter(ec2TagRole, ec2RoleHome),
+			tagFilter(ec2TagWorkspace, workspace),
+		},
+	})
+	if err != nil {
+		return removed, fmt.Errorf("describe the home of %s: %w", workspace, err)
+	}
+	for i := range vols.Volumes {
+		vol := vols.Volumes[i]
+		volumeID := aws.ToString(vol.VolumeId)
+		if vol.State != ec2types.VolumeStateAvailable {
+			return removed, fmt.Errorf("the home %s of %s is %s, not detached; leaving it alone",
+				volumeID, workspace, vol.State)
+		}
+		// A candidate being captured right now reads this volume. EBS lets the source be
+		// deleted mid-copy, so this is a refusal on purpose rather than an API limit.
+		pending, err := f.snapshotInProgress(ctx, volumeID)
+		if err != nil {
+			return removed, err
+		}
+		if pending {
+			return removed, nil
+		}
+		if _, err := f.ec2.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(volumeID)}); err != nil {
+			return removed, fmt.Errorf("delete the home %s of %s: %w", volumeID, workspace, err)
+		}
+		removed = append(removed, "volume "+volumeID)
+	}
+	return removed, nil
+}
+
+// snapshotInProgress reports whether a snapshot of this volume is still copying blocks.
+func (f *ecsEC2Factory) snapshotInProgress(ctx context.Context, volumeID string) (bool, error) {
+	out, err := f.ec2.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{
+		OwnerIds: []string{"self"},
+		Filters:  []ec2types.Filter{{Name: aws.String("volume-id"), Values: []string{volumeID}}},
+	})
+	if err != nil {
+		return false, fmt.Errorf("describe the snapshots of %s: %w", volumeID, err)
+	}
+	for _, s := range out.Snapshots {
+		if s.State == ec2types.SnapshotStatePending {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // releaseForBake is releaseSlot under a name that says why it is being called. The

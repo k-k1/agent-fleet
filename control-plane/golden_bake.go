@@ -48,6 +48,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -78,6 +79,8 @@ type goldenBaker struct {
 	// loggedBlocked keeps "the pool is full" to one line per reason instead of one per
 	// tick — the reaper runs every minute and this can be true for hours.
 	loggedBlocked string
+	// warned does the same for the cleanup path, per reserved key: see warn.
+	warned map[string]string
 }
 
 func newGoldenBaker(mgr *manager, pool goldenBakePool) *goldenBaker {
@@ -385,12 +388,27 @@ func (b *goldenBaker) tidy(ctx context.Context, arch string) {
 	b.destroy(ctx, b.probeKey(arch))
 }
 
+// destroy removes one reserved workspace. Every way out of it says which one it took:
+// "the database has nothing to destroy" and "the database could not be read" used to
+// both be a bare return, so a tidy that cleaned NOTHING and a tidy that had nothing to
+// clean produced the same log — no line at all. That is how a leaked seed stayed
+// invisible on a real deployment (docs/64 §64.29.5): the probe's line was printed, the
+// seed's absence was not, and its service and 50 GiB home billed on.
 func (b *goldenBaker) destroy(ctx context.Context, key string) {
 	mem, ok, err := b.membership(ctx, key, false)
-	if err != nil || !ok {
+	if err != nil {
+		b.warn(key, "golden: looking up %s to clean it up failed: %v", key, err)
 		return
 	}
-	if _, ok, err := b.mgr.store.GetWorkspaceByMembership(ctx, mem.MembershipID); err != nil || !ok {
+	if !ok {
+		b.sweep(ctx, key) // no row can point at AWS any more; go by the tags
+		return
+	}
+	if _, ok, err := b.mgr.store.GetWorkspaceByMembership(ctx, mem.MembershipID); err != nil {
+		b.warn(key, "golden: reading the %s workspace to clean it up failed: %v", key, err)
+		return
+	} else if !ok {
+		b.sweep(ctx, key)
 		return
 	}
 	// The membership row itself stays. What has to be fresh for the next round is the
@@ -400,8 +418,53 @@ func (b *goldenBaker) destroy(ctx context.Context, key string) {
 		log.Printf("golden: destroying %s failed: %v", key, err)
 		return
 	}
+	b.quiet(key)
 	log.Printf("golden: destroyed the %s workspace", key)
 }
+
+// sweep is the cleanup for the case destroy cannot handle: the database has no
+// workspace to destroy, but the SERVICE and the HOME VOLUME of one are still in AWS.
+//
+// They are reachable only by tag, and the ordinary drift sweeper deliberately never
+// deletes a home — a detached home is what every stopped workspace looks like. So the
+// reserved bake workspaces need their own pass, and it is safe precisely because of the
+// two conditions that hold here and nowhere else: the name is one this file reserves,
+// and the database has just said nobody owns it.
+//
+// Silent when there is nothing to remove: tidy runs on every tick once a golden is
+// current, and a line a minute for "still nothing" is how a log stops being read.
+func (b *goldenBaker) sweep(ctx context.Context, key string) {
+	name, _, _ := b.mgr.workspaceNames(goldenTenantSlug, key)
+	removed, err := b.pool.sweepOrphans(ctx, name)
+	if err != nil {
+		b.warn(key, "golden: cleaning up what is left of %s failed: %v", name, err)
+		return
+	}
+	b.quiet(key)
+	if len(removed) > 0 {
+		log.Printf("golden: %s had no workspace row but was still in AWS; removed %s",
+			name, strings.Join(removed, ", "))
+	}
+}
+
+// warn logs a repeating failure once per distinct message. tidy runs every minute in
+// the steady state, and a cleanup that keeps failing for the same reason must be
+// visible without printing 1440 identical lines a day.
+func (b *goldenBaker) warn(key, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	if b.warned == nil {
+		b.warned = map[string]string{}
+	}
+	if b.warned[key] == msg {
+		return
+	}
+	b.warned[key] = msg
+	log.Print(msg)
+}
+
+// quiet forgets the last warning for a key, so the NEXT failure is printed even when it
+// reads the same as one that has since been resolved.
+func (b *goldenBaker) quiet(key string) { delete(b.warned, key) }
 
 func (b *goldenBaker) stop(ctx context.Context, res *resolved) {
 	if err := res.rt.Stop(ctx); err != nil {
