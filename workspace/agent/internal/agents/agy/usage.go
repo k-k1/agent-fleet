@@ -115,7 +115,7 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 var (
-	trustRe = regexp.MustCompile(`Do you trust the contents of this project\?`)
+	// trustRe（workspace trust 画面）は trustprompt.go 側で質問文から組む。
 	readyRe = regexp.MustCompile(`\? for shortcuts`)
 	// The quota panel's footer — once it renders, both group sections are on screen.
 	panelRe = regexp.MustCompile(`esc Close`)
@@ -139,13 +139,15 @@ var (
 
 // scrapeUsage runs the agy TUI in a scratch dir, drives it to the /usage panel,
 // and parses the group pools. The scratch dir keeps the workspace-trust prompt
-// away from real working copies; the prompt is auto-accepted when it appears
-// (our own empty dir — nothing to trust but itself).
+// away from real working copies, and is pre-trusted so the prompt never renders
+// (our own empty dir — nothing to trust but itself); answering it interactively
+// is only the fallback, same as scrapeContext.
 func scrapeUsage() (*usageResult, error) {
 	dir := filepath.Join(os.TempDir(), "af-agy-usage")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
+	EnsureWorkspaceTrusted(dir)
 	enforceTelemetryOff() // launch-time re-pin, same as BuildLaunch
 	cmd := exec.Command("agy")
 	cmd.Dir = dir
@@ -156,11 +158,12 @@ func scrapeUsage() (*usageResult, error) {
 	}
 	defer f.Close()
 
-	// First launch in the scratch dir shows the trust prompt; "Yes" is preselected.
+	// 事前 trust が効いていればこの画面は出ない。出た場合でも Enter は盲打ちしない
+	// （既定の選択肢は上流の都合で入れ替わる — trustprompt.go）。
 	if m := f.WaitFor(regexp.MustCompile(trustRe.String()+`|`+readyRe.String()), 25*time.Second); m == "" {
 		return nil, errString("agy did not reach the prompt (timeout)")
 	} else if trustRe.MatchString(m) {
-		if _, err := f.Ptmx.Write([]byte("\r")); err != nil {
+		if err := answerTrustPrompt(f); err != nil {
 			return nil, err
 		}
 		if f.WaitFor(readyRe, 20*time.Second) == "" {
