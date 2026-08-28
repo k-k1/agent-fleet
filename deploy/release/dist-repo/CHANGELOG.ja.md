@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.13.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.13.0) — 2026-08-28
+
+GitHub / Jira / Bitbucket の課題・プルリクエストが左ペインに並び、その 1 件から作業を
+始められるようになりました。`ecs-ec2` ではワークスペースごとにメモリ上限が入り、重い
+ワークスペース 1 つが箱ごと巻き添えにすることがなくなります。
+
 ## [0.12.4](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.4) — 2026-08-26
 
 0.12.3 に上げると `ecs-ec2` の Workspace が起動できなくなる不具合を直しました。0.12.3 を

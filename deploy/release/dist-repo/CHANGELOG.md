@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.13.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.13.0) — 2026-08-28
+
+Issues, pull requests and tickets from GitHub, Jira and Bitbucket appear in the left
+rail, and a session starts from the one you picked. On `ecs-ec2`, a workspace now has a
+memory limit of its own, so a heavy one can no longer take its machine down with it.
+
 ## [0.12.4](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.12.4) — 2026-08-26
 
 A workspace on an `ecs-ec2` deployment could not start after upgrading to 0.12.3. This
