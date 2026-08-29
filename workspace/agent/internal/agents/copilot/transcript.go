@@ -5,7 +5,7 @@ package copilot
 // assistant.message / tool.execution_start|complete / assistant.turn_end が
 // 描画対象で、deltas・reasoning などの ephemeral イベントはファイルに書かれない。
 // Turn.Idx は行番号由来の単調増加（Console の pendingEcho/MirrorView は idx
-// 単調前提 — agy 1ccb63e の教訓）。
+// 単調前提 — agy 7354916 の教訓）。
 
 import (
 	"bufio"

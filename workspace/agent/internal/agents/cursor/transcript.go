@@ -12,7 +12,7 @@ package cursor
 // ミラーはツール名/引数まで、出力は空。1 assistant ターンは複数行に跨り得る
 // （tool_use 行＋最終テキスト行）ので、user 行か turn_ended で flush する。
 // Turn.Idx は行番号由来の単調増加（Console の pendingEcho/MirrorView は idx 単調
-// 前提 — agy 1ccb63e の教訓）。
+// 前提 — agy 7354916 の教訓）。
 
 import (
 	"bufio"

@@ -27,7 +27,7 @@ docs/36 実測記録）。認証は GitHub トークン（gh CLI アプリの OA
    で同一形式・ライブ追記 — 実測）。transcript・live 状態分類（working/question/idle）
    を両ドライバ共通実装にし、TUI 文字列に依存しない（false-idle 教訓）。
 4. **セッション UUID は AF 側で外部採番**（`--session-id`、RFC4122 v4）。agy で
-   苦労した resume ID 捕獲（0008/docs/32 46271bb）は構造的に発生しない。
+   苦労した resume ID 捕獲（0008/docs/32 202e439）は構造的に発生しない。
 5. **認証は GitHub 連携相乗り**: 専用の Connections フローを作らない。
    `copilot.connected` は git プロバイダ GitHub 連携の導出値で、**GitHub 連携が先**。
    TUI は copilot 自身の gh フォールバック（ambient・実測で動作）、managed 子と
@@ -40,7 +40,7 @@ docs/36 実測記録）。認証は GitHub トークン（gh CLI アプリの OA
    stale-if-error）。Free 系バナー → 空 = ピッカーは既定（auto）のみ。
 7. **権限は防御実装**: fleet 既定は `--allow-all`（plan 起動時のみ外す）だが、
    `session/request_permission` は常に Interaction(question) へ写像し /respond で
-   構造化回答（「UI に出ないから発生しない」を信用しない — agy 3aaebf6 教訓）。
+   構造化回答（「UI に出ないから発生しない」を信用しない — agy df996e4 教訓）。
 8. **セッションの GitHub 同期・リモート操縦は既定オフ**（`--no-remote
    --no-remote-export`）— フリート外への会話流出と二重操縦を防ぐ。
 9. Steer は driver 内キュー（ACP に mid-turn 注入なし）、Fork なし、

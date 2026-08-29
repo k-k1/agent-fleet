@@ -309,8 +309,8 @@ af-workspace:0.10.1-dev-d7e0173c → sha256:497ca29360ed…   ← 同じ
 ### 72.6.5 ✅ 前検査（決定 6）も実機で両向き確かめた
 
 ```
-CpArch=x86_64 → :d7e0173c   ==> af-control-plane:… is an index of: amd64 arm64   → 通す
-CpArch=arm64  → :54033c64   ERROR: … is a SINGLE manifest …（exit 1）            → 落とす
+CpArch=x86_64 → :878e9782   ==> af-control-plane:… is an index of: amd64 arm64   → 通す
+CpArch=arm64  → :fa045a80   ERROR: … is a SINGLE manifest …（exit 1）            → 落とす
 ```
 
 **旧タグ（単一マニフェスト）は deploy の前に止まる。** これが無ければ、症状は

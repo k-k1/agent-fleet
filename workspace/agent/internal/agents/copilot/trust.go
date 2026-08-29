@@ -80,7 +80,7 @@ func writeConfigAt(p string, comments []string, m map[string]any) {
 // EnsureFolderTrusted pre-accepts copilot's folder-trust gate for dir — exactly
 // what copilot writes when the user answers "Yes, and remember this folder"
 // (実測). Best-effort and idempotent; called on every launch（一回きりの固定は
-// 後で剥がれる — agy 5a19080 の教訓）。
+// 後で剥がれる — agy 00dacc5 の教訓）。
 func EnsureFolderTrusted(dir string) {
 	if dir == "" {
 		return

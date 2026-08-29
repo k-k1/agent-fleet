@@ -274,7 +274,7 @@ func TestParseECRRef(t *testing.T) {
 	}
 }
 
-// ★ マージで静かに壊れる組み合わせ: 966106f4 のタスク定義再利用キャッシュ
+// ★ マージで静かに壊れる組み合わせ: 7ae97ea1 のタスク定義再利用キャッシュ
 // （同じスロットへの再 wake で再登録＋強制デプロイを避ける）と、この指紋スタンプ。
 //
 // スタンプは taskDefFingerprint が畳む入力の一部で、それは偶然ではなく**必須**である。
@@ -284,7 +284,7 @@ func TestParseECRRef(t *testing.T) {
 // 古いスタンプを持ったままになる＝**何度再起動しても消えないバッジ**になる。
 //
 // 逆に、ECR が一時的に引けなかっただけで指紋が動いてもいけない（不要な強制デプロイ＝
-// 966106f4 が消した Service Connect の 1〜2 分の窓が戻る）。両方をここで固定する。
+// 7ae97ea1 が消した Service Connect の 1〜2 分の窓が戻る）。両方をここで固定する。
 func TestECSEC2TaskDefReuseSeesTheImageStamp(t *testing.T) {
 	origFresh := freshness
 	defer func() { freshness = origFresh }()

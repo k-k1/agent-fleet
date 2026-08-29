@@ -13,10 +13,10 @@
 エージェント制御は 3 種とも「tmux 内 TUI＋send-keys 入力＋capture-pane スクレイプ＋注入 hooks＋
 ネイティブストア解析」で成立している。Codex TUI のモデル勝手切替バグ（利用率 93〜99% で
 `ThreadSettings` 連投→軽量モデルへ意図せず切替→圧縮。暫定対処 `hide_rate_limit_model_nudge` トグルは
-`2a6fe25` で main 済み）が露呈させたのは、**TUI 固有の対話にキー入力で応答する構成では、AF が構造化
+`9414525` で main 済み）が露呈させたのは、**TUI 固有の対話にキー入力で応答する構成では、AF が構造化
 イベントとして検知・制御できない**という限界。一方 Codex CLI 0.144.3 の `app-server`（双方向 JSON-RPC）は
 既に Workspace ごとに 1 プロセス常駐しており（`codex_appserver.go`、圧縮検知の read-only オブザーバ、
-`b5ee735`）、OpenCode には TUI 併用が公式サポートの `opencode serve`（HTTP＋SSE）がある。
+`fa7e47d`）、OpenCode には TUI 併用が公式サポートの `opencode serve`（HTTP＋SSE）がある。
 Claude だけは 1 プロセス集約の口がない（Agent SDK / stream-json は session 毎子プロセス、
 Remote Control は公開ローカル API なし）。
 

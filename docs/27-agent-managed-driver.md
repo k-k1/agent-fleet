@@ -12,7 +12,7 @@ P3（Codex managed 化 — 第2 Driver、daemon drain、双方向排他切替）
 
 > 発端は Codex TUI のモデル勝手切替バグ（週次利用率 93〜99% で `ThreadSettings` が 3 件連続送信され
 > `gpt-5.6-sol` → `gpt-5.4-mini` へ意図せず切替→直後にコンテキスト圧縮。複数セッションで再現）。
-> 暫定対処の `[notice] hide_rate_limit_model_nudge` トグルは main マージ済み（`2a6fe25`）。
+> 暫定対処の `[notice] hide_rate_limit_model_nudge` トグルは main マージ済み（`9414525`）。
 > 本書はその根本対処＝「端末スクレイプ＋キー入力エミュレーション」からの脱却を、
 > Codex 単体でなく 3 エージェント（codex / opencode / claude）横断のアーキテクチャとして設計する。
 > （追記 2026-07-21: 第3の Driver 実装として copilot が加わった — 共有 daemon でなく
@@ -68,11 +68,11 @@ write（制御）と subscribe（イベント）を足すこと**であり、rea
 （`program.go:51-54`）、AF は第 2 の WebSocket 接続で **read-only オブザーバ**として観測する。
 書き手は TUI だけなので競合はない。app-server 起動失敗時は従来の直接 TUI へフォールバックする（可用性優先）。
 
-P1 実装（2026-07-15）で観測対象を `contextCompaction` の item lifecycle（`b5ee735`）から
+P1 実装（2026-07-15）で観測対象を `contextCompaction` の item lifecycle（`fa7e47d`）から
 `account/rateLimits/updated`・`model/rerouted`・`thread/settings/updated`・`warning`・
 `thread/status/changed` へ拡張した。その際、**thread スコープ通知はスレッドをロードした接続にしか
 配送されない**（§12.1-1）と判明したため、observer が `thread/resume` で各スレッドに read-only
-アタッチする `codexObserver` を追加した——**b5ee735 の圧縮検知はアタッチなしでは本番で発火しない
+アタッチする `codexObserver` を追加した——**fa7e47d の圧縮検知はアタッチなしでは本番で発火しない
 実装だった**（P1 で修正）。
 
 ### 1.3 何が限界か
@@ -589,7 +589,7 @@ P1 の実装前検証（`codex app-server generate-json-schema` スキーマ突�
    `thread/status/changed`（ロード時 notLoaded→idle 等）程度。観測には observer 自身の `thread/resume` が
    必要で、実行中スレッドへの resume は in-memory インスタンスへの合流＝**rollout を変更しない**
    （sha256 実測）。TUI との二重アタッチも互いに影響しない（両接続が全通知を受信）。
-   帰結: b5ee735 の圧縮検知はアタッチなしでは不発だった（P1 で修正）。P2/P3 の Driver 購読も
+   帰結: fa7e47d の圧縮検知はアタッチなしでは不発だった（P1 で修正）。P2/P3 の Driver 購読も
    「resume＝subscribe」を前提にできる。
 2. **発端バグの切り分け規準**: `ModelRerouteReason` は 0.144.4 でも enum `highRiskCyberActivity` のみ＝
    **rate limit 起因のサーバ側 reroute は存在しない**。したがって利用率 93〜99% で起きた発端バグは

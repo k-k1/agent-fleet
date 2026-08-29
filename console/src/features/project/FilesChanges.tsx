@@ -8,7 +8,7 @@
 // viewer (same as the SCM pane's changes list) — EXCEPT an untracked file, which
 // git has no diff for: the working diff would be an empty pane, so the row opens
 // the file itself in the viewer instead. The row menu still offers 差分 for anyone
-// who wants it. Revived from the old FilesSection (deleted 52582b9), minus its
+// who wants it. Revived from the old FilesSection (deleted 0568750), minus its
 // file-management extras.
 import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";

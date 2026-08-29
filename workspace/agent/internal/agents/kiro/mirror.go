@@ -17,7 +17,7 @@ package kiro
 // <sid>.jsonl）。停止して handle が無いときはそちらを読む（driver.go managedTranscript の
 // フォールバック）ので、この buf は「生きた handle の live/replay 転写」を担う。
 //
-// Turn.Idx は単調増加（Console の pendingEcho/MirrorView は idx 単調前提 — agy 1ccb63e の
+// Turn.Idx は単調増加（Console の pendingEcho/MirrorView は idx 単調前提 — agy 7354916 の
 // 教訓）。tool_call_update の rawOutput はツール Part の Output に載せる。
 
 import (

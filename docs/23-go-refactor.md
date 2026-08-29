@@ -18,7 +18,7 @@
 >   機能別 register 関数 17 個に分散 + **authGate 除外レジストリ**（isAuthExempt のハードコード解消、
 >   同一判定テスト付き）/ manager.go を 6 ファイルに分割 + dockerInspectOut シーム /
 >   **manager.mu の DB I/O 跨ぎ直列化を解消**（per-membership build ロック、-race テスト付き —
->   本計画で挙動に触れた唯一のコミット 06b009f）/ Store を機能別サブインターフェース 17 個に再構成
+>   本計画で挙動に触れた唯一のコミット c828bff）/ Store を機能別サブインターフェース 17 個に再構成
 >   （gitGC を narrow view の実例に）/ グローバル可変 map 3 つを struct 化。
 >
 > **残タスク①〜③も完了**（2026-07-09 後半）:

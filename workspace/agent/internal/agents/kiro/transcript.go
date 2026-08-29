@@ -13,7 +13,7 @@ package kiro
 // する tool パートに出力を貼る（cursor では取れなかったツール出力がここでは載る）。
 // content の `data` は text では文字列・toolUse/toolResult ではオブジェクトなので
 // RawMessage で受けて kind 別にデコードする。Turn.Idx は行番号由来の単調増加
-// （Console の pendingEcho/MirrorView は idx 単調前提 — agy 1ccb63e の教訓）。
+// （Console の pendingEcho/MirrorView は idx 単調前提 — agy 7354916 の教訓）。
 
 import (
 	"bufio"

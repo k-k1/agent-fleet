@@ -19,7 +19,7 @@ package cursor
 // models は列挙のみ）、子プロセス毎の `--model` フラグで固定するのが確実。権限
 // （session/request_permission）は --force 運転では発生しない（実測: echo が確認なしで
 // 実行された）が、plan 起動では --force を外すため到達しうる。「UI に出ないから発生
-// しない」を信用せず（agy 3aaebf6 の教訓）、常に Interaction(question) へ写像する。
+// しない」を信用せず（agy df996e4 の教訓）、常に Interaction(question) へ写像する。
 
 import (
 	"encoding/json"

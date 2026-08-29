@@ -4,7 +4,7 @@
   read 層＋TUI＋managed driver＋配備＋CP/Console＋ライブ使用量配線を実装。`go build`/`go vet`/
   `gofmt`／`go test`＋`KIRO_LIVE=1` 実 `kiro-cli` 契約テスト／Console typecheck・i18n:lint・
   vitest・vite build 緑。Track A/B/C/A2 は全 P1 レビュー修正込みで develop へマージ済み
-  〔merge 1b912423〕、Track D は temp/kiro-track-d）。残＝実フリート再ビルド後の実機目視。
+  〔merge de2fb25b〕、Track D は temp/kiro-track-d）。残＝実フリート再ビルド後の実機目視。
 - 関連: [0023](0023-cursor-agent-kind.md)（cursor — 直近の種別追加・本件のテンプレ）、
   [0019](0019-copilot-agent-kind.md)（copilot — 紫色の前所有者）、
   [0008](0008-antigravity-cli-agent-kind.md)（agy — Terminal 専用 MVP・ContextReporter の先例）、
@@ -100,7 +100,7 @@ device-flow ログイン込みで全プローブを実施した（docs/43 §2）
 
 - Track A/A2/B/C 実装済み（2026-07-24）＝read 層＋TUI 状態＋v2 JSONL 転写／managed ACP driver／
   オンデマンド配備＋焼き込みノブ／CP・Console 配線＋色3種同時変更。全 P1 レビュー（9 件）修正込みで
-  develop へマージ（1b912423）。
+  develop へマージ（de2fb25b）。
 - Track D 実装済み（2026-07-24・temp/kiro-track-d）＝`_kiro.dev/metadata` のライブ context%／credits を
   %→token 変換で ContextBar（ミラー・ContextReporter 経由）と `get_session_usage`（context＋
   cumulative.credits）へ配線。headlessChat／API キー／プラン残量チップは決定7 のとおり見送り。

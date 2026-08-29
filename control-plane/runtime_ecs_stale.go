@@ -131,7 +131,7 @@ func (e *ecsEC2Runtime) Stale(ctx context.Context) bool { return e.base.Stale(ct
 // is not cosmetic: on the EC2 launch type this map is part of what taskDefFingerprint
 // hashes, so letting a transient ECR blip drop the label would change the fingerprint,
 // miss the task-definition reuse (reuseOrRegisterTaskDef) and force a deployment — the
-// 1-2 minute Service Connect window that commit 966106f4 exists to avoid. With no
+// 1-2 minute Service Connect window that commit 7ae97ea1 exists to avoid. With no
 // previous value at all it stays empty, i.e. "unknown", which is the safe side.
 func (e *ecsRuntime) stampImage(ctx context.Context) map[string]string {
 	key := ecrFingerprintKey(e.cfg.workspaceImage)

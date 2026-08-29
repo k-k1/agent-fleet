@@ -4,7 +4,7 @@ package main
 //
 // 折り込みの冪等性を担保しているのは watermark（`usage/state.json`）だが、**行を追記した
 // 直後・watermark を書く前**に落ちると、そのセッションの数ターン分は次のパスでもう一度
-// 追記される。commitSessionUsageFold で窓は1セッション分まで縮めた（b61854f2）が、窓自体は
+// 追記される。commitSessionUsageFold で窓は1セッション分まで縮めた（29bd9f2d）が、窓自体は
 // 消せない — 追記先（raw jsonl）と watermark（state.json）は別のファイルで、原子的に
 // 書けないため。**書き手側で完全に閉じられない以上、読み手側で落とす。**
 //

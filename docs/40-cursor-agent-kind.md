@@ -83,7 +83,7 @@
 
 ## 先に固定する契約
 
-**命名・色・アイコン**（5bf9800 教訓: 最初に確定）:
+**命名・色・アイコン**（cbdc4b8 教訓: 最初に確定）:
 
 | 項目 | 決定 |
 |---|---|
@@ -96,7 +96,7 @@
 
 | 項目 | 決定 |
 |---|---|
-| 対話ログイン | `NO_OPEN_BROWSER=1 agent login` が URL を標準出力に出す（実測）→ claude/agy と同じ start/complete 連携フロー（URL 抽出→Console 表示→ユーザーがブラウザで承認→完了検知）。OSC-8 汚染（agy 1e8a71d）に注意して URL 抽出 |
+| 対話ログイン | `NO_OPEN_BROWSER=1 agent login` が URL を標準出力に出す（実測）→ claude/agy と同じ start/complete 連携フロー（URL 抽出→Console 表示→ユーザーがブラウザで承認→完了検知）。OSC-8 汚染（agy a1b91c8）に注意して URL 抽出 |
 | API キー | `CURSOR_API_KEY` / `--api-key`（実測）→ codex 型の手動キー登録経路も併設（Dashboard 発行キー） |
 | 状態判定 | `agent status --format json`（実測: `{status:"authenticated", isAuthenticated, hasAccessToken, hasRefreshToken, userInfo:{email,userId,...}}` のクリーンな JSON） |
 | 資格情報の保存先 | **`~/.config/cursor/auth.json`**（実測・mode 600・`accessToken`/`refreshToken` の平文 JSON。**`~/.cursor` ではない**）→ `fs.go` denylist は **`.config/cursor` と `.cursor`** の両方（copilot `.copilot` と同じ平文トークン対策）。ホームボリュームに載るため recreate を跨いで持続 |
@@ -110,7 +110,7 @@
 - 権限は fleet 既定の bypass 相当: `--force`（=`--yolo`。**deny リストは引き続き有効**な設計 — 実測 help）。
   plan 起動は `--mode=plan`。ask モードは v1 非露出。
 - ヘッドレス経路の workspace trust は `--trust`。TUI 初回の trust プロンプト有無は要プローブ
-  （出るなら copilot 同様に設定ファイル事前追記 or `--trust` 相当で毎回スキップ、agy 5a19080 教訓で起動毎に再固定）。
+  （出るなら copilot 同様に設定ファイル事前追記 or `--trust` 相当で毎回スキップ、agy 00dacc5 教訓で起動毎に再固定）。
 - sandbox は既定 disabled（`cli-config.json` 実測）。v1 はそのまま（fleet コンテナ自体が隔離境界）。
 - **Cursor 自前の worktree 機能（`-w/--worktree`）は使わない** — セッション隔離は Console の
   worktree が正（`~/.cursor/worktrees/` に勝手に増えるのを避ける）。
@@ -136,7 +136,7 @@
 
 - **TUI**: claude と同型の working マーカー（beforeSubmitPrompt=turn 開始、stop=turn 終了）を
   `~/.cursor/hooks.json`（起動前に AF が配線・起動毎再固定）から status ファイルに書く →
-  `LiveState` の一次ソース。報告消失の教訓（19b3b92）を踏まえ同じ seam に乗せる。
+  `LiveState` の一次ソース。報告消失の教訓（38e7270）を踏まえ同じ seam に乗せる。
   転写は hooks payload の `transcript_path` が指す
   `~/.cursor/projects/<cwdスラグ>/agent-transcripts/<chatId>/<chatId>.jsonl`。
   形式は `{"role","message":{"content":[...]}}`（Anthropic content block 型・`tool_use` あり）＋
@@ -148,7 +148,7 @@
   `session/load` の全量リプレイ（user_message_chunk から再生 — 実測）で復元。
   状態は runTurn 境界（codex/copilot と同じ）。
 - TUI 文字列（スピナー/フッタ）には依存しない（false-idle 第3〜6次の教訓。週次リリースでドリフト前提）。
-  paneMode 分岐（1ab3eb9 教訓）用のフッタは §Track 0 実測結果 に採取済み。
+  paneMode 分岐（0b0a07f 教訓）用のフッタは §Track 0 実測結果 に採取済み。
 
 **managed 契約（ADR0015 / driver.go 準拠・Track 0 プローブで主要項目を確定）**:
 
@@ -160,10 +160,10 @@
 | streaming | `session/update` 通知: `agent_message_chunk` / `agent_thought_chunk` / `session_info_update` / `available_commands_update`（実測）＋ `tool_call`（公式 docs） | 実測 probe |
 | capabilities | `promptCapabilities.image:true`（画像添付可）・`sessionCapabilities.list`・`mcpCapabilities.http/sse`・modes は `agent`/`plan`（session/new 応答で列挙 — 実測） | 実測 |
 | Interrupt | `session/cancel`（公式 docs・copilot 同型。実装時に実測） | docs |
-| 質問/許可 | `session/request_permission`（allow-once/allow-always/reject-once — 公式 docs）→ Interaction(question)。`cursor/ask_question`（blocking 拡張）も question に写像。防御実装（agy 3aaebf6 教訓） | docs |
+| 質問/許可 | `session/request_permission`（allow-once/allow-always/reject-once — 公式 docs）→ Interaction(question)。`cursor/ask_question`（blocking 拡張）も question に写像。防御実装（agy df996e4 教訓） | docs |
 | Steer/Fork | ネイティブ無し見込み → driver 内キュー / `Fork:false`（TUI には `/fork` あり） | 実装時確認 |
 | Mode/Model | mode は session/new/load 応答に `modes` があり切替口あり → `DynamicMode` は実装時に set 系メソッドを確認。model は ACP で per-session 指定が見当たらず → copilot 同様 **子プロセス毎 `--model` フラグ**・`DynamicModel:false` | 実測＋docs |
-| 完了報告 | runTurn 境界で `MarkTurnStart/End`（notify seam、0c80377/451ff8b 教訓） | — |
+| 完了報告 | runTurn 境界で `MarkTurnStart/End`（notify seam、f3e63f6/eb3eb31 教訓） | — |
 | TUIAttach | `false`（codex/copilot 型の排他切替） | — |
 | 認証 | 子プロセスは `~/.config/cursor/auth.json` の ambient ログインで動く（実測: env 注入なしで完走）。`--api-key` 前置も可 | 実測 |
 
@@ -175,7 +175,7 @@
 JSONL 転写パス・形式確定（claude パーサ流用は不可だが専用パーサ容易）、hooks は TUI 経路で
 全発火（-p は shell のみ・ACP は不発火）、資格情報は `~/.config/cursor/auth.json`、
 auto-update 無効化の公式手段は**未発見**（versions 書込禁止 fallback で確定）。
-tmux 検証は `-L cursor-probe` 専用ソケット隔離を遵守（910cc9a 教訓）。
+tmux 検証は `-L cursor-probe` 専用ソケット隔離を遵守（e07671b 教訓）。
 
 ### Track A — workspace agent 本体（read 層 + TUI）— **実装済み（2026-07-23）**
 
@@ -188,17 +188,17 @@ Status() のみ（login start/complete は Track C）。以下は当初計画（
    - `program.go` — buildProgram（上記 launch 契約。`AGENT_CURSOR_CMD`/`AGENT_CURSOR_FLAGS` override 慣習）
    - `auth.go` — `Status()`（`agent status --format json` or 資格情報ファイル）＋ login start/complete フロー
    - `hooks.go` — `~/.cursor/hooks.json` へ AF 状態フック（stop/beforeSubmitPrompt）を起動前に配線
-     （起動毎に再固定、5a19080 教訓。ユーザー既存 hooks.json とのマージ規則を決める）
+     （起動毎に再固定、00dacc5 教訓。ユーザー既存 hooks.json とのマージ規則を決める）
    - `sids.go` — sid-store（slotSid → cursor chatId。create-chat 事前採番）
-   - `transcript.go` — JSONL 転写パーサ（Turn.Idx 単調採番 — 1ccb63e 教訓・pending 検知・ツール正規化）
+   - `transcript.go` — JSONL 転写パーサ（Turn.Idx 単調採番 — 7354916 教訓・pending 検知・ツール正規化）
    - `state.go` — `LiveState`（hooks 由来 status ファイル一次＋JSONL 末尾で補強）
    - `models.go` — `agent models` によるアカウント連動ライブカタログ（10 分キャッシュ・stale-if-error、
      copilot models.go と同じ agents.Flow 基盤。**スクレイプ不要でコマンドが公式にある**分 copilot より楽な見込み）
 2. 登録: `internal/session/session.go` `KindCursor`、`agent.go` agentRegistry、
    `connections.go` Status 集約、`agent_models.go` switch、`fs.go` denylist **`.cursor`**
-3. paneMode（`session_io.go`）: フッタ実測パターンで分岐（1ab3eb9 教訓・Track 0 で採取）。
+3. paneMode（`session_io.go`）: フッタ実測パターンで分岐（0b0a07f 教訓・Track 0 で採取）。
    tmux 内の改行は Ctrl+J（公式 docs — Shift+Enter 非対応）→ 投入経路 5 つ
-   （launch-seed / send_to_session / /turn / 保留中 / paste）を監査（bb81e62 教訓）
+   （launch-seed / send_to_session / /turn / 保留中 / paste）を監査（69fde0b 教訓）
 4. GracefulStop: TUI の終了コマンド実測（Ctrl+D 二度押し — 実測 help/docs）→ `stop.go`
 
 ### Track A2 — managed driver — **実装済（2026-07-23）**
@@ -260,7 +260,7 @@ chatId は別空間）。
 4. boot-install fallback（`BAKE_AGENT_CLIS=0` lean 経路）: `versions.json` の
    `cursor`＋`cursor_sha256` で版付き tarball を `~/.local` へ導入（agy boot と同経路）。
 5. entrypoint で `cli-config.json` の `channel:"static"` を起動毎再固定（channel 鍵のみ・
-   他キー保存・JSON でなければ触らない — 5a19080 教訓）。
+   他キー保存・JSON でなければ触らない — 00dacc5 教訓）。
 6. `deploy/local/e2e-smoke.sh` に cursor 版検証・lean 不在検証・`versions.json`
    （cursor＋cursor_sha256）検証を追加（**非公開 URL 仕様のドリフト一次検知**）。
 7. **linux arm64**: 配布資産の健全性は検証済（arm64 tarball の bundled `node` と native
@@ -313,13 +313,13 @@ chatId は別空間）。
 2. MCP kind enum: `mcp_stdio.go`（create_session driver 注入・list_models whitelist の
    `!=` 連鎖＋エラー文＋スキーマ記述・get_session_usage/get_agent_usage の注記）＋
    `control-plane/mcp.go`（同項目＋list_my_sessions/create_session 記述）の**両方**を総ざらい
-   （413b696 教訓）。
+   （351fdf6 教訓）。
 3. Console:
    - `types/session.ts` — union / SESSION_KINDS（表示順どおり codex と copilot の間へ挿入）/
      ConnectionsStatus.cursor
    - `agents/registry.ts` — descriptor（**caps 全項目を明示決定**した — chat/transcript/model/
      tuiStartMode/runsInDir/launchableFromRepo のみ true。effort は**モデル id に畳まれる**ため
-     false、fork は TUI 限定で false、contextBar/imagePaste は v1 未配線で false=f49e162/41c78b0
+     false、fork は TUI 限定で false、contextBar/imagePaste は v1 未配線で false=91e209e/2aa00a5
      教訓）。`managedDriver:true`（Track A2）・`tuiMemoryCost:""`（per-session child・copilot 同型）・
      icon=`inspect`（cursor 相当の codicon が無いためポインタで代替）・color=ローズ `#d96ba1`/
      `#b0316e`・short=`cu`・repoLaunchKinds へ挿入
@@ -337,7 +337,7 @@ chatId は別空間）。
    - `questionKeys.ts`: 変更不要 — managed 質問は buildRespondAnswers（汎用・kind 非依存）、
      TUI cursor は v1 で "question" を出さない（許可待ち検知は Track D）。
 4. availability: registry の `available` 述語＝`supported!==false && connected`（agy/copilot
-   同型）。conns 未取得時は表示（rail の null=show-all）＝c6514b5 教訓に整合。
+   同型）。conns 未取得時は表示（rail の null=show-all）＝30886a1 教訓に整合。
 5. bridge: `internal/bridge/format.go` kindLabel に `case "cursor": return "Cursor"`
    （registry.ts と同期コメント維持）。
 
@@ -382,21 +382,21 @@ chatId は別空間）。
 
 | 過去の指摘 | cursor での対応 |
 |---|---|
-| resume ID 取得不能（agy 46271bb） | AF 側採番の chat ID を `--resume` に渡して構造的に回避（copilot `--session-id` と同型。当初計画の `create-chat` 事前採番は Track A で自己採番 v4 UUID へ変更 — §Track A の実測反映） |
-| auth URL の OSC-8 汚染（agy 1e8a71d） | login start/complete フローの URL 抽出で同対策を最初から適用 |
-| tmux kill-server 全滅（agy 910cc9a） | probe/E2E は `-L cursor-probe` 専用ソケット隔離 |
-| Turn.Idx 未採番（1ccb63e） | transcript.go 単調採番＋単調増加テスト |
-| paneMode 分岐漏れ（1ab3eb9） | Track 0 でフッタ実測 → 実装。改行 Ctrl+J の投入経路監査（bb81e62）込み |
-| MCP ツール欠落（413b696） | mcp_stdio.go / CP mcp.go 総ざらい済（Track C — create_session driver・list_models whitelist・各 usage 記述） |
-| turn 終端未検出→報告不発（0c80377/19b3b92） | hooks stop を status seam に乗せ、managed は MarkTurnStart/End |
-| caps 明示漏れ（f49e162/41c78b0） | descriptor caps 全項目を明示決定済（Track C — effort/fork/contextBar/imagePaste は根拠付きで false） |
-| 権限「発生しない前提」崩壊（agy 3aaebf6） | request_permission / ask_question を防御実装 |
-| conns ローディング中の誤露出（c6514b5） | connsDone ゲート |
-| 設定の一回きり固定（agy 5a19080） | hooks.json / trust / auto-update 封殺は起動毎に再固定 |
+| resume ID 取得不能（agy 202e439） | AF 側採番の chat ID を `--resume` に渡して構造的に回避（copilot `--session-id` と同型。当初計画の `create-chat` 事前採番は Track A で自己採番 v4 UUID へ変更 — §Track A の実測反映） |
+| auth URL の OSC-8 汚染（agy a1b91c8） | login start/complete フローの URL 抽出で同対策を最初から適用 |
+| tmux kill-server 全滅（agy e07671b） | probe/E2E は `-L cursor-probe` 専用ソケット隔離 |
+| Turn.Idx 未採番（7354916） | transcript.go 単調採番＋単調増加テスト |
+| paneMode 分岐漏れ（0b0a07f） | Track 0 でフッタ実測 → 実装。改行 Ctrl+J の投入経路監査（69fde0b）込み |
+| MCP ツール欠落（351fdf6） | mcp_stdio.go / CP mcp.go 総ざらい済（Track C — create_session driver・list_models whitelist・各 usage 記述） |
+| turn 終端未検出→報告不発（f3e63f6/38e7270） | hooks stop を status seam に乗せ、managed は MarkTurnStart/End |
+| caps 明示漏れ（91e209e/2aa00a5） | descriptor caps 全項目を明示決定済（Track C — effort/fork/contextBar/imagePaste は根拠付きで false） |
+| 権限「発生しない前提」崩壊（agy df996e4） | request_permission / ask_question を防御実装 |
+| conns ローディング中の誤露出（30886a1） | connsDone ゲート |
+| 設定の一回きり固定（agy 00dacc5） | hooks.json / trust / auto-update 封殺は起動毎に再固定 |
 | ストア内部依存の false-idle（opencode 教訓） | store.db（SQLite blob）は読まない。hooks＋JSONL の公式契約のみ |
 | CP allowlist 漏れ（cp-rest-proxy-allowlist） | cursor login start/poll/DELETE は両 routes.go に同時登録済（Track C） |
 | 非公式 API の突然死（usage-chip 429） | 使用量チップ v1 不採用（Track D） |
-| インストーラ既存あり no-op（agy 6111248） | tarball 直展開のため非該当だが、焼き込み検証を e2e-smoke に追加 |
+| インストーラ既存あり no-op（agy 7306de7） | tarball 直展開のため非該当だが、焼き込み検証を e2e-smoke に追加 |
 
 ## 実測記録（2026-07-23、v2026.07.20-8cc9c0b linux-x64、本コンテナ）
 

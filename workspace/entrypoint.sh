@@ -712,7 +712,7 @@ PY
 # --disable-auto-update を全経路で渡すが、ユーザーが素で `cursor-agent` を叩いた
 # 場合の背景更新（~/.local へ home shadow を作り PATH で焼き込みを隠す）まで防ぐには
 # 恒久設定が要る。~/.cursor/cli-config.json の channel を "static" に固定する（起動毎
-# 再固定 — 5a19080 教訓）。channel 鍵のみ触り他は保存。JSON でなければ触らない。
+# 再固定 — 00dacc5 教訓）。channel 鍵のみ触り他は保存。JSON でなければ触らない。
 # self-update opt-in で ~/.local に shadow を入れた版にも同じ config が効くが、opt-in の
 # 更新は install.sh 明示実行なので無害（cursor 自身の背景更新だけを止める）。
 if command -v cursor-agent >/dev/null 2>&1; then

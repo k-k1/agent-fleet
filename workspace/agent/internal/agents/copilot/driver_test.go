@@ -189,7 +189,7 @@ func TestPermissionInteractionRoundTrip(t *testing.T) {
 		len(snap.Interaction.Questions) != 1 || len(snap.Interaction.Questions[0].Options) != 3 {
 		t.Fatalf("interaction wrong: %+v", snap.Interaction)
 	}
-	// 質問待ち中の自由文はガード（question_pending — bb81e62 の教訓）。
+	// 質問待ち中の自由文はガード（question_pending — 69fde0b の教訓）。
 	if err := h.Send(agents.TurnInput{Prompt: "x", ClientMessageID: "m2"}); err != agents.ErrQuestionPending {
 		t.Fatalf("want ErrQuestionPending, got %v", err)
 	}

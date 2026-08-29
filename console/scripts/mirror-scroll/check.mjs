@@ -130,7 +130,7 @@ const OPEN_SHARED = `(() => {
 })()`;
 // The reader, parked at the bottom, expands the last 作業過程 disclosure. The content grows
 // under them and they must STAY — snapping to the bottom would hide what they just opened
-// (the regression ef94ece fixed, and the reason the re-pin used to be time-boxed).
+// (the regression 7f871de fixed, and the reason the re-pin used to be time-boxed).
 const EXPAND_WORK = `(() => {
   const el = document.querySelector(".mirror-body");
   const heads = [...el.querySelectorAll(".mt-work-head")].filter((h) => h.getAttribute("aria-expanded") === "false");

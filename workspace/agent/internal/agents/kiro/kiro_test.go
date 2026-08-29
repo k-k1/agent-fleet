@@ -1,7 +1,7 @@
 package kiro
 
 // read 層のユニットテスト: 起動コマンド組み立て・v2 JSONL 転写のパース（tool 出力の
-// toolUseId 突合・Turn.Idx 単調 — agy 1ccb63e の教訓で必須）・TUI 文字列の状態分類・
+// toolUseId 突合・Turn.Idx 単調 — agy 7354916 の教訓で必須）・TUI 文字列の状態分類・
 // models JSON パース・cwd による sid 発見。フィクスチャは 2.14.1 の実測（docs/43）。
 
 import (

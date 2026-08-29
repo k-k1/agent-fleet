@@ -146,7 +146,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"flow_id": id, "url": url})
 }
 
-// sanitizeURL drops a trailing OSC-8 hyperlink remnant defensively（agy 1e8a71d
+// sanitizeURL drops a trailing OSC-8 hyperlink remnant defensively（agy a1b91c8
 // 教訓の予防 — cursor は実測で OSC-8 無しだが版ドリフトに備える）.
 func sanitizeURL(u string) string {
 	const scheme = "https://"

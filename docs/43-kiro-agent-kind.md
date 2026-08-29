@@ -1,6 +1,6 @@
 # 43. Kiro エージェント種別（kind=kiro・第8種）— Track 0 実測記録
 
-status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。**Track C（CP＋Console 配線・色3種同時変更）実装完了（2026-07-24・temp/snznjpk・§8）**。**Track A2（managed driver・`kiro-cli acp`）実装完了（2026-07-24・temp/kiro-track-a2・§9）**。**Track A/B/C/A2 は全レビュー修正込みで develop へマージ済み（merge 1b912423）**。**Track D（ライブ使用量の UI 配線）実装完了（2026-07-24・temp/kiro-track-d・§10）＋ADR0026 起票**。**ピン追従の修正（導入済み kiro が新ピンへ上がらない不具合）完了（2026-07-25・temp/syzjob2・§11）**。
+status: Track 0（着工前プローブ）完了＋方針4点決定（2026-07-24）。**Track A（workspace agent 本体・read 層＋TUI）実装完了（2026-07-24・temp/snznjpk）**。**Track B（配備・オンデマンド導入＋焼き込みノブ）実装完了（2026-07-24・temp/snznjpk・§7）**。**Track C（CP＋Console 配線・色3種同時変更）実装完了（2026-07-24・temp/snznjpk・§8）**。**Track A2（managed driver・`kiro-cli acp`）実装完了（2026-07-24・temp/kiro-track-a2・§9）**。**Track A/B/C/A2 は全レビュー修正込みで develop へマージ済み（merge de2fb25b）**。**Track D（ライブ使用量の UI 配線）実装完了（2026-07-24・temp/kiro-track-d・§10）＋ADR0026 起票**。**ピン追従の修正（導入済み kiro が新ピンへ上がらない不具合）完了（2026-07-25・temp/syzjob2・§11）**。
 関連: docs/40（cursor・章立てのテンプレ）/ docs/36（copilot）/ docs/32（agy）/ decisions/0015（managed driver）/ decisions/0026（本件の ADR）。
 
 ## 0. 対象と背景

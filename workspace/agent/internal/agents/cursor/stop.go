@@ -5,7 +5,7 @@ package cursor
 // cursor-agent はターン後に worker-server 常駐プロセスを残す（実測 — docs/40）ので、
 // kill-session でパネルを潰す前に一度だけ正規終了（Ctrl+D 二度押し — 実測/docs）を
 // 試し、CLI 自身に後片付けさせる。保留メニュー（許可/plan）が出ている間の Enter は
-// ハイライト行を承認してしまう（copilot 79fcd90 と同型リスク）——Escape で棄却して
+// ハイライト行を承認してしまう（copilot c639973 と同型リスク）——Escape で棄却して
 // から打つ。
 
 import (

@@ -4,14 +4,14 @@
 > 対象設計: [31-container-browser-pane.md](31-container-browser-pane.md)
 > 対象ADR: [decisions/0018-container-browser-pane.md](decisions/0018-container-browser-pane.md)
 > 前回レポート（修正前・不合格）: `feature/browser-pane-v1-container-verify:docs/31-container-browser-pane-verification.md`
-> 前提修正: screencast backpressure 修正（`8a9b9ea` = `812db07` を main へ統合、完成イメージへ反映済み）
+> 前提修正: screencast backpressure 修正（`b7ff65d` = `fe388b9` を main へ統合、完成イメージへ反映済み）
 > 本再検証で追加した修正: `workspace/agent/browser_manager.go` の `startScreencast` リトライ（§5.2）
 > 最終判定: **条件付き合格** — 前回の P0（screencast backpressure crash）は解消・全受入シナリオが継続描画に到達。ただし完成イメージには別系統の初回描画レース（§5）が残存しており、本ブランチの追加修正を焼き込んだ再ビルドを V1 サインオフの条件とする。
 
 ## 1. 結論
 
 完成イメージ（container `15592d470c28`、焼き込み `workspace-agent` build 時刻 2026-07-19 01:04:38 =
-merge `8a9b9ea`(01:01:07) より後、fix シンボル在中）で再検証した。
+merge `b7ff65d`(01:01:07) より後、fix シンボル在中）で再検証した。
 
 - **前回 P0（screencast backpressure crash）は解消**。1200×800 aggressive animation、2 Page 同時（5分）、
   最大 1600×1200、wheel、navigation/reload、Vite HMR のいずれも `reason=screencast backpressure` の

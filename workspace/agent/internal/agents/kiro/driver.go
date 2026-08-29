@@ -21,7 +21,7 @@ package kiro
 // per-session child を選ぶ理由: モデル/effort/agent-engine を子プロセスの起動フラグで固定
 // するのが確実（ACP に per-session のモデル指定口が無い）。権限（session/request_permission）は
 // --trust-all-tools 運転では発生しないが、plan 起動では --trust-all-tools を外すため到達
-// しうる。「UI に出ないから発生しない」を信用せず（agy 3aaebf6 の教訓）、常に
+// しうる。「UI に出ないから発生しない」を信用せず（agy df996e4 の教訓）、常に
 // Interaction(question) へ写像する。
 //
 // ライブ使用量（`_kiro.dev/metadata` の contextUsagePercentage / meteringUsage）は cursor で

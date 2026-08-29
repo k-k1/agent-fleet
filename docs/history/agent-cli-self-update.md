@@ -9,7 +9,7 @@
 そこで「使う人が自分で最新に保つ」を opt-in で可能にする。ただし版の一貫性は運用者の裁量に置く。
 
 関連: claude 固有の background auto-updater は root 所有ゆえ書けず "auto-update failed" を出していたので、
-別途 `DISABLE_AUTOUPDATER=1` で停止済み（`a5dda951` fix(workspace): claude の background auto-updater を無効化）。本機能の更新は**起動時のみ**で mid-session churn を作らない。
+別途 `DISABLE_AUTOUPDATER=1` で停止済み（`cf44464a` fix(workspace): claude の background auto-updater を無効化）。本機能の更新は**起動時のみ**で mid-session churn を作らない。
 
 ## 22.2 採用した仕組み（/usr/local を起動時に in-place 差し替え）
 

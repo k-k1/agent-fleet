@@ -8,7 +8,7 @@
 # for console changes (and widening e2e.yml's paths for our sake would drag in all its
 # jobs). workflow_dispatch inputs are also per workflow — codex's Tier2 and claude's
 # live-smoke actually shared a single `live` input and could not be run separately
-# (split in 10e9a50). One file per agent makes this coupling structurally impossible.
+# (split in 6e2f8ee). One file per agent makes this coupling structurally impossible.
 # Same shape: opencode-contract.yml / claude-tui-contract.yml. Version-skew monitoring
 # is cli-drift.yml.
 name: codex-contract

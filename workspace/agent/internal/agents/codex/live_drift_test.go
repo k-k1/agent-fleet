@@ -364,7 +364,7 @@ func TestLiveDriftCodexStopHookAndRollout(t *testing.T) {
 // simply answers instead of asking SKIPS rather than fails (best-effort, non-blocking).
 //
 // One outcome is NOT tolerated: codex refusing the tool ("unavailable in … mode"). That
-// is the exact regression 9c46074 fixed (the Default-mode opt-in silently lapsing), and
+// is the exact regression f03fbf8 fixed (the Default-mode opt-in silently lapsing), and
 // because an unknown -c key is ignored without complaint, a feature rename upstream
 // would reintroduce it invisibly. That case fails loudly.
 func TestLiveDriftCodexPendingQuestion(t *testing.T) {

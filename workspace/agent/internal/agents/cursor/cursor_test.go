@@ -1,7 +1,7 @@
 package cursor
 
 // read 層のユニットテスト: 起動コマンド組み立て・JSONL 転写のパース（Turn.Idx
-// 単調 — agy 1ccb63e の教訓で必須）・live 状態分類・models パース。フィクスチャの
+// 単調 — agy 7354916 の教訓で必須）・live 状態分類・models パース。フィクスチャの
 // 行形式は v2026.07.20 の実測（docs/40 実測記録）。
 
 import (

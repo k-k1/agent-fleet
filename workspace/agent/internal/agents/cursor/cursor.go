@@ -5,7 +5,7 @@
 //
 // セッション同一性は AF 側で採番した v4 UUID を `--resume <uuid>` で渡す方式
 // （実測: 未知の valid v4 は新規作成、既存は resume）——copilot の --session-id と
-// 同型で、agy の「resume UUID が取れない」問題（docs/32 46271bb）は構造的に発生
+// 同型で、agy の「resume UUID が取れない」問題（docs/32 202e439）は構造的に発生
 // しない。read 正本は Claude Code 互換 JSONL 転写（program.go transcriptPath）——
 // 非公開 SQLite（~/.cursor/chats/**/store.db）には依存しない（opencode ストア契約
 // 変更で false-idle を踏んだ教訓 — docs/40 決定 3）。認証は専用フロー型で、

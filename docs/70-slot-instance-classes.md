@@ -859,7 +859,7 @@ golden ベイカーは常に新規 home から始まるため構造的にこの�
 
 | | 証拠 |
 |---|---|
-| 合わなくなったスロットの解放 | `released slot i-0711ed3e5de6d168e`（`e1c3c59b` が実機で効いた） |
+| 合わなくなったスロットの解放 | `released slot i-0711ed3e5de6d168e`（`9dd96bd0` が実機で効いた） |
 | m8g のスロットに載る | `i-05ec4df1eedbfe787` m8g.large arm64・`af-slot-size=m8g.large` |
 | **home が同じボリュームのまま付け替わる** | `vol-00753f1f9376b8ee4`（新規作成されていない） |
 | task def の矛盾が解消 | `:22` = ARM64＋制約が新 m8g＋image は新タグ（`:21` は **ARM64＋m6i 制約**だった） |

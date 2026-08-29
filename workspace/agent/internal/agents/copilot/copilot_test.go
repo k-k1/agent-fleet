@@ -1,7 +1,7 @@
 package copilot
 
 // read 層のユニットテスト: 起動コマンド組み立て・trust 事前追記（コメント行
-// 保存）・events.jsonl のパース（Turn.Idx 単調 — agy 1ccb63e の教訓で必須）・
+// 保存）・events.jsonl のパース（Turn.Idx 単調 — agy 7354916 の教訓で必須）・
 // live 状態分類。fixture のイベント形は v1.0.73 実測（docs/36）。
 
 import (

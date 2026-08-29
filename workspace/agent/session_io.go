@@ -659,7 +659,7 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 	// Cap ~15s (slow sign-in) then proceed best-effort; a pending question/permission
 	// was already rejected above, so this can't stall on a widget.
 	// copilot: 同型 — trust 事前追記済みでもタブ UI の描画までコンポーザは無く、
-	// ブート画面に送った文字は無音で消える（1ab3eb9 の教訓）。フッタが readiness。
+	// ブート画面に送った文字は無音で消える（0b0a07f の教訓）。フッタが readiness。
 	if meta, ok := session.ReadMeta(name); ok &&
 		(meta.Kind == session.KindAgy || meta.Kind == session.KindCopilot || meta.Kind == session.KindCursor ||
 			meta.Kind == session.KindKiro) {
