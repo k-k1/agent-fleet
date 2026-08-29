@@ -21,7 +21,8 @@
 #   printf '%s' 'the term' | go run ./deploy/release/scan \
 #     --ledger /dev/null --add --id <id> >> deploy/release/forbidden.sha256
 #
-# ids: corp-* employer, name-* person, host-* internal host, repo-* internal repo
+# ids: corp-* employer, name-* person, host-* internal host or deployment domain,
+#      repo-* internal repo, acct-* cloud account id, zone-* DNS hosted zone id
 #
 # A person goes in as the FULL name, one entry per word order — never the given
 # name or the surname on its own. Measured on the real shipping set: a bare
@@ -39,3 +40,7 @@ ada4b71d52532a2a8eb08eb8a711bfa093e0c639ae1350006e9a697718b52393  7  a1b3500160c
 3227bbcb9b92e705e9d1d81fd3e9fb9bf1f3d8be3e1308e9d5f6a1d31f53f740  9  0bcbeba4ed79659a  repo-3
 ca4467f7d03e2069bc11316de87fff7c23685b2fad8a3d1fd86d4cf23cdf22f2  6  100b1cc235fac9b0  repo-4
 c94f2214e01c27ba83b3db5fa5848e7ba4865d8837d64fdd78e90441d2456bd9  7  aa5cbc0165b12707  repo-5
+cdcc708be148348d35d81cdba19a90605755a581f9098261f33daec490363e2a  6  19fa7a17dfa81d8b  host-2
+666efc485e367c972e1ebd79479d59511e4babb9eb5c43fae33614718f40bcb7  12  fca3f6adb802dfa8  acct-1
+b4502106e9e08932d261c2cb7636dbdd10a2d45a1290fa171852fe0daa4872ca  19  b581fffbe30f0e12  zone-1
+ab1bf996c2b6b015a8090eb0a75721e682aa2ad0e68ba20f7029c038bc73efbc  9  ae5d67e6610304da  host-3
