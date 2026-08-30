@@ -1,39 +1,51 @@
-# 0012. Go バックエンド内部リファクタ — internal 層化・2 バイナリ分離維持・共有モジュール見送り
+# 0012. Go backend internal refactor — layer into `internal/`, keep the two binaries separate, defer a shared module
 
-- 状態: 確定（2026-07-08）
-- 関連: [23-go-refactor.md](../log/23-go-refactor.md)（設計本体）/
-  [0011-console-rebuild.md](0011-console-rebuild.md)（Console 側の先行事例）
+English | [日本語](0012-go-internal-refactor.ja.md)
 
-## 背景
+- Status: decided (2026-07-08)
+- See also: [23-go-refactor.md](../log/23-go-refactor.md) (the design proper) /
+  [0011-console-rebuild.md](0011-console-rebuild.md) (the precedent on the Console side)
 
-CP（約 13.8k 行・54 ファイル）と Workspace Agent（約 16k 行・61 ファイル）はどちらもフラットな
-単一 `package main` で、境界がコンパイラに強制されていない。帰結として CP は god オブジェクト×2
-（`config` 133 ハンドラ / `manager` 責務過多 + DB I/O 跨ぎのロック）、Agent は CLI 3 種の
-並列コピー実装（transcript / auth / usage）と 11 のグローバルロック島を抱える。CI は存在せず、
-Console との API 契約は TS 型・Go 構造体・エラーコード文字列の三重手動同期。一方でロジック自体は
-健全で、Store / Runtime / Agent インターフェースという良い抽象が既にある — Console（docs/22）の
-「リビルドでないと解けない」とは逆に、こちらは**構造だけの問題**でありリファクタで解ける。
+## Context
 
-## 決定
+The CP (about 13.8k lines, 54 files) and the Workspace Agent (about 16k lines, 61 files) are
+both a flat single `package main`, so no boundary is enforced by the compiler. The consequences:
+the CP has two god objects (`config` with 133 handlers; `manager` with too many
+responsibilities and a lock held across DB I/O), and the Agent carries three parallel copies of
+the same implementation for the three CLIs (transcript / auth / usage) plus 11 islands of global
+locks. There is no CI, and the API contract with the Console is kept in sync by hand across three
+places: TS types, Go structs and error-code strings. The logic itself, though, is healthy, and
+good abstractions already exist in the Store / Runtime / Agent interfaces — unlike the Console
+(docs/22), where nothing but a rebuild would do, **this is purely a structural problem** and
+refactoring solves it.
 
-1. **各モジュール内で `internal/` パッケージに層化する**（機能不変・ワイヤ API 完全互換）。
-   両 Dockerfile はモジュールディレクトリ丸ごと COPY のため、モジュール内分割はビルド無変更で
-   通る。`//go:embed` 対象（migrations / knowledge）はパッケージと同伴移動。
-2. **CP↔Agent の 2 バイナリ分離は維持**。`preview` や SSM 系の「重複に見える」コードは
-   プロトコルの両端であり、信頼境界（Agent は VPC 内部のみ）として設計・文書化済み。統合しない。
-3. **共有 Go モジュール（go.work）は見送り**。モジュール横断の真の重複は `writeJSON` と ID 生成
-   程度で、Dockerfile 2 本のコンテキスト変更コストに見合わない。契約の型化（tygo 等による
-   TS 型生成）を本気でやる時に再検討。
-4. **安全網を先に敷く**（P0）: CI（gofmt / vet / test / build + Console build）、`main()` からの
-   `buildMux()` 抽出 + httptest スモーク、エラーコード文字列の const 化。golangci-lint は既存
-   コードへの指摘で red 開始になるため初期スコープから除外（後続 opt-in）。
+## Decision
 
-## 帰結
+1. **Layer into `internal/` packages within each module** (behaviour unchanged, wire API fully
+   compatible). Both Dockerfiles COPY the whole module directory, so splitting within a module
+   passes the build unchanged. `//go:embed` targets (migrations, knowledge) move with their
+   package.
+2. **Keep the CP↔Agent split into two binaries.** The code in `preview` and the SSM family that
+   "looks duplicated" is the two ends of a protocol, and it is designed and documented as a trust
+   boundary (the Agent is inside the VPC only). Do not merge them.
+3. **Defer a shared Go module (go.work).** The genuine cross-module duplication amounts to
+   `writeJSON` and ID generation, which does not justify the cost of changing the context of two
+   Dockerfiles. Revisit when we seriously take on typing the contract (generating TS types with
+   tygo or similar).
+4. **Put the safety net in first** (P0): CI (gofmt / vet / test / build plus the Console build),
+   extracting `buildMux()` out of `main()` plus an httptest smoke test, and turning error-code
+   strings into constants. golangci-lint is left out of the initial scope because it would start
+   red against the existing code (opt in later).
 
-- フェーズ順は P0（安全網）→ P1（Agent: runGit / fileStore[T] / decodeJSON 畳み込み → CLI 縦割り
-  `internal/agents/{claude,codex,opencode}` ほか）→ P2（CP: プリアンブルラッパー / ルート登録分散 /
-  `config`・`manager` 分解 / Store サブインターフェース）→ P3（任意: 契約の型化）。詳細は docs/23。
-- 挙動に触るのは `manager.mu` のロックスコープ修正 1 点のみ（単独 PR）。それ以外の wave は
-  純粋な再配置 + 畳み込みで、移動 wave とロジック wave を混ぜない。
-- transcript パーサ 3 本は統合せず、同一パッケージ境界・同一出力型に揃えて並列性を構造として
-  固定する（opencode usage 欠落等はインターフェースの未実装として可視化）。
+## Consequences
+
+- The phase order is P0 (safety net) → P1 (Agent: fold up runGit / fileStore[T] / decodeJSON,
+  then slice the CLIs vertically into `internal/agents/{claude,codex,opencode}` and so on) →
+  P2 (CP: the preamble wrapper, distributing route registration, breaking up `config` and
+  `manager`, Store sub-interfaces) → P3 (optional: typing the contract). Details in docs/23.
+- Exactly one change touches behaviour — fixing the lock scope of `manager.mu` — and it goes in
+  its own PR. Every other wave is pure relocation and folding; move waves and logic waves are
+  never mixed.
+- The three transcript parsers are not merged. They are aligned to the same package boundary and
+  the same output type, so the parallelism is fixed structurally (things like opencode's missing
+  usage become visible as an unimplemented part of the interface).

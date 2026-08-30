@@ -1,72 +1,94 @@
-# 0017. Console キーボード操作体系 — capture-phase 単一ディスパッチャ＋Leader/パレット＋再割当
+# 0017. The Console keyboard system — one capture-phase dispatcher, a Leader key and a palette, plus rebinding
 
-- 状態: 確定・P0〜P5 実装済み（2026-07-16）——P0（ディスパッチャ＋レジストリ）／P1（領域・ペイン移動）／
-  P2（Leader＋which-key＋コマンドパレット）／P3（モーダル focus-trap・メニュー/レール roving）／
-  P4（`?` チートシート＋ボタン inline ヒント）／P5（設定での再割当 UI＋端末入力優先トグル）
-- 関連: [29-keyboard-system.md](../log/29-keyboard-system.md)（設計本体・実装マップ）/
-  [0011-console-rebuild.md](0011-console-rebuild.md)（この体系が載る Console 基盤）/
-  [0016-i18n.md](0016-i18n.md)（将来、コマンド文言を lib/i18n へ集約する接続先）
+English | [日本語](0017-keyboard-system.ja.md)
 
-## 背景
+- Status: decided; P0–P5 implemented (2026-07-16) — P0 (dispatcher + registry) / P1 (moving
+  between areas and panes) / P2 (Leader + which-key + the command palette) / P3 (modal
+  focus-trap, roving in menus and the rail) / P4 (the `?` cheat sheet + inline hints on buttons) /
+  P5 (the rebinding UI in settings + the terminal-input-priority toggle)
+- See also: [29-keyboard-system.md](../log/29-keyboard-system.md) (the design proper and the implementation map) /
+  [0011-console-rebuild.md](0011-console-rebuild.md) (the Console foundation this system sits on) /
+  [0016-i18n.md](0016-i18n.md) (where command wording will eventually be collected, in lib/i18n)
 
-Console は 1 ワークスペースを複数ペイン（ターミナル / チャット / ファイル / 差分…）で同時に駆動する。
-だが操作の中心である **xterm はフォーカス中ほぼ全キーを PTY へ飲む**（`terminal/term.ts` の
-`attachCustomKeyEventHandler` が `Ctrl+*`／F1–F10 を軒並み `preventDefault` で握る。素通しの
-carve-out は Ctrl+C/V とズームのみ）。このため「ターミナルにフォーカスしたままアプリの操作をする」
-導線が事実上存在しなかった。マウス依存が強く、キーボードだけで完結できない。
+## Context
 
-## 決定
+The Console drives one workspace through several simultaneous panes (terminal / chat / files /
+diff, …). But **xterm, the centre of interaction, swallows almost every key to the PTY while
+focused** (`attachCustomKeyEventHandler` in `terminal/term.ts` takes `Ctrl+*` and F1–F10 across
+the board with `preventDefault`; the only carve-outs passed through are Ctrl+C/V and zoom). So
+there was effectively no way to "operate the app while the terminal has focus". Interaction
+depended heavily on the mouse and could not be completed from the keyboard alone.
 
-1. **単一の capture-phase ディスパッチャ**（`features/keys/dispatcher.ts`）が `window` の
-   keydown を capture フェーズで 1 本だけ購読する。xterm ハンドラも React の onKeyDown も
-   DOM ツリー上は window の子孫なので、**登録済みキーだけ** `preventDefault + stopPropagation`
-   で先に握り、未登録キーは素通しする（シェルは無傷）。これが xterm の grab を貫く唯一の機構。
+## Decision
 
-2. **ハイブリッド操作系**: Leader（`Ctrl/⌘+K`）＋ which-key ＋ コマンドパレット（`Ctrl/⌘+P`）＋
-   少数の直接アクセラレータ（`Alt` 修飾）。`Ctrl≡⌘`（`e.ctrlKey || e.metaKey` を 1 トークン `mod` に）。
-   IME 変換中（`isComposing`／keyCode 229）と auto-repeat は非発火。
+1. **A single capture-phase dispatcher** (`features/keys/dispatcher.ts`) subscribes to `window`
+   keydown exactly once, in the capture phase. Both the xterm handler and React's onKeyDown are
+   descendants of window in the DOM tree, so it takes **only registered keys** first, with
+   `preventDefault + stopPropagation`, and passes unregistered keys through (the shell is
+   untouched). This is the only mechanism that pierces xterm's grab.
 
-3. **キー正規化は `KeyboardEvent.code` 基準**（`lib/keys/chords.ts`）。`.key` は Mac の ⌥/Shift で
-   化けるため使わない（⌥+1→"¡"、Shift+k→"K" でも code は Digit1／KeyK）。Shift は独立修飾として保持
-   （`k` と `shift+k` は別バインド＝ペイン移動の hjkl/HJKL に使う）。
+2. **A hybrid interaction model**: Leader (`Ctrl/⌘+K`) + which-key + the command palette
+   (`Ctrl/⌘+P`) + a small number of direct accelerators (the `Alt` modifier). `Ctrl≡⌘`
+   (`e.ctrlKey || e.metaKey` collapsed into one token, `mod`). Nothing fires during IME
+   composition (`isComposing` / keyCode 229) or on auto-repeat.
 
-4. **Escape は capture で握らない**。overlay の閉じは escLayer が bubble フェーズで担う設計なので、
-   capture で Escape を stop すると全モーダル/メニューの Esc が壊れる。例外はリーダー保留中のみ。
-   overlay が開いている間はディスパッチャ自体を不活性化する（`escLayer.hasOpenOverlay()`）。
+3. **Key normalisation is based on `KeyboardEvent.code`** (`lib/keys/chords.ts`). `.key` is not
+   used because it mutates under ⌥/Shift on a Mac (⌥+1→"¡", Shift+k→"K", while code stays
+   Digit1/KeyK). Shift is kept as an independent modifier (`k` and `shift+k` are different
+   bindings — used for hjkl/HJKL pane movement).
 
-5. **レイヤリング**: 純ロジックは `lib/keys/`（`chords.ts`／`registry.ts`、store も DOM も import せず
-   vitest 対象）、ストア結合は `features/keys/`。コマンド DATA は 1 か所（`commands.ts` の
-   `ALL_COMMANDS`）に集約し、ディスパッチャ・which-key・パレット・チートシート・ボタンヒントが
-   すべてそこから読む＝表示と挙動が絶対にドリフトしない。
+4. **Escape is not taken in the capture phase.** Closing an overlay is escLayer's job in the
+   bubble phase by design, so stopping Escape during capture would break Esc for every modal and
+   menu. The only exception is while a leader key is pending. While an overlay is open the
+   dispatcher itself is deactivated (`escLayer.hasOpenOverlay()`).
 
-6. **【P5】再割当できるのは直接アクセラレータと 3 つのアプリ全体キー**（Leader / パレット / チートシート）
-   **だけ**。リーダー配下のシーケンス（`p r`、`w t` 等）は木構造ナビゲーションであり、任意再割当は
-   グループ木の衝突管理を複雑化し操作不能を招くリスクが高いので固定とする。上書きは
-   `Settings.keybindings`（`id → chord`、`""`＝明示無効化）に保存し、`features/keys/bindings.ts` の
-   `effectiveCommands()` / `boundChord()` が `ALL_COMMANDS` と予約キーに被せて解決する。純関数
-   `applyOverrides()`（`lib/keys/registry.ts`）で被せるので既存 consumer は `Command[]` を受け取る
-   だけで変わらない。localStorage＋サーバ（ui-prefs）同期の既存機構に相乗り＝クロスデバイス（`theme`
-   等の `DEVICE_LOCAL` には**含めない**——キー配列は環境依存ではなく作業様式の好み）。
+5. **Layering**: pure logic lives in `lib/keys/` (`chords.ts`, `registry.ts` — importing neither
+   the store nor the DOM, and covered by vitest); store coupling lives in `features/keys/`. The
+   command DATA is collected in one place (`ALL_COMMANDS` in `commands.ts`), and the dispatcher,
+   which-key, the palette, the cheat sheet and the button hints all read from it — so display and
+   behaviour can never drift.
 
-7. **【P5】端末入力優先トグル**（`Settings.terminalPriority`、既定 OFF）。ON のとき、端末フォーカス中は
-   全アプリショートカットを xterm へ素通しし、**Leader だけ**を生かす（tmux の prefix 方式）。Leader から
-   which-key／パレットで全操作に到達できる。Leader 自体も再割当可なので、Leader を無効化すれば「完全に
-   純粋な端末」も選べる。1 キーだけ残すのは、端末に閉じ込められない**脱出保証**のため。
+6. **[P5] Only the direct accelerators and three app-wide keys can be rebound** (Leader,
+   palette, cheat sheet). The sequences under the leader (`p r`, `w t`, …) are navigation through
+   a tree, and arbitrary rebinding would complicate collision management in that tree and risk
+   making the app unusable, so they are fixed. Overrides are saved in `Settings.keybindings`
+   (`id → chord`, with `""` meaning explicitly disabled) and resolved by `effectiveCommands()` /
+   `boundChord()` in `features/keys/bindings.ts`, layered over `ALL_COMMANDS` and the reserved
+   keys. The layering is done by the pure function `applyOverrides()` (`lib/keys/registry.ts`),
+   so existing consumers are unchanged — they still just receive a `Command[]`. It rides the
+   existing localStorage + server (ui-prefs) sync, i.e. cross-device (it is **not** in
+   `DEVICE_LOCAL` alongside `theme` — a key layout is a preference about how you work, not
+   something environment-dependent).
 
-## 却下した案
+7. **[P5] A terminal-input-priority toggle** (`Settings.terminalPriority`, off by default). When
+   on, every app shortcut passes through to xterm while the terminal has focus and **only the
+   Leader** stays live (tmux's prefix approach). Everything remains reachable from the Leader via
+   which-key or the palette. The Leader itself can also be rebound, so disabling it gives you a
+   "completely pure terminal" if you want one. Keeping exactly one key is the **guaranteed
+   escape** from being trapped in the terminal.
 
-- **エディタ風の 1 グローバルアクセラレータ体系（Ctrl+多数）**: xterm と全面衝突し、端末を使うほど
-  ショートカットが死ぬ。Leader 方式なら衝突面は 1 キーに畳める。
-- **キャプチャを使わず各コンポーネントで onKeyDown**: xterm の grab を貫けず、端末フォーカス中に無力。
-- **リーダーシーケンスまで完全再割当可**: UI とグループ木衝突検知が過大。直接キー＋予約キーで実利の大半を
-  カバーでき、シーケンスは意味づけ（p=pane 等）が強いので固定が妥当（決定 6）。
-- **端末優先で脱出キーを一切残さない**を既定にする: 端末に入るとキーボードで抜けられず事故る。既定は
-  Leader を残し、完全純粋端末は明示オプトイン（Leader 無効化）に留めた（決定 7）。
+## Options rejected
 
-## 影響
+- **An editor-style system of global accelerators (many Ctrl combinations)**: collides with
+  xterm across the board, so the more you use the terminal the more shortcuts die. A Leader
+  approach folds the collision surface down to one key.
+- **onKeyDown on each component instead of capture**: cannot pierce xterm's grab and is powerless
+  while the terminal has focus.
+- **Making even the leader sequences fully rebindable**: the UI and collision detection across
+  the tree would be excessive. Direct keys plus reserved keys cover most of the practical value,
+  and the sequences carry meaning (p = pane, and so on), so fixing them is right (decision 6).
+- **Defaulting to terminal priority with no escape key at all**: once you enter the terminal you
+  cannot leave with the keyboard, which is an accident waiting to happen. The default keeps the
+  Leader, and a completely pure terminal stays an explicit opt-in (disabling the Leader)
+  (decision 7).
 
-- ディスパッチャ／各 overlay は `effectiveCommands()`／`boundChord()` 経由になり、再割当が即時反映。
-- 設定に「キー操作」タブ（`features/settings/KeysTab.tsx`）を新設。再割当行＋キー記録（capture）＋衝突警告＋
-  端末優先トグル。設定モーダルは overlay ゆえディスパッチャが不活性で、記録用の capture リスナが安全に
-  キーを独占できる（Ctrl+P の印刷等だけ preventDefault で抑止）。
-- 文言は将来 [[0016-i18n]] の lib/i18n 経由に置換可能（レジストリ集約済で 1 か所で済む）。
+## Impact
+
+- The dispatcher and each overlay go through `effectiveCommands()` / `boundChord()`, so a
+  rebinding takes effect immediately.
+- A "keys" tab is added to settings (`features/settings/KeysTab.tsx`): rebinding rows, key
+  recording (capture), collision warnings and the terminal-priority toggle. The settings modal is
+  an overlay, so the dispatcher is inactive and the recording capture listener can safely take
+  every key (only things like Ctrl+P's print are suppressed with preventDefault).
+- Wording can later be routed through lib/i18n from [0016](0016-i18n.md) — the registry is
+  already centralised, so it is a single place.
