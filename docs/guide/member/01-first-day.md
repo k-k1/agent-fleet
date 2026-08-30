@@ -50,12 +50,12 @@ Each item maps to a regular operation as follows.
 | Connect an agent | ⚙ Settings → "Agents" tab |
 | Start chatting | "＋ (New chat)" in the left pane's Assistants section |
 | Connect a git provider | ⚙ Settings → "Git hosting" tab |
-| Clone a repository and start a session | "Start" on the workspace action bar ("Clone" in the left pane's "Repositories" section can also clone, clone-only) |
+| Clone a repository and start a session | "Start" on the workspace action bar ("Add" in the left pane's "Repositories" section can also bring one in, without launching) |
 
 ## Clone your first repository
 
 To put an agent to work, first bring the repository you'll work on into the workspace.
-Open **"Clone"** from **Repositories** in the left pane.
+Open **"Add"** from **Repositories** in the left pane and leave **Kind** on **Git**.
 
 - If you have a connected GitHub / Bitbucket, **"Pick from connections"** (the default) lets you choose the repository and branch from a list.
 - For anything not in the list, or not connected, use **"Enter URL"** and paste the clone URL.
@@ -65,6 +65,11 @@ Press **"Clone"** and the fetch starts; when it finishes, the repository appears
 **Repositories** list. From **"Launch"** on that row you can start your first session right
 away. Detailed steps and common pitfalls are collected in
 [04 Repositories and git](04-git.md).
+
+If you are starting something that does not exist anywhere yet, there is nothing to clone. Use
+**"+ Start" → "Start in a new folder…"** (or "Add" → Kind "New folder") to create an empty
+folder. It is `git init`ed as it is created, so from then on it behaves like any other
+repository.
 
 ## At the end of the day — is it OK to stop the workspace?
 

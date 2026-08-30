@@ -100,6 +100,31 @@ export async function cloneRepo(
   return awaitImport(job, toast, "rp.clone_failed");
 }
 
+// initRepo — POST /api/repos/init: 取り込み元が無いところから始める（~/repos/<name> を
+// 作って git init）。**ジョブを経由しない**のがクローン/チェックアウトとの違いで、それは
+// ネットワークを触らず数ミリ秒で終わるから —— 上の事故（60 秒で切れる応答を外形で補う）が
+// 起きようがない処理なので、結末はそのまま応答に入る。
+export async function initRepo(
+  name: string,
+  toast: (msg: string) => void,
+): Promise<{ ok: boolean; name: string }> {
+  let res: { error?: unknown; repo?: { name?: string } };
+  try {
+    res = await apiJSON("api/repos/init", "POST", { name });
+  } catch (e) {
+    toast(t("rp.init_failed", { err: String(e) }));
+    return { ok: false, name: "" };
+  }
+  if (res?.error) {
+    toast(t("rp.init_failed", { err: errText(res.error as never) }));
+    return { ok: false, name: "" };
+  }
+  const created = res?.repo?.name || name;
+  await useReposStore.getState().refresh();
+  revealNewRepo(created);
+  return { ok: true, name: created };
+}
+
 // svnCheckout — POST /api/repos/svn, the SVN twin of cloneRepo (docs/41).
 export async function svnCheckout(
   req: SvnCheckoutRequest,

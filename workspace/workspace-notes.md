@@ -129,14 +129,22 @@ network namespace. Anything outside your own working directory belongs to someon
   forbidden is changing **what it is** — `checkout`/`switch`/`branch -f`/`stash`, any merge that
   could conflict or add a merge commit, `git worktree remove`/`prune`, deleting it (worktree
   lifecycle, cleanup and the shelf are the Console's job).
-- **Keeping the parent's current branch fresh is a different thing, and someone has to do it.**
+- **Your worktree starts at the newest base; the parent clone is a separate question.**
   A new worktree is created in the parent with `git worktree add -b <new> <dir> <base>`, and
-  `<base>` resolves against the parent's **local** refs — that path never fetches (only an
-  existing-branch launch fetches and fast-forwards). A stale parent therefore forks every later
-  session off an old base, silently. So once the base branch has moved, refresh it:
-  `git -C ~/repos/<repo> pull --ff-only`, on a clean tree that already sits on that branch —
-  the same thing the Console's Fast-Forward on the repo row does. Dirty, or on another branch?
-  Stop there and tell the user; don't "fix" it by checking anything out.
+  `<base>` resolves against the parent's **local** refs — which nothing ever moves (the
+  auto-fetch loop only refreshes `origin/*`). So right after creating it the Console
+  fast-forwards **the new worktree** to `origin/<base>`, inside the worktree, leaving the
+  parent untouched: `git pull --ff-only origin <base>`. It is skipped, deliberately, when
+  the local base is ahead or has diverged (your unpushed work is the base you meant) and
+  when origin has no such branch.
+- **The parent clone's own branch therefore stays where it was, and that is fine** — nothing
+  is forked off it any more. Refresh it when *it* is what you want current (reading its diff,
+  comparing a worktree against it): `git -C ~/repos/<repo> pull --ff-only`, on a clean tree
+  that already sits on that branch — the same thing the Console's Fast-Forward on the repo row
+  does. Dirty, or on another branch? Stop there and tell the user; don't "fix" it by checking
+  anything out. **Never fast-forward a parent to "help" someone else's launch**: `pull
+  --ff-only` aborts only when the incoming commits touch a file that copy has modified — with
+  unrelated edits it succeeds and swaps files out under a session working there.
 - Worktrees share one object store, so `git fetch`, `git gc`, tag and branch writes are visible
   to everyone, and **a branch can be checked out in only one worktree at a time**. Which
   branches are taken is not fixed: the parent clone sits on whatever it was last left on, which

@@ -28,7 +28,8 @@ never be asked for a token on each clone or push.
 
 ## Clone a repository
 
-Open **"Clone"** in the **Repositories** section of the left pane. There are two sources.
+Open **"Add"** in the **Repositories** section of the left pane and pick **Git** under **Kind**.
+There are two sources.
 
 - **Pick from connections** (default) — choose a repository and branch from your connected GitHub / Bitbucket. Private repositories are marked with 🔒. Tabs for unconnected providers cannot be selected and show "Not connected (Settings → Git)".
 - **Enter URL** — enter a "Clone URL" (`https://…` / `git@…`) and "Branch (optional)". For repositories you are not connected to.
@@ -36,6 +37,22 @@ Open **"Clone"** in the **Repositories** section of the left pane. There are two
 If you specify **"New branch (optional)"**, a new branch is created from the base branch and
 checked out. When you do, you can also give the working copy its own folder via **"Folder name"**.
 Finally, click **"Clone"** to fetch it.
+
+## Starting with nothing to import from (a new folder)
+
+When you are starting something that does not exist anywhere yet, there is nothing to clone.
+Use **"Add" → Kind "New folder"** to create an empty folder under `~/repos`. The same thing is
+available from **"+ Start" → "Start in a new folder…"**, which continues straight into the
+**Start work** dialog once the folder exists.
+
+- The folder is **`git init`ed** as it is created. That is what makes it a row in the left pane,
+  with the usual review / commit / share / delete actions available. **A remote can be added
+  later** with `git remote add` in a terminal (creating a home for it in the internal git
+  provider is one way to do that).
+- **Until the first commit exists, a separate working copy (worktree) cannot be created** — git
+  cannot resolve HEAD yet — so launches during that window run directly in the folder (the launch
+  dialog says so). After one commit it behaves like any other repository.
+- The name must start with a letter or number and must not collide with an existing working copy.
 
 ### Submodules and Git LFS
 

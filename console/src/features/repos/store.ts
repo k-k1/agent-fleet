@@ -22,6 +22,11 @@ export interface Repo {
    * 空になった worktree の自動 prune も対象外になる。 */
   locked?: boolean;
 
+  /** まだ 1 つもコミットが無い git 作業コピー（`POST /api/repos/init` で作った直後、
+   * または空リモートのクローン）。ブランチ名はあるが HEAD が解決できないので
+   * `git worktree add` が通らない ——「新しい作業コピー」の選択肢はここでは出せない。 */
+  unborn?: boolean;
+
   /** Working-copy kind (docs/41): "git" (default/omitted) or "svn". SVN copies are
    * flat — no branch/ahead/behind/worktree — so the Console gates git-only actions
    * on it and shows the revision/URL below instead. */

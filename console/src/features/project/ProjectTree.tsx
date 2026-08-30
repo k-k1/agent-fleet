@@ -14,7 +14,7 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useReposStore, useLaunchTarget } from "../repos/store.ts";
 import { NewRepoModal } from "../repos/NewRepoModal.tsx";
-import { cloneRepo, svnCheckout } from "../repos/clone.ts";
+import { cloneRepo, svnCheckout, initRepo } from "../repos/clone.ts";
 import type { CloneRequest, SvnCheckoutRequest } from "../repos/clone.ts";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
 import { useRepoJobsStore } from "../repos/jobs.ts";
@@ -84,7 +84,7 @@ export const ProjectTree = memo(function ProjectTree() {
 
   // 取り込みの進行は Agent 側のジョブが正（docs/78）。ここは開始して結末を待つだけで、
   // 「取り込み中」の行は下の RepoJobRow が一覧から描く（タブを閉じても続いている）。
-  const doImport = async (start: () => Promise<{ ok: boolean; name: string }>, doneKey: "pj.cloned" | "pj.checked_out") => {
+  const doImport = async (start: () => Promise<{ ok: boolean; name: string }>, doneKey: "pj.cloned" | "pj.checked_out" | "pj.folder_created") => {
     const res = await start();
     // グループ選択中の取り込みはそのグループへ自動所属（docs/52 §1 — さもないと
     // 作った直後に絞り込みで見えなくなる）。
@@ -107,6 +107,9 @@ export const ProjectTree = memo(function ProjectTree() {
 
   const doClone = (req: CloneRequest) => doImport(() => cloneRepo(req, toast), "pj.cloned");
   const doSvnCheckout = (req: SvnCheckoutRequest) => doImport(() => svnCheckout(req, toast), "pj.checked_out");
+  // 取り込み元なしの新規フォルダ。ジョブを経由しないだけで、後片付け（グループ所属・
+  // このまま起動）はクローンと同じ道を通る。
+  const doInit = (name: string) => doImport(() => initRepo(name, toast), "pj.folder_created");
 
   return (
     <Section
@@ -159,7 +162,15 @@ export const ProjectTree = memo(function ProjectTree() {
           )}
         </div>
       </div>
-      {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} onSvnCheckout={doSvnCheckout} repos={repos} />}
+      {showClone && (
+        <NewRepoModal
+          onClose={() => setShowClone(false)}
+          onClone={doClone}
+          onSvnCheckout={doSvnCheckout}
+          onInit={doInit}
+          repos={repos}
+        />
+      )}
       {showShares && <ShareListModal onClose={() => setShowShares(false)} />}
       <ul className="sess-list proj-tree" ref={rail.ref} role="tree" onKeyDown={rail.onKeyDown}>
         {jobs.map((j) => (

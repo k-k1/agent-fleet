@@ -649,6 +649,19 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			dir, err = ensureWorktree(parent, req.Branch, nb, folderSeg)
+			if err == nil {
+				// 起点を origin の先端に合わせる（既存ブランチ経路の fastForwardWorktree と
+				// 同じ狙い）。base 未指定＝親の HEAD が起点なので、その現在ブランチ名で引く。
+				base := strings.TrimSpace(req.Branch)
+				if base == "" {
+					// gitCurrentBranch は detached を "(detached)" と答えるので、そのときは
+					// 引ける相手が無い＝何もしない（ブランチ名として投げると紛らわしいログが出る）。
+					if b := gitCurrentBranch(parent); b != "(detached)" {
+						base = b
+					}
+				}
+				fastForwardNewWorktreeToOrigin(dir, base)
+			}
 		}
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "worktree_failed", err.Error())

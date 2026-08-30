@@ -95,6 +95,12 @@ out an independent working copy (worktree) per session.
 - With "New worktree" you specify the base branch and an optional branch name. If the branch
   name is empty you get a provisional name `temp/…`; if you enter one, the worktree folder
   name is generated automatically from the branch name.
+- **The start point is brought up to origin's tip.** Right after the worktree is created, it is
+  fast-forwarded to `origin/<base branch>` — inside the new worktree only. A working copy's
+  local branches are never moved by a fetch, so without this a session forked from an old clone
+  silently starts weeks behind. **The parent working copy is left alone** (someone may be
+  working in it, and files must not be swapped out under them). When the local base is ahead or
+  has diverged, or origin has no branch of that name, the local base is used as before.
 - Launching from an existing worktree row launches directly in that worktree. Create new
   worktrees from the base repository.
 
@@ -112,7 +118,7 @@ repository's folders.
   branch switching, cleanup and worktree deletion behave exactly as before.
 - The last folder you launched in is remembered per repository and pre-filled next time.
 
-The standalone "Clone" under **Repositories** in the left pane also lets you specify a different
+The standalone "Add" under **Repositories** in the left pane also lets you specify a different
 folder name when you specify a new branch or when a working copy with the same name already
 exists ([04](04-git.md)). This is a separate path from creating a worktree in "Start working".
 

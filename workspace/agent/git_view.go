@@ -227,6 +227,14 @@ func handleRepoLog(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := gitx.Run(dir, args...)
 	if err != nil {
+		// An unborn branch (a folder from POST /repos/init, or a clone of an empty
+		// remote) has no commits, and `git log` calls that fatal. "No history yet" is
+		// not a failure to report — the graph view already answers it with an empty
+		// list, because `git log --all` exits 0 there.
+		if st, sErr := gitStatus(dir); sErr == nil && st.Unborn {
+			httpx.WriteJSON(w, http.StatusOK, map[string]any{"commits": []commitView{}})
+			return
+		}
 		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
 	}

@@ -95,6 +95,11 @@ interface LaunchModalProps {
   /** The working copy is an SVN checkout (docs/41): it has no worktree concept, so
    * the in-place location note drops the worktree wording. */
   isSvn?: boolean;
+  /** The git repository has no commit yet (`POST /api/repos/init`, or a clone of an
+   * empty remote). `git worktree add` cannot resolve HEAD there, so the caller drops
+   * allowWorktree and this explains WHY — otherwise the choice just silently vanishes
+   * for one repo and the user reads it as a bug. */
+  isUnborn?: boolean;
   onClose: () => void;
   /** Present when opened from the はじめる hub: はじめる に戻る returns to it. */
   onBack?: () => void;
@@ -147,7 +152,7 @@ function LaunchSection({ label, summary, warn = false, open, onToggle, children 
   );
 }
 
-export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, initialWorktree, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, onClose, onBack, initialPrompt, initialTitle, initialExistingBranch, initialNewBranch, initialWorktree, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -597,6 +602,8 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
               <span className="ui-field-hint">
                 {isSvn ? (
                   tr("launch.svn_direct_note")
+                ) : isUnborn ? (
+                  tr("launch.unborn_direct_note")
                 ) : (
                   <Trans k="launch.worktree_direct_note" vars={{ branch: branch || tr("launch.current_wc") }} components={[<code />]} />
                 )}
@@ -672,6 +679,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                     <label className="ui-field">
                       <span className="ui-field-label">{tr("launch.base_branch")}</span>
                       <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || tr("launch.base_default")} />
+                      {/* 起点は origin の先端に合わせる（Agent 側 fastForwardNewWorktreeToOrigin）。
+                          黙って起点が変わることにならないよう、ここで何をするか書いておく。 */}
+                      <span className="ui-field-hint">{tr("launch.base_origin_note")}</span>
                     </label>
                     <label className="ui-field">
                       <span className="ui-field-label">{tr("launch.branch_name")}</span>

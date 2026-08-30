@@ -519,8 +519,9 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           // OFF a worktree yields a confusing double-@ name off the wrong base. New
           // worktrees are created from the base clone (any base branch). SVN has no
           // worktree at all (docs/41), so it too launches in place only.
-          allowWorktree={!r.worktree && !isSvn}
+          allowWorktree={!r.worktree && !isSvn && !r.unborn}
           isSvn={isSvn}
+          isUnborn={!!r.unborn}
           onClose={() => setLaunchModal(false)}
           onLaunch={onStartWork}
         />

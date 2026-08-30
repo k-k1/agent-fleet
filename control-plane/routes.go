@@ -566,6 +566,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	rest := proxy.withResolved(proxy.rest)
 	mux.HandleFunc("GET /api/repos", rest)
 	mux.HandleFunc("POST /api/repos", rest)
+	mux.HandleFunc("POST /api/repos/init", rest) // 取り込み元なしの新規作業コピー（mkdir + git init）
 	mux.HandleFunc("DELETE /api/repos/{name}", rest)
 	mux.HandleFunc("POST /api/repos/{name}/lock", rest) // 削除ロック（docs/45）
 	mux.HandleFunc("GET /api/repos/{name}/status", rest)
