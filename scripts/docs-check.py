@@ -5,7 +5,7 @@ docs/ は「読者で切った棚」であり、その構造がそのまま配�
 （control-plane/workspace_docs.go の docsRolePrefixes）。棚の規約が崩れると
 配布範囲が静かに変わるので、規約は人間のレビューではなくここで機械検査する。
 
-検査は 9 本:
+検査は 10 本:
 
   links      相対リンクの実在（アンカーは無視）
   lang       二言語の閉包（en は .md へ、ja は .ja.md へ）と対訳の存在
@@ -14,6 +14,7 @@ docs/ は「読者で切った棚」であり、その構造がそのまま配�
   frozen     現役の棚から docs/log/（凍結アーカイブ）へリンクしていない
   ref        ref/ の表がコードの一次情報と一致し、かつ対訳と ✓ の立ち方が揃っている
   settings   設定タブの解説（use/12-settings）がタブの一覧（ref/settings）を覆っている
+  features   機能カタログのメンバー向けの行が、利用者の棚（use/）の手順を指している
   knowledge  アシスタント知識が機能カタログのメンバー向けの行を覆っている
   notes      全コンテナへ配る運用ポリシーが実在する棚だけを指している
 
@@ -547,6 +548,65 @@ def check_use_settings(f: Findings) -> None:
         )
 
 
+# 機能カタログのメンバー向けの行のうち、詳細列が use/ を指さなくてよいもの
+# （機能名 -> 理由）。⚠️ 理由つきで明示する。ここに足す前に「読者は本当に手順へ
+# 辿り着けるのか」を確かめること——`use/` を指していないのに例外にした行が、
+# まさに課題管理が 1 章も持たないまま緑だった形である。
+FEATURES_EXEMPT: dict[str, str] = {}
+
+# 詳細列の見出し（ロケール -> (ファイル名, 見出し語, メンバーを表す語)）。
+FEATURES_FILES = (
+    ("features.ja.md", "詳細", "メンバー"),
+    ("features.md", "Details", "member"),
+)
+
+
+def check_features(f: Findings) -> None:
+    """機能カタログのメンバー向けの行が、利用者の棚（use/）の手順を指しているか。
+
+    `ref/features` は「在るか・誰が使えるか」の索引で、**どうやるかはリンク先**だと
+    自分で宣言している。だから詳細列が能力表（`agents.md` / `repos.md`）しか指して
+    いない行は、読者にとっては行き止まりである——実際、作業項目の受信箱の行は
+    `repos.md`（どのプロバイダが何を出すか）だけを指しており、**機能そのものを書いた
+    章が use/ に 1 つも無いまま**カタログは埋まって見えていた。
+
+    見るのは**メンバー向けの行だけ**。管理者・運用者の行は読者が違い、行き先は
+    `admin/` `operate/` `ref/` になる。詳細列を持たない表（自分の設定）は、節の
+    前文が棚を指す形なので対象外——表の見出しに「詳細」が無いことで自動的に外れる。
+
+    ⚠️ 両言語それぞれを見る。`check_ref_parity` が見ているのは表の ✓ の形だけなので、
+    **片方の言語の行き先だけが古い**のはそこでは止まらない。
+    """
+    for name, details_head, member in FEATURES_FILES:
+        path = os.path.join(DOCS, "ref", name)
+        if not os.path.exists(path):
+            continue
+        header: list[str] = []
+        for line in read(path).splitlines():
+            s = line.strip()
+            if not s.startswith("|") or set(s) <= set("|-: "):
+                continue
+            cells = [c.strip() for c in s.strip("|").split("|")]
+            if details_head in cells:  # 表の見出し行
+                header = cells
+                continue
+            if not header or len(cells) != len(header):
+                continue
+            who = cells[header.index(details_head) - 2] if len(header) > 2 else ""
+            if not who.startswith(member):
+                continue
+            feature = cells[0]
+            if feature in FEATURES_EXEMPT:
+                continue
+            details = cells[header.index(details_head)]
+            if "../use/" not in details:
+                f.error(
+                    f"ref/{name}:「{feature}」の詳細が use/ を指していない"
+                    f"（{details or '空'}）"
+                    "——メンバー向けの行は、やり方が読める章を必ず 1 つ指すこと"
+                )
+
+
 def check_notes(f: Findings) -> None:
     """全コンテナへ配る運用ポリシーが、実在する棚だけを指しているか。
 
@@ -730,7 +790,7 @@ def main() -> int:
         default="",
         help=(
             "検査名をカンマ区切りで指定"
-            "（links,lang,header,vocab,frozen,ref,settings,knowledge,notes）"
+            "（links,lang,header,vocab,frozen,ref,settings,features,knowledge,notes）"
         ),
     )
     args = ap.parse_args()
@@ -755,6 +815,8 @@ def main() -> int:
         check_ref_parity(f)
     if run("settings"):
         check_use_settings(f)
+    if run("features"):
+        check_features(f)
     if run("knowledge"):
         check_knowledge(f)
     if run("notes"):
