@@ -5,7 +5,7 @@ docs/ は「読者で切った棚」であり、その構造がそのまま配�
 （control-plane/workspace_docs.go の docsRolePrefixes）。棚の規約が崩れると
 配布範囲が静かに変わるので、規約は人間のレビューではなくここで機械検査する。
 
-検査は 8 本:
+検査は 9 本:
 
   links      相対リンクの実在（アンカーは無視）
   lang       二言語の閉包（en は .md へ、ja は .ja.md へ）と対訳の存在
@@ -13,6 +13,7 @@ docs/ は「読者で切った棚」であり、その構造がそのまま配�
   vocab      利用者向けの棚に実装用語（AF_* / kind= / /api/）が漏れていない
   frozen     現役の棚から docs/log/（凍結アーカイブ）へリンクしていない
   ref        ref/ の表がコードの一次情報と一致し、かつ対訳と ✓ の立ち方が揃っている
+  settings   設定タブの解説（use/12-settings）がタブの一覧（ref/settings）を覆っている
   knowledge  アシスタント知識が機能カタログのメンバー向けの行を覆っている
   notes      全コンテナへ配る運用ポリシーが実在する棚だけを指している
 
@@ -439,6 +440,113 @@ def check_knowledge(f: Findings) -> None:
             )
 
 
+def table_first_column_under(path: str, heading: str) -> list[str]:
+    """`## <heading>` の節の中にある表の 1 列目（ヘッダ行を除く・出現順）。
+
+    ref/settings.md には表が 3 つある（個人設定 / テナント設定 / 配備の変数）ので、
+    ファイル全体から拾うと**テナント設定のタブまで use/ に要求してしまう**。
+    あちらは admin/ の担当で、読者が違う。
+    """
+    rows: list[str] = []
+    inside = False
+    header_seen = False
+    for line in read(path).splitlines():
+        s = line.strip()
+        if s.startswith("## "):
+            if inside:
+                break
+            inside = s[3:].strip() == heading
+            continue
+        if not inside or not s.startswith("|"):
+            continue
+        if set(s) <= set("|-: "):
+            continue
+        cell = s.strip("|").split("|")[0].strip()
+        if not header_seen:  # 表の見出し行
+            header_seen = True
+            continue
+        if cell:
+            rows.append(cell)
+    return rows
+
+
+def heading3_under(path: str, groups: tuple[str, ...]) -> list[str]:
+    """グループ見出し（`## <groups のどれか>`）の下にある `###` を出現順に返す。
+
+    グループの外の `###`（「いつ反映されるか」など）はタブではないので拾わない。
+    """
+    out: list[str] = []
+    inside = False
+    for line in read(path).splitlines():
+        s = line.strip()
+        if s.startswith("## "):
+            inside = s[3:].strip() in groups
+            continue
+        if inside and s.startswith("### "):
+            out.append(s[4:].strip())
+    return out
+
+
+# ref/settings.ja.md の個人設定タブのうち、use/12-settings.ja.md に節を持たなくてよいもの
+# （タブ名 -> 理由）。⚠️ 除外は必ず理由つきで明示する。理由なしで足せる除外リストは、
+# 「落ちたから消す」で埋まって素通りする検査に戻る。いまは 1 件も無い。
+USE_SETTINGS_EXEMPT: dict[str, str] = {}
+
+USE_SETTINGS_GROUPS_JA = ("個人設定", "接続", "ワークスペース")
+USE_SETTINGS_GROUPS_EN = ("Personal", "Connections", "Workspace")
+
+
+def check_use_settings(f: Findings) -> None:
+    """設定タブの解説（use/12-settings）が、タブの一覧（ref/settings）を覆っているか。
+
+    ref/settings の行は check_ref が Console のラベルと突き合わせているので、**画面が
+    増えれば ref/ には必ず行が増える**。しかし use/ を見る検査が無かったため、ref/ が
+    正しいまま use/ だけ穴が開いても全部緑のままだった（実際、課題管理とクラウド費用の
+    2 タブが**両言語とも**欠けていて、しかも ref/features が「意味は 12 設定」と
+    その空席を指していた）。ここはその 1 段を足す。
+
+    突き合わせるのは**日本語版どうし**。英語の ref/settings.md の行は Console の英語
+    ラベル（Keyboard / Read aloud …）で、use/12-settings.md の節見出し（Keys / Speech …）
+    とは一字一句同じではなく、名前で突き合わせられるのは ja 側だけである。英語版は
+    **節の数が対訳と同じか**で見る——片方の言語にだけ節を足した、はこれで捕まる。
+
+    ⚠️ 見るのは ref/settings.ja.md の**個人設定の表だけ**（`table_first_column_under`）。
+    """
+    ref = os.path.join(DOCS, "ref", "settings.ja.md")
+    use_ja = os.path.join(DOCS, "use", "12-settings.ja.md")
+    use_en = os.path.join(DOCS, "use", "12-settings.md")
+    if not all(os.path.exists(p) for p in (ref, use_ja, use_en)):
+        return
+
+    tabs = table_first_column_under(ref, "個人設定")
+    if not tabs:
+        f.error("ref/settings.ja.md: 個人設定の表が読めない（見出しか表の形が変わった）")
+        return
+    sections = heading3_under(use_ja, USE_SETTINGS_GROUPS_JA)
+
+    for tab in tabs:
+        if tab in USE_SETTINGS_EXEMPT:
+            continue
+        if tab not in sections:
+            f.error(
+                f"use/12-settings.ja.md: 設定タブの節が無い -> 「### {tab}」"
+                "（ref/settings.ja.md に在るタブは、両言語に節を書くこと）"
+            )
+    for name in sections:
+        if name not in tabs:
+            f.error(
+                f"use/12-settings.ja.md: タブに無い節が残っている -> 「### {name}」"
+                "（Console でタブが消えたか改名された）"
+            )
+
+    en = heading3_under(use_en, USE_SETTINGS_GROUPS_EN)
+    if len(en) != len(sections):
+        f.error(
+            "use/12-settings.md: タブの節の数が対訳と違う"
+            f"（en={len(en)} / ja={len(sections)}）"
+        )
+
+
 def check_notes(f: Findings) -> None:
     """全コンテナへ配る運用ポリシーが、実在する棚だけを指しているか。
 
@@ -620,7 +728,10 @@ def main() -> int:
     ap.add_argument(
         "--only",
         default="",
-        help="検査名をカンマ区切りで指定（links,lang,header,vocab,frozen,ref,knowledge,notes）",
+        help=(
+            "検査名をカンマ区切りで指定"
+            "（links,lang,header,vocab,frozen,ref,settings,knowledge,notes）"
+        ),
     )
     args = ap.parse_args()
 
@@ -642,6 +753,8 @@ def main() -> int:
     if run("ref"):
         check_ref(f)
         check_ref_parity(f)
+    if run("settings"):
+        check_use_settings(f)
     if run("knowledge"):
         check_knowledge(f)
     if run("notes"):
