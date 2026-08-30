@@ -1,7 +1,7 @@
 # 61. ログイン IdP — Google 固定から「汎用 OIDC ＋ GitHub」へ
 
 > 状態: **P0・P1 実装済み**（2026-08-14）／P2・P3・P4 は未着手
-> 意思決定: [decisions/0043](../decisions/0043-login-idp.md)
+> 意思決定: [decisions/0043](../decisions/0043-login-idp.ja.md)
 > 関連: [build/07-security.ja.md](../build/07-security.ja.md) §7.3（AUTH 3 モード＝現行契約） /
 > [build/06-data.ja.md](../build/06-data.ja.md)（`identity` / `membership`） /
 > [build/09-deploy.ja.md](../build/09-deploy.ja.md)（配布物の設定面） / [35-packaging.md](35-packaging.md)（4 ターゲットへ同じ設定を配る） /
@@ -134,7 +134,7 @@ CREATE INDEX idx_identity_provider_identity ON identity_provider(identity_id);
 ### ★ 改訂（2026-08-14・P1 実装時）— 別 email の結合そのものをやめた
 
 初版は「サインイン済みの状態で Console の『アカウントを追加』からもう一方の IdP を通せば結合する」
-（＝両方にログインできることが結合の証明・[決定 5](../decisions/0043-login-idp.md)）としていた。
+（＝両方にログインできることが結合の証明・[決定 5](../decisions/0043-login-idp.ja.md)）としていた。
 これを**撤回し、結合機構を作らない**。理由:
 
 - 両方にログインできることが証明するのは「その 2 つのアカウントを操作できる」ことまでで、

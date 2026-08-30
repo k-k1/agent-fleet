@@ -10,7 +10,7 @@
 
 関連: [70](70-slot-instance-classes.md) §70.8/§70.9（スロット側のアーキと multi-arch 化）・
 [35](35-packaging.md)（出荷経路）・[64](64-ec2-persistent-workspace.md)（ecs-ec2）。
-決定は [ADR 0053](../decisions/0053-cp-arch-and-availability.md)。
+決定は [ADR 0053](../decisions/0053-cp-arch-and-availability.ja.md)。
 
 ## 72.1 現状（2026-08-23・実物で確認）
 
@@ -416,7 +416,7 @@ CpArch=arm64  → :fa045a80   ERROR: … is a SINGLE manifest …（exit 1）   
 順序を付けるなら:
 
 1. `MultiAZ` をパラメータにする（既定 `false`。**コストが 2 倍になるので既定は動かさない**）。
-   ⚠️ [ADR 0044 決定 3](../decisions/0044-workspace-sizing.md) の「既定オフで出した機能は
+   ⚠️ [ADR 0044 決定 3](../decisions/0044-workspace-sizing.ja.md) の「既定オフで出した機能は
    存在しないのと同じ」が効くので、出すなら画面か README に「入れるとき」を書く。
 2. 定時実行の CAS 化と device flow の退避（§72.7.3 の 🔴 2 件）。
 3. そのうえで `CpDesiredCount` をパラメータにする。

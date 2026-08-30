@@ -32,7 +32,7 @@ Updated: 2026-07
 |---------------|----------|--------|
 | `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | 空・`local`・`docker` = Docker Engine（既定）/ `ecs`・`aws` = ECS 🚧 / `native`・`wsl` = コンテナレス（ホストプロセス・`AUTH=dev` 必須）。未知値は起動時 fail-fast |
 | `Store` | `AF_DB`（SQLite パス）/ `AF_DATABASE_URL` ほか `AF_DB_*` | SQLite（既定・pure-Go）/ Postgres |
-| `KeyCustodian` | `AF_MASTER_KEY` の有無 | 設定時 = localCustodian / 未設定 = 暗号化なし（dev のみ）。KMS/Vault は 📋 seam のみ（[decisions/0005](../decisions/0005-envelope-custodian.md)）|
+| `KeyCustodian` | `AF_MASTER_KEY` の有無 | 設定時 = localCustodian / 未設定 = 暗号化なし（dev のみ）。KMS/Vault は 📋 seam のみ（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)）|
 | `AuthGateway` | `AUTH` | `dev` / `oauth` / `proxy`（[07 §7.3](07-security.ja.md)）|
 | Ingress / TLS | （CP 外・形態で決まる）| Caddy（compose）/ Tailscale Funnel（local 運用）/ ALB+ACM（aws）|
 
@@ -61,10 +61,10 @@ https 前置きが Secure cookie の前提。
 |----------|------|------|------|
 | CP コア | `CP_ADDR`（`:8080`・実運用は `127.0.0.1:8099`）・`CONSOLE_DIR`・`AF_RUNTIME`（local）・`AF_DB`（`<WS_DATA>/control-plane.db`）・`PUBLIC_BASE_URL` | bind 先 / Console dist / Runtime 選択 / DB / 外部 URL | 本章 |
 | Workspace 起動テンプレ | `WS_IMAGE`・`WS_DATA`・`WS_MEMORY`（1g）・`WS_AGENT_PORT`（7700 起点の割当）・`WS_AGENT_HOST`（127.0.0.1）・`WS_JVM_DIR`・`WS_ENV`・`WS_SESSION_CMD` | CP が `docker run` に流し込む共通テンプレ | [04](04-agent.ja.md) |
-| L1 認証 | `AUTH`（dev）・`DEV_USER`（dev）・`AUTH_EMAIL_HEADER`・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_OIDC_PROVIDERS`＋`AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。許可リスト全空 = fail-closed。`TRUST` 未宣言の provider は無効化、有効な provider ゼロなら fatal | [07 §7.3](07-security.ja.md) / [61](../decisions/0043-login-idp.md) |
+| L1 認証 | `AUTH`（dev）・`DEV_USER`（dev）・`AUTH_EMAIL_HEADER`・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_OIDC_PROVIDERS`＋`AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。許可リスト全空 = fail-closed。`TRUST` 未宣言の provider は無効化、有効な provider ゼロなら fatal | [07 §7.3](07-security.ja.md) / [61](../decisions/0043-login-idp.ja.md) |
 | プロビジョン / 権限 | `AF_PROVISION`（auto）・`SUPER_ADMIN_EMAILS` | 未知 identity の自動受入ポリシー / 初期 super_admin | [06](06-data.ja.md) |
 | at-rest 暗号 | `AF_MASTER_KEY` | 未設定 = 平文（dev のみ）。**紛失 = crypto-shred**・データ領域と別金庫 | [07 §7.6](07-security.ja.md) |
-| git プロバイダ OAuth | **env は無い**（削除済み）| テナント管理者が Console（テナント設定 › 連携 › git プロバイダ OAuth）で登録する。`BITBUCKET_OAUTH_KEY/SECRET` は読まれず、`GITHUB_OAUTH_CLIENT_ID` は L1 の GitHub サインイン専用になった | [71](../decisions/0052-tenant-git-oauth.md) |
+| git プロバイダ OAuth | **env は無い**（削除済み）| テナント管理者が Console（テナント設定 › 連携 › git プロバイダ OAuth）で登録する。`BITBUCKET_OAUTH_KEY/SECRET` は読まれず、`GITHUB_OAUTH_CLIENT_ID` は L1 の GitHub サインイン専用になった | [71](../decisions/0052-tenant-git-oauth.ja.md) |
 | scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`（1h）・`AF_INTERACTION_IDLE_TIMEOUT`（既定=session。人の判断待ち・docs/75）・`AF_WS_IDLE_TIMEOUT`（2h）・`AF_PRESENCE_IDLE_TIMEOUT`（30m。打鍵の無い端末を在席と数える猶予・0 で無効）・`AF_IDLE_SWEEP_INTERVAL`・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング | [03](03-control-plane.ja.md) |
 | MCP | `AF_MCP_ENABLED` | CP `/mcp` エンドポイント有効化 | [08](08-integrations.ja.md) |
 | egress 🚧 | `AF_EGRESS_LISTEN`（:3128）・`AF_EGRESS_TOKEN`・`AF_EGRESS_{INGEST,POLICY}_URL`・`AF_EGRESS_PROXY_ADDR`・`AF_EGRESS_ENFORCE`・`AF_EGRESS_ALLOWLIST` | forward proxy サブコマンドと CP 集約 | [07 §7.8](07-security.ja.md) |

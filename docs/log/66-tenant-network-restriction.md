@@ -1,10 +1,10 @@
 # 66. テナント管理者が自分のテナントの「接続元ネットワーク」を絞れるようにする
 
 > 状態: 検討完了・**採用**（2026-08-17）。決定は
-> [ADR 0047](../decisions/0047-tenant-network-restriction.md)。
+> [ADR 0047](../decisions/0047-tenant-network-restriction.ja.md)。
 > 関連: [61-login-idp.md](61-login-idp.md)（誰が入れるかを決める既存の 3 層と、その中の
 > テナント門＝`checkTenantProvider`。本書はその隣に 1 つ足す） /
-> [ADR 0043](../decisions/0043-login-idp.md) 決定 24/25（「テナントの外へ届くものは運用者、
+> [ADR 0043](../decisions/0043-login-idp.ja.md) 決定 24/25（「テナントの外へ届くものは運用者、
 > テナントの中で閉じるものはテナント管理者」の線引き） /
 > [64-ec2-persistent-workspace.md](64-ec2-persistent-workspace.md) §64.26（公開したら
 > 9 時間で 172 件の探索が来た実測） / `deploy/aws/ecs/cfn/00-network.yaml`（`AlbIngressCidr`） /
@@ -138,7 +138,7 @@ git も `git clone http://<cp>/git/...` をコンテナの中から叩く。オ�
 ### 66.5.3 既定オフの機能は作らない
 
 `AF_TENANT_IP_RULES=on/off` のような運用者スイッチは**足さない**。
-[ADR 0044 決定 3 が一度も発火していなかった](../decisions/0044-workspace-sizing.md)（既定オフで
+[ADR 0044 決定 3 が一度も発火していなかった](../decisions/0044-workspace-sizing.ja.md)（既定オフで
 出した機能は存在しないのと同じ）を繰り返さないため。**「オフ」はリストが空であること**——
 それ以外の消し方を用意しない。
 

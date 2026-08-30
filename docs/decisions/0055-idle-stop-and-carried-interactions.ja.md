@@ -4,7 +4,7 @@
 
 - 状態: **採用**（2026-08-24）。検討・実測の記録は [docs/75](../log/75-idle-stop-and-pending-interactions.md)。
 - 関連: [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.ja.md)（live 状態を「促す次の一手」で分ける） /
-  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md)（停止＝スロット解放＝費用） /
+  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.ja.md)（停止＝スロット解放＝費用） /
   [docs/history/p3-9-idle-stop.md](../log/p3-9-idle-stop.md)（二段構えの原型）
 
 ## 背景

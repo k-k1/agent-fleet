@@ -2,7 +2,7 @@
 
 > 実施日: 2026-07-19
 > 対象設計: [31-container-browser-pane.md](31-container-browser-pane.md)
-> 対象ADR: [decisions/0018-container-browser-pane.md](../decisions/0018-container-browser-pane.md)
+> 対象ADR: [decisions/0018-container-browser-pane.md](../decisions/0018-container-browser-pane.ja.md)
 > 前回（修正前・不合格）: `feature/browser-pane-v1-container-verify:docs/31-container-browser-pane-verification.md`
 > 前回（backpressure 修正後・条件付き合格）: [31-container-browser-pane-verification-v2.md](31-container-browser-pane-verification-v2.md)（`verify/browser-pane-v1-recheck:88986ce`）
 > 対象イメージ: `b892d37`（＝`b7ff65d` backpressure 修正 ＋ `88986ce` 初回 attach レース修正を統合）を焼き込んだ完成イメージ

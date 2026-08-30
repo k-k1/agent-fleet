@@ -2,7 +2,7 @@
 
 > 実施日: 2026-07-18〜2026-07-19
 > 対象設計: [31-container-browser-pane.md](31-container-browser-pane.md)
-> 対象ADR: [0018-container-browser-pane.md](../decisions/0018-container-browser-pane.md)
+> 対象ADR: [0018-container-browser-pane.md](../decisions/0018-container-browser-pane.ja.md)
 > 最終判定: **不合格（要修正、V1リリースブロッカー）**
 
 ## 1. 結論

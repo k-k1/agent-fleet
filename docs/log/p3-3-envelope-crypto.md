@@ -1,6 +1,6 @@
 # 15. P3-3 実装プラン — per-deployment/tenant 封筒暗号鍵（custodian 抽象）
 
-> 🗄 **歴史的記録（完了）** — 決定と正直な限界は [decisions/0005](../decisions/0005-envelope-custodian.md)、現状は [HANDOFF §6.9](../HANDOFF.md)。以下は当時の実装プラン。
+> 🗄 **歴史的記録（完了）** — 決定と正直な限界は [decisions/0005](../decisions/0005-envelope-custodian.ja.md)、現状は [HANDOFF §6.9](../HANDOFF.md)。以下は当時の実装プラン。
 
 [12 Phase 3](../roadmap.md) の P3-3。Phase 2 / 現状の鍵は **単一 `AF_MASTER_KEY` → `HMAC(master, userKey)` を
 `AF_SECRET_KEY` として注入**（manager.secretKeyFor）。これを **封筒暗号 + custodian 抽象**へ昇格する。

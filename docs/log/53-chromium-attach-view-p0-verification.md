@@ -2,7 +2,7 @@
 
 > 判定: **P0 合格・未決5項目を契約化済み**（2026-08-02）
 > 実装契約: [53-chromium-attach-view.md](53-chromium-attach-view.md)
-> 意思決定: [decisions/0038](../decisions/0038-chromium-attach-view.md)
+> 意思決定: [decisions/0038](../decisions/0038-chromium-attach-view.ja.md)
 
 ## 1. 範囲と環境
 

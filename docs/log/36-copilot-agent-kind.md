@@ -1,7 +1,7 @@
 # 36. `kind=copilot`（GitHub Copilot CLI）実装計画 — Terminal + Managed 両対応
 
 - 状態: **実装済み**（2026-07-21 計画・同日実装完了。全トラック✅、実 CLI 契約テスト通過）。
-  採用判断は [decisions/0019](../decisions/0019-copilot-agent-kind.md)。事前調査・実バイナリ実測は本ドキュメント末尾 §実測記録。
+  採用判断は [decisions/0019](../decisions/0019-copilot-agent-kind.ja.md)。事前調査・実バイナリ実測は本ドキュメント末尾 §実測記録。
 - ゴール: `copilot`（GitHub Copilot CLI, npm `@github/copilot`）を第5のエージェント種別として組み込む。
   **agy と異なり v1 から Managed driver（既定）＋ Terminal (CLI) の両対応**とする。
 - 根拠: Copilot CLI v1.0.73（2026-02 GA）は `--acp`（Agent Client Protocol, JSON-RPC over stdio）・

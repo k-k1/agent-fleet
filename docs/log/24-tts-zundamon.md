@@ -1,8 +1,8 @@
 # 24. エージェント回答の音声読み上げ（TTS / ずんだもん・Polly）
 
 - 状態: Phase 1〜2 実装済み（2026-07-10, feat/tts-zundamon）。実機での音出し・AWS 実環境（Polly/ECS）の検証は未
-- 関連: [decisions/0013-tts-zundamon.md](../decisions/0013-tts-zundamon.md)（決定記録）/
-  [decisions/0005-envelope-custodian.md](../decisions/0005-envelope-custodian.md)（秘密情報の封筒暗号）/
+- 関連: [decisions/0013-tts-zundamon.md](../decisions/0013-tts-zundamon.ja.md)（決定記録）/
+  [decisions/0005-envelope-custodian.md](../decisions/0005-envelope-custodian.ja.md)（秘密情報の封筒暗号）/
   [history/p3-7-aws-adapter.md](p3-7-aws-adapter.md)（ECS アダプタ）/
   [build/03-control-plane.ja.md](../build/03-control-plane.ja.md) / [build/02-console.ja.md](../build/02-console.ja.md)
 

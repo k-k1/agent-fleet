@@ -1,7 +1,7 @@
 # 75. アイドル自動停止の条件整理と、保留中の対話の持ち越し
 
 > 状態: **P0〜P5 実装済み**（2026-08-24）。設計判断は
-> [decisions/0055](../decisions/0055-idle-stop-and-carried-interactions.md)。
+> [decisions/0055](../decisions/0055-idle-stop-and-carried-interactions.ja.md)。
 > 残り = ECS 実配備での 1 周確認（§75.8 の「実機」）と、許可の写し取りのうち実機で
 > 再現できなかった経路（§75.10.1 J）。
 > 前提となる既存実装は [history/p3-9-idle-stop](p3-9-idle-stop.md)（二段構えの導入）と

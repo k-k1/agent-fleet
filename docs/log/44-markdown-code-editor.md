@@ -1,7 +1,7 @@
 # docs/44 — Console Markdown / コードエディタ設計と Phase 0 契約
 
 > 正: 本書は Phase 0 で固定した設計契約。実装の詳細は各フェーズのコードとテストが正。/
-> ADR: [0027](../decisions/0027-markdown-code-editor.md) /
+> ADR: [0027](../decisions/0027-markdown-code-editor.ja.md) /
 > 対象: Console の既存 `file` ペイン + Workspace Agent の fs API
 
 ## 1. 固定する全体設計
@@ -690,7 +690,7 @@ identityから応答受信時にenvelopeを合成し、本節の検証をその�
 
 ### Phase 0（本変更）
 
-- [ADR 0027](../decisions/0027-markdown-code-editor.md) と本書で、CodeMirror 6、File ペイン拡張、
+- [ADR 0027](../decisions/0027-markdown-code-editor.ja.md) と本書で、CodeMirror 6、File ペイン拡張、
   Markdown/Marpの3モード対応、未保存本文のメモリ限定、一般AIセッションと提案生成チャネルの
   権限差が明記されている。
 - CAS保証を「比較時点までに観測した変更の検出 + 同一API保存の直列化」に限定し、外部writerとの

@@ -1,6 +1,6 @@
 # P3-6 実装プラン — MCP（管理面 + 作業面を一体・E が主目的）
 
-> ✅ **段1 完了（実装・ライブ検証済）** — 設計確定は [decisions/0006](../decisions/0006-mcp-unified.md)、フェーズ要約は [roadmap P3-6](../roadmap.md#p3-6-mcp-による-agent-fleet-制御管理面--作業面を一体で)。現状は [HANDOFF](../HANDOFF.md) を正とする。
+> ✅ **段1 完了（実装・ライブ検証済）** — 設計確定は [decisions/0006](../decisions/0006-mcp-unified.ja.md)、フェーズ要約は [roadmap P3-6](../roadmap.md#p3-6-mcp-による-agent-fleet-制御管理面--作業面を一体で)。現状は [HANDOFF](../HANDOFF.md) を正とする。
 >
 > **実装（段1）**: CP（migration 0006 / PAT store+API / `/mcp` Streamable HTTP / member-drive 4 ツール）・Agent（`/sessions/{name}/input|status|output`）・Console（設定→MCP タブで PAT 発行/失効）。run-dev.sh が `AF_MCP_ENABLED` を渡す。
 > **ライブ E2E green（2026-06-29, 運用者デプロイ）**: 運用者が write PAT 発行 → `/mcp` に Bearer 接続 → `list_my_sessions` で自分のセッション一覧 → `send_to_session`→`get_session_status`(working→idle)→`get_session_output` で **遠隔 claude を駆動し応答取得**（"PONG"）。**2 セッション並行駆動も確認**（ALPHA / BETA を別個に取得＝フリート駆動）。revoke→401。isolated dev E2E（別ポート+temp DB）で scope フィルタ（write=4・read=3、send は read で unauthorized）/ AF_MCP_ENABLED ゲート（無効→404）も green。
@@ -10,7 +10,7 @@ CP に `/mcp`（Streamable HTTP）を 1 本生やし、PAT で identity+membersh
 **member（自分の遠隔セッション駆動＝E）と admin（fleet 運用）を role で出し分ける**。
 **段 1 で E を動かす**のが本プランの主眼。新ロジックを足さない薄いラッパに保つ。
 
-## P3-6.0 確定スコープ（[0006](../decisions/0006-mcp-unified.md)）
+## P3-6.0 確定スコープ（[0006](../decisions/0006-mcp-unified.ja.md)）
 
 | # | 内容 |
 |---|------|

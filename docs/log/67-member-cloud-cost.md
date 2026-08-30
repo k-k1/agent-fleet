@@ -1,13 +1,13 @@
 # 67. メンバー毎の AWS 費用を、コスト配分タグを軸に見える化する
 
 > 状態: 検討完了・**採用（ただし範囲を絞る）**（2026-08-17）。決定は
-> [ADR 0048](../decisions/0048-member-cloud-cost.md)。
+> [ADR 0048](../decisions/0048-member-cloud-cost.ja.md)。
 > 関連: [46-usage-accounting.md](46-usage-accounting.md)（**トークン**の台帳。本書とは別軸で、
 > 名前が衝突する）／ `control-plane/usage.go`（**稼働秒**の showback。本書はここを金額へ
 > 延ばさない）／ [64-ec2-persistent-workspace.md](64-ec2-persistent-workspace.md)
-> ＋ [ADR 0045](../decisions/0045-ec2-persistent-workspace.md) 決定 8（1 スロット 1 ユーザー専有
+> ＋ [ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 8（1 スロット 1 ユーザー専有
 > ＝タグが個人に紐づく前提）・決定 21（**効かない項目を画面に出さない**／表示のためだけに
-> IAM を増やさない前例）／ [ADR 0044](../decisions/0044-workspace-sizing.md) 決定 3（既定オフで
+> IAM を増やさない前例）／ [ADR 0044](../decisions/0044-workspace-sizing.ja.md) 決定 3（既定オフで
 > 出して一度も発火しなかった前例）／ [66](66-tenant-network-restriction.md)（tenant_admin と
 > super_admin の線引き・直前の先例）
 > 対象: `control-plane/cloudcost.go`（新設）/ `cost_profile.go`（新設）/ `runtime_ecs_ec2.go` /
@@ -342,7 +342,7 @@ af-role         Inactive   LastUsedDate: 2026-08-01T00:00:00Z
   これは**プールが大きすぎることの実費**で、今まで数字で見えたことがない。
 - **共有カードは super_admin だけ**。tenant_admin にデプロイ全体の ALB / RDS 請求を
   見せるのは、テナントの外の情報を渡すことになる（[66](66-tenant-network-restriction.md) と
-  [ADR 0043](../decisions/0043-login-idp.md) 決定 24/25 の線）。
+  [ADR 0043](../decisions/0043-login-idp.ja.md) 決定 24/25 の線）。
 
 ## 67.8 ランタイム差——**AWS の請求が無い所にこの画面を出さない**
 

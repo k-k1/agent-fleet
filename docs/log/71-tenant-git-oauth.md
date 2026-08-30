@@ -1,6 +1,6 @@
 # 71. git プロバイダ OAuth をテナント管理者が設定する
 
-- 決定は [ADR 0052](../decisions/0052-tenant-git-oauth.md)。
+- 決定は [ADR 0052](../decisions/0052-tenant-git-oauth.ja.md)。
 - 関連: [08-integrations.md](../build/08-integrations.ja.md) §8.4（git 連携の現状）/
   [61-login-idp.md](61-login-idp.md) §61.11（テナント定義のサインイン方法 — **承認が要る側**の
   前例）/ [66](66-tenant-network-restriction.md)（テナント管理者が書ける面の前例）

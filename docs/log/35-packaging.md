@@ -32,7 +32,7 @@
 | # | アーティファクト | 中身 | 対象ターゲット |
 |---|---|---|---|
 | A | `agent-fleet-<v>.tar.gz` | compose deploy surface（compose.yml / Caddyfile / .env.example / backup / restore / load-images / README）**+ `aws/`（ec2-single cfn.yaml・ecs cfn/・release-ecr.sh・README）** | amd64 Linux・EC2-Single・ECS |
-| ~~B~~ | ~~`agent-fleet-images-<v>.tar.gz`~~ | **廃止（[ADR 0037](../decisions/0037-registry-policy.md)・2026-08-02）**。イメージは GHCR（`ghcr.io/k-k1/agent-fleet/{control-plane,workspace}`）で配る。レジストリに到達できないホスト向けに `release.sh --save` で手元生成する自助手順は残す（配布物ではない） | — |
+| ~~B~~ | ~~`agent-fleet-images-<v>.tar.gz`~~ | **廃止（[ADR 0037](../decisions/0037-registry-policy.ja.md)・2026-08-02）**。イメージは GHCR（`ghcr.io/k-k1/agent-fleet/{control-plane,workspace}`）で配る。レジストリに到達できないホスト向けに `release.sh --save` で手元生成する自助手順は残す（配布物ではない） | — |
 | C | `agent-fleet-native-<v>-linux-amd64.tar.gz`（**数十 MB**） | `af` ランチャ・`bin/af-cp`・`bin/bwrap`・`bin/git`（いずれも静的）・`rootfs.json`（R の URL + sha256 + rootfs 版のピン manifest — **rootfs 本体は同梱せず初回起動時に DL**）・`console/`（Vite dist）・`docs/`（ステージング源）・README。`--bundle-rootfs` で R 同梱の self-contained 版（air-gap/ファイル渡し用）も生成可 | native（WSL / 任意の Linux 単一ユーザー）**ホスト追加インストール ゼロ**（§35.3.1） |
 | R | `agent-fleet-rootfs-<r>-linux-amd64.tar.zst`（zstd 200MB 台目安） | **lean rootfs** = workspace イメージの配布 variant（OSS ユーザーランドのみ。エージェント CLI は起動時ピン版インストール、chromium＋CJK フォント・Go・AWS CLI+SSM plugin・ops MCP 群など利用者限定ツールはオンデマンドピン版インストール — §35.3.1・§35.4.1）。**公開の置き場**（§35.9-2）に置き、`af` が rootfs.json のピンで取得・検証。**版 `<r>` は app 版 `<v>` から分離** — イメージ不変のリリースでは再 DL なし | native（C から参照される） |
 | D | `SHA256SUMS` | A〜C のチェックサム | 全部 |
@@ -309,7 +309,7 @@ reset で掃除）。データ（`WS_DATA`）は外にあるので触れない�
    ECS まで立てられる」一つの箱になる。release.sh の cp 対象に `deploy/aws/` を足すだけ。
 2. **SHA256SUMS 生成**を release.sh に追加。
 3. **版刻印**（§35.6.1）を CP/agent のビルドに配線。
-4. ~~**レジストリ方針の決定**（§35.9 未決）~~ → **決着（2026-08-02・[ADR 0037](../decisions/0037-registry-policy.md)）**:
+4. ~~**レジストリ方針の決定**（§35.9 未決）~~ → **決着（2026-08-02・[ADR 0037](../decisions/0037-registry-policy.ja.md)）**:
    **イメージは GHCR で配り、B は廃止**。予見どおり `release.sh --push` を足すだけで済んだ
    （`REGISTRY` の間接参照が既にあったため）。
 5. **multi-arch イメージは今はやらない**。Dockerfile は arch 対応済みだが、buildx の
@@ -1073,7 +1073,7 @@ pool もいずれ掃除されるので延命にしかならない）。
 | native（C+R・ワンライナー導入の本線） | `build.sh` が明示的に **0** | 焼かない。初回起動の boot-install が `versions.json` のピンで取得 |
 | compose のイメージ（GHCR で配布） | `release.sh` は未指定 → Dockerfile 既定の **1** | 焼く |
 
-★**[ADR 0037](../decisions/0037-registry-policy.md)（B の廃止）はこの行を消していない。**
+★**[ADR 0037](../decisions/0037-registry-policy.ja.md)（B の廃止）はこの行を消していない。**
 B は「`docker save` で tar 化して配る」経路が無くなっただけで、**イメージ自体は同じものを
 GHCR へ push する**。したがって **compose のイメージは今も chromium を apt の厳密版 pin で
 焼いており、`ARG CHROMIUM_VERSION` が Debian の security 更新で腐ると publish のビルド段が
@@ -1185,7 +1185,7 @@ gh repo create k-k1/agent-fleet-dist --public \
 gh secret set DIST_PUBLISH_TOKEN   # プロンプトに PAT を貼る
 ```
 
-**GHCR の初回 push だけの追加手順（[ADR 0037](../decisions/0037-registry-policy.md)）**:
+**GHCR の初回 push だけの追加手順（[ADR 0037](../decisions/0037-registry-policy.ja.md)）**:
 コンテナパッケージは**初回 publish 時に private で作られる**（GitHub の仕様。repo が
 public でも自動では public にならない）。private のままだと利用者の
 `docker compose pull` が `unauthorized` で落ちる＝**compose 版の導入手順が丸ごと

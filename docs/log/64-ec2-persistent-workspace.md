@@ -1,7 +1,7 @@
 # 64. ECS の Workspace を EC2 起動タイプ ＋ インスタンス stop/start で持つ
 
 > 状態: 調査完了・**採用（実装中）**（2026-08-15）。決定は
-> [ADR 0045](../decisions/0045-ec2-persistent-workspace.md)。
+> [ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md)。
 > ⚠️ **§64.2〜§64.14 は「見送り」を結論としていた調査の記録である。** 同じ日のうちに利用者の判断で
 > **採用に転じた**（ADR 0045 決定 10。§64.10 の判定ゲートは**充足していない**）。
 > **採る形はプール型（§64.12）**で、**実装の設計は §64.15**。
@@ -9,7 +9,7 @@
 > 残存リソース 0 を確認済み・§64.14）。**第 2 ラウンドで「プール ＋ EBS 差し替え」と
 > 「初回ユーザー用 golden snapshot」も実測した**（§64.12 / §64.13）。
 > 関連: [63-workspace-sizing.md](63-workspace-sizing.md)（EFS が遅い実測と `~` の置き場の決定） /
-> [ADR 0044](../decisions/0044-workspace-sizing.md) 決定 4（「本当に必要なら EC2 ＋ stop」と書いた箇所） /
+> [ADR 0044](../decisions/0044-workspace-sizing.ja.md) 決定 4（「本当に必要なら EC2 ＋ stop」と書いた箇所） /
 > [62-ecs-start-latency.md](62-ecs-start-latency.md) §62.5 (d)（EC2 起動タイプを却下していた箇所・本書で改訂） /
 > [history/p3-7-aws-adapter.md](p3-7-aws-adapter.md) §20b.7（EFS を選んだ凍結仕様）
 > 対象（採るなら）: `control-plane/runtime_ecs.go` / `deploy/aws/ecs/cfn/` / `workspace/entrypoint.sh`
@@ -322,7 +322,7 @@ ADR 0012 の「アダプタは CP に状態を持たない」は**維持でき�
   起動時チェックで踏む）→ Start。
 - **退避 / 復帰**: §64.7。
 - **削除**: タスク停止 → `TerminateInstances` → **`DeregisterContainerInstance`（自動では消えない）**
-  → ボリューム／スナップショット削除。[ADR 0028](../decisions/0028-deletion-lock.md) の削除ロックの対象が増える。
+  → ボリューム／スナップショット削除。[ADR 0028](../decisions/0028-deletion-lock.ja.md) の削除ロックの対象が増える。
 - **`State()`**: 「サービスの desired/running」だけでは足りず、**インスタンスの状態との組**で
   `none / stopped / starting / running` へ写す必要がある（インスタンス起動中＝ `starting`）。
 - **EFS は捨てなくてよい。** 資格情報・identity（`homeKeep` の 7 つ・100 MiB 未満）だけを EFS の
@@ -540,7 +540,7 @@ Cloud Map 名前空間 / ロググループ / SG / IAM ロール / インスタ�
 
 ## 64.15 実装設計（P0・プール型・2026-08-15 に採用）
 
-[ADR 0045](../decisions/0045-ec2-persistent-workspace.md) 決定 10 で採用に転じた。ここは**実装前に紙で
+[ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 10 で採用に転じた。ここは**実装前に紙で
 確定させた設計**である（§64.9 は「1 ユーザー = 1 インスタンス固定」の設計案で、採らない）。
 
 - **形**: §64.12 のプール型（汎用スロット ＋ ユーザー毎 EBS の差し替え・ホット ＋ 排他 ＋ tmpfs ＋ 短い cleanup）
@@ -551,7 +551,7 @@ Cloud Map 名前空間 / ロググループ / SG / IAM ロール / インスタ�
 
 ### 64.15.1 資源と引き方（DB スキーマは増やさない）
 
-[ADR 0012](../decisions/0012-go-internal-refactor.md)「アダプタは CP に状態を持たない」は**維持できる**。
+[ADR 0012](../decisions/0012-go-internal-refactor.ja.md)「アダプタは CP に状態を持たない」は**維持できる**。
 占有は導出でき、確保の原子性は AWS の API に委ねられるためである。
 
 | 資源 | 引き方 | タグ |
@@ -953,7 +953,7 @@ mount が延々と再試行され、外からは「`starting` のまま何も起
 ## 64.18 Workspace の破棄と退避（決定 13・第 4 ラウンド）
 
 `Destroy` は §64.15 で実装したが、**呼び出し元がどこにも無い**（§64.15.9 (3)）。ここを埋める。
-決定は [ADR 0045 決定 13](../decisions/0045-ec2-persistent-workspace.md#決定-13--workspace-の破棄に継ぎ目を作る自動経路は退避までしかやらない)。
+決定は [ADR 0045 決定 13](../decisions/0045-ec2-persistent-workspace.ja.md#決定-13--workspace-の破棄に継ぎ目を作る自動経路は退避までしかやらない)。
 
 ### 64.18.1 配線しようとして分かったこと（3 件）
 
@@ -1671,7 +1671,7 @@ codex / opencode / copilot / cursor / kiro とシェルは tier 2（ワークス
 
 ## 64.27 サイズ選択が `ecs-ec2` と噛み合っていない（2026-08-17）
 
-決定は [ADR 0045](../decisions/0045-ec2-persistent-workspace.md) 決定 21。
+決定は [ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 21。
 ここは**そこへ至る調査**である。出発点は「ユーザー／テナントが選ぶのはメモリと CPU なのに、
 `ecs-ec2` は `slotTypeFor(memBytes)` でメモリだけを見ている。実態と合っているか」。
 
@@ -2045,7 +2045,7 @@ seed → boot → capture → snapshot → probe → published
 
 ## 64.31 空きスロットが停止されない（実デプロイ・2026-08-23）
 
-決定は [ADR 0045](../decisions/0045-ec2-persistent-workspace.md) 決定 22（決定 11-2 の補追）。
+決定は [ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 22（決定 11-2 の補追）。
 
 [docs/72](72-cp-arch-and-availability.md) の CP マルチアーキ検証のついでに、開発配備の EC2 を
 数えて見つけた。
@@ -2093,7 +2093,7 @@ running なインスタンスには何もしない。
   対象外のまま**になる（刻印を持たないので）。**取られたら消す**——1 スイープ（5 分）より短い
   占有だと、前回の空き時刻が残ったまま次の解放を迎え、猶予がゼロになる。
 - **刻印の初回は必ず「押すだけ」で、止めるのは次のスイープ。** これが CP 再起動と、デプロイの
-  たびに 51 秒重なる 2 レプリカ（[ADR 0053](../decisions/0053-cp-arch-and-availability.md)）を
+  たびに 51 秒重なる 2 レプリカ（[ADR 0053](../decisions/0053-cp-arch-and-availability.ja.md)）を
   跨いで同じ答えになる根拠。`StopInstances` は冪等なので二重に撃っても無害。
 
 **⚠️ 使用中かどうかは EC2 と ECS の両方に聞く。** 「home が付いていない」は

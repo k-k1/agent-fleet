@@ -4,7 +4,7 @@
 
 - 状態: **採用**（2026-08-23、P0/P1 実装済み・実機での初回実行は未）。検討の記録は [docs/73](../log/73-dev-deploy.md)。
 - 関連: [0053-cp-arch-and-availability.md](0053-cp-arch-and-availability.ja.md)（`CpArch` と dev イメージ） /
-  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) 決定 8・9（`ImageTag` は 2 イメージ共有 / golden の突合） /
+  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.ja.md) 決定 8・9（`ImageTag` は 2 イメージ共有 / golden の突合） /
   [docs/35](../log/35-packaging.md)（本物のリリース経路——ここは通らない）
 
 ## 背景

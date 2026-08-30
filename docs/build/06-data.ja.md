@@ -20,12 +20,12 @@ Updated: 2026-07
 
 | テーブル | 役割 / 主なカラム |
 |----------|------------------|
-| `tenant` | 部署単位（既定 1 テナント=全社）。`slug`(unique)・`limits`(JSON: max_workspaces 等)・`isolation`・`key_ref`・ログイン規則 3 種（0039: `allowed_providers`／`auto_join_domains`／`allowed_domains`・すべて CSV。**`allowed_emails` は無い** — 「誰が入れるか」の名簿は `membership` が持つ。[61](../decisions/0043-login-idp.md) §61.9.5）|
+| `tenant` | 部署単位（既定 1 テナント=全社）。`slug`(unique)・`limits`(JSON: max_workspaces 等)・`isolation`・`key_ref`・ログイン規則 3 種（0039: `allowed_providers`／`auto_join_domains`／`allowed_domains`・すべて CSV。**`allowed_emails` は無い** — 「誰が入れるか」の名簿は `membership` が持つ。[61](../decisions/0043-login-idp.ja.md) §61.9.5）|
 | `identity` | 人。`email`(unique)・`user_key`(unique・sanitize 済みキー)・`role`(`super_admin`\|`user`) |
 | `membership` | identity×tenant の結節。`role`(`tenant_admin`\|`member`)・`UNIQUE(identity_id, tenant_id)`・`status`。**オフボーディングは論理削除**（`status='inactive'`・workspace / home は残る）で、解決系はすべて `status='active'` を要求する。復活は招待 API だけが行う（自動採番経路が復活させると除名が無効化されるため） |
-| `identity_provider` | (provider, subject) → identity の対応（0038 / pg 0021。[61](../decisions/0043-login-idp.md) §61.5）。IdP 側で email が変わっても `user_key`＝home を動かさないための鍵。**行が 1 つでもあれば「一度サインインされた identity」**で、テナント定義 IdP の規則 2' はこれを見て claim と拒否を分ける |
-| `tenant_idp` | テナント定義のサインイン方法（0040 / pg 0023。[61](../decisions/0043-login-idp.md) §61.11）。`UNIQUE(tenant_id, name)`・`issuer`／`client_id`／`secret_enc`＋`key_ref`（テナント鍵で封印）・`trust`・`allowed_tids`／`allowed_domains`(CSV・**ドメインは必須**)・`status`(`pending`\|`active`\|`suspended`)・`approved_by`／`approved_at`。**行を書くのは tenant_admin、`active` にできるのは super_admin だけ**（IdP の登録は「誰であるか」を宣言する権限で、identity は email でデプロイ全体に 1 つのため）。CP が見る provider id は `t:<tenant-slug>:<name>` で、env 由来（`entra` 等）と名前空間が分かれている |
-| `tenant_git_oauth` | テナントが登録した git プロバイダの OAuth アプリ（0048 / pg 0032。[71](../decisions/0052-tenant-git-oauth.md)）。`UNIQUE(tenant_id, provider)`（`provider` = `github`\|`bitbucket`）・`client_id`・`secret_enc`＋`key_ref`（`tenant_idp` と同じ封筒）。**status 列が無いのが `tenant_idp` との差**——clone 用の OAuth アプリは「誰であるか」を宣言せず、`redirect_uri` は CP 固定・token は本人のワークスペースにしか渡らないので、tenant_admin の保存で即有効（ADR0052 決定 3）。GitHub 行は device flow なので `secret_enc` は常に空。**env は読まない**（`BITBUCKET_OAUTH_KEY/SECRET` は廃止、`GITHUB_OAUTH_CLIENT_ID` はサインイン専用へ） |
+| `identity_provider` | (provider, subject) → identity の対応（0038 / pg 0021。[61](../decisions/0043-login-idp.ja.md) §61.5）。IdP 側で email が変わっても `user_key`＝home を動かさないための鍵。**行が 1 つでもあれば「一度サインインされた identity」**で、テナント定義 IdP の規則 2' はこれを見て claim と拒否を分ける |
+| `tenant_idp` | テナント定義のサインイン方法（0040 / pg 0023。[61](../decisions/0043-login-idp.ja.md) §61.11）。`UNIQUE(tenant_id, name)`・`issuer`／`client_id`／`secret_enc`＋`key_ref`（テナント鍵で封印）・`trust`・`allowed_tids`／`allowed_domains`(CSV・**ドメインは必須**)・`status`(`pending`\|`active`\|`suspended`)・`approved_by`／`approved_at`。**行を書くのは tenant_admin、`active` にできるのは super_admin だけ**（IdP の登録は「誰であるか」を宣言する権限で、identity は email でデプロイ全体に 1 つのため）。CP が見る provider id は `t:<tenant-slug>:<name>` で、env 由来（`entra` 等）と名前空間が分かれている |
+| `tenant_git_oauth` | テナントが登録した git プロバイダの OAuth アプリ（0048 / pg 0032。[71](../decisions/0052-tenant-git-oauth.ja.md)）。`UNIQUE(tenant_id, provider)`（`provider` = `github`\|`bitbucket`）・`client_id`・`secret_enc`＋`key_ref`（`tenant_idp` と同じ封筒）。**status 列が無いのが `tenant_idp` との差**——clone 用の OAuth アプリは「誰であるか」を宣言せず、`redirect_uri` は CP 固定・token は本人のワークスペースにしか渡らないので、tenant_admin の保存で即有効（ADR0052 決定 3）。GitHub 行は device flow なので `secret_enc` は常に空。**env は読まない**（`BITBUCKET_OAUTH_KEY/SECRET` は廃止、`GITHUB_OAUTH_CLIENT_ID` はサインイン専用へ） |
 | `user_limit` | membership 単位の上限（`max_sessions`・`disk_gb`・`mem_limit`＝Workspace RAM 上限 bytes、0018）。テナント枠内で管理者が設定 |
 
 **実行環境**（Workspace は **membership 単位**＝同一人物でもテナントごとに完全分離）
@@ -53,8 +53,8 @@ Updated: 2026-07
 | `git_repo` / `lfs_object` / `lfs_lock` | 内部 git プロバイダの台帳（0014〜0016・[91](91-internal-git.ja.md)）。LFS 実体は FS content-addressed、テーブルは O(1) クォータ集計と locks 用。**git アクセストークンは非保存**（per-membership HMAC を都度導出） |
 | `memo` / `memo_category` | メモキュー（0017・[03](03-control-plane.ja.md)）。membership×repo×category、`sent_at`='' が未送、送信済みは retention 後に sweep。`attachments`（0021）は画像添付の JSON 参照（実体はコンテナ内、DB 非保存）。`memo_category`（0020）はカテゴリの並び順と空カテゴリの存在を持つ |
 | `notification` / `notification_usage_state` | 通知センター（0019・[03](03-control-plane.ja.md)）: membership 毎の通知行（`event_id` unique・`seen_at`）と、使用量しきい値通知の窓状態 |
-| `schedule` / `schedule_run` | 定時実行（0022〜0026・[docs/38](../decisions/0021-scheduled-execution.md)）: cron/interval/once の定義と発火台帳（`next_run`/`last_run`）。reuse モードの回転台帳（0024）・run の対象セッションと manual/scheduled 区別（0025/0026）。CP DB に置くのは Workspace 停止中も時計を見られるのが CP だけだから |
-| `mcp_server` | テナント配布 MCP サーバ（0028・[docs/48](../decisions/0031-mcp-registry.md)）: remote（http/sse）定義のみで **stdio 用の command/args/env カラムを意図的に持たない**（ADR0031）。`headers_enc` はテナント鍵で封筒暗号、`user_secret`=1 はヘッダ名だけ配布 |
+| `schedule` / `schedule_run` | 定時実行（0022〜0026・[docs/38](../decisions/0021-scheduled-execution.ja.md)）: cron/interval/once の定義と発火台帳（`next_run`/`last_run`）。reuse モードの回転台帳（0024）・run の対象セッションと manual/scheduled 区別（0025/0026）。CP DB に置くのは Workspace 停止中も時計を見られるのが CP だけだから |
+| `mcp_server` | テナント配布 MCP サーバ（0028・[docs/48](../decisions/0031-mcp-registry.ja.md)）: remote（http/sse）定義のみで **stdio 用の command/args/env カラムを意図的に持たない**（ADR0031）。`headers_enc` はテナント鍵で封筒暗号、`user_secret`=1 はヘッダ名だけ配布 |
 
 ## 6.3 関係の要点
 

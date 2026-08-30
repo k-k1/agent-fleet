@@ -6,7 +6,7 @@
 - 関連: [0044-workspace-sizing.md](0044-workspace-sizing.ja.md) 決定 3
   （**既定オフで出した機能は存在しないのと同じ**——本 ADR の決定 4 はこれに逆らって
   「既定オフのまま出す」と言うので、理由を明示する必要がある） /
-  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) 決定 8
+  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.ja.md) 決定 8
   （`ImageTag` は CP と workspace で共有＝**別タグにできない**） /
   [0037-registry-policy.md](0037-registry-policy.ja.md)（イメージはレジストリで配る／air-gap tar は
   1 台への手渡し＝マニフェストリストの対象外）
@@ -70,7 +70,7 @@ arm64 の増分で見れば 8.0 倍。** workspace の +593 秒に対して CP �
 1. 当初は OFF。理由は「ビルド時間の税を測っていないから」。
 2. 測った（+71 秒）ので**その理由は消えた**——が、**別の・より重い理由**が残った:
    ON にすると**一度も起動させていない arm64 の面**を全利用者向けのタグに載せることに
-   なる。[0045](0045-ec2-persistent-workspace.md) 決定 9-1 の
+   なる。[0045](0045-ec2-persistent-workspace.ja.md) 決定 9-1 の
    **「起動を確かめていない golden は公開しない」と同じ形**である。
 3. **P3 でその面が実機で上がった**（下の実機検証）ので、両方の理由が無くなった → ON。
 

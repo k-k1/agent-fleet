@@ -217,7 +217,7 @@ assert している**（`workspace/Dockerfile` の `find / -perm /6000 -exec chm
 **推奨: (c) を先に（ほぼ無料）、本命は (a)。(b) は保留、(d) は却下。**
 
 > ⚠️ **2026-08-15 追記 — (d) の却下理由は実測で書き換わった（結論は維持）。**
-> [docs/64](64-ec2-persistent-workspace.md) / [ADR 0045](../decisions/0045-ec2-persistent-workspace.md) で
+> [docs/64](64-ec2-persistent-workspace.md) / [ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) で
 > **EC2 起動タイプ ＋ インスタンス stop** を sandbox で端から端まで実測した結果、上の表の理由のうち
 > **成り立っていたのは「AMI 更新が増える」だけ**だった:
 > - **「scale-to-zero の経済性が消える」は誤り。** 停止インスタンスは課金されず EBS 代だけになる。

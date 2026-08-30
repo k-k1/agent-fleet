@@ -2,7 +2,7 @@
 
 > 実施日: 2026-07-19
 > 対象設計: [31-container-browser-pane.md](31-container-browser-pane.md)
-> 対象ADR: [decisions/0018-container-browser-pane.md](../decisions/0018-container-browser-pane.md)
+> 対象ADR: [decisions/0018-container-browser-pane.md](../decisions/0018-container-browser-pane.ja.md)
 > 前回レポート（修正前・不合格）: `feature/browser-pane-v1-container-verify:docs/31-container-browser-pane-verification.md`
 > 前提修正: screencast backpressure 修正（`b7ff65d` = `fe388b9` を main へ統合、完成イメージへ反映済み）
 > 本再検証で追加した修正: `workspace/agent/browser_manager.go` の `startScreencast` リトライ（§5.2）

@@ -3,7 +3,7 @@
 [English](0048-member-cloud-cost.md) | 日本語
 
 - 状態: **採用**（2026-08-17）。検討の記録は [docs/67](../log/67-member-cloud-cost.md)。
-- 関連: [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) 決定 8
+- 関連: [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.ja.md) 決定 8
   （1 スロット 1 ユーザー専有＝インスタンス時間がそのまま個人に落ちる前提）・
   決定 21（**効かない項目を画面に出さない**／**表示のためだけに IAM を増やさない**前例。
   今回はそれを明示的にひっくり返す） /
@@ -11,7 +11,7 @@
   存在しないのと同じ**） /
   [0029-usage-accounting.md](0029-usage-accounting.ja.md)（**トークン**の台帳。本 ADR は
   AWS インフラ費用で、別軸・別の名前） /
-  [0043-login-idp.md](0043-login-idp.md) 決定 24/25（テナントの外へ届くものは運用者）
+  [0043-login-idp.md](0043-login-idp.ja.md) 決定 24/25（テナントの外へ届くものは運用者）
 
 ## 背景
 

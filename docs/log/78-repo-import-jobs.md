@@ -1,6 +1,6 @@
 # docs/78 — リポジトリの取り込みを非同期ジョブにする
 
-決定は [ADR 0059](../decisions/0059-repo-import-jobs.md)。`git clone` と `svn checkout` を、HTTP
+決定は [ADR 0059](../decisions/0059-repo-import-jobs.ja.md)。`git clone` と `svn checkout` を、HTTP
 リクエストの寿命から切り離した**名前付きジョブ**にし、進行と結末を観測できるようにする。
 
 ## 0. 何が起きたか（2026-08-26 / <prod-deployment> 環境）

@@ -1,7 +1,7 @@
 # 44. オペレーター↔セッション やり取りの可視化（シーケンス図）
 
 > 状態: **設計・着工中**。Phase 0（契約凍結）実装。以降 P1（3並列実装）→ P2（統合）。
-> ADR: [0027](../decisions/0027-operator-interaction-graph.md)。前提: docs/30（セッション完了報告→
+> ADR: [0027](../decisions/0027-operator-interaction-graph.ja.md)。前提: docs/30（セッション完了報告→
 > フリート・オペレーター）、[history/19](19-assistant-chat.md)（assistant-chat）、docs/38（定時実行）。
 
 ## 0. 目的

@@ -8,7 +8,7 @@ AWS アダプタを後付けする（[ポータビリティ](build/09-deploy.md)
 
 ### Phase 0 — PoC（ローカル dev, 既存資産の延長）　✅ 完了
 `/login` の対話フローを最小コストで検証。ヘッドレスで **localhost コールバック非依存**と判明し最大リスクが消えた
-（[decisions/0002](decisions/0002-claude-auth-onboarding.md)）。記録は [history/phase0-poc](log/phase0-poc.md)。
+（[decisions/0002](decisions/0002-claude-auth-onboarding.ja.md)）。記録は [history/phase0-poc](log/phase0-poc.md)。
 
 ### Phase 1 — Workspace イメージ + Console MVP（ローカル dev）　✅ 完了
 1 ユーザー分のコンテナ化 + 最小 Console を local Docker で完成。Runtime/Volume ポートを実装。
@@ -20,7 +20,7 @@ AWS アダプタを後付けする（[ポータビリティ](build/09-deploy.md)
 
 ### Phase 3 — プロダクト化（パッケージ配布・グループ各社セルフホスト）　▶ 進行中
 「AWS 移植」から**プロダクトのパッケージ化**へ再定義。提供モデルの意思決定（SaaS 断念の経緯・ToS 根拠）は
-[decisions/0001](decisions/0001-self-host-vs-saas.md)。**P3-1〜P3-7 + Console 刷新は実装済み**（P3-7 残 = KMS custodian・実 AWS 再検証）、
+[decisions/0001](decisions/0001-self-host-vs-saas.ja.md)。**P3-1〜P3-7 + Console 刷新は実装済み**（P3-7 残 = KMS custodian・実 AWS 再検証）、
 **P3-10（パッケージング）は dist 配布の publish 運用中**（[docs/35](log/35-packaging.md)）。残 = P3-8・P3-9 の成熟項目・
 P3-10 の完了ゲート（第 2 デプロイ E2E）。詳細は本書「Phase 3 詳細設計」章（↓）。
 
@@ -43,7 +43,7 @@ P3-10 の完了ゲート（第 2 デプロイ E2E）。詳細は本書「Phase 3
 
 Phase 3 を **「AWS 移植」から「プロダクトのパッケージ化（グループ各社が自社でセルフホスト）」へ再定義**した設計。
 **提供モデルの意思決定**（商用 SaaS / 中央運用マルチテナント SaaS の断念、各社セルフホスト採用、確定前提一覧、
-ToS 根拠・残存リスク）は [decisions/0001](decisions/0001-self-host-vs-saas.md) に集約。本章はその設計と
+ToS 根拠・残存リスク）は [decisions/0001](decisions/0001-self-host-vs-saas.ja.md) に集約。本章はその設計と
 ワークストリームを扱う。旧 Phase 3（AWS アダプタ）/ Phase 4（堅牢化）は本章の substrate として吸収する。
 
 > 要点: 「我々が運用する基盤」は無い。各デプロイは**その社のもの**——データ・鍵・OAuth 設定・ユーザー管理は
@@ -170,7 +170,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 ---
 
 ## P3-3. per-deployment/tenant 封筒暗号鍵（custodian 抽象・オンプレ優先）
-> ✅ **完了**。決定と限界は [decisions/0005](decisions/0005-envelope-custodian.md)、実装プランは [history/p3-3-envelope-crypto](log/p3-3-envelope-crypto.md)。
+> ✅ **完了**。決定と限界は [decisions/0005](decisions/0005-envelope-custodian.ja.md)、実装プランは [history/p3-3-envelope-crypto](log/p3-3-envelope-crypto.md)。
 
 **現状（Phase 2 A3）**: 単一 `AF_MASTER_KEY`(env) → `HMAC(SHA256(master), user)` で per-user サブ鍵を導出し起動時注入。
 → 不十分: master が単一障害点、テナント単位の鍵ローテ/失効ができない、鍵が CP env に常在。
@@ -239,7 +239,7 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 > - **段1 = member 4 ツール**（`list_my_sessions`/`get_session_status`/`get_session_output`/`send_to_session`）+ PAT 発行/失効（Console）+ `/mcp`（Streamable HTTP）を実装・**E2E green でライブ稼働**（現状は [dev/03 §3.5 MCP サーバ](build/03-control-plane.md#35-mcp-サーバ)）。
 > - **admin read/write 実装・ライブ E2E green**（2026-07-01）: read=`list_workspaces`/`get_usage`/`list_sessions`、write=`stop_workspace`/`stop_session`/`set_user_quota`。PAT の tenant に固定し、live role（super_admin / その tenant の tenant_admin）で gate、write は `AuditLog`（`actor_kind=mcp`）へ記録。監査ログ書き込み（migration 0007 `audit_log` + `InsertAudit`/`ListAuditByTenant`）をここで導入。ライブ検証（運用者デプロイ）= super_admin PAT で全10ツール可視・`get_usage` に host stats／tenant_admin は admin ツール可視だが host stats 無し／plain member は member 4ツールのみ・admin ツールは 401／`set_user_quota` の write が `audit_log` へ `actor_kind=mcp` 記録、を確認。
 > - **残 = dangerous 段**（`rotate_key`/`recreate_workspace`/`stop_all_idle`、confirm+dry-run）。土台（鍵ローテ実装・idle 検出 P3-9・`tail_audit`）が未整備ゆえ後続。
-> - 設計確定は [decisions/0006](decisions/0006-mcp-unified.md)、実装プランは [history/p3-6-mcp](log/p3-6-mcp.md)。
+> - 設計確定は [decisions/0006](decisions/0006-mcp-unified.ja.md)、実装プランは [history/p3-6-mcp](log/p3-6-mcp.md)。
 
 CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面（メンバー自身の遠隔セッション駆動）を同一サーバで** role 出し分けする。
 **そもそもの目的 = E**: 1 つの手元 Claude が、自分の Workspace 内の claude/opencode/codex セッション群を束ねて駆動する（フリート運用の MCP 化）。
@@ -332,7 +332,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 ## P3-10. パッケージング & 配布 & アップグレード（提供モデルの核）
 > ◐ **進行中**（提供モデルの核）。4 ターゲットの設計・実装記録は [docs/35](log/35-packaging.md)、**dist 配布は publish 運用中**
 > （0.1.0〜、リリースノートは `deploy/release/notes/`）。完了判定 = 第 2 デプロイをゼロから立てて E2E 通過
-> （[decisions/0001](decisions/0001-self-host-vs-saas.md)）——未達。
+> （[decisions/0001](decisions/0001-self-host-vs-saas.ja.md)）——未達。
 
 「グループ各社が自社でセルフホスト」を成立させる工程。機能（P3-1〜P3-9）を**他社の情シスが設置・運用・更新できる形**にする。
 

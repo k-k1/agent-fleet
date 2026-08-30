@@ -72,8 +72,11 @@ in the same change — a shelf with a stale translation is worse than one with n
 - The line right after the H1 is the language switcher, and it is the **only** link
   allowed to cross languages.
 - Every other internal link stays inside its language: `.ja.md` files link to
-  `.ja.md`. Links into a Japanese-only area (`decisions/`, `log/`) point at the same
-  target from both languages.
+  `.ja.md`. Links into the Japanese-only area (`log/`) point at the same target from
+  both languages.
+- `decisions/` is bilingual too, on the same terms. An ADR is append-only and
+  immutable, so translating one is a translation and not a rewrite: never change the
+  wording of a decision, a measurement or a discarded option to make it read better.
 - Quote the Console's own strings for UI labels: `console/src/lib/i18n/locales/en.ts`
   for English, `ja.ts` for Japanese. Inventing a translation for a button creates a
   term the reader cannot find on screen.

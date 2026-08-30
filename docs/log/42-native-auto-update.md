@@ -1,6 +1,6 @@
 # docs/42 — ホスト常駐 `af` の自動更新
 
-決定は [ADR 0025](../decisions/0025-native-auto-update.md)。native パッケージ（[docs/34](34-native-runtime.md) /
+決定は [ADR 0025](../decisions/0025-native-auto-update.ja.md)。native パッケージ（[docs/34](34-native-runtime.md) /
 [docs/35](35-packaging.md)）をホストで常駐させたまま、放っておいても新しい版が**用意**され、任意のタイミングで
 **適用**できるようにする。設計の核は **stage（取得）と apply（再起動）の分離**。
 

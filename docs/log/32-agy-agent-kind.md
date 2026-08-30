@@ -1,6 +1,6 @@
 # 32. `kind=agy`（Antigravity CLI）実装計画 — 並行トラック構成
 
-- 状態: **M1 実装済**（採用決定・計画 2026-07-20 → 同日 Track A/B/C 実施・統合＋M1 E2E 実機完走 — §統合と M1 E2E 結果）。設計と PoC 経緯は [decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md)。
+- 状態: **M1 実装済**（採用決定・計画 2026-07-20 → 同日 Track A/B/C 実施・統合＋M1 E2E 実機完走 — §統合と M1 E2E 結果）。設計と PoC 経緯は [decisions/0008](../decisions/0008-antigravity-cli-agent-kind.ja.md)。
 - ゴール: `agy` を claude/codex/opencode と並ぶ第4のエージェント種別として組み込む。
   **M1 は Starter Quota で「実験枠」として成立させ、M2 で GCP プロジェクト経路を足して常用化**する。
 - 前提（0008 の再 PoC で実証済み）: RDRAND 有効ホストで起動・OAuth 認証・`-p`・resume 動作確認済。

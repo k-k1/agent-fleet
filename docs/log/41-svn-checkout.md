@@ -1,6 +1,6 @@
 # docs/41 — SVN チェックアウト対応
 
-決定は [ADR 0024](../decisions/0024-svn-checkout.md)。git だけでなく Subversion のリポジトリでも
+決定は [ADR 0024](../decisions/0024-svn-checkout.ja.md)。git だけでなく Subversion のリポジトリでも
 作業できるようにする。provider は無く、**URL ＋ 基本認証**でチェックアウトし、特定 path 以下や
 複数 path のチェックアウトを素直に扱う。
 

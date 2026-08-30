@@ -3,7 +3,7 @@
 - 状態: **P0 実装済み**（2026-08-16。P1 以降は未着手）。実測は開発 Workspace の headless
   Chromium で行い、再現コマンドを各節に残した。実装で分かったことは §65.11。
   検証ハーネスは `npm --prefix console run drawio:check`。
-  設計判断は [decisions/0046](../decisions/0046-drawio-viewer.md)。
+  設計判断は [decisions/0046](../decisions/0046-drawio-viewer.ja.md)。
 - 関連: [44-markdown-code-editor.md](44-markdown-code-editor.md)（File ペインの面と編集・保存機構。
   本機能は**その面を 1 つ増やす**形で載る） / [28-i18n.md](28-i18n.md) /
   [35-packaging.md](35-packaging.md)（同梱物と配布サイズ） /

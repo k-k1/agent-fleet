@@ -2,7 +2,7 @@
 
 > ◐ P1〜P5 実装済み（契約 ＋ **4 kind**（claude/codex/opencode/copilot）＋ Console 導線 ＋「続きから」）。**4 種とも
 > サーバ側は実 CLI で通し確認済み**、Console からの通しはデプロイ待ち。cursor / kiro / agy は対象外（§55.5）。
-> 設計判断は [decisions/0039](../decisions/0039-fork-at-message.md)。
+> 設計判断は [decisions/0039](../decisions/0039-fork-at-message.ja.md)。
 > 旧判断（会話まるごと分岐のみ・地点分岐は非サポートにつき却下）は
 > [history/fork-from-chat.md](fork-from-chat.md)。本書はそれを差し替える。
 

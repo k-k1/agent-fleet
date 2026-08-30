@@ -2,7 +2,7 @@
 
 > 状態: **V2 確定**（2026-07-18、現行 Console の操作確認済み）
 > 実装契約: [31-container-browser-pane.md](31-container-browser-pane.md)
-> 意思決定: [ADR 0018](../decisions/0018-container-browser-pane.md)
+> 意思決定: [ADR 0018](../decisions/0018-container-browser-pane.ja.md)
 > 用途: V3 の `CLAUDE.md` / `AGENTS.md` 案内と V4 利用ガイドが参照する操作上の正
 
 ## 用語と使い分け

@@ -220,7 +220,7 @@ prompt cache が冷えるたび書き直しだけで1ターン $1 超）。絶�
 - 圧縮完了 notice は発動元で書き分け（`compactReason*`）: 手動「コンテキストを圧縮
   しました」／自動「使用量が閾値を超えたため、自動で圧縮しました」／復旧「超過エラー
   からの自動復旧のため、圧縮しました」— なぜ今要約されたかを後から追える。
-- **notice の文言は保存されない**（ADR [0033](../decisions/0033-stored-text-locale.md)）: 逼迫・超過・圧縮完了とも
+- **notice の文言は保存されない**（ADR [0033](../decisions/0033-stored-text-locale.ja.md)）: 逼迫・超過・圧縮完了とも
   会話 JSON に載るのは `notice_key`＋`notice_args`（逼迫なら pct/tokens/window、圧縮なら要約本文）だけで、
   表示文は Console のカタログが持つ。発動元ごとの書き分けはキーの別（`chat.notice.compact_{manual,auto,recovery}`）
   で表す。要約本文は LLM が書いたものなので訳さず、そのまま埋め込む。

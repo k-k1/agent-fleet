@@ -6,7 +6,7 @@
 バックエンドだけが「増築を全部吸い込むフラット構造」のまま残っている — その解消が目的。
 
 > ステータス: **P0〜P2 完了**（2026-07-09、branch `temp/sfiv6ai`）。決定の要約は
-> [decisions/0012-go-internal-refactor.md](../decisions/0012-go-internal-refactor.md)。
+> [decisions/0012-go-internal-refactor.md](../decisions/0012-go-internal-refactor.ja.md)。
 >
 > - **P0**: CI（.github/workflows/ci.yml）/ `buildMux()` 抽出 + httptest スモーク（CP・Agent）/
 >   エラーコード const 化（errcodes.go ×2 ↔ client.ts）/ agent gofmt 整形。

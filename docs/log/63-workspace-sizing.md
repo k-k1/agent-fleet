@@ -2,7 +2,7 @@
 
 > 状態: 設計中（2026-08-15）。**P0 の計測は完了** —— Fargate の有効タスクサイズ全 74 通りを
 > ECS API で実測（§63.2）し、**EFS の I/O を AWS sandbox で実測**（§63.4）した。
-> **決定は [ADR 0044](../decisions/0044-workspace-sizing.md) に固定済み**（2026-08-15）: サイズは数値 3 軸で
+> **決定は [ADR 0044](../decisions/0044-workspace-sizing.ja.md) に固定済み**（2026-08-15）: サイズは数値 3 軸で
 > 持ち名前付きサイズは UI 層／ディスクは 200 GiB を境に ephemeral と EBS／`~` の置き場は
 > **平均ファイルサイズ**で分ける／home を EBS に載せる案は Fargate では原理的に不可。
 > **P1〜P2 実装済み**（§63.7）。残る未決は `~/.local`（CLI 実体）の置き場のみ（§63.5.3）。
@@ -248,7 +248,7 @@ EFS のペナルティは **1 ファイルあたり約 14.5 ms 固定**、帯域
 ### 63.5.5 home を EBS に載せる案（Fargate では不可）
 
 「金を払って home を EBS にすれば解決するか」を API 定義で確認した結果、**できない**。詳細は
-[ADR 0044 決定 4](../decisions/0044-workspace-sizing.md)。要点:
+[ADR 0044 決定 4](../decisions/0044-workspace-sizing.ja.md)。要点:
 
 | | 型 | 終了時 |
 |---|---|---|
@@ -264,7 +264,7 @@ EFS のペナルティは **1 ファイルあたり約 14.5 ms 固定**、帯域
 本当に必要なら EC2 起動タイプ ＋ インスタンス stop（停止してもボリュームが残る）になる。
 参考価格: m7i.large（2 vCPU/8 GiB）$0.1302/時 vs 同等 Fargate $0.1454/時（実測・ap-northeast-1）。
 
-> **2026-08-15 追記: 検討済み → [64](64-ec2-persistent-workspace.md) / [ADR 0045](../decisions/0045-ec2-persistent-workspace.md)。**
+> **2026-08-15 追記: 検討済み → [64](64-ec2-persistent-workspace.md) / [ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md)。**
 > sandbox で端から端まで実測した結果、**成立はする**（stop/start でも terminate → 付け替えでも home が残り、
 > pull は 31.8s → 0.09s、小ファイル 2,000 個作成は EFS 30.7s に対し **0.04s**、費用も EC2 が安い）が、
 > **起動は速くならず**（83.5s 対 Fargate ~84s）、罠が 4 件（**インスタンスタイプ変更を ECS が拒否する** /
@@ -370,7 +370,7 @@ EFS / cluster / SG / log group / IAM role / task definition がすべて 0 件�
 保存の形（ADR 0044 決定 1：ランタイム中立な独立した 3 つの数値）は**変えない**。
 変えるのは「その値が何になるか」を**ランタイムが申告し、画面がその通りに言う**ことだけである。
 調査は [64](64-ec2-persistent-workspace.md) §64.27、決定は
-[ADR 0045](../decisions/0045-ec2-persistent-workspace.md) 決定 21。
+[ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 21。
 
 ## 63.9 リソースの実測値は、ランタイムを問わず「中から」読む（2026-08-25）
 
@@ -411,7 +411,7 @@ ECS のタスクには docker バイナリも対象の cgroup も home のパス
 ⚠️ **`Runtime` インターフェースに `Stats()` は足していない。** 足しても分岐が生まれないからである
 ——docker と native は既にホスト側で読めており、ECS 系 3 つは AWS API から cgroup を取る手段が無い
 ので**どれも同じ HTTP 呼び出しに落ちる**。5 実装のうち 4 つが同じ 1 行を書くインターフェースは
-抽象ではなく重複である（[ADR 0058](../decisions/0058-workspace-resource-observation.md) 決定 2）。
+抽象ではなく重複である（[ADR 0058](../decisions/0058-workspace-resource-observation.ja.md) 決定 2）。
 `workspaceStats` は安い順に「ホストの cgroup → State で稼働確認 → Agent へ問い合わせ」と落ちるので、
 **docker / native の既存挙動は 1 バイトも変わらない**。
 

@@ -1,7 +1,7 @@
 # 53. Chromium Attach View — 外部所有 Chromium の表示・人間操作
 
 > 状態: **P0実測・実装契約確定、P1〜P3実装済み**（2026-08-02。P3の対話セッション直接経路を同日補正）
-> 意思決定: [decisions/0038](../decisions/0038-chromium-attach-view.md)
+> 意思決定: [decisions/0038](../decisions/0038-chromium-attach-view.ja.md)
 > P0実測: [53-chromium-attach-view-p0-verification.md](53-chromium-attach-view-p0-verification.md)
 > 関連: [31-container-browser-pane.md](31-container-browser-pane.md) / [49-mcp-2026-07-28.md](49-mcp-2026-07-28.md)
 > 対象: Console / Control Plane / Workspace Agent / ローカル stdio MCP / Workspace 利用契約

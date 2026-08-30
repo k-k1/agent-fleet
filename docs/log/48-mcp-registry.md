@@ -5,7 +5,7 @@
   **全 kind のセッション materialize（claude / codex / opencode / copilot / cursor / kiro / agy）**・
   **テナントスコープの配布（CP テーブル / 管理 API / ブリッジ / 配布キャッシュ / `user_secret`）**・
   **egress allowlist 連携（§9.1）**）。残りは §14 の未決のみ。
-  意思決定は [decisions/0031](../decisions/0031-mcp-registry.md)。
+  意思決定は [decisions/0031](../decisions/0031-mcp-registry.ja.md)。
 - 関連: [history/19](19-assistant-chat.md)（アシスタント）/ [25](25-ops-monitoring.md)（組み込み ops 連携 = 本設計が一般化する対象）/
   [20](20-container-audit-egress.md)（egress allowlist）/ [46](46-usage-accounting.md)（残 P5 = MCP の使用量計上）/
   [27](27-agent-managed-driver.md) §codex thread MCP / [32](32-agy-agent-kind.md) §MCP / [43](43-kiro-agent-kind.md) §2.6
@@ -407,7 +407,7 @@ map のキー・エントリの綴り方）に分けてある。codex だけが 
   再出力するとコメントと project trust セクションが黙って再整形される。af は自分が所有する
   テーブル（とその下位テーブル）だけを行ごと抜き、末尾に新しいテーブルを足す。
 - ⚠️ **この規約は「af が*自動で*書くのは user/global だけ」と読む**（[56](56-project-mcp.md) /
-  [ADR0040](../decisions/0040-project-mcp.md)）。プロジェクトスコープを**利用者の明示操作のときだけ**
+  [ADR0040](../decisions/0040-project-mcp.ja.md)）。プロジェクトスコープを**利用者の明示操作のときだけ**
   代理編集する別軸のツールを docs/56 で設計しており、そちらは所有台帳もマーカーも持たない
   （監査証跡は git の差分）。`Materialize` / `MaterializeAll` がプロジェクトスコープへ触れないことは
   変わらず、テストで固定する。

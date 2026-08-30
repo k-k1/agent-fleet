@@ -5,7 +5,7 @@
 > ⚠️ **§21.1 の「任意メッセージからの厳密分岐は非サポートにつき却下」は 2026-08 に覆った。**
 > codex / opencode は公式に分岐点パラメータを持ち、claude も切り詰め resume が実在する。
 > 後継設計は [55-fork-at-message.md](../log/55-fork-at-message.md)、判断は
-> [decisions/0039](../decisions/0039-fork-at-message.md)。本書の残りは当時の実装記録として有効
+> [decisions/0039](../decisions/0039-fork-at-message.ja.md)。本書の残りは当時の実装記録として有効
 > （ここで作った `ForkFrom` と `handleForkSession` が後継の土台になる）。
 
 ## 21.1 ゴールと採用範囲

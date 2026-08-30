@@ -37,7 +37,7 @@ status: **M1〜M5＋member 面 実装済**（詳細は下の実装状況を参�
 - 残：aws Network Firewall／DNS Firewall（M6）、per-tenant 属性＋enforce 強化、egress deny アラート/週次 digest（通知チャネル要）、P3-10 設定化（M7）。
 
 関連: [reference/security.md](../build/07-security.ja.md)（脅威モデル §4.3/§4.6/§4.7）、[roadmap.md](../roadmap.md) P3-9（`egress 統制` L318 / `監査` L232）、
-[decisions/0006-mcp-unified.md](../decisions/0006-mcp-unified.md)（audit_log の由来・MCP 管理面）、[19-assistant-chat.md](19-assistant-chat.md)（エージェント壁打ちの土台）、[decisions/0009-transcript-paging.md](../decisions/0009-transcript-paging.md)（transcript）。
+[decisions/0006-mcp-unified.md](../decisions/0006-mcp-unified.ja.md)（audit_log の由来・MCP 管理面）、[19-assistant-chat.md](19-assistant-chat.md)（エージェント壁打ちの土台）、[decisions/0009-transcript-paging.md](../decisions/0009-transcript-paging.ja.md)（transcript）。
 
 ---
 
@@ -176,7 +176,7 @@ status: **M1〜M5＋member 面 実装済**（詳細は下の実装状況を参�
 
 ## Part D. 運用モデルとエージェント壁打ちによる allowlist 改善ループ
 
-監査・egress は「入れて終わり」ではなく、**allowlist を継続的に見直し改善する運用**が本体になる。ここをエージェント（AI）との壁打ちで回せるようにする。土台は既存の [decisions/0006-mcp-unified.md](../decisions/0006-mcp-unified.md)（MCP 管理面）と [19-assistant-chat.md](19-assistant-chat.md)（アシスタントチャット）。
+監査・egress は「入れて終わり」ではなく、**allowlist を継続的に見直し改善する運用**が本体になる。ここをエージェント（AI）との壁打ちで回せるようにする。土台は既存の [decisions/0006-mcp-unified.md](../decisions/0006-mcp-unified.ja.md)（MCP 管理面）と [19-assistant-chat.md](19-assistant-chat.md)（アシスタントチャット）。
 
 ### D.1 運用モデル（誰が・何を・どのライフサイクル）
 

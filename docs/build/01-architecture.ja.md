@@ -13,7 +13,7 @@ Updated: 2026-07
 ブラウザの Console からセッション起動・ターミナル操作・git 操作・ファイル閲覧・チャットを行う。
 
 - **提供モデル**: パッケージ製品を各社が自社インフラでセルフホスト。**1 社 = 1 デプロイ**。
-  SaaS は ToS で断念（[decisions/0001](../decisions/0001-self-host-vs-saas.md)）。
+  SaaS は ToS で断念（[decisions/0001](../decisions/0001-self-host-vs-saas.ja.md)）。
 - **規模想定**: 同時 〜20 人。1 ユーザー複数セッション。単一ホスト（または単一クラスタ）で足りる。
 - **Claude 認証は BYO**: 各ユーザーが自分のアカウントで `/login`（[08 §8.5](08-integrations.ja.md)）。
 - デプロイ先は各社選択: **オンプレ Docker（既定）** / 自社 AWS（🚧 [09](09-deploy.ja.md)）。
@@ -139,7 +139,7 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 | 永続ホーム | Runtime 内 | bind mount | EFS アクセスポイント 🚧 |
 | L1 認証 | `AUTH` env 分岐 | oauth / dev | proxy（ALB OIDC）|
 | メタデータ | `Store` | SQLite（既定・pure-Go）| Postgres（実装済）|
-| at-rest 鍵 | `KeyCustodian` | localCustodian（master 由来 KEK）| KMS/Vault 📋（seam のみ、[decisions/0005](../decisions/0005-envelope-custodian.md)）|
+| at-rest 鍵 | `KeyCustodian` | localCustodian（master 由来 KEK）| KMS/Vault 📋（seam のみ、[decisions/0005](../decisions/0005-envelope-custodian.ja.md)）|
 | 入口/TLS | （CP 外）| Caddy / Funnel | ALB + ACM 🚧 |
 
 ## 1.7 現状 vs 計画の総覧
@@ -153,8 +153,8 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 | egress 統制 | 🚧 log-only + allowlist 運用まで。enforce は後続（[07 §7.8](07-security.ja.md)）|
 | AWS アダプタ（ECS/EFS/SSM・CFN）| 🚧 実装済・実運用実績なし（[09](09-deploy.ja.md)）|
 | KMS/Vault custodian | 📋 seam のみ |
-| agy（Antigravity CLI）kind | ✅ 実装済み（[32](../decisions/0008-antigravity-cli-agent-kind.md)、採用判断は [decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md)）|
-| copilot（GitHub Copilot CLI）kind | ✅ 実装済み・Terminal+Managed 両対応（[36](../decisions/0019-copilot-agent-kind.md) / [decisions/0019](../decisions/0019-copilot-agent-kind.md)）|
-| kiro（Kiro・旧 Amazon Q Developer CLI）kind | ✅ 実装済み・Terminal+Managed 両対応（[decisions/0026](../decisions/0026-kiro-agent-kind.md)）|
-| コンテナ内ブラウザペイン | ✅ MVP実装・W5ライブ結線検証済み（[decisions/0018](../decisions/0018-container-browser-pane.md) / [設計31](../decisions/0018-container-browser-pane.md)）|
-| Go 内部リファクタ | 大半を統合済み（CP 分割、Agent `internal/`・エージェント縦割り）。残作業は [docs/23](../decisions/0012-go-internal-refactor.md)、現配置は [90](90-code-map.ja.md) |
+| agy（Antigravity CLI）kind | ✅ 実装済み（[32](../decisions/0008-antigravity-cli-agent-kind.ja.md)、採用判断は [decisions/0008](../decisions/0008-antigravity-cli-agent-kind.ja.md)）|
+| copilot（GitHub Copilot CLI）kind | ✅ 実装済み・Terminal+Managed 両対応（[36](../decisions/0019-copilot-agent-kind.ja.md) / [decisions/0019](../decisions/0019-copilot-agent-kind.ja.md)）|
+| kiro（Kiro・旧 Amazon Q Developer CLI）kind | ✅ 実装済み・Terminal+Managed 両対応（[decisions/0026](../decisions/0026-kiro-agent-kind.ja.md)）|
+| コンテナ内ブラウザペイン | ✅ MVP実装・W5ライブ結線検証済み（[decisions/0018](../decisions/0018-container-browser-pane.ja.md) / [設計31](../decisions/0018-container-browser-pane.ja.md)）|
+| Go 内部リファクタ | 大半を統合済み（CP 分割、Agent `internal/`・エージェント縦割り）。残作業は [docs/23](../decisions/0012-go-internal-refactor.ja.md)、現配置は [90](90-code-map.ja.md) |

@@ -166,7 +166,7 @@ Stop フック kick と違い waiter には「ターンが終わった」とい�
 ### v2 Phase 1 での置き換え（2026-07-29）— 判定の一本化
 
 上の2節（保留 waiter と配送3条件）は [docs/51](51-session-report-v2-ledger.md) /
-[ADR 0035](../decisions/0035-session-report-v2-ledger.md) の移行 Phase 1 で撤去され、
+[ADR 0035](../decisions/0035-session-report-v2-ledger.ja.md) の移行 Phase 1 で撤去され、
 **消費の判定はサーバ内の単一リコンサイラ**（`chat_report_reconcile.go`・tick 15s ＋
 ヒント起床）に一本化された。arm の1bit（`session-report/*.json`）は Phase 2 まで据え置き。
 
@@ -304,7 +304,7 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
   ユーザー不在での暴走ループ（追撃→完了→報告→追撃…）の構造的歯止め。
 - 上限に達したら `role:"notice"` を **1 回だけ**追記（なぜ静かになったか・再開の仕方・未処理報告の件数）＋
   通知センター `chat-auto-paused`。この notice はキー＋引数で保存し表示は Console のカタログが訳す
-  （`chat.notice.auto_paused.*`・ADR [0033](../decisions/0033-stored-text-locale.md)）。**報告カード
+  （`chat.notice.auto_paused.*`・ADR [0033](../decisions/0033-stored-text-locale.ja.md)）。**報告カード
   （`role:"report"`）の本文は対象外**——表示とオペレーターへの指示を兼ねるので日本語のまま。
 - 実行: 未配送の report を定型プリアンブル付きで 1 プロンプトに連結し、通常の provider
   send（`registerLiveTurn` 登録 = 停止ボタン / in_progress 対応）。
@@ -371,7 +371,7 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
   （managed 報告への本文抜粋は不採用で確定 — 逆に TUI を managed のシンプルな形に揃えた。）
 - **後継設計（2026-07-28）**: 本機構の「エッジ駆動＋1bit arm」構造は sqmconc 事故を機に
   見直し、指示台帳＋レベル駆動リコンサイラへ置き換える v2 を設計した —
-  [docs/51](51-session-report-v2-ledger.md) / [ADR 0035](../decisions/0035-session-report-v2-ledger.md)。
+  [docs/51](51-session-report-v2-ledger.md) / [ADR 0035](../decisions/0035-session-report-v2-ledger.ja.md)。
   上記の BG 保留 waiter・managed daemon 異常死非報告（Phase 1）・キュー済み指示のずれ
   （Phase 2）は解消済み。Phase 3（補償 reopen ＋自己申告ファストパス）も docs/51 側で
   実装済み。

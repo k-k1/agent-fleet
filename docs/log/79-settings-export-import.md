@@ -1,6 +1,6 @@
 # docs/79 — 設定の書き出し / 取り込み
 
-決定は [ADR 0060](../decisions/0060-settings-export-import.md)。利用者の設定を **1 個の JSON**
+決定は [ADR 0060](../decisions/0060-settings-export-import.ja.md)。利用者の設定を **1 個の JSON**
 にまとめて持ち出し、別のデプロイ / 別テナント / 新しいアカウントで読み戻せるようにする。
 
 ## 0. きっかけと、範囲を広げた理由

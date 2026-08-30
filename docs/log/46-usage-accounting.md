@@ -4,7 +4,7 @@
 対話セッションだけでなく、フリート自身が裏で撃っている補助 LLM 呼び出し（アシスタントチャット、
 要約引き継ぎ、タイトル提案、返信サジェスト、報告への自動ターン…）を **同じ物差しで並べる** のが主眼。
 
-決定は [ADR 0029](../decisions/0029-usage-accounting.md)。ステータス: **P0.5（是正）＋ P1（台帳＋計装）
+決定は [ADR 0029](../decisions/0029-usage-accounting.ja.md)。ステータス: **P0.5（是正）＋ P1（台帳＋計装）
 ＋ P2（出自＋折り込み）＋ P3（`/usage/series` + rollup + CP 両側登録）＋ P4（Console UI）実装済み。
 P5（MCP ツール + 設定）以降は未着手**。
 
@@ -464,7 +464,7 @@ memory: headless-ui-verification-harness の型2）: 11 バケット / 856 呼�
 return の全経路で必ず1回**残る（失敗行は `ok:false`）。
 
 **モデル報告プローブの結果**（実 CLI・本ワークスペース）: 表は
-[ADR 0029 §4](../decisions/0029-usage-accounting.md)。要点は3つ —
+[ADR 0029 §4](../decisions/0029-usage-accounting.ja.md)。要点は3つ —
 
 - claude は `modelUsage` の**キーが版込みの生 id**、値に `canonicalModel` / `costUSD` /
   トークン4種。top-level に `usage.output_tokens` / `total_cost_usd` / `duration_ms`。

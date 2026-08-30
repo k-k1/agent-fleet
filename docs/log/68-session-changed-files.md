@@ -1,6 +1,6 @@
 # 68. セッションが直したファイルへ、ミラーから一手で届くようにする
 
-- 状態: **P0〜P2 実装済み**（2026-08-17）。決定は [decisions/0049](../decisions/0049-session-changed-files.md)。
+- 状態: **P0〜P2 実装済み**（2026-08-17）。決定は [decisions/0049](../decisions/0049-session-changed-files.ja.md)。
 - 関連: [docs/44](44-markdown-code-editor.md)（File ペインの表示/編集モード） /
   [docs/55](55-fork-at-message.md)（転写の anchor） /
   [docs/59](59-session-sharing.md) §3（共有 DTO は座標を落とす） /

@@ -95,7 +95,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 ## 閉域網（air-gap）へのインストール
 
 外部ネットワークに出られないホストにも入れられます。ただし
-[ADR 0037](../decisions/0037-registry-policy.md) 以降、image は GHCR で配布し
+[ADR 0037](../decisions/0037-registry-policy.ja.md) 以降、image は GHCR で配布し
 **リリースに image tar は添付しません**。レジストリに到達できないホストは、
 `ghcr.io/k-k1/agent-fleet/*` を社内レジストリにミラーして `REGISTRY` をそこへ向けるか、
 image を手で持ち込みます（ネット接続のあるマシンで `release.sh --save` してビルド＆

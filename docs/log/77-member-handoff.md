@@ -2,7 +2,7 @@
 
 - 状態: ✅ **P0 実装済み**（差し出し / 撤回 / 受諾 / 辞退・push ゲート・受信箱）・
   ⏸ P1〜P3 は §77.14。⚠️ 実フリートでの 2 アカウント通しは未実施
-- 設計判断: [decisions/0057](../decisions/0057-member-handoff.md)
+- 設計判断: [decisions/0057](../decisions/0057-member-handoff.ja.md)
 - 関連: [docs/59 セッション共有](59-session-sharing.md)（本機能が乗る土台・ACL と失効の規律）、
   [docs/58 セッション間メッセージ](58-cross-session-messaging.md)（**同一 Workspace 内**の別機能・境界は §77.2）、
   [docs/55 会話の途中から引き継ぐ](55-fork-at-message.md)、

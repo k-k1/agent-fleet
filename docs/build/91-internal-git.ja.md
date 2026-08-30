@@ -8,8 +8,8 @@ Updated: 2026-07
 
 - 状態: **P1 実装済み**（MVP）。契約はコードが正（`control-plane/git_http.go`・`internal_git.go` ほか）。
 - 関連: [01 アーキテクチャ](01-architecture.ja.md) / [07 §7.6](07-security.ja.md#76-シークレット管理と封筒暗号) /
-  [05 API 契約](05-api.ja.md) / ADR [0010](../decisions/0010-internal-git-provider.md)（採否）/
-  [0003](../decisions/0003-ssh-to-connections.md)（git 認証＝Connections）
+  [05 API 契約](05-api.ja.md) / ADR [0010](../decisions/0010-internal-git-provider.ja.md)（採否）/
+  [0003](../decisions/0003-ssh-to-connections.ja.md)（git 認証＝Connections）
 
 ## 1. 目的とスコープ
 
@@ -147,7 +147,7 @@ Updated: 2026-07
 - **パス封じ込め**: slug/repo 名は正規表現で検証、`..` 拒否、`${DATA_DIR}/git/<slug>/` 配下に限定。
 - **権限**: read=member 以上、write(push)=role。将来は repo 単位の ACL を `git_repo` に拡張可能。
 - **秘密の非漏洩**: token は暗号ストア（`secrets.enc`, AES-256-GCM）に注入し平文化しない
-  （[0003](../decisions/0003-ssh-to-connections.md) / [0005](../decisions/0005-envelope-custodian.md) 準拠）。
+  （[0003](../decisions/0003-ssh-to-connections.ja.md) / [0005](../decisions/0005-envelope-custodian.ja.md) 準拠）。
 - CP に **git 実行面が増える**点は新たな攻撃面。入力（refspec/パス）検証を厳格化する。
 - **LFS**（P3）: smart-HTTP と同じ `authorizeGitRepo`（テナント越境遮断・台帳存在）を全操作で適用。
   oid は sha256 hex のみ許可＝転送パスのパス封じ込めも兼ねる。アップロードは sha256 を検証し oid 不一致を

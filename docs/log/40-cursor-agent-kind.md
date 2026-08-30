@@ -56,7 +56,7 @@
      許可待ち（allowlist 外コマンド確認）は JSONL に痕跡が無いため v1 は "question" を
      出さず "working" 扱い（許可カード化と rtk hook seam は Track D）。
 - 状態(旧): 計画・Track 0 プローブ実施済み（2026-07-23 事前調査＋認証済み実測完了）。
-  採用判断は [decisions/0023](../decisions/0023-cursor-agent-kind.md)。
+  採用判断は [decisions/0023](../decisions/0023-cursor-agent-kind.ja.md)。
   実 CLI の実測は本ドキュメント末尾 §実測記録・§Track 0 実測結果（v2026.07.20-8cc9c0b を本コンテナで実測）。
   **managed 可否の分水嶺（ACP `session/load`）は合格 — v1 Terminal + Managed 両対応で確定。**
   ※ docs/39 / ADR0022 はエージェントメモリ版管理（未マージブランチ）が使用中のため 40/0023 を採番。

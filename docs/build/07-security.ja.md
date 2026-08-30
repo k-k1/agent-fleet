@@ -13,7 +13,7 @@ Updated: 2026-07
 **他ユーザーのデータ / CP・ホスト基盤 / シークレット / 情報持ち出し**。
 
 この「承認を全部スキップして起動する」は **2026-08 以降は既定であって固定ではない**——利用者が
-kind 毎／セッション毎にオフにできる（[76](../decisions/0056-tool-permission-choice.md) / [ADR 0056](../decisions/0056-tool-permission-choice.md)）。
+kind 毎／セッション毎にオフにできる（[76](../decisions/0056-tool-permission-choice.ja.md) / [ADR 0056](../decisions/0056-tool-permission-choice.ja.md)）。
 ただし**境界の設計は変えない**: オフにできるのは 5 kind だけで、TUI 内でモードを戻すこともでき、
 CLI 自身の設定経路まで塞いではいない。つまり承認確認は**事故を減らす手当**であって隔離境界では
 なく、依然としてコンテナ境界が唯一の砦である。
@@ -30,7 +30,7 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
 
 **前提の限界（正直に明記）**: 1 デプロイ内では CP が `docker.sock`（ホスト root 相当）を持ち平文 DEK を
 注入するため、**CP/ホストが侵害されるとそのデプロイ内の分離は一括で破れる**。会社間は別デプロイゆえ
-波及しない——これが提供モデルの強み（[decisions/0001](../decisions/0001-self-host-vs-saas.md)）。
+波及しない——これが提供モデルの強み（[decisions/0001](../decisions/0001-self-host-vs-saas.ja.md)）。
 緩和候補: rootless Docker / socket-proxy / CP 最小権限（別ワーク・未着手）。
 
 ## 7.2 隔離コントロール（local / aws 両対応）
@@ -54,7 +54,7 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
 | モード | 仕組み | 用途 |
 |--------|--------|------|
 | `oauth`（実運用の既定）| **CP ネイティブ OIDC ログイン**（Google ＋ 任意の OIDC IdP・§7.3.1）。`/oauth2/{login,callback,logout}` + `/login` を CP が所有。ログイン成功で署名 cookie（HMAC-SHA256・`AF_COOKIE_SECRET`・HttpOnly/Secure/Lax・TTL `AF_SESSION_TTL` 既定 168h）発行 | セルフホスト本命。HTTPS 前提（エッジは Caddy/Funnel）|
-| `proxy` | 外部ゲートウェイ（oauth2-proxy / ALB OIDC）の `X-Forwarded-Email`（`AUTH_EMAIL_HEADER` で変更可）を信頼。**ヘッダ欠落は 401**（フォールバック無し）。CP は loopback 束縛前提 | ALB OIDC（aws）/ 既存ゲート流用。**SAML IdP（HENNGE One / TrustLogin / CloudGate 等）の正式な答えもこれ** — oauth2-proxy / Keycloak でブリッジする（[61](../decisions/0043-login-idp.md) 決定 10）|
+| `proxy` | 外部ゲートウェイ（oauth2-proxy / ALB OIDC）の `X-Forwarded-Email`（`AUTH_EMAIL_HEADER` で変更可）を信頼。**ヘッダ欠落は 401**（フォールバック無し）。CP は loopback 束縛前提 | ALB OIDC（aws）/ 既存ゲート流用。**SAML IdP（HENNGE One / TrustLogin / CloudGate 等）の正式な答えもこれ** — oauth2-proxy / Keycloak でブリッジする（[61](../decisions/0043-login-idp.ja.md) 決定 10）|
 | `dev` | 固定 `DEV_USER`（既定 `dev`）| ローカル開発のみ。`AUTH=oauth` は素の HTTP では Secure cookie が保存されず使えない |
 
 **authGate の要点**（`oauth` モード）:
@@ -68,7 +68,7 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
   `AF_OAUTH_ALLOWED_EMAILS_FILE`（1 行 = メール or `@domain`・ログイン毎に再読込＝**追加は再起動不要**）。
   provider ごとに `AF_OIDC_<ID>_ALLOWED_{EMAILS,DOMAINS}` を置くと、その provider ではデプロイ共通
   リストの**代わりに**それが使われる（per-provider の絞り込み）。
-- ★ **入口の判定は email 軸の「和」**（[61](../decisions/0043-login-idp.md) §61.9.6・P3）:
+- ★ **入口の判定は email 軸の「和」**（[61](../decisions/0043-login-idp.ja.md) §61.9.6・P3）:
 
   ```
   ( provider 固有リスト | デプロイ共通リスト )  ∪  ( tenant.auto_join_domains | membership 保有 )
@@ -83,7 +83,7 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
 - **判定はログイン時だけでなく毎リクエスト**（許可リストから消す／membership を無効化する＝
   オフボーディング経路。セッション cookie の TTL を待たずに次のリクエストで締め出される）。
   セッション cookie は stateless なので**個別失効は無く**、全セッションを即時に切る唯一の手段は
-  `AF_COOKIE_SECRET` のローテーション（[ADR0043](../decisions/0043-login-idp.md) 決定 27）。
+  `AF_COOKIE_SECRET` のローテーション（[ADR0043](../decisions/0043-login-idp.ja.md) 決定 27）。
 - ★ **テナントの門は authGate に置かない**（決定 13）。`authGate` はテナントを知らない
   （`X-AF-Tenant` を読むのはその先）ので、テナント規則を持ち込むと「どのテナントで判定するか」が
   決まらない。テナント側の判定（`tenant.allowed_providers` とセッションの `prov` の突合）は
@@ -97,7 +97,7 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
 ### 7.3.1 ログイン IdP（`oauth` モード）
 
 Google 固定ではなく**汎用 OIDC クライアント 1 本**で、Entra ID / Okta / Keycloak / Auth0 /
-Cognito / GitLab が設定だけで載る（[61](../decisions/0043-login-idp.md) P0 + [ADR0043](../decisions/0043-login-idp.md)）。
+Cognito / GitLab が設定だけで載る（[61](../decisions/0043-login-idp.ja.md) P0 + [ADR0043](../decisions/0043-login-idp.ja.md)）。
 Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）は据え置き**＝既存デプロイは無変更。
 
 - `AF_OIDC_PROVIDERS`（CSV）＋ `AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,
@@ -120,14 +120,14 @@ Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）
   `tid` は同一レスポンス内の id_token ペイロードから読む。**フロントチャネル（implicit /
   form_post）で id_token を受ける経路を足すなら JWKS 検証が必須**。JWT ライブラリ依存はゼロ。
 
-**GitHub だけは専用アダプタ**（[61](../decisions/0043-login-idp.md) §61.7 P2）。OIDC ではないので上の 1 本には
+**GitHub だけは専用アダプタ**（[61](../decisions/0043-login-idp.ja.md) §61.7 P2）。OIDC ではないので上の 1 本には
 載らない。許可は**独立した 2 つの門の AND**:
 
 - ①**org メンバーシップ**（必須）: `GET /user/memberships/orgs/{org}` が `active`。
   `AF_GITHUB_ALLOWED_ORGS` が空なら provider ごと無効化する（決定 2 — メンバーシップ判定と
   セットでのみ採用した入口）。**この env が GitHub ログインを有効にする合図**でもある
   （`GITHUB_OAUTH_CLIENT_ID` 単体ではログインを有効にしない。★ 歴史的には「git 連携の
-  device flow が先に使っていた env だから」だったが、[71](../decisions/0052-tenant-git-oauth.md) で
+  device flow が先に使っていた env だから」だったが、[71](../decisions/0052-tenant-git-oauth.ja.md) で
   git 側はテナントの行を読むようになったので、この env は**サインイン専用**になった。
   合図が org 一覧である理由は今も同じ——許可を与えているのは org メンバーシップである）。
 - ②**email 許可リスト**: `AF_GITHUB_ALLOWED_{EMAILS,DOMAINS}` → 無ければデプロイ共通 →
@@ -144,7 +144,7 @@ Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）
   `forbidden` ではなく **`reauth`（再ログイン要求・API には 401）** を返す。fail-closed は
   保ったまま、事実と違う「許可されていません」を出さないための区別。
 
-**テナント定義のサインイン方法**（[61](../decisions/0043-login-idp.md) §61.11 P4）。子会社ごとに Entra が違う
+**テナント定義のサインイン方法**（[61](../decisions/0043-login-idp.ja.md) §61.11 P4）。子会社ごとに Entra が違う
 場合に、IdP の定義そのものをテナントが持てる（`tenant_idp`）。env の provider と決定的に違うのは
 **誰が有効化するか**で、そこが安全性の全体を支えている:
 
@@ -177,8 +177,8 @@ Google も同実装の 1 インスタンスで、**env 名（`GOOGLE_OAUTH_*`）
 
 ### 7.3.2 テナントの接続元制限（`allowed_cidrs`）
 
-「誰か」の次に「どこから」を見る門（[docs/66](../decisions/0047-tenant-network-restriction.md)・
-[ADR 0047](../decisions/0047-tenant-network-restriction.md)）。テナント管理者が Console から
+「誰か」の次に「どこから」を見る門（[docs/66](../decisions/0047-tenant-network-restriction.ja.md)・
+[ADR 0047](../decisions/0047-tenant-network-restriction.ja.md)）。テナント管理者が Console から
 CIDR を並べると、そのテナントの解決経路（`resolveFull` / `resolveMembership`）で照合される。
 
 ⚠️ **これはネットワーク防御ではない。** 要求は ALB を通り CP に届き、セッションが検証された
@@ -220,14 +220,14 @@ L2（Claude/codex/opencode を誰として動かすか）はユーザー本人�
 | GitHub ログイン中の人の access token（org 再判定用・§7.3.1）| **CP プロセス内メモリのみ**（永続化しない）| CP のみ。再起動で消え、その人は再ログインを求められる |
 | PAT | DB に SHA-256 ハッシュのみ（[06](06-data.ja.md)）| 平文は発行時 1 回だけ表示 |
 
-**封筒暗号 + custodian 抽象**（[decisions/0005](../decisions/0005-envelope-custodian.md)）:
+**封筒暗号 + custodian 抽象**（[decisions/0005](../decisions/0005-envelope-custodian.ja.md)）:
 - per-workspace **DEK** を per-tenant **KEK** で wrap し `wrapped_dek` に保存。CP が Workspace 起動時に
   unwrap して `AF_SECRET_KEY` としてコンテナへ注入（Agent は暗号方式に無関心）。
 - custodian は interface（`KeyCustodian{Wrap,Unwrap}`）。現実装は **localCustodian**
   （KEK = `HMAC(master, "af-kek:"+tenantID)`・AES-GCM・AAD=keyRef）。
 - ⚠️ **honest な限界**: localCustodian は KEK が master 由来のため、実効強度は単一 `AF_MASTER_KEY` と
   同等。テナント鍵 disable による**真の per-tenant crypto-shred は Vault/KMS custodian 採用時**に達成
-  （📋 seam のみ・[decisions/0005](../decisions/0005-envelope-custodian.md)）。
+  （📋 seam のみ・[decisions/0005](../decisions/0005-envelope-custodian.ja.md)）。
 
 ## 7.7 監査
 
@@ -257,7 +257,7 @@ L2（Claude/codex/opencode を誰として動かすか）はユーザー本人�
 ## 7.9 リスクと残課題
 
 1. **`--dangerously-skip-permissions` の既定運用** — コンテナ境界が唯一の砦。§7.2 を厳格に。
-   利用者はオフにできる（[76](../decisions/0056-tool-permission-choice.md)）が、既定は従来どおりスキップで、
+   利用者はオフにできる（[76](../decisions/0056-tool-permission-choice.ja.md)）が、既定は従来どおりスキップで、
    オフも隔離境界の代わりにはならない（§7.1）。
 2. **CP/ホスト侵害 = デプロイ内一括崩壊**（§7.1 の前提の限界）。会社間非波及が緩和。
 3. **長期保持する L2 認証情報の失効・ローテーション** — 封筒暗号で枠組みは入ったが、真の失効は

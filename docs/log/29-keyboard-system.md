@@ -5,7 +5,7 @@
 Console 全体をキーボードだけで直感的に操作できるようにする体系。中心にある **xterm がフォーカス中
 ほぼ全キーを PTY へ飲む**という制約を、単一の capture-phase ディスパッチャで貫き、Leader＋コマンド
 パレット＋少数アクセラレータのハイブリッドで操作系を構成する。意思決定は
-[decisions/0017-keyboard-system.md](../decisions/0017-keyboard-system.md)。当初の視覚設計は
+[decisions/0017-keyboard-system.md](../decisions/0017-keyboard-system.ja.md)。当初の視覚設計は
 `console/docs/history/keyboard-system-design.html`（standalone HTML）。
 
 > 本書は実装済み体系のリファレンス（利用者向けの操作一覧＋開発者向けの実装マップ）。各コミットで
@@ -126,7 +126,7 @@ ON のとき、端末フォーカス中は全アプリショートカットを x
 
 ### 5.5 i18n（日英）とパレットの日英マッチ
 
-コマンド/グループ名・各 overlay の文言は [0016-i18n](../decisions/0016-i18n.md) の `lib/i18n` へ集約済み。
+コマンド/グループ名・各 overlay の文言は [0016-i18n](../decisions/0016-i18n.ja.md) の `lib/i18n` へ集約済み。
 `Command.title` は i18n メッセージキーで、表示は `cmdLabel()`（現ロケール）で解決する（`features/keys/labels.ts`）。
 **コマンドパレットの絞り込みは `cmdSearch()`＝全ロケール文言（ja＋en…）に対して曖昧マッチ**するので、
 UI 言語に関係なく日本語でも英語でも打ってヒットする（例: 英語 UI でも "分割" で「右に分割/Split right」に一致）。

@@ -3,7 +3,7 @@
 > 状態: **P0〜P2 実装済み**（2026-08-13。ユーザー指示は claude / codex / opencode / copilot / agy /
 > kiro の 6 種へ、フリート方針は claude を含む 6 種すべてへ届く。**配れないのは cursor だけ**で、
 > それは構造的な理由（§60.3）。実測は §60.3 / §60.4 / §60.17）
-> 意思決定: [decisions/0042](../decisions/0042-user-instructions.md)
+> 意思決定: [decisions/0042](../decisions/0042-user-instructions.ja.md)
 > 関連: [57-project-tools.md](57-project-tools.md)（配布軸 / 管理軸の区分・本件は**配布軸**） /
 > [48-mcp-registry.md](48-mcp-registry.md) §8.2（配布軸の書き込み規約） /
 > [39-agent-memory-management.md](39-agent-memory-management.md)（第 3 の場所＝エージェントメモリ） /

@@ -14,7 +14,7 @@
 > 旧コード（state.tsx / components/ / views/ / settings/ / styles.css / 旧 App・main）は削除済み。スワップ時の暫定エイリアス
 > `next.html`（+ vite multi-entry の `next` 入力）も撤去済み（`index.html` 単一エントリ）。api.ts→`core/api/client.ts`、term.ts→`terminal/term.ts`、
 > viewport→`app/`、FileIcon→`ui/` に吸収済み。チェックリストは全数 ✔（機能はコード検証、外観はフェーズ毎のユーザー目視）。
-> 決定の要約は [decisions/0011-console-rebuild.md](../decisions/0011-console-rebuild.md)。
+> 決定の要約は [decisions/0011-console-rebuild.md](../decisions/0011-console-rebuild.ja.md)。
 >
 > **スワップ後に残す意図的な負債（動作パリティに影響なし・随時解消）:**
 > - MirrorView は「transcript パーサ純関数化+ブロック分解」でなく **忠実移植のまま**（品質リスク優先で解体を見送り。分解は次の独立タスク）。CommitGraph/GitDiff/ビュアー群も verbatim。

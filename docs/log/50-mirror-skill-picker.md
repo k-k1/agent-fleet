@@ -1,6 +1,6 @@
 # 50. ミラーのスキルピッカー — セッションのスキル/コマンドを認識して 1 操作で呼ぶ
 
-- 状態: **✅ 実装済み**（v1 claude 2026-07-28 / **v2 クロスエージェント同日** — codex・opencode・cursor 追加、実測記録は §7）。意思決定は [decisions/0034](../decisions/0034-mirror-skill-picker.md)。
+- 状態: **✅ 実装済み**（v1 claude 2026-07-28 / **v2 クロスエージェント同日** — codex・opencode・cursor 追加、実測記録は §7）。意思決定は [decisions/0034](../decisions/0034-mirror-skill-picker.ja.md)。
 - 関連: [29](29-keyboard-system.md)（キーボード体系 — sel-index リストの流儀）/ [27](27-agent-managed-driver.md)（turn 経路）/ [40](40-cursor-agent-kind.md)・[43](43-kiro-agent-kind.md)（ACP）/ 起動モーダルのテンプレ集約（`workspace/agent/repo_prompts.go`）
 
 ---

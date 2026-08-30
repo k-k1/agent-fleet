@@ -3,7 +3,7 @@
 [English](0047-tenant-network-restriction.md) | 日本語
 
 - 状態: **採用**（2026-08-17）。検討の記録は [docs/66](../log/66-tenant-network-restriction.md)。
-- 関連: [0043-login-idp.md](0043-login-idp.md) 決定 24/25（テナントの外へ届くものは運用者、
+- 関連: [0043-login-idp.md](0043-login-idp.ja.md) 決定 24/25（テナントの外へ届くものは運用者、
   中で閉じるものはテナント管理者）・決定 14（門は画面ではなく解決経路に置く） /
   [0044-workspace-sizing.md](0044-workspace-sizing.ja.md) 決定 3（**既定オフで出して一度も
   発火しなかった**前例） / [docs/64](../log/64-ec2-persistent-workspace.md) §64.25（WAF に

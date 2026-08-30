@@ -2,7 +2,7 @@
 
 - 状態: **実装済み** — Phase 1（判定の一本化）/ Phase 2（台帳置換）/ Phase 3（補償 reopen ＋
   自己申告ファストパス）すべて実装（2026-07-29）。[docs/30](30-session-report.md) の報告機構の後継設計。
-- 決定記録: [ADR 0035](../decisions/0035-session-report-v2-ledger.md)
+- 決定記録: [ADR 0035](../decisions/0035-session-report-v2-ledger.ja.md)
 - 関連: [docs/47](47-turn-abort-auto-resume.md)（中断分類・自動再開）/ [docs/27](27-agent-managed-driver.md)（notify seam）/ [docs/38](38-scheduled-execution.md)（配達検証）
 
 ## 背景 — v1 の構造的限界

@@ -10,8 +10,8 @@
 > 2026-08-22 に取得した一次情報**。残存リソースは 0（プローブしたタスク定義 2 本は
 > deregister → delete 済み）。
 > 関連: [64-ec2-persistent-workspace.md](64-ec2-persistent-workspace.md)（スロットプールの本体・
-> [ADR 0045](../decisions/0045-ec2-persistent-workspace.md) 決定 8 / 決定 9 / 決定 21）/
-> [63-workspace-sizing.md](63-workspace-sizing.md)（サイズ 3 軸・[ADR 0044](../decisions/0044-workspace-sizing.md)）/
+> [ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 8 / 決定 9 / 決定 21）/
+> [63-workspace-sizing.md](63-workspace-sizing.md)（サイズ 3 軸・[ADR 0044](../decisions/0044-workspace-sizing.ja.md)）/
 > [67-member-cloud-cost.md](67-member-cloud-cost.md)（`af-slot-size` はコスト配分タグとして既に Active）/
 > [35-packaging.md](35-packaging.md) §35.3.1（**amd64 先行**という現在のパッケージング方針）
 > 対象: `control-plane/runtime_ecs_ec2.go`（`slotTypeFor` / `freeSlots` / `launchSlot` / `buildTaskDef`）/
@@ -66,7 +66,7 @@ launch template、(c) **既存ユーザーの home に入っている x86 バイ
 | `buildTaskDef` (`:2190`) | `RuntimePlatform` を**指定していない** | 指定は任意（§70.8 で実測）だが明示すべき |
 | `goldenSnapshot` (`:2719`) | `(af-pool, af-role=golden, af-image)` で 1 本だけ引く | **アーキの次元が無い → x86 の home を arm に配る** |
 | `SizingProfile` (`workspace_sizing.go:107`) | 梯子を Console へ返す（決定 21） | クラスの次元を足す |
-| `af-slot-size` タグ (`:1645`) | インスタンスタイプを打つ。**コスト配分タグとして Active**（[ADR 0048](../decisions/0048-member-cloud-cost.md) 決定 1） | **何も足さずに費用差が請求に出る** |
+| `af-slot-size` タグ (`:1645`) | インスタンスタイプを打つ。**コスト配分タグとして Active**（[ADR 0048](../decisions/0048-member-cloud-cost.ja.md) 決定 1） | **何も足さずに費用差が請求に出る** |
 
 読み取れる良い知らせが 2 つある。**空きスロット探索は既にインスタンスタイプで分離されている**ので、
 プールに arm と x86 が混ざっても取り違えは起きない。そして **費用の可視化は既に通っている**——
@@ -93,7 +93,7 @@ m7i で確かめた線形性は 4 ファミリ全てで成り立つ。したが�
 クラスの差は全段に等しく効く。
 
 **取得可能性**: m7g / m6g / m8g / m7i いずれも ap-northeast-1a / 1c / 1d の 3 AZ で提供
-（`describe-instance-type-offerings` 実測）。[ADR 0045](../decisions/0045-ec2-persistent-workspace.md)
+（`describe-instance-type-offerings` 実測）。[ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md)
 決定 15/16 の AZ 分散・容量不足時の他 AZ 退避は**そのまま成り立つ**。
 
 ### 70.3.1 性能（実 EC2 で実測・ap-northeast-1・2026-08-22）
@@ -192,7 +192,7 @@ workspace イメージができてから測る——どちらも**素の AL2023 
 
 `user_limit` に `instance_type TEXT` を足して "m7g.xlarge" を入れる案は、3 つの理由で採らない。
 
-1. **サイズ 3 軸の runtime 中立性**（[ADR 0044](../decisions/0044-workspace-sizing.md) 決定 1）を壊す。
+1. **サイズ 3 軸の runtime 中立性**（[ADR 0044](../decisions/0044-workspace-sizing.ja.md) 決定 1）を壊す。
    `user_limit` は docker / native / Fargate / ecs-ec2 で同じ意味を持つ数値の置き場で、
    EC2 の語彙が入ると他ランタイムで意味不明の列になる。
 2. **メモリ軸と二重管理になる。** 現在は「メモリ要求 → 載る箱」の一方向で、`slotTypeFor` が
@@ -214,7 +214,7 @@ AF_ECS_EC2_SLOT_TYPES=
 
 - **後方互換が要件。** `|` を含まない文字列は**今までどおり単一の梯子**として読み、
   `id=standard` / `arch=x86_64` の 1 クラスに畳む。既にデプロイ済みの 30-ingress スタックは
-  パラメータを触らずに新 CP へ上がれる（[ADR 0045](../decisions/0045-ec2-persistent-workspace.md) は
+  パラメータを触らずに新 CP へ上がれる（[ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) は
   「梯子を書く運用者は数字を知っている」を前提に置いた——同じ前提でアーキも運用者が書く）。
 - **アーキは宣言させる。導出しない。** `m7g` の末尾 `g` から arm を推定する案は
   `m7gd` / `g4dn` / `x2gd` で崩れる文字列契約で、この repo が何度も踏んだ型
@@ -233,7 +233,7 @@ AF_ECS_EC2_SLOT_TYPES=
 | ユーザー | `user_limit.slot_class TEXT`（migration `0047`） | tenant_admin | テナント既定 |
 
 解決は `resolveWorkspaceSize` の隣に `resolveSlotClass(ctx, ws) (id string, note string)` を置き、
-**メモリ・CPU・ディスクと同じクランプの型**にする（[ADR 0044](../decisions/0044-workspace-sizing.md)）:
+**メモリ・CPU・ディスクと同じクランプの型**にする（[ADR 0044](../decisions/0044-workspace-sizing.ja.md)）:
 
 ```
 user_limit.slot_class → 空なら tenant.limits.slot_class → 空ならデプロイ既定
@@ -303,7 +303,7 @@ x86 で JDK を入れた人が arm に移ると、**`JAVA_HOME` は x86 の JDK 
 | | 案 A: 切替を禁じる | 案 B: 起動時に自動修復（**推奨**） | 案 C: 移行を明示操作にする |
 |---|---|---|---|
 | 意味 | クラスは **home 作成時のみ**有効。以後の変更は「ホームの掃除」か作り直しが要る | `~` にアーキの刻印を置き、不一致なら**アーキ依存物だけ**捨てて boot-install をやり直す | 管理者が「アーキ移行」を実行 → home を snapshot → 新規 home を golden から作る |
-| 実装量 | 最小（保存時の検証 1 か所） | 中（entrypoint の修復 + 刻印 + 既存の自己修復パターンの延長） | 大（新しいライフサイクル操作・[ADR 0045](../decisions/0045-ec2-persistent-workspace.md) 決定 13 系） |
+| 実装量 | 最小（保存時の検証 1 か所） | 中（entrypoint の修復 + 刻印 + 既存の自己修復パターンの延長） | 大（新しいライフサイクル操作・[ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 13 系） |
 | 利用者の体感 | 「変えられません」 | 初回起動が boot-install ぶん遅い（lean で数分）+ `~/repos/*/node_modules` は各自再作成 | 作業データが消える or 別ボリュームに残る |
 | 危険 | 要件を半分しか満たさない | **修復漏れ**（表に無い置き場） | データの取り扱いが重い |
 
@@ -322,7 +322,7 @@ x86 で JDK を入れた人が arm に移ると、**`JAVA_HOME` は x86 の JDK 
 ⚠️ 案 B でも **Console 側の警告は必須**。クラス変更の保存時に
 「次回起動でホーム内のアーキ依存物を入れ直します（数分）。`~/repos` 配下の
 `node_modules` / `target` / `.venv` は各自で再作成が必要です」を出して明示的に確定させる。
-[ADR 0045](../decisions/0045-ec2-persistent-workspace.md) 決定 13 が「利用者のデータを動かす経路は
+[ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 13 が「利用者のデータを動かす経路は
 必ず本人に見える形で」と決めた線の内側に置く。
 
 ## 70.6 golden スナップショットはアーキ毎に要る
@@ -340,7 +340,7 @@ x86 で JDK を入れた人が arm に移ると、**`JAVA_HOME` は x86 の JDK 
 - `goldenBaker` は**使われているアーキごとに 1 本ずつ焼く**。予約メンバーの鍵を
   `af-golden-seed` → `af-golden-seed-<arch>` / `af-golden-probe-<arch>` に分け、
   種のワークスペースに `slot_class` を与えて対象アーキのスロットへ載せる。
-  焼く順は 1 tick 1 ステップの既存の形を崩さない（[ADR 0045](../decisions/0045-ec2-persistent-workspace.md) 決定 9・
+  焼く順は 1 tick 1 ステップの既存の形を崩さない（[ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md) 決定 9・
   「1 tick 1 ステップで状態は AWS 側」）。
 - ⚠️ [`golden-snapshot-bake`](64-ec2-persistent-workspace.md) §64.28-29 の教訓が**アーキ毎に効く**:
   **起動を確かめていない golden は公開しない**。probe は履歴の無いメンバーシップで、
@@ -690,7 +690,7 @@ chromium 151.0.7922.137。chromium は **headless の日本語スクリーンシ
   未検証**」として残していた項目は、**これで解消**した。
 - [43](43-kiro-agent-kind.md) の「arm64 は musl 変種必須」は正しく、その通りに動いた。
 - ✅ **agy も動く**（§70.13 で別途実測）。L1 smoke は agy の `--version` を**意図的に実行
-  しない**（[decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md) — RDRAND を提示しない
+  しない**（[decisions/0008](../decisions/0008-antigravity-cli-agent-kind.ja.md) — RDRAND を提示しない
   ホストで SIGABRT するため）ので、イメージのビルドだけでは分からないまま残っていた。
 
 ⚠️ **未検証の山はここに残る。** [40](40-cursor-agent-kind.md) §10 は cursor-agent の
@@ -722,7 +722,7 @@ kiro は arm64 だけ musl 変種。**arm スロットは、これら 9 種の C
 
 ## 70.11 費用の可視化 —— 何も足さなくてよい
 
-[ADR 0048](../decisions/0048-member-cloud-cost.md) 決定 1 で **`af-slot-size` は
+[ADR 0048](../decisions/0048-member-cloud-cost.ja.md) 決定 1 で **`af-slot-size` は
 コスト配分タグとして Active**、決定 3 でスロットに `af-membership` が付いている。
 `launchSlot` は `af-slot-size` にインスタンスタイプをそのまま打つ（`:1645`）ので、
 **m7g へ移った人の実費は [67](67-member-cloud-cost.md) のメンバー別費用に自動的に安く出る。**
@@ -747,7 +747,7 @@ $ は Cost Explorer 由来の実費だけにする。
 
 `deploy/aws/ecs/harness/probe-agy-arm64.sh`。agy は Go **BoringCrypto (FIPS)** ビルドで、
 x86 では FIPS 乱数の自己テストが **RDRAND を必須**とし、提示しないホストでは起動直後に
-`CRNGT failed` → SIGABRT する（[decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md)）。
+`CRNGT failed` → SIGABRT する（[decisions/0008](../decisions/0008-antigravity-cli-agent-kind.ja.md)）。
 `hostcaps.AgyStatus` はそれを **`GOARCH == "amd64"` のときだけ**課していた——
 つまり **「arm64 では課さない」は一度も実行されていない仮定**だった。
 
@@ -1190,7 +1190,7 @@ AGY_CLI_DISABLE_AUTO_UPDATE=true  → auto_updater.go:218] Auto-update disabled 
    **m7g は出さない**——m8g に対して安くも速くもない。
 2. **既定クラスを将来動かすか。** 既存デプロイの既定を arm に変えると全員が §70.5 を踏む。
    「新規テナントの既定だけ arm」は分岐が増える。当面**既定は `standard` のまま**を推す。
-   ⚠️ 起票時はここに「[ADR 0044](../decisions/0044-workspace-sizing.md) 決定 3（**既定オフで
+   ⚠️ 起票時はここに「[ADR 0044](../decisions/0044-workspace-sizing.ja.md) 決定 3（**既定オフで
    出した機能は存在しないのと同じ**）の裏返しで、クラスの選択肢自体は 30-ingress の既定に
    載せて出荷する」と書いたが、**実装時に取り下げた**。arm64 クラスは (1) arm64 マニフェスト
    を持つ workspace イメージ（P1・未）と (2) `Ec2SlotAmiArm64` の両方が要り、前者が無いまま

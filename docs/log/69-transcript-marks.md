@@ -1,6 +1,6 @@
 # 69. 会話のこの一文に線を引く——転写のマーカーを共有セッションまで届ける
 
-- 状態: **P0〜P2 実装済み**（2026-08-19、develop 未マージ）。決定は [decisions/0050](../decisions/0050-transcript-marks.md)。
+- 状態: **P0〜P2 実装済み**（2026-08-19、develop 未マージ）。決定は [decisions/0050](../decisions/0050-transcript-marks.ja.md)。
 - 関連: [docs/59](59-session-sharing.md)（共有の権限・DTO・所有者 Workspace 停止時の振る舞い） /
   [docs/55](55-fork-at-message.md)（転写の `anchorId`） /
   [docs/68](68-session-changed-files.md)（ミラーのヘッド直下の帯という置き場） /

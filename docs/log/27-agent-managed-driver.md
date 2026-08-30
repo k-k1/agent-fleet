@@ -1,7 +1,7 @@
 # 27. エージェント制御の Managed Driver 化（TUI スクレイプ → 共有 runtime＋構造化 RPC） — 設計
 
 **Status: ✅ 設計確定・P1/P1.5/P2/P3 実装済み（2026-07-15）** — 2026-07-15 起草。並行設計セッション（sol=A / fable=B）の成果を比較し、
-B の骨格に A の部品を移植する形でユーザー裁定により統合・確定した（経緯は [decisions/0015](../decisions/0015-agent-managed-driver.md)）。
+B の骨格に A の部品を移植する形でユーザー裁定により統合・確定した（経緯は [decisions/0015](../decisions/0015-agent-managed-driver.ja.md)）。
 P1（Codex 観測拡張）実装時の実測で判明した事実は §12.1 に記録（**通知はスレッドアタッチ必須**という
 発見により、P1 は「switch への 5 イベント追加」から「observer のアタッチ機構＋5 イベント」に拡大した）。
 P1.5（Console managed セッション UI の受け皿）の実装記録は §10.1、pane 前提機能の棚卸しと置き換え設計は §10.2。
@@ -17,10 +17,10 @@ P3（Codex managed 化 — 第2 Driver、daemon drain、双方向排他切替）
 > Codex 単体でなく 3 エージェント（codex / opencode / claude）横断のアーキテクチャとして設計する。
 > （追記 2026-07-21: 第3の Driver 実装として copilot が加わった — 共有 daemon でなく
 > **per-session child**（`copilot --acp`、ACP JSON-RPC over stdio）という新しい
-> ProcessModel。[docs/36](36-copilot-agent-kind.md) / [decisions/0019](../decisions/0019-copilot-agent-kind.md)）
+> ProcessModel。[docs/36](36-copilot-agent-kind.md) / [decisions/0019](../decisions/0019-copilot-agent-kind.ja.md)）
 > （追記 2026-07-24: 同じ per-session child ACP ProcessModel の実装として kiro（Kiro、
 > 旧 Amazon Q Developer CLI）が加わった — `kiro-cli acp`（ACP JSON-RPC over stdio）。
-> [docs/43](43-kiro-agent-kind.md) / [decisions/0026](../decisions/0026-kiro-agent-kind.md)）
+> [docs/43](43-kiro-agent-kind.md) / [decisions/0026](../decisions/0026-kiro-agent-kind.ja.md)）
 
 ---
 

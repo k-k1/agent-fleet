@@ -29,15 +29,15 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 - **memo キュー** — membership 単位のメモ永続と一括送信。コンテナ停止中も使える「CP 完結」機能。§3.6。
 - **定時実行（scheduler）** — スケジュール定義を CP DB に永続し、CP 内 goroutine（`scheduler.go`）が cron 評価・発火
   （tz は埋め込み IANA DB で DST 込み解決）。作成/編集はオペレーター経由の `/internal/schedules`
-  （`AF_SCHEDULE_TOKEN`）、Console の `/api/schedules` は閲覧・管理のみ（[docs/38](../decisions/0021-scheduled-execution.md)）。
+  （`AF_SCHEDULE_TOKEN`）、Console の `/api/schedules` は閲覧・管理のみ（[docs/38](../decisions/0021-scheduled-execution.ja.md)）。
 - **通知** — Agent の通知 outbox を取得時に CP ストアへ drain し、`/api/notifications` で一覧・既読管理
   （保持 7 日。`notification.go`）。
 - **MCP サーバレジストリ（テナント配布）** — tenant_admin が全メンバーへ配る MCP サーバ定義を CP DB に保持
   （`/api/admin/mcp-servers` + Agent が poll する `/internal/mcp-servers`）。メンバー個人の登録
-  （`/api/mcp-servers`）は Agent 側で合成され CP は中継のみ（[docs/48](../decisions/0031-mcp-registry.md)）。
+  （`/api/mcp-servers`）は Agent 側で合成され CP は中継のみ（[docs/48](../decisions/0031-mcp-registry.ja.md)）。
 - **バックグラウンドジョブ** — reaper / usage サンプラー / git GC / claude-audit sweep。§3.7。
 - なお**掃除**（cleanup: 調査・削除・gz ごみ箱 `/api/sessions/cleanup`・`/api/cleanup/archives*`）と
-  **エージェントメモリ管理**（snapshot/restore/export `/api/agents/memory/*`・[docs/39](../decisions/0022-agent-memory-management.md)）は
+  **エージェントメモリ管理**（snapshot/restore/export `/api/agents/memory/*`・[docs/39](../decisions/0022-agent-memory-management.ja.md)）は
   **Agent 側の機能**で、CP はそのまま中継する（Agent 中継の一部）。
 
 実装ファイルへの対応は [90-code-map](90-code-map.ja.md)。
@@ -91,7 +91,7 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 
 ## 3.5 MCP サーバ
 
-設計と決定は [decisions/0006](../decisions/0006-mcp-unified.md)。`AF_MCP_ENABLED=true` のときだけ `/mcp` を登録する。
+設計と決定は [decisions/0006](../decisions/0006-mcp-unified.ja.md)。`AF_MCP_ENABLED=true` のときだけ `/mcp` を登録する。
 
 - **トランスポート**は Streamable HTTP の最小形: POST の JSON-RPC 2.0（単発 + batch）に `application/json` で
   応答（SSE なし）。エッジは `/mcp` を Bearer のまま素通しする必要がある。
@@ -102,7 +102,7 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 - **admin ツール** — read（`list_workspaces` / `get_usage` / `list_sessions` / `tail_audit` / egress 観測系）+
   write（`stop_workspace` / `stop_session` / `set_user_quota` / `propose_allowlist_change`＝提案のみ）。
   super_admin / tenant_admin で gate し、write は `audit_log` に `actor_kind=mcp` で記録する。
-- 残: dangerous ツール（鍵ローテ・recreate 等、confirm + dry-run 前提）📋 — [decisions/0006](../decisions/0006-mcp-unified.md)。
+- 残: dangerous ツール（鍵ローテ・recreate 等、confirm + dry-run 前提）📋 — [decisions/0006](../decisions/0006-mcp-unified.ja.md)。
 
 ## 3.6 memo キュー
 

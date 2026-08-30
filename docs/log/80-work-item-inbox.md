@@ -3,7 +3,7 @@
 - 状態: ✅ **P0〜P2 実装済み**（2026-08-26）＋ **P2.5＝実データを見ての情報設計のやり直し**
   （2026-08-27・§80.18）＋ **P2.6＝Bitbucket の Pull Request**（2026-08-27・§80.19）。
   ⏸ 残り = **実機目視**（CP と workspace の両方の再ビルドが要る）と P3 以降。
-  採否と判断は [decisions/0061](../decisions/0061-work-item-inbox.md)。
+  採否と判断は [decisions/0061](../decisions/0061-work-item-inbox.ja.md)。
 - ゴール: 人の仕事の起点である**チケット**を左ペインに置き、そこから 1 クリックで
   文脈込みのセッションを立てられるようにする。Workspace が停止していても一覧は見え、
   「始める」を押したときに初めて起きる。
@@ -367,7 +367,7 @@ URL: https://example.atlassian.net/browse/PROJ-123
 `hardBreak` に写す。
 
 **PR 起票はここでは作らない**（当初 P2 に挙げていたが取り下げ）。理由は
-[ADR 0061](../decisions/0061-work-item-inbox.md) 決定 4 そのもので、**セッションの中の `gh` が既に
+[ADR 0061](../decisions/0061-work-item-inbox.ja.md) 決定 4 そのもので、**セッションの中の `gh` が既に
 できる**（透過認証済み）。af 側に 2 つ目の実装を置くと、push 済みかの判定・既定ブランチの解決・
 既存 PR の検出を af が抱えることになり、`gh pr create` の劣化コピーが増える。
 
@@ -729,7 +729,7 @@ muted 文字はどちらも読める。
 
 3 本目の取得アダプタ。**接続はもうあった**（`tenant_git_oauth` の 3 provider・
 [71](71-tenant-git-oauth.md)）ので、無かったのはアダプタだけ —— しかし
-「保存クエリ 1 本 = provider の検索 1 回」という [ADR 0061](../decisions/0061-work-item-inbox.md)
+「保存クエリ 1 本 = provider の検索 1 回」という [ADR 0061](../decisions/0061-work-item-inbox.ja.md)
 の土台が、Bitbucket でだけ**そのままでは載らなかった**。
 
 ### 80.19.1 ★ Bitbucket に「横断検索」は無い（ここが設計を決めた）
@@ -790,7 +790,7 @@ PR の読み取りには **`pullrequest`**（OAuth）/ **`read:pullrequest:bitbu
 `scope=` は無い）—— コンシューマの Permissions でチェックした物がそのまま渡り、
 **後から権限を足しても既存トークンには焼かれた古い権限しか無い**。つまり本来なら
 「テナント管理者がアプリを直し、全員が接続し直す」という
-[ADR 0061 決定 13](../decisions/0061-work-item-inbox.md)（Jira の 3LO を足したとき）と同じ重さになる。
+[ADR 0061 決定 13](../decisions/0061-work-item-inbox.ja.md)（Jira の 3LO を足したとき）と同じ重さになる。
 
 **そうならないのは、この機能が既定で何も取りに行かないからである。**
 保存クエリを 1 本も作らなければ Bitbucket は 1 回も叩かれない。だから:

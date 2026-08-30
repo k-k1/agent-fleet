@@ -12,7 +12,7 @@
 関連: [72](72-cp-arch-and-availability.md) §72.6（dev イメージと `CpArch`）・
 [70](70-slot-instance-classes.md) §70.14（EC2 で手焼きしていた頃）・
 [64](64-ec2-persistent-workspace.md) §64.28（golden の自動焼き）・
-[35](35-packaging.md)（本物のリリース経路）。決定は [ADR 0054](../decisions/0054-dev-deploy.md)。
+[35](35-packaging.md)（本物のリリース経路）。決定は [ADR 0054](../decisions/0054-dev-deploy.ja.md)。
 
 ## 73.1 何が足りなかったか
 
@@ -99,7 +99,7 @@ deploy/aws/ecs/dev-deploy.sh --profile <p> --region <r>
    タグの sha は**リモートの ref から**取り、手元がそれと違えば警告する。さらに **run の
    `headSha` を焼いたあとに突き合わせる**——dispatch と checkout の間に develop が動けば、
    タグが指す sha は嘘になる。
-2. **`ImageTag` は CP と workspace で共有**（[ADR 0045](../decisions/0045-ec2-persistent-workspace.md)
+2. **`ImageTag` は CP と workspace で共有**（[ADR 0045](../decisions/0045-ec2-persistent-workspace.ja.md)
    決定 8）。CP だけ焼き直しても workspace 側を同じタグに置かないと、タグ不在で CP タスクが
    上がらない。
 3. **`docker pull` + `push` はインデックスを 1 アーキに潰す。** GHCR → ECR は `crane copy`。

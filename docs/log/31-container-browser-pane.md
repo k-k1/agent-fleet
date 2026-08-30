@@ -1,7 +1,7 @@
 # 31. コンテナ内ブラウザペイン — 実装設計
 
 > 状態: **MVP 実装済み・W5 統合検証済み**（2026-07-18）
-> 意思決定: [decisions/0018](../decisions/0018-container-browser-pane.md)
+> 意思決定: [decisions/0018](../decisions/0018-container-browser-pane.ja.md)
 > 利用契約: [31-container-browser-pane-ux-contract.md](31-container-browser-pane-ux-contract.md)
 > 対象: Console / Control Plane / Workspace Agent / Workspace image
 

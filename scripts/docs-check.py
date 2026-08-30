@@ -41,9 +41,11 @@ LIVING = ("use", "admin", "operate", "build", "ref")
 # 利用者向け = 実装用語を書いてはいけない棚。
 READER_FACING = ("use", "admin")
 # 二言語 = 英語が正（X.md）、日本語が併記（X.ja.md）。
-BILINGUAL = LIVING + ("guide",)
+# decisions/ は LIVING ではない（ADR は不変なので Updated: を持たない）が、二言語では
+# ある——読者で切った棚と同じで、英語だけ読む人が決定の理由に届かないのは同じ欠損。
+BILINGUAL = LIVING + ("guide", "decisions")
 # 日本語のみ = 二言語検査の対象外。log/ は凍結、dev/ と guide 以外の旧棚は移行待ち。
-JA_ONLY_DIRS = ("dev", "decisions", "log")
+JA_ONLY_DIRS = ("dev", "log")
 JA_ONLY_FILES = ("HANDOFF.md", "CHANGELOG-handoff.md", "roadmap.md")
 
 # log/ への参照が許される現役ファイル。P4 までに空にする（plan の受け入れ条件）。

@@ -1,6 +1,6 @@
 # 47. 中断ターンの検知と自動再開
 
-決定は [ADR0030](../decisions/0030-turn-abort-auto-resume.md)。
+決定は [ADR0030](../decisions/0030-turn-abort-auto-resume.ja.md)。
 
 ## 1. 何が壊れていたか
 

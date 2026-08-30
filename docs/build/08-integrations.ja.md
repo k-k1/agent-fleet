@@ -76,7 +76,7 @@ CP ネイティブ実装。フロー・許可リスト・authGate の防御は [
 - **OAuth（Auth Code Grant）**: 唯一の CP 所有コールバック。`GET /api/connections/git/bitbucket/oauth/start`
   → 承認 → `GET /api/oauth/bitbucket/callback`（state に user を束ねて解決。ブラウザの CP セッション
   cookie で authGate を通過するため**除外設定不要**）→ token を Agent に渡して保存。
-  consumer の key/secret は**テナントの行**から読む（[71](../decisions/0052-tenant-git-oauth.md)）。
+  consumer の key/secret は**テナントの行**から読む（[71](../decisions/0052-tenant-git-oauth.ja.md)）。
   `PUBLIC_BASE_URL` は残る（consumer の Callback URL は完全一致が前提）。
   ★ state に **tenant_id** を載せる。コールバックは bitbucket.org からの素のリダイレクトで
   `X-AF-Tenant` を持たないので、そこで解決し直すと別テナントのアプリで code を交換しうる。
@@ -129,7 +129,7 @@ Agent が PTY 駆動で authorize URL を抽出 → Console が表示 → ユー
   2. 合成 `.credentials.json`（refreshToken 空）→ 対話 TUI は拒否（refresh 不可）。
   3. `ANTHROPIC_AUTH_TOKEN` → 認証は通るが「API Usage Billing」扱いになりサブスク機能（RC 等）を殺す恐れ。
   - 判定の教訓: 認証可否は `claude auth status` でもバナーでも確証できない。**実プロンプト→応答**でのみ確証。
-    **auth と onboarding は別物**（[decisions/0002](../decisions/0002-claude-auth-onboarding.md)）。
+    **auth と onboarding は別物**（[decisions/0002](../decisions/0002-claude-auth-onboarding.ja.md)）。
 
 ## 8.6 codex / opencode
 
@@ -152,7 +152,7 @@ Agent が PTY 駆動で authorize URL を抽出 → Console が表示 → ユー
 | Agent `mcp-stdio`（対話セッション面）| mcpreg builtin `af`をmaterializeできる各CLI | 不要（自コンテナ・localhost、Agent tokenを子processへ転送）| `af_report`＋Chromium Attach View 7種だけ。その他のフリートtoolは広告・callとも拒否 |
 
 クライアント設定は `{"type":"http","url":"<PUBLIC_BASE_URL>/mcp","headers":{"Authorization":"Bearer <PAT>"}}`。
-`AF_MCP_ENABLED=true` のときだけ `/mcp` が有効。設計判断は [decisions/0006](../decisions/0006-mcp-unified.md)。
+`AF_MCP_ENABLED=true` のときだけ `/mcp` が有効。設計判断は [decisions/0006](../decisions/0006-mcp-unified.ja.md)。
 
 ## 8.8 AWS 🚧
 
