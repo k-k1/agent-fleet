@@ -1,115 +1,129 @@
-# 0052. git プロバイダ（GitHub / Bitbucket）の OAuth アプリを**テナント管理者**が登録する
+# 0052. The **tenant admin** registers the git providers' (GitHub / Bitbucket) OAuth apps
 
-- 状態: **採用**（2026-08-22）。検討の記録は [docs/71](../log/71-tenant-git-oauth.md)。
-- 関連: [0043-login-idp.md](0043-login-idp.md) 決定 29/30（テナント定義の IdP＝**承認が要る**側）・
-  決定 24/25（テナントの外へ届くものは運用者、中で閉じるものはテナント管理者） /
-  [0047-tenant-network-restriction.md](0047-tenant-network-restriction.md) 決定 6（同じ線引き）
+English | [日本語](0052-tenant-git-oauth.ja.md)
 
-## 背景
+- Status: **adopted** (2026-08-22). The record of the investigation is [docs/71](../log/71-tenant-git-oauth.md).
+- See also: [0043-login-idp.md](0043-login-idp.md) decisions 29/30 (a tenant-defined IdP — the side
+  that **requires approval**) and decisions 24/25 (what reaches outside the tenant belongs to the
+  operator; what stays inside belongs to the tenant admin) /
+  [0047-tenant-network-restriction.md](0047-tenant-network-restriction.md) decision 6 (the same line)
 
-「OAuth で接続」のアプリはデプロイに 1 つで、GitHub は Workspace の env
-（`GITHUB_OAUTH_CLIENT_ID`）、Bitbucket は CP の env（`BITBUCKET_OAUTH_KEY`/`_SECRET`）
-だった。アプリが実際に置かれるのは各社の GitHub org / Bitbucket ワークスペースであり、
-テナント毎に違って当然のものを運用者が 1 つだけ持っていた。
+## Context
 
-## 決定 1 — 設定はテナントの行にする。**デプロイ毎の設定は置かない**
+There was one "connect with OAuth" app per deployment: GitHub in the workspace's env
+(`GITHUB_OAUTH_CLIENT_ID`) and Bitbucket in the CP's env
+(`BITBUCKET_OAUTH_KEY`/`_SECRET`). But the app actually lives in each company's GitHub org or
+Bitbucket workspace, and the operator held exactly one of something that naturally differs per
+tenant.
 
-`tenant_git_oauth(tenant_id, provider)`。運用者向けの UI も env も新設しない。
+## Decision 1 — the setting goes on the tenant's row. **No per-deployment setting**
 
-単一テナントのデプロイ（native / compose）では default テナントの行が事実上の
-デプロイ設定になる。層を 2 つ持つより、1 つの層を全構成で共有する方が説明も導線も 1 本になる。
+`tenant_git_oauth(tenant_id, provider)`. No new operator-facing UI and no new env.
 
-## 決定 2 — env は**フォールバックにもしない**。移送もしない
+On a single-tenant deployment (native / compose) the default tenant's row effectively becomes the
+deployment setting. Rather than having two layers, sharing one layer across every configuration keeps
+both the explanation and the route singular.
 
-「行が無ければ env」を残すと、*どのアプリに送られるか*が**テナントによって変わる**。
-ボタンが出ない／別のアプリに飛ぶという問い合わせに対して、見る場所が 2 つになる。
+## Decision 2 — the env is **not even a fallback**, and nothing is migrated
 
-起動時の自動移送（env → default テナント）も入れない。入れると「env は読まない」が
-**起動時だけ嘘になり**、`.env` を消し忘れたデプロイで再起動のたびに復活する行ができる。
-稼働中デプロイの代償は「テナント管理者が登録し直すまで OAuth ボタンが出ない」だけで、
-token 貼付も既存接続も止まらない。
+Keeping "fall back to env when the row is missing" makes *which app you are sent to* **vary by
+tenant**. When someone asks why the button is missing or why they landed on a different app, there
+are two places to look.
 
-## 決定 3 — **承認を要らない**（`tenant_idp` と揃えない）
+Automatic migration at startup (env → the default tenant) is not added either. It would make
+"the env is not read" **a lie at startup only**, and on a deployment that forgot to delete `.env` a
+row would reappear on every restart. The price for a running deployment is only "the OAuth button is
+missing until the tenant admin registers it again" — pasting a token and existing connections keep
+working.
 
-`tenant_idp` が super_admin の承認を要るのは、IdP の登録が「**誰であるか**を宣言する
-権限」だからである（0043 決定 30）。git の OAuth アプリはそれを持たない:
+## Decision 3 — **no approval required** (unlike `tenant_idp`)
 
-- identity を増やさない。ログイン画面にボタンは出ないし、user_key も deployment role も動かない。
-- `redirect_uri` は **CP 所有で固定**。攻撃者のアプリを登録しても grant を余所へ飛ばせない。
-- 得られる token は**押した本人のワークスペース**にしか入らず、登録した管理者には返らない。
-- そして `AUTH=dev` のデプロイには承認できる super_admin が居ない（決定 5）。
-  承認制にすると、その構成では**永久に pending のまま**という例外規則が要る。
+`tenant_idp` requires super_admin approval because registering an IdP is **the authority to declare
+who someone is** (0043 decision 30). A git OAuth app does not carry that:
 
-止めるのは常に速い方でよいので、削除もテナント管理者ができる。
+- It adds no identity. No button appears on the login screen, and neither user_key nor the deployment
+  role moves.
+- The `redirect_uri` is **fixed and owned by the CP**. Registering an attacker's app cannot send the
+  grant elsewhere.
+- The resulting token goes only into **the workspace of whoever pressed the button**; it never comes
+  back to the admin who registered it.
+- And a deployment with `AUTH=dev` has no super_admin to approve anything (decision 5). Requiring
+  approval would need an exception rule for "permanently pending" in that configuration.
 
-## 決定 4 — GitHub の device flow を **Agent から CP へ移す**
+Stopping something should always be the faster path, so a tenant admin can delete it too.
 
-per-tenant の client_id をコンテナ env で配る案を捨てた理由は 2 つ。
+## Decision 4 — move GitHub's device flow **from the Agent to the CP**
 
-1. env が固まるのは**コンテナ起動時**で、実装が**ランタイム毎に 4 つ**ある
-   （docker / native / ecs / ecs-ec2）。
-2. **反映に全メンバーのワークスペース再起動が要る。** 初回登録の直後が一番踏みやすい。
+Two reasons for discarding the idea of distributing a per-tenant client_id via container env.
 
-CP で回せば配線ゼロ・即時反映で、Bitbucket と形も揃う。パス
-（`/api/connections/git/github/oauth/{start,poll}`）は据え置き、取得した token は
-Agent の `PUT /connections/git/github.com`（PAT 貼付と同じ入口）へ渡す。
-Agent 側の device flow ハンドラと `githubClientID()` は**削除**する——残せば env を
-読む経路が生き、決定 2 が嘘になる。
+1. The env is fixed **when the container starts**, and there are **four implementations, one per
+   runtime** (docker / native / ecs / ecs-ec2).
+2. **Applying it requires restarting every member's workspace.** That is most likely to bite right
+   after the first registration.
 
-## 決定 5 — `AUTH=dev` の固定ユーザーを **super_admin** として扱う
+Running it on the CP needs no wiring, applies immediately, and matches Bitbucket's shape. The paths
+(`/api/connections/git/github/oauth/{start,poll}`) stay, and the acquired token is handed to the
+Agent's `PUT /connections/git/github.com` (the same entrance as pasting a PAT). The Agent's device
+flow handler and `githubClientID()` are **deleted** — leaving them keeps a path that reads the env
+alive, making decision 2 a lie.
 
-`deploy/native/af` は `AUTH=dev` 固定で、その identity は **email を持たない**。
-`SUPER_ADMIN_EMAILS` はアドレス照合なので、native / WSL には super_admin が
-**原理的に存在しなかった**。設定が全部 env にあった間は問題にならなかったが、
-決定 1 の後は「設定できる人が 1 人も居ないデプロイ」になる。
+## Decision 5 — treat `AUTH=dev`'s fixed user as **super_admin**
 
-`AUTH=dev` は無認証の単一固定ユーザー＝ホストの持ち主なので、権限を与えているのではなく
-**モードの実態を role に写しているだけ**である。email が空なので `DemoteSuperAdmins`
-（`email <> ''` のみ対象）にも掛からず、再起動で剥がれない。
+`deploy/native/af` is fixed at `AUTH=dev`, and that identity **has no email**.
+`SUPER_ADMIN_EMAILS` matches on addresses, so on native / WSL a super_admin **could not exist in
+principle**. That did not matter while all the settings were env, but after decision 1 it becomes "a
+deployment where nobody can configure anything".
 
-## 決定 6 — secret は**書き込み専用**、ただし初回の空は拒否
+`AUTH=dev` is an unauthenticated single fixed user, i.e. the host's owner, so this is not granting a
+privilege but **mirroring the mode's reality into a role**. With an empty email it is not caught by
+`DemoteSuperAdmins` either (which only targets `email <> ''`), so it does not get stripped on restart.
 
-保存済みの `client_secret` は返さない（`tenant_idp` / `mcp_server` と同じ契約）。空で
-保存＝「変えない」。ただし secret が要るプロバイダの**初回**だけは空を拒否する
-（`secret_required`）——空のまま保存できると、画面上は登録済みなのに token 交換で落ちる行が
-できて、失敗が Bitbucket 側の `invalid_client` としてしか見えなくなる。
+## Decision 6 — the secret is **write-only**, but an empty value is refused the first time
 
-GitHub には逆向きの規則を置く: secret を渡されても**保存しない**。device flow は
-client_id だけで認証するので、保存すれば「誰も読まない・誰も rotate しない資格情報」を
-増やすだけになる。
+A stored `client_secret` is never returned (the same contract as `tenant_idp` and `mcp_server`).
+Saving with it empty means "leave it unchanged". But **the first time** for a provider that needs a
+secret, empty is refused (`secret_required`) — being able to save it empty creates a row that looks
+registered on screen but fails at token exchange, and the failure is only visible as Bitbucket's
+`invalid_client`.
 
-## 決定 7 — Bitbucket の **refresh grant も CP で回す**（client_secret を配らない）
+For GitHub the rule goes the other way: if a secret is supplied it is **not stored**. The device flow
+authenticates with the client_id alone, so storing it would only add "a credential nobody reads and
+nobody rotates".
 
-refresh grant は OAuth アプリの key:secret で Basic 認証する。従来は接続時に CP が
-key/secret を Agent へ渡し、Agent が自前で回していた ＝ **テナントの client_secret が
-全メンバーの `secrets.enc` に複製**されていた。運用者のアプリだった間は「運用者の秘密が
-運用者の作ったコンテナにある」で済むが、決定 1 でアプリの持ち主がテナント管理者になった
-以上、他人のディスクに置かれた他人の資格情報になる。
+## Decision 7 — run Bitbucket's **refresh grant on the CP too** (do not distribute the client_secret)
 
-`POST /internal/git-oauth/bitbucket/refresh` を追加し、メンバーシップ毎の
-`AF_GIT_OAUTH_TOKEN`（他のブリッジと同形・**署名鍵は別**）で認証する。テナントは
-**トークンから引く**（リクエストで選ばせない）。
+A refresh grant does Basic auth with the OAuth app's key:secret. Previously the CP handed the
+key/secret to the Agent at connection time and the Agent ran it itself, which meant **the tenant's
+client_secret was copied into every member's `secrets.enc`**. While it was the operator's app that
+was merely "the operator's secret in a container the operator made", but once decision 1 made the
+tenant admin the app's owner, it becomes someone else's credential sitting on someone else's disk.
 
-★ **refresh token は動かさない。** ワークスペースに残り、CP は保存しない。「CP は秘密を
-素通しさせるだけで保持しない」を保ったまま、**テナントの秘密は CP・本人のトークンは
-ワークスペース**という分け方にした。全部を CP に集めるより、壊れたときに失うものが小さい。
+`POST /internal/git-oauth/bitbucket/refresh` is added, authenticated by a per-membership
+`AF_GIT_OAUTH_TOKEN` (the same shape as the other bridges, with **a separate signing key**). The
+tenant is **derived from the token** (the request does not get to choose).
 
-移行は**動くことを確かめてから消す**順にする: 既存ストアの key/secret は**ブリッジが一度
-成功した時点で**破棄し、ブリッジ失敗時**かつ**旧値が残っている間だけ旧経路へ落ちる。
-新規接続には旧値が無いので、フォールバックは一世代で構造的に消える。
+★ **The refresh token does not move.** It stays in the workspace and the CP does not store it. Keeping
+"the CP passes secrets through and does not hold them", the split becomes **the tenant's secret on
+the CP, the person's own token in the workspace**. Less is lost when something breaks than if
+everything were collected on the CP.
 
-代償は 2 つ、どちらも受け入れる。①refresh に CP 到達性が要る（access token は ~2h 有効
-なので CP の再起動は見えない）。②docs/71 より前に起動したコンテナの Agent は保存 API で
-key/secret を必須にしているため、**アップグレードの窓で 1 回だけ**「ワークスペースを
-停止→起動」が要る（CP がその旨に文言を差し替える）。
+The migration order is **confirm it works, then delete**: the key/secret in the existing store is
+discarded **once the bridge has succeeded once**, and the old path is used only when the bridge fails
+**and** the old values are still there. New connections have no old values, so the fallback disappears
+structurally within one generation.
 
-## 影響
+There are two prices, both accepted. (1) A refresh needs the CP to be reachable (the access token is
+valid for ~2h, so a CP restart is invisible). (2) The Agent in a container started before docs/71
+requires key/secret in its save API, so **one "stop and start the workspace" is needed once during the
+upgrade window** (the CP swaps in wording that says so).
 
-- `BITBUCKET_OAUTH_KEY` / `_SECRET` は読まれなくなる。CFN の `BitbucketOauthKey` と
-  `<SsmPrefix>/bitbucket-oauth-secret` の参照を削除。
-- `GITHUB_OAUTH_CLIENT_ID` は**残るが意味が変わる**。以降は GitHub **サインイン**専用で、
-  ワークスペースへは注入されない（docs/61 §61.7 の「git 連携が先に使っている env」という
-  前提はここで終わる）。
-- `AUTH=dev` のデプロイで管理モーダルが開くようになる（今まで開かなかった）。
-- ワークスペースに `AF_GIT_OAUTH_TOKEN` が 1 つ増え、`secrets.enc` から Bitbucket の
-  `key`/`secret` が（次回 refresh 時に）消える。逆に refresh は CP 到達性に依存する。
+## Impact
+
+- `BITBUCKET_OAUTH_KEY` / `_SECRET` stop being read. The CFN references to `BitbucketOauthKey` and
+  `<SsmPrefix>/bitbucket-oauth-secret` are removed.
+- `GITHUB_OAUTH_CLIENT_ID` **remains but changes meaning**. From now on it is for GitHub **sign-in**
+  only and is not injected into workspaces (docs/61 §61.7's premise that "git integration is already
+  using this env" ends here).
+- The admin modal now opens on an `AUTH=dev` deployment (it did not before).
+- The workspace gains one `AF_GIT_OAUTH_TOKEN`, and Bitbucket's `key`/`secret` disappear from
+  `secrets.enc` (at the next refresh). In exchange, a refresh now depends on the CP being reachable.

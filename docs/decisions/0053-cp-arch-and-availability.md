@@ -1,166 +1,178 @@
-# 0053. CP イメージを 2 アーキ index にし、実行アーキは**運用者が選ぶ**（冗長化は別の話として切り離す）
+# 0053. Make the CP image a two-architecture index and let **the operator choose** the running architecture (redundancy is separated out as a different matter)
 
-- 状態: **採用**（2026-08-23）。検討の記録は [docs/72](../log/72-cp-arch-and-availability.md)。
-- 関連: [0044-workspace-sizing.md](0044-workspace-sizing.md) 決定 3
-  （**既定オフで出した機能は存在しないのと同じ**——本 ADR の決定 4 はこれに逆らって
-  「既定オフのまま出す」と言うので、理由を明示する必要がある） /
-  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) 決定 8
-  （`ImageTag` は CP と workspace で共有＝**別タグにできない**） /
-  [0037-registry-policy.md](0037-registry-policy.md)（イメージはレジストリで配る／air-gap tar は
-  1 台への手渡し＝マニフェストリストの対象外）
+English | [日本語](0053-cp-arch-and-availability.ja.md)
 
-## 背景
+- Status: **adopted** (2026-08-23). The record of the investigation is [docs/72](../log/72-cp-arch-and-availability.md).
+- See also: [0044-workspace-sizing.md](0044-workspace-sizing.md) decision 3
+  (**a feature shipped off by default might as well not exist** — decision 4 of this ADR defies that
+  by saying "ship it off by default", so the reason has to be stated) /
+  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) decision 8
+  (`ImageTag` is shared by the CP and the workspace, i.e. **they cannot use different tags**) /
+  [0037-registry-policy.md](0037-registry-policy.md) (images are distributed via a registry; the
+  air-gap tar is a hand-off to one machine and is out of scope for manifest lists)
 
-[docs/70](../log/70-slot-instance-classes.md) は Workspace が載る箱をアーキごと選べるように
-した。同じ問いが CP 自身に残っている——**CP は amd64 でしか焼かれていない**ので、
-Fargate を Graviton に置くという選択肢がそもそも存在しない。一方で
-`control-plane/Dockerfile` にはアーキ依存の記述が 1 行も無く、**焼き方だけの問題**である。
+## Context
 
-## 決定 1 — タグは 1 つのまま、中身をマニフェストリストにする
+[docs/70](../log/70-slot-instance-classes.md) made it possible to choose the architecture of the box a
+workspace runs on. The same question remains for the CP itself — **the CP is only built for amd64**,
+so the option of putting Fargate on Graviton does not exist at all. Meanwhile there is not a single
+architecture-dependent line in `control-plane/Dockerfile`; **it is purely a question of how it is
+built**.
 
-`ImageTag` は CP と workspace で共有されていて別タグにできない（0045 決定 8）。
-アーキごとにタグを分ける案はそこで詰む。**index にすれば ECS もローカルの docker も
-ホストのアーキで正しい方を引く**ので、参照は 1 つのままでよい。
+## Decision 1 — keep one tag and make its contents a manifest list
 
-## 決定 2 — CP は**クロスコンパイルで焼く**（QEMU でコンパイルさせない）
+`ImageTag` is shared by the CP and the workspace and they cannot use different tags (0045 decision
+8), which is where the idea of a tag per architecture dies. **With an index, both ECS and local docker
+pull the right one for the host's architecture**, so the reference can stay singular.
 
-`console`（Vite）と `build`（Go）の 2 ステージを `--platform=$BUILDPLATFORM` に固定し、
-Go には `GOARCH=$TARGETARCH` を渡す。エミュレータを通るのはランタイムステージの
-`apt-get` だけになる。
+## Decision 2 — build the CP by **cross-compiling** (do not compile under QEMU)
 
-- Console の成果物は JS/CSS で**アーキ非依存**——2 回焼く意味が無い。
-- `CGO_ENABLED=0` なので Go のクロスビルドは**準備を何も要らない**。
-- [docs/70](../log/70-slot-instance-classes.md) §70.9.2 が測った QEMU の税（arm64 単体で
-  実機の約 5 倍）は、**中身が I/O 寄りだから**その値で済んだと同じ節が明記している。
-  **CP はそこで警告されているコンパイル寄りの側**なので、workspace の数字を
-  流用してはならない。
+The `console` (Vite) and `build` (Go) stages are pinned to `--platform=$BUILDPLATFORM`, with
+`GOARCH=$TARGETARCH` passed to Go. The only thing that goes through the emulator is the runtime
+stage's `apt-get`.
 
-✅ **実測（2026-08-23）**: amd64 のみ **95 秒** / クロスコンパイルで 2 アーキ **166 秒**
-（増分 **+71 秒**）/ **ピンを剥がすと 664 秒**（増分 +569 秒）。**素直に焼くと 4.0 倍・
-arm64 の増分で見れば 8.0 倍。** workspace の +593 秒に対して CP は **+71 秒**で、
-**CP の multi-arch 化は workspace より安い**という見立ても当たった。
-反実仮想を並べて焼く仕掛けが無ければ、この 8 分は「そういうものだ」で終わっていた。
+- The Console's output is JS/CSS and **architecture-independent** — there is no point building it
+  twice.
+- With `CGO_ENABLED=0`, cross-building Go **requires no preparation at all**.
+- The QEMU tax that [docs/70](../log/70-slot-instance-classes.md) §70.9.2 measured (about 5× real
+  hardware for arm64 alone) came out at that figure **because the contents are I/O-bound**, as that
+  same section states explicitly. **The CP is on the compile-heavy side it warns about**, so the
+  workspace's numbers must not be reused.
 
-⚠️ **この最適化は失敗しても壊れない。** ピンを 1 つ落としても出てくるイメージは正しく、
-違いはビルド分数だけ。だから (a) Dockerfile のヘッダに理由を書き、(b) 計測ワークフローに
-**ピンを剥がした反実仮想**を同時に焼かせて差を数字で残す。**「クロスコンパイルしている」を
-信念のままにしない。**
+✅ **Measured (2026-08-23)**: amd64 only **95 seconds** / two architectures by cross-compiling **166
+seconds** (an increment of **+71 seconds**) / **664 seconds with the pins removed** (an increment of
++569 seconds). **Building it naively is 4.0×, or 8.0× measured on the arm64 increment.** Against the
+workspace's +593 seconds, the CP is **+71 seconds**, so the expectation that **making the CP
+multi-arch is cheaper than the workspace** held too. Without a mechanism that builds the counterfactual
+alongside it, those eight minutes would have been written off as "that is just how it is".
 
-## 決定 3 — `WS_PLATFORMS` と `CP_PLATFORMS` は**独立**にする
+⚠️ **This optimisation does not break anything if it fails.** Drop one pin and the resulting image is
+still correct; the only difference is build minutes. So (a) the reason is written in the Dockerfile's
+header, and (b) the measurement workflow also builds **the counterfactual with the pins removed** so
+the difference is recorded as a number. **Do not let "we cross-compile" stay a belief.**
 
-1 つの旗にまとめない。2 つのイメージは別の問いに答えている——workspace の arm64 は
-「スロットが Graviton になりうる」から、CP の arm64 は「サービス自体を Graviton に
-置きたい」から。**片方だけ欲しい配備は普通にあり**、まとめると「使わない方の
-ビルド時間」を必ず払うことになる。
+## Decision 3 — `WS_PLATFORMS` and `CP_PLATFORMS` are **independent**
 
-## 決定 4 — `control_plane_arm64` は**既定 ON**（当初 OFF。P3 が通った時点で倒した）
+They are not merged into one flag. The two images answer different questions — the workspace's arm64
+because "a slot may be Graviton", the CP's arm64 because "we want to put the service itself on
+Graviton". **A deployment that wants only one of them is perfectly normal**, and merging them
+guarantees paying for the build time of the one you do not use.
 
-**通常のリリースが 2 アーキ index の CP を出す。** `CpArch=arm64` は、専用に焼いた版では
-なく**普通のリリースで使える**。
+## Decision 4 — `control_plane_arm64` is **on by default** (initially off; flipped once P3 passed)
 
-⚠️ **`workspace_arm64` は OFF のままで、この非対称が決定の中身である。** 同じ 2 択に
-見えるが値段が二桁違う: **CP は +71 秒**（クロスコンパイルするので・決定 2）、
-**workspace は +593 秒**（アーキ毎のバイナリを入れるのでクロスできない）。
-71 秒は 90 分の timeout に対して誤差で、**運用者に訊く理由が無い。**
+**Ordinary releases now ship a two-architecture index CP.** `CpArch=arm64` can be used with **an
+ordinary release**, not a specially built one.
 
-**この既定に至るまでに理由が 2 回入れ替わっている。記録しておく:**
+⚠️ **`workspace_arm64` stays off, and that asymmetry is the substance of this decision.** They look
+like the same binary choice but the prices differ by two orders of magnitude: **the CP is +71 seconds**
+(because it cross-compiles — decision 2) and **the workspace is +593 seconds** (because it installs
+per-architecture binaries and cannot cross-compile). 71 seconds is noise against a 90-minute timeout,
+so **there is no reason to ask the operator.**
 
-1. 当初は OFF。理由は「ビルド時間の税を測っていないから」。
-2. 測った（+71 秒）ので**その理由は消えた**——が、**別の・より重い理由**が残った:
-   ON にすると**一度も起動させていない arm64 の面**を全利用者向けのタグに載せることに
-   なる。[0045](0045-ec2-persistent-workspace.md) 決定 9-1 の
-   **「起動を確かめていない golden は公開しない」と同じ形**である。
-3. **P3 でその面が実機で上がった**（下の実機検証）ので、両方の理由が無くなった → ON。
+**The reason changed twice on the way to this default, so it is recorded:**
 
-⚠️ **2 が肝である。** 1 が解けた時点で倒していたら、「動くはずの arm64」を配ることに
-なっていた。**税の問いと「確かめたか」の問いは別の問いで、後者の方が遅く片付く。**
+1. Initially off. The reason: "we have not measured the build-time tax".
+2. We measured it (+71 seconds), so **that reason vanished** — but **a different, heavier reason**
+   remained: turning it on would put **an arm64 surface that has never been started** onto the tag
+   every user gets. **The same shape as [0045](0045-ec2-persistent-workspace.md) decision 9-1's "do
+   not publish a golden whose startup has not been confirmed".**
+3. **In P3 that surface came up on real hardware** (see the verification below), so both reasons were
+   gone → on.
 
-⚠️ そして OFF のまま据え置く選択肢は無かった: 0044 決定 3（**既定オフで出した機能は
-存在しないのと同じ**）そのものになる。
+⚠️ **Point 2 is the crux.** Flipping it the moment point 1 was resolved would have meant shipping an
+arm64 that "should work". **The question of the tax and the question of "have you checked?" are
+different questions, and the latter settles later.**
 
-## 決定 5 — `RuntimePlatform` は既定値でも**明示する**
+⚠️ And leaving it off was not an option: it would have become 0044 decision 3 itself (**a feature
+shipped off by default might as well not exist**).
 
-`CpArch` の既定は `x86_64`＝いまの挙動と同一だが、テンプレートには書く。
+## Decision 5 — state `RuntimePlatform` **explicitly**, even at its default value
 
-Fargate は `runtimePlatform` を省略すると `X86_64` を入れる。**⚠️ ただし入れるのは
-タスクが起動するときで、登録時ではない**——だから `describe-task-definition` は
-`null` を返し、「この CP が何のアーキで動いているか」は**どこにも書かれていない**。
-明示すればタスク定義の同一性にも入るので、`CpArch` を動かせば確実に新リビジョンになる。
+`CpArch`'s default is `x86_64`, identical to today's behaviour, but it is written in the template
+anyway.
 
-⚠️ EC2 起動タイプはこの既定を**共有しない**（省略すると `null` のまま）。
-[docs/70](../log/70-slot-instance-classes.md) §70.8 が記録した非対称で、
-「Fargate で省略しても動いていたから EC2 でも省略でよい」は成立しない。
+Fargate fills in `X86_64` when `runtimePlatform` is omitted. **⚠️ But it fills it in when the task
+starts, not at registration** — so `describe-task-definition` returns `null` and "which architecture
+is this CP running on" is **written down nowhere**. Stating it explicitly also puts it into the task
+definition's identity, so moving `CpArch` reliably produces a new revision.
 
-## 決定 6 — 噛み合わない組合せは **deploy の前に**落とす
+⚠️ The EC2 launch type **does not share this default** (omitted, it stays `null`). It is the asymmetry
+recorded in [docs/70](../log/70-slot-instance-classes.md) §70.8: "omitting it worked on Fargate, so
+omitting it is fine on EC2" does not hold.
 
-`CpArch=arm64` を arm64 マニフェストの無いタグに当てると、症状は
-`CannotPullContainerError` ですらなく **`desired=1 / running=0` の配置不能**で、
-pull エラーのログも出ない。
+## Decision 6 — reject a mismatched combination **before deploying**
 
-⚠️ 決定 4 を ON に倒したことで**この危険は減ったが、消えてはいない**。これから出るリリースは
-2 アーキ index を持つが、**0.10.0 以前のリリースは単一 amd64 のまま**であり、
-`docker build` で手元で焼いた版も（`CP_PLATFORMS` を渡さない限り）ホストのアーキ 1 枚である。
-**「新しいリリースなら大丈夫」は前検査を外してよい理由にならない。**
+Applying `CpArch=arm64` to a tag with no arm64 manifest does not even produce a
+`CannotPullContainerError` — the symptom is **`desired=1 / running=0`, unplaceable**, with no pull
+error in the logs.
 
-`update.sh` に前検査を足す。⚠️ **証明できたときだけ落とす**——index ならアーキ一覧を
-読んで断定でき、単一マニフェストなら中身は読めないので「arm64 を要求している」ときだけ
-落とす。`AF_CP_ARCH_CHECK=0` で外せる。**ここは公開ゲートではなく更新の前検査**なので、
-[docs/35](../log/35-packaging.md) §35.7.5 の「走らなかったゲートは通っていない」は当てない
-（当てると、権限やツールの差で運用者の更新経路が止まる）。
+⚠️ Flipping decision 4 on **reduced this danger but did not remove it**. Releases from now on carry a
+two-architecture index, but **releases before 0.10.0 are single amd64**, and a version built locally
+with `docker build` is a single host-architecture image too (unless `CP_PLATFORMS` is passed).
+**"It is a new release, so it is fine" is not a reason to skip the pre-check.**
 
-## 決定 7 — 冗長化は**本 ADR の対象外**にする（が、実状は記録する）
+A pre-check is added to `update.sh`. ⚠️ **It fails only when it can prove the problem** — with an index
+it reads the architecture list and can be certain; with a single manifest it cannot read the contents,
+so it fails only when arm64 is being requested. `AF_CP_ARCH_CHECK=0` disables it. **This is an update
+pre-check, not a publishing gate**, so [docs/35](../log/35-packaging.md) §35.7.5's "a gate that did
+not run has not passed" does not apply (applying it would stop an operator's update path over
+differences in permissions or tooling).
 
-CP は `DesiredCount: 1`・オートスケール無し・RDS は `MultiAZ: false`（パラメータですら
-ない）。**これは事故ではないが、「そう決めた」と書かれてもいなかった**ので
-[docs/72](../log/72-cp-arch-and-availability.md) §72.7 に記録した。
+## Decision 7 — redundancy is **out of scope for this ADR** (but the reality is recorded)
 
-⚠️ **「CP は 1 台」は「コードが 1 台前提でよい」を意味しない。** `minimumHealthyPercent=100`
-なので、**アップグレードのたびに新旧 2 つの CP が約 51 秒重なる**（実測）。無停止デプロイは
-その重なりが作っている。
+The CP is `DesiredCount: 1`, has no autoscaling, and its RDS is `MultiAZ: false` (not even a
+parameter). **This is not an accident, but it had never been written down as a decision either**, so it
+was recorded in [docs/72](../log/72-cp-arch-and-availability.md) §72.7.
 
-⚠️ それでも `DesiredCount` を上げないのは、常時 2 台で**具体的に壊れるものがある**から:
-定時実行は**発火してから台帳を前進**させるので 2 レプリカが同じ slot を二重発火し得る
-（コード自身が「プロンプトの二重配達」と書いている）、GitHub device flow は
-**プロセスメモリ**にある。
+⚠️ **"The CP is one instance" does not mean "the code may assume one instance".** With
+`minimumHealthyPercent=100`, **two CPs, old and new, overlap for about 51 seconds on every upgrade**
+(measured). That overlap is what makes the deployment zero-downtime.
 
-⚠️ **そして一番弱い環は CP の台数ではない。** 2 台にしても両方が同じ単一 AZ の RDS を
-見る。順序は「`MultiAZ` をパラメータにする → 上の 2 件を直す → `CpDesiredCount` を出す」で、
-**最後だけを先に出すのが一番悪い**（冗長化したと読める設定が増え、実際には二重発火という
-新しい障害を足しただけになる）。
+⚠️ Even so, `DesiredCount` is not raised, because with two running permanently **specific things
+break**: scheduled execution **advances the ledger after firing**, so two replicas can double-fire the
+same slot (the code itself says "double delivery of the prompt"), and the GitHub device flow lives in
+**process memory**.
 
-## 実機検証（2026-08-23・開発配備）—— 決定 5 と 6 が実物で裏づいた
+⚠️ **And the weakest link is not the CP's instance count.** Even with two, both look at the same
+single-AZ RDS. The order is "make `MultiAZ` a parameter → fix the two items above → expose
+`CpDesiredCount`", and **doing only the last one first is the worst** (it adds a setting that reads as
+redundancy while actually only adding a new failure mode, double firing).
 
-`ImageTag=0.10.1-dev-d7e0173c` / `CpArch=arm64` で **arm64 の CP が上がり**、
-**x86_64 と arm64 両方の Workspace を端から端まで**面倒を見た（golden の
-seed → snapshot → probe → publish が 2 アーキ分完走し、スロットも全部返った）。
+## Verification on real hardware (2026-08-23, the development deployment) — decisions 5 and 6 were borne out
 
-- ✅ **決定 5 の根拠が実物で出た。** 切替前の rev 18 は `runtimePlatform: null` を返す一方、
-  走っているタスクの属性は `ecs.cpu-architecture: x86_64` だった——**テンプレートにも
-  タスク定義にも書かれていない値で本番が動いていた。**
-- ✅ **アーキ跨ぎのローリングデプロイは拒否されない**（懸念点だった）。x86_64 の rev と
-  arm64 の rev が **51 秒同居**して入れ替わり、無停止だった。
-- ✅ **決定 6 の前検査を両向き確認**: 2 アーキ index は通し、単一マニフェストに
-  `CpArch=arm64` を当てると exit 1 で落ちる。
-- ⚠️ **届いた経路は Service Connect の別名ではなく Cloud Map フォールバック**だった。
-  ただし**切替前の x86_64 でも同じログが出ている**ので退行ではない（Workspace のサービスは
-  CP タスクより後に作られるため別名に載らない）。**この配備では新規 Workspace への経路は
-  常にフォールバック側**で、「共有 Transport を通る経路にしか効かない」という制約は
-  稀な保険ではなく**常用経路の制約**として読むべきである。
+With `ImageTag=0.10.1-dev-d7e0173c` / `CpArch=arm64`, **an arm64 CP came up** and looked after
+**both x86_64 and arm64 workspaces end to end** (the golden seed → snapshot → probe → publish ran to
+completion for both architectures, and every slot was returned).
 
-## 影響
+- ✅ **Decision 5's grounds appeared in reality.** Revision 18, before the switch, returned
+  `runtimePlatform: null`, while the running task's attribute was `ecs.cpu-architecture: x86_64` —
+  **production was running on a value written neither in the template nor in the task definition.**
+- ✅ **A rolling deployment across architectures is not refused** (which had been a worry). An x86_64
+  revision and an arm64 revision **coexisted for 51 seconds** and swapped over with no downtime.
+- ✅ **Decision 6's pre-check was confirmed in both directions**: a two-architecture index passes, and
+  applying `CpArch=arm64` to a single manifest exits 1.
+- ⚠️ **The route that actually worked was the Cloud Map fallback, not Service Connect's alias.** But
+  **the same log appears on the pre-switch x86_64 too**, so it is not a regression (a workspace's
+  service is created after the CP task and so does not get onto the alias). **On this deployment the
+  route to a new workspace is always the fallback**, so the constraint "it only works on routes that
+  go through the shared Transport" should be read as **a constraint on the everyday route**, not as
+  rare insurance.
 
-- 既存配備は**何も変わらない**。`CpArch` の既定は `x86_64`＝Fargate の暗黙既定と同じ値で、
-  `control_plane_arm64` は既定 ON になったが、**index に amd64 の面がある**ので
-  既存デプロイは何も変わらない（ECS もローカルの docker もホストのアーキで正しい方を引く）。
-  ⚠️ 変わるのは**リリースの CP イメージがマニフェストリストになる**ことで、
-  `release-ecr.sh` のようなローカル docker 経由の経路はそれを運べない（決定 6 の直し済み）。
-- native パッケージ（C/R）は amd64 のまま（[docs/35](../log/35-packaging.md) §35.3.1）。
-  air-gap の images tar も単一アーキのまま——マニフェストリストは `docker save` できない
-  （0037）。`--save` と `CP_PLATFORMS` は排他にした。
-- ⚠️ **`ImageTag` が CP と workspace で共有**（0045 決定 8）なので、CP だけを差し替えたくても
-  workspace 側を同じタグに置く必要がある。ECR 内で再タグすれば中身は同一（digest 一致を確認）
-  だが、**golden の `af-image` タグが持っているのは参照文字列であって digest ではない**ので、
-  CP は 2 アーキ分の golden を一から焼き直した（約 10 分・スロット 2 本）。壊れてはいないが、
-  **バイト単位で同じ home を作り直すために払っている。**
-- 費用は arm64 で **−20.0%**（Pricing API 実測・ap-northeast-1）だが、CP は
-  0.5 vCPU / 1 GB なので **月 $4.5**。⚠️ **これを節約の話にしない。**
+## Impact
+
+- Existing deployments **change nothing**. `CpArch` defaults to `x86_64`, the same value as Fargate's
+  implicit default, and although `control_plane_arm64` is now on by default, **the index has an amd64
+  surface**, so existing deployments are unaffected (both ECS and local docker pull the right one for
+  the host's architecture).
+  ⚠️ What does change is that **a release's CP image becomes a manifest list**, and a path that goes
+  through local docker such as `release-ecr.sh` cannot carry that (fixed as part of decision 6).
+- The native package (C/R) stays amd64 ([docs/35](../log/35-packaging.md) §35.3.1). The air-gap images
+  tar stays single-architecture too — a manifest list cannot be `docker save`d (0037). `--save` and
+  `CP_PLATFORMS` are made mutually exclusive.
+- ⚠️ Because **`ImageTag` is shared by the CP and the workspace** (0045 decision 8), replacing only
+  the CP still requires putting the workspace side on the same tag. Re-tagging inside ECR keeps the
+  contents identical (digest match confirmed), but **the golden's `af-image` tag holds a reference
+  string, not a digest**, so the CP's goldens were re-baked from scratch for both architectures (about
+  10 minutes, two slots). Nothing was broken, but **we paid to recreate a byte-identical home.**
+- Cost on arm64 is **−20.0%** (measured against the Pricing API, ap-northeast-1), but the CP is
+  0.5 vCPU / 1 GB, so that is **$4.5 a month**. ⚠️ **Do not make this a story about saving money.**
