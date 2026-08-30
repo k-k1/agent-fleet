@@ -1,830 +1,949 @@
-# 0043. ログイン IdP はプロバイダ別実装を増やさず「汎用 OIDC 1 本 ＋ GitHub だけ専用」にし、同一人物の保証を GitHub より先に入れる
+# 0043. For login IdPs, do not add per-provider implementations — one generic OIDC client plus a dedicated one for GitHub alone — and put the same-person guarantee in before GitHub
 
-- 状態: 採用・**P0 / P1 / P2 / P3 実装済み**（残 P4。2026-08-14。設計は docs/61。同日、1 デプロイ内を
-  部署でテナント分割する要件を受けて**決定 13〜28（テナント毎のログイン・責務分担・移譲と退職・P3）を
-  追加**した。うち決定 15/16 は「テナント毎にログインできる ID を管理すればよい」という指摘を受けた
-  見直しで、招待 API が既にあることを実測して**テナント側の email リストを設計から落とした**。
-  P3 実装時に決定 16 を改訂 — 和は email 軸の中だけに閉じる。下記）
-- 関連: [61-login-idp.md](../log/61-login-idp.md) /
-  [build/07-security.md](../build/07-security.md) §7.3（AUTH 3 モード＝現行契約） /
-  [build/06-data.md](../build/06-data.md)（`identity` / `user_key`） /
-  [0001-self-host-vs-saas.md](0001-self-host-vs-saas.md)（各社が自社でセルフホスト＝IdP は各社のもの）
+English | [日本語](0043-login-idp.ja.md)
 
-## 背景
+- Status: adopted; **P0 / P1 / P2 / P3 implemented** (P4 remains. 2026-08-14. The design is docs/61. On
+  the same day, following a requirement to split one deployment into tenants by department,
+  **decisions 13–28 (per-tenant login, the division of responsibility, delegation and departure, P3)
+  were added**. Of those, decisions 15/16 came from a review prompted by the observation that "it is
+  enough to manage, per tenant, which IDs can log in", and measuring that the invitation API already
+  exists **dropped the tenant-side email list from the design**. Decision 16 was revised when P3 was
+  implemented — the union stays within the email axis. See below.)
+- See also: [61-login-idp.md](../log/61-login-idp.md) /
+  [build/07-security.md](../build/07-security.md) §7.3 (the three AUTH modes = the current contract) /
+  [build/06-data.md](../build/06-data.md) (`identity` / `user_key`) /
+  [0001-self-host-vs-saas.md](0001-self-host-vs-saas.md) (each company self-hosts, so the IdP is theirs)
 
-L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。セルフホスト先は
-「グループ各社が自社の社員をホストする」前提（roadmap §12.2）なので、Google Workspace を
-使っていない会社は設置自体ができない。想定顧客の多数派は M365 で、これは配布の前提条件を欠く。
+## Context
 
-コードを実測して分かった、設計を決めた 3 点:
+The L1 login IdP is fixed to Google (`control-plane/oauth_google.go`). Self-hosting presumes "each
+group company hosts its own employees" (roadmap §12.2), so a company not using Google Workspace cannot
+even install it. The majority of prospective customers are on M365, which means the distribution
+premise is missing.
 
-- **OAuth の配線は軽い。** Google 実装は id_token を検証せず、認可コード → トークン → userinfo で
-  email を取るだけ（`oauth_google.go:238-256`）。JWT ライブラリを持っておらず（`go.mod`）、
-  stdlib で完結している。汎用 OIDC も discovery JSON を 1 回読む差しかない。
-- **重いのは identity 側。** `identity.user_key = sanitizeUser(email)`（`resolver.go:281`）が
-  **workspace の home ディレクトリ名であり、暗号化 secrets の帰属先**（dev/07 §7.2）。
-  つまり email が identity そのものになっている。既に `disambiguateUserKey`
-  （`store_sqlite.go:337`）が sanitize 衝突による identity 併合を防いでいて、この一意性は
-  意図的に守られている。
-- **email の信頼根拠は IdP ごとに違う。** 現行は `email_verified` を見ている（Google は出す）が、
-  **Entra ID はこのクレームを出さない**。一律 `email_verified == true` を必須にすると Entra が通らず、
-  逆に外すと GitHub で「他人の会社 email を登録して許可リストを通過」が成立する。
+Three things measured in the code decided the design:
 
-## 決定
+- **The OAuth wiring is light.** The Google implementation does not verify the id_token; it just goes
+  authorisation code → token → userinfo to get the email (`oauth_google.go:238-256`). There is no JWT
+  library (`go.mod`) and it is all stdlib. A generic OIDC client differs only by reading a discovery
+  JSON once.
+- **The heavy part is the identity side.** `identity.user_key = sanitizeUser(email)`
+  (`resolver.go:281`) is **the workspace's home directory name and what the encrypted secrets belong
+  to** (build/07 §7.2). In other words the email *is* the identity. `disambiguateUserKey`
+  (`store_sqlite.go:337`) already prevents identities merging through a sanitisation collision, so this
+  uniqueness is deliberately protected.
+- **What makes an email trustworthy differs per IdP.** Today `email_verified` is checked (Google emits
+  it), but **Entra ID does not emit that claim**. Requiring `email_verified == true` uniformly locks
+  Entra out; dropping it lets "register someone else's company email on GitHub and pass the allowlist"
+  succeed.
 
-1. **プロバイダ別実装を増やさず、汎用 OIDC クライアントを 1 本作る。** Entra ID / Okta / Keycloak /
-   Auth0 / Cognito / GitLab はこれ 1 本で載る。Google も内部的にこの実装の 1 インスタンスへ移す
-   （**env 名は据え置き** — 既存デプロイは設定を 1 行も変えずに動く）。
-2. **専用アダプタを書くのは GitHub だけ。** GitHub は OIDC 非対応（OIDC は Actions 用トークンで、
-   ユーザーログインには無い）ため避けられない。**org メンバーシップ判定とセットでのみ**入れる —
-   個人 GitHub アカウントは会社の統制外なので、email 許可リストだけで開けてはいけない。
-3. ★ **同一人物の保証（P1）を GitHub（P2）より先に入れる。** GitHub の登録 email は会社 email と
-   違うのが普通で、`user_key` が email 由来である以上、リンク機構なしに出すと
-   **identity が 2 つ・home が 2 つ・secrets が別**になる。ユーザーからは「リポジトリが消えた」に見える。
-   順番は **P0 汎用 OIDC → P1 リンク → P2 GitHub**。P0 だけで「Microsoft でログインしたい」は満たせる。
-   （決定 5 の撤回に伴う補足: P1 は「リンク」ではなく **`(provider, subject)` による同一性の固定**になった。
-   GitHub を出す前提は「**会社 email を GitHub に登録している人専用**」と定義することへ変わり、
-   別 email なら別 WS でよい。順序 P0 → P1 → P2 自体は維持。）
-4. **`user_key` は不変とし、`(provider, subject)` を横に足す。** 新テーブル `identity_provider`
-   （`0038`）を作り、`identity` 本体は触らない。`user_key` を `sub` ベースへ作り替える案は、
-   home ディレクトリ名なので**既存デプロイ全員のデータ移行**が要る上、`af-ws-<user>` が人に読めなくなる。
-   既存デプロイの移行は初回ログイン時に `(google, sub)` 行を書くだけで済む（移行ゼロ）。
-5. ~~**別 email の結合はログイン画面から行わない。** サインイン済みの状態で Console の
-   「アカウントを追加」から 2 つ目の IdP を通したときだけ結合する（＝両方にログインできることが証明）。~~
-   ★ **撤回（2026-08-14・P1 実装時）— 別 email の結合機構そのものを作らない。**
-   両方にログインできることが証明するのは「その 2 つのアカウントを操作できる」ことまでで、
-   **同一人物であること**ではない。弱い検証の IdP が 1 つでも有効なら、そこで取ったアカウントを
-   会社アカウントの home（＝会社の secrets が入っている側）へ合流させる経路になり、しかも
-   **結合を解く導線は無く一度合流すると戻せない**。加えて、入口の許可リストが会社ドメインに
-   限定されていれば**ログインできる email は会社 email だけ**で、別 email が現れるのは
-   ドメインを緩めた運用を選んだ場合＝ WS が分かれるのは設定どおりの結果。GitHub（P2）も
-   「会社 email を GitHub に登録している人専用」と定義すれば同じ線に収まる。
-   結果として P1 は §61.5 の規則 1〜3 だけになり、**Console 側の作業はゼロ**。
-   なお管理者が対応表で結合する案は、初版どおり却下のまま（表が保守されない）。
-6. **email の信頼根拠を provider ごとの宣言（`trust`）にする。** `email_verified` /
-   `issuer`（テナント固定で担保・Entra） / `api`（別 API の検証フラグ・GitHub）の 3 種。
-   **宣言の無い provider は起動時に拒否**して fail-closed を落とさない。
-7. **Entra を `common` エンドポイントで受けさせない。** issuer をテナント固定にするか、
-   `tid` 許可リストを必須にする。`common` かつ `ALLOWED_TIDS` 未設定は **fatal**。
-   これを許すと「Microsoft アカウントを持つ全人類」が入口に立ち、個人 MSA は email を
-   付け替えられるので email 許可リストが意味を失う。
-8. **redirect_uri は `/oauth2/callback` 1 本のまま**にし、provider は署名済み state cookie に載せる。
-   プロバイダごとに URI を分けると、設置する会社が IdP 側へ登録する手数が IdP の数だけ増える。
-   コールバックでは state の provider id を**設定済みの集合と突合してから**分岐する。
-9. **id_token の署名検証は引き続き行わない。** 認可コードフロー・client_secret 付き・
-   トークンエンドポイントから TLS 直受けだから（OIDC Core §3.1.3.7 の注記と同じ論拠）。
-   `tid` のように userinfo に出ないクレームは、**同一レスポンス内の id_token ペイロードを
-   署名検証なしで読む**。この前提は `oauth_oidc.go` 冒頭に固定し、
-   **フロントチャネルで id_token を受ける経路を足すなら JWKS 検証が必須**と明記する。
-   これにより Go の依存追加はゼロのまま。
-10. **SAML は CP に実装しない。** 日本企業の IdP（HENNGE One / TrustLogin / CloudGate 等）は
-    SAML 前提が多いが、SP 実装は OIDC の数倍の面積で stdlib に収まらない。
-    **既存の `AUTH=proxy` ＋ oauth2-proxy / Keycloak のブリッジ**を正式な回答として文書化する。
-11. **1 つの IdP の設定ミスで全員を締め出さない。** 個々の provider は設定不足なら無効化＋警告、
-    **有効な provider がゼロのときだけ fatal**（現行の挙動を維持）。許可リストが全部空なら
-    現行どおり警告つき全拒否。
-12. **オフボーディングの性質（毎リクエスト再判定）を落とさない。** GitHub の org 判定だけは
-    ローカル判定できないので、`(provider, subject)` キーの TTL キャッシュ（既定 10 分）＋
-    API 障害時は最後の肯定結果を猶予（既定 1 時間）だけ延命し、超えたら拒否する。
-    （P2 実装時の補足 — 利用者判断: 再判定には**本人の access token** が要る。cookie に載せると
-    XSS で漏れるのでプロセス内メモリにしか持たず、したがって **CP 再起動でキャッシュごと消える**。
-    そのとき本人は org のメンバーのままなので、「許可されていません」（`forbidden`）は事実と違う。
-    エラーコード **`reauth`** を足して**再ログインを要求**する — fail-closed を守りつつ、
-    GitHub 側のセッションが生きていれば無操作で戻れる。API には 403 ではなく **401** を返し、
-    SPA の既存の未認証経路に乗せる。判定材料を持たないことと、許可されていないことは別物。）
+## Decisions
 
-### テナント毎のログイン（P3・部署分割・docs/61 §61.9）
+1. **Do not add per-provider implementations; build one generic OIDC client.** Entra ID / Okta /
+   Keycloak / Auth0 / Cognito / GitLab all ride on it. Google moves internally to being one instance of
+   that implementation (**the env names stay** — existing deployments work without changing a single
+   line of configuration).
+2. **The only dedicated adapter written is GitHub's.** GitHub does not support OIDC (its OIDC is a
+   token for Actions, not for user login), so it is unavoidable. It goes in **only together with org
+   membership checking** — a personal GitHub account is outside the company's control, so it must not
+   be opened up by an email allowlist alone.
+3. ★ **Put the same-person guarantee (P1) in before GitHub (P2).** A GitHub account's registered email
+   is normally different from the company email, and since `user_key` derives from the email, shipping
+   without a linking mechanism gives **two identities, two homes and separate secrets**. To the user it
+   looks like "my repositories are gone". The order is **P0 generic OIDC → P1 linking → P2 GitHub**.
+   P0 alone satisfies "I want to log in with Microsoft".
+   (An addendum following the withdrawal of decision 5: P1 became **fixing identity by
+   `(provider, subject)`** rather than "linking". The premise for shipping GitHub changed to defining
+   it as **for people who have registered their company email with GitHub**, and a different email may
+   simply mean a different workspace. The order P0 → P1 → P2 itself stands.)
+4. **`user_key` is immutable; `(provider, subject)` is added alongside.** A new table
+   `identity_provider` (`0038`) is created and `identity` itself is untouched. Rebuilding `user_key` on
+   `sub` would require **migrating the data of everyone on every existing deployment**, since it is the
+   home directory name, and it would make `af-ws-<user>` unreadable to humans. Migrating an existing
+   deployment is just writing a `(google, sub)` row at first login (zero migration).
+5. ~~**Joining a different email is not done from the login screen.** It joins only when a second IdP
+   is passed through "add an account" in the Console while already signed in (= proof of being able to
+   log in to both).~~
+   ★ **Withdrawn (2026-08-14, during P1) — do not build a mechanism for joining a different email at
+   all.** Being able to log in to both proves only "this person can operate those two accounts", not
+   **that they are the same person**. If even one weakly verifying IdP is enabled, it becomes a route
+   for merging an account obtained there into the company account's home (the side holding the
+   company's secrets), and **there is no route to undo a join: once merged, there is no way back**.
+   Moreover, if the entrance allowlist is limited to the company domain, **the only emails that can log
+   in are company emails**, and a different email only appears where the operation chose to loosen the
+   domain — in which case separate workspaces are the configured outcome. GitHub (P2) fits the same
+   line once defined as "for people who have registered their company email with GitHub".
+   As a result P1 became just rules 1–3 of §61.5, with **zero work on the Console side**. The idea of an
+   admin joining them via a mapping table remains rejected as in the first edition (the table does not
+   get maintained).
+6. **Make the grounds for trusting an email a per-provider declaration (`trust`).** Three kinds:
+   `email_verified` / `issuer` (guaranteed by pinning the tenant — Entra) / `api` (a verification flag
+   from another API — GitHub). **A provider with no declaration is refused at startup**, so fail-closed
+   is not dropped.
+7. **Do not let Entra be accepted on the `common` endpoint.** Either pin the issuer to a tenant or
+   require a `tid` allowlist. `common` with `ALLOWED_TIDS` unset is **fatal**. Allowing it puts "every
+   human being with a Microsoft account" at the door, and a personal MSA can change its email, so the
+   email allowlist loses meaning.
+8. **redirect_uri stays a single `/oauth2/callback`**, with the provider carried in the signed state
+   cookie. Splitting the URI per provider multiplies the work an installing company must do at the IdP
+   by the number of IdPs. On the callback, the state's provider id is **checked against the configured
+   set** before branching.
+9. **The id_token's signature is still not verified.** It is the authorisation code flow, with a
+   client_secret, received over TLS directly from the token endpoint (the same rationale as the note in
+   OIDC Core §3.1.3.7). Claims that do not appear in userinfo, such as `tid`, are read from **the
+   id_token payload in the same response, without signature verification**. This premise is pinned at
+   the top of `oauth_oidc.go`, stating that **adding any path that receives an id_token on the front
+   channel makes JWKS verification mandatory**. Go's dependencies stay at zero additions.
+10. **SAML is not implemented in the CP.** Japanese companies' IdPs (HENNGE One, TrustLogin, CloudGate
+    and so on) often presume SAML, but an SP implementation is several times the surface of OIDC and
+    does not fit in stdlib. **The existing `AUTH=proxy` plus oauth2-proxy / Keycloak bridge** is
+    documented as the official answer.
+11. **One IdP's misconfiguration must not lock everybody out.** An individual provider that is
+    under-configured is disabled with a warning; **only zero valid providers is fatal** (preserving
+    current behaviour). If every allowlist is empty, it refuses everything with a warning, as today.
+12. **Do not lose the property that offboarding re-evaluates on every request.** Only GitHub's org
+    check cannot be evaluated locally, so it gets a TTL cache keyed by `(provider, subject)` (10
+    minutes by default), plus a grace on API failure that keeps the last positive result alive (1 hour
+    by default) and then refuses.
+    (An addendum from implementing P2 — the user's call: re-evaluation needs **the person's own access
+    token**. Putting it in a cookie would leak it to XSS, so it is held only in process memory, and
+    therefore **it is lost along with the cache when the CP restarts**. At that moment the person is
+    still an org member, so "not permitted" (`forbidden`) is untrue. An error code **`reauth`** was
+    added to **demand a re-login** — preserving fail-closed while letting them return without any
+    interaction if their GitHub session is alive. The API returns **401** rather than 403, so it rides
+    the SPA's existing unauthenticated path. Not holding the material for a judgement is a different
+    thing from not being permitted.)
 
-13. ★ **「入口の門」と「テナントの門」を別の層に置く。** 入口（このデプロイにサインインできるか）は
-    `authGate` が毎リクエスト判定し、テナント（いまこのテナントを使ってよいか）は
-    `resolveFull` / `selectMembership` 側で判定する。**テナント規則を `authGate` に持ち込まない** —
-    `authGate` はテナントを知らない（`X-AF-Tenant` を読むのは `httpapi.go:34`）ので、
-    「どのテナントで判定するのか」が決まらず必ず穴か過剰拒否になる。
-14. ★ **URL のテナント指定は認可の根拠にしない。** `/login/<slug>` は「どの画面を出すか」のヒントに
-    過ぎず、利用者が書き換えられる。実際にどのテナントへ入れるかはサーバ側の membership ＋
-    テナント規則だけで決める。同じ理由で、テナント毎の `allowed_providers` は**画面のボタンを
-    絞るだけでは不十分**で、セッションの `prov` をテナント解決時に突合して強制する
-    （さもないと汎用 `/login` で GitHub ログイン → `X-AF-Tenant` 差し替えで抜けられる）。
-    決定 1 で `prov` クレームを足す価値の半分はここにある。
-15. ★ **「テナント毎にログインできる ID の名簿」は membership が持ち、テナントに `allowed_emails` を
-    足さない。** 実測すると器は既にある — `POST /api/admin/memberships`（`tenants.go:254`）は
-    email から**未ログインの人の identity を先に作って** membership を張る＝招待そのもので、
-    Console の管理タブに UI もある（`AdminTab.tsx:1593`）。テナント側に email リストを足すと
-    同じ「誰が入れるか」を 2 箇所で管理する**二重台帳**になり必ずずれる。
-    これにより**全社共通ドメインの会社でも部署分割が成立**する（名簿はドメインに依存しない）。
-    テナントが持つのは `auto_join_domains`（自動参加・省力化）と `allowed_domains`
-    （**招待時のガードのみ**。tenant_admin が自部署ドメイン外を勝手に足すのを防ぐ）の 2 つだけ。
-    `allowed_domains` を毎リクエストの制約にはしない — 正規に招待した業務委託（別ドメイン）が
-    締め出され、例外リストが要り、結局二重台帳へ戻るため。**継続的な可否は membership が持つ**。
-16. **入口の判定は「和」にし、そこに「membership を持つこと」を含める**
-    （デプロイ全体の許可リスト ∪ 各テナントの `auto_join_domains` ∪ membership）。
-    ★ 最後の項が現状で欠けている接続で、いまは招待済みでも `AF_OAUTH_ALLOWED_*`(env) に
-    載っていなければ `authGate` が入口で弾く。繋ぐと**招待運用のデプロイでは env の許可リストが
-    不要**になり、名簿が membership 1 箇所に寄る。積にすると招待のたびに env にも足す二重管理になる。
-    和でも危険が増えないのは、入口通過が「どこかに入れる」を意味しないため（決定 13）。
-    **すべて空なら現行どおり全拒否**。
-    ★ **改訂（2026-08-14・P3 実装時）— 「和」は *email 軸の中だけ*、しかも 2 項に分ける。**
-    素直に `provider.Allowed(...) || hasMembership(...)` と書くと 2 通り壊れる。
-    (a) **GitHub の org 判定を迂回できる** — P2 の GitHub は「org ∧ email 許可リスト」の
-    2 門 AND（決定 2）なので、membership を持つだけで org 外の人が入れてしまう。
-    (b) **provider 固有リストの絞り込みが黙って広がる** — P0 の「provider 固有リストは共通
-    リストを置き換える」は「Google は全社、Entra は子会社ドメインだけ」という per-provider の
-    narrowing として使える仕様で、共通リストとの和にすると後退になる。
-    よって採用した形は `( provider 固有 | デプロイ共通 ) ∪ ( auto_join | membership )` —
-    **置き換えの規則は P0 のまま据え置き、DB 由来の項だけを常に OR する**。
-    種類の違う判定（GitHub の org）は AND のままで、DB 由来の項は email 側の門にしか足さない。
-    これにより「二重管理の解消」は達成され（招待された人はどちらの形式でも入口を通る）、
-    P0 の文書記述の改訂は不要になった。詳細と回帰テストは docs/61 §61.9.6 の改訂節。
-17. **ログイン画面の分割はパス方式（`/login/<slug>`）**。サブドメイン方式はワイルドカード DNS と
-    証明書が要り、Funnel は 1 ホスト名しか出せず、redirect_uri が増えて決定 8 を壊す。
-    **未知の slug は 404 にせず汎用画面**を返す（テナント slug の存在有無を未認証者に漏らさない）。
-18. **セッションは provider を 1 つしか持たない。** テナント間移動で再サインインが要る場合は
-    `provider_required` を返し、**403 で終わらせず再ログインへ誘導**する（「このテナントには
-    Microsoft でのサインインが必要です」）。複数 provider の同時保持は cookie を
-    「認可状態の集合」にし、失効とオフボーディングの意味を曖昧にする。
-19. **テナント規則は env ではなく DB（`tenant` のカラム・`0039`）に置く。** テナントは実行時に増えるので
-    `AF_TENANT_<SLUG>_…` は必ずずれる。管理 API は既にある（`routes.go:129-137`）。
-    毎リクエスト参照は短 TTL（30 秒）キャッシュ＋管理 API 書き込みで破棄。
-    なお現行 `emailAllowed` は許可ファイル指定時に**毎リクエスト `os.ReadFile`**しており
-    （`oauth_google.go:130`）、DB＋キャッシュはこれより軽い。
-    ★ **実装時の判断（P3）— この 3 カラムを編集できるのは `super_admin` だけ**にした
-    （`PUT /api/admin/tenants/{slug}/login` は `withSuperAdmin`）。決定 26 で workspace / home を
-    tenant_admin に開いたのと逆向きに見えるが、3 つのうち 2 つは**テナントの外に効く**:
-    `auto_join_domains` は**デプロイの入口**をドメイン単位で開けてしまい（決定 16 の和の項）、
-    `allowed_providers` は「誰であるか」を宣言してよい IdP の選択だから。tenant_admin が持つのは
-    自テナントの名簿と、その人たちの workspace / home。docs/61 §61.10.3 の運用像（テナント新設と
-    その設定は super_admin）とも一致する。
+### Per-tenant login (P3, department split, docs/61 §61.9)
 
-    ついでに保存時の検証を 2 つ入れた: **同じ `auto_join_domains` を 2 テナントが持てない**
-    （決定 15 の競合を作らせない。既存行のための「slug 昇順」規則は残す）／
-    **デプロイに存在しない provider id を `allowed_providers` に書けない**（黙ってボタンの
-    無いログインページになるのを防ぐ）。
-20. **P3（テナント毎のログイン）は P1 / P2 と独立**で、P0 の直後に着手してよい（依存は `prov` だけ）。
-    GitHub を入れない会社でも「部署ごとにテナントを分け、Entra 限定にする」だけで価値が出る。
-21. **IdP のグループ（Entra `groups` / GitHub team）→ テナント同期は入れない。** 決定 15 で名簿を
-    membership に寄せたため必須ではなくなり、残る利点は異動の自動追従だけ。入れると
-    「membership が正」という単一の正が崩れて同期衝突を扱うことになる。将来入れるとしても
-    membership を上書きせず、**管理画面に差分を出して人が承認**する形にする。
-    （Entra の `groups` は overage で Graph 参照に化けるため、実装も見た目より重い。）
-22. ★ **membership の削除／無効化 API を P3 のスコープに必ず含める。** 運用を書き下して見つかった穴で、
-    現状 `MembershipStore`（`store.go:383-402`）にあるのは `EnsureMembership`（挿入のみ）と
-    `SetMembershipRole` だけ、`routes.go` にも `DELETE /api/admin/memberships` が無い。
-    今それで足りているのは、オフボーディングが **env / ファイルの許可リストから消す**こと
-    （`oauth_google.go:299-309` の毎リクエスト再判定）で成立していたため。決定 15/16 で名簿を
-    membership に寄せると**この経路が消える** — IdP 側で無効化しても署名済みセッション cookie は
-    最大 `AF_SESSION_TTL`（既定 168h＝7 日）有効なので、外せなければ最大 7 日残る。
-    **異動（旧部署から外す）も退職（全部から外す）も実行できない。**
-    `Membership` には `Status` があり `GetMembershipByID` も missing/inactive を想定しているので、
-    **論理削除（`status='inactive'`）で足りる**（workspace / home は残したまま締め出せる）。
-    外した後の workspace / home の扱いは [0028-deletion-lock](0028-deletion-lock.md) と
-    掃除の段階制に合わせ、即削除しない。
-    ★ **実装時の補足（P3）— `EnsureMembership` に「復活」を持たせてはいけない。**
-    同じ関数を `auto_join_domains` と `AF_PROVISION=auto` の自動採番が通るので、そこで
-    `status='active'` に戻すと**除名した人が次のログインで自動的に名簿へ戻る**。復活は招待
-    API だけが明示的に行う。同じ理由で **auto_join は「行が存在するなら（inactive でも）
-    参加させない」** — 決定 15 の「membership があればそれが正」には「外した」も含まれる。
-    あわせて**自分自身は外せない**ようにした（製品内に取り消し手段が無いため）。
-    → **2026-08-21 に「自分の*最後の*有効な membership だけ拒否」へ絞った**（docs/61
-    §61.10.6）。守っているのは戻る道であって自分の行かどうかではなく、全部拒否すると
-    自分で作った捨てテナントを製品から片付けられない（docs/64 §64.28）。
-23. **`super_admin` は membership が無くても管理画面に入れるようにする（P3）。**
-    現状コードを追う限り、`AF_PROVISION=invite` で立ち上げると最初の 1 人が入れない —
-    membership ゼロだと `GET /api/tenants` が 403 `not_provisioned`（`resolver.go:69`）、
-    Console は `data.error` 分岐で `superAdmin` を立てず（`tenant.ts:93-100`・既定 `false`）、
-    管理メニューの表示条件 `superAdmin || tenant_admin`（`TopBar.tsx:319`）が偽になる。
-    admin API 自体は `identityFor` だけで通るので API 直叩きなら可能だが、手順として成立しない。
-    ~~直すまでの運用は「**`auto` で立ち上げ → テナント作成と招待 → `invite` へ切替**」~~
-    → ✅ **P3 で解消**（`tenantAPI.list`）。**`AF_PROVISION=invite` のまま立ち上げてよい**。
-    → ✅ **P7-2 でそれを既定にした**（テンプレート側のみ・上の「却下した案」参照）。あわせて
-    **招待前の着地面**を新設した: `super_admin` 以外は従来どおり 403 `not_provisioned` だが、
-    Console はそれを**エラーではなく状態**として扱い（`tenant.ts` の `notProvisioned`）、
-    「まだ招待されていません／このアドレスでサインインしています」の面を描く。
-    ★ **③ 自分のアドレスを読ませるのが本体**。管理者は名簿にアドレスで人を足すので、それが
-    読めないと往復が必ず 1 回増える — サインイン方法が複数ある人ほど、自分がどれで入ったのか
-    分かっていない。以前はこの状態でも通常の Console が開き、以後すべてのリクエストが 403 で
-    弾かれてトーストが 1 つずつ出るだけだった。
-    ★ 「デプロイ直後は super_admin *だけ*がサインインできる」を字義どおりにする案は採らない
-    （`authGate` に membership を要求することになり、決定 15「テナントの門を authGate に置くな」に
-    抵触する）。サインインが通っても membership が無ければ入れる面は 1 つも無いので、
-    **変わったのは拒否の見え方だけで、門は 1 つも動いていない**。
+13. ★ **Put "the entrance gate" and "the tenant gate" in different layers.** The entrance (may this
+    person sign in to this deployment?) is judged per request by `authGate`, and the tenant (may they
+    use this tenant right now?) is judged in `resolveFull` / `selectMembership`. **Do not bring tenant
+    rules into `authGate`** — `authGate` does not know about tenants (`X-AF-Tenant` is read at
+    `httpapi.go:34`), so "which tenant are we judging for?" is undecidable and it is guaranteed to be
+    either a hole or over-refusal.
+14. ★ **A tenant named in a URL is not grounds for authorisation.** `/login/<slug>` is only a hint for
+    which screen to show, and the user can rewrite it. Which tenant they can actually enter is decided
+    solely by the server-side membership plus the tenant rules. For the same reason, a per-tenant
+    `allowed_providers` **is not enough as a filter on the screen's buttons**: the session's `prov` is
+    checked and enforced at tenant resolution (otherwise one can log in with GitHub at the generic
+    `/login` and slip through by swapping `X-AF-Tenant`). Half the value of adding the `prov` claim in
+    decision 1 is here.
+15. ★ **The roster of "which IDs can log in per tenant" is held by membership; no `allowed_emails` is
+    added to the tenant.** Measurement showed the vessel already exists —
+    `POST /api/admin/memberships` (`tenants.go:254`) **creates the identity of someone who has not yet
+    logged in** from an email and attaches a membership, i.e. it is an invitation, and there is UI for
+    it in the Console's admin tab (`AdminTab.tsx:1593`). Adding an email list on the tenant side would
+    manage the same "who may enter" in **two ledgers**, which will inevitably diverge. This also makes
+    **a department split work even at a company with one shared domain** (a roster does not depend on a
+    domain). What the tenant holds is only two things: `auto_join_domains` (automatic joining, for
+    convenience) and `allowed_domains` (**a guard on invitations only**, preventing a tenant_admin from
+    adding domains outside their department). `allowed_domains` is not a per-request constraint —
+    properly invited contractors (a different domain) would be locked out, an exception list would be
+    needed, and we would be back to two ledgers. **Continuing eligibility is held by membership.**
+16. **Make the entrance check a union, and include "having a membership" in it**
+    (the deployment-wide allowlist ∪ each tenant's `auto_join_domains` ∪ membership).
+    ★ The last term is the connection missing today: even an invited person is refused at the entrance
+    by `authGate` unless they are in `AF_OAUTH_ALLOWED_*` (env). Connecting it makes **the env allowlist
+    unnecessary on an invitation-run deployment**, gathering the roster into membership alone. An
+    intersection would mean adding to the env on every invitation — two ledgers again. A union adds no
+    danger, because passing the entrance does not mean being able to enter anywhere (decision 13).
+    **If everything is empty it refuses everything, as today.**
+    ★ **Revised (2026-08-14, during P3) — the union is *within the email axis only*, and it splits into
+    two terms.** Writing it naively as `provider.Allowed(...) || hasMembership(...)` breaks in two ways.
+    (a) **GitHub's org check can be bypassed** — P2's GitHub is an AND of two gates, "org ∧ email
+    allowlist" (decision 2), so merely holding a membership would let someone outside the org in.
+    (b) **A provider-specific list's narrowing silently widens** — P0's "a provider-specific list
+    replaces the common list" is a specification usable as per-provider narrowing ("Google for the whole
+    company, Entra for the subsidiary's domain only"), and unioning it with the common list is a
+    regression.
+    So the adopted form is `( provider-specific | deployment-common ) ∪ ( auto_join | membership )` —
+    **the replacement rule stays exactly as in P0, and only the DB-derived terms are always ORed**.
+    Checks of a different kind (GitHub's org) stay ANDed, and DB-derived terms are only added to the
+    email-side gate. This achieves "removing the two ledgers" (an invited person passes the entrance in
+    either form) and made revising P0's documented description unnecessary. The details and the
+    regression tests are in the revised section of docs/61 §61.9.6.
+17. **The login screen is split by path (`/login/<slug>`).** A subdomain approach needs wildcard DNS
+    and certificates, Funnel can only expose one hostname, and it multiplies redirect_uris, breaking
+    decision 8. **An unknown slug returns the generic screen rather than a 404** (do not leak whether a
+    tenant slug exists to an unauthenticated visitor).
+18. **A session holds exactly one provider.** When moving between tenants requires signing in again, it
+    returns `provider_required` and **guides to a re-login rather than ending at a 403** ("this tenant
+    requires signing in with Microsoft"). Holding several providers at once would make the cookie "a set
+    of authorisation states" and blur what revocation and offboarding mean.
+19. **Tenant rules live in the database (`tenant` columns, `0039`), not in env.** Tenants are created at
+    runtime, so `AF_TENANT_<SLUG>_…` is bound to drift. The admin API already exists
+    (`routes.go:129-137`). Per-request lookups use a short TTL (30-second) cache, invalidated by admin
+    API writes. Note that the current `emailAllowed` does **an `os.ReadFile` on every request** when an
+    allowlist file is specified (`oauth_google.go:130`); DB plus cache is lighter than that.
+    ★ **A decision made during implementation (P3) — only `super_admin` may edit these three columns**
+    (`PUT /api/admin/tenants/{slug}/login` is `withSuperAdmin`). It looks like the opposite direction
+    from decision 26, which opened workspace / home to tenant_admin, but two of the three **take effect
+    outside the tenant**: `auto_join_domains` opens **the deployment's entrance** by domain (the union
+    term in decision 16), and `allowed_providers` is the choice of which IdP may declare "who someone
+    is". What a tenant_admin holds is their own tenant's roster and those people's workspaces and homes.
+    That also matches the operating picture in docs/61 §61.10.3 (creating a tenant and configuring it
+    are super_admin).
 
-### 責務分担（2026-08-14 確認）
+    Two validations were added at save time while we were there: **two tenants cannot hold the same
+    `auto_join_domains`** (do not allow decision 15's conflict to be created; the "ascending slug" rule
+    remains for existing rows), and **a provider id that does not exist on the deployment cannot be
+    written into `allowed_providers`** (preventing a login page that silently has no buttons).
+20. **P3 (per-tenant login) is independent of P1 / P2** and may be started right after P0 (the only
+    dependency is `prov`). Even a company that does not use GitHub gets value from "split by department
+    into tenants and restrict to Entra".
+21. **IdP group (Entra `groups` / GitHub team) → tenant synchronisation is not added.** Decision 15
+    moved the roster to membership, so it is no longer required, and the remaining benefit is only
+    automatically following transfers. Adding it would break the single source of truth ("membership is
+    canonical") and mean handling synchronisation conflicts. If it is ever added, it must not overwrite
+    membership — it should **show the differences in the admin screen for a human to approve**.
+    (Entra's `groups` degenerates into a Graph lookup on overage, so the implementation is heavier than
+    it looks.)
+22. ★ **The membership deletion/disabling API must be in P3's scope.** A hole found by writing the
+    operations down: today `MembershipStore` (`store.go:383-402`) has only `EnsureMembership`
+    (insert-only) and `SetMembershipRole`, and `routes.go` has no `DELETE /api/admin/memberships`. The
+    reason that has sufficed is that offboarding worked by **removing someone from the env/file
+    allowlist** (the per-request re-evaluation at `oauth_google.go:299-309`). Moving the roster to
+    membership in decisions 15/16 **removes that route** — disabling someone at the IdP still leaves a
+    signed session cookie valid for up to `AF_SESSION_TTL` (168h = 7 days by default), so without a way
+    to remove them they stay for up to 7 days. **Neither a transfer (remove from the old department) nor
+    a departure (remove from everything) can be carried out.**
+    `Membership` has a `Status` and `GetMembershipByID` already anticipates missing/inactive, so
+    **a logical delete (`status='inactive'`) is enough** (they can be locked out while the workspace and
+    home remain). What happens to the workspace and home afterwards follows
+    [0028-deletion-lock](0028-deletion-lock.md) and the staged cleanup; nothing is deleted immediately.
+    ★ **An addendum from implementation (P3) — `EnsureMembership` must not carry "resurrection".**
+    The same function is used by `auto_join_domains` and by `AF_PROVISION=auto`'s automatic
+    provisioning, so setting `status='active'` there would **automatically return a removed person to
+    the roster on their next login**. Resurrection is done explicitly by the invitation API only. For
+    the same reason **auto_join "does not join if a row exists (even inactive)"** — decision 15's
+    "membership is canonical if it exists" includes "was removed".
+    We also made it so **you cannot remove yourself** (there is no undo inside the product).
+    → **On 2026-08-21 this was narrowed to "refuse only your *last* active membership"** (docs/61
+    §61.10.6). What is being protected is the way back, not whether the row is yours; refusing all of
+    them means you cannot tidy up a throwaway tenant you created yourself from within the product
+    (docs/64 §64.28).
+23. **`super_admin` can enter the admin screen without a membership (P3).**
+    Following the current code, starting with `AF_PROVISION=invite` means the first person cannot get in
+    — with zero memberships, `GET /api/tenants` is 403 `not_provisioned` (`resolver.go:69`), the Console
+    does not set `superAdmin` on the `data.error` branch (`tenant.ts:93-100`, defaulting to `false`),
+    and the admin menu's display condition `superAdmin || tenant_admin` (`TopBar.tsx:319`) is false. The
+    admin API itself passes on `identityFor` alone, so hitting the API directly works, but that is not a
+    workable procedure.
+    ~~Until it is fixed, the practice is "start with `auto` → create the tenant and invite → switch to
+    `invite`"~~
+    → ✅ **Resolved in P3** (`tenantAPI.list`). **You may start with `AF_PROVISION=invite` as it is.**
+    → ✅ **P7-2 made that the default** (in the templates only; see "options rejected" above). Alongside
+    it, **a landing surface before invitation** was added: anyone other than `super_admin` still gets a
+    403 `not_provisioned` as before, but the Console treats it **as a state rather than an error**
+    (`notProvisioned` in `tenant.ts`) and draws a screen saying "you have not been invited yet / you are
+    signed in with this address".
+    ★ **Point ③, letting them read their own address, is the substance.** An admin adds people to the
+    roster by address, and if they cannot read it, a round trip is always added — and the more sign-in
+    methods a person has, the less they know which one they used. Previously the ordinary Console opened
+    in that state and every subsequent request was rejected with a 403, producing one toast at a time.
+    ★ Taking "right after deployment, *only* super_admin can sign in" literally is not adopted (it would
+    mean requiring a membership in `authGate`, conflicting with decision 15's "do not put the tenant gate
+    in authGate"). Since passing sign-in with no membership gives access to not one surface, **all that
+    changed is how the refusal looks; not one gate moved.**
 
-24. **`super_admin` の指定はホスト側の env（`SUPER_ADMIN_EMAILS`・`main.go:85`）のままとし、
-    Console からの昇格は作らない。** デプロイ全体を動かせる権限は、そのデプロイを設置した人＝
-    ホストのファイルに触れる人だけが持つ。アプリ内で増やせると設置者以外が権限を作れてしまう。
-    許可リストと違い **live-read ではなく起動時に 1 度読むだけ**なので、変更には CP 再起動が要る。
-    ★ **ただし剥奪ができない（現状の穴・P3 で塞ぐ）。** `UpsertIdentity` は
-    「Upgrade (never downgrade)」（`store_sqlite.go:314-317`）なので、`SUPER_ADMIN_EMAILS` から
-    消して再起動しても `identity.role` は `super_admin` のまま残り、降格 API も無い
-    （`setMembershipRole` はテナント役割のみ）＝ DB 直編集以外に手段が無い。
-    env を単一の正とし、**CP 起動時に一括同期する**（`SUPER_ADMIN_EMAILS` に無い `super_admin` を
-    `user` へ落とす）。★ ログイン時同期ではなく**起動時**にする理由は移譲・退職ケース —
-    退職者はもう二度とログインしないので、ログイン時同期では DB に `super_admin` が残り続ける
-    （docs/61 §61.10.7）。起動時なら env を書き換えて再起動する移譲手順とタイミングが一致する。
-    実装注意 — **降格を `UpsertIdentity` の `roleHint` に持たせない**。
-    `addMembership`（`tenants.go:285`）/ `cleanHome`（`:195`）/ `stopWorkspace`（`:149`）は
-    `roleHint=""` で呼ぶため、誰かをテナントに追加しただけで super_admin が落ちる。
-    起動時の一括 UPDATE なら `roleHint` を通らないので、この罠を構造的に回避できる。
-    ★ **実装時の補足（P3）— `email` が空の identity は降格しない。** `SUPER_ADMIN_EMAILS` は
-    email の列挙なので、email を持たない行（`AUTH=dev` の固定ユーザー等）を落とすと
-    **文書化された復旧手順（env を書いて再起動）で戻せなくなる**。降格した相手は CP ログに残す。
-25. **テナントの新設と `tenant_admin` の任命は `super_admin`。** 実装は既にこのとおりで変更不要
-    （`POST /api/admin/tenants` は `withSuperAdmin`＝`routes.go:133`、`tenant_admin` を付けられるのは
-    super_admin だけ＝`tenants.go:280`、`PUT /api/admin/membership-role` も `withSuperAdmin`）。
-    super_admin が日常運用に出るのは**この 2 つだけ**にする。
-26. ★ **workspace / home の削除は `tenant_admin` の責務。** 部署の人員を把握しているのは部署側で、
-    情シスに毎回頼む形にしない。**現状 `clean-home` は super_admin 限定**
-    （`routes.go:136` の `adm.withSuperAdmin(adm.cleanHome)`。ハンドラもテナント所属を見ていない）
-    なので、**P3 でハンドラ内 `tenantAdminFor` ゲートへ付け替える**。前例は同ファイルの
-    `stopWorkspace`（`tenants.go:145`）で、これにより tenant_admin は自部署のメンバーの home しか
-    消せない。順序は「membership 無効化 → workspace 停止 → home 削除」で、停止は既に
-    tenant_admin ができるため揃えるのは `clean-home` だけ。即時削除にしない扱いは
-    [0028-deletion-lock](0028-deletion-lock.md) と掃除の段階制に合わせる。
-    決定 22 の membership 無効化 API も同じく tenant_admin（自テナント分）に開く。
-    → ✅ **P3 で実装**: `routes.go` の `withSuperAdmin(adm.cleanHome)` を外し、ハンドラ内で
-    `tenantAdminFor` を取る形にした。**権限を広げたので監査に必ず残す**（`workspace.clean_home`）。
-27. ★ **セッションの即時失効は「`AF_COOKIE_SECRET` のローテーション」しか無い。これを runbook に書く。**
-    セッション cookie は stateless（HMAC over `{email, exp}`・`oauth_google.go:85-93`）で、
-    サーバ側にセッションストアも個別失効も「全端末からログアウト」も無い。今それで足りていたのは、
-    **許可リストから消せば `authGate` が毎リクエスト弾く**（`:299-309`）のが実質の失効機構だったため。
-    決定 15/16 で名簿を membership に寄せると、その役割は membership 無効化が担うが、
-    ★ **`AF_OAUTH_ALLOWED_DOMAINS` を併用しているデプロイでは塞がらない** — 前任は membership を
-    全部外されてもドメイン一致だけで入口を通り、管理 API は `identityFor` だけで通って membership を
-    要求せず、決定 24 未修正なら `role` は `super_admin` のままなので `withSuperAdmin` を通過して
-    **自分を復帰させられる**（手元の cookie は最大 `AF_SESSION_TTL`＝既定 168h 有効）。
-    対策は決定 24 の起動時同期＋このローテーション手順の 2 段。**サーバ側セッションストアは作らない**
-    — stateless cookie の軽さは CP の設計上の利点で、失効のために状態を持つのは代償が大きい。
-28. **招待の通知機能は作らない。** 招待 URL（`/login/<slug>`）は tenant_admin が口頭 / 社内チャットなど
-    **CP の外**で伝える。CP にメール送信を持たせない方針（決定 10 の magic link 却下と同じ理由）で、
-    通知経路を足しても「本人に届いたか」の保証は結局得られない。
+### Division of responsibility (confirmed 2026-08-14)
 
-### テナント定義の認証方式（P4・子会社ごとに Entra が違う場合・docs/61 §61.11）
+24. **Designating `super_admin` stays in the host's env (`SUPER_ADMIN_EMAILS`, `main.go:85`), with no
+    promotion from the Console.** The authority to operate the whole deployment belongs only to whoever
+    installed it, i.e. whoever can touch the host's files. If it could be granted inside the app, someone
+    other than the installer could create that authority. Unlike the allowlists, it is **read once at
+    startup rather than live**, so changing it requires a CP restart.
+    ★ **But it cannot be revoked (a current hole, closed in P3).** `UpsertIdentity` is
+    "upgrade (never downgrade)" (`store_sqlite.go:314-317`), so removing someone from
+    `SUPER_ADMIN_EMAILS` and restarting leaves `identity.role` as `super_admin`, and there is no
+    demotion API (`setMembershipRole` covers tenant roles only) — leaving no means other than editing the
+    database directly. env is made the single source of truth and **synchronised in bulk when the CP
+    starts** (dropping any `super_admin` not in `SUPER_ADMIN_EMAILS` to `user`). ★ The reason it is at
+    **startup** rather than at login is the delegation and departure cases — someone who has left never
+    logs in again, so login-time synchronisation leaves `super_admin` in the database forever (docs/61
+    §61.10.7). At startup it coincides with the delegation procedure of editing env and restarting.
+    An implementation note — **do not put the demotion in `UpsertIdentity`'s `roleHint`**.
+    `addMembership` (`tenants.go:285`), `cleanHome` (`:195`) and `stopWorkspace` (`:149`) call it with
+    `roleHint=""`, so merely adding someone to a tenant would drop a super_admin. A bulk UPDATE at
+    startup does not go through `roleHint` and structurally avoids the trap.
+    ★ **An addendum from implementation (P3) — do not demote an identity with an empty `email`.**
+    `SUPER_ADMIN_EMAILS` is a list of emails, so dropping rows that have no email (the fixed user of
+    `AUTH=dev`, for instance) would make **the documented recovery procedure (write the env and restart)
+    unable to restore them**. Anyone demoted is recorded in the CP's log.
+25. **Creating tenants and appointing `tenant_admin` are `super_admin`'s.** The implementation is already
+    this and needs no change (`POST /api/admin/tenants` is `withSuperAdmin` = `routes.go:133`; only
+    super_admin can grant `tenant_admin` = `tenants.go:280`; `PUT /api/admin/membership-role` is also
+    `withSuperAdmin`). **These two are the only places** super_admin appears in day-to-day operation.
+26. ★ **Deleting a workspace or home is `tenant_admin`'s responsibility.** The department knows its own
+    headcount; do not make them ask IT every time. **Currently `clean-home` is super_admin only**
+    (`adm.withSuperAdmin(adm.cleanHome)` at `routes.go:136`; the handler does not check tenant membership
+    either), so **P3 switches it to a `tenantAdminFor` gate inside the handler**. The precedent is
+    `stopWorkspace` in the same file (`tenants.go:145`), which lets a tenant_admin delete only the homes
+    of their own department's members. The order is "disable the membership → stop the workspace → delete
+    the home", and since stopping is already available to tenant_admin, the only thing to align is
+    `clean-home`. Not deleting immediately follows [0028-deletion-lock](0028-deletion-lock.md) and the
+    staged cleanup. Decision 22's membership-disabling API is likewise opened to tenant_admin (for their
+    own tenant).
+    → ✅ **Implemented in P3**: `withSuperAdmin(adm.cleanHome)` was removed from `routes.go` and
+    `tenantAdminFor` is taken inside the handler. **Because the privilege widened, it is always audited**
+    (`workspace.clean_home`).
+27. ★ **The only way to revoke a session immediately is rotating `AF_COOKIE_SECRET`. Write it in the
+    runbook.** The session cookie is stateless (an HMAC over `{email, exp}`, `oauth_google.go:85-93`);
+    there is no server-side session store, no individual revocation and no "log out of all devices". The
+    reason that has sufficed is that **removing someone from the allowlist made `authGate` refuse them on
+    every request** (`:299-309`) — the de facto revocation mechanism. Once decisions 15/16 move the
+    roster to membership, that role is taken over by disabling the membership, but
+    ★ **it does not close on a deployment that also uses `AF_OAUTH_ALLOWED_DOMAINS`** — a predecessor
+    stripped of every membership still passes the entrance on the domain match alone, the admin API passes
+    on `identityFor` alone without requiring a membership, and with decision 24 unfixed their `role` is
+    still `super_admin`, so they pass `withSuperAdmin` and **can reinstate themselves** (their cookie is
+    valid for up to `AF_SESSION_TTL` = 168h by default). The countermeasure is two-stage: decision 24's
+    startup synchronisation plus this rotation procedure. **No server-side session store is built** — the
+    lightness of a stateless cookie is a design advantage of the CP, and holding state for the sake of
+    revocation costs too much.
+28. **No invitation notification feature is built.** The invitation URL (`/login/<slug>`) is conveyed by
+    the tenant_admin **outside the CP** (verbally, in the company chat, and so on). It is policy not to
+    give the CP email sending (the same reason magic links were rejected in decision 10), and adding a
+    notification route still would not guarantee that it reached the person.
 
-29. **テナント毎に provider 定義そのものを持てるようにする（P4）。** グループ各社・分社では
-    テナントごとに Entra テナントが違う（issuer も client_id/secret も別）。P0 の env でも
-    `AF_OIDC_PROVIDERS=entra_a,entra_b` と並べれば動く（実測済み）が、**テナントを増やすたびに
-    ホストのファイル編集＋CP 再起動**になり、「テナント新設は再起動不要」（決定 25・docs/61 §61.10.3）と
-    矛盾する。定義を DB へ移し、tenant_admin が Console から編集できるようにする。
-30. ★ **有効化は `super_admin` の承認を要する。編集と保存は tenant_admin、有効化は別の人。**
-    プロジェクト MCP（[0031](0031-mcp-registry.md)）は tenant_admin が単独で登録できるが、
-    あれは「そのテナントのエージェントが**外へ**叩きに行く先」で、**IdP は「誰であるか」を宣言する
-    主体**だから同じ扱いにはできない。実測した乗っ取り経路: `user_key = sanitizeUser(email)`
-    （`resolver.go:281`）は**デプロイ全体で 1 つの名前空間**で、デプロイ役割も **email 一致**で決まる
-    （`roleHintFor`・`resolver.go:28`）。よって自分の支配下の IdP を登録できる tenant_admin は
-    `email=<super_admin>` を主張するトークンを自分で発行してサインインでき、`UpsertIdentity` が
-    role を上げ、**never downgrade（`store_sqlite.go:314-317`）なので不正 provider を消しても残る**。
-    `trust: "issuer"` は防波堤にならない（issuer が攻撃者自身）。★ **悪意が無くても起きる** —
-    セルフサインアップ有効な Auth0 テナントを善意で登録した瞬間にデプロイ全体が開く。
-    承認は子会社あたり 1 回きりなので、運用コストは失うものに対して圧倒的に小さい。
-    無効化（`suspended`）は tenant_admin も打てる — **止める方向は誰でも早く**。
-    ★ **issuer / client_id / trust を変更したら `pending` へ戻す**。承認は「この issuer を信じてよい」に
-    対して与えたもので、issuer が変われば承認の対象そのものが変わる。
-    ★ **実装時の補足（P4）— 戻す条件に「許可ドメイン・tid の拡大」を足した。** 承認は
-    「この issuer を**この範囲で**信じてよい」であって、範囲が広がれば対象が変わる。縮小は戻さない。
-    `client_secret` の更新も戻さない（同じ issuer・同じアプリ登録で、鍵のローテーションのたびに
-    再承認を要求すると**ローテーションしなくなる**方が高くつく）。
-    ★ **承認前の拒否は callback で効かせる。** ボタンを出さないのは表示なので、
-    `/oauth2/login?provider=t:…` を直接叩かれれば通ってしまう（決定 14 と同じ穴）。
-31. ★ **テナント定義の provider からは `super_admin` を取れない。** `roleHintFor` は
-    **env 由来 provider のログインにだけ**効かせる。承認済みでも、その IdP の管理者はその会社の
-    情シスであってこのデプロイの設置者ではない（決定 24 の「デプロイ全体の権限はホストに触れる人だけ」）。
-32. ★ **P4 は P1（`0038`）が前提。** テナント定義の provider は `(provider, subject)` で identity を
-    作り、**決定 4 / docs/61 §61.5 の「email 一致で既存 identity へ結合」を無効化する**。
-    これが無いと、email を騙るだけで既存の identity＝home＝secrets を乗っ取れる。
-    あわせて、テナント定義の provider は**自テナントにしか入れない**（`prov` を `resolveFull` で突合。
-    入口の許可リストもそのテナントのものを使い、デプロイ共通リストへフォールバックしない）し、
-    **素の `/login` には出さず `/login/<slug>` 限定**にする（全子会社のボタンが未認証者に並ぶと
-    組織構成が漏れる）。依存関係は実質 **P1 → P3 → P4**。
-    ★ **改訂（P4 実装時）— 「無効化する」は実装できず、「拒否する」になった。** 規則 2 を切って
-    新規作成へ落としても `user_key = sanitizeUser(email)` の `ON CONFLICT(user_key)` で同じ行に戻り、
-    `identity.email` は UNIQUE なので別行も作れない。よって**規則 2'**: 一度もサインインされて
-    いない identity（招待の placeholder）だけ claim し、ログイン実績のあるアドレスは
-    `email_taken` で拒否する。招待 → 初回ログインという本線は通り、乗っ取りは塞がる（docs/61 §61.11.8）。
-    ★ **改訂 — 入口の門は行の `allowed_domains` を必須にした。** デプロイ共通リストへ
-    フォールバックしない（本文どおり）だけでは、許可リストが空の行が「誰も入れない」か
-    「誰でも入れる」かのどちらかになる。必須にすることで、**その issuer が名乗ってよいアドレスの
-    範囲**が常に明示され、1 ドメイン 1 テナント（§61.9.8 と同じ規則）で他社のアドレスを
-    名乗れなくなる。
-33. **`client_secret` は DB にテナント鍵で封印して置く。前例は `mcp_server`。**
-    `headers_enc` ＋ `key_ref` を `custodian.Wrap(tenantID, …)` で封印し（`mcp_server.go:146`・
-    AES-256-GCM・AAD=keyRef）、UI へは `***` でマスク、更新は merge で未編集の値を残し、
-    復号不能は空にせず明示エラー（`mcp_headers_unreadable`）——この 4 点をそのまま踏襲する。
-    正直に添える限界 2 つ: `localCustodian` の KEK は master 由来なので**テナント間の暗号学的分離では
-    ない**（[0005](0005-envelope-custodian.md)）／env から DB へ移すと秘密が **`DATA_DIR`＝
-    バックアップの中**に入る（`AF_MASTER_KEY` をデータ領域の外に置く既存ルールが前提）。
-    ★ **provider id の名前空間を分ける**: env 由来は `entra`、DB 由来は `t:<tenant-slug>:<name>`。
-    混ぜるとテナントが `google` という名前の行を作って env の Google を上書きできる。
-    `common` / `organizations` ＋ TIDs 空の禁止（決定 7）は、DB 側では**保存時 400** で効かせる
-    （実行中の CP は落とせないため）。
-    ★ **実装時の補足（P4）— `validProviderID` は緩めない。** `t:` 形式は別関数で検証する。
-    緩めると env 側の provider id をテナント名前空間へ入れられる、という逆向きの穴になる。
+### Tenant-defined authentication methods (P4, when each subsidiary has a different Entra, docs/61 §61.11)
 
-### テナント定義の GitHub（P5・信頼の根拠が issuer でなくなる場合・docs/61 §61.15）
+29. **Let a tenant hold provider definitions themselves (P4).** In group companies and spin-offs the
+    Entra tenant differs per tenant (a different issuer and different client_id/secret). P0's env can do
+    it by listing `AF_OIDC_PROVIDERS=entra_a,entra_b` (measured), but that means **editing a file on the
+    host and restarting the CP every time a tenant is added**, contradicting "creating a tenant needs no
+    restart" (decision 25, docs/61 §61.10.3). The definitions move to the database, editable by a
+    tenant_admin from the Console.
+30. ★ **Activation requires `super_admin`'s approval. Editing and saving are the tenant_admin's;
+    activation is someone else's.** Project MCP ([0031](0031-mcp-registry.md)) can be registered by a
+    tenant_admin alone, but that is "where that tenant's agents go **outward**", whereas **an IdP is the
+    subject that declares who someone is**, so it cannot be treated the same. The measured hijack route:
+    `user_key = sanitizeUser(email)` (`resolver.go:281`) is **one namespace across the whole deployment**,
+    and the deployment role is decided by **an email match** too (`roleHintFor`, `resolver.go:28`). So a
+    tenant_admin who can register an IdP under their own control can issue themselves a token asserting
+    `email=<super_admin>` and sign in; `UpsertIdentity` raises the role, and **never downgrade
+    (`store_sqlite.go:314-317`) means it persists even after the rogue provider is deleted.**
+    `trust: "issuer"` is no breakwater (the issuer is the attacker). ★ **It can happen without malice** —
+    registering an Auth0 tenant with self-signup enabled in good faith opens the whole deployment the
+    moment it is done. Approval is once per subsidiary, so the operational cost is overwhelmingly smaller
+    than what is at stake. Disabling (`suspended`) can be done by a tenant_admin too — **stopping should
+    always be quick for anyone.**
+    ★ **Changing the issuer, client_id or trust returns it to `pending`.** Approval was given to "this
+    issuer may be trusted", and if the issuer changes, the thing approved has changed.
+    ★ **An addendum from implementation (P4) — "widening the allowed domains or tids" was added to the
+    conditions for returning it.** Approval means "this issuer may be trusted **within this range**", and
+    if the range widens, the subject has changed. Narrowing does not return it. Updating the
+    `client_secret` does not return it either (with the same issuer and the same app registration,
+    demanding re-approval on every key rotation costs more, because **people stop rotating**).
+    ★ **Refusal before approval takes effect at the callback.** Not showing the button is a display
+    matter; hitting `/oauth2/login?provider=t:…` directly would otherwise get through (the same hole as
+    decision 14).
+31. ★ **A tenant-defined provider cannot obtain `super_admin`.** `roleHintFor` applies **only to logins
+    through env-derived providers**. Even when approved, that IdP's administrators are that company's IT
+    department, not the person who installed this deployment (decision 24's "deployment-wide authority
+    belongs only to whoever can touch the host").
+32. ★ **P4 presupposes P1 (`0038`).** Tenant-defined providers create identities by
+    `(provider, subject)` and **disable decision 4 / docs/61 §61.5's "join an existing identity on an
+    email match"**. Without that, merely claiming an email would hijack an existing identity = home =
+    secrets. Alongside that, a tenant-defined provider **can only enter its own tenant** (`prov` is
+    checked in `resolveFull`; the entrance allowlist is that tenant's and does not fall back to the
+    deployment-wide list), and **it is not shown on the bare `/login`, only on `/login/<slug>`** (a row
+    of buttons for every subsidiary would leak the organisation's structure to an unauthenticated
+    visitor). The dependency is effectively **P1 → P3 → P4**.
+    ★ **Revised (during P4) — "disable it" could not be implemented and became "refuse".** Cutting rule 2
+    and falling through to creating a new identity still returns to the same row via
+    `ON CONFLICT(user_key)`, because `user_key = sanitizeUser(email)`, and `identity.email` is UNIQUE so
+    a separate row cannot be created either. Hence **rule 2'**: only claim an identity that has never
+    been signed into (an invitation placeholder), and refuse an address with a login history with
+    `email_taken`. The main line of invitation → first login works, and the hijack is closed (docs/61
+    §61.11.8).
+    ★ **Revised — the entrance gate now requires the row's `allowed_domains`.** Merely not falling back
+    to the deployment-wide list (as written above) leaves a row with an empty allowlist meaning either
+    "nobody can enter" or "anybody can". Making it mandatory always makes **the range of addresses that
+    issuer may claim** explicit, and with one domain per tenant (the same rule as §61.9.8) it cannot
+    claim another company's addresses.
+33. **The `client_secret` is sealed in the database with the tenant key. The precedent is
+    `mcp_server`.** `headers_enc` plus `key_ref` is sealed with `custodian.Wrap(tenantID, …)`
+    (`mcp_server.go:146`, AES-256-GCM, AAD=keyRef), masked as `***` in the UI, updated by a merge that
+    keeps unedited values, and an undecryptable value is an explicit error rather than empty
+    (`mcp_headers_unreadable`) — those four points are followed exactly. Two limits, stated honestly:
+    `localCustodian`'s KEK derives from the master and so is **not cryptographic separation between
+    tenants** ([0005](0005-envelope-custodian.md)), and moving the secret from env to the database puts
+    it **inside `DATA_DIR`, i.e. inside backups** (the existing rule of keeping `AF_MASTER_KEY` outside
+    the data area is the premise).
+    ★ **Separate the provider id namespaces**: env-derived is `entra`, database-derived is
+    `t:<tenant-slug>:<name>`. Mixing them would let a tenant create a row called `google` and override
+    env's Google. The ban on `common` / `organizations` with empty TIDs (decision 7) is enforced on the
+    database side **as a 400 at save time** (a running CP cannot be killed).
+    ★ **An addendum from implementation (P4) — do not loosen `validProviderID`.** The `t:` form is
+    validated by a separate function. Loosening it opens the reverse hole of letting an env-side provider
+    id be put into the tenant namespace.
 
-34. ★ **テナントは GitHub もサインイン方法にできる。ただし承認の対象が変わる。**
-    決定 30 の承認は「この issuer を、このドメイン範囲で信じてよい」だった。その根拠は
-    **issuer がその子会社に固定されている**こと（決定 7）で、GitHub には無い —
-    `github.com` は全テナント共有の 1 つの発行元だから。よって GitHub 行の承認は
-    **「この org のメンバーを、このドメイン範囲で信じてよい」**に読み替える。
-    ★ **それでも承認を外さない。** 決定 30 が塞いだ乗っ取り（自前 IdP で `email=<情シス>` を
-    主張する）は GitHub では成立しない（email を検証するのは GitHub で、テナント管理者に
-    偽造できない）が、承認が担うものが 2 つ残る: ①`allowed_domains` は 1 ドメイン 1 テナントの
-    **台帳から枠を取る**行為で、なりすませなくても他社の登録を塞げる ②org の入退室を握るのは
-    その会社の情シスとは限らない org オーナーで、それを会社の入口として許すかはデプロイの判断。
-    ★ **org の追加は `pending` へ戻す**（決定 30 の「範囲の拡大」と同じ枠）。削除は戻さない。
-    ★ **`allowed_domains` は GitHub でも必須。** 「A 社が B 社ドメインを名乗る org を登録する」を
-    止めるのは org ではなく**ドメイン台帳**（409）で、必須にしないと行がその台帳の外に出る。
-    ★ **OAuth App は行が持つ。** デプロイの App を共有すると、各子会社の org オーナーに
-    情シスの App（git 連携の device flow と同一）を承認させることになり、情シスの鍵
-    ローテーションが全子会社を無言で壊す。結果として **`AF_GITHUB_ALLOWED_ORGS` の無い
-    デプロイでも、テナント定義の GitHub だけを有効にできる**（決定 29 の帰結）。
-35. ★ **同じ IdP アカウントを別のボタンから押したら同じ人（規則 1.5）。**
-    決定 32 で `emailJoin=false` にした結果、**env の GitHub で入っていた人がテナントの
-    GitHub ボタンを押すと `email_taken` で拒否される**（同じアカウント・同じ email なのに
-    `(provider, subject)` が別キーになるため）。決定 32 を緩めるのではなく、
-    `identity_provider.realm`（＝身元が証明された場所。OIDC は issuer、GitHub は
-    `https://github.com`）を足し、**realm と subject が一致するときだけ**結合する。
-    ★ **realm は行が書くのではなくアダプタが名乗る**（`issuerURL()`）。GitHub アダプタの
-    エンドポイントは定数のままで、行から差し替えられない — 動かせると任意の subject を
-    名乗れて鍵が偽造できる。
-    ★ **email だけ一致する別 IdP は拒否のまま**（利用者判断）。開けると、承認済みドメインの
-    範囲内で、そのテナントの管理者が**別の権威で作られた既存アカウント**になりすませる。
-    運用上の帰結（兼務の人が使う方式を `allowed_providers` から外さない）を画面とガイドに書く。
+### Tenant-defined GitHub (P5, when the grounds for trust are no longer the issuer, docs/61 §61.15)
 
-36. ★ **「受け入れる方式」と「ボタンに出す方式」を分ける（`hidden_providers`）。**
-    決定 14 以来 `allowed_providers` が 2 つの仕事（毎リクエストの強制＋ログイン画面の表示）を
-    兼ねていた。テナント定義の GitHub が入ると、これが要件と衝突する: **子会社は自社の
-    GitHub だけで運用したい**のに、本社から出向している兼務の人（子会社の GitHub アカウントを
-    そもそも持たない）を通すために本社の方式を受け入れねばならず、すると使いもしない
-    ボタンが子会社のログイン画面に並ぶ。★ **受け入れることは入れる人を増やすことではない** —
-    誰が入れるかを決めるのは名簿（決定 15）で、`allowed_providers` は「どの身元の出どころを
-    認めるか」でしかない。よって落としてよいのは表示だけで、`hidden_providers` は
-    **表示専用**にした（`providerAllowed` は参照しない＝決定 14 は無傷）。
-    ★ **全部隠したら隠す指定を無視する。** ボタンの無いログイン画面は行き止まりで、
-    テナントの設定ミスがそれを作れてはいけない。保存時に弾かないのは、そのテナントの方式が
-    実行時に増減する（承認・停止）ため、保存の瞬間には確定しないから。
+34. ★ **A tenant may use GitHub as a sign-in method too, but what is approved changes.**
+    Decision 30's approval was "this issuer may be trusted within this domain range". Its grounds were
+    that **the issuer is pinned to that subsidiary** (decision 7), which GitHub does not have —
+    `github.com` is one issuer shared by every tenant. So approval of a GitHub row is reread as
+    **"members of this org may be trusted within this domain range"**.
+    ★ **Approval is still not dropped.** The hijack decision 30 closed (asserting `email=<IT dept>` via
+    your own IdP) does not work on GitHub (GitHub verifies the email and a tenant admin cannot forge it),
+    but two things approval still carries: (1) `allowed_domains` is **taking a slot in the one-domain-one-
+    tenant ledger**, and even without impersonation it can block another company's registration; and (2)
+    who controls entry to and exit from an org is an org owner, not necessarily that company's IT
+    department, and whether to allow that as the company's entrance is the deployment's call.
+    ★ **Adding an org returns it to `pending`** (the same frame as decision 30's "widening the range").
+    Removing one does not.
+    ★ **`allowed_domains` is mandatory for GitHub too.** What stops "company A registering an org that
+    claims company B's domain" is not the org but **the domain ledger** (409), and without making it
+    mandatory the row escapes that ledger.
+    ★ **The OAuth App belongs to the row.** Sharing the deployment's app would make each subsidiary's org
+    owner approve the IT department's app (the same one as git integration's device flow), so the IT
+    department's key rotation would silently break every subsidiary. As a result, **even a deployment
+    with no `AF_GITHUB_ALLOWED_ORGS` can enable tenant-defined GitHub alone** (a consequence of decision
+    29).
+35. ★ **The same IdP account pressed from a different button is the same person (rule 1.5).**
+    Setting `emailJoin=false` in decision 32 means **someone who was signing in with env's GitHub gets
+    refused with `email_taken` when they press the tenant's GitHub button** (the same account and the
+    same email, but a different `(provider, subject)` key). Rather than loosening decision 32,
+    `identity_provider.realm` is added (= where the identity was proven; the issuer for OIDC,
+    `https://github.com` for GitHub) and joining happens **only when the realm and the subject both
+    match**.
+    ★ **The realm is declared by the adapter, not written by the row** (`issuerURL()`). The GitHub
+    adapter's endpoints stay constants and cannot be swapped from a row — if they could be moved, any
+    subject could be claimed and the key forged.
+    ★ **A different IdP with only the email matching stays refused** (the user's call). Opening it would
+    let that tenant's admin impersonate **an existing account created by a different authority**, within
+    the approved domain range. The operational consequence (do not remove from `allowed_providers` the
+    method a person with dual roles uses) is written on the screen and in the guide.
 
-### 本人の同意でサインイン方法を紐づける（P6・docs/61 §61.16）
+36. ★ **Separate "methods accepted" from "methods shown as buttons" (`hidden_providers`).**
+    Since decision 14, `allowed_providers` has done two jobs (per-request enforcement plus login-screen
+    display). Tenant-defined GitHub brings that into conflict with the requirement: **a subsidiary wants
+    to run on its own GitHub only**, yet it must accept head office's method to let through a seconded
+    person who has no subsidiary GitHub account at all — and then an unused button sits on the
+    subsidiary's login screen. ★ **Accepting is not the same as increasing who can enter** — who can
+    enter is decided by the roster (decision 15), and `allowed_providers` is only "which sources of
+    identity are recognised". So what may be dropped is display alone, and `hidden_providers` is
+    **display-only** (`providerAllowed` does not consult it, leaving decision 14 intact).
+    ★ **If everything would be hidden, ignore the hiding.** A login screen with no buttons is a dead end,
+    and a tenant's misconfiguration must not be able to create one. It is not rejected at save time
+    because that tenant's methods increase and decrease at runtime (approval, suspension), so it is not
+    determined at the moment of saving.
 
-37. ★ **「別 IdP・同じ email」は、アカウントの持ち主が自分で押したときだけ通す。**
-    決定 32（と決定 35 の但し書き）で拒否したのは、**テナントの管理者が別の権威で作られた
-    既存アカウントになりすませる**からだった。危険なのは**誰が主張したか**であって
-    アドレスが同じことではない。よって開ける条件は「**ログイン済みの本人が、自分の
-    アカウントに 2 つ目の方式を足す**」— これなら片方はセッションが、もう片方はその IdP の
-    コールバックが証明しており、他人についての主張が 1 つも要らない。
-    効かせる条件（どれか 1 つでも欠けると上の性質が崩れる）:
-    - **ライブなセッションが要る**。しかも 2 本目の脚で**同じ人であることを再確認**する —
-      署名済み state は「CP が書いた」しか言わず、その間に別タブでサインインし直せる。
-      ★ `/oauth2/` は `authGate` の**除外プレフィックス**なので、この門はハンドラ自身が持つ。
-    - **その方式自身の門（org・許可ドメイン）を通る**。`Allowed()` をログインと同じに走らせる
-      ＝紐づけは迂回路ではない。
-    - **同じメールアドレスを名乗る方式だけ**（利用者判断）。別アドレスの結合は §61.5 の
-      「両方にサインインできることは同一人物の証明ではない」に当たり、しかも取り消せない。
-    - **相手の IdP アカウントが誰かのものなら拒否**（対そのもの・規則 1.5 の一致・
-      アドレスの持ち主のいずれか）。付け替えも結合もしない。
-    - **デプロイ役割は動かさない**（決定 31）。`AttachProvider` は `identity` 行を一切触らない
-      ＝ `roleHint` の経路がそもそも無い。
-    ★ **解除も入れた**（当初は見送っていた）。足せて外せないと片道になる — 異動で org を
-    抜けた人の行が「まだ使える方法」の顔で残り続ける。締め出しを作らないためのガードが 3 つ:
-    **残り 1 つは拒否**（数えるのは `DELETE` 文の中。API で数えてから消すとタブ 2 枚で 0 にできる）、
-    **いま使っているセッションの方式は拒否**、**`identity_id` を必ず WHERE に入れる**。
-    ★ **入口は 2 つ**: 設定の「アカウント」タブと、ログイン画面の `email_taken` の文面
-    （そこで拒否された人が、次に何をすればよいか読める場所はそこしかない）。
-    ★ **兼務の人が子会社の GitHub アカウントを持っていない場合はこれでは解けない**（紐づける
-    相手が存在しない）。そちらは決定 36（`hidden_providers`）＋運用で解決済みで、混同しない。
+### Linking sign-in methods with the person's own consent (P6, docs/61 §61.16)
 
-38. ★ **規則 1.5 の鍵を増やす — ただし `subject` は `sub` のまま、別の列で照合する。**
-    決定 35 の規則 1.5 は `(realm, subject)` で「同じ IdP アカウントを別のボタンから」を結合する。
-    GitHub ではこれで足りる（数値 id は全 OAuth App で同じ）が、**Entra の `sub` は
-    (アプリ登録, 人) のペアワイズ**なので、同じ Entra テナントでもアプリ登録が違えば同じ人が
-    別 subject になり、規則 1.5 が当たらない。
-    ★ **素直に「`subject` を `oid` に差し替える」は事故る。** 既存行の鍵が変わって規則 1 が
-    外れる。env provider は規則 2（email 結合）で救われるが、**テナント定義の行は規則 2' で
-    `email_taken` になり、いま使っている人が締め出される**。
-    そこで `identity_provider` に **`realm_claim`（読んだクレーム名）＋ `realm_subject`（その値）**
-    を足し、**規則 1.5 の照合だけをそちらでも行う**（`WHERE realm=? AND realm_claim=? AND
-    realm_subject=?`）。`subject` は `sub` のまま。
-    - ★ **照合にクレーム名を含める。** 片方が `oid`、片方が別のクレームのとき、値がたまたま
-      一致しても当ててはいけない — 同じ問いの答えではない。空は一切マッチしないので、
-      この列より前に書かれた行と、クレームを名乗らない provider は参加しない。
-    - ★ **設定できるのはクレーム「名」だけで、値は必ずトークンから読む**（realm と同じ作法）。
-      行から値を書けたら、テナントが他人の `oid` を名乗って規則 1.5 を偽造できる。
-    - ★ **テナントが名乗れるのは既知の安定クレームだけ**（まずは `oid` のホワイトリスト）。
-      `email` / `upn` / `preferred_username` を書けると、**共有 realm の中に email 結合**を
-      作れてしまう＝決定 32 が拒否した乗っ取りが別の扉から入る。
-      env（`AF_OIDC_<ID>_LINK_CLAIM`）は任意のクレーム名を許す — 話し手がオペレーター自身で、
-      許可リストを直せば同じことができる立場だから。危険性は運用ガイドに明記する。
-    - ★ **検証は API 側（`validateTenantIdPBody`）と実行時側（`buildTenantProvider`）の 2 箇所**。
-      片方だけだと「保存はできたのに承認後に落ちる」行が作れる。
-    - **`link_claim` の変更は `pending` へ戻す。** 誰が入れるかは変わらないが、**誰に着地するか**が
-      変わる（既存アカウントに届くボタンが増える）＝承認者が見るべき変更。
-    - 紐づけ（決定 37）の拒否条件にもこの鍵を足す。realm+subject だけ見ていると、
-      ペアワイズ `sub` のせいで「対は空いている」ように見えて、実際に入ると他人に着地する。
+37. ★ **"A different IdP with the same email" is allowed only when the account's owner presses it
+    themselves.** What decision 32 (and decision 35's proviso) refused was **a tenant's admin
+    impersonating an existing account created by a different authority**. What is dangerous is **who
+    asserted it**, not that the address is the same. So the condition for opening it is "**a logged-in
+    person adds a second method to their own account**" — one leg is proven by the session and the other
+    by that IdP's callback, and not a single assertion about anyone else is required.
+    The conditions that make it work (drop any one and the property above collapses):
+    - **A live session is required**, and on the second leg **the same person is re-confirmed** — a
+      signed state only says "the CP wrote it", and in between they could sign in again in another tab.
+      ★ `/oauth2/` is an **excluded prefix** for `authGate`, so this gate lives in the handler itself.
+    - **It passes that method's own gate (org, allowed domains).** `Allowed()` runs exactly as it does at
+      login, so linking is not a bypass.
+    - **Only a method claiming the same email address** (the user's call). Joining a different address
+      falls under §61.5's "being able to sign in to both is not proof of being the same person", and it
+      cannot be undone.
+    - **Refuse if the other IdP account belongs to somebody** (the pair itself, a rule 1.5 match, or the
+      address's owner). Nothing is re-pointed and nothing is merged.
+    - **The deployment role does not move** (decision 31). `AttachProvider` never touches the `identity`
+      row, so there is no `roleHint` path at all.
+    ★ **Unlinking was added too** (originally deferred). Being able to add but not remove is one-way — the
+    row of someone who left the org on a transfer would linger wearing the face of "a method still
+    usable". Three guards prevent lockout: **refusing the last remaining one** (counted inside the
+    `DELETE` statement; counting in the API before deleting lets two tabs take it to zero), **refusing
+    the method of the session currently in use**, and **always putting `identity_id` in the WHERE**.
+    ★ **There are two entrances**: the "account" tab in settings, and the wording of `email_taken` on the
+    login screen (the only place a person refused there can read what to do next).
+    ★ **This does not solve the case of a seconded person with no subsidiary GitHub account** (there is
+    nothing to link to). That is already solved by decision 36 (`hidden_providers`) plus operations; do
+    not conflate them.
 
-### サインイン方式をテナントへ寄せる（P7・docs/61 §61.17）
+38. ★ **Add a key to rule 1.5 — but keep `subject` as `sub` and match on a separate column.**
+    Decision 35's rule 1.5 joins "the same IdP account from a different button" by `(realm, subject)`.
+    That is enough for GitHub (the numeric id is the same across every OAuth App), but **Entra's `sub` is
+    pairwise per (app registration, person)**, so the same person gets a different subject under a
+    different app registration even within the same Entra tenant, and rule 1.5 does not fire.
+    ★ **Naively "replacing `subject` with `oid`" causes an accident.** The key of existing rows would
+    change and rule 1 would stop matching. env providers are saved by rule 2 (email joining), but
+    **tenant-defined rows hit rule 2' and get `email_taken`, locking out people who are using it now**.
+    So `identity_provider` gains **`realm_claim` (the claim name read) plus `realm_subject` (its value)**,
+    and **only rule 1.5's matching also runs against those** (`WHERE realm=? AND realm_claim=? AND
+    realm_subject=?`). `subject` stays `sub`.
+    - ★ **Include the claim name in the match.** When one side is `oid` and the other is a different
+      claim, a coincidental value match must not be applied — they are not answers to the same question.
+      Empty never matches, so rows written before this column, and providers that declare no claim, do not
+      take part.
+    - ★ **Only the claim *name* is configurable; the value is always read from the token** (the same
+      practice as realm). If a row could write the value, a tenant could claim someone else's `oid` and
+      forge rule 1.5.
+    - ★ **A tenant may only name a known stable claim** (an allowlist starting with `oid`). Being able to
+      write `email` / `upn` / `preferred_username` would **create email joining inside a shared realm** =
+      the hijack decision 32 refused, entering by another door. env (`AF_OIDC_<ID>_LINK_CLAIM`) allows any
+      claim name — the speaker there is the operator, who could do the same thing by editing the
+      allowlist. The danger is stated in the operations guide.
+    - ★ **Validation happens in two places, the API side (`validateTenantIdPBody`) and the runtime side
+      (`buildTenantProvider`).** With only one, a row can be created that saves fine and then fails after
+      approval.
+    - **A change to `link_claim` returns it to `pending`.** Who can enter does not change, but **where they
+      land** does (more buttons reach an existing account) — a change the approver should see.
+    - This key is added to the refusal conditions for linking (decision 37) too. Looking only at realm and
+      subject makes the pair look free because of the pairwise `sub`, while entering actually lands on
+      someone else.
 
-39. ★ **サインイン方式は「テナントが持つもの」に一本化し、env の方式は既定テナントに属させる。**
-    P4/P5 を経てもなお「デプロイの方式」と「テナントの方式」は別の層に住んでいて、その境目が
-    3 つの形で表に出ていた: ①**管理画面のどこにも Google が出ない**（出す面は
-    `GET /api/admin/providers` ただ 1 つで、しかも super_admin がログイン規則を*編集している時*
-    にしか出ない）ため、テナント管理者の「サインイン方式」は Google で毎日入っている会社でも空
-    ②`hidden_providers` が素の `/login` に効かない（決定 36 の範囲・§61.15.13）
-    ③デプロイの既定方式を廃止できない。
-    ★ **③は「やらない方がよい」ではなく「やると管理不能になる」**: `upsertIdentity` は
-    テナント定義の provider に対し `roleHint` を無条件で空にする（決定 31）ので、全方式が
-    テナント定義になると `SUPER_ADMIN_EMAILS` に載っていても**新しく super_admin になれる人が
-    居なくなり**、承認者が居ないので最初のテナント行も有効化できない（決定 30）＝循環する。
-    加えて `AUTH=oauth` は provider ゼロで起動を拒否する。
-    ★ **レビューでの精度上げ**: 当初は「誰も super_admin になれない」と書いたが、正確には
-    **昇格経路が 0 になる**であって既存行は消えない。昇格する SQL はデプロイ全体で 2 本
-    （`UpsertIdentity` / `touchIdentity`）で、どちらも `roleHint == "super_admin"` を条件に
-    するため上の抑止で塞がる。降格は起動時の `DemoteSuperAdmins` 1 本だけで、これは
-    `SUPER_ADMIN_EMAILS` に**載っていない**行を落とすので、既存の super_admin は env に
-    載り続ける限り残る。効くのは**新規インストールと、新任 super_admin を後から足す場面**。
-    結論は変わらない — 最初の 1 人を作れない仕組みは採れない。
-    よって**廃止ではなく置き場を与える**: env の方式は**既定テナント**（`EnsureDefaultTenant`・
-    起動時に必ず存在する）の方式として扱い、他テナントはそれを**参照**して受け入れる。
-    他テナントの面に「デプロイの方式」という別カテゴリを置かない。
-40. ★ **帰属を移すのは表示と規則だけ。provider id の形と identity 層は 1 行も触らない。**
-    「既定テナントの方式」を `t:default:google` へ改名するのは**やってはいけない**。
-    `checkTenantProvider` は `parseTenantProviderID` の**文字列の形**でテナント定義セッションを
-    自テナントへ固定し（決定 32-3）、`upsertIdentity` は同じ形の判定（`isTenantProviderID`）で
-    `roleHint` を空にする（決定 31）。改名すると **①共有の Google で入った人が既定テナント
-    以外を使えなくなる**（兼務も部署テナントも全滅）**②その入口からは新規に super_admin に
-    なれない**。
-    ★ **レビューで数え上げたら分岐点は 2 つではなく 10 箇所だった**（テスト除く・
-    docs/61 §61.17.3 の表）。id の形はガードではなく**識別子の意味そのもの**として全層に
-    散っている。特に重いのが 3 つ: **(i) `providerFor` は `t:` を env ではなく DB レジストリで
-    解決する**ので、改名した id はそもそも解決できず**そのボタンでログインできない**（最初に
-    当たるのはここ）。**(ii) `setTenantLogin` の検証は `t:` id を「自テナントの行」としてしか
-    受け付けない**ので、他テナントが `t:default:google` を `allowed_providers` に書けない
-    ＝ **決定 41-a の「参照」そのものが成立しなくなる**。**(iii) `linkableFor` が `t:` を
-    そのテナントのメンバーにしか出さない**ので、決定 37 のリンク候補から Google が消える。
-    判定は id の形のまま据え置き、意味づけだけを「**誰が issuer を握っているか（オペレーターか
-    テナント管理者か）**」と読み替える。docs/61 §61.9.2 の 3 層でいえば、P7 が触るのは
-    **ログイン画面**と**規則の帰属**だけで、**入口の門**と**テナントの門**は変えない。
-    ★ 副産物として、いま Go の 1 行に隠れている不変条件が画面に出る —
-    **デプロイが持つ方式（＝既定テナントの方式）だけが super_admin を運べる。**
-41. ★ **「同じプロバイダの別設定」は許すが、ペアワイズ subject の IdP では手当てが要る。**
-    利便性のための追加操作は 2 つで、安全性が違う。**(a) 既定テナントと同じ方式を追加＝参照**
-    （id は `google` のまま受け入れ集合に足すだけ・identity 層に触らない）が主で、実体は
-    `allowed_providers` を自由入力からトグルに変えるだけ。★ **レビューで (a) から「追加」という
-    操作を外した**: 参照の追加／削除は「受け入れる」トグルの ON／OFF と**同じ 1 ビット**で、
-    同じことに 2 つの名前を与えると「参照行を編集できると思った」「追加したのに一覧に増えない」
-    という誤解を必ず生む。→ **既定テナントの方式は常に行として並べ**、未参照なら OFF で描く。
-    ［方式を追加］は (b) だけを指す語にする。**(b) 同じプロバイダの別設定＝
-    新しい行**（別のアプリ登録）は上級操作で、同じ人が別 subject になるかどうかが分かれ目:
-    discovery の `subject_types_supported` は **Google `public` / Entra `pairwise`**（2026-08-20 実測）、
-    GitHub は数値 id が全 OAuth App で共通。`pairwise` は決定 38 の状況そのもので、
-    放置すると規則 2' の `email_taken` になる。
-    - **判定は discovery を読む**（issuer のホスト名で当てない）。読むのは「同じ issuer の行が
-      既にある」＝(b) そのものの場合だけでよい。
-    - `pairwise` なら **`link_claim` を必須**（保存時 400）。現行 UI の初期値は
-      「既定（`sub` で見分ける）」なので、そのままだと事故る。
-      ✅ **P7-3 で実装**（`checkPairwiseNeedsLinkClaim`）。★★ 当初は「かつ `oid` が使えるなら」と
-      書いたが、**後半は判定できないと実測で分かった**: 標準の答えである `claims_supported` を
-      **Entra は過少申告する**（`oid` を 1 つも挙げないのに、v2 トークンには必ず載る・2026-08-20）。
-      条件にすると必要な場面でこそ発火しない。→ 条件は **`pairwise` かつ「その issuer が既に
-      このデプロイで使われている」**だけにした。出ないクレームを指定しても無害
-      （`realm_subject` が空のままで `identityIDForRealmClaim` が空 subject を弾く）なので、
-      **効かないときの代償が無い**＝必須にして困る場面が無い。
-      ★ 「既に使われている」には**env の provider も数える** — 一番多い形が「デプロイが使って
-      いるディレクトリに、テナントが自分のアプリ登録を足す」だから。
-      ★ discovery が引けないときは**通す**。issuer が一時的に届かないだけのことがあり、
-      ログイン側も discovery は遅延取得にしている（同じ理由）。通信の一瞬の失敗で保存が
-      できなくなる方が高くつく。
-    - 名乗れる安定クレームが無い `pairwise` は**拒否しない**。決定 37（本人の同意で紐づける）が
-      後から救い、`email_taken` の画面がその導線を案内する。代わりに**保存時と承認画面の両方に
-      警告**を出す（誰に着地するかが変わる＝承認者が見るべき情報）。
-    - ★ **「分裂する」は誤りだった（レビューで訂正）。起きるのは拒否で、そちらの方が重い。**
-      既にこのデプロイでログインしたことがある人が (b) の新しいボタンを押すと、規則 1.5 が
-      当たらず → 規則 2' の `identityHasProvider` が真 → `errIdentityClaimed` →
-      `/login?error=email_taken` で**セッションが発行されない**。identity は 2 つに割れず、
-      **既存の利用者だけがそのボタンから入れなくなる**（新規の人は普通に作られる）。
-    - ★ **救済の前提は「古い方式がまだ生きている」こと。** `email_taken` の画面は日英とも
-      「いつもの方式でログインしてから 設定 → アカウント で追加」と案内しているが、(b) の
-      典型は**アプリ登録の差し替え**で、移行後に古い行を止めたくなる。止めた時点で未紐づけの
-      人は自力復旧できない（紐づけを始めるセッションが作れず、`AttachProvider` も既に
-      結びついた `(provider, subject)` は受け取らない）。→ **新しい行を有効にしても古い行は
-      止めない**、止めてよいのは全員が紐づけ終わってから、という順序を UI に持たせる。
-      docs/61 §61.17.4。
-      ✅ **P7-3 で実装**（`CountMembersOnlyOnProvider` ＋ 停止時の 409）。
-      ★ **拒否ではなく確認**（`?confirm=1` で通る）。停止は「漏れた IdP を止める」手段でもあり、
-      **止めるのは常に始めるより速くてよい**。守らせたいのは移行の場面で、事故の場面ではない。
-      ★ 数えるのは「その方式**しか**使ったことのない現役メンバー」。「その他の方式」は
-      このテナントの中に限らない（`identity_provider` の行は*証明済みのログイン*なので、
-      他テナントの方式からでも入り直せる）。行が 1 つも無い人＝まだ入っていない招待は数えない。
-      ★ 人数は CP しか知らないので `error` の隣に `members` として返し、Console は**数だけ
-      受け取って自分の言語の文言に差す**（CP の英文をそのまま出すと表示言語が CP のものになる）。
-      共有の error 封筒 `{code, message}` を広げると全ハンドラに波及するので、この 1 応答だけ
-      手で書いている。
-    - (b) の副作用は残る: `t:` id なのでそのセッションはそのテナントに固定され（決定 32-3）、
-      `client_secret` が DB に複製される。
-42. **素の `/login` に既定テナントの `hidden_providers` を適用する（描画のみ）。**
-    決定 36 の `hidden_providers` が素の `/login` に効かないのは、そこが*どのテナントでもない*
-    画面だったから。既定テナントの規則で描けばそれが効き、§61.15.13 の
-    「実装では変えられない」が撤回できる。★ **認可の根拠にはしない** — どのテナントに入れるかは
-    membership とテナント規則が決める（決定 13）。未知の slug を汎用ページに落とす挙動も変えない。
-    ★★ **当初は「既定テナントのページとして描画する」＝規則を丸ごと適用する案だったが、
-    レビューで `hidden_providers` だけに狭めた。** 安全弁が片側にしか無い:
-    hidden の絞り込みには「全部隠したら無視する」弁があるが、**`allowed_providers` の
-    絞り込みには弁が無く、全部落ちるとボタン 0 のエラーページになる**。素の `/login` は
-    どのテナントにも属さない人（新任 super_admin・招待前の人）の唯一の入口で、規則を戻す
-    `PUT .../login` は `withSuperAdmin` ＝セッションが要る。既存セッションが TTL で切れたら
-    **DB 直編集以外に戻す道がない**＝デプロイ全体の締め出し。閉じたかった穴は hidden の側に
-    しか無いので、狭めても目的は完全に達成され、締め出しの経路は**構造的に**消える。
-    ★ 実装注: 「規則の出どころ」と「ボタン URL に載せる slug」は**別の引数に分ける**。
-    素の `/login` に `default` を載せると、state 経由でログイン後の Console のテナント
-    初期選択が全員 `default` に倒れ、既定テナント自身の `t:default:*` 行も素の `/login` に
-    並んでしまう（決定 32-4 が避けた形）。載せるのは規則だけ。
-    ✅ **P7-1 で実装した（`handleLogin` の 3 行）。** `loginButtons` は元から slug と規則が
-    別引数だったので、分ける作業自体は不要だった — 素の `/login` は `tenant=""` のまま
-    `hidden` にだけ既定テナントの値を入れる。上の副作用 2 つは slug を空に保つだけで両方消える。
-    ★ **未知の slug のページは素の `/login` と完全に同一でなければならない**（片方にだけ
-    既定テナントの規則を効かせると、2 つを見比べて slug の存否が分かる）。同じ分岐に入れ、
-    テストで一致を固定した。あわせて「既定テナントが env に無い方式を受け入れると宣言していても
-    素の `/login` のボタンは 1 つも消えない」も固定した — 決定を狭めた理由そのものなので。
-    ★ 画面側では `allowed_providers` / `hidden_providers` の CSV 2 本が**行ごとの 2 トグル**
-    （受け入れる / ボタンに出す）に変わる。**DB 表現は据え置き＝スキーマ変更なし**。
-    実装上の罠は「空＝全部」という既存の意味と、既存の安全弁から出る:
-    **「受け入れる」の最後の 1 つは OFF にできない**（全部落とすと保存結果は「全部 ON」＝
-    絞ったつもりで全開）、★ **「出す」側も同じ**（hidden にも弁があるので全部 OFF は
-    保存できて効かない＝画面が嘘をつく）、★ **矛盾は表現させない**（描画は hidden の判定の
-    中でも allowed を要求するので、受け入れる=OFF の行の「出す」は無意味 → 従属トグルにして
-    `disabled`）、★ **未設定のテナントは「全部 ON」と描くが、明示リストへは固めない**
-    （「空」は*デプロイに追従する*という意味を持っており、固めると以後 env に足した方式を
-    そのテナントだけ黙って拒否する。正規化は「**全部 ON なら空で保存**」）。
-    そして**順序を UI が守る**（先に絞ってから管理者を招くとその人が入れない。既定テナントの
-    方式を全部 OFF にできるのは active な自前の行が 1 つ以上あるときだけ）。
-    ✅ **P7-0 で実装した。** ★ 2 つの規則は 1 本の関数で足りた — 「OFF にできない」の判定を
-    *usable な*方式（デプロイの方式＋**active かつ usable な自前の行**）の上で数えると、
-    「最後の 1 つ」がそのまま順序の規則になる（承認前の行は usable でないので、自前の行が
-    動き出すまで既定テナントの方式を外せない）。順序のための分岐は書いていない。
-    ★ 保存は 4 列を丸ごと置き換える PUT なので、**どちらの面も自分が持っていない 2 列を
-    読んだ値のまま送り返す**（片方でも落とすと、もう片方の面での設定が黙って消える）。
-    ★ トグルを触らせるのは**デプロイの方式の一覧が読めているときだけ** — 読めていないと
-    「全部 ON なら空」の正規化が知らない id を落とした結果で走り、絞ったつもりのない
-    テナントを絞る。§61.17.9 ② の 3 状態は表示だけでなく保存の可否にも要る。
+### Moving sign-in methods onto the tenant (P7, docs/61 §61.17)
 
-### 後始末 — 消す操作（2026-08-22・docs/61 §61.18）
+39. ★ **Unify sign-in methods as "something a tenant holds", and make env's methods belong to the default
+    tenant.** Even after P4/P5, "the deployment's methods" and "the tenant's methods" lived in different
+    layers, and the seam surfaced in three ways: (1) **Google appears nowhere in the admin screen** (the
+    only surface that shows it is `GET /api/admin/providers`, and only while a super_admin is *editing*
+    the login rules), so a tenant admin's "sign-in methods" is empty even at a company that logs in with
+    Google every day; (2) `hidden_providers` has no effect on the bare `/login` (the scope of decision 36,
+    §61.15.13); and (3) the deployment's default methods cannot be abolished.
+    ★ **(3) is not "inadvisable" but "doing it makes the deployment unmanageable"**: `upsertIdentity`
+    unconditionally empties `roleHint` for tenant-defined providers (decision 31), so if every method
+    became tenant-defined, **nobody new could become super_admin** even if listed in
+    `SUPER_ADMIN_EMAILS`, and with no approver the first tenant row could not be activated either
+    (decision 30) — a cycle. On top of that, `AUTH=oauth` refuses to start with zero providers.
+    ★ **A precision improvement from review**: this originally said "nobody can become super_admin", but
+    precisely it is that **the promotion path becomes zero**, not that existing rows disappear. There are
+    two SQL statements that promote across the whole deployment (`UpsertIdentity` / `touchIdentity`), both
+    conditioned on `roleHint == "super_admin"` and hence blocked by the above. There is one that demotes,
+    the startup `DemoteSuperAdmins`, and it drops rows **not** in `SUPER_ADMIN_EMAILS`, so an existing
+    super_admin survives as long as they stay in env. What is affected is **a fresh installation, and
+    adding a new super_admin later**. The conclusion is unchanged — a design in which the first person
+    cannot be created is not adoptable.
+    So **rather than abolishing them, give them a home**: env's methods are treated as the methods of the
+    **default tenant** (`EnsureDefaultTenant`, always present at startup), and other tenants **reference**
+    and accept them. No separate category called "the deployment's methods" is put on other tenants'
+    surfaces.
+40. ★ **What moves is attribution in display and rules only; the provider id's form and the identity layer
+    are untouched.** Renaming "the default tenant's methods" to `t:default:google` **must not be done**.
+    `checkTenantProvider` pins a tenant-defined session to its own tenant by **the string form** in
+    `parseTenantProviderID` (decision 32-3), and `upsertIdentity` empties `roleHint` on the same form
+    check (`isTenantProviderID`, decision 31). Renaming would mean **(1) people signing in with the shared
+    Google could no longer use any tenant but the default** (wiping out both dual-role users and
+    department tenants) and **(2) nobody could newly become super_admin through that entrance**.
+    ★ **Counting them in review found ten branch points, not two** (excluding tests; the table in docs/61
+    §61.17.3). The id's form is scattered across every layer not as a guard but as **the identifier's
+    meaning itself**. Three are especially heavy: **(i) `providerFor` resolves `t:` through the database
+    registry rather than env**, so a renamed id cannot be resolved at all and **that button cannot log in**
+    (the first thing you hit); **(ii) `setTenantLogin`'s validation only accepts a `t:` id as "a row of
+    this tenant"**, so another tenant cannot write `t:default:google` into `allowed_providers` — i.e.
+    **decision 41-a's "reference" stops working**; and **(iii) `linkableFor` only offers `t:` to members of
+    that tenant**, so Google disappears from decision 37's link candidates. The checks stay on the id's
+    form, and only the meaning is reread as "**who holds the issuer (the operator or a tenant admin)**". In
+    terms of docs/61 §61.9.2's three layers, P7 touches only **the login screen** and **the attribution of
+    rules**, leaving **the entrance gate** and **the tenant gate** unchanged.
+    ★ As a by-product, an invariant currently hidden in one line of Go becomes visible on screen —
+    **only the deployment's methods (= the default tenant's methods) can carry super_admin.**
+41. ★ **"Another configuration of the same provider" is allowed, but an IdP with pairwise subjects needs
+    handling.** There are two additional operations for convenience, and their safety differs.
+    **(a) Adding the same method as the default tenant = a reference** (the id stays `google` and it is
+    merely added to the accepted set; the identity layer is untouched) is the main one, and in substance it
+    just turns `allowed_providers` from free text into a toggle. ★ **Review removed the "add" operation
+    from (a)**: adding and removing a reference is **the same single bit** as toggling "accept" on and off,
+    and giving one thing two names inevitably produces the misunderstandings "I thought I could edit the
+    reference row" and "I added it but the list did not grow". → **The default tenant's methods are always
+    listed as rows**, drawn OFF when unreferenced. [Add a method] becomes a word for (b) only.
+    **(b) Another configuration of the same provider = a new row** (a different app registration) is an
+    advanced operation, and the dividing line is whether the same person gets a different subject:
+    discovery's `subject_types_supported` is **`public` for Google / `pairwise` for Entra** (measured
+    2026-08-20), and GitHub's numeric id is common across every OAuth App. `pairwise` is exactly decision
+    38's situation, and left alone it produces rule 2's `email_taken`.
+    - **Decide by reading discovery** (do not guess from the issuer's hostname). It only needs reading when
+      "a row with the same issuer already exists", i.e. in case (b) itself.
+    - For `pairwise`, **`link_claim` becomes mandatory** (a 400 at save time). The current UI's initial
+      value is "default (distinguish by `sub`)", so leaving it as is causes an accident.
+      ✅ **Implemented in P7-3** (`checkPairwiseNeedsLinkClaim`). ★★ This originally said "and if `oid` is
+      available", but **measurement showed the second half cannot be determined**: the standard answer,
+      `claims_supported`, is **under-reported by Entra** (it lists no `oid` at all, yet a v2 token always
+      carries it — 2026-08-20). As a condition it would fail to fire exactly where it is needed. → The
+      condition is only **`pairwise` and "this issuer is already in use on this deployment"**. Specifying a
+      claim that is not emitted is harmless (`realm_subject` stays empty and `identityIDForRealmClaim`
+      rejects an empty subject), so **there is no cost when it does not apply** = no situation where making
+      it mandatory hurts.
+      ★ "Already in use" **counts env providers too** — the commonest shape is "a tenant adds its own app
+      registration to the directory the deployment already uses".
+      ★ When discovery cannot be fetched, **let it through**. The issuer may just be temporarily
+      unreachable, and the login side also fetches discovery lazily (for the same reason). A momentary
+      network failure making saving impossible costs more.
+    - A `pairwise` with no stable claim to name is **not refused**. Decision 37 (linking with the person's
+      consent) rescues it afterwards, and the `email_taken` screen points to that route. Instead **a warning
+      is shown both at save time and on the approval screen** (where someone lands changes = information the
+      approver should see).
+    - ★ **"It splits" was wrong (corrected in review). What happens is a refusal, and that is the heavier
+      outcome.** When someone who has logged into this deployment before presses (b)'s new button, rule 1.5
+      does not match → rule 2's `identityHasProvider` is true → `errIdentityClaimed` →
+      `/login?error=email_taken`, and **no session is issued**. The identity does not split into two;
+      **only existing users become unable to enter through that button** (new people are created normally).
+    - ★ **The rescue presupposes that the old method is still alive.** The `email_taken` screen in both
+      languages says "log in with your usual method, then add it under Settings → Account", but the typical
+      case for (b) is **swapping an app registration**, and after migrating you want to stop the old row.
+      The moment you do, anyone unlinked cannot recover by themselves (they cannot create the session that
+      starts the linking, and `AttachProvider` does not accept a `(provider, subject)` already bound). →
+      The UI carries the order: **enabling a new row does not stop the old one**, and stopping is allowed
+      only after everyone has linked. docs/61 §61.17.4.
+      ✅ **Implemented in P7-3** (`CountMembersOnlyOnProvider` plus a 409 on suspension).
+      ★ **A confirmation, not a refusal** (`?confirm=1` gets through). Suspending is also the means of
+      "stopping a leaked IdP", and **stopping should always be allowed to be faster than starting**. What we
+      want to protect is the migration case, not the incident case.
+      ★ What is counted is "active members who have **only ever** used that method". "Other methods" is not
+      limited to this tenant (a row in `identity_provider` is *a proven login*, so they can re-enter via
+      another tenant's method). People with no rows at all — invitations not yet used — are not counted.
+      ★ Only the CP knows the number, so it is returned as `members` next to `error`, and the Console
+      **takes just the number and puts it into wording in its own language** (emitting the CP's English
+      directly would make the display language the CP's). Widening the shared error envelope
+      `{code, message}` would ripple to every handler, so this one response is written by hand.
+    - (b)'s side effects remain: it is a `t:` id, so that session is pinned to that tenant (decision 32-3),
+      and the `client_secret` is copied into the database.
+42. **Apply the default tenant's `hidden_providers` to the bare `/login` (rendering only).**
+    Decision 36's `hidden_providers` had no effect on the bare `/login` because that screen belongs to *no
+    tenant*. Drawing it with the default tenant's rules makes it apply, and §61.15.13's "cannot be changed
+    in the implementation" can be withdrawn. ★ **It is not grounds for authorisation** — which tenant one
+    can enter is decided by membership and tenant rules (decision 13). The behaviour of falling back to the
+    generic page for an unknown slug is unchanged.
+    ★★ **This originally proposed "render it as the default tenant's page", i.e. applying the whole rule
+    set, but review narrowed it to `hidden_providers` only.** The safety valve exists on one side only:
+    hiding has the valve "ignore it if everything would be hidden", but **`allowed_providers`' narrowing
+    has no valve, and if everything drops out you get an error page with zero buttons**. The bare `/login`
+    is the only entrance for people belonging to no tenant (a newly appointed super_admin, someone not yet
+    invited), and `PUT .../login`, which restores the rules, is `withSuperAdmin` — it needs a session. If
+    the existing session expires on its TTL, **there is no way back except editing the database** = locking
+    out the entire deployment. The hole we wanted to close exists only on the hidden side, so narrowing it
+    fully achieves the goal while **structurally** removing the lockout route.
+    ★ An implementation note: "where the rules come from" and "the slug put on the button URLs" are **separate
+    arguments**. Putting `default` on the bare `/login` would make the Console's initial tenant selection
+    after login fall to `default` for everyone via the state, and the default tenant's own `t:default:*`
+    rows would line up on the bare `/login` (the shape decision 32-4 avoided). Only the rules are applied.
+    ✅ **Implemented in P7-1 (three lines in `handleLogin`).** `loginButtons` already had the slug and the
+    rules as separate arguments, so the separation work itself was unnecessary — the bare `/login` keeps
+    `tenant=""` and only puts the default tenant's value into `hidden`. Both side effects above disappear
+    simply by keeping the slug empty.
+    ★ **The page for an unknown slug must be exactly identical to the bare `/login`** (applying the default
+    tenant's rules to only one of them would reveal whether a slug exists by comparing the two). They go
+    down the same branch, and a test pins the equivalence. It also pins that "even if the default tenant
+    declares it accepts a method that is not in env, not one button disappears from the bare `/login`" —
+    that being the very reason the decision was narrowed.
+    ★ On the screen, the two CSVs `allowed_providers` / `hidden_providers` become **two toggles per row**
+    (accept / show as a button). **The database representation is unchanged = no schema change.**
+    The implementation traps come from the existing meaning of "empty = all" and from the existing safety
+    valves: **the last remaining "accept" cannot be turned OFF** (dropping them all saves as "all ON" =
+    wide open while believing you narrowed it), ★ **the same applies to "show"** (hidden has a valve too, so
+    turning everything OFF saves but has no effect = the screen lies), ★ **contradictions cannot be
+    expressed** (rendering requires allowed even inside the hidden check, so "show" on a row with accept=OFF
+    is meaningless → it becomes a dependent toggle and is `disabled`), and ★ **a tenant with nothing
+    configured is drawn as "all ON" but is not frozen into an explicit list** ("empty" carries the meaning
+    *follow the deployment*, and freezing it would silently refuse, for that tenant alone, any method added
+    to env later; the normalisation is "**save empty when everything is ON**").
+    And **the UI enforces the order** (narrow first and then invite an admin, and that person cannot get in;
+    the default tenant's methods can all be turned OFF only when at least one active row of your own
+    exists).
+    ✅ **Implemented in P7-0.** ★ One function sufficed for both rules — counting the "cannot turn OFF" check
+    over *usable* methods (the deployment's methods plus **your own rows that are active and usable**) makes
+    "the last one" the ordering rule itself (a row awaiting approval is not usable, so the default tenant's
+    methods cannot be removed until your own row starts working). No branch was written for the ordering.
+    ★ Saving is a PUT that replaces all four columns, so **each surface sends back the two columns it does
+    not own with the values it read** (dropping either would silently erase the other surface's settings).
+    ★ The toggles are only editable **when the deployment's method list could be read** — if it could not,
+    the "empty when all ON" normalisation would run over a result that dropped ids it does not know about,
+    narrowing a tenant that never meant to narrow. §61.17.9 ②'s three states are needed not just for display
+    but for whether saving is permitted.
 
-- **決定 43: 予約テナント（`af-golden`）は管理画面の一覧に出さない。削除もさせない。**
-  焼き直しのたびに使い回される**入れ物**であって、人のテナントではない（毎回捨てられるのは
-  workspace と home とスロットだけ）。畳んで見せる案・表示トグル案は採らず、単に出さない。
-  ★ 落とすのは **API 層**（`listTenants` / `usage`）で、**`store.ListTenants` は素通し**。
-  あの store 呼び出しには監査の `tenant_id → slug` 解決と費用ポーラーの
-  `membership → tenant` 解決が乗っており、store で絞ると症状は管理画面ではなく監査と請求に出る。
-  判定は `system_tenant.go` の 1 か所（同じ判定が一覧・削除・費用の 3 面に効く）。
-  スロットプール画面の golden 表示は別物なので残す。
-- **決定 44: 予約メンバーシップの費用は、タグではなく取り込みで SHARED へ畳む。**
-  `af-membership` は**コスト配分キーであると同時に照合キー**（ランタイムが EFS アクセス
-  ポイントと home ボリュームを引き当てる）なので、空にはできない。タグは製品の通常経路の
-  まま打ち、Cost Explorer から取り込む段で `""` にする。
-  ⚠️ **畳んだら合算する** — `PutCloudCost` は `(day, membership_id, service)` を置き換える
-  実装なので、足さずに 2 行渡すと後の行が前の行の金額を消す。ADR 0048 決定 13 と対。
-- **決定 45: テナント削除は「空のものだけ」。** active な membership・workspace 行・内部 git
-  リポジトリのどれかが残っていれば 409。**DB の行は、クラウドやディスクに残った実体への
-  唯一のハンドル**であることがあり、先に消すと資源だけが課金され続けて誰も指せなくなる
-  （ADR 0045 決定 13-2 と同じ線）。除名や破棄まで連鎖させる案は採らない——取り消せない破棄が
-  「テナントを消す」の副作用になる。
-  ⚠️ **内部 git リポジトリには順序の罠**: 削除 API は `withMembership` ゲートなので、
-  最後のメンバーを外すと誰も消せなくなる。拒否のメッセージがその順序を言う。
-- **決定 46: 除名済みメンバーの物理削除は「作業データは消す／履歴は残す」。**
-  条件は inactive かつ workspace 破棄済み（ADR 0045 決定 13-2 と揃える）。
-  `SetMembershipStatus` の「hard deletion is deliberately not offered」は撤回するが、
-  その文が本当に守っていたもの——**監査ログ・クラウド費用・稼働時間**——は残す。
-  監査を除名の後始末で消せてはならず、費用を消すと過去月の合計が後から変わる
-  （`memberCloudCost` は membership_id だけで引く＝ADR 0048 の前提）。
-  `identity` 行も残す（別テナントに居るかもしれず、居なくても監査行が指している）。
+### Tidying up — the delete operations (2026-08-22, docs/61 §61.18)
 
-## 却下した案
+- **Decision 43: the reserved tenant (`af-golden`) does not appear in the admin screen's list, and cannot
+  be deleted.** It is **a vessel** reused on every re-bake, not a person's tenant (only the workspace, the
+  home and the slot are thrown away each time). Neither collapsing it nor a display toggle was adopted — it
+  simply does not appear.
+  ★ It is dropped in the **API layer** (`listTenants` / `usage`), and **`store.ListTenants` passes it
+  through**. That store call carries the audit's `tenant_id → slug` resolution and the cost poller's
+  `membership → tenant` resolution, and filtering in the store would make the symptom appear in the audit
+  and the billing rather than in the admin screen. The check is in one place, `system_tenant.go` (the same
+  check serves the list, deletion and cost). The golden's appearance in the slot pool screen is a different
+  thing and stays.
+- **Decision 44: a reserved membership's cost is folded into SHARED at ingest, not by tagging.**
+  `af-membership` is **both a cost allocation key and a matching key** (the runtime finds the EFS access
+  point and the home volume with it), so it cannot be emptied. The tag is written by the product's normal
+  path, and it becomes `""` at the stage of ingesting from Cost Explorer.
+  ⚠️ **Sum when folding** — `PutCloudCost` replaces `(day, membership_id, service)`, so passing two rows
+  without adding them makes the later row erase the earlier one's amount. The counterpart of ADR 0048
+  decision 13.
+- **Decision 45: a tenant may be deleted only when it is empty.** If any active membership, workspace row
+  or internal git repository remains, it is a 409. **A database row is sometimes the only handle on
+  something still present in the cloud or on disk**, and deleting it first leaves the resource billing with
+  nobody able to point at it (the same line as ADR 0045 decision 13-2). Cascading into removals and
+  destruction is not adopted — irreversible destruction must not be a side effect of "delete the tenant".
+  ⚠️ **Internal git repositories have an ordering trap**: the delete API is behind a `withMembership`
+  gate, so removing the last member leaves nobody able to delete them. The refusal message states that
+  order.
+- **Decision 46: physically deleting a removed member is "delete the working data, keep the history".**
+  The conditions are inactive plus workspace disposed of (aligned with ADR 0045 decision 13-2).
+  `SetMembershipStatus`'s "hard deletion is deliberately not offered" is withdrawn, but what that sentence
+  was really protecting — **the audit log, cloud cost and running hours** — is kept. An audit must not be
+  erasable as part of tidying up a removal, and erasing cost would change a past month's total after the
+  fact (`memberCloudCost` queries by membership_id alone — ADR 0048's premise). The `identity` row is kept
+  too (they may be in another tenant, and even if not, audit rows point at it).
 
-- **Entra 専用実装を足すだけ。** 最短だが、Okta / Keycloak の要望のたびに同じ作業を繰り返す。
-  汎用 OIDC との差は discovery を読む数十行しかない（決定 1）。
-- **`AUTH=proxy` で全部済ませる（CP は何もしない）。** 実際 SAML の答えはこれ（決定 10）だが、
-  これを既定にすると「compose を上げれば動く」というセルフホストの前提が崩れ、
-  設置する会社に oauth2-proxy の運用を丸ごと負わせることになる。
-- **email が一致したら常に自動結合し、別 email は管理者の対応表で結合。** 決定 5 のとおり却下。
-- **magic link / パスワードログイン。** IdP を持たない小さな会社には効くが、CP が資格情報と
-  SMTP を背負う。需要が出てから別 ADR で判断する。
-- **Apple / LINE / Slack / Atlassian / Discord。** 会社が入退社を統制する手段にならず、B2B の入口に値しない。
-- **`super_admin` を Console から昇格できるようにする。** 運用は楽になるが、設置者以外が
-  デプロイ全体の権限を作れてしまう（決定 24）。
-- **招待メール / 通知を CP から送る。** URL を人が伝える手間は残るが、SMTP 依存が増え、
-  「本人に届いたか」の保証も得られない（決定 27）。
-- **workspace / home の削除を super_admin 限定のままにする。** 現状の実装はこれだが、
-  部署の人員を把握していない情シスに毎回頼む形になる（決定 26）。
-- **サーバ側セッションストアを持って個別失効できるようにする。** 退職者を即座に切れるが、
-  stateless cookie の軽さ（DB 参照ゼロで認証が済む）を捨てることになる。
-  鍵ローテーションという即時手段が既にあるので、そこまでの代償は払わない（決定 27）。
-- **`super_admin` の降格をログイン時だけに同期する。** 実装は素直だが、
-  **退職者はもうログインしない**ので DB に `super_admin` が残り続ける（決定 24）。
-- **テナントに `allowed_emails` カラムを持たせる。** 「テナント毎にログインできる ID を管理する」の
-  最も素直な実装だが、membership が既に同じ名簿なので二重台帳になる（決定 15）。
-- ★ **tenant_admin が単独で認証方式を有効化できるようにする。** 「テナントのことはテナントで完結」
-  という決定 25/26 の線には最も忠実だが、**IdP を足せる人はそのデプロイの誰にでもなれる**（決定 30）。
-  tenant_admin の任命が super_admin の任命と同義になってしまう。
-- **承認を省略する env（`AF_ALLOW_TENANT_IDP=1`）を用意する。** 「自社の tenant_admin は信頼できる」
-  デプロイ向けの逃げ道だが、**fail-closed を env 1 行で外せる形にすると、それが既定の設置手順になる**。
-  承認は子会社あたり 1 回きりなので、外す価値が無い（決定 30）。
-- **テナントの `client_secret` は env に置いたまま、DB にはテナントの選択だけ持たせる。**
-  秘密がバックアップに入らない利点はあるが、テナント追加のたびにホスト編集＋再起動が残る。
-  MCP のヘッダで既に同じ posture を受容している以上、ここだけ厳しくする理由が無い（決定 33）。
-- **テナント定義の provider に env と同じ id 空間を使う。** 実装は短いが、テナントが `google` という
-  行を作って env の Google を上書きできる（決定 33）。
-- **テナント定義の provider でも email 一致で結合する（決定 35 の代案）。** 「同じアドレスなら
-  どの経路でも入れる」は満たせるが、承認済みドメインの範囲で、そのテナントの管理者が
-  **別の権威で作られた既存アカウント**（本社の Google で作った identity＝workspace・secrets）に
-  なりすませる。承認は「そのドメインを受け入れてよい」であって「その IT 部門が個人に
-  なりすましてよい」ではない。全経路を通したいなら、次は**本人の同意で紐づける導線**を作る
-  （決定 37・docs/61 §61.16 で実装した）。
-- **拒否されたログイン画面で、その場で紐づける（決定 37 の実装案 ③）。** 「いつもの方法で
-  ログイン → 自動で紐づけ」は手数が最も少ないが、保留中の紐づけを署名 cookie で持ち回すため、
-  有効期限・取り違え・CSRF の検証面が増える。入口は設定タブ＋`email_taken` の案内で足り、
-  そこを踏む人は年に数人（兼務の発生時だけ）なので、面を増やす側に価値が無い。
-- **紐づけの相手アドレスが未使用なら、別 email でも許す（決定 37 の代案）。** 「本社の
-  a@honsha と子会社の b@sub は同じ人」を本人同意で通せるが、実質**アドレスをまたぐ結合**を
-  認めることになり、§61.5 の説明（別 email は結合しない）を書き換えることになる。
-  取り消せない操作を、要望が出る前に開ける理由が無い。
-- **テナントの GitHub 行でデプロイの OAuth App を共有する。** 子会社の設置が楽になるが、
-  各 org オーナーに情シスの App（git 連携の device flow と同一）を承認させることになり、
-  情シスの鍵ローテーションが全子会社を無言で壊す（決定 34）。
-- **デプロイの既定方式を廃止し、全部テナント定義にする（決定 39 の出発点）。** 一様で綺麗に見えるが、
-  決定 31 の `roleHint` 空きで**新しく super_admin になれる人が居なくなり**、承認者不在で最初の
-  テナント行も有効化できない（決定 30）。`AUTH=oauth` は provider ゼロで起動もしない。
-  「昇格（step-up）で代替する」も**両立しない** — 昇格に使う 1 本はオペレーターが握る方式でないと
-  決定 31 の乗っ取りが復活するので、デプロイ側の方式は必ず 1 つ残る（docs/61 §61.17.8 に未決として置く）。
-- **既定テナントの方式を `t:default:*` に改名して一様にする。** 決定 40 のとおり、
-  判定が id の**形**を見ているため、改名した瞬間に兼務が全滅し super_admin も生えなくなる。
-  ★ レビューで数えたら分岐点は 10 箇所あり、最初に当たるのは `providerFor` — `t:` id は
-  DB のレジストリでしか解決されないので、**そのボタンでログインできなくなる**のが先。
-  一様さの対価がデプロイの管理不能では釣り合わない。
-- **env の方式を各テナントの面に「読み取り専用の行」として並べるだけ（P7-0 の当初案）。**
-  Google は見えるようになるが、説明の無い行が 1 つ増えるだけで「それは何で、うちとどう関係するのか」に
-  答えない。**行にトグルを付ける**と、同じ一覧が「このテナントで受け入れるかどうか」を答える面になる
-  （決定 41-a）。
-- **参照の追加を［方式を追加］のピッカーにする（決定 41-a の当初案）。** 「追加」という操作があると
-  分かりやすく見えるが、参照の有無は「受け入れる」トグルと**同じ 1 ビット**で、同じ状態に 2 つの
-  入口を作ることになる。DB 上は `allowed_providers` への追記でしかないのに UI が「テナントの方式を
-  追加した」と読ませるので、「参照行を編集できると思った」という抽象の漏れも生む。
-  → 既定テナントの方式は常に行として並べ、トグルだけで表す（決定 41）。
-- **素の `/login` に既定テナントの規則を丸ごと適用する（決定 42 の当初案）。** 一様だが、
-  `allowed_providers` の絞り込みには「全部消えたら無視する」安全弁が無いため、既定テナントを
-  絞った瞬間に**デプロイ全体を締め出せてしまう**（戻すには DB 直編集しかない）。閉じたい穴は
-  `hidden_providers` の側にしか無いので、そこだけ適用すれば目的は足りる（決定 42）。
-- **`AF_PROVISION` の既定を「membership が 0 行なら invite」と実行時に導出する（P7-2 の当初案）。**
-  判定自体は起動シーケンス上可能だが、**毎起動やり直される**のが致命的: invite で始めた
-  デプロイは最初の 1 人が入った時点で条件を満たさなくなり、次の再起動で `auto` に戻って
-  **黙って開く**。固定するには設定行の永続化が要り、「env もスキーマも増やさない」P7 の性質が
-  崩れる。→ インストーラ／ガイドが生成する env の既定を `invite` にする。
-  ✅ **P7-2 で後者を実装した**（`.env.example` は `AF_PROVISION=invite`、ECS は
-  `AfProvision` パラメータの既定が `invite`）。**CP の既定は `auto` のまま**なので、
-  `AF_PROVISION` を書いていない既存の `.env` は 1 バイトも挙動が変わらない。
-  ★ ECS だけはテンプレート＝設定そのものなので、既存スタックの再デプロイでも `invite` に
-  倒れる。それでよいと判断した根拠は **`membershipsFor` が既存の membership を最初に読む**
-  こと（`resolver.go:144`）— いま働いている人は全員そのまま通り、止まるのは**新規の
-  自動受け入れ**だけ。閉じる方向で、かつ稼働中の誰も締め出さない。
-- **`allowed_providers` の「空＝全部」を「空＝自テナントの方式だけ」に反転する。** テナントが自前の
-  方式を持つ世界では自然に見えるが、①既存デプロイの全テナントが黙って締まる ②作った直後の
-  テナントは方式 0＝誰も入れず、管理者を招くこともできない（決定 42 の順序の罠が既定になる）。
-- **テナント毎のログインをサブドメインで分ける / URL・cookie のテナント指定を認可の根拠にする /
-  テナント規則を `authGate` に置く / `allowed_domains` を毎リクエストの制約にする /
-  `auto_join_domains` を唯一の帰属手段にする / テナント規則を env に置く /
-  セッションに複数 provider を持たせる。** それぞれ決定 13〜19 の裏返しで、理由は docs/61 §61.13。
+## Options rejected
 
-## 影響
+- **Just add a dedicated Entra implementation.** The shortest route, but the same work repeats every time
+  Okta or Keycloak is requested. The difference from generic OIDC is a few dozen lines that read discovery
+  (decision 1).
+- **Do it all with `AUTH=proxy` (the CP does nothing).** That is in fact the answer for SAML (decision 10),
+  but making it the default breaks the self-hosting premise that "bring up compose and it works", and it
+  makes the installing company carry the whole operation of oauth2-proxy.
+- **Always join automatically on an email match, and join different emails via an admin's mapping table.**
+  Rejected as in decision 5.
+- **Magic links / password login.** Effective for small companies with no IdP, but the CP would carry
+  credentials and SMTP. Decide in a separate ADR once there is demand.
+- **Apple / LINE / Slack / Atlassian / Discord.** They do not give a company a means of controlling joiners
+  and leavers, and are not worthy of a B2B entrance.
+- **Allow promotion to `super_admin` from the Console.** It makes operations easier, but it lets someone
+  other than the installer create deployment-wide authority (decision 24).
+- **Send invitation emails / notifications from the CP.** The effort of a person conveying the URL remains,
+  but it adds an SMTP dependency and still gives no guarantee that it reached the person (decision 27).
+- **Keep workspace/home deletion super_admin-only.** That is the current implementation, but it means asking
+  an IT department that does not know the department's headcount every time (decision 26).
+- **Hold a server-side session store so sessions can be revoked individually.** It can cut off a leaver
+  instantly, but it discards the lightness of a stateless cookie (authentication with zero database
+  lookups). An immediate means already exists — key rotation — so the price is not paid (decision 27).
+- **Synchronise `super_admin` demotion only at login.** The implementation is straightforward, but
+  **a leaver never logs in again**, so `super_admin` remains in the database forever (decision 24).
+- **Give the tenant an `allowed_emails` column.** The most straightforward implementation of "manage which
+  IDs can log in per tenant", but membership is already that same roster, so it becomes two ledgers
+  (decision 15).
+- ★ **Let a tenant_admin activate an authentication method alone.** The most faithful to decisions 25/26's
+  line of "tenant matters stay within the tenant", but **anyone who can add an IdP can become anyone on that
+  deployment** (decision 30). Appointing a tenant_admin would become synonymous with appointing a
+  super_admin.
+- **Provide an env that skips approval (`AF_ALLOW_TENANT_IDP=1`).** An escape hatch for deployments where
+  "our own tenant_admins are trustworthy", but **making fail-closed removable with one line of env makes
+  that the default installation procedure**. Approval is once per subsidiary, so there is no value in
+  removing it (decision 30).
+- **Keep the tenant's `client_secret` in env and hold only the tenant's choice in the database.** It has the
+  advantage of keeping the secret out of backups, but editing the host and restarting remains on every tenant
+  addition. Having already accepted the same posture for MCP headers, there is no reason to be stricter only
+  here (decision 33).
+- **Use the same id space for tenant-defined providers as env's.** The implementation is shorter, but a
+  tenant could create a row called `google` and override env's Google (decision 33).
+- **Join on an email match for tenant-defined providers too (the alternative to decision 35).** It satisfies
+  "the same address gets in by any route", but within the approved domain range that tenant's admin can
+  impersonate **an existing account created by a different authority** (an identity — workspace, secrets —
+  created with head office's Google). Approval means "that domain may be accepted", not "that IT department
+  may impersonate an individual". To let every route through, the next step is to build **a route for
+  linking with the person's consent** (decision 37, implemented in docs/61 §61.16).
+- **Link on the spot from the refused login screen (implementation option ③ for decision 37).** "Log in your
+  usual way → link automatically" is the fewest steps, but carrying the pending link around in a signed
+  cookie adds expiry, mix-up and CSRF surfaces to verify. The settings tab plus the `email_taken` guidance
+  are entrances enough, and only a few people a year hit it (only when a dual role arises), so adding a
+  surface has no value.
+- **Allow a different email if the target address is unused (the alternative to decision 37).** It would let
+  "a@honsha at head office and b@sub at the subsidiary are the same person" through with the person's
+  consent, but it effectively admits **joining across addresses** and would mean rewriting §61.5's
+  explanation (different emails are not joined). There is no reason to open an irreversible operation before
+  anyone asks for it.
+- **Share the deployment's OAuth App on a tenant's GitHub row.** It makes installation easier for a
+  subsidiary, but it makes each org owner approve the IT department's app (the same one as git integration's
+  device flow), so the IT department's key rotation silently breaks every subsidiary (decision 34).
+- **Abolish the deployment's default methods and make everything tenant-defined (decision 39's starting
+  point).** It looks uniform and clean, but decision 31's empty `roleHint` means **nobody new can become
+  super_admin**, and with no approver the first tenant row cannot be activated either (decision 30).
+  `AUTH=oauth` will not even start with zero providers. "Substitute a step-up" **does not work either** —
+  the one method used for stepping up has to be one the operator holds, or decision 31's hijack returns, so
+  a deployment-side method always remains (left as an open question in docs/61 §61.17.8).
+- **Rename the default tenant's methods to `t:default:*` for uniformity.** As in decision 40, the checks look
+  at the id's **form**, so the moment it is renamed dual-role users are wiped out and super_admins stop
+  appearing. ★ Counting in review found ten branch points, and the first one hit is `providerFor` — a `t:`
+  id is resolved only in the database registry, so **being unable to log in with that button comes first**.
+  Uniformity at the price of an unmanageable deployment does not balance.
+- **Merely list env's methods as read-only rows on each tenant's surface (P7-0's original proposal).**
+  Google becomes visible, but it only adds one unexplained row and does not answer "what is that, and what
+  has it to do with us?". **Putting a toggle on the row** turns the same list into a surface that answers
+  "does this tenant accept it?" (decision 41-a).
+- **Make adding a reference a picker under [Add a method] (decision 41-a's original proposal).** Having an
+  "add" operation looks clearer, but the presence of a reference is **the same single bit** as the "accept"
+  toggle, creating two entrances to the same state. In the database it is only an append to
+  `allowed_providers`, yet the UI reads as "a tenant method was added", which also leaks the abstraction as
+  "I thought I could edit the reference row". → The default tenant's methods are always listed as rows and
+  expressed only by a toggle (decision 41).
+- **Apply the default tenant's whole rule set to the bare `/login` (decision 42's original proposal).**
+  Uniform, but `allowed_providers`' narrowing has no "ignore it if everything disappears" valve, so
+  **narrowing the default tenant would lock out the whole deployment** (recoverable only by editing the
+  database). The hole to close is only on the `hidden_providers` side, so applying it there is enough
+  (decision 42).
+- **Derive `AF_PROVISION`'s default at runtime as "invite if there are zero memberships" (P7-2's original
+  proposal).** The check itself is possible in the startup sequence, but **it is redone on every start**,
+  which is fatal: a deployment started with invite stops meeting the condition once the first person is in,
+  and reverts to `auto` on the next restart, **silently opening**. Pinning it needs a persisted setting row,
+  which breaks P7's property of "add neither env nor schema". → Make the default in the env that the
+  installer/guide generates `invite`.
+  ✅ **The latter was implemented in P7-2** (`.env.example` has `AF_PROVISION=invite`, and on ECS the
+  `AfProvision` parameter defaults to `invite`). **The CP's default stays `auto`**, so an existing `.env`
+  with no `AF_PROVISION` behaves identically to the byte.
+  ★ Only ECS is different, because the template *is* the configuration, so redeploying an existing stack
+  falls to `invite`. The grounds for judging that acceptable are that **`membershipsFor` reads existing
+  memberships first** (`resolver.go:144`) — everyone currently working passes as before, and what stops is
+  only **new automatic acceptance**. It closes, and locks out nobody who is working.
+- **Invert `allowed_providers`' "empty = all" to "empty = this tenant's own methods only".** It looks natural
+  in a world where tenants hold their own methods, but (1) every tenant on every existing deployment
+  silently closes, and (2) a freshly created tenant has zero methods = nobody can enter and no admin can even
+  be invited (decision 42's ordering trap becomes the default).
+- **Split per-tenant login by subdomain / use the tenant named in the URL or cookie as grounds for
+  authorisation / put tenant rules in `authGate` / make `allowed_domains` a per-request constraint / make
+  `auto_join_domains` the only means of belonging / put tenant rules in env / let a session hold several
+  providers.** Each is the inverse of decisions 13–19; the reasons are in docs/61 §61.13.
 
-- `oauth_google.go`（461 行）は `oauth.go` / `oauth_oidc.go` / `oauth_github.go` に分割される。
-  ファイル名の Google 色は消える（`build/90-code-map.md` の更新が要る）。
-- `sessionClaims` に `prov` / `sub` が増える。JSON なので**既存 cookie は欠損フィールドとして読め**、
-  移行時の強制ログアウトは不要。ただし `prov` 欠損を `"google"` とみなす暫定規則を 1 版だけ置く。
-- `oauthState` に provider id が増える（state cookie は署名済みなので追加は安全）。
-- P2 で `GITHUB_OAUTH_CLIENT_ID` の意味が広がる。**git 連携の device flow が既に使っている** env で、
-  CP が各 Workspace へ注入し `.env.example` にも載っている。1 つの OAuth App が両フローを賄えるので
-  共有し、設置手順には**コールバック URL の追加**だけを足す（分けたい場合は `AF_GITHUB_LOGIN_*`）。
-  そのため **GitHub ログインを有効にする合図は `AF_GITHUB_ALLOWED_ORGS`** とし、device flow だけの
-  既存デプロイが毎起動 warning を浴びないようにした。
-- P2 で `sessionAllowed` の戻り値が `bool` から `(bool, エラーコード)` になる（`reauth` の追加・決定 12）。
-  ログイン画面の文言に `errReauth` が 1 つ増える（ja/en 両方）。
-- `authGate` の毎リクエスト再判定が provider 分岐を持つ（`oauth_google.go:299-309`）。
-- 起動時バリデーション（`main.go:278-284`）が provider 単位になる。
-- 配布物 6 箇所に設定例が増える: `deploy/compose/.env.example` / `deploy/local/oauth.env.example` /
-  `deploy/aws/ecs/cfn/30-ingress.yaml` / `deploy/aws/ec2-single/README.md` /
-  `deploy/compose/README.md` / `docs/guide/operator/*`（guide は**二言語とも**）。
-- `build/07-security.md` §7.3 の「AUTH 3 モード」表は、`oauth` 行が「Google」ではなくなるので書き換え。
-- GitHub を入れる会社には **org の OAuth App 承認**という設置手順が 1 つ増える
-  （org が OAuth App access restrictions を有効にしていると、承認前は membership が見えず全員拒否になる）。
-- ✅ P3: `authGate` の入口判定が membership を参照する（決定 16）。招待運用のデプロイでは
-  `AF_OAUTH_ALLOWED_*` を空にできるので、「空＝全拒否」の警告は
-  **起動時に `AnyActiveMembership()` を見て**、名簿があるときは警告ではなく
-  「入口は membership と auto_join_domains が支配する」という情報行に変えた。
-- ✅ P3: `tenant` に 3 カラム（`0039` / pg `0022`）。`Tenant` 構造体と `getTenant` /
-  `ListTenants` の SELECT、`PUT /api/admin/tenants/{slug}/login`、Console の管理 UI。
-  新しい env は 1 つも増えない（規則は全部 DB）。
-- ✅ P3: `resolveFull` / `resolveMembership` に `checkTenantProvider` が入り、
-  エラーコードに `provider_required` が増えた。Console は専用モーダル
-  （`ProviderRequiredModal`）で再サインイン導線を出す。リンクに要る provider id は
-  `/api/tenants` の `allowed_providers`（membership ごと）から引く。
-- ✅ P3: `clean-home` が tenant_admin（自テナント分）へ広がり、監査に `workspace.clean_home` を追加。
-- ✅ P3: `identity.role` の降格経路（決定 24）。`UpsertIdentity` の「never downgrade」は維持し、
-  `DemoteSuperAdmins` を `main.go` の起動直後に 1 回だけ呼ぶ。
-- ✅ P3: `AF_COOKIE_SECRET` のローテーション手順（＝全員ログアウト）を operator の runbook に新設
-  （決定 27）。`docs/operate/04-secure{,.ja}.md`。
-- ✅ P3: 退職・移譲の棚卸し表（docs/61 §61.10.7）を operator guide にも出した。とくに
-  **定時実行は `Schedule.MembershipID`＝個人所有なので止まる**（内部 git は `git_repo.tenant_id`＝
-  テナント所有なので残る）という非対称は、事前に知らないと退職後に気づくことになる。
-- P3 で `AF_PROVISION` の意味が広がる（`auto_join_domains` 一致が `auto` / `invite` より先に効く）。
-  一致しないときの挙動は現行と同じなので、既存デプロイの見え方は変わらない。
-- ✅ P4: `tenant_idp`（`0040` / pg `0023`）が増え、**provider の一覧が env 固定ではなくなった**（決定 29）。
-  実装は「env 由来は起動時固定のまま、DB 由来だけを実行時レジストリに重ねる」形にした
-  （`tenant_idp.go` の `tenantIdPRegistry`。30 秒 TTL ＋ 管理 API の書き込みで破棄、
-  DB が読めなければ古いスナップショットを使う＝決定 19 と同じ作法）。置き場が `manager` なのは、
-  `config` が**値でコピーされて**ハンドラに渡るため、そこに置いた集合は再起動しないと変わらないから。
-- ✅ P4: 承認前の拒否は**ログイン画面ではなく callback** で効く。`providerFor` が active 行だけを
-  引くので、`/oauth2/login?provider=t:…` を直接叩いても authorize もセッション発行も通らない
-  （ボタンを隠すのは表示、という決定 14 の型）。`sessionAllowed` も同じ経路なので、
-  **停止は既存セッションを TTL 内に失効させる**。
-- ✅ P4: `roleHintFor`（`resolver.go`）の抑止は**呼び出し 3 箇所ではなく `upsertIdentity` の 1 箇所**に
-  置いた（決定 31）。`identityFor` / `resolveFull` / `resolveMembership` が同じ引数を渡す以上、
-  規則を 3 回書けば 4 回目で漏れる。callback の `linkAfterLogin` だけは store を直接呼ぶので同じ抑止を書いた。
-- ★ P4 の実装で決定 32 を**改訂**した。「email 一致の結合を無効化する」は**実装できない** —
-  規則 2 を切って新規作成へ落としても、`user_key = sanitizeUser(email)` なので
-  `ON CONFLICT(user_key)` で同じ行に戻り、`identity.email` は UNIQUE なので別行も作れない。
-  よって**規則 2'**（一度もサインインされていない identity＝招待の placeholder だけ claim し、
-  ログイン実績のあるアドレスは `email_taken` で**拒否**）にした。招待 → 初回ログインという
-  子会社受け入れの本線は通り、既存アカウントの乗っ取りは塞がる。詳細は docs/61 §61.11.8。
-- ★ P4 の実装で決定 32-3 を**具体化**した。`deployAllowed` は nil（デプロイ共通リストへ
-  フォールバックしない）にしたうえで、**行の `allowed_domains` を保存時必須（400）**にし、
-  **1 ドメイン 1 テナント**（他テナントの行が主張済みなら 409）を効かせた。動機は
-  「承認したのに誰も入れない」の回避より、**allowed_domains がその issuer の名乗ってよい範囲を
-  縛る唯一の手段**であること — 空にできると承認済みの子会社 IdP が親会社のアドレスを名乗れる。
-  あわせて、承認のやり直し条件に**許可ドメイン・tid の「拡大」**を足した（縮小は戻さない。
-  `client_secret` の更新も戻さない — ローテーションのたびに再承認だとローテーションしなくなる）。
-- ✅ P4: `tenant.allowed_providers` にテナント自身の `t:<slug>:<name>` を書けるようにした。
-  P3 の検証は env の provider id しか通さず、そのままでは**子会社が自社 IdP だけに絞れなかった**。
-- ✅ P4: Console に面が 2 つ増えた: テナント詳細の「このテナントのサインイン方法」（tenant_admin）と、
-  super_admin の一覧。承認は権限を作る操作なので **`audit.go` に残す**
-  （`tenant_idp.create` / `.update` / `.active` / `.suspended` / `.pending` / `.delete`。
-  誰がどのテナントのどの issuer を承認したか）。★ 後者は**空になるキューではなく登録簿**にした —
-  承認は一度きりの点検だが IdP 側の設定は後から変わるので、承認済みも承認者・承認日時つきで
-  残し続ける方が、定期的な見直しの置き場になる（docs/61 §61.14 の 3 つ目の答え）。
-  置き場は 2026-08-14 の Console IA 刷新で確定した（docs/61 §61.11.8 の改訂）: tenant_admin の
-  面は新設の**テナント設定モーダル**、super_admin の承認と登録簿・ログイン規則の編集は管理
-  モーダルに残す。ログイン規則はテナント設定にも**読み取り専用**で出す（PUT は `withSuperAdmin`
-  固定＝決定 19 のまま）。実装は `console/src/features/settings/tenantLogin.tsx` の 1 つを両方から
-  差し、**出し分けは props だけでサーバ側のゲートは変えていない**。
-  ★ 2026-08-15 に 2 点追った（同 §61.11.8）: **承認は登録簿の行から直接打てる**ようにし
-  （件数だけ見えてそこで承認できないのは遠回りだった。宛先は行の `tenant_slug` から組む）、
-  **管理モーダルの入口を `superAdmin` だけにした**。後者にあたって tenant_admin に意味のある
-  面（メンバー・セッション・使用量・監査・MCP 配布）をテナント設定へ移している。閉じたのは
-  入口だけで、CP のゲートは前から `withSuperAdmin` 固定 — 決定 19 も決定 30 も変えていない。
-  ★ 2026-08-15 にもう 1 点: **`GET /api/admin/providers`（`withSuperAdmin`）を新設**し、
-  「使えるサインイン方法」欄に何が書けるかを欄の直下に読み取り専用で出した。集合は
-  `manager.knownProviderIDs` に前からあったが**外に出すハンドラが無く**、書ける値を知るには
-  デプロイの env を読むしかなかった（間違えれば 400 `unknown_provider` で弾かれるだけで、
-  次に何を打てばよいかは画面に無い）。返すのは id・ボタン文言（ja/en）・issuer だけで
-  `client_id` / `client_secret` は載せない。テナント定義の `t:<slug>:<name>` は混ぜない
-  （決定 32-4）。詳細は docs/61 §61.11.8。
-- ✅ P4 の秘密は `DATA_DIR` の DB に入るため、**バックアップの取り扱い（`AF_MASTER_KEY` を
-  データ領域の外に置く）が今より効く**。operator guide の該当箇所に一言足した（二言語とも）。
-- ★ P4 は env を 1 つも増やさない。4 配布ターゲットの env 例に足すものは無く、
-  更新が要るのは運用ガイドの記述だけ（docs/61 §61.8 の末尾）。
-- ⏳ P7（決定 39-42・docs/61 §61.17）は **env もスキーマも 1 つも増やさない**。触るのは
-  Console のテナント面と `handleLogin`／`loginButtons` の描画、そして
-  `GET /api/admin/providers` の**意味づけと閲覧ゲート**（「デプロイの env 一覧」→
-  「既定テナントの方式」）だけ。★ `checkTenantProvider` / `providerAllowed` / identity 層は
-  1 行も触らない。
-- ★ P7 で **`GET /api/admin/providers` を tenant_admin にも読ませる**必要が出る（他テナントの
-  管理者が自テナントの一覧に既定テナントの方式を並べるため）。いまは `withSuperAdmin` 固定で、
-  `tenant_login_test.go` が「tenant_admin には 403」を**明文で固定している** — P7 ではその
-  テストと文言を「**編集は super_admin、閲覧は tenant_admin**」へ改める（決定 19 の *編集* の
-  ゲートは変えない）。機密性の根拠は元々薄い: id とボタン文言は**未認証の `/login`** に出ており、
-  `GET /api/me/login-methods`（決定 37）は管理者でない利用者にも同じ id を返している。
-  ★★ **ただしこの API は `issuer` も返す（レビューで判明）。** Entra の tenant GUID や
-  Okta のホスト名は `/login` には出ないので、「元々薄い」の理由が当たらない列がある。
-  → **tenant_admin に返すのは id と 2 言語ラベルだけ**にし、`issuer` は super_admin の
-  応答にのみ載せる。テストも「403 → 200 だが列が減る」形に書き換える。
-  ✅ **P7-0a で実装した。** ゲートは新設の `anyTenantAdminFor`（super_admin ∪ どこか 1 つでも
-  active な tenant_admin。素のメンバーは 403）。★ この gate は slug を取らないので
-  **どのテナントの管理者かを検査していない** — 全テナントで同じ値を返す READ 以外に
-  使ってはならず、書き込みは従来どおり `tenantAdminFor` / `withSuperAdmin`。
-  `issuer` は**キーごと落とす**（空文字は空セルとして描かれ、設定漏れに見える）。
-- ★ P7 の Console 側は、403 を `{error}` で返す `api()` の性質と噛み合わない箇所がある。
-  いまの `DeploymentSignInMethods` は `res?.providers || []` で**空配列に潰す**ので、権限の無い
-  相手に「このデプロイにはサインイン方法が設定されていません」と**嘘を表示する**。
-  読める相手を広げる前に、この分岐を**「読めなかった／本当に 0 件／読み込み中」の 3 通**に
-  分けること（i18n キーも 1 つでは足りない）。
-  ✅ **P7-0a で実装した。** 判定は `Array.isArray(res?.providers)` — `res.error` の有無ではなく
-  **欲しい形が来たかどうか**で見る（将来 error の形が変わっても、0 件と混ざらない）。
-  通信断は reject で来るので `.catch` も同じ状態へ倒す。`admin.providers_unreadable` を新設。
-- ★ P7 の監査は**足すものが無い**。2 トグルは既存の `PUT /api/admin/tenants/{slug}/login` を
-  叩くので `tenant.login_rules` がそのまま残る。ただし Detail は 4 列の CSV なので、
-  **画面の語彙が変わっても監査の語彙は変わらない**（「参照を外した」も「絞った」も同じ形）。
-- ★ P7-1 のガイド波及は**二言語 3 面 6 ファイル**: `docs/admin/README(.ja).md`、
-  `docs/operate/02-install(.ja).md`、`docs/operate/05-signin(.ja).md`。
-  §61.15.13 の運用回避（「隠す指定は素の `/login` に効かないので `/login/<slug>` を配れ」）が
-  この 3 面に書かれている。
-- ★ P7 に**データ移行は無い**（スキーマ据え置き）。決定 42 を `hidden_providers` だけに
-  狭めたので、「既定テナントの `allowed_providers` が既に絞られていたデプロイ」が P7-1 で
-  突然締まる、という移行リスクも同時に消えている。
+## Impact
+
+- `oauth_google.go` (461 lines) splits into `oauth.go` / `oauth_oidc.go` / `oauth_github.go`. The Google
+  flavour disappears from the filenames (`build/90-code-map.md` needs updating).
+- `sessionClaims` gains `prov` / `sub`. It is JSON, so **existing cookies read as missing fields** and no
+  forced logout is needed at migration. A provisional rule treating a missing `prov` as `"google"` stays for
+  one version.
+- `oauthState` gains a provider id (the state cookie is signed, so additions are safe).
+- P2 widens the meaning of `GITHUB_OAUTH_CLIENT_ID`. It is an env that **git integration's device flow
+  already uses**, injected into each workspace by the CP and present in `.env.example`. One OAuth App can
+  serve both flows, so it is shared, and the installation procedure gains only **an additional callback URL**
+  (use `AF_GITHUB_LOGIN_*` to separate them). For that reason **the signal that enables GitHub login is
+  `AF_GITHUB_ALLOWED_ORGS`**, so existing device-flow-only deployments are not warned on every start.
+- P2 changes `sessionAllowed`'s return from `bool` to `(bool, error code)` (adding `reauth`, decision 12).
+  The login screen's wording gains one entry, `errReauth` (in both ja and en).
+- `authGate`'s per-request re-evaluation gains a provider branch (`oauth_google.go:299-309`).
+- Startup validation (`main.go:278-284`) becomes per provider.
+- Configuration examples are added in six places in the distribution: `deploy/compose/.env.example`,
+  `deploy/local/oauth.env.example`, `deploy/aws/ecs/cfn/30-ingress.yaml`, `deploy/aws/ec2-single/README.md`,
+  `deploy/compose/README.md` and `docs/guide/operator/*` (the guide **in both languages**).
+- The "three AUTH modes" table in `build/07-security.md` §7.3 is rewritten, since the `oauth` row is no
+  longer "Google".
+- A company adopting GitHub gains one installation step, **approving the OAuth App for the org** (if the org
+  has OAuth App access restrictions enabled, membership is invisible before approval and everyone is
+  refused).
+- ✅ P3: `authGate`'s entrance check consults membership (decision 16). On an invitation-run deployment
+  `AF_OAUTH_ALLOWED_*` can be empty, so the "empty = refuse everything" warning now **checks
+  `AnyActiveMembership()` at startup** and, when a roster exists, becomes an informational line rather than a
+  warning: "the entrance is governed by membership and auto_join_domains".
+- ✅ P3: three columns on `tenant` (`0039` / pg `0022`). The `Tenant` struct and the SELECTs in `getTenant` /
+  `ListTenants`, `PUT /api/admin/tenants/{slug}/login`, and the Console's admin UI. Not one new env is added
+  (all the rules are in the database).
+- ✅ P3: `checkTenantProvider` goes into `resolveFull` / `resolveMembership`, and the error codes gain
+  `provider_required`. The Console offers a re-sign-in route via a dedicated modal
+  (`ProviderRequiredModal`). The provider id needed for the link comes from `/api/tenants`'
+  `allowed_providers` (per membership).
+- ✅ P3: `clean-home` widens to tenant_admin (for their own tenant), with `workspace.clean_home` added to the
+  audit.
+- ✅ P3: the demotion path for `identity.role` (decision 24). `UpsertIdentity`'s "never downgrade" is kept, and
+  `DemoteSuperAdmins` is called exactly once immediately after startup in `main.go`.
+- ✅ P3: the `AF_COOKIE_SECRET` rotation procedure (= logging everyone out) is added to the operator's runbook
+  (decision 27). `docs/operate/04-secure{,.ja}.md`.
+- ✅ P3: the departure/delegation checklist (docs/61 §61.10.7) is also published in the operator guide. In
+  particular the asymmetry that **scheduled execution stops, because `Schedule.MembershipID` is personally
+  owned** (while internal git survives, because `git_repo.tenant_id` is tenant-owned) is something you
+  discover after someone has left unless you know it in advance.
+- P3 widens the meaning of `AF_PROVISION` (an `auto_join_domains` match takes effect before `auto` /
+  `invite`). Behaviour when there is no match is unchanged, so existing deployments look the same.
+- ✅ P4: `tenant_idp` (`0040` / pg `0023`) is added, and **the provider list is no longer fixed by env**
+  (decision 29). The implementation is "env-derived stays fixed at startup, and only database-derived is
+  layered onto a runtime registry" (`tenantIdPRegistry` in `tenant_idp.go`; a 30-second TTL invalidated by
+  admin API writes, using the previous snapshot if the database cannot be read — the same practice as
+  decision 19). It lives in `manager` because `config` is **copied by value** into handlers, so a set placed
+  there could not change without a restart.
+- ✅ P4: refusal before approval takes effect **at the callback, not on the login screen**. `providerFor`
+  only fetches active rows, so hitting `/oauth2/login?provider=t:…` directly passes neither authorize nor
+  session issuance (the decision 14 pattern that hiding a button is a display matter). `sessionAllowed` takes
+  the same path, so **suspension expires existing sessions within their TTL**.
+- ✅ P4: the suppression in `roleHintFor` (`resolver.go`) is placed **in the one place, `upsertIdentity`,
+  rather than at three call sites** (decision 31). Since `identityFor` / `resolveFull` / `resolveMembership`
+  all pass the same arguments, writing the rule three times means missing it the fourth. Only the callback's
+  `linkAfterLogin` calls the store directly, so the same suppression is written there.
+- ★ P4's implementation **revised decision 32**. "Disable email-match joining" **cannot be implemented** —
+  cutting rule 2 and falling through to creating a new identity still returns to the same row via
+  `ON CONFLICT(user_key)` because `user_key = sanitizeUser(email)`, and `identity.email` is UNIQUE so a
+  separate row cannot be created either. So it became **rule 2'** (claim only an identity never signed into
+  — an invitation placeholder — and **refuse** an address with a login history with `email_taken`). The main
+  line of onboarding a subsidiary, invitation → first login, works, and hijacking an existing account is
+  closed. Details in docs/61 §61.11.8.
+- ★ P4's implementation **made decision 32-3 concrete**. `deployAllowed` is nil (no fallback to the
+  deployment-wide list), **the row's `allowed_domains` is mandatory at save time (400)**, and **one domain per
+  tenant** is enforced (409 if another tenant's row already claims it). The motive is less about avoiding
+  "approved but nobody can enter" than that **allowed_domains is the only means of bounding the range that
+  issuer may claim** — if it could be empty, an approved subsidiary IdP could claim the parent company's
+  addresses. Alongside that, **widening the allowed domains or tids** was added to the conditions for
+  re-approval (narrowing does not return it; nor does updating the `client_secret` — demanding re-approval on
+  every rotation means people stop rotating).
+- ✅ P4: `tenant.allowed_providers` can now contain the tenant's own `t:<slug>:<name>`. P3's validation only
+  accepted env provider ids, which meant **a subsidiary could not restrict itself to its own IdP**.
+- ✅ P4: two surfaces are added to the Console — "this tenant's sign-in methods" on the tenant detail
+  (tenant_admin) and super_admin's list. Approval is an operation that creates authority, so **it is recorded
+  in `audit.go`** (`tenant_idp.create` / `.update` / `.active` / `.suspended` / `.pending` / `.delete`: who
+  approved which issuer for which tenant). ★ The latter is **a register, not a queue that empties** —
+  approval is a one-off inspection but the IdP's configuration changes afterwards, so keeping approved rows
+  with their approver and timestamp gives periodic reviews somewhere to live (the third answer in docs/61
+  §61.14). Where they live was settled by the Console IA overhaul of 2026-08-14 (the revision in docs/61
+  §61.11.8): the tenant_admin surface is the new **tenant settings modal**, and super_admin's approvals, the
+  register and editing the login rules stay in the admin modal. The login rules also appear in tenant settings
+  **read-only** (the PUT stays `withSuperAdmin` — decision 19 unchanged). The implementation puts one file,
+  `console/src/features/settings/tenantLogin.tsx`, into both, and **the difference is props only; no
+  server-side gate changed**.
+  ★ Two more things followed on 2026-08-15 (same §61.11.8): **approval can be issued directly from a row in
+  the register** (seeing only a count with no way to approve there was a detour; the target is composed from
+  the row's `tenant_slug`), and **the admin modal's entrance was restricted to `superAdmin`**. For the latter,
+  the surfaces meaningful to a tenant_admin (members, sessions, usage, audit, MCP distribution) were moved
+  into tenant settings. Only the entrance was closed; the CP's gates were already fixed at `withSuperAdmin` —
+  neither decision 19 nor decision 30 changed.
+  ★ One more on 2026-08-15: **`GET /api/admin/providers` (`withSuperAdmin`) was added**, showing read-only,
+  directly under the field, what may be written in "usable sign-in methods". The set had long existed in
+  `manager.knownProviderIDs` but **had no handler to expose it**, so the only way to know the writable values
+  was to read the deployment's env (get it wrong and you are simply rejected with 400 `unknown_provider`,
+  with nothing on screen saying what to type next). It returns only the id, the button wording (ja/en) and
+  the issuer; `client_id` / `client_secret` are not included. Tenant-defined `t:<slug>:<name>` are not mixed
+  in (decision 32-4). Details in docs/61 §61.11.8.
+- ✅ P4's secrets go into the database in `DATA_DIR`, so **how backups are handled (keeping `AF_MASTER_KEY`
+  outside the data area) matters more than before**. A line was added to the relevant part of the operator
+  guide (in both languages).
+- ★ P4 adds not one env. Nothing is added to the env examples of the four distribution targets; only the
+  operations guide's wording needs updating (the end of docs/61 §61.8).
+- ⏳ P7 (decisions 39–42, docs/61 §61.17) adds **neither env nor schema**. What it touches is the Console's
+  tenant surfaces, the rendering in `handleLogin` / `loginButtons`, and **the meaning and the read gate of
+  `GET /api/admin/providers`** ("the deployment's env list" → "the default tenant's methods"). ★ Not one line
+  of `checkTenantProvider` / `providerAllowed` / the identity layer is touched.
+- ★ P7 requires **letting tenant_admin read `GET /api/admin/providers`** too (so another tenant's admin can
+  list the default tenant's methods in their own tenant's list). It is currently fixed at `withSuperAdmin`,
+  and `tenant_login_test.go` **explicitly pins "403 for tenant_admin"** — P7 rewrites that test and the
+  wording to "**editing is super_admin, reading is tenant_admin**" (the gate on decision 19's *editing* does
+  not change). The grounds for confidentiality were always thin: the id and the button wording appear on the
+  **unauthenticated `/login`**, and `GET /api/me/login-methods` (decision 37) returns the same ids to
+  non-admin users.
+  ★★ **But this API also returns the `issuer` (found in review).** Entra's tenant GUID and Okta's hostname do
+  not appear on `/login`, so "always thin" does not apply to that column.
+  → **A tenant_admin is returned only the id and the two-language labels**, and the `issuer` rides only on
+  the super_admin response. The test is rewritten to "403 → 200 but with fewer columns".
+  ✅ **Implemented in P7-0a.** The gate is a new `anyTenantAdminFor` (super_admin ∪ an active tenant_admin
+  anywhere; a plain member gets 403). ★ This gate takes no slug and so **does not check which tenant they
+  administer** — it must not be used for anything but a READ that returns the same value for every tenant,
+  and writes stay on `tenantAdminFor` / `withSuperAdmin` as before. The `issuer` is **dropped key and all**
+  (an empty string would be drawn as an empty cell and look like a missing setting).
+- ★ P7's Console side has a place that does not mesh with `api()`'s habit of returning a 403 as `{error}`.
+  The current `DeploymentSignInMethods` collapses it to **an empty array** with `res?.providers || []`, so it
+  **displays the lie** "this deployment has no sign-in methods configured" to someone without permission.
+  Before widening who can read it, that branch must be split into **three cases: "could not read" / "genuinely
+  zero" / "loading"** (one i18n key is not enough).
+  ✅ **Implemented in P7-0a.** The check is `Array.isArray(res?.providers)` — it looks at **whether the shape
+  we wanted arrived**, not at the presence of `res.error` (so that a future change to the error shape does
+  not get mixed up with zero items). A dropped connection arrives as a rejection, so `.catch` falls to the
+  same state. `admin.providers_unreadable` was added.
+- ★ P7's audit has **nothing to add**. The two toggles hit the existing
+  `PUT /api/admin/tenants/{slug}/login`, so `tenant.login_rules` stays as it is. But Detail is four columns of
+  CSV, so **the screen's vocabulary changed while the audit's did not** ("removed a reference" and "narrowed"
+  have the same shape).
+- ★ P7-1's ripple into the guide is **three surfaces in two languages, six files**: `docs/admin/README(.ja).md`,
+  `docs/operate/02-install(.ja).md` and `docs/operate/05-signin(.ja).md`. §61.15.13's operational workaround
+  ("hiding has no effect on the bare `/login`, so distribute `/login/<slug>`") is written on those three.
+- ★ P7 has **no data migration** (the schema is unchanged). Narrowing decision 42 to `hidden_providers` alone
+  also removes the migration risk of "a deployment whose default tenant's `allowed_providers` was already
+  narrowed suddenly closing up at P7-1".
