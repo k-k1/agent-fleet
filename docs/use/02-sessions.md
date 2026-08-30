@@ -126,6 +126,52 @@ The standalone "Add" under **Repositories** in the left pane also lets you speci
 folder name when you specify a new branch or when a working copy with the same name already
 exists ([04](03-code.md)). This is a separate path from creating a worktree in "Start working".
 
+## Starting from the issue tracker
+
+The **Issue tracker** section of the left pane lists your work items — Jira issues, GitHub issues
+and pull requests, Bitbucket pull requests — so that a session can start with the ticket's context
+already in place. It is drawn **whether or not the workspace is running**, because deciding what to
+work on happens before a session exists, which is exactly when the workspace tends to be stopped.
+
+**Nothing is listed until you register a saved query** (⚙ Settings →
+[Issue tracker](12-settings.md#issue-tracker)). That query is the whole of the filtering; nothing is
+synced in bulk.
+
+### Reading the list
+
+- The count beside the section name is the **unfinished** items, and the line under it says **when
+  the list was last fetched**. While the workspace is stopped it says so as well: the list stays
+  readable, but nothing here starts your workspace just to draw a list.
+- A long list **folds at 10 rows**, with "Show more (N left)" underneath — the count keeps counting
+  all of them. Past ten rows you also get a **one-line filter**, which searches the rows already on
+  screen (key, title, assignee, labels, repository) and never asks the tracker for anything.
+- A row carries **only what differs between rows**: when every row of a query has the same assignee
+  or repository, that line is dropped. A relative time appears only on rows that have **not moved
+  for a day or more** — for the rest, being near the top already says it.
+- **🔗** opens the item in its own tracker. A **dot badge** means somebody has already started this
+  one, and clicking it opens that session — it is there to stop a second person *before* the launch.
+
+### From a row to a session
+
+Clicking a row opens its details: state, kind, provider, assignee, repository, labels, when it last
+moved, and a link to the original page. **The description is not shown here.** A body is read inside
+the session, where `gh` and the Jira MCP server can fetch it, and the list has to work while the
+workspace is stopped.
+
+- Pick the **repository** and **where to work** — a new worktree, the base copy itself, or an
+  existing worktree — then **Start**. A ticket does not know which working copy its work happens
+  in: a GitHub item names a repository but not a copy, and a Jira issue names neither.
+- The usual launch dialog then opens, with the agent, model and first instruction filled in. **That
+  instruction carries the key, the title, the URL and where to read the body** — not the body
+  itself.
+- The branch defaults to `feature/<key>`; the template is in the settings tab.
+- Once work is under way, **Comment the work back** appears in the details. The draft holds the
+  branch and the changed files, and **the sentence is yours**: it is posted exactly as written and
+  nothing is written for you. Bitbucket items have no such button — Agent Fleet only reads from
+  Bitbucket.
+
+While the workspace runs the list refreshes about every 5 minutes; **⟳** fetches immediately.
+
 ## Reading state — badges and notifications
 
 In each row of the list, the colored icon at the front shows the agent kind, and the state icon

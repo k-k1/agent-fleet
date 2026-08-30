@@ -194,6 +194,9 @@ issues and pull requests, Bitbucket pull requests — so that a session can be s
 - **Branch name template** — what a session started from a row branches as (`feature/{key}` by
   default).
 
+The list itself, and starting a session from a row, are in
+[02 Sessions](02-sessions.md#starting-from-the-issue-tracker).
+
 ### Chat integration
 
 Connect a Discord / Slack bot to follow session progress in chat and drive it by replying.

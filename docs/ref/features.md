@@ -57,7 +57,7 @@ If a feature ships and does not appear here, it is not done
 |---|---|---|---|
 | Working sets | member | top of the left pane | [02 Sessions](../use/02-sessions.md) |
 | Memo queue | member | Memo queue | [07 Chat & memo](../use/07-chat-memo.md) |
-| Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [repos.md](repos.md) for what each provider contributes |
+| Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [02 Sessions](../use/02-sessions.md); [repos.md](repos.md) for what each provider contributes |
 | Scheduled (unattended) runs | member | Schedules | [11 Fleet operator](../use/08-organising.md) |
 | Notification centre | member | top bar | [12 Settings](../use/12-settings.md) |
 | Assistant chat | member | Assistants | [07 Chat & memo](../use/07-chat-memo.md) |
