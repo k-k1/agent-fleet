@@ -1,163 +1,191 @@
-# 0040. プロジェクトスコープ MCP は「利用者の代理編集」として扱い、ワンショットでのみ書く
+# 0040. Treat project-scoped MCP as "editing on the user's behalf", and write only as a one-shot
 
-- 状態: 採用・未実装
-- 関連: [56-project-mcp.md](../log/56-project-mcp.md)（設計） /
-  [48-mcp-registry.md](../log/48-mcp-registry.md) §8.2 §8.4（本 ADR が適用範囲を明確化する規約） /
-  [0031-mcp-registry.md](0031-mcp-registry.md)（レジストリの決定・本 ADR はその**別軸**）
+English | [日本語](0040-project-mcp.ja.md)
 
-## 背景
+- Status: adopted, not implemented
+- See also: [56-project-mcp.md](../log/56-project-mcp.md) (the design) /
+  [48-mcp-registry.md](../log/48-mcp-registry.md) §8.2 §8.4 (the rules whose scope this ADR clarifies) /
+  [0031-mcp-registry.md](0031-mcp-registry.md) (the registry decision — this ADR is a **different axis** of it)
 
-ADR 0031 / docs/48 で AF は MCP サーバー定義を配れるようになったが、配る先は各 CLI の
-**user/global スコープ 1 箇所**だけで、リポジトリ側のプロジェクトスコープ
-（`.mcp.json` / `opencode.json` / `.codex/config.toml` / `.cursor/mcp.json` …）は
-「利用者のもの」として触らない方針だった（§8.2）。
+## Context
 
-実運用でその外側に穴が出た。`~/repos/novel-lab` は同じ 1 本の MCP サーバーを `.mcp.json`
-（claude / copilot）と `opencode.json` に**二重に**登録しており、片方を直すともう片方が腐る。
-AF はこれを見ることも直すこともできない。
+ADR 0031 / docs/48 let AF distribute MCP server definitions, but only to **one place, each CLI's
+user/global scope**; the project scope on the repository side (`.mcp.json` / `opencode.json` /
+`.codex/config.toml` / `.cursor/mcp.json`, …) was deliberately left alone as "the user's" (§8.2).
 
-2026-08-09 の実測（docs/56 §2）で、単純な「コピー」では済まないことが分かった:
+A hole opened outside that in real use. `~/repos/novel-lab` registers the same single MCP server
+**twice**, in `.mcp.json` (claude / copilot) and in `opencode.json`, and fixing one leaves the other
+to rot. AF can neither see nor fix this.
 
-- **プレースホルダの構文が CLI ごとに違う。** claude は `${VAR}`、opencode は `{env:VAR}`、
-  cursor は両方（`${VAR}` と `${env:VAR}`）、**codex は何も展開しない**。
-  `${env:VAR}` を opencode に入れると `$` が残って `$/home/…` という別のパスになる
-  （起動失敗ではなく静かな誤り）。
-- **書いた直後は効かない。** claude のプロジェクト `.mcp.json` は `⏸ Pending approval` で
-  **プローブすら起動せず**、cursor は `not loaded (needs approval)`。codex は trust が gate。
-- したがって **novel-lab の実例は、値を実パスへ展開しない限り codex へは持って行けない**。
+Measurements on 2026-08-09 (docs/56 §2) showed that a simple "copy" is not enough:
 
-## 決定
+- **Placeholder syntax differs per CLI.** claude uses `${VAR}`, opencode `{env:VAR}`, cursor both
+  (`${VAR}` and `${env:VAR}`), and **codex expands nothing**. Putting `${env:VAR}` into opencode
+  leaves the `$` behind and yields a different path, `$/home/…` — a silent error, not a startup
+  failure.
+- **It does not take effect immediately after writing.** claude's project `.mcp.json` sits at
+  `⏸ Pending approval` and **does not even start the probe**; cursor shows
+  `not loaded (needs approval)`. codex gates on trust.
+- Therefore **the novel-lab example cannot be carried over to codex at all unless the values are
+  expanded to real paths.**
 
-1. **軸を 2 本に分ける。** 「配布軸」（レジストリ → user/global・af が**自動で**書く・所有台帳あり）と
-   「管理軸」（プロジェクトスコープ・**利用者の明示操作でのみ** af が代理で書く・**所有しない**）。
-   docs/48 §8.2 は改訂せず、「af が**自動で**書くのは user/global だけ」と適用範囲を明確化する 1 節を足す。
-   `Materialize*` がプロジェクトスコープに触れないことはテストで固定する。
-2. **プロジェクトファイルに af の所有マーカーを置かない。** マーカーは「後で af が自動的に触る」ための
-   仕組みで、自動で触らない以上は用が無い。加えてプロジェクトファイルは**コミットされ同僚も読む共有物**で、
-   AF 固有のキーを混ぜると AF を使っていない人のリポジトリに痕跡が残る。
-   **監査証跡は git（`git diff`）が担う**。書き込み後は SCM ペインへ誘導する。
-3. **純粋なワンショット。** 正本の記録・継続同期・ドリフト追跡を持たない。自動反映の契機はゼロ
-   （セッション起動・agent 起動・レジストリ CRUD のいずれからも呼ばない）。
-4. **マージ（衝突解決）は利用者が 1 件ずつ決める。** 反映先に同名があるとき AF は自動で
-   上書き／スキップのどちらにも倒さない。**ただし方言変換の候補は AF が計算して見せる**
-   — 差を見つけて選択肢を出すのが道具の仕事で、選ぶのは利用者。
-5. **plan → apply の 2 段にし、`planHash` で楽観ロックする。** 作業コピーは他セッションや
-   利用者のエディタと共有されているので、read-modify-write の間に人が編集しうる。不一致は 409。
-6. **整形を壊さないテキスト編集にする。** `json.MarshalIndent` による全体再出力は採らない。
-   コミットされるファイルで差分が全行になると**レビューできない diff** になり、機能が使われなくなる。
-   JSON も codex の TOML 行編集と同じ思想で、対象エントリのバイト範囲だけを差し替える。
-7. **ファイル権限 0600 を持ち込まない。** git はモードを `100644` / `100755` しか記録せず、
-   0600 は原理的に守れない。**「user スコープの安全弁がここでは効かない」ことを秘密警告の根拠にする**。
-8. **v1 のコピー元はプロジェクトファイルだけ。** AF レジストリ（user / tenant / builtin）は
-   コピー元にしない。tenant 配布の値をリポジトリへ吐くとテナントの資格情報が git に載り、
-   builtin はコンテナ固有で他人の環境では無意味、user origin の複製は二重登録を増やす
-   （この機能が直そうとしている病気そのもの）。**この 1 本の制約で秘密の新規流出は原則消える。**
-9. **秘密の既定は「値を書かない」。** 値を持って行くにはサーバーごとの明示チェックが要り、
-   **コピー元とコピー先の tracked 状態の差**で警告の強さを決める（未追跡 → tracked が赤＝
-   新たに git 管理下へ入る唯一の経路）。
-10. **Console は値を一度も受け取らない。** スナップショット API は値を `***` で返し、`apply` は
-    `withSecrets` という**フラグだけ**を受け、実値は Agent がファイルから読んで書く。
-    docs/48 §5.1 を壊さずに「警告の上でコピーを許可」を実装できる唯一の形。
-11. **ゲートを代行しない。** claude の承認・`cursor-agent mcp enable`・codex の trust はいずれも
-    利用者の信頼判断で、AF が代筆すると **AF を使うだけで信頼判断が省略されたことになる**。
-    コマンドは提示し、実行は利用者が行う。反映結果は「**書いた**」と「**効いている**」を別の行にする
-    — claude / cursor は承認前に起動しないので、AF は書き込みの成否を `mcp list` で検証すらできない。
-12. **画面の列は kind ではなくファイル。** `.mcp.json` は claude と copilot の 2 kind に効くので、
-    kind で数えると同じファイルへ二重に書く事故になる。
-13. **入口はレポ行の右クリックメニュー → モーダル。** 設定モーダルは workspace 全体（user スコープ）の
-    場所で、混ぜると**どちらのスコープを触っているかが画面から消える**。設定 → MCP タブには
-    「プロジェクトスコープはここでは扱わない」の注記を 1 行だけ置き、行き止まりにしない。
-14. **対象は選んだ作業コピー 1 つだけ。** 同じリポジトリの他の worktree は列挙も編集もしない
-    （他セッションの机に未コミットの変更を作らない）。worktree のときは
-    「コミットするまで他の作業コピーには反映されない」と注記する。
-15. **型を `mcpreg.ServerDef` と共有しない（`internal/mcpproj` を新設）。** `ServerDef` は
-    「AF が配るもの」で `Origin` / `Targets` / 台帳を伴い、`Validate()` は `af` 系の名前を**弾く**。
-    プロジェクト側では逆に、その名前は**見つけて赤く出す**のが仕事（docs/48 §8.4 の乗っ取り検知）。
-    同じ型にすると実効レジストリの合成に紛れ込み、**user スコープへ配ってしまう**余地が残る。
-    ただし **kind ごとの綴り方（シリアライザ）は `mcpreg` と共有**する — 二重定義すれば必ずドリフトする。
-16. **kiro は v1 では読み取りのみ、agy は対象外。** kiro はプロジェクトスコープの契約が未検証
-    （`mcp` 系が全てログイン必須）、agy はプロジェクトスコープを持たない。
-    **どちらも行としては出す**（黙って消すと「対応漏れ」に見え、同じ質問が繰り返される）。
-17. **逆方向（プロジェクト → AF レジストリの取り込み）は v1 で作らない。** レジストリは
-    user スコープ＝全リポジトリに効くため、取り込むと 1 リポジトリのためのサーバーが
-    どこでも起動する。作るなら `ServerDef` に repo スコープを足す設計が先で、それは別の決定。
+## Decision
 
-18. **git の無視設定への追加を機能として持つ。既定は `.git/info/exclude`。**
-    §7.2 の警告に「その場で直す手段」を付ける。コミットを増やさない＝取り返しがつく方を既定にし、
-    `.gitignore`（＝同じ判断を同僚にも課す）は影響を書いてから選ばせる。
-    ⚠️ **`.git/info/exclude` は worktree 単位ではない**（common dir にあり親クローンと全 worktree に
-    効く・実測）ので、影響範囲を必ず表示する。global excludes は枠外（未決）。
-19. **「無視に追加」と「追跡から外す」を別の操作・別の確認にする。** `.gitignore` は**追跡済み
-    ファイルに効かない**（実測）ため、動機の実例（既に tracked な `.mcp.json` / `opencode.json`）は
-    無視の追加だけでは何も変わらない。実際に外すには `git rm --cached` が要り、
-    **コミットして push した時点で同僚の作業コピーからそのファイルが消える** — 「無視した」の
-    帰結としては重すぎる。**AF は index を変えるところまでで、コミットはしない**。
-    `--assume-unchanged` / `--skip-worktree` は採らない（問題を隠すだけで壊れ方が分かりにくい）。
-20. **ファイルごと無視してよいかは kind で違うと明示する。** `.mcp.json` / `.cursor/mcp.json` /
-    `.kiro/settings/mcp.json` / `.github/mcp.json` は MCP 専用なので無視してよい。
-    **`opencode.json` と `.codex/config.toml` は MCP 以外の設定も抱える**ので、ファイルごと無視すると
-    それらも消える。opencode は **`opencode.json` と `opencode.jsonc` が project でも両方読まれて
-    マージされる**（実測）ので分割で逃げられるが、**codex には逃げ道が無い**。
-    claude は分割不可（`.claude/settings.local.json` の `mcpServers` は効かない・実測）だが、
-    `.mcp.json` が MCP 専用なので必要が無い。
+1. **Split into two axes.** The "distribution axis" (registry → user/global, written **automatically**
+   by af, with an ownership ledger) and the "management axis" (project scope, written by af on the
+   user's behalf **only on an explicit action**, and **not owned**). docs/48 §8.2 is not revised;
+   one section is added clarifying that **what af writes automatically is user/global only**. That
+   `Materialize*` never touches the project scope is pinned by a test.
+2. **Do not put an af ownership marker in a project file.** A marker is machinery for "af will touch
+   this automatically later", and with no automatic touching it has no purpose. Beyond that, a
+   project file is **shared, committed and read by colleagues**, and mixing in AF-specific keys
+   leaves traces in the repository of people who do not use AF.
+   **The audit trail is git's job (`git diff`).** After writing, direct the user to the SCM pane.
+3. **A pure one-shot.** No record of a canonical copy, no continuous sync, no drift tracking. There
+   are zero triggers for automatic application (it is called from neither session startup, nor agent
+   startup, nor registry CRUD).
+4. **The user decides each merge (conflict) individually.** When a name already exists in the
+   destination, AF falls to neither overwrite nor skip automatically. **But AF does compute and show
+   the dialect-conversion candidate** — finding the difference and offering the options is the
+   tool's job; choosing is the user's.
+5. **Two stages, plan → apply, with optimistic locking on `planHash`.** The working copy is shared
+   with other sessions and with the user's editor, so a person can edit between the read and the
+   write. A mismatch is a 409.
+6. **A text edit that does not destroy the formatting.** Re-emitting the whole file with
+   `json.MarshalIndent` is not adopted. In a committed file, a diff that touches every line is **a
+   diff nobody can review**, and the feature goes unused. JSON follows the same thinking as codex's
+   line editing of TOML: replace only the byte range of the entry concerned.
+7. **Do not carry file permission 0600 over.** git records only `100644` / `100755` as the mode, so
+   0600 cannot be preserved in principle. **Use "the user-scope safety valve does not apply here" as
+   the grounds for the secret warning.**
+8. **In v1 the source of a copy is a project file only.** The AF registry (user / tenant / builtin)
+   is not a source. Emitting a tenant-distributed value into a repository would put the tenant's
+   credentials into git; builtins are container-specific and meaningless in someone else's
+   environment; and duplicating a user-origin entry increases double registration (the very disease
+   this feature is meant to cure). **This one constraint removes new secret leakage in principle.**
+9. **The default for secrets is "do not write the value".** Carrying a value across requires an
+   explicit per-server checkbox, and **the strength of the warning is decided by the difference in
+   tracked status between source and destination** (untracked → tracked is red — the only route by
+   which something newly enters git's control).
+10. **The Console never receives a value.** The snapshot API returns values as `***`, and `apply`
+    takes **only a flag**, `withSecrets`, with the Agent reading the real values from the file and
+    writing them. This is the only shape that implements "allow the copy after a warning" without
+    breaking docs/48 §5.1.
+11. **Do not perform gates on the user's behalf.** claude's approval, `cursor-agent mcp enable` and
+    codex's trust are all the user's trust judgement, and if AF signs for them, **merely using AF
+    means the trust judgement was skipped**. Present the command; the user runs it. The result is
+    reported on two separate lines, "**written**" and "**in effect**" — claude and cursor do not
+    start before approval, so AF cannot even verify the write's success with `mcp list`.
+12. **The columns on screen are files, not kinds.** `.mcp.json` applies to two kinds, claude and
+    copilot, so counting by kind causes the accident of writing the same file twice.
+13. **The entrance is the repo row's context menu → a modal.** The settings modal is the place for
+    the whole workspace (the user scope), and mixing them **removes from the screen which scope you
+    are touching**. The settings → MCP tab gets one line noting "the project scope is not handled
+    here", so it is not a dead end.
+14. **The target is the one selected working copy only.** Other worktrees of the same repository are
+    neither listed nor edited (do not create uncommitted changes on another session's desk). For a
+    worktree, note that "this does not reach the other working copies until you commit".
+15. **Do not share the type with `mcpreg.ServerDef` (add a new `internal/mcpproj`).** `ServerDef` is
+    "what AF distributes", comes with `Origin` / `Targets` / the ledger, and its `Validate()`
+    **rejects** `af`-family names. On the project side the job is the opposite — **find that name and
+    show it in red** (the hijack detection in docs/48 §8.4). Using the same type would let it creep
+    into the composition of the effective registry, leaving room to **distribute it to the user
+    scope**. However, **the per-kind spelling (the serialisers) is shared with `mcpreg`** — defining
+    them twice guarantees drift.
+16. **kiro is read-only in v1, and agy is out of scope.** kiro's project-scope contract is unverified
+    (everything under `mcp` requires a login), and agy has no project scope. **Both still appear as
+    rows** (removing them silently looks like an oversight, and the same question gets asked again).
+17. **The reverse direction (importing project → the AF registry) is not built in v1.** The registry
+    is the user scope, i.e. it applies to every repository, so importing would start a server meant
+    for one repository everywhere. Building it would first require designing a repo scope into
+    `ServerDef`, which is a separate decision.
 
-## 採らなかった案
+18. **Adding to git's ignore settings is a feature, defaulting to `.git/info/exclude`.** §7.2's
+    warning gets a way to fix it on the spot. The default is the recoverable one, which adds no
+    commit; `.gitignore` (which imposes the same judgement on colleagues) is offered only after
+    stating its effect.
+    ⚠️ **`.git/info/exclude` is not per worktree** (it lives in the common dir and applies to the
+    parent clone and every worktree — measured), so always display the blast radius. Global excludes
+    are out of frame (undecided).
+19. **"Add to ignore" and "stop tracking" are separate operations with separate confirmations.**
+    `.gitignore` **has no effect on already-tracked files** (measured), so the motivating examples
+    (`.mcp.json` / `opencode.json`, already tracked) do not change at all from adding an ignore.
+    Actually removing them needs `git rm --cached`, and **once that is committed and pushed the file
+    disappears from colleagues' working copies** — far too heavy as the consequence of "I ignored
+    it". **AF goes as far as changing the index and does not commit.** `--assume-unchanged` /
+    `--skip-worktree` are not adopted (they only hide the problem and break inscrutably).
+20. **State explicitly that whether a whole file may be ignored differs by kind.** `.mcp.json` /
+    `.cursor/mcp.json` / `.kiro/settings/mcp.json` / `.github/mcp.json` are MCP-only and may be
+    ignored. **`opencode.json` and `.codex/config.toml` hold settings other than MCP**, so ignoring
+    the whole file loses those too. opencode can escape by splitting, because **`opencode.json` and
+    `opencode.jsonc` are both read and merged at the project level too** (measured), but **codex has
+    no escape**. claude cannot split (`mcpServers` in `.claude/settings.local.json` has no effect —
+    measured), but it does not need to, since `.mcp.json` is MCP-only.
 
-### 継続同期（正本 kind を固定して自動追随）
+## Options not taken
 
-「片方を直すともう片方が腐る」に対する最も直接的な答えに見える。採らない理由は、
-**プロジェクトファイルが git 管理下のコミット対象**であること。自動追随は、利用者が触っていない
-タイミングで作業ツリーに差分を生やす。ブランチを切り替えた・別のセッションがそのファイルを編集した・
-`git stash` した — どの瞬間にも書きうるし、コンフリクトの後始末は AF ではなく利用者に落ちる。
-「どちらが正本か」の恒常的な管理も要る。得られる利便より、**他人の作業ツリーが勝手に汚れる**
-コストの方が大きい。
+### Continuous sync (fix a canonical kind and follow automatically)
 
-### 差分を見せるだけで AF は書かない
+It looks like the most direct answer to "fixing one leaves the other to rot". The reason not to take
+it is that **project files are under git and are meant to be committed.** Automatic following grows
+a diff in the working tree at times the user is not touching it. It could write the moment you
+switch branches, or another session edits that file, or you `git stash` — and cleaning up the
+conflict falls on the user, not AF. It also requires permanently managing "which is canonical".
+The cost of **someone else's working tree getting dirty by itself** outweighs the convenience.
 
-§8.2 に一切触れずに済み、責任も完全に利用者に残る。しかし動機（二重登録の手間）はほとんど
-減らない — 方言変換を手で書き写す作業が残り、そこが一番間違えるところ。
-**変換を計算して見せるところまでやって、書くのを拒む**のは中途半端で、
-「読めるが直せない」画面は使われない。
+### Only show the difference; AF does not write
 
-### プロジェクトスコープも af の管理対象へ格上げする（リポジトリ単位の所有台帳）
+It touches §8.2 not at all and leaves the responsibility entirely with the user. But it barely
+reduces the motivation (the labour of double registration) — the work of transcribing the dialect
+conversion by hand remains, and that is exactly where mistakes happen. **Computing and showing the
+conversion but refusing to write it** is half-hearted, and a screen that can be read but not fixed
+goes unused.
 
-user スコープと同じ read → merge → rename に統一でき、実装は素直になる。
-採らない理由は台帳の置き場が無いこと: home に置けばリポジトリを消したとき孤児になり、
-リポジトリ内に置けば**コミット対象が 1 つ増える**（AF を使っていない同僚に説明の要るファイル）。
-そして台帳の目的である「af が自動で消してよい行の決定」は、自動削除をしない本設計では不要。
+### Promote the project scope to something af manages (a per-repository ownership ledger)
 
-### `json.MarshalIndent` で全体を書き直す（既存 `materialize_json.go` の流用）
+It could be unified with the user scope's read → merge → rename and the implementation would be
+straightforward. The reason not to is that there is nowhere to put the ledger: in home, it is
+orphaned when the repository is deleted; in the repository, **it adds one more thing to commit** (a
+file that needs explaining to colleagues who do not use AF). And the ledger's purpose — deciding
+which lines af may delete automatically — is unnecessary in a design that never deletes
+automatically.
 
-コードは既にあり、user スコープでは実際にこれで足りている。プロジェクトファイルで採らないのは
-**diff がレビューできなくなる**から。home 配下の設定ファイルは誰も差分を読まないが、
-リポジトリのファイルは PR に載る。1 エントリ足したら 200 行変わる道具は使われない。
+### Rewrite the whole file with `json.MarshalIndent` (reusing the existing `materialize_json.go`)
 
-### 値を常にコピーする / 値を絶対にコピーしない
+The code already exists and is genuinely sufficient for the user scope. It is not taken for project
+files because **the diff becomes unreviewable**. Nobody reads diffs of configuration files under
+home, but repository files appear in a PR. A tool that changes 200 lines when you add one entry goes
+unused.
 
-前者は git に秘密を入れる既定になる。後者は「もともと両方のファイルに同じ値が書いてある」
-という**実際の使われ方**（novel-lab がまさにそれ）で毎回手作業が残る。
-既定は書かない・明示チェックで書く・**tracked 状態の差で警告の強さを変える**、が実態に合う。
+### Always copy the values / never copy the values
 
-### AF が codex の trust を付与し、cursor の `mcp enable` を叩く
+The former makes putting secrets into git the default. The latter leaves manual work every time in
+**how it is actually used** — "the same value is already written in both files" (which is exactly
+novel-lab). Not writing by default, writing on an explicit checkbox, and **varying the warning's
+strength by the difference in tracked status**, matches reality.
 
-「反映しました」と言い切れるようになる。しかし trust はエージェントが利用者に
-「このディレクトリのコードとコマンドを信用してよいか」を問う信頼境界そのもので、
-**AF がそれを代筆すると、AF を経由するだけで信頼判断が省略されたことになる**。
-MCP サーバーは任意コマンドを起動でき（ADR 0031 決定 2 でテナント配布 stdio を禁じたのと同じ理由）、
-その承認を自動化するのは同じ穴を裏口から開ける。
+### Have AF grant codex's trust and run cursor's `mcp enable`
 
-### 「無視に追加」で `git rm --cached` まで一気にやる / AF がコミットまでやる
+It would let us say "applied" without qualification. But trust is the very trust boundary at which
+the agent asks the user "may I trust the code and commands in this directory?", and **if AF signs
+for it, merely going through AF means the trust judgement was skipped**. An MCP server can start
+arbitrary commands (the same reason ADR 0031 decision 2 forbade tenant-distributed stdio), and
+automating that approval opens the same hole by the back door.
 
-1 ボタンで「もうコミットされない状態」に到達できるのが親切に見える。採らない理由は、
-その 1 ボタンの結果が **push した時点で同僚の作業コピーからファイルが消える**ことだから。
-無視の追加は取り返しがつき、追跡の解除は（履歴には残るが）他人の環境を変える — 同じ確認で
-くくってよい重さではない。コミットまで AF がやらないのは、憲章 2 が「監査は git の差分」に
-寄りかかっている以上、**利用者が差分を見る機会を奪ってはならない**から。
+### Have "add to ignore" go all the way to `git rm --cached` / have AF commit as well
 
-### 設定モーダルの「MCP サーバー」タブに寄せる
+Reaching "it will not be committed any more" in one button looks helpful. The reason not to is that
+the result of that one button is **the file disappearing from colleagues' working copies the moment
+it is pushed**. Adding an ignore is recoverable; untracking changes other people's environments
+(even though it stays in history) — not a weight that belongs behind the same confirmation. AF does
+not commit either, because charter 2 leans on "the audit is git's diff", so **the user must not be
+deprived of the chance to look at that diff**.
 
-MCP の設定が 1 箇所にまとまるので探しやすい、という主張には理がある。採らないのは、
-そのタブが **workspace 全体（user スコープ）の一覧**であり、**実効レジストリそのままを出す**
-ことを設計上の約束にしているから（docs/48 §11.1）。リポジトリごとに中身が変わる表を同居させると、
-「いま見ているのはどのスコープか」が消える — それは §8.4 の乗っ取り事故を読み解けなくする方向。
-代わりに注記 1 行で導線だけを繋ぐ。
+### Fold it into the settings modal's "MCP servers" tab
+
+There is something to the argument that having MCP settings in one place makes them easy to find. It
+is not taken because that tab is **a listing for the whole workspace (the user scope)** and its
+design promise is to **show the effective registry exactly as it is** (docs/48 §11.1). Putting a
+table whose contents change per repository next to it erases "which scope am I looking at" — which
+is the direction that makes the §8.4 hijack incident unreadable. Instead, one note connects the
+route.
