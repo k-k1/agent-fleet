@@ -322,6 +322,25 @@ def table_first_column(path: str) -> set[str]:
     return out
 
 
+def source_setting_tabs(locale: str) -> dict[str, str]:
+    """Console の設定タブのラベル（キー -> 表示文字列）。
+
+    利用者が探すのは画面に出ている名前なので、ref/settings.md の行は
+    **Console のラベルそのもの**でなければならない。タブが増えたら行が増える。
+    """
+    path = os.path.join(
+        ROOT, "console", "src", "lib", "i18n", "locales", f"{locale}.ts"
+    )
+    if not os.path.exists(path):
+        return {}
+    return {
+        m.group(1): m.group(2)
+        for m in re.finditer(
+            r'"((?:set|tenant)\.tab_[a-z_]+)":\s*"([^"]+)"', read(path)
+        )
+    }
+
+
 def table_mark_shape(path: str) -> list[tuple[str, ...]]:
     """ファイル内の全表を「印だけ」に潰した形。行の順序も保つ。
 
@@ -404,6 +423,21 @@ def check_ref(f: Findings) -> None:
                     f"ref/agents.md「{row}」が実装の {field} と食い違う"
                     f"（表={sorted(marked)} / コード={sorted(want)}）"
                 )
+
+    # 設定タブは Console のラベルが正。増えた画面が黙って未記載にならないよう、
+    # 両言語それぞれを自分のロケールのラベルと突き合わせる。
+    for locale, name in (("en", "settings.md"), ("ja", "settings.ja.md")):
+        path = os.path.join(DOCS, "ref", name)
+        tabs = source_setting_tabs(locale)
+        if not os.path.exists(path) or not tabs:
+            continue
+        rows = table_first_column(path)
+        missing = sorted({v for v in tabs.values()} - rows)
+        if missing:
+            f.error(
+                f"ref/{name}: Console にある設定タブが表に無い -> "
+                + ", ".join(missing)
+            )
 
     targets = os.path.join(DOCS, "ref", "deploy-targets.md")
     if os.path.exists(targets):

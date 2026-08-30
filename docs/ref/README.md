@@ -48,6 +48,10 @@ capability sentence outside this shelf, link instead.
 
 ## Status
 
-The axes are fixed; the cells are being filled in phase P1 of the documentation
-rebuild. A table that still says "to be filled" is not a claim that the capability is
-absent — check the shelf it links to.
+All nine tables are filled. Two things they deliberately do *not* do:
+
+- **They do not invent numbers.** A limit nobody measures is written as "read the
+  screen", never as a plausible-looking default ([limits.md](limits.md)).
+- **A dash is not always "impossible".** In [features.md](features.md) a dash in the
+  Details column means no reader-facing page covers that feature yet, not that the
+  feature is missing. Closing those gaps is phase P2.
