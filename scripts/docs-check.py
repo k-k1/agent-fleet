@@ -39,10 +39,6 @@ BILINGUAL = LIVING + ("guide",)
 JA_ONLY_DIRS = ("dev", "decisions", "log")
 JA_ONLY_FILES = ("HANDOFF.md", "CHANGELOG-handoff.md", "roadmap.md")
 
-# 現役の棚がまだ書かれていない移行期は、旧棚（dev/ guide/）を正として参照する。
-# P1〜P4 で新体系が埋まったら LEGACY を空にして棚ごと消す。
-LEGACY = ("dev", "guide")
-
 # log/ への参照が許される現役ファイル。P4 までに空にする（plan の受け入れ条件）。
 FROZEN_REF_ALLOWLIST: set[str] = {
     "log/README.md",
@@ -116,7 +112,7 @@ def bilingual_scope(relpath: str) -> bool:
 def check_links(files: list[str], f: Findings) -> None:
     for path in files:
         src = rel(path)
-        body = read(path)
+        body = strip_code(read(path))
         for m in LINK_RE.finditer(body):
             target = m.group(1)
             # 先頭 "/" はサイト絶対 URL（Console が返す open link の例示など）で、
@@ -144,7 +140,7 @@ def check_lang(files: list[str], f: Findings) -> None:
         mate = counterpart(src)
         if mate not in present:
             f.error(f"{src}: 対訳が無い（{mate} が必要）")
-        body = read(path)
+        body = strip_code(read(path))
         for m in LINK_RE.finditer(body):
             target = m.group(1).split("#", 1)[0]
             if target.startswith(("http://", "https://", "mailto:")) or not target:
@@ -200,7 +196,7 @@ def check_frozen(files: list[str], f: Findings) -> None:
             continue
         if src in FROZEN_REF_ALLOWLIST:
             continue
-        for m in LINK_RE.finditer(read(path)):
+        for m in LINK_RE.finditer(strip_code(read(path))):
             target = m.group(1)
             dest = os.path.normpath(os.path.join(os.path.dirname(path), target))
             if dest.startswith(os.path.join(DOCS, "log")):
@@ -221,9 +217,29 @@ def source_kinds() -> set[str]:
     return set(re.findall(r'^\s*Kind\w+\s*=\s*"([a-z]+)"', body, re.M))
 
 
-def source_runtimes() -> set[str]:
+def source_runtime_groups() -> list[set[str]]:
+    """デプロイ形態を「別名の組」として返す。
+
+    newRuntimeFactory の switch は 1 つのアダプタに複数の綴りを許している
+    （local=docker / ecs=aws / native=wsl）。表がどの綴りを採っていても
+    通したいので、組のどれか 1 つが在れば満たしたとみなす。組の一覧は
+    その switch から、必須の集合は同じ関数の「want ...」エラー文から取る。
+    """
     body = read(os.path.join(ROOT, "control-plane", "runtime.go"))
-    return set(re.findall(r'case\s+"([a-z0-9-]+)"', body))
+    start = body.find("func newRuntimeFactory(")
+    if start < 0:
+        return []
+    end = body.find("\nfunc ", start + 1)
+    scope = body[start : end if end > 0 else len(body)]
+    groups = [
+        {a.strip().strip('"') for a in labels.split(",")}
+        for labels in re.findall(r"case\s+(\"[^\n:]*)\s*:", scope)
+    ]
+    groups = [{a for a in g if a} for g in groups]
+    want = re.search(r"want ([a-z0-9|-]+)", scope)
+    required = set(want.group(1).split("|")) if want else set()
+    # 必須集合に触れている組だけを検査対象にする。
+    return [g for g in groups if g & required]
 
 
 def table_columns(path: str) -> set[str]:
@@ -261,12 +277,12 @@ def check_ref(f: Findings) -> None:
     targets = os.path.join(DOCS, "ref", "deploy-targets.md")
     if os.path.exists(targets):
         rows = {c.strip("`*") for c in table_first_column(targets)}
-        missing = source_runtimes() - rows
-        if missing:
-            f.error(
-                "ref/deploy-targets.md: コードにある形態が表に無い -> "
-                + ", ".join(sorted(missing))
-            )
+        for group in source_runtime_groups():
+            if not (group & rows):
+                f.error(
+                    "ref/deploy-targets.md: コードにある形態が表に無い -> "
+                    + "|".join(sorted(group))
+                )
 
 
 # --- helpers ------------------------------------------------------------------

@@ -1,0 +1,39 @@
+# docs ゲート。docs/ の構造規約（docs/CONVENTIONS.md）を機械検査する。
+#
+# なぜ ci.yml と分けるか: ci.yml は Go / Console のビルドとテストで、docs だけを
+# 直した PR には重すぎる。逆に docs ゲートはコード変更でも走らせたい——ref/ の表は
+# コードの一次情報（エージェント種別の定数・runtime のプロファイル）と突き合わせて
+# いるので、**表を触らずコードを触ったときにこそ壊れる**。だから両方の変更で走る。
+#
+# 検査の中身は scripts/docs-check.py。ローカルでも同じコマンドで走る。
+name: docs
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 依存は無い（標準ライブラリのみ）。ランナーの python3 をそのまま使う。
+      - name: docs-check
+        run: python3 scripts/docs-check.py
+
+      # 移行中は warn のままにしてある検査（利用者向けの棚の語彙）を可視化する。
+      # 棚を書き終えた段階で、この行を上の run に --strict として畳む。
+      - name: docs-check (strict, informational)
+        continue-on-error: true
+        run: python3 scripts/docs-check.py --strict

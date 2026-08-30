@@ -3,7 +3,7 @@
 このファイルは**このホストの稼働状態・実行の作法・落とし穴・現在地**に絞った引き継ぎメモ。
 機能仕様の正は **[dev/](dev/README.md)（開発者向け）とコード**、利用者の操作は **[guide/](guide/README.ja.md)**、
 時系列の作業ログは [CHANGELOG-handoff.md](CHANGELOG-handoff.md)、前向きの計画は [roadmap](roadmap.md)、
-意思決定は [decisions/](decisions/)、使い終わった実装プランは [history/]()。
+意思決定は [decisions/](decisions/)、使い終わった実装プランは [log/](log/README.md)。
 **まず読む順**: この HANDOFF（§1〜§3）→ [dev/01 アーキテクチャ](dev/01-architecture.md) → §4 の現在地。
 
 ## 1. いま動いているもの（このホスト）
@@ -56,7 +56,7 @@
 プロダクト化は P3-1〜P3-7 + Console 全面刷新（React+Vite）まで実装済み（P3-7/P3-10 の実装プランは history/ 入り）。
 **P3-10（パッケージング）は dist 配布の publish 運用中**（[docs/35](log/35-packaging.md)・リリースノートは
 `deploy/release/notes/`）。残 = P3-8（専用分離）・P3-9 の成熟項目（観測 / egress 統制）・P3-10 の完了ゲート
-（第 2 デプロイ E2E）（[roadmap](roadmap.md)）。フェーズごとの実装記録は [history/]()、確定事項の背景は decisions/。
+（第 2 デプロイ E2E）（[roadmap](roadmap.md)）。フェーズごとの実装記録は [log/](log/README.md)、確定事項の背景は decisions/。
 
 - **仕様を知りたい** → [dev/](dev/README.md): アーキテクチャ(01) / Console(02) / Control Plane(03) / Agent(04) /
   API 契約(05) / データモデル(06) / セキュリティ(07) / 外部連携(08) / デプロイ(09) / 開発作法(10) / コードマップ(90)。
