@@ -1,13 +1,16 @@
-// NewRepoModal — bring a repository into ~/repos. Two kinds (docs/41): Git clone
-// (source picking in the shared CloneForm + fork-a-branch / folder name) and SVN
-// checkout (URL + optional subpath + optional basic auth). The op itself runs in
-// the parent (spinner row in the rail) so the user isn't trapped in a busy dialog.
+// NewRepoModal — bring a repository into ~/repos. Three kinds: Git clone (source
+// picking in the shared CloneForm + fork-a-branch / folder name), SVN checkout
+// (URL + optional subpath + optional basic auth, docs/41), and 新規フォルダ — a
+// folder that exists nowhere yet, created empty and `git init`ed. The op itself
+// runs in the parent (spinner row in the rail) so the user isn't trapped in a busy
+// dialog.
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { CloneForm } from "./CloneForm.tsx";
 import type { CloneSource } from "./CloneForm.tsx";
+import { NewFolderForm, newFolderNameOk } from "./NewFolderForm.tsx";
 import type { CloneRequest, SvnCheckoutRequest } from "./clone.ts";
 import { deriveRepoName, sanitizeSeg, sanitizeFolderName, uniqueRepoName, repoNameRe } from "../../lib/reponame.ts";
 import { useT } from "../../lib/i18n/index.ts";
@@ -18,6 +21,8 @@ interface NewRepoModalProps {
   onClose?: () => void;
   onClone: (req: CloneRequest) => void;
   onSvnCheckout?: (req: SvnCheckoutRequest) => void;
+  /** 新規フォルダ（取り込み元なし）。省略されたら種類の選択肢自体を出さない。 */
+  onInit?: (name: string) => void;
   repos?: { name: string }[];
 }
 
@@ -44,9 +49,9 @@ function deriveSvnName(url: string, subpath: string): string {
   return decode(last);
 }
 
-export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: NewRepoModalProps) {
+export function NewRepoModal({ onClose, onClone, onSvnCheckout, onInit, repos = [] }: NewRepoModalProps) {
   const tr = useT();
-  const [vcs, setVcs] = useState<"git" | "svn">("git");
+  const [vcs, setVcs] = useState<"git" | "svn" | "new">("git");
   const repoNames = new Set(repos.map((r) => r.name));
 
   // --- Git clone state ---
@@ -89,8 +94,18 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: Ne
   const svnUrlOk = /^https?:\/\/.+/i.test(svnUrl.trim());
   const canSubmitSvn = svnUrlOk && svnNameOk;
 
+  // --- 新規フォルダ state（取り込み元なし） ---
+  const [newName, setNewName] = useState("");
+  const canSubmitNew = !!onInit && newFolderNameOk(newName, repoNames);
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (vcs === "new") {
+      if (!canSubmitNew || !onInit) return;
+      onInit(newName.trim());
+      onClose?.();
+      return;
+    }
     if (vcs === "svn") {
       if (!canSubmitSvn || !onSvnCheckout) return;
       onSvnCheckout({
@@ -118,7 +133,9 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: Ne
   return (
     <Modal title={tr("rp.clone_repo_title")} onClose={onClose} as="form" onSubmit={submit}>
       <div className="ui-modal-body">
-        {/* Kind: Git clone vs SVN checkout. */}
+        {/* Kind: Git clone / SVN checkout / a brand-new folder. 新規 is offered only
+            when the caller wired onInit — a picker with a dead option is worse than
+            no picker. */}
         <div className="ui-field">
           <span className="ui-field-label">{tr("rp.vcs")}</span>
           <div className="ui-seg">
@@ -126,6 +143,7 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: Ne
               [
                 ["git", tr("rp.vcs_git")],
                 ["svn", tr("rp.vcs_svn")],
+                ...(onInit ? ([["new", tr("rp.vcs_new")]] as const) : []),
               ] as const
             ).map(([v, label]) => (
               <button
@@ -140,7 +158,9 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: Ne
           </div>
         </div>
 
-        {vcs === "git" ? (
+        {vcs === "new" ? (
+          <NewFolderForm value={newName} onChange={setNewName} taken={repoNames} autoFocus />
+        ) : vcs === "git" ? (
           <>
             <CloneForm onChange={setSrc} />
 
@@ -237,8 +257,12 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, repos = [] }: Ne
         <Button variant="ghost" onClick={onClose}>
           {tr("rp.cancel")}
         </Button>
-        <Button variant="primary" type="submit" disabled={vcs === "svn" ? !canSubmitSvn : !canSubmitGit}>
-          {vcs === "svn" ? tr("rp.svn_checkout") : tr("rp.clone")}
+        <Button
+          variant="primary"
+          type="submit"
+          disabled={vcs === "new" ? !canSubmitNew : vcs === "svn" ? !canSubmitSvn : !canSubmitGit}
+        >
+          {vcs === "new" ? tr("rp.create_folder") : vcs === "svn" ? tr("rp.svn_checkout") : tr("rp.clone")}
         </Button>
       </footer>
     </Modal>

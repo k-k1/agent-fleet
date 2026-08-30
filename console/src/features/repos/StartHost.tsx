@@ -76,8 +76,9 @@ export function StartHost() {
           path={launch.path}
           kinds={agentKinds}
           settling={ctx.connsSettling}
-          allowWorktree={!launch.worktree && launch.vcs !== "svn"}
+          allowWorktree={!launch.worktree && launch.vcs !== "svn" && !launch.unborn}
           isSvn={launch.vcs === "svn"}
+          isUnborn={!!launch.unborn}
           initialPrompt={seedPrompt || undefined}
           initialTitle={seedTitle || undefined}
           initialNewBranch={seedWorkItem?.branch || undefined}

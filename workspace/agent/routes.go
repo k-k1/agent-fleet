@@ -192,6 +192,9 @@ func buildMux() *http.ServeMux {
 	// Repository management — git ops on working copies under ~/repos.
 	mux.HandleFunc("GET /repos", handleListRepos)
 	mux.HandleFunc("POST /repos", handleCloneRepo)
+	// 取り込み元が無いとき: ~/repos/<name> を作って git init するだけの新規作業コピー。
+	// clone / svn checkout と違い同期（ネットワークを触らないのでジョブにする意味がない）。
+	mux.HandleFunc("POST /repos/init", handleInitRepo)
 	// リポジトリ取り込みジョブ（docs/78）。clone / svn checkout は 202 でここへ移り、
 	// 進捗と結末はこの一覧で観測する。DELETE は走行中なら中止、終端済みなら既読。
 	mux.HandleFunc("GET /repo-jobs", handleListRepoJobs)

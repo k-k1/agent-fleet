@@ -102,6 +102,39 @@ describe("repo import (docs/78)", () => {
     });
   });
 
+  // 新規フォルダ（取り込み元なし）は mkdir + git init だけで、ネットワークを触らない。
+  // ここをジョブ経路に載せると、終わっている処理の結末を一覧のポーリング越しに待つことに
+  // なる —— 速いだけでなく、待つ相手を間違えない形にしておく。
+  it("新規フォルダはジョブを経由せず、応答をそのまま結末にする", async () => {
+    let jobPolls = 0;
+    fetchMock.mockImplementation(async (url: string, opts?: RequestInit) => {
+      if ((opts?.method || "GET") === "POST") {
+        expect(String(url)).toContain("api/repos/init");
+        return json({ repo: { name: "new-project", branch: "main", unborn: true } }, 201);
+      }
+      if (String(url).includes("repo-jobs")) {
+        jobPolls++;
+        return json({ jobs: [] });
+      }
+      return json({ repos: [{ name: "new-project", branch: "main", unborn: true }] });
+    });
+    const { initRepo } = await import("./clone.ts");
+    const toast = vi.fn();
+    await expect(initRepo("new-project", toast)).resolves.toEqual({ ok: true, name: "new-project" });
+    expect(jobPolls).toBe(0);
+    expect(toast).not.toHaveBeenCalled();
+    // 一覧が取り直されていること（作った直後に左ペインへ出るのはこれのおかげ）。
+    expect(useReposStore.getState().repos.map((r) => r.name)).toEqual(["new-project"]);
+  });
+
+  it("既にある名前は 409 で断られ、成功にはしない", async () => {
+    fetchMock.mockImplementation(async () => json({ error: { code: "exists", message: "repo already exists: docs" } }, 409));
+    const { initRepo } = await import("./clone.ts");
+    const toast = vi.fn();
+    await expect(initRepo("docs", toast)).resolves.toEqual({ ok: false, name: "" });
+    expect(toast).toHaveBeenCalled();
+  });
+
   it("ジョブが返ってこなければ開始できていない（成功にしない）", async () => {
     route({ post: () => json({ error: { code: "exists", message: "repo already exists: docs" } }, 409), jobs: [] });
     const toast = vi.fn();

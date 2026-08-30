@@ -70,6 +70,11 @@ type Repo struct {
 	Vcs      string `json:"vcs,omitempty"`
 	Revision string `json:"revision,omitempty"` // SVN: current working-copy revision
 	URL      string `json:"url,omitempty"`      // SVN: repository URL of the working copy
+	// Unborn marks a git working copy with no commit yet — a folder created by
+	// POST /repos/init, or a clone of an empty remote. `git worktree add` cannot
+	// resolve HEAD there, so the Console offers in-place launch only until the
+	// first commit exists.
+	Unborn bool `json:"unborn,omitempty"`
 	// Worktree marks a linked git worktree (from `git worktree add`) rather than a
 	// standalone clone, so the Console can badge it; Parent is the folder name of the
 	// main working copy it hangs off (for a tooltip). Both empty/false for a plain clone.
@@ -212,14 +217,18 @@ func gitProviderHost(remote string) (string, string) {
 
 // RepoStatus mirrors docs/06 §6.4's status response shape.
 type RepoStatus struct {
-	Branch    string `json:"branch"`
-	Detached  bool   `json:"detached"`
-	Dirty     bool   `json:"dirty"`
-	Ahead     int    `json:"ahead"`
-	Behind    int    `json:"behind"`
-	Staged    int    `json:"staged"`
-	Unstaged  int    `json:"unstaged"`
-	Untracked int    `json:"untracked"`
+	Branch string `json:"branch"`
+	// Unborn marks a repository whose current branch has no commit yet (`git init`,
+	// or a clone of an empty remote). The branch NAME exists, so Branch is filled —
+	// but HEAD does not resolve, which is what breaks `git worktree add`.
+	Unborn    bool `json:"unborn,omitempty"`
+	Detached  bool `json:"detached"`
+	Dirty     bool `json:"dirty"`
+	Ahead     int  `json:"ahead"`
+	Behind    int  `json:"behind"`
+	Staged    int  `json:"staged"`
+	Unstaged  int  `json:"unstaged"`
+	Untracked int  `json:"untracked"`
 }
 
 // gitStatus parses `git status --porcelain=v2 --branch` into a RepoStatus.
@@ -240,6 +249,9 @@ func gitStatus(dir string) (RepoStatus, error) {
 			} else {
 				s.Branch = h
 			}
+		case strings.HasPrefix(line, "# branch.oid "):
+			// "(initial)" is git's marker for an unborn branch (no commit yet).
+			s.Unborn = strings.TrimSpace(strings.TrimPrefix(line, "# branch.oid ")) == "(initial)"
 		case strings.HasPrefix(line, "# branch.ab "):
 			// "# branch.ab +N -M"
 			if f := strings.Fields(strings.TrimPrefix(line, "# branch.ab ")); len(f) == 2 {
@@ -349,7 +361,7 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		repos = append(repos, Repo{
 			Name: e.Name(), WorkingCopyID: workingCopyID(dir), Path: dir, Branch: st.Branch,
-			Dirty: st.Dirty, Ahead: st.Ahead, Behind: st.Behind,
+			Dirty: st.Dirty, Ahead: st.Ahead, Behind: st.Behind, Unborn: st.Unborn,
 			Provider: provider, Remote: host,
 			Worktree: wt, Parent: parent, CreatedAt: createdAt,
 		})
@@ -1111,6 +1123,77 @@ func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
 		return gitCloneCtx(ctx, sink, dir, req.RemoteURL, req.Branch, req.NewBranch)
 	})
 	httpx.WriteJSON(w, http.StatusAccepted, map[string]any{"job": job})
+}
+
+type initRepoReq struct {
+	Name string `json:"name"`
+}
+
+// gitInitDefaultBranch is the branch `git init` should start on: the user's own
+// init.defaultBranch when they set one, else "main". Left to git's built-in
+// default it would be "master" plus an advice banner — and the name is baked into
+// the folder for good, so it is worth being explicit.
+func gitInitDefaultBranch() string {
+	// Read from the repos root, not the new folder: this runs before init, so there
+	// is no repo yet and only global/system config can answer.
+	out, err := gitx.Run(reposRoot(), "config", "--get", "init.defaultBranch")
+	if b := strings.TrimSpace(out); err == nil && b != "" {
+		return b
+	}
+	return "main"
+}
+
+// handleInitRepo creates a brand-new working copy under ~/repos and runs `git init`
+// in it — the "start something that doesn't exist anywhere yet" path, next to the
+// clone (POST /repos) and SVN checkout (POST /repos/svn) import paths.
+//
+// Unlike those two this is synchronous: mkdir + git init touch no network and
+// finish in milliseconds, so there is nothing for a job (docs/78) to observe and
+// no proxy timeout to outlive. It answers with the same Repo shape GET /repos
+// returns, so the Console can hand the folder straight to the launch dialog.
+//
+// git init rather than a bare folder: GET /repos lists only working copies (a plain
+// folder is skipped above), so an uninitialized folder would exist on disk while
+// being invisible in the rail — launchable by path, but with no row, no worktrees,
+// no diff view and no delete. The repository starts empty and commit-less; that is
+// what Repo.Unborn reports.
+func handleInitRepo(w http.ResponseWriter, r *http.Request) {
+	var req initRepoReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	dir, ok := resolveRepoDir(name)
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "name must start with a letter or number, may contain letters/numbers plus . _ @ -, and be at most 96 characters")
+		return
+	}
+	if _, err := os.Stat(dir); err == nil {
+		httpx.WriteErr(w, http.StatusConflict, "exists", "repo already exists: "+name)
+		return
+	}
+	if repoJobActive(name) {
+		httpx.WriteErr(w, http.StatusConflict, "job_running", "an import is already running for: "+name)
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
+		return
+	}
+	branch := gitInitDefaultBranch()
+	if out, err := gitx.Combined(dir, "init", "-b", branch); err != nil {
+		// The folder is ours — the stat above proved it did not exist — so clearing it
+		// leaves no half-made working copy behind for the next attempt to trip over.
+		_ = os.RemoveAll(dir)
+		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", fmt.Sprintf("%v: %s", err, out))
+		return
+	}
+	// No applyGitIdentity here: with no remote there is no provider to resolve an
+	// identity from, and it would only unset keys that don't exist. Adding a remote
+	// later goes through the identity sync like any other working copy.
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"repo": Repo{
+		Name: name, WorkingCopyID: workingCopyID(dir), Path: dir, Branch: branch, Unborn: true,
+	}})
 }
 
 // repoDirFromPath validates {name} and ensures the working copy exists.

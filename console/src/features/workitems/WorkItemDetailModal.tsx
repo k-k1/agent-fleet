@@ -88,7 +88,8 @@ export function WorkItemDetailModal({
     () => repos.filter((r) => r.worktree && r.parent === base).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || "")),
     [repos, base],
   );
-  const canWorktree = !!baseRepo && baseRepo.vcs !== "svn";
+  // コミットがまだ無い（unborn）作業コピーでも `git worktree add` は HEAD を解決できない。
+  const canWorktree = !!baseRepo && baseRepo.vcs !== "svn" && !baseRepo.unborn;
 
   const go = () => {
     // 作業コピーがまだ 1 つも無いなら、ここで選ばせるものが無い —— clone から案内する

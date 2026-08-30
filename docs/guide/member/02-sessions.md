@@ -112,7 +112,7 @@ repository's folders.
   branch switching, cleanup and worktree deletion behave exactly as before.
 - The last folder you launched in is remembered per repository and pre-filled next time.
 
-The standalone "Clone" under **Repositories** in the left pane also lets you specify a different
+The standalone "Add" under **Repositories** in the left pane also lets you specify a different
 folder name when you specify a new branch or when a working copy with the same name already
 exists ([04](04-git.md)). This is a separate path from creating a worktree in "Start working".
 

@@ -25,7 +25,8 @@ import { useReposStore } from "./store.ts";
 import type { Repo } from "./store.ts";
 import { CloneForm } from "./CloneForm.tsx";
 import type { CloneSource } from "./CloneForm.tsx";
-import { cloneRepo } from "./clone.ts";
+import { NewFolderForm, newFolderNameOk } from "./NewFolderForm.tsx";
+import { cloneRepo, initRepo } from "./clone.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionTerminal } from "../sessions/open.ts";
@@ -46,7 +47,7 @@ interface StartModalProps {
   onPickRepo: (r: Repo) => void;
 }
 
-type Stage = "place" | "clone" | "home" | "ssm";
+type Stage = "place" | "clone" | "newdir" | "home" | "ssm";
 
 interface SsmProfile {
   id: string;
@@ -126,6 +127,25 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
       setStage("place"); // the hub stays mounted below the launch stage — leave it reset
       onPickRepo(repo);
     } else onClose(); // clone landed but the fresh list hasn't caught up — the tree has it
+  };
+
+  // --- newdir: 取り込み元が無いところから始める（~/repos/<name> を作って git init） ---
+  // クローンと同じ合流点へ流す: 作った作業コピーをそのまま 作業を始める ダイアログへ渡す。
+  const [newName, setNewName] = useState("");
+  const takenNames = new Set(repos.map((r) => r.name));
+  const doInit = async () => {
+    if (busy || !newFolderNameOk(newName, takenNames)) return;
+    setBusy(true);
+    const res = await initRepo(newName.trim(), toast);
+    setBusy(false);
+    if (!res.ok) return; // ここに留まる（理由はトーストが言った）
+    // グループ選択中なら、作った作業コピーをそのグループへ入れる（docs/52 §1）。
+    autoAddToActiveWorkingSet("repos", res.name);
+    const repo = useReposStore.getState().repos.find((r) => r.name === res.name);
+    if (repo) {
+      setStage("place"); // ハブは下に残るので、畳んだ状態に戻しておく
+      onPickRepo(repo);
+    } else onClose(); // 作れたが一覧が追いついていない — 木には出ている
   };
 
   // --- ssm: host picker + SSO handshake (NewSessionModal の SSM 面を移設, Ph3) ---
@@ -406,6 +426,15 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                   <span className="start-row-title">{tr("start.clone_title")}</span>
                 </span>
               </button>
+              {/* 取り込み元が無いところから: ホーム起動と違い「場所」を持つので、この先
+                  ずっと左ペインの行・worktree・差分・共有の単位になる。 */}
+              <button type="button" className="start-row action" onClick={() => setStage("newdir")}>
+                <Icon name="new-folder" className="start-row-ic" />
+                <span className="start-row-body">
+                  <span className="start-row-title">{tr("start.newdir_title")}</span>
+                  <span className="start-row-desc">{tr("start.newdir_desc")}</span>
+                </span>
+              </button>
             </div>
           </div>
         </div>
@@ -445,6 +474,25 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             </Button>
             <Button variant="primary" onClick={() => void doClone()} disabled={!src.cloneUrl || !!already || busy}>
               {busy ? tr("start.cloning") : tr("start.clone_continue")}
+            </Button>
+          </footer>
+        </>
+      )}
+
+      {stage === "newdir" && (
+        <>
+          <div className="ui-modal-body">
+            <NewFolderForm value={newName} onChange={setNewName} taken={takenNames} onSubmit={() => void doInit()} autoFocus />
+          </div>
+          <footer className="ui-modal-foot">
+            <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={() => setStage("place")} disabled={busy}>
+              {tr("launch.back_to_hub")}
+            </Button>
+            <Button variant="ghost" onClick={onClose} disabled={busy}>
+              {tr("common.cancel")}
+            </Button>
+            <Button variant="primary" onClick={() => void doInit()} disabled={busy || !newFolderNameOk(newName, takenNames)}>
+              {busy ? tr("start.creating_folder") : tr("start.create_and_continue")}
             </Button>
           </footer>
         </>
