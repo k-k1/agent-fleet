@@ -2,6 +2,10 @@
 
 English | [日本語](07-chat-memo.ja.md)
 
+Audience: anyone using the assistant chat or the memo queue
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 > For: members who want to knock out questions, translations, and summaries that don't warrant
 > spinning up a session. Covers the assistant chat, the "Chat" view for reading a running
 > agent's conversation, and the memo queue.
@@ -17,7 +21,7 @@ answering small questions.
 Here's how to think about **choosing between it and a session**.
 
 - **Chat** — short-to-medium questions, translations, summaries. Things like "translate this text into Japanese" or "what does this function do?", where an answer on the spot is all you need.
-- **Session** — work that actually reads and writes files, code changes, bulk processing of large files. If file output is involved, go to a session (you can hand over files with "Send" in [05 Files](05-files.md)).
+- **Session** — work that actually reads and writes files, code changes, bulk processing of large files. If file output is involved, go to a session (you can hand over files with "Send" in [05 Files](04-files.md)).
 
 Start a conversation with **+ (New chat)** in the **Assistants** section. Send with Ctrl+Enter
 (you can switch to Enter-to-send in settings). The other side's messages are labeled
@@ -53,7 +57,7 @@ rather than print a guess.
 
 The built-in **Fleet Operator** is the flagship example of "AF write": from chat it can
 direct everything from launching sessions to giving instructions and receiving completion
-reports. See [11 Fleet Operator](11-fleet-operator.md) for details.
+reports. See [11 Fleet Operator](08-organising.md) for details.
 
 For example, for a translation assistant you might put "You are a technical-document
 translator. Return only the translated text." in the persona, and "Send me text and I'll
@@ -206,10 +210,10 @@ flushing them to a session together later** (the **Memo queue** in the left pane
 say, jot down "want to fix that" items on your phone during the commute, then hand them
 over in one go at your PC.
 
-- **Capture** — write into "Add a quick memo… (send them together later)" and press "Add". You can also open a file and capture from "Send" in [05](05-files.md). Memos are grouped by repository and category.
+- **Capture** — write into "Add a quick memo… (send them together later)" and press "Add". You can also open a file and capture from "Send" in [05](04-files.md). Memos are grouped by repository and category.
 - **Tidy up with AI** — select memos and hit **"Organize the selected memos with an assistant"**: it turns scribbles into clear instructions and suggests categories. The result is **always previewed** and nothing is applied until you approve with "Apply N item(s)" (nothing gets rewritten behind your back).
 - **Send** — pick a running destination session and send in bulk with **"Send selection"**. You can also send a whole category at once ("Send this category together"). If there's no running session to send to, start one first.
 
 ---
 
-For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../../dev/04-workspace-agent.md) · [dev/03 Control Plane (memo queue)](../../dev/03-control-plane.md)
+For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../dev/04-workspace-agent.md) · [dev/03 Control Plane (memo queue)](../dev/03-control-plane.md)

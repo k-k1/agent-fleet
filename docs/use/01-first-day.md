@@ -2,6 +2,10 @@
 
 English | [日本語](01-first-day.ja.md)
 
+Audience: someone opening the Console for the first time
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 > Audience: members opening the Console for the first time. We walk in order through logging
 > in, the welcome card (2 steps + picking a goal), cloning your first repository, and
 > whether it's OK to stop the workspace at the end of the day.
@@ -32,7 +36,7 @@ Next comes a two-way choice: **"Where do you want to start?"** (you can use both
 - **Ask AI a question or for a translation** — "Start chatting" opens a chat with the
   assistant right away. No git and no terminal needed ([07 Chat and memos](07-chat-memo.md)).
 - **Develop in a repository** — "Go to dev setup" expands the remaining steps.
-  1. **Connect a git provider** (optional) — sign in to GitHub / Bitbucket. Required if you'll clone or push private repositories ([04 Repositories and git](04-git.md)).
+  1. **Connect a git provider** (optional) — sign in to GitHub / Bitbucket. Required if you'll clone or push private repositories ([04 Repositories and git](03-code.md)).
   2. **Clone a repository and start a session** — from **"Start"** on the workspace action bar you can clone and launch in one go ([02 Sessions](02-sessions.md)).
 
 The card disappears once you create your first session or start your first chat.
@@ -64,7 +68,7 @@ Open **"Add"** from **Repositories** in the left pane and leave **Kind** on **Gi
 Press **"Clone"** and the fetch starts; when it finishes, the repository appears in the
 **Repositories** list. From **"Launch"** on that row you can start your first session right
 away. Detailed steps and common pitfalls are collected in
-[04 Repositories and git](04-git.md).
+[04 Repositories and git](03-code.md).
 
 If you are starting something that does not exist anywhere yet, there is nothing to clone. Use
 **"+ Start" → "Start in a new folder…"** (or "Add" → Kind "New folder") to create an empty
@@ -89,7 +93,7 @@ inactivity** (idle auto-stop). It saves resources, so if stopping it explicitly 
 chore, it's fine to just leave it.
 
 However, **uncommitted changes exist only inside the workspace**. For long-running work,
-committing and pushing frequently is the safe habit ([04](04-git.md)).
+committing and pushing frequently is the safe habit ([04](03-code.md)).
 
 ### "A new version is available" and the **Restart needed** badge
 
@@ -111,8 +115,8 @@ The badge disappears on its own once the workspace is back on the current versio
 
 The things that tend to trip people up on day one (claude showing a login screen, a session
 that won't resume, a failed clone, and so on) are collected in
-[09 Troubleshooting](09-troubleshooting.md).
+[09 Troubleshooting](11-troubleshooting.md).
 
 ---
 
-For those who want to know how it works: [dev/01 Overall architecture](../../dev/01-architecture.md)
+For those who want to know how it works: [dev/01 Overall architecture](../dev/01-architecture.md)

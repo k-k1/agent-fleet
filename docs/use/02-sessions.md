@@ -2,6 +2,10 @@
 
 English | [日本語](02-sessions.ja.md)
 
+Audience: anyone running and steering agents
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 > Audience: members who work with sessions day to day. Covers creating new sessions, reading
 > their state, pausing and tidying up work, the conditions for resuming, and duplicating a
 > conversation and renaming branches.
@@ -27,7 +31,7 @@ working folder.
 
 claude / codex / cursor / opencode / copilot / kiro / agy appear in "Start" once you connect the corresponding
 agent (connections: [06 Agents](06-agents.md)). (**ssm**, which logs in to another host, is
-covered in [08 Advanced usage](08-advanced.md).)
+covered in [08 Advanced usage](10-integrations.md).)
 
 ## Execution method — Managed and Terminal (CLI)
 
@@ -120,7 +124,7 @@ repository's folders.
 
 The standalone "Add" under **Repositories** in the left pane also lets you specify a different
 folder name when you specify a new branch or when a working copy with the same name already
-exists ([04](04-git.md)). This is a separate path from creating a worktree in "Start working".
+exists ([04](03-code.md)). This is a separate path from creating a worktree in "Start working".
 
 ## Reading state — badges and notifications
 
@@ -201,7 +205,7 @@ Archived sessions are a "shelf" that cleanup does not touch (restore them from t
 browser). "Delete old ones" in the archive list removes items older than 30 days from the list.
 
 You can also ask the fleet operator to do the same survey and tidy-up from chat
-([11](11-fleet-operator.md)).
+([11](08-organising.md)).
 
 ## When you can — and can't — resume
 
@@ -215,7 +219,7 @@ if its working folder is missing.
 When you open a stopped session, the history is first shown read-only, and **"Resume"** restarts
 the conversation. After resuming, it continues with the execution method that was saved.
 **Ctrl+click** (or middle-click) opens it **in a new pane** while keeping your
-current view ([03 Terminal](03-terminal.md)).
+current view ([03 Terminal](05-terminal.md)).
 
 Even while the workspace is stopped, **the list itself stays visible**. You can't operate on the
 contents, but you can check "which sessions were there" even from a phone.
@@ -380,4 +384,4 @@ review the content and choose **"Approve and send"** or **"Reject"**.
 
 ---
 
-For those who want to know how it works: [dev/04 Workspace Agent (session model)](../../dev/04-workspace-agent.md)
+For those who want to know how it works: [dev/04 Workspace Agent (session model)](../dev/04-workspace-agent.md)

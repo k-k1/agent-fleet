@@ -2,6 +2,10 @@
 
 English | [日本語](06-agents.ja.md)
 
+Audience: anyone choosing and connecting an agent
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 > For: members deciding which agent to use and connecting it. Covers how the connections
 > differ, model selection, and the RTK setting shared by the three agents. All connections
 > are made from **⚙Settings → the "Agents" tab** (the workspace must be running).
@@ -9,7 +13,7 @@ English | [日本語](06-agents.ja.md)
 ## Supported agents and how to choose
 
 Six major CLI coding agents are supported (the experimental Antigravity (agy) slot is
-covered in [08](08-advanced.md)). Connection changes take effect immediately; behavior
+covered in [08](10-integrations.md)). Connection changes take effect immediately; behavior
 settings apply **from each agent's new sessions**.
 
 | | claude | codex | opencode | copilot | cursor | kiro |
@@ -49,8 +53,8 @@ new session ([02](02-sessions.md)).
 
 The table at the top compares the six main agents. This one adds Antigravity (agy) and
 the non-agent session kinds (shell / SSM), and rolls in the cross-cutting features
-covered elsewhere in this guide — worktrees ([04](04-git.md)), scheduled runs and the
-chat bridge ([11](11-fleet-operator.md), [08](08-advanced.md)). ✓ = supported,
+covered elsewhere in this guide — worktrees ([04](03-code.md)), scheduled runs and the
+chat bridge ([11](08-organising.md), [08](10-integrations.md)). ✓ = supported,
 — = not applicable / not supported.
 
 | Capability | claude | codex | cursor | copilot | kiro | agy | opencode | shell | ssm |
@@ -98,7 +102,7 @@ kiro is **not** available as an assistant chat (it has no headless chat mode).
 > without asking each time. shell / SSM sessions run the string you send **verbatim**.
 > These actions can be destructive or irreversible. Keep backups, use least-privilege
 > credentials, and lean on the approval gates (shell-command confirmation, chat-bridge
-> approve / deny). See also [11 Fleet operator](11-fleet-operator.md).
+> approve / deny). See also [11 Fleet operator](08-organising.md).
 
 ## Claude
 
@@ -118,7 +122,7 @@ Claude's behavior can be adjusted on the same screen.
 
 > **If "Select login method" or a login screen shows up** → it's almost always a
 > transient session-side state, and the connection itself is still alive. For the fix, see
-> [09 Troubleshooting](09-troubleshooting.md). The traditional approach of running
+> [09 Troubleshooting](11-troubleshooting.md). The traditional approach of running
 > `/login` manually inside the terminal also still works.
 
 ## Codex
@@ -244,4 +248,4 @@ Instructions come in three layers, and this setting is the **middle** one.
 
 ---
 
-For those who want to know how it works: [dev/08 Integrations (auth methods)](../../dev/08-integrations.md) · [dev/04 Workspace Agent (kind integration / RTK mechanism)](../../dev/04-workspace-agent.md)
+For those who want to know how it works: [dev/08 Integrations (auth methods)](../dev/08-integrations.md) · [dev/04 Workspace Agent (kind integration / RTK mechanism)](../dev/04-workspace-agent.md)

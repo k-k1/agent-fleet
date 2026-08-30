@@ -1,6 +1,10 @@
 # 03. Terminal — working the black screen, copy & paste, shortcuts, phones
 
-English | [日本語](03-terminal.ja.md)
+English | [日本語](05-terminal.ja.md)
+
+Audience: anyone using the terminal, panes, or a preview of a running app
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
 
 > Audience: members who operate a session's terminal. Covers copy & paste, shortcuts, using it
 > on a phone, and adjusting the font and size. Even if you're comfortable with CLIs, a browser
@@ -39,7 +43,7 @@ even when they're displayed wrapped. No need to copy a long URL and paste it bac
   each keep their own size, and the one belonging to the focused pane is what moves (the
   same number you see in Settings › Display). Zooming the whole browser is still
   **Ctrl+= / Ctrl+-**.
-- When the file tree has focus: **↑ ↓ ← → / Enter** to move and open/close, **Ctrl+↑ ↓** to jump between folders, **Shift+↑ ↓** to scroll the viewer ([05 Files](05-files.md)).
+- When the file tree has focus: **↑ ↓ ← → / Enter** to move and open/close, **Ctrl+↑ ↓** to jump between folders, **Shift+↑ ↓** to scroll the viewer ([05 Files](04-files.md)).
 
 ### Command palette
 
@@ -106,9 +110,9 @@ These settings are **saved on the server** and managed per user. Your office PC,
 even a login from another browser — the same font and size **follow you**.
 
 (Theme, colors, and the file viewer's display settings are on the same "Display" tab. See
-[05 Files](05-files.md) for details. Note that the terminal background stays dark even on the
+[05 Files](04-files.md) for details. Note that the terminal background stays dark even on the
 light theme.)
 
 ---
 
-For those who want to know how it works: [dev/02 Console (the display system)](../../dev/02-console.md)
+For those who want to know how it works: [dev/02 Console (the display system)](../dev/02-console.md)

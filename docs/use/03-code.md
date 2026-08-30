@@ -1,6 +1,10 @@
 # 04. Repositories and git — cloning, reviewing changes, committing, pushing
 
-English | [日本語](04-git.ja.md)
+English | [日本語](03-code.ja.md)
+
+Audience: anyone working with repositories, branches and commits
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
 
 > Audience: members who clone repositories and work with git. Covers connecting a git provider,
 > cloning, the built-in git provider, launching from a repository row, committing in the source
@@ -198,4 +202,4 @@ toggle** to select SVN, then enter the **Repository URL** and, if needed, a **su
 
 ---
 
-For those who want to know how it works: [dev/04 Workspace Agent (git / fs side)](../../dev/04-workspace-agent.md) · the built-in provider is covered in [dev/91 Internal git](../../dev/91-internal-git.md)
+For those who want to know how it works: [dev/04 Workspace Agent (git / fs side)](../dev/04-workspace-agent.md) · the built-in provider is covered in [dev/91 Internal git](../dev/91-internal-git.md)

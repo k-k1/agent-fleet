@@ -19,33 +19,33 @@ Updated: 2026-08
 
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
-| セッションの起動（エージェント・モデル・effort・開始モード）| メンバー | ワークスペース操作バー → Start | [02 セッション](../guide/member/02-sessions.ja.md) |
-| 新しい git worktree で動かす | メンバー | Start ダイアログ | [04 Git](../guide/member/04-git.ja.md) |
-| チャットミラー — 実行中のエージェントを追う・操縦する | メンバー | メイン領域 | [02 セッション](../guide/member/02-sessions.ja.md) |
+| セッションの起動（エージェント・モデル・effort・開始モード）| メンバー | ワークスペース操作バー → Start | [02 セッション](../use/02-sessions.ja.md) |
+| 新しい git worktree で動かす | メンバー | Start ダイアログ | [04 Git](../use/03-code.ja.md) |
+| チャットミラー — 実行中のエージェントを追う・操縦する | メンバー | メイン領域 | [02 セッション](../use/02-sessions.ja.md) |
 | 質問・プラン・権限確認に答える | メンバー | ミラー | どのエージェントが尋ねるかは [agents.md](agents.ja.md) |
 | スキル / コマンドのピッカー | メンバー | ミラーの入力欄 | [agents.md](agents.ja.md) |
-| セッションに繋がった実端末 | メンバー | メイン領域 | [03 ターミナル](../guide/member/03-terminal.ja.md) |
-| 停止したセッションの再開 | メンバー | 左ペイン → そのセッション | [02 セッション](../guide/member/02-sessions.ja.md) |
-| 会話を新しいセッションへ引き継ぐ | メンバー | セッションの ⋯ メニュー | [02 セッション](../guide/member/02-sessions.ja.md) |
+| セッションに繋がった実端末 | メンバー | メイン領域 | [03 ターミナル](../use/05-terminal.ja.md) |
+| 停止したセッションの再開 | メンバー | 左ペイン → そのセッション | [02 セッション](../use/02-sessions.ja.md) |
+| 会話を新しいセッションへ引き継ぐ | メンバー | セッションの ⋯ メニュー | [02 セッション](../use/02-sessions.ja.md) |
 | 過去の発言からの分岐 | メンバー | ミラーの過去の発言 | どのエージェントで可能かは [agents.md](agents.ja.md) |
-| 別メンバーへセッションを引き継ぐ | メンバー | セッションの ⋯ メニュー | [02 セッション](../guide/member/02-sessions.ja.md) |
-| セッションの読み取り共有 | メンバー | 共有セッション | [02 セッション](../guide/member/02-sessions.ja.md) |
-| 転写のマーカー | メンバー | ミラーの選択範囲 | — |
-| このセッションが直したファイル | メンバー | ミラーのヘッダ | — |
-| コンテキスト使用量ゲージ | メンバー | セッションのヘッダ | [06 エージェント](../guide/member/06-agents.ja.md) |
-| 中断の検知と自動再開 | メンバー | 自動 | — |
+| 別メンバーへセッションを引き継ぐ | メンバー | セッションの ⋯ メニュー | [02 セッション](../use/02-sessions.ja.md) |
+| セッションの読み取り共有 | メンバー | 共有セッション | [02 セッション](../use/02-sessions.ja.md) |
+| マーカー | メンバー | ミラーの選択範囲 | [09 他の人と扱う](../use/09-collaboration.ja.md) |
+| 変更ファイル | メンバー | セッションの ⋯ メニュー | [09 他の人と扱う](../use/09-collaboration.ja.md) |
+| コンテキスト使用量ゲージ | メンバー | セッションのヘッダ | [06 エージェント](../use/06-agents.ja.md) |
+| 中断の検知と自動再開 | メンバー | 自動 | [09 他の人と扱う](../use/09-collaboration.ja.md) |
 
 ## コードを扱う
 
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
-| リポジトリの取り込み | メンバー | リポジトリ → Clone | [04 Git](../guide/member/04-git.ja.md) |
-| 空のフォルダから始める | メンバー | リポジトリ → 新規フォルダ | [04 Git](../guide/member/04-git.ja.md) |
-| コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [04 Git](../guide/member/04-git.ja.md) |
-| worktree | メンバー | 各リポジトリの下 | [04 Git](../guide/member/04-git.ja.md) |
-| ファイルツリーとビューア | メンバー | ファイル | [05 ファイル](../guide/member/05-files.ja.md) |
-| Markdown / コードの編集 | メンバー | ファイル → 各ファイル | [05 ファイル](../guide/member/05-files.ja.md) |
-| `.drawio` の図 | メンバー | ファイル → `.drawio` | [05 ファイル](../guide/member/05-files.ja.md) |
+| リポジトリの取り込み | メンバー | リポジトリ → Clone | [04 Git](../use/03-code.ja.md) |
+| 空のフォルダから始める | メンバー | リポジトリ → 新規フォルダ | [04 Git](../use/03-code.ja.md) |
+| コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [04 Git](../use/03-code.ja.md) |
+| worktree | メンバー | 各リポジトリの下 | [04 Git](../use/03-code.ja.md) |
+| ファイルツリーとビューア | メンバー | ファイル | [05 ファイル](../use/04-files.ja.md) |
+| Markdown / コードの編集 | メンバー | ファイル → 各ファイル | [05 ファイル](../use/04-files.ja.md) |
+| `.drawio` の図 | メンバー | ファイル → `.drawio` | [05 ファイル](../use/04-files.ja.md) |
 | ローカル Web アプリのブラウザペイン | メンバー | ワークスペース操作バー → プレビュー | [browser-pane.md](browser-pane.ja.md) |
 | エージェントが持つ Chromium への接続 | メンバー | エージェントが渡すリンク | [browser-pane.md](browser-pane.ja.md) |
 
@@ -53,21 +53,21 @@ Updated: 2026-08
 
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
-| 作業グループ | メンバー | 左ペインの最上部 | [02 セッション](../guide/member/02-sessions.ja.md) |
-| メモキュー | メンバー | メモキュー | [07 チャットとメモ](../guide/member/07-chat-memo.ja.md) |
+| 作業グループ | メンバー | 左ペインの最上部 | [02 セッション](../use/02-sessions.ja.md) |
+| メモキュー | メンバー | メモキュー | [07 チャットとメモ](../use/07-chat-memo.ja.md) |
 | 作業項目の受信箱（Issue / チケット / プルリクエスト）| メンバー | 課題管理 | どのプロバイダが何を出すかは [repos.md](repos.ja.md) |
-| 定時実行（無人実行）| メンバー | スケジュール | [11 フリート運用](../guide/member/11-fleet-operator.ja.md) |
-| 通知センター | メンバー | 画面最上部のバー | [12 設定](../guide/member/12-settings.ja.md) |
-| アシスタントチャット | メンバー | アシスタント | [07 チャットとメモ](../guide/member/07-chat-memo.ja.md) |
-| チャットブリッジ（Discord / Slack）| メンバー | 設定 → チャット連携 | [08 応用](../guide/member/08-advanced.ja.md) |
-| 返信サジェスト | メンバー | ミラーの入力欄 | — |
-| キーボード操作体系 | メンバー | 設定 → キー操作 | [08 応用](../guide/member/08-advanced.ja.md) |
-| 音声読み上げ | メンバー | 設定 → 読み上げ | [12 設定](../guide/member/12-settings.ja.md) |
+| 定時実行（無人実行）| メンバー | スケジュール | [11 フリート運用](../use/08-organising.ja.md) |
+| 通知センター | メンバー | 画面最上部のバー | [12 設定](../use/12-settings.ja.md) |
+| アシスタントチャット | メンバー | アシスタント | [07 チャットとメモ](../use/07-chat-memo.ja.md) |
+| チャットブリッジ（Discord / Slack）| メンバー | 設定 → チャット連携 | [08 応用](../use/10-integrations.ja.md) |
+| 返信候補 | メンバー | ミラーの入力欄 | [09 他の人と扱う](../use/09-collaboration.ja.md) |
+| キーボード操作体系 | メンバー | 設定 → キー操作 | [08 応用](../use/10-integrations.ja.md) |
+| 音声読み上げ | メンバー | 設定 → 読み上げ | [12 設定](../use/12-settings.ja.md) |
 
 ## 自分の設定
 
 いずれも**設定**の中で、タブが「どこ」です。タブの一覧は
-[settings.md](settings.ja.md)、意味は [12 設定](../guide/member/12-settings.ja.md)。
+[settings.md](settings.ja.md)、意味は [12 設定](../use/12-settings.ja.md)。
 
 | 機能 | 誰が | どこ |
 |---|---|---|
@@ -103,8 +103,8 @@ Updated: 2026-08
 | 連携サーバーの配布 | テナント管理者 | MCP 配布 | [admin 04](../guide/admin/04-mcp-egress.ja.md) |
 | 監査 | テナント管理者 | 監査 | [admin 03](../guide/admin/03-audit-usage.ja.md) |
 | 稼働時間とクラウド費用 | テナント管理者 | 稼働時間 / クラウド費用 | [admin 03](../guide/admin/03-audit-usage.ja.md) |
-| 削除ロック | メンバー | 対象の項目 | — |
-| 掃除とごみ箱 | メンバー | 掃除 | — |
+| 削除ロック | メンバー | セッションの ⋯ メニュー | [09 他の人と扱う](../use/09-collaboration.ja.md) |
+| 掃除とごみ箱 | メンバー | 掃除 | [09 他の人と扱う](../use/09-collaboration.ja.md) |
 
 ## 配備を運用する
 
@@ -114,7 +114,7 @@ Updated: 2026-08
 | 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [operator 01](../guide/operator/01-install.ja.md) / [02](../guide/operator/02-operations.ja.md) |
 | 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [operator 03](../guide/operator/03-security.ja.md) |
 | 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 03](../guide/operator/03-security.ja.md) |
-| 監視連携 | 配備管理者 | 設定 → 運用・監視 | [member 10](../guide/member/10-ops-mcp-poc.ja.md) |
+| 監視連携 | 配備管理者 | 設定 → 運用・監視 | [member 10](../use/13-ops-tooling.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
 | コンテナ内のロール別ドキュメント | — | 自動 | [roles.md](roles.ja.md) |
 
@@ -122,5 +122,7 @@ Updated: 2026-08
 
 「—」は、**機能は在って動くのに、利用者向けのページがどこにも無い**という意味です。
 旧ガイドが追いつけなかった箇所で、**このカタログを作った理由そのもの**であり、
-埋めるのが P2 の仕事です——転写のマーカー、直したファイル、返信サジェスト、
-接続元の制限、連携アプリの OAuth、削除ロック、掃除とごみ箱、中断の自動再開。
+P2 で大半は埋まりました——マーカー・変更ファイル・返信候補・削除ロック・掃除とごみ箱・
+中断の自動再開は [09 他の人と扱う](../use/09-collaboration.ja.md) にあります。
+残っているのは管理者側の 2 つ（接続元の制限・連携アプリの OAuth）で、次に
+[admin/](../admin/README.ja.md) で埋めます。

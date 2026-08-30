@@ -83,7 +83,7 @@ curl -s http://127.0.0.1:8099/api/workspace            # {"state":"running"|"sto
 # 旧来の手動経路: 端末で claude → /login（⧉ sign-in URL でURL取得）も併用可
 ```
 
-利用者視点の詳しい手順は [guide/member/01-first-day.ja.md](guide/member/01-first-day.ja.md)。
+利用者視点の詳しい手順は [use/01-first-day.ja.md](use/01-first-day.ja.md)。
 
 ## 6. コミット規約
 

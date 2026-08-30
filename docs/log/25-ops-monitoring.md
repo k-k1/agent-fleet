@@ -157,7 +157,7 @@ CP には interval ジョブの基盤（reaper / usage サンプラー等）が�
 | **3. イベント駆動** | webhook ingress（PagerDuty v3 署名）→ memo キュー + 通知。自動初動は ops ボット identity の ADR 決着後に | CP: /hooks、脅威モデル追記 | 中〜大（身元問題込み） |
 | **4. 発展** | スケジュールレポート / write 系 runbook（承認ゲート付き）/ Teams / hosted MCP 許可制 | — | 需要を見て |
 
-Phase 0 は 2026-07-12 に着手済み。手順は [guide/member/10-ops-mcp-poc.ja.md](../guide/member/10-ops-mcp-poc.ja.md)。dev コンテナでの事前検証結果:
+Phase 0 は 2026-07-12 に着手済み。手順は [guide/member/10-ops-mcp-poc.ja.md](../use/13-ops-tooling.ja.md)。dev コンテナでの事前検証結果:
 - mcp-grafana v0.17.1（Go 単一バイナリ 49MB）は Grafana 未接続・ダミートークンでも起動し tools/list 応答（遅延接続）。既定 65 ツール、`-disable-write -disable-admin` で 52 ツール・create/update/delete/install 系ゼロを実測。Grafana データソース経由の CloudWatch/Athena クエリツールも同梱（カテゴリ別 disable 可）。
 - PagerDuty 公式 self-host は PyPI `pagerduty-mcp`（`uvx pagerduty-mcp`、env `PAGERDUTY_USER_API_KEY`）で**既定 read-only**、write は `--enable-write-tools` 明示。hosted（mcp.pagerduty.com）は既定で write も出るため PoC では非推奨。
 - awslabs CloudWatch は `uvx awslabs.cloudwatch-mcp-server@latest` + `AWS_PROFILE`（SSO チェーン = 既存 ssm 接続と同じ資格で追加秘密なし）。

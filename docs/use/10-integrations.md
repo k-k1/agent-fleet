@@ -1,6 +1,10 @@
 # 08. Going further — browser pane / lightweight preview, external integrations, other hosts, environment settings
 
-English | [日本語](08-advanced.ja.md)
+English | [日本語](10-integrations.ja.md)
+
+Audience: anyone connecting the workspace to something outside it
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
 
 > Audience: members who are comfortable with the basics and want to go one step further. This chapter covers
 > checking services running inside your workspace (browser pane / lightweight preview), remote control from your
@@ -70,7 +74,7 @@ When the browser pane fails to render properly, a status appears in the pane.
 |------|------|------|
 | `target-unreachable` | The browser started, but the connection to that port/path hasn't been established yet. **Waiting for the dev server to start** is also this state. | Check the port number, the path, and whether the server is listening; once it's up, press **"Reload"**. If it persists, press **"Reconnect"**. |
 | `disconnected` | Communication with the pane (WebSocket) was lost. This is not necessarily a browser crash. | Check that the workspace is running and connectivity is back, then press **"Reconnect"**. |
-| `crashed` | The browser inside the workspace terminated abnormally and cannot continue that display. | Reopen with **"Reconnect"**. If it keeps happening, check the workspace's memory usage and the target app ([09](09-troubleshooting.md)). |
+| `crashed` | The browser inside the workspace terminated abnormally and cannot continue that display. | Reopen with **"Reconnect"**. If it keeps happening, check the workspace's memory usage and the target app ([09](11-troubleshooting.md)). |
 
 If you try to open it while the workspace is stopped or starting, a dedicated notice appears. Reopen once the
 workspace is running.
@@ -128,7 +132,7 @@ replies.
   session as-is. Questions can be answered with choice buttons, plan approvals with "Approve / Reject" buttons,
   and permission requests with "Allow / Deny" buttons (button coverage varies by agent kind).
 - **Fleet operator** — write in the standing thread "🛰 Fleet Operator" to talk with the
-  [11 fleet operator](11-fleet-operator.md) from chat (the same conversation as the operator on the Console
+  [11 fleet operator](08-organising.md) from chat (the same conversation as the operator on the Console
   side). Destructive operations initiated from chat (deletion etc.) pause for an "Approve / Reject" button
   before executing.
 - **Just want to silence notifications** — under Personal → the "Notifications" tab, **Service notifications**
@@ -178,7 +182,7 @@ what goes is as follows.
 
 In short: "**only `~/repos` is deleted, and the container is rebuilt from the latest image. The rest of home
 (logins, connections, `~/.local`, etc.) stays**". Use it when you want to pick up an image update or the
-environment is broken. **Uncommitted changes are lost**, so push / commit before running it ([04](04-git.md)).
+environment is broken. **Uncommitted changes are lost**, so push / commit before running it ([04](03-code.md)).
 
 ### Cleaning home (an even deeper reset)
 
@@ -196,4 +200,4 @@ Both operations **lose uncommitted changes**.
 
 ---
 
-For those who want the internals: browser pane and lightweight preview, MCP, and SSM are in [dev/08 External integrations](../../dev/08-integrations.md); recreate behavior is in [dev/04 Workspace Agent](../../dev/04-workspace-agent.md)
+For those who want the internals: browser pane and lightweight preview, MCP, and SSM are in [dev/08 External integrations](../dev/08-integrations.md); recreate behavior is in [dev/04 Workspace Agent](../dev/04-workspace-agent.md)

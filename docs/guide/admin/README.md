@@ -5,7 +5,7 @@ English | [日本語](README.ja.md)
 You are your team's **tenant administrator (tenant_admin)**. From the browser's tenant settings you add
 members, keep track of how resources are being used, and review audit logs and usage. Many
 administrators are also developing members themselves. For everyday development operations, read
-[member/](../member/README.md). Here we talk only about the "managing the team" side.
+[member/](../../use/README.md). Here we talk only about the "managing the team" side.
 
 This volume is written to be readable on its own, but the internal "mechanics" live in the
 developer-facing [dev/](../../dev/README.md). To avoid duplicating facts, we link you there

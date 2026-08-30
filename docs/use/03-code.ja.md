@@ -1,6 +1,10 @@
 # 04. リポジトリと git — クローン・変更の確認・コミット・push
 
-[English](04-git.md) | 日本語
+[English](03-code.md) | 日本語
+
+Audience: リポジトリ・ブランチ・コミットを扱う人
+Source of truth: Console そのもの（画面と食い違ったら画面が正）
+Updated: 2026-08
 
 > 対象: リポジトリをクローンしてgit操作をするメンバー。gitプロバイダの接続、クローン、
 > 内蔵のgitプロバイダ、リポジトリ行からの起動、コミットグラフビューでのコミット、pushと認証を扱います。
@@ -191,4 +195,4 @@ git だけでなく **SVN** のリポジトリでも作業できます。クロ�
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（git / fs 面）](../../dev/04-workspace-agent.md)・内蔵プロバイダは [dev/91 内部 git](../../dev/91-internal-git.md)
+仕組みを知りたい人へ: [dev/04 Workspace Agent（git / fs 面）](../dev/04-workspace-agent.md)・内蔵プロバイダは [dev/91 内部 git](../dev/91-internal-git.md)

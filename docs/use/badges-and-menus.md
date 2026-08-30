@@ -2,6 +2,10 @@
 
 English | [日本語](badges-and-menus.ja.md)
 
+Audience: anyone wondering what a mark on the screen means
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 > Audience: anyone who wants to check what the marks in the left pane mean, or what a right-click can do.
 > Menu items vary with the target's type, its state, your permissions, and the workspace state.
 
@@ -41,7 +45,7 @@ automatic tidying — [02](02-sessions.md#tidying-up-in-bulk-cleanup)).
 | Uncommitted | There are uncommitted changes |
 | = parent | Same commit as the parent working copy |
 | unmerged N | There are N worktree-specific commits not contained in the parent |
-| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from the parent"** in the menu brings them in ([04](04-git.md)) |
+| parent+N, FF ok | The worktree's HEAD is contained in the parent, which is N commits ahead. **"Fast-forward from the parent"** in the menu brings them in ([04](03-code.md)) |
 | diverged N↕M, no FF | Both the worktree and the parent have their own commits; a merge or rebase is needed |
 | n/a | The relation to the parent can't be determined (detached HEAD etc.) |
 | ↑N | N commits ahead of origin |
@@ -62,7 +66,7 @@ A collapsed parent repository also aggregates the sessions of the worktrees unde
 - **"From the operator", "Scheduled", "Manual run", "Auto-resume", "From <name>"** in the chat view — where a
   prompt you did not type came from: the fleet operator, a schedule, an auto-resume after an interruption, and
   [a message from another session](02-sessions.md#messages-between-sessions).
-- **"Paused"** on a schedule row — that schedule is suspended ([11](11-fleet-operator.md)).
+- **"Paused"** on a schedule row — that schedule is suspended ([11](08-organising.md)).
 - **"N awaiting approval"** on shared sessions — proposals from a recipient are waiting for you
   ([02](02-sessions.md#sharing-a-conversation-shared-sessions)).
 - **"Safe" / "Review" / "Keep"** in the cleanup modal — whether it is fine to tidy away
@@ -109,7 +113,7 @@ create a new branch based at that commit. While viewing a submodule, the branch-
 At the top right of a pane you get, depending on its content, **toggle wrapping**, **pop out into another tab**
 (the pane moves into a browser tab of its own) and **close** (middle-click / Ctrl+click closes without
 confirmation). Panes that cannot be popped out don't show the button
-([03](03-terminal.md#arranging-multiple-views-panes)).
+([03](05-terminal.md#arranging-multiple-views-panes)).
 
 ## When a menu doesn't appear
 
@@ -119,4 +123,4 @@ confirmation). Panes that cannot be popped out don't show the button
 
 ---
 
-Related: [Sessions](02-sessions.md) · [Repositories and git](04-git.md) · [Files](05-files.md)
+Related: [Sessions](02-sessions.md) · [Repositories and git](03-code.md) · [Files](04-files.md)

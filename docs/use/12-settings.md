@@ -2,6 +2,10 @@
 
 English | [日本語](12-settings.ja.md)
 
+Audience: anyone looking for a setting
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 > Audience: members who want to find where a setting lives and what an item actually changes. How each setting is
 > *used* belongs to the other chapters, so read this one as a **map**. Items with a fuller explanation elsewhere
 > link to that chapter.
@@ -49,12 +53,12 @@ Everything about appearance.
 - **Colour theme** — besides the app itself, you can theme the **session**, **shared session** and **assistant**
   surfaces separately ("inherit" follows the app theme). Different colours per surface make a grid of panes
   readable at a glance.
-- **Terminal** — font and font size ([03](03-terminal.md)).
-- **File viewer** — tab width, line numbers, wrapping, minimap, Markdown rendering ([05](05-files.md)).
+- **Terminal** — font and font size ([03](05-terminal.md)).
+- **File viewer** — tab width, line numbers, wrapping, minimap, Markdown rendering ([05](04-files.md)).
 - **Reader view** / **file icons** (icon set).
 - **Main area layout** — **split panes** (drag the dividers) or **tabbed grid** (each cell switches by tab).
   Stored **on this device only**, and the two layouts are remembered separately, so moving between them does not
-  disturb either ([03](03-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
+  disturb either ([03](05-terminal.md)). If you switch often, the same choice sits in **Appearance** (the paint
   can) in the top bar.
 
 ### Account
@@ -116,13 +120,13 @@ Reads out replies from sessions and assistants.
 
 - **Audio notifications** on / off (the entry point into the speech tab's detail).
 - **Service notifications** — stop sending to Discord / Slack **without disconnecting**. The connection itself
-  lives in the "Chat integration" tab ([08](08-advanced.md)).
+  lives in the "Chat integration" tab ([08](10-integrations.md)).
 - **Allow desktop notifications** — asks the browser for permission.
 - History is in the **notification centre** (last 7 days), opened from the bell in the top bar.
 
 ### Assistant
 
-The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [11](11-fleet-operator.md)).
+The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [11](08-organising.md)).
 
 - **Output language** — follow the input / 日本語 / English.
 - **AI title suggestions** — whether the rename dialog offers "let AI suggest".
@@ -135,7 +139,7 @@ The behaviour of assistant chat and the fleet operator ([07](07-chat-memo.md), [
   within it are handled in one turn), **quiet completion reports** (a normal completion delivers the card and
   the notification but takes no turn).
 - **Autopilot** — carries questions and plan approvals through automatically. Off by default
-  ([11](11-fleet-operator.md)).
+  ([11](08-organising.md)).
 - **Auto-resume after an interruption** — resumes a turn cut short by a dropped connection or a temporary rate
   limit. On by default.
 - **Automatic context compaction** and its **threshold** — summarise and hand a long conversation forward.
@@ -165,18 +169,18 @@ limit resets, and auto-resume of an interrupted turn.
 ### Git hosting
 
 GitHub / Bitbucket (authentication for clone / push). **Connecting GitHub also connects GitHub Copilot.**
-→ [04 Repositories and git](04-git.md)
+→ [04 Repositories and git](03-code.md)
 
 ### Ops & monitoring
 
 Connect PagerDuty / Grafana / CloudWatch / AWS so the **SRE assistant** can talk through an incident against
 real data. CloudWatch and AWS only need a profile picked from your SSM connections — no secret to type. AWS
-**write tools are off by default**. → [10 Ops tooling](10-ops-mcp-poc.md)
+**write tools are off by default**. → [10 Ops tooling](13-ops-tooling.md)
 
 ### Chat integration
 
 Connect a Discord / Slack bot to follow session progress in chat and drive it by replying.
-→ [08 Going further](08-advanced.md#connecting-discord--slack-chat-bridge)
+→ [08 Going further](10-integrations.md#connecting-discord--slack-chat-bridge)
 
 ### MCP servers
 
@@ -209,7 +213,7 @@ search.
 ### MCP tokens
 
 Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
-→ [08 Going further](08-advanced.md#driving-your-workspace-from-an-external-claude-mcp)
+→ [08 Going further](10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)
 
 ---
 
@@ -253,18 +257,18 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
 
 Timezone, Node.js / Java / Go versions, the table of effective tool versions, **agent CLI updates** (off by
 default), and applying an Agent Fleet update.
-→ [08 Going further](08-advanced.md#environment-settings-and-recreating-the-workspace)
+→ [08 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
 
 ### AWS SSM
 
 Profiles (shared settings) and SSM hosts (individual) for logging in to another in-house host.
-→ [08 Going further](08-advanced.md#logging-in-to-another-in-house-host-ssm)
+→ [08 Going further](10-integrations.md#logging-in-to-another-in-house-host-ssm)
 
 ### Internal repositories
 
 Create, rename, delete and browse git repositories that **live entirely inside the tenant**, with no external
 git hosting. The clone URL authenticates itself, so there is no connect step (and it works while the workspace
-is stopped). → [04 Repositories and git](04-git.md)
+is stopped). → [04 Repositories and git](03-code.md)
 
 ### Export / import
 
@@ -287,7 +291,7 @@ your **AWS SSM** registrations, and your **agent instructions**.
 
 **Recreate the workspace** (delete `~/repos` only and rebuild from the latest image) and **clean home** (a
 deeper reset that also removes home except logins and connections). Both lose uncommitted changes.
-→ [08 Going further](08-advanced.md#recreating-the-workspace-danger-zone)
+→ [08 Going further](10-integrations.md#recreating-the-workspace-danger-zone)
 
 ---
 
@@ -323,4 +327,4 @@ deeper reset that also removes home except logins and connections). Both lose un
 
 ---
 
-For those who want the internals: [dev/02 Console design](../../dev/02-console.md)
+For those who want the internals: [dev/02 Console design](../dev/02-console.md)

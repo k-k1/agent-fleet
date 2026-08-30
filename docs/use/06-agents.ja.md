@@ -2,6 +2,10 @@
 
 [English](06-agents.md) | 日本語
 
+Audience: エージェントを選んで接続する人
+Source of truth: Console そのもの（画面と食い違ったら画面が正）
+Updated: 2026-08
+
 > 対象: どのエージェントを使うか決め、接続するメンバー。接続方法と違い、モデル選択、
 > そして 3 エージェント共通の RTK 設定を扱います。接続はすべて **⚙設定 →
 > 「エージェント」タブ**から行います（ワークスペースの起動が必要）。
@@ -9,7 +13,7 @@
 ## 対応エージェントと選び方
 
 主要 6 つの CLI コーディングエージェントに対応しています（実験枠の Antigravity（agy）は
-[08](08-advanced.ja.md)）。接続の変更は即時、挙動設定は各エージェントの**新しいセッション
+[08](10-integrations.ja.md)）。接続の変更は即時、挙動設定は各エージェントの**新しいセッション
 から**反映されます。
 
 | | claude | codex | opencode | copilot | cursor | kiro |
@@ -48,8 +52,8 @@ Codex / opencode / copilot / cursor / kiro の**マネージド実行**は、会
 
 冒頭の表は主要 6 エージェントの比較です。こちらは Antigravity（agy）とエージェント以外の
 セッション種別（shell / SSM）を加え、本ガイドの他章で扱う横断的な機能——worktree
-（[04](04-git.ja.md)）、定時実行とチャットブリッジ（[11](11-fleet-operator.ja.md)、
-[08](08-advanced.ja.md)）——もまとめたものです。✓ = 対応、— = 非対応 / 該当なし。
+（[04](03-code.ja.md)）、定時実行とチャットブリッジ（[11](08-organising.ja.md)、
+[08](10-integrations.ja.md)）——もまとめたものです。✓ = 対応、— = 非対応 / 該当なし。
 
 | 機能 | claude | codex | cursor | copilot | kiro | agy | opencode | shell | ssm |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
@@ -96,7 +100,7 @@ WSバーの使用量チップはアカウント単位の残量枠がある場合
 > こともあります。shell / SSM セッションは送った文字列を**そのまま**実行します。これらは
 > 破壊的・不可逆になりえます。バックアップを保持し、最小権限の認証情報を使い、承認ゲート
 > （shell コマンドの確認、チャットブリッジの承認 / 却下）を活用してください。
-> あわせて [11 フリートオペレーター](11-fleet-operator.ja.md) も参照してください。
+> あわせて [11 フリートオペレーター](08-organising.ja.md) も参照してください。
 
 ## Claude
 
@@ -116,7 +120,7 @@ Claude の挙動は同じ画面で切り替えられます。
 
 > **「Select login method」やログイン画面が出てしまうときは** → セッション側の
 > 一時的な状態で、接続そのものは生きていることがほとんどです。対処は
-> [09 困ったとき](09-troubleshooting.ja.md) を見てください。端末内で手動 `/login` する
+> [09 困ったとき](11-troubleshooting.ja.md) を見てください。端末内で手動 `/login` する
 > 従来のやり方も併用できます。
 
 ## Codex
@@ -240,4 +244,4 @@ claude / codex / opencode / GitHub Copilot / agy の 5 エージェントに **�
 
 ---
 
-仕組みを知りたい人へ: [dev/08 外部連携（認証方式）](../../dev/08-integrations.md)・[dev/04 Workspace Agent（kind 統合・RTK 機構）](../../dev/04-workspace-agent.md)
+仕組みを知りたい人へ: [dev/08 外部連携（認証方式）](../dev/08-integrations.md)・[dev/04 Workspace Agent（kind 統合・RTK 機構）](../dev/04-workspace-agent.md)

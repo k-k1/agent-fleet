@@ -21,33 +21,33 @@ If a feature ships and does not appear here, it is not done
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [02 Sessions](../guide/member/02-sessions.md) |
-| Run in a fresh git worktree | member | Start dialog | [04 Git](../guide/member/04-git.md) |
-| Chat mirror — follow and steer a running agent | member | main area | [02 Sessions](../guide/member/02-sessions.md) |
+| Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [02 Sessions](../use/02-sessions.md) |
+| Run in a fresh git worktree | member | Start dialog | [04 Git](../use/03-code.md) |
+| Chat mirror — follow and steer a running agent | member | main area | [02 Sessions](../use/02-sessions.md) |
 | Answer a question, plan, or permission prompt | member | mirror | [agents.md](agents.md) for which agents ask |
 | Skill / command picker | member | mirror composer | [agents.md](agents.md) |
-| Live terminal attached to a session | member | main area | [03 Terminal](../guide/member/03-terminal.md) |
-| Resume a stopped session | member | left pane → the session | [02 Sessions](../guide/member/02-sessions.md) |
-| Hand a conversation to a new session | member | session ⋯ menu | [02 Sessions](../guide/member/02-sessions.md) |
+| Live terminal attached to a session | member | main area | [03 Terminal](../use/05-terminal.md) |
+| Resume a stopped session | member | left pane → the session | [02 Sessions](../use/02-sessions.md) |
+| Hand a conversation to a new session | member | session ⋯ menu | [02 Sessions](../use/02-sessions.md) |
 | Fork from a past message | member | mirror, on a past message | [agents.md](agents.md) for which agents |
-| Hand a session to another member | member | session ⋯ menu | [02 Sessions](../guide/member/02-sessions.md) |
-| Share a session read-only | member | Shared sessions | [02 Sessions](../guide/member/02-sessions.md) |
-| Transcript marks | member | mirror, on a selection | — |
-| Files this session changed | member | mirror header | — |
-| Context usage gauge | member | session header | [06 Agents](../guide/member/06-agents.md) |
-| Abort detection and auto-resume | member | automatic | — |
+| Hand a session to another member | member | session ⋯ menu | [02 Sessions](../use/02-sessions.md) |
+| Share a session read-only | member | Shared sessions | [02 Sessions](../use/02-sessions.md) |
+| Highlights | member | mirror, on a selection | [09 Working with others](../use/09-collaboration.md) |
+| Changed files | member | session ⋯ menu | [09 Working with others](../use/09-collaboration.md) |
+| Context usage gauge | member | session header | [06 Agents](../use/06-agents.md) |
+| Abort detection and auto-resume | member | automatic | [09 Working with others](../use/09-collaboration.md) |
 
 ## Working with code
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Import a repository | member | Repositories → Clone | [04 Git](../guide/member/04-git.md) |
-| Start from an empty folder | member | Repositories → new folder | [04 Git](../guide/member/04-git.md) |
-| Commit graph, diff, stage and commit | member | Commit graph | [04 Git](../guide/member/04-git.md) |
-| Worktrees | member | under each repository | [04 Git](../guide/member/04-git.md) |
-| File tree and viewer | member | Files | [05 Files](../guide/member/05-files.md) |
-| Markdown and code editing | member | Files → a file | [05 Files](../guide/member/05-files.md) |
-| `.drawio` diagrams | member | Files → a `.drawio` file | [05 Files](../guide/member/05-files.md) |
+| Import a repository | member | Repositories → Clone | [04 Git](../use/03-code.md) |
+| Start from an empty folder | member | Repositories → new folder | [04 Git](../use/03-code.md) |
+| Commit graph, diff, stage and commit | member | Commit graph | [04 Git](../use/03-code.md) |
+| Worktrees | member | under each repository | [04 Git](../use/03-code.md) |
+| File tree and viewer | member | Files | [05 Files](../use/04-files.md) |
+| Markdown and code editing | member | Files → a file | [05 Files](../use/04-files.md) |
+| `.drawio` diagrams | member | Files → a `.drawio` file | [05 Files](../use/04-files.md) |
 | Browser pane for a local web app | member | workspace action bar → Preview | [browser-pane.md](browser-pane.md) |
 | Attach to a Chromium the agent owns | member | a link the agent hands you | [browser-pane.md](browser-pane.md) |
 
@@ -55,21 +55,21 @@ If a feature ships and does not appear here, it is not done
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Working sets | member | top of the left pane | [02 Sessions](../guide/member/02-sessions.md) |
-| Memo queue | member | Memo queue | [07 Chat & memo](../guide/member/07-chat-memo.md) |
+| Working sets | member | top of the left pane | [02 Sessions](../use/02-sessions.md) |
+| Memo queue | member | Memo queue | [07 Chat & memo](../use/07-chat-memo.md) |
 | Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [repos.md](repos.md) for what each provider contributes |
-| Scheduled (unattended) runs | member | Schedules | [11 Fleet operator](../guide/member/11-fleet-operator.md) |
-| Notification centre | member | top bar | [12 Settings](../guide/member/12-settings.md) |
-| Assistant chat | member | Assistants | [07 Chat & memo](../guide/member/07-chat-memo.md) |
-| Chat bridge — Discord / Slack | member | Settings → Chat | [08 Advanced](../guide/member/08-advanced.md) |
-| Reply suggestions | member | mirror composer | — |
-| Keyboard system | member | Settings → Keyboard | [08 Advanced](../guide/member/08-advanced.md) |
-| Text-to-speech | member | Settings → Read aloud | [12 Settings](../guide/member/12-settings.md) |
+| Scheduled (unattended) runs | member | Schedules | [11 Fleet operator](../use/08-organising.md) |
+| Notification centre | member | top bar | [12 Settings](../use/12-settings.md) |
+| Assistant chat | member | Assistants | [07 Chat & memo](../use/07-chat-memo.md) |
+| Chat bridge — Discord / Slack | member | Settings → Chat | [08 Advanced](../use/10-integrations.md) |
+| Reply suggestions | member | mirror composer | [09 Working with others](../use/09-collaboration.md) |
+| Keyboard system | member | Settings → Keyboard | [08 Advanced](../use/10-integrations.md) |
+| Text-to-speech | member | Settings → Read aloud | [12 Settings](../use/12-settings.md) |
 
 ## Personal settings
 
 Every row is under **Settings**; the tab is the "Where".
-[settings.md](settings.md) lists the tabs, [12 Settings](../guide/member/12-settings.md)
+[settings.md](settings.md) lists the tabs, [12 Settings](../use/12-settings.md)
 explains them.
 
 | Feature | Who | Where |
@@ -106,8 +106,8 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Distributing integration servers | tenant admin | MCP distribution | [admin 04](../guide/admin/04-mcp-egress.md) |
 | Audit | tenant admin | Audit | [admin 03](../guide/admin/03-audit-usage.md) |
 | Running time and cloud cost | tenant admin | Running time / Cloud cost | [admin 03](../guide/admin/03-audit-usage.md) |
-| Deletion lock | member | on the item | — |
-| Cleanup and the trash | member | Cleanup | — |
+| Deletion lock | member | session ⋯ menu | [09 Working with others](../use/09-collaboration.md) |
+| Cleanup and the trash | member | Clean up | [09 Working with others](../use/09-collaboration.md) |
 
 ## Operating a deployment
 
@@ -117,7 +117,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Install, upgrade, back up, restore | deployment admin | a shell | [operator 01](../guide/operator/01-install.md) / [02](../guide/operator/02-operations.md) |
 | Ingress, TLS and sign-in providers | deployment admin | a shell | [operator 03](../guide/operator/03-security.md) |
 | Audit log and egress control | deployment admin | Admin | [operator 03](../guide/operator/03-security.md) |
-| Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 10](../guide/member/10-ops-mcp-poc.md) |
+| Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 10](../use/13-ops-tooling.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
 | Role-scoped documentation in containers | — | automatic | [roles.md](roles.md) |
 
@@ -125,6 +125,8 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 
 A dash means the feature exists and works, but no reader-facing page covers it — the
 old guide never caught up with it. Those gaps are the reason this catalogue exists,
-and closing them is what phase P2 is: transcript marks, changed files, reply
-suggestions, connection-source restriction, integration app OAuth, deletion lock,
-cleanup and the trash, abort auto-resume.
+Phase P2 closed most of them — highlights, changed files, reply suggestions, deletion
+lock, cleanup and the trash, and abort auto-resume are now in
+[09 Working with others](../use/09-collaboration.md). What is still open is on the
+administrator side: connection-source restriction and integration app OAuth, which
+[admin/](../admin/README.md) covers next.

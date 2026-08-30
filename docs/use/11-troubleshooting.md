@@ -1,6 +1,10 @@
 # 09. Troubleshooting — fixes by symptom and FAQ
 
-English | [日本語](09-troubleshooting.ja.md)
+English | [日本語](11-troubleshooting.ja.md)
+
+Audience: anyone whose screen is not doing what they expected
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
 
 > Audience: members when something isn't working. Start with the "by symptom" index and look
 > for your situation; if nothing matches, check the FAQ at the end. Each entry links to the
@@ -74,12 +78,12 @@ Use **"Check outcome"** to find out where it stands
 
 - Private repositories need a GitHub / Bitbucket **connection** first (⚙ Settings → "Git hosting" tab). Check whether it says "Not connected".
 - Double-check the spelling of the URL and branch name.
-- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([04](04-git.md)).
+- Submodules are fetched best-effort after the clone; even if they fail, the parent clone itself succeeds ([04](03-code.md)).
 
 ### A session says the submodules are missing / broken
 
 - A large submodule may not finish fetching inside the launch. The fetch keeps going in the
-  background, and the notification center tells you when it lands ([04](04-git.md)).
+  background, and the notification center tells you when it lands ([04](03-code.md)).
 - A submodule left half-fetched is repaired the next time a session launches in that working
   copy. To fix it right away, run `git submodule update --init --recursive` there in a terminal.
 
@@ -87,7 +91,7 @@ Use **"Check outcome"** to find out where it stands
 
 In ⚙ Settings → the "Git hosting" tab, check that the provider in question is **"Connected"**.
 If it isn't, connect via OAuth or a token. Once connected, authentication is transparent, so
-from then on you can clone / push without entering tokens ([04](04-git.md) · [06](06-agents.md)).
+from then on you can clone / push without entering tokens ([04](03-code.md) · [06](06-agents.md)).
 
 ### The browser pane shows `target-unreachable` / goes blank or 404
 
@@ -101,13 +105,13 @@ from then on you can clone / push without entering tokens ([04](04-git.md) · [0
   switch the display to **"Open in pane"** (browser pane). The browser pane handles absolute assets and redirects
   just like ordinary localhost browsing, so most apps render as-is. If you really must use the lightweight preview,
   set `server.forward-headers-strategy=framework` (or `native`) for Spring Boot,
-  or adjust the base path on the app side for anything else ([08](08-advanced.md)).
+  or adjust the base path on the app side for anything else ([08](10-integrations.md)).
 
 ### HMR (live reload) doesn't work / no automatic refresh
 
 - The **lightweight preview** is for one-off HTTP checks and **does not support WebSocket / SSE**. That's why Vite / React
   **HMR (hot reload) does not work** there. When you need HMR, use **"Open in pane"** (browser pane).
-  In the browser pane, HMR, WebSocket, and SSE work just like plain localhost ([08](08-advanced.md)).
+  In the browser pane, HMR, WebSocket, and SSE work just like plain localhost ([08](10-integrations.md)).
 
 ### The browser pane shows `crashed` / `disconnected`, or keeps dying
 
@@ -116,7 +120,7 @@ from then on you can clone / push without entering tokens ([04](04-git.md) · [0
 - **`crashed`** means the browser inside the workspace terminated abnormally. Reopen it with **"Reconnect"**.
 - **If it keeps dying within a short time**, workspace memory pressure is the likely suspect. Clean up heavy builds, watchers, and
   browser panes left open, and keep in mind that browser panes are limited to **2** at a time. For how to check memory and
-  what to do about it, also see the FAQ entry "Builds die / freeze from running out of memory" below ([08](08-advanced.md)).
+  what to do about it, also see the FAQ entry "Builds die / freeze from running out of memory" below ([08](10-integrations.md)).
 
 ### No notifications arrive
 
@@ -198,7 +202,7 @@ message**. The limit is in ⚙ Settings → Assistant (it cannot be unlimited).
 
 If you only want normal completions to stay quiet, turn on **"Quiet completion reports"** in
 the same tab: the card and the notification still arrive, but no automatic turn runs
-([11](11-fleet-operator.md)).
+([11](08-organising.md)).
 
 ### The chat says the context went over the limit and won't answer
 
@@ -221,13 +225,13 @@ Check its row in the **Schedules** section of the left pane.
   the operator chat).
 - **"Run now"** exercises the same path as a timed firing (allow up to about a minute).
 - If there is no Schedules section at all, scheduled execution is disabled on this deployment
-  ([11](11-fleet-operator.md#scheduled-runs)).
+  ([11](08-organising.md#scheduled-runs)).
 
 ### Ctrl+C doesn't work in the terminal / I can't copy-paste
 
 Working as intended. In the terminal, Ctrl+C is passed to the program as an interrupt (SIGINT). **Copy is
 automatic on select, or Ctrl+Shift+C; paste with right-click / middle-click / Ctrl+Shift+V**
-([03](03-terminal.md)).
+([03](05-terminal.md)).
 
 ### App shortcuts such as the command palette don't work
 
@@ -240,19 +244,19 @@ terminal.
 - **"Pass every key to shell / SSM terminals"** — even the leader and the palette go through.
   Move focus to another pane to get the app operations back.
 
-**?** opens the list of what is bound to what ([03](03-terminal.md#shortcuts),
+**?** opens the list of what is bound to what ([03](05-terminal.md#shortcuts),
 [12](12-settings.md#keys)).
 
 ### On a phone, the keyboard pops up on its own / it's hard to operate
 
 The **control key row** under the terminal (`Esc` `Tab` arrows `^C` `⏎`) sends keys without
 bringing up the soft keyboard. You can scroll back through past output with a **one-finger vertical swipe**. Toggle the left pane
-with the **≡ (menu)** at the top left of the screen ([03](03-terminal.md)).
+with the **≡ (menu)** at the top left of the screen ([03](05-terminal.md)).
 
 ### Only the terminal stays dark on the light theme
 
 Known behavior. Even after switching themes, the terminal (the black screen) background stays dark. The file
-viewer and other screens follow the theme ([03](03-terminal.md)).
+viewer and other screens follow the theme ([03](05-terminal.md)).
 
 ### The workspace has stopped without me noticing
 
@@ -269,16 +273,16 @@ cannot be undone (the conversation log files themselves remain). For the differe
 
 **Q. Can I use it from both my work PC and my home PC?**
 Yes. Your login and connections, as well as display settings like font / text size, are stored on the server
-and follow you on other devices and browsers ([03](03-terminal.md)).
+and follow you on other devices and browsers ([03](05-terminal.md)).
 
 **Q. If I stop the workspace, is my work lost?**
 No. Clones, uncommitted changes, the session list, and connections all remain. However,
 uncommitted changes exist only inside the workspace, so commit / push for long-term safekeeping
-([01](01-first-day.md) · [04](04-git.md)).
+([01](01-first-day.md) · [04](03-code.md)).
 
 **Q. Is it OK to run several tasks at the same time?**
 Yes. If each session works in its own independent worktree, edits won't collide. Worktrees are
-created by default ([02](02-sessions.md) · [04](04-git.md)).
+created by default ([02](02-sessions.md) · [04](03-code.md)).
 
 **Q. What's the difference between "Stop", "Delete", "Archive", and "Recreate"?**
 Stop = just pause (resumable), Delete = remove from the list (throwaway kinds), Archive = hide (restorable),
@@ -313,4 +317,4 @@ can be installed into your user area yourself (`pip install --user` persists).
 ---
 
 If this doesn't solve it, ask your team admin or IT department, including the symptom and
-(if any) the message that was shown. The internals are covered in the developer docs [dev/](../../dev/README.md).
+(if any) the message that was shown. The internals are covered in the developer docs [dev/](../dev/README.md).

@@ -1,6 +1,10 @@
 # 11. Fleet operator — directing multiple sessions from chat
 
-English | [日本語](11-fleet-operator.ja.md)
+English | [日本語](08-organising.ja.md)
+
+Audience: anyone running several pieces of work at once
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
 
 > Audience: members who want to run multiple sessions in parallel, or hand over from
 > research to implementation and delegate the follow-up until completion. It helps to read
@@ -149,8 +153,8 @@ next run time, so check that it matches your intent.
 - **Handover is summary-based.** The conversation context does not move over wholesale, so for lengthy research results it is safer to have them written to a plan file before handing over (see Pattern 1).
 - **Sessions do not coordinate with each other directly.** Orchestration always goes through the operator. This is complementary to parallelization that stays within a single session (an agent's own subagent feature); choose the operator **when work spans repositories or agents, or when you want to see each piece of work as its own session**.
 - **Report bodies are treated as "data."** So that text originating from session output is never executed as an instruction, the design confirms with you first whenever a new session would be created based on an automatic report. In particular, even if a report or output contains something like "run this command," the operator **will not execute a command or send it to a shell session on that basis** (prompt-injection protection). The operator executes only what you instructed directly. The extra safety-side confirmations are by design.
-- **Shell sessions always require your approval.** kind=shell is a raw shell with no agent guardrails in between: the string sent is executed as a command as-is. Therefore, when launching a shell session or sending it a command, the operator **presents the exact command to be executed and asks for your approval in advance**. Destructive or irreversible commands are never sent unless you explicitly approve them.
+- **Shell sessions always require your approval.** a shell session is a raw shell with no agent guardrails in between: the string sent is executed as a command as-is. Therefore, when launching a shell session or sending it a command, the operator **presents the exact command to be executed and asks for your approval in advance**. Destructive or irreversible commands are never sent unless you explicitly approve them.
 
 ---
 
-For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../../dev/04-workspace-agent.md); the canonical design is docs/30 (session completion reports → fleet operator)
+For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../dev/04-workspace-agent.md); the canonical design is docs/30 (session completion reports → fleet operator)

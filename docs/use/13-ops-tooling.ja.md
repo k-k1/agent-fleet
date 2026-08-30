@@ -1,6 +1,10 @@
 # 10. 運用ツール連携（MCP でインシデント壁打ち）🧪
 
-[English](10-ops-mcp-poc.md) | 日本語
+[English](13-ops-tooling.md) | 日本語
+
+Audience: 監視ツールを会話につなぐ人
+Source of truth: Console そのもの（画面と食い違ったら画面が正）
+Updated: 2026-08
 
 ## PagerDuty / Grafana / CloudWatch / AWS は「運用・監視」タブから接続できます（推奨）
 
@@ -25,7 +29,7 @@ Zabbix など他ツールは、下の PoC 手順で手動接続できます（�
 
 ## （PoC）その他ツールを手動で繋ぐ 🧪
 
-**実験的な手順です**（[docs/25 サービス運用向け拡張](../../log/25-ops-monitoring.md) の Phase 0）。まだ「運用・監視」タブに無いツール（CloudWatch / Zabbix など）や、チャットではなく**ターミナル（CLI）の claude セッション**に繋ぎたい場合の手作業手順です。
+**実験的な手順です。**まだ「運用・監視」タブに無いツール（CloudWatch / Zabbix など）や、チャットではなく**ターミナル（CLI）の claude セッション**に繋ぎたい場合の手作業手順です。
 
 - 対象: ターミナル（CLI）の claude セッション。**チャット（アシスタント）には現状 MCP を足せません**（Phase 1 で対応予定）。
 - 前提: ワークスペースから各監視ツールのエンドポイントへ outbound が通ること。PyPI 系は `uvx` の初回取得で必要。

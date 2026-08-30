@@ -109,10 +109,11 @@ func TestDocsBridgeRoleScoping(t *testing.T) {
 	}{
 		{
 			role:     "member",
-			wantHave: []string{"use/02-sessions.md", "ref/agents.md", "guide/member/08-advanced.md"},
+			wantHave: []string{"use/02-sessions.md", "ref/agents.md"},
 			wantAbsent: []string{
 				"admin/02-limits.md", "operate/01-install.md", "build/04-workspace-agent.md",
-				"guide/admin/02-limits.md", "decisions/0011-console.md", "log/p3-10.md",
+				"guide/admin/02-limits.md", "dev/04-workspace-agent.md",
+				"decisions/0011-console.md", "log/p3-10.md",
 			},
 		},
 		{

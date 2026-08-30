@@ -14,7 +14,7 @@ This guide is the authoritative source for the "how to" of operating the product
 
 | You are… | Volume to read | What it covers |
 |-----------|----------|---------------------|
-| A developer writing code in the Console every day | **[member/](member/README.md)** | Login through sessions, git, files, agents, chat, and troubleshooting |
+| A developer writing code in the Console every day | **[use/](../use/README.md)** ← moved | Login through sessions, git, files, agents, chat, and troubleshooting |
 | Someone who skips the terminal — mostly chat and progress checks | **[lite.md](lite.md)** | The minimal guide for using Agent Fleet without touching the black screen |
 | Someone managing the team's members, limits, and audits | **[admin/](admin/README.md)** | Adding members, resource limits, audit logs, usage, distributing shared MCP servers |
 | IT / SRE handling deployment, backups, and incident response | **[operator/](operator/README.md)** | Setup, operations, security, troubleshooting |
@@ -29,9 +29,12 @@ volumes are written to be readable independently, so move between them as needed
 Read that first. For the big picture, see the project [README](../../README.md) and the
 developer-facing [dev/01 Architecture](../dev/01-architecture.md).
 
-## Terminology (bare minimum)
+## Terminology
 
-- **Workspace** — your own dedicated working environment. Holds your repositories and work.
-- **Session** — the unit corresponding to one task: a conversation, a place to work, and an execution state. It may not have a terminal.
-- **Tenant** — a group such as a department. Your workspaces are separated per tenant (one by default).
-- **Agent** — a coding AI such as Claude / Codex / OpenCode.
+[ref/glossary.md](../ref/glossary.md) — one list, with the screen word and the
+implementation word side by side.
+
+> **This shelf is being retired.** The member volume has already moved to
+> [use/](../use/README.md); `admin/` and `operator/` follow, into
+> [admin/](../admin/README.md) and [operate/](../operate/README.md). What a role, an
+> agent or a provider can actually do now lives in [ref/](../ref/README.md).

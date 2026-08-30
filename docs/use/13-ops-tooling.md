@@ -1,6 +1,10 @@
 # 10. Ops tooling PoC — incident brainstorming over MCP 🧪
 
-English | [日本語](10-ops-mcp-poc.ja.md)
+English | [日本語](13-ops-tooling.ja.md)
+
+Audience: anyone wiring monitoring tools into a conversation
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
 
 ## PagerDuty / Grafana / CloudWatch / AWS connect from the "Ops & monitoring" tab (recommended)
 
@@ -25,7 +29,7 @@ Other tools such as Zabbix can be connected manually with the PoC steps below (t
 
 ## (PoC) Connecting other tools manually 🧪
 
-**These are experimental steps** (Phase 0 of [docs/25 service-ops extensions](../../log/25-ops-monitoring.md)). Manual steps for tools not yet in the "Ops & monitoring" tab (CloudWatch / Zabbix, etc.), or for when you want to connect a **Terminal (CLI) claude session** rather than chat.
+**These are experimental steps.** Manual steps for tools not yet in the "Ops & monitoring" tab (CloudWatch / Zabbix, etc.), or for when you want to connect a **Terminal (CLI) claude session** rather than chat.
 
 - Scope: Terminal (CLI) claude sessions. **Chat (the assistant) cannot take extra MCP servers today** (planned for Phase 1).
 - Prerequisite: outbound connectivity from the workspace to each monitoring tool's endpoint. PyPI access is needed for `uvx`'s first fetch.

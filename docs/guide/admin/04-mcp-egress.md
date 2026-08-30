@@ -13,7 +13,7 @@ Tenant settings → **"Operations → MCP distribution"** distributes an MCP ser
 the tenant.
 A distributed server appears in each member's ⚙ Settings → MCP servers labelled **tenant**,
 ready to use from their assistants and sessions (what they see:
-[member/12 Settings](../member/12-settings.md#mcp-servers)).
+[member/12 Settings](../../use/12-settings.md#mcp-servers)).
 
 ### Only remote (HTTP) can be distributed
 
@@ -104,5 +104,5 @@ and they can act on it as-is.
 ---
 
 - Previously: [03 Audit and usage](03-audit-usage.md)
-- What members see: [member/12 Settings](../member/12-settings.md#mcp-servers)
+- What members see: [member/12 Settings](../../use/12-settings.md#mcp-servers)
 - For those who want the internals: [dev/08 External integrations](../../dev/08-integrations.md)

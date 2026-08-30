@@ -162,7 +162,7 @@ session; codex and opencode are seeded with the same text at each start).
   their workspace, or it takes effect the next time a container is created.
 - A user's own additions do **not** belong in this layer. They go in each person's ⚙ Settings →
   Agent instructions, and fleet policy wins where the two conflict
-  ([member/06](../member/06-agents.md#agent-instructions-write-down-how-you-work-once)).
+  ([member/06](../../use/06-agents.md#agent-instructions-write-down-how-you-work-once)).
 - **Its length is a per-session context cost.** Every agent reads it every time, so before adding
   to it, check that it is genuinely needed by everyone, every time. This layer cannot be
   delivered to cursor.
