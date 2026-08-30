@@ -136,11 +136,15 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const openGuide = useSettingsUI((st) => st.openGuide);
   // The guide ships per language: English is canonical (README.md), Japanese
   // lives beside it as README.ja.md — open the one matching the UI locale.
+  //
+  // docs/use/ is the shelf written for this reader, and it is the one every role
+  // receives (docsRolePrefixes). Do not point this at a shelf a member's container
+  // never gets: the pane would just 404, with nothing on screen to explain why.
   const openUserGuide = () =>
     useLayoutStore.getState().openTargetInNew({
       content: {
         kind: "file",
-        filePath: `/usr/local/share/agent-fleet/docs/guide/member/README${getLocale() === "ja" ? ".ja" : ""}.md`,
+        filePath: `/usr/local/share/agent-fleet/docs/use/README${getLocale() === "ja" ? ".ja" : ""}.md`,
       },
     }, true);
   const run = (fn: () => void) => {

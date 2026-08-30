@@ -7,7 +7,7 @@
 #               D: SHA256SUMS). Delegates to deploy/compose/release.sh. Builds B
 #               (docker save) by default to satisfy the P1 gate (A+B+D). Images
 #               are the distribution variant (workspace: BAKE_AGENT_CLIS=0 lean /
-#               CP: docs distignore applied).
+#               CP: docs allowlist (.distinclude) applied).
 #   --native  … C (native tar) + R (lean rootfs) — docs/log/35 §35.7.2-7.
 #   --bundle-rootfs     … with --native, also produce the self-contained variant
 #                          bundling R (-bundle tar).
@@ -110,16 +110,18 @@ if [ "$DO_NATIVE" = 1 ]; then
     --output "type=local,dest=$WORK/console" "$ROOT"
   cp -R "$WORK/console/console" "$OUT/console"
 
-  # (iii) stage docs (internal denylist applied — same rules as compose/release.sh).
-  echo "==> [native] stage docs (distignore applied)"
+  # (iii) stage docs (allowlist — same rules as compose/release.sh).
+  echo "==> [native] stage docs (distinclude allowlist)"
   mkdir -p "$OUT/docs"
-  EXCLUDES=()
+  DOCS_SHELVES=()
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%%#*}"
     line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
-    if [ -n "$line" ]; then EXCLUDES+=(--exclude="./$line"); fi
-  done < "$ROOT/docs/.distignore"
-  tar -C "$ROOT/docs" -cf - "${EXCLUDES[@]}" . | tar -C "$OUT/docs" -xf -
+    [ -n "$line" ] || continue
+    [ -d "$ROOT/docs/$line" ] || { echo "ERROR: docs/.distinclude lists '$line', which is not a directory" >&2; exit 1; }
+    DOCS_SHELVES+=("$line")
+  done < "$ROOT/docs/.distinclude"
+  tar -C "$ROOT/docs" -cf - "${DOCS_SHELVES[@]}" | tar -C "$OUT/docs" -xf -
 
   # (iv) static bwrap / git+git-http-backend / zstd (alpine builder; versions are
   # pinned via ARGs in Dockerfile.tools).

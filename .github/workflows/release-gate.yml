@@ -79,17 +79,21 @@ jobs:
           # no key material (gitignored) slipped into the bundle
           ! tar tzf "agent-fleet-$VERSION.tar.gz" | grep -E '(-key|\.pem)$'
 
-      - name: assert CP image (docs denylist + /api/version stamp)
+      - name: assert CP image (docs allowlist + /api/version stamp)
         run: |
           set -eux
-          # the distribution-variant CP bakes docs with the internal denylist
-          # (docs/.distignore) applied
+          # The distribution-variant CP bakes only the shelves on the allowlist
+          # (docs/.distinclude). Assert both directions: every shipped shelf is
+          # present, and nothing that is shipped to nobody made it in. The negative
+          # half is the one that matters — an allowlist fails safe, but a mistake
+          # while editing it would ship the internal work journals to customers.
           docker run --rm --entrypoint /bin/sh "agent-fleet/control-plane:$VERSION" -c '
             set -e
             d=/usr/local/share/agent-fleet/docs
-            test -f "$d/35-packaging.md" && test -d "$d/dev" && test -d "$d/guide"
+            for s in use admin operate build ref guide dev; do test -d "$d/$s"; done
+            test ! -e "$d/log" && test ! -e "$d/decisions"
             test ! -e "$d/HANDOFF.md" && test ! -e "$d/CHANGELOG-handoff.md"
-            test ! -e "$d/talk" && test ! -e "$d/history"'
+            test ! -e "$d/roadmap.md" && test ! -e "$d/img"'
           # version stamp: after boot, /api/version behind auth returns VERSION
           # (AUTH=dev has no gate). Booting with no mounts is intentional — the CP's
           # MkdirAll(dbPath parent) supports it, and this gate once caught an

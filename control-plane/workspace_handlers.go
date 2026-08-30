@@ -438,10 +438,11 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 				fmt.Sprintf("tenant workspace limit reached (%d)", lim.MaxWorkspaces)}
 		}
 	}
-	// Stage the role-scoped docs subset (member → guide/member + dev, tenant_admin →
-	// guide/ + dev, super_admin → all) into <dataDir>/docs so the container's agents can
-	// answer environment questions from the authoritative docs. Gated here because
-	// the CP knows the role — a member's container never holds private decision/history docs.
+	// Stage the role-scoped docs subset into <dataDir>/docs so the container's agents
+	// can answer environment questions from the authoritative docs. Which shelves a
+	// role gets is docsRolePrefixes (workspace_docs.go) — one allowlist, no "all"
+	// case. Gated here because the CP is what knows the role; no container ever holds
+	// the decision records or the frozen work journals.
 	// Best-effort: a failure just means no docs mount, never a failed start.
 	//
 	// Only for the adapters that then MOUNT that directory. On ECS nothing would ever

@@ -95,7 +95,7 @@ jobs:
 
       # Through release.sh, deliberately — the same script publish-dist reaches. A second
       # buildx invocation written here would drift from the real one, and the first thing
-      # to drift would be the docs staging (docs/.distignore), which is how internal
+      # to drift would be the docs staging (docs/.distinclude), which is how internal
       # documents would end up inside an image nobody thought was a distribution.
       - name: bake
         env:

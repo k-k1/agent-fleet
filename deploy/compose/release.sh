@@ -13,8 +13,9 @@
 # Distribution variants (docs/log/35 §35.4.1/§35.4.3): by default
 #   - workspace is lean (BAKE_AGENT_CLIS=0; agent CLIs are pin-installed at start).
 #     The fully-baked internal build must be requested with BAKE_AGENT_CLIS=1.
-#   - CP docs come from a staged tree with the internal denylist (docs/.distignore)
-#     applied.
+#   - CP docs come from a staged tree holding only the shelves on the allowlist
+#     (docs/.distinclude) — the decision records and the frozen work journals are
+#     never shipped.
 #
 #   VERSION=1.0.0 deploy/compose/release.sh            # build images + bundle (A+D)
 #   VERSION=1.0.0 deploy/compose/release.sh --push     # + push images to $REGISTRY (ADR 0037)
@@ -90,20 +91,24 @@ OUT="$DIST/agent-fleet-$VERSION"
 rm -rf "$OUT"; mkdir -p "$OUT"
 
 if [ "$DO_BUILD" = 1 ]; then
-  # Bake the distribution image's docs from a staged tree with the internal denylist
-  # (docs/.distignore, docs/log/35 §35.4.3) applied. The stage must live inside the build
-  # context (repo root), so it goes in deploy/release/.docs-stage (gitignored).
+  # Bake the distribution image's docs from a staged tree holding only the shelves on
+  # the allowlist (docs/.distinclude). The stage must live inside the build context
+  # (repo root), so it goes in deploy/release/.docs-stage (gitignored).
   DOCS_STAGE_REL="deploy/release/.docs-stage"
   DOCS_STAGE="$ROOT/$DOCS_STAGE_REL"
   rm -rf "$DOCS_STAGE"; mkdir -p "$DOCS_STAGE"
-  EXCLUDES=()
+  DOCS_SHELVES=()
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%%#*}"
     line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
-    if [ -n "$line" ]; then EXCLUDES+=(--exclude="./$line"); fi
-  done < "$ROOT/docs/.distignore"
-  tar -C "$ROOT/docs" -cf - "${EXCLUDES[@]}" . | tar -C "$DOCS_STAGE" -xf -
-  echo "==> staged docs (distignore applied) -> $DOCS_STAGE_REL"
+    [ -n "$line" ] || continue
+    # A listed shelf that does not exist is a mistake in .distinclude, not something
+    # to ship silently short — tar would fail anyway; say why first.
+    [ -d "$ROOT/docs/$line" ] || { echo "ERROR: docs/.distinclude lists '$line', which is not a directory" >&2; exit 1; }
+    DOCS_SHELVES+=("$line")
+  done < "$ROOT/docs/.distinclude"
+  tar -C "$ROOT/docs" -cf - "${DOCS_SHELVES[@]}" | tar -C "$DOCS_STAGE" -xf -
+  echo "==> staged docs (allowlist: ${DOCS_SHELVES[*]}) -> $DOCS_STAGE_REL"
 
   # Same rule as the workspace image below: a multi-platform build produces a
   # manifest LIST, which buildx can only push. ⚠️ Unlike the workspace image, the

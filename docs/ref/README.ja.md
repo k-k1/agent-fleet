@@ -19,6 +19,7 @@ Updated: 2026-08
 | [settings.md](settings.ja.md) | どこで設定する？ 変数名は？ |
 | [limits.md](limits.ja.md) | 既定はいくつ？ 上限は？ |
 | [glossary.md](glossary.ja.md) | この言葉は画面とコードで何を指す？ |
+| [browser-pane.md](browser-pane.ja.md) | 動いている Web アプリを人にどう見せる？ |
 
 ## なぜ共有の棚なのか
 

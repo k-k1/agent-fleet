@@ -11,11 +11,19 @@ func buildDocsSrc(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	files := []string{
+		// Shelves, cut by reader (docs/CONVENTIONS.md).
+		"use/02-sessions.md",
+		"ref/agents.md",
+		"admin/02-limits.md",
+		"operate/01-install.md",
+		"build/04-workspace-agent.md",
+		// Shipped to nobody, whatever the role.
+		"decisions/0011-console.md",
+		"log/p3-10.md",
+		// Legacy shelves, still shipped while the new ones are written.
 		"guide/member/08-advanced.md",
 		"guide/admin/02-limits.md",
 		"dev/04-workspace-agent.md",
-		"decisions/0011-console.md",
-		"history/p3-10.md",
 	}
 	for _, f := range files {
 		p := filepath.Join(root, f)
@@ -54,24 +62,38 @@ func TestStageWorkspaceDocs_RoleScoping(t *testing.T) {
 		wantAbsent []string
 	}{
 		{
-			role:       "member",
-			wantHave:   []string{"guide/member/08-advanced.md", "dev/04-workspace-agent.md"},
-			wantAbsent: []string{"guide/admin/02-limits.md", "decisions/0011-console.md"},
+			role:     "member",
+			wantHave: []string{"use/02-sessions.md", "ref/agents.md", "guide/member/08-advanced.md"},
+			wantAbsent: []string{
+				"admin/02-limits.md", "operate/01-install.md", "build/04-workspace-agent.md",
+				"guide/admin/02-limits.md", "decisions/0011-console.md", "log/p3-10.md",
+			},
 		},
 		{
-			role:       "tenant_admin",
-			wantHave:   []string{"guide/member/08-advanced.md", "guide/admin/02-limits.md", "dev/04-workspace-agent.md"},
-			wantAbsent: []string{"history/p3-10.md"},
+			role:     "tenant_admin",
+			wantHave: []string{"use/02-sessions.md", "ref/agents.md", "admin/02-limits.md", "guide/admin/02-limits.md"},
+			wantAbsent: []string{
+				"operate/01-install.md", "build/04-workspace-agent.md",
+				"decisions/0011-console.md", "log/p3-10.md",
+			},
 		},
 		{
-			role:       "super_admin",
-			wantHave:   []string{"guide/member/08-advanced.md", "guide/admin/02-limits.md", "dev/04-workspace-agent.md", "decisions/0011-console.md", "history/p3-10.md"},
-			wantAbsent: nil,
+			role: "super_admin",
+			wantHave: []string{
+				"use/02-sessions.md", "ref/agents.md", "admin/02-limits.md",
+				"operate/01-install.md", "build/04-workspace-agent.md",
+			},
+			// super_admin is an allowlist too — "the whole tree" is not a case any
+			// more. The frozen journals and the decision records go to nobody.
+			wantAbsent: []string{"decisions/0011-console.md", "log/p3-10.md"},
 		},
 		{
-			role:       "bogus-role", // unknown → least privilege (member)
-			wantHave:   []string{"guide/member/08-advanced.md", "dev/04-workspace-agent.md"},
-			wantAbsent: []string{"guide/admin/02-limits.md"},
+			role:     "bogus-role", // unknown → least privilege (member)
+			wantHave: []string{"use/02-sessions.md", "ref/agents.md"},
+			wantAbsent: []string{
+				"admin/02-limits.md", "operate/01-install.md", "build/04-workspace-agent.md",
+				"decisions/0011-console.md", "log/p3-10.md",
+			},
 		},
 	}
 	for _, c := range cases {
@@ -96,8 +118,8 @@ func TestStageWorkspaceDocs_RoleScoping(t *testing.T) {
 }
 
 // A re-stage must fully replace the previous role's subset (e.g. after a role
-// downgrade), not merge into it. Member-visible dev docs remain; private
-// decisions must be removed.
+// downgrade), not merge into it. The member shelves remain; the shelves only an
+// operator may read must be removed.
 func TestStageWorkspaceDocs_RestageReplaces(t *testing.T) {
 	src := buildDocsSrc(t)
 	t.Setenv("AF_DOCS_DIR", src)
@@ -106,22 +128,25 @@ func TestStageWorkspaceDocs_RestageReplaces(t *testing.T) {
 	if err := stageWorkspaceDocs(dataDir, "super_admin"); err != nil {
 		t.Fatal(err)
 	}
-	if !staged(t, dataDir)[filepath.FromSlash("dev/04-workspace-agent.md")] {
-		t.Fatal("super_admin should have dev docs")
+	if !staged(t, dataDir)[filepath.FromSlash("operate/01-install.md")] {
+		t.Fatal("super_admin should have the operate shelf")
 	}
-	// Downgrade to member → internal docs must be gone.
+	// Downgrade to member → the operator and admin shelves must be gone.
 	if err := stageWorkspaceDocs(dataDir, "member"); err != nil {
 		t.Fatal(err)
 	}
 	got := staged(t, dataDir)
-	if !got[filepath.FromSlash("dev/04-workspace-agent.md")] {
-		t.Error("re-stage as member must keep the public dev docs")
+	if !got[filepath.FromSlash("use/02-sessions.md")] {
+		t.Error("re-stage as member must keep the use shelf")
 	}
-	if got[filepath.FromSlash("decisions/0011-console.md")] {
-		t.Error("re-stage as member must drop the private decision docs")
+	if !got[filepath.FromSlash("ref/agents.md")] {
+		t.Error("re-stage as member must keep the shared reference shelf")
 	}
-	if !got[filepath.FromSlash("guide/member/08-advanced.md")] {
-		t.Error("re-stage as member must keep the member guide")
+	if got[filepath.FromSlash("operate/01-install.md")] {
+		t.Error("re-stage as member must drop the operate shelf")
+	}
+	if got[filepath.FromSlash("admin/02-limits.md")] {
+		t.Error("re-stage as member must drop the admin shelf")
 	}
 }
 
