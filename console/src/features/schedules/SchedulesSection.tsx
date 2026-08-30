@@ -1,11 +1,11 @@
-// SchedulesSection (docs/38 P5) — the left-rail view of operator-authored scheduled
+// SchedulesSection (docs/log/38 P5) — the left-rail view of operator-authored scheduled
 // executions. Membership-scoped and Control-Plane persisted (like the memo queue), so it
 // shows in both running and stopped workspace states and refetches on mount / tenant
 // switch + slow-polls while mounted. Read + manage only: toggle enabled, run-now, view run
 // history, delete. Creating/editing a schedule stays in the operator conversation because
 // it needs the NL→cron translation the operator LLM does.
 //
-// Row interaction (docs/38): clicking a row opens its run history inline; the ⋯ menu (also
+// Row interaction (docs/log/38): clicking a row opens its run history inline; the ⋯ menu (also
 // on right-click) holds the manage actions — pause/resume, run-now, delete. Each history
 // row shows the outcome (成功/失敗/スキップ), whether it was a manual run-now or a scheduled
 // fire, and opens the session that fire drove.
@@ -71,7 +71,7 @@ function shortLocal(iso?: string): string {
 
 // Open the session a fire drove. new-mode sessions take the schedule's agent kind, so a
 // chat-capable kind opens the mirror and a terminal kind opens the terminal pane.
-// An assistant fire (docs/38 session_mode=assistant) records the CONVERSATION slug
+// An assistant fire (docs/log/38 session_mode=assistant) records the CONVERSATION slug
 // ("a"+6 chars) instead of a session name — resolve it via the chat list and open the
 // assistant chat pane.
 function openRunSession(agentKind: string | undefined, name: string): void {
@@ -92,7 +92,7 @@ interface ScheduleRowProps {
   rowBusy: boolean;
   runsOpen: boolean;
   runs: ScheduleRun[] | undefined;
-  /** 作業グループ (docs/52): the defined sets + the derivation context, for the
+  /** 作業グループ (docs/log/52): the defined sets + the derivation context, for the
    * ⋯ menu's membership toggles. */
   wsets: WorkingSet[];
   wctx: ScheduleSetContext;
@@ -203,7 +203,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, wsets, wctx, onToggleRuns, on
                 >
                   <Icon name="play" /> {tr("sched.run_now")}
                 </button>
-                {/* 作業グループ (docs/52): direct-assignment toggles. A membership
+                {/* 作業グループ (docs/log/52): direct-assignment toggles. A membership
                     DERIVED from the schedule's repo / owner conversation / reuse
                     target shows checked-but-disabled — it moves with that entity,
                     not with this toggle. */}
@@ -311,7 +311,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const [runs, setRuns] = useState<Record<string, ScheduleRun[]>>({});
   const [detail, setDetail] = useState<ScheduleDTO | null>(null);
   const serRef = useRef("");
-  // 作業グループ (docs/52): CP 永続のスケジュールは所属を導出する — repo /
+  // 作業グループ (docs/log/52): CP 永続のスケジュールは所属を導出する — repo /
   // owner_conv(作成元会話) / reuse_target(会話 slug・セッション名)。導出できない
   // ものは行メニューの直接割当（set.schedules）で。
   const wset = useActiveWorkingSet();

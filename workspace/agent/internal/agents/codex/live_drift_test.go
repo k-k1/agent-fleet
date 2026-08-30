@@ -488,7 +488,7 @@ func TestLiveDriftCodexManagedTurnNotifications(t *testing.T) {
 		failAuthAware(t, "managed Resume (thread/start)", err, err.Error())
 	}
 
-	// The docs/30 報告 seam: main wires recordSessionNotification here, and a managed
+	// The docs/log/30 報告 seam: main wires recordSessionNotification here, and a managed
 	// turn's completion is what consumes the arm. Capture it from the real
 	// turn/completed rather than a mock, so a codex rename that stops driving the
 	// transition also surfaces as "報告が飛ばなくなった".
@@ -552,7 +552,7 @@ func TestLiveDriftCodexManagedTurnNotifications(t *testing.T) {
 		st, _ := status.Read(slot)
 		t.Fatalf("status = %+v after completion, want idle — turn/completed no longer persists idle", st)
 	}
-	// 完了が報告 seam へ届いたか（docs/30 — managed は hook を持たないので、ここが
+	// 完了が報告 seam へ届いたか（docs/log/30 — managed は hook を持たないので、ここが
 	// 切れると完了しても【セッション報告】が一切飛ばない）。
 	// 通知は非同期（readLoop を塞がないため）なので待って拾う。
 	var reported bool
@@ -567,7 +567,7 @@ func TestLiveDriftCodexManagedTurnNotifications(t *testing.T) {
 checked:
 	if !reported {
 		t.Error("完了が状態通知 seam に届かなかった: managed セッションの turn/completed が " +
-			"agents.MarkTurnEnd を通っていない — オペレーターへの完了報告(docs/30)が飛ばない")
+			"agents.MarkTurnEnd を通っていない — オペレーターへの完了報告(docs/log/30)が飛ばない")
 	} else {
 		t.Log("ok: turn/completed -> 報告 seam (recordSessionNotification) へ通知")
 	}
@@ -575,7 +575,7 @@ checked:
 	t.Log("ok: turn/completed -> status idle + TurnCompleted event")
 }
 
-// ---- 5: 発言時点からの分岐（docs/55）— lastTurnId が包含であること ------------------
+// ---- 5: 発言時点からの分岐（docs/log/55）— lastTurnId が包含であること ------------------
 
 // TestLiveDriftCodexForkAtLastTurn is the one claim about codex that only a real run can
 // settle: `thread/fork`'s lastTurnId is **inclusive**, so branching "before the user's Nth
@@ -664,7 +664,7 @@ func TestLiveDriftCodexForkAtLastTurn(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatalf("fork carries %d turns, want 1: lastTurnId is not inclusive-through-that-turn anymore. "+
-			"ResolveForkAt's -1 translation (docs/55 §55.3) is now wrong in the other direction — "+
+			"ResolveForkAt's -1 translation (docs/log/55 §55.3) is now wrong in the other direction — "+
 			"branches would carry the prompt the user meant to retake. src=%v fork=%v", len(got), src, got)
 	}
 	if got[0] != resolved {
@@ -675,9 +675,9 @@ func TestLiveDriftCodexForkAtLastTurn(t *testing.T) {
 	// managed route never needs it, but the TUI route (`codex resume <fork>`) would.
 	if p := rolloutPath(st.threadID); p == "" {
 		t.Log("note: the fork has no rollout before its first turn — a TUI resume of a fresh fork " +
-			"cannot work (docs/55 §55.10-1); managed is unaffected")
+			"cannot work (docs/log/55 §55.10-1); managed is unaffected")
 	} else {
-		t.Log("note: the fork's rollout exists immediately (docs/55 §55.10-1)")
+		t.Log("note: the fork's rollout exists immediately (docs/log/55 §55.10-1)")
 	}
 }
 
@@ -739,7 +739,7 @@ func freePort(t *testing.T) int {
 
 // TestLiveDriftCodexThreadMCPConfigAppliesOnResume closes the one gap Tier 1 cannot
 // reach. A managed session's MCP child learns which session it serves from the thread
-// config (docs/27 §9.3.1), and Tier 1 proves thread/start delivers it. But a session
+// config (docs/log/27 §9.3.1), and Tier 1 proves thread/start delivers it. But a session
 // that outlives an Agent restart comes back through thread/RESUME — and a thread has
 // no rollout to resume until a real turn has started, which is exactly what Tier 1
 // cannot buy. If resume ignored the config, every recovered managed session would
@@ -827,13 +827,13 @@ func TestLiveDriftCodexThreadMCPConfigAppliesOnResume(t *testing.T) {
 	// MEASURED 2026-08-09, codex-cli 0.147.0: resume does NOT apply it. thread/start
 	// is the only place config.mcp_servers takes effect, so this asserts the
 	// LIMITATION — if codex ever starts honouring it, this fails and the degradation
-	// note in docs/27 §9.3.1 can be deleted.
+	// note in docs/log/27 §9.3.1 can be deleted.
 	for i := 0; i < 40; i++ {
 		if liveThreadMCPNames(t, cl, tid)[resumeServer] {
 			t.Fatalf("thread/resume now APPLIES config.mcp_servers (%q appeared for %s). "+
 				"Good news: a managed session recovered after a daemon restart would keep its "+
 				"AF_SESSION_NAME instead of degrading to the cwd fallback. Remove the "+
-				"degradation note in docs/27 §9.3.1 and flip this assertion.", resumeServer, tid)
+				"degradation note in docs/log/27 §9.3.1 and flip this assertion.", resumeServer, tid)
 		}
 		time.Sleep(250 * time.Millisecond)
 	}

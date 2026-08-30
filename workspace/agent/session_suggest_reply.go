@@ -44,7 +44,7 @@ const (
 )
 
 // replySuggestPersona は指示文の言語（＝ペルソナ/プロンプトを書く言語）を Console の表示言語で
-// 選ぶ（docs/28 P6）。titleSuggestPersona(lang) と同じ形。
+// 選ぶ（docs/log/28 P6）。titleSuggestPersona(lang) と同じ形。
 //
 // ★候補そのものの言語は表示言語ではなく**会話の言語**（両言語の指示文がそう書いてある）。
 // 候補はユーザーがそのままセッションへ送る文であり、日本語で作業中のセッションへ英語を送ると

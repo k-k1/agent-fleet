@@ -1,6 +1,6 @@
 package agy
 
-// チャットミラーの ContextBar 用のセッションレベル context 充填率（docs/32）。
+// チャットミラーの ContextBar 用のセッションレベル context 充填率（docs/log/32）。
 // agy の転写（transcript_full.jsonl）にも他の永続状態にも token 数は一切無い
 // （実機 grep 0 件）ので、TUI の /context パネル（"Visualize current context
 // usage" — 合計 `26.0k/1.0M tokens` とカテゴリ別内訳を描く）が唯一の取得元。

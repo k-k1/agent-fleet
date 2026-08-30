@@ -4,7 +4,7 @@
 // Workspace を起動するたびに赤いトースト `agent did not become healthy within 15s` を
 // 踏み、しかも数秒後には普通に使えていた。起動は最初から成功していて、CP が「15 秒で
 // /healthz が 200 を返さなければ失敗」と決めていただけ（自己更新 opt-in が ON の人
-// だけ 300 秒だったので「一部の人だけ」に見えた）。docs/38 ★6 の定時実行障害と同根。
+// だけ 300 秒だったので「一部の人だけ」に見えた）。docs/log/38 ★6 の定時実行障害と同根。
 package main
 
 import (
@@ -66,7 +66,7 @@ func TestWaitAgentHealthyTimeoutIsTypedAndKeepsItsWording(t *testing.T) {
 }
 
 // TestAgentStartingMarkerIsSelfHealing — 印は「起動途中だ」と名乗る根拠だが、放置されると
-// 収束しない starting（Console から停止も再作成もできない箱・docs/70 §70.14.6）になる。
+// 収束しない starting（Console から停止も再作成もできない箱・docs/log/70 §70.14.6）になる。
 // 消える道が 2 本あることを固定する: Agent が上がった / 期限が切れた。
 func TestAgentStartingMarkerIsSelfHealing(t *testing.T) {
 	t.Run("印が無ければ starting ではない", func(t *testing.T) {

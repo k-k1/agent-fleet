@@ -150,7 +150,7 @@ describe("link reference definitions", () => {
     expect(html("[foo]: https://example.com/x\n\nsee [foo]")).toBe(
       '<p>see <a href="https://example.com/x">foo</a></p>\n',
     );
-    expect(html("[d]: /docs/68.md\n\nsee [d]")).toContain('href="/docs/68.md"');
+    expect(html("[d]: /docs/log/68.md\n\nsee [d]")).toContain('href="/docs/log/68.md"');
     // The destination and the title may sit on the following lines — marked's own rule
     // decides where the definition ends, so the title line is consumed with it.
     expect(html('[t]: /a.md\n  "Title"\n\nsee [t]')).toContain('title="Title"');
@@ -163,7 +163,7 @@ describe("link reference definitions", () => {
     expect(isLinkDestination("#見出し")).toBe(true);
     expect(isLinkDestination("<any thing>")).toBe(true);
     expect(isLinkDestination("mailto:a@example.com")).toBe(true);
-    expect(isLinkDestination("docs/68-session-changed-files.md")).toBe(true);
+    expect(isLinkDestination("docs/log/68-session-changed-files.md")).toBe(true);
     expect(isLinkDestination("中イキ未達を意図化する案（既定設計と逆）。")).toBe(false);
     expect(isLinkDestination("幕間の再配置／MED語彙拡張。")).toBe(false);
   });

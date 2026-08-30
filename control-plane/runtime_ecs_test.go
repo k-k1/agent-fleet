@@ -29,7 +29,7 @@ type fakeECS struct {
 	taskDefs map[string]*ecstypes.TaskDefinition
 	// activeDeploymentPolls makes DescribeServices report a left-over ACTIVE deployment
 	// for the next N answers, which is what ECS does for 10-23 seconds after a task
-	// definition changes (docs/64 §64.39.4). Nothing else models deployments, because
+	// definition changes (docs/log/64 §64.39.4). Nothing else models deployments, because
 	// nothing else looks at them.
 	activeDeploymentPolls int
 }
@@ -278,7 +278,7 @@ func TestECSStartNonFatalWhenAgentNotReady(t *testing.T) {
 }
 
 func TestECSStartDoesNotBlockOnReadiness(t *testing.T) {
-	// The 504 fix (docs/62 §62.5): Start runs inside the HTTP request, and the ALB in
+	// The 504 fix (docs/log/62 §62.5): Start runs inside the HTTP request, and the ALB in
 	// front of the CP has a 60s idle timeout, so Start must return as soon as the
 	// service is at desiredCount 1 — never sit on the readiness poll, whose budget is
 	// deliberately longer than any single request may take.
@@ -489,7 +489,7 @@ func tags(membership, role string) []efstypes.Tag {
 }
 
 // The Fargate adapter has the same leak the EC2 one had: an ECS service, two EFS access
-// points and two SSM SecureStrings that outlive the membership (docs/64 §64.18.1). What
+// points and two SSM SecureStrings that outlive the membership (docs/log/64 §64.18.1). What
 // it CANNOT do is delete the home itself — the EFS directories survive their access
 // points — so those come back as reported leftovers rather than as a silent success.
 func TestECSDestroyRemovesServiceAccessPointsAndSecrets(t *testing.T) {

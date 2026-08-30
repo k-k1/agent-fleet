@@ -55,7 +55,7 @@
   overflow-y: auto;
   overflow-x: hidden;
 }
-/* 作業グループ switcher (docs/52) — pinned between the layout map and the
+/* 作業グループ switcher (docs/log/52) — pinned between the layout map and the
    scroll area. The scoped state tints the whole bar with the accent so an
    active filter is unmissable (the "where did my session go" guard). */
 .wset-bar {
@@ -318,7 +318,7 @@
 .lm-dot.bg { background: var(--warn); }
 .lm-dot.off { background: var(--muted2); }
 
-/* Pre-invitation landing (docs/61 §61.10.2 · P7-2 · features/auth/NotProvisioned).
+/* Pre-invitation landing (docs/log/61 §61.10.2 · P7-2 · features/auth/NotProvisioned).
    A whole-window state rather than a modal: there is no Console behind it to dim,
    and a dismissible dialog would leave the person in a shell where every request
    403s. Since AF_PROVISION=invite became the default for new installs, this is the

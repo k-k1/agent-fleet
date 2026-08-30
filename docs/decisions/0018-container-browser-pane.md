@@ -1,8 +1,8 @@
 # 0018. コンテナ内ブラウザペイン — Chromium を Workspace 内で動かし描画だけを中継する
 
 - 状態: 採用・MVP実装済み（2026-07-18、W5統合検証済み）
-- 関連: [31-container-browser-pane.md](../31-container-browser-pane.md)（実装契約・段階計画）/
-  [31-container-browser-pane-ux-contract.md](../31-container-browser-pane-ux-contract.md)（利用契約）/
+- 関連: [31-container-browser-pane.md](../log/31-container-browser-pane.md)（実装契約・段階計画）/
+  [31-container-browser-pane-ux-contract.md](../log/31-container-browser-pane-ux-contract.md)（利用契約）/
   [dev/05 §5.3](../dev/05-api-contracts.md)（既存 port preview）/
   [0007-opencode-web-via-pk-webui.md](0007-opencode-web-via-pk-webui.md)（サブパス方式の既知限界）
 

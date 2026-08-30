@@ -2,8 +2,8 @@
 
 - 状態: 採用・P0実測で実装契約確定（P1〜P3実装済み。対話セッション直接経路を2026-08-02に補正。
   導線の断線とport衝突を2026-08-08に補正 = 決定18〜20）
-- 関連: [53-chromium-attach-view.md](../53-chromium-attach-view.md) /
-  [53 P0実測](../53-chromium-attach-view-p0-verification.md) / [0018-container-browser-pane.md](0018-container-browser-pane.md) /
+- 関連: [53-chromium-attach-view.md](../log/53-chromium-attach-view.md) /
+  [53 P0実測](../log/53-chromium-attach-view-p0-verification.md) / [0018-container-browser-pane.md](0018-container-browser-pane.md) /
   [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.md)
 
 ## 背景
@@ -86,7 +86,7 @@ CDP screencast基盤が既にあるAFには過剰である。
 2026-08-08に「CDP合成入力をやめてOSの入力処理をそのまま使えないか」という観点で再検討し、実地計測の上で
 **この判断を維持する**と決めた。決め手はコストではなく所有権で、VNCはownerが自分のChromiumをAFの仮想
 ディスプレイ上でheadful起動する前提を要求するが、§53.2でChromiumを起動するのはownerでありAFではない。
-計測と検討の詳細は[docs/53 §53.18](../53-chromium-attach-view.md#5318-rdp--vnc-転送の検討2026-08-08-実測)。
+計測と検討の詳細は[docs/53 §53.18](../log/53-chromium-attach-view.md#5318-rdp--vnc-転送の検討2026-08-08-実測)。
 
 ### Playwright protocolへ接続する
 

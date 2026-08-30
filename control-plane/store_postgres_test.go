@@ -192,7 +192,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("ssm profile: %v", err)
 	}
 
-	// memo categories (docs/21 UI刷新 / migrations-pg/0030). ★ This whole table had
+	// memo categories (docs/log/21 UI刷新 / migrations-pg/0030). ★ This whole table had
 	// only ever existed on SQLite: the mirror migration was never written, so on a
 	// Postgres deployment every category endpoint answered 500 and the Console — which
 	// folds a non-array answer into an empty list — simply showed no categories. The
@@ -268,7 +268,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("get setting: %v %q", err, v)
 	}
 
-	// identity_provider round trip (docs/61 P1 / migrations-pg/0021). Everything
+	// identity_provider round trip (docs/log/61 P1 / migrations-pg/0021). Everything
 	// below had only ever run on SQLite: the pair table, its
 	// ON CONFLICT(provider, subject) upsert, and the LOWER(email)=? lookup. Postgres
 	// is the stricter dialect about placeholder types, which is why identityByEmail
@@ -312,7 +312,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("identity_provider rows = %d, want 2", n)
 	}
 
-	// tenant login rules round trip (docs/61 P3 / migrations-pg/0022). The columns
+	// tenant login rules round trip (docs/log/61 P3 / migrations-pg/0022). The columns
 	// arrive by ALTER on an existing table, and the entry gate reads them on every
 	// request, so a dialect slip here would take the whole login down.
 	if err := st.SetTenantLogin(ctx, t2.ID, "entra,github", "acme.co.jp", "acme.co.jp", ""); err != nil {
@@ -328,7 +328,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("pre-existing tenant row: %v %+v", err, got)
 	}
 	// The tenant's source-network restriction rides the same row and the same bulk
-	// read (docs/66 / migrations-pg/0028). It is consulted on EVERY request, so a
+	// read (docs/log/66 / migrations-pg/0028). It is consulted on EVERY request, so a
 	// dialect slip here would 403 an entire tenant rather than just fail a screen.
 	if err := st.SetTenantAllowedCIDRs(ctx, t2.ID, "203.0.113.0/24,198.51.100.7/32"); err != nil {
 		t.Fatalf("set allowed_cidrs: %v", err)
@@ -385,7 +385,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("EnsureMembership revived a deactivated membership: %+v", got)
 	}
 
-	// tenant_idp round trip (docs/61 P4 / migrations-pg/0023). The table is created
+	// tenant_idp round trip (docs/log/61 P4 / migrations-pg/0023). The table is created
 	// by this migration, the deployment-wide read JOINs tenant, and the approval path
 	// is a second UPDATE — all of it had only ever run on SQLite.
 	idpRow := TenantIdP{
@@ -408,7 +408,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("approve: %v", err)
 	}
 	// ★ The display name travels with the slug: it is what the generated button label
-	// says to tell this tenant's method apart from the deployment's (docs/61 §61.15.10).
+	// says to tell this tenant's method apart from the deployment's (docs/log/61 §61.15.10).
 	act, tenants, err := st.ListActiveTenantIdPs(ctx)
 	if err != nil || len(act) != 1 || tenants[t2.ID].Slug != t2.Slug ||
 		tenants[t2.ID].Name != t2.Name || act[0].ApprovedBy != "boss" {

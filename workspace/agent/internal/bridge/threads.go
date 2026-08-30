@@ -10,13 +10,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// The session↔thread map of docs/37 契約6: sessionName → the chat thread its
+// The session↔thread map of docs/log/37 契約6: sessionName → the chat thread its
 // notifications group into. Small JSON file under ~/.config/agent-fleet (home
 // persists across container recreates). Channel is recorded so a destination
 // change invalidates old mappings naturally; a hand-deleted thread invalidates
 // itself via the recreate path in the provider's threaded send.
 //
-// Provider-scoped (docs/37 Slack 追随): each provider owns its own file so Discord
+// Provider-scoped (docs/log/37 Slack 追随): each provider owns its own file so Discord
 // and Slack can be connected at once without colliding. Discord keeps the original
 // unqualified filename (no migration of an existing map); Slack gets a suffixed one.
 // `Thread` is the routing key the receive loop reverse-looks-up (thread→session):
@@ -94,7 +94,7 @@ func (ts *threadStore) update(fn func(threadMap)) {
 }
 
 // threadToSession reverse-looks-up which session a thread belongs to — the routing
-// key for P2a inbound (docs/37): a reply in a session's thread is injected into that
+// key for P2a inbound (docs/log/37): a reply in a session's thread is injected into that
 // session. Match on Thread alone: the forward path keeps exactly one thread per
 // session and overwrites the entry when the destination channel changes, so a thread
 // id in the map is always the current thread of exactly one session.

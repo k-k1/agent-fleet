@@ -1,4 +1,4 @@
--- Postgres mirror of migrations/0048_tenant_git_oauth.sql (docs/71 + ADR0052).
+-- Postgres mirror of migrations/0048_tenant_git_oauth.sql (docs/log/71 + ADR0052).
 -- Tenant-owned OAuth apps for the git providers. See the SQLite file for why the
 -- row is the only source (env is not read) and why there is no approval status.
 CREATE TABLE IF NOT EXISTS tenant_git_oauth(

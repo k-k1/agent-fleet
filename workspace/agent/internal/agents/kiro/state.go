@@ -1,6 +1,6 @@
 package kiro
 
-// TUI 文字列契約による live 状態分類（working / question / idle）。docs/43 の実装時
+// TUI 文字列契約による live 状態分類（working / question / idle）。docs/log/43 の実装時
 // 判断（§5-1）を実測で決着させた結果、状態源は**明示テキスト契約**に置く:
 //
 //   - working : フッタ「Kiro is working · Type to steer · Ctrl+S to queue」
@@ -35,7 +35,7 @@ func LiveState(m session.Meta) string {
 }
 
 // approvalDetail は TUI の承認パネルが「何を承認しろと言っているか」を 1 行で返す
-// （docs/75 P5 の持ち越し用）。承認待ちでなければ ""。
+// （docs/log/75 P5 の持ち越し用）。承認待ちでなければ ""。
 //
 // 契約句を含む行そのものを返す（"shell requires approval" のような 1 行）。パネルの
 // 体裁は版で動くので、行を丸ごと運んで**解釈しない** — 持ち越しカードが出すのは

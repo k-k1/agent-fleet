@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// SSM login status (docs/history/p3-ssm-session.md). An ssm session runs
+// SSM login status (docs/log/p3-ssm-session.md). An ssm session runs
 // `aws sso login` (device-code) then `aws ssm start-session` in its tmux pane. The
 // Console drives the login from a modal WITHOUT attaching the terminal yet: it polls
 // this endpoint, which reads the pane and reports whether the device-authorization URL
@@ -223,7 +223,7 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 	var b strings.Builder
 	// Lean rootfs ships without the AWS CLI / Session Manager plugin; install the
 	// pinned versions into the home on first use, with the progress streaming
-	// into this very pane (docs/35 §35.7.2-6). No-op when both are present.
+	// into this very pane (docs/log/35 §35.7.2-6). No-op when both are present.
 	b.WriteString("{ command -v aws && command -v session-manager-plugin; } >/dev/null 2>&1 || " +
 		"workspace-agent install-awscli || { echo '[Agent Fleet] AWS CLI の導入に失敗しました（ネットワークを確認して再試行してください）'; exit 1; }; ")
 	if s.StartURL != "" && s.Profile != "" {

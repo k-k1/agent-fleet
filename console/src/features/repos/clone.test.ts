@@ -47,7 +47,7 @@ function route(handlers: { post?: () => Response; jobs: Array<() => Response>; r
   });
 }
 
-describe("repo import (docs/78)", () => {
+describe("repo import (docs/log/78)", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     useRepoJobsStore.setState({ jobs: [] });

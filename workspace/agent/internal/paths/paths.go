@@ -1,4 +1,4 @@
-// Package paths はホーム配下のパス規約（docs/23 P1-W5、残① Wave A で internal 化）。
+// Package paths はホーム配下のパス規約（docs/log/23 P1-W5、残① Wave A で internal 化）。
 // ~/.config/agent-fleet は denylist 配下（ファイルブラウザ非表示）で、fstore の
 // 各ストアと資格情報ストアが同居する。package main と internal/session/status の
 // 双方から参照される最下層のヘルパ。
@@ -27,7 +27,7 @@ func AgentConfigDir() string {
 // of home via CLAUDE_CONFIG_DIR; unset means the classic ~/.claude.
 //
 // It lives here rather than in internal/agents/claude so a lower layer (the MCP
-// registry's session materialize, docs/48 §8) can write the CLI's native config
+// registry's session materialize, docs/log/48 §8) can write the CLI's native config
 // without importing an agent package — one resolver, no drifting copy.
 func ClaudeConfigDir() string {
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
@@ -65,7 +65,7 @@ func CopilotHome() string {
 }
 
 // FleetNotesPath is the workspace guide baked into the image
-// (`workspace/workspace-notes.md` — the fleet layer of docs/60). The agent composes
+// (`workspace/workspace-notes.md` — the fleet layer of docs/log/60). The agent composes
 // it into each CLI's global instruction file at startup; the env override exists so
 // tests can point at a fixture instead of the image copy.
 func FleetNotesPath() string {
@@ -94,7 +94,7 @@ func AgentDataDir() string {
 }
 
 // ExePath is the absolute path to this binary, used to build hook/MCP commands
-// that resolve in an agent's hook context regardless of PATH (docs/23 残① Wave F
+// that resolve in an agent's hook context regardless of PATH (docs/log/23 残① Wave F
 // で main の agentExe / codex の複製を一本化).
 func ExePath() string {
 	exe, err := os.Executable()

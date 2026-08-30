@@ -1,12 +1,12 @@
 package copilot
 
-// copilot の managed driver（docs/36 Track A2）— per-session child 方式。
+// copilot の managed driver（docs/log/36 Track A2）— per-session child 方式。
 // セッション毎に `copilot --acp`（Agent Client Protocol、stdio JSON-RPC）を子
 // プロセスとして抱え、session/new・session/load（クロスプロセス resume、実測）・
 // session/prompt（blocking）・session/cancel・session/set_mode に turn 状態機械
 // （§4）・Interaction（§5）・reconciliation（§6）をマッピングする。
 //
-// per-session child を選ぶ理由（docs/36 契約）: ACP に per-session のモデル指定が
+// per-session child を選ぶ理由（docs/log/36 契約）: ACP に per-session のモデル指定が
 // 無く（configOptions は mode/allow_all のみ — 実測）、子プロセス毎の --model /
 // --effort フラグで固定するのが唯一の確実な経路。メモリは TUI pane と同等で、
 // exit/OOM 記録は子の cmd.Wait() で per-session に正確化される。
@@ -69,7 +69,7 @@ func NewDriver() agents.Driver { return managedDriver{} }
 
 type managedDriver struct{ agentImpl }
 
-// Capabilities（§3.1・docs/36 契約）。Steer は driver 内キュー（ACP に mid-turn
+// Capabilities（§3.1・docs/log/36 契約）。Steer は driver 内キュー（ACP に mid-turn
 // 注入の口が無い — opencode と同じ意味論）。DynamicModel/Effort は false: 子の
 // 起動フラグで固定（変更はセッション再作成）。Mode は session/set_mode がネイティブ。
 func (managedDriver) Capabilities() agents.Capabilities {
@@ -126,14 +126,14 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if h.settings.Mode == "" {
 		h.settings.Mode = m.Mode
 	}
-	// 権限確認をスキップするか（docs/76）は meta と ui-prefs から毎 Resume 解決する。
+	// 権限確認をスキップするか（docs/log/76）は meta と ui-prefs から毎 Resume 解決する。
 	// ThreadSettings に載せないのは、あちらが「空 = 変更しない」の動的更新用で bool を
 	// 3 値にできないから — 設定変更後の再 spawn でも、ここで解決し直した値が効く。
 	h.bypass = agents.SkipPermissions(m)
 	st := h.settings
 	h.mu.Unlock()
 
-	// First Resume of a forked slot (docs/55): mint this slot's session id and build its
+	// First Resume of a forked slot (docs/log/55): mint this slot's session id and build its
 	// session-state directory from the source before spawning, so the spawn below takes
 	// the ordinary session/load path. Without this the slot has no sid, spawn falls to
 	// session/new, and the branch quietly opens as an empty conversation.
@@ -304,7 +304,7 @@ type threadHandle struct {
 
 	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・kiro A2-4 と同型）
 
-	// bypass は「権限確認をスキップする」か（docs/76）。Resume が meta から解決して
+	// bypass は「権限確認をスキップする」か（docs/log/76）。Resume が meta から解決して
 	// 置く — spawn は meta を持たないので、ここに載せて渡す。plan は Resume 時点では
 	// なく spawn の st.Mode で見る（稼働中のモード変更で再 spawn されるため）。
 	bypass bool
@@ -327,7 +327,7 @@ type threadHandle struct {
 
 // spawn starts the child runtime, initializes ACP and loads/creates the copilot
 // session. Caller must NOT hold h.mu.
-// bypassNow reports the resolved「権限確認をスキップする」choice (docs/76). Resume writes
+// bypassNow reports the resolved「権限確認をスキップする」choice (docs/log/76). Resume writes
 // it under h.mu; spawn runs without the lock, so read it through here.
 func (h *threadHandle) bypassNow() bool {
 	h.mu.Lock()
@@ -338,7 +338,7 @@ func (h *threadHandle) bypassNow() bool {
 func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	args := []string{"--acp", "--no-remote", "--no-remote-export"}
 	if h.bypassNow() && st.Mode != "plan" {
-		// fleet 既定の bypass。plan 起動と、利用者が権限確認を選んだとき（docs/76）は
+		// fleet 既定の bypass。plan 起動と、利用者が権限確認を選んだとき（docs/log/76）は
 		// 外す — 承認は Interaction として表面化させる。
 		args = append(args, "--allow-all")
 	}
@@ -605,7 +605,7 @@ func (h *threadHandle) pump() {
 }
 
 // runTurn executes ONE blocking session/prompt and lands the terminal state.
-// turn 境界の MarkTurnStart/End が status ストアと docs/30 の完了報告を駆動する
+// turn 境界の MarkTurnStart/End が status ストアと docs/log/30 の完了報告を駆動する
 // （notify seam — f3e63f6/eb3eb31 の教訓）。
 func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.slotSid)

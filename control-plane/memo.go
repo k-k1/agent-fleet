@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Memo queue (docs/21). Per-membership notes accumulated across devices, then flushed
+// Memo queue (docs/log/21). Per-membership notes accumulated across devices, then flushed
 // to a coding session as one concatenated message. All routes resolve scope with
 // withMembership (no workspace build); mutations are ownership-guarded in the store by
 // membership_id. Persistence mirrors the SSM profile CRUD (ssm.go) 1:1.
@@ -28,7 +28,7 @@ func memoRetainBefore() string {
 	return time.Now().UTC().Add(-memoRetentionDays * 24 * time.Hour).Format(time.RFC3339)
 }
 
-// memoAttachment is one image attached to a memo (docs/21 画像添付). Path is the
+// memoAttachment is one image attached to a memo (docs/log/21 画像添付). Path is the
 // absolute in-container path returned by POST /api/memos/paste-image (under
 // ~/.cache/agent-fleet/memo-images); Name is its basename for display.
 type memoAttachment struct {
@@ -96,7 +96,7 @@ func normalizeAttachments(in []memoAttachment) (string, *apiError) {
 	return string(b), nil
 }
 
-// memoAPI is the memo-queue feature handler set（docs/23 残③ の機能 struct 実例）:
+// memoAPI is the memo-queue feature handler set（docs/log/23 残③ の機能 struct 実例）:
 // 解決は埋め込みの memberAuth（登録側で withMembership / withResolved に包む）、
 // store は MemoStore の narrow view だけを持つ。flush だけは実ランタイムへ送る
 // ため withResolved で登録する。
@@ -346,7 +346,7 @@ func (a memoAPI) flush(w http.ResponseWriter, r *http.Request, res *resolved) {
 		IDs         []string `json:"ids"`
 		// Text, when non-empty, is sent verbatim instead of the server-composed
 		// message — the send modal lets the user edit the concatenated text before
-		// sending (docs/21 UI刷新). The ids still drive which memos get stamped sent.
+		// sending (docs/log/21 UI刷新). The ids still drive which memos get stamped sent.
 		Text string `json:"text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -369,7 +369,7 @@ func (a memoAPI) delete(w http.ResponseWriter, r *http.Request, _ Identity, mv M
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- Memo categories (docs/21 UI刷新) -------------------------------------------
+// --- Memo categories (docs/log/21 UI刷新) -------------------------------------------
 // First-class categories: created ahead of any memo, reordered by drag-and-drop, kept
 // while empty. A category's NAME stays the grouping key (Memo.Category), so a rename
 // cascades onto the memos and a rename onto an existing name merges the two.

@@ -14,7 +14,7 @@ func memoryMkdirAll(t *testing.T, dir string) {
 	}
 }
 
-// docs/39 ★1: allowlist が唯一の判定であることを、ルート宣言そのものに対して固定する。
+// docs/log/39 ★1: allowlist が唯一の判定であることを、ルート宣言そのものに対して固定する。
 // ここが緩むと transcript / 資格情報 / 派生状態が repo へ入る経路が生まれる。
 func TestMemoryAllowedAllowlist(t *testing.T) {
 	claudeRoot, codexRoot := memoryRootDecls()[0], memoryRootDecls()[1]
@@ -112,7 +112,7 @@ func TestMemorySlugDisplay(t *testing.T) {
 }
 
 // memoryRoots は codex のルートを ~/.codex/memories の存在で出し入れする（memories 機能は
-// 既定 OFF なので、有効化していない環境ではルート自体が現れない — docs/39 決着 #4）。
+// 既定 OFF なので、有効化していない環境ではルート自体が現れない — docs/log/39 決着 #4）。
 func TestMemoryRootsCodexPresenceGated(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -138,7 +138,7 @@ func memoryRootKinds() []string {
 	return out
 }
 
-// docs/39 P4: memories を有効化していない環境で codex ルートを黙って落とすと、Console は
+// docs/log/39 P4: memories を有効化していない環境で codex ルートを黙って落とすと、Console は
 // 「なぜ codex のメモリが出てこないか」も「どう有効化するか」も示せない。inactive が
 // その理由を持つことを固定する。
 func TestMemoryInactiveRootsExplainCodex(t *testing.T) {

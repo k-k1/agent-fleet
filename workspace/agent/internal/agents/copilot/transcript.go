@@ -1,7 +1,7 @@
 package copilot
 
-// events.jsonl → transcript.Turn 正規化（read 正本、docs/36）。イベント形は
-// v1.0.73 実測（docs/36 実測記録）: user.message / assistant.turn_start /
+// events.jsonl → transcript.Turn 正規化（read 正本、docs/log/36）。イベント形は
+// v1.0.73 実測（docs/log/36 実測記録）: user.message / assistant.turn_start /
 // assistant.message / tool.execution_start|complete / assistant.turn_end が
 // 描画対象で、deltas・reasoning などの ephemeral イベントはファイルに書かれない。
 // Turn.Idx は行番号由来の単調増加（Console の pendingEcho/MirrorView は idx
@@ -33,7 +33,7 @@ type event struct {
 	Type string `json:"type"`
 	TS   string `json:"timestamp"`
 	// ID/ParentID: every events.jsonl line carries them (実測) — a uuid chain like
-	// claude's. The user.message id is the fork anchor (docs/55 §55.5).
+	// claude's. The user.message id is the fork anchor (docs/log/55 §55.5).
 	ID       string          `json:"id"`
 	ParentID string          `json:"parentId"`
 	Data     json.RawMessage `json:"data"`
@@ -222,7 +222,7 @@ func toolLabel(args json.RawMessage) string {
 }
 
 // toolEdits extracts the edit-family payload of a copilot tool call, so a session's
-// changed-files list (docs/68) has a coordinate to list and a before/after to count.
+// changed-files list (docs/log/68) has a coordinate to list and a before/after to count.
 //
 // 実測（~/.copilot/session-state/*/events.jsonl, 2026-08）: 観測できた tool は
 // `view` / `bash` / `edit` / `grep` の 4 つで、編集は **`edit`** ——

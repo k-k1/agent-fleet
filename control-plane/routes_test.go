@@ -12,7 +12,7 @@ import (
 )
 
 // smokeEnv wires the real route table (buildMux) to a real SQLite store in dev
-// auth mode — no docker / agent involved. docs/23 P0-2: these are the regression
+// auth mode — no docker / agent involved. docs/log/23 P0-2: these are the regression
 // detectors for handler moves; they assert status + known JSON keys, not shapes.
 func smokeEnv(t *testing.T) (config, *http.ServeMux) {
 	t.Helper()
@@ -71,7 +71,7 @@ func TestSmokeVersion(t *testing.T) {
 	if got["version"] != "dev" {
 		t.Fatalf("version payload: %v", got)
 	}
-	// /api/version must stay behind the auth gate (docs/35 §35.6.1) — only
+	// /api/version must stay behind the auth gate (docs/log/35 §35.6.1) — only
 	// /healthz is the unauthenticated probe.
 	if isAuthExempt("/api/version") {
 		t.Fatalf("/api/version must not be auth-exempt")
@@ -94,7 +94,7 @@ func TestSmokeWhoami(t *testing.T) {
 }
 
 // smokeProxyEnv is smokeEnv in AUTH=proxy with a plain member — the only way to get a
-// NON-administrator now that AUTH=dev's fixed user is a super_admin (docs/71 §71.6).
+// NON-administrator now that AUTH=dev's fixed user is a super_admin (docs/log/71 §71.6).
 func smokeProxyEnv(t *testing.T) (config, *http.ServeMux) {
 	t.Helper()
 	cfg, _ := smokeEnv(t)
@@ -106,7 +106,7 @@ func smokeProxyEnv(t *testing.T) (config, *http.ServeMux) {
 
 // /api/tenants auto-provisions the dev user into the default tenant (AF_PROVISION=auto)
 // and reports super_admin=true — in dev mode the single fixed user IS the operator, so
-// the tenant settings screen is reachable on a native / WSL deployment (docs/71 §71.6).
+// the tenant settings screen is reachable on a native / WSL deployment (docs/log/71 §71.6).
 // The MEMBERSHIP role is a different axis and stays "member".
 func TestSmokeTenants(t *testing.T) {
 	_, mux := smokeEnv(t)
@@ -128,7 +128,7 @@ func TestSmokeTenants(t *testing.T) {
 		t.Fatalf("tenants payload: %+v", got)
 	}
 	if !got.SuperAdmin {
-		t.Fatal("dev user must be super_admin (docs/71 §71.6)")
+		t.Fatal("dev user must be super_admin (docs/log/71 §71.6)")
 	}
 }
 
@@ -178,7 +178,7 @@ func TestSmokeStaticCatchAll(t *testing.T) {
 	}
 }
 
-// The Chromium attachment action link (docs/53 §53.7) is a Console route with no
+// The Chromium attachment action link (docs/log/53 §53.7) is a Console route with no
 // file behind it. It regressed to the catch-all's 404 once — the whole one-click
 // hand-off is dead when this 404s, and no unit test above the parser noticed.
 func TestBrowserAttachmentActionServesConsoleShell(t *testing.T) {
@@ -201,7 +201,7 @@ func TestBrowserAttachmentActionServesConsoleShell(t *testing.T) {
 		}
 	}
 	// The action route must stay session-gated — it is a Console surface, and the
-	// id is not an authorization token (docs/53 §53.6).
+	// id is not an authorization token (docs/log/53 §53.6).
 	if isAuthExempt("/open/browser-attachment/" + id) {
 		t.Fatal("the action route must NOT be auth exempt")
 	}
@@ -252,7 +252,7 @@ func TestFSResolveProxyRouteRegistered(t *testing.T) {
 	}
 }
 
-// エディタ AI 変更提案（docs/44 Phase 4）: CP は明示許可リスト方式なので、Agent 側
+// エディタ AI 変更提案（docs/log/44 Phase 4）: CP は明示許可リスト方式なので、Agent 側
 // ルートに対応する /api/fs/suggest-edit の登録漏れを回帰検知する。
 func TestFSSuggestEditProxyRouteRegistered(t *testing.T) {
 	_, mux := smokeEnv(t)
@@ -264,7 +264,7 @@ func TestFSSuggestEditProxyRouteRegistered(t *testing.T) {
 }
 
 // ★ CP は明示許可リストなので、Agent 側にルートを足しただけでは Console から届かない
-// （再発常習: docs/78 の取り込みジョブも Agent → CP の順で 2 か所要る）。ここは CP 側の
+// （再発常習: docs/log/78 の取り込みジョブも Agent → CP の順で 2 か所要る）。ここは CP 側の
 // 登録と、監査分類が付いていることを固定する。
 func TestCPRegistersRepoJobRoutes(t *testing.T) {
 	_, mux := smokeEnv(t)

@@ -1,7 +1,7 @@
 package main
 
 // Git OAuth refresh bridge — the internal (per-membership token) face of the tenant's
-// git provider OAuth app (docs/71 §71.8 + ADR0052 決定 7).
+// git provider OAuth app (docs/log/71 §71.8 + ADR0052 決定 7).
 //
 // ★ Why this exists at all. Bitbucket access tokens expire in ~2h, so something has to
 // run the refresh grant, and that grant is Basic-authenticated with the OAuth app's
@@ -9,7 +9,7 @@ package main
 // and the Agent refreshed on its own — which meant the TENANT's client secret was
 // copied into every one of its members' encrypted stores, readable by anyone with a
 // shell in their own container. That was tolerable while the app belonged to the
-// deployment operator; once it belongs to a tenant administrator (docs/71) it is their
+// deployment operator; once it belongs to a tenant administrator (docs/log/71) it is their
 // credential sitting on other people's disks.
 //
 // So the refresh moves here: the Agent posts the REFRESH TOKEN, the CP adds the app's

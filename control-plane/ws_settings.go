@@ -27,7 +27,7 @@ func parseWSSettings(s string) wsSettings {
 	return w
 }
 
-// wsSettingsAPI は CP 管理のワークスペース設定の機能ハンドラ集（docs/23 残③）。
+// wsSettingsAPI は CP 管理のワークスペース設定の機能ハンドラ集（docs/log/23 残③）。
 // 解決は埋め込みの memberAuth（登録側で withResolved に包む）。store は
 // WorkspaceStore、tenants はオペレータゲート参照用 TenantStore の narrow view。
 // キャッシュ破棄（evictMembershipCache）だけは memberAuth 経由の a.mgr を直接呼ぶ。

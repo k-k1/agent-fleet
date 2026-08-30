@@ -5,7 +5,7 @@ import { SESSION_TITLE_MAX, clampSessionTitle } from "./sessionTitle.ts";
 // できるのに起動だけ bad_title で落ちる（引き継ぎタイトルの実障害）。
 describe("clampSessionTitle", () => {
   it("leaves a normal title alone", () => {
-    expect(clampSessionTitle("docs/80 の続き")).toBe("docs/80 の続き");
+    expect(clampSessionTitle("docs/log/80 の続き")).toBe("docs/log/80 の続き");
     expect(clampSessionTitle("  前後の空白は落とす  ")).toBe("前後の空白は落とす");
     expect(clampSessionTitle("")).toBe("");
   });

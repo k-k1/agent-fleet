@@ -1,4 +1,4 @@
-// ScheduleDetailModal (docs/38 P5.2) — view a schedule's full detail and edit the
+// ScheduleDetailModal (docs/log/38 P5.2) — view a schedule's full detail and edit the
 // structured, no-NL-needed fields (label / prompt / timing spec+tz / wake policy /
 // agent+model). Reached from the row's ⋯ menu. The advanced execution fields
 // (session_mode / reuse / rotation / repo / worktree) are shown read-only: those are

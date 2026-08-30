@@ -14,10 +14,10 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// セッション単位のスキル一覧（docs/50 / ADR0034、v2 でクロスエージェント化）:
+// セッション単位のスキル一覧（docs/log/50 / ADR0034、v2 でクロスエージェント化）:
 // ミラービューのスキルピッカーが「いま話しているセッション」で呼べる起動可能な
 // スキル/コマンドを列挙する。kind ごとにソースと起動形が違う（全て 2026-07-28 実測、
-// docs/50 §7）:
+// docs/log/50 §7）:
 //   - claude:   .claude/skills + .claude/commands（project = meta.Dir / user = claude.ConfigDir()）→ "/name"
 //   - codex:    .codex/skills（project）+ $CODEX_HOME/skills（user・同梱 .system は cli 扱い）→ "$name" メンション
 //   - opencode: .opencode/command(s)（project）+ ~/.config/opencode/command(s)（user）→ "/name"
@@ -37,7 +37,7 @@ type sessionSkill struct {
 	// ネイティブ起動: コンポーザーへ差し込む起動文字列（末尾空白込み。"/name " / "$name "）。
 	// foreign エントリ（下記）では空。
 	Invoke string `json:"invoke,omitempty"`
-	// クロススキル注入（docs/50 §8）: この kind の CLI が自力では発見しない他規約の
+	// クロススキル注入（docs/log/50 §8）: この kind の CLI が自力では発見しない他規約の
 	// スキル。Path は repo 相対の SKILL.md、Origin は規約ディレクトリ（".claude" 等）。
 	// Console はこれを「Path を読んで指示に従え」というプロンプトに組んで差し込む —
 	// ただの指示文なので kind もドライバも選ばない。
@@ -199,7 +199,7 @@ func scanSlashSkills(projectBase, userBase string) []sessionSkill {
 // 走査には掛からない（SKILL.md がディレクトリ直下に無い）ので別ルートとして拾い、
 // source "cli" で区別する。起動は "$name" メンション（スラッシュではない — バイナリの
 // システムプロンプト実測「names an available skill (with $SkillName …)」）。
-// .codex/skills にはスキルブリッジ（docs/50 §8）が張った claude スキルへのリンクも
+// .codex/skills にはスキルブリッジ（docs/log/50 §8）が張った claude スキルへのリンクも
 // 含まれる — 通常ファイルと同様に os.ReadFile が辿るので特別扱い不要。
 func codexSkills(dir string) []sessionSkill {
 	home := paths.CodexHome()
@@ -214,7 +214,7 @@ func codexSkills(dir string) []sessionSkill {
 // opencodeSkills: コマンド md（本文がプロンプト・frontmatter description）を列挙する。
 // ディレクトリ名は単複両方が実在する（1.18.8 バイナリ実測: .opencode/command/deploy.md と
 // .opencode/commands/ の両文字列）。.opencode/skills は model 起動用でスラッシュ起動が
-// 未検証のため対象外（docs/50 §7）。
+// 未検証のため対象外（docs/log/50 §7）。
 func opencodeSkills(dir string) []sessionSkill {
 	cfg := paths.OpencodeConfigDir()
 	return scanSkillRoots([]skillRoot{

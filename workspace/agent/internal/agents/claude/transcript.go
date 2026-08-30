@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// claude jsonl transcript の読み出しと解析（docs/23 残① Wave F: 旧 package main
+// claude jsonl transcript の読み出しと解析（docs/log/23 残① Wave F: 旧 package main
 // session_io.go の jsonl 読み出し + session_transcript.go の claude パーサ）。
 // /messages・/output の HTTP ハンドラ（ウィンドウ処理・ページング・internal/status
 // の pending 合成）は package main の session_transcript.go / session_io.go に残り、
@@ -267,7 +267,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		Type      string `json:"type"`
 		Timestamp string `json:"timestamp"`
 		// UUID is the line's own id in claude's uuid/parentUuid DAG. It is the fork
-		// anchor (docs/55): claude's own --fork-session rewrites only sessionId and
+		// anchor (docs/log/55): claude's own --fork-session rewrites only sessionId and
 		// leaves uuid/parentUuid untouched (実測), so a message keeps the same uuid
 		// across branches — it is a durable handle, unlike the line index.
 		UUID             string `json:"uuid"`
@@ -317,7 +317,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		if a.Type != "queued_command" || txt == "" || (a.Origin.Kind != "" && a.Origin.Kind != "human") {
 			return transcript.Turn{}, false
 		}
-		// AnchorID は**付けない**（docs/55）。この行は type:"attachment" で、分岐点の検査
+		// AnchorID は**付けない**（docs/log/55）。この行は type:"attachment" で、分岐点の検査
 		// （forkat.go の cutIndex）は type:"user" の行しか受け付けないため、uuid を渡すと
 		// 「ここから分岐」の導線が出るのに必ず 400（エージェントの発言からは分岐できません）
 		// になる。割り込みはターンの途中（tool_use と tool_result の間）に注入されるので、
@@ -609,7 +609,7 @@ func CollectInteractionAnswers(lines [][]byte) map[string]InteractionAnswer {
 }
 
 // CollectFileEdits extracts every edit-family tool call from lines[from:] — the raw
-// material for the session's changed-files list (docs/68). `from` lets the caller fold
+// material for the session's changed-files list (docs/log/68). `from` lets the caller fold
 // only the lines it hasn't seen: the jsonl is append-only, so the answer for a prefix
 // never changes, and re-running the line differ over a whole transcript on every poll
 // would not be affordable.

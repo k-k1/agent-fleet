@@ -1,7 +1,7 @@
 package cursor
 
 // 実バイナリ契約テスト（opt-in）: AF_CURSOR_LIVE=1 のときだけ実 `cursor-agent acp` を
-// 子プロセスとして起動し、docs/40 の managed 契約が実 CLI で成立することを検証する —
+// 子プロセスとして起動し、docs/log/40 の managed 契約が実 CLI で成立することを検証する —
 // spawn→initialize→session/new→prompt(completed)→転写がメモリ構築される→（別プロセスで）
 // session/load resume→文脈保持＋転写がリプレイから再構築される。認証は環境の Cursor
 // ログイン（~/.config/cursor/auth.json の ambient 認証）前提。

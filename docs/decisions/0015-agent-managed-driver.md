@@ -4,7 +4,7 @@
   P2（OpenCode managed 化 — Driver/RuntimeSupervisor/turn 状態機械/Interaction/reconciliation の初出、
   managed 作成解禁・opencode 新規既定＝managed。実測記録は docs/27 §12.2）、P3（Codex managed 化 —
   第2 Driver・daemon drain・新規既定・双方向排他切替。実測記録は docs/27 §12.3）まで完了
-- 関連: [27-agent-managed-driver.md](../27-agent-managed-driver.md)（設計本体）/
+- 関連: [27-agent-managed-driver.md](../log/27-agent-managed-driver.md)（設計本体）/
   [0012-go-internal-refactor.md](0012-go-internal-refactor.md)（`internal/agents` の Agent IF——本決定が増築する read 層）/
   [0014-agent-exit-recording.md](0014-agent-exit-recording.md)（pane ラッパー——managed 化で supervisor へ移設）
 

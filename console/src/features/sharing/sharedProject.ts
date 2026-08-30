@@ -1,5 +1,5 @@
 // sharedProject — groups the flat 受信側 SharedSession[] into a project/worktree
-// tree, mirroring lib/project.ts groupedRepos() (docs/59)。所有者側と違い working
+// tree, mirroring lib/project.ts groupedRepos() (docs/log/59)。所有者側と違い working
 // copy を表す別オブジェクト(Repo[])が無いので、セッション自身から working copy を
 // 合成してから同じペアリングをかける。異なる owner が同名の working copy を持つ
 // ことがあるため、グルーピングは owner ごとに独立して行う。

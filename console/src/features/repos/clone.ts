@@ -1,4 +1,4 @@
-// cloneRepo / svnCheckout — リポジトリの取り込み（docs/78）。POST は**開始**だけを行い、
+// cloneRepo / svnCheckout — リポジトリの取り込み（docs/log/78）。POST は**開始**だけを行い、
 // 実処理は Agent 側のジョブになる（202 + job）。ここはそのジョブが終わるまで待ち、結末を
 // 呼び出し元に返す。
 //
@@ -125,7 +125,7 @@ export async function initRepo(
   return { ok: true, name: created };
 }
 
-// svnCheckout — POST /api/repos/svn, the SVN twin of cloneRepo (docs/41).
+// svnCheckout — POST /api/repos/svn, the SVN twin of cloneRepo (docs/log/41).
 export async function svnCheckout(
   req: SvnCheckoutRequest,
   toast: (msg: string) => void,

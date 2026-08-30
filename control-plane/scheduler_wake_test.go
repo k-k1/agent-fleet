@@ -110,7 +110,7 @@ func TestBuildInjectBody(t *testing.T) {
 	if m["dir"] != "/home/dev/repos/x" {
 		t.Errorf("dir = %v", m["dir"])
 	}
-	// The mirror badges schedule-driven prompts (docs/38): a timed fire tags "schedule",
+	// The mirror badges schedule-driven prompts (docs/log/38): a timed fire tags "schedule",
 	// a run-now（手動発火・ManualFirePending）tags "schedule-manual".
 	if m["source"] != "schedule" {
 		t.Errorf("source = %v, want schedule", m["source"])
@@ -193,7 +193,7 @@ func TestInjectSessionAgentError(t *testing.T) {
 // update — because overrunning it was a FAILURE. It is not a failure any more
 // (runtime_health.go): the budget only decides whether Start answers "running" or
 // "starting", so a self-updating boot no longer needs a longer one, and a 300s block
-// inside an HTTP request is what the Runtime port forbids (docs/62 §62.5 = a 504).
+// inside an HTTP request is what the Runtime port forbids (docs/log/62 §62.5 = a 504).
 // What must stay pinned is the unattended carve-out: the scheduler's tick goroutine
 // polls the Agent itself afterwards, so making it sit here buys nothing.
 func TestStartHealthWaitSelfUpdate(t *testing.T) {

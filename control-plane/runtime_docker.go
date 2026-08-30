@@ -1,5 +1,5 @@
 // runtime_docker.go — ローカル Docker アダプタ（dockerRuntime / dockerFactory）。
-// runtime.go からの機械的分割（docs/23 P2-W1）。
+// runtime.go からの機械的分割（docs/log/23 P2-W1）。
 package main
 
 import (
@@ -42,7 +42,7 @@ type dockerRuntime struct {
 
 // dockerFactory is the `local` (compose) RuntimeFactory. It carries the template
 // fields shared by every container plus rootDataDir, a closure that re-bases a
-// workspace's stored data_dir onto the CURRENT dataRoot (docs/history/
+// workspace's stored data_dir onto the CURRENT dataRoot (docs/log/
 // p3-10-packaging.md §20.3) — kept as a closure so the factory need not know the
 // manager's tenant/path internals.
 type dockerFactory struct {
@@ -100,7 +100,7 @@ func (d *dockerRuntime) Name() string  { return d.name }
 // `docker run -d` returns with the container already running, so the transient
 // created/restarting statuses collapse into "stopped" as before — but a running
 // CONTAINER is not a reachable AGENT. The entrypoint still has to finish (pinned
-// CLI boot-install, the opt-in self-update: 約60 秒 実測, docs/38 ★6) before
+// CLI boot-install, the opt-in self-update: 約60 秒 実測, docs/log/38 ★6) before
 // workspace-agent listens, and during that window every caller that gates on
 // "running" (terminal WS, file proxy, browser, session create) used to be waved
 // through to a socket nobody answers.
@@ -419,7 +419,7 @@ func (d *dockerRuntime) writeSecretEnvFile() (string, error) {
 // would otherwise be FAILED at 15s. Nothing fails here now, and a 300s block is the
 // thing the Runtime port forbids: Start runs inside an HTTP request, and a wait past
 // the ingress idle timeout does not deliver a slower success, it deletes the response
-// (docs/62 §62.5, measured as a 504 on ECS). So one budget, sized to sit inside that
+// (docs/log/62 §62.5, measured as a 504 on ECS). So one budget, sized to sit inside that
 // timeout, and the boot window is carried by State() == "starting" instead.
 //
 // AF_AGENT_HEALTH_WAIT_SEC still overrides it — a deployment that knows its ingress

@@ -43,7 +43,7 @@ func mustNotNotify(t *testing.T, got chan transition) {
 }
 
 // A completed managed turn must notify working→idle — the transition
-// recordSessionNotification turns into 応答あり + the docs/30 operator report. This is
+// recordSessionNotification turns into 応答あり + the docs/log/30 operator report. This is
 // the hole managed sessions had: the driver wrote the status and told nobody.
 func TestMarkTurnEndNotifiesCompletion(t *testing.T) {
 	got := captureNotifier(t)

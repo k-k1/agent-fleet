@@ -402,7 +402,7 @@ func TestMCPCleanupToolsRelay(t *testing.T) {
 
 // TestMCPStopResumeSessionRelay covers the operator's session-lifecycle tools:
 // stop_session must relay to /halt (resumable — NOT the destructive /stop) carrying
-// disarm_report (the stop cancels the outstanding instruction, docs/30), and
+// disarm_report (the stop cancels the outstanding instruction, docs/log/30), and
 // resume_session must relay to /start.
 func TestMCPStopResumeSessionRelay(t *testing.T) {
 	type hit struct {
@@ -508,7 +508,7 @@ func mcpIsError(t *testing.T, resp string) bool {
 	return parsed.Result.IsError
 }
 
-// docs/39 P4: メモリの持ち出し／取り込みは MCP に出さない。P3 で export に
+// docs/log/39 P4: メモリの持ち出し／取り込みは MCP に出さない。P3 で export に
 // secret スキャン＋本人の明示 ack を課したのに、モデルが ack できる経路を作ると
 // 防御を迂回する二つ目の出口になる。広告ツール集合がゲートなので、ここで固定する。
 func TestMCPMemoryToolsExposeNoExportOrImport(t *testing.T) {
@@ -579,7 +579,7 @@ func TestMCPRestoreMemoryDeniedWithoutWrite(t *testing.T) {
 }
 
 // get_memory_snapshot は tree（その時点の中身）と diff（その snapshot の変更）を
-// 1 回で返す。restore の範囲は tree からしか作れない（docs/39 ③）。
+// 1 回で返す。restore の範囲は tree からしか作れない（docs/log/39 ③）。
 func TestMCPGetMemorySnapshotJoinsTreeAndDiff(t *testing.T) {
 	paths := mcpMemoryStub(t, func(p string) string {
 		if strings.HasSuffix(p, "/tree") {
@@ -608,7 +608,7 @@ func TestMCPGetMemorySnapshotJoinsTreeAndDiff(t *testing.T) {
 	}
 }
 
-// --- 作業計画（docs/33 第5段 案D）---------------------------------------------
+// --- 作業計画（docs/log/33 第5段 案D）---------------------------------------------
 
 // set_chat_plan は会話 id を引数に取らず、常に自分の会話（mcpConvID）へ書く。
 // notice:true を必ず立てる — 利用者が見ていない間に計画が動く唯一の経路なので、
@@ -661,7 +661,7 @@ func TestMCPSetChatPlanRefusesEmpty(t *testing.T) {
 	}
 }
 
-// 広告集合がスコープの境界（docs/19 Q2 と同じ作法）: read/write とも --write 下でのみ。
+// 広告集合がスコープの境界（docs/log/19 Q2 と同じ作法）: read/write とも --write 下でのみ。
 func TestMCPChatPlanToolsDeniedWithoutWrite(t *testing.T) {
 	withMCPWriteConv(t, "conv-1")
 	mcpWriteEnabled = false

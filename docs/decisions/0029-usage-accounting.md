@@ -1,7 +1,7 @@
 # 0029. 使用量アカウンティング — 機能別トークン台帳を1本持つ
 
 - 状態: **採用（P0.5〜P4 実装済み。P5 MCP ツール以降は未着手）**（2026-07-26）。
-- 関連: 設計・実測の本体は [docs/46](../46-usage-accounting.md)。
+- 関連: 設計・実測の本体は [docs/46](../log/46-usage-accounting.md)。
   [0016](0016-i18n.md)（Console 文言は ja/en 両方）、[0021](0021-scheduled-execution.md)（`source=schedule`
   — 本 ADR の `origin=schedule` の一次ソース）、[0022] はエージェントメモリ版管理（未マージ
   `temp/s7in3bh`）、[0027] はオペレーター↔セッション相互作用図（未マージ `temp/sjoad3a`）が

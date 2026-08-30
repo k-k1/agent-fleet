@@ -1,6 +1,6 @@
 package main
 
-// 中断ターン（docs/47）がマーカーに依存せず報告されること。
+// 中断ターン（docs/log/47）がマーカーに依存せず報告されること。
 //
 // 実測 sp2qemx (2026-07-30): API エラーでターンが落ちると claude は Stop hook を
 // 鳴らさない。従来この中断を見ていたのはペース（ペイン）由来のヒール経路だけで、
@@ -27,7 +27,7 @@ func TestSessionReportDetectsAbortWithoutMarker(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// 自動再開（docs/47 §4-6）は OFF。この試験が押さえているのは**報告経路そのもの**
+	// 自動再開（docs/log/47 §4-6）は OFF。この試験が押さえているのは**報告経路そのもの**
 	// で、ON のときの「まず Agent が再開させ、打ち切ってから報告する」挙動は
 	// TestSessionReportHeldWhileAutoResuming が別に固定する。
 	if err := os.WriteFile(filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json"),
@@ -106,7 +106,7 @@ func TestSessionReportDetectsAbortWithoutMarker(t *testing.T) {
 	}
 }
 
-// TestSessionReportHeldWhileAutoResuming: 自動再開（docs/47 §4-6）が引き受けている間、
+// TestSessionReportHeldWhileAutoResuming: 自動再開（docs/log/47 §4-6）が引き受けている間、
 // 中断報告は出ない。ここがトークンの節約そのもの — 出せば「再開させろ」と伝えるだけの
 // アシスタントのターンが1つ走り、しかもその再開は Agent が既にやっている。
 //

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Does agy actually run on Graviton? (docs/32 Track B / decisions/0008 / docs/70 §70.13)
+# Does agy actually run on Graviton? (docs/log/32 Track B / decisions/0008 / docs/log/70 §70.13)
 #
 #   AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
 #     deploy/aws/ecs/harness/probe-agy-arm64.sh [--types m8g.large,m7g.large,m6g.large]
@@ -16,7 +16,7 @@
 # **That "arm64 では課さない" is an assumption that has never been executed.** The L1
 # image smoke deliberately does not run `agy --version` (it would SIGABRT on the build
 # host), so building the arm64 image proves nothing about agy — it is the one CLI that
-# came out of that build unverified (docs/70 §70.9.5).
+# came out of that build unverified (docs/log/70 §70.9.5).
 #
 # ## Why three generations and not one
 #
@@ -28,7 +28,7 @@
 #   Graviton4 (Neoverse-V2, ARMv9.0)  — has RNDR
 #
 # A single-instance probe on m8g would then report "agy works on arm64" and be wrong
-# for exactly the class docs/70 §70.3.3 recommends for cost-sensitive members (m6g).
+# for exactly the class docs/log/70 §70.3.3 recommends for cost-sensitive members (m6g).
 # So: one instance per generation, and `/proc/cpuinfo` Features recorded next to the
 # result so the two can be correlated rather than guessed at.
 #
@@ -180,7 +180,7 @@ while [ "$pending" -gt 0 ] && [ "$SECONDS" -lt "$deadline" ]; do
 done
 
 echo
-echo "=== agy on Graviton — docs/32 Track B / decisions/0008 / docs/70 §70.13 ==="
+echo "=== agy on Graviton — docs/log/32 Track B / decisions/0008 / docs/log/70 §70.13 ==="
 echo "agy $AGY_VERSION-$AGY_BUILD (linux-arm/cli_linux_arm64.tar.gz), inside node:22-bookworm-slim"
 for ty in "${TYPE_LIST[@]}"; do
   echo "--- $ty"

@@ -1,9 +1,9 @@
 # 0013. エージェント回答の音声読み上げ — CP-native TTS・プロバイダ抽象・ずんだもん主役 / Polly 受け皿
 
 - 状態: 確定（2026-07-09）・Phase 1〜2 実装済み（2026-07-10）
-- 関連: [24-tts-zundamon.md](../24-tts-zundamon.md)（設計本体）/
+- 関連: [24-tts-zundamon.md](../log/24-tts-zundamon.md)（設計本体）/
   [0005-envelope-custodian.md](0005-envelope-custodian.md)（秘密情報の扱い）/
-  [p3-7-aws-adapter.md](../history/p3-7-aws-adapter.md)（ECS）
+  [p3-7-aws-adapter.md](../log/p3-7-aws-adapter.md)（ECS）
 
 ## 背景
 

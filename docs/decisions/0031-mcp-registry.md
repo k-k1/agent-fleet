@@ -2,8 +2,8 @@
 
 - 状態: **採用・P0〜P4 実装済み**（レジストリ型 / 合成 / user CRUD / 接続テスト / Console タブ /
   アシスタント配線 / claude・codex のセッション materialize / **テナント配布**）。
-  設計は [docs/48](../48-mcp-registry.md)。
-- 関連: [history/19](../history/19-assistant-chat.md)（アシスタント）/ [0020](0020-chat-bridge.md)（同型の CP ブリッジ）/
+  設計は [docs/48](../log/48-mcp-registry.md)。
+- 関連: [history/19](../log/19-assistant-chat.md)（アシスタント）/ [0020](0020-chat-bridge.md)（同型の CP ブリッジ）/
   docs/25（一般化の対象となる組み込み ops 連携）/ docs/20（egress allowlist）
 
 ## 背景

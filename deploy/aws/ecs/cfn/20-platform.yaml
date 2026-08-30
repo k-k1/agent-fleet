@@ -136,7 +136,7 @@ Resources:
               # from an older image and the Console can offer a stop→start.
               #
               # ⚠️ This role, not the deployer's. The whole class of bug ADR 0045 決定 21 /
-              # docs/64 §64.22 documents is "it passed against real AWS" while the live
+              # docs/log/64 §64.22 documents is "it passed against real AWS" while the live
               # test ran as the deployer — the CP task role is the only identity that
               # matters here. Without this statement the probe fails with AccessDenied,
               # which the CP treats as "unknown" and the badge simply never appears: a
@@ -167,7 +167,7 @@ Resources:
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
               # --- EC2 slot pool (AF_RUNTIME=ecs-ec2 only; harmless on Fargate) ---
               # The CP owns the whole swap: find slots and volumes by tag, attach the
-              # user's home, mount it over SSM, and hand the slot back. docs/64 §64.15.8.
+              # user's home, mount it over SSM, and hand the slot back. docs/log/64 §64.15.8.
               - Sid: Ec2SlotPool
                 Effect: Allow
                 Action:
@@ -189,14 +189,14 @@ Resources:
                   # nothing else in the product ever removes a box. Without this the
                   # sweeper's terminate stage fails with AccessDenied on every pass —
                   # visible only in the CP log, while the bill keeps growing to
-                  # Ec2MaxSlots x SlotRootVolumeGiB (docs/64 §64.32).
+                  # Ec2MaxSlots x SlotRootVolumeGiB (docs/log/64 §64.32).
                   - ec2:TerminateInstances
                   # ⚠️ Snapshots were MISSING here until 2026-08-16, and nothing caught it:
                   # the live E2E runs with a deployer credential, not with this role. Every
                   # snapshot path would have failed with AccessDenied on a real deployment —
                   # and not only the optional ones. createHomeVolume asks for the user's
                   # hibernation snapshot FIRST, so a brand-new user's Start would have failed
-                  # outright, not merely started slowly. (docs/64 §64.22.)
+                  # outright, not merely started slowly. (docs/log/64 §64.22.)
                   #   DescribeSnapshots — restore (決定 4), golden lookup (決定 9), backups (決定 17)
                   #   CreateSnapshot    — hibernation and backups
                   #   DeleteSnapshot    — retention, superseded captures, Destroy
@@ -246,7 +246,7 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: ecs-tasks.amazonaws.com
-              # --- Cloud cost (docs/67, ADR 0048 決定 8) ---
+              # --- Cloud cost (docs/log/67, ADR 0048 決定 8) ---
               # ADR 0045 決定 21 refused to add IAM just to DISPLAY something (the vCPU
               # count became an env declaration instead). This reverses that, on purpose:
               # there the same number was obtainable another way, and here the alternative
@@ -270,7 +270,7 @@ Resources:
                 Resource: "*"
               # ⚠️ ACCOUNT-LEVEL BILLING CONFIGURATION — the one place the Control Plane
               # writes something outside the resources it created itself. Read the reason
-              # before removing it (docs/67 §67.5, ADR 0048 決定 11).
+              # before removing it (docs/log/67 §67.5, ADR 0048 決定 11).
               #
               # A cost allocation tag only applies from the moment it is switched on, and
               # AWS will not activate a key it has not yet discovered on a real resource —
@@ -291,7 +291,7 @@ Resources:
                 Action:
                   - ce:UpdateCostAllocationTagsStatus
                 Resource: "*"
-              # Text-to-speech (docs/24). The CP calls Polly with the task role — no key
+              # Text-to-speech (docs/log/24). The CP calls Polly with the task role — no key
               # is ever stored (ADR 0013). SynthesizeSpeech has no resource-level
               # permissions, hence "*".
               #

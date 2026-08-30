@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { hostOf, hostsOf, checkQuery, egressLevel } from "./egressCheck.ts";
 import type { EgressCheck } from "./egressCheck.ts";
 
-// The rules that decide WHETHER the MCP screens warn about a destination (docs/48 §9).
+// The rules that decide WHETHER the MCP screens warn about a destination (docs/log/48 §9).
 // The failure mode being guarded is crying wolf: a warning shown on a deployment with no
 // egress control, or while the check has not answered, teaches the user to ignore it.
 

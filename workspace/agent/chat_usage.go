@@ -1,6 +1,6 @@
 package main
 
-// アシスタントチャットのコンテキスト使用量の捕捉と逼迫通知（docs/33）。
+// アシスタントチャットのコンテキスト使用量の捕捉と逼迫通知（docs/log/33）。
 //
 // 各プロバイダの headless 実行が返す usage イベントをターン毎に拾い、会話へ
 // 「直近のコンテキスト占有」スナップショット（contextUsage — get_session_usage /
@@ -35,7 +35,7 @@ type claudeUsage struct {
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	// OutputTokens はコンテキスト占有には効かない（出力は次ターンの入力として戻る）が、
-	// 使用量台帳の spend には要る（docs/46 §2）。実測で存在を確認済み。
+	// 使用量台帳の spend には要る（docs/log/46 §2）。実測で存在を確認済み。
 	OutputTokens int           `json:"output_tokens"`
 	Iterations   []claudeUsage `json:"iterations,omitempty"`
 }
@@ -45,7 +45,7 @@ func (u claudeUsage) contextTokens() int {
 	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
-// ledgerTokens は使用量台帳のトークン内訳（docs/46）。**modelUsage が取れなかった時の
+// ledgerTokens は使用量台帳のトークン内訳（docs/log/46）。**modelUsage が取れなかった時の
 // 縮退用**で、モデル別の内訳は失われるが総量は残る。トップレベルの値を使うのは、台帳が
 // 見たいのが「この呼び出しで実際に課金された量」だから — コンテキスト占有（iterations
 // 末尾のスナップショット）とは別の量。
@@ -159,7 +159,7 @@ func (t *claudeCtx) apply(c *chatConversation) {
 type codexUsage struct {
 	InputTokens       int `json:"input_tokens"`
 	CachedInputTokens int `json:"cached_input_tokens"`
-	// 使用量台帳向け（docs/46 §2）。実測（codex-cli 0.144.x）で turn.completed が
+	// 使用量台帳向け（docs/log/46 §2）。実測（codex-cli 0.144.x）で turn.completed が
 	// cache_write_input_tokens / output_tokens / reasoning_output_tokens も運ぶことを確認。
 	// reasoning は output に含まれる内訳なので spend では足さない。
 	CacheWriteInputTokens int `json:"cache_write_input_tokens"`
@@ -183,7 +183,7 @@ func (u codexUsage) ledgerTokens() usageTokens {
 // input はキャッシュ分を含まない（SQLite ストアの message.data.tokens と同じ形）。
 type opencodeUsage struct {
 	Input int `json:"input"`
-	// Output は使用量台帳向け（docs/46 §2）。このワークスペースは opencode 未ログインで
+	// Output は使用量台帳向け（docs/log/46 §2）。このワークスペースは opencode 未ログインで
 	// ライブ検証できていないので、取れなければ 0 のまま — 推測で埋めない（ADR 0029 §4）。
 	Output int `json:"output"`
 	Cache  struct {

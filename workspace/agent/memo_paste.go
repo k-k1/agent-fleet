@@ -10,7 +10,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// Memo image attachments (docs/21 画像添付). A memo is membership-scoped and syncs across
+// Memo image attachments (docs/log/21 画像添付). A memo is membership-scoped and syncs across
 // devices — an image shared from an Android phone's 共有シート, or dragged into the memo
 // composer, is uploaded here and later flushed into whichever session the user picks.
 // Because the memo (and its images) aren't tied to a session or conversation, they live

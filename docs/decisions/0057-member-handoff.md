@@ -1,7 +1,7 @@
 # 0057. メンバー間の引き継ぎは共有 ACL の派生物として作り、越境するのは文章と座標だけにする
 
-- 状態: **採用・未実装**（2026-08-24）。設計と実装段階は [docs/77](../77-member-handoff.md)。
-- 関連: [59-session-sharing.md](../59-session-sharing.md)（土台の ACL・本文凍結・失効の規律。ADR は無く
+- 状態: **採用・未実装**（2026-08-24）。設計と実装段階は [docs/77](../log/77-member-handoff.md)。
+- 関連: [59-session-sharing.md](../log/59-session-sharing.md)（土台の ACL・本文凍結・失効の規律。ADR は無く
   設計ドキュメントが正） /
   [0041-cross-session-messaging.md](0041-cross-session-messaging.md)（同一 Workspace 内のメッセージ。
   封筒・permission laundering・「送信者が N になったら要る弁」の出典） /
@@ -53,7 +53,7 @@ CP が A の Workspace を叩いて何かを起こす形にしない。B が**�
 仕事は「引き継ぎ本文を書く」だけで、それは `propose_session_handoff` が既にやっている。追加するのは
 同ツールの**任意 `to` ヒント**に留める。
 
-理由は 2 つ。ツールは**全セッションの system prompt に常駐する**（[docs/58](../58-cross-session-messaging.md)
+理由は 2 つ。ツールは**全セッションの system prompt に常駐する**（[docs/58](../log/58-cross-session-messaging.md)
 §58.14 が説明文の分量を 1 組の例に絞ったのと同じコスト）。
 そして、ツールを配ると**エージェントが他人の受信箱へ書ける**ようになる —— 汚染されたリポジトリを
 読んだセッションが A の名前で同僚に作業依頼を投げられる形は、ADR 0041 が封筒に取り込んだ

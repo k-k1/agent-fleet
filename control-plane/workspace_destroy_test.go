@@ -102,7 +102,7 @@ func membershipIDOf(t *testing.T, st *sqlStore, ident Identity, tn Tenant) strin
 
 // The whole point of the operation: after it, nothing bills. The runtime resources are
 // gone, the DB row is gone, and whatever the adapter COULD NOT delete is in the audit
-// log rather than only in an HTTP response nobody kept (docs/64 §64.18.4).
+// log rather than only in an HTTP response nobody kept (docs/log/64 §64.18.4).
 func TestDestroyWorkspaceRemovesTheRowAndAuditsTheLeftovers(t *testing.T) {
 	ctx := context.Background()
 	f := &destroyingFactory{leftovers: []string{"efs:fs-1/home/M-1"}}
@@ -162,7 +162,7 @@ func TestDestroyWorkspaceKeepsTheRowWhenTheRuntimeFails(t *testing.T) {
 // The guard exists against a lockout with no undo from inside the product, and that is
 // the last membership, not any of them. Refusing all of them made the golden bake's
 // throwaway tenant impossible to clean up on a deployment with one administrator
-// (docs/64 §64.28: the seed has to be an account that can sign in, i.e. your own).
+// (docs/log/64 §64.28: the seed has to be an account that can sign in, i.e. your own).
 func TestRemoveMembershipSelfKeepsTheLastOne(t *testing.T) {
 	ctx := context.Background()
 	call := func(mgr *manager, body string) *httptest.ResponseRecorder {
@@ -256,7 +256,7 @@ func TestRemoveMembershipSelfKeepsTheLastOne(t *testing.T) {
 	})
 }
 
-// Offboarding keeps the home by default (docs/61 §61.10.6) and destroys it only when the
+// Offboarding keeps the home by default (docs/log/61 §61.10.6) and destroys it only when the
 // caller asks — the two are separate decisions that happen to be convenient in one click.
 func TestRemoveMembershipPurgeIsOptIn(t *testing.T) {
 	ctx := context.Background()

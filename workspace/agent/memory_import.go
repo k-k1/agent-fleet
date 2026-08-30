@@ -1,6 +1,6 @@
 package main
 
-// エージェントメモリの版管理（docs/39 ⑤ / ADR 0022 決定 5）— import。
+// エージェントメモリの版管理（docs/log/39 ⑤ / ADR 0022 決定 5）— import。
 //
 //	受領（multipart）──▶ 検証 ──▶ refs/imports/<id>/* として取り込む ──▶ preview
 //	                                                                    │
@@ -39,7 +39,7 @@ import (
 )
 
 const (
-	memoryImportDefaultMax = 64 << 20 // 受領サイズ上限の既定（docs/39 ★3）
+	memoryImportDefaultMax = 64 << 20 // 受領サイズ上限の既定（docs/log/39 ★3）
 	memoryImportMaxEntries = 20000    // tar のエントリ数上限
 	memoryImportMaxFile    = 8 << 20  // tar の 1 ファイル上限
 	memoryImportKeepRefs   = 10       // 保持する取り込み系譜の本数
@@ -434,7 +434,7 @@ func memoryPruneImportRefs(keep int) {
 // 実体は restore と同じ経路（= pre-restore snapshot を取り、allowlist の内側だけ書き、
 // 結果を commit する）で、契機だけ import になる — つまり取り込みも巻き戻せる。
 //
-// opts.Adopt=true は**移設**（docs/39 ⑤-移設）: 内容だけでなく履歴も引き継ぐ。bundle は
+// opts.Adopt=true は**移設**（docs/log/39 ⑤-移設）: 内容だけでなく履歴も引き継ぐ。bundle は
 // 相手の全 snapshot を運んでいるのに、既定の適用では最新ツリーしか使わず、運んできた
 // 過去は refs/imports に埋もれたまま（10 本を超えると刈られる）だった。移設は main を
 // その系譜へ付け替えるので、相手の履歴がそのまま「この環境の履歴」になり、一覧・差分・

@@ -1,6 +1,6 @@
 package claude
 
-// 利用上限が解ける時刻の確定（docs/47 §4-4）。
+// 利用上限が解ける時刻の確定（docs/log/47 §4-4）。
 //
 // 上限でターンが切れると claude は転写にバナーを 1 行残す:
 //
@@ -123,7 +123,7 @@ func resolveResetAt(msg string, abortedAt time.Time, captured []time.Time, now t
 				return c, "banner+capture", true
 			}
 		}
-		// 週次の窓だけはバナー単独で決めない（docs/47 §4-10）。バナーは壁時計しか書かない
+		// 週次の窓だけはバナー単独で決めない（docs/log/47 §4-10）。バナーは壁時計しか書かない
 		// ので "resets 9am" は「今日か明日の 9時」としか読めないが、週次のリセットは数日先に
 		// あり得る。firstAfter が返す明日の 9時に起こしても同じ 429 を踏み、そのたびに新しい
 		// エピソードが開いて予約し直す — 本当のリセットまで毎日 1 ターンずつ焼く。

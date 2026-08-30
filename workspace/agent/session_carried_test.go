@@ -15,7 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// 配達文面は飾りではなく機能。docs/75 §75.10 C の実測で、「質問し直さず」の一文が
+// 配達文面は飾りではなく機能。docs/log/75 §75.10 C の実測で、「質問し直さず」の一文が
 // 無いと claude は質問し直すことが分かっている（会話木から質問が消えているため）。
 // 文面を書き換えるときは、この 2 つの不変条件を壊していないか見ること。
 func TestCarriedQuestionPromptCarriesQuestionAndForbidsReasking(t *testing.T) {
@@ -190,7 +190,7 @@ func TestSurfaceCarriedYieldsToLivePending(t *testing.T) {
 	}
 }
 
-// --- P5: claude 以外の持ち越し（docs/75）------------------------------------------
+// --- P5: claude 以外の持ち越し（docs/log/75）------------------------------------------
 
 // fakeModalAgent は ModalReporter を実装しただけのダミー kind。promoteCarriedOther が
 // 「kind に訊く」ところだけを固定する（実 kind の探知手段＝会話 DB / events.jsonl /

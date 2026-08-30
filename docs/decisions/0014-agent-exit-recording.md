@@ -1,7 +1,7 @@
 # 0014. エージェントプロセスの終了理由記録 — pane ラッパー方式・自 cgroup で OOM 帰属・per-container は CP 直読み
 
 - 状態: 確定（2026-07-12）・Phase 1（CP）＋ Phase 2（Agent）実装済み（同日）
-- 関連: [26-agent-exit-recording.md](../26-agent-exit-recording.md)（設計本体）/
+- 関連: [26-agent-exit-recording.md](../log/26-agent-exit-recording.md)（設計本体）/
   [0012-go-internal-refactor.md](0012-go-internal-refactor.md)（internal/status 抽出）
 
 ## 背景

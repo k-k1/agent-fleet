@@ -1,8 +1,8 @@
 package main
 
-// セッション報告の消費判定 — レベル駆動リコンサイラ（docs/51 Phase 1 / ADR 0035）。
+// セッション報告の消費判定 — レベル駆動リコンサイラ（docs/log/51 Phase 1 / ADR 0035）。
 //
-// v1（docs/30）は「Stop フック等のエッジを1回だけ捕まえ、不可逆な1bit（arm）を
+// v1（docs/log/30）は「Stop フック等のエッジを1回だけ捕まえ、不可逆な1bit（arm）を
 // 消費して報告する」構造で、機械的 idle と意味的完了のズレが出るたびに報告が消えた:
 //   - 2026-07-24 saga5uc: BG サブエージェント起動直後の Stop が arm を消費し、
 //     数十分後の本完了が二度と報告されなかった → 保留 waiter を追加。
@@ -43,7 +43,7 @@ const (
 	// reportTickDefault is the reconciler's sweep cadence. 定常コストは「armed な
 	// セッションが1件も無ければ readdir 1回」なので短めでよいが、settle には 2 tick
 	// 連続の静穏を要求するため、ヒント喪失時の配送遅延はおよそ 1〜2 tick になる
-	// （15〜30s — v1 waiter の 90s TTL 待ちより悪化しない: docs/51 §トレードオフ）。
+	// （15〜30s — v1 waiter の 90s TTL 待ちより悪化しない: docs/log/51 §トレードオフ）。
 	reportTickDefault = 15 * time.Second
 	// reportSettleTicks is the debounce: 静穏をこの回数だけ連続で観測して初めて
 	// settle する。TUI ポーリング系（kiro/cursor 等）の footer 1回誤読や、ヒール
@@ -72,7 +72,7 @@ type reportSignals struct {
 	Exit    string // 指示以降の異常終了（oom/crashed/killed）— 終端の事実
 	ExitAt  string // その異常終了の RFC3339
 
-	// SelfReported は自己申告ファストパス（docs/51 §自己申告・Phase 3）: セッション自身が
+	// SelfReported は自己申告ファストパス（docs/log/51 §自己申告・Phase 3）: セッション自身が
 	// af_report MCP ツールで「この指示は終わった」と申告した。**意味的完了を直接測る
 	// 唯一のシグナル**だが、呼び忘れ・早呼びがあるので backbone にはしない — busy 証拠は
 	// これより強く、申告があっても進行中なら settle しない。
@@ -83,7 +83,7 @@ type reportSignals struct {
 	SelfReportAged bool
 
 	// Abort は転写の末尾が API エラーで切れている＝ターンが中断で終わった証拠
-	// （docs/47）。claude はこのとき Stop hook を鳴らさないので**マーカーは一切
+	// （docs/log/47）。claude はこのとき Stop hook を鳴らさないので**マーカーは一切
 	// 動かない**。従来これを見ていたのはペースのヒール経路（state != idle かつ
 	// ペインが待機表示）だけで、誤ヒールでマーカーが消えた後は二度と評価されず、
 	// 中断がどこにも報告されないまま指示が宙に浮いた（実測 sp2qemx 2026-07-30）。
@@ -104,12 +104,12 @@ type reportSignals struct {
 	TailAborted bool
 
 	// AbortHeld は「中断を見つけたが、Agent 自身の自動再開が引き受けている」状態
-	// （docs/47 §4-6）。報告を**遅らせる**だけで握り潰さない: 再開が成功すれば、その
+	// （docs/log/47 §4-6）。報告を**遅らせる**だけで握り潰さない: 再開が成功すれば、その
 	// ターンの完了が指示を閉じる（報告は2回でなく1回になる）。再送しても中断が続いて
 	// 打ち切られたら、そこで抑止が外れて中断報告が出る。
 	//
 	// 抑止は Abort だけでなく**マーカー由来の idle 証拠にも効かなければならない**:
-	// 中断でも Stop が鳴る形（利用上限の 429 — docs/47 §4-5）があり、その形では
+	// 中断でも Stop が鳴る形（利用上限の 429 — docs/log/47 §4-5）があり、その形では
 	// マーカーが先に idle+turnEnd になるので、Abort を落とすだけだと「素の完了」として
 	// 報告してしまう。よって evalReportEvidence の入口で見る。
 	AbortHeld bool
@@ -208,7 +208,7 @@ func (s reportSignals) evidenceAt() string {
 	return ""
 }
 
-// evalReportEvidence is the settle predicate（docs/51 §settled/progressed 述語）。
+// evalReportEvidence is the settle predicate（docs/log/51 §settled/progressed 述語）。
 // 純関数: 引数の証拠だけで決まる。2 tick 連続のデバウンスは呼び出し側（リコンサイラ）
 // の責務で、ここは1 sweep ぶんの「静穏か」を返す。
 func evalReportEvidence(s reportSignals) reportVerdict {
@@ -223,11 +223,11 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 	}
 	if s.Stopped {
 		// 停止＝指示の取り消しではない（取り消しは stop_session の disarm）。arm は
-		// 温存し、再開後の完了で報告する（docs/30 の規約）。
+		// 温存し、再開後の完了で報告する（docs/log/30 の規約）。
 		return reportVerdict{Why: "stopped"}
 	}
 	if s.AbortHeld {
-		// 中断は自動再開が引き受けている（docs/47 §4-6）。まだ「終わった」と言わない —
+		// 中断は自動再開が引き受けている（docs/log/47 §4-6）。まだ「終わった」と言わない —
 		// 異常終了（上）だけは先に見る: プロセスが死んでいるなら再開する相手が居ない。
 		return reportVerdict{Why: "abort-held"}
 	}
@@ -250,7 +250,7 @@ func evalReportEvidence(s reportSignals) reportVerdict {
 	}
 }
 
-// evalReportResumed is the COMPENSATION predicate（docs/51 §補償）: 完了報告のあと、
+// evalReportResumed is the COMPENSATION predicate（docs/log/51 §補償）: 完了報告のあと、
 // セッションが**その報告より後に**働き始めた証拠。settle 述語の busy 証拠と同じ列を見る
 // が、判定の向きが逆なので条件が1つ増える —「報告の時点で既にそう見えていた」ものを
 // 除く必要がある。マーカー系は書込み時刻で切れる（MarkerAfterArm は since=報告時刻で
@@ -297,7 +297,7 @@ func evalReportResumed(s reportSignals) []string {
 }
 
 // collectReportSignals reads the current level state for one session with open
-// instruction rows. since は**最古の未報告指示のカーソル**（docs/51 §progressed の
+// instruction rows. since は**最古の未報告指示のカーソル**（docs/log/51 §progressed の
 // 下限）— それより前の証拠は「前の指示の話」なので今回の完了にはならない。
 // selfAt は自己申告の時刻（無ければ空）。since より前の申告は前の指示の話なので捨てる —
 // マーカーに課している progressed の下限を、自己申告にも同じ形で課す。
@@ -351,7 +351,7 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 }
 
 // selfReportSettleDelay is how long a session must stay quiet AFTER calling af_report
-// before that self-report alone may settle the instruction (docs/51 §自己申告).
+// before that self-report alone may settle the instruction (docs/log/51 §自己申告).
 //
 // 申告は「意味的完了を直接測る唯一のシグナル」だが、**早呼び**がある: セッションが
 // 「終わった」と申告してから、まだ最終回答を書き続けることがある。実測 2026-07-30
@@ -365,7 +365,7 @@ func collectReportSignals(m session.Meta, since, hintReason, selfAt string) repo
 // 避ける方が価値が高い。値は観測された思考ギャップ（142s）に余裕を足したもの。
 const selfReportSettleDelay = 3 * time.Minute
 
-// collectAbortSignal reads the転写末尾 for a turn that died on an API error (docs/47).
+// collectAbortSignal reads the転写末尾 for a turn that died on an API error (docs/log/47).
 // マーカーを一切見ないのが肝: claude は中断で Stop hook を鳴らさないので、マーカーは
 // 「working のまま」「誤ヒールで消えた」「前のターンの idle が残っている」のどれにも
 // なり得る。中断そのものは転写の末尾という**レベル**に書かれているので、そこだけを見る。
@@ -386,7 +386,7 @@ func collectAbortSignal(s *reportSignals, name, sid, since string) {
 	if at != "" && reportTimeBefore(at, since) {
 		return
 	}
-	// 再送で直る中断は、まず Agent 自身が再開させる（docs/47 §4-6）。その間は報告を
+	// 再送で直る中断は、まず Agent 自身が再開させる（docs/log/47 §4-6）。その間は報告を
 	// 出さない — 出すとアシスタントのターンが1つ走り、しかもその内容（「再開させろ」）は
 	// もう実行済みになる。打ち切られたら holds が false になり、通常経路へ落ちる。
 	if abortResumeHolds(name, a, time.Now()) {
@@ -434,7 +434,7 @@ func reportTranscriptBusy(sid string, marker time.Time) bool {
 }
 
 // reportPaneBusy checks the pane's interrupt affordance (逆ヒールと同じ根拠)。tmux を
-// 叩くので settle 候補のときだけ実行する（docs/51: tmux 負荷を抑える）。
+// 叩くので settle 候補のときだけ実行する（docs/log/51: tmux 負荷を抑える）。
 // claude の TUI に限るのは tmuxx.IsBusy が claude のスピナー契約を読む実装だから
 // （v1 waiter と同じ適用範囲）: 他 kind のペインで誤って busy と読むと、その kind の
 // 報告が永久に出ない — 「消失」は遅延より悪い。
@@ -594,7 +594,7 @@ func (rc *reportReconciler) hint(name, kind, reason string) {
 	rc.nudge()
 }
 
-// selfReport records the session's own「終わった」claim (docs/51 §自己申告ファストパス)
+// selfReport records the session's own「終わった」claim (docs/log/51 §自己申告ファストパス)
 // and wakes the sweep. **これは backbone ではない** — 記録するのは申告の時刻だけで、
 // 報告そのものは通常どおりリコンサイラが述語で決める。申告が来なければ settle が拾い、
 // 早すぎれば busy 証拠に止められる。
@@ -676,7 +676,7 @@ func (rc *reportReconciler) resetSettle(name string) {
 }
 
 // sweep re-evaluates every session with open instruction rows once, then compensates
-// the sessions whose recent completion report may have been premature (docs/51 §補償)。
+// the sessions whose recent completion report may have been premature (docs/log/51 §補償)。
 func (rc *reportReconciler) sweep(now time.Time) {
 	pending, grace := instrSweepSessions(now)
 	for _, name := range pending {
@@ -717,7 +717,7 @@ func (rc *reportReconciler) prune(armed []string) {
 // evaluate is the whole decision for one session: 未報告の指示行を読む → 証拠を集める →
 // 述語 → デバウンス → 証拠が覆う行だけを配送 → 配送できた行だけを reported にする。
 //
-// docs/51 Phase 2 の肝は最後の2段。判定は「セッションが静穏か」という**セッション単位**
+// docs/log/51 Phase 2 の肝は最後の2段。判定は「セッションが静穏か」という**セッション単位**
 // の話だが、報告義務は**指示単位**なので、静穏の証拠（idle マーカー / ExitInfo）より
 // **後に**投入された指示は同じ静穏では完了になり得ない。その行は pending のまま残り、
 // 次のターンの終端で改めて報告される — v1 で arm が上書きされて消えていた穴A が、
@@ -748,7 +748,7 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 		rc.resetSettle(name)
 		return
 	}
-	// Fast: 自己申告があるときはデバウンスを1 tick に短縮する（docs/51 §ファストパス）。
+	// Fast: 自己申告があるときはデバウンスを1 tick に短縮する（docs/log/51 §ファストパス）。
 	// 時間的な裏取りが要るのは「機械的 idle が意味的完了とズレる」からで、セッション自身が
 	// 完了だと言っている以上、その2つはズレていない。busy 証拠のゲートは通ったままなので、
 	// 早呼びは短縮の対象にならない（そもそも Quiet にならない）。
@@ -773,7 +773,7 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 		log.Printf("session-report: settled %s kind=%s reason=%q rows=%v (%s)",
 			name, v.Kind, v.Reason, instrIDs(rows), v.Why)
 	}
-	// 自動再開のカウンタ（docs/47）は**セッション単位のイベント**を数える。1つの静穏を
+	// 自動再開のカウンタ（docs/log/47）は**セッション単位のイベント**を数える。1つの静穏を
 	// 複数のオペレーター会話へ配ったときに会話数ぶん加算すると、2会話から指示されている
 	// セッションは中断1回で上限（2回）に届いてしまう。数えるのは「中断報告を配った」と
 	// いう事実1つなので、会話ループの外で1回だけ動かす。
@@ -791,11 +791,11 @@ func (rc *reportReconciler) evaluate(name string, now time.Time) {
 }
 
 // reportReopenGrace is how long a reported row stays under compensation watch
-// (docs/51 §補償)。この窓を過ぎてからの busy 復帰は「新しい仕事」であって誤報告の
+// (docs/log/51 §補償)。この窓を過ぎてからの busy 復帰は「新しい仕事」であって誤報告の
 // 続きではない、という線引き。
 const reportReopenGrace = 10 * time.Minute
 
-// compensate is the self-repair for a WRONG「完了」(docs/51 §補償 / ADR 0035 決定4)。
+// compensate is the self-repair for a WRONG「完了」(docs/log/51 §補償 / ADR 0035 決定4)。
 //
 // v1 の非対称はここだった: 誤って arm を消費すると二度と報告されない（誤消費＝回復
 // 不能）。台帳では報告は行の状態でしかないので、grace の間だけ「その報告のあとに
@@ -852,7 +852,7 @@ func (rc *reportReconciler) compensate(name string, now time.Time) {
 			log.Printf("session-report: reopened %s rows=%v (%s)", name, instrIDs(reopen), why)
 		}
 		// 上限に達した行は開き直さない。黙って打ち切ると「報告が来ない」だけになるので、
-		// 判定が振動している事実そのものを1回だけ利用者向けに報告する（docs/47 の
+		// 判定が振動している事実そのものを1回だけ利用者向けに報告する（docs/log/47 の
 		// 自動再開上限と同じイディオム）。配送は行IDで冪等なので毎 tick は繰り返さない。
 		if len(capped) > 0 {
 			rc.sink(name, conv, reportKindReopened, reportReasonReopenCapped, capped)

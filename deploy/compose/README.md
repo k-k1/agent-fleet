@@ -179,7 +179,7 @@ AF_GITHUB_ALLOWED_DOMAINS=example.com    # strongly recommended; see below
 
 Login above is for the **console**. The one-click "Connect via OAuth" buttons for
 cloning private repos are configured **in the Console, per tenant** — not in `.env`
-(docs/71). A tenant administrator opens **Tenant settings → Integrations → Git
+(docs/log/71). A tenant administrator opens **Tenant settings → Integrations → Git
 provider OAuth** and registers:
 
 - **GitHub** (device flow) — `client_id` only (not a secret; the OAuth App must have

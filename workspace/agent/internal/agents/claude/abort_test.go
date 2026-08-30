@@ -37,7 +37,7 @@ func apiErr(text string, status int) string {
 }
 
 // apiErrKind is apiErr plus claude's own machine-readable cause (`error`), the field
-// that survives an English-wording change (docs/47 §4-6 / B).
+// that survives an English-wording change (docs/log/47 §4-6 / B).
 func apiErrKind(text string, status int, kind string) string {
 	var rec map[string]any
 	_ = json.Unmarshal([]byte(apiErr(text, status)), &rec)
@@ -55,7 +55,7 @@ func userLine(text string) string {
 }
 
 // TestAbortedTurnClassification pins the four error classes actually observed in the
-// fleet's transcripts (docs/47 §2). The retryable/blocked split is the safety valve for
+// fleet's transcripts (docs/log/47 §2). The retryable/blocked split is the safety valve for
 // 自動再開: re-sending a blocked turn reproduces the same error forever.
 func TestAbortedTurnClassification(t *testing.T) {
 	cases := []struct {
@@ -105,7 +105,7 @@ func TestAbortedTurnClassification(t *testing.T) {
 	}
 }
 
-// TestAbortedTurnErrorKind pins the `error` field as the FALLBACK classifier (docs/47
+// TestAbortedTurnErrorKind pins the `error` field as the FALLBACK classifier (docs/log/47
 // §4-6): 英文言は版ごとに変わるが、この値は claude 自身の分類なので変わりにくい。
 // 順序が要点 — 文言が主で、`error` はそれが何も言わなかったときだけ効く。文言の方が
 // 「上限ではない」といった否定を表現できるからで、逆順にすると 429 の retryable と
@@ -235,7 +235,7 @@ func TestAbortedTurnLiveCorpus(t *testing.T) {
 }
 
 // TestHealIdleRoutesAbortToNotifier is the seam test: the pane heal used to call
-// status.Remove and swallow the turn end, which is the bug docs/47 fixes. Here the
+// status.Remove and swallow the turn end, which is the bug docs/log/47 fixes. Here the
 // whole path runs — planted transcript → HealIdle → agents notifier — and asserts both
 // that a terminal event is emitted with the right label and that status lands on idle
 // (NOT removed; a removed marker lets the heal fire again and re-report).
@@ -321,7 +321,7 @@ func TestHealIdleRoutesAbortToNotifier(t *testing.T) {
 // なく「利用上限」だけ、という切り分けと、その中の**種別**（待てば解ける窓か、待っても
 // 解けない支出・残高か）を固定する。プロンプト超過や認証エラーで「利用上限に達しました」と
 // 通知したら利用者は来ないリセットを待つことになるし、支出の上限を窓と読み違えると
-// 「制限解除待ち」と表示したまま永久に解けない（docs/47 §4-10）。
+// 「制限解除待ち」と表示したまま永久に解けない（docs/log/47 §4-10）。
 // retryable 側（"(not your usage limit)" と自称する 429）も落ちることが要点。
 func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
 	home := t.TempDir()

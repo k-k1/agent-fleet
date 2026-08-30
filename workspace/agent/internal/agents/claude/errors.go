@@ -10,7 +10,7 @@ package claude
 //
 // codex / opencode は同じ失敗を `kind="error"` の part として出しており（各 errors.go）、
 // Console の ErrorBlock（.mirror-error）がそれを常時展開の赤いブロックで描く。claude も
-// 同じ語彙へ寄せる。ここは docs/47 の分類（再送で直るか）とは別軸で、**画面に何をどう
+// 同じ語彙へ寄せる。ここは docs/log/47 の分類（再送で直るか）とは別軸で、**画面に何をどう
 // 出すか**だけを決める。
 //
 // 実測レコード（2026-08-06 22:12 UTC / 認証切れ・転写コーパス）:
@@ -40,11 +40,11 @@ const causeAuth = "auth"
 type apiError struct {
 	msg    string // 本文（claude の英文言。版ごとに書き換わる前提で扱う）
 	kind   string // `error` フィールド: authentication_failed / rate_limit / server_error / invalid_request
-	status int    // apiErrorStatus。合成レコードでは欠けることがある（docs/47 §2）
+	status int    // apiErrorStatus。合成レコードでは欠けることがある（docs/log/47 §2）
 }
 
 // authKinds are claude's own machine-readable causes that mean「ログインし直せ」。文言と
-// 違ってこのフィールドは版ごとに書き換わらないので、判定の主にする（docs/47 と同じ方針）。
+// 違ってこのフィールドは版ごとに書き換わらないので、判定の主にする（docs/log/47 と同じ方針）。
 var authKinds = map[string]bool{
 	"authentication_failed": true,
 	"authentication_error":  true, // API 側の type 名がそのまま載る形への備え

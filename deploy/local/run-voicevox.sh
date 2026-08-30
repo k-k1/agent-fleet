@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local dev: run the VOICEVOX engine (CPU build; Zundamon et al.) in docker.
-# Used for spoken agent replies (docs/24 + ADR0013). The CP runs on the host, so
+# Used for spoken agent replies (docs/log/24 + ADR0013). The CP runs on the host, so
 # publishing the engine on 127.0.0.1:50021 makes it reachable via the CP's default
 # AF_VOICEVOX_URL.
 #

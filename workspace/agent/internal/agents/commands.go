@@ -2,7 +2,7 @@ package agents
 
 import "sync"
 
-// CLI 広告コマンドの共有ストア（docs/50 v2）。ACP 系 kind（cursor 等）は CLI 自身が
+// CLI 広告コマンドの共有ストア（docs/log/50 v2）。ACP 系 kind（cursor 等）は CLI 自身が
 // session/update の available_commands_update でスキル/コマンド一覧を流してくる —
 // これがその kind の唯一の完全なソース（builtin skill ＋ global ＋ project 全部入り、
 // cursor 実測 2026-07-28）。driver の onNotify が受信のたびにここへ publish し、

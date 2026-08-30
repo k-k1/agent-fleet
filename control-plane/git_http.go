@@ -22,7 +22,7 @@ import (
 // workspace (manager.go) and to verify here, so injection is idempotent and no
 // plaintext is ever persisted. Every request re-checks (tenant, role) live.
 
-// gitServerAPI is the internal-git feature handler set (docs/23 残③): the
+// gitServerAPI is the internal-git feature handler set (docs/log/23 残③): the
 // smart-HTTP + LFS + LFS-lock faces (self-authenticating Basic git token,
 // session-exempt under /git/) and the CP-native management/browse API
 // (/api/internal-git/*, session auth via the embedded memberAuth's

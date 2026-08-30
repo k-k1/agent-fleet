@@ -30,7 +30,7 @@ export async function getBrowserAttachment(id: string): Promise<BrowserAttachmen
 
 /**
  * The live attachments, newest first. The action link is the primary way in
- * (docs/53 §53.7); this is the way BACK in once that link has scrolled out of
+ * (docs/log/53 §53.7); this is the way BACK in once that link has scrolled out of
  * the mirror or its pane was closed while the hand-off is still pending.
  * Expired-but-not-yet-reaped entries are dropped here, as getBrowserAttachment
  * does, so the list never offers a pane that cannot open.

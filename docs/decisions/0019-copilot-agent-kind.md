@@ -1,6 +1,6 @@
 # 0019. `kind=copilot`（GitHub Copilot CLI）を第5のエージェント種別として追加する
 
-- 状態: **採用・実装済み**（2026-07-21）。実装計画・全実測は [docs/36](../36-copilot-agent-kind.md)。
+- 状態: **採用・実装済み**（2026-07-21）。実装計画・全実測は [docs/36](../log/36-copilot-agent-kind.md)。
 - 関連: [0008](0008-antigravity-cli-agent-kind.md)（agy — 新種別追加の先例）、
   [0015](0015-agent-managed-driver.md)（managed driver 抽象 — 本件は第3実装）。
 

@@ -4,7 +4,7 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { getLocale, useT } from "../../lib/i18n/index.ts";
 
 // AccountTab — 自分のアカウントに紐づいたサインイン方法の一覧と、2 つ目の追加
-// （docs/61 §61.16 + ADR0043 決定 37）。
+// （docs/log/61 §61.16 + ADR0043 決定 37）。
 //
 // なぜこの面が要るか: 別々の IdP が同じメールアドレスを名乗る組み合わせはログイン時に
 // 拒否される（決定 32）。開けてよいのは「アカウントの持ち主が、自分で押したとき」だけ
@@ -76,7 +76,7 @@ export function AccountTab() {
     location.assign(rel("oauth2/link") + "?" + q.toString());
   };
 
-  // 解除（docs/61 §61.16.4）。★ provider / subject はクエリで渡す — テナント定義の
+  // 解除（docs/log/61 §61.16.4）。★ provider / subject はクエリで渡す — テナント定義の
   // provider id は "t:<slug>:<name>" で ":" を含み、パスの区切りに載せられない。
   const detach = async (m: LinkedMethod) => {
     const ok = await askConfirm({

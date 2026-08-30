@@ -1,4 +1,4 @@
-# Restore the assets of an already published release (docs/35 §35.7.6).
+# Restore the assets of an already published release (docs/log/35 §35.7.6).
 #
 # The assets of 0.1.0–0.5.0 were deleted because they carried a string that
 # should never have been published. This rebuilds a chosen version from its own
@@ -43,7 +43,7 @@ jobs:
       - name: preflight (secret + input format)
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "::error::secret DIST_PUBLISH_TOKEN is not set (docs/35 §35.8.2)."
+            echo "::error::secret DIST_PUBLISH_TOKEN is not set (docs/log/35 §35.8.2)."
             exit 1
           fi
           echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$' \

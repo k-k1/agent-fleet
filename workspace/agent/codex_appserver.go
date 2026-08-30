@@ -9,7 +9,7 @@ package main
 //   - account/rateLimits/updated → usage reading fresher than the rollout snapshot
 //     (codex.SetObservedRateLimits)
 //   - model/rerouted, thread/settings/updated, warning, thread/status/changed →
-//     structured observation log (docs/27 P1). The log separates the two possible
+//     structured observation log (docs/log/27 P1). The log separates the two possible
 //     causes of an unrequested model switch: a server-side reroute emits
 //     model/rerouted, while a TUI-level nudge acceptance emits only a
 //     thread/settings/updated with a changed model.
@@ -143,7 +143,7 @@ func orDash(s string) string {
 
 // startCodexAppServer ensures the shared local server (owned by the codex
 // RuntimeSupervisor since P3 — daemon 起動・generation・exit recording は
-// codex.Serve() 側、docs/27 §10.2-2) and connects the AF read-only observer.
+// codex.Serve() 側、docs/log/27 §10.2-2) and connects the AF read-only observer.
 // Failure is deliberately non-fatal: buildProgram sees no env and launches the
 // traditional direct TUI, preserving Codex availability at the cost of live
 // compaction state; managed codex sessions then fail Resume with runtime_failed.
@@ -154,7 +154,7 @@ func startCodexAppServer() {
 	}
 	// Ensure spawns (or adopts) the daemon, exports AF_CODEX_APP_SERVER_ADDR and
 	// holds the managed writer connection. The observer below is a SEPARATE
-	// read-only socket: thread-scoped notifications are per-connection (docs/27
+	// read-only socket: thread-scoped notifications are per-connection (docs/log/27
 	// §12.1-1), and the writer only sees threads it started/resumed itself — the
 	// observer keeps covering the TUI (CLI-route) threads.
 	if _, _, err := codex.Serve().Ensure(); err != nil {

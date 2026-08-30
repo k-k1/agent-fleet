@@ -1,5 +1,5 @@
 // Package agents は coding-agent 抽象の型層（Agent インターフェイスと入出力型）。
-// docs/23 残① Wave C: package main の agent.go からインターフェイス層のみを切り出した。
+// docs/log/23 残① Wave C: package main の agent.go からインターフェイス層のみを切り出した。
 // 依存は internal/session・internal/transcript のみ。実装（claude/opencode/codex/
 // shell/ssm）とレジストリは後続 Wave で移すまで main に残る。
 package agents
@@ -21,13 +21,13 @@ func DirGoneErr(dir string) error {
 // ErrSSMNoTarget is returned when an ssm session has no connection target recorded.
 var ErrSSMNoTarget = errors.New("SSM セッションの接続先が指定されていません")
 
-// --- 権限確認をスキップするか（docs/76） ---------------------------------------
+// --- 権限確認をスキップするか（docs/log/76） ---------------------------------------
 //
 // fleet の既定は「スキップする」＝ claude なら --dangerously-skip-permissions、他 kind も
 // 同格のフラグ（cursor --force / copilot --allow-all / kiro --trust-all-tools /
 // agy --dangerously-skip-permissions）。コンテナ自体がサンドボックスで、承認ダイアログで
 // TUI が止まっても Console から答えられない時期があったための判断だった。
-// docs/76 でこれを**利用者の選択**にする。既定は変えない（true）。
+// docs/log/76 でこれを**利用者の選択**にする。既定は変えない（true）。
 //
 // 値は 3 層で解決する。上から順に、最初に決まったものが勝つ:
 //
@@ -81,14 +81,14 @@ type Caps struct {
 	CanFork       bool // POST /fork — copy the conversation into a new session (claude)
 	CanTranscript bool // GET /output & /messages — read the jsonl transcript (claude)
 	UsesLabel     bool // set a claude --name display label at create/recreate (claude)
-	// PermissionChoice: 利用者が「権限確認をスキップするか」を選べる kind（docs/76）。
+	// PermissionChoice: 利用者が「権限確認をスキップするか」を選べる kind（docs/log/76）。
 	// 立てる条件は**承認待ちが Console から答えられること**——フラグを外すだけなら
 	// どの kind でもできるが、ペインしか無い（あるいはペインすら無い managed の）承認
 	// ダイアログで止まったセッションは、利用者から見れば黙って固まったのと同じ。
 	// 実測で導線がある kind にだけ立てる（「未検証の caps を立てない」— 1854d の教訓）。
 	PermissionChoice bool
 	// CanForkAt narrows CanFork: POST /fork {"at": …} can branch at a PAST turn instead
-	// of copying the whole conversation (docs/55). Implies the kind also implements
+	// of copying the whole conversation (docs/log/55). Implies the kind also implements
 	// ForkAtResolver and fills transcript.Turn.AnchorID. Never true without CanFork.
 	CanForkAt bool
 }
@@ -150,7 +150,7 @@ type Agent interface {
 // GracefulStopper is an optional Agent capability: a chance for the CLI to
 // exit on its own terms before the pane is hard-killed. agy needs it because
 // v1.1.4 flushes its cwd→conversation map (the resume-UUID source) ONLY on a
-// graceful exit (統合E2E実測 — docs/32); kill-session would lose the id for
+// graceful exit (統合E2E実測 — docs/log/32); kill-session would lose the id for
 // good. Returning true means the tmux session already ended and the caller
 // must skip its own kill.
 type GracefulStopper interface {
@@ -193,7 +193,7 @@ type TranscriptData struct {
 
 // ContextReporter is an optional Agent capability: a session-level context-fill
 // reading for agents whose transcript carries no per-turn token usage (agy —
-// transcript_full.jsonl に token 数が一切無い、docs/32). Called ONLY from the
+// transcript_full.jsonl に token 数が一切無い、docs/log/32). Called ONLY from the
 // /messages handler (the chat mirror's poll), NOT from the bulk /sessions/usage
 // aggregation, so a fleet-wide usage query never triggers the underlying
 // (expensive, PTY-scrape) refresh. nil = no reading yet.
@@ -211,7 +211,7 @@ type Forker interface {
 }
 
 // ForkAtResolver is the optional "fork at a point" capability behind Caps().CanForkAt
-// (docs/55). It is DELIBERATELY separate from Forker: adding a method there would break
+// (docs/log/55). It is DELIBERATELY separate from Forker: adding a method there would break
 // the kinds that only do whole-conversation forks.
 //
 // ResolveForkAt validates an anchor (transcript.Turn.AnchorID, echoed back by the

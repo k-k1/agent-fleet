@@ -257,7 +257,7 @@ type fileStatSnapshot struct {
 // uint64; on linux/arm64 Blksize is int32 and Nlink is uint32. Assigning either
 // directly compiles on one architecture and fails on the other — which is exactly how
 // this was found: the first attempt to build the workspace image for arm64 stopped
-// here (docs/70 §70.9). `make arm64-build` / the ci.yml cross-compile step exists so
+// here (docs/log/70 §70.9). `make arm64-build` / the ci.yml cross-compile step exists so
 // the next one is caught without an EC2 instance.
 func statSnapshot(st *unix.Stat_t) fileStatSnapshot {
 	return fileStatSnapshot{

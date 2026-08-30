@@ -1,6 +1,6 @@
 package main
 
-// POST /sessions/{name}/fork の分岐点まわり（docs/55）。ここで守りたいのは
+// POST /sessions/{name}/fork の分岐点まわり（docs/log/55）。ここで守りたいのは
 // **「地点を指したのに会話まるごと分岐された」が起きないこと** で、そのために
 // 解決できない分岐点はすべて 4xx で止める。逆に、分岐点なしの旧クライアントは
 // これまでどおり通す（後方互換）。
@@ -85,7 +85,7 @@ func TestForkRejectsMalformedBody(t *testing.T) {
 	}
 }
 
-// 後方互換: ボディ無し（docs/55 以前のクライアント）は分岐点の検査に入らない。
+// 後方互換: ボディ無し（docs/log/55 以前のクライアント）は分岐点の検査に入らない。
 // 会話がまだ無いので not_resumable で止まるが、fork_at_* ではないこと＝
 // 分岐点まわりの新しいゲートを一切踏んでいないことを確かめる。
 func TestForkWithoutBodyKeepsWholeConversationPath(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// docs/80 / ADR 0061 — 一覧に載るのは provider の応答をどう写したかで決まる。
+// docs/log/80 / ADR 0061 — 一覧に載るのは provider の応答をどう写したかで決まる。
 // ここが本体なので、ネットワーク無しで固定する。
 
 func TestParseGitHubSearchItems(t *testing.T) {
@@ -106,7 +106,7 @@ func TestRepoFromGitHubAPIURL(t *testing.T) {
 }
 
 // 未接続・未知の provider は「その 1 本のクエリのエラー」として返り、リクエスト全体は
-// 200 で通る —— 1 本の失敗で棚全体が空になってはいけない（docs/80 §80.6）。
+// 200 で通る —— 1 本の失敗で棚全体が空になってはいけない（docs/log/80 §80.6）。
 func TestWorkItemsFetchPerQueryErrors(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	body := `{"queries":[{"id":"q1","provider":"github","query":"assignee:@me"},

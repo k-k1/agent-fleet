@@ -55,7 +55,7 @@ if [ "${1:-}" = "--inner" ]; then
     # CLIs are baked it must be present at the pinned version.
     check_ver kiro "$EXPECT_KIRO" kiro-cli --version
   else
-    # Lean distribution variant (BAKE_AGENT_CLIS=0, docs/35 §35.7.1-7): verify the
+    # Lean distribution variant (BAKE_AGENT_CLIS=0, docs/log/35 §35.7.1-7): verify the
     # agent CLIs really are absent (= we do not redistribute proprietary CLIs).
     # Whether the pinned versions are installable is covered by the versions.json
     # all-pins check (below) and the separate P1-gate boot-install run (needs network).
@@ -97,7 +97,7 @@ if [ "${1:-}" = "--inner" ]; then
   # versions.json mirrors the build-time pins (source of the pin display in the
   # settings UI "tool versions"; on the lean variant, the versions boot-install /
   # on-demand install fetches). All pins must be listed regardless of the BAKE
-  # knobs (docs/35 §35.7.1-5/-7).
+  # knobs (docs/log/35 §35.7.1-5/-7).
   VJ=/usr/local/share/agent-fleet/versions.json
   if [ -f "$VJ" ]; then
     for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" "copilot=$EXPECT_COPILOT" \
@@ -116,7 +116,7 @@ if [ "${1:-}" = "--inner" ]; then
       else echo "NG  versions.json $k: ${got:-?} != $want"; fail=1; fi
     done
     # agy_sha256 depends on the image arch (verification value for boot-install;
-    # docs/35 §35.4.1).
+    # docs/log/35 §35.4.1).
     case "$(dpkg --print-architecture)" in
       amd64) agy_sha_want="$EXPECT_AGY_SHA_X64" ;;
       arm64) agy_sha_want="$EXPECT_AGY_SHA_ARM64" ;;
@@ -164,7 +164,7 @@ if [ "${1:-}" = "--inner" ]; then
     if [ "${EXPECT_RTK:-1}" = "1" ]; then
       if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)"
       # ⚠️ Absent WITH a reason is a pass, absent without one is not. On arm64 upstream
-      # ships no runnable binary for this base image (docs/70 §70.9.2), and the build
+      # ships no runnable binary for this base image (docs/log/70 §70.9.2), and the build
       # records that instead of shipping something that cannot start — but "rtk quietly
       # stopped being baked" must still fail, so the marker is what tells them apart.
       elif [ -f /usr/local/share/agent-fleet/rtk-unavailable ]; then
@@ -287,7 +287,7 @@ EXPECT_AWSCLI="$(arg_pin AWSCLI_VERSION)"
 EXPECT_SMP="$(arg_pin SESSION_MANAGER_PLUGIN_VERSION)"
 EXPECT_RTK="${EXPECT_RTK:-1}" # default = always baked in; pass 0 only to verify a BAKE_RTK=0 build
 # Pass 0 when verifying a lean distribution variant image (BAKE_AGENT_CLIS=0;
-# docs/35 §35.7.1-7 — verification switches to CLI absence + versions.json listing all pins).
+# docs/log/35 §35.7.1-7 — verification switches to CLI absence + versions.json listing all pins).
 EXPECT_AGENT_CLIS="${EXPECT_AGENT_CLIS:-1}"
 SMOKE_MEMORY="${WS_MEMORY:-1g}"
 

@@ -5,7 +5,7 @@ import { checkQuery, egressLevel, hostOf } from "./egressCheck.ts";
 import type { EgressCheck } from "./egressCheck.ts";
 
 // The egress warning + request flow shared by the member registry (McpTab) and the tenant
-// distribution admin (AdminTab) — docs/48 §9. Both screens register a remote MCP server,
+// distribution admin (AdminTab) — docs/log/48 §9. Both screens register a remote MCP server,
 // and both need the same answer: can a workspace actually reach this host, and if not,
 // what can this person do about it.
 //

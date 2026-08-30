@@ -84,7 +84,7 @@ func TestSessionMarksRoundTrip(t *testing.T) {
 }
 
 // ⚠️ 共有 DTO が落としている座標（cwd / file / 差分）を Quote が迂回して運び出さないよう、
-// 塗れる kind は保存時に閉じてある（docs/69 §69.4）。ここが緩むと、Console 側の描画が
+// 塗れる kind は保存時に閉じてある（docs/log/69 §69.4）。ここが緩むと、Console 側の描画が
 // 広がっただけでパスが共有先へ渡る。
 func TestSessionMarksRejectNonProseKind(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

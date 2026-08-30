@@ -1,7 +1,7 @@
 # 0021. 定時実行は CP 常駐スケジューラが停止中 WS を wake して駆動し、実行と報告は既存 create_session／docs/30 に全乗りする
 
-- 状態: **設計中**（2026-07-22）。実装計画は [docs/38](../38-scheduled-execution.md)。
-- 関連: [docs/30](../30-session-report.md)（完了報告 — 実行結果の配送先）、
+- 状態: **設計中**（2026-07-22）。実装計画は [docs/38](../log/38-scheduled-execution.md)。
+- 関連: [docs/30](../log/30-session-report.md)（完了報告 — 実行結果の配送先）、
   docs/27（managed driver — 実行対象セッションの一種）、
   reaper（`control-plane/reaper.go` — scale-to-zero と競合）、
   メモキュー（`memo_bridge.go` — CP に貯めてエージェントから叩く操作面の先例）、

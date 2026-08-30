@@ -45,7 +45,7 @@ describe("markRootKey / parseRootKey", () => {
 
 // ⚠️ これが本命の回帰テスト。ミラーと共有ビューは別々の tail 窓を持つので、ブロックへ
 // 何行畳み込まれたかは両側で違う。root がブロック相対だと、その差がそのまま「共有先だけ
-// 印が 1 つ隣」になる（docs/69 §69.3.2）。
+// 印が 1 つ隣」になる（docs/log/69 §69.3.2）。
 describe("groupTurns の origins", () => {
   const older: Turn = {
     role: "assistant",

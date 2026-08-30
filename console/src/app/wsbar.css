@@ -1,5 +1,5 @@
 /* WS bar — extracted from the old console's styles.css (region 352–785) for
-   pixel parity (docs/22 P6a). The .spark base rules from that region live in
+   pixel parity (docs/log/22 P6a). The .spark base rules from that region live in
    ui/ui.css (owned by ui/Sparkline). Trimmed at P8. */
 
 /* Legacy control styles (old element globals), scoped to the bar — the verbatim-
@@ -582,7 +582,7 @@ button.wu-manage {
 
 /* ---- left pane ---- */
 
-/* ---- starting dialog (WsStartingDialog — docs/35 §35.9-9) ---- */
+/* ---- starting dialog (WsStartingDialog — docs/log/35 §35.9-9) ---- */
 /* 縦並び・間隔・左右の余白は共有の .ui-modal-body が持つ（min-width も要らない —
    .ui-modal が幅を固定している）。 */
 .ws-starting-line {

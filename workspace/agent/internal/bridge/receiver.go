@@ -1,6 +1,6 @@
 package bridge
 
-// Receive supervisor (docs/37 P2a): owns the long-lived Discord Gateway connection and
+// Receive supervisor (docs/log/37 P2a): owns the long-lived Discord Gateway connection and
 // routes inbound thread replies back into sessions. Split from the send path on purpose —
 // sending is a stateless per-drain REST call, receiving is one persistent WSS connection
 // with its own lifecycle (bridge.go 契約1 note).
@@ -22,7 +22,7 @@ import (
 )
 
 // sourceDiscord tags turns injected from Discord so the mirror can badge them like
-// operator-injected turns (docs/37 追加要件). Matches package main's turnSourceDiscord.
+// operator-injected turns (docs/log/37 追加要件). Matches package main's turnSourceDiscord.
 const sourceDiscord = "discord"
 
 // ReceiverDeps is the capability the receiver needs from package main, passed as a
@@ -40,7 +40,7 @@ type ReceiverDeps struct {
 	// error it only logs. nil when P2b isn't wired.
 	Answer func(pi ParsedInteraction) (feedback string, err error)
 	// Operator delivers an inbound message from the dedicated fleet-operator thread to
-	// the built-in operator assistant conversation (docs/37 P3先取り) and returns the
+	// the built-in operator assistant conversation (docs/log/37 P3先取り) and returns the
 	// assistant's reply. Unlike Inject (a session, whose answer rides an existing
 	// answer-ready notification), the operator conversation's reply has no such push,
 	// so the receiver posts the returned reply back into the thread itself. On failure
@@ -61,7 +61,7 @@ var (
 )
 
 // StartReceiver launches the receive supervisors — one per chat provider (Discord Gateway +
-// Slack Socket Mode), sharing the same provider-neutral deps (docs/37 Slack 追随). No-op
+// Slack Socket Mode), sharing the same provider-neutral deps (docs/log/37 Slack 追随). No-op
 // without an Inject callback; cheap when no provider has receive configured — each just polls
 // secrets and does nothing.
 func StartReceiver(deps ReceiverDeps) {
@@ -296,7 +296,7 @@ func routeOperatorInbound(m gatewayMessage, conv, text, token string, deps Recei
 // 戻っていたため、「止めた」あとも in-flight の typing POST が走り続け、返信を出した
 // 後に打鍵中インジケータが一瞬残った。テストではもっとはっきり出て、次のテストが
 // 差し替えた discordAPIBase をこの goroutine が読み、`-race` がデータ競合として検出した
-// （slack 側の post 漏れと同じ「テストを跨いで生き残る goroutine」— docs/60 作業中に発見）。
+// （slack 側の post 漏れと同じ「テストを跨いで生き残る goroutine」— docs/log/60 作業中に発見）。
 func startTypingPulse(token, channelID string) func() {
 	done := make(chan struct{})
 	exited := make(chan struct{})

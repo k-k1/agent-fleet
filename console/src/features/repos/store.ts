@@ -18,7 +18,7 @@ export interface Repo {
   worktree?: boolean; // linked git worktree (not a standalone clone)
   parent?: string; // for a worktree, the parent working copy's folder name
   createdAt?: string; // for a worktree, its creation time (RFC3339); orders worktrees under a base
-  /** 削除ロック（docs/45）: true の間、削除は force 付きでも 403 で拒否され、
+  /** 削除ロック（docs/log/45）: true の間、削除は force 付きでも 403 で拒否され、
    * 空になった worktree の自動 prune も対象外になる。 */
   locked?: boolean;
 
@@ -27,7 +27,7 @@ export interface Repo {
    * `git worktree add` が通らない ——「新しい作業コピー」の選択肢はここでは出せない。 */
   unborn?: boolean;
 
-  /** Working-copy kind (docs/41): "git" (default/omitted) or "svn". SVN copies are
+  /** Working-copy kind (docs/log/41): "git" (default/omitted) or "svn". SVN copies are
    * flat — no branch/ahead/behind/worktree — so the Console gates git-only actions
    * on it and shows the revision/URL below instead. */
   vcs?: "git" | "svn";
@@ -106,7 +106,7 @@ interface LaunchTargetStore {
    * new-branch flow ("" = new branch). Set by the SCM view's「このブランチで作業を
    * 始める」, which knows the branch before the dialog exists. */
   existingBranch: string;
-  /** The caller already chose 「このコピーで直接」 (docs/80: the work item flow picks the
+  /** The caller already chose 「このコピーで直接」 (docs/log/80: the work item flow picks the
    * working copy — new worktree or an existing one — before the launch dialog opens).
    * The dialog would otherwise re-default to "new worktree" and undo that answer. */
   inPlace: boolean;
@@ -122,7 +122,7 @@ export const useLaunchTarget = create<LaunchTargetStore>((set) => ({
   clear: () => set({ target: null, existingBranch: "", inPlace: false }),
 }));
 
-/** A first-prompt seed for the next launch (docs/21 UI刷新): the memo send modal's
+/** A first-prompt seed for the next launch (docs/log/21 UI刷新): the memo send modal's
  * "新規セッションを起動" stashes the composed memo text here, then opens the launch hub.
  * LaunchModal reads it once to prefill its prompt field, then it's cleared. */
 interface LaunchSeedStore {
@@ -136,11 +136,11 @@ interface LaunchSeedStore {
 	 *  session may propose more than one handoff in a turn, so the session name alone
 	 *  no longer identifies the card to badge. */
 	handoffId: string;
-	/** メンバーから受け取った引き継ぎ（docs/77）の offer id ("" = 該当なし)。起動が成功した
+	/** メンバーから受け取った引き継ぎ（docs/log/77）の offer id ("" = 該当なし)。起動が成功した
 	 *  時点で受諾を申告するために持つ —— キャンセルされた起動で受諾済みにしてはいけないので、
 	 *  handoffId と同じく「種を置く時点」では申告できない。 */
 	handoffOfferId: string;
-	/** 作業項目（docs/80）から起動したときの相手。起動が**成功したあと**に台帳へ
+	/** 作業項目（docs/log/80）から起動したときの相手。起動が**成功したあと**に台帳へ
 	 *  1 行入れるために持つ —— handoffOfferId と同じ理由で、種を置く時点では
 	 *  「着手した」と言ってはいけない（キャンセルされうる）。branch は
 	 *  LaunchModal の新規ブランチ欄に入る提案値。 */
@@ -164,7 +164,7 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 /** Poll every 60s while the tab is visible AND the workspace is running, so the
  * origin-ahead badge (kept fresh server-side by the Agent's auto-fetch) updates
  * without a manual refresh. Skipped while stopped/booting — the agent proxy only
- * 502s then (docs/35 §35.9-9). Returns cleanup (StrictMode-safe). */
+ * 502s then (docs/log/35 §35.9-9). Returns cleanup (StrictMode-safe). */
 export function startReposPolling(): () => void {
   const load = () => {
     if (document.hidden || !wsRunning(useWorkspaceStore.getState().state)) return;

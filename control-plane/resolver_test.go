@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// docs/23 P2-W2: manager.mu を DB I/O 跨ぎで保持する直列化をやめた際の要件 —
+// docs/log/23 P2-W2: manager.mu を DB I/O 跨ぎで保持する直列化をやめた際の要件 —
 // 同一メンバーシップの並行「初回」resolve が workspace を二重作成しないこと
 // （per-membership build ロックが守る）、かつ全 goroutine が同じ workspace に
 // 解決すること。

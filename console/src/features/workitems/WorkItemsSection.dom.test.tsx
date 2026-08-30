@@ -1,4 +1,4 @@
-// 作業項目レール（docs/80 P0）の描画テスト。芯は 4 つ:
+// 作業項目レール（docs/log/80 P0）の描画テスト。芯は 4 つ:
 //   ① Workspace 停止中でもキャッシュの行が出て、「最終取得」と停止中の断りが付く
 //      —— この画面が使えないなら機能そのものが無い（ADR 0061 決定 1）
 //   ② 着手済みの行にバッジが出る（同じ課題に 2 人目が入るのを起動前に止める）
@@ -331,7 +331,7 @@ describe("WorkItemsSection", () => {
     expect(strayChildren(queries)).toEqual([]);
   });
 
-  // --- docs/80 §80.18: 実データ（Jira 41 件・全行同じ担当者）で作り直した情報設計 ---
+  // --- docs/log/80 §80.18: 実データ（Jira 41 件・全行同じ担当者）で作り直した情報設計 ---
 
   const jiraRows = (n: number) =>
     Array.from({ length: n }, (_, i) =>
@@ -365,7 +365,7 @@ describe("WorkItemsSection", () => {
     expect(rows()).toBe(10);
   });
 
-  // docs/80 §80.20: 同じ JQL を 2 本保存していて 41 件が 82 行になった、という実機の報告。
+  // docs/log/80 §80.20: 同じ JQL を 2 本保存していて 41 件が 82 行になった、という実機の報告。
   it("★ 2 本のクエリが同じチケットを返しても 1 行（バッジも重複を数えない）", async () => {
     const q2 = { ...query, id: "q2", provider: "jira" };
     const dup = jiraRows(41).map((r) => ({ ...r, id: r.id + "-dup", queryId: "q2" }));

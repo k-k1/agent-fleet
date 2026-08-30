@@ -1,6 +1,6 @@
 // 日本語カタログ（ソース・正本）。キーは他ロケールの網羅チェックの基準になる（en.ts は
 // Record<keyof typeof ja, string> で全キー必須）。値の {name} 等は t() が vars で置換する。
-// docs/28-i18n.md。P0 は中央集約 sink 3 種（errText / notifications wording / 設定ラベル定数）分のみ。
+// docs/log/28-i18n.md。P0 は中央集約 sink 3 種（errText / notifications wording / 設定ラベル定数）分のみ。
 // 以降のフェーズで features 単位に追記していく。
 export const ja = {
   // --- 共通 / 設定ラベル ---
@@ -52,11 +52,11 @@ export const ja = {
   "err.send_failed": "送信に失敗しました",
   "err.network": "通信エラー",
   "err.unknown": "不明なエラーが発生しました",
-  // テナント毎のログイン（docs/61 §61.9）。provider_required は専用モーダルが
+  // テナント毎のログイン（docs/log/61 §61.9）。provider_required は専用モーダルが
   // 再サインイン導線を出すので、この文言はモーダル外で出た場合の保険。
   "err.provider_required": "このテナントには別のサインイン方法が必要です。サインインし直してください。",
   "err.not_provisioned": "所属するテナントがありません。管理者に追加を依頼してください。",
-  // 招待前の着地面（docs/61 §61.10.2・P7-2）。★ 失敗ではなく、招待制デプロイの正常な
+  // 招待前の着地面（docs/log/61 §61.10.2・P7-2）。★ 失敗ではなく、招待制デプロイの正常な
   // 最初の一歩として書く。管理者に伝えるべき「自分のアドレス」を必ず読ませる。
   "notprov.title": "まだ招待されていません",
   "notprov.lead":
@@ -91,7 +91,7 @@ export const ja = {
   "err.read_failed": "ファイルの読み込みに失敗しました",
   "err.write_failed": "ファイルの保存に失敗しました",
   "err.write_state_unknown": "保存内容は反映されていますが、永続化の成否を確認できません",
-  // docs/28 P3: workspace/agent ハンドラの安定コード（errcodes.go と対）。
+  // docs/log/28 P3: workspace/agent ハンドラの安定コード（errcodes.go と対）。
   "err.chat_assistant_not_found": "アシスタントが見つかりません",
   "err.chat_agent_unsupported": "未対応のエージェントです",
   "err.chat_prompt_empty": "プロンプトが空です",
@@ -113,7 +113,7 @@ export const ja = {
   "err.conn_slack_destination_invalid": "宛先は Slack の ID を入力してください（チャンネル C…、ユーザー U…）",
   "err.conn_slack_token_invalid": "Slack がトークンを拒否しました（Bot / App-level トークンを確認してください）",
   "err.conn_slack_app_token_required": "返信の受信には App-level トークン（xapp-）が必要です",
-  // MCP レジストリ（docs/48 / workspace/agent/mcp_servers.go + internal/mcpreg/def.go）
+  // MCP レジストリ（docs/log/48 / workspace/agent/mcp_servers.go + internal/mcpreg/def.go）
   "err.mcp_not_found": "MCP サーバーが見つかりません",
   "err.mcp_read_only": "このサーバーは編集できません（無効化のみ可能です）",
   "err.mcp_name_taken": "同じ名前のサーバーが既に登録されています",
@@ -136,7 +136,7 @@ export const ja = {
   "err.mcp_kind_unknown": "未知のエージェント種別です",
   "err.mcp_timeout_range": "タイムアウトは 1000〜120000 ミリ秒で指定してください",
   "err.mcp_headers_unreadable": "保存済みのヘッダを復号できません。すべてのヘッダ値を再入力してください",
-  // egress 許可リストの申請（docs/48 §9 / control-plane/egress_member.go）
+  // egress 許可リストの申請（docs/log/48 §9 / control-plane/egress_member.go）
   "err.egress_entry_invalid":
     "許可リストにはホスト名か .suffix.example.com の形式を指定してください（スキーム・ポート・パスは使えません）",
   "err.egress_entry_too_broad": "TLD 全体（.com など）は申請できません。ドメイン単位で指定してください",
@@ -169,7 +169,7 @@ export const ja = {
   "err.memory_secret_detected": "書き出す内容に秘密情報らしき記述があります",
   "err.memory_too_large": "ファイルが大きすぎます",
 
-  // --- ビルトインアシスタント（docs/28 P3。id は assistants.go の固定集合。Agent は
+  // --- ビルトインアシスタント（docs/log/28 P3。id は assistants.go の固定集合。Agent は
   //     和文を返すが、表示は builtin のとき Console カタログが解決する）---
   "assistant.af.name": "Agent Fleet アシスタント",
   "assistant.af.desc":
@@ -461,7 +461,7 @@ export const ja = {
     "Slack アプリを作成し（api.slack.com/apps → From scratch）、Socket Mode を有効化、Bot スコープ（chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email）と connections:write を持つ App-level トークンを追加、message 系イベントを購読してからインストールし、/invite で Bot をチャンネルに招待します。両方のトークンをここに貼り付けてください。トークンはワークスペース内に暗号化保存され、通知の送信にだけ使われます（表示名と状態のみ・ログや秘密は送りません）。",
 
 
-  // === MCP サーバー（features/settings/McpTab.tsx・docs/48 P1）===
+  // === MCP サーバー（features/settings/McpTab.tsx・docs/log/48 P1）===
   // 実効レジストリ（組み込み ∪ テナント配布 ∪ 個人登録）の一覧と、個人スコープの CRUD。
   "mcp.ws_required_title": "ワークスペースが停止しています",
   "mcp.ws_required_hint":
@@ -533,7 +533,7 @@ export const ja = {
   "mcp.enabled_on": "有効にする",
   "mcp.kv_value": "値",
   "mcp.kv_masked_hint": "*** は保存済みの値です。そのままにすれば変更されません。",
-  // --- 外部通信の許可リスト連携（docs/48 §9・EgressNote.tsx）---
+  // --- 外部通信の許可リスト連携（docs/log/48 §9・EgressNote.tsx）---
   // 遮断されている / これから遮断される宛先を、まだ直せる場所（登録画面）で伝える。
   "mcp.egress_blocked":
     "この宛先（{host}）は外部通信の許可リストに無いため、ワークスペースから接続できません。",
@@ -545,7 +545,7 @@ export const ja = {
   "mcp.egress_reason_for": "MCP サーバー {name} で使用",
   "mcp.egress_send": "申請する",
   "mcp.egress_propose_failed": "申請できませんでした: {msg}",
-  // --- テナント配布（docs/48 P4）---
+  // --- テナント配布（docs/log/48 P4）---
   "mcp.tenant_fetched_at": "テナント配布の最終取得: {when}",
   "mcp.tenant_never_fetched": "テナント配布はまだ取得できていません（管理側の設定または接続を確認してください）。",
   "mcp.tenant_refresh": "テナント配布を取得",
@@ -716,7 +716,7 @@ export const ja = {
   "ssm.f_region_placeholder": "プロファイル既定を使用",
   "ssm.add_host": "ホストを追加",
 
-  // --- 設定の書き出し / 取り込み（features/settings/BackupTab.tsx・docs/79）---
+  // --- 設定の書き出し / 取り込み（features/settings/BackupTab.tsx・docs/log/79）---
   "backup.intro":
     "自分の設定を 1 個のファイルにまとめて持ち出し、別の環境やアカウントで読み戻せます。",
   "backup.secrets_note":
@@ -916,7 +916,7 @@ export const ja = {
   "git.rename": "リネーム",
   "git.rename_cancel": "取消",
   "git.github_oauth_unconfigured": "このテナントに GitHub の OAuth アプリが登録されていません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼するか、アクセストークンの貼付で接続してください。",
-  // OAuth の導線そのものを出さないときの説明（docs/71）。押せないボタンを置いても、
+  // OAuth の導線そのものを出さないときの説明（docs/log/71）。押せないボタンを置いても、
   // 押した本人には直せない（設定はテナント管理者のもの）。
   "git.oauth_unregistered": "このテナントには OAuth アプリが登録されていないため、OAuth での接続は出していません。テナント管理者に「テナント設定 › 連携 › git プロバイダ OAuth」での登録を依頼してください。",
   "git.oauth_start_failed": "OAuth 開始に失敗: {msg}",
@@ -1041,7 +1041,7 @@ export const ja = {
   "agents.default_model": "既定モデル",
   "agents.default_effort": "既定 effort",
   "agents.start_mode": "開始モード",
-  // 権限確認をスキップするか（docs/76）。既定はスキップ＝従来どおり。
+  // 権限確認をスキップするか（docs/log/76）。既定はスキップ＝従来どおり。
   "agents.skip_permissions": "権限確認",
   "agents.skip_permissions_sub": "ツール実行のたびに許可を求めるか",
   "agents.skip_permissions_off_note":
@@ -1210,7 +1210,7 @@ export const ja = {
   "admin.destroy_leftovers": "破棄しましたが、次のものは削除できませんでした: {list}",
   "admin.remove_purge": "Workspace と home も破棄する（取り消せません）",
   "admin.remove_purge_warn": "home と、ランタイムがこの人のために作ったものを削除します。再招待しても戻りません。",
-  // 後始末の 3 段目（docs/61 §61.18）。Workspace を破棄し終えた行にだけ出る。
+  // 後始末の 3 段目（docs/log/61 §61.18）。Workspace を破棄し終えた行にだけ出る。
   "admin.delete_member_row": "メンバーを完全に削除",
   "admin.delete_member_row_title": "{key} を名簿から完全に削除しますか？",
   "admin.delete_member_row_confirm": "完全に削除する",
@@ -1276,7 +1276,7 @@ export const ja = {
   "pool.golden_rejected": "{snapshot} は使いません: {reason}。起動を確かめられなかったものは配らないので、新規 home は空から作られます（初回起動が遅いだけで、壊れはしません）。同じイメージでの焼き直しは 2 回で打ち切ります。",
   "pool.golden_stale": "{snapshot} は {baked} から焼かれていますが、このデプロイは {running} を動かしています。この golden は使われず、焼き直すまで新規 home は空から作られます（初回起動が遅くなります）。",
   "pool.golden_ok": "{image} から焼いたもの",
-  // 焼き込みの進み具合（docs/64 §64.30）。焼きは 11 分前後かかり、前半には snapshot が
+  // 焼き込みの進み具合（docs/log/64 §64.30）。焼きは 11 分前後かかり、前半には snapshot が
   // まだ存在しない——「用意しています」の 1 行だけでは、動いているのか固まっているのか
   // 分からないまま待たせることになる。
   "pool.bake_step_seed": "種を起動",
@@ -1305,7 +1305,7 @@ export const ja = {
   "pool.idle_min": "{n} 分",
   "pool.idle_hour": "{n} 時間",
   "pool.idle_day": "{n} 日",
-  // --- テナント配布 MCP（docs/48 P4・AdminTab の McpAdminView）---
+  // --- テナント配布 MCP（docs/log/48 P4・AdminTab の McpAdminView）---
   "admin.mcp_intro":
     "テナントの全メンバーへ配布する MCP サーバーです。配布できるのはリモート（Streamable HTTP）だけで、コマンドを起動する stdio は配布できません（管理者が全員のコンテナで任意のコマンドを実行できることと等価になるため）。",
   "admin.mcp_distributed": "配布中の MCP サーバー",
@@ -1390,7 +1390,7 @@ export const ja = {
   "admin.tts_dict_note":
     "全ユーザーの読み上げに適用される共通辞書です（1 行に 1 件「表記=読み」、# 始まりはコメント）。各ユーザーが設定（読み上げタブ）の読み仮名辞書に同じ表記を持つ場合は、そのユーザーの指定が優先されます。保存後、他のユーザーには Console の次回ロードから反映されます。",
   "admin.usage_load_error": "読み込みに失敗しました。",
-  // --- クラウド費用（docs/67 + ADR 0048）---
+  // --- クラウド費用（docs/log/67 + ADR 0048）---
   // ⚠️ わざと「使用量」と呼ばない。その名前は既に 3 か所で使っている
   //（エージェントのトークン、ワークスペース稼働時間が 2 か所）。ここは金額で、
   // しかも AWS の請求があるデプロイにしか存在しない。
@@ -1629,7 +1629,7 @@ export const ja = {
   "admin.grant_body_2": " のテナント管理者権限を付与します。",
   "admin.grant_note": "付与後はこのテナント内のメンバー管理・リソース閲覧・ワークスペース強制停止・セッション上限設定ができるようになります（他テナントには影響しません）。",
 
-  // --- テナント毎のログイン（docs/61 §61.9・P3）。3 つの規則は似て非なるもので、
+  // --- テナント毎のログイン（docs/log/61 §61.9・P3）。3 つの規則は似て非なるもので、
   // とくに「招待できるドメイン」を「使えるドメイン」と読み違えると運用が壊れる。---
   "admin.login_rules": "ログイン規則",
   "admin.login_rules_note": "空欄 = 制限なし",
@@ -1642,15 +1642,15 @@ export const ja = {
     "「自動参加ドメイン」は 1 ドメインにつき 1 テナントだけ設定できます。",
   "admin.login_url": "このテナント専用のログイン URL:",
 
-  // --- デプロイの方式＝既定テナントの方式（docs/61 §61.17）。P7-0 で、テナントの
+  // --- デプロイの方式＝既定テナントの方式（docs/log/61 §61.17）。P7-0 で、テナントの
   // サインイン方法の一覧に「デプロイ共通」の行として並ぶようになった。表示名を主に、
   // id は <code> で添える（技術識別子を主役にしない）。---
   "admin.providers_none": "このデプロイにはサインイン方法が設定されていません（ログイン画面にボタンが出ません）。",
   // ★ 「0 件」と「読めなかった」を必ず別文言にする。以前は 403 を空配列に潰していて、
-  // 権限の無い相手に「設定されていません」と嘘を表示していた（docs/61 §61.17.9 ②）。
+  // 権限の無い相手に「設定されていません」と嘘を表示していた（docs/log/61 §61.17.9 ②）。
   "admin.providers_unreadable": "サインイン方法の一覧を読み込めませんでした。権限が無いか、一時的に取得できていません。",
 
-  // --- テナント定義の認証方式（docs/61 §61.11・P4）。子会社ごとに Entra が違う場合。
+  // --- テナント定義の認証方式（docs/log/61 §61.11・P4）。子会社ごとに Entra が違う場合。
   // 作るのはテナント管理者、有効化はデプロイ管理者（決定 30）。この非対称が本体。---
   "admin.idp_title": "このテナントで使えるサインイン方法",
   "admin.idp_note": "自前の方式の有効化にはデプロイ管理者の承認が必要",
@@ -1660,7 +1660,7 @@ export const ja = {
     "登録した時点では「承認待ち」で、デプロイ管理者が承認するまでログイン画面にボタンは出ず、サインインもできません。",
   "admin.idp_none": "このテナント専用の方式はまだありません（上のデプロイ共通の方式は使えます）。",
   "admin.idp_add": "サインイン方法を追加",
-  // --- 行ごとの 2 トグル（docs/61 §61.17.5）。DB は CSV 2 本のままで、画面だけが変わる。
+  // --- 行ごとの 2 トグル（docs/log/61 §61.17.5）。DB は CSV 2 本のままで、画面だけが変わる。
   // ★ 「出す」は「受け入れる」の従属 — 受け入れていない方式は ON にしても出ない。---
   "admin.idp_accept": "受け入れる",
   "admin.idp_show": "ボタンに出す",
@@ -1719,7 +1719,7 @@ export const ja = {
   "admin.idp_repend_hint":
     "issuer / client_id / email の信頼方法・種類・同一アカウントの見分け方を変更したとき、または受け入れるドメイン・tid・GitHub 組織を追加したときは、" +
     "承認がやり直しになります（承認は「この発行元・この組織を、この範囲で信じてよい」に対して与えられたものなので）。",
-  // ★ P7-1（docs/61 §61.17.6）で「素の /login には効かない」の運用回避は消えた。
+  // ★ P7-1（docs/log/61 §61.17.6）で「素の /login には効かない」の運用回避は消えた。
   // 残すのは「隠した＝もう使えない」という誤読への一文だけ。
   "admin.hidden_still_accepted_note":
     "★ ボタンに出さない方式も、受け入れは続きます。その方式で入っている人（他テナントとの兼務など）は" +
@@ -1731,7 +1731,7 @@ export const ja = {
     "受け入れても入れる人が増えるわけではありません — 誰がこのテナントに入れるかを決めるのは名簿です。",
   "admin.login_rules_methods_moved":
     "★ どのサインイン方法を受け入れるか・ログイン画面のボタンに出すかは、「サインイン方法」の面で行ごとに切り替えます。",
-  // ★ 停止の順序ガード（docs/61 §61.17.4）。拒否ではなく確認 — 停止は「漏れた IdP を
+  // ★ 停止の順序ガード（docs/log/61 §61.17.4）。拒否ではなく確認 — 停止は「漏れた IdP を
   // 止める」手段でもあるので、常に始めるより速くあってよい。人数は CP の文言を出す。
   "admin.idp_suspend_title": "{name} を停止する",
   "admin.idp_suspend_body":
@@ -1784,7 +1784,7 @@ export const ja = {
   "tenant.net_scope_hint": "制限されるのはテナントの「利用」で、サイトへの到達ではありません。ログイン画面はどこからでも開けますしサインインも通りますが、一覧に無いネットワークからはこのテナントの中身を開けません。",
   "tenant.net_exempt_hint": "対象外: MCP と内蔵 Git です（本人のワークスペースの中から呼ばれるので、人がどこにいるかを表しません）。これらを止めるにはメンバーシップを無効化してください。デプロイ管理者はこの規則の対象外で、設定を間違えても必ず戻せます。",
   "tenant.net_layers_hint": "これはアクセス制限であってネットワーク防御ではありません（要求はコントロールプレーンまで届き、セッションを検証したあとで拒否されます）。届く前に止めるには、運用者がロードバランサ側で絞ります。",
-  // 連携（docs/71）— 外部サービス側にテナントが用意した資格情報の登録。
+  // 連携（docs/log/71）— 外部サービス側にテナントが用意した資格情報の登録。
   "tenant.group_integrations": "連携",
   "tenant.tab_git_oauth": "連携アプリの OAuth",
   "tenant.git_oauth_intro": "メンバーの画面に出る「OAuth で接続」が、どの OAuth アプリを使うかを決めます（GitHub / Bitbucket は 接続 > Git、Jira は 接続 > 課題管理）。アプリは各社の GitHub org / Bitbucket ワークスペース / Atlassian に作るものなので、登録するのはテナント管理者です。保存した時点で有効になります（承認は要りません）。",
@@ -1821,7 +1821,7 @@ export const ja = {
   "tenant.rules_autojoin_note": "このドメインのメールアドレスの人は、初回ログインでこのテナントに参加します。",
   "tenant.rules_invite_note": "メンバーを追加するときだけ効くガードです。既にメンバーの人には影響しません。",
 
-  // --- キーボード操作体系（features/keys・docs/29）。コマンド/グループ名は表示と
+  // --- キーボード操作体系（features/keys・docs/log/29）。コマンド/グループ名は表示と
   // コマンドパレットの日英マッチ両方に使う。{n} はペイン序数。---
   "keys.grp.pane": "ペイン / レイアウト",
   "keys.grp.session": "セッション",
@@ -1995,9 +1995,9 @@ export const ja = {
   "state.plan": "プランあり",
   "state.permission": "許可待ち",
   "state.blocked": "上限で停止 — 操作が必要",
-  // 利用上限のリセット待ち（docs/47 §4-9）。blocked と違い人の操作は要らないので、
+  // 利用上限のリセット待ち（docs/log/47 §4-9）。blocked と違い人の操作は要らないので、
   // 「操作が必要」とは言わずに、いつ動くか（予約済みの自動再開時刻）だけを添える。
-  // 支出・残高の上限（docs/47 §4-10）。待っても解けないので「制限解除待ち」とは別物にする。
+  // 支出・残高の上限（docs/log/47 §4-10）。待っても解けないので「制限解除待ち」とは別物にする。
   "state.spend_limit": "残高上限 — 増枠が必要",
   "state.rate_limited": "制限解除待ち",
   "state.rate_limited_at": "制限解除待ち · {at}",
@@ -2040,7 +2040,7 @@ export const ja = {
   "wsbar.state.recreating": "再作成中…",
   "wsbar.state.unknown": "不明",
   "wsbar.state.no_tenant": "未所属",
-  // 起動中ダイアログ（WsStartingDialog・docs/35 §35.9-9）
+  // 起動中ダイアログ（WsStartingDialog・docs/log/35 §35.9-9）
   "wsstart.title": "ワークスペースを起動中",
   "wsstart.generic": "起動しています…",
   "wsstart.blocked": "起動できません。このまま待っても進みません",
@@ -2284,7 +2284,7 @@ export const ja = {
     "メッセージを送って会話を始めましょう。Markdown 文書の翻訳や要約、質問への回答などを依頼できます。",
   "chat.you": "あなた",
   "chat.report_role": "セッション報告",
-  // セッション報告カード（docs/28 P6）。カードは**事実だけ**で、オペレーターへの行動指示は
+  // セッション報告カード（docs/log/28 P6）。カードは**事実だけ**で、オペレーターへの行動指示は
   // 含まない（指示は Agent がプロンプトを組む瞬間に生成する）。{display}/{name} は報告元の
   // セッション、それ以外は Agent が渡す引数。features/chat/report.ts が組み立てる。
   "chat.report.headline": "セッション「{display}」({name}) からの報告: ",
@@ -2513,7 +2513,7 @@ export const ja = {
   "mirror.ph_enter": "プロンプトを入力（Enter で送信 / Shift+Enter で改行）",
   "mirror.toggle_mode": "モードを切り替え（Plan ⇄ 実装）",
   "mirror.pasted_image_zoom": "貼り付け画像（拡大）",
-  // スキルピッカー（docs/50）
+  // スキルピッカー（docs/log/50）
   "mirror.skills_btn": "スキル / コマンド（入力欄の先頭でトリガ文字を打っても開く）",
   "mirror.skills_loading": "スキルを読み込み中…",
   "mirror.skills_empty": "このセッションで使えるスキル / コマンドはありません",
@@ -2640,7 +2640,7 @@ export const ja = {
   "mirror.freeform_ph": "または自由入力（Type something / 改行可）",
   "mirror.submit_answer": "回答を送信",
   "mirror.question_cancel": "キャンセルして会話に戻る",
-  // 持ち越した対話（docs/75）— 停止時に画面に出ていたが答えが届かなかったもの。
+  // 持ち越した対話（docs/log/75）— 停止時に画面に出ていたが答えが届かなかったもの。
   "mirror.carried_question": "停止時に未回答だった質問",
   "mirror.carried_plan": "停止時に承認待ちだった計画",
   "mirror.carried_permission": "停止時に許可を求めていた操作",
@@ -2772,7 +2772,7 @@ export const ja = {
   "memo.assistant_title": "メモ",
   "keys.cmd.memoAdd": "メモを追加",
 
-  // === 定時実行スケジュール（features/schedules/SchedulesSection.tsx・docs/38 P5）===
+  // === 定時実行スケジュール（features/schedules/SchedulesSection.tsx・docs/log/38 P5）===
   "sched.title": "スケジュール",
   "sched.empty": "定時実行はまだありません。オペレーターに「毎朝9時に…」のように依頼すると登録されます。",
   "sched.next_run": "次回発火",
@@ -3054,7 +3054,7 @@ export const ja = {
   "arch.no_restorable": "復帰できるアーカイブはありません",
   "arch.restore_all": "すべて復帰",
 
-  // === 掃除パネル（features/sessions/CleanupModal.tsx・docs/32）===
+  // === 掃除パネル（features/sessions/CleanupModal.tsx・docs/log/32）===
   "clean.title": "掃除",
   "clean.open": "掃除を開く（点検・整理）",
   "clean.subtitle": "溜まった停止中セッション・不要な worktree・マージ済みブランチを点検して片付けます。",
@@ -3402,7 +3402,7 @@ export const ja = {
   "repo.share": "共有する…",
   "repo.shared_badge": "共有中（他のユーザーに公開しています）",
 
-  // === プロジェクト設定モーダル（docs/56 P0 + docs/57、features/repos/ProjectModal.tsx）===
+  // === プロジェクト設定モーダル（docs/log/56 P0 + docs/log/57、features/repos/ProjectModal.tsx）===
   "pmcp.title": "プロジェクト設定 — {repo}",
   "pmcp.ws_required_title": "ワークスペースが停止しています",
   "pmcp.ws_required_hint": "作業コピーの中のファイルを読むには、ワークスペースの起動が必要です。",
@@ -3959,7 +3959,7 @@ export const ja = {
   "set.group_workspace": "ワークスペース",
   "set.back": "設定一覧",
 
-  // === アカウント（サインイン方法の紐づけ・docs/61 §61.16 + 決定 37） ===
+  // === アカウント（サインイン方法の紐づけ・docs/log/61 §61.16 + 決定 37） ===
   "set.tab_account": "アカウント",
   "account.intro": "このアカウントに紐づいたサインイン方法です。どの方法で入っても、同じワークスペース・同じホーム・同じ秘密情報になります。",
   "account.disabled": "このデプロイはサインイン方法の追加に対応していません（IdP を使うログインが有効なときだけ使えます）。",
@@ -3977,7 +3977,7 @@ export const ja = {
     "この方法ではサインインできなくなります。ワークスペース・ホーム・秘密情報はそのままで、あとから同じ方法をもう一度追加できます。",
   "account.detach_current": "いまこの方法でサインインしています。先に別の方法でサインインしてから解除してください。",
   "account.detach_last": "残り 1 つのサインイン方法です。解除するとどの方法でも入れなくなります。",
-  // === 使用量ビュー（docs/46 P4・features/usage/UsageView.tsx） ===
+  // === 使用量ビュー（docs/log/46 P4・features/usage/UsageView.tsx） ===
   // usage.val.<軸>.<値> は台帳の列挙値の表示名。カタログに無い値（新しいモデル名など）は
   // 生の値がそのまま出る（tMaybe フォールバック）＝新語彙で画面が壊れない。
   "usage.intro":
@@ -4271,13 +4271,13 @@ export const ja = {
   "auth.expired_relogin_hint": "再ログインすると、この画面に戻って作業を続けられます。",
   "auth.relogin": "再ログイン",
 
-  // === サインイン方法が違うテナント（ProviderRequiredModal・docs/61 §61.9.4） ===
+  // === サインイン方法が違うテナント（ProviderRequiredModal・docs/log/61 §61.9.4） ===
   "auth.provider_required_title": "このテナントには別のサインインが必要です",
   "auth.provider_required_body": "{tenant} は、いまサインインしている方法とは別のサインイン方法だけを受け付ける設定になっています。",
   "auth.provider_required_hint": "サインインし直すとこのテナントに入れます。元のテナントに戻る場合は、このままキャンセルしてテナントを切り替えてください。",
   "auth.provider_required_signin": "サインインし直す",
 
-  // === Text/コード編集（docs/44 Phase 2） ===
+  // === Text/コード編集（docs/log/44 Phase 2） ===
   "editor.aria_label": "{path} エディター",
   "editor.guard.layout": "ペインを移動すると未保存の変更が破棄されます。",
   "editor.guard.history": "履歴を移動すると未保存の変更が破棄されます。",
@@ -4344,7 +4344,7 @@ export const ja = {
   "editor.diff.remote": "remote",
   "editor.popout_dirty": "未保存のファイルは別タブへ切り離せません。保存または破棄してから再試行してください。",
 
-  // === AI変更提案（docs/44 Phase 4） ===
+  // === AI変更提案（docs/log/44 Phase 4） ===
   "editor.suggestion.button": "AI提案",
   "editor.suggestion.button_tip": "選択範囲（未選択なら全文）への変更をAIに提案させる",
   "editor.suggestion.title": "AIによる変更提案",
@@ -4362,12 +4362,12 @@ export const ja = {
   "editor.suggestion.invalid": "この提案は適用できません。",
 
 
-  // === エージェントメモリの版管理（docs/39 P2 / ADR 0022・features/settings/MemoryTab.tsx） ===
+  // === エージェントメモリの版管理（docs/log/39 P2 / ADR 0022・features/settings/MemoryTab.tsx） ===
   // mem.trigger_* のキー名は Agent の commit trailer（AF-Trigger）の値そのもの
   // （"-" は "_" に置換）。未知の契機はカタログに無くても生の値で表示される。
   "mem.intro":
     "エージェントが書き溜めるメモリ（claude の自動メモリ・codex の memories）の履歴です。変更のたびにスナップショットを積み、差分の確認と任意時点への巻き戻しができます。メモリには個人的な内容が含まれることがあるため、共有する前に中身を確認してください。",
-  // エージェントへの指示（docs/60）— フリート方針とプロジェクト指示の間の「その人の層」
+  // エージェントへの指示（docs/log/60）— フリート方針とプロジェクト指示の間の「その人の層」
   "instr.intro":
     "ここに書いた内容は、このワークスペースで新しく起動する全エージェントの指示に加わります。報告の言語や口調、確認を取る粒度、使ってほしい道具など「あなたの働き方」を書く場所です。リポジトリにはコミットされません。",
   "instr.enabled": "ユーザー指示を使う",
@@ -4447,7 +4447,7 @@ export const ja = {
   "mem.restored": "戻しました（更新{written}・削除{deleted}）",
   "mem.restore_nochange": "すでにその時点と同じ内容でした",
 
-  // --- 持ち出し / 取り込み（docs/39 P3）---
+  // --- 持ち出し / 取り込み（docs/log/39 P3）---
   "mem.transfer_title": "持ち出し / 取り込み",
   "mem.export_format_bundle": "bundle（全履歴）",
   "mem.export_format_tar": "tar.gz（最新のみ）",
@@ -4508,7 +4508,7 @@ export const ja = {
   "share.proposal_failed": "提案を送信できませんでした",
   "share.proposal_sent": "所有者へ提案しました",
   "share.pending": "承認待ち {count}件",
-  // メンバーへの引き継ぎ（docs/77 / ADR 0057）
+  // メンバーへの引き継ぎ（docs/log/77 / ADR 0057）
   "handoff.offer_action": "メンバーへ引き継ぐ",
   "handoff.offer_title": "メンバーへ引き継ぐ",
   "handoff.offer_intro": "このセッションを共有している相手に「この続きをやってほしい」を差し出します。相手が受け取ると、相手のワークスペースで新しいセッションが始まります。",

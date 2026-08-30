@@ -1,4 +1,4 @@
-// テナント設定モーダル（docs/61 の面の置き場を管理モーダルから移したもの）を、実ビルド
+// テナント設定モーダル（docs/log/61 の面の置き場を管理モーダルから移したもの）を、実ビルド
 // （console/dist）を headless で動かして固定する。CP も Docker も要らない mock 系
 // （plan-comments-mock.spec.ts と同じ骨格）。
 //
@@ -42,7 +42,7 @@ const IDP = {
   usable: false,
   tenant_slug: "acme",
 };
-// テナント定義の GitHub 行（docs/61 §61.15）。issuer はサーバが入れた定数で、
+// テナント定義の GitHub 行（docs/log/61 §61.15）。issuer はサーバが入れた定数で、
 // 行の身元を分けているのは org（＋ドメイン台帳）。
 const GITHUB_IDP = {
   id: "idp2",
@@ -124,7 +124,7 @@ test("テナント管理者: サインイン方式は編集できるが承認は
   const modal = page.locator(".tenant-modal");
   await expect(modal).toBeVisible();
   // サインイン方式（既定セクション）。デプロイ共通の方式と自前の行が 1 本のリストに
-  // 並ぶ（docs/61 §61.17.5）。
+  // 並ぶ（docs/log/61 §61.17.5）。
   const rows = modal.locator(".adm-mcp-row");
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0).locator(".as-name")).toHaveText("Google でサインイン");
@@ -188,7 +188,7 @@ test("テナント管理者: 「管理」は消え、メンバーと運用はテ
   await expect(modal.locator(".member-row")).toHaveCount(2);
   await modal.locator(".member-row").first().click();
   await expect(modal.locator(".member-detail")).toBeVisible();
-  // offboarding 一式は tenant_admin のもの（docs/61 §61.10.6 / 決定 26）。
+  // offboarding 一式は tenant_admin のもの（docs/log/61 §61.10.6 / 決定 26）。
   await expect(modal.locator(".member-detail button", { hasText: "メンバーを外す" })).toHaveCount(1);
   await expect(modal.locator(".member-detail button", { hasText: "home を掃除" })).toHaveCount(1);
   // 権限（tenant_admin の付与）はデプロイ管理者のものなので出ない。
@@ -241,7 +241,7 @@ test("デプロイ管理者: 登録簿の行から承認して有効化できる
   await expect(register.locator("button", { hasText: "承認して有効化" })).toHaveCount(0);
 });
 
-// ★ kind で「何を訊くか」が変わる（docs/61 §61.15）。GitHub 行に issuer / tid /
+// ★ kind で「何を訊くか」が変わる（docs/log/61 §61.15）。GitHub 行に issuer / tid /
 // 信頼方法を出すと、埋めようのない欄を見せて保存時 400 になり、逆に組織を出さないと
 // 必須欄が無い。一覧の「身元の出どころ」も、github.com は全テナント同じで何も区別
 // できないので org を出す。そして種類を戻したときに issuer を持ち越さないこと —
@@ -281,7 +281,7 @@ test("テナント管理者: GitHub 行は組織を訊き、issuer / tid / 信�
   await expect(labels.filter({ hasText: "issuer" })).toHaveCount(0);
   await expect(labels.filter({ hasText: "email の信頼方法" })).toHaveCount(0);
   await expect(labels.filter({ hasText: "許可する Entra テナント" })).toHaveCount(0);
-  // ★ 「同一アカウントの見分け方」も GitHub には無い（docs/61 §61.15.11）。GitHub の
+  // ★ 「同一アカウントの見分け方」も GitHub には無い（docs/log/61 §61.15.11）。GitHub の
   // subject はどの OAuth App でも同じ数値 id なので、2 本目の鍵が要らない。
   await expect(labels.filter({ hasText: "同一アカウントの見分け方" })).toHaveCount(0);
   // ドメインは GitHub でも必須のまま（1 ドメイン 1 テナントの台帳・§61.15.3）。
@@ -302,7 +302,7 @@ test("テナント管理者: GitHub 行は組織を訊き、issuer / tid / 信�
 // 「使えるサインイン方法」はかつて自由入力の CSV で、何が書けるかは env にしか無かった
 // （打ち間違えると CP が 400 unknown_provider で弾くだけ）。P7-0 でその欄は消え、
 // GET /api/admin/providers が返すデプロイ共通の方式が**行として**並ぶようになった
-// （docs/61 §61.17.5）。バンドルを動かして見るのは、置き場（サインイン方式の面）と、
+// （docs/log/61 §61.17.5）。バンドルを動かして見るのは、置き場（サインイン方式の面）と、
 // 自前の行と 1 本のリストに混ざる並び順が、コンポーネント単体では確かめられないため。
 test("デプロイ管理者: デプロイ共通の方式が、テナントの一覧に id つきで並ぶ", async ({ page }) => {
   await page.route("**/api/**", async (route) => {
@@ -351,7 +351,7 @@ test("デプロイ管理者: デプロイ共通の方式が、テナントの一
 });
 
 // 「ボタンに出す」を倒すと、その方式はこのテナントのログイン画面から消えるが**受け入れは
-// 続く**（docs/61 §61.17.6・P7-1 で素の /login も既定テナントのページになった）。
+// 続く**（docs/log/61 §61.17.6・P7-1 で素の /login も既定テナントのページになった）。
 // 「隠した＝もう使えない」と読む人が居るので、倒したその場でそう書く。★ 自由入力の CSV を
 // 埋めるのではなく行のトグルを倒す — 何が起きたかは、送った 2 本の CSV で固定する。
 test("デプロイ管理者: ボタンに出すのを倒すと、受け入れは続くとその場で読める", async ({ page }) => {

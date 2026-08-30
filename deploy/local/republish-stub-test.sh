@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stub run test for republish-dist.sh (docs/35 §35.7.6).
+# Stub run test for republish-dist.sh (docs/log/35 §35.7.6).
 # Uses no real GitHub: a fake gh (prepended to PATH) serves the release body and
 # records calls. Covers the two ways this script could destroy something that
 # cannot be got back — eating the release notes while rewriting the notice, and

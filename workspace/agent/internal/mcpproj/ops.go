@@ -1,14 +1,14 @@
 package mcpproj
 
-// ops.go — docs/56 §5/§10: the plan → apply operation model. Plan computes what
+// ops.go — docs/log/56 §5/§10: the plan → apply operation model. Plan computes what
 // applying ops would do WITHOUT writing; Apply performs the same computation and
 // then writes, refusing (ErrPlanStale) if any file it would WRITE has changed
 // since the hash the caller supplies was computed. No plan is stored server-side
-// (docs/56 §5's "純粋なワンショット") — planHash is a pure function of (ops,
+// (docs/log/56 §5's "純粋なワンショット") — planHash is a pure function of (ops,
 // current file bytes), so Apply recomputes and compares rather than looking
 // anything up.
 //
-// v1 (P1) supports exactly two op kinds (docs/56 §12's phase table): "copy" (with
+// v1 (P1) supports exactly two op kinds (docs/log/56 §12's phase table): "copy" (with
 // onConflict resolution — the motivating novel-lab case has a conflict on day
 // one) and "ignore" (§7.5 operation A). Freestanding upsert/delete/untrack CRUD
 // is P2.
@@ -27,7 +27,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/projcfg"
 )
 
-// Op is one requested change (docs/56 §10's wire shape).
+// Op is one requested change (docs/log/56 §10's wire shape).
 type Op struct {
 	Op string `json:"op"` // "copy" | "ignore"
 
@@ -64,7 +64,7 @@ type OpResult struct {
 	ResolvedName string  `json:"resolvedName,omitempty"` // may differ from As under onConflict=rename
 	Before       *Server `json:"before,omitempty"`       // masked; nil = no prior entry
 	After        *Server `json:"after,omitempty"`        // masked
-	// GateCode echoes the destination kind's docs/56 §8 gate — "書いた" (this
+	// GateCode echoes the destination kind's docs/log/56 §8 gate — "書いた" (this
 	// result) is not "効いている" until the gate clears.
 	GateCode string `json:"gateCode,omitempty"`
 
@@ -74,7 +74,7 @@ type OpResult struct {
 }
 
 // PlanResult is what both Plan and Apply return — Plan's is a preview, Apply's
-// describes what actually happened, but the shape is identical (docs/56 §5).
+// describes what actually happened, but the shape is identical (docs/log/56 §5).
 type PlanResult struct {
 	PlanHash string     `json:"planHash"`
 	Ops      []OpResult `json:"ops"`
@@ -82,11 +82,11 @@ type PlanResult struct {
 }
 
 // ErrPlanStale: a file an op would WRITE changed since planHash was computed
-// (docs/56 §5's optimistic lock — the working copy is shared with other sessions
+// (docs/log/56 §5's optimistic lock — the working copy is shared with other sessions
 // and the user's own editor).
 var ErrPlanStale = errors.New("plan is stale: a file this operation would write has changed")
 
-// Op result codes (docs/56 §10's one-reason-one-code, extended to op outcomes).
+// Op result codes (docs/log/56 §10's one-reason-one-code, extended to op outcomes).
 const (
 	CodeCopySourceUnreadable = "mcp_project_copy_source_unreadable"
 	CodeCopySourceMissing    = "mcp_project_copy_source_missing"
@@ -316,7 +316,7 @@ func applyServerToFileState(fs *fileState, name string, s Server) error {
 // seedBytes is the base a brand-new file starts from — never fully compact even
 // with no seed content, or UpsertJSONEntry's compact-source detection would
 // mistake "nothing here yet" for "this file's own style is minified" and write a
-// single-line file no CLI would ever produce itself (docs/56 §6: match what the
+// single-line file no CLI would ever produce itself (docs/log/56 §6: match what the
 // CLI itself would write).
 func seedBytes(spec fileSpec) []byte {
 	if spec.seed == nil {
@@ -359,7 +359,7 @@ func emptyValues(m map[string]string) map[string]string {
 }
 
 // uniqueName appends "-2", "-3", … to base until the result is absent from
-// existing (docs/56 §10's onConflict="rename").
+// existing (docs/log/56 §10's onConflict="rename").
 func uniqueName(base string, existing map[string]Server) string {
 	if _, ok := existing[base]; !ok {
 		return base

@@ -64,12 +64,12 @@ var toolSpecs = []toolSpec{
 	// （それ自体がガード対象ホストの兆候）。
 	{Name: "agy", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy"},
 	{Name: "copilot", Cmd: "copilot", Baked: "/usr/local/bin/copilot", Pin: "copilot"},
-	// cursor（kind="cursor"、docs/40）は npm でなく版付き tarball の Node.js バンドル。
+	// cursor（kind="cursor"、docs/log/40）は npm でなく版付き tarball の Node.js バンドル。
 	// 焼き込みは /usr/local/share/cursor-agent/versions/<ver>/ で、/usr/local/bin/cursor-agent
 	// はその wrapper への symlink（realpath で版ディレクトリを解決）。版は日付形式
 	// （2026.07.20-8cc9c0b）で semver でないが、`cursor-agent --version` はその文字列を返す。
 	{Name: "cursor", Cmd: "cursor-agent", Baked: "/usr/local/bin/cursor-agent", Pin: "cursor"},
-	// kiro（kind="kiro"、docs/43）は焼き込み（/usr/local・BAKE=1）でも、既定では
+	// kiro（kind="kiro"、docs/log/43）は焼き込み（/usr/local・BAKE=1）でも、既定では
 	// オンデマンドで ~/.local へ入る（~855MB のため全ユーザー boot-install しない）。
 	// 実効/焼き込み/ユーザー local の 3 版表示は他 CLI と同じ（未導入なら effective/baked
 	// とも null＝「未導入」がそのまま可視化される）。`kiro-cli --version` は「kiro-cli 2.14.1」。
@@ -79,7 +79,7 @@ var toolSpecs = []toolSpec{
 	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},
 	{Name: "node", Cmd: "node", Baked: "/usr/local/bin/node"},
 	{Name: "python", Cmd: "python3", Baked: "/usr/bin/python3"},
-	// AWS / ops MCP 系（docs/25）。CLI ほど目立たないが、ピンずれと home shadow が起きる
+	// AWS / ops MCP 系（docs/log/25）。CLI ほど目立たないが、ピンずれと home shadow が起きる
 	// 条件は同じ（`install-awscli` は ~/.local/bin へ、grafana の fallback も ~/.local/bin を
 	// 見る）うえ、lean variant では焼き込みが無く versions.json のピンだけが手掛かりになる。
 	// ここに出ていないと「MCP サーバーが古い/入っていない」を Console から確かめる術が無い。
@@ -230,7 +230,7 @@ func collectToolVersions() []toolReport {
 			}
 			r.Baked = probeTool(spec, spec.Baked, home)
 			// go: a lean rootfs bakes no /usr/local/go — surface the on-demand
-			// toolchain (install-go, docs/35 §35.7.2-5) in the image column instead.
+			// toolchain (install-go, docs/log/35 §35.7.2-5) in the image column instead.
 			if r.Baked == nil && spec.Name == "go" {
 				if vers := installedGoVersions(); len(vers) > 0 {
 					r.Baked = probeVersion(filepath.Join(goHomeRoot(), vers[len(vers)-1], "bin", "go"), spec.Args)

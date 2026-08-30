@@ -11,7 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// docs/23 P0-2: smoke tests over the real route table (buildMux) + the real
+// docs/log/23 P0-2: smoke tests over the real route table (buildMux) + the real
 // httpx.RequireToken gate, in an isolated HOME. Regression detectors for handler
 // moves — status + known JSON keys only, no docker / tmux / CLI involved.
 
@@ -35,7 +35,7 @@ func smokeHandler(t *testing.T) http.Handler {
 //
 // Worse than the stray row: the ownership ledger (mcp-managed.json) DID land in the
 // temp HOME, so af never learned it wrote that name — the row became an orphan no
-// later materialize is allowed to remove (docs/48 §8.2), and only a hand-run
+// later materialize is allowed to remove (docs/log/48 §8.2), and only a hand-run
 // `claude mcp remove` clears it.
 //
 // The other kinds escaped only by luck: CODEX_HOME / COPILOT_HOME / KIRO_HOME /
@@ -136,7 +136,7 @@ func TestFSFilePutRouteRegistered(t *testing.T) {
 }
 
 // The collection route must not be swallowed by the {id} route — the Console's
-// recovery list is the only entry left when the action link is lost (docs/53 §53.7).
+// recovery list is the only entry left when the action link is lost (docs/log/53 §53.7).
 func TestBrowserAttachmentListRouteRegistered(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/browser/attachments", nil)
 	_, pattern := buildMux().Handler(req)

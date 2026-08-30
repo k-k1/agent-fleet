@@ -1,6 +1,6 @@
 # 0036. 作業グループ — 定義は ui-prefs・選択は端末ローカル・サーバは関与しない
 
-- 状態: **採用・実装済み**（実機目視待ち）。設計は [docs/52](../52-working-sets.md)。
+- 状態: **採用・実装済み**（実機目視待ち）。設計は [docs/52](../log/52-working-sets.md)。
 - 関連: [0028](0028-deletion-lock.md)（3 実体横断の先例）/ `console/src/lib/settings.ts`・
   `workspace/agent/ui_prefs.go`（ui-prefs の経路）/ `workspace/agent/model_deny.go`（hiddenModels — 表示フィルタの先行事例）
 

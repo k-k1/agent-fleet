@@ -1,8 +1,8 @@
 package mcpproj
 
-// Cross-file divergence (docs/56 §9.2's "⚠差分" matrix marker): the same server
+// Cross-file divergence (docs/log/56 §9.2's "⚠差分" matrix marker): the same server
 // name defined in two or more files with different content — the exact shape of the
-// motivating novel-lab bug (docs/56 §1), generalized from "these two specific
+// motivating novel-lab bug (docs/log/56 §1), generalized from "these two specific
 // files" to "any two files in this snapshot".
 
 import "reflect"
@@ -48,7 +48,7 @@ func anyDiffer(group []serverLocation) bool {
 }
 
 // serversEqual compares the fields that matter to whether two entries would behave
-// the same way if reflected into one file (docs/56 §9.2) — everything except Extra,
+// the same way if reflected into one file (docs/log/56 §9.2) — everything except Extra,
 // which is kind-specific spelling (e.g. copilot's "tools") that legitimately differs
 // between two files without the SERVER itself having diverged.
 func serversEqual(a, b Server) bool {

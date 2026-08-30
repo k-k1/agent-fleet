@@ -111,7 +111,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // このセッションの回答を音声読み上げ中か（ミラー朗読・要約・セッション通知いずれも
   // 発生元セッション名を tts ストアへ載せている）。合成待ち（preparing）も含めて示す。
   const speaking = useTtsStore((t) => t.sessionName === s.name && (t.speaking || t.preparing));
-  // 作業グループ (docs/52): direct assignment is for repo-less sessions only —
+  // 作業グループ (docs/log/52): direct assignment is for repo-less sessions only —
   // a session living in a working copy inherits that repo's membership instead.
   const wsets = workingSetList(useSettings());
   const repos = useReposStore((st) => st.repos);
@@ -206,9 +206,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         {speaking && (
           <Icon name="unmute" className="sess-speaking" title={tr("srow.speaking")} />
         )}
-        {/* 削除ロック（docs/45）: 鍵バッジ。「なぜ削除が押せないのか」を行の上で示す。 */}
+        {/* 削除ロック（docs/log/45）: 鍵バッジ。「なぜ削除が押せないのか」を行の上で示す。 */}
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
-        {/* 停止しないピン（docs/75）: 期限が生きている間だけ出す。切れたピンをバッジに
+        {/* 停止しないピン（docs/log/75）: 期限が生きている間だけ出す。切れたピンをバッジに
             残すと「守られているつもり」で放置されるので、時計は表示側でも見る。 */}
         {remainingShort(s.keepAwakeUntil) && (
           <Icon
@@ -321,7 +321,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                     {s.driver === "managed" ? tr("sess.switch_to_tui") : tr("sess.switch_to_managed")}
                   </button>
                 )}
-                {/* 変更ファイル（docs/68）— ミラーを開いて帯を広げる。専用のペイン種は
+                {/* 変更ファイル（docs/log/68）— ミラーを開いて帯を広げる。専用のペイン種は
                     作らない（ADR 0049 決定 4）ので、「覗く」導線はミラーを開くこと自体で、
                     その開閉状態は帯が per-session に憶えている localStorage を先に書いて
                     渡す。転写を持たない kind（shell/ssm）には一覧の材料が無い。 */}
@@ -400,7 +400,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                   </button>
                 )}
                 {/* セッション共有: 同一テナントの別ユーザーへ会話を共有する。shell/SSM は
-                    transcript が無く共有対象外(docs/59)。 */}
+                    transcript が無く共有対象外(docs/log/59)。 */}
                 {agentOf(s.kind).caps.transcript && (
                   <button
                     type="button"
@@ -413,7 +413,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                     <Icon name="broadcast" /> {tr("srow.share")}
                   </button>
                 )}
-                {/* 作業グループ (docs/52): membership toggles — repo-less rows only. */}
+                {/* 作業グループ (docs/log/52): membership toggles — repo-less rows only. */}
                 {repoLess && wsets.length > 0 && (
                   <>
                     <div className="ui-menu-caption">{tr("wset.menu_caption")}</div>
@@ -432,7 +432,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                     ))}
                   </>
                 )}
-                {/* 削除ロック（docs/45）: この行を削除保護に固定/解除する。保護の実体は
+                {/* 削除ロック（docs/log/45）: この行を削除保護に固定/解除する。保護の実体は
                     Agent 側（403）なので、ここは切替と見た目の抑止だけを担う。 */}
                 <button
                   type="button"
@@ -445,7 +445,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                   <Icon name={s.locked ? "unlock" : "lock"} />{" "}
                   {s.locked ? tr("srow.unlock") : tr("srow.lock")}
                 </button>
-                {/* 停止しないピン（docs/75）: アイドル自動停止からこのセッションと Workspace を
+                {/* 停止しないピン（docs/log/75）: アイドル自動停止からこのセッションと Workspace を
                     期限付きで守る。shell / ssm では「ジョブが走っているか」を af が判定できない
                     （放置された less と実行中のビルドが前景コマンド名で区別できず、ssm は常に
                     aws を張る）ため、推測ではなく宣言に倒した逃げ道。 */}

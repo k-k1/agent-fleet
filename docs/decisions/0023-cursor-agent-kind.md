@@ -6,7 +6,7 @@
   Track C で **v1 は login-only を確定**（API キー手動登録は Track D 送り — 下記決定 5 追記）。
   実装計画・実測・Track A の改良2点（自己採番 UUID／JSONL 末尾状態）・Track A2 の ACP 契約
   （`cursor-agent acp` 起動・session/update からの転写メモリ構築・set_mode/cancel 実測）は
-  [docs/40](../40-cursor-agent-kind.md)。
+  [docs/40](../log/40-cursor-agent-kind.md)。
 - 関連: [0019](0019-copilot-agent-kind.md)（copilot — 直近の種別追加・本件のテンプレ）、
   [0008](0008-antigravity-cli-agent-kind.md)（agy — Terminal 専用 MVP の先例）、
   [0015](0015-agent-managed-driver.md)（managed driver 抽象）。
@@ -63,7 +63,7 @@ Cursor CLI（`cursor-agent`/`agent`、Anysphere）は `agent acp`（ACP = JSON-R
      batch 経路（アシスタントチャット headless 用）でありライブセッションでは使わない。実現には
      上流が ACP に usage を載せるのを待つか、managed を `-p` 駆動に替えて **決定1（ACP
      `session/load` クロスプロセス resume）を捨てる**ことが要り、割に合わない。詳細は
-     [docs/40 §使用量表示の実現可否プローブ](../40-cursor-agent-kind.md)。
+     [docs/40 §使用量表示の実現可否プローブ](../log/40-cursor-agent-kind.md)。
    - 付随実測: **Free プランは named model 不可**（`Named models unavailable. Free plans can only
      use Auto.`）で Auto/composer-2.5 のみ可。起動でモデル未選択時にサーバ側既定が named に振れると
      free wall に当たり得るため、未選択時の Auto 明示前置を Track D の頑健化候補として記録。
@@ -100,4 +100,4 @@ Cursor CLI（`cursor-agent`/`agent`、Anysphere）は `agent acp`（ACP = JSON-R
   （cursor 12・agent+bridge 335・CP 222／Console typecheck・i18n:lint・vitest 392・vite build）。
 - 残: Track D（API キー手動登録・使用量チップ・rtk hook seam・headless チャット・画像添付等）と
   arm64 実機起動、実フリート再ビルド後の実機目視。詳細・トラック分割・教訓反映表・プローブ一覧は
-  [docs/40](../40-cursor-agent-kind.md)。
+  [docs/40](../log/40-cursor-agent-kind.md)。

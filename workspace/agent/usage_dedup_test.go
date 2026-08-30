@@ -1,6 +1,6 @@
 package main
 
-// (ref, idx) 重複排除の回帰（usage_dedup.go / docs/46 §7-4）。
+// (ref, idx) 重複排除の回帰（usage_dedup.go / docs/log/46 §7-4）。
 //
 // 塞ぐ穴は1つ: 折り込みが「行を追記 → watermark を書く」の間で落ちると、そのセッションの
 // 数ターン分が次のパスで再追記される。書き手側では閉じられない（別ファイルなので原子的に

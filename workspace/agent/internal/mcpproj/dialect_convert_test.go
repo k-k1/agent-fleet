@@ -9,7 +9,7 @@ func TestCanTranslate(t *testing.T) {
 		}
 	}
 	if CanTranslate("codex") {
-		t.Error("codex expands nothing (docs/56 §2.1) — must not offer translate")
+		t.Error("codex expands nothing (docs/log/56 §2.1) — must not offer translate")
 	}
 	if CanTranslate("kiro") {
 		t.Error("kiro dialect support is unmeasured — must not claim translate")
@@ -17,7 +17,7 @@ func TestCanTranslate(t *testing.T) {
 }
 
 func TestTranslateValueClaudeToOpencode(t *testing.T) {
-	// The exact novel-lab direction (docs/56 §1): claude's ${HOME} -> opencode's
+	// The exact novel-lab direction (docs/log/56 §1): claude's ${HOME} -> opencode's
 	// {env:HOME}.
 	got := translateValue("${HOME}/repos/narou-mcp-stdio/narou_mcp.py", DialectEnvBrace)
 	want := "{env:HOME}/repos/narou-mcp-stdio/narou_mcp.py"

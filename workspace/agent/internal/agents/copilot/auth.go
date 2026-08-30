@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// copilot の認証は GitHub 連携相乗り（docs/36 契約）: Copilot CLI は
+// copilot の認証は GitHub 連携相乗り（docs/log/36 契約）: Copilot CLI は
 // COPILOT_GITHUB_TOKEN > GH_TOKEN > GITHUB_TOKEN と「gh CLI アプリの OAuth
 // トークン」を公式サポートし、実測ではこの Workspace の gh 透過認証だけで
 // 追加ログインなしに動いた。専用の start/complete フローは持たず、Status()

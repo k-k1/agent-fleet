@@ -51,7 +51,7 @@ func TestAddIgnorePatternExcludeIsCommonDirNotWorktree(t *testing.T) {
 	if err := AddIgnorePattern(wt, IgnoreExclude, ".mcp.json"); err != nil {
 		t.Fatal(err)
 	}
-	// docs/56 §2.4: .git/info/exclude is the COMMON dir — the pattern must land
+	// docs/log/56 §2.4: .git/info/exclude is the COMMON dir — the pattern must land
 	// under the PARENT's .git, not any per-worktree location.
 	b, err := os.ReadFile(filepath.Join(parent, ".git", "info", "exclude"))
 	if err != nil {

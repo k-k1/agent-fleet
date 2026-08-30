@@ -1,4 +1,4 @@
-// Work item inbox store (docs/80). Fed by two sources with the same shape: the SSE
+// Work item inbox store (docs/log/80). Fed by two sources with the same shape: the SSE
 // `workitems` frame (core/push/wire) and a slow poll while the section is mounted, which
 // takes over whenever the stream is down (the fallback rule every other store follows).
 //

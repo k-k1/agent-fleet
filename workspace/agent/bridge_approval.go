@@ -1,6 +1,6 @@
 package main
 
-// Chat-bridge P3 (docs/37): the approval gate for destructive fleet-operator actions —
+// Chat-bridge P3 (docs/log/37): the approval gate for destructive fleet-operator actions —
 // the package-main half of internal/bridge/approval.go. Two cooperating processes share
 // the filesystem here:
 //

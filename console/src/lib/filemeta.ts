@@ -15,7 +15,7 @@ const EXT_LANG: Record<string, string> = {
   yml: "yaml", yaml: "yaml", toml: "ini", ini: "ini", cfg: "ini", conf: "ini",
   xml: "xml", html: "xml", htm: "xml", svg: "xml", vue: "xml",
   // .drawio / .dio は mxfile（XML）。図として開く面は別にあるが、ソース面では
-  // XML として色を付ける（docs/65 §65.4）。
+  // XML として色を付ける（docs/log/65 §65.4）。
   drawio: "xml", dio: "xml",
   css: "css", scss: "scss", sass: "scss", less: "less",
   md: "markdown", markdown: "markdown",
@@ -245,7 +245,7 @@ export function humanSize(bytes: number | null | undefined): string {
 }
 
 // Extensions that are almost certainly non-text, used to hide actions that only make
-// sense on readable files (e.g. handing a file to an assistant — docs/19 Phase C). This
+// sense on readable files (e.g. handing a file to an assistant — docs/log/19 Phase C). This
 // is a denylist: unknown extensions (LICENSE, Dockerfile, .env, source files…) are
 // treated as text-eligible on purpose, so the check is generous rather than strict.
 const BINARY_EXT = new Set([

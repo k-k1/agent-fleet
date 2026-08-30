@@ -16,7 +16,7 @@ import (
 
 // The shape every deployed 30-ingress stack passes today. It must keep parsing
 // forever: an operator upgrading the CP does not edit CFN parameters, and a spec that
-// stopped parsing would leave the pool with no ladder at all (docs/70 §70.4.2).
+// stopped parsing would leave the pool with no ladder at all (docs/log/70 §70.4.2).
 func TestParseSlotClassesBareLadderStaysOneClass(t *testing.T) {
 	cs := parseSlotClasses("m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8")
 	if len(cs) != 1 {
@@ -52,7 +52,7 @@ func TestParseSlotClassesMultiple(t *testing.T) {
 
 // A typo'd architecture must drop the class, not default it. Defaulting "aarch64" to
 // x86_64 would boot an x86 AMI for an arm instance type — a launch failure with no
-// hint of a spelling mistake anywhere near it (docs/70 §70.4.2).
+// hint of a spelling mistake anywhere near it (docs/log/70 §70.4.2).
 func TestParseSlotClassesRejectsUnknownArch(t *testing.T) {
 	cs := parseSlotClasses("ok|OK|arm64|m7g.large:8192\nbad|Bad|aarch64|m7g.large:8192")
 	if len(cs) != 1 || cs[0].id != "ok" {
@@ -102,7 +102,7 @@ func TestSlotTypeForPerClass(t *testing.T) {
 }
 
 // An arm64 slot needs the arm64 AMI: the launch template pins the x86_64
-// ECS-optimized one and Graviton cannot boot it (docs/70 §70.8).
+// ECS-optimized one and Graviton cannot boot it (docs/log/70 §70.8).
 func TestAMIForArch(t *testing.T) {
 	p := ec2PoolConfig{launchTemplate: "lt-x86", amiArm64: "ami-arm"}
 	if got := p.amiFor(ec2ArchArm); got != "ami-arm" {
@@ -460,7 +460,7 @@ func TestMigrationVersionsAreUniquePerDialect(t *testing.T) {
 	}
 }
 
-// ★ The bug P5 found on a live deployment (docs/70 §70.14.5).
+// ★ The bug P5 found on a live deployment (docs/log/70 §70.14.5).
 //
 // The attachment is AFFINITY, not a decision: it records the slot this workspace used
 // last time, for the size and class it had THEN. When a member moves to a class on

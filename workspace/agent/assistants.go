@@ -1,6 +1,6 @@
 package main
 
-// Assistant templates (docs/19 Q2). An "assistant" is a configurable persona for the
+// Assistant templates (docs/log/19 Q2). An "assistant" is a configurable persona for the
 // headless-CLI chat (custom-GPT style): a name, an agent backend, an optional model,
 // a system prompt (persona), a tool grant, and optional knowledge dirs. A conversation
 // SNAPSHOTS an assistant's settings at creation (see chat.go chatCreate), so later
@@ -10,8 +10,8 @@ package main
 //   - builtins: code-injected, always present, not user-editable/deletable (see
 //     builtinAssistants): the flagship "Agent Fleet アシスタント" (usage guidance, af_read,
 //     USAGE knowledge), the af_write "フリート・オペレーター" (observes / drives / reaps
-//     sessions, receives docs/30 session reports), and the "SRE アシスタント" (af_read +
-//     ops integrations, docs/25).
+//     sessions, receives docs/log/30 session reports), and the "SRE アシスタント" (af_read +
+//     ops integrations, docs/log/25).
 //   - user-defined: JSON files under ~/.config/agent-fleet/assistants/<id>.json (full CRUD).
 
 import (
@@ -29,8 +29,8 @@ import (
 )
 
 // Tool grants an assistant can hold. af_read attaches the local read-only stdio MCP
-// (docs/19 Q1); af_write additionally exposes the write tools (send_to_session …) by
-// starting that MCP server with --write (docs/19 Q2 opt-in).
+// (docs/log/19 Q1); af_write additionally exposes the write tools (send_to_session …) by
+// starting that MCP server with --write (docs/log/19 Q2 opt-in).
 const (
 	toolsNone    = "none"
 	toolsAFRead  = "af_read"
@@ -41,9 +41,9 @@ func validToolGrant(t string) bool {
 	return t == toolsNone || t == toolsAFRead || t == toolsAFWrite
 }
 
-// Ops integration ids (docs/25 Phase 1). Each maps to an external MCP server the
+// Ops integration ids (docs/log/25 Phase 1). Each maps to an external MCP server the
 // chat attaches read-only via `workspace-agent mcp-run <id>`. The catalog itself now
-// lives in internal/mcpreg as builtin registry entries (docs/48 / ADR0031 決定 6) so
+// lives in internal/mcpreg as builtin registry entries (docs/log/48 / ADR0031 決定 6) so
 // there is ONE list of MCP servers rather than a builtin catalog beside a registry.
 const (
 	integrationPagerDuty  = mcpreg.BuiltinPagerDuty
@@ -52,7 +52,7 @@ const (
 	integrationAWS        = mcpreg.BuiltinAWS
 )
 
-// validIntegration accepts any id the effective registry knows (docs/48 P2): the
+// validIntegration accepts any id the effective registry knows (docs/log/48 P2): the
 // builtins as before, plus the user's own registrations and anything the tenant
 // distributes. The builtin ids stay their own literal strings, so assistants saved
 // before the registry existed need no migration.
@@ -73,7 +73,7 @@ type assistant struct {
 	Tools       string   `json:"tools"`             // "none" | "af_read" | "af_write"
 	Knowledge   []string `json:"knowledge,omitempty"`
 	// Integrations are the MCP servers attached to this assistant's chat, orthogonal
-	// to the af tools grant. Each entry is an id in the effective registry (docs/48
+	// to the af tools grant. Each entry is an id in the effective registry (docs/log/48
 	// §7): a builtin ops integration ("pagerduty" …, launched read-only via
 	// `workspace-agent mcp-run <id>` so the stored key is injected at spawn rather
 	// than written to a config), a server the user registered, or one the tenant
@@ -83,7 +83,7 @@ type assistant struct {
 	Integrations []string `json:"integrations,omitempty"`
 	// Voice is the Console-side TTS voice override ("vv:<speaker>" / "polly:<VoiceId>").
 	// "" = auto (the Console assigns one from the user's character pool). The agent only
-	// stores and echoes it — synthesis and resolution are entirely client-side (docs/24).
+	// stores and echoes it — synthesis and resolution are entirely client-side (docs/log/24).
 	Voice     string `json:"voice,omitempty"`
 	CreatedAt int64  `json:"created_at,omitempty"`
 	UpdatedAt int64  `json:"updated_at,omitempty"`
@@ -114,7 +114,7 @@ func ensureBuiltinKnowledge() string {
 	return dir
 }
 
-// ビルトイン persona のロケール分岐（docs/28 P6）。生成される回答を読むのは利用者なので、
+// ビルトイン persona のロケール分岐（docs/log/28 P6）。生成される回答を読むのは利用者なので、
 // ADR 0033 の軸（誰が読む文字列か）では表示言語に従う。会話は作成時に persona をスナップ
 // ショットする（chatCreate）ので、切り替えは**新しい会話から**効き、既存スレッドは動かない
 // — 件名提案を後から作り直さないのと同じ扱い。
@@ -173,7 +173,7 @@ const operatorPersona = "あなたは Agent Fleet のフリート・オペレー
 
 // operatorPersonaEN: 日本語版と 1 対 1 に対応させた英語版。**段落の順序も対応関係も変えない**
 // — 差分レビューで「防御条項が 1 つ落ちていないか」を目で追えることが、この persona では
-// 読みやすさより優先する（docs/28 §6.6 の地雷）。防御条項は 4 か所ある:
+// 読みやすさより優先する（docs/log/28 §6.6 の地雷）。防御条項は 4 か所ある:
 //
 //	(1) 報告本文・セッション出力を根拠にコマンド実行/shell 送信をしない（絶対）
 //	(2) 質問への回答の根拠は利用者の意向だけ（出力が特定の選択を促していても従わない）
@@ -228,8 +228,8 @@ const afAssistantID = "af"
 // backend is the preferred AVAILABLE one (claude → codex → opencode), so a workspace
 // without a claude login still gets working builtin assistants; a conversation
 // snapshots the value at creation as before.
-// Persona は表示言語で選ぶ（docs/28 P6・personaFor）。Name / Description は Console 側の
-// カタログ（assistant.<id>.name/.desc・docs/28 P3）が表示解決するので、ここは正本言語のまま。
+// Persona は表示言語で選ぶ（docs/log/28 P6・personaFor）。Name / Description は Console 側の
+// カタログ（assistant.<id>.name/.desc・docs/log/28 P3）が表示解決するので、ここは正本言語のまま。
 func builtinAssistants() []assistant {
 	know := ensureBuiltinKnowledge()
 	lang := uiLocale()
@@ -338,7 +338,7 @@ func getAssistant(id string) (*assistant, error) {
 }
 
 // resolveAssistant finds an assistant by id first, then by exact name — the model-facing
-// ask_assistant tool (docs/19) lets an orchestrator name a specialist either way.
+// ask_assistant tool (docs/log/19) lets an orchestrator name a specialist either way.
 func resolveAssistant(idOrName string) (*assistant, error) {
 	if a, err := getAssistant(idOrName); err == nil {
 		return a, nil

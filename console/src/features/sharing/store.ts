@@ -24,7 +24,7 @@ export interface SharedSession {
   /**
    * 稼働中セッションの live state(working | question | plan | permission | blocked |
    * compacting、空=入力待ち)。停止中は空。所有者側と同じ状態チップの素で、鮮度は
-   * 一覧の同期間引き(既定60秒)＋リロードボタン次第(docs/59 §3)。
+   * 一覧の同期間引き(既定60秒)＋リロードボタン次第(docs/log/59 §3)。
    */
   activity?: string;
 }

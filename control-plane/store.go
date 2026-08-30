@@ -14,7 +14,7 @@ import (
 
 type Tenant struct {
 	ID, Slug, Name, Status, Limits, Isolation, KeyRef, CreatedAt string
-	// Per-tenant login rules (docs/61 §61.9.7, migration 0039). All CSV, all
+	// Per-tenant login rules (docs/log/61 §61.9.7, migration 0039). All CSV, all
 	// optional; see TenantLoginRules for what each one governs and why there is no
 	// allowed_emails among them. HiddenProviders (0042) is the one that is DISPLAY
 	// only — accepted methods to leave off this tenant's login page (§61.15.9).
@@ -22,16 +22,16 @@ type Tenant struct {
 }
 
 // TenantLoginRules is the login-relevant slice of a tenant, as loaded in bulk by
-// the entry gate's cache (docs/61 §61.9.6/§61.9.7). Slug is carried because the
+// the entry gate's cache (docs/log/61 §61.9.6/§61.9.7). Slug is carried because the
 // deterministic tie-break for two tenants claiming the same auto-join domain is
 // "lowest slug wins" (§61.9.8).
 type TenantLoginRules struct {
 	ID, Slug, Name                                    string
 	AllowedProviders, AutoJoinDomains, AllowedDomains []string
 	// HiddenProviders is not a gate. It only removes buttons from /login/<slug>;
-	// the same method still admits its people (docs/61 §61.15.9 + 決定 14).
+	// the same method still admits its people (docs/log/61 §61.15.9 + 決定 14).
 	HiddenProviders []string
-	// AllowedCIDRs restricts which source networks may USE this tenant (docs/66,
+	// AllowedCIDRs restricts which source networks may USE this tenant (docs/log/66,
 	// ADR 0047). Empty = no restriction, and that is how the feature is switched off.
 	// Unlike the fields above it belongs to the tenant_admin: it reaches nothing
 	// outside this tenant. It is stored here rather than in limits JSON because it is
@@ -66,7 +66,7 @@ type UserQuota struct {
 	// MemLimit is the per-workspace RAM cap in BYTES (0 = unset → deployment default
 	// WS_MEMORY / AF_ECS_TASK_MEMORY). A tenant_admin sets it within the tenant cap
 	// (tenantLimits.MaxWorkspaceMem); resolveWorkspaceMemBytes clamps and applies it at
-	// container start (docker --memory / ECS task size). See docs/26 / roadmap P3-4.
+	// container start (docker --memory / ECS task size). See docs/log/26 / roadmap P3-4.
 	MemLimit int64
 	// CPULimit is the per-workspace CPU cap in Fargate CPU units (1024 = 1 vCPU),
 	// bounded by tenantLimits.MaxWorkspaceCPU. Independent of MemLimit so "8 GB with
@@ -77,7 +77,7 @@ type UserQuota struct {
 	// deployment default). Only ecs-ec2 reads it; everywhere else it is inert.
 	//
 	// It is a string and not a number because it is not a size — the three axes above
-	// say HOW BIG, this says WHICH LADDER (docs/70 §70.4). Still runtime-neutral in the
+	// say HOW BIG, this says WHICH LADDER (docs/log/70 §70.4). Still runtime-neutral in the
 	// sense that matters: the id is opaque here, and the operator alone maps it to
 	// instance types and an architecture (ADR 0044 決定 1).
 	SlotClass string
@@ -122,13 +122,13 @@ type AuditLog struct {
 }
 
 // EgressStat is one destination host with its would-allow / would-block hit counts
-// aggregated over the queried window (docs/20 M2, log-only egress proxy).
+// aggregated over the queried window (docs/log/20 M2, log-only egress proxy).
 type EgressStat struct {
 	Host             string
 	Allowed, Blocked int
 }
 
-// AllowlistEntry is one versioned egress allowlist rule (docs/20 M3). TenantID is a
+// AllowlistEntry is one versioned egress allowlist rule (docs/log/20 M3). TenantID is a
 // tenant id, or "" for a deployment-global rule. State ∈ active | proposed | retired
 // (proposed rules come from the M4 agent and need admin approval to go active).
 type AllowlistEntry struct {
@@ -144,7 +144,7 @@ type UsageRow struct {
 	RunningSecs                                             int
 }
 
-// SSMProfile is the COMMON auth bundle shared by many hosts (docs/history/p3-ssm-
+// SSMProfile is the COMMON auth bundle shared by many hosts (docs/log/p3-ssm-
 // session.md): the AWS IAM Identity Center (SSO) portal + account/role/default region.
 // It maps to one ~/.aws named profile; `aws sso login` authenticates it. Personal
 // scope. NON-SECRET: the CP never sees AWS credentials — the in-container aws CLI logs
@@ -165,7 +165,7 @@ type SSMHost struct {
 	InstanceID, DocumentName, CreatedAt string
 }
 
-// Memo is one queued note (docs/21), personal scope. Grouped by Repo then Category
+// Memo is one queued note (docs/log/21), personal scope. Grouped by Repo then Category
 // (a free-form sub-project label); Repo="" is the common/unfiled bucket. Kind is
 // "file" (RefPath points at a ~/repos path, Body is an optional comment) or "text"
 // (Body is the note). SentAt="" means unsent; a non-empty RFC3339 stamp marks a
@@ -173,7 +173,7 @@ type SSMHost struct {
 type Memo struct {
 	ID, MembershipID, Repo, Category string
 	Kind, Body, RefPath              string
-	// Attachments is a JSON array of {path,name} image attachments (docs/21 画像添付),
+	// Attachments is a JSON array of {path,name} image attachments (docs/log/21 画像添付),
 	// "" = none. path is an absolute in-container path under ~/.cache/agent-fleet/
 	// memo-images; the bytes live in the workspace, this only references them.
 	Attachments       string
@@ -181,9 +181,9 @@ type Memo struct {
 	CreatedAt, SentAt string
 }
 
-// WorkItemQuery is one saved search that feeds the work item inbox (docs/80). af holds
+// WorkItemQuery is one saved search that feeds the work item inbox (docs/log/80). af holds
 // the query, not a copy of the tracker: GitHub gets search syntax, Jira gets JQL. Full
-// synchronisation is deliberately not a thing (docs/80 §80.12) — the query is what keeps
+// synchronisation is deliberately not a thing (docs/log/80 §80.12) — the query is what keeps
 // the rail short. FetchedAt/LastError record the last attempt (see
 // MarkWorkItemQueryFetched for why the stamp is written even when the fetch failed).
 type WorkItemQuery struct {
@@ -221,7 +221,7 @@ type WorkItemSession struct {
 	CreatedAt                           string
 }
 
-// MemoCategory persists a memo category as a first-class row (docs/21 UI刷新), so a
+// MemoCategory persists a memo category as a first-class row (docs/log/21 UI刷新), so a
 // category can exist while empty and carry an explicit order. Name is unique within a
 // (MembershipID, Repo) and stays the grouping key that Memo.Category references.
 type MemoCategory struct {
@@ -230,7 +230,7 @@ type MemoCategory struct {
 	CreatedAt                    string
 }
 
-// Schedule is one operator-authored scheduled task (docs/38 + ADR0021). It lives
+// Schedule is one operator-authored scheduled task (docs/log/38 + ADR0021). It lives
 // in the CP DB because the CP is the only thing alive while the workspace is stopped.
 // SpecKind is "cron" (Spec is a 5-field cron expr), "interval" (Spec is whole
 // seconds) or "once" (Spec is an RFC3339 absolute instant). Spec is the evaluated
@@ -239,7 +239,7 @@ type MemoCategory struct {
 // LastRun are UTC RFC3339 fire-ledger stamps (NextRun="" means never/disabled).
 type Schedule struct {
 	ID, MembershipID, TenantID string
-	OwnerConv                  string // operator conversation id — the report_to target (docs/30)
+	OwnerConv                  string // operator conversation id — the report_to target (docs/log/30)
 	SpecKind, Spec, SpecLabel  string
 	TZ                         string
 	WakePolicy                 string // wake (default) | skip | catch_up
@@ -249,7 +249,7 @@ type Schedule struct {
 	NewBranch                  bool
 	Prompt                     string
 	OverlapPolicy              string // skip (default) | queue | restart (reuse only, P6)
-	// Report opts a fire into the docs/30 completion report: true passes OwnerConv as the
+	// Report opts a fire into the docs/log/30 completion report: true passes OwnerConv as the
 	// session's report_to so the result comes back to the operator/assistant conversation.
 	// Default false = fire silently (run history / failure notifications still surface).
 	Report               bool
@@ -257,7 +257,7 @@ type Schedule struct {
 	NextRun, LastRun     string
 	LastStatus           string
 	CreatedAt, UpdatedAt string
-	// Reuse ledger (P6, docs/38): the current long-lived session the scheduler drives in
+	// Reuse ledger (P6, docs/log/38): the current long-lived session the scheduler drives in
 	// session_mode=reuse, when it started, and how many fires it has taken since the last
 	// rotation. Rotation is a JSON blob of triggers (every_runs/after/calendar). MissingTargetPolicy
 	// governs a pinned reuse whose target session vanished (recreate default | fail).
@@ -266,11 +266,11 @@ type Schedule struct {
 	Rotation                     string
 	MissingTargetPolicy          string
 	// ManualFirePending is set by run-now and read+cleared by the scheduler on the next
-	// fire to tag that run as manual (docs/38). Transient — not part of the schedule DTO.
+	// fire to tag that run as manual (docs/log/38). Transient — not part of the schedule DTO.
 	ManualFirePending bool
 }
 
-// ScheduleRun is one fire-attempt history row (docs/38 P3 get_schedule_runs).
+// ScheduleRun is one fire-attempt history row (docs/log/38 P3 get_schedule_runs).
 // Status mirrors the schedule's last_status token; FiredAt is UTC RFC3339. Session is
 // the session the fire drove — the newly created session (session_mode=new) or the
 // long-lived reuse target (session_mode=reuse) — so the Console history can open it. It
@@ -284,7 +284,7 @@ type ScheduleRun struct {
 	Trigger                      string
 }
 
-// MCPServerRow is one tenant-distributed MCP server definition (docs/48 P4 +
+// MCPServerRow is one tenant-distributed MCP server definition (docs/log/48 P4 +
 // ADR0031). It is deliberately NOT the agent's full ServerDef: there is no Command /
 // Args / Env, because a tenant-distributed stdio server would be an admin running an
 // arbitrary command in every member's container. The table has no such columns either,
@@ -296,7 +296,7 @@ type ScheduleRun struct {
 // comma lists on the wire to the DB ("assistant,session"; empty Kinds = every kind).
 //
 // UserSecret=1 distributes the URL and the header NAMES only: each member supplies the
-// values into their own encrypted store (docs/48 §5.2). It exists because a token in a
+// values into their own encrypted store (docs/log/48 §5.2). It exists because a token in a
 // distributed header is readable in plaintext by every member of the tenant, which
 // container isolation cannot prevent.
 type MCPServerRow struct {
@@ -334,7 +334,7 @@ type Workspace struct {
 	// stored on the row (the tenant table owns it). It exists because the AWS
 	// adapters stamp `af-tenant` on billable resources and the cost-allocation tag
 	// has to be READABLE in Cost Explorer — an opaque tenant id there would say
-	// nothing the membership id does not already imply (docs/67 §67.4, ADR 0048
+	// nothing the membership id does not already imply (docs/log/67 §67.4, ADR 0048
 	// 決定 3)。Empty on a Workspace built in memory by a test.
 	TenantSlug                   string
 	AgentPort, AgentToken, State string
@@ -352,7 +352,7 @@ type Workspace struct {
 	// user_limit and are resolved through the tenant cap on the way here (ADR 0044).
 	CPUUnits int
 	DiskGB   int
-	// SlotClass is the RESOLVED machine class for the next container start (docs/70).
+	// SlotClass is the RESOLVED machine class for the next container start (docs/log/70).
 	// Same lifecycle as the three axes above — not a persisted column, filled by
 	// buildResolved through resolveSlotClass, and read only by the ecs-ec2 factory.
 	// "" means "the deployment default", which is also what every other runtime sees.
@@ -365,7 +365,7 @@ type Workspace struct {
 type SessionRow struct {
 	WorkspaceID, Name, Kind, Dir, Repo, Label string
 	CreatedAt, State, LastSeen                string
-	// Carried: 畳まれたときに答えを待っていた対話の種類（docs/75 §75.6.5）。停止中の
+	// Carried: 畳まれたときに答えを待っていた対話の種類（docs/log/75 §75.6.5）。停止中の
 	// Workspace ではこのミラーが一覧の唯一のソースなので、ここに無い情報は「無かった」
 	// ことになる。
 	Carried string
@@ -380,7 +380,7 @@ type SharedSessionCatalog struct {
 	ID, WorkspaceID, OwnerMembershipID, Name, Kind, Dir, Repo string
 	WorkingCopyID, Title, Label, CreatedAt, State, LastSeen   string
 	Archived                                                  bool
-	// Worktree/Parent: docs/59 の受信側プロジェクト/worktreeツリー表示用。
+	// Worktree/Parent: docs/log/59 の受信側プロジェクト/worktreeツリー表示用。
 	// Parent は worktree の場合のみ、親(ベース)working copy のフォルダ名。
 	Worktree bool
 	Parent   string
@@ -403,7 +403,7 @@ type SessionShareProposal struct {
 	CreatedAt, ExpiresAt, DecidedAt, DecidedBy                       string
 }
 
-// SessionHandoffOffer は「この続きをやってほしい」を共有先へ差し出したもの（docs/77 /
+// SessionHandoffOffer は「この続きをやってほしい」を共有先へ差し出したもの（docs/log/77 /
 // ADR 0057）。
 //
 // ⚠️ SessionShareProposal と方向が逆である。あちらは共有先 → 所有者（提案し、所有者が承認）、
@@ -435,7 +435,7 @@ type LFSLock struct {
 }
 
 // Store is the MetadataStore port — the union of the feature-scoped sub-
-// interfaces below (docs/23 P2-W3). 実装は単一の sqlStore（sqlite/postgres 共用）
+// interfaces below (docs/log/23 P2-W3). 実装は単一の sqlStore（sqlite/postgres 共用）
 // のまま。利用側は原則 Store を持つが、独立コンポーネントは必要最小のサブ
 // インターフェース（narrow view）に依存できる（例: git_gc.go）。メソッドの
 // 追加は該当サブインターフェースへ。
@@ -489,7 +489,7 @@ type SessionShareStore interface {
 	TransitionSessionShareProposal(ctx context.Context, id, from, to, decidedBy, decidedAt string, clearBody bool) (bool, error)
 	ClaimSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, now, leaseUntil string) (SessionShareProposal, SharedSessionCatalog, string, error)
 	FinalizeSessionShareProposal(ctx context.Context, id, ownerMembershipID, decidedBy, decidedAt string) (bool, error)
-	// メンバーへの引き継ぎ（docs/77）。共有 ACL の派生物なので同じサブインターフェースに置く。
+	// メンバーへの引き継ぎ（docs/log/77）。共有 ACL の派生物なので同じサブインターフェースに置く。
 	CreateSessionHandoffOffer(ctx context.Context, row SessionHandoffOffer) (bool, error)
 	GetSessionHandoffOffer(ctx context.Context, id string) (SessionHandoffOffer, bool, error)
 	ListSessionHandoffOffersByOwner(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error)
@@ -513,22 +513,22 @@ type TenantStore interface {
 	// emptiness is proved by the handler — see deleteTenant in tenants.go for the five
 	// refusals and why each one exists.
 	DeleteTenant(ctx context.Context, tenantID string) error
-	// SetTenantLogin stores the three CSV login rules (docs/61 §61.9.7). Values are
+	// SetTenantLogin stores the three CSV login rules (docs/log/61 §61.9.7). Values are
 	// normalized by the caller (lowercased, deduped); this only writes them.
-	// hiddenProviders is DISPLAY only (0042, docs/61 §61.15.9) — accepted methods to
+	// hiddenProviders is DISPLAY only (0042, docs/log/61 §61.15.9) — accepted methods to
 	// leave off this tenant's login page, never a gate.
 	SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains, hiddenProviders string) error
 	// ListTenantLoginRules is the entry gate's bulk read: one query behind a short
 	// TTL cache rather than a per-request lookup (§61.9.7).
 	ListTenantLoginRules(ctx context.Context) ([]TenantLoginRules, error)
-	// The tenant's source-network restriction (docs/66, ADR 0047). Kept apart from
+	// The tenant's source-network restriction (docs/log/66, ADR 0047). Kept apart from
 	// SetTenantLogin because the owner differs: those three fields are the operator's,
 	// this one is the tenant_admin's. "" = no restriction.
 	GetTenantAllowedCIDRs(ctx context.Context, tenantID string) (string, error)
 	SetTenantAllowedCIDRs(ctx context.Context, tenantID, cidrs string) error
 }
 
-// TenantIdP is one tenant-defined login provider (docs/61 §61.11, migration 0040).
+// TenantIdP is one tenant-defined login provider (docs/log/61 §61.11, migration 0040).
 // SecretEnc is opaque ciphertext here exactly like MCPServerRow.HeadersEnc: the
 // SQL layer stores and returns it, and tenant_idp.go owns the sealing.
 //
@@ -542,7 +542,7 @@ type TenantIdP struct {
 	// Kind selects the adapter the row is built into and therefore which of the
 	// fields below mean anything: "oidc" (the P4 default) uses Issuer/Trust/
 	// AllowedTIDs, "github" uses AllowedOrgs and pins Issuer to https://github.com
-	// (docs/61 §61.15 + 決定 35).
+	// (docs/log/61 §61.15 + 決定 35).
 	Kind                        string
 	Issuer, ClientID            string
 	SecretEnc, KeyRef           string
@@ -550,7 +550,7 @@ type TenantIdP struct {
 	AllowedTIDs, AllowedDomains string // CSV
 	AllowedOrgs                 string // CSV, kind=github only
 	// LinkClaim names the stable claim rule 1.5 should match on, for an issuer whose
-	// `sub` is pairwise (docs/61 §61.15.10). ★ A tenant may only name a claim from a
+	// `sub` is pairwise (docs/log/61 §61.15.10). ★ A tenant may only name a claim from a
 	// closed list (tenantLinkClaims): naming `email` or `upn` would build an
 	// email join inside a shared realm, which is precisely what 決定 32 refuses. The
 	// VALUE is never taken from this row — only the name is configuration.
@@ -560,7 +560,7 @@ type TenantIdP struct {
 	CreatedBy, CreatedAt, UpdatedAt string
 }
 
-// TenantIdPStore is the tenant-defined login provider registry (docs/61 §61.11).
+// TenantIdPStore is the tenant-defined login provider registry (docs/log/61 §61.11).
 // Every mutation carries tenant_id in the WHERE, the way MCPServerStore does, so a
 // tenant_admin of one tenant can never reach another's row even if an id leaks.
 // ListActiveTenantIdPs is the exception by design: it is the deployment-wide read
@@ -570,7 +570,7 @@ type TenantIdP struct {
 // carry it: the slug because the provider id the rest of CP sees is built from it
 // (t:<slug>:<name>), and the DISPLAY NAME because the default button label has to
 // say WHICH company's method it is — otherwise a tenant's GitHub row and the
-// deployment's GitHub button render the same text on one page (docs/61 §61.15.10).
+// deployment's GitHub button render the same text on one page (docs/log/61 §61.15.10).
 type TenantRef struct{ Slug, Name string }
 
 type TenantIdPStore interface {
@@ -592,19 +592,19 @@ type TenantIdPStore interface {
 	DeleteTenantIdP(ctx context.Context, tenantID, id string) error
 	// TenantIdPIssuerInUse reports whether some OTHER row already names this issuer
 	// (any tenant). It is the "second app registration of the same directory" signal
-	// (docs/61 §61.17.4 (b)): the same person then arrives with a DIFFERENT subject
+	// (docs/log/61 §61.17.4 (b)): the same person then arrives with a DIFFERENT subject
 	// if the issuer is pairwise, which rule 2' refuses as email_taken. Deployment-wide
 	// on purpose — identities are deployment-wide, so a row in another tenant splits
 	// the same person just as effectively.
 	TenantIdPIssuerInUse(ctx context.Context, issuer, excludeID string) (bool, error)
 	// CountMembersOnlyOnProvider counts a tenant's ACTIVE members whose only proven
 	// sign-in is this provider — the people who would have no way in if it stopped
-	// (docs/61 §61.17.4 の順序). Used to warn before suspending, never to refuse:
+	// (docs/log/61 §61.17.4 の順序). Used to warn before suspending, never to refuse:
 	// stopping a compromised IdP must stay faster than starting one.
 	CountMembersOnlyOnProvider(ctx context.Context, tenantID, providerID string) (int, error)
 }
 
-// TenantGitOAuth is one tenant's OAuth app for a git provider (docs/71, migration
+// TenantGitOAuth is one tenant's OAuth app for a git provider (docs/log/71, migration
 // 0048). SecretEnc is opaque ciphertext here exactly like TenantIdP.SecretEnc: the
 // SQL layer stores and returns it, tenant_git_oauth.go owns the sealing.
 //
@@ -621,7 +621,7 @@ type TenantGitOAuth struct {
 	CreatedAt, UpdatedAt   string
 }
 
-// TenantGitOAuthStore is the per-tenant git provider OAuth app registry (docs/71).
+// TenantGitOAuthStore is the per-tenant git provider OAuth app registry (docs/log/71).
 // Every call carries tenant_id, the way TenantIdPStore does, so a tenant_admin of
 // one tenant can never read or write another's app — and the secret in particular
 // never leaves the tenant it was sealed for.
@@ -648,9 +648,9 @@ type IdentityLink struct {
 	// two buttons onto the same IdP, so the same subject there is the same person —
 	// that is rule 1.5, and it is the one join a tenant-defined provider is allowed
 	// to make, because the realm is asserted by the adapter and verified against
-	// that IdP, never taken from the tenant's row (docs/61 §61.15).
+	// that IdP, never taken from the tenant's row (docs/log/61 §61.15).
 	Realm string
-	// RealmClaim / RealmSubject are rule 1.5's SECOND key (docs/61 §61.15.10 + 決定
+	// RealmClaim / RealmSubject are rule 1.5's SECOND key (docs/log/61 §61.15.10 + 決定
 	// 38). Some IdPs make `sub` pairwise — Entra's is a function of (app registration,
 	// user) — so the same person through two app registrations on one issuer is two
 	// subjects and rule 1.5 never fires. A provider may therefore also name a stable
@@ -670,7 +670,7 @@ type IdentityLink struct {
 }
 
 // LinkedProvider is one sign-in method bound to a person, as shown on their own
-// account panel (docs/61 §61.16). Subject is included because it is the only
+// account panel (docs/log/61 §61.16). Subject is included because it is the only
 // stable handle on the row; the Console shows the label and the address instead.
 type LinkedProvider struct {
 	Provider    string
@@ -689,13 +689,13 @@ type IdentityStore interface {
 	// LinkIdentity is UpsertIdentity for a login that proved an IdP subject
 	// (AUTH=oauth). The (provider, subject) pair decides who this is, so an email
 	// change keeps the same identity — and therefore the same user_key, workspace
-	// and secrets (docs/61 §61.5). isNew reports that no existing identity matched
+	// and secrets (docs/log/61 §61.5). isNew reports that no existing identity matched
 	// and a new one was created, which is the only signal the caller has that this
 	// person landed in a different workspace than the one they may expect.
 	// fallbackKey is used only on that path (it is sanitizeUser(email)).
 	//
 	// ★ EmailJoin selects rule 2 ("this address already belongs to someone — join
-	// that identity"). It is FALSE for a tenant-defined provider (docs/61 §61.11 +
+	// that identity"). It is FALSE for a tenant-defined provider (docs/log/61 §61.11 +
 	// 決定 32): its issuer belongs to the subsidiary, not to the operator, so an
 	// admin there could otherwise mint a token carrying a colleague's address and
 	// land in that colleague's identity — home, secrets and all. The caller decides,
@@ -708,11 +708,11 @@ type IdentityStore interface {
 	FillProviderRealm(ctx context.Context, provider, realm string) error
 	// ListLinkedProviders returns the sign-in methods bound to one person, newest
 	// login first. It is the read half of the "link a second sign-in method" flow
-	// (docs/61 §61.16) and carries nothing secret — the pairs it lists are exactly
+	// (docs/log/61 §61.16) and carries nothing secret — the pairs it lists are exactly
 	// what the person proved by signing in.
 	ListLinkedProviders(ctx context.Context, identityID string) ([]LinkedProvider, error)
 	// AttachProvider binds an ALREADY-PROVEN (provider, subject) to an EXISTING
-	// identity, at that person's own request (docs/61 §61.16 + 決定 37). It differs
+	// identity, at that person's own request (docs/log/61 §61.16 + 決定 37). It differs
 	// from LinkIdentity in three ways that are the whole point:
 	//
 	//   - it never creates an identity and never resolves one — the caller passes the
@@ -725,7 +725,7 @@ type IdentityStore interface {
 	//     errLinkTaken. Joining two accounts that both have a login history is a
 	//     merge, and a merge cannot be undone (§61.5).
 	AttachProvider(ctx context.Context, identityID string, link IdentityLink) error
-	// DetachProvider removes one sign-in method from a person's account (docs/61
+	// DetachProvider removes one sign-in method from a person's account (docs/log/61
 	// §61.16.4, the deferred half of 決定 37). identityID is always in the WHERE, so
 	// no caller can reach somebody else's row even with a (provider, subject) it
 	// guessed.
@@ -762,7 +762,7 @@ type MembershipStore interface {
 	// reads it as "who is a member of this tenant" and must never be handed somebody
 	// who was taken off the roster. The admin roster still needs them, because
 	// offboarding runs remove → stop workspace → clean home and the last two steps
-	// happen when the person is already off the list (docs/61 §61.10.6).
+	// happen when the person is already off the list (docs/log/61 §61.10.6).
 	ListRemovedMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error)
 	EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error)
 	GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error)
@@ -780,7 +780,7 @@ type MembershipStore interface {
 	// SetMembershipStatus deactivates (or restores) a membership. Offboarding is a
 	// LOGICAL delete: the workspace, its home and its secrets survive, but every
 	// path that resolves a membership already requires status='active', so the
-	// person is locked out on the next request (docs/61 §61.10.6 / 決定 22).
+	// person is locked out on the next request (docs/log/61 §61.10.6 / 決定 22).
 	// This is what offboarding means, and it stays the default: DeleteMembership
 	// below is a second, deliberate step taken later.
 	SetMembershipStatus(ctx context.Context, membershipID, status string) error
@@ -794,7 +794,7 @@ type MembershipStore interface {
 	// audit_log never referenced a membership at all (its actor is an identity). What
 	// the reason really protected is the HISTORY — the audit ledger, and the cost and
 	// occupancy rows an admin may still have to answer for — so those are what is kept
-	// (docs/61 §61.18).
+	// (docs/log/61 §61.18).
 	//
 	// Callers must have deactivated the membership and destroyed its workspace first;
 	// this does not release a home or any cloud resource.
@@ -807,7 +807,7 @@ type MembershipStore interface {
 	// keep a user_key that no longer derives from their current address.
 	EmailHasActiveMembership(ctx context.Context, email string) (bool, error)
 	// EmailHasActiveMembershipInTenant is the same question asked of ONE tenant. A
-	// tenant-defined provider (docs/61 §61.11) may only admit that tenant's own
+	// tenant-defined provider (docs/log/61 §61.11) may only admit that tenant's own
 	// people, so its entry gate cannot use the deployment-wide answer above: being
 	// on some other subsidiary's roster is not permission to use this subsidiary's
 	// IdP (決定 32-3).
@@ -916,7 +916,7 @@ type LFSLockStore interface {
 	RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error
 }
 
-// AuditStore is the audit log (docs/decisions/0006, P3-6; docs/20 M1).
+// AuditStore is the audit log (docs/decisions/0006, P3-6; docs/log/20 M1).
 // InsertAudit records one action; ListAuditByTenant serves the most recent
 // entries (newest first) scoped to a tenant, or — when tenantID=="" —
 // deployment-wide (super_admin).
@@ -925,7 +925,7 @@ type AuditStore interface {
 	ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error)
 }
 
-// EgressStore aggregates egress observation (docs/20 M2, log-only proxy) and
+// EgressStore aggregates egress observation (docs/log/20 M2, log-only proxy) and
 // holds the allowlist (M3). RecordEgress adds hits into the (day, host,
 // allowed) bucket; ListEgress returns the busiest hosts on/after sinceDay
 // (YYYY-MM-DD) with their would-allow / would-block split. ListAllowlist
@@ -943,7 +943,7 @@ type EgressStore interface {
 }
 
 // SettingsStore is a small kv for deployment-wide toggles such as the egress
-// mode (docs/20 M3). GetSetting returns "" when unset. ListSettingKeys /
+// mode (docs/log/20 M3). GetSetting returns "" when unset. ListSettingKeys /
 // DeleteSetting exist for prefix-scoped cursors (claude audit) so stale keys
 // don't accumulate forever.
 type SettingsStore interface {
@@ -963,7 +963,7 @@ type UsageStore interface {
 }
 
 // CloudCostRow is one (day, membership, service) slice of the AWS invoice, as landed
-// by the Cost Explorer poller (docs/67, ADR 0048). MembershipID=="" is the SHARED
+// by the Cost Explorer poller (docs/log/67, ADR 0048). MembershipID=="" is the SHARED
 // bucket — infrastructure that belongs to nobody. Amounts are integer micro-units of
 // Currency; they are never converted to another currency and never divided among
 // people (決定 4 / 決定 6).
@@ -1006,7 +1006,7 @@ type CloudCostStore interface {
 	CloudCostDays(ctx context.Context) (first, last string, err error)
 }
 
-// SSMStore is the SSM login config (docs/history/p3-ssm-session.md), personal
+// SSMStore is the SSM login config (docs/log/p3-ssm-session.md), personal
 // scope. No AWS secrets stored. Mutations are scoped by membership so a member
 // only touches their own rows. A profile is the common auth bundle; a host
 // references one.
@@ -1023,7 +1023,7 @@ type SSMStore interface {
 	DeleteSSMHost(ctx context.Context, id, membershipID string) error
 }
 
-// MemoStore is the memo queue (docs/21), personal scope. Mutations are scoped
+// MemoStore is the memo queue (docs/log/21), personal scope. Mutations are scoped
 // by membership so a member only touches their own rows. ListMemos returns
 // unsent memos plus sent ones still inside the retention window (sent before
 // retainBefore are swept).
@@ -1036,7 +1036,7 @@ type MemoStore interface {
 	MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error
 	SweepSentMemos(ctx context.Context, retainBefore string) error
 
-	// Categories (docs/21 UI刷新). First-class so they can be created empty, reordered,
+	// Categories (docs/log/21 UI刷新). First-class so they can be created empty, reordered,
 	// and renamed (the rename cascades onto the memos via ReassignMemoCategory). All
 	// ownership-guarded by membership_id, like the memo methods above.
 	ListCategories(ctx context.Context, membershipID string) ([]MemoCategory, error)
@@ -1049,7 +1049,7 @@ type MemoStore interface {
 	ReassignMemoCategory(ctx context.Context, membershipID, repo, from, to string) error
 }
 
-// WorkItemStore is the work item inbox (docs/80 / ADR 0061), personal scope. The CP
+// WorkItemStore is the work item inbox (docs/log/80 / ADR 0061), personal scope. The CP
 // owns the saved queries and a cache of non-secret metadata; the Workspace Agent owns
 // the provider tokens and does the fetching. Everything is scoped by membership.
 type WorkItemStore interface {
@@ -1085,7 +1085,7 @@ type NotificationStore interface {
 	PutUsageNotificationState(ctx context.Context, state UsageNotificationState) error
 }
 
-// ScheduleStore is the scheduled-execution definition store (docs/38 + ADR0021).
+// ScheduleStore is the scheduled-execution definition store (docs/log/38 + ADR0021).
 // The CP-resident scheduler (scheduler.go) reads ListDueSchedules on every tick and
 // stamps the fire ledger via RecordScheduleFire; the operator MCP (P3) drives the
 // membership-scoped CRUD. Mutations that a member issues carry membership_id in the
@@ -1100,7 +1100,7 @@ type ScheduleStore interface {
 	UpdateSchedule(ctx context.Context, s Schedule) error
 	SetScheduleEnabled(ctx context.Context, id, membershipID string, enabled bool, nextRun, updatedAt string) error
 	// MarkManualFirePending is run-now: it sets next_run so the ticker fires immediately and
-	// flags manual_fire_pending so the resulting run is tagged as a manual fire (docs/38).
+	// flags manual_fire_pending so the resulting run is tagged as a manual fire (docs/log/38).
 	MarkManualFirePending(ctx context.Context, id, membershipID, nextRun, updatedAt string) error
 	DeleteSchedule(ctx context.Context, id, membershipID string) error
 	// RecordScheduleFire stamps the ledger after a fire attempt: last_run/last_status
@@ -1119,7 +1119,7 @@ type ScheduleStore interface {
 	ListScheduleRuns(ctx context.Context, scheduleID, membershipID string, limit int) ([]ScheduleRun, error)
 }
 
-// MCPServerStore is the tenant-distributed MCP server registry (docs/48 P4 +
+// MCPServerStore is the tenant-distributed MCP server registry (docs/log/48 P4 +
 // ADR0031). Rows are tenant-scoped: every mutation carries tenant_id in the WHERE so a
 // tenant_admin of one tenant can never reach another's definitions even if an id leaks.
 // HeadersEnc is stored and returned as opaque ciphertext — decryption is the handler's

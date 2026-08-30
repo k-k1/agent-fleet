@@ -1,11 +1,11 @@
 package projcfg
 
 // editjson.go — format-preserving edits to "one JSON object holding a map of
-// entries" (docs/56 §6 / docs/57 憲章4): the shape every v1 project MCP file uses
+// entries" (docs/log/56 §6 / docs/log/57 憲章4): the shape every v1 project MCP file uses
 // except codex's TOML (.mcp.json / opencode.json / .cursor/mcp.json /
 // .github/mcp.json / .kiro/settings/mcp.json). json.MarshalIndent over the whole
 // file would turn a one-entry change into an all-lines diff — unreviewable, and
-// per docs/56 §6 "これを守れない道具は使われない". So every edit here touches only
+// per docs/log/56 §6 "これを守れない道具は使われない". So every edit here touches only
 // the byte range of the entry actually changing; everything else in the file is
 // copied through untouched.
 //

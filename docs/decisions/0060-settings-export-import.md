@@ -1,6 +1,6 @@
 # 0060. 設定の書き出し / 取り込みは「秘密を含まないセクションの集合」1 本にし、取り込みは足すだけにする
 
-- 状態: **採用・実装済み**（2026-08-26）。設計と経緯は [docs/79](../79-settings-export-import.md)。
+- 状態: **採用・実装済み**（2026-08-26）。設計と経緯は [docs/79](../log/79-settings-export-import.md)。
 - 関連: [0022-agent-memory-management.md](0022-agent-memory-management.md)（環境間の持ち出し / 取り込みの先例。
   メモリは専用形式を持つのでこのバンドルには入れない） /
   [0042-user-instructions.md](0042-user-instructions.md)（運ぶ 3 層のうち「エージェントへの指示」） /

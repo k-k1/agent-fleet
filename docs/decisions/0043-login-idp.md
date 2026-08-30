@@ -5,7 +5,7 @@
   追加**した。うち決定 15/16 は「テナント毎にログインできる ID を管理すればよい」という指摘を受けた
   見直しで、招待 API が既にあることを実測して**テナント側の email リストを設計から落とした**。
   P3 実装時に決定 16 を改訂 — 和は email 軸の中だけに閉じる。下記）
-- 関連: [61-login-idp.md](../61-login-idp.md) /
+- 関連: [61-login-idp.md](../log/61-login-idp.md) /
   [dev/07-security.md](../dev/07-security.md) §7.3（AUTH 3 モード＝現行契約） /
   [dev/06-data-model.md](../dev/06-data-model.md)（`identity` / `user_key`） /
   [0001-self-host-vs-saas.md](0001-self-host-vs-saas.md)（各社が自社でセルフホスト＝IdP は各社のもの）

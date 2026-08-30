@@ -6,7 +6,7 @@ package mcpproj
 // URL/Headers) rather than round-tripping Extra — the same choice mcpreg's own
 // *Servers builders make (ClaudeServers, OpencodeServers, …): a written entry
 // looks like one the CLI itself would produce, not a patchwork of whatever the
-// SOURCE file happened to also carry (docs/56 §6, "新規作成するファイルの形は、
+// SOURCE file happened to also carry (docs/log/56 §6, "新規作成するファイルの形は、
 // その CLI 自身が作るものに合わせる").
 
 import (

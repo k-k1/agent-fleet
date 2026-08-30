@@ -1,4 +1,4 @@
-// Package httpx は Agent の HTTP ヘルパー（docs/23 P1-W5 で main から機械的に
+// Package httpx は Agent の HTTP ヘルパー（docs/log/23 P1-W5 で main から機械的に
 // 抽出）。JSON の書き出し/読み込みと、トークンゲート・リクエストログの両ミドル
 // ウェアを集約する。
 package httpx

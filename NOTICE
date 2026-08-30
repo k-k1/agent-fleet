@@ -25,7 +25,7 @@ preprocessing in control-plane/enkana.go):
 
 --------------------------------------------------------------------------------
 This product bundles the draw.io (diagrams.net) viewer, used by the Console to render
-`.drawio` diagrams in a File pane (docs/65). The file is vendored verbatim at
+`.drawio` diagrams in a File pane (docs/log/65). The file is vendored verbatim at
 console/vendor/drawio/viewer-static.min.js and shipped inside the Console bundle:
 
   draw.io / diagrams.net — Copyright (C) JGraph Ltd. Licensed under the Apache
@@ -35,7 +35,7 @@ console/vendor/drawio/viewer-static.min.js and shipped inside the Console bundle
 
 --------------------------------------------------------------------------------
 Third-party software bundled in the distributed container images / rootfs
-(docs/35 §35.4.1). License texts ship with each component inside the image
+(docs/log/35 §35.4.1). License texts ship with each component inside the image
 (/usr/share/doc/<pkg>/copyright for Debian packages, or the component's own
 distribution). Proprietary agent CLIs (Claude Code, GitHub Copilot CLI,
 Antigravity CLI) are NOT bundled — deployments fetch them directly from their
@@ -75,7 +75,7 @@ from the official registries in the lean distribution variant):
 
 --------------------------------------------------------------------------------
 Statically linked binaries bundled in the native package (agent-fleet-native-*,
-docs/35 §35.7.2). Each is built unmodified from the upstream release tarball at
+docs/log/35 §35.7.2). Each is built unmodified from the upstream release tarball at
 the version pinned in deploy/release/native/Dockerfile.tools:
 
   bubblewrap (bin/bwrap) — LGPL-2.0-or-later

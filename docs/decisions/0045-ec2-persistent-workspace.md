@@ -1,17 +1,17 @@
 # 0045. Workspace の EC2 起動タイプは「汎用スロットのプール ＋ ユーザー毎 EBS の差し替え」で採る
 
-- 状態: **採用・実装中**（2026-08-15。設計と実測は [docs/64](../64-ec2-persistent-workspace.md)）。
+- 状態: **採用・実装中**（2026-08-15。設計と実測は [docs/64](../log/64-ec2-persistent-workspace.md)）。
   成立性は AWS sandbox で**端から端まで実測**した（新規作成 → 温起動 → 停止 → 終了 → ボリューム付け替え →
   snapshot 退避 → 復元 → サイズ変更、および第 2 ラウンドのプール型・ホットスワップ・golden snapshot）。
   ⚠️ **本 ADR は同じ日のうちに「条件付き見送り」から「採用」へ転じている。** 決定 1〜9 は
   見送りの記録として書かれたもので、**転じた理由と採る形は決定 10** にある。決定 2（今は採らない）は
   決定 10 が上書きし、決定 5（着手ゲート）は**充足を待たずに着手する**判断で越えた。
   **決定 3・4・6〜9 は生きている**——実装に持ち込む罠と形の一覧である。
-- 関連: [64-ec2-persistent-workspace.md](../64-ec2-persistent-workspace.md) /
+- 関連: [64-ec2-persistent-workspace.md](../log/64-ec2-persistent-workspace.md) /
   [0044-workspace-sizing.md](0044-workspace-sizing.md) 決定 4（本 ADR を起こした宿題） /
-  [63-workspace-sizing.md](../63-workspace-sizing.md) §63.4（EFS の I/O 実測） /
-  [62-ecs-start-latency.md](../62-ecs-start-latency.md) §62.5（(d) EC2 起動タイプの却下・本 ADR で改訂） /
-  [0012-go-refactor.md](0012-go-refactor.md)（アダプタは CP に状態を持たない）
+  [63-workspace-sizing.md](../log/63-workspace-sizing.md) §63.4（EFS の I/O 実測） /
+  [62-ecs-start-latency.md](../log/62-ecs-start-latency.md) §62.5（(d) EC2 起動タイプの却下・本 ADR で改訂） /
+  [0012-go-internal-refactor.md](0012-go-internal-refactor.md)（アダプタは CP に状態を持たない）
 
 ## 背景
 
@@ -206,7 +206,7 @@ boot-install（4CLI 41s ＋ rtk 1s ＋ agy 6s ＝ **48s**）とキャッシュ�
 - **焼き直しをリリースに紐づけること。** イメージや CLI のピンが上がったら golden も焼き直す
   （1 台起こして entrypoint を通し snapshot を取るだけ）。忘れると新規ユーザーだけ古い CLI で
   始まるので、**golden にイメージタグを刻んで CP が突合する。**
-  - **追記（2026-08-23・[docs/73](../73-dev-deploy.md) 決定 3）**: 突合は**内容**で行う。
+  - **追記（2026-08-23・[docs/73](../log/73-dev-deploy.md) 決定 3）**: 突合は**内容**で行う。
     刻むのは `af-image`（参照文字列）に加えて **`af-image-fp`（プラットフォーム毎の manifest
     digest から作る指紋）**で、両側にあるときは指紋が決め、無ければこれまでどおり文字列で
     比べる。**参照は同一性ではない**——同じ digest を別タグに置き直しただけで焼き直しが走り
@@ -737,7 +737,7 @@ home の AZ 外コピーは、**たまたま退避が走っていた人にしか
 採るのは 3 案のうち (c) ——**保存の形（3 軸の独立した数値・ADR 0044 決定 1）は一切変えず、
 ランタイムが「その値が何になるか」を申告し、画面がその通りに言う**。
 
-**まず、実装を読んで確定した齟齬 5 件**（設計の出発点。詳細は [docs/64](../64-ec2-persistent-workspace.md) §64.27）:
+**まず、実装を読んで確定した齟齬 5 件**（設計の出発点。詳細は [docs/64](../log/64-ec2-persistent-workspace.md) §64.27）:
 
 1. **CPU 指定は `ecs-ec2` では捨てられている。** `fargateSize()` は Fargate 経路にしかなく、
    `slotTypeFor(memBytes)` はメモリしか見ない。タスク定義にも CPU は入らない。
@@ -1114,8 +1114,8 @@ ECS エージェント / SSM / efs stunnel）が実行ページを読み直し�
   user-data（`af-mount` / `af-umount`・`ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION`）・CP のタスクロールに
   EC2 / SSM 権限
 - `workspace/workspace-notes.md` — 永続モデルの記述（home が EBS になり、`/scratch` は存在しない）
-- [docs/62](../62-ecs-start-latency.md) §62.5 — (d) の却下理由を改訂（実施済み）
-- [docs/63](../63-workspace-sizing.md) §63.5.5 — 「別セッションで検討する」の結論へのリンク（実施済み）
+- [docs/62](../log/62-ecs-start-latency.md) §62.5 — (d) の却下理由を改訂（実施済み）
+- [docs/63](../log/63-workspace-sizing.md) §63.5.5 — 「別セッションで検討する」の結論へのリンク（実施済み）
 
 **決定 23〜25 で足した面（2026-08-26）**
 

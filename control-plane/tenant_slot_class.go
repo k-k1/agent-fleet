@@ -1,4 +1,4 @@
-// tenant_slot_class.go — the tenant's DEFAULT machine class (docs/70 §70.4.3).
+// tenant_slot_class.go — the tenant's DEFAULT machine class (docs/log/70 §70.4.3).
 //
 // Why this is not on PUT /api/admin/tenants/{slug}/limits, which already writes the
 // same JSON blob: that endpoint is super_admin-only, and the tenant default is a

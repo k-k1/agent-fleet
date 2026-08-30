@@ -1,6 +1,6 @@
 //go:build drift
 
-// プロジェクトローカル MCP スコープの契約（docs/48 §8.4）。**実エージェント CLI に
+// プロジェクトローカル MCP スコープの契約（docs/log/48 §8.4）。**実エージェント CLI に
 // 当てる**テストで、`go test ./...` からは build tag `drift` で除外される。
 //
 // なぜ要るか: af が書くのは各 CLI の **user/global スコープ 1 箇所だけ**で、リポジトリ側の
@@ -13,7 +13,7 @@
 //     乗っ取られるかどうかが決まる。`reservedNames` は AF レジストリ側でしか効かないので、
 //     プロジェクトファイルは止められない。
 //
-// どちらも CLI 側の実装依存で、版が変われば黙って変わる。ここが赤くなったら docs/48 §8.4 の
+// どちらも CLI 側の実装依存で、版が変われば黙って変わる。ここが赤くなったら docs/log/48 §8.4 の
 // 表を更新すること。
 //
 // 認証不要: `mcp list` は設定ファイルを読んで接続を試すだけ。プローブは /bin/true などで、
@@ -152,7 +152,7 @@ func TestDriftMCPScopesMerge(t *testing.T) {
 				if !strings.Contains(out, want) {
 					t.Fatalf("%s: %q が一覧に無い — user スコープとプロジェクトスコープが"+
 						"マージされなくなった。af のサーバがプロジェクト設定のあるリポジトリで"+
-						"消える（docs/48 §8.4）\n%s", sp.kind, want, out)
+						"消える（docs/log/48 §8.4）\n%s", sp.kind, want, out)
 				}
 			}
 		})
@@ -171,7 +171,7 @@ func TestDriftMCPScopeCollisionWinner(t *testing.T) {
 				t.Fatalf("%s: 一覧から勝者を読み取れなかった（出力形が変わった）:\n%s", sp.kind, out)
 			}
 			if got != sp.wantWinner {
-				t.Fatalf("%s: 同名衝突の勝者が %q → %q に変わった。docs/48 §8.4 の表と、"+
+				t.Fatalf("%s: 同名衝突の勝者が %q → %q に変わった。docs/log/48 §8.4 の表と、"+
 					"「プロジェクト設定が af のサーバを乗っ取れるか」の判断が古くなっている:\n%s",
 					sp.kind, sp.wantWinner, got, out)
 			}

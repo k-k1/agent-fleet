@@ -2,12 +2,12 @@
 #
 # ## Why this exists
 #
-# Every "does it actually work on the real thing" round (docs/64 §64.20, docs/70 §70.14,
-# docs/72 §72.6) needs an image that is not a release. Until now that meant renting an
+# Every "does it actually work on the real thing" round (docs/log/64 §64.20, docs/log/70 §70.14,
+# docs/log/72 §72.6) needs an image that is not a release. Until now that meant renting an
 # EC2 box and running `docker build` on it by hand, because the workspace image cannot
 # be cross-compiled — it installs per-architecture binaries.
 #
-# ⚠️ The CONTROL PLANE image has no such excuse: it cross-compiles (docs/72 §72.3), so a
+# ⚠️ The CONTROL PLANE image has no such excuse: it cross-compiles (docs/log/72 §72.3), so a
 # two-architecture CP index costs 166 seconds on an ordinary x86 runner (measured). Renting
 # a Graviton box to produce it would contradict the very design that makes it cheap.
 #
@@ -68,8 +68,8 @@ jobs:
     steps:
       # ⚠️ The one guard that matters. A released tag is immutable by convention, not by
       # the registry — pushing over `0.10.0` here would silently replace what users pull,
-      # and the artifact would never have passed scan-forbidden.sh (docs/35 §35.7.5).
-      # docs/70 §70.14 handled this by hand ("リリース済みタグは触らない"); make it a rule.
+      # and the artifact would never have passed scan-forbidden.sh (docs/log/35 §35.7.5).
+      # docs/log/70 §70.14 handled this by hand ("リリース済みタグは触らない"); make it a rule.
       - name: refuse a tag that could be a release
         run: |
           set -euo pipefail

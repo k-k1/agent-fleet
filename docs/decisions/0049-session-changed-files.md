@@ -1,9 +1,9 @@
 # 0049. セッションが直したファイルの一覧は「転写 × git の突合」で作り、ミラーのヘッド直下に置く
 
-- 状態: **採用**（2026-08-17）。検討の記録は [docs/68](../68-session-changed-files.md)。
+- 状態: **採用**（2026-08-17）。検討の記録は [docs/68](../log/68-session-changed-files.md)。
 - 関連: [0046-drawio-viewer.md](0046-drawio-viewer.md)（**新しい PaneKind を作らず既存の面を増やす**） /
   [0039-fork-at-message.md](0039-fork-at-message.md)（転写の anchor） /
-  [docs/59](../59-session-sharing.md) §3（共有 DTO は座標を落とす）
+  [docs/59](../log/59-session-sharing.md) §3（共有 DTO は座標を落とす）
 
 ## 背景
 

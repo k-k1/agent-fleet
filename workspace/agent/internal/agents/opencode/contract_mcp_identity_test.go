@@ -3,7 +3,7 @@
 // Can a managed opencode session's MCP child be told WHICH session it serves?
 //
 // The codex answer is yes: a thread's `config.mcp_servers` reaches the spawned child
-// (docs/27 §9.3.1). opencode is the other managed runtime and the question decides
+// (docs/log/27 §9.3.1). opencode is the other managed runtime and the question decides
 // whether propose_session_handoff can ever stop guessing from cwd there. Two things
 // have to hold for an injection point to exist: the API must accept per-session MCP
 // configuration, and the daemon must spawn a child per session to receive it. These

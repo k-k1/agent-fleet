@@ -13,7 +13,7 @@ import { useT } from "../../lib/i18n/index.ts";
 interface RowProps {
   st: any;
   reload: () => void;
-  /** テナントがこのプロバイダの OAuth アプリを登録しているか（docs/71）。 */
+  /** テナントがこのプロバイダの OAuth アプリを登録しているか（docs/log/71）。 */
   oauthAvailable: boolean;
 }
 
@@ -21,7 +21,7 @@ interface RowProps {
 //
 // ★ 押してから not_configured が返る形にはしない。設定を持っているのはテナント
 // 管理者で、押した本人には直せないため、押す前に「テナント管理者に登録を頼む」と
-// 言えないと詰む（docs/71 §71.4）。
+// 言えないと詰む（docs/log/71 §71.4）。
 //
 // ★ /api/connections（Agent へプロキシ）ではなく CP 直の /api/git-oauth を見る。
 // 答えは CP の DB にあり、ワークスペースが止まっている間もこの面は開かれる。
@@ -436,7 +436,7 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
             {tr("git.bb_token_hint_write")}
             {/* ★ 必須には足さない。PR を読む権限は作業項目レールにだけ要るもので、
                 clone しかしない人の接続を「不足」と言い出すのは嘘になる
-                （docs/80 §80.19.3）。 */}
+                （docs/log/80 §80.19.3）。 */}
             <br />
             <code>read:pullrequest:bitbucket</code>
             {tr("git.bb_token_hint_pr")}

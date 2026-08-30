@@ -1,7 +1,7 @@
 # 0027. File ペインに CodeMirror 6 の編集モードを追加し、保存を明示操作に限定する
 
 - 状態: **採用・Phase 4 まで実装済み**（2026-07-28）
-- 詳細契約: [docs/44-markdown-code-editor.md](../44-markdown-code-editor.md)
+- 詳細契約: [docs/44-markdown-code-editor.md](../log/44-markdown-code-editor.md)
 - 関連: [docs/dev/02-console.md](../dev/02-console.md)（Console のペイン構成）/
   [docs/dev/04-workspace-agent.md](../dev/04-workspace-agent.md)（fs の境界と denylist）/
   [docs/dev/05-api-contracts.md](../dev/05-api-contracts.md)（API 中継の地図）/
@@ -88,7 +88,7 @@ Console の File ペインは現在、Workspace のファイルを読み取り�
 
 ## 対象範囲とフェーズ境界
 
-- Phase 0（本ADRと [docs/44](../44-markdown-code-editor.md)）で、設計・API・revision/競合・提案形式・
+- Phase 0（本ADRと [docs/44](../log/44-markdown-code-editor.md)）で、設計・API・revision/競合・提案形式・
   入力制約を固定する。
 - Phase 1 は Agent/CP route、中継、監査（`write_state_unknown`含む）、strict decoder、fd-relative操作、
   GET/download race、symlink/CAS/failure injection、current file/path boundを含む保存API基盤とGo単体

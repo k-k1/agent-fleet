@@ -1,6 +1,6 @@
 # 0053. CP イメージを 2 アーキ index にし、実行アーキは**運用者が選ぶ**（冗長化は別の話として切り離す）
 
-- 状態: **採用**（2026-08-23）。検討の記録は [docs/72](../72-cp-arch-and-availability.md)。
+- 状態: **採用**（2026-08-23）。検討の記録は [docs/72](../log/72-cp-arch-and-availability.md)。
 - 関連: [0044-workspace-sizing.md](0044-workspace-sizing.md) 決定 3
   （**既定オフで出した機能は存在しないのと同じ**——本 ADR の決定 4 はこれに逆らって
   「既定オフのまま出す」と言うので、理由を明示する必要がある） /
@@ -11,7 +11,7 @@
 
 ## 背景
 
-[docs/70](../70-slot-instance-classes.md) は Workspace が載る箱をアーキごと選べるように
+[docs/70](../log/70-slot-instance-classes.md) は Workspace が載る箱をアーキごと選べるように
 した。同じ問いが CP 自身に残っている——**CP は amd64 でしか焼かれていない**ので、
 Fargate を Graviton に置くという選択肢がそもそも存在しない。一方で
 `control-plane/Dockerfile` にはアーキ依存の記述が 1 行も無く、**焼き方だけの問題**である。
@@ -30,7 +30,7 @@ Go には `GOARCH=$TARGETARCH` を渡す。エミュレータを通るのはラ�
 
 - Console の成果物は JS/CSS で**アーキ非依存**——2 回焼く意味が無い。
 - `CGO_ENABLED=0` なので Go のクロスビルドは**準備を何も要らない**。
-- [docs/70](../70-slot-instance-classes.md) §70.9.2 が測った QEMU の税（arm64 単体で
+- [docs/70](../log/70-slot-instance-classes.md) §70.9.2 が測った QEMU の税（arm64 単体で
   実機の約 5 倍）は、**中身が I/O 寄りだから**その値で済んだと同じ節が明記している。
   **CP はそこで警告されているコンパイル寄りの側**なので、workspace の数字を
   流用してはならない。
@@ -88,7 +88,7 @@ Fargate は `runtimePlatform` を省略すると `X86_64` を入れる。**⚠�
 明示すればタスク定義の同一性にも入るので、`CpArch` を動かせば確実に新リビジョンになる。
 
 ⚠️ EC2 起動タイプはこの既定を**共有しない**（省略すると `null` のまま）。
-[docs/70](../70-slot-instance-classes.md) §70.8 が記録した非対称で、
+[docs/70](../log/70-slot-instance-classes.md) §70.8 が記録した非対称で、
 「Fargate で省略しても動いていたから EC2 でも省略でよい」は成立しない。
 
 ## 決定 6 — 噛み合わない組合せは **deploy の前に**落とす
@@ -105,14 +105,14 @@ pull エラーのログも出ない。
 `update.sh` に前検査を足す。⚠️ **証明できたときだけ落とす**——index ならアーキ一覧を
 読んで断定でき、単一マニフェストなら中身は読めないので「arm64 を要求している」ときだけ
 落とす。`AF_CP_ARCH_CHECK=0` で外せる。**ここは公開ゲートではなく更新の前検査**なので、
-[docs/35](../35-packaging.md) §35.7.5 の「走らなかったゲートは通っていない」は当てない
+[docs/35](../log/35-packaging.md) §35.7.5 の「走らなかったゲートは通っていない」は当てない
 （当てると、権限やツールの差で運用者の更新経路が止まる）。
 
 ## 決定 7 — 冗長化は**本 ADR の対象外**にする（が、実状は記録する）
 
 CP は `DesiredCount: 1`・オートスケール無し・RDS は `MultiAZ: false`（パラメータですら
 ない）。**これは事故ではないが、「そう決めた」と書かれてもいなかった**ので
-[docs/72](../72-cp-arch-and-availability.md) §72.7 に記録した。
+[docs/72](../log/72-cp-arch-and-availability.md) §72.7 に記録した。
 
 ⚠️ **「CP は 1 台」は「コードが 1 台前提でよい」を意味しない。** `minimumHealthyPercent=100`
 なので、**アップグレードのたびに新旧 2 つの CP が約 51 秒重なる**（実測）。無停止デプロイは
@@ -154,7 +154,7 @@ seed → snapshot → probe → publish が 2 アーキ分完走し、スロッ�
   既存デプロイは何も変わらない（ECS もローカルの docker もホストのアーキで正しい方を引く）。
   ⚠️ 変わるのは**リリースの CP イメージがマニフェストリストになる**ことで、
   `release-ecr.sh` のようなローカル docker 経由の経路はそれを運べない（決定 6 の直し済み）。
-- native パッケージ（C/R）は amd64 のまま（[docs/35](../35-packaging.md) §35.3.1）。
+- native パッケージ（C/R）は amd64 のまま（[docs/35](../log/35-packaging.md) §35.3.1）。
   air-gap の images tar も単一アーキのまま——マニフェストリストは `docker save` できない
   （0037）。`--save` と `CP_PLATFORMS` は排他にした。
 - ⚠️ **`ImageTag` が CP と workspace で共有**（0045 決定 8）なので、CP だけを差し替えたくても

@@ -12,7 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// TestDiscordLiveSend is the live contract test of docs/37 検証方針: it talks to
+// TestDiscordLiveSend is the live contract test of docs/log/37 検証方針: it talks to
 // the real Discord API and posts one message. Skipped unless AF_DISCORD_LIVE=1;
 // credentials come from env (never committed):
 //
@@ -43,7 +43,7 @@ func TestDiscordLiveSend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	// Thread grouping (docs/37 P1.5): two events for one session must land in a
+	// Thread grouping (docs/log/37 P1.5): two events for one session must land in a
 	// single thread under the channel. Verify visually on the Discord side.
 	if p.creds.ChannelID != "" {
 		tp := &discordProvider{creds: secrets.DiscordCreds{Token: token,
@@ -55,7 +55,7 @@ func TestDiscordLiveSend(t *testing.T) {
 				t.Fatalf("thread %s: %v", kind, err)
 			}
 		}
-		// P2b (docs/37): with AF_DISCORD_BUTTONS=1, post a question with option
+		// P2b (docs/log/37): with AF_DISCORD_BUTTONS=1, post a question with option
 		// buttons plus a permission prompt so the rendering can be eyeballed and
 		// clicked (the click round-trips through TestDiscordLiveReceive).
 		if os.Getenv("AF_DISCORD_BUTTONS") == "1" {
@@ -72,7 +72,7 @@ func TestDiscordLiveSend(t *testing.T) {
 				t.Fatalf("permission buttons send: %v", err)
 			}
 		}
-		// 全文ブリッジ (docs/37 将来の方向): with AF_DISCORD_FULLTEXT=1, post an
+		// 全文ブリッジ (docs/log/37 将来の方向): with AF_DISCORD_FULLTEXT=1, post an
 		// answer-ready whose body exceeds one message so chunking + the scrubber
 		// can be eyeballed in the thread (mention on the first chunk only).
 		if os.Getenv("AF_DISCORD_FULLTEXT") == "1" {
@@ -88,7 +88,7 @@ func TestDiscordLiveSend(t *testing.T) {
 			}
 		}
 
-		// P3先取り (docs/37): with AF_DISCORD_OPERATOR=1, 起票 the standing operator
+		// P3先取り (docs/log/37): with AF_DISCORD_OPERATOR=1, 起票 the standing operator
 		// thread and post a reply into it, so the create-thread + return-leg (chunk +
 		// scrub) can be eyeballed. Uses a throwaway conv id — no turn is run here.
 		if os.Getenv("AF_DISCORD_OPERATOR") == "1" {
@@ -101,7 +101,7 @@ func TestDiscordLiveSend(t *testing.T) {
 			if err := postOperatorChunks(token, thread, "オペレーターの応答（ライブ確認）: フリートは正常です。"); err != nil {
 				t.Fatalf("operator reply post: %v", err)
 			}
-			// P3 承認ゲート (docs/37): with AF_DISCORD_APPROVAL=1, post an approve/reject
+			// P3 承認ゲート (docs/log/37): with AF_DISCORD_APPROVAL=1, post an approve/reject
 			// button into the operator thread so the gate's buttons render and a click
 			// round-trips through TestDiscordLiveReceive (which logs the parsed "op" id).
 			if os.Getenv("AF_DISCORD_APPROVAL") == "1" {
@@ -118,7 +118,7 @@ func TestDiscordLiveSend(t *testing.T) {
 // bridge package's live test doesn't reach into main).
 func operatorLiveName() string { return "🛰 フリート・オペレーター" }
 
-// TestDiscordLiveReceive is the live RECEIVE smoke test (docs/37 P2a): it opens a REAL
+// TestDiscordLiveReceive is the live RECEIVE smoke test (docs/log/37 P2a): it opens a REAL
 // Discord Gateway connection and logs every message the bot sees for ~40s, so the receive
 // path can be verified in isolation — before the full session round-trip. Post a message in
 // your server (and in a session thread) while it runs and confirm it arrives WITH content;

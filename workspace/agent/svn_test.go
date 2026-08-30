@@ -186,7 +186,7 @@ func TestSvnCheckoutFileRepo(t *testing.T) {
 	}
 }
 
-// TestSvnCheckoutIsAsync は POST /repos/svn の非同期化（docs/78）を実 svn で確かめる。
+// TestSvnCheckoutIsAsync は POST /repos/svn の非同期化（docs/log/78）を実 svn で確かめる。
 // 検証したいのは 3 点: ①ハンドラは checkout の完了を待たない（202 とジョブを返す）、
 // ②取り込み中のフォルダは GET /repos に出ない、③ジョブが done になって初めて作業コピー
 // として現れる。同期だった頃はここが「応答が返る＝完了」ではなく「プロキシが諦めた＝完了」
@@ -248,7 +248,7 @@ func TestSvnCheckoutIsAsync(t *testing.T) {
 }
 
 // TestSvnCheckoutFailureKeepsResumableCopy は「失敗しても再開できる作業コピーは消さない」
-// （docs/78）。30 分の上限で殺したうえで RemoveAll していた頃、数十分ダウンロードした
+// （docs/log/78）。30 分の上限で殺したうえで RemoveAll していた頃、数十分ダウンロードした
 // 作業コピーが黙って消えた — svn は cleanup + update で続きから取れるのだから、消してよいのは
 // 作業コピーになっていないときだけ。
 func TestSvnCheckoutFailureKeepsResumableCopy(t *testing.T) {
@@ -290,7 +290,7 @@ func TestSvnCheckoutFailureKeepsResumableCopy(t *testing.T) {
 // ★ 一覧の dirty 判定は作業コピー全体を走査する。11.4GB の作業コピー（実例）では
 // これが GET /repos を握ったままになりうるので、同じフォルダへの同時要求は 1 本の走査に
 // 相乗りさせる —— さもないと画面の操作のたびに全走査が重なる（走行中の checkout と
-// wc.db を奪い合ったのと同じ形を、今度は自分で作ることになる）。docs/78。
+// wc.db を奪い合ったのと同じ形を、今度は自分で作ることになる）。docs/log/78。
 func TestSvnDirtySharesOneScan(t *testing.T) {
 	if !svnAvailable() {
 		t.Skip("svn not installed")

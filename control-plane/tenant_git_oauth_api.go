@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Admin API for the tenant's git provider OAuth apps (docs/71 §71.4 + ADR0052).
+// Admin API for the tenant's git provider OAuth apps (docs/log/71 §71.4 + ADR0052).
 //
 // The whole surface belongs to the tenant_admin — read, write and delete. There is no
 // super_admin step, and that is the decision, not an omission: registering an OAuth app
@@ -14,7 +14,7 @@ import (
 // approval exists to guard), the redirect_uri is the CP's own so an app cannot redirect a
 // grant anywhere else, and the resulting token is written into the member's own workspace
 // and never returned to the administrator. A deployment run with AUTH=dev has no
-// super_admin at all (docs/71 §71.6), so an approval step would also simply never clear
+// super_admin at all (docs/log/71 §71.6), so an approval step would also simply never clear
 // there.
 type tenantGitOAuthAPI struct{ memberAuth }
 

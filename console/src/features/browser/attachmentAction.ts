@@ -1,5 +1,5 @@
 // One place that turns "the user followed a Chromium attachment link" into a
-// pane (docs/53 §53.7). Two entry points share it: the action ROUTE (a real
+// pane (docs/log/53 §53.7). Two entry points share it: the action ROUTE (a real
 // navigation to /open/browser-attachment/<id>, e.g. a new tab or a reload) and a
 // CLICK on the Markdown link the agent posts into the mirror, which never
 // navigates at all. Both must verify membership/expiry, ask before replacing a

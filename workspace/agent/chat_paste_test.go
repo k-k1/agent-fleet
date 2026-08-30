@@ -13,7 +13,7 @@ import (
 )
 
 // The assistant chat's image attach rides the same save→reference flow as a terminal
-// session (docs/19): upload to a conversation-scoped dir, then reference the returned
+// session (docs/log/19): upload to a conversation-scoped dir, then reference the returned
 // absolute path so the chat's headless agent opens it (claude: Read tool / codex:
 // view_image — both live-verified). Drive the two endpoints end-to-end over a mux (so
 // PathValue routing is real) to prove the wiring, the agent gate (claude/codex allowed,

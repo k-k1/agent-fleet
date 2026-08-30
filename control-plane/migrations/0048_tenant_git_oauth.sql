@@ -1,4 +1,4 @@
--- Tenant-owned OAuth apps for the git providers (docs/71 + ADR0052). The Console's
+-- Tenant-owned OAuth apps for the git providers (docs/log/71 + ADR0052). The Console's
 -- "connect with OAuth" buttons for GitHub and Bitbucket used to run on a DEPLOYMENT
 -- wide OAuth app named by env (GITHUB_OAUTH_CLIENT_ID / BITBUCKET_OAUTH_KEY+SECRET).
 -- That put the operator in the loop for something that is a tenant's own account

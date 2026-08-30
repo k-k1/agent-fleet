@@ -1,6 +1,6 @@
 # 0034. ミラーのスキルピッカー — セッション単位 API ＋コンポーザー内補完
 
-- 状態: **採用・実装済み**（2026-07-28）。設計と実装記録は [50-mirror-skill-picker.md](../50-mirror-skill-picker.md)。
+- 状態: **採用・実装済み**（2026-07-28）。設計と実装記録は [50-mirror-skill-picker.md](../log/50-mirror-skill-picker.md)。
 - 関連: [0017](0017-keyboard-system.md)（キーボード体系）/ [0015](0015-agent-managed-driver.md)（driver 抽象 — turn 素通しの前提）
 
 ## 背景

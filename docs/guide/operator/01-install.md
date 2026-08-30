@@ -84,7 +84,7 @@ Which keys you fill in depends on the IdP:
 > administrator under **Tenant settings → Integrations → Git provider OAuth**. There is no
 > deployment-level setting for them and `BITBUCKET_OAUTH_KEY` / `_SECRET` are not read at all;
 > `GITHUB_OAUTH_CLIENT_ID` above means the sign-in app only. See
-> [docs/71](../../71-tenant-git-oauth.md).
+> [docs/71](../../log/71-tenant-git-oauth.md).
 
 Three points decide whether this goes smoothly, and all three are covered in detail in
 [05](05-login-idp.md):

@@ -69,7 +69,7 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 
 // drainAgentOutbox pulls the Agent's notification outbox into the store and acks it.
 //
-// res を取らないのは、**Workspace を止める直前にも呼ぶ**から（docs/75）。Agent の
+// res を取らないのは、**Workspace を止める直前にも呼ぶ**から（docs/log/75）。Agent の
 // アウトボックスは Console が見に来たときにしか drain されないので、畳んだ直後に
 // 止めると「未回答のまま停止しました」の通知が、次に Workspace を起こすまで誰にも
 // 届かない — 費用のために止めた結果、止めたことを知らせる通知だけが止めたせいで

@@ -176,7 +176,7 @@
 }
 
 /* Onboarding card (first-run checklist over the empty starter pane) — old
-   styles.css region 4074–4171 verbatim (docs/22 P6d). */
+   styles.css region 4074–4171 verbatim (docs/log/22 P6d). */
 
 /* Legacy control styles (old element globals), scoped — the verbatim-ported card
    keeps raw <button className="ghost"> markup (:where() = old 0-0-1 specificity).

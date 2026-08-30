@@ -15,7 +15,7 @@ import (
 )
 
 // auditActionTarget classifies a proxied request as an auditable CHANGE operation
-// (M1 audit, docs/20 §A / §E.1: file, git, session mutations). Read-only and other
+// (M1 audit, docs/log/20 §A / §E.1: file, git, session mutations). Read-only and other
 // non-mutating calls return ok=false. Target is taken from the URL only (path value
 // or query), never the request body — so no secrets are read (docs §A.6).
 func auditActionTarget(r *http.Request) (action, target string, ok bool) {
@@ -59,7 +59,7 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		case name != "" && strings.HasSuffix(p, "/parent-ff"):
 			return "git.parent_ff", name, true
 		case p == "/api/agents/memory/snapshots":
-			// エージェントメモリの手動 snapshot（docs/39）。
+			// エージェントメモリの手動 snapshot（docs/log/39）。
 			return "memory.snapshot", "", true
 		case p == "/api/agents/memory/import":
 			// 受領（refs/imports への取り込み。live にはまだ触れない）。
@@ -68,7 +68,7 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			// 取り込んだ内容の live への適用。どの系譜かは URL のヒントから採る。
 			return "memory.import.apply", q.Get("importId"), true
 		case p == "/api/agents/memory/restore":
-			// 巻き戻し（docs/39 ④）。戻し元 rev は Console が **監査用のヒントとして**
+			// 巻き戻し（docs/log/39 ④）。戻し元 rev は Console が **監査用のヒントとして**
 			// クエリにも載せる（本文は読まない = §A.6）。実処理は本文の rev/at/scope が正で、
 			// 何が起きたかは repo の restore commit（AF-Restore-Rev / -Scope）に残る。
 			return "memory.restore", q.Get("rev"), true
@@ -80,7 +80,7 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "session.stop", name, true
 		}
 	case http.MethodGet:
-		// 読み取りは原則として監査しないが、メモリの export だけは例外にする（docs/39 ★4）:
+		// 読み取りは原則として監査しないが、メモリの export だけは例外にする（docs/log/39 ★4）:
 		// 個人のメモリを環境の外へ持ち出す唯一の経路であり、「誰がいつ何形式で出したか」が
 		// 残らないと後追いができない。target は形式のみ（本文も内容も読まない）。
 		if p == "/api/agents/memory/export" {
@@ -91,7 +91,7 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		case p == "/api/fs/delete":
 			return "fs.delete", q.Get("path"), true
 		case strings.HasPrefix(p, "/api/repo-jobs/"):
-			// 取り込みの中止／既読（docs/78）。target は job id（URL だけから採る）。
+			// 取り込みの中止／既読（docs/log/78）。target は job id（URL だけから採る）。
 			return "repo.job.cancel", strings.TrimPrefix(p, "/api/repo-jobs/"), true
 		case name != "" && p == "/api/repos/"+name:
 			return "repo.delete", name, true
@@ -100,7 +100,7 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 	return "", "", false
 }
 
-// agentProxyAPI は Workspace Agent への素通しプロキシ集（docs/23 残③）。解決は
+// agentProxyAPI は Workspace Agent への素通しプロキシ集（docs/log/23 残③）。解決は
 // 埋め込みの memberAuth（登録側で withResolved に包む — terminal/WS の tenant 選択
 // が query param なのも tenantSel が吸収し従来の resolvedFor と同一）。依存は
 // a.mgr（conns の activity フック・監査 store）のみ。
@@ -206,7 +206,7 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		}
 	}
 
-	// M1 audit (docs/20): record a successful change operation. actor/tenant come from
+	// M1 audit (docs/log/20): record a successful change operation. actor/tenant come from
 	// the resolved request; best-effort with a detached context so a client disconnect
 	// during the body copy below can't cancel the write.
 	if action, target, ok := auditActionTarget(r); ok &&
@@ -346,7 +346,7 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 	// P3-9: an attached terminal keeps the workspace warm and pins its session
 	// (tier 1 won't halt a session someone is watching).
 	session := r.URL.Query().Get("session")
-	// 在席は「ソケットがある」ではなく「人が触っている」で数える（docs/75 P3）。
+	// 在席は「ソケットがある」ではなく「人が触っている」で数える（docs/log/75 P3）。
 	// noteInput は下の browser→agent 中継が打鍵フレームを見たときだけ呼ぶ。
 	releasePresence, noteInput, err := a.mgr.trackWorkspaceTerminal(r.Context(), res.ws.ID, session)
 	if err != nil {
@@ -415,7 +415,7 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 //
 // ★ping と resize を数えてはいけない: Console は開いているソケットへ定期的に ping を
 // 送るので、「何かフレームが来た＝在席」にすると、閉じ忘れたタブが永久に Workspace を
-// 温める従来の挙動がそのまま戻る（docs/75 P3 が消そうとしているもの）。
+// 温める従来の挙動がそのまま戻る（docs/log/75 P3 が消そうとしているもの）。
 type terminalFrame struct {
 	Type string `json:"type"`
 }

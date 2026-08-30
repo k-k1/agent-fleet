@@ -1,6 +1,6 @@
 package agents
 
-// MsgLedger は ClientMessageID の永続台帳（docs/27 §4・§9.5 — 会話内容を含まない
+// MsgLedger は ClientMessageID の永続台帳（docs/log/27 §4・§9.5 — 会話内容を含まない
 // 運用メタデータ）。driver の accept が「この ID は投入済みか」を引き、再送・
 // reconnect 後の二重投入を冪等化する。P2 は handle 生存中の in-memory 台帳だけ
 // だった（§12.2-3 の将来課題）— P3 でプロセス跨ぎ（Agent 再起動・daemon 再起動を

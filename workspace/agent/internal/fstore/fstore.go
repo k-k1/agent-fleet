@@ -1,4 +1,4 @@
-// Package fstore は「キー1件 = 小さな値1ファイル」の汎用ストア（docs/23 P1-W2、
+// Package fstore は「キー1件 = 小さな値1ファイル」の汎用ストア（docs/log/23 P1-W2、
 // W5 で internal 化）。<base()>/<subdir>/<key><ext> に置く。base はストア生成時に
 // 注入され、呼び出しの都度解決する — テストが HOME を差し替えるためキャッシュ
 // しない。session-status / pending-* / last-tool / *-sid の 7 家系の共通実装。

@@ -1,4 +1,4 @@
--- Scheduled execution (docs/38 + ADR0021): richer run history. session records which
+-- Scheduled execution (docs/log/38 + ADR0021): richer run history. session records which
 -- session each fire drove so the Console can open it — the freshly created session for
 -- session_mode=new or the long-lived reuse target for session_mode=reuse, empty for soft
 -- skips that ran nothing. trigger_kind distinguishes a manual run-now fire (value manual)

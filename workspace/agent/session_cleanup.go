@@ -104,7 +104,7 @@ func classifySessionCleanup(locked, archived, live, ephemeral bool) (action, saf
 	case live:
 		return "", "", "", false // running — not a cleanup target
 	case locked:
-		// 削除ロック（docs/45）: 掃除の対象外。黙って隠すのではなく keep として見せる —
+		// 削除ロック（docs/log/45）: 掃除の対象外。黙って隠すのではなく keep として見せる —
 		// 「なぜ片付かないのか」が利用者にもオペレーターにも分かるように。
 		return "", "keep", cleanReasonLocked, true
 	case archived:
@@ -130,9 +130,9 @@ func classifySessionCleanup(locked, archived, live, ephemeral bool) (action, saf
 func classifyWorktreeCleanup(locked bool, lockedSessions, liveCount, ahead int, dirty bool, relation string) (action, safety, reasonKey string) {
 	switch {
 	case locked:
-		return "", "keep", cleanReasonLocked // docs/45
+		return "", "keep", cleanReasonLocked // docs/log/45
 	case lockedSessions > 0:
-		// 削除ロック済みセッション（docs/45）が住む WT は handleDeleteRepo が 403 で拒む。
+		// 削除ロック済みセッション（docs/log/45）が住む WT は handleDeleteRepo が 403 で拒む。
 		// safe と提案しても実行時に失敗するだけ — keep として理由ごと見せる。
 		return "", "keep", cleanReasonWtLockedSess
 	case liveCount > 0:

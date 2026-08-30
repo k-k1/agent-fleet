@@ -1,9 +1,9 @@
 package main
 
 // 再送で直る中断（接続断・一時的なレート制限・ストリームの番犬）からの自動再開
-// （docs/47 §4-6）。
+// （docs/log/47 §4-6）。
 //
-// docs/47 §3-4 の再開はアシスタント主導だった: 中断 → 完了報告 → オペレーターが
+// docs/log/47 §3-4 の再開はアシスタント主導だった: 中断 → 完了報告 → オペレーターが
 // send_to_session で「続けて」を送る。これには2つの穴がある。
 //
 //	① 会話に紐付いていないセッション（Console から直接起動）は再開されない。報告先が
@@ -18,7 +18,7 @@ package main
 // 不調ではないので、そこで初めて報告して利用者へエスカレーションする。
 //
 // ADR0030 §3 が Agent 直送を避けた第一の理由「誰が何を送ったか見えなくなる」は、
-// docs/37/38 の注入元記録（recordInjection → ミラーのバッジ）で解消済み。再開の
+// docs/log/37/38 の注入元記録（recordInjection → ミラーのバッジ）で解消済み。再開の
 // プロンプトは注入元 auto-resume として転写に残り、ミラーで見分けられる。
 //
 // **報告の抑止は「中断を握り潰す」ことではない。** 中断の通知（通知センター）は従来
@@ -275,7 +275,7 @@ func abortEpisodeStale(st abortResumeState, now time.Time) bool {
 }
 
 // abortResumeHolds reports whether the automatic resume has taken responsibility for this
-// cut-off — i.e. the reconciler must NOT deliver an aborted-turn report yet (docs/47 §4-6).
+// cut-off — i.e. the reconciler must NOT deliver an aborted-turn report yet (docs/log/47 §4-6).
 //
 // エピソードのファイルが**まだ無い**場合も抑止する（sweep は 30 秒ごとなので、中断の
 // 直後は必ずこの状態になる）。ただし中断が新しいうちだけ: 時刻が読めないか古い中断で

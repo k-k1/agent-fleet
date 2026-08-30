@@ -1,7 +1,7 @@
 # 0004. Console スタック — React + Vite を採用
 
 - 状態: 確定（Phase 3 / Console 全面刷新）
-- 関連: [dev/02 Console](../dev/02-console.md)（旧 HANDOFF §6.10.1） / [history/console-redesign](../history/console-redesign.md)（当時の診断ブリーフ）
+- 関連: [dev/02 Console](../dev/02-console.md)（旧 HANDOFF §6.10.1） / [history/console-redesign](../log/console-redesign.md)（当時の診断ブリーフ）
 
 ## 背景
 

@@ -1,4 +1,4 @@
-// テナント設定モーダル（docs/61 の面を管理モーダルから移した先）。ここが守るのは
+// テナント設定モーダル（docs/log/61 の面を管理モーダルから移した先）。ここが守るのは
 // 「画面の出し分けを、サーバが持つ権限より緩めない」ことなので、それだけを jsdom で押さえる:
 //   ① 既定＝テナント管理者（super_admin: false）で「承認して有効化」を出さないこと
 //      ★ テスト側で isSuper を作って渡すと、この既定の経路が無検証になる。だから
@@ -123,7 +123,7 @@ describe("TenantDialog", () => {
     expect(content.querySelector(".admin-actions")).toBeNull();
     const vals = Array.from(content.querySelectorAll(".af-val")).map((e) => e.textContent || "");
     // ★ 残るのはドメインの 2 列だけ。方式の 2 列（受け入れる／ボタンに出す）は P7-0 で
-    // この面から出て、「サインイン方法」の行ごとのトグルになった（docs/61 §61.17.5）。
+    // この面から出て、「サインイン方法」の行ごとのトグルになった（docs/log/61 §61.17.5）。
     // CSV を読み取り専用で見せても「うちは何で入れるのか」には答えないため。
     expect(vals).toHaveLength(2);
     expect(vals[0]).toBe("@sales.acme.co.jp");
@@ -133,7 +133,7 @@ describe("TenantDialog", () => {
     expect(content.textContent).toContain("login/acme");
   });
 
-  // ⚠️ 実際に「設定にも管理にも見当たらない」と言われた。接続元の制限（docs/66）は
+  // ⚠️ 実際に「設定にも管理にも見当たらない」と言われた。接続元の制限（docs/log/66）は
   // テナント設定モーダルにしか置いておらず、そのモーダルの入口は **tenant_admin の
   // 在籍だけ**で出るので、在籍の無い super_admin からは一生見えなかった。面はレールに
   // 並んでいること、そして管理モーダル側にも置いてあること（AdminTab 側）を固定する。
@@ -174,7 +174,7 @@ describe("TenantDialog", () => {
     expect(document.querySelector(".member-detail")).toBeTruthy();
     const crumb = document.querySelector<HTMLButtonElement>(".tenant-drill .admin-back");
     expect(crumb).toBeTruthy();
-    // 外す・home を掃除は tenant_admin の操作（docs/61 §61.10.6）なので出ている。
+    // 外す・home を掃除は tenant_admin の操作（docs/log/61 §61.10.6）なので出ている。
     expect(document.querySelector(".member-detail")!.textContent).toContain("メンバーを外す");
 
     await act(async () => {

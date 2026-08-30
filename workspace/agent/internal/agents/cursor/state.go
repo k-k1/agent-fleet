@@ -8,7 +8,7 @@ package cursor
 //
 // 許可待ち（TUI の allowlist 外コマンド確認）は JSONL に痕跡が残らないため v1 では
 // "question" を出さない——ターンが開いたまま＝"working" として扱う（ミラーは進行中
-// ＋停止ボタン）。許可カード化は Track D（docs/40）。
+// ＋停止ボタン）。許可カード化は Track D（docs/log/40）。
 
 import (
 	"bufio"

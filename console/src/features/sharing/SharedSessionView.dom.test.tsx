@@ -4,7 +4,7 @@
 // 本文は所有者側の別ストアにある。ミラーはそれをカードとして会話へ差し込むが、共有ビューは
 // 転写しか取っていなかったので、共有先には「引き継いだらしい」ことしか見えなかった。
 //
-// あわせて docs/59 §3 の約束 —「能力が無い操作要素は描画しない」— も押さえる: 共有先は
+// あわせて docs/log/59 §3 の約束 —「能力が無い操作要素は描画しない」— も押さえる: 共有先は
 // 編集も破棄も起動もできないので、そのボタンが出てはいけない。
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
@@ -20,7 +20,7 @@ vi.mock("../../core/api/client.ts", () => ({
   api: (path: string) => api(path),
   apiJSON: vi.fn(async () => ({})),
   errText: (e: unknown) => String((e as { message?: string })?.message ?? e),
-  // マーカー（docs/69）が読み手の login id を tenant ストア経由で引くので、その初期化に要る。
+  // マーカー（docs/log/69）が読み手の login id を tenant ストア経由で引くので、その初期化に要る。
   getTenant: () => "",
 }));
 

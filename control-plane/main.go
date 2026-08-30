@@ -22,7 +22,7 @@ import (
 )
 
 // buildVersion is stamped by the release pipeline via
-// `-ldflags "-X main.buildVersion=<v>"` (docs/35 §35.6.1); dev builds stay "dev".
+// `-ldflags "-X main.buildVersion=<v>"` (docs/log/35 §35.6.1); dev builds stay "dev".
 // Surfaced in the startup log and GET /api/version (authenticated).
 var buildVersion = "dev"
 
@@ -30,14 +30,14 @@ type config struct {
 	addr       string
 	consoleDir string
 	mgr        *manager
-	// ★ The git providers' OAuth apps are NOT here. Since docs/71 they are per-tenant
+	// ★ The git providers' OAuth apps are NOT here. Since docs/log/71 they are per-tenant
 	// rows read from the database at the moment a member presses "connect"
 	// (tenant_git_oauth.go); BITBUCKET_OAUTH_KEY/SECRET and the workspace's
 	// GITHUB_OAUTH_CLIENT_ID are not read at all, not even as a fallback.
 	publicBaseURL string // external base, e.g. https://host (for redirect_uri)
 	// CP-native OIDC login (AUTH=oauth) — replaces oauth2-proxy. See oauth.go /
 	// oauth_oidc.go. Google keeps its historical env names and is one instance of
-	// the generic OIDC client (docs/61 §61.6).
+	// the generic OIDC client (docs/log/61 §61.6).
 	googleClientID     string
 	googleClientSecret string
 	cookieSecret       []byte        // HMAC key for the signed session cookie
@@ -51,7 +51,7 @@ type config struct {
 	providers    []loginProvider
 	providerByID map[string]loginProvider
 	autostart    bool // P3-9: on-demand start of a stopped workspace on intentful access
-	// Egress observation (docs/20 M2, log-only). egressToken authenticates the
+	// Egress observation (docs/log/20 M2, log-only). egressToken authenticates the
 	// forward proxy's POST /internal/egress; egressDedup collapses would-block audit
 	// rows to one per (day, host). Both empty/nil unless egress is configured.
 	egressToken string
@@ -59,9 +59,9 @@ type config struct {
 	// egressProxyAddr mirrors AF_EGRESS_PROXY_ADDR: set = workspace containers are
 	// actually routed through the forward proxy. The member-facing check reports it as
 	// `configured` so the Console only warns about unreachable MCP hosts on deployments
-	// where egress really is constrained (docs/48 §9).
+	// where egress really is constrained (docs/log/48 §9).
 	egressProxyAddr string
-	// TTS 読み上げ（docs/24 + ADR0013）: CP が直接叩く VOICEVOX エンジンの base URL。
+	// TTS 読み上げ（docs/log/24 + ADR0013）: CP が直接叩く VOICEVOX エンジンの base URL。
 	// dev は host 起動の CP から docker 公開の 127.0.0.1:50021 へ。AWS は ECS + Cloud Map
 	// の固定 DNS を差し込む（Phase 2）。
 	voicevoxURL string
@@ -69,13 +69,13 @@ type config struct {
 
 func main() {
 	// Subcommand: `control-plane egress-proxy` runs the log-only forward proxy
-	// (docs/20 M2) instead of the CP server, reusing this same image/binary.
+	// (docs/log/20 M2) instead of the CP server, reusing this same image/binary.
 	if len(os.Args) > 1 && os.Args[1] == "egress-proxy" {
 		runEgressProxy()
 		return
 	}
 	// Subcommand: `control-plane drawio-preseed` fills the stencil cache ahead of
-	// time (docs/65 §65.5.5). It runs where the cache lives and reuses the embedded
+	// time (docs/log/65 §65.5.5). It runs where the cache lives and reuses the embedded
 	// manifest, so it cannot drift from what the server will verify against.
 	if len(os.Args) > 1 && os.Args[1] == "drawio-preseed" {
 		runDrawioPreseed(os.Args[2:])
@@ -104,7 +104,7 @@ func main() {
 		conns: newConnRegistry(),
 	}
 	// ★ GITHUB_OAUTH_CLIENT_ID is deliberately NOT injected into the workspace any more
-	// (docs/71 §71.5). The GitHub device flow moved into the CP, where the app can be
+	// (docs/log/71 §71.5). The GitHub device flow moved into the CP, where the app can be
 	// read per tenant from the database; container env is fixed at container start and
 	// is implemented once per runtime, so a per-tenant value delivered that way would
 	// have needed all four runtimes plumbed and a workspace restart to take effect. The
@@ -135,7 +135,7 @@ func main() {
 		}
 		log.Printf("metadata store: postgres")
 	} else {
-		// 初回起動でも素で立ち上がるよう DB の親ディレクトリは自作する（docs/35 P1
+		// 初回起動でも素で立ち上がるよう DB の親ディレクトリは自作する（docs/log/35 P1
 		// ゲートで露見: WS_DATA 未作成の素のコンテナ/native 初回起動だと sqlite が
 		// ファイルを作れず即死していた。実デプロイはマウント済み dir で不発だった）。
 		if mkerr := os.MkdirAll(filepath.Dir(dbPath), 0o755); mkerr != nil {
@@ -151,7 +151,7 @@ func main() {
 	}
 	mgr.store = store
 	mgr.tenantLogin = newTenantLoginCache(store)
-	// Tenant-defined login providers (docs/61 §61.11). Unlike the env providers built
+	// Tenant-defined login providers (docs/log/61 §61.11). Unlike the env providers built
 	// below, this set is read from the database on demand, so approving a subsidiary's
 	// IdP needs no restart (決定 29).
 	mgr.tenantIdP = newTenantIdPRegistry(store, mgr.openTenantSecret)
@@ -161,7 +161,7 @@ func main() {
 		mgr.defaultTenantID = dt.ID // used by rootedDataDir to detect flat paths
 	}
 	// ★ SUPER_ADMIN_EMAILS is the single source of truth for the deployment role,
-	// and this is where removing somebody from it takes effect (docs/61 §61.10.7 +
+	// and this is where removing somebody from it takes effect (docs/log/61 §61.10.7 +
 	// ADR0043 決定 24). UpsertIdentity only ever upgrades, on purpose — it is called
 	// with roleHint="" from addMembership / cleanHome / stopWorkspace, so demoting
 	// there would strip an operator the moment anyone added a member. And a
@@ -177,11 +177,11 @@ func main() {
 		log.Printf("backfill warning: %v", err)
 	}
 
-	// docs/20 M2 (egress, log-only): when a forward-proxy address is configured, route
+	// docs/log/20 M2 (egress, log-only): when a forward-proxy address is configured, route
 	// every workspace container's HTTP(S) egress through it by injecting proxy env.
 	// DEFAULT OFF — nothing changes unless AF_EGRESS_PROXY_ADDR is set. Must run BEFORE
 	// the runtime factory below, which snapshots mgr.extraEnv by value. Attribution is
-	// coarse in this first cut (shared env, no per-workspace identity; docs/20 §D.3).
+	// coarse in this first cut (shared env, no per-workspace identity; docs/log/20 §D.3).
 	egressProxyAddr := os.Getenv("AF_EGRESS_PROXY_ADDR")
 	if addr := egressProxyAddr; addr != "" {
 		pu := "http://" + addr
@@ -230,23 +230,23 @@ func main() {
 		// P3-9 auto-start (scale-to-zero counterpart): default on; AF_AUTOSTART=0
 		// disables it so a stopped workspace only starts on an explicit start click.
 		autostart: envBool("AF_AUTOSTART", true),
-		// docs/20 M2 egress ingestion auth + audit dedup (empty token => endpoint 401s).
+		// docs/log/20 M2 egress ingestion auth + audit dedup (empty token => endpoint 401s).
 		egressToken: os.Getenv("AF_EGRESS_TOKEN"),
 		egressDedup: &egressAuditDedup{},
-		// Whether containers are actually routed through the proxy (docs/48 §9).
+		// Whether containers are actually routed through the proxy (docs/log/48 §9).
 		egressProxyAddr: egressProxyAddr,
-		// docs/24 TTS: 既定は dev の docker 公開先（host loopback）。
+		// docs/log/24 TTS: 既定は dev の docker 公開先（host loopback）。
 		voicevoxURL: envOr("AF_VOICEVOX_URL", "http://127.0.0.1:50021"),
 	}
 
-	// P3-9 idle-stop (docs/19): a background reaper halts idle claude sessions
+	// P3-9 idle-stop (docs/log/19): a background reaper halts idle claude sessions
 	// (tier 1) and stops cold workspaces (tier 2).
 	//
 	// The deployment defaults are ON — 1h for a session, 2h for the workspace. They used
 	// to be 0 (off), which read as "safe by default" and was not: a workspace nobody had
 	// touched since the night before was still running the next morning, and on the EC2
 	// pool that also pins an m7i.large, because a slot only sleeps once its task is gone
-	// (measured on a real deployment, 9.4h — docs/64 §64.26). Nothing is lost when they
+	// (measured on a real deployment, 9.4h — docs/log/64 §64.26). Nothing is lost when they
 	// fire: a halted claude session is resumable, and a stopped workspace restarts on the
 	// next visit.
 	//
@@ -254,7 +254,7 @@ func main() {
 	// it off for that tenant (idleTimeout), and a deployment sets its own default in env.
 	// AF_IDLE_SWEEP_INTERVAL=0 disables the reaper entirely — see intervalOff, which is
 	// what makes that true (measured: it was not).
-	// 在席の猶予（docs/75 P3）: 打鍵の無い端末を、あと何分だけ「人が居る」と数えるか。
+	// 在席の猶予（docs/log/75 P3）: 打鍵の無い端末を、あと何分だけ「人が居る」と数えるか。
 	// 0 で無効＝従来どおり「ソケットがある限り在席」に戻る。テナント別にしないのは
 	// これが課金方針ではなく人の注意の定数だから（実際に止まるまでの時間を決めるのは
 	// 従来どおり ws_idle_timeout）。reaper が動かない構成でも presence の意味は同じ
@@ -268,7 +268,7 @@ func main() {
 		sessDef := intervalOff(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), time.Hour)
 		// 人の判断待ち（質問・プラン承認・許可・上限メニュー・認証切れ）の既定。未設定なら
 		// セッションの既定と同値 — 「質問を出したまま席を立った」を idle より優遇する理由も、
-		// 冷遇する理由も既定としては無い。畳んでも失われない（持ち越し・docs/75 §75.6）。
+		// 冷遇する理由も既定としては無い。畳んでも失われない（持ち越し・docs/log/75 §75.6）。
 		interDef := intervalOff(os.Getenv("AF_INTERACTION_IDLE_TIMEOUT"), sessDef)
 		wsDef := intervalOff(os.Getenv("AF_WS_IDLE_TIMEOUT"), 2*time.Hour)
 		// Tier 3 (ecs-ec2 only): the deployment default for home hibernation. Kept in the
@@ -283,7 +283,7 @@ func main() {
 		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef).run(context.Background())
 	}
 
-	// Golden snapshot auto-bake (ecs-ec2 only — ADR 0045 決定 9 / docs/64 §64.28).
+	// Golden snapshot auto-bake (ecs-ec2 only — ADR 0045 決定 9 / docs/log/64 §64.28).
 	// The CP already refuses a golden stamped with another image; this is the CP acting
 	// on what it knows instead of logging it and waiting for somebody to run
 	// bake-golden.sh. Default ON: the failure it removes is a release nobody re-baked
@@ -307,13 +307,13 @@ func main() {
 		go newUsageSampler(mgr, iv).run(context.Background())
 	}
 
-	// Cloud cost (docs/67 + ADR 0048): the AWS invoice, attributed per member by cost
+	// Cloud cost (docs/log/67 + ADR 0048): the AWS invoice, attributed per member by cost
 	// allocation tag. A different claim from the sampler above — that one counts
 	// seconds on every runtime, this one reads real money and only where there is a
 	// bill. No-op unless the runtime declares one (docker/native have no invoice).
 	startCloudCostPoller(context.Background(), mgr)
 
-	// docs/20 M5 (claude self-op audit, A-第2段): a sweeper that pulls each running
+	// docs/log/20 M5 (claude self-op audit, A-第2段): a sweeper that pulls each running
 	// claude session's transcript and records Write/Edit/Bash into the audit ledger
 	// (actor_kind=claude). OFF by default (AF_CLAUDE_AUDIT_INTERVAL=0) — it polls every
 	// session, so it's opt-in; enable per deployment once validated.
@@ -331,7 +331,7 @@ func main() {
 		go newGitGC(mgr.store, mgr.dataRoot, iv, grace).run(context.Background())
 	}
 
-	// Scheduled execution (docs/38 + ADR0021): a CP-resident scheduler watches the
+	// Scheduled execution (docs/log/38 + ADR0021): a CP-resident scheduler watches the
 	// wall clock and drives due schedules (cron/interval/once). ON by default with a
 	// 1m tick (opt-out): the tick is a single indexed due-query and is a no-op while no
 	// schedule exists, so the sane default is "a schedule you create actually fires."
@@ -358,19 +358,19 @@ func main() {
 		log.Printf("scheduler: enabled (interval=%s settle=%s wake_timeout=%s jitter=%s)", iv, settle, ready, scheduleJitterMax)
 	}
 
-	// Login providers (docs/61 §61.6): Google (historical env names) plus every id
+	// Login providers (docs/log/61 §61.6): Google (historical env names) plus every id
 	// listed in AF_OIDC_PROVIDERS. A provider with incomplete config is dropped
 	// with a warning inside; only the unsafe multi-tenant Entra case errors, and
 	// that is fatal below. Must run before buildMux — it captures cfg by value.
 	provs, provErr := buildLoginProviders(cfg)
 	cfg.setProviders(provs)
 	// The admin API validates a tenant's allowed_providers against this set, so a
-	// rule can't name an IdP the deployment doesn't have (docs/61 §61.9.4).
+	// rule can't name an IdP the deployment doesn't have (docs/log/61 §61.9.4).
 	mgr.knownProviderIDs = map[string]bool{}
 	for _, p := range provs {
 		mgr.knownProviderIDs[p.ID()] = true
 		// ★ Stamp the realm on the logins this provider recorded before the column
-		// existed (docs/61 §61.15). Here rather than in the migration because only
+		// existed (docs/log/61 §61.15). Here rather than in the migration because only
 		// the set just built knows which id is which IdP — and rule 1.5 refuses to
 		// act on a realm it had to guess. A failure is logged, never fatal: the
 		// consequence is one join that falls back to today's behavior.
@@ -398,13 +398,13 @@ func main() {
 		}
 		// ★ "No allowlist" no longer means "nobody can sign in": since P3 the entry
 		// gate also admits anyone on a tenant's roster or matching an auto-join
-		// domain (docs/61 §61.9.6), which is the whole point of the invite-run
+		// domain (docs/log/61 §61.9.6), which is the whole point of the invite-run
 		// deployment — no AF_OAUTH_ALLOWED_* at all. So check the database before
 		// warning, and only say "every login is denied" when that is actually true.
 		if !cfg.hasDeploymentAllowlist() && !anyProviderAllowlist(cfg.providers) {
 			hasRoster, err := mgr.store.AnyActiveMembership(ctx)
 			// A tenant-defined provider carries its own (mandatory) domain list
-			// (docs/61 §61.11), so an approved one is also a way in — counting it keeps
+			// (docs/log/61 §61.11), so an approved one is also a way in — counting it keeps
 			// the warning from claiming "every login is denied" on a deployment that
 			// runs entirely on a subsidiary's own IdP.
 			if !hasRoster && err == nil {
@@ -416,7 +416,7 @@ func main() {
 			case err != nil:
 				log.Printf("WARNING: could not check for existing memberships: %v", err)
 			case hasRoster:
-				log.Printf("login: no email allowlist configured — access is governed by tenant membership and auto_join_domains (docs/61 §61.9.6)")
+				log.Printf("login: no email allowlist configured — access is governed by tenant membership and auto_join_domains (docs/log/61 §61.9.6)")
 			default:
 				log.Printf("WARNING: AUTH=oauth with no allowlist (AF_OAUTH_ALLOWED_EMAILS / AF_OAUTH_ALLOWED_DOMAINS / AF_OAUTH_ALLOWED_EMAILS_FILE / AF_OIDC_<ID>_ALLOWED_EMAILS / AF_OIDC_<ID>_ALLOWED_DOMAINS / AF_GITHUB_ALLOWED_ORGS) and no tenant membership or auto_join_domains — every login is denied")
 			}
@@ -444,7 +444,7 @@ func main() {
 	log.Print("edge: " + clientIPBanner())
 	// withClientIP is OUTERMOST on purpose: it is the only place the forwarding
 	// headers are read, so nothing downstream can be tempted to trust a client's own
-	// claim about where it is calling from (docs/66 §66.6).
+	// claim about where it is calling from (docs/log/66 §66.6).
 	srv := &http.Server{Addr: cfg.addr, Handler: withClientIP(logRequests(gzipMiddleware(etagJSON(handler)))), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)

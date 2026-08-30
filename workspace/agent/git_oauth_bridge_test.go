@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// docs/71 §71.8. The workspace side of moving Bitbucket's refresh grant into the CP.
+// docs/log/71 §71.8. The workspace side of moving Bitbucket's refresh grant into the CP.
 // What must not regress:
 //
 //   - a successful bridge refresh DROPS the legacy client key/secret (that is the
@@ -43,7 +43,7 @@ func TestBitbucketRefreshViaCPClearsTheStoredClientSecret(t *testing.T) {
 
 	c := secrets.BitbucketCreds{
 		AccessToken: "stale", RefreshToken: "r0", Expiry: 1,
-		Key: "legacy-key", Secret: "legacy-secret", // written by a pre-docs/71 connect
+		Key: "legacy-key", Secret: "legacy-secret", // written by a pre-docs/log/71 connect
 	}
 	nc, err := refreshBitbucketViaCP(secrets.CPBridge{BaseURL: srv.URL, Token: "afo_tok"}, c)
 	if err != nil {

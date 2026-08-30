@@ -27,7 +27,7 @@ var browserUpgrader = websocket.Upgrader{
 }
 
 // chromiumInstallState serializes the one-shot on-demand chromium install a
-// lean rootfs triggers on the first pane attach (docs/35 §35.7.2-4). While the
+// lean rootfs triggers on the first pane attach (docs/log/35 §35.7.2-4). While the
 // background install runs, page creation answers 503 browser_installing and the
 // Console shows "preparing" + retries.
 var chromiumInstallState struct {
@@ -354,7 +354,7 @@ func (v *browserViewer) handleControl(data []byte) bool {
 		v.call("Input.insertText", map[string]any{"text": msg.Text}, nil)
 	case "copy":
 		// The page runs in the container, so its clipboard is unreachable for the
-		// user; hand the selection back over the wire instead (docs/53 §53.7).
+		// user; hand the selection back over the wire instead (docs/log/53 §53.7).
 		var result struct {
 			Result struct {
 				Value string `json:"value"`

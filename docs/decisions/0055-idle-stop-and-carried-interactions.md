@@ -1,15 +1,15 @@
 # 0055. 人の判断待ちでコンテナを起こし続けない。畳む前に対話を「持ち越す」
 
-- 状態: **採用**（2026-08-24）。検討・実測の記録は [docs/75](../75-idle-stop-and-pending-interactions.md)。
+- 状態: **採用**（2026-08-24）。検討・実測の記録は [docs/75](../log/75-idle-stop-and-pending-interactions.md)。
 - 関連: [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.md)（live 状態を「促す次の一手」で分ける） /
   [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md)（停止＝スロット解放＝費用） /
-  [docs/history/p3-9-idle-stop.md](../history/p3-9-idle-stop.md)（二段構えの原型）
+  [docs/history/p3-9-idle-stop.md](../log/p3-9-idle-stop.md)（二段構えの原型）
 
 ## 背景
 
 AskUserQuestion が出たまま放置されたセッションがあると、その Workspace は**永久に停止しない**。
 `reaper.go` の busy 判定が `question` を数え、tier1 の対象からも外していたため両段とも閉じる。
-ECS / EC2 プールでは止まらない Workspace はそのまま課金で、[docs/64](../64-ec2-persistent-workspace.md)
+ECS / EC2 プールでは止まらない Workspace はそのまま課金で、[docs/64](../log/64-ec2-persistent-workspace.md)
 §64.26 では誰も触っていない Workspace が一晩 9.4 時間 m7i.large を占有していた。
 
 同じ形は 2026-07-31 に利用上限メニュー（`blocked`）で実測済みで、そのときは blocked を busy から

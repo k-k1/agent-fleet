@@ -1,6 +1,6 @@
 # 0059. リポジトリの取り込み（clone / svn checkout）は名前付きジョブにし、「応答が返ったか」で完了を決めない
 
-- 状態: **採用・実装済み**（2026-08-26）。設計と経緯は [docs/78](../78-repo-import-jobs.md)。
+- 状態: **採用・実装済み**（2026-08-26）。設計と経緯は [docs/78](../log/78-repo-import-jobs.md)。
 - 関連: [0024-svn-checkout.md](0024-svn-checkout.md)（SVN 取り込みの本体。本 ADR はその完了判定を差し替える） /
   [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md)（止めてよいかの判定材料に
   「取り込み中」を足す） / [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.md)（長い処理を

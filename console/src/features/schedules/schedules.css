@@ -1,4 +1,4 @@
-/* Schedules rail section (docs/38 P5). Follows the memo-queue / notification rail idiom:
+/* Schedules rail section (docs/log/38 P5). Follows the memo-queue / notification rail idiom:
    dense rows, muted secondary text, tone-colored status dots keyed off the shared
    --ok/--warn/--danger/--muted tokens, ghost icon-buttons that reveal on row hover. */
 
@@ -274,7 +274,7 @@
   color: var(--muted);
 }
 
-/* Detail / edit modal (docs/38 P5.2). Reuses the shared .ui-field / .ui-field-row form
+/* Detail / edit modal (docs/log/38 P5.2). Reuses the shared .ui-field / .ui-field-row form
    controls; only the layout widths, the mono prompt box, and the read-only definition
    list are schedule-specific. */
 .sched-detail-modal {

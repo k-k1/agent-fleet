@@ -146,11 +146,11 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 | マルチテナント（identity↔tenant 多対多・クォータ・監査・showback）| ✅ |
 | 内部 git プロバイダ（bare + smart-HTTP + LFS）| ✅（[91](91-internal-git.md)）|
 | MCP（CP `/mcp` + コンテナ内 stdio）| ✅（admin dangerous ツールは残）|
-| egress 統制 | 🚧 log-only + allowlist 運用まで。enforce は後続（[docs/20](../20-container-audit-egress.md)）|
+| egress 統制 | 🚧 log-only + allowlist 運用まで。enforce は後続（[docs/20](../log/20-container-audit-egress.md)）|
 | AWS アダプタ（ECS/EFS/SSM・CFN）| 🚧 実装済・実運用実績なし（[09](09-deploy.md)）|
 | KMS/Vault custodian | 📋 seam のみ |
-| agy（Antigravity CLI）kind | ✅ 実装済み（[32](../32-agy-agent-kind.md)、採用判断は [decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md)）|
-| copilot（GitHub Copilot CLI）kind | ✅ 実装済み・Terminal+Managed 両対応（[36](../36-copilot-agent-kind.md) / [decisions/0019](../decisions/0019-copilot-agent-kind.md)）|
-| kiro（Kiro・旧 Amazon Q Developer CLI）kind | ✅ 実装済み・Terminal+Managed 両対応（[43](../43-kiro-agent-kind.md) / [decisions/0026](../decisions/0026-kiro-agent-kind.md)）|
-| コンテナ内ブラウザペイン | ✅ MVP実装・W5ライブ結線検証済み（[decisions/0018](../decisions/0018-container-browser-pane.md) / [設計31](../31-container-browser-pane.md)）|
-| Go 内部リファクタ | 大半を統合済み（CP 分割、Agent `internal/`・エージェント縦割り）。残作業は [docs/23](../23-go-refactor.md)、現配置は [90](90-code-map.md) |
+| agy（Antigravity CLI）kind | ✅ 実装済み（[32](../log/32-agy-agent-kind.md)、採用判断は [decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md)）|
+| copilot（GitHub Copilot CLI）kind | ✅ 実装済み・Terminal+Managed 両対応（[36](../log/36-copilot-agent-kind.md) / [decisions/0019](../decisions/0019-copilot-agent-kind.md)）|
+| kiro（Kiro・旧 Amazon Q Developer CLI）kind | ✅ 実装済み・Terminal+Managed 両対応（[43](../log/43-kiro-agent-kind.md) / [decisions/0026](../decisions/0026-kiro-agent-kind.md)）|
+| コンテナ内ブラウザペイン | ✅ MVP実装・W5ライブ結線検証済み（[decisions/0018](../decisions/0018-container-browser-pane.md) / [設計31](../log/31-container-browser-pane.md)）|
+| Go 内部リファクタ | 大半を統合済み（CP 分割、Agent `internal/`・エージェント縦割り）。残作業は [docs/23](../log/23-go-refactor.md)、現配置は [90](90-code-map.md) |

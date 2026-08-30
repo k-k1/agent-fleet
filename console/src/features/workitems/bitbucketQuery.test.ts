@@ -1,4 +1,4 @@
-// Bitbucket の保存クエリを組み立てる純ロジック（docs/80 §80.23）。ここで固定したいのは
+// Bitbucket の保存クエリを組み立てる純ロジック（docs/log/80 §80.23）。ここで固定したいのは
 // 「人が書けない書式を af が代わりに書く」ことなので、**出力の文字列そのもの**を見る。
 import { describe, expect, it } from "vitest";
 import { bbNeedsRepo, bbQueries, bbQuery, bbRepoNames, bbWorkspaceOf, bbWorkspaces } from "./bitbucketQuery.ts";

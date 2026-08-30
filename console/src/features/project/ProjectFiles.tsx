@@ -106,7 +106,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   const filesTick = useFilesStore((s) => s.tick);
   const q = useFilesFilter((s) => s.q);
   const nq = normQuery(q);
-  const wset = useActiveWorkingSet(); // 作業グループ (docs/52) — repos ツリーの絞り込み
+  const wset = useActiveWorkingSet(); // 作業グループ (docs/log/52) — repos ツリーの絞り込み
   const focusInput = useFilesFilter((s) => s.focusInput);
   const focusTreeN = useFilesFilter((s) => s.focusTreeN);
   const askConfirm = useConfirm();
@@ -138,7 +138,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   const showFile = useCallback((p: string) => openTarget({ content: { kind: "file", filePath: p } }), [openTarget]);
   const showFileSplit = useCallback((p: string) => openTargetInNew({ content: { kind: "file", filePath: p } }), [openTargetInNew]);
 
-  // Open an ad-hoc assistant chat for a Files verb (docs/30 ②): translate / summarize
+  // Open an ad-hoc assistant chat for a Files verb (docs/log/30 ②): translate / summarize
   // the file with the verb persona baked in — no standing assistant. The Agent attaches
   // the file's dir as knowledge and returns a seed prompt; openChat prefills the composer
   // (never auto-sent — the user reviews and hits Enter).
@@ -151,7 +151,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
             : t("proj.verb_title.summarize", { name: baseName(filePath) });
         const c = await chatCreate("", title, { attachPath: filePath, seedVerb: verb });
         if (c && c.id) {
-          autoAddToActiveWorkingSet("convs", c.id); // docs/52 §1
+          autoAddToActiveWorkingSet("convs", c.id); // docs/log/52 §1
           openChat(c.id, c.seed);
         } else toast(t("send.chat_create_failed"));
       } catch {
@@ -309,7 +309,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
   }, [searchMode, q, root, filesTick]);
 
   // The rows actually shown / navigated: flat search hits in search mode, else
-  // the (tree-)filtered rows — both scoped to the active 作業グループ (docs/52)
+  // the (tree-)filtered rows — both scoped to the active 作業グループ (docs/log/52)
   // for the repos-rooted tree: a row is kept when its top-level working copy
   // belongs to the group (worktree folders resolve via their "<base>@" prefix).
   const allRows = searchMode ? searchRows ?? NO_ROWS : filteredRows;

@@ -17,7 +17,7 @@
 }
 /* Legacy control styles (old styles.css element globals), scoped to the views that
    host the transcript render layer — the mirror AND the recipient's shared session
-   (docs/59). The blocks in features/mirror/transcript are shared by both and still
+   (docs/log/59). The blocks in features/mirror/transcript are shared by both and still
    carry this raw <button className="ghost|primary"> markup, so scoping these to
    .mirrorview alone made the very same footer render as a plain bordered button in
    the shared view (the コピー button stood out like a primary action). :where() keeps
@@ -448,7 +448,7 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
 }
-/* Operator-injected user turn (docs/30 ②): the prompt came from the fleet operator
+/* Operator-injected user turn (docs/log/30 ②): the prompt came from the fleet operator
    assistant, not the user's own keyboard. A distinct pill + a left accent on the bubble
    so the two are never confused. */
 .mt-op {
@@ -466,7 +466,7 @@
 .mirror-turn.user.from-operator {
   border-left: 2px solid color-mix(in srgb, var(--warn, #e0a45e) 55%, var(--border));
 }
-/* Chat-bridge-injected user turn (docs/37 P2a): a reply the user sent from Discord/Slack,
+/* Chat-bridge-injected user turn (docs/log/37 P2a): a reply the user sent from Discord/Slack,
    not the console keyboard. Same pill shape as the operator badge but a distinct (info)
    hue so the two origins read apart. */
 .mt-chat {
@@ -476,7 +476,7 @@
 .mirror-turn.user.from-chat {
   border-left: 2px solid color-mix(in srgb, var(--accent, #5e9ce0) 55%, var(--border));
 }
-/* Schedule-injected user turn (docs/38): the prompt was fired by a schedule — timed
+/* Schedule-injected user turn (docs/log/38): the prompt was fired by a schedule — timed
    ("定時") or a run-now ("手動発火"). Same pill shape, its own (ok/green) hue so the
    three injected origins (operator / chat / schedule) read apart at a glance. */
 .mt-sched {
@@ -486,7 +486,7 @@
 .mirror-turn.user.from-schedule {
   border-left: 2px solid color-mix(in srgb, var(--ok, #5ec07a) 55%, var(--border));
 }
-/* Peer-injected user turn (docs/58 / ADR 0041): ANOTHER SESSION sent this. Its own
+/* Peer-injected user turn (docs/log/58 / ADR 0041): ANOTHER SESSION sent this. Its own
    (purple-ish) hue so the four injected origins (operator / chat / schedule / peer) read
    apart. This badge is the only visualisation a peer message gets, so it is deliberately
    as loud as the operator one rather than a faint metadata pill. */
@@ -497,7 +497,7 @@
 .mirror-turn.user.from-peer {
   border-left: 2px solid color-mix(in srgb, var(--peer, #b48ee0) 55%, var(--border));
 }
-/* Message kind (docs/58 §58.14): 依頼 / 質問 / 回答 / 共有, read back from the envelope.
+/* Message kind (docs/log/58 §58.14): 依頼 / 質問 / 回答 / 共有, read back from the envelope.
    Same hue as the sender badge but outlined instead of filled — it qualifies that badge
    rather than competing with it. Worth showing at all because it is what explains why a
    message did or did not get an answer. */
@@ -601,7 +601,7 @@
 .mt-spend .ts-out {
   background: var(--chat-accent);
 }
-/* カラオケ朗読（turnTts, docs/24）: いま読んでいる文が属するブロックのハイライト。 */
+/* カラオケ朗読（turnTts, docs/log/24）: いま読んでいる文が属するブロックのハイライト。 */
 .mirror-turn-body .tts-active {
   background: color-mix(in srgb, var(--chat-accent) 14%, transparent);
   border-radius: 4px;
@@ -625,7 +625,7 @@
   color: var(--fg);
   background: var(--hover-bg);
 }
-/* 「ここから分岐」（docs/55）— コピーと同じフッターの控えめな操作。ホバー/フォーカスまで
+/* 「ここから分岐」（docs/log/55）— コピーと同じフッターの控えめな操作。ホバー/フォーカスまで
    隠すと、そんな機能があること自体に気づけないので、常に出しておいて色だけ落とす。
    coarse pointer にはホバーが無いという理由でもある（headless の実測メモ参照）。 */
 .mt-fork {
@@ -821,7 +821,7 @@
   font-variant-numeric: tabular-nums;
   color: var(--fg);
 }
-/* ターン末尾のファイルチップ (docs/68 P1): この返信が直したファイル。畳まれた
+/* ターン末尾のファイルチップ (docs/log/68 P1): この返信が直したファイル。畳まれた
    ToolRun を開かずに「さっき直したのはどれ」に答える。フッターの直前に置き、
    時刻・トークンと同じ余白に載せる。 */
 .mirror-turn-files {
@@ -877,7 +877,7 @@
   white-space: nowrap;
 }
 
-/* 変更ファイル (docs/68): the files this session edited, as a collapsed disclosure in the
+/* 変更ファイル (docs/log/68): the files this session edited, as a collapsed disclosure in the
    same band as the ToDo list. It reuses .mirror-disclosure and the .chg-badge / .dv-add /
    .dv-del vocabularies (global) so a row reads identically to the rail's 変更 list and to
    a diff pane's counters. */
@@ -1019,7 +1019,7 @@
 .mfl-sub .codicon {
   font-size: 11px;
 }
-/* コミット済み (docs/68 P2): 作業ツリーに差分は無いが、セッション開始以降のコミットに
+/* コミット済み (docs/log/68 P2): 作業ツリーに差分は無いが、セッション開始以降のコミットに
    現れた行。「片付いた」ことが読み取れればよいので、まだ手を入れられる行（未ステージ/
    未追跡）より控えめだが、根拠のない「差分なし」よりは前に出す。 */
 .chg-badge.st-done {
@@ -1731,7 +1731,7 @@ button.mt-tool-outhead {
   opacity: 0.85;
 }
 /* An edit expanded in place, for views with no diff pane to open (the shared-session
-   view — the DTO keeps the diff body but drops the path, docs/59 §3). Sits in the same
+   view — the DTO keeps the diff body but drops the path, docs/log/59 §3). Sits in the same
    slot as .mt-tool-output and borrows the diff pane's dv-* row styling (viewer.css). */
 .mt-tool-diffstat {
   margin-left: auto;
@@ -2511,7 +2511,7 @@ button.mt-bash-toggle:hover {
 .mirror-attach-btn:disabled {
   opacity: 0.4;
 }
-/* スキルピッカー（docs/50）: 「/」ボタンは ＋ と同寸で並び、リストはコンポーサーの
+/* スキルピッカー（docs/log/50）: 「/」ボタンは ＋ と同寸で並び、リストはコンポーサーの
    すぐ上に浮く（トランスクリプトに重なる）。選択ハイライトは sel-index 駆動
    （フォーカスは textarea に残る — CommandPalette と同型）。 */
 .mirror-skill-btn {
@@ -2882,7 +2882,7 @@ button.mt-bash-toggle:hover {
 .mirror-handoff-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .mirror-handoff-newwt { display: flex; align-items: center; gap: 6px; margin-top: 9px; font-size: 12.5px; color: var(--muted); }
 
-/* ── 転写のマーカー（docs/69 / ADR 0050）─────────────────────────────────────
+/* ── 転写のマーカー（docs/log/69 / ADR 0050）─────────────────────────────────────
    色は利用者が選ぶ「意味」の軸、作成者は下線の色。2つを1つの軸へ押し込むと、
    共有先が3人いる会話で色が意味を失う（ADR 0050 決定 5）。 */
 mark.tmark {
@@ -2941,7 +2941,7 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
 }
 .tmark-card-del { align-self: flex-start; }
 
-/* マーカーの一覧帯（docs/69 §69.7）。畳み方と寸法は変更ファイル帯（.mirror-files）に
+/* マーカーの一覧帯（docs/log/69 §69.7）。畳み方と寸法は変更ファイル帯（.mirror-files）に
    揃える — 同じ帯に並ぶパネルが別々の作法だと、無関係な機能が2つあるように読める。 */
 .mirror-marks {
   margin: 6px 16px;
@@ -2982,7 +2982,7 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
 }
 .tmark-row-del:hover { color: var(--fg); background: var(--hover, var(--panel2)); }
 
-/* 持ち越した対話（docs/75）— 停止時に画面に出ていたが答えが届かなかったもの。
+/* 持ち越した対話（docs/log/75）— 停止時に画面に出ていたが答えが届かなかったもの。
    保留カード（.mt-question / .mt-perm）と**見た目で区別できること**が要件:
    同じ質問文が同じ形で出ていると、利用者は「さっき答えたのにまた出ている」と読み、
    キーで答えられるカードとの違いに気づけない。注意色ではなく中立の枠にして、
@@ -3009,7 +3009,7 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
   opacity: 0.85;
 }
 
-/* 引き継ぎの状態行（docs/77 §77.10）。通知は流れ物なので、二重作業を防ぐのはここの役目。 */
+/* 引き継ぎの状態行（docs/log/77 §77.10）。通知は流れ物なので、二重作業を防ぐのはここの役目。 */
 .mirror-handoff-offer {
   margin: 0.35rem 0 0;
   font-size: 0.85em;

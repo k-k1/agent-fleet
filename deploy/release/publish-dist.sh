@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agent Fleet — dist repo publish (docs/35 §35.7.4-1 / §35.4.2).
+# Agent Fleet — dist repo publish (docs/log/35 §35.7.4-1 / §35.4.2).
 #
 #   VERSION=0.1.0 deploy/release/publish-dist.sh [--dist-dir <d>] [--repo <o/r>] [--seed] [--dry-run]
 #
@@ -21,7 +21,7 @@
 # from the repo root so the public copy matches the one bundled in the tars. The CHANGELOGs are
 # generated — run gen-changelog.sh after adding the notes/index.tsv row, before publishing.
 # Auth via gh (local = gh auth login / CI = GH_TOKEN set to DIST_PUBLISH_TOKEN).
-# Runbook for a real publish: docs/35 §35.8.2.
+# Runbook for a real publish: docs/log/35 §35.8.2.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -88,7 +88,7 @@ if [ "$SEED" = 1 ]; then
   # NOTICE carries the primary-distribution URL that Apache-2.0 §4(d) makes
   # redistributors propagate, so the dist repo must show it too.
   # The README screenshots live in the repo's docs/img/ (regenerate with
-  # console/scripts/shots — docs/35 §35.7.4-1) and are pushed under the same path,
+  # console/scripts/shots — docs/log/35 §35.7.4-1) and are pushed under the same path,
   # so both READMEs can reference them relatively. Binary content rides the same
   # base64 contents API as the text files.
   shots=()
@@ -163,7 +163,7 @@ for f in "agent-fleet-$VERSION.tar.gz" \
   size="$(stat -c%s "$p")"
   if [ "$size" -ge "$GH_MAX_ASSET" ]; then
     echo "WARN: $f is ${size} bytes, over the 2GiB GitHub Releases asset limit — skipping" >&2
-    echo "      (hand the file over out of band — docs/35 §35.2)" >&2
+    echo "      (hand the file over out of band — docs/log/35 §35.2)" >&2
     continue
   fi
   assets+=("$p")

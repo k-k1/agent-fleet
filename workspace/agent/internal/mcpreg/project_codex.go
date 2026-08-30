@@ -1,9 +1,9 @@
 package mcpreg
 
-// Exports for docs/56 P1's mcpproj to write .codex/config.toml the SAME way
+// Exports for docs/log/56 P1's mcpproj to write .codex/config.toml the SAME way
 // materialize_codex.go already does — a line-based edit, not a parse→re-emit
 // round trip, because config.toml carries comments and [projects."…"] trust
-// sections a generic TOML encoder would silently reformat away (docs/48 §8.2).
+// sections a generic TOML encoder would silently reformat away (docs/log/48 §8.2).
 //
 // These are pure syntax helpers (TOML string/array/table escaping, table-name
 // stripping by NAME predicate) with no ServerDef in their signature, so exporting

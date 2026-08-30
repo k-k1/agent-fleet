@@ -1,6 +1,6 @@
 # 0052. git プロバイダ（GitHub / Bitbucket）の OAuth アプリを**テナント管理者**が登録する
 
-- 状態: **採用**（2026-08-22）。検討の記録は [docs/71](../71-tenant-git-oauth.md)。
+- 状態: **採用**（2026-08-22）。検討の記録は [docs/71](../log/71-tenant-git-oauth.md)。
 - 関連: [0043-login-idp.md](0043-login-idp.md) 決定 29/30（テナント定義の IdP＝**承認が要る**側）・
   決定 24/25（テナントの外へ届くものは運用者、中で閉じるものはテナント管理者） /
   [0047-tenant-network-restriction.md](0047-tenant-network-restriction.md) 決定 6（同じ線引き）

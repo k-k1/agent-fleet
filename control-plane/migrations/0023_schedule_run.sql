@@ -1,4 +1,4 @@
--- Scheduled execution run history (docs/38 + ADR0021, P3 get_schedule_runs). One row
+-- Scheduled execution run history (docs/log/38 + ADR0021, P3 get_schedule_runs). One row
 -- per fire attempt, appended by the scheduler and trimmed to a bounded tail per schedule
 -- so a frequent interval schedule cannot grow it without limit. status mirrors the
 -- schedule's last_status token (fired / skipped_* / error-...) and detail is an optional

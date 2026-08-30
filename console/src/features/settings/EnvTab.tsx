@@ -102,7 +102,7 @@ export function EnvTab() {
   );
 }
 
-// HostUpdateSection surfaces the native host self-update (docs/42). GET
+// HostUpdateSection surfaces the native host self-update (docs/log/42). GET
 // /api/update/status is native-only; on any other deployment (Docker/ECS, dev)
 // the CP does not register the route, api() returns an http_404 error, and this
 // renders nothing. When a newer version has been staged on disk (by `af update`

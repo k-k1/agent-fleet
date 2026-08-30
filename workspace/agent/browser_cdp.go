@@ -90,7 +90,7 @@ func launchPipeCDP(ctx context.Context) (browserCDP, error) {
 	// AF_CHROMIUM_NO_SANDBOX=1 is the documented escape hatch for hosts where no
 	// Chromium sandbox can work at all — the native rootfs mode runs under an
 	// unprivileged userns (no SUID helper) and its namespace-sandbox viability is
-	// hardware/kernel dependent (docs/35 §35.7.2-4). Pane-only usage, loopback
+	// hardware/kernel dependent (docs/log/35 §35.7.2-4). Pane-only usage, loopback
 	// CDP; the README spells out the tradeoff. Default remains sandboxed.
 	return launchPipeCDPWithSandbox(ctx, os.Getenv("AF_CHROMIUM_NO_SANDBOX") != "1")
 }
@@ -195,7 +195,7 @@ func findChromiumBinary() (string, error) {
 	// The pinned on-demand build (install-chromium) comes BEFORE the playwright
 	// cache: on a lean rootfs nothing is baked, and without this ordering a
 	// user-managed playwright download would win over the verified pin
-	// (docs/35 §35.7.2-4).
+	// (docs/log/35 §35.7.2-4).
 	if p := chromiumPinnedBinary(); p != "" {
 		return p, nil
 	}

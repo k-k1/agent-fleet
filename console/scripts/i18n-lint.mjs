@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// i18n 回帰防止チェック（docs/28-i18n.md P5）。JSX テキスト・文字列/テンプレートリテラルの中に
+// i18n 回帰防止チェック（docs/log/28-i18n.md P5）。JSX テキスト・文字列/テンプレートリテラルの中に
 // 生の日本語（CJK）が残っていないかを TypeScript の AST で検出する。コメントは AST ノードでは
 // ないので自動的に対象外＝「表示に出る文言」だけを拾える（正規表現よりも誤検出が少ない）。
 //
@@ -12,7 +12,7 @@
 // ファイルの違反は「移行待ち（backlog）」として非致命で報告し、**それ以外**のファイルの違反
 // だけを CI 落とし条件にする。移行してゼロになったファイルは pending から外す（＝二度と戻れない）。
 //
-// 除外の仕組み（翻訳しないと決めた文言＝docs/28 §4/§6.4 の LLM プロンプト・TTS 読み辞書・
+// 除外の仕組み（翻訳しないと決めた文言＝docs/log/28 §4/§6.4 の LLM プロンプト・TTS 読み辞書・
 // 回答判定の正規表現・固有名詞など。pending と違い「恒久的に翻訳しない」意思表示）:
 //   * 行末 or 直前コメント行の  // i18n-exempt[: 理由]          … その 1 ノード
 //   * // i18n-exempt-start 〜 // i18n-exempt-end で囲む            … 範囲（LLM プロンプト塊など）
@@ -36,7 +36,7 @@ const HAS_LETTER = /[぀-ヿ㐀-鿿]/;
 const ALLOW_FILES = new Set([
   "lib/i18n/locales/ja.ts", // カタログ正本（CJK が中身）
   "lib/i18n/locales/en.ts", // 英カタログ（型網羅対象）
-  "features/chat/ttsText.ts", // TTS 読み変換の内部（発音辞書ロジック・docs/28 §4）
+  "features/chat/ttsText.ts", // TTS 読み変換の内部（発音辞書ロジック・docs/log/28 §4）
   "features/chat/ttsDict.ts", // 読み辞書データ
   "features/chat/tts.ts", // VOICEVOX 話者名・感情スタイル名（§6.4 未翻訳）＋読み上げロジック
   "features/viewer/readerText.ts", // なろうルビ解析ロジック（《》｜ は構文文字）

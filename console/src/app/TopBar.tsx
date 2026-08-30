@@ -1,4 +1,4 @@
-// Top bar — ported from the old components/TopBar.tsx (docs/22 P6b). Verbatim
+// Top bar — ported from the old components/TopBar.tsx (docs/log/22 P6b). Verbatim
 // except the useApp() reads (→ core/store/tenant), the nav toggles (→ props from
 // App) and openSettings/openAdmin (→ features/settings/store).
 import { useEffect, useRef, useState } from "react";
@@ -42,7 +42,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const s = useSettings();
   const tr = useT();
   const isMobile = useIsMobile();
-  // 音声読み上げ（docs/24）: ピルは常時表示。再生中は「読み上げ中＋停止」（クリックで全体
+  // 音声読み上げ（docs/log/24）: ピルは常時表示。再生中は「読み上げ中＋停止」（クリックで全体
   // 1 本の再生を止める）、アイドル時は設定 ttsEnabled の ON/OFF トグルとして働く。
   // ttsSessionNotify（音声通知）は別軸なので、OFF でも speaking になり得る＝speaking 優先。
   const ttsSpeaking = useTtsStore((st) => st.speaking);
@@ -106,7 +106,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const openSettings = useSettingsUI((st) => st.openSettings);
   const openAdmin = useSettingsUI((st) => st.openAdmin);
   const openTenantSettings = useSettingsUI((st) => st.openTenantSettings);
-  // Native host self-update (docs/42): null on non-native deployments. When a newer
+  // Native host self-update (docs/log/42): null on non-native deployments. When a newer
   // version is staged we surface it here — next to the build stamp — as a nudge into
   // 設定 → ツールチェーン, where the actual "再起動して適用" action lives.
   const hostUpdate = useHostUpdate();
@@ -118,7 +118,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const deployImages = !!(deployment?.image || deployment?.workspace_image);
   const [verCopied, setVerCopied] = useState(false);
   // One block with every fact a bug report needs — the point of the version zone
-  // (docs/35 §35.6.1). Built at click time so it always matches what is on screen.
+  // (docs/log/35 §35.6.1). Built at click time so it always matches what is on screen.
   const copyVersions = () => {
     const lines = [
       deployment?.version
@@ -347,7 +347,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     どのテナントの管理者としても通す（`tenantAdminFor`）ので、隠していたのは
                     表示だけであり、その表示が「デプロイ管理者は管理モーダルから入る」という
                     暗黙のルールを人に要求していた。実際それで、テナント設定にしか無い面
-                    （接続元の制限・docs/66）が在籍の無い super_admin から見えなくなった。
+                    （接続元の制限・docs/log/66）が在籍の無い super_admin から見えなくなった。
                     テナントが複数あればモーダル側にピッカーが出る（TenantDialog）。 */}
                 {(superAdmin || tenants?.some((t) => t.role === "tenant_admin")) && (
                   <button className="acct-item" role="menuitem" onClick={() => run(() => openTenantSettings())}>
@@ -385,7 +385,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     </button>
                   </>
                 )}
-                {/* Version zone. Native host self-update (docs/42) sits above the FE
+                {/* Version zone. Native host self-update (docs/log/42) sits above the FE
                     build stamp: a CTA when a newer af is staged (→ 設定 for the restart),
                     else the current host version. Both hidden on non-native (hostUpdate
                     null). The build stamp below is the Console FRONTEND bundle — a

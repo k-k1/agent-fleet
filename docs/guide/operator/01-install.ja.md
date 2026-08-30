@@ -74,7 +74,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 > クローンするための「OAuth で接続」ボタンは**テナント単位**で、テナント管理者が Console の
 > **テナント設定 → 連携 → git プロバイダ OAuth** で登録します。デプロイ側の設定は無く、
 > `BITBUCKET_OAUTH_KEY` / `_SECRET` は一切読まれません。上の `GITHUB_OAUTH_CLIENT_ID` は
-> サインイン用アプリだけを意味します。詳細は [docs/71](../../71-tenant-git-oauth.md)。
+> サインイン用アプリだけを意味します。詳細は [docs/71](../../log/71-tenant-git-oauth.md)。
 
 うまくいくかどうかを分けるのは次の 3 点で、いずれも [05](05-login-idp.ja.md) に詳細があります。
 

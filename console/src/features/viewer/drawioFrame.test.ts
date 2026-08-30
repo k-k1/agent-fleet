@@ -1,4 +1,4 @@
-// フレーム HTML の組み立て（docs/65 §65.3）。ここで守るのは「外部へ出る経路と
+// フレーム HTML の組み立て（docs/log/65 §65.3）。ここで守るのは「外部へ出る経路と
 // 隔離が、文字列として本当に入っているか」だけ。描画そのものは実ブラウザでしか
 // 確かめられないので scripts/drawio/check.mjs が見る。
 import { describe, expect, it } from "vitest";
@@ -42,7 +42,7 @@ describe("drawioFrameSrcdoc", () => {
     expect(s).toContain("script-src 'unsafe-inline';");
   });
 
-  it("ステンシルもフレームには取りに行かせない（docs/65 §65.5.4）", () => {
+  it("ステンシルもフレームには取りに行かせない（docs/log/65 §65.5.4）", () => {
     const s = html();
     // ビューア自身の遅延取得を切ったままにする。true に戻すと、認証を通れない要求・
     // CSP の穴・失敗後に再試行しない詰まり方が **まとめて** 戻ってくる（どれも実測）。
@@ -82,7 +82,7 @@ describe("drawioFrameSrcdoc", () => {
 
   it("dark-mode は真偽値ではなく文字列で渡す", () => {
     // isDarkMode() は "dark" / "auto" と比較するので、true は黙って「ライト」になる。
-    // 暗い背景に黒い既定文字が載って読めなくなる（docs/65 §65.11-10）。
+    // 暗い背景に黒い既定文字が載って読めなくなる（docs/log/65 §65.11-10）。
     // 値はフレームの中で描画時に決まるので、ここで見えるのは式そのもの。
     // **実際に暗色描画になったか**は scripts/drawio/check.mjs が isDarkMode() で検算する。
     expect(html()).toContain('"dark-mode": dark ? "dark" : "light"');

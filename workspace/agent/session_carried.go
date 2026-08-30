@@ -1,10 +1,10 @@
 package main
 
-// 保留中の対話の持ち越し（docs/75 §75.6）。
+// 保留中の対話の持ち越し（docs/log/75 §75.6）。
 //
 // モーダルを出したまま畳まれたセッションの「意図」を持ち越し、再開後に**文章として**
 // 配達する。モーダルそのものは戻せない — claude を --resume しても未応答の tool_use は
-// 親ポインタで迂回され、会話木から外れる（docs/75 §75.10 A で実測）。
+// 親ポインタで迂回され、会話木から外れる（docs/log/75 §75.10 A で実測）。
 //
 // ここが持つのは 3 つ: 昇格（pending-* → carried）、配達文面の組み立て、配達の入口。
 // 文面はテスト可能な純関数に切ってある — 実測（§75.10 C）で分かったとおり、この文面は
@@ -36,7 +36,7 @@ import (
 //     このうちペインと handle は**プロセスと一緒に消える**ので、畳む前に呼ぶこと。
 //
 // ★ tier1 の門は kind ではなく「halt が resumable か」になっている（tier1Foldable・
-// docs/75 P5）。つまり claude 以外も畳まれる以上、claude 以外の持ち越しが無いと
+// docs/log/75 P5）。つまり claude 以外も畳まれる以上、claude 以外の持ち越しが無いと
 // ADR 0055 決定 2（畳んでよいのは失われないときだけ）が成立しない。
 func promoteCarriedFor(m session.Meta) bool {
 	promoted := false
@@ -280,7 +280,7 @@ func handleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 }
 
 // promoteCarriedOther copies a NON-claude session's live pending modal into the
-// carried store, before whatever holds it goes away（docs/75 P5）。
+// carried store, before whatever holds it goes away（docs/log/75 P5）。
 //
 // claude だけが保留をディスク（pending-question / pending-plan / pending-perm）に
 // 持っている。他の kind の保留は会話 DB・events.jsonl・ペインのフッタ・runtime handle の

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agent Fleet — native launcher (docs/35 §35.3.1 / §35.7.2-8).
+# Agent Fleet — native launcher (docs/log/35 §35.3.1 / §35.7.2-8).
 # Extract the tar, run `./af start`, then open http://localhost:8099 in a browser.
 #
 #   ./af start [--rootfs <tar.zst>]   # first run: fetch rootfs (sha256-verified) and extract
@@ -21,7 +21,7 @@ DEV_KEY="${DEV_USER:-dev}"
 
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"; }
 
-# ---- distribution metadata (for `af update`; docs/42) ------------------------
+# ---- distribution metadata (for `af update`; docs/log/42) ------------------------
 # Where `af update` fetches new releases from. Baked as dist.json at build time
 # (paired with install.sh's defaults); env overrides win. Kept in sync with the
 # one-liner installer so update and install resolve the same artifacts.
@@ -135,7 +135,7 @@ do_start() {
   done
   local ver=""
   [ -f "$PKG/VERSION" ] && ver="$(cat "$PKG/VERSION")"
-  # Self-info for the CP's update surface (docs/42): AF_SELF_PKG is this running
+  # Self-info for the CP's update surface (docs/log/42): AF_SELF_PKG is this running
   # package; AF_SELF_LINK is the ~/.local/bin/af symlink `af update` re-points, so
   # the CP can compare its baked version against what is staged on disk and offer
   # "restart to apply". Empty for hand-extracted copies. AF_SYSTEMD_UNIT is
@@ -176,7 +176,7 @@ do_start() {
     "$PKG/bin/af-cp"
 }
 
-# ---- update: stage the latest release (docs/42) -------------------------------
+# ---- update: stage the latest release (docs/log/42) -------------------------------
 # Resolves the target version (AF_VERSION pins it; otherwise the latest release
 # via the releases/latest redirect — no API rate limit), downloads + sha256-
 # verifies the native tar against the release SHA256SUMS, extracts it next to the

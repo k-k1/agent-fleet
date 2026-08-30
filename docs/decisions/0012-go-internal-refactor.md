@@ -1,7 +1,7 @@
 # 0012. Go バックエンド内部リファクタ — internal 層化・2 バイナリ分離維持・共有モジュール見送り
 
 - 状態: 確定（2026-07-08）
-- 関連: [23-go-refactor.md](../23-go-refactor.md)（設計本体）/
+- 関連: [23-go-refactor.md](../log/23-go-refactor.md)（設計本体）/
   [0011-console-rebuild.md](0011-console-rebuild.md)（Console 側の先行事例）
 
 ## 背景

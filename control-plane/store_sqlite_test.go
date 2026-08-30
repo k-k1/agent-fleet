@@ -94,7 +94,7 @@ func TestSQLiteStore(t *testing.T) {
 	}
 }
 
-// Memo queue (docs/21): CRUD is membership-scoped; ListMemos returns unsent plus
+// Memo queue (docs/log/21): CRUD is membership-scoped; ListMemos returns unsent plus
 // sent-within-retention; MarkMemosSent stamps only owned ids; SweepSentMemos drops
 // memos sent before the cutoff.
 func TestSQLiteMemo(t *testing.T) {
@@ -197,7 +197,7 @@ func TestSQLiteMemo(t *testing.T) {
 	}
 }
 
-// Memo categories (docs/21 UI刷新): first-class rows, membership-scoped, with a rename
+// Memo categories (docs/log/21 UI刷新): first-class rows, membership-scoped, with a rename
 // that cascades onto the memos and ReassignMemoCategory that empties/moves them.
 func TestSQLiteMemoCategory(t *testing.T) {
 	ctx := context.Background()
@@ -333,7 +333,7 @@ func TestAggregateUsage(t *testing.T) {
 	}
 }
 
-// Workspace reads carry the owning tenant's SLUG (docs/67, ADR 0048 決定 3). It is not a
+// Workspace reads carry the owning tenant's SLUG (docs/log/67, ADR 0048 決定 3). It is not a
 // column on the row — the AWS adapters need it to stamp `af-tenant`, and reading it
 // there would mean a store call from inside a tag write, on every Start.
 func TestSQLiteWorkspaceCarriesTenantSlug(t *testing.T) {

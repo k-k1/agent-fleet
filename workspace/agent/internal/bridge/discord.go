@@ -22,7 +22,7 @@ var discordAPIBase = "https://discord.com/api/v10"
 
 // ErrUnauthorized marks a credential Discord rejected (401/403) — the
 // connections handler turns it into a 400 for the card, while a network error
-// is tolerated (offline-friendly: outbound may be restricted, docs/37).
+// is tolerated (offline-friendly: outbound may be restricted, docs/log/37).
 var ErrUnauthorized = errors.New("discord: unauthorized")
 
 // discordAPIError carries the HTTP status and Discord's JSON error code so the
@@ -49,7 +49,7 @@ func isThreadArchived(err error) bool {
 	return errors.As(err, &de) && de.Code == 50083
 }
 
-// discordProvider is the P1 send-only Discord implementation (docs/37 契約1:
+// discordProvider is the P1 send-only Discord implementation (docs/log/37 契約1:
 // Discord is fully capable — CanReceive/CanInteract turn on with P2's Gateway
 // connection; Send itself needs only REST, no Gateway).
 type discordProvider struct {
@@ -61,7 +61,7 @@ type discordProvider struct {
 
 // Providers builds the send-capable providers configured in the secrets store.
 // Called per drain — cheap, stateless, and picks up connect/disconnect without
-// any daemon-side registry. Discord and Slack coexist (docs/37 Slack 追随): each
+// any daemon-side registry. Discord and Slack coexist (docs/log/37 Slack 追随): each
 // gets its own resume cursor (queued.Delivered keys on Name()) and DM cache callback.
 func Providers(s *secrets.Data, cacheDiscordDM, cacheSlackDM func(channelID string)) []Provider {
 	var out []Provider
@@ -91,7 +91,7 @@ func (d *discordProvider) Send(m Message) error {
 
 // SendFrom delivers m starting at sub-message index `from` and returns the count of
 // sub-messages delivered so far (cumulative from 0), so the sender can resume a
-// partial delivery without re-posting what already landed (docs/37 重複対策 =
+// partial delivery without re-posting what already landed (docs/log/37 重複対策 =
 // ResumableSender). A transient failure returns the count reached and the error.
 func (d *discordProvider) SendFrom(m Message, from int) (int, error) {
 	// In thread mode the completion is already delivered to the session's thread by
@@ -109,7 +109,7 @@ func (d *discordProvider) SendFrom(m Message, from int) (int, error) {
 	if len(msgs) == 0 {
 		return from, nil
 	}
-	// Thread-per-session (docs/37 P1.5): guild channel destination only — threads
+	// Thread-per-session (docs/log/37 P1.5): guild channel destination only — threads
 	// don't exist in DMs — and only for session-scoped events.
 	if d.creds.ChannelID != "" && d.creds.Threads && m.SessionName != "" {
 		return d.sendThreaded(m, msgs, from)
@@ -128,18 +128,18 @@ func (d *discordProvider) SendFrom(m Message, from int) (int, error) {
 // retries so a delivery cursor (SendFrom's `from`) indexes the same messages.
 func (d *discordProvider) buildMessages(m Message) []outMsg {
 	content := m.Text(d.creds.Lang)
-	// 全文ブリッジ (docs/37 将来の方向): in full-text mode the answer body IS the
+	// 全文ブリッジ (docs/log/37 将来の方向): in full-text mode the answer body IS the
 	// message — drop the headline/「表示名」/link preface and post the scrubbed,
 	// Discord-formatted body alone (the thread name already names the session, and
 	// the deep link is usually dead in the local-only setup full-text targets). Only
 	// answer-ready carries a body; every other kind keeps its headline.
 	if d.creds.FullText && m.Body != "" {
-		// A trailing divider (docs/37 Fix ⑤) so a run of answers doesn't visually merge.
+		// A trailing divider (docs/log/37 Fix ⑤) so a run of answers doesn't visually merge.
 		content = withDivider(renderBodyForDiscord(m.Body))
 	}
 	// Mention makes mobile push deterministic: Discord's default notification level
 	// for guild channels AND threads is "only @mentions", so an unpinged notification
-	// silently becomes badge-only (docs/37 P1.5). DM mode needs none. It rides the
+	// silently becomes badge-only (docs/log/37 P1.5). DM mode needs none. It rides the
 	// FIRST chunk only (one ping per turn) and is budgeted so the pinged chunk still
 	// fits Discord's limit. The time-gate (shouldMention) keeps a rapid answer stream
 	// from pinging every turn while still pushing after a lull.
@@ -151,7 +151,7 @@ func (d *discordProvider) buildMessages(m Message) []outMsg {
 	for _, c := range chunkMessage(content, prefix) {
 		msgs = append(msgs, outMsg{content: c})
 	}
-	// P2b (docs/37): append interactive button messages for attention events when
+	// P2b (docs/log/37): append interactive button messages for attention events when
 	// this connection can round-trip clicks (Receive gateway + channel mode).
 	if d.interactive() {
 		msgs = append(msgs, d.buttonMessages(m)...)
@@ -166,7 +166,7 @@ func (d *discordProvider) buildMessages(m Message) []outMsg {
 // pushes. Tunable; a var so tests can shrink it.
 var mentionQuietWindow = 10 * time.Minute
 
-// shouldMention decides whether this message carries the push @mention (docs/37,
+// shouldMention decides whether this message carries the push @mention (docs/log/37,
 // user request 2026-07-22). Action/abnormal events always ping (you must act, or the
 // session died); read-only events ping only when the session's thread has been quiet
 // for mentionQuietWindow. Without a thread to gate on (flat channel / DM / first
@@ -225,7 +225,7 @@ func (d *discordProvider) destChannel() (string, error) {
 
 // sendThreaded posts msgs[from:] into the session's thread, creating it from the
 // session's first notification when needed, and returns the cumulative delivered
-// count so a partial failure resumes without duplicating (docs/37 重複対策). Failure
+// count so a partial failure resumes without duplicating (docs/log/37 重複対策). Failure
 // policy unchanged: the notification is never lost to thread bookkeeping — a failed
 // thread creation falls back to flat delivery and the grouping retries next event.
 func (d *discordProvider) sendThreaded(m Message, msgs []outMsg, from int) (int, error) {
@@ -283,7 +283,7 @@ func (d *discordProvider) postRangeToThread(session, threadID string, msgs []out
 
 // MirrorUserInput echoes a prompt the user submitted from the Console into the session's
 // chat thread(s), so each connected provider's thread stays a faithful two-way mirror
-// (docs/37 Fix ②). Called async from the Console input path for genuine human prompts
+// (docs/log/37 Fix ②). Called async from the Console input path for genuine human prompts
 // (report_to == ""); operator/MCP injections are badged elsewhere and chat-origin replies
 // already show a 👀. Best-effort per provider.
 func MirrorUserInput(sessionName, text string) {
@@ -312,7 +312,7 @@ func mirrorDiscordInput(sessionName, text string) {
 	}
 	prov := &discordProvider{creds: *d}
 	// 🧑 marks it as the human's own input, distinct from the bot's answer posts; the
-	// trailing divider (docs/37 Fix ⑤) separates it from the answer that follows.
+	// trailing divider (docs/log/37 Fix ⑤) separates it from the answer that follows.
 	for _, chunk := range chunkMessage(withDivider(renderBodyForDiscord(text)), "🧑 ") {
 		if err := prov.postToThread(ref.Thread, outMsg{content: chunk}); err != nil {
 			log.Printf("bridge: mirror console input to %s failed: %v", sessionName, err)
@@ -373,7 +373,7 @@ func DiscordAppInfo(token string) (DiscordApp, error) {
 
 // discordInvitePermissions = VIEW_CHANNEL(1024) + SEND_MESSAGES(2048) +
 // ADD_REACTIONS(64) + CREATE_PUBLIC_THREADS(1<<34) + SEND_MESSAGES_IN_THREADS(1<<38).
-// The thread bits back docs/37 P1.5 and ADD_REACTIONS backs the P2a inject receipt
+// The thread bits back docs/log/37 P1.5 and ADD_REACTIONS backs the P2a inject receipt
 // (👀); private guilds usually grant these via @everyone anyway, so older invites keep
 // working — a denial surfaces as testError / a silently-logged best-effort skip.
 const discordInvitePermissions = "292057779264"
@@ -420,7 +420,7 @@ func DiscordGuildChannels(token, guildID string) ([]DiscordChannel, error) {
 }
 
 // DiscordGuildOwner returns a guild's owner_id — the zero-friction way to get
-// the user's own id (docs/37 P1.5): in the recommended setup the user created
+// the user's own id (docs/log/37 P1.5): in the recommended setup the user created
 // the private guild, so owner == user. No privileged intent, no Developer Mode.
 func DiscordGuildOwner(token, guildID string) (string, error) {
 	var g struct {
@@ -485,7 +485,7 @@ func DiscordUnarchiveThread(token, threadID string) error {
 }
 
 // receiptEmoji is the reaction the bot adds to an injected reply to signal "received,
-// now working" (docs/37 P2a ack). Eyes read as "seen" and pair with the typing pulse.
+// now working" (docs/log/37 P2a ack). Eyes read as "seen" and pair with the typing pulse.
 const receiptEmoji = "👀"
 
 // DiscordAddReaction reacts to a message as the bot (PUT .../reactions/{emoji}/@me).
@@ -529,7 +529,7 @@ func DiscordEditMessage(token, channelID, messageID, content string, components 
 }
 
 // DiscordResolveDM opens (or returns the existing) DM channel with the bound
-// user — the REST shape of "DM this person" (docs/37 契約5: the bot only ever
+// user — the REST shape of "DM this person" (docs/log/37 契約5: the bot only ever
 // initiates toward the explicitly bound user id).
 func DiscordResolveDM(token, userID string) (string, error) {
 	var res struct {
@@ -547,7 +547,7 @@ func DiscordResolveDM(token, userID string) (string, error) {
 
 // discordRateRetries / discordRetryCap bound the inline retry on a 429. Handling the
 // rate limit HERE (rather than failing the post and re-sending the whole queue entry)
-// is the primary fix for the duplicate storm (docs/37 重複対策): a burst of posts
+// is the primary fix for the duplicate storm (docs/log/37 重複対策): a burst of posts
 // from a long full-text answer routinely trips Discord's per-channel limit, and a
 // mid-batch failure used to re-post the delivered chunks. Bounded so a stuck 429
 // can't hang the single sender goroutine. Vars so tests can shrink them.

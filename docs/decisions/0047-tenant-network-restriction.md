@@ -1,10 +1,10 @@
 # 0047. テナント管理者が自分のテナントの接続元ネットワークを絞れるようにする（**アプリ層・認証の後**）
 
-- 状態: **採用**（2026-08-17）。検討の記録は [docs/66](../66-tenant-network-restriction.md)。
+- 状態: **採用**（2026-08-17）。検討の記録は [docs/66](../log/66-tenant-network-restriction.md)。
 - 関連: [0043-login-idp.md](0043-login-idp.md) 決定 24/25（テナントの外へ届くものは運用者、
   中で閉じるものはテナント管理者）・決定 14（門は画面ではなく解決経路に置く） /
   [0044-workspace-sizing.md](0044-workspace-sizing.md) 決定 3（**既定オフで出して一度も
-  発火しなかった**前例） / [docs/64](../64-ec2-persistent-workspace.md) §64.25（WAF に
+  発火しなかった**前例） / [docs/64](../log/64-ec2-persistent-workspace.md) §64.25（WAF に
   署名系を採らなかった判断・同じ「効かないものを効くように見せない」線）
 
 ## 背景

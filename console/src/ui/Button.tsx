@@ -1,6 +1,6 @@
 // Button / IconButton — the next console's only button primitives.
 //
-// Every actionable control goes through these (docs/22 §ui/): consistent
+// Every actionable control goes through these (docs/log/22 §ui/): consistent
 // icon+label composition, variants for tone, no ad-hoc <button> styling in
 // features. Icons are codicon names (the icon font ships with the app).
 import type { ButtonHTMLAttributes } from "react";

@@ -1,9 +1,9 @@
-// Package agy は Antigravity CLI（agy）種別の縦割りパッケージ（docs/32 Track A）。
+// Package agy は Antigravity CLI（agy）種別の縦割りパッケージ（docs/log/32 Track A）。
 // codex パッケージの構成に倣い、Agent 実装・起動コマンド組み立て・auth の
 // Connections ハンドラ・rtk ブロック適用を種別内に閉じる。実行方式は
 // Terminal (CLI)/tmux 一択 — v1.1.4 に構造化出力が無く Managed は組めない
 // （docs/decisions/0008）。ホスト要件（RDRAND・バイナリ有無）は internal/hostcaps
-// が判定し、Status()/BuildLaunch がそれを配線する（docs/32 Track B 契約）。
+// が判定し、Status()/BuildLaunch がそれを配線する（docs/log/32 Track B 契約）。
 package agy
 
 import (
@@ -27,7 +27,7 @@ var sids = agents.NewSidStore("agy-sid")
 // captureConversation can tell a conversation this slot created from a stale
 // entry left by an earlier session in the same dir. `--continue` (= the raw
 // cwd map) is NOT used for resume: any other agy run in the dir overwrites the
-// mapping and slots would swap conversations (docs/32 Track D-3).
+// mapping and slots would swap conversations (docs/log/32 Track D-3).
 var prelaunch = agents.NewSidStore("agy-prelaunch")
 
 // brainPrelaunch snapshots the brain/ conversation-dir listing (newline-joined)
@@ -54,7 +54,7 @@ func (agentImpl) Caps() agents.Caps {
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// Same host gate as the Console's kind selector: on a host where agy can't run
 	// (binary absent / no RDRAND → SIGABRT at launch) refuse to build the pane
-	// program instead of letting the session die on start (docs/32 Track B).
+	// program instead of letting the session die on start (docs/log/32 Track B).
 	if supported, reason := hostcaps.AgyStatus(); !supported {
 		return agents.LaunchPlan{}, fmt.Errorf("agy はこのホストで利用できません（%s）", reason)
 	}
@@ -65,7 +65,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// contents of this project?" prompt (not skippable by flags).
 	EnsureWorkspaceTrusted(m.Dir)
 	// Re-pin the telemetry opt-out on every launch: the auth-time pin alone
-	// doesn't survive the key being flipped or dropped later, and docs/32 の
+	// doesn't survive the key being flipped or dropped later, and docs/log/32 の
 	// 採用条件は常時オフ。
 	enforceTelemetryOff()
 	slotSid := session.UUID(m.Dir, m.Name)

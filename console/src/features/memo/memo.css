@@ -1,5 +1,5 @@
 /* Memo queue + send-selection modal — extracted from the old console's
-   styles.css (regions 8510–8543, 8610–8823) for pixel parity (docs/22 P6c).
+   styles.css (regions 8510–8543, 8610–8823) for pixel parity (docs/log/22 P6c).
    Trimmed at P8. */
 
 /* "送信しました" toast: display name + color-matched pane-ordinal badge(s). */
@@ -36,7 +36,7 @@
   border: 1px solid var(--border);
   border-radius: 6px;
 }
-/* --- Memo queue (docs/21) --------------------------------------------------- */
+/* --- Memo queue (docs/log/21) --------------------------------------------------- */
 .pane-empty {
   color: var(--muted);
   font-size: 12px;
@@ -295,7 +295,7 @@
   padding: 0 6px;
 }
 
-/* --- Memo queue UI刷新 (docs/21) ------------------------------------------------- */
+/* --- Memo queue UI刷新 (docs/log/21) ------------------------------------------------- */
 /* Checkboxes follow the left-pane accent (color theme), not the fixed app blue. */
 .memo-add-cat,
 .memo-cat-check,
@@ -562,7 +562,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* --- Send-memo modal (docs/21 UI刷新) -------------------------------------------- */
+/* --- Send-memo modal (docs/log/21 UI刷新) -------------------------------------------- */
 .memo-send-hint {
   font-weight: 400;
   letter-spacing: 0;
@@ -671,7 +671,7 @@
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
-/* --- Image attachments (docs/21 画像添付) ---------------------------------------- */
+/* --- Image attachments (docs/log/21 画像添付) ---------------------------------------- */
 /* Composer preview strip + in-row thumbnails. Small square previews with a hover
    remove chip; clicking opens a full-size lightbox (MemoImageThumb). */
 .memo-add-thumbs,

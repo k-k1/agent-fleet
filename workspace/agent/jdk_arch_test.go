@@ -31,7 +31,7 @@ func TestForeignArchJDK(t *testing.T) {
 
 // The regression this whole change exists for: "amd64" sorts before "arm64", so the
 // old glob+sort+[0] returned the x86 tree on an arm64 workspace whose home had been
-// filled on x86 (docs/70 §70.5.1).
+// filled on x86 (docs/log/70 §70.5.1).
 func TestPickArchJDKPrefersOurArchitecture(t *testing.T) {
 	matches := []string{
 		filepath.Join("/jvm", "temurin-21-jdk-amd64"),

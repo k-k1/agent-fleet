@@ -607,7 +607,7 @@ function diffStat(edits: DiffEdit[]) {
 }
 
 // InlineEdits shows an edit's before/after right where the tool trace sits, for views
-// that have no diff pane to open. The shared-session DTO (docs/59 §3) keeps the diff
+// that have no diff pane to open. The shared-session DTO (docs/log/59 §3) keeps the diff
 // BODY (old/new) but drops the file path, so there is no coordinate to open — the
 // change itself is all there is to show, and showing it here is the whole affordance.
 // Reuses the diff pane's dv-* markup (viewer.css is loaded globally) so the two read

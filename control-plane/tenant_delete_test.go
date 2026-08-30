@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// テナント削除（docs/61 §61.18）。**空のものだけ**消せる——DB の行は、クラウドや
+// テナント削除（docs/log/61 §61.18）。**空のものだけ**消せる——DB の行は、クラウドや
 // ディスクに残った資源に対する唯一の手掛かりなので、最初に消えてはいけない。
 
 func callDeleteTenant(mgr *manager, slug string) *httptest.ResponseRecorder {

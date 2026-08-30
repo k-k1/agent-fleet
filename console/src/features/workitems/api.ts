@@ -1,4 +1,4 @@
-// Work item inbox — Console endpoints (docs/80). The tenant header rides every request
+// Work item inbox — Console endpoints (docs/log/80). The tenant header rides every request
 // via the global fetch wrapper (client.ts), so callers pass nothing extra.
 import { api, apiJSON, raw } from "../../core/api/client.ts";
 import type { WorkItemQuery } from "./read.ts";
@@ -16,7 +16,7 @@ export function workItemRefresh(): Promise<unknown> {
   return apiJSON("api/work-items/refresh", "POST");
 }
 
-/** Bitbucket の「どこを見るか」の候補（docs/80 §80.22）。クローン用のリポジトリ一覧と
+/** Bitbucket の「どこを見るか」の候補（docs/log/80 §80.22）。クローン用のリポジトリ一覧と
  *  同じ経路で、トークンを持つ Agent が答える。
  *
  *  ⚠️ **Workspace が停止中だと取れない**（レール本体は CP のキャッシュなので停止中でも
@@ -43,7 +43,7 @@ export function workItemQueryDelete(id: string): Promise<Response> {
   return raw(`api/work-item-queries/${q(id)}`, { method: "DELETE" });
 }
 
-/** Post a human-approved draft back to the ticket (docs/80 §80.10). The CP relays it to
+/** Post a human-approved draft back to the ticket (docs/log/80 §80.10). The CP relays it to
  * the Agent, which holds the tokens; a stopped workspace answers 409 rather than being
  * started for it. */
 export function workItemComment(rec: { provider: string; key: string; body: string }): Promise<unknown> {

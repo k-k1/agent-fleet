@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// lockMux wires the routes the delete lock (docs/45) governs, so each test drives
+// lockMux wires the routes the delete lock (docs/log/45) governs, so each test drives
 // the real handlers over HTTP rather than calling internals.
 func lockMux() *http.ServeMux {
 	mux := http.NewServeMux()

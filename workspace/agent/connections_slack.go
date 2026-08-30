@@ -1,6 +1,6 @@
 package main
 
-// Slack chat-bridge connection handlers (docs/37 Slack 追随) — the Socket-Mode twin of the
+// Slack chat-bridge connection handlers (docs/log/37 Slack 追随) — the Socket-Mode twin of the
 // Discord connection code in connections.go. Same three-point set (agent routes + CP proxy
 // allowlist + Console card) and the same secrets-store discipline: two of the user's OWN
 // tokens (bot xoxb- + app-level xapp-) are stored encrypted, never held by the CP.
@@ -23,7 +23,7 @@ var (
 	slackUserRe    = regexp.MustCompile(`^[UW][A-Z0-9]{6,}$`)
 )
 
-// slackStatus reports the chat-bridge Slack connection (docs/37 Slack 追随) — never a token.
+// slackStatus reports the chat-bridge Slack connection (docs/log/37 Slack 追随) — never a token.
 func slackStatus(s *secrets.Data) map[string]any {
 	sl := s.Slack
 	if sl == nil || sl.BotToken == "" {
@@ -157,7 +157,7 @@ type slackConnReq struct {
 }
 
 // handlePutSlackConn stores the user's Slack tokens + destination in the encrypted store
-// (docs/37 Slack 追随), mirroring handlePutDiscordConn. Exactly one destination: a channel id
+// (docs/log/37 Slack 追随), mirroring handlePutDiscordConn. Exactly one destination: a channel id
 // or the bound user id (DM); the bound user id is required in channel mode too (it is the
 // mention + identity binding). Edit-after-connect: an omitted bot token patches the existing
 // connection (tokens + destination reused).

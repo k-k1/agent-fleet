@@ -1,6 +1,6 @@
 package codex
 
-// codex memories のフリート有効化配線（docs/39 P4・決着 #4）。
+// codex memories のフリート有効化配線（docs/log/39 P4・決着 #4）。
 //
 // codex の memories は feature flag が stable でありながら **既定 OFF** で、有効化すると
 // rollout ごとの抽出（Phase1）と内部サブエージェントによるグローバル統合（Phase2）が
@@ -16,7 +16,7 @@ package codex
 // バイナリの有無・版に依存せず設定を書けるようにするため。
 //
 // 有効化しても ~/.codex/memories/ はすぐには生えない（次に codex セッションが走った
-// ときに codex 自身が作る）。docs/39 のルート宣言は RequireDir なので、その間は
+// ときに codex 自身が作る）。docs/log/39 のルート宣言は RequireDir なので、その間は
 // メモリルートとして現れない —— UI はこの「有効だが未生成」を区別して見せる。
 
 import (
@@ -28,7 +28,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// MemoriesDir は codex が memories ワークスペースを作る場所（docs/39 のルート宣言と
+// MemoriesDir は codex が memories ワークスペースを作る場所（docs/log/39 のルート宣言と
 // 同じパス。両者がズレると「有効化したのにルートが現れない」になるので定義は 1 箇所）。
 func MemoriesDir() string {
 	return filepath.Join(paths.HomeDir(), ".codex", "memories")
@@ -82,7 +82,7 @@ func seedMemoriesTuning(b []byte) []byte {
 	}
 	lines := []string{
 		"[memories]",
-		"# agent-fleet が memories 有効化時に置いた保守的な既定（docs/39 P4）。自由に調整可。",
+		"# agent-fleet が memories 有効化時に置いた保守的な既定（docs/log/39 P4）。自由に調整可。",
 	}
 	for _, kv := range memoriesTuning() {
 		lines = append(lines, kv[0]+" = "+kv[1])

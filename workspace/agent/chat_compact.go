@@ -1,6 +1,6 @@
 package main
 
-// 要約引き継ぎ＝自前コンパクション（docs/33 第2段）。
+// 要約引き継ぎ＝自前コンパクション（docs/log/33 第2段）。
 //
 // resume 駆動のチャットはコンテキストがプロバイダ側に積み上がり続ける。CLI 側の
 // 自動コンパクションは headless 経路での動作が保証されず、仕様ドリフトにも晒される
@@ -10,9 +10,9 @@ package main
 //	2. resume ハンドルを全部クリア（次ターンは新プロバイダセッション）
 //	3. 要約を PendingHandoff として保存し、新セッションの最初のプロンプトに
 //	   プリアンブルとして注入する（injectCarryover — 配信済みマークは成功時のみ、
-//	   docs/30 の報告注入と同じ流儀）
+//	   docs/log/30 の報告注入と同じ流儀）
 //
-// docs/33 第5段: 要約ターンの出力は「計画」と「要約」の2ブロックになり、計画は要約を
+// docs/log/33 第5段: 要約ターンの出力は「計画」と「要約」の2ブロックになり、計画は要約を
 // 通さない原文枠（chatConversation.Plan・chat_plan.go）へ分離した。要約は1回きりで
 // 消費されるが計画は毎セッション原文のまま運ばれるので、圧縮を重ねても劣化しない。
 //
@@ -36,12 +36,12 @@ import (
 // compactSummaryPromptFor は現行セッションへ流す引き継ぎ指示。後任アシスタントが読む前提の
 // 引き継ぎ書を作らせる。
 //
-// docs/28 P6: **枠（指示文）は表示言語**でロケール分岐し、**中身の言語は会話の主要言語**の
+// docs/log/28 P6: **枠（指示文）は表示言語**でロケール分岐し、**中身の言語は会話の主要言語**の
 // まま（両言語の指示文がそう書いてある）。要約と計画は次のセッションの入力になるので、
 // 会話が日本語なら日本語で書かせないと引き継ぎ先の応答言語まで反転してしまう。日本語の指示文を
 // 英語スレッドに巻くと同じことが逆向きに起きる、というのがここを分岐する理由。
 //
-// docs/33 第5段: 出力は**計画ブロックと要約ブロックの2本立て**。計画は原文で運ぶ枠
+// docs/log/33 第5段: 出力は**計画ブロックと要約ブロックの2本立て**。計画は原文で運ぶ枠
 // （chat_plan.go）へ入れて以後は要約を通さない、要約は背景説明に専念する、という分業。
 // 要約の目安を1000→600字に絞れるのは、行動を決める部分を計画側が持つようになったため。
 func compactSummaryPromptFor(lang string) string {
@@ -117,7 +117,7 @@ func compactConversation(ctx context.Context, c *chatConversation, prov chatProv
 	if err != nil {
 		return err
 	}
-	// docs/33 第5段: 計画ブロックは原文のまま Plan 枠へ（要約を通さない）。区切りが
+	// docs/log/33 第5段: 計画ブロックは原文のまま Plan 枠へ（要約を通さない）。区切りが
 	// 守られなかった場合 plan は空で返るので、運用中の計画はそのまま残る。
 	plan, summary := parseCompactOutput(out)
 	if summary == "" {
@@ -213,7 +213,7 @@ func chatAutoCompactTokenThreshold() int {
 }
 
 // maybeAutoCompact runs the preventive compaction right before a turn when the
-// last snapshot shows the context at/above the threshold (docs/33 第4段). Returns
+// last snapshot shows the context at/above the threshold (docs/log/33 第4段). Returns
 // whether a compaction happened. The caller holds the conversation lock and MUST
 // call this BEFORE building its prompt, so the fresh PendingHandoff rides the
 // injectHandoff of the very turn that triggered it.

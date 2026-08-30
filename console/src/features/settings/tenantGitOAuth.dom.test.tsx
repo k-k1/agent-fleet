@@ -1,4 +1,4 @@
-// テナントの git プロバイダ OAuth の面（docs/71・ADR 0052）。押さえるのは 3 点:
+// テナントの git プロバイダ OAuth の面（docs/log/71・ADR 0052）。押さえるのは 3 点:
 //   ① client_secret は書き込み専用。保存済みの値は返らないので、空のまま保存したら
 //      「変えない」の意味で PUT する —— でないと client_id を直すたびに secret が
 //      黙って消え、次の接続が invalid_client で落ちる。

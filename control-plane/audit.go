@@ -5,7 +5,7 @@ import (
 	"strconv"
 )
 
-// Audit log read side (docs/20 M1). The write side lives in proxy.go (auditActionTarget
+// Audit log read side (docs/log/20 M1). The write side lives in proxy.go (auditActionTarget
 // + InsertAudit) and mcp.go/ssm.go. This exposes the ledger to operators; there is no
 // read path anywhere else yet.
 

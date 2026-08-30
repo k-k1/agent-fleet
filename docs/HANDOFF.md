@@ -3,7 +3,7 @@
 このファイルは**このホストの稼働状態・実行の作法・落とし穴・現在地**に絞った引き継ぎメモ。
 機能仕様の正は **[dev/](dev/README.md)（開発者向け）とコード**、利用者の操作は **[guide/](guide/README.ja.md)**、
 時系列の作業ログは [CHANGELOG-handoff.md](CHANGELOG-handoff.md)、前向きの計画は [roadmap](roadmap.md)、
-意思決定は [decisions/](decisions/)、使い終わった実装プランは [history/](history/)。
+意思決定は [decisions/](decisions/)、使い終わった実装プランは [history/]()。
 **まず読む順**: この HANDOFF（§1〜§3）→ [dev/01 アーキテクチャ](dev/01-architecture.md) → §4 の現在地。
 
 ## 1. いま動いているもの（このホスト）
@@ -54,21 +54,21 @@
 **Phase 1 MVP 完了（2026-06-26, `dd2330e`）以降、Phase 2 完了・Phase 3 進行中。** オンプレ 1 台で複数ユーザーが
 相互不可視に並行利用でき（per-user Workspace / AuthGateway / ネットワーク分離 / at-rest 暗号化）、Phase 3 の
 プロダクト化は P3-1〜P3-7 + Console 全面刷新（React+Vite）まで実装済み（P3-7/P3-10 の実装プランは history/ 入り）。
-**P3-10（パッケージング）は dist 配布の publish 運用中**（[docs/35](35-packaging.md)・リリースノートは
+**P3-10（パッケージング）は dist 配布の publish 運用中**（[docs/35](log/35-packaging.md)・リリースノートは
 `deploy/release/notes/`）。残 = P3-8（専用分離）・P3-9 の成熟項目（観測 / egress 統制）・P3-10 の完了ゲート
-（第 2 デプロイ E2E）（[roadmap](roadmap.md)）。フェーズごとの実装記録は [history/](history/)、確定事項の背景は decisions/。
+（第 2 デプロイ E2E）（[roadmap](roadmap.md)）。フェーズごとの実装記録は [history/]()、確定事項の背景は decisions/。
 
 - **仕様を知りたい** → [dev/](dev/README.md): アーキテクチャ(01) / Console(02) / Control Plane(03) / Agent(04) /
   API 契約(05) / データモデル(06) / セキュリティ(07) / 外部連携(08) / デプロイ(09) / 開発作法(10) / コードマップ(90)。
 - **操作を知りたい** → [guide/](guide/README.ja.md): member / admin / operator / lite の分冊。
 - **恒久的に有効な検証知見**: `/login` は localhost 非依存（`redirect_uri=platform.claude.com/oauth/code/callback`）で
   ヘッドレス/リモートに無条件成立、認証と onboarding は別物、`/login` URL 折返し復元 →
-  詳細は [dev/08 §8.5](dev/08-integrations.md) と [history/phase1-plan §11.10](history/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
-- **進行中の設計**: egress 統制（[docs/20](20-container-audit-egress.md)・enforce 未了）。Go 内部リファクタ
-  （[docs/23](23-go-refactor.md)）は develop マージ済・残 = ④契約の型化のみ。i18n（[docs/28](28-i18n.md)）は
+  詳細は [dev/08 §8.5](dev/08-integrations.md) と [history/phase1-plan §11.10](log/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
+- **進行中の設計**: egress 統制（[docs/20](log/20-container-audit-egress.md)・enforce 未了）。Go 内部リファクタ
+  （[docs/23](log/23-go-refactor.md)）は develop マージ済・残 = ④契約の型化のみ。i18n（[docs/28](log/28-i18n.md)）は
   Console 側 P0〜P5 ＋ P6（エージェント出力言語）まで完了・残 = 実フリート再ビルド後の実機目視。
   **新しく prompt を足すときの判断基準は
-  [§6.6](28-i18n.md#66-p6-エージェント出力言語完了) の判定表と地雷。**
+  [§6.6](log/28-i18n.md#66-p6-エージェント出力言語完了) の判定表と地雷。**
 
 ## 5. 動作確認の最短手順
 

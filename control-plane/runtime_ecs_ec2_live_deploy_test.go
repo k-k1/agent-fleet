@@ -19,7 +19,7 @@ import (
 )
 
 // TestECSEC2LiveStartDeployments counts, on the REAL pool, how many tasks ECS actually
-// creates per Start — the only way to check docs/64 §64.39 end to end.
+// creates per Start — the only way to check docs/log/64 §64.39 end to end.
 //
 // Unit tests can only assert the shape of the calls we make. What made this bug expensive
 // is the shape of the ANSWER: one UpdateService carrying both a new task definition and
@@ -38,7 +38,7 @@ import (
 // nothing either way, and failing on it would only make this test flaky.
 //
 // Read the rounds accordingly: they show the product no longer CREATES the condition
-// (docs/64 §64.39), not that the condition was guaranteed to bite. The frequency evidence
+// (docs/log/64 §64.39), not that the condition was guaranteed to bite. The frequency evidence
 // is the production pool's 40% of Starts, not this harness.
 func TestECSEC2LiveStartDeployments(t *testing.T) {
 	if os.Getenv("AF_ECS_EC2_LIVE") != "1" || os.Getenv("AF_ECS_EC2_LIVE_DEPLOY") != "1" {
@@ -175,7 +175,7 @@ func TestECSEC2LiveStartDeployments(t *testing.T) {
 }
 
 // TestECSFargateLiveStartDeployments asks the same question of the FARGATE adapter,
-// which docs/64 §64.39.6.3 could only reason about: `ecsRuntime.upsertService` sends
+// which docs/log/64 §64.39.6.3 could only reason about: `ecsRuntime.upsertService` sends
 // desiredCount 1 together with a new revision and ForceNewDeployment, and
 // `registerTaskDef` registers unconditionally — so every Start after the first has the
 // exact shape that made ECS launch a second task on the EC2 pool.
@@ -256,11 +256,11 @@ func TestECSFargateLiveStartDeployments(t *testing.T) {
 			"Start. Fargate keeps no image cache, so the extra task pays a full pull.", n)
 	} else {
 		t.Logf("MEASURED: the Fargate adapter created %d task(s) on a settled service; the EC2 pool's "+
-			"second-task behaviour did NOT reproduce. docs/64 §64.39.6.3 must be corrected.", n)
+			"second-task behaviour did NOT reproduce. docs/log/64 §64.39.6.3 must be corrected.", n)
 	}
 }
 
-// TestECSEC2LiveDeploymentConfig checks the ONE part of docs/64 §64.39.10 that unit tests
+// TestECSEC2LiveDeploymentConfig checks the ONE part of docs/log/64 §64.39.10 that unit tests
 // cannot: that `ec2SingleTaskDeployment` (maximumPercent 100 / minimumHealthyPercent 0)
 // actually reaches the real service — including a service that was created BEFORE this
 // change and therefore still carries the AWS default 200/100, which is the state every
@@ -395,7 +395,7 @@ func TestECSEC2LiveDeploymentConfig(t *testing.T) {
 	switch {
 	case atDefault >= 2 && atFixed < 2:
 		t.Logf("A/B RESULT: 200%% ran %d tasks at once, 100%% ran %d — on this substrate the setting is "+
-			"what decides whether a second task can exist at all (docs/64 §64.39.10).", atDefault, atFixed)
+			"what decides whether a second task can exist at all (docs/log/64 §64.39.10).", atDefault, atFixed)
 	case atDefault < 2:
 		t.Logf("A/B RESULT: even at 200%% this substrate never showed two tasks at once (%d), so it does "+
 			"NOT reproduce the production condition; the rounds below show what the product SENDS, not "+
@@ -709,7 +709,7 @@ func (d *liveDeploy) countSince(service string, since time.Time) (tasks, blocked
 // settle waits until the service is back to ONE deployment that has finished rolling
 // out. That state is the precondition for the whole defect: only a settled PRIMARY can be
 // demoted to ACTIVE by the next task-definition change and then be handed the
-// desiredCount. Measured at ~90s on a stopped service (docs/64 §64.39.4).
+// desiredCount. Measured at ~90s on a stopped service (docs/log/64 §64.39.4).
 func (d *liveDeploy) settle(service string, budget time.Duration) {
 	d.t.Helper()
 	deadline := time.Now().Add(budget)
@@ -954,7 +954,7 @@ func (r watchResult) requireNoDemotedTask(t *testing.T, what string) {
 		return
 	}
 	t.Errorf("%s: a superseded (ACTIVE) deployment was handed %d task(s) — the count reached the OLD "+
-		"revision, which is docs/64 §64.39 still happening: %v", what, len(r.demoted), r.demoted)
+		"revision, which is docs/log/64 §64.39 still happening: %v", what, len(r.demoted), r.demoted)
 }
 
 // requireOrdered is the answer to "does the first Start after the deploy still behave like

@@ -21,7 +21,7 @@ export interface Tenant {
   max_workspace_mem?: number; // per-workspace RAM cap in bytes (0 = no tenant cap)
   session_idle_timeout?: string;
   ws_idle_timeout?: string;
-  /** 人の判断待ち専用の tier1 タイムアウト（docs/75）。空 = session_idle_timeout に従う。 */
+  /** 人の判断待ち専用の tier1 タイムアウト（docs/log/75）。空 = session_idle_timeout に従う。 */
   interaction_idle_timeout?: string;
   // How long a home may sit unopened before it is put away as a snapshot (ecs-ec2 only;
   // "" = deploy default, "0" = never). ADR 0045 決定 13-2.
@@ -31,11 +31,11 @@ export interface Tenant {
   home_backup_every?: string;
   allow_agent_self_update?: boolean;
   terminal_history_retention_days?: number;
-  // Per-tenant login rules, stored as CSV (docs/61 §61.9.7).
+  // Per-tenant login rules, stored as CSV (docs/log/61 §61.9.7).
   allowed_providers?: string;
   auto_join_domains?: string;
   allowed_domains?: string;
-  // 受け入れるが、そのテナントのログイン画面には出さない方式（docs/61 §61.15.9）。
+  // 受け入れるが、そのテナントのログイン画面には出さない方式（docs/log/61 §61.15.9）。
   hidden_providers?: string;
 }
 
@@ -51,13 +51,13 @@ export interface Member {
   disk_gb?: number | null; // per-workspace working disk in GiB (0/undefined = unset → 20 GiB free default)
   /** Which KIND of machine the workspace lands on, as a deployment-declared class id
    *  ("" / undefined = the tenant default). Not a size — mem_limit still picks the
-   *  rung within the class (docs/70). */
+   *  rung within the class (docs/log/70). */
   slot_class?: string | null;
   /** "active" | "removed". A removed member is off the roster and can no longer
    *  sign in, but stays on THIS list so the rest of the offboarding sequence
-   *  (stop workspace → clean home) is still reachable (docs/61 §61.10.6). */
+   *  (stop workspace → clean home) is still reachable (docs/log/61 §61.10.6). */
   status?: string;
-  /** 自動停止の見通し（docs/75 P4）。reaper が最後に観測したもので、稼働中の
+  /** 自動停止の見通し（docs/log/75 P4）。reaper が最後に観測したもので、稼働中の
    *  Workspace にだけ入る。**画面はこれを再計算しない** — 自前で導出すると reaper が
    *  実際に見ているもの（在席・ピン・背景作業）とズレて、「なぜ止まらないのか」を
    *  調べるための画面が別の答えを出す。 */
@@ -83,7 +83,7 @@ export interface MemberIdle {
  *  stored number BECOMES is not. On the EC2 slot pool the CPU axis never reaches the
  *  backend, memory picks a box instead of capping one, and the disk number sizes the
  *  PERSISTENT home. The UI reads this instead of describing every deployment as if it
- *  were Fargate, which is what it used to do (docs/64 §64.27). */
+ *  were Fargate, which is what it used to do (docs/log/64 §64.27). */
 export interface WsSizing {
   runtime: string;
   cpu_effective: boolean;
@@ -97,7 +97,7 @@ export interface WsSizing {
   slots?: WsSlot[];
   /** The machine classes this deployment offers. Absent on a deployment that declared
    *  a single unnamed ladder — a picker with one entry is a question with one possible
-   *  answer, so there is no picker at all (docs/70 §70.10). */
+   *  answer, so there is no picker at all (docs/log/70 §70.10). */
   slot_classes?: WsSlotClass[];
   default_slot_class?: string;
 }
@@ -167,7 +167,7 @@ export function ladderFor(sizing: WsSizing, classID: string): WsSlot[] | undefin
  *  independent numbers (ADR 0044 決定 1); these presets exist only so an admin picks
  *  from combinations Fargate actually accepts instead of discovering the matrix by
  *  trial and error. cpu is in Fargate units (1024 = 1 vCPU), mem in MiB, disk in GiB.
- *  Every pair here is a measured-valid Fargate size (docs/63 §63.2). */
+ *  Every pair here is a measured-valid Fargate size (docs/log/63 §63.2). */
 export const WS_SIZE_PRESETS = [
   { id: "s", label: "S", cpu: 1024, mem: 2048, disk: 0 },
   { id: "m", label: "M", cpu: 1024, mem: 4096, disk: 0 },

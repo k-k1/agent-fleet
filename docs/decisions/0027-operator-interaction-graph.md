@@ -1,8 +1,8 @@
 # 0027. オペレーター↔セッションのやり取りを SVG シーケンス図で可視化
 
-- 状態: **採用・着工中**（Phase 0 契約凍結）。設計は [docs/44](../44-operator-interaction-graph.md)。
+- 状態: **採用・着工中**（Phase 0 契約凍結）。設計は [docs/44](../log/44-operator-interaction-graph.md)。
 - 関連: [0015](0015-agent-managed-driver.md)（managed driver）/ [0021](0021-scheduled-execution.md)（定時実行）/
-  docs/30（セッション完了報告→フリート・オペレーター）/ [history/19](../history/19-assistant-chat.md)（assistant-chat）
+  docs/30（セッション完了報告→フリート・オペレーター）/ [history/19](../log/19-assistant-chat.md)（assistant-chat）
 
 ## 背景
 

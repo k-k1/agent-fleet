@@ -42,14 +42,14 @@ export function PendingQuestions({
   questions: Question[];
   onSubmitKeys: (keys: string[]) => void;
   onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void;
-  // onRespond (managed セッション): pending Interaction への構造化回答（docs/27 §5、
+  // onRespond (managed セッション): pending Interaction への構造化回答（docs/log/27 §5、
   // 質問ごとに 1 エントリ・順序どおり）。渡されたら全経路が semantic 応答になり、
   // 下の TUI キー駆動（モーダルの挙動に縛られたシーケンス組み立て）は一切通らない。
   onRespond?: (answers: InteractionAnswer[]) => void;
   // onCancel: dismiss the pending question without answering (Escape / Interrupt) so the
   // conversation can continue with a fresh prompt instead of an answer.
   onCancel?: () => void;
-  // onSubmitAnswers（持ち越し・docs/75）: **モーダルがもう無い**質問への回答。渡されたら
+  // onSubmitAnswers（持ち越し・docs/log/75）: **モーダルがもう無い**質問への回答。渡されたら
   // 他のどの submit 経路よりも優先し、キー列も seq も組み立てない — 当てる先の無いキーは、
   // 生きたペインに落ちれば別のものを決めてしまう。回答は Agent が再開後に文章として配達する。
   // 選択 UI（複数選択・自由入力・preview 比較）はそのまま使い回す。
@@ -142,7 +142,7 @@ export function PendingQuestions({
   // structured per-question answers — no TUI key encoding, no modal quirks.
   const submitRespond = () => onRespond!(buildRespondAnswers(qs, sel, freeText));
 
-  // 持ち越し（docs/75）: 選択と自由入力をそのまま渡す。キー列には一切変換しない。
+  // 持ち越し（docs/log/75）: 選択と自由入力をそのまま渡す。キー列には一切変換しない。
   const submitCarried = () =>
     onSubmitAnswers!(qs.map((_, qi) => ({ labels: sel[qi] || [], notes: (freeText[qi] || "").trim() })));
 

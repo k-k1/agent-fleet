@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// 後始末の 3 段目（docs/61 §61.18）のテスト。除名 → Workspace 破棄 → 行の削除、の
+// 後始末の 3 段目（docs/log/61 §61.18）のテスト。除名 → Workspace 破棄 → 行の削除、の
 // 最後の 1 段で、前の 2 段が済んでいない限り通ってはいけない。
 
 // cleanupFixture: tenant sales に管理者 1 人と対象者 1 人。対象者には workspace 行と、

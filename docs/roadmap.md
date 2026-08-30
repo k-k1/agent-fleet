@@ -1,18 +1,18 @@
 # ロードマップ
 
 既存資産（`oauth2-proxy` / `tmux-claude.sh` / `CLAUDE_CONFIG_DIR`）を踏み台に **local-first** で進め、同一コアに
-AWS アダプタを後付けする（[ポータビリティ](reference/portability.md)）。各フェーズで「実機検証 → 設計確定」を回す。
+AWS アダプタを後付けする（[ポータビリティ](dev/09-deploy.md)）。各フェーズで「実機検証 → 設計確定」を回す。
 **現状の運用詳細は [HANDOFF](HANDOFF.md)、意思決定の経緯は [decisions/](decisions/)。**
 
 ## フェーズ一覧
 
 ### Phase 0 — PoC（ローカル dev, 既存資産の延長）　✅ 完了
 `/login` の対話フローを最小コストで検証。ヘッドレスで **localhost コールバック非依存**と判明し最大リスクが消えた
-（[decisions/0002](decisions/0002-claude-auth-onboarding.md)）。記録は [history/phase0-poc](history/phase0-poc.md)。
+（[decisions/0002](decisions/0002-claude-auth-onboarding.md)）。記録は [history/phase0-poc](log/phase0-poc.md)。
 
 ### Phase 1 — Workspace イメージ + Console MVP（ローカル dev）　✅ 完了
 1 ユーザー分のコンテナ化 + 最小 Console を local Docker で完成。Runtime/Volume ポートを実装。
-実装結果と実運用の知見は [history/phase1-plan §11.10](history/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
+実装結果と実運用の知見は [history/phase1-plan §11.10](log/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
 
 ### Phase 2 — マルチユーザー（ローカル shared）+ ポート確立　✅ 完了
 オンプレ 1 台で複数ユーザーが相互不可視に並行利用 + 全ポート抽象化。per-user Workspace / AuthGateway
@@ -21,7 +21,7 @@ AWS アダプタを後付けする（[ポータビリティ](reference/portabili
 ### Phase 3 — プロダクト化（パッケージ配布・グループ各社セルフホスト）　▶ 進行中
 「AWS 移植」から**プロダクトのパッケージ化**へ再定義。提供モデルの意思決定（SaaS 断念の経緯・ToS 根拠）は
 [decisions/0001](decisions/0001-self-host-vs-saas.md)。**P3-1〜P3-7 + Console 刷新は実装済み**（P3-7 残 = KMS custodian・実 AWS 再検証）、
-**P3-10（パッケージング）は dist 配布の publish 運用中**（[docs/35](35-packaging.md)）。残 = P3-8・P3-9 の成熟項目・
+**P3-10（パッケージング）は dist 配布の publish 運用中**（[docs/35](log/35-packaging.md)）。残 = P3-8・P3-9 の成熟項目・
 P3-10 の完了ゲート（第 2 デプロイ E2E）。詳細は本書「Phase 3 詳細設計」章（↓）。
 
 ### Phase 4 — 運用の成熟・グループ横展開　— 未着手
@@ -98,7 +98,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 ---
 
 ## P3-1. MetadataStore（SQLite 既定）— 全ての土台
-> ✅ **完了**。実装プランは [history/p3-1-metadatastore](history/p3-1-metadatastore.md)。データモデルの現在形は [dev/06 データモデル](dev/06-data-model.md)。
+> ✅ **完了**。実装プランは [history/p3-1-metadatastore](log/p3-1-metadatastore.md)。データモデルの現在形は [dev/06 データモデル](dev/06-data-model.md)。
 
 **着手時の欠落（当時の記録）**: DB が**一切無い**。フォルダ名=ID、ポートは in-memory map、CP 再起動で再採番されうる。
 テナント・バジェット・管理者・クォータ・監査は**すべて永続レコードを要する**。ここが全ワークストリームの gating item。
@@ -141,10 +141,10 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 ---
 
 ## P3-2. アイデンティティ & テナント解決（AuthGateway 拡張）
-> ✅ **完了**。実装プランは [history/p3-2-identity-tenant](history/p3-2-identity-tenant.md)、現状は [dev/07 セキュリティ](dev/07-security.md)。
+> ✅ **完了**。実装プランは [history/p3-2-identity-tenant](log/p3-2-identity-tenant.md)、現状は [dev/07 セキュリティ](dev/07-security.md)。
 
 現状の `AuthGateway.Identify` は email→sanitized user を返すだけ。マルチテナントでは、**email は人（identity）を特定し、作業対象 tenant はリクエストの明示選択**で決める（identity↔tenant 多対多, §12.1）。
-詳細な実装プランは [14 P3-2 実装プラン](history/p3-2-identity-tenant.md)。
+詳細な実装プランは [14 P3-2 実装プラン](log/p3-2-identity-tenant.md)。
 
 - **テナントはネットワーク信号から推定しない**: 中央 SaaS の subdomain/path ルーティングは採らない（会社の区別はデプロイ自体）。
   デプロイ内の作業対象テナントは**ユーザーが明示選択**（Console ピッカー → `X-AF-Tenant`）し、CP が membership で検証する。
@@ -159,7 +159,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
   role = identity.role==super_admin か membership.role
   workspace = getOrCreate(identity, tenant)            // テナントごとに別コンテナ
   ```
-- **L1（認証）**: 既定は **CP ネイティブ Google OAuth（`AUTH=oauth`）**＝外部ゲートウェイ不要で各社が許可ドメイン/メールを設定（[reference/auth.md](reference/auth.md)、2026-06-29 ライブ採用）。大規模/既存資産がある社は自社の ALB OIDC / oauth2-proxy（`AUTH=proxy`）も選べる。我々は設定方法を文書化（P3-10）。
+- **L1（認証）**: 既定は **CP ネイティブ Google OAuth（`AUTH=oauth`）**＝外部ゲートウェイ不要で各社が許可ドメイン/メールを設定（[reference/auth.md](dev/07-security.md)、2026-06-29 ライブ採用）。大規模/既存資産がある社は自社の ALB OIDC / oauth2-proxy（`AUTH=proxy`）も選べる。我々は設定方法を文書化（P3-10）。
 - **L2-authz（認可）を DB に移す**: emails.txt の静的許可を廃し、**CP が email を DB と突合**し identity/membership を判定。未登録 email は provisioning ポリシー依存（既定 auto-provision / 厳格は 403）。
 - **新エンドポイント**: `GET /api/tenants` = 呼び出し元の membership 一覧（tenant slug/name/role）→ Console のピッカー。
 - **provisioning ポリシー**（env で切替）: 既定 **auto-provision**（ゲートウェイを通れた=その社の正規メンバー → 既定テナントへ自動）/ 厳格運用は **invite-only**（管理者が招待で membership 先行作成、未知は 403）。マルチテナントの部署割当は招待ベース。
@@ -170,7 +170,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 ---
 
 ## P3-3. per-deployment/tenant 封筒暗号鍵（custodian 抽象・オンプレ優先）
-> ✅ **完了**。決定と限界は [decisions/0005](decisions/0005-envelope-custodian.md)、実装プランは [history/p3-3-envelope-crypto](history/p3-3-envelope-crypto.md)。
+> ✅ **完了**。決定と限界は [decisions/0005](decisions/0005-envelope-custodian.md)、実装プランは [history/p3-3-envelope-crypto](log/p3-3-envelope-crypto.md)。
 
 **現状（Phase 2 A3）**: 単一 `AF_MASTER_KEY`(env) → `HMAC(SHA256(master), user)` で per-user サブ鍵を導出し起動時注入。
 → 不十分: master が単一障害点、テナント単位の鍵ローテ/失効ができない、鍵が CP env に常在。
@@ -196,7 +196,7 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 ---
 
 ## P3-4. リソースバジェット / クォータ（テナント + ユーザー）
-> ✅ **完了**（ハードクォータ・既定無制限）。実装プランは [history/p3-4-quota](history/p3-4-quota.md)、現状は [dev/03 Control Plane](dev/03-control-plane.md)。残: ディスク強制 / showback（P3-9）。
+> ✅ **完了**（ハードクォータ・既定無制限）。実装プランは [history/p3-4-quota](log/p3-4-quota.md)、現状は [dev/03 Control Plane](dev/03-control-plane.md)。残: ディスク強制 / showback（P3-9）。
 
 **BYO のため対象はインフラ資源のみ**（Claude 利用量ではない）。その社の自社ホスト資源を守るためのもの。
 
@@ -218,7 +218,7 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 
 ## P3-5. 管理コンソール + 管理 API
 > ✅ **完了**。管理 UI（super_admin の `AdminDialog`）+ メンバー Console（git/ファイル可視化・shell）を実装。
-> メンバー Console プランは [history/p3-5-member-console](history/p3-5-member-console.md)、現状は [dev/02 Console](dev/02-console.md)。
+> メンバー Console プランは [history/p3-5-member-console](log/p3-5-member-console.md)、現状は [dev/02 Console](dev/02-console.md)。
 
 その社の中の管理。**単一テナント運用（super_admin が全社を見る）を先に**完成させ、部署 admin は任意拡張。
 
@@ -239,7 +239,7 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 > - **段1 = member 4 ツール**（`list_my_sessions`/`get_session_status`/`get_session_output`/`send_to_session`）+ PAT 発行/失効（Console）+ `/mcp`（Streamable HTTP）を実装・**E2E green でライブ稼働**（現状は [dev/03 §3.5 MCP サーバ](dev/03-control-plane.md#35-mcp-サーバ)）。
 > - **admin read/write 実装・ライブ E2E green**（2026-07-01）: read=`list_workspaces`/`get_usage`/`list_sessions`、write=`stop_workspace`/`stop_session`/`set_user_quota`。PAT の tenant に固定し、live role（super_admin / その tenant の tenant_admin）で gate、write は `AuditLog`（`actor_kind=mcp`）へ記録。監査ログ書き込み（migration 0007 `audit_log` + `InsertAudit`/`ListAuditByTenant`）をここで導入。ライブ検証（運用者デプロイ）= super_admin PAT で全10ツール可視・`get_usage` に host stats／tenant_admin は admin ツール可視だが host stats 無し／plain member は member 4ツールのみ・admin ツールは 401／`set_user_quota` の write が `audit_log` へ `actor_kind=mcp` 記録、を確認。
 > - **残 = dangerous 段**（`rotate_key`/`recreate_workspace`/`stop_all_idle`、confirm+dry-run）。土台（鍵ローテ実装・idle 検出 P3-9・`tail_audit`）が未整備ゆえ後続。
-> - 設計確定は [decisions/0006](decisions/0006-mcp-unified.md)、実装プランは [history/p3-6-mcp](history/p3-6-mcp.md)。
+> - 設計確定は [decisions/0006](decisions/0006-mcp-unified.md)、実装プランは [history/p3-6-mcp](log/p3-6-mcp.md)。
 
 CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面（メンバー自身の遠隔セッション駆動）を同一サーバで** role 出し分けする。
 **そもそもの目的 = E**: 1 つの手元 Claude が、自分の Workspace 内の claude/opencode/codex セッション群を束ねて駆動する（フリート運用の MCP 化）。
@@ -263,7 +263,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 ---
 
 ## P3-7. デプロイ先アダプタ（オンプレ Docker 既定 / 自社 AWS 任意）
-> ◐ **段1（シーム固め）完了**（実装記録 [p3-7-aws-adapter](history/p3-7-aws-adapter.md)）。`RuntimeFactory` 港を
+> ◐ **段1（シーム固め）完了**（実装記録 [p3-7-aws-adapter](log/p3-7-aws-adapter.md)）。`RuntimeFactory` 港を
 > 唯一の生成口にし、`&dockerRuntime{}` 直生成を factory 経由へ統一。`AF_RUNTIME=local|ecs` 分岐（unknown=起動時 fail-fast）。
 > `ecsRuntime` スケルトン（港は満たすが lifecycle は未実装で fail-loud）。`go build/vet/test` で検証済（`runtime_test.go`）。
 > **段2（ecsRuntime 本実装）＝完了**（コードは AWS 非依存で完結、`runtime_ecs.go`＋fake-client `runtime_ecs_test.go`、
@@ -275,9 +275,9 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 > Start→shell まで到達。CP が ws ECS サービス＋EFS AP2本(transit 暗号)＋SSM SecureString を動的払出し、CP→Service
 > Connect→Agent 到達（`POST /sessions` 受理）、DEK/token は平文 env になし。findings=大容量イメージ cold pull が Start の
 > healthz 待ち超過(→(A)対応済=非致命化)/CP SQLite ephemeral ゆえ再デプロイで状態消失(→(B)対応済=**段3a RDS Postgres Store**、
-> 共有 sqlStore＋?→$n rebind、Docker Postgres で conformance green、CP→RDS を CFN 配線)。残＝段3b(KMS custodian)・実 AWS 再検証。AWS 構成は [reference/aws](reference/aws.md)。
+> 共有 sqlStore＋?→$n rebind、Docker Postgres で conformance green、CP→RDS を CFN 配線)。残＝段3b(KMS custodian)・実 AWS 再検証。AWS 構成は [reference/aws](dev/09-deploy.md)。
 
-各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](reference/portability.md)）。我々は両方を同梱（P3-10）。
+各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](dev/09-deploy.md)）。我々は両方を同梱（P3-10）。
 
 | 港 | オンプレ（既定）| 自社 AWS（任意）|
 |----|-----------------|-----------------|
@@ -291,7 +291,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 
 - **Agent 契約は不変**（/sessions・/repos・/connections）。Workspace イメージと Agent は両ターゲットで**同一物**（[dev/09 §9.2](dev/09-deploy.md#92-ポートアダプタ--何をどのノブで差し替えるか)）。
 - **CP↔Agent 到達**: ECS では publish host:port が無いので Service Connect / 内部 NLB / awsvpc ENI へ。`Runtime.Endpoint` 港が差を吸収。
-- 詳細な AWS 構成は [03 AWS](reference/aws.md)。**多くの社はオンプレ compose で足りる**見込み。
+- 詳細な AWS 構成は [03 AWS](dev/09-deploy.md)。**多くの社はオンプレ compose で足りる**見込み。
 
 ---
 
@@ -313,16 +313,16 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 ---
 
 ## P3-9. 運用の成熟（社内・旧 Phase 4 を吸収）
-> ◐ **idle-stop 実装済**（[p3-9-idle-stop](history/p3-9-idle-stop.md)）+ **showback 段1+段2 実装済**（バックエンド + Console 使用量ダッシュボード、[p3-9-showback](history/p3-9-showback.md)、段2 は要目視確認）。
+> ◐ **idle-stop 実装済**（[p3-9-idle-stop](log/p3-9-idle-stop.md)）+ **showback 段1+段2 実装済**（バックエンド + Console 使用量ダッシュボード、[p3-9-showback](log/p3-9-showback.md)、段2 は要目視確認）。
 > **auto-start（オンデマンド起動）実装済**（idle-stop の対＝scale-to-zero 完結、`AF_AUTOSTART`, 既定 on）。残＝観測 / egress 統制。バックアップ/復元は P3-10 段3 で実装済。
 
 各社が自社デプロイを運用するための成熟。我々は機能と runbook を提供。
 
 | 項目 | 内容 | 小規模での着地 |
 |------|------|----------------|
-| **社内 showback** ◐ | 部署別に使用量を可視化（任意の chargeback）。外部課金なし | **段1 実装済**: workspace 占有秒を per-(membership,day) にサンプリング累積（`AF_USAGE_SAMPLE_INTERVAL`, 既定 5m）→ `GET /api/admin/usage`（JSON=days+member 別 totals / CSV）。gate=super_admin（全社）or tenant_admin（自社 scope, `?tenant=`）。段2=Console ダッシュボード。設計 [p3-9-showback](history/p3-9-showback.md)。 |
+| **社内 showback** ◐ | 部署別に使用量を可視化（任意の chargeback）。外部課金なし | **段1 実装済**: workspace 占有秒を per-(membership,day) にサンプリング累積（`AF_USAGE_SAMPLE_INTERVAL`, 既定 5m）→ `GET /api/admin/usage`（JSON=days+member 別 totals / CSV）。gate=super_admin（全社）or tenant_admin（自社 scope, `?tenant=`）。段2=Console ダッシュボード。設計 [p3-9-showback](log/p3-9-showback.md)。 |
 | **ライフサイクル** | provision は管理者手動 / 停止（部署解散→stop・データ N 日保持）/ オフボード（エクスポート + 鍵 disable で crypto-shred）| crypto-shred は P3-3 で無料。 |
-| **idle-stop（scale-to-zero）** ✅ | オンプレ単一ホストは RAM 逼迫（運用メモ host-oom-fleet-risk）ゆえ**実運用上きわめて重要**（旧 Phase 4 C1 を前倒し）| **実装済**: 二段構え（第1段=idle claude を halt で resumable 化 / 第2段=冷えた WS を docker stop）。テナント別 timeout（super_admin 編集）。設計 [p3-9-idle-stop](history/p3-9-idle-stop.md)。**auto-start（停止中 WS をセッション作成/fork/再開・持ち越し回答・SSM 探索で自動起動、`AF_AUTOSTART` 既定 on。端末アタッチは後に対象外へ）実装済**。残= ECS desired=0（P3-7 と共通化）。 |
+| **idle-stop（scale-to-zero）** ✅ | オンプレ単一ホストは RAM 逼迫（運用メモ host-oom-fleet-risk）ゆえ**実運用上きわめて重要**（旧 Phase 4 C1 を前倒し）| **実装済**: 二段構え（第1段=idle claude を halt で resumable 化 / 第2段=冷えた WS を docker stop）。テナント別 timeout（super_admin 編集）。設計 [p3-9-idle-stop](log/p3-9-idle-stop.md)。**auto-start（停止中 WS をセッション作成/fork/再開・持ち越し回答・SSM 探索で自動起動、`AF_AUTOSTART` 既定 on。端末アタッチは後に対象外へ）実装済**。残= ECS desired=0（P3-7 と共通化）。 |
 | **バックアップ/復元** | **価値の本体は永続 home（資格情報・履歴・clone）**。home + DB のバックアップ/復元は必須機能 | オンプレ=ディスクスナップ/rsync、AWS=AWS Backup/S3。runbook 同梱。 |
 | **観測** ◐ | メトリクス・アラート。noisy-neighbor 防止（クォータ + cgroup で緩和）| 簡易ダッシュボード + CloudWatch（AWS 時）。**全ユーザーのセッション俯瞰**を admin UI に実装（`GET /api/admin/sessions`＝running は Agent live / stopped は DB ミラー、テナント横断・検索・5s ポーリング。super_admin=全社 / tenant_admin=自社）。 |
 | **egress 統制** | 情報持ち出し統制として egress allowlist | github/bitbucket/anthropic/claude.ai。 |
@@ -330,14 +330,14 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 ---
 
 ## P3-10. パッケージング & 配布 & アップグレード（提供モデルの核）
-> ◐ **進行中**（提供モデルの核）。4 ターゲットの設計・実装記録は [docs/35](35-packaging.md)、**dist 配布は publish 運用中**
+> ◐ **進行中**（提供モデルの核）。4 ターゲットの設計・実装記録は [docs/35](log/35-packaging.md)、**dist 配布は publish 運用中**
 > （0.1.0〜、リリースノートは `deploy/release/notes/`）。完了判定 = 第 2 デプロイをゼロから立てて E2E 通過
 > （[decisions/0001](decisions/0001-self-host-vs-saas.md)）——未達。
 
 「グループ各社が自社でセルフホスト」を成立させる工程。機能（P3-1〜P3-9）を**他社の情シスが設置・運用・更新できる形**にする。
 
 - **配布**: バージョン付きリリース。**Workspace/CP イメージ（タグ付き）+ `docker compose` 一式 + AWS（EC2-Single / ECS+CFN）+ native tar（WSL 向け）+ 設置スクリプト**
-  （4 ターゲットの設計は [docs/35](35-packaging.md)）。イメージは各社の自社レジストリ（or 我々の社内レジストリ）から取得。
+  （4 ターゲットの設計は [docs/35](log/35-packaging.md)）。イメージは各社の自社レジストリ（or 我々の社内レジストリ）から取得。
   **Helm chart（k8s）は需要が出るまで棚上げ** — AWS 希望社への答えは ECS+CFN（2026-07-21 決定、docs/35 §35.9-4）。
 - **設定（その社が握る項目を 1 箇所に）**: Google OAuth client、許可ドメイン/ユーザー、公開ドメイン/TLS、**ルート鍵 custodian の指定**（Vault/ファイル/KMS）、リソース上限の既定、データ配置。
   → `.env` / 単一 config + `oauth.env`（Phase 2 の作法を踏襲）として文書化。**秘密は同梱しない**。

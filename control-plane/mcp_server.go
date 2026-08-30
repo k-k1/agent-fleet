@@ -1,6 +1,6 @@
 package main
 
-// Tenant-distributed MCP servers (docs/48 P4 + ADR0031) — the CP half.
+// Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031) — the CP half.
 //
 // Two faces over the same rows:
 //
@@ -31,7 +31,7 @@ import (
 	"strings"
 )
 
-// Validation codes, identical to mcpreg's (docs/48 §11.3: one reason = one code).
+// Validation codes, identical to mcpreg's (docs/log/48 §11.3: one reason = one code).
 // 追加・改名時は console/src/lib/i18n/locales/{ja,en}.ts の "err.<code>" も同時に。
 const (
 	codeMCPNameInvalid    = "mcp_name_invalid"
@@ -53,7 +53,7 @@ const (
 
 // maskedValue is what a stored header value is replaced with on the wire. Sending it
 // back unchanged keeps the stored value, so the admin UI can edit a definition without
-// ever handling the real credential (the connections convention, docs/48 §5.1).
+// ever handling the real credential (the connections convention, docs/log/48 §5.1).
 const maskedValue = "***"
 
 // mcpNameRe is the intersection of what the target CLIs accept as a server key — codex
@@ -71,7 +71,7 @@ var mcpKnownKinds = map[string]bool{
 }
 
 // mcpServerStore is the narrow store view this feature needs: the definitions plus the
-// audit ledger (every admin mutation is recorded, docs/48 §9).
+// audit ledger (every admin mutation is recorded, docs/log/48 §9).
 type mcpServerStore interface {
 	MCPServerStore
 	AuditStore
@@ -138,7 +138,7 @@ type distDef struct {
 // sealHeaders encrypts the header map with the tenant KEK through the key custodian
 // (custodian.go), returning the ciphertext and the key reference. Wrap/Unwrap are
 // AES-256-GCM over opaque bytes with the keyRef as AAD — nominally a DEK envelope, used
-// here for the secret field itself, which is exactly the shape docs/48 §3.2 asks for.
+// here for the secret field itself, which is exactly the shape docs/log/48 §3.2 asks for.
 //
 // With no master key (dev / single-node without a configured secret) the map is stored
 // as plaintext JSON with an empty KeyRef, the same way the Agent's secret store degrades
@@ -318,7 +318,7 @@ func mergeHeaders(incoming, stored map[string]string) map[string]string {
 
 // stripValues keeps the header NAMES and drops every value. It is what user_secret=1
 // stores: the tenant describes WHICH headers the server needs, each member supplies the
-// values into their own encrypted store (docs/48 §5.2). Dropping values on the way in
+// values into their own encrypted store (docs/log/48 §5.2). Dropping values on the way in
 // (rather than only on the way out) matters — a token the admin pasted before flipping
 // the flag would otherwise sit in the DB forever with nothing ever reading it.
 func stripValues(h map[string]string) map[string]string {
@@ -482,7 +482,7 @@ func (a mcpServerAPI) adminUpsert(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	// Audit detail names the server and the flags, never a header value (docs/48 §9).
+	// Audit detail names the server and the flags, never a header value (docs/log/48 §9).
 	a.auditMCP(r.Context(), ident, t.ID, "mcp.upsert", row.Name,
 		"url="+row.URL+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret))
 	writeJSON(w, http.StatusOK, rowToBody(row, maskHeaders(headers)))
@@ -531,7 +531,7 @@ func (a mcpServerAPI) auditMCP(ctx context.Context, ident Identity, tenantID, ac
 // --- distribution face -------------------------------------------------------------
 
 // distribute (GET /internal/mcp-servers) serves the caller's tenant's ENABLED
-// definitions to their Workspace agent, which caches them (docs/48 §6). The tenant comes
+// definitions to their Workspace agent, which caches them (docs/log/48 §6). The tenant comes
 // from the token's membership, never the request, so this can never read another
 // tenant's headers.
 //

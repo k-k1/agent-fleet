@@ -1,7 +1,7 @@
 package main
 
 // Assistant chat — a headless-CLI LLM chat/translation assistant, distinct from
-// the tmux coding sessions. See docs/19-assistant-chat.md.
+// the tmux coding sessions. See docs/log/19-assistant-chat.md.
 //
 // Why a parallel subsystem (not a SessionKind): the Agent interface in agent.go
 // is PTY-shaped (buildLaunch returns a tmux program). A real chat has no TUI, so
@@ -13,7 +13,7 @@ package main
 // the agent kind only selects the backend + presentation.
 //
 // このファイルは会話モデルとペルソナ/言語/ツールポリシーのみを持つ。永続化は chat_store.go、
-// プロバイダ実装は chat_providers.go、HTTP ハンドラは chat_handlers.go（docs/23 残②で分割）。
+// プロバイダ実装は chat_providers.go、HTTP ハンドラは chat_handlers.go（docs/log/23 残②で分割）。
 
 import (
 	"os"
@@ -25,7 +25,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// chatStep is one "作業過程" item of an assistant turn (docs/19): the narration the model
+// chatStep is one "作業過程" item of an assistant turn (docs/log/19): the narration the model
 // emitted right before it called a tool. On a tool-using answer claude produces several
 // assistant messages — each ending in a tool call (stop_reason=tool_use) is a working step,
 // and only the last (stop_reason=end_turn) is the final answer. We keep the steps so the UI
@@ -37,7 +37,7 @@ type chatStep struct {
 
 // chatMessage is one turn in a conversation.
 type chatMessage struct {
-	Role    string `json:"role"` // "user" | "assistant" | "report" (docs/30 セッション報告) | "notice" (システム通知)
+	Role    string `json:"role"` // "user" | "assistant" | "report" (docs/log/30 セッション報告) | "notice" (システム通知)
 	Content string `json:"content"`
 	TS      int64  `json:"ts"` // unix millis
 	// Agent is the backend that actually generated this assistant turn. It may differ
@@ -54,11 +54,11 @@ type chatMessage struct {
 	// Steps is the assistant turn's working process (narration before each tool call),
 	// separated from Content (the final answer). Empty for user turns and tool-less replies.
 	Steps []chatStep `json:"steps,omitempty"`
-	// Session names the reporting session for role=="report" (docs/30) — the Console
+	// Session names the reporting session for role=="report" (docs/log/30) — the Console
 	// renders these as a session-origin card, not a user/assistant bubble.
 	Session string `json:"session,omitempty"`
 	// Instr lists the instruction-ledger row ids this completion report covers
-	// (docs/51 Phase 2). It is the DELIVERY IDEMPOTENCY key: a retry after a crash
+	// (docs/log/51 Phase 2). It is the DELIVERY IDEMPOTENCY key: a retry after a crash
 	// between「追記成功」and「台帳更新」finds its own ids here and appends nothing.
 	// Empty for interim reports (question / plan-approval), which are non-consuming
 	// and may legitimately repeat within one instruction.
@@ -68,14 +68,14 @@ type chatMessage struct {
 	// exists in the stored thread but the LLM hasn't seen it yet.
 	Delivered bool `json:"delivered,omitempty"`
 	// NoticeKey / NoticeArgs localize the bodies WE generate — role=="notice" (ADR 0033)
-	// and, since docs/28 P6, role=="report" as well: the Console renders the catalog
+	// and, since docs/log/28 P6, role=="report" as well: the Console renders the catalog
 	// entry for the user's locale and only falls back to Content (source language) for
 	// records written before the key existed. See chat_notice.go / chat_report_text.go.
 	NoticeKey  string            `json:"notice_key,omitempty"`
 	NoticeArgs map[string]string `json:"notice_args,omitempty"`
 	// ReportKind / ReportReason are the EVENT a role=="report" card stands for
 	// (answer-ready / question / plan-approval / exit …, qualified by turn-failed,
-	// turn-aborted, oom …). docs/28 P6 separated the two readers of a report: the card
+	// turn-aborted, oom …). docs/log/28 P6 separated the two readers of a report: the card
 	// the user reads comes from NoticeKey (display), and the operator's marching orders
 	// are re-rendered from these fields at injection time (reportPromptFor) in the
 	// display language — storing the instruction text would freeze its language and
@@ -127,32 +127,32 @@ type chatConversation struct {
 	AgyMessageCursor      int `json:"agy_message_cursor,omitempty"`
 	CursorMessageCursor   int `json:"cursor_message_cursor,omitempty"`
 	// AFTools attaches the local Agent Fleet MCP tools (read-only) to this chat's
-	// claude so it can inspect the user's workspace (docs/19 Q1). Legacy field kept for
+	// claude so it can inspect the user's workspace (docs/log/19 Q1). Legacy field kept for
 	// conversations created before assistants (Q2); new conversations drive tools via the
 	// snapshot Tools grant below and afToolsEnabled() reconciles the two.
 	AFTools bool `json:"af_tools,omitempty"`
-	// Assistant snapshot (docs/19 Q2): the conversation copies its assistant's settings at
+	// Assistant snapshot (docs/log/19 Q2): the conversation copies its assistant's settings at
 	// creation, so later edits to the assistant don't rewrite existing threads. AssistantID
 	// is kept for display/reference; Persona/Tools/Knowledge drive the provider.
 	AssistantID string   `json:"assistant_id,omitempty"`
 	Persona     string   `json:"persona,omitempty"`   // --append-system-prompt (falls back to chatPersona)
 	Tools       string   `json:"tools,omitempty"`     // "none" | "af_read" | "af_write"
 	Knowledge   []string `json:"knowledge,omitempty"` // dirs passed to --add-dir
-	// Integrations snapshots the assistant's ops MCP servers (docs/25 Phase 1), e.g.
+	// Integrations snapshots the assistant's ops MCP servers (docs/log/25 Phase 1), e.g.
 	// ["pagerduty"]. mcpConfigArgs attaches each read-only via mcp-run when the user
 	// has the matching connection configured.
 	Integrations []string `json:"integrations,omitempty"`
-	// Locked pins the conversation against deletion (docs/45): while true,
+	// Locked pins the conversation against deletion (docs/log/45): while true,
 	// DELETE /chat/conversations/{id} is refused with 403 locked. Toggled by
 	// POST /chat/conversations/{id}/lock; nothing else writes it, so a turn that
 	// rewrites the conversation preserves it like any other field.
 	Locked bool `json:"locked,omitempty"`
-	// Seed is a transient first-turn prompt returned by create (Files attach, docs/19
+	// Seed is a transient first-turn prompt returned by create (Files attach, docs/log/19
 	// Phase C) for the Console to prefill the composer. It is set AFTER saveConv, so it is
 	// never persisted — the composer owns it thereafter.
 	Seed string `json:"seed,omitempty"`
 	// SeedVerb records the ad-hoc Files verb that created this thread ("translate" |
-	// "summarize"), when the chat was opened without a standing assistant (docs/30 ②).
+	// "summarize"), when the chat was opened without a standing assistant (docs/log/30 ②).
 	// It drives the persona-embedded verb behaviour — notably the translate language
 	// exemption below — so deleting the old 翻訳/汎用 builtins costs no capability.
 	SeedVerb string `json:"seed_verb,omitempty"`
@@ -162,7 +162,7 @@ type chatConversation struct {
 	// on the GET response, after load and never before saveConv).
 	InProgress bool `json:"in_progress,omitempty"`
 	// AutoTurns counts the operator turns run automatically off session reports since
-	// the user's last message (docs/30). Capped at maxAutoTurns; reset on every user
+	// the user's last message (docs/log/30). Capped at maxAutoTurns; reset on every user
 	// send — the structural stop for an unattended follow-up loop.
 	AutoTurns int `json:"auto_turns,omitempty"`
 	// AutoPausedNotified marks that the "自動応答の上限に達しました" pause notice has
@@ -179,11 +179,11 @@ type chatConversation struct {
 	// appended for the CURRENT crossing; reset when usage falls back under the
 	// threshold (e.g. the provider compacted) so a later re-crossing warns again.
 	CtxWarned bool `json:"ctx_warned,omitempty"`
-	// PendingHandoff is the compaction summary (docs/33 第2段) waiting to ride the
+	// PendingHandoff is the compaction summary (docs/log/33 第2段) waiting to ride the
 	// next prompt as a preamble — the new provider session's seed context. Cleared
 	// only after that turn succeeds (injectHandoff / chat_compact.go).
 	PendingHandoff string `json:"pending_handoff,omitempty"`
-	// Plan is the conversation's standing work plan (docs/33 第5段), carried into every
+	// Plan is the conversation's standing work plan (docs/log/33 第5段), carried into every
 	// fresh provider session **verbatim** — unlike PendingHandoff it is never summarized
 	// and never consumed, so repeated compaction cannot erode it. Written by compaction
 	// (差分更新), the 計画を更新 button and hand editing; see chat_plan.go.
@@ -232,7 +232,7 @@ func (c *chatConversation) afToolsEnabled() bool {
 }
 
 // afWriteEnabled reports whether the write tools (send_to_session …) are exposed to this
-// chat — only when the assistant granted af_write (docs/19 Q2 opt-in).
+// chat — only when the assistant granted af_write (docs/log/19 Q2 opt-in).
 func (c *chatConversation) afWriteEnabled() bool { return c.Tools == toolsAFWrite }
 
 // chatOutputRule is appended to every chat's system prompt. The file/shell tools are hard-
@@ -240,7 +240,7 @@ func (c *chatConversation) afWriteEnabled() bool { return c.Tools == toolsAFWrit
 // from even trying (it otherwise tends to "save the result to a file" at the end of a big
 // task, then fail) and to always return the full result as chat text.
 //
-// Locale-branched like the other prompts that steer the reply language (docs/28 §4):
+// Locale-branched like the other prompts that steer the reply language (docs/log/28 §4):
 // this rule sits in EVERY system prompt, so a Japanese-only version quietly biases every
 // answer toward Japanese even for a user whose Console is English.
 const chatOutputRule = "【出力ルール（厳守）】ファイルの作成・編集・保存やコマンド実行はできません（ツールは無効化されています）。" +
@@ -270,10 +270,10 @@ const (
 // languageRule returns the forced-output-language directive for this conversation, or ""
 // to leave language to the input/persona. Translation is exempt: its whole job is
 // auto-detecting direction (JA↔EN), which a forced language would break. That is now the
-// ad-hoc "translate" verb (docs/30 ②); the AssistantID check keeps threads created by the
+// ad-hoc "translate" verb (docs/log/30 ②); the AssistantID check keeps threads created by the
 // old 翻訳 builtin exempt too.
 //
-// "auto" is symmetric again (docs/28 P6). It used to fall back to the display language
+// "auto" is symmetric again (docs/log/28 P6). It used to fall back to the display language
 // for "en" only: the personas and the output rule were written in Japanese, so with no
 // rule at all an English Console still got Japanese answers, and that one-sided patch
 // corrected it. P6 localized the actual prompts — persona (builtin and ad-hoc), output
@@ -353,12 +353,12 @@ type chatMeta struct {
 	UpdatedAt    int64         `json:"updated_at"`
 	MessageCount int           `json:"message_count"`
 	Context      *contextUsage `json:"context,omitempty"` // current context fill (chat_usage.go)
-	Locked       bool          `json:"locked,omitempty"`  // 削除ロック（docs/45）: true の間 DELETE は拒否
+	Locked       bool          `json:"locked,omitempty"`  // 削除ロック（docs/log/45）: true の間 DELETE は拒否
 }
 
 // chatPersona keeps the headless agent in plain conversational mode (translate,
 // summarize, answer) rather than reaching for file edits or bash on its own.
-// docs/28 P6: 表示言語で書く（アシスタントを選ばない会話の唯一のペルソナなので、ここが
+// docs/log/28 P6: 表示言語で書く（アシスタントを選ばない会話の唯一のペルソナなので、ここが
 // 日本語のままだと英語 Console でも回答が日本語に倒れる）。
 func chatPersonaFor(lang string) string {
 	if lang == "en" {
@@ -389,7 +389,7 @@ const defaultOpencodeChatModel = "opencode/nemotron-3-ultra-free"
 // defaultAgyChatModel favors the fast Gemini Flash tier for conversational
 // assistants: chat is latency-sensitive, agy's distinctive value here is Gemini
 // (its Claude models duplicate the claude backend and are Thinking-only), and
-// Flash is the quota-cheapest choice on the scarce Starter/free plan (docs/32
+// Flash is the quota-cheapest choice on the scarce Starter/free plan (docs/log/32
 // Track D). The value is `agy models` display-name syntax; a name the live
 // catalog no longer lists is dropped at send time (agyChatModel) so a rename
 // upstream degrades to agy's own default instead of a hard error.

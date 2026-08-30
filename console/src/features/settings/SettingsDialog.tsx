@@ -7,7 +7,7 @@
 // settings.
 //
 // Section keys are unchanged (display/keys/env/agents/assistant/tts/git/ssm/ops/tokens/memory
-// — account was added later, docs/61 §61.16; backup later still, docs/79)
+// — account was added later, docs/log/61 §61.16; backup later still, docs/log/79)
 // so every openSettings(section) deep-link still lands on the right item.
 //
 // Mobile (≤760px): the two panes become a drill-down — the rail is shown first, then
@@ -41,9 +41,9 @@ import { BackupTab } from "./BackupTab.tsx";
 import { NotificationsTab } from "./NotificationsTab.tsx";
 import { MemoryTab } from "./MemoryTab.tsx";
 // 使用量タブは features/usage の View をそのまま差す薄いラッパ（モーダル非依存に
-// 保つ＝将来ペインへ昇格させるときに同じ View を差し替えなしで使える。docs/46 §5）。
+// 保つ＝将来ペインへ昇格させるときに同じ View を差し替えなしで使える。docs/log/46 §5）。
 import { UsageView } from "../usage/UsageView.tsx";
-// クラウド費用は AWS の請求がある時だけの面（docs/67 §67.8）。トークンの「使用量」の
+// クラウド費用は AWS の請求がある時だけの面（docs/log/67 §67.8）。トークンの「使用量」の
 // 隣に置くが、同じパネルには入れない——時間と $ を並べると、片方が実測でもう片方が
 // 請求である差が消える（ADR 0048 決定 5）。
 import { MyCloudCostView, useCostProfile } from "../cost/CloudCostView.tsx";

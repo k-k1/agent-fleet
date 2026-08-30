@@ -25,7 +25,7 @@ Other tools such as Zabbix can be connected manually with the PoC steps below (t
 
 ## (PoC) Connecting other tools manually 🧪
 
-**These are experimental steps** (Phase 0 of [docs/25 service-ops extensions](../../25-ops-monitoring.md)). Manual steps for tools not yet in the "Ops & monitoring" tab (CloudWatch / Zabbix, etc.), or for when you want to connect a **Terminal (CLI) claude session** rather than chat.
+**These are experimental steps** (Phase 0 of [docs/25 service-ops extensions](../../log/25-ops-monitoring.md)). Manual steps for tools not yet in the "Ops & monitoring" tab (CloudWatch / Zabbix, etc.), or for when you want to connect a **Terminal (CLI) claude session** rather than chat.
 
 - Scope: Terminal (CLI) claude sessions. **Chat (the assistant) cannot take extra MCP servers today** (planned for Phase 1).
 - Prerequisite: outbound connectivity from the workspace to each monitoring tool's endpoint. PyPI access is needed for `uvx`'s first fetch.

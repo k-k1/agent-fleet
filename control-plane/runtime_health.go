@@ -3,11 +3,11 @@
 // この面の契約はひとつだけ: **「Agent がまだ応答しない」は起動の失敗ではない**。
 // Start はコンテナ/プロセスの起動を確定させるところまでを引き受け、Agent が応答する
 // までの窓は State() の "starting" として表に出す。ECS アダプタは最初からそう作られて
-// いて（watchReady・docs/62 §62.5「A readiness failure must still NEVER fail Start」）、
+// いて（watchReady・docs/log/62 §62.5「A readiness failure must still NEVER fail Start」）、
 // ローカルの docker / native 2 つだけが「予算内に /healthz が 200 を返さなければ起動
 // 失敗」だった。その不揃いが 3 つの実害を生んでいた:
 //
-//   - 実障害（docs/38 ★6）: 定時実行の wake が `agent did not become healthy within 15s`
+//   - 実障害（docs/log/38 ★6）: 定時実行の wake が `agent did not become healthy within 15s`
 //     で落ちた。真因は entrypoint の CLI 自己更新（実測 約60 秒）で、コンテナは正常。
 //   - 同じ 15 秒が人手の Start にも効く。予算が 300 秒に伸びるのは自己更新 opt-in が
 //     ON の起動だけなので、**OFF の利用者だけ**が lean/cold な起動・遅い回線・ネット
@@ -38,13 +38,13 @@ import (
 // 300 秒なのは native の rootfs 経路・ECS の startTimeout と同じ根拠（cold pull ＋
 // entrypoint の boot-install ＋ CLI 自己更新の実測 約60 秒を包む）。**必ず時限式**に
 // するのが肝で、収束しない "starting" は Console から停止も再作成もできない箱になる
-// （docs/70 §70.14.6 の実害）。期限が切れたら素直に running（コンテナは在る）へ落ちる。
+// （docs/log/70 §70.14.6 の実害）。期限が切れたら素直に running（コンテナは在る）へ落ちる。
 const agentBootBudget = 300 * time.Second
 
 // agentReadyWait は「Agent に用がある API」がその場で待ってよい上限（AF_AGENT_READY_WAIT_SEC）。
 // 既定 55 秒は ALB の idle timeout 60 秒（deploy/aws/ecs/cfn/30-ingress.yaml）の内側に
 // 収めるため — HTTP ハンドラの中で待つ以上、ここを超えた瞬間に応答そのものが 504 で
-// 消える（docs/62 §62.5 で計測済み）。待ちきれなければ 409 workspace_starting を返す。
+// 消える（docs/log/62 §62.5 で計測済み）。待ちきれなければ 409 workspace_starting を返す。
 // 起動は裏で続くので、利用者/Console の再試行が次に通る。
 func agentReadyWait() time.Duration {
 	if n := envInt("AF_AGENT_READY_WAIT_SEC", 0); n > 0 {
@@ -56,7 +56,7 @@ func agentReadyWait() time.Duration {
 // agentHealthWait returns the Start health-wait budget: the adapter default,
 // overridable via AF_AGENT_HEALTH_WAIT_SEC. Lean (boot-install) deployments
 // need more than the classic 15s on FIRST start — the entrypoint downloads the
-// pinned CLIs before the agent listens (docs/35 §35.4.1); the native rootfs
+// pinned CLIs before the agent listens (docs/log/35 §35.4.1); the native rootfs
 // adapter defaults higher for the same reason.
 //
 // ★ これは「これを過ぎたら失敗」ではなく「これを過ぎたら starting を名乗って返る」。

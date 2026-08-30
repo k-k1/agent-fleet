@@ -7,7 +7,7 @@
 #   deploy/local/run-dev.sh [local]   # Docker runtime (dev default)
 #   deploy/local/run-dev.sh wsl       # WSL personal-use preset (Docker required;
 #                                     # docker/cgroup preflight, AUTH=dev forced)
-#   deploy/local/run-dev.sh native    # containerless, no Docker (single user; docs/34)
+#   deploy/local/run-dev.sh native    # containerless, no Docker (single user; docs/log/34)
 #   deploy/local/run-dev.sh reset [--all] [--yes]
 #                                     # wipe local data. Default: only the dev user's
 #                                     # workspace ($WS_DATA/<DEV_USER>).
@@ -159,7 +159,7 @@ WS_IMAGE="${WS_IMAGE:-$WS_IMAGE_DEFAULT}"
 
 # Control Plane config (contains secrets -> git-ignored): PUBLIC_BASE_URL, the login
 # provider env, AF_MASTER_KEY, ... See deploy/local/oauth.env.example.
-# ★ The git providers' OAuth apps are NOT in here since docs/71 — they are per-tenant
+# ★ The git providers' OAuth apps are NOT in here since docs/log/71 — they are per-tenant
 # rows, registered in the Console under Tenant settings -> Integrations.
 OAUTH_ENV="$ROOT/deploy/local/oauth.env"
 if [ -f "$OAUTH_ENV" ]; then
@@ -191,7 +191,7 @@ if [ "$MODE" = wsl ]; then
   if ! docker info >/dev/null 2>&1; then
     echo "✗ cannot reach the docker daemon. Start dockerd inside WSL and add ${USER:-$(id -un)} to the docker group" >&2
     echo "   (e.g. sudo service docker start / sudo usermod -aG docker ${USER:-$(id -un)}, then log in again)" >&2
-    echo "   If Docker is not an option: deploy/local/run-dev.sh native (docs/34)" >&2
+    echo "   If Docker is not an option: deploy/local/run-dev.sh native (docs/log/34)" >&2
     fail=1
   fi
   # cgroup v2 (the --memory cap and resource display depend on it).
@@ -237,7 +237,7 @@ if [ "$MODE" != native ]; then
   fi
 else
   # native: no image — build the workspace-agent for this host instead, and check
-  # the host provides what the Dockerfile normally would (warn-only; docs/34).
+  # the host provides what the Dockerfile normally would (warn-only; docs/log/34).
   build_go_binary "$ROOT/workspace/agent" /tmp/af-agent "workspace-agent (native runtime)"
   AF_NATIVE_AGENT_BIN=/tmp/af-agent
   for c in tmux git claude; do
@@ -260,7 +260,7 @@ build_console
 build_go_binary "$ROOT/control-plane" /tmp/af-cp "control-plane"
 
 echo "==> control-plane on $CP_ADDR  (console: http://${CP_ADDR/#:/localhost:})  mode=$MODE runtime=$AF_RUNTIME auth=${AUTH:-dev}"
-# The generic OIDC login providers (docs/61) are named at runtime — AF_OIDC_PROVIDERS
+# The generic OIDC login providers (docs/log/61) are named at runtime — AF_OIDC_PROVIDERS
 # plus AF_OIDC_<ID>_* per provider — so they can't be listed one by one like the
 # fixed vars below. Forward whatever is exported, along with the GitHub adapter's
 # AF_GITHUB_* (P2), which has the same open-ended shape.

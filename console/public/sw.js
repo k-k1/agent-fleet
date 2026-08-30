@@ -1,4 +1,4 @@
-// Agent Fleet Console service worker — deliberately minimal (docs/21 画像添付).
+// Agent Fleet Console service worker — deliberately minimal (docs/log/21 画像添付).
 //
 // Its ONLY job is the Web Share Target: receive a POST share from Android's 共有シート,
 // stash the payload in CacheStorage, and redirect into the app so the memo composer can

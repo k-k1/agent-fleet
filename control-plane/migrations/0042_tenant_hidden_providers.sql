@@ -1,4 +1,4 @@
--- Sign-in methods a tenant ACCEPTS but does not put a button on (docs/61 §61.15.9).
+-- Sign-in methods a tenant ACCEPTS but does not put a button on (docs/log/61 §61.15.9).
 --
 -- allowed_providers (0039) does two jobs at once: it decides which methods may be
 -- used to enter the tenant AND which buttons its login page shows. That is fine

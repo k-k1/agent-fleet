@@ -1,5 +1,5 @@
 // core/api/client — the console's API core (absorbed from src/api.ts at the
-// docs/22 P8 swap; the parallel-entry shim is gone). Transport primitives +
+// docs/log/22 P8 swap; the parallel-entry shim is gone). Transport primitives +
 // domain wrappers; features re-export their slice via features/*/api.ts.
 // Shared API layer, originally ported from the Phase 1 Console — the behavioral
 // contract is unchanged; only the packaging moved to modules.
@@ -120,9 +120,9 @@ export interface ApiError {
 export type FsResult = { status: number } & Record<string, unknown>;
 
 // Server error messages are language-neutral developer fallbacks. The user-facing text
-// is localized via the i18n catalog under the "err.<code>" key (docs/28 / ADR 0016);
+// is localized via the i18n catalog under the "err.<code>" key (docs/log/28 / ADR 0016);
 // an unmapped code falls back to the server's message. Go 側の対は
-// control-plane/errcodes.go / workspace/agent/errcodes.go（docs/23 P0-3）— コードを増減・
+// control-plane/errcodes.go / workspace/agent/errcodes.go（docs/log/23 P0-3）— コードを増減・
 // 変更するときは必ず両側同時に、対応する "err.<code>" キーを i18n カタログにも足す。
 // isTransientErr reports whether an api() result is a gateway/transport failure the UI
 // should RETRY rather than treat as real (empty/not-found) data. api() synthesizes an
@@ -198,7 +198,7 @@ export const api = (path: string, opts?: RequestInit): Promise<any> => {
       try {
         const parsed = JSON.parse(text);
         // The active tenant accepts a different sign-in method than this session
-        // was minted with (docs/61 §61.9.4). Latch it so a dialog can offer the
+        // was minted with (docs/log/61 §61.9.4). Latch it so a dialog can offer the
         // re-sign-in link — otherwise every request for that tenant just fails and
         // the person is left with no way to reach it. Mirrors the 401 latch above.
         if (parsed?.error?.code === "provider_required" && selectedTenant) {
@@ -306,7 +306,7 @@ export function uploadFiles(
   return statusJSON(`api/fs/upload?${qs.toString()}`, { method: "POST", body: fd });
 }
 
-// --- semantic session turn ops (docs/27 P1.5) ---
+// --- semantic session turn ops (docs/log/27 P1.5) ---
 // The chat mirror's send / steer / interrupt go through POST /turn, which the
 // Agent adapts to the session's driver: tui = the same tmux typing as before,
 // managed = turn/start・turn/steer・turn/interrupt RPC（P2/P3）. Returns ok.
@@ -325,7 +325,7 @@ export async function sessionTurn(
   op: TurnOp,
   prompt?: string,
   // attachments: managed セッション専用のファイル添付（保存済み絶対パス）。driver が
-  // API 添付（opencode は v1 file part）へ変換する（docs/27 §10.2-3）。tui では
+  // API 添付（opencode は v1 file part）へ変換する（docs/log/27 §10.2-3）。tui では
   // Console が従来どおりパスをプロンプト本文へ織り込むので渡さない。
   attachments?: string[],
 ): Promise<TurnResult> {
@@ -379,7 +379,7 @@ export async function sessionPlanRespond(
   return { ok: true, delivered: feedback ? r?.feedback_delivered === true : true, message: r?.hint };
 }
 
-// 持ち越した対話（docs/75）— 停止時に画面に出ていた質問 / プラン / 許可。モーダルは
+// 持ち越した対話（docs/log/75）— 停止時に画面に出ていた質問 / プラン / 許可。モーダルは
 // 再開しても戻らない（未応答の tool_use は会話木から外れる）ので、これは**キー列で
 // 答えるものではない**: 回答は Agent が再開後に文章として配達する。
 import type { Question } from "../../features/mirror/transcript/types.ts";
@@ -417,7 +417,7 @@ export async function sessionCarriedAnswer(
   return { ok: true };
 }
 
-// One question's structured answer inside an Interaction reply (docs/27 §5).
+// One question's structured answer inside an Interaction reply (docs/log/27 §5).
 // A multi-question form replies with one entry per question, in order.
 export interface InteractionAnswer {
   text?: string; // 自由入力
@@ -440,7 +440,7 @@ export const sessionRespond = (
     answers,
   }).then((r) => (r?.error ? { ok: false, message: errText(r.error as ApiError) } : { ok: true }));
 
-// sessionSettings updates a MANAGED session's dynamic thread settings（docs/27
+// sessionSettings updates a MANAGED session's dynamic thread settings（docs/log/27
 // §9.4-3: 稼働中セッションのモデル / effort / モード変更）。空フィールドは
 // 「変更しない」。TUI セッションはそれぞれの CLI 内の設定操作を使う。
 export interface ManagedThreadSettings {
@@ -535,7 +535,7 @@ export const fsSearch = (root: string, query: string): Promise<{ results: string
     truncated: !!r?.truncated,
   }));
 
-// --- assistant chat (docs/19) ---
+// --- assistant chat (docs/log/19) ---
 // Headless-CLI LLM chat/translation. Thin wrappers over the /api/chat/* endpoints;
 // callers own the response shape (Conversation / ConversationMeta in types/chat).
 import type { Conversation, ConversationMeta, ChatStep } from "../../types/chat.ts";
@@ -544,9 +544,9 @@ import type { Assistant, AssistantInput } from "../../types/assistant.ts";
 
 export const chatList = (): Promise<{ conversations: ConversationMeta[] }> =>
   api("api/chat/conversations");
-// Create a conversation from an assistant template (docs/19 Q2): the Agent snapshots
+// Create a conversation from an assistant template (docs/log/19 Q2): the Agent snapshots
 // the assistant's agent/model/persona/tools/knowledge onto the new thread. Optionally
-// attach a file/dir (docs/19 Phase C): its dir is added to knowledge and the response
+// attach a file/dir (docs/log/19 Phase C): its dir is added to knowledge and the response
 // carries a `seed` prompt (composed with the absolute path) to prefill the composer.
 export interface ChatCreateOpts {
   attachPath?: string; // browse-root-relative file/dir to hand to the assistant
@@ -565,10 +565,10 @@ export const chatCreate = (
   });
 export const chatGet = (id: string): Promise<Conversation> =>
   api(`api/chat/conversations/${encodeURIComponent(id)}`);
-// Rename a conversation's display title (docs/19).
+// Rename a conversation's display title (docs/log/19).
 export const chatRename = (id: string, title: string): Promise<Conversation> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}`, "PATCH", { title });
-// Switch the backend CLI of an existing conversation (docs/19). The agent-priority setting
+// Switch the backend CLI of an existing conversation (docs/log/19). The agent-priority setting
 // only applies to NEW conversations, so this is the way to move a thread in progress: the
 // backend re-pins the conversation, re-resolves the model from that CLI's row in settings,
 // and replays the history the new backend hasn't seen with the next message. 409
@@ -589,12 +589,12 @@ export const chatDelete = (id: string): Promise<Response> =>
 // connection (survives a reload), so aborting the fetch no longer cancels it — this does.
 export const chatStop = (id: string): Promise<Response> =>
   raw(`api/chat/conversations/${encodeURIComponent(id)}/stop`, { method: "POST" });
-// Compact the conversation's context (docs/33 第2段): the backend summarizes the current
+// Compact the conversation's context (docs/log/33 第2段): the backend summarizes the current
 // provider session, resets the resume handles, and carries only the summary into a fresh
 // session on the next turn. Returns the updated conversation (or {error}).
 export const chatCompact = (id: string): Promise<Conversation & { error?: ApiError }> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/compact`, "POST");
-// 作業計画（docs/33 第5段）: 圧縮を跨いで原文のまま運ばれる枠。set は手編集（空文字で
+// 作業計画（docs/log/33 第5段）: 圧縮を跨いで原文のまま運ばれる枠。set は手編集（空文字で
 // クリア）、refresh は直近の会話から計画を引き直す一発ヘッドレス（会話のプロバイダ
 // セッションは使わないので、更新のためにコンテキストは増えない）。どちらも更新済みの
 // 会話を返す。
@@ -695,20 +695,20 @@ export async function chatStream(
   }
 }
 
-// --- 削除ロック（docs/45） ---
+// --- 削除ロック（docs/log/45） ---
 // セッション / 作業コピー（worktree 含む）/ アシスタント会話を削除保護に固定・解除する。
 // 保護そのものは Agent の REST 層で効くので、ここを通らない削除（オペレーターの MCP
 // ツール・ブリッジ）も同じ 403 locked で止まる。UI 側は locked を見て削除項目を無効化
 // するだけ — 判定の正は常にサーバー。
 export const sessionSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/lock`, "POST", { locked });
-// 操作ビーコン（docs/75 P3）: 「人が今 Console を触っている」を Workspace のアイドル時計へ
+// 操作ビーコン（docs/log/75 P3）: 「人が今 Console を触っている」を Workspace のアイドル時計へ
 // 伝える。応答は見ない（在席の記録が 1 回落ちても次の操作で届く）。auto-start は通らない
 // ので、停止中の Workspace がこれで起き上がることは無い。
 export const workspaceAttention = (): Promise<unknown> =>
   apiJSON("api/workspace/attention", "POST", {}).catch(() => null);
 
-// 停止しないピン（docs/75）: アイドル自動停止（tier1 のセッション halt / tier2 の
+// 停止しないピン（docs/log/75）: アイドル自動停止（tier1 のセッション halt / tier2 の
 // Workspace 停止）から、期限付きでこのセッションを守る。hours<=0 で解除。
 // **時刻で切れる**のが本体 — 消し忘れたピンは閉じ忘れた端末タブと同じで、黙って
 // 課金し続けるものになる。延長は押し直す。
@@ -722,7 +722,7 @@ export const repoSetLock = (name: string, locked: boolean): Promise<{ locked?: b
 export const chatSetLock = (id: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/lock`, "POST", { locked });
 
-// --- assistant templates (docs/19 Q2) ---
+// --- assistant templates (docs/log/19 Q2) ---
 // Configurable chat personas. Builtins are code-injected on the Agent (not editable);
 // user-defined ones support create/update/delete.
 export const assistantList = (): Promise<{ assistants: Assistant[] }> =>
@@ -753,7 +753,7 @@ export interface PromptTemplateGroup {
 export const repoPromptTemplates = (name: string): Promise<{ groups: PromptTemplateGroup[] }> =>
   api(`api/repos/${encodeURIComponent(name)}/prompt-templates`);
 
-// --- session skills (mirror スキルピッカー, docs/50 / ADR0034) ---
+// --- session skills (mirror スキルピッカー, docs/log/50 / ADR0034) ---
 // Invocable skills/commands for a RUNNING session. Sources are kind-specific
 // (claude/codex/opencode: filesystem conventions; cursor: the CLI-advertised
 // ACP list) — the Agent resolves them; unsupported kinds answer an empty list.
@@ -766,7 +766,7 @@ export interface SessionSkill {
   // Native invocation: exact string to insert into the composer ("/name " / "$name ").
   // Empty for foreign entries (below).
   invoke?: string;
-  // Cross-skill injection (docs/50 §8): a skill from ANOTHER convention this kind's
+  // Cross-skill injection (docs/log/50 §8): a skill from ANOTHER convention this kind's
   // CLI won't discover natively. The composer turns it into a "read {path} and follow
   // its instructions" prompt — plain text, so it works on any kind/driver.
   path?: string; // repo-relative SKILL.md path
@@ -775,7 +775,7 @@ export interface SessionSkill {
 export const sessionSkills = (session: string): Promise<{ skills: SessionSkill[] }> =>
   api(`api/sessions/${encodeURIComponent(session)}/skills`);
 
-// --- memo queue (docs/21) ---
+// --- memo queue (docs/log/21) ---
 // Per-membership notes accumulated across devices, then flushed to a session as one
 // message. Persisted in the Control Plane (membership-scoped), so they sync between
 // devices; there is no server push, so callers refetch on open + poll while open.
@@ -824,7 +824,7 @@ export const memoFlush = (
 ): Promise<{ sent?: number; sentAt?: string; ids?: string[]; error?: ApiError }> =>
   apiJSON("api/memos/flush", "POST", { sessionName, ids, ...(text ? { text } : {}) });
 
-// First-class categories (docs/21 UI刷新): add empty, rename (cascades onto memos),
+// First-class categories (docs/log/21 UI刷新): add empty, rename (cascades onto memos),
 // reorder by drag. Membership-scoped like the memos.
 export const memoCategoryList = (): Promise<MemoCategory[]> => api("api/memo-categories");
 export const memoCategoryCreate = (input: MemoCategoryInput): Promise<MemoCategory> =>
@@ -834,7 +834,7 @@ export const memoCategoryUpdate = (id: string, patch: MemoCategoryPatch): Promis
 export const memoCategoryDelete = (id: string): Promise<Response> =>
   raw(`api/memo-categories/${encodeURIComponent(id)}`, { method: "DELETE" });
 
-// --- assistant one-shot ask (docs/21 メモ整理) ---
+// --- assistant one-shot ask (docs/log/21 メモ整理) ---
 // Stateless advisory turn (tools off) used to tidy up + auto-categorize memos. The
 // assistant is asked to return JSON; the caller parses and previews before applying.
 export const askAssistant = (

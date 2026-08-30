@@ -1,7 +1,7 @@
 package agents
 
 // 「いま画面に出ている人待ちのモーダル」を kind 側から構造で取り出す seam
-// （docs/75 P5）。
+// （docs/log/75 P5）。
 //
 // なぜ必要か: 持ち越し（carried interaction）の昇格は claude では status ストアの
 // pending-question / pending-plan / pending-perm を読めば済む — hooks が ask 時点で
@@ -33,7 +33,7 @@ type PendingModal struct {
 	// この 2 つを分けるのは**再開後にできること**が違うからである。質問の回答は文章
 	// として配達すれば意味を持つが、許可の可否は**死んだツール呼び出しには届かない**
 	// （ACP の JSON-RPC id も TUI のモーダルもプロセスと一緒に消える）。許可で持ち越
-	// せるのは「何を訊かれていたか」という事実だけ（docs/75 §75.6.4）。
+	// せるのは「何を訊かれていたか」という事実だけ（docs/log/75 §75.6.4）。
 	//
 	// ★ここを取り違えると実害が出る: 許可を question として運ぶと、Console は
 	// 「Yes / No」を選ばせるカードを描き、選ばれた答えを**届かない宛先へ送ったつもり**に

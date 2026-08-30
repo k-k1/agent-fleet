@@ -127,7 +127,7 @@ const exact = {
   "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
   "/api/browser/pages": () => ({ pages: [] }),
   "/api/tts/speakers": () => ({ speakers: [] }),
-  // 受信側の共有セッション(docs/59)。所有者と同じ転写・同じ引き継ぎ提案を、共有 API の
+  // 受信側の共有セッション(docs/log/59)。所有者と同じ転写・同じ引き継ぎ提案を、共有 API の
   // 経路で返す — 共有ビューが本文をどう出すかを、実物のバンドルで見るため。
   "/api/shared-sessions": () => ({
     sessions: SHARED

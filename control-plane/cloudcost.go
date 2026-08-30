@@ -1,5 +1,5 @@
 // cloudcost.go — the AWS invoice, attributed per member by cost allocation tag
-// (docs/67, ADR 0048).
+// (docs/log/67, ADR 0048).
 //
 // This is NOT usage.go. That one samples workspace occupancy in seconds and exists on
 // every runtime; this one reads real money out of Cost Explorer and exists only where

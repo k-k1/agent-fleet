@@ -1,6 +1,6 @@
 // Package session はセッションのモデル（ワイヤ構造体・永続メタ・kind 定数）と
 // その付帯ヘルパ（tmux 名前規約・UUID・メタ永続化）。package main からの抽出
-// （docs/23 残① Wave A）。JSON タグ／ディスク上のレイアウトは main 時代と
+// （docs/log/23 残① Wave A）。JSON タグ／ディスク上のレイアウトは main 時代と
 // バイト同一を維持すること。
 package session
 
@@ -28,7 +28,7 @@ const (
 	KindSSM      = "ssm"
 )
 
-// Driver 方式（docs/27 §2・§9.2、ADR 0015）: セッションの制御経路。tui は従来の
+// Driver 方式（docs/log/27 §2・§9.2、ADR 0015）: セッションの制御経路。tui は従来の
 // tmux 内 TUI（AF は send-keys で書き・スクレイプ/hooks で読む）。managed は共有
 // runtime＋構造化 RPC — AF が唯一の writer で、tmux pane を持たない（P2 で opencode、
 // P3 で codex）。kind は分けない — transcript / settings / auth / models を tui と
@@ -38,14 +38,14 @@ const (
 	DriverManaged = "managed"
 )
 
-// セッションの出自（docs/46 §2-c・ADR 0029 §6）: 誰が始めたセッションの消費か。
+// セッションの出自（docs/log/46 §2-c・ADR 0029 §6）: 誰が始めたセッションの消費か。
 // ターン注入元（transcript.Turn.Source）とは別の軸で、「自分で開いたセッション」と
 // 「オペレーターが勝手に立てたセッション」を使用量集計で分けるために持つ — 後者は
 // 自動走行・定時実行と組み合わさると無人で増える。
 const (
 	OriginUser     = "user"     // Console の起動導線から人が開始（既定）
 	OriginOperator = "operator" // af_write アシスタントの create_session（＋作成元の会話）
-	OriginSchedule = "schedule" // 定時実行が起こした（docs/38）
+	OriginSchedule = "schedule" // 定時実行が起こした（docs/log/38）
 	OriginHandoff  = "handoff"  // 引き継ぎ（旧 fork）で生えた
 	// OriginUnknown はこの機能より前に作られた既存セッション。0 でも user でもない、を守る。
 	OriginUnknown = "unknown"
@@ -87,7 +87,7 @@ type Session struct {
 	Kind string `json:"kind"` // "claude" | "opencode" | "codex" | "shell"
 	// Driver mirrors Meta.Driver on the wire（"" = tui）。managed のセッションは
 	// tmux pane を持たないので、Console はこれを見てターミナルビューを出さず
-	// ミラー（チャット）を主 UI として描画する（docs/27 §10）。
+	// ミラー（チャット）を主 UI として描画する（docs/log/27 §10）。
 	Driver string `json:"driver,omitempty"`
 	// Subdir mirrors Meta.Subdir: the folder beneath Dir the agent actually runs in
 	// ("" = Dir itself). Dir stays the working copy, so the Console keeps grouping
@@ -110,7 +110,7 @@ type Session struct {
 	BackgroundBusy bool `json:"backgroundBusy"`
 	// RateLimitResumeAt: State == agents.StateLimited のとき**だけ**入る、予約済み自動再開の
 	// 時刻（RFC3339）。空 = 上限では止まっているが再開は仕込まれていない（自動再開 OFF、
-	// リセット時刻を決める材料が無い、モデル別上限 — docs/47 §4-5）。チップに「いつ動くか」を
+	// リセット時刻を決める材料が無い、モデル別上限 — docs/log/47 §4-5）。チップに「いつ動くか」を
 	// 出すためだけの表示用で、待ち合わせ自体は CP の定時実行が持つ。
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
 	// Context: current context-window fill (newest assistant turn's prompt tokens),
@@ -139,11 +139,11 @@ type Session struct {
 	ExitCode   int    `json:"exitCode,omitempty"`
 	ExitSignal int    `json:"exitSignal,omitempty"`
 	// Carried は「畳まれたときに画面に出ていた対話」の種類（"question" | "plan" |
-	// "permission"）。停止中の行にだけ入る（docs/75 §75.6.5）。
+	// "permission"）。停止中の行にだけ入る（docs/log/75 §75.6.5）。
 	//
 	// なぜ一覧に要るか: 停止中セッションの状態は 停止中 の 1 語しか無く、答えを待って
 	// いる質問があることは**どこにも出ていなかった**。人待ちを畳めるようにした以上
-	// （docs/75 P2）、畳まれた質問が一覧から見えないのは「静かに失われた」のと区別が
+	// （docs/log/75 P2）、畳まれた質問が一覧から見えないのは「静かに失われた」のと区別が
 	// つかない。ミラーを開けばカードは出るが、開く理由が無ければ開かない。
 	Carried string `json:"carried,omitempty"`
 	// Locked mirrors Meta.Locked: the user pinned this session against deletion, so
@@ -153,7 +153,7 @@ type Session struct {
 	Locked   bool `json:"locked,omitempty"`
 	Archived bool `json:"archived,omitempty"`
 	// KeepAwakeUntil mirrors Meta.KeepAwakeUntil: while it is in the future the
-	// idle-stop reaper leaves this session AND its workspace alone (docs/75)。
+	// idle-stop reaper leaves this session AND its workspace alone (docs/log/75)。
 	// 停止中の行にも載せる — 掛かっているピンは、切れる前に見えていないと外せない。
 	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
 }
@@ -202,7 +202,7 @@ type Meta struct {
 	// by fork/recreate. TUI sessions leave both empty.
 	Effort string `json:"effort,omitempty"`
 	Mode   string `json:"mode,omitempty"`
-	// SkipPermissions is this session's answer to「権限確認をスキップするか」（docs/76）:
+	// SkipPermissions is this session's answer to「権限確認をスキップするか」（docs/log/76）:
 	// true = fleet 既定の bypass 起動（claude --dangerously-skip-permissions と各 kind の
 	// 同格フラグ）、false = ツール実行のたびに承認を求めさせる。**3 値**である点が要で、
 	// nil は「未指定＝ ui-prefs の kind 毎の既定に従う」。false と nil を分けないと、
@@ -211,7 +211,7 @@ type Meta struct {
 	// この値が true でも mode=plan なら承認は出る。
 	SkipPermissions *bool  `json:"skipPermissions,omitempty"`
 	Kind            string `json:"kind"`
-	// Driver selects the control route（docs/27）: "" | "tui" = tmux 内 TUI（従来）、
+	// Driver selects the control route（docs/log/27）: "" | "tui" = tmux 内 TUI（従来）、
 	// "managed" = 共有 runtime＋構造化 RPC（pane なし。P2 で opencode から解禁）。
 	// 既定の tui は "" で永続化し、既存メタとディスク上バイト同一を保つ。
 	Driver string `json:"driver,omitempty"`
@@ -246,7 +246,7 @@ type Meta struct {
 	// KeepAwakeUntil pins the session (and with it the workspace) against the idle-stop
 	// reaper until this instant (RFC3339). Empty / past = not pinned.
 	//
-	// なぜ「時刻」で、真偽値ではないのか（docs/75 §75.5）: 消し忘れたピンは、閉じ忘れた
+	// なぜ「時刻」で、真偽値ではないのか（docs/log/75 §75.5）: 消し忘れたピンは、閉じ忘れた
 	// 端末タブと同じ「黙って課金し続けるもの」になる。止めない理由が本物なら数時間で済み、
 	// 本物でなければ勝手に切れてほしい。延長は押し直せばよい。
 	//
@@ -265,7 +265,7 @@ type Meta struct {
 	ForkFrom string `json:"forkFrom,omitempty"`
 	// ForkAt narrows ForkFrom to a POINT in the source conversation: this session
 	// carries the source's history up to — but NOT including — the anchored turn
-	// (docs/55 §55.3). The value is whatever the kind's ForkAtResolver produced from the
+	// (docs/log/55 §55.3). The value is whatever the kind's ForkAtResolver produced from the
 	// Console's anchor, already translated into that engine's inclusivity (opencode =
 	// the exclusive messageID, codex = the inclusive lastTurnId of the PREVIOUS turn).
 	// Empty = whole-conversation fork, the pre-existing behaviour. Like ForkFrom it only

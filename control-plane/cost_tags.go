@@ -1,5 +1,5 @@
 // cost_tags.go — keep the cost allocation tags activated, without anyone having to
-// remember (docs/67 §67.5, ADR 0048 決定 11).
+// remember (docs/log/67 §67.5, ADR 0048 決定 11).
 //
 // Why this is automated at all: forgetting is PERMANENT. A cost allocation tag only
 // applies from the moment it is switched on, so every day the step is left undone is a

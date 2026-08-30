@@ -1,4 +1,4 @@
-// WS bar — ported from the old components/WsBar.tsx (docs/22 P6a). Verbatim
+// WS bar — ported from the old components/WsBar.tsx (docs/log/22 P6a). Verbatim
 // except the useApp() reads, which map onto the zustand stores:
 //   wsState/startWs/stopWs       → core/store/workspace
 //   tenant/superAdmin            → core/store/tenant
@@ -257,7 +257,7 @@ function agoText(sec: number | null | undefined) {
   return tCount("wsbar.ago_sec", Math.max(0, sec));
 }
 
-// UsageBreakdownLink: 使用量チップ → 設定「使用量」タブへのディープリンク（docs/46 §5）。
+// UsageBreakdownLink: 使用量チップ → 設定「使用量」タブへのディープリンク（docs/log/46 §5）。
 // このチップが答えるのは「サブスク枠がどれだけ残っているか」で、「何にトークンを使ったか」は
 // 別の問い。枠を見て「で、何に消えた?」となった所からそのまま渡す導線。
 function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
@@ -522,7 +522,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   );
 }
 
-// AgyUsageChip: Antigravity's quota chip (docs/32 — moved here from the AgyCard so
+// AgyUsageChip: Antigravity's quota chip (docs/log/32 — moved here from the AgyCard so
 // the 残量 sits beside the Claude / Codex chips). agy's wallet is split into
 // per-model-group pools (Gemini / Claude+GPT), each with a weekly window plus a
 // 5-hour window on paid tiers, and the agent reports REMAINING percent (matching
@@ -611,7 +611,7 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
               />
             ))
           )}
-          {/* 実験枠 note (採用条件 — docs/32 Track C-3): the Starter pool is tiny and
+          {/* 実験枠 note (採用条件 — docs/log/32 Track C-3): the Starter pool is tiny and
               shared with the Antigravity IDE / Jules, so the popover always says so. */}
           <div className="wu-note muted">{tr("agents.agy_exp_label")}</div>
           <div className="wu-foot">
@@ -1145,7 +1145,7 @@ export function WsBar() {
         </div>
         <div className="pv-hint">{tr("wsbar.preview.hint")}</div>
       </div>
-      {/* エージェントが attach した既存 Chromium への戻り道（docs/53 §53.7）。
+      {/* エージェントが attach した既存 Chromium への戻り道（docs/log/53 §53.7）。
           本来の入口はミラーの action リンクだが、会話が流れてリンクを見失ったり
           ペインを閉じた後でも、生きている接続へ戻れるようにする。 */}
       {attachments.length > 0 && (

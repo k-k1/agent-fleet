@@ -127,7 +127,7 @@
 
 /* file viewer: info bar + line-numbered, highlighted code */
 .fileinfo {
-  /* The controls are all fixed-width (保存 / AI提案 / mode segments — docs/44),
+  /* The controls are all fixed-width (保存 / AI提案 / mode segments — docs/log/44),
      and the header's right padding only *reserves* room for the pane control
      cluster overlaid at the top-right: fixed items that outgrow the row would
      overflow past that padding and slide under the cluster. Wrap them onto a
@@ -830,7 +830,7 @@
 :root[data-theme="light"] .markdown a.md-conv-link {
   color: #5b21b6;
 }
-/* An existing file path written as inline code (`docs/65-drawio-viewer.md`) → that file's
+/* An existing file path written as inline code (`docs/log/65-drawio-viewer.md`) → that file's
    pane. The anchor lives INSIDE the <code>, so it inherits the code chip's font and
    background and only takes the link color; green keeps it apart from the amber commit
    hash, the blue session slug and the violet conversation slug. */
@@ -1078,7 +1078,7 @@
 }
 /* Side by side needs width for two usable columns. In a narrow pane — a phone,
    or a file pane in a 3-column layout — stack them instead of squeezing both
-   (docs/44 §1.1). Splitting the height keeps the editor's caret and the preview
+   (docs/log/44 §1.1). Splitting the height keeps the editor's caret and the preview
    on screen at once, which is the point of the mode. */
 @container filepane (max-width: 640px) {
   .file-surfaces.is-split {
@@ -1095,7 +1095,7 @@
     border-top: 1px solid var(--border);
   }
 }
-/* drawio の図の面（docs/65）。フレームはペインいっぱいに置く —— 図の収まりは
+/* drawio の図の面（docs/log/65）。フレームはペインいっぱいに置く —— 図の収まりは
    フレームの中のビューアが自分で計算するので、こちら側は寸法を与えるだけ。
    畳むときは display:none（外さない）—— 作り直すと 4MB のビューアを読み直す。 */
 .file-diagram-shell[hidden] {
@@ -1201,7 +1201,7 @@
   color: var(--warning, #d29922);
   font-weight: 600;
 }
-/* 外部変更のadvisory通知 (docs/44 §7.3): 状態行の中の控えめな注記＋差分確認ボタン。 */
+/* 外部変更のadvisory通知 (docs/log/44 §7.3): 状態行の中の控えめな注記＋差分確認ボタン。 */
 .file-external-note {
   margin-left: 10px;
   color: var(--warning, #d29922);
@@ -1278,7 +1278,7 @@
 .file-diff-column .diff-remote {
   background: rgb(63 185 80 / 14%);
 }
-/* AI提案パネル（docs/44 Phase 4）: 競合パネルの器を流用し、警告色ではなく
+/* AI提案パネル（docs/log/44 Phase 4）: 競合パネルの器を流用し、警告色ではなく
    通常のボーダーで「エラーではない」ことを示す。 */
 .file-editor-suggest {
   border-color: var(--border);
@@ -1332,7 +1332,7 @@
 }
 
 /* Floating action pills by a code selection (→ 送る / 読み上げ). body-portaled group,
-   positioned against the viewport; the pills sit statically inside it (docs/19, docs/24). */
+   positioned against the viewport; the pills sit statically inside it (docs/log/19, docs/log/24). */
 .sel-pill-group {
   position: fixed;
   z-index: 60;
@@ -1535,7 +1535,7 @@
   opacity: 1;
 }
 
-/* 朗読ビュー（docs/24, ReaderView）: 読むための版組＋カラオケ・ハイライト。
+/* 朗読ビュー（docs/log/24, ReaderView）: 読むための版組＋カラオケ・ハイライト。
    原文の改行・行頭スペースを保つため pre-wrap。単位（.reader-unit）はインライン span。 */
 .reader-body {
   flex: 1;

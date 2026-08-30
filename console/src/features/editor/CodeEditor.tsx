@@ -16,7 +16,7 @@ import { validateEditorBuffer, type BufferValidationError } from "./buffer.ts";
 import { lineStartOf, selectionRangeOf, type EditorSelectionReport } from "./selection.ts";
 import { t } from "../../lib/i18n/index.ts";
 
-/** Imperative surface for the AI suggestion flow (docs/44 §4): read the current
+/** Imperative surface for the AI suggestion flow (docs/log/44 §4): read the current
  *  selection when a suggestion is requested, and apply an accepted replacement
  *  as ONE ranged transaction — undoable like a user edit, and filtered by the
  *  shared buffer validator like every other transaction. */
@@ -31,7 +31,7 @@ interface CodeEditorProps {
   path: string;
   content: string;
   wrap: boolean;
-  /** 1-based line to reveal — a citation that opened this file (docs/44 §1.8). */
+  /** 1-based line to reveal — a citation that opened this file (docs/log/44 §1.8). */
   targetLine?: number;
   onChange(content: string): void;
   onSave(): void;
@@ -41,7 +41,7 @@ interface CodeEditorProps {
   onHandle?(handle: CodeEditorHandle | null): void;
   /** Fires on every selection change with the quotable selection, or null. */
   onSelectionChange?(selection: EditorSelectionReport | null): void;
-  /** Bumped when a clean buffer auto-followed an external change (docs/44
+  /** Bumped when a clean buffer auto-followed an external change (docs/log/44
    *  §7.4). The document is swapped by rebuilding the editor state — not by an
    *  edit transaction — so undo cannot roll the external content back, and the
    *  cursor and scroll positions are restored by line number. */
@@ -93,7 +93,7 @@ export function bufferValidationExtensions(
 }
 
 /** Replace the document without leaving the old content in the undo history
- *  (docs/44 §7.4): a change transaction would let Ctrl+Z resurrect — and then
+ *  (docs/log/44 §7.4): a change transaction would let Ctrl+Z resurrect — and then
  *  save — the pre-follow text, so the whole editor state is rebuilt instead.
  *  Cursor and scroll are restored by line number, clamped to the new document.
  *  `reconfigure` re-applies compartment values (language, wrapping) that the

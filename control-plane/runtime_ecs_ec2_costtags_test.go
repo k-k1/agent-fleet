@@ -10,7 +10,7 @@ import (
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
 
-// The cost-allocation tags (docs/67, ADR 0048). These are read by NOTHING in the CP —
+// The cost-allocation tags (docs/log/67, ADR 0048). These are read by NOTHING in the CP —
 // only by AWS's bill — which is exactly why they need tests: a tag that silently stops
 // being written costs real money that can never be attributed afterwards (cost
 // allocation has no backfill), and no user-visible behaviour changes to give it away.

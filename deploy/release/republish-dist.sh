@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agent Fleet — re-attach assets to an already published release (docs/35 §35.7.6).
+# Agent Fleet — re-attach assets to an already published release (docs/log/35 §35.7.6).
 #
 #   VERSION=0.4.0 ROOTFS=5daf889e009a deploy/release/republish-dist.sh \
 #     [--dist-dir <d>] [--repo <o/r>] [--dry-run]

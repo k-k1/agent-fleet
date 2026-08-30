@@ -1,4 +1,4 @@
-// Package gitx は git 実行の統一ラッパー（docs/23 P1-W1、W5 で internal 化）。
+// Package gitx は git 実行の統一ラッパー（docs/log/23 P1-W1、W5 で internal 化）。
 // -C dir の付与、GIT_TERMINAL_PROMPT=0（資格情報がない時にハングせず失敗させる）、
 // 出力の trim をここに集約する。環境変数や入出力を個別に細工したい呼び出しだけ
 // Cmd を直接使う。

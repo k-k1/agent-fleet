@@ -117,7 +117,7 @@ func (a sessionShareAPI) allowRead(key string) bool {
 
 // repoInfo は /repos の1行から ACL・表示に必要な分だけを抜いたもの。parentWC は
 // worktree の親(ベース)作業コピーの workingCopyId で、repo 共有がプロジェクト全体を
-// 覆うための鍵になる(docs/59 §1)。
+// 覆うための鍵になる(docs/log/59 §1)。
 type repoInfo struct {
 	worktree bool
 	parent   string
@@ -150,7 +150,7 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 	if err := json.Unmarshal([]byte(body), &wire); err != nil {
 		return nil, err
 	}
-	// worktree/parent(受信側のプロジェクト/worktreeツリー表示用、docs/59)は working
+	// worktree/parent(受信側のプロジェクト/worktreeツリー表示用、docs/log/59)は working
 	// copy 単位の情報なので /repos から working_copy_id をキーに引く。取得できなくても
 	// (一時的な Agent 到達不可等)catalog 自体の同期は継続する — この付随情報が
 	// 新規行なら空のままになるだけで、下の失効プルーニング(byWorkingCopy==nil)と
@@ -340,7 +340,7 @@ func (a sessionShareAPI) put(w http.ResponseWriter, r *http.Request, res *resolv
 	found := false
 	if in.Scope.Type == "session" {
 		for _, c := range catalog {
-			// アーカイブ済みは共有先に出さない(docs/59 §1)ので、共有対象にも選べない。
+			// アーカイブ済みは共有先に出さない(docs/log/59 §1)ので、共有対象にも選べない。
 			if c.Name == in.Scope.Key && !c.Archived {
 				found = true
 				break
@@ -450,7 +450,7 @@ func (a sessionShareAPI) delete(w http.ResponseWriter, r *http.Request, ident Id
 // effectivePermission — この catalog 行に効く最も強い権限("" なら共有されていない)。
 //
 // repo 規則はプロジェクト全体を覆う: ベース作業コピー直下のセッションに加えて、その
-// 配下 linked worktree のセッションにも効く(docs/59 §1)。所有者の作業は基本 worktree
+// 配下 linked worktree のセッションにも効く(docs/log/59 §1)。所有者の作業は基本 worktree
 // 側で進むため、ベースだけを対象にすると「リポジトリを共有した」のに共有先には古い
 // セッションしか見えない、という結果になっていた。worktree 規則は従来どおり、その
 // worktree 1つだけの範囲。空の scope_key はここでも弾く: workingCopyId を持てない
@@ -538,7 +538,7 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 		for _, c := range catalog {
 			// アーカイブ済みは所有者が畳んだ会話。共有規則は残す(復元すればまた見える)が、
 			// 共有先の一覧には出さない — 出し続けると「所有者が消したはずの古いセッションが
-			// 延々と残る」ように見える(docs/59 §1)。
+			// 延々と残る」ように見える(docs/log/59 §1)。
 			if c.Archived {
 				continue
 			}
@@ -634,7 +634,7 @@ func (a sessionShareAPI) messages(w http.ResponseWriter, r *http.Request, _ Iden
 // セッションが propose_session_handoff を呼んでも、転写に残るのはツール行と定型の
 // 完了文だけで、肝心の本文(次セッションの表示名と引き継ぎプロンプト)は所有者
 // Workspace 側の別ストア(session-handoffs)にある。ミラーはそれを会話へ差し込む
-// カードとして描いているので、同じ描画層を通す共有ビュー(docs/59 §3)にも同じ素が要る。
+// カードとして描いているので、同じ描画層を通す共有ビュー(docs/log/59 §3)にも同じ素が要る。
 // 転写と同じく本文だけを allowlist で通し、置き場所などの座標は返さない。
 func (a sessionShareAPI) handoffProposals(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
 	c, res, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), false)

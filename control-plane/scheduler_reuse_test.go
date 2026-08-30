@@ -136,7 +136,7 @@ func TestReusePolicyDefaults(t *testing.T) {
 	}
 }
 
-// reuseSendBody must request delivery confirmation (docs/38 配達検証): without
+// reuseSendBody must request delivery confirmation (docs/log/38 配達検証): without
 // confirm the Agent answers 200 on mere keystroke delivery, and a swallowed prompt
 // records a bogus "fired" (the 2026-07-24 sbk7oej recurrence).
 func TestReuseSendBodyRequestsConfirm(t *testing.T) {
@@ -163,7 +163,7 @@ func TestReuseSendBodyRequestsConfirm(t *testing.T) {
 		t.Fatal("reuse send must set confirm:true — keystroke-200 is not delivery")
 	}
 	if body.Source != "schedule" {
-		t.Fatalf("source = %q, want schedule (mirror badge, docs/38)", body.Source)
+		t.Fatalf("source = %q, want schedule (mirror badge, docs/log/38)", body.Source)
 	}
 	raw = reuseSendBody(Schedule{Prompt: "/scout", OwnerConv: "conv-1", ManualFirePending: true}, time.Date(2026, 7, 24, 11, 0, 0, 0, time.UTC))
 	_ = json.Unmarshal(raw, &body)

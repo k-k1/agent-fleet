@@ -1,4 +1,4 @@
--- Tenant-distributed MCP servers (docs/48 P4 + ADR0031), Postgres mirror of
+-- Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031), Postgres mirror of
 -- migrations/0028_mcp_server.sql. See that file for the column semantics and for why
 -- there is no command or args or env column. The DDL is dialect-neutral
 -- (TEXT/INTEGER), so the two files stay identical apart from the migration series.

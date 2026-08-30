@@ -1,6 +1,6 @@
 # 0058. Workspace のリソース実測は「中から自分の cgroup を読む」1 本にし、Runtime の口は増やさない
 
-- 状態: **採用・実装済み**（2026-08-25）。設計と経緯は [docs/63 §63.9](../63-workspace-sizing.md#639-リソースの実測値はランタイムを問わず中から読む2026-08-25)。
+- 状態: **採用・実装済み**（2026-08-25）。設計と経緯は [docs/63 §63.9](../log/63-workspace-sizing.md#639-リソースの実測値はランタイムを問わず中から読む2026-08-25)。
 - 関連: [0044-workspace-sizing.md](0044-workspace-sizing.md)（3 軸を**指定する**側の決定。本 ADR は同じ 3 軸を
   **観測する**側） /
   [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) 決定 21（同じ 3 軸がランタイムで別のものを

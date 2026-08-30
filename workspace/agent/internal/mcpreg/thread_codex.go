@@ -1,7 +1,7 @@
 package mcpreg
 
 // codex's THREAD-scoped MCP configuration — the `mcp_servers` map handed to
-// `thread/start` / `thread/resume` / `thread/fork` (docs/27 §9.3.1).
+// `thread/start` / `thread/resume` / `thread/fork` (docs/log/27 §9.3.1).
 //
 // Why it exists: a managed session's MCP child is spawned by the ONE shared app-server
 // the Agent started, so nothing per-session can ride the process environment the way
@@ -13,7 +13,7 @@ package mcpreg
 //
 //   - A thread map MERGES with the file config layers: $CODEX_HOME/config.toml AND a
 //     trusted project's own .codex/config.toml both still apply
-//     (TestDriftCodexThreadConfigMergeMatrix). docs/27 §9.3's "replace" result was
+//     (TestDriftCodexThreadConfigMergeMatrix). docs/log/27 §9.3's "replace" result was
 //     measured on servers supplied by `-c` overrides and does not generalize to files.
 //   - For a SHARED name the thread definition WINS
 //     (TestDriftCodexThreadConfigOverridesSameNamedFileServer), so af can restate its

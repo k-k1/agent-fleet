@@ -1,4 +1,4 @@
-# Forbidden-token ledger for release artifacts (docs/35 §35.7.5).
+# Forbidden-token ledger for release artifacts (docs/log/35 §35.7.5).
 #
 # Every line names one string that must never appear in anything we ship:
 # a former employer's name, a real person's name, an internal repository or

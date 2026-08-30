@@ -2,7 +2,7 @@
 //
 // The battle-tested xterm logic (heartbeat zombie detection, WebGL context-loss
 // recovery, clipboard/Keyboard-Lock, soft-keyboard handling) stays in src/term.ts,
-// shared with the frozen console during the parallel-entry transition (docs/22:
+// shared with the frozen console during the parallel-entry transition (docs/log/22:
 // keep the asset, re-draw the ownership boundary). This module narrows the
 // surface components may touch and owns the layout⇄terminal reconciliation that
 // used to be a loose effect in the old God-context.

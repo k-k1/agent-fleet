@@ -54,7 +54,7 @@ func TestBuildProgramPlanModeKeepsAllowFlagIntact(t *testing.T) {
 	}
 }
 
-// 権限確認あり（docs/76: 利用者がスキップをオフにした通常起動）。--dangerously-skip-
+// 権限確認あり（docs/log/76: 利用者がスキップをオフにした通常起動）。--dangerously-skip-
 // permissions は --allow-… へ差し替わる（それ自体は何も許可せず、TUI 内 shift+tab で
 // bypass へ入る道だけを残す）。plan ではないので --permission-mode plan は付かない。
 func TestBuildProgramPermissionsOn(t *testing.T) {

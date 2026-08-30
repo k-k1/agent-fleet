@@ -1,6 +1,6 @@
 package copilot
 
-// copilot の起動時モデルカタログ — プラン連動のライブ取得（docs/36 追補）。
+// copilot の起動時モデルカタログ — プラン連動のライブ取得（docs/log/36 追補）。
 //
 // copilot CLI に列挙口が無く（/model は TUI 専用・ACP configOptions にも model は
 // 無い — 実測）、しかも**モデルの可否はプラン依存**（Copilot Free は Auto のみで、

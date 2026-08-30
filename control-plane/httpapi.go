@@ -1,5 +1,5 @@
-// httpapi.go — 共有 JSON レスポンスヘルパ（writeJSON / writeAPIErr、docs/23 P2-W1）と、
-// 機能別ハンドラ struct の共通土台 memberAuth（docs/23 残③）。ハンドラ冒頭にコピー
+// httpapi.go — 共有 JSON レスポンスヘルパ（writeJSON / writeAPIErr、docs/log/23 P2-W1）と、
+// 機能別ハンドラ struct の共通土台 memberAuth（docs/log/23 残③）。ハンドラ冒頭にコピー
 // されていた解決プリアンブル（membershipFor / resolvedFor / requireSuperAdmin）を
 // 登録側で包むラッパーに畳む。各機能 API は memberAuth を埋め込み、store は
 // 必要最小のサブインターフェース（store.go）だけを持つ — memo.go の memoAPI が実例。
@@ -118,7 +118,7 @@ func (a memberAuth) withSuperAdmin(h func(http.ResponseWriter, *http.Request, Id
 
 // anyTenantAdminFor gates a DEPLOYMENT-WIDE READ that a tenant administrator
 // legitimately needs in order to administer their own tenant — currently only the
-// list of the deployment's sign-in methods (docs/61 §61.17.9 ①). It allows a
+// list of the deployment's sign-in methods (docs/log/61 §61.17.9 ①). It allows a
 // super_admin, or anyone holding an active tenant_admin membership of ANY tenant.
 //
 // ★ It is a strictly weaker gate than withSuperAdmin, so it must never be put in
@@ -141,7 +141,7 @@ func (a memberAuth) anyTenantAdminFor(w http.ResponseWriter, r *http.Request) (I
 		return ident, true
 	}
 	// ListMemberships returns ACTIVE rows only, so a tenant_admin who was taken off
-	// the roster stops passing here as soon as the row is deactivated (docs/61
+	// the roster stops passing here as soon as the row is deactivated (docs/log/61
 	// §61.10.7 の穴 2 と同じ性質)。
 	ms, err := a.mgr.store.ListMemberships(r.Context(), ident.ID)
 	if err != nil {

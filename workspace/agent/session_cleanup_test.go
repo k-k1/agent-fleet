@@ -28,7 +28,7 @@ func TestClassifySessionCleanup(t *testing.T) {
 	if !ok || action != "delete_session" || safety != "safe" || reasonKey != cleanReasonEphemeral {
 		t.Fatalf("ephemeral: action=%q safety=%q reason=%q ok=%v", action, safety, reasonKey, ok)
 	}
-	// 削除ロック（docs/45）: listed, but keep and with no action — the operator must
+	// 削除ロック（docs/log/45）: listed, but keep and with no action — the operator must
 	// never propose a tool call that the Agent will refuse with 403.
 	for _, archived := range []bool{false, true} {
 		action, safety, reasonKey, ok := classifySessionCleanup(true, archived, false, false)
@@ -58,7 +58,7 @@ func TestClassifyWorktreeCleanup(t *testing.T) {
 		{"clean unmerged needs review", false, 0, 0, 0, false, "unmerged", "delete_worktree", "review"},
 		{"clean diverged needs review", false, 0, 0, 0, false, "diverged", "delete_worktree", "review"},
 		{"unknown relation reviews", false, 0, 0, 0, false, "", "delete_worktree", "review"},
-		// 削除ロック（docs/45）は「安全に消せる」条件を満たしていても keep で止める。
+		// 削除ロック（docs/log/45）は「安全に消せる」条件を満たしていても keep で止める。
 		{"locked beats safe", true, 0, 0, 0, false, "contained", "", "keep"},
 		// 削除ロック済みセッションが住む WT も同様 — handleDeleteRepo が 403 で拒むので
 		// safe と提案してはならない（停止中/アーカイブ済みのロックも数える）。

@@ -10,7 +10,7 @@ import { OnOff } from "./controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
-// OpsTab is the home for service-operations connections (docs/25 Phase 1): external
+// OpsTab is the home for service-operations connections (docs/log/25 Phase 1): external
 // monitoring / incident tools the SRE assistant talks to over MCP, plus the AWS MCP
 // Server (Agent Toolkit for AWS), which also attaches to interactive sessions. Today:
 // PagerDuty, Grafana, CloudWatch and AWS. Credentials are stored container-side

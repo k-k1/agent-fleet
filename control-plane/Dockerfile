@@ -8,9 +8,9 @@
 # or via deploy/compose/docker-compose.yml (`build.context: ../..`).
 #
 # DooD note: the CP shells out to `docker` (runtime.go) against the HOST daemon
-# via the mounted /var/run/docker.sock — see docs/history/p3-10-packaging.md §20.3.
+# via the mounted /var/run/docker.sock — see docs/log/p3-10-packaging.md §20.3.
 #
-# Multi-architecture (docs/72). One tag, one manifest list, amd64 + arm64 — so a
+# Multi-architecture (docs/log/72). One tag, one manifest list, amd64 + arm64 — so a
 # deployment can put the CP on Graviton without a second image reference. The two
 # expensive stages are deliberately PINNED TO THE BUILDER'S OWN ARCHITECTURE:
 #
@@ -25,7 +25,7 @@
 # that is download-bound rather than compute-bound. ⚠️ Dropping either
 # `--platform=$BUILDPLATFORM` still produces a CORRECT image — it just silently
 # runs the compiler under QEMU, so the cost shows up as build minutes, not as a
-# failure (docs/72 §72.3).
+# failure (docs/log/72 §72.3).
 # syntax=docker/dockerfile:1
 
 # --- 1. console (Vite + React) ----------------------------------------------
@@ -47,7 +47,7 @@ RUN go mod download
 COPY control-plane/ ./
 # Static binary: modernc.org/sqlite is pure Go, so CGO can stay off. Migrations
 # (migrations/*.sql) are go:embed'd into the binary — no external files needed.
-# VERSION stamps the binary (startup log + GET /api/version, docs/35 §35.6.1);
+# VERSION stamps the binary (startup log + GET /api/version, docs/log/35 §35.6.1);
 # only the release pipeline passes a real value — dev builds stay "dev".
 ARG VERSION=dev
 # TARGETARCH is supplied by BuildKit (amd64 / arm64) and maps 1:1 onto GOARCH. It
@@ -86,7 +86,7 @@ COPY --from=console       /src/console/dist     /app/console
 # at start (workspace_docs.go). Context is the repo root, so docs/ is reachable.
 # DOCS_SRC lets the release pipeline point this COPY at a staged tree with the
 # internal denylist (docs/.distignore) applied — distribution images must not
-# carry HANDOFF/talk/history etc. (docs/35 §35.4.3). Self-hosted dev/ops builds
+# carry HANDOFF/talk/history etc. (docs/log/35 §35.4.3). Self-hosted dev/ops builds
 # keep the default (full tree).
 ARG DOCS_SRC=docs
 COPY ${DOCS_SRC}/         /usr/local/share/agent-fleet/docs/

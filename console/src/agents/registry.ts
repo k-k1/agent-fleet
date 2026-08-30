@@ -19,7 +19,7 @@ import type { MsgKey } from "../lib/i18n/index.ts";
 // has the matching cap, so a new agent lights up the right controls by data alone.
 export interface AgentCaps {
   chat: boolean; // shows the chat mirror (GET /messages, POST /input)
-  headlessChat: boolean; // can back an assistant-chat conversation via a headless CLI (docs/19)
+  headlessChat: boolean; // can back an assistant-chat conversation via a headless CLI (docs/log/19)
   transcript: boolean; // stopped session opens a read-only chat history
   model: boolean; // offers a model selector at launch
   effort: boolean; // offers a reasoning-effort selector when the chosen driver supports it
@@ -27,26 +27,26 @@ export interface AgentCaps {
   tuiStartMode: boolean; // the TUI launch command can start deterministically in plan/normal
   contextBar: boolean; // shows the context-window token gauge
   imagePaste: boolean; // chat composer accepts pasted images (claude Read-tool flow)
-  // composer offers the skill/command picker (GET /sessions/{name}/skills — docs/50).
+  // composer offers the skill/command picker (GET /sessions/{name}/skills — docs/log/50).
   // Native listings: claude/codex/opencode scan filesystem conventions; cursor serves
   // the CLI-advertised ACP list. Every chat kind additionally gets "foreign" entries
-  // (other conventions' SKILL.md, fired via prompt injection — docs/50 §8), which is
+  // (other conventions' SKILL.md, fired via prompt injection — docs/log/50 §8), which is
   // why kiro/copilot/agy are on too (foreign-only; no verified native mechanism).
   slashSkills: boolean;
   // …and NATIVE entries also show for MANAGED (paneless) sessions. Off for opencode:
   // its /commands are a TUI feature and firing them over the server API is unverified
-  // (docs/50 §7) — foreign (injection) entries are exempt from this gate, being plain
+  // (docs/log/50 §7) — foreign (injection) entries are exempt from this gate, being plain
   // prompts. cursor is verified (ACP session/prompt "/cmd" fired — 実測 2026-07-28);
   // codex "$skill" is a plain text mention, channel-agnostic by construction.
   slashSkillsManaged: boolean;
   planMode: boolean; // chat offers a plan-mode toggle (drives the TUI's mode-cycle key)
-  // 起動時に「権限確認をスキップするか」を選べる（docs/76）。立てる条件はフラグを
+  // 起動時に「権限確認をスキップするか」を選べる（docs/log/76）。立てる条件はフラグを
   // 外せることではなく、**承認待ちを Console から答えられること** — 答えられない
   // kind でオフにすると、利用者から見れば黙って固まる。Go 側の Caps.PermissionChoice と
   // 対で、サーバも同じ規則で create を断る（permission_choice_unsupported）。
   permissionChoice: boolean;
   // the mirror offers 「ここから分岐」 on a past user turn — a new session carrying the
-  // history up to just before it (docs/55). Needs the kind to send transcript anchors
+  // history up to just before it (docs/log/55). Needs the kind to send transcript anchors
   // (Turn.anchorId); the mirror also checks the turn itself (canBranchFrom).
   forkAt: boolean;
   // …and whether that needs a MANAGED session. True for the kinds whose only fork-point
@@ -104,18 +104,18 @@ export interface AgentDescriptor {
   // plan (the real label follows from the next poll) and as the "normal" option in the
   // launch dialogs. claude "Bypass", codex "Default", opencode "Build". "" for agents
   // without a mode chip. ⚠️ claude のこれは**権限確認をスキップして起動したとき**の名前
-  // なので、そのまま出さず nonPlanModeLabel() を通すこと（docs/76）。
+  // なので、そのまま出さず nonPlanModeLabel() を通すこと（docs/log/76）。
   defaultModeLabel: string;
   // the head-of-input character that opens the skill picker while typing ("/" for
   // slash-command kinds, "$" for codex skill mentions). "" = the picker opens from
   // its button only (kinds whose entries are all injection prompts — no slash form).
   skillTrigger: string;
-  // managed driver（docs/27 P2/P3）: この kind が共有 runtime 駆動（paneless）のセッション
+  // managed driver（docs/log/27 P2/P3）: この kind が共有 runtime 駆動（paneless）のセッション
   // 作成に対応しているか。true の kind は起動 UI にドライバ選択が出て、既定が managed
   // になる（§9.2 — CLI(TUI) はユーザーの明示的なメモリトレードオフ）。
   managedDriver: boolean;
   // managed と比べた CLI(TUI) 1 セッション分のおおよその追加 RSS。起動・切替 UI は
-  // kind 分岐を持たず、この実測表示を使う（docs/27 §12.2-9 / 付録B）。
+  // kind 分岐を持たず、この実測表示を使う（docs/log/27 §12.2-9 / 付録B）。
   tuiMemoryCost: string;
   caps: AgentCaps;
   // whether this kind is currently launchable given connections / SSM hosts
@@ -169,7 +169,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     caps: caps({
       permissionChoice: true, // 承認は status hook の permission 状態＋ミラーの許可カードで答えられる
       chat: true,
-      headlessChat: true, // Phase A: claude -p backs assistant chat (docs/19)
+      headlessChat: true, // Phase A: claude -p backs assistant chat (docs/log/19)
       transcript: true,
       model: true,
       effort: true,
@@ -180,7 +180,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       slashSkills: true,
       slashSkillsManaged: true,
       planMode: true,
-      // 発言時点からの分岐（docs/55）: claude だけは公式の分岐点 API を使えない
+      // 発言時点からの分岐（docs/log/55）: claude だけは公式の分岐点 API を使えない
       // （`--resume-session-at` は print モード限定）ので、Agent が転写 jsonl を切り詰めて
       // 分岐先を作る。managed driver が無い kind なので managedOnly は false。
       forkAt: true,
@@ -208,7 +208,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // gauge works — codex logs token counts too. Plan mode + inline request_user_input
     // questions are supported. headlessChat via `codex exec --json` (assistant chat /
     // title suggestion backend); fork via `codex fork <id>` (server ForkSource).
-    // forkAt: 発言時点からの分岐（docs/55）は app-server の `thread/fork` の lastTurnId
+    // forkAt: 発言時点からの分岐（docs/log/55）は app-server の `thread/fork` の lastTurnId
     // （inclusive）。managed のときだけ導線が出る（CLI ルートに分岐点を渡す口が無い）。
     // model: launch-time only, live catalog (api/agents/codex/models = `codex debug
     // models` under codex's own subscription auth) → `codex -m`.
@@ -225,7 +225,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       tuiEffort: true, // -c model_reasoning_effort=…
       contextBar: true,
       imagePaste: true,
-      slashSkills: true, // $CODEX_HOME/skills + .codex/skills — "$name" mention (docs/50 §7)
+      slashSkills: true, // $CODEX_HOME/skills + .codex/skills — "$name" mention (docs/log/50 §7)
       slashSkillsManaged: true, // a text mention works on any channel
       planMode: true,
       forkAt: true,
@@ -247,14 +247,14 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "",
     defaultModeLabel: "Agent",
     skillTrigger: "/",
-    // Cursor CLI (docs/40, ADR 0023). Managed が既定: per-session child の
+    // Cursor CLI (docs/log/40, ADR 0023). Managed が既定: per-session child の
     // `cursor-agent acp`（ACP JSON-RPC over stdio）を driver が駆動する（Track A2）。
     // TUI も同じ Claude Code 互換 JSONL 転写を書くのでミラー/状態は両ドライバで成立。
     // model: launch-time only（`cursor-agent models` のアカウント連動ライブカタログ →
     // `--model`。effort はモデル id 自体に畳まれている＝別 effort cap は立てない。
     // ACP に per-session モデル指定口が無く稼働中変更も不可＝DynamicModel:false）。
     // fork なし（cursor の /fork は TUI 限定）。contextBar なし（v1 は per-turn トークンを
-    // ミラーに載せない — docs/40 Track D）。imagePaste は ACP に image:true があるが v1
+    // ミラーに載せない — docs/log/40 Track D）。imagePaste は ACP に image:true があるが v1
     // 未配線のためオフ（copilot と同じ「未検証の caps を立てない」1854d 教訓）。
     // 認証は専用ログインフロー（~/.config/cursor/auth.json・API キー登録は Track D）。
     managedDriver: true,
@@ -264,11 +264,11 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     caps: caps({
       permissionChoice: true, // 承認は ACP session/request_permission → Interaction で答えられる
       chat: true,
-      headlessChat: true, // `cursor-agent -p --mode ask` backs assistant chat, read-only (docs/40 Track D)
+      headlessChat: true, // `cursor-agent -p --mode ask` backs assistant chat, read-only (docs/log/40 Track D)
       transcript: true,
       model: true,
       tuiStartMode: true, // --plan（plan で起動）
-      slashSkills: true, // ACP 広告リスト（builtin skill+global+project）が正 — docs/50 §7
+      slashSkills: true, // ACP 広告リスト（builtin skill+global+project）が正 — docs/log/50 §7
       slashSkillsManaged: true, // ACP session/prompt "/cmd" の発火を実測（2026-07-28）
       runsInDir: true,
       launchableFromRepo: true,
@@ -290,7 +290,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "",
     defaultModeLabel: "",
     skillTrigger: "",
-    // Antigravity CLI (docs/32, ADR 0008). v1.1.4 has no structured output, so
+    // Antigravity CLI (docs/log/32, ADR 0008). v1.1.4 has no structured output, so
     // Terminal (CLI) is the only driver — no managed mode until agy grows an
     // event stream. The chat mirror works: the agent reads the per-conversation
     // brain/…/transcript_full.jsonl (written live) and normalizes it into
@@ -314,12 +314,12 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       transcript: true,
       model: true,
       imagePaste: true,
-      slashSkills: true, // foreign（注入）エントリのみ — docs/50 §8
+      slashSkills: true, // foreign（注入）エントリのみ — docs/log/50 §8
       slashSkillsManaged: true, // 注入はただのプロンプト（agy に managed は無いが明示）
       runsInDir: true,
       launchableFromRepo: true,
     }),
-    // Hidden on hosts that cannot run agy (supported === false — docs/32
+    // Hidden on hosts that cannot run agy (supported === false — docs/log/32
     // Track B RDRAND ガード); an unfetched conns bag falls back to visible
     // (the rail treats null conns as show-all before the predicate runs).
     available: (c) => c.conns?.agy?.supported !== false && !!c.conns?.agy?.connected,
@@ -338,7 +338,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "",
     defaultModeLabel: "Default",
     skillTrigger: "",
-    // GitHub Copilot CLI (docs/36). Managed が既定: per-session child の
+    // GitHub Copilot CLI (docs/log/36). Managed が既定: per-session child の
     // `copilot --acp`（ACP JSON-RPC over stdio）を driver が駆動する。TUI も同じ
     // events.jsonl を書くのでミラー/状態は両ドライバで同一実装。
     // model/effort: launch-time only（TUI /model の PTY スクレイプによる
@@ -360,9 +360,9 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       effort: true,
       tuiEffort: true, // --effort
       tuiStartMode: true, // --mode plan
-      slashSkills: true, // foreign（注入）エントリのみ — docs/50 §8
+      slashSkills: true, // foreign（注入）エントリのみ — docs/log/50 §8
       slashSkillsManaged: true,
-      // 発言時点からの分岐（docs/55）: copilot にも公式の分岐口が無いので、session-state
+      // 発言時点からの分岐（docs/log/55）: copilot にも公式の分岐口が無いので、session-state
       // ディレクトリをコピーして events.jsonl を切り詰める（復元元が events.jsonl である
       // ことは実測）。TUI / managed どちらの経路でも Agent 側が材料化するので managedOnly
       // は false。
@@ -388,7 +388,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "",
     defaultModeLabel: "Agent",
     skillTrigger: "",
-    // Kiro CLI（kiro-cli・旧 Amazon Q Developer CLI。docs/43, ADR 0026 予定）。
+    // Kiro CLI（kiro-cli・旧 Amazon Q Developer CLI。docs/log/43, ADR 0026 予定）。
     // Terminal(TUI) ＋ Managed 両対応（Track A2）: managed は per-session child の
     // ACP（`kiro-cli acp`・cursor/copilot 同型）で、session/load のクロスプロセス resume＋
     // 文脈保持を実測（起動 UI に Terminal/Managed のドライバ選択を出す）。
@@ -423,7 +423,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       model: true,
       contextBar: true, // Track D: managed ACP の _kiro.dev/metadata ライブ context% → ContextFill 経由
       tuiStartMode: true, // program.go は mode=plan で --trust-all-tools を外す（承認待ちは state.go が "question" で拾う）
-      slashSkills: true, // foreign（注入）エントリのみ — docs/50 §8
+      slashSkills: true, // foreign（注入）エントリのみ — docs/log/50 §8
       slashSkillsManaged: true,
       runsInDir: true,
       launchableFromRepo: true,
@@ -466,11 +466,11 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       tuiStartMode: true, // --agent plan|build
       contextBar: true,
       imagePaste: true,
-      slashSkills: true, // .opencode/command(s) + ~/.config/opencode/command — docs/50 §7
+      slashSkills: true, // .opencode/command(s) + ~/.config/opencode/command — docs/log/50 §7
       // slashSkillsManaged stays false: /command は TUI 機能で、server API 経由の
       // 発火は未検証（未検証の caps を立てない — 1854d の教訓）。
       planMode: true,
-      // 発言時点からの分岐（docs/55）: serve の `POST /session/{id}/fork` が messageID を
+      // 発言時点からの分岐（docs/log/55）: serve の `POST /session/{id}/fork` が messageID を
       // 取り、指定メッセージの手前で履歴のコピーを打ち切る（実測 1.18.14）。
       forkAt: true,
       runsInDir: true,
@@ -543,7 +543,7 @@ export function agentOf(kind: string | null | undefined): AgentDescriptor {
   return (kind && AGENTS[kind as SessionKind]) || AGENTS.claude;
 }
 
-// nonPlanModeLabel は「plan ではない側」のモード表示名（docs/76）。
+// nonPlanModeLabel は「plan ではない側」のモード表示名（docs/log/76）。
 //
 // claude の既定ラベル "Bypass" は**権限確認をスキップして起動したときの状態名**。承認ありで
 // 起動したセッションは claude 自身の既定モード＝ **manual**（実測 2.1.241: 状態行は

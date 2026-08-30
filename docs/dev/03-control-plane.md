@@ -25,15 +25,15 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 - **memo キュー** — membership 単位のメモ永続と一括送信。コンテナ停止中も使える「CP 完結」機能。§3.6。
 - **定時実行（scheduler）** — スケジュール定義を CP DB に永続し、CP 内 goroutine（`scheduler.go`）が cron 評価・発火
   （tz は埋め込み IANA DB で DST 込み解決）。作成/編集はオペレーター経由の `/internal/schedules`
-  （`AF_SCHEDULE_TOKEN`）、Console の `/api/schedules` は閲覧・管理のみ（[docs/38](../38-scheduled-execution.md)）。
+  （`AF_SCHEDULE_TOKEN`）、Console の `/api/schedules` は閲覧・管理のみ（[docs/38](../log/38-scheduled-execution.md)）。
 - **通知** — Agent の通知 outbox を取得時に CP ストアへ drain し、`/api/notifications` で一覧・既読管理
   （保持 7 日。`notification.go`）。
 - **MCP サーバレジストリ（テナント配布）** — tenant_admin が全メンバーへ配る MCP サーバ定義を CP DB に保持
   （`/api/admin/mcp-servers` + Agent が poll する `/internal/mcp-servers`）。メンバー個人の登録
-  （`/api/mcp-servers`）は Agent 側で合成され CP は中継のみ（[docs/48](../48-mcp-registry.md)）。
+  （`/api/mcp-servers`）は Agent 側で合成され CP は中継のみ（[docs/48](../log/48-mcp-registry.md)）。
 - **バックグラウンドジョブ** — reaper / usage サンプラー / git GC / claude-audit sweep。§3.7。
 - なお**掃除**（cleanup: 調査・削除・gz ごみ箱 `/api/sessions/cleanup`・`/api/cleanup/archives*`）と
-  **エージェントメモリ管理**（snapshot/restore/export `/api/agents/memory/*`・[docs/39](../39-agent-memory-management.md)）は
+  **エージェントメモリ管理**（snapshot/restore/export `/api/agents/memory/*`・[docs/39](../log/39-agent-memory-management.md)）は
   **Agent 側の機能**で、CP はそのまま中継する（Agent 中継の一部）。
 
 実装ファイルへの対応は [90-code-map](90-code-map.md)。
@@ -102,7 +102,7 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 
 ## 3.6 memo キュー
 
-「溜めて一括でセッションへ送る」メモ（確定仕様は [docs/21](../history/21-memo-queue.md)、テーブルは [06](06-data-model.md)）。
+「溜めて一括でセッションへ送る」メモ（確定仕様は [docs/21](../log/21-memo-queue.md)、テーブルは [06](06-data-model.md)）。
 実装済み・main マージ済み（CP CRUD / flush / 整理用 `/api/chat/ask` 露出 / Console UI の全フェーズ。
 docs/21 冒頭の「未実装」注記は設計時点のもの）。
 
@@ -137,7 +137,7 @@ docs/21 冒頭の「未実装」注記は設計時点のもの）。
 ## 3.8 egress 統制の CP 側
 
 設計・段階運用（log-only → allowlist → enforce 🚧）は [07 §7.8](07-security.md) と
-[docs/20](../20-container-audit-egress.md)。CP に住んでいるのは次の 4 点だけ:
+[docs/20](../log/20-container-audit-egress.md)。CP に住んでいるのは次の 4 点だけ:
 
 - **egress-proxy サブコマンド** — 同一バイナリ/イメージを `control-plane egress-proxy` で起動すると
   forward proxy として併走する（FQDN 判定・TLS 非復号）。

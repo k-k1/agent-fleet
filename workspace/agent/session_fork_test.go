@@ -7,7 +7,7 @@ import (
 )
 
 // buildProgram のフォークコマンド組み立てテストは internal/agents/claude の
-// program_test.go へ移設（docs/23 残① Wave F）。
+// program_test.go へ移設（docs/log/23 残① Wave F）。
 
 // forkTitle derives a fork's title from the source: its own title, else the stripped
 // label, always suffixed " (fork)".

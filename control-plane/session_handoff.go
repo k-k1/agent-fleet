@@ -1,6 +1,6 @@
 package main
 
-// メンバーへの引き継ぎ（docs/77 / ADR 0057）の API。
+// メンバーへの引き継ぎ（docs/log/77 / ADR 0057）の API。
 //
 // 所有者 A が「この続きをやってほしい」を、**既にそのセッションを共有している** B へ差し出す。
 // 受け取った B は自分の Console から自分の Workspace にセッションを立てる。
@@ -113,7 +113,7 @@ func handoffOfferDTO(o SessionHandoffOffer, recipientKey string) map[string]any 
 // 「読み込み中」のまま止まって見える。だから読みは**同じスロットルに乗せる**。
 //
 // ⚠️ 逆に、同期を丸ごと省くことはできない。repo/worktree スコープの共有は**後から作られた
-// セッションにも動的に効く**（docs/59 §1）ので、catalog に行が無いことは「共有されていない」
+// セッションにも動的に効く**（docs/log/59 §1）ので、catalog に行が無いことは「共有されていない」
 // の証明にならない —— 省くと、共有済みの新しいセッションに「まだ誰にも共有していません」と
 // 表示してしまう。
 func (a sessionHandoffAPI) catalogForOwnedSession(r *http.Request, res *resolved, name string, exact bool) (SharedSessionCatalog, bool, *apiError) {
@@ -174,7 +174,7 @@ func (a sessionHandoffAPI) recipientsFor(ctx context.Context, mv MembershipView,
 }
 
 // recipients — GET /api/sessions/{name}/handoff-recipients。差し出す前に A が宛先を選ぶための
-// 一覧と、push ゲートの判定（docs/77 §77.5）を同時に返す。ゲートを送信時だけに置くと、A は
+// 一覧と、push ゲートの判定（docs/log/77 §77.5）を同時に返す。ゲートを送信時だけに置くと、A は
 // 長い本文を書き終えてから初めて弾かれる。
 func (a sessionHandoffAPI) recipients(w http.ResponseWriter, r *http.Request, res *resolved) {
 	name := r.PathValue("name")
@@ -347,7 +347,7 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 }
 
 // listOwned — GET /api/session-handoff-offers。A の台帳。通知は流れ物なので、後から辿れる
-// 唯一の場所（docs/77 §77.10）。
+// 唯一の場所（docs/log/77 §77.10）。
 func (a sessionHandoffAPI) listOwned(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
 	a.expireDue(r.Context())
 	rows, err := a.mgr.store.ListSessionHandoffOffersByOwner(r.Context(), mv.MembershipID)
@@ -497,7 +497,7 @@ func (a sessionHandoffAPI) expireDue(ctx context.Context) {
 	}
 }
 
-// notifyOffered / notifyAccepted — docs/77 §77.9。
+// notifyOffered / notifyAccepted — docs/log/77 §77.9。
 //
 // ⚠️ CP から直接 InsertNotification する。既存のセッション通知は Agent のアウトボックスを
 // drain する経路だが、引き継ぎは**送る側も受け取る側も Workspace が止まっている**場面が

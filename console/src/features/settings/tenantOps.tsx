@@ -149,7 +149,7 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
   );
 }
 
-// --- Audit log (docs/20 M1) -------------------------------------------------
+// --- Audit log (docs/log/20 M1) -------------------------------------------------
 // The change-operation ledger: file / git / session mutations recorded by the CP
 // proxy (actor = the member behind the resolved request). Reads GET /api/admin/audit
 // (super_admin: whole deployment, optionally filtered by ?tenant=; tenant_admin:

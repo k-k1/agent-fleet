@@ -26,7 +26,7 @@ func TestDetectDialects(t *testing.T) {
 }
 
 func TestDialectWarningsOpencodeBreaksOnDollarEnvBrace(t *testing.T) {
-	// docs/56 §2.1: "${env:HOME}" in opencode silently becomes "$/…" — this must be
+	// docs/log/56 §2.1: "${env:HOME}" in opencode silently becomes "$/…" — this must be
 	// the RED "broken" code, not the generic yellow mismatch.
 	ws := dialectWarningsForValue("${env:HOME}/repos/x", "opencode.json", "srv", "command", []string{"opencode"})
 	if len(ws) != 1 || ws[0].Code != CodeDialectBroken || ws[0].Severity != "red" {

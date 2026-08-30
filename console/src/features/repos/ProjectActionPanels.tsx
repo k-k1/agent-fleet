@@ -1,9 +1,9 @@
-// ProjectActionPanels — docs/56 §9.2 ③ / §7.5 操作A: the two write actions P1
+// ProjectActionPanels — docs/log/56 §9.2 ③ / §7.5 操作A: the two write actions P1
 // ships. Copy is deliberately ONE decision (which agent) plus one optional toggle
 // (copy secret values too) — not a form: dialect and overwrite-vs-skip are decided
 // FOR the user from the destination's own known contract (translate when the
 // target kind has a native dialect, overwrite when a same-named entry already
-// exists — docs/56 §5 still requires a preview before every write, so the user
+// exists — docs/log/56 §5 still requires a preview before every write, so the user
 // sees exactly what will land and can cancel, but is never asked to pick options
 // that have one obviously-right answer). plan() computes that preview; apply()
 // only runs once the user has looked at it and confirmed.
@@ -31,12 +31,12 @@ async function call<T>(fn: () => Promise<T>): Promise<ApiResult<T>> {
 
 // --- copy ----------------------------------------------------------------
 
-// The agent kinds a copy may target — kiro is read-only (docs/56 §4.3, its
+// The agent kinds a copy may target — kiro is read-only (docs/log/56 §4.3, its
 // project-scope write contract is unmeasured) and agy has no project scope at
 // all, so neither is offered as a destination.
 const COPY_TARGET_KINDS = ["claude", "codex", "opencode", "cursor", "copilot"];
 
-// v1's file↔kind map is fixed (docs/56 §4.3): each kind reads exactly one project
+// v1's file↔kind map is fixed (docs/log/56 §4.3): each kind reads exactly one project
 // file (copilot has a second, .github/mcp.json, but .mcp.json — listed first — is
 // its documented default when both could apply). Picking by KIND here, not by raw
 // path, is the whole point of this redesign — the file is an implementation detail
@@ -241,7 +241,7 @@ export function ProjectCopyPanel({ repo, snap, source, onClose, onApplied }: Cop
   );
 }
 
-// ServerSummary — plain key/value rows (docs/56 §9.2's "プレビュー", not a raw JSON
+// ServerSummary — plain key/value rows (docs/log/56 §9.2's "プレビュー", not a raw JSON
 // dump): the command/URL as one line, env/header VALUE NAMES only (values stay
 // masked or absent — this is a preview, not an editor).
 function ServerSummary({ s }: { s: ProjectServer }) {

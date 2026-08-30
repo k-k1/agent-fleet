@@ -1,8 +1,8 @@
 # 0025. ホスト常駐 `af` の自動更新 — stage は自動 / apply（再起動）は明示
 
-- 状態: **採用・実装済み**。設計は [docs/42](../42-native-auto-update.md)。
-- 関連: [docs/35](../35-packaging.md)（パッケージング／install.sh／`af` ランチャ）/
-  [docs/34](../34-native-runtime.md)（native ランタイム）
+- 状態: **採用・実装済み**。設計は [docs/42](../log/42-native-auto-update.md)。
+- 関連: [docs/35](../log/35-packaging.md)（パッケージング／install.sh／`af` ランチャ）/
+  [docs/34](../log/34-native-runtime.md)（native ランタイム）
 
 ## 背景
 

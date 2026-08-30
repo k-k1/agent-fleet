@@ -1,9 +1,9 @@
 package main
 
-// 利用上限モーダルの自動解除と、リセット時刻での自動再開（docs/47 §4-4）。
+// 利用上限モーダルの自動解除と、リセット時刻での自動再開（docs/log/47 §4-4）。
 //
 // 上限に当たった claude はメニュー（/rate-limit-options）を出してキー入力待ちで止まる。
-// docs/47 §4-3 はそれを blocked として**読める**ようにしただけで、止まったままなのは
+// docs/log/47 §4-3 はそれを blocked として**読める**ようにしただけで、止まったままなのは
 // 変わらない。ここが実際に前へ進める部分:
 //
 //	① メニューの既定（1. Stop and wait for limit to reset）を確定して待機プロンプトへ戻す。
@@ -15,7 +15,7 @@ package main
 // なぜ待ち合わせを CP のスケジューラに預けるか: ①でメニューを消すとセッションは普通の
 // 入力待ちになるので、リセットまでの数時間で idle-reaper が WS ごと停止させる（させて
 // よい — ターンは終わっている）。停止中にプロセス内タイマーは生き残れないが、CP の
-// 定時実行は wake_policy=wake で WS を起こしてから注入できる（docs/38 P6 の
+// 定時実行は wake_policy=wake で WS を起こしてから注入できる（docs/log/38 P6 の
 // session_mode=reuse＝既存セッションへの投入）。
 //
 // 順序は「②→①」。①が成功するとメニューは消え、この検知経路は二度と開かないので、
@@ -309,7 +309,7 @@ func scheduleRateLimitResume(m session.Meta, st rateLimitState, now time.Time) r
 // 表示側（wireSession / driveState）が idle を読み替えるための述語。
 //
 // 状態が 2 つあるのは、待てば解ける窓（agents.StateLimited）と、待っても解けない支出・
-// 残高の上限（agents.StateSpendLimit）で利用者の次の一手が正反対だから（docs/47 §4-10）。
+// 残高の上限（agents.StateSpendLimit）で利用者の次の一手が正反対だから（docs/log/47 §4-10）。
 // 種別はエピソードファイルの `Spend` ではなく**転写から今引き直した値**を使う: 増枠されて
 // 別の上限（窓）に当たり直した、のような遷移でも表示が追随する。
 //
@@ -360,7 +360,7 @@ func episodeStale(st rateLimitState, now time.Time) bool {
 	return err != nil || now.After(t.Add(rateLimitEpisodeTTL))
 }
 
-// createRateLimitSchedule books the resume with the CP scheduler (docs/38).
+// createRateLimitSchedule books the resume with the CP scheduler (docs/log/38).
 //
 //	spec_kind=once           — 一回限り。発火すると自身を disable する。
 //	session_mode=reuse       — 新規セッションではなく、止まった**そのセッション**へ投入する。
@@ -429,7 +429,7 @@ func deleteRateLimitSchedule(id string) {
 }
 
 // rateLimitResumePrompt is the nudge sent when the limit lifts. 新しい指示は混ぜない
-// （docs/47 §3-4 の再開文と同じ方針）。言語は表示言語に合わせる — 会話ごとの言語を
+// （docs/log/47 §3-4 の再開文と同じ方針）。言語は表示言語に合わせる — 会話ごとの言語を
 // 持たない以上、その利用者が読み書きしている言語が最良の推定。
 func rateLimitResumePrompt() string {
 	return rateLimitResumePromptFor(uiLocale())

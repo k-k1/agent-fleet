@@ -1,6 +1,6 @@
 package mcpreg
 
-// User-scope CRUD and the effective-registry composition (docs/48 §3〜§4).
+// User-scope CRUD and the effective-registry composition (docs/log/48 §3〜§4).
 //
 //	effective = builtin(接続済み) ∪ tenant(配布・opt-out を除く) ∪ user
 //
@@ -337,7 +337,7 @@ func Delete(id string) error {
 }
 
 // withMemberSecrets fills a user_secret definition's header values from the member's
-// own store (docs/48 §5.2). Only the NAMES the tenant distributed are filled: a stale
+// own store (docs/log/48 §5.2). Only the NAMES the tenant distributed are filled: a stale
 // local value for a header the tenant has since removed is ignored rather than sent, so
 // the tenant stays in control of WHICH headers the server sees.
 func withMemberSecrets(names map[string]string, mine map[string]string) map[string]string {
@@ -414,7 +414,7 @@ func SetTenantSecrets(id string, incoming map[string]string) error {
 
 // SetEnabled toggles a definition. For a user row it flips the stored flag; for a
 // tenant row it records a local opt-out, which is the ONLY local edit a member has
-// over distributed servers — the escape hatch for a broken one (docs/48 §4).
+// over distributed servers — the escape hatch for a broken one (docs/log/48 §4).
 // A builtin's availability is its connection status, so it has no toggle.
 func SetEnabled(id string, on bool) error {
 	s, err := secrets.Load()

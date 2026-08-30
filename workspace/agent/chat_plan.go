@@ -1,6 +1,6 @@
 package main
 
-// 作業計画のキャリーフォワード（docs/33 第5段）。
+// 作業計画のキャリーフォワード（docs/log/33 第5段）。
 //
 // 圧縮の引き継ぎ（第2段）は「LLM が要約した約1000字」1本しかない。しかも要約から
 // 始まったセッションを次の圧縮がまた要約するため、世代を重ねるほど内容が薄まる
@@ -42,7 +42,7 @@ const (
 )
 
 // planShapeFor は計画ブロックの型（3見出し固定）。見出しそのものが計画の本文として保存され、
-// 利用者が notice カードで読むので、docs/28 P6 で表示言語に分岐した（中身の言語は会話の
+// 利用者が notice カードで読むので、docs/log/28 P6 で表示言語に分岐した（中身の言語は会話の
 // 主要言語のまま — compactSummaryPromptFor の注記を参照）。
 //
 // ★「完了したこと」という見出しを置かないのが肝。見出しがあるとモデルは完了作業を
@@ -349,13 +349,13 @@ type chatPlanReq struct {
 	// Notice asks for the「作業計画を更新しました」カードを会話へ積むこと。Console の
 	// 手編集は false（自分で書いた本人に見せ返しても意味がない）、MCP 経由＝オペレーター
 	// が自分で書き換えたときは true — 利用者が見ていない間に計画が動く唯一の経路なので、
-	// そこだけは必ず会話に痕跡を残す（docs/33 第5段 案D）。
+	// そこだけは必ず会話に痕跡を残す（docs/log/33 第5段 案D）。
 	Notice bool `json:"notice,omitempty"`
 }
 
 // handleChatPlanGet (GET /chat/conversations/{id}/plan) returns just the plan.
 // 会話まるごとの GET と分けてあるのは MCP（オペレーター自身が自分の計画を読む口・
-// docs/33 第5段 案D）のため: 全メッセージを返すと、計画を1行読むためにモデルへ会話
+// docs/log/33 第5段 案D）のため: 全メッセージを返すと、計画を1行読むためにモデルへ会話
 // 全文を流し込むことになる。
 func handleChatPlanGet(w http.ResponseWriter, r *http.Request) {
 	c, err := loadConv(r.PathValue("id"))

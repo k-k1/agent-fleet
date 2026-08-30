@@ -1,5 +1,5 @@
 // Package transcript は claude/codex/opencode の3パーサが共有する出力語彙
-// (docs/23 P1-W5)。JSONタグは Console の型と対 — 変更禁止。
+// (docs/log/23 P1-W5)。JSONタグは Console の型と対 — 変更禁止。
 package transcript
 
 // Part is one ordered piece of a turn: rendered text, a faint tool trace, a
@@ -31,7 +31,7 @@ type Part struct {
 	Plan     string `json:"plan,omitempty"`  // kind=plan: ExitPlanMode plan Markdown
 	File     string `json:"file,omitempty"`  // kind=tool: edit/write target (openable as a diff)
 	Edits    []Edit `json:"edits,omitempty"` // kind=tool: before/after per edit (Edit/Write/MultiEdit)
-	// Verb qualifies File for the changed-files list (docs/68): "add" | "edit" | "delete".
+	// Verb qualifies File for the changed-files list (docs/log/68): "add" | "edit" | "delete".
 	// Only a parser that KNOWS says so — codex reads it out of the patch header, and its
 	// delete branch carries no Edits at all. Everyone else omits it and EditVerb derives
 	// add/edit from the before/after, because "no Edits" must not be read as a deletion
@@ -60,7 +60,7 @@ type Edit struct {
 // Question mirrors one AskUserQuestion entry (header + prompt + options).
 type Question struct {
 	// ID identifies the runtime-side Interaction this pending question belongs to
-	// (docs/27 §5) — managed driver のセッションだけが埋め、Console は id 付きの質問を
+	// (docs/log/27 §5) — managed driver のセッションだけが埋め、Console は id 付きの質問を
 	// POST /respond の構造化回答で返す。TUI 由来（hooks/probe/rollout）の質問は空の
 	// まま＝従来どおり keys/seq で TUI モーダルを駆動する。省略可の追加フィールド
 	// なので既存ワイヤと互換（タグ変更ではない）。
@@ -91,7 +91,7 @@ type Turn struct {
 	// Source attributes a user turn's origin: "operator" = injected by the fleet operator
 	// (an af_write assistant's create_session / send_to_session), "" = the user's own input
 	// (composer or raw terminal). Set server-side by matching the operator-injection store
-	// (docs/30 ②), so the mirror can badge operator-driven prompts distinctly.
+	// (docs/log/30 ②), so the mirror can badge operator-driven prompts distinctly.
 	Source    string `json:"source,omitempty"`
 	Model     string `json:"model,omitempty"`     // assistant only: the model that answered
 	Effort    string `json:"effort,omitempty"`    // assistant only: reasoning effort/variant (codex reasoning_effort, opencode variant); "" when the agent records none (claude)
@@ -109,7 +109,7 @@ type Turn struct {
 	Idx         int    `json:"idx"` // transcript line index — a stable render key
 	// AnchorID is the AGENT's own stable identifier for this turn, opaque to the Console:
 	// claude = message uuid, codex = turn id, opencode = message id ("msg_…"). It is the
-	// handle "branch from this message" (docs/55) passes back to POST /fork {"at": …}.
+	// handle "branch from this message" (docs/log/55) passes back to POST /fork {"at": …}.
 	// Idx cannot serve: it is a line/message ordinal that moves under compaction, and a
 	// branch taken from a silently shifted point looks entirely plausible to the user.
 	// Empty = this kind has no such id (or the row predates it) — the Console then hides

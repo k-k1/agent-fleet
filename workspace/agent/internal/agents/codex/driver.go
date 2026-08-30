@@ -1,10 +1,10 @@
 package codex
 
-// Codex の managed driver（docs/27 P3）— Driver 型（agents.Driver/ThreadHandle）の
+// Codex の managed driver（docs/log/27 P3）— Driver 型（agents.Driver/ThreadHandle）の
 // 第 2 実装（初出は P2 の opencode）。共有 app-server の WS JSON-RPC に turn 状態
 // 機械（§4）・Interaction（§5）・reconciliation（§6）をマッピングする。
 //
-// 実測（0.144.4、docs/27 §12.3）に基づく API 選定:
+// 実測（0.144.4、docs/log/27 §12.3）に基づく API 選定:
 //   - turn 駆動は `turn/start`。応答は turn id を即返し（status=inProgress）、完走は
 //     `turn/completed` 通知（status: completed | interrupted | failed）で届く。
 //   - `turn/steer` は expectedTurnId 前提の真の mid-turn 注入（実測: 実行中 turn の
@@ -78,7 +78,7 @@ func (managedDriver) Capabilities() agents.Capabilities {
 var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 
 // threadConfig is the per-thread config: the features above, plus the MCP servers
-// scoped to THIS session（docs/27 §9.3.1）。
+// scoped to THIS session（docs/log/27 §9.3.1）。
 //
 // A managed session's MCP child is spawned by the one shared app-server, so the
 // process environment cannot carry a per-session AF_SESSION_NAME the way tmux does
@@ -88,7 +88,7 @@ var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 //
 // A thread map MERGES with the file config layers — $CODEX_HOME/config.toml and a
 // trusted project's own .codex/config.toml both still apply — and for a shared name
-// the thread definition wins (measured 0.147.0, docs/27 §9.3.1). So mcpreg restates
+// the thread definition wins (measured 0.147.0, docs/log/27 §9.3.1). So mcpreg restates
 // ONLY the af entry: everything else, including servers af does not manage at all,
 // comes through untouched. When there is nothing to override the key is omitted and
 // the thread inherits everything, which is also the safe failure for an unreadable
@@ -347,7 +347,7 @@ func threadResume(cl *appClient, tid, cwd, slot string) (threadSnapshotWire, err
 }
 
 // threadFork copies src into a NEW thread. lastTurnId, when non-empty, is the last turn
-// the fork keeps — **inclusive**: codex omits every turn after it (docs/55 §55.2). The
+// the fork keeps — **inclusive**: codex omits every turn after it (docs/log/55 §55.2). The
 // translation from the Console's exclusive anchor happened in ResolveForkAt; by the time
 // it reaches here it is already "the turn to fork through". Empty = the whole thread.
 func threadFork(cl *appClient, src, cwd, lastTurnID, slot string) (threadSnapshotWire, error) {
@@ -983,7 +983,7 @@ func (h *threadHandle) hasQuestion() bool {
 // session is currently blocked on, read straight from the live handle WITHOUT
 // resuming the runtime (a notification-poll caller must stay cheap). ok=false when no
 // live handle / no pending question. Used to enrich the codex-question notification
-// with P2b option buttons (docs/37 managed ボタン化). The bytes are the SAME shape
+// with P2b option buttons (docs/log/37 managed ボタン化). The bytes are the SAME shape
 // bridge_answer fingerprints from Snapshot at answer time (identical []transcript.
 // Question marshaled the same way), so the send-side fingerprint matches the
 // answer-side one for an unchanged question.

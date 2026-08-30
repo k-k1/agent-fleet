@@ -1,14 +1,14 @@
 // Package cursor は Cursor CLI（`cursor-agent` / Anysphere）種別の縦割りパッケージ
-// （docs/40 Track A）。read 層（Agent 実装・Claude Code 互換 JSONL の transcript/
+// （docs/log/40 Track A）。read 層（Agent 実装・Claude Code 互換 JSONL の transcript/
 // 状態読み）を種別内に閉じる。managed driver（`cursor-agent agent acp`、per-session
 // child・ACP JSON-RPC over stdio）は Track A2 で driver.go/serve.go を足す。
 //
 // セッション同一性は AF 側で採番した v4 UUID を `--resume <uuid>` で渡す方式
 // （実測: 未知の valid v4 は新規作成、既存は resume）——copilot の --session-id と
-// 同型で、agy の「resume UUID が取れない」問題（docs/32 202e439）は構造的に発生
+// 同型で、agy の「resume UUID が取れない」問題（docs/log/32 202e439）は構造的に発生
 // しない。read 正本は Claude Code 互換 JSONL 転写（program.go transcriptPath）——
 // 非公開 SQLite（~/.cursor/chats/**/store.db）には依存しない（opencode ストア契約
-// 変更で false-idle を踏んだ教訓 — docs/40 決定 3）。認証は専用フロー型で、
+// 変更で false-idle を踏んだ教訓 — docs/log/40 決定 3）。認証は専用フロー型で、
 // 資格情報は ~/.config/cursor/auth.json（auth.go）。
 package cursor
 
@@ -78,7 +78,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return li
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。
 //
 // cursor の人待ちは ACP の `session/request_permission`（plan 起動 / bypass を外した
 // とき）だけで、TUI ルートの許可メニューは JSONL に痕跡を残さない（state.go の
@@ -86,7 +86,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 //
 // Kind は **permission**。Interaction 自体は "question" を名乗るが、それは Console に
 // 選択カードを描かせるための形であって、答えの宛先は ACP の JSON-RPC id である。
-// 子プロセスごと消えた後にその可否を選ばせても届かない（docs/75 §75.6.4）ので、
+// 子プロセスごと消えた後にその可否を選ばせても届かない（docs/log/75 §75.6.4）ので、
 // 持ち越すのは「何を訊かれていたか」という事実だけにする。
 //
 // ★ handle はメモリ上にしか無い。**畳む前に**呼ばれなければ何も残らない（昇格の契機は

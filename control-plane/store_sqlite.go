@@ -315,7 +315,7 @@ func (s *sqlStore) getTenant(ctx context.Context, id string) (Tenant, error) {
 	return t, err
 }
 
-// SetTenantLogin writes the per-tenant login rules (docs/61 §61.9.7).
+// SetTenantLogin writes the per-tenant login rules (docs/log/61 §61.9.7).
 func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProviders, autoJoinDomains, allowedDomains, hiddenProviders string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE tenant SET allowed_providers=?, auto_join_domains=?, allowed_domains=?, hidden_providers=? WHERE id=?`,
@@ -323,7 +323,7 @@ func (s *sqlStore) SetTenantLogin(ctx context.Context, tenantID, allowedProvider
 	return err
 }
 
-// SetTenantAllowedCIDRs writes the tenant's source-network restriction (docs/66).
+// SetTenantAllowedCIDRs writes the tenant's source-network restriction (docs/log/66).
 // Separate from SetTenantLogin on purpose: that one is super_admin-only because its
 // three fields reach outside the tenant, while this one is the tenant_admin's
 // (ADR 0047 決定 6). Empty = no restriction.
@@ -448,12 +448,12 @@ func (s *sqlStore) DemoteSuperAdmins(ctx context.Context, keep []string) ([]stri
 }
 
 // LinkIdentity resolves a login that carries an IdP subject to a person, applying
-// the three rules of docs/61 §61.5 in order:
+// the three rules of docs/log/61 §61.5 in order:
 //
 //  1. (provider, subject) already recorded => that identity, whatever its email is
 //     now. user_key does not move, so home and secrets stay put across a rename.
 //     1.5. not recorded, but the SAME REALM has this subject on another provider =>
-//     that identity (docs/61 §61.15 + 決定 35). Two buttons can be two doors onto
+//     that identity (docs/log/61 §61.15 + 決定 35). Two buttons can be two doors onto
 //     one IdP — the deployment's GitHub and a tenant's own GitHub, or an env Entra
 //     and a tenant row pointing at the same issuer — and the same account behind
 //     both is the same person. The realm is the adapter's own answer to "where did
@@ -475,7 +475,7 @@ func (s *sqlStore) DemoteSuperAdmins(ctx context.Context, keep []string) ([]stri
 // you can sign in to both accounts shows control of both, not that they are one
 // person, and the merge would be irreversible.
 //
-// ★ emailJoin=false is a TENANT-DEFINED provider (docs/61 §61.11): the operator did
+// ★ emailJoin=false is a TENANT-DEFINED provider (docs/log/61 §61.11): the operator did
 // not configure that issuer, a subsidiary's administrator did, so an asserted
 // address is not proof of being that person. Rule 2 becomes rule 2' — CLAIM an
 // identity nobody has ever signed in as (the placeholder an invite leaves behind,
@@ -500,7 +500,7 @@ func (s *sqlStore) LinkIdentity(ctx context.Context, link IdentityLink) (Identit
 		if identityID, err = s.identityIDForRealm(ctx, link.Realm, subject); err != nil {
 			return Identity{}, false, err
 		}
-		// ★ …and its second key, for an issuer whose `sub` is pairwise (docs/61
+		// ★ …and its second key, for an issuer whose `sub` is pairwise (docs/log/61
 		// §61.15.10 + 決定 38). Tried AFTER the subject match, so an IdP where both
 		// work behaves exactly as it did before this column existed.
 		if identityID == "" {
@@ -599,7 +599,7 @@ func (s *sqlStore) identityIDForProvider(ctx context.Context, provider, subject 
 }
 
 // identityIDForRealm implements rule 1.5: the same IdP account reached through a
-// DIFFERENT button (docs/61 §61.15). The realm identifies the authority that
+// DIFFERENT button (docs/log/61 §61.15). The realm identifies the authority that
 // verified the subject — https://github.com for the GitHub adapter, the issuer URL
 // for OIDC — so (realm, subject) is the same person no matter which provider row
 // carried them here.
@@ -625,7 +625,7 @@ func (s *sqlStore) identityIDForRealm(ctx context.Context, realm, subject string
 }
 
 // identityIDForRealmClaim is rule 1.5's second key: the same IdP account recognised
-// by a STABLE CLAIM rather than by `sub` (docs/61 §61.15.10 + 決定 38). Entra's `sub`
+// by a STABLE CLAIM rather than by `sub` (docs/log/61 §61.15.10 + 決定 38). Entra's `sub`
 // is pairwise — a function of (app registration, user) — so one person coming through
 // the head office's app and through a subsidiary's carries two subjects on one
 // issuer, and identityIDForRealm cannot see that they are the same account. `oid` is
@@ -652,7 +652,7 @@ func (s *sqlStore) identityIDForRealmClaim(ctx context.Context, realm, claim, su
 }
 
 // FillProviderRealm records the realm of the rows an env-defined provider already
-// wrote, and is called once per provider at STARTUP (docs/61 §61.15).
+// wrote, and is called once per provider at STARTUP (docs/log/61 §61.15).
 //
 // ★ It has to happen in Go rather than in the migration: which realm a provider id
 // belongs to is only known from the provider set CP just built, and a migration that
@@ -675,7 +675,7 @@ func (s *sqlStore) FillProviderRealm(ctx context.Context, provider, realm string
 // re-point an existing mapping or merge two accounts, and both are irreversible.
 var errLinkTaken = errors.New("that sign-in method already belongs to an account on this deployment")
 
-// ListLinkedProviders — see the Store interface (docs/61 §61.16).
+// ListLinkedProviders — see the Store interface (docs/log/61 §61.16).
 func (s *sqlStore) ListLinkedProviders(ctx context.Context, identityID string) ([]LinkedProvider, error) {
 	if identityID == "" {
 		return nil, nil
@@ -700,7 +700,7 @@ func (s *sqlStore) ListLinkedProviders(ctx context.Context, identityID string) (
 	return out, rows.Err()
 }
 
-// AttachProvider — see the Store interface (docs/61 §61.16 + 決定 37).
+// AttachProvider — see the Store interface (docs/log/61 §61.16 + 決定 37).
 //
 // ★ The three refusals below are STRUCTURAL: they hold whoever calls this and
 // whatever the login layer checked first. The caller adds the policy half (the
@@ -732,7 +732,7 @@ func (s *sqlStore) AttachProvider(ctx context.Context, identityID string, link I
 		if byRealm != "" && byRealm != identityID {
 			return errLinkTaken
 		}
-		// ★ …and through rule 1.5's second key (docs/61 §61.15.10). Without this the
+		// ★ …and through rule 1.5's second key (docs/log/61 §61.15.10). Without this the
 		// pairwise-`sub` case slips past: two subjects, one Entra account, so the pair
 		// looks free while signing in with it would land on somebody else.
 		byClaim, err := s.identityIDForRealmClaim(ctx, link.Realm, link.RealmClaim, link.RealmSubject)
@@ -781,7 +781,7 @@ var (
 	errNoSuchLoginMethod = errors.New("that sign-in method is not linked to this account")
 )
 
-// DetachProvider — see the Store interface (docs/61 §61.16.4).
+// DetachProvider — see the Store interface (docs/log/61 §61.16.4).
 func (s *sqlStore) DetachProvider(ctx context.Context, identityID, provider, subject string) error {
 	if identityID == "" || provider == "" || subject == "" {
 		return fmt.Errorf("detach provider: identity, provider and subject are required")
@@ -1052,7 +1052,7 @@ func (s *sqlStore) IdentityIDForMembership(ctx context.Context, membershipID str
 // (auto_join_domains, AF_PROVISION=auto), which run on every login of a person who
 // currently has no active membership; reactivating there would undo an
 // administrator's removal the next time the person opened the page, which is
-// precisely the offboarding docs/61 §61.10.6 exists to make work. Coming back onto
+// precisely the offboarding docs/log/61 §61.10.6 exists to make work. Coming back onto
 // a roster is an explicit act — the invite API reactivates deliberately
 // (adminAPI.addMembership).
 func (s *sqlStore) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
@@ -1106,7 +1106,7 @@ func (s *sqlStore) SetMembershipStatus(ctx context.Context, membershipID, status
 // half-works because of a schema detail shows up as a foreign-key error in production and
 // nowhere in tests.
 //
-// ★ What is NOT here is the point of the operation (docs/61 §61.18):
+// ★ What is NOT here is the point of the operation (docs/log/61 §61.18):
 //
 //   - audit_log — it has no membership_id at all; the actor is an identity
 //     (0007_audit.sql). Offboarding must not be able to erase its own record.
@@ -1153,7 +1153,7 @@ func membershipCascade(membershipID string) []struct {
 		{`DELETE FROM notification_usage_state WHERE membership_id=?`, id},
 		// 共有は両端を持つ。相手側が生きていても、片方が消えた共有は残せない。
 		{`DELETE FROM session_share_proposal WHERE owner_membership_id=? OR proposer_membership_id=?`, both},
-		// 引き継ぎ（docs/77）も両端を持つ。catalog の CASCADE は所有者側しか掃除しないので、
+		// 引き継ぎ（docs/log/77）も両端を持つ。catalog の CASCADE は所有者側しか掃除しないので、
 		// 受け手だけが消えた場合を取りこぼさないよう明示的に両端で消す。
 		{`DELETE FROM session_handoff_offer WHERE owner_membership_id=? OR recipient_membership_id=?`, both},
 		{`DELETE FROM session_share WHERE owner_membership_id=? OR recipient_membership_id=?`, both},
@@ -1167,7 +1167,7 @@ func membershipCascade(membershipID string) []struct {
 
 // DeleteMembership removes a membership row and everything keyed to it. Irreversible,
 // and only ever reached from the explicit admin operation, which has already established
-// that the membership is inactive and its workspace destroyed (docs/61 §61.18).
+// that the membership is inactive and its workspace destroyed (docs/log/61 §61.18).
 func (s *sqlStore) DeleteMembership(ctx context.Context, membershipID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1266,7 +1266,7 @@ func (s *sqlStore) EmailHasActiveMembership(ctx context.Context, email string) (
 
 // EmailHasActiveMembershipInTenant is EmailHasActiveMembership narrowed to one
 // tenant — the entry-gate term a tenant-defined provider is allowed to use
-// (docs/61 §61.11.3-3). Being on ANOTHER tenant's roster says nothing about this
+// (docs/log/61 §61.11.3-3). Being on ANOTHER tenant's roster says nothing about this
 // subsidiary's IdP.
 func (s *sqlStore) EmailHasActiveMembershipInTenant(ctx context.Context, email, tenantID string) (bool, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
@@ -1999,7 +1999,7 @@ func (s *sqlStore) ListAuditByTenant(ctx context.Context, tenantID string, limit
 }
 
 // RecordEgress accumulates egress hits into the (day, host, allowed) bucket
-// (docs/20 M2). Upsert += so repeated batches add up.
+// (docs/log/20 M2). Upsert += so repeated batches add up.
 func (s *sqlStore) RecordEgress(ctx context.Context, day, host string, allowed bool, count int) error {
 	a := 0
 	if allowed {
@@ -2014,7 +2014,7 @@ func (s *sqlStore) RecordEgress(ctx context.Context, day, host string, allowed b
 }
 
 // ListEgress returns the busiest destination hosts on/after sinceDay, each with its
-// would-allow / would-block totals, most-hit first (docs/20 M2).
+// would-allow / would-block totals, most-hit first (docs/log/20 M2).
 //
 // ORDER BY must not reference the SELECT aliases inside an expression: Postgres
 // resolves names in an ORDER BY *expression* against the input columns only, so
@@ -2046,7 +2046,7 @@ func (s *sqlStore) ListEgress(ctx context.Context, sinceDay string, limit int) (
 	return out, rows.Err()
 }
 
-// --- egress allowlist + deployment settings (docs/20 M3) --------------------
+// --- egress allowlist + deployment settings (docs/log/20 M3) --------------------
 
 func (s *sqlStore) ListAllowlist(ctx context.Context, state string, limit int) ([]AllowlistEntry, error) {
 	if limit <= 0 {
@@ -2223,7 +2223,7 @@ func scanWorkspace(row scanner) (Workspace, error) {
 	return ws, err
 }
 
-// --- SSM login config (docs/history/p3-ssm-session.md) --------------------------
+// --- SSM login config (docs/log/p3-ssm-session.md) --------------------------
 
 const ssmProfileCols = `SELECT id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at FROM ssm_profile`
 
@@ -2338,7 +2338,7 @@ func (s *sqlStore) DeleteSSMHost(ctx context.Context, id, membershipID string) e
 	return err
 }
 
-// --- Memo queue (docs/21) --------------------------------------------------------
+// --- Memo queue (docs/log/21) --------------------------------------------------------
 
 const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path, attachments, position, created_at, sent_at FROM memo`
 
@@ -2428,7 +2428,7 @@ func (s *sqlStore) SweepSentMemos(ctx context.Context, retainBefore string) erro
 	return err
 }
 
-// --- Memo categories (docs/21 UI刷新) -------------------------------------------
+// --- Memo categories (docs/log/21 UI刷新) -------------------------------------------
 
 const memoCategoryCols = `SELECT id, membership_id, repo, name, position, created_at FROM memo_category`
 
@@ -2579,7 +2579,7 @@ func (s *sqlStore) PutUsageNotificationState(ctx context.Context, st UsageNotifi
 	return err
 }
 
-// --- Schedules (docs/38 + ADR0021) ----------------------------------------------
+// --- Schedules (docs/log/38 + ADR0021) ----------------------------------------------
 
 // b2i/i2b bridge the 0/1 INTEGER columns (enabled, new_branch) and Go bools; the
 // database/sql layer does not coerce int<->bool on its own.
@@ -2720,7 +2720,7 @@ func (s *sqlStore) RecordScheduleFire(ctx context.Context, id, lastRun, lastStat
 
 // MarkManualFirePending flags a run-now request: it sets next_run so the ticker fires the
 // schedule immediately AND records that this next fire was manually triggered, so the run
-// history can distinguish it from an automatic scheduled fire (docs/38). enabled is forced
+// history can distinguish it from an automatic scheduled fire (docs/log/38). enabled is forced
 // true (run-now on a paused schedule is rejected earlier). membership_id scopes the write.
 func (s *sqlStore) MarkManualFirePending(ctx context.Context, id, membershipID, nextRun, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx,
@@ -2770,7 +2770,7 @@ func (s *sqlStore) ListScheduleRuns(ctx context.Context, scheduleID, membershipI
 	return out, rows.Err()
 }
 
-// --- Tenant-distributed MCP servers (docs/48 P4 + ADR0031) ----------------------
+// --- Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031) ----------------------
 //
 // Every statement carries tenant_id, including the ones that already have the primary
 // key in the WHERE. An id is opaque but not secret (it travels to the Console and into
@@ -2841,7 +2841,7 @@ func (s *sqlStore) DeleteMCPServer(ctx context.Context, tenantID, id string) err
 	return err
 }
 
-// --- tenant-defined login providers (docs/61 §61.11 + ADR0043 決定 29-33) -------
+// --- tenant-defined login providers (docs/log/61 §61.11 + ADR0043 決定 29-33) -------
 
 const tenantIdPCols = `SELECT id, tenant_id, name, label_ja, label_en, kind, issuer, client_id,
        secret_enc, key_ref, trust, allowed_tids, allowed_domains, allowed_orgs, link_claim, status,
@@ -2884,7 +2884,7 @@ func (s *sqlStore) ListActiveTenantIdPs(ctx context.Context) ([]TenantIdP, map[s
 // listTenantIdPs is the deployment-wide read. The tenant slug travels with each row
 // because the provider id the rest of CP sees is built from it (t:<slug>:<name>),
 // and joining here saves the caller a lookup per row. The display name comes along
-// for the default button label (docs/61 §61.15.10).
+// for the default button label (docs/log/61 §61.15.10).
 //
 // ★ Rows of a non-active tenant are left out: a suspended tenant's IdP must not keep
 // minting sessions, the same way ListTenantLoginRules only loads active tenants.
@@ -2972,7 +2972,7 @@ func (s *sqlStore) DeleteTenantIdP(ctx context.Context, tenantID, id string) err
 	return err
 }
 
-// --- tenant-owned git provider OAuth apps (docs/71 + ADR0052) ------------------
+// --- tenant-owned git provider OAuth apps (docs/log/71 + ADR0052) ------------------
 
 const tenantGitOAuthCols = `SELECT id, tenant_id, provider, client_id, secret_enc, key_ref,
        updated_by, created_at, updated_at FROM tenant_git_oauth`
@@ -3069,7 +3069,7 @@ func (s *sqlStore) CountMembersOnlyOnProvider(ctx context.Context, tenantID, pro
 	return n, err
 }
 
-// --- cloud cost (docs/67, ADR 0048) --------------------------------------------
+// --- cloud cost (docs/log/67, ADR 0048) --------------------------------------------
 
 // PutCloudCost replaces the given days wholesale. Cost Explorer restates recent days
 // (they arrive `Estimated` and keep moving for about a day), so the poller re-fetches a
@@ -3190,7 +3190,7 @@ func (s *sqlStore) CloudCostTotals(ctx context.Context, tenantID, fromDay, toDay
 // CloudCostDays is the coverage window that actually exists. It is what lets the API say
 // "cost allocation was not switched on before this date" instead of drawing an honest-
 // looking zero — and that distinction is permanent, because activation is not
-// retroactive (docs/67 §67.5).
+// retroactive (docs/log/67 §67.5).
 func (s *sqlStore) CloudCostDays(ctx context.Context) (string, string, error) {
 	var first, last sql.NullString
 	err := s.db.QueryRowContext(ctx,
@@ -3202,7 +3202,7 @@ func (s *sqlStore) CloudCostDays(ctx context.Context) (string, string, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Work item inbox (docs/80 / ADR 0061). The CP owns the saved queries and a cache
+// Work item inbox (docs/log/80 / ADR 0061). The CP owns the saved queries and a cache
 // of non-secret metadata; the provider tokens stay in the Workspace.
 // ---------------------------------------------------------------------------
 

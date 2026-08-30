@@ -1,9 +1,9 @@
 package kiro
 
-// kiro の managed driver（docs/43 Track A2）— per-session child 方式。セッション毎に
+// kiro の managed driver（docs/log/43 Track A2）— per-session child 方式。セッション毎に
 // `kiro-cli acp` を子プロセスとして抱え、session/new・session/load（クロスプロセス
 // resume、実測）・session/prompt（blocking）・session/cancel に turn 状態機械・
-// Interaction・reconciliation をマッピングする。cursor / copilot の driver.go（docs/40,36）
+// Interaction・reconciliation をマッピングする。cursor / copilot の driver.go（docs/log/40,36）
 // と同じ骨格で、kiro 固有の差分は 2 点:
 //
 //  1. **`.lock` によるクロスプロセス排他**（cursor に無い）。kiro のセッションは
@@ -144,7 +144,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if h.settings.Mode == "" {
 		h.settings.Mode = m.Mode
 	}
-	// 権限確認をスキップするか（docs/76）は meta と ui-prefs から毎 Resume 解決する。
+	// 権限確認をスキップするか（docs/log/76）は meta と ui-prefs から毎 Resume 解決する。
 	// ThreadSettings に載せないのは、あちらが「空 = 変更しない」の動的更新用で bool を
 	// 3 値にできないから — 設定変更後の再 spawn でも、ここで解決し直した値が効く。
 	h.bypass = agents.SkipPermissions(m)
@@ -242,7 +242,7 @@ func ManagedAlive(name string) bool {
 }
 
 // ManagedContext returns the live context fill for a managed kiro session (Track D —
-// docs/43 §10): the latest `_kiro.dev/metadata` contextUsagePercentage (0–100), the
+// docs/log/43 §10): the latest `_kiro.dev/metadata` contextUsagePercentage (0–100), the
 // running model's context window in tokens, the accumulated meteringUsage credits, and
 // the model id. ok=false when there's no live handle or no metadata has arrived yet —
 // so TUI sessions and pre-first-turn managed sessions show no context bar. Cheap
@@ -375,7 +375,7 @@ type threadHandle struct {
 
 	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・A2-4）
 
-	// bypass は「権限確認をスキップする」か（docs/76）。Resume が meta から解決して
+	// bypass は「権限確認をスキップする」か（docs/log/76）。Resume が meta から解決して
 	// 置く — spawn は meta を持たないので、ここに載せて渡す。plan は Resume 時点では
 	// なく spawn の st.Mode で見る（稼働中のモード変更で再 spawn されるため）。
 	bypass bool
@@ -400,7 +400,7 @@ type threadHandle struct {
 
 	buf transcriptBuf // ACP session/update から構築する転写（別ロックで保護）
 
-	// ライブ使用量（Track D — docs/43 §10）。`_kiro.dev/metadata` 通知が運ぶ
+	// ライブ使用量（Track D — docs/log/43 §10）。`_kiro.dev/metadata` 通知が運ぶ
 	// contextUsagePercentage（最新値）と meteringUsage（累積 credit）を保持する。
 	// onNotify（readLoop goroutine）が更新するので h.mu とは別ロックにして turn 配管と
 	// 競合させない。読み手は ManagedContext（context.go / session_usage.go 経由でミラーの
@@ -414,7 +414,7 @@ type threadHandle struct {
 
 // spawn starts the child runtime, initializes ACP and loads/creates the kiro session.
 // Caller must NOT hold h.mu.
-// bypassNow reports the resolved「権限確認をスキップする」choice (docs/76). Resume writes
+// bypassNow reports the resolved「権限確認をスキップする」choice (docs/log/76). Resume writes
 // it under h.mu; spawn runs without the lock, so read it through here.
 func (h *threadHandle) bypassNow() bool {
 	h.mu.Lock()
@@ -774,7 +774,7 @@ func (h *threadHandle) pump() {
 }
 
 // runTurn executes ONE blocking session/prompt and lands the terminal state.
-// turn 境界の MarkTurnStart/End が status ストアと docs/30 の完了報告を駆動する。
+// turn 境界の MarkTurnStart/End が status ストアと docs/log/30 の完了報告を駆動する。
 func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.slotSid)
 	defer func() { agents.MarkTurnEnd(h.slotSid, h.currentState()) }()
@@ -1123,7 +1123,7 @@ func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method
 }
 
 // pendingPermission は保留中の ACP `session/request_permission` を「何を訊かれて
-// いたか」の 1 行へ畳む（docs/75 P5）。保留が無ければ ""。
+// いたか」の 1 行へ畳む（docs/log/75 P5）。保留が無ければ ""。
 func (h *threadHandle) pendingPermission() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1140,7 +1140,7 @@ func (h *threadHandle) pendingPermission() string {
 //
 // なぜ要るか: managed にはペインが無いので TUI 文字列契約は常に空を返し、**一覧の
 // チップも reaper の分類材料も無いまま**だった。結果、承認待ちで固まった managed
-// セッションは「状態不明」に落ち、tier1 が畳むことも無い（docs/75 の unknown）。
+// セッションは「状態不明」に落ち、tier1 が畳むことも無い（docs/log/75 の unknown）。
 // turn 状態機械が唯一の情報源なので、そこから供給する（cursor と同型）。
 //
 // 承認待ちを **question** と名乗るのは、ミラーが描く許可カード（td.Pending）および

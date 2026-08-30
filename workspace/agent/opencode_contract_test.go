@@ -127,7 +127,7 @@ func TestContractOpencodeTUIPaneMode(t *testing.T) {
 
 // TestContractOpencodeEnvConfig is the drift alarm for OPENCODE_CONFIG, which the
 // assistant chat's report wiring rests on: the af MCP server must carry `--conv <id>`
-// (docs/30), the id is per conversation, and opencode's config is per FILE — so the
+// (docs/log/30), the id is per conversation, and opencode's config is per FILE — so the
 // per-conversation config is handed over as OPENCODE_CONFIG while --dir stays the
 // per-grant project dir (that path IS the session's resume identity).
 //
@@ -182,7 +182,7 @@ func TestContractOpencodeEnvConfig(t *testing.T) {
 // OPENCODE_CONFIG file because that is the only place `--conv <id>` can live; if a future
 // opencode flipped precedence — or if someone "helpfully" added af to the project config —
 // the --conv-less entry would win and every opencode assistant would stop reporting back
-// (docs/30), with nothing else looking broken.
+// (docs/log/30), with nothing else looking broken.
 //
 //	go test -tags clicontract -run TestContractOpencodeConfigPrecedence ./
 func TestContractOpencodeConfigPrecedence(t *testing.T) {

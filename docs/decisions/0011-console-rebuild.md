@@ -1,7 +1,7 @@
 # 0011. Console リビルド — 並行エントリ方式・zustand 採用・旧側凍結
 
 - 状態: 確定（2026-07-07）
-- 関連: [22-console-rebuild.md](../history/22-console-rebuild.md)（設計本体）/ [0004-vanilla-to-react.md](0004-vanilla-to-react.md)（前回刷新）
+- 関連: [22-console-rebuild.md](../log/22-console-rebuild.md)（設計本体）/ [0004-vanilla-to-react.md](0004-vanilla-to-react.md)（前回刷新）
 
 ## 背景
 

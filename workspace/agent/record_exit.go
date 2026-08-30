@@ -12,7 +12,7 @@ package main
 // a stop as a crash (verified on tmux 3.3a: kill-session leaves no record; an inner
 // SIGKILL records 137).
 //
-// この pane ラッパー経路は tui ドライバ専用。managed セッション（docs/27 §10.2-2）は
+// この pane ラッパー経路は tui ドライバ専用。managed セッション（docs/log/27 §10.2-2）は
 // daemon が supervisor の子プロセスなので cmd.Wait() で直接取れ、判定ロジック
 // （status.ExitReasonFor / status.OOMKillCount — 本ファイルから internal/status へ
 // 移設）を共用する。
@@ -60,14 +60,14 @@ func runRecordExit(args []string) {
 		OOMBase: base.OOMBase,
 	})
 	// Abnormal death of an operator-armed session reports to its conversation
-	// (docs/30) — a clean quit / graceful stop is not report-worthy.
+	// (docs/log/30) — a clean quit / graceful stop is not report-worthy.
 	switch reason {
 	case "oom", "crashed", "killed":
 		if sessionReportPending(name) {
 			kickSessionReport(name, "exit", reason)
 		}
 		// Abnormal exits don't pass through the notice outbox (the sessions list
-		// surfaces ExitInfo directly), so the chat bridge (docs/37 P1) gets its
+		// surfaces ExitInfo directly), so the chat bridge (docs/log/37 P1) gets its
 		// own enqueue here. Plain file write — safe in this dying shell.
 		display, sessKind := name, ""
 		if m, ok := session.ReadMeta(name); ok {

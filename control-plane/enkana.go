@@ -1,11 +1,11 @@
-// enkana.go — 英単語を「カタカナ英語」に変換する前処理（docs/24）。VOICEVOX(OpenJTalk) は
+// enkana.go — 英単語を「カタカナ英語」に変換する前処理（docs/log/24）。VOICEVOX(OpenJTalk) は
 // 英語を綴りのままだと読めないので、CMU 発音辞書で英単語→発音記号(ARPABET)を引き、それを
 // 日本語モーラ(カタカナ)に写像してから合成に渡す。結果は "それっぽい" カタカナ英語（日本語
 // アクセント）で、ネイティブ発音ではない。日英混在はそのまま扱える（英単語トークンのみ変換）。
 //
 // 辞書: CMU Pronouncing Dictionary（assets/cmudict.dict.gz, BSD-2, (c) 1993-2015 CMU。
 // ライセンス全文 assets/cmudict.LICENSE）。GPL の alkana/bep-eng.dic は Apache-2.0 の本リポジトリ
-// と非互換のため不採用（docs/24 参照）。辞書は初回利用時に遅延ロードする。
+// と非互換のため不採用（docs/log/24 参照）。辞書は初回利用時に遅延ロードする。
 package main
 
 import (

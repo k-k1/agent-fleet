@@ -70,7 +70,7 @@ inspected afterwards.
 
 ## Publishing a version
 
-Covered by the runbook in [docs/35 §35.8.2](../../../docs/35-packaging.md); the parts
+Covered by the runbook in [docs/log/35 §35.8.2](../../../docs/log/35-packaging.md); the parts
 that concern this directory:
 
 1. Write `<version>.md` and `<version>.ja.md`.

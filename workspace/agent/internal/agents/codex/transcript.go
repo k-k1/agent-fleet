@@ -103,7 +103,7 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 	var tasks []transcript.Task
 	var cwd, branch, model, effort, mode string
 	// The rollout turn currently open (task_started … task_complete). Every displayable
-	// turn inside it carries this id as its fork anchor (docs/55): `thread/fork`'s
+	// turn inside it carries this id as its fork anchor (docs/log/55): `thread/fork`'s
 	// lastTurnId speaks in these, not in line numbers. Empty until the first
 	// task_started — the preamble (injected instructions) belongs to no turn and must
 	// not be branchable.
@@ -1206,7 +1206,7 @@ func rolloutLines(path string) ([][]byte, error) {
 
 // taskStartedTurnID returns the turn id an event_msg/task_started payload opens, or ""
 // for any other event. This id is codex's own unit of "one exchange" and the currency of
-// `thread/fork`'s lastTurnId (docs/55 §55.2).
+// `thread/fork`'s lastTurnId (docs/log/55 §55.2).
 func taskStartedTurnID(payload json.RawMessage) string {
 	var p struct {
 		Type   string `json:"type"`

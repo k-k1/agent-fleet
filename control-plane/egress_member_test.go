@@ -1,6 +1,6 @@
 package main
 
-// Member-facing egress check / propose (docs/48 §9). What these pin:
+// Member-facing egress check / propose (docs/log/48 §9). What these pin:
 //   - the verdict is the SAME policy the proxy enforces (defaults ∪ active entries),
 //   - `configured` follows the proxy wiring, not the token — a deployment with no proxy
 //     must not have the Console warning about a restriction it does not have,

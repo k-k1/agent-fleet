@@ -1,6 +1,6 @@
 package main
 
-// エージェントメモリの版管理（docs/39 ④ / ADR 0022 決定 4）— restore。
+// エージェントメモリの版管理（docs/log/39 ④ / ADR 0022 決定 4）— restore。
 //
 // 履歴は書き換えない。restore は「その時点の内容を live へ書き戻し、結果を新しい commit
 // として積む」操作であり、適用前に **pre-restore snapshot を必ず取る**ので、巻き戻しの
@@ -42,7 +42,7 @@ func memoryErrf(status int, code, format string, args ...any) error {
 	return &memoryUserErr{Status: status, Code: code, Msg: fmt.Sprintf(format, args...)}
 }
 
-// memoryRestoreScope は復元範囲。docs/39 の `{all | projects: [slug...]}` に、
+// memoryRestoreScope は復元範囲。docs/log/39 の `{all | projects: [slug...]}` に、
 // codex のような Scopes=false のルートを丸ごと指すための kinds を足したもの。
 type memoryRestoreScope struct {
 	All      bool     `json:"all"`
@@ -58,7 +58,7 @@ type memoryScopeTarget struct {
 	Rel  string
 }
 
-// memoryApplyOpts は適用の変種。既定（ゼロ値）は docs/39 ④ そのままの「内容だけ採る」で、
+// memoryApplyOpts は適用の変種。既定（ゼロ値）は docs/log/39 ④ そのままの「内容だけ採る」で、
 // Adopt はそこに**系譜の付け替え**を足す（= 移設。取り込んだ履歴をこの環境の履歴にする）。
 // 取り込んだ内容を live へ書く手順は 1 バイトも変えない — 変わるのは main がどの系譜を
 // 指すかだけなので、allowlist 由来の防御（★1 の裏返し）はそのまま効く。
@@ -88,7 +88,7 @@ type memoryRestoreResult struct {
 	ReplacedRef string `json:"replacedRef,omitempty"`
 }
 
-// memoryRestore は docs/39 ④ の手順をそのまま実行する。now はテストが決定的に検証
+// memoryRestore は docs/log/39 ④ の手順をそのまま実行する。now はテストが決定的に検証
 // できるよう呼び出し側から渡す（snapshot と同じ流儀）。
 func memoryRestore(sc memoryRestoreScope, rev, at string, now time.Time) (memoryRestoreResult, error) {
 	// snapshot と staging / index を共有するので、自動 snapshot ループとは相互排他。
@@ -121,7 +121,7 @@ func memoryApplyRev(sc memoryRestoreScope, from, trigger string, extraTrailers [
 	return memoryApplyRevLocked(sc, from, trigger, extraTrailers, now, opts)
 }
 
-// memoryApplyRevLocked は memorySnapshotMu を握った状態の本体（docs/39 ④ の手順そのもの）。
+// memoryApplyRevLocked は memorySnapshotMu を握った状態の本体（docs/log/39 ④ の手順そのもの）。
 func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrailers []string, now time.Time, opts memoryApplyOpts) (memoryRestoreResult, error) {
 	res := memoryRestoreResult{From: from, Scopes: []string{}, Written: []string{}, Deleted: []string{}, Projects: []memoryProjectRef{}}
 	targets, err := memoryResolveScope(sc)
@@ -132,7 +132,7 @@ func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrai
 	for _, t := range targets {
 		res.Scopes = append(res.Scopes, t.Repo)
 		if busy[t.Root.Kind] {
-			// 実行中セッションがあっても止めない（docs/39 ④-5: 既定は続行可）。後から
+			// 実行中セッションがあっても止めない（docs/log/39 ④-5: 既定は続行可）。後から
 			// 書かれた分は restore 後の新しい snapshot として履歴に現れるだけで追跡できる。
 			res.Busy = true
 		}

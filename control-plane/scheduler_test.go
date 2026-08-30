@@ -293,7 +293,7 @@ func TestScheduleStoreCRUD(t *testing.T) {
 
 // TestMarkManualFirePending checks the run-now provenance flag: MarkManualFirePending sets
 // next_run + manual_fire_pending, and the fire ledger (RecordScheduleFire) clears the flag
-// so a subsequent automatic fire is not mis-tagged as manual (docs/38).
+// so a subsequent automatic fire is not mis-tagged as manual (docs/log/38).
 func TestMarkManualFirePending(t *testing.T) {
 	st, ctx := newSchedTestStore(t)
 	sc := Schedule{

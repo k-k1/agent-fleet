@@ -1,4 +1,4 @@
-// fileMode — the File pane's display-mode state machine (docs/44 §1.1, §1.8).
+// fileMode — the File pane's display-mode state machine (docs/log/44 §1.1, §1.8).
 //
 // The pane has two layers that Phase 3 collapses into one piece of state: the
 // pane's own `mode: "view" | "edit"`, and — for Markdown — the top-level
@@ -36,7 +36,7 @@ export interface FileModeCaps {
   marp: boolean;
   /** A validated, PUT-able editor snapshot exists, so the buffer can be edited. */
   editable: boolean;
-  /** drawio の図として開ける（docs/65）。Markdown と同時に立つことはない。 */
+  /** drawio の図として開ける（docs/log/65）。Markdown と同時に立つことはない。 */
   diagram: boolean;
 }
 
@@ -130,7 +130,7 @@ export function surfacesFor(state: FileModeState, caps: FileModeCaps): FileSurfa
   }
   const renderer = effectiveRenderer(state, caps);
   // `split` needs an edit surface. A non-editable document is never offered it
-  // (docs/44 §1.1 keeps that case on preview / source / slides), so a state that
+  // (docs/log/44 §1.1 keeps that case on preview / source / slides), so a state that
   // still carries it — one render before reconcileFileMode clamps it, or a
   // direct call — degrades to the same preview that clamp lands on.
   if (state.md === "preview" || (state.md === "split" && !caps.editable)) {
@@ -143,12 +143,12 @@ export function surfacesFor(state: FileModeState, caps: FileModeCaps): FileSurfa
 /** Identity of the set of surfaces on screen, ignoring which renderer draws the
  *  preview. Choosing a renderer is not choosing a surface, so anything that
  *  reacts to "the user moved to another surface" — focus, above all — must not
- *  be triggered by it (docs/44 §5). */
+ *  be triggered by it (docs/log/44 §5). */
 export function surfaceKey(surfaces: FileSurfaces): string {
   return [surfaces.editor, surfaces.source, !!surfaces.preview, surfaces.split, surfaces.diagram].join("|");
 }
 
-/** One button of the Markdown mode group (docs/44 §5: a button group with
+/** One button of the Markdown mode group (docs/log/44 §5: a button group with
  *  `aria-pressed`, not a tablist). */
 export interface MarkdownModeControl {
   mode: MarkdownMode;

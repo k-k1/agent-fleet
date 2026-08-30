@@ -83,7 +83,7 @@ func prefOnDefault(p *bool) bool {
 }
 
 // 各エージェント側の適用 artifact は縦割りパッケージへ移設済み: opencode は
-// opencode.ApplyRTK（rtk.ts プラグインの seed/remove、docs/23 残① Wave D）、codex
+// opencode.ApplyRTK（rtk.ts プラグインの seed/remove、docs/log/23 残① Wave D）、codex
 // は codex.ApplyRTK（AGENTS.md のマーカーブロック、同 Wave E）。
 
 // reconcileAgentRTK applies the durable prefs to the on-disk artifacts. When rtk is

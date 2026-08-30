@@ -121,7 +121,7 @@ func TestDriftCodexProjectConfigWinsOverUserConfig(t *testing.T) {
 		t.Logf("codex: collision winner = project — a repository's .codex/config.toml CAN " +
 			"shadow af's own `af` entry once the project is trusted")
 	case userRan == nil && projRan != nil:
-		t.Fatalf("codex: collision winner = user, not project. docs/48 §8.4 records project " +
+		t.Fatalf("codex: collision winner = user, not project. docs/log/48 §8.4 records project " +
 			"as the winner; af's `af` entry is safer than documented, and the warning about " +
 			"repositories shadowing it can be narrowed")
 	default:
@@ -147,7 +147,7 @@ func writeProbeServer(t *testing.T, path, name, marker string) {
 // TestDriftCodexThreadConfigOverridesProjectConfig checks the last cell of the
 // layering table: a trusted project's .codex/config.toml beats $CODEX_HOME
 // (TestDriftCodexProjectConfigWinsOverUserConfig), so a repository can shadow af's `af`
-// entry — unless the thread config sits above the project layer too. docs/48 §8.4
+// entry — unless the thread config sits above the project layer too. docs/log/48 §8.4
 // claims managed codex is therefore immune to that shadowing; this is the claim.
 func TestDriftCodexThreadConfigOverridesProjectConfig(t *testing.T) {
 	probes := t.TempDir()
@@ -196,7 +196,7 @@ func TestDriftCodexThreadConfigOverridesProjectConfig(t *testing.T) {
 		t.Fatalf("thread config no longer sits above the project layer (project=%v thread=%v): "+
 			"a repository's .codex/config.toml can now shadow af's `af` entry in MANAGED codex "+
 			"sessions too, which breaks self-report, the handoff proposal and Chromium attach "+
-			"there. docs/48 §8.4's immunity note is wrong and must be removed",
+			"there. docs/log/48 §8.4's immunity note is wrong and must be removed",
 			projRan == nil, threadRan == nil)
 	}
 	t.Logf("codex: thread > project > user — managed sessions keep af's own entry")

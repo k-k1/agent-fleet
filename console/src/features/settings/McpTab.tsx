@@ -24,14 +24,14 @@ import {
 } from "./mcpWire.ts";
 import type { Form, KV, McpServer, ProbeResult, Registry } from "./mcpWire.ts";
 import { Field, KVEditor, Meta } from "./mcpForm.tsx";
-// Egress allowlist tie-in (docs/48 §9): a remote server the deployment's proxy will not
+// Egress allowlist tie-in (docs/log/48 §9): a remote server the deployment's proxy will not
 // let the workspace reach is warned about here, where it can still be acted on.
 import { EgressNote, useEgressCheck } from "./EgressNote.tsx";
 import { hostsOf } from "./egressCheck.ts";
 import type { EgressCheck } from "./egressCheck.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
 
-// McpTab — the member's own MCP server registry (docs/48 P1 + ADR0031). Lists the
+// McpTab — the member's own MCP server registry (docs/log/48 P1 + ADR0031). Lists the
 // EFFECTIVE registry (builtin ∪ tenant ∪ user) as one table, because that is what the
 // assistants and sessions actually see; origin decides what is editable here:
 //   user    … full CRUD
@@ -143,7 +143,7 @@ export function McpTab() {
   };
 
   // Pull the tenant-distributed set now instead of waiting for the agent's 5-minute
-  // poll (docs/48 §6). A failure is surfaced verbatim — a silently stale list is the
+  // poll (docs/log/48 §6). A failure is surfaced verbatim — a silently stale list is the
   // thing this button exists to rule out.
   const refreshTenant = async () => {
     setRefreshing(true);
@@ -193,9 +193,9 @@ export function McpTab() {
   return (
     <div className="mcp-tab">
       <Hint>{tr("mcp.intro")}</Hint>
-      {/* プロジェクトスコープ（リポジトリの .mcp.json 等）は別軸（docs/56 P0）— この
+      {/* プロジェクトスコープ（リポジトリの .mcp.json 等）は別軸（docs/log/56 P0）— この
           タブは実効レジストリ（user/tenant/builtin）だけを扱う。行き止まりにしない
-          よう導線だけ 1 行置く（docs/57 §3）。 */}
+          よう導線だけ 1 行置く（docs/log/57 §3）。 */}
       <p className="ps-note">{tr("mcp.project_scope_note")}</p>
       {shadowed.length > 0 && (
         <p className="ps-note ps-note-warn">{tr("mcp.shadowed", { names: shadowed.join(", ") })}</p>
@@ -387,7 +387,7 @@ function ServerRow({
         onProposed={onProposed}
       />
       {/* 組み込みの "af" は接続情報を持たない（自己申告ファストパスのセッション側サーバー・
-          docs/51 Phase 3）ので、運用連携と同じ「接続で設定してください」を出すと嘘になる。 */}
+          docs/log/51 Phase 3）ので、運用連携と同じ「接続で設定してください」を出すと嘘になる。 */}
       {s.origin === "builtin" && (
         <p className="ps-note">{tr(s.id === "af" ? "mcp.builtin_af_note" : "mcp.builtin_note")}</p>
       )}
@@ -408,7 +408,7 @@ function targetsText(tg: { assistant: boolean; session: boolean } | undefined, t
 
 // Meta は mcpForm.tsx の共通プリミティブを使う（SsmTab と同型だったため集約）。
 
-// ProbeView renders one connection-test outcome (docs/48 §10). On failure the server's
+// ProbeView renders one connection-test outcome (docs/log/48 §10). On failure the server's
 // own stderr / body tail is shown verbatim — a broken command almost always explains
 // itself there, and paraphrasing it would only hide the cause.
 function ProbeView({ probe }: { probe?: ProbeResult }) {
@@ -444,7 +444,7 @@ function ProbeView({ probe }: { probe?: ProbeResult }) {
   );
 }
 
-// --- member secrets for a tenant user_secret definition (docs/48 §5.2) -------------
+// --- member secrets for a tenant user_secret definition (docs/log/48 §5.2) -------------
 //
 // The tenant distributed WHICH headers this server needs; the values are the member's.
 // So the header names are fixed (read-only) and only the values are editable — adding a

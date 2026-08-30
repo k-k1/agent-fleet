@@ -1,6 +1,6 @@
 package main
 
-// install_kiro.go — on-demand installer for the Kiro CLI (kind="kiro", docs/43
+// install_kiro.go — on-demand installer for the Kiro CLI (kind="kiro", docs/log/43
 // Track B / decisions/0026).
 //
 // Every OTHER agent CLI is either baked into the image (/usr/local, BAKE_AGENT_CLIS=1)
@@ -57,7 +57,7 @@ import (
 // kiroAsset returns the manifest asset name for this arch. x86_64 uses the gnu
 // build (install.sh requires glibc >= 2.34; Debian 12 ships 2.36); aarch64 uses the
 // **musl** build because the aarch64 gnu build requires glibc >= 2.39, newer than
-// Debian 12's 2.36 (docs/43 §2.1 — verified). One image is single-arch, so the
+// Debian 12's 2.36 (docs/log/43 §2.1 — verified). One image is single-arch, so the
 // versions.json kiro_sha256 (written per build arch) matches the asset chosen here.
 func kiroAsset() (string, error) {
 	switch runtime.GOARCH {

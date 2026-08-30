@@ -1,4 +1,4 @@
-// workitems_test.go — 作業項目の受け皿（docs/80 / ADR 0061）。
+// workitems_test.go — 作業項目の受け皿（docs/log/80 / ADR 0061）。
 //
 // 固定するのは「壊れたときに一番痛い」4 つ:
 //   - 停止中でもキャッシュが返り、取得は起きない（表示のために Workspace を起こさない）

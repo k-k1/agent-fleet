@@ -92,7 +92,7 @@ loopback で届く（preview の下請け `/proxy/{port}`とBrowserManagerの直
 
 ## 4.3 エージェント kind / driver 統合パターン
 
-kind = `claude` / `codex` / `cursor` / `opencode` / `agy` / `copilot` / `kiro` / `shell` / `ssm`（agy は [32](../32-agy-agent-kind.md)、copilot は [36](../36-copilot-agent-kind.md)、kiro は [43](../43-kiro-agent-kind.md) — copilot / cursor / kiro は Terminal+Managed 両対応・per-session child の ACP driver、agy は Terminal 専用）。
+kind = `claude` / `codex` / `cursor` / `opencode` / `agy` / `copilot` / `kiro` / `shell` / `ssm`（agy は [32](../log/32-agy-agent-kind.md)、copilot は [36](../log/36-copilot-agent-kind.md)、kiro は [43](../log/43-kiro-agent-kind.md) — copilot / cursor / kiro は Terminal+Managed 両対応・per-session child の ACP driver、agy は Terminal 専用）。
 Codex / OpenCode は managed が新規既定で、tui は明示選択。Claude / shell / SSM は tui のみ。
 **新 kind を足すときに埋める面**は毎回同じ（雛形は opencode 追加時に確立、codex で再利用）:
 
@@ -118,7 +118,7 @@ Codex / OpenCode は managed が新規既定で、tui は明示選択。Claude /
   漏れやすいのは「起動タイムアウトで `Process.Kill()` して return」する失敗経路
   （codex app-server / opencode serve で実例、2026-07 修正）。PTY ログインフロー共有の
   `agents.Flow.Close()` は Kill＋Wait まで面倒を見る（agy /usage スクレイプのゾンビ蓄積で顕在化、
-  `internal/agents/flow_test.go` が回帰テスト。経緯は [32](../32-agy-agent-kind.md)）。
+  `internal/agents/flow_test.go` が回帰テスト。経緯は [32](../log/32-agy-agent-kind.md)）。
 - ⚠️ codex のフックは claude と同じ**入れ子スキーマ**（`hooks.<Event>=[{hooks=[{type,command}]}]`）。
   フラットに書くと**パースは通るが無音で発火しない**（resume が新規化する既知の罠）。
 - RTK（安全化ラッパー、vendor 時のみ）は 3 エージェントで機構が違う: claude=settings.json の
@@ -130,7 +130,7 @@ managed の共通境界は `Driver` / `ThreadHandle` / `RuntimeSupervisor`。`/t
 意味論 API として driver 非依存に受け、managed は構造化 API、tui は既存のキー入力経路へ委譲する。
 会話本文を AF 独自ストアへ複製せず、native store を read の正本として transcript を正規化する。
 実装判断とプロトコル実測は [ADR 0015](../decisions/0015-agent-managed-driver.md) と
-[実装記録](../27-agent-managed-driver.md) を参照。
+[実装記録](../log/27-agent-managed-driver.md) を参照。
 
 ## 4.4 状態バッジ機構
 
@@ -147,7 +147,7 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 
 ## 4.5 チャット・アシスタント面（headless CLI）
 
-設計の全容は [docs/19](../history/19-assistant-chat.md)。要点:
+設計の全容は [docs/19](../log/19-assistant-chat.md)。要点:
 
 - **チャットは tmux セッションではない**。Agent 内の並列サブシステムで、`claude -p`（headless）を
   会話ストア（`~/.config/agent-fleet/chats/<id>.json`）と組で駆動。ストリームは SSE（[05 §5.3](05-api-contracts.md)）。
@@ -162,7 +162,7 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 - **コンテナ内 stdio MCP**: チャットの claude には `workspace-agent mcp-stdio` を `--mcp-config` で
   付与（PAT 不要・egress 不要・身元=自コンテナ）。既定 read-only、`--write` 時のみ
   `create_session`・`send_to_session`・`list_assistants`・`ask_assistant`・
-  `get_chat_plan`／`set_chat_plan`（作業計画 — [33](../33-chat-context-usage.md) 第5段）を**広告**する（権限プロンプトでなく
+  `get_chat_plan`／`set_chat_plan`（作業計画 — [33](../log/33-chat-context-usage.md) 第5段）を**広告**する（権限プロンプトでなく
   「見えるツール集合」がゲート）。CP の `/mcp` とは**別実装・別スコープ**（意図的な二重管理、
   [03](03-control-plane.md)）。
 - **対話セッション用 stdio MCP**: mcpreg builtin `af`を各CLIのnative設定へmaterializeし、
@@ -237,7 +237,7 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 起動時に旧平文資格の自動移行あり。`AF_MASTER_KEY` 未設定の dev では平文 `secrets.json`（同一経路）。
 
 ★ **ここに置かない物が 1 つある: git プロバイダの OAuth アプリの client_secret**
-（[71](../71-tenant-git-oauth.md) §71.8）。テナントの資格情報なので、全メンバーの
+（[71](../log/71-tenant-git-oauth.md) §71.8）。テナントの資格情報なので、全メンバーの
 `secrets.enc` に複製されるのを避けて CP に残す。Bitbucket の refresh は Agent が
 `POST /internal/git-oauth/bitbucket/refresh` を呼んで代行させる（本人の refresh token は
 ここに残る）。★ ブリッジの座標（`AF_CP_BASE_URL` + `AF_GIT_OAUTH_TOKEN`）は起動時に
@@ -335,11 +335,11 @@ Page上限2、最大1600×1200/DPR 1、12fps/quality 70、latest-frame 1枚、�
 12fpsはWebSocket送信だけでなく、Pageごとの容量1 frame workerがCDP ACKを`1/maxFPS`遅延して
 Chromiumのcapture/encode元から制限する。pipe CDPは1 message 8 MiB・event 256件/合計32 MiBで固定し、必須eventの飽和時は
 waiter goroutineやqueue memoryを増やさずChromiumを終了してPageを`crashed`へ遷移させる。
-詳細契約とW5検証結果は[設計31](../31-container-browser-pane.md)を参照。
+詳細契約とW5検証結果は[設計31](../log/31-container-browser-pane.md)を参照。
 
 ## 4.11 tmux サーバのスコープと第 2 インスタンスの隔離（開発・E2E 必読）
 
-> 経緯: agy 統合の M1 E2E（[32](../32-agy-agent-kind.md)、2026-07-20）で、テスト用に別ポートで
+> 経緯: agy 統合の M1 E2E（[32](../log/32-agy-agent-kind.md)、2026-07-20）で、テスト用に別ポートで
 > 起動した agent の shutdown が**共有デフォルトソケットへ `tmux kill-server` を実行**し、
 > 並行稼働中の無関係なセッション（開発者自身の claude CLI 含む）を計 4 回全滅させた。
 > 本節の規約はその再発防止（恒久対応 + 開発時の安全手順）。

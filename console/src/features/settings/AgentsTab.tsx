@@ -104,7 +104,7 @@ export function AgentsTab() {
         <OnOff value={s.autoTitleSuggest} onChange={(v) => setSetting("autoTitleSuggest", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_auto_title")}</p>
-      {/* セッション間メッセージ（docs/58 / ADR 0041）。カードの中ではなくここに置くのは、
+      {/* セッション間メッセージ（docs/log/58 / ADR 0041）。カードの中ではなくここに置くのは、
           af 自身の MCP が配られる 7 kind すべてに効く設定で、特定のエージェントの
           設定ではないから（claude カードに入れると claude 限定に見える）。 */}
       <Row label={tr("agents.peer_messaging")}>
@@ -270,7 +270,7 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" | "kiro"
           />
         </SettingRow>
       )}
-      {/* 権限確認をスキップするか（docs/76）。承認待ちを Console から答えられる kind
+      {/* 権限確認をスキップするか（docs/log/76）。承認待ちを Console から答えられる kind
           （claude / cursor / copilot / kiro / agy）だけに出す — 答えられない kind で
           オフにできると、固まったセッションを作れてしまう。 */}
       {desc.caps.permissionChoice && (
@@ -517,7 +517,7 @@ function ClaudeCard({
       status={
         running ? (
           /* 期限切れは「接続済み」ではない: 資格情報は手元にあるので `claude auth status`
-             は loggedIn を返すが、それでターンは始まらない（docs/47 §4-8）。緑のピルの
+             は loggedIn を返すが、それでターンは始まらない（docs/log/47 §4-8）。緑のピルの
              ままにすると、この画面がまさに嘘をつく場所になる。 */
           <StatusPill on={st?.connected && !st?.expired}>
             {!st?.connected
@@ -577,7 +577,7 @@ function ClaudeCard({
             {st.email || tr("conn.connected")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
-          {/* 期限（docs/47 §4-8）。CLI 側の予告は残り1日以下・15秒で消える起動ヒント
+          {/* 期限（docs/log/47 §4-8）。CLI 側の予告は残り1日以下・15秒で消える起動ヒント
               だけで、切れた後は何も出ない。ここは消えない場所なので、切れる前から
               静かに出しておく。日時は tooltip（行を伸ばさない）。 */}
           {(st.expired || st.days_left !== undefined) && (
@@ -645,15 +645,15 @@ function ClaudeCard({
   );
 }
 
-// agy (Antigravity CLI, docs/32): claude-style OAuth connect (start → approve in a
+// agy (Antigravity CLI, docs/log/32): claude-style OAuth connect (start → approve in a
 // new tab → paste code → complete) with an auth-method selector (M1 offers Google
 // OAuth only; the GCP-project method lands with M2), plus the shared RTK toggle so
-// the card reads like the other agents'. The 実験枠 label is a 採用条件 (docs/32
+// the card reads like the other agents'. The 実験枠 label is a 採用条件 (docs/log/32
 // Track C-3): the Starter pool is tiny and shared with the IDE/Jules wallet, so the
 // card must always say so. The quota gauge (残量%) lives in the WS bar next to the
 // Claude / Codex usage chips. On unsupported hosts (no RDRAND) the card shows why
 // instead of the connect flow.
-// CopilotCard: GitHub Copilot CLI（docs/36）。専用の認証フローを持たない —
+// CopilotCard: GitHub Copilot CLI（docs/log/36）。専用の認証フローを持たない —
 // GitHub 連携（gh 透過認証）に相乗りするので、状態表示と起動既定のみ。接続/切断は
 // 連携タブの GitHub 側で行う。
 function CopilotCard({
@@ -1064,7 +1064,7 @@ function CodexCard({
   );
 }
 
-// Cursor: dedicated login flow (docs/40). `NO_OPEN_BROWSER=1 cursor-agent login`
+// Cursor: dedicated login flow (docs/log/40). `NO_OPEN_BROWSER=1 cursor-agent login`
 // prints an authorize URL and self-polls until the user approves in a browser, then
 // writes ~/.config/cursor/auth.json — so the UI shows the URL and polls
 // api/connections/cursor/poll (no pasted code, unlike Claude/Codex). v1 is
@@ -1170,7 +1170,7 @@ function CursorCard({ running, st, reload }: { running: boolean; st: any; reload
   );
 }
 
-// Kiro: on-demand install + device-flow login (docs/43 Track C). Kiro's ~855MB
+// Kiro: on-demand install + device-flow login (docs/log/43 Track C). Kiro's ~855MB
 // bundle is NOT baked on the lean image (decision §4-2), so a fresh workspace reports
 // supported=false; the card offers an "install" button that lands the CLI in the
 // user's ~/.local (POST /connections/kiro/install runs in the background, we poll
@@ -1383,7 +1383,7 @@ function KiroCard({ running, st, reload }: { running: boolean; st: any; reload: 
   );
 }
 
-// opencode: two independent auth paths that coexist (docs/54) —
+// opencode: two independent auth paths that coexist (docs/log/54) —
 //   ① opencode アカウント: OAuth device flow through `opencode serve`'s integration
 //      API. Approval happens entirely in the browser (mode="auto", opencode polls the
 //      token itself), so like Cursor there is no code to paste; we show the URL and
@@ -1433,7 +1433,7 @@ function OpencodeUsageRow() {
   );
 }
 
-// 利用枠の導線（docs/54 §54.7）。opencode.ai の利用枠ページはブラウザセッション前提で、
+// 利用枠の導線（docs/log/54 §54.7）。opencode.ai の利用枠ページはブラウザセッション前提で、
 // 数値を取り込む API が無い（実測: ページは /auth/authorize へ 302、console 側 API に
 // usage は無い）。だから Console が持てるのは workspace ID と、そこへのリンクと、上限に
 // 当たったときにエラーが運んできた枠情報だけ。ID は手入力でも、失敗から自動で学習しても
@@ -1610,7 +1610,7 @@ function OpencodeCard({
     reload();
   };
 
-  const usage = s.opencodeCatalog; // off | free | go | zen（課金経路の選択・docs/54）
+  const usage = s.opencodeCatalog; // off | free | go | zen（課金経路の選択・docs/log/54）
   const off = usage === "off";
   const pill = [
     off ? tr("agents.oc_usage_off") : usage === "free" ? tr("agents.oc_usage_free") : "",

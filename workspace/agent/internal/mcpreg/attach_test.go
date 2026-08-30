@@ -1,6 +1,6 @@
 package mcpreg
 
-// Per-provider serialization (docs/48 §7 / P2). The assertions worth having here are
+// Per-provider serialization (docs/log/48 §7 / P2). The assertions worth having here are
 // the ones a running chat would only reveal as "the server silently isn't there":
 // each CLI's exact key names, and the invariant that a credential never reaches argv.
 
@@ -193,7 +193,7 @@ func TestForAssistantScopesByKindAndReadiness(t *testing.T) {
 	}
 	any := mk("anykind", nil, nil)
 	codexOnly := mk("codexonly", []string{session.KindCodex}, nil)
-	// A definition still waiting for its header value (the docs/48 §5.2 user_secret
+	// A definition still waiting for its header value (the docs/log/48 §5.2 user_secret
 	// shape: the name is distributed, the value is the member's to fill in) cannot
 	// authenticate, so it is held back rather than attached as a server that fails on
 	// first use.

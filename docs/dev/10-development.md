@@ -89,7 +89,7 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
   |---|---|
   | （無指定）/ `local` | 開発既定。Docker ランタイム |
   | `wsl` | WSL 個人利用プリセット（docker/cgroup preflight・`AUTH=dev` 固定）。旧 `wsl-quickstart.sh` はこれを exec する後方互換ラッパー |
-  | `native` | Docker なしコンテナレス（`AF_RUNTIME=native`・単一ユーザー・[34](../34-native-runtime.md)）。agent をホストビルドして渡す |
+  | `native` | Docker なしコンテナレス（`AF_RUNTIME=native`・単一ユーザー・[34](../log/34-native-runtime.md)）。agent をホストビルドして渡す |
   | `reset [--all] [--yes]` | ローカルデータ初期化。既定は dev ユーザーのみ（DB・共有 JDK 温存）、`--all` で `WS_DATA` 全体。CP 稼働中は拒否し、docker/native 両方の残骸（コンテナ・agent プロセス・専用 tmux）を掃除してから消す |
 
   サブコマンド無しのときは env `AF_RUNTIME` で後方互換分岐（`native|wsl` → コンテナレス）。

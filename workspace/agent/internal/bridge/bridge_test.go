@@ -141,7 +141,7 @@ func TestDiscordBotNameUnauthorized(t *testing.T) {
 	}
 }
 
-// The setup-wizard REST shapes (docs/37 P1 追補): app info → invite URL,
+// The setup-wizard REST shapes (docs/log/37 P1 追補): app info → invite URL,
 // guild list, and text-channel filtering for the picker.
 func TestDiscordWizardEndpoints(t *testing.T) {
 	srv, _ := fakeDiscord(t, "tok")
@@ -174,7 +174,7 @@ func TestDiscordWizardEndpoints(t *testing.T) {
 	}
 }
 
-// TestDiscordThreadPerSession covers the docs/37 P1.5 thread lifecycle against
+// TestDiscordThreadPerSession covers the docs/log/37 P1.5 thread lifecycle against
 // a stateful fake: starter message → thread creation → posts land in the
 // thread → archived thread revives on post → a hand-deleted thread (404)
 // recreates → sessions get separate threads → session-less events stay flat.
@@ -356,7 +356,7 @@ func TestDrainClearsQueueWhenUnconfigured(t *testing.T) {
 }
 
 // TestDiscord429RetriesInline: a 429 is retried inline (respecting retry_after)
-// instead of failing the post — the fix that stops a duplicate storm (docs/37 重複対策).
+// instead of failing the post — the fix that stops a duplicate storm (docs/log/37 重複対策).
 func TestDiscord429RetriesInline(t *testing.T) {
 	oldCap, oldN := discordRetryCap, discordRateRetries
 	discordRetryCap, discordRateRetries = 20*time.Millisecond, 3
@@ -413,7 +413,7 @@ func (r *resumableFake) SendFrom(m Message, from int) (int, error) {
 }
 
 // TestDrainResumesWithoutDuplicate: a partial failure persists the delivery cursor,
-// so the retry tick posts only the undelivered tail — no sub-message twice (docs/37 重複対策).
+// so the retry tick posts only the undelivered tail — no sub-message twice (docs/log/37 重複対策).
 func TestDrainResumesWithoutDuplicate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	Enqueue(Message{Kind: "answer-ready", DisplayName: "A"})
@@ -436,7 +436,7 @@ func TestDrainResumesWithoutDuplicate(t *testing.T) {
 }
 
 // TestSessionReportThreadSuppressed: session-report is a no-op in thread mode (the
-// completion is already delivered by answer-ready — docs/37 Fix ①c), but still posts
+// completion is already delivered by answer-ready — docs/log/37 Fix ①c), but still posts
 // flat / in DM.
 func TestSessionReportThreadSuppressed(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -465,7 +465,7 @@ func TestSessionReportThreadSuppressed(t *testing.T) {
 }
 
 // TestMirrorUserInput: a Console prompt echoes into an existing session thread with the
-// 🧑 marker (docs/37 Fix ②); opt-out and a thread-less session post nothing.
+// 🧑 marker (docs/log/37 Fix ②); opt-out and a thread-less session post nothing.
 func TestMirrorUserInput(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	srv, sent := fakeDiscord(t, "tok")
@@ -538,7 +538,7 @@ func TestTextEnglishAndDeepLink(t *testing.T) {
 }
 
 // TestMentionTimeGate: action/abnormal events always mention; a read-only event
-// (answer-ready) mentions only when its thread has been quiet past the window (docs/37).
+// (answer-ready) mentions only when its thread has been quiet past the window (docs/log/37).
 func TestMentionTimeGate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	old := mentionQuietWindow
@@ -574,7 +574,7 @@ func TestMentionTimeGate(t *testing.T) {
 }
 
 // TestFullTextBodyOnly: full-text mode posts the scrubbed answer body alone — no
-// headline/link preface (docs/37 全文整理 2026-07-22).
+// headline/link preface (docs/log/37 全文整理 2026-07-22).
 func TestFullTextBodyOnly(t *testing.T) {
 	srv, sent := fakeDiscord(t, "tok")
 	oldBase := discordAPIBase

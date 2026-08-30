@@ -1,5 +1,5 @@
 // Session deep link: ?session=<name> opens that session's pane directly. The
-// producer is the chat bridge (docs/37) — its Discord notifications carry
+// producer is the chat bridge (docs/log/37) — its Discord notifications carry
 // <base>/?session=<slug> so a tap on the phone lands IN the session, not on the
 // Console home. Consumed once at boot: the param is stripped from the URL
 // immediately (so reloads/back don't re-trigger), then we wait for the sessions

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Claude self-operation audit (docs/20 M5, A-第2段). claude runs untrusted inside the
+// Claude self-operation audit (docs/log/20 M5, A-第2段). claude runs untrusted inside the
 // container and edits files / runs Bash directly; those don't flow through the CP proxy
 // (M1), so they'd be invisible. The isolation model blocks Agent→CP, so instead of a
 // push from claude's PreToolUse hook the CP PULLS: a background sweeper reads each
@@ -21,7 +21,7 @@ import (
 // isn't audited retroactively. Opt-in: AF_CLAUDE_AUDIT_INTERVAL=0 (default) disables it.
 
 // claudeAuditTools maps a claude tool name to the audit action it records. Read/Grep/
-// etc. are intentionally absent — M5 records change/exec operations only (docs/20 §E.1).
+// etc. are intentionally absent — M5 records change/exec operations only (docs/log/20 §E.1).
 var claudeAuditTools = map[string]string{
 	"Write":        "claude.write",
 	"Edit":         "claude.edit",

@@ -1,6 +1,6 @@
 package main
 
-// 使用量タグと、プロバイダ層1点記録の入口（docs/46 §3-a / ADR0029 §3）。
+// 使用量タグと、プロバイダ層1点記録の入口（docs/log/46 §3-a / ADR0029 §3）。
 //
 // usage を解析しているのはプロバイダ実装の内側（claudeChat.send / parseCodexExecEvents /
 // parseOpencodeRunEvents / cursorChat.send / oneShotHeadless）で、そこは既にモデルも
@@ -45,7 +45,7 @@ func usageTagOf(ctx context.Context) usageTag {
 
 // chatTurnUsageTag はアシスタントチャット1ターン分のタグ。SeedVerb（Files 由来の翻訳/
 // 要約スレッド）は feature を増やさず verb のサブ次元として割る — 独立カテゴリとして
-// 見たいが、機能の enum を増やすと Console の色・i18n・フィルタ全部に波及する（docs/46 §1-a）。
+// 見たいが、機能の enum を増やすと Console の色・i18n・フィルタ全部に波及する（docs/log/46 §1-a）。
 func chatTurnUsageTag(c *chatConversation, trigger string) usageTag {
 	return usageTag{
 		Feature: usageFeatureAssistantChat, Trigger: trigger, Ref: c.ID, Verb: c.SeedVerb,
@@ -179,7 +179,7 @@ func (c *usageCall) measuredOr(t usageTokens) string {
 
 // usageModelFallback はモデルを報告しない CLI（codex/cursor/agy）向けの縮退。要求値が
 // あれば requested、無ければ default_unknown — 「CLI の既定（通常フラッグシップ）で
-// 走っている」ことが1列で見えるのが狙い（docs/46 §2-b）。
+// 走っている」ことが1列で見えるのが狙い（docs/log/46 §2-b）。
 func usageModelFallback(req string) (model, src string) {
 	if req == "" {
 		return "", usageModelUnknown

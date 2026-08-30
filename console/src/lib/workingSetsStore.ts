@@ -1,4 +1,4 @@
-// 作業グループ (docs/52) — the settings-backed half: which sets exist
+// 作業グループ (docs/log/52) — the settings-backed half: which sets exist
 // (`workingSets`, server-synced ui-prefs) and which one THIS device is scoped
 // to (`workingSetActive`, DEVICE_LOCAL). Split from workingSets.ts so the pure
 // membership predicates stay importable under the node vitest project (this
@@ -72,7 +72,7 @@ export function toggleWorkingSetMember(id: string, field: WorkingSetField, key: 
   );
 }
 
-/** docs/52 §1: anything created WHILE a group is selected joins that group —
+/** docs/log/52 §1: anything created WHILE a group is selected joins that group —
  * without this, a fresh clone / conversation / repo-less session would vanish
  * from the filtered rail the moment it appears. No-op when no group is active. */
 export function autoAddToActiveWorkingSet(field: WorkingSetField, key: string): void {

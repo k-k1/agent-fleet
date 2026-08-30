@@ -1,4 +1,4 @@
-// Saved queries for the work item inbox (docs/80 §80.16-1). Deliberately a plain list +
+// Saved queries for the work item inbox (docs/log/80 §80.16-1). Deliberately a plain list +
 // one small form: af holds the query, not a copy of the tracker, so the "filter UI" IS
 // this text field. GitHub search syntax goes in as-is, JQL likewise.
 //
@@ -28,10 +28,10 @@ interface Props {
 }
 
 // provider ごとの既定クエリ。ここが「自分にアサインされた未完了だけ」という既定の
-// 絞り込みそのもの（docs/80 §80.7）—— 全件同期をしないという設計を初期値で表している。
+// 絞り込みそのもの（docs/log/80 §80.7）—— 全件同期をしないという設計を初期値で表している。
 // GitHub は検索構文、Jira は JQL。af は写像を持つだけで、方言はそのまま保存する。
 //
-// ★ Bitbucket の既定だけ「そのまま使えない」（docs/80 §80.19.1）。⚠️ 置き換えるべき語を
+// ★ Bitbucket の既定だけ「そのまま使えない」（docs/log/80 §80.19.1）。⚠️ 置き換えるべき語を
 // 既定値に置いておけばエラーが自分でそれを言う、という当初の目算は**実機で外れた**
 // （§80.22）—— `workspace/repo` のまま保存され、404 が「別のエラー」として読まれた。
 // 一覧を引ける限り組み立て UI が出るので、この既定値が使われるのは手書きに降りたときだけ。
@@ -41,7 +41,7 @@ const DEFAULT_QUERY: Record<string, string> = {
   bitbucket: 'workspace/repo reviewers.uuid="@me"',
 };
 
-// 取得元の並び。製品名なので i18n 対象ではない（docs/28 §4）。
+// 取得元の並び。製品名なので i18n 対象ではない（docs/log/28 §4）。
 const PROVIDERS = [
   { id: "github", name: "GitHub" },
   { id: "jira", name: "Jira" },
@@ -73,7 +73,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
   const [query, setQuery] = useState(queries.length ? "" : DEFAULT_QUERY.github);
   const [repoHint, setRepoHint] = useState("");
   const [busy, setBusy] = useState(false);
-  // Bitbucket の組み立て（docs/80 §80.23）。`bbRepos === null` は「まだ引いていない」、
+  // Bitbucket の組み立て（docs/log/80 §80.23）。`bbRepos === null` は「まだ引いていない」、
   // 空配列は「引いたが候補が無い（＝停止中・未接続・エラー）」で、後者は手書きに落ちる。
   // ★ 意図は**複数選べる**（排他ではない）。「レビュー待ち」と「自分の PR」はどちらも見たい物で、
   //   1 本ずつ足させると同じ対象を 2 回選ばせることになる。
@@ -211,7 +211,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
             ))}
           </ul>
         )}
-        {/* ブランチ名テンプレート（docs/80 P2）。プレビューを添えるのは、{slug} が
+        {/* ブランチ名テンプレート（docs/log/80 P2）。プレビューを添えるのは、{slug} が
             日本語タイトルで空になる（＝結果が feature/issue-45 になる）ことが、
             説明文よりも 1 行の実例で伝わるから。 */}
         <div className="wi-qbranch">
@@ -227,7 +227,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
           <p className="wi-qhint">
             {tr("wi.branch_preview", {
               branch: branchForItem({ key: "acme/web#45", title: "Fix the empty list" }, settings.workItemBranchTemplate),
-              // i18n-exempt: 非 ASCII のタイトル見本そのもの（訳すと例が例でなくなる・docs/28 §4）
+              // i18n-exempt: 非 ASCII のタイトル見本そのもの（訳すと例が例でなくなる・docs/log/28 §4）
               branch2: branchForItem({ key: "PROJ-123", title: "ログイン後に一覧が空になる" }, settings.workItemBranchTemplate),
             })}
           </p>
@@ -262,7 +262,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
             />
           </label>
           {effQueries.length > 1 && <p className="wi-qhint">{tr("wi.bb_label_auto")}</p>}
-          {/* ★ Bitbucket だけ、クエリ欄そのものを出さずに組み立てる（docs/80 §80.23）。
+          {/* ★ Bitbucket だけ、クエリ欄そのものを出さずに組み立てる（docs/log/80 §80.23）。
               先頭の `<workspace>/<repo>` も `reviewers.uuid="@me"` も **af の発明**で、
               利用者が普段書いている方言ではない —— 既定値の `workspace/repo` を
               置き換えないまま保存され 404 になった、が実際に起きた（§80.23）。
@@ -321,7 +321,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
               </label>
               {/* ★ Bitbucket にだけ説明が要る。GitHub と Jira は「どこを見るか」をクエリの
                   外に置けるが、Bitbucket の API は横断検索を持たないので先頭に対象を書く
-                  （docs/80 §80.19.1）。ここを書かないと、利用者は 404 を見てから学ぶことになる。 */}
+                  （docs/log/80 §80.19.1）。ここを書かないと、利用者は 404 を見てから学ぶことになる。 */}
               {provider === "bitbucket" && <p className="wi-qhint">{tr("wi.query_bb_hint")}</p>}
               {/* 候補を引けなかった（Workspace 停止中・未接続）ことは黙らない。「一覧から
                   選べるはずでは？」を先に答えておかないと、手書き欄が仕様に見える。 */}

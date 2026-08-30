@@ -3,7 +3,7 @@ package main
 import "strings"
 
 // egressPolicy is the allowlist the egress proxy checks each destination against
-// (docs/20 M2). Matching is case-insensitive. An entry starting with "." (or "*.",
+// (docs/log/20 M2). Matching is case-insensitive. An entry starting with "." (or "*.",
 // normalised to a leading ".") is a suffix match covering that domain and all its
 // subdomains; any other entry is an exact host match.
 type egressPolicy struct {
@@ -11,9 +11,9 @@ type egressPolicy struct {
 	suffix []string // e.g. ".githubusercontent.com" (leading dot)
 }
 
-// defaultEgressAllowlist is what the product itself needs (docs/20 §B.5): Anthropic/
+// defaultEgressAllowlist is what the product itself needs (docs/log/20 §B.5): Anthropic/
 // Claude (product-critical), the git hosts, and the common package registries —
-// registries are included by decision (docs/20 §E.1). Deployments tune it via
+// registries are included by decision (docs/log/20 §E.1). Deployments tune it via
 // AF_EGRESS_ALLOWLIST (a file, one host per line, "#" comments).
 var defaultEgressAllowlist = []string{
 	// Anthropic / Claude — product-critical, always allowed.
@@ -27,7 +27,7 @@ var defaultEgressAllowlist = []string{
 	"proxy.golang.org", "sum.golang.org", ".golang.org", "go.dev",
 	".debian.org", ".ubuntu.com",
 	// aws cli / tooling. `.api.aws` is a SEPARATE apex from `.amazonaws.com` and is
-	// where the AWS MCP Server lives (aws-mcp.<region>.api.aws — docs/25 §AWS MCP);
+	// where the AWS MCP Server lives (aws-mcp.<region>.api.aws — docs/log/25 §AWS MCP);
 	// without it that builtin integration dies the day a deployment flips to enforce.
 	".amazonaws.com", ".api.aws",
 }

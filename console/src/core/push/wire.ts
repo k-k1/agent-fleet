@@ -17,7 +17,7 @@ export function wirePushApply(): () => void {
     onPush("workspace", (d) => useWorkspaceStore.getState().applyPush(d || {})),
     onPush("sessions", (d) => useSessionsStore.getState().applyList(d?.sessions || [])),
     onPush("notifications", (d) => applyPushedNotifications(d || {})),
-    // 作業項目（docs/80）: フレームは CP のキャッシュそのもの。取得は CP 側の
+    // 作業項目（docs/log/80）: フレームは CP のキャッシュそのもの。取得は CP 側の
     // 別 goroutine が回すので、ここで届くのは「もう入っている行」だけ。
     onPush("workitems", (d) => useWorkItemStore.getState().applyPush(d)),
     // 再接続は「CP が再起動したかもしれない」の合図 — フレームでは運ばれない

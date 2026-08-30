@@ -1,13 +1,13 @@
 # 0046. `.drawio` は drawio 公式ビューアを同梱し、サンドボックス iframe に閉じ込めて表示する
 
 - 状態: **P0 実装済み**（2026-08-16）＋ **P1（ステンシル）実装済み**（2026-08-22。設計と実測は
-  [docs/65](../65-drawio-viewer.md)）。成立性は開発 Workspace の headless Chromium で
+  [docs/65](../log/65-drawio-viewer.md)）。成立性は開発 Workspace の headless Chromium で
   **外部通信を全遮断した状態**まで実測し、実装後は検証ハーネス
   （`npm --prefix console run drawio:check`）が実ブラウザで「描画される・外部への要求 0 件」を
   毎回判定する。**P1 で当初案（フレームが `STENCIL_PATH` から直接取る）を実測により撤回し、
   決定 5b / 5c を追加した。** 閉域向けの事前投入スクリプト（P1b）と P2 以降は未着手。
 - 関連: [0027-markdown-code-editor.md](0027-markdown-code-editor.md)（File ペインの面と保存機構。
-  本 ADR はその面を 1 つ増やす） / [docs/35](../35-packaging.md)（同梱物と配布サイズ） /
+  本 ADR はその面を 1 つ増やす） / [docs/35](../log/35-packaging.md)（同梱物と配布サイズ） /
   [0031-mcp-registry.md](0031-mcp-registry.md)（信用できない入力を名前で照合してから使う型）
 
 ## 背景

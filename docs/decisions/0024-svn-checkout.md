@@ -1,6 +1,6 @@
 # 0024. SVN チェックアウト — プロバイダ無しのフラット作業コピー＋URL/基本認証
 
-- 状態: **採用・実装済み**。設計は [docs/41](../41-svn-checkout.md)。
+- 状態: **採用・実装済み**。設計は [docs/41](../log/41-svn-checkout.md)。
 - 関連: [0003](0003-ssh-to-connections.md)（git 認証＝Connections）/ [0005](0005-envelope-custodian.md)（封筒暗号）/
   [0010](0010-internal-git-provider.md)（プロバイダ抽象）
 

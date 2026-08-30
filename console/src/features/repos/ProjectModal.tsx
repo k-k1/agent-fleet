@@ -1,10 +1,10 @@
-// ProjectModal — docs/56 / docs/57 §3: a working copy's project-scope settings,
+// ProjectModal — docs/log/56 / docs/log/57 §3: a working copy's project-scope settings,
 // entered from the repo row's right-click menu (a SEPARATE modal from the settings
 // dialog on purpose — that one is workspace-wide/user-scope, this one is "this one
 // repo", and mixing the two would make it unclear which scope a value belongs to).
 // Ships exactly one section (MCP servers): the servers × files matrix that answers
-// "is the same server duplicated, and which copy is actually alive" (docs/56 §1's
-// novel-lab motivation), plus the P1 write actions (③, docs/56 §9.2) — copying a
+// "is the same server duplicated, and which copy is actually alive" (docs/log/56 §1's
+// novel-lab motivation), plus the P1 write actions (③, docs/log/56 §9.2) — copying a
 // server into another file (with dialect translation and conflict resolution) and
 // adding a file to git's ignore list. This modal never plans-and-applies silently:
 // every write goes through a preview the user must explicitly confirm.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Agent Fleet — build a versioned on-prem release bundle (maintainers).
 #
-# Produces, under ${DIST_DIR:-./dist}/ (A/B/D of docs/35 §35.2):
+# Produces, under ${DIST_DIR:-./dist}/ (A/B/D of docs/log/35 §35.2):
 #   agent-fleet-<VERSION>/           ... bundle dir (the deploy surface below)
 #   agent-fleet-<VERSION>.tar.gz     ... A: compose deploy surface + aws/ (ec2-single,
 #                                       ecs cfn, release-ecr) + LICENSE/NOTICE
@@ -10,7 +10,7 @@
 #   SHA256SUMS                       ... D: checksums of the above
 #
 # Images are tagged ${REGISTRY}/agent-fleet/{control-plane,workspace}:${VERSION}.
-# Distribution variants (docs/35 §35.4.1/§35.4.3): by default
+# Distribution variants (docs/log/35 §35.4.1/§35.4.3): by default
 #   - workspace is lean (BAKE_AGENT_CLIS=0; agent CLIs are pin-installed at start).
 #     The fully-baked internal build must be requested with BAKE_AGENT_CLIS=1.
 #   - CP docs come from a staged tree with the internal denylist (docs/.distignore)
@@ -24,17 +24,17 @@
 #   VERSION=1.0.0 deploy/compose/release.sh --no-build # bundle only (images exist)
 #   BAKE_AGENT_CLIS=1 VERSION=... deploy/compose/release.sh   # fully baked (internal use)
 #   WS_PLATFORMS=linux/amd64,linux/arm64 VERSION=... ... --push  # multi-arch workspace
-#                                                      #   image (docs/70 §70.9). Implies
+#                                                      #   image (docs/log/70 §70.9). Implies
 #                                                      #   --push: buildx cannot load a
 #                                                      #   manifest list locally.
 #   CP_PLATFORMS=linux/amd64,linux/arm64 VERSION=... ... --push  # same, for the control
-#                                                      #   plane image (docs/72). Also
+#                                                      #   plane image (docs/log/72). Also
 #                                                      #   implies --push.
 #   VERSION=... deploy/compose/release.sh --push --only cp   # build/push ONE image only
 #                                                      #   (dev images for real-machine
-#                                                      #   verification — docs/72 §72.6)
+#                                                      #   verification — docs/log/72 §72.6)
 #
-# Normally invoked via deploy/release/build.sh, the single entry point (docs/35 §35.6.2).
+# Normally invoked via deploy/release/build.sh, the single entry point (docs/log/35 §35.6.2).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -48,12 +48,12 @@ WS_IMAGE="$REGISTRY/workspace:$VERSION"
 # Distribution default is lean (no baked CLIs). BAKE_AGENT_CLIS=1 restores the
 # fully-baked build.
 BAKE_AGENT_CLIS="${BAKE_AGENT_CLIS:-0}"
-# Which CPU architectures the WORKSPACE image is built for (docs/70 §70.9). Empty =
+# Which CPU architectures the WORKSPACE image is built for (docs/log/70 §70.9). Empty =
 # the host's, which is what every release so far has published. Set to
 # "linux/amd64,linux/arm64" to publish one tag holding both — ECS and docker then pull
 # whichever matches the box, and the CP needs no second image reference.
 WS_PLATFORMS="${WS_PLATFORMS:-}"
-# Same, for the CONTROL PLANE image (docs/72). Independent of WS_PLATFORMS on
+# Same, for the CONTROL PLANE image (docs/log/72). Independent of WS_PLATFORMS on
 # purpose: the two images answer different questions. The workspace image needs
 # arm64 because a slot can be Graviton; the CP image needs it because an operator
 # may want to run the Fargate service itself on ARM64. A deployment can want
@@ -61,7 +61,7 @@ WS_PLATFORMS="${WS_PLATFORMS:-}"
 CP_PLATFORMS="${CP_PLATFORMS:-}"
 
 # Which of the two images to build/push. Default `both` = every release ever made.
-# `cp` / `ws` exist for the dev-image path (docs/72 §72.6): verifying ONE image on a
+# `cp` / `ws` exist for the dev-image path (docs/log/72 §72.6): verifying ONE image on a
 # real deployment should not pay for rebuilding the other, and for the workspace image
 # that difference is ~12 minutes of QEMU. ⚠️ It changes only what is BUILT — the bundle
 # below still pins both refs, because the deployment consumes them as a pair
@@ -91,7 +91,7 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 
 if [ "$DO_BUILD" = 1 ]; then
   # Bake the distribution image's docs from a staged tree with the internal denylist
-  # (docs/.distignore, docs/35 §35.4.3) applied. The stage must live inside the build
+  # (docs/.distignore, docs/log/35 §35.4.3) applied. The stage must live inside the build
   # context (repo root), so it goes in deploy/release/.docs-stage (gitignored).
   DOCS_STAGE_REL="deploy/release/.docs-stage"
   DOCS_STAGE="$ROOT/$DOCS_STAGE_REL"
@@ -108,7 +108,7 @@ if [ "$DO_BUILD" = 1 ]; then
   # Same rule as the workspace image below: a multi-platform build produces a
   # manifest LIST, which buildx can only push. ⚠️ Unlike the workspace image, the
   # CP Dockerfile pins its console and Go stages to $BUILDPLATFORM and cross-compiles
-  # (docs/72 §72.3), so the second architecture costs an emulated `apt-get install`
+  # (docs/log/72 §72.3), so the second architecture costs an emulated `apt-get install`
   # and nothing else — do not "simplify" that away.
   if ! want_cp; then
     echo "==> skip $CP_IMAGE (--only $ONLY)"
@@ -132,8 +132,8 @@ if [ "$DO_BUILD" = 1 ]; then
       "$ROOT"
   fi
   # The workspace image needs a second CPU architecture for its own reason: on the
-  # ecs-ec2 runtime a slot can be Graviton (docs/70). That is a different question from
-  # CP_PLATFORMS above (which architecture the CP's own Fargate task runs on, docs/72),
+  # ecs-ec2 runtime a slot can be Graviton (docs/log/70). That is a different question from
+  # CP_PLATFORMS above (which architecture the CP's own Fargate task runs on, docs/log/72),
   # which is why the two are separate switches. WS_PLATFORMS is empty by default, so a
   # plain build is byte-for-byte what it has always been.
   #
@@ -168,7 +168,7 @@ echo "==> assemble deploy surface -> $OUT"
 cp "$HERE/docker-compose.yml" "$HERE/Caddyfile" "$HERE/.env.example" \
    "$HERE/backup.sh" "$HERE/restore.sh" "$HERE/load-images.sh" \
    "$HERE/README.md" "$ROOT/LICENSE" "$ROOT/NOTICE" "$OUT/"
-# AWS deploy surface (docs/35 §35.2 A): ec2-single cfn + ecs cfn/ + runbooks.
+# AWS deploy surface (docs/log/35 §35.2 A): ec2-single cfn + ecs cfn/ + runbooks.
 # Explicitly strip local key material (gitignored) so it cannot slip into the bundle.
 cp -R "$ROOT/deploy/aws" "$OUT/aws"
 rm -f "$OUT"/aws/ec2-single/*-key "$OUT"/aws/ec2-single/*-key.pub "$OUT"/aws/ec2-single/*.pem

@@ -1,5 +1,5 @@
 // KeysTab — keyboard settings: rebind shortcuts and the terminal-input-priority toggle
-// (docs/29 + ADR-0017). Rebindable actions come from features/keys/bindings.ts, which is
+// (docs/log/29 + ADR-0017). Rebindable actions come from features/keys/bindings.ts, which is
 // the single source the dispatcher / overlays also read, so a change here takes effect
 // live everywhere. Only direct accelerators and the three app chords (leader / palette /
 // cheat-sheet) are rebindable; leader SEQUENCES (p r, w t …) are structural and fixed.

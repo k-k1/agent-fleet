@@ -30,7 +30,7 @@ func readF(t *testing.T, dir, rel string) string {
 }
 
 // TestPlanNeverWrites: the single most important invariant of the plan half —
-// docs/56 §5 "書かずに結果を計算する".
+// docs/log/56 §5 "書かずに結果を計算する".
 func TestPlanNeverWrites(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
@@ -52,7 +52,7 @@ func TestPlanNeverWrites(t *testing.T) {
 	}
 }
 
-// TestApplyCopyNovelLabTranslate replays docs/56 §1 end to end: copy claude's
+// TestApplyCopyNovelLabTranslate replays docs/log/56 §1 end to end: copy claude's
 // syosetu into a BRAND NEW opencode.json, translated into opencode's dialect.
 func TestApplyCopyNovelLabTranslate(t *testing.T) {
 	dir := t.TempDir()
@@ -198,7 +198,7 @@ func TestApplyCopyWithoutSecretsEmptiesValues(t *testing.T) {
 	}
 }
 
-// TestPlanResultNeverLeaksSecrets is the independent assertion docs/56 §13 calls
+// TestPlanResultNeverLeaksSecrets is the independent assertion docs/log/56 §13 calls
 // for, applied to plan/apply's wire response (not just GET's).
 func TestPlanResultNeverLeaksSecrets(t *testing.T) {
 	dir := t.TempDir()

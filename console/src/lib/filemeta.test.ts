@@ -56,7 +56,7 @@ describe("resolveMarkdownFileTarget", () => {
   });
 });
 
-// ── drawio の判定（docs/65 §65.4）─────────────────────────────────────────
+// ── drawio の判定（docs/log/65 §65.4）─────────────────────────────────────────
 describe("isDrawioFile", () => {
   it("拡張子で決まるのは .drawio / .dio だけ", () => {
     expect(isDrawioFile("repos/a/design.drawio")).toBe(true);

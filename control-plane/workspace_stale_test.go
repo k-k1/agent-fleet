@@ -194,7 +194,7 @@ func TestNativeStaleBinaryStamp(t *testing.T) {
 //
 //	・bwrap を見る → af update で rootfs が変わっても検出できない
 //	・CP 版と Agent 版を比べる → rootfs 版 <r> は app 版 <v> と分離されている
-//	  （docs/35・build.sh --rootfs-json のイメージ不変リリース）ので恒久誤点灯
+//	  （docs/log/35・build.sh --rootfs-json のイメージ不変リリース）ので恒久誤点灯
 //
 // の両方を踏む。af update との噛み合わせをここで固定する。
 func TestNativeStaleRootfsIdentity(t *testing.T) {

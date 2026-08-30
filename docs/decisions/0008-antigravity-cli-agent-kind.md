@@ -1,6 +1,6 @@
 # 0008. Antigravity CLI（`agy`）を第4のエージェント種別として取り込む
 
-- 状態: **採用決定**（2026-07-20。Starter=実験枠で実装開始、GCP 経路で常用化を目指す。実装計画は [32](../32-agy-agent-kind.md)）
+- 状態: **採用決定**（2026-07-20。Starter=実験枠で実装開始、GCP 経路で常用化を目指す。実装計画は [32](../log/32-agy-agent-kind.md)）
 - 関連: [session.go](../../workspace/agent/session.go)（セッション統合）/ [Codex auth](../../workspace/agent/internal/agents/codex/auth.go)（device-auth の現行実装）/ [0006-mcp-unified](0006-mcp-unified.md) / [HANDOFF §エージェント種別](../HANDOFF.md)
 - 出自: ユーザー依頼「antigravity cli を Agent-Fleet に組み込めないか検討」（2026-06-29〜30 調査）
 
@@ -142,12 +142,12 @@ compute ベース・**5 時間リフレッシュ＋週次上限**、Pro 以上�
 運用停止に直結しない。一方 **ToS 面は初版判定のまま**: 全消費者プランが個人アカウント限定
 （Workspace 加入不可）で、学習除外は有償でもオプトアウト頼み。
 → **個人利用デプロイの常用は AI Pro で成立し得る（要実測）。会社デプロイの常用は引き続き
-会社 Workspace / GCP プロジェクト経路のみ**。詳細比較表は [32 §AI サブスク経路の比較](../32-agy-agent-kind.md)。
+会社 Workspace / GCP プロジェクト経路のみ**。詳細比較表は [32 §AI サブスク経路の比較](../log/32-agy-agent-kind.md)。
 
 **同日実測で確定**: AI Pro 実機計測により、同一実タスクの週次消費が Starter 6.01% → **Pro 0.22%
 （プール ≈27 倍、週 ≈455 実タスク分）**、Claude 系も週 ≈81 実タスク分、`/usage` に 5h 枠バーが
 追加されることを確認。**個人利用デプロイの常用は AI Pro で成立（実測確定）**。数値は
-[32 §Track D-4 実測結果](../32-agy-agent-kind.md)。会社デプロイの判定は不変。
+[32 §Track D-4 実測結果](../log/32-agy-agent-kind.md)。会社デプロイの判定は不変。
 
 **判定: `kind=agy` の採用価値はあるが、Starter Quota では「claude/codex/opencode と並ぶ
 常用ドライバ」にはならない。**
@@ -166,7 +166,7 @@ compute ベース・**5 時間リフレッシュ＋週次上限**、Pro 以上�
 
 Track A/B/C をマージし、**M1 の完了条件（Console 契約の API 実機駆動: 作成・会話・resume・
 logout・認証フロー・`/usage` 4 バー・RDRAND 非露出）を実機で通した** — 詳細は
-[32 §統合と M1 E2E 結果](../32-agy-agent-kind.md)。E2E で 1 件の統合バグを発見・修正:
+[32 §統合と M1 E2E 結果](../log/32-agy-agent-kind.md)。E2E で 1 件の統合バグを発見・修正:
 **v1.1.4 TUI は resume 単位（cwd→会話マップ）を graceful exit 時にしか flush しない**
 （「初回プロンプトで書く」という Track D 観測は `-p` のプロセス即終了による見え方）。
 対応は WireLive の dead 側 capture ＋ halt の `agents.GracefulStopper`（`/exit` 送出→猶予→kill）。

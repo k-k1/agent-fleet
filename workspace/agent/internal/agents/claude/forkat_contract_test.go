@@ -1,6 +1,6 @@
 //go:build clicontract
 
-// claude 契約テスト（**実ターンを消費する**）: 発言時点からの分岐（docs/55）の唯一の
+// claude 契約テスト（**実ターンを消費する**）: 発言時点からの分岐（docs/log/55）の唯一の
 // ドリフト検知。
 //
 // なぜ必要か: claude だけは公式の分岐点 API を使えない（`--resume-session-at` は print
@@ -126,6 +126,6 @@ func TestContractLiveClaudeForkAt(t *testing.T) {
 			"carries history it should not", out)
 	default:
 		t.Fatalf("the branch could not answer from the carried history (%q) — a truncated transcript "+
-			"is no longer resumable the way docs/55 §55.2 measured", out)
+			"is no longer resumable the way docs/log/55 §55.2 measured", out)
 	}
 }

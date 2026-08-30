@@ -1,8 +1,8 @@
-// AI 変更提案の構造化フォーマットと適用前検証（docs/44 §4 / Phase 4）。
+// AI 変更提案の構造化フォーマットと適用前検証（docs/log/44 §4 / Phase 4）。
 // envelope の identity（paneId/filePath/requestId）と revision の三重一致
 // （sourceRevision === suggestion.baseRevision === 現在の bufferRevision）を
 // 適用境界で検査し、一致しない提案は `suggestion_stale` の UI code として棄却する
-// （HTTP エラーではない — docs/44 §3.4）。replacement は単体と適用後全文の両方を
+// （HTTP エラーではない — docs/log/44 §3.4）。replacement は単体と適用後全文の両方を
 // 共通 buffer validator（§1.7）に通す。
 
 import { REVISION_RE, validateEditorBuffer, type BufferErrorCode } from "./buffer.ts";
@@ -35,14 +35,14 @@ export interface EditSuggestionEnvelope {
   suggestion: EditSuggestion;
 }
 
-/** 適用を拒否した理由の安定 UI code。`suggestion_stale` は docs/44 §3.4 で固定。 */
+/** 適用を拒否した理由の安定 UI code。`suggestion_stale` は docs/log/44 §3.4 で固定。 */
 export type SuggestionIssue = "suggestion_stale" | "suggestion_invalid" | BufferErrorCode;
 
 const SUMMARY_MAX_BYTES = 240;
 
 const utf8Bytes = (value: string): number => new TextEncoder().encode(value).byteLength;
 
-/** offset が surrogate pair の内側を指すか（docs/44 §4.2: pair の途中は不正）。 */
+/** offset が surrogate pair の内側を指すか（docs/log/44 §4.2: pair の途中は不正）。 */
 function splitsSurrogatePair(content: string, offset: number): boolean {
   if (offset <= 0 || offset >= content.length) return false;
   const prev = content.charCodeAt(offset - 1);
@@ -61,7 +61,7 @@ export type SuggestionCheck =
   | { ok: true; applied: string }
   | { ok: false; code: SuggestionIssue };
 
-/** envelope 全体を現在のバッファに対して検査し、適用後全文を返す（docs/44 §4.2）。
+/** envelope 全体を現在のバッファに対して検査し、適用後全文を返す（docs/log/44 §4.2）。
  *  受信時と適用時の両方で呼ぶ — 受信後にバッファが進めば結果が変わるため。 */
 export function checkSuggestion(
   envelope: EditSuggestionEnvelope,

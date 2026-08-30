@@ -24,7 +24,7 @@ func restoreBody(r *http.Request, b []byte) {
 	r.Header.Set("Content-Length", strconv.Itoa(len(b)))
 }
 
-// SSM login (docs/history/p3-ssm-session.md). A member pre-registers SSO sessions and
+// SSM login (docs/log/p3-ssm-session.md). A member pre-registers SSO sessions and
 // SSM host bookmarks (personal scope), then opens a kind=ssm session that runs
 // `aws sso login` (device-code URL surfaced in the terminal) + `aws ssm start-session`
 // inside their workspace container. NO AWS secrets pass through the Control Plane: the
@@ -65,7 +65,7 @@ func hostToDTO(h SSMHost) ssmHostDTO {
 		InstanceID: h.InstanceID, DocumentName: h.DocumentName, CreatedAt: h.CreatedAt}
 }
 
-// ssmConfigAPI は SSM ログイン設定の機能ハンドラ集（docs/23 残③）。解決は埋め込みの
+// ssmConfigAPI は SSM ログイン設定の機能ハンドラ集（docs/log/23 残③）。解決は埋め込みの
 // memberAuth（登録側で withMembership に包む）、store は SSMStore の narrow view
 // だけを持つ。※ ssmAPI という名前は runtime_ecs.go の AWS SSM クライアント
 // インターフェースが先に使っているため避けた。
@@ -292,7 +292,7 @@ func ssmProfileName(label string) string {
 // coordinates. The client only sends {name, kind:"ssm", ssm_host_id}; the host's
 // instance/document/region and SSO config stay authoritative in the CP DB and
 // ownership is enforced here. Non-ssm requests pass through untouched.
-// 呼び手は workspaceAPI.sessionCreate のみなので receiver も workspaceAPI（docs/23 残③）。
+// 呼び手は workspaceAPI.sessionCreate のみなので receiver も workspaceAPI（docs/log/23 残③）。
 func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Request) *apiError {
 	var peek struct {
 		Name          string `json:"name"`

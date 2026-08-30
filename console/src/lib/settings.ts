@@ -60,7 +60,7 @@ export const CJK_UNICODE_RANGE_PROSE = `${CJK_UNICODE_RANGE}, U+25A0-25FF, U+260
 // 選べる和文フォント。"自動" は OS 任せ（GENERIC_CJK をそのまま使う）、"欧文優先" は
 // @font-face を張らない＝従来どおり欧文フォントの半角グリフ。それ以外は実フォント名で、
 // 未インストールなら GENERIC_CJK へ落ちる。
-// i18n-exempt-start: 値は保存される生フォント値（表示は font.* で翻訳・docs/28 §2.4）
+// i18n-exempt-start: 値は保存される生フォント値（表示は font.* で翻訳・docs/log/28 §2.4）
 export const CJK_FONT_AUTO = "自動";
 export const CJK_FONT_OFF = "欧文優先";
 export const CJK_FONTS = [
@@ -87,13 +87,13 @@ const GENERIC_CJK = [
 // Chat fonts: unlike the code viewer, the chat reads as prose, so proportional
 // families are offered first ("システム" = system sans, "セリフ" = serif), with the
 // monospace code fonts still available for anyone who prefers them.
-// i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/28 §2.4）
+// i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/log/28 §2.4）
 export const CHAT_FONTS = ["システム", "セリフ", "Source Code Pro", "JetBrains Mono", "Fira Code", "IBM Plex Mono"];
 
 // Reader (朗読ビュー) fonts: the reader is Japanese prose, so it offers the two
 // families that matter for reading — 明朝 (serif, the default) and ゴシック (sans) —
 // each resolved with CJK fallbacks in readerFontStack.
-// i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/28 §2.4）
+// i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/log/28 §2.4）
 export const READER_FONTS = ["明朝", "ゴシック"];
 
 // File-icon sets (brand SVGs under assets/fileicons/<id>/). value = asset subdir.
@@ -117,7 +117,7 @@ export const PANE_LAYOUTS: { id: "split" | "tabs"; labelKey: MsgKey }[] = [
   { id: "tabs", labelKey: "display.pane_layout_tabs" },
 ];
 
-// UI 表示言語（docs/28 / ADR 0016）。ラベルは各言語の自称なので翻訳しない（どの言語で見ても
+// UI 表示言語（docs/log/28 / ADR 0016）。ラベルは各言語の自称なので翻訳しない（どの言語で見ても
 // 母語名で並ぶ）。id は i18n カタログ／SUPPORTED_LOCALES と一致させる。
 export const LOCALES = [
   { id: "ja", label: "日本語" }, // i18n-exempt: 言語の自称（どの UI 言語でも母語名で表示）
@@ -176,7 +176,7 @@ export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerCo
   // backward-compat with persisted prefs.
   { key: "chatColor", shortKey: "surface.session.short", longKey: "surface.session.long" },
   // sharedColor は共有セッション(.shared-view)の同じ仕組み。他人の会話を読んでいる面を
-  // 自分のミラーと別の色にできると、どちらを見ているか一目で分かる(docs/59)。
+  // 自分のミラーと別の色にできると、どちらを見ているか一目で分かる(docs/log/59)。
   { key: "sharedColor", shortKey: "surface.shared.short", longKey: "surface.shared.long" },
   // assistantColor is the same surface mechanism for the assistant chat (.chatview).
   { key: "assistantColor", shortKey: "surface.assistant.short", longKey: "surface.assistant.long" },
@@ -244,7 +244,7 @@ export interface AgentLaunchDefault {
   effort: string;
   startMode: "normal" | "plan";
   /**
-   * 権限確認をスキップして起動するか（docs/76）。true = fleet 従来の既定（claude なら
+   * 権限確認をスキップして起動するか（docs/log/76）。true = fleet 従来の既定（claude なら
    * --dangerously-skip-permissions、他 kind も同格のフラグ）、false = ツール実行のたびに
    * 承認を求めさせる。**既定は true で、挙動は変えない。**
    *
@@ -282,14 +282,14 @@ export interface Settings {
   /** Main-area layout profile. Stored only on this device; each profile's
    * concrete layout remains per user, tenant and browser tab. */
   paneLayout: "split" | "tabs";
-  // UI 表示言語（docs/28 / ADR 0016）。"ja" | "en"。theme と違い端末ローカルにせずサーバ同期し、
+  // UI 表示言語（docs/log/28 / ADR 0016）。"ja" | "en"。theme と違い端末ローカルにせずサーバ同期し、
   // 言語は人単位で全端末に追従させる。既定はブラウザ言語判定→日本語フォールバック（detectLocale）。
   locale: string;
   // Per-region base theme, independent of `theme`: "inherit" (default, follow the app),
   // "dark", or "light". Applied by scoping data-theme onto the region container.
   // mirrorTheme → .mirrorview (session mirror); assistantTheme → .chatview (assistant chat).
   mirrorTheme: string;
-  // sharedTheme → .shared-view（受信側の共有セッション、docs/59）。
+  // sharedTheme → .shared-view（受信側の共有セッション、docs/log/59）。
   sharedTheme: string;
   assistantTheme: string;
   topbarColor: string;
@@ -320,7 +320,7 @@ export interface Settings {
   // Sessions only — the assistant-chat side split off into assistantTitleSuggest.
   // Default true so existing users get it without an explicit opt-in.
   autoTitleSuggest: boolean;
-  // Global ON/OFF for session-to-session messaging (AgentsTab セッション, docs/58 /
+  // Global ON/OFF for session-to-session messaging (AgentsTab セッション, docs/log/58 /
   // ADR 0041). Not per-agent: it applies to every kind that gets af's own MCP server
   // (claude / codex / opencode / cursor / kiro / agy / copilot), and shell / ssm can
   // neither send nor receive by construction.
@@ -361,7 +361,7 @@ export interface Settings {
   // Forced output language for assistant chat: "auto" = follow the input language
   // (default), "ja" / "en" = always reply in that language (even for foreign-language
   // content). The Agent reads this key from ui-prefs and injects a language rule into the
-  // chat system prompt (translate assistant is exempt). See docs/19.
+  // chat system prompt (translate assistant is exempt). See docs/log/19.
   outputLanguage: string;
   // Assistant-chat backend priority (AssistantTab 並べ替え): auto-selection takes the
   // first CONNECTED kind in this order (the Agent's preferredHeadlessAgent, read
@@ -378,14 +378,14 @@ export interface Settings {
   // the requested model.
   assistantModels: Record<string, string>;
   assistantUtilityModels: Record<string, string>;
-  // Auto turn on session reports (docs/30): when a session an af_write assistant
+  // Auto turn on session reports (docs/log/30): when a session an af_write assistant
   // launched/steered reports back, the assistant runs one turn automatically to
   // process it. Default ON; the backend caps unattended turns at 10 per conversation
   // (reset by a user message) regardless of this switch.
   assistantAutoTurn: boolean;
   // Ceiling on unattended auto turns per conversation (reset whenever the user sends
   // a message). Backend clamps to [1, 50] — there is no unlimited mode; the clamp is
-  // the structural runaway stop (docs/30).
+  // the structural runaway stop (docs/log/30).
   assistantAutoTurnLimit: number;
   // 自動応答専用モデル（claude の会話のみ・空 = 会話のモデルのまま）。報告処理は
   // 定型作業なので、haiku 等の軽量モデルに逃がすとトークン費用を大きく下げられる。
@@ -398,28 +398,28 @@ export interface Settings {
   // 静かな完了報告: 正常な完了報告では自動応答を実行しない（カードと通知のみ。報告は
   // 次のターンに相乗り）。異常系・質問・プラン承認は従来どおり。既定 OFF。
   assistantQuietCompletion: boolean;
-  // 自動走行 (docs/30): when an instructed session stops at an AskUserQuestion, the
+  // 自動走行 (docs/log/30): when an instructed session stops at an AskUserQuestion, the
   // operator answers with the session's own recommendation; when it stops at plan
   // approval, the operator has another session review the plan, feeds back findings,
   // and approves once clean — sharing each decision in chat. Default OFF — acting in
   // the user's stead is consequential, so this is a deliberate opt-in; unclear or
   // destructive choices/plans still ask the user.
   assistantAutoPilot: boolean;
-  // 中断時の自動再開 (docs/47): when a session's turn is CUT OFF before it answered by
+  // 中断時の自動再開 (docs/log/47): when a session's turn is CUT OFF before it answered by
   // something that clears on its own (dropped connection, temporary rate limit), the
   // operator nudges it to continue instead of only relaying to the user. Default ON —
   // unlike auto-pilot this makes no decision on the user's behalf, it just re-runs work
   // they already asked for; failures whose cause won't clear (usage limit, prompt too
   // long) are classified out and never auto-resumed.
   assistantAutoResume: boolean;
-  // 利用上限リセット後の自動再開 (docs/47 §4-4, Agent settings > Claude): a claude
+  // 利用上限リセット後の自動再開 (docs/log/47 §4-4, Agent settings > Claude): a claude
   // session cut off by its usage limit gets a one-shot schedule at the reset instant
   // that tells it to carry on (the agent books it with the CP scheduler, so a workspace
   // stopped in the meantime is woken for it). Default ON. Note this toggle governs the
   // RESUME only — dismissing the limit menu itself ("stop and wait", the no-charge
   // option) happens either way, because while it is up the session accepts nothing at all.
   rateLimitAutoResume: boolean;
-  // Auto-resume a cut-off turn (docs/47 §4-6): when a claude turn dies on something that
+  // Auto-resume a cut-off turn (docs/log/47 §4-6): when a claude turn dies on something that
   // clears on its own (dropped connection, temporary rate limit, stream idle timeout),
   // the agent itself re-sends 「続けて」 after a short backoff, up to maxAutoResumeAttempts.
   // Default ON. Unlike assistantAutoResume this needs no assistant conversation — it
@@ -427,11 +427,11 @@ export interface Settings {
   // once the retries are exhausted (which is what makes it cheaper in tokens, not just
   // in latency).
   claudeAbortAutoResume: boolean;
-  // Preventive auto-compaction (docs/33 第4段): when a chat's context is still at/above
+  // Preventive auto-compaction (docs/log/33 第4段): when a chat's context is still at/above
   // the backend threshold (90%) as a new turn starts, summarize-and-hand-off first.
   // Default ON — the 80% notice gives a manual window before this fires.
   assistantAutoCompact: boolean;
-  // 自動圧縮の絶対トークン閾値（相対 90% との OR — docs/33 §5.1）。resume 駆動の
+  // 自動圧縮の絶対トークン閾値（相対 90% との OR — docs/log/33 §5.1）。resume 駆動の
   // チャットは毎ターン全コンテキストを再読するため、占有量がそのままターン単価になる。
   // Agent 側 chatAutoCompactTokenThreshold が下限 20k をクランプ。
   assistantAutoCompactTokens: number;
@@ -460,12 +460,12 @@ export interface Settings {
   // ピン留め（常に表示）した候補。キーではなく表示綴りをピンした順で持つ — 学習が間引かれても
   // ピンだけで復元でき、並びもユーザーが決めた順のまま出せる（lib/quickReplies）。
   quickRepliesPinned: string[];
-  // 作業項目から起動するときのブランチ名テンプレート（docs/80 P2）。差し込みは
+  // 作業項目から起動するときのブランチ名テンプレート（docs/log/80 P2）。差し込みは
   // {key}（PROJ-123 / issue-45）と {slug}（タイトル由来の ASCII slug・日本語なら空）。
   // 空文字 = 既定（feature/{key}-{slug}）。ここを空にすればサーバの temp/<slug> に戻る
   // わけではない —— 起動ダイアログのブランチ欄を空にするのがその操作。
   workItemBranchTemplate: string;
-  // 音声読み上げ（TTS, docs/24 + ADR0013）。エージェント回答を VOICEVOX（ずんだもん）で
+  // 音声読み上げ（TTS, docs/log/24 + ADR0013）。エージェント回答を VOICEVOX（ずんだもん）で
   // 読み上げる。CP-native な /api/tts/synthesize を句点区切りで逐次呼ぶ（features/chat/tts.ts）。
   ttsEnabled: boolean;
   // プロバイダ選択（Phase 2 で auto ルーティング実装）。auto = 日本語×engine ready なら
@@ -489,7 +489,7 @@ export interface Settings {
   // ペインに属する読み上げを、現在の横方向の列位置に合わせてステレオ配置する。
   // 左右端でも完全には振り切らず、聞きやすさのため最大 ±70% に留める。
   ttsStereoByPane: boolean;
-  // バックグラウンドのセッションが回答/質問を返したら音声で知らせる（docs/24 Tier1）。チャットの
+  // バックグラウンドのセッションが回答/質問を返したら音声で知らせる（docs/log/24 Tier1）。チャットの
   // 自動読み上げ(ttsEnabled)とは別軸。名前前置きの短い告知を直列キューで読む。タブが見えている
   // 間のみ（セッション監視は document.hidden で止まるため）。
   ttsSessionNotify: boolean;
@@ -499,11 +499,11 @@ export interface Settings {
   // 通常のリセットでは鳴らさない（スパム防止）。Console のタブが開いている間に確実に検知し、
   // 閉じている間のリセットは次に開いたとき 1 度だけ通知する。
   usageResetNotify: boolean;
-  // 英単語をカタカナ英語に変換してから VOICEVOX に読ませる（docs/24, CP の enkana 前処理）。
+  // 英単語をカタカナ英語に変換してから VOICEVOX に読ませる（docs/log/24, CP の enkana 前処理）。
   // ずんだもんの声のまま英語を "それっぽく"（日本語アクセントで）読む。CMU 発音辞書ベースの
   // 音写なので、定着した和製カタカナ（コーヒー等）ではなく音写（カフィー等）になる。
   ttsEnglishKana: boolean;
-  // ユーザー読み仮名辞書（docs/24）。1 行 "表記=読み"。読み上げ直前に読み上げテキストへ
+  // ユーザー読み仮名辞書（docs/log/24）。1 行 "表記=読み"。読み上げ直前に読み上げテキストへ
   // リテラル置換で適用（英語/日本語/記号どれでも。enkana の ON/OFF に依らず効く）。表記は
   // 長いものから当てる。空 = 無効。features/chat/ttsText.ts の parse/applyUserDict。
   ttsUserDict: string;
@@ -556,7 +556,7 @@ export interface Settings {
   // 助詞（を・は・で・に・と）の直後に漢字が続くとき、読点を挿入して小さな間で読む
   // （features/chat/ttsText.ts の pauseParticles。句点の一拍より短い「息継ぎ」相当）。
   ttsParticlePause: boolean;
-  // 朗読ビュー（docs/24）を縦書きで表示するか（既定 false=横書き）。ReaderView のトグルに追随。
+  // 朗読ビュー（docs/log/24）を縦書きで表示するか（既定 false=横書き）。ReaderView のトグルに追随。
   readerVertical: boolean;
   // 朗読ビューの声。"" = 設定の話者のまま / "vv:<speaker>" = VOICEVOX のキャラ /
   // "polly:<VoiceId>" = Polly。ReaderView ヘッダーの選択に追随（features/chat/tts.ts の
@@ -567,17 +567,17 @@ export interface Settings {
   readerFont: string;
   // 朗読ビューの本文文字サイズ（px）。ReaderView が --reader-size として本文へ渡す。
   readerSize: number;
-  // キーボードショートカットのユーザー再割当（docs/29 + ADR-0017）。キー＝コマンド id、または
+  // キーボードショートカットのユーザー再割当（docs/log/29 + ADR-0017）。キー＝コマンド id、または
   // アプリ予約キーの合成 id（app.leader / app.palette / app.cheatsheet）。値＝上書きするコード
   // （chords.ts の正規形文字列。""＝明示的に無効化）。未登録キーは既定のまま。直接アクセラレータと
   // 予約キーのみ再割当可（リーダー配下のシーケンス p r 等は構造なので固定）。features/keys/bindings.ts
   // の effectiveCommands / boundChord が解決する。クロスデバイス同期（DEVICE_LOCAL 外）。
   keybindings: Record<string, string>;
-  // 端末入力優先（docs/29）。ON のとき、端末（xterm）にフォーカスがある間はアプリのグローバル
+  // 端末入力優先（docs/log/29）。ON のとき、端末（xterm）にフォーカスがある間はアプリのグローバル
   // ショートカットを抑止して端末へ素通しする（Ctrl 系を端末に渡す）。唯一 Leader（既定 Ctrl/⌘+K・
   // 再割当可）だけは残し、そこから which-key／パレットで全コマンドに到達できる。既定 OFF（capture 優先）。
   terminalPriority: boolean;
-  // 作業グループ（docs/52 + ADR 0036）の定義。名前付きの { 作業コピー, 会話, repo なし
+  // 作業グループ（docs/log/52 + ADR 0036）の定義。名前付きの { 作業コピー, 会話, repo なし
   // セッション } の集合で、左ペインの表示を案件ごとに絞り込む。定義はクロスデバイス同期
   // （サーバ ui-prefs）、いま「どのグループを見ているか」は workingSetActive（端末ローカル）。
   // 壊れた値・消えた実体への参照は lib/workingSets.ts の normalize / 述語が無害化する。
@@ -585,7 +585,7 @@ export interface Settings {
   // 表示中の作業グループ id（"" = すべて）。theme と同じ端末ローカル（DEVICE_LOCAL）—
   // PC では案件X・タブレットでは案件Y を見る、が端末ごとに成立する。
   workingSetActive: string;
-  // shell/SSM 端末へのキー素通し（docs/29）。ON のとき、shell・ssm 端末にフォーカスがある間は
+  // shell/SSM 端末へのキー素通し（docs/log/29）。ON のとき、shell・ssm 端末にフォーカスがある間は
   // terminalPriority と違い Leader（Ctrl/⌘+K）とパレット（Ctrl/⌘+P）も含めて全アプリショートカットを
   // 抑止し、Ctrl+K（kill-line）／Ctrl+P（履歴前へ）などをそのまま xterm/PTY へ渡す＝純ターミナル。
   // 対象は shell/ssm のみ（エージェント端末は従来どおり）。既定 OFF。復帰はマウスや他ペインクリック。
@@ -664,7 +664,7 @@ const DEFAULTS: Settings = {
   hiddenModels: { claude: ["fable"] },
   claudeCustomModels: [],
   autoTitleSuggest: true,
-  peerMessaging: false, // opt-in（docs/58 / ADR 0041）— 既定で増やしてよい面ではない
+  peerMessaging: false, // opt-in（docs/log/58 / ADR 0041）— 既定で増やしてよい面ではない
   opencodeCatalog: "off",
   expandThinking: {},
   assistantTitleSuggest: true,
@@ -749,7 +749,7 @@ const DEFAULTS: Settings = {
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
-// i18n-exempt-start: VOICEVOX スタイル名は固有名詞として未翻訳（docs/28 §6.4）
+// i18n-exempt-start: VOICEVOX スタイル名は固有名詞として未翻訳（docs/log/28 §6.4）
 export const VOICEVOX_ZUNDAMON: [string, string][] = [
   ["3", "ノーマル"],
   ["1", "あまあま"],
@@ -760,7 +760,7 @@ export const VOICEVOX_ZUNDAMON: [string, string][] = [
 ];
 // i18n-exempt-end
 
-// TTS プロバイダ（docs/24 Phase 2）。auto の使い分けは CP が決める。ラベルは i18n キー。
+// TTS プロバイダ（docs/log/24 Phase 2）。auto の使い分けは CP が決める。ラベルは i18n キー。
 export const TTS_PROVIDERS: [string, MsgKey][] = [
   ["auto", "tts.provider_auto"],
   ["voicevox", "tts.provider_voicevox"],
@@ -1094,7 +1094,7 @@ export function defaultSetting<K extends keyof Settings>(key: K): Settings[K] {
   return DEFAULTS[key];
 }
 
-/** 既定値一式のコピー。設定の書き出し / 取り込み（docs/79）が「知っているキーと、その
+/** 既定値一式のコピー。設定の書き出し / 取り込み（docs/log/79）が「知っているキーと、その
  *  値の形」を突き合わせるための窓 —— 取り込む側が独自にキー一覧を持つと、設定を足した
  *  日に静かに運ばれなくなる。 */
 export function settingsDefaults(): Settings {
@@ -1204,7 +1204,7 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
   "chatColor",
   "sharedColor",
   "assistantColor",
-  "workingSetActive", // 表示中の作業グループ（docs/52 — 端末ごとに別案件を見る）
+  "workingSetActive", // 表示中の作業グループ（docs/log/52 — 端末ごとに別案件を見る）
 ]);
 
 /** Exported as a policy seam so persistence tests can pin which preferences

@@ -1,8 +1,8 @@
 # 0040. プロジェクトスコープ MCP は「利用者の代理編集」として扱い、ワンショットでのみ書く
 
 - 状態: 採用・未実装
-- 関連: [56-project-mcp.md](../56-project-mcp.md)（設計） /
-  [48-mcp-registry.md](../48-mcp-registry.md) §8.2 §8.4（本 ADR が適用範囲を明確化する規約） /
+- 関連: [56-project-mcp.md](../log/56-project-mcp.md)（設計） /
+  [48-mcp-registry.md](../log/48-mcp-registry.md) §8.2 §8.4（本 ADR が適用範囲を明確化する規約） /
   [0031-mcp-registry.md](0031-mcp-registry.md)（レジストリの決定・本 ADR はその**別軸**）
 
 ## 背景

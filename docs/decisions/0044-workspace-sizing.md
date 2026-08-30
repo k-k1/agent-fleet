@@ -3,10 +3,10 @@
 - 状態: 採用・実装中（2026-08-15。設計と実測は docs/63）。**Fargate の有効タスクサイズ全 74 通り**と
   **EFS の I/O** を AWS sandbox で実測した上で決めた。実測が当初案を 2 つ壊している
   （Elastic throughput は小ファイルに効かない／キャッシュだけローカルへ逃がしても効かない）。
-- 関連: [63-workspace-sizing.md](../63-workspace-sizing.md) /
-  [62-ecs-start-latency.md](../62-ecs-start-latency.md)（同じ ECS の起動レイテンシ側） /
-  [history/p3-7-aws-adapter.md](../history/p3-7-aws-adapter.md) §20b.7.4（EFS を選んだ凍結仕様） /
-  [0012-go-refactor.md](0012-go-refactor.md)（アダプタは CP に状態を持たない）
+- 関連: [63-workspace-sizing.md](../log/63-workspace-sizing.md) /
+  [62-ecs-start-latency.md](../log/62-ecs-start-latency.md)（同じ ECS の起動レイテンシ側） /
+  [history/p3-7-aws-adapter.md](../log/p3-7-aws-adapter.md) §20b.7.4（EFS を選んだ凍結仕様） /
+  [0012-go-internal-refactor.md](0012-go-internal-refactor.md)（アダプタは CP に状態を持たない）
 
 ## 背景
 

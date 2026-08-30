@@ -2,13 +2,13 @@
 
 - 状態: 採用・未実装（設計のみ。実装は docs/58 の P1〜P3。**P0 の実測は完了**し、
   その結果として決定1 が「開ける」から「有効化しない」へ差し戻った）
-- 関連: [58-cross-session-messaging.md](../58-cross-session-messaging.md) /
-  [51-session-report-v2-ledger.md](../51-session-report-v2-ledger.md)（arm と台帳の所有者） /
+- 関連: [58-cross-session-messaging.md](../log/58-cross-session-messaging.md) /
+  [51-session-report-v2-ledger.md](../log/51-session-report-v2-ledger.md)（arm と台帳の所有者） /
   [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.md)（決定5: 申告はタイミング信号のみ） /
-  [44-operator-interaction-graph.md](../44-operator-interaction-graph.md)（ディスパッチ台帳） /
-  [30-session-report.md](../30-session-report.md)（報告経由のインジェクション方針） /
+  [44-operator-interaction-graph.md](../log/44-operator-interaction-graph.md)（ディスパッチ台帳） /
+  [30-session-report.md](../log/30-session-report.md)（報告経由のインジェクション方針） /
   [0031-mcp-registry.md](0031-mcp-registry.md)（builtin「af」はセッションへ配る） /
-  [35-packaging.md](../35-packaging.md) §35.9（本 ADR が訂正する env の残置判断）
+  [35-packaging.md](../log/35-packaging.md) §35.9（本 ADR が訂正する env の残置判断）
 
 ## 背景
 

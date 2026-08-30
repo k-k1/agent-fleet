@@ -1,4 +1,4 @@
-// 操作ビーコンの配線（docs/75 P3）。DOM を触るので dom プロジェクト側。
+// 操作ビーコンの配線（docs/log/75 P3）。DOM を触るので dom プロジェクト側。
 // 純ロジック（shouldBeacon の真偽表）は attention.test.ts にある。
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { ATTENTION_INTERVAL_MS, shouldBeacon, wireAttentionBeacon } from "./attention.ts";

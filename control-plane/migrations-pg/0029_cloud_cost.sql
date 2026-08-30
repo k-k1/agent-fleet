@@ -1,4 +1,4 @@
--- Cloud cost, the AWS invoice attributed by cost allocation tag (docs/67, ADR 0048).
+-- Cloud cost, the AWS invoice attributed by cost allocation tag (docs/log/67, ADR 0048).
 --
 -- NOT the same thing as usage_daily next door. That one counts workspace occupancy in
 -- SECONDS and exists on every runtime — this one holds REAL MONEY from Cost Explorer and

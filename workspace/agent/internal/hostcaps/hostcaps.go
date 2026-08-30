@@ -1,6 +1,6 @@
 // Package hostcaps はホスト CPU / 実行環境の能力検知。エージェント種別のうち
 // ホスト条件で動かせないものを Console のセレクタから隠す（capability ガード）
-// ための判定を一箇所に集める（docs/32 Track B）。
+// ための判定を一箇所に集める（docs/log/32 Track B）。
 //
 // 現在の対象は agy（Antigravity CLI, kind="agy"）のみ: agy は Go BoringCrypto
 // (FIPS) ビルドで、x86 では FIPS 乱数モジュールが RDRAND 命令を必須とする。
@@ -64,14 +64,14 @@ func rdrandInCPUInfo(cpuinfo string) bool {
 //
 // agy.Status()（GET /connections の "agy" フィールド）はこれをそのまま
 // supported / reason として載せ、Console は supported=false の kind を
-// セレクタに出さない。セッション作成側も同じ判定で拒否する（docs/32）。
+// セレクタに出さない。セッション作成側も同じ判定で拒否する（docs/log/32）。
 func AgyStatus() (supported bool, reason string) {
 	if _, err := exec.LookPath("agy"); err != nil {
 		return false, "not_installed"
 	}
 	// RDRAND 要件は x86 の FIPS 乱数モジュール固有（0008）。arm64 等では課さない。
 	//
-	// ✅ 実測で確認済み（2026-08-22・docs/70 §70.13）: Graviton 3 世代（m8g=Graviton4 /
+	// ✅ 実測で確認済み（2026-08-22・docs/log/70 §70.13）: Graviton 3 世代（m8g=Graviton4 /
 	// m7g=Graviton3 / m6g=Neoverse-N1）の Debian 12 コンテナで `agy --version` と
 	// `agy --help` が終了コード 0。**決め手は m6g** で、`/proc/cpuinfo` に `rng`
 	// （ARMv8.5-RNG＝RNDR。x86 の rdrand に相当）が **無いのに動いた**——つまり arm64 の

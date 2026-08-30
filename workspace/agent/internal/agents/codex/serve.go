@@ -1,6 +1,6 @@
 package codex
 
-// codex app-server の RuntimeSupervisor（docs/27 §3・§7、P3）。共有 `codex app-server`
+// codex app-server の RuntimeSupervisor（docs/log/27 §3・§7、P3）。共有 `codex app-server`
 // （WS JSON-RPC、loopback :7798）を 1 プロセス起動・監視し、managed セッションの
 // runtime と単一の writer 接続（appClient）を提供する。責務は「プロセスと接続の生涯」
 // だけ — thread に何をさせるかは driver.go の ThreadHandle が持つ。
@@ -9,7 +9,7 @@ package codex
 // TUI（CLI ルート）セッションの圧縮検知・rate limits 用にそのまま残り、managed の
 // 書き込みはこの supervisor の writer 接続だけが行う（単一 writer 排他、§2）。
 //
-// 実測（0.144.4、docs/27 §12.3）:
+// 実測（0.144.4、docs/log/27 §12.3）:
 //   - listen ポートは WS と同時に HTTP /healthz・/readyz を提供する — 健全性確認は
 //     これを使う（opencode の /global/health と同型）。
 //   - thread スコープ通知は「そのスレッドをロードした接続」にのみ配送（§12.1-1）。
@@ -17,7 +17,7 @@ package codex
 //   - daemon SIGKILL 後の再起動→thread/resume で、実行中だった turn は status=
 //     interrupted として rollout に確定しており、スレッドはそのまま継続できる（§12.3）。
 //
-// exit recording（docs/26・§10.2-2 の supervisor 移設）: daemon は supervisor の
+// exit recording（docs/log/26・§10.2-2 の supervisor 移設）: daemon は supervisor の
 // 子プロセスなので cmd.Wait() の wait status が直接取れる。予期しない死は live な
 // managed セッション全員に status.PersistExit で記録し、復旧（reconcile）が成功した
 // セッションは baseline 書き込みでクリアされる（opencode serve.go と同型）。
@@ -44,7 +44,7 @@ const defaultAppServerAddr = "ws://127.0.0.1:7798"
 
 // Supervisor owns the shared codex app-server daemon and the managed writer
 // connection: idempotent start, health, generation counter, drain and restart
-// （docs/27 §3 の RuntimeSupervisor）。
+// （docs/log/27 §3 の RuntimeSupervisor）。
 type Supervisor struct {
 	mu     sync.Mutex
 	gen    int        // runtime generation（§7）。新プロセス/新 writer 接続のたび++

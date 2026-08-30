@@ -46,7 +46,7 @@ Features	: fp asimd evtstrm aes pmull sha1 sha2 crc32 rdrand
 
 func TestAgyStatusReasonVocabulary(t *testing.T) {
 	// 実ホスト依存のスモーク: 返り値が契約の語彙に収まっていること
-	// （docs/32 — Console は supported=false の kind をセレクタに出さない）。
+	// （docs/log/32 — Console は supported=false の kind をセレクタに出さない）。
 	supported, reason := AgyStatus()
 	switch {
 	case supported && reason != "":

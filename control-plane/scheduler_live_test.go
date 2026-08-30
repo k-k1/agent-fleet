@@ -10,7 +10,7 @@ import (
 )
 
 // scheduler_live_test.go — end-to-end verification of the scheduled-execution pipeline
-// (docs/38 P5 pre-flight). Where scheduler_test.go drives sc.tick by hand and writes the
+// (docs/log/38 P5 pre-flight). Where scheduler_test.go drives sc.tick by hand and writes the
 // store directly, these tests exercise the REAL wiring the fleet uses: the operator
 // create/run_now HTTP handlers write the store, and the actual ticker goroutine (sc.run,
 // not a hand-called tick) picks the row up and fires it. Only the side-effecting firer

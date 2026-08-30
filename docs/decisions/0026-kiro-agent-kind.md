@@ -10,7 +10,7 @@
   [0008](0008-antigravity-cli-agent-kind.md)（agy — Terminal 専用 MVP・ContextReporter の先例）、
   [0015](0015-agent-managed-driver.md)（managed driver 抽象）。
   実装計画・Track 0 実測・各 Track の実装メモ（read 契約・ACP 契約・配備・色・ライブ使用量）は
-  [docs/43](../43-kiro-agent-kind.md)。
+  [docs/43](../log/43-kiro-agent-kind.md)。
   ※ 0022 はエージェントメモリ版管理（未マージブランチ temp/s7in3bh）が、0025 は native 自動更新が
   使用中のため 0026 を採番。
 
@@ -106,4 +106,4 @@ device-flow ログイン込みで全プローブを実施した（docs/43 §2）
   cumulative.credits）へ配線。headlessChat／API キー／プラン残量チップは決定7 のとおり見送り。
 - 残: 実フリート再ビルド後の実機目視（色描画・オンデマンド 855MB 導入・device-flow ログイン・
   ミラー ContextBar の pct 推移）と arm64 実機起動。詳細・トラック分割・プローブ一覧は
-  [docs/43](../43-kiro-agent-kind.md)。
+  [docs/43](../log/43-kiro-agent-kind.md)。

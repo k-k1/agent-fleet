@@ -1,4 +1,4 @@
--- Scheduled execution (docs/38 + ADR0021), Postgres mirror of migrations/0022_schedule.sql.
+-- Scheduled execution (docs/log/38 + ADR0021), Postgres mirror of migrations/0022_schedule.sql.
 -- See that file for the column semantics. DDL is dialect-neutral here (TEXT/INTEGER),
 -- so the two stay identical apart from living in the pg migration series.
 -- NOTE the migrator splits on the semicolon, so comments must not contain one.

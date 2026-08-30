@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 
-// Native host self-update status (docs/42). Shape of GET /api/update/status.
+// Native host self-update status (docs/log/42). Shape of GET /api/update/status.
 export interface HostUpdateStatus {
   current: string; // version the running control-plane is serving
   installed: string; // newest version staged on disk (== current when up to date)

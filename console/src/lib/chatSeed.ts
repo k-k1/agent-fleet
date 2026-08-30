@@ -1,5 +1,5 @@
 // A tiny out-of-React handoff for the first-turn prompt when a chat is opened with a
-// seed (e.g. a Files right-click "アシスタントで開く" — docs/19 Phase C, or a session
+// seed (e.g. a Files right-click "アシスタントで開く" — docs/log/19 Phase C, or a session
 // handoff). openChat stashes the seed keyed by conversation id; ChatView takes it once
 // on load. `auto` decides what ChatView does with it: false = prefill the composer for
 // the user to review and hit Enter; true = fire the first turn automatically once the

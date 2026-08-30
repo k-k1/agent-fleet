@@ -1,11 +1,11 @@
-// Assistant-chat domain types (docs/19). A "conversation" is a headless-CLI LLM
+// Assistant-chat domain types (docs/log/19). A "conversation" is a headless-CLI LLM
 // chat/translation thread, distinct from a tmux session. `agent` reuses SessionKind
 // values (claude/codex) to select the backend provider and its presentation.
 
 import type { SessionKind } from "./session.ts";
 import type { ToolGrant } from "./assistant.ts";
 
-// One "作業過程" item of an assistant turn (docs/19): the narration the model emitted
+// One "作業過程" item of an assistant turn (docs/log/19): the narration the model emitted
 // right before it called a tool. Kept alongside the final answer so the UI can show the
 // process separately (保持). Empty for tool-less replies.
 export interface ChatStep {
@@ -24,10 +24,10 @@ export interface ChatMessage {
   // no model instead of standing in the conversation's current setting.
   model?: string;
   steps?: ChatStep[]; // assistant working process, separated from the final content
-  // role==="report" (docs/30): the reporting session's name — rendered as a
+  // role==="report" (docs/log/30): the reporting session's name — rendered as a
   // session-origin card, not a user/assistant bubble.
   session?: string;
-  // role==="notice" (docs/30): a system notice (e.g. the operator's auto-turn budget
+  // role==="notice" (docs/log/30): a system notice (e.g. the operator's auto-turn budget
   // ran out and the loop paused) — rendered as a centered informational card.
   // report only: whether the report has been fed into the provider's context yet.
   delivered?: boolean;
@@ -35,11 +35,11 @@ export interface ChatMessage {
   // so the text follows settings.locale instead of the language it was stored in.
   // Absent on notices written before the change — those fall back to `content`, which
   // still holds the same sentence in the source language. See features/chat/notice.ts.
-  // role==="notice" and, since docs/28 P6, role==="report": the catalog key +
+  // role==="notice" and, since docs/log/28 P6, role==="report": the catalog key +
   // arguments the card is rendered from (see features/chat/report.ts).
   notice_key?: string;
   notice_args?: Record<string, string>;
-  // role==="report" (docs/28 P6): the event the card stands for. The Agent keeps the
+  // role==="report" (docs/log/28 P6): the event the card stands for. The Agent keeps the
   // operator's marching orders OUT of the stored body and re-renders them when it
   // builds the prompt, so the card can follow the display language; report_reason
   // qualifies the kind (turn-failed / turn-aborted / oom …) and names the exit label.
@@ -65,7 +65,7 @@ export interface ChatContextUsage {
 export interface ConversationMeta {
   id: string;
   // Short addressable identity ("a"+6 chars — the assistant twin of session slugs),
-  // used by schedules (docs/38 アシスタント発火) and shown in the row tooltip.
+  // used by schedules (docs/log/38 アシスタント発火) and shown in the row tooltip.
   slug?: string;
   agent: SessionKind;
   active_agent?: SessionKind; // backend used by the latest successful turn
@@ -76,7 +76,7 @@ export interface ConversationMeta {
   updated_at: number;
   message_count: number;
   context?: ChatContextUsage; // current context fill (chat_usage.go)
-  locked?: boolean; // 削除ロック（docs/45）: true の間 DELETE は 403 で拒否される
+  locked?: boolean; // 削除ロック（docs/log/45）: true の間 DELETE は 403 で拒否される
 }
 
 // Full conversation from GET/POST /api/chat/conversations/{id}.
@@ -91,22 +91,22 @@ export interface Conversation {
   updated_at: number;
   messages: ChatMessage[];
   // Transient first-turn prompt returned only by create when a file/dir was attached
-  // (docs/19 Phase C). The Console prefills the composer with it; it is never persisted.
+  // (docs/log/19 Phase C). The Console prefills the composer with it; it is never persisted.
   seed?: string;
   // Transient flag from GET only: an assistant turn is still running on the backend.
   // A client that reloaded mid-answer uses it to keep the thinking indicator up and
   // poll until the reply lands (the detached turn survives the reload). Never persisted.
   in_progress?: boolean;
   // Tool grant snapshot (assistant.ts の ToolGrant と同じ値域; legacy 会話は未設定).
-  // af_write conversations can receive server-pushed session reports (docs/30), so
+  // af_write conversations can receive server-pushed session reports (docs/log/30), so
   // ChatView keeps them fresh with a light poll while the pane is active.
   tools?: ToolGrant;
   // Current context fill (chat_usage.go): drives the ContextBar under the chat header.
   context?: ChatContextUsage;
-  // Compaction summary waiting to ride the next prompt (docs/33 第2段). Display-only
+  // Compaction summary waiting to ride the next prompt (docs/log/33 第2段). Display-only
   // here (the notice message already shows it); cleared server-side after it carries.
   pending_handoff?: string;
-  // Standing work plan (docs/33 第5段): carried into every fresh provider session
+  // Standing work plan (docs/log/33 第5段): carried into every fresh provider session
   // verbatim — never summarized, never consumed. Edited from the 計画 panel, refreshed
   // from the recent conversation, and diff-updated by compaction.
   plan?: string;

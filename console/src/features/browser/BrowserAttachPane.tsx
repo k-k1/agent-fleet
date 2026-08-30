@@ -130,7 +130,7 @@ export function BrowserAttachPane({ paneId, attachmentId, headerActions }: Brows
         {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </div>
 
-      {/* A fresh attachment is view-only by contract (docs/53 §53.11): the agent
+      {/* A fresh attachment is view-only by contract (docs/log/53 §53.11): the agent
           must stop its own automation and hand over before input is accepted.
           Until this notice existed the pane looked fully interactive and every
           scroll and keystroke was dropped in silence. */}

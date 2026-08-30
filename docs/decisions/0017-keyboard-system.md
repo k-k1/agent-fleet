@@ -3,7 +3,7 @@
 - 状態: 確定・P0〜P5 実装済み（2026-07-16）——P0（ディスパッチャ＋レジストリ）／P1（領域・ペイン移動）／
   P2（Leader＋which-key＋コマンドパレット）／P3（モーダル focus-trap・メニュー/レール roving）／
   P4（`?` チートシート＋ボタン inline ヒント）／P5（設定での再割当 UI＋端末入力優先トグル）
-- 関連: [29-keyboard-system.md](../29-keyboard-system.md)（設計本体・実装マップ）/
+- 関連: [29-keyboard-system.md](../log/29-keyboard-system.md)（設計本体・実装マップ）/
   [0011-console-rebuild.md](0011-console-rebuild.md)（この体系が載る Console 基盤）/
   [0016-i18n.md](0016-i18n.md)（将来、コマンド文言を lib/i18n へ集約する接続先）
 

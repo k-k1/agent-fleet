@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stub end-to-end test for the deployment lifecycle scripts
-# (standup.sh / teardown.sh / pause.sh — docs/73).
+# (standup.sh / teardown.sh / pause.sh — docs/log/73).
 #
 # 実 AWS も docker も使わない。PATH に置いた偽 `aws` / `crane` / `curl` が呼び出しを
 # 記録し、**順序**を固定する。ここで守っているのは「消えること」ではなく

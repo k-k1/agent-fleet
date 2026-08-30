@@ -4,8 +4,8 @@
   実装の結果として決定 4 の copilot 経路と決定 5 の entrypoint 側が再度変わった。P1 で kiro の
   global steering を実測し、**配れないのは cursor だけ**に確定。P2 でフリート方針も同じ配布器から
   agy / copilot / kiro へ届くようにした）
-- 関連: [60-user-instructions.md](../60-user-instructions.md) /
-  [57-project-tools.md](../57-project-tools.md)（配布軸 / 管理軸の区分） /
+- 関連: [60-user-instructions.md](../log/60-user-instructions.md) /
+  [57-project-tools.md](../log/57-project-tools.md)（配布軸 / 管理軸の区分） /
   [0031-mcp-registry.md](0031-mcp-registry.md)（配布軸の所有台帳） /
   [0040-project-mcp.md](0040-project-mcp.md)（管理軸＝所有しない側の判断） /
   [0022-agent-memory-management.md](0022-agent-memory-management.md)（第 3 の場所＝エージェントメモリ）

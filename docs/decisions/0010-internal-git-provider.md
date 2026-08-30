@@ -1,8 +1,8 @@
 # 0010. テナント内部 git プロバイダ — bare + git-http-backend を CP に自ホスト
 
-- 状態: **採用・P1 実装済み**。設計は [reference/internal-git-provider](../reference/internal-git-provider.md)。
+- 状態: **採用・P1 実装済み**。設計は [reference/internal-git-provider](../dev/91-internal-git.md)。
 - 関連: [0001](0001-self-host-vs-saas.md)（SaaS 断念・自ホスト）/ [0003](0003-ssh-to-connections.md)（git 認証＝Connections）/
-  [0005](0005-envelope-custodian.md)（封筒暗号）/ [architecture](../reference/architecture.md)
+  [0005](0005-envelope-custodian.md)（封筒暗号）/ [architecture](../dev/01-architecture.md)
 
 ## 背景
 

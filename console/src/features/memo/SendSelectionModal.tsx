@@ -1,8 +1,8 @@
 // SendSelectionModal — ported from the old components/SendSelectionModal.tsx
-// (docs/22 P6c). Sends a file — with a comment — to a running session (the coding
+// (docs/log/22 P6c). Sends a file — with a comment — to a running session (the coding
 // agent that acts on it) or an assistant chat. Two modes:
 //   - QUOTE mode (quote/startLine/endLine given): a selected range is quoted inline (a
-//     Files/CodeView selection → session/assistant, docs/19 Phase C).
+//     Files/CodeView selection → session/assistant, docs/log/19 Phase C).
 //   - FILE mode (no quote): the WHOLE file is handed by PATH reference to a SESSION — for
 //     work that produces a file (e.g. "translate this manual and save it"), which the
 //     chat assistant can't do (it's chat-only, no file writes). Assistants are hidden here
@@ -62,7 +62,7 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
       .catch(() => {});
   }, [fileMode]);
 
-  // Existing categories, to suggest while queuing (docs/21). Cheap membership-scoped read.
+  // Existing categories, to suggest while queuing (docs/log/21). Cheap membership-scoped read.
   useEffect(() => {
     memoList()
       .then((list) => setCatSuggest([...new Set((Array.isArray(list) ? list : []).map((m) => m.category).filter(Boolean))]))
@@ -168,7 +168,7 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
     }
   };
 
-  // Queue the item instead of sending now (docs/21): file mode → a file memo (path +
+  // Queue the item instead of sending now (docs/log/21): file mode → a file memo (path +
   // comment), quote mode → a text memo carrying the composed quote. repo comes from the
   // path; category is free-form (with existing-category suggestions). Doesn't need a
   // running session — the queue is flushed later from the メモキュー panel.

@@ -22,7 +22,7 @@ package mcpreg
 //     churn them nor widen the window where af's rename drops a concurrent CLI write.
 //
 // Secret env and header VALUES land here in plaintext at 0600, which is exactly what
-// docs/48 §5.1 promises: the CLI has to be able to read them, and the mitigation is
+// docs/log/48 §5.1 promises: the CLI has to be able to read them, and the mitigation is
 // the mode and the location (home only, never a repo).
 
 import (

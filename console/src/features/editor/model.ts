@@ -45,7 +45,7 @@ export type UnknownObservation =
   | { kind: "third_revision"; remote: RemoteSnapshot }
   | { kind: "unavailable"; message: string };
 
-/** Advisory record of what the external-change probe observed (docs/44 §7.3).
+/** Advisory record of what the external-change probe observed (docs/log/44 §7.3).
  *  It lives beside `phase` and never drives it: `conflict` still only arises
  *  from a 409 or from the user's explicit diff-check action. `same_as_buffer`
  *  is the non-conflict case where an external writer produced exactly the
@@ -75,11 +75,11 @@ export interface FileEditorModel {
   externalObservation: ExternalObservation | null;
   /** Bumped by each clean auto-follow. The editor surface keys its state
    *  rebuild on it, which is what keeps the replaced content out of the undo
-   *  history (docs/44 §7.4). */
+   *  history (docs/log/44 §7.4). */
   followEpoch: number;
   riskAccepted: boolean;
   message: string;
-  /** Pending AI edit suggestion (docs/44 §4). Advisory beside `phase` like
+  /** Pending AI edit suggestion (docs/log/44 §4). Advisory beside `phase` like
    *  `externalObservation`: it never drives `phase`, and staleness is DERIVED
    *  (suggestion.baseRevision !== bufferRevision) rather than stored, so a
    *  buffer edit during review makes it stale without extra transitions.
@@ -332,7 +332,7 @@ export function discardToBase(model: FileEditorModel): FileEditorModel {
   return { ...clean, bufferGeneration: model.bufferGeneration + 1, followEpoch: model.followEpoch };
 }
 
-/** Record (or clear) the pending AI suggestion (docs/44 §4). Advisory only:
+/** Record (or clear) the pending AI suggestion (docs/log/44 §4). Advisory only:
  *  `phase`, the buffer, and every base revision stay untouched. The caller
  *  validates the envelope (checkSuggestion) before recording it. */
 export function setSuggestion(
@@ -342,7 +342,7 @@ export function setSuggestion(
   return { ...model, suggestion };
 }
 
-/** Accept the pending suggestion into the buffer (docs/44 §4.2/§4.3): re-check
+/** Accept the pending suggestion into the buffer (docs/log/44 §4.2/§4.3): re-check
  *  identity, the revision triple, the range, and the shared buffer validator
  *  against the CURRENT buffer, then apply through editBuffer — the buffer goes
  *  dirty and nothing here touches PUT. Throws the stable UI code
@@ -356,7 +356,7 @@ export function applySuggestion(model: FileEditorModel): FileEditorModel {
 }
 
 /** Record (or clear) what the probe observed. Advisory only: `phase`, the
- *  buffer, and every base revision stay untouched (docs/44 §7.3). */
+ *  buffer, and every base revision stay untouched (docs/log/44 §7.3). */
 export function observeExternal(
   model: FileEditorModel,
   observation: ExternalObservation | null,
@@ -364,7 +364,7 @@ export function observeExternal(
   return { ...model, externalObservation: observation };
 }
 
-/** Adopt an externally changed file into a clean buffer (docs/44 §7.4). The
+/** Adopt an externally changed file into a clean buffer (docs/log/44 §7.4). The
  *  model is rebuilt from the remote snapshot — not edited — and the follow
  *  epoch tells the editor surface to rebuild its state so undo cannot roll the
  *  external change back. A risk-accepted clean base is followed too, and the

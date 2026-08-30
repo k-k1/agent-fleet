@@ -1,6 +1,6 @@
 package main
 
-// テナント配布 MCP の取得契機（docs/48 §6 / P4）。定義の取得そのものは
+// テナント配布 MCP の取得契機（docs/log/48 §6 / P4）。定義の取得そのものは
 // internal/mcpreg/tenant.go にあり、本ファイルは「いつ引くか」だけを持つ
 // （mcp_materialize.go が materialize の契機だけを持つのと同じ分け方）。
 //
@@ -94,7 +94,7 @@ func handleMCPTenantRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMCPServerSecrets (PUT /mcp-servers/{id}/secrets) stores the member's own header
-// values for a tenant-distributed user_secret definition (docs/48 §5.2). This is the only
+// values for a tenant-distributed user_secret definition (docs/log/48 §5.2). This is the only
 // write a member has into a tenant row's content, and it lands in the member's own
 // encrypted store — the distributed definition is never modified.
 func handleMCPServerSecrets(w http.ResponseWriter, r *http.Request) {

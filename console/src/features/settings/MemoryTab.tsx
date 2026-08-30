@@ -1,4 +1,4 @@
-// MemoryTab — エージェントメモリの版管理（docs/39 P2 / ADR 0022・採用既定値 #3）。
+// MemoryTab — エージェントメモリの版管理（docs/log/39 P2 / ADR 0022・採用既定値 #3）。
 //
 // エージェントが書き溜める永続メモリ（claude の auto-memory / codex の memories）は
 // 「消えない置き場」にある一方で**履歴が無い**。このタブはその履歴・差分・巻き戻しの
@@ -10,7 +10,7 @@
 // 差分の描画は SCM のコミットペインと同じ <Diff> を流用する（見え方を 2 つに増やさない）。
 //
 // 巻き戻しは履歴を書き換えず、適用前に pre-restore スナップショットを自動で積む
-// （docs/39 ★2）。つまりこの画面のどの操作も後から取り消せる — 確認ダイアログの
+// （docs/log/39 ★2）。つまりこの画面のどの操作も後から取り消せる — 確認ダイアログの
 // 文面もその前提で書いている。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errDetail, errText, isTransientErr, raw } from "../../core/api/client.ts";
@@ -39,12 +39,12 @@ interface MemoryRoot {
   modified?: string;
   busy?: boolean;
   projects: ProjectRef[];
-  /** エージェント側がメモリを書くことの ON/OFF（今は codex のみ・docs/39 P4）。 */
+  /** エージェント側がメモリを書くことの ON/OFF（今は codex のみ・docs/log/39 P4）。 */
   toggleable?: boolean;
   enabled?: boolean;
 }
 /**
- * 宣言はされているが今この環境では有効でないルート（docs/39 P4）。codex の memories は
+ * 宣言はされているが今この環境では有効でないルート（docs/log/39 P4）。codex の memories は
  * 上流の既定が OFF なので、黙って一覧から消すと「なぜ出てこないか」も「どう有効化するか」も
  * 伝わらない。toggleable なものはここから直接切り替える。
  */
@@ -195,7 +195,7 @@ export function MemoryTab() {
     setData((d) => (d ? { ...d, auto: !!res.auto, autoLocked: !!res.autoLocked } : d));
   };
 
-  // codex memories のフリート有効化（docs/39 P4・決着 #4）。設定の実体は codex 自身の
+  // codex memories のフリート有効化（docs/log/39 P4・決着 #4）。設定の実体は codex 自身の
   // config.toml なので、書き込みは既存の /codex/settings を使う。有効化しても
   // ~/.codex/memories は次に codex が走るまで生えないため、直後は「有効だが未生成」で
   // 出る（roots を読み直して状態を Agent 側から取り直す）。
@@ -465,7 +465,7 @@ interface RestoreBody {
 
 // RestorePanel — 戻す範囲を選ぶ。選択肢は**その時点のツリー**から作る（今の live では
 // なく）。誤って消したメモリを戻す、が本命のユースケースなので、現在存在しない
-// プロジェクトも選べなければ機能として成立しない（docs/39 ④）。
+// プロジェクトも選べなければ機能として成立しない（docs/log/39 ④）。
 function RestorePanel({
   state,
   patch,
@@ -588,7 +588,7 @@ function RestorePanel({
   );
 }
 
-// TransferSection — 環境間の持ち出し / 取り込み（docs/39 ⑤ P3）。
+// TransferSection — 環境間の持ち出し / 取り込み（docs/log/39 ⑤ P3）。
 //
 // 持ち出しは既定が **bundle（全履歴）**。受け側で `git bundle verify` が通り、履歴ごと
 // 移せる。tar.gz は「最新だけ軽く持ち出す」用の併設。

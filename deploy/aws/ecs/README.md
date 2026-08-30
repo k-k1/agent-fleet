@@ -5,7 +5,7 @@ The **native AWS adapter** (`AF_RUNTIME=ecs`): each Workspace is one ECS Service
 over Service Connect. This is **not** the single-VM Compose host — for "self-host on
 AWS the easy way" use [`../ec2-single`](../ec2-single/) instead.
 
-Frozen implementation spec: [`docs/history/p3-7-aws-adapter.md` §20b.7](../../../docs/history/p3-7-aws-adapter.md#20b7-段2-実装仕様凍結).
+Frozen implementation spec: [`docs/log/p3-7-aws-adapter.md` §20b.7](../../../docs/log/p3-7-aws-adapter.md#20b7-段2-実装仕様凍結).
 Only the AWS CLI is required (no Terraform / CDK). Tear everything down with
 `delete-stack`.
 
@@ -34,7 +34,7 @@ platform changes:
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
-| `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/70 §70.8) |
+| `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/log/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/log/70 §70.8) |
 
 > All five are proven end-to-end **including teardown**: two real deployments in two
 > separate AWS accounts (`WsRuntime=ecs-ec2`, one `Persistence=delete` and one
@@ -53,7 +53,7 @@ platform changes:
   ```bash
   aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || true
   ```
-- **Cloud cost (optional, but it cannot be backfilled — see docs/67).** Two account-level
+- **Cloud cost (optional, but it cannot be backfilled — see docs/log/67).** Two account-level
   switches the templates cannot set, both in the Billing console of the **payer** account.
   ⚠️ **None of this arrives with the stacks.** The templates carry only the IAM permission
   (`ce:GetCostAndUsage` on `CpTaskRole`); the tags themselves are written by the *running*
@@ -142,7 +142,7 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
    aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
      --name /af-cp/oidc-client-secret   --value "<AF_OIDC_<ID>_CLIENT_SECRET>"
    ```
-   ⚠️ The **git providers' OAuth apps are not deployment configuration** (docs/71). A
+   ⚠️ The **git providers' OAuth apps are not deployment configuration** (docs/log/71). A
    tenant administrator registers GitHub and Bitbucket in the Console under **Tenant
    settings → Integrations → Git provider OAuth**; there is no CFN parameter and no SSM
    entry for them. The Bitbucket consumer's **Callback URL must be exactly**
@@ -162,7 +162,7 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
      --profile af-sandbox --region $RG
    ```
    For a Microsoft Entra ID (or Okta / Keycloak / …) deployment, swap
-   `GoogleClientId` for the `Oidc*` parameters (docs/61) — leaving `GoogleClientId`
+   `GoogleClientId` for the `Oidc*` parameters (docs/log/61) — leaving `GoogleClientId`
    empty is fine, Google is then simply not offered:
    ```bash
      --parameter-overrides OidcProviderId=ENTRA \
@@ -333,7 +333,7 @@ It does the three things the hand-typed sequence gets wrong:
 
 `update.sh` deploys a **released** tag. A deployment kept for development wants the
 opposite: whatever is on `develop` right now, without cutting a version. That is
-`dev-deploy.sh` (docs/73), and it ends by calling `update.sh` — the pre-flight checks
+`dev-deploy.sh` (docs/log/73), and it ends by calling `update.sh` — the pre-flight checks
 above are the reason, and writing a second copy of them for the dev path would mean the
 checks are what drifts.
 
@@ -350,7 +350,7 @@ Three things it decides for you:
   since the deployed tag; otherwise the workspace image is re-tagged inside ECR, which
   copies no bytes. Baking it costs ~10 minutes of QEMU.
 - **That the golden snapshot does not have to be re-baked** when those bytes are
-  identical (docs/72 §72.6.4 paid 10 minutes and two slots for exactly that).
+  identical (docs/log/72 §72.6.4 paid 10 minutes and two slots for exactly that).
 - **That this is not somebody's live deployment.** It refuses any `Fqdn` but the dev
   one unless `--allow-fqdn` says otherwise: moving `ImageTag` puts a "restart required"
   badge in front of everyone running a workspace there.
@@ -455,7 +455,7 @@ service supports it:
 
 Three `30-ingress` parameters set what every workspace gets by default; per-user
 overrides live in the Console (Settings → members → "Set limits") and are clamped by the
-tenant cap. Design and measurements: `docs/63`, decisions in `docs/decisions/0044`.
+tenant cap. Design and measurements: `docs/log/63`, decisions in `docs/decisions/0044`.
 
 | Parameter | Env | Default | Notes |
 |---|---|---|---|
@@ -465,7 +465,7 @@ tenant cap. Design and measurements: `docs/63`, decisions in `docs/decisions/004
 
 **Only specific (cpu, memory) pairs exist**, and the steps are not uniform — 8 vCPU moves
 in 4096 MiB steps and 16 vCPU in 8192, while 0.25 vCPU accepts only 512/1024/2048. The
-full matrix was measured against the ECS API and is in `docs/63` §63.2. The CP snaps any
+full matrix was measured against the ECS API and is in `docs/log/63` §63.2. The CP snaps any
 request onto a valid pair, so an odd value never reaches a task definition; the visible
 effect is that **raising CPU can also raise memory** (4 vCPU cannot run below 8 GiB).
 
@@ -475,7 +475,7 @@ switch for moving small-file trees off EFS onto that disk: the workspace entrypo
 relocates the caches (Go build cache, `uv`, Go modules) and the Agent relocates build
 artifacts (`node_modules`, `target`, `.venv`, `build`) as each working copy is created.
 Both arm only when the disk is **30 GiB or more**, because the measured caches do not fit
-alongside the image in 20 GiB. On EFS these trees are 8–30× slower to write (`docs/63`
+alongside the image in 20 GiB. On EFS these trees are 8–30× slower to write (`docs/log/63`
 §63.4).
 
 **The default is 50 GiB, so relocation is on.** It used to be 0, which meant the feature
@@ -497,7 +497,7 @@ is untested on real infrastructure; ephemeral storage covers everything up to 20
 
 🚧 **Stood up and run in a sandbox, including a production-shaped VPC — but never with
 real users.** `40-ec2-pool` has been deployed as a stack and real workspaces have run on it
-end to end, first in a public subnet (docs/64 §64.16, §64.17), then in a **private subnet
+end to end, first in a public subnet (docs/log/64 §64.16, §64.17), then in a **private subnet
 behind a NAT gateway** (§64.19), and then with **four slots across two AZs, three users
 starting at once, and the sweep loop left running for eighteen minutes** (§64.20). The
 task-ENI trap below does not reproduce behind a NAT — there is no public IPv4 to lose.
@@ -515,12 +515,12 @@ starts a slot in the AZ that user's home is already in.
    the slot type, a **new** home falls back to another; an **existing** one fails, because
    it cannot move (決定 15).
 3. **To move someone to another AZ there is no "move".** Hibernate their home and start it
-   again with free capacity only where you want them — the snapshot has no AZ. docs/64
+   again with free capacity only where you want them — the snapshot has no AZ. docs/log/64
    §64.20.7 has the runbook, including the AWS CLI form for moving one person to a
    named AZ.
 
 **Losing an AZ is a different question from moving.** A home cannot be evacuated, so the
-answer has to be in place before the bad day: turn on **home backups** (below). docs/64
+answer has to be in place before the bad day: turn on **home backups** (below). docs/log/64
 §64.21 walks through what the adapter actually does during an AZ outage, what the operator
 should do first (drop the failed subnet from `AF_ECS_SUBNETS` and restart the CP), and how
 to rebuild a home from a backup afterwards.
@@ -541,7 +541,7 @@ back. **One slot serves one user at a time** (`ADR 0045` 決定 8).
 
 | | Fargate (`ecs`) | EC2 pool (`ecs-ec2`) |
 |---|---|---|
-| Warm Start | ~105s | **84–110s** — *not* an improvement worth switching for (docs/64 §64.17.5, §64.19.2) |
+| Warm Start | ~105s | **84–110s** — *not* an improvement worth switching for (docs/log/64 §64.17.5, §64.19.2) |
 | Home | EFS — small files are 8–30× slower | **EBS gp3** — 2,000 small files in 0.04s vs 30.7s |
 | Size | 74 discrete (cpu, memory) pairs, ≤16 vCPU / 120 GiB | instance types; the task reserves nothing and gets the box |
 | Resources per workspace | 2 (service + EFS access points) | 6 (also instance, volume, container-instance registration, task def) |
@@ -585,7 +585,7 @@ the workspace can actually spend with the box beside it — `6.4 GiB (of 8 GiB)`
 memory can push the box into refault thrash: with no swap the kernel throws away page
 cache, every daemon spends its time re-reading its own executable off disk, and the slot
 stops answering the cluster entirely while still looking healthy to EC2. That happened on
-a live deployment (docs/64 §64.40) — nobody could start that workspace again for hours.
+a live deployment (docs/log/64 §64.40) — nobody could start that workspace again for hours.
 
 ⚠️ **Changing the reserve replaces running tasks.** It is part of the task definition, so
 the first start after the change registers a new revision — the same as an image change.
@@ -599,7 +599,7 @@ at runtime, and Metrics Insights filters on dimension values rather than tags �
 queries are account-wide within the region. Turn them on where the account is the
 deployment's own.
 
-**Offering a choice of machine (docs/70).** `Ec2SlotTypes` takes several named ladders,
+**Offering a choice of machine (docs/log/70).** `Ec2SlotTypes` takes several named ladders,
 `id|label|arch|<ladder>` separated by `;`, and a tenant administrator then picks one per
 tenant and per member. Memory still picks the rung *within* the class, so "8 GB" keeps
 meaning the same thing. **The shipped default already declares two**, because "cost over
@@ -611,7 +611,7 @@ standard|Standard (Intel)|x86_64|m7i.large:8192:2,…;saver|Lower cost (Intel, p
 
 Measured in ap-northeast-1 on 2026-08-22 — the price from the Pricing API, the speed
 from this repository's own build on each family (`harness/bench-instance-classes.sh`,
-docs/70 §70.3):
+docs/log/70 §70.3):
 
 | against m7i | $/hour | build time | **cost per build** |
 |---|---|---|---|
@@ -699,7 +699,7 @@ only copy that is not in the zone — snapshots are regional.
   power cut leaves. Quiescing would mean taking a working person's home away on a timer.
 - **Never restored automatically.** A backup is older than the home by definition; handing
   somebody a silently older home is worse than telling an operator to decide. The restore
-  runbook is docs/64 §64.21.4.
+  runbook is docs/log/64 §64.21.4.
 - The trigger is the idle-stop reaper, so `AF_IDLE_SWEEP_INTERVAL=0` turns backups off too.
 - The Slots tab shows, per home, how old its newest spare copy is — and says so loudly when
   there is none.
@@ -710,7 +710,7 @@ measured) — and makes the slot **slower overall**, because a private AMI's roo
 loaded from a fresh snapshot: the box took ~56s longer to join the cluster and a new user's
 first start measured **179–192s against 144s** on the stock ECS-optimized AMI. The script
 and the CP-side reporting were removed rather than left as a not-recommended option; the
-measurement and the reasoning are in docs/64 §64.24 / ADR 0045 決定 19. **`SlotAmiId` stays
+measurement and the reasoning are in docs/log/64 §64.24 / ADR 0045 決定 19. **`SlotAmiId` stays
 at its default** (the ECS-optimized AMI's SSM parameter — re-deploying this stack is how
 slots get patched, 決定 7).
 
@@ -746,7 +746,7 @@ a deployment that has turned it off (or for baking one on the spot):
   workspace can never be created. Adding an account you DO hold to a throwaway tenant
   is the cheap way to get the fresh membership a seed needs.
 - **Step 3 is a membership of your own, and that is allowed.** The roster refuses only
-  your *last* membership (docs/61 §61.10.6), so you take yourself off the throwaway
+  your *last* membership (docs/log/61 §61.10.6), so you take yourself off the throwaway
   tenant from the Console — *Remove member* with *destroy the workspace and home*
   ticked, or remove then destroy. Until that rule was narrowed, every self-removal was
   refused and a deployment with a single administrator could not free the seed's slot at
@@ -792,7 +792,7 @@ they survive, and keep billing. The response and the audit entry list what was l
   `Ec2MaxSlots` to serve more people also signs you up for that many root volumes,
   permanently and whether or not anyone is working (30 × 40 GiB ≈ **$115/month**). That was
   measured on a live deployment, where the only cure was terminating boxes by hand
-  (docs/64 §64.32). **14400 (4h) is the recommended value**, and it costs your users 25
+  (docs/log/64 §64.32). **14400 (4h) is the recommended value**, and it costs your users 25
   seconds: come back the same day and you wake the box (~110s), come back tomorrow and one
   is built for you (~135s).
 - **Two different idle timers, in series.** `AF_WS_IDLE_TIMEOUT` / the per-tenant
@@ -819,7 +819,7 @@ they survive, and keep billing. The response and the audit entry list what was l
   start still fails, and says the pool is full.
 - **An EMPTY slot sleeps on the same timer.** A slot whose home has been released — by an
   eviction, a size/class change, a `Destroy`, or the golden bake finishing with its seed
-  and probe — belongs to nobody, and `Ec2SlotSleepSec` stops it too. ⚠️ Before docs/64
+  and probe — belongs to nobody, and `Ec2SlotSleepSec` stops it too. ⚠️ Before docs/log/64
   §64.31 only *occupied* slots were ever stopped, so a released box ran until an operator
   noticed: measured on a live deployment, three empty `m*.large` up for over 24h with zero
   tasks, at ~$95/month each.
@@ -850,7 +850,7 @@ they survive, and keep billing. The response and the audit entry list what was l
 
 A cold workspace Start pays a full image pull on every launch (Fargate keeps no
 image cache between tasks). Measured end-to-end in the sandbox (2026-08-15,
-`docs/62` §62.9): **126s on a fresh home, 128–218s on a warm one** — the earlier
+`docs/log/62` §62.9): **126s on a fresh home, 128–218s on a warm one** — the earlier
 "~100s" was optimistic. `POST
 /api/workspace/start` does **not** wait for that: it returns as soon as the ECS
 service sits at `desiredCount 1`, with the live state — normally `starting`.
@@ -872,7 +872,7 @@ the entrypoint has finished and the Agent answers. A create issued in that windo
 still gets `502 workspace agent unreachable`; retry.
 
 **The split has been measured** (2026-08-15,
-[`docs/62-ecs-start-latency.md`](../../../docs/62-ecs-start-latency.md) §62.9–62.10),
+[`docs/log/62-ecs-start-latency.md`](../../../docs/log/62-ecs-start-latency.md) §62.9–62.10),
 and the answer was not the image. A warm-home Stop→Start costs **~101s**: **4–8s**
 for ECS to create the task, **16s** provision (ENI attach), **35s** image pull
 (918 MiB compressed, 34 layers), **~25s** EFS mount + container create, **21s**
@@ -911,7 +911,7 @@ definition for the same image with `entryPoint` overridden (`run-task
 the whole entrypoint). Every `run-task` is cold by construction — Fargate keeps
 no image cache between tasks. The full recipe, the delta arithmetic and the
 decision gate are in
-[`docs/62-ecs-start-latency.md`](../../../docs/62-ecs-start-latency.md) §62.7
+[`docs/log/62-ecs-start-latency.md`](../../../docs/log/62-ecs-start-latency.md) §62.7
 (conclusion on SOCI: conditional yes, gated on this measurement).
 
 ## Cost & ephemerality
@@ -978,7 +978,7 @@ For iteration, **deploy → E2E → `delete-stack`** and keep stacks short-lived
 ## Lifecycle scripts (stand up / pause / tear down)
 
 The runbooks in this file are the source of truth; these four are their executable
-form (docs/73). A deployment is addressed the way `update.sh` already addresses one —
+form (docs/log/73). A deployment is addressed the way `update.sh` already addresses one —
 by **AWS profile** — and everything else is read from the live deployment, which
 matters because two deployments built from these same templates can differ in ways a
 hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
@@ -1003,7 +1003,7 @@ hardcoded default gets wrong (one names its pool stack `af-ecs-pool`, another
   parameters; `standup.sh` only checks that they *exist*. Teardown keeps `/af-cp/*` by
   default so the same account can be redeployed into.
 - **Which deployment is the development one is not in this repository.** `dev-deploy.sh`
-  (docs/73) only touches a deployment whose local capture says `AF_DEV_DEPLOY=1`.
+  (docs/log/73) only touches a deployment whose local capture says `AF_DEV_DEPLOY=1`.
 - The order these run in is what the stub test in `deploy/local/ecs-lifecycle-stub-test.sh`
   pins — see the next section for why each step is where it is.
 

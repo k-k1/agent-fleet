@@ -20,27 +20,27 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | sessions | `GET/POST /api/sessions`・lifecycle `POST …/{stop,halt,recreate,archive,restore,fork,start}`・意味論操作 `POST …/{turn,respond,settings,driver}`・端末操作 `POST …/{input,paste-image}`・`GET …/{status,output,messages,settings}`・title/branch 系・`GET /api/sessions/archived`・削除ロック `POST …/lock`（docs/45）| 生成/fork/start=CP→Agent、他は中継 | [04](04-workspace-agent.md) |
 | ↳ fork の任意ボディ | `POST …/fork` は `{"at": <anchorId>, "include": bool}` を取ると**発言時点からの分岐**になる（docs/55）。省略時は従来の会話まるごと分岐で後方互換。壊れた JSON は `400 bad_request`（黙って全体分岐に倒さない）。分岐点が使えない＝`400 fork_bad_anchor`、その種別/起動方式に機能が無い＝`400 fork_at_unsupported` | CP はボディを素通し中継 | [04](04-workspace-agent.md) |
 | repos (SCM) | `GET/POST /api/repos`・取り込み元なしの新規作業コピー `POST /api/repos/init`（`{name}` → `201 {repo}`。mkdir + `git init` だけなので**同期**＝取り込みジョブを経由しない）・`/api/repos/{name}/{status,branches,checkout,fetch,ff,changes,diff,log,graph,show,stage,unstage,discard,commit,identity,prompt-templates}`・削除ロック `POST /api/repos/{name}/lock`（docs/45）| 中継 | [04](04-workspace-agent.md) |
-| fs | `GET /api/fs/{tree,file,download,changes,linemarks}`・`PUT /api/fs/file`・`POST /api/fs/{upload,mkdir,newfile,rename,delete,suggest-edit}` | 中継 | [04](04-workspace-agent.md) / [docs/44](../44-markdown-code-editor.md) |
-| connections | `GET /api/connections`・git `PUT/DELETE /api/connections/git/{host}`（+ GitHub Device / Bitbucket OAuth / claude / codex / opencode）・`GET /api/git-oauth`（自テナントでどの OAuth ボタンを出せるか）| 中継。ただし **git プロバイダの OAuth は両方とも CP**（GitHub の device flow `start`/`poll`・Bitbucket の `start` と callback・`/api/git-oauth`）＝[71](../71-tenant-git-oauth.md) | [08](08-integrations.md) |
+| fs | `GET /api/fs/{tree,file,download,changes,linemarks}`・`PUT /api/fs/file`・`POST /api/fs/{upload,mkdir,newfile,rename,delete,suggest-edit}` | 中継 | [04](04-workspace-agent.md) / [docs/44](../log/44-markdown-code-editor.md) |
+| connections | `GET /api/connections`・git `PUT/DELETE /api/connections/git/{host}`（+ GitHub Device / Bitbucket OAuth / claude / codex / opencode）・`GET /api/git-oauth`（自テナントでどの OAuth ボタンを出せるか）| 中継。ただし **git プロバイダの OAuth は両方とも CP**（GitHub の device flow `start`/`poll`・Bitbucket の `start` と callback・`/api/git-oauth`）＝[71](../log/71-tenant-git-oauth.md) | [08](08-integrations.md) |
 | chat / assistants | `/api/chat/conversations*`（stream は SSE、削除ロック `POST …/{id}/lock`）・`POST /api/chat/ask`・`/api/assistants*` | 中継 | [04](04-workspace-agent.md) |
 | env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`POST/GET /api/env/jdk-install`（JDK ワンボタン導入・[09 §JDK](09-deploy.md)）・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex,copilot}/usage`（各 WsBar 使用量チップ。claude/codex=サブスク枠、copilot=アカウント
 クレジット残量。応答にプランと利用アカウントを含む。agy は `GET /api/connections/agy/usage`）・`GET/PUT /api/agents/rtk`・`GET /api/agents/rtk/gain`（rtk 節約履歴＝使用量タブ「rtk 効果」カード、`rtk gain --all --format json` 素通し）| ws-settings=CP、他は中継 | [04](04-workspace-agent.md) |
 | memo | `GET/POST/PATCH/DELETE /api/memos*`・`POST /api/memos/flush` | CP（flush 時のみ Agent へ）| [03](03-control-plane.md) |
 | notifications | `GET /api/notifications`・`POST /api/notifications/{seen,usage-observations}` | CP（DB）| [03](03-control-plane.md) |
-| schedules | `GET /api/schedules`・`GET …/{id}/runs`・`PATCH/DELETE …/{id}`・`POST …/{id}/{pause,resume,run-now}`（Console は一覧・管理のみ。作成は MCP ツール経由）| CP（DB + scheduler）| [docs/38](../38-scheduled-execution.md) |
+| schedules | `GET /api/schedules`・`GET …/{id}/runs`・`PATCH/DELETE …/{id}`・`POST …/{id}/{pause,resume,run-now}`（Console は一覧・管理のみ。作成は MCP ツール経由）| CP（DB + scheduler）| [docs/38](../log/38-scheduled-execution.md) |
 | cleanup | `GET /api/sessions/{usage,cleanup}`・`DELETE /api/sessions/{name}`・`GET /api/cleanup/archives`・`POST /api/cleanup/archives/{id}/restore`・`DELETE /api/cleanup/archives/{id}` | 中継 | [04](04-workspace-agent.md) |
-| agent memory | `GET /api/agents/memory/{roots,snapshots,diff,tree,export}`・`POST …/{snapshots,restore,import,import/apply}`・`PUT …/settings` | 中継 | [docs/39](../39-agent-memory-management.md) |
-| MCP レジストリ | `GET/POST /api/mcp-servers`・`PUT/DELETE …/{id}`・`POST …/{test,tenant-refresh}`・`POST …/{id}/enabled`・`PUT …/{id}/secrets` | 中継（実体は Agent）| [docs/48](../48-mcp-registry.md) |
-| usage 時系列 | `GET /api/usage/series`（機能別トークン台帳の時系列）| 中継 | [docs/46](../46-usage-accounting.md) |
+| agent memory | `GET /api/agents/memory/{roots,snapshots,diff,tree,export}`・`POST …/{snapshots,restore,import,import/apply}`・`PUT …/settings` | 中継 | [docs/39](../log/39-agent-memory-management.md) |
+| MCP レジストリ | `GET/POST /api/mcp-servers`・`PUT/DELETE …/{id}`・`POST …/{test,tenant-refresh}`・`POST …/{id}/enabled`・`PUT …/{id}/secrets` | 中継（実体は Agent）| [docs/48](../log/48-mcp-registry.md) |
+| usage 時系列 | `GET /api/usage/series`（機能別トークン台帳の時系列）| 中継 | [docs/46](../log/46-usage-accounting.md) |
 | pat | `GET/POST/DELETE /api/pat*` | CP | [07 §7.6](07-security.md) |
 | ssm | `GET/POST/PUT/DELETE /api/ssm/{profiles,hosts}*`・`GET /api/sessions/{name}/ssm-login` | CP（DB）+ Agent（セッション）| [08](08-integrations.md) |
 | internal git | `GET/POST/DELETE /api/internal-git/repos*`（管理）・`/git/{slug}/{repo...}` smart-HTTP・`/git/…/info/lfs/*` | CP（Agent を経由しない）| [91](91-internal-git.md) |
-| admin | `GET /api/admin/{tenants,sessions,usage,audit,host,egress*}`・`POST /api/admin/{tenants,memberships,stop-workspace,clean-home}`・`PUT /api/admin/{tenants/{slug}/limits,user-limits,membership-role,egress/mode}`・git プロバイダ OAuth `GET /api/admin/tenants/{slug}/git-oauth`＋`PUT/DELETE …/git-oauth/{provider}`（tenant_admin・承認なし・[71](../71-tenant-git-oauth.md)）| CP（super_admin / tenant_admin gate）| [03](03-control-plane.md) |
+| admin | `GET /api/admin/{tenants,sessions,usage,audit,host,egress*}`・`POST /api/admin/{tenants,memberships,stop-workspace,clean-home}`・`PUT /api/admin/{tenants/{slug}/limits,user-limits,membership-role,egress/mode}`・git プロバイダ OAuth `GET /api/admin/tenants/{slug}/git-oauth`＋`PUT/DELETE …/git-oauth/{provider}`（tenant_admin・承認なし・[71](../log/71-tenant-git-oauth.md)）| CP（super_admin / tenant_admin gate）| [03](03-control-plane.md) |
 | MCP | `POST /mcp`（Streamable HTTP JSON-RPC・Bearer PAT・authGate 除外）| CP | [03](03-control-plane.md) / [decisions/0006](../decisions/0006-mcp-unified.md) |
 | preview | `GET /preview/{port}/{rest...}`（`/preview/{port}` は 301 で末尾 `/` 付与）| CP → Agent `/proxy/{port}` | §5.3 |
-| browser | `POST/GET/DELETE /api/browser/pages*`・`GET /ws/browser?id=&tenant=` | CP → Agent `/browser/pages*`・`/ws/browser` | §5.3 / [設計31](../31-container-browser-pane.md) |
+| browser | `POST/GET/DELETE /api/browser/pages*`・`GET /ws/browser?id=&tenant=` | CP → Agent `/browser/pages*`・`/ws/browser` | §5.3 / [設計31](../log/31-container-browser-pane.md) |
 | WebSocket | `GET /ws/terminal?session=&tenant=` | CP → Agent `/ws/pty` | §5.3 |
-| internal（Agent → CP・per-membership トークン）| `GET /internal/{memos,schedules,mcp-servers,docs}`・**`POST /internal/git-oauth/bitbucket/refresh`**（`AF_GIT_OAUTH_TOKEN`。テナントの client_secret を CP に残したまま refresh grant を代行＝[71](../71-tenant-git-oauth.md) §71.8）| CP | [08](08-integrations.md) |
+| internal（Agent → CP・per-membership トークン）| `GET /internal/{memos,schedules,mcp-servers,docs}`・**`POST /internal/git-oauth/bitbucket/refresh`**（`AF_GIT_OAUTH_TOKEN`。テナントの client_secret を CP に残したまま refresh grant を代行＝[71](../log/71-tenant-git-oauth.md) §71.8）| CP | [08](08-integrations.md) |
 | auth / その他 | `GET /login`・`/oauth2/{login,callback,logout}`・`GET /api/oauth/bitbucket/callback`・`GET /healthz`・`/internal/egress{,/policy}`（`AF_EGRESS_TOKEN`）・`GET /internal/docs`（`AF_DOCS_TOKEN`・ロール別 docs の tar.gz／[04 §4.9](04-workspace-agent.md)）・`/` = Console 静的配信（no-store）| CP | [07](07-security.md) |
 
 - 旧 `/agent-fleet` プレフィクスは**廃止**（ルート配信）。`/agent-fleet*` は互換リダイレクトのみ。
@@ -48,7 +48,7 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 - `GET /api/workspace/stats` の応答は CP がホストから cgroup v2 を直読みして組む（`metrics.go`）:
   稼働時 `{running:true, mem_used, mem_max?, cpu_pct?, oom_kill_total?, oom_recent?}`、
   停止時 `{running:false, oom_killed?, exit_code?}`。`oom_recent`/`oom_killed` は OOM 検知
-  （コンテナ内子プロセスの OOM kill／コンテナ丸ごとの OOM 落ち）で、設計は [26](../26-agent-exit-recording.md)。
+  （コンテナ内子プロセスの OOM kill／コンテナ丸ごとの OOM 落ち）で、設計は [26](../log/26-agent-exit-recording.md)。
   セッション単位の終了理由（`exitReason`/`exitCode`/`exitSignal`）は `GET /api/sessions` の各要素に載る（同 docs/26 Phase 2）。
 
 ## 5.2 内部面（CP ↔ Agent）
@@ -75,7 +75,7 @@ Session API は論理操作と端末操作を分ける。`/turn`（start/steer/i
 | **REST**（proxyAgentREST）| `/api/*` → Agent 同パス（`/api` 剥がし）| 変更系は 2xx 応答時に監査記録（§5.5）。workspace が running でなければ 409 |
 | **SSE**（proxyAgentStream）| `POST /api/chat/conversations/{id}/stream` → Agent | チャンク毎 flush。チャットのストリーミング用 |
 | **WS**（proxyTerminal）| `GET /ws/terminal` → Agent `/ws/pty` | running 確認（stopped/starting=409、自動起動しない）→ 双方向リレー（binary=PTY 出力 / text=入力・resize）。接続追跡が workspace を warm 維持（reaper のアイドル判定に使用）|
-| **browser** | `/api/browser/pages*` → Agent `/browser/pages*`、`/ws/browser` → Agent同名 | membership/running検査後にAgent bearerだけを付与。REST本文/応答とWS textは解釈せず、binary JPEGはlatest-onlyで中継。visible viewerだけがworkspaceをwarm維持。wire v1は[設計31](../31-container-browser-pane.md) |
+| **browser** | `/api/browser/pages*` → Agent `/browser/pages*`、`/ws/browser` → Agent同名 | membership/running検査後にAgent bearerだけを付与。REST本文/応答とWS textは解釈せず、binary JPEGはlatest-onlyで中継。visible viewerだけがworkspaceをwarm維持。wire v1は[設計31](../log/31-container-browser-pane.md) |
 | **preview** | `GET /preview/{port}/{rest...}` → Agent `/proxy/{port}/{rest...}` → コンテナ内 `127.0.0.1:{port}` | `X-Forwarded-{Prefix,Host,Proto}` 付与、Agent 側は Authorization を除去して ReverseProxy。新タブは cookie 以外のヘッダを運べないため `?tenant=<slug>` の query fallback で解決。**制約: HTTP のみ（WS/SSE 不可＝HMR 不可）**。アプリ側は `X-Forwarded-Prefix` 尊重の設定（例 Spring Boot `server.forward-headers-strategy`）が必要 |
 
 ## 5.4 横断規約

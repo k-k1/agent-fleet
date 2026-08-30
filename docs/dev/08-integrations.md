@@ -72,7 +72,7 @@ CP ネイティブ実装。フロー・許可リスト・authGate の防御は [
 - **OAuth（Auth Code Grant）**: 唯一の CP 所有コールバック。`GET /api/connections/git/bitbucket/oauth/start`
   → 承認 → `GET /api/oauth/bitbucket/callback`（state に user を束ねて解決。ブラウザの CP セッション
   cookie で authGate を通過するため**除外設定不要**）→ token を Agent に渡して保存。
-  consumer の key/secret は**テナントの行**から読む（[71](../71-tenant-git-oauth.md)）。
+  consumer の key/secret は**テナントの行**から読む（[71](../log/71-tenant-git-oauth.md)）。
   `PUBLIC_BASE_URL` は残る（consumer の Callback URL は完全一致が前提）。
   ★ state に **tenant_id** を載せる。コールバックは bitbucket.org からの素のリダイレクトで
   `X-AF-Tenant` を持たないので、そこで解決し直すと別テナントのアプリで code を交換しうる。

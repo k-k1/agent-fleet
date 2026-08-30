@@ -69,7 +69,7 @@ export const ProjectTree = memo(function ProjectTree() {
     [refreshRepos, clearRepos, running],
   );
 
-  // 作業グループ (docs/52): scope to the active group first — a whole project
+  // 作業グループ (docs/log/52): scope to the active group first — a whole project
   // (base + its worktrees) is in or out by the base's membership.
   const wset = useActiveWorkingSet();
   const scoped = groupedRepos(repos).filter((g) => !wset || repoInSet(wset, g[0]));
@@ -82,11 +82,11 @@ export const ProjectTree = memo(function ProjectTree() {
     .filter((g) => !nq || g.some(visible))
     .map((g) => (nq ? [g[0], ...g.slice(1).filter(visible)] : g));
 
-  // 取り込みの進行は Agent 側のジョブが正（docs/78）。ここは開始して結末を待つだけで、
+  // 取り込みの進行は Agent 側のジョブが正（docs/log/78）。ここは開始して結末を待つだけで、
   // 「取り込み中」の行は下の RepoJobRow が一覧から描く（タブを閉じても続いている）。
   const doImport = async (start: () => Promise<{ ok: boolean; name: string }>, doneKey: "pj.cloned" | "pj.checked_out" | "pj.folder_created") => {
     const res = await start();
-    // グループ選択中の取り込みはそのグループへ自動所属（docs/52 §1 — さもないと
+    // グループ選択中の取り込みはそのグループへ自動所属（docs/log/52 §1 — さもないと
     // 作った直後に絞り込みで見えなくなる）。
     if (res.ok && res.name) autoAddToActiveWorkingSet("repos", res.name);
     // clone-only path: bridge straight into 作業を始める (起動導線 Ph3) so

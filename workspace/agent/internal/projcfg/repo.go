@@ -1,8 +1,8 @@
-// Package projcfg is the shared ground floor for "project-scoped" tools (docs/57):
+// Package projcfg is the shared ground floor for "project-scoped" tools (docs/log/57):
 // tools that read/edit files INSIDE one working copy on the "management axis" (as
 // opposed to internal/mcpreg's "distribution axis", which af writes automatically
-// into each CLI's user/global config — docs/57 §0). The first tool built on it is
-// internal/mcpproj (docs/56, project-scope MCP servers).
+// into each CLI's user/global config — docs/log/57 §0). The first tool built on it is
+// internal/mcpproj (docs/log/56, project-scope MCP servers).
 //
 // This file holds the part every such tool needs before it can read a single file:
 // telling git from svn from neither, whether the working copy is a linked worktree,
@@ -51,7 +51,7 @@ func isSvnRepo(dir string) bool {
 }
 
 // IsWorktree reports whether dir is a linked git worktree (`git worktree add`)
-// rather than a normal clone — docs/56 §4.4 requires the caller to say so, because
+// rather than a normal clone — docs/log/56 §4.4 requires the caller to say so, because
 // a write here would not be visible to the repo's other working copies until
 // committed and pulled there. Mirrors git.go's isLinkedWorktree.
 func IsWorktree(dir string) bool {
@@ -63,7 +63,7 @@ func IsWorktree(dir string) bool {
 }
 
 // TrackState is what the VCS knows about one repo-relative path, for the secret
-// warnings in docs/56 §7.2 / docs/57 憲章6. Only git can actually answer; svn and a
+// warnings in docs/log/56 §7.2 / docs/log/57 憲章6. Only git can actually answer; svn and a
 // missing VCS come back Uncertain rather than a guessed false — "判定不可" is itself
 // the fact to display, never silently downgraded to "not tracked".
 type TrackState struct {

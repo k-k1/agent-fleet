@@ -1,6 +1,6 @@
 package cursor
 
-// cursor の認証は専用フロー型（docs/40 契約・claude/agy と同型）。資格情報は
+// cursor の認証は専用フロー型（docs/log/40 契約・claude/agy と同型）。資格情報は
 // ~/.config/cursor/auth.json（600・accessToken/refreshToken 平文 JSON — 実測）。
 // 対話ログインは `NO_OPEN_BROWSER=1 cursor-agent login`（URL 標準出力）で、
 // start/complete 連携は Track C（CP ルート）で足す。ここでは Status() を出す:
@@ -93,7 +93,7 @@ func invalidateStatus() {
 	statusMu.Unlock()
 }
 
-// --- interactive login flow (docs/40 Track C) ---------------------------------
+// --- interactive login flow (docs/log/40 Track C) ---------------------------------
 //
 // `NO_OPEN_BROWSER=1 cursor-agent login` prints an authorize URL to stdout, then
 // polls Cursor itself until the user approves in a browser and finally writes
@@ -104,7 +104,7 @@ func invalidateStatus() {
 // browser, so the flow is start→poll（codex device-auth 型）, not start→complete.
 // v1 is login-only; a manual CURSOR_API_KEY registration path is deferred to
 // Track D（cursor CLI has no key-persistence command, and injecting the key into
-// the tmux TUI pane program would leak it into `ps` — docs/40 決定 5/Track D）.
+// the tmux TUI pane program would leak it into `ps` — docs/log/40 決定 5/Track D）.
 
 // loginURLRe matches the deep-control authorize URL cursor prints（実測 Track 0）:
 // https://cursor.com/loginDeepControl?challenge=…&uuid=…&mode=login&redirectTarget=cli

@@ -1,6 +1,6 @@
 package main
 
-// ブラウザ attach ハンドオフの配送台帳（docs/53-chromium-attach-view.md「完了通知」節）。
+// ブラウザ attach ハンドオフの配送台帳（docs/log/53-chromium-attach-view.md「完了通知」節）。
 //
 // request_browser_action で人間に操作を依頼したセッションへ、Console の完了/
 // キャンセルボタンが押された結果を実際に届ける薄い機構。それまでは

@@ -1,6 +1,6 @@
-// メンバーへの引き継ぎ（docs/77 / ADR 0057）のクライアント状態。
+// メンバーへの引き継ぎ（docs/log/77 / ADR 0057）のクライアント状態。
 //
-// 3 つの役割を混ぜないのがこの機能の要（docs/77 §77.10）:
+// 3 つの役割を混ぜないのがこの機能の要（docs/log/77 §77.10）:
 //   通知 = 流れ物（既読で消えてよい）／バッジ = 未処理の在庫／台帳 = 出した側の履歴。
 // ここが持つのは後ろ 2 つで、どちらも CP の DB スナップショットを読むだけ ——
 // **所有者 Workspace が停止していても出る**のが要件そのものなので、共有一覧のように
@@ -55,7 +55,7 @@ export const useHandoffStore = create<HandoffStore>((set) => ({
   },
 }));
 
-/** 未処理の在庫は「既読」では消さない（docs/77 §77.10）ので、素の件数がそのままバッジ。 */
+/** 未処理の在庫は「既読」では消さない（docs/log/77 §77.10）ので、素の件数がそのままバッジ。 */
 export function pendingHandoffCount(offers: HandoffOffer[]): number {
   return offers.filter((o) => o.status === "pending").length;
 }

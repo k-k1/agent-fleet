@@ -1,6 +1,6 @@
 # 0030. 中断ターン — 自己修復を通知 seam に載せ、再送で直る中断だけ自動再開する
 
-- 状態: **採用・実装済み**。設計は [docs/47](../47-turn-abort-auto-resume.md)。
+- 状態: **採用・実装済み**。設計は [docs/47](../log/47-turn-abort-auto-resume.md)。
 - 関連: [0015](0015-agent-managed-driver.md)（managed driver の turn 状態機械）/
   docs/30（完了報告とオペレーター）/ docs/37（チャットブリッジ）
 
@@ -112,7 +112,7 @@ Agent の裏送信になるので、代わりに**定時実行の一覧に一回
 
 §3 は「再開させるのはアシスタントで、Agent 側で自動再送はしない」だった。上限（前の
 追補）に続き、**retryable な中断一般もその例外にする**。設計は
-[docs/47 §4-6](../47-turn-abort-auto-resume.md)。
+[docs/47 §4-6](../log/47-turn-abort-auto-resume.md)。
 
 理由は 2 つ。
 

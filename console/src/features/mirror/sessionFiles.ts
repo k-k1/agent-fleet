@@ -1,4 +1,4 @@
-// sessionFiles — the model behind「変更ファイル」(docs/68): the files THIS session's
+// sessionFiles — the model behind「変更ファイル」(docs/log/68): the files THIS session's
 // agent edited, joined with the working tree's current git state.
 //
 // Two sources, deliberately:
@@ -47,7 +47,7 @@ export interface FsChange {
  * What the working tree says about a file the session edited.
  *   unstaged/staged/untracked — git has a diff to show
  *   committed — no working-tree diff left, but the path appeared in a commit made since
- *             this session started (docs/68 P2).
+ *             this session started (docs/log/68 P2).
  *   clean   — no working-tree diff and no such commit. ⚠️ This is NOT "reverted": the
  *             edit may have landed in an older commit, in another working copy, or under
  *             a name git no longer reports. Only the positive claim is made; the rest

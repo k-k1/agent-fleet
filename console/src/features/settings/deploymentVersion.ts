@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 
 // Deployment build identity — the answer to "which version is this, and which image is
-// it running" (docs/35 §35.6.1, CP side in version_info.go).
+// it running" (docs/log/35 §35.6.1, CP side in version_info.go).
 //
 // It is a DIFFERENT thing from lib/version.ts: that stamp is the Console bundle in this
 // tab. On ECS the code arrives as an image, and what an operator deploys is the ImageTag

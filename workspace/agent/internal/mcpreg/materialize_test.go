@@ -1,6 +1,6 @@
 package mcpreg
 
-// docs/48 §13「materialize の非破壊性」: 利用者手書きの設定に対して書き→消しを
+// docs/log/48 §13「materialize の非破壊性」: 利用者手書きの設定に対して書き→消しを
 // 往復させ、**手書き分が残り af 分だけ消える**ことを固定する。ここが崩れると
 // 「af が MCP を登録したら claude の trust ダイアログが飛んだ / codex の config が
 // 読めなくなった」という、機能そのものより重い壊れ方をする。
@@ -332,7 +332,7 @@ func TestMaterializeUsesSessionTargetAndKind(t *testing.T) {
 	if res.Err != "" {
 		t.Fatalf("claude: %s", res.Err)
 	}
-	// af は自己申告ファストパスの組み込みサーバー（docs/51 Phase 3）で、接続不要・全 kind
+	// af は自己申告ファストパスの組み込みサーバー（docs/log/51 Phase 3）で、接続不要・全 kind
 	// 配布なので、どの kind の materialize にも必ず入る。
 	if !reflect.DeepEqual(res.Written, []string{"af", "both"}) {
 		t.Fatalf("claude written = %v, want [af both]", res.Written)

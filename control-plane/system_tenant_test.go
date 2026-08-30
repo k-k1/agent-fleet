@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// 予約テナントは管理画面のテナント一覧に出さない（docs/61 §61.18）。焼き直しのたびに
+// 予約テナントは管理画面のテナント一覧に出さない（docs/log/61 §61.18）。焼き直しのたびに
 // 使い回される入れ物であって、人のテナントではない。
 func TestListTenantsHidesTheSystemTenant(t *testing.T) {
 	ctx := context.Background()

@@ -1,5 +1,5 @@
 -- Which KIND of machine this member's workspace lands on, as a deployment-declared
--- class id (docs/70). "" = unset means the tenant default, and failing that the
+-- class id (docs/log/70). "" = unset means the tenant default, and failing that the
 -- deployment default class.
 --
 -- Deliberately an opaque id and not an EC2 instance type. user_limit is the

@@ -1,11 +1,11 @@
 package opencode
 
-// opencode serve の RuntimeSupervisor（docs/27 §3・§7、P2）。共有 `opencode serve`
+// opencode serve の RuntimeSupervisor（docs/log/27 §3・§7、P2）。共有 `opencode serve`
 // （HTTP＋SSE、loopback）を 1 プロセス起動・監視し、managed セッションの runtime を
 // 提供する。責務は「プロセスの生涯」だけ — thread（opencode session）に何をさせるかは
 // driver.go の ThreadHandle が持つ。
 //
-// 実測（1.17.18、docs/27 §12.2）:
+// 実測（1.17.18、docs/log/27 §12.2）:
 //   - 認証: OPENCODE_SERVER_PASSWORD 未設定なら無認証（起動ログに unsecured 警告）。
 //     コンテナ network namespace 内の loopback 限定なので codex app-server と同じ判断
 //     （§9.1）で無認証運用。TUI アタッチも同条件で素通し。
@@ -14,7 +14,7 @@ package opencode
 //   - serve は SQLite（message/part）へ v1 フローで書く。read 層（transcript.go）は
 //     無傷のまま managed セッションの正本を読める。
 //
-// exit recording（docs/26・§10.2-2 の supervisor 移設）: daemon は supervisor の
+// exit recording（docs/log/26・§10.2-2 の supervisor 移設）: daemon は supervisor の
 // 子プロセスなので cmd.Wait() の wait status が直接取れる。予期しない死は
 // (a) generation 履歴としてログへ、(b) thread レベルでは live な managed セッション
 // 全員に status.PersistExit（既存の session-exit ストア・reason enum 共用）で記録し、
@@ -50,7 +50,7 @@ const defaultServeAddr = "http://127.0.0.1:7799"
 var serveClient = &http.Client{Timeout: 10 * time.Second}
 
 // Supervisor owns the shared `opencode serve` daemon: idempotent start, health,
-// generation counter, drain and restart（docs/27 §3 の RuntimeSupervisor）。
+// generation counter, drain and restart（docs/log/27 §3 の RuntimeSupervisor）。
 type Supervisor struct {
 	mu   sync.Mutex
 	addr string

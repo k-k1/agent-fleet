@@ -1,5 +1,5 @@
 // ワークスペースの大きさ（メモリ / CPU / 作業ディスク）を設定する面を固定する
-// （docs/63 §63.5 / ADR 0044 決定 1・2）。押さえるのは 2 点だけ:
+// （docs/log/63 §63.5 / ADR 0044 決定 1・2）。押さえるのは 2 点だけ:
 //   ① 保存で 3 軸すべてが飛ぶこと。この API はクォータ行を丸ごと書くので、UI が
 //      送らなかった軸は 0 に落ちる —— disk_gb を省いた実装は、MCP や API で設定した
 //      ディスクを黙って消す。
@@ -125,7 +125,7 @@ describe("メンバーの上限編集", () => {
   });
 });
 
-// 後始末の 3 段（docs/61 §61.18）。段は「外す → Workspace を破棄 → 行を消す」で、
+// 後始末の 3 段（docs/log/61 §61.18）。段は「外す → Workspace を破棄 → 行を消す」で、
 // 画面に出る危険操作は常にそのうちの 1 つだけであること —— 3 つ並べると、どれが
 // 今できる操作なのかが押してみるまで分からない。
 describe("外したメンバーの後始末", () => {
@@ -224,7 +224,7 @@ describe("メンバーの上限編集（ecs-ec2）", () => {
   });
 });
 
-// マシン種別（docs/70 §70.10）。押さえるのは 3 点。
+// マシン種別（docs/log/70 §70.10）。押さえるのは 3 点。
 //   ① 1 クラスしか無いデプロイでは選択肢を出さない（答えが 1 つの質問を足さない）。
 //   ② クラスを変えるとメモリのチップ列がそのクラスの梯子で描き直され、「乗る箱」も
 //      そのクラスで再計算される —— 同じ MB でも別のクラスでは別の箱に乗る。
@@ -329,7 +329,7 @@ describe("メンバーのマシン種別", () => {
 // it (onChanged reloads the tenant LIST, not the selection). Re-seeding the editor from
 // that prop after a save shows the values from BEFORE the save, which on the machine
 // chips reads as "the setting did not save" while it very much did. Measured on a live
-// deployment (docs/70 §70.14.6).
+// deployment (docs/log/70 §70.14.6).
 describe("保存した値が編集を開き直しても残る", () => {
   beforeEach(() => {
     api.mockImplementation((p: string) =>
@@ -368,7 +368,7 @@ describe("保存した値が編集を開き直しても残る", () => {
   });
 });
 
-// リソースのタイル（docs/63 §63.9）。ECS 構成では実測値が Agent から来るので、
+// リソースのタイル（docs/log/63 §63.9）。ECS 構成では実測値が Agent から来るので、
 // ホストの cgroup が読めない＝タイルが 3 つとも「–」だった状態からの回復がここ。
 // 押さえるのは「測れない軸を 0 として描かない」ことと、割合の分母である。
 describe("ワークスペースのリソースのタイル", () => {
@@ -398,7 +398,7 @@ describe("ワークスペースのリソースのタイル", () => {
     expect(mem.sub).toContain("8.00G");
     expect(cpu.value).toBe("42%");
     expect(disk.value).toBe("20.0G");
-    // 分母は実測の容量。docs/63 §63.9 の要点は「稼働中なのに – のまま」を無くすこと。
+    // 分母は実測の容量。docs/log/63 §63.9 の要点は「稼働中なのに – のまま」を無くすこと。
     expect(disk.sub).toContain("/ 40.0G");
     expect(disk.sub).toContain("50%");
   });

@@ -2,8 +2,8 @@
 
 - 状態: **採用・実装済み**（2026-07-28 決定 / 2026-07-29 に Phase 1「判定の一本化」・
   Phase 2「台帳置換」・Phase 3「補償 reopen ＋自己申告ファストパス」を実装）。
-  設計本文は [51-session-report-v2-ledger.md](../51-session-report-v2-ledger.md)。
-- 関連: [docs/30](../30-session-report.md)（v1 の設計と事故史 — 専用 ADR は無い）/
+  設計本文は [51-session-report-v2-ledger.md](../log/51-session-report-v2-ledger.md)。
+- 関連: [docs/30](../log/30-session-report.md)（v1 の設計と事故史 — 専用 ADR は無い）/
   [0030](0030-turn-abort-auto-resume.md)（中断分類 — v2 の述語に吸収）/
   [0015](0015-agent-managed-driver.md)（notify seam — v2 でヒント化）
 

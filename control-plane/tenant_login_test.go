@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// docs/61 §61.9 / §61.10 (P3). What these pin down is the part of per-tenant login
+// docs/log/61 §61.9 / §61.10 (P3). What these pin down is the part of per-tenant login
 // that is easy to get subtly wrong: the entry gate is a union taken WITHIN the
 // email axis (so a membership never buys a way past the GitHub org check), the
 // per-tenant provider rule is enforced at tenant resolution rather than by hiding
@@ -43,7 +43,7 @@ func p3Manager(t *testing.T, st *sqlStore) *manager {
 
 // 決定 16: being on a roster is itself permission to reach the login, so an
 // invite-run deployment does not have to keep AF_OAUTH_ALLOWED_* as well. This is
-// the connection docs/61 §61.9.6 calls "the one that is missing today".
+// the connection docs/log/61 §61.9.6 calls "the one that is missing today".
 func TestEntryGateAdmitsAnInvitedPersonWithNoDeploymentAllowlist(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -354,7 +354,7 @@ func TestRemoveMembershipLocksOutButKeepsTheWorkspace(t *testing.T) {
 // valid for up to AF_SESSION_TTL and they may still clear the entry gate (a
 // deployment-wide allowed domain, another tenant's membership), so if the admin
 // gate did not check the membership status they could simply put themselves back
-// on the roster — docs/61 §61.10.7 の穴 2.
+// on the roster — docs/log/61 §61.10.7 の穴 2.
 func TestRemovedTenantAdminLosesAdminRights(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -551,7 +551,7 @@ func TestPerTenantLoginPage(t *testing.T) {
 	}
 }
 
-// P7-1 (docs/61 §61.17.6 + 決定 42): the tenant-less /login is the DEFAULT tenant's
+// P7-1 (docs/log/61 §61.17.6 + 決定 42): the tenant-less /login is the DEFAULT tenant's
 // page — for hidden_providers, and for nothing else.
 //
 // The three properties below are one decision each, and the second one is why the
@@ -713,7 +713,7 @@ func TestSetTenantLoginRejectsDuplicateAutoJoinDomains(t *testing.T) {
 // two properties the endpoint exists for — it names every enabled provider with a
 // label, and it leaks no credential — plus the gate.
 //
-// ★ P7 (docs/61 §61.17.9 ①) widened the gate: the deployment's methods ARE the
+// ★ P7 (docs/log/61 §61.17.9 ①) widened the gate: the deployment's methods ARE the
 // default tenant's methods, so every tenant's sign-in method panel lists them and
 // its administrator has to be able to read them. What did NOT widen is the ISSUER,
 // which names the operator's own directory and is absent from /login — so the

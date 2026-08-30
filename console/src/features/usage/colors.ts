@@ -1,4 +1,4 @@
-// features/usage/colors — 系列 → 色スロットの割り当て（docs/46 P4）。
+// features/usage/colors — 系列 → 色スロットの割り当て（docs/log/46 P4）。
 //
 // 規約は3つだけ。守るとグラフが色覚特性を含めて読める状態のまま保たれる。
 //
@@ -32,9 +32,9 @@ export const MAX_SLOTS = 8;
 export const OTHER_KEY = "__other__";
 
 /**
- * feature の固定スロット表（docs/46 §1-a の列挙）。
+ * feature の固定スロット表（docs/log/46 §1-a の列挙）。
  *
- * enum は13個（ADR0029 の凍結12個＋docs/44 Phase 4 の `suggest.edit`）あり、スロットは
+ * enum は13個（ADR0029 の凍結12個＋docs/log/44 Phase 4 の `suggest.edit`）あり、スロットは
  * 8つしかない。**9色目を作らない**（規約3）ので、溢れる5つは常にグレーの「その他」へ
  * 入る — これは取りこぼしではなく選択で、色を持つ8つは「単独で桁が立ちうるもの」を
  * 採ってある:

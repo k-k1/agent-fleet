@@ -39,7 +39,7 @@ interface ContextBarProps {
   // the same row, after the context gauge. Omitted by the terminal head, which has none.
   spends?: number[];
   maxSpend?: number;
-  // Optional trailing action (assistant chat only: the compact button, docs/33) rendered
+  // Optional trailing action (assistant chat only: the compact button, docs/log/33) rendered
   // at the row's end. The mirror/terminal heads pass nothing.
   action?: ReactNode;
 }

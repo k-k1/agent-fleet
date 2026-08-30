@@ -2,7 +2,7 @@
 // Group.title) is now an i18n message key, optionally carrying a "|k=v" vars suffix
 // (the generated pane-focus commands use it to pass {n}). Display resolves to the
 // current locale; the palette searches across ALL locales so typing English or Japanese
-// matches either way (docs/29, i18n = docs/28). Kept out of the pure lib layer.
+// matches either way (docs/log/29, i18n = docs/log/28). Kept out of the pure lib layer.
 import { tMaybe, tLocales } from "../../lib/i18n/index.ts";
 
 function parse(title: string): { key: string; vars?: Record<string, string> } {

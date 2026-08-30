@@ -25,10 +25,10 @@ import (
 // with the assistant's text, so the Console can faintly show what claude was doing
 // (Read/Bash/Edit …) between paragraphs. Both read the same jsonl (cursor = line #).
 //
-// The shared turn/part model itself lives in internal/transcript (docs/23 P1-W5),
+// The shared turn/part model itself lives in internal/transcript (docs/log/23 P1-W5),
 // so the claude/codex/opencode parsers are compiler-bound to one output vocabulary.
 // claude の jsonl 解析（CollectTurns/CollectTasks ほか）は internal/agents/claude
-// へ移設（docs/23 残① Wave F）; ここにはウィンドウ処理・ページング・internal/status
+// へ移設（docs/log/23 残① Wave F）; ここにはウィンドウ処理・ページング・internal/status
 // の pending 合成を行う HTTP ハンドラだけが残る。
 
 // forkPreviewCursor is an out-of-range line cursor handed out while a fork previews its
@@ -152,7 +152,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	turns := claude.CollectTurns(lines, lo, hi)
 	resolveUserFiles(turns)       // SendUserFile paths → browse-root-relative, per each turn's cwd
-	tagInjectedTurns(name, turns) // Source=operator/discord/… on injected user turns (docs/30 ②, docs/37 P2a)
+	tagInjectedTurns(name, turns) // Source=operator/discord/… on injected user turns (docs/log/30 ②, docs/log/37 P2a)
 	mt := jsonlMtime(jpath)       // hoisted: also feeds the title-suggestion idle check below
 	if autoTitleSuggestEnabled() && meta.Title == "" && meta.SuggestedTitle == "" &&
 		!meta.SuggestedTitleDismissed && titleGenReady(name) {
@@ -171,7 +171,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// de-duplication below needs to know what was surfaced, and may withdraw it.
 	pending := map[string]any{}
 	surfacePendingPayloads(pending, sid, state)
-	// 畳まれたときに画面に出ていたもの（docs/75）。保留が無いときだけ載る。
+	// 畳まれたときに画面に出ていたもの（docs/log/75）。保留が無いときだけ載る。
 	surfaceCarried(pending, sid)
 	// The pending question/plan above is ALSO in the transcript already (ask-time tool_use),
 	// so the same card would render twice. Drop the duplicate and hold the cursor short of
@@ -219,7 +219,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if tasks := claude.CollectTasks(lines); len(tasks) > 0 {
 		resp["tasks"] = tasks
 	}
-	// Files this session edited (docs/68). Whole-transcript like the ToDo list above —
+	// Files this session edited (docs/log/68). Whole-transcript like the ToDo list above —
 	// the turns sent alongside are a window, so anything derived from them would
 	// undercount. jsonl lines are immutable once written, so all of them are foldable.
 	var head []byte
@@ -341,7 +341,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// userfile parts exist here too (codex imagegen's generated file) — map their
 	// paths browse-root-relative so the Console's 共有ファイル panel can open them.
 	resolveUserFiles(turns)
-	tagInjectedTurns(meta.Name, turns) // Source=operator/discord/… on injected user turns (docs/30 ②, docs/37 P2a)
+	tagInjectedTurns(meta.Name, turns) // Source=operator/discord/… on injected user turns (docs/log/30 ②, docs/log/37 P2a)
 	resp := map[string]any{
 		"name": meta.Name, "messages": turns, "cursor": cursor,
 		"status": state, "alive": alive, "reset": reset,
@@ -360,7 +360,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if len(td.Tasks) > 0 {
 		resp["tasks"] = td.Tasks
 	}
-	// Files this session edited (docs/68), from the same whole parse. The LAST turn is
+	// Files this session edited (docs/log/68), from the same whole parse. The LAST turn is
 	// held back from the fold: these agents keep appending parts to an already-counted
 	// message (genericMutableTail above), so folding it into the cache would double-count
 	// its edits — it is re-folded into a copy on every poll instead.
@@ -384,7 +384,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if alive && len(td.Pending) > 0 {
 		resp["pendingQuestions"] = td.Pending
 	}
-	// 畳まれたときに答えを待っていた対話（docs/75 §75.6）。claude の /messages と同じ
+	// 畳まれたときに答えを待っていた対話（docs/log/75 §75.6）。claude の /messages と同じ
 	// キー・同じ「保留が生きているあいだは出さない」規則で載せる — 出さないと、tier1 が
 	// 畳んだ非 claude セッションの持ち越しは**書かれるだけで誰にも見えない**（一覧の
 	// バッジは「質問あり」と言うのに、開いても答える口が無い）。
@@ -422,7 +422,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// the rollout's per-turn mode is a stale snapshot (the last turn's), which made a
 	// stopped codex show 計画モードON. When not alive, or the composer isn't drawn yet,
 	// report no mode (the Console shows the default, normal).
-	// managed（docs/27 §10.2-5）: pane が無いので TranscriptData.Mode（driver 設定 ＝
+	// managed（docs/log/27 §10.2-5）: pane が無いので TranscriptData.Mode（driver 設定 ＝
 	// 次 turn が使う値、無ければ db の最後の turn の agent）からの射影で供給する。
 	if alive {
 		if meta.DriverKind() == session.DriverManaged {
@@ -576,7 +576,7 @@ func surfacePendingPayloads(resp map[string]any, sid, state string) {
 	}
 }
 
-// surfaceCarried adds the CARRIED interaction (docs/75 §75.6) — what was on screen when
+// surfaceCarried adds the CARRIED interaction (docs/log/75 §75.6) — what was on screen when
 // the session was folded away, which the resumed CLI no longer knows about.
 //
 // pending-* とは**別のキー**で出す。同じキーに相乗りさせると、Console 側は「今モーダルが

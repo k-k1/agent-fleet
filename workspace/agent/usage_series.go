@@ -1,6 +1,6 @@
 package main
 
-// GET /usage/series — 機能別使用量の時系列（docs/46 §4 / ADR0029 §8）。
+// GET /usage/series — 機能別使用量の時系列（docs/log/46 §4 / ADR0029 §8）。
 //
 // サーバ側で集計して返す（Console に生ログを流さない）。生ログにはセッション名・会話 id が
 // 載るので、集計して返すことは形の都合ではなくプライバシー側の要求でもある。
@@ -203,7 +203,7 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// fold-on-read（docs/46 §3-b）: 系列を要求されたこの機会にセッション本体を折り込む。
+	// fold-on-read（docs/log/46 §3-b）: 系列を要求されたこの機会にセッション本体を折り込む。
 	// 非同期なのでこの応答自体は待たない（＝直近ターンは次回の読み出しに乗る）。**待たない
 	// ことを黙っていると「再取得を何度か押すまで最新にならない」画面になる**ので、走行中は
 	// folding を立てて返し、Console が終わってから取り直す。

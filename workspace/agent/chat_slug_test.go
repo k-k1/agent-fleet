@@ -1,6 +1,6 @@
 package main
 
-// アシスタント会話 slug（docs/38 アシスタント発火）: 形式・採番・解決・バックフィル。
+// アシスタント会話 slug（docs/log/38 アシスタント発火）: 形式・採番・解決・バックフィル。
 
 import "testing"
 

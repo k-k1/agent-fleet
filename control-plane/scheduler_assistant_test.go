@@ -1,6 +1,6 @@
 package main
 
-// session_mode=assistant（docs/38 アシスタント発火）の fake-Agent 統合テスト:
+// session_mode=assistant（docs/log/38 アシスタント発火）の fake-Agent 統合テスト:
 // 会話解決（reuse_target → owner_conv フォールバック）・成功 fired・実行中 409 →
 // skipped_overlap・会話消失 404 → skipped_target_missing・source なし同期実行の意味論。
 

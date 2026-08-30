@@ -1,11 +1,11 @@
 package cursor
 
-// cursor の起動コマンド組み立てと、状態・転写パスの解決（docs/40 Track A）。
+// cursor の起動コマンド組み立てと、状態・転写パスの解決（docs/log/40 Track A）。
 //
 // セッション同一性は AF 側で採番した v4 UUID を `--resume <uuid>` に渡す方式。
 // 実測（v2026.07.20）: 未知の valid v4 UUID を --resume に渡すとその ID で新規
 // チャットを作成し、既存 ID なら resume する（copilot の --session-id と同型）——
-// docs/40 は `create-chat` 事前採番を想定していたが、自己採番 UUID なら起動時の
+// docs/log/40 は `create-chat` 事前採番を想定していたが、自己採番 UUID なら起動時の
 // 追加 exec が要らず速い。転写は Claude Code 互換 JSONL（`<chatId>.jsonl`）で、
 // cwd スラグ配下に置かれる（実測パスは transcriptPath 参照）。
 
@@ -29,7 +29,7 @@ func envOr(key, def string) string {
 // Home is cursor's state root (~/.cursor): chats/<ws-hash>/<chatId>/store.db
 // （非公開 SQLite・読まない）、projects/<slug>/agent-transcripts/（読む JSONL）、
 // hooks.json・cli-config.json など。資格情報は別ツリー（~/.config/cursor/auth.json）
-// にあり、両方とも fs.go の denylist 対象（平文トークン保護 — docs/40 契約）。
+// にあり、両方とも fs.go の denylist 対象（平文トークン保護 — docs/log/40 契約）。
 func Home() string { return paths.CursorHome() }
 
 // projectsDir is ~/.cursor/projects — the per-cwd transcript tree root.
@@ -66,7 +66,7 @@ func transcriptPath(dir, chatID string) string {
 // だが受理・既定 false）。ACP/サブコマンドの前に置く必要がある（root option のため。
 // 実測: `cursor-agent --disable-auto-update acp` は通り、`acp --disable-auto-update` は
 // 拒否）。バンドル解析でも背景更新は `disableAutoUpdate || channel==="static"` で
-// スキップされる（起動2秒後 setTimeout(...).unref()）ことを確認済み — docs/40 Track B。
+// スキップされる（起動2秒後 setTimeout(...).unref()）ことを確認済み — docs/log/40 Track B。
 // entrypoint の cli-config.json `channel:"static"` 再固定と二重の封殺（片方が
 // ユーザ設定で崩れても他方が効く）。
 const disableAutoUpdateFlag = "--disable-auto-update"
@@ -91,7 +91,7 @@ func Bin() string { return bin() }
 // buildProgram returns the tmux pane program for a cursor TUI session. Auth is
 // ambient（~/.config/cursor/auth.json を CLI 自身が拾う — 実測）なのでトークンは
 // 注入しない。--resume は新規作成と resume の両方を同じ形でまかなう。
-// bypass=false は「権限確認をスキップしない」（docs/76 の利用者選択、または plan 起動）。
+// bypass=false は「権限確認をスキップしない」（docs/log/76 の利用者選択、または plan 起動）。
 // 外すのは --force だけで、--trust（ワークスペース信頼）は必ず残す — 信頼プロンプトは
 // 権限確認ではなく、外すと ACP でも TUI でも起動が固まる（実測）。
 func buildProgram(model, mode, chatID string, bypass bool) string {

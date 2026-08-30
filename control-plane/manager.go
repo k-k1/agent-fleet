@@ -17,7 +17,7 @@ import (
 // runtimes keyed by membership id. The Agent contract is unchanged.
 type manager struct {
 	// mu guards ONLY the in-memory maps below (runtime/lock/activity caches) — it is
-	// never held across store/docker I/O（docs/23 P2-W2、以前は resolve 全体を
+	// never held across store/docker I/O（docs/log/23 P2-W2、以前は resolve 全体を
 	// この 1 本で直列化していた）。初回解決の I/O は per-membership の
 	// buildLocks で直列化する（buildResolved, resolver.go）。
 	mu                     sync.Mutex
@@ -30,7 +30,7 @@ type manager struct {
 	store                  Store
 	conns                  *connRegistry // P3-9: live activity/attachment tracking for idle-stop
 	// idleForecasts は reaper が毎スイープで置いていく「この Workspace はいつ止まるか /
-	// なぜ止まらないか」（docs/75 P4）。管理画面はここを読むだけで、判定をやり直さない。
+	// なぜ止まらないか」（docs/log/75 P4）。管理画面はここを読むだけで、判定をやり直さない。
 	//
 	// ★再導出しないことが要件そのもの: 画面が自前で計算すると、reaper が実際に見ている
 	// もの（在席・保留中の対話・ピン・共有ウォーターマーク）とズレて、「止まらない理由」を
@@ -43,7 +43,7 @@ type manager struct {
 	rtFactory RuntimeFactory
 
 	// costPoller is the Cost Explorer poller when this deployment has an AWS bill and
-	// the credentials to read it (docs/67, ADR 0048), else nil. Held only so the API can
+	// the credentials to read it (docs/log/67, ADR 0048), else nil. Held only so the API can
 	// surface the poller's last failure — an AccessDenied there is indistinguishable
 	// from "nothing was spent" if it is not shown.
 	costPoller *cloudCostPoller
@@ -51,11 +51,11 @@ type manager struct {
 	// autoBakeGolden is AF_ECS_EC2_GOLDEN_AUTOBAKE, recorded at boot for the pool
 	// screen. It is the one thing about the golden that is NOT visible in AWS, and
 	// without it "no golden, nothing under way" cannot be told apart from "no golden,
-	// and nothing ever will be" (docs/64 §64.30).
+	// and nothing ever will be" (docs/log/64 §64.30).
 	autoBakeGolden bool
 
 	// nativeRuntime is true when AF_RUNTIME is native/wsl (containerless, single-user;
-	// docs/34). Native is a personal dev host with no shared-host contention, so the
+	// docs/log/34). Native is a personal dev host with no shared-host contention, so the
 	// concurrent-session quota is not enforced there — see sessionQuotaExceeded.
 	nativeRuntime bool
 
@@ -87,17 +87,17 @@ type manager struct {
 	// the default tenant) | "invite" (deny unknown identities). superAdmins are
 	// emails granted identity.role=super_admin (deployment-wide).
 	//
-	// docs/61 §61.9.8 puts a third case FIRST: a tenant whose auto_join_domains
+	// docs/log/61 §61.9.8 puts a third case FIRST: a tenant whose auto_join_domains
 	// matches the address wins over both of these, so a deployment can split into
 	// departments by domain without touching AF_PROVISION.
 	provisionMode string
 	superAdmins   map[string]bool
 
-	// tenantLogin caches the per-tenant login rules (docs/61 §61.9.7). Read by the
+	// tenantLogin caches the per-tenant login rules (docs/log/61 §61.9.7). Read by the
 	// entry gate on every request and by the tenant gate on every resolution;
 	// dropped by every admin write that can change who may enter.
 	tenantLogin *tenantLoginCache
-	// tenantIdP is the RUNTIME set of tenant-defined login providers (docs/61
+	// tenantIdP is the RUNTIME set of tenant-defined login providers (docs/log/61
 	// §61.11). It lives here rather than in config for the reason tenant_idp.go
 	// gives: config is copied by value into every handler, so a set stored there
 	// could never change without a restart — and approving or suspending a
@@ -179,7 +179,7 @@ func (m *manager) workspaceNames(slug, key string) (name, network, dataDir strin
 // stale — mounting it would silently give the workspace an empty home. The stable
 // part is the suffix (<key> for the default tenant, <slug>/<key> otherwise, per
 // workspaceNames); we keep the trailing segment(s) and swap the root. Idempotent
-// when the path is already current. See docs/history/p3-10-packaging.md §20.3(B).
+// when the path is already current. See docs/log/p3-10-packaging.md §20.3(B).
 func (m *manager) rootedDataDir(ws Workspace) string {
 	if ws.DataDir == "" {
 		return ws.DataDir

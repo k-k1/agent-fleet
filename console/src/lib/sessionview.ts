@@ -27,7 +27,7 @@ export const displayName = (s: Session): string => {
 };
 
 // What stateInfo actually reads. Structural on purpose: Session satisfies it, and so
-// does the recipient-side SharedSession (docs/59) — a shared row must show the same
+// does the recipient-side SharedSession (docs/log/59) — a shared row must show the same
 // 進行中 / 入力待ち / 質問中 chip as the owner's own rail, from the same code, or the two
 // sides drift apart in exactly the way that makes a shared list untrustworthy.
 export interface SessionState {
@@ -40,7 +40,7 @@ export interface SessionState {
   exitCode?: number;
   exitSignal?: number;
   rateLimitResumeAt?: string;
-  /** 畳まれたときに答えを待っていた対話（docs/75）。停止中の行にだけ入る。 */
+  /** 畳まれたときに答えを待っていた対話（docs/log/75）。停止中の行にだけ入る。 */
   carried?: string;
 }
 
@@ -92,9 +92,9 @@ export const stateInfo = (s: SessionState): StateInfo => {
     // clean 停止中; the reason detail rides the row tooltip.
     const ex = exitLabel(s);
     if (ex) return { cls: "off warn", icon: "warning", text: ex.text };
-    // 畳まれたときに答えを待っていた対話がある（docs/75）。停止中を 停止中 の 1 語で
+    // 畳まれたときに答えを待っていた対話がある（docs/log/75）。停止中を 停止中 の 1 語で
     // 済ませると、未回答の質問を抱えた行が「ただ畳まれた行」と見分けられない —
-    // 人待ちも畳めるようにした以上（docs/75 P2）、これが無いと利用者から見て
+    // 人待ちも畳めるようにした以上（docs/log/75 P2）、これが無いと利用者から見て
     // 「静かに失われた」のと同じになる。色は question 系（注意を引く側）だが、
     // off を残して「今は動いていない」ことは崩さない。
     switch (s.carried) {
@@ -134,7 +134,7 @@ export const stateInfo = (s: SessionState): StateInfo => {
     // window to reset (claude: the menu is already auto-dismissed, or the limit never
     // showed one; codex managed: usageLimitExceeded). Deliberately NOT "idle" — it looked
     // exactly like a finished turn, so nothing on screen said why the session stopped or
-    // when it moves again (docs/47 §4-9). Separate from "blocked" because nobody has to
+    // when it moves again (docs/log/47 §4-9). Separate from "blocked" because nobody has to
     // act: rateLimitResumeAt is when the reserved auto-resume fires. It keeps the question
     // colours (so the row is readable at a glance as "not running") but adds "limited",
     // which drops the bold weight — it must not shout as loudly as an unanswered question.
@@ -147,7 +147,7 @@ export const stateInfo = (s: SessionState): StateInfo => {
       };
     }
     // The usage limit that WAITING never clears: the org's monthly spend limit / an
-    // exhausted credit balance (agent: agents.StateSpendLimit, docs/47 §4-10). It arrives
+    // exhausted credit balance (agent: agents.StateSpendLimit, docs/log/47 §4-10). It arrives
     // as the same 429 as the time windows above, so only the wording tells them apart —
     // and showing 制限解除待ち here would park the user on a reset that never comes. The
     // next move is a billing one (raise the limit / add credits), so it takes the loud
@@ -171,7 +171,7 @@ export const stateInfo = (s: SessionState): StateInfo => {
 
 // 未来の時刻までの残りを「1h20m」「12m」に畳む。過ぎている／空／壊れた値はすべて ""。
 //
-// この "" が要件: 停止しないピン（docs/75）のバッジは**切れたら消える**必要がある —
+// この "" が要件: 停止しないピン（docs/log/75）のバッジは**切れたら消える**必要がある —
 // 残すと利用者は「守られているつもり」で放置する。管理画面の停止予定も同じで、負の
 // 残り時間を出しても意味が無い（次のスイープで止まるか、止まらない理由が付く）。
 export const remainingShort = (until: string | undefined, now: Date = new Date()): string => {
@@ -186,5 +186,5 @@ export const remainingShort = (until: string | undefined, now: Date = new Date()
   return m ? `${h}h${m}m` : `${h}h`;
 };
 
-// 1 回のピンで張る長さ。Agent 側の上限は 24h で、延長は押し直す（docs/75）。
+// 1 回のピンで張る長さ。Agent 側の上限は 24h で、延長は押し直す（docs/log/75）。
 export const KEEP_AWAKE_HOURS = 4;

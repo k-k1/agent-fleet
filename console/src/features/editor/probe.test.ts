@@ -19,7 +19,7 @@ const open = (): ExternalProbeGates => ({
   saving: false,
 });
 
-describe("external probe gates (docs/44 §7.2)", () => {
+describe("external probe gates (docs/log/44 §7.2)", () => {
   it("probes only when every condition holds", () => {
     expect(shouldProbe(open())).toBe(true);
   });

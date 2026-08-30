@@ -1,6 +1,6 @@
 package main
 
-// 台帳の (ref, idx) 重複排除（docs/46 §3-b / ADR0029 §5）。
+// 台帳の (ref, idx) 重複排除（docs/log/46 §3-b / ADR0029 §5）。
 //
 // 折り込みの冪等性を担保しているのは watermark（`usage/state.json`）だが、**行を追記した
 // 直後・watermark を書く前**に落ちると、そのセッションの数ターン分は次のパスでもう一度

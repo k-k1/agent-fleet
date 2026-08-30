@@ -6,7 +6,7 @@
 
 React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を静的配信し（[05 §5.4](05-api-contracts.md)）、
 バックエンドとは `/api` REST・SSE・`/ws/terminal`・`/ws/browser` で会話する。2026-07 に機能パリティを保った全面リビルド
-（[../22-console-rebuild.md](../history/22-console-rebuild.md)）で God-context 構造を廃した — 経緯と決定は
+（[../22-console-rebuild.md](../log/22-console-rebuild.md)）で God-context 構造を廃した — 経緯と決定は
 [decisions/0011](../decisions/0011-console-rebuild.md)。設計原則:
 
 - **ドメイン別 zustand ストア + selector 購読**。単一 Context・`bump*()` カウンタ・ref ミラーは全廃（§2.3）。
@@ -143,7 +143,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   モバイルはレール→内容の 2 段ドリルダウン）。**個人設定**＝表示 / キー操作 / 読み上げ / 通知 /
   アシスタント、**接続**＝エージェント（各 kind の接続・RTK 等）/ Gitホスティング / 運用・監視 /
   チャット連携 / MCP サーバー / MCPトークン（PAT 発行・失効）、**ワークスペース**＝使用量 /
-  エージェントメモリ / ツールチェーン / AWS SSM / 内部リポジトリ / 書き出し・取り込み（[docs/79](../79-settings-export-import.md)）/
+  エージェントメモリ / ツールチェーン / AWS SSM / 内部リポジトリ / 書き出し・取り込み（[docs/79](../log/79-settings-export-import.md)）/
   危険な操作（Workspace 作り直し等）。
   管理機能は SettingsDialog に混ぜず **AdminDialog に分離**（TopBar の shield から、super_admin のみ）。
 - **管理モーダル / テナント設定モーダル**: どちらも同じ器（`ui/Modal` + `settings-modal`）と同じ
@@ -194,7 +194,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 
 ## 2.8 残債（動作影響なし・随時解消）
 
-[../22-console-rebuild.md](../history/22-console-rebuild.md) のステータス欄が正。要点:
+[../22-console-rebuild.md](../log/22-console-rebuild.md) のステータス欄が正。要点:
 
 - MirrorView 解体（transcript パーサ純関数化 + ブロック分解）— 忠実移植のまま。CommitGraph / GitDiff / ビュアー群も verbatim。
 - 抽出 CSS（viewer / mirror / chat / settings 等）の未使用セレクタ刈り。

@@ -1,7 +1,7 @@
 # 0037. レジストリ方針 — イメージは GHCR で配り、air-gap イメージ tar（B）は廃止する
 
 - 状態: **採用**（2026-08-02）。docs/35 §35.9 の未決事項「レジストリ方針の決定」を決着させる。
-- 関連: [docs/35 §35.4](../35-packaging.md)（配布チャネルと air-gap）/ §35.7.7（焼き込み判断）/
+- 関連: [docs/35 §35.4](../log/35-packaging.md)（配布チャネルと air-gap）/ §35.7.7（焼き込み判断）/
   `deploy/compose/release.sh`・`deploy/release/dist-repo/install-compose.sh`（実装）
 
 ## 背景

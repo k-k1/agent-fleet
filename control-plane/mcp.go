@@ -30,7 +30,7 @@ import (
 // 蓄積するため、上限なしの全文はその会話の以降の全ターンを高くする。
 const mcpSessionOutputTailBytes = 32 << 10
 
-// mcpAPI is the MCP feature handler set (docs/23 残③): the /mcp endpoint plus
+// mcpAPI is the MCP feature handler set (docs/log/23 残③): the /mcp endpoint plus
 // its tool registry/impls, converted receiver-only from config. Auth is a
 // Bearer PAT (authMCP), never the session gateway; everything it needs hangs
 // off the embedded memberAuth's manager (store + runtime resolution).
@@ -134,7 +134,7 @@ func (a mcpAPI) handleMCP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, resp)
 }
 
-// dispatchMCPHTTP applies the stateless-era request validation (docs/49) and then
+// dispatchMCPHTTP applies the stateless-era request validation (docs/log/49) and then
 // dispatches, returning the HTTP status the answer must carry. The stateless revision
 // ties specific statuses to specific errors — 400 for version/header/params problems,
 // 404 for an unknown method — because that is what lets a client tell a modern server
@@ -511,7 +511,7 @@ func memberTools() []mcpTool {
 				return agentText(ctx, res.rt, "POST", "/sessions", body)
 			},
 		},
-		// Memo queue (docs/21). The queue lives in the CP store (membership-scoped), so
+		// Memo queue (docs/log/21). The queue lives in the CP store (membership-scoped), so
 		// these tools hit it DIRECTLY via the shared memo core (memo.go), scoped to the
 		// PAT's membership — no Agent round-trip. flush_memos does reach the workspace to
 		// deliver the concatenated message.
@@ -924,7 +924,7 @@ func adminTools() []mcpTool {
 				})
 			},
 		},
-		// --- egress review (docs/20 M4: agent 壁打ち) ---------------------------
+		// --- egress review (docs/log/20 M4: agent 壁打ち) ---------------------------
 		// Read + propose only. The agent reviews observations and proposes allowlist
 		// changes; a human admin approves them in the console. Egress is deployment-
 		// wide, so these require super_admin (enforced in the impls).

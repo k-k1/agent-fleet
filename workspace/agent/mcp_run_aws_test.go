@@ -7,7 +7,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// AWS MCP（Agent Toolkit for AWS — docs/25 §AWS MCP）の起動引数。
+// AWS MCP（Agent Toolkit for AWS — docs/log/25 §AWS MCP）の起動引数。
 // 落とすと静かに壊れるのは 2 つで、どちらも「壊れた」ようには見えない:
 //   - --read-only が抜けると、接続しただけのつもりの利用者に call_aws（AWS API 約
 //     15,000 アクション）と run_script（任意コード）が生えている。

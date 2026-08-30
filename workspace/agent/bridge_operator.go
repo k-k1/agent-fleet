@@ -1,6 +1,6 @@
 package main
 
-// Chat-bridge P3先取り (docs/37): @メンション→フリート・オペレーター会話. A reply the
+// Chat-bridge P3先取り (docs/log/37): @メンション→フリート・オペレーター会話. A reply the
 // bound user posts in the dedicated Discord operator thread is delivered here as a user
 // turn on the built-in operator assistant conversation (assistants.go ID "operator"),
 // which can inspect and drive the fleet (af_write MCP). The reply is posted back into
@@ -9,7 +9,7 @@ package main
 //
 // The turn machinery is NOT reinvented: runOperatorTurn is handleChatSend's non-HTTP
 // twin (same lock, auto-compaction, pending-report injection, overflow self-heal, and
-// AutoTurns reset). Bloat is capped by docs/33 preventive auto-compaction exactly like
+// AutoTurns reset). Bloat is capped by docs/log/33 preventive auto-compaction exactly like
 // the Console operator chat — this IS a Console-visible operator conversation, just one
 // the bridge also owns a deep link to.
 
@@ -25,7 +25,7 @@ import (
 // reply. On failure it returns an already-localized reason line (for the receiver to post
 // back) plus the error to log — mirroring ReceiverDeps.Inject's (reason, err) contract.
 //
-// This is the Discord/Slack entry point. The scheduled assistant fire (docs/38
+// This is the Discord/Slack entry point. The scheduled assistant fire (docs/log/38
 // session_mode=assistant) shares the same machinery through runOperatorTurnAs — the two
 // are the same turn but NOT the same consumption to a reader of the usage graph, so the
 // usage tag is the caller's to supply (ADR 0029 §2).
@@ -60,7 +60,7 @@ func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 	actualAgent := chatProviderKind(c, prov)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: text, TS: nowMs()})
-	// A real user message resets the unattended auto-turn budget (docs/30), same as
+	// A real user message resets the unattended auto-turn budget (docs/log/30), same as
 	// handleChatSend — subsequent session reports get a fresh follow-up allowance.
 	c.AutoTurns, c.AutoPausedNotified = 0, false
 
@@ -72,9 +72,9 @@ func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 	deregister := registerLiveTurn(conv, cancel) // Stop button / in_progress work as usual
 	defer deregister()
 
-	// docs/33 第4段: 閾値超過のまま新ターンに入るなら先に予防的自動圧縮。
+	// docs/log/33 第4段: 閾値超過のまま新ターンに入るなら先に予防的自動圧縮。
 	maybeAutoCompact(ctx, c, prov)
-	// docs/30: undelivered session reports ride this prompt; docs/33: a compaction
+	// docs/log/30: undelivered session reports ride this prompt; docs/log/33: a compaction
 	// summary rides the new session's first prompt, outermost.
 	prompt, pendingReports := injectPendingReports(c, text)
 	prompt, handoff := injectCarryover(c, actualAgent, prompt)
@@ -82,7 +82,7 @@ func runOperatorTurnAs(conv, text string, tag usageTag) (string, error) {
 
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
-		// docs/33 第3段: 超過検知 → 要約して畳み新セッションでリトライ。
+		// docs/log/33 第3段: 超過検知 → 要約して畳み新セッションでリトライ。
 		prompt, pendingReports = injectPendingReports(c, text)
 		prompt, handoff = injectCarryover(c, actualAgent, prompt)
 		prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
@@ -133,7 +133,7 @@ func createOperatorConversation() (string, error) {
 }
 
 // provisionDiscordOperator ensures a standing operator thread + conversation exist for
-// the connection (docs/37 P3先取り), reusing both across reconnects. Best-effort: any
+// the connection (docs/log/37 P3先取り), reusing both across reconnects. Best-effort: any
 // step failing just logs — a missing operator thread degrades to "no @mention route",
 // never a failed connect. Called async from handlePutDiscordConn (channel + receive).
 func provisionDiscordOperator(token, channelID, lang string) {
@@ -163,7 +163,7 @@ func provisionDiscordOperator(token, channelID, lang string) {
 	bridge.SaveOperatorState(channelID, thread, conv)
 }
 
-// provisionSlackOperator is the Slack twin of provisionDiscordOperator (docs/37 Slack 追随):
+// provisionSlackOperator is the Slack twin of provisionDiscordOperator (docs/log/37 Slack 追随):
 // ensure a standing operator thread + conversation for the Slack connection, reusing both
 // across reconnects. Slack threads carry no name (the seed message titles it) and are keyed
 // by the seed's ts. Best-effort + async, called from handlePutSlackConn.

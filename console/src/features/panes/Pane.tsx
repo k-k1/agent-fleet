@@ -202,7 +202,7 @@ function PopulatedPane({
     if (sessionMeta?.alive === true) setAttached(true);
     else if (sessionMeta?.alive === false) setAttached(false);
   }, [sessionMeta?.alive]);
-  // Managed（paneless）セッション（docs/27 §10）: tmux pane が存在しないので
+  // Managed（paneless）セッション（docs/log/27 §10）: tmux pane が存在しないので
   // ターミナルはマウントせず、ミラー（チャット）を常時の主 UI にする。
   const managed = isManagedSession(sessionMeta);
   // The mirror is offered only for agents with the `chat` capability (claude —
@@ -227,7 +227,7 @@ function PopulatedPane({
   const sessions = useSessionsStore((s) => s.sessions);
   const sessionByName = useMemo(() => new Map(sessions.map((s) => [s.name, s] as const)), [sessions]);
   // A shared-session tab isn't backed by a local Session — it needs its own
-  // name/kind, kept in the recipient-side store (docs/59) instead.
+  // name/kind, kept in the recipient-side store (docs/log/59) instead.
   const sharedSessions = useSharedSessionsStore((s) => s.sessions);
   const sharedById = useMemo(() => new Map(sharedSessions.map((s) => [s.id, s] as const)), [sharedSessions]);
   const settings = useSettings();

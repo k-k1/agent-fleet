@@ -1,4 +1,4 @@
-// スキルピッカーの純ロジック（docs/50 / ADR0034）。DOM もストアも触らない —
+// スキルピッカーの純ロジック（docs/log/50 / ADR0034）。DOM もストアも触らない —
 // MirrorView がトリガ判定・絞り込み・差し込みをここへ委譲する。
 // トリガ文字は kind 依存（claude/opencode/cursor は "/"、codex は "$" メンション —
 // registry の skillTrigger）。起動は「入力の先頭」でだけ成立するとみなし、トリガも

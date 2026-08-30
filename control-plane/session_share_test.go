@@ -53,7 +53,7 @@ func TestEffectiveSharePermission(t *testing.T) {
 }
 
 // repo 共有はプロジェクト全体 — ベース直下だけでなく、その配下 worktree のセッションにも
-// 効く(docs/59 §1)。所有者の作業は worktree 側で進むので、ここが効かないと「リポジトリを
+// 効く(docs/log/59 §1)。所有者の作業は worktree 側で進むので、ここが効かないと「リポジトリを
 // 共有した」のに共有先には何も見えない。逆に worktree 共有はその1つに閉じたままにする。
 func TestRepoShareCoversWorktreeSessionsButWorktreeShareStaysNarrow(t *testing.T) {
 	base := SharedSessionCatalog{OwnerMembershipID: "owner", Name: "s-base", WorkingCopyID: "wc-base"}

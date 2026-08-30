@@ -18,7 +18,7 @@ reached the packaging & distribution milestone (P3-10): the full Console rebuild
 (React+Vite), the AWS ECS adapter (P3-7) and the compose / ECS / Docker-less native
 distribution targets are shipped, with 0.x releases published to the
 [distribution repo](https://github.com/k-k1/agent-fleet-dist)
-([docs/history/p3-10-packaging.md](docs/history/p3-10-packaging.md),
+([docs/log/p3-10-packaging.md](docs/log/p3-10-packaging.md),
 [docs/roadmap.md](docs/roadmap.md)).
 **Current operational details and pitfalls: [docs/HANDOFF.md](docs/HANDOFF.md) (read
 first in a new session).**
@@ -128,18 +128,18 @@ is an excerpt; the full set (0001–0042) is in [docs/decisions/](docs/decisions
 | [0005-envelope-custodian.md](docs/decisions/0005-envelope-custodian.md) | at-rest keys: envelope encryption + custodian abstraction (on-prem limits stated) |
 
 **history/ — finished implementation plans (done, kept for the record)** — the table
-below is an excerpt; the full set is in [docs/history/](docs/history/)
+below is an excerpt; the full set is in [docs/log/](docs/log/)
 | File | Contents |
 |----------|------|
-| [phase0-poc.md](docs/history/phase0-poc.md) | Phase 0 PoC procedure (`/login` verification) |
-| [phase1-plan.md](docs/history/phase1-plan.md) | Phase 1 plan + results (§11.10 remains useful knowledge) |
-| [p3-1-metadatastore.md](docs/history/p3-1-metadatastore.md) | P3-1: MetadataStore (SQLite) |
-| [p3-2-identity-tenant.md](docs/history/p3-2-identity-tenant.md) | P3-2: identity↔tenant many-to-many |
-| [p3-3-envelope-crypto.md](docs/history/p3-3-envelope-crypto.md) | P3-3: envelope encryption + custodian abstraction |
-| [p3-4-quota.md](docs/history/p3-4-quota.md) | P3-4: resource budgets / quotas |
-| [p3-5-member-console.md](docs/history/p3-5-member-console.md) | P3-5: member Console UX (git/file visibility) |
-| [p3-10-packaging.md](docs/history/p3-10-packaging.md) | P3-10: packaging & distribution (compose / ECS / native targets, release bundles) |
-| [console-redesign.md](docs/history/console-redesign.md) | Console UI rebuild brief (vanilla→React diagnosis) |
+| [phase0-poc.md](docs/log/phase0-poc.md) | Phase 0 PoC procedure (`/login` verification) |
+| [phase1-plan.md](docs/log/phase1-plan.md) | Phase 1 plan + results (§11.10 remains useful knowledge) |
+| [p3-1-metadatastore.md](docs/log/p3-1-metadatastore.md) | P3-1: MetadataStore (SQLite) |
+| [p3-2-identity-tenant.md](docs/log/p3-2-identity-tenant.md) | P3-2: identity↔tenant many-to-many |
+| [p3-3-envelope-crypto.md](docs/log/p3-3-envelope-crypto.md) | P3-3: envelope encryption + custodian abstraction |
+| [p3-4-quota.md](docs/log/p3-4-quota.md) | P3-4: resource budgets / quotas |
+| [p3-5-member-console.md](docs/log/p3-5-member-console.md) | P3-5: member Console UX (git/file visibility) |
+| [p3-10-packaging.md](docs/log/p3-10-packaging.md) | P3-10: packaging & distribution (compose / ECS / native targets, release bundles) |
+| [console-redesign.md](docs/log/console-redesign.md) | Console UI rebuild brief (vanilla→React diagnosis) |
 
 ## Existing prototype assets (reused from)
 

@@ -41,7 +41,7 @@ describe("launch gate — per-agent predicates", () => {
   });
 
   it("keeps agy out on a host that cannot run it, even when a token exists", () => {
-    // docs/32 Track B RDRAND guard: supported === false hides agy regardless of auth.
+    // docs/log/32 Track B RDRAND guard: supported === false hides agy regardless of auth.
     expect(ready("agy", { agy: { supported: false, connected: true } })).toBe(false);
   });
 
@@ -59,7 +59,7 @@ describe("launch gate — per-agent predicates", () => {
   });
 
   it("keeps opencode out while usage is explicitly off, even with a key or OAuth still present", () => {
-    // usage:"off" is a tamper-resistant hard disable (docs/54 §… — same override the
+    // usage:"off" is a tamper-resistant hard disable (docs/log/54 §… — same override the
     // Agent applies in opencode.Connected()) — a stray stored key must not re-admit it.
     expect(ready("opencode", { opencode: { usage: "off", envs: ["anthropic"] } })).toBe(false);
     expect(ready("opencode", { opencode: { usage: "off", connected: true } })).toBe(false);

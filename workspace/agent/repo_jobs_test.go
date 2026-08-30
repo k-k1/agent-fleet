@@ -42,7 +42,7 @@ func waitRepoJob(t *testing.T, id string) RepoJob {
 
 // ★ 取り込み中のフォルダは「作業コピー」ではない。ここを一覧に出していたせいで、
 // 走行中の checkout に対して 起動 / 更新 / svn status が掛かり、E155037・E200033 に
-// なっていた（docs/78）。
+// なっていた（docs/log/78）。
 func TestRepoJobHidesWorkingCopyWhileRunning(t *testing.T) {
 	resetRepoJobs(t)
 	home := t.TempDir()

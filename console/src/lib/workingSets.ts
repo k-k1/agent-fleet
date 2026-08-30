@@ -1,10 +1,10 @@
-// Working sets (作業グループ, docs/52 + ADR 0036) — named groups of { working
+// Working sets (作業グループ, docs/log/52 + ADR 0036) — named groups of { working
 // copies, assistant conversations, repo-less sessions } that scope what the
 // left rail shows. This module owns the vocabulary: the pure membership
 // predicates plus the settings-backed mutations, shared by the rail sections,
 // the row menus and the rail-top switcher.
 //
-// Membership rules (docs/52 §1):
+// Membership rules (docs/log/52 §1):
 // - a base clone belongs by its FOLDER NAME; its worktrees follow the base
 //   (worktrees are never assigned individually);
 // - a session inherits its working copy's membership (sessionFolder → base);
@@ -13,7 +13,7 @@
 // - a conversation is assigned explicitly by conversation id.
 // Dangling references (deleted repo / conversation) are harmless — predicates
 // simply stop matching — and are NOT auto-pruned: at read time "not loaded yet"
-// and "deleted" are indistinguishable (docs/52 §2).
+// and "deleted" are indistinguishable (docs/log/52 §2).
 //
 // This module is PURE (unit-testable under the node vitest project) — the
 // settings-backed selection/mutations live in workingSetsStore.ts.
@@ -113,11 +113,11 @@ export function convInSet(set: WorkingSet, convId: string): boolean {
   return set.convs.includes(convId);
 }
 
-// --- Schedules (docs/52 — CP-persisted, so membership is derived where the
+// --- Schedules (docs/log/52 — CP-persisted, so membership is derived where the
 // schedule's own fields give it an unambiguous home, with direct assignment by
 // schedule id as the fallback for the rest). The DTO fields involved:
 // repo = the working copy a session_mode=new fire launches in, held as the
-//   ABSOLUTE agent path (docs/38 P2 passes it to create_session as "dir"
+//   ABSOLUTE agent path (docs/log/38 P2 passes it to create_session as "dir"
 //   verbatim, and the operator sources it from list_repos' path) — NOT a folder
 //   name, so it needs folderNameOf before it can meet a set's repos;
 // worktree = the same thing as a folder name, but no writer sets it today (the

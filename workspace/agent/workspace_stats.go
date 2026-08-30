@@ -8,7 +8,7 @@ import (
 )
 
 // handleWorkspaceStats（GET /workspace/stats）は **この Workspace 自身の**
-// メモリ / CPU / ディスクを返す（docs/63 §63.9）。
+// メモリ / CPU / ディスクを返す（docs/log/63 §63.9）。
 //
 // CP はまずホスト側の cgroup を直接読もうとし（docker / native 構成でだけ成立
 // する）、読めなかったときにここへ落ちてくる。ECS（Fargate / `ecs-ec2`）では

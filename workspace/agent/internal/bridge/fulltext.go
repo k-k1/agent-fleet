@@ -1,6 +1,6 @@
 package bridge
 
-// 全文ブリッジ (docs/37 将来の方向): the answer-ready push can carry the final
+// 全文ブリッジ (docs/log/37 将来の方向): the answer-ready push can carry the final
 // assistant turn body so the chat is a self-sufficient remote UI when the
 // Console deep link is dead (local-only, externally-unreachable deployment).
 // Two concerns live here and are provider-independent: secret scrubbing (the
@@ -22,14 +22,14 @@ const discordContentLimit = 1990
 // turn can't flood the thread. Overflow past this is dropped with an ellipsis
 // line rather than posted (the full text is always in the Console). Sized so a
 // full turn body (bridgeBodyCap runes, session_status.go) splits cleanly across
-// enough messages that a normal long answer is delivered WHOLE (docs/37 Fix ③ —
+// enough messages that a normal long answer is delivered WHOLE (docs/log/37 Fix ③ —
 // 「うまく分割」), not truncated to the first few chunks.
 const maxBodyChunks = 12
 
 const redactedMark = "[secret redacted]"
 
 // bridgeDivider is a thin horizontal rule appended to the end of a full-text answer
-// and a mirrored user input (docs/37 Fix ⑤), so consecutive posts / a run of replies
+// and a mirrored user input (docs/log/37 Fix ⑤), so consecutive posts / a run of replies
 // don't visually merge into one unreadable block. A run of U+2500 renders as a line
 // in Discord (which does not honor Markdown "---").
 const bridgeDivider = "────────────────────"
@@ -41,7 +41,7 @@ func withDivider(s string) string {
 
 // renderBodyForDiscord prepares an assistant/user body for a Discord message: scrub
 // secrets, then reflow Markdown tables (which Discord does NOT render) into fenced
-// code blocks so their columns stay aligned in monospace (docs/37 Fix ④).
+// code blocks so their columns stay aligned in monospace (docs/log/37 Fix ④).
 func renderBodyForDiscord(body string) string {
 	return tablesToCodeBlocks(ScrubSecrets(body))
 }
@@ -94,7 +94,7 @@ var tokenRe = regexp.MustCompile(`[A-Za-z0-9+/=_.\-]{20,}`)
 
 // ScrubSecrets removes credentials from body text before it reaches a chat wire.
 // It is defense-in-depth over the primary guarantee (own both ends + opt-in,
-// docs/37「セキュリティ整合」): known provider token shapes, then UPPERCASE env
+// docs/log/37「セキュリティ整合」): known provider token shapes, then UPPERCASE env
 // assignments, then a high-entropy standalone-token fallback. Best-effort — it
 // can over-redact a rare high-entropy prose token, which the user accepted as
 // the safer failure than leaking a key.
@@ -163,7 +163,7 @@ var tableSepRe = regexp.MustCompile(`^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\
 
 // tablesToCodeBlocks wraps each Markdown table (which Discord does NOT render) in a
 // fenced code block, so its pipes line up in monospace instead of collapsing into an
-// unreadable run of text (docs/37 Fix ④). A table is a header line containing a pipe
+// unreadable run of text (docs/log/37 Fix ④). A table is a header line containing a pipe
 // immediately followed by a separator row; the block extends over the following
 // pipe-bearing rows. Everything else is passed through untouched.
 func tablesToCodeBlocks(s string) string {
@@ -192,7 +192,7 @@ func tablesToCodeBlocks(s string) string {
 
 // chunkMessage splits content into Discord-sized pieces (chunkTo with Discord's
 // per-message limit). Kept as the Discord entry point; Slack calls chunkTo with
-// its own larger limit (docs/37 Slack 追随).
+// its own larger limit (docs/log/37 Slack 追随).
 func chunkMessage(content, firstPrefix string) []string {
 	return chunkTo(content, firstPrefix, discordContentLimit)
 }

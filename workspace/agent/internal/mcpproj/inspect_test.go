@@ -49,7 +49,7 @@ func writeRepoFile(t *testing.T, dir, rel, body string) {
 	}
 }
 
-// TestInspectNovelLabMotivatingExample replays docs/56 §1's real-world case: the
+// TestInspectNovelLabMotivatingExample replays docs/log/56 §1's real-world case: the
 // same server duplicated across .mcp.json and opencode.json with two different
 // placeholder dialects. The read must surface both the dialect danger AND the
 // divergence (the two files literally spell the args differently).
@@ -84,7 +84,7 @@ func TestInspectNovelLabMotivatingExample(t *testing.T) {
 	if !oc.Exists || !oc.Parsable || !oc.Tracked || len(oc.Servers) != 1 {
 		t.Fatalf("opencode.json: %+v", oc)
 	}
-	// Files that don't exist here must still be listed (docs/57 憲章「無いものが
+	// Files that don't exist here must still be listed (docs/log/57 憲章「無いものが
 	// 消えると分からない」), just Exists=false.
 	cx := byPath[".codex/config.toml"]
 	if cx.Exists {
@@ -144,7 +144,7 @@ func TestInspectNameHijackWarning(t *testing.T) {
 	}
 }
 
-// TestInspectSecretNeverOnWire is the independent assertion docs/56 §13 calls for:
+// TestInspectSecretNeverOnWire is the independent assertion docs/log/56 §13 calls for:
 // the raw secret-looking value must not appear ANYWHERE in the marshaled response,
 // masked or not — checked on the JSON bytes, not just the typed field.
 func TestInspectSecretNeverOnWire(t *testing.T) {
@@ -191,7 +191,7 @@ func TestInspectSecretNeverOnWire(t *testing.T) {
 }
 
 // TestInspectUnparsableFileUntouched: an unreadable file is reported, not rewritten
-// or skipped-silently, and other files are still processed (docs/57 憲章3).
+// or skipped-silently, and other files are still processed (docs/log/57 憲章3).
 func TestInspectUnparsableFileUntouched(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
@@ -238,8 +238,8 @@ func TestInspectUnparsableFileUntouched(t *testing.T) {
 }
 
 // TestInspectNoVCSMarksUncertainNotFalse: outside git entirely, secret-looking
-// values must still warn (as "cannot determine", not silently "safe") — docs/56
-// §7.2's VCS-not-git row, docs/57 憲章6.
+// values must still warn (as "cannot determine", not silently "safe") — docs/log/56
+// §7.2's VCS-not-git row, docs/log/57 憲章6.
 func TestInspectNoVCSMarksUncertain(t *testing.T) {
 	dir := t.TempDir() // no git init
 	const secret = "af-test-fixture-9f8e7d6c5b4a3210x"

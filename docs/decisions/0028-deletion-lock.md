@@ -1,6 +1,6 @@
 # 0028. 削除ロック — 保護は Agent の REST 層に置き、自動削除にも効かせる
 
-- 状態: **採用・実装済み**。設計は [docs/45](../45-deletion-lock.md)。
+- 状態: **採用・実装済み**。設計は [docs/45](../log/45-deletion-lock.md)。
 - 関連: [0012](0012-go-internal-refactor.md)（Agent の内部構造）/ [0021](0021-scheduled-execution.md)（自動実行）/
   `workspace/agent/cleanup_archive.go`（掃除と gz 安全網 — 専用の設計文書は無い）
 

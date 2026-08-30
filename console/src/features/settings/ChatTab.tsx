@@ -11,7 +11,7 @@ import { ProviderCard, StatusPill, Hint, DisconnectButton, IssueLink } from "./p
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { getLocale, useT } from "../../lib/i18n/index.ts";
 
-// ChatTab (チャット連携) — the chat-bridge CONNECTIONS (Discord / Slack, docs/37), split
+// ChatTab (チャット連携) — the chat-bridge CONNECTIONS (Discord / Slack, docs/log/37), split
 // out of 運用・監視 into their own 接続 tab: these are notification destinations, not
 // monitoring providers. Each card separates CONNECT (token → verify → pick channel →
 // 接続, minimal) from the detail SETTINGS (threads / mention / receive / mirror / events /
@@ -94,7 +94,7 @@ function PsRow({ label, sub, children }: { label: ReactNode; sub?: ReactNode; ch
 
 // DiscordCard — connect = token → verify → invite → pick channel → 接続 (adjacent). The
 // detail settings appear only AFTER connect, in the collapsible SettingsPanel that
-// auto-saves each toggle. docs/37 P1.
+// auto-saves each toggle. docs/log/37 P1.
 function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
@@ -366,7 +366,7 @@ function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   );
 }
 
-// SlackCard — the Socket-Mode twin of DiscordCard (docs/37 Slack 追随). Two tokens (bot
+// SlackCard — the Socket-Mode twin of DiscordCard (docs/log/37 Slack 追随). Two tokens (bot
 // xoxb- + app-level xapp-) → verify → pick channel → 接続; details auto-save afterward.
 function SlackCard({ st, reload }: { st: any; reload: () => void }) {
   const tr = useT();

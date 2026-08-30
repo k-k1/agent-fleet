@@ -1,5 +1,5 @@
 // Package agy integrates Google's Antigravity CLI (`agy`) as the fourth agent
-// kind (docs/32, ADR 0008). This file owns the quota scrape (Track C): agy has
+// kind (docs/log/32, ADR 0008). This file owns the quota scrape (Track C): agy has
 // no structured usage query, so we drive the TUI under a PTY (the shared
 // agents.Flow plumbing), send /usage, and parse the quota panel. Launch / auth /
 // status live in this package's other files (Track A).
@@ -23,7 +23,7 @@ import (
 // The /usage panel is model-group based (ADR 0008 実測): two pools ("GEMINI
 // MODELS" and "CLAUDE AND GPT MODELS") that each show REMAINING percentage
 // bars and a "Refreshes in 167h 27m" line ("Quota available" at 100%). Starter
-// shows one "Weekly Limit" bar per group; paid tiers (AI Pro 実測, docs/32
+// shows one "Weekly Limit" bar per group; paid tiers (AI Pro 実測, docs/log/32
 // D-4) add a "Five Hour Limit" bar — 2 groups × 2 limits = the AgyCard's four
 // gauges. The scrape is the Console's only source for the 残量% display.
 
@@ -71,7 +71,7 @@ func tokenPath() string {
 // HOME, which shares ONLY the login via a symlink to this file (chatAgyHome).
 func TokenPath() string { return tokenPath() }
 
-// SignedIn reports whether agy has a persisted OAuth token. The docs/32 contract
+// SignedIn reports whether agy has a persisted OAuth token. The docs/log/32 contract
 // pairs this with `agy models` for status; token presence is enough for the
 // usage endpoint's cheap authed gate.
 func SignedIn() bool {
@@ -129,7 +129,7 @@ var (
 	// Section header, e.g. "GEMINI MODELS" / "CLAUDE AND GPT MODELS".
 	groupRe = regexp.MustCompile(`(?m)^\s*([A-Z][A-Z0-9 /&+.-]* MODELS)\s*$`)
 	// Limit sub-header within a group ("Weekly Limit" / "Five Hour Limit" —
-	// the latter appears on paid tiers, docs/32 D-4).
+	// the latter appears on paid tiers, docs/log/32 D-4).
 	limitRe   = regexp.MustCompile(`(?m)^\s*(Weekly|Five Hour) Limit\s*$`)
 	modelsRe  = regexp.MustCompile(`Models within this group:\s*([^\n]+)`)
 	pctRe     = regexp.MustCompile(`\]\s*(\d+(?:\.\d+)?)%`)
@@ -215,7 +215,7 @@ func parseUsage(out string) (*usageResult, error) {
 			g.Models = strings.TrimSpace(m[1])
 		}
 		// Split the section on its limit sub-headers. Starter has "Weekly Limit"
-		// only; paid tiers add "Five Hour Limit" (docs/32 D-4). A panel with no
+		// only; paid tiers add "Five Hour Limit" (docs/log/32 D-4). A panel with no
 		// sub-headers at all (defensive: layout drift) falls back to treating the
 		// whole section as the weekly limit.
 		lims := limitRe.FindAllStringSubmatchIndex(sec, -1)

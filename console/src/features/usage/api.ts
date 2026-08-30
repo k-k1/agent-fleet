@@ -1,4 +1,4 @@
-// features/usage/api — GET /api/usage/series の型と取得（docs/46 §4-a / ADR0029）。
+// features/usage/api — GET /api/usage/series の型と取得（docs/log/46 §4-a / ADR0029）。
 //
 // サーバが集計して返す（Console に生ログは流れない）。ワイヤ形は Go 側
 // workspace/agent/usage_series.go の usageSeriesResp と1対1。軸の語彙は

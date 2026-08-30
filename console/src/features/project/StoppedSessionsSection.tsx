@@ -19,7 +19,7 @@ export const StoppedSessionsSection = memo(function StoppedSessionsSection() {
   const multi = paneCount(layout) > 1;
   const panes = multi ? sessionPanes(layout) : null;
   const selected = activePane(layout)?.session ?? null;
-  // 作業グループ (docs/52): membership resolves from the folder name alone, so the
+  // 作業グループ (docs/log/52): membership resolves from the folder name alone, so the
   // scope keeps working here even though the repo list needs the (stopped) agent.
   const wset = useActiveWorkingSet();
   const shown = wset ? sessions.filter((s) => sessionInSet(wset, s)) : sessions;

@@ -5,7 +5,7 @@
 # a domain and a DNS A/AAAA record). Caddy also passes WebSocket Upgrade through, so
 # terminal ws:// traffic works as-is.
 #
-# Network assumption (docs/history/p3-10-packaging.md §20.4): CP and Caddy are BOTH
+# Network assumption (docs/log/p3-10-packaging.md §20.4): CP and Caddy are BOTH
 # host-net. The CP binds 127.0.0.1:8099 (loopback only) and is never exposed
 # directly; Caddy shares the same host loopback and reaches 127.0.0.1:8099. A
 # bridge-net Caddy could not reach the host-net CP's loopback bind — the CP would

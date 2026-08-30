@@ -8,7 +8,7 @@
 # （`capture-env.sh` が書く）の `AF_DEV_DEPLOY=1` が印である。
 #
 # `update.sh` が「リリース版を出す」ひとコマンドなら、これは「いまの develop を出す」
-# ひとコマンド。docs/72 §72.6.2 が手順として書いた 4 段
+# ひとコマンド。docs/log/72 §72.6.2 が手順として書いた 4 段
 # （dev-image.yml を dispatch → CP を ECR へ crane copy → workspace を同じタグに置く →
 # update.sh）を 1 本にしたもので、最後は必ず `update.sh` に落ちる —— タグ不在・空チェンジ
 # セット・CpArch 不整合・走行中 Workspace の一覧という前検査は、そこにしか無い。
@@ -22,14 +22,14 @@
 #  2. **`ImageTag` は CP と workspace で共有**（ADR 0045 決定 8）。CP だけ焼き直しても
 #     workspace 側を同じタグに置かないと、タグ不在で CP タスクが上がらない。ECR 内の
 #     `crane copy` は実体を複製しないただの再タグなので、workspace に変更が無い回は
-#     それで済ませる —— workspace を焼き直すと QEMU で +593 秒（docs/72 §72.5.1）。
+#     それで済ませる —— workspace を焼き直すと QEMU で +593 秒（docs/log/72 §72.5.1）。
 #     焼くかどうかは **`workspace/` 配下の差分**で決める（ws イメージのビルドコンテキストは
 #     `deploy/compose/release.sh` のとおり `workspace/` だけ）。
 #     ⚠️ ビルド引数側（`release.sh` の `BAKE_AGENT_CLIS` など）を触ったときは差分に出ない。
 #     そのときは `--image both` を明示すること。
 #  3. **`docker pull` + `push` はインデックスを 1 アーキに潰す。** GHCR → ECR は
 #     `crane copy` でインデックスごと運ぶ（このコンテナに docker は無い＝crane が前提）。
-#  4. **同じ digest の再タグでも golden は焼き直される**（docs/72 §72.6.4）。golden の
+#  4. **同じ digest の再タグでも golden は焼き直される**（docs/log/72 §72.6.4）。golden の
 #     `af-image` タグが持っているのは**参照文字列であって digest ではない**ので、中身が
 #     バイト単位で同じでも「新しいタグ用の golden が無い」と判断され、2 アーキ分を
 #     約 10 分・スロット 2 本かけて焼き直す。**新旧の digest が一致することを確かめてから**

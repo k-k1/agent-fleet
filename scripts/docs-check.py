@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""docs/ の構造検査。CI（.github/workflows/docs.yml）とローカルの両方で走る。
+
+docs/ は「読者で切った棚」であり、その構造がそのまま配布の権限になる
+（control-plane/workspace_docs.go の docsRolePrefixes）。棚の規約が崩れると
+配布範囲が静かに変わるので、規約は人間のレビューではなくここで機械検査する。
+
+検査は 6 本:
+
+  links      相対リンクの実在（アンカーは無視）
+  lang       二言語の閉包（en は .md へ、ja は .ja.md へ）と対訳の存在
+  header     現役の棚の全ファイルに Audience / Source of truth / Updated
+  vocab      利用者向けの棚に実装用語（AF_* / kind= / /api/）が漏れていない
+  frozen     現役の棚から docs/log/（凍結アーカイブ）へリンクしていない
+  ref        ref/ の表の軸が、コードの一次情報と一致している
+
+`--strict` で warn を error に格上げする（移行中の棚を段階的に締めるため）。
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import sys
+from dataclasses import dataclass, field
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DOCS = os.path.join(ROOT, "docs")
+
+# --- 棚の分類 -----------------------------------------------------------------
+# 現役 = これから書く新体系。規範（header / lang / vocab / frozen）が全部かかる。
+LIVING = ("use", "admin", "operate", "build", "ref")
+# 利用者向け = 実装用語を書いてはいけない棚。
+READER_FACING = ("use", "admin")
+# 二言語 = 英語が正（X.md）、日本語が併記（X.ja.md）。
+BILINGUAL = LIVING + ("guide",)
+# 日本語のみ = 二言語検査の対象外。log/ は凍結、dev/ と guide 以外の旧棚は移行待ち。
+JA_ONLY_DIRS = ("dev", "decisions", "log")
+JA_ONLY_FILES = ("HANDOFF.md", "CHANGELOG-handoff.md", "roadmap.md")
+
+# 現役の棚がまだ書かれていない移行期は、旧棚（dev/ guide/）を正として参照する。
+# P1〜P4 で新体系が埋まったら LEGACY を空にして棚ごと消す。
+LEGACY = ("dev", "guide")
+
+# log/ への参照が許される現役ファイル。P4 までに空にする（plan の受け入れ条件）。
+FROZEN_REF_ALLOWLIST: set[str] = {
+    "log/README.md",
+}
+
+LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+HEADER_KEYS = ("Audience:", "Source of truth:", "Updated:")
+UPDATED_RE = re.compile(r"^Updated:\s*(\d{4})-(\d{2})\s*$", re.M)
+
+# 利用者向けの棚に出てはいけない実装用語。画面の名前で書くための歯止め。
+VOCAB_BANNED = (
+    (re.compile(r"\bAF_[A-Z][A-Z0-9_]+"), "env 変数名"),
+    (re.compile(r"\bkind=[a-z]"), "内部の種別識別子"),
+    (re.compile(r"(?<![\w/])/api/[a-z]"), "API パス"),
+    (re.compile(r"(?<![\w/])/internal/[a-z]"), "内部 API パス"),
+)
+
+
+@dataclass
+class Findings:
+    errors: list[str] = field(default_factory=list)
+    warns: list[str] = field(default_factory=list)
+
+    def error(self, msg: str) -> None:
+        self.errors.append(msg)
+
+    def warn(self, msg: str) -> None:
+        self.warns.append(msg)
+
+
+def rel(path: str) -> str:
+    return os.path.relpath(path, DOCS).replace(os.sep, "/")
+
+
+def top(relpath: str) -> str:
+    return relpath.split("/", 1)[0]
+
+
+def is_ja(relpath: str) -> bool:
+    return relpath.endswith(".ja.md")
+
+
+def counterpart(relpath: str) -> str:
+    """en <-> ja のファイル名を入れ替える。"""
+    if is_ja(relpath):
+        return relpath[: -len(".ja.md")] + ".md"
+    return relpath[: -len(".md")] + ".ja.md"
+
+
+def all_docs() -> list[str]:
+    out = []
+    for dirpath, dirnames, filenames in os.walk(DOCS):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.endswith(".md"):
+                out.append(os.path.join(dirpath, name))
+    return sorted(out)
+
+
+def bilingual_scope(relpath: str) -> bool:
+    if top(relpath) in JA_ONLY_DIRS or relpath in JA_ONLY_FILES:
+        return False
+    if "/" not in relpath:  # docs 直下: README / CONVENTIONS だけ二言語
+        return relpath.split(".")[0] in ("README", "CONVENTIONS")
+    return top(relpath) in BILINGUAL
+
+
+# --- 検査 ---------------------------------------------------------------------
+
+
+def check_links(files: list[str], f: Findings) -> None:
+    for path in files:
+        src = rel(path)
+        body = read(path)
+        for m in LINK_RE.finditer(body):
+            target = m.group(1)
+            # 先頭 "/" はサイト絶対 URL（Console が返す open link の例示など）で、
+            # リポジトリ内のパスではない。
+            if target.startswith(("http://", "https://", "mailto:", "#", "/")):
+                continue
+            target = target.split("#", 1)[0]
+            if not target:
+                continue
+            resolved = os.path.normpath(
+                os.path.join(os.path.dirname(path), target)
+            )
+            # docs の外（../../deploy/... など）も同じ規則で実在を見る。
+            if os.path.exists(resolved):
+                continue
+            f.error(f"{src}: リンク切れ -> {m.group(1)}")
+
+
+def check_lang(files: list[str], f: Findings) -> None:
+    present = {rel(p) for p in files}
+    for path in files:
+        src = rel(path)
+        if not bilingual_scope(src):
+            continue
+        mate = counterpart(src)
+        if mate not in present:
+            f.error(f"{src}: 対訳が無い（{mate} が必要）")
+        body = read(path)
+        for m in LINK_RE.finditer(body):
+            target = m.group(1).split("#", 1)[0]
+            if target.startswith(("http://", "https://", "mailto:")) or not target:
+                continue
+            if not target.endswith(".md"):
+                continue
+            dest = os.path.normpath(os.path.join(os.path.dirname(path), target))
+            if not dest.startswith(DOCS):
+                continue  # docs 外（deploy/ など）は言語を持たない
+            dest_rel = rel(dest)
+            if not bilingual_scope(dest_rel):
+                continue  # 日本語のみの棚へは両言語から同じターゲットを指す
+            if dest_rel == mate:
+                continue  # H1 直後の言語スイッチャ行。唯一の正当な言語またぎ
+            if is_ja(src) != is_ja(dest_rel):
+                want = counterpart(dest_rel)
+                f.error(
+                    f"{src}: 言語をまたぐリンク -> {target}（{want} を指すこと）"
+                )
+
+
+def check_header(files: list[str], f: Findings, strict: bool) -> None:
+    for path in files:
+        src = rel(path)
+        if top(src) not in LIVING:
+            continue
+        head = "\n".join(read(path).splitlines()[:12])
+        missing = [k for k in HEADER_KEYS if k not in head]
+        if missing:
+            f.error(f"{src}: 冒頭ヘッダが無い（{', '.join(missing)}）")
+            continue
+        if not UPDATED_RE.search(head):
+            f.error(f"{src}: Updated: は YYYY-MM 形式で書く")
+
+
+def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
+    for path in files:
+        src = rel(path)
+        if top(src) not in READER_FACING:
+            continue
+        body = strip_code(read(path))
+        for pattern, label in VOCAB_BANNED:
+            hit = pattern.search(body)
+            if hit:
+                msg = f"{src}: 利用者向けの棚に{label}が出ている（{hit.group(0)}）"
+                (f.error if strict else f.warn)(msg)
+
+
+def check_frozen(files: list[str], f: Findings) -> None:
+    for path in files:
+        src = rel(path)
+        if top(src) not in LIVING:
+            continue
+        if src in FROZEN_REF_ALLOWLIST:
+            continue
+        for m in LINK_RE.finditer(read(path)):
+            target = m.group(1)
+            dest = os.path.normpath(os.path.join(os.path.dirname(path), target))
+            if dest.startswith(os.path.join(DOCS, "log")):
+                f.error(
+                    f"{src}: 凍結アーカイブ log/ を参照している -> {target}"
+                    "（事実は新しい文書へ転記すること）"
+                )
+
+
+# --- ref/ の軸をコードの一次情報と突き合わせる --------------------------------
+
+
+def source_kinds() -> set[str]:
+    path = os.path.join(
+        ROOT, "workspace", "agent", "internal", "session", "session.go"
+    )
+    body = read(path)
+    return set(re.findall(r'^\s*Kind\w+\s*=\s*"([a-z]+)"', body, re.M))
+
+
+def source_runtimes() -> set[str]:
+    body = read(os.path.join(ROOT, "control-plane", "runtime.go"))
+    return set(re.findall(r'case\s+"([a-z0-9-]+)"', body))
+
+
+def table_columns(path: str) -> set[str]:
+    """先頭の表のヘッダ行からセル（1列目を除く）を取り出す。"""
+    for line in read(path).splitlines():
+        line = line.strip()
+        if line.startswith("|") and line.count("|") >= 3:
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            return {c for c in cells[1:] if c}
+    return set()
+
+
+def table_first_column(path: str) -> set[str]:
+    out = set()
+    for line in read(path).splitlines():
+        line = line.strip()
+        if not line.startswith("|") or set(line) <= set("|-: "):
+            continue
+        cell = line.strip("|").split("|")[0].strip()
+        if cell:
+            out.add(cell)
+    return out
+
+
+def check_ref(f: Findings) -> None:
+    agents = os.path.join(DOCS, "ref", "agents.md")
+    if os.path.exists(agents):
+        cols = {c.strip("`*") for c in table_columns(agents)}
+        missing = source_kinds() - cols
+        if missing:
+            f.error(
+                "ref/agents.md: コードにある種別が表に無い -> "
+                + ", ".join(sorted(missing))
+            )
+    targets = os.path.join(DOCS, "ref", "deploy-targets.md")
+    if os.path.exists(targets):
+        rows = {c.strip("`*") for c in table_first_column(targets)}
+        missing = source_runtimes() - rows
+        if missing:
+            f.error(
+                "ref/deploy-targets.md: コードにある形態が表に無い -> "
+                + ", ".join(sorted(missing))
+            )
+
+
+# --- helpers ------------------------------------------------------------------
+
+FENCE_RE = re.compile(r"```.*?```", re.S)
+INLINE_RE = re.compile(r"`[^`\n]*`")
+
+
+def strip_code(body: str) -> str:
+    """語彙検査はコードブロックとインラインコードを見ない。
+
+    利用者向けの文章でも、設定ファイルの実例や env の一覧を「引用として」
+    載せることはある。禁じたいのは地の文で実装用語を使うことなので、
+    コードとして明示された部分は対象外にする。
+    """
+    return INLINE_RE.sub("", FENCE_RE.sub("", body))
+
+
+_cache: dict[str, str] = {}
+
+
+def read(path: str) -> str:
+    if path not in _cache:
+        with open(path, encoding="utf-8") as fh:
+            _cache[path] = fh.read()
+    return _cache[path]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--strict", action="store_true", help="warn を error に格上げする"
+    )
+    ap.add_argument(
+        "--only",
+        default="",
+        help="検査名をカンマ区切りで指定（links,lang,header,vocab,frozen,ref）",
+    )
+    args = ap.parse_args()
+
+    want = set(filter(None, args.only.split(",")))
+    run = lambda name: not want or name in want  # noqa: E731
+
+    files = all_docs()
+    f = Findings()
+    if run("links"):
+        check_links(files, f)
+    if run("lang"):
+        check_lang(files, f)
+    if run("header"):
+        check_header(files, f, args.strict)
+    if run("vocab"):
+        check_vocab(files, f, args.strict)
+    if run("frozen"):
+        check_frozen(files, f)
+    if run("ref"):
+        check_ref(f)
+
+    for w in f.warns:
+        print(f"warn: {w}")
+    for e in f.errors:
+        print(f"ERROR: {e}")
+    print(
+        f"\ndocs-check: {len(files)} files, "
+        f"{len(f.errors)} error(s), {len(f.warns)} warning(s)"
+    )
+    return 1 if f.errors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

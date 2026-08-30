@@ -3,7 +3,7 @@ package main
 import "time"
 
 // セッション 1 行を「コンテナを起こし続ける理由になるか」「畳んでよいか」へ落とす分類
-// （docs/75 §75.5）。reaper の 2 段はここだけを見る。
+// （docs/log/75 §75.5）。reaper の 2 段はここだけを見る。
 //
 // なぜ関数 1 つに集約するのか: この判定はもともと reaper.go の中にインラインの真偽式が
 // 2 つ（tier2 の busy 判定と、フェンス取得後の再判定）あるだけで、テストが 1 本も無かった。
@@ -22,7 +22,7 @@ const (
 	// 畳んでも失われるものが無い。
 	activityIdleWait
 	// activityHumanWait: 人の判断を待って止まっている。畳んでよいが、**畳む前に
-	// 保留中の対話を持ち越す**必要がある（docs/75 §75.6）。コンテナを起こし続ける
+	// 保留中の対話を持ち越す**必要がある（docs/log/75 §75.6）。コンテナを起こし続ける
 	// 理由にはならない — 人待ちは何日でも続きうる。
 	activityHumanWait
 	// activityMachineBusy: 機械が動いている。触ってはならない。
@@ -54,7 +54,7 @@ const (
 // **一覧はここだけを見ること**（idle_forecast.go の holdersOf）。この集合を 2 箇所に
 // 書くと、増えた状態を片方に入れ忘れる: 実際 stateCompacting は sessionActivity に
 // だけ足され、holdersOf は working しか見ないままだった＝ reaper は正しく止めないのに
-// 画面は「もうすぐ止まります」と言う、という docs/75 決定 11（画面は reaper の決定を
+// 画面は「もうすぐ止まります」と言う、という docs/log/75 決定 11（画面は reaper の決定を
 // そのまま公開する）違反が再発している。
 func busyState(state string) bool {
 	switch state {
@@ -71,7 +71,7 @@ func sessionActivity(s sessionWire) activity {
 	if !s.Alive {
 		return activityUnknown
 	}
-	// 利用者の「停止しない」ピン（docs/75）。分類の一番外に置くのは、これが**唯一の
+	// 利用者の「停止しない」ピン（docs/log/75）。分類の一番外に置くのは、これが**唯一の
 	// 逃げ道**である shell / ssm では state が空＝ unknown で、その先の分岐に一切
 	// 引っかからないから。生きている行にしか効かない（上の !Alive で落ちる）ので、
 	// 死んだセッションのピンがコンテナを抱え込むことはない。
@@ -90,7 +90,7 @@ func sessionActivity(s sessionWire) activity {
 	}
 	switch s.State {
 	case stateIdle, stateLimited:
-		// limited は「時計待ち」。リセット時刻に CP の定時実行が起こす（docs/47 §4-9）
+		// limited は「時計待ち」。リセット時刻に CP の定時実行が起こす（docs/log/47 §4-9）
 		// ので、畳んでも失われるものは無い＝ idle と同じ扱い。
 		return activityIdleWait
 	case stateQuestion, statePlan, statePermission, stateBlocked, stateAuth, stateSpendLimit:
@@ -105,10 +105,10 @@ func sessionActivity(s sessionWire) activity {
 //
 // **機械が動いているときだけ**。人待ち（question / plan / permission / blocked / auth /
 // spend_limit）は理由にならない — 人待ちは何日でも続きうるので、それでコンテナを起こし
-// 続けるとそのまま課金になる（docs/75 §75.1。question が唯一の例外として残っていた頃が
+// 続けるとそのまま課金になる（docs/log/75 §75.1。question が唯一の例外として残っていた頃が
 // 「AUQ が出ていると Workspace が永久に停止しない」の原因そのものだった）。
 //
-// 畳んでも失われないことは持ち越し（docs/75 §75.6）が担保する: 保留中の質問/プラン/許可は
+// 畳んでも失われないことは持ち越し（docs/log/75 §75.6）が担保する: 保留中の質問/プラン/許可は
 // halt の直前に carried へ退避され、Console から答えれば再開して届く。
 func holdsWorkspace(s sessionWire) bool {
 	return sessionActivity(s) == activityMachineBusy
@@ -139,7 +139,7 @@ func keepAwake(until string, now time.Time) bool {
 	return now.Before(t)
 }
 
-// tier1Foldable は kind を「halt して安全か」で分ける（docs/75 P5）。
+// tier1Foldable は kind を「halt して安全か」で分ける（docs/log/75 P5）。
 //
 // halt は resumable な停止（claude は --resume、managed は runtime handle の再接続）
 // なので、エージェントのセッションはどの kind でも畳んでよい。**shell / ssm だけが

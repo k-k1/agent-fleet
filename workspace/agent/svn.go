@@ -1,6 +1,6 @@
 package main
 
-// Subversion (SVN) checkout support (docs/41). SVN working copies live under
+// Subversion (SVN) checkout support (docs/log/41). SVN working copies live under
 // ~/repos/<name> alongside git working copies — the folder name IS the id, same
 // flat model as git (git.go §22). There is no provider abstraction: an SVN
 // checkout is just a URL + optional basic auth. SVN addresses subtrees by URL, so
@@ -71,14 +71,14 @@ func runSvnCtx(ctx context.Context, args ...string) (string, error) {
 // unknown-ca) so a deliberate "trust this dev server" toggle also survives the
 // hostname mismatch that self-signed certs almost always have. Security trade-off:
 // it disables cert verification for that server entirely, hence the explicit,
-// per-server opt-in (docs/41).
+// per-server opt-in (docs/log/41).
 const svnTrustFailures = "--trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other"
 
 // svnNetTimeout bounds a SYNCHRONOUS network op (update) so a hung/slow server can't
 // occupy the handler indefinitely; generous because updating a large working copy
 // legitimately takes long. The first checkout does NOT use it — it runs as a job on
 // repoJobTimeout, because killing a long checkout at a handler-shaped deadline is what
-// deleted a half-hour-old working copy (docs/78).
+// deleted a half-hour-old working copy (docs/log/78).
 const svnNetTimeout = 30 * time.Minute
 
 // svnAuthedArgs builds the full argv (after "svn") for a network op: the
@@ -143,7 +143,7 @@ func runSvnAuthedSink(ctx context.Context, sink *repoJobSink, creds *secrets.SVN
 // 出すのは「E155037: Previous operation has not finished; run 'cleanup' if it was interrupted」で、
 // **`svn cleanup` ではなく `cleanup`** と書く。E155004 系の文言だけを見ていた頃、これが素通りして
 // 自動修復が一度も走らず、利用者は毎回 更新 が失敗するのを手動で ロックを解除 するしかなかった
-// （実測: svn 1.14.2 / docs/78）。
+// （実測: svn 1.14.2 / docs/log/78）。
 func svnLocked(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(out, "E155004") ||
@@ -398,7 +398,7 @@ type svnCheckoutReq struct {
 	Username  string `json:"username"`
 	Password  string `json:"password"`
 	Save      bool   `json:"save"`
-	TrustCert bool   `json:"trustCert"` // accept a self-signed / untrusted server cert (docs/41)
+	TrustCert bool   `json:"trustCert"` // accept a self-signed / untrusted server cert (docs/log/41)
 }
 
 // svnBuildURL joins a base repo URL with an optional subpath (SVN addresses
@@ -413,7 +413,7 @@ func svnBuildURL(base, subpath string) string {
 
 // handleSvnCheckout (POST /repos/svn) starts an SVN checkout into ~/repos/<name>.
 // Mirrors handleCloneRepo: derive/validate a folder name, refuse an existing dir, then
-// hand the network work to a background job and answer 202 with it (docs/78) — a first
+// hand the network work to a background job and answer 202 with it (docs/log/78) — a first
 // checkout routinely outlives every proxy in the path, and the synchronous shape made
 // the Console call a still-running checkout "done". Credentials are used once and, when
 // Save is set, upserted into the encrypted store for later updates.

@@ -1,4 +1,4 @@
-// `.drawio` ペインの描画ハーネス（docs/65）。
+// `.drawio` ペインの描画ハーネス（docs/log/65）。
 //
 // 守っているもの:
 //  1. **同梱ビューアだけで図が出る**（外部ネットワーク 0 件）。ビューアは既定値として
@@ -97,7 +97,7 @@ const BIG = `<mxfile><diagram name="大" id="b1"><mxGraphModel page="1"><root>
   ${Array.from({ length: 24 }, (_, i) => `<mxCell id="b${i}" value="ノード${i}" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="${(i % 6) * 420}" y="${Math.floor(i / 6) * 320}" width="360" height="220" as="geometry"/></mxCell>`).join("")}
 </root></mxGraphModel></diagram></mxfile>`;
 
-// ── ステンシル（docs/65 §65.5）─────────────────────────────────────────
+// ── ステンシル（docs/log/65 §65.5）─────────────────────────────────────────
 // 本物の aws4.xml は 6.2 MB あるので、ハーネスは形だけ同じ最小のセットを配る
 // （バイト列の正しさは CP 側の sha256 照合と台帳のテストが持つ）。図案が付いたか
 // どうかは **path の本数**で見る: ステンシルが無いと枠だけの矩形になる。
@@ -362,7 +362,7 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     fail.push(`${c.name}: フレームが資格情報無しで取りに行った ${JSON.stringify([...new Set(unauthorized)])}`);
   }
 
-  // ── ステンシル（docs/65 §65.5）───────────────────────────────────────
+  // ── ステンシル（docs/log/65 §65.5）───────────────────────────────────────
   if (c.stencils) {
     const want = JSON.stringify(c.stencils);
     const asked = JSON.stringify([...new Set(stencilAsks)]);
@@ -417,7 +417,7 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     console.log(`   stencils: asked=${asked} rendered=${renders} 通 scale=${last?.scale}`);
   }
 
-  // ── 背景（docs/65 §65.11-13）──────────────────────────────────────────
+  // ── 背景（docs/log/65 §65.11-13）──────────────────────────────────────────
   if (c.bg && rendered) {
     // 図形の載っていない隅を見る（フレームは 860x520・図は中央に収まる）。
     const shot = await b.call("Page.captureScreenshot", { clip: { x: 840, y: 500, width: 8, height: 8, scale: 1 } });
@@ -443,7 +443,7 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     }
   }
 
-  // ── テーマ切り替え（docs/65 §65.11-12）──────────────────────────────────
+  // ── テーマ切り替え（docs/log/65 §65.11-12）──────────────────────────────────
   // DrawioView と同じ手順: 拡大しておく → フレームを作り直す（新しい srcdoc）→
   // ready から boot し直し → 直前の現在地を restore で渡す。
   if (c.themeSwitch && rendered) {
@@ -491,7 +491,7 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     }
   }
 
-  // ── ジェスチャ（docs/65 §65.12）────────────────────────────────────────
+  // ── ジェスチャ（docs/log/65 §65.12）────────────────────────────────────────
   // フレームは倍率が変わるたびに rendered を返すので、押した結果は親から観測できる。
   if (c.gestures && rendered) {
     const scaleNow = async () => {
@@ -547,7 +547,7 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     console.log(`   gestures: fit=${base0} → ctrl+wheel=${afterWheel} → pinch=${afterPinch} → dbltap=${afterTap}`);
   }
 
-  // ── コントラスト（docs/65 §65.12）────────────────────────────────────
+  // ── コントラスト（docs/log/65 §65.12）────────────────────────────────────
   // 暗いテーマで「既定色の文字」が背景に溶けていないか。画素を数えて判定する。
   if (rendered && rendered.darkMode !== c.dark) {
     fail.push(

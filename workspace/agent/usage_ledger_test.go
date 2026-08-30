@@ -299,7 +299,7 @@ func TestFoldSessionUsageIsIdempotent(t *testing.T) {
 }
 
 // TestFoldMatchesSessionUsageLive は実ワークスペースの実転写で、台帳へ折り込んだ合計が
-// get_session_usage の cumulative と一致することを見る opt-in テスト（docs/46 P2 完了条件）。
+// get_session_usage の cumulative と一致することを見る opt-in テスト（docs/log/46 P2 完了条件）。
 // 合成ターンの単体テストでは、各 kind の実パーサが吐く形（sidechain の付き方・イベントの
 // 刻み方）まではカバーできない。
 // 実行例: AF_USAGE_FOLD_LIVE=1 go test -run TestFoldMatchesSessionUsageLive -v .
@@ -643,7 +643,7 @@ func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 			checked++
 			if !finalizes {
 				t.Errorf("%s: %s が session.RemoveMeta を呼ぶのに finalizeSessionUsage を呼んでいない"+
-					"（docs/46 §3-b: meta を忘れる前に末尾ターンを確定させる）", name, fd.Name.Name)
+					"（docs/log/46 §3-b: meta を忘れる前に末尾ターンを確定させる）", name, fd.Name.Name)
 			}
 		}
 	}

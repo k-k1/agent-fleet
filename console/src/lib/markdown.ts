@@ -55,7 +55,7 @@ const isDelimiterRow = (cells: string[]) => cells.every((cell) => DELIMITER_CELL
 const isFullwidthRow = (line: string) => /[｜￨]/.test(line) && !line.includes("|");
 // Both widths on one row: the ASCII ones are the separators and the fullwidth one is
 // cell content, deliberately — the only way to put a vertical bar in a cell without
-// splitting it. docs/54-opencode-console-oauth.md does exactly that.
+// splitting it. docs/log/54-opencode-console-oauth.md does exactly that.
 const mixesPipeWidths = (line: string) => /[｜￨]/.test(line) && line.includes("|");
 
 // Repair tables written with fullwidth pipes, and supply a delimiter row where one is

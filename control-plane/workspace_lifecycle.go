@@ -1,5 +1,5 @@
 // workspace_lifecycle.go — ワークスペースレコードのライフサイクルとワークスペース単位の環境変数導出。
-// manager.go からの機械的分割（docs/23 P2-W2）。
+// manager.go からの機械的分割（docs/log/23 P2-W2）。
 package main
 
 import (
@@ -273,11 +273,11 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 		env = append(env,
 			"AF_CP_BASE_URL="+m.publicBaseURL,
 			"AF_MEMO_TOKEN="+mintMemoToken(memoSignKey(m.tokenSignMaster()), ws.MembershipID),
-			// Schedule bridge (docs/38 P3): separate per-membership token so the
+			// Schedule bridge (docs/log/38 P3): separate per-membership token so the
 			// operator MCP can drive /internal/schedules over the same hairpin. A
 			// distinct credential from the memo token — a leak is scoped to schedules.
 			"AF_SCHEDULE_TOKEN="+mintScheduleToken(scheduleSignKey(m.tokenSignMaster()), ws.MembershipID),
-			// MCP registry bridge (docs/48 P4): the agent polls /internal/mcp-servers for
+			// MCP registry bridge (docs/log/48 P4): the agent polls /internal/mcp-servers for
 			// this tenant's distributed MCP definitions. Its own credential, because the
 			// response can carry tenant secrets (a user_secret=0 server's headers) — a leak
 			// must not also grant memo/schedule access, and vice versa.
@@ -287,7 +287,7 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 			// mount. Its own credential for the same reason as the others; a leak reads
 			// this member's docs subset and nothing else.
 			"AF_DOCS_TOKEN="+mintDocsToken(docsSignKey(m.tokenSignMaster()), ws.MembershipID),
-			// Git OAuth refresh bridge (docs/71 §71.8): the agent posts its Bitbucket
+			// Git OAuth refresh bridge (docs/log/71 §71.8): the agent posts its Bitbucket
 			// refresh token here so the CP can add the TENANT's client secret, which
 			// therefore never reaches the container. Its own credential for the same
 			// reason as the others; a leak refreshes this member's git token and
@@ -353,7 +353,7 @@ func (m *manager) resolveWorkspaceSize(ctx context.Context, ws Workspace) (memBy
 }
 
 // resolveSlotClass returns the machine class ws's NEXT container start lands on, and
-// a note when the stored answer could not be honoured (docs/70 §70.4.3).
+// a note when the stored answer could not be honoured (docs/log/70 §70.4.3).
 //
 // The chain is user → tenant default → deployment default, and each candidate must be
 // both DECLARED by the deployment and ALLOWED by the tenant. "" is returned on every
@@ -431,7 +431,7 @@ func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws Workspace) in
 //
 // Only reachable from an explicit administrator action. In particular it does NOT run on
 // offboarding: removeMembership is a logical delete that keeps the home on purpose
-// (docs/61 §61.10.6), and the automatic sweep hibernates rather than destroys.
+// (docs/log/61 §61.10.6), and the automatic sweep hibernates rather than destroys.
 //
 // ⚠️ This cannot honour the deletion locks of ADR 0028. They live inside the home
 // (~/.config/agent-fleet/), which is unreadable while the workspace is stopped — a
