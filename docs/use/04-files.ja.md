@@ -127,4 +127,4 @@ Updated: 2026-08
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（fs 面・denylist）](../dev/04-workspace-agent.md)
+仕組みを知りたい人へ: [dev/04 Workspace Agent（fs 面・denylist）](../build/04-agent.ja.md)

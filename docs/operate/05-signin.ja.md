@@ -16,7 +16,7 @@ Updated: 2026-08
 （あちらは症状から引く索引）で、ここでは繰り返しません。
 
 内部の仕組み（信頼規則、2 つの IdP をまたいで同じ人と見なす判定）は
-[dev/07 §7.3.1](../dev/07-security.md) と [ADR 0043](../decisions/0043-login-idp.md)。
+[dev/07 §7.3.1](../build/07-security.ja.md) と [ADR 0043](../decisions/0043-login-idp.md)。
 
 ## 0. はじめる前に
 

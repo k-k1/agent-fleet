@@ -67,7 +67,7 @@ Browser ──HTTP/WS──▶ Control Plane(:8080, コンテナ)
 | POST | `/sessions/{name}/stop` | `tmux kill-session` |
 | GET (WS) | `/ws/pty?session=<name>` | PTY を生成し `tmux attach -t <name>` を実行、双方向中継 |
 
-セッション制御は [07 §7.4（現 dev/04 §4.2 セッションモデル）](../dev/04-workspace-agent.md#42-セッションモデル) のロジック（jsonl 有無で `--resume`/`--session-id`）。
+セッション制御は [07 §7.4（現 dev/04 §4.2 セッションモデル）](../build/04-agent.ja.md#42-セッションモデル) のロジック（jsonl 有無で `--resume`/`--session-id`）。
 
 WS フレーム（JSON テキスト）:
 - 上り: `{"type":"input","data":"…"}` / `{"type":"resize","cols":N,"rows":N}`
@@ -75,7 +75,7 @@ WS フレーム（JSON テキスト）:
 
 ## 11.5 Control Plane エンドポイント（MVP）
 
-[06](../dev/05-api-contracts.md) のサブセット。認証は dev 固定 ID（`X-Dev-User` か固定値）。
+[06](../build/05-api.ja.md) のサブセット。認証は dev 固定 ID（`X-Dev-User` か固定値）。
 
 | Method | Path | 説明 |
 |--------|------|------|
@@ -88,7 +88,7 @@ WS フレーム（JSON テキスト）:
 | POST | `/api/sessions/{name}/stop` | Agent へ proxy |
 | GET (WS) | `/ws/terminal?session=…` | Agent の `/ws/pty` へ透過 proxy |
 
-Runtime アダプタ（[09 §9.3（現 dev/09 §9.2 ポート&アダプタ）](../dev/09-deploy.md#92-ポートアダプタ--何をどのノブで差し替えるか)）の `local` 実装をここで初めて具現化する。
+Runtime アダプタ（[09 §9.3（現 dev/09 §9.2 ポート&アダプタ）](../build/09-deploy.ja.md#92-ポートアダプタ--何をどのノブで差し替えるか)）の `local` 実装をここで初めて具現化する。
 
 ## 11.6 技術選定（MVP）
 
@@ -122,7 +122,7 @@ docker compose up --build -d
 
 - Phase 1 は dev 形態（認証バイパス・単一ユーザー）。隔離/認証強化は Phase 2 以降。
 - `claude /login` は [10](../log/phase0-poc.md) の方式 A（対話コード貼り戻し）をターミナルから実施。
-- docker.sock を CP に渡す = ホスト root 相当（[09 §9.8（現 dev/07 セキュリティ）](../dev/07-security.md)）。dev 前提で許容。
+- docker.sock を CP に渡す = ホスト root 相当（[09 §9.8（現 dev/07 セキュリティ）](../build/07-security.ja.md)）。dev 前提で許容。
 
 ## 11.10 実装結果と実運用の知見（Phase 1 完了）
 
@@ -139,7 +139,7 @@ Workspace 起動/停止、セッション作成/一覧/停止、ターミナル�
 ### 計画からの差分（確定）
 - **claude は実行時 install**（イメージに焼かない）。entrypoint が起動時に最新を `~/.local` へ install/update
   → 再ビルドなしで常に最新。`INSTALL_CLAUDE` build-arg は廃止、`CLAUDE_INSTALL` env で制御。
-- **M5 は host-CP 版**（`deploy/local/run-dev.sh`）で実現。compose（CP もコンテナ化 + afnet）は後続（[09](../dev/09-deploy.md)）。
+- **M5 は host-CP 版**（`deploy/local/run-dev.sh`）で実現。compose（CP もコンテナ化 + afnet）は後続（[09](../build/09-deploy.ja.md)）。
 - CP のポートは **8099**（8080 はこの環境で使用中）。
 - まだ**単一 Workspace**（`af-ws-dev`）。per-user 化は Phase 2。
 
@@ -151,7 +151,7 @@ Workspace 起動/停止、セッション作成/一覧/停止、ターミナル�
 - **Console キャッシュ**: 静的配信に `Cache-Control: no-store`（dev 中の反映漏れを防止）。
 - **端末描画**: 絵文字の半クリップは unicode11 アドオン、見栄えは WebGL + JetBrains Mono。
 - **/login URL の受け渡し**: Ink がハード改行するため、バッファから折返し連結で URL を復元し
-  「⧉ sign-in URL」ボタンでオンデマンド Copy（自動バナーは誤検出が多く廃止）。→ [02 §2.6（現 dev/08 §8.5 Claude 認証）](../dev/08-integrations.md#85-claude-認証オンボーディングl2-の本丸)。
+  「⧉ sign-in URL」ボタンでオンデマンド Copy（自動バナーは誤検出が多く廃止）。→ [02 §2.6（現 dev/08 §8.5 Claude 認証）](../build/08-integrations.ja.md#85-claude-認証オンボーディングl2-の本丸)。
 
 ### 次フェーズの入口
 per-user Workspace 化（CP が user→container を払い出し）、リポジトリ管理、SSH 鍵、settings.json 編集 UI、

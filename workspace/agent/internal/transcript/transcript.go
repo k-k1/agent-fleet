@@ -24,7 +24,7 @@ type Part struct {
 	Questions []Question `json:"questions,omitempty"` // kind=question: AskUserQuestion
 	Answer    string     `json:"answer,omitempty"`    // kind=question: the chosen answer text
 	// Declined marks kind=question only: claude's tool_result was a decline (Escape out
-	// of the modal, e.g. docs/dev/92 §6's preview free-text bug) rather than a genuine
+	// of the modal, e.g. docs/build/92 §6's preview free-text bug) rather than a genuine
 	// answer — Answer then holds claude's own rejection boilerplate, not a pick, and the
 	// Console must not render it as an answered card (see QuestionBlock).
 	Declined bool   `json:"declined,omitempty"`

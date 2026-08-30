@@ -5,7 +5,7 @@
 > 実装サマリ（2026-07-12）:
 > - **Phase 2（agent）**: pane ラッパー方式で per-session の終了理由を記録。`record_exit.go`（record-exit サブコマンド＋`exitReason` 解釈＋自 cgroup `memory.events` の `oom_kill` をセッション開始時ベースラインと比較して OOM 確定）、`status.ExitInfo` ストア、`startSessionTmux` のラッパー付与＋ベースライン記録、`wireSession` の終了理由付与、Stop/Archive/Recreate のクリーンアップ。Console は `exitReason/exitCode/exitSignal` を左ペインに反映（異常終了は warn チップ＋ツールチップ）。単体テスト＋実バイナリでのケース検証済み。**「意図的停止フラグ」は実証の結果不要と判明**（§4.2 追記）。
 > - **Phase 1（control-plane）**: `metrics.go` に `memory.events` の `oom_kill` 追跡（`oomTracker`、ポーリング跨ぎで `oom_recent`）と停止コンテナの docker `.State.OOMKilled/.ExitCode` を追加。`/api/workspace/stats` に `oom_kill_total`/`oom_recent`/`oom_killed`/`exit_code` を露出。単体テスト済み。
-> - **UI/契約/ADR 完了**: WsBar に OOM 表示（メモリタイル crit＋状態チップ warn、`258af54`）、`docs/dev/05-api-contracts.md` に stats 契約追記、[decisions/0014](../decisions/0014-agent-exit-recording.md) 起票。
+> - **UI/契約/ADR 完了**: WsBar に OOM 表示（メモリタイル crit＋状態チップ warn、`258af54`）、`docs/build/05-api.ja.md` に stats 契約追記、[decisions/0014](../decisions/0014-agent-exit-recording.md) 起票。
 > - **残**: 実フリート再ビルド反映と実機目視のみ（agent はイメージ焼き込みのため要再ビルド）。
 
 コンテナ内で動くエージェントプロセス（claude / codex / opencode の各セッション）が **なぜ終了したか**（正常終了 / OOM kill / その他 signal / クラッシュ / 意図的停止）を捕捉して記録し、Console に事実ベースで提示するための設計。現状は「tmux セッションが消えた＝停止」しか見ておらず、終了理由の情報はゼロ。
@@ -141,7 +141,7 @@ args := []string{"new-session", "-d", "-s", session.TmuxName(m.Name), "-c", plan
 - **セッションカード / tooltip**: 現状の推測表示（`WsBar.tsx:683`「停止（コンテナが自走終了 — クラッシュ / OOM の可能性）」）を、記録済み `ExitReason` による事実表示に置換（`oom`→「メモリ不足で強制終了(OOM)」、`crashed`→「異常終了(code N)」、`killed`→「強制終了(signal N)」、`stopped`→通常停止表示）。
 - **ワークスペースバー**: 「直近 OOM 発生」を確定で表示（Phase 1 データ）＋ `memory.current/memory.max` の予兆警告。
 - **admin ビュー**（`admin_stats.go:47` `memberStats`）: member 別に直近 OOM 回数・OOM で落ちたセッション一覧を出せると運用上有用。
-- API 契約（`GET /api/workspace/stats` / セッション一覧の wire 型 `session.Session`）に終了理由フィールドを追加 → `docs/dev/05-api-contracts.md` を更新。
+- API 契約（`GET /api/workspace/stats` / セッション一覧の wire 型 `session.Session`）に終了理由フィールドを追加 → `docs/build/05-api.ja.md` を更新。
 
 ---
 

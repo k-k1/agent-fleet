@@ -434,7 +434,7 @@ P1 抜きの P2 は禁止（原則 2）。
   経過で `/halt` が飛ぶ → 以後 busy が消えて tier2 が走ることを 1 本で通す。
 - **持ち越しの round-trip**（P1）: pending 書込 → 昇格 → `/messages` が `carriedQuestion` を返す →
   `carried-answer` → `deliverInitialPrompt` に渡る文字列を固定（複数質問・自由入力・
-  preview 付きの 3 形。文字列契約は版ごとに壊れるので[92](../dev/92-tui-modal-driving.md)の型に従う）。
+  preview 付きの 3 形。文字列契約は版ごとに壊れるので[92](../build/92-driving-a-tui.ja.md)の型に従う）。
 - **キーを撃たないこと**（P1）: carried カードからは `POST /input` が 1 回も出ないことを
   DOM テストで固定（生きたペインへの誤配達の防止）。
 - **実機**: ECS の実配備で「質問を出したまま放置 → 1h で halt → 2h で Workspace 停止 →
@@ -459,7 +459,7 @@ P1 抜きの P2 は禁止（原則 2）。
 ## 75.10 実測（claude 2.1.241・2026-08-24）
 
 設計の前提を、実データの突合ではなく**実 TUI を立てた対照実験**で確かめた。手順の型は
-[92](../dev/92-tui-modal-driving.md)。他セッションに触れないよう専用の tmux ソケット
+[92](../build/92-driving-a-tui.ja.md)。他セッションに触れないよう専用の tmux ソケット
 （`tmux -L probe75`）を使い、`af` と同じ起動形（`claude --session-id <uuid>
 --dangerously-skip-permissions` / プランは `--allow-dangerously-skip-permissions
 --permission-mode plan`）を再現。ワークスペース停止は `tmux kill-session`＝SIGKILL 相当で代替した。

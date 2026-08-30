@@ -10,7 +10,7 @@ This chapter summarizes the **assumptions an operator must understand** and the 
 controls to apply** in order to run Agent Fleet safely. It is not a list of hidden bugs; it
 **honestly discloses properties inherent in the architecture and shows how to handle them in
 operations**. The external-facing threat model is in [SECURITY.md](../../SECURITY.md)
-(English), and the design background is in [dev/07 Security](../dev/07-security.md); this
+(English), and the design background is in [dev/07 Security](../build/07-security.md); this
 document expands those into operational procedures.
 
 ## Threat model (summary)
@@ -65,7 +65,7 @@ properties inherent in the current architecture.
 A caveat on limits: in the current localCustodian, the KEK is derived from the master key, so
 the effective strength is equivalent to the single `AF_MASTER_KEY`. **True per-tenant
 crypto-shred via tenant key revocation will be achieved when a Vault/KMS custodian is adopted
-in the future** (currently design only). Details in [dev/07 §7.6](../dev/07-security.md).
+in the future** (currently design only). Details in [dev/07 §7.6](../build/07-security.md).
 
 ## Operating egress control
 
@@ -91,7 +91,7 @@ in the Console.
 > actual blocking (enforce), and enabling the accompanying always-on container-side wiring
 > (internal network + proxy env injection), are **not yet completed and are follow-up work**.
 > For now, understand that you can operate up to the "observe and grow the allowlist" stage.
-> The full design picture is in [dev/07 §7.8](../dev/07-security.md).
+> The full design picture is in [dev/07 §7.8](../build/07-security.md).
 
 ## MCP servers and external connections
 
@@ -141,7 +141,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
   pinned to your tenant GUID: on the `/common/` or `/organizations/` endpoints every Microsoft
   account on earth reaches the login and a personal account can rewrite its own email address,
   so the CP refuses to start there unless `AF_OIDC_<ID>_ALLOWED_TIDS` is set
-  ([05 §4](05-signin.md) / [dev/07 §7.3](../dev/07-security.md)).
+  ([05 §4](05-signin.md) / [dev/07 §7.3](../build/07-security.md)).
 - **Audit log.** Only mutating / destructive operations are recorded in `audit_log` (reads are
   off by default, and **raw terminal streams are never stored, due to the risk of secrets
   leaking into them**). super_admins / tenant_admins view it from the Audit tab of the Admin
@@ -157,7 +157,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
 - **Designed to keep secrets out of logs.** The CP neither holds nor interprets credential
   plaintext, and does not emit it into logs. The unified cred helper decrypts on demand and
   hands it over, so no plaintext files are ever created
-  ([dev/07 §7.6](../dev/07-security.md)).
+  ([dev/07 §7.6](../build/07-security.md)).
 
 ## Offboarding: how access is actually revoked
 

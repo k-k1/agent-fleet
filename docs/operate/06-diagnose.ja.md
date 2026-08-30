@@ -41,7 +41,7 @@ Updated: 2026-08
 CP はコンテナですが、ホストの Docker デーモンを外から駆動します（docker-out-of-docker）。この方式
 には破ると**エラーを出さずに静かに壊れる** 3 つの制約があり、compose 定義が封じ込めています。
 自分で compose をカスタマイズしたときや、症状から当たりをつけたいときはここを見ます。仕組みの
-背景は [dev/09](../dev/09-deploy.md)。
+背景は [dev/09](../build/09-deploy.ja.md)。
 
 - **(A) host ネットワーク** — CP はワークスペースをホストデーモン経由で `127.0.0.1:<port>` に
   publish するので、ホストの loopback を共有していないと到達できません。CP と Caddy の両方が
@@ -165,7 +165,7 @@ A. 正常です。Workspace（`af-ws-*`）は compose 管理外で、CP が `doc
 
 **Q. 複数ホストに分散（HA・水平スケール）できる？**
 A. 提供モデルは 1 社 = 1 デプロイ = 1 ホストです。CP はホストの Docker デーモンを駆動する前提で、
-複数ホストへの分散や HA 構成は現行の対象外です。大規模化の設計方向は [dev/09](../dev/09-deploy.md)
+複数ホストへの分散や HA 構成は現行の対象外です。大規模化の設計方向は [dev/09](../build/09-deploy.ja.md)
 （aws ターゲットは実装済みだが実運用実績なし）を参照してください。
 
 **Q. Google 以外の認証（Microsoft 365 / LDAP / SAML など）を使いたい。**
@@ -175,4 +175,4 @@ IdP 側にリダイレクト URI を 1 本（[05](05-signin.ja.md)）。同時�
 ログイン画面に provider の数だけボタンが並びます。
 SAML のみの IdP（HENNGE One / TrustLogin / CloudGate など）と LDAP は CP には実装していません。
 既存のゲートウェイ（oauth2-proxy / Keycloak / ALB OIDC）を前段に置き、`AUTH=proxy` で上流のメール
-ヘッダを信頼させてください（[dev/07 §7.3](../dev/07-security.md)）。
+ヘッダを信頼させてください（[dev/07 §7.3](../build/07-security.ja.md)）。

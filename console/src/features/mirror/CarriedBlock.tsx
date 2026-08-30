@@ -41,7 +41,7 @@ export function CarriedBlock({
     setSending(true);
     const r = await sessionCarriedAnswer(session, body);
     setSending(false);
-    // 沈黙は成功と区別が付かない（docs/dev/92 §7 の教訓）。失敗は必ずトーストする。
+    // 沈黙は成功と区別が付かない（docs/build/92 §7 の教訓）。失敗は必ずトーストする。
     if (!r.ok) {
       onError(r.message || tr("err.send_failed"));
       return;

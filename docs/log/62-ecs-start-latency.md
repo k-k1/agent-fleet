@@ -10,7 +10,7 @@
 > 「Docker が無いのでここでは実検証できない」は**誤りだった**。`crane` + `soci --standalone` で
 > root も Docker も containerd も無しに index manifest v2 まで生成できる。
 > 意思決定: **ADR は起票しない**（P1 に進まないため。0044 は欠番にせず次の議題に回す）
-> 関連: [dev/09-deploy.md §9.5](../dev/09-deploy.md)（aws ターゲットの縮約） /
+> 関連: [build/09-deploy.ja.md §9.5](../build/09-deploy.ja.md)（aws ターゲットの縮約） /
 > [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md)（ランブック・"Known behavior: first Start may 504"） /
 > [35-packaging.md](35-packaging.md) §35.4.1（`BAKE_AGENT_CLIS` / `BAKE_OPTIONAL_TOOLS` の配布ノブ）
 > 対象: `deploy/aws/ecs/release-ecr.sh`（索引生成の置き場）/ `control-plane/runtime_ecs.go`（Start の待ち）/
@@ -27,7 +27,7 @@
   （`deploy/aws/ecs/README.md` の "Known behavior"）。
 - CP は裏で provisioning を続けるので機能的には収束する（Console は `GET /api/workspace` を
   ポーリングして `starting` を出す）が、体感は悪い。
-- [dev/09-deploy.md §9.5](../dev/09-deploy.md) が書くとおり、`starting` 状態が実質 ECS 専用なのは
+- [build/09-deploy.ja.md §9.5](../build/09-deploy.ja.md) が書くとおり、`starting` 状態が実質 ECS 専用なのは
   この構造のため。**scale-to-zero の代償を起動レイテンシとして毎回払っている**。
 
 帯域とデータ処理料の話は片付いている: ECR のレイヤ実体（S3）は S3 ゲートウェイエンドポイント

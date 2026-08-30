@@ -1,22 +1,22 @@
 # HANDOFF — 次セッションへの引き継ぎ
 
 このファイルは**このホストの稼働状態・実行の作法・落とし穴・現在地**に絞った引き継ぎメモ。
-機能仕様の正は **[dev/](dev/README.md)（開発者向け）とコード**、利用者の操作は **[use/](use/README.ja.md)**、
+機能仕様の正は **[dev/](build/README.md)（開発者向け）とコード**、利用者の操作は **[use/](use/README.ja.md)**、
 時系列の作業ログは [CHANGELOG-handoff.md](CHANGELOG-handoff.md)、前向きの計画は [roadmap](roadmap.md)、
 意思決定は [decisions/](decisions/)、使い終わった実装プランは [log/](log/README.md)。
-**まず読む順**: この HANDOFF（§1〜§3）→ [dev/01 アーキテクチャ](dev/01-architecture.md) → §4 の現在地。
+**まず読む順**: この HANDOFF（§1〜§3）→ [dev/01 アーキテクチャ](build/01-architecture.md) → §4 の現在地。
 
 ## 1. いま動いているもの（このホスト）
 
-- **Control Plane**: `:8099` で稼働中（React+Vite Console（`console/dist`）+ REST/WS プロキシ + Docker Runtime）。バイナリ `/tmp/af-cp`。Console の作りは [dev/02](dev/02-console.md)。
-- **形態**: **shared（`AUTH=oauth`）でライブ稼働**（2026-06-29 刷新, commit `0d8ce10`）。**CP が Google OAuth を内蔵**（oauth2-proxy + Caddy は廃止）。`authGate` が署名セッション cookie を検証して email を解決（[dev/07 §7.3](dev/07-security.md)）。CP は `127.0.0.1:8099` 束縛＝Funnel 経由のみ。設定は git-ignored の `deploy/local/oauth.env`（`AUTH=oauth`/`CP_ADDR=127.0.0.1:8099`/`GOOGLE_OAUTH_CLIENT_ID|SECRET`/`AF_COOKIE_SECRET`/許可リスト）。
+- **Control Plane**: `:8099` で稼働中（React+Vite Console（`console/dist`）+ REST/WS プロキシ + Docker Runtime）。バイナリ `/tmp/af-cp`。Console の作りは [dev/02](build/02-console.md)。
+- **形態**: **shared（`AUTH=oauth`）でライブ稼働**（2026-06-29 刷新, commit `0d8ce10`）。**CP が Google OAuth を内蔵**（oauth2-proxy + Caddy は廃止）。`authGate` が署名セッション cookie を検証して email を解決（[dev/07 §7.3](build/07-security.md)）。CP は `127.0.0.1:8099` 束縛＝Funnel 経由のみ。設定は git-ignored の `deploy/local/oauth.env`（`AUTH=oauth`/`CP_ADDR=127.0.0.1:8099`/`GOOGLE_OAUTH_CLIENT_ID|SECRET`/`AF_COOKIE_SECRET`/許可リスト）。
 - **Workspace コンテナ**: 運用者は `af-ws-k1-kami-gmail-com`（image `agent-fleet/workspace:dev`）。`~`= bind mount `/tmp/af-data/<user>/home`（永続・`/login` 済み）。許可ユーザー追加は `deploy/local/allowed-emails.txt` に1行（メール or `@domain`）→ ログイン毎にライブ反映、その Google ログインで `af-ws-<email>` が自動払い出し（相互不可視: 別 home/別ネットワーク/別トークン）。dev 形態に戻すには oauth.env の `AUTH` 行を外す。
-- **外部アクセス**: このホストの **Tailscale Funnel URL**（`https://<tailnet ホスト>.ts.net/`。ルート配信、旧 `/agent-fleet` プレフィクス廃止。Funnel → CP `:8099` 直結。未認証は `/login` → Google → Console）。**実ホスト名はリポジトリに書かない**（公開リポジトリで生きた入口を晒さないため）— 手元で `tailscale funnel status` か `tailscale status --json | jq -r .Self.DNSName` で引く。入口（ingress）の設計は [dev/09 §9.3](dev/09-deploy.md)。
-- **イメージ**: `agent-fleet/workspace:dev`（最新, 約2.8G, 焼き込み内容は [dev/04 §4.9](dev/04-workspace-agent.md)）。**Java は image 外**＝ホスト共有 dir `WS_DATA/shared/jvm`（Temurin 8/21/25）を `/usr/lib/jvm:ro` でマウント。
+- **外部アクセス**: このホストの **Tailscale Funnel URL**（`https://<tailnet ホスト>.ts.net/`。ルート配信、旧 `/agent-fleet` プレフィクス廃止。Funnel → CP `:8099` 直結。未認証は `/login` → Google → Console）。**実ホスト名はリポジトリに書かない**（公開リポジトリで生きた入口を晒さないため）— 手元で `tailscale funnel status` か `tailscale status --json | jq -r .Self.DNSName` で引く。入口（ingress）の設計は [dev/09 §9.3](build/09-deploy.md)。
+- **イメージ**: `agent-fleet/workspace:dev`（最新, 約2.8G, 焼き込み内容は [dev/04 §4.9](build/04-agent.md)）。**Java は image 外**＝ホスト共有 dir `WS_DATA/shared/jvm`（Temurin 8/21/25）を `/usr/lib/jvm:ro` でマウント。
 
 ## 2. ツールチェーン / 実行の作法（このホスト固有）
 
-変更の種類ごとの汎用的な反映ルール（早見表）は [dev/10 §10.2](dev/10-development.md) に移した。ここは**このホスト固有の起動作法**のみ。
+変更の種類ごとの汎用的な反映ルール（早見表）は [dev/10 §10.2](build/10-development.md) に移した。ここは**このホスト固有の起動作法**のみ。
 
 - **Go**: user-local。`export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"`（go1.26）。
 - **Node**: nvm（`~/.nvm/versions/node/v22.23.1`）。ログインシェルで有効。
@@ -58,12 +58,12 @@
 `deploy/release/notes/`）。残 = P3-8（専用分離）・P3-9 の成熟項目（観測 / egress 統制）・P3-10 の完了ゲート
 （第 2 デプロイ E2E）（[roadmap](roadmap.md)）。フェーズごとの実装記録は [log/](log/README.md)、確定事項の背景は decisions/。
 
-- **仕様を知りたい** → [dev/](dev/README.md): アーキテクチャ(01) / Console(02) / Control Plane(03) / Agent(04) /
+- **仕様を知りたい** → [dev/](build/README.md): アーキテクチャ(01) / Console(02) / Control Plane(03) / Agent(04) /
   API 契約(05) / データモデル(06) / セキュリティ(07) / 外部連携(08) / デプロイ(09) / 開発作法(10) / コードマップ(90)。
 - **操作を知りたい** → [use/](use/README.ja.md): member / admin / operator / lite の分冊。
 - **恒久的に有効な検証知見**: `/login` は localhost 非依存（`redirect_uri=platform.claude.com/oauth/code/callback`）で
   ヘッドレス/リモートに無条件成立、認証と onboarding は別物、`/login` URL 折返し復元 →
-  詳細は [dev/08 §8.5](dev/08-integrations.md) と [history/phase1-plan §11.10](log/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
+  詳細は [dev/08 §8.5](build/08-integrations.md) と [history/phase1-plan §11.10](log/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
 - **進行中の設計**: egress 統制（[docs/20](log/20-container-audit-egress.md)・enforce 未了）。Go 内部リファクタ
   （[docs/23](log/23-go-refactor.md)）は develop マージ済・残 = ④契約の型化のみ。i18n（[docs/28](log/28-i18n.md)）は
   Console 側 P0〜P5 ＋ P6（エージェント出力言語）まで完了・残 = 実フリート再ビルド後の実機目視。

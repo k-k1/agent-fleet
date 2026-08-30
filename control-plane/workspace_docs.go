@@ -56,16 +56,11 @@ func docsSrcDir() string {
 // The listing is deliberately literal rather than clever. It is read as "who sees
 // what" during security review, and a loop over a table would hide the answer.
 func docsRolePrefixes(role string) []string {
-	// docs/guide is gone: guide/member became use/, guide/admin became admin/, and
-	// guide/operator became operate/. docs/dev is the last legacy shelf — delete this
-	// variable, and this comment, once build/ is written and docs/dev is removed.
-	legacyDev := []string{"dev"}
-
 	switch role {
 	case "super_admin":
-		return append([]string{"use", "ref", "admin", "operate", "build"}, legacyDev...)
+		return []string{"use", "ref", "admin", "operate", "build"}
 	case "tenant_admin":
-		return append([]string{"use", "ref", "admin"}, legacyDev...)
+		return []string{"use", "ref", "admin"}
 	default: // "member" and any unknown role
 		return []string{"use", "ref"}
 	}

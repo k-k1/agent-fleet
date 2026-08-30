@@ -77,7 +77,7 @@ func notifyCarried(m session.Meta) {
 // oneLine は TUI へ打鍵する文字列を 1 行へ畳む。
 //
 // ★これは飾りではない: {t} は tmux send-keys -l でバイト列がそのままペインに載るので、
-// 改行は LF としてペインに届き Enter として作用する（docs/dev/92）。複数行の配達文は
+// 改行は LF としてペインに届き Enter として作用する（docs/build/92）。複数行の配達文は
 // 途中で送信され、残りが次のプロンプトや別のモーダルへ落ちる。
 func oneLine(s string) string {
 	r := strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ", "\t", " ")
@@ -246,7 +246,7 @@ func handleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 生きているセッションに新しいモーダルが出ているなら送らない。持ち越しの文章が
-	// そのモーダルの選択操作に化ける（docs/dev/92 の誤配達クラス）。
+	// そのモーダルの選択操作に化ける（docs/build/92 の誤配達クラス）。
 	if sessionAlive(m) {
 		if blocked := promptBlocker(name); blocked != "" {
 			writeBlockedErr(w, blocked)

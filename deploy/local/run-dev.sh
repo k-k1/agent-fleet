@@ -20,7 +20,7 @@
 #     Note: env AF_RUNTIME=wsl is, to the CP, an alias for "containerless" and is NOT
 #     the `wsl` subcommand (Docker preset). Easy to mix up — prefer the subcommand.
 #   - claude / opencode / codex / agy / rtk are baked into the image (pinned via
-#     Dockerfile ARGs). Version bump runbook: docs/dev/10-development.md §10.2.1.
+#     Dockerfile ARGs). Version bump runbook: docs/build/10-development.md §10.2.1.
 #     Tracking latest is also possible via the settings modal's self-update opt-in
 #     (AF_AGENT_SELF_UPDATE), rtk included.
 #

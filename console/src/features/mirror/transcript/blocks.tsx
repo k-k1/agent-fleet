@@ -783,7 +783,7 @@ export function QuestionBlock({
   answered?: boolean;
   answer?: string;
   // declined: the tool_result was claude's own decline boilerplate (an Escape out of
-  // the modal — e.g. docs/dev/92 §6's preview free-text bug), not a genuine answer.
+  // the modal — e.g. docs/build/92 §6's preview free-text bug), not a genuine answer.
   // Rendering `answer` as if it were a pick would parse to nothing but still badge
   // "回答済み" — the exact "answered but not recognized" confusion this fixes.
   declined?: boolean;

@@ -110,4 +110,4 @@ Updated: 2026-08
 
 ---
 
-仕組みを知りたい人へ: [dev/02 Console（表示システム）](../dev/02-console.md)
+仕組みを知りたい人へ: [dev/02 Console（表示システム）](../build/02-console.ja.md)

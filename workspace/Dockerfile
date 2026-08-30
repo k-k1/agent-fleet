@@ -210,7 +210,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # 実体は /usr/local/libexec/gh に置き、/usr/local/bin/gh は透過認証ラッパー
 # (gh-auth-wrapper.sh) にする。ラッパーが呼び出しのたびに git と同一の cred helper
 # からトークンを取り出し GH_TOKEN に注入するので、`gh auth login` 不要で gh が使える
-# （docs/dev/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
+# （docs/build/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
 ARG GH_VERSION=2.98.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -444,7 +444,7 @@ RUN mkdir -p /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/do
 # 中身を持つ」側だったため元から dev 所有——このRUNは今後 keep 用アクセスポイントが
 # 新規作成される場合（決定 3-6）に同じ穴を未然に防ぐためのもの。
 # docs は ECS に bind-mount する経路が無く、Agent が CP からロール別 docs を
-# 取得してここへ展開する（docs/dev/04 §4.9・agent docs_sync.go）。
+# 取得してここへ展開する（docs/build/04 §4.9・agent docs_sync.go）。
 RUN chown 1000:1000 /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/docs
 # /scratch = タスクローカルの作業ディスク（ADR 0044 決定 3）。ECS では ephemeral
 # storage 上の素のディレクトリ（>200 GiB のときだけ EBS のマウント先）で、entrypoint が

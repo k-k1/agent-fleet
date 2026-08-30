@@ -137,7 +137,7 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, erro
 //
 // ⚠️ The token is the Connections one, whose scope is `repo` (no `read:org`), and the
 // host is fixed to github.com: GitHub Enterprise Server is out of scope for v1, exactly
-// as for the `gh` wrapper (docs/dev/08 §8.3).
+// as for the `gh` wrapper (docs/build/08 §8.3).
 func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, error) {
 	u := "https://api.github.com/search/issues?per_page=" + fmt.Sprint(workItemFetchPerQuery) +
 		"&sort=updated&order=desc&q=" + url.QueryEscape(query)

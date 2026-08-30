@@ -1,6 +1,6 @@
 package main
 
-// Role-scoped docs, pulled from the CP when nothing was mounted (docs/dev/04 §4.9).
+// Role-scoped docs, pulled from the CP when nothing was mounted (docs/build/04 §4.9).
 //
 // The agent-fleet docs under /usr/local/share/agent-fleet/docs are what the Console's
 // 利用ガイド opens and what the in-container agents grep to answer questions about this

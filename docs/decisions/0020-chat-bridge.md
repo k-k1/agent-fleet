@@ -7,7 +7,7 @@
   ＋**Slack 追随（Socket Mode で全機能パリティ）実装済み**（2026-07-23。Discord/Slack 同時接続対応＝
   store は provider スコープ化）。実装計画は [docs/37](../log/37-chat-bridge.md)。
 - 関連: [docs/30](../log/30-session-report.md)（完了報告 — 通知内容の供給元）、
-  docs/25（PagerDuty/Grafana — Connections 追加の先例）、dev/07-security.md §7.6（秘密は CP を素通り）。
+  docs/25（PagerDuty/Grafana — Connections 追加の先例）、build/07-security.md §7.6（秘密は CP を素通り）。
 
 ## 背景
 

@@ -327,4 +327,4 @@ deeper reset that also removes home except logins and connections). Both lose un
 
 ---
 
-For those who want the internals: [dev/02 Console design](../dev/02-console.md)
+For those who want the internals: [dev/02 Console design](../build/02-console.md)

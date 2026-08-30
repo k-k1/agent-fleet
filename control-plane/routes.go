@@ -553,7 +553,7 @@ func registerMCPServerRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/admin/mcp-servers/{id}", m.adminUpsert)
 	mux.HandleFunc("DELETE /api/admin/mcp-servers/{id}", m.adminDelete)
 	mux.HandleFunc("GET /internal/mcp-servers", m.withMCPToken(m.distribute))
-	// Role-scoped docs pull (docs/dev/04 §4.9). Same shape as the MCP poll — a
+	// Role-scoped docs pull (docs/build/04 §4.9). Same shape as the MCP poll — a
 	// per-membership token, session-exempt via /internal/ — and the only way an ECS
 	// workspace gets its docs at all, since there is no host path to bind-mount there.
 	mux.HandleFunc("GET /internal/docs", newDocsAPI(cfg.mgr).download)

@@ -30,7 +30,7 @@ describe("pathRefCandidate", () => {
 
   it("drops a trailing slash so a directory resolves like any other path", () => {
     expect(pathRefCandidate("_act-parts/")).toEqual({ ref: "_act-parts" });
-    expect(pathRefCandidate("docs/dev/")).toEqual({ ref: "docs/dev" });
+    expect(pathRefCandidate("docs/build/")).toEqual({ ref: "docs/build" });
   });
 
   it("trims surrounding whitespace but rejects a token with any inside", () => {

@@ -12,7 +12,7 @@ air-gapped networks, and stopping Workspaces — together with the decision poin
 canonically documented in [deploy/compose/README.md](../../deploy/compose/README.md).**
 Rather than duplicating the commands here, this chapter supplements them with "what happens
 and what to watch out for." The working directory is `deploy/compose/`. To dig into the
-design assumptions, see [dev/09 §9.7](../dev/09-deploy.md).
+design assumptions, see [dev/09 §9.7](../build/09-deploy.md).
 
 ## Backup
 
@@ -208,7 +208,7 @@ hours** (measured: 172 probes for `/actuator/heapdump`, `/.env` and friends in t
   left open never keeps a Workspace warm. This is effective for
   saving resources. For the meaning of the env vars, see
   [.env.example](../../deploy/compose/.env.example); for how it works, see
-  [dev/09 §9.4](../dev/09-deploy.md).
+  [dev/09 §9.4](../build/09-deploy.md).
 - **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
   are outside compose management). To stop a specific Workspace for sure, a super_admin
   force-stops it from the Admin panel in the Console. When the whole host must be brought fully

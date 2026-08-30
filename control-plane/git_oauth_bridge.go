@@ -17,7 +17,7 @@ package main
 //
 // ★ Note what did NOT move. The refresh token itself stays in the workspace — the CP
 // does not store it, and this endpoint does not remember it. That keeps the standing
-// rule that the CP passes credentials through without holding them (docs/dev/08), and
+// rule that the CP passes credentials through without holding them (docs/build/08), and
 // it is the reason the split is "the tenant's secret here, the member's token there"
 // rather than "all of it here".
 //

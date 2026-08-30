@@ -195,4 +195,4 @@ git だけでなく **SVN** のリポジトリでも作業できます。クロ�
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（git / fs 面）](../dev/04-workspace-agent.md)・内蔵プロバイダは [dev/91 内部 git](../dev/91-internal-git.md)
+仕組みを知りたい人へ: [dev/04 Workspace Agent（git / fs 面）](../build/04-agent.ja.md)・内蔵プロバイダは [dev/91 内部 git](../build/91-internal-git.ja.md)

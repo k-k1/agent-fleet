@@ -117,7 +117,7 @@ headless チャットは `--dangerously-skip-permissions` で走る。ops MCP（
 
 ### 4.6 イベント駆動（UC3）— webhook ingress
 
-- CP に `/hooks/<provider>` を新設（PagerDuty Webhook v3 の署名検証、テナント紐付け、冪等化）。CP は現状 unsolicited inbound を一切持たないので、**新しい攻撃面**として docs/dev/07-security.md の脅威モデルに追記が必要。
+- CP に `/hooks/<provider>` を新設（PagerDuty Webhook v3 の署名検証、テナント紐付け、冪等化）。CP は現状 unsolicited inbound を一切持たないので、**新しい攻撃面**として docs/build/07-security.ja.md の脅威モデルに追記が必要。
 - 受けた後の段階案:
   - **最小**: memo キューに積む + 既存ブラウザ通知/TTS（+Phase 2 の Slack 通知）。オンコールが Console を開くと初動材料が揃っている。
   - **自動初動**: assistant-chat の会話を自動作成し headless で初動調査を走らせ、要約を Slack へ投稿。ここで「誰の身元・誰のサブスクで走るか」問題が出る（§8-2）。BYO サブスク前提と ToS 判断（サブスク OAuth の生 API 流用禁止 → CLI 経由）は 19-assistant-chat で決着済みだが、**不在時の自動実行を本人サブスクで走らせるのは消費面でも心理面でも筋が悪い**。テナントの「ops ボット」identity + 専用 workspace + API キー認証の claude、が有力。
@@ -340,5 +340,5 @@ Phase 0 で検証した mcp-grafana は汎用 Grafana API（URL + トークン�
 
 ## 参照
 
-- 土台: `docs/history/19-assistant-chat.md`（チャット/アシスタント/面B）、`docs/dev/08-integrations.md`（Connections/MCP/AWS）、`docs/20-container-audit-egress.md`（監査/egress）、`docs/history/21-memo-queue.md`
+- 土台: `docs/history/19-assistant-chat.md`（チャット/アシスタント/面B）、`docs/build/08-integrations.ja.md`（Connections/MCP/AWS）、`docs/20-container-audit-egress.md`（監査/egress）、`docs/history/21-memo-queue.md`
 - 外部（2026-07 確認）: [PagerDuty MCP](https://github.com/PagerDuty/pagerduty-mcp-server) / [grafana/mcp-grafana](https://github.com/grafana/mcp-grafana) / [awslabs MCP（CloudWatch ほか）](https://github.com/awslabs/mcp) / [initMAX zabbix-mcp-server](https://github.com/initMAX/zabbix-mcp-server) / [Slack 公式 MCP](https://slack.com/help/articles/48855576908307-Guide-to-the-Slack-MCP-server)

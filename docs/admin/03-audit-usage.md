@@ -38,7 +38,7 @@ keep it in mind.
 
 Therefore the audit log cannot trace "what exactly that member typed in the terminal". What it can
 trace is "when, who, against which file or session, made what kind of change". The design intent
-behind the recording scope is laid out in [dev/07 §7.7 Audit](../dev/07-security.md).
+behind the recording scope is laid out in [dev/07 §7.7 Audit](../build/07-security.md).
 
 ## Usage ("Usage")
 

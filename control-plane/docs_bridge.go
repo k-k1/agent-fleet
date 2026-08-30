@@ -1,6 +1,6 @@
 package main
 
-// Docs bridge — the PULL face of the role-scoped agent-fleet docs (docs/dev/04 §4.9).
+// Docs bridge — the PULL face of the role-scoped agent-fleet docs (docs/build/04 §4.9).
 //
 //	tenant member's container ──(AF_DOCS_TOKEN)──▶ CP GET /internal/docs  (tar.gz)
 //	                                                   │ role-scoped by the CP

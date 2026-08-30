@@ -202,4 +202,4 @@ toggle** to select SVN, then enter the **Repository URL** and, if needed, a **su
 
 ---
 
-For those who want to know how it works: [dev/04 Workspace Agent (git / fs side)](../dev/04-workspace-agent.md) · the built-in provider is covered in [dev/91 Internal git](../dev/91-internal-git.md)
+For those who want to know how it works: [dev/04 Workspace Agent (git / fs side)](../build/04-agent.md) · the built-in provider is covered in [dev/91 Internal git](../build/91-internal-git.md)

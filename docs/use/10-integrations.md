@@ -200,4 +200,4 @@ Both operations **lose uncommitted changes**.
 
 ---
 
-For those who want the internals: browser pane and lightweight preview, MCP, and SSM are in [dev/08 External integrations](../dev/08-integrations.md); recreate behavior is in [dev/04 Workspace Agent](../dev/04-workspace-agent.md)
+For those who want the internals: browser pane and lightweight preview, MCP, and SSM are in [dev/08 External integrations](../build/08-integrations.md); recreate behavior is in [dev/04 Workspace Agent](../build/04-agent.md)

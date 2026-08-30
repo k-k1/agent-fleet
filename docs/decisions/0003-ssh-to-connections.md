@@ -1,7 +1,7 @@
 # 0003. git 認証 — SSH 鍵から Connections（HTTPS トークン/OAuth）へ
 
 - 状態: 確定（Phase 2）。旧 `docs/08-bitbucket.md`（SSH 鍵モデル・陳腐化のため削除済み）を置換
-- 関連: [HANDOFF §6.6](../HANDOFF.md) / [dev/05 API 契約](../dev/05-api-contracts.md)（旧 api-agent §7.0 API 表面地図） / [dev/07 §7.6 シークレット管理と封筒暗号](../dev/07-security.md#76-シークレット管理と封筒暗号)（旧 security §4.4）
+- 関連: [HANDOFF §6.6](../HANDOFF.md) / [dev/05 API 契約](../build/05-api.md)（旧 api-agent §7.0 API 表面地図） / [dev/07 §7.6 シークレット管理と封筒暗号](../build/07-security.md#76-シークレット管理と封筒暗号)（旧 security §4.4）
 
 ## 背景
 

@@ -1,7 +1,7 @@
 # 20b. P3-7 実装プラン — AWS デプロイ先アダプタ（ECS）
 
 > 🗄 **実装記録** — 現状は [HANDOFF](../HANDOFF.md)、設計は [ロードマップ P3-7](../roadmap.md#p3-7-デプロイ先アダプタオンプレ-docker-既定--自社-aws-任意)、
-> AWS 構成の具体像は [reference/aws](../dev/09-deploy.md)、港の思想は [reference/portability](../dev/09-deploy.md)。
+> AWS 構成の具体像は [reference/aws](../build/09-deploy.ja.md)、港の思想は [reference/portability](../build/09-deploy.ja.md)。
 
 [12 Phase 3](../roadmap.md) の P3-7。各社が**自社のデプロイ先を選ぶ**（オンプレ Docker 既定／自社 AWS 任意）。
 **コアは無改修、周縁アダプタのみ差し替える**（ports & adapters, docs/09）。Workspace イメージと Agent は
@@ -193,7 +193,7 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
 ### 20b.7.6 TaskDefinition の中身
 
 - `requiresCompatibilities: [FARGATE]`, `networkMode: awsvpc`, `cpu`/`memory` = Fargate task size
-  （`WS_MEMORY` 相当。既定 1vCPU/2GB、[dev/09 §9.8 コスト特性](../dev/09-deploy.md#98-コスト特性ec2-single--ecs)）。
+  （`WS_MEMORY` 相当。既定 1vCPU/2GB、[dev/09 §9.8 コスト特性](../build/09-deploy.ja.md#98-コスト特性ec2-single--ecs)）。
 - `executionRoleArn` / `taskRoleArn` = `ecsConfig`（[§20b.7.9](#20b79-iam最小権限)）。
 - container `agent`:
   - `image` = Workspace イメージ（ECR）。local と**同一物**（[§20b.1](#20b1-ゴールと不変条件)）。

@@ -129,7 +129,9 @@ func TestDocsBridgeRoleScoping(t *testing.T) {
 			wantHave: []string{"use/02-sessions.md", "operate/01-install.md", "build/04-workspace-agent.md"},
 			// Even the highest role is an allowlist: the decision records and the
 			// frozen journals are served to nobody.
-			wantAbsent: []string{"decisions/0011-console.md", "log/p3-10.md"},
+			wantAbsent: []string{
+				"decisions/0011-console.md", "log/p3-10.md", "dev/04-workspace-agent.md",
+			},
 		},
 	}
 	for _, c := range cases {

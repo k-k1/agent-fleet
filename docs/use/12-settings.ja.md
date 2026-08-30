@@ -319,4 +319,4 @@ Discord / Slack の Bot を接続し、セッションの進捗をチャット�
 
 ---
 
-仕組みを知りたい人へ: [dev/02 Console の設計](../dev/02-console.md)
+仕組みを知りたい人へ: [dev/02 Console の設計](../build/02-console.ja.md)

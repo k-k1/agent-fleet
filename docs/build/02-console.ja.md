@@ -1,12 +1,16 @@
 # 02. Console（React + Vite + zustand）
 
-> 正: コード（本書は地図と設計意図）/ 主な更新トリガ: Console のアーキ・IA・ビルド制約の変更 / 最終確認: 2026-07
+[English](02-console.md) | 日本語
+
+Audience: Console（ブラウザ側）を変える人
+Source of truth: コード（本書は地図と設計意図）
+Updated: 2026-07
 
 ## 2.1 スタックと設計原則
 
-React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を静的配信し（[05 §5.4](05-api-contracts.md)）、
+React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を静的配信し（[05 §5.4](05-api.ja.md)）、
 バックエンドとは `/api` REST・SSE・`/ws/terminal`・`/ws/browser` で会話する。2026-07 に機能パリティを保った全面リビルド
-（[../22-console-rebuild.md](../log/22-console-rebuild.md)）で God-context 構造を廃した — 経緯と決定は
+（[decisions/0011](../decisions/0011-console-rebuild.md)）で God-context 構造を廃した — 経緯と決定は
 [decisions/0011](../decisions/0011-console-rebuild.md)。設計原則:
 
 - **ドメイン別 zustand ストア + selector 購読**。単一 Context・`bump*()` カウンタ・ref ミラーは全廃（§2.3）。
@@ -65,7 +69,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   workspace の状態は CP の `running/starting/stopped/none` + `unknown`（fetch 失敗）で、
   末尾 `…` は楽観的 in-flight の印（ボタンとポーラーは busy として手を出さない）。
 - `core/api/client.ts` が `window.fetch` をラップし、全リクエストに `X-AF-Tenant` を注入
-  （WS・新タブ・ダウンロードは `?tenant=` query fallback — [05 §5.4](05-api-contracts.md)）。
+  （WS・新タブ・ダウンロードは `?tenant=` query fallback — [05 §5.4](05-api.ja.md)）。
   401 は login ランディングへ 1 回だけリダイレクト。エラーコード→和文の `errText`、
   SSE / multipart / download ヘルパもここに集約。非同期操作は同期 + ポーリングで運用（job キュー無し）。
 
@@ -143,7 +147,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   モバイルはレール→内容の 2 段ドリルダウン）。**個人設定**＝表示 / キー操作 / 読み上げ / 通知 /
   アシスタント、**接続**＝エージェント（各 kind の接続・RTK 等）/ Gitホスティング / 運用・監視 /
   チャット連携 / MCP サーバー / MCPトークン（PAT 発行・失効）、**ワークスペース**＝使用量 /
-  エージェントメモリ / ツールチェーン / AWS SSM / 内部リポジトリ / 書き出し・取り込み（[docs/79](../log/79-settings-export-import.md)）/
+  エージェントメモリ / ツールチェーン / AWS SSM / 内部リポジトリ / 書き出し・取り込み（[docs/79](../decisions/0060-settings-export-import.md)）/
   危険な操作（Workspace 作り直し等）。
   管理機能は SettingsDialog に混ぜず **AdminDialog に分離**（TopBar の shield から、super_admin のみ）。
 - **管理モーダル / テナント設定モーダル**: どちらも同じ器（`ui/Modal` + `settings-modal`）と同じ
@@ -180,21 +184,21 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 
 ## 2.7 ビルドとハード制約
 
-- `vite build`（`npm run build` / dev は `vite build --watch` → リロード反映、CP 再起動不要。[10](10-development.md)）。
+- `vite build`（`npm run build` / dev は `vite build --watch` → リロード反映、CP 再起動不要。[10](10-development.ja.md)）。
   mermaid / marp が heap を食うため `NODE_OPTIONS=--max-old-space-size` を**コマンド単位**で付与
   （package.json scripts は 4096、`deploy/local/` の再ビルドは 3072）。sourcemap は無効（生成で heap 溢れの前科）。
 - mermaid / marp-core は**遅延 import チャンク**（メインバンドルから分離。開いた時に初めて読み込む）。
 - **marp-core の罠**: `math:false` で使っていても mathjax-full(~43MB) / katex を**静的 require**するため、
   素のままだと本番ビルドが minify 段でハングする。`vite.config.js` の `resolve.alias` で
   `marp-math-stub.js` に差し替えてバンドル除外している（据置のハード制約。剥がすとビルドが死ぬ）。
-- CP は `console/dist` を `Cache-Control: no-store` で配信＝デプロイ即反映（[05 §5.4](05-api-contracts.md)）。
+- CP は `console/dist` を `Cache-Control: no-store` で配信＝デプロイ即反映（[05 §5.4](05-api.ja.md)）。
   旧 `/agent-fleet` プレフィクスは廃止（ルート配信・互換リダイレクトのみ）。
 - **テスト**: vitest（node 環境・`maxWorkers=2` — 共有ホストのメモリ規律）で純ロジックのみ
-  （layout/ops・lib の純関数・ストア遷移）。DOM・ビジュアルはブラウザ目視が正（[10](10-development.md)）。
+  （layout/ops・lib の純関数・ストア遷移）。DOM・ビジュアルはブラウザ目視が正（[10](10-development.ja.md)）。
 
 ## 2.8 残債（動作影響なし・随時解消）
 
-[../22-console-rebuild.md](../log/22-console-rebuild.md) のステータス欄が正。要点:
+[decisions/0011](../decisions/0011-console-rebuild.md) のステータス欄が正。要点:
 
 - MirrorView 解体（transcript パーサ純関数化 + ブロック分解）— 忠実移植のまま。CommitGraph / GitDiff / ビュアー群も verbatim。
 - 抽出 CSS（viewer / mirror / chat / settings 等）の未使用セレクタ刈り。

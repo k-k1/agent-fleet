@@ -244,4 +244,4 @@ claude / codex / opencode / GitHub Copilot / agy の 5 エージェントに **�
 
 ---
 
-仕組みを知りたい人へ: [dev/08 外部連携（認証方式）](../dev/08-integrations.md)・[dev/04 Workspace Agent（kind 統合・RTK 機構）](../dev/04-workspace-agent.md)
+仕組みを知りたい人へ: [dev/08 外部連携（認証方式）](../build/08-integrations.ja.md)・[dev/04 Workspace Agent（kind 統合・RTK 機構）](../build/04-agent.ja.md)

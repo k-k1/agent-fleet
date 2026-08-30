@@ -49,7 +49,7 @@ Slack と Discord は「外向き WSS 1 本で送受信・ボタン応答まで�
    Console はフラグで「このプロバイダは通知のみ」を表示し分ける。
 2. **ブリッジは workspace Agent 側に置く**（CP ではなく）。理由: トークンは per-user の
    `secrets.enc`（`internal/secrets/secrets.go` `Data`）にあり、「秘密は CP を素通り」
-   原則（dev/07-security.md §7.6・dev/08）を維持するため。WSS 接続もユーザー毎に Agent 内
+   原則（build/07-security.ja.md §7.6・dev/08）を維持するため。WSS 接続もユーザー毎に Agent 内
    goroutine で 1 本（プロバイダ接続中のみ）。
 3. **トークンはユーザー自前登録**（v1）: 中央ホストの共有 App は作らない。
    ユーザーが自分の Slack App（Socket Mode 有効）/ Discord Bot（私設ギルド招待済み）を

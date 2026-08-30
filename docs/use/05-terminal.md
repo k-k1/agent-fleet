@@ -115,4 +115,4 @@ light theme.)
 
 ---
 
-For those who want to know how it works: [dev/02 Console (the display system)](../dev/02-console.md)
+For those who want to know how it works: [dev/02 Console (the display system)](../build/02-console.md)

@@ -157,4 +157,4 @@ next run time, so check that it matches your intent.
 
 ---
 
-For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../dev/04-workspace-agent.md); the canonical design is docs/30 (session completion reports → fleet operator)
+For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../build/04-agent.md); the canonical design is docs/30 (session completion reports → fleet operator)

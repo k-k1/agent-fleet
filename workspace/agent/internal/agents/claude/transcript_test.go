@@ -195,7 +195,7 @@ func TestCollectInteractionAnswers(t *testing.T) {
 }
 
 // TestCollectInteractionAnswers_Declined pins the fix for "回答済みと表示されるのに
-// 中身は却下の定型文" (docs/dev/92 §6): an Escape/interrupt out of AskUserQuestion
+// 中身は却下の定型文" (docs/build/92 §6): an Escape/interrupt out of AskUserQuestion
 // (e.g. the preview free-text bug — a free-text answer lands on the unnumbered "Chat
 // about this" row and Enter activates it) surfaces as an is_error tool_result carrying
 // claude's own "wants to clarify"/"(No answer provided)" boilerplate — real transcript

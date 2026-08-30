@@ -10,7 +10,7 @@ Updated: 2026-08
 判断ポイントとともに説明します。**実際のコマンド（`backup.sh` / `restore.sh` / upgrade /
 air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/README.md) が正**です。
 ここではコマンドを複製せず、「何が起きるか・何に注意するか」を補います。作業ディレクトリは
-`deploy/compose/`。設計上の前提を深掘りしたいときは [dev/09 §9.7](../dev/09-deploy.md)。
+`deploy/compose/`。設計上の前提を深掘りしたいときは [dev/09 §9.7](../build/09-deploy.ja.md)。
 
 ## バックアップ
 
@@ -188,7 +188,7 @@ Control Plane を公開ホスト名で出すと、**数時間のうちに脆弱�
   起動しません**（「停止しています。起動してください」を返します）。開きっぱなしのタブが Workspace を
   温め続けることはありません。
   資源の節約に有効です。env の意味は [.env.example](../../deploy/compose/.env.example)、仕組みは
-  [dev/09 §9.4](../dev/09-deploy.md)。
+  [dev/09 §9.4](../build/09-deploy.ja.md)。
 - **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose
   管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから
   force-stop します。ホスト全体をメンテナンスで完全に落とす必要があるときは、CP/Caddy を止めた

@@ -4,7 +4,7 @@
 - 関連: [decisions/0013-tts-zundamon.md](../decisions/0013-tts-zundamon.md)（決定記録）/
   [decisions/0005-envelope-custodian.md](../decisions/0005-envelope-custodian.md)（秘密情報の封筒暗号）/
   [history/p3-7-aws-adapter.md](p3-7-aws-adapter.md)（ECS アダプタ）/
-  [dev/03-control-plane.md](../dev/03-control-plane.md) / [dev/02-console.md](../dev/02-console.md)
+  [build/03-control-plane.ja.md](../build/03-control-plane.ja.md) / [build/02-console.ja.md](../build/02-console.ja.md)
 
 チャット（assistant-chat）のエージェント回答テキストを、**ずんだもん（VOICEVOX）**の声で読み上げる。
 将来 **AWS Polly** など他エンジンにも広げられるよう、TTS をプロバイダ抽象として設計する。

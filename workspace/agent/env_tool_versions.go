@@ -5,7 +5,7 @@ package main
 // （~/.local/bin の override）」の 3 つの版と、イメージビルド時のピン
 // （/usr/local/share/agent-fleet/versions.json、Dockerfile が ARG から書き出す）を
 // 返す。PATH は ~/.local/bin が /usr/local より先なので実効≠焼き込みが平気で起きる
-// （gh の home shadow、docs/dev/08 §8.3 と同型）— その可視化が目的。
+// （gh の home shadow、docs/build/08 §8.3 と同型）— その可視化が目的。
 // claude --version などは ~1s かかるため結果は短時間キャッシュし、各ツールは並列に叩く。
 
 import (

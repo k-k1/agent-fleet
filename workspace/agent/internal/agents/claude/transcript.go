@@ -477,7 +477,7 @@ func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) 
 // label, free text, or a delegation's capped output) plus whether it was a DECLINE —
 // claude's own "The user doesn't want to proceed… wants to clarify these questions" /
 // "(No answer provided)" rejection boilerplate (an Escape/interrupt out of the
-// AskUserQuestion modal, e.g. docs/dev/92 §6's preview free-text bug) — rather than a
+// AskUserQuestion modal, e.g. docs/build/92 §6's preview free-text bug) — rather than a
 // genuine answer. Declined is only ever set for kind=question: ExitPlanMode already has
 // its own text-heuristic outcome classification (planDecision.ts isRejected), and a
 // delegation's tool_result is its output, not an answer to decline.

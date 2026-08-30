@@ -359,4 +359,4 @@ Claude Code にも同じ用途の機能（cross-session messaging、`/list-agent
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（セッションモデル）](../dev/04-workspace-agent.md)
+仕組みを知りたい人へ: [dev/04 Workspace Agent（セッションモデル）](../build/04-agent.ja.md)

@@ -56,7 +56,7 @@ export interface Part {
   answer?: string;
   // declined marks kind=question only: the answer text is claude's own decline
   // boilerplate (an Escape out of the AskUserQuestion modal — e.g. the preview
-  // free-text bug, docs/dev/92 §6), not a genuine pick — QuestionBlock must not render
+  // free-text bug, docs/build/92 §6), not a genuine pick — QuestionBlock must not render
   // it as an answered card.
   declined?: boolean;
   plan?: string;

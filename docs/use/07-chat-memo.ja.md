@@ -196,4 +196,4 @@ claude、codex、cursor、copilot、kiro、agy、opencode のセッションは 
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（チャット・アシスタント面）](../dev/04-workspace-agent.md)・[dev/03 Control Plane（memo キュー）](../dev/03-control-plane.md)
+仕組みを知りたい人へ: [dev/04 Workspace Agent（チャット・アシスタント面）](../build/04-agent.ja.md)・[dev/03 Control Plane（memo キュー）](../build/03-control-plane.ja.md)

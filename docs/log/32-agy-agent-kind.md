@@ -300,7 +300,7 @@ Console→CP が叩くのと同一の agent API を直接駆動**した（CP プ
 > テスト agent の shutdown が共有デフォルトソケットへ `tmux kill-server` を実行、無関係の
 > 並行セッション（開発者の claude CLI 複数）を計 4 回全滅させた。恒久対応（shutdown の
 > owned-only kill-session 化・`AF_TMUX_SOCKET` によるソケット分離・tripwire テスト）と
-> 第 2 インスタンス起動の安全手順は [dev/04 §4.11](../dev/04-workspace-agent.md) を正とする。
+> 第 2 インスタンス起動の安全手順は [dev/04 §4.11](../build/04-agent.ja.md) を正とする。
 > 以後この形の in-container E2E は必ず `AF_TMUX_SOCKET`＋`AF_SESSIONS_DIR`＋別ポートの
 > 3 点セットで隔離すること。
 

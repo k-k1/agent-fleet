@@ -2,7 +2,7 @@
 
 - 状態: **採用**（2026-08-24）。検討・実測の記録は [docs/76](../log/76-tool-permission-choice.md)。
 - 関連: [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md)（承認待ちで畳まれたときの受け皿） /
-  [dev/07 セキュリティ](../dev/07-security.md) §脅威モデル（コンテナ境界が唯一の砦、という前提そのもの）
+  [dev/07 セキュリティ](../build/07-security.md) §脅威モデル（コンテナ境界が唯一の砦、という前提そのもの）
 
 ## 背景
 

@@ -18,7 +18,7 @@ Agent Fleet には「ターミナル」と呼ばれる、文字だけの黒い�
 意味を知る必要もありません。この分冊では、その黒い画面を一度も開かずに済む使い方だけを説明します。
 
 このガイドは操作の「やり方」を書いたものです。「なぜそう動くのか」という仕組みの話は出てきません
-（気になったら開発者向けの [../dev/README.md](../dev/README.md) にあります）。ほかの立場の人向けの
+（気になったら開発者向けの [../build/README.ja.md](../build/README.ja.md) にあります）。ほかの立場の人向けの
 ガイドや用語集は索引 [README.md](../use/README.ja.md) から。もう少し踏み込んだ操作（自分でコードを
 書く・ファイルを編集するなど）が必要になったら、開発者向けの [member/README.md](README.ja.md) へ。
 
@@ -246,4 +246,4 @@ Agent Fleet は、社内のみんなが AI（Claude など）をブラウザか�
 **Q. もっといろいろやりたくなったら？**
 自分でファイルを編集したり AI にコードを書かせたりしたくなったら、開発者向けの
 [member/README.md](README.ja.md) が次のステップです。仕組みそのものが知りたいときは
-[../dev/README.md](../dev/README.md) へ。
+[../build/README.ja.md](../build/README.ja.md) へ。

@@ -20,8 +20,8 @@ func buildDocsSrc(t *testing.T) string {
 		// Shipped to nobody, whatever the role.
 		"decisions/0011-console.md",
 		"log/p3-10.md",
-		// The last legacy shelf. docs/guide is gone entirely: guide/member became
-		// use/, guide/admin became admin/, guide/operator became operate/.
+		// The legacy shelves are gone entirely: guide/member became use/,
+		// guide/admin became admin/, guide/operator became operate/, dev became build/.
 		"dev/04-workspace-agent.md",
 	}
 	for _, f := range files {
@@ -67,17 +67,17 @@ func TestStageWorkspaceDocs_RoleScoping(t *testing.T) {
 			// dev/ docs, which used to be handed out to everyone.
 			wantAbsent: []string{
 				"admin/02-limits.md", "operate/01-install.md", "build/04-workspace-agent.md",
-				"dev/04-workspace-agent.md", "dev/04-workspace-agent.md",
+				"dev/04-workspace-agent.md",
 				"decisions/0011-console.md", "log/p3-10.md",
 			},
 		},
 		{
 			role:     "tenant_admin",
 			wantHave: []string{"use/02-sessions.md", "ref/agents.md", "admin/02-limits.md"},
-			// A tenant admin still receives the legacy dev/ shelf; what it must not
-			// see is the operator's and the developer's new shelves.
+			// No legacy shelf reaches anybody now.
 			wantAbsent: []string{
 				"operate/01-install.md", "build/04-workspace-agent.md",
+				"dev/04-workspace-agent.md",
 				"decisions/0011-console.md", "log/p3-10.md",
 			},
 		},
@@ -88,8 +88,11 @@ func TestStageWorkspaceDocs_RoleScoping(t *testing.T) {
 				"operate/01-install.md", "build/04-workspace-agent.md",
 			},
 			// super_admin is an allowlist too — "the whole tree" is not a case any
-			// more. The frozen journals and the decision records go to nobody.
-			wantAbsent: []string{"decisions/0011-console.md", "log/p3-10.md"},
+			// more. The frozen journals, the decision records and the retired legacy
+			// shelves go to nobody.
+			wantAbsent: []string{
+				"decisions/0011-console.md", "log/p3-10.md", "dev/04-workspace-agent.md",
+			},
 		},
 		{
 			role:     "bogus-role", // unknown → least privilege (member)

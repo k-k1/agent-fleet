@@ -384,4 +384,4 @@ review the content and choose **"Approve and send"** or **"Reject"**.
 
 ---
 
-For those who want to know how it works: [dev/04 Workspace Agent (session model)](../dev/04-workspace-agent.md)
+For those who want to know how it works: [dev/04 Workspace Agent (session model)](../build/04-agent.md)

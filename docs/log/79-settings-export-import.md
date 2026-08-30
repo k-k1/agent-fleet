@@ -128,7 +128,7 @@ ui-prefs は **state をまるごと PUT・最後の書き手が勝つ**（`cons
 
 必要な REST は全て既にある（`api/env/ui-prefs`・`api/ssm/*`・`api/user-notes`）。新しい REST を
 足すと CP のプロキシ許可リスト（`control-plane/routes.go`）と Agent の両方に入れる必要があり、
-片方だけ入れて 404 にするのは何度も繰り返している事故（[dev/05](../dev/05-api-contracts.md)）。
+片方だけ入れて 404 にするのは何度も繰り返している事故（[dev/05](../build/05-api.ja.md)）。
 **フロント完結で足りるならそれが最も安い**。
 
 原子性は諦めている（プロファイルを 3 件作った後にホストで失敗し得る）。CP に一括取り込み

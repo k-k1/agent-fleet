@@ -22,9 +22,6 @@ operate
 build
 ref
 
-# 旧レイアウト。build/ を書き上げたら消す。
-dev
-
 # ⚠️ operate/runbooks/ はここに書かない。リポジトリには存在せず、ステージング時に
 # deploy/*/README.md から作られる**生成物**だから。
 #

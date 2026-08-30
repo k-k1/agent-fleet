@@ -119,4 +119,4 @@ that won't resume, a failed clone, and so on) are collected in
 
 ---
 
-For those who want to know how it works: [dev/01 Overall architecture](../dev/01-architecture.md)
+For those who want to know how it works: [dev/01 Overall architecture](../build/01-architecture.md)

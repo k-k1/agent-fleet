@@ -2,9 +2,9 @@
 
 - 状態: **採用・Phase 4 まで実装済み**（2026-07-28）
 - 詳細契約: [docs/44-markdown-code-editor.md](../log/44-markdown-code-editor.md)
-- 関連: [docs/dev/02-console.md](../dev/02-console.md)（Console のペイン構成）/
-  [docs/dev/04-workspace-agent.md](../dev/04-workspace-agent.md)（fs の境界と denylist）/
-  [docs/dev/05-api-contracts.md](../dev/05-api-contracts.md)（API 中継の地図）/
+- 関連: [docs/build/02-console.md](../build/02-console.md)（Console のペイン構成）/
+  [docs/build/04-agent.md](../build/04-agent.md)（fs の境界と denylist）/
+  [docs/build/05-api.md](../build/05-api.md)（API 中継の地図）/
   [decisions/0011](0011-console-rebuild.md)（Console リビルド）
 
 ## 背景

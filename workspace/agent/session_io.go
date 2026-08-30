@@ -934,7 +934,7 @@ var promptFreeStates = map[string]bool{"idle": true, "working": true}
 // highlighted row a typed line + Enter CONFIRMS — the text is swallowed and the Enter
 // decides for the user:
 //   - question:   the modal ignores typed text and Enter picks the FIRST option
-//     (v2.1.204 実測, docs/dev/92) — a silent wrong answer.
+//     (v2.1.204 実測, docs/build/92) — a silent wrong answer.
 //   - plan:       Enter confirms the first row of the ExitPlanMode dialog, which is
 //     always an approval — a prompt sent here SILENTLY APPROVES the plan. Decide it
 //     from the plan card / plan-respond instead.

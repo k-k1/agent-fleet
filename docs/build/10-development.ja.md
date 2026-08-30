@@ -1,6 +1,10 @@
 # 10. 開発 — ビルド・反映・テスト・規約
 
-> 正: コード + CI 定義 / 主な更新トリガ: ビルド・テスト・反映手順の変更 / 最終確認: 2026-07
+[English](10-development.md) | 日本語
+
+Audience: はじめてこのリポジトリをビルドする人
+Source of truth: コード + CI 定義
+Updated: 2026-07
 
 ## 10.1 リポジトリ構成（責務のみ）
 
@@ -9,11 +13,11 @@
 | `console/` | ブラウザ SPA（React + Vite + zustand）。ビルド成果物 `console/dist` を CP が静的配信 |
 | `control-plane/` | Control Plane（Go・単独モジュール）。migrations を埋め込み、起動時に自動適用 |
 | `workspace/` | Workspace イメージ（Dockerfile / entrypoint）+ `workspace/agent/`（Agent・独立 Go モジュール）|
-| `deploy/` | デプロイ層（local / compose / aws）。runbook は各 README（[09](09-deploy.md)）|
+| `deploy/` | デプロイ層（local / compose / aws）。runbook は各 README（[09](09-deploy.ja.md)）|
 | `e2e/` | フリート E2E（独立 Go モジュール・stdlib のみ）。CP + 実コンテナの疎通検証（§10.4）|
 | `console-e2e/` | Console UI E2E（Playwright）。ブラウザ → CP → 実コンテナの縦串検証（§10.4）|
 
-ファイル単位の地図は [90-code-map](90-code-map.md)。
+ファイル単位の地図は [90-code-map](90-code-map.ja.md)。
 
 ## 10.2 ビルドと反映の早見表
 
@@ -35,7 +39,7 @@ bind mount で永続し、イメージ更新の影響を受けない。
 
 CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは、この手順どおりに進める。
 背景: 版未指定の `npm install -g` は Docker レイヤキャッシュに当たり「再ビルドしても
-上がらない」罠があったため ARG ピン化した経緯（[04 §4.9](04-workspace-agent.md)）。
+上がらない」罠があったため ARG ピン化した経緯（[04 §4.9](04-agent.ja.md)）。
 
 1. **latest 確認**
    - CLI 3 種: `npm view @anthropic-ai/claude-code version`（`opencode-ai` / `@openai/codex` も同様）
@@ -89,7 +93,7 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
   |---|---|
   | （無指定）/ `local` | 開発既定。Docker ランタイム |
   | `wsl` | WSL 個人利用プリセット（docker/cgroup preflight・`AUTH=dev` 固定）。旧 `wsl-quickstart.sh` はこれを exec する後方互換ラッパー |
-  | `native` | Docker なしコンテナレス（`AF_RUNTIME=native`・単一ユーザー・[34](../log/34-native-runtime.md)）。agent をホストビルドして渡す |
+  | `native` | Docker なしコンテナレス（`AF_RUNTIME=native`・単一ユーザー・[ref/deploy-targets](../ref/deploy-targets.ja.md)）。agent をホストビルドして渡す |
   | `reset [--all] [--yes]` | ローカルデータ初期化。既定は dev ユーザーのみ（DB・共有 JDK 温存）、`--all` で `WS_DATA` 全体。CP 稼働中は拒否し、docker/native 両方の残骸（コンテナ・agent プロセス・専用 tmux）を掃除してから消す |
 
   サブコマンド無しのときは env `AF_RUNTIME` で後方互換分岐（`native|wsl` → コンテナレス）。
@@ -119,7 +123,7 @@ Go は **2 モジュール**（`control-plane/` と `workspace/agent/`）でそ�
 - ⚠️ **マイグレーションを足したときは、実 Postgres でも 1 度回すこと。** skip される 3 本
   （`TestPostgresStore` / `TestPostgresDeleteCascade` / **`TestSchemaDialectParity`**）が
   「片方の系列にだけ足した」を捕まえる唯一の場所で、CI は `AF_TEST_DATABASE_URL` を持たない
-  （[06 §6.4](06-data-model.md)）。Docker が要らない立て方（初回のみ数分）:
+  （[06 §6.4](06-data.ja.md)）。Docker が要らない立て方（初回のみ数分）:
 
 ```bash
 PGT=~/.local/share/af-pgtest    # 無ければ initdb -U postgres --auth=trust で作る
@@ -305,10 +309,10 @@ ECS リリース手順の静的検査・dist の stub publish/install を hosted
 - **秘密をコミットしない**: `deploy/compose/.env`・`deploy/local/oauth.env`・`allowed-emails.txt` は
   git-ignored。コミット前に diff を確認。
 - **コアを deploy 非依存に保つ**: Docker/compose 前提を CP コアに焼き込まず、ポート
-  （Runtime / KeyCustodian / Store / AuthGateway）の背後へ（[09 §9.2](09-deploy.md)）。
+  （Runtime / KeyCustodian / Store / AuthGateway）の背後へ（[09 §9.2](09-deploy.ja.md)）。
 - migration 追加時は前方互換を確認し（起動時自動適用・ダウングレード非対応）、コミットに明記。
 - 検証方法（テスト + 挙動変更は実機での確認）を書き残す。
 
 ## 10.6 ドキュメント更新責務
 
-何を変えたらどの dev/ ファイルを更新するかは [dev/README の早見表](README.md)。
+何を変えたらどの dev/ ファイルを更新するかは [dev/README の早見表](README.ja.md)。

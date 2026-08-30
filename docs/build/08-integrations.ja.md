@@ -1,6 +1,10 @@
 # 08. 外部システム連携
 
-> 正: コード（本書は方式と設計意図の地図）/ 主な更新トリガ: プロバイダ・認証方式の追加/変更 / 最終確認: 2026-07
+[English](08-integrations.md) | 日本語
+
+Audience: 外部プロバイダや CLI エージェントを足す人
+Source of truth: コード（本書は方式と設計意図の地図）
+Updated: 2026-07
 
 外部プロバイダとの連携を 1 本に集約する。横断で効く共通パターンは 2 つ:
 **(a) コールバック不要方式**（device flow / コード貼り戻し——エッジの認証ゲートと無干渉で成立）と
@@ -14,21 +18,21 @@
 | Google | L1 Console ログイン | OAuth Auth Code（CP ネイティブ）| CP `/oauth2/callback` | 署名 cookie（資格は保存しない）|
 | GitHub | git 認証 | PAT 貼付 / **Device Flow（CP 実行・テナントのアプリ）** | 不要 | `secrets.enc` |
 | Bitbucket | git 認証 | email+API token 貼付 / **OAuth Auth Code（CP 所有 callback・テナントのアプリ）** | CP `/api/oauth/bitbucket/callback` | `secrets.enc`（refresh は専用 cred helper）|
-| 内部 git | git ホスティング | per-membership HMAC トークン（Basic）| — | 非保存（都度導出、[91](91-internal-git.md)）|
+| 内部 git | git ホスティング | per-membership HMAC トークン（Basic）| — | 非保存（都度導出、[91](91-internal-git.ja.md)）|
 | Anthropic / claude.ai | claude 認証（L2）| `claude auth login --claudeai`（コード貼り戻し）| 不要 | `CLAUDE_CONFIG_DIR/.credentials.json`（claude 所有）|
 | OpenAI | codex 認証 | API キー / **ChatGPT Device Flow** | 不要 | `~/.codex/auth.json`（codex 所有）|
 | 各 LLM プロバイダ | opencode 認証 | env キー（プリセット: OpenCode Zen 既定 / Anthropic / OpenAI / OpenRouter / Google / カスタム）| 不要 | `secrets.enc` |
-| 外部 Claude クライアント | MCP（遠隔操作）| Bearer PAT | — | PAT はハッシュのみ DB（[06](06-data-model.md)）|
+| 外部 Claude クライアント | MCP（遠隔操作）| Bearer PAT | — | PAT はハッシュのみ DB（[06](06-data.ja.md)）|
 | AWS | ECS/EFS ランタイム 🚧・SSM ログイン | SDK / SSO device flow | 不要 | SSM の短命 cred はコンテナ内キャッシュ（CP 非到達）|
-| Tailscale Funnel / Caddy | 入口（TLS 終端）| —（コード外のインフラ）| — | —（[09 §9.3](09-deploy.md)）|
+| Tailscale Funnel / Caddy | 入口（TLS 終端）| —（コード外のインフラ）| — | —（[09 §9.3](09-deploy.ja.md)）|
 
 Connections の設計原則: **秘密は CP を素通りするだけで保持・解釈しない**（Agent の `secrets.enc` に
-集約、[07 §7.6](07-security.md)）。接続状態は `GET /api/connections` に集約し、アカウント表示用の
+集約、[07 §7.6](07-security.ja.md)）。接続状態は `GET /api/connections` に集約し、アカウント表示用の
 プロバイダ API は**接続毎に 1 回だけ**叩いてキャッシュ（ポーリングで都度叩かない）。
 
 ## 8.2 Google OAuth（L1）
 
-CP ネイティブ実装。フロー・許可リスト・authGate の防御は [07 §7.3](07-security.md) が正。
+CP ネイティブ実装。フロー・許可リスト・authGate の防御は [07 §7.3](07-security.ja.md) が正。
 連携として押さえる点: 必要 env は `GOOGLE_OAUTH_CLIENT_ID/SECRET`・`PUBLIC_BASE_URL`・
 `AF_COOKIE_SECRET`、リダイレクト URI は `<PUBLIC_BASE_URL>/oauth2/callback`（Google Cloud Console に
 完全一致で登録）。
@@ -72,7 +76,7 @@ CP ネイティブ実装。フロー・許可リスト・authGate の防御は [
 - **OAuth（Auth Code Grant）**: 唯一の CP 所有コールバック。`GET /api/connections/git/bitbucket/oauth/start`
   → 承認 → `GET /api/oauth/bitbucket/callback`（state に user を束ねて解決。ブラウザの CP セッション
   cookie で authGate を通過するため**除外設定不要**）→ token を Agent に渡して保存。
-  consumer の key/secret は**テナントの行**から読む（[71](../log/71-tenant-git-oauth.md)）。
+  consumer の key/secret は**テナントの行**から読む（[71](../decisions/0052-tenant-git-oauth.md)）。
   `PUBLIC_BASE_URL` は残る（consumer の Callback URL は完全一致が前提）。
   ★ state に **tenant_id** を載せる。コールバックは bitbucket.org からの素のリダイレクトで
   `X-AF-Tenant` を持たないので、そこで解決し直すと別テナントのアプリで code を交換しうる。
@@ -137,7 +141,7 @@ Agent が PTY 駆動で authorize URL を抽出 → Console が表示 → ユー
   auth_mode + id_token claims から email・plan を解決。
 - **opencode**: `PUT /api/connections/opencode {env,key}`（env 名は `^[A-Z][A-Z0-9_]+$`）で
   `secrets.enc` に保存し、セッション起動時にコマンド前置で注入（auth.json 平文を作らない）。
-  スロット独立・状態通知は [04 §4.3](04-workspace-agent.md)。
+  スロット独立・状態通知は [04 §4.3](04-agent.ja.md)。
 
 ## 8.7 MCP（対外契約のみ・実装は 03/04）
 
@@ -153,8 +157,8 @@ Agent が PTY 駆動で authorize URL を抽出 → Console が表示 → ユー
 ## 8.8 AWS 🚧
 
 - **ECS/EFS ランタイム**（🚧 実装済・実運用実績なし）: TaskDef 登録・Service upsert・EFS アクセス
-  ポイント・Secrets 注入。SDK interface（ecsAPI/efsAPI/ssmAPI）を seam にテスト可能化（[09 §9.5](09-deploy.md)）。
+  ポイント・Secrets 注入。SDK interface（ecsAPI/efsAPI/ssmAPI）を seam にテスト可能化（[09 §9.5](09-deploy.ja.md)）。
 - **SSM ログイン**（kind=`ssm`）: プロファイル（共通 SSO 束）+ ホスト（個別インスタンス）の 2 層
-  （[06 §6.2](06-data-model.md)）。セッション開始時にコンテナ内 `aws sso login`（device flow）→
+  （[06 §6.2](06-data.ja.md)）。セッション開始時にコンテナ内 `aws sso login`（device flow）→
   `aws ssm start-session`。**AWS の秘密は CP に保存も到達もしない**。
-- KMS custodian は 📋（seam のみ、[07 §7.6](07-security.md)）。
+- KMS custodian は 📋（seam のみ、[07 §7.6](07-security.ja.md)）。

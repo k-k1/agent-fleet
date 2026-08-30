@@ -1465,7 +1465,7 @@ export function MirrorView({
   };
 
   // sendPrompt submits one prompt (the composer). Never used to answer an AUQ —
-  // the modal ignores typed text, so a text send would confirm option 1 (docs/dev/92).
+  // the modal ignores typed text, so a text send would confirm option 1 (docs/build/92).
   // attachments は managed セッションの API 添付（send() が織り込みと使い分ける）。
   // 戻り値は「セッションに受理されたか」。呼び出し側の大半は投げっぱなしでよいが、
   // プランコメントの送信済みマークだけはこれを見る必要がある — 失敗をトーストするだけで
@@ -1690,7 +1690,7 @@ export function MirrorView({
   };
 
   // An AskUserQuestion can't be answered by the composer's free text — verified against
-  // the terminal (v2.1.204, docs/dev/92): the modal IGNORES typed text on option rows
+  // the terminal (v2.1.204, docs/build/92): the modal IGNORES typed text on option rows
   // entirely (the older "option filter" behavior is gone), so the trailing Enter just
   // confirms the highlighted (first) option — a silent wrong answer. Digit keys 1-9 even
   // select-and-submit instantly, so stray text is doubly dangerous. Lock the composer for

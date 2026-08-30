@@ -1,11 +1,11 @@
 # 0004. Console スタック — React + Vite を採用
 
 - 状態: 確定（Phase 3 / Console 全面刷新）
-- 関連: [dev/02 Console](../dev/02-console.md)（旧 HANDOFF §6.10.1） / [history/console-redesign](../log/console-redesign.md)（当時の診断ブリーフ）
+- 関連: [dev/02 Console](../build/02-console.md)（旧 HANDOFF §6.10.1） / [history/console-redesign](../log/console-redesign.md)（当時の診断ブリーフ）
 
 ## 背景
 
-確定スタックは当初から React（[requirements §1.6（現 dev/01 §1.1）](../dev/01-architecture.md#11-何であるか提供モデル)）だが、Phase 1 MVP は
+確定スタックは当初から React（[requirements §1.6（現 dev/01 §1.1）](../build/01-architecture.md#11-何であるか提供モデル)）だが、Phase 1 MVP は
 **最小 vanilla JS**（`app.js` 617+行）で出した。機能追加（SCM / Files / Admin / Connections / テナント picker）で
 情報設計が破綻——ナビゲーション無し、暗号アイコンの羅列、サイドバーとオーバーレイの混在、ヘッダ過密。
 刷新にあたり「vanilla 維持 / 軽量フレームワーク CDN / React 本格採用」を比較した。当時のブリーフ（旧 18）は

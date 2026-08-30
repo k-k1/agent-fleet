@@ -1,4 +1,4 @@
-// Pins the fix for "回答済みと表示されるのに中身は却下の定型文" (docs/dev/92 §6): claude's
+// Pins the fix for "回答済みと表示されるのに中身は却下の定型文" (docs/build/92 §6): claude's
 // own AskUserQuestion decline boilerplate (an Escape out of the modal — e.g. the preview
 // free-text bug, where a free-text answer lands on the unnumbered "Chat about this" row)
 // used to render as an ordinary "回答済み" card with the raw rejection prose dumped in as

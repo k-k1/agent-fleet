@@ -1,7 +1,7 @@
 # 0005. at-rest 鍵 — 封筒暗号 + custodian 抽象（on-prem の限界を明記）
 
 - 状態: 確定（P3-3）
-- 関連: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [dev/07 §7.6 シークレット管理と封筒暗号](../dev/07-security.md#76-シークレット管理と封筒暗号)（旧 security §4.4） / [ロードマップ §12.3](../roadmap.md#123-tos-と分離の留意自社ホスト前提)
+- 関連: [history/p3-3-envelope-crypto](../log/p3-3-envelope-crypto.md) / [dev/07 §7.6 シークレット管理と封筒暗号](../build/07-security.md#76-シークレット管理と封筒暗号)（旧 security §4.4） / [ロードマップ §12.3](../roadmap.md#123-tos-と分離の留意自社ホスト前提)
 
 ## 背景
 

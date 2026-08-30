@@ -79,7 +79,7 @@ idle-stop の**対**。停止中 WS へユーザーが**意図的にアクセス
     > セッションを 1 つクリックしただけで（= `/ws/pty` が開くだけで）WS 全体が黙って起き上がるため。
     > 現在の auto-start はセッション作成 / fork / start / 持ち越し回答 / SSM ノード探索の 5 本で、
     > 停止中の端末は 409 `workspace_stopped` を返して「起動してから」に倒す。現行の正は
-    > [dev/03 §3.2](../dev/03-control-plane.md)。
+    > [dev/03 §3.2](../build/03-control-plane.ja.md)。
 - **共有コア** `config.ensureWorkspaceStarted`: State!=running なら max_workspaces クォータ（P3-4）を課してから
   `Runtime.Start`（healthz 待ち）→ DB state=running。手動 start/recreate もこれに集約。`res.rt` は DEK 付きで
   ビルド済ゆえ Start が `AF_SECRET_KEY` を正しく注入。

@@ -216,4 +216,4 @@ over in one go at your PC.
 
 ---
 
-For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../dev/04-workspace-agent.md) · [dev/03 Control Plane (memo queue)](../dev/03-control-plane.md)
+For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../build/04-agent.md) · [dev/03 Control Plane (memo queue)](../build/03-control-plane.md)

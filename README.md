@@ -9,7 +9,7 @@ CPU/memory quotas (or a bubblewrap sandbox in the Docker-less native runtime) �
 a persistent home and git working copies, and starts, drives and manages agent
 sessions from the browser. A Go control plane orchestrates the workspaces; the same
 core runs **both locally (Docker) and on AWS ECS (CloudFormation)** — the deployment
-layer is separated via ports & adapters ([portability](docs/dev/09-deploy.md)).
+layer is separated via ports & adapters ([portability](docs/build/09-deploy.md)).
 
 **Status: Phase 2 complete, Phase 3 in progress.** Multiple users can work in
 parallel, mutually invisible, on a single on-prem host (per-user Workspace /
@@ -26,7 +26,7 @@ useful if you are working on *this* host, not an entry point for the project.)
 Code: [`workspace/`](workspace/) (Agent + image) / [`control-plane/`](control-plane/) /
 [`console/`](console/); start via [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)
 (subcommands: `local` = Docker default / `wsl` = WSL preset / `native` = no Docker /
-`reset` = wipe data. [docs/dev/10 §10.3](docs/dev/10-development.md)).
+`reset` = wipe data. [docs/build/10 §10.3](docs/build/10-development.md)).
 
 ## Self-hosting (on-prem / Docker Compose)
 
@@ -102,8 +102,6 @@ receives only the shelves its user's role may see.
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) is the norm every file follows;
 `scripts/docs-check.py` enforces it in CI.
 
-> The shelves are being written. Until each is finished, `docs/dev/` and
-> `docs/guide/` remain the source of truth — each new shelf's README says which.
 > The work journals that used to be `docs/NN-*.md` are frozen in
 > [docs/log/](docs/log/README.md); they are not maintained and not shipped.
 
@@ -115,7 +113,7 @@ product.
 - **`oauth2-proxy`** — Google domain-restricted auth gate (`emails.txt` allowlist).
   **Now replaced by CP-native Google OAuth (`AUTH=oauth`)** — the allowlist is
   `deploy/local/allowed-emails.txt` (emails / `@domain`). Design:
-  [docs/dev/07 §7.3](docs/dev/07-security.md)
+  [docs/build/07 §7.3](docs/build/07-security.md)
 - **`scripts/tmux-claude.sh`** — idempotently starts, resumes and generation-manages
   multiple Claude CLIs in detached tmux
 - **`CLAUDE_CONFIG_DIR` profile separation** — per-directory separate `~/.claude`

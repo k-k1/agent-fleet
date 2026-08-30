@@ -248,4 +248,4 @@ Instructions come in three layers, and this setting is the **middle** one.
 
 ---
 
-For those who want to know how it works: [dev/08 Integrations (auth methods)](../dev/08-integrations.md) · [dev/04 Workspace Agent (kind integration / RTK mechanism)](../dev/04-workspace-agent.md)
+For those who want to know how it works: [dev/08 Integrations (auth methods)](../build/08-integrations.md) · [dev/04 Workspace Agent (kind integration / RTK mechanism)](../build/04-agent.md)

@@ -156,7 +156,7 @@ func main() {
 	// Backgrounded and fail-open: boot must not wait on the CP, and an unreachable CP
 	// keeps the cached set rather than stripping everyone's servers.
 	startMCPTenantSync()
-	// Pull the role-scoped docs when the runtime mounted none (ECS — docs/dev/04 §4.9).
+	// Pull the role-scoped docs when the runtime mounted none (ECS — docs/build/04 §4.9).
 	// Backgrounded: it is a few hundred KB over the network and nothing at boot waits on
 	// it, but the Console's 利用ガイド and every agent's environment answers need it.
 	go syncWorkspaceDocs("agent boot")

@@ -15,7 +15,7 @@
 // modal advances through each question and doesn't close after the first pick.
 // Every path is key-driven; NEVER send an option label as text — the modal ignores
 // typed text on option rows and the Enter confirms the highlighted first option
-// (v2.1.204 実測, docs/dev/92-tui-modal-driving.md).
+// (v2.1.204 実測, docs/build/92-driving-a-tui.md).
 
 import { useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";

@@ -6,8 +6,8 @@
   見直しで、招待 API が既にあることを実測して**テナント側の email リストを設計から落とした**。
   P3 実装時に決定 16 を改訂 — 和は email 軸の中だけに閉じる。下記）
 - 関連: [61-login-idp.md](../log/61-login-idp.md) /
-  [dev/07-security.md](../dev/07-security.md) §7.3（AUTH 3 モード＝現行契約） /
-  [dev/06-data-model.md](../dev/06-data-model.md)（`identity` / `user_key`） /
+  [build/07-security.md](../build/07-security.md) §7.3（AUTH 3 モード＝現行契約） /
+  [build/06-data.md](../build/06-data.md)（`identity` / `user_key`） /
   [0001-self-host-vs-saas.md](0001-self-host-vs-saas.md)（各社が自社でセルフホスト＝IdP は各社のもの）
 
 ## 背景
@@ -696,7 +696,7 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 ## 影響
 
 - `oauth_google.go`（461 行）は `oauth.go` / `oauth_oidc.go` / `oauth_github.go` に分割される。
-  ファイル名の Google 色は消える（`dev/90-code-map.md` の更新が要る）。
+  ファイル名の Google 色は消える（`build/90-code-map.md` の更新が要る）。
 - `sessionClaims` に `prov` / `sub` が増える。JSON なので**既存 cookie は欠損フィールドとして読め**、
   移行時の強制ログアウトは不要。ただし `prov` 欠損を `"google"` とみなす暫定規則を 1 版だけ置く。
 - `oauthState` に provider id が増える（state cookie は署名済みなので追加は安全）。
@@ -712,7 +712,7 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - 配布物 6 箇所に設定例が増える: `deploy/compose/.env.example` / `deploy/local/oauth.env.example` /
   `deploy/aws/ecs/cfn/30-ingress.yaml` / `deploy/aws/ec2-single/README.md` /
   `deploy/compose/README.md` / `docs/guide/operator/*`（guide は**二言語とも**）。
-- `dev/07-security.md` §7.3 の「AUTH 3 モード」表は、`oauth` 行が「Google」ではなくなるので書き換え。
+- `build/07-security.md` §7.3 の「AUTH 3 モード」表は、`oauth` 行が「Google」ではなくなるので書き換え。
 - GitHub を入れる会社には **org の OAuth App 承認**という設置手順が 1 つ増える
   （org が OAuth App access restrictions を有効にしていると、承認前は membership が見えず全員拒否になる）。
 - ✅ P3: `authGate` の入口判定が membership を参照する（決定 16）。招待運用のデプロイでは

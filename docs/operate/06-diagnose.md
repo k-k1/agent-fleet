@@ -44,7 +44,7 @@ The CP is a container, but it drives the host's Docker daemon from the outside
 (docker-out-of-docker). This approach has 3 constraints that, if broken, **fail silently
 without producing errors**; the compose definition keeps them contained. Look here when you
 have customized compose yourself, or when you want to narrow things down from symptoms. The
-background on how this works is in [dev/09](../dev/09-deploy.md).
+background on how this works is in [dev/09](../build/09-deploy.md).
 
 - **(A) host network** — the CP publishes workspaces on `127.0.0.1:<port>` via the host daemon,
   so they are unreachable unless the host's loopback is shared. Both the CP and Caddy must have
@@ -180,7 +180,7 @@ whole host down, `docker stop` the remaining `af-ws-*` separately ([02](03-run.m
 A. The delivery model is one company = one deployment = one host. The CP is premised on driving
 the host's Docker daemon, and distribution across multiple hosts or HA configurations are out
 of scope for now. For the design direction toward larger scale, see
-[dev/09](../dev/09-deploy.md) (the aws target is implemented but has no production track
+[dev/09](../build/09-deploy.md) (the aws target is implemented but has no production track
 record).
 
 **Q. I want to use authentication other than Google (Microsoft 365 / LDAP / SAML, etc.).**
@@ -190,4 +190,4 @@ Cognito and GitLab work with configuration alone** — `AF_OIDC_PROVIDERS` plus 
 enable several at once; the login page then shows one button per provider.
 SAML-only IdPs (HENNGE One / TrustLogin / CloudGate, etc.) and LDAP are not implemented in the
 CP: put an existing gateway (oauth2-proxy / Keycloak / ALB OIDC) in front and have the CP trust
-the upstream email header with `AUTH=proxy` ([dev/07 §7.3](../dev/07-security.md)).
+the upstream email header with `AUTH=proxy` ([dev/07 §7.3](../build/07-security.md)).

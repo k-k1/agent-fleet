@@ -17,7 +17,7 @@ patent grant; no separate CLA is required.
   committing. Compiled binaries are git-ignored too.
 - **Keep the core deploy-agnostic.** Don't bake Docker/compose assumptions into
   the Control Plane. Deployment specifics belong behind the ports (Runtime,
-  KeyCustodian, MetadataStore, AuthGateway) — see `docs/dev/09-deploy.md`.
+  KeyCustodian, MetadataStore, AuthGateway) — see `docs/build/09-deploy.md`.
 - **Match the surrounding code.** Go: `gofmt` + `go vet` clean, `go test ./...`
   passing. Console: `npm run build` clean.
 - **Run `gofmt` before every commit that touches Go — this is a hard gate.**

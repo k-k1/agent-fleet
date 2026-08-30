@@ -33,7 +33,7 @@ func TestCarriedQuestionPromptCarriesQuestionAndForbidsReasking(t *testing.T) {
 }
 
 // TUI へは send-keys -l で 1 バイトずつ載るので、改行はそのまま Enter として作用する
-// （docs/dev/92）。配達文は必ず 1 行。
+// （docs/build/92）。配達文は必ず 1 行。
 func TestCarriedPromptsAreSingleLine(t *testing.T) {
 	qs := []transcript.Question{{Question: "改行\nを含む\r\n質問"}, {Question: "2 問目"}}
 	answers := []CarriedAnswer{{Labels: []string{"A\nB"}, Notes: "補足\nの続き"}, {Labels: []string{"C"}}}

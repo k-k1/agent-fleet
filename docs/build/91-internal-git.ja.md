@@ -1,10 +1,14 @@
 # 91. テナント内部 git プロバイダ（bare + smart-HTTP）
 
-> 正: コード / 主な更新トリガ: 内部 git・LFS の仕様変更 / 最終確認: 2026-07
+[English](91-internal-git.md) | 日本語
+
+Audience: 内部 git プロバイダに触れる人
+Source of truth: コード
+Updated: 2026-07
 
 - 状態: **P1 実装済み**（MVP）。契約はコードが正（`control-plane/git_http.go`・`internal_git.go` ほか）。
-- 関連: [01 アーキテクチャ](01-architecture.md) / [07 §7.6](07-security.md#76-シークレット管理と封筒暗号) /
-  [05 API 契約](05-api-contracts.md) / ADR [0010](../decisions/0010-internal-git-provider.md)（採否）/
+- 関連: [01 アーキテクチャ](01-architecture.ja.md) / [07 §7.6](07-security.ja.md#76-シークレット管理と封筒暗号) /
+  [05 API 契約](05-api.ja.md) / ADR [0010](../decisions/0010-internal-git-provider.md)（採否）/
   [0003](../decisions/0003-ssh-to-connections.md)（git 認証＝Connections）
 
 ## 1. 目的とスコープ

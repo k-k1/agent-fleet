@@ -175,5 +175,5 @@ If Docker is an option, prefer the §1 setup (`wsl-quickstart.sh`).
 | Java not found | `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk*`; if empty, `workspace-agent install-jdk <major>` |
 | `agy` missing from the agent picker | the host CPU does not expose RDRAND (`grep -w rdrand /proc/cpuinfo` is empty). agy is a FIPS build that requires RDRAND, so it is deliberately hidden ([0008](../../docs/decisions/0008-antigravity-cli-agent-kind.md)) |
 
-For deployment forms and the env index see [docs/dev/09-deploy.md](../../docs/dev/09-deploy.md);
+For deployment forms and the env index see [docs/build/09-deploy.md](../../docs/build/09-deploy.md);
 for production Compose steps see [deploy/compose/README.md](../compose/README.md).

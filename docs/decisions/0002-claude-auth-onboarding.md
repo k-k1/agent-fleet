@@ -1,7 +1,7 @@
 # 0002. Claude 認証 — auth と onboarding は別物
 
 - 状態: 確定（続10→11→12 の訂正連鎖の到達点）
-- 関連: [HANDOFF §6.10.3](../HANDOFF.md) / [dev/08 §8.5 Claude 認証・オンボーディング](../dev/08-integrations.md)（旧 architecture §2.6） / [history/phase0-poc](../log/phase0-poc.md)
+- 関連: [HANDOFF §6.10.3](../HANDOFF.md) / [dev/08 §8.5 Claude 認証・オンボーディング](../build/08-integrations.md)（旧 architecture §2.6） / [history/phase0-poc](../log/phase0-poc.md)
 
 ## 背景
 

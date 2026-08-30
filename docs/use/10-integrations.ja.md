@@ -190,4 +190,4 @@ push / コミットを済ませてください（[04](03-code.ja.md)）。
 
 ---
 
-仕組みを知りたい人へ: ブラウザペインと軽量プレビュー・MCP・SSM は [dev/08 外部連携](../dev/08-integrations.md)、作り直しの挙動は [dev/04 Workspace Agent](../dev/04-workspace-agent.md)
+仕組みを知りたい人へ: ブラウザペインと軽量プレビュー・MCP・SSM は [dev/08 外部連携](../build/08-integrations.ja.md)、作り直しの挙動は [dev/04 Workspace Agent](../build/04-agent.ja.md)

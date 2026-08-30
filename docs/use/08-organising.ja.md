@@ -152,4 +152,4 @@ Updated: 2026-08
 
 ---
 
-仕組みを知りたい人へ: [dev/04 Workspace Agent（チャット・アシスタント面）](../dev/04-workspace-agent.md)・設計の正本は docs/30（セッション完了報告 → フリート・オペレーター）
+仕組みを知りたい人へ: [dev/04 Workspace Agent（チャット・アシスタント面）](../build/04-agent.ja.md)・設計の正本は docs/30（セッション完了報告 → フリート・オペレーター）

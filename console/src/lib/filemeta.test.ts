@@ -41,9 +41,9 @@ describe("resolveMarkdownFileTarget", () => {
   it("keeps an allowed absolute document root when following a relative link", () => {
     expect(resolveMarkdownFileTarget(
       "06-agents.md",
-      "/usr/local/share/agent-fleet/docs/guide/member/README.md",
+      "/usr/local/share/agent-fleet/docs/use/README.md",
     )).toEqual({
-      path: "/usr/local/share/agent-fleet/docs/guide/member/06-agents.md",
+      path: "/usr/local/share/agent-fleet/docs/use/06-agents.md",
     });
   });
 

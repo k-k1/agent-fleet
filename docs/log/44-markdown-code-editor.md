@@ -330,7 +330,7 @@ CodeMirror documentとAI適用境界で先に実行するPhase 2/4の共通契�
 許可する。Console/Agentが送るcanonical
 Content-Typeは `application/json` とする。サーバーは互換性のため `application/json; charset=utf-8`
 も受け付けるが、他のmedia typeは415とする。認証、テナント、Workspace 状態の共通
-エラーは [docs/dev/05-api-contracts.md](../dev/05-api-contracts.md) の横断規約に従う。
+エラーは [docs/build/05-api.ja.md](../build/05-api.ja.md) の横断規約に従う。
 
 ### 3.2 GET `/fs/file?path=...`
 

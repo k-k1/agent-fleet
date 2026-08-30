@@ -1,7 +1,7 @@
 # ロードマップ
 
 既存資産（`oauth2-proxy` / `tmux-claude.sh` / `CLAUDE_CONFIG_DIR`）を踏み台に **local-first** で進め、同一コアに
-AWS アダプタを後付けする（[ポータビリティ](dev/09-deploy.md)）。各フェーズで「実機検証 → 設計確定」を回す。
+AWS アダプタを後付けする（[ポータビリティ](build/09-deploy.md)）。各フェーズで「実機検証 → 設計確定」を回す。
 **現状の運用詳細は [HANDOFF](HANDOFF.md)、意思決定の経緯は [decisions/](decisions/)。**
 
 ## フェーズ一覧
@@ -16,7 +16,7 @@ AWS アダプタを後付けする（[ポータビリティ](dev/09-deploy.md)�
 
 ### Phase 2 — マルチユーザー（ローカル shared）+ ポート確立　✅ 完了
 オンプレ 1 台で複数ユーザーが相互不可視に並行利用 + 全ポート抽象化。per-user Workspace / AuthGateway
-（`AUTH=proxy`）/ ネットワーク分離（`af-net-<user>`）/ at-rest 暗号化（[dev/07 セキュリティ](dev/07-security.md)）。
+（`AUTH=proxy`）/ ネットワーク分離（`af-net-<user>`）/ at-rest 暗号化（[dev/07 セキュリティ](build/07-security.md)）。
 
 ### Phase 3 — プロダクト化（パッケージ配布・グループ各社セルフホスト）　▶ 進行中
 「AWS 移植」から**プロダクトのパッケージ化**へ再定義。提供モデルの意思決定（SaaS 断念の経緯・ToS 根拠）は
@@ -98,14 +98,14 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 ---
 
 ## P3-1. MetadataStore（SQLite 既定）— 全ての土台
-> ✅ **完了**。実装プランは [history/p3-1-metadatastore](log/p3-1-metadatastore.md)。データモデルの現在形は [dev/06 データモデル](dev/06-data-model.md)。
+> ✅ **完了**。実装プランは [history/p3-1-metadatastore](log/p3-1-metadatastore.md)。データモデルの現在形は [dev/06 データモデル](build/06-data.md)。
 
 **着手時の欠落（当時の記録）**: DB が**一切無い**。フォルダ名=ID、ポートは in-memory map、CP 再起動で再採番されうる。
 テナント・バジェット・管理者・クォータ・監査は**すべて永続レコードを要する**。ここが全ワークストリームの gating item。
 
 - **DB 選定 = SQLite 既定**: 1 デプロイ = CP 1 プロセス / 1 ホスト（オンプレ compose 既定）に**埋め込み DB がベストフィット**。外部 DB サーバ不要＝自己ホスト製品（P3-10）と相性最良。
   持つのは制御メタデータのみ（重いのは PTY であり DB ではない）で、数十〜百ユーザーは SQLite の余裕圏。
-  **今は SQLite アダプタだけ実装**し、**Postgres は `MetadataStore` 港の裏で AWS/HA 時に後追い**（[dev/09 §9.2](dev/09-deploy.md#92-ポートアダプタ--何をどのノブで差し替えるか)）。投機的に Postgres を作らない（リーン）。
+  **今は SQLite アダプタだけ実装**し、**Postgres は `MetadataStore` 港の裏で AWS/HA 時に後追い**（[dev/09 §9.2](build/09-deploy.md#92-ポートアダプタ--何をどのノブで差し替えるか)）。投機的に Postgres を作らない（リーン）。
 - **SQLite 運用規律**（外すと後で痛い）:
   - 接続: `journal_mode=WAL` / `busy_timeout` / `foreign_keys=ON` / `synchronous=NORMAL`、書き込みは単一ライターに。
   - ドライバ: **pure-Go（`modernc.org/sqlite`）** 推奨（cgo 回避＝静的バイナリ運用と整合）。
@@ -141,7 +141,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 ---
 
 ## P3-2. アイデンティティ & テナント解決（AuthGateway 拡張）
-> ✅ **完了**。実装プランは [history/p3-2-identity-tenant](log/p3-2-identity-tenant.md)、現状は [dev/07 セキュリティ](dev/07-security.md)。
+> ✅ **完了**。実装プランは [history/p3-2-identity-tenant](log/p3-2-identity-tenant.md)、現状は [dev/07 セキュリティ](build/07-security.md)。
 
 現状の `AuthGateway.Identify` は email→sanitized user を返すだけ。マルチテナントでは、**email は人（identity）を特定し、作業対象 tenant はリクエストの明示選択**で決める（identity↔tenant 多対多, §12.1）。
 詳細な実装プランは [14 P3-2 実装プラン](log/p3-2-identity-tenant.md)。
@@ -159,12 +159,12 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
   role = identity.role==super_admin か membership.role
   workspace = getOrCreate(identity, tenant)            // テナントごとに別コンテナ
   ```
-- **L1（認証）**: 既定は **CP ネイティブ Google OAuth（`AUTH=oauth`）**＝外部ゲートウェイ不要で各社が許可ドメイン/メールを設定（[reference/auth.md](dev/07-security.md)、2026-06-29 ライブ採用）。大規模/既存資産がある社は自社の ALB OIDC / oauth2-proxy（`AUTH=proxy`）も選べる。我々は設定方法を文書化（P3-10）。
+- **L1（認証）**: 既定は **CP ネイティブ Google OAuth（`AUTH=oauth`）**＝外部ゲートウェイ不要で各社が許可ドメイン/メールを設定（[reference/auth.md](build/07-security.md)、2026-06-29 ライブ採用）。大規模/既存資産がある社は自社の ALB OIDC / oauth2-proxy（`AUTH=proxy`）も選べる。我々は設定方法を文書化（P3-10）。
 - **L2-authz（認可）を DB に移す**: emails.txt の静的許可を廃し、**CP が email を DB と突合**し identity/membership を判定。未登録 email は provisioning ポリシー依存（既定 auto-provision / 厳格は 403）。
 - **新エンドポイント**: `GET /api/tenants` = 呼び出し元の membership 一覧（tenant slug/name/role）→ Console のピッカー。
 - **provisioning ポリシー**（env で切替）: 既定 **auto-provision**（ゲートウェイを通れた=その社の正規メンバー → 既定テナントへ自動）/ 厳格運用は **invite-only**（管理者が招待で membership 先行作成、未知は 403）。マルチテナントの部署割当は招待ベース。
 - **role ブートストラップ**: env `SUPER_ADMIN_EMAILS` 一致で `identity.role=super_admin`（最初の管理者の鶏卵問題を解消）。
-- **ゲート迂回封じは Phase 2 の規律を継承**: proxy モードでヘッダ欠落＝401、CP は `127.0.0.1` 束縛（[dev/07 セキュリティ](dev/07-security.md)）。
+- **ゲート迂回封じは Phase 2 の規律を継承**: proxy モードでヘッダ欠落＝401、CP は `127.0.0.1` 束縛（[dev/07 セキュリティ](build/07-security.md)）。
   `--email-domain=*` だと L1 は「正当な Google アカウント」までしか絞らないので、**DB メンバーシップ判定（403）+ レート制限**が実質ゲート。自社ドメイン限定なら `hd` を効かせる方が堅い。
 
 ---
@@ -196,7 +196,7 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 ---
 
 ## P3-4. リソースバジェット / クォータ（テナント + ユーザー）
-> ✅ **完了**（ハードクォータ・既定無制限）。実装プランは [history/p3-4-quota](log/p3-4-quota.md)、現状は [dev/03 Control Plane](dev/03-control-plane.md)。残: ディスク強制 / showback（P3-9）。
+> ✅ **完了**（ハードクォータ・既定無制限）。実装プランは [history/p3-4-quota](log/p3-4-quota.md)、現状は [dev/03 Control Plane](build/03-control-plane.md)。残: ディスク強制 / showback（P3-9）。
 
 **BYO のため対象はインフラ資源のみ**（Claude 利用量ではない）。その社の自社ホスト資源を守るためのもの。
 
@@ -218,7 +218,7 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 
 ## P3-5. 管理コンソール + 管理 API
 > ✅ **完了**。管理 UI（super_admin の `AdminDialog`）+ メンバー Console（git/ファイル可視化・shell）を実装。
-> メンバー Console プランは [history/p3-5-member-console](log/p3-5-member-console.md)、現状は [dev/02 Console](dev/02-console.md)。
+> メンバー Console プランは [history/p3-5-member-console](log/p3-5-member-console.md)、現状は [dev/02 Console](build/02-console.md)。
 
 その社の中の管理。**単一テナント運用（super_admin が全社を見る）を先に**完成させ、部署 admin は任意拡張。
 
@@ -236,7 +236,7 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 
 ## P3-6. MCP による Agent Fleet 制御（管理面 + 作業面を一体で）
 > ◐ **段1（member/drive）ライブ稼働 + admin read/write 実装済（未ライブ検証）/ dangerous 段は残**。
-> - **段1 = member 4 ツール**（`list_my_sessions`/`get_session_status`/`get_session_output`/`send_to_session`）+ PAT 発行/失効（Console）+ `/mcp`（Streamable HTTP）を実装・**E2E green でライブ稼働**（現状は [dev/03 §3.5 MCP サーバ](dev/03-control-plane.md#35-mcp-サーバ)）。
+> - **段1 = member 4 ツール**（`list_my_sessions`/`get_session_status`/`get_session_output`/`send_to_session`）+ PAT 発行/失効（Console）+ `/mcp`（Streamable HTTP）を実装・**E2E green でライブ稼働**（現状は [dev/03 §3.5 MCP サーバ](build/03-control-plane.md#35-mcp-サーバ)）。
 > - **admin read/write 実装・ライブ E2E green**（2026-07-01）: read=`list_workspaces`/`get_usage`/`list_sessions`、write=`stop_workspace`/`stop_session`/`set_user_quota`。PAT の tenant に固定し、live role（super_admin / その tenant の tenant_admin）で gate、write は `AuditLog`（`actor_kind=mcp`）へ記録。監査ログ書き込み（migration 0007 `audit_log` + `InsertAudit`/`ListAuditByTenant`）をここで導入。ライブ検証（運用者デプロイ）= super_admin PAT で全10ツール可視・`get_usage` に host stats／tenant_admin は admin ツール可視だが host stats 無し／plain member は member 4ツールのみ・admin ツールは 401／`set_user_quota` の write が `audit_log` へ `actor_kind=mcp` 記録、を確認。
 > - **残 = dangerous 段**（`rotate_key`/`recreate_workspace`/`stop_all_idle`、confirm+dry-run）。土台（鍵ローテ実装・idle 検出 P3-9・`tail_audit`）が未整備ゆえ後続。
 > - 設計確定は [decisions/0006](decisions/0006-mcp-unified.md)、実装プランは [history/p3-6-mcp](log/p3-6-mcp.md)。
@@ -275,9 +275,9 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 > Start→shell まで到達。CP が ws ECS サービス＋EFS AP2本(transit 暗号)＋SSM SecureString を動的払出し、CP→Service
 > Connect→Agent 到達（`POST /sessions` 受理）、DEK/token は平文 env になし。findings=大容量イメージ cold pull が Start の
 > healthz 待ち超過(→(A)対応済=非致命化)/CP SQLite ephemeral ゆえ再デプロイで状態消失(→(B)対応済=**段3a RDS Postgres Store**、
-> 共有 sqlStore＋?→$n rebind、Docker Postgres で conformance green、CP→RDS を CFN 配線)。残＝段3b(KMS custodian)・実 AWS 再検証。AWS 構成は [reference/aws](dev/09-deploy.md)。
+> 共有 sqlStore＋?→$n rebind、Docker Postgres で conformance green、CP→RDS を CFN 配線)。残＝段3b(KMS custodian)・実 AWS 再検証。AWS 構成は [reference/aws](build/09-deploy.md)。
 
-各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](dev/09-deploy.md)）。我々は両方を同梱（P3-10）。
+各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](build/09-deploy.md)）。我々は両方を同梱（P3-10）。
 
 | 港 | オンプレ（既定）| 自社 AWS（任意）|
 |----|-----------------|-----------------|
@@ -289,9 +289,9 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 | Ingress/TLS | Caddy（自己署名/社内 CA）| ALB + ACM |
 | Agent 認証 | 同一ホスト + Bearer（Phase2 A2）| SG 制限 + Bearer → 将来 mTLS |
 
-- **Agent 契約は不変**（/sessions・/repos・/connections）。Workspace イメージと Agent は両ターゲットで**同一物**（[dev/09 §9.2](dev/09-deploy.md#92-ポートアダプタ--何をどのノブで差し替えるか)）。
+- **Agent 契約は不変**（/sessions・/repos・/connections）。Workspace イメージと Agent は両ターゲットで**同一物**（[dev/09 §9.2](build/09-deploy.md#92-ポートアダプタ--何をどのノブで差し替えるか)）。
 - **CP↔Agent 到達**: ECS では publish host:port が無いので Service Connect / 内部 NLB / awsvpc ENI へ。`Runtime.Endpoint` 港が差を吸収。
-- 詳細な AWS 構成は [03 AWS](dev/09-deploy.md)。**多くの社はオンプレ compose で足りる**見込み。
+- 詳細な AWS 構成は [03 AWS](build/09-deploy.md)。**多くの社はオンプレ compose で足りる**見込み。
 
 ---
 
@@ -354,9 +354,9 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
   つまり **CP/ホストが侵害されれば、その社・そのデプロイ内の全ユーザーの分離（鍵・ネットワーク含む）が一括で破れる**。
   - これは「単一ホスト論理分離」の原理的限界。**会社間は別デプロイなので波及しない**のが本モデルの強み。
   - デプロイ内でさらに強い分離が要る部署は P3-8（dedicated）/ 別デプロイ / AWS（タスク分離・IMDS 遮断・docker.sock 非共有）へ。
-  - 緩和: rootless Docker / ソケットプロキシ（権限絞り）/ CP 最小権限（[dev/07 §7.1](dev/07-security.md#71-脅威モデルと信頼境界)）。
+  - 緩和: rootless Docker / ソケットプロキシ（権限絞り）/ CP 最小権限（[dev/07 §7.1](build/07-security.md#71-脅威モデルと信頼境界)）。
 - **データ責任は各社に閉じる**: データ・鍵・OAuth はその社が保有。我々（vendor）は実行時にアクセスしない（phone-home なし）。
-- **可用性**: その社の SLA 相応。全社が依存するなら CP 冗長化 + DB バックアップを runbook で案内（[dev/09 §9.7](dev/09-deploy.md#97-バックアップ--リストア--アップグレードの設計前提)）。
+- **可用性**: その社の SLA 相応。全社が依存するなら CP 冗長化 + DB バックアップを runbook で案内（[dev/09 §9.7](build/09-deploy.md#97-バックアップ--リストア--アップグレードの設計前提)）。
 
 ## 12.4 推奨シーケンス（小規模・local-first 継続）
 

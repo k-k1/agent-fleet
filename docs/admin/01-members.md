@@ -118,8 +118,8 @@ Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the
 can grant roles, from the "Permissions" section of the member detail. A granted administrator's
 authority is likewise limited to that tenant and does not affect other tenants.
 The precise definition of the permission model is in
-[dev/03 Control plane](../dev/03-control-plane.md), and the table structure in
-[dev/06 Data model](../dev/06-data-model.md).
+[dev/03 Control plane](../build/03-control-plane.md), and the table structure in
+[dev/06 Data model](../build/06-data.md).
 
 ---
 

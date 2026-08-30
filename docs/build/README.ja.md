@@ -39,8 +39,31 @@ API の境界、データモデル、脅威モデル、外部連携、ビルド�
 | ファイルの置き場（リファクタ）| **コードマップだけ**（他が動くなら設計が漏れている）|
 | 利用者から見える機能 | 該当章 ＋ [ref/](../ref/README.ja.md) ＋ その読者の棚 |
 
-## 移行中
+## 章立て
 
-まだ書いていません。それまでは `../dev/` が正で、既にこの規則のほとんどに従っています。
-ドキュメント再編の P4 でここへ二言語で書き直し、旧い棚に無かった 2 本を足します——
-**エージェント種別の足し方**と、**デプロイアダプタの足し方**。
+**はじめて？** [01](01-architecture.ja.md) → [05](05-api.ja.md) → [06](06-data.ja.md) →
+[10](10-development.ja.md)。**特定コンポーネント担当？** [01](01-architecture.ja.md) →
+その章。**セキュリティレビュー？** [07](07-security.ja.md) → [08](08-integrations.ja.md) →
+[01](01-architecture.ja.md)。
+
+| | |
+|---|---|
+| [01 アーキテクチャ](01-architecture.ja.md) | 提供モデル・用語・3 プロセス・認証 2 層・主要フロー・アダプタの seam |
+| [02 Console](02-console.ja.md) | ブラウザ側の SPA |
+| [03 Control Plane](03-control-plane.ja.md) | 責務地図・リクエストの一生・バックグラウンドジョブ |
+| [04 Agent](04-agent.ja.md) | セッションモデル・種別統合・Workspace イメージ |
+| [05 API](05-api.ja.md) | 2 つの境界・中継 5 経路・横断規約・監査の書き込み点 |
+| [06 データ](06-data.ja.md) | エンティティとマイグレーション作法 |
+| [07 セキュリティ](07-security.ja.md) | 脅威モデル・隔離・認証 2 層・封筒暗号・egress |
+| [08 外部連携](08-integrations.ja.md) | 全プロバイダと、それが落ちる 2 つの型 |
+| [09 デプロイ](09-deploy.ja.md) | 形態・アダプタ・env 索引・費用 |
+| [10 開発](10-development.ja.md) | ビルド・反映・テスト・規約 |
+| **[20 エージェント種別を足す](20-add-an-agent.ja.md)** | 型と、実際に踏んだ罠 |
+| **[21 デプロイ形態を足す](21-add-a-deploy-target.ja.md)** | アダプタが負う契約 |
+| [90 コードマップ](90-code-map.ja.md) | grep の起点——**パス列挙を許す唯一のファイル** |
+| [91 内部 git](91-internal-git.ja.md) | テナント内の git ホスティング |
+| [92 TUI の駆動](92-driving-a-tui.ja.md) | キー列で駆動するモーダル画面の検証 |
+| [93 worktree の依存](93-worktree-deps.ja.md) | worktree が共有するもの / 重複するもの（実測）|
+
+製品に何ができるかは [ref/](../ref/README.ja.md)、なぜそうなっているかは
+[decisions/](../decisions/)。

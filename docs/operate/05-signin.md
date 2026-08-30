@@ -17,7 +17,7 @@ open. Diagnosing a deployment that is already running belongs to
 procedure-driven and does not repeat it.
 
 For how the login works internally (the trust rules, how one person is recognised across two
-IdPs), see [dev/07 §7.3.1](../dev/07-security.md) and
+IdPs), see [dev/07 §7.3.1](../build/07-security.md) and
 [ADR 0043](../decisions/0043-login-idp.md).
 
 ## 0. Before you start

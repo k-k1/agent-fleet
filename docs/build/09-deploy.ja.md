@@ -1,6 +1,10 @@
 # 09. デプロイ — 3形態・ポート&アダプタ・env 索引
 
-> 正: コード + `deploy/*/README.md`（runbook）/ 主な更新トリガ: デプロイ形態・env・アダプタの追加 / 最終確認: 2026-07
+[English](09-deploy.md) | 日本語
+
+Audience: デプロイ形態やアダプタを足す人
+Source of truth: コード ＋ 各 runbook（`deploy/*/README.md`）
+Updated: 2026-07
 
 実手順（コマンド）は各 runbook が正で、本書は複製しない。本書は「どの形態があり、何が差し替わり、
 どのノブで制御するか」の地図。
@@ -9,27 +13,27 @@
 
 | 形態 | 概要 | 状態 | runbook |
 |------|------|------|---------|
-| **local dev** | CP をホストプロセスで起動（`run-dev.sh` 一括 / `restart-cp.sh` 軽量反映）。`AUTH=dev`（単独）または `oauth`（共有）。run-dev.sh はサブコマンド式の単一エントリ（`local`/`wsl`/`native`/`reset`＝データ初期化） | ✅ 開発 + 小規模共有で運用中 | スクリプト冒頭コメント（[run-dev.sh](../../deploy/local/run-dev.sh) / [restart-cp.sh](../../deploy/local/restart-cp.sh)）。反映作法は [10](10-development.md) |
-| **wsl（個人）** | local dev の WSL2 むけ即起動プリセット（native dockerd 前提・`AUTH=dev` 固定・JDK は bind-mount か on-demand）。Docker を入れられない場合は `run-dev.sh native`（コンテナレス 🚧・[34](../log/34-native-runtime.md)） | ✅ 個人検証 | [../../deploy/local/README-wsl.md](../../deploy/local/README-wsl.md)（`run-dev.sh wsl`。旧 `wsl-quickstart.sh` はラッパー） |
+| **local dev** | CP をホストプロセスで起動（`run-dev.sh` 一括 / `restart-cp.sh` 軽量反映）。`AUTH=dev`（単独）または `oauth`（共有）。run-dev.sh はサブコマンド式の単一エントリ（`local`/`wsl`/`native`/`reset`＝データ初期化） | ✅ 開発 + 小規模共有で運用中 | スクリプト冒頭コメント（[run-dev.sh](../../deploy/local/run-dev.sh) / [restart-cp.sh](../../deploy/local/restart-cp.sh)）。反映作法は [10](10-development.ja.md) |
+| **wsl（個人）** | local dev の WSL2 むけ即起動プリセット（native dockerd 前提・`AUTH=dev` 固定・JDK は bind-mount か on-demand）。Docker を入れられない場合は `run-dev.sh native`（コンテナレス 🚧・[ref/deploy-targets](../ref/deploy-targets.ja.md)） | ✅ 個人検証 | [../../deploy/local/README-wsl.md](../../deploy/local/README-wsl.md)（`run-dev.sh wsl`。旧 `wsl-quickstart.sh` はラッパー） |
 | **compose** | セルフホスト本命。CP コンテナ + Caddy（ACME 自動 TLS）。CP は loopback bind、DooD（ホストのデーモンを駆動）の3制約（host-net / `DATA_DIR` 同一絶対パス / docker gid）を compose 定義が封じ込める | ✅ | [../../deploy/compose/README.md](../../deploy/compose/README.md) |
 | **aws** | ネイティブ ECS アダプタ（CFN 4段）と、compose を単一 EC2 VM に載せる ec2-single の 2 通り | 🚧 実装済・実運用実績なし | [ecs](../../deploy/aws/ecs/README.md) / [ec2-single](../../deploy/aws/ec2-single/README.md) |
 
 - ec2-single は「AWS 上の compose」＝形態としては compose の変種（P3-10 の完成ゲート
   「clean host でリリースバンドルから起動」を実証済み）。
-- 認証モード（dev / oauth / proxy）の中身は [07 §7.3](07-security.md) が正。ここでは繰り返さない。
+- 認証モード（dev / oauth / proxy）の中身は [07 §7.3](07-security.ja.md) が正。ここでは繰り返さない。
 
 ## 9.2 ポート&アダプタ — 何をどのノブで差し替えるか
 
 **コア（Console / CP コアロジック / Agent / Workspace イメージ）は全ターゲット同一物**で、
-差し替わるのは CP 内の interface seam のみ（seam の一覧と local/aws 対応は [01 §1.6](01-architecture.md)）。
+差し替わるのは CP 内の interface seam のみ（seam の一覧と local/aws 対応は [01 §1.6](01-architecture.ja.md)）。
 本節はその選択ノブ側:
 
 | ポート（seam） | 切替ノブ | 選択肢 |
 |---------------|----------|--------|
-| `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | 空・`local`・`docker` = Docker Engine（既定）/ `ecs`・`aws` = ECS 🚧 / `native`・`wsl` = コンテナレス（ホストプロセス・`AUTH=dev` 必須、[34](../log/34-native-runtime.md)）。未知値は起動時 fail-fast |
+| `Runtime` / `RuntimeFactory` | `AF_RUNTIME` | 空・`local`・`docker` = Docker Engine（既定）/ `ecs`・`aws` = ECS 🚧 / `native`・`wsl` = コンテナレス（ホストプロセス・`AUTH=dev` 必須）。未知値は起動時 fail-fast |
 | `Store` | `AF_DB`（SQLite パス）/ `AF_DATABASE_URL` ほか `AF_DB_*` | SQLite（既定・pure-Go）/ Postgres |
 | `KeyCustodian` | `AF_MASTER_KEY` の有無 | 設定時 = localCustodian / 未設定 = 暗号化なし（dev のみ）。KMS/Vault は 📋 seam のみ（[decisions/0005](../decisions/0005-envelope-custodian.md)）|
-| `AuthGateway` | `AUTH` | `dev` / `oauth` / `proxy`（[07 §7.3](07-security.md)）|
+| `AuthGateway` | `AUTH` | `dev` / `oauth` / `proxy`（[07 §7.3](07-security.ja.md)）|
 | Ingress / TLS | （CP 外・形態で決まる）| Caddy（compose）/ Tailscale Funnel（local 運用）/ ALB+ACM（aws）|
 
 ## 9.3 入口（ingress）の選択肢と loopback 不変条件
@@ -56,18 +60,18 @@ https 前置きが Secure cookie の前提。
 | グループ | 変数 | 役割 | 詳細 |
 |----------|------|------|------|
 | CP コア | `CP_ADDR`（`:8080`・実運用は `127.0.0.1:8099`）・`CONSOLE_DIR`・`AF_RUNTIME`（local）・`AF_DB`（`<WS_DATA>/control-plane.db`）・`PUBLIC_BASE_URL` | bind 先 / Console dist / Runtime 選択 / DB / 外部 URL | 本章 |
-| Workspace 起動テンプレ | `WS_IMAGE`・`WS_DATA`・`WS_MEMORY`（1g）・`WS_AGENT_PORT`（7700 起点の割当）・`WS_AGENT_HOST`（127.0.0.1）・`WS_JVM_DIR`・`WS_ENV`・`WS_SESSION_CMD` | CP が `docker run` に流し込む共通テンプレ | [04](04-workspace-agent.md) |
-| L1 認証 | `AUTH`（dev）・`DEV_USER`（dev）・`AUTH_EMAIL_HEADER`・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_OIDC_PROVIDERS`＋`AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。許可リスト全空 = fail-closed。`TRUST` 未宣言の provider は無効化、有効な provider ゼロなら fatal | [07 §7.3](07-security.md) / [61](../log/61-login-idp.md) |
-| プロビジョン / 権限 | `AF_PROVISION`（auto）・`SUPER_ADMIN_EMAILS` | 未知 identity の自動受入ポリシー / 初期 super_admin | [06](06-data-model.md) |
-| at-rest 暗号 | `AF_MASTER_KEY` | 未設定 = 平文（dev のみ）。**紛失 = crypto-shred**・データ領域と別金庫 | [07 §7.6](07-security.md) |
-| git プロバイダ OAuth | **env は無い**（削除済み）| テナント管理者が Console（テナント設定 › 連携 › git プロバイダ OAuth）で登録する。`BITBUCKET_OAUTH_KEY/SECRET` は読まれず、`GITHUB_OAUTH_CLIENT_ID` は L1 の GitHub サインイン専用になった | [71](../log/71-tenant-git-oauth.md) |
-| scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`（1h）・`AF_INTERACTION_IDLE_TIMEOUT`（既定=session。人の判断待ち・docs/75）・`AF_WS_IDLE_TIMEOUT`（2h）・`AF_PRESENCE_IDLE_TIMEOUT`（30m。打鍵の無い端末を在席と数える猶予・0 で無効）・`AF_IDLE_SWEEP_INTERVAL`・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング | [03](03-control-plane.md) |
-| MCP | `AF_MCP_ENABLED` | CP `/mcp` エンドポイント有効化 | [08](08-integrations.md) |
-| egress 🚧 | `AF_EGRESS_LISTEN`（:3128）・`AF_EGRESS_TOKEN`・`AF_EGRESS_{INGEST,POLICY}_URL`・`AF_EGRESS_PROXY_ADDR`・`AF_EGRESS_ENFORCE`・`AF_EGRESS_ALLOWLIST` | forward proxy サブコマンドと CP 集約 | [07 §7.8](07-security.md) |
-| Postgres | `AF_DATABASE_URL` または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}` | Store=postgres 選択時のみ | [06](06-data-model.md) |
+| Workspace 起動テンプレ | `WS_IMAGE`・`WS_DATA`・`WS_MEMORY`（1g）・`WS_AGENT_PORT`（7700 起点の割当）・`WS_AGENT_HOST`（127.0.0.1）・`WS_JVM_DIR`・`WS_ENV`・`WS_SESSION_CMD` | CP が `docker run` に流し込む共通テンプレ | [04](04-agent.ja.md) |
+| L1 認証 | `AUTH`（dev）・`DEV_USER`（dev）・`AUTH_EMAIL_HEADER`・`GOOGLE_OAUTH_CLIENT_ID/SECRET`・`AF_OIDC_PROVIDERS`＋`AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST,LABEL_JA,LABEL_EN,SCOPES,PROMPT,ALLOWED_EMAILS,ALLOWED_DOMAINS,ALLOWED_TIDS}`・`AF_COOKIE_SECRET`・`AF_SESSION_TTL`（168h）・`AF_OAUTH_ALLOWED_{EMAILS,DOMAINS,EMAILS_FILE}` | Console ログイン。許可リスト全空 = fail-closed。`TRUST` 未宣言の provider は無効化、有効な provider ゼロなら fatal | [07 §7.3](07-security.ja.md) / [61](../decisions/0043-login-idp.md) |
+| プロビジョン / 権限 | `AF_PROVISION`（auto）・`SUPER_ADMIN_EMAILS` | 未知 identity の自動受入ポリシー / 初期 super_admin | [06](06-data.ja.md) |
+| at-rest 暗号 | `AF_MASTER_KEY` | 未設定 = 平文（dev のみ）。**紛失 = crypto-shred**・データ領域と別金庫 | [07 §7.6](07-security.ja.md) |
+| git プロバイダ OAuth | **env は無い**（削除済み）| テナント管理者が Console（テナント設定 › 連携 › git プロバイダ OAuth）で登録する。`BITBUCKET_OAUTH_KEY/SECRET` は読まれず、`GITHUB_OAUTH_CLIENT_ID` は L1 の GitHub サインイン専用になった | [71](../decisions/0052-tenant-git-oauth.md) |
+| scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`（1h）・`AF_INTERACTION_IDLE_TIMEOUT`（既定=session。人の判断待ち・docs/75）・`AF_WS_IDLE_TIMEOUT`（2h）・`AF_PRESENCE_IDLE_TIMEOUT`（30m。打鍵の無い端末を在席と数える猶予・0 で無効）・`AF_IDLE_SWEEP_INTERVAL`・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング | [03](03-control-plane.ja.md) |
+| MCP | `AF_MCP_ENABLED` | CP `/mcp` エンドポイント有効化 | [08](08-integrations.ja.md) |
+| egress 🚧 | `AF_EGRESS_LISTEN`（:3128）・`AF_EGRESS_TOKEN`・`AF_EGRESS_{INGEST,POLICY}_URL`・`AF_EGRESS_PROXY_ADDR`・`AF_EGRESS_ENFORCE`・`AF_EGRESS_ALLOWLIST` | forward proxy サブコマンドと CP 集約 | [07 §7.8](07-security.ja.md) |
+| Postgres | `AF_DATABASE_URL` または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}` | Store=postgres 選択時のみ | [06](06-data.ja.md) |
 | ECS アダプタ 🚧 | `AF_ECS_{CLUSTER,REGION,SUBNETS,SECURITY_GROUP,NAMESPACE_ARN,EFS_ID,EXEC_ROLE,TASK_ROLE,LOG_GROUP,TASK_CPU,TASK_MEMORY,POSIX_UID,POSIX_GID,START_TIMEOUT_SEC}` | CFN が作った静的基盤の座標を CP に渡す | [ecs runbook](../../deploy/aws/ecs/README.md) |
-| native アダプタ 🚧 | `AF_NATIVE_AGENT_BIN`（PATH の `workspace-agent`） | コンテナレス実行時の workspace-agent バイナリの所在 | [34](../log/34-native-runtime.md) |
-| コンテナ内（CP が注入・運用者は直接設定しない） | `AGENT_ADDR`（:7700）・`AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_TMUX_SOCKET`/`AGENT_DOCS_DIR`（native のみ）・`AF_DOCS_TOKEN`（docs 取得ブリッジ・[04 §4.9](04-workspace-agent.md)） | CP↔Agent 認証・DEK・停止猶予ほか | [04](04-workspace-agent.md) / [07 §7.5](07-security.md) |
+| native アダプタ 🚧 | `AF_NATIVE_AGENT_BIN`（PATH の `workspace-agent`） | コンテナレス実行時の workspace-agent バイナリの所在 | — |
+| コンテナ内（CP が注入・運用者は直接設定しない） | `AGENT_ADDR`（:7700）・`AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_TMUX_SOCKET`/`AGENT_DOCS_DIR`（native のみ）・`AF_DOCS_TOKEN`（docs 取得ブリッジ・[04 §4.9](04-agent.ja.md)） | CP↔Agent 認証・DEK・停止猶予ほか | [04](04-agent.ja.md) / [07 §7.5](07-security.ja.md) |
 
 網羅性の確認方法: 変数名そのものが grep アンカー。CP の読み値（`envOr` / `os.Getenv`）と
 `run-dev.sh` の透過リスト・`.env.example` を突き合わせる。
@@ -99,11 +103,11 @@ Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JA
 - Runtime 契約の `starting` 状態は実質 ECS 専用（Fargate の cold image pull が分単位）。呼び出し側は
   収束待ちの間、再 Start もアイドル停止もしない。docker アダプタは秒で上がるため実際には報告しない。
   - この起動レイテンシの短縮（SOCI 遅延ロードの採否・代替案比較・実測計画）は
-    [62-ecs-start-latency.md](../log/62-ecs-start-latency.md)。結論は**条件付き採用**で、SOCI の前提は
+    **条件付き採用**が結論で、SOCI の前提は
     現構成が変更ゼロで満たす（PV 1.4.0 / ECR private / gzip）が、**~100s の内訳が未計測**のため
     先に `describe-tasks` の `pullStartedAt`/`pullStoppedAt` で pull 時間を切り出すのがゲート。
   - 初回 Start の 504 は **`AF_ECS_START_TIMEOUT_SEC`（当時 90s）の同期待ち > ALB idle（既定 60s）**が
-    直接原因で、SOCI とは独立に解消済み（[62 §62.5](../log/62-ecs-start-latency.md)）。**`Start` は
+    直接原因で、SOCI とは独立に解消済み。**`Start` は
     desiredCount 1 まででリターン**し、Agent の healthz 待ちは背景ゴルーチン（`watchReady`・ログ用）へ。
     ここで同期待ちが成立し得ないのは、`running`/`starting` が手前で早期 return する以上、
     `waitReady` に届く時点で必ず**タスクをゼロから起動している**ため（Fargate はイメージキャッシュ無し）。
@@ -117,16 +121,16 @@ Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JA
 | Workspace イメージ / Agent | 同一物 | 同一物（移植の肝）|
 | scale-to-zero | docker stop / start | Service desired 0/1。アイドル判定ロジックは共通・Runtime が実体差を吸収 |
 | 隔離強度 | コンテナ境界（同一カーネル共有）| + タスク分離（Fargate はホスト共有なし）|
-| egress | docker network + ホスト FW（enforce は 🚧 [07 §7.8](07-security.md)）| SG / NACL（Network Firewall は 📋）|
+| egress | docker network + ホスト FW（enforce は 🚧 [07 §7.8](07-security.ja.md)）| SG / NACL（Network Firewall は 📋）|
 | ストレージ性能 | ローカルディスク（速い）| EFS はメタデータ操作の多い git で遅延しうる |
-| 基盤権限 | docker.sock = ホスト root 相当（[07 §7.1](07-security.md)）| IMDS 遮断 + Task Role 最小化 |
+| 基盤権限 | docker.sock = ホスト root 相当（[07 §7.1](07-security.ja.md)）| IMDS 遮断 + Task Role 最小化 |
 
 ## 9.7 バックアップ / リストア / アップグレードの設計前提
 
 - **`WS_DATA`（compose では `DATA_DIR`）が保全対象のすべて**: DB・per-user home（`secrets.enc` 含む）・
   `claude-config`（平文 Claude 状態）・wrapped DEK・Caddy 証明書。再 provision 可能な `shared/jvm` のみ除外。
 - **`AF_MASTER_KEY` はデータ領域にもバックアップにも含めない**（別金庫で独立保管）。失えば全バックアップが
-  復号不能 = crypto-shred（[07 §7.6](07-security.md)）。逆にアーカイブ側には平文 Claude 状態が入るので
+  復号不能 = crypto-shred（[07 §7.6](07-security.ja.md)）。逆にアーカイブ側には平文 Claude 状態が入るので
   アーカイブ自体も保護対象。
 - リストアはパス再ルート可: `DATA_DIR` の親パスが変わっても CP が Workspace 起動時に現在値へ付け替える
   （basename は維持する契約）。

@@ -1,6 +1,8 @@
-# 92 — TUI モーダル駆動の実測検証プレイブック（AUQ ほか）
+# 92（記録）— TUI モーダル駆動の実測記録
 
-正: コード（本書は検証手法と実測記録）/ 主な更新トリガ: claude CLI のバージョン更新・AUQ 駆動経路（`PendingQuestions` / `handleSessionInput`）の変更 / 最終確認: 2026-08（claude 2.1.241、§8 追加）
+> 凍結アーカイブ。**プレイブック（検証手順・回帰チェック・恒久修正の不変条件）は
+> [build/92](../build/92-driving-a-tui.ja.md) へ移した。**ここに残したのは、特定の CLI 版に
+> 対する日付つきの実測と事件記録——寿命が違うので現役の棚には置けない。
 
 Console のチャットは、エージェント TUI のモーダル（claude の AskUserQuestion=AUQ、プラン承認、
 許可プロンプト）を **tmux send-keys で代理操作**して回答する。この結合は claude CLI 側の

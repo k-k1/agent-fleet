@@ -1,7 +1,7 @@
 # 0001. 提供モデル — 各社セルフホスト（SaaS 断念）
 
 - 状態: 確定（2026-06-27）
-- 関連: [ロードマップ Phase 3](../roadmap.md) / [dev/07 §7.9 リスクと残課題](../dev/07-security.md#79-リスクと残課題)（旧 security §4.7）
+- 関連: [ロードマップ Phase 3](../roadmap.md) / [dev/07 §7.9 リスクと残課題](../build/07-security.md#79-リスクと残課題)（旧 security §4.7）
 
 ## 背景
 

@@ -129,4 +129,4 @@ batch later ([07 Chat and memos](07-chat-memo.md)).
 
 ---
 
-For those who want to know how it works: [dev/04 Workspace Agent (fs side / denylist)](../dev/04-workspace-agent.md)
+For those who want to know how it works: [dev/04 Workspace Agent (fs side / denylist)](../build/04-agent.md)

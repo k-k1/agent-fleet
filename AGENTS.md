@@ -44,7 +44,7 @@ Both vitest projects and `npm run build` resolve through the link (measured).
   shared, so don't be surprised by the disk.
 
 The same question for the other ecosystems (what a worktree already shares, what it duplicates,
-and the measurements) is `docs/dev/93-worktree-dependencies.md`.
+and the measurements) is `docs/build/93-worktree-deps.md`.
 
 ## Running the Go tests
 
@@ -59,7 +59,7 @@ container is busy.
 
 Postgres-backed tests skip themselves unless `AF_TEST_DATABASE_URL` is set; there is no local
 database (and no Docker) in the workspace, so leave them skipped. The full build/reflect matrix
-is `docs/dev/10-development.md`.
+is `docs/build/10-development.md`.
 
 ## Running the Console tests
 

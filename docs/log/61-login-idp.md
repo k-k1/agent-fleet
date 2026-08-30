@@ -2,9 +2,9 @@
 
 > 状態: **P0・P1 実装済み**（2026-08-14）／P2・P3・P4 は未着手
 > 意思決定: [decisions/0043](../decisions/0043-login-idp.md)
-> 関連: [dev/07-security.md](../dev/07-security.md) §7.3（AUTH 3 モード＝現行契約） /
-> [dev/06-data-model.md](../dev/06-data-model.md)（`identity` / `membership`） /
-> [dev/09-deploy.md](../dev/09-deploy.md)（配布物の設定面） / [35-packaging.md](35-packaging.md)（4 ターゲットへ同じ設定を配る） /
+> 関連: [build/07-security.ja.md](../build/07-security.ja.md) §7.3（AUTH 3 モード＝現行契約） /
+> [build/06-data.ja.md](../build/06-data.ja.md)（`identity` / `membership`） /
+> [build/09-deploy.ja.md](../build/09-deploy.ja.md)（配布物の設定面） / [35-packaging.md](35-packaging.md)（4 ターゲットへ同じ設定を配る） /
 > [28-i18n.md](28-i18n.md)（CP 描画ページの言語選択） / [roadmap.md](../roadmap.md) §12.2（各社が握る設定項目）
 > 対象: Control Plane（`oauth_*.go` / `main.go` / `routes.go` / migrations）/ Console（アカウント連携 UI・P1）/ `deploy/**`
 
@@ -16,7 +16,7 @@ L1（Console へのログイン）の IdP が **Google 1 種に固定**されて
 
 本ドキュメントは L1 の IdP を複数化する。**L2（Claude / codex / opencode を誰として動かすか＝
 ユーザー本人の OAuth）とは無関係**で、`oauth_bitbucket.go` のような Git プロバイダ接続とも別軸
-（[dev/08-integrations.md](../dev/08-integrations.md)）。
+（[build/08-integrations.ja.md](../build/08-integrations.ja.md)）。
 
 受入条件:
 
@@ -35,7 +35,7 @@ L1（Console へのログイン）の IdP が **Google 1 種に固定**されて
 
 | 事実 | 位置 |
 |------|------|
-| `AUTH` は `oauth`（CP 内蔵 Google）/ `proxy`（外部ゲートウェイのヘッダ）/ `dev`（固定ユーザー）の 3 モード | `main.go:80`, [dev/07 §7.3](../dev/07-security.md) |
+| `AUTH` は `oauth`（CP 内蔵 Google）/ `proxy`（外部ゲートウェイのヘッダ）/ `dev`（固定ユーザー）の 3 モード | `main.go:80`, [dev/07 §7.3](../build/07-security.ja.md) |
 | Google 部分は 1 ファイルに閉じている（461 行）。プロバイダ抽象は無く、URL も scope もクレーム名も定数直書き | `oauth_google.go:27-34, 182-190` |
 | **id_token を検証していない。** 認可コード → トークン → userinfo で `email` / `email_verified` を取る。「トークンエンドポイントから TLS で直接来たから信頼」という設計 | `oauth_google.go:238-256` |
 | **JWT ライブラリを持っていない**（`go.mod` に無い）。stdlib のみで完結している | `control-plane/go.mod` |
@@ -46,7 +46,7 @@ L1（Console へのログイン）の IdP が **Google 1 種に固定**されて
 | ルートは `/login` `/oauth2/{login,callback,logout}` の 4 本、認証除外は `exemptPrefix("/oauth2/")` | `routes.go:102-114` |
 | 人の実体は **`identity.user_key = sanitizeUser(email)`**（小文字化・非英数→`-`・40 字上限） | `resolver.go:281-288` |
 | `user_key` は UNIQUE かつ**識別子そのもの**。sanitize 衝突は `disambiguateUserKey` が別キーへ逃がす | `store_sqlite.go:300-360` |
-| その `user_key` が **workspace の home ディレクトリ名**（`<WS_DATA>/<user>/home`）＝暗号化 secrets の帰属先 | [dev/07 §7.2](../dev/07-security.md) |
+| その `user_key` が **workspace の home ディレクトリ名**（`<WS_DATA>/<user>/home`）＝暗号化 secrets の帰属先 | [dev/07 §7.2](../build/07-security.ja.md) |
 | SPA 側は 401 をラッチして再ログインモーダルを出す（ページごと飛ばさない） | `console/src/core/auth/authExpired.ts` |
 
 **要点**: OAuth の配線を増やすのは難しくない。難所は最後の 3 行 —
@@ -335,7 +335,7 @@ AF_GITHUB_LOGIN_CLIENT_SECRET=
 
 更新する配布物: `deploy/compose/.env.example` / `deploy/local/oauth.env.example` /
 `deploy/aws/ecs/cfn/30-ingress.yaml` / `deploy/aws/ec2-single/README.md` /
-`deploy/compose/README.md` / `docs/guide/operator/*` / `docs/dev/07-security.md` §7.3。
+`deploy/compose/README.md` / `docs/guide/operator/*` / `docs/build/07-security.ja.md` §7.3。
 
 ★ **P4（§61.11）は env を 1 つも増やさない。** テナント定義の認証方式は DB に入り、
 Console から編集するので、4 ターゲットの env 例に足すものは無い（承認を省略する
@@ -665,7 +665,7 @@ AF_PROVISION=invite          # ★ P7-2 で新規インストールの既定に�
 
 - `sales` と `dev` の両方に招待する。ログイン後、Console のテナント切替に 2 つ出る
   （`tenant.ts:107-110` は 2 件以上でピッカーを出す）。
-- ★ **workspace は membership 毎＝部署毎に別**（home も secrets も別・[dev/07 §7.2](../dev/07-security.md)）。
+- ★ **workspace は membership 毎＝部署毎に別**（home も secrets も別・[dev/07 §7.2](../build/07-security.ja.md)）。
   同じ人でも営業の作業と開発の作業は混ざらない。これは既存の性質で、部署分割と相性が良い。
 - 部署で使える認証方式が違う場合（例: `dev` だけ GitHub 可）、切り替え時に
   `provider_required` で再サインインを促す（§61.9.4）。
@@ -925,7 +925,7 @@ P3 の `allowed_providers` がこれを選び分ければ「テナント A は E
 正直に添える限界が 2 つ:
 
 - `localCustodian` の KEK は `HMAC(master, "af-kek:"+tenantID)` なので、**`AF_MASTER_KEY` を持てば
-  全テナント分が開く**（[dev/07 §7.6](../dev/07-security.md)）。テナント間の暗号学的分離ではない。
+  全テナント分が開く**（[dev/07 §7.6](../build/07-security.ja.md)）。テナント間の暗号学的分離ではない。
 - env から DB へ移すと、秘密が **`DATA_DIR`＝バックアップの中**に入る（env は外）。
   `AF_MASTER_KEY` をデータ領域の外に置く既存ルールが守られていれば中身は暗号文のままだが、
   posture は変わる。MCP のトークンで既に受容済みの水準ではある。
