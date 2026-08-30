@@ -3258,6 +3258,7 @@ export const ja = {
   "launch.branch_in_use": "ブランチ <0>{branch}</0> は作業コピー <1>{folder}</1> で使用中です。git は同じブランチを2つの作業コピーに置けません。",
   "launch.base_branch": "基点ブランチ",
   "launch.base_default": "既定",
+  "launch.base_origin_note": "origin に同じ名前のブランチがあれば、その先端から切ります（このコピーのローカルが進んでいる／分岐しているときはローカルのまま。親の作業コピーは動かしません）。",
   "launch.branch_name": "ブランチ名（任意）",
   "launch.branch_ph": "自動（暫定名 temp/…）",
   "launch.wc_created_note": "作業コピーは <0>{folder}</0> に作成します。後でブランチ名は変更できます。",

@@ -830,6 +830,49 @@ func fastForwardWorktree(dir string) {
 	}
 }
 
+// fastForwardNewWorktreeToOrigin is the new-branch twin of fastForwardWorktree: it
+// advances a just-forked worktree from the parent's LOCAL <base> to origin/<base>.
+//
+// Why it is needed at all: `git worktree add -b temp/x <dir> <base>` resolves <base>
+// against the parent clone's local refs, and nothing in this product ever moves a
+// local branch — the auto-fetch loop (fetch_loop.go) only refreshes origin/*. So a
+// parent cloned weeks ago forks every later session off a weeks-old base, silently.
+//
+// Why the fix lands HERE rather than on the parent: fast-forwarding the parent clone
+// would move HEAD under whatever session is working in it, and a dirty tree does not
+// stop that — `pull --ff-only` aborts only when the incoming commits touch a locally
+// modified file; with unrelated edits it succeeds and swaps the files out (measured).
+// Pulling into the new worktree instead touches nobody else's checkout: the parent's
+// local <base> stays exactly where it was, only refs/remotes/origin/* advances.
+//
+// Best-effort, and every failure mode is the right outcome, decided by git rather than
+// by us (all measured): no origin/<base> → "couldn't find remote ref"; local <base>
+// ahead or diverged → "Not possible to fast-forward, aborting" (the user's unpushed
+// work is the base they meant); no origin at all → nothing to do. HEAD is left alone in
+// each case. `pull` with an explicit refspec sets no upstream, so the new branch keeps
+// the same tracking state (none) it has today.
+func fastForwardNewWorktreeToOrigin(dir, base string) {
+	base = strings.TrimSpace(base)
+	if base == "" || strings.HasPrefix(base, "-") {
+		return
+	}
+	if _, ok := gitOriginURL(dir); !ok {
+		return // local-only working copy (internal scratch repo, git init): nothing newer exists
+	}
+	before, _ := gitx.Run(dir, "rev-parse", "HEAD")
+	ctx, cancel := context.WithTimeout(context.Background(), worktreeSyncTimeout)
+	defer cancel()
+	if out, err := gitx.CmdContext(ctx, dir, "pull", "--ff-only", "origin", base).CombinedOutput(); err != nil {
+		// Not an error path — log it so "why did my branch start behind?" is answerable.
+		log.Printf("worktree %s: base fast-forward to origin/%s skipped: %v: %s",
+			filepath.Base(dir), base, err, strings.TrimSpace(string(out)))
+		return
+	}
+	if after, _ := gitx.Run(dir, "rev-parse", "HEAD"); after != before {
+		gitSubmodulesUpdate(dir) // submodule pins differ per commit
+	}
+}
+
 // realPath canonicalizes a path for identity comparison (git prints resolved,
 // absolute worktree paths; our dirs can arrive with symlinks — /home vs a
 // bind-mounted home — or as ".."-laden relatives). Falls back to a lexical clean

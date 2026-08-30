@@ -679,6 +679,9 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
                     <label className="ui-field">
                       <span className="ui-field-label">{tr("launch.base_branch")}</span>
                       <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || tr("launch.base_default")} />
+                      {/* 起点は origin の先端に合わせる（Agent 側 fastForwardNewWorktreeToOrigin）。
+                          黙って起点が変わることにならないよう、ここで何をするか書いておく。 */}
+                      <span className="ui-field-hint">{tr("launch.base_origin_note")}</span>
                     </label>
                     <label className="ui-field">
                       <span className="ui-field-label">{tr("launch.branch_name")}</span>

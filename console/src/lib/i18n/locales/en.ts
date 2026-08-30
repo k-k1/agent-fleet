@@ -3208,6 +3208,7 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.branch_in_use": "Branch <0>{branch}</0> is in use by working copy <1>{folder}</1>. git cannot check one branch out into two working copies.",
   "launch.base_branch": "Base branch",
   "launch.base_default": "default",
+  "launch.base_origin_note": "If origin has a branch of the same name, the new branch starts at its tip (if this copy's local branch is ahead or has diverged, the local one is kept). The parent working copy is never moved.",
   "launch.branch_name": "Branch name (optional)",
   "launch.branch_ph": "auto (temporary name temp/…)",
   "launch.wc_created_note": "The working copy is created at <0>{folder}</0>. You can rename the branch later.",
