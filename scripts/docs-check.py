@@ -5,7 +5,7 @@ docs/ は「読者で切った棚」であり、その構造がそのまま配�
 （control-plane/workspace_docs.go の docsRolePrefixes）。棚の規約が崩れると
 配布範囲が静かに変わるので、規約は人間のレビューではなくここで機械検査する。
 
-検査は 7 本:
+検査は 8 本:
 
   links      相対リンクの実在（アンカーは無視）
   lang       二言語の閉包（en は .md へ、ja は .ja.md へ）と対訳の存在
@@ -14,6 +14,7 @@ docs/ は「読者で切った棚」であり、その構造がそのまま配�
   frozen     現役の棚から docs/log/（凍結アーカイブ）へリンクしていない
   ref        ref/ の表がコードの一次情報と一致し、かつ対訳と ✓ の立ち方が揃っている
   knowledge  アシスタント知識が機能カタログのメンバー向けの行を覆っている
+  notes      全コンテナへ配る運用ポリシーが実在する棚だけを指している
 
 ref は 3 段階で見る。(a) 軸の網羅: エージェントの列がセッション種別の定数を、
 デプロイの行が runtime のプロファイルを覆っているか。(b) 行の一致: Caps() で
@@ -438,6 +439,65 @@ def check_knowledge(f: Findings) -> None:
             )
 
 
+def check_notes(f: Findings) -> None:
+    """全コンテナへ配る運用ポリシーが、実在する棚だけを指しているか。
+
+    `workspace/workspace-notes.md` はイメージに焼かれ、**すべてのエージェントが
+    起動時に読む**。docs/ を並べ替えたときここが取り残されると、1 か所の腐りが
+    全コンテナの全セッションを同時に誤誘導する——しかも読み手は指示に従うだけなので、
+    誰も異常だと気づかない（実際 P4 の棚の付け替えで `dev/93-…` が残っていた）。
+
+    見るのは 2 つだけ:
+
+    (1) 名指しした棚のファイルが実在すること。
+    (2) 保証されない棚（member の mount は use/ と ref/ だけ）を指すなら、
+        「無いかもしれない」と書いてあること。書いていなければ、その一文は
+        member のコンテナでは実行不能な指示になる。
+
+    ⚠️ 本文の重複そのものは検査しない——それは意図された重複である（同ファイルに
+    理由を書いた）。検査するのは**指し先が生きているか**だけ。
+    """
+    notes = os.path.join(ROOT, "workspace", "workspace-notes.md")
+    if not os.path.exists(notes):
+        return
+    guaranteed = ("use", "ref")  # docsRolePrefixes の default（member）
+    shelves = LIVING + ("decisions", "log")
+    ref_re = re.compile(
+        r"`(" + "|".join(shelves) + r")/([A-Za-z0-9._-]+\.md)`"
+    )
+    # 断り書きは**段落**の中で探す。行で探すと、折り返しただけで落ちる
+    # ——「同じ行に書け」は書式の制約であって、意味の制約ではない。
+    lines = read(notes).splitlines()
+    blocks: list[tuple[int, str]] = []  # (先頭行番号, 段落)
+    start, buf = 1, []
+    for i, line in enumerate(lines, 1):
+        if line.strip():
+            if not buf:
+                start = i
+            buf.append(line)
+        elif buf:
+            blocks.append((start, "\n".join(buf)))
+            buf = []
+    if buf:
+        blocks.append((start, "\n".join(buf)))
+
+    for lineno, block in blocks:
+        for m in ref_re.finditer(block):
+            shelf, name = m.group(1), m.group(2)
+            if not os.path.exists(os.path.join(DOCS, shelf, name)):
+                f.error(
+                    f"workspace-notes.md:{lineno}: 無い棚のファイルを指している"
+                    f" -> {shelf}/{name}"
+                    "（全エージェントが読む指示なので、腐ると全員が誤誘導される）"
+                )
+                continue
+            if shelf not in guaranteed and "may be absent" not in block.lower():
+                f.error(
+                    f"workspace-notes.md:{lineno}: {shelf}/ は member の mount に無い。"
+                    "同じ段落に「may be absent」と断るか、use/ か ref/ を指すこと"
+                )
+
+
 def check_ref_parity(f: Findings) -> None:
     """ref/ の表は、英語版と日本語版で ✓ の立ち方が一致していること。
 
@@ -560,7 +620,7 @@ def main() -> int:
     ap.add_argument(
         "--only",
         default="",
-        help="検査名をカンマ区切りで指定（links,lang,header,vocab,frozen,ref,knowledge）",
+        help="検査名をカンマ区切りで指定（links,lang,header,vocab,frozen,ref,knowledge,notes）",
     )
     args = ap.parse_args()
 
@@ -584,6 +644,8 @@ def main() -> int:
         check_ref_parity(f)
     if run("knowledge"):
         check_knowledge(f)
+    if run("notes"):
+        check_notes(f)
 
     for w in f.warns:
         print(f"warn: {w}")

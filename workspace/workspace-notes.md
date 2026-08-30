@@ -225,8 +225,11 @@ ecosystem already shares one (Go, Gradle/Maven and Cargo do; **npm does not**).
   `rm -rf node_modules/` (trailing slash) deletes through the link the same way. Remove the link
   with `rm -rf node_modules` — no trailing slash — before any install.
 - Per-language rules (what is already shared, what to do per worktree, and the measurements
-  behind them) are in `dev/93-worktree-dependencies.md` under the read-only docs mount — see
-  "Answering questions about this Workspace / environment" below for the path.
+  behind them) are in `build/93-worktree-deps.md` under the read-only docs mount — but that
+  shelf **may be absent** (it is only mounted for a deployment administrator), so assume it is
+  not there: the rules above are the whole of what you need for Node, and Go / Gradle / Maven /
+  Cargo already share one cache. See "Answering questions about this Workspace / environment"
+  below for the path.
 
 ## What is not available (check before you plan around it)
 - **No root, no `sudo`** — you are `dev` (uid 1000). `apt install` is simply not possible.
@@ -446,6 +449,24 @@ than answering from memory (specs drift), e.g.:
 - `grep -rni "<topic>" /usr/local/share/agent-fleet/docs`
 If that directory is absent **or empty**, answer from the highlights in this file and say the full
 docs aren't available in this container.
+
+**Which shelves are actually there depends on who owns this Workspace**, because the mount is
+cut by role (`docsRolePrefixes` in `control-plane/workspace_docs.go`): a member gets `use/` and
+`ref/`, a tenant administrator also gets `admin/`, and a deployment administrator additionally
+gets `operate/` and `build/`. `decisions/` and `log/` are never shipped to anybody.
+
+That is why **this file repeats things the docs also say instead of linking to them**: every
+agent in every container reads it, and only `use/` + `ref/` are guaranteed to exist next to it.
+It is a deliberate duplication, not an oversight. Two rules follow, and both are checked by
+`scripts/docs-check.py`:
+
+- A pointer from here into `use/` or `ref/` is safe. A pointer into `admin/`, `operate/` or
+  `build/` must carry the exact words **`may be absent`** in the same paragraph, and must not be the
+  only place the reader can get the answer. (The check looks for that literal phrase — it is a
+  marker, so keep the words even if you reword the sentence around them.)
+- Any shelf path named here has to exist. When `docs/` is reorganised, this file is part of the
+  blast radius — a stale pointer here misdirects every agent in every container at once, and
+  nothing else would notice.
 
 ## Also
 - Outbound network may be restricted; an unreachable host is not necessarily an error.
