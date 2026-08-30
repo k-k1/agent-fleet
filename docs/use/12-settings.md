@@ -17,8 +17,8 @@ Updated: 2026-08
 | Group | What is in it |
 |---|---|
 | **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / Agent instructions |
-| **Connections** | Agents / Git hosting / Ops & monitoring / Chat integration / MCP servers / MCP tokens |
-| **Workspace** | Usage / Agent memory / Toolchain / AWS SSM / Internal repositories / Export & import / Danger zone |
+| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens |
+| **Workspace** | Usage / Cloud cost / Agent memory / Toolchain / AWS SSM / Internal repositories / Export & import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
 - **On a phone it is a list → detail drill-down.** Back returns to the list; back again closes the dialog.
@@ -177,6 +177,23 @@ Connect PagerDuty / Grafana / CloudWatch / AWS so the **SRE assistant** can talk
 real data. CloudWatch and AWS only need a profile picked from your SSM connections — no secret to type. AWS
 **write tools are off by default**. → [10 Ops tooling](13-ops-tooling.md)
 
+### Issue tracker
+
+Where the work items in the left rail's **Issue tracker** section come from — Jira issues, GitHub
+issues and pull requests, Bitbucket pull requests — so that a session can be started from a row.
+
+- **Saved queries** are the whole of it: GitHub search syntax, Jira JQL or a Bitbucket filter
+  expression, saved exactly as written. **Nothing is fetched until you save one**, and the query is
+  the only filter — nothing is synced in bulk.
+- **Jira** is connected here, either with **OAuth** or with **your email address and an API token**
+  (the address is half of that credential). **GitHub and Bitbucket ride on the Git hosting
+  connection**, so they need nothing of their own.
+- **Bitbucket** has no search across an account, so its query is **assembled from your connected
+  repositories** — what to list × which target — instead of being typed by hand. Bitbucket items are
+  **read only**: nothing is written back to them.
+- **Branch name template** — what a session started from a row branches as (`feature/{key}` by
+  default).
+
 ### Chat integration
 
 Connect a Discord / Slack bot to follow session progress in chat and drive it by replying.
@@ -235,6 +252,23 @@ scale.
   (which does not mean they were free).
 - **RTK gain** — cumulative tokens saved, average saving rate and command count, daily / weekly / monthly
   (RTK is in [06](06-agents.md#rtk-token-savings)).
+
+### Cloud cost
+
+What your own workspace costs to run in the cloud. **The tab is only there on a deployment running on
+AWS**, because nowhere else has a cloud bill to read.
+
+- The figure is **what is directly attributable to your workspace** — its slot hours, its persistent
+  home volume and that volume's snapshots — and the screen labels it "directly attributable to your
+  workspace (shared not included)". Shared infrastructure (NAT, DNS, load balancer, database, the idle
+  slot pool) is deliberately **never divided up between members**, so this is **not** the full cost of
+  running your workspace, and it is not "your cost".
+- **It runs about 24 hours behind, and the current day is not final** — the most recent days still
+  move.
+- A **date range**, the **daily trend** and **what it was spent on**. Amounts are in the currency the
+  bill is in (US dollars); nothing is converted.
+- **Nothing at all is available from before the day cost attribution was switched on** — it only
+  counts from that moment and cannot be backfilled. The screen says which day that is.
 
 ### Agent memory
 
@@ -314,10 +348,12 @@ deeper reset that also removes home except logins and connections). Both lose un
 | Let sessions talk to each other | Agents (session-to-session messaging) |
 | Clone a private repository | Git hosting |
 | Get help investigating an incident | Ops & monitoring |
+| Start work from a ticket or an issue | Issue tracker |
 | Follow progress while away from the desk | Chat integration |
 | Let the AI use an in-house tool | MCP servers |
 | Drive it from the Claude on my laptop | MCP tokens |
 | Find out what the tokens went on | Usage |
+| Find out what my workspace costs to run | Cloud cost |
 | It memorised something wrong | Agent memory |
 | Change the Java / Node version | Toolchain |
 | Get into another server | AWS SSM |
