@@ -96,6 +96,27 @@ workspace is running.
 > **Smartphones are not supported in the current version.** At around 390px width (phones), the entry point in
 > the action bar overflows off screen and you cannot start. Please use a **desktop or tablet**.
 
+## Operating a browser the agent opened
+
+When an agent is driving its own browser (Chromium) inside the workspace and reaches something
+**only a person can do** — signing in, a one-time code, ticking a consent box — it can hand that
+page over to you. This is a different thing from the browser pane above: there you open your own
+local web app, here you take over a page the agent already has open.
+
+- A link appears in the agent's message: **"Open the browser and operate it (opens as a pane in this
+  tab)"**. **You are the one who clicks it** — nothing opens until you do, and it opens as a pane in
+  the tab you are already in, not in a new one.
+- It starts in **View only**. The picture is live, but clicks, scrolling and keystrokes are not
+  delivered. Once the agent hands control over it becomes **User control** and you can operate it.
+  (**If it feels unresponsive, this is why** — the pane says so at the top.)
+- What you are being asked to do is shown as a **Requested browser action**. **Action complete** or
+  **Cancel action** tells the agent how it ended. Pressing them reports *what you did*, not that the
+  site's own processing succeeded — which is also why an agent must not make the final send, buy or
+  consent click for you.
+- **Close view** only stops showing it. **The agent's browser, its page and its session stay open.**
+- You can reopen an attachment from **Preview** in the workspace action bar, under **Attached
+  browsers**. If the same Chromium has other tabs, **Switch to another tab** moves between them.
+
 ## Driving your workspace from an external Claude (MCP)
 
 From Claude Code / Claude Desktop on your local PC you can **remotely drive** sessions in your workspace.

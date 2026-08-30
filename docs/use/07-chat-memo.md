@@ -160,6 +160,22 @@ approval it reads **"Send comments and reject (N)"** — delivering the body req
 approval dialog, so the two go together. The agent comes back with a revised plan that takes
 your comments into account.
 
+### Calling a skill or a command
+
+The button beside the input field — it shows the trigger character, **`/`** or **`$`** (**✦** for an
+agent that has no trigger) — opens **the skills and commands this session can actually call**.
+Typing the trigger at the head of an empty input opens the same list (`/` for claude, cursor and
+opencode, `$` for codex; the full-width `／` and `＄` a Japanese IME produces are accepted too).
+
+- Each entry carries its description, an argument hint, and where it came from — **user**, **CLI**
+  or **shared**.
+- Picking one **only inserts it into the input; nothing is sent.** Add the arguments, then send.
+- From the keyboard: **↑↓** to move, **Enter** (or **Tab**) to insert, **Esc** to close.
+- **Skills written for another agent** and left in the repository are listed too. Picking one
+  inserts "read that file and follow its instructions", so the content is usable even by an agent
+  that has no skill mechanism of its own.
+- Which agents offer the picker is in [agents.md](../ref/agents.md).
+
 ### Reply suggestions
 
 Above the input field, chips offer short replies you use often (OK, go ahead, commit …) plus

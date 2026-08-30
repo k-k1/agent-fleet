@@ -24,12 +24,12 @@ If a feature ships and does not appear here, it is not done
 | Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [02 Sessions](../use/02-sessions.md) |
 | Run in a fresh git worktree | member | Start dialog | [04 Git](../use/03-code.md) |
 | Chat mirror — follow and steer a running agent | member | main area | [02 Sessions](../use/02-sessions.md) |
-| Answer a question, plan, or permission prompt | member | mirror | [agents.md](agents.md) for which agents ask |
-| Skill / command picker | member | mirror composer | [agents.md](agents.md) |
+| Answer a question, plan, or permission prompt | member | mirror | [07 Chat and memos](../use/07-chat-memo.md); [agents.md](agents.md) for which agents ask |
+| Skill / command picker | member | mirror composer | [07 Chat and memos](../use/07-chat-memo.md); [agents.md](agents.md) for which agents |
 | Live terminal attached to a session | member | main area | [03 Terminal](../use/05-terminal.md) |
 | Resume a stopped session | member | left pane → the session | [02 Sessions](../use/02-sessions.md) |
 | Hand a conversation to a new session | member | session ⋯ menu | [02 Sessions](../use/02-sessions.md) |
-| Fork from a past message | member | mirror, on a past message | [agents.md](agents.md) for which agents |
+| Fork from a past message | member | mirror, on a past message | [07 Chat and memos](../use/07-chat-memo.md); [agents.md](agents.md) for which agents |
 | Hand a session to another member | member | session ⋯ menu | [02 Sessions](../use/02-sessions.md) |
 | Share a session read-only | member | Shared sessions | [02 Sessions](../use/02-sessions.md) |
 | Highlights | member | mirror, on a selection | [09 Working with others](../use/09-collaboration.md) |
@@ -48,8 +48,8 @@ If a feature ships and does not appear here, it is not done
 | File tree and viewer | member | Files | [05 Files](../use/04-files.md) |
 | Markdown and code editing | member | Files → a file | [05 Files](../use/04-files.md) |
 | `.drawio` diagrams | member | Files → a `.drawio` file | [05 Files](../use/04-files.md) |
-| Browser pane for a local web app | member | workspace action bar → Preview | [browser-pane.md](browser-pane.md) |
-| Attach to a Chromium the agent owns | member | a link the agent hands you | [browser-pane.md](browser-pane.md) |
+| Browser pane for a local web app | member | workspace action bar → Preview | [08 Going further](../use/10-integrations.md); [browser-pane.md](browser-pane.md) for the contract |
+| Attach to a Chromium the agent owns | member | a link the agent hands you | [08 Going further](../use/10-integrations.md) |
 
 ## Organising the work
 

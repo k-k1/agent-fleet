@@ -22,12 +22,12 @@ Updated: 2026-08
 | セッションの起動（エージェント・モデル・effort・開始モード）| メンバー | ワークスペース操作バー → Start | [02 セッション](../use/02-sessions.ja.md) |
 | 新しい git worktree で動かす | メンバー | Start ダイアログ | [04 Git](../use/03-code.ja.md) |
 | チャットミラー — 実行中のエージェントを追う・操縦する | メンバー | メイン領域 | [02 セッション](../use/02-sessions.ja.md) |
-| 質問・プラン・権限確認に答える | メンバー | ミラー | どのエージェントが尋ねるかは [agents.md](agents.ja.md) |
-| スキル / コマンドのピッカー | メンバー | ミラーの入力欄 | [agents.md](agents.ja.md) |
+| 質問・プラン・権限確認に答える | メンバー | ミラー | [07 チャットとメモ](../use/07-chat-memo.ja.md)。どのエージェントが尋ねるかは [agents.md](agents.ja.md) |
+| スキル / コマンドのピッカー | メンバー | ミラーの入力欄 | [07 チャットとメモ](../use/07-chat-memo.ja.md)。対応するエージェントは [agents.md](agents.ja.md) |
 | セッションに繋がった実端末 | メンバー | メイン領域 | [03 ターミナル](../use/05-terminal.ja.md) |
 | 停止したセッションの再開 | メンバー | 左ペイン → そのセッション | [02 セッション](../use/02-sessions.ja.md) |
 | 会話を新しいセッションへ引き継ぐ | メンバー | セッションの ⋯ メニュー | [02 セッション](../use/02-sessions.ja.md) |
-| 過去の発言からの分岐 | メンバー | ミラーの過去の発言 | どのエージェントで可能かは [agents.md](agents.ja.md) |
+| 過去の発言からの分岐 | メンバー | ミラーの過去の発言 | [07 チャットとメモ](../use/07-chat-memo.ja.md)。どのエージェントで可能かは [agents.md](agents.ja.md) |
 | 別メンバーへセッションを引き継ぐ | メンバー | セッションの ⋯ メニュー | [02 セッション](../use/02-sessions.ja.md) |
 | セッションの読み取り共有 | メンバー | 共有セッション | [02 セッション](../use/02-sessions.ja.md) |
 | マーカー | メンバー | ミラーの選択範囲 | [09 他の人と扱う](../use/09-collaboration.ja.md) |
@@ -46,8 +46,8 @@ Updated: 2026-08
 | ファイルツリーとビューア | メンバー | ファイル | [05 ファイル](../use/04-files.ja.md) |
 | Markdown / コードの編集 | メンバー | ファイル → 各ファイル | [05 ファイル](../use/04-files.ja.md) |
 | `.drawio` の図 | メンバー | ファイル → `.drawio` | [05 ファイル](../use/04-files.ja.md) |
-| ローカル Web アプリのブラウザペイン | メンバー | ワークスペース操作バー → プレビュー | [browser-pane.md](browser-pane.ja.md) |
-| エージェントが持つ Chromium への接続 | メンバー | エージェントが渡すリンク | [browser-pane.md](browser-pane.ja.md) |
+| ローカル Web アプリのブラウザペイン | メンバー | ワークスペース操作バー → プレビュー | [08 応用](../use/10-integrations.ja.md)。契約は [browser-pane.md](browser-pane.ja.md) |
+| エージェントが持つ Chromium への接続 | メンバー | エージェントが渡すリンク | [08 応用](../use/10-integrations.ja.md) |
 
 ## 仕事を並べる
 
