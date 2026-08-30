@@ -1,47 +1,57 @@
-# 0001. 提供モデル — 各社セルフホスト（SaaS 断念）
+# 0001. Delivery model — each company self-hosts (SaaS abandoned)
 
-- 状態: 確定（2026-06-27）
-- 関連: [ロードマップ Phase 3](../roadmap.md) / [dev/07 §7.9 リスクと残課題](../build/07-security.md#79-リスクと残課題)（旧 security §4.7）
+English | [日本語](0001-self-host-vs-saas.ja.md)
 
-## 背景
+- Status: decided (2026-06-27)
+- See also: [Roadmap Phase 3](../roadmap.md) / [build/07 §7.9 Risks and open work](../build/07-security.md#79-risks-and-open-work) (formerly security §4.7)
 
-Phase 2 で「オンプレ 1 台・複数ユーザー相互不可視・at-rest 暗号化」の社内 MVP が完成した。次は
-プロダクト化だが、提供形態によって Anthropic ToS posture が大きく変わる。Claude は各ユーザーの
-個人サブスク（BYO `/login`）で動く前提のため、「誰のインフラで誰の社員をホストするか」が論点になる。
+## Context
 
-## 検討した選択肢
+Phase 2 finished the internal MVP: one on-prem machine, several users who cannot see each
+other, encryption at rest. Productising it was next — but the delivery model changes the
+Anthropic ToS posture drastically. Claude runs on each user's personal subscription
+(BYO `/login`), so the question becomes "whose infrastructure hosts whose employees?"
 
-1. **商用マルチテナント SaaS（外部顧客向け）** — 却下。BYO（個人サブスクの Claude を第三者ホストの
-   共有サービスで動かす）は ToS グレー。
-2. **我々が 1 基盤を運用する社内マルチテナント SaaS（自社 + 関連会社）** — 却下。別法人の社員を
-   我々のインフラでホストする posture が依然グレー寄り。
-3. **パッケージ製品 + 各社セルフホスト（採用）** — 各社が**自社の社員を自社インフラでホスト**するだけ
-   なので ToS posture が最もクリーン。我々は運用者でなく **vendor/maintainer**。
+## Options considered
 
-## 決定
+1. **Commercial multi-tenant SaaS (for external customers)** — rejected. BYO (running a
+   personal Claude subscription on a shared, third-party-hosted service) is ToS grey area.
+2. **An internal multi-tenant SaaS we operate ourselves (our company + affiliates)** —
+   rejected. Hosting another legal entity's employees on our infrastructure is still on the
+   grey side.
+3. **Packaged product + self-hosting per company (adopted)** — each company hosts **its own
+   employees on its own infrastructure**, which is the cleanest ToS posture available. We are
+   the **vendor/maintainer**, not the operator.
 
-**プロダクトをパッケージ化し、グループ各社が「自社で」セルフホストする（1 社 = 1 デプロイ）。**
+## Decision
 
-確定前提:
+**Package the product; each group company self-hosts it (1 company = 1 deployment).**
 
-| 論点 | 決定 |
-|------|------|
-| 提供形態 | パッケージ製品。各社が自社でセルフホスト。**phone-home なし** |
-| Claude 認証 | BYO 継続（各自 `/login`）。会社所有の Team/Enterprise シート推奨 |
-| 会社間分離 | **デプロイ分離（最強・無料）**。別法人＝別インフラ・別 DB・別ルート鍵 |
-| デプロイ内マルチテナント | 任意（既定 = 単一テナント = 全社）。部署分割は大企業向け拡張 |
-| バジェット | per-deployment。その社の管理者が設定。外部課金なし |
-| デプロイ先 | 各社の選択（オンプレ Docker 既定 / 自社 AWS 任意） |
-| 規模 | 小（1 デプロイ = 数十〜百ユーザー）。DB は SQLite 既定 |
+The settled premises:
 
-旧 `platform_admin`（= 我々）は廃止。実行時の階層に vendor は登場しない（[ロードマップ §12.1](../roadmap.md#121-アイデンティティ階層パッケージセルフホスト版)）。
+| Question | Decision |
+|---|---|
+| Delivery | Packaged product, self-hosted by each company. **No phone-home** |
+| Claude auth | Stays BYO (each person runs `/login`). Company-owned Team/Enterprise seats recommended |
+| Separation between companies | **Separate deployments (strongest, and free)**. Different entity = different infrastructure, database and root key |
+| Multi-tenancy within a deployment | Optional (default = single tenant = the whole company). Splitting by department is an enterprise extension |
+| Budget | Per deployment, set by that company's admin. No external billing |
+| Deployment target | The company's choice (on-prem Docker by default, their own AWS optionally) |
+| Scale | Small (1 deployment = tens to ~100 users). SQLite is the default database |
 
-## 帰結
+The old `platform_admin` (i.e. us) is gone. The vendor does not appear anywhere in the
+runtime hierarchy ([Roadmap §12.1](../roadmap.md#121-アイデンティティ階層パッケージセルフホスト版)).
 
-- **P3-10 パッケージング**が提供モデルの核になる（compose/Helm + 設定 + マイグレーション + runbook）。
-  完了判定 = 第 2 デプロイをゼロから立てて E2E 通過。
-- データ・鍵・OAuth 設定・ユーザー管理は**すべてその社が握る**。我々は実行時にアクセスしない。
-- **残存リスク（正直に）**: 1 デプロイ内では CP が `docker.sock`（ホスト root 相当）+ 平文 DEK 注入のため、
-  CP/ホスト侵害でそのデプロイ内の分離が一括崩壊する。**会社間は別デプロイゆえ波及しない**のが本モデルの
-  強み。さらに強い分離が要る部署は dedicated（P3-8）/ 別デプロイ / AWS（タスク分離・docker.sock 非共有）へ。
-  緩和は rootless Docker / socket-proxy / CP 最小権限。
+## Consequences
+
+- **P3-10 packaging** becomes the core of the delivery model (compose/Helm + configuration +
+  migrations + runbook). Done means: stand up a second deployment from scratch and pass E2E.
+- Data, keys, OAuth configuration and user management are **entirely the company's**. We have
+  no runtime access.
+- **The residual risk, stated honestly**: within one deployment the CP holds `docker.sock`
+  (equivalent to host root) and injects plaintext DEKs, so compromising the CP or the host
+  collapses the separation inside that deployment all at once. **The strength of this model is
+  that it does not spread between companies**, because they are different deployments. A
+  department that needs stronger isolation goes to dedicated (P3-8), to its own deployment, or
+  to AWS (task isolation, no shared docker.sock). Mitigations: rootless Docker, a socket proxy,
+  minimal CP privileges.

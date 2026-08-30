@@ -1,195 +1,236 @@
-# 0008. Antigravity CLI（`agy`）を第4のエージェント種別として取り込む
+# 0008. Take in the Antigravity CLI (`agy`) as a fourth agent kind
 
-- 状態: **採用決定**（2026-07-20。Starter=実験枠で実装開始、GCP 経路で常用化を目指す。実装計画は [32](../log/32-agy-agent-kind.md)）
-- 関連: [session.go](../../workspace/agent/session.go)（セッション統合）/ [Codex auth](../../workspace/agent/internal/agents/codex/auth.go)（device-auth の現行実装）/ [0006-mcp-unified](0006-mcp-unified.md) / [HANDOFF §エージェント種別](../HANDOFF.md)
-- 出自: ユーザー依頼「antigravity cli を Agent-Fleet に組み込めないか検討」（2026-06-29〜30 調査）
+English | [日本語](0008-antigravity-cli-agent-kind.ja.md)
 
-## 背景
+- Status: **adopted** (2026-07-20. Implementation started on the Starter/experimental track, aiming at everyday use over the GCP route. The implementation plan is [32](../log/32-agy-agent-kind.md))
+- See also: [session.go](../../workspace/agent/session.go) (session integration) / [Codex auth](../../workspace/agent/internal/agents/codex/auth.go) (the current device-auth implementation) / [0006-mcp-unified](0006-mcp-unified.md) / [HANDOFF §agent kinds](../HANDOFF.md)
+- Origin: a user request — "look into whether the antigravity cli can be built into Agent-Fleet" (investigated 2026-06-29/30)
 
-Agent-Fleet は既に **`claude | opencode | codex | shell`** の複数エージェント種別を
-`kind` 一つで切り替える構造（`session.go` の `startSessionTmux` 分岐、種別ごとの
-`*_auth.go`、イメージ同梱、Console セッション種別セレクタ）を持つ。ここに Google の
-**Antigravity CLI（バイナリ名 `agy`）** を `kind=agy` として加えられるかを調べた。
+## Context
 
-`agy` は Google が 2026-05 に出した **Go 製ターミナルエージェント**（旧 Gemini CLI の後継、
-Gemini CLI は 2026-06-18 廃止）。SSH/キーボード駆動を明示的に想定した TUI で、構造的に
-**claude/codex と同型＝PTY で動く対話エージェント**。よって既存の PTY→tmux→xterm 橋渡しを
-そのまま再利用できる。
+Agent-Fleet already switches between several agent kinds —
+**`claude | opencode | codex | shell`** — off a single `kind` (the `switch` in
+`startSessionTmux` in `session.go`, a `*_auth.go` per kind, inclusion in the image, the session
+kind selector in the Console). The question was whether Google's **Antigravity CLI** (binary
+name `agy`) could be added as `kind=agy`.
 
-- モデル: Gemini 系が主、**オプションで Claude・OSS バックエンドも指定可**。
-- 認証: システムキーリング →（無ければ）Google Sign-In。**SSH セッション検知時は認可 URL を
-  表示してローカルで完了**（codex の device-auth・claude の sign-in URL ボタンと同型）。
-  CI/ヘッドレスは `ANTIGRAVITY_TOKEN`。素の API key 認証は要望中（[Issue #78]）。
-- 非対話: `agy -p "<prompt>" --output-format json`、`--headless` + `--approve <policy>`。
-- 設定流儀: ルートの `AGENTS.md`（全プロンプト前置）、`.agents/skills/*.md`（スラッシュコマンド）。
-  → **既存の `WS_NOTES`→`AGENTS.md` シード機構（entrypoint）がそのまま効く**。
-- MCP 対応あり（[0006](0006-mcp-unified.md) の統合 MCP 方針と整合）。
+`agy` is a **terminal agent written in Go** that Google shipped in 2026-05 (the successor to the
+old Gemini CLI, which was retired on 2026-06-18). Its TUI explicitly assumes SSH/keyboard
+driving, which makes it **structurally the same shape as claude/codex: an interactive agent that
+runs on a PTY**. So the existing PTY→tmux→xterm bridge can be reused as is.
 
-## ToS 判定（最大のゲート）
+- Models: mainly the Gemini family, but **Claude and OSS backends can optionally be selected**.
+- Authentication: the system keyring, falling back to Google Sign-In. **When it detects an SSH
+  session it shows an authorisation URL to be completed locally** (the same shape as codex's
+  device-auth and claude's sign-in URL button). For CI/headless there is `ANTIGRAVITY_TOKEN`.
+  Plain API-key authentication has been requested ([Issue #78]).
+- Configuration idiom: `AGENTS.md` at the root (prepended to every prompt) and
+  `.agents/skills/*.md` (slash commands). → **The existing `WS_NOTES`→`AGENTS.md` seeding in the
+  entrypoint applies unchanged.**
+- It supports MCP (consistent with the unified MCP direction in [0006](0006-mcp-unified.md)).
 
-Anthropic ToS を [0001](0001-self-host-vs-saas.md) で慎重に詰めた以上、同等の検証を行った。
-**結論: claude よりむしろクリーンな道がある。**
+## The ToS judgement (the biggest gate)
 
-認証は**全階層とも同一の Google Sign-In**（device-auth/認可 URL）で、`agy` のコードは
-**ログイン階層に非依存**。よって階層選択は**実装差ではなく運用/ToS ポリシー**の問題。
+Having worked through the Anthropic ToS carefully in [0001](0001-self-host-vs-saas.md), we did
+the equivalent here. **Conclusion: there is a route that is actually cleaner than claude's.**
 
-| 経路（BYO ログイン階層） | 学習利用 | クォータ | セルフホスト適合 | 判定 |
-|------|---------|---------|------------------------------|------|
-| **会社 Workspace（Gemini for Business / AI Ultra for Business）** | **収集しない**（明示） | 企業枠 | 会社所有シート＝[overview](../HANDOFF.md) の方針と一致 | ✅ **推奨** |
-| **GCP プロジェクト** | **されない**（私的環境外に保存せず） | 消費ベース課金 | 各ユーザーが自分の GCP 資格→**GCP ToS** | ✅ **推奨** |
-| 個人 **AI Pro（$20）/ Ultra（$249.99）** | **既定で学習**（「Gemini Apps Activity」オフでオプトアウト） | Pro=5h ごとリフレッシュだが `agy` の重い compute effort で**2h で 5h ロック**の報告 | 技術的には BYO 可だが細い | ⚠ **個人検証どまり**（claude の「個人 Pro/Max 避ける」と同型） |
-| 消費者/無料 | 学習（同上） | **1 日 20 req/アカウント**（desktop/CLI/SDK 共有） | 本番不向き | ⚠ 動作確認のみ |
-| Claude モデルを `agy` 経由 | — | — | 追加で **Anthropic 商用規約**にも拘束 | 併用時注意 |
+Authentication is **the same Google Sign-In at every tier** (device-auth / authorisation URL),
+and `agy`'s code **does not depend on the login tier**. So choosing a tier is **an
+operational/ToS policy question, not an implementation difference**.
 
-**会社 Workspace または GCP プロジェクト経路は Agent-Fleet の「1 社=1 デプロイ・自社
-セルフホスト・BYO」（[overview](../HANDOFF.md)）とそのまま一致**し、SaaS を断念させた ToS
-グレーを踏まない。個人 AI Pro は技術的には同じ device-auth で通るが、**学習利用（オプト
-アウト頼み）＋クォータ枯渇**の 2 点で claude の個人プラン同様に会社運用では避ける。
-→ **ゲート通過。会社 Workspace / GCP 経路を推奨前提とし、実装自体は階層非依存。**
+| Route (the BYO login tier) | Used for training | Quota | Fit with self-hosting | Verdict |
+|---|---|---|---|---|
+| **Company Workspace (Gemini for Business / AI Ultra for Business)** | **not collected** (stated explicitly) | enterprise allowance | company-owned seats — matches the direction in [overview](../HANDOFF.md) | ✅ **recommended** |
+| **A GCP project** | **not used** (nothing is stored outside the private environment) | consumption billing | each user brings their own GCP credentials → **GCP ToS** | ✅ **recommended** |
+| Personal **AI Pro ($20) / Ultra ($249.99)** | **trained on by default** (opt out by turning off "Gemini Apps Activity") | Pro refreshes every 5h, but there are reports of **a 5h lock after 2h** given `agy`'s heavy compute effort | technically BYO-able, but thin | ⚠ **personal evaluation only** (the same shape as "avoid personal Pro/Max" for claude) |
+| Consumer / free | trained on (as above) | **20 req/day/account** (shared across desktop/CLI/SDK) | unfit for production | ⚠ smoke testing only |
+| Claude models via `agy` | — | — | additionally bound by **Anthropic's commercial terms** | take care when combining |
 
-## 既存パターンへの接地（変更箇所）
+**The company Workspace and GCP project routes line up directly with Agent-Fleet's "1 company =
+1 deployment, self-hosted, BYO"** ([overview](../HANDOFF.md)) and do not step into the ToS grey
+area that killed SaaS. Personal AI Pro passes the same device-auth technically, but on two
+counts — **training use (opt-out only) and quota exhaustion** — it is avoided for company use
+exactly as claude's personal plans are.
+→ **Gate passed. The company Workspace / GCP routes are the recommended premise; the
+implementation itself is tier-agnostic.**
 
-codex/opencode 追加と同じ轍。触る範囲は限定的:
+## Grounding it in the existing patterns (what gets touched)
 
-1. **イメージ同梱** — `workspace/Dockerfile:86` は今 `npm install -g … @openai/codex …`。
-   `agy` は npm ではなく `curl -fsSL https://antigravity.google/cli/install.sh | bash` の
-   **Go バイナリ**なので、claude（`claude.ai/install.sh`）と同型の install 行を 1 本追加し、
-   `&& agy --version` を検証行に足す。**ここが唯一の構造差分。**
-2. **launch 分岐** — `session.go:210` の `switch m.Kind` に `case "agy":` を追加。
-   作業ディレクトリで `agy`（必要なら resume/model フラグ付き）を起動する `buildAgyProgram` を
-   `buildCodexProgram` に倣って新設。`session.go:431` の許可リストにも `"agy"` を追加。
-3. **認証 `agy_auth.go`** — `codex_auth.go` の **device-auth/PTY スクレイプ機構をほぼ流用**。
-   `agy` の SSH 認可 URL を `claudeFlow` で掴んで Console に出し、ポーリングで完了検知。
-   状態表示は `agy` のログイン状態照会コマンドで（codex の `login status` 相当を確認要）。
-   資格は `agy` 自身が keyring/home に持つ＝**claude/codex と同じく暗号ストア外＋denylist**。
-4. **CP ルート** — `control-plane/main.go` の codex と同型に
-   `/api/connections/agy/...`（device start/poll・disconnect）を `proxyAgentREST` で足すだけ。
-5. **Console** — セッション種別セレクタに `agy` を追加、Connections タブに認証パネルを 1 枚。
-   バックエンド API が codex と同形なら UI も複製で済む。
-6. **AGENTS.md シード** — entrypoint の `WS_NOTES`→`AGENTS.md` コピー先に `agy` の
-   参照パス（プロジェクト root の `AGENTS.md` を既に読む）を含める。rtk ブロック追記も同様。
+The same rut as adding codex/opencode. The footprint is small:
 
-## PoC 結果（2026-06-30、使い捨てコンテナ `agent-fleet/workspace:dev`）
+1. **Include it in the image** — `workspace/Dockerfile:86` currently says
+   `npm install -g … @openai/codex …`. `agy` is not npm but a **Go binary** from
+   `curl -fsSL https://antigravity.google/cli/install.sh | bash`, so add one install line of the
+   same shape as claude's (`claude.ai/install.sh`) and add `&& agy --version` to the
+   verification line. **This is the only structural difference.**
+2. **Launch branch** — add `case "agy":` to the `switch m.Kind` at `session.go:210`. Add a
+   `buildAgyProgram`, modelled on `buildCodexProgram`, that starts `agy` in the working
+   directory (with resume/model flags where needed). Add `"agy"` to the allowlist at
+   `session.go:431`.
+3. **Authentication, `agy_auth.go`** — **reuse the device-auth/PTY-scraping machinery from
+   `codex_auth.go` almost verbatim**. Catch `agy`'s SSH authorisation URL with `claudeFlow`,
+   surface it in the Console, and detect completion by polling. For the state display, use
+   `agy`'s login-status query (the equivalent of codex's `login status` needs confirming).
+   Credentials are held by `agy` itself in the keyring/home — **outside the encrypted store,
+   like claude and codex, so a denylist entry is needed**.
+4. **CP routes** — just add `/api/connections/agy/...` (device start/poll, disconnect) via
+   `proxyAgentREST`, in the same shape as codex in `control-plane/main.go`.
+5. **Console** — add `agy` to the session kind selector and one authentication panel in the
+   Connections tab. If the backend API matches codex's shape, the UI is a copy.
+6. **AGENTS.md seeding** — include `agy`'s reference path in the entrypoint's
+   `WS_NOTES`→`AGENTS.md` copy (it already reads `AGENTS.md` at the project root). The same goes
+   for appending the rtk block.
 
-ビルドせず既存イメージの使い捨てコンテナで実施（[ホスト OOM リスク](../HANDOFF.md)回避）。
+## PoC results (2026-06-30, in a throwaway `agent-fleet/workspace:dev` container)
 
-- ✅ **インストール成功**: `curl -fsSL https://antigravity.google/cli/install.sh | bash` は
-  **非対話・冪等・sha512 検証つき**で `$HOME/.local/bin/agy` に設置（Cloud Run の manifest→
-  flat native build を取得）。`--dir` で設置先指定可、既存なら skip。Debian12/curl/x86_64 でOK。
-- ❌ **起動不可（本開発ホストのみ）**: `agy` が起動直後に `CRNGT failed` → SIGABRT。スタックは
-  `crypto/internal/boring._goboringcrypto_RAND_bytes`。**agy は Go BoringCrypto(FIPS) ビルド**で、
-  x86 の FIPS 乱数モジュールが **RDRAND 命令を必須**とする。本ホスト（AMD Ryzen Embedded
-  R2514・ベアメタル・`detect-virt: none`）は **`/proc/cpuinfo` に rdrand 非提示**（カーネル
-  マスク/BIOS 無効の疑い）→ 自己テスト abort。`seccomp=unconfined` でも変わらず、プリビルド
-  ゆえ FIPS 無効化スイッチもなく**ユーザー空間からは回避不可**。
+Done in a throwaway container from the existing image rather than by building one (to avoid
+[the host OOM risk](../HANDOFF.md)).
 
-→ **新たな配備要件: agy を動かすホストは RDRAND 有効が必須**（一般的なクラウド VM・現行 CPU の
-多くは満たすが、この開発ホストは満たさない）。これは agy/Agent-Fleet 固有の欠陥ではなく FIPS
-ビルドの性質。**この開発ホストでは対話/認証/resume の実機確認まで到達できない**ため、以下は
-RDRAND 有効ホストで再 PoC する。
+- ✅ **Install works**: `curl -fsSL https://antigravity.google/cli/install.sh | bash` is
+  **non-interactive, idempotent and sha512-verified**, installing to `$HOME/.local/bin/agy` (it
+  fetches a Cloud Run manifest → a flat native build). `--dir` selects the destination; it skips
+  when already present. Fine on Debian 12 / curl / x86_64.
+- ❌ **Will not start (on this development host only)**: `agy` hits `CRNGT failed` → SIGABRT
+  immediately at startup. The stack is
+  `crypto/internal/boring._goboringcrypto_RAND_bytes`. **agy is a Go BoringCrypto (FIPS) build**,
+  and the x86 FIPS random module **requires the RDRAND instruction**. This host (AMD Ryzen
+  Embedded R2514, bare metal, `detect-virt: none`) **does not advertise rdrand in
+  `/proc/cpuinfo`** (suspected kernel mask or BIOS disable) → the self-test aborts.
+  `seccomp=unconfined` makes no difference, and because it is a prebuilt binary there is no
+  switch to disable FIPS — **it cannot be worked around from user space**.
 
-## 再 PoC 結果（2026-07-20、RDRAND 有効ホスト＝WSL2 / Ryzen 7 PRO 8840HS の Workspace コンテナ内）
+→ **A new deployment requirement: a host running agy must have RDRAND enabled** (most cloud VMs
+and current CPUs do; this development host does not). This is not a defect specific to
+agy or Agent-Fleet; it is a property of FIPS builds. **On this development host we cannot reach
+hands-on verification of interaction, authentication or resume**, so the following was re-run on
+a host with RDRAND.
 
-前回の次アクション「RDRAND 有効ホストで再 PoC」を実施。`/proc/cpuinfo` に `rdrand`/`rdseed`
-提示ありのホストで、**起動〜認証〜非対話実行まで全て完走**した（v1.1.4）。
+## Second PoC (2026-07-20, on an RDRAND-enabled host = a workspace container on WSL2 / Ryzen 7 PRO 8840HS)
 
-- ✅ **起動成功**: `install.sh` → `~/.local/bin/agy`、`agy --version` 正常。`CRNGT failed` は
-  再現せず。**RDRAND 要件の裏取り完了**（有効ホストなら問題なし。0008 の配備要件は妥当）。
-- ✅ **コンテナ内認証フロー完走**（keyring 不在環境）: TUI 起動で「1. Google OAuth /
-  2. Use a Google Cloud project」の 2 択 → OAuth 選択で**認可 URL＋認可コード貼り付け
-  （PKCE、redirect_uri=`antigravity.google/oauth-callback`）が端末内に表示**される。
-  tmux `send-keys` でコード投入し完了 = **codex device-auth 同型の PTY スクレイプで
-  Console 統合が成立する**。GCP プロジェクト経路も同セレクタの選択肢 2 として存在。
-- **初回オンボーディング**（`agy_auth.go` がスクレイプで踏む画面列）: カラースキーム選択 →
-  ToS + **Interactions データ収集オプトイン（既定オン、TUI 上でトグルしてオプトアウト可**、
-  今回オフで完走）→ ワークスペースの trust プロンプト（Yes/No）→ メイン画面。
-- **資格の永続化先**: keyring 不在時は **`~/.gemini/antigravity-cli/antigravity-oauth-token`
-  （平文、home 配下）** → claude/codex と同じく**暗号ストア外＝denylist 追加要**。
-- **ログイン状態照会**: 専用サブコマンドは無い。未認証時に `agy models` が
-  「Please sign in」エラーを返すため、**これが `login status` 相当の判定に使える**。
-- ✅ **非対話実行**: `agy -p "<prompt>"` が正常応答（既定 Gemini 3.5 Flash (Medium)）。
-- **モデル一覧**（Starter Quota の個人 Google アカウント）: Gemini 3.5 Flash (Low/Medium/High)、
-  Gemini 3.1 Pro (Low/High)、**Claude Sonnet 4.6 / Opus 4.6 (Thinking)**、GPT-OSS 120B。
+The follow-up action "re-run the PoC on an RDRAND-enabled host" was carried out. On a host whose
+`/proc/cpuinfo` advertises `rdrand`/`rdseed`, **everything from startup through authentication to
+non-interactive execution ran to completion** (v1.1.4).
 
-## Starter Quota 実測と採用判定（2026-07-20 追記）
+- ✅ **Starts**: `install.sh` → `~/.local/bin/agy`, `agy --version` fine. `CRNGT failed` did not
+  reproduce. **The RDRAND requirement is confirmed from both sides** (no problem on an enabled
+  host; the deployment requirement in 0008 is sound).
+- ✅ **The in-container authentication flow completes** (in an environment with no keyring):
+  starting the TUI offers "1. Google OAuth / 2. Use a Google Cloud project"; choosing OAuth
+  **prints an authorisation URL and an authorisation-code paste prompt in the terminal** (PKCE,
+  `redirect_uri=antigravity.google/oauth-callback`). Feeding the code in with tmux `send-keys`
+  completes it = **Console integration works with the same PTY scraping as codex's device-auth**.
+  The GCP project route exists as option 2 of the same selector.
+- **First-run onboarding** (the sequence of screens `agy_auth.go` has to scrape through): colour
+  scheme selection → ToS + **an opt-in for Interactions data collection (on by default, can be
+  toggled off in the TUI**; turned off for this run) → the workspace trust prompt (Yes/No) → the
+  main screen.
+- **Where credentials persist**: with no keyring, in
+  **`~/.gemini/antigravity-cli/antigravity-oauth-token` (plaintext, under home)** → like
+  claude/codex this is **outside the encrypted store, so a denylist entry is required**.
+- **Querying login state**: there is no dedicated subcommand. When unauthenticated, `agy models`
+  returns a "Please sign in" error, so **that serves as the `login status` equivalent**.
+- ✅ **Non-interactive execution**: `agy -p "<prompt>"` replies normally (default Gemini 3.5
+  Flash (Medium)).
+- **The model list** (a personal Google account on Starter Quota): Gemini 3.5 Flash
+  (Low/Medium/High), Gemini 3.1 Pro (Low/High), **Claude Sonnet 4.6 / Opus 4.6 (Thinking)**,
+  GPT-OSS 120B.
 
-個人 Google アカウント（表示名 **Antigravity Starter Quota** = consumer 無償枠）のまま
-第4種別として採用できるかを検討。TUI `/usage` の実測で**クォータ制度が本 ADR 初版の
-調査時（1日20req・5h リフレッシュ）から変わっている**ことを確認した。
+## Starter Quota measurements and the adoption call (added 2026-07-20)
 
-- **現行は週次・モデルグループ制**: 「Gemini 系（Flash/Pro 共有）」と「Claude/GPT 系
-  （Opus 4.6 / Sonnet 4.6 / GPT-OSS 120B 共有）」の 2 プールが**それぞれ週次上限**を持ち、
-  **トークンコスト比例**で消費される（`/usage` の説明文言より）。実測: 極小の `-p` 1 回で
-  Gemini プールの約 1% を消費 → **Starter の週次プールは極小プロンプト換算で約 100 回分**。
-  実際のエージェントタスク（リポジトリ文脈込み）は 1 タスクで数%〜を消費すると見込む。
-- **クォータは同一アカウントの Google エージェント面と共有**（Antigravity IDE・Jules・
-  Code Assist 等の unified wallet。2026-04 の quota 制度変更報道と整合）。CLI 単独の枠ではない。
-- **`/usage` は PTY スクレイプ可能** → Console の Connections パネルに残量%を出せる。
-- 判明した運用面: **`/logout` あり**（logout 手段解決）。**resume 単位 = 会話 UUID**。
-  `--continue` は cwd の最終会話（`cache/last_conversations.json` が **cwd→会話ID の
-  マップ**）、`--conversation <ID>` で明示 resume、一覧は `conversation_summaries.db`
-  （SQLite、平文で読める）か TUI `/resume`。**スロット sid との対応付けは「スロット毎に
-  作業 dir が分かれていれば `--continue` で自動」「または ID を CP 側で保存」のどちらも可**。
-- **構造化出力は現版に無い**: v1.1.4 の flags に `--output-format` は存在せず（初版調査の
-  記載は旧版/未実装機能とみられる）。`-p` はプレーンテキストのみ。
-  → **実行方式は Terminal (CLI)（tmux/PTY）一択**。codex/opencode のような Managed
-  （イベントストリーム駆動）は現状組めない。claude と同列の扱いになる。
+We looked at whether it can be adopted as a fourth kind while staying on a personal Google
+account (display name **Antigravity Starter Quota** = the free consumer tier). Measurements from
+the TUI's `/usage` showed that **the quota regime has changed since this ADR's first edition was
+researched** (20 req/day, 5h refresh).
 
-**2026-07-20 追記（個人有償サブスク 3 プランの再評価）**: 初版で「個人 AI Pro=検証どまり」と
-一括判定した根拠のうち**クォータ面は現行プランでは解消し得る**。現行は AI Plus $4.99 /
-AI Pro $19.99 / AI Ultra $100（Pro 比 5 倍）/ AI Ultra $200（同 20 倍）で、有償プランは
-compute ベース・**5 時間リフレッシュ＋週次上限**、Pro 以上は**クレジット追い足し可**＝枯渇が
-運用停止に直結しない。一方 **ToS 面は初版判定のまま**: 全消費者プランが個人アカウント限定
-（Workspace 加入不可）で、学習除外は有償でもオプトアウト頼み。
-→ **個人利用デプロイの常用は AI Pro で成立し得る（要実測）。会社デプロイの常用は引き続き
-会社 Workspace / GCP プロジェクト経路のみ**。詳細比較表は [32 §AI サブスク経路の比較](../log/32-agy-agent-kind.md)。
+- **It is now weekly and per model group**: two pools — "the Gemini family (Flash/Pro shared)"
+  and "the Claude/GPT family (Opus 4.6 / Sonnet 4.6 / GPT-OSS 120B shared)" — **each with a
+  weekly cap**, consumed **in proportion to token cost** (per the wording in `/usage`). Measured:
+  one tiny `-p` call consumed about 1% of the Gemini pool → **the Starter weekly pool is worth
+  roughly 100 tiny prompts**. A real agent task (with repository context) should be expected to
+  consume several percent each.
+- **The quota is shared with the same account's other Google agent surfaces** (Antigravity IDE,
+  Jules, Code Assist, etc. — a unified wallet, consistent with the reported 2026-04 quota
+  changes). It is not a CLI-only allowance.
+- **`/usage` can be scraped from the PTY** → the remaining percentage can be shown in the
+  Console's Connections panel.
+- Operational findings: **`/logout` exists** (which settles how to log out). **The resume unit is
+  a conversation UUID.** `--continue` takes the last conversation for the cwd
+  (`cache/last_conversations.json` is **a cwd→conversation-ID map**), `--conversation <ID>`
+  resumes explicitly, and the list comes from `conversation_summaries.db` (SQLite, readable in
+  plaintext) or the TUI's `/resume`. **Mapping to a slot sid works either way: "automatic via
+  `--continue` if each slot has its own working directory", or "store the ID on the CP side".**
+- **There is no structured output in this version**: v1.1.4's flags have no `--output-format`
+  (the first edition's note appears to describe an older version or an unimplemented feature).
+  `-p` produces plain text only.
+  → **Terminal (CLI) (tmux/PTY) is the only possible execution method.** A Managed method driven
+  by an event stream, as with codex/opencode, cannot be built today. It sits alongside claude.
 
-**同日実測で確定**: AI Pro 実機計測により、同一実タスクの週次消費が Starter 6.01% → **Pro 0.22%
-（プール ≈27 倍、週 ≈455 実タスク分）**、Claude 系も週 ≈81 実タスク分、`/usage` に 5h 枠バーが
-追加されることを確認。**個人利用デプロイの常用は AI Pro で成立（実測確定）**。数値は
-[32 §Track D-4 実測結果](../log/32-agy-agent-kind.md)。会社デプロイの判定は不変。
+**Added 2026-07-20 (re-evaluating the three paid personal plans)**: of the grounds for the first
+edition's blanket "personal AI Pro is evaluation only", **the quota half can be resolved on
+current plans**. Today there is AI Plus $4.99 / AI Pro $19.99 / AI Ultra $100 (5× Pro) / AI Ultra
+$200 (20×), and the paid plans are compute-based with **a 5-hour refresh plus a weekly cap**;
+Pro and above **can top up credits**, so exhaustion does not immediately halt operations. **The
+ToS side, however, stands as first judged**: every consumer plan is limited to personal accounts
+(they cannot join a Workspace), and exclusion from training remains opt-out even when paid.
+→ **Everyday use on a personal deployment can work on AI Pro (to be measured). Everyday use on a
+company deployment remains the company Workspace / GCP project routes only.** The detailed
+comparison table is in [32 §comparison of AI subscription routes](../log/32-agy-agent-kind.md).
 
-**判定: `kind=agy` の採用価値はあるが、Starter Quota では「claude/codex/opencode と並ぶ
-常用ドライバ」にはならない。**
+**Confirmed by measurement the same day**: on real AI Pro hardware, the same real task consumed
+6.01% of the weekly pool on Starter versus **0.22% on Pro (a pool ≈27× larger, ≈455 real tasks
+per week)**; the Claude family came to ≈81 real tasks per week; and `/usage` gains a 5h-window
+bar. **Everyday use on a personal deployment works on AI Pro (measured and settled).** The
+figures are in [32 §Track D-4 measurements](../log/32-agy-agent-kind.md). The verdict for company
+deployments is unchanged.
 
-| 観点 | 評価 |
-|------|------|
-| 技術統合（auth スクレイプ・tmux・resume・AGENTS.md・MCP） | ✅ 全て成立（Terminal 方式限定） |
-| Starter の量 | ❌ 週次プール極小＋IDE/Jules と共有。常用は数タスクで枯渇 |
-| Starter の ToS | ⚠ 初版判定どおり個人検証どまり（学習はオプトアウト済でも会社運用不適） |
-| 位置づけ | **補助枠**: Claude/GPT プールが別枠なので「Gemini/Claude second-opinion を週数回」用途、および統合実装の検証用 |
+**Verdict: `kind=agy` is worth adopting, but on Starter Quota it will not be an everyday driver
+alongside claude/codex/opencode.**
 
-→ **個人利用デプロイ（WSL 即起動導線の路線）には Starter のまま「実験的・補助エージェント」
-として採用可**。会社デプロイでの常用採用は **Workspace / GCP 経路が前提**（初版判定を維持）。
+| Aspect | Assessment |
+|---|---|
+| Technical integration (auth scraping, tmux, resume, AGENTS.md, MCP) | ✅ all of it works (Terminal method only) |
+| Starter volume | ❌ a tiny weekly pool, shared with the IDE and Jules. Everyday use exhausts it in a few tasks |
+| Starter ToS | ⚠ personal evaluation only, as first judged (unfit for company use even with training opted out) |
+| Where it sits | **A supporting slot**: because the Claude/GPT pool is separate, it suits "a Gemini/Claude second opinion a few times a week", and verifying the integration |
 
-## M1 統合結果（2026-07-20 追記）
+→ **A personal deployment (the WSL quick-start line) can adopt it on Starter as an
+"experimental, supporting agent".** Everyday adoption on a company deployment presupposes **the
+Workspace / GCP routes** (the first edition's judgement stands).
 
-Track A/B/C をマージし、**M1 の完了条件（Console 契約の API 実機駆動: 作成・会話・resume・
-logout・認証フロー・`/usage` 4 バー・RDRAND 非露出）を実機で通した** — 詳細は
-[32 §統合と M1 E2E 結果](../log/32-agy-agent-kind.md)。E2E で 1 件の統合バグを発見・修正:
-**v1.1.4 TUI は resume 単位（cwd→会話マップ）を graceful exit 時にしか flush しない**
-（「初回プロンプトで書く」という Track D 観測は `-p` のプロセス即終了による見え方）。
-対応は WireLive の dead 側 capture ＋ halt の `agents.GracefulStopper`（`/exit` 送出→猶予→kill）。
-この知見は本文「resume 単位 = 会話 UUID」の運用条件として上書きする。
+## M1 integration results (added 2026-07-20)
 
-## 未解決（残り）
+Tracks A/B/C were merged and **M1's exit criteria (driving the Console contract's API on real
+hardware: create, converse, resume, logout, the authentication flow, the four `/usage` bars, and
+no RDRAND exposure) passed on real hardware** — details in
+[32 §integration and the M1 E2E results](../log/32-agy-agent-kind.md). E2E found and fixed one
+integration bug: **the v1.1.4 TUI only flushes the resume unit (the cwd→conversation map) on a
+graceful exit** (the Track D observation that "it writes on the first prompt" was an artefact of
+`-p` exiting the process immediately). The fix is a dead-side capture in WireLive plus
+`agents.GracefulStopper` on halt (send `/exit`, wait, then kill). This finding overrides the body
+text above as the operating condition for "the resume unit is a conversation UUID".
 
-- **GCP プロジェクト経路の per-user ログイン**手順（`gcloud` 連携要否、env で渡す資格の形。
-  TUI セレクタ選択肢 2 の中身は未走行）。
-- ~~イメージ同梱は root 設置か home 設置か~~ → **Track B で root 設置に確定**
-  （`--dir /usr/local/bin`＋`AGY_CLI_DISABLE_AUTO_UPDATE=true` で自己更新封殺。
-  ⚠️ 値は `true` のみ有効 — `1` は無視される。docs/32 §（自己更新）／docs/70 §70.14.9）。
-- Managed 実行方式の可否は `agy` 側の構造化出力（`--output-format` 相当）の将来提供待ち。
-- CP・ブラウザ込みの L2 E2E（`e2e/`）は docker のあるホストで別途（本コンテナは docker 無し）。
+## Open questions
 
-## 決定（提案）
+- **Per-user login for the GCP project route** (whether `gcloud` integration is needed, and the
+  shape of credentials passed by env). Option 2 of the TUI selector has not been exercised.
+- ~~Whether the image installs it as root or into home~~ → **settled on root install in Track B**
+  (`--dir /usr/local/bin` plus `AGY_CLI_DISABLE_AUTO_UPDATE=true` to suppress self-update.
+  ⚠️ Only the value `true` works — `1` is ignored. docs/32 §(self-update) / docs/70 §70.14.9).
+- Whether a Managed execution method is possible waits on `agy` shipping structured output (an
+  equivalent of `--output-format`).
+- L2 E2E including the CP and a browser (`e2e/`) has to happen separately on a host with docker
+  (this container has none).
 
-**`kind=agy` を第4のエージェント種別として追加する**。ToS ゲートは GCP プロジェクト経路で通過済み。
-実装は codex 追加の轍（launch 分岐＋`agy_auth.go` device-auth 流用＋CP プロキシ＋Console パネル）に
-乗り、構造差分はイメージ導入が npm でなく `install.sh` の 1 点のみ。**PoC でインストールは確認済
-だが、agy の FIPS ビルドが RDRAND を必須とし本開発ホストでは起動不可**（上記）。配備ドキュメント
-に RDRAND 要件を明記。**2026-07-20 追記: RDRAND 有効ホストでの再 PoC 完了**（上記「再 PoC 結果」
-— 起動・OAuth 認証・`-p` 非対話まで実機確認済）。**次アクション=残り未解決（GCP 経路・logout・
-resume 単位）を潰しつつ段階実装**。
+## Decision (proposed)
+
+**Add `kind=agy` as a fourth agent kind.** The ToS gate is passed via the GCP project route. The
+implementation rides the rut of adding codex (a launch branch, an `agy_auth.go` reusing
+device-auth, a CP proxy, a Console panel), and the only structural difference is that the image
+brings it in with `install.sh` rather than npm. **The PoC confirmed installation, but agy's FIPS
+build requires RDRAND and will not start on this development host** (above). The deployment
+documentation must state the RDRAND requirement. **Added 2026-07-20: the second PoC on an
+RDRAND-enabled host is complete** (see "Second PoC" — startup, OAuth authentication and
+non-interactive `-p` all verified on real hardware). **Next action = implement in stages while
+closing the remaining open questions (the GCP route, logout, the resume unit).**
 
 [Issue #78]: https://github.com/google-antigravity/antigravity-cli/issues/78

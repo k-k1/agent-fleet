@@ -1,34 +1,48 @@
-# 0002. Claude 認証 — auth と onboarding は別物
+# 0002. Claude authentication — auth and onboarding are two different things
 
-- 状態: 確定（続10→11→12 の訂正連鎖の到達点）
-- 関連: [HANDOFF §6.10.3](../HANDOFF.md) / [dev/08 §8.5 Claude 認証・オンボーディング](../build/08-integrations.md)（旧 architecture §2.6） / [history/phase0-poc](../log/phase0-poc.md)
+English | [日本語](0002-claude-auth-onboarding.ja.md)
 
-## 背景
+- Status: decided (the end of a chain of corrections, rounds 10 → 11 → 12)
+- See also: [HANDOFF §6.10.3](../HANDOFF.md) / [build/08 §8.5 Claude authentication and onboarding](../build/08-integrations.md) (formerly architecture §2.6) / [history/phase0-poc](../log/phase0-poc.md)
 
-ヘッドレスコンテナで各ユーザーの Claude を本人として動かす（BYO `/login`）。Phase 0 で `/login` 自体は
-**localhost コールバック非依存**（`redirect_uri=platform.claude.com/oauth/code/callback`）と確定し、最大の
-リスクは消えた。だが Console から接続させる実装で、何度も「認証済みのはずがログイン画面が出る」に嵌った。
+## Context
 
-## 訂正の連鎖（教訓として圧縮）
+Each user's Claude has to run as that user inside a headless container (BYO `/login`). Phase 0
+established that `/login` itself **does not depend on a localhost callback**
+(`redirect_uri=platform.claude.com/oauth/code/callback`), which removed the biggest risk. But
+while wiring it up from the Console we kept falling into the same hole: "it is supposed to be
+authenticated, and yet the login screen appears."
 
-1. **誤**: `setup-token` を env `CLAUDE_CODE_OAUTH_TOKEN` で注入 → これは `claude -p`（headless）専用で
-   対話 TUI は読まない。
-2. **誤**: 合成 `.credentials.json`（refreshToken 空）→ headless は通るが対話 TUI は refresh 不可で拒否。
-3. `ANTHROPIC_AUTH_TOKEN` は対話を認証できるが「API Usage Billing」扱いになりサブスク機能（RC 等）を殺す恐れ → 不採用。
-4. `tmux new-session -e VAR=val` はセッション環境にしか入らずペインのプロセスに伝播しない（env はコマンド前置で渡す）。
+## The chain of corrections (compressed, because the lesson is the point)
 
-## 決定
+1. **Wrong**: inject a `setup-token` through the env var `CLAUDE_CODE_OAUTH_TOKEN` — that is
+   only read by `claude -p` (headless); the interactive TUI ignores it.
+2. **Wrong**: synthesise a `.credentials.json` with an empty refreshToken — headless accepts
+   it, but the interactive TUI cannot refresh and rejects it.
+3. `ANTHROPIC_AUTH_TOKEN` can authenticate the interactive session, but it is treated as "API
+   Usage Billing" and risks killing subscription features (RC and friends) → not adopted.
+4. `tmux new-session -e VAR=val` only populates the session environment; it does not propagate
+   to the processes in a pane (pass env by prefixing the command instead).
 
-- **認証本体**は `claude auth login --claudeai`（本物のサブスク OAuth）。claude 自身が refreshToken 付きの
-  `.credentials.json` を書く＝対話 TUI が認証され RC 等も維持。URL は PTY 駆動で抽出 → Console 表示 → コード貼付。
-- **ログイン画面が出る真因は認証情報ではなく `.claude.json` の `hasCompletedOnboarding` 未設定**。`auth status`
-  が `loggedIn:true` でも、対話 TUI はオンボード・ウィザード（先頭がログイン方式選択）を再実行する。
-  → セッション起動毎に `.claude.json` へ `hasCompletedOnboarding=true` ＋ `projects[dir].hasTrustDialogAccepted=true`
-  を seed する。`--dangerously-skip-permissions` では trust もオンボードも飛ばせないため明示 seed が必須。
-- `CLAUDE_CONFIG_DIR` 設定下では claude は `.claude.json` を CCD 配下で読む（P3-5 の機微状態退避と整合）。
+## Decision
 
-## 帰結
+- **Authentication proper** is `claude auth login --claudeai` (the real subscription OAuth).
+  claude itself writes a `.credentials.json` with a refreshToken, so the interactive TUI is
+  authenticated and RC and the rest keep working. The URL is scraped by driving the PTY, shown
+  in the Console, and the code is pasted back.
+- **The real cause of the login screen is not the credentials — it is `hasCompletedOnboarding`
+  being unset in `.claude.json`.** Even when `auth status` reports `loggedIn:true`, the
+  interactive TUI re-runs the onboarding wizard, whose first step is choosing a login method.
+  → On every session start, seed `.claude.json` with `hasCompletedOnboarding=true` and
+  `projects[dir].hasTrustDialogAccepted=true`. `--dangerously-skip-permissions` skips neither
+  trust nor onboarding, so seeding them explicitly is mandatory.
+- With `CLAUDE_CONFIG_DIR` set, claude reads `.claude.json` from under the config dir —
+  consistent with moving sensitive state out of the way in P3-5.
 
-- **auth と onboarding は別物**。認証可否は `claude auth status` でも起動バナーでも判定できず、`send-keys` で
-  実プロンプト→応答でのみ確証する。
-- Claude 接続状態の表示は `claude auth status`（JSON `loggedIn`）の実行時プローブで足りる（DB テーブル不要）。
+## Consequences
+
+- **Auth and onboarding are different things.** Whether authentication succeeded cannot be
+  judged from `claude auth status` nor from the startup banner; only sending a real prompt with
+  `send-keys` and getting a reply proves it.
+- Showing Claude's connection state only needs a runtime probe of `claude auth status` (the
+  JSON `loggedIn` field). No database table required.

@@ -1,82 +1,106 @@
-# 0006. MCP — 管理面と作業面を一体で公開（PAT 認証・E を主目的）
+# 0006. MCP — expose the admin surface and the working surface as one (PAT auth; E is the point)
 
-- 状態: 確定。実装 = 段1（member/drive + PAT + `/mcp`）+ admin read/write、ともにライブ E2E green（2026-07-01）/ dangerous 段残（鍵ローテ・idle 検出の土台待ち）
-- 関連: [roadmap P3-6](../roadmap.md#p3-6-mcp-による-agent-fleet-制御管理面--作業面を一体で) / [history/p3-6-mcp](../log/p3-6-mcp.md) / [dev/01 §1.4 認証は 2 層](../build/01-architecture.md)（旧 architecture §認証スコープ） / [dev/07 セキュリティ](../build/07-security.md)（旧 security）
+English | [日本語](0006-mcp-unified.ja.md)
 
-## 背景
+- Status: decided. Implemented = stage 1 (member/drive + PAT + `/mcp`) plus admin read/write, both live-E2E green (2026-07-01) / the dangerous stage remains (waiting on the groundwork for key rotation and idle detection)
+- See also: [roadmap P3-6](../roadmap.md#p3-6-mcp-による-agent-fleet-制御管理面--作業面を一体で) / [history/p3-6-mcp](../log/p3-6-mcp.md) / [build/01 §1.4 Authentication is two layers](../build/01-architecture.md) (formerly architecture, "authentication scope") / [build/07 Security](../build/07-security.md) (formerly security)
 
-CP は REST + Console を持つが、これは**人間が作ったクライアント（Console）でしか駆動できない**。
-運用者・メンバーが自分の Claude（Claude Code / Desktop / claude.ai）から自然言語で Fleet を
-操作・観測したい。とくに本プロジェクトの起点である**「1 つの手元 Claude が、自分の Workspace
-内で走る複数の claude/opencode/codex セッションを束ねて駆動する」**（フリート運用の MCP 化）が
-そもそもの目的。これを REST に人手クライアントを被せる形では達成できない。
+## Context
 
-「管理面（P3-6 旧構想）」と「作業面（メンバー自身の遠隔セッション駆動）」を **両方** 1 本の
-MCP サーバで出したい、という意思決定（2026-06-29）。
+The CP has REST plus the Console, but that means it **can only be driven by the client a human
+built (the Console)**. Operators and members want to drive and observe the fleet in natural
+language from their own Claude (Claude Code / Desktop / claude.ai). In particular the very thing
+this project started from — **one Claude at hand driving the several claude/opencode/codex
+sessions running inside its own workspace** — is the point of putting the fleet on MCP. You
+cannot get there by wrapping REST in a hand-written client.
 
-## 決定
+Hence the decision (2026-06-29) to expose **both** the admin surface (the old P3-6 idea) and the
+working surface (a member driving their own sessions remotely) from a single MCP server.
 
-### 1. 一体化する層は入口だけ（service 層ではない）
+## Decision
 
-`/mcp` の **transport / 認証・RBAC / 監査** だけを一体化する。裏のバックエンドは 2 つのまま:
-admin ツールは CP の管理サービス層、member ツールは `manager.resolve` 経由で per-container の
-Agent（`/sessions`・`/repos`・`/fs`）へ proxy。**新ロジックを足さない薄いラッパ**の原則を維持。
-「サービス層を 1 本に」は管理面の話で、作業面は Agent 表面なので統合しない（混同しない）。
+### 1. Only the entrance is unified (not the service layer)
 
-### 2. 認証 = PAT（CP 発行・発行者の role を継承）
+Only the **transport, the authentication/RBAC and the audit** of `/mcp` are unified. There are
+still two backends behind it: admin tools go to the CP's management service layer, member tools
+proxy through `manager.resolve` to the per-container Agent (`/sessions`, `/repos`, `/fs`). The
+principle of **a thin wrapper that adds no new logic** holds. "One service layer" was a
+statement about the admin surface; the working surface is the Agent's surface and is not merged
+into it. Do not conflate the two.
 
-- **各ユーザーが Console（CP）で自分の PAT を発行**。別途 service principal を切らない。
-- トークンは **identity + membership** を参照。**role は呼び出し毎に store から live 解決**
-  （トークンに焼かない）＝降格・membership 削除で既存トークンが即無力化される。
-- **role は能力の天井**。admin が発行したトークンは admin ツールに到達でき、member の
-  トークンは自分の membership の作業ツールのみ。「admin なら admin の PAT」を満たす。
-- **scope は発行時に選択（≤ role）**: `read`（既定）/ `write` / `admin:dangerous`。
-  admin でも既定は read。これで「読む Claude は read トークン・壊す操作は別トークン」という
-  **read/write 分離が“1 人が複数トークンを持つ”形で自然に成立**する。
-- 失効・TTL・ローテを最初から（Console に発行/一覧/失効 UI）。文字列は発行時 1 回表示・保存はハッシュ。
-- **テナントはトークンに固定**。クライアント供給の `X-AF-Tenant` は MCP では受けない（cross-tenant 封じ）。
-- オンプレの oauth2-proxy（Google forward-auth）は MCP クライアントの OAuth2.1/DCR と噛み合わない
-  ので PAT を主にする。OAuth2.1 ネイティブ対応は claude.ai/Desktop を取りに行く段（AWS 以降）で従。
+### 2. Authentication = PAT (issued by the CP, inheriting the issuer's role)
 
-### 3. transport = Streamable HTTP
+- **Each user issues their own PAT in the Console (CP).** No separate service principal.
+- The token references an **identity + membership**. The **role is resolved live from the store
+  on every call** (never baked into the token), so a demotion or a deleted membership disarms
+  existing tokens immediately.
+- **The role is a ceiling on capability.** A token issued by an admin can reach admin tools; a
+  member's token reaches only the working tools for their own membership. This satisfies "an
+  admin's PAT for admin things".
+- **The scope is chosen at issue time (≤ role)**: `read` (default) / `write` /
+  `admin:dangerous`. Even an admin gets `read` by default. This makes **read/write separation
+  fall out naturally in the form of "one person holds several tokens"**: a reading Claude gets a
+  read token, destructive operations need a different one.
+- Revocation, TTL and rotation from the start (issue/list/revoke UI in the Console). The string
+  is shown once at issue time; only a hash is stored.
+- **The tenant is fixed in the token.** A client-supplied `X-AF-Tenant` is not accepted over MCP
+  (cross-tenant access is closed off).
+- The on-prem oauth2-proxy (Google forward-auth) does not mesh with MCP clients' OAuth2.1/DCR,
+  so PAT is primary. Native OAuth2.1 support is secondary, for the stage where we go after
+  claude.ai/Desktop (AWS onwards).
 
-CP に `/mcp` を 1 ルート追加（新プロセス不要）。旧仕様の HTTP+SSE ではなく **Streamable HTTP**。
-SDK は公式 Go SDK を第一候補にしバージョン pin（MCP の transport は一度割れているため）。
+### 3. Transport = Streamable HTTP
 
-### 4. ツールは単一レジストリを principal で capability フィルタ
+One new route `/mcp` on the CP (no new process). **Streamable HTTP**, not the old HTTP+SSE
+spec. The Go SDK from the official project is the first choice, with a pinned version (the MCP
+transport has already split once).
 
-role + scope で見えるツールを出し分ける。posture は role で非対称:
+### 4. One tool registry, filtered by capability from the principal
 
-- **member/drive（E・主目的）**: `list_my_sessions` / `send_to_session` / `get_session_status` /
-  `get_session_output`。自分の BYO claude が自分の Workspace を駆動＝**同一信頼ドメイン・自己完結**。
-  被害は自分の Workspace に閉じるので read/write 厳格分離の対象外でよい。
-- **admin/read**: `get_usage` / `list_*` / `tail_audit`。
-- **admin/write**: `start_workspace` / `stop_workspace` / `stop_session` / `set_user_quota` 等（`write` scope）。
-- **admin/dangerous**: `rotate_key` / `recreate_workspace` / `stop_all_idle`
-  （`admin:dangerous` scope ＋ `confirm` 引数 ＋ `dry_run` 既定 true。fleet 横断ゆえ強権）。
+Which tools are visible is decided by role + scope. The posture is deliberately asymmetric
+across roles:
 
-RBAC は **必ずサービス層で再検証**（MCP 層の capability フィルタは UX、authz の権威にしない）。
-全呼び出しを `AuditLog(actor_kind=mcp, principal, token_id)`（schema は `mcp` を既に持つ）。
+- **member/drive (E, the main goal)**: `list_my_sessions` / `send_to_session` /
+  `get_session_status` / `get_session_output`. Your own BYO claude driving your own workspace is
+  **the same trust domain and self-contained**; the blast radius is your own workspace, so it is
+  not subject to strict read/write separation.
+- **admin/read**: `get_usage` / `list_*` / `tail_audit`.
+- **admin/write**: `start_workspace` / `stop_workspace` / `stop_session` / `set_user_quota`,
+  etc. (the `write` scope).
+- **admin/dangerous**: `rotate_key` / `recreate_workspace` / `stop_all_idle` (the
+  `admin:dangerous` scope, plus a `confirm` argument, plus `dry_run` defaulting to true — these
+  cut across the fleet, so they are strongly gated).
 
-### 5. E（メンバー遠隔駆動）を第一級目標・前倒し
+RBAC is **always re-checked in the service layer**; the MCP layer's capability filter is UX, not
+the authority on authorisation. Every call is written as
+`AuditLog(actor_kind=mcp, principal, token_id)` (the schema already has `mcp`).
 
-E は既存資産にほぼ乗る: 状態フック（`working|idle|question`、`session_status.go`）が send→完了
-判定に使え、tmux `send-keys` で prompt 投入、決定的 sid で対象指定、jsonl transcript で応答取得。
-**新規に要るのは Agent の `get_session_output`（jsonl/capture-pane の tail）1 本だけ**。
-手元 Claude のループは `send → poll status until idle|question → get_output`（→ question なら回答送信）。
-N セッション並行＝フリート駆動。よって E を Phase 1 へ格上げ（旧案の「最後の任意段」から変更）。
+### 5. E (member remote drive) is a first-class goal, moved earlier
 
-## 帰結・正直な限界
+E rides on assets that already exist: the state hook (`working|idle|question`,
+`session_status.go`) can decide when a send has completed, tmux `send-keys` injects a prompt,
+the deterministic sid names the target, and the jsonl transcript yields the reply. **The only
+new thing needed is one Agent endpoint, `get_session_output` (a tail of the jsonl or of
+capture-pane).** The loop on the Claude at hand is `send → poll status until idle|question →
+get_output` (→ answer if it is a question). N sessions in parallel = driving a fleet. So E is
+promoted into Phase 1 (changed from the old plan, where it was an optional last stage).
 
-- **両方一体・role 出し分け**が、member（自己完結な駆動）と admin（fleet 横断・confirm 必須）の
-  posture 非対称によってきれいに同居する。
-- **最大の固有リスク = prompt-injection × 変更系の confused-deputy**（admin 側）。監査ログ/ファイルを
-  読ませた Claude に rotate/stop_all を持たせると注入で破壊操作に誘導されうる →
-  read/write の別トークン分離 + dangerous の人手 confirm + dry-run で殺す。E（member）は自己完結ゆえ対象外。
-- **blast radius**: admin トークン＝そのデプロイの管理面の鍵。漏洩＝管理面侵害。短命・ローテ・read 既定・
-  scope 分離・監査で抑える。**会社間はデプロイ分離ゆえ波及しない**（本モデルの強み）。
-- MCP は CP の口を増やすだけで新たな信頼境界は作らない。逆に **MCP 認証が CP 侵害面そのもの**なので
-  入口認証を弱くしない。
-- member MCP の read 系は Console があるぶん補完的。E（drive）が主、read 拡張は従。
-- 既定 OFF（`AF_MCP_ENABLED`）で同梱、P3-10 runbook に設定（ingress の `/mcp` は Bearer 通し＝
-  oauth2-proxy のパス除外が 1 点必要）。phone-home なし。
+## Consequences, and the honest limits
+
+- **Both surfaces in one, sorted out by role** works cleanly precisely because of the posture
+  asymmetry between member (self-contained driving) and admin (fleet-wide, confirm required).
+- **The biggest risk specific to this is prompt injection × a confused deputy on the mutating
+  tools** (the admin side). A Claude that has been made to read audit logs or files, and also
+  holds rotate/stop_all, can be steered into destructive operations by injection → killed by
+  separate read/write tokens, a human `confirm` on dangerous tools, and dry-run. E (member) is
+  self-contained and out of scope for this.
+- **Blast radius**: an admin token is the key to that deployment's management surface. Leaking
+  it means the management surface is compromised. Held down by short lifetimes, rotation, a read
+  default, scope separation and audit. **It does not spread between companies, because
+  deployments are separate** — the strength of this model.
+- MCP only adds a mouth to the CP; it creates no new trust boundary. Conversely, **MCP
+  authentication is itself the CP's attack surface**, so do not weaken the entrance.
+- The member MCP's read tools are complementary, since the Console exists. E (drive) is primary;
+  read expansion is secondary.
+- Shipped off by default (`AF_MCP_ENABLED`), configured in the P3-10 runbook (`/mcp` on the
+  ingress must pass Bearer through — one path exclusion in oauth2-proxy). No phone-home.
