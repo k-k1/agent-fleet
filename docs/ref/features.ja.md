@@ -93,16 +93,16 @@ Updated: 2026-08
 
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
-| メンバー | テナント管理者 | メンバー | [admin 01](../guide/admin/01-members.ja.md) |
-| テナント全体のセッション | テナント管理者 | セッション | [admin 02](../guide/admin/02-limits.ja.md) |
-| 上限とアイドル自動停止 | テナント管理者（読み取り）| 上限・自動停止 | [admin 02](../guide/admin/02-limits.ja.md) |
+| メンバー | テナント管理者 | メンバー | [admin 01](../admin/01-members.ja.md) |
+| テナント全体のセッション | テナント管理者 | セッション | [admin 02](../admin/02-limits.ja.md) |
+| 上限とアイドル自動停止 | テナント管理者（読み取り）| 上限・自動停止 | [admin 02](../admin/02-limits.ja.md) |
 | ワークスペースのサイズ | 配備管理者 | — | [deploy-targets.md](deploy-targets.ja.md) |
 | サインイン方式とログイン規則 | テナント管理者 | サインイン方式 / ログイン規則 | [operator 05](../guide/operator/05-login-idp.ja.md) |
-| 接続元の制限 | テナント管理者 | 接続元の制限 | — |
-| 連携アプリの OAuth | テナント管理者 | 連携アプリの OAuth | — |
-| 連携サーバーの配布 | テナント管理者 | MCP 配布 | [admin 04](../guide/admin/04-mcp-egress.ja.md) |
-| 監査 | テナント管理者 | 監査 | [admin 03](../guide/admin/03-audit-usage.ja.md) |
-| 稼働時間とクラウド費用 | テナント管理者 | 稼働時間 / クラウド費用 | [admin 03](../guide/admin/03-audit-usage.ja.md) |
+| 接続元の制限 | テナント管理者 | 接続元の制限 | [admin 05](../admin/05-access.ja.md) |
+| 連携アプリの OAuth | テナント管理者 | 連携アプリの OAuth | [admin 05](../admin/05-access.ja.md) |
+| 連携サーバーの配布 | テナント管理者 | MCP 配布 | [admin 04](../admin/04-mcp-egress.ja.md) |
+| 監査 | テナント管理者 | 監査 | [admin 03](../admin/03-audit-usage.ja.md) |
+| 稼働時間とクラウド費用 | テナント管理者 | 稼働時間 / クラウド費用 | [admin 03](../admin/03-audit-usage.ja.md) |
 | 削除ロック | メンバー | セッションの ⋯ メニュー | [09 他の人と扱う](../use/09-collaboration.ja.md) |
 | 掃除とごみ箱 | メンバー | 掃除 | [09 他の人と扱う](../use/09-collaboration.ja.md) |
 
@@ -122,7 +122,9 @@ Updated: 2026-08
 
 「—」は、**機能は在って動くのに、利用者向けのページがどこにも無い**という意味です。
 旧ガイドが追いつけなかった箇所で、**このカタログを作った理由そのもの**であり、
-P2 で大半は埋まりました——マーカー・変更ファイル・返信候補・削除ロック・掃除とごみ箱・
-中断の自動再開は [09 他の人と扱う](../use/09-collaboration.ja.md) にあります。
-残っているのは管理者側の 2 つ（接続元の制限・連携アプリの OAuth）で、次に
-[admin/](../admin/README.ja.md) で埋めます。
+P2 で全部埋まりました。マーカー・変更ファイル・返信候補・削除ロック・掃除とごみ箱・
+中断の自動再開は [09 他の人と扱う](../use/09-collaboration.ja.md)、接続元の制限と
+連携アプリの OAuth は [admin 05](../admin/05-access.ja.md) です。
+
+残っている「—」は、その行がリンク先の表で完結しているという意味で、
+何かが欠けているという意味ではありません。

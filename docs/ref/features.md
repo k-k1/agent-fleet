@@ -96,16 +96,16 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Members | tenant admin | Members | [admin 01](../guide/admin/01-members.md) |
-| Sessions across the tenant | tenant admin | Sessions | [admin 02](../guide/admin/02-limits.md) |
-| Limits and idle auto-stop | tenant admin (read) | Limits & idle | [admin 02](../guide/admin/02-limits.md) |
+| Members | tenant admin | Members | [admin 01](../admin/01-members.md) |
+| Sessions across the tenant | tenant admin | Sessions | [admin 02](../admin/02-limits.md) |
+| Limits and idle auto-stop | tenant admin (read) | Limits & idle | [admin 02](../admin/02-limits.md) |
 | Workspace sizing | deployment admin | — | [deploy-targets.md](deploy-targets.md) |
 | Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [operator 05](../guide/operator/05-login-idp.md) |
-| Connection-source restriction | tenant admin | Allowed networks | — |
-| Integration app OAuth | tenant admin | Integration OAuth apps | — |
-| Distributing integration servers | tenant admin | MCP distribution | [admin 04](../guide/admin/04-mcp-egress.md) |
-| Audit | tenant admin | Audit | [admin 03](../guide/admin/03-audit-usage.md) |
-| Running time and cloud cost | tenant admin | Running time / Cloud cost | [admin 03](../guide/admin/03-audit-usage.md) |
+| Connection-source restriction | tenant admin | Allowed networks | [admin 05](../admin/05-access.md) |
+| Integration app OAuth | tenant admin | Integration OAuth apps | [admin 05](../admin/05-access.md) |
+| Distributing integration servers | tenant admin | MCP distribution | [admin 04](../admin/04-mcp-egress.md) |
+| Audit | tenant admin | Audit | [admin 03](../admin/03-audit-usage.md) |
+| Running time and cloud cost | tenant admin | Running time / Cloud cost | [admin 03](../admin/03-audit-usage.md) |
 | Deletion lock | member | session ⋯ menu | [09 Working with others](../use/09-collaboration.md) |
 | Cleanup and the trash | member | Clean up | [09 Working with others](../use/09-collaboration.md) |
 
@@ -125,8 +125,10 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 
 A dash means the feature exists and works, but no reader-facing page covers it — the
 old guide never caught up with it. Those gaps are the reason this catalogue exists,
-Phase P2 closed most of them — highlights, changed files, reply suggestions, deletion
-lock, cleanup and the trash, and abort auto-resume are now in
-[09 Working with others](../use/09-collaboration.md). What is still open is on the
-administrator side: connection-source restriction and integration app OAuth, which
-[admin/](../admin/README.md) covers next.
+Phase P2 closed them all: highlights, changed files, reply suggestions, deletion lock,
+cleanup and the trash, and abort auto-resume are in
+[09 Working with others](../use/09-collaboration.md); connection-source restriction
+and integration app OAuth are in [admin 05](../admin/05-access.md).
+
+A dash that remains means the row is covered by the table it links to, not that
+something is missing.

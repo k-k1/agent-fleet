@@ -56,7 +56,8 @@ to open [11 Troubleshooting](11-troubleshooting.md) first.
 13. [Ops tooling](13-ops-tooling.md) — wiring monitoring tools into a conversation (experimental)
 
 Also here: [Icons, badges and menus](badges-and-menus.md) for what a mark on the
-screen means.
+screen means, and [lite.md](lite.md) — the short version for someone who never opens
+the terminal.
 
 **What each agent, provider or role can actually do is in
 [ref/](../ref/README.md)** — this shelf tells you how, and links there rather than

@@ -57,17 +57,19 @@ func docsSrcDir() string {
 // what" during security review, and a loop over a table would hide the answer.
 func docsRolePrefixes(role string) []string {
 	// Legacy shelves, still authoritative while the new ones are being written
-	// (docs/README.md "Migration in progress"). guide/member is already gone — it
-	// became use/ — so a member now gets only the new shelves. Delete the rest of
-	// these entries, and this comment, once admin/ operate/ build/ are written and
-	// docs/{dev,guide} are removed.
-	legacyAll := []string{"guide", "dev"}
+	// (docs/README.md "Migration in progress"). What is left in docs/guide is the
+	// operator volume — guide/member became use/ and guide/admin became admin/ — so
+	// only the deployment administrator still needs it, and a member needs neither.
+	// Delete these two variables, and this comment, once operate/ and build/ are
+	// written and docs/{dev,guide} are removed.
+	legacyDev := []string{"dev"}
+	legacyOperator := []string{"guide", "dev"}
 
 	switch role {
 	case "super_admin":
-		return append([]string{"use", "ref", "admin", "operate", "build"}, legacyAll...)
+		return append([]string{"use", "ref", "admin", "operate", "build"}, legacyOperator...)
 	case "tenant_admin":
-		return append([]string{"use", "ref", "admin"}, legacyAll...)
+		return append([]string{"use", "ref", "admin"}, legacyDev...)
 	default: // "member" and any unknown role
 		return []string{"use", "ref"}
 	}

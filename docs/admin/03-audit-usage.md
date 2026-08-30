@@ -2,6 +2,10 @@
 
 English | [日本語](03-audit-usage.ja.md)
 
+Audience: a tenant administrator reviewing what happened and what it cost
+Source of truth: the Console's tenant settings — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 The audit log lets you trace "who did what"; usage tallies "how much was used". Both are available
 from the tenant settings rail, scoped to your own tenant.
 
@@ -34,7 +38,7 @@ keep it in mind.
 
 Therefore the audit log cannot trace "what exactly that member typed in the terminal". What it can
 trace is "when, who, against which file or session, made what kind of change". The design intent
-behind the recording scope is laid out in [dev/07 §7.7 Audit](../../dev/07-security.md).
+behind the recording scope is laid out in [dev/07 §7.7 Audit](../dev/07-security.md).
 
 ## Usage ("Usage")
 
@@ -90,7 +94,7 @@ Clean home**, in that order ("Removing a member" in [01-members.md](01-members.m
 
 **Q. Where is egress (external traffic) control?**
 Egress (external traffic) control is super_admin only. When traffic control becomes necessary,
-consult your IT department ([operator/README.md](../operator/README.md)).
+consult your IT department ([operator/README.md](../guide/operator/README.md)).
 
 **Q. If I force-stop a workspace, does that member's work disappear?**
 No. The container merely stops for the moment; the contents of home (repositories and settings)
@@ -99,4 +103,4 @@ remain. The member can start it again from the Console.
 ---
 
 - Back to: [02 Resource limits and sessions](02-limits.md)
-- Guide index: [../README.md](../README.md)
+- Guide index: [../README.md](../guide/README.md)

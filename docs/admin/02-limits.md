@@ -2,6 +2,10 @@
 
 English | [日本語](02-limits.ja.md)
 
+Audience: a tenant administrator managing resources and running sessions
+Source of truth: the Console's tenant settings — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 As the team grows, the questions become "who is using how much of the resources" and "can we stop a
 runaway". This chapter sorts out what you (tenant_admin) can see, what you can adjust, and what you
 ask IT for.
@@ -28,7 +32,7 @@ in the Admin modal and never appears for you. What you can read is the current v
 
 The "Limits — Workspace: X / Session: Y" shown under **Tenant › Limits & idle** is the value
 currently in effect. When you want it changed, ask your IT department / deployment administrator
-([operator/README.md](../operator/README.md)).
+([operator/README.md](../guide/operator/README.md)).
 
 ### Per-member session limits (you can set these)
 
@@ -114,7 +118,7 @@ tenant-wide side, so they are super_admin's domain). It has two stages.
 
 The time format is `30m` (minutes), `2h` (hours), `90s` (seconds). Empty follows the deploy
 default (disabled by default), and `0` means explicitly disabled. For the details of the behavior,
-see [dev/03 §3.7 Background jobs](../../dev/03-control-plane.md).
+see [dev/03 §3.7 Background jobs](../dev/03-control-plane.md).
 
 Even when stopped, the work itself (the contents of home) remains. The next time members need it,
 they just start it again from the Console.
@@ -161,7 +165,7 @@ It is strictly a "pause for now" operation, not destructive.
 Note that the "Clean home" button, which cleans home itself, is super_admin only and is not shown
 to you. **Situations that need heavier measures** — the container is broken and restarting doesn't
 fix it, host-side intervention is needed — **are the domain of your IT department / deployment
-administrator** ([operator/README.md](../operator/README.md)).
+administrator** ([operator/README.md](../guide/operator/README.md)).
 
 ## What members experience when a limit is hit
 

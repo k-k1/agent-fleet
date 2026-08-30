@@ -21,8 +21,9 @@ func buildDocsSrc(t *testing.T) string {
 		"decisions/0011-console.md",
 		"log/p3-10.md",
 		// Legacy shelves, still shipped while the remaining ones are written.
-		// guide/member is gone — it became use/.
-		"guide/admin/02-limits.md",
+		// Only the operator volume is left here: guide/member became use/, guide/admin
+		// became admin/.
+		"guide/operator/01-install.md",
 		"dev/04-workspace-agent.md",
 	}
 	for _, f := range files {
@@ -68,15 +69,18 @@ func TestStageWorkspaceDocs_RoleScoping(t *testing.T) {
 			// dev/ docs, which used to be handed out to everyone.
 			wantAbsent: []string{
 				"admin/02-limits.md", "operate/01-install.md", "build/04-workspace-agent.md",
-				"guide/admin/02-limits.md", "dev/04-workspace-agent.md",
+				"guide/operator/01-install.md", "dev/04-workspace-agent.md",
 				"decisions/0011-console.md", "log/p3-10.md",
 			},
 		},
 		{
 			role:     "tenant_admin",
-			wantHave: []string{"use/02-sessions.md", "ref/agents.md", "admin/02-limits.md", "guide/admin/02-limits.md"},
+			wantHave: []string{"use/02-sessions.md", "ref/agents.md", "admin/02-limits.md"},
+			// docs/guide now holds only the operator volume, so a tenant admin has
+			// no reason to receive it any more.
 			wantAbsent: []string{
 				"operate/01-install.md", "build/04-workspace-agent.md",
+				"guide/operator/01-install.md",
 				"decisions/0011-console.md", "log/p3-10.md",
 			},
 		},

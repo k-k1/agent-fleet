@@ -92,7 +92,7 @@ in the Console.
 ## MCP servers and external connections
 
 Users register **their own MCP servers** under ⚙ Settings → MCP servers, and a tenant admin can
-**distribute one to every member** ([admin/04](../admin/04-mcp-egress.md)). Four things matter to
+**distribute one to every member** ([admin/04](../../admin/04-mcp-egress.md)). Four things matter to
 an operator.
 
 - **Where secrets live.** Environment variable and header values are stored with envelope

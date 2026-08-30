@@ -2039,7 +2039,7 @@ CSV の羅列なので「参照を外した」も「絞った」も同じ形で�
 1 キーでは足りない。
 
 **⑤ ガイドへの波及（P7-1）。** §61.15.13 の運用回避は**二言語 3 面 6 ファイル**に書かれている:
-`docs/guide/admin/README(.ja).md`（「素の `/login` には効きません」）・
+`docs/admin/README(.ja).md`（「素の `/login` には効きません」）・
 `docs/guide/operator/01-install(.ja).md`（表の行＋2 か所の注記）・
 `docs/guide/operator/05-login-idp(.ja).md`（ボタンが出る場所の表と手順 5）。P7-1 で全部
 書き換える。★ `.md`（英語が正）と `.ja.md` の**両方必須**。

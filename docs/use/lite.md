@@ -2,6 +2,10 @@
 
 English | [日本語](lite.ja.md)
 
+Audience: someone using Agent Fleet without touching the terminal
+Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 > Who this guide is for: people who don't do development themselves, but want to ask the AI
 > questions or for translations, peek at how development is going, read the documents and slides
 > inside repositories, or pass ideas and requests along to the development team. Product managers,
@@ -17,9 +21,9 @@ using Agent Fleet that never require opening that black screen.
 
 This guide describes the "how" of the operations. It doesn't get into the "why it works that way"
 mechanics (if you're curious, that's in the developer-facing [../dev/README.md](../dev/README.md)).
-Guides for other roles and the glossary are in the index [README.md](README.md). If you ever need
+Guides for other roles and the glossary are in the index [README.md](../guide/README.md). If you ever need
 to go a step further (write code yourself, edit files, and so on), move on to the developer-facing
-[member/README.md](../use/README.md).
+[member/README.md](README.md).
 
 ---
 
@@ -263,5 +267,5 @@ Not if you only chat and browse. Setup requires just two things: "Start workspac
 
 **Q. What if I want to do more?**
 When you feel like editing files yourself or having the AI write code, the developer-facing
-[member/README.md](../use/README.md) is your next step. If you want to understand the machinery
+[member/README.md](README.md) is your next step. If you want to understand the machinery
 itself, head to [../dev/README.md](../dev/README.md).

@@ -2,6 +2,10 @@
 
 English | [日本語](01-members.ja.md)
 
+Audience: a tenant administrator managing who belongs to the team
+Source of truth: the Console's tenant settings — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 You manage members under **"Operations → Members"** in the tenant settings rail. It is a
 two-level drill-down: roster → member detail. To go back up a level, use the "Back" button or
 follow the breadcrumb at the top of the panel (Members › the person).
@@ -35,7 +39,7 @@ At the very bottom of the roster there is an **"Add member"** form.
    logged in (an invite in advance). When they log in for the first time, a workspace is
    provisioned based on this membership.
 
-Point the newly added person to [member/](../../use/README.md) in this guide.
+Point the newly added person to [member/](../use/README.md) in this guide.
 
 ### How email addresses relate to internal identifiers
 
@@ -61,7 +65,7 @@ There are two ways, depending on deployment settings, for a new person to enter 
 
 **Switching between these modes is outside your authority.** It is a deployment-wide environment
 setting, so when you want it changed, ask your IT department / deployment administrator
-([operator/README.md](../operator/README.md)). Even in invite-only mode, the add operation itself
+([operator/README.md](../guide/operator/README.md)). Even in invite-only mode, the add operation itself
 is done via "Adding a member" on this page.
 
 Note that deciding who can log in at all (the permitted email domains / addresses) is also IT's
@@ -114,8 +118,8 @@ Agent Fleet has 3 roles. The ones that mainly concern you (tenant_admin) are the
 can grant roles, from the "Permissions" section of the member detail. A granted administrator's
 authority is likewise limited to that tenant and does not affect other tenants.
 The precise definition of the permission model is in
-[dev/03 Control plane](../../dev/03-control-plane.md), and the table structure in
-[dev/06 Data model](../../dev/06-data-model.md).
+[dev/03 Control plane](../dev/03-control-plane.md), and the table structure in
+[dev/06 Data model](../dev/06-data-model.md).
 
 ---
 

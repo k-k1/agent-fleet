@@ -2,6 +2,10 @@
 
 English | [日本語](04-mcp-egress.ja.md)
 
+Audience: a tenant administrator distributing integrations to the team
+Source of truth: the Console's tenant settings — if a screen disagrees with this page, the screen is right
+Updated: 2026-08
+
 > Audience: tenant admins who want to hand the whole team's agents a shared tool (an
 > internal wiki, an issue tracker, a document search), and the super_admin who controls
 > outbound traffic. The first is yours to do; the second belongs to IT / the deployment
@@ -13,7 +17,7 @@ Tenant settings → **"Operations → MCP distribution"** distributes an MCP ser
 the tenant.
 A distributed server appears in each member's ⚙ Settings → MCP servers labelled **tenant**,
 ready to use from their assistants and sessions (what they see:
-[member/12 Settings](../../use/12-settings.md#mcp-servers)).
+[member/12 Settings](../use/12-settings.md#mcp-servers)).
 
 ### Only remote (HTTP) can be distributed
 
@@ -104,5 +108,5 @@ and they can act on it as-is.
 ---
 
 - Previously: [03 Audit and usage](03-audit-usage.md)
-- What members see: [member/12 Settings](../../use/12-settings.md#mcp-servers)
-- For those who want the internals: [dev/08 External integrations](../../dev/08-integrations.md)
+- What members see: [member/12 Settings](../use/12-settings.md#mcp-servers)
+- For those who want the internals: [dev/08 External integrations](../dev/08-integrations.md)

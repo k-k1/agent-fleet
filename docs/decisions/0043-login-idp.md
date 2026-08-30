@@ -821,7 +821,7 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - ★ P7 の監査は**足すものが無い**。2 トグルは既存の `PUT /api/admin/tenants/{slug}/login` を
   叩くので `tenant.login_rules` がそのまま残る。ただし Detail は 4 列の CSV なので、
   **画面の語彙が変わっても監査の語彙は変わらない**（「参照を外した」も「絞った」も同じ形）。
-- ★ P7-1 のガイド波及は**二言語 3 面 6 ファイル**: `docs/guide/admin/README(.ja).md`、
+- ★ P7-1 のガイド波及は**二言語 3 面 6 ファイル**: `docs/admin/README(.ja).md`、
   `docs/guide/operator/01-install(.ja).md`、`docs/guide/operator/05-login-idp(.ja).md`。
   §61.15.13 の運用回避（「隠す指定は素の `/login` に効かないので `/login/<slug>` を配れ」）が
   この 3 面に書かれている。
