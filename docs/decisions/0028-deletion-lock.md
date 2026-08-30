@@ -1,47 +1,62 @@
-# 0028. 削除ロック — 保護は Agent の REST 層に置き、自動削除にも効かせる
+# 0028. The deletion lock — enforce it in the Agent's REST layer, and make it apply to automatic deletion too
 
-- 状態: **採用・実装済み**。設計は [docs/45](../log/45-deletion-lock.md)。
-- 関連: [0012](0012-go-internal-refactor.md)（Agent の内部構造）/ [0021](0021-scheduled-execution.md)（自動実行）/
-  `workspace/agent/cleanup_archive.go`（掃除と gz 安全網 — 専用の設計文書は無い）
+English | [日本語](0028-deletion-lock.ja.md)
 
-## 背景
+- Status: **adopted and implemented**. The design is [docs/45](../log/45-deletion-lock.md).
+- See also: [0012](0012-go-internal-refactor.md) (the Agent's internal structure) / [0021](0021-scheduled-execution.md) (automatic execution) /
+  `workspace/agent/cleanup_archive.go` (cleanup and the gz safety net — it has no design document of its own)
 
-セッション・作業コピー（worktree）・アシスタント会話は、**消し方が複数ある**。人が押す削除
-（Console の行メニュー、掃除モーダル）だけでなく、停止中セッションの 7日 TTL 自動 prune、
-セッションが尽きた worktree の自動 prune、オペレーター（MCP `delete_session` / `delete_worktree`）、
-チャットブリッジ経由の依頼まである。「これは消したくない」を利用者が表明する手段が無く、
-残したい会話や長期の作業コピーが自動整理で消える余地があった。
+## Context
 
-## 決定
+Sessions, working copies (worktrees) and assistant conversations **can be deleted in several
+ways**. Beyond the deletions a person presses (the row menu in the Console, the cleanup modal),
+there is the 7-day TTL automatic prune of stopped sessions, the automatic prune of a worktree
+whose sessions are gone, the operator (MCP `delete_session` / `delete_worktree`) and requests
+arriving through the chat bridge. There was no way for a user to say "I do not want this deleted",
+so a conversation worth keeping or a long-lived working copy could disappear in automatic tidying.
 
-**対象ごとに `locked` フラグを持たせ、拒否は Agent の REST ハンドラで行う。**
+## Decision
 
-1. **enforcement は REST 層**。Console のボタン無効化は補助でしかない — オペレーターもブリッジも
-   素の REST も同じハンドラを通るので、そこで止めれば入口を問わず一様に止まる。拒否は
-   `403` ＋ 安定コード `locked` / `locked_sessions`。
-2. **自動削除にも効かせる**。TTL prune と worktree 自動 prune を素通しにすると、ロックは
-   「押し間違い防止」でしかなくなる。守りたいのは*時間が経っても消えないこと*なので、
-   自動経路こそ対象に含める。
-3. **`force` はロックを越えない**。dirty worktree の `force=true` は「未コミットを承知で消す」意思表示だが、
-   ロックは「消さない」意思表示で、後から入れた方が強い。越える道はロック解除のみ。
-4. **可逆な操作は止めない**。`archive`（復元可）と `halt`（行が残る）は通す。ロックが止めるのは
-   実体が消える操作だけ — さもないと「ロックしたら整理もできない」になり、使われなくなる。
-5. **置き場は対象の自然な所有物に**。セッション＝`Meta`、会話＝会話 JSON。作業コピーだけは AF 所有の
-   メタが無いので、外側の台帳 `~/.config/agent-fleet/locks.json` に**絶対パス**をキーとして持つ
-   （自動 prune が名前ではなく dir しか知らないため）。
-6. **掃除の点検では隠さず `keep` で見せる**。候補一覧から消すと「なぜ片付かないのか」が分からず、
-   オペレーターが 403 になるツール呼び出しを提案してしまう。
+**Give each kind of target a `locked` flag, and refuse in the Agent's REST handler.**
 
-## 影響
+1. **Enforcement is in the REST layer.** Disabling the Console's button is only an aid — the
+   operator, the bridge and plain REST all go through the same handler, so stopping it there stops
+   it uniformly regardless of the entrance. The refusal is `403` with the stable codes `locked` /
+   `locked_sessions`.
+2. **It applies to automatic deletion too.** Letting the TTL prune and the automatic worktree prune
+   through would make the lock nothing more than a mis-click guard. What we want to protect is
+   *not disappearing as time passes*, so the automatic paths are precisely what must be covered.
+3. **`force` does not override a lock.** `force=true` on a dirty worktree expresses "delete it,
+   I know there are uncommitted changes", but a lock expresses "do not delete this", and the one
+   set later is the stronger. The only way past it is to unlock.
+4. **Reversible operations are not blocked.** `archive` (restorable) and `halt` (the row remains)
+   pass. A lock stops only operations that destroy the thing itself — otherwise it becomes "once I
+   lock it I cannot tidy up", and nobody uses it.
+5. **It is stored on whatever naturally owns the target.** A session's is in `Meta`, a
+   conversation's in the conversation JSON. Only a working copy has no AF-owned metadata, so it
+   goes in an external ledger, `~/.config/agent-fleet/locks.json`, keyed by **absolute path**
+   (the automatic prune knows only the directory, not the name).
+6. **The cleanup review does not hide them — it shows them as `keep`.** Removing them from the
+   candidate list makes it impossible to tell why things are not being tidied, and leads the
+   operator to propose a tool call that will 403.
 
-- 新規 API 3 本（`POST /{sessions|repos|chat/conversations}/…/lock`）と CP allowlist 登録。
-- `Session.locked` / `Repo.locked` / `ConversationMeta.locked` が wire に追加（`omitempty`、既存互換）。
-- Console は行の鍵バッジ・メニュー切替・削除項目の無効化・一括操作の件数からの除外。
+## Impact
 
-## 却下した案
+- Three new APIs (`POST /{sessions|repos|chat/conversations}/…/lock`) plus registration in the CP
+  allowlist.
+- `Session.locked` / `Repo.locked` / `ConversationMeta.locked` are added to the wire
+  (`omitempty`, compatible with existing clients).
+- The Console shows a lock badge on the row, switches the menu, disables the delete item and
+  excludes them from bulk operation counts.
 
-- **Console だけで無効化**: オペレーターや REST から素通り。守りにならない。
-- **ロック対象を「アーカイブ済み」に読み替える**: archive は可逆な非表示で、意味が違う。TTL 除外の
-  副作用（アーカイブは prune 対象外）に頼るのは偶然の保護で、意図が読めない。
-- **作業コピー内にロックファイルを置く**: `git status` を汚し、worktree 削除で一緒に消える。
-- **削除時に毎回確認ダイアログを増やす**: 自動削除には効かず、手動側も確認疲れを増やすだけ。
+## Options rejected
+
+- **Disabling it in the Console only**: the operator and plain REST walk straight past. It is not
+  protection.
+- **Reinterpreting "locked" as "archived"**: archive is reversible hiding, which means something
+  else. Relying on its side effect of TTL exclusion (archives are not pruned) is accidental
+  protection, and the intent cannot be read from it.
+- **Putting a lock file inside the working copy**: it dirties `git status`, and it is deleted along
+  with the worktree.
+- **Adding a confirmation dialogue on every deletion**: it does nothing for automatic deletion, and
+  only adds confirmation fatigue on the manual side.

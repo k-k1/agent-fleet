@@ -1,147 +1,165 @@
-# 0031. 独自 MCP サーバーは「レジストリ」に登録し、各 CLI のネイティブ設定へ af が書き出す
+# 0031. Register custom MCP servers in a "registry", and have af write them out to each CLI's native configuration
 
-- 状態: **採用・P0〜P4 実装済み**（レジストリ型 / 合成 / user CRUD / 接続テスト / Console タブ /
-  アシスタント配線 / claude・codex のセッション materialize / **テナント配布**）。
-  設計は [docs/48](../log/48-mcp-registry.md)。
-- 関連: [history/19](../log/19-assistant-chat.md)（アシスタント）/ [0020](0020-chat-bridge.md)（同型の CP ブリッジ）/
-  docs/25（一般化の対象となる組み込み ops 連携）/ docs/20（egress allowlist）
+English | [日本語](0031-mcp-registry.ja.md)
 
-## 背景
+- Status: **adopted; P0–P4 implemented** (the registry model, composition, user CRUD, the connection
+  test, the Console tab, assistant wiring, session materialisation for claude and codex, and
+  **tenant distribution**). The design is [docs/48](../log/48-mcp-registry.md).
+- See also: [history/19](../log/19-assistant-chat.md) (the assistant) / [0020](0020-chat-bridge.md) (a CP bridge of the same shape) /
+  docs/25 (the built-in ops integrations this generalises) / docs/20 (the egress allowlist)
 
-外部 MCP サーバーは **コードに固定された 3 種**（pagerduty / grafana / cloudwatch）しか使えない
-（`assistants.go` の `opsIntegrations`）。しかもその 3 種すら**アシスタントチャット専用**で、
-対話セッション（claude / codex / opencode / …）には af からの MCP 注入経路が一切ない。
+## Context
 
-利用者が自分の MCP を使うには各 CLI のグローバル設定を手で書くしかなく、Console からは
-見えず、管理も配布もできない。社内共通の MCP を全員に配る手段は無い。
+Only **three kinds fixed in code** (pagerduty / grafana / cloudwatch) can be used as external MCP
+servers (`opsIntegrations` in `assistants.go`). And even those three are **for assistant chat only**;
+interactive sessions (claude / codex / opencode, …) have no route at all by which af injects MCP.
 
-## 決定
+For a user to use their own MCP, the only option is to hand-write each CLI's global configuration,
+which the Console cannot see and which cannot be managed or distributed. There is no way to give
+everyone a company-wide MCP.
 
-### 1. スコープは user + tenant の 2 層、実効レジストリは合成
+## Decision
 
-`effective = builtin(接続済) ∪ tenant(enabled) ∪ user`。
+### 1. Two scopes, user and tenant, with the effective registry composed from them
 
-- `user` は Workspace の暗号化ストア（`secrets.enc`）— connections と同じ鍵・同じライフサイクル。
-  新しい鍵管理を増やさない。
-- `tenant` は CP DB。**CP は Workspace が止まっていても生きている唯一の場所**で、
-  管理者の登録を全メンバーへ配るには CP に持つほかない（schedule と同じ理由）。
-- 名前衝突は **tenant 優先**。ただし利用者は**テナント配布を自分の Workspace で無効化できる**。
-  壊れたサーバーが全員のセッション起動を巻き込むとき、個人が逃げられる口を残すため。
+`effective = builtin(connected) ∪ tenant(enabled) ∪ user`.
 
-### 2. テナント配布は stdio を許さない（スキーマから落とす）
+- `user` lives in the workspace's encrypted store (`secrets.enc`) — the same key and the same
+  lifecycle as connections. No new key management is added.
+- `tenant` lives in the CP database. **The CP is the only place that is alive while a workspace is
+  stopped**, and distributing an admin's registration to every member has to be held there (the same
+  reason as for schedules).
+- On a name collision, **tenant wins**. But a user **can disable tenant distribution in their own
+  workspace** — leaving an escape hatch for an individual when a broken server takes down everyone's
+  session startup.
 
-テナント配布の stdio は「管理者が全メンバーのコンテナで任意コマンドを実行できる」ことと等価で、
-`command` を配れる管理者は事実上 root 相当の権能を持つ。テナント配布は **リモート（Streamable HTTP）のみ**とし、
-API で弾くだけでなく **CP のテーブルに `command` / `args` / `env` 列を作らない**。
-「後から緩められる」状態にしないのが要点。
+### 2. Tenant distribution does not allow stdio (it is dropped from the schema)
 
-個人スコープの stdio は許す。自分のコンテナで自分がコマンドを動かすのは、ターミナルで
-同じことをするのと権能が変わらない。
+Tenant-distributed stdio is equivalent to "an admin can run arbitrary commands in every member's
+container", and an admin who can distribute a `command` effectively holds root-equivalent power.
+Tenant distribution is therefore **remote (Streamable HTTP) only**, and this is enforced not just by
+rejecting it in the API but by **not creating `command` / `args` / `env` columns in the CP's table**
+at all. The point is not to leave it in a state where it can be loosened later.
 
-**P4 では、この 1 つの決定を独立した 3 段で実装した**（どれか 1 段が壊れても実害が出ない形にする）:
+Personal-scope stdio is allowed. Running your own command in your own container is no more power
+than doing the same thing in a terminal.
 
-1. CP のテーブルに `command` 系の列が無い（列が無ければ緩められない）。
-2. CP の API が `transport=stdio` を 400 で拒否し、Console のテナント用フォームは
-   `command` / `args` / `env` を**そもそも送らない別シェイプ**にした（member 用フォームから
-   フィールドを隠す作りだと「stdio を作れる状態」が理屈上残る）。
-3. agent が受け取った定義を**再検証して落とす**（`mcpreg.acceptTenant`）。CP が侵害されても、
-   古い行が残っていても効く。**コマンドを実際に実行する当のマシン上で走る唯一の検査**がこれ。
+**In P4 this single decision was implemented as three independent layers** (so that no one layer
+breaking causes real damage):
 
-### 3. セッションへは「起動フラグ」ではなく「ネイティブ設定への materialize」で配る
+1. The CP's table has no `command`-family columns (if the column does not exist, it cannot be
+   loosened).
+2. The CP's API rejects `transport=stdio` with a 400, and the Console's tenant form is **a different
+   shape that never sends `command` / `args` / `env`** (a form built by hiding fields from the member
+   form would leave "a state in which stdio can be created" theoretically intact).
+3. The agent **re-validates and drops** definitions it receives (`mcpreg.acceptTenant`). This works
+   even if the CP is compromised or an old row survives. It is **the only check that runs on the very
+   machine that would actually execute the command.**
 
-claude の `--mcp-config` は `--strict-mcp-config` と組で使うことになり、**利用者自身の
-プロジェクト `.mcp.json` やグローバル設定を締め出す**。af が MCP を足したせいで利用者の
-MCP が消えるのは受け入れられない。
+### 3. Sessions receive them by "materialising into the native configuration", not by launch flags
 
-そこで各 CLI のグローバル設定ファイル（`.claude.json` / `config.toml` / `mcp-config.json` /
-`opencode.jsonc` / `mcp.json` …）を af が **read → merge → 原子的 rename** で更新する。
-af が書いた名前だけを別ファイルに記録し、**削除は af が書いたものだけ**に限る。
+claude's `--mcp-config` has to be used together with `--strict-mcp-config`, which **shuts out the
+user's own project `.mcp.json` and global configuration**. A user's MCP disappearing because af
+added one is unacceptable.
 
-代償は 2 つあり、どちらも受け入れる:
+So af updates each CLI's global configuration file (`.claude.json` / `config.toml` /
+`mcp-config.json` / `opencode.jsonc` / `mcp.json`, …) by **read → merge → atomic rename**. Only the
+names af wrote are recorded in a separate file, and **deletion is limited to what af wrote**.
 
-- **設定契約が CLI の版ごとに壊れうる**。文字列契約と同じ問題（`false-idle-reverse-heal`）なので、
-  `<cli> mcp add` を隔離 HOME で実行して生成物を比較する **drift テスト**を各 kind に置き、
-  壊れたら CI が赤くなるようにする（`.github/workflows/mcp-config-contract.yml`。
-  P3 で claude / codex、P5 で opencode / copilot / cursor を配線）。
-  **この層を置けない kind が 2 つ残る**: kiro は `mcp` サブコマンドが全部ログインを要求するので
-  runner では走らせられず（未ログインなら skip し、確認はログイン済みの手元でしか取れない）、
-  agy は RDRAND の無いホストで起動しない。この 2 つは実測記録が唯一の裏取りになる。
-- **反映は次のセッションから**。どの CLI も設定を起動時に読む。Console に明示する。
-  managed セッションだけは CLI プロセスを起動し直さないので前提が別で、codex の共有 app-server が
-  `thread/start` ごとに config を読み直すことを実測し、それ自体を drift テストで固定した（docs/48 §8.3）。
+There are two prices, both accepted:
 
-アシスタントチャットは逆に**起動単位の隔離が正**なので、従来どおり `--mcp-config` /
-codex `-c` / 隔離 dir を使い続ける。チャットとセッションで方式が違うのは意図的で、
-チャットは af が作る使い捨て環境、セッションは利用者の作業環境だから。
+- **The configuration contract can break with each CLI version.** It is the same problem as string
+  contracts (`false-idle-reverse-heal`), so there is a **drift test** per kind that runs
+  `<cli> mcp add` under an isolated HOME and compares the output, turning CI red when it breaks
+  (`.github/workflows/mcp-config-contract.yml`; claude and codex wired in P3, opencode/copilot/cursor
+  in P5). **Two kinds cannot have this layer**: kiro's `mcp` subcommands all require a login and so
+  cannot run on the runner (skipped when not logged in; confirmation is only possible on a logged-in
+  machine), and agy will not start on a host without RDRAND. For those two, the measurement record is
+  the only corroboration.
+- **It takes effect from the next session.** Every CLI reads its configuration at startup. Stated
+  explicitly in the Console. Managed sessions alone have a different premise, since the CLI process
+  is not restarted; we measured that codex's shared app-server re-reads the config on every
+  `thread/start`, and pinned that itself with a drift test (docs/48 §8.3).
 
-### 4. 秘密は「ストアの中だけが正」、テナント配布は `user_secret` で逃がす
+Assistant chat is the opposite — **per-launch isolation is right there** — so it keeps using
+`--mcp-config` / codex `-c` / an isolated dir. The methods differing between chat and sessions is
+deliberate: chat is a throwaway environment af creates, while a session is the user's working
+environment.
 
-Console へは常にマスク（`***`）で返し、`***` のまま PUT されたら既存値を保持する
-（connections の既存作法）。materialize 時点で平文になるのは避けられないので、`0600` と
-home 配下に限定する。
+### 4. Secrets are canonical only inside the store; tenant distribution escapes via `user_secret`
 
-テナント配布のヘッダにトークンを入れると、**そのトークンは全メンバーのコンテナで平文で読める**。
-これは隔離では防げない（本人が読める）。よって `user_secret` フラグを設け、
-`1` のときテナントは **URL とヘッダ名だけ**を配り、値は各メンバーが自分の暗号化ストアへ入れる。
-値が未入力のサーバーは materialize しない（起動して失敗させるより、出さない方がよい）。
+They are always returned to the Console masked (`***`), and a PUT that still contains `***` keeps
+the existing value (the existing practice from connections). Becoming plaintext at materialisation
+time is unavoidable, so it is limited to `0600` and under home.
 
-P4 でこの機構を入れた（既定は `0`）。実装で決めた 3 点:
+Putting a token in a tenant-distributed header means **that token is readable in plaintext in every
+member's container**. Isolation cannot prevent this (the person themselves can read it). So there is
+a `user_secret` flag: when it is `1`, the tenant distributes **only the URL and the header names**,
+and each member puts the value into their own encrypted store. A server with no value entered is not
+materialised (better not to emit it than to start it and have it fail).
 
-- `user_secret=1` のとき CP は**入ってくる値をその場で捨てる**。出力時だけ隠すのでは、フラグを
-  立てる前に管理者が貼ったトークンが DB に残り、誰も読まないのに漏洩面だけが残る。
-- メンバーが埋められるのは**テナントが配ったヘッダ名だけ**。どのヘッダを送るかはテナントの裁量という
-  性質を保つため、ローカルの古い値は無視する。
-- 値込みで配られた行の値は**メンバーが差し替えられない**（`ErrReadOnly`）。差し替えられると、
-  テナントが意図した資格情報で接続できなくなる。
+P4 added this mechanism (defaulting to `0`). Three things settled in implementation:
 
-⚠️ 「`user_secret=1` を既定にするか」の**運用方針は未決のまま**（docs/48 §14-5）。入れたのは機構だけで、
-そこは意図的に変えていない。
+- When `user_secret=1`, the CP **discards the incoming value on the spot**. Hiding it only on output
+  would leave a token an admin pasted before setting the flag sitting in the database, read by
+  nobody but still an exposure surface.
+- A member can only fill in **the header names the tenant distributed**. Which headers are sent is by
+  nature the tenant's prerogative, so an older local value is ignored.
+- A member **cannot replace the value** of a row distributed with its value included (`ErrReadOnly`).
+  If they could, it would stop connecting with the credentials the tenant intended.
 
-### 5. 登録時に接続テストを行う（P0 に入れる）
+⚠️ **Whether `user_secret=1` should be the default is still an open operational question**
+(docs/48 §14-5). Only the mechanism went in; that point was deliberately left alone.
 
-`initialize` → `tools/list` を実際に投げて、成否とツール数を返す。これが無いと利用者は
-「セッションを立てて初めて壊れているとわかる」ことになり、しかも失敗は CLI の起動ログの
-奥に埋もれる。登録フローの一部として最初のフェーズに含める。
+### 5. Run a connection test at registration time (included in P0)
 
-### 6. 組み込み 3 種も同じ型に正規化する
+Actually send `initialize` → `tools/list`, and return success/failure and the tool count. Without
+it, a user only finds out something is broken when they start a session — and the failure is buried
+deep in the CLI's startup log. It is part of the registration flow, in the first phase.
 
-`opsIntegrations` を `ServerDef`（`Origin=builtin`）へ畳み、`mcpConfigArgs` を
-「組み込み or 登録」の分岐ではなく **1 本のリスト処理**にする。`assistant.Integrations` の
-値は builtin の id をそのまま使うので、**保存済みアシスタントの移行は不要**。
+### 6. Normalise the three built-ins into the same type
 
-## 却下した案
+`opsIntegrations` is folded into `ServerDef` (`Origin=builtin`), and `mcpConfigArgs` becomes **one
+list operation** rather than a branch on "built-in or registered". `assistant.Integrations` keeps
+using the builtin ids as they are, so **saved assistants need no migration**.
 
-| 案 | 却下理由 |
-|----|---------|
-| af が MCP プロキシとして全通信を中継する | 認証・ストリーミング・OAuth を af が肩代わりすることになり、実装量が桁違い。egress 統制は既に proxy 層（docs/20）にあり、二重に持つ理由がない |
-| セッションにも `--mcp-config` で渡す | `--strict-mcp-config` が利用者自身の MCP を締め出す（決定 3）。また kind ごとに同等フラグが無い（agy / cursor はグローバル設定のみ） |
-| テナント配布も stdio 可にして super_admin ゲート＋監査で受ける | ゲートは運用で緩む。列を作らなければ緩められない（決定 2） |
-| user スコープを CP に集約 | 個人の秘密を CP へ集める必要がない。Workspace の暗号化ストアで完結する方が漏洩面が小さい |
-| テナント配布を fail-closed（CP 到達不能なら MCP を消す） | CP の瞬断でセッションから MCP が消える。キャッシュ + stale 表示にする |
+## Options rejected
 
-## 結果
+| Option | Why rejected |
+|---|---|
+| af acts as an MCP proxy and relays all traffic | af would take on authentication, streaming and OAuth — an order of magnitude more implementation. Egress control already lives in the proxy layer (docs/20), and there is no reason to hold it twice |
+| Pass them to sessions with `--mcp-config` too | `--strict-mcp-config` shuts out the user's own MCP (decision 3). And there is no equivalent flag on every kind (agy and cursor have global configuration only) |
+| Allow stdio in tenant distribution too, gated on super_admin plus auditing | Gates loosen in operation. If the column does not exist, it cannot be loosened (decision 2) |
+| Collect the user scope on the CP | There is no need to gather personal secrets on the CP. Completing it in the workspace's encrypted store is a smaller exposure surface |
+| Make tenant distribution fail-closed (if the CP is unreachable, remove the MCP) | A momentary CP outage would make MCP vanish from sessions. Cache it and show it as stale instead |
 
-- 利用者は Console から自分の MCP を登録し、アシスタントとセッションの両方で使える。
-- 管理者はテナント共通の MCP を配れるが、配れるのはリモート定義だけで、コマンドは配れない。
-- 既存の組み込み 3 連携は同じ仕組みの上に載り、分岐が 1 本に減る。
-- リモート定義は egress allowlist（docs/20）と噛み合い、未許可の宛先は**登録画面で**警告される。
-  申請導線をメンバーに開いたが、作れるのは `proposed` 行だけで、有効化は super_admin のまま
-  （docs/48 §9.1）。ここを「admin にだけ見せる」にすると、登録した本人が理由を知る手段が無くなる。
+## Results
 
-## 積み残し
+- A user can register their own MCP from the Console and use it in both the assistant and sessions.
+- An admin can distribute a tenant-wide MCP, but only remote definitions — not commands.
+- The three existing built-in integrations sit on the same mechanism, reducing the branches to one.
+- Remote definitions mesh with the egress allowlist (docs/20), and an unapproved destination is
+  warned about **on the registration screen**. The request route is open to members, but all they can
+  create is a `proposed` row; enabling it stays with super_admin (docs/48 §9.1). Making this
+  admin-only would leave the person who registered it with no way to learn why.
 
-- 旧 HTTP+SSE トランスポートは v1 の対象外（仕様上 deprecated で、接続テストに別クライアントが要る）。
-- OAuth を要する MCP（各 CLI の `mcp login`）は af から駆動しない。
-- ツール単位の許可（agy の `mcp(server/tool)`、copilot の `--allow-tool`）は v1 では持たない。
-- MCP ツール呼び出しの使用量計上（docs/46 残 P5）はここでは決めない。
-- ~~kiro / cursor のリモート設定形は未実測~~ → P5 で実機確定（docs/48 §8.1）。どちらもリモートで
-  独自ヘッダを運べることを、ヘッダ記録リスナー相手の実ターン / 実 `mcp list` まで確認した。
-  **テナント配布はリモート専用（決定 2）で認証はヘッダ**なので、ここが落ちていたら
-  「配布されたサーバーだけ動かない」形で壊れていた。
-- **定義の検証が CP と agent で二重**になっている（別 Go モジュールでコードを共有できない）。
-  エラーコードは意図して同一にし、ドリフトは agent 側の再検証が「配られたが使われない」として
-  現れる形にしたが、ルール追加時は両方に足す必要がある。
-- `localCustodian` の KEK は master 由来なので、`key_ref` は**暗号学的なテナント分離ではない**
-  （`custodian.go` に既述の性質）。実際の隔離は store の `tenant_id` スコープと、配布面が
-  トークン→membership→tenant で解決することに依っている。真の per-tenant 無効化は Vault / KMS
-  アダプタ側の話で、ここでは変えていない。
+## Left over
+
+- The old HTTP+SSE transport is out of scope for v1 (deprecated in the specification, and the
+  connection test would need a different client).
+- MCPs requiring OAuth (each CLI's `mcp login`) are not driven from af.
+- Per-tool permissions (agy's `mcp(server/tool)`, copilot's `--allow-tool`) are not in v1.
+- Accounting for MCP tool calls (docs/46's remaining P5) is not decided here.
+- ~~kiro's and cursor's remote configuration shapes are unmeasured~~ → settled on real hardware in P5
+  (docs/48 §8.1). Both were confirmed to carry custom headers over remote, through a real turn and a
+  real `mcp list` against a header-recording listener. **Since tenant distribution is remote-only
+  (decision 2) and authenticates by header**, a failure here would have broken in the shape of "only
+  the distributed servers do not work".
+- **Validating a definition happens twice, on the CP and on the agent** (code cannot be shared
+  between separate Go modules). The error codes are deliberately identical and drift shows up as the
+  agent's re-validation marking something "distributed but unused", but a new rule has to be added in
+  both places.
+- `localCustodian`'s KEK derives from the master, so `key_ref` is **not cryptographic tenant
+  separation** (a property already stated in `custodian.go`). The real isolation rests on the store's
+  `tenant_id` scoping and on the distribution surface resolving token → membership → tenant. True
+  per-tenant revocation is a matter for the Vault/KMS adapter and is not changed here.

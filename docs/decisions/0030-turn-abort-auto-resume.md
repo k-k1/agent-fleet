@@ -1,155 +1,173 @@
-# 0030. 中断ターン — 自己修復を通知 seam に載せ、再送で直る中断だけ自動再開する
+# 0030. Aborted turns — put self-healing on the notification seam, and auto-resume only the aborts a resend fixes
 
-- 状態: **採用・実装済み**。設計は [docs/47](../log/47-turn-abort-auto-resume.md)。
-- 関連: [0015](0015-agent-managed-driver.md)（managed driver の turn 状態機械）/
-  docs/30（完了報告とオペレーター）/ docs/37（チャットブリッジ）
+English | [日本語](0030-turn-abort-auto-resume.ja.md)
 
-## 背景
+- Status: **adopted and implemented**. The design is [docs/47](../log/47-turn-abort-auto-resume.md).
+- See also: [0015](0015-agent-managed-driver.md) (the managed driver's turn state machine) /
+  docs/30 (completion reports and the operator) / docs/37 (the chat bridge)
 
-claude の TUI セッションで API エラーがターンを切ると、**Stop フックが鳴らない**。
-`working → idle` の遷移が誰にも記録されないまま、ペインだけが待機プロンプトへ戻る。
+## Context
 
-その後始末をしていたのが、ペインを見て状態キャッシュを直す自己修復
-（`driveState` / `WireLive`）で、これは `status.Remove(sid)` を呼ぶだけだった。結果:
+When an API error cuts a turn short in a claude TUI session, **the Stop hook does not fire**. The
+`working → idle` transition is recorded by nobody, and the pane simply returns to a waiting prompt.
 
-- 応答あり通知が出ない
-- docs/30 の完了報告が飛ばず、報告の arm が未消費のまま残る
-- Console 上はただの「入力待ち」— 利用者が気づくまで作業が止まったままになる
+What cleaned up afterwards was the self-healing that watches the pane and fixes the state cache
+(`driveState` / `WireLive`), and all it did was call `status.Remove(sid)`. The results:
 
-実測（セッション ssiw5kb / 2026-07-26 23:02:57 JST、`API Error: Connection closed
-mid-response.`）で、通知 0 件・`session-report` の `armed:true` 残留を確認した。
+- No "answer ready" notification appears.
+- The docs/30 completion report is never sent, and the report's arm is left unconsumed.
+- In the Console it is simply "waiting for input" — the work stays stopped until a user notices.
 
-`recordSessionNotification` は「マーカーが消えている（previous == ""）」ケースを既に
-ケアしていたが、それは *フックが発火したとき* にしか効かない。今回はフック自体が 1 度も
-鳴っていないため、保険が空振りしていた。
+Measured (session ssiw5kb, 2026-07-26 23:02:57 JST, `API Error: Connection closed mid-response.`):
+zero notifications, with `session-report` left at `armed:true`.
 
-## 決定
+`recordSessionNotification` already handled the case of "the marker has gone (previous == "")", but
+that only helps *when the hook fires*. Here the hook never fired at all, so the safety net swung at
+nothing.
 
-### 1. 自己修復は「黙って消す」のをやめ、終端イベントは通知 seam に載せる
+## Decision
 
-自己修復が idle に倒すとき、transcript の末尾が API エラーなら **`agents.MarkTurnEndErr`**
-を通す。これは managed driver（docs/27）のために作った seam で、status に idle を書き、
-`recordSessionNotification` を呼ぶところまでを一手にやる。TUI 側もこれを使うことで、
-**「どの遷移が完了か」の判定は 1 実装のまま**になる（TUI 用に第 2 の判定を持たせない）。
+### 1. Self-healing stops deleting silently; terminal events go on the notification seam
 
-自己修復の他のケース（kill+resume、許可の却下、放棄された質問）は従来どおり無言で
-マーカーを消す。**終端イベントを出す条件を transcript の実データに限定した**のが要点で、
-tmux 文字列のヒューリスティクスが誤爆しても偽の「完了しました」報告は生まれない。
+When self-healing falls to idle, if the tail of the transcript is an API error it goes through
+**`agents.MarkTurnEndErr`**. That is the seam built for the managed driver (docs/27), and it does
+everything in one: write idle into status and call `recordSessionNotification`. Using it on the TUI
+side too means **"which transition counts as completion" stays a single implementation** (we do not
+give the TUI a second definition).
 
-### 2. 中断は「再送で直る」と「原因を直すまで無意味」に分ける
+The other self-healing cases (kill+resume, a denied permission, an abandoned question) still delete
+the marker silently. The key point is that **emitting a terminal event is restricted to real data in
+the transcript**, so even if a tmux string heuristic misfires, no false "it completed" report is
+produced.
 
-`StateFailed`（既存）に加えて **`StateAborted`** を新設した。イベントとしては同じ終端
-（入力待ちに戻った・指示 1 件の報告を消費する）だが、オペレーターに促す行動が正反対だから:
+### 2. Split aborts into "a resend fixes it" and "meaningless until the cause is fixed"
 
-| | 例 | 次の一手 |
+Alongside the existing `StateFailed` there is a new **`StateAborted`**. As an event they are the
+same terminal (back to waiting for input; consuming the report for one dispatch), but the action to
+prompt the operator with is the opposite:
+
+| | Examples | The next move |
 |---|---|---|
-| `StateAborted` | 接続断、一時的なレート制限 | **再送すれば直る** → 自動再開 |
-| `StateFailed` | 利用上限、残高切れ、プロンプト長超過 | 原因を直すまで**再送しても同じ** |
+| `StateAborted` | a dropped connection, a temporary rate limit | **a resend fixes it** → auto-resume |
+| `StateFailed` | a usage limit, no balance, prompt too long | **a resend does the same thing** until the cause is fixed |
 
-分類はステータスコードだけでは決められない。フリートの実測 16 件では **429 に両方が
-同居**していた（"Server is temporarily limiting requests **(not your usage limit)**" と
-"You've reached your … limit"）。よって**文言を主・コードを従**として判定し、
-**判定不能は blocked 側に倒す**（自動再送しない方が安全側）。
+The classification cannot be made from the status code alone. In the 16 cases measured across the
+fleet, **both live under 429** ("Server is temporarily limiting requests **(not your usage limit)**"
+and "You've reached your … limit"). So the judgement is **primarily on the wording, with the code
+secondary**, and **anything undecidable falls to the blocked side** (not auto-resending is the safe
+side).
 
-### 3. 再開させるのはアシスタント（オペレーター）で、Agent 側で自動再送はしない
+### 3. The assistant (the operator) does the resuming; the Agent does not auto-resend
 
-報告文に指示を載せ、オペレーターが `send_to_session` で「続けて」を送る。docs/30 の
-question / plan 自動走行と同じ形にした理由:
+The instruction is put in the report body and the operator sends "carry on" with
+`send_to_session`. The same shape as the question / plan autonomous running in docs/30, and for the
+same reasons:
 
-- 利用者から見て**誰が何を送ったかがチャットに残る**（Agent の裏送信は不可視になる）
-- 破壊的操作の途中で落ちた場合など、**再開してよいかの判断が要る**ケースを人／LLM の
-  ガードレールに載せられる
-- `send_to_session` は `report_to` を伴うので**再開後の完了報告が再び arm される** —
-  報告の一巡が閉じる
+- From the user's point of view, **who sent what stays visible in the chat** (a back-channel send
+  from the Agent would be invisible).
+- Cases where **judgement about whether it is safe to resume is needed** — a crash part-way through
+  a destructive operation, say — can be put on the human's or the LLM's guardrails.
+- `send_to_session` carries `report_to`, so **the completion report after resuming is armed again** —
+  the reporting cycle closes.
 
-代償として、会話に紐付いていない（Console 起動の）セッションは自動再開の対象外になる。
-通知と Console 表示は従来どおり出るので、可視化の穴は残らない。
+The price is that sessions not tied to a conversation (started from the Console) are excluded from
+auto-resume. Notifications and the Console display appear as before, so there is no gap in
+visibility.
 
-### 4. ON/OFF は自動走行と別トグル、既定 ON
+### 4. The on/off switch is separate from autonomous running, and defaults to on
 
-自動走行（質問への代理回答・プラン承認）は**利用者の判断を肩代わり**するので既定 OFF。
-自動再開は**利用者が既に頼んだ作業を走らせ直すだけ**で、新しい判断を含まない。危険側の
-中断（上限・残高）は分類で除外され、連続再開は `maxAutoResumeAttempts`（2 回）で止まる。
-よって別トグル（`assistantAutoResume`）を新設し、既定 ON とした。
+Autonomous running (answering questions and approving plans on the user's behalf) **substitutes for
+the user's judgement**, so it defaults to off. Auto-resume **merely re-runs work the user already
+asked for** and involves no new judgement. The dangerous aborts (limits, balance) are excluded by
+the classification, and repeated resumes stop at `maxAutoResumeAttempts` (2). So it gets its own
+toggle (`assistantAutoResume`), defaulting to on.
 
-## 結果
+## Results
 
-- 中断が「黙って止まる」ことはなくなり、通知・報告・チャットブリッジのいずれにも乗る。
-- 再送で直る中断は、利用者が気づく前にオペレーターが再開させる。
-- 直らない中断は自動再開せず、原因と対処の相談として上がる。
-- 連続中断は 2 回で自動再開を打ち切り、利用者へエスカレーションする。
+- An abort no longer "stops silently"; it rides the notifications, the reports and the chat bridge
+  alike.
+- An abort a resend fixes is resumed by the operator before the user notices.
+- An abort that will not be fixed is not auto-resumed and comes up as a discussion of the cause and
+  the remedy.
+- Repeated aborts cut auto-resume off after two and escalate to the user.
 
-## 追補（2026-07-31）— 利用上限だけは Agent が直接再開させる
+## Addendum (2026-07-31) — the usage limit alone is resumed directly by the Agent
 
-§3 の「Agent 側で自動再送はしない」は**会話に紐付いた中断**についての決定であり、それは
-変えない。利用上限（`session limit` / `usage limit`）だけは例外にする。理由:
+§3's "the Agent does not auto-resend" is a decision about **aborts tied to a conversation**, and
+that does not change. The usage limit (`session limit` / `usage limit`) alone is an exception,
+because:
 
-- **止まり方が違う。** 上限に当たった claude は `/rate-limit-options` のメニューを出して
-  キー入力待ちで停止し、人が消すまで**注入も通知も報告も受け付けない**（docs/47 §4-3）。
-  オペレーターに「続けてと送れ」と指示しても、その送信は 409 で弾かれる。まず**ペインを
-  回復させる主体**が要り、それはオペレーターではなく Agent しか居ない。
-- **判断が要らない。** 選ばせるのは既定の「1. リセットまで待つ」＝無課金側だけで、
-  増枠依頼（2）は選ばない。「再開してよいか」の判断も、上限は原因が**時刻で必ず解ける**
-  ので接続断と同じ扱いでよい。
-- **待ちが長い。** リセットまで数時間あり、その間 WS は停止してよい（ターンは終わっている）。
-  停止中も生きているのは CP だけなので、待ち合わせは docs/38 の定時実行に預ける
-  （`spec_kind=once` / `session_mode=reuse`）。プロセス内タイマーでは実現できない。
+- **It stops differently.** On hitting the limit, claude shows the `/rate-limit-options` menu and
+  halts waiting for a keypress, **accepting no injection, no notification and no report** until a
+  person dismisses it (docs/47 §4-3). Telling the operator to "send carry on" gets that send rejected
+  with a 409. Something has to **recover the pane** first, and only the Agent can.
+- **No judgement is required.** The only choice made is the default, "1. wait until it resets" — the
+  option that costs nothing; asking for more quota (2) is never chosen. And "is it safe to resume?"
+  can be treated like a dropped connection, because a limit is **always resolved by the clock**.
+- **The wait is long.** Reset is hours away, and the workspace may stop meanwhile (the turn is
+  over). Only the CP is alive while stopped, so the waiting is delegated to the scheduled execution
+  in docs/38 (`spec_kind=once` / `session_mode=reuse`). An in-process timer cannot do it.
 
-代償は §3 の 1 番目の利点（誰が何を送ったかがチャットに残る）を上限再開では手放すこと。
-Agent の裏送信になるので、代わりに**定時実行の一覧に一回限りの予約として残る**形にした
-（`spec_kind=once` で繰り返さず、使用後に削除）。トグルは `rateLimitAutoResume`
-（既定 ON、設定 > エージェント > Claude > 動作設定）。アシスタント会話の有無ではなく
-全 Claude TUI セッションに効く設定なので、アシスタント設定から Claude の動作設定へ移した。
-メニューの自動解除だけは OFF でも行う — 解除しないとセッションは何もできず、選ぶ側に
-課金判断が無いため。
+The price is giving up §3's first benefit (who sent what stays in the chat) for limit resumes. It
+becomes a back-channel send from the Agent, so instead **it is left in the schedule list as a
+one-off booking** (`spec_kind=once`, no repeat, deleted after use). The toggle is
+`rateLimitAutoResume` (on by default, settings > agents > Claude > behaviour). It applies to every
+claude TUI session regardless of whether there is an assistant conversation, so it moved from the
+assistant settings to Claude's behaviour settings. Dismissing the menu happens even when the toggle
+is off — without it the session can do nothing, and the person choosing has no billing decision to
+make.
 
-利用者への状態遷移は Agent の永続通知 outbox にも残す。上限メニューの初回検知を
-`rate-limit-reached`、再開プロンプトの**配達確認成功後**を `rate-limit-resumed` とし、
-各エピソード／once 予約につき1回だけ通知センターへ出す。予約時刻の到来だけでは再開成功と
-みなさないため、overlap・対象消失・配達失敗を「再開した」と誤通知しない。
+The state transitions are also left in the Agent's persistent notification outbox for the user. The
+first detection of the limit menu is `rate-limit-reached`, and **after delivery of the resume prompt
+is confirmed** it is `rate-limit-resumed`, each emitted to the notification centre exactly once per
+episode / once-booking. The arrival of the booked time alone is not taken as a successful resume, so
+an overlap, a vanished target or a delivery failure is never mis-notified as "resumed".
 
-## 追補（2026-08-05）— §3 を反転する: 再開は Agent、アシスタントは打ち切りの受け皿
+## Addendum (2026-08-05) — §3 inverted: the Agent resumes, and the assistant catches what it gives up on
 
-§3 は「再開させるのはアシスタントで、Agent 側で自動再送はしない」だった。上限（前の
-追補）に続き、**retryable な中断一般もその例外にする**。設計は
-[docs/47 §4-6](../log/47-turn-abort-auto-resume.md)。
+§3 was "the assistant does the resuming; the Agent does not auto-resend". After the limit (the
+previous addendum), **retryable aborts in general become an exception too**. The design is
+[docs/47 §4-6](../log/47-turn-abort-auto-resume.md).
 
-理由は 2 つ。
+Two reasons.
 
-- **会話を持たないセッションが救われない。** §3 の代償として明記した穴だが、実運用では
-  これが多数派になった（Console から直接起動したセッション）。実測 2026-08-05、
-  `API Error: Stream idle timeout - no chunks received` で 15 分ぶんのターンが落ち、通知は
-  出たが誰も再開させないまま止まっていた。可視化の穴は無くても、**止まっている事実**は
-  残る。
-- **判断の要らない再開に、判断のための LLM を通していた。** 中断報告 1 ターン ＋
-  `send_to_session` の往復が中断のたびに走る。再開の内容は常に同じ（「続けて」）で、
-  オペレーターが足す判断は無い。
+- **Sessions with no conversation were never rescued.** This was stated as the price in §3, but in
+  practice it became the majority (sessions started directly from the Console). Measured 2026-08-05:
+  `API Error: Stream idle timeout - no chunks received` dropped 15 minutes' worth of a turn; the
+  notification appeared, but nobody resumed it and it stayed stopped. Even with no gap in
+  visibility, **the fact that it is stopped** remains.
+- **A resume that needs no judgement was being routed through an LLM for judgement.** One abort
+  report turn plus a `send_to_session` round trip ran on every abort. The content of the resume is
+  always the same ("carry on"), and the operator adds no judgement.
 
-新しい形: Agent が retryable な中断を見つけたら、バックオフののち自分で「続けて」を送る
-（最大 `maxAutoResumeAttempts` = 2 回）。**その間、中断報告は配らない** — 配れば
-「もう実行済みの依頼」をアシスタントのターンで送ることになる。2 回送っても中断が続いたら
-そこで手を引き、既存の escalation 文言（`reportKeyTurnAbortedCapped`）で報告する。
-つまりアシスタントが見るのは「自動では直らなかった中断」だけになる。
+The new shape: when the Agent finds a retryable abort it backs off and sends "carry on" itself (at
+most `maxAutoResumeAttempts` = 2 times). **While it does, the abort report is not delivered** —
+delivering it would mean the assistant's turn sending a request that has already been carried out.
+If the aborts continue after two attempts it withdraws and reports with the existing escalation
+wording (`reportKeyTurnAbortedCapped`). So what the assistant sees is only "aborts that did not fix
+themselves".
 
-§3 の 3 つの利点をどう手当てしたか:
+How §3's three benefits are covered:
 
-| §3 の理由 | v2 での扱い |
+| §3's reason | How v2 handles it |
 |---|---|
-| 誰が何を送ったかがチャットに残る | **解消済み**。docs/37/38 の注入元記録で、再開は `auto-resume` としてミラーにバッジ表示される（この決定の当時は無かった仕組み） |
-| 再開してよいかの判断を人／LLM に載せる | retryable 限定・連続 2 回・トグル（既定 ON）で抑える。判断が要る側（上限・残高・プロンプト超過・認証）は分類で除外されたまま |
-| `report_to` を伴うので報告が再 arm される | 不要になった。指示の行は**閉じないまま**なので、再開したターンの完了がそのまま同じ指示の完了報告になる（報告は 2 通から 1 通へ減る） |
+| who sent what stays in the chat | **Already solved.** With the injection-source recording in docs/37/38, a resume is badged in the mirror as `auto-resume` (a mechanism that did not exist when this decision was made) |
+| put "is it safe to resume?" on a human or an LLM | Held down by restricting to retryable, two attempts, and a toggle (on by default). The side that does need judgement (limits, balance, prompt length, authentication) stays excluded by the classification |
+| `report_to` comes with it, so the report is re-armed | No longer needed. The dispatch's row is **left open**, so the completion of the resumed turn becomes the completion report of that same dispatch (two reports become one) |
 
-**抑止は遅延であって握り潰しではない。** 通知センターへの中断通知は従来どおり出す。
-報告側の抑止には必ず外れる条件（打ち切り・TTL・設定 OFF・watcher 不在）を持たせる —
-片道切符にすると、v1 の「黙って止まる」に別の形で戻ることになる。
+**The suppression is a delay, not a cover-up.** The abort notification still goes to the
+notification centre as before. The suppression on the report side always has conditions that release
+it (giving up, a TTL, the toggle off, no watcher) — a one-way ticket would be a different route back
+to v1's "stops silently".
 
-再開プロンプトは一語（`続けて（自動再開）`）。中断は数十秒前の出来事で文脈がそのまま
-残っているため、上限再開（数時間後に届く）のような説明文は要らない。
+The resume prompt is a single phrase (`続けて（自動再開）`, "carry on (auto-resume)"). The abort was
+tens of seconds ago and the context is intact, so it needs none of the explanation a limit resume
+does (which arrives hours later).
 
-## 積み残し
+## Left over
 
-- 対象は claude TUI のみ。判別材料が claude の jsonl 形式に固有（`isApiErrorMessage`）で、
-  他 TUI 種別（cursor / copilot / kiro）は別のシグナルが要る。managed（codex / opencode）は
-  `StateFailed` で既に報告経路を持つ。
-- 再開プロンプトの言語は表示言語（`uiLocale`）。セッション毎の言語フィールドを持てば
-  決定的にできるが、まだ持たせていない。
+- It covers the claude TUI only. What it discriminates on is specific to claude's jsonl format
+  (`isApiErrorMessage`), and the other TUI kinds (cursor / copilot / kiro) need different signals.
+  Managed (codex / opencode) already has a reporting path through `StateFailed`.
+- The resume prompt's language is the display language (`uiLocale`). A per-session language field
+  would make it deterministic, but we do not have one yet.

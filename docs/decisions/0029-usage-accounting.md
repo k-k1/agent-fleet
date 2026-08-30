@@ -1,29 +1,31 @@
-# 0029. 使用量アカウンティング — 機能別トークン台帳を1本持つ
+# 0029. Usage accounting — keep one token ledger, broken down by feature
 
-- 状態: **採用（P0.5〜P4 実装済み。P5 MCP ツール以降は未着手）**（2026-07-26）。
-- 関連: 設計・実測の本体は [docs/46](../log/46-usage-accounting.md)。
-  [0016](0016-i18n.md)（Console 文言は ja/en 両方）、[0021](0021-scheduled-execution.md)（`source=schedule`
-  — 本 ADR の `origin=schedule` の一次ソース）、[0022] はエージェントメモリ版管理（未マージ
-  `temp/s7in3bh`）、[0027] はオペレーター↔セッション相互作用図（未マージ `temp/sjoad3a`）が
-  使用中のため 0029 を採番。
+English | [日本語](0029-usage-accounting.ja.md)
 
-## 背景
+- Status: **adopted (P0.5–P4 implemented; P5, the MCP tools, and beyond not started)** (2026-07-26).
+- See also: the design and the measurements proper are in [docs/46](../log/46-usage-accounting.md).
+  [0016](0016-i18n.md) (Console wording is in both ja and en), [0021](0021-scheduled-execution.md)
+  (`source=schedule` — the primary source for this ADR's `origin=schedule`). Numbers 0022 (agent
+  memory versioning, on the unmerged `temp/s7in3bh`) and 0027 (the operator↔session interaction
+  graph, on the unmerged `temp/sjoad3a`) were taken, so this is 0029.
 
-フリートは対話セッションの外側でも LLM を撃っている（アシスタントチャット、要約引き継ぎ、
-タイトル提案、ブランチ名提案、返信サジェスト、完了報告への自動ターン、ブリッジ応答）。
-これらは **現状ゼロ計測** で、実測すると「haiku だから誤差」という直感が外れていた
-（タイトル提案1回で入力側 16k トークン・$0.023 — docs/46 §0）。
-どの機能がいくら食っているかを1本の物差しで並べる台帳を持つ。
+## Context
 
-## 決定
+The fleet fires LLM calls outside interactive sessions too (assistant chat, handoff summaries,
+title suggestions, branch-name suggestions, reply suggestions, the automatic turn on a completion
+report, bridge replies). These are **entirely unmeasured today**, and measuring them showed the
+intuition "it's haiku, so it's noise" to be wrong (one title suggestion is 16k input tokens and
+$0.023 — docs/46 §0). We keep one ledger that lines up what each feature costs on a single scale.
 
-### 1. 台帳1行 = LLM 呼び出し1回（または折り込んだセッションの論理ターン1回）
+## Decision
 
-**本文は一切記録しない**（トークン数とメタのみ）。これは非交渉。
-保存は `~/.local/share/agent-fleet/usage/raw/YYYY-MM-DD.jsonl`（追記のみ・日次ローテ）。
-`~/.local` は Workspace の recreate を跨いで残る。
+### 1. One ledger row = one LLM call (or one folded-in logical turn of a session)
 
-行のワイヤ形（凍結）— フィールドの意味は docs/46 §2:
+**No content is ever recorded** (token counts and metadata only). This is non-negotiable. Storage
+is `~/.local/share/agent-fleet/usage/raw/YYYY-MM-DD.jsonl` (append only, rotated daily).
+`~/.local` survives a workspace recreate.
+
+The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2:
 
 ```jsonc
 {"ts","call","feature","trigger","origin","origin_conv","kind",
@@ -31,22 +33,24 @@
  "in","out","cread","ccreate","spend","cost_usd","ms","ok","measured"}
 ```
 
-- **`spend` = in + ccreate + out**（cache_read を含めない）。既存の `get_session_usage` /
-  ミラーの ContextBar と同じ定義 — 二つの画面が食い違わないことを優先する。
-- **`kind` は「要求」ではなく「実行結果」を書く**。`chatProviderFor` / `oneShotHeadless` は
-  使えるバックエンドへフォールバックするので、要求値を書くと claude-less ワークスペースの
-  消費が全部 claude に化ける。
-- **1呼び出しが複数モデルに割れる場合はモデル毎に1行**、`call`（呼び出し ID）で束ねる。
-  集計の `calls` は distinct `call` で数え、**その呼び出しで最も spend の大きいモデル行**に
-  1回だけ付ける（同点は生 id 昇順で決定的に）。行順（生 id の綴り順）に付けると `by=model`
-  で主力モデルが 0 回と出る。按分にしないのは `calls` を整数の回数として凍結しているから
-  — 代表以外の行は spend>0 / calls=0 になるので、平均は `—` で出す（docs/46 §7-5）。
-- **`measured` で「0」と「未計測」を区別する**（`exact` | `partial` | `none`）。
-  トークンを報告しない CLI でも **回数だけは必ず数える**。
+- **`spend` = in + ccreate + out** (cache_read is not included). The same definition as the
+  existing `get_session_usage` and the mirror's ContextBar — two screens not disagreeing comes
+  first.
+- **`kind` records what actually ran, not what was requested.** `chatProviderFor` and
+  `oneShotHeadless` fall back to whichever backend is available, so writing the requested value
+  would attribute all of a claude-less workspace's consumption to claude.
+- **When one call splits across models, there is one row per model**, tied together by `call` (the
+  call ID). The aggregate `calls` counts distinct `call`s and attributes each **once, to the row
+  with the largest spend in that call** (ties broken deterministically by ascending raw id).
+  Attributing by row order (the spelling of the raw id) makes the main model show 0 calls under
+  `by=model`. We do not apportion, because `calls` is frozen as an integer count — non-representative
+  rows have spend>0 with calls=0, so averages are shown as `—` (docs/46 §7-5).
+- **`measured` distinguishes "zero" from "not measured"** (`exact` | `partial` | `none`). Even a
+  CLI that reports no tokens still **always has its call counted**.
 
-### 2. enum（凍結。Console 側で i18n する）
+### 2. The enums (frozen; the Console does the i18n)
 
-| 次元 | 値 |
+| Dimension | Values |
 |---|---|
 | `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
@@ -54,142 +58,170 @@
 | `model_src` | `reported` / `requested` / `default_unknown` |
 | `measured` | `exact` / `partial` / `none` |
 
-`feature=unknown` を enum に含めるのは、**新しい補助機能がタグを付け忘れても必ず1行残す**ため。
-無記録（＝見えない消費）を作らないことを、タグの正しさより優先する。
+`feature=unknown` is in the enum so that **a new auxiliary feature that forgets to tag itself still
+always leaves a row**. Not creating unrecorded (i.e. invisible) consumption takes priority over the
+tag being right.
 
-### 3. 収集は「ctx タグ ＋ プロバイダ層1点記録」
+### 3. Collection is "a ctx tag plus one recording point in the provider layer"
 
-usage を解析しているのはプロバイダ実装の内側で、そこは既にモデルもトークンも持っている。
-足りないのは「何のための呼び出しか」だけなので、`context.Context` に
-`usageTag{feature, trigger, ref, verb}` を載せ、**消費源は1箇所1行だけ変える**。
-記録はプロバイダ側の解析地点に集約する（claude send/sendStream・codex・opencode・cursor・agy・
-`oneShotHeadless`）。
+Usage is already parsed inside the provider implementations, which have both the model and the
+tokens. The only thing missing is "what the call was for", so a
+`usageTag{feature, trigger, ref, verb}` rides on `context.Context` and **each consumption site
+changes by one line in one place**. Recording is concentrated at the parsing point on the provider
+side (claude send/sendStream, codex, opencode, cursor, agy, `oneShotHeadless`).
 
-- 記録は各プロバイダ関数の先頭で `defer` に積み、**成功・失敗・早期 return の全経路で必ず1回**走る。
-  失敗行は `ok:false` / `measured:"none"` で残る（回数は数える）。
-- `oneShotHeadless` は**戻り値を広げず、内部で記録する**（docs/46 §3-a は kind と usage を返す案
-  だったが、記録点が関数の内側にある以上、呼び出し側4箇所を触る理由がない）。
+- Recording is pushed onto a `defer` at the top of each provider function, so it runs **exactly
+  once on every path**: success, failure and early return. A failure leaves a row with `ok:false` /
+  `measured:"none"` (the call is still counted).
+- `oneShotHeadless` **records internally rather than widening its return value** (docs/46 §3-a
+  proposed returning the kind and usage, but since the recording point is inside the function there
+  is no reason to touch the four call sites).
 
-### 4. モデル次元は取れた粒度を自己申告する（実測で確定）
+### 4. The model dimension self-reports the granularity available (settled by measurement)
 
-実 CLI プローブ（2026-07-26・本ワークスペース）:
+Probes of the real CLIs (2026-07-26, in this workspace):
 
-| kind | トークン | モデル | コスト | `model_src` |
+| kind | Tokens | Model | Cost | `model_src` |
 |---|---|---|---|---|
-| claude | `usage.{input,output,cache_read_input,cache_creation_input}_tokens` ◎ | `modelUsage` の**キーが生 id**、値に `canonicalModel` ◎ | `total_cost_usd` / `modelUsage[].costUSD` ◎ **実測** | `reported` |
-| codex | `turn.completed.usage.{input,cached_input,cache_write_input,output,reasoning_output}_tokens` ◎ | **どのイベントにも無し**（`thread.started` にも無い） | 無し | `requested` / `default_unknown` |
-| cursor | `result.usage.{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens}` ◎ | **`result` に無し** | 無し | `requested` / `default_unknown` |
-| opencode | `step_finish` の `part.tokens` ○ | `modelID` を拾えれば `reported`、無ければ縮退 | 要実測 | 未確定 |
-| agy | 無し（素のテキスト出力） | — | 無し | `requested` |
+| claude | `usage.{input,output,cache_read_input,cache_creation_input}_tokens` ◎ | `modelUsage`'s **key is the raw id**, with `canonicalModel` in the value ◎ | `total_cost_usd` / `modelUsage[].costUSD` ◎ **measured** | `reported` |
+| codex | `turn.completed.usage.{input,cached_input,cache_write_input,output,reasoning_output}_tokens` ◎ | **absent from every event** (including `thread.started`) | none | `requested` / `default_unknown` |
+| cursor | `result.usage.{inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens}` ◎ | **absent from `result`** | none | `requested` / `default_unknown` |
+| opencode | `part.tokens` on `step_finish` ○ | `reported` if `modelID` can be picked up, otherwise degraded | needs measuring | undecided |
+| agy | none (plain text output) | — | none | `requested` |
 
-- **表示は `canonicalModel` 相当で束ね、生 id は `model_raw` に残す**（版が上がっても系列が
-  分断されない）。claude では `modelUsage` のキーが版込みの生 id、値の `canonicalModel` が正規名。
-- **`model_req` を別に持つ**。要求と報告の食い違い（過負荷時のフォールバック、alias 解決先の
-  変更、設定ミス）が1列の差分として出る。
-- opencode はこのワークスペースが未ログイン（`opencode auth list` = 0 credentials）で
-  ライブ検証できていない。**実装は `modelID` を拾い、取れなければ `requested`/`default_unknown`
-  へ縮退する**（推測でスキーマを固めない）。
+- **Display groups by the `canonicalModel` equivalent, keeping the raw id in `model_raw`** (so a
+  series is not broken by a version bump). On claude, `modelUsage`'s key is the raw id including the
+  version and the value's `canonicalModel` is the canonical name.
+- **`model_req` is kept separately.** A discrepancy between requested and reported (a fallback under
+  load, a change in what an alias resolves to, a misconfiguration) shows up as the difference
+  between two columns.
+- opencode could not be verified live, as this workspace is not logged in
+  (`opencode auth list` = 0 credentials). **The implementation picks up `modelID` and degrades to
+  `requested`/`default_unknown` if it cannot** (we do not fix a schema by guesswork).
 
-### 5. セッション本体は転写の差分折り込み（watermark）
+### 5. Sessions themselves are folded in from the transcript delta (a watermark)
 
-セッション消費は別プロセス（CLI）が出すので、転写を読んで台帳へ折り込む。
+Session consumption is emitted by a separate process (the CLI), so we read the transcript and fold
+it into the ledger.
 
-- **論理ターンの通し番号（ordinal）を idx にする**。転写は追記のみなので kind に依らず安定で、
-  `(session, idx)` が冪等キーになる。各 kind の `Turn.Idx`（行番号）を使わないのは、
-  番号体系が kind ごとに違い watermark が混ざるため。
-- **開いている末尾グループは折り込まない**。折り込み後に同じ論理ターンへイベントが追加されると
-  入力スナップショットを二重に数えてしまう。次のユーザーターンが来て閉じた時、または
-  **セッション削除・アーカイブ時（`includeTrailing`）** に確定させる。
-- 契機は **fold-on-read**（`GET /sessions/usage` を 60 秒スロットルで間借り）＋
-  **fold-on-delete**。**常駐タイマーは増やさない**（メモリ制約ホスト・docs/26 の教訓）。
-- **初回バックフィルは自動**: watermark 0 から走るので、導入時の1回目で過去の全ターンが入る。
-  補助呼び出しは記録が無いので遡れない＝導入日以降。
-- 二重計上しない: 折り込み対象は**登録済みセッション（`session.Meta`）のみ**で、アシスタント
-  会話（`~/.claude/projects` に転写を書く）は含まない。
-- **冪等は二段構えにする**（レビュー P1 の続き・2026-07-26）。watermark は書き手側の担保だが、
-  行の追記（`raw/*.jsonl`）と watermark（`state.json`）は別ファイルで原子的に書けない — 間で
-  落ちれば再追記される。**集計側で `(ref, idx)` の重複を落とす**（docs/46 §7-4）。持つのは
-  ref ごとに「計上済み最大 idx ＋観測最大 ts」の1エントリだけで、集合は持たない（idx は 1 から
-  単調増加で追記され、重複は必ず末尾の再追記として現れるため）。ts を併せて見るのは slug 再利用
-  への保険で、**判定に迷う側は「重複を残す」に倒す** — 重複は raw を見れば分かるが、落とした
-  消費は戻らない。既に畳んだ rollup は加算済みで引き算できないので、**版を上げて raw から
-  作り直す**（寄与元 raw が prune 済みなら作り直さない）。
+- **The logical turn's ordinal is used as idx.** Transcripts are append-only, so it is stable
+  regardless of kind, and `(session, idx)` is an idempotency key. Each kind's `Turn.Idx` (a line
+  number) is not used, because the numbering differs per kind and would mix up the watermark.
+- **The open trailing group is not folded in.** If events are added to the same logical turn after
+  folding, the input snapshot would be counted twice. It is settled when the next user turn arrives
+  and closes it, or **when the session is deleted or archived** (`includeTrailing`).
+- The trigger is **fold-on-read** (piggybacking on `GET /sessions/usage`, throttled to 60 seconds)
+  plus **fold-on-delete**. **No new resident timer** (a memory-constrained host; the lesson of
+  docs/26).
+- **The initial backfill is automatic**: it runs from watermark 0, so the first pass after
+  introduction takes in every past turn. Auxiliary calls have no records and cannot be recovered,
+  so those start from the day of introduction.
+- No double counting: only **registered sessions (`session.Meta`)** are folded in; assistant
+  conversations (which write transcripts into `~/.claude/projects`) are not.
+- **Idempotency is doubled up** (following on from review P1, 2026-07-26). The watermark is the
+  writer's guarantee, but appending the rows (`raw/*.jsonl`) and the watermark (`state.json`) are
+  separate files and cannot be written atomically — a crash in between re-appends. **The aggregation
+  side drops duplicate `(ref, idx)`** (docs/46 §7-4). It keeps just one entry per ref, "the highest
+  idx counted plus the highest ts observed", not a set (idx is appended monotonically from 1, so a
+  duplicate always appears as a re-append at the tail). Looking at ts as well is insurance against
+  slug reuse, and **when in doubt the tie goes to keeping the duplicate** — a duplicate is visible in
+  the raw data, but consumption that was dropped never comes back. A rollup that has already been
+  folded is additive and cannot be subtracted, so **the version is bumped and it is rebuilt from
+  raw** (and not rebuilt if the contributing raw has been pruned).
 
-### 6. セッションの出自（`origin`）を `session.Meta` に持つ
+### 6. A session's origin (`origin`) lives in `session.Meta`
 
-`trigger`（ターン注入元）とは別軸。「自分で開いたセッション」と「オペレーターが勝手に立てた
-セッション」では消費の意味が違う — 後者は自動走行・定時実行と組み合わさると**無人で増える**。
+A different axis from `trigger` (where the turn was injected from). Consumption means something
+different for "a session I opened myself" and "a session the operator stood up on its own" — the
+latter, combined with autonomous running and scheduled execution, **grows unattended**.
 
-- `Meta.Origin` / `Meta.OriginConv` を追加。**Console = `user`（既定）/ MCP `create_session` =
-  `operator`＋作成元の会話 slug / スケジュール = `schedule` / handoff = `handoff`**。
-  recreate は元の出自を継承し、**フィールドを持たない既存セッションは `unknown`**
-  （`0` でも `user` でもない、を守る）。
-- **スケジュールは CP を触らずに導出する**: CP scheduler は既に `source=schedule` /
-  `schedule-manual` を create に載せている（docs/38）ので、サーバ側でそこから解決する。
-  新しいワイヤ項目を CP に増やさない。
-- **補助呼び出しにも焼き込む**: あるセッションのタイトル提案・返信サジェストは、`ref` から
-  そのセッションの origin を解決して**行に焼き込む**（セッション削除後も集計が壊れない。
-  他の次元と同じ思想）。会話スコープの機能（`assistant.*`）の origin は空 — 出自の軸は
-  セッションのものだから。
+- `Meta.Origin` / `Meta.OriginConv` are added. **Console = `user` (the default) / MCP
+  `create_session` = `operator` plus the creating conversation's slug / a schedule = `schedule` /
+  handoff = `handoff`.** A recreate inherits the original origin, and **existing sessions without
+  the field are `unknown`** (holding the line that it is neither `0` nor `user`).
+- **Schedules are derived without touching the CP**: the CP scheduler already puts
+  `source=schedule` / `schedule-manual` on the create (docs/38), so it is resolved from that on the
+  server side. No new wire item is added to the CP.
+- **It is baked into auxiliary calls too**: a title suggestion or a reply suggestion for a session
+  resolves that session's origin from `ref` and **bakes it into the row** (so the aggregate does not
+  break after the session is deleted — the same thinking as the other dimensions). Conversation-scoped
+  features (`assistant.*`) have an empty origin, because the origin axis belongs to sessions.
 
-### 7. §9 の未決 → 決定（すべて推奨案）
+### 7. The open questions in §9 → decided (all as recommended)
 
-1. **コスト**: `cost_usd` は claude で実測が取れた時だけ記録する。UI では
-   **「API 換算相当額（claude のみ実測）」と明記した副次表示**に留める（サブスク定額で $ を
-   主役にすると誤読を招く）。主指標は `spend`。
-2. **セッション本体を含める**: 含める（`feature=session`）。補助だけ見たい時は feature フィルタ。
-3. **保持**: raw 90日（`AF_USAGE_RETENTION_DAYS`）・rollup 無期限。
-4. **CP 横断集計**: v1 はワークスペース内で閉じる。P6（任意）で集計値のみ CP へ。
-5. UI は設定モーダルの新タブ（docs/46 §5 で決着済み。`features/usage/UsageView.tsx` を
-   モーダル非依存に切り、ペイン昇格の余地だけ残す）。
+1. **Cost**: `cost_usd` is recorded only where claude actually measures it. In the UI it stays a
+   **secondary display, explicitly labelled "API-equivalent amount (measured for claude only)"**
+   (making $ the headline under a flat subscription invites misreading). The primary metric is
+   `spend`.
+2. **Include sessions themselves**: yes (`feature=session`). Use the feature filter to see only the
+   auxiliaries.
+3. **Retention**: raw 90 days (`AF_USAGE_RETENTION_DAYS`); rollups indefinitely.
+4. **Cross-CP aggregation**: v1 stays inside the workspace. P6 (optional) sends aggregate values
+   only to the CP.
+5. The UI is a new tab in the settings modal (settled in docs/46 §5; `features/usage/UsageView.tsx`
+   is written independently of the modal, leaving room to promote it to a pane).
 
-### 8. 段階と、rollup で確定した契約
+### 8. The stages, and the contract settled by the rollup
 
-rollup（`usage/rollup/YYYY-MM.json`）と `/usage/series` は **P3 で同時に入れた**
-（読み手のいない集計を先に作らない）。P3 で凍結した点:
+The rollup (`usage/rollup/YYYY-MM.json`) and `/usage/series` **went in together in P3** (we do not
+build an aggregate before there is a reader). What P3 froze:
 
-- **バケットは行の `ts`（消費が起きた時刻）で刻む。追記先のファイル日ではない。**
-  セッション折り込みは過去の転写を後から取り込むので、ファイル日で刻むと過去の消費が全部
-  「導入日」に積み上がる。実機で最初に踏んだ穴（docs/46 §7-3）。
-- 二重計上しない不変条件は1つ: **raw の各ファイル日は「畳み済み」か「未畳み」のどちらか
-  一方**。当日は必ず未畳み側。加えて畳んだ消費日ごとに寄与元ファイル日（`src`）を残すので、
-  途中で落ちてやり直しても足し込まない。
-- **`ref` は rollup のキーにも応答にも入れない**。際限なく増えて「小さい」前提が壊れるのと、
-  集計 API から個別の名前を出さない（プライバシー）を兼ねる。ref 単位は raw の保持期間内のみ。
-  例外は `(ref, idx)` 重複排除の内部索引（`rollup/state.json`）で、**ref は SHA-256 の前半に
-  して平文で残さない** — 重複排除には等値比較しか要らない。集計エントリにも応答にも出ない。
-- **`bucket=hour` は raw の保持期間内だけ**。復元できない期間は `truncated: true` で言う
-  （黙って短い系列を返すと「消費が無かった」に見える）。同じ理由で **消費の無いバケットも
-  ゼロで埋めて返す** — 落とすと離れた日が隣接した棒になり、空白期間が絵から消える。
-- **月ファイルが1つでも書けなければ state を進めない**。「畳み済みだが集計が無い」を作らない
-  （raw が prune された時点で戻らない）。畳む側は `usageMu` を保持して「その日はもう追記
-  されないか」を確かめてから読む — 別ロックのままだと UTC 日跨ぎ直前の追記が黙って消える。
-- `coverage` は**データから自動生成**する（手書きの表はドリフトする）。
+- **Buckets are cut by the row's `ts` (when the consumption happened), not the file date it was
+  appended to.** Session folding takes in past transcripts after the fact, so cutting by file date
+  would pile all past consumption onto "the day of introduction". The first hole we fell into on
+  real hardware (docs/46 §7-3).
+- There is exactly one invariant against double counting: **each raw file date is either folded or
+  unfolded, never both.** Today's is always on the unfolded side. In addition, each folded
+  consumption day keeps its contributing file dates (`src`), so a crash and a retry do not add
+  twice.
+- **`ref` appears in neither the rollup's keys nor the response.** It would grow without bound and
+  break the "it is small" premise, and it also serves privacy (an aggregation API does not emit
+  individual names). Per-ref data exists only within raw's retention period. The exception is the
+  internal index for `(ref, idx)` deduplication (`rollup/state.json`), where **ref is the first half
+  of a SHA-256 and is not kept in plaintext** — deduplication needs nothing but equality. It appears
+  in neither the aggregate entries nor the response.
+- **`bucket=hour` is only within raw's retention period.** For a period that cannot be
+  reconstructed, say so with `truncated: true` (silently returning a short series looks like "there
+  was no consumption"). For the same reason, **buckets with no consumption are returned filled with
+  zero** — dropping them turns distant days into adjacent bars and erases the gap from the picture.
+- **The state does not advance if even one month file fails to write.** We do not create "folded but
+  no aggregate" (irrecoverable once raw is pruned). The folding side holds `usageMu` and confirms
+  "nothing more will be appended for that day" before reading — with a separate lock, an append
+  just before the UTC day boundary would silently vanish.
+- `coverage` is **generated from the data** (a hand-written table drifts).
 
-### 9. Console の色は「検証済みパレット＋固定スロット順」で持つ（P4）
+### 9. The Console's colours are a validated palette plus a fixed slot order (P4)
 
-グラフの色は好みではなく検証対象として扱う（dataviz スキルの6チェック）。凍結した規約:
+Chart colour is treated as something to validate, not a preference (the six checks in the dataviz
+skill). The frozen rules:
 
-- **カテゴリカルは `tokens.css` の `--viz-1..8`**（light / dark それぞれ別ステップで検証済み）。
-  `--viz-other` はグレーの「その他」で、実体には決して割り当てない。**1スロットだけ手で
-  いじらない** — 変えるならセット全体で検証をやり直す。
-- **色は実体に付く（順位ではなく）**。列挙軸は固定表、無限に増えうる軸（model / origin_conv）は
-  **キー名のハッシュ**で決める。フィルタで系列が減っても生き残りの色は動かない。
-- **描画は必ずスロット順**。積み上げで触れ合うのは隣接スロットだけになるので、隣接ペアの
-  検証がそのまま実際の隣接の保証になる。**8を超えたら「その他」へ畳む**（9色目を作らない）。
-- **kind は `--kind-*` のまま塗り替えない**（agent-display-naming の1ソース規約が優先）。
-  代わりに**積み順を固定**して隣接ゲートを通す（docs/46 §5-a）。彩度・明度の帯は通らないので、
-  **凡例のラベル・ツールチップ・表ビュー**を relief として常設する（色だけに頼らせない）。
-- UI は `features/usage/UsageView.tsx` に**モーダル非依存**で置き、設定タブは薄いラッパ。
-  ペイン昇格の余地を構造で残す（逆はできない）。
+- **Categorical colours are `--viz-1..8` from `tokens.css`** (validated separately for light and
+  dark). `--viz-other` is the grey "other" and is never assigned to a real entity. **Do not tweak a
+  single slot by hand** — if you change it, revalidate the whole set.
+- **Colour attaches to the entity, not the rank.** Enumerable axes use a fixed table; axes that can
+  grow without bound (model, origin_conv) are decided by **a hash of the key name**. Filtering out
+  series does not move the colours of the survivors.
+- **Drawing is always in slot order.** In a stacked chart only adjacent slots ever touch, so
+  validating adjacent pairs is exactly a guarantee about real adjacency. **Beyond eight, fold into
+  "other"** (never invent a ninth colour).
+- **kind keeps `--kind-*` and is not repainted** (the single-source rule from agent-display-naming
+  wins). Instead **the stacking order is fixed** to pass the adjacency gate (docs/46 §5-a). Bands of
+  saturation and lightness do not pass, so **legend labels, tooltips and the table view** are
+  permanent relief (never make colour the only channel).
+- The UI lives in `features/usage/UsageView.tsx` **independently of the modal**, with the settings
+  tab as a thin wrapper. Room to promote it to a pane is preserved structurally (the reverse is not
+  possible).
 
-## 結果
+## Results
 
-- 「どの機能・どのエージェント・どのモデルが食っているか」が1つの物差しで並ぶ。
-  最初に暴くはずの穴は docs/46 §2-b の**既定モデル問題**（`AF_TITLE_MODEL_{CODEX,OPENCODE,CURSOR}`
-  未設定なら CLI 既定＝通常フラッグシップで補助呼び出しが走る）。
-- 計測自体のコストは 0 — 既存の CLI 出力を解析するだけで、追加の LLM 呼び出しはしない。
-- **限界**: サブスク枠はトークンから逆算できない（枠の正は使用量チップ＝statusline `rate_limits`）。
-  rtk の節約量は別軸（台帳が測るのは rtk 適用「後」の実消費）。
-  copilot は `outTok` のみ・kiro/cursor/agy は転写にトークンが無い＝`measured` で正直に出す。
-- **プライバシー**: 本文非記録。台帳はワークスペース内に閉じる。
+- "Which feature, which agent, which model is eating what" lines up on one scale. The first hole it
+  should expose is docs/46 §2-b's **default model problem** (with
+  `AF_TITLE_MODEL_{CODEX,OPENCODE,CURSOR}` unset, auxiliary calls run on the CLI default, i.e.
+  normally the flagship).
+- The measurement itself costs nothing — it only parses existing CLI output and makes no additional
+  LLM calls.
+- **Limits**: a subscription allowance cannot be back-calculated from tokens (the allowance's
+  canonical source is the usage chip, i.e. the statusline `rate_limits`). rtk's savings are a
+  different axis (the ledger measures actual consumption *after* rtk is applied). copilot has only
+  `outTok`, and kiro/cursor/agy have no tokens in the transcript — reported honestly via `measured`.
+- **Privacy**: no content is recorded. The ledger stays inside the workspace.
