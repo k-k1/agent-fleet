@@ -12,7 +12,14 @@ docs/ は「読者で切った棚」であり、その構造がそのまま配�
   header     現役の棚の全ファイルに Audience / Source of truth / Updated
   vocab      利用者向けの棚に実装用語（AF_* / kind= / /api/）が漏れていない
   frozen     現役の棚から docs/log/（凍結アーカイブ）へリンクしていない
-  ref        ref/ の表の軸が、コードの一次情報と一致している
+  ref        ref/ の表がコードの一次情報と一致し、かつ対訳と ✓ の立ち方が揃っている
+
+ref は 3 段階で見る。(a) 軸の網羅: エージェントの列がセッション種別の定数を、
+デプロイの行が runtime のプロファイルを覆っているか。(b) 行の一致: Caps() で
+表現されている能力は**完全一致**（⊇ ではない——立っていない capability を ✓ に
+するのが最悪の嘘）。(c) 対訳の一致: 表の ✓ の立ち方が en と ja で同じか。
+対訳の存在だけ見ても「中身がずれた訳」は止まらず、能力表で片方だけ古いのは
+表が 2 つあるのと同じ害になる。
 
 `--strict` で warn を error に格上げする（移行中の棚を段階的に締めるため）。
 """
@@ -217,6 +224,57 @@ def source_kinds() -> set[str]:
     return set(re.findall(r'^\s*Kind\w+\s*=\s*"([a-z]+)"', body, re.M))
 
 
+def source_caps() -> dict[str, set[str]]:
+    """kind -> その Caps() が true にしているフィールド名の集合。
+
+    workspace/agent/internal/agents/<kind>/ の Caps() メソッド本体だけを見る。
+    ここが「この種別に何ができるか」の実装側の一次情報で、ref/agents.md の
+    該当行はこれと一致していなければならない。
+    """
+    base = os.path.join(ROOT, "workspace", "agent", "internal", "agents")
+    out: dict[str, set[str]] = {}
+    if not os.path.isdir(base):
+        return out
+    for kind in sorted(os.listdir(base)):
+        d = os.path.join(base, kind)
+        if not os.path.isdir(d):
+            continue
+        fields: set[str] = set()
+        for name in sorted(os.listdir(d)):
+            if not name.endswith(".go") or name.endswith("_test.go"):
+                continue
+            body = read(os.path.join(d, name))
+            for m in re.finditer(r"\)\s*Caps\(\)\s*(?:agents\.)?Caps\s*\{", body):
+                # メソッド本体は最初の "\n}" まで。Caps は素の構造体リテラルを
+                # 返すだけなので、これで十分かつ誤爆しない。
+                end = body.find("\n}", m.end())
+                blk = body[m.end() : end if end > 0 else len(body)]
+                fields |= set(re.findall(r"(\w+)\s*:\s*true", blk))
+        if fields:
+            out[kind] = fields
+    return out
+
+
+def table_check_marks(path: str, row_label: str) -> set[str] | None:
+    """表の行 row_label で ✓ が立っている列名の集合。行が無ければ None。"""
+    header: list[str] = []
+    for line in read(path).splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if not header:
+            header = [c.strip("`*") for c in cells]
+            continue
+        if cells[0].startswith(row_label):
+            return {
+                header[i]
+                for i, c in enumerate(cells)
+                if i < len(header) and c.startswith("✓")
+            }
+    return None
+
+
 def source_runtime_groups() -> list[set[str]]:
     """デプロイ形態を「別名の組」として返す。
 
@@ -264,6 +322,59 @@ def table_first_column(path: str) -> set[str]:
     return out
 
 
+def table_mark_shape(path: str) -> list[tuple[str, ...]]:
+    """ファイル内の全表を「印だけ」に潰した形。行の順序も保つ。
+
+    セルは ✓ / — / それ以外（散文）の 3 値にする。訳文の言い回しは無視して、
+    **どこに ✓ が立っているか**だけを比べるための正規化。
+    """
+    shape: list[tuple[str, ...]] = []
+    for line in read(path).splitlines():
+        line = line.strip()
+        if not line.startswith("|") or set(line) <= set("|-: "):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        shape.append(
+            tuple(
+                "✓" if c.startswith("✓") else "—" if c.startswith("—") else "."
+                for c in cells
+            )
+        )
+    return shape
+
+
+def check_ref_parity(f: Findings) -> None:
+    """ref/ の表は、英語版と日本語版で ✓ の立ち方が一致していること。
+
+    対訳の存在は lang 検査が見るが、それだけでは**中身がずれた訳**を止められない。
+    能力表で片方だけ古いのは、表が 2 つあるのと同じ害になる。
+    """
+    refdir = os.path.join(DOCS, "ref")
+    if not os.path.isdir(refdir):
+        return
+    for name in sorted(os.listdir(refdir)):
+        if not name.endswith(".md") or name.endswith(".ja.md"):
+            continue
+        ja = os.path.join(refdir, name[: -len(".md")] + ".ja.md")
+        if not os.path.exists(ja):
+            continue  # lang 検査が別途報告する
+        en_shape = table_mark_shape(os.path.join(refdir, name))
+        ja_shape = table_mark_shape(ja)
+        if len(en_shape) != len(ja_shape):
+            f.error(
+                f"ref/{name}: 表の行数が対訳と違う"
+                f"（en={len(en_shape)} / ja={len(ja_shape)}）"
+            )
+            continue
+        for i, (a, b) in enumerate(zip(en_shape, ja_shape)):
+            if a != b:
+                f.error(
+                    f"ref/{name}: 表の {i + 1} 行目で ✓ の立ち方が対訳と違う"
+                    f"（en={''.join(a)} / ja={''.join(b)}）"
+                )
+                break
+
+
 def check_ref(f: Findings) -> None:
     agents = os.path.join(DOCS, "ref", "agents.md")
     if os.path.exists(agents):
@@ -274,6 +385,26 @@ def check_ref(f: Findings) -> None:
                 "ref/agents.md: コードにある種別が表に無い -> "
                 + ", ".join(sorted(missing))
             )
+    # Caps() で表現されている行は、実装と 1:1 で一致していなければならない
+    # （⊇ ではなく完全一致 — 立っていない capability を ✓ にするのが最悪の嘘）。
+    if os.path.exists(agents):
+        caps = source_caps()
+        for row, field in (
+            ("Copy the conversation into a new session", "CanFork"),
+            ("Fork from a past message", "CanForkAt"),
+            ("Choosing to skip permission prompts", "PermissionChoice"),
+        ):
+            marked = table_check_marks(agents, row)
+            if marked is None:
+                f.error(f"ref/agents.md: 行が見つからない -> 「{row}」")
+                continue
+            want = {k for k, fields in caps.items() if field in fields}
+            if marked != want:
+                f.error(
+                    f"ref/agents.md「{row}」が実装の {field} と食い違う"
+                    f"（表={sorted(marked)} / コード={sorted(want)}）"
+                )
+
     targets = os.path.join(DOCS, "ref", "deploy-targets.md")
     if os.path.exists(targets):
         rows = {c.strip("`*") for c in table_first_column(targets)}
@@ -340,6 +471,7 @@ def main() -> int:
         check_frozen(files, f)
     if run("ref"):
         check_ref(f)
+        check_ref_parity(f)
 
     for w in f.warns:
         print(f"warn: {w}")
