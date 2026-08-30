@@ -5,7 +5,7 @@ docs/ は「読者で切った棚」であり、その構造がそのまま配�
 （control-plane/workspace_docs.go の docsRolePrefixes）。棚の規約が崩れると
 配布範囲が静かに変わるので、規約は人間のレビューではなくここで機械検査する。
 
-検査は 6 本:
+検査は 7 本:
 
   links      相対リンクの実在（アンカーは無視）
   lang       二言語の閉包（en は .md へ、ja は .ja.md へ）と対訳の存在
@@ -13,6 +13,7 @@ docs/ は「読者で切った棚」であり、その構造がそのまま配�
   vocab      利用者向けの棚に実装用語（AF_* / kind= / /api/）が漏れていない
   frozen     現役の棚から docs/log/（凍結アーカイブ）へリンクしていない
   ref        ref/ の表がコードの一次情報と一致し、かつ対訳と ✓ の立ち方が揃っている
+  knowledge  アシスタント知識が機能カタログのメンバー向けの行を覆っている
 
 ref は 3 段階で見る。(a) 軸の網羅: エージェントの列がセッション種別の定数を、
 デプロイの行が runtime のプロファイルを覆っているか。(b) 行の一致: Caps() で
@@ -364,6 +365,79 @@ def table_mark_shape(path: str) -> list[tuple[str, ...]]:
     return shape
 
 
+def check_knowledge(f: Findings) -> None:
+    """アシスタント知識が機能カタログのメンバー向けの行を覆っているか。
+
+    `workspace/agent/knowledge/af-usage.md` は `docs/use/` の要約で、//go:embed で
+    エージェントのバイナリに焼かれる。生成物にはできない——エージェントのイメージの
+    ビルド文脈は `workspace/agent/` だけなので `docs/` が見えないし、あれは散文を
+    連結したものではなく「読ませる順」に畳んだプロンプトである。
+
+    手写しである以上は必ず遅れるので、遅れたことが分かるようにする。突き合わせるのは
+    ref/features.ja.md の**メンバー向けの行**（管理者・運用者向けの行は、読者が違うので
+    このアシスタントの守備範囲ではない）。
+
+    ⚠️ 検査できるのは「その機能について書くと決めた記録が在るか」までで、書いた中身が
+    正しいかではない。台帳が「覆った」と言っているだけの可能性は消せない——消せるのは
+    「カタログに増えた行を誰も見なかった」の方だけである。
+    """
+    cat = os.path.join(DOCS, "ref", "features.ja.md")
+    doc = os.path.join(ROOT, "workspace", "agent", "knowledge", "af-usage.md")
+    led = os.path.join(ROOT, "workspace", "agent", "knowledge", "af-usage.coverage.tsv")
+    if not (os.path.exists(cat) and os.path.exists(doc) and os.path.exists(led)):
+        return
+
+    # カタログのメンバー向けの行（「誰が」列が「メンバー」で始まるもの）。
+    wanted: list[str] = []
+    for line in read(cat).splitlines():
+        line = line.strip()
+        if not line.startswith("|") or set(line) <= set("|-: "):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if not cells[0] or cells[0] == "機能":
+            continue
+        if len(cells) > 1 and cells[1].startswith("メンバー"):
+            wanted.append(cells[0])
+
+    ledger: dict[str, str] = {}
+    for i, line in enumerate(read(led).splitlines(), 1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if "\t" not in line:
+            f.error(f"af-usage.coverage.tsv:{i}: タブ区切りでない -> {line!r}")
+            continue
+        name, where = line.split("\t", 1)
+        ledger[name.strip()] = where.strip()
+
+    sections = set(re.findall(r"^##\s+(\d+)\.", read(doc), re.M))
+
+    for name in wanted:
+        if name not in ledger:
+            f.error(
+                f"af-usage.coverage.tsv: 機能カタログの行が台帳に無い -> 「{name}」"
+                "（アシスタント知識に書くか、書かない理由を `-` で添えること）"
+            )
+            continue
+        where = ledger[name]
+        if where.startswith("-"):
+            if not where[1:].strip():
+                f.error(
+                    f"af-usage.coverage.tsv:「{name}」を対象外にするなら理由を書く"
+                )
+        elif where not in sections:
+            f.error(
+                f"af-usage.coverage.tsv:「{name}」が af-usage.md に無い章を指している"
+                f" -> {where}"
+            )
+
+    for name in ledger:
+        if name not in wanted:
+            f.error(
+                f"af-usage.coverage.tsv: 機能カタログに無い行が残っている -> 「{name}」"
+                "（カタログ側で消えたか名前が変わった）"
+            )
+
+
 def check_ref_parity(f: Findings) -> None:
     """ref/ の表は、英語版と日本語版で ✓ の立ち方が一致していること。
 
@@ -486,7 +560,7 @@ def main() -> int:
     ap.add_argument(
         "--only",
         default="",
-        help="検査名をカンマ区切りで指定（links,lang,header,vocab,frozen,ref）",
+        help="検査名をカンマ区切りで指定（links,lang,header,vocab,frozen,ref,knowledge）",
     )
     args = ap.parse_args()
 
@@ -508,6 +582,8 @@ def main() -> int:
     if run("ref"):
         check_ref(f)
         check_ref_parity(f)
+    if run("knowledge"):
+        check_knowledge(f)
 
     for w in f.warns:
         print(f"warn: {w}")
