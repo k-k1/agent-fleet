@@ -1,221 +1,250 @@
-# 0046. `.drawio` は drawio 公式ビューアを同梱し、サンドボックス iframe に閉じ込めて表示する
+# 0046. Ship drawio's official viewer for `.drawio`, and display it confined in a sandboxed iframe
 
-- 状態: **P0 実装済み**（2026-08-16）＋ **P1（ステンシル）実装済み**（2026-08-22。設計と実測は
-  [docs/65](../log/65-drawio-viewer.md)）。成立性は開発 Workspace の headless Chromium で
-  **外部通信を全遮断した状態**まで実測し、実装後は検証ハーネス
-  （`npm --prefix console run drawio:check`）が実ブラウザで「描画される・外部への要求 0 件」を
-  毎回判定する。**P1 で当初案（フレームが `STENCIL_PATH` から直接取る）を実測により撤回し、
-  決定 5b / 5c を追加した。** 閉域向けの事前投入スクリプト（P1b）と P2 以降は未着手。
-- 関連: [0027-markdown-code-editor.md](0027-markdown-code-editor.md)（File ペインの面と保存機構。
-  本 ADR はその面を 1 つ増やす） / [docs/35](../log/35-packaging.md)（同梱物と配布サイズ） /
-  [0031-mcp-registry.md](0031-mcp-registry.md)（信用できない入力を名前で照合してから使う型）
+English | [日本語](0046-drawio-viewer.ja.md)
 
-## 背景
+- Status: **P0 implemented** (2026-08-16) plus **P1 (stencils) implemented** (2026-08-22. The design
+  and the measurements are in [docs/65](../log/65-drawio-viewer.md)). Feasibility was measured in the
+  development workspace's headless Chromium **with all external communication blocked**, and after
+  implementation a verification harness (`npm --prefix console run drawio:check`) judges "it renders,
+  with zero outbound requests" in a real browser every time. **P1 withdrew the original proposal (the
+  frame fetching directly from `STENCIL_PATH`) on the basis of measurement, adding decisions 5b and
+  5c.** The pre-seeding script for closed networks (P1b) and P2 onwards are not started.
+- See also: [0027-markdown-code-editor.md](0027-markdown-code-editor.md) (the File pane's surfaces and
+  the save machinery — this ADR adds one more surface) / [docs/35](../log/35-packaging.md) (what is bundled and
+  distribution size) / [0031-mcp-registry.md](0031-mcp-registry.md) (the pattern of checking untrusted
+  input against a name before using it)
 
-Console の File ペインは `.drawio` を**生の XML** としてしか出せない。`.drawio.svg` /
-`.drawio.png` は拡張子が画像なので既に表示できており、穴は**素の `.drawio` だけ**である。
+## Context
 
-## 決定 1 — 描画は drawio 公式の `viewer-static.min.js` を同梱して行う
+The Console's File pane can only show `.drawio` as **raw XML**. `.drawio.svg` / `.drawio.png` already
+display, since their extensions are images, so the gap is **plain `.drawio` alone**.
 
-自前レンダラも外部サービスも採らない。
+## Decision 1 — render with drawio's official `viewer-static.min.js`, bundled
 
-- **完全オフラインで描画できることを実測した。** DNS を全遮断（`--host-resolver-rules="MAP *
-  127.0.0.1:1"`）した headless Chromium で、図形・エッジ・日本語ラベル・複数ページ・
-  **圧縮された `<diagram>`**（deflate+base64）まで正しく描画された。読み込み 76 ms・描画 ~0 ms。
-- 大きさは **4.0 MB（gzip 870 KB）の 1 ファイル**。既に遅延読み込みしている mermaid / marp-core と
-  同じ桁で、遅延読み込みする限り初期表示には乗らない。
-- **自前レンダラは却下。** シェイプライブラリを使った図が「それらしく間違って」描かれる。
-  無言の低品質は非表示より悪い。
-- **サーバ側 SVG 変換は不可。** drawio-desktop（Electron）が要る。
-- **npm に代替が無い**（`mxgraph` は下回りのみ・`drawio` は無関係・`react-drawio` は外部 embed の
-  ラッパ）。ベンダリングが唯一の道である。
+Neither a home-grown renderer nor an external service.
 
-## 決定 2 — アプリの window へは読み込まず、サンドボックス iframe に閉じ込める
+- **Rendering fully offline was measured.** In a headless Chromium with DNS entirely blocked
+  (`--host-resolver-rules="MAP * 127.0.0.1:1"`), shapes, edges, Japanese labels, multiple pages and
+  even **compressed `<diagram>`** (deflate+base64) all rendered correctly. 76 ms to load, ~0 ms to
+  render.
+- The size is **one file of 4.0 MB (870 KB gzipped)**. The same order as mermaid and marp-core, which
+  are already lazily loaded, and as long as it is lazily loaded it does not weigh on the initial
+  render.
+- **A home-grown renderer is rejected.** Diagrams that use shape libraries would be drawn
+  "plausibly wrong". Silent low quality is worse than not displaying.
+- **Server-side SVG conversion is impossible.** It needs drawio-desktop (Electron).
+- **There is no alternative on npm** (`mxgraph` is only the substrate, `drawio` is unrelated, and
+  `react-drawio` wraps an external embed). Vendoring is the only route.
 
-`sandbox="allow-scripts"`（`allow-same-origin` も `allow-popups` も与えない）の iframe に
-自前の受け皿を置き、**XML は親が `api/fs/download` で取って postMessage で流し込む**。
+## Decision 2 — do not load it into the app's window; confine it in a sandboxed iframe
 
-理由はすべて実測に基づく。
+Put our own container in an iframe with `sandbox="allow-scripts"` (granting neither
+`allow-same-origin` nor `allow-popups`), and **have the parent fetch the XML with `api/fs/download`
+and feed it in by postMessage**.
 
-1. **グローバルを 932 個生やす。** `mxClient` 系だけでなく `lang` / `dash` / `Base64` / `Spinner` /
-   `pako` / `MathJax` / `Editor` / `Graph`、さらに **`window.DOMPurify` を上書き**する。
-   アプリの window に入れたら戻す手段が無い。
-2. **ツールバーの lightbox が図面を外部へ持ち出す。** `GraphViewer.lightboxHost =
-   window.DRAWIO_LIGHTBOX_URL`（既定 `https://app.diagrams.net`）を `window.open` して図を渡す。
-   ツールバーから外すのに加え、**`allow-popups` を与えないので `window.open` 自体が失敗する**——
-   設定漏れが事故にならない側に倒す。
-3. オリジンを持たない iframe なので、ラベルに仕込まれた HTML がビューア同梱の DOMPurify を
-   すり抜けても Console の DOM・Cookie・API に届かない。
-4. **P0 はこれで追加設定が要らない。** `<script src>` は CORS の対象外なので、オリジンなしの
-   iframe からでも自オリジンのビューアを読める。
+The reasons are all measured.
 
-**フレームは何ひとつ自分で取りに行かない**（2026-08-16 の実機不具合を受けて改訂）。当初は
-ビューア本体を `<script src>` で読ませていたが、**オリジンを持たないフレームからの要求は
-cross-site 扱いになり `SameSite=Lax` のセッション cookie が付かない**ため、CP の `authGate` が
-`/assets/*` を 401 で弾き、実機だけが壊れた。ビューア本文も図の XML も**親が取得して
-postMessage で渡す**（フレームはインライン script として評価する）。CP の認証・キャッシュ規則を
-触らずに済み、P1 のステンシルも同じ経路に乗る。**フレームの CSP に外部オリジンを足す変更は、
-この不具合に戻すこと**と同義なので入れない。
+1. **It creates 932 globals.** Not just the `mxClient` family but `lang` / `dash` / `Base64` /
+   `Spinner` / `pako` / `MathJax` / `Editor` / `Graph`, and it **overwrites `window.DOMPurify`**.
+   Once it is in the app's window there is no way back.
+2. **The toolbar's lightbox carries the diagram outside.**
+   `GraphViewer.lightboxHost = window.DRAWIO_LIGHTBOX_URL` (defaulting to
+   `https://app.diagrams.net`) is opened with `window.open` and handed the diagram.
+3. The XML is untrusted input; even if something slips through it cannot reach the Console's DOM,
+   cookies or API.
+4. **P0 needs no extra configuration this way.** `<script src>` is not subject to CORS, so even an
+   origin-less iframe can load a viewer from our own origin.
 
-**iframe を作った直後に postMessage してはいけない**（同日・同じ調査で判明）。まだ srcdoc の
-文書が無く、メッセージは初期の `about:blank` に配達されて消える（実測: 0/10/50ms は届かず、
-200ms で届いた）。フレームが `ready` を出してから送る。
+**The frame fetches nothing itself** (revised after the real-hardware failure of 2026-08-16).
+Originally the viewer was loaded with `<script src>`, but **a request from an origin-less frame is
+treated as cross-site and the `SameSite=Lax` session cookie is not attached**, so the CP's `authGate`
+rejected `/assets/*` with 401 and only real hardware broke. Both the viewer body and the diagram's
+XML are **fetched by the parent and passed by postMessage** (the frame evaluates it as an inline
+script). This leaves the CP's authentication and caching rules untouched, and P1's stencils ride the
+same path. **A change that adds an external origin to the frame's CSP** is equivalent to reverting to
+this bug and is not made.
 
-**「読み込めなかった」と「図として読めない」は別のコードで返す。** 上の不具合はビューアの
-読み込み失敗だったのに一律 `parse` を返していたため、画面には「drawio の図として解釈できません」
-と出て**原因がファイル側にあるように見えた**。誤った文言は調査をまるごと逸らす。
+**Do not postMessage immediately after creating the iframe** (found the same day, in the same
+investigation). The srcdoc document does not exist yet and the message is delivered to the initial
+`about:blank` and lost (measured: 0/10/50ms did not arrive; 200ms did). Send after the frame emits
+`ready`.
 
-**フレームの中身は静的ファイルではなく `srcdoc`（文字列を組み立てる 1 モジュール）にした。**
-CSP・外部 URL の潰し・メッセージ契約が 1 か所に集まり、「lightbox を出していないか」
-「外部 URL を潰しているか」をユニットテストで文字列として検査できる。ハッシュ付き資産に
-なるのは 4 MB の本体だけで、srcdoc はそれを `<script src>` で読む。
+**"Could not load" and "cannot be read as a diagram" return different codes.** The bug above was a
+failure to load the viewer, yet `parse` was returned uniformly, so the screen said "this cannot be
+interpreted as a drawio diagram" and **made it look as though the fault was in the file**. Wrong
+wording derails the whole investigation.
 
-**外部 URL の既定値は空文字では潰せない**（実装時に判明）。ビューアは
-`window.X = window.X || "https://…"` の形で入れるので `""` は falsy ＝ 外部の既定値が残る。
-実際 `DRAW_MATH_URL` が `viewer.diagrams.net` を取りに行き、CSP だけが止めていた。
-ネットワークに出ない dead value を入れ、**ハーネスの「外部への要求 0 件」で担保する**
-（版が上がって新しい名前が増えたら、そこで赤くなる）。
+**The frame's contents are a `srcdoc` (one module that assembles a string), not a static file.** The
+CSP, the neutralisation of external URLs and the message contract all gather in one place, and "are
+we showing the lightbox?" and "are external URLs neutralised?" can be checked as strings in a unit
+test. The only hashed asset is the 4 MB body, which the srcdoc loads with `<script src>`.
 
-## 決定 2.5 — 操作（ズーム / パン）はフレーム側で自前に持つ
+**The external URL defaults cannot be neutralised with an empty string** (found during
+implementation). The viewer sets them as `window.X = window.X || "https://…"`, so `""` is falsy and
+the external default survives. In fact `DRAW_MATH_URL` was going to `viewer.diagrams.net`, and only
+the CSP was stopping it. We put in a dead value that does not go on the network, and **guarantee it
+with the harness's "zero outbound requests"** (if a version bump adds a new name, it goes red there).
 
-`GraphViewer` は**ジェスチャを一切配線していない**（`init` は `pinchEnabled=false`・
-`setPanning(false)`、ホイールの購読も無い）。ツールバーのボタンだけでは、スマホのピンチも
-Ctrl＋ホイールもダブルタップも効かない。フレーム内に実装する（詳細と実測は docs/65 §65.12）。
+## Decision 2.5 — implement the interactions (zoom / pan) ourselves in the frame
 
-- **`touch-action: none` が要る** —— 無ければスマホのピンチはページ拡大に取られて図に届かない。
-- **利用者が動かした後は、ペインの寸法が変わっても収め直さない。**
-- **収め直しに `fitGraph()` は使えない**（コンテナ幅が同じだと早期 return で無反応）。
-  ビューアが控える `graph.initialViewState` を戻す。
+`GraphViewer` **wires up no gestures at all** (`init` has `pinchEnabled=false` and
+`setPanning(false)`, and it does not subscribe to the wheel). With only the toolbar buttons, neither
+pinch on a phone, nor Ctrl+wheel, nor double-tap works. It is implemented inside the frame (details
+and measurements in docs/65 §65.12).
 
-## 決定 2.6 — テーマ追従は `"dark"` / `"light"` の**文字列**で渡す
+- **`touch-action: none` is required** — without it a phone's pinch is taken by page zoom and never
+  reaches the diagram.
+- **Once the user has moved it, do not re-fit when the pane's dimensions change.**
+- **`fitGraph()` cannot be used to re-fit** (it returns early and does nothing when the container
+  width is unchanged). Restore the `graph.initialViewState` the viewer keeps.
 
-`isDarkMode()` は文字列比較なので、真偽値を渡すと黙ってライト描画になる。背景だけ暗くした
-結果、**既定色（黒）のラベルが暗い背景に消えた**（実測コントラスト比 1.3:1）。
+## Decision 2.6 — pass the theme as the **string** `"dark"` / `"light"`
 
-**この種の欠陥を画素で判定してはいけない。** 暗色にならない絵の方が図形の明るい塗りで
-「明るい画素」が多くなり（40778 対 2387）、素朴なしきい値は真逆の答えを出す。ビューアの
-`isDarkMode()` を返させて要求と突き合わせる。
+`isDarkMode()` compares strings, so passing a boolean silently renders light. Having darkened only
+the background, **labels in the default colour (black) vanished against the dark background**
+(measured contrast ratio 1.3:1).
 
-## 決定 2.7 — テーマが変わったらフレームごと作り直し、見ていた場所を引き継ぐ
+**Do not judge this class of defect by pixels.** The picture that fails to go dark has *more* bright
+pixels, because of the shapes' light fills (40778 versus 2387), and a naive threshold gives exactly
+the opposite answer. Have the viewer return `isDarkMode()` and compare it with what was requested.
 
-drawio は **1 つの文書内でのテーマ往復を想定していない**。`darkModeChanged()` は CSS クラスと
-`color-scheme` を触るだけで、色の決定は読み込み・初回描画で固まる。同じフレームに描き直しを
-頼むと、ビューア自身は `isDarkMode() === true` と答えるのに、**コンテナ見出しが消え、エッジの
-ラベルはライト時の白いピル＋黒文字のまま残る**（実測）。
+## Decision 2.7 — recreate the whole frame when the theme changes, carrying over where you were
 
-作り直しの代償は 4 MB の再評価（キャッシュから ~76 ms）だけで、テーマ切替は頻繁な操作では
-ないため受け入れる。**ページ・倍率・位置は引き継ぐ**ので体感は連続する。ページは
-**番号ではなく diagram の id**（`graphConfig.pageId`）で指す —— 番号はページの増減でずれる。
-引き継ぎは**利用者が自分で動かしていたときだけ**行い、そうでなければ収め直す。
+drawio **does not anticipate switching theme back and forth within one document.**
+`darkModeChanged()` only touches the CSS class and `color-scheme`; the colour decisions are fixed at
+load and first render. Asking the same frame to redraw leaves the viewer answering
+`isDarkMode() === true` while **container headings disappear and edge labels keep the light theme's
+white pill with black text** (measured).
 
-## 決定 2.8 — 背景色は描画のたびに html と body の両方へ inline で置く
+The price of recreating is re-evaluating 4 MB (~76 ms from cache), and switching theme is not a
+frequent action, so it is accepted. **The page, the zoom and the position are carried over**, so it
+feels continuous. The page is named by **the diagram's id, not its number** (`graphConfig.pageId`) —
+numbers shift when pages are added or removed. The carry-over happens **only when the user had moved
+it themselves**; otherwise it re-fits.
 
-srcdoc のスタイルシートは `html, body` の両方に色を付けるので、描画時に `html` だけを
-inline で上書きしても **`body` の指定が上に塗り、一度も効かない**。結果として背景は
-「フレームを組み立てたときのテーマ」で固定され、利用者から出た 2 つの症状——
-「ダークにしても白いまま」「ライトにしても背景が暗いまま（要素だけライト）」——は
-**どちらもこれ 1 つ**だった。**背景色は単色なので画素で判定してよい**（決定 2.6 の
-コントラストと違い、しきい値が真逆を向かない）。
+## Decision 2.8 — set the background colour inline on both html and body on every render
 
-## 決定 3 — 新しい `PaneKind` は作らず、File ペインの面を 1 つ増やす
+The srcdoc's stylesheet colours both `html` and `body`, so overriding only `html` inline at render
+time is **painted over by `body`'s rule and never takes effect once**. The background was therefore
+pinned to "whatever theme the frame was assembled with", and the two symptoms the user reported —
+"it stays white when I switch to dark" and "the background stays dark when I switch to light (only
+the elements go light)" — were **both this one thing**. **The background colour may be judged by
+pixels, because it is a flat colour** (unlike decision 2.6's contrast, the threshold does not point
+the wrong way).
 
-`kind: "file"` のまま `fileMode` に `diagram` を足し、**図 ↔ XML ソースの 2 モード**にする。
-タブ・ポップアウト・dirty 管理・キーボード・左ペインからの導線が無改造で効き、ソース側は
-既存の CodeMirror 編集面（docs/44 の保存・競合・外部変更追従）をそのまま使える。
-判定は拡張子（`.drawio` / `.dio`）に加え、**先頭が `<mxfile` / `<mxGraphModel` の `.xml`** も含める。
+## Decision 3 — do not create a new `PaneKind`; add one surface to the File pane
 
-## 決定 4 — 図の取得は `api/fs/file` ではなく `api/fs/download` から行う
+Keep `kind: "file"` and add `diagram` to `fileMode`, giving **two modes, diagram ↔ XML source**.
+Tabs, popout, dirty management, the keyboard and the route from the left pane all work unmodified,
+and the source side uses the existing CodeMirror editing surface as is (docs/44's saving, conflicts
+and following external changes). Detection is by extension (`.drawio` / `.dio`) plus **`.xml` files
+starting with `<mxfile` or `<mxGraphModel`**.
 
-`api/fs/file` は **2 MiB で打ち切る**（`maxEditorFileBytes = 2 << 20`,
-`workspace/agent/fs_fd_linux.go:19`）。画像を埋め込んだ `.drawio` は普通に超え、`content` が
-`(file too large to preview)` に化ける。`api/fs/download` はサイズ制限を持たない
-（`http.ServeContent`）。**この 1 点でファイルの半分が開かないか開くかが変わる。**
+## Decision 4 — fetch the diagram from `api/fs/download`, not `api/fs/file`
 
-## 決定 5 — ステンシルは同梱せず、CP がプロキシしてディスクにキャッシュする
+`api/fs/file` **truncates at 2 MiB** (`maxEditorFileBytes = 2 << 20`,
+`workspace/agent/fs_fd_linux.go:19`). A `.drawio` with embedded images routinely exceeds it and
+`content` turns into `(file too large to preview)`. `api/fs/download` has no size limit
+(`http.ServeContent`). **This single point decides whether half the files open at all.**
 
-「必要になったときに取りに行く」を採る。**実行時のオンデマンド性は最初からある**——
-`mxStencilRegistry` は図に現れたセットだけを 1 回取りに行くので、1 枚の図で
-全部を読むことは起きない。問題は配布サイズだけである。
+## Decision 5 — do not bundle the stencils; the CP proxies them and caches to disk
 
-- **ステンシル `.xml` は 203 ファイル / 40.8 MB**（`aws4.xml` だけで 6.21 MB。`LICENSE` と
-  `clipart/*.png` を含めた `stencils/` 全体は 205 ファイル / 42.8 MB）。使う図の割合に対して
-  リポジトリとイメージに常時積むのは割に合わない。
-- **同梱するのは台帳だけ**（`control-plane/assets/drawio-stencils.json`、203 件の
-  `名前 → sha256 → サイズ`、26 KB）。CP は `GET /api/drawio/stencils/<set>.xml` を受け、
-  台帳で照合 → キャッシュ → 無ければ pin した upstream から取得 → sha256 照合 → 保存、
-  の順で応える。**台帳は CP に置く——照合するのは CP だから**で、Console 側の台帳は防壁にならない。
-- **台帳は完全性の担保であると同時に SSRF の防壁である。** セット名は**信用できない `.drawio` の
-  中身**（`shape=mxgraph.<set>.<x>`）から来る。台帳に無い名前を取りに行く実装は、
-  「図を開かせるだけで CP に任意の URL を叩かせる」道具になる。要求は URL を運ばず、
-  CP が台帳の `base` とセット名から組み立てる。
-- **台帳は絞らない。** 載せなかったセットは 404 ＝ その図が黙って劣化する。全件 26 KB なので
-  絞る動機が無い。**絞るのは事前投入（プリシード）の方**であって台帳ではない。
-- **外向き通信は CP で 1 回・テナント全体で共有**する。利用者のブラウザからは出さない。
-- **閉域では黙って劣化する**——取得に失敗したら「枠と色だけ」（＝ P0 と同じ絵）に落ちるだけで、
-  ペインは壊れない。**エラー表示にはしない**（図は正しく開けているので、利用者に見せる異常
-  ではない）。事前投入用のスクリプトを併せて用意する。
+We take "fetch them when they are needed". **On-demand behaviour at run time is there from the
+start** — `mxStencilRegistry` fetches only the sets that appear in the diagram, once, so one diagram
+never loads them all. The only problem is distribution size.
 
-**ステンシルの有無で何が変わるかは実測済み**である。未同梱だと `shape=mxgraph.aws4.*` は
-サイズ・枠・グラデーション・ラベルは出るが**アイコンの図案が空になる**（オレンジの四角が
-出るだけ）。ステンシルを渡すと正しい A1 / EC2 のアイコンが出る。
+- **The stencil `.xml` files are 203 files / 40.8 MB** (`aws4.xml` alone is 6.21 MB; the whole
+  `stencils/` including `LICENSE` and `clipart/*.png` is 205 files / 42.8 MB). Carrying that in the
+  repository and the image permanently is not worth the proportion of diagrams that use it.
+- **Only a ledger is bundled** (`control-plane/assets/drawio-stencils.json`: 203 entries of
+  `name → sha256 → size`, 26 KB). The CP takes `GET /api/drawio/stencils/<set>.xml` and answers by
+  checking the ledger → the cache → fetching from a pinned upstream if absent → checking the sha256 →
+  saving. **The ledger lives on the CP, because the CP is what checks it**; a ledger on the Console
+  side is no defence.
+- **The ledger guarantees integrity and is at the same time the SSRF defence.** The set name comes
+  from **the contents of an untrusted `.drawio`** (`shape=mxgraph.<set>.<x>`). An implementation that
+  fetches a name absent from the ledger is a tool for "make the CP hit an arbitrary URL just by
+  getting a diagram opened". The request carries no URL; the CP assembles it from the ledger's `base`
+  and the set name.
+- **Do not trim the ledger.** A set left out is a 404, i.e. that diagram silently degrades. All of it
+  is 26 KB, so there is no motive to trim. **What gets trimmed is the pre-seeding**, not the ledger.
+- **Outbound traffic happens once, on the CP, shared across the tenant.** It never leaves the user's
+  browser.
+- **On a closed network it degrades silently** — if the fetch fails it falls back to "outlines and
+  colours only" (the same picture as P0) and the pane does not break. **It is not shown as an error**
+  (the diagram opened correctly, so it is not an anomaly to put in front of the user). A pre-seeding
+  script is provided alongside.
 
-## 決定 5b — フレームには取りに行かせない。申告させ、親が取って渡す
+**What changes with and without the stencils has been measured.** Without them,
+`shape=mxgraph.aws4.*` still gets its size, outline, gradient and label but **the icon artwork is
+empty** (just an orange rectangle). Given the stencils, the correct A1 / EC2 icons appear.
 
-決定 5 の「CP がプロキシする」までは変わらないが、**誰がその CP を叩くか**は当初案
-（`STENCIL_PATH` を CP に向けてフレームに取らせる。CORS `*` ＋ authGate 除外が要る）から
-改める。実ブラウザで測って、フレーム直取りが 3 つとも壊れることを確認したためである。
+## Decision 5b — do not let the frame fetch. It declares, and the parent fetches and hands over
 
-1. **認証を通れない。** フレームから出た要求には**セッション cookie が付かない**（実測）。
-   オリジンを持たないフレームの要求は cross-site 扱いで SameSite=Lax が落ちる——
-   §65.11-7 で `<script src>` が 401 になったのとまったく同じ穴。
-2. **CSP を開けることになる。** `connect-src 'none'` のままではフレームの取得は止まる
-   （実測: 要求 0 本）。通すには自オリジンを足すしかなく、**フレームが自分で外を叩ける経路が
-   そこで復活する**（決定 2 が塞いだもの）。
-3. **一度失敗すると二度と再取得しない。** 失敗は握り潰されたうえ `packages[basename] = 1` が
-   立つ。実測では、失敗後に再描画しても要求は 1 本も出ずアイコンは空のままだった。
-   一時的な失敗がフレームの寿命いっぱい固定される。
+"The CP proxies" from decision 5 is unchanged, but **who hits that CP** is revised from the original
+proposal (point `STENCIL_PATH` at the CP and let the frame fetch; requiring CORS `*` and an authGate
+exclusion). Measuring in a real browser confirmed that fetching directly from the frame breaks in
+three ways.
 
-**親が取って渡す形にすると 3 つとも消え、絵は同じになる**——フレーム直取り版と親から
-`parseStencilSets()` で流し込んだ版のスクリーンショットは**バイト単位で一致**した。
-差し込み後の描き直しは `graph.refresh()` で足りる（実測: 1.8221 倍に拡大した状態で
-倍率も位置も保たれたまま図案だけが載った）。**必要なセットの割り出しは展開済みのモデルを
-見る**——生 XML の走査は圧縮された `<diagram>` で何も見つけられない（実測）ので、
-これにより**親が deflate を解く必要も無くなる**。
+1. **It cannot get through authentication.** A request leaving the frame **carries no session
+   cookie** (measured). A request from an origin-less frame is treated as cross-site and SameSite=Lax
+   is dropped — exactly the hole that made `<script src>` 401 in §65.11-7.
+2. **It would mean opening the CSP.** With `connect-src 'none'` the frame's fetch is stopped
+   (measured: zero requests). Letting it through requires adding our own origin, and **that revives
+   the route by which the frame can reach outside on its own** (the thing decision 2 closed).
+3. **After one failure it never retries.** The failure is swallowed and `packages[basename] = 1` is
+   set. Measured: after a failure, redrawing produced not a single request and the icons stayed
+   empty. A transient failure is pinned for the frame's whole lifetime.
 
-したがって CP のステンシル経路は **authGate の内側**に置き、CORS も認証除外も付けない。
+**Having the parent fetch and hand over removes all three, and the picture is identical** —
+screenshots of the frame-fetching version and the version fed from the parent via
+`parseStencilSets()` matched **byte for byte**. Redrawing after injection needs only
+`graph.refresh()` (measured: at 1.8221× zoom, both the zoom and the position were preserved and only
+the artwork appeared). **Work out which sets are needed from the expanded model** — scanning the raw
+XML finds nothing in a compressed `<diagram>` (measured) — which also **removes the need for the
+parent to inflate anything**.
 
-## 決定 5c — `basename + ".xml"` で組み立ててはならない
+The CP's stencil route therefore sits **inside authGate**, with neither CORS nor an authentication
+exclusion.
 
-ビューアは `mxStencilRegistry.libraries`（62 セットの表）で **basename とファイル名の
-読み替え**を持つ: `ios7icons → ios7/icons.xml`、`rackGeneral → rack/general.xml`、
-`ibmcloud → ibm_cloud.xml`、`pidFlowSensors → pid/flow_sensors.xml` など。表に無い basename
-だけがフォールバックで `basename.replace("_-_","_") + ".xml"` になる（203 件中 157 件）。
-解決規則はビューアの中にしかないので、**フレーム側でその表を引く**のが唯一正しい実装になる。
+## Decision 5c — never assemble the name as `basename + ".xml"`
 
-関連する 2 つの実測:
+The viewer has a **basename-to-filename remapping** in `mxStencilRegistry.libraries` (a table of 62
+sets): `ios7icons → ios7/icons.xml`, `rackGeneral → rack/general.xml`, `ibmcloud → ibm_cloud.xml`,
+`pidFlowSensors → pid/flow_sensors.xml`, and so on. Only basenames absent from the table fall back to
+`basename.replace("_-_","_") + ".xml"` (157 of 203). The resolution rule exists only inside the
+viewer, so **consulting that table in the frame** is the only correct implementation.
 
-- **`SHAPES_PATH` の `.js`（48 本）は取りに行かない。** `libraries` は `.xml` と `.js` を混ぜて
-  並べ、分岐はリスト内の全ファイルを読むので一見取りに行くように見えるが、
-  `viewer-static.min.js` 末尾の `mxStencilRegistry.allowEval = false` に阻まれて**取得も eval も
-  起きない**（実行時に `allowEval === false` を確認。両パスを自前サーバへ向けても出た要求は
-  `aws4.xml` 1 本だけだった）。`allowEval` をこちらから触る必要は無い。
-- **純 JS のセットは台帳と無関係。** `libraries` 62 件のうち 21 件は `.xml` を持たない
-  （`archimate3` / `sysml` / `c4` / `er` / `uml25` / `mockup/*` / `emoji` …）。これらの図形は
-  viewer-static に焼き込み済みで、**今も要求 0 本で正しく描けている**（6 セットを並べた図で実測）。
-- **`libraries.sap` は存在しない `sap.xml` を指す**（upstream v31.1.8 の `stencils/` に `sap` は
-  1 件も無い）。台帳に無い＝ 404 が正しい。「漏れ」と誤読して足さないこと。
+Two related measurements:
 
-## 決定 6 — ビューア本体はリポジトリにコミットし、Vite のハッシュ資産として配る
+- **The 48 `.js` files under `SHAPES_PATH` are never fetched.** `libraries` mixes `.xml` and `.js` in
+  its lists and the branch reads every file in a list, so it looks as though it would fetch them, but
+  `mxStencilRegistry.allowEval = false` at the end of `viewer-static.min.js` blocks it and **neither
+  the fetch nor the eval happens** (confirmed `allowEval === false` at run time; pointing both paths
+  at our own server produced exactly one request, for `aws4.xml`). We do not need to touch
+  `allowEval`.
+- **The pure-JS sets have nothing to do with the ledger.** 21 of the 62 `libraries` entries have no
+  `.xml` (`archimate3` / `sysml` / `c4` / `er` / `uml25` / `mockup/*` / `emoji`, …). Those shapes are
+  baked into viewer-static and **already render correctly with zero requests** (measured on a diagram
+  containing six such sets).
+- **`libraries.sap` points at a `sap.xml` that does not exist** (there is no `sap` anywhere in
+  upstream v31.1.8's `stencils/`). Absent from the ledger, i.e. a 404, is correct. Do not misread it
+  as an omission and add it.
 
-- **ビルドが外部ネットワークに依存しない**ことを優先し、4.0 MB を `console/vendor/drawio/` に
-  バージョン ＋ sha256 固定でコミットする（`NOTICE` に Apache-2.0 の帰属を追記）。
-  ステンシル 40.8 MB は決定 5 の通りコミットしない——**同梱するかどうかの線はサイズで引く。**
-- **`console/public/` に素置きしてはならない。** CP は `/assets/*` だけ immutable で、他は
-  `no-store`（`control-plane/routes.go:776-785`）。素置きすると 4 MB がペインを開くたびに
-  再取得される。`?url` インポートで `dist/assets/` に吐かせ、バージョン更新はハッシュ変更に任せる。
+## Decision 6 — commit the viewer body to the repository and ship it as a Vite hashed asset
 
-## 決定 7 — 編集は本 ADR の範囲外
+- **Not depending on an external network at build time** comes first, so the 4.0 MB is committed to
+  `console/vendor/drawio/` pinned by version and sha256 (with Apache-2.0 attribution added to
+  `NOTICE`). The 40.8 MB of stencils is not committed, per decision 5 — **the line for what gets
+  bundled is drawn by size.**
+- **It must not be dropped into `console/public/`.** The CP marks only `/assets/*` immutable;
+  everything else is `no-store` (`control-plane/routes.go:776-785`). Dropped in plainly, the 4 MB
+  would be re-fetched every time the pane opens. Import with `?url` so it lands in `dist/assets/`,
+  and let version updates be expressed as a change of hash.
 
-drawio webapp の自ホスト（`draw.war` 53 MB）が要り、配布サイズが別次元になる。着手時に別 ADR を
-起こす。保存機構そのものは docs/44 の revision/競合機構がそのまま使えるため、**難所は編集器の
-配布であって保存ではない**ことだけ記録しておく。
+## Decision 7 — editing is out of scope for this ADR
+
+It requires self-hosting the drawio webapp (`draw.war`, 53 MB), which puts distribution size in
+another league. Raise a separate ADR when it is started. The save machinery itself can use docs/44's
+revision/conflict machinery as is, so it is worth recording only that **the hard part is distributing
+the editor, not saving**.
