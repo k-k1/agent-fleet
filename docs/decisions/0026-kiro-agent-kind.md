@@ -1,109 +1,139 @@
-# 0026. `kind=kiro`（Kiro）を第8のエージェント種別として追加する
+# 0026. Add `kind=kiro` (Kiro) as an eighth agent kind
 
-- 状態: **採用（Track A＋A2＋B＋C＋D 実装済み）**（2026-07-24。Track 0 プローブ合格 →
-  read 層＋TUI＋managed driver＋配備＋CP/Console＋ライブ使用量配線を実装。`go build`/`go vet`/
-  `gofmt`／`go test`＋`KIRO_LIVE=1` 実 `kiro-cli` 契約テスト／Console typecheck・i18n:lint・
-  vitest・vite build 緑。Track A/B/C/A2 は全 P1 レビュー修正込みで develop へマージ済み
-  〔merge de2fb25b〕、Track D は temp/kiro-track-d）。残＝実フリート再ビルド後の実機目視。
-- 関連: [0023](0023-cursor-agent-kind.md)（cursor — 直近の種別追加・本件のテンプレ）、
-  [0019](0019-copilot-agent-kind.md)（copilot — 紫色の前所有者）、
-  [0008](0008-antigravity-cli-agent-kind.md)（agy — Terminal 専用 MVP・ContextReporter の先例）、
-  [0015](0015-agent-managed-driver.md)（managed driver 抽象）。
-  実装計画・Track 0 実測・各 Track の実装メモ（read 契約・ACP 契約・配備・色・ライブ使用量）は
-  [docs/43](../log/43-kiro-agent-kind.md)。
-  ※ 0022 はエージェントメモリ版管理（未マージブランチ temp/s7in3bh）が、0025 は native 自動更新が
-  使用中のため 0026 を採番。
+English | [日本語](0026-kiro-agent-kind.ja.md)
 
-## 背景
+- Status: **adopted (Tracks A, A2, B, C and D implemented)** (2026-07-24. The Track 0 probes
+  passed → the read layer, the TUI, the managed driver, deployment, CP/Console and the live usage
+  wiring are implemented. `go build`/`go vet`/`gofmt`/`go test` plus the `KIRO_LIVE=1` real
+  `kiro-cli` contract test, and Console typecheck / i18n:lint / vitest / vite build, all green.
+  Tracks A/B/C/A2 are merged to develop including every P1 review fix [merge de2fb25b]; Track D is
+  on temp/kiro-track-d.) What remains is looking at real hardware after the fleet is rebuilt.
+- See also: [0023](0023-cursor-agent-kind.md) (cursor — the most recent kind added, and the template for this),
+  [0019](0019-copilot-agent-kind.md) (copilot — the previous owner of purple),
+  [0008](0008-antigravity-cli-agent-kind.md) (agy — the precedent for a Terminal-only MVP and for ContextReporter),
+  [0015](0015-agent-managed-driver.md) (the managed driver abstraction).
+  The implementation plan, the Track 0 measurements and the implementation notes for each track
+  (the read contract, the ACP contract, deployment, colour, live usage) are in
+  [docs/43](../log/43-kiro-agent-kind.md).
+  Note: numbers 0022 (agent memory versioning, on an unmerged branch temp/s7in3bh) and 0025
+  (native auto-update) were taken, so this is 0026.
 
-Kiro（`kiro-cli`・旧 Amazon Q Developer CLI、2025-11-17 改名。AWS Kiro IDE のターミナル版）
-は `kiro-cli acp`（ACP = JSON-RPC over stdio）・`chat`（TUI）・`--list-models -f json`・
-`--resume-id`・v2 JSONL セッションストア（`~/.kiro/sessions/cli/<sid>.jsonl`・TUI と ACP が共用）を
-備える。実バイナリ 2.14.1 を本 Workspace（Debian 12/x86_64/glibc 2.36）へ導入し Builder ID（free）
-device-flow ログイン込みで全プローブを実施した（docs/43 §2）。既存 7 種の中では cursor/copilot
-（per-session-child ACP driver）に最も近い統合面を持つ。
+## Context
 
-## 決定
+Kiro (`kiro-cli`, formerly the Amazon Q Developer CLI, renamed 2025-11-17; the terminal edition of
+the AWS Kiro IDE) has `kiro-cli acp` (ACP = JSON-RPC over stdio), `chat` (a TUI),
+`--list-models -f json`, `--resume-id` and a v2 JSONL session store
+(`~/.kiro/sessions/cli/<sid>.jsonl`, shared by the TUI and ACP). The real binary 2.14.1 was
+installed in this workspace (Debian 12 / x86_64 / glibc 2.36) and every probe was run, including a
+Builder ID (free) device-flow login (docs/43 §2). Among the existing seven kinds its integration
+surface is closest to cursor's and copilot's (a per-session-child ACP driver).
 
-1. **色 = 紫（Kiro が copilot から紫を継承）。3 種同時変更**（ユーザー決定 2026-07-24）。実描画
-   （両テーマ headless chromium スウォッチ）で確定した最終値: **kiro = dark #a371f7 / light #8250df**
-   （旧 copilot 値）、**copilot = 中立チャコール dark #7d8590 / light #30363d**、**opencode = 薄い
-   スレートグレー dark #aab4be / light #6e7781**。方針の候補値（copilot dark #6b7075／light #24292f、
-   opencode light #9aa4ae）は暗背景チャコール／白背景淡グレーで低コントラストだったため、階層
-   （copilot=濃いめ・opencode=薄め）を保ったまま可読値へ寄せた。色クラス twin は `kind-color-css-checklist`
-   の全ファイル（tokens.css dark/light＋app/terminal/sessions/settings/ui.css）を 3 種総ざらい。
-   **アイコン=`compass`（codicon）・表示順=copilot の後**（ユーザー確認済み）。
+## Decision
 
-2. **配備 = 既定オンデマンド導入・利用ユーザー限定、`BAKE_AGENT_CLIS=1` では焼いてよい**
-   （ユーザー決定 2026-07-24）。展開 ~855MB（`kiro-cli-chat` 663M 含む）が他 kind と桁違いに巨大なため、
-   lean 一律 boot-install ループには**入れない**。kiro を使うユーザーの**初回起動時（or 接続カードの
-   インストールボタン）に、その `~/.local` へ manifest sha256 ピン付きで導入**する新パターン
-   （`workspace-agent install-kiro`）。arm64/Debian12 は glibc 2.39 要求を避け **musl 変種**必須。
-   auto-update は `app.disableAutoupdates` を entrypoint 起動毎に再固定。855MB が home ボリュームに
-   載る旨は UI で明示。
+1. **Colour = purple (Kiro inherits purple from copilot); three kinds change at once** (user
+   decision, 2026-07-24). The final values, settled by actually rendering swatches in headless
+   chromium in both themes: **kiro = dark #a371f7 / light #8250df** (copilot's old values),
+   **copilot = a neutral charcoal, dark #7d8590 / light #30363d**, and **opencode = a pale slate
+   grey, dark #aab4be / light #6e7781**. The candidate values in the proposal (copilot dark
+   #6b7075 / light #24292f, opencode light #9aa4ae) were charcoal on a dark background and a pale
+   grey on white, i.e. low contrast, so they were pulled towards legible values while preserving
+   the hierarchy (copilot darker, opencode lighter). The colour-class twins sweep all three kinds
+   through every file in `kind-color-css-checklist` (tokens.css dark/light plus
+   app/terminal/sessions/settings/ui.css). **The icon is `compass` (codicon) and the display
+   position is after copilot** (confirmed with the user).
 
-3. **headlessChat = 不要（v1 スコープ外で確定）**。`ASSISTANT_AGENT_KINDS`/`defaultHeadlessOrder` に
-   kiro を加えない。headless `--no-interactive` は JSON を出さず（issue #5423/#9066）ACP 経由が筋だが、
-   アシスタントチャットの需要は既存バックエンドで足りる。**タイトル AI 提案は現行機構のまま動く**
-   （`session_title.go` の oneShotHeadless が generic read 層＝Track A の転写実装を読む）。Track D で
-   再検討したが変更なし。
+2. **Deployment: installed on demand by default, only for users who use it; it may be baked in
+   under `BAKE_AGENT_CLIS=1`** (user decision, 2026-07-24). At ~855MB unpacked (including
+   `kiro-cli-chat` at 663M) it is an order of magnitude larger than any other kind, so it does
+   **not** join the uniform lean boot-install loop. Instead there is a new pattern
+   (`workspace-agent install-kiro`) that **installs into the user's own `~/.local`, pinned by a
+   manifest sha256, on their first launch (or from an install button on the connection card)**. On
+   arm64/Debian 12 the **musl variant** is required, to avoid the glibc 2.39 requirement.
+   Auto-update is re-pinned on every entrypoint start via `app.disableAutoupdates`. The UI states
+   plainly that 855MB lands on the home volume.
 
-4. **ToS = 注意事項として記載**（Builder ID free の業務利用可否・組織ポリシー整合は採用組織側の
-   確認事項）。**開発・検証は Free（Builder ID）で進める**。
+3. **headlessChat = not needed (settled as out of scope for v1)**. kiro is not added to
+   `ASSISTANT_AGENT_KINDS` or `defaultHeadlessOrder`. Headless `--no-interactive` emits no JSON
+   (issues #5423/#9066) so ACP would be the proper route, but the demand for assistant chat is met
+   by the existing backends. **AI title suggestions still work with the current machinery**
+   (`oneShotHeadless` in `session_title.go` reads the generic read layer, i.e. the transcript
+   implementation from Track A). Reconsidered in Track D; unchanged.
 
-5. **セッション ID は CLI 採番。`session/new` へ降格してよいのは「そのストア（`<sid>.json`）が実際に
-   消滅したとき」だけ**（レビューで確定・A2-1）。kiro はセッション ID を CLI 側で採番し、自己採番の
-   `--resume-id` を渡しても採用されない（実測）。resume の `session/load` は `.lock`（pid 入り）による
-   クロスプロセス排他で「active in another process」を返し得るが、**この lock-busy を「会話が消えた」と
-   誤認して `session/new` で新規化すると、生きた会話を無言で切り離す**。したがって新規化の可否は
-   **オンディスクのストア存在**という決定的事実から判断し、lock エラー文言の有無やドリフトでは判断しない
-   （`isLockBusy` は -32603 AND メッセージで厳格化し、RETRY 判断のみに使う）。壊れたストアは resume を
-   永久エラーにする方が会話保全上正しい（意図的 fail-safe）。
+4. **ToS = documented as a caveat** (whether Builder ID free may be used for work, and consistency
+   with organisational policy, are for the adopting organisation to confirm). **Development and
+   verification proceed on Free (Builder ID).**
 
-6. **sid 発見は「枠の作成時刻」でフェンスする**（レビューで確定・A-1）。kiro は起動後に
-   `~/.kiro/sessions/cli/<sid>.json`（cwd 記録付き）を生成するので、AF は cwd＋更新時刻でそれを発見して
-   sidstore にキャッシュする。しかし **recreate は同一 dir に新しいスラグを切る**ため、フレッシュ起動の窓で
-   同一 cwd に居残る**前身セッションを誤って掴む**危険がある。よって discover は**その枠の CreatedAt
-   （Meta.CreatedAt・作成時に確定し resume 跨ぎで安定）以降に作られたストアだけ**を採用する。managed 経路
-   でも `threadHandle.createdAt` を spawn の discover へ引き回して同じフェンスを効かせる。CreatedAt が
-   解釈不能なときはフェンス無し（発見不能で固まるより退行が軽い）。
+5. **The session ID is assigned by the CLI, and falling back to `session/new` is allowed only when
+   that store (`<sid>.json`) has actually disappeared** (settled in review, A2-1). kiro assigns
+   session IDs on the CLI side and does not accept a self-assigned `--resume-id` (measured). A
+   resume's `session/load` can return "active in another process" because of cross-process
+   exclusion by a `.lock` (containing a pid), but **mistaking that lock-busy for "the conversation
+   is gone" and creating a new one with `session/new` silently severs a live conversation.**
+   Whether to create a new one is therefore judged from the decisive fact of **the store's
+   existence on disk**, never from the presence or drift of a lock error message (`isLockBusy` is
+   tightened to -32603 AND the message, and used only to decide RETRY). For a corrupted store,
+   making resume a permanent error is the right thing for conversation preservation (a deliberate
+   fail-safe).
 
-7. **ライブ使用量は `_kiro.dev/metadata` を %→token 変換で既存 UI に載せる（Track D）**。cursor は
-   ライブ経路に usage が一切乗らず不採用だった（ADR0023 決定7）が、**kiro は managed（ACP）の
-   `_kiro.dev/metadata` 通知に `contextUsagePercentage`（0–100・最新値）＋`meteringUsage`（credit・累積）が
-   毎ターン乗る**（実測）。転写にトークンが無いため、**% をモデルの実 context window（`--list-models` の
-   `context_window_tokens`）に対するトークン数へ変換**し、window を明示で渡すことで既存のトークンベース
-   ContextBar／`get_session_usage` にそのまま載せる（% は厳密往復）。ミラーへは agy と同じ
-   `agents.ContextReporter`（`ContextFill`）seam で配線し**フロント無改修**（managed=paneless はミラーが
-   唯一のビュー）。credits は `get_session_usage.cumulative.credits` で返す。**プラン残量チップ（/usage
-   PTY スクレイプ → get_agent_usage）は本 Track では見送り**（機械可読手段なし＝issue #7752・非公式 API/
-   スクレイプの脆さは usage-chip 429 事件と同種のため、必要時に別途起票）。**API キー認証も見送り・
-   login-only 継続**（TUI への env 注入が `ps` 露出＝ADR0023 決定5 と同理由）。
+6. **Discovering the sid is fenced by the slot's creation time** (settled in review, A-1). kiro
+   creates `~/.kiro/sessions/cli/<sid>.json` (recording the cwd) after it starts, so AF discovers
+   it by cwd plus modification time and caches it in the sidstore. But **recreate cuts a new slug in
+   the same directory**, so in the window of a fresh start there is a risk of **wrongly grabbing the
+   predecessor session** that is still sitting in the same cwd. So discovery accepts **only stores
+   created at or after that slot's CreatedAt** (`Meta.CreatedAt`, fixed at creation time and stable
+   across resumes). On the managed path, `threadHandle.createdAt` is carried through to the spawn's
+   discovery so the same fence applies. When CreatedAt cannot be interpreted, there is no fence
+   (a regression is a lighter cost than freezing because nothing can be discovered).
 
-## リスク（受け入れ）
+7. **Live usage rides `_kiro.dev/metadata` into the existing UI, converting % into tokens
+   (Track D)**. cursor carried no usage on its live paths at all and was not adopted (ADR 0023
+   decision 7), but **kiro's managed (ACP) `_kiro.dev/metadata` notification carries
+   `contextUsagePercentage` (0–100, the latest value) plus `meteringUsage` (credits, cumulative)
+   every turn** (measured). The transcript has no token counts, so **the percentage is converted to
+   a token count against the model's real context window** (`context_window_tokens` from
+   `--list-models`), and passing the window explicitly puts it straight into the existing
+   token-based ContextBar and `get_session_usage` (the percentage round-trips exactly). It is wired
+   to the mirror through the same `agents.ContextReporter` (`ContextFill`) seam as agy, so **the
+   front end is unmodified** (managed is paneless, and the mirror is the only view). Credits come
+   back in `get_session_usage.cumulative.credits`. **The plan-allowance chip (scraping /usage from
+   the PTY → get_agent_usage) is deferred in this track** (there is no machine-readable means —
+   issue #7752 — and the fragility of an unofficial API or scraping is the same kind as the
+   usage-chip 429 incident; file it separately when needed). **API-key authentication is also
+   deferred and login-only continues** (injecting env into the TUI exposes it in `ps` — the same
+   reason as ADR 0023 decision 5).
 
-- 週次リリースの CLI ドリフト。managed は ACP 公式契約（`session/update` 判別子・`session/load` リプレイ・
-  `.lock` 解放・`stopReason`）依存＋`KIRO_LIVE` 契約テストで一次検知。TUI は明示テキスト契約
-  （「Kiro is working」/「ask a question or describe a task」/「requires approval」）で、2.14.1 に Stop hook が
-  無い（実測）ためスピナー regex は使わない。metadata の field 名/スケールが変われば Track D の契約テストで
-  落ちる。
-- 展開 855MB のオンデマンド導入。中断（初回起動待ちきれずペイン kill）に対し staging→原子 rename＋
-  presence marker（kiro-cli を最後に設置）＋`--version` サニティ＋flock 排他で自己修復可能に。実 855MB DL の
-  通し目視は実フリート再ビルド後。
-- linux arm64: musl 変種の資産健全性は検証済だが実 arm64 ハードでの起動は未検証（本コンテナ x64）。
-- v2 JSONL ストアの世代差（v1 SQLite／v3 JSONL）。`--agent-engine v2` を明示ピンして read/状態契約が
-  将来の既定 v3 化で崩れないよう保険。
-- ライブ使用量は**稼働中 managed のみ**（in-memory・停止/TUI/未受信は非表示）。token 数は % からの概算
-  （% 自体は正確）。
+## Risks (accepted)
 
-## 結果
+- CLI drift from weekly releases. Managed depends on the official ACP contract (the
+  `session/update` discriminator, `session/load` replay, releasing the `.lock`, `stopReason`) with
+  the `KIRO_LIVE` contract test as the primary detector. The TUI uses explicit text contracts
+  ("Kiro is working" / "ask a question or describe a task" / "requires approval") and does not use
+  a spinner regex, because 2.14.1 has no Stop hook (measured). If the metadata field names or
+  scales change, Track D's contract test fails.
+- On-demand installation of 855MB unpacked. Against interruption (killing the pane while waiting
+  for the first launch) it self-heals via staging → atomic rename, a presence marker (kiro-cli
+  installed last), a `--version` sanity check and flock exclusion. Watching a real 855MB download
+  end to end remains, after the fleet is rebuilt.
+- linux arm64: the musl variant's assets are verified sound, but starting on real arm64 hardware is
+  unverified (this container is x64).
+- Generational differences in the v2 JSONL store (v1 SQLite / v3 JSONL). `--agent-engine v2` is
+  pinned explicitly as insurance against the read/state contract breaking when v3 becomes the
+  default.
+- Live usage is **only for a running managed session** (in memory; hidden when stopped, on the TUI,
+  or before anything is received). The token count is approximated from the percentage (the
+  percentage itself is exact).
 
-- Track A/A2/B/C 実装済み（2026-07-24）＝read 層＋TUI 状態＋v2 JSONL 転写／managed ACP driver／
-  オンデマンド配備＋焼き込みノブ／CP・Console 配線＋色3種同時変更。全 P1 レビュー（9 件）修正込みで
-  develop へマージ（de2fb25b）。
-- Track D 実装済み（2026-07-24・temp/kiro-track-d）＝`_kiro.dev/metadata` のライブ context%／credits を
-  %→token 変換で ContextBar（ミラー・ContextReporter 経由）と `get_session_usage`（context＋
-  cumulative.credits）へ配線。headlessChat／API キー／プラン残量チップは決定7 のとおり見送り。
-- 残: 実フリート再ビルド後の実機目視（色描画・オンデマンド 855MB 導入・device-flow ログイン・
-  ミラー ContextBar の pct 推移）と arm64 実機起動。詳細・トラック分割・プローブ一覧は
-  [docs/43](../log/43-kiro-agent-kind.md)。
+## Results
+
+- Tracks A/A2/B/C implemented (2026-07-24) = the read layer, TUI state and the v2 JSONL
+  transcript; the managed ACP driver; on-demand deployment plus the bake-in knob; CP and Console
+  wiring plus changing all three colours at once. Merged to develop including all nine P1 review
+  fixes (de2fb25b).
+- Track D implemented (2026-07-24, temp/kiro-track-d) = the live context % and credits from
+  `_kiro.dev/metadata`, converted from % to tokens and wired into the ContextBar (in the mirror,
+  via ContextReporter) and `get_session_usage` (context plus cumulative.credits). headlessChat, the
+  API key and the plan-allowance chip are deferred as per decision 7.
+- Remaining: looking at real hardware after the fleet is rebuilt (colour rendering, the on-demand
+  855MB install, the device-flow login, the pct progression in the mirror's ContextBar) and starting
+  on real arm64 hardware. The details, the track split and the probe list are in
+  [docs/43](../log/43-kiro-agent-kind.md).

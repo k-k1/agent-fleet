@@ -1,76 +1,96 @@
-# 0021. 定時実行は CP 常駐スケジューラが停止中 WS を wake して駆動し、実行と報告は既存 create_session／docs/30 に全乗りする
+# 0021. Scheduled execution: a resident scheduler on the CP wakes a stopped workspace and drives it, riding entirely on the existing create_session and docs/30
 
-- 状態: **設計中**（2026-07-22）。実装計画は [docs/38](../log/38-scheduled-execution.md)。
-- 関連: [docs/30](../log/30-session-report.md)（完了報告 — 実行結果の配送先）、
-  docs/27（managed driver — 実行対象セッションの一種）、
-  reaper（`control-plane/reaper.go` — scale-to-zero と競合）、
-  メモキュー（`memo_bridge.go` — CP に貯めてエージェントから叩く操作面の先例）、
-  session_idempotency（`workspace/agent/session_idempotency.go` — 二重発火の吸収）。
+English | [日本語](0021-scheduled-execution.ja.md)
 
-## 背景
+- Status: **in design** (2026-07-22). The implementation plan is [docs/38](../log/38-scheduled-execution.md).
+- See also: [docs/30](../log/30-session-report.md) (completion reports — where results are delivered),
+  docs/27 (the managed driver — the sessions being executed are one kind of it),
+  the reaper (`control-plane/reaper.go` — it competes with this),
+  the memo queue (`memo_bridge.go` — the precedent for an operation surface that queues on the CP and is drained by an agent),
+  session_idempotency (`workspace/agent/session_idempotency.go` — absorbing double firing).
 
-「毎朝9時にこのプロンプトで回す」型の定時タスクを、オペレーター（`af_write`
-アシスタント）が会話から仕込みたい。だが土台は無い: 既存の定期処理は CP の
-デプロイ全体 1 個のシングルトン goroutine（reaper 等）だけで、時刻起点で「起こす／
-実行する」機構も、スケジュール定義 DB も存在しない。
+## Context
 
-決定的な制約は **WS 停止中はコンテナ内 workspace-agent が丸ごと消える**こと。
-セッション実行・通知・報告は全部エージェント内なので、停止中は誰も動かせない。
-停止中に生きているのは CP と home ディスクだけで、**WS を起こせるのは CP の
-`ensureWorkspaceStarted` だけ**（ただし現状は時刻起点 wake を持たない）。
+The operator (the `af_write` assistant) wants to set up "run this prompt every morning at 9"
+tasks from a conversation. There is no foundation for it: the only periodic processing today is
+a single deployment-wide singleton goroutine on the CP (the reaper and friends); there is no
+mechanism for "wake and run" triggered by the clock, and no schedule-definition database.
 
-## 決定
+The decisive constraint is that **while a workspace is stopped, the workspace-agent inside the
+container is gone entirely**. Session execution, notifications and reports all live inside the
+agent, so while stopped nobody can drive anything. What is alive while stopped is the CP and the
+home disk, and **only the CP's `ensureWorkspaceStarted` can wake a workspace** (though today it
+has no clock-triggered wake).
 
-1. **スケジューラは CP 常駐**とする。停止中に唯一動く CP が「時刻監視／wake／注入」を
-   担う。in-WS の cron ループ（`fetch_loop.go` 型）は WS running 中しか動かず
-   「停止中でも実行」を満たせないため不採用。
-2. **WS 停止中の既定は wake（起こして実行）**。真の定時実行を既定にする。ただし
-   リソース／OOM リスクがあるため **スケジュール単位で `skip`／`catch_up` に上書き可**。
-3. **投入先は毎回新規セッション**（`create_session`）を既定とする。長寿命セッション
-   再利用はコンテキスト肥大（docs/33 圧縮依存）と overlap を招くため将来拡張に回す。
-4. **実行と報告は既存資産に全乗り**する。実行は `create_session`（report_to・冪等キー・
-   停止時再開を既に保有）を、報告は docs/30 の report seam
-   （`recordSessionNotification`→`/chat/report`→role="report"＋通知＋自動ターン）を
-   そのまま使う。定時実行専用の実行系・報告系を新設しない。
-5. **操作面はメモキューと同型**とする。オペレーター MCP（`create_schedule` 等、
-   `af_write` ゲート）→ Agent → CP internal（`cpMemoDo` に倣う内部トークン経路）→
-   CP DB。定義の正本は CP DB（停止中に読めるのは CP だけなので `~/.config` 案は不採用）。
-6. **reaper と明示協調する**。発火した実行には開いた Console 接続が無く、放置すると
-   reaper が注入直後に WS を止めてセッションと報告を殺す。スケジューラは実行中
-   keep-alive を reaper に登録し、「対象セッション idle 到達＋報告配送完了」まで
-   リクレーム対象から外す。**wake で起こした（元停止の）WS は、完了後に settle 猶予を
-   挟んでから停止に戻す**（自動ターン後続や直後のユーザー操作を取りこぼさないため）。
-   元 running の WS はスケジュール由来で止めない。
-7. **spec 入力は自然言語も可**。オペレーターが登録時に構造化 spec（cron/interval/once＋tz）へ
-   翻訳して登録し、解釈結果と次回発火をユーザーに確認する。DB 正本は構造化 spec で、
-   自然言語は表示用 `spec_label` に留める（実行時パースの非決定性・沈黙失敗を避ける）。
-8. **`run_now`（手動発火）を v1 に含める**。定時発火と同一経路（wake ポリシー・冪等・
-   keep-alive）を通し、手動でも★対策を素通りさせない。
-9. **無人失敗は沈黙させない**。認証失効・usage 枯渇・wake/注入失敗を検知したら、
-   report seam に error 種別を足してオペレーターへ報告する。可能なら発火前に
-   レート制限を見て skip＋見送り報告。
-10. **プロンプトのテンプレート変数は固定メタ変数のみ**。`{{date}}`/`{{time}}`/
-    `{{datetime}}`/`{{tz}}`/`{{schedule_id}}`/`{{schedule_label}}`/`{{last_run}}` の、
-    スケジューラが発火時に決定論的に計算する非データ値だけを許す。報告本文・前回セッション
-    出力・git/WS 状態などの「データ」は運ばない（無人実行に攻撃者影響下データが流れ込む
-    インジェクション面を開かないため）。展開は発火時にスケジューラ側で行い、未定義
-    `{{foo}}` はリテラル素通し。ホワイトリスト拡張は「登録時/スケジューラ確定の非データ値」
-    の線を越えない範囲で将来検討しうる。
+## Decision
 
-## 結果（見込みと受け入れる制約）
+1. **The scheduler is resident on the CP.** The CP, the only thing running while a workspace is
+   stopped, takes on watching the clock, waking, and injecting. An in-workspace cron loop (the
+   `fetch_loop.go` shape) only runs while the workspace is running and cannot satisfy "runs even
+   while stopped", so it is not adopted.
+2. **The default when the workspace is stopped is to wake it and run.** Truly scheduled
+   execution is the default. Because of the resource and OOM risks, however, it **can be
+   overridden per schedule to `skip` or `catch_up`**.
+3. **Each firing goes into a brand new session** (`create_session`) by default. Reusing a
+   long-lived session invites context bloat (depending on docs/33 compaction) and overlap, so it
+   is left to a future extension.
+4. **Execution and reporting ride entirely on existing assets.** Execution uses `create_session`
+   (which already has report_to, an idempotency key and resume-after-stop), and reporting uses the
+   report seam from docs/30 (`recordSessionNotification` → `/chat/report` → role="report" plus a
+   notification plus an automatic turn) as is. No execution or reporting machinery is built
+   specifically for scheduled runs.
+5. **The operation surface has the same shape as the memo queue.** The operator MCP
+   (`create_schedule` and friends, gated on `af_write`) → the Agent → CP internal (an internal
+   token route modelled on `cpMemoDo`) → the CP database. The canonical definition lives in the CP
+   database (only the CP can read anything while stopped, so a `~/.config` proposal is not
+   adopted).
+6. **Coordinate explicitly with the reaper.** A firing has no open Console connection, and left
+   alone the reaper would stop the workspace immediately after injection, killing the session and
+   the report. The scheduler registers a keep-alive with the reaper while running and keeps the
+   workspace out of reclamation until "the target session reaches idle and the report is
+   delivered". **A workspace that we woke (i.e. was stopped) goes back to stopped after a settle
+   grace period** (so that follow-on automatic turns, or a user action right afterwards, are not
+   dropped). A workspace that was already running is never stopped on account of a schedule.
+7. **The spec may be entered in natural language.** The operator translates it into a structured
+   spec (cron/interval/once plus tz) at registration time and confirms its interpretation and the
+   next firing with the user. The canonical form in the database is the structured spec; the
+   natural language stays as a `spec_label` for display (to avoid non-determinism and silent
+   failure from parsing at execution time).
+8. **`run_now` (manual firing) is in v1.** It goes through exactly the same path as a scheduled
+   firing (wake policy, idempotency, keep-alive), so a manual run does not slip past the
+   safeguards.
+9. **Unattended failures are not silent.** When an expired credential, exhausted usage, or a
+   failed wake/injection is detected, an error kind is added to the report seam and reported to the
+   operator. Where possible, check the rate limit before firing and skip with a "skipped" report.
+10. **Template variables in the prompt are fixed metadata only.** Only `{{date}}` / `{{time}}` /
+    `{{datetime}}` / `{{tz}}` / `{{schedule_id}}` / `{{schedule_label}}` / `{{last_run}}` —
+    non-data values the scheduler computes deterministically at firing time — are allowed. "Data"
+    such as report bodies, the previous session's output, or git/workspace state is not carried
+    (so as not to open an injection surface where attacker-influenced data flows into an
+    unattended run). Expansion happens on the scheduler side at firing time, and an undefined
+    `{{foo}}` passes through literally. Extending the whitelist may be considered in future, as
+    long as it does not cross the line of "non-data values fixed at registration or by the
+    scheduler".
 
-- オペレーター会話から定時タスクを仕込め、停止中の WS も時刻到来で起きて実行し、
-  結果が会話へ自動報告される（自動ターンで後続処理まで繋がる）。
-- 新規実装は 4 点に限定される: CP スケジューラ goroutine／スケジュール DB／時刻起点
-  wake の内部認証経路（membership→resolved の内部生成）／操作 MCP。実行・報告は既存。
-- 受け入れる制約:
-  - **wake は scale-to-zero と正面から競合**する。集中時刻のサンダリングハードは
-    ホスト OOM リスク（既知の実害）。jitter・wake 同時実行上限・`max_workspaces`
-    クォータ尊重で緩和し、それでも「省リソースより時刻厳守を選んだ」トレードオフは残る。
-  - **強力プリミティブのセキュリティ面**: 「停止 WS を起こして無人で agent を回す」を
-    仕込めるため、報告本文（攻撃者影響下データ）を根拠にした登録は要ユーザー確認を
-    persona に明記（docs/30 ガードの延長）。
-  - **CP 再起動を跨ぐ発火**は `next_run`/`last_run` の DB 永続化と (schedule_id＋発火
-    スロット) 決定論冪等キーで二重発火/欠落を吸収する（in-memory 台帳では不足）。
-  - v1 は cron/interval/once の 1 プロンプト投入まで。ワークフロー DAG・GUI 作成・
-    長寿命再利用・分未満高頻度は範囲外（docs/38 の後続フェーズ）。
+## Results (expected, and the constraints accepted)
+
+- Scheduled tasks can be set up from the operator conversation; a stopped workspace wakes when
+  the time comes and runs, and the result is reported back into the conversation automatically
+  (the automatic turn carries it on into follow-up processing).
+- New implementation is limited to four things: the CP scheduler goroutine, the schedule
+  database, an internal authentication route for a clock-triggered wake (generating
+  membership→resolved internally), and the operation MCP. Execution and reporting already exist.
+- Constraints accepted:
+  - **Waking competes head-on with scale-to-zero.** A thundering herd at a popular time is a host
+    OOM risk (with real damage on record). Mitigated by jitter, a cap on concurrent wakes and
+    respecting the `max_workspaces` quota — and even so, the trade-off of "punctuality chosen over
+    frugality" remains.
+  - **The security surface of a powerful primitive**: since it can be set up to "wake a stopped
+    workspace and run an agent unattended", the persona explicitly requires user confirmation
+    before registering anything on the basis of a report body (attacker-influenced data) — an
+    extension of the docs/30 guard.
+  - **Firings across a CP restart** are handled by persisting `next_run`/`last_run` in the
+    database and a deterministic idempotency key of (schedule_id + firing slot), which absorbs
+    both double firing and missed firing (an in-memory ledger is not enough).
+  - v1 goes as far as injecting one prompt on cron/interval/once. Workflow DAGs, GUI creation,
+    long-lived reuse and sub-minute frequencies are out of scope (later phases in docs/38).
