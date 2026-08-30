@@ -1,92 +1,107 @@
-# 0033. 「保存データは JA 統一」を撤回 — 自前生成の表示文言はカタログキーで持ち、ロケールに追随させる
+# 0033. Withdraw "stored data is uniformly JA" — display wording we generate ourselves is held as a catalogue key and follows the locale
 
-- 状態: **採用・実装済み**（notice 4 種 → 掃除候補の理由 9 種にも適用）。設計の置き場は
-  [28-i18n.md](../log/28-i18n.md) §2.5 / §4。
-- 関連: [0016](0016-i18n.md)（Console の i18n・本 ADR はその §7 の一部を上書きする）/
-  [history/19](../log/19-assistant-chat.md)（アシスタントチャット・撤回対象の方針の出所）/ docs/30（セッション報告・オペレーター）/
-  docs/33（チャットのコンテキスト逼迫と圧縮）
+English | [日本語](0033-stored-text-locale.ja.md)
 
-## 背景
+- Status: **adopted and implemented** (the four notice kinds → also applied to the nine cleanup
+  candidate reasons). The design lives in [28-i18n.md](../log/28-i18n.md) §2.5 / §4.
+- See also: [0016](0016-i18n.md) (the Console's i18n — this ADR overrides part of its §7) /
+  [history/19](../log/19-assistant-chat.md) (assistant chat — where the withdrawn policy came from) / docs/30 (session reports, the operator) /
+  docs/33 (context pressure in chat, and compaction)
 
-アシスタントチャットには、**利用者に読ませるためだけに我々が生成する文**がある——
-`role=="notice"` のカード 4 種（コンテキスト逼迫・コンテキスト超過・自動応答の停止・圧縮完了）。
-これらは会話 JSON に本文をベタ書きして保存し、Console は `content` をそのまま Markdown 描画していた。
+## Context
 
-方針としては docs/19 の流儀（「保存される会話データは JA で統一」）に沿っており、
-`chat_usage.go` / `chat_recover.go` のコメントにもそう書いてあった。当時は Console 自体が
-日本語ハードコードだったので、これは無害な既定だった。
+Assistant chat contains **text we generate solely for the user to read** — the four kinds of
+`role=="notice"` card (context pressure, context exceeded, autonomous replies stopped, compaction
+finished). These stored their body verbatim in the conversation JSON, and the Console rendered
+`content` straight through as Markdown.
 
-その前提は ADR 0016（Console の全面 i18n）で消えている。**Lang を英語にした Console でも
-notice カードだけが日本語で出る**——同じ事象の通知センター側は
-`notif.chat_ctx_pressure.*` で英訳されるので、通知は英語・チャット内カードは日本語という
-食い違いまで生じていた。
+That followed docs/19's idiom ("stored conversation data is uniformly JA"), and the comments in
+`chat_usage.go` / `chat_recover.go` said as much. At the time the Console itself was hard-coded
+Japanese, so it was a harmless default.
 
-ADR 0016 §7 は「エージェント出力言語（`outputLanguage` 軸）は対象外」と決めたが、
-notice はモデルの挙動を決める文字列ではなく**純粋な表示文**で、その除外の趣旨に入らない。
-分類が粗かった。
+That premise is gone as of ADR 0016 (full Console i18n). **With the Console set to English, only
+the notice cards come out in Japanese** — and since the notification-centre side of the same event
+is translated via `notif.chat_ctx_pressure.*`, we even had the inconsistency of an English
+notification next to a Japanese in-chat card.
 
-## 決定
+ADR 0016 §7 decided that "the agent's output language (the `outputLanguage` axis) is out of scope",
+but a notice is not a string that determines model behaviour — it is **purely display text** and
+does not fall under the spirit of that exclusion. The classification was too coarse.
 
-### 1. 「保存データは JA 統一」を方針として撤回する
+## Decision
 
-保存レコードの言語は**表示の言語を決めない**。判断軸は「保存されているか」ではなく
-**「誰が読むための文字列か」**——
+### 1. Withdraw "stored data is uniformly JA" as a policy
 
-- **利用者が読む、我々が生成した文**（notice）→ Console の i18n カタログが正。`settings.locale` に追随する。
-- **モデルが読む文**（persona / system prompt / 報告の指示文 / 要約プロンプト）→ ADR 0016 §7 のまま対象外。
-  言語は `outputLanguage` 軸の話であり、UI ロケールとは別の決定に属する。
-- **モデルが書いた文**（回答本文・圧縮の要約）→ そもそも翻訳しない。生成時の言語のまま見せる。
+The language of a stored record **does not decide the language of the display**. The axis is not
+"is it stored?" but **"who is the string for?"**:
 
-### 2. notice はキー＋引数で保存し、描画時に翻訳する
+- **Text we generate for the user to read** (notices) → the Console's i18n catalogue is canonical.
+  It follows `settings.locale`.
+- **Text the model reads** (persona, system prompts, the instruction text in reports, summarisation
+  prompts) → out of scope, as in ADR 0016 §7. Its language is a matter for the `outputLanguage`
+  axis and belongs to a different decision from the UI locale.
+- **Text the model wrote** (answer bodies, compaction summaries) → not translated at all. Shown in
+  the language it was generated in.
 
-バックエンドは `notice_key`（例 `chat.notice.ctx_pressure`）と `notice_args`（`pct` / `tokens` /
-`window` など）を刻むだけにし、Console が `t(notice_key, notice_args)` で描く
-（`workspace/agent/chat_notice.go` ↔ `console/src/features/chat/notice.ts`）。
+### 2. A notice is stored as a key plus arguments and translated at render time
 
-**書き込み時にサーバ側でロケール解決して 1 本の文字列を保存する案は採らない。** 保存時点で
-言語が凍り、あとから Lang を切り替えても過去のカードだけ元の言語で残る。キー方式なら
-**既存の会話も切替に追随する**。これは docs/23 P0-3（バックエンドは言語非依存コードを返し、
-Console が `ERR_TEXT` で訳す）と同じ形で、この製品の既定の作法でもある。
+The backend records only `notice_key` (e.g. `chat.notice.ctx_pressure`) and `notice_args` (`pct`,
+`tokens`, `window`, …), and the Console renders it with `t(notice_key, notice_args)`
+(`workspace/agent/chat_notice.go` ↔ `console/src/features/chat/notice.ts`).
 
-### 2-bis. 保存文だけの話ではない — その場で組み立てる表示文も同じ扱い
+**Resolving the locale server-side at write time and storing one string is not adopted.** The
+language would freeze at storage time, so after switching Lang the old cards alone would remain in
+the original language. With keys, **existing conversations follow the switch too.** This is the same
+shape as docs/23 P0-3 (the backend returns a language-independent code and the Console translates it
+via `ERR_TEXT`), and it is this product's default idiom.
 
-掃除モーダル（`GET /sessions/cleanup`）の `reason`（「マージ済み・クリーン（親に取り込み済み）」等 9 種）は
-保存されないが、**利用者が読む、我々が生成した文**なので決定 1 の軸ではまったく同じ側にある。英語 Console
-でも理由列だけが日本語で出ていた。`reason_key`（`clean.reason.*`）を足し、Console が
-`cleanupReason.ts` で描く。
+### 2-bis. It is not only about stored text — text assembled on the spot is treated the same
 
-notice と違うのは**読み手が 2 人**いること: Console と、同じ JSON を `list_cleanup_candidates` で受け取る
-アシスタント（カタログを持たない）。そこで `reason` に正本言語の文を残したまま `reason_key` を**足す**——
-Console 向けにキー、モデル向けに文、1 フィールドずつ。ADR 0016 §7（モデルが読む文は対象外）と矛盾しない。
+The `reason` in the cleanup modal (`GET /sessions/cleanup`) — nine kinds such as "merged and clean
+(already taken into the parent)" — is not stored, but it is **text we generate for the user to
+read** and sits on exactly the same side of decision 1's axis. On an English Console, the reason
+column alone came out in Japanese. A `reason_key` (`clean.reason.*`) is added and the Console
+renders it in `cleanupReason.ts`.
 
-### 3. `content` は消さず、正本言語（ja）のフォールバックとして残す
+The difference from a notice is that there are **two readers**: the Console, and the assistant that
+receives the same JSON via `list_cleanup_candidates` (and has no catalogue). So `reason_key` is
+**added** while `reason` keeps its canonical-language text — a key for the Console, a sentence for
+the model, one field each. This does not contradict ADR 0016 §7 (text the model reads is out of
+scope).
 
-キーを持たない既存レコードと、Console が知らないキー（版ずれ）は `content` に落とす——
-空カードにはしない。ADR 0016 §4 のとおり **ja が正本**なので、フォールバック文は日本語のままでよい。
-「保存データが日本語であること」自体は撤回対象ではなく、**それが表示文言の決定権を持つこと**を撤回した。
+### 3. `content` is not removed; it stays as a fallback in the canonical language (ja)
 
-notice の `content` を読む経路は他にない: プロバイダ文脈へは再生されず（`syncProviderPrompt`）、
-ブリッジにも流れない（`bridge.eventKeyFor` で chat-* は Console 限定）。唯一残っていた
-タイトル自動命名・返信サジェストのプロンプト窓からは、本 ADR で `report` と同様に除外した
-（会話の話題ではないので、そもそも入れるべきではなかった）。
+Existing records with no key, and keys the Console does not know (a version skew), fall back to
+`content` — never an empty card. Per ADR 0016 §4, **ja is canonical**, so the fallback text may
+stay Japanese. What was withdrawn is not "stored data is Japanese" itself but **its having the
+final say over the display wording**.
 
-### 4. Go 側キーと Console カタログのズレは検査で落とす
+There is no other path that reads a notice's `content`: it is not replayed into the provider's
+context (`syncProviderPrompt`), and it does not flow to the bridge (`bridge.eventKeyFor` keeps
+chat-* to the Console). The one remaining path — the prompt window for automatic title naming and
+reply suggestions — is excluded by this ADR just as `report` is (it is not the conversation's
+subject matter, and should never have been included).
 
-Go でキーを足して翻訳を忘れると、英語 Console が静かにフォールバック（＝日本語）へ落ちる——
-動いて見えるので気づけない。`TestNoticeKeysExistInConsoleCatalogs` が
-`console/src/lib/i18n/locales/{ja,en}.ts` に全キーの存在を確かめる（カタログが無い配布物では skip）。
+### 4. A skew between the Go-side keys and the Console catalogue is caught by a check
 
-## 捨てた案
+Adding a key in Go and forgetting the translation makes the English Console fall back silently
+(i.e. to Japanese) — it looks like it works, so nobody notices.
+`TestNoticeKeysExistInConsoleCatalogs` confirms every key exists in
+`console/src/lib/i18n/locales/{ja,en}.ts` (skipped in a distribution with no catalogue).
 
-- **サーバ側でロケール解決して保存**（決定 2 の対案）: Go に第 2 のメッセージカタログが要り、
-  ja/en が 2 箇所に分かれる。加えて言語が保存時点で凍る。
-- **`content` を廃して完全にキーだけにする**: 既存レコードと版ずれで空カードになる。得るものは
-  数十バイトの節約だけ。
+## Options rejected
 
-## 残る非対称（既知・本 ADR の範囲外）
+- **Resolve the locale server-side and store that** (the alternative to decision 2): it needs a
+  second message catalogue in Go, splitting ja/en across two places. And the language freezes at
+  storage time.
+- **Drop `content` and go key-only**: existing records and version skews would become empty cards.
+  The gain is a few dozen bytes.
 
-`role=="report"`（docs/30 のセッション報告カード）の本文は日本語のままである。これは
-**表示とプロンプトを兼ねている**文字列で（`reportsPrompt` がそのままオペレーターの文脈へ渡す）、
-訳せば LLM への指示文も変わる。分離するには「表示用の文（キー化）」と「モデル向けの指示文
-（`outputLanguage` 軸）」に割る設計判断が要る——ADR 0016 §7 の領域なので、ここでは触らない。
-英語 Console では報告カードだけが日本語で残る。
+## The asymmetry that remains (known; out of scope for this ADR)
+
+The body of `role=="report"` (the session report cards from docs/30) is still Japanese. That string
+**doubles as display and as prompt** (`reportsPrompt` passes it straight into the operator's
+context), so translating it would also change the instruction to the LLM. Separating them requires a
+design decision splitting "text for display (keyed)" from "instructions for the model (the
+`outputLanguage` axis)" — ADR 0016 §7's territory, untouched here. On an English Console, the report
+cards alone remain in Japanese.
