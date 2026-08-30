@@ -1,12 +1,16 @@
 # 03. Security Operations
 
-English | [日本語](03-security.ja.md)
+English | [日本語](04-secure.ja.md)
+
+Audience: someone responsible for the deployment's security posture
+Source of truth: the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page
+Updated: 2026-08
 
 This chapter summarizes the **assumptions an operator must understand** and the **day-to-day
 controls to apply** in order to run Agent Fleet safely. It is not a list of hidden bugs; it
 **honestly discloses properties inherent in the architecture and shows how to handle them in
-operations**. The external-facing threat model is in [SECURITY.md](../../../SECURITY.md)
-(English), and the design background is in [dev/07 Security](../../dev/07-security.md); this
+operations**. The external-facing threat model is in [SECURITY.md](../../SECURITY.md)
+(English), and the design background is in [dev/07 Security](../dev/07-security.md); this
 document expands those into operational procedures.
 
 ## Threat model (summary)
@@ -34,7 +38,7 @@ containment.
 ## The 4 residual risks (operators must understand these)
 
 Here we expand, from an operational standpoint, the 4 points that
-[SECURITY.md](../../../SECURITY.md) lists. These are not undisclosed bugs; they are known
+[SECURITY.md](../../SECURITY.md) lists. These are not undisclosed bugs; they are known
 properties inherent in the current architecture.
 
 1. **The CP holds privileges equivalent to host root.** As noted above, it can operate the host
@@ -47,8 +51,8 @@ properties inherent in the current architecture.
    credentials and every backup become permanently undecryptable**. Operations: **store it in a
    vault separate from the DB and homes, and back it up independently**. Never place it in the
    data area or in backup archives (by design it never goes in). For when it is generated and
-   how to store it, see [01 §2](01-install.md); for the identity requirement at restore time,
-   see [02](02-operations.md).
+   how to store it, see [01 §2](02-install.md); for the identity requirement at restore time,
+   see [02](03-run.md).
 
 3. **Backups are sensitive.** The archive contains each user's home and **plaintext Claude
    login state**. Operations: strictly control the permissions of the storage location (limit
@@ -61,7 +65,7 @@ properties inherent in the current architecture.
 A caveat on limits: in the current localCustodian, the KEK is derived from the master key, so
 the effective strength is equivalent to the single `AF_MASTER_KEY`. **True per-tenant
 crypto-shred via tenant key revocation will be achieved when a Vault/KMS custodian is adopted
-in the future** (currently design only). Details in [dev/07 §7.6](../../dev/07-security.md).
+in the future** (currently design only). Details in [dev/07 §7.6](../dev/07-security.md).
 
 ## Operating egress control
 
@@ -87,12 +91,12 @@ in the Console.
 > actual blocking (enforce), and enabling the accompanying always-on container-side wiring
 > (internal network + proxy env injection), are **not yet completed and are follow-up work**.
 > For now, understand that you can operate up to the "observe and grow the allowlist" stage.
-> The full design picture is in [dev/07 §7.8](../../dev/07-security.md).
+> The full design picture is in [dev/07 §7.8](../dev/07-security.md).
 
 ## MCP servers and external connections
 
 Users register **their own MCP servers** under ⚙ Settings → MCP servers, and a tenant admin can
-**distribute one to every member** ([admin/04](../../admin/04-mcp-egress.md)). Four things matter to
+**distribute one to every member** ([admin/04](../admin/04-mcp-egress.md)). Four things matter to
 an operator.
 
 - **Where secrets live.** Environment variable and header values are stored with envelope
@@ -125,7 +129,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
   logins are rejected. `_EMAILS_FILE` is re-read on every login, so **additions take effect
   without a CP restart** (removals likewise). The check runs **on every request**, not just at
   sign-in, so removing someone locks them out on their very next request instead of waiting out
-  `AF_SESSION_TTL` — that is the offboarding path. Configuration is in [01 §6](01-install.md).
+  `AF_SESSION_TTL` — that is the offboarding path. Configuration is in [01 §6](02-install.md).
 - **Being invited is itself permission to reach the login.** Somebody added to a tenant in the
   Admin panel can sign in without also appearing in `AF_OAUTH_ALLOWED_*`, so a deployment run
   on invitations keeps one roster instead of two lists that drift apart. Passing the door does
@@ -137,7 +141,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
   pinned to your tenant GUID: on the `/common/` or `/organizations/` endpoints every Microsoft
   account on earth reaches the login and a personal account can rewrite its own email address,
   so the CP refuses to start there unless `AF_OIDC_<ID>_ALLOWED_TIDS` is set
-  ([05 §4](05-login-idp.md) / [dev/07 §7.3](../../dev/07-security.md)).
+  ([05 §4](05-signin.md) / [dev/07 §7.3](../dev/07-security.md)).
 - **Audit log.** Only mutating / destructive operations are recorded in `audit_log` (reads are
   off by default, and **raw terminal streams are never stored, due to the risk of secrets
   leaking into them**). super_admins / tenant_admins view it from the Audit tab of the Admin
@@ -153,7 +157,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
 - **Designed to keep secrets out of logs.** The CP neither holds nor interprets credential
   plaintext, and does not emit it into logs. The unified cred helper decrypts on demand and
   hands it over, so no plaintext files are ever created
-  ([dev/07 §7.6](../../dev/07-security.md)).
+  ([dev/07 §7.6](../dev/07-security.md)).
 
 ## Offboarding: how access is actually revoked
 
@@ -229,6 +233,6 @@ whole deployment should be exactly the people who can edit the host's files.
 If you find a vulnerability, **do not open a public issue** — report it privately. The
 preferred channel is GitHub's Security → "Report a vulnerability" (private advisory). The
 information to include in a report (affected version/commit, deployment form, reproduction
-steps, observed impact) and the response policy are in [SECURITY.md](../../../SECURITY.md).
+steps, observed impact) and the response policy are in [SECURITY.md](../../SECURITY.md).
 Because we are pre-1.0, fixes are made against the latest tag. Update to the latest version
 before reporting.

@@ -1,12 +1,16 @@
 # 02. 日常運用
 
-[English](02-operations.md) | 日本語
+[English](03-run.md) | 日本語
+
+Audience: 動いている配備を保つ人
+Source of truth: `deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）
+Updated: 2026-08
 
 構築後の定常運用 — バックアップ、リストア、アップグレード、閉域網、Workspace の停止 — を、
 判断ポイントとともに説明します。**実際のコマンド（`backup.sh` / `restore.sh` / upgrade /
-air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose/README.md) が正**です。
+air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/README.md) が正**です。
 ここではコマンドを複製せず、「何が起きるか・何に注意するか」を補います。作業ディレクトリは
-`deploy/compose/`。設計上の前提を深掘りしたいときは [dev/09 §9.7](../../dev/09-deploy.md)。
+`deploy/compose/`。設計上の前提を深掘りしたいときは [dev/09 §9.7](../dev/09-deploy.md)。
 
 ## バックアップ
 
@@ -33,7 +37,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose
 > この 2 点が運用の肝です。バックアップアーカイブは**平文の Claude 状態を含む機微データ**なので、
 > 保管先の権限・暗号化を厳格にしてください。同時に、アーカイブだけを持っていても
 > `AF_MASTER_KEY` が無ければ封筒暗号された資格情報は復号できません。逆に `AF_MASTER_KEY` を
-> 失えば、すべての過去アーカイブが復号不能になります（crypto-shred・[03](03-security.ja.md)）。**鍵と
+> 失えば、すべての過去アーカイブが復号不能になります（crypto-shred・[03](04-secure.ja.md)）。**鍵と
 > データは別々に、しかし両方をバックアップする**のが正解です。
 
 ### ユーザーへの影響
@@ -91,7 +95,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose
 ## 閉域網（air-gap）へのインストール
 
 外部ネットワークに出られないホストにも入れられます。ただし
-[ADR 0037](../../decisions/0037-registry-policy.md) 以降、image は GHCR で配布し
+[ADR 0037](../decisions/0037-registry-policy.md) 以降、image は GHCR で配布し
 **リリースに image tar は添付しません**。レジストリに到達できないホストは、
 `ghcr.io/k-k1/agent-fleet/*` を社内レジストリにミラーして `REGISTRY` をそこへ向けるか、
 image を手で持ち込みます（ネット接続のあるマシンで `release.sh --save` してビルド＆
@@ -102,7 +106,7 @@ image を手で持ち込みます（ネット接続のあるマシンで `releas
 - **image の取得元**: 社内レジストリのミラーなら `docker compose pull` がそのまま使え、
   保守も軽くなります。手持ち込みの tar は、アップグレードのたびにビルド／コピー／load を
   繰り返すことになり、image 名を `.env` の `REGISTRY` と一致させる必要があります。
-- **TLS**: 閉域では Let's Encrypt が使えないので、[01 §4](01-install.ja.md) の `tls internal`（自己署名）
+- **TLS**: 閉域では Let's Encrypt が使えないので、[01 §4](02-install.ja.md) の `tls internal`（自己署名）
   へ切り替えるか、社内 CA を使います。
 - **Claude のインストール**: Workspace image は既定でコンテナ起動時に最新の Claude を取得します。
   完全オフラインのホストでは `CLAUDE_INSTALL=0`（`WS_ENV` 経由）にし、Claude を焼き込んだ image を
@@ -145,7 +149,7 @@ image を手で持ち込みます（ネット接続のあるマシンで `releas
 - **反映にはイメージの再ビルドが必要**です。編集 → イメージを作り直し → 各利用者が
   ワークスペースを「作り直す」か、次にコンテナが作られたときに効きます。
 - 利用者個人の書き足しは**この層ではありません**。各自の ⚙設定 →「エージェントへの指示」で行い、
-  フリート方針と衝突したときはフリート方針が優先されます（[member/06](../../use/06-agents.ja.md#エージェントへの指示自分の働き方を一度だけ書く)）。
+  フリート方針と衝突したときはフリート方針が優先されます（[member/06](../use/06-agents.ja.md#エージェントへの指示自分の働き方を一度だけ書く)）。
 - **長さはそのまま全セッションのコンテキスト費用になります。** 全エージェントが毎回読むので、
   増やす前に「本当に全員・毎回必要か」を確認してください。cursor にはこの層を配れません。
 
@@ -183,10 +187,10 @@ Control Plane を公開ホスト名で出すと、**数時間のうちに脆弱�
   のときだけ自動で起こします。**ターミナルを開いても起動しませんし、閲覧や Console のリロードでも
   起動しません**（「停止しています。起動してください」を返します）。開きっぱなしのタブが Workspace を
   温め続けることはありません。
-  資源の節約に有効です。env の意味は [.env.example](../../../deploy/compose/.env.example)、仕組みは
-  [dev/09 §9.4](../../dev/09-deploy.md)。
+  資源の節約に有効です。env の意味は [.env.example](../../deploy/compose/.env.example)、仕組みは
+  [dev/09 §9.4](../dev/09-deploy.md)。
 - **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose
   管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから
   force-stop します。ホスト全体をメンテナンスで完全に落とす必要があるときは、CP/Caddy を止めた
   うえで、残る `af-ws-*` コンテナを別途 `docker stop` する必要があります（この点は障害対応の
-  [04](04-troubleshooting.ja.md) でも触れます）。
+  [04](06-diagnose.ja.md) でも触れます）。

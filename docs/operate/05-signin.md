@@ -1,20 +1,24 @@
 # 05. Sign-in Methods — Setting Up an IdP End to End
 
-English | [日本語](05-login-idp.ja.md)
+English | [日本語](05-signin.ja.md)
+
+Audience: someone wiring an identity provider into the deployment
+Source of truth: the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page
+Updated: 2026-08
 
 This page is the **source of truth for configuring sign-in**: what to create on the IdP's side,
 which values to write down, which key in `.env` (or which field in the Console) they go into,
-how to confirm it worked, and what usually goes wrong. [01-install §3](01-install.md) gives the
+how to confirm it worked, and what usually goes wrong. [01-install §3](02-install.md) gives the
 one-paragraph version and points here; when the two disagree, **this page wins**.
 
 Read it top to bottom for the IdP you are adding — one pass should be enough to get the door
 open. Diagnosing a deployment that is already running belongs to
-[04-troubleshooting.md](04-troubleshooting.md), which is symptom-driven; this page is
+[06-diagnose.md](06-diagnose.md), which is symptom-driven; this page is
 procedure-driven and does not repeat it.
 
 For how the login works internally (the trust rules, how one person is recognised across two
-IdPs), see [dev/07 §7.3.1](../../dev/07-security.md) and
-[ADR 0043](../../decisions/0043-login-idp.md).
+IdPs), see [dev/07 §7.3.1](../dev/07-security.md) and
+[ADR 0043](../decisions/0043-login-idp.md).
 
 ## 0. Before you start
 
@@ -119,7 +123,7 @@ Google's own `email_verified`". The scope requested is `openid email`.
 - **Set only one of the two keys** — the button silently does not appear, and the CP log says
   `google login disabled — set both GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET`.
 - **Google accepts the sign-in but Agent Fleet rejects it** — that is the allowlist, not Google.
-  See §8 and [04 "Cannot log in"](04-troubleshooting.md).
+  See §8 and [04 "Cannot log in"](06-diagnose.md).
 - **An External consent screen still in testing** admits only the accounts registered as test
   users; everybody else is stopped by Google before the CP ever sees them.
 - Remember that a personal `gmail.com` address passes Google's verification perfectly well. What
@@ -202,7 +206,7 @@ AF_OIDC_ENTRA_LINK_CLAIM=oid
 
 `oid` is the person's object id within that directory: the same value in every app registration,
 and not something anybody can choose. That last part is the whole point — see the warning in
-§7.1 before naming anything else, and [ADR 0043](../../decisions/0043-login-idp.md) (decision 38)
+§7.1 before naming anything else, and [ADR 0043](../decisions/0043-login-idp.md) (decision 38)
 for why this is an *additional* key rather than a replacement for `sub`.
 
 ### 4.4 Common failures
@@ -356,7 +360,7 @@ register** in the rail (*Tenant-defined sign-in methods*) carries the approve an
 buttons for every tenant at once.
 
 > Whether to split into tenants at all, and how a tenant's login rules interact with people who
-> belong to two tenants, is a decision — it stays in [01-install §4](01-install.md).
+> belong to two tenants, is a decision — it stays in [01-install §4](02-install.md).
 
 ### 7.1 What the tenant administrator fills in
 
@@ -501,7 +505,7 @@ Work down this list; each step tells you something the next one assumes.
 
 ## 9. When it still does not work
 
-Symptom-driven diagnosis lives in [04-troubleshooting.md](04-troubleshooting.md) — go to
+Symptom-driven diagnosis lives in [06-diagnose.md](06-diagnose.md) — go to
 **"Cannot log in"** there, which covers the rejected sign-in, the redirect URI mismatch, the
 missing button, the multi-tenant issuer, the GitHub cases, and cookies not being saved over
 plain HTTP. The per-IdP mistakes are §3.3, §4.4 and §5.4 above.

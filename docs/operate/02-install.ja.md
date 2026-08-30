@@ -1,9 +1,13 @@
 # 01. 初期構築
 
-[English](01-install.md) | 日本語
+[English](02-install.md) | 日本語
+
+Audience: 配備をはじめて建てる人
+Source of truth: `deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）
+Updated: 2026-08
 
 初めてのデプロイを、判断ポイントを添えて順を追って説明します。**実際のコマンドは
-[deploy/compose/README.md](../../../deploy/compose/README.md) の "Quick start" 節が正**です。ここでは
+[deploy/compose/README.md](../../deploy/compose/README.md) の "Quick start" 節が正**です。ここでは
 「各ステップで何を決め、何に注意するか」を日本語で補います。作業ディレクトリは `deploy/compose/`
 です。全体像とこのガイドの位置づけは [README.md](README.ja.md) を先に読んでください。
 
@@ -21,8 +25,8 @@
 
 `deploy/compose/.env.example` を `.env` にコピーして編集します（コマンドは runbook の "Quick start"）。
 `.env` は git 管理外で、ここが**設定の単一ソース**です。各変数の意味・生成手順・注釈は
-[.env.example](../../../deploy/compose/.env.example) 自体に詳しく書いてあります。索引が欲しいときは
-[dev/09 §9.4](../../dev/09-deploy.md) を参照してください。
+[.env.example](../../deploy/compose/.env.example) 自体に詳しく書いてあります。索引が欲しいときは
+[dev/09 §9.4](../dev/09-deploy.md) を参照してください。
 
 構築時に必ず埋める主なものは、公開 URL（`PUBLIC_DOMAIN` / `PUBLIC_BASE_URL`）、ログイン IdP の
 クライアント ID/シークレット、ログイン許可リスト（`AF_OAUTH_ALLOWED_DOMAINS` など）、初期管理者
@@ -40,14 +44,14 @@ base64 化）は runbook の "Quick start" に載っています。
 > 控えを取り、データ領域とは別に独立して保管してください。** この鍵は `DATA_DIR` にもバックアップ
 > アーカイブにも入りません（設計上、意図的に）。失うと、保存済みの全資格情報とすべての過去
 > バックアップが**永久に復号不能**になります（crypto-shred）。リストアには「同じ鍵」が要ります。
-> 詳細は [03-security.md](03-security.ja.md) と [dev/07 §7.6](../../dev/07-security.md)。
+> 詳細は [04-secure.md](04-secure.ja.md) と [dev/07 §7.6](../dev/07-security.md)。
 
 あわせて、CP が使う `DOCKER_GID` をホストの docker グループ GID に合わせます（値の求め方は
-runbook）。これを間違えると起動後に docker ソケットで permission denied になります（[04](04-troubleshooting.ja.md)）。
+runbook）。これを間違えると起動後に docker ソケットで permission denied になります（[04](06-diagnose.ja.md)）。
 
 ## 3. ログイン IdP を設定する
 
-> **通しの手順は [05-login-idp.md](05-login-idp.ja.md)** にあります — Google / Microsoft
+> **通しの手順は [05-signin.md](05-signin.ja.md)** にあります — Google / Microsoft
 > Entra ID / GitHub / その他 OIDC で何を作るか、どの値を `.env` のどのキーに入れるか、
 > 確認方法、よくある失敗まで。サインイン設定の正はあちらで、この節は判断の形だけを示します。
 > ここでいったんあちらを終わらせてから、§4 に戻ってきてください。
@@ -60,7 +64,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
 このパスは `<PUBLIC_BASE_URL>/oauth2/callback` と完全に一致していなければなりません。ここが
-ズレるとログイン時に "redirect URI mismatch" になります（よくある失敗・[04](04-troubleshooting.ja.md)）。
+ズレるとログイン時に "redirect URI mismatch" になります（よくある失敗・[04](06-diagnose.ja.md)）。
 
 どのキーを埋めるかは IdP によって違います。
 
@@ -74,9 +78,10 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 > クローンするための「OAuth で接続」ボタンは**テナント単位**で、テナント管理者が Console の
 > **テナント設定 → 連携 → git プロバイダ OAuth** で登録します。デプロイ側の設定は無く、
 > `BITBUCKET_OAUTH_KEY` / `_SECRET` は一切読まれません。上の `GITHUB_OAUTH_CLIENT_ID` は
-> サインイン用アプリだけを意味します。詳細は [docs/71](../../log/71-tenant-git-oauth.md)。
+> サインイン用アプリだけを意味します。テナント管理者側の手順は
+> [admin/05 入り方](../admin/05-access.ja.md)。
 
-うまくいくかどうかを分けるのは次の 3 点で、いずれも [05](05-login-idp.ja.md) に詳細があります。
+うまくいくかどうかを分けるのは次の 3 点で、いずれも [05](05-signin.ja.md) に詳細があります。
 
 - **`AF_OIDC_<ID>_TRUST` に既定値はありません（意図的です）** — 「その IdP のメールアドレスを
   なぜ信じてよいか」を宣言する欄で、無い provider は推測されず起動時に無効化されます。
@@ -97,7 +102,7 @@ CP が起動を止めるのは**有効な provider が 1 つも無いとき**だ
 既存の認証ゲートウェイ（oauth2-proxy / ALB OIDC など）を前段に置く社は `AUTH=proxy` を選べます
 （メール識別を上流ヘッダに委ねる）。**SAML のみの IdP（HENNGE One / TrustLogin / CloudGate など）の
 正式な答えもこれ**で、oauth2-proxy や Keycloak でブリッジします。仕組みは
-[dev/07 §7.3](../../dev/07-security.md)。GitHub/Bitbucket の連携 OAuth は任意で、無くても
+[dev/07 §7.3](../dev/07-security.md)。GitHub/Bitbucket の連携 OAuth は任意で、無くても
 トークン貼り付けで動くため初期構築では省略できます。
 
 ## 4. 判断ポイント
@@ -192,7 +197,7 @@ membership が 1 つも無くても Admin パネルに到達できます。招�
 **テナント設定 → サインイン方式**（アカウントメニューの「テナント設定」）。デプロイ管理者は
 **管理 → そのテナント → サインイン方式**から同じ欄を開きます。ここでは一切再起動が要りません。
 
-**入力欄の中身・承認前に確認すること・GitHub の場合の違いは、[05 §7](05-login-idp.ja.md)**
+**入力欄の中身・承認前に確認すること・GitHub の場合の違いは、[05 §7](05-signin.ja.md)**
 にあります。この節に置くのは「判断」の方です。
 
 > **登録しただけでは動きません。** 新しいサインイン方法は「承認待ち」で作られ、デプロイ管理者が
@@ -252,7 +257,7 @@ membership が 1 つも無くても Admin パネルに到達できます。招�
 curl -s http://127.0.0.1:8099/healthz    # -> ok
 ```
 
-`ok` が返らない・そもそも CP が上がらないときは [04-troubleshooting.md](04-troubleshooting.ja.md) の
+`ok` が返らない・そもそも CP が上がらないときは [06-diagnose.md](06-diagnose.ja.md) の
 「CP が起動しない」を参照してください。
 
 ## 6. 初回ログインと最初の管理者
@@ -265,7 +270,7 @@ Console に盾アイコンの **Admin パネル**が見え、デプロイ全体�
 > / `_DOMAINS` / `_EMAILS_FILE`）が**すべて空で、かつまだ誰もテナントに招待されていないと全ログインを
 > 拒否**します（fail-closed = 安全側に倒す設計）。新規設置の時点では当然まだ誰も招待されていないので、
 > **最初の管理者を入れるために少なくとも 1 つは設定**してください。
-> 詳細は [04](04-troubleshooting.ja.md)。
+> 詳細は [04](06-diagnose.ja.md)。
 
 ## 7. 最初のテナントとメンバー
 
@@ -291,5 +296,5 @@ super_admin として Admin パネルから、テナントの作成、メンバ�
 予約テナント `golden snapshot (system)` は一覧に出ず、削除もできません——デプロイ自身のもので、
 自動的に作り直されます。
 
-構築後の日常運用（バックアップ・アップグレード・停止）は [02-operations.md](02-operations.ja.md) へ、
-セキュリティ運用は [03-security.md](03-security.ja.md) へ進んでください。
+構築後の日常運用（バックアップ・アップグレード・停止）は [03-run.md](03-run.ja.md) へ、
+セキュリティ運用は [04-secure.md](04-secure.ja.md) へ進んでください。

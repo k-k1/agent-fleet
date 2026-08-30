@@ -32,7 +32,7 @@ in the Admin modal and never appears for you. What you can read is the current v
 
 The "Limits — Workspace: X / Session: Y" shown under **Tenant › Limits & idle** is the value
 currently in effect. When you want it changed, ask your IT department / deployment administrator
-([operator/README.md](../guide/operator/README.md)).
+([operator/README.md](../operate/README.md)).
 
 ### Per-member session limits (you can set these)
 
@@ -165,7 +165,7 @@ It is strictly a "pause for now" operation, not destructive.
 Note that the "Clean home" button, which cleans home itself, is super_admin only and is not shown
 to you. **Situations that need heavier measures** — the container is broken and restarting doesn't
 fix it, host-side intervention is needed — **are the domain of your IT department / deployment
-administrator** ([operator/README.md](../guide/operator/README.md)).
+administrator** ([operator/README.md](../operate/README.md)).
 
 ## What members experience when a limit is hit
 

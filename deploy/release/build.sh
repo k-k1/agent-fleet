@@ -110,18 +110,10 @@ if [ "$DO_NATIVE" = 1 ]; then
     --output "type=local,dest=$WORK/console" "$ROOT"
   cp -R "$WORK/console/console" "$OUT/console"
 
-  # (iii) stage docs (allowlist — same rules as compose/release.sh).
-  echo "==> [native] stage docs (distinclude allowlist)"
-  mkdir -p "$OUT/docs"
-  DOCS_SHELVES=()
-  while IFS= read -r line || [ -n "$line" ]; do
-    line="${line%%#*}"
-    line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
-    [ -n "$line" ] || continue
-    [ -d "$ROOT/docs/$line" ] || { echo "ERROR: docs/.distinclude lists '$line', which is not a directory" >&2; exit 1; }
-    DOCS_SHELVES+=("$line")
-  done < "$ROOT/docs/.distinclude"
-  tar -C "$ROOT/docs" -cf - "${DOCS_SHELVES[@]}" | tar -C "$OUT/docs" -xf -
+  # (iii) stage docs — the shelves on the allowlist plus the runbooks (shared with
+  # compose/release.sh so the two cannot drift).
+  echo "==> [native] stage docs (shelves + runbooks)"
+  bash "$ROOT/deploy/release/stage-docs.sh" "$OUT/docs"
 
   # (iv) static bwrap / git+git-http-backend / zstd (alpine builder; versions are
   # pinned via ARGs in Dockerfile.tools).

@@ -730,7 +730,7 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
 - ✅ P3: `identity.role` の降格経路（決定 24）。`UpsertIdentity` の「never downgrade」は維持し、
   `DemoteSuperAdmins` を `main.go` の起動直後に 1 回だけ呼ぶ。
 - ✅ P3: `AF_COOKIE_SECRET` のローテーション手順（＝全員ログアウト）を operator の runbook に新設
-  （決定 27）。`docs/guide/operator/03-security{,.ja}.md`。
+  （決定 27）。`docs/operate/04-secure{,.ja}.md`。
 - ✅ P3: 退職・移譲の棚卸し表（docs/61 §61.10.7）を operator guide にも出した。とくに
   **定時実行は `Schedule.MembershipID`＝個人所有なので止まる**（内部 git は `git_repo.tenant_id`＝
   テナント所有なので残る）という非対称は、事前に知らないと退職後に気づくことになる。
@@ -822,7 +822,7 @@ L1 ログインの IdP が Google 固定（`control-plane/oauth_google.go`）。
   叩くので `tenant.login_rules` がそのまま残る。ただし Detail は 4 列の CSV なので、
   **画面の語彙が変わっても監査の語彙は変わらない**（「参照を外した」も「絞った」も同じ形）。
 - ★ P7-1 のガイド波及は**二言語 3 面 6 ファイル**: `docs/admin/README(.ja).md`、
-  `docs/guide/operator/01-install(.ja).md`、`docs/guide/operator/05-login-idp(.ja).md`。
+  `docs/operate/02-install(.ja).md`、`docs/operate/05-signin(.ja).md`。
   §61.15.13 の運用回避（「隠す指定は素の `/login` に効かないので `/login/<slug>` を配れ」）が
   この 3 面に書かれている。
 - ★ P7 に**データ移行は無い**（スキーマ据え置き）。決定 42 を `hidden_providers` だけに

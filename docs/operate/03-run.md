@@ -1,14 +1,18 @@
 # 02. Day-to-Day Operations
 
-English | [日本語](02-operations.ja.md)
+English | [日本語](03-run.ja.md)
+
+Audience: someone keeping a running deployment healthy
+Source of truth: the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page
+Updated: 2026-08
 
 This chapter covers steady-state operations after installation — backup, restore, upgrades,
 air-gapped networks, and stopping Workspaces — together with the decision points involved.
 **The actual commands (`backup.sh` / `restore.sh` / upgrade / air-gapped procedures) are
-canonically documented in [deploy/compose/README.md](../../../deploy/compose/README.md).**
+canonically documented in [deploy/compose/README.md](../../deploy/compose/README.md).**
 Rather than duplicating the commands here, this chapter supplements them with "what happens
 and what to watch out for." The working directory is `deploy/compose/`. To dig into the
-design assumptions, see [dev/09 §9.7](../../dev/09-deploy.md).
+design assumptions, see [dev/09 §9.7](../dev/09-deploy.md).
 
 ## Backup
 
@@ -38,7 +42,7 @@ What is **not included**:
 > wherever you store it. At the same time, possessing the archive alone is not enough: without
 > `AF_MASTER_KEY`, the envelope-encrypted credentials cannot be decrypted. Conversely, if you
 > lose `AF_MASTER_KEY`, every past archive becomes permanently undecryptable (crypto-shred —
-> see [03](03-security.md)). **Keep the key and the data separate, but back up both** — that is
+> see [03](04-secure.md)). **Keep the key and the data separate, but back up both** — that is
 > the right answer.
 
 ### Impact on users
@@ -105,7 +109,7 @@ The commands are in the runbook's "Upgrade" section.
 ## Installing into an air-gapped network
 
 You can install onto a host with no external network access. Since
-[ADR 0037](../../decisions/0037-registry-policy.md) the images are distributed through GHCR
+[ADR 0037](../decisions/0037-registry-policy.md) the images are distributed through GHCR
 and **no image tarball ships with a release**, so a host that cannot reach a registry either
 mirrors `ghcr.io/k-k1/agent-fleet/*` internally and points `REGISTRY` at that mirror, or has
 the images carried in by hand: build and `docker save` them on a networked machine with
@@ -119,7 +123,7 @@ There are four decision points.
   the build/copy/load cycle for every upgrade, and its image names must match `REGISTRY` in
   `.env`.
 - **TLS**: Let's Encrypt is unusable in an air-gapped network, so either switch to
-  `tls internal` (self-signed) per [01 §4](01-install.md), or use an internal CA.
+  `tls internal` (self-signed) per [01 §4](02-install.md), or use an internal CA.
 - **Installing Claude**: the Workspace image by default fetches the latest Claude at container
   startup. On a fully offline host, set `CLAUDE_INSTALL=0` (via `WS_ENV`) and use an image with
   Claude baked in.
@@ -162,7 +166,7 @@ session; codex and opencode are seeded with the same text at each start).
   their workspace, or it takes effect the next time a container is created.
 - A user's own additions do **not** belong in this layer. They go in each person's ⚙ Settings →
   Agent instructions, and fleet policy wins where the two conflict
-  ([member/06](../../use/06-agents.md#agent-instructions-write-down-how-you-work-once)).
+  ([member/06](../use/06-agents.md#agent-instructions-write-down-how-you-work-once)).
 - **Its length is a per-session context cost.** Every agent reads it every time, so before adding
   to it, check that it is genuinely needed by everyone, every time. This layer cannot be
   delivered to cursor.
@@ -203,11 +207,11 @@ hours** (measured: 172 probes for `/actuator/heapdump`, `/.env` and friends in t
   reloading the Console**: those answer "the workspace is stopped — start it first", so a tab
   left open never keeps a Workspace warm. This is effective for
   saving resources. For the meaning of the env vars, see
-  [.env.example](../../../deploy/compose/.env.example); for how it works, see
-  [dev/09 §9.4](../../dev/09-deploy.md).
+  [.env.example](../../deploy/compose/.env.example); for how it works, see
+  [dev/09 §9.4](../dev/09-deploy.md).
 - **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
   are outside compose management). To stop a specific Workspace for sure, a super_admin
   force-stops it from the Admin panel in the Console. When the whole host must be brought fully
   down for maintenance, after stopping the CP/Caddy you also need to `docker stop` the remaining
   `af-ws-*` containers separately (this also comes up in the troubleshooting chapter,
-  [04](04-troubleshooting.md)).
+  [04](06-diagnose.md)).

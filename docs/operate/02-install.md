@@ -1,10 +1,14 @@
 # 01. Initial Setup
 
-English | [日本語](01-install.ja.md)
+English | [日本語](02-install.ja.md)
+
+Audience: someone standing a deployment up for the first time
+Source of truth: the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page
+Updated: 2026-08
 
 This page walks through your first deployment step by step, with the decision points along the
 way. **The source of truth for the actual commands is the "Quick start" section of
-[deploy/compose/README.md](../../../deploy/compose/README.md).** Here we supplement it with
+[deploy/compose/README.md](../../deploy/compose/README.md).** Here we supplement it with
 "what to decide and what to watch out for at each step." The working directory is
 `deploy/compose/`. For the big picture and where this guide fits, read
 [README.md](README.md) first.
@@ -26,8 +30,8 @@ Before starting the build-out, confirm you have the 4 items listed under "Prereq
 Copy `deploy/compose/.env.example` to `.env` and edit it (the commands are in the runbook's
 "Quick start"). `.env` is outside git management and is the **single source of configuration**.
 The meaning of each variable, generation steps, and annotations are described in detail in
-[.env.example](../../../deploy/compose/.env.example) itself. If you want an index, see
-[dev/09 §9.4](../../dev/09-deploy.md).
+[.env.example](../../deploy/compose/.env.example) itself. If you want an index, see
+[dev/09 §9.4](../dev/09-deploy.md).
 
 The main values you must fill in at build time are the public URL (`PUBLIC_DOMAIN` /
 `PUBLIC_BASE_URL`), your login IdP's client ID/secret, the login allowlist
@@ -47,15 +51,15 @@ There are 2 secrets in `.env` that you generate yourself. The generation command
 > This key goes into neither `DATA_DIR` nor backup archives (deliberately, by design). If you
 > lose it, all stored credentials and every past backup become **permanently undecryptable**
 > (crypto-shred). A restore requires "the same key."
-> Details in [03-security.md](03-security.md) and [dev/07 §7.6](../../dev/07-security.md).
+> Details in [04-secure.md](04-secure.md) and [dev/07 §7.6](../dev/07-security.md).
 
 In addition, set the `DOCKER_GID` used by the CP to match the host's docker group GID (how to
 find the value is in the runbook). Getting this wrong results in permission denied on the docker
-socket after startup ([04](04-troubleshooting.md)).
+socket after startup ([04](06-diagnose.md)).
 
 ## 3. Configure the login IdP
 
-> **The full procedure is [05-login-idp.md](05-login-idp.md)** — what to create at Google /
+> **The full procedure is [05-signin.md](05-signin.md)** — what to create at Google /
 > Microsoft Entra ID / GitHub / another OIDC IdP, which value goes into which `.env` key, how to
 > confirm it worked, and what usually goes wrong. That page is the source of truth for sign-in
 > configuration; this section is only the shape of the decision. Work through it now and come
@@ -69,7 +73,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 ```
 
 This path must match `<PUBLIC_BASE_URL>/oauth2/callback` exactly. If they diverge, you get
-"redirect URI mismatch" at login (a common failure — [04](04-troubleshooting.md)).
+"redirect URI mismatch" at login (a common failure — [04](06-diagnose.md)).
 
 Which keys you fill in depends on the IdP:
 
@@ -83,11 +87,11 @@ Which keys you fill in depends on the IdP:
 > GitHub / Bitbucket repositories are **per-tenant**, registered in the Console by a tenant
 > administrator under **Tenant settings → Integrations → Git provider OAuth**. There is no
 > deployment-level setting for them and `BITBUCKET_OAUTH_KEY` / `_SECRET` are not read at all;
-> `GITHUB_OAUTH_CLIENT_ID` above means the sign-in app only. See
-> [docs/71](../../log/71-tenant-git-oauth.md).
+> `GITHUB_OAUTH_CLIENT_ID` above means the sign-in app only. The tenant administrator's
+> side of it is [admin/05 Access](../admin/05-access.md).
 
 Three points decide whether this goes smoothly, and all three are covered in detail in
-[05](05-login-idp.md):
+[05](05-signin.md):
 
 - **`AF_OIDC_<ID>_TRUST` has no default, on purpose** — it records *why* this IdP's email address
   may be believed, and a provider without it is disabled at startup rather than guessed at.
@@ -110,7 +114,7 @@ Note: for Console login authentication (L1), the CP performs the OAuth/OIDC flow
 (oauth2-proxy / ALB OIDC, etc.) in front can choose `AUTH=proxy` (delegating email
 identification to upstream headers) — **this is also the answer for a SAML-only IdP**
 (HENNGE One / TrustLogin / CloudGate and the like): bridge it with oauth2-proxy or Keycloak.
-How this works is in [dev/07 §7.3](../../dev/07-security.md).
+How this works is in [dev/07 §7.3](../dev/07-security.md).
 The GitHub/Bitbucket integration OAuth is optional — everything works with token pasting even
 without it, so you can skip it during initial setup.
 
@@ -210,7 +214,7 @@ from the Console — **Tenant settings → "Sign-in methods"** (the account menu
 which you reach from **Admin → the tenant → "Sign-in methods."** Nothing here needs a restart.
 
 **The step-by-step — what the tenant fills in, what to check before approving, and the GitHub
-variant — is [05 §7](05-login-idp.md).** What belongs here is the decision:
+variant — is [05 §7](05-signin.md).** What belongs here is the decision:
 
 > **A new sign-in method does nothing until you approve it.** It is created as *waiting for
 > approval*, and until a deployment administrator activates it, no
@@ -272,7 +276,7 @@ curl -s http://127.0.0.1:8099/healthz    # -> ok
 ```
 
 If `ok` does not come back, or the CP does not come up at all, see "CP does not start" in
-[04-troubleshooting.md](04-troubleshooting.md).
+[06-diagnose.md](06-diagnose.md).
 
 ## 6. First login and the first administrator
 
@@ -285,7 +289,7 @@ deployment.
 > (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`) **empty, and nobody invited to a
 > tenant yet, all logins are rejected** (fail-closed = designed to fail safe). On a first
 > install nobody is invited yet, so set at least one of them to get your first administrator in.
-> Details in [04](04-troubleshooting.md).
+> Details in [04](06-diagnose.md).
 
 ## 7. The first tenant and members
 
@@ -315,5 +319,5 @@ goes blank). The reserved `golden snapshot (system)` tenant is not shown and can
 it belongs to the deployment itself and is recreated automatically.
 
 For day-to-day operations after the build-out (backup, upgrades, shutdown), continue to
-[02-operations.md](02-operations.md), and for security operations, to
-[03-security.md](03-security.md).
+[03-run.md](03-run.md), and for security operations, to
+[04-secure.md](04-secure.md).

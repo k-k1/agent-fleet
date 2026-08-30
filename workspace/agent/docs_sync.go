@@ -210,7 +210,7 @@ func extractDocsTarGz(r io.Reader, dest string) (int, error) {
 }
 
 // safeDocsEntryName accepts only a relative, cleaned, forward-slash path that stays
-// inside the destination — "guide/member/README.md", never "/etc/x" or "../../x".
+// inside the destination — "use/README.md", never "/etc/x" or "../../x".
 func safeDocsEntryName(name string) (string, bool) {
 	n := strings.TrimSpace(name)
 	if n == "" || strings.ContainsRune(n, '\\') || strings.ContainsRune(n, 0) {

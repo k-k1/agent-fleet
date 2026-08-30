@@ -65,7 +65,7 @@ There are two ways, depending on deployment settings, for a new person to enter 
 
 **Switching between these modes is outside your authority.** It is a deployment-wide environment
 setting, so when you want it changed, ask your IT department / deployment administrator
-([operator/README.md](../guide/operator/README.md)). Even in invite-only mode, the add operation itself
+([operator/README.md](../operate/README.md)). Even in invite-only mode, the add operation itself
 is done via "Adding a member" on this page.
 
 Note that deciding who can log in at all (the permitted email domains / addresses) is also IT's

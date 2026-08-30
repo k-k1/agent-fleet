@@ -96,19 +96,8 @@ if [ "$DO_BUILD" = 1 ]; then
   # (repo root), so it goes in deploy/release/.docs-stage (gitignored).
   DOCS_STAGE_REL="deploy/release/.docs-stage"
   DOCS_STAGE="$ROOT/$DOCS_STAGE_REL"
-  rm -rf "$DOCS_STAGE"; mkdir -p "$DOCS_STAGE"
-  DOCS_SHELVES=()
-  while IFS= read -r line || [ -n "$line" ]; do
-    line="${line%%#*}"
-    line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
-    [ -n "$line" ] || continue
-    # A listed shelf that does not exist is a mistake in .distinclude, not something
-    # to ship silently short — tar would fail anyway; say why first.
-    [ -d "$ROOT/docs/$line" ] || { echo "ERROR: docs/.distinclude lists '$line', which is not a directory" >&2; exit 1; }
-    DOCS_SHELVES+=("$line")
-  done < "$ROOT/docs/.distinclude"
-  tar -C "$ROOT/docs" -cf - "${DOCS_SHELVES[@]}" | tar -C "$DOCS_STAGE" -xf -
-  echo "==> staged docs (allowlist: ${DOCS_SHELVES[*]}) -> $DOCS_STAGE_REL"
+  rm -rf "$DOCS_STAGE"
+  bash "$ROOT/deploy/release/stage-docs.sh" "$DOCS_STAGE"
 
   # Same rule as the workspace image below: a multi-platform build produces a
   # manifest LIST, which buildx can only push. ⚠️ Unlike the workspace image, the

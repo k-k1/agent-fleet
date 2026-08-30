@@ -11,7 +11,8 @@
 # 入れない。HANDOFF / CHANGELOG-handoff / roadmap / img も同じ理由で入れない。
 #
 # 消費者: deploy/compose/release.sh（CP イメージの DOCS_SRC ステージング）と
-# deploy/release/build.sh（native tar の docs/ 同梱）。
+# deploy/release/build.sh（native tar の docs/ 同梱）。どちらも、この一覧を写した後に
+# deploy/*/README.md を operate/runbooks/ へステージする（下の注記）。
 # 検査: .github/workflows/release-gate.yml が焼き上がったイメージの中身を見る。
 
 # 読者で切った棚
@@ -21,7 +22,15 @@ operate
 build
 ref
 
-# 旧レイアウト。新しい棚が書き上がるまでは、こちらが正なので配り続ける。
-# docs/{dev,guide} を消すときに、この 2 行も消す。
-guide
+# 旧レイアウト。build/ を書き上げたら消す。
 dev
+
+# ⚠️ operate/runbooks/ はここに書かない。リポジトリには存在せず、ステージング時に
+# deploy/*/README.md から作られる**生成物**だから。
+#
+# なぜ移設ではなくコピーなのか: runbook は「操作する対象の隣」に置いてあり、かつ
+# **リリースバンドルの中身そのもの**（release.sh が deploy/compose/README.md を
+# バンドルへ、deploy/aws を丸ごとコピーする）。docs/ へ移して deploy/ 側をポインタに
+# すると、tarball だけを持つ顧客の手元で「その tarball に無いパスを指す README」が
+# 出来上がる。解くべき問題は置き場ではなく**配られていないこと**だったので、
+# 置き場は動かさず、コンテナへ届くようにだけした。

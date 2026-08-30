@@ -1,10 +1,14 @@
 # 04. Troubleshooting and FAQ
 
-English | [日本語](04-troubleshooting.ja.md)
+English | [日本語](06-diagnose.ja.md)
+
+Audience: someone with a deployment that is not behaving
+Source of truth: the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page
+Updated: 2026-08
 
 This chapter organizes, by symptom, how to triage "it came up but doesn't work" and "a user
 says they can't use it." **The canonical recovery commands are in the "Troubleshooting" section
-of [deploy/compose/README.md](../../../deploy/compose/README.md)**; this chapter expands on it
+of [deploy/compose/README.md](../../deploy/compose/README.md)**; this chapter expands on it
 and adds diagnostic perspectives. One-or-two-line log checks and health checks are exceptionally
 included here as well. The working directory is `deploy/compose/`.
 
@@ -40,7 +44,7 @@ The CP is a container, but it drives the host's Docker daemon from the outside
 (docker-out-of-docker). This approach has 3 constraints that, if broken, **fail silently
 without producing errors**; the compose definition keeps them contained. Look here when you
 have customized compose yourself, or when you want to narrow things down from symptoms. The
-background on how this works is in [dev/09](../../dev/09-deploy.md).
+background on how this works is in [dev/09](../dev/09-deploy.md).
 
 - **(A) host network** — the CP publishes workspaces on `127.0.0.1:<port>` via the host daemon,
   so they are unreachable unless the host's loopback is shared. Both the CP and Caddy must have
@@ -50,7 +54,7 @@ background on how this works is in [dev/09](../../dev/09-deploy.md).
   path inside the CP too. If they diverge, **an empty home gets mounted**. **Symptom: the
   Workspace starts but home is empty / the work is missing.** If this symptom appears after a
   restore, check whether the destination `DATA_DIR` diverges from the original in path (at
-  least in basename) ([02](02-operations.md)).
+  least in basename) ([02](03-run.md)).
 - **(C) `user: "1000:1000"` + `group_add: <DOCKER_GID>`** — homes are created owned by uid 1000
   (the Workspace's `dev` user), and the CP needs the host's docker group to use the docker
   socket. With the wrong `DOCKER_GID`, you get **permission denied on the socket**. **Symptom:
@@ -60,7 +64,7 @@ background on how this works is in [dev/09](../../dev/09-deploy.md).
 
 > Setting an IdP up in the first place — what to create at Google / Entra ID / GitHub / another
 > OIDC IdP, which value goes where, and how to confirm it — is
-> [05-login-idp.md](05-login-idp.md). Come here when it is configured and still refuses.
+> [05-signin.md](05-signin.md). Come here when it is configured and still refuses.
 
 - **Always rejected** → if the allowlist (`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` /
   `_EMAILS_FILE`) is **entirely empty and nobody has been invited to a tenant, everything is
@@ -77,11 +81,11 @@ background on how this works is in [dev/09](../../dev/09-deploy.md).
   (7 days by default) and cannot be revoked individually. Take them off the roster (Admin →
   tenant → member → **Remove member**) or out of the allowlist — either takes effect on their
   very next request. To cut every session at once, rotate `AF_COOKIE_SECRET`
-  ([03 §Offboarding](03-security.md)).
+  ([03 §Offboarding](04-secure.md)).
 - **redirect URI mismatch** → check that the authorized redirect URI registered at the IdP
   (Google Cloud Console, the Entra app registration, …) is an **exact match** for
   `<PUBLIC_BASE_URL>/oauth2/callback`. If you change `PUBLIC_BASE_URL`, update the IdP side to
-  match ([05 §1](05-login-idp.md)). There is only ever this one URI, however many providers you
+  match ([05 §1](05-signin.md)). There is only ever this one URI, however many providers you
   enable.
 - **A sign-in button you configured is not on the login page** → that provider was disabled at
   startup because its settings were incomplete (one broken IdP must not lock everyone out).
@@ -113,7 +117,7 @@ When Caddy cannot obtain a certificate from Let's Encrypt, the usual causes are 
 A/AAAA do not point to this host, 80/443 are not reachable from outside (firewall), or you hit
 Let's Encrypt rate limits. In environments where public DNS is not available, such as air-gapped
 networks, don't use ACME at all — switch to `tls internal` (self-signed)
-([01 §4](01-install.md)).
+([01 §4](02-install.md)).
 
 ## Triage flow for user inquiries
 
@@ -143,12 +147,12 @@ problem or a CP/deployment-wide problem**.
 **Q. What happens if I lose `AF_MASTER_KEY`?**
 A. All stored credentials and **every past backup become permanently undecryptable**
 (crypto-shred). There is no recovery. That is precisely why you store it in a vault separate
-from the data and back it up independently ([03](03-security.md)).
+from the data and back it up independently ([03](04-secure.md)).
 
 **Q. What goes into a backup, and what does not?**
 A. Included: the DB, each user's home, plaintext Claude state, and Caddy certificates. Not
 included: `shared/jvm` (re-fetchable) and **`AF_MASTER_KEY`**. Details in
-[02](02-operations.md).
+[02](03-run.md).
 
 **Q. The Workspace starts but home is empty.**
 A. Almost certainly DooD constraint (B). Check that `DATA_DIR` is the same absolute path inside
@@ -159,31 +163,31 @@ document).
 A. Yes, with caveats. Releases no longer ship an image tar, so either mirror the GHCR images
 into an internal registry and point `REGISTRY` at it, or carry them in with
 `release.sh --save` + `load-images.sh`. Use `tls internal` for TLS, and a baked-in image with
-`CLAUDE_INSTALL=0` for Claude (the air-gap section of [02](02-operations.md)). Note that the
+`CLAUDE_INSTALL=0` for Claude (the air-gap section of [02](03-run.md)). Note that the
 fleet will start but the agents cannot work without reaching their model endpoints.
 
 **Q. I want to downgrade.**
 A. Not supported. Migrations are forward-compatible and applied automatically, and an older CP
 cannot understand the new schema. Rolling back is done not by "going back to the old image" but
-by "restoring from the backup taken before the upgrade" ([02](02-operations.md)).
+by "restoring from the backup taken before the upgrade" ([02](03-run.md)).
 
 **Q. I ran `docker compose down` but Workspaces are still there.**
 A. That is normal. Workspaces (`af-ws-*`) are outside compose management; the CP started them
 with `docker run`. To stop them for sure, use force-stop in the Admin panel; or, if bringing the
-whole host down, `docker stop` the remaining `af-ws-*` separately ([02](02-operations.md)).
+whole host down, `docker stop` the remaining `af-ws-*` separately ([02](03-run.md)).
 
 **Q. Can it be distributed across multiple hosts (HA / horizontal scaling)?**
 A. The delivery model is one company = one deployment = one host. The CP is premised on driving
 the host's Docker daemon, and distribution across multiple hosts or HA configurations are out
 of scope for now. For the design direction toward larger scale, see
-[dev/09](../../dev/09-deploy.md) (the aws target is implemented but has no production track
+[dev/09](../dev/09-deploy.md) (the aws target is implemented but has no production track
 record).
 
 **Q. I want to use authentication other than Google (Microsoft 365 / LDAP / SAML, etc.).**
 A. Natively (`AUTH=oauth`) the CP speaks OIDC, so **Microsoft Entra ID, Okta, Keycloak, Auth0,
 Cognito and GitLab work with configuration alone** — `AF_OIDC_PROVIDERS` plus a few
-`AF_OIDC_<ID>_*` variables, and one redirect URI at the IdP ([05](05-login-idp.md)). You can
+`AF_OIDC_<ID>_*` variables, and one redirect URI at the IdP ([05](05-signin.md)). You can
 enable several at once; the login page then shows one button per provider.
 SAML-only IdPs (HENNGE One / TrustLogin / CloudGate, etc.) and LDAP are not implemented in the
 CP: put an existing gateway (oauth2-proxy / Keycloak / ALB OIDC) in front and have the CP trust
-the upstream email header with `AUTH=proxy` ([dev/07 §7.3](../../dev/07-security.md)).
+the upstream email header with `AUTH=proxy` ([dev/07 §7.3](../dev/07-security.md)).

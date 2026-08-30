@@ -97,7 +97,7 @@ Updated: 2026-08
 | テナント全体のセッション | テナント管理者 | セッション | [admin 02](../admin/02-limits.ja.md) |
 | 上限とアイドル自動停止 | テナント管理者（読み取り）| 上限・自動停止 | [admin 02](../admin/02-limits.ja.md) |
 | ワークスペースのサイズ | 配備管理者 | — | [deploy-targets.md](deploy-targets.ja.md) |
-| サインイン方式とログイン規則 | テナント管理者 | サインイン方式 / ログイン規則 | [operator 05](../guide/operator/05-login-idp.ja.md) |
+| サインイン方式とログイン規則 | テナント管理者 | サインイン方式 / ログイン規則 | [operator 05](../operate/05-signin.ja.md) |
 | 接続元の制限 | テナント管理者 | 接続元の制限 | [admin 05](../admin/05-access.ja.md) |
 | 連携アプリの OAuth | テナント管理者 | 連携アプリの OAuth | [admin 05](../admin/05-access.ja.md) |
 | 連携サーバーの配布 | テナント管理者 | MCP 配布 | [admin 04](../admin/04-mcp-egress.ja.md) |
@@ -111,9 +111,9 @@ Updated: 2026-08
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
 | デプロイ形態 | 配備管理者 | 起動前 | [deploy-targets.md](deploy-targets.ja.md) |
-| 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [operator 01](../guide/operator/01-install.ja.md) / [02](../guide/operator/02-operations.ja.md) |
-| 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [operator 03](../guide/operator/03-security.ja.md) |
-| 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 03](../guide/operator/03-security.ja.md) |
+| 導入・更新・バックアップ・復旧 | 配備管理者 | 端末 | [operator 01](../operate/02-install.ja.md) / [02](../operate/03-run.ja.md) |
+| 入口・TLS・サインイン方式 | 配備管理者 | 端末 | [operator 03](../operate/04-secure.ja.md) |
+| 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 03](../operate/04-secure.ja.md) |
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [member 10](../use/13-ops-tooling.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
 | コンテナ内のロール別ドキュメント | — | 自動 | [roles.md](roles.ja.md) |

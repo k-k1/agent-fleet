@@ -94,7 +94,7 @@ Clean home**, in that order ("Removing a member" in [01-members.md](01-members.m
 
 **Q. Where is egress (external traffic) control?**
 Egress (external traffic) control is super_admin only. When traffic control becomes necessary,
-consult your IT department ([operator/README.md](../guide/operator/README.md)).
+consult your IT department ([operator/README.md](../operate/README.md)).
 
 **Q. If I force-stop a workspace, does that member's work disappear?**
 No. The container merely stops for the moment; the contents of home (repositories and settings)
@@ -103,4 +103,4 @@ remain. The member can start it again from the Console.
 ---
 
 - Back to: [02 Resource limits and sessions](02-limits.md)
-- Guide index: [../README.md](../guide/README.md)
+- Guide index: [../README.md](../use/README.md)

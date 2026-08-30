@@ -56,18 +56,14 @@ func docsSrcDir() string {
 // The listing is deliberately literal rather than clever. It is read as "who sees
 // what" during security review, and a loop over a table would hide the answer.
 func docsRolePrefixes(role string) []string {
-	// Legacy shelves, still authoritative while the new ones are being written
-	// (docs/README.md "Migration in progress"). What is left in docs/guide is the
-	// operator volume — guide/member became use/ and guide/admin became admin/ — so
-	// only the deployment administrator still needs it, and a member needs neither.
-	// Delete these two variables, and this comment, once operate/ and build/ are
-	// written and docs/{dev,guide} are removed.
+	// docs/guide is gone: guide/member became use/, guide/admin became admin/, and
+	// guide/operator became operate/. docs/dev is the last legacy shelf — delete this
+	// variable, and this comment, once build/ is written and docs/dev is removed.
 	legacyDev := []string{"dev"}
-	legacyOperator := []string{"guide", "dev"}
 
 	switch role {
 	case "super_admin":
-		return append([]string{"use", "ref", "admin", "operate", "build"}, legacyOperator...)
+		return append([]string{"use", "ref", "admin", "operate", "build"}, legacyDev...)
 	case "tenant_admin":
 		return append([]string{"use", "ref", "admin"}, legacyDev...)
 	default: // "member" and any unknown role
@@ -92,7 +88,7 @@ func roleDocsRoots(src, role string) []struct{ Dir, Rel string } {
 }
 
 // writeRoleDocsTarGz streams the role-permitted subset as a gzipped tar whose paths are
-// relative to the docs root ("guide/member/README.md", …). It is the PULL half of the
+// relative to the docs root ("use/README.md", …). It is the PULL half of the
 // same provisioning decision stageWorkspaceDocs implements for docker/native: on ECS
 // there is no host path to bind-mount into a Fargate/EC2 task, so the container asks
 // for the identical subset over the internal bridge instead (docs_bridge.go).

@@ -90,8 +90,12 @@ jobs:
           docker run --rm --entrypoint /bin/sh "agent-fleet/control-plane:$VERSION" -c '
             set -e
             d=/usr/local/share/agent-fleet/docs
-            for s in use admin operate build ref guide dev; do test -d "$d/$s"; done
-            test ! -e "$d/log" && test ! -e "$d/decisions"
+            for s in use admin operate build ref dev; do test -d "$d/$s"; done
+            # The runbooks are copied in at staging time (deploy/release/stage-docs.sh)
+            # so an operator can read them from inside a workspace.
+            test -f "$d/operate/runbooks/compose.md"
+            test -f "$d/operate/runbooks/aws-ecs.md"
+            test ! -e "$d/log" && test ! -e "$d/decisions" && test ! -e "$d/guide"
             test ! -e "$d/HANDOFF.md" && test ! -e "$d/CHANGELOG-handoff.md"
             test ! -e "$d/roadmap.md" && test ! -e "$d/img"'
           # version stamp: after boot, /api/version behind auth returns VERSION

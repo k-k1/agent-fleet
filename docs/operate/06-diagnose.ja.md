@@ -1,9 +1,13 @@
 # 04. 障害対応と FAQ
 
-[English](04-troubleshooting.md) | 日本語
+[English](06-diagnose.md) | 日本語
+
+Audience: 配備の様子がおかしい人
+Source of truth: `deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）
+Updated: 2026-08
 
 「立ち上がったのに動かない」「ユーザーから使えないと言われた」ときの切り分けを、症状ベースで
-まとめます。**復旧コマンドの正は [deploy/compose/README.md](../../../deploy/compose/README.md) の
+まとめます。**復旧コマンドの正は [deploy/compose/README.md](../../deploy/compose/README.md) の
 "Troubleshooting" 節**で、ここはそれを日本語化・拡充し、診断の観点を足したものです。ログ確認や
 ヘルスチェックの 1〜2 行は例外的にここにも載せます。作業ディレクトリは `deploy/compose/`。
 
@@ -37,7 +41,7 @@
 CP はコンテナですが、ホストの Docker デーモンを外から駆動します（docker-out-of-docker）。この方式
 には破ると**エラーを出さずに静かに壊れる** 3 つの制約があり、compose 定義が封じ込めています。
 自分で compose をカスタマイズしたときや、症状から当たりをつけたいときはここを見ます。仕組みの
-背景は [dev/09](../../dev/09-deploy.md)。
+背景は [dev/09](../dev/09-deploy.md)。
 
 - **(A) host ネットワーク** — CP はワークスペースをホストデーモン経由で `127.0.0.1:<port>` に
   publish するので、ホストの loopback を共有していないと到達できません。CP と Caddy の両方が
@@ -46,7 +50,7 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
   `-v` マウントを作るので、`DATA_DIR` は CP の内側でも同じ絶対パスに解決されなければなりません。
   ずれると**空の home がマウント**されます。**症状: Workspace は起動するのに home が空・作業が
   見当たらない。**リストア後にこの症状が出たら、復元先の `DATA_DIR` が元とパス（少なくとも
-  basename）で食い違っていないか確認します（[02](02-operations.ja.md)）。
+  basename）で食い違っていないか確認します（[02](03-run.ja.md)）。
 - **(C) `user: "1000:1000"` + `group_add: <DOCKER_GID>`** — home は uid 1000（Workspace の `dev`
   ユーザー）所有で作られ、CP は docker ソケットを使うためにホストの docker グループが要ります。
   `DOCKER_GID` が違うと**ソケットで permission denied**。**症状: Workspace を起動しようとすると
@@ -55,7 +59,7 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
 ## ログインできない
 
 > そもそも IdP をどう設定するか — Google / Entra ID / GitHub / その他 OIDC で何を作り、どの値を
-> どこに入れ、どう確認するか — は [05-login-idp.md](05-login-idp.ja.md) にあります。ここは
+> どこに入れ、どう確認するか — は [05-signin.md](05-signin.ja.md) にあります。ここは
 > 「設定してあるのに拒否される」ときに読む場所です。
 
 - **常に拒否される** → 許可リスト（`AF_OAUTH_ALLOWED_EMAILS` / `_DOMAINS` / `_EMAILS_FILE`）が
@@ -72,10 +76,10 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
   切れません**。署名済み cookie は最大 `AF_SESSION_TTL`（既定 7 日）有効で、個別失効の手段はあり
   ません。名簿から外す（管理 → テナント → メンバー → **メンバーを外す**）か許可リストから消して
   ください — どちらも**次のリクエスト**で効きます。全セッションを一度に切るなら
-  `AF_COOKIE_SECRET` のローテーション（[03 のオフボーディング節](03-security.ja.md)）。
+  `AF_COOKIE_SECRET` のローテーション（[03 のオフボーディング節](04-secure.ja.md)）。
 - **redirect URI mismatch** → IdP 側（Google Cloud Console、Entra のアプリ登録など）に登録した
   承認済みリダイレクト URI が `<PUBLIC_BASE_URL>/oauth2/callback` と**完全一致**しているか。
-  `PUBLIC_BASE_URL` を変えたら IdP 側も合わせます（[05 §1](05-login-idp.ja.md)）。有効にする provider が
+  `PUBLIC_BASE_URL` を変えたら IdP 側も合わせます（[05 §1](05-signin.ja.md)）。有効にする provider が
   何個でも、この URI は 1 本だけです。
 - **設定したはずのサインインボタンがログイン画面に出ない** → 設定が不完全なため起動時に無効化
   されています（1 つの IdP の設定ミスで全員が締め出されないための挙動）。
@@ -108,7 +112,7 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
 Caddy が Let's Encrypt から証明書を取れないときの定番は、DNS の A/AAAA がこのホストを指していない、
 80/443 が外部から到達できない（ファイアウォール）、Let's Encrypt のレート制限に当たった、の 3 つ
 です。閉域網など公開 DNS を用意できない環境では、そもそも ACME を使わず `tls internal`（自己署名）へ
-切り替えます（[01 §4](01-install.ja.md)）。
+切り替えます（[01 §4](02-install.ja.md)）。
 
 ## ユーザー問い合わせの切り分けフロー
 
@@ -132,11 +136,11 @@ Caddy が Let's Encrypt から証明書を取れないときの定番は、DNS �
 
 **Q. `AF_MASTER_KEY` を無くすとどうなる？**
 A. 保存済みの全資格情報と、**すべての過去バックアップが永久に復号不能**になります（crypto-shred）。
-復旧手段はありません。だからこそデータとは別の金庫に、独立してバックアップします（[03](03-security.ja.md)）。
+復旧手段はありません。だからこそデータとは別の金庫に、独立してバックアップします（[03](04-secure.ja.md)）。
 
 **Q. バックアップに何が入って、何が入らない？**
 A. 入るのは DB・各ユーザーの home・平文の Claude 状態・Caddy 証明書。入らないのは `shared/jvm`
-（再取得可能）と **`AF_MASTER_KEY`**。詳細は [02](02-operations.ja.md)。
+（再取得可能）と **`AF_MASTER_KEY`**。詳細は [02](03-run.ja.md)。
 
 **Q. Workspace は起動するのに home が空。**
 A. ほぼ DooD 制約 (B)。`DATA_DIR` が CP の内外で同一絶対パスか、リストア時に basename が一致して
@@ -146,29 +150,29 @@ A. ほぼ DooD 制約 (B)。`DATA_DIR` が CP の内外で同一絶対パスか�
 A. 入れられますが、条件があります。リリースに image tar は添付しなくなったので、GHCR の image を
 社内レジストリへミラーして `REGISTRY` をそこへ向けるか、`release.sh --save` ＋ `load-images.sh` で
 持ち込みます。TLS は `tls internal`、Claude は `CLAUDE_INSTALL=0` で焼き込み image を使います
-（[02](02-operations.ja.md) の air-gap）。なお、フリートは起動できてもエージェント自身は
+（[02](03-run.ja.md) の air-gap）。なお、フリートは起動できてもエージェント自身は
 モデルのエンドポイントに到達できなければ動きません。
 
 **Q. ダウングレードしたい。**
 A. 非対応です。migration は前方互換で自動適用され、古い CP は新スキーマを理解できません。後退は
 「古い image に戻す」ではなく「アップグレード前に取ったバックアップからリストアする」で行います
-（[02](02-operations.ja.md)）。
+（[02](03-run.ja.md)）。
 
 **Q. `docker compose down` したのに Workspace が残っている。**
 A. 正常です。Workspace（`af-ws-*`）は compose 管理外で、CP が `docker run` で起こしたものです。
 確実に止めるには Admin パネルの force-stop、またはホスト全体を落とすなら残る `af-ws-*` を別途
-`docker stop` します（[02](02-operations.ja.md)）。
+`docker stop` します（[02](03-run.ja.md)）。
 
 **Q. 複数ホストに分散（HA・水平スケール）できる？**
 A. 提供モデルは 1 社 = 1 デプロイ = 1 ホストです。CP はホストの Docker デーモンを駆動する前提で、
-複数ホストへの分散や HA 構成は現行の対象外です。大規模化の設計方向は [dev/09](../../dev/09-deploy.md)
+複数ホストへの分散や HA 構成は現行の対象外です。大規模化の設計方向は [dev/09](../dev/09-deploy.md)
 （aws ターゲットは実装済みだが実運用実績なし）を参照してください。
 
 **Q. Google 以外の認証（Microsoft 365 / LDAP / SAML など）を使いたい。**
 A. CP ネイティブ（`AUTH=oauth`）は OIDC を話すので、**Microsoft Entra ID・Okta・Keycloak・Auth0・
 Cognito・GitLab は設定だけで使えます** — `AF_OIDC_PROVIDERS` と数個の `AF_OIDC_<ID>_*`、そして
-IdP 側にリダイレクト URI を 1 本（[05](05-login-idp.ja.md)）。同時に複数有効化でき、その場合は
+IdP 側にリダイレクト URI を 1 本（[05](05-signin.ja.md)）。同時に複数有効化でき、その場合は
 ログイン画面に provider の数だけボタンが並びます。
 SAML のみの IdP（HENNGE One / TrustLogin / CloudGate など）と LDAP は CP には実装していません。
 既存のゲートウェイ（oauth2-proxy / Keycloak / ALB OIDC）を前段に置き、`AUTH=proxy` で上流のメール
-ヘッダを信頼させてください（[dev/07 §7.3](../../dev/07-security.md)）。
+ヘッダを信頼させてください（[dev/07 §7.3](../dev/07-security.md)）。

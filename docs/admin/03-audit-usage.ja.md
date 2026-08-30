@@ -88,7 +88,7 @@ home を掃除** の順です（[01-members.md](01-members.ja.md) の「メン�
 
 **Q. 外部通信（egress）の統制はどこですか。**
 egress（外部通信）統制は super_admin 専用です。通信の制御が必要になったら情シスへ相談してください
-（[operator/README.md](../guide/operator/README.ja.md)）。
+（[operator/README.md](../operate/README.ja.md)）。
 
 **Q. ワークスペースを強制停止すると、そのメンバーの作業は消えますか？**
 消えません。コンテナがいったん止まるだけで、home の中身（リポジトリや設定）は残ります。メンバーは
@@ -97,4 +97,4 @@ Console から起動し直せます。
 ---
 
 - 前に戻る: [02 資源上限とセッション](02-limits.ja.md)
-- ガイド全体の索引: [../README.md](../guide/README.ja.md)
+- ガイド全体の索引: [../README.md](../use/README.ja.md)

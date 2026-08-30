@@ -100,7 +100,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Sessions across the tenant | tenant admin | Sessions | [admin 02](../admin/02-limits.md) |
 | Limits and idle auto-stop | tenant admin (read) | Limits & idle | [admin 02](../admin/02-limits.md) |
 | Workspace sizing | deployment admin | — | [deploy-targets.md](deploy-targets.md) |
-| Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [operator 05](../guide/operator/05-login-idp.md) |
+| Sign-in methods and login rules | tenant admin | Sign-in methods / Login rules | [operator 05](../operate/05-signin.md) |
 | Connection-source restriction | tenant admin | Allowed networks | [admin 05](../admin/05-access.md) |
 | Integration app OAuth | tenant admin | Integration OAuth apps | [admin 05](../admin/05-access.md) |
 | Distributing integration servers | tenant admin | MCP distribution | [admin 04](../admin/04-mcp-egress.md) |
@@ -114,9 +114,9 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Feature | Who | Where | Details |
 |---|---|---|---|
 | Deployment targets | deployment admin | before start | [deploy-targets.md](deploy-targets.md) |
-| Install, upgrade, back up, restore | deployment admin | a shell | [operator 01](../guide/operator/01-install.md) / [02](../guide/operator/02-operations.md) |
-| Ingress, TLS and sign-in providers | deployment admin | a shell | [operator 03](../guide/operator/03-security.md) |
-| Audit log and egress control | deployment admin | Admin | [operator 03](../guide/operator/03-security.md) |
+| Install, upgrade, back up, restore | deployment admin | a shell | [operator 01](../operate/02-install.md) / [02](../operate/03-run.md) |
+| Ingress, TLS and sign-in providers | deployment admin | a shell | [operator 03](../operate/04-secure.md) |
+| Audit log and egress control | deployment admin | Admin | [operator 03](../operate/04-secure.md) |
 | Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 10](../use/13-ops-tooling.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
 | Role-scoped documentation in containers | — | automatic | [roles.md](roles.md) |

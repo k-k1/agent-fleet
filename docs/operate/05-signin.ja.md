@@ -1,18 +1,22 @@
 # 05. サインイン方式の設定 — IdP 側の手順まで通しで
 
-[English](05-login-idp.md) | 日本語
+[English](05-signin.md) | 日本語
+
+Audience: IdP を配備につなぐ人
+Source of truth: `deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）
+Updated: 2026-08
 
 このページが**サインイン設定の正**です。IdP 側で何を作るか、どの値を控えるか、それを `.env` の
 どのキー（または Console のどの欄）に入れるか、うまくいったことをどう確認するか、そしてよくある
-失敗は何か、を IdP ごとに並べています。[01-install §3](01-install.ja.md) には要点だけを残して
+失敗は何か、を IdP ごとに並べています。[01-install §3](02-install.ja.md) には要点だけを残して
 ここへのリンクを置いてあり、両者が食い違ったときは**このページが正**です。
 
 追加したい IdP の節を上から順に読めば、入口が開くところまで到達できるように書いてあります。
-すでに動いているデプロイの切り分けは[04-troubleshooting.md](04-troubleshooting.ja.md)の役目
+すでに動いているデプロイの切り分けは[06-diagnose.md](06-diagnose.ja.md)の役目
 （あちらは症状から引く索引）で、ここでは繰り返しません。
 
 内部の仕組み（信頼規則、2 つの IdP をまたいで同じ人と見なす判定）は
-[dev/07 §7.3.1](../../dev/07-security.md) と [ADR 0043](../../decisions/0043-login-idp.md)。
+[dev/07 §7.3.1](../dev/07-security.md) と [ADR 0043](../decisions/0043-login-idp.md)。
 
 ## 0. はじめる前に
 
@@ -113,7 +117,7 @@ CP は discovery を一切行いません。規則は常に「Google 自身の `
 - **2 つのキーの片方だけを設定した** — ボタンが黙って出ません。CP のログに
   `google login disabled — set both GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET`。
 - **Google は通すのに Agent Fleet が拒否する** — Google ではなく許可リストの話です。§8 と
-  [04「ログインできない」](04-troubleshooting.ja.md)へ。
+  [04「ログインできない」](06-diagnose.ja.md)へ。
 - **外部の同意画面がテスト中のまま**だと、テストユーザーに登録したアカウントしか通れません。
   それ以外は CP に届く前に Google が止めます。
 - 個人の `gmail.com` アドレスも Google の検証は問題なく通ります。このボタンを自社に閉じるのは
@@ -193,7 +197,7 @@ AF_OIDC_ENTRA_LINK_CLAIM=oid
 `oid` はそのディレクトリでのその人のオブジェクト ID で、どのアプリ登録でも同じ値であり、
 本人にも選べません。この「選べない」が肝心なところで、他の値を指定する前に §7.1 の警告を
 読んでください。なぜこれが `sub` の**差し替えではなく追加**なのかは
-[ADR 0043](../../decisions/0043-login-idp.md)（決定 38）にあります。
+[ADR 0043](../decisions/0043-login-idp.md)（決定 38）にあります。
 
 ### 4.4 よくある失敗
 
@@ -336,7 +340,7 @@ IdP の管理画面で何を探せばよいかの目安として、issuer の形
 全テナント分の承認・停止を直接打てます。
 
 > そもそもテナントを分けるかどうか、兼務者がいる場合にテナントのログイン規則がどう絡むかは
-> 「判断」の話なので、[01-install §4](01-install.ja.md) に置いてあります。
+> 「判断」の話なので、[01-install §4](02-install.ja.md) に置いてあります。
 
 ### 7.1 テナント管理者が埋める欄
 
@@ -478,7 +482,7 @@ IdP の管理画面で何を探せばよいかの目安として、issuer の形
 
 ## 9. それでも動かないとき
 
-症状から引く切り分けは[04-troubleshooting.md](04-troubleshooting.ja.md)の**「ログインできない」**
+症状から引く切り分けは[06-diagnose.md](06-diagnose.ja.md)の**「ログインできない」**
 にあります（拒否され続ける、リダイレクト URI 不一致、ボタンが出ない、マルチテナント issuer、
 GitHub 各種、平文 HTTP で Cookie が保存されない）。IdP ごとの失敗は上の §3.3・§4.4・§5.4 です。
 

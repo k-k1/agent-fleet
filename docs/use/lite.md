@@ -21,7 +21,7 @@ using Agent Fleet that never require opening that black screen.
 
 This guide describes the "how" of the operations. It doesn't get into the "why it works that way"
 mechanics (if you're curious, that's in the developer-facing [../dev/README.md](../dev/README.md)).
-Guides for other roles and the glossary are in the index [README.md](../guide/README.md). If you ever need
+Guides for other roles and the glossary are in the index [README.md](../use/README.md). If you ever need
 to go a step further (write code yourself, edit files, and so on), move on to the developer-facing
 [member/README.md](README.md).
 
