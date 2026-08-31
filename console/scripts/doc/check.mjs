@@ -10,6 +10,7 @@
 // docs/82 §82.2 の実測に置いた）。
 //
 //   npm --prefix console run doc:check
+//   node console/scripts/doc/check.mjs --screenshot /tmp/doc.png
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +19,8 @@ import { checker, serveDir, startBrowser, until } from "../lib/headless.mjs";
 
 const CONSOLE = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const { check, report } = checker();
+const shotArg = process.argv.indexOf("--screenshot");
+const SHOT = shotArg > 0 ? process.argv[shotArg + 1] : "";
 const www = fs.mkdtempSync(path.join(os.tmpdir(), "af-doccheck-"));
 process.on("exit", () => fs.rmSync(www, { recursive: true, force: true }));
 
@@ -237,6 +240,8 @@ try {
   // 「簡易プレビュー」の断りが、読み始める前に見える位置にある。
   const note = await b.evaluate("document.querySelector('.docpreview-note')?.textContent || ''");
   check(note.includes("簡易プレビュー"), "簡易プレビューだと明示している", JSON.stringify(note.trim().slice(0, 30)));
+
+  if (SHOT) await b.screenshot(SHOT);
 
   // 壊れたファイルは、白い面ではなく理由とダウンロード導線を出す。
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/broken.docx&fmt=docx`);
