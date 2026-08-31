@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.14.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.0) — 2026-08-31
+
+A web app running in a workspace can be opened at a URL of its own — a subdomain minted
+on every start, behind sign-in by default and shareable with your tenant. The File pane
+now renders PDFs and gives Office documents a text preview, and the user guide has become
+a tree of its own in English and Japanese.
+
 ## [0.13.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.13.1) — 2026-08-28
 
 A Bitbucket query in the issue tracker is now assembled from what you pick instead of a
