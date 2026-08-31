@@ -332,3 +332,65 @@ env -u AF_SESSION_NAME claude -p --setting-sources project --settings ./hooks.js
 **教訓**: 「ターンは一本道」という前提を置いたフック配線は、BG サブエージェント /
 Workflow / Monitor が入った時点で崩れる。フックで状態を書く経路を足すときは
 **「裏で並行に鳴りうるか」**を必ず一度問うこと。
+
+## 9. キャンセルした AUQ が「また聞かれる」— 保留ペイロードが決着より長生きする（2026-08-31、claude 2.1.251 で実測・修正済み）
+
+**症状（利用者報告）**: 「AUQ をキャンセルしても何度も聞かれる」。ミラーの質問カードで
+「キャンセルして会話に戻る」を押すと、いったんは決着したように見えるのに、**同じ質問の
+カードがもう一度、回答フォーム付きで出てくる**。その2枚目は選んでも「回答を送信」しても
+**完全に無反応**、キャンセルも効かない。しばらく放置すると勝手に消え、残った1枚には
+英文の定型文（`The user doesn't want to proceed with this tool use…`）が「回答」として
+入っている。
+
+**実測（一次データ）**: 5ms 間隔で `pending-question` / jsonl / `session-status` を
+サンプリングしたプローブ（2回とも同じ形）:
+
+```
+21:39:54.288  pending-question/<sid>.json 出現（AskUserQuestion の PreToolUse フック）
+21:39:54.410  jsonl に tool_use 行が flush（122ms 後 — 別回は 106ms）
+21:40:00.347  state=permission（AUQ 自身の permission_prompt、6 秒後 = §8 と同じ化け）
+```
+
+- claude は jsonl を**遅れて flush する**（直前の thinking 行は自分のタイムスタンプより
+  6 秒遅れて、tool_use 行と同時に落ちた）。「フックの書き込み」と「転写への行の出現」の
+  **順序は保証されない**。
+- キャンセルは `POST /turn {op:"interrupt"}` → Escape で、claude 側では
+  **ツールの却下**として記録される: `is_error` の tool_result（上の英文）＋
+  `[Request interrupted by user for tool use]`。「(No answer provided)」の形（§6）とは
+  **別の文言**。
+
+**根因は2つ、どちらも「決着したのに保留が残る」**:
+
+1. **ペイロードを消すフックが鳴らない。** 保留を消すのは `AskUserQuestion` 自身の
+   PostToolUse（§8 の `clearsInteraction`）だが、**却下されたツールの PostToolUse は
+   鳴らない**。`pending-question/<sid>.json` は、無関係なフック（Stop の idle / 次の
+   UserPromptSubmit）が来るまでディスクに残り続ける。
+2. **窓の中でしか気づけない。** `hidePendingInteraction` は「保留と同じ行が**いま返す窓の
+   中**にあり、しかも answered なら保留を引っ込める」— つまり**窓依存**。ところが窓は
+   決着と同時に前へ進む（保留中はカーソルを質問行で止め、決着した行を配ったところで解放
+   する）ので、**その次のポーリングではもう行が窓に無く、残ったペイロードが「生きた
+   カード」として出し直される**。打鍵の当たる先（モーダル）はもう無いので、答えても
+   キャンセルしても無反応になる。
+
+**修正**:
+1. `sweepSettledPending`（`session_transcript.go`）を `surfacePendingPayloads` の中に置き、
+   **転写を根拠に**決着済みの保留を捨てる。判定材料は中身の一致ではなく時刻:
+   `claude.SettledAt(lines)`（その種のモーダルの最後の決着＝tool_result の時刻）と、
+   ペイロードファイルの mtime（＝捕まえた時刻）。**同時に開くモーダルは1つ**なので、
+   捕捉より後の決着はそのペイロード自身のものでしかありえない。この時刻比較が、上の
+   106〜122ms の隙（フックは書いたが tool_use 行はまだ flush されていない）で**生きた質問を
+   誤って掃除しない**唯一の歯止めになっている。窓に依存しないので、行がどれだけ過去へ
+   流れていても効く。掃除は出す経路と同じ関数の中に置く（分けると必ず片方だけ直される）。
+2. `isDeclinedAnswer` に `The tool use was rejected` を追加。§6 で入れた判定は
+   `(No answer provided)` しか見ておらず、Console のキャンセルが生む文言を取り逃していた
+   ため、却下された質問が**「回答済み」を名乗り、回答欄に英文の定型文**が入っていた。
+
+回帰テストは `session_transcript_test.go`（`TestSweepSettledPending` — 掃除する／生きた
+質問は掃除しない／決着が無ければ触らない、の3件を `surfacePendingPayloads` 越しに固定）と
+`internal/agents/claude/transcript_test.go`（`TestCollectInteractionAnswers_Declined` に
+キャンセル実文言のケースを追加）。
+
+**教訓**: **「表示の重複除去」で状態の後始末を代用しない。** 重複が見えている間だけ
+消す仕組みは、窓が動いた瞬間に無力になり、しかもそこから先は「操作できるのに何も起きない
+UI」という最悪の形で残る。ペイロードの寿命は、それを消せる**唯一のイベント**（ここでは
+PostToolUse）が鳴らない場合を必ず勘定に入れて設計すること。
