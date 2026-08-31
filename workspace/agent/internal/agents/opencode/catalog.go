@@ -23,7 +23,6 @@ package opencode
 // decorates it further, in the user's language, from the same prefix.
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -59,8 +58,9 @@ const (
 )
 
 // Catalog shapes the live catalog ids into launch choices by applying the user's
-// usage preference. ids is the raw catalog (Models()); pref is one of the Usage*
-// constants. The label stays the id: the Console localizes the Go/Zen marker itself
+// usage preference, in a normalized order (Go route first, id ascending inside each
+// group — see the sort below). ids is the raw catalog (Models()); pref is one of the
+// Usage* constants. The label stays the id: the Console localizes the Go/Zen marker itself
 // (agentModels.ts) and the MCP list_models an assistant reads wants the raw id anyway.
 func Catalog(ids []string, pref string) []agents.ModelChoice {
 	out := make([]agents.ModelChoice, 0, len(ids))
@@ -79,12 +79,19 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 		return Catalog(ids, UsageZen)
 	}
 	// Go first everywhere: whichever route is selected, a subscription-covered id is
-	// the one to reach for first. STABLE so the catalog's own order reads through
-	// inside each group.
-	sort.SliceStable(out, func(i, j int) bool {
-		return strings.HasPrefix(out[i].ID, goPrefix) && !strings.HasPrefix(out[j].ID, goPrefix)
+	// the one to reach for first. Inside a group the order is normalized by id
+	// (=label), NOT inherited from the catalog: opencode is the one kind read through
+	// two sources, and they disagree — the daemon's /api/model hands back the upstream
+	// catalog's own (meaningless) order while `opencode models` prints it sorted. The
+	// picker's order therefore flipped depending on whether a serve happened to be
+	// running when the modal was opened（実測 2026-08-31・見た目は「時々並びが乱れる」）。
+	// docs/54 の取得元切り替えは維持したまま、見え方だけを揃える。
+	return agents.SortGrouped(out, func(m agents.ModelChoice) int {
+		if strings.HasPrefix(m.ID, goPrefix) {
+			return 0
+		}
+		return 1
 	})
-	return out
 }
 
 // keepForUsage decides whether one id belongs in the menu under pref. opencode.ai の

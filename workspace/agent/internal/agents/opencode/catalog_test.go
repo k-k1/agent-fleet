@@ -52,16 +52,44 @@ func withFreeIDs(t *testing.T, free ...string) {
 }
 
 // Zen: opencode.ai 側は絞らない（Go を併用していれば両方出る）。Go を先頭へ寄せるが
-// 捨てず、群の中の相対順は保つ（安定ソート）ので、カタログの並びがそのまま読める。
+// 捨てず、群の中は id 昇順に正規化する（取得元の並びは持ち込まない）。
 func TestCatalogZenKeepsBothRoutesGoFirst(t *testing.T) {
 	got := ids(t, UsageZen)
 	want := []string{
 		"opencode-go/deepseek-v4-pro", "opencode-go/glm-5.2", "opencode-go/kimi-k3",
-		"opencode/deepseek-v4-flash-free", "opencode/claude-opus-5", "opencode/deepseek-v4-pro",
-		"opencode/glm-5.2", "anthropic/claude-opus-5",
+		"anthropic/claude-opus-5", "opencode/claude-opus-5", "opencode/deepseek-v4-flash-free",
+		"opencode/deepseek-v4-pro", "opencode/glm-5.2",
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("zen = %v", got)
+	}
+}
+
+// 「時々並びが乱れる」の再現と固定: 同じカタログでも daemon（GET /api/model = 上流の
+// 生の並び）と CLI（opencode models = id 昇順）で入力順が違う。整形後は同一でなければ
+// ならない — 利用者から見て「起動モーダルを開き直したら並びが変わった」になるため。
+func TestCatalogOrderIsIndependentOfSource(t *testing.T) {
+	// daemon 実測（2026-08-31）の並びを縮めたもの: 名前順でもプロバイダ順でもない。
+	fromDaemon := []string{
+		"opencode-go/kimi-k3",
+		"opencode/deepseek-v4-flash-free",
+		"opencode-go/glm-5.2",
+		"anthropic/claude-opus-5",
+		"opencode/glm-5.2",
+		"opencode-go/deepseek-v4-pro",
+		"opencode/claude-opus-5",
+		"opencode/deepseek-v4-pro",
+	}
+	for _, pref := range []string{UsageZen, UsageGo} {
+		a, b := Catalog(fromDaemon, pref), Catalog(live, pref) // live = CLI 相当（別順）
+		if len(a) != len(b) {
+			t.Fatalf("%s: 件数が違う: %d vs %d", pref, len(a), len(b))
+		}
+		for i := range a {
+			if a[i].ID != b[i].ID {
+				t.Fatalf("%s: 取得元で並びが変わる: %d 番目 %q vs %q", pref, i, a[i].ID, b[i].ID)
+			}
+		}
 	}
 }
 
@@ -82,7 +110,7 @@ func TestCatalogGoDropsOnlyMeteredIDs(t *testing.T) {
 func TestCatalogFreeKeepsZeroCostAndDirectProviders(t *testing.T) {
 	withFreeIDs(t, "opencode/deepseek-v4-flash-free")
 	got := ids(t, UsageFree)
-	want := []string{"opencode/deepseek-v4-flash-free", "anthropic/claude-opus-5"}
+	want := []string{"anthropic/claude-opus-5", "opencode/deepseek-v4-flash-free"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("free = %v", got)
 	}
