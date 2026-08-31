@@ -379,3 +379,32 @@
   margin-left: 6px;
   vertical-align: 1px;
 }
+
+/* Round-trip readout in the terminal head (TermRtt.tsx). A readout, not a control:
+   no border, no hover, nothing to click — it sits left of the mirror toggle and must
+   not read as a button. Tabular figures so a value ticking between 98 and 102 doesn't
+   shuffle the cluster next to it. */
+.term-rtt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+  color: var(--muted);
+}
+.term-rtt .codicon {
+  font-size: 12px;
+}
+/* Below --warn the terminal feels local; the ok state stays deliberately dim so a
+   healthy connection is background information rather than a badge. */
+.term-rtt-ok {
+  color: var(--muted2);
+}
+.term-rtt-warn {
+  color: var(--warn);
+}
+.term-rtt-bad {
+  color: var(--del);
+}

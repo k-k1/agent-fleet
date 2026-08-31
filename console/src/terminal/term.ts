@@ -31,7 +31,13 @@ interface Inst {
   ro?: ResizeObserver | null;
   dropped?: boolean;
   hb?: ReturnType<typeof setInterval>; // heartbeat timer (see startHeartbeat)
+  rttTimer?: ReturnType<typeof setInterval>; // RTT sampling timer (see startHeartbeat)
   lastPong?: number; // ms of the last pong seen on the current socket
+  pingAt?: number; // performance.now() of the ping still awaiting a pong (see noteRtt)
+  rttLog?: number[]; // recent round-trip samples, newest last (RTT_LOG_MAX)
+  rttAt?: number; // Date.now() of the newest sample
+  rttListeners?: Set<(s: RttStats | null) => void>;
+  pongWaiters?: ((rtt: number) => void)[]; // probeTerminalRtt's sequential sampler
   rx?: boolean; // any PTY byte received on the CURRENT socket (see ensureAttached)
   connAt?: number; // ms when the CURRENT socket began connecting (stall watchdog — see ensureAttached)
   connWd?: ReturnType<typeof setTimeout>; // connect-stall watchdog timer (see attach)
@@ -878,6 +884,162 @@ export function focusTerm(paneId: string) {
   } catch {}
 }
 
+// --- round-trip measurement -------------------------------------------------
+//
+// The terminal's app-level ping/pong is also the ONLY honest probe of how far away
+// the PTY is: the ping travels the exact path a keystroke does (browser → CP proxy →
+// Agent) and the Agent answers it from the same goroutine that writes PTY output, so
+// the round trip covers everything except the PTY/tmux itself (measured at ~0.4 ms in
+// the container — i.e. everything that is left IS this number). Without it, "typing
+// feels slow" has no observable quantity anywhere in the product, and an investigation
+// can only guess between the browser, the relay and the terminal.
+//
+// One ping is in flight at a time: the Agent's pong is a constant frame
+// (`{"type":"pong"}` — workspace/agent/terminal.go) and carries no token to correlate
+// with, so a second outstanding ping could not be told apart. A ping sent while one is
+// still outstanding is therefore skipped, which is itself the right behaviour: a socket
+// that owes us a pong is stalled, and piling on more says nothing new.
+export interface RttStats {
+  last: number; // newest sample (ms)
+  med: number; // median of the retained window
+  max: number; // worst of the retained window
+  n: number; // samples retained
+  at: number; // Date.now() of the newest sample
+}
+
+const RTT_LOG_MAX = 24; // ~2 min of history at RTT_INTERVAL
+const RTT_INTERVAL = 5000; // sampling cadence (independent of the 15s heartbeat)
+
+function rttStats(it: Inst): RttStats | null {
+  const log = it.rttLog;
+  if (!log || log.length === 0) return null;
+  const sorted = [...log].sort((a, b) => a - b);
+  return {
+    last: log[log.length - 1],
+    med: sorted[Math.floor(sorted.length / 2)],
+    max: sorted[sorted.length - 1],
+    n: log.length,
+    at: it.rttAt ?? 0,
+  };
+}
+
+// onTermRtt subscribes a pane's round-trip readout. Fires immediately with the
+// current value (null before the first sample) and on every sample after that.
+export function onTermRtt(paneId: string, fn: (s: RttStats | null) => void) {
+  let it = insts.get(paneId);
+  if (!it) {
+    it = { sessionListeners: new Set(), session: null };
+    insts.set(paneId, it);
+  }
+  if (!it.rttListeners) it.rttListeners = new Set();
+  it.rttListeners.add(fn);
+  fn(rttStats(it));
+  // Explicitly void: React's effect cleanup rejects a returned value, and
+  // Set.delete's boolean would otherwise leak through.
+  return () => {
+    it.rttListeners?.delete(fn);
+  };
+}
+
+export function terminalRtt(paneId: string): RttStats | null {
+  const it = inst(paneId);
+  return it ? rttStats(it) : null;
+}
+
+// terminalRttAll is the devtools entry point (service.ts): every pane's current
+// readout keyed by pane id, so the ids probeTerminalRtt needs can be discovered
+// without reaching into the layout store.
+export function terminalRttAll(): Record<string, { session: string | null; rtt: RttStats | null }> {
+  const out: Record<string, { session: string | null; rtt: RttStats | null }> = {};
+  for (const [id, it] of insts) out[id] = { session: it.session ?? null, rtt: rttStats(it) };
+  return out;
+}
+
+// sendPing marks the send time and pushes the frame. No-op when a pong is still
+// outstanding (see above) or the socket isn't open.
+function sendPing(it: Inst) {
+  const ws = it.ws;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (it.pingAt !== undefined) return;
+  it.pingAt = performance.now();
+  try {
+    ws.send(JSON.stringify({ type: "ping" }));
+  } catch {
+    it.pingAt = undefined;
+  }
+}
+
+// noteRtt records the round trip for the outstanding ping. A pong with nothing
+// outstanding (a stale socket's late reply, or a burst probe's own) is ignored here.
+function noteRtt(it: Inst) {
+  const sent = it.pingAt;
+  if (sent === undefined) return;
+  it.pingAt = undefined;
+  const rtt = performance.now() - sent;
+  if (!it.rttLog) it.rttLog = [];
+  it.rttLog.push(rtt);
+  if (it.rttLog.length > RTT_LOG_MAX) it.rttLog.shift();
+  it.rttAt = Date.now();
+  const waiter = it.pongWaiters && it.pongWaiters.shift();
+  if (waiter) waiter(rtt);
+  if (it.rttListeners) {
+    const s = rttStats(it);
+    for (const fn of it.rttListeners) fn(s);
+  }
+}
+
+function clearRtt(it: Inst) {
+  if (it.rttTimer !== undefined) {
+    clearInterval(it.rttTimer);
+    it.rttTimer = undefined;
+  }
+  it.pingAt = undefined;
+  // A fresh socket starts a fresh measurement: samples from the previous
+  // connection describe a path that no longer exists.
+  it.rttLog = undefined;
+  it.rttAt = undefined;
+  it.pongWaiters = undefined;
+  if (it.rttListeners) for (const fn of it.rttListeners) fn(null);
+}
+
+// probeTerminalRtt takes `n` back-to-back samples and resolves with their spread —
+// the thing to run AT THE MOMENT typing feels slow, when the 5 s background cadence
+// is too coarse to characterise it. Sequential by necessity (one ping in flight), so
+// it also reproduces the serialisation a burst of keystrokes would see.
+export async function probeTerminalRtt(paneId: string, n = 15, gapMs = 100): Promise<RttStats | null> {
+  const it = inst(paneId);
+  if (!it || !it.ws || it.ws.readyState !== WebSocket.OPEN) return null;
+  const got: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const rtt = await new Promise<number | null>((resolve) => {
+      const timer = setTimeout(() => {
+        // Drop our waiter so a late pong doesn't resolve the NEXT sample's promise
+        // with this one's round trip.
+        if (it.pongWaiters) it.pongWaiters = it.pongWaiters.filter((w) => w !== waiter);
+        resolve(null);
+      }, 5000);
+      const waiter = (v: number) => {
+        clearTimeout(timer);
+        resolve(v);
+      };
+      if (!it.pongWaiters) it.pongWaiters = [];
+      it.pongWaiters.push(waiter);
+      sendPing(it);
+    });
+    if (rtt !== null) got.push(rtt);
+    if (gapMs > 0) await new Promise((r) => setTimeout(r, gapMs));
+  }
+  if (got.length === 0) return null;
+  const sorted = [...got].sort((a, b) => a - b);
+  return {
+    last: got[got.length - 1],
+    med: sorted[Math.floor(sorted.length / 2)],
+    max: sorted[sorted.length - 1],
+    n: got.length,
+    at: Date.now(),
+  };
+}
+
 // A PTY socket can die WITHOUT a close frame — a flaky network, a laptop sleep, or a
 // proxy dropping an idle connection can leave the WebSocket wedged in OPEN with no
 // data and no onclose. The terminal then looks attached but is dead until a full page
@@ -920,6 +1082,9 @@ function clearHeartbeat(it: Inst) {
     clearInterval(it.hb);
     it.hb = undefined;
   }
+  // Every caller here means "this socket is done" (replaced, closed, disposed), and
+  // the round-trip readout describes that socket's path — so it goes with it.
+  clearRtt(it);
 }
 
 function clearConnWd(it: Inst) {
@@ -934,8 +1099,18 @@ function clearConnWd(it: Inst) {
 function startHeartbeat(paneId: string, ws: WebSocket) {
   const it0 = inst(paneId);
   if (!it0) return;
-  clearHeartbeat(it0);
+  clearHeartbeat(it0); // also resets the round-trip window (clearRtt)
   it0.lastPong = Date.now();
+  // Sample the round trip on its own, faster cadence: the 15 s heartbeat is a
+  // liveness contract (HB_TIMEOUT) and must not be sped up just to get numbers, but
+  // three samples a minute is too coarse to characterise a stall someone is watching
+  // happen. Ping once immediately so a freshly attached pane has a figure to show.
+  sendPing(it0);
+  it0.rttTimer = setInterval(() => {
+    const it = inst(paneId);
+    if (!it || it.ws !== ws) return; // socket was replaced — this timer is stale
+    sendPing(it);
+  }, RTT_INTERVAL);
   it0.hb = setInterval(() => {
     const it = inst(paneId);
     if (!it || it.ws !== ws) return; // socket was replaced — this timer is stale
@@ -947,9 +1122,9 @@ function startHeartbeat(paneId: string, ws: WebSocket) {
       if (it.session) attach(paneId, it.session);
       return;
     }
-    try {
-      ws.send(JSON.stringify({ type: "ping" }));
-    } catch {}
+    // One ping in flight at a time (sendPing): a tick skipped because the socket
+    // still owes us a pong is exactly the stall HB_TIMEOUT above is watching for.
+    sendPing(it);
     // Watchdog repaint for visible-but-INACTIVE panes. A WebGL canvas can end up
     // showing a stale/garbled composite after the boot churn (multi-pane attach +
     // history replay + layout/font settling), and every existing recovery hook —
@@ -1043,7 +1218,10 @@ export function attach(paneId: string, session: string) {
       // Text frames are out-of-band control (heartbeat), never terminal output — PTY
       // output is always binary. Consume the pong without writing it to the grid.
       try {
-        if (JSON.parse(d)?.type === "pong") it.lastPong = Date.now();
+        if (JSON.parse(d)?.type === "pong") {
+          it.lastPong = Date.now();
+          noteRtt(it);
+        }
       } catch {}
       return;
     }
