@@ -50,7 +50,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 | `schedules` | 定時実行の左ペインセクション + 詳細モーダル（一覧・有効切替・即時実行・実行履歴。作成/編集はオペレーター会話側）|
 | `keys` | キーボード操作体系: capture-phase dispatcher・コマンドパレット・WhichKey / CheatSheet・キー再割当ストア |
 | `notifications` | 通知センター: 未読/既読管理・トーストログ・音声通知トグル |
-| `usage` | 機能別トークン使用量ダッシュボード（UsageView。設定モーダルの「使用量」タブが薄いラッパとして表示）|
+| `usage` | 機能別トークン使用量ダッシュボード（UsageView。設定モーダルの「エージェント使用量」タブが薄いラッパとして表示）|
 | `auth` | ログインセッション切れ（401 / 端末ソケット断）検出時の再ログインモーダル（AuthExpiredModal）|
 | `settings` | SettingsDialog（3 グループ左レール × 18 タブ、§2.5）・AdminDialog・接続状態ポーリング |
 

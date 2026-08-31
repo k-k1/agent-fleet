@@ -25,7 +25,15 @@ export interface UsageAgg {
   cread: number;
   ccreate: number;
   calls: number;
+  /** 実測コスト。claude の補助呼び出しだけが返す（セッション本体には無い）。 */
   cost_usd?: number;
+  /**
+   * API 換算相当額の**推定**（サーバが単価表 × トークンで起こす・usage_price.go）。
+   * **実測 cost_usd とは別値で、足さない**（1つの数字に2つの計測法を混ぜない）。
+   * 単価表に無いモデルの行は 0 ではなく「無い」— 値付けできた割合は
+   * priced_spend / unpriced_spend で分かる。
+   */
+  cost_est_usd?: number;
 }
 
 export interface UsageBucket {
@@ -51,6 +59,9 @@ export interface UsageSeries {
   matrix?: Record<string, Record<string, UsageAgg>>;
   coverage: Record<string, UsageCoverage>;
   unmeasured_calls: number;
+  /** 推定額を起こせた消費 / 単価表に無くて起こせなかった消費（spend ベース）。 */
+  priced_spend?: number;
+  unpriced_spend?: number;
   /** 要求期間の一部が raw の保持期間より古く hour 粒度で復元できなかった。 */
   truncated?: boolean;
   /**

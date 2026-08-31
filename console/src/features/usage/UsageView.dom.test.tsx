@@ -1,5 +1,7 @@
-// 使用量ビューの「鮮度」まわり。押さえるのは数字の中身ではなく、**古い数字を最新の顔で
-// 見せないこと** の 2 点:
+// 使用量ビューの描画。どちらの describe も「数字の中身」ではなく**数字の顔つき**を見る
+// （前半＝鮮度、後半＝推定額）。
+//
+// 鮮度で押さえるのは **古い数字を最新の顔で見せないこと** の 2 点:
 //   ① セッション本体の折り込み（fold-on-read）は非同期なので、走っている間の応答は直近
 //      ターンを含まない。サーバが folding を立てて返している間は、こちらが自動で取り直す。
 //      これが無いと「再取得を何度か押すまで最新にならない」画面になる（実際の苦情）。
@@ -27,7 +29,7 @@ vi.mock("../../core/store/workspace.ts", () => ({
 
 const { UsageView } = await import("./UsageView.tsx");
 
-const series = (spend: number, folding: boolean): UsageSeries => ({
+const series = (spend: number, folding: boolean, extra: Partial<UsageSeries> = {}): UsageSeries => ({
   from: "2026-08-18T00:00:00Z",
   to: "2026-08-19T00:00:00Z",
   bucket: "day",
@@ -42,7 +44,15 @@ const series = (spend: number, folding: boolean): UsageSeries => ({
   coverage: {},
   unmeasured_calls: 0,
   folding,
+  ...extra,
 });
+
+const kpiText = (label: string): string => {
+  const tile = [...(host?.querySelectorAll(".ukpi") || [])].find((el) =>
+    el.querySelector(".ukpi-lab")?.textContent?.includes(label),
+  );
+  return tile?.querySelector(".ukpi-val")?.textContent || "";
+};
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -121,5 +131,40 @@ describe("UsageView の鮮度", () => {
       await Promise.resolve();
     });
     expect(queries().filter((q) => q.fold === "force").length).toBe(3);
+  });
+});
+
+// 金額の面（docs/46 §9-2 の続き）。セッション本体は実測コストを持たないので、単価表 ×
+// トークンの**推定**を出す。押さえるのは数字そのものではなく、**推定が実測の顔をしない**
+// ことと、**値付けできなかった消費を黙って落とさない**こと。
+describe("UsageView の推定額", () => {
+  it("推定額は ≈ 付きで出し、実測とは足さない", async () => {
+    fetchUsageSeries.mockImplementation(() =>
+      Promise.resolve(
+        series(1000, false, {
+          totals: { spend: 1000, in: 1000, out: 0, cread: 0, ccreate: 0, calls: 1, cost_usd: 2, cost_est_usd: 12.5 },
+        }),
+      ),
+    );
+    await mount();
+    // 12.5 と 2 を足した "14.50" が出てはいけない（別の計測法を1つの数字に混ぜない）。
+    expect(kpiText("API換算相当額")).toBe("≈$12.50");
+  });
+
+  it("値付けできない消費は割合を添えて申告する", async () => {
+    fetchUsageSeries.mockImplementation(() =>
+      Promise.resolve(series(1000, false, { priced_spend: 750, unpriced_spend: 250 })),
+    );
+    await mount();
+    const cov = host!.querySelector(".usage-coverage")?.textContent || "";
+    expect(cov).toContain("25%");
+  });
+
+  it("値付けの漏れが無ければ注記は出さない", async () => {
+    fetchUsageSeries.mockImplementation(() =>
+      Promise.resolve(series(1000, false, { priced_spend: 1000, unpriced_spend: 0 })),
+    );
+    await mount();
+    expect(host!.querySelector(".usage-coverage")).toBe(null);
   });
 });

@@ -68,7 +68,9 @@ const METRICS: { metric: UsageMetric; key: MsgKey }[] = [
   { metric: "spend", key: "usage.metric_spend" },
   { metric: "calls", key: "usage.metric_calls" },
   { metric: "cread", key: "usage.metric_cread" },
-  { metric: "cost_usd", key: "usage.metric_cost" },
+  // 金額は**推定**を出す（実測はセッション本体に無く、あの列がずっと「—」だった）。
+  // 実測は消さず、推定の隣にツールチップで併記する（別の計測法なので足さない）。
+  { metric: "cost_est_usd", key: "usage.metric_cost" },
 ];
 
 /** 軸の値 → 表示名。未知の値（新しいモデル名など）はキーをそのまま出す。 */
@@ -78,12 +80,17 @@ export const dimLabel = (dim: string, key: string): string => {
   return tMaybe(`usage.val.${dim}.${key}`) ?? key;
 };
 
-// コストは claude の実測が有るときだけ入る。0 を "$0.0000" と書くと「タダで動いた」に
-// 読めてしまうので、実測が無い＝「—」（未計測と同じ書き方）で出す。
+// 0 を "$0.0000" と書くと「タダで動いた」に読めてしまうので、値が無い＝「—」（未計測と
+// 同じ書き方）で出す。
 const fmtUSD = (v: number): string => (v <= 0 ? "—" : v >= 1 ? "$" + v.toFixed(2) : "$" + v.toFixed(4));
+
+// 推定額は必ず「≈」を付ける。実測（claude の補助呼び出し）と同じ書体で並ぶと、単価表 ×
+// トークンで起こした数字が請求額として読まれる。
+export const fmtUSDEst = (v: number): string => (v <= 0 ? "—" : "≈" + fmtUSD(v));
 
 /** 指標つきの数値整形。トークンは compact（fmtTok）、回数は桁区切り、コストは $。 */
 export function fmtMetric(metric: UsageMetric, v: number): string {
+  if (metric === "cost_est_usd") return fmtUSDEst(v);
   if (metric === "cost_usd") return fmtUSD(v);
   if (metric === "calls") return fmtNum(Math.round(v));
   return fmtTok(Math.round(v));
@@ -392,7 +399,12 @@ export function UsageView() {
             <MatrixTable src={matrixBy === "feature" ? featModel : kindModel} rowDim={matrixBy} />
           </section>
 
-          <CoverageBanner notes={notes} unmeasured={series?.unmeasured_calls || 0} />
+          <CoverageBanner
+            notes={notes}
+            unmeasured={series?.unmeasured_calls || 0}
+            priced={series?.priced_spend || 0}
+            unpriced={series?.unpriced_spend || 0}
+          />
         </div>
       )}
 
@@ -686,6 +698,10 @@ function matrixTotals(s: UsageSeries | null, axis: "row" | "col"): Map<string, U
 function KpiRow({ totals, unmeasured }: { totals: UsageAgg | undefined; unmeasured: number }) {
   const tr = useT();
   const t = totals;
+  // 実測は消さずに併記する（推定の答え合わせになる唯一の値）。足し算はしない。
+  const measured = t?.cost_usd || 0;
+  const costTitle =
+    tr("usage.kpi_cost_hint") + (measured > 0 ? "\n" + tr("usage.cost_measured", { v: fmtUSD(measured) }) : "");
   return (
     <div className="usage-kpis">
       <div className="ukpi hero">
@@ -700,8 +716,8 @@ function KpiRow({ totals, unmeasured }: { totals: UsageAgg | undefined; unmeasur
         <div className="ukpi-val">{fmtTok(t?.cread || 0)}</div>
         <div className="ukpi-lab muted">{tr("usage.kpi_cread")}</div>
       </div>
-      <div className="ukpi" title={tr("usage.kpi_cost_hint")}>
-        <div className="ukpi-val">{fmtUSD(t?.cost_usd || 0)}</div>
+      <div className="ukpi" title={costTitle}>
+        <div className="ukpi-val">{fmtUSDEst(t?.cost_est_usd || 0)}</div>
         <div className="ukpi-lab muted">{tr("usage.kpi_cost")}</div>
       </div>
       <div className={"ukpi" + (unmeasured > 0 ? " unmeasured" : "")} title={tr("usage.kpi_unmeasured_hint")}>
@@ -996,7 +1012,20 @@ function MatrixTable({ src, rowDim }: { src: UsageSeries | null; rowDim: string 
                 </td>
                 <td className="num">{fmtTok(c.agg.spend)}</td>
                 <td className="num">{c.agg.calls > 0 ? fmtTok(Math.round(perCall(c.agg))) : "—"}</td>
-                <td className="num">{c.agg.cost_usd ? fmtUSD(c.agg.cost_usd) : "—"}</td>
+                {/* 推定額。単価表に無いモデルは 0 ではなく「—」＋理由をツールチップに置く
+                    （0 と「値付けできない」を混同させない）。実測がある行では併記する。 */}
+                <td
+                  className="num"
+                  title={
+                    c.agg.cost_est_usd
+                      ? c.agg.cost_usd
+                        ? tr("usage.cost_measured", { v: fmtUSD(c.agg.cost_usd) })
+                        : tr("usage.cost_est_hint")
+                      : tr("usage.cost_unpriced_hint")
+                  }
+                >
+                  {fmtUSDEst(c.agg.cost_est_usd || 0)}
+                </td>
               </tr>
             )),
           )}
@@ -1013,12 +1042,19 @@ function MatrixTable({ src, rowDim }: { src: UsageSeries | null; rowDim: string 
 function CoverageBanner({
   notes,
   unmeasured,
+  priced,
+  unpriced,
 }: {
   notes: ReturnType<typeof coverageNotes>;
   unmeasured: number;
+  priced: number;
+  unpriced: number;
 }) {
   const tr = useT();
-  if (!notes.length && unmeasured === 0) return null;
+  // 推定額をいくらぶんの消費から起こせたか。値付けできない分を黙っていると、
+  // 「≈$41」が全消費ぶんの金額として読まれる。
+  const unpricedPct = priced + unpriced > 0 ? Math.round((unpriced / (priced + unpriced)) * 100) : 0;
+  if (!notes.length && unmeasured === 0 && unpriced === 0) return null;
   return (
     <section className="usage-card usage-coverage">
       <div className="uc-head">
@@ -1027,6 +1063,9 @@ function CoverageBanner({
         </h4>
       </div>
       {unmeasured > 0 && <p className="uc-sub">{tr("usage.coverage_unmeasured", { n: fmtNum(unmeasured) })}</p>}
+      {unpriced > 0 && (
+        <p className="uc-sub">{tr("usage.coverage_unpriced", { pct: String(unpricedPct), n: fmtTok(unpriced) })}</p>
+      )}
       <ul className="ucov-list">
         {notes.map((n) => (
           <li key={n.kind}>

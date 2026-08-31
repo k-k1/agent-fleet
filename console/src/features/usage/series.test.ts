@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { UsageAgg, UsageBucket } from "./api.ts";
 import {
+  addAgg,
   bucketFor,
   breakdownRows,
   coverageNotes,
+  isMoneyMetric,
   matrixRows,
   filterParam,
   foldedFilterOn,
@@ -148,6 +150,18 @@ describe("指標・期間", () => {
     expect(metricOf(agg(10), "cost_usd")).toBe(0);
     expect(metricOf(agg(10, 1, { cost_usd: 0.02 }), "cost_usd")).toBe(0.02);
     expect(metricOf(undefined, "spend")).toBe(0);
+  });
+
+  // 推定額と実測は**別の値**。片方をもう片方の欠損補完に使わない（1つの数字に2つの
+  // 計測法が混ざると、どちらとしても読めなくなる）。
+  it("推定額は実測とは独立に読み書きされる", () => {
+    expect(metricOf(agg(10, 1, { cost_est_usd: 1.5 }), "cost_est_usd")).toBe(1.5);
+    expect(metricOf(agg(10, 1, { cost_est_usd: 1.5 }), "cost_usd")).toBe(0);
+    expect(metricOf(agg(10, 1, { cost_usd: 0.02 }), "cost_est_usd")).toBe(0);
+    expect(isMoneyMetric("cost_est_usd")).toBe(true);
+    expect(isMoneyMetric("spend")).toBe(false);
+    const sum = addAgg(agg(10, 1, { cost_est_usd: 1.5 }), agg(10, 1, { cost_est_usd: 2.25 }));
+    expect(sum.cost_est_usd).toBe(3.75);
   });
 
   it("perCall は calls=0 でも壊れない", () => {

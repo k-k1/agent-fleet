@@ -135,6 +135,11 @@ type usageSeriesResp struct {
 	Matrix          map[string]map[string]usageAgg `json:"matrix,omitempty"`
 	Coverage        map[string]usageCoverage       `json:"coverage"`
 	UnmeasuredCalls int                            `json:"unmeasured_calls"`
+	// PricedSpend / UnpricedSpend は「推定額をいくらぶんの消費から起こせたか」の申告
+	// （usage_price.go）。推定額だけを出すと、単価表に無いモデルの消費が黙って抜けた
+	// 合計を「API 換算相当額」として読ませてしまう。
+	PricedSpend   int `json:"priced_spend"`
+	UnpricedSpend int `json:"unpriced_spend"`
 	// Truncated は要求期間の一部が raw の保持期間より古く、hour バケットでは復元できな
 	// かったことを示す。黙って短い系列を返すと「その期間は消費が無かった」に見える。
 	Truncated bool `json:"truncated,omitempty"`
@@ -230,12 +235,21 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 			byBucket[s.T] = map[string]usageAgg{}
 			order = append(order, s.T)
 		}
+		// 推定額はここで載せる（保存しない）。サンプルはまだモデル次元を持っている＝
+		// どの軸で畳んだ後でも足し合わせが効く形になるのは、畳む前のこの位置だけ。
+		agg := s.Agg
+		if est, priced := usageEstCostUSD(s.Key.Model, agg); priced {
+			agg.CostEstUSD = est
+			resp.PricedSpend += agg.Spend
+		} else {
+			resp.UnpricedSpend += agg.Spend
+		}
 		k := usageDimValue(s.Key, by)
 		a := byBucket[s.T][k]
-		a.add(s.Agg)
+		a.add(agg)
 		byBucket[s.T][k] = a
 
-		resp.Totals.add(s.Agg)
+		resp.Totals.add(agg)
 
 		if split != "" {
 			if resp.Matrix == nil {
@@ -246,11 +260,11 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 			}
 			sv := usageDimValue(s.Key, split)
 			m := resp.Matrix[k][sv]
-			m.add(s.Agg)
+			m.add(agg)
 			resp.Matrix[k][sv] = m
 		}
 		if s.Key.Measured == usageMeasuredNone {
-			resp.UnmeasuredCalls += s.Agg.Calls
+			resp.UnmeasuredCalls += agg.Calls
 		}
 		observeUsageCoverage(resp.Coverage, s.Key)
 	}
