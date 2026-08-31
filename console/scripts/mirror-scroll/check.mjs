@@ -44,6 +44,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //   shared       — 共有セッション(受信側・docs/59)の同じ2点: 初めて開いたら末尾、途中まで
 //                  読んで離れて戻ったらその位置。描画層はミラーと共通でも、着地と復元は
 //                  SharedSessionView 自身の持ち物なので別に見る。
+//   typing       — 末尾に貼り付いたままコンポーザーへ書く。入力欄が縦に伸びていても、
+//                  1 文字ごとに転写が末尾から浮いてはいけない（実測: 1 打鍵で 154px）。
+//                  スクロールアンカリングを切ってから見る（runTyping の注記）。
 const SCENARIOS = [
   { name: "long", turns: 200, images: 3, imgdelay: 3000, mermaid: 0 },
   { name: "mermaid", turns: 12, images: 0, imgdelay: 0, mermaid: 3 },
@@ -51,6 +54,7 @@ const SCENARIOS = [
   { name: "restore", turns: 200, images: 3, imgdelay: 3000, mermaid: 0, mode: "restore" },
   { name: "swipe", turns: 200, images: 3, imgdelay: 3000, mermaid: 0, mode: "swipe", from: "sk4rq2f" },
   { name: "shared", turns: 200, images: 3, imgdelay: 3000, mermaid: 0, mode: "shared", shared: true },
+  { name: "typing", turns: 60, images: 0, imgdelay: 0, mermaid: 0, mode: "typing" },
 ];
 
 class CDP {
@@ -320,6 +324,74 @@ async function runSwipe(cdp) {
   };
 }
 
+// typing: 末尾に貼り付いたまま、コンポーザーに長い下書きを書く。入力欄は内容に合わせて縦に
+// 伸びる（.mirror-input の max-height まで）が、その高さを計測するために一瞬 2 行へ縮めると
+// 転写の clientHeight がそのぶん伸び、末尾に居たビューの scrollTop がブラウザに切り詰め
+// られる。高さを戻しても scrollTop は戻らない＝打鍵のたびに末尾から浮く（実測 154px・
+// 入力欄が伸びているほど大きい）。
+//
+// ★ 計測の前に .mirror-body の overflow-anchor を切る。Chromium はスクロールアンカリングで
+// この切り詰めを打ち消してしまうので、素の headless では 3/3 緑になり不具合が見えない
+// （＝この検査が何も守らない）。アンカリングは仕様上の保証ではなく、持たない／抑止された
+// エンジンでは素通しで出る — 利用者の報告もそちら側。切った状態が「アンカリングに助けられて
+// いないか」の踏み絵になる。実測: 修正前は 1 打鍵目で gap=154px・「最新へ」まで出た。
+const KILL_ANCHOR = `(() => {
+  const st = document.createElement("style");
+  st.textContent = ".mirror-body { overflow-anchor: none; }";
+  document.head.appendChild(st);
+  return "ok";
+})()`;
+const COMPOSER_H = `(() => {
+  const t = document.querySelector(".mirror-input");
+  return t ? Math.round(t.getBoundingClientRect().height) : -1;
+})()`;
+async function typeChar(cdp, ch) {
+  const common = { key: ch, text: ch, unmodifiedText: ch, windowsVirtualKeyCode: ch.toUpperCase().charCodeAt(0) };
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...common });
+  await cdp.send("Input.dispatchKeyEvent", { type: "char", ...common });
+  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...common });
+}
+async function runTyping(cdp) {
+  if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
+  await sleep(9000);
+  await cdp.ev(KILL_ANCHOR);
+  const landed = await cdp.ev(PROBE);
+
+  // 下書きを書き入れて入力欄を伸ばす（改行込み＝実際に縦へ伸びる形）。insertText は 1 回の
+  // 入力なので、ここはまだ「伸びる瞬間」しか通らない。
+  if ((await cdp.ev(`(() => { const t = document.querySelector(".mirror-input"); if (!t) return "none"; t.focus(); return "ok"; })()`)) !== "ok")
+    throw new Error("no composer input (session not live?)");
+  await cdp.send("Input.insertText", { text: Array.from({ length: 10 }, (_, i) => `下書きの ${i} 行目です。`).join("\n") });
+  await sleep(1200);
+  const grown = await cdp.ev(PROBE);
+  const h = await cdp.ev(COMPOSER_H);
+
+  // ここからが本題: 伸びきった入力欄に 1 文字ずつ足す。転写は末尾のまま動いてはいけない。
+  let worst = grown.gap;
+  const tops = [];
+  for (const ch of "abcde") {
+    await typeChar(cdp, ch);
+    await sleep(400);
+    const p = await cdp.ev(PROBE);
+    worst = Math.max(worst, p.gap);
+    tops.push(p.top);
+  }
+  // 縮む向き（文字を消す）も同じ計測を通る。
+  for (let i = 0; i < 5; i++) {
+    await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Backspace", windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 });
+    await sleep(400);
+  }
+  const after = await cdp.ev(PROBE);
+  worst = Math.max(worst, after.gap);
+
+  const ok = !!landed && landed.gap <= 2 && h > 100 && worst <= 2 && !after.jump;
+  return {
+    ok,
+    note: `landed gap=${landed?.gap}px  composer=${h}px  worst gap while typing=${worst}px (tops ${tops.join(",")})  after backspaces gap=${after.gap}px jump=${after.jump}`,
+  };
+}
+
 async function runScenario(sc, chrome) {
   const stub = spawn(process.execPath, [path.join(HERE, "stub.mjs"), "--port", String(PORT),
     "--turns", String(sc.turns), "--images", String(sc.images), "--imgdelay", String(sc.imgdelay),
@@ -358,6 +430,7 @@ async function runScenario(sc, chrome) {
         sc.mode === "restore" ? await runRestore(cdp)
         : sc.mode === "swipe" ? await runSwipe(cdp)
         : sc.mode === "shared" ? await runShared(cdp)
+        : sc.mode === "typing" ? await runTyping(cdp)
         : await runLanding(cdp);
       results.push(r);
       console.log(`  [${sc.name} ${run + 1}/${RUNS}] ${r.ok ? "OK " : "NG "} ${r.note}`);
