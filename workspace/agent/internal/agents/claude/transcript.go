@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -501,28 +500,6 @@ func isDeclinedAnswer(text string, isErr bool) bool {
 // collectAnswers maps each tool_use id to the text of its tool_result — used to show
 // which option an answered AskUserQuestion resolved to. Best-effort: the answer text
 // is whatever text the tool_result carried (a selected label, or a free-text reply).
-// planAnswerHead drops the approved plan that claude appends to an ExitPlanMode
-// tool_result. The current CLI writes:
-//
-//	User has approved your plan. You can now start coding. …
-//	Your plan has been saved to: …/plans/immutable-dazzling-babbage.md
-//	## Approved Plan:
-//	<the entire plan Markdown>
-//
-// The verdict is the header; the body is a verbatim copy of a plan the Console already
-// holds as the plan part. Keeping it would ship every approved plan twice on every poll
-// (9 KB+ each, in a map that is re-sent whole), and the Console badges the card by
-// keyword — reading the plan's own prose ("却下"/"やり直し"/"reject") flipped an APPROVED
-// plan's badge to 却下 (2026-08-31). The Console cuts it too; this keeps the wire small.
-var planBodyMarker = regexp.MustCompile(`(?im)^[ \t]*#{1,6}[ \t]*(approved plan|承認されたプラン)[ \t]*[:：]`)
-
-func planAnswerHead(s string) string {
-	if m := planBodyMarker.FindStringIndex(s); m != nil {
-		return strings.TrimRight(s[:m[0]], " \t\r\n")
-	}
-	return s
-}
-
 func collectAnswers(lines [][]byte) map[string]InteractionAnswer {
 	out := map[string]InteractionAnswer{}
 	for _, ln := range lines {
@@ -626,7 +603,8 @@ func CollectInteractionAnswers(lines [][]byte) map[string]InteractionAnswer {
 							t = transcript.CapOutput(t)
 						}
 						if plan[b.ToolUseID] {
-							t = planAnswerHead(t) // 承認結果に丸ごと載る計画本文は落とす
+							notePlanVerdict(b.ToolUseID, t) // ドリフトのカナリア（plan_verdict.go）
+							t = planAnswerHead(t)           // 承認結果に丸ごと載る計画本文は落とす
 						}
 						out[b.ToolUseID] = InteractionAnswer{
 							Text:     t,
