@@ -277,7 +277,3 @@ settings) and rebuilds from the latest image — a deeper reset.
 
 Try "Recreate" first to see if it fixes things, and use "Clean" only when that doesn't.
 Both operations **lose uncommitted changes**.
-
----
-
-For those who want the internals: browser pane and lightweight preview, MCP, and SSM are in [dev/08 External integrations](../build/08-integrations.md); recreate behavior is in [dev/04 Workspace Agent](../build/04-agent.md)

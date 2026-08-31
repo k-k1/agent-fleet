@@ -334,4 +334,4 @@ can be installed into your user area yourself (`pip install --user` persists).
 ---
 
 If this doesn't solve it, ask your team admin or IT department, including the symptom and
-(if any) the message that was shown. The internals are covered in the developer docs [dev/](../build/README.md).
+(if any) the message that was shown. The internals are covered in the developer documentation.

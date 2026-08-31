@@ -11,7 +11,7 @@ the smallest role that can use it ([roles.md](roles.md)); **Where** is the scree
 named as the Console names it.
 
 If a feature ships and does not appear here, it is not done
-([CONVENTIONS §8](../CONVENTIONS.md)).
+(`docs/CONVENTIONS.md` §8).
 
 > While the reader shelves are being written, the **Details** column points at the
 > guide that is still authoritative. Those links move to `use/`, `admin/` and

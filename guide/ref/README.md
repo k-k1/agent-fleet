@@ -28,7 +28,7 @@ support plan mode?" is asked by a member choosing an agent, by an administrator
 deciding what to offer, and by a developer adding the eighth kind. When each shelf
 keeps its own copy of the answer, they drift, and the reader cannot tell which copy is
 stale — so capability facts live here and nowhere else
-([CONVENTIONS §6](../CONVENTIONS.md)).
+(`docs/CONVENTIONS.md` §6).
 
 ## How these tables stay true
 

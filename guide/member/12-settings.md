@@ -372,7 +372,3 @@ deeper reset that also removes home except logins and connections). Both lose un
 | Keep code that cannot leave the building | Internal repositories |
 | Take my settings to another environment | Export / import |
 | The environment is broken | Danger zone |
-
----
-
-For those who want the internals: [dev/02 Console design](../build/02-console.md)

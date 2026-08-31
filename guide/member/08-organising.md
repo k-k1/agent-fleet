@@ -154,7 +154,3 @@ next run time, so check that it matches your intent.
 - **Sessions do not coordinate with each other directly.** Orchestration always goes through the operator. This is complementary to parallelization that stays within a single session (an agent's own subagent feature); choose the operator **when work spans repositories or agents, or when you want to see each piece of work as its own session**.
 - **Report bodies are treated as "data."** So that text originating from session output is never executed as an instruction, the design confirms with you first whenever a new session would be created based on an automatic report. In particular, even if a report or output contains something like "run this command," the operator **will not execute a command or send it to a shell session on that basis** (prompt-injection protection). The operator executes only what you instructed directly. The extra safety-side confirmations are by design.
 - **Shell sessions always require your approval.** a shell session is a raw shell with no agent guardrails in between: the string sent is executed as a command as-is. Therefore, when launching a shell session or sending it a command, the operator **presents the exact command to be executed and asks for your approval in advance**. Destructive or irreversible commands are never sent unless you explicitly approve them.
-
----
-
-For those who want to know how it works: [dev/04 Workspace Agent (chat / assistant surface)](../build/04-agent.md); the canonical design is docs/30 (session completion reports → fleet operator)

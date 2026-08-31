@@ -130,7 +130,3 @@ even a login from another browser — the same font and size **follow you**.
 (Theme, colors, and the file viewer's display settings are on the same "Display" tab. See
 [05 Files](04-files.md) for details. Note that the terminal background stays dark even on the
 light theme.)
-
----
-
-For those who want to know how it works: [dev/02 Console (the display system)](../build/02-console.md)

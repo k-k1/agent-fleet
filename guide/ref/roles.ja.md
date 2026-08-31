@@ -69,6 +69,6 @@ IT / SRE と同じ人です。
 |---|---|
 | メンバー | [use/](../member/README.ja.md), [ref/](README.ja.md) |
 | テナント管理者 | ＋ [admin/](../admin/README.ja.md) |
-| 配備管理者 | ＋ [operate/](../operate/README.ja.md), [build/](../build/README.ja.md) |
+| 配備管理者 | ＋ [operate/](../operate/README.ja.md), `docs/build/` |
 
 決定記録と凍結アーカイブは**誰にも配りません**。

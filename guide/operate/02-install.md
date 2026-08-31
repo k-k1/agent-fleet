@@ -31,7 +31,7 @@ Copy `deploy/compose/.env.example` to `.env` and edit it (the commands are in th
 "Quick start"). `.env` is outside git management and is the **single source of configuration**.
 The meaning of each variable, generation steps, and annotations are described in detail in
 [.env.example](../../deploy/compose/.env.example) itself. If you want an index, see
-[dev/09 §9.4](../build/09-deploy.md).
+`docs/build/09-deploy.md` §9.4.
 
 The main values you must fill in at build time are the public URL (`PUBLIC_DOMAIN` /
 `PUBLIC_BASE_URL`), your login IdP's client ID/secret, the login allowlist
@@ -51,7 +51,7 @@ There are 2 secrets in `.env` that you generate yourself. The generation command
 > This key goes into neither `DATA_DIR` nor backup archives (deliberately, by design). If you
 > lose it, all stored credentials and every past backup become **permanently undecryptable**
 > (crypto-shred). A restore requires "the same key."
-> Details in [04-secure.md](04-secure.md) and [dev/07 §7.6](../build/07-security.md).
+> Details in [04-secure.md](04-secure.md) and `docs/build/07-security.md` §7.6.
 
 In addition, set the `DOCKER_GID` used by the CP to match the host's docker group GID (how to
 find the value is in the runbook). Getting this wrong results in permission denied on the docker
@@ -114,7 +114,7 @@ Note: for Console login authentication (L1), the CP performs the OAuth/OIDC flow
 (oauth2-proxy / ALB OIDC, etc.) in front can choose `AUTH=proxy` (delegating email
 identification to upstream headers) — **this is also the answer for a SAML-only IdP**
 (HENNGE One / TrustLogin / CloudGate and the like): bridge it with oauth2-proxy or Keycloak.
-How this works is in [dev/07 §7.3](../build/07-security.md).
+How this works is in `docs/build/07-security.md` §7.3.
 The GitHub/Bitbucket integration OAuth is optional — everything works with token pasting even
 without it, so you can skip it during initial setup.
 

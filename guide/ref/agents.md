@@ -107,7 +107,7 @@ at all, which is what makes them comfortable to run many of at once.
 
 - **Rovo Dev** was studied as a further agent kind and is not implemented.
 - Per-kind quirks that matter only while debugging a driver belong in
-  [build/](../build/README.md).
+  `docs/build/`.
 
 > Agents run commands, edit files and push on your behalf — unattended in scheduled
 > runs, and without asking each time in permission-skipping modes. `shell` and `ssm`

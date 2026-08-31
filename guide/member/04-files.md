@@ -144,7 +144,3 @@ selecting a range). This action is not in the file's right-click menu.
 
 You can also tag items with a "Category" and pile them up in the **memo queue** to send in a
 batch later ([07 Chat and memos](07-chat-memo.md)).
-
----
-
-For those who want to know how it works: [dev/04 Workspace Agent (fs side / denylist)](../build/04-agent.md)

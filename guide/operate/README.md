@@ -76,7 +76,7 @@ secrets, and exfiltration.
 **Four residual risks are disclosed honestly** — `docker.sock` is host-root equivalent,
 losing `AF_MASTER_KEY` is a crypto-shred, backups are sensitive, and host access is
 total control. They are in [04 Securing it](04-secure.md) and in
-[SECURITY.md](../../SECURITY.md). **Read them before deciding to adopt.**
+`SECURITY.md`. **Read them before deciding to adopt.**
 
 ## The minimal model you must hold in your head
 
@@ -122,4 +122,4 @@ side.
 - [ ] If introducing egress control, the staged policy understood: observe in log-only
       mode first, then move to enforce.
 - [ ] The procedure for reporting a vulnerability known
-      ([SECURITY.md](../../SECURITY.md)).
+      (`SECURITY.md`).

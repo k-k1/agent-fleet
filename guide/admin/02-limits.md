@@ -118,7 +118,7 @@ tenant-wide side, so they are super_admin's domain). It has two stages.
 
 The time format is `30m` (minutes), `2h` (hours), `90s` (seconds). Empty follows the deploy
 default (disabled by default), and `0` means explicitly disabled. For the details of the behavior,
-see [dev/03 §3.7 Background jobs](../build/03-control-plane.md).
+see the developer documentation.
 
 Even when stopped, the work itself (the contents of home) remains. The next time members need it,
 they just start it again from the Console.

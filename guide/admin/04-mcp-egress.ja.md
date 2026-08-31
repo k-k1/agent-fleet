@@ -99,4 +99,3 @@ tenant_admin の権限で完結しないものは、super_admin ／ 情シスに
 
 - 前に読む: [03 監査と利用状況](03-audit-usage.ja.md)
 - メンバー側の見え方: [member/12 設定](../member/12-settings.ja.md#mcp-サーバー)
-- 仕組みを知りたい人へ: [dev/08 外部連携](../build/08-integrations.ja.md)

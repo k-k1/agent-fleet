@@ -116,7 +116,3 @@ The badge disappears on its own once the workspace is back on the current versio
 The things that tend to trip people up on day one (claude showing a login screen, a session
 that won't resume, a failed clone, and so on) are collected in
 [09 Troubleshooting](11-troubleshooting.md).
-
----
-
-For those who want to know how it works: [dev/01 Overall architecture](../build/01-architecture.md)

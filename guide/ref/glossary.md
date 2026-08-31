@@ -7,7 +7,7 @@ Source of truth: the Console's own strings for the screen column; the code for t
 Updated: 2026-08
 
 Two columns on purpose. The reader-facing shelves may use only the **screen** word;
-[build/](../build/README.md) uses the **implementation** word. Keeping the mapping in
+`docs/build/` uses the **implementation** word. Keeping the mapping in
 one place is what lets a support conversation and a stack trace be about the same
 thing.
 
@@ -46,7 +46,7 @@ thing.
 
 `driver`, `runtime`, `TUI`, `PTY`, `tmux`, `pane` as an implementation term, `kind` —
 these describe how it is built, not what the reader sees. Use them in
-[build/](../build/README.md), and in a user-facing document only when the reader has
+`docs/build/`, and in a user-facing document only when the reader has
 explicitly asked how the machinery works.
 
 The same rule applies to agents talking to people: say "execution method" and

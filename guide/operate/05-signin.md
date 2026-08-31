@@ -17,8 +17,8 @@ open. Diagnosing a deployment that is already running belongs to
 procedure-driven and does not repeat it.
 
 For how the login works internally (the trust rules, how one person is recognised across two
-IdPs), see [dev/07 §7.3.1](../build/07-security.md) and
-[ADR 0043](../decisions/0043-login-idp.md).
+IdPs), see `docs/build/07-security.md` §7.3.1 and
+ADR 0043.
 
 ## 0. Before you start
 
@@ -206,7 +206,7 @@ AF_OIDC_ENTRA_LINK_CLAIM=oid
 
 `oid` is the person's object id within that directory: the same value in every app registration,
 and not something anybody can choose. That last part is the whole point — see the warning in
-§7.1 before naming anything else, and [ADR 0043](../decisions/0043-login-idp.md) (decision 38)
+§7.1 before naming anything else, and ADR 0043 (decision 38)
 for why this is an *additional* key rather than a replacement for `sub`.
 
 ### 4.4 Common failures

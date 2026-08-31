@@ -12,7 +12,7 @@ air-gapped networks, and stopping Workspaces — together with the decision poin
 canonically documented in [deploy/compose/README.md](../../deploy/compose/README.md).**
 Rather than duplicating the commands here, this chapter supplements them with "what happens
 and what to watch out for." The working directory is `deploy/compose/`. To dig into the
-design assumptions, see [dev/09 §9.7](../build/09-deploy.md).
+design assumptions, see `docs/build/09-deploy.md` §9.7.
 
 ## Backup
 
@@ -109,7 +109,7 @@ The commands are in the runbook's "Upgrade" section.
 ## Installing into an air-gapped network
 
 You can install onto a host with no external network access. Since
-[ADR 0037](../decisions/0037-registry-policy.md) the images are distributed through GHCR
+ADR 0037 the images are distributed through GHCR
 and **no image tarball ships with a release**, so a host that cannot reach a registry either
 mirrors `ghcr.io/k-k1/agent-fleet/*` internally and points `REGISTRY` at that mirror, or has
 the images carried in by hand: build and `docker save` them on a networked machine with
@@ -208,7 +208,7 @@ hours** (measured: 172 probes for `/actuator/heapdump`, `/.env` and friends in t
   left open never keeps a Workspace warm. This is effective for
   saving resources. For the meaning of the env vars, see
   [.env.example](../../deploy/compose/.env.example); for how it works, see
-  [dev/09 §9.4](../build/09-deploy.md).
+  `docs/build/09-deploy.md` §9.4.
 - **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
   are outside compose management). To stop a specific Workspace for sure, a super_admin
   force-stops it from the Admin panel in the Console. When the whole host must be brought fully

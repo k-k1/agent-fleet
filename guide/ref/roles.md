@@ -70,6 +70,6 @@ read, which is why the shelves are cut by reader in the first place.
 |---|---|
 | member | [use/](../member/README.md), [ref/](README.md) |
 | tenant administrator | + [admin/](../admin/README.md) |
-| deployment administrator | + [operate/](../operate/README.md), [build/](../build/README.md) |
+| deployment administrator | + [operate/](../operate/README.md), `docs/build/` |
 
 The decision records and the frozen work journals are shipped to nobody.

@@ -10,7 +10,7 @@ Updated: 2026-08
 最小のロール（[roles.md](roles.ja.md)）、**どこ**は Console がその画面を呼ぶ名前です。
 
 **機能を出したのにここに行が無ければ、その機能は完了していません**
-（[CONVENTIONS §8](../CONVENTIONS.ja.md)）。
+（`docs/CONVENTIONS.ja.md` §8）。
 
 > 読者の棚を書き上げるまで、**詳細**の列は「いま正であるガイド」を指しています。
 > `use/` `admin/` `operate/` が揃うたびに、この行き先を差し替えます。

@@ -241,7 +241,3 @@ claude / codex / opencode / GitHub Copilot / agy の 5 エージェントに **�
 - 長さの上限があります。ここに書いた内容は**毎セッションのコンテキストに毎回乗る**ので、
   短いほどよく効きます。
 - **秘密（API キーやトークン）は書かないでください。** 複数のエージェントが読む平文です。
-
----
-
-仕組みを知りたい人へ: [dev/08 外部連携（認証方式）](../build/08-integrations.ja.md)・[dev/04 Workspace Agent（kind 統合・RTK 機構）](../build/04-agent.ja.md)

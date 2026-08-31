@@ -141,7 +141,3 @@ Updated: 2026-08
 
 「カテゴリ」を付けて**メモキュー**に溜めておき、あとでまとめて送ることもできます
 （[07 チャットとメモ](07-chat-memo.ja.md)）。
-
----
-
-仕組みを知りたい人へ: [dev/04 Workspace Agent（fs 面・denylist）](../build/04-agent.ja.md)

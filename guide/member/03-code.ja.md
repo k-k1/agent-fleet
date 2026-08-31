@@ -192,7 +192,3 @@ git だけでなく **SVN** のリポジトリでも作業できます。クロ�
   ビュー（stage / コミット）は git 専用なので、コミットはセッション内で `svn commit`
   を使います。**セッション内の svn コマンドには保存済み認証は透過されない**ため、
   必要に応じて `--username` を付けてください。
-
----
-
-仕組みを知りたい人へ: [dev/04 Workspace Agent（git / fs 面）](../build/04-agent.ja.md)・内蔵プロバイダは [dev/91 内部 git](../build/91-internal-git.ja.md)

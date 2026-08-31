@@ -245,7 +245,3 @@ Instructions come in three layers, and this setting is the **middle** one.
 - There is a length limit: this text rides along in **every session's context, every time**, so
   shorter works better.
 - **Don't put secrets (API keys, tokens) here.** It is plain text that several agents read.
-
----
-
-For those who want to know how it works: [dev/08 Integrations (auth methods)](../build/08-integrations.md) · [dev/04 Workspace Agent (kind integration / RTK mechanism)](../build/04-agent.md)

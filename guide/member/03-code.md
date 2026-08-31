@@ -199,7 +199,3 @@ toggle** to select SVN, then enter the **Repository URL** and, if needed, a **su
   (stage / commit) are git-only, so commit with `svn commit` inside a session. **Saved
   credentials are not passed through to svn commands inside sessions**, so add `--username`
   when needed.
-
----
-
-For those who want to know how it works: [dev/04 Workspace Agent (git / fs side)](../build/04-agent.md) · the built-in provider is covered in [dev/91 Internal git](../build/91-internal-git.md)

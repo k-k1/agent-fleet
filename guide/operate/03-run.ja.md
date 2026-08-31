@@ -10,7 +10,7 @@ Updated: 2026-08
 判断ポイントとともに説明します。**実際のコマンド（`backup.sh` / `restore.sh` / upgrade /
 air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/README.md) が正**です。
 ここではコマンドを複製せず、「何が起きるか・何に注意するか」を補います。作業ディレクトリは
-`deploy/compose/`。設計上の前提を深掘りしたいときは [dev/09 §9.7](../build/09-deploy.ja.md)。
+`deploy/compose/`。設計上の前提を深掘りしたいときは `docs/build/09-deploy.ja.md` §9.7。
 
 ## バックアップ
 
@@ -95,7 +95,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../deploy/compose/RE
 ## 閉域網（air-gap）へのインストール
 
 外部ネットワークに出られないホストにも入れられます。ただし
-[ADR 0037](../decisions/0037-registry-policy.ja.md) 以降、image は GHCR で配布し
+ADR 0037 以降、image は GHCR で配布し
 **リリースに image tar は添付しません**。レジストリに到達できないホストは、
 `ghcr.io/k-k1/agent-fleet/*` を社内レジストリにミラーして `REGISTRY` をそこへ向けるか、
 image を手で持ち込みます（ネット接続のあるマシンで `release.sh --save` してビルド＆
@@ -188,7 +188,7 @@ Control Plane を公開ホスト名で出すと、**数時間のうちに脆弱�
   起動しません**（「停止しています。起動してください」を返します）。開きっぱなしのタブが Workspace を
   温め続けることはありません。
   資源の節約に有効です。env の意味は [.env.example](../../deploy/compose/.env.example)、仕組みは
-  [dev/09 §9.4](../build/09-deploy.ja.md)。
+  `docs/build/09-deploy.ja.md` §9.4。
 - **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose
   管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから
   force-stop します。ホスト全体をメンテナンスで完全に落とす必要があるときは、CP/Caddy を止めた

@@ -26,7 +26,7 @@ Updated: 2026-08
 `deploy/compose/.env.example` を `.env` にコピーして編集します（コマンドは runbook の "Quick start"）。
 `.env` は git 管理外で、ここが**設定の単一ソース**です。各変数の意味・生成手順・注釈は
 [.env.example](../../deploy/compose/.env.example) 自体に詳しく書いてあります。索引が欲しいときは
-[dev/09 §9.4](../build/09-deploy.ja.md) を参照してください。
+`docs/build/09-deploy.ja.md` §9.4 を参照してください。
 
 構築時に必ず埋める主なものは、公開 URL（`PUBLIC_DOMAIN` / `PUBLIC_BASE_URL`）、ログイン IdP の
 クライアント ID/シークレット、ログイン許可リスト（`AF_OAUTH_ALLOWED_DOMAINS` など）、初期管理者
@@ -44,7 +44,7 @@ base64 化）は runbook の "Quick start" に載っています。
 > 控えを取り、データ領域とは別に独立して保管してください。** この鍵は `DATA_DIR` にもバックアップ
 > アーカイブにも入りません（設計上、意図的に）。失うと、保存済みの全資格情報とすべての過去
 > バックアップが**永久に復号不能**になります（crypto-shred）。リストアには「同じ鍵」が要ります。
-> 詳細は [04-secure.md](04-secure.ja.md) と [dev/07 §7.6](../build/07-security.ja.md)。
+> 詳細は [04-secure.md](04-secure.ja.md) と `docs/build/07-security.ja.md` §7.6。
 
 あわせて、CP が使う `DOCKER_GID` をホストの docker グループ GID に合わせます（値の求め方は
 runbook）。これを間違えると起動後に docker ソケットで permission denied になります（[04](06-diagnose.ja.md)）。
@@ -102,7 +102,7 @@ CP が起動を止めるのは**有効な provider が 1 つも無いとき**だ
 既存の認証ゲートウェイ（oauth2-proxy / ALB OIDC など）を前段に置く社は `AUTH=proxy` を選べます
 （メール識別を上流ヘッダに委ねる）。**SAML のみの IdP（HENNGE One / TrustLogin / CloudGate など）の
 正式な答えもこれ**で、oauth2-proxy や Keycloak でブリッジします。仕組みは
-[dev/07 §7.3](../build/07-security.ja.md)。GitHub/Bitbucket の連携 OAuth は任意で、無くても
+`docs/build/07-security.ja.md` §7.3。GitHub/Bitbucket の連携 OAuth は任意で、無くても
 トークン貼り付けで動くため初期構築では省略できます。
 
 ## 4. 判断ポイント
