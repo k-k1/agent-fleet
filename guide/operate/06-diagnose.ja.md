@@ -1,4 +1,4 @@
-# 04. 障害対応と FAQ
+# 06. 障害対応と FAQ
 
 [English](06-diagnose.md) | 日本語
 
@@ -76,7 +76,7 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
   切れません**。署名済み cookie は最大 `AF_SESSION_TTL`（既定 7 日）有効で、個別失効の手段はあり
   ません。名簿から外す（管理 → テナント → メンバー → **メンバーを外す**）か許可リストから消して
   ください — どちらも**次のリクエスト**で効きます。全セッションを一度に切るなら
-  `AF_COOKIE_SECRET` のローテーション（[03 のオフボーディング節](04-secure.ja.md)）。
+  `AF_COOKIE_SECRET` のローテーション（[04 のオフボーディング節](04-secure.ja.md)）。
 - **redirect URI mismatch** → IdP 側（Google Cloud Console、Entra のアプリ登録など）に登録した
   承認済みリダイレクト URI が `<PUBLIC_BASE_URL>/oauth2/callback` と**完全一致**しているか。
   `PUBLIC_BASE_URL` を変えたら IdP 側も合わせます（[05 §1](05-signin.ja.md)）。有効にする provider が
@@ -112,7 +112,7 @@ CP はコンテナですが、ホストの Docker デーモンを外から駆動
 Caddy が Let's Encrypt から証明書を取れないときの定番は、DNS の A/AAAA がこのホストを指していない、
 80/443 が外部から到達できない（ファイアウォール）、Let's Encrypt のレート制限に当たった、の 3 つ
 です。閉域網など公開 DNS を用意できない環境では、そもそも ACME を使わず `tls internal`（自己署名）へ
-切り替えます（[01 §4](02-install.ja.md)）。
+切り替えます（[02 §4](02-install.ja.md)）。
 
 ## ユーザー問い合わせの切り分けフロー
 

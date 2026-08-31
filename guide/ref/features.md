@@ -22,12 +22,12 @@ If a feature ships and does not appear here, it is not done
 | Feature | Who | Where | Details |
 |---|---|---|---|
 | Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [02 Sessions](../member/02-sessions.md) |
-| Run in a fresh git worktree | member | Start dialog | [04 Git](../member/03-code.md) |
+| Run in a fresh git worktree | member | Start dialog | [03 Git](../member/03-code.md) |
 | Chat mirror — follow and steer a running agent | member | main area | [02 Sessions](../member/02-sessions.md) |
 | Answer a question, plan, or permission prompt | member | mirror | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents ask |
 | Skill / command picker | member | mirror composer | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents |
-| Live terminal attached to a session | member | main area | [03 Terminal](../member/05-terminal.md) |
-| Terminal round-trip time (keystroke lag) | member | terminal pane header | [03 Terminal](../member/05-terminal.md) |
+| Live terminal attached to a session | member | main area | [05 Terminal](../member/05-terminal.md) |
+| Terminal round-trip time (keystroke lag) | member | terminal pane header | [05 Terminal](../member/05-terminal.md) |
 | Resume a stopped session | member | left pane → the session | [02 Sessions](../member/02-sessions.md) |
 | Hand a conversation to a new session | member | session ⋯ menu | [02 Sessions](../member/02-sessions.md) |
 | Fork from a past message | member | mirror, on a past message | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents |
@@ -42,17 +42,17 @@ If a feature ships and does not appear here, it is not done
 
 | Feature | Who | Where | Details |
 |---|---|---|---|
-| Import a repository | member | Repositories → Clone | [04 Git](../member/03-code.md) |
-| Start from an empty folder | member | Repositories → new folder | [04 Git](../member/03-code.md) |
-| Commit graph, diff, stage and commit | member | Commit graph | [04 Git](../member/03-code.md) |
-| Worktrees | member | under each repository | [04 Git](../member/03-code.md) |
-| File tree and viewer | member | Files | [05 Files](../member/04-files.md) |
-| Markdown and code editing | member | Files → a file | [05 Files](../member/04-files.md) |
-| `.drawio` diagrams | member | Files → a `.drawio` file | [05 Files](../member/04-files.md) |
-| PDF and Office document preview | member | Files → that document | [05 Files](../member/04-files.md) |
-| Browser pane for a local web app | member | workspace action bar → Preview | [08 Going further](../member/10-integrations.md); [browser-pane.md](browser-pane.md) for the contract |
-| Preview subdomains (minted on every start) | member | workspace action bar → Preview | [08 Going further](../member/10-integrations.md) |
-| Attach to a Chromium the agent owns | member | a link the agent hands you | [08 Going further](../member/10-integrations.md) |
+| Import a repository | member | Repositories → Clone | [03 Git](../member/03-code.md) |
+| Start from an empty folder | member | Repositories → new folder | [03 Git](../member/03-code.md) |
+| Commit graph, diff, stage and commit | member | Commit graph | [03 Git](../member/03-code.md) |
+| Worktrees | member | under each repository | [03 Git](../member/03-code.md) |
+| File tree and viewer | member | Files | [04 Files](../member/04-files.md) |
+| Markdown and code editing | member | Files → a file | [04 Files](../member/04-files.md) |
+| `.drawio` diagrams | member | Files → a `.drawio` file | [04 Files](../member/04-files.md) |
+| PDF and Office document preview | member | Files → that document | [04 Files](../member/04-files.md) |
+| Browser pane for a local web app | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md); [browser-pane.md](browser-pane.md) for the contract |
+| Preview subdomains (minted on every start) | member | workspace action bar → Preview | [10 Going further](../member/10-integrations.md) |
+| Attach to a Chromium the agent owns | member | a link the agent hands you | [10 Going further](../member/10-integrations.md) |
 
 ## Organising the work
 
@@ -61,12 +61,12 @@ If a feature ships and does not appear here, it is not done
 | Working sets | member | top of the left pane | [02 Sessions](../member/02-sessions.md) |
 | Memo queue | member | Memo queue | [07 Chat & memo](../member/07-chat-memo.md) |
 | Work-item inbox — issues, tickets, pull requests | member | Issue tracker | [02 Sessions](../member/02-sessions.md); [repos.md](repos.md) for what each provider contributes |
-| Scheduled (unattended) runs | member | Schedules | [11 Fleet operator](../member/08-organising.md) |
+| Scheduled (unattended) runs | member | Schedules | [08 Fleet operator](../member/08-organising.md) |
 | Notification centre | member | top bar | [12 Settings](../member/12-settings.md) |
 | Assistant chat | member | Assistants | [07 Chat & memo](../member/07-chat-memo.md) |
-| Chat bridge — Discord / Slack | member | Settings → Chat | [08 Advanced](../member/10-integrations.md) |
+| Chat bridge — Discord / Slack | member | Settings → Chat | [10 Advanced](../member/10-integrations.md) |
 | Reply suggestions | member | mirror composer | [09 Working with others](../member/09-collaboration.md) |
-| Keyboard system | member | Settings → Keyboard | [08 Advanced](../member/10-integrations.md) |
+| Keyboard system | member | Settings → Keyboard | [10 Advanced](../member/10-integrations.md) |
 | Text-to-speech | member | Settings → Read aloud | [12 Settings](../member/12-settings.md) |
 
 ## Personal settings

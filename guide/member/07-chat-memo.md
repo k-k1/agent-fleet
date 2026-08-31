@@ -21,7 +21,7 @@ answering small questions.
 Here's how to think about **choosing between it and a session**.
 
 - **Chat** — short-to-medium questions, translations, summaries. Things like "translate this text into Japanese" or "what does this function do?", where an answer on the spot is all you need.
-- **Session** — work that actually reads and writes files, code changes, bulk processing of large files. If file output is involved, go to a session (you can hand over files with "Send" in [05 Files](04-files.md)).
+- **Session** — work that actually reads and writes files, code changes, bulk processing of large files. If file output is involved, go to a session (you can hand over files with "Send" in [04 Files](04-files.md)).
 
 Start a conversation with **+ (New chat)** in the **Assistants** section. Send with Ctrl+Enter
 (you can switch to Enter-to-send in settings). The other side's messages are labeled
@@ -57,7 +57,7 @@ rather than print a guess.
 
 The built-in **Fleet Operator** is the flagship example of "AF write": from chat it can
 direct everything from launching sessions to giving instructions and receiving completion
-reports. See [11 Fleet Operator](08-organising.md) for details.
+reports. See [08 Fleet Operator](08-organising.md) for details.
 
 For example, for a translation assistant you might put "You are a technical-document
 translator. Return only the translated text." in the persona, and "Send me text and I'll

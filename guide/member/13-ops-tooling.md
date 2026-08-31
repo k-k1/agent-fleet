@@ -1,4 +1,4 @@
-# 10. Ops tooling PoC — incident brainstorming over MCP 🧪
+# 13. Ops tooling PoC — incident brainstorming over MCP 🧪
 
 English | [日本語](13-ops-tooling.ja.md)
 

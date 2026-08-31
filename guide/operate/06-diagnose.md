@@ -1,4 +1,4 @@
-# 04. Troubleshooting and FAQ
+# 06. Troubleshooting and FAQ
 
 English | [日本語](06-diagnose.ja.md)
 
@@ -81,7 +81,7 @@ background on how this works is in `docs/build/09-deploy.md`.
   (7 days by default) and cannot be revoked individually. Take them off the roster (Admin →
   tenant → member → **Remove member**) or out of the allowlist — either takes effect on their
   very next request. To cut every session at once, rotate `AF_COOKIE_SECRET`
-  ([03 §Offboarding](04-secure.md)).
+  ([04 §Offboarding](04-secure.md)).
 - **redirect URI mismatch** → check that the authorized redirect URI registered at the IdP
   (Google Cloud Console, the Entra app registration, …) is an **exact match** for
   `<PUBLIC_BASE_URL>/oauth2/callback`. If you change `PUBLIC_BASE_URL`, update the IdP side to
@@ -117,7 +117,7 @@ When Caddy cannot obtain a certificate from Let's Encrypt, the usual causes are 
 A/AAAA do not point to this host, 80/443 are not reachable from outside (firewall), or you hit
 Let's Encrypt rate limits. In environments where public DNS is not available, such as air-gapped
 networks, don't use ACME at all — switch to `tls internal` (self-signed)
-([01 §4](02-install.md)).
+([02 §4](02-install.md)).
 
 ## Triage flow for user inquiries
 

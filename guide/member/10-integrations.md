@@ -1,4 +1,4 @@
-# 08. Going further — browser pane / lightweight preview, external integrations, other hosts, environment settings
+# 10. Going further — browser pane / lightweight preview, external integrations, other hosts, environment settings
 
 English | [日本語](10-integrations.ja.md)
 
@@ -212,7 +212,7 @@ replies.
   session as-is. Questions can be answered with choice buttons, plan approvals with "Approve / Reject" buttons,
   and permission requests with "Allow / Deny" buttons (button coverage varies by agent kind).
 - **Fleet operator** — write in the standing thread "🛰 Fleet Operator" to talk with the
-  [11 fleet operator](08-organising.md) from chat (the same conversation as the operator on the Console
+  [08 fleet operator](08-organising.md) from chat (the same conversation as the operator on the Console
   side). Destructive operations initiated from chat (deletion etc.) pause for an "Approve / Reject" button
   before executing.
 - **Just want to silence notifications** — under Personal → the "Notifications" tab, **Service notifications**

@@ -1,4 +1,4 @@
-# 02. 日常運用
+# 03. 日常運用
 
 [English](03-run.md) | 日本語
 
@@ -106,7 +106,7 @@ image を手で持ち込みます（ネット接続のあるマシンで `releas
 - **image の取得元**: 社内レジストリのミラーなら `docker compose pull` がそのまま使え、
   保守も軽くなります。手持ち込みの tar は、アップグレードのたびにビルド／コピー／load を
   繰り返すことになり、image 名を `.env` の `REGISTRY` と一致させる必要があります。
-- **TLS**: 閉域では Let's Encrypt が使えないので、[01 §4](02-install.ja.md) の `tls internal`（自己署名）
+- **TLS**: 閉域では Let's Encrypt が使えないので、[02 §4](02-install.ja.md) の `tls internal`（自己署名）
   へ切り替えるか、社内 CA を使います。
 - **Claude のインストール**: Workspace image は既定でコンテナ起動時に最新の Claude を取得します。
   完全オフラインのホストでは `CLAUDE_INSTALL=0`（`WS_ENV` 経由）にし、Claude を焼き込んだ image を

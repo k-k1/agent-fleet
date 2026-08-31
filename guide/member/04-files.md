@@ -1,4 +1,4 @@
-# 05. Files — tree, viewer, Markdown/slides
+# 04. Files — tree, viewer, Markdown/slides
 
 English | [日本語](04-files.ja.md)
 

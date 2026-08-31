@@ -1,4 +1,4 @@
-# 11. Fleet operator — directing multiple sessions from chat
+# 08. Fleet operator — directing multiple sessions from chat
 
 English | [日本語](08-organising.ja.md)
 

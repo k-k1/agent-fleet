@@ -123,7 +123,7 @@ Google's own `email_verified`". The scope requested is `openid email`.
 - **Set only one of the two keys** — the button silently does not appear, and the CP log says
   `google login disabled — set both GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET`.
 - **Google accepts the sign-in but Agent Fleet rejects it** — that is the allowlist, not Google.
-  See §8 and [04 "Cannot log in"](06-diagnose.md).
+  See §8 and [06 "Cannot log in"](06-diagnose.md).
 - **An External consent screen still in testing** admits only the accounts registered as test
   users; everybody else is stopped by Google before the CP ever sees them.
 - Remember that a personal `gmail.com` address passes Google's verification perfectly well. What

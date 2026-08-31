@@ -31,7 +31,7 @@ working folder.
 
 claude / codex / cursor / opencode / copilot / kiro / agy appear in "Start" once you connect the corresponding
 agent (connections: [06 Agents](06-agents.md)). (**ssm**, which logs in to another host, is
-covered in [08 Advanced usage](10-integrations.md).)
+covered in [10 Advanced usage](10-integrations.md).)
 
 ## Execution method — Managed and Terminal (CLI)
 
@@ -265,7 +265,7 @@ if its working folder is missing.
 When you open a stopped session, the history is first shown read-only, and **"Resume"** restarts
 the conversation. After resuming, it continues with the execution method that was saved.
 **Ctrl+click** (or middle-click) opens it **in a new pane** while keeping your
-current view ([03 Terminal](05-terminal.md)).
+current view ([05 Terminal](05-terminal.md)).
 
 Even while the workspace is stopped, **the list itself stays visible**. You can't operate on the
 contents, but you can check "which sessions were there" even from a phone.

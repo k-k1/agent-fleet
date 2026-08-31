@@ -1,4 +1,4 @@
-# 02. Day-to-Day Operations
+# 03. Day-to-Day Operations
 
 English | [日本語](03-run.ja.md)
 
@@ -123,7 +123,7 @@ There are four decision points.
   the build/copy/load cycle for every upgrade, and its image names must match `REGISTRY` in
   `.env`.
 - **TLS**: Let's Encrypt is unusable in an air-gapped network, so either switch to
-  `tls internal` (self-signed) per [01 §4](02-install.md), or use an internal CA.
+  `tls internal` (self-signed) per [02 §4](02-install.md), or use an internal CA.
 - **Installing Claude**: the Workspace image by default fetches the latest Claude at container
   startup. On a fully offline host, set `CLAUDE_INSTALL=0` (via `WS_ENV`) and use an image with
   Claude baked in.

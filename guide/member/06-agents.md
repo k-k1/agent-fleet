@@ -41,7 +41,7 @@ work entirely from the conversation view (Codex / opencode carry no extra per-se
 process, which makes them well suited to parallel work; copilot / cursor / kiro run a dedicated
 per-session process even when Managed). Pick **Terminal (CLI)** only when you need the
 CLI's own black screen. For details, see
-[02 Sessions](02-sessions.md#execution-method--managed-and-terminal-cli).
+[02 Sessions](02-sessions.md#execution-method-managed-and-terminal-cli).
 The Managed chat view is separate from the assistant chat in the left pane, which doesn't use a repository.
 
 You can confirm a connection succeeded on each card in ⚙Settings → the "Agents" tab.
@@ -102,7 +102,7 @@ kiro is **not** available as an assistant chat (it has no headless chat mode).
 > without asking each time. shell / SSM sessions run the string you send **verbatim**.
 > These actions can be destructive or irreversible. Keep backups, use least-privilege
 > credentials, and lean on the approval gates (shell-command confirmation, chat-bridge
-> approve / deny). See also [11 Fleet operator](08-organising.md).
+> approve / deny). See also [08 Fleet operator](08-organising.md).
 
 ## Claude
 
@@ -122,7 +122,7 @@ Claude's behavior can be adjusted on the same screen.
 
 > **If "Select login method" or a login screen shows up** → it's almost always a
 > transient session-side state, and the connection itself is still alive. For the fix, see
-> [09 Troubleshooting](11-troubleshooting.md). The traditional approach of running
+> [11 Troubleshooting](11-troubleshooting.md). The traditional approach of running
 > `/login` manually inside the terminal also still works.
 
 ## Codex

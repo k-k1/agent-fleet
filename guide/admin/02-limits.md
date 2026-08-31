@@ -1,4 +1,4 @@
-# Resource limits, idle auto-stop, and the sessions overview
+# 02. Resource limits, idle auto-stop, and the sessions overview
 
 English | [日本語](02-limits.ja.md)
 

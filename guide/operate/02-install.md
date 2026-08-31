@@ -1,4 +1,4 @@
-# 01. Initial Setup
+# 02. Initial Setup
 
 English | [日本語](02-install.ja.md)
 

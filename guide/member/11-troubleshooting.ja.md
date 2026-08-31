@@ -1,4 +1,4 @@
-# 09. 困ったとき — 症状別の対処と FAQ
+# 11. 困ったとき — 症状別の対処と FAQ
 
 [English](11-troubleshooting.md) | 日本語
 

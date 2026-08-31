@@ -1,4 +1,4 @@
-# 09. Troubleshooting — fixes by symptom and FAQ
+# 11. Troubleshooting — fixes by symptom and FAQ
 
 English | [日本語](11-troubleshooting.ja.md)
 

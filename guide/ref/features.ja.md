@@ -20,12 +20,12 @@ Updated: 2026-08
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
 | セッションの起動（エージェント・モデル・effort・開始モード）| メンバー | ワークスペース操作バー → Start | [02 セッション](../member/02-sessions.ja.md) |
-| 新しい git worktree で動かす | メンバー | Start ダイアログ | [04 Git](../member/03-code.ja.md) |
+| 新しい git worktree で動かす | メンバー | Start ダイアログ | [03 Git](../member/03-code.ja.md) |
 | チャットミラー — 実行中のエージェントを追う・操縦する | メンバー | メイン領域 | [02 セッション](../member/02-sessions.ja.md) |
 | 質問・プラン・権限確認に答える | メンバー | ミラー | [07 チャットとメモ](../member/07-chat-memo.ja.md)。どのエージェントが尋ねるかは [agents.md](agents.ja.md) |
 | スキル / コマンドのピッカー | メンバー | ミラーの入力欄 | [07 チャットとメモ](../member/07-chat-memo.ja.md)。対応するエージェントは [agents.md](agents.ja.md) |
-| セッションに繋がった実端末 | メンバー | メイン領域 | [03 ターミナル](../member/05-terminal.ja.md) |
-| 端末の往復時間（打鍵の遅れ）| メンバー | ターミナルの上部 | [03 ターミナル](../member/05-terminal.ja.md) |
+| セッションに繋がった実端末 | メンバー | メイン領域 | [05 ターミナル](../member/05-terminal.ja.md) |
+| 端末の往復時間（打鍵の遅れ）| メンバー | ターミナルの上部 | [05 ターミナル](../member/05-terminal.ja.md) |
 | 停止したセッションの再開 | メンバー | 左ペイン → そのセッション | [02 セッション](../member/02-sessions.ja.md) |
 | 会話を新しいセッションへ引き継ぐ | メンバー | セッションの ⋯ メニュー | [02 セッション](../member/02-sessions.ja.md) |
 | 過去の発言からの分岐 | メンバー | ミラーの過去の発言 | [07 チャットとメモ](../member/07-chat-memo.ja.md)。どのエージェントで可能かは [agents.md](agents.ja.md) |
@@ -40,17 +40,17 @@ Updated: 2026-08
 
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
-| リポジトリの取り込み | メンバー | リポジトリ → Clone | [04 Git](../member/03-code.ja.md) |
-| 空のフォルダから始める | メンバー | リポジトリ → 新規フォルダ | [04 Git](../member/03-code.ja.md) |
-| コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [04 Git](../member/03-code.ja.md) |
-| worktree | メンバー | 各リポジトリの下 | [04 Git](../member/03-code.ja.md) |
-| ファイルツリーとビューア | メンバー | ファイル | [05 ファイル](../member/04-files.ja.md) |
-| Markdown / コードの編集 | メンバー | ファイル → 各ファイル | [05 ファイル](../member/04-files.ja.md) |
-| `.drawio` の図 | メンバー | ファイル → `.drawio` | [05 ファイル](../member/04-files.ja.md) |
-| PDF・Office 文書のプレビュー | メンバー | ファイル → その文書 | [05 ファイル](../member/04-files.ja.md) |
-| ローカル Web アプリのブラウザペイン | メンバー | ワークスペース操作バー → プレビュー | [08 応用](../member/10-integrations.ja.md)。契約は [browser-pane.md](browser-pane.ja.md) |
-| プレビュー用サブドメイン（起動ごとに発行）| メンバー | ワークスペース操作バー → プレビュー | [08 応用](../member/10-integrations.ja.md) |
-| エージェントが持つ Chromium への接続 | メンバー | エージェントが渡すリンク | [08 応用](../member/10-integrations.ja.md) |
+| リポジトリの取り込み | メンバー | リポジトリ → Clone | [03 Git](../member/03-code.ja.md) |
+| 空のフォルダから始める | メンバー | リポジトリ → 新規フォルダ | [03 Git](../member/03-code.ja.md) |
+| コミットグラフ・差分・ステージ・コミット | メンバー | コミットグラフ | [03 Git](../member/03-code.ja.md) |
+| worktree | メンバー | 各リポジトリの下 | [03 Git](../member/03-code.ja.md) |
+| ファイルツリーとビューア | メンバー | ファイル | [04 ファイル](../member/04-files.ja.md) |
+| Markdown / コードの編集 | メンバー | ファイル → 各ファイル | [04 ファイル](../member/04-files.ja.md) |
+| `.drawio` の図 | メンバー | ファイル → `.drawio` | [04 ファイル](../member/04-files.ja.md) |
+| PDF・Office 文書のプレビュー | メンバー | ファイル → その文書 | [04 ファイル](../member/04-files.ja.md) |
+| ローカル Web アプリのブラウザペイン | メンバー | ワークスペース操作バー → プレビュー | [10 応用](../member/10-integrations.ja.md)。契約は [browser-pane.md](browser-pane.ja.md) |
+| プレビュー用サブドメイン（起動ごとに発行）| メンバー | ワークスペース操作バー → プレビュー | [10 応用](../member/10-integrations.ja.md) |
+| エージェントが持つ Chromium への接続 | メンバー | エージェントが渡すリンク | [10 応用](../member/10-integrations.ja.md) |
 
 ## 仕事を並べる
 
@@ -59,12 +59,12 @@ Updated: 2026-08
 | 作業グループ | メンバー | 左ペインの最上部 | [02 セッション](../member/02-sessions.ja.md) |
 | メモキュー | メンバー | メモキュー | [07 チャットとメモ](../member/07-chat-memo.ja.md) |
 | 作業項目の受信箱（Issue / チケット / プルリクエスト）| メンバー | 課題管理 | [02 セッション](../member/02-sessions.ja.md)。どのプロバイダが何を出すかは [repos.md](repos.ja.md) |
-| 定時実行（無人実行）| メンバー | スケジュール | [11 フリート運用](../member/08-organising.ja.md) |
+| 定時実行（無人実行）| メンバー | スケジュール | [08 フリート運用](../member/08-organising.ja.md) |
 | 通知センター | メンバー | 画面最上部のバー | [12 設定](../member/12-settings.ja.md) |
 | アシスタントチャット | メンバー | アシスタント | [07 チャットとメモ](../member/07-chat-memo.ja.md) |
-| チャットブリッジ（Discord / Slack）| メンバー | 設定 → チャット連携 | [08 応用](../member/10-integrations.ja.md) |
+| チャットブリッジ（Discord / Slack）| メンバー | 設定 → チャット連携 | [10 応用](../member/10-integrations.ja.md) |
 | 返信候補 | メンバー | ミラーの入力欄 | [09 他の人と扱う](../member/09-collaboration.ja.md) |
-| キーボード操作体系 | メンバー | 設定 → キー操作 | [08 応用](../member/10-integrations.ja.md) |
+| キーボード操作体系 | メンバー | 設定 → キー操作 | [10 応用](../member/10-integrations.ja.md) |
 | 音声読み上げ | メンバー | 設定 → 読み上げ | [12 設定](../member/12-settings.ja.md) |
 
 ## 自分の設定

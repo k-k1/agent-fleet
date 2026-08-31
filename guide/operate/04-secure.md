@@ -1,4 +1,4 @@
-# 03. Security Operations
+# 04. Security Operations
 
 English | [日本語](04-secure.ja.md)
 
@@ -51,7 +51,7 @@ properties inherent in the current architecture.
    credentials and every backup become permanently undecryptable**. Operations: **store it in a
    vault separate from the DB and homes, and back it up independently**. Never place it in the
    data area or in backup archives (by design it never goes in). For when it is generated and
-   how to store it, see [01 §2](02-install.md); for the identity requirement at restore time,
+   how to store it, see [02 §2](02-install.md); for the identity requirement at restore time,
    see [02](03-run.md).
 
 3. **Backups are sensitive.** The archive contains each user's home and **plaintext Claude
@@ -129,7 +129,7 @@ into answers, logs or commits is part of the agent-side instructions as well.
   logins are rejected. `_EMAILS_FILE` is re-read on every login, so **additions take effect
   without a CP restart** (removals likewise). The check runs **on every request**, not just at
   sign-in, so removing someone locks them out on their very next request instead of waiting out
-  `AF_SESSION_TTL` — that is the offboarding path. Configuration is in [01 §6](02-install.md).
+  `AF_SESSION_TTL` — that is the offboarding path. Configuration is in [02 §6](02-install.md).
 - **Being invited is itself permission to reach the login.** Somebody added to a tenant in the
   Admin panel can sign in without also appearing in `AF_OAUTH_ALLOWED_*`, so a deployment run
   on invitations keeps one roster instead of two lists that drift apart. Passing the door does

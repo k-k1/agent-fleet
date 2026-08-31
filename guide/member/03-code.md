@@ -1,4 +1,4 @@
-# 04. Repositories and git — cloning, reviewing changes, committing, pushing
+# 03. Repositories and git — cloning, reviewing changes, committing, pushing
 
 English | [日本語](03-code.ja.md)
 

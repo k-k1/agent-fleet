@@ -163,14 +163,14 @@ claude / codex / opencode / GitHub Copilot / Cursor / Kiro（と実験枠の Ant
 ### Gitホスティング
 
 GitHub / Bitbucket の連携です（clone / push の認証）。**GitHub の連携は GitHub Copilot の接続も兼ねます**。
-→ [04 リポジトリと git](03-code.ja.md)
+→ [03 リポジトリと git](03-code.ja.md)
 
 ### 運用・監視
 
 PagerDuty / Grafana / CloudWatch / AWS を接続し、**SRE アシスタント**が実データを見ながら
 インシデントの壁打ちをできるようにします。CloudWatch と AWS は SSM 接続のプロファイルを選ぶだけで、
 秘密の入力はありません。AWS の**書き込みツールは既定オフ**です。
-→ [10 運用ツール連携](13-ops-tooling.ja.md)
+→ [13 運用ツール連携](13-ops-tooling.ja.md)
 
 ### 課題管理
 
@@ -194,7 +194,7 @@ Bitbucket のプルリクエスト）の取得元です。行からそのまま�
 ### チャット連携
 
 Discord / Slack の Bot を接続し、セッションの進捗をチャットで受けて返信で操縦します。
-→ [08 一歩進んだ使い方](10-integrations.ja.md#discord--slack-と連携するチャットブリッジ)
+→ [10 一歩進んだ使い方](10-integrations.ja.md#discord-slack-と連携するチャットブリッジ)
 
 ### MCP サーバー
 
@@ -225,7 +225,7 @@ Discord / Slack の Bot を接続し、セッションの進捗をチャット�
 ### MCPトークン
 
 手元の PC の Claude Code / Claude Desktop から自分のワークスペースを遠隔操作するためのトークンです。
-→ [08 一歩進んだ使い方](10-integrations.ja.md#外部の-claude-から自分のワークスペースを操作するmcp)
+→ [10 一歩進んだ使い方](10-integrations.ja.md#外部の-claude-から自分のワークスペースを操作するmcp)
 
 ---
 
@@ -293,18 +293,18 @@ Discord / Slack の Bot を接続し、セッションの進捗をチャット�
 
 タイムゾーン、Node.js / Java / Go のバージョン、ツールの実効バージョン一覧、
 **エージェント CLI の更新**（既定オフ）、Agent Fleet 自体の更新の適用。
-→ [08 一歩進んだ使い方](10-integrations.ja.md#環境設定とワークスペースの作り直し)
+→ [10 一歩進んだ使い方](10-integrations.ja.md#環境設定とワークスペースの作り直し)
 
 ### AWS SSM
 
 社内の別ホストへ SSM でログインするための、プロファイル（共通設定）と SSM ホスト（個別）の登録です。
-→ [08 一歩進んだ使い方](10-integrations.ja.md#社内の別ホストに入るssm)
+→ [10 一歩進んだ使い方](10-integrations.ja.md#社内の別ホストに入るssm)
 
 ### 内部リポジトリ
 
 外部の git ホスティングを使わず、**テナントの中だけで完結する git リポジトリ**の作成・リネーム・削除と、
 中身の参照です。clone URL は自動で認証されるので、接続の手順はありません
-（ワークスペースが停止中でも操作できます）。→ [04 リポジトリと git](03-code.ja.md)
+（ワークスペースが停止中でも操作できます）。→ [03 リポジトリと git](03-code.ja.md)
 
 ### 書き出し / 取り込み
 
@@ -327,7 +327,7 @@ Discord / Slack の Bot を接続し、セッションの進捗をチャット�
 **ワークスペースを作り直す**（`~/repos` だけを消して最新イメージで作り直す）と、
 **ホームを掃除する**（ログイン・接続以外のホームも消す、より深いリセット）。
 どちらも未コミットの変更が消えます。
-→ [08 一歩進んだ使い方](10-integrations.ja.md#ワークスペースを作り直す危険な操作)
+→ [10 一歩進んだ使い方](10-integrations.ja.md#ワークスペースを作り直す危険な操作)
 
 ---
 

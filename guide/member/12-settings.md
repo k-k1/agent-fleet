@@ -169,13 +169,13 @@ limit resets, and auto-resume of an interrupted turn.
 ### Git hosting
 
 GitHub / Bitbucket (authentication for clone / push). **Connecting GitHub also connects GitHub Copilot.**
-→ [04 Repositories and git](03-code.md)
+→ [03 Repositories and git](03-code.md)
 
 ### Ops & monitoring
 
 Connect PagerDuty / Grafana / CloudWatch / AWS so the **SRE assistant** can talk through an incident against
 real data. CloudWatch and AWS only need a profile picked from your SSM connections — no secret to type. AWS
-**write tools are off by default**. → [10 Ops tooling](13-ops-tooling.md)
+**write tools are off by default**. → [13 Ops tooling](13-ops-tooling.md)
 
 ### Issue tracker
 
@@ -200,7 +200,7 @@ The list itself, and starting a session from a row, are in
 ### Chat integration
 
 Connect a Discord / Slack bot to follow session progress in chat and drive it by replying.
-→ [08 Going further](10-integrations.md#connecting-discord--slack-chat-bridge)
+→ [10 Going further](10-integrations.md#connecting-discord-slack-chat-bridge)
 
 ### MCP servers
 
@@ -233,7 +233,7 @@ search.
 ### MCP tokens
 
 Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
-→ [08 Going further](10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)
+→ [10 Going further](10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)
 
 ---
 
@@ -303,18 +303,18 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
 
 Timezone, Node.js / Java / Go versions, the table of effective tool versions, **agent CLI updates** (off by
 default), and applying an Agent Fleet update.
-→ [08 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
+→ [10 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
 
 ### AWS SSM
 
 Profiles (shared settings) and SSM hosts (individual) for logging in to another in-house host.
-→ [08 Going further](10-integrations.md#logging-in-to-another-in-house-host-ssm)
+→ [10 Going further](10-integrations.md#logging-in-to-another-in-house-host-ssm)
 
 ### Internal repositories
 
 Create, rename, delete and browse git repositories that **live entirely inside the tenant**, with no external
 git hosting. The clone URL authenticates itself, so there is no connect step (and it works while the workspace
-is stopped). → [04 Repositories and git](03-code.md)
+is stopped). → [03 Repositories and git](03-code.md)
 
 ### Export / import
 
@@ -337,7 +337,7 @@ your **AWS SSM** registrations, and your **agent instructions**.
 
 **Recreate the workspace** (delete `~/repos` only and rebuild from the latest image) and **clean home** (a
 deeper reset that also removes home except logins and connections). Both lose uncommitted changes.
-→ [08 Going further](10-integrations.md#recreating-the-workspace-danger-zone)
+→ [10 Going further](10-integrations.md#recreating-the-workspace-danger-zone)
 
 ---
 
