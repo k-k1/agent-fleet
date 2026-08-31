@@ -27,6 +27,7 @@ If a feature ships and does not appear here, it is not done
 | Answer a question, plan, or permission prompt | member | mirror | [07 Chat and memos](../use/07-chat-memo.md); [agents.md](agents.md) for which agents ask |
 | Skill / command picker | member | mirror composer | [07 Chat and memos](../use/07-chat-memo.md); [agents.md](agents.md) for which agents |
 | Live terminal attached to a session | member | main area | [03 Terminal](../use/05-terminal.md) |
+| Terminal round-trip time (keystroke lag) | member | terminal pane header | [03 Terminal](../use/05-terminal.md) |
 | Resume a stopped session | member | left pane → the session | [02 Sessions](../use/02-sessions.md) |
 | Hand a conversation to a new session | member | session ⋯ menu | [02 Sessions](../use/02-sessions.md) |
 | Fork from a past message | member | mirror, on a past message | [07 Chat and memos](../use/07-chat-memo.md); [agents.md](agents.md) for which agents |
@@ -82,7 +83,7 @@ explains them.
 | AWS SSM | member | AWS SSM |
 | Integration servers and tokens | member | MCP servers / MCP tokens |
 | Issue-tracker connections | member | Issue tracker |
-| Usage | member | Usage |
+| Usage | member | Agent usage |
 | Cloud cost | member | Cloud cost |
 | Display, language and keys | member | Display / Keyboard |
 | Export / import settings | member | Export / import |

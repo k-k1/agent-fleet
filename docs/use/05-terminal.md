@@ -81,6 +81,9 @@ or in ⚙ Settings → Display → **main area layout**.
 - **Tabbed grid** — each cell switches by tab, so a lot of open items fit without adding cells.
   Closing the tab you are on brings back **the tab you were on before it**, not the one next to it
   in the strip: open a file from a chat, close it again, and you are back on that chat.
+  **Right-clicking a session's tab** (or the **Menu key** / **Shift+F10** while it has focus) opens
+  the same menu as that session's row in the left pane, so you can rename, hand over, archive and
+  the rest without going back to the rail. Tabs that are not sessions keep the browser's own menu.
 
 The setting is stored **on this device only**, and the two layouts remember their arrangements
 separately, so moving between them disturbs neither. On desktop you can arrange up to 4 columns
@@ -89,6 +92,21 @@ separately, so moving between them disturbs neither. On desktop you can arrange 
 Each pane's content is independent. For claude / codex / cursor / copilot / kiro / agy / opencode running as Terminal (CLI),
 the **Chat ⇄ Terminal** toggle at the top switches between the conversation's Markdown view and
 the terminal view. Managed sessions use only the chat view ([07 Chat and memos](07-chat-memo.md)).
+
+## How far away the terminal is (round-trip time)
+
+A terminal pane's header carries a small **round-trip time in milliseconds** — how long it takes a
+byte to reach the workspace and come back. It is measured over **the same socket and the same
+frames your keystrokes use**, so it is what the echo of a keypress actually costs, not a separate
+network test.
+
+- The figure is the **median** of the recent samples. Hover it for the median, the worst one, and
+  how many samples that is.
+- Under about **120 ms** it feels local; past about **300 ms** every keystroke is visibly behind
+  your finger, and the colour says which side of that you are on.
+- The terminal itself (PTY and tmux inside the workspace) is well under a millisecond, so **this
+  number is the connection**, not the machine. If it reads low while the agent still feels slow,
+  what you are waiting for is the agent thinking — not the link.
 
 ## Using it on a phone
 

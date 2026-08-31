@@ -115,11 +115,20 @@ At the top right of a pane you get, depending on its content, **toggle wrapping*
 confirmation). Panes that cannot be popped out don't show the button
 ([03](05-terminal.md#arranging-multiple-views-panes)).
 
+### Tabs (tabbed grid)
+
+Right-clicking **a session's tab** gives the same menu as that session's row in the left pane
+([03](05-terminal.md#arranging-multiple-views-panes)). Tabs that are not sessions, and every tab while the
+workspace is stopped, keep the browser's own menu.
+
 ## When a menu doesn't appear
 
 - While the workspace is stopped, menu items that run inside the workspace are disabled or hidden.
 - Operations the kind doesn't support, or that don't fit the current state, are not shown.
-- A right-click menu closes on an outside click, Escape, or when the window loses focus.
+- A right-click menu closes on an outside click, Escape, or when the window loses focus, and the focus goes
+  back to the item you opened it from.
+- Every one of these menus also opens from the keyboard with the **Menu key** (or **Shift+F10**) while the item
+  has focus.
 
 ---
 
