@@ -357,6 +357,13 @@ type Workspace struct {
 	// buildResolved through resolveSlotClass, and read only by the ecs-ec2 factory.
 	// "" means "the deployment default", which is also what every other runtime sees.
 	SlotClass string
+	// PreviewSlug is the random label this workspace's preview subdomains are served
+	// under (docs/81 §4): https://{PreviewSlug}-{port}.{PreviewDomain}. Persisted,
+	// unlike the four resolved axes above — the preview request arrives on a bare
+	// host with no session and no tenant selection, so the slug IS the lookup key.
+	// Minted at container start and cleared on stop, so a stopped workspace's URLs
+	// stop resolving and the previous start's URLs die with it.
+	PreviewSlug string
 }
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
@@ -840,6 +847,12 @@ type WorkspaceStore interface {
 	SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSON string) error
 	MaxAgentPort(ctx context.Context) (int, error)
 	ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error)
+	// Preview subdomain slug (docs/81 §4). SetWorkspacePreviewSlug writes the slug
+	// minted for THIS container start (""=clear, on stop/destroy);
+	// GetWorkspaceByPreviewSlug is the reverse lookup a preview request needs — it is
+	// the ONLY thing that request carries, so it must resolve without a session.
+	SetWorkspacePreviewSlug(ctx context.Context, workspaceID, slug string) error
+	GetWorkspaceByPreviewSlug(ctx context.Context, slug string) (Workspace, bool, error)
 }
 
 // QuotaStore is the per-membership quota override (docs/16 P3-4).

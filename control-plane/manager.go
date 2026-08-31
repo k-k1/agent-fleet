@@ -135,6 +135,13 @@ type manager struct {
 	// the CP's /internal/memos bridge over the public hairpin (memo_bridge.go). Empty
 	// (no PUBLIC_BASE_URL) = the memo bridge is not reachable, so it is not injected.
 	publicBaseURL string
+
+	// previewDomain is AF_PREVIEW_DOMAIN — the parent of the per-start preview
+	// subdomains (docs/81). Empty = host-mode preview is off for this deployment
+	// (no wildcard DNS / certificate), and only the path-mode /preview/{port}
+	// exists. Held here as well as on config because the container env injection
+	// (workspaceExtraEnv) has to name the URLs the app will be reachable at.
+	previewDomain string
 }
 
 // apiError carries an HTTP status + machine code for handlers to return.

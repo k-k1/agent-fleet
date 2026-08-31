@@ -97,17 +97,34 @@ from then on you can clone / push without entering tokens ([04](04-git.md) · [0
 - **Listening on `127.0.0.1` (localhost) is enough for it to reach.** The browser connects directly to `127.0.0.1`
   from inside the same workspace, so a loopback-only listen opens without issues (`0.0.0.0` for external exposure is not needed).
   If it still can't reach, verify that the server really is up on that port and that you didn't mistype the port number.
-- **A blank page / 404** tends to happen when you open an app that loads assets by absolute path in the **lightweight preview**. In that case
-  switch the display to **"Open in pane"** (browser pane). The browser pane handles absolute assets and redirects
-  just like ordinary localhost browsing, so most apps render as-is. If you really must use the lightweight preview,
-  set `server.forward-headers-strategy=framework` (or `native`) for Spring Boot,
+- **A blank page / 404** tends to happen when you open an app that loads assets by absolute path in the **lightweight preview**.
+  Its URL is a **sub-path** (`/preview/{port}/`), so the moment the app asks for `/static/...` it lands outside.
+  **If preview subdomains are issued on your deployment, open it there first** — the app is served at the root, so
+  the problem cannot arise. Otherwise switch to **"Open in pane"** (browser pane). If you really must use the
+  lightweight preview, set `server.forward-headers-strategy=framework` (or `native`) for Spring Boot,
   or adjust the base path on the app side for anything else ([08](08-advanced.md)).
+
+### The preview URL I gave a colleague returns 404
+
+- **A preview subdomain URL changes every time the workspace restarts.** Pasting
+  `https://<random>-3000.…` as-is guarantees a 404 on the next start. Hand out the link from the
+  **"Share"** button in the preview popover instead: **that one survives restarts** and sends the
+  visitor to whatever the URL is at the time they open it.
+- If they see **nothing under "Shared with you", or a 404**, check that **"Show it to your tenant"**
+  is on under Settings › Toolchains › Preview subdomains. Turning it off closes the preview
+  **from their very next request**, even mid-session — that is deliberate.
+- **"Stopped" on their side** means your workspace is not running. **They cannot start your
+  workspace** — start it and tell them.
+- Removing the port from the exposed-ports list also produces a 404 ([08](08-advanced.md)).
 
 ### HMR (live reload) doesn't work / no automatic refresh
 
-- The **lightweight preview** is for one-off HTTP checks and **does not support WebSocket / SSE**. That's why Vite / React
-  **HMR (hot reload) does not work** there. When you need HMR, use **"Open in pane"** (browser pane).
-  In the browser pane, HMR, WebSocket, and SSE work just like plain localhost ([08](08-advanced.md)).
+- **The lightweight preview and the preview subdomains both pass WebSocket and SSE through.** If HMR still does not
+  connect, the dev server may be **embedding its own port into the client** (Vite does this). Then the app needs a
+  setting such as `server.hmr.clientPort: 443`.
+- To avoid adding configuration — or to isolate the cause — use **"Open in pane"** (browser pane). A browser inside
+  the workspace opens `127.0.0.1` directly, so HMR, WebSocket and SSE behave exactly like plain localhost
+  ([08](08-advanced.md)).
 
 ### The browser pane shows `crashed` / `disconnected`, or keeps dying
 

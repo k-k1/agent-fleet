@@ -733,6 +733,17 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
 // workspace per membership, so there is no select / create / delete. The
 // destructive "作り直す" lives deep in 設定 > 環境 (warning-gated), off this bar.
+// SharedPreview は GET /api/preview/shared の 1 行（docs/81 §14.6）。running は
+// 「プレビューの URL が今あるか」であって、コンテナの状態そのものではない。
+type SharedPreview = {
+  ownerUserKey: string;
+  ownerEmail: string;
+  ports: number[];
+  urls: Record<string, string>;
+  shareLinks: Record<string, string>;
+  running: boolean;
+};
+
 // On desktop the resource chips / opencode web / port-preview sit inline at the
 // right; on a phone they'd wrap to a second line, so they fold into a single ⋯
 // overflow popover instead.
@@ -832,6 +843,18 @@ export function WsBar() {
   // Live Chromium attachments, read when the popover opens (no polling: this is
   // a recovery entry, and the authoritative state is the pane's own socket).
   const [attachments, setAttachments] = useState<BrowserAttachmentStatus[]>([]);
+  // 発行済みのプレビュー用サブドメイン（docs/81）。起動のたびに変わるので、開いた
+  // 瞬間に読み直す。ホスト方式が無いデプロイでは previewDomain が空 = 何も出さない。
+  const [pvHosts, setPvHosts] = useState<{
+    domain: string;
+    urls: Record<string, string>;
+    // 起動をまたいで有効な、貼れるリンク（docs/81 §14.6）。停止中でも入っている。
+    shareLinks: Record<string, string>;
+    public: boolean;
+    tenantShare: boolean;
+  } | null>(null);
+  // 同じテナントの他の人が共有しているプレビュー（docs/81 §14.6）。
+  const [pvShared, setPvShared] = useState<SharedPreview[]>([]);
   const [staleOpen, setStaleOpen] = useState(false); // 要再起動 badge popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
@@ -977,10 +1000,41 @@ export function WsBar() {
       (list) => !cancelled && setAttachments(list),
       () => !cancelled && setAttachments((prev) => (prev.length ? [] : prev)),
     );
+    void api("api/env/ws-settings").then(
+      (res: any) => {
+        if (cancelled) return;
+        setPvHosts(
+          res && !res.error && res.previewDomain
+            ? {
+                domain: res.previewDomain,
+                urls: res.previewUrls || {},
+                shareLinks: res.previewShareLinks || {},
+                public: !!res.previewPublic,
+                tenantShare: !!res.previewTenantShare,
+              }
+            : null,
+        );
+      },
+      () => !cancelled && setPvHosts(null),
+    );
     return () => {
       cancelled = true;
     };
   }, [pvOpen, moreOpen, running]);
+
+  // 同じテナントで共有されているプレビュー（docs/81 §14.6）。★ running を条件にしない
+  // —— ここに出るのは**他人の** Workspace で、自分が止まっているかは無関係である。
+  useEffect(() => {
+    if (!pvOpen && !moreOpen) return;
+    let cancelled = false;
+    void api("api/preview/shared").then(
+      (res: any) => !cancelled && setPvShared(res && !res.error ? res.items || [] : []),
+      () => !cancelled && setPvShared([]),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [pvOpen, moreOpen]);
 
   // Close each popover on an outside click / Escape.
   useDismiss(pvRef, pvOpen, () => setPvOpen(false));
@@ -1145,6 +1199,90 @@ export function WsBar() {
         </div>
         <div className="pv-hint">{tr("wsbar.preview.hint")}</div>
       </div>
+      {/* 発行済みのプレビュー用サブドメイン（docs/81）。★ 停止中は URL を出さない
+          —— slug は起動ごとに発行され停止で失効するので、出したところで 404 にしか
+          ならないリンクは「機能が壊れている」という報告になって返ってくる。 */}
+      {pvHosts && Object.keys(pvHosts.urls).length > 0 && (
+        <div className="pv-section">
+          <label className="pv-label">
+            {tr("wsbar.preview.hosts_label")}
+            {pvHosts.public && <span className="pv-public"> {tr("wsbar.preview.public_badge")}</span>}
+          </label>
+          {Object.keys(pvHosts.urls)
+            .sort((a, b) => Number(a) - Number(b))
+            .map((p) => (
+              <div className="pv-row pv-actions" key={p}>
+                <button
+                  className="pv-host"
+                  title={pvHosts.urls[p]}
+                  onClick={() => {
+                    window.open(pvHosts.urls[p], "_blank", "noopener");
+                    setPvOpen(false);
+                    setMoreOpen(false);
+                  }}
+                >
+                  <Icon name="globe" /> :{p}
+                </button>
+                <button
+                  className="ghost"
+                  title={tr("wsbar.preview.copy_url")}
+                  onClick={() => void navigator.clipboard?.writeText(pvHosts.urls[p])}
+                >
+                  {tr("wsbar.preview.copy")}
+                </button>
+                {/* 共有中のときだけ出す、起動をまたいで有効なリンク（docs/81 §14.6）。
+                    ★ 生 URL の方は起動ごとに腐るので、人に渡すのはこちらである。 */}
+                {pvHosts.tenantShare && pvHosts.shareLinks[p] && (
+                  <button
+                    className="ghost"
+                    title={tr("wsbar.preview.copy_share_url")}
+                    onClick={() =>
+                      void navigator.clipboard?.writeText(window.location.origin + pvHosts.shareLinks[p])
+                    }
+                  >
+                    {tr("wsbar.preview.copy_share")}
+                  </button>
+                )}
+              </div>
+            ))}
+          <div className="pv-hint">{tr("wsbar.preview.hosts_hint")}</div>
+        </div>
+      )}
+      {/* 同じテナントの他の人が共有しているプレビュー（docs/81 §14.6）。★ 開くのは
+          Console オリジンの固定リンクで、そこが今の slug を解決する —— 生 URL を
+          持ち回ると相手が再起動した瞬間に 404 になる。 */}
+      {pvShared.length > 0 && (
+        <div className="pv-section">
+          <label className="pv-label">{tr("wsbar.preview.shared_label")}</label>
+          {pvShared.map((s) => (
+            <div className="pv-row pv-actions pv-row-shared" key={s.ownerUserKey}>
+              <span className="pv-shared-owner" title={s.ownerEmail || s.ownerUserKey}>
+                {s.ownerEmail || s.ownerUserKey}
+              </span>
+              {s.running ? (
+                s.ports.map((p) => (
+                  <button
+                    className="pv-host"
+                    key={p}
+                    title={s.shareLinks[String(p)]}
+                    onClick={() => {
+                      window.open(window.location.origin + s.shareLinks[String(p)], "_blank", "noopener");
+                      setPvOpen(false);
+                      setMoreOpen(false);
+                    }}
+                  >
+                    <Icon name="globe" /> :{p}
+                  </button>
+                ))
+              ) : (
+                // 停止中は行ごと消さない。消すと「共有されていない」と読めてしまう。
+                <span className="muted">{tr("wsbar.preview.shared_stopped")}</span>
+              )}
+            </div>
+          ))}
+          <div className="pv-hint">{tr("wsbar.preview.shared_hint")}</div>
+        </div>
+      )}
       {/* エージェントが attach した既存 Chromium への戻り道（docs/53 §53.7）。
           本来の入口はミラーの action リンクだが、会話が流れてリンクを見失ったり
           ペインを閉じた後でも、生きている接続へ戻れるようにする。 */}

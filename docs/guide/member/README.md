@@ -62,7 +62,7 @@ environment — your **workspace**. It holds the operations that affect your wor
 
 - **● Status lamp** — shows by color whether the workspace is **running** or **stopped**. It refreshes automatically every few seconds, so there is no need to reload manually.
 - **Start / Stop workspace button** — a single button that starts and stops the workspace.
-- **Preview** — the entry point for viewing a web service you started inside the workspace, either in the **browser pane** rendered inside a Console pane, or in the **lightweight preview** that opens in another tab ([08 Going further](08-advanced.md)).
+- **Preview** — the entry point for viewing a web service you started inside the workspace: the **browser pane** rendered inside a Console pane, the **lightweight preview** that opens in another tab, and — where the deployment configures it — the **preview subdomains** issued on every start, one URL per port ([08 Going further](08-advanced.md)).
 
 ### Left pane
 

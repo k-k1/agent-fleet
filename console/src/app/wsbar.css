@@ -335,6 +335,41 @@ button.wu-manage {
 .pv-actions {
   justify-content: flex-end;
 }
+/* プレビュー用サブドメインの 1 行（docs/81）。左のボタンがポート、右がコピー。
+   ホスト名そのものは title に入れて、popover を広げない。 */
+.pv-host {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+/* 「公開中」は畳まれていても目に入る必要がある —— この機能の事故は、公開したことを
+   忘れたときにだけ起きる（ADR 0062 決定 12）。 */
+.pv-public {
+  color: var(--warn);
+  font-weight: 600;
+}
+/* 共有されているプレビューの行（docs/81 §14.6）は「誰の」＋ポートのボタンなので、
+   名前側を伸ばさずに省略する。メールアドレスは長さが読めない。 */
+.pv-shared-owner {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: 0.85;
+}
+/* ポートのボタンは内容ぶんだけ。★ 既定の .pv-host は flex:1 なので、ここで戻さないと
+   ポートが 2 つ以上ある行で名前が潰れる。 */
+.pv-row-shared .pv-host {
+  flex: 0 0 auto;
+}
 /* An attachment is listed by its page title, which is arbitrary length — let the
    row give it the full width and ellipsize instead of widening the popover. */
 .pv-attachment {
