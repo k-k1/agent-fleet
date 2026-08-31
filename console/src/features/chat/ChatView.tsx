@@ -113,6 +113,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   const setLive = useChatStore((s) => s.setLive);
   const clearLive = useChatStore((s) => s.clearLive);
   const publishSnapshot = useChatStore((s) => s.publishSnapshot);
+  const setConvTitle = useChatStore((s) => s.setConvTitle);
   const storeBusy = useChatStore((s) => (conversationId ? !!s.busy[conversationId] : false));
   const liveTurn = useChatStore((s) => (conversationId ? s.live[conversationId] : undefined));
   const snapshot = useChatStore((s) => (conversationId ? s.snapshots[conversationId] : undefined));
@@ -1149,6 +1150,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   const agentKind = liveTurn?.agent || conv?.active_agent || conv?.agent || draftAsst?.agent || null;
   const agent = agentKind ? agentOf(agentKind) : null;
   const title = conv?.title || (draftAsst && assistantName(draftAsst)) || t("chat.label");
+  // The pane's tab and the pop-out title bar label this chat by the same title, but they
+  // outlive this view (a background tab has no ChatView at all). Publish it so a title the
+  // backend just generated for a fresh conversation shows up there without waiting for the
+  // rail's 15s list poll — which in a pop-out window never runs, there being no rail.
+  useEffect(() => {
+    if (conv?.id && conv.title) setConvTitle(conv.id, conv.title);
+  }, [conv?.id, conv?.title, setConvTitle]);
   const isDraft = !conversationId && !!draftAssistantId;
   // A turn may be in flight because THIS pane is sending, because a background turn on this
   // conversation (started before the pane was closed + re-opened) is still running, or

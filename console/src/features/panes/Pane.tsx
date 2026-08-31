@@ -26,6 +26,7 @@ import { DocView } from "../viewer/DocView.tsx";
 import { DiffView } from "../viewer/DiffView.tsx";
 import type { DiffEdit } from "../viewer/DiffView.tsx";
 import { ChatView } from "../chat/ChatView.tsx";
+import { ensureConvs, useChatTitles } from "../chat/store.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { findScroller, VIEWER_KINDS } from "../../lib/keyScroll.ts";
@@ -235,6 +236,14 @@ function PopulatedPane({
   // name/kind, kept in the recipient-side store (docs/log/59) instead.
   const sharedSessions = useSharedSessionsStore((s) => s.sessions);
   const sharedById = useMemo(() => new Map(sharedSessions.map((s) => [s.id, s] as const)), [sharedSessions]);
+  // Same for a chat tab: its title lives in the conversation, not the pane. Only the
+  // SELECTED tab has a mounted ChatView, so the background ones would read "チャット"
+  // forever — pull the list in once for them (the rail may not be mounted at all).
+  const chatTitles = useChatTitles();
+  const hasChatTab = cell.views.some((v) => v.content.kind === "chat" && v.content.conversationId);
+  useEffect(() => {
+    if (hasChatTab) void ensureConvs();
+  }, [hasChatTab]);
   // タブの右クリック: 左ペインのセッション行と同じメニューを、カーソル位置に出す。
   // `open` を落としても要素は残す — メニューが閉じたあとも生き続ける引き継ぎ/共有
   // ダイアログを SessionMenu が抱えているので、アンマウントすると道連れになる。
@@ -284,7 +293,11 @@ function PopulatedPane({
     const session = view.session ? sessionByName.get(view.session) ?? null : null;
     if (view.content.kind === "terminal" && view.session && !session) return tr("pane.no_session");
     const shared = view.content.kind === "sharedSession" ? sharedById.get(view.content.sharedSessionId) : undefined;
-    return paneTitle(view, session, shared);
+    const chatTitle =
+      view.content.kind === "chat" && view.content.conversationId
+        ? chatTitles.get(view.content.conversationId)
+        : undefined;
+    return paneTitle(view, session, { shared, chatTitle });
   };
   const tabState = (view: PaneView) => {
     if (view.content.kind !== "terminal" || !view.session) return null;
@@ -344,7 +357,7 @@ function PopulatedPane({
   const tabInfo = useMemo(
     () => views.map((view) => ({ view, label: tabLabel(view), state: tabState(view), kic: tabKindIcon(view) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [views, sessionByName, sharedById, tr],
+    [views, sessionByName, sharedById, chatTitles, tr],
   );
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, cell.id);

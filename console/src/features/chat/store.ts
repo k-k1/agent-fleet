@@ -9,6 +9,7 @@
 // delivered to an unmounted component and dropped. Publishing here lets a pane that is
 // re-opened on the same conversation re-attach to the live turn and pick up the final
 // answer instead of a stale pre-turn snapshot (docs/log/19: "close pane mid-stream" fix).
+import { useMemo } from "react";
 import { create } from "zustand";
 import { chatList } from "./api.ts";
 import { isTransientErr } from "../../core/api/client.ts";
@@ -34,6 +35,12 @@ interface ChatStore {
   // mounted, ensureConvs() covers surfaces that render before/without it.
   convs: ConversationMeta[] | null;
   setConvs(convs: ConversationMeta[]): void;
+  // Conversation id → title, published by whichever ChatView has that conversation
+  // loaded. `convs` alone can't label a chat pane: it is only refreshed by the rail's
+  // 15s poll (so a title the backend just auto-generated for a brand-new conversation
+  // is missing) and in a pop-out window the rail never mounts at all. See useChatTitles.
+  titles: Record<string, string>;
+  setConvTitle(id: string, title: string): void;
   busy: Record<string, boolean>;
   markBusy(id: string, busy: boolean): void;
   // Accumulating assistant reply + working steps of an in-flight turn, so a re-opened pane
@@ -52,6 +59,9 @@ export const useChatStore = create<ChatStore>((set) => ({
   bumpList: () => set((s) => ({ listTick: s.listTick + 1 })),
   convs: null,
   setConvs: (convs) => set({ convs }),
+  titles: {},
+  setConvTitle: (id, title) =>
+    set((s) => (s.titles[id] === title ? s : { titles: { ...s.titles, [id]: title } })),
   busy: {},
   markBusy: (id, b) =>
     set((s) => {
@@ -94,6 +104,27 @@ export function ensureConvs(): Promise<void> {
       });
   }
   return convsLoading;
+}
+
+/** Conversation id → current title. The rail's list wins where it has the
+ * conversation — a rename refreshes it right away — and the per-view `titles` fill
+ * in the ones it hasn't seen yet (a thread created after the last list fetch, or a
+ * pop-out window where no rail ever mounts). */
+export function mergeChatTitles(
+  convs: ConversationMeta[] | null,
+  titles: Record<string, string>,
+): Map<string, string> {
+  const m = new Map<string, string>(Object.entries(titles).filter(([, t]) => !!t));
+  for (const c of convs ?? []) if (c.title) m.set(c.id, c.title);
+  return m;
+}
+
+/** mergeChatTitles as a subscription, for surfaces that label a chat by its own
+ * name (pane tab strips, the pop-out title bar) rather than the generic kind word. */
+export function useChatTitles(): Map<string, string> {
+  const convs = useChatStore((s) => s.convs);
+  const titles = useChatStore((s) => s.titles);
+  return useMemo(() => mergeChatTitles(convs, titles), [convs, titles]);
 }
 
 /** Poll every 15s while the tab is visible: bump listTick so AssistantSection's
