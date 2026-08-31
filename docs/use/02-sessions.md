@@ -377,6 +377,11 @@ is why `/list-agents` does nothing here; use the Agent Fleet version above inste
 | Sessions on another machine or the web | Can reply to them | **Not supported** (same workspace only) |
 | Holding or refusing on the receiving side | Available | Not yet — only the workspace-wide on/off |
 
+The block is applied **through the launch settings** (a version shipped where environment variables
+no longer closed it). If something does arrive over Claude's own channel anyway, **it shows up in
+the chat view as an incoming message**, with the sending session's name. It is closed, and a leak is
+made visible.
+
 ## Sharing a conversation (shared sessions)
 
 You can show a session's conversation to another member of the same tenant, **read-only** —
@@ -409,6 +414,10 @@ workspace is stopped, the history cannot be read. The list refreshes on its own,
 If the session proposed a **handoff to a new session**, that card appears in the shared
 conversation too, at the point it was proposed, with the title and the full prompt. Only the
 owner can edit it, discard it, or launch from it, so those buttons are not shown to you.
+
+If the agent is **stopped on a question**, **its options appear in the shared conversation too**,
+so the recipient can see what it is waiting on. Only the owner can answer (with "may propose" you
+send it as a proposal and wait for approval).
 
 The view behaves like a session mirror: **opening a shared conversation for the first time
 lands on the latest message**, and if you leave part-way through, **reopening it returns you

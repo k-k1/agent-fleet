@@ -84,6 +84,24 @@ There is a sample to try in this repository: **[`docs/assets/architecture.drawio
 
 Editing the drawing itself is not supported yet — use the source view, or an external editor.
 
+### PDFs and Office documents
+
+A **PDF** is drawn as its pages, exactly as it looks (`1 / 12 pages` in the header). Step through
+with the arrows, **zoom in and out**, and **fit to width**. **Japanese PDFs render their text too**,
+even when the fonts are not embedded.
+
+**Word / Excel / PowerPoint** (`.docx`, `.xlsx`, `.pptx`, plus `.odt`, `.rtf`, `.epub` and friends)
+get a **plain preview**: the content is converted into something readable, and the surface says so —
+**formatting, shapes and images are not reproduced**. When you need the document as laid out, open
+the original from **Download** in the info bar.
+
+- **Both the conversion and the rendering happen inside your browser.** The document is never sent
+  to an outside service (the same rule as `.drawio`).
+- The first time you open that format there is a short wait while it loads — nothing is loaded
+  unless you open one.
+- When it cannot be shown, **you are told why**: password-protected, corrupt, **pages that are
+  images only** (reading the text would need OCR, which is not done here), or too large (over 40 MB).
+
 ## Editing a file
 
 Switch to editing with **View / Edit / Split** at the top of the viewer and you can fix the file

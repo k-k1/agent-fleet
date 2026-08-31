@@ -147,6 +147,10 @@ Sending a prompt from the input field below works just like typing into the term
 running you can halt it with **"Stop"** (Esc). Right after sending, the message shows as
 sent, and it's reflected in the conversation once the agent starts processing.
 
+**Work-in-progress** and **thinking** blocks fold and unfold from their heading. When a long one is
+open, a **"Close"** also appears at the bottom of the body, so you can fold it from where you
+finished reading instead of scrolling back to the heading.
+
 A stopped session is read-only history; to reply, restart it with **"Resume and continue"**.
 
 ### Writing comments on a plan

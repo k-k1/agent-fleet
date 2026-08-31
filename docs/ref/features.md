@@ -49,7 +49,9 @@ If a feature ships and does not appear here, it is not done
 | File tree and viewer | member | Files | [05 Files](../use/04-files.md) |
 | Markdown and code editing | member | Files → a file | [05 Files](../use/04-files.md) |
 | `.drawio` diagrams | member | Files → a `.drawio` file | [05 Files](../use/04-files.md) |
+| PDF and Office document preview | member | Files → that document | [05 Files](../use/04-files.md) |
 | Browser pane for a local web app | member | workspace action bar → Preview | [08 Going further](../use/10-integrations.md); [browser-pane.md](browser-pane.md) for the contract |
+| Preview subdomains (minted on every start) | member | workspace action bar → Preview | [08 Going further](../use/10-integrations.md) |
 | Attach to a Chromium the agent owns | member | a link the agent hands you | [08 Going further](../use/10-integrations.md) |
 
 ## Organising the work
