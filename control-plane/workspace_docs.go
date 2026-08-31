@@ -60,6 +60,38 @@ func docsSrcDir() string {
 // which is how it gets read during a security review.
 var guideShelves = []string{"member", "admin", "operate", "ref", "assets"}
 
+// guideRootFiles are the files at the TOP of the guide tree that ship next to the
+// shelves. The tree's own README is the entry point — the page that branches by reader
+// — and it is what the Console's 「利用ガイド」 opens (console/src/app/TopBar.tsx). Ship
+// only the shelves and that button opens nothing at all, with the pane's
+// "(target is not an existing regular file)" as the only explanation on screen.
+//
+// Enumerated one by one for the same reason guideShelves is: with AF_DOCS_DIR pointed
+// at a wider tree by a local dev CP, "every file at the root" would sweep up whatever
+// else happens to sit there.
+var guideRootFiles = []string{"README.md", "README.ja.md"}
+
+// isFilePath reports whether p exists and is a regular file.
+func isFilePath(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// guideRootFilePaths resolves the root files that are actually present in src, paired
+// with their path relative to the docs root (absent ones are skipped: best-effort, same
+// as guideRoots).
+func guideRootFilePaths(src string) []struct{ Path, Rel string } {
+	var out []struct{ Path, Rel string }
+	for _, f := range guideRootFiles {
+		p := filepath.Join(src, f)
+		if !isFilePath(p) {
+			continue
+		}
+		out = append(out, struct{ Path, Rel string }{p, f})
+	}
+	return out
+}
+
 // guideRoots resolves the absolute source subtrees to ship, paired with their path
 // relative to the docs root. Both provisioning paths (the bind-mount staging below and
 // the tar stream in docs_bridge.go) go through this one function, so "what does a
@@ -92,6 +124,37 @@ func writeGuideTarGz(w io.Writer) (files int, err error) {
 	}
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
+	add := func(path, rel string, fi fs.FileInfo) error {
+		if err := tw.WriteHeader(&tar.Header{
+			Typeflag: tar.TypeReg,
+			Name:     filepath.ToSlash(rel),
+			Mode:     0o644,
+			Size:     fi.Size(),
+			ModTime:  fi.ModTime(),
+		}); err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, cErr := io.Copy(tw, f)
+		f.Close()
+		if cErr != nil {
+			return cErr
+		}
+		files++
+		return nil
+	}
+	for _, rf := range guideRootFilePaths(src) {
+		fi, err := os.Stat(rf.Path)
+		if err != nil {
+			return files, err
+		}
+		if err := add(rf.Path, rf.Rel, fi); err != nil {
+			return files, err
+		}
+	}
 	for _, root := range guideRoots(src) {
 		walkErr := filepath.WalkDir(root.Dir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -108,26 +171,7 @@ func writeGuideTarGz(w io.Writer) (files int, err error) {
 			if err != nil {
 				return err
 			}
-			if err := tw.WriteHeader(&tar.Header{
-				Typeflag: tar.TypeReg,
-				Name:     filepath.ToSlash(rel),
-				Mode:     0o644,
-				Size:     fi.Size(),
-				ModTime:  fi.ModTime(),
-			}); err != nil {
-				return err
-			}
-			f, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			_, cErr := io.Copy(tw, f)
-			f.Close()
-			if cErr != nil {
-				return cErr
-			}
-			files++
-			return nil
+			return add(path, rel, fi)
 		})
 		if walkErr != nil {
 			return files, walkErr
@@ -158,6 +202,18 @@ func stageWorkspaceDocs(dataDir string) error {
 			return err
 		}
 		if err := os.CopyFS(d, os.DirFS(root.Dir)); err != nil {
+			return err
+		}
+	}
+	for _, rf := range guideRootFilePaths(src) {
+		if err := os.MkdirAll(dest, 0o755); err != nil {
+			return err
+		}
+		b, err := os.ReadFile(rf.Path)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dest, rf.Rel), b, 0o644); err != nil {
 			return err
 		}
 	}
