@@ -304,19 +304,52 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 // 5 秒ごとに更新され続け、**Workspace は永久に停止しない**。lease は「ソケットがある」
 // ことしか語れないのに、reaper はそれを「人が見ている」と読んでいた。返る noteInput を
 // 打鍵のたびに呼ぶことで、lease は「人が触っている」を語るようになる。
+// ★noteInput は打鍵の中継経路上で呼ばれる（proxy.go relay: onInput() → キーの転送）。
+// つまりここでブロックした時間は、そのまま**そのキーがエコーバックされるまでの遅延**に
+// なる。以前はここで recordWorkspaceActivity を同期呼び出ししており、5 秒に 1 回、
+// ある打鍵だけが DB 1 往復ぶん（activityLockFor を握ったまま）止まっていた。畳み込みが
+// 効いていても「1 打鍵に 1 書き込みではない」ことしか保証せず、当たった打鍵の遅延は
+// DB の応答時間そのものになる。端末は 1 文字の往復で品質が決まる面なので、在席の記録の
+// ために打鍵を待たせてはいけない。
+//
+// 書き込みは専用の goroutine へ出し、容量 1 のチャネルで畳む: 書き込み中に来た打鍵は
+// 「もう 1 回やる」を 1 個だけ残して素通りする（在席は「最近打鍵があった」という単調な
+// 事実なので、取りこぼしても次の打鍵か heartbeat が同じ結論を書く）。in-memory 側の
+// noteInput は残す — reaper の在席判定はこれを読むので、即時であることに意味がある。
 func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session string) (release func(), noteInput func(), err error) {
 	rel, err := m.trackPresence(ctx, wsID, session, true)
 	if err != nil {
 		return nil, nil, err
 	}
-	return rel, func() {
-		m.conns.noteInput(wsID)
-		// 打鍵は本物のアクティビティ: 共有ウォーターマーク（last_seen_at）も進める。
-		// force=false なので 5 秒に 1 回へ畳まれる — 1 打鍵 1 DB 書き込みにはならない。
-		ctxHB, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_ = m.recordWorkspaceActivity(ctxHB, wsID, false)
-		cancel()
-	}, nil
+	pending := make(chan struct{}, 1)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			case <-pending:
+				// 共有ウォーターマーク（last_seen_at）。force=false なので 5 秒に 1 回へ
+				// 畳まれ、大半の周回はロックとマップ参照だけで返る。
+				ctxHB, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				_ = m.recordWorkspaceActivity(ctxHB, wsID, false)
+				cancel()
+			}
+		}
+	}()
+	return func() {
+			close(stop)
+			<-done
+			rel()
+		}, func() {
+			m.conns.noteInput(wsID)
+			select {
+			case pending <- struct{}{}:
+			default: // 書き込みが既に予約済み — 打鍵は待たない
+			}
+		}, nil
 }
 
 func (m *manager) trackPresence(ctx context.Context, wsID, session string, attention bool) (func(), error) {
