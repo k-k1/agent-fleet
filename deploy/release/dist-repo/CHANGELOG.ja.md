@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.14.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.0) — 2026-08-31
+
+ワークスペースで動かしている Web アプリを、専用の URL で開けるようにしました。起動のたびに
+発行されるサブドメインで、既定ではログインが要り、同じテナントのメンバーにも見せられます。
+File ペインは PDF を描き、Office 文書も簡易プレビューできます。利用ガイドは英語と日本語の
+独立したツリーになりました。
+
 ## [0.13.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.13.1) — 2026-08-28
 
 課題管理の Bitbucket のクエリを、自分で書き起こす代わりに選んで組み立てられるようにしました。
