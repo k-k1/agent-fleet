@@ -65,6 +65,24 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
     if (!open || !el) return;
     place(el);
   });
+  // useMenuRoving pulls focus into the menu on open, so closing it destroys the
+  // focused element and focus falls to <body> — after a keyboard open (メニューキー
+  // → Esc, or activating an item) the user is left nowhere to arrow from. Hand focus
+  // back to whatever opened the menu, but only when the menu really still had it: a
+  // click that landed on some other control must keep the focus the user chose.
+  //
+  // A LAYOUT effect on purpose. useMenuRoving focuses the first item from a passive
+  // effect, so a passive capture here would read the menu item as "the opener" —
+  // layout effects run first, before anything has moved focus.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    if (!opener || opener === document.body) return; // opened by mouse — nothing to give back
+    return () => {
+      const now = document.activeElement;
+      if ((!now || now === document.body) && opener.isConnected) opener.focus();
+    };
+  }, [open]);
   // The session's immutable id (e.g. "sk7f3q9") — the thing shown as ID in the
   // row tooltip. The menu label shows the concrete value, not jargon ("slug").
   const copyId = () => {

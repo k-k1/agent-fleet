@@ -10,6 +10,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { SessionMenu } from "../sessions/SessionMenu.tsx";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
+import { isContextMenuKey, synthContextMenu } from "../project/contextMenuKey.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { TerminalView } from "../terminal/TerminalView.tsx";
@@ -432,6 +433,10 @@ function PopulatedPane({
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
         >
           {tabInfo.map(({ view, label, state, kic }) => {
+            // セッションのタブだけがメニューを持つ（SCM/ファイルのタブと、停止中の
+            // Workspace は既定動作のまま）。右クリックとメニューキーで同じ 1 つの
+            // 判定を見るため、ここで一度だけ解決する。
+            const menuSession = wsRunning && view.session && sessionByName.has(view.session) ? view.session : null;
             return (
               <div
                 className={cx("pane-tab", view.id === cell.selectedViewId && "selected")}
@@ -440,9 +445,9 @@ function PopulatedPane({
                 // 左ペインの行と同じ形: 後続の contextmenu で開く（mousedown 側の
                 // 外側クリック判定に即座に閉じられないため）。× の上でも同じ。
                 onContextMenu={(e) => {
-                  if (!wsRunning || !view.session || !sessionByName.has(view.session)) return;
+                  if (!menuSession) return;
                   e.preventDefault();
-                  setTabMenu({ session: view.session, x: e.clientX, y: e.clientY, open: true });
+                  setTabMenu({ session: menuSession, x: e.clientX, y: e.clientY, open: true });
                 }}
               >
                 <button
@@ -482,6 +487,15 @@ function PopulatedPane({
                   }}
                   onAuxClick={(e) => {
                     if (e.button === 1) { e.preventDefault(); closeTab(view.id); }
+                  }}
+                  // メニューキー / Shift+F10 — タブは素の button なので Tab で焦点が
+                  // 来る。rail の行と同じく、native な contextmenu を合成して上の
+                  // onContextMenu をそのまま通す（開き方を 2 本持たない）。メニューを
+                  // 持たないタブでは既定を止めない — ブラウザ本来のメニューを奪わない。
+                  onKeyDown={(e) => {
+                    if (!menuSession || !isContextMenuKey(e)) return;
+                    e.preventDefault();
+                    synthContextMenu(e.currentTarget);
                   }}
                   onClick={() => selectTab(view.id)}
                 >
