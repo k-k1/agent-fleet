@@ -675,6 +675,9 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/env/ws-settings", wss.withResolved(wss.put))
 	// プレビュー URL の再発行（docs/81 §4.1）。GET/PUT と違い状態を捨てる操作なので POST。
 	mux.HandleFunc("POST /api/env/ws-settings/preview/reissue", wss.withResolved(wss.reissuePreview))
+	// 同じテナントで共有中のプレビュー（docs/81 §14.6）。★ withMembership —— 読むのは
+	// 他人の Workspace の公開設定なので、自分のコンテナは要らない（停止中でも引ける）。
+	mux.HandleFunc("GET /api/preview/shared", wss.withMembership(wss.sharedPreviews))
 	// Per-user UI preferences (Console display settings) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/ui-prefs", rest)
 	mux.HandleFunc("PUT /api/env/ui-prefs", rest)
@@ -876,6 +879,9 @@ func registerTerminalPreviewRoutes(mux *http.ServeMux, cfg config) {
 	// HERE, on the authenticated origin, precisely so an unauthenticated visitor meets
 	// the normal login before any token exists.
 	mux.HandleFunc("GET "+previewHandshakePath, newPreviewHostAPI(cfg).handshake)
+	// 起動をまたいで有効な、貼れるリンク（docs/81 §14.6）。ここも Console のオリジン
+	// ＝ authGate の中でなければならない（未ログインの人が先にログインへ出会うため）。
+	mux.HandleFunc("GET "+previewOpenPath, newPreviewHostAPI(cfg).openStable)
 }
 
 // Legacy path compatibility: the deployment used to be served under

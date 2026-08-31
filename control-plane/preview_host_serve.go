@@ -36,6 +36,12 @@ const previewAuthCallbackPath = "/__af/preview-auth"
 // so an unauthenticated visitor lands on the normal login first).
 const previewHandshakePath = "/preview-auth"
 
+// previewOpenPath is the STABLE link people paste (docs/81 §14.6 / ADR 0062 決定 17).
+// The preview hostname changes at every workspace start, so a raw URL always rots —
+// and it rots as a 404, the least legible failure there is. This one names the owner
+// and the port instead, and resolves the current slug on each visit.
+const previewOpenPath = "/preview-open"
+
 // previewTokenTTL is how long the one-shot token minted on the Console origin stays
 // valid — it only has to survive one redirect.
 const previewTokenTTL = 30 * time.Second
@@ -122,7 +128,7 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if !st.PreviewPublic && !a.authorized(r, ph, ws) {
+	if !st.PreviewPublic && !a.authorized(ctx, r, ph, ws, st) {
 		a.startHandshake(w, r, ph)
 		return
 	}
@@ -164,8 +170,12 @@ func mustSettings(ctx context.Context, m *manager, wsID string) string {
 
 // authorized reports whether this request already carries a valid preview cookie for
 // THIS host (slug + port both checked — a cookie is host-scoped by the browser, but we
-// do not rely on that alone).
-func (a previewHostAPI) authorized(r *http.Request, ph previewHost, ws Workspace) bool {
+// do not rely on that alone) AND whether the person it names may still open it.
+//
+// ★ cookie が言えるのは「誰か」までで、「見てよいか」は毎リクエスト引き直す
+// （previewViewerAllowed / ADR 0062 決定 15）。cookie の寿命は 12 時間あるので、
+// ここに権限を焼くと、共有を切ってもテナントから外しても cookie だけが生き残る。
+func (a previewHostAPI) authorized(ctx context.Context, r *http.Request, ph previewHost, ws Workspace, st wsSettings) bool {
 	c, err := r.Cookie(previewAuthCookie)
 	if err != nil || c.Value == "" {
 		return false
@@ -174,7 +184,10 @@ func (a previewHostAPI) authorized(r *http.Request, ph previewHost, ws Workspace
 	if !ok {
 		return false
 	}
-	return cl.Slug == ph.slug && cl.Port == ph.port && cl.MembershipID == ws.MembershipID
+	if cl.Slug != ph.slug || cl.Port != ph.port {
+		return false
+	}
+	return previewViewerAllowed(ctx, a.mgr, ws, st, cl.MembershipID)
 }
 
 func (a previewHostAPI) verifyClaims(s string) (previewClaims, bool) {
@@ -324,29 +337,37 @@ func (a previewHostAPI) handshake(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "no gateway identity"})
 		return
 	}
-	// Resolve within the workspace's OWN tenant and compare workspaces: a member has
-	// one workspace per membership, so "the workspace I resolve to in that tenant is
-	// the one being asked for" is exactly "this is mine". Everything the normal API
-	// path checks (membership, required provider, tenant network) is checked here too,
-	// because it is the same resolver.
-	res, aerr := a.mgr.resolveFull(ctx, id.key, id.email, ws.TenantID)
+	// Resolve the caller within the workspace's OWN tenant. Getting past this proves
+	// they are an ACTIVE member of that tenant, with the required provider and from an
+	// allowed network — the same three checks every normal API call makes, because it
+	// is the same resolver.
+	//
+	// ★ resolveMembership であって resolveFull ではない。以前は「呼び手の Workspace が
+	// 対象と同じか」で所有者を判定していたので Workspace を建てる必要があったが、いまは
+	// membership を previewViewerAllowed に渡すだけで足りる。閲覧者のために相手の
+	// ランタイムを組み立てる理由は無い。
+	_, mv, aerr := a.mgr.resolveMembership(ctx, id.key, id.email, ws.TenantID)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	if res.ws.ID != ws.ID {
-		// Not theirs. Same 404 as an unknown slug — being told "that exists but is
-		// someone else's" is itself information about another tenant's workspace.
+	st := parseWSSettings(mustSettings(ctx, a.mgr, ws.ID))
+	// 所有者本人か、その Workspace が同じテナントへ共有しているか（docs/81 §14.3）。
+	// どちらでもなければ、未知の slug と同じ 404 —— 「存在するが他人のもの」と告げる
+	// こと自体が、他人の Workspace についての情報である。
+	if !previewViewerAllowed(ctx, a.mgr, ws, st, mv.MembershipID) {
 		previewNotFound(w)
 		return
 	}
-	st := parseWSSettings(mustSettings(ctx, a.mgr, ws.ID))
 	if !previewPortAllowed(st, port) {
 		previewNotFound(w)
 		return
 	}
+	// ★ 焼くのは呼び手自身の membership（所有者のものではない）。閲覧者の cookie は
+	// 「この slug/port を、この人が開こうとしている」だけを言い、権限は毎リクエスト
+	// 引き直される（決定 15）。所有者にとっては今までと同じ値になる。
 	tok := a.sign(previewClaims{
-		Slug: slug, Port: port, MembershipID: ws.MembershipID,
+		Slug: slug, Port: port, MembershipID: mv.MembershipID,
 		Exp: time.Now().Add(previewTokenTTL).Unix(),
 	})
 	q := url.Values{}
@@ -355,6 +376,71 @@ func (a previewHostAPI) handshake(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r,
 		previewURLFor(slug, port, a.mgr.previewDomain)+previewAuthCallbackPath+"?"+q.Encode(),
 		http.StatusFound)
+}
+
+// openStable (GET /preview-open?owner={userKey}&port={n}[&next=/path]) runs on the
+// CONSOLE origin and answers "where is that person's preview right now?".
+//
+// ★ 認証の判断はここに持たせない —— ACL を通したら **今の slug** を入れて
+// /preview-auth へ渡すだけで、token を発行するのは最後まで 1 か所である（決定 17）。
+// authGate の中にあるので、未ログインの人はまず通常のログインに出会う。
+func (a previewHostAPI) openStable(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+	port, _ := strconv.Atoi(r.URL.Query().Get("port"))
+	if owner == "" || port < 1 || port > 65535 {
+		http.Error(w, "bad preview request", http.StatusBadRequest)
+		return
+	}
+	id := a.mgr.resolveIdentity(r)
+	if id.key == "" {
+		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "no gateway identity"})
+		return
+	}
+	// 呼び手の**現在のテナント**で解決する（Workspace は建てない）。所有者を探すのは
+	// その中だけなので、テナントをまたいで他人を指すことはこの時点で不可能になる。
+	_, mv, aerr := a.mgr.resolveMembership(ctx, id.key, id.email, tenantSel(r))
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	member, ok, err := memberByUserKey(ctx, a.mgr.store, mv.TenantID, owner)
+	if err != nil {
+		http.Error(w, "preview lookup failed", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		previewNotFound(w)
+		return
+	}
+	ws, ok, err := a.mgr.store.GetWorkspaceByMembership(ctx, member.MembershipID)
+	if err != nil {
+		http.Error(w, "preview lookup failed", http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		previewNotFound(w)
+		return
+	}
+	st := parseWSSettings(mustSettings(ctx, a.mgr, ws.ID))
+	if !previewViewerAllowed(ctx, a.mgr, ws, st, mv.MembershipID) || !previewPortAllowed(st, port) {
+		previewNotFound(w)
+		return
+	}
+	if ws.PreviewSlug == "" {
+		// ★ ここだけは「停止中」と答え分けてよい —— 呼び手が同じテナントの認証済み
+		// メンバーで、その Workspace を見てよい人だと**確定した後**だからである。
+		// 存在を答えない規則（§7）は、そこに至っていない相手に対するもの。
+		// ⚠️ 起動はしない（決定 16）: 他人の課金で他人のコンテナを起こすことになる。
+		http.Error(w, "that workspace is not running — its preview URL is issued at start",
+			http.StatusConflict)
+		return
+	}
+	q := url.Values{}
+	q.Set("slug", ws.PreviewSlug)
+	q.Set("port", strconv.Itoa(port))
+	q.Set("next", safePreviewNext(r.URL.Query().Get("next")))
+	http.Redirect(w, r, previewHandshakePath+"?"+q.Encode(), http.StatusFound)
 }
 
 // --- the relay itself -----------------------------------------------------------

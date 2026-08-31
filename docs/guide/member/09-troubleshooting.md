@@ -104,6 +104,19 @@ from then on you can clone / push without entering tokens ([04](04-git.md) · [0
   lightweight preview, set `server.forward-headers-strategy=framework` (or `native`) for Spring Boot,
   or adjust the base path on the app side for anything else ([08](08-advanced.md)).
 
+### The preview URL I gave a colleague returns 404
+
+- **A preview subdomain URL changes every time the workspace restarts.** Pasting
+  `https://<random>-3000.…` as-is guarantees a 404 on the next start. Hand out the link from the
+  **"Share"** button in the preview popover instead: **that one survives restarts** and sends the
+  visitor to whatever the URL is at the time they open it.
+- If they see **nothing under "Shared with you", or a 404**, check that **"Show it to your tenant"**
+  is on under Settings › Toolchains › Preview subdomains. Turning it off closes the preview
+  **from their very next request**, even mid-session — that is deliberate.
+- **"Stopped" on their side** means your workspace is not running. **They cannot start your
+  workspace** — start it and tell them.
+- Removing the port from the exposed-ports list also produces a 404 ([08](08-advanced.md)).
+
 ### HMR (live reload) doesn't work / no automatic refresh
 
 - **The lightweight preview and the preview subdomains both pass WebSocket and SSE through.** If HMR still does not

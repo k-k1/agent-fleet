@@ -86,10 +86,25 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
 - `AF_PREVIEW_URL_3000`, `AF_PREVIEW_URL_8080` and `AF_PREVIEW_DOMAIN` are present inside the container. Pass
   them to anything that reads its own public URL from the environment, such as `NEXTAUTH_URL`.
 
-#### Showing it to someone else / throwing the URL away
+#### Showing it to someone else (three steps)
 
-- **Open without signing in** lets anyone with the URL open it. It **always returns to off when the workspace
-  stops or restarts** (and the URL changes).
+What you use depends on who you want to show it to. **Each step opens it wider.**
+
+1. **Only you** — do nothing (the default).
+2. **Colleagues in the same tenant** — turn on **"Show it to your tenant"** under
+   Settings › Toolchains › Preview subdomains.
+   - They open it **after signing in to the Console** (nobody outside the tenant can see it).
+   - **This does NOT return to off when the workspace stops or restarts.** Turn it off yourself
+     when you are done.
+   - Hand them the link from the **"Share"** button. **That link keeps working across restarts** —
+     a raw `https://xxxx-3000.…` URL starts returning 404 the next time your workspace starts.
+   - In their Console it appears under **"Shared with you"** in the preview popover. **While your
+     workspace is stopped it shows "Stopped" and cannot be opened** — they cannot start your
+     workspace, so ask them to ping you if they need it running.
+   - ⚠️ **Your workspace will not idle-stop while someone has it open, and that running time is
+     billed to you.** (A page left open and untouched does eventually stop.)
+3. **People outside the tenant** — **Open without signing in** lets anyone with the URL open it. It
+   **always returns to off when the workspace stops or restarts** (and the URL changes).
 - If a URL went to the wrong place, press **"Discard and mint a new one"**. Tabs that are open now start
   returning 404 immediately.
 

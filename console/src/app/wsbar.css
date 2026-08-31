@@ -354,6 +354,22 @@ button.wu-manage {
   color: var(--warn);
   font-weight: 600;
 }
+/* 共有されているプレビューの行（docs/81 §14.6）は「誰の」＋ポートのボタンなので、
+   名前側を伸ばさずに省略する。メールアドレスは長さが読めない。 */
+.pv-shared-owner {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: 0.85;
+}
+/* ポートのボタンは内容ぶんだけ。★ 既定の .pv-host は flex:1 なので、ここで戻さないと
+   ポートが 2 つ以上ある行で名前が潰れる。 */
+.pv-row-shared .pv-host {
+  flex: 0 0 auto;
+}
 /* An attachment is listed by its page title, which is arbitrary length — let the
    row give it the full width and ellipsize instead of widening the popover. */
 .pv-attachment {

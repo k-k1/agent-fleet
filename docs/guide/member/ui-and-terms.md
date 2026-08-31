@@ -77,6 +77,7 @@ a pane can be popped out into its own browser tab
 | Browser pane | A method that renders a web service started inside the workspace (`127.0.0.1:{port}`) in a Console pane, with display and interaction (clicking, typing, scrolling, etc.). HMR, WebSocket, SSE, cookies, and redirects all work. "Open in pane" in the UI. localhost only — external URLs cannot be opened ([08](08-advanced.md)) |
 | Lightweight preview | Opens the same web service in another tab under a `/preview/{port}/` sub-path. WebSocket and SSE pass through, but an app that emits absolute-path assets breaks ([08](08-advanced.md)) |
 | Preview subdomains | A `https://<random>-<port>.<domain>/` URL issued every time the workspace starts. The app is served at the root and several ports are open at once. Issued only on deployments that configure it ([08](08-advanced.md)) |
+| Shared with you (previews) | A preview another member of your tenant turned "Show it to your tenant" on for. It is listed in the preview popover and opens **after you sign in**. While their workspace is stopped it shows "Stopped" and cannot be opened — you cannot start someone else's workspace ([08](08-advanced.md)) |
 
 ## Writing conventions
 

@@ -509,6 +509,12 @@ function PreviewSection({
         <OnOff value={!!au.previewFixedSlug} onChange={(on) => save({ previewFixedSlug: on })} />
       </Row>
       <p className="muted ds-sub">{tr("env.preview_fixed_note")}</p>
+      {/* 同じテナントへの共有（docs/81 §14）。公開モードの「手前」に置く —— 社内に
+          見せたいだけの人が、そのために公開モードへ手を伸ばすのを止めるのが目的。 */}
+      <Row label={tr("env.preview_share_label")}>
+        <OnOff value={!!au.previewTenantShare} onChange={(on) => save({ previewTenantShare: on })} />
+      </Row>
+      <p className="muted ds-sub">{tr("env.preview_share_note")}</p>
       <Row label={tr("env.preview_public_label")}>
         <OnOff value={!!au.previewPublic} onChange={(on) => save({ previewPublic: on })} />
       </Row>

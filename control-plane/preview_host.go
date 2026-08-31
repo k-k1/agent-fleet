@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -131,6 +132,19 @@ func previewURLFor(slug string, port int, domain string) string {
 	return "https://" + h
 }
 
+// previewOpenPathFor は「起動をまたいで有効な、貼れるリンク」の相対パス（決定 17）。
+// ★ 形を組み立てるのはここ 1 か所にする —— Console 側で組み立てると、パラメータ名を
+// 変えた瞬間に**貼られた古いリンクではなく、これから作るリンクが**壊れる。
+func previewOpenPathFor(ownerUserKey string, port int) string {
+	if ownerUserKey == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("owner", ownerUserKey)
+	q.Set("port", strconv.Itoa(port))
+	return previewOpenPath + "?" + q.Encode()
+}
+
 // defaultPreviewPorts は Workspace 設定が空のときの許可ポート（docs/81 §5・ADR 0062
 // 決定 6）。要望そのもの（React 3000 / Spring Boot 8080）を既定にしてある。
 var defaultPreviewPorts = []int{3000, 8080}
@@ -171,6 +185,50 @@ func auditPreviewPublic(ctx context.Context, m *manager, res *resolved, on bool)
 		Action: "workspace.preview_public", Target: res.ws.ID,
 		Detail: "public=" + state, At: nowTS(),
 	})
+}
+
+// auditPreviewShare records the tenant-share toggle (ADR 0062 決定 14), for the same
+// reason as auditPreviewPublic: the accident is not the moment it is switched on, it is
+// the months afterwards when nobody remembers it is.
+//
+// ★ 値が変わったときだけ書く。公開モードと違い、この設定は起動をまたいで残るので、
+// 設定画面を開いて保存するたびに同じ行が積まれると、監査ログの側が使えなくなる。
+//
+// ⚠️ 閲覧者の**アクセス**は残さない。静的アセット 1 本ごとに 1 行になる。残すのは
+// 「誰が開けたか」であって「誰が見たか」ではない（docs/81 §14.7）。
+func auditPreviewShare(ctx context.Context, m *manager, res *resolved, on bool) {
+	state := "off"
+	if on {
+		state = "on"
+	}
+	_ = m.store.InsertAudit(ctx, AuditLog{
+		ID: newID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
+		Action: "workspace.preview_tenant_share", Target: res.ws.ID,
+		Detail: "tenant=" + state, At: nowTS(),
+	})
+}
+
+// previewViewerAllowed reports whether `membershipID` may open THIS workspace's preview
+// right now — the one place the question is answered, for both halves of the handshake.
+//
+// ★ 毎回引き直すことに意味がある（ADR 0062 決定 15）。呼び出し側は cookie に焼いた
+// membership を渡してくるだけで、「見てよい」は cookie の中に無い。共有を切った瞬間、
+// テナントから外した瞬間に、次のリクエストから閉じる。
+//
+// GetMembershipByID は active 行しか返さないので、無効化された membership はここで
+// 落ちる（git_http.go が同じ理由で同じ関数を使っている）。
+func previewViewerAllowed(ctx context.Context, m *manager, ws Workspace, st wsSettings, membershipID string) bool {
+	if membershipID == "" {
+		return false
+	}
+	if membershipID == ws.MembershipID {
+		return true // 所有者本人
+	}
+	if !st.PreviewTenantShare {
+		return false
+	}
+	mv, ok, err := m.store.GetMembershipByID(ctx, membershipID)
+	return err == nil && ok && mv.TenantID == ws.TenantID
 }
 
 // sanitizePreviewPorts normalizes what the Console sent: 1..65535、重複を潰し、
