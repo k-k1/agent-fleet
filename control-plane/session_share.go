@@ -709,17 +709,70 @@ func sharedTranscriptDTO(payload map[string]any) map[string]any {
 				continue
 			}
 			p := map[string]any{}
+			// "declined" is a display flag on kind=question: the tool_result was the agent's
+			// own decline boilerplate (an Escape out of the modal), not a pick. Without it the
+			// recipient's card badges 回答済み and renders the rejection prose as if it were
+			// the chosen answer.
 			copyAllowed(p, part, "kind", "text", "tool", "info", "cause", "output", "prompt", "agentType",
-				"status", "model", "answer", "plan", "caption", "qid")
-			p["questions"] = sharedQuestions(part["questions"])
-			p["edits"] = sharedEdits(part["edits"])
+				"status", "model", "answer", "declined", "plan", "caption", "qid")
+			if raw, ok := part["questions"]; ok {
+				p["questions"] = sharedQuestions(raw)
+			}
+			if raw, ok := part["edits"]; ok {
+				p["edits"] = sharedEdits(raw)
+			}
 			visibleParts = append(visibleParts, p)
 		}
 		t["parts"] = visibleParts
 		shared = append(shared, t)
 	}
 	out["messages"] = shared
+	out["answers"] = sharedAnswers(payload["answers"])
+	sharePendingInteraction(out, payload)
 	return out
+}
+
+// sharedAnswers passes the whole-transcript interaction map (tool_use id → その回答)。
+//
+// エージェントは質問の tool_use を**訊いた時点**で転写に書き、その回答は数秒〜分後の別行に
+// 来る。窓がその2行をまたぐと、共有先が持っているのは未回答のカードのままになり、あとから
+// 届く回答は同じターンを再送しない増分には載らない。所有者側はこの map を qid で後追い
+// 適用して直している(patchAnswers)ので、共有先にも同じ素が要る。
+// 通すのは本文と却下フラグだけ。鍵の tool_use id は不透明な識別子で座標を含まない。
+func sharedAnswers(raw any) map[string]any {
+	items, _ := raw.(map[string]any)
+	out := make(map[string]any, len(items))
+	for qid, item := range items {
+		answer, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		a := map[string]any{}
+		copyAllowed(a, answer, "text", "declined")
+		out[qid] = a
+	}
+	return out
+}
+
+// sharePendingInteraction passes the STILL-OPEN AskUserQuestion / ExitPlanMode through.
+//
+// WHY this is not optional: while a modal is up, the owner's Agent deliberately removes
+// that question/plan from `messages` and holds the cursor short of its line
+// (hidePendingInteraction), because the same decision would otherwise be drawn twice —
+// once inertly in the transcript and once as the actionable card built from these
+// top-level payloads. Drop them here and the shared view is left with neither: the
+// recipient sees nothing at all for as long as the question is open, which is exactly
+// when they most want to read it ("共有先に AUQ の選択肢が見えない").
+//
+// The contents are conversation, not coordinates: the question text, its options (with the
+// preview mockups the choice is about) and the prose the agent streamed just before it.
+// pendingPermission stays out — a tool-permission prompt is the owner's decision about
+// their own Workspace and its message quotes commands and absolute paths.
+func sharePendingInteraction(out, payload map[string]any) {
+	if raw, ok := payload["pendingQuestions"]; ok {
+		out["pendingQuestions"] = sharedQuestions(raw)
+	}
+	copyAllowed(out, payload, "pendingText", "pendingPlan")
 }
 
 // sharedHandoffDTO — 引き継ぎ提案の allowlist。表示に要るのは本文(title/prompt)と、

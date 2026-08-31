@@ -2,9 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -154,5 +159,86 @@ func TestHidePendingInteractionNoMatch(t *testing.T) {
 
 	if hold != -1 || len(got) != 3 {
 		t.Fatalf("hold = %d, turns = %d, want -1 / 3 (unrelated payload changes nothing)", hold, len(got))
+	}
+}
+
+// TestSweepSettledPending は、モーダルがもう無い保留ペイロードが掃除されること、
+// そして**まだ出ているモーダル**は掃除されないことを固定する。
+//
+// 実バグ（2026-08-31 利用者報告「AUQ をキャンセルしても何度も聞かれる」）: キャンセルは
+// ツールの却下なので AskUserQuestion の PostToolUse が鳴らず、pending-question が残る。
+// 決着した行が窓から出た次のポーリングで、それが**生きた回答フォーム付きカード**として
+// 出し直され、答えてもキャンセルしても無反応になる。
+func TestSweepSettledPending(t *testing.T) {
+	const sid = "sid-sweep"
+	ask := []byte(`{"type":"assistant","timestamp":"2026-08-31T12:00:00.000Z","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"どれ？","options":[{"label":"A"}]}]}}]}}`)
+	// キャンセルの実文言（実転写から採取）。回答ではなく「ツールが却下された」形で来る。
+	decided := []byte(`{"type":"user","timestamp":"2026-08-31T12:05:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"q1","is_error":true,"content":"The user doesn't want to proceed with this tool use. The tool use was rejected"}]}}`)
+	raw := json.RawMessage(`[{"header":"方式","question":"どれ？","options":[{"label":"A"}]}]`)
+
+	t.Run("決着より前に捕まえた保留は掃除される", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		status.WritePendingQuestion(sid, raw)
+		status.AppendPendingText(sid, "前置き")
+		// ペイロードは質問が出た時点＝決着より前に書かれたもの、という関係を作る。
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
+
+		// 掃除は surfacePendingPayloads の中で走る（出す経路と同じ場所）ので、
+		// ここも「出す側」を呼んで、消えることと出ないことを一度に固定する。
+		resp := map[string]any{}
+		surfacePendingPayloads(resp, sid, "question", [][]byte{ask, decided})
+
+		if _, ok := resp["pendingQuestions"]; ok {
+			t.Error("a settled question was surfaced — the Console shows it as a live, unanswerable card")
+		}
+		if _, ok := status.ReadPendingQuestion(sid); ok {
+			t.Error("pending question survived a settled modal — the next poll offers it again")
+		}
+		if _, ok := status.ReadPendingText(sid); ok {
+			t.Error("pending text survived — it is only ever shown with the question card")
+		}
+	})
+
+	t.Run("決着より後に捕まえた保留は残す", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		status.WritePendingQuestion(sid, raw)
+		// フックが先に書き、tool_use の行はまだ flush されていない状態（実測 106〜122ms）。
+		// 転写に見えている決着は**ひとつ前の**モーダルのもので、生きた質問を消してはならない。
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:05:00.100Z")
+
+		resp := map[string]any{}
+		surfacePendingPayloads(resp, sid, "question", [][]byte{ask, decided})
+
+		if _, ok := resp["pendingQuestions"]; !ok {
+			t.Error("a live question was not surfaced")
+		}
+		if _, ok := status.ReadPendingQuestion(sid); !ok {
+			t.Error("a live question was swept — its payload was captured after the last decision")
+		}
+	})
+
+	t.Run("決着がひとつも無ければ触らない", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		status.WritePendingQuestion(sid, raw)
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
+
+		surfacePendingPayloads(map[string]any{}, sid, "question", [][]byte{ask})
+
+		if _, ok := status.ReadPendingQuestion(sid); !ok {
+			t.Error("pending question swept with no tool_result in the transcript")
+		}
+	})
+}
+
+// backdate は保留ペイロードの mtime を「いつ捕まえたか」に合わせる。掃除の判定材料は
+// 中身ではなく捕捉時刻なので、テストもそこだけを作る。
+func backdate(t *testing.T, path, ts string) {
+	t.Helper()
+	at, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
 	}
 }

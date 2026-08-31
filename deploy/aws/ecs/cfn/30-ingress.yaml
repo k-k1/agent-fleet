@@ -287,6 +287,29 @@ Parameters:
     Description: >-
       Route53 hosted zone id for the Fqdn's domain. Required — the zone must be
       in this account (ACM DNS validation + alias record are created in it).
+  PreviewDomain:
+    Type: String
+    Default: ""
+    Description: >-
+      Parent domain for the per-start preview subdomains (docs/81), e.g.
+      pv.example.com. A workspace start mints a random slug and its services become
+      reachable at https://{slug}-{port}.{PreviewDomain} — 3000 と 8080 のような
+      2 ポート構成が、サブパスではなく **それぞれのルート直下**で開ける。
+
+      Empty (the default) = the feature is OFF and nothing below is created; only
+      the existing path-mode /preview/{port} exists.
+
+      ★ ラベルは 1 段しか使えない。ACM のワイルドカード証明書が 1 段しか受け持たない
+      ので、ポートは `{slug}-{port}` とラベルの中に前置してある（`{port}.{slug}.…` は
+      `*.*.…` を要求して発行できない — ADR 0062 決定 2）。
+
+      ⚠️ Console の FQDN の **子ではなく兄弟**を勧める（af.example.com に対して
+      pv.example.com）。子（*.af.example.com）にすると、プレビューで動くアプリが
+      .af.example.com のドメイン cookie を書けてしまい、Console の cookie を上書き /
+      固定できる余地が残る（ADR 0062 決定 13）。
+
+      ⚠️ この名前を含むゾーンが HostedZoneId でなければ、ACM の DNS 検証が終わらず
+      **失敗ではなく「進まない」**形でスタックが止まる。
   CpPort:
     Type: Number
     Default: 8099
@@ -459,6 +482,7 @@ Conditions:
   # org list: it is the thing that authorizes the sign-in.
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
+  HasPreviewDomain: !Not [ !Equals [ !Ref PreviewDomain, "" ] ]
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
 
@@ -565,6 +589,43 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
 
+  # --- preview subdomains (docs/81), only when PreviewDomain is set -----------
+  # ★ 既存の Cert には触らない。SAN を足す形は **証明書の置換**になり、Console が今
+  # 出せている TLS を「プレビューを足す」という理由で作り直すことになる。リスナーは
+  # SNI で追加証明書を選べるので、2 枚目として貼る（やめるときは外すだけ・決定 4）。
+  PreviewCert:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasPreviewDomain
+    Properties:
+      DomainName: !Sub "*.${PreviewDomain}"
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub "*.${PreviewDomain}"
+          HostedZoneId: !Ref HostedZoneId
+
+  PreviewListenerCert:
+    Type: AWS::ElasticLoadBalancingV2::ListenerCertificate
+    Condition: HasPreviewDomain
+    Properties:
+      ListenerArn: !Ref Listener443
+      Certificates:
+        - CertificateArn: !Ref PreviewCert
+
+  # ワイルドカード 1 本で全 Workspace・全ポートを受け持つ。★ Workspace ごとに
+  # レコードを書く設計にはしない —— 起動のたびに API 往復と伝播待ちが乗り、レコード数の
+  # クォータにも当たる。発行コスト 0・伝播待ち 0 がホスト方式の数少ない「ただの得」で、
+  # そこを崩すと残るのは複雑さだけになる（決定 5）。
+  PreviewDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasPreviewDomain
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "*.${PreviewDomain}"
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Alb.DNSName
+        HostedZoneId: !GetAtt Alb.CanonicalHostedZoneID
+
   Listener80:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -647,6 +708,9 @@ Resources:
             - { Name: AUTH, Value: !Ref AuthMode }
             - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
             - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
+            # docs/81: プレビュー用サブドメインの親。空なら CP はホスト方式の振り分けを
+            # 一切登録しない（従来のパス方式だけが残る）。
+            - { Name: AF_PREVIEW_DOMAIN, Value: !Ref PreviewDomain }
             - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
             - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
             - { Name: AF_OAUTH_ALLOWED_DOMAINS, Value: !Ref AllowedDomains }

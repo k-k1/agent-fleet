@@ -112,6 +112,64 @@ func TestSharedTranscriptDTOAllowsContentAndRejectsEveryUnknownCoordinate(t *tes
 	}
 }
 
+// 保留中の質問／プランは転写から意図的に外されている(hidePendingInteraction)ので、
+// この allowlist を通らなければ共有先には「質問が出ているあいだ何も無い」時間ができる。
+// 中身は本文と選択肢だけ、座標と許可プロンプトは通さない。
+func TestSharedTranscriptDTOPassesPendingInteractionButNotPermission(t *testing.T) {
+	v := map[string]any{
+		"pendingQuestions": []any{map[string]any{
+			"header": "方式", "question": "どちらにしますか", "multiSelect": true,
+			"cwd": "/home/dev/repos/private",
+			"options": []any{map[string]any{
+				"label": "A 案", "description": "説明", "preview": "+--+\n|  |\n+--+",
+				"file": "/secret/option.txt",
+			}},
+		}},
+		"pendingText":       "前置きの本文",
+		"pendingPlan":       "# 計画\n本文",
+		"pendingPermission": "Bash(rm -rf /home/dev/repos/private)",
+		"carried":           map[string]any{"kind": "question"},
+	}
+	encoded, _ := json.Marshal(sharedTranscriptDTO(v))
+	for _, want := range []string{"どちらにしますか", "A 案", "preview", "前置きの本文", "# 計画"} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("pending interaction content %q dropped — the recipient sees nothing while the modal is up: %s", want, encoded)
+		}
+	}
+	for _, secret := range []string{"pendingPermission", "rm -rf", "/secret/option.txt", "cwd", "/home/dev/repos/private", "carried"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("private/unknown field %q survived: %s", secret, encoded)
+		}
+	}
+	// 保留が無いときに空配列を生やさない(クライアントの「保留あり」判定が常に真になる)。
+	if _, ok := sharedTranscriptDTO(map[string]any{})["pendingQuestions"]; ok {
+		t.Fatal("pendingQuestions present with no pending question")
+	}
+}
+
+// 却下(Escape)された質問は declined でしか見分けられない。落とすと共有先のカードは
+// 「回答済み」を名乗り、エージェントの定型文を選択された答えとして描く。
+func TestSharedTranscriptDTOKeepsDeclinedFlag(t *testing.T) {
+	v := map[string]any{"messages": []any{map[string]any{"role": "assistant", "parts": []any{map[string]any{
+		"kind": "question", "answer": "(No answer provided)", "declined": true, "qid": "toolu_1",
+	}}}},
+		// 回答が窓をまたいで届くケースのための全転写マップ。本文と却下フラグだけを通す。
+		"answers": map[string]any{"toolu_1": map[string]any{
+			"text": `"どちらにしますか"="A 案"`, "declined": false, "cwd": "/home/dev/repos/private",
+		}},
+	}
+	encoded, _ := json.Marshal(sharedTranscriptDTO(v))
+	if !strings.Contains(string(encoded), `"declined":true`) {
+		t.Fatalf("declined dropped, a rejected question renders as answered: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"toolu_1"`) || !strings.Contains(string(encoded), `A 案`) {
+		t.Fatalf("answers map dropped, a late answer never reaches the recipient: %s", encoded)
+	}
+	if strings.Contains(string(encoded), "/home/dev/repos/private") {
+		t.Fatalf("coordinate inside answers survived: %s", encoded)
+	}
+}
+
 func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 	ctx := context.Background()
 	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))

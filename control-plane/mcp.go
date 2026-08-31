@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -1122,12 +1123,18 @@ func (a mcpAPI) mcpMemberSessions(ctx context.Context, ws Workspace) []map[strin
 	return out
 }
 
+// sessionLabelTagRe は Agent が付けるラベルの先頭タグ（workspace/agent/internal/session/
+// label.go）。旧 `[AF] ` と、セッション名を含む新 `[AF:<name>] ` の両方に一致する。ラベルは
+// 作成時に meta へ焼かれるので**両方が同時に DB に居る** — 片方しか剥がさないと、古い行だけ
+// 表示にタグが残る。
+var sessionLabelTagRe = regexp.MustCompile(`^\[AF(?::[A-Za-z0-9][A-Za-z0-9_-]*)?\]\s*`)
+
 // sessionRowDisplay is the DB-mirror fallback for a human-readable session name (the
 // Agent supplies Session.Display live; the store row has no title). Prefer the claude
-// --name label (minus the "[AF] " tag), else the repo, else the opaque slug.
+// --name label (minus the "[AF:<name>] " tag), else the repo, else the opaque slug.
 func sessionRowDisplay(r SessionRow) string {
 	if r.Label != "" {
-		return strings.TrimLeft(strings.TrimPrefix(r.Label, "[AF]"), " ")
+		return strings.TrimSpace(sessionLabelTagRe.ReplaceAllString(r.Label, ""))
 	}
 	if r.Repo != "" {
 		return r.Repo

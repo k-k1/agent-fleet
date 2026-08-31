@@ -97,3 +97,89 @@ describe("SharedSessionView の引き継ぎ提案", () => {
     expect(nodes.length).toBeGreaterThan(1);
   });
 });
+
+// 保留中の AskUserQuestion。所有者の Agent はモーダルが開いているあいだ、その質問を
+// 転写(messages)から外してカーソルも手前で止め、pendingQuestions として別枠で返す。
+// ここを描かないと、共有先は「質問が出ているあいだだけ何も見えない」ことになる。
+describe("SharedSessionView の保留中の質問", () => {
+  const PENDING = {
+    ...MESSAGES,
+    // 保留中の質問は messages に入っていない、という実際の形。
+    pendingText: "方式が2つあります",
+    pendingQuestions: [
+      {
+        header: "方式",
+        question: "どちらにしますか",
+        options: [
+          { label: "A 案", description: "既存を拡張する" },
+          { label: "B 案", description: "作り直す", preview: "+--+\n|  |\n+--+" },
+        ],
+      },
+    ],
+  };
+  const withPending = () =>
+    api.mockImplementation(async (path: string) => {
+      if (path.includes("/handoff-proposals")) return { proposals: [] };
+      if (path.includes("/messages")) return PENDING;
+      return { sessions: [] };
+    });
+
+  it("質問文と選択肢(preview 込み)を出す", async () => {
+    withPending();
+    const el = await render();
+    const card = el.querySelector(".mt-question");
+    expect(card).toBeTruthy();
+    expect(card!.textContent).toContain("どちらにしますか");
+    expect([...card!.querySelectorAll(".mq-opt")].map((o) => o.textContent)).toEqual([
+      expect.stringContaining("A 案"),
+      expect.stringContaining("B 案"),
+    ]);
+    expect(card!.querySelector(".mq-opt-preview")?.textContent).toContain("+--+");
+    // 質問の直前に流れていた地の文も一緒に(カードだけだと何の話か分からない)。
+    expect(el.textContent).toContain("方式が2つあります");
+  });
+
+  it("答える口は出さない(答えるのは所有者)", async () => {
+    withPending();
+    const el = await render();
+    const card = el.querySelector(".mt-question")!;
+    expect(card.querySelector(".mq-submit")).toBeNull();
+    expect(card.querySelector(".mq-freetext")).toBeNull();
+    expect([...card.querySelectorAll("button")].every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
+    // 決着していないので「回答済み」バッジも出ない。
+    expect(card.querySelector(".mq-done")).toBeNull();
+  });
+
+  it("転写が空でも「履歴なし」で潰さない", async () => {
+    api.mockImplementation(async (path: string) => {
+      if (path.includes("/handoff-proposals")) return { proposals: [] };
+      if (path.includes("/messages")) return { ...PENDING, messages: [] };
+      return { sessions: [] };
+    });
+    const el = await render();
+    expect(el.querySelector(".mt-question")).toBeTruthy();
+    expect(el.querySelector(".mirror-empty")).toBeNull();
+  });
+
+  it("決着したら出しっぱなしにしない", async () => {
+    withPending();
+    vi.useFakeTimers();
+    try {
+      const el = await render();
+      expect(el.querySelector(".mt-question")).toBeTruthy();
+      // 次の poll に pendingQuestions が入っていない = もうモーダルは出ていない。前回の値を
+      // 残すと、所有者が答えたあとも共有先にだけカードが居座る。
+      api.mockImplementation(async (path: string) => {
+        if (path.includes("/handoff-proposals")) return { proposals: [] };
+        if (path.includes("/messages")) return MESSAGES;
+        return { sessions: [] };
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3100); // POLL_IDLE
+      });
+      expect(el.querySelector(".mt-question")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

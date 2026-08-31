@@ -161,3 +161,30 @@ docs/35 §35.9 のとおり、前者は入力ハングの誤診断で入れて�
 - 決定9 に伴う俯瞰図は docs/44 の後続タスク。本 ADR ではスコープに含めない。
 - 受信側の accept / hold / refuse（Claude の `crossSessionInbound` 相当）は P2。v1 は
   ワークスペース単位の opt-in だけで、セッション単位の拒否権は持たない。
+
+## 補遺（2026-08-31）— 決定1 の手段を env から起動設定へ移す
+
+**決定そのものは変わらない**（ネイティブ経路は有効化しない）。変わったのは、その決定を
+実現していた手段が上流の版上げで効かなくなったことである。
+
+- **前提が崩れた**: `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` と `DISABLE_TELEMETRY` を
+  **両方立てたままでも、2.1.251 は `ListAgents` / `SendMessage` を配り、実際に配達する**
+  （実プロセスの environ と両側の転写で確認）。決定1 の「env は現状維持でよい」という
+  但し書きは、この版では成立しない。
+- **保留にしていた案をそのまま採る**: 決定1 の3つ目のぶら下がりで「塞ぎ方を managed
+  settings（`crossSessionInbound: refuse` ＋ `SendMessage`/`ListAgents` の deny）へ
+  二重化するかは保留。env が効いている限り不要」と書いていた。**env が効かなくなったので、
+  その条件が満たされた。**
+- **置き場は managed settings ではなく起動時の `--settings`**。実測で
+  `crossSessionInbound` は `--managed-settings` では効かず（`permissions.deny` は効く）、
+  `--settings` は両方効いたため（docs/58 §58.17 の表）。Agent の
+  `internal/agents/claude/program.go` が全 claude セッションへ渡す。
+- **env は残す**（本来の optional/background traffic の抑制として）。ただし
+  **「この2キーが遮断である」という Dockerfile の記述は取り下げた** — 残したままだと、
+  次の担当者が効かない防御を効いていると読む。
+- 併せて、この経路の着信が**ミラーに出る**ようにした（docs/58 §58.16）。塞いだ後も、
+  塞ぎ漏れがあれば人間から見えるようにしておくのは別の防御である。
+
+**教訓として ADR に残す**: env による遮断は、上流の実装都合で無言に失効する。**遮断を
+決定の根拠に置くなら、その遮断が効いていることを回帰テストで固定する**
+（`TestBuildProgramBlocksNativePeerChannel`）。

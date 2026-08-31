@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Store[T any] struct {
@@ -44,6 +45,17 @@ func (s Store[T]) Read(key string) (T, bool) {
 }
 
 func (s Store[T]) Remove(key string) { _ = os.Remove(s.Path(key)) }
+
+// ModTime は key が最後に書かれた時刻。値そのものではなく「いつ捕まえたか」で
+// 鮮度を判断する呼び出し側のためにある（保留ペイロードが、転写に記録された決着
+// より前に書かれたものかどうか）。missing は ok=false。
+func (s Store[T]) ModTime(key string) (time.Time, bool) {
+	fi, err := os.Stat(s.Path(key))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return fi.ModTime(), true
+}
 
 // Strings stores a plain string per key.
 func Strings(base func() string, subdir, ext string) Store[string] {

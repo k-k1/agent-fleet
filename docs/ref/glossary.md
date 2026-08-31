@@ -34,7 +34,9 @@ thing.
 | Memo queue | memo | Instructions parked now and sent to a session later, in a batch |
 | Cleanup / trash | cleanup / shelf | The sweep of stopped sessions, stale worktrees and merged branches. What it removes is stashed and can be restored |
 | Browser pane | browser pane | The workspace's own Chromium rendering `127.0.0.1:{port}` into a pane. See [browser-pane.md](browser-pane.md) |
-| Lightweight preview | preview proxy | The same service opened in a new tab through a simple HTTP proxy |
+| Lightweight preview | preview proxy | The same service opened in a new tab under a `/preview/{port}/` sub-path. WebSocket and SSE pass through, but an app emitting absolute-path assets breaks |
+| Preview subdomain | preview subdomain | A `https://<random>-<port>.<domain>/` URL issued every time the workspace starts. The app is served at the root and several ports are open at once. Not issued on every deployment |
+| Shared preview | shared preview | A preview a member of your tenant turned "Show it to your tenant" on for. It opens after you sign in, and not while their workspace is stopped |
 | Connection | connection / secrets | A credential you attached from the Console — an agent, a git provider, a tracker |
 | Tenant | tenant | One team or department. Members of different tenants are invisible to each other |
 | Slot | slot | On the EC2 target, one pooled instance a workspace can be placed on |

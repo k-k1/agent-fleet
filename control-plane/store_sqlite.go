@@ -134,7 +134,73 @@ func (s *sqlStore) migrate(ctx context.Context) error {
 		}
 	}
 	if s.legacyHook != nil {
-		return s.legacyHook(ctx)
+		if err := s.legacyHook(ctx); err != nil {
+			return err
+		}
+	}
+	return s.repairWorkspaceColumns(ctx)
+}
+
+// repairWorkspaceColumns re-adds the workspace columns that the identity/membership
+// swap throws away, and is why it exists at all.
+//
+// ★ 実測（2026-08-31、SQLite の**新規** DB）: マイグレーション 0002 が作る
+// `workspace_new` を、legacyHook が最後に `DROP TABLE workspace` →
+// `ALTER TABLE workspace_new RENAME TO workspace` で入れ替える。**この入れ替えは
+// 同じ migrate() の中で、0009 以降の ALTER のあとに走る**ので、0002 より後に足した列
+// （`settings`、そして今回の `preview_slug`）は作られた直後に捨てられる。しかも
+// schema_migrations には「適用済み」と記録済みなので、次の起動でも二度と足されない。
+//
+// 症状が静かなのが厄介なところで、`settings` は 2026 年のこの発見まで **新規 SQLite
+// デプロイでだけ存在しなかった**（読み出しは `raw, _ :=` で握りつぶされ、保存だけが
+// 500 になる）。Postgres 系列には legacyHook が無いので影響しない。
+//
+// 直し方は「入れ替えの後で、足りない列を足し直す」。PRAGMA で現物を見てから足すので
+// 冪等で、既に壊れている DB も次の起動で自己修復する。
+func (s *sqlStore) repairWorkspaceColumns(ctx context.Context) error {
+	if s.dialect != "sqlite" {
+		return nil
+	}
+	have := map[string]bool{}
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(workspace)`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dflt any
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		have[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(have) == 0 {
+		return nil // no workspace table yet (nothing migrated); nothing to repair
+	}
+	// 0002 より後に workspace へ足した列は、必ずここにも書くこと。
+	for _, c := range []struct{ name, ddl string }{
+		{"settings", `ALTER TABLE workspace ADD COLUMN settings TEXT NOT NULL DEFAULT ''`},
+		{"preview_slug", `ALTER TABLE workspace ADD COLUMN preview_slug TEXT NOT NULL DEFAULT ''`},
+	} {
+		if have[c.name] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, c.ddl); err != nil {
+			return fmt.Errorf("repair workspace.%s: %w", c.name, err)
+		}
+	}
+	// 索引もテーブルと一緒に消えるので張り直す（IF NOT EXISTS で冪等）。
+	if _, err := s.db.ExecContext(ctx,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_preview_slug ON workspace(preview_slug) WHERE preview_slug <> ''`); err != nil {
+		return fmt.Errorf("repair idx_workspace_preview_slug: %w", err)
 	}
 	return nil
 }
@@ -1329,6 +1395,16 @@ func (s *sqlStore) SetWorkspaceState(ctx context.Context, workspaceID, state str
 	if _, err = tx.ExecContext(ctx, `UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, nowTS(), workspaceID); err != nil {
 		return err
 	}
+	// ★ 「走っていない Workspace はプレビュー用 slug を持たない」を、状態遷移そのものに
+	// 括り付ける（docs/log/81 §4）。停止の経路は 1 つではない（利用者の停止・アイドル停止・
+	// 作り直し・home の掃除）ので、各所で消して回る形にすると必ずどれかが漏れ、そのとき
+	// 症状は「前回の URL が再起動後も生きている」＝ 起動ごとに引き直すという約束が
+	// 静かに破れた状態になる。ここに置けば、新しい停止経路が増えても勝手に守られる。
+	if state != "running" {
+		if _, err = tx.ExecContext(ctx, `UPDATE workspace SET preview_slug='' WHERE id=?`, workspaceID); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_stop_intent WHERE workspace_id=?`, workspaceID); err != nil {
 		return err
 	}
@@ -1566,6 +1642,32 @@ func (s *sqlStore) GetWorkspaceSettings(ctx context.Context, workspaceID string)
 func (s *sqlStore) SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSON string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE workspace SET settings=? WHERE id=?`, settingsJSON, workspaceID)
 	return err
+}
+
+// SetWorkspacePreviewSlug records the slug this container start is reachable under
+// (docs/log/81 §4); "" clears it, which is what a stop does. The unique index is partial
+// (non-empty only), so every stopped workspace can hold "" at once.
+func (s *sqlStore) SetWorkspacePreviewSlug(ctx context.Context, workspaceID, slug string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE workspace SET preview_slug=? WHERE id=?`, slug, workspaceID)
+	return err
+}
+
+// GetWorkspaceByPreviewSlug resolves a preview request's host label back to the
+// workspace. An empty slug never matches: that is the value every STOPPED workspace
+// carries, and a lookup that matched it would hand a stranger the first stopped
+// workspace in the table.
+func (s *sqlStore) GetWorkspaceByPreviewSlug(ctx context.Context, slug string) (Workspace, bool, error) {
+	if slug == "" {
+		return Workspace{}, false, nil
+	}
+	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, workspaceCols+` WHERE w.preview_slug=?`, slug))
+	if err == sql.ErrNoRows {
+		return Workspace{}, false, nil
+	}
+	if err != nil {
+		return Workspace{}, false, err
+	}
+	return ws, true, nil
 }
 
 func (s *sqlStore) MaxAgentPort(ctx context.Context) (int, error) {
@@ -2210,7 +2312,7 @@ func nullable(s string) any {
 // seeing it, which turns a bad row into leaked AWS resources.
 const workspaceCols = `SELECT w.id, w.tenant_id, COALESCE(t.slug,''), w.membership_id,
 	w.container_name, w.network, w.data_dir, w.agent_port, w.agent_token, w.state,
-	w.created_at, COALESCE(w.last_active_at,'')
+	w.created_at, COALESCE(w.last_active_at,''), COALESCE(w.preview_slug,'')
 	FROM workspace w LEFT JOIN tenant t ON t.id = w.tenant_id`
 
 type scanner interface{ Scan(dest ...any) error }
@@ -2219,7 +2321,7 @@ func scanWorkspace(row scanner) (Workspace, error) {
 	var ws Workspace
 	err := row.Scan(&ws.ID, &ws.TenantID, &ws.TenantSlug, &ws.MembershipID, &ws.ContainerName,
 		&ws.Network, &ws.DataDir, &ws.AgentPort, &ws.AgentToken, &ws.State, &ws.CreatedAt,
-		&ws.LastActiveAt)
+		&ws.LastActiveAt, &ws.PreviewSlug)
 	return ws, err
 }
 

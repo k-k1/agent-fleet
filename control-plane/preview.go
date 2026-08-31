@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -97,7 +96,7 @@ func (a previewAPI) setPreviewTenantCookie(w http.ResponseWriter, r *http.Reques
 // gateway-resolved identity as every other route — and the CP↔Agent bearer is
 // injected here. We attach X-Forwarded-* so apps that honor them (Spring Boot's
 // server.forward-headers-strategy) generate correct absolute URLs/redirects under
-// the /preview/{port} sub-path. HTTP only for now; WebSocket/HMR is a follow-up.
+// the /preview/{port} sub-path. WebSocket と逐次フラッシュは relayPreview 側で通る。
 func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
 	if err := a.mgr.touchWorkspace(r.Context(), res.ws.ID); err != nil {
@@ -105,7 +104,8 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 		return
 	}
 	port := r.PathValue("port")
-	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
 		http.Error(w, "bad preview port", http.StatusBadRequest)
 		return
 	}
@@ -115,85 +115,18 @@ func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved)
 		http.Error(w, "bad preview path", http.StatusBadRequest)
 		return
 	}
-	target := rt.Endpoint() + "/proxy/" + port + "/" + rest
-	if r.URL.RawQuery != "" {
-		target += "?" + r.URL.RawQuery
-	}
-
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
-	if err != nil {
-		http.Error(w, "bad proxy request", http.StatusBadGateway)
-		return
-	}
-	req.Header = a.sanitizedHeader(r)
-	if rt.Token() != "" {
-		req.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
-	}
-	// Tell the previewed app where it really lives, as the browser sees it:
-	// <public base path>/preview/{port}. Spring Boot uses these to build correct
-	// links/redirects; a plain JSON REST app ignores them and still works.
-	req.Header.Set("X-Forwarded-Prefix", a.externalPrefix()+"/preview/"+port)
-	if r.Host != "" && req.Header.Get("X-Forwarded-Host") == "" {
-		req.Header.Set("X-Forwarded-Host", r.Host)
-	}
-	if req.Header.Get("X-Forwarded-Proto") == "" {
-		req.Header.Set("X-Forwarded-Proto", forwardedProto(r))
-	}
-
-	resp, err := agentRelayClient.Do(req)
-	if err != nil {
-		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	for k, vals := range resp.Header {
-		for _, v := range vals {
-			// The previewed app must not (re)issue a login cookie on the Console
-			// origin — neither the CP's own (af_session fixation / tossing) nor a
-			// front auth gateway's (_oauth2_proxy* / AWSELBAuthSessionCookie*):
-			// the same set the request side strips. Its other cookies pass.
-			if http.CanonicalHeaderKey(k) == "Set-Cookie" && sensitiveBrowserCookie(setCookieName(v)) {
-				continue
-			}
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
-}
-
-// sanitizedHeader clones the browser's request headers for the relay WITHOUT the
-// Console's credentials. The previewed app is arbitrary user code (someone's dev
-// server): forwarding the af_session cookie, the gateway identity header, or a
-// browser Authorization header would let that app call the CP API as the signed-in
-// user. CP-owned cookies are filtered out of Cookie (the previewed app's own
-// cookies still pass); the identity headers cover both the configured emailHeader
-// and the common oauth2-proxy set an upstream may attach.
-func (a previewAPI) sanitizedHeader(r *http.Request) http.Header {
-	h := r.Header.Clone()
-	h.Del("Authorization")
-	h.Del("X-Forwarded-Email")
-	h.Del("X-Forwarded-User")
-	h.Del("X-Forwarded-Preferred-Username")
-	h.Del("X-Auth-Request-Email")
-	h.Del("X-Auth-Request-User")
-	h.Del("X-Auth-Request-Access-Token")
-	if eh := a.mgr.emailHeader; eh != "" {
-		h.Del(eh)
-	}
-	h.Del("Cookie")
-	var kept []string
-	for _, c := range r.Cookies() {
-		if sensitiveBrowserCookie(c.Name) {
-			continue
-		}
-		kept = append(kept, c.Name+"="+c.Value)
-	}
-	if len(kept) > 0 {
-		h.Set("Cookie", strings.Join(kept, "; "))
-	}
-	return h
+	// Same relay as the host-mode preview (ADR 0062 決定 10): one implementation, so
+	// WebSocket/HMR, streaming and the credential stripping cannot drift apart. What
+	// differs is only the shape of the URL the browser used — here the app lives under
+	// a sub-path, so it still gets X-Forwarded-Prefix.
+	relayPreview(w, r, rt, previewRelayOptions{
+		port:           n,
+		path:           "/" + rest,
+		publicHost:     r.Host,
+		proto:          forwardedProto(r),
+		prefix:         a.externalPrefix() + "/preview/" + port,
+		identityHeader: a.mgr.emailHeader,
+	})
 }
 
 // sensitiveBrowserCookie reports whether a cookie carries a login the previewed
@@ -205,7 +138,11 @@ func (a previewAPI) sanitizedHeader(r *http.Request) http.Header {
 // login, but it must not leak to the app either — the app must stay ignorant of
 // AF's tenant-selection mechanism, same as it never sees ?tenant= itself.
 func sensitiveBrowserCookie(name string) bool {
-	if name == sessionCookie || name == stateCookie || name == previewTenantCookie {
+	// af_pv is the preview host's own gate cookie (preview_host_serve.go). It rides on
+	// the SAME origin as the app, so unlike the others it is not kept off the app by
+	// the browser — this list is the only thing that stops the app from reading its
+	// own admission ticket and replaying it.
+	if name == sessionCookie || name == stateCookie || name == previewTenantCookie || name == previewAuthCookie {
 		return true
 	}
 	return strings.HasPrefix(name, "_oauth2_proxy") ||

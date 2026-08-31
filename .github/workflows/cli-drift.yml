@@ -105,3 +105,34 @@ jobs:
         run: |
           gh issue close "${{ steps.issue.outputs.num }}" \
             --comment "Pins have caught up to npm latest (cli-drift.yml)."
+
+  # プラン決着の文言ドリフト（クレデンシャル不要・毎日）。
+  #
+  # 上の drift ジョブが答えるのは「ピンが遅れているか」だけで、**上流が文言を変えたか**は
+  # 誰も見ていなかった。2026-08-31、承認結果に計画本文が丸ごと付くようになり、Console の
+  # キーワード判定が本文の「却下」を拾って**承認したプランに 却下 バッジ**が付いた
+  # （単体テストは既知の形を固定しているだけなので全部緑のまま）。
+  #
+  # ここは実 CLI（latest = self-update した Workspace が走らせる版）に、製品コードが
+  # 読んでいる文言がまだ在るかだけを見る。実ターンも認証も要らないので毎日回せる。
+  # ⚠ 文字列が在ることは「今もその場所で使われている」証明ではない — 経路まで通す証明は
+  # claude-tui-contract.yml の plan approval contract（実 TUI・要クレデンシャル）の役目。
+  #
+  # 版ドリフトと違ってこれは**定常状態ではない**（起きたら製品側の修正が要る）ので、
+  # issue ではなく普通に赤くする。
+  plan-result-format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-agent-cli
+        with:
+          agent: claude
+          version: latest
+      - name: plan result literals
+        working-directory: workspace/agent
+        env:
+          E2E_REQUIRE: "1" # CLI が入っていないのに skip で緑になるのを防ぐ
+        run: |
+          go test -tags drift -run '^TestDriftClaudePlanResultLiterals$' \
+            -count=1 -v -timeout 5m .

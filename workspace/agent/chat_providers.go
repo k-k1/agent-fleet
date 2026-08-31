@@ -1797,10 +1797,16 @@ func envWith(over ...string) []string {
 // are also blocked — the chat persona forbids file/command work anyway. --disallowedTools
 // is enforced by Claude Code even under --dangerously-skip-permissions (that flag only skips
 // approval prompts, not deny rules). Read/Glob/Grep/WebFetch and the MCP af tools remain.
+//
+// ListAgents / SendMessage は claude 自前の cross-session チャネル（docs/log/58 §58.17）。
+// ヘッドレスの `-p` はソケットを bind しない＝**受信はできないが送信はできる**ので、
+// 塞がないとアシスタントがワークスペース内のセッションへ AF の外から打ち込める。
+// オペレーター面の投入は af MCP の send_to_session が持っていて、そちらは台帳を通る。
 func chatToolLimits() []string {
 	return []string{"--disallowedTools",
 		"Agent", "Task", "Workflow",
-		"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"}
+		"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit",
+		"ListAgents", "SendMessage"}
 }
 
 // chatClaudeCmd runs chat turns against Claude's single shared config directory. This

@@ -9,9 +9,12 @@ import { chatFontStack, effectiveTheme, expandThinking, surfaceAccent, surfaceBg
 import { HandoffBody, HandoffCard, type Proposal } from "../mirror/HandoffProposal.tsx";
 import { applyMark, captureMark, loadMark, saveMark, type ScrollMark } from "../mirror/scrollMark.ts";
 import { TranscriptView } from "../mirror/transcript/TranscriptView.tsx";
+import { PlanBlock, QuestionBlock } from "../mirror/transcript/blocks.tsx";
+import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import type { TranscriptCaps } from "../mirror/transcript/capabilities.ts";
-import type { Turn } from "../mirror/transcript/types.ts";
+import type { Question, Turn } from "../mirror/transcript/types.ts";
 import { coalesceUserActions, groupTurns, mergeTurns } from "../mirror/transcript/model.ts";
+import { patchAnswers } from "../mirror/interactionAnswers.ts";
 import { ownerLabel, useSharedSessionsStore } from "./store.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useMarksController } from "../mirror/transcript/useMarks.ts";
@@ -93,6 +96,14 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // だけで、本文は所有者側の別ストアにある — 出さないと「引き継いだ」ことしか分からず、
   // 何を引き継いだのかが共有先には見えない。
   const [handoffs, setHandoffs] = useState<Proposal[]>([]);
+  // いま出ているモーダル(AskUserQuestion / ExitPlanMode)。所有者向けの応答と同じく転写とは
+  // **別枠**で届く — Agent は開いているあいだ、その質問/プランを messages から外して
+  // カーソルも手前で止める(hidePendingInteraction)ので、ここを描かないと共有先は
+  // 「質問が出ているあいだだけ何も見えない」ことになる。読むだけの面なので答える口は
+  // 出さない(押せない要素を出さない — transcript/capabilities.ts)。
+  const [pendingQuestions, setPendingQuestions] = useState<Question[] | null>(null);
+  const [pendingText, setPendingText] = useState("");
+  const [pendingPlan, setPendingPlan] = useState<string | null>(null);
   const seen = useRef(""); // 直近に受け取った提案の中身(同じなら state を触らない)
   const cursor = useRef(cached?.cursor ?? 0);
   const firstLine = useRef(cached?.firstLine ?? 0);
@@ -147,6 +158,10 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     setLoaded(!!entry);
     setHasMore(entry?.hasMore ?? false);
     setError("");
+    // 保留はキャッシュしない(別セッションのモーダルが一瞬残るのを避ける) — 最初の poll で入る。
+    setPendingQuestions(null);
+    setPendingText("");
+    setPendingPlan(null);
     cursor.current = entry?.cursor ?? 0;
     firstLine.current = entry?.firstLine ?? 0;
     atBottom.current = true;
@@ -184,12 +199,23 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
         if (typeof d.firstLine === "number") firstLine.current = d.firstLine;
         if (typeof d.hasMore === "boolean") setHasMore(d.hasMore);
         setWorking(d.status === "working");
+        // 保留は毎回サーバが今の状態を返す(増分ポーリングでも窓に依らない)ので、
+        // 「入っていない = もう出ていない」。前回の値を残すと、決着したモーダルが
+        // 共有先にだけ出しっぱなしになる。
+        setPendingQuestions(Array.isArray(d.pendingQuestions) && d.pendingQuestions.length ? (d.pendingQuestions as Question[]) : null);
+        setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
+        setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
         const incoming: SharedTurn[] = Array.isArray(d.messages) ? d.messages : [];
         // reset: 所有者側の転写が縮んだ/差し替わった(圧縮など) — 置き換える。それ以外は
         // idx を鍵にした冪等マージ。同じターンの再送(伸びている最中の assistant ターン)や
         // ページ境界の重なりを、そのまま積み増さないため(mergeTurns の注記を参照)。
-        if (d.reset) setTurns(incoming);
-        else if (incoming.length) setTurns((old) => mergeTurns(old, incoming));
+        // 質問/プランの tool_use は「訊いた時点」で転写に書かれ、回答は別の行として
+        // あとから来る。窓がその2行をまたぐと持っているターンは未回答のままなので、
+        // qid を鍵にした全転写マップで後追いに貼る(ミラーと同じ patchAnswers)。
+        // 新しいターンが1つも無い poll でも貼る — 貼るべきなのはまさにその場合。
+        const answers = d.answers && typeof d.answers === "object" ? (d.answers as Record<string, { text: string; declined?: boolean }>) : null;
+        if (d.reset) setTurns(patchAnswers(incoming, answers));
+        else setTurns((old) => patchAnswers(incoming.length ? mergeTurns(old, incoming) : old, answers));
       }
       timer = window.setTimeout(tick, d?.status === "working" ? POLL_WORKING : POLL_IDLE);
     };
@@ -333,7 +359,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     // handoffs も追従の対象。カードは転写とは別のポーリングで後から届くので、turns だけを
     // 見ていると末尾にいたまま高さだけが増え、その分だけ着地が上にずれる(実測 +263px)。
     if (atBottom.current) toBottom(el);
-  }, [turns, handoffs, loaded]);
+    // 保留カードも追従の対象。転写の外に足される高さなので、turns だけを見ていると
+    // 質問が出た瞬間にその分だけ着地が上へずれる(handoffs と同じ理由)。
+  }, [turns, handoffs, loaded, pendingQuestions, pendingPlan, pendingText]);
 
   // 転写の高さはほぼ全部が遅れて確定する(markdown の流し込み → ハイライト → 画像 decode →
   // web フォント)。発生源を数え上げるのではなく「追従中は末尾を、復元中はアンカーを保つ」で
@@ -525,7 +553,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
                 <Icon name="loading" spin /> {tr("chat.ph_loading")}
               </div>
             )
-          ) : groups.length === 0 && handoffs.length === 0 ? (
+          ) : groups.length === 0 && handoffs.length === 0 && !pendingQuestions && !pendingPlan ? (
             // handoffs.length === 0: 転写が空なら提案カードだけが出すものになる(空表示は
             // TranscriptView ごと飛ばしてしまうので、ミラーと同じ条件にする)。
             <div className="mirror-empty muted">{tr("mirror.no_history")}</div>
@@ -547,6 +575,37 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
                 ),
               }))}
             />
+          )}
+          {/* いま出ているモーダル。転写からは外されて別枠で届くので(上の pendingQuestions
+              の注記)、ここで描かないと共有先はモーダルが開いているあいだ何も見えない。
+              決着すると Agent がその行をカーソルごと出し直し、決定済みのカードとして
+              転写側に現れる — 入れ替わりであって二重にはならない。 */}
+          {pendingPlan && (
+            <div className="mirror-turn assistant">
+              <div className="mirror-turn-head">
+                <span className="mt-who">{caps.agentName}</span>
+                <span className="mt-model muted">{tr("mirror.plan_pending")}</span>
+              </div>
+              <div className="mirror-turn-body">
+                {/* 承認・却下は所有者の判断。pending を渡すとその2つのボタンが出るので
+                    渡さない(押せない要素を出さない) — 本文はその場で開ける。 */}
+                <PlanBlock plan={pendingPlan} />
+              </div>
+            </div>
+          )}
+          {pendingQuestions && (
+            <div className="mirror-turn assistant">
+              <div className="mirror-turn-head">
+                <span className="mt-who">{caps.agentName}</span>
+                <span className="mt-model muted">{tr("mirror.questioning")}</span>
+              </div>
+              <div className="mirror-turn-body">
+                {pendingText && <MarkdownView source={pendingText} />}
+                {/* 転写に残った質問と同じ不活性カード。選択肢も preview もそのまま読めて、
+                    答える口だけが無い(答えるのは所有者)。 */}
+                <QuestionBlock questions={pendingQuestions} />
+              </div>
+            </div>
           )}
           {showJump && (
             // ミラーと同じ sticky ピル(mirror.css)。高さ0の帯なのでスクロール量を増やさない。

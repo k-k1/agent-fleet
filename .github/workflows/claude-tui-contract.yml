@@ -90,6 +90,20 @@ jobs:
             -run TestClaudeTUIContractLive -v -timeout 20m \
             2>&1 | tee /tmp/contract.log
 
+      # プラン承認の実 TUI 契約（docs: planDecision.ts / plan_verdict.go）。プランカードの
+      # バッジは claude が返す**非契約の文言**とメニュー形状に乗っており、そこは 2 回壊れて
+      # いる（2026-07-22 却下が承認になる／2026-08-31 承認に 却下 バッジ）。固定キャプチャの
+      # ロックはどちらも緑のままだったので、実 TUI で「既定行は必ず Yes」「承認の結果が
+      # 承認と読める」「決着に計画本文が混ざらない」まで通す。実ターン 1 回（短いプラン）。
+      - name: plan approval contract (ExitPlanMode)
+        working-directory: workspace/agent
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+        run: |
+          go test -tags tui_contract -run '^TestClaudePlanApprovalContractLive$' \
+            -count=1 -v -timeout 15m .
+
       # 発言時点からの分岐（docs/log/55）のドリフト検知。claude だけは公式の分岐点 API を
       # 使えず転写 jsonl を自分で切り詰めているので、claude の転写スキーマや resume の
       # 解釈が動いた瞬間に静かに壊れる（起動はするが会話が変、という気づけない壊れ方）。

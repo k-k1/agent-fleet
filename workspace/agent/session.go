@@ -101,17 +101,21 @@ func annotateSessions(sessions []session.Session, info func(string) dirInfo) {
 }
 
 // sessionLabelFor builds the claude --name for a session. When the user supplied a
-// title it's "[AF] {title}"; otherwise it falls back to the auto default
-// "[AF] {repo} @MMDD-HHMM" where {repo} is the working dir's basename and the time is
-// the workspace's local time (the entrypoint exports TZ from the per-user timezone
-// setting, default JST). The "[AF] " tag identifies Agent-Fleet-launched sessions in
-// the claude.ai Remote Control picker. Computed at create/recreate and stored in the
-// meta so relaunch keeps the same name.
-func sessionLabelFor(dir, title string) string {
+// title it's "[AF:{name}] {title}"; otherwise it falls back to the auto default
+// "[AF:{name}] {repo} @MMDD-HHMM" where {repo} is the working dir's basename and the
+// time is the workspace's local time (the entrypoint exports TZ from the per-user
+// timezone setting, default JST). The tag identifies Agent-Fleet-launched sessions in
+// the claude.ai Remote Control picker; the session name inside it is what keeps two
+// sessions with the SAME title apart — see internal/session/label.go for why that
+// matters (claude's own cross-session channel addresses sessions by this string, and
+// a duplicate title silently misdelivers). Computed at create/recreate and stored in
+// the meta so relaunch keeps the same name.
+func sessionLabelFor(dir, title, name string) string {
+	tag := session.LabelPrefix(name)
 	if title != "" {
-		return "[AF] " + title
+		return tag + title
 	}
-	return fmt.Sprintf("[AF] %s @%s", filepath.Base(dir), time.Now().Format("0102-1504"))
+	return fmt.Sprintf("%s%s @%s", tag, filepath.Base(dir), time.Now().Format("0102-1504"))
 }
 
 // sessionTitleMaxRunes is THE limit for a session's display title, in runes. Every
@@ -143,7 +147,7 @@ func cleanTitle(s string) (string, bool) {
 func forkTitle(src session.Meta) string {
 	base := src.Title
 	if base == "" {
-		base = strings.TrimPrefix(src.Label, "[AF] ")
+		base = session.StripLabel(src.Label)
 	}
 	return strings.TrimSpace(base + " (fork)")
 }

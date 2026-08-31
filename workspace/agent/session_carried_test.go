@@ -170,7 +170,7 @@ func TestSurfaceCarriedYieldsToLivePending(t *testing.T) {
 	status.PromoteCarried(sid, "halt")
 
 	resp := map[string]any{}
-	surfacePendingPayloads(resp, sid, "question")
+	surfacePendingPayloads(resp, sid, "question", nil)
 	surfaceCarried(resp, sid)
 	if _, ok := resp["carried"]; ok {
 		t.Error("保留中なのに持ち越しまで出した")
@@ -179,7 +179,7 @@ func TestSurfaceCarriedYieldsToLivePending(t *testing.T) {
 	// 保留が消えた後（＝再開後）は持ち越しだけが出る。
 	status.RemovePendingQuestion(sid)
 	resp2 := map[string]any{}
-	surfacePendingPayloads(resp2, sid, "idle")
+	surfacePendingPayloads(resp2, sid, "idle", nil)
 	surfaceCarried(resp2, sid)
 	c, ok := resp2["carried"].(map[string]any)
 	if !ok {

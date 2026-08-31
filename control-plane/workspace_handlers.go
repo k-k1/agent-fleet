@@ -379,7 +379,7 @@ func (a workspaceAPI) ensureWorkspaceStartedUnattended(ctx context.Context, res 
 		log.Printf("unattended runtime for ws %s: %v (falling back to normal start)", res.ws.ID, err)
 		return a.ensureWorkspaceStarted(ctx, res)
 	}
-	return a.ensureWorkspaceStartedRT(ctx, res, rt)
+	return a.ensureWorkspaceStartedRT(ctx, res, rt, unattendedStartEnv)
 }
 
 // ensureWorkspaceStartedRT is the shared body, parameterized by the runtime that drives
@@ -387,7 +387,7 @@ func (a workspaceAPI) ensureWorkspaceStartedUnattended(ctx context.Context, res 
 // Serialized per workspace locally (startLockFor) and across CP replicas (owner
 // lease): the state check and Start form a check-then-act that explicit starts,
 // auto-starts and scheduler wake must not interleave.
-func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolved, rt Runtime) *apiError {
+func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolved, rt Runtime, extraEnv ...string) *apiError {
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -401,10 +401,10 @@ func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolve
 		return workspaceLifecycleLeaseError(err)
 	}
 	defer releaseFence()
-	return a.ensureWorkspaceStartedRTLocked(lease.Context(), res, rt, lease)
+	return a.ensureWorkspaceStartedRTLocked(lease.Context(), res, rt, lease, extraEnv...)
 }
 
-func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *resolved, rt Runtime, lease *workspaceLifecycleLeaseGuard) *apiError {
+func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *resolved, rt Runtime, lease *workspaceLifecycleLeaseGuard, extraEnv ...string) *apiError {
 	if err := lease.checkpoint(ctx); err != nil {
 		return workspaceLifecycleLeaseError(err)
 	}
@@ -456,6 +456,15 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	}
 	if err := lease.checkpoint(ctx); err != nil {
 		return workspaceLifecycleLeaseError(err)
+	}
+	// docs/log/81 §4: このコンテナ起動ぶんのプレビュー slug を、コンテナが作られる **前** に
+	// 確定させ、URL を env に載せた runtime で起動する。順番が逆だと、アプリが自分の
+	// 公開 URL を env から知る作り（Next.js の NEXTAUTH_URL / AUTH_URL / metadataBase）
+	// では「URL は出たがアプリは自分の場所を間違えている」状態になる。プレビューが
+	// 無効なデプロイ、または slug を用意できなかったときは rt をそのまま使う——
+	// プレビューが付かないことは起動を止める理由にならない。
+	if armed := a.mgr.armPreviewForStart(ctx, res, extraEnv); armed != nil {
+		rt = armed
 	}
 	if err := rt.Start(ctx); err != nil {
 		return internalErr(err)

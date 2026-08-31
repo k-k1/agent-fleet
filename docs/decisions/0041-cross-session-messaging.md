@@ -180,3 +180,30 @@ an input hang and was left in place as "harmless hardening" even after the real 
 - The overview diagram that decision 9 entails is a follow-up task in docs/44. Not in scope here.
 - Accept / hold / refuse on the receiving side (the equivalent of Claude's `crossSessionInbound`) is
   P2. v1 has only a workspace-level opt-in and no per-session right of refusal.
+
+## Addendum (2026-08-31) — decision 1 is now enforced by launch settings, not by env
+
+**The decision itself does not change** (the native channel stays disabled). What changed is that
+the means by which it was enforced stopped working when upstream shipped a new version.
+
+- **The premise broke**: with `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` **and**
+  `DISABLE_TELEMETRY` both set, 2.1.251 still advertises `ListAgents` / `SendMessage` **and
+  actually delivers** (confirmed in the live process environment and in both transcripts). The
+  caveat in decision 1 — "the env vars are enough as they stand" — does not hold on that version.
+- **The option we had parked is the one we take**: decision 1's third bullet said "whether to
+  double up with managed settings (`crossSessionInbound: refuse` plus a deny on `SendMessage` /
+  `ListAgents`) is on hold; it is unnecessary while the env vars work". **They stopped working, so
+  the condition is met.**
+- **It goes in the launch-time `--settings`, not in managed settings.** Measured:
+  `crossSessionInbound` has no effect under `--managed-settings` (`permissions.deny` does), while
+  `--settings` carries both (the table in docs/58 §58.17). The Agent's
+  `internal/agents/claude/program.go` passes it to every claude session.
+- **The env vars stay** (they still suppress genuinely optional background traffic), but **the
+  Dockerfile comment claiming those two keys are the block has been withdrawn** — left in place, it
+  would tell the next person that a defence which no longer works is still holding.
+- Alongside this, incoming messages on that channel are now **shown in the mirror** (docs/58
+  §58.16). Making a leak visible to a human is a separate defence from closing it.
+
+**The lesson this ADR keeps**: a block implemented through env vars can lapse silently when
+upstream changes its mind. **If a decision rests on something being blocked, pin the block with a
+regression test** (`TestBuildProgramBlocksNativePeerChannel`).

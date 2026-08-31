@@ -18,7 +18,7 @@ import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 // 何も描かないので、ここで出し分けは持たない。
 import { MemberCostPanel } from "../cost/CloudCostView.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { remainingShort, stateInfo } from "../../lib/sessionview.ts";
+import { remainingShort, stateInfo, stripLabelTag } from "../../lib/sessionview.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
 import type { Member, MemberIdle, WsSizing, WsSlot } from "./adminShared.ts";
 
@@ -642,7 +642,7 @@ export function MemberView({
                   <span className={"kind-tag kind-" + kindClass(s.kind)}>
                     <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                   </span>
-                  <span className="as-name mono" title={s.dir || ""}>{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.name}</span>
+                  <span className="as-name mono" title={s.dir || ""}>{s.label ? stripLabelTag(s.label) : s.name}</span>
                   <span className="as-repo muted">{s.repo || ""}</span>
                   <span className={"session-state " + st.cls}>
                     <Icon name={st.icon} spin={st.spin} /> {st.text}

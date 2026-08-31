@@ -170,7 +170,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// Pending question/plan/permission — built aside (not straight into resp) because the
 	// de-duplication below needs to know what was surfaced, and may withdraw it.
 	pending := map[string]any{}
-	surfacePendingPayloads(pending, sid, state)
+	surfacePendingPayloads(pending, sid, state, lines)
 	// 畳まれたときに画面に出ていたもの（docs/log/75）。保留が無いときだけ載る。
 	surfaceCarried(pending, sid)
 	// The pending question/plan above is ALSO in the transcript already (ask-time tool_use),
@@ -534,7 +534,13 @@ func toBrowseRel(p, cwd, root string) string {
 // but nothing that says the modal is still up, and a permission prompt never reaches
 // the jsonl at all. The tool_use it DOES carry is the duplicate hidePendingInteraction
 // removes.
-func surfacePendingPayloads(resp map[string]any, sid, state string) {
+//
+// The transcript IS consulted for one thing first: sweeping a payload whose modal it
+// shows is already closed (sweepSettledPending). That sweep lives here, rather than at
+// the call site, so surfacing a pending payload and discarding a settled one can never
+// drift apart — the leftover payload is only ever a bug when something surfaces it.
+func surfacePendingPayloads(resp map[string]any, sid, state string, lines [][]byte) {
+	sweepSettledPending(sid, lines)
 	// A captured question/plan payload takes precedence over the "permission" state.
 	// AskUserQuestion / ExitPlanMode fire their OWN permission_prompt Notification
 	// (state→"permission") between the tool's PreToolUse and PostToolUse, but the
@@ -614,6 +620,45 @@ func surfaceCarried(resp map[string]any, sid string) {
 		out["text"] = c.Text
 	}
 	resp["carried"] = out
+}
+
+// sweepSettledPending drops a pending question/plan payload whose modal the TRANSCRIPT
+// shows is already closed.
+//
+// WHY: the hooks clear the payload on that tool's own PostToolUse, which does not fire
+// when the tool is REJECTED — and the Console's「キャンセル」rejects it (it interrupts the
+// turn, 実測 2026-08-31). The payload then outlives its modal, and hidePendingInteraction
+// cannot save us: it only withdraws a stale payload while the question's line is inside
+// the window it is emitting, and that window moves on BY DESIGN — the poll carrying the
+// decision releases the held cursor, so the very next poll no longer sees the line and
+// surfaces the leftover payload as a fresh, fully interactive card. Answering it does
+// nothing (there is no modal left for the keystrokes to land on); cancelling it does
+// nothing; it sits there until an unrelated hook (Stop, or the next prompt) happens to
+// clear the file. 利用者報告「AUQ をキャンセルしても何度も聞かれる」の正体。
+//
+// The rule needs no content matching: only one modal of a kind is ever open, so a
+// decision recorded AFTER the payload was captured can only be that payload's own. The
+// mtime comparison is also what keeps this safe during the ~120ms in which the PreToolUse
+// hook has already written the payload but claude has not yet flushed the tool_use line
+// (実測 2026-08-31: フックが 106ms / 122ms 先行。claude は jsonl を遅れて flush するので
+// 順序は保証されない) — the newest decision is then still the PREVIOUS modal's, which
+// predates the file, and a live question is never swept.
+func sweepSettledPending(sid string, lines [][]byte) {
+	question, plan := claude.SettledAt(lines)
+	if !question.IsZero() {
+		if at, ok := status.PendingQuestionAt(sid); ok && at.Before(question) {
+			status.RemovePendingQuestion(sid)
+			// The prose before the question is only ever shown with the question card;
+			// on the normal (answered) path PostToolUse→working drops it in the same
+			// breath, so a swept question takes it along too.
+			status.RemovePendingText(sid)
+		}
+	}
+	if !plan.IsZero() {
+		if at, ok := status.PendingPlanAt(sid); ok && at.Before(plan) {
+			status.RemovePendingPlan(sid)
+		}
+	}
 }
 
 // hidePendingInteraction removes the transcript part that DUPLICATES a still-pending

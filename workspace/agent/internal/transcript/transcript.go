@@ -83,6 +83,15 @@ type Option struct {
 	Preview string `json:"preview,omitempty"`
 }
 
+// SourcePeer marks a user turn that ANOTHER SESSION sent into this one (Turn.Source).
+// Its home is the Agent's session_injections.go, which owns the whole Source vocabulary
+// and stamps most of it by matching what AF itself injected. This one value also has to
+// be settable by a PARSER — claude's own cross-session channel delivers messages AF never
+// saw, so there is nothing in the injection store to match them against (docs/log/58 §58.16).
+// **Two spellings of "peer" would mean the badge appears for one delivery path and not
+// the other**, so both sides use this constant.
+const SourcePeer = "peer"
+
 // Turn is one displayable conversation turn.
 type Turn struct {
 	Role  string `json:"role"`  // "user" | "assistant"
@@ -91,8 +100,16 @@ type Turn struct {
 	// Source attributes a user turn's origin: "operator" = injected by the fleet operator
 	// (an af_write assistant's create_session / send_to_session), "" = the user's own input
 	// (composer or raw terminal). Set server-side by matching the operator-injection store
-	// (docs/log/30 ②), so the mirror can badge operator-driven prompts distinctly.
-	Source    string `json:"source,omitempty"`
+	// (docs/log/30 ②), so the mirror can badge operator-driven prompts distinctly. The full
+	// vocabulary lives in the Agent's session_injections.go; SourcePeer is spelled here
+	// because a parser sets it straight off the transcript line (see PeerFrom).
+	Source string `json:"source,omitempty"`
+	// PeerFrom names the SESSION that sent a Source=="peer" turn, when the parser could
+	// read it off the line. 空でよい — AF 自身の peer 送信は本文の封筒
+	// （`[agent-fleet:peer from=…]`）に名前を載せるので Console はそちらから読める。これが
+	// 要るのは**封筒を持たない着信**、つまり claude 自前の cross-session チャネル
+	// （docs/log/58 §58.16）で、そこでは名前の出どころが `origin.name` しか無い。
+	PeerFrom  string `json:"peerFrom,omitempty"`
 	Model     string `json:"model,omitempty"`     // assistant only: the model that answered
 	Effort    string `json:"effort,omitempty"`    // assistant only: reasoning effort/variant (codex reasoning_effort, opencode variant); "" when the agent records none (claude)
 	CtxWindow int    `json:"ctxWindow,omitempty"` // assistant only: the model's real context-window size when the agent records it (codex model_context_window); 0 = let the Console guess from the model name

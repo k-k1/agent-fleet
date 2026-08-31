@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -224,9 +225,21 @@ func TestCollectInteractionAnswers_Declined(t *testing.T) {
 		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q2","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"別の質問","options":[{"label":"案A"},{"label":"案B"}]}]}}]}}`),
 		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q2","is_error":true,"content":"malformed AskUserQuestion input"}]}}`),
 	}
+	// Console の「キャンセル」で実際に来る形（2026-08-31 実測・実転写から採取）。上の
+	// declineText と違い "(No answer provided)" を**含まない** — キャンセルはターンの中断
+	// なので、claude は「質問が未回答」ではなく「ツールが却下された」として書く。これを
+	// 拾えていなかったため、キャンセルした質問が「回答済み」を名乗り、回答欄にこの英文の
+	// 定型文が入っていた。
+	lines = append(lines,
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q3","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"三つ目","options":[{"label":"案A"}]}]}}]}}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q3","is_error":true,"content":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."}]}}`),
+	)
 	ans := CollectInteractionAnswers(lines)
 	if got := ans["q1"]; !got.Declined {
 		t.Errorf("q1 = %+v, want Declined=true (claude's decline boilerplate)", got)
+	}
+	if got := ans["q3"]; !got.Declined {
+		t.Errorf("q3 = %+v, want Declined=true (the Console's キャンセル rejects the tool)", got)
 	}
 	if got := ans["q2"]; got.Declined {
 		t.Errorf("q2 = %+v, want Declined=false (is_error alone isn't a decline)", got)
@@ -468,5 +481,123 @@ func TestCollectFileEdits(t *testing.T) {
 	tail := CollectFileEdits(lines, 2)
 	if len(tail) != 1 || tail[0].Path != "b.ts" {
 		t.Fatalf("tail = %+v", tail)
+	}
+}
+
+// TestPlanAnswerDropsEmbeddedPlan pins the 2026-08-31 report「プランを承認したのに
+// "却下" バッジが付いた」. The CLI now appends the whole approved plan to the
+// ExitPlanMode tool_result ("## Approved Plan:" + Markdown, 9 KB+ in the wild). The
+// Console badges the card by keyword-matching that text, so a plan whose own prose says
+// 「却下」/「やり直し」/"reject" flipped its APPROVAL to 却下 — and every poll carried a
+// second copy of a plan the Console already holds. Only the verdict header survives.
+func TestPlanAnswerDropsEmbeddedPlan(t *testing.T) {
+	result := "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\\n\\n" +
+		"Your plan has been saved to: /var/lib/af/claude/plans/immutable-dazzling-babbage.md\\n" +
+		"You can refer back to it if needed during implementation.\\n\\n" +
+		"## Approved Plan:\\n# フロービルダー UI の移植\\n\\n## 非目標\\n- 前回の案は却下。途中で中止はしない。\\n"
+	lines := [][]byte{
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"p1","name":"ExitPlanMode","input":{"plan":"# フロービルダー UI の移植"}}]}}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"p1","content":"` + result + `"}]}}`),
+	}
+	want := "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\n\n" +
+		"Your plan has been saved to: /var/lib/af/claude/plans/immutable-dazzling-babbage.md\n" +
+		"You can refer back to it if needed during implementation."
+	// The whole-transcript map (what the Console patches onto a split-out plan card)…
+	if got := CollectInteractionAnswers(lines)["p1"].Text; got != want {
+		t.Errorf("interaction answer = %q, want %q", got, want)
+	}
+	// …and the window-local resolution inside CollectTurns.
+	turns := CollectTurns(lines, 0, len(lines))
+	var plan *transcript.Part
+	for i := range turns {
+		for pi := range turns[i].Parts {
+			if turns[i].Parts[pi].Kind == "plan" {
+				plan = &turns[i].Parts[pi]
+			}
+		}
+	}
+	if plan == nil {
+		t.Fatalf("no plan part in %+v", turns)
+	}
+	if plan.Answer != want {
+		t.Errorf("plan part Answer = %q, want %q", plan.Answer, want)
+	}
+	if strings.Contains(plan.Answer, "却下") {
+		t.Errorf("approved plan's body leaked into the answer: %q", plan.Answer)
+	}
+}
+
+// TestPeerMessageTurn — claude 自前の cross-session チャネル（ListAgents / SendMessage）で
+// **隣のセッションから**届いたメッセージが、ミラーに出ることと、送信者名が付くこと。
+//
+// 行の形は 2026-08-31 の実物から取っている（docs/log/58 §58.16）。**着信の形は相手の状態で
+// 変わる**のがこの機能の肝で、片方だけ通す実装だと「相手が忙しかった時だけ消える」という、
+// 再現しないバグにしか見えない壊れ方をする:
+//   - 相手が idle  → type:"user" + isMeta:true（isMeta の門に落ちていた）
+//   - 相手が busy  → type:"attachment" queued_command + origin.kind:"peer"（human 限定の門に落ちていた）
+func TestPeerMessageTurn(t *testing.T) {
+	const body = "94-freeze試走2本 完了・push済。資料側の不足を申告する。"
+	const wrapper = `Another Claude session sent a message:\n<cross-session-message from=\"uds:/tmp/cc-socks/887891.sock\">\n` + body + `\n</cross-session-message>`
+	origin := `"origin":{"kind":"peer","from":"uds:/tmp/cc-socks/887891.sock","verifiedPeerPid":887891,` +
+		`"name":"[AF:s6bbilu] 94-freeze 試走2本（A1C14・A2C07）","body":"` + body + `"}`
+
+	for name, ln := range map[string]string{
+		"idle 着信（user + isMeta）": `{"type":"user","isMeta":true,"uuid":"f82a0f77-85ee-4f2c-9bce-b6cffb58c344",` +
+			`"timestamp":"2026-08-31T11:51:22.608Z","gitBranch":"temp/spzyoht","cwd":"/w",` + origin +
+			`,"message":{"role":"user","content":"` + wrapper + `"}}`,
+		"busy 着信（queued_command）": `{"type":"attachment","timestamp":"2026-08-31T11:51:22.608Z","gitBranch":"temp/spzyoht","cwd":"/w",` +
+			`"attachment":{"type":"queued_command","commandMode":"prompt","prompt":"` + wrapper + `",` + origin + `}}`,
+	} {
+		turn, ok := parseTurn([]byte(ln), 12)
+		if !ok {
+			t.Errorf("%s: 落とされた（＝利用者から見えない）", name)
+			continue
+		}
+		if turn.Role != "user" || turn.Idx != 12 || turn.Branch != "temp/spzyoht" || turn.Cwd != "/w" {
+			t.Errorf("%s: turn = %+v", name, turn)
+		}
+		// 本文は origin.body — 行そのものに被っている配送の包装は人間に読ませない。
+		if turn.Text != body || len(turn.Parts) != 1 || turn.Parts[0].Text != body {
+			t.Errorf("%s: text = %q / parts = %+v, want %q", name, turn.Text, turn.Parts, body)
+		}
+		if turn.Source != transcript.SourcePeer {
+			t.Errorf("%s: Source = %q, want %q", name, turn.Source, transcript.SourcePeer)
+		}
+		// バッジに出る送信者。ラベルからセッション名を読み戻せている＝利用者が rail と
+		// 突き合わせられる。ここが空だと「別のセッション」としか出ず、誰の仕業か辿れない。
+		if turn.PeerFrom != "s6bbilu" {
+			t.Errorf("%s: PeerFrom = %q, want %q", name, turn.PeerFrom, "s6bbilu")
+		}
+		// isMeta 行も割り込み行も分岐点にできない（forkat.go cutIndex が拒む）。uuid を
+		// 渡すと「ここから分岐」の導線だけ出て必ず 400 になる。
+		if turn.AnchorID != "" {
+			t.Errorf("%s: AnchorID = %q, want empty", name, turn.AnchorID)
+		}
+	}
+
+	// 旧ラベル（セッション名が入る前に作られたセッション）と、AF 外で起動した claude:
+	// 名前は読み戻せないので、タグだけ落として素で出す（"" にしない — 名無しバッジより
+	// 「どのラベルの誰か」の方が辿れる）。
+	old := `{"type":"user","isMeta":true,"origin":{"kind":"peer","name":"[AF] 旧ラベルのセッション","body":"x"},` +
+		`"message":{"role":"user","content":"x"}}`
+	if turn, ok := parseTurn([]byte(old), 0); !ok || turn.PeerFrom != "旧ラベルのセッション" {
+		t.Errorf("旧ラベル: ok=%v PeerFrom=%q", ok, turn.PeerFrom)
+	}
+
+	// body の無い版に当たったら包装ごと出す（何も出さないよりはるかにマシ）。
+	nobody := `{"type":"user","isMeta":true,"origin":{"kind":"peer","name":"[AF:sabc123] t"},` +
+		`"message":{"role":"user","content":"` + wrapper + `"}}`
+	if turn, ok := parseTurn([]byte(nobody), 0); !ok || !strings.Contains(turn.Text, body) {
+		t.Errorf("body 欠落: ok=%v text=%q", ok, turn.Text)
+	}
+
+	// peer でない isMeta 行は従来どおり落ちる（この門を丸ごと開けたわけではない）。
+	for name, ln := range map[string]string{
+		"素の isMeta":        `{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-stdout>…"}}`,
+		"human 由来の origin": `{"type":"user","isMeta":true,"origin":{"kind":"human"},"message":{"role":"user","content":"x"}}`,
+	} {
+		if _, ok := parseTurn([]byte(ln), 0); ok {
+			t.Errorf("%s: parsed as a turn, want dropped", name)
+		}
 	}
 }

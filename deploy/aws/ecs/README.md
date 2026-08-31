@@ -181,6 +181,40 @@ from `10-data`'s exports, so that stack must already be up. Prerequisites:
    Versioned (release) images add `ImageTag=<v>` to the overrides — the default
    `dev` matches the sandbox push above.
 
+### Preview subdomains (optional, off by default)
+
+`30-ingress` can issue a per-start preview URL for the services a member runs inside
+their workspace (docs/log/81):
+
+```bash
+--parameter-overrides PreviewDomain=pv.example.com ...
+```
+
+Every workspace start mints a random label, and the workspace's allow-listed ports
+(default `3000, 8080`) become reachable at
+`https://{slug}-{port}.pv.example.com/` — **at the root**, which is what a React /
+Next.js / Spring Boot pair needs and what the existing `/preview/{port}` sub-path
+cannot give. Empty (the default) creates none of it and leaves the sub-path preview as
+the only mode.
+
+What the parameter adds: a `*.{PreviewDomain}` ACM certificate, a
+`ListenerCertificate` that hangs it on the existing 443 listener (SNI), a wildcard
+Route53 alias, and `AF_PREVIEW_DOMAIN` in the CP's environment. **The existing
+certificate is not touched** — adding a SAN to it would replace it, and there is no
+reason to re-issue the Console's TLS to add a preview.
+
+- ⚠️ `HostedZoneId` must be the zone that contains `PreviewDomain`; otherwise ACM's DNS
+  validation never completes and the stack sits there — a stall, not a failure.
+- ⚠️ Prefer a **sibling** of the Console FQDN (`pv.example.com` next to
+  `af.example.com`), not a child (`*.af.example.com`): a previewed app is the member's
+  own code, and as a child it could write a `.af.example.com` domain cookie.
+- Nothing is written to DNS per workspace — one wildcard record and one certificate
+  serve every workspace and port, so issuing a URL costs no API call and no
+  propagation wait.
+- Members choose which ports are exposed, whether the URL stays stable across starts,
+  and whether it is readable without signing in (off by default, and it returns to off
+  on every start).
+
 ### WAF (optional, off by default)
 
 `30-ingress` can put an AWS WAF web ACL in front of the ALB. Two knobs, and only two on

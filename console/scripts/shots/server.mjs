@@ -146,6 +146,22 @@ const exact = {
   "/api/pat": () => ({}),
   "/api/tts/dict": () => ({ entries: [] }),
   "/api/workspace/stats": () => fx.stats(),
+  // プレビュー用サブドメイン（docs/log/81）: 発行済み URL と Workspace 単位の設定。
+  // 起動中の Workspace を模すので URL が入っている（停止中は previewUrls が空）。
+  "/api/env/ws-settings": () => ({
+    agentUpdate: false,
+    allowAgentUpdate: true,
+    previewDomain: "pv.example.com",
+    previewPorts: [3000, 8080],
+    previewFixedSlug: false,
+    previewPublic: false,
+    previewCrossOrigin: false,
+    previewMaxPorts: 8,
+    previewUrls: {
+      "3000": "https://k7f2q9x1w3ub5nzt0abc-3000.pv.example.com",
+      "8080": "https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com",
+    },
+  }),
   // 左ペイン「変更」ビュー — cross-repo, one call (see FilesChanges).
   "/api/fs/changes": () => fx.fsChanges(LOCALE),
 };

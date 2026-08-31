@@ -83,6 +83,10 @@ export interface Turn {
   pending?: boolean; // optimistic local echo of a just-sent prompt, not yet in the jsonl
   queued?: boolean; // sitting in claude's mid-run queue (enqueued, awaiting injection)
   source?: string; // user turn origin: "operator" = fleet-operator injected (docs/log/30 ②), else own input
+  // peerFrom: the SESSION that sent a source==="peer" turn, when the Agent could name it.
+  // AF 自身の peer 送信は本文の封筒に名前が載るのでこれは空 — 埋まるのは封筒を持たない
+  // 着信、つまり claude 自前の cross-session チャネル(docs/log/58 §58.16)のときだけ。
+  peerFrom?: string;
   parts?: Part[];
   sidechain?: boolean;
   compact?: boolean;
@@ -137,6 +141,7 @@ export interface Group {
   pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
   queued?: boolean; // holds a prompt claude reports queued for the running turn
   source?: string; // user group origin: "operator" = fleet-operator injected (docs/log/30 ②)
+  peerFrom?: string; // sender of a source==="peer" group when the Agent named it (Turn.peerFrom)
 }
 
 // foldParts output: a run of tool traces, or a single passthrough part.
