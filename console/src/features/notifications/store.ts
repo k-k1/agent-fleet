@@ -11,6 +11,7 @@ import { openSessionChat, openSessionChatSplit, openSessionTerminal, openSession
 import { openChat } from "../chat/open.ts";
 import { openRepoScm } from "../scm/open.ts";
 import { openSharedSession } from "../sharing/open.ts";
+import { useSchedulesStore } from "../schedules/store.ts";
 import { unseenSessionEventIDs } from "./read.ts";
 import { notificationWording } from "./wording.ts";
 
@@ -99,6 +100,14 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // （offer は共有 ACL の派生物で、ACL が消えれば本文も消えている）。
   if (n.kind === "handoff-offer" && typeof n.payload.catalogId === "string" && n.payload.catalogId) {
     openSharedSession(n.payload.catalogId, split);
+    return true;
+  }
+  // 定時実行の失敗/スキップ（docs/log/38）。行き先はセッションではなく左レールの
+  // スケジュール行で、しかも**実行履歴**——「なぜ動かなかったのか」はそこにしか無い。
+  // 落ちた発火にはそもそもセッションが存在しないので、下の session 解決には落とせない
+  // （落とすと「該当セッションは一覧にありません」という無関係な警告で終わる）。
+  if (n.target.type === "schedule" && n.target.id) {
+    useSchedulesStore.getState().revealSchedule(n.target.id);
     return true;
   }
   if (n.target.type !== "session" || !n.target.id) return false;

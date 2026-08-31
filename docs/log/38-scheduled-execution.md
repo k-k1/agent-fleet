@@ -343,6 +343,69 @@ starting workspace to failed」と書いてある（docs/62 §62.5）。docker /
 `SetWorkspaceState("running")` も `touchWorkspace` も通らず、コンテナは走っているのに
 DB は stopped・reaper の in-memory lastSeen も古いまま、だった。
 
+### ★7. wake 予算 90 秒が ecs-ec2 の起動時間に届いていなかった（**実障害・2026-09-01 修正**）
+
+**症状**: ecs-ec2 デプロイ（acrt）の利用者から「朝のスケジュールが動かないことがある」。
+WS も Agent も正常に起動しているのに、その朝だけ何も実行されない。
+
+**実測（obata・`sch_db0c75a9…`・`session_mode=assistant`・毎朝 09:01 JST・同一 WS /
+同一スロット `i-09eb8ab7…` の 5 日連続）**。CP は UTC、WS コンテナは JST。
+
+| 朝 (UTC) | wake ログ | Agent healthy | **wake からの経過** | 配達 (`POST /assistant-turns`) |
+|---|---|---|---|---|
+| 08-27 | 00:01:47 | 00:03:43（95s after Start） | 116s | ❌ → 利用者が 02:01 に履歴を見て run-now |
+| 08-28 | 00:01:47 | 00:03:18（70s） | **91s** | ✅ 00:03:18 開始（ポーリング粒度でギリ通過） |
+| 08-29 | 00:01:48.99 | 00:03:22.75（73s） | **93.8s** | ❌（**4 秒差**） |
+| 08-30 | 00:01:49 | 00:02:54（46s） | 65s | ✅ 00:02:55 開始 |
+| 08-31 | 00:01:49 | 00:04:00（111s） | 131s | ❌ → 01:27 に履歴確認 → run-now → 01:28 実行 |
+
+**真因**: `AF_SCHEDULE_WAKE_TIMEOUT` の既定 **90 秒**が、この基盤の起動時間分布の
+**ど真ん中**を切っていた。ecs-ec2 の `Start` は同期では待たない（`State()` が `starting`
+を名乗り、収束は `bg` の背景 goroutine・予算 `AF_ECS_EC2_WAIT_SEC` 600 秒）ので、
+発火が実際に待つのは `awaitAgentReady` のこの予算だけである。実測の wake は
+休眠スロット 110s / プール増 135s（docs/log/64 §64.17.2, §64.38）で、いずれも 90 秒を超える。
+
+- ⚠️ **予算は見た目より約 20 秒きつい**。アダプタの `Agent healthy Ns after Start` の N は
+  ECS 側の Start 時計で、休眠スロットの `StartInstances` / ECS 登録 / mount は
+  `place.deferred` の背景収束で**その前**に走る。スケジューラの 90 秒は **wake の瞬間**から
+  数えるので、「73s after Start」でも wake からは 93.8s（08-29）。
+- **ecs-ec2 の利用者だけが踏む**: docker / native は数秒〜45 秒で上がるので 90 秒で足りる。
+  しかも **ECS デプロイでは値を変える手段が無かった**（`AF_SCHEDULE_*` に CFN パラメータが
+  無く、タスク定義の手編集は次の deploy で消える）＝`Ec2HibernateAfterSec` と同じ穴。
+- **落ちた発火はその場で捨てられていた**。`fireOne` は失敗でも台帳を前進させ、
+  `advanceNextRun` は「now より後」で次を計算する＝毎朝の cron なら**翌朝まで飛ぶ**。
+  1 分後の次 tick なら WS はもう上がっているのに、そこには戻ってこない。
+
+**対策（3 段）**:
+
+1. **予算の既定を `agentBootBudget`（300 秒）へ**。プラットフォームが既に「起動中を
+   名乗ってよい」と決めている窓と同じ数字にする。これより小さい値は「これより起動の遅い
+   基盤ではスケジュールは発火しません」を黙って意味してしまう。
+2. **未配達は失敗ではなく状態として再試行**（本命）。`awaitAgentReady` の失敗だけを
+   `scheduleRetryable` で包み、`fireOne` は窓（`scheduleRetryWindow` 15 分）の内側なら
+   **台帳を一切触らずに返る**＝次 tick で同じ slot を出し直す。記録しないのは、これが
+   「1 回の発火がまだ進行中」だからで、最後に着地した行（fired か error）がその発火の
+   正直な記録になる。next_run を動かさないので冪等キー・`{{time}}`・`manual_fire_pending`
+   もそのまま。
+   - ⚠️ **再試行可の線は「まだ何も配達していない」ところにしか引けない**。readiness 待ちの
+     先は Agent と喋り始めているので、reuse / assistant には slot 単位の冪等が無く、
+     再試行はプロンプトの二重配達になる。だから retryable を決めるのは firer だけ。
+   - ⚠️ 窓は**必ず有界**にする。再試行は毎回 WS を起こすので、永久に上がらない WS が
+     毎 tick wake を買い続ける。窓を過ぎたら従来どおり error + 通知。
+3. **`AF_SCHEDULE_*` を ECS の CFN パラメータに出す**（`SchedulerInterval` /
+   `ScheduleWakeTimeout` / `ScheduleSettle` / `ScheduleJitter`）。**空 = 製品の既定**に
+   なるよう `!If … AWS::NoValue` で渡す＝既定のコピーをスタックに焼かない。
+
+**併せて直した「気づけない」側（同じ障害の一部）**: 失敗通知 `schedule-failed` /
+`schedule-skipped` は Console の `labelKeys` に無く**生スラッグ**で出ており、しかも
+`notificationWording` に分岐が無いので**末尾の usage-reset 文面に落ちていた**
+（＝OS 通知にも読み上げにも「利用制限がリセットされました」と出る）。クリックしても
+`openNotificationTarget` は `target.type=schedule` を解決できず「該当セッションは現在の
+一覧にありません」で終わっていた。文面を足し、遷移先を**行の実行履歴**（失敗の理由が
+書いてある唯一の場所）にして、節が畳まれていても開くようにした。
+⚠️ **教訓＝未知の kind を最後の分岐へ落とす構造**そのものが原因。通知は届いているのに
+中身が別の出来事、という壊れ方は誰も疑わない。
+
 ### その他
 
 - **TZ / DST**: cron はユーザー TZ 基準で評価。夏時間跨ぎの二重/欠落時刻の扱いを規定。

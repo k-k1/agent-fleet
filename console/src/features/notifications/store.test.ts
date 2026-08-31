@@ -78,3 +78,44 @@ describe("carried-interaction の通知文言", () => {
     expect(notificationWording(q).title).toBe("Stopped with an unanswered question");
   });
 });
+
+describe("定時実行の通知の文面 (docs/log/38)", () => {
+  beforeEach(() => setLocale("ja"));
+
+  const sched = (kind: string, status: string) => ({
+    ...event("e20", "sch_1", false, "schedule"),
+    kind,
+    displayName: "毎朝レビュー",
+    payload: { schedule_id: "sch_1", status, spec_label: "毎朝レビュー", spec: "0 9 * * *" },
+  });
+
+  // ★回帰の芯: schedule-* に分岐が無かった間、未知の kind は末尾の usage-reset 文面へ
+  // 落ちていた。通知は出ているのに「利用制限がリセットされました」と読める状態で、
+  // 利用者から見れば「スケジュールは黙って動かなかった」のと変わらない。
+  it("利用上限リセットの文面に落ちない", () => {
+    const w = notificationWording(sched("schedule-failed", "error:agent not ready"));
+    expect(w.title).toBe("定時実行が失敗しました");
+    expect(w.title).not.toContain("リセット");
+    expect(w.speech).toContain("毎朝レビュー");
+  });
+
+  // 失敗の本文は原因そのもの（"why didn't it run" の答えは status にしか無い）。
+  it("失敗は理由をそのまま本文に載せる", () => {
+    const w = notificationWording(sched("schedule-failed", "error:agent not ready: timed out waiting for agent"));
+    expect(w.body).toContain("毎朝レビュー");
+    expect(w.body).toContain("timed out waiting for agent");
+  });
+
+  it("スキップは既知の理由を訳文にする", () => {
+    const w = notificationWording(sched("schedule-skipped", "skipped_quota"));
+    expect(w.title).toBe("定時実行が見送られました");
+    expect(w.body).toContain("上限");
+  });
+
+  it("英語ロケールでも同じ構造", () => {
+    setLocale("en");
+    const w = notificationWording(sched("schedule-failed", "skipped_target_missing"));
+    expect(w.title).toBe("A schedule did not run");
+    expect(w.body).toContain("no longer exists");
+  });
+});

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"log"
@@ -68,6 +69,28 @@ type scheduleStore interface {
 
 // scheduleRunKeep bounds the per-schedule run history (docs/log/38 P3 get_schedule_runs).
 const scheduleRunKeep = 50
+
+// scheduleRetryWindow is how long past its slot a fire may be re-attempted before the
+// failure becomes final. It exists because "the workspace is not answering yet" is a
+// STATE, not a verdict: the fire itself woke that workspace, and on ecs-ec2 the wake is
+// minutes long and varies by tens of seconds run to run. Advancing the ledger on the first
+// miss threw the whole slot away — for a daily cron, the whole day (measured: 3 of 5
+// consecutive mornings on the acrt deployment, same workspace, same schedule).
+//
+// Bounded, because a retry re-wakes a stopped workspace: a workspace that can never come
+// up must stop costing wakes and must surface as a failure instead of retrying forever.
+const scheduleRetryWindow = 15 * time.Minute
+
+// scheduleRetryable marks a fire error that may be re-attempted on a later tick. Only the
+// firer may decide this, and only where NOTHING has been delivered yet — a retry after a
+// prompt reached the Agent would duplicate it (assistant/reuse have no per-slot idempotency
+// key). Everything past the readiness wait is therefore final by construction.
+type scheduleRetryable struct{ err error }
+
+func (e scheduleRetryable) Error() string { return e.err.Error() }
+func (e scheduleRetryable) Unwrap() error { return e.err }
+
+func retryableFireErr(err error) error { return scheduleRetryable{err: err} }
 
 // statusMembershipInactive is the outcome the firer reports when the schedule's owner
 // membership is no longer active (revoked / tenant access removed). It is durable, not a
@@ -164,7 +187,8 @@ const schedulerMaxConcurrentFires = 4
 // tickAt is tick with an injected clock so the jitter gate is unit-testable.
 // Due schedules fire CONCURRENTLY (capped); the tick still waits for them all, so
 // a schedule can never double-fire — the next tick only lists rows whose ledger
-// this one has already advanced.
+// this one has already advanced, or (scheduleRetryWindow) deliberately left where it
+// was for a re-attempt, which cannot start until this tick's attempt has returned.
 func (sc *scheduler) tickAt(ctx context.Context, now time.Time) {
 	due, err := sc.store.ListDueSchedules(ctx, now.Format(time.RFC3339))
 	if err != nil {
@@ -207,6 +231,18 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 	}
 	status, session, ferr := sc.firer.fire(ctx, sch, slot)
 	if ferr != nil {
+		// Retryable and still inside the window: leave the ledger ALONE so this same slot
+		// is listed again on the next tick. Nothing is recorded — not last_status, not a
+		// run row, not a notification — because this is one fire still in progress, and
+		// the row that eventually lands (fired or error) is the honest account of it.
+		// Leaving next_run untouched is also what keeps the retry on the nominal slot, so
+		// the idempotency key, {{time}} and manual_fire_pending all stay put.
+		var retry scheduleRetryable
+		if errors.As(ferr, &retry) && now.Before(slot.Add(scheduleRetryWindow)) {
+			log.Printf("scheduler: schedule %s not delivered yet (%v) — retrying on a later tick (slot %s, until %s)",
+				sch.ID, ferr, slot.UTC().Format(time.RFC3339), slot.Add(scheduleRetryWindow).UTC().Format(time.RFC3339))
+			return
+		}
 		status = "error:" + truncStatus(ferr.Error())
 	}
 	// Compute the next fire strictly after `now` (not after the slot) so a backlog

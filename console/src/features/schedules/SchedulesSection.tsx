@@ -29,6 +29,7 @@ import { chatList } from "../chat/api.ts";
 import { useChatStore, ensureConvs } from "../chat/store.ts";
 import { sessionFolder } from "../../lib/project.ts";
 import { useSettings } from "../../lib/settings.ts";
+import { useSchedulesStore } from "./store.ts";
 import {
   useActiveWorkingSet,
   workingSetList,
@@ -59,6 +60,9 @@ import {
 } from "./read.ts";
 
 const POLL_MS = 15000;
+// Section の内蔵永続と同じキー（ui/Section.tsx storeKey）。controlled にしても利用者の
+// 開閉の選択が引き継がれるように、あえて同じものを読む。
+const SECTION_KEY = "af-section-schedules";
 
 // Compact local timestamp for last_run / fired_at (RFC3339 UTC → the viewer's locale).
 // next_run uses the server-rendered next_run_local (already in the schedule's own tz).
@@ -129,7 +133,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, wsets, wctx, onToggleRuns, on
   };
 
   return (
-    <div className={"sched-row" + (paused ? " paused" : "")}>
+    <div className={"sched-row" + (paused ? " paused" : "")} data-sched-id={s.id}>
       {/* Clicking the row body toggles the run history; the ⋯ menu holds the actions. */}
       <div
         className="sched-main"
@@ -310,6 +314,16 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const [openRuns, setOpenRuns] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ScheduleRun[]>>({});
   const [detail, setDetail] = useState<ScheduleDTO | null>(null);
+  // 節の開閉を自分で持つ（controlled Section）。通知からの reveal で開ける必要があるため。
+  // キーは Section 内蔵の永続と同じなので、既存の開閉状態はそのまま効く。
+  const [sectionOpen, setSectionOpenState] = useState(() => localStorage.getItem(SECTION_KEY) !== "0");
+  const setSectionOpen = (v: boolean) => {
+    setSectionOpenState(v);
+    try {
+      localStorage.setItem(SECTION_KEY, v ? "1" : "0");
+    } catch {}
+  };
+  const reveal = useSchedulesStore((s) => s.reveal);
   const serRef = useRef("");
   // 作業グループ (docs/log/52): CP 永続のスケジュールは所属を導出する — repo /
   // owner_conv(作成元会話) / reuse_target(会話 slug・セッション名)。導出できない
@@ -448,23 +462,49 @@ export const SchedulesSection = memo(function SchedulesSection() {
     }
   };
 
+  const loadRuns = async (id: string) => {
+    setOpenRuns(id);
+    try {
+      const res = await scheduleRuns(id);
+      const list = res && typeof res === "object" && "runs" in res ? (res as { runs: ScheduleRun[] }).runs : [];
+      setRuns((r) => ({ ...r, [id]: Array.isArray(list) ? list : [] }));
+    } catch {
+      setRuns((r) => ({ ...r, [id]: [] }));
+    }
+  };
+
   const toggleRuns = async (s: ScheduleDTO) => {
     if (openRuns === s.id) {
       setOpenRuns(null);
       return;
     }
-    setOpenRuns(s.id);
-    try {
-      const res = await scheduleRuns(s.id);
-      const list = res && typeof res === "object" && "runs" in res ? (res as { runs: ScheduleRun[] }).runs : [];
-      setRuns((r) => ({ ...r, [s.id]: Array.isArray(list) ? list : [] }));
-    } catch {
-      setRuns((r) => ({ ...r, [s.id]: [] }));
-    }
+    await loadRuns(s.id);
   };
 
+  // 通知センターから「なぜ動かなかったのか」を辿ってきた（docs/log/38）。行き先は行そのもの
+  // ではなく**実行履歴**——失敗の理由はそこにしか書いていない。畳まれていることの方が多い
+  // ので節も開ける。FilesSection と同じ controlled Section ＋ 自前の永続で、利用者の
+  // 開閉の選択（af-section-schedules）はそのまま引き継ぐ。
+  useEffect(() => {
+    const id = reveal.id;
+    if (!id) return;
+    setSectionOpen(true);
+    void loadRuns(id);
+    // 行は節を開いた後にしか存在しないので、描画を1フレーム待ってから寄せる。
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-sched-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal.n]);
+
   return (
-    <Section id="schedules" title={tr("sched.title")} icon="watch" count={activeCount}>
+    <Section
+      title={tr("sched.title")}
+      icon="watch"
+      count={activeCount}
+      open={sectionOpen}
+      onToggle={() => setSectionOpen(!sectionOpen)}
+    >
       {/* 取得失敗は「空」と別物として出す（直前まで表示していた行は残す）。 */}
       {loadErr && (
         <div className="sched-load-err" role="status" title={loadErr}>

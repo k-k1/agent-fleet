@@ -18,6 +18,8 @@ const labelKeys: Record<string, MsgKey> = {
   "rate-limit-reached": "noti.kind_rate_limit_reached",
   "rate-limit-resumed": "noti.kind_rate_limit_resumed",
   "submodule-sync": "noti.kind_submodule_sync",
+  "schedule-failed": "noti.kind_schedule_failed",
+  "schedule-skipped": "noti.kind_schedule_skipped",
 };
 // 通知の相対時刻。共通実装（lib/intl）へ委譲する。
 const relative = (at: string): string => relTime(at);
@@ -137,7 +139,9 @@ function FleetRow({ n, onActivate }: { n: FleetNotification; onActivate: (n: Fle
       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onActivate(n, e.ctrlKey || e.metaKey); } }}
       onMouseDown={(e) => e.button === 1 && e.preventDefault()}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onActivate(n, true); } }}>
-      <Icon name={n.kind === "answer-ready" ? "check" : ["usage-reset", "rate-limit-reached", "rate-limit-resumed"].includes(n.kind) ? "pulse" : "comment-discussion"} />
+      <Icon name={n.kind === "answer-ready" ? "check"
+        : n.kind.startsWith("schedule-") ? "watch" // 左レールのスケジュール節と同じ字面
+          : ["usage-reset", "rate-limit-reached", "rate-limit-resumed"].includes(n.kind) ? "pulse" : "comment-discussion"} />
       <span><b>{labelKeys[n.kind] ? tr(labelKeys[n.kind]) : n.kind}</b><small>{n.displayName} · {relative(n.createdAt)}</small></span>
     </button>
     <button className="notification-replay" title={tr("noti.replay")} aria-label={tr("noti.replay")} onClick={() => replayNotification(n)}><Icon name="unmute" /></button>

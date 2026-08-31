@@ -527,6 +527,32 @@ needs an ECS infrastructure role passed as `AF_ECS_INFRA_ROLE` (policy
 role — without it a >200 GiB request silently falls back to the free default. 🚧 This path
 is untested on real infrastructure; ephemeral storage covers everything up to 200 GiB.
 
+## Scheduled execution (timed wakes)
+
+The CP scheduler wakes a stopped workspace at the appointed time and injects the prompt
+(`docs/log/38`). It is **on by default** on every runtime and is a no-op while no schedule
+exists. Four `30-ingress` parameters exist so a deployment can switch it off or give a
+slow-booting substrate more room; **leave one empty to keep the product default** rather
+than pinning a copy in the stack.
+
+| Parameter | Env | Default | Notes |
+|---|---|---|---|
+| `SchedulerInterval` | `AF_SCHEDULER_INTERVAL` | `1m` | Tick cadence. `0` hard-disables timed wakes: nothing fires, and the Console hides the Schedules section |
+| `ScheduleWakeTimeout` | `AF_SCHEDULE_WAKE_TIMEOUT` | `300s` | How long one fire waits for the woken Agent. See the warning below |
+| `ScheduleSettle` | `AF_SCHEDULE_SETTLE` | `5m` | How long the woken workspace is held up afterwards so the reaper cannot stop it mid-turn |
+| `ScheduleJitter` | `AF_SCHEDULE_JITTER` | `2m` | Deterministic spread for cron fires so a 09:00 crowd does not wake at once. `0` = exact slot |
+
+⚠️ **Do not lower `ScheduleWakeTimeout` on `ecs-ec2` without measuring.** Its clock starts
+at the **wake**, roughly 20 seconds before the adapter's own `Agent healthy Ns after Start`
+log does — the slot's `StartInstances`, ECS registration and home mount all run in the
+background convergence — so the budget is tighter than that line reads. On a live
+deployment the *same* workspace, on the *same* schedule and the *same* slot, took **65 to
+131 seconds** on five consecutive mornings; the old 90s budget therefore delivered on two
+of them and silently dropped three. A budget that lands inside the spread makes a stopped
+workspace's morning schedule fire at random. An undelivered fire is now re-attempted on
+later ticks for 15 minutes, but each retry re-wakes the workspace, so the budget should
+still be big enough to win on the first attempt.
+
 ## Optional: EC2 slot pool (`WsRuntime=ecs-ec2`)
 
 🚧 **Stood up and run in a sandbox, including a production-shaped VPC — but never with

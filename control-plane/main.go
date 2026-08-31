@@ -352,7 +352,14 @@ func main() {
 	// AF_SCHEDULE_SETTLE, and injects via create_session.
 	if iv := parseDurationOr(os.Getenv("AF_SCHEDULER_INTERVAL"), time.Minute); iv > 0 {
 		settle := parseDurationOr(os.Getenv("AF_SCHEDULE_SETTLE"), 5*time.Minute)
-		ready := parseDurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), 90*time.Second)
+		// How long a fire waits for the woken Agent. Defaults to agentBootBudget — the
+		// SAME window the platform already grants a boot to say "starting" — because any
+		// smaller number silently means "schedules do not fire on substrates that boot
+		// slower than this". The old 90s default cut straight through the middle of
+		// ecs-ec2's measured wake distribution (docs/log/38 ★7 ・ docs/log/64):
+		// waking a sleeping slot is ~110s and growing the pool ~135s, so a stopped
+		// workspace's morning fire landed or dropped essentially at random.
+		ready := parseDurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), agentBootBudget)
 		// Per-schedule fire jitter (★2) spreads aligned cron times (everyone at 09:00)
 		// so simultaneous wakes don't OOM the shared host. Default 2m; AF_SCHEDULE_JITTER=0
 		// disables. Set before any schedule's next_run is computed so it takes effect.

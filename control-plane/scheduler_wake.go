@@ -39,19 +39,30 @@ type wakeFirer struct {
 	// settle is how long the keep-alive is held after a fire so the reaper does not
 	// reclaim the freshly-woken workspace before its session runs and reports (★1).
 	settle time.Duration
-	// readyTimeout bounds the wait for the Agent to come up after a wake. It also bounds
-	// the per-session input-readiness wait a reuse send makes before typing (awaitSessionReady).
+	// readyTimeout bounds the wait for the Agent to come up after a wake.
 	readyTimeout time.Duration
+	// sessionReadyTimeout bounds the per-session input-readiness wait a reuse send makes
+	// before typing (awaitSessionReady). Deliberately SEPARATE from readyTimeout: the two
+	// wait for different things. readyTimeout covers a container boot (minutes on ECS),
+	// while this one covers a CLI drawing its composer in an already-running container —
+	// tying them together would make a wedged session hold a fire slot for the whole boot
+	// budget, on a workspace that is demonstrably up.
+	sessionReadyTimeout time.Duration
 	// readyInterval is the poll gap for awaitSessionReady (0 -> 1s). Tests set it small.
 	readyInterval time.Duration
 }
 
+// scheduleSessionReadyWait is the default sessionReadyTimeout: how long a reuse fire waits
+// for its target session to become input-ready once the Agent is answering.
+const scheduleSessionReadyWait = 90 * time.Second
+
 func newWakeFirer(mgr *manager, settle, readyTimeout time.Duration) *wakeFirer {
 	return &wakeFirer{
-		mgr:          mgr,
-		wsAPI:        newWorkspaceAPI(mgr, true),
-		settle:       settle,
-		readyTimeout: readyTimeout,
+		mgr:                 mgr,
+		wsAPI:               newWorkspaceAPI(mgr, true),
+		settle:              settle,
+		readyTimeout:        readyTimeout,
+		sessionReadyTimeout: scheduleSessionReadyWait,
 	}
 }
 
@@ -118,11 +129,17 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 	}
 
 	// 4. wait for the Agent, then inject.
+	//
+	// A failure HERE is retryable and is marked as such: nothing has been delivered yet,
+	// so re-running this same slot cannot double-deliver, and on a substrate whose boot
+	// time is measured in minutes (ecs-ec2) the workspace this fire just woke is usually
+	// answering a tick or two later. Past this point the fire has started talking to the
+	// Agent and a retry could duplicate a prompt, so nothing below is retryable.
 	if err := f.awaitAgentReady(ctx, res.rt); err != nil {
 		if wakeErr != nil {
-			return "", "", fmt.Errorf("%w (after %v)", err, wakeErr)
+			return "", "", retryableFireErr(fmt.Errorf("%w (after %v)", err, wakeErr))
 		}
-		return "", "", fmt.Errorf("agent not ready: %w", err)
+		return "", "", retryableFireErr(fmt.Errorf("agent not ready: %w", err))
 	}
 	if wakeErr != nil {
 		// The start reported failure but the Agent is up — it was only slow. Finish the
@@ -161,10 +178,18 @@ func (f *wakeFirer) scheduleRelease(release func()) {
 
 // awaitAgentReady polls the Agent's session list until it responds or readyTimeout
 // elapses — a just-started container's Agent needs a moment before it accepts a create.
+//
+// ⚠️ The clock starts HERE, at the wake, not at the runtime's own notion of "Start".
+// On ecs-ec2 a stopped slot's StartInstances / ECS registration / home mount all run in
+// the adapter's BACKGROUND convergence (place.deferred) and Start returns immediately, so
+// roughly 20 seconds of the boot are already spent before the adapter's "Agent healthy Ns
+// after Start" clock even begins. A budget picked against that number is ~20s tighter than
+// it reads (measured on the acrt deployment: a fire that logged "healthy 73s after Start"
+// was 93.8s after the wake, and was dropped by the old 90s budget).
 func (f *wakeFirer) awaitAgentReady(ctx context.Context, rt Runtime) error {
 	deadline := time.Now().Add(f.readyTimeout)
 	if f.readyTimeout <= 0 {
-		deadline = time.Now().Add(90 * time.Second)
+		deadline = time.Now().Add(agentBootBudget)
 	}
 	var lastErr error
 	for {

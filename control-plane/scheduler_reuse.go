@@ -220,7 +220,7 @@ func (f *wakeFirer) retireSession(ctx context.Context, rt Runtime, name string) 
 // recorded "error:" and the operator is notified — never a bogus "fired" with an unadvanced
 // session.
 func (f *wakeFirer) awaitSessionReady(ctx context.Context, rt Runtime, name string) error {
-	timeout := f.readyTimeout
+	timeout := f.sessionReadyTimeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
