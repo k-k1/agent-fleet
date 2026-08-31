@@ -28,6 +28,7 @@ import { Button } from "../../ui/Button.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
 import { TermKeys } from "./TermKeys.tsx";
+import { TermRtt } from "./TermRtt.tsx";
 import { MirrorToggle } from "../mirror/MirrorToggle.tsx";
 import { OnboardingCard } from "./OnboardingCard.tsx";
 import { ContextBar } from "../mirror/ContextBar.tsx";
@@ -222,6 +223,10 @@ export function TerminalView({
         className="view-head-term"
         actions={
           <>
+            {/* Leftmost of the cluster: a readout, not a control — it must not move the
+                mirror toggle and the cell buttons, whose positions the mirror head
+                mirrors (below). Renders null until the first sample. */}
+            <TermRtt paneId={paneId} />
             {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
             {/* 末尾＝右端。ミラー側（MirrorView）と同じ並びにして、チャット/ターミナルを
                 切り替えてもセル操作ボタンが同じ位置に留まるようにする。 */}

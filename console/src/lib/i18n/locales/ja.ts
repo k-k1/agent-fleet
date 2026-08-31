@@ -3679,6 +3679,9 @@ export const ja = {
   "onb.paste_confirm": "貼り付け",
   // ターミナルのグリッドへ直接書く切断通知（term.ts）
   "onb.term_disconnected": "[切断されました]",
+  "onb.rtt_unit": "ms",
+  "onb.rtt_title":
+    "端末の往復時間（中央値 {med}ms / 最大 {max}ms / 直近 {n} 回）。\n打鍵と同じ経路・同じフレームで測った、ブラウザ↔ワークスペース間の実測値です（PTY/tmux 自体は 1ms 未満なので、ほぼそのままエコーの遅れになります）。",
   "onb.term_session_stopped": "[このセッションは停止中です — 右下の「再開」で再開できます]",
 
   // === P5 プロジェクト（ProjectTree/FilesSection/FilesChanges/RepoNode ほか） ===
