@@ -54,6 +54,8 @@ import {
 } from "./tts.ts";
 import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
 import { ContextBar } from "../mirror/ContextBar.tsx";
+// 作業過程はミラーの .mt-work をそのまま使っているので、最下部の「閉じる」も同じ部品を使う。
+import { DisclosureFoot, revealHead } from "../mirror/transcript/blocks.tsx";
 import { ChatPlan } from "./ChatPlan.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
@@ -1716,6 +1718,8 @@ function ChatMarkdown({ source, breaks, streaming }: { source: string; breaks?: 
 function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpen?: boolean; live?: boolean }) {
   const tr = useT();
   const [open, setOpen] = useState(!!defaultOpen);
+  // 見出し（summary）。最下部の「閉じる」で畳んだあと、見出しが画面の上へ流れていたら戻す。
+  const head = useRef<HTMLElement>(null);
   if (!steps.length) return null;
   const toolCount = steps.reduce((n, step) => n + (step.tools?.length ?? 0), 0);
   return (
@@ -1724,7 +1728,7 @@ function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpe
       open={open}
       onToggle={(e) => setOpen(e.currentTarget.open)}
     >
-      <summary className="mt-work-head">
+      <summary className="mt-work-head" ref={head}>
         <Icon name={open ? "chevron-down" : "chevron-right"} />
         {live && <Icon name="loading" spin />}
         <span className="mt-work-title">{tr("chat.work_process")}</span>
@@ -1743,6 +1747,12 @@ function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpe
             <ChatToolRun key={i} tools={it.tools} />
           ),
         )}
+        <DisclosureFoot
+          onClose={() => {
+            setOpen(false);
+            revealHead(head.current);
+          }}
+        />
       </div>
     </details>
   );

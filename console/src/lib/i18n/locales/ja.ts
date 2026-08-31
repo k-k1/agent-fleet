@@ -2566,6 +2566,9 @@ export const ja = {
     "{agent} のログインが切れています。再認証すると、このセッションはそのまま続きから再開できます。",
   "mirror.error_auth_action": "再認証する",
   "mirror.collapse_output": "出力をたたむ",
+  // 開いた作業過程／思考の最下部に置く「閉じる」（DisclosureFoot）。読み終えた位置から
+  // 見出しまで戻らずに畳めるようにするためのもので、見出しのトグルと同じ操作。
+  "mirror.collapse_section": "閉じる",
   "mirror.show_output": "出力を表示",
   "mirror.output_lines": "出力 ({lines} 行)",
   // Turn

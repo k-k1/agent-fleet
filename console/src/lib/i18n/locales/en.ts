@@ -2527,6 +2527,7 @@ export const en: Record<keyof typeof ja, string> = {
     "The {agent} sign-in has expired. Re-authenticate and this session picks up where it left off.",
   "mirror.error_auth_action": "Re-authenticate",
   "mirror.collapse_output": "Collapse output",
+  "mirror.collapse_section": "Collapse",
   "mirror.show_output": "Show output",
   "mirror.output_lines": "Output ({lines} lines)",
   "mirror.subagent": "Subagent",

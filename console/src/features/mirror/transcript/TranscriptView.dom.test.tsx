@@ -253,6 +253,53 @@ describe("作業過程の畳み込みは往復しない", () => {
   });
 });
 
+// 開いた作業過程／思考は画面数枚ぶんの高さになるので、畳む操作が見出しにしか無いと
+// 「読み終えた位置から見出しまで戻る」までたたむ手段が無い。本文の最下部にも同じトグルを置く。
+describe("開いた作業過程・思考は最下部からも閉じられる", () => {
+  const WORK_TURN: Turn[] = [
+    { role: "user", text: "調べて", idx: 1 },
+    {
+      role: "assistant",
+      idx: 2,
+      parts: [
+        { kind: "tool", tool: "Read" },
+        { kind: "text", text: "調べ終わりました。" },
+      ],
+    },
+  ];
+  const THINK_TURN: Turn[] = [
+    { role: "user", text: "考えて", idx: 1 },
+    {
+      role: "assistant",
+      idx: 2,
+      parts: [
+        { kind: "thinking", text: "まず前提を確かめる。" },
+        { kind: "text", text: "こうです。" },
+      ],
+    },
+  ];
+
+  it("作業過程：最下部の閉じるで畳む（見出しのトグルと同じ状態になる）", () => {
+    const el = render(WORK_TURN, OWNER, { working: false, autoCollapseWork: true });
+    const head = el.querySelector<HTMLButtonElement>(".mt-work-head")!;
+    act(() => head.click());
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    const foot = el.querySelector<HTMLButtonElement>(".mt-work-body .mirror-disclosure-foot")!;
+    expect(foot.textContent).toContain(tr("mirror.collapse_section"));
+    act(() => foot.click());
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("思考：最下部の閉じるで畳む", () => {
+    const el = render(THINK_TURN, OWNER);
+    const head = el.querySelector<HTMLButtonElement>(".mirror-thinking-head")!;
+    act(() => head.click());
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    act(() => el.querySelector<HTMLButtonElement>(".mirror-thinking-body .mirror-disclosure-foot")!.click());
+    expect(head.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
 describe("peer 着信の見え方（docs/58 §58.14）", () => {
   const peerTurn = (text: string): Turn[] => [{ role: "user", text, idx: 1, source: "peer" }];
 
