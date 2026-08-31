@@ -237,6 +237,7 @@ export function groupTurns(turns: Turn[]): Group[] {
       if (t.pending) last.pending = true;
       if (t.queued) last.queued = true;
       if (t.source) last.source = t.source; // operator origin survives a same-role merge
+      if (t.peerFrom) last.peerFrom = t.peerFrom; // …and so does the sender behind a peer origin
       if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
       if (!last.model && t.model) last.model = t.model;
       if (!last.effort && t.effort) last.effort = t.effort;
@@ -275,6 +276,7 @@ export function groupTurns(turns: Turn[]): Group[] {
         pending: !!t.pending,
         queued: !!t.queued,
         source: t.source,
+        peerFrom: t.peerFrom,
       });
     }
   }

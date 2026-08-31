@@ -716,7 +716,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	label := ""
 	if agentOf(kind).Caps().UsesLabel {
-		label = sessionLabelFor(req.Dir, title)
+		label = sessionLabelFor(req.Dir, title, name)
 	}
 	var ssm *session.SSMMeta
 	if kind == session.KindSSM {
@@ -925,7 +925,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		Origin: session.OriginHandoff, OriginConv: src.OriginConv,
 	}
 	if ag.Caps().UsesLabel {
-		meta.Label = sessionLabelFor(src.Dir, title)
+		meta.Label = sessionLabelFor(src.Dir, title, meta.Name)
 	}
 	if meta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(meta)
@@ -1193,7 +1193,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv,
 	}
 	if agentOf(newMeta.Kind).Caps().UsesLabel {
-		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title)
+		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)
 	}
 	if newMeta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(newMeta)
