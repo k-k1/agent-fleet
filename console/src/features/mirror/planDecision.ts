@@ -20,15 +20,38 @@
 // approval ("Yes, …"); the tmuxx plan-approval contract test guards that invariant.
 export const PLAN_APPROVE_KEYS: readonly string[] = ["Enter"];
 
+// WHY only the header of the outcome is classified:
+//   Newer claude appends the WHOLE approved plan to the ExitPlanMode tool_result:
+//     User has approved your plan. You can now start coding. …
+//     Your plan has been saved to: …/plans/immutable-dazzling-babbage.md
+//     ## Approved Plan:
+//     <the entire plan Markdown>
+//   The verdict is always in that header; the body is the plan's own prose. Matching the
+//   keywords against the whole text lets a plan that merely *mentions* 「却下」「中止」
+//   「やり直し」/ "reject" / "refine" badge its OWN approval 却下 — observed 2026-08-31:
+//   approved plan, card badged 却下, claude coding on right under it. Every plan long
+//   enough to discuss alternatives is a coin flip. So: cut the embedded plan off first.
+const PLAN_BODY_MARKER = /^[ \t]*#{1,6}[ \t]*(approved plan|承認されたプラン)[ \t]*[:：]/im;
+
+// outcomeHead reduces an ExitPlanMode tool_result to the part that states the verdict:
+// everything before the embedded plan, and at most a few lines of it (a cheap guard for
+// the next version that embeds something without the marker — the verdict has always been
+// the first line, and failing to match merely leaves the badge neutral, never wrong).
+export function outcomeHead(outcome?: string): string {
+  const s = outcome || "";
+  const m = s.match(PLAN_BODY_MARKER);
+  return (m ? s.slice(0, m.index) : s).slice(0, 400);
+}
+
 // isApproved / isRejected guess an ExitPlanMode tool_result's meaning to badge a
 // historical plan. Best-effort keyword match — the exact result text varies by version.
 export function isApproved(outcome?: string): boolean {
-  return /approv|proceed|start coding|going to code|承認|実行してよい|yes/i.test(outcome || "");
+  return /approv|proceed|start coding|going to code|承認|実行してよい|yes/i.test(outcomeHead(outcome));
 }
 export function isRejected(outcome?: string): boolean {
   // "interrupt" catches a rejected plan's tool_result ("[Request interrupted by user
   // for tool use]"), which is how an Escape/却下 out of ExitPlanMode is recorded.
-  return /keep planning|not approv|reject|refine|declin|interrupt|却下|中止|やり直/i.test(outcome || "");
+  return /keep planning|not approv|reject|refine|declin|interrupt|却下|中止|やり直/i.test(outcomeHead(outcome));
 }
 
 export type PlanOutcome = "approved" | "rejected" | "decided";

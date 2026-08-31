@@ -75,6 +75,14 @@ func TestPlanApprovalContract(t *testing.T) {
 	twoOpt := "   Claude has written up a plan and is ready to execute. Would you like to\n" +
 		"   proceed?\n\n   ❯ 1. Yes, and use auto mode\n     2. Yes, manually approve edits\n\n" +
 		"   ctrl+g to edit in Vim ·"
+	// 3-option: captured live from 2.1.251 by the plan approval probe
+	// (workspace/agent/claude_plan_contract_test.go, 2026-08-31). Third distinct shape in
+	// six weeks — the menu keeps moving, which is the whole reason approve must be
+	// "Enter = the highlighted default" and reject must be an interrupt.
+	threeOpt := "   Claude has written up a plan and is ready to execute. Would you like to proceed?\n\n" +
+		"   ❯ 1. Yes, and switch to BYPASS PERMISSIONS (no further prompts) for this session\n" +
+		"     2. Yes, manually approve edits\n     3. Tell Claude what to change\n" +
+		"        shift+tab to approve with this feedback\n\n   ctrl+g to edit in Vim ·"
 
 	for _, c := range []struct {
 		name    string
@@ -82,6 +90,7 @@ func TestPlanApprovalContract(t *testing.T) {
 		wantN   int
 	}{
 		{"4-option (testdata golden)", fourOpt, 4},
+		{"3-option (2.1.251, live capture)", threeOpt, 3},
 		{"2-option (2.1.212)", twoOpt, 2},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -122,8 +131,11 @@ func TestPlanApprovalContract(t *testing.T) {
 	// The clincher: there is no single Down-offset that rejects on BOTH known menu shapes,
 	// so no positional reject can ever be correct — interrupt is the only sound reject.
 	four := parsePlanApprovalMenu(fourOpt)
+	three := parsePlanApprovalMenu(threeOpt)
 	for off := 0; off <= 8; off++ {
-		if !isPlanApproval(selectByDownOffset(four, off).label) && !isPlanApproval(selectByDownOffset(two, off).label) {
+		if !isPlanApproval(selectByDownOffset(four, off).label) &&
+			!isPlanApproval(selectByDownOffset(three, off).label) &&
+			!isPlanApproval(selectByDownOffset(two, off).label) {
 			t.Fatalf("Down×%d rejects on both menus — if the CLI ever aligns menu shapes, "+
 				"revisit whether keystroke reject is viable; today reject must interrupt", off)
 		}
