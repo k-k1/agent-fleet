@@ -41,7 +41,12 @@ const (
 	// 送っていない指示がミラーに現れたとき、それが「隣の worktree のセッションから来た」
 	// と分からないと、誰の仕業か辿る手段が無い。**このバッジが peer 着信の唯一の可視化**
 	// なので、付け忘れると人間から見えない経路になる。
-	turnSourcePeer = "peer"
+	//
+	// 綴りが internal/transcript にあるのは、**claude 自前の cross-session チャネル**の
+	// 着信（AF を通らないので、この投入ストアには何も残らない）を転写パーサが直接この値で
+	// 立てるため（docs/58 §58.16）。両側で別々に "peer" と書くと、経路によってバッジが
+	// 出たり出なかったりする。
+	turnSourcePeer = transcript.SourcePeer
 )
 
 // injectionSource maps a caller-supplied source onto the recordable vocabulary. The

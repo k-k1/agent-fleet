@@ -550,7 +550,7 @@ func handleAcceptSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	m.SuggestedTitle = ""
 	m.SuggestedTitleDismissed = true // resolved — v1 never re-suggests for this session
 	if agentOf(m.Kind).Caps().UsesLabel {
-		m.Label = sessionLabelFor(m.Dir, m.Title)
+		m.Label = sessionLabelFor(m.Dir, m.Title, m.Name)
 	}
 	session.WriteMeta(m)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, sessionAlive(m)))
@@ -666,7 +666,7 @@ func handleSetTitle(w http.ResponseWriter, r *http.Request) {
 	m.SuggestedTitle = ""
 	m.SuggestedTitleDismissed = title != "" // clearing the title re-opens auto-suggestion
 	if agentOf(m.Kind).Caps().UsesLabel {
-		m.Label = sessionLabelFor(m.Dir, m.Title)
+		m.Label = sessionLabelFor(m.Dir, m.Title, m.Name)
 	}
 	session.WriteMeta(m)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(m, sessionAlive(m)))

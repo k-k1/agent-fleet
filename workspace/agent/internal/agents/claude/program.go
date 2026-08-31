@@ -23,6 +23,37 @@ func envOr(key, def string) string {
 	return def
 }
 
+// nativePeerSettings は claude 自前の cross-session チャネル（ListAgents / SendMessage、
+// UDS `/tmp/cc-socks/<pid>.sock`）を AF のセッションで塞ぐ設定（docs/58 §58.17 /
+// ADR 0041 決定1）。`--settings` に JSON 文字列として渡す。
+//
+// **なぜ env ではなくこれか**: 元は Dockerfile の `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
+// と `DISABLE_TELEMETRY` が事実上の遮断だった（〜2.1.226 実測）。**2.1.251 では両方立てても
+// 貫通する**ことを実プロセスで確認済みで、その隙に AF を通らない着信が実際に起きた
+// （docs/58 §58.16）。env は当てにならないので、設定として明示的に閉じる。
+//
+// 2つ入っているのは**方向が違う**から。片方だけでは塞がらない:
+//   - `permissions.deny`（送信側）: この2ツールが**一覧から消える**。呼んで拒否されるのでは
+//     なく、モデルからそもそも見えない（実測）。見えていると、封筒も指示台帳もレート制限も
+//     配送保証も無いこちらを掴んでしまう — 実際にそれで誤配と不可視の着信が起きた。
+//   - `crossSessionInbound:"refuse"`（受信側）: **AF が起こしていない** claude（利用者が手で
+//     立てたもの）からの着信を止める。送信側の deny では届かない穴はここだけ。
+//
+// **受信側だけでは足りない理由**（実測）: refuse された送信でもツール結果はその場では
+// `success:true` で返り、拒否の受領通知は**数分後・送信側が次にターン境界へ来たとき**に
+// まとめて届く（7分03秒 / 9分49秒後の2通が同一秒に着弾）。黙って消えるわけではないが、
+// **その場では成功に見える**ので、送信側は届いた前提で先へ進み、利用者に「隣へ伝えた」と
+// 報告してしまう。だから送信側で最初から見せない（deny）方が主で、refuse は backstop。
+//
+// ⚠️ **`--managed-settings` に置いても `crossSessionInbound` は効かない**（2.1.251 実測）。
+// `permissions.deny` の方は効くので「ポリシー層に置けば両方効く」と読みたくなるが、効かない。
+// `--settings`（flagSettings 層）は**両方効く**ので、1つにまとめてここへ置いている。
+//
+// `--settings` は既存の設定を**置き換えない**（層になるだけ）。AF が管理する settings.json の
+// PreToolUse フック（RTK 書き換え）がこのフラグ付きで実際に発火することを確認済み — ここを
+// 取り違えると、全セッションのフックと Remote Control 設定が黙って消える。
+const nativePeerSettings = `{"permissions":{"deny":["ListAgents","SendMessage"]},"crossSessionInbound":"refuse"}`
+
 // buildProgram returns the shell command tmux should run for a session.
 // AGENT_SESSION_CMD overrides claude entirely (e.g. "bash") for plumbing tests.
 // Otherwise it resumes when a session jsonl already exists, else starts new.
@@ -46,6 +77,9 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 		flags = strings.TrimSpace(strings.ReplaceAll(" "+flags+" ",
 			" --dangerously-skip-permissions ", " --allow-dangerously-skip-permissions "))
 	}
+	// AGENT_CLAUDE_FLAGS の後ろに足す（上書きさせない）。塞ぐこと自体が目的なので、
+	// 環境変数で無効化できる逃げ道は用意しない。
+	flags += " --settings " + session.ShellQuote(nativePeerSettings)
 	if mode == "plan" {
 		flags += " --permission-mode plan"
 	}

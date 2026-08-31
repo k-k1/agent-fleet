@@ -322,7 +322,7 @@ func StoppedTTL() time.Duration {
 
 // Display derives a human-readable session name, mirroring the Console's
 // displayName (lib/sessionview.ts): the user title if set; else a claude session's
-// --name label (minus the "[AF] " tag); else "{repo}@MMDD-HHMM". The random slug
+// --name label (minus the "[AF:<name>] " tag, label.go); else "{repo}@MMDD-HHMM". The random slug
 // (Name) is never surfaced alone — it's an opaque id users don't recognize, so callers
 // (e.g. the Fleet Operator) should report Display, not Name.
 func Display(m Meta) string {
@@ -330,7 +330,7 @@ func Display(m Meta) string {
 		return m.Title
 	}
 	if m.Label != "" {
-		return strings.TrimLeft(strings.TrimPrefix(m.Label, "[AF]"), " ")
+		return StripLabel(m.Label)
 	}
 	base := m.Repo
 	if base == "" {

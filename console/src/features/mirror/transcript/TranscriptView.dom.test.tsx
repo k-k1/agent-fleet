@@ -337,6 +337,25 @@ describe("peer 着信の見え方（docs/58 §58.14）", () => {
     const el = render([{ role: "user", text: "自分で打った指示", idx: 1 }], RECIPIENT);
     expect(el.querySelector(".mt-peer")).toBeNull();
   });
+
+  // claude 自前の cross-session チャネル(docs/58 §58.16)の着信には封筒が無い —— AF を
+  // 通っていないので付けようが無い。名前は Agent が転写の origin から起こして peerFrom に
+  // 載せるので、そこから出す。ここを繋いでいないと「別のセッション」としか出ず、
+  // 利用者もオペレーターも送っていない指示の出どころが辿れない。
+  it("封筒の無いネイティブ着信でも peerFrom から送信元名を出す", () => {
+    const el = render([{ role: "user", text: "資料の不足を申告する", idx: 1, source: "peer", peerFrom: "s6bbilu" }], RECIPIENT);
+    expect(el.querySelector(".mt-peer")?.textContent).toContain("s6bbilu");
+    // 封筒が無いので種別チップは出ない（推測しない）。
+    expect(el.querySelector(".mt-peer-kind")).toBeNull();
+  });
+
+  it("封筒がある場合は封筒の名前が勝つ（サーバが必ず付ける側）", () => {
+    const el = render(
+      [{ role: "user", text: "[agent-fleet:peer from=build-api intent=notice reply=none] 出た", idx: 1, source: "peer", peerFrom: "s6bbilu" }],
+      RECIPIENT,
+    );
+    expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
+  });
 });
 
 // claude は AskUserQuestion / ExitPlanMode の tool_use を「訊いた時点」で転写に書く。
