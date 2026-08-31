@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// egress-proxy subcommand (docs/20 M2): a small HTTP forward proxy the workspace
+// egress-proxy subcommand (docs/log/20 M2): a small HTTP forward proxy the workspace
 // containers route through (http_proxy/https_proxy env, injected by the CP when
 // AF_EGRESS_PROXY_ADDR is set). It classifies each destination against the allowlist
 // and batches observations to the Control Plane. LOG-ONLY by default: it NEVER blocks
@@ -28,7 +28,7 @@ import (
 
 // proxyPolicy is the atomically-swappable decision state: the compiled allowlist and
 // whether to actually block. Held in an atomic.Pointer so a live policy refresh
-// (docs/20 M3) never races the request path.
+// (docs/log/20 M3) never races the request path.
 type proxyPolicy struct {
 	policy  *egressPolicy
 	enforce bool
@@ -42,7 +42,7 @@ type egressProxy struct {
 func runEgressProxy() {
 	listen := envOr("AF_EGRESS_LISTEN", ":3128")
 	// Static seed: built-in defaults + optional file + AF_EGRESS_ENFORCE. When a CP
-	// policy URL is configured it overrides this on first poll (docs/20 M3).
+	// policy URL is configured it overrides this on first poll (docs/log/20 M3).
 	entries := append([]string(nil), defaultEgressAllowlist...)
 	if f := os.Getenv("AF_EGRESS_ALLOWLIST"); f != "" {
 		if b, err := os.ReadFile(f); err == nil {
@@ -68,7 +68,7 @@ func (p *egressProxy) modeLabel() string {
 	return "log-only"
 }
 
-// pollPolicy refreshes the allowlist + mode from the CP so admin edits (docs/20 M3)
+// pollPolicy refreshes the allowlist + mode from the CP so admin edits (docs/log/20 M3)
 // take effect without restarting the proxy. On any error the last-good policy stays.
 func (p *egressProxy) pollPolicy(ctx context.Context, url, token string) {
 	fetch := func() {

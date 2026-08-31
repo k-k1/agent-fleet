@@ -71,7 +71,7 @@ func handleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	// fold-on-read（docs/46 §3-b）: 使用量が読まれたこの機会に、セッション本体の消費を
+	// fold-on-read（docs/log/46 §3-b）: 使用量が読まれたこの機会に、セッション本体の消費を
 	// 台帳へ折り込む（60 秒スロットル）。常駐タイマーを増やさないための間借り。
 	maybeFoldSessionUsage()
 	out := []sessionUsage{}
@@ -96,7 +96,7 @@ func handleSessionsUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 // overlayKiroLiveUsage fills a running managed kiro session's context + credits from
-// its live ACP handle (Track D — docs/43 §10). kiro's v2 JSONL transcript carries no
+// its live ACP handle (Track D — docs/log/43 §10). kiro's v2 JSONL transcript carries no
 // token counts, so aggregateUsage leaves Context nil; but the managed driver holds the
 // latest _kiro.dev/metadata contextUsagePercentage in memory. We convert the % to a
 // token count against the model's real context window (so pct is exact and the token

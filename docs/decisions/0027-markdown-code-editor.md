@@ -1,159 +1,202 @@
-# 0027. File ペインに CodeMirror 6 の編集モードを追加し、保存を明示操作に限定する
+# 0027. Add a CodeMirror 6 edit mode to the File pane, and limit saving to an explicit action
 
-- 状態: **採用・Phase 4 まで実装済み**（2026-07-28）
-- 詳細契約: [docs/44-markdown-code-editor.md](../44-markdown-code-editor.md)
-- 関連: [docs/dev/02-console.md](../dev/02-console.md)（Console のペイン構成）/
-  [docs/dev/04-workspace-agent.md](../dev/04-workspace-agent.md)（fs の境界と denylist）/
-  [docs/dev/05-api-contracts.md](../dev/05-api-contracts.md)（API 中継の地図）/
-  [decisions/0011](0011-console-rebuild.md)（Console リビルド）
+English | [日本語](0027-markdown-code-editor.ja.md)
 
-## 背景
+- Status: **adopted; implemented through Phase 4** (2026-07-28)
+- The detailed contract: [docs/44-markdown-code-editor.md](../log/44-markdown-code-editor.md)
+- See also: [docs/build/02-console.md](../build/02-console.md) (the Console's pane structure) /
+  [docs/build/04-agent.md](../build/04-agent.md) (the fs boundary and the denylist) /
+  [docs/build/05-api.md](../build/05-api.md) (the map of API relaying) /
+  [decisions/0011](0011-console-rebuild.md) (the Console rebuild)
 
-Console の File ペインは現在、Workspace のファイルを読み取り専用で表示する。
-コードや Markdown を軽く修正する需要に対して、専用エディタペインを新設すると、既存の
-ペイン復元・レイアウト・Markdown/Marp/Mermaid の描画資産が二重化する。また、AI が提案を
-そのままディスクへ書き込む設計は、ユーザーの意図しない変更と競合時の復旧を難しくする。
+## Context
 
-## 決定
+The Console's File pane currently displays workspace files read-only. Against the demand for
+lightly editing code and Markdown, adding a dedicated editor pane would duplicate the existing pane
+restoration, layout and Markdown/Marp/Mermaid rendering assets. And a design in which the AI writes
+its suggestions straight to disk makes unintended changes and recovery from conflicts hard.
 
-1. **エディタは CodeMirror 6 を採用する。** 現行の React + Vite + TypeScript へ組み込みやすく、
-   Markdown/コードの編集に必要な拡張を段階的に追加できる。LSP が必須になる場合に限り、
-   Monaco を将来再評価する。
-2. **既存の `file` ペインを拡張する。** 新しいペイン種別は作らず、ファイルペインに
-   `mode: "view" | "edit"` を持たせる。`view` は従来どおり読み取り専用、`edit` はタブ内の
-   編集バッファを表示する。
-3. **保存APIは `PUT /fs/file` とする。** Console の公開入口は `PUT /api/fs/file`、Workspace
-   Agent 内部の実体は `PUT /fs/file` とし、CP は既存の fs 中継規約で転送する。
-4. **保存は観測時点CAS＋同一API直列化とする。** ファイルの生バイトSHA-256をrevisionとし、
-   保存APIの `baseDiskRevision` と比較時点のrevisionが一致する場合だけ保存する。一致しなければ
-   `409 revision_conflict` とする。同一APIのPUTは、字句検証で確定したcanonical相対pathをmutex key
-   とし、対象のfd安全検証・open・read・hashより前にmutexを取得する。親directoryのfsync結果を
-   確定するまで保持して直列化する。shell、Claude/Codex、git checkout等の外部writerはこのmutexに
-   参加しないため、比較後rename前の外部変更を防止・検出する保証は持たない。全writer協調ロックは
-   採用しない。
-5. **保存はatomic writeとし、rename後失敗を別状態にする。** 対象と同じディレクトリに一時ファイルを
-   書き、fsyncしてからrenameし、親directoryもfsyncする。rename前の失敗は旧本文を保持して
-   `write_failed`、rename後のdirectory fsync等の失敗は現在のlive namespaceでは新本文だが
-   durabilityが不明な `write_state_unknown` とする。GET照合だけではdurabilityを確定できないため、
-   クライアントはdirtyなmineを保持する `SaveStateUnknown` へ遷移し、明示的な再保存またはリスク承認を
-   要求する。通常保存は200応答でのみcleanとし、送信本文のlive反映を確認した後の明示的な
-   durabilityリスク承認だけを例外とする。リスク承認時は復旧GETで確認した送信本文のrevisionを
-   `baseDiskRevision`へ設定してからclean/dirtyを分岐する。保持する属性は `mode.Perm()` のみで、
-   owner/ACL/xattr/special bitsはv1で保証しない。
-6. **操作面ごとにfd-relativeな境界を分離する。** v1のLinux Agentはroot/parent directory fdを固定し、
-   `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`、`fstatat(AT_SYMLINK_NOFOLLOW)`、`renameat`相当を
-   GET/file、download、PUTで使う。PUTはbrowse-root相対canonical pathのみ、GET/downloadは既存
-   `allowedReadRoots`（browse/scratch/docs）配下のcanonical絶対pathも許可し、許可rootを選んでroot fd
-   から相対化する。既存の字句検査＋Lstat helperはrequest-controlled pathのTOCTOU対策として再利用しない。
-   symlinkによるpath迂回は抑止するが、同一uidのnamespace mutatorやhardlinkによるinode別名はv1の
-   非協調writer脅威モデル外で、denylistはinode出自まで保証しない。GETは最大2回の
-   `fstat-before → 2 MiB+1 bounded read → fstat-after`でsize/content-length整合を確認するが、
-   同サイズの外部in-place writeに対する瞬間snapshotは保証しない。
-7. **編集対象はLF-onlyのUTF-8テキストとする。** CRLF/CR単独/混在改行は読み取り専用にし、raw byte
-   revisionとCodeMirror 6のdocument offsetを変換なしで一致させる。typing/IME/paste/undo/redo/AI
-   replacementの全transactionへCR/NUL/unpaired surrogate/2 MiB validatorを適用する。PUTのwire bodyが
-   UTF-8不正またはJSON不正なら400 `bad_request`、current fileのUTF-8不正/NULとdecoded contentのNULは
-   415 `binary_not_supported`、CRは415 `unsupported_newline` とする。JSON文字列のlone high/low
-   surrogate escapeも400 `bad_request`とし、正しいsurrogate pairと実際のU+FFFDは許可する。
-   将来の改行マッピングやCRLF対応は別設計で固定してから追加する。
-8. **AIは変更提案チャネルで編集バッファまでしか変更しない。** 一般のClaude/Codex等にはWrite/Edit/
-   Bash能力があり得るため、AI全体の権限を「書込みtoolなし」とは表現しない。Phase 4の提案生成だけは
-   read-only allowlist経路に限定し、`EditSuggestion`をpaneId/filePath/requestId/sourceRevisionと
-   ともに検証する。acceptはPUTを呼ばず、保存はユーザーのCtrl+S/Cmd+SまたはSaveボタンに限定する。
-9. **Markdownは既存資産を再利用する。** 編集・プレビュー・左右分割の3モードをFileペイン内で提供し、
-   MarkdownView、MarpView、Mermaidの遅延ロードを再利用する。現行sourceはedit、previewとslidesは
-   preview側のrenderer選択へ対応させ、Marpの通常previewを失わない。
-10. **未保存本文はメモリ限定とし、全navigationをguardする。** dirty本文、undo、提案、世代を
-    PaneContent/layoutへ入れず、layoutがstorageに永続化されても本文を保存しない。closeだけでなく
-    active差し替え、pane再利用、history、tenant/reset、reader、popout、beforeunloadをdirty registryで
-    保護する。reload、logout、version update、workspace recreate/clean-home/stopも対象とし、
-    terminal用のversion update例外をeditorへ流用しない。dirty popoutはv1では拒否または明示確認とする。
-11. **409競合は別remote snapshotを持つstate machineで解決する。** dirty mineを上書きせず、remote採用、
-    mine破棄、remoteをbaseにした手動merge、cancelをPhase 2で提供する。409後のGETで対象消失・安全境界
-    エラー・編集不可となった場合はmineを保持する `ConflictRemoteUnavailable` とし、再取得・コピー・
-    明示的に閉じる操作を提供する。remote revisionだけを更新してmineをforce overwriteする経路は作らない。
-12. **Markdownのトップレベルモードは3つに保ち、編集面がsource面の機能を包含する。** Markdownでは
-    edit/preview/splitを唯一のトップレベル操作とし、ペインの `mode` をそこから導出する。編集可能な
-    Markdownに読み取り専用の `source` モードは残さない。代わりに、CodeViewが持っていた選択→送ると
-    行引用のジャンプをCodeMirrorの編集面へ実装する。行番号と引用文字列はDOMではなくCodeMirrorの
-    documentから求める（仮想化により画面外の選択がDOMに存在しないため）。編集できないMarkdownは
-    従来のpreview/source/slidesへフォールバックする。
-13. **外部変更の追従はadvisoryなrevisionプローブとし、CASを置き換えない。** Console以外の書き手
-    （エージェント・shell・git）によるファイル変更を、本文を返さない `GET /fs/file?meta=1` の
-    ポーリングで検知する。新規ルートは作らずクエリフラグとし、CPのルート追加を不要にする。dirtyの
-    ときは通知だけを行い、**プローブは `phase` を遷移させない**。`Conflict` を作るのは409応答と、
-    ユーザーが明示的に「差分を確認」を実行して本文GETに成功した場合（docs/44 §7.3）に限り、
-    プローブがConflictを自動発生させない不変条件を維持する。cleanのときは自動追従してよいが、
-    undo履歴に旧本文を残さない。追従対象は `revision` を持つ `editable:true` のファイルに限る。
+## Decision
 
-## 対象範囲とフェーズ境界
+1. **Adopt CodeMirror 6 as the editor.** It integrates easily with the current React + Vite +
+   TypeScript, and the extensions needed for editing Markdown and code can be added in stages.
+   Monaco will be re-evaluated in future only if LSP becomes a requirement.
+2. **Extend the existing `file` pane.** No new pane kind: the file pane gains
+   `mode: "view" | "edit"`. `view` is read-only as before; `edit` shows an editing buffer inside the
+   tab.
+3. **The save API is `PUT /fs/file`.** The Console's public entrance is `PUT /api/fs/file` and the
+   actual endpoint inside the Workspace Agent is `PUT /fs/file`, with the CP forwarding under the
+   existing fs relay convention.
+4. **Saving is compare-time CAS plus serialisation within the same API.** The revision is the
+   SHA-256 of the file's raw bytes, and a save proceeds only if the save API's `baseDiskRevision`
+   matches the revision at the time of comparison. If it does not, the result is
+   `409 revision_conflict`. PUTs on the same API take a mutex keyed by the canonical relative path
+   fixed by lexical validation, acquired **before** the target's fd-safe validation, open, read and
+   hash, and held until the parent directory's fsync result is settled. External writers — the
+   shell, Claude/Codex, `git checkout` and so on — do not participate in this mutex, so it offers no
+   guarantee of preventing or detecting an external change between the comparison and the rename. A
+   cooperative lock across all writers is not adopted.
+5. **Saving is an atomic write, and a failure after the rename is a distinct state.** Write a
+   temporary file in the same directory as the target, fsync it, rename, and fsync the parent
+   directory too. A failure before the rename keeps the old content and is `write_failed`; a failure
+   after the rename (in the directory fsync and so on) means the new content is in the live
+   namespace but its durability is unknown, and is `write_state_unknown`. A GET comparison alone
+   cannot settle durability, so the client transitions to `SaveStateUnknown`, holding its dirty
+   "mine", and requires either an explicit re-save or an acknowledgement of the risk. A normal save
+   is clean only on a 200 response; the sole exception is an explicit acceptance of the durability
+   risk after confirming that the sent content is live. On accepting the risk, the revision of the
+   sent content as confirmed by the recovery GET is set as `baseDiskRevision` before branching on
+   clean/dirty. The only attribute preserved is `mode.Perm()`; owner, ACLs, xattrs and special bits
+   are not guaranteed in v1.
+6. **Separate an fd-relative boundary per operation surface.** The v1 Linux Agent fixes the
+   root/parent directory fds and uses `openat2(RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS)`,
+   `fstatat(AT_SYMLINK_NOFOLLOW)` and the `renameat` equivalent for GET/file, download and PUT. PUT
+   accepts only a browse-root-relative canonical path; GET and download additionally accept a
+   canonical absolute path under the existing `allowedReadRoots` (browse/scratch/docs), choosing the
+   permitted root and taking the path relative to that root fd. The existing lexical check plus
+   Lstat helper is not reused as TOCTOU protection for a request-controlled path. Path detours via
+   symlinks are prevented, but a namespace mutator running as the same uid, and inode aliasing via
+   hardlinks, are outside v1's non-cooperative-writer threat model; the denylist does not guarantee
+   anything about an inode's provenance. GET verifies size/content-length consistency with at most
+   two rounds of `fstat-before → a bounded 2 MiB+1 read → fstat-after`, but it does not guarantee an
+   instantaneous snapshot against an external in-place write of the same size.
+7. **The material for editing is LF-only UTF-8 text.** CRLF, lone CR and mixed line endings are
+   read-only, so that the raw byte revision and CodeMirror 6's document offsets match with no
+   conversion. The CR / NUL / unpaired-surrogate / 2 MiB validators are applied to every
+   transaction: typing, IME, paste, undo, redo and AI replacement. If PUT's wire body is invalid
+   UTF-8 or invalid JSON, it is 400 `bad_request`; invalid UTF-8 or a NUL in the current file, and a
+   NUL in the decoded content, are 415 `binary_not_supported`; CR is 415 `unsupported_newline`. A
+   lone high/low surrogate escape in a JSON string is also 400 `bad_request`, while correct
+   surrogate pairs and an actual U+FFFD are allowed. Future line-ending mapping or CRLF support will
+   be added only after being fixed in a separate design.
+8. **The AI changes nothing beyond the editing buffer, through a change-proposal channel.** A
+   general Claude/Codex may well have Write/Edit/Bash capabilities, so we do not describe the AI as
+   a whole as having "no write tools". Only Phase 4's proposal generation is restricted to a
+   read-only allowlisted path, and an `EditSuggestion` is validated together with
+   paneId/filePath/requestId/sourceRevision. Accepting does not call PUT; saving is limited to the
+   user's Ctrl+S / Cmd+S or the Save button.
+9. **Markdown reuses the existing assets.** Three modes — edit, preview and a side-by-side split —
+   are offered inside the File pane, reusing the lazy loading of MarkdownView, MarpView and Mermaid.
+   The current source becomes edit, while preview and slides become a renderer choice on the preview
+   side, so Marp's ordinary preview is not lost.
+10. **Unsaved content is memory-only, and every navigation is guarded.** Dirty content, undo, the
+    suggestion and the generation are kept out of PaneContent/layout, so the content is not saved
+    even though the layout is persisted to storage. Not just closing, but replacing the active pane,
+    pane reuse, history, tenant/reset, the reader, popout and beforeunload are protected by a dirty
+    registry. Reload, logout, a version update and workspace recreate/clean-home/stop are covered
+    too, and the terminal's version-update exception is not carried over to the editor. A dirty
+    popout is refused or explicitly confirmed in v1.
+11. **A 409 conflict is resolved by a state machine holding a separate remote snapshot.** The dirty
+    "mine" is not overwritten; Phase 2 offers taking remote, discarding mine, a manual merge with
+    remote as the base, and cancel. If the GET after a 409 finds the target gone, hits a safety
+    boundary error or finds it uneditable, the state is `ConflictRemoteUnavailable`, holding mine and
+    offering re-fetch, copy and an explicit close. There is no path that updates only the remote
+    revision and force-overwrites with mine.
+12. **Markdown keeps three top-level modes, and the edit surface subsumes what the source surface
+    did.** For Markdown, edit/preview/split are the only top-level operations, and the pane's `mode`
+    is derived from them. There is no read-only `source` mode for editable Markdown. Instead, the
+    select→send and line-quote jump that CodeView had are implemented on CodeMirror's edit surface.
+    The line number and quoted string are taken from CodeMirror's document rather than the DOM
+    (virtualisation means an off-screen selection is not in the DOM). Markdown that cannot be edited
+    falls back to the old preview/source/slides.
+13. **Following external changes is an advisory revision probe; it does not replace CAS.** Changes
+    made by writers other than the Console (agents, the shell, git) are detected by polling
+    `GET /fs/file?meta=1`, which does not return content. It is a query flag rather than a new
+    route, so no CP route has to be added. When dirty, it only notifies, and **the probe does not
+    move `phase`**. `Conflict` is created only by a 409 response and by the user explicitly running
+    "review the difference" and the content GET succeeding (docs/44 §7.3), preserving the invariant
+    that a probe never creates a Conflict by itself. When clean it may follow automatically, but the
+    old content is not left in the undo history. Only `editable:true` files that have a `revision`
+    are followed.
 
-- Phase 0（本ADRと [docs/44](../44-markdown-code-editor.md)）で、設計・API・revision/競合・提案形式・
-  入力制約を固定する。
-- Phase 1 は Agent/CP route、中継、監査（`write_state_unknown`含む）、strict decoder、fd-relative操作、
-  GET/download race、symlink/CAS/failure injection、current file/path boundを含む保存API基盤とGo単体
-  テストを行う。
-- Phase 2 は CodeMirror 6、Fileペインのview/edit、single-flight保存、snapshot/generation、
-  `SaveStateUnknown`、409競合とremote取得不能のstate machine、全buffer validator、dirty registry/
-  navigation guard、beforeunload、ARIA、Saveボタンを実装する。
-- Phase 3 は Markdown/Marpのedit/preview/split、通常preview/slide renderer切替、編集面の選択→送ると
-  行ジャンプ、既存描画資産の回帰テストを実装する。**2026-07-28に実装完了。** Console単独で完結し
-  Agent/CPの変更は無い。レビュー8ラウンド・14件の指摘に対応し、既知の限界として残した項目は無い。
-- Phase 3.5 は `meta=1` メタデータGET、Consoleのプローブ、dirty時のadvisory通知、clean時の自動追従
-  （読み取り専用のviewペインを含む）を実装する。**2026-07-28に実装完了**（docs/44 §6 Phase 3.5）。
-  Agent側は応答からの `content` 除去のみで判定・排他・エラー契約を通常GETと共有し、Console側は
-  undo履歴を残さないEditorState再構築と行番号ベースのカーソル/スクロール復元で追従する。
-- Phase 4 は read-only提案生成チャネル、identity付き構造化提案、差分レビュー、accept/rejectを実装する。
-  **2026-07-28に実装完了**（docs/44 §6 Phase 4）。UXは「選択範囲＋指示文」（rangeはユーザー選択で
-  確定し、LLMにoffsetを計算させない。選択なしは全文）、transportは同期POST
-  `POST /fs/suggest-edit`（envelopeはwireに載せずConsoleが合成して§4.2の検証を通す）、生成は
-  タイトル/返信サジェストと同じ `oneShotHeadless` を再利用し、唯一read-onlyでなかったopencode
-  one-shotへ `OPENCODE_CONFIG` のedit/bash denyポリシーを追加して閉じた。staleは保存せず
-  `baseRevision !== bufferRevision` から導出し、適用はCodeMirrorの範囲transaction 1回
-  （undo可能・共通validatorフィルタ通過）で行う。
-- Phase 5 の複数候補・hunk単位accept・セッション連携・補完・CRLF対応は別設計後に着手する。
+## Scope and phase boundaries
 
-## 却下した選択肢
+- Phase 0 (this ADR and [docs/44](../log/44-markdown-code-editor.md)) fixes the design, the API,
+  revisions/conflicts, the proposal format and the input constraints.
+- Phase 1 covers the save API foundation and its Go unit tests: the Agent/CP routes, relaying,
+  auditing (including `write_state_unknown`), the strict decoder, fd-relative operations, the
+  GET/download race, symlink/CAS/failure injection, and the current-file and path bounds.
+- Phase 2 implements CodeMirror 6, view/edit in the File pane, single-flight saving,
+  snapshot/generation, `SaveStateUnknown`, the state machine for a 409 conflict and for an
+  unreachable remote, all the buffer validators, the dirty registry and navigation guard,
+  beforeunload, ARIA and the Save button.
+- Phase 3 implements edit/preview/split for Markdown/Marp, switching between the ordinary preview
+  and the slide renderer, select→send and the line jump on the edit surface, and regression tests
+  for the existing rendering assets. **Completed 2026-07-28.** It is contained in the Console alone;
+  no Agent or CP changes. Eight rounds of review and 14 comments were addressed, and no item was left
+  as a known limitation.
+- Phase 3.5 implements the `meta=1` metadata GET, the probe in the Console, an advisory notification
+  when dirty, and automatic following when clean (including read-only view panes). **Completed
+  2026-07-28** (docs/44 §6 Phase 3.5). On the Agent side it only removes `content` from the
+  response, sharing the decision, exclusion and error contracts with the ordinary GET; on the Console
+  side it follows by rebuilding EditorState without leaving undo history, restoring the cursor and
+  scroll position by line number.
+- Phase 4 implements the read-only proposal generation channel, structured proposals with an
+  identity, the diff review and accept/reject. **Completed 2026-07-28** (docs/44 §6 Phase 4). The UX
+  is "a selected range plus an instruction" (the range is fixed by the user's selection; the LLM is
+  not asked to compute offsets, and no selection means the whole file); the transport is a
+  synchronous `POST /fs/suggest-edit` (the envelope does not go on the wire — the Console composes it
+  and passes it through §4.2's validation); generation reuses the same `oneShotHeadless` as title and
+  reply suggestions, and the one one-shot that was not read-only, opencode, was closed off by adding
+  an edit/bash deny policy via `OPENCODE_CONFIG`. Staleness is not stored but derived from
+  `baseRevision !== bufferRevision`, and applying is a single range transaction in CodeMirror
+  (undoable, and passing the shared validator filter).
+- Phase 5 — multiple candidates, accepting a single hunk, session integration, completion and CRLF
+  support — begins after a separate design.
 
-- **Monaco を先に採用する:** LSP のない段階では依存とバンドルが大きく、既存の軽量な viewer との
-  統合に対する利点が不足する。LSP が要件になった時点で再評価する。
-- **編集専用の新規ペイン種別:** レイアウト、URL/履歴、ペイン復元、既存 viewer の再利用点が増え、
-  File ペインの自然な view/edit 遷移を失うため採らない。
-- **AIが直接ファイルを書き込む:** 明示的なユーザー承認、競合レビュー、監査の境界が曖昧になるため
-  採らない。AIは提案の生成とバッファ適用までに限定する。
-- **localStorageへのdraft保存:** 共有端末やアカウント切替時の残留、機微なソースコードの意図しない
-  永続化を招くため採らない。
-- **revisionなしの上書き保存:** 別タブ、外部エージェント、git操作による変更を黙って消すため採らない。
-- **全writerを協調ロック下に置く:** shell/agent/gitを含む全書込み経路の統合はv1の変更範囲と権限境界を
-  大きくするため採らない。比較時点CASの限界を契約とテストに明記する。
-- **編集可能なMarkdownに読み取り専用のsourceモードを残す:** トップレベルのモードが4つ（Marpでは実質
-  5つ）になり、キーボードでの巡回とスマホ幅のレイアウトが破綻する。さらに、見た目がほぼ同じ
-  プレーンテキスト面が2つ並び、送るピル・検索・編集可否が面ごとに食い違う。編集面へ機能を移せば
-  この重複自体が不要になるため採らない。
-- **Agentのfsnotify + pushストリームで外部変更を検知する:** 監視レジストリ、CP経由の新しいstream配線、
-  コンテナFSのinotify挙動とwatch上限の検討が必要で、v1の変更範囲を大きく超える。プローブで不足だと
-  確認された時点で別設計とする。
-- **全文GETをポーリングして外部変更を検知する:** 開いているペインごとに最大2 MiBを繰り返し転送し、
-  Console↔CPの通信量削減の方針に反するため採らない。
+## Options rejected
 
-## 結果と受け入れる制約
+- **Adopting Monaco first**: without LSP, the dependency and bundle are large and the benefit
+  against integrating with the existing lightweight viewers is insufficient. Re-evaluate when LSP
+  becomes a requirement.
+- **A new pane kind dedicated to editing**: it multiplies the points of layout, URL/history, pane
+  restoration and reuse of the existing viewers, and it loses the natural view/edit transition of
+  the File pane.
+- **The AI writing files directly**: the boundaries of explicit user approval, conflict review and
+  auditing become vague. The AI is limited to generating a proposal and applying it to the buffer.
+- **Saving drafts to localStorage**: it leaves residue on a shared machine or when switching
+  accounts, and unintentionally persists sensitive source code.
+- **Overwriting without a revision**: it silently erases changes made by another tab, an external
+  agent or a git operation.
+- **Putting every writer under a cooperative lock**: unifying every write path including the shell,
+  the agents and git would greatly expand v1's change footprint and privilege boundary. The limits of
+  compare-time CAS are stated in the contract and the tests instead.
+- **Keeping a read-only source mode for editable Markdown**: there would be four top-level modes
+  (effectively five for Marp), which breaks keyboard cycling and the phone-width layout. Worse, two
+  nearly identical plain-text surfaces would sit side by side with the send pill, search and
+  editability differing between them. Moving the features onto the edit surface removes the need for
+  the duplication.
+- **Detecting external changes with the Agent's fsnotify plus a push stream**: it needs a watch
+  registry, new stream wiring through the CP, and investigation of inotify behaviour and watch limits
+  in a container FS — well beyond v1's footprint. If the probe proves insufficient, that becomes a
+  separate design.
+- **Polling a full GET to detect external changes**: it would repeatedly transfer up to 2 MiB per
+  open pane, contradicting the policy of reducing Console↔CP traffic.
 
-- 既存の File ペインと描画資産を維持したまま、ユーザーが編集・確認・明示保存できる。
-- 競合時は安全側に倒して保存を止める。自動マージや強制上書きは将来の別設計とする。
-- v1 は UTF-8 のテキストファイル、かつ編集本文 2 MiB 以下に限定する。バイナリ、非UTF-8、
-  大容量ファイル、denylist 配下、symlink 経由のファイルは編集対象外とする。GET/downloadは
-  scratch/docsのallowed read root絶対pathをread-onlyで許可する。
-- dirty バッファはタブのメモリにしか存在しないため、ブラウザ再起動後の復元機能は提供しない。
-- 外部変更の検知はポーリングであり、リアルタイムではない。タブが背面のあいだ、およびプローブ間隔の
-  ぶんだけ気付くのが遅れる。`editable:false` のファイルは `revision` を持たないため追従対象外である。
-  検知は早期警告にすぎず、保存の正しさは引き続き比較時点CASが担保する。
-- 同一uidのnamespace mutatorやhardlinkによるinode別名は非協調writer脅威モデル外であり、fd境界は
-  request-controlled pathとsymlink解決の保護範囲として説明する。
-- **既知の制約:** クライアントがPUTをタイムアウトで打ち切った後の復旧GETは、Agent内の
-  path mutex共有とmutex取得直後のcontext検査でAgentプロセス内の競合を閉じている。ただし
-  PUTと復旧GETは別々のCP→Agent HTTPリクエストであり、CPはキャンセルの伝播順序を保証しない
-  ため、「mutex取得前に停止していたPUTへcancelが届くより先に復旧GETが旧baseを読み、その後
-  再開したPUTが検査を通過してrenameする」極めて狭い窓が残る（docs/44 §3.2）。発生には
-  goroutineスケジューリングとネットワークタイミングの重なりが必要で確率は極めて低く、v1では
-  受け入れる。解消はCP側でのpath単位進行中PUT追跡、または保存operation IDによるGETの
-  待ち合わせを要する将来課題とする。
+## Results and the constraints accepted
+
+- Users can edit, review and explicitly save while the existing File pane and rendering assets stay
+  as they are.
+- On a conflict it errs on the safe side and stops the save. Automatic merging and force
+  overwriting are left to a future, separate design.
+- v1 is limited to UTF-8 text files with an edited body of 2 MiB or less. Binary, non-UTF-8, large
+  files, anything under the denylist and files reached through a symlink cannot be edited. GET and
+  download allow absolute paths under the scratch/docs allowed read roots, read-only.
+- A dirty buffer exists only in the tab's memory, so there is no restoration after a browser
+  restart.
+- External-change detection is polling, not real time. It is late by however long the tab is in the
+  background plus the probe interval. Files with `editable:false` have no `revision` and are not
+  followed. Detection is only an early warning; the correctness of a save is still carried by
+  compare-time CAS.
+- A namespace mutator running as the same uid, and inode aliasing via hardlinks, are outside the
+  non-cooperative-writer threat model; the fd boundary is described as protection for
+  request-controlled paths and symlink resolution.
+- **A known constraint**: after a client aborts a PUT on a timeout, the recovery GET is closed
+  against races within the Agent process by sharing the path mutex and checking the context
+  immediately after acquiring it. But the PUT and the recovery GET are separate CP→Agent HTTP
+  requests, and the CP guarantees nothing about the order in which cancellation propagates, so an
+  extremely narrow window remains: "the recovery GET reads the old base before the cancel reaches a
+  PUT that had stopped before acquiring the mutex, and the PUT then resumes, passes its check and
+  renames" (docs/44 §3.2). Hitting it requires goroutine scheduling and network timing to coincide;
+  the probability is extremely low and v1 accepts it. Closing it would require tracking in-flight
+  PUTs per path on the CP side, or having the GET wait on a save operation ID — future work.

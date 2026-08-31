@@ -36,7 +36,7 @@ describe("Chromium attachment action route", () => {
     expect(browserAttachmentIdFromLink("https://fleet.invalid/open/browser-attachment/ba_x", base)).toBe("ba_x");
     expect(browserAttachmentIdFromLink("https://evil.invalid/open/browser-attachment/ba_x", base)).toBeNull();
     expect(browserAttachmentIdFromLink("javascript:alert(1)//open/browser-attachment/ba_x", base)).toBeNull();
-    expect(browserAttachmentIdFromLink("/docs/53.md", base)).toBeNull();
+    expect(browserAttachmentIdFromLink("/docs/log/53.md", base)).toBeNull();
     expect(browserAttachmentIdFromLink("", base)).toBeNull();
   });
 

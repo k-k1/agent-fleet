@@ -1,6 +1,6 @@
 package kiro
 
-// v2 JSONL セッションストア → transcript.Turn 正規化（read 正本、docs/43）。実測
+// v2 JSONL セッションストア → transcript.Turn 正規化（read 正本、docs/log/43）。実測
 // （2.14.1）の行形式（1 行 1 レコード・append-only）:
 //
 //	{"version":"v1","kind":"Prompt","data":{"message_id":"…","content":[{"kind":"text","data":"…"}],"meta":{"timestamp":1784869360}}}

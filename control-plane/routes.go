@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// buildMux は CP の全ルートを登録した mux を返す（docs/23 P0-2 で main() から抽出、
+// buildMux は CP の全ルートを登録した mux を返す（docs/log/23 P0-2 で main() から抽出、
 // P2-W1 で機能別 register 関数に分散）。テストが実ルート表を httptest で叩くための
 // 分離で、登録内容は従来と同一。認証ゲート（authGate）や logRequests のラップは
 // 呼び出し側（main / テスト）の責務。
@@ -51,7 +51,7 @@ func registerNotificationRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/notifications/usage-observations", n.withMembership(n.observeUsage))
 }
 
-// --- authGate 除外レジストリ（docs/23 P2-W1） -------------------------------
+// --- authGate 除外レジストリ（docs/log/23 P2-W1） -------------------------------
 // セッション無しで到達できるパスは、従来 oauth_google.go にハードコードされ
 // ルート表と手動同期だった。各 register 関数が自分の除外を宣言し、authGate の
 // isAuthExempt はこのレジストリを参照する。buildMux はテストから複数回呼ばれる
@@ -102,11 +102,11 @@ func isAuthExempt(p string) bool {
 // a session; see oauth.go (flow/session) and oauth_oidc.go (the IdP client).
 func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 	exemptExact("/login", "/healthz")
-	// /login/<tenant-slug> is the per-tenant sign-in page (docs/61 §61.9.3) and is
+	// /login/<tenant-slug> is the per-tenant sign-in page (docs/log/61 §61.9.3) and is
 	// reachable without a session, like /login itself.
 	exemptPrefix("/oauth2/", "/brand/", "/login/")
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
-	// Build version + the images this deployment runs (docs/35 §35.6.1,
+	// Build version + the images this deployment runs (docs/log/35 §35.6.1,
 	// version_info.go). Deliberately NOT auth-exempt: /healthz is frozen
 	// (restart-cp.sh compares the body to "ok" verbatim) and none of this should
 	// leak to unauthenticated callers.
@@ -114,18 +114,18 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 		writeJSON(w, http.StatusOK, versionPayload(r.Context(), cfg.mgr))
 	})
 	mux.HandleFunc("GET /login", cfg.handleLogin)
-	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin) // per-tenant page (docs/61 §61.9.3)
+	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin) // per-tenant page (docs/log/61 §61.9.3)
 	mux.HandleFunc("GET /oauth2/login", cfg.handleOAuthLogin)
 	mux.HandleFunc("GET /oauth2/callback", cfg.handleOAuthCallback)
 	mux.HandleFunc("GET /oauth2/logout", cfg.handleOAuthLogout)
 	// Linking a second sign-in method to the account you are ALREADY signed in as
-	// (docs/61 §61.16 + 決定 37). It sits under the auth-exempt /oauth2/ prefix like
+	// (docs/log/61 §61.16 + 決定 37). It sits under the auth-exempt /oauth2/ prefix like
 	// the rest of the flow, and therefore checks the session itself.
 	mux.HandleFunc("GET /oauth2/link", cfg.handleOAuthLink)
-	// The account panel behind it — a normal session-gated API (docs/61 §61.16).
+	// The account panel behind it — a normal session-gated API (docs/log/61 §61.16).
 	acct := newAccountAPI(cfg)
 	mux.HandleFunc("GET /api/me/login-methods", acct.withIdentity(acct.loginMethods))
-	// Unlinking one (docs/61 §61.16.4). provider/subject are query parameters, not
+	// Unlinking one (docs/log/61 §61.16.4). provider/subject are query parameters, not
 	// path segments — a tenant provider id carries colons; see detachLoginMethod.
 	mux.HandleFunc("DELETE /api/me/login-methods", acct.withIdentity(acct.detachLoginMethod))
 	// Identity — who the AuthGateway resolved this request to (and the raw
@@ -134,7 +134,7 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 }
 
 // Tenants — the caller's memberships (Console picker) + admin API + egress
-// observation (docs/14 P3-2, docs/20). /internal/* is deployment-internal
+// observation (docs/14 P3-2, docs/log/20). /internal/* is deployment-internal
 // (egress proxy ingestion), authenticated by Bearer token — session-exempt.
 func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	exemptPrefix("/internal/")
@@ -146,34 +146,34 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members", adm.listMembers)
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/stats", adm.memberStats)       // per-member mem/CPU/disk
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/sessions", adm.memberSessions) // per-member session list (read-only)
-	// One member's attributed cloud cost (docs/67 §67.15). Same body as /api/cost/me,
+	// One member's attributed cloud cost (docs/log/67 §67.15). Same body as /api/cost/me,
 	// keyed by membership instead of by the caller — the per-member LIST carries a total
 	// and nothing else, so the daily shape and the breakdown are not derivable from it.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/cost", adm.memberCloudCost)
-	// 後始末の 3 段目（docs/61 §61.18）。除名（DELETE /api/admin/memberships）と破棄
+	// 後始末の 3 段目（docs/log/61 §61.18）。除名（DELETE /api/admin/memberships）と破棄
 	// （DELETE /api/admin/workspaces）を済ませた行だけを、ここで実際に消す。
 	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/members/{key}", adm.deleteMembership)
 	mux.HandleFunc("POST /api/admin/tenants", adm.withSuperAdmin(adm.createTenant))
-	mux.HandleFunc("DELETE /api/admin/tenants/{slug}", adm.withSuperAdmin(adm.deleteTenant)) // 空のテナントだけ (docs/61 §61.18)
+	mux.HandleFunc("DELETE /api/admin/tenants/{slug}", adm.withSuperAdmin(adm.deleteTenant)) // 空のテナントだけ (docs/log/61 §61.18)
 	mux.HandleFunc("POST /api/admin/memberships", adm.addMembership)
-	mux.HandleFunc("DELETE /api/admin/memberships", adm.removeMembership) // offboarding (docs/61 §61.10.6)
+	mux.HandleFunc("DELETE /api/admin/memberships", adm.removeMembership) // offboarding (docs/log/61 §61.10.6)
 	mux.HandleFunc("DELETE /api/admin/workspaces", adm.destroyWorkspace)  // irreversible; inactive members only (ADR 0045 決定 13)
 	mux.HandleFunc("POST /api/admin/stop-workspace", adm.stopWorkspace)
-	mux.HandleFunc("POST /api/admin/clean-home", adm.cleanHome) // wipe home (tenant_admin, docs/61 §61.10.6)
+	mux.HandleFunc("POST /api/admin/clean-home", adm.cleanHome) // wipe home (tenant_admin, docs/log/61 §61.10.6)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", adm.withSuperAdmin(adm.setTenantLimits))
-	mux.HandleFunc("PUT /api/admin/tenants/{slug}/login", adm.withSuperAdmin(adm.setTenantLogin)) // per-tenant login rules (docs/61 §61.9.7)
-	// The tenant's own source-network restriction (docs/66, ADR 0047). tenant_admin,
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/login", adm.withSuperAdmin(adm.setTenantLogin)) // per-tenant login rules (docs/log/61 §61.9.7)
+	// The tenant's own source-network restriction (docs/log/66, ADR 0047). tenant_admin,
 	// unlike the login rules above: it reaches nothing outside this tenant. The gate
 	// on both is checked mid-handler by tenantAdminFor.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/network", adm.tenantNetwork)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/network", adm.setTenantNetwork)
-	// The tenant's DEFAULT machine class (docs/70). tenant_admin for the same reason
+	// The tenant's DEFAULT machine class (docs/log/70). tenant_admin for the same reason
 	// as the network rule above — it reaches nothing outside this tenant, and the set
 	// it may choose from is bounded by allowed_slot_classes, which only a super_admin
 	// can write (on the limits endpoint).
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/slot-class", adm.tenantSlotClass)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/slot-class", adm.setTenantSlotClass)
-	// Tenant-defined sign-in methods (docs/61 §61.11). The rows are the tenant's, so
+	// Tenant-defined sign-in methods (docs/log/61 §61.11). The rows are the tenant's, so
 	// these gate on tenant_admin mid-handler; ACTIVATION is checked inside setStatus,
 	// which is the one super_admin step (決定 30). The queue is deployment-wide.
 	idp := newTenantIdPAPI(cfg.mgr, cfg.providers)
@@ -183,7 +183,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/idp/{id}", idp.remove)
 	mux.HandleFunc("POST /api/admin/tenants/{slug}/idp/{id}/status", idp.setStatus)
 	mux.HandleFunc("GET /api/admin/idp", idp.withSuperAdmin(idp.queue)) // approval queue (super_admin)
-	// The tenant's git provider OAuth apps (docs/71). tenant_admin end to end — no
+	// The tenant's git provider OAuth apps (docs/log/71). tenant_admin end to end — no
 	// approval step, because an app for cloning repositories declares nothing about who
 	// anybody is (ADR0052 決定 3). The gate is taken mid-handler by tenantAdminFor.
 	gho := newTenantGitOAuthAPI(cfg.mgr)
@@ -192,7 +192,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/git-oauth/{provider}", gho.remove)
 	// The deployment's own (env-defined) providers, read-only — since P7 these ARE
 	// the default tenant's methods, and every tenant's sign-in method panel lists
-	// them (docs/61 §61.17). Hence withAnyTenantAdmin rather than withSuperAdmin:
+	// them (docs/log/61 §61.17). Hence withAnyTenantAdmin rather than withSuperAdmin:
 	// the reader is a tenant administrator, and the issuer column is dropped for
 	// them inside the handler. cfg.providers is set before buildMux, so capturing
 	// it here is the whole set.
@@ -204,23 +204,23 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/admin/ec2-pool", adm.withSuperAdmin(adm.poolStatus))                   // EC2 slot pool (ecs-ec2 only)                            // host load / memory (super_admin)
 	mux.HandleFunc("GET /api/admin/workspace-sizing", adm.withIdentity(adm.workspaceSizingProfile)) // what mem/CPU/disk MEAN on this runtime (ADR 0045 決定 21)
 	mux.HandleFunc("GET /api/admin/usage", adm.usage)                                               // showback: occupancy per tenant/member (json|csv)
-	// Cloud cost — the AWS invoice (docs/67 + ADR 0048). Deliberately NOT folded into
+	// Cloud cost — the AWS invoice (docs/log/67 + ADR 0048). Deliberately NOT folded into
 	// /api/admin/usage: that one is occupancy in seconds and exists everywhere, this one
 	// is money and exists only on AWS. Same reason the Console gives them different names.
 	mux.HandleFunc("GET /api/cost/profile", adm.withIdentity(adm.costProfileHandler))                   // is there a bill here at all
 	mux.HandleFunc("GET /api/cost/me", adm.withMembership(adm.myCloudCost))                             // the caller's OWN attributed spend
 	mux.HandleFunc("GET /api/admin/cloud-cost", adm.cloudCost)                                          // per-member totals (+ shared, super_admin only)
 	mux.HandleFunc("GET /api/admin/sessions", adm.allSessions)                                          // deployment-wide session overview (super_admin / tenant_admin)
-	mux.HandleFunc("GET /api/admin/audit", adm.audit)                                                   // audit log ledger (super_admin / tenant_admin, docs/20 M1)
-	mux.HandleFunc("GET /api/admin/egress", eg.withSuperAdmin(eg.stats))                                // egress observation stats (super_admin, docs/20 M2)
-	mux.HandleFunc("POST /internal/egress", eg.ingest)                                                  // egress proxy -> CP ingestion (AF_EGRESS_TOKEN, docs/20 M2)
-	mux.HandleFunc("GET /internal/egress/policy", eg.policy)                                            // effective allowlist+mode -> proxy (docs/20 M3)
-	mux.HandleFunc("GET /api/admin/egress/allowlist", eg.withSuperAdmin(eg.allowlistList))              // allowlist entries (super_admin, docs/20 M3)
+	mux.HandleFunc("GET /api/admin/audit", adm.audit)                                                   // audit log ledger (super_admin / tenant_admin, docs/log/20 M1)
+	mux.HandleFunc("GET /api/admin/egress", eg.withSuperAdmin(eg.stats))                                // egress observation stats (super_admin, docs/log/20 M2)
+	mux.HandleFunc("POST /internal/egress", eg.ingest)                                                  // egress proxy -> CP ingestion (AF_EGRESS_TOKEN, docs/log/20 M2)
+	mux.HandleFunc("GET /internal/egress/policy", eg.policy)                                            // effective allowlist+mode -> proxy (docs/log/20 M3)
+	mux.HandleFunc("GET /api/admin/egress/allowlist", eg.withSuperAdmin(eg.allowlistList))              // allowlist entries (super_admin, docs/log/20 M3)
 	mux.HandleFunc("POST /api/admin/egress/allowlist", eg.withSuperAdmin(eg.allowlistAdd))              // add allowlist entry (super_admin)
 	mux.HandleFunc("POST /api/admin/egress/allowlist/{id}/state", eg.withSuperAdmin(eg.allowlistState)) // approve/retire (super_admin)
 	mux.HandleFunc("GET /api/admin/egress/mode", eg.withSuperAdmin(eg.mode))                            // read egress mode (super_admin)
 	mux.HandleFunc("PUT /api/admin/egress/mode", eg.withSuperAdmin(eg.mode))                            // set log-only/enforce (super_admin)
-	// Member face (docs/48 §9): "can a workspace reach this MCP server's host, and if not,
+	// Member face (docs/log/48 §9): "can a workspace reach this MCP server's host, and if not,
 	// let me ask". The write produces a PROPOSED entry only — approval stays super_admin
 	// on the routes above, so this cannot widen egress (egress_member.go).
 	mux.HandleFunc("GET /api/egress/check", eg.withMembership(eg.checkHosts)) // per-host verdict + deployment mode
@@ -258,7 +258,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/workspace/clean-home", ws.withResolved(ws.cleanHome)) // deeper reset: wipe home except logins/connections
 	// Own-workspace resource chip (mem / CPU vs quota) — host-read cgroup, all users.
 	mux.HandleFunc("GET /api/workspace/stats", ws.withResolved(ws.stats))
-	// 操作ビーコン（docs/75 P3）: 「人が今 Console を触っている」をアイドル時計へ伝える。
+	// 操作ビーコン（docs/log/75 P3）: 「人が今 Console を触っている」をアイドル時計へ伝える。
 	// 打鍵に絞った在席判定だけだと、読んでいるだけの人が不在に見えるため。
 	mux.HandleFunc("POST /api/workspace/attention", ws.withResolved(ws.attention))
 }
@@ -277,45 +277,45 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/sessions/archived", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/archive", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/restore", rest)
-	// Cleanup (docs/32): survey, per-session usage, delete-with-reclaim, and the gz
+	// Cleanup (docs/log/32): survey, per-session usage, delete-with-reclaim, and the gz
 	// safety-net archive (list/restore/purge). Proxied verbatim; also used by the MCP
 	// cleanup tools, which reach the Agent directly via the resolved runtime.
 	mux.HandleFunc("GET /api/sessions/usage", rest)
-	// 機能別使用量の時系列（docs/46 P3 / ADR0029）— Agent 側で集計済みの結果をそのまま中継。
+	// 機能別使用量の時系列（docs/log/46 P3 / ADR0029）— Agent 側で集計済みの結果をそのまま中継。
 	mux.HandleFunc("GET /api/usage/series", rest)
 	mux.HandleFunc("GET /api/sessions/cleanup", rest)
 	mux.HandleFunc("DELETE /api/sessions/{name}", rest)
-	mux.HandleFunc("POST /api/sessions/{name}/lock", rest) // 削除ロック（docs/45）
+	mux.HandleFunc("POST /api/sessions/{name}/lock", rest) // 削除ロック（docs/log/45）
 	mux.HandleFunc("GET /api/cleanup/archives", rest)
 	mux.HandleFunc("POST /api/cleanup/archives/{id}/restore", rest)
 	mux.HandleFunc("DELETE /api/cleanup/archives/{id}", rest)
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
 	// by the MCP tools, which call the Agent directly via the resolved runtime.
 	mux.HandleFunc("POST /api/sessions/{name}/input", rest)
-	// Semantic turn ops + Interaction reply (docs/27 P1.5) — proxied verbatim.
+	// Semantic turn ops + Interaction reply (docs/log/27 P1.5) — proxied verbatim.
 	mux.HandleFunc("POST /api/sessions/{name}/turn", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/respond", rest)
-	// プラン承認応答（docs/30 / ExitPlanMode）— Console のプランカードが却下＋
+	// プラン承認応答（docs/log/30 / ExitPlanMode）— Console のプランカードが却下＋
 	// フィードバックを1操作で送るために使う。Agent 側が Escape → コンポーザ復帰待ち →
 	// 投入まで面倒を見る（承認ダイアログが開いたまま /input へ送ると本文がモーダルに
 	// 飲まれ Enter が承認になるため、この経路でしか安全に届けられない）。
 	mux.HandleFunc("POST /api/sessions/{name}/plan-respond", rest)
-	// 持ち越した対話への回答（docs/75）— 停止時に未応答だった質問/プラン/許可へ答え、
+	// 持ち越した対話への回答（docs/log/75）— 停止時に未応答だった質問/プラン/許可へ答え、
 	// Agent が**セッションを再開したうえで文章として**配達する。停止した Workspace が
 	// 相手になりうるので、他の write と違って auto-start を通す（下の restStart）。
 	mux.HandleFunc("POST /api/sessions/{name}/carried-answer", ws.withResolved(ws.sessionCarriedAnswer))
-	// 停止しないピン（docs/75）— アイドル自動停止からセッションと Workspace を期限付きで守る。
+	// 停止しないピン（docs/log/75）— アイドル自動停止からセッションと Workspace を期限付きで守る。
 	mux.HandleFunc("POST /api/sessions/{name}/keep-awake", rest)
-	// managed セッションの ThreadSettings 取得・動的更新（docs/27 P2 §9.4-3）— proxied verbatim.
+	// managed セッションの ThreadSettings 取得・動的更新（docs/log/27 P2 §9.4-3）— proxied verbatim.
 	mux.HandleFunc("GET /api/sessions/{name}/settings", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/settings", rest)
-	// ドライバ排他切替（docs/27 P3 §2: tui ⇄ managed）— proxied verbatim.
+	// ドライバ排他切替（docs/log/27 P3 §2: tui ⇄ managed）— proxied verbatim.
 	mux.HandleFunc("POST /api/sessions/{name}/driver", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/paste-image", rest)
 	mux.HandleFunc("GET /api/sessions/{name}/pasted/{file}", rest)
 	mux.HandleFunc("GET /api/sessions/{name}/status", rest)
 	mux.HandleFunc("GET /api/sessions/{name}/output", rest)
-	// SSM login status polled by the New Session modal (docs/history/p3-ssm-session.md)
+	// SSM login status polled by the New Session modal (docs/log/p3-ssm-session.md)
 	// — surfaces the device-auth URL and the "ready" transition without attaching yet.
 	mux.HandleFunc("GET /api/sessions/{name}/ssm-login", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/start", ws.withResolved(ws.sessionStart))
@@ -325,7 +325,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/sessions/{name}/handoff-proposal", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/handoff-proposal", rest)
 	mux.HandleFunc("DELETE /api/sessions/{name}/handoff-proposal", rest)
-	// 転写のマーカー（docs/69 / ADR 0050）— 所有者の Console 経路。共有先の経路は
+	// 転写のマーカー（docs/log/69 / ADR 0050）— 所有者の Console 経路。共有先の経路は
 	// registerSessionShareRoutes 側（ACL を評価して author を CP が刻む）。
 	mux.HandleFunc("GET /api/sessions/{name}/marks", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/marks", rest)
@@ -337,7 +337,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/sessions/{name}/title/set", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest)  // LLM branch-name suggestion (this session's convo)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-replies", rest) // LLM reply suggestion v2 (this session's convo)
-	mux.HandleFunc("GET /api/sessions/{name}/skills", rest)           // ミラーのスキルピッカー（docs/50 / ADR0034）
+	mux.HandleFunc("GET /api/sessions/{name}/skills", rest)           // ミラーのスキルピッカー（docs/log/50 / ADR0034）
 	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest)   // worktree deferred-naming: git branch -m
 }
 
@@ -351,7 +351,7 @@ func registerSessionShareRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/shared-sessions", a.withMembership(a.listReceived))
 	mux.HandleFunc("GET /api/shared-sessions/{id}/messages", a.withMembership(a.messages))
 	mux.HandleFunc("GET /api/shared-sessions/{id}/handoff-proposals", a.withMembership(a.handoffProposals))
-	// 転写のマーカー（docs/69 / ADR 0050）。読みは RO でも、書きは RW だけ — ただし
+	// 転写のマーカー（docs/log/69 / ADR 0050）。読みは RO でも、書きは RW だけ — ただし
 	// 「提案 → 所有者の承認」には載せない（エージェントを動かさない注釈のため）。
 	mux.HandleFunc("GET /api/shared-sessions/{id}/marks", a.withMembership(a.marks))
 	mux.HandleFunc("POST /api/shared-sessions/{id}/marks", a.withMembership(a.marks))
@@ -361,7 +361,7 @@ func registerSessionShareRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/session-share-proposals/{id}/approve", a.withMembership(a.approve))
 	mux.HandleFunc("POST /api/session-share-proposals/{id}/reject", a.withMembership(a.reject))
 
-	// メンバーへの引き継ぎ（docs/77 / ADR 0057）。共有 ACL の派生物なのでここに同居させ、
+	// メンバーへの引き継ぎ（docs/log/77 / ADR 0057）。共有 ACL の派生物なのでここに同居させ、
 	// 在庫同期のスロットルを共有 API の**同じインスタンス**と分け合う。
 	h := newSessionHandoffAPI(cfg.mgr, a)
 	mux.HandleFunc("GET /api/sessions/{name}/handoff-recipients", h.withResolved(h.recipients))
@@ -374,7 +374,7 @@ func registerSessionShareRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/session-handoff-offers/{id}/decline", h.withMembership(h.decline))
 }
 
-// Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the
+// Assistant chat (docs/log/19) — headless-CLI LLM chat/translation, proxied to the
 // Agent verbatim (kind-agnostic; non-streaming, so the plain REST proxy suffices).
 func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	proxy := newAgentProxyAPI(cfg.mgr)
@@ -386,21 +386,21 @@ func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/chat/conversations/{id}/title/suggest", rest)   // preview-only AI title suggestion (chat_title.go, Agent-side)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/suggest-replies", rest) // LLM reply suggestion v2 (chat_suggest_reply.go, Agent-side)
 	mux.HandleFunc("DELETE /api/chat/conversations/{id}", rest)
-	mux.HandleFunc("POST /api/chat/conversations/{id}/lock", rest) // 削除ロック（docs/45）
+	mux.HandleFunc("POST /api/chat/conversations/{id}/lock", rest) // 削除ロック（docs/log/45）
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", rest)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", proxy.withResolved(proxy.stream)) // SSE (Phase B)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stop", rest)                               // cancel a detached in-flight turn
-	mux.HandleFunc("POST /api/chat/conversations/{id}/compact", rest)                            // 要約引き継ぎ（docs/33 第2段）
-	mux.HandleFunc("GET /api/chat/conversations/{id}/plan", rest)                                // 作業計画の取得（docs/33 第5段）
-	mux.HandleFunc("PUT /api/chat/conversations/{id}/plan", rest)                                // 作業計画の手編集（docs/33 第5段）
+	mux.HandleFunc("POST /api/chat/conversations/{id}/compact", rest)                            // 要約引き継ぎ（docs/log/33 第2段）
+	mux.HandleFunc("GET /api/chat/conversations/{id}/plan", rest)                                // 作業計画の取得（docs/log/33 第5段）
+	mux.HandleFunc("PUT /api/chat/conversations/{id}/plan", rest)                                // 作業計画の手編集（docs/log/33 第5段）
 	mux.HandleFunc("POST /api/chat/conversations/{id}/plan/refresh", rest)                       // 作業計画の明示更新（同）
 	mux.HandleFunc("POST /api/chat/conversations/{id}/paste-image", rest)
 	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", rest)
-	// One-shot advisory turn (docs/21 メモ整理) — stateless, tools off. Proxied verbatim.
+	// One-shot advisory turn (docs/log/21 メモ整理) — stateless, tools off. Proxied verbatim.
 	mux.HandleFunc("POST /api/chat/ask", rest)
 }
 
-// Assistant templates (docs/19 Q2) — configurable chat personas, proxied verbatim.
+// Assistant templates (docs/log/19 Q2) — configurable chat personas, proxied verbatim.
 func registerAssistantRoutes(mux *http.ServeMux, cfg config) {
 	proxy := newAgentProxyAPI(cfg.mgr)
 	rest := proxy.withResolved(proxy.rest)
@@ -411,7 +411,7 @@ func registerAssistantRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/assistants/{id}", rest)
 }
 
-// SSM login config (docs/history/p3-ssm-session.md) — per-member profiles (common
+// SSM login config (docs/log/p3-ssm-session.md) — per-member profiles (common
 // auth bundle) + host bookmarks (per-instance). No AWS secrets; the aws CLI in the
 // workspace authenticates via SSO.
 func registerSSMRoutes(mux *http.ServeMux, cfg config) {
@@ -426,7 +426,7 @@ func registerSSMRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", ssm.withMembership(ssm.deleteHost))
 }
 
-// Work item inbox (docs/80) — external tickets in the left rail. The list and the 更新
+// Work item inbox (docs/log/80) — external tickets in the left rail. The list and the 更新
 // button need the Runtime handle (the Agent does the fetching, holding the tokens), so
 // they are withResolved; the saved queries and the ledger are pure CP rows and stay on
 // withMembership so they work while the Workspace is stopped.
@@ -438,7 +438,7 @@ func registerWorkItemRoutes(mux *http.ServeMux, cfg config) {
 	wi := newWorkItemsAPI(cfg.mgr)
 	mux.HandleFunc("GET /api/work-items", wi.withResolved(wi.list))
 	mux.HandleFunc("POST /api/work-items/refresh", wi.withResolved(wi.refresh))
-	// 書き戻し（docs/80 §80.10）: 人が下書きを承認したときだけ。CP は Agent へ中継する。
+	// 書き戻し（docs/log/80 §80.10）: 人が下書きを承認したときだけ。CP は Agent へ中継する。
 	mux.HandleFunc("POST /api/work-items/comment", wi.withResolved(wi.comment))
 	mux.HandleFunc("GET /api/work-item-queries", wi.withMembership(wi.listQueries))
 	mux.HandleFunc("POST /api/work-item-queries", wi.withMembership(wi.createQuery))
@@ -448,7 +448,7 @@ func registerWorkItemRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/work-item-sessions/{id}", wi.withMembership(wi.deleteSession))
 }
 
-// Memo queue (docs/21) — per-member notes accumulated across devices, then flushed
+// Memo queue (docs/log/21) — per-member notes accumulated across devices, then flushed
 // to a session as one message. Scoped by membership (no workspace build for CRUD).
 func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	memo := newMemoAPI(cfg.mgr)
@@ -458,7 +458,7 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PATCH /api/memos/{id}", memo.withMembership(memo.update))
 	mux.HandleFunc("DELETE /api/memos/{id}", memo.withMembership(memo.delete))
 
-	// Memo image attachments (docs/21 画像添付) — upload/serve/GC proxied verbatim to the
+	// Memo image attachments (docs/log/21 画像添付) — upload/serve/GC proxied verbatim to the
 	// workspace Agent (/api stripped -> /memos/*), which stores the bytes per-container.
 	// These are more specific than POST /api/memos so the mux routes them to the proxy.
 	proxy := newAgentProxyAPI(cfg.mgr)
@@ -467,7 +467,7 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/memos/images/{file}", rest)
 	mux.HandleFunc("POST /api/memos/images/gc", rest)
 
-	// First-class categories (docs/21 UI刷新): add empty, rename (cascades), reorder.
+	// First-class categories (docs/log/21 UI刷新): add empty, rename (cascades), reorder.
 	mux.HandleFunc("GET /api/memo-categories", memo.withMembership(memo.listCategories))
 	mux.HandleFunc("POST /api/memo-categories", memo.withMembership(memo.createCategory))
 	mux.HandleFunc("PATCH /api/memo-categories/{id}", memo.withMembership(memo.updateCategory))
@@ -487,7 +487,7 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /internal/memo-categories/{id}", memo.withMemoToken(memo.deleteCategory))
 }
 
-// Scheduled execution (docs/38 + ADR0021) — operator-authored cron/interval/once tasks.
+// Scheduled execution (docs/log/38 + ADR0021) — operator-authored cron/interval/once tasks.
 // Definitions live in the CP DB; the scheduler goroutine (scheduler.go) drives them.
 // Two faces share the same membership-scoped scheduleAPI handlers:
 //   - /internal/* (operator token, session-exempt): the operator MCP writes here via its
@@ -532,7 +532,7 @@ func scheduleMember(s scheduleAPI, h func(http.ResponseWriter, *http.Request, Me
 	})
 }
 
-// Tenant-distributed MCP servers (docs/48 P4 + ADR0031) — the definitions a
+// Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031) — the definitions a
 // tenant_admin distributes to every member of a tenant. Two faces over one table
 // (mcp_server.go):
 //
@@ -553,7 +553,7 @@ func registerMCPServerRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/admin/mcp-servers/{id}", m.adminUpsert)
 	mux.HandleFunc("DELETE /api/admin/mcp-servers/{id}", m.adminDelete)
 	mux.HandleFunc("GET /internal/mcp-servers", m.withMCPToken(m.distribute))
-	// Role-scoped docs pull (docs/dev/04 §4.9). Same shape as the MCP poll — a
+	// Role-scoped docs pull (docs/build/04 §4.9). Same shape as the MCP poll — a
 	// per-membership token, session-exempt via /internal/ — and the only way an ECS
 	// workspace gets its docs at all, since there is no host path to bind-mount there.
 	mux.HandleFunc("GET /internal/docs", newDocsAPI(cfg.mgr).download)
@@ -568,24 +568,24 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos", rest)
 	mux.HandleFunc("POST /api/repos/init", rest) // 取り込み元なしの新規作業コピー（mkdir + git init）
 	mux.HandleFunc("DELETE /api/repos/{name}", rest)
-	mux.HandleFunc("POST /api/repos/{name}/lock", rest) // 削除ロック（docs/45）
+	mux.HandleFunc("POST /api/repos/{name}/lock", rest) // 削除ロック（docs/log/45）
 	mux.HandleFunc("GET /api/repos/{name}/status", rest)
 	mux.HandleFunc("GET /api/repos/{name}/branches", rest)
-	mux.HandleFunc("DELETE /api/repos/{name}/branch", rest) // ?branch=<name>; cleanup (docs/32)
+	mux.HandleFunc("DELETE /api/repos/{name}/branch", rest) // ?branch=<name>; cleanup (docs/log/32)
 	mux.HandleFunc("POST /api/repos/{name}/checkout", rest)
 	mux.HandleFunc("POST /api/repos/{name}/fetch", rest)
 	mux.HandleFunc("POST /api/repos/{name}/ff", rest)
 	mux.HandleFunc("POST /api/repos/{name}/parent-ff", rest)
-	// リポジトリ取り込みジョブ（docs/78）— clone / svn checkout の進捗と結末。
+	// リポジトリ取り込みジョブ（docs/log/78）— clone / svn checkout の進捗と結末。
 	mux.HandleFunc("GET /api/repo-jobs", rest)
 	mux.HandleFunc("DELETE /api/repo-jobs/{id}", rest)
-	// Subversion (docs/41) — checkout / update / cleanup, proxied to the Agent.
+	// Subversion (docs/log/41) — checkout / update / cleanup, proxied to the Agent.
 	mux.HandleFunc("POST /api/repos/svn", rest)
 	mux.HandleFunc("POST /api/repos/{name}/svn-update", rest)
 	mux.HandleFunc("POST /api/repos/{name}/svn-cleanup", rest)
 	// Launch prompt templates (repo 起動 modal) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", rest)
-	// Project-scope MCP servers (docs/56 P0/P1) — proxied to the Agent.
+	// Project-scope MCP servers (docs/log/56 P0/P1) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/mcp", rest)
 	mux.HandleFunc("POST /api/repos/{name}/mcp/plan", rest)
 	mux.HandleFunc("POST /api/repos/{name}/mcp/apply", rest)
@@ -610,7 +610,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/fs/file", proxy.withResolved(proxy.fsFilePut))
 	// ミラー本文のパス参照解決 — stat だけの read-only（workspace/agent/fs_resolve.go）。
 	mux.HandleFunc("POST /api/fs/resolve", rest)
-	// エディタの AI 変更提案（docs/44 Phase 4）— read-only 生成、監査対象外。
+	// エディタの AI 変更提案（docs/log/44 Phase 4）— read-only 生成、監査対象外。
 	mux.HandleFunc("POST /api/fs/suggest-edit", rest)
 	mux.HandleFunc("GET /api/fs/download", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
@@ -641,13 +641,13 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/agents/rtk", rest)
 	// rtk token-savings history (WsBar "rtk 効果" chip) — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/rtk/gain", rest)
-	// ユーザー指示（docs/60 / ADR 0042）— 正本も配布先もコンテナ内なので Agent 中継のみ。
+	// ユーザー指示（docs/log/60 / ADR 0042）— 正本も配布先もコンテナ内なので Agent 中継のみ。
 	mux.HandleFunc("GET /api/user-notes", rest)
 	mux.HandleFunc("PUT /api/user-notes", rest)
 	mux.HandleFunc("GET /api/user-notes/preview", rest)
 	// codex / opencode model catalogs (launch model picker) — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/{kind}/models", rest)
-	// エージェントメモリの版管理（docs/39 / ADR 0022 P1〜P3）— Agent 側で完結する処理の中継。
+	// エージェントメモリの版管理（docs/log/39 / ADR 0022 P1〜P3）— Agent 側で完結する処理の中継。
 	// {kind}/models とは最終セグメントが違うのでパターンは衝突しない。
 	mux.HandleFunc("GET /api/agents/memory/roots", rest)
 	mux.HandleFunc("GET /api/agents/memory/snapshots", rest)
@@ -673,9 +673,9 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	wss := newWSSettingsAPI(cfg.mgr)
 	mux.HandleFunc("GET /api/env/ws-settings", wss.withResolved(wss.get))
 	mux.HandleFunc("PUT /api/env/ws-settings", wss.withResolved(wss.put))
-	// プレビュー URL の再発行（docs/81 §4.1）。GET/PUT と違い状態を捨てる操作なので POST。
+	// プレビュー URL の再発行（docs/log/81 §4.1）。GET/PUT と違い状態を捨てる操作なので POST。
 	mux.HandleFunc("POST /api/env/ws-settings/preview/reissue", wss.withResolved(wss.reissuePreview))
-	// 同じテナントで共有中のプレビュー（docs/81 §14.6）。★ withMembership —— 読むのは
+	// 同じテナントで共有中のプレビュー（docs/log/81 §14.6）。★ withMembership —— 読むのは
 	// 他人の Workspace の公開設定なので、自分のコンテナは要らない（停止中でも引ける）。
 	mux.HandleFunc("GET /api/preview/shared", wss.withMembership(wss.sharedPreviews))
 	// Per-user UI preferences (Console display settings) — proxied to the Agent.
@@ -693,7 +693,7 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	// only in the Agent process's memory, so a wake-triggered task swap mid-flow
 	// silently drops it otherwise.
 	restLogin := proxy.withResolved(proxy.restLoginFlow)
-	// MCP レジストリ（docs/48 P0）— 実体は Agent 側（workspace/agent/mcp_servers.go）。
+	// MCP レジストリ（docs/log/48 P0）— 実体は Agent 側（workspace/agent/mcp_servers.go）。
 	mux.HandleFunc("GET /api/mcp-servers", rest)
 	mux.HandleFunc("POST /api/mcp-servers", rest)
 	mux.HandleFunc("POST /api/mcp-servers/test", rest)
@@ -710,7 +710,7 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/connections/git/{host}", rest)
 	mux.HandleFunc("PUT /api/connections/git/{host}/identity", rest)
 	mux.HandleFunc("DELETE /api/connections/git/{host}", rest)
-	// Git provider OAuth — CP-native for BOTH providers since docs/71: the OAuth app is
+	// Git provider OAuth — CP-native for BOTH providers since docs/log/71: the OAuth app is
 	// the tenant's, and the tenant's row lives in the CP's database. GitHub's device
 	// flow used to be proxied to the Agent (restLogin), which is why the paths keep
 	// their shape — the Console calls exactly the same two endpoints.
@@ -719,13 +719,13 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/connections/git/bitbucket/oauth/start", cfg.handleBitbucketOAuthStart)
 	mux.HandleFunc("GET /api/oauth/bitbucket/callback", cfg.handleBitbucketOAuthCallback)
 	mux.HandleFunc("GET /api/oauth/jira/callback", cfg.handleJiraOAuthCallback)
-	// Which OAuth buttons this member's tenant can offer (docs/71 §71.4). CP-native and
+	// Which OAuth buttons this member's tenant can offer (docs/log/71 §71.4). CP-native and
 	// separate from GET /api/connections on purpose: that one is proxied to the Agent
 	// and answers 502 while the workspace is stopped, which is exactly when this tab is
 	// being looked at.
 	gitOAuth := newTenantGitOAuthAPI(cfg.mgr)
 	mux.HandleFunc("GET /api/git-oauth", gitOAuth.withMembership(gitOAuth.availability))
-	// The Agent's refresh bridge (docs/71 §71.8): the tenant's client secret stays in the
+	// The Agent's refresh bridge (docs/log/71 §71.8): the tenant's client secret stays in the
 	// CP, so the workspace posts its refresh token here instead of holding the secret.
 	// Session-exempt via the /internal/ prefix; authenticated by AF_GIT_OAUTH_TOKEN.
 	exemptPrefix("/internal/")
@@ -735,7 +735,7 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/claude/start", restLogin)
 	mux.HandleFunc("POST /api/connections/claude/complete", restLogin)
 	mux.HandleFunc("DELETE /api/connections/claude", rest)
-	// agy (Antigravity CLI, docs/32) — claude-style flow: start returns the
+	// agy (Antigravity CLI, docs/log/32) — claude-style flow: start returns the
 	// authorize URL (+ flow_id; body carries method: oauth|gcp-project — M1
 	// implements oauth only), complete submits the pasted code. usage feeds the
 	// AgyCard's Starter-Quota gauge (TUI /usage scrape, agent-side).
@@ -743,20 +743,20 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/agy/complete", restLogin)
 	mux.HandleFunc("DELETE /api/connections/agy", rest)
 	mux.HandleFunc("GET /api/connections/agy/usage", rest)
-	// cursor (Cursor CLI, docs/40) — dedicated login flow: start returns the
+	// cursor (Cursor CLI, docs/log/40) — dedicated login flow: start returns the
 	// authorize URL (+ flow_id), poll checks browser approval (no pasted code —
 	// cursor self-polls). Proxied to the Agent (cursor owns ~/.config/cursor/auth.json).
 	mux.HandleFunc("POST /api/connections/cursor/start", restLogin)
 	mux.HandleFunc("POST /api/connections/cursor/poll", restLogin)
 	mux.HandleFunc("DELETE /api/connections/cursor", rest)
-	// kiro (Kiro CLI, docs/43) — dedicated device-flow login: start returns the
+	// kiro (Kiro CLI, docs/log/43) — dedicated device-flow login: start returns the
 	// verification URL (+ user_code + flow_id), poll checks AWS-side approval (kiro
 	// self-polls, no pasted code). Proxied to the Agent (kiro owns its credential
 	// store under ~/.local/share/kiro-cli).
 	mux.HandleFunc("POST /api/connections/kiro/start", restLogin)
 	mux.HandleFunc("POST /api/connections/kiro/poll", restLogin)
 	mux.HandleFunc("DELETE /api/connections/kiro", rest)
-	// kiro on-demand install (docs/43 Track B/C) — the ~855MB bundle is not baked on
+	// kiro on-demand install (docs/log/43 Track B/C) — the ~855MB bundle is not baked on
 	// the lean image, so the connection card triggers a background install (POST) and
 	// polls its progress (GET). Proxied to the Agent (installs into the user's ~/.local).
 	mux.HandleFunc("POST /api/connections/kiro/install", rest)
@@ -768,7 +768,7 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/opencode/oauth/cancel", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/oauth", rest)
 	mux.HandleFunc("PUT /api/connections/opencode/workspace", rest)
-	// SVN saved basic-auth creds (docs/41) — forget a stored server credential.
+	// SVN saved basic-auth creds (docs/log/41) — forget a stored server credential.
 	mux.HandleFunc("DELETE /api/connections/svn", rest)
 	// Codex auth — proxied to the Agent (codex owns auth.json; no public callback,
 	// device-auth polls OpenAI from inside the container).
@@ -776,14 +776,14 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/codex/device/start", restLogin)
 	mux.HandleFunc("POST /api/connections/codex/device/poll", restLogin)
 	mux.HandleFunc("DELETE /api/connections/codex", rest)
-	// Ops connections (docs/25 Phase 1): the credentials are stored in the
+	// Ops connections (docs/log/25 Phase 1): the credentials are stored in the
 	// Workspace's encrypted secrets and injected into the ops MCP servers at
 	// spawn; the CP only proxies here, never holds the secrets.
-	// Jira（docs/80 P1）— 作業項目の取得元。⚠️ GET /api/connections には相乗りするが、
+	// Jira（docs/log/80 P1）— 作業項目の取得元。⚠️ GET /api/connections には相乗りするが、
 	// 保存/削除はここに 1 本ずつ要る（CP は catch-all ではなく明示許可リスト）。
 	mux.HandleFunc("PUT /api/connections/jira", rest)
 	mux.HandleFunc("DELETE /api/connections/jira", rest)
-	// OAuth（docs/80 §80.17）: start は CP が認可 URL を組み、callback は CP が受けて
+	// OAuth（docs/log/80 §80.17）: start は CP が認可 URL を組み、callback は CP が受けて
 	// トークンを Agent へ渡す（Bitbucket と同型・oauth_jira.go）。site の選択だけは
 	// Console → Agent のプロキシ。
 	mux.HandleFunc("POST /api/connections/jira/oauth/start", cfg.handleJiraOAuthStart)
@@ -796,13 +796,13 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/connections/cloudwatch", rest)
 	mux.HandleFunc("PUT /api/connections/aws", rest)
 	mux.HandleFunc("DELETE /api/connections/aws", rest)
-	// Chat bridge (docs/37 P1): the Discord bot token lives in the Workspace's
+	// Chat bridge (docs/log/37 P1): the Discord bot token lives in the Workspace's
 	// encrypted secrets like the ops credentials above — proxied, never held here.
 	mux.HandleFunc("PUT /api/connections/discord", rest)
 	mux.HandleFunc("DELETE /api/connections/discord", rest)
 	mux.HandleFunc("POST /api/connections/discord/inspect", rest)
 	mux.HandleFunc("POST /api/connections/discord/guilds", rest)
-	// Chat bridge Slack (docs/37 Slack 追随): bot + app-level tokens live in the
+	// Chat bridge Slack (docs/log/37 Slack 追随): bot + app-level tokens live in the
 	// Workspace's encrypted secrets like Discord above — proxied, never held here.
 	mux.HandleFunc("PUT /api/connections/slack", rest)
 	mux.HandleFunc("DELETE /api/connections/slack", rest)
@@ -842,7 +842,7 @@ func registerInternalGitRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("/git/{slug}/{repo...}", g.gitHTTP)
 }
 
-// Browser Page lifecycle + restricted rendering/input WebSocket (docs/31).
+// Browser Page lifecycle + restricted rendering/input WebSocket (docs/log/31).
 // The browser implementation remains separate from terminal relay semantics:
 // binary JPEG frames are replaceable under backpressure, PTY bytes are not.
 func registerBrowserRoutes(mux *http.ServeMux, cfg config) {
@@ -875,11 +875,11 @@ func registerTerminalPreviewRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /ws/terminal", proxy.withResolved(proxy.terminal))
 	mux.HandleFunc("/preview/{port}", pv.redirect)
 	mux.HandleFunc("/preview/{port}/{rest...}", pv.withPreviewResolved(pv.proxy))
-	// Console-origin half of the preview-subdomain handshake (docs/81 §6). It lives
+	// Console-origin half of the preview-subdomain handshake (docs/log/81 §6). It lives
 	// HERE, on the authenticated origin, precisely so an unauthenticated visitor meets
 	// the normal login before any token exists.
 	mux.HandleFunc("GET "+previewHandshakePath, newPreviewHostAPI(cfg).handshake)
-	// 起動をまたいで有効な、貼れるリンク（docs/81 §14.6）。ここも Console のオリジン
+	// 起動をまたいで有効な、貼れるリンク（docs/log/81 §14.6）。ここも Console のオリジン
 	// ＝ authGate の中でなければならない（未ログインの人が先にログインへ出会うため）。
 	mux.HandleFunc("GET "+previewOpenPath, newPreviewHostAPI(cfg).openStable)
 }
@@ -912,7 +912,7 @@ func registerLegacyRedirect(mux *http.ServeMux) {
 // unhashed entry points (index.html, version.json, sw.js) stay no-store so a
 // reload / the deploy check always sees the latest build.
 func registerStatic(mux *http.ServeMux, cfg config) {
-	// Console action route (docs/53 §53.7). The Console is a static SPA, so no
+	// Console action route (docs/log/53 §53.7). The Console is a static SPA, so no
 	// file exists at this path — under the catch-all FileServer alone the very
 	// link attach_chromium tells the agent to hand the user 404s. Serve the same
 	// shell: index.html re-points its dynamic <base> at the Workspace root and

@@ -1,6 +1,6 @@
 package cursor
 
-// Claude Code 互換 JSONL → transcript.Turn 正規化（read 正本、docs/40）。実測
+// Claude Code 互換 JSONL → transcript.Turn 正規化（read 正本、docs/log/40）。実測
 // （v2026.07.20）の行形式:
 //
 //	{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>…</timestamp>\n<user_query>\n…\n</user_query>"}]}}
@@ -8,7 +8,7 @@ package cursor
 //	{"type":"turn_ended","status":"success"}
 //
 // claude パーサは流用できない（uuid/timestamp 無し・独自エンベロープ）が専用は容易。
-// tool_result はこの JSONL に載らない（ツール出力は store.db のみ — docs/40）ので
+// tool_result はこの JSONL に載らない（ツール出力は store.db のみ — docs/log/40）ので
 // ミラーはツール名/引数まで、出力は空。1 assistant ターンは複数行に跨り得る
 // （tool_use 行＋最終テキスト行）ので、user 行か turn_ended で flush する。
 // Turn.Idx は行番号由来の単調増加（Console の pendingEcho/MirrorView は idx 単調
@@ -39,7 +39,7 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	}
 	path := transcriptPath(m.Dir, chatID)
 	td := agents.TranscriptData{Path: path, Turns: parseTranscript(path)}
-	// TUI/-p はモデルを転写に書かない（docs/40 §モデル表示）ので、起動モデル（セッション
+	// TUI/-p はモデルを転写に書かない（docs/log/40 §モデル表示）ので、起動モデル（セッション
 	// 固定）を各 assistant ターンにスタンプしてミラーのモデルバッジに出す。未選択＝Auto。
 	stampModel(td.Turns, displayModel(m.Model))
 	return td, true
@@ -49,9 +49,9 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 // ACP の bracket パラメータ（`claude-opus-4-8[thinking=true,context=300k,effort=high]`）を
 // 剥がして素の id にし、Auto 系（空文字列 /`auto`/`default[]`）は "Auto" に寄せる。ピッカーの
 // dash 形式（`composer-2.5` 等）はそのまま。cursor は**セッションでモデル固定**（per-session
-// child・DynamicModel:false）なので、全 assistant ターンに同じ値が載る（docs/40 §モデル表示）。
+// child・DynamicModel:false）なので、全 assistant ターンに同じ値が載る（docs/log/40 §モデル表示）。
 // 注意: これは**設定モデル**であって、Auto が各ターンで実際に解決した具体モデルではない
-// （公式経路に解決先が出ない — docs/40）。
+// （公式経路に解決先が出ない — docs/log/40）。
 func displayModel(id string) string {
 	id = strings.TrimSpace(id)
 	if i := strings.IndexByte(id, '['); i >= 0 {
@@ -236,7 +236,7 @@ func parseTranscript(path string) []transcript.Turn {
 	return turns
 }
 
-// ── 編集の抽出（docs/68）────────────────────────────────────────────────────────
+// ── 編集の抽出（docs/log/68）────────────────────────────────────────────────────────
 //
 // 経路が 2 つあり、手掛かりが違う:
 //   jsonl（TUI / -p）  … tool 名しか無い → toolEdits が名前の allowlist で判定する

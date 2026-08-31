@@ -74,10 +74,10 @@ const exact = {
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/chat/conversations": () => ({ conversations: fx.conversations(LOCALE) }),
   "/api/assistants": () => fx.assistants(LOCALE),
-  // 作業項目（docs/80）。★ 未対応ルートは {} を返すだけなので、これが無いと
+  // 作業項目（docs/log/80）。★ 未対応ルートは {} を返すだけなので、これが無いと
   // レールの新しい面は「常に空」で描かれ、検証にならない。
   "/api/work-items": () => fx.workItems(LOCALE),
-  // テナントが OAuth アプリを登録済みの状態（docs/80 §80.17）。これが無いと Jira の
+  // テナントが OAuth アプリを登録済みの状態（docs/log/80 §80.17）。これが無いと Jira の
   // 「OAuth で接続」は常に無効で描かれ、導線を確かめられない。
   "/api/git-oauth": () => ({
     github: { configured: true },
@@ -90,7 +90,7 @@ const exact = {
   "/api/env/ui-prefs": () => ({}),
   "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
   "/api/usage": () => ({ agents: fx.usage(LOCALE) }),
-  // クラウド費用（docs/67）。⚠️ profile.available が true でないとタブごと出ないので、
+  // クラウド費用（docs/log/67）。⚠️ profile.available が true でないとタブごと出ないので、
   // このスタブが無いとハーネスでは新しい面が存在しないのと同じになる。
   "/api/cost/profile": () => fx.costProfile(),
   "/api/cost/me": () => fx.myCloudCost(),
@@ -112,7 +112,7 @@ const exact = {
   "/api/stats": () => fx.stats(),
   "/api/ssm/hosts": () => ({ hosts: [] }),
   "/api/ssm/profiles": () => ({ profiles: [] }),
-  // MCP registry (docs/48). One row per origin so the settings tab shows all three
+  // MCP registry (docs/log/48). One row per origin so the settings tab shows all three
   // editability states (user = full CRUD, tenant = disable-only, builtin = code).
   // Secret values arrive masked, exactly as the agent sends them.
   "/api/mcp-servers": () => ({
@@ -146,7 +146,7 @@ const exact = {
   "/api/pat": () => ({}),
   "/api/tts/dict": () => ({ entries: [] }),
   "/api/workspace/stats": () => fx.stats(),
-  // プレビュー用サブドメイン（docs/81）: 発行済み URL と Workspace 単位の設定。
+  // プレビュー用サブドメイン（docs/log/81）: 発行済み URL と Workspace 単位の設定。
   // 起動中の Workspace を模すので URL が入っている（停止中は previewUrls が空）。
   "/api/env/ws-settings": () => ({
     agentUpdate: false,
@@ -168,10 +168,10 @@ const exact = {
 
 const re = [
   [/^\/api\/sessions\/([^/]+)\/messages$/, (m) => fx.messages(LOCALE, decodeURIComponent(m[1]))],
-  // 変更ファイル帯の「コミット済み」判定（docs/68 P2）: セッション開始以降のコミットに
+  // 変更ファイル帯の「コミット済み」判定（docs/log/68 P2）: セッション開始以降のコミットに
   // 現れた repo 相対パス。
   [/^\/api\/sessions\/([^/]+)\/committed$/, () => fx.committedFiles()],
-  // メンバー詳細の 4 本（docs/67 §67.15）。cost だけは stats/sessions の 4 秒ポーリングに
+  // メンバー詳細の 4 本（docs/log/67 §67.15）。cost だけは stats/sessions の 4 秒ポーリングに
   // 乗らず、開いたときと「適用」のときだけ引かれる（費用は 6 時間更新の DB 読みなので）。
   [/^\/api\/admin\/tenants\/[^/]+\/members$/, () => fx.adminMembers()],
   [/^\/api\/admin\/tenants\/[^/]+\/members\/[^/]+\/stats$/, () => fx.adminMemberStats()],
@@ -189,7 +189,7 @@ const re = [
   [/^\/api\/fs\/list$/, (m, q) => fx.fsList(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/tree$/, (m, q) => fx.fsTree(LOCALE, q.get("path") || "")],
   [/^\/api\/fs\/file$/, (m, q) => fx.fsFile(LOCALE, q.get("path") || "")],
-  // Egress allowlist verdicts for the MCP tab (docs/48 §9). This deployment HAS the
+  // Egress allowlist verdicts for the MCP tab (docs/log/48 §9). This deployment HAS the
   // proxy wired and is still log-only, and the corp wiki host is not on the list — the
   // combination that renders the "works today, blocked once enforced" warning.
   [

@@ -1,6 +1,6 @@
 package main
 
-// 補償 reopen と自己申告ファストパス（docs/51 Phase 3 / ADR 0035 決定4・5）のテスト。
+// 補償 reopen と自己申告ファストパス（docs/log/51 Phase 3 / ADR 0035 決定4・5）のテスト。
 //
 // 二層の分け方は Phase 1・2 と同じ:
 //   - 候補選び（instrReopenCandidates）と復帰の証拠（evalReportResumed）は純関数なので、
@@ -98,7 +98,7 @@ func TestReportResumedEvidence(t *testing.T) {
 		{"報告後にそのターンが中断で終わった＝再開ではない",
 			reportSignals{Abort: true, TailAborted: true, AbortReason: reportReasonTurnAborted,
 				TranscriptBusy: true}, false},
-		// 報告が中断より**後**に出るのは自動再開（docs/47 §4-6）の普通の姿: 再送を 2 回
+		// 報告が中断より**後**に出るのは自動再開（docs/log/47 §4-6）の普通の姿: 再送を 2 回
 		// 試してから打ち切って報告するので、中断レコードは報告時刻より古い。時刻の下限で
 		// 落として鮮度だけを見ると「報告のあとに働き出した」と読み、嘘の訂正を配ってしまう。
 		{"報告より古い中断でも再開ではない（自動再開ののちの打ち切り報告）",
@@ -206,7 +206,7 @@ func TestReportCompensationSkipsWhenNewInstruction(t *testing.T) {
 
 // TestReportCompensationStopsAtCap: 開き直しは行あたり instrReopenMax 回まで。上限に
 // 達したら黙って諦めず、「判定が振動している」事実を1回だけ報告して打ち切る
-// （docs/47 の自動再開上限と同じイディオム）。
+// （docs/log/47 の自動再開上限と同じイディオム）。
 func TestReportCompensationStopsAtCap(t *testing.T) {
 	m, sid, _, id := reportedFixture(t, "slot72", 30*time.Second)
 	var cs countingSink
@@ -469,7 +469,7 @@ func TestSelfReportIsIdleEvidenceWithoutMarker(t *testing.T) {
 	expectSinkQuiet(t, &cs, 1, "申告より後に投入された指示")
 }
 
-// TestAutoResumeCountsSessionEventsNotConversations: 自動再開のカウンタ（docs/47）は
+// TestAutoResumeCountsSessionEventsNotConversations: 自動再開のカウンタ（docs/log/47）は
 // セッションの中断イベントを数える。1つの静穏を2つのオペレーター会話へ配ったときに
 // 会話数ぶん加算すると、2会話から指示されているセッションは中断1回で上限に届いてしまう。
 func TestAutoResumeCountsSessionEventsNotConversations(t *testing.T) {

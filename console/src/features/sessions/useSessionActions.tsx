@@ -22,7 +22,7 @@ export interface SessionActions {
   archive(s: Session): Promise<void>;
   /** Delete outright (shell/ssm — no conversation worth keeping). Irreversible. */
   deleteSession(s: Session): Promise<void>;
-  /** 削除ロック（docs/45）の切替。ON の間、この行はどの削除経路（Console・掃除・
+  /** 削除ロック（docs/log/45）の切替。ON の間、この行はどの削除経路（Console・掃除・
    *  7日自動prune・オペレーター）からも消せなくなる。 */
   setLocked(s: Session, locked: boolean): Promise<void>;
   setKeepAwake(s: Session, hours: number): Promise<void>;
@@ -44,7 +44,7 @@ export interface SessionActions {
    *  auto-fires the extraction turn; the operator proposes a summary and only creates the
    *  new session after the user consents. `note` is optional extra instruction. */
   handoff(name: string, kind: string, note?: string): Promise<void>;
-  /** ドライバ排他切替（docs/27 P3 §2）: tui ⇄ managed を stop→drain→resume で。 */
+  /** ドライバ排他切替（docs/log/27 P3 §2）: tui ⇄ managed を stop→drain→resume で。 */
   switchDriver(s: Session): Promise<void>;
 }
 
@@ -97,7 +97,7 @@ export function useSessionActions(): SessionActions {
     void refreshSessions();
   };
 
-  // 停止しないピン（docs/75）: hours>0 で期限を張り、0 で解除。shell / ssm の走行中ジョブを
+  // 停止しないピン（docs/log/75）: hours>0 で期限を張り、0 で解除。shell / ssm の走行中ジョブを
   // af 側から見分けられないので、推測でコンテナを守る代わりに利用者に宣言してもらう。
   const setKeepAwake = async (s: Session, hours: number) => {
     const res = await sessionKeepAwake(s.name, hours);
@@ -111,7 +111,7 @@ export function useSessionActions(): SessionActions {
   };
 
   const clearOrphans = async (all: Session[]) => {
-    const orphans = all.filter((s) => !s.locked); // 削除ロック（docs/45）は一括掃除に載せない
+    const orphans = all.filter((s) => !s.locked); // 削除ロック（docs/log/45）は一括掃除に載せない
     if (orphans.length === 0) return;
     // Same split as the Cleanup modal's stage ①: agent sessions archive (conversation kept,
     // restorable); shell/ssm have no conversation worth keeping, so they delete.
@@ -290,7 +290,7 @@ export function useSessionActions(): SessionActions {
     // the user's OWN message in the operator chat (and steers the reply language in the
     // default outputLanguage=auto). So it must follow the UI locale — an English user must
     // not see a Japanese paragraph as their own turn, nor get a Japanese reply.
-    // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/28 §4）— ロケール分岐
+    // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/log/28 §4）— ロケール分岐
     const trimmed = note?.trim();
     const prompt =
       getLocale() === "en"
@@ -314,7 +314,7 @@ export function useSessionActions(): SessionActions {
       // gate before create_session lives in the prompt above.
       const conv = await chatCreate("operator", tr("srow.handoff_title", { name }));
       if (!conv?.id) throw new Error("conversation was not created");
-      autoAddToActiveWorkingSet("convs", conv.id); // docs/52 §1: 選択中グループへ自動所属
+      autoAddToActiveWorkingSet("convs", conv.id); // docs/log/52 §1: 選択中グループへ自動所属
       openChat(conv.id, prompt, true);
     } catch {
       toast(t("sess.handoff_failed"));

@@ -3,7 +3,7 @@ package main
 // create_session の冪等台帳。POST /sessions を idempotency キーで重複排除し、
 // 「クライアントがタイムアウトしたがバックエンドは実際にセッションを作っていた」
 // レース（＝LLM が失敗と誤認して再実行し、独立した 2 つ目のセッションを生む事故・
-// docs/36 の二重起動）を潰す。ClientMessageID の MsgLedger（agents.MsgLedger, docs/27
+// docs/log/36 の二重起動）を潰す。ClientMessageID の MsgLedger（agents.MsgLedger, docs/log/27
 // §4/§9.5）と同じ思想の、create 専用・軽量版。
 //
 // 永続化は不要（重複リトライは数秒後・同一プロセスに届く）。TTL リングで肥大しない。

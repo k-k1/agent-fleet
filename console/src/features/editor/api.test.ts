@@ -110,7 +110,7 @@ describe("editor api timeout", () => {
   });
 });
 
-describe("probeFileMeta classification (docs/44 §7.5)", () => {
+describe("probeFileMeta classification (docs/log/44 §7.5)", () => {
   const jsonResponse = (status: number, body: unknown) =>
     vi.fn(() =>
       Promise.resolve({

@@ -1,71 +1,82 @@
-# 0063. PDF は pdf.js で「描く」、Office 文書は anydoc で「読める形に変える」
+# 0063. Draw PDFs with pdf.js; turn Office documents into something readable with anydoc
 
-- 状態: **採用・P0（PDF）/ P1（Office の簡易プレビュー）実装済み**（2026-08-31）。
-  設計と実測は [docs/82](../82-document-preview.md)。
-- 関連: [0046-drawio-viewer.md](0046-drawio-viewer.md)（同じ「バイナリをペインの中で読む」系。
-  同梱物と `?url` の作法はこれに倣った） / [0026-markdown-code-editor.md](0026-markdown-code-editor.md)
-  （File ペインの面の構成）
+English | [日本語](0063-document-preview.ja.md)
 
-## 背景
+- Status: **accepted — P0 (PDF) and P1 (a plain preview of Office documents) implemented**
+  (2026-08-31). The design and the measurements are in [docs/82](../log/82-document-preview.md).
+- Related: [0046-drawio-viewer.md](0046-drawio-viewer.md) (the same "read a binary inside the pane"
+  shape; the bundling and the `?url` convention follow it) /
+  [0027-markdown-code-editor.md](0027-markdown-code-editor.md) (how the File pane is put together)
 
-リポジトリに置かれた PDF や配布資料が、Console の中では「(バイナリ, 86.8 KB)」としか見えない。
-ダウンロードしてローカルのアプリで開くしかなく、ブラウザ 1 枚で完結しない。
+## Background
 
-前提として **サーバ側変換は使えない**。Workspace コンテナに LibreOffice は無く、root が無いので
-入れられない。描画・変換はすべてブラウザ側で行う。
+A PDF or a slide deck sitting in a repository shows up in the Console as nothing but
+"(binary, 86.8 KB)". The only way to read it is to download it and open a local application, so the
+browser alone is not enough.
 
-## 決定
+A constraint up front: **server-side conversion is not available.** There is no LibreOffice in the
+workspace container and no root with which to install one. All rendering and conversion happens in
+the browser.
 
-### 1. PDF は pdf.js で描く（テキスト化で代用しない）
+## Decision
 
-PDF は**見た目そのものが情報**である。図面・帳票・組版された資料を Markdown にしても、それは
-別の文書になる。pdf.js（Apache-2.0・Mozilla）は 10 年以上動いている唯一の実用解で、
-gzip 126 KB ＋ ワーカー 366 KB を **PDF を開いたときだけ**落とす分離で足りる。
+### 1. Draw PDFs with pdf.js (do not substitute text extraction)
 
-捨てた案:
+For a PDF, **the way it looks is the information**. Turning a drawing, a form or a typeset document
+into Markdown produces a different document. pdf.js (Apache-2.0, Mozilla) is the one practical
+implementation that has been running for over a decade, and 126 KB gzipped plus a 366 KB worker,
+**fetched only when a PDF is opened**, is a small enough price.
 
-- **anydoc でテキスト化して済ませる** — 上の理由で却下。ただし補助面としては将来ありうる。
-- **`<iframe src=…>` でブラウザ内蔵ビューアに任せる** — 実装は一瞬だが、テーマも情報バーも
-  ペインの操作体系も効かず、Console の面ではなく「別のアプリ」が埋まる。表示制御も奪われる。
+Rejected:
 
-### 2. cMap と標準フォントは同梱し、パスに版を入れる
+- **Extract text with anydoc and leave it at that** — rejected for the reason above, though it
+  could make sense later as a secondary view.
+- **Hand it to the browser's built-in viewer with `<iframe src=…>`** — a moment's work, but the
+  theme, the info bar and the pane's own controls all stop applying: what gets embedded is another
+  application rather than a Console surface, and we lose control of the display.
 
-フォントを埋め込んでいない日本語 PDF は、cMap 無しでは文字が出ない（`UniJIS-UCS2-H` などの
-符号化を解けない）。日本語文書では珍しくないので、**同梱しないという選択は「日本語 PDF が
-壊れる」と同義**である。配布物は +2.5 MB（dist 15 MB → 18 MB）。
+### 2. Bundle the cMaps and the standard fonts, with the version in the path
 
-`dist/assets/pdfjs/<version>/` に置くのは、`assets/` 配下を CP が `immutable` で配るため。版を
-パスに含めれば、pdf.js を上げたときに古い cMap が居座らない。
+A Japanese PDF that does not embed its fonts renders no glyphs at all without the cMaps (the
+encodings such as `UniJIS-UCS2-H` cannot be resolved). That is not rare in Japanese documents, so
+**choosing not to bundle them is the same as choosing "Japanese PDFs are broken"**. The build grows
+by 2.5 MB (dist 15 MB → 18 MB).
 
-### 3. Word / Excel / PowerPoint は anydoc で Markdown 化し、「簡易プレビュー」と明示する
+They live under `dist/assets/pdfjs/<version>/` because the Control Plane serves everything under
+`assets/` as `immutable`. Putting the version in the path keeps a stale cMap from sticking around
+when pdf.js is upgraded.
 
-「見た目の再現」を狙う道（docx-preview ＋ SheetJS ＋ @jvmr/pptx-to-html）は、実測では**それぞれ
-よく描けた**。それでもこちらを採らないのは、次の 3 点による。
+### 3. Convert Word / Excel / PowerPoint to Markdown with anydoc, and label it a "plain preview"
 
-1. **PPTX に信頼できる実装が無い。** 名前がいちばんそれらしい `pptx-preview` は**無言で失敗する**
-   （黒い canvas を残し、例外を投げない）。唯一まともに描けたのは公開 1 年・単独メンテナの
-   新しいパッケージで、プレビューの中核をそこに預ける判断は今は取らない。
-2. **依存 1 つ対 3 つ。** anydoc は docx / xlsx / pptx（＋ odt / rtf / epub / csv）を 1 つで賄う。
-   更新も監査も 1 か所で済む。
-3. **出力が Markdown なら、既存の面がそのまま使える。** MarkdownView・リンク解決・コピー・
-   読み上げが何も足さずに効く。
+The route that aims at **reproducing the appearance** (docx-preview + SheetJS + @jvmr/pptx-to-html)
+**rendered well in every measurement**. It is still not the one we take, for three reasons.
 
-代償は**体裁が落ちること**（ページ体裁・図形の位置・セルの色は消え、画像は alt text になる）。
-これは隠さない：面に「簡易プレビュー」と出し、原本を開くダウンロード導線を常に隣に置く。
-将来 PPTX の描画に信頼できる実装が現れたら、簡易プレビューと並べて「見た目」の面を足せばよい
-（この決定はその道を塞がない）。
+1. **There is no trustworthy PPTX implementation.** The package with the most convincing name,
+   `pptx-preview`, **fails silently** — it leaves a black canvas and throws nothing. The only one
+   that rendered properly is a year-old package with a single maintainer, and we are not putting the
+   core of the preview in its hands today.
+2. **One dependency against three.** anydoc covers docx / xlsx / pptx (plus odt / rtf / epub / csv)
+   on its own, so updates and audits happen in one place.
+3. **Markdown output means the existing surface just works.** MarkdownView, link resolution, copy
+   and read-aloud all apply with nothing added.
 
-WASM は gzip 2.9 MB と大きいが、**その形式のファイルを開いた人だけ**が払う。起動時の主チャンクは
-変わらない。
+The price is **the loss of presentation** (page layout, shape positions and cell colours are gone;
+images become alt text). We do not hide it: the surface says "plain preview", and a download link to
+the original always sits beside it. If a trustworthy PPTX renderer appears later, an appearance view
+can be added alongside the plain preview — this decision does not close that door.
 
-### 4. スキャン PDF・パスワード付き・壊れたファイルは、理由を出して止まる
+The WASM is large at 2.9 MB gzipped, but **only someone who opens a file of that format pays for
+it**. The main startup chunk is unchanged.
 
-anydoc は OCR を持たないので、スキャン PDF は `needsOcr` を返す。pdf.js はパスワード付きを
-`PasswordException`、壊れたものを `InvalidPDFException` で返す。**いずれも白い面のまま黙らない**。
-理由と、ダウンロードして手元で開く導線を出す。
+### 4. Scanned PDFs, password-protected files and corrupt files stop with a reason
 
-## 影響
+anydoc has no OCR, so a scanned PDF comes back as `needsOcr`. pdf.js reports a password-protected
+file as `PasswordException` and a corrupt one as `InvalidPDFException`. **None of these is allowed
+to sit silently on a blank surface**: the reason is shown, along with the download route for opening
+it locally.
 
-- Console の配布物が +2.5 MB（cMap と標準フォント）。主チャンクは不変。
-- `console/package.json` に `pdfjs-dist` と `@firecrawl/anydoc-wasm` が増える（どちらも遅延読み込み）。
-- バックエンドの変更は無い。既存の `api/fs/download` が生バイトを返し、Range も通る。
+## Consequences
+
+- The Console build grows by 2.5 MB (cMaps and standard fonts). The main chunk is unchanged.
+- `console/package.json` gains `pdfjs-dist` and `@firecrawl/anydoc-wasm` (both lazily loaded).
+- No backend change. The existing `api/fs/download` returns the raw bytes and honours Range.

@@ -18,7 +18,7 @@ import (
 // that only moved HOME would write into the developer's real config — measured
 // 2026-08-09, when a REST test left a live `wiki` server in the real .claude.json and
 // the ownership ledger (which did land in the temp HOME) had no memory of it, making
-// the row an orphan no later materialize may remove (docs/48 §8.2).
+// the row an orphan no later materialize may remove (docs/log/48 §8.2).
 func resetAFName(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()

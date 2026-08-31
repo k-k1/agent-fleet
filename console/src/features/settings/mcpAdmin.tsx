@@ -8,7 +8,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { kindLabel } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
-// Tenant MCP distribution reuses the member tab's wire contract (docs/48 P4), so the
+// Tenant MCP distribution reuses the member tab's wire contract (docs/log/48 P4), so the
 // name rule, the masked round-trip and the "remote only" shape are pinned by
 // mcpWire.test.ts rather than by this component.
 import {
@@ -23,14 +23,14 @@ import type { TenantForm, TenantServer } from "./mcpWire.ts";
 // Same field furniture as the member tab's form (McpTab), so the two MCP forms stay
 // one design instead of two.
 import { Field, KVEditor, CheckRow, Check } from "./mcpForm.tsx";
-// Egress allowlist tie-in (docs/48 §9). It matters more here than on the member tab: a
+// Egress allowlist tie-in (docs/log/48 §9). It matters more here than on the member tab: a
 // distributed server that the proxy blocks is broken for EVERY member of the tenant.
 import { EgressNote, useEgressCheck } from "./EgressNote.tsx";
 import { hostsOf } from "./egressCheck.ts";
 import type { EgressCheck } from "./egressCheck.ts";
 import type { Tenant } from "./adminShared.ts";
 
-// --- Tenant-distributed MCP servers (docs/48 P4 + ADR0031) -------------------------
+// --- Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031) -------------------------
 //
 // A tenant_admin registers a REMOTE MCP server once and every member of that tenant gets
 // it in their workspace — assistants and interactive sessions both. There is deliberately

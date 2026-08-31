@@ -1,7 +1,7 @@
 package main
 
 // MCP registry bridge — the internal (per-membership token) face of tenant-distributed
-// MCP servers (docs/48 P4 + ADR0031). It mirrors the memo / schedule bridges
+// MCP servers (docs/log/48 P4 + ADR0031). It mirrors the memo / schedule bridges
 // (memo_bridge.go / schedule_bridge.go): the Workspace agent has no user session, so it
 // authenticates to /internal/mcp-servers with an MCP TOKEN injected into its container
 // (AF_MCP_TOKEN). The token carries the membership id plus a truncated HMAC tag and is a

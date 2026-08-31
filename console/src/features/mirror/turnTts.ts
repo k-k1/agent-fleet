@@ -1,4 +1,4 @@
-// features/mirror/turnTts — ミラーのターン本文をカラオケ朗読する（docs/24）。
+// features/mirror/turnTts — ミラーのターン本文をカラオケ朗読する（docs/log/24）。
 //
 // MarkdownView が innerHTML で描画した DOM からブロック（p / h1-h6 / li / blockquote 内の
 // 段落）を文書順に集め、textContent を文分割して startNarration（features/chat/tts.ts）へ
@@ -53,7 +53,7 @@ function walkList(list: HTMLElement, out: HTMLElement[]): void {
 
 // finalAnswerStart は「最終回答の本文」が始まるブロック index を返す（index は collectBlocks と
 // 同じブロック順）。ツールが無ければ 0。ミラー自動読み上げが、最終回答より前の作業ナレーションを
-// 飛ばして最終回答だけ読むために使う（chat の分離と同趣・docs/19）。
+// 飛ばして最終回答だけ読むために使う（chat の分離と同趣・docs/log/19）。
 // 本文パートは body 直下の .markdown、ツール実行は mt-tool* クラスの直下要素として並ぶ。飛ばすのは
 // 「最初の最終回答本文が現れる前」の作業ツールだけ。最終回答の後ろに来るツール（メモ書き込み等の
 // 後始末）以降は最終回答の一部なので飛ばさない — 完了ターンでは workSplit が作業過程を disclosure へ
@@ -120,7 +120,7 @@ export function turnSpokenText(body: HTMLElement, fromBlock = 0): string {
     .join("\n");
 }
 
-// --- 読み上げ担当の登録（全ペイン自動読み上げ, docs/24） ---------------------------
+// --- 読み上げ担当の登録（全ペイン自動読み上げ, docs/log/24） ---------------------------
 // 同じセッションを複数ペインで開いているとき、自動読み上げ・確認読み上げを担うのは最初に
 // 登録したペインだけ（二重読み防止）。担当ペインが閉じたら次の登録ペインが自動で引き継ぐ。
 // hasTurnReader は useSessionNotifications が「本文をそのまま朗読するセッション」へ短い告知を

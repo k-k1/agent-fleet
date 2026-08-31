@@ -325,7 +325,7 @@ func TestMCPChromiumErrorsDoNotExposeAgentDetails(t *testing.T) {
 
 // The instance check is only worth anything if the MCP boundary carries it:
 // list must hand back the browser id, and attach must forward the caller's
-// expectation as camelCase browserId (docs/53 §53.16).
+// expectation as camelCase browserId (docs/log/53 §53.16).
 func TestMCPChromiumCarriesBrowserIdentity(t *testing.T) {
 	const guid = "c162d83f-b0a3-41d3-9db6-e9f6012c1491"
 	var attachBody map[string]any

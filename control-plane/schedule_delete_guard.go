@@ -9,9 +9,9 @@ import (
 
 // scheduleGuardErr blocks deleting a repo/worktree or a session that an ENABLED
 // Schedule still references — the fix for the incident where a live cron's
-// worktree was removed by a repo cleanup out from under it (docs/38). Pass "" for
+// worktree was removed by a repo cleanup out from under it (docs/log/38). Pass "" for
 // whichever of repoName/sessionName doesn't apply. A schedule's Repo is the
-// absolute workspace-agent repo path (docs/38 P2: "dir" passthrough), so it is
+// absolute workspace-agent repo path (docs/log/38 P2: "dir" passthrough), so it is
 // compared by basename against the repo/worktree {name}; ReuseTarget/ReuseSession
 // already hold the literal session name. A store error fails OPEN — a lookup
 // failure must not itself become a reason deletion is blocked.

@@ -13,7 +13,7 @@ import (
 )
 
 // Linking a SECOND sign-in method to an account, with the account owner's consent
-// (docs/61 §61.16 + ADR0043 決定 37).
+// (docs/log/61 §61.16 + ADR0043 決定 37).
 //
 // The problem it closes: two different IdPs asserting the SAME address are refused
 // (決定 32 / rule 2'), and rule 1.5 only joins two buttons onto ONE IdP. So the
@@ -191,7 +191,7 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 		return
 	}
 	// ★ Same stamp as the login callback, from the provider object — never from the
-	// exchange and never from a tenant's row (docs/61 §61.15).
+	// exchange and never from a tenant's row (docs/log/61 §61.15).
 	pr.Realm = providerRealm(p)
 	// ★ The method's own gate. Linking must not be a way past the org membership or
 	// the allowed domains: someone who cannot sign in with a method cannot link it.
@@ -272,7 +272,7 @@ func (c config) writeLinkResult(w http.ResponseWriter, r *http.Request, res link
 
 // --- the account panel's API ----------------------------------------------
 
-// accountAPI serves the person's OWN sign-in methods (docs/61 §61.16): what is
+// accountAPI serves the person's OWN sign-in methods (docs/log/61 §61.16): what is
 // linked, and what may be linked next. Deliberately not an admin endpoint — it
 // answers about the caller only, and every row in it is something the caller
 // already proved by signing in.
@@ -350,7 +350,7 @@ func currentMethod(cur loginRef, provider, subject string) bool {
 }
 
 // detachLoginMethod (DELETE /api/me/login-methods?provider=…&subject=…) removes one
-// sign-in method from the caller's OWN account (docs/61 §61.16.4).
+// sign-in method from the caller's OWN account (docs/log/61 §61.16.4).
 //
 // ★ provider and subject arrive as QUERY parameters, not path segments: a
 // tenant-defined provider id is "t:<slug>:<name>" and the colons make it a poor path
@@ -397,7 +397,7 @@ func (a accountAPI) detachLoginMethod(w http.ResponseWriter, r *http.Request, id
 }
 
 // auditMethod records a change to WHICH doors open an account. Both directions are
-// written (docs/61 §61.16.4): a linked method is a new way into a workspace, and the
+// written (docs/log/61 §61.16.4): a linked method is a new way into a workspace, and the
 // question an audit answers afterwards is "when did that become possible", which a
 // detach-only ledger cannot.
 //

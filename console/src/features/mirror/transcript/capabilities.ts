@@ -7,7 +7,7 @@
 //                              plan panes, fork points.
 //   shared view (SharedSessionView)
 //                              a recipient reading someone else's session through the
-//                              control-plane's allowlist DTO (docs/59 §3), which strips
+//                              control-plane's allowlist DTO (docs/log/59 §3), which strips
 //                              cwd / path / filePath and every structured coordinate.
 //                              There is nothing local to open and nothing to drive.
 //
@@ -66,7 +66,7 @@ export interface TranscriptCaps {
   sendPlanComments?: (plan: string) => void;
   /** Why sending is blocked ("" / undefined = allowed). */
   planSendDisabled?: string;
-  /** Branch from a past user turn (docs/55). Absent → no turn offers it. */
+  /** Branch from a past user turn (docs/log/55). Absent → no turn offers it. */
   forkAt?: (turn: Group) => void;
   /**
    * Jump to 設定 > エージェント after an auth failure. Absent → ErrorBlock shows the
@@ -74,10 +74,10 @@ export interface TranscriptCaps {
    * somebody else's agent, so offering the route would be a dead end.
    */
   onReauth?: () => void;
-  /** Karaoke read-aloud wiring (docs/24). Absent → no per-turn TTS buttons. */
+  /** Karaoke read-aloud wiring (docs/log/24). Absent → no per-turn TTS buttons. */
   tts?: TurnTtsWiring;
   /**
-   * 会話へ引いたマーカー（docs/69 / ADR 0050）。無ければ印は描かれず、選択ピルも出ない。
+   * 会話へ引いたマーカー（docs/log/69 / ADR 0050）。無ければ印は描かれず、選択ピルも出ない。
    * 「読めるが引けない」（RO の共有先）は wiring 側の `canEdit` が持つ — 印の表示自体は
    * 読み手にも要るので、ここを能力の有無だけで割ることはできない。
    */

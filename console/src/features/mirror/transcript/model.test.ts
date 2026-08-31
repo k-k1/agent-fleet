@@ -156,7 +156,7 @@ describe("peerSenderOf", () => {
 
   it("封筒に語が増えても名前を読み落とさない", () => {
     // 名前の直後を "]" に固定していたため、intent/reply が乗った時点でバッジが
-    // 無言で「別のセッション」に劣化した（docs/58 §58.14）。以後の追加にも耐える形。
+    // 無言で「別のセッション」に劣化した（docs/log/58 §58.14）。以後の追加にも耐える形。
     expect(
       peerSenderOf("[agent-fleet:peer from=build-api intent=request reply=only-if-blocked] 直して"),
     ).toBe("build-api");

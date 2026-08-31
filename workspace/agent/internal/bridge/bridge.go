@@ -1,4 +1,4 @@
-// Package bridge is the chat-bridge delivery layer (docs/37, ADR 0020): it
+// Package bridge is the chat-bridge delivery layer (docs/log/37, ADR 0020): it
 // mirrors notification-center events out to chat providers (P1: Discord,
 // send-only push; Slack lands on the same abstraction next).
 //
@@ -6,7 +6,7 @@
 //   - Enqueue — a plain file write into an on-disk queue. notice.Put and
 //     record-exit run in short-lived hook SUBPROCESSES (session-status /
 //     record-exit), so the write path must not do network I/O, must never
-//     block, and must never fail the outbox (docs/37 契約4: the outbox is the
+//     block, and must never fail the outbox (docs/log/37 契約4: the outbox is the
 //     source of truth, the chat side is a 写し).
 //   - StartSender — a single goroutine in the long-running Agent daemon that
 //     drains the queue, formats the message, and sends through every
@@ -15,7 +15,7 @@ package bridge
 
 import "encoding/json"
 
-// Caps are a provider's capability flags (docs/37 契約1). P1 providers are
+// Caps are a provider's capability flags (docs/log/37 契約1). P1 providers are
 // send-only in practice (only Send is wired); CanReceive/CanInteract exist so
 // the Console and P2's inbound routing can discriminate without a type switch
 // — a future Teams provider is CanSend-only by design.
@@ -39,7 +39,7 @@ type Provider interface {
 // ResumableSender is an optional Provider capability: deliver a message starting
 // at a sub-message index and report how many sub-messages have been delivered so
 // far, so the sender can RESUME a partial delivery across ticks WITHOUT re-posting
-// what already landed (docs/37 重複対策 = idempotent delivery). One notification
+// what already landed (docs/log/37 重複対策 = idempotent delivery). One notification
 // fans into several posts (mention chunk + body chunks + P2b buttons + a thread
 // starter); a failure after some succeed — a 429 that slips discordDo's inline
 // retry, a dropped connection mid-batch — used to re-post the whole entry on the
@@ -51,7 +51,7 @@ type ResumableSender interface {
 }
 
 // Message is the provider-independent notification payload. It carries only
-// display data — never tokens, keys, or raw logs (docs/37 「秘密の露出」).
+// display data — never tokens, keys, or raw logs (docs/log/37 「秘密の露出」).
 type Message struct {
 	Kind        string `json:"kind"`        // notice kind or "exit"
 	SessionName string `json:"sessionName"` // slug ("" for chat-scoped events)
@@ -59,27 +59,27 @@ type Message struct {
 	DisplayName string `json:"displayName"`
 	Detail      string `json:"detail,omitempty"` // e.g. exit reason (oom/crashed/killed)
 	CreatedAt   string `json:"createdAt"`
-	// Body is the final assistant turn prose for the 全文ブリッジ (docs/37 将来の
+	// Body is the final assistant turn prose for the 全文ブリッジ (docs/log/37 将来の
 	// 方向). Populated only for answer-ready; rendered only when the provider's
 	// creds opt into full-text mode. Still display data — never tool logs,
 	// thinking, or raw transcripts, and secret-scrubbed before it reaches a wire.
 	Body string `json:"body,omitempty"`
 	// Questions is the pending AskUserQuestion payload (claude's tool_input.questions
-	// array, verbatim) for P2b button rendering (docs/37). Populated only for the
+	// array, verbatim) for P2b button rendering (docs/log/37). Populated only for the
 	// "question" kind; an interact-capable provider renders one option button per
 	// choice. Nil for every other kind (plan-approval / permission-request use fixed
 	// allow/deny buttons that need no payload).
 	Questions json.RawMessage `json:"questions,omitempty"`
 }
 
-// EventKeys are the user-toggleable notification groups of docs/37 P1. The
+// EventKeys are the user-toggleable notification groups of docs/log/37 P1. The
 // Connections card renders one toggle per key; an empty stored selection means
 // all of them.
 var EventKeys = []string{"answer-ready", "question", "permission-request", "exit", "session-report"}
 
 // eventKeyFor maps a notice kind to its toggle group; "" means the kind is not
 // bridged at all (the chat-* context housekeeping events stay Console-only —
-// docs/37 P1 scopes the push to attention/terminal events).
+// docs/log/37 P1 scopes the push to attention/terminal events).
 func eventKeyFor(kind string) string {
 	switch kind {
 	case "answer-ready":

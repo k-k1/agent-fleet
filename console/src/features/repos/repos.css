@@ -302,7 +302,7 @@
 }
 
 /* ---- Repos section rows ---- */
-/* リポジトリ取り込みジョブの行（docs/78）。進行中と、既読にするまで残る結末。
+/* リポジトリ取り込みジョブの行（docs/log/78）。進行中と、既読にするまで残る結末。
    （旧 .repo-cloning は「押している間だけのスピナー」で、接続が切れれば消えていた） */
 .repo-job {
   padding: 6px 8px;
@@ -416,7 +416,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 削除ロック（docs/45）: 作業コピー行の鍵バッジ（セッション行の .sess-lock と対）。 */
+/* 削除ロック（docs/log/45）: 作業コピー行の鍵バッジ（セッション行の .sess-lock と対）。 */
 .repo-lock {
   flex: none;
   color: var(--muted);
@@ -828,7 +828,7 @@
   gap: 10px;
 }
 
-/* ProjectModal (docs/56 P0) — project-scope MCP servers × files matrix. */
+/* ProjectModal (docs/log/56 P0) — project-scope MCP servers × files matrix. */
 .pmcp-modal {
   width: min(720px, 92vw);
 }
@@ -954,7 +954,7 @@
   color: var(--warn);
 }
 
-/* ProjectActionPanels (docs/56 P1) — the copy/ignore write flows. */
+/* ProjectActionPanels (docs/log/56 P1) — the copy/ignore write flows. */
 .pmcp-link-btn {
   background: none;
   border: none;
@@ -1035,7 +1035,7 @@
   flex-direction: column;
   gap: 2px;
 }
-/* Copy target picker: one chip per destination agent, docs/56 P1's redesign away
+/* Copy target picker: one chip per destination agent, docs/log/56 P1's redesign away
    from a raw file-path dropdown (feedback 2026-08-11 — target by agent, not file). */
 .pmcp-kind-chips {
   display: flex;

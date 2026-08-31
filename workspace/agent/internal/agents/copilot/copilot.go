@@ -1,12 +1,12 @@
 // Package copilot は GitHub Copilot CLI（`copilot`, npm @github/copilot）種別の
-// 縦割りパッケージ（docs/36 Track A）。read 層（Agent 実装・events.jsonl の
+// 縦割りパッケージ（docs/log/36 Track A）。read 層（Agent 実装・events.jsonl の
 // transcript/状態読み）と managed driver（--acp: Agent Client Protocol JSON-RPC
 // over stdio、per-session child — driver.go/acp.go）を種別内に閉じる。
 //
 // セッション同一性は AF 側で外部採番した UUID（`--session-id <uuid v4>`、TUI と
-// ACP の session/load で共通）— agy の「resume UUID が取れない」問題（docs/32
+// ACP の session/load で共通）— agy の「resume UUID が取れない」問題（docs/log/32
 // 202e439）は構造的に発生しない。read 正本は $COPILOT_HOME/session-state/<sid>/
-// events.jsonl（TUI・-p・ACP 全経路で同一形式・ライブ追記 — docs/36 実測記録）。
+// events.jsonl（TUI・-p・ACP 全経路で同一形式・ライブ追記 — docs/log/36 実測記録）。
 // 認証は GitHub 連携相乗り（gh 透過認証の OAuth トークン。Copilot CLI は
 // COPILOT_GITHUB_TOKEN > GH_TOKEN > GITHUB_TOKEN と gh CLI アプリのトークンを
 // 公式サポート）で、専用の Connections フローは持たない。
@@ -39,7 +39,7 @@ func (agentImpl) Kind() string { return session.KindCopilot }
 // which copilot appends live in every mode. CanFork/CanForkAt: copilot exposes no fork
 // affordance of its own, so both are done by copying the session-state directory and
 // truncating events.jsonl (forkat.go) — events.jsonl is the restore source (実測,
-// docs/55 §55.5). No display label.
+// docs/log/55 §55.5). No display label.
 func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true, PermissionChoice: true}
 }
@@ -108,7 +108,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		}
 		sids.Write(session.UUID(m.Dir, m.Name), sid)
 	}
-	// First launch of a fork (docs/55): build our own session-state directory before
+	// First launch of a fork (docs/log/55): build our own session-state directory before
 	// copilot starts, so the launch below is an ordinary `--session-id <sid>` resume.
 	// A failure must NOT fall through to a fresh session — the user asked for a branch
 	// carrying history, and starting empty looks like the branch silently lost it.
@@ -138,14 +138,14 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return li
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。
 //
 // copilot の人待ちは許可要求だけで、TUI ルートも managed（ACP）も**同じ
 // events.jsonl** に `permission.requested` を刻む（state.go）ので、経路を分けずに
 // 1 本で読める。ファイルなのでプロセスが死んだ後でも残り、halt より遅い契機でも拾える。
 //
 // Kind は **permission**: 可否の宛先（TUI のメニュー / ACP の JSON-RPC id）は
-// プロセスと一緒に消えるので、持ち越せるのは事実だけ（docs/75 §75.6.4）。対象名は
+// プロセスと一緒に消えるので、持ち越せるのは事実だけ（docs/log/75 §75.6.4）。対象名は
 // events.jsonl のスキーマ次第で取れないことがあり、そのときは事実だけを述べる。
 func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	detail, pending := PendingPermission(m)

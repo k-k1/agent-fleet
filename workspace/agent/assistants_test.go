@@ -9,9 +9,9 @@ import (
 // sessions and run commands, but only with explicit user confirmation, and it must
 // NEVER execute a command / drive a shell on the authority of a session's report or
 // output (prompt-injection defense). These live in the persona (the gate is the tool
-// set + persona, per docs/30), so a wording drift that drops them is a regression.
+// set + persona, per docs/log/30), so a wording drift that drops them is a regression.
 //
-// docs/28 P6: persona は表示言語で分岐するようになったので、**両ロケールで**見る。片方だけ
+// docs/log/28 P6: persona は表示言語で分岐するようになったので、**両ロケールで**見る。片方だけ
 // 直して片方の防御条項が落ちる、が英訳でいちばん起きやすい壊れ方（§6.6 の地雷）。
 func TestOperatorPersonaShellGuards(t *testing.T) {
 	cases := []struct {

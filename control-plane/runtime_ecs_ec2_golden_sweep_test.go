@@ -1,5 +1,5 @@
 // runtime_ecs_ec2_golden_sweep_test.go — sweepOrphans, the AWS half of "the database
-// forgot about a bake workspace but AWS did not" (docs/64 §64.29.5).
+// forgot about a bake workspace but AWS did not" (docs/log/64 §64.29.5).
 package main
 
 import (

@@ -191,7 +191,7 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		Queued:     queued(db, ses),
 		Compacting: compacting(db, ses),
 	}
-	// managed セッション（docs/27 P2）: driver の runtime 状態を合流 — pending 質問へ
+	// managed セッション（docs/log/27 P2）: driver の runtime 状態を合流 — pending 質問へ
 	// Interaction id（/respond の宛先）、driver 内キューを キュー済み へ。
 	managedEnrich(m, &td)
 	return td, true
@@ -556,7 +556,7 @@ func parseMessage(db *sql.DB, msgID string, data []byte, idx int) (transcript.Tu
 		Cwd: md.Path.Cwd,
 		// opencode's own message id IS the fork anchor: POST /session/{id}/fork takes a
 		// messageID and its copy loop stops at the first message whose id sorts >= that
-		// value (docs/55 §55.2), so the anchor travels to the server untranslated.
+		// value (docs/log/55 §55.2), so the anchor travels to the server untranslated.
 		AnchorID: msgID,
 	}
 	if md.Time.Created > 0 {

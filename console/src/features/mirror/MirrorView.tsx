@@ -111,7 +111,7 @@ import { PendingQuestions } from "./PendingQuestions.tsx";
 import { CarriedBlock } from "./CarriedBlock.tsx";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
 import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
-// The transcript rendering layer, shared with the shared-session view (docs/59). What the
+// The transcript rendering layer, shared with the shared-session view (docs/log/59). What the
 // reader may DO here is expressed as TranscriptCaps — the mirror is the owner, so it fills
 // in every capability; a recipient fills in almost none. See transcript/capabilities.ts.
 import { TranscriptView } from "./transcript/TranscriptView.tsx";
@@ -124,7 +124,7 @@ import { MarkStrip } from "./transcript/MarkStrip.tsx";
 
 const q = encodeURIComponent;
 
-// foreign スキルの出所バッジ（docs/50 §8）: kind 色（--kind-* 1 ソース）のミニチップで
+// foreign スキルの出所バッジ（docs/log/50 §8）: kind 色（--kind-* 1 ソース）のミニチップで
 // 出所エージェントを示す。.agents はどの kind でもない共有規約 → 中立の「共有」。
 // ネイティブ項目はバッジ無し（従来どおり）。
 function SkillOriginBadge({ origin }: { origin: string }) {
@@ -289,7 +289,7 @@ export function MirrorView({
   // いるときだけ出す（末尾では出さない: 押すべきボタンの上に被るため。syncReplyTop の注記）。
   const [showReplyTop, setShowReplyTop] = useState(false);
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
-  // Files this session's agent edited (docs/68). Aggregated server-side over the WHOLE
+  // Files this session's agent edited (docs/log/68). Aggregated server-side over the WHOLE
   // transcript and delivered on this same poll — deriving it from `turns` would count
   // only the window the mirror happens to hold and grow as the reader scrolls up.
   const [files, setFiles] = useState<SessionFile[]>([]);
@@ -306,7 +306,7 @@ export function MirrorView({
   const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
-  // 持ち越し（docs/75）: セッションが畳まれたときに画面に出ていた対話。保留（上の 3 つ）と
+  // 持ち越し（docs/log/75）: セッションが畳まれたときに画面に出ていた対話。保留（上の 3 つ）と
   // 違ってモーダルはもう無いので、答えはキーではなく文章として配達される。サーバは保留が
   // あるあいだ carried を出さないので、両方が同時に立つことはない。
   const [carried, setCarried] = useState<CarriedInteraction | null>(null);
@@ -315,7 +315,7 @@ export function MirrorView({
   // two later — otherwise it sits at the neutral 決定済み until then.
   const rejectedPlansRef = useRef<Set<string>>(new Set());
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
-  // 直近に端末が名乗った非 plan モード名。plan を抜けたときの楽観ラベルに使う（docs/76）。
+  // 直近に端末が名乗った非 plan モード名。plan を抜けたときの楽観ラベルに使う（docs/log/76）。
   const lastNonPlanMode = useRef("");
   // Session-level context fill reported by the agent itself (agy /context scrape) —
   // the ContextBar's fallback when the transcript has no per-turn token usage.
@@ -324,7 +324,7 @@ export function MirrorView({
   const [titleActing, setTitleActing] = useState(false); // accept/dismiss request in flight
   const [managedSettingsOpen, setManagedSettingsOpen] = useState(false);
   const [managedSettings, setManagedSettings] = useState<ManagedThreadSettings | null>(null);
-  // 「ここから分岐」の確認待ち（docs/55）。null = 閉じている。
+  // 「ここから分岐」の確認待ち（docs/log/55）。null = 閉じている。
   const [forkAtTarget, setForkAtTarget] = useState<ForkAtTarget | null>(null);
   // Composer draft, persisted per session so switching ターミナル⇄チャット (which
   // unmounts this view) — or a reload — keeps what you were typing. Key by session.
@@ -353,7 +353,7 @@ export function MirrorView({
   const attachSuggestRow = useDragScroll(suggestRef);
   // チップの右クリック / 長タップ / Menu キーで開くメニュー（ピン留め・削除）。
   const chipMenu = useChipMenu();
-  // スキルピッカー（docs/50 / ADR0034、v2 クロスエージェント＋§8 クロススキル注入）:
+  // スキルピッカー（docs/log/50 / ADR0034、v2 クロスエージェント＋§8 クロススキル注入）:
   // セッションで呼べるスキル/コマンドの補完リスト。ネイティブ起動（invoke — "/name" や
   // codex "$name"）に加え、他規約の SKILL.md（foreign — path/origin 付き）は「path を
   // 読んで指示に従え」プロンプトとして差し込む — ただの指示文なので kind/ドライバ不問。
@@ -432,7 +432,7 @@ export function MirrorView({
   // The idx of the reply whose FINAL ANSWER top we've already brought to the viewport top.
   // On completion a following pane collapses the 作業過程 into a disclosure, so the reply's
   // top becomes that collapsed row; we then re-anchor once to the final answer's first line
-  // (docs/24). Kept separate from anchoredIdxRef so the top-anchor and the answer-anchor each
+  // (docs/log/24). Kept separate from anchoredIdxRef so the top-anchor and the answer-anchor each
   // fire exactly once per reply.
   const answerAnchoredRef = useRef<number | undefined>(undefined);
   // False until the first content settle for a session. On open we land at the bottom (as
@@ -440,7 +440,7 @@ export function MirrorView({
   // the user is watching get anchored to the top — history isn't retro-scrolled.
   const didInitRef = useRef(false);
 
-  // --- カラオケ朗読（turnTts, docs/24） -----------------------------------------
+  // --- カラオケ朗読（turnTts, docs/log/24） -----------------------------------------
   // 読み上げ中のターン（transcript の idx）と一時停止状態。onEnd（自然終了・TopBar 停止・
   // 他の再生開始）で自分の分だけ片づける。
   const [ttsReading, setTtsReading] = useState<{ idx: number; paused: boolean } | null>(null);
@@ -506,7 +506,7 @@ export function MirrorView({
   // 長い回答の要約読み上げ（設定 ttsSummaryRead）。この文字数を超える新着分は、全文を
   // 読む代わりにアシスタント（headless CLI・ツールなし one-shot）へ 2 文要約させて読む。
   const TTS_SUMMARY_MIN = 500;
-  // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/28 §4）
+  // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/log/28 §4）
   const TTS_SUMMARY_PROMPT =
     "次のテキストはコーディングエージェントの回答です。音声で聞くための要約を、日本語で最大2文・120字以内で書いてください。" +
     "記号・コード・URL・箇条書きは使わず、プレーンな文章だけを返してください。要約以外の前置きや説明は書かないでください。\n\n---\n";
@@ -560,7 +560,7 @@ export function MirrorView({
       const total = collectBlocks(body).length;
       ttsAutoDoneRef.current.set(gi, total);
       if (total <= done) continue; // 増分なし（ツールだけの追記等）
-      // 過程スキップ（chat の分離と同趣・docs/19）: 完成した本文からツール前ナレーションを
+      // 過程スキップ（chat の分離と同趣・docs/log/19）: 完成した本文からツール前ナレーションを
       // 飛ばし、最後のツール以降の本文（＝最終回答）だけを自動読み上げする。
       // 完了後の作業過程は disclosure 内へ移るため、DOM 直下を読む手動朗読も最終回答に揃う。
       const from = Math.max(done, finalAnswerStart(body));
@@ -655,7 +655,7 @@ export function MirrorView({
     announce(text, label, { ...(sessionVoiceOpts(session) ?? {}), paneId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, pending, pendingPlan, pendingPerm]);
-  // 会話へ引いたマーカー（docs/69 / ADR 0050）。ここは所有者なので、誰の印でも消せる側。
+  // 会話へ引いたマーカー（docs/log/69 / ADR 0050）。ここは所有者なので、誰の印でも消せる側。
   // ⚠️ ポーリングは増やさない — 転写のロードに合わせて reload() を呼ぶ（下の effect）。
   const marks = useMarksController({
     path: session ? `api/sessions/${q(session)}/marks` : "",
@@ -960,7 +960,7 @@ export function MirrorView({
           const nextMode = typeof d.mode === "string" ? d.mode : "";
           // 非 plan のときの実際の名前を覚えておく（plan を抜けたときの楽観ラベル用）。
           // 種別の既定ラベルを使うと、権限確認ありで起動した claude に "Bypass" と出る
-          // （docs/76）。端末が名乗った値なら、その取り違えが起こらない。
+          // （docs/log/76）。端末が名乗った値なら、その取り違えが起こらない。
           if (nextMode && nextMode.toLowerCase() !== "plan") lastNonPlanMode.current = nextMode;
           setMode(nextMode);
           setAgentCtx(
@@ -1422,11 +1422,11 @@ export function MirrorView({
   }, [readOnly, alive, termState]);
 
   // Low-level: submit one prompt as a semantic turn op — start when idle, steer when a
-  // turn is already running (docs/27 §4). The Agent adapts it per driver: tui = the same
+  // turn is already running (docs/log/27 §4). The Agent adapts it per driver: tui = the same
   // tmux typing as before (sessionTurn falls back to /input against an old Agent),
   // managed = the turn/start・turn/steer RPC (P2). The result carries the rejection
   // reason so the caller can drop its optimistic echo AND tell the user why.
-  // attachments は managed だけが渡す（driver が API 添付へ変換、docs/27 §10.2-3）。
+  // attachments は managed だけが渡す（driver が API 添付へ変換、docs/log/27 §10.2-3）。
   const postInput = (text: string, op: "start" | "steer", attachments?: string[]): Promise<TurnResult> =>
     sessionTurn(session, op, text, attachments);
 
@@ -1465,7 +1465,7 @@ export function MirrorView({
   };
 
   // sendPrompt submits one prompt (the composer). Never used to answer an AUQ —
-  // the modal ignores typed text, so a text send would confirm option 1 (docs/dev/92).
+  // the modal ignores typed text, so a text send would confirm option 1 (docs/build/92).
   // attachments は managed セッションの API 添付（send() が織り込みと使い分ける）。
   // 戻り値は「セッションに受理されたか」。呼び出し側の大半は投げっぱなしでよいが、
   // プランコメントの送信済みマークだけはこれを見る必要がある — 失敗をトーストするだけで
@@ -1609,7 +1609,7 @@ export function MirrorView({
   };
 
   // sendRespond answers a MANAGED session's pending question by interaction id —
-  // 構造化回答（docs/27 §5）。tui の質問は従来どおり sendKeys/sendSeq で TUI モーダル
+  // 構造化回答（docs/log/27 §5）。tui の質問は従来どおり sendKeys/sendSeq で TUI モーダル
   // をナビゲーション駆動する（サーバも tui への /respond は受け付けない）。
   const sendRespond = async (id: string, answers: InteractionAnswer[]) => {
     if (sending) return;
@@ -1690,7 +1690,7 @@ export function MirrorView({
   };
 
   // An AskUserQuestion can't be answered by the composer's free text — verified against
-  // the terminal (v2.1.204, docs/dev/92): the modal IGNORES typed text on option rows
+  // the terminal (v2.1.204, docs/build/92): the modal IGNORES typed text on option rows
   // entirely (the older "option filter" behavior is gone), so the trailing Enter just
   // confirms the highlighted (first) option — a silent wrong answer. Digit keys 1-9 even
   // select-and-submit instantly, so stray text is doubly dangerous. Lock the composer for
@@ -1792,7 +1792,7 @@ export function MirrorView({
     const ts = useTtsStore.getState();
     if (ts.active && ts.sessionName === session) ts.stop();
     const paths = attachments.map((a) => a.path);
-    // managed はワイヤの attachments で渡し（driver が API 添付へ変換、docs/27
+    // managed はワイヤの attachments で渡し（driver が API 添付へ変換、docs/log/27
     // §10.2-3）、tui は従来どおりプロンプト本文へパスを織り込む。
     const prompt = managed ? text : buildImagePrompt(text, paths, agent.id);
     setHistIdx(null);
@@ -1857,7 +1857,7 @@ export function MirrorView({
     setSetting("quickRepliesHidden", unhideQuickReply(settings.quickRepliesHidden || [], text));
   };
 
-  // --- スキルピッカー（docs/50） ---
+  // --- スキルピッカー（docs/log/50） ---
   // slashOpen: 先頭トリガのトークンが生きていて、かつ直前に閉じられていない。
   // skillListVisible: 実際にリストを描く条件 — タイプ起点は該当ゼロなら出さない
   // （素の /plan 等の手打ちを覆い隠さない）。ボタン起点は空でも「無い」ことを見せる。
@@ -2081,7 +2081,7 @@ export function MirrorView({
   // Open an edit trace's captured before/after in a diff pane. The mirror HAS panes, so
   // it must pass this capability: without it ToolTrace silently takes the degraded path
   // meant for the pane-less shared view (transcript/capabilities.ts) and an edit becomes
-  // an inline expansion with nothing to open — which is how it behaved until docs/68.
+  // an inline expansion with nothing to open — which is how it behaved until docs/log/68.
   const openDiff = (p: Part) => {
     const title = p.file ? p.file.split("/").pop() || p.file : p.tool || tr("view.diff");
     const target = { content: { kind: "diff" as const, docTitle: title, diffTool: p.tool || "", diffEdits: p.edits || [] } };
@@ -2353,7 +2353,7 @@ export function MirrorView({
   // waiting for the reply even if the session already reads idle.
   const replyPending = awaitingReply(groups);
 
-  // 「ここから分岐」（docs/55）。条件は kind ごとに違う（canBranchInSession）— ここで絞らないと、
+  // 「ここから分岐」（docs/log/55）。条件は kind ごとに違う（canBranchInSession）— ここで絞らないと、
   // 押せるのに必ず 400 で返るボタンを出すか、逆に claude で永久に出ないかのどちらかになる。
   const canForkAt = canBranchInSession(agent.caps, { managed, readOnly });
   const openForkAt = (turn: Group) => {
@@ -2829,7 +2829,7 @@ export function MirrorView({
           />
         )}
         {carried && (
-          // 持ち越し（docs/75）。保留カードと違い**キーは 1 つも送らない** — 当てる先の
+          // 持ち越し（docs/log/75）。保留カードと違い**キーは 1 つも送らない** — 当てる先の
           // モーダルはもう無く、回答は Agent が再開してから文章として届ける。
           <CarriedBlock
             carried={carried}
@@ -3216,7 +3216,7 @@ export function MirrorView({
               <Icon name="chevron-down" />
             </button>
           </div>
-          {/* スキルピッカー（docs/50）: コンポーサー上に浮く補完リスト。マウスは onMouseMove で
+          {/* スキルピッカー（docs/log/50）: コンポーサー上に浮く補完リスト。マウスは onMouseMove で
               選択追従＋クリック確定（mousedown は preventDefault でフォーカスを奪わない —
               CommandPalette と同型）、タップはそのまま確定、キーボードは onKeyDown が駆動。
               引数入力中（skillArgs）は受動表示 — キーボード選択を持たないので sel も付けず、
@@ -3373,7 +3373,7 @@ export function MirrorView({
                   // the poll reconciles from the terminal via paneMode.
                   setMode(toPlan ? "Plan" : lastNonPlanMode.current || agent.defaultModeLabel);
                   // managed のモード切替は ThreadSettings の更新（POST /settings →
-                  // UpdateSettings、docs/27 §9.4-3）— 次 turn の agent/mode に効く。
+                  // UpdateSettings、docs/log/27 §9.4-3）— 次 turn の agent/mode に効く。
                   // tui は従来どおりキー駆動（planEnterCmd / planCycleKey）。
                   if (managed) {
                     void sessionSettings(session, { mode: toPlan ? "plan" : "normal" });

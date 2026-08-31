@@ -27,7 +27,7 @@ func procState(t *testing.T, pid int) string {
 
 // Close must reap the child (Cmd.Wait), not just kill it: workspace-agent is
 // not PID 1, so an unwaited flow child stays a zombie until the agent exits
-// （実機で agy /usage スクレイプ毎に `[agy] <defunct>` が蓄積した — docs/32）.
+// （実機で agy /usage スクレイプ毎に `[agy] <defunct>` が蓄積した — docs/log/32）.
 func TestCloseReapsKilledProcess(t *testing.T) {
 	cmd := exec.Command("sleep", "30")
 	f, err := StartFlow(cmd)

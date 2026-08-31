@@ -1,7 +1,7 @@
 package main
 
 // アシスタントチャットの HTTP ハンドラ（一覧・作成・取得・改名・削除・送信・ストリーム・consult）。
-// chat.go からの機械的分割（docs/23 残②）。
+// chat.go からの機械的分割（docs/log/23 残②）。
 
 import (
 	"context"
@@ -32,7 +32,7 @@ type chatCreateReq struct {
 	Agent       string `json:"agent"`        // legacy fallback when no assistant_id
 	Title       string `json:"title"`
 	Model       string `json:"model"` // legacy override (ignored when assistant_id is set)
-	// Ad-hoc attach (docs/19 Phase C): a Files right-click can hand a file/dir to the new
+	// Ad-hoc attach (docs/log/19 Phase C): a Files right-click can hand a file/dir to the new
 	// chat. AttachPath is browse-root-relative (resolved + denylisted via safeBrowsePath);
 	// its dir is added to the conversation's knowledge so the assistant can read it, and a
 	// seed prompt (below) is composed server-side with the absolute path.
@@ -40,12 +40,12 @@ type chatCreateReq struct {
 	SeedVerb   string `json:"seed_verb"` // "translate" | "summarize" | "" (open-ended ask)
 }
 
-// verbPersona is the persona-embedded instruction for an ad-hoc Files verb (docs/30 ②).
+// verbPersona is the persona-embedded instruction for an ad-hoc Files verb (docs/log/30 ②).
 // A translate/summarize chat opened from Files carries its own persona instead of pointing
 // at a standing 翻訳/汎用 assistant, so those builtins could be removed with no loss. Any
 // other verb ("") falls through to the generic chatPersona.
 //
-// docs/28 P6: 生成物（訳文・要約）を読むのは利用者なので、persona は表示言語で書く。翻訳の
+// docs/log/28 P6: 生成物（訳文・要約）を読むのは利用者なので、persona は表示言語で書く。翻訳の
 // 言語ペアは表示言語と無関係に日本語↔英語のままにしてある — 「訳す方向」は入力から決まる話で、
 // Console の表示言語で決めるものではない（languageRule も translate だけ除外している）。
 func verbPersona(verb, lang string) string {
@@ -141,7 +141,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case req.AssistantID != "":
-		// Snapshot the assistant's settings onto the conversation (docs/19 Q2): later edits
+		// Snapshot the assistant's settings onto the conversation (docs/log/19 Q2): later edits
 		// to the assistant leave existing threads untouched.
 		a, err := getAssistant(req.AssistantID)
 		if err != nil {
@@ -156,7 +156,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		c.Knowledge = a.Knowledge
 		c.Integrations = a.Integrations
 	case verbPersona(req.SeedVerb, lang) != "":
-		// Ad-hoc persona-embedded verb (docs/30 ②): a Files 翻訳/要約 opens a standalone chat
+		// Ad-hoc persona-embedded verb (docs/log/30 ②): a Files 翻訳/要約 opens a standalone chat
 		// carrying the verb persona directly — no standing 翻訳/汎用 assistant to point at.
 		// Read-only (the attached file arrives via knowledge --add-dir below); SeedVerb is
 		// persisted so languageRule() keeps a translate thread language-agnostic.
@@ -181,7 +181,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Ad-hoc attach from a Files right-click (docs/19 Phase C): resolve the target safely,
+	// Ad-hoc attach from a Files right-click (docs/log/19 Phase C): resolve the target safely,
 	// add its dir to knowledge so the assistant can read it, and compose the seed prompt.
 	var seed string
 	if req.AttachPath != "" {
@@ -205,7 +205,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
-// chatAskReq is the assistant-to-assistant consult (docs/19): an af_write orchestrator's
+// chatAskReq is the assistant-to-assistant consult (docs/log/19): an af_write orchestrator's
 // ask_assistant tool posts here to get a specialist's advice.
 type chatAskReq struct {
 	Assistant string `json:"assistant"` // id or exact name of the assistant to consult
@@ -283,7 +283,7 @@ type chatPatchReq struct {
 	Agent *string `json:"agent,omitempty"`
 }
 
-// handleChatPatch updates a conversation in place (docs/19):
+// handleChatPatch updates a conversation in place (docs/log/19):
 //   - title: the auto-title from the first message is often not what the user wants once
 //     the thread has a topic.
 //   - agent: switch the backend CLI mid-thread. 設定 > アシスタントの「エージェント優先順位」は
@@ -381,7 +381,7 @@ func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	unlock := lockConv(id)
 	defer unlock()
-	// 削除ロック（docs/45）: ロック中の会話は消さない。読めない会話は素通り
+	// 削除ロック（docs/log/45）: ロック中の会話は消さない。読めない会話は素通り
 	// （下の os.Remove が not-exist を許容するのと同じで、掃除は続けたい）。
 	if c, err := loadConv(id); err == nil && c.Locked {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
@@ -399,7 +399,7 @@ func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	chatWD := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd")
 	_ = os.RemoveAll(filepath.Join(chatWD, "agy-"+id))
 	_ = os.Remove(filepath.Join(chatWD, "opencode-conv", id+".json"))
-	// claude chats get a per-conversation --mcp-config file (docs/48 P2) — it holds
+	// claude chats get a per-conversation --mcp-config file (docs/log/48 P2) — it holds
 	// the attached servers' credentials, so it goes with the thread rather than
 	// lingering until the next container rebuild.
 	removeChatMCPConfig(id)
@@ -436,13 +436,13 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	actualAgent := chatProviderKind(c, prov)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
-	// docs/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（成功
+	// docs/log/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（成功
 	// すれば直後の injectHandoff がその要約を乗せる）。
 	maybeAutoCompact(r.Context(), c, prov)
-	// docs/30: reports that never got their own auto turn ride the next prompt, and a
+	// docs/log/30: reports that never got their own auto turn ride the next prompt, and a
 	// user message resets the unattended auto-turn budget.
 	prompt, pendingReports := injectPendingReports(c, content)
-	// docs/33: a compaction summary rides the NEW session's first prompt, outermost.
+	// docs/log/33: a compaction summary rides the NEW session's first prompt, outermost.
 	prompt, handoff := injectCarryover(c, actualAgent, prompt)
 	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 	c.AutoTurns, c.AutoPausedNotified = 0, false
@@ -452,7 +452,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	ctx = withUsageTag(ctx, chatTurnUsageTag(c, usageTriggerUser)) // 使用量台帳（ADR 0029 §3）
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
-		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
+		// docs/log/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
 		// リトライ。reports は未配信なので再注入され、要約も前置される。
 		prompt, pendingReports = injectPendingReports(c, content)
 		prompt, handoff = injectCarryover(c, actualAgent, prompt)
@@ -567,18 +567,18 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// docs/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（detached
+	// docs/log/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（detached
 	// ctx 上なのでリロードでも中断されない）。成功すれば下の injectHandoff が要約を
 	// 乗せる。プロンプト構築は圧縮の後（PendingHandoff 反映後）でなければならない。
 	maybeAutoCompact(ctx, c, prov)
-	// docs/30: undelivered session reports ride this prompt; docs/33: a compaction
+	// docs/log/30: undelivered session reports ride this prompt; docs/log/33: a compaction
 	// summary rides the NEW session's first prompt, outermost.
 	prompt, pendingReports := injectPendingReports(c, content)
 	prompt, handoff := injectCarryover(c, actualAgent, prompt)
 	prompt = syncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 	runTurn(prompt)
 	if err != nil && recoverForRetry(ctx, c, prov, err) {
-		// docs/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
+		// docs/log/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
 		// リトライ。超過エラーは初回送信直後の 400 なので delta 未発火＝二重表示なし。
 		prompt, pendingReports = injectPendingReports(c, content)
 		prompt, handoff = injectCarryover(c, actualAgent, prompt)

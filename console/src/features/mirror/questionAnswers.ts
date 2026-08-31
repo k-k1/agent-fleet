@@ -40,7 +40,7 @@ const cutPreview = (s: string): string | null => {
 const cutSep = (s: string) => s.replace(/"[\s,、，]*$/, "").trim();
 
 // A question answered with NOTES and no option — what a previewed question's free text
-// becomes, since that layout has no "Type something" row (docs/dev/92 §6) — is reported
+// becomes, since that layout has no "Type something" row (docs/build/92 §6) — is reported
 // UNQUOTED:
 //   "<q>"=(no option selected) notes: <text>
 // The anchor below used to demand a quote right after the `=`, so a single answer of this

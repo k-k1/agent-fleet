@@ -1,5 +1,5 @@
 -- Rule 1.5 on a second key: a stable claim the IdP hands out next to sub
--- (docs/61 §61.15.10 + ADR0043 決定 38).
+-- (docs/log/61 §61.15.10 + ADR0043 決定 38).
 --
 -- 0041 keyed rule 1.5 on (realm, subject), which is exactly right for GitHub:
 -- github.com hands the same numeric id to every OAuth App, so the same account

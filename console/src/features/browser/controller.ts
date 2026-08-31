@@ -297,7 +297,7 @@ export class BrowserController {
         const e = error as { code?: string; message?: string };
         if (e.code === "browser_installing") {
           // First-use pinned Chromium install is running agent-side (lean rootfs
-          // — docs/35 §35.7.2-4). Show "preparing" and poll until it lands.
+          // — docs/log/35 §35.7.2-4). Show "preparing" and poll until it lands.
           this.update({ state: "loading", errorCode: e.code, errorMessage: e.message || "" });
           setTimeout(() => {
             if (!this.disposed && this.visible && !this.pageId) void this.start();

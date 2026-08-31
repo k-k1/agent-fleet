@@ -1,6 +1,6 @@
 package mcpreg
 
-// Per-provider serialization of registry definitions (docs/48 §7 / P2). One
+// Per-provider serialization of registry definitions (docs/log/48 §7 / P2). One
 // ServerDef list in, the shape each headless CLI's assistant chat expects out — so
 // "which servers does this assistant get" is decided once, in the registry, and the
 // providers only differ in how they spell it.
@@ -8,7 +8,7 @@ package mcpreg
 // The one rule every provider here obeys: a secret VALUE (an env value, a header
 // value) must not reach a process ARGV. Argv is readable through /proc for the whole
 // uid and can be echoed into a CLI's own crash logs, which is a weaker place than
-// the 0600 files docs/48 §5.1 commits to. So:
+// the 0600 files docs/log/48 §5.1 commits to. So:
 //
 //   - claude / opencode / agy take a config FILE the caller writes 0600 (this package
 //     only builds the maps),
@@ -21,7 +21,7 @@ package mcpreg
 // 2026-07-27): `codex mcp list --json` round-trips `http_headers` /
 // `env_http_headers` on a streamable_http transport, and a live `codex exec` against
 // a header-logging listener showed both arriving on the wire. This CONTRADICTS the
-// original docs/48 §7 note that codex could carry nothing but a bearer token — that
+// original docs/log/48 §7 note that codex could carry nothing but a bearer token — that
 // note described an older CLI and is corrected in the doc.
 
 import (

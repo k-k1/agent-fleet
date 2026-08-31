@@ -9,7 +9,7 @@ import { SSM_HOST_COLORS, hostColorBase, termBackground } from "../../lib/termco
 import { useT, t } from "../../lib/i18n/index.ts";
 import { Field, Meta } from "./mcpForm.tsx";
 
-// SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md)
+// SsmTab manages the member's own AWS SSM login config (docs/log/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
 //   プロファイル (共通) = the shared auth bundle (SSO portal + account/role/region);
 //                         many hosts reuse one. Maps to a ~/.aws named profile.

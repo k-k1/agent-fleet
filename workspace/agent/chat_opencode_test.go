@@ -42,7 +42,7 @@ func mcpCommand(t *testing.T, cfg map[string]any) []string {
 	return out
 }
 
-// docs/30 の要: af_write の会話が起こしたセッションは、その会話へ完了報告を返す。
+// docs/log/30 の要: af_write の会話が起こしたセッションは、その会話へ完了報告を返す。
 // 報告リンクは mcp-stdio の --conv でしか張れないので、opencode チャットの設定が
 // --conv を落とすと報告は永久に届かない（実際に落ちていた）。
 func TestOpencodeChatConfigCarriesConv(t *testing.T) {
@@ -101,7 +101,7 @@ func TestOpencodeChatConfigSkippedWithoutGrant(t *testing.T) {
 // プロジェクト側（--dir）の設定には af MCP を書かない。opencode は設定を**併合**し、
 // 衝突時は**プロジェクト設定が勝つ**（1.18.7 実測・TestContractOpencodeConfigPrecedence
 // が固定）ので、ここに af を書くと会話別設定の --conv 付き定義を上書きしてしまい、
-// セッション報告（docs/30）が恒久的に届かなくなる。レジストリサーバーは両方の設定が
+// セッション報告（docs/log/30）が恒久的に届かなくなる。レジストリサーバーは両方の設定が
 // 同じ会話から作るので食い違わず、ここに載っていて構わない。
 func TestOpencodeChatDirHasNoMCP(t *testing.T) {
 	home := t.TempDir()

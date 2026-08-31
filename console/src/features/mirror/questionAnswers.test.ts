@@ -33,7 +33,7 @@ describe("parseQuestionAnswers", () => {
     // `" selected preview:\n<mockup>` glued on after the closing quote. The mockup's own
     // quotes used to end up in the answer, so the picked option matched nothing.
     // Identifiers inside it are dummies — a fixture copied straight out of a real
-    // session is how real names end up in a public repo (docs/35 §35.7.5).
+    // session is how real names end up in a public repo (docs/log/35 §35.7.5).
     const raw =
       'Your questions have been answered: "`branch = develop/3.0.x` はどうする？"="branch も release/3.0.3 に" selected preview:\n' +
       '# .gitmodules\n[submodule "example-core"]\n\tbranch = release/3.0.3. You can now continue with these answers in mind.';

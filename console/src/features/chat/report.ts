@@ -1,6 +1,6 @@
 // Session-report card bodies (role==="report") are rendered from the catalog, not from
 // the text the backend stored — the same treatment notices got in ADR 0033, extended to
-// reports by docs/28 P6.
+// reports by docs/log/28 P6.
 //
 // A report used to be ONE string with two readers: the user reading the card, and the
 // operator assistant receiving the same string as a prompt. That is why it was excluded

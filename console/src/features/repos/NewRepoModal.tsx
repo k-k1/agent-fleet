@@ -1,6 +1,6 @@
 // NewRepoModal — bring a repository into ~/repos. Three kinds: Git clone (source
 // picking in the shared CloneForm + fork-a-branch / folder name), SVN checkout
-// (URL + optional subpath + optional basic auth, docs/41), and 新規フォルダ — a
+// (URL + optional subpath + optional basic auth, docs/log/41), and 新規フォルダ — a
 // folder that exists nowhere yet, created empty and `git init`ed. The op itself
 // runs in the parent (spinner row in the rail) so the user isn't trapped in a busy
 // dialog.

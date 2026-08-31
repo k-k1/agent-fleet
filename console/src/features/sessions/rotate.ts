@@ -4,7 +4,7 @@
 // ようにするため、実際にペインへ開く副作用側は sessions/open.ts に置く（workingSets.ts
 // と workingSetsStore.ts の分け方と同じ理由）。
 //
-// 対象と順序（docs/52 の作業グループを尊重する）:
+// 対象と順序（docs/log/52 の作業グループを尊重する）:
 // - 対象＝alive なセッションだけ。停止中は「切り替え先」ではなく再開の判断が要るので入れない。
 // - 作業グループが選ばれていれば、その絞り込みに従う（左ペインで見えている集合と一致させる）。
 // - 順序は GET /api/sessions のまま（CreatedAt の降順＝新しい順、session_handlers.go）。

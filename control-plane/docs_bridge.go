@@ -1,6 +1,6 @@
 package main
 
-// Docs bridge — the PULL face of the role-scoped agent-fleet docs (docs/dev/04 §4.9).
+// Docs bridge — the PULL face of the role-scoped agent-fleet docs (docs/build/04 §4.9).
 //
 //	tenant member's container ──(AF_DOCS_TOKEN)──▶ CP GET /internal/docs  (tar.gz)
 //	                                                   │ role-scoped by the CP
@@ -16,7 +16,8 @@ package main
 // Role separation still happens on the CP, exactly as it does for the mount: the token
 // resolves to a membership, the membership's LIVE role picks the subtree, and the
 // response only ever carries what that role may read. Nothing in the request selects
-// scope, so a member cannot ask for the internal decision/history docs.
+// scope, so a member cannot ask for a shelf above its role — and the decision records
+// and frozen work journals are on nobody's allowlist, so no role can ask for them.
 //
 // The token is a SEPARATE credential from the memo / schedule / MCP / git tokens
 // (mcp_server_bridge.go and friends), so a leak is scoped to reading this member's own

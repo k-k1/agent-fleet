@@ -18,7 +18,7 @@ type Runtime interface {
 	// a full image pull), so callers must not read a nil error as "Agent reachable":
 	// poll State(), use ensureWorkspaceReady, or let the Agent call itself fail and
 	// retry. Start runs inside an HTTP request, so no adapter may block it past the
-	// ingress idle timeout (docs/62 §62.5 — a 90s wait here is exactly what made a
+	// ingress idle timeout (docs/log/62 §62.5 — a 90s wait here is exactly what made a
 	// cold ECS Start come back as a 504).
 	//
 	// ★ A readiness overrun is NOT an error. Returning one flips a workspace that is
@@ -64,7 +64,7 @@ func workspaceAlive(state string) bool { return state == "running" || state == "
 // could not remove, so the caller can put them in the audit log instead of letting the
 // operator believe the data is gone. Today that is only the Fargate adapter's EFS
 // directories: an access point can be deleted from the API, but the directory it pointed
-// at cannot (docs/64 §64.18.4), and EFS keeps billing for it.
+// at cannot (docs/log/64 §64.18.4), and EFS keeps billing for it.
 type runtimeDestroyer interface {
 	Destroy(context.Context) ([]string, error)
 }
@@ -150,9 +150,9 @@ type runtimeDocsMounter interface{ mountsStagedDocs() }
 // newRuntimeFactory selects the Runtime adapter by deployment profile (AF_RUNTIME):
 // "" / "local" / "docker" → Docker Engine (compose, the on-prem default); "ecs" /
 // "aws" → AWS ECS on Fargate (P3-7); "ecs-ec2" → the same ECS substrate on the EC2
-// launch type with a pool of slots and a persistent per-user EBS home (docs/64,
+// launch type with a pool of slots and a persistent per-user EBS home (docs/log/64,
 // ADR 0045 決定 10); "native" / "wsl" → containerless host processes for
-// Docker-less WSL2 / dev hosts (single-user only; docs/34). Unknown profiles fail
+// Docker-less WSL2 / dev hosts (single-user only; docs/log/34). Unknown profiles fail
 // fast at boot rather than silently defaulting to Docker. The docker factory
 // captures the manager's template fields by value, so it MUST be built after
 // those fields are finalized (e.g. extraEnv appends in main.go).

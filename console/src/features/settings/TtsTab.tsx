@@ -22,7 +22,7 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { Choice, OnOff, Row, Slider } from "./controls.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
-// TtsTab — 音声読み上げ（TTS, docs/24 + ADR0013）の設定タブ。もとは AgentsTab から分離した
+// TtsTab — 音声読み上げ（TTS, docs/log/24 + ADR0013）の設定タブ。もとは AgentsTab から分離した
 // 1 セクションだったが、項目が増えて関心事（声の選択・読むタイミング・テキスト加工・性能）が
 // フラットに混在したため、「声＝何で読むか」「自動読み上げ＝いつ読むか」「読み方＝どう読むか」
 // 「詳細」のグループに分けている。すべてクライアント側の設定（settings store）なので、
@@ -240,7 +240,7 @@ export function TtsTab() {
   );
 }
 
-// CharList — キャラクター設定（docs/24）。使用の ON/OFF・基準スタイル・キャラ別速度・試聴。
+// CharList — キャラクター設定（docs/log/24）。使用の ON/OFF・基準スタイル・キャラ別速度・試聴。
 // 一覧はエンジン実カタログ（GET /api/tts/speakers）駆動で、取得できるまで（エンジン停止中
 // 含む）は既定 14 キャラの静的フォールバックを表示する（スタイルはノーマルのみ）。
 function CharList() {

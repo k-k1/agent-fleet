@@ -38,7 +38,7 @@ func docsTarGz(t *testing.T, files map[string]string) []byte {
 }
 
 func TestSafeDocsEntryName(t *testing.T) {
-	ok := []string{"guide/member/README.md", "dev/04.md", "./dev/04.md"}
+	ok := []string{"use/README.md", "ref/agents.md", "./ref/agents.md"}
 	for _, n := range ok {
 		if _, good := safeDocsEntryName(n); !good {
 			t.Errorf("%q should be accepted", n)
@@ -69,7 +69,7 @@ func TestExtractDocsRefusesTraversal(t *testing.T) {
 func TestExtractDocsWritesTree(t *testing.T) {
 	dest := t.TempDir()
 	n, err := extractDocsTarGz(bytes.NewReader(docsTarGz(t, map[string]string{
-		"guide/member/README.ja.md": "ガイド",
+		"use/README.ja.md":          "ガイド",
 		"dev/04-workspace-agent.md": "dev",
 	})), dest)
 	if err != nil {
@@ -78,7 +78,7 @@ func TestExtractDocsWritesTree(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("files: want 2 got %d", n)
 	}
-	b, err := os.ReadFile(filepath.Join(dest, "guide", "member", "README.ja.md"))
+	b, err := os.ReadFile(filepath.Join(dest, "use", "README.ja.md"))
 	if err != nil || string(b) != "ガイド" {
 		t.Fatalf("content: %q / %v", b, err)
 	}
@@ -89,7 +89,7 @@ func TestExtractDocsRejectsGarbage(t *testing.T) {
 		t.Fatal("expected an error for a non-gzip body")
 	}
 	// A truncated archive must fail rather than silently install a partial tree.
-	full := docsTarGz(t, map[string]string{"guide/member/README.md": "hello"})
+	full := docsTarGz(t, map[string]string{"use/README.md": "hello"})
 	if _, err := extractDocsTarGz(bytes.NewReader(full[:len(full)-8]), t.TempDir()); err == nil {
 		t.Fatal("expected an error for a truncated archive")
 	}
@@ -99,8 +99,8 @@ func TestExtractDocsRejectsGarbage(t *testing.T) {
 // is cleaned up afterwards.
 func TestFetchWorkspaceDocs(t *testing.T) {
 	body := docsTarGz(t, map[string]string{
-		"guide/member/README.md": "guide",
-		"dev/04.md":              "dev",
+		"use/README.md": "guide",
+		"dev/04.md":     "dev",
 	})
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +126,7 @@ func TestFetchWorkspaceDocs(t *testing.T) {
 	if gotAuth != "Bearer afd_test.tok" {
 		t.Fatalf("auth header: %q", gotAuth)
 	}
-	if b, err := os.ReadFile(filepath.Join(root, "guide", "member", "README.md")); err != nil || string(b) != "guide" {
+	if b, err := os.ReadFile(filepath.Join(root, "use", "README.md")); err != nil || string(b) != "guide" {
 		t.Fatalf("installed content: %q / %v", b, err)
 	}
 	if _, err := os.Stat(filepath.Join(root, docsStageDir)); !os.IsNotExist(err) {

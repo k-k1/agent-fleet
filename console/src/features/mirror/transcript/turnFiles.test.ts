@@ -1,4 +1,4 @@
-// ターン末尾のファイルチップ（docs/68 P1）の畳み方。
+// ターン末尾のファイルチップ（docs/log/68 P1）の畳み方。
 import { describe, it, expect } from "vitest";
 import { chipPart, turnFiles } from "./turnFiles.ts";
 import type { Part } from "./types.ts";

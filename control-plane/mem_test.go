@@ -74,7 +74,7 @@ func TestFargateSize(t *testing.T) {
 
 // Every (cpu, memory) pair fargateSize can emit must be one the ECS API actually
 // accepts. The table these come from was measured against RegisterTaskDefinition
-// (docs/63 §63.2), and the cases below are the ones the pre-measurement table got
+// (docs/log/63 §63.2), and the cases below are the ones the pre-measurement table got
 // WRONG: it assumed a uniform 1024 MiB step, so a request landing in the 8 or 16 vCPU
 // tier produced an invalid size and failed the whole Start.
 func TestFargateSizeCoarseTierSteps(t *testing.T) {

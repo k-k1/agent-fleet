@@ -54,7 +54,7 @@ func TestBuildProgramPlanModeKeepsAllowFlagIntact(t *testing.T) {
 	}
 }
 
-// 権限確認あり（docs/76: 利用者がスキップをオフにした通常起動）。--dangerously-skip-
+// 権限確認あり（docs/log/76: 利用者がスキップをオフにした通常起動）。--dangerously-skip-
 // permissions は --allow-… へ差し替わる（それ自体は何も許可せず、TUI 内 shift+tab で
 // bypass へ入る道だけを残す）。plan ではないので --permission-mode plan は付かない。
 func TestBuildProgramPermissionsOn(t *testing.T) {
@@ -72,7 +72,7 @@ func TestBuildProgramPermissionsOn(t *testing.T) {
 }
 
 // TestBuildProgramBlocksNativePeerChannel — claude 自前の cross-session チャネルを
-// 起動時に塞ぐこと（docs/58 §58.17 / ADR 0041 決定1）。
+// 起動時に塞ぐこと（docs/log/58 §58.17 / ADR 0041 決定1）。
 //
 // **ここが落ちたら「AF が見えない claude↔claude 経路」が全セッションで開く。** 元は
 // Dockerfile の env が事実上の遮断だったが 2.1.251 で貫通することを実測しており、いま

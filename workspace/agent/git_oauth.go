@@ -17,7 +17,7 @@ import (
 // Git provider OAuth, workspace side.
 //
 // ★ The GitHub device flow used to live HERE, reading GITHUB_OAUTH_CLIENT_ID out of
-// the container environment. Since docs/71 both providers' flows run in the Control
+// the container environment. Since docs/log/71 both providers' flows run in the Control
 // Plane, because the OAuth app is now a per-tenant row in the CP's database and
 // container env is fixed at container start (a tenant administrator registering an app
 // would otherwise be telling every member to restart their workspace). What the Agent
@@ -35,7 +35,7 @@ import (
 // encrypted store (secrets.Data.Bitbucket, see internal/secrets). See plan.
 
 // bbTokenURL is a var so the legacy direct-grant fallback can be pointed at a stub in
-// tests. The normal path does not use it at all — the CP runs the grant (docs/71 §71.8).
+// tests. The normal path does not use it at all — the CP runs the grant (docs/log/71 §71.8).
 var bbTokenURL = "https://bitbucket.org/site/oauth2/access_token"
 
 // writeBitbucketCreds persists the OAuth refresh creds into the encrypted store.
@@ -52,7 +52,7 @@ type bitbucketStoreReq struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int64  `json:"expires_in"`
-	// Key/Secret are the tenant's OAuth app. The CP stopped sending them in docs/71
+	// Key/Secret are the tenant's OAuth app. The CP stopped sending them in docs/log/71
 	// §71.8 — the refresh grant runs there now — and they are accepted-and-ignored
 	// rather than removed so an older CP talking to this Agent still connects instead
 	// of failing on an unknown field's absence.
@@ -64,7 +64,7 @@ type bitbucketStoreReq struct {
 // credential helper for bitbucket.org only. The empty-helper reset clears the
 // inherited global `store` helper so our refreshing helper is the sole source.
 //
-// ★ The tenant's client key/secret are NOT stored (docs/71 §71.8). What lands here is
+// ★ The tenant's client key/secret are NOT stored (docs/log/71 §71.8). What lands here is
 // this member's own access + refresh token; the refresh grant runs in the CP, which is
 // where the tenant's secret stays.
 func handleBitbucketStore(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +108,7 @@ func removeBitbucketOAuth() {
 
 // refreshBitbucket exchanges the refresh_token for a fresh access token.
 //
-// ★ The grant runs in the CONTROL PLANE (docs/71 §71.8). It is Basic-authenticated with
+// ★ The grant runs in the CONTROL PLANE (docs/log/71 §71.8). It is Basic-authenticated with
 // the tenant's OAuth app secret, and that secret used to be copied into every member's
 // store so this function could run it locally — a tenant-wide credential sitting on each
 // member's disk. Now the refresh token goes up and a fresh access token comes back; the
@@ -139,7 +139,7 @@ func refreshBitbucket(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) 
 
 // loadGitOAuthBridge reads the CP bridge out of the store. nil = not configured, which
 // is normal on a deployment with no PUBLIC_BASE_URL (the CP injects nothing then) and on
-// a container started before docs/71.
+// a container started before docs/log/71.
 func loadGitOAuthBridge() *secrets.CPBridge {
 	s, err := secrets.Load()
 	if err != nil || s.GitOAuthBridge == nil {
@@ -152,7 +152,7 @@ func loadGitOAuthBridge() *secrets.CPBridge {
 }
 
 // cpRefreshedToken is what the CP bridge answers with — the three fields worth storing.
-// The app's client id/secret are deliberately not among them (docs/71 §71.8).
+// The app's client id/secret are deliberately not among them (docs/log/71 §71.8).
 type cpRefreshedToken struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -160,7 +160,7 @@ type cpRefreshedToken struct {
 }
 
 // refreshOAuthViaCP runs one provider's refresh grant through the CP bridge. The
-// provider is a path segment (bitbucket / jira, docs/80 §80.17) — the bridge token and
+// provider is a path segment (bitbucket / jira, docs/log/80 §80.17) — the bridge token and
 // base URL are shared, because what the bridge authorizes is "refresh THIS member's
 // tokens", not one provider's.
 //
@@ -200,7 +200,7 @@ func refreshOAuthViaCP(b secrets.CPBridge, provider, refreshToken string) (cpRef
 
 // refreshBitbucketViaCP posts the refresh token to the CP and returns the refreshed
 // creds with the legacy client key/secret CLEARED — the caller persists the result, so
-// the scrub of a pre-docs/71 store happens as a side effect of the first refresh that
+// the scrub of a pre-docs/log/71 store happens as a side effect of the first refresh that
 // proves the bridge works.
 func refreshBitbucketViaCP(b secrets.CPBridge, c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
 	if c.RefreshToken == "" {
@@ -250,7 +250,7 @@ func refreshBitbucketViaCP(b secrets.CPBridge, c secrets.BitbucketCreds) (secret
 	return c, nil
 }
 
-// refreshBitbucketDirect is the pre-docs/71 path, kept only for stores that still carry
+// refreshBitbucketDirect is the pre-docs/log/71 path, kept only for stores that still carry
 // the client key/secret. Transient failures (transport error / 429 / 5xx) are retried a
 // few times with a short backoff — this refresh backs the repo/branch pickers AND the git
 // credential helper (clone/fetch/push in sessions), so a single blip here otherwise

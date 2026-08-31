@@ -6,12 +6,12 @@ import (
 )
 
 // idleForecast は「この Workspace はいつ止まるか、止まらないなら誰が止めているか」
-// （docs/75 P4）。reaper が毎スイープで manager へ置き、管理画面が読む。
+// （docs/log/75 P4）。reaper が毎スイープで manager へ置き、管理画面が読む。
 //
 // なぜ要るか: 自動停止が効かないとき、これまで運用者に見えるものが何も無かった。
 // reaper はログを出すだけで、「なぜ止まらないのか」を返す API も画面も無く、調べる
 // 唯一の手段が他人のコンテナへ docker exec して status ファイルを読むことだった
-// （docs/75 D7）。しかも P0〜P3 で判定材料が増えた（人待ち・背景作業・在席・ピン）ので、
+// （docs/log/75 D7）。しかも P0〜P3 で判定材料が増えた（人待ち・背景作業・在席・ピン）ので、
 // 見えないままだと運用者は「止まらない」を説明できない。
 type idleForecast struct {
 	// Enabled はこのテナントで tier2（Workspace 停止）が有効か。0 = 無効のときは
@@ -31,7 +31,7 @@ type idleForecast struct {
 type idleHolder struct {
 	// Kind: "working"（ターン実行中）/ "background"（背景ジョブ・サブエージェント）/
 	// "pin"（自動停止しないピン）/ "watching"（人が触っている）/ "recent"（直近の操作）/
-	// "repojob"（リポジトリ取り込み中 — docs/78）
+	// "repojob"（リポジトリ取り込み中 — docs/log/78）
 	Kind    string `json:"kind"`
 	Session string `json:"session,omitempty"`
 	// Until はピンの期限（Kind=="pin" のときだけ）。
@@ -57,7 +57,7 @@ func holdersOf(sessions []sessionWire, watched bool, now time.Time, repoJobs int
 			// 状態名を直接並べない: reaper の busy 判定（sessionActivity）と同じ
 			// 述語を見る。working だけを見ていた頃、compacting は reaper では
 			// machineBusy なのに画面では holders が空＝ StopAt が出ていた
-			// （docs/75 決定 11 違反）。
+			// （docs/log/75 決定 11 違反）。
 			out = append(out, idleHolder{Kind: "working", Session: s.Name})
 		}
 	}

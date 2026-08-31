@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// エージェントメモリの版管理（docs/39 P1・P2）の中継登録を固定する。CP は明示許可リスト
+// エージェントメモリの版管理（docs/log/39 P1・P2）の中継登録を固定する。CP は明示許可リスト
 // 方式なので、Agent 側にだけ足すと Console からは 404 になる（この漏れは繰り返し起きて
 // いる）。ここは「CP のルート表に載っていること」だけを見る — 実際の中継先の応答は
 // Agent 側のテストが担保する。
@@ -34,7 +34,7 @@ func TestMemoryRoutesProxiedByCP(t *testing.T) {
 }
 
 // 手動 snapshot・restore・import は変更操作なので監査に載る。export は読み取りだが、
-// 「個人のメモリを環境の外へ出す唯一の経路」なので docs/39 ★4 の要件として例外的に
+// 「個人のメモリを環境の外へ出す唯一の経路」なので docs/log/39 ★4 の要件として例外的に
 // 載せる。target は URL 由来のみで body は読まない。
 func TestMemorySnapshotIsAudited(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/agents/memory/snapshots", nil)

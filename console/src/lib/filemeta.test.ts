@@ -41,9 +41,9 @@ describe("resolveMarkdownFileTarget", () => {
   it("keeps an allowed absolute document root when following a relative link", () => {
     expect(resolveMarkdownFileTarget(
       "06-agents.md",
-      "/usr/local/share/agent-fleet/docs/guide/member/README.md",
+      "/usr/local/share/agent-fleet/docs/use/README.md",
     )).toEqual({
-      path: "/usr/local/share/agent-fleet/docs/guide/member/06-agents.md",
+      path: "/usr/local/share/agent-fleet/docs/use/06-agents.md",
     });
   });
 
@@ -56,7 +56,7 @@ describe("resolveMarkdownFileTarget", () => {
   });
 });
 
-// ── drawio の判定（docs/65 §65.4）─────────────────────────────────────────
+// ── drawio の判定（docs/log/65 §65.4）─────────────────────────────────────────
 describe("isDrawioFile", () => {
   it("拡張子で決まるのは .drawio / .dio だけ", () => {
     expect(isDrawioFile("repos/a/design.drawio")).toBe(true);
@@ -117,7 +117,7 @@ describe("documentFormat", () => {
 
   it("leaves text formats alone", () => {
     // csv も anydoc は読めるが、すでにテキストとして開けている。変換に回すと
-    // コードビューと編集面を失う（docs/82 §82.4）。
+    // コードビューと編集面を失う（docs/log/82 §82.4）。
     expect(documentFormat("repos/a/data.csv")).toBe("");
     expect(documentFormat("repos/a/README.md")).toBe("");
     expect(documentFormat("repos/a/spec.pdf")).toBe(""); // PDF は描く面が別にある

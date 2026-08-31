@@ -1,4 +1,4 @@
--- Work item inbox (docs/80 / ADR 0061): external tickets (GitHub Issue / PR, later Jira)
+-- Work item inbox (docs/log/80 / ADR 0061): external tickets (GitHub Issue / PR, later Jira)
 -- listed in the left rail so a session can be started from one. The CP owns the saved
 -- queries and a cache of NON-SECRET metadata ONLY -- never the description, comments or
 -- provider tokens (ADR 0061 decision 2). The cache exists so the rail still renders while

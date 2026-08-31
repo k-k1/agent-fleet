@@ -12,7 +12,7 @@ import (
 )
 
 // mcp-run is the credential-injecting launcher for external ops MCP servers
-// (docs/25 Phase 1). An MCP config references `workspace-agent mcp-run <provider>`
+// (docs/log/25 Phase 1). An MCP config references `workspace-agent mcp-run <provider>`
 // instead of embedding the provider's API key, so no secret is ever written into
 // a claude/.claude.json MCP config. The wrapper loads the encrypted store at
 // spawn, sets the provider's env vars into ONLY the child process, and execs the
@@ -79,7 +79,7 @@ func runPagerDutyMCP(extra []string) {
 // here, not in the MCP config: -disable-write -disable-admin are always
 // prepended, so the config's wrapper reference alone can never yield write
 // tools. Works unchanged for self-hosted / Grafana Cloud / Amazon Managed
-// Grafana — AMG auth is the same Bearer service-account token (docs/25 AMG 検討).
+// Grafana — AMG auth is the same Bearer service-account token (docs/log/25 AMG 検討).
 func runGrafanaMCP(extra []string) {
 	s, err := secrets.Load()
 	if err != nil {
@@ -155,7 +155,7 @@ func runCloudWatchMCP(extra []string) {
 	}
 	// Pin the PyPI fetch to the verified version (versions.json) — on a lean
 	// rootfs this fallback IS the normal path, and an unpinned uvx would pull
-	// whatever latest is (docs/35 §35.7.2-6). No pin (dev build) = latest.
+	// whatever latest is (docs/log/35 §35.7.2-6). No pin (dev build) = latest.
 	pkg := "awslabs.cloudwatch-mcp-server"
 	if pin := readBuildPins()["cloudwatch_mcp"]; pin != "" {
 		pkg += "==" + pin
@@ -193,7 +193,7 @@ func writeOpsAWSConfig(id string, p secrets.AWSProfileRef) error {
 
 // AWS MCP (Agent Toolkit for AWS) — the server is AWS-operated and remote, reached
 // over Streamable HTTP with SigV4 auth. The registry's own remote transport can't
-// express that (it only carries static headers, docs/48 §3.1), so the integration is
+// express that (it only carries static headers, docs/log/48 §3.1), so the integration is
 // the official stdio proxy: mcp-proxy-for-aws signs each call with the local
 // credential chain. That also keeps the "credential never lands in an MCP config"
 // property of the other builtins for free — there is no credential to write down.
@@ -263,7 +263,7 @@ func runAWSMCP(extra []string) {
 	}
 	args := awsMCPArgs(s.AWS, extra)
 	// Baked entrypoint first (uv tool install in the image); uvx as the dev / lean
-	// rootfs fallback, pinned to the verified version (docs/35 §35.7.2-6).
+	// rootfs fallback, pinned to the verified version (docs/log/35 §35.7.2-6).
 	if p, err := exec.LookPath(awsMCPPackage); err == nil {
 		argv := append([]string{p}, args...)
 		if err := syscall.Exec(p, argv, env); err != nil {
@@ -291,7 +291,7 @@ func runAWSMCP(extra []string) {
 // /usr/local/bin) first, the per-user installs next (~/.local/bin from Phase 0,
 // ~/.local/share/agent-fleet/bin from the on-demand installer), and as the last
 // resort it downloads the pinned release on the spot (lean rootfs — the bake is
-// absent by design; docs/35 §35.7.2-6).
+// absent by design; docs/log/35 §35.7.2-6).
 func grafanaMCPPath() (string, error) {
 	if p, err := exec.LookPath("mcp-grafana"); err == nil {
 		return p, nil

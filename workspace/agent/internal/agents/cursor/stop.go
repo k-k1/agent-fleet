@@ -2,7 +2,7 @@ package cursor
 
 // TUI ルートの graceful stop。cursor は JSONL をライブ追記し resume は AF 採番の
 // UUID 固定なので、agy のような「終了しないと resume ID を失う」制約は無い。ただし
-// cursor-agent はターン後に worker-server 常駐プロセスを残す（実測 — docs/40）ので、
+// cursor-agent はターン後に worker-server 常駐プロセスを残す（実測 — docs/log/40）ので、
 // kill-session でパネルを潰す前に一度だけ正規終了（Ctrl+D 二度押し — 実測/docs）を
 // 試し、CLI 自身に後片付けさせる。保留メニュー（許可/plan）が出ている間の Enter は
 // ハイライト行を承認してしまう（copilot c639973 と同型リスク）——Escape で棄却して

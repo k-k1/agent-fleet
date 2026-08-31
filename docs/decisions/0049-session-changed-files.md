@@ -1,156 +1,179 @@
-# 0049. セッションが直したファイルの一覧は「転写 × git の突合」で作り、ミラーのヘッド直下に置く
+# 0049. Build the list of files a session changed by reconciling the transcript against git, and put it directly under the mirror's head
 
-- 状態: **採用**（2026-08-17）。検討の記録は [docs/68](../68-session-changed-files.md)。
-- 関連: [0046-drawio-viewer.md](0046-drawio-viewer.md)（**新しい PaneKind を作らず既存の面を増やす**） /
-  [0039-fork-at-message.md](0039-fork-at-message.md)（転写の anchor） /
-  [docs/59](../59-session-sharing.md) §3（共有 DTO は座標を落とす）
+English | [日本語](0049-session-changed-files.ja.md)
 
-## 背景
+- Status: **adopted** (2026-08-17). The record of the investigation is [docs/68](../log/68-session-changed-files.md).
+- See also: [0046-drawio-viewer.md](0046-drawio-viewer.md) (**add a surface to an existing pane rather than a new PaneKind**) /
+  [0039-fork-at-message.md](0039-fork-at-message.md) (the transcript's anchor) /
+  [docs/59](../log/59-session-sharing.md) §3 (the shared DTO drops coordinates)
 
-Console には「変更ファイル」を出す面が 4 つある（ミラーのツール行・左レールのファイル→変更・
-SCM ペイン・コマンドパレットの `changed`）が、どれも作業コピー／リポジトリ軸で、
-**セッション軸のものが 1 つも無い**。同じ作業コピーを複数セッションが順に使う運用なので、
-「このセッションが何を直したか」は既存のどの面でも答えられない。
+## Context
 
-一方、ワイヤ語彙 `transcript.Part` には最初から `File`（編集対象）と `Edits`（before/after）が
-あり、Agent は claude / codex / opencode でそれを埋めている。Console の型にも `file?: string` は
-宣言されている——**が、`console/src` 全体で一度も読まれていない**。配管の半分は既にある。
+The Console has four surfaces that show "changed files" (the mirror's tool rows, the left rail's
+Files → Changes, the SCM pane, and the command palette's `changed`), but all of them are on the
+working-copy or repository axis and **not one is on the session axis**. Since several sessions use
+the same working copy in turn, none of the existing surfaces can answer "what did this session
+change?".
 
-## 決定 1 — 一覧の意味は**転写 × git の突合**。転写が母集合、git は行の状態
+Meanwhile the wire vocabulary `transcript.Part` has had `File` (what was edited) and `Edits`
+(before/after) from the start, and the Agent fills them in for claude / codex / opencode. The
+Console's type even declares `file?: string` — **but it is never read anywhere in `console/src`.**
+Half the plumbing already exists.
 
-転写だけだと「もう取り消した編集」が居座り、git だけだと**セッションという軸自体が消える**
-（既存の `FilesChanges` の焼き直しになる）。どちらも単独では嘘になる。
+## Decision 1 — the list means **the transcript reconciled against git**; the transcript is the population, git is each row's state
 
-- **行の母集合は転写の `Part.File`**（＝エージェントが編集したという記録）。
-- **各行の状態は `GET /fs/changes` との突合**で決める（未ステージ / ステージ済 / 未追跡 /
-  作業ツリーに差分なし / 作業コピー外）。
-- ⚠️ **「差分なし」の行を消さない。** 消すと「さっき直したのに一覧に居ない」になり、
-  利用者から見れば壊れている。灰色で残す。
-- 「差分なし」の細分は P2（決定 12）。P0 で嘘の断定をするより、割らずに正直に出す方がよい。
+The transcript alone leaves "edits that were already undone" sitting there, and git alone **erases
+the session axis itself** (it becomes a rehash of the existing `FilesChanges`). Neither is anything
+but a lie on its own.
 
-## 決定 2 — 突合キーは `(repo, rel)`。browse 相対パスを join に使わない
+- **The population of rows is the transcript's `Part.File`** (a record that the agent edited it).
+- **Each row's state is decided by reconciling against `GET /fs/changes`** (unstaged / staged /
+  untracked / no difference in the working tree / outside the working copy).
+- ⚠️ **Do not delete rows with "no difference".** Deleting them produces "I just changed that and it
+  is not in the list", which from the user's point of view is broken. Keep them, greyed out.
+- Subdividing "no difference" is P2 (decision 12). Better to present it honestly undivided than to
+  assert something false in P0.
 
-`toBrowseRel()` の出力は `browseRoot()`（`AF_BROWSE_ROOT` で差し替え可）基準、
-`fs/changes` の `path` は**常に** `repos/<repo>/<rel>`。既定では一致するが、
-`AF_BROWSE_ROOT` が home 以外を指すデプロイで**静かにズレる**。
+## Decision 2 — the reconciliation key is `(repo, rel)`. Do not join on the browse-relative path
 
-- ワイヤは `repo` と `rel` を**明示的に**持つ。突合はその 2 つで行う。
-- browse 相対の `path` は FileView に渡すためだけに持つ。
+`toBrowseRel()`'s output is relative to `browseRoot()` (replaceable with `AF_BROWSE_ROOT`), while
+`fs/changes`'s `path` is **always** `repos/<repo>/<rel>`. They match by default, but **they diverge
+silently** in a deployment where `AF_BROWSE_ROOT` points somewhere other than home.
 
-## 決定 3 — 集計は **Agent 側・全転写**。`/messages` に同梱し、新エンドポイントを作らない
+- The wire carries `repo` and `rel` **explicitly**. The reconciliation uses those two.
+- The browse-relative `path` is carried only to hand to FileView.
 
-ミラーは転写を tail 窓（`WINDOW = 400`）でしか持たない。クライアントで集計すると
-**長いセッションで件数が足りず、上へスクロールする度に増える**——無言で間違うたぐいの壊れ方をする。
+## Decision 3 — aggregate **on the Agent side, over the whole transcript**. Include it in `/messages`; do not add an endpoint
 
-- ToDo が既に先例を作っている（`claude.CollectTasks(lines)` → `resp["tasks"]`、
-  汎用経路も `td.Tasks`）。**同じ形**で `resp["files"]` を足す。
-- 新しいポーリングを増やさない。2 本目のポーリングは帯とツール行が別の時刻を見る同期ズレを生む。
-- 走査コストは新しいパスを足すのではなく既存パスに相乗りさせる（既に全行を数回舐めている）。
+The mirror only holds the transcript in a tail window (`WINDOW = 400`). Aggregating on the client
+means **the count is short on a long session and grows every time you scroll up** — the kind of
+breakage that is silently wrong.
 
-## 決定 4 — 置き場は**ミラーのヘッド直下の帯**。新しい `PaneKind` は作らない
+- ToDos already set the precedent (`claude.CollectTasks(lines)` → `resp["tasks"]`, and `td.Tasks` on
+  the generic path). `resp["files"]` is added in **the same shape**.
+- No new polling. A second poll produces a desynchronisation where the strip and the tool rows are
+  looking at different moments.
+- The scanning cost rides the existing pass rather than adding a new one (we already sweep every line
+  several times).
 
-`ViewHead → ContextBar → TaskChecklist` の並びに 1 段挟む。
+## Decision 4 — it goes in **a strip directly under the mirror's head**; no new `PaneKind`
 
-- **雛形は `TaskChecklist`**（`key={session}` で再キー・開閉を `localStorage` に per-session 保存・
-  `DisclosureContent`）。隣に並ぶものが違う作法で畳まれると別機能に見える。
-- `sessionfiles` のような **PaneKind は足さない**——0046 が `.drawio` で出した結論と同じで、
-  面を 1 つ増やす方が安い。常設タブの要望が出てから足せる（帯の形は変わらない）。
-- 既定クリック＝差分、`Ctrl/⌘+Enter`＝別ペイン（パレットの慣習）。
-  ⚠️ **未追跡ファイルは差分が空**なのでファイル自体を開く（`FilesChanges` が踏んだ罠を踏襲）。
+One row is inserted into the `ViewHead → ContextBar → TaskChecklist` sequence.
 
-## 決定 5 — コマンドパレットに 4 つ目のモード `session` を足す
+- **The template is `TaskChecklist`** (re-keyed with `key={session}`, open/closed saved per session in
+  `localStorage`, `DisclosureContent`). Something next to it that collapses by different rules looks
+  like a different feature.
+- **No PaneKind such as `sessionfiles` is added** — the same conclusion 0046 reached for `.drawio`:
+  adding one surface is cheaper. It can be added when someone asks for a permanent tab (the strip's
+  shape does not change).
+- The default click is the diff; `Ctrl/⌘+Enter` opens in another pane (the palette's convention).
+  ⚠️ **An untracked file has an empty diff**, so open the file itself (following the trap
+  `FilesChanges` fell into).
 
-`changed` モードの行と操作をそのまま再利用し、母集合だけをアクティブセッションのものに差し替える。
-帯は「見ながら気づく」面、パレットは「手を離さず飛ぶ」面で、同じ一覧の 2 つの入口である。
-対象セッションが無い／kind が対応しないときは**モードを出さない**。
+## Decision 5 — add a fourth mode, `session`, to the command palette
 
-## 決定 6 — 能力が無いものは**出さない**（帯ごと出さない）
+Reuse the `changed` mode's rows and operations exactly, replacing only the population with the active
+session's. The strip is the surface for "noticing while you look"; the palette is for "jumping
+without lifting your hands" — two entrances to the same list. When there is no target session, or the
+kind does not support it, **the mode is not offered**.
 
-`transcript/capabilities.ts` の憲法（absent capability = NOT RENDERED）に従う。
+## Decision 6 — where the capability is absent, **do not show it** (do not show the strip at all)
 
-- **共有セッションビューには帯を出さない。** 共有 DTO は差分の本体は残すが**パスを落とす**ので、
-  開ける座標が存在しない。`caps` に足すのは任意フィールドで、共有側は埋めない。
-- `File` を出さない kind（kiro / agy / shell / ssm）では帯そのものを描かない。
-  **「0 件」の空の帯は、未対応なのか本当に 0 件なのか区別できない。**
+Following the constitution in `transcript/capabilities.ts` (absent capability = NOT RENDERED).
 
-## 決定 7 — ミラーに `caps.openDiff` を配線する（既存の穴を塞ぐ）
+- **The strip is not shown in the shared session view.** The shared DTO keeps the diff bodies but
+  **drops the paths**, so there are no coordinates to open. What is added to `caps` is an optional
+  field, and the shared side does not fill it.
+- For kinds that do not emit `File` (kiro / agy / shell / ssm) the strip itself is not drawn.
+  **An empty "0 items" strip cannot be told apart from "unsupported" and "genuinely zero".**
 
-`ToolTrace` の「その場で展開」は*ペインを持たない共有ビュー*用の縮退経路なのに、
-`MirrorView` の `caps` に `openDiff` が無いためミラーもそこを走っている。
-ミラーはペインを持っている側なので渡す。帯とツール行のどちらから開いても同じ挙動になる。
+## Decision 7 — wire `caps.openDiff` into the mirror (closing an existing hole)
 
-## 決定 8 — cursor / copilot は `Part.File` を埋めて対応 kind に入れる（P1 で実施）
+`ToolTrace`'s "expand in place" is a degraded path *for the shared view, which has no panes*, yet the
+mirror runs through it too because `MirrorView`'s `caps` lacks `openDiff`. The mirror is on the side
+that has panes, so pass it. Opening from the strip and from the tool rows then behaves identically.
 
-両者とも入力に `path` / `file_path` / `target_file` を持ちながら、**表示用の `Info` 文字列に
-畳んで捨てていた**。kiro / agy は持っていないので対象外。
+## Decision 8 — fill in `Part.File` for cursor and copilot and add them to the supported kinds (done in P1)
 
-**実測（2026-08-17・ディスクに残っていた実転写）で見積もりが 2 つ変わった:**
+Both have `path` / `file_path` / `target_file` in their inputs but were **folding them into a display
+`Info` string and discarding them**. kiro and agy do not have them and are out of scope.
 
-- **before/after も来ていた** ので `+N −M` まで出る（「差分は出さない」を撤回）。
-  cursor `Write` = `{"path","contents"}` / copilot `edit` = `{"path","old_str","new_str"}`。
-- ⚠️ **判定は名前の allowlist にする。「read 以外は編集」にしない。** 名前が変わった版で
-  後者だと **`Read` / `view` しただけのファイルが「変更ファイル」に並ぶ**——一覧が黙って
-  嘘をつく側に倒れる。allowlist の取りこぼしは「行が出ない」で済む。
-- ⚠️ **cursor の managed（ACP）経路では名前を見ない。** ACP は `tool_call.kind`
-  （`read`/`edit`/`delete`/`move`/…）と `locations` で**プロトコル自身が分類している**。
-  `title` は "Write /tmp/x" という表示文字列で、そこから名前を復元するのは、まさに
-  この機能が避けたい文字列契約になる。before/after は入力の**形だけ**から取る。
+**Measurement (2026-08-17, against real transcripts left on disk) changed two estimates:**
 
-## 決定 9 — fork の履歴もサブエージェントの編集も**数える**
+- **before/after arrive too**, so `+N −M` can be shown ("we will not show diffs" is withdrawn).
+  cursor `Write` = `{"path","contents"}`; copilot `edit` = `{"path","old_str","new_str"}`.
+- ⚠️ **Detect by an allowlist of names. Do not use "anything that is not read is an edit".** With the
+  latter, in a version where a name changed, **a file merely `Read`/`view`ed appears among the
+  "changed files"** — the list falls to the side of silently lying. A miss in the allowlist merely
+  means "the row does not appear".
+- ⚠️ **On cursor's managed (ACP) path, do not look at names.** ACP has **the protocol itself
+  classifying** via `tool_call.kind` (`read`/`edit`/`delete`/`move`/…) and `locations`. `title` is a
+  display string like "Write /tmp/x", and recovering the name from it would be exactly the kind of
+  string contract this feature is trying to avoid. before/after are taken **from the shape of the
+  input alone**.
 
-- fork はコンテキストごと引き継ぐ＝そのセッションが立っている土台であり、レビュー対象としては
-  含まれている方が正しい。区切りが要ると分かったら `ForkAt` の anchor で切る余地は残す。
-- sidechain も数える（見たいのは誰が触ったかではなく何が変わったか）。印だけ持たせ、P1 で出す。
+## Decision 9 — **count** forked history and subagent edits alike
 
-## 決定 10 — 「Edits が無い」を削除と読まない。知っているパーサだけが `Verb` を申告する
+- A fork carries the context over, i.e. it is the ground the session stands on, and for review
+  purposes it is more correct to include it. If a boundary turns out to be needed, the room to cut at
+  `ForkAt`'s anchor remains.
+- Sidechains count too (what we want is what changed, not who touched it). They carry a marker and
+  are surfaced in P1.
 
-`transcript.Part` に任意の `Verb`（`add` / `edit` / `delete`）を足した。codex は
-`*** Delete File:` を読んでいるので言える——が、**差分本体をそもそも運ばない kind**
-（cursor / copilot）に同じ推定を当てると、そのエージェントが触ったファイルが**全部
-「削除」になる**。知らないときの既定は `edit` で、`delete` には決してしない。
+## Decision 10 — do not read "no Edits" as a deletion. Only a parser that knows declares a `Verb`
 
-同じ理由で codex の rename は `File` を**行き先のパス**にした（従来は `"<src> → <dst>"` という、
-開ける座標ではない表示用の文字列だった）。矢印は `Info` に残る。
+An optional `Verb` (`add` / `edit` / `delete`) was added to `transcript.Part`. codex reads
+`*** Delete File:` so it can say — but applying the same inference to **kinds that do not carry diff
+bodies at all** (cursor / copilot) makes **every file that agent touched a "deletion"**. The default
+when we do not know is `edit`, and never `delete`.
 
-## 決定 11 — 折り畳みは追記前提の逐次。無効化は 3 条件
+For the same reason codex's rename sets `File` to **the destination path** (previously it was
+`"<src> → <dst>"`, a display string and not coordinates you can open). The arrow stays in `Info`.
 
-`+N −M` は行差分なので、全転写を毎ポーリング数え直すのは成立しない。転写は追記のみなので
-**畳んだ位置から先だけ**を畳む。作り直すのは、転写のパスが変わった／**先頭レコードの指紋が
-変わった**（同じ長さのまま書き換えられた）／畳んだ数より短くなった、の 3 つ。
+## Decision 11 — folding is incremental on the assumption of appending; three conditions invalidate it
 
-⚠️ **store 由来の kind は最後の 1 ターンを確定として畳まない。** opencode は既存メッセージへ
-part を足し続けるので、畳むと**ポーリングの度に同じ編集を数える**。可変な尾はコピーに畳む。
+`+N −M` is a line diff, so recounting the whole transcript on every poll does not work. The
+transcript is append-only, so **only what follows the folded position** is folded. It is rebuilt in
+three cases: the transcript's path changed, **the first record's fingerprint changed** (rewritten at
+the same length), or it became shorter than what was folded.
 
-## 決定 12 — P2 では**「コミット済み」だけを肯定する**。「取り消された」とは言わない
+⚠️ **For store-derived kinds, do not fold the last turn as final.** opencode keeps adding parts to an
+existing message, so folding it **counts the same edit on every poll**. A mutable tail is folded into
+a copy.
 
-決定 1 は「差分なし」を **コミット済み / 取り消された**に割るつもりだった。実装して、
-割れるのは片側だけだと分かったので**片側だけにする**。
+## Decision 12 — in P2 only **"committed" is asserted**; "reverted" is not
 
-- **コミット済みは肯定できる** —— `git log --since=<セッション作成時刻> --name-only` に
-  そのパスが現れた、という事実がある。
-- **「取り消された」は肯定できない** —— 差分が無くコミットにも出ない理由は他にもある
-  （開始より前のコミットに入っていた／別の作業コピー／改名／`--max-count` の窓から溢れた）。
-  一括で「取り消し」と表示すれば、**UI が根拠のない断定をする**ことになる。残りは「差分なし」。
+Decision 1 intended to split "no difference" into **committed / reverted**. Implementing it showed
+that only one side can be split, so **only one side is done**.
 
-⚠️ **根拠は時刻なので、同じ作業コピーで並行していた別セッションのコミットも入る。**
-突き合わせる相手が**このセッションが編集したファイル**に限られているので実害は小さい
-（「自分が触ったファイルがその後コミットされた」は、誰がコミットしたかに関わらず正しい）。
+- **Committed can be asserted** — there is the fact that the path appeared in
+  `git log --since=<the session's creation time> --name-only`.
+- **"Reverted" cannot be asserted** — there are other reasons for having no diff and not appearing in
+  a commit (it was in a commit before the session started / a different working copy / a rename /
+  it fell outside the `--max-count` window). Showing all of those as "reverted" would mean **the UI
+  asserting something it has no grounds for**. The rest stays "no difference".
 
-置き場は `GET /sessions/{name}/committed`（`/messages` には載せない —— git を叩くので
-ポーリング毎の負担になるし、帯が必要になったときだけ引けばよい）。git 作業コピーでない・
-時刻が読めない・コマンドが失敗した、のいずれでも**空を返す**（バッジが出ないだけ）。
+⚠️ **The grounds are a timestamp, so commits from another session running in parallel in the same
+working copy are included too.** The harm is small because what it is reconciled against is limited to
+**files this session edited** ("a file I touched was subsequently committed" is true regardless of who
+committed it).
 
-## 決定 13 — レールからの導線は「ミラーを開いて帯を広げる」
+It lives at `GET /sessions/{name}/committed` (not on `/messages` — it runs git, so it would burden
+every poll, and it need only be fetched when the strip needs it). If it is not a git working copy, if
+the time cannot be read, or if the command fails, it **returns empty** (the badge simply does not
+appear).
 
-専用の `PaneKind` を作らない（決定 4）ので、行メニューの「変更ファイル」は
-**ミラーを開き、帯の per-session 開閉状態（localStorage）を先に書いて渡す**。
-新しい面を足さずに「ミラーを開かずに覗きたい」を満たす一番安い形で、
-帯の実装は何も知らなくてよい。
+## Decision 13 — the route from the rail is "open the mirror and expand the strip"
 
-## 影響
+Since no dedicated `PaneKind` is created (decision 4), the row menu's "changed files" **opens the
+mirror after first writing the strip's per-session open/closed state (localStorage)**. It is the
+cheapest shape that satisfies "I want to peek without opening the mirror" without adding a surface,
+and the strip's implementation needs to know nothing about it.
 
-- Agent: `session_transcript.go` に `CollectFiles`（claude 経路 + 汎用経路）。
-- Console: `features/mirror/FileChangeStrip.tsx` 新設、`MirrorView.tsx` の `caps` に 2 つ
-  （`openDiff` / `sessionFiles`）、`CommandPalette.tsx` にモード 1 つ、i18n は en/ja 両方。
-- 既存の面（`FilesChanges` / `ChangesView` / パレットの `changed`）は**変えない**。
-  軸が違うものとして並存する。
+## Impact
+
+- Agent: `CollectFiles` in `session_transcript.go` (the claude path plus the generic path).
+- Console: a new `features/mirror/FileChangeStrip.tsx`, two additions to `MirrorView.tsx`'s `caps`
+  (`openDiff` / `sessionFiles`), one mode in `CommandPalette.tsx`, and i18n in both en and ja.
+- The existing surfaces (`FilesChanges` / `ChangesView` / the palette's `changed`) are **unchanged**.
+  They coexist as things on a different axis.

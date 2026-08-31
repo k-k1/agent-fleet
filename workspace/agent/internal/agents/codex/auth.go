@@ -28,7 +28,7 @@ import (
 // denylisted from the file browser.
 
 // PTY flow plumbing (agents.Flow / agents.FlowStore) は internal/agents/flow.go の
-// 共有実装を使う（docs/23 残① Wave F で Wave E の複製を一本化）。
+// 共有実装を使う（docs/log/23 残① Wave F で Wave E の複製を一本化）。
 
 // --- status ------------------------------------------------------------------------
 

@@ -1,12 +1,12 @@
 // tts.go — CP-native な音声読み上げ（TTS）。エージェント回答テキストを VOICEVOX
-// エンジン（ずんだもん等）または AWS Polly で合成し音声バイト列を返す。docs/24 + ADR0013。
+// エンジン（ずんだもん等）または AWS Polly で合成し音声バイト列を返す。docs/log/24 + ADR0013。
 //
-// チャット（docs/19）が「Agent が headless CLI を実行 → CP がプロキシ」なのとは責務が
+// チャット（docs/log/19）が「Agent が headless CLI を実行 → CP がプロキシ」なのとは責務が
 // 異なり、TTS は CP が外部サービス（VOICEVOX HTTP / Polly SDK）を直接叩くだけ。CP の
 // 外向き通信は egress 制限外（oauth_google.go と同様）なので allowlist 変更は不要。
 // バイナリ応答は git_lfs.go の octet-stream と同じ要領（base64 は使わない）。
 //
-// Phase 2（docs/24）: polly プロバイダ（IAM ロール, tts_polly.go）、auto ルーティング
+// Phase 2（docs/log/24）: polly プロバイダ（IAM ロール, tts_polly.go）、auto ルーティング
 // （下の chooseTTSProvider）、ECS オンデマンド起動（tts_ecs.go + /api/admin/tts）。
 package main
 
@@ -38,7 +38,7 @@ type ttsSynthReq struct {
 	ParticlePause bool    `json:"particlePause"` // 設定 ttsParticlePause（クライアントが挿入した読点の間を詰める。voicevox のみ）
 }
 
-// ttsProvider は合成エンジンのプロバイダ抽象（docs/24）。chat_providers.go の
+// ttsProvider は合成エンジンのプロバイダ抽象（docs/log/24）。chat_providers.go の
 // chatProviders と同型の map dispatch。テキスト前処理（enkana / ユーザー辞書）は
 // プロバイダの外（ハンドラ / クライアント）が担い、ここは「テキスト → 音声」だけ。
 type ttsProvider interface {
@@ -55,7 +55,7 @@ type voiceOpts struct {
 	particlePause bool    // 助詞の小休止（voicevox のみ）の間を詰める
 }
 
-// chooseTTSProvider は auto（既定）の使い分けを決める純関数（docs/24 の表）。
+// chooseTTSProvider は auto（既定）の使い分けを決める純関数（docs/log/24 の表）。
 // ずんだもんは日本語専用・要起動、Polly は多言語・常時稼働という非対称を吸収する:
 //   - 明示指定（voicevox / polly）はそのまま。
 //   - 非日本語（lang=en）→ Polly。Polly 不在なら enkana 併用前提で voicevox が受け皿。
@@ -88,7 +88,7 @@ const ttsEngineSetting = "tts_engine"
 // ttsDictSetting はテナント共通の読み仮名辞書（1 行 "表記=読み"、クライアントの
 // ユーザー辞書と同じ書式）。管理者が /api/admin/tts/dict で編集し、全ユーザーの
 // クライアントが GET /api/tts/dict で取得してユーザー辞書と合成する（同じ表記は
-// ユーザー辞書が勝つ＝上書き）。適用はクライアント側（docs/24）。
+// ユーザー辞書が勝つ＝上書き）。適用はクライアント側（docs/log/24）。
 const ttsDictSetting = "tts_dict"
 
 // registerTTSRoutes は CP-native TTS のルートを登録する（buildMux から呼ぶ）。認証は
@@ -136,7 +136,7 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 		o := voiceOpts{voice: req.Voice, speed: req.Speed, lang: req.Lang, particlePause: req.ParticlePause}
 		if name == "voicevox" {
 			// 英語をカタカナ英語に前処理（VOICEVOX は英語綴りを読めないため）。Polly は
-			// 英語をそのまま読めるので、voicevox に決まったときだけ適用する。docs/24。
+			// 英語をそのまま読めるので、voicevox に決まったときだけ適用する。docs/log/24。
 			if req.EnKana {
 				text = englishToKana(text)
 			}
@@ -179,7 +179,7 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 
 	// キャラ一覧（VOICEVOX の /speakers のプロキシ）。設定 UI の「キャラクター」選択が
 	// 実エンジンのデータで選択肢（キャラ名・スタイル・speaker 番号）を出すために使う —
-	// speaker 番号を静的に持つと実エンジンとずれる（docs/24）。60s キャッシュで設定画面の
+	// speaker 番号を静的に持つと実エンジンとずれる（docs/log/24）。60s キャッシュで設定画面の
 	// 再描画がエンジンを叩き続けないようにする。エンジン停止中は 502（UI は現在の設定を
 	// 表示するだけの読み取り専用にフォールバック）。
 	var spMu sync.Mutex
@@ -215,7 +215,7 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 
 	// 管理者トグル（super_admin）: VOICEVOX エンジンの有効/無効。ECS 管理下なら desired
 	// count 0↔1 を切り替え（オンデマンド起動・停止中コスト 0）、常に setting へ意図を記録
-	// する（egress の SettingsStore と同じ流儀）。docs/24 Phase 2。
+	// する（egress の SettingsStore と同じ流儀）。docs/log/24 Phase 2。
 	adm := ttsAdminAPI{memberAuth{cfg.mgr}, settings, eng, vv, pl}
 	mux.HandleFunc("GET /api/admin/tts", adm.withSuperAdmin(adm.get))
 	mux.HandleFunc("PUT /api/admin/tts", adm.withSuperAdmin(adm.put))

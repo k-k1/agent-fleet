@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// ミラーのスキルピッカー（docs/50 / ADR0034）の中継登録を固定する。CP は明示許可リスト
+// ミラーのスキルピッカー（docs/log/50 / ADR0034）の中継登録を固定する。CP は明示許可リスト
 // 方式なので、Agent 側にだけ足すと Console からは 404 になる（この漏れは繰り返し起きて
 // いる）。実際の応答形は Agent 側 session_skills_test.go が担保する。
 func TestSessionSkillsRouteProxiedByCP(t *testing.T) {

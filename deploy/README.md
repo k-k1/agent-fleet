@@ -20,5 +20,5 @@ applies no cgroup limits.
 | [`release/`](release/) | Release build & publish tooling: `build.sh` (artifact orchestrator), `publish-dist.sh` (GitHub Releases publish), `dist-repo/` (seed of the public distribution repo incl. `install.sh`). |
 | [`local/`](local/) | Local development helpers (`run-dev.sh` etc.), WSL personal-use guide ([README-wsl.md](local/README-wsl.md)), and CI test scripts (stub tests, e2e smoke). |
 
-Release engineering design and gates: [docs/35-packaging.md](../docs/35-packaging.md). Deployment architecture
-and portability: [docs/dev/09-deploy.md](../docs/dev/09-deploy.md).
+Release engineering design and gates: [docs/log/35-packaging.md](../docs/log/35-packaging.md). Deployment architecture
+and portability: [docs/build/09-deploy.md](../docs/build/09-deploy.md).

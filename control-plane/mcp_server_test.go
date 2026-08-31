@@ -1,6 +1,6 @@
 package main
 
-// Tenant-distributed MCP servers (docs/48 P4 + ADR0031).
+// Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031).
 //
 // The tests worth having here are the ones a code review cannot guarantee:
 //   - a tenant definition can never become a stdio one (決定 2)

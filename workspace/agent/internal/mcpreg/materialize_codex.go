@@ -15,7 +15,7 @@ package mcpreg
 // and a hand-written remote table round-trips through `codex mcp list --json` as
 // streamable_http with `http_headers` / `env_http_headers` / `startup_timeout_sec`.
 // Unlike the assistant chat (attach.go), a materialized definition may put header and
-// env VALUES straight into this file: it is a 0600 file, which is what docs/48 §5.1
+// env VALUES straight into this file: it is a 0600 file, which is what docs/log/48 §5.1
 // promises, whereas the chat's only per-exec channel is argv.
 //
 // The edit is line-based, like codex/settings.go's notice-key editor, for the same

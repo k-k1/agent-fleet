@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  agent-fleet ECS adapter — EC2 slot pool for AF_RUNTIME=ecs-ec2 (docs/64 §64.12 /
+  agent-fleet ECS adapter — EC2 slot pool for AF_RUNTIME=ecs-ec2 (docs/log/64 §64.12 /
   §64.15, ADR 0045 決定 10). Owns what a SLOT is: the launch template (ECS-optimized
   AMI, the cluster-join user-data, the af-mount/af-umount helpers), the instance role
   and the slot security group. It creates NO instances — the Control Plane runs them
@@ -26,7 +26,7 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      arm64 ECS-optimized AMI, for slot classes that declare arch=arm64 (docs/70
+      arm64 ECS-optimized AMI, for slot classes that declare arch=arm64 (docs/log/70
       §70.8). Leave EMPTY unless AF_ECS_EC2_SLOT_TYPES actually declares an arm64
       class — the Control Plane refuses to start when one is declared and this is
       not set, which is deliberate: a class that appears in the admin UI and cannot
@@ -193,11 +193,11 @@ Resources:
                 Fn::ImportValue: !Sub "${PlatformStackName}-ClusterName"
               Cleanup: !Ref TaskCleanupWait
 
-  # --- Slot I/O alarms (ADR 0045 決定 28 / docs/64 §64.41.4) ---
+  # --- Slot I/O alarms (ADR 0045 決定 28 / docs/log/64 §64.41.4) ---
   #
   # 🔥 What they are for: on 2026-08-27 one workspace's runaway drove its slot into
   # refault thrash — the root volume, which holds 8.0 GB of data in total, was read at
-  # 39.34 GB every five minutes for three hours (docs/64 §64.40). Every daemon on the
+  # 39.34 GB every five minutes for three hours (docs/log/64 §64.40). Every daemon on the
   # box starved and the workspace could not be started again for hours.
   #
   # ⚠️ The metrics were ALL there the whole time. `VolumeQueueLength` went from 0.005
@@ -233,7 +233,7 @@ Resources:
       AlarmName: !Sub "af-${AWS::StackName}-slot-io-queue"
       AlarmDescription: >-
         An EBS volume has had a deep queue for 15 minutes. On the slot pool this means a
-        workspace is thrashing its box; see docs/64 §64.40 for what that does to it.
+        workspace is thrashing its box; see docs/log/64 §64.40 for what that does to it.
       Metrics:
         - Id: q
           # No GROUP BY on purpose: the aggregate collapses every volume into the one

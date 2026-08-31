@@ -2,7 +2,7 @@ package opencode
 
 // opencode.ai の workspace ID（`wrk_…`）と、上限に当たったときの枠情報。
 //
-// なぜ持つのか（docs/54 §54.7）: 利用枠の画面
+// なぜ持つのか（docs/log/54 §54.7）: 利用枠の画面
 // `https://opencode.ai/workspace/{wrk}/go` はブラウザセッション前提で、素の GET は
 // `/auth/authorize` へ 302 する。JSON API も opencode.ai 側には無く（api/* は 404）、
 // Console 側 API は Bearer で開いているが（/api/orgs と /api/user が 401＝経路は存在、

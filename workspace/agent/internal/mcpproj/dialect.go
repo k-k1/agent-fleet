@@ -1,13 +1,13 @@
 package mcpproj
 
-// Placeholder-dialect detection (docs/56 §2.1, the measured heart of this feature):
+// Placeholder-dialect detection (docs/log/56 §2.1, the measured heart of this feature):
 // which of the three placeholder syntaxes a server's values reference, and whether
 // the kind(s) reading this file will actually expand it.
 
 import "regexp"
 
 // dialectSupport is which placeholder syntaxes a kind's CLI expands (measured,
-// docs/56 §2.1). opencode's ${env:VAR} case is NOT "unsupported" like the others —
+// docs/log/56 §2.1). opencode's ${env:VAR} case is NOT "unsupported" like the others —
 // it partially expands and leaves a stray "$", which is why it gets its own code
 // (CodeDialectBroken) instead of the generic mismatch.
 type dialectSupport struct {
@@ -24,7 +24,7 @@ var dialectByKind = map[string]dialectSupport{
 	"copilot":  {dollarBrace: true},
 	"cursor":   {dollarBrace: true, dollarEnvBrace: true},
 	"opencode": {envBrace: true},
-	"codex":    {}, // expands nothing (docs/56 §2.1)
+	"codex":    {}, // expands nothing (docs/log/56 §2.1)
 }
 
 var (

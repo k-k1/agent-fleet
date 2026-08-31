@@ -71,7 +71,7 @@ export function DisplayTab() {
             onChange={(v) => setSetting("mirrorTheme", v)}
           />
         </Row>
-        {/* 共有セッション(docs/59)は他人の会話を読む面。自分のミラーと別のテーマ/背景に
+        {/* 共有セッション(docs/log/59)は他人の会話を読む面。自分のミラーと別のテーマ/背景に
             できると、どちらを見ているのかが色で分かる。 */}
         <Row label={tr("display.shared_theme")}>
           <Choice
@@ -197,7 +197,7 @@ export function DisplayTab() {
 
 // Generic font names carry a translated display label; brand names (Source Code Pro …)
 // pass through. The stored value stays the raw name so fontStack() keeps matching.
-// i18n-exempt-start: キーは fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/28 §2.4）
+// i18n-exempt-start: キーは fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/log/28 §2.4）
 const FONT_LABEL_KEYS: Record<string, MsgKey> = {
   "システム等幅": "font.sys_mono",
   "システム": "font.sys",

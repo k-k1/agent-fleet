@@ -30,10 +30,10 @@ func memoryLiveOrEmpty(t *testing.T, p string) string {
 }
 
 // import の本命: **別環境の bundle を持ち込み、選んだプロジェクトだけ置き換え、
-// それを restore で元に戻せる**こと（docs/39 P3 の出口条件）。
+// それを restore で元に戻せる**こと（docs/log/39 P3 の出口条件）。
 //
 // 1 テスト内で HOME / CLAUDE_CONFIG_DIR を差し替えて 2 環境を演じる。同じ repo 名なら
-// slug はパス由来で一致する、という前提（docs/39 ⑤ slug 互換性）もこの形で確認できる。
+// slug はパス由来で一致する、という前提（docs/log/39 ⑤ slug 互換性）もこの形で確認できる。
 func TestMemoryImportBundleRoundTrip(t *testing.T) {
 	share := t.TempDir() // 環境をまたいで持ち回るファイル置き場
 

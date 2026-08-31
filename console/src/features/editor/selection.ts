@@ -1,7 +1,7 @@
 import type { EditorState } from "@codemirror/state";
 
 // selection — the editing surface's answers to the two questions the read-only
-// CodeView used to answer from the DOM (docs/44 §1.8).
+// CodeView used to answer from the DOM (docs/log/44 §1.8).
 //
 // Both are derived from the CodeMirror document, never from the rendered DOM or
 // window.getSelection(): CodeMirror virtualises rows, so a selection that runs

@@ -1,7 +1,7 @@
 # EC2 スロットプール（`AF_RUNTIME=ecs-ec2`）の実機ハーネス
 
 `control-plane/runtime_ecs_ec2_live_test.go` を **実 AWS** に対して回すための最小基盤。
-docs/64 §64.16 の計測はこれで取った。
+docs/log/64 §64.16 の計測はこれで取った。
 
 ```bash
 # 作業ディレクトリ（~/af-ec2c）へ写して使う想定なので、checkout の場所は渡す

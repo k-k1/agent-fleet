@@ -1,4 +1,4 @@
-// preview_host_serve.go — ホスト方式プレビューの経路（docs/81 §6・§7 / ADR 0062）。
+// preview_host_serve.go — ホスト方式プレビューの経路（docs/log/81 §6・§7 / ADR 0062）。
 //
 //	ブラウザ → {slug}-{port}.{AF_PREVIEW_DOMAIN} → CP（この層）→ Agent /proxy/{port}/… → 127.0.0.1:{port}
 //
@@ -36,7 +36,7 @@ const previewAuthCallbackPath = "/__af/preview-auth"
 // so an unauthenticated visitor lands on the normal login first).
 const previewHandshakePath = "/preview-auth"
 
-// previewOpenPath is the STABLE link people paste (docs/81 §14.6 / ADR 0062 決定 17).
+// previewOpenPath is the STABLE link people paste (docs/log/81 §14.6 / ADR 0062 決定 17).
 // The preview hostname changes at every workspace start, so a raw URL always rots —
 // and it rots as a 404, the least legible failure there is. This one names the owner
 // and the port instead, and resolves the current slug on each visit.
@@ -113,7 +113,7 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		a.acceptToken(w, r, ph, st)
 		return
 	}
-	// 兄弟オリジン（同じ slug の別ポート）からの呼び出し（docs/81 §2.4・決定 11）。
+	// 兄弟オリジン（同じ slug の別ポート）からの呼び出し（docs/log/81 §2.4・決定 11）。
 	// opt-in のときだけ、CP が preflight に答え、応答に CORS を足す。
 	allowOrigin := a.siblingOrigin(r, ph, st)
 	if allowOrigin != "" && r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
@@ -248,7 +248,7 @@ func (a previewHostAPI) acceptToken(w http.ResponseWriter, r *http.Request, ph p
 		Secure:   forwardedProto(r) == "https",
 		// Lax: a top-level navigation carries it, a cross-site sub-request does not.
 		// None is the opt-in for apps that call a sibling preview origin directly
-		// (docs/81 §2.4) — not the default, because it also means any third-party page
+		// (docs/log/81 §2.4) — not the default, because it also means any third-party page
 		// that knows the URL can drive the preview with the user's browser.
 		SameSite: previewCookieSameSite(st),
 		MaxAge:   int(previewSessionTTL.Seconds()),
@@ -352,7 +352,7 @@ func (a previewHostAPI) handshake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := parseWSSettings(mustSettings(ctx, a.mgr, ws.ID))
-	// 所有者本人か、その Workspace が同じテナントへ共有しているか（docs/81 §14.3）。
+	// 所有者本人か、その Workspace が同じテナントへ共有しているか（docs/log/81 §14.3）。
 	// どちらでもなければ、未知の slug と同じ 404 —— 「存在するが他人のもの」と告げる
 	// こと自体が、他人の Workspace についての情報である。
 	if !previewViewerAllowed(ctx, a.mgr, ws, st, mv.MembershipID) {
@@ -483,7 +483,7 @@ func relayPreview(w http.ResponseWriter, r *http.Request, rt Runtime, o previewR
 		Transport: previewProxyTransport,
 		// -1 = flush as soon as anything is written. Required for SSE and for the
 		// App Router's streamed HTML: buffering it turns "slow" into "white page"
-		// (docs/81 §2.5 (f)).
+		// (docs/log/81 §2.5 (f)).
 		FlushInterval: -1,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme = target.Scheme

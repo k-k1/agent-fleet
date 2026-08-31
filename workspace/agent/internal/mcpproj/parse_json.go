@@ -4,7 +4,7 @@ package mcpproj
 // one map of entries" — the mirror image of mcpreg's jsonConfig writer
 // (materialize_json.go), reading instead of writing. It consults
 // mcpreg.JSONEntrySpellings so a key name is never re-typed by hand a second time
-// (docs/56 §4.2).
+// (docs/log/56 §4.2).
 
 import (
 	"encoding/json"
@@ -16,7 +16,7 @@ import (
 // parseJSONFile reads path as plain JSON and returns the server map named by
 // sp.ServersKey, in the order they appear (encoding/json's map decode does not
 // preserve order, so callers that need one — none do in P0 — would have to switch
-// to a token-level decode; docs/56 §6 already earmarks that for P1's span tracking).
+// to a token-level decode; docs/log/56 §6 already earmarks that for P1's span tracking).
 func parseJSONServers(raw map[string]any, sp mcpreg.JSONEntrySpelling) (map[string]Server, error) {
 	rawServers, _ := raw[sp.ServersKey].(map[string]any)
 	out := map[string]Server{}
@@ -156,7 +156,7 @@ func extraKeys(raw map[string]any, used map[string]bool) map[string]any {
 
 // decodeJSONObject parses b as a JSON object (not array/scalar) at the top level —
 // every kind's project MCP file is an object, so anything else is treated the same
-// as a parse failure (docs/57 憲章3, "読めないファイルは触らない").
+// as a parse failure (docs/log/57 憲章3, "読めないファイルは触らない").
 func decodeJSONObject(b []byte) (map[string]any, error) {
 	var v any
 	if err := json.Unmarshal(b, &v); err != nil {

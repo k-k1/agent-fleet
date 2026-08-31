@@ -4,7 +4,7 @@ import (
 	"net/http"
 )
 
-// The deployment's own login providers, read-only (docs/61 §61.11.8).
+// The deployment's own login providers, read-only (docs/log/61 §61.11.8).
 //
 // tenant.allowed_providers is a free-text CSV of provider ids, and saving one the
 // deployment does not have is refused with 400 unknown_provider (tenants.go). The
@@ -19,7 +19,7 @@ import (
 // WHICH Entra (or Okta, or Keycloak) the id stands for, which is the same question
 // the sign-in method register answers for tenant-defined rows.
 //
-// ★ Tenant-defined providers ("t:<slug>:<name>", docs/61 §61.11) are NOT listed.
+// ★ Tenant-defined providers ("t:<slug>:<name>", docs/log/61 §61.11) are NOT listed.
 // They come and go at runtime, they belong to their tenant, and the generic list
 // of them is a directory of the group's subsidiaries (決定 32-4). A tenant's own
 // rows are already visible on that tenant's sign-in method panel.
@@ -45,7 +45,7 @@ type providerIssuer interface{ issuerURL() string }
 // administrator (anyTenantAdminFor); EDITING the rule this list feeds stays
 // super_admin-only (決定 19 は変えていない).
 //
-// It was super_admin-only until P7 (docs/61 §61.17.9 ①), which made the deployment's
+// It was super_admin-only until P7 (docs/log/61 §61.17.9 ①), which made the deployment's
 // methods the DEFAULT TENANT's methods: every tenant's sign-in method panel now lists
 // them, so its administrator has to be able to read them. The ids and button labels
 // were never secret — they are on the unauthenticated /login, and

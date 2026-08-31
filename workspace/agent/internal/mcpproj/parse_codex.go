@@ -5,7 +5,7 @@ package mcpproj
 // `codex mcp add` writes by hand. There is no TOML library in this module (the
 // existing codex settings/materialize code is all hand-rolled line/regex editing,
 // on purpose — config.toml carries comments and [projects."…"] trust sections a
-// generic parse→re-emit would reformat away, docs/48 §8.2). This file follows the
+// generic parse→re-emit would reformat away, docs/log/48 §8.2). This file follows the
 // same convention for READING: a scanner narrow enough for the subset af itself
 // (and `codex mcp add`) actually produces, not a general TOML implementation.
 //

@@ -3,7 +3,7 @@ package transcript
 import "strings"
 
 // 表示用の切り詰めヘルパ3種。codex/opencode/claude のパーサが共有していた
-// package main の capOutput / codexClip / capEdit を docs/23 残① Wave D で
+// package main の capOutput / codexClip / capEdit を docs/log/23 残① Wave D で
 // 移設した（挙動は同一）。
 
 // CapOutput bounds a tool output so a huge result can't bloat the chat payload.

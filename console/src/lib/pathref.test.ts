@@ -7,7 +7,7 @@ import { pathRefCandidate } from "./pathref.ts";
 
 describe("pathRefCandidate", () => {
   it("accepts paths an agent actually cites", () => {
-    expect(pathRefCandidate("docs/65-drawio-viewer.md")).toEqual({ ref: "docs/65-drawio-viewer.md" });
+    expect(pathRefCandidate("docs/log/65-drawio-viewer.md")).toEqual({ ref: "docs/log/65-drawio-viewer.md" });
     expect(pathRefCandidate("94-freeze/辛口編集者レビュー/00_講評.md")).toEqual({
       ref: "94-freeze/辛口編集者レビュー/00_講評.md",
     });
@@ -25,12 +25,12 @@ describe("pathRefCandidate", () => {
     });
     expect(pathRefCandidate("src/a.ts:12:5")).toEqual({ ref: "src/a.ts", line: 12, column: 5 });
     // Not a coordinate — a name that merely ends in digits keeps them.
-    expect(pathRefCandidate("docs/65")).toEqual({ ref: "docs/65" });
+    expect(pathRefCandidate("docs/log/65")).toEqual({ ref: "docs/log/65" });
   });
 
   it("drops a trailing slash so a directory resolves like any other path", () => {
     expect(pathRefCandidate("_act-parts/")).toEqual({ ref: "_act-parts" });
-    expect(pathRefCandidate("docs/dev/")).toEqual({ ref: "docs/dev" });
+    expect(pathRefCandidate("docs/build/")).toEqual({ ref: "docs/build" });
   });
 
   it("trims surrounding whitespace but rejects a token with any inside", () => {

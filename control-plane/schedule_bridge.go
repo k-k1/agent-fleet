@@ -1,7 +1,7 @@
 package main
 
 // Schedule bridge — the internal (operator-token) face of scheduled execution
-// (docs/38 + ADR0021 P3). It mirrors the memo bridge (memo_bridge.go): the Console
+// (docs/log/38 + ADR0021 P3). It mirrors the memo bridge (memo_bridge.go): the Console
 // reaches schedules through the session gateway, but an in-container フリート・
 // オペレーター has NO gateway session, so it authenticates to /internal/schedules with a
 // per-membership SCHEDULE TOKEN injected into its Workspace (AF_SCHEDULE_TOKEN). The

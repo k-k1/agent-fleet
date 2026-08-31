@@ -1,6 +1,6 @@
 package main
 
-// Chat-bridge inbound (docs/37 P2a): the receive half's landing point in package main.
+// Chat-bridge inbound (docs/log/37 P2a): the receive half's landing point in package main.
 // The Gateway supervisor lives in internal/bridge, but the session-injection primitives
 // live here — so bridge takes an Inject callback (avoids an import cycle) and this file
 // supplies it. A reply the bound user posts in a session's Discord thread arrives here as
@@ -28,7 +28,7 @@ var (
 )
 
 // injectSessionPrompt delivers a free-text prompt into a running session with no HTTP layer —
-// the in-process entry point behind chat-bridge inbound (docs/37 P2a). It mirrors
+// the in-process entry point behind chat-bridge inbound (docs/log/37 P2a). It mirrors
 // handleSessionInput's {prompt} branch (session_io.go) but returns errors instead of writing
 // an HTTP response, and reuses the same primitives (typeLineAndSubmit / driver Send /
 // markSessionWorking) so behavior can't drift. It refuses to free-text a session with a
@@ -90,7 +90,7 @@ func injectManagedPrompt(meta session.Meta, prompt string) error {
 
 // startBridgeReceiver wires chat-bridge inbound to the injection primitive and starts the
 // Gateway supervisor. Each injected message is recorded with its origin so the mirror badges
-// the resulting user turn distinctly from self-typed input (docs/37 追加要件, docs/30 ②).
+// the resulting user turn distinctly from self-typed input (docs/log/37 追加要件, docs/log/30 ②).
 func startBridgeReceiver() {
 	bridge.StartReceiver(bridge.ReceiverDeps{
 		Inject: func(sessionName, text, source string) (string, error) {

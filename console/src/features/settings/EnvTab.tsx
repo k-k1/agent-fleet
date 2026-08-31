@@ -71,7 +71,7 @@ export function EnvTab() {
     else toast(tr("common.save_failed"));
   };
 
-  // プレビュー用サブドメインの設定（docs/81）。同じ ws-settings に載るので、
+  // プレビュー用サブドメインの設定（docs/log/81）。同じ ws-settings に載るので、
   // 保存経路も応答の形も agentUpdate と同じ。
   const savePreview = async (patch: Record<string, unknown>) => {
     const res = await apiJSON("api/env/ws-settings", "PUT", patch);
@@ -79,7 +79,7 @@ export function EnvTab() {
     else toast(tr("common.save_failed"));
   };
 
-  // 再発行（docs/81 §4.1）: 配ってしまった URL をその場で捨てる。取り消せないので
+  // 再発行（docs/log/81 §4.1）: 配ってしまった URL をその場で捨てる。取り消せないので
   // 確認を挟み、何が起きるか（今開いているタブが 404 になる）を先に言う。
   const reissuePreview = async () => {
     const ok = await askConfirm({
@@ -127,7 +127,7 @@ export function EnvTab() {
   );
 }
 
-// HostUpdateSection surfaces the native host self-update (docs/42). GET
+// HostUpdateSection surfaces the native host self-update (docs/log/42). GET
 // /api/update/status is native-only; on any other deployment (Docker/ECS, dev)
 // the CP does not register the route, api() returns an http_404 error, and this
 // renders nothing. When a newer version has been staged on disk (by `af update`
@@ -466,7 +466,7 @@ function JavaRow({
 // in the CP DB), so — unlike the toolchains above — it can be toggled even while the
 // workspace is STOPPED; the value is applied at the next container start. Shown only
 // when the operator allows it (tenant policy).
-// PreviewSection: プレビュー用サブドメイン（docs/81）の Workspace 単位の設定。
+// PreviewSection: プレビュー用サブドメイン（docs/log/81）の Workspace 単位の設定。
 // ホスト方式が無いデプロイ（AF_PREVIEW_DOMAIN 未設定）では previewDomain が空なので
 // 呼び出し側ごと描画されない —— 「押しても何も起きない設定」を置かないため。
 function PreviewSection({
@@ -509,7 +509,7 @@ function PreviewSection({
         <OnOff value={!!au.previewFixedSlug} onChange={(on) => save({ previewFixedSlug: on })} />
       </Row>
       <p className="muted ds-sub">{tr("env.preview_fixed_note")}</p>
-      {/* 同じテナントへの共有（docs/81 §14）。公開モードの「手前」に置く —— 社内に
+      {/* 同じテナントへの共有（docs/log/81 §14）。公開モードの「手前」に置く —— 社内に
           見せたいだけの人が、そのために公開モードへ手を伸ばすのを止めるのが目的。 */}
       <Row label={tr("env.preview_share_label")}>
         <OnOff value={!!au.previewTenantShare} onChange={(on) => save({ previewTenantShare: on })} />

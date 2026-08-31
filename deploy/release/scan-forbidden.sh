@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Forbidden-token gate over what we are about to ship (docs/35 §35.7.5).
+# Forbidden-token gate over what we are about to ship (docs/log/35 §35.7.5).
 #
 #   deploy/release/scan-forbidden.sh [path...]      # default: deploy/release/dist
 #

@@ -157,7 +157,7 @@ describe("surfacesFor", () => {
     });
     // A non-editable document is never offered split. A state that still carries
     // it must render what reconcileFileMode clamps it to — a plain preview — and
-    // never a split the contract does not allow (docs/44 §1.1).
+    // never a split the contract does not allow (docs/log/44 §1.1).
     expect(surfacesFor(md({ md: "split" }), caps({ editable: false }))).toEqual({
       editor: false,
       source: false,
@@ -218,7 +218,7 @@ describe("control groups", () => {
 describe("surfaceKey", () => {
   it("ignores which renderer draws the preview", () => {
     // Choosing a renderer is not moving to another surface, so it must not read
-    // as one (docs/44 §5 — focus follows the mode).
+    // as one (docs/log/44 §5 — focus follows the mode).
     const marp = caps({ marp: true });
     expect(surfaceKey(surfacesFor(md({ md: "split", renderer: "normal" }), marp))).toBe(
       surfaceKey(surfacesFor(md({ md: "split", renderer: "slides" }), marp)),
@@ -365,7 +365,7 @@ describe("reconcileFileMode", () => {
   });
 });
 
-// ── 図（.drawio）の面 — docs/65 §65.4 ─────────────────────────────────────
+// ── 図（.drawio）の面 — docs/log/65 §65.4 ─────────────────────────────────────
 describe("diagram mode", () => {
   const dcaps = (over: Partial<FileModeCaps> = {}) => caps({ markdown: false, diagram: true, ...over });
 

@@ -1,6 +1,6 @@
 package codex
 
-// 発言時点からの分岐（docs/55）の codex 側ユニットテスト。
+// 発言時点からの分岐（docs/log/55）の codex 側ユニットテスト。
 //
 // codex はアンカーを**そのままは送らない**唯一の kind。Console の意味は排他（この発言の
 // 手前まで）で、`thread/fork` の lastTurnId は包含（この turn まで残す）なので、答えは

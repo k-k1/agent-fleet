@@ -2,7 +2,7 @@ package agy
 
 // 会話中インタラクティブプロンプト（ASK_QUESTION / ツール許可）の保留検知。
 //
-// 検知チャネルの選定（実機調査 2026-07-20, v1.1.4 — docs/32）: transcript jsonl は
+// 検知チャネルの選定（実機調査 2026-07-20, v1.1.4 — docs/log/32）: transcript jsonl は
 // 保留中に何も書かず、OSC/タイトル・stderr・lock ファイルも無し。CLI ログ
 // （log/cli-*.log の "Surfacing ask_question" 行）はイベントのみで本文が無い。
 // 唯一構造まで載るのが **会話 DB（conversations/<uuid>.db）の steps 最終行**:
@@ -28,7 +28,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// steps.status の実測値（v1.1.4 — docs/32）。最終 step の status が会話の
+// steps.status の実測値（v1.1.4 — docs/log/32）。最終 step の status が会話の
 // 現在地をそのまま表す: 実行中 / 完了 / ユーザー入力待ち。
 const (
 	stepStatusRunning      = 2
@@ -68,7 +68,7 @@ func lastStep(m session.Meta) (int, []byte, bool) {
 // "working" mid-turn, "idle" once the last step completed, "" when the DB has
 // no opinion yet. agy ships no status hooks, so this is the ONLY turn-end
 // signal — /input persists an optimistic "working" that nothing else clears,
-// which left the operator's 完了報告 arm unconsumed forever (docs/30 ②).
+// which left the operator's 完了報告 arm unconsumed forever (docs/log/30 ②).
 // Callers gate on liveness themselves: a killed session's DB keeps its last
 // status, which must not surface as live state on a stopped session.
 func LiveState(m session.Meta) string {
@@ -111,12 +111,12 @@ func Probe(m session.Meta) (string, []transcript.Question) {
 	return "permission", permissionQuestions(payload)
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。Probe の上の
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。Probe の上の
 // 薄い写像だが、Kind の落とし方だけは Probe と違う: 許可は **permission** になる。
 //
 // Probe が許可に対して合成メニュー（Yes / No …）を返すのは、**生きている TUI へ
 // キー列を撃つため**である。畳まれた後にそのメニューを描くと、当てる先がもう無い
-// 答えを利用者に選ばせることになる（docs/75 §75.6.4）。運べるのは「どのコマンドを
+// 答えを利用者に選ばせることになる（docs/log/75 §75.6.4）。運べるのは「どのコマンドを
 // 訊かれていたか」という事実だけで、それは合成した質問文がそのまま持っている。
 //
 // agy の保留は**会話 DB に残る**ので、ペインが死んだ後でも読める — ACP 3 種と違い、

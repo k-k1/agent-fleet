@@ -65,7 +65,7 @@ type Repo struct {
 	Provider      string `json:"provider,omitempty"` // origin host slug: github/bitbucket/gitlab, or the bare host
 	Remote        string `json:"remote,omitempty"`   // origin host (for a tooltip); no path/token
 	// Vcs discriminates the working-copy kind: "git" (default/omitted) or "svn"
-	// (docs/41). SVN copies are flat — no branches/ahead/behind/worktree — so the
+	// (docs/log/41). SVN copies are flat — no branches/ahead/behind/worktree — so the
 	// Console gates git-only actions on it; Revision/URL carry the svn-side facts.
 	Vcs      string `json:"vcs,omitempty"`
 	Revision string `json:"revision,omitempty"` // SVN: current working-copy revision
@@ -91,7 +91,7 @@ type Repo struct {
 	// parent working copy's current HEAD. It is deliberately separate from
 	// Ahead/Behind above, which describe the branch's configured upstream.
 	Integration *RepoIntegration `json:"integration,omitempty"`
-	// Locked marks the working copy as pinned against deletion (docs/45, locks.go):
+	// Locked marks the working copy as pinned against deletion (docs/log/45, locks.go):
 	// DELETE /repos/{name} is refused even with force=true, and the automatic
 	// worktree prune skips it. Toggled by POST /repos/{name}/lock.
 	Locked bool `json:"locked,omitempty"`
@@ -331,7 +331,7 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if repoJobActive(e.Name()) {
-			// Being imported right now (docs/78). A half-written working copy must not
+			// Being imported right now (docs/log/78). A half-written working copy must not
 			// appear here: the list is what can be launched in, updated, deleted — and
 			// for svn every entry costs an `svn status` over the whole tree, which
 			// fights the running checkout for the same wc.db lock. The Console draws
@@ -340,7 +340,7 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		dir := filepath.Join(reposRoot(), e.Name())
 		if !isGitRepo(dir) {
-			// An SVN working copy (docs/41) is a flat folder with a .svn dir; surface it
+			// An SVN working copy (docs/log/41) is a flat folder with a .svn dir; surface it
 			// with revision/URL so it shows in the tree and can host a session. Anything
 			// else (a plain folder) is skipped.
 			if isSvnRepo(dir) {
@@ -385,7 +385,7 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 		integration := gitWorktreeIntegration(parentDir, repos[i].Path, targetBranch)
 		repos[i].Integration = &integration
 	}
-	// Delete lock (docs/45): one ledger read for the whole list, not one per row.
+	// Delete lock (docs/log/45): one ledger read for the whole list, not one per row.
 	if locked := lockedRepoDirs(); len(locked) > 0 {
 		for i := range repos {
 			repos[i].Locked = locked[absPath(repos[i].Path)]
@@ -438,7 +438,7 @@ func gitClone(dir, remoteURL, branch, newBranch string) error {
 }
 
 // gitCloneCtx is gitClone bound to a context, optionally reporting progress into a
-// repo-import job's sink (docs/78). With a sink, `git clone` is asked for --progress
+// repo-import job's sink (docs/log/78). With a sink, `git clone` is asked for --progress
 // (it stays silent when stderr is not a terminal) and its output is streamed rather
 // than buffered, so the Console can show a live line instead of a spinner that says
 // nothing for twenty minutes.
@@ -601,7 +601,7 @@ func maybePruneWorktree(dir string) {
 		return
 	}
 	if repoLocked(dir) {
-		return // 削除ロック（docs/45）は自動 prune にも効く
+		return // 削除ロック（docs/log/45）は自動 prune にも効く
 	}
 	if st, err := gitStatus(dir); err != nil || st.Dirty || st.Ahead > 0 {
 		return // keep dirty/unpushed worktrees; the user force-deletes those explicitly
@@ -1158,7 +1158,7 @@ func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "job_running", "an import is already running for: "+name)
 		return
 	}
-	// The clone runs as a background job (docs/78), same as an SVN checkout: cloning a
+	// The clone runs as a background job (docs/log/78), same as an SVN checkout: cloning a
 	// large repository outlives the proxies in front of this handler, and answering
 	// "done" from a request that merely survived is how a half-written working copy got
 	// reported as a finished one.
@@ -1191,7 +1191,7 @@ func gitInitDefaultBranch() string {
 // clone (POST /repos) and SVN checkout (POST /repos/svn) import paths.
 //
 // Unlike those two this is synchronous: mkdir + git init touch no network and
-// finish in milliseconds, so there is nothing for a job (docs/78) to observe and
+// finish in milliseconds, so there is nothing for a job (docs/log/78) to observe and
 // no proxy timeout to outlive. It answers with the same Repo shape GET /repos
 // returns, so the Console can hand the folder straight to the launch dialog.
 //
@@ -1541,7 +1541,7 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 				len(running), strings.Join(running, ", ")))
 		return
 	}
-	// 削除ロック（docs/45）: 作業コピー自身のロックと、そこに住むロック済みセッションの
+	// 削除ロック（docs/log/45）: 作業コピー自身のロックと、そこに住むロック済みセッションの
 	// 巻き添え。どちらも force=true では越えられない — ロック解除が唯一の道。
 	if repoLocked(dir) {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
@@ -1643,7 +1643,7 @@ func forgetNonLiveMetasUnder(dir string) {
 			continue
 		}
 		if m.Locked {
-			continue // 削除ロック（docs/45）— 掃除の巻き添えでも消さない
+			continue // 削除ロック（docs/log/45）— 掃除の巻き添えでも消さない
 		}
 		if m.Archived {
 			// アーカイブは「棚」— WT を消しても会話は棚に残し、回収は棚側の削除
@@ -1651,7 +1651,7 @@ func forgetNonLiveMetasUnder(dir string) {
 			// →②WT削除 の段階を踏んだ人の棚が黙って消える。行は「フォルダ無し」表示になる。
 			continue
 		}
-		finalizeSessionUsage(m) // 使用量台帳へ確定してから忘れる（docs/46 §3-b）
+		finalizeSessionUsage(m) // 使用量台帳へ確定してから忘れる（docs/log/46 §3-b）
 		session.RemoveMeta(m.Name)
 	}
 }

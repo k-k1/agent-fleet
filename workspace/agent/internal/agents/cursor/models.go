@@ -1,12 +1,12 @@
 package cursor
 
-// 起動時モデルカタログ — アカウント連動のライブ取得（docs/40 決定 6）。cursor は
+// 起動時モデルカタログ — アカウント連動のライブ取得（docs/log/40 決定 6）。cursor は
 // `cursor-agent models` が公式にあり（copilot の TUI スクレイプ不要）、`id - 表示名`
 // の行を返す（実測 v2026.07.20）。effort はモデル ID 自体に畳まれている
 // （例 gpt-5.3-codex-high / claude-opus-4-8-thinking-high）ので別 Efforts は付けない。
 // `auto`（既定・フラグ無し）はカタログから外す。10 分キャッシュ・stale-if-error。
 //
-// **Free プラン絞り込み（docs/40 §Free・session2 実測）**: `cursor-agent models` は
+// **Free プラン絞り込み（docs/log/40 §Free・session2 実測）**: `cursor-agent models` は
 // プランに関係なく全モデルを列挙するが、**Free プランは named model を一切使えない**
 // （実測: `ActionRequiredError: Named models unavailable Free plans can only use Auto.`）。
 // 使えるのは Auto（＝ピッカーの 既定・カタログから除外済み）と Composer 系のみ

@@ -1,4 +1,4 @@
--- Tenant-defined login providers (docs/61 §61.11 + ADR0043 決定 29-33), Postgres
+-- Tenant-defined login providers (docs/log/61 §61.11 + ADR0043 決定 29-33), Postgres
 -- mirror of migrations/0040_tenant_idp.sql. See that file for the column semantics
 -- and for why a row is born pending. The DDL is dialect-neutral (TEXT only), so the
 -- two files stay identical apart from the migration series.

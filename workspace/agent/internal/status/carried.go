@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-// 持ち越し（carried interaction）— docs/75 §75.6。
+// 持ち越し（carried interaction）— docs/log/75 §75.6。
 //
 // pending-question / pending-plan / pending-perm は「**今まさにモーダルが出ている**」と
 // いう意味で、Console はそれをキー列（Down/Enter）で答える。セッションが畳まれると
 // そのモーダルは二度と戻らない — claude を --resume しても未応答の tool_use は親ポインタで
-// 迂回され、会話木から外れる（docs/75 §75.10 A で実測）。つまり畳んだ後に残せるのは
+// 迂回され、会話木から外れる（docs/log/75 §75.10 A で実測）。つまり畳んだ後に残せるのは
 // **モーダルではなく意図**だけで、答えは文章として注入するしかない。
 //
 // だから同じファイルを使い回さない。停止中のカードが生きたペインへ Down/Enter を撃つ
@@ -30,7 +30,7 @@ type Carried struct {
 	// Questions は AskUserQuestion の tool_input.questions を生のまま。
 	Questions json.RawMessage `json:"questions,omitempty"`
 	// Plan は ExitPlanMode の計画本文。★保留中のプランは転写に載らない
-	// （docs/75 §75.10 D の実測）ので、これが唯一の記録になる。
+	// （docs/log/75 §75.10 D の実測）ので、これが唯一の記録になる。
 	Plan string `json:"plan,omitempty"`
 	// Permission は許可を求めていたツールの説明（"Bash · npm ci"）。答えは死んだ
 	// ツール呼び出しには届かないので、これは**事実の記録**であって回答対象ではない。
@@ -42,7 +42,7 @@ type Carried struct {
 // CarriedTTL は持ち越しの寿命。過ぎたものは PromoteCarried / ReadCarried の入口で捨てる。
 //
 // なぜ寿命が要るか: pending-* には寿命が無く、実開発機には 5〜6 週間前の未回答
-// ペイロードが残っていた（docs/75 D9）。sid は決定論なので、同じ dir+name の
+// ペイロードが残っていた（docs/log/75 D9）。sid は決定論なので、同じ dir+name の
 // セッションが将来また作られれば亡霊のカードが surface しうる。
 const CarriedTTL = 14 * 24 * time.Hour
 
@@ -57,7 +57,7 @@ func carriedFresh(c Carried, now time.Time) bool {
 // PromoteCarried は「モーダルが出たまま畳まれた」を持ち越しへ昇格させる。
 // 昇格したら true。
 //
-// 呼ばれるのは 3 箇所（docs/75 §75.6.3）。halt は status.Remove がペイロードを消す直前、
+// 呼ばれるのは 3 箇所（docs/log/75 §75.6.3）。halt は status.Remove がペイロードを消す直前、
 // 一覧はペインが消えているのを**初めて見つけた**とき（＝Workspace 停止・クラッシュ・
 // 利用者の /exit をまとめて拾う）、SessionStart(boot) は再開時の消去の直前。3 つ目は
 // 保険で、SIGKILL のように 1 も 2 も走らなかった経路でも消える前に拾える。
@@ -137,7 +137,7 @@ func SweepCarried() int {
 
 // PutCarried は「保留ペイロードのファイルを経由せずに」持ち越しを書く入口。
 //
-// claude 以外の kind のためにある（docs/75 P5）: 保留中の対話は pending-question /
+// claude 以外の kind のためにある（docs/log/75 P5）: 保留中の対話は pending-question /
 // pending-perm ではなく、会話 DB・events.jsonl・ペインのフッタ・runtime handle の
 // Interaction のいずれかにしか無い。どこから来たかは kind 側（agents.ModalReporter）が
 // 知っており、ここはその結果を受け取るだけ。

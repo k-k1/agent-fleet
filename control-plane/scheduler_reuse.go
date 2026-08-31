@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Scheduled execution P6 (docs/38 + ADR0021): long-lived session reuse. When a schedule
+// Scheduled execution P6 (docs/log/38 + ADR0021): long-lived session reuse. When a schedule
 // runs with session_mode=reuse the scheduler sends each fire's prompt into the SAME
 // long-lived session (send_to_session) instead of creating a fresh one, so the
 // conversation context carries across fires. Two shapes:
@@ -134,7 +134,7 @@ func (f *wakeFirer) deliverReuse(ctx context.Context, rt Runtime, sch Schedule, 
 // 409 not_running, is resumed and retried) but adds the readiness gate on the ALREADY-ALIVE
 // path too: /input types keystrokes into the pane and returns 200 regardless of whether
 // the CLI can accept them, and the unattended cron has no human to notice a swallowed
-// prompt. This is the sbk7oej silent-drop fix (docs/38 + ADR0021).
+// prompt. This is the sbk7oej silent-drop fix (docs/log/38 + ADR0021).
 func (f *wakeFirer) sendToSession(ctx context.Context, rt Runtime, name string, alive bool, body []byte) error {
 	inputPath := "/sessions/" + url.PathEscape(name) + "/input"
 	if !alive {
@@ -372,7 +372,7 @@ func reuseCreateTitle(sch Schedule, pinned bool) string {
 
 // reuseSendBody is the /input body for a reuse fire: the expanded prompt plus report_to
 // (the operator conversation when report=true, else empty = no completion report).
-// confirm (docs/38 配達検証) is the second sbk7oej fix: the first (the readiness gate)
+// confirm (docs/log/38 配達検証) is the second sbk7oej fix: the first (the readiness gate)
 // still declared "fired" on tmux keystroke success, and a CLI that momentarily could
 // not accept input (cold resume before slash commands register, a swallowed Enter)
 // silently ate the prompt while the ledger recorded success (2026-07-24 朝の再発).
@@ -385,7 +385,7 @@ func reuseSendBody(sch Schedule, slot time.Time) []byte {
 		"prompt":    expandSchedulePrompt(sch, slot),
 		"report_to": scheduleReportTo(sch),
 		"confirm":   true,
-		"source":    scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/38)
+		"source":    scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/log/38)
 	})
 	return b
 }
@@ -403,7 +403,7 @@ func buildReuseCreateBody(sch Schedule, slot time.Time, title string) []byte {
 		"driver":          injectDriver(kind),
 		"report_to":       scheduleReportTo(sch),
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
-		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/38)
+		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/log/38)
 	}
 	b, _ := json.Marshal(body)
 	return b
@@ -411,7 +411,7 @@ func buildReuseCreateBody(sch Schedule, slot time.Time, title string) []byte {
 
 // --- rotation ------------------------------------------------------------------
 
-// rotationSpec is the parsed rotation policy (docs/38 P6). Triggers are OR-composed: any
+// rotationSpec is the parsed rotation policy (docs/log/38 P6). Triggers are OR-composed: any
 // satisfied trigger rotates the managed session on the next fire. context_pct is reserved
 // for a later best-effort usage trigger (running-only) and is ignored by rotationDue.
 type rotationSpec struct {

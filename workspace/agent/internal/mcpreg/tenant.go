@@ -1,6 +1,6 @@
 package mcpreg
 
-// Tenant distribution — the Workspace half of docs/48 §6 / P4.
+// Tenant distribution — the Workspace half of docs/log/48 §6 / P4.
 //
 //	tenant_admin ──▶ CP /api/admin/mcp-servers        (control-plane/mcp_server.go)
 //	                     │
@@ -13,7 +13,7 @@ package mcpreg
 //   - **fail-open.** An unreachable CP keeps the previous cache. Fail-closed would mean
 //     a CP blip silently strips MCP servers out of every member's next session, which is
 //     worse than serving a slightly stale set. FetchedAt is surfaced so the Console can
-//     show HOW stale (docs/48 §6).
+//     show HOW stale (docs/log/48 §6).
 //   - **the tenant cannot ship a command.** Every incoming definition is re-validated
 //     locally and anything that is not a well-formed remote server is dropped. ADR0031
 //     決定 2 is enforced three times over — the CP table has no command columns, the CP
@@ -155,7 +155,7 @@ func writeTenantCache(servers []ServerDef, fetchedAt int64) error {
 	if err := os.MkdirAll(filepath.Dir(tenantCachePath()), 0o700); err != nil {
 		return err
 	}
-	// 0600: the cache holds the tenant's header values in plaintext (docs/48 §5.1 —
+	// 0600: the cache holds the tenant's header values in plaintext (docs/log/48 §5.1 —
 	// unavoidable, since the CLIs have to be able to read them; the mitigation is the
 	// mode and staying inside home).
 	return writeFileAtomic(tenantCachePath(), b, 0o600)

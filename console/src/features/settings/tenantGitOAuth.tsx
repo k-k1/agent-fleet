@@ -1,4 +1,4 @@
-// テナントの git プロバイダ OAuth アプリ（docs/71・ADR 0052）。
+// テナントの git プロバイダ OAuth アプリ（docs/log/71・ADR 0052）。
 //
 // メンバーの「接続」タブに出る GitHub / Bitbucket の **OAuth で接続** ボタンが、
 // どの OAuth アプリを叩くかをここで決める。以前はデプロイの env
@@ -38,7 +38,7 @@ const REGISTER_URL: Record<string, string> = {
   github: "https://github.com/settings/developers",
   bitbucket: "https://support.atlassian.com/bitbucket-cloud/docs/use-oauth-on-bitbucket-cloud/",
   // ⚠️ Jira は Bitbucket と同じ Atlassian でも登録先が別（3LO アプリは Developer
-  // Console）。Bitbucket のコンシューマを流用することはできない（docs/80 §80.17）。
+  // Console）。Bitbucket のコンシューマを流用することはできない（docs/log/80 §80.17）。
   jira: "https://developer.atlassian.com/console/myapps/",
 };
 
@@ -152,7 +152,7 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
       {/* ★ Bitbucket は認可 URL に scope を載せない —— コンシューマの Permissions で
           チェックした物がそのまま渡る。だから「どれを入れるか」はここで言うしかなく、
           Pull requests: Read を後から足した場合はメンバーの再接続が要る
-          （既存トークンには古い権限が焼かれている・docs/80 §80.19.3）。 */}
+          （既存トークンには古い権限が焼かれている・docs/log/80 §80.19.3）。 */}
       {app.provider === "bitbucket" && <p className="admin-hint">{tr("tenant.git_oauth_bb_scopes")}</p>}
       {app.provider === "jira" && (
         <>

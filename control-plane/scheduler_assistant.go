@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-// Scheduled execution — session_mode=assistant (docs/38 アシスタント発火): a due fire
+// Scheduled execution — session_mode=assistant (docs/log/38 アシスタント発火): a due fire
 // runs ONE assistant-chat turn instead of driving a session. The prompt lands as a user
 // turn in the target conversation and the assistant (persona + af tools it carries)
 // executes it — "毎朝オペレーターにフリート状況をまとめさせる" without any session.
 //
 // Target resolution: reuse_target names the conversation (an "a…" slug or a UUID);
 // empty falls back to the schedule's owner_conv — the operator conversation that
-// created the schedule, which docs/30 reports already flow into, so the zero-config
+// created the schedule, which docs/log/30 reports already flow into, so the zero-config
 // default is "kick my operator".
 //
 // The turn is SYNCHRONOUS on the Agent (POST /assistant-turns wraps runOperatorTurn):

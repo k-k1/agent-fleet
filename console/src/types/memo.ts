@@ -1,11 +1,11 @@
-// Memo queue domain types (docs/21). A Memo is a note queued per membership and
+// Memo queue domain types (docs/log/21). A Memo is a note queued per membership and
 // synced across devices, then flushed to a coding session as one concatenated
 // message. Notes are grouped by repo then a free-form category (sub-project);
 // repo="" is the common/unfiled bucket. Persisted in the Control Plane SQLite.
 
 export type MemoKind = "file" | "text";
 
-// An image attached to a memo (docs/21 画像添付). path is the absolute in-container path
+// An image attached to a memo (docs/log/21 画像添付). path is the absolute in-container path
 // returned by memoPasteImage (under ~/.cache/agent-fleet/memo-images); name is the
 // basename, used both for display and to preview via GET api/memos/images/{name}.
 export interface MemoAttachment {
@@ -47,7 +47,7 @@ export interface MemoPatch {
   position?: number;
 }
 
-// A first-class category (docs/21 UI刷新): created ahead of any memo, reordered by drag,
+// A first-class category (docs/log/21 UI刷新): created ahead of any memo, reordered by drag,
 // kept while empty. name is unique within a (repo) bucket and stays the grouping key that
 // Memo.category references — so a rename cascades onto the memos.
 export interface MemoCategory {

@@ -1,7 +1,7 @@
 /* Design tokens — the ONLY place theme variables live in the next console.
  *
  * Copied verbatim from the frozen styles.css :root / [data-theme=light] blocks
- * (docs/22: the theme mechanism is a hard constraint — <html data-theme> +
+ * (docs/log/22: the theme mechanism is a hard constraint — <html data-theme> +
  * lib/settings.ts applyTheme() writing region overrides onto the root element).
  * The old styles.css is frozen during the rebuild, so drift risk is accepted;
  * at swap time (P8) styles.css is deleted and this file becomes the single truth.
@@ -11,7 +11,7 @@
  */
 /* Dark theme (the default). The bare [data-theme="dark"] selector — in addition to
    :root — lets a nested container opt into dark independently of the app root: the
-   assistant ChatView sets data-theme on its own element (assistantTheme, docs/19). */
+   assistant ChatView sets data-theme on its own element (assistantTheme, docs/log/19). */
 :root,
 [data-theme="dark"] {
   /* Tell the UA to render native controls (number-input spinners, scrollbars,
@@ -41,7 +41,7 @@
   --ok: #67c23a;
   --warn: #e6a23c;
   --del: #e06c75;
-  /* Origin hue for a peer-injected turn (docs/58: another SESSION sent it). The mirror
+  /* Origin hue for a peer-injected turn (docs/log/58: another SESSION sent it). The mirror
      already spends --warn on operator, --accent on chat and --ok on schedule, so the
      fourth injected origin needs its own. Measured 5.1:1 on --active-bg (the darkest
      surface it lands on), 6.9:1 on --bg. */
@@ -64,7 +64,7 @@
   --sel-fg-mix: 0%;
   --sel-bg: color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg));
   --sel-fg: color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg));
-  /* 転写のマーカー（docs/69 / ADR 0050）。塗りは「利用者が選ぶ意味」の軸で、作成者は
+  /* 転写のマーカー（docs/log/69 / ADR 0050）。塗りは「利用者が選ぶ意味」の軸で、作成者は
      別の軸（--mark-author-N の下線）で示す。暗色では彩度を落として本文の可読性を優先し、
      文字色は据え置き（背景だけを変える）。 */
   --mark-yellow: #6a5a12;
@@ -106,14 +106,14 @@
      LayoutMap, settings badges). Tints are derived via color-mix at the use sites. */
   --kind-claude: #e0a45e;
   --kind-codex: #4ec97a;
-  --kind-cursor: #d96ba1; /* rose/magenta — the only warm hue free of the other 7 (docs/40) */
+  --kind-cursor: #d96ba1; /* rose/magenta — the only warm hue free of the other 7 (docs/log/40) */
   --kind-agy: #4285f4;
-  --kind-kiro: #a371f7; /* purple — inherits copilot's former hue (docs/43 §4-1). Kiro brand 紫 */
-  --kind-copilot: #7d8590; /* neutral/charcoal grey — moved off purple (docs/43). darker than opencode */
+  --kind-kiro: #a371f7; /* purple — inherits copilot's former hue (docs/log/43 §4-1). Kiro brand 紫 */
+  --kind-copilot: #7d8590; /* neutral/charcoal grey — moved off purple (docs/log/43). darker than opencode */
   --kind-opencode: #aab4be; /* light slate grey — lighter than copilot's charcoal for clear separation */
   --kind-shell: #46c9d0;
   --kind-ssm: #6d8bf5;
-  /* Data-viz categorical slots (docs/46 P4 — 使用量ビュー). A validated 8-hue
+  /* Data-viz categorical slots (docs/log/46 P4 — 使用量ビュー). A validated 8-hue
      categorical palette: fixed slot ORDER is the colorblind-safety mechanism, so
      series are always painted (and stacked) in slot order — never re-ordered by
      rank. Verified with the dataviz validator against this theme's modal surface
@@ -137,7 +137,7 @@
 
 /* Light theme — applied via document.documentElement[data-theme="light"]. The bare
    [data-theme="light"] selector also lets a nested container (the assistant ChatView)
-   opt into light independently of the app root (assistantTheme, docs/19). */
+   opt into light independently of the app root (assistantTheme, docs/log/19). */
 :root[data-theme="light"],
 [data-theme="light"] {
   color-scheme: light;
@@ -219,14 +219,14 @@
      its OWN hue, so the effective surface is darker than --panel and the 10px bold
      labels sat at 3.8–4.3:1. Every hue below now clears 4.5:1 on its own tint and on
      --panel2. Relative ordering is unchanged (copilot stays the darkest neutral,
-     opencode the lighter one), so the per-kind identity documented in docs/43 holds.
+     opencode the lighter one), so the per-kind identity documented in docs/log/43 holds.
      This block is the single source — grep for a literal hue before adding one. */
   --kind-claude: #8f4f13;
   --kind-codex: #126b3b;
   --kind-cursor: #a02a63; /* rose/magenta (light) */
   --kind-agy: #0f5ec4;
-  --kind-kiro: #6b3ac9; /* purple (light) — inherits copilot's former hue (docs/43 §4-1) */
-  --kind-copilot: #30363d; /* near-black/charcoal (light) — moved off purple (docs/43) */
+  --kind-kiro: #6b3ac9; /* purple (light) — inherits copilot's former hue (docs/log/43 §4-1) */
+  --kind-copilot: #30363d; /* near-black/charcoal (light) — moved off purple (docs/log/43) */
   --kind-opencode: #575e68; /* mid slate grey (light) — lighter than copilot's near-black */
   --kind-shell: #0f676d;
   --kind-ssm: #2c39a3;

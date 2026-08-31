@@ -58,7 +58,7 @@ describe("device-local settings", () => {
   });
 
   // 面ごとのテーマ/背景は「この端末でどう見せるか」なので端末ローカル。共有セッション
-  // (docs/59)も同じ扱い — 追加時にここから漏らすと、別端末の見え方を勝手に上書きする。
+  // (docs/log/59)も同じ扱い — 追加時にここから漏らすと、別端末の見え方を勝手に上書きする。
   it("keeps every per-region look on this device", () => {
     for (const key of ["mirrorTheme", "sharedTheme", "assistantTheme", "chatColor", "sharedColor"] as const) {
       expect(isDeviceLocalSetting(key)).toBe(true);
@@ -66,7 +66,7 @@ describe("device-local settings", () => {
   });
 });
 
-// 権限確認の既定（docs/76）。**欠落は「スキップする」**でなければならない — 既存の
+// 権限確認の既定（docs/log/76）。**欠落は「スキップする」**でなければならない — 既存の
 // prefs を読んだ端末で全セッションが承認待ちになるのは「既定は現状のまま」の破り方の
 // 中で一番目立たない。明示 false のときだけ承認あり。
 describe("normalizeAgentLaunchDefaults / skipPermissions", () => {

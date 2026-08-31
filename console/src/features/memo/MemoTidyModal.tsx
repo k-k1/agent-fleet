@@ -1,5 +1,5 @@
-// MemoTidyModal (docs/21 整理) — ported from the old sections/MemoTidyModal.tsx
-// (docs/22 P6c): hands the selected memos to a stateless assistant turn that
+// MemoTidyModal (docs/log/21 整理) — ported from the old sections/MemoTidyModal.tsx
+// (docs/log/22 P6c): hands the selected memos to a stateless assistant turn that
 // returns cleaned text + a suggested category per memo, previews old→new, and on
 // approval PATCHes the changes. We never auto-apply — a bad tidy shouldn't need undo.
 import { useEffect, useState } from "react";
@@ -25,16 +25,16 @@ interface MemoTidyModalProps {
 }
 
 // The assistant is asked to return STRICT JSON; there's no structured-output plumbing
-// (docs/21), so we prompt for a fenced array and parse it defensively on the client.
+// (docs/log/21), so we prompt for a fenced array and parse it defensively on the client.
 function buildTidyPrompt(memos: Memo[]): string {
   const items = memos.map((m) => ({
     id: m.id,
     repo: m.repo,
     category: m.category,
-    // i18n-exempt: LLM プロンプトに渡すメモ本文（表示でなくモデル挙動・docs/28 §4）
+    // i18n-exempt: LLM プロンプトに渡すメモ本文（表示でなくモデル挙動・docs/log/28 §4）
     text: m.kind === "file" ? `対象ファイル ${m.refPath}${m.body ? " — " + m.body : ""}` : m.body,
   }));
-  // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/28 §4）
+  // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/log/28 §4）
   return (
     "あなたはメモ整理アシスタントです。以下は開発者の走り書きメモです。各メモについて、" +
     "(1) 指示として明確な日本語に整形し、(2) サブプロジェクトを表す短いカテゴリ名を提案してください。" +

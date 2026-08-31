@@ -1,4 +1,4 @@
-// Package userinstr owns the *user layer* of agent instructions (docs/60 / ADR 0042):
+// Package userinstr owns the *user layer* of agent instructions (docs/log/60 / ADR 0042):
 // one body of markdown the workspace's owner writes once, which agent-fleet delivers
 // into every supported CLI's user-scope instruction position.
 //
@@ -9,7 +9,7 @@
 //
 // このパッケージは**正本の読み書きと本文の組み立てだけ**を持ち、どの CLI のどこへ
 // 配るかは各 internal/agents/<kind> と package main の配布器（agent_instructions.go）
-// が持つ。理由は docs/60 §60.5-6 の原則「他人のファイルに書くより AF 専用ファイル＋
+// が持つ。理由は docs/log/60 §60.5-6 の原則「他人のファイルに書くより AF 専用ファイル＋
 // 参照を優先する」が kind ごとに手段を変えるため — 綴り方をここへ集めると、
 // kind を足すたびにこの層が太る。
 package userinstr
@@ -24,12 +24,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// MaxBytes は本文の上限。根拠は**費用**であって truncation ではない（docs/60 §60.9 —
+// MaxBytes は本文の上限。根拠は**費用**であって truncation ではない（docs/log/60 §60.9 —
 // codex の project_doc_max_bytes は global を含まないと実測済み）。フリート方針だけで
 // 毎セッション約 30KB が固定費として乗っており、その上に無制限を積ませない。
 const MaxBytes = 8 * 1024
 
-// ErrTooLarge は上限超過。REST は 1 理由 = 1 コードで返す（docs/57 §4）。
+// ErrTooLarge は上限超過。REST は 1 理由 = 1 コードで返す（docs/log/57 §4）。
 var ErrTooLarge = errors.New("too_large")
 
 func notesPath() string { return filepath.Join(paths.AgentConfigDir(), "user-notes.md") }
@@ -115,7 +115,7 @@ func (s State) Body(kind string) string {
 }
 
 // header は AF が必ず前置する固定文。フラットな 1 ファイルへ合成する kind では
-// 階層の信号が消えるので、優先順位は**散文で**言うしかない（docs/60 §60.5-4）。
+// 階層の信号が消えるので、優先順位は**散文で**言うしかない（docs/log/60 §60.5-4）。
 // 読み手はモデルなので、フリート方針と同じ英語で書く（表示言語とは別軸 — ADR 0033）。
 const header = "# User instructions (from the person who owns this workspace)\n\n" +
 	"These are the personal working preferences of this workspace's user. They apply to\n" +

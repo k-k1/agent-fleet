@@ -159,9 +159,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         {speaking && (
           <Icon name="unmute" className="sess-speaking" title={tr("srow.speaking")} />
         )}
-        {/* 削除ロック（docs/45）: 鍵バッジ。「なぜ削除が押せないのか」を行の上で示す。 */}
+        {/* 削除ロック（docs/log/45）: 鍵バッジ。「なぜ削除が押せないのか」を行の上で示す。 */}
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
-        {/* 停止しないピン（docs/75）: 期限が生きている間だけ出す。切れたピンをバッジに
+        {/* 停止しないピン（docs/log/75）: 期限が生きている間だけ出す。切れたピンをバッジに
             残すと「守られているつもり」で放置されるので、時計は表示側でも見る。 */}
         {remainingShort(s.keepAwakeUntil) && (
           <Icon

@@ -1,12 +1,12 @@
 package copilot
 
-// 発言時点からの分岐（docs/55 §55.5）。copilot にも公式の分岐口が無いので、claude と同じく
+// 発言時点からの分岐（docs/log/55 §55.5）。copilot にも公式の分岐口が無いので、claude と同じく
 // 転写を切り詰めて分岐先を作る。違いは単位で、claude は 1 ファイル、copilot は
 // `session-state/<sid>/` ディレクトリ一式（events.jsonl のほか checkpoints・files・
 // research・rewind-file-snapshots・workspace.yaml。1.0.81 までに廃れたが、それ以前に
 // 作られたセッションには session.db も入っている）。
 //
-// **復元元が events.jsonl であることは実測済み**（docs/55 §55.5）: 両ターン分を持つ
+// **復元元が events.jsonl であることは実測済み**（docs/log/55 §55.5）: 両ターン分を持つ
 // SQLite（かつては隣の session.db、現在は COPILOT_HOME 直下の session-store.db）が
 // 残っていても、切り詰めた events.jsonl のほうが文脈を決めた（2026-08-28 に 1.0.81 で
 // 再実測・contract テストで担保）。だから DB は「コピーして触らない」でよい — 我々が

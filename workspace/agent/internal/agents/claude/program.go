@@ -1,7 +1,7 @@
 package claude
 
 // claude の起動コマンド組み立てと、resume 判定に使う jsonl の所在確認
-// （旧 package main session_program.go — docs/23 残① Wave F で移設）。
+// （旧 package main session_program.go — docs/log/23 残① Wave F で移設）。
 
 import (
 	"bytes"
@@ -24,13 +24,13 @@ func envOr(key, def string) string {
 }
 
 // nativePeerSettings は claude 自前の cross-session チャネル（ListAgents / SendMessage、
-// UDS `/tmp/cc-socks/<pid>.sock`）を AF のセッションで塞ぐ設定（docs/58 §58.17 /
+// UDS `/tmp/cc-socks/<pid>.sock`）を AF のセッションで塞ぐ設定（docs/log/58 §58.17 /
 // ADR 0041 決定1）。`--settings` に JSON 文字列として渡す。
 //
 // **なぜ env ではなくこれか**: 元は Dockerfile の `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
 // と `DISABLE_TELEMETRY` が事実上の遮断だった（〜2.1.226 実測）。**2.1.251 では両方立てても
 // 貫通する**ことを実プロセスで確認済みで、その隙に AF を通らない着信が実際に起きた
-// （docs/58 §58.16）。env は当てにならないので、設定として明示的に閉じる。
+// （docs/log/58 §58.16）。env は当てにならないので、設定として明示的に閉じる。
 //
 // 2つ入っているのは**方向が違う**から。片方だけでは塞がらない:
 //   - `permissions.deny`（送信側）: この2ツールが**一覧から消える**。呼んで拒否されるのでは
@@ -59,7 +59,7 @@ const nativePeerSettings = `{"permissions":{"deny":["ListAgents","SendMessage"]}
 // Otherwise it resumes when a session jsonl already exists, else starts new.
 // label, when non-empty, becomes claude's --name (display name shown in the
 // Remote Control picker and terminal title), e.g. "[AF] agent-fleet @0627-2115".
-// bypass=false は「権限確認をスキップしない」（docs/76 の利用者選択、または plan 起動）。
+// bypass=false は「権限確認をスキップしない」（docs/log/76 の利用者選択、または plan 起動）。
 func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool) string {
 	if override := os.Getenv("AGENT_SESSION_CMD"); override != "" {
 		return override
@@ -154,7 +154,7 @@ func TranscriptSnapshot(sid string) map[string]int64 {
 // AFTER snap was taken. claude persists a submitted prompt as a user line within well
 // under a second of a real submit, so this — not tmux send-keys exiting 0, which only
 // proves keystrokes reached the pane — is the ground truth that a typed prompt became
-// a turn (配達検証, docs/38). Appends are whole lines, so seeking to the recorded EOF
+// a turn (配達検証, docs/log/38). Appends are whole lines, so seeking to the recorded EOF
 // never splits the type token.
 func UserTurnAppendedSince(sid string, snap map[string]int64) bool {
 	for _, p := range jsonlPaths(sid) {

@@ -1,7 +1,7 @@
 package copilot
 
 // acpClient は `copilot --acp` 子プロセスとの JSON-RPC 2.0（newline-delimited、
-// stdio）クライアント（docs/36 managed 契約・v1.0.73 実測）。
+// stdio）クライアント（docs/log/36 managed 契約・v1.0.73 実測）。
 //   - call: id 採番 → 書き込み → 応答待ち（timeout 0 = 無期限、session/prompt 用）
 //   - notify: 通知（session/cancel）
 //   - respond: サーバー発リクエスト（session/request_permission）への応答

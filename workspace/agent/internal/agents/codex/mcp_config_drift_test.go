@@ -1,11 +1,11 @@
 //go:build drift
 
-// codex app-server の MCP 設定リロード契約（docs/48 P3）。**実 codex バイナリに当てる**
+// codex app-server の MCP 設定リロード契約（docs/log/48 P3）。**実 codex バイナリに当てる**
 // テストで、`go test ./...` からは build tag `drift` で除外される。
 //
 // なぜ要るか: MCP レジストリのセッション materialize は `$CODEX_HOME/config.toml` を
 // 書き換える方式で、tui セッションは毎回 codex を起動し直すので必ず読み直される。
-// ところが **managed セッションは共有 `codex app-server` に相乗りする**（docs/27）。
+// ところが **managed セッションは共有 `codex app-server` に相乗りする**（docs/log/27）。
 // この daemon が config を「プロセス起動時に 1 度だけ」読むのなら、登録した MCP は
 // app-server を再起動するまで managed セッションに現れない — レジストリの UI は
 // 「新規セッションから有効」と言っているのに、実際は効かないことになる。
@@ -17,7 +17,7 @@
 // 認証不要: MCP サーバーの spawn は thread/start の内部で起き、モデル呼び出しの前に
 // 完結する（thread/start 自体が認証エラーで返っても spawn は観測できる）。
 //
-// 補足（docs/27 §9.3.1）: managed セッションは thread 単位 config で af のエントリ
+// 補足（docs/log/27 §9.3.1）: managed セッションは thread 単位 config で af のエントリ
 // **だけ**を上書きし、他は config.toml から継承する。つまりこのリロード契約は managed
 // でも依然として効いており、レジストリに登録した MCP が新規 thread に現れるかどうかは
 // ここが守っている。slot 空（`threadStart(cl, home, "", "")`）で呼ぶのは、af の上書きを
@@ -113,6 +113,6 @@ func TestDriftCodexAppServerRereadsMCPConfig(t *testing.T) {
 	if !waitFile(marker("second-spawned"), 15*time.Second) {
 		t.Fatal("稼働中の app-server が config.toml を読み直さなくなった: " +
 			"managed codex セッションは materialize した MCP を見なくなる。" +
-			"docs/48 §8.3 を更新し、レジストリ変更時に Supervisor.Restart を呼ぶ配線が要る")
+			"docs/log/48 §8.3 を更新し、レジストリ変更時に Supervisor.Restart を呼ぶ配線が要る")
 	}
 }

@@ -9,7 +9,7 @@ import (
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 )
 
-// Automatic activation of the cost allocation tags (docs/67 §67.5, ADR 0048 決定 11).
+// Automatic activation of the cost allocation tags (docs/log/67 §67.5, ADR 0048 決定 11).
 //
 // This is the one piece of the system that writes ACCOUNT-LEVEL billing configuration,
 // so the tests are mostly about what it must REFUSE to do. Getting activation wrong in

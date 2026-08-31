@@ -1,6 +1,6 @@
 package main
 
-// 「権限確認をスキップする」の kind 毎の既定を ui-prefs から読む層（docs/76）。
+// 「権限確認をスキップする」の kind 毎の既定を ui-prefs から読む層（docs/log/76）。
 // 解決そのものは internal/agents の表テストが持つので、ここが見るのは 2 点だけ:
 // prefs の形（agentLaunchDefaults[kind].skipPermissions）を読めること、そして
 // **承認待ちを Console から答えられない kind では、書いてあっても効かせない**こと。

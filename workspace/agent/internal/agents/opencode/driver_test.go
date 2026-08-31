@@ -1,6 +1,6 @@
 package opencode
 
-// managed driver（docs/27 P2）のユニットテスト。serve は httptest でモックし、
+// managed driver（docs/log/27 P2）のユニットテスト。serve は httptest でモックし、
 // turn 状態機械（Send→completed / busy 中の queue / interrupt→cancelled / 台帳の
 // 冪等化）と Interaction 応答（ラベル変換・reject）・SSE dispatch を検証する。
 
@@ -467,7 +467,7 @@ func TestManagedEnrich(t *testing.T) {
 
 // codex 側と同じ回帰: managed セッションの turn 完了が状態通知 seam
 // （agents.SetStateNotifier → package main の recordSessionNotification）へ届くこと。
-// hook を持たない managed driver は status を直接書いて誰にも知らせず、docs/30 の
+// hook を持たない managed driver は status を直接書いて誰にも知らせず、docs/log/30 の
 // 【セッション報告】が構造的に飛ばなかった。
 func TestManagedTurnNotifiesCompletion(t *testing.T) {
 	m, srv := newMockServe(t)

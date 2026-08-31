@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// docs/61 §61.11 / ADR0043 決定 29-33 (P4). What these pin down is the part of
+// docs/log/61 §61.11 / ADR0043 決定 29-33 (P4). What these pin down is the part of
 // tenant-defined sign-in methods that is easy to get subtly wrong — and each one is
 // a takeover path if it regresses:
 //
@@ -115,7 +115,7 @@ func TestTenantProviderGateDoesNotFallBackToTheDeployment(t *testing.T) {
 
 // A row that would admit everybody the issuer asserts is refused at build time, and
 // the API refuses it earlier still (see TestTenantIdPSaveTimeValidation). This is
-// docs/61 §61.14's first P4 question answered: allowed_domains is required.
+// docs/log/61 §61.14's first P4 question answered: allowed_domains is required.
 func TestBuildTenantProviderRefusesDangerousRows(t *testing.T) {
 	base := TenantIdP{
 		Name: "entra", Issuer: "https://login.microsoftonline.com/guid/v2.0",

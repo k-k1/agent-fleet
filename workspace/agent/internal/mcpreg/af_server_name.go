@@ -1,6 +1,6 @@
 package mcpreg
 
-// af 自身の MCP サーバ名を起動ごとに振り直す（docs/48 §8.4）。
+// af 自身の MCP サーバ名を起動ごとに振り直す（docs/log/48 §8.4）。
 //
 // なぜ: af が書くのは各 CLI の user/global スコープだが、**リポジトリ側のプロジェクト
 // スコープが同名を定義すると、claude 以外は project が勝つ**（実測・§8.4 の表）。つまり
@@ -91,7 +91,7 @@ func afServerNameLocked() string {
 // ledger (mcp-managed.json) no longer lists it.
 //
 // This is what makes per-boot rotation safe. The ledger is normally the only thing
-// that authorizes deleting a row from a user's config (docs/48 §8.2) — deliberately
+// that authorizes deleting a row from a user's config (docs/log/48 §8.2) — deliberately
 // conservative, so af can never eat a server it did not write. But with a name that
 // changes every boot, a lost or stale ledger would stop af recognising its own previous
 // entries, and each boot would leave another live `af_xxxxxxxx` behind: N boots, N MCP

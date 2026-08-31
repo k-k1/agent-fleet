@@ -44,12 +44,12 @@ type bbState struct {
 	// up by. It has to be carried rather than re-derived: the callback is a plain
 	// browser redirect from bitbucket.org with no X-AF-Tenant header, so re-resolving
 	// there would land on whatever tenant happens to come first for this person and
-	// exchange the code against another tenant's app (docs/71 §71.5).
+	// exchange the code against another tenant's app (docs/log/71 §71.5).
 	tenantID string
 	created  time.Time
 }
 
-// bbFlowRegistry owns the in-flight OAuth CSRF states（docs/23 P2-W4: 生の
+// bbFlowRegistry owns the in-flight OAuth CSRF states（docs/log/23 P2-W4: 生の
 // package 変数 map+mutex から struct 化）。プロセス内メモリなので、CP を
 // マルチインスタンス化する際は sticky ルーティングか DB 退避が必要（P3-7）。
 type bbFlowRegistry struct {
@@ -86,7 +86,7 @@ func (c config) bbRedirectURI() string {
 
 func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request) {
 	// The flow is keyed by the person's real user_key, not by sanitizeUser(email):
-	// since docs/61 §61.5 an identity keeps its key when the IdP changes the email,
+	// since docs/log/61 §61.5 an identity keeps its key when the IdP changes the email,
 	// so the two can differ, and the callback would otherwise resolve a DIFFERENT
 	// workspace and install the token there. The membership comes from the same
 	// resolution so the tenant carried into the callback is the one the Console is
@@ -101,7 +101,7 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 		writeAPIErr(w, aerr)
 		return
 	}
-	// docs/71: the OAuth app is the TENANT's, registered by its administrator. No env
+	// docs/log/71: the OAuth app is the TENANT's, registered by its administrator. No env
 	// fallback — "not configured" here means this tenant has no app, and the Console
 	// says so pointing at the tenant admin rather than at the operator. Only the key is
 	// read: the callback re-reads the row for the secret, so the client secret never
@@ -140,7 +140,7 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
-	t := oauthCallbackText(preferredUILang(r), "Bitbucket") // docs/28 P3: Accept-Language で ja/en
+	t := oauthCallbackText(preferredUILang(r), "Bitbucket") // docs/log/28 P3: Accept-Language で ja/en
 
 	st, ok := bbFlows.take(state)
 	if !ok {
@@ -187,7 +187,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 
 	// Hand the tokens to the Agent to store + install the refresh helper.
 	//
-	// ★ key/secret are deliberately NOT sent (docs/71 §71.8). They used to ride along so
+	// ★ key/secret are deliberately NOT sent (docs/log/71 §71.8). They used to ride along so
 	// the Agent could run the refresh grant itself, which put the TENANT's client secret
 	// in every member's encrypted store. The Agent now posts its refresh token back to
 	// /internal/git-oauth/bitbucket/refresh instead (git_oauth_bridge.go).
@@ -214,12 +214,12 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	if aresp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(aresp.Body)
 		// ★ One upgrade window is visible here. A workspace container started before
-		// docs/71 runs an Agent that REQUIRES key+secret in this payload and refuses
+		// docs/log/71 runs an Agent that REQUIRES key+secret in this payload and refuses
 		// without them, and the raw refusal ("key, secret are required") reads like a
 		// configuration mistake the member should fix — which it is not. Matching the
 		// old message is a string contract and would normally be avoided, but it only
 		// ever improves the wording: behaviour is identical either way, and the check
-		// becomes dead code once no pre-docs/71 Agent is running.
+		// becomes dead code once no pre-docs/log/71 Agent is running.
 		if aresp.StatusCode == http.StatusBadRequest && strings.Contains(string(b), "secret are required") {
 			bbCallbackPage(w, t.staleAgent)
 			return
@@ -231,12 +231,12 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 }
 
 // oauthCallbackText holds the localized strings for the CP-rendered OAuth callback page
-// (docs/28 P3). The detail-bearing entries are prefixes; the underlying error detail is
+// (docs/log/28 P3). The detail-bearing entries are prefixes; the underlying error detail is
 // appended verbatim. ja is the default; en is served when Accept-Language prefers
 // English (preferredUILang, defined in oauth_google.go).
 //
 // Parameterized by provider display name because Bitbucket and Jira run the SAME code
-// grant with the same failure modes (docs/80 §80.17) — two hand-written copies of nine
+// grant with the same failure modes (docs/log/80 §80.17) — two hand-written copies of nine
 // strings would drift, and the only per-provider word is the name itself.
 type bbStrings struct {
 	stateMismatch, noCode, notConfigured, staleAgent                         string

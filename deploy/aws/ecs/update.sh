@@ -102,7 +102,7 @@ echo "==> ECR has af-control-plane:$VERSION and af-workspace:$VERSION"
 # --- 1b) CP イメージのアーキが CpArch と噛み合っているか（落とし穴 1 の兄弟） -----
 # 落とし穴 1 は「タグが無い」。こちらは「タグはあるが、そのアーキが無い」で、症状は
 # もっと悪い: CannotPullContainerError ですらなく、ECS はタスクを**配置できない**まま
-# desired=1 / running=0 で回り続ける（docs/72）。CpArch=arm64 にできるのは
+# desired=1 / running=0 で回り続ける（docs/log/72）。CpArch=arm64 にできるのは
 # publish-dist を control_plane_arm64 で回した版だけで、それは既定 OFF。
 # ⚠️ 判定は「証明できたときだけ落とす」。確かめられなかったときに通すのは、
 # ここが公開ゲートではなく更新の前検査だからで、AF_CP_ARCH_CHECK=0 で丸ごと外せる。
@@ -134,7 +134,7 @@ if [ "${AF_CP_ARCH_CHECK:-1}" = 1 ]; then
         *)
           echo "ERROR: CpArch=$cp_arch needs a '$want' entry, and af-control-plane:$VERSION has: ${archs:-<none>}" >&2
           echo "       Deploying this puts the service in desired=1 / running=0 with no pull error to read." >&2
-          echo "       Publish with control_plane_arm64, or set CpArch back (docs/72)." >&2
+          echo "       Publish with control_plane_arm64, or set CpArch back (docs/log/72)." >&2
           exit 1 ;;
       esac
       ;;
@@ -142,7 +142,7 @@ if [ "${AF_CP_ARCH_CHECK:-1}" = 1 ]; then
       if [ "$want" = arm64 ]; then
         echo "ERROR: CpArch=arm64 but af-control-plane:$VERSION is a SINGLE manifest — it can only" >&2
         echo "       serve one architecture, and this pipeline's single-arch builds are the build" >&2
-        echo "       host's (amd64). Re-publish with control_plane_arm64 (docs/72)." >&2
+        echo "       host's (amd64). Re-publish with control_plane_arm64 (docs/log/72)." >&2
         echo "       Check by hand: crane manifest <ecr>/af-control-plane:$VERSION" >&2
         echo "       Override with AF_CP_ARCH_CHECK=0 if you know better." >&2
         exit 1

@@ -11,13 +11,13 @@ import (
 	"time"
 )
 
-// Egress observation ingestion + read (docs/20 M2, log-only forward proxy).
+// Egress observation ingestion + read (docs/log/20 M2, log-only forward proxy).
 //
 // The proxy (egress_proxy.go) batches destination observations and POSTs them to
 // /internal/egress; the CP aggregates them into egress_daily and mirrors the FIRST
 // would-block sighting of each host per day into the audit ledger (action=
 // egress.observe) so operators see exfil-shaped attempts without the log flooding.
-// Nothing is ENFORCED in M1/M2 — this is log-only (docs/20 §B.6).
+// Nothing is ENFORCED in M1/M2 — this is log-only (docs/log/20 §B.6).
 
 // egressIngest is the wire body the proxy POSTs.
 type egressIngest struct {
@@ -72,7 +72,7 @@ type egressStore interface {
 	SettingsStore
 }
 
-// egressAPI is the egress observation/allowlist handler set（docs/23 残③）.
+// egressAPI is the egress observation/allowlist handler set（docs/log/23 残③）.
 // The /internal/* routes (ingest, policy) are authenticated by the shared
 // AF_EGRESS_TOKEN bearer — NOT a user session — so they register directly;
 // the /api/admin/egress* routes register through withSuperAdmin.
@@ -93,7 +93,7 @@ func newEgressAPI(m *manager, token, proxy string, dedup *egressAuditDedup) egre
 	return egressAPI{memberAuth{m}, token, proxy, dedup, m.store}
 }
 
-// auditAdmin records a deployment-wide admin action (docs/20 M3: allowlist/mode edits
+// auditAdmin records a deployment-wide admin action (docs/log/20 M3: allowlist/mode edits
 // are themselves audited). Best-effort.
 func (a egressAPI) auditAdmin(ctx context.Context, ident Identity, action, target, detail string) {
 	_ = a.store.InsertAudit(ctx, AuditLog{
@@ -103,7 +103,7 @@ func (a egressAPI) auditAdmin(ctx context.Context, ident Identity, action, targe
 }
 
 // effectivePolicy is what the proxy enforces: the built-in product-critical defaults
-// (docs/20 §B.5) plus every ACTIVE allowlist entry, and the deployment egress mode
+// (docs/log/20 §B.5) plus every ACTIVE allowlist entry, and the deployment egress mode
 // (log-only unless set to enforce).
 func (a egressAPI) effectivePolicy(ctx context.Context) (entries []string, enforce bool) {
 	entries = append(entries, defaultEgressAllowlist...)

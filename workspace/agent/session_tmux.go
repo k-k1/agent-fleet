@@ -2,7 +2,7 @@ package main
 
 // tmux まわりのセッションオーケストレーション: 起動/再生成、ディレクトリ配下の
 // セッション判定。純粋な tmux プロービング（存在確認・pane 解決/キャプチャ・
-// 生存一覧・pane 種別）は internal/tmuxx へ移設（docs/23 残① Wave A）。
+// 生存一覧・pane 種別）は internal/tmuxx へ移設（docs/log/23 残① Wave A）。
 
 import (
 	"fmt"
@@ -22,7 +22,7 @@ import (
 // 選ぶ); for shell it runs a login bash.
 func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// Write the MCP registry into this kind's own config before the CLI reads it
-	// (docs/48 §8.3). Doing it here rather than in BuildLaunch keeps it out of the
+	// (docs/log/48 §8.3). Doing it here rather than in BuildLaunch keeps it out of the
 	// per-kind agents, and covers every tui launch — create, start, recreate, handoff.
 	materializeMCP(m.Kind)
 	// Same timing for claude's own settings.json wiring (hooks + statusLine): it is
@@ -74,7 +74,7 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 // ensureSessionTmux (re)creates the tmux session from its recorded meta when it is
 // not currently alive — used on attach so a clicked-but-exited session relaunches
 // claude rather than the default shell. nil means the session is now running.
-// managed セッション（docs/27 P2）は tmux でなく driver.Resume（runtime handle の
+// managed セッション（docs/log/27 P2）は tmux でなく driver.Resume（runtime handle の
 // 再接続＝§6 の reconciliation）で「起動」する — /start の意味論は両ドライバで同じ。
 //
 // Every failure is REPORTED, never swallowed: /start answering {"ok":true} for a
@@ -146,7 +146,7 @@ func sessionsInDir(metas []session.Meta, live map[string]bool, dir string) []str
 	return names
 }
 
-// lockedSessionsInDir returns the display names of DELETE-LOCKED sessions (docs/45)
+// lockedSessionsInDir returns the display names of DELETE-LOCKED sessions (docs/log/45)
 // whose cwd is dir or sits beneath it — running or not, archived included. Removing
 // the working copy would strand them (their dir vanishes, resume is gone), which is
 // exactly what the lock exists to prevent, so a working-copy delete refuses while any

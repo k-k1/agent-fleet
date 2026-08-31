@@ -52,7 +52,7 @@ func TestCDPPortListenersUnknownWhenNoListener(t *testing.T) {
 	}
 }
 
-// Two processes on one port is the measured Chromium collision (docs/53 §53.16):
+// Two processes on one port is the measured Chromium collision (docs/log/53 §53.16):
 // the second browser binds the other loopback family and keeps running, so
 // discovery would hand this session the OTHER session's browser.
 func TestEnsureUnambiguousCDPPortRejectsTwoOwners(t *testing.T) {

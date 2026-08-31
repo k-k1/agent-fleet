@@ -1,4 +1,4 @@
-// transcript/useMarks — マーカーの取得・追加・削除（docs/69 / ADR 0050）。
+// transcript/useMarks — マーカーの取得・追加・削除（docs/log/69 / ADR 0050）。
 //
 // アンカーの決め方そのものは marks.ts（純粋・React も I/O も無し）。ここはミラーと共有
 // ビューが共通で使う配線で、差はエンドポイントと「自分は誰か」だけ。
@@ -109,7 +109,7 @@ export function useMarksController(opts: MarksControllerOptions): TranscriptMark
   }
 
   // 転写のポーリング（毎秒）に相乗りして呼ばれるので、ここで間引く。⚠️ 2 本目の周期を
-  // 増やさないための作りで、増やすと転写と印が別の時刻を見る（docs/68 決定 3 と同じ理由）。
+  // 増やさないための作りで、増やすと転写と印が別の時刻を見る（docs/log/68 決定 3 と同じ理由）。
   const reload = useCallback(() => {
     if (!path || paused) return;
     const now = Date.now();

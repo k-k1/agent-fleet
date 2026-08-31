@@ -1,11 +1,11 @@
-// The wire contract for docs/56 P0's read-only project-scope MCP snapshot
+// The wire contract for docs/log/56 P0's read-only project-scope MCP snapshot
 // (workspace/agent/internal/mcpproj, GET /api/repos/{name}/mcp). Kept separate from
 // ../settings/mcpWire.ts (the AF REGISTRY's wire contract) on purpose: ADR0040 決定15
 // keeps the Go types apart too — a project file's "af" entry must be FOUND and
 // flagged here, not treated like an editable registry row — so this file defines
 // its own interfaces rather than reusing/extending McpServer/Registry.
 //
-// mcpproj never sends prose for a warning (docs/23 P0-3's one-code-per-reason rule):
+// mcpproj never sends prose for a warning (docs/log/23 P0-3's one-code-per-reason rule):
 // every Warning is a code plus parameters, and warningText() below is where the
 // Console turns that back into a localized sentence.
 
@@ -66,12 +66,12 @@ export interface ProjectSnapshot {
 export const fetchProjectMcpSnapshot = (repo: string): Promise<ProjectSnapshot> =>
   api(`api/repos/${encodeURIComponent(repo)}/mcp`);
 
-// --- P1: plan → apply (docs/56 §5 / §10) --------------------------------------
+// --- P1: plan → apply (docs/log/56 §5 / §10) --------------------------------------
 //
 // A pure ops list, computed client-side from the panel's form state — never
-// stored server-side (docs/56 §5's "純粋なワンショット"). planHash is an opaque
+// stored server-side (docs/log/56 §5's "純粋なワンショット"). planHash is an opaque
 // echo: compute it via planProjectMcp, pass the SAME value to applyProjectMcp: a
-// 409 means a file the ops would write changed in between (docs/56 §5's
+// 409 means a file the ops would write changed in between (docs/log/56 §5's
 // optimistic lock) and the panel must re-plan rather than retry blindly.
 
 export type OnConflict = "overwrite" | "skip" | "rename";
@@ -118,7 +118,7 @@ export const applyProjectMcp = (repo: string, ops: ProjectOp[], planHash: string
   apiJSON(`api/repos/${encodeURIComponent(repo)}/mcp/apply`, "POST", { ops, planHash });
 
 /** Whether file already has an entry named name — for progressive disclosure of
- * the onConflict choice (docs/56 §9.2: only ask when there IS a conflict). */
+ * the onConflict choice (docs/log/56 §9.2: only ask when there IS a conflict). */
 export function targetHasEntry(files: ProjectFile[], file: string, name: string): boolean {
   const f = files.find((x) => x.path === file);
   return !!f?.servers?.some((s) => s.name === name);
@@ -139,7 +139,7 @@ export function opErrorText(reason?: string): string {
   }
 }
 
-// --- matrix helpers (servers × files, docs/56 §9.2 ②) -----------------------
+// --- matrix helpers (servers × files, docs/log/56 §9.2 ②) -----------------------
 
 /** Every distinct server name across every file, sorted — the matrix rows. */
 export function matrixServerNames(files: ProjectFile[]): string[] {

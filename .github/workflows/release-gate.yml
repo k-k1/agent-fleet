@@ -1,4 +1,4 @@
-# Release gate (docs/35 §35.7.1 P1 / §35.7.2 P2 / §35.7.3 P3): verifies on a hosted
+# Release gate (docs/log/35 §35.7.1 P1 / §35.7.2 P2 / §35.7.3 P3): verifies on a hosted
 # runner that the distribution artifacts A+B+D build, the lean variant boot-installs,
 # the default (fully baked) build is unaffected, native C+R build and run under real
 # bwrap (gates d/e), and the ECS release procedure passes static checks (gate g).
@@ -9,7 +9,7 @@
 # trigger: it runs on pushes that change this workflow file itself (= deliberate
 # trigger) and on workflow_dispatch once it is on develop/main.
 # Re-run with `gh run rerun <id>`.
-# P4 (docs/35 §35.7.4): adds dist-gate (stub run of publish/install + real chromium
+# P4 (docs/log/35 §35.7.4): adds dist-gate (stub run of publish/install + real chromium
 # CDN download check). The dev WS network gets 400s from the PRSS CDN, so the CI
 # network is the authoritative place to measure the CDN.
 name: release-gate
@@ -79,17 +79,26 @@ jobs:
           # no key material (gitignored) slipped into the bundle
           ! tar tzf "agent-fleet-$VERSION.tar.gz" | grep -E '(-key|\.pem)$'
 
-      - name: assert CP image (docs denylist + /api/version stamp)
+      - name: assert CP image (docs allowlist + /api/version stamp)
         run: |
           set -eux
-          # the distribution-variant CP bakes docs with the internal denylist
-          # (docs/.distignore) applied
+          # The distribution-variant CP bakes only the shelves on the allowlist
+          # (docs/.distinclude). Assert both directions: every shipped shelf is
+          # present, and nothing that is shipped to nobody made it in. The negative
+          # half is the one that matters — an allowlist fails safe, but a mistake
+          # while editing it would ship the internal work journals to customers.
           docker run --rm --entrypoint /bin/sh "agent-fleet/control-plane:$VERSION" -c '
             set -e
             d=/usr/local/share/agent-fleet/docs
-            test -f "$d/35-packaging.md" && test -d "$d/dev" && test -d "$d/guide"
+            for s in use admin operate build ref; do test -d "$d/$s"; done
+            # The runbooks are copied in at staging time (deploy/release/stage-docs.sh)
+            # so an operator can read them from inside a workspace.
+            test -f "$d/operate/runbooks/compose.md"
+            test -f "$d/operate/runbooks/aws-ecs.md"
+            test ! -e "$d/log" && test ! -e "$d/decisions"
+            test ! -e "$d/guide" && test ! -e "$d/dev"
             test ! -e "$d/HANDOFF.md" && test ! -e "$d/CHANGELOG-handoff.md"
-            test ! -e "$d/talk" && test ! -e "$d/history"'
+            test ! -e "$d/roadmap.md" && test ! -e "$d/img"'
           # version stamp: after boot, /api/version behind auth returns VERSION
           # (AUTH=dev has no gate). Booting with no mounts is intentional — the CP's
           # MkdirAll(dbPath parent) supports it, and this gate once caught an
@@ -115,7 +124,7 @@ jobs:
           echo "$out" | grep -F "workspace-agent $VERSION listening"
 
       # Gate (l): nothing we ship carries a string this project removed from its
-      # history (docs/35 §35.7.5). Runs before the tars are dropped, and expands
+      # history (docs/log/35 §35.7.5). Runs before the tars are dropped, and expands
       # the image layers inside B — where the escape that motivated this gate
       # actually shipped.
       - name: forbidden-token scan (A+D)
@@ -155,7 +164,7 @@ jobs:
             fi
             echo "== boot-install gate OK =="'
 
-  # Gates (d)+(e) (P2 — docs/35 §35.7.2): build and content-check C (native tar) +
+  # Gates (d)+(e) (P2 — docs/log/35 §35.7.2): build and content-check C (native tar) +
   # R (lean rootfs), then live-run on the runner = af start --rootfs → workspace
   # boots under bwrap → the rootfs entrypoint boot-installs the pins into the
   # virtual HOME. The end-to-end pass on plain WSL2 (no extra installs) remains
@@ -189,7 +198,7 @@ jobs:
           echo "$sha  $R" | sha256sum -c -
           # console / docs (denylist applied) / LICENSE / NOTICE / VERSION are bundled
           test -f "$C/console/index.html"
-          test -f "$C/docs/35-packaging.md" && test -d "$C/docs/dev"
+          test -f "$C/docs/log/35-packaging.md" && test -d "$C/docs/dev"
           test ! -e "$C/docs/HANDOFF.md" && test ! -e "$C/docs/talk" && test ! -e "$C/docs/history"
           test -f "$C/NOTICE" && test -f "$C/README.md" && test -f "$C/LICENSE"
           grep -q "github.com/k-k1/agent-fleet-dist" "$C/NOTICE"
@@ -199,7 +208,7 @@ jobs:
           tar -I zstd -tf "$R" | grep -q '^usr/local/share/agent-fleet/image-env.json$'
 
       # Gate (l) for the native side: C carries the same Console bundle the CP
-      # image does, so it needs the same scan (docs/35 §35.7.5).
+      # image does, so it needs the same scan (docs/log/35 §35.7.5).
       - name: forbidden-token scan (C+R+D)
         run: deploy/release/scan-forbidden.sh
 
@@ -289,7 +298,7 @@ jobs:
           ( cd "$RUN/$C" && WS_DATA="$WS_DATA" ./af reset --all --yes )
           test ! -e "$WS_DATA"
 
-  # Gate (g) (P3 — docs/35 §35.7.3): static verification of the ECS release
+  # Gate (g) (P3 — docs/log/35 §35.7.3): static verification of the ECS release
   # procedure. Lightweight job, no docker/AWS: cfn-lint (4 templates incl. the
   # LanguageExtensions/Persistence branches), shellcheck, and a stub run of
   # release-ecr.sh (fake aws/docker pin the call sequence and ECR URIs). A full
@@ -337,7 +346,7 @@ jobs:
       - name: standup/teardown/pause stub run (order gate)
         run: deploy/local/ecs-lifecycle-stub-test.sh
 
-  # Gate (i) (P4 — docs/35 §35.7.4): verifies the dist publish set. Lightweight
+  # Gate (i) (P4 — docs/log/35 §35.7.4): verifies the dist publish set. Lightweight
   # job, no docker: shellcheck + stub run of publish-dist.sh/install.sh (fake gh /
   # file:// layout) + real chromium CDN download check (the measuring point of
   # §35.9-7(a) — the dev WS network gets PRSS 400s and cannot measure it. Note:

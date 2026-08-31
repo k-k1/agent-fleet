@@ -13,7 +13,7 @@ package mcpreg
 //
 // Not re-measured for P5: agy will not run on this host at all (no RDRAND — the
 // FIPS/BoringCrypto binary aborts before it prints its version), so `agy --version`
-// is as far as it gets. The shape is docs/32's and the one the chat path writes and
+// is as far as it gets. The shape is docs/log/32's and the one the chat path writes and
 // has been live-verified through; there is no drift test for agy for the same reason.
 // If agy's config form moves, this is the kind that finds out last.
 

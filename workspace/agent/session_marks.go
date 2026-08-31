@@ -1,14 +1,14 @@
 package main
 
-// 転写のマーカー（docs/69 / ADR 0050）。会話の「ここ」に線を引き、その印を共有先にも
+// 転写のマーカー（docs/log/69 / ADR 0050）。会話の「ここ」に線を引き、その印を共有先にも
 // 同じ位置で見せるための、セッション単位の注釈ストア。
 //
 // アンカーは W3C Web Annotation の TextQuoteSelector 相当（引用文字列 + 出現番号）で、
 // 数える範囲は「1つの part の描画後テキスト」に閉じている。転写行の序数（Idx）は
-// compaction で動くので使わない（transcript.Idx のコメント参照）。詳細は docs/69 §69.3。
+// compaction で動くので使わない（transcript.Idx のコメント参照）。詳細は docs/log/69 §69.3。
 //
 // ⚠️ Kind をここで検査するのは、共有 DTO が落としている座標（cwd / file / 差分）を
-// マーカーの Quote が迂回して運び出さないため（docs/69 §69.4）。塗れるのは共有 DTO を
+// マーカーの Quote が迂回して運び出さないため（docs/log/69 §69.4）。塗れるのは共有 DTO を
 // 素通りする本文フィールドだけで、その不変条件を「保存時に」効かせておくと、後から
 // Console 側で塗れる場所が広がっても漏れ出さない。
 
@@ -40,7 +40,7 @@ const (
 )
 
 // markProseKinds は「共有 DTO を素通りする本文」を描く part の kind。ここに無い kind の
-// 上には印を付けられない（docs/69 §69.4）。"" はターン本文（Turn.Text）を指す。
+// 上には印を付けられない（docs/log/69 §69.4）。"" はターン本文（Turn.Text）を指す。
 var markProseKinds = map[string]bool{
 	"":       true,
 	"text":   true,
@@ -276,7 +276,7 @@ func handleSessionMarks(w http.ResponseWriter, r *http.Request) {
 		}
 		if !markProseKinds[m.Kind] {
 			// 座標を持つ part（ツール行のパス・差分）の上には印を置かせない。ここを緩めると
-			// 共有 DTO が落としているはずのパスが Quote として共有先へ渡る（docs/69 §69.4）。
+			// 共有 DTO が落としているはずのパスが Quote として共有先へ渡る（docs/log/69 §69.4）。
 			httpx.WriteErr(w, http.StatusBadRequest, "mark_kind_not_markable", "this part kind cannot be marked")
 			return
 		}

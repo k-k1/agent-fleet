@@ -11,7 +11,7 @@ import (
 
 // captureConversation は「起動前スナップショットから変わった UUID だけを採用」
 // が肝: 同じ dir で前のセッションが残した stale なマップエントリを新スロットが
-// 拾ってはいけない（docs/32 Track D-3）。
+// 拾ってはいけない（docs/log/32 Track D-3）。
 func TestCaptureConversationAdoptsOnlyFreshUUID(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := "/home/dev/repos/proj"

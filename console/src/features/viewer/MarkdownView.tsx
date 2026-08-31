@@ -54,12 +54,12 @@ interface MarkdownViewProps {
   // passes this to force a new pane so its own conversation isn't swapped out.
   onOpenConversation?: (id: string, openInNew?: boolean) => void;
   // markRoot tags this rendered block as an anchoring root for transcript marks
-  // (docs/69): the highlight layer counts occurrences inside ONE such element, never
+  // (docs/log/69): the highlight layer counts occurrences inside ONE such element, never
   // across the page. Absent → this block cannot carry a mark.
   markRoot?: string;
   // markKind is the transcript part kind behind markRoot ("" = the turn's own text). The
   // highlight layer sends it back when a mark is created; the Agent re-checks it, because
-  // only kinds whose text crosses the shared DTO verbatim may carry one (docs/69 §69.4).
+  // only kinds whose text crosses the shared DTO verbatim may carry one (docs/log/69 §69.4).
   markKind?: string;
 }
 
@@ -179,9 +179,9 @@ export function MarkdownView({
       });
     }
 
-    // Link the file paths written as inline code (`docs/65-drawio-viewer.md`) to the file
+    // Link the file paths written as inline code (`docs/log/65-drawio-viewer.md`) to the file
     // they name — but only on a surface that can actually open one. onOpenFile absent means
-    // the shared view (docs/59): a recipient has no such file, so nothing is linked there
+    // the shared view (docs/log/59): a recipient has no such file, so nothing is linked there
     // rather than shown a link that opens nothing. The paths resolve against the reply's
     // own working directory (the mirror passes the turn's cwd), or — in a document viewer,
     // which has no cwd — against the folder the document itself sits in.
@@ -561,7 +561,7 @@ function makeSessionLink(name: string, openSession: (name: string, openInNew: bo
   return a;
 }
 
-// linkifyPathRefs turns the file paths an agent writes as INLINE CODE — `docs/65.md`,
+// linkifyPathRefs turns the file paths an agent writes as INLINE CODE — `docs/log/65.md`,
 // `console/src/lib/filemeta.ts:73`, `_act-parts/` — into links that open that file in a
 // pane (a directory reveals in the ファイル rail). Until now those were dead text: the
 // coordinate you most want to follow was the one thing you had to retype.
@@ -925,7 +925,7 @@ function wireLinks(
       return;
     }
 
-    // The Chromium attachment action link (docs/53 §53.7). It has to be claimed
+    // The Chromium attachment action link (docs/log/53 §53.7). It has to be claimed
     // BEFORE the repo-file branch below: `/open/browser-attachment/<id>` carries
     // no scheme, so the file resolver would happily read it as a repo-root path
     // and answer the click with "file not found" — which is exactly how this

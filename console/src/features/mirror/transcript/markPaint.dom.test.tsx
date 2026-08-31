@@ -21,7 +21,7 @@ beforeEach(() => {
 
 describe("paintTurnMarks", () => {
   // ⚠️ 出現番号は root ひとつの中でだけ数える。ページ全体で数えると、共有側で片方の part が
-  // 落ちたときに別の場所へ印が付く（docs/69 §69.3）。
+  // 落ちたときに別の場所へ印が付く（docs/log/69 §69.3）。
   it("counts occurrences inside one root only", () => {
     const el = body();
     const byRoot = new Map([["uuid-1#0", [mark({ nth: 1 })]]]);

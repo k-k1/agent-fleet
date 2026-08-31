@@ -10,7 +10,7 @@ WORKDIR /src
 COPY agent/go.mod agent/go.sum ./
 RUN go mod download
 COPY agent/ ./
-# VERSION stamps the binary (startup log, docs/35 §35.6.1); only the release
+# VERSION stamps the binary (startup log, docs/log/35 §35.6.1); only the release
 # pipeline passes a real value — dev builds stay "dev".
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-X main.buildVersion=${VERSION}" -o /out/workspace-agent .
@@ -43,14 +43,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 
 # uv/uvx (Astral) baked as a baseline tool: it is the launcher for the ops MCP
-# servers the SRE assistant uses (docs/25 — `workspace-agent mcp-run pagerduty`
+# servers the SRE assistant uses (docs/log/25 — `workspace-agent mcp-run pagerduty`
 # execs `uvx pagerduty-mcp`). Installed to /usr/local/bin so it's on PATH for
 # every user without a per-home setup step; uvx caches fetched servers under the
 # persistent ~/.cache after first run.
 RUN pip install --no-cache-dir uv \
     && uv --version && uvx --version
 
-# --- 配布ノブ（docs/35 §35.4.1・§35.7.1-5） ----------------------------------
+# --- 配布ノブ（docs/log/35 §35.4.1・§35.7.1-5） ----------------------------------
 # BAKE_AGENT_CLIS=0  … エージェント CLI（claude/opencode/codex/copilot/cursor/agy/rtk）を
 #   焼かない lean variant（ライセンス理由: プロプライエタリ CLI は再配布不可扱い）。
 #   entrypoint の boot-install が versions.json のピン版を初回起動時に ~/.local へ導入。
@@ -66,7 +66,7 @@ ARG BAKE_AGENT_CLIS=0
 ARG BAKE_OPTIONAL_TOOLS=1
 
 # mcp-grafana (official Grafana MCP server, Go single binary) baked for the ops
-# integrations (docs/25 — `workspace-agent mcp-run grafana` execs it with the
+# integrations (docs/log/25 — `workspace-agent mcp-run grafana` execs it with the
 # stored URL + service-account token and -disable-write -disable-admin). Works
 # against self-hosted / Grafana Cloud / Amazon Managed Grafana. Bump
 # MCP_GRAFANA_VERSION to upgrade (ARG pin busts the cache; same idiom as GH_VERSION).
@@ -82,7 +82,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     fi
 
 # awslabs CloudWatch MCP server (Python) baked as a uv tool so `workspace-agent
-# mcp-run cloudwatch` starts instantly with no PyPI fetch at runtime (docs/25
+# mcp-run cloudwatch` starts instantly with no PyPI fetch at runtime (docs/log/25
 # §5-5 (d)). UV_PYTHON_DOWNLOADS=never + --python pin the SYSTEM python: without
 # them uv drops a managed interpreter into root's home, unreadable by the
 # runtime user. The venv + entrypoint under /usr/local are root-owned and
@@ -103,7 +103,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
       -c "import awslabs.cloudwatch_mcp_server.server"; \
     fi
 
-# AWS MCP proxy (Agent Toolkit for AWS — docs/25 §AWS MCP) baked the same way:
+# AWS MCP proxy (Agent Toolkit for AWS — docs/log/25 §AWS MCP) baked the same way:
 # `workspace-agent mcp-run aws` execs it to reach the AWS-operated MCP Server over
 # SigV4. Worth baking rather than leaving to uvx: the dependency tree is botocore +
 # awscrt (~20MB of wheels), so a cold fetch is the difference between an MCP server
@@ -132,7 +132,7 @@ ARG CHROMIUM_VERSION=151.0.7922.173-1~deb12u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
-# （docs/35 §35.7.1-5。ライブラリ一覧は playwright の Debian 12 chromium deps 準拠）。
+# （docs/log/35 §35.7.1-5。ライブラリ一覧は playwright の Debian 12 chromium deps 準拠）。
 RUN apt-get update \
  && if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then \
       apt-get install -y --no-install-recommends \
@@ -184,7 +184,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # terminal) + `aws ssm start-session` against their OWN AWS account. NO AWS credentials
 # are baked or stored anywhere — auth is per-session via SSO and cached in the home
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
-# 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/35
+# 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/log/35
 # §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
 ARG AWSCLI_VERSION=2.36.33
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
@@ -210,7 +210,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # 実体は /usr/local/libexec/gh に置き、/usr/local/bin/gh は透過認証ラッパー
 # (gh-auth-wrapper.sh) にする。ラッパーが呼び出しのたびに git と同一の cred helper
 # からトークンを取り出し GH_TOKEN に注入するので、`gh auth login` 不要で gh が使える
-# （docs/dev/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
+# （docs/build/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
 ARG GH_VERSION=2.98.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -231,8 +231,8 @@ RUN set -eux; \
 # ⚠️ amd64 gets a STATIC musl binary. arm64 does not exist: upstream publishes only
 # `rtk-aarch64-unknown-linux-gnu`, which requires **GLIBC_2.39**, and this image is
 # Debian 12 (**glibc 2.36**) — the download and the sha256 both pass and the binary
-# then cannot start (measured on Graviton4, 2026-08-22, docs/70 §70.9.2). Exactly the
-# shape docs/43 recorded for kiro, except kiro publishes an aarch64 musl variant and
+# then cannot start (measured on Graviton4, 2026-08-22, docs/log/70 §70.9.2). Exactly the
+# shape docs/log/43 recorded for kiro, except kiro publishes an aarch64 musl variant and
 # rtk does not (checked across v0.45.0 and every dev-0.45.1-rc).
 #
 # So the binary is VERIFIED BY RUNNING IT, and a version that cannot run is removed
@@ -244,7 +244,7 @@ RUN set -eux; \
 # Bump RTK_VERSION to upgrade (ARG change busts the cache; same idiom as GH_VERSION).
 # The AF_AGENT_SELF_UPDATE opt-in also updates rtk in place at start (entrypoint).
 # BAKE_AGENT_CLIS=0（lean 配布 variant）は rtk も焼かない — entrypoint の boot-install
-# が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/35 §35.4.1）。
+# が versions.json の rtk ピンで ~/.local/bin へ導入する（docs/log/35 §35.4.1）。
 ARG BAKE_RTK=1
 ARG RTK_VERSION=0.46.0
 RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
@@ -294,13 +294,13 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       && claude --version && opencode --version && codex --version && copilot --version; \
     fi
 
-# copilot（kind="copilot"、docs/36）: 自己更新は既定 ON（CI env 検出時のみ自動 OFF）
+# copilot（kind="copilot"、docs/log/36）: 自己更新は既定 ON（CI env 検出時のみ自動 OFF）
 # — フリートの版管理はイメージ再ビルドが正なので明示的に封殺する（claude の
 # DISABLE_AUTOUPDATER・agy の AGY_CLI_DISABLE_AUTO_UPDATE と同じ理屈。ユーザーの
 # 明示的な `copilot update` は可能なまま）。
 ENV COPILOT_AUTO_UPDATE=false
 
-# Antigravity CLI（kind="agy"、docs/decisions/0008 / docs/32）。npm でなく Go バイナリ
+# Antigravity CLI（kind="agy"、docs/decisions/0008 / docs/log/32）。npm でなく Go バイナリ
 # 配布なので別 RUN。かつては install.sh（常に latest manifest・版ピン不可）だったが、
 # 1.1.7以降は GitHub Releases が追随しないため、公式installerが返す不変のGCS
 # object（version-build-idを含むURL）を直接取得する。sha256 はその公式manifestの
@@ -334,7 +334,7 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # DISABLE_AUTOUPDATER と同じ理屈（明示的な `agy update` は引き続き可能）。
 ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 
-# Cursor CLI（kind="cursor"、docs/40 / docs/decisions/0023）。npm でも単一 Go バイナリ
+# Cursor CLI（kind="cursor"、docs/log/40 / docs/decisions/0023）。npm でも単一 Go バイナリ
 # でもなく、版付き tarball の Node.js バンドル（bundled node ＋ webpack chunk 群 ＋
 # node_sqlite3/pty/ripgrep 同梱）。上流 `curl cursor.com/install | bash` は版ピンされた
 # スクリプトを配り、`downloads.cursor.com/lab/<版>/linux/<arch>/agent-cli-package.tar.gz`
@@ -354,7 +354,7 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # 自己更新は公式に無効化できる（バンドル解析: 背景更新は起動2秒後の
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
-# cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/40 Track B）。
+# cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
 ARG CURSOR_VERSION=2026.08.25-3e8eec8
 ARG CURSOR_SHA256_X64=7a212e5a17ff9316f5acc78808e33c536940d5455645022e6388d99ba48c8425
 ARG CURSOR_SHA256_ARM64=f1c1c2330d89fa4ef5b6cc04fcffba15012ff50eacd07e0f3baec0716f25ac5d
@@ -375,7 +375,7 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       cursor-agent --disable-auto-update --version; \
     fi
 
-# Kiro CLI（kind="kiro"、docs/43 / docs/decisions/0026）。旧 Amazon Q Developer CLI
+# Kiro CLI（kind="kiro"、docs/log/43 / docs/decisions/0026）。旧 Amazon Q Developer CLI
 # の版付きネイティブバイナリ配布（bundled kiro-cli + kiro-cli-chat + kiro-cli-term）。
 # 公式 manifest（prod.download.cli.kiro.dev/stable/latest/manifest.json）が版付き URL
 # ＋ sha256 を掲載しており、agy と同じ「版付き URL ＋ sha256 ピン」で焼ける。zip 内は
@@ -415,19 +415,19 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
 # 設定 UI「ツールのバージョン」の「ピン vs 実体」表示・スモークの検証材料に加え、
 # lean variant（BAKE_AGENT_CLIS=0 / BAKE_OPTIONAL_TOOLS=0）では entrypoint の
-# boot-install とオンデマンド導入（P2）がこのピンを取得版として使う（docs/35 §35.4.1）。
+# boot-install とオンデマンド導入（P2）がこのピンを取得版として使う（docs/log/35 §35.4.1）。
 # BAKE ノブに関わらず常に全ピンを書き出す。
 # chromium_cft は amd64 のオンデマンド chromium ピン = Chrome for Testing の
 # browser version（playwright 1.61 同梱 build 1228 と同一実体。playwright は 1.61 で
-# x64 を builds/chromium から CfT 配布へ移行済み — docs/35 §35.9-7(a) の P4 実測）。
+# x64 を builds/chromium から CfT 配布へ移行済み — docs/log/35 §35.9-7(a) の P4 実測）。
 # chromium_dl は arm64 が使う旧 builds/chromium レイアウトの build 番号ピン。
 # noto_cjk は install-chromium が CJK フォントを取る notofonts/noto-cjk のタグピン
-# （lean rootfs のオンデマンド導入用 — docs/35 §35.7.2-4）。
+# （lean rootfs のオンデマンド導入用 — docs/log/35 §35.7.2-4）。
 ARG CHROMIUM_CFT_VERSION=149.0.7827.55
 ARG CHROMIUM_DL_VERSION=1228
 ARG NOTO_CJK_VERSION=Sans2.004
 # bind マウントポイントを rootfs に焼く: docker は -v 先のディレクトリを実行時に自動
-# 作成するが、native rootfs モード（bwrap --ro-bind で / が read-only — docs/35
+# 作成するが、native rootfs モード（bwrap --ro-bind で / が read-only — docs/log/35
 # §35.7.2）では bwrap が bind 先を mkdir できず起動が即死する。4 箇所とも空のまま焼く。
 RUN mkdir -p /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/docs /usr/lib/jvm
 # claude / keep / docs は dev 所有にする: claude auth login が CLAUDE_CONFIG_DIR に
@@ -444,7 +444,7 @@ RUN mkdir -p /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/do
 # 中身を持つ」側だったため元から dev 所有——このRUNは今後 keep 用アクセスポイントが
 # 新規作成される場合（決定 3-6）に同じ穴を未然に防ぐためのもの。
 # docs は ECS に bind-mount する経路が無く、Agent が CP からロール別 docs を
-# 取得してここへ展開する（docs/dev/04 §4.9・agent docs_sync.go）。
+# 取得してここへ展開する（docs/build/04 §4.9・agent docs_sync.go）。
 RUN chown 1000:1000 /var/lib/af/claude /var/lib/af/keep /usr/local/share/agent-fleet/docs
 # /scratch = タスクローカルの作業ディスク（ADR 0044 決定 3）。ECS では ephemeral
 # storage 上の素のディレクトリ（>200 GiB のときだけ EBS のマウント先）で、entrypoint が
@@ -483,7 +483,7 @@ ENV DISABLE_AUTOUPDATER=1
 ENV OPENCODE_DISABLE_AUTOUPDATE=true
 
 # NEVER let git fall back to an interactive /dev/tty credential prompt. This fixes a
-# real "the claude session accepts NO keyboard input" bug (gate k, docs/35 §35.9-10):
+# real "the claude session accepts NO keyboard input" bug (gate k, docs/log/35 §35.9-10):
 # when a user works in a github.com repo but has NOT connected GitHub, our global
 # credential helper (`workspace-agent cred`) returns nothing for github.com, so the
 # `gh pr view` that Claude Code runs for PR status falls to `git credential fill`,
@@ -504,7 +504,7 @@ ENV GIT_TERMINAL_PROMPT=0 \
 
 # Opt a self-hosted fleet out of Claude Code's optional/background network calls. NOTE:
 # this does NOT fix the input-hang above (that was an early misdiagnosis, commit
-# b1c1c41 / an earlier revision of docs/35 §35.9-10 — the real cause is the git
+# b1c1c41 / an earlier revision of docs/log/35 §35.9-10 — the real cause is the git
 # credential prompt handled just above; these flags never stop `gh pr view`). Kept only
 # as harmless hardening for restricted/air-gapped networks and privacy, and it aligns
 # with the version-pinned CLI story (DISABLE_AUTOUPDATER above).
@@ -514,16 +514,16 @@ ENV GIT_TERMINAL_PROMPT=0 \
 # NONESSENTIAL_TRAFFIC *and* DISABLE_TELEMETRY each gate it on their own, so BOTH must
 # be unset for the feature to come back, and DISABLE_ERROR_REPORTING is irrelevant to
 # it. (The upstream env-var table says DISABLE_TELEMETRY does not affect feature-flag
-# evaluation; it does. docs/58 §58.12 has the 3-runs-per-config matrix.)
+# evaluation; it does. docs/log/58 §58.12 has the 3-runs-per-config matrix.)
 #
-# ⚠️ THAT NO LONGER HOLDS (measured 2026-08-31 on 2.1.251, docs/58 §58.16). With BOTH
+# ⚠️ THAT NO LONGER HOLDS (measured 2026-08-31 on 2.1.251, docs/log/58 §58.16). With BOTH
 # vars set to 1 in the live process, claude still advertises ListAgents / SendMessage and
 # still delivers over /tmp/cc-socks/<pid>.sock — verified end to end on a real pair of
 # sessions. **So do NOT read this block as the cross-session block any more.**
 #
 # The block now lives in the Agent, as launch settings on every claude session it starts:
 # workspace/agent/internal/agents/claude/program.go `nativePeerSettings`
-# (permissions.deny on the two tools + crossSessionInbound:"refuse", docs/58 §58.17).
+# (permissions.deny on the two tools + crossSessionInbound:"refuse", docs/log/58 §58.17).
 # It is code, so it takes effect on an Agent restart rather than an image rebuild — which
 # is also why it is no longer here. Keep these vars anyway: they still do what the
 # paragraph above says about optional/background traffic. ADR 0041 決定1 is unchanged
@@ -590,7 +590,7 @@ RUN mkdir -p /etc/claude-code \
 # exclusive: the normal USER dev process has no effective capabilities, and no
 # unrelated setuid/setgid utility may acquire the enlarged bounding set.
 # BAKE_OPTIONAL_TOOLS=0 は chromium 不在なので sandbox helper の存在前提を外し、
-# 「setuid/setgid が一切残っていない」ことだけを見る（docs/35 §35.7.1-5）。
+# 「setuid/setgid が一切残っていない」ことだけを見る（docs/log/35 §35.7.1-5）。
 RUN find / -xdev -type f -perm /6000 ! -path /usr/lib/chromium/chrome-sandbox \
       -exec chmod a-s {} + \
  && if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then \

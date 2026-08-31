@@ -1,4 +1,4 @@
-// transcript/markPaint — 印を実際の DOM へ被せる（docs/69 / ADR 0050）。
+// transcript/markPaint — 印を実際の DOM へ被せる（docs/log/69 / ADR 0050）。
 //
 // 切り貼りの本体は features/viewer/quoteMarks.ts（プランコメントと共通）。ここは
 // 「1ターンぶんをまとめて塗り直すか、何もしないか」の判断だけを持つ。

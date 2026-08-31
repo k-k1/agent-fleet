@@ -1,28 +1,38 @@
-# 0004. Console スタック — React + Vite を採用
+# 0004. Console stack — adopt React + Vite
 
-- 状態: 確定（Phase 3 / Console 全面刷新）
-- 関連: [dev/02 Console](../dev/02-console.md)（旧 HANDOFF §6.10.1） / [history/console-redesign](../history/console-redesign.md)（当時の診断ブリーフ）
+English | [日本語](0004-vanilla-to-react.ja.md)
 
-## 背景
+- Status: decided (Phase 3 / the full Console rebuild)
+- See also: [build/02 Console](../build/02-console.md) (formerly HANDOFF §6.10.1) / [history/console-redesign](../log/console-redesign.md) (the diagnostic brief written at the time)
 
-確定スタックは当初から React（[requirements §1.6（現 dev/01 §1.1）](../dev/01-architecture.md#11-何であるか提供モデル)）だが、Phase 1 MVP は
-**最小 vanilla JS**（`app.js` 617+行）で出した。機能追加（SCM / Files / Admin / Connections / テナント picker）で
-情報設計が破綻——ナビゲーション無し、暗号アイコンの羅列、サイドバーとオーバーレイの混在、ヘッダ過密。
-刷新にあたり「vanilla 維持 / 軽量フレームワーク CDN / React 本格採用」を比較した。当時のブリーフ（旧 18）は
-配布の手軽さ（ディスク配信・no-store・即反映）を重んじ **vanilla 維持を推奨**していた。
+## Context
 
-## 決定
+React was the settled stack from the beginning
+([requirements §1.6, now build/01 §1.1](../build/01-architecture.md#11-what-it-is-and-how-it-is-delivered)),
+but the Phase 1 MVP shipped as **minimal vanilla JS** (`app.js`, 617+ lines). As features
+arrived (SCM / Files / Admin / Connections / the tenant picker) the information architecture
+broke down — no navigation, a row of cryptic icons, a mix of sidebar and overlay, an overloaded
+header. For the rebuild we compared "stay vanilla / a lightweight framework from a CDN / adopt
+React properly". The brief of the time (old doc 18) weighted ease of distribution highly
+(serve from disk, no-store, instant reflection) and **recommended staying vanilla**.
 
-**React + Vite を採用**（`console/src` → `console/dist` を CP が `Cache-Control: no-store` で配信）。
-no-build の手軽さより、増えた機能（左アクティビティ・レール + 単一メインの VS Code 風 IA、SCM/ファイル
-ビュアー/設定/管理）の作り込みやすさを優先した。配布の懸念は dist をイメージに焼くことで吸収する。
+## Decision
 
-- IA: 2 段バー（TOP = アプリ名/テナント picker/whoami/設定/管理）＋ 左ペイン 3 セクション（Sessions/Repos/Files）
-  ＋ メインが選択で切替。オーバーレイは廃止しビュー切替へ。
-- フロントだけの調整は `vite build --watch` → ブラウザ・リロードで反映（CP 再起動不要）。
+**Adopt React + Vite** (`console/src` → `console/dist`, served by the CP with
+`Cache-Control: no-store`). Being able to build the grown feature set — the VS Code-style IA
+with a left activity rail and a single main area, SCM, the file viewer, settings, admin — beat
+the convenience of having no build step. The distribution concern is absorbed by baking dist
+into the image.
 
-## 帰結
+- IA: a two-row bar (TOP = app name / tenant picker / whoami / settings / admin) plus a left
+  pane with three sections (Sessions/Repos/Files), with main switching on selection. Overlays
+  were abolished in favour of view switching.
+- Front-end-only tweaks reflect via `vite build --watch` plus a browser reload (no CP restart).
 
-- 旧 vanilla は一時 `console/legacy-phase1/` に退避していたが、移植完了後に削除済み。振る舞いの正は現 Console（HANDOFF §6.10.1）。
-- ビルド工程が増えるが、`run-dev.sh` が `NODE_OPTIONS=--max-old-space-size=3072 npm run build`（mermaid の
-  heap OOM 回避）で吸収。P3-10 パッケージングは dist 同梱で配布する。
+## Consequences
+
+- The old vanilla code was parked in `console/legacy-phase1/` for a while and deleted once the
+  port was complete. The current Console is the source of truth for behaviour (HANDOFF §6.10.1).
+- There is one more build step, but `run-dev.sh` absorbs it with
+  `NODE_OPTIONS=--max-old-space-size=3072 npm run build` (to avoid the mermaid heap OOM). P3-10
+  packaging ships dist inside the image.

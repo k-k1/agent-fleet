@@ -1,307 +1,339 @@
-# 0048. メンバー毎の AWS 費用を、コスト配分タグ由来の**実費**として見せる（按分はしない・共有は配らない）
+# 0048. Show per-member AWS cost as **actual spend** derived from cost allocation tags (no apportionment; shared cost is not distributed)
 
-- 状態: **採用**（2026-08-17）。検討の記録は [docs/67](../67-member-cloud-cost.md)。
-- 関連: [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) 決定 8
-  （1 スロット 1 ユーザー専有＝インスタンス時間がそのまま個人に落ちる前提）・
-  決定 21（**効かない項目を画面に出さない**／**表示のためだけに IAM を増やさない**前例。
-  今回はそれを明示的にひっくり返す） /
-  [0044-workspace-sizing.md](0044-workspace-sizing.md) 決定 3（**既定オフで出した機能は
-  存在しないのと同じ**） /
-  [0029-usage-accounting.md](0029-usage-accounting.md)（**トークン**の台帳。本 ADR は
-  AWS インフラ費用で、別軸・別の名前） /
-  [0043-login-idp.md](0043-login-idp.md) 決定 24/25（テナントの外へ届くものは運用者）
+English | [日本語](0048-member-cloud-cost.ja.md)
 
-## 背景
+- Status: **adopted** (2026-08-17). The record of the investigation is [docs/67](../log/67-member-cloud-cost.md).
+- See also: [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) decision 8
+  (one slot is dedicated to one user, so instance hours fall directly on a person) and
+  decision 21 (the precedent of **not putting an item on screen that does not work** and **not adding
+  IAM just for a display** — which this ADR explicitly overturns) /
+  [0044-workspace-sizing.md](0044-workspace-sizing.md) decision 3 (**a feature shipped off by default
+  might as well not exist**) /
+  [0029-usage-accounting.md](0029-usage-accounting.md) (the **token** ledger. This ADR is AWS
+  infrastructure cost — a different axis with a different name) /
+  [0043-login-idp.md](0043-login-idp.md) decisions 24/25 (what reaches outside the tenant belongs to
+  the operator)
 
-CP は AWS リソースに `af-membership` ほかのタグを既に打っているが、**コスト配分タグとしては
-全て Inactive** で、請求はどこにも人に割れていない。Console にあるのは稼働秒の showback
-（`usage.go`・冒頭に `No external billing.`）とトークン台帳だけで、**$ は 1 か所も無い**。
+## Context
 
-## 決定 1 — コスト配分タグを**設計より先に**有効化した
+The CP already tags AWS resources with `af-membership` and others, but **they are all Inactive as
+cost allocation tags** and the bill is not attributed to anybody. All the Console has is showback in
+running seconds (`usage.go`, whose header reads `No external billing.`) and the token ledger — **there
+is not a single $ anywhere.**
 
-バックフィルが存在せず、1 日遅らせれば 1 日分の実費が永久に失われる。利用者の確認を取り、
-`ce:UpdateCostAllocationTagsStatus` で **`af-membership` / `af-role` / `af-pool` /
-`af-slot-size` を Active**（2026-08-17T05:26:16Z）。
+## Decision 1 — activate the cost allocation tags **before** designing the rest
 
-⚠️ **`af-workspace` は有効化しない。** 値が `af-ws-<メール由来>` で、請求データ（CUR / CE /
-請求書 CSV）に個人情報を載せることになる。集計軸は不透明 ID の `af-membership` で足り、
-メンバーへの解決は CP が自分の DB でできる。
+There is no backfill, so delaying by a day loses that day's actual spend permanently. With the user's
+confirmation, `ce:UpdateCostAllocationTagsStatus` made **`af-membership` / `af-role` / `af-pool` /
+`af-slot-size` Active** (2026-08-17T05:26:16Z).
 
-⚠️ **系として、この機能は 2026-08-17 より前を一切表示できない。** 画面に理由を書く。
+⚠️ **`af-workspace` is not activated.** Its value is `af-ws-<derived from the email>`, which would put
+personal data into the billing data (CUR / CE / the invoice CSV). The opaque `af-membership` id is
+enough as an aggregation axis, and the CP can resolve it to a member in its own database.
 
-⚠️ **有効化は AWS アカウントごとに 1 回で、テナントもメンバーも一切関与しない。**
-単位は `TagKey` だけ（API に値の次元が無い）なので、`af-membership` 1 エントリで
-これから増える全員が、`af-tenant` 1 エントリでこれから作る全テナントが対象になる。
-そもそもテナント管理者は AWS を触らない（0043 決定 24/25 の線）。
-Organizations 配下では管理（支払い）アカウントだけが有効化できる。
+⚠️ **As a system, this feature can show nothing before 2026-08-17.** The reason is stated on screen.
 
-## 決定 2 — 出すのは**実費（Cost Explorer）だけ**。稼働秒を金額に変換しない
+⚠️ **Activation happens once per AWS account, with no involvement from tenants or members
+whatsoever.** The unit is the `TagKey` alone (the API has no dimension for values), so one entry for
+`af-membership` covers everyone added from now on, and one for `af-tenant` covers every tenant created
+from now on. Tenant admins do not touch AWS in the first place (the line from 0043 decisions 24/25).
+Under Organizations, only the management (payer) account can activate them.
 
-按分見積（稼働秒 × 運用者申告の単価）は、単価を更新しない限り**静かに嘘をつき続ける**。
-実費が取れる以上、見積を並べれば必ず食い違い、必ず「どちらが本当か」になる。
+## Decision 2 — show **actual spend (Cost Explorer) only**. Do not convert running seconds into money
 
-- **`usage_daily`（稼働秒）は残すが、金額にしない**——docker / native で唯一意味を持つ数字。
-- **画面上は別のパネル**。同じカードに「時間」と「$」を並べない。
-- 帰結として、**タグ有効化前の期間は「稼働時間はあるが費用は無い」**という状態になる。
-  これは欠損ではなく事実なので、そう書く。
+An apportioned estimate (running seconds × an operator-declared unit price) **goes on lying silently**
+unless the unit price is kept up to date. Once actual spend is available, putting an estimate next to
+it guarantees a discrepancy and guarantees the question "which is the real one?".
 
-## 決定 3 — 課金の軸を成立させる: スロットインスタンスに `af-membership`、全リソースに `af-tenant`（slug）
+- **`usage_daily` (running seconds) stays but is not turned into money** — it is the only number that
+  means anything on docker and native.
+- **On screen they are separate panels.** Hours and $ never appear on the same card.
+- As a consequence, the period before the tags were activated is **"there are running hours but no
+  cost"**. That is a fact rather than a gap, so it is stated as such.
 
-実機を読んだ結果、**インスタンスには `af-membership` が無い**（`af-role=slot` / `af-pool` /
-`af-slot-size` のみ）。紐づけたい費用の 91% がそのインスタンス時間なので、
-**タグを有効化しただけでは主目的が達成できない。**
+## Decision 3 — make the billing axis work: `af-membership` on slot instances, `af-tenant` (the slug) on every resource
 
-- 付与は home のアタッチが成功した地点、除去は `releaseSlot` のデタッチ成功後と
-  `quarantineSlot`。掃除経路で「`af-membership` があるのにボリュームが付いていない箱」を
-  拾って消す（CP が落ちた場合の取りこぼし）。
-- **既存ロジックは変わらない**——スロット検索は `af-role` + `af-pool`、占有判定は
-  ボリューム側（`freeSlots` / `occupiedInstances`）。タグは課金にしか読まれない。
-- `ec2:CreateTags` / `ec2:DeleteTags` は `CpTaskRole` に既にある。**IAM 追加は不要。**
-- ⚠️ **CUR の行は時間単位**なので、1 時間の途中で人から人へ移った分はタグが付いていた方に
-  丸ごと寄る。日次では平均されるが、**誤差として文書化する**。秒で再按分する手はあるが、
-  それは実費を見積で上書きすることなので採らない。
-- **掃除経路は双方向に直す。** 古いタグ（解放が半分で終わった箱）は消し、抜けたタグ
-  （アタッチ直後に落ちた／このコード以前の箱）は**ボリュームから写す**。前者は人を過剰請求し、
-  後者は紐づけを「共有」に落とす——そしてコスト配分はバックフィルできないので後者は永久に失う。
-  ⚠️ プールのロジックはこのタグを一切読まないので、**壊れても請求書以外には何も現れない**。
+Reading the real deployment showed that **instances have no `af-membership`** (only `af-role=slot`,
+`af-pool` and `af-slot-size`). 91% of the cost we want to attribute is those instance hours, so
+**activating the tags alone does not achieve the main goal.**
 
-### ユーザー軸は既にある。**メールのハッシュは足さない**
+- The tag is applied at the point where attaching home succeeded, and removed after a successful
+  detach in `releaseSlot` and in `quarantineSlot`. The cleanup path picks up and removes "a box that
+  has `af-membership` but no volume attached" (what is missed when the CP dies).
+- **The existing logic does not change** — slot search is `af-role` + `af-pool`, and occupancy is
+  judged from the volume side (`freeSlots` / `occupiedInstances`). The tag is read only for billing.
+- `ec2:CreateTags` / `ec2:DeleteTags` are already on `CpTaskRole`. **No IAM addition is needed.**
+- ⚠️ **CUR rows are hourly**, so a handover from person to person part-way through an hour lands
+  entirely on whichever had the tag. It averages out daily, but **it is documented as an error term**.
+  Re-apportioning by seconds is possible, but that would overwrite actual spend with an estimate, so
+  it is not done.
+- **The cleanup path is fixed in both directions.** A stale tag (a box whose release finished
+  half-way) is removed, and a missing tag (a box that died right after attach, or that predates this
+  code) is **copied from the volume**. The former overcharges a person and the latter demotes the
+  attribution to "shared" — and since cost allocation cannot be backfilled, the latter is lost
+  permanently. ⚠️ The pool logic never reads this tag, so **if it breaks, nothing shows up anywhere
+  except the invoice.**
 
-⚠️ `af-membership` は `newID() = randHex(16)`（`store.go`）で、**メール由来ではない**乱数である
-（実機の `d6e8070a…` がハッシュに見えるだけ）。したがってユーザーへの紐づけは既に成立して
-おり、既に非 PII。**メールのハッシュを新設するのは乱数 ID より悪い**——仮名化された個人
-データのままで、しかも組織のメールアドレス空間は小さく**総当たりで戻せる**。
-`af-user`（人単位・テナント横断）も足さない: AWS 側では人を不透明に保つので読みやすさの
-利得が無く、membership → identity の join で CP が出せる。
+### The user axis already exists. **Do not add a hash of the email**
 
-### 本当に無かったのはテナント軸。`af-tenant` は **ID ではなく slug**
+⚠️ `af-membership` is `newID() = randHex(16)` (`store.go`) — a random value, **not derived from the
+email** (the `d6e8070a…` on the real deployment merely looks like a hash). So attribution to a user
+already works, and it is already non-PII. **Adding a hash of the email would be worse than the random
+id** — it stays pseudonymised personal data, and an organisation's email address space is small enough
+to **reverse by brute force**. `af-user` (per person, across tenants) is not added either: keeping
+people opaque on the AWS side means there is no readability gain, and the CP can emit it by joining
+membership → identity.
 
-どの AWS リソースにもテナントのタグが無く、**AWS 側だけでテナント別に切れない**。
-テナント軸を足す唯一の利得がそれなので、不透明 ID では `af-membership` から導ける以上の
-ものがほぼ無い。slug は**組織名であって個人データではなく**、変更 API も存在しない
-（`CreateTenant` で決まり `UpdateTenant` が無い＝実質不変）。
-運び方は `Workspace.TenantSlug`——**列を足さず、読むたびに tenant を LEFT JOIN する**
-（タグを書くたびに store を叩かせない）。
-⚠️ **slug が不明なときは空文字を打たず、タグごと省く**: 空のコスト配分タグ値は請求上
-「テナント =（空白）」という実在のグループになり、「タグが無い」と読めない。
+### What was genuinely missing was the tenant axis. `af-tenant` is **the slug, not the id**
 
-### ⚠️ AWS が見たことのないタグキーは、先に有効化できない（実測）
+No AWS resource had a tenant tag, so **the AWS side alone could not be cut by tenant**. That is the
+only gain from adding a tenant axis, so an opaque id would add almost nothing beyond what
+`af-membership` already derives. The slug is **an organisation name, not personal data**, and there is
+no API to change it (it is fixed at `CreateTenant` and there is no `UpdateTenant`, i.e. effectively
+immutable). It is carried as `Workspace.TenantSlug` — **no column is added; the tenant is LEFT JOINed
+on each read** (so writing a tag never hits the store).
+⚠️ **When the slug is unknown, omit the tag entirely rather than writing an empty string**: an empty
+cost allocation tag value becomes a real group in the bill, "tenant = (blank)", which cannot be read as
+"there is no tag".
 
-`ce update-cost-allocation-tags-status` は `ValidationException: Tag keys not found:
-af-tenant` を返す。順序は **「リソースに打つ → AWS が発見（〜24h）→ 有効化」** で固定され、
-**バックフィル無しの時計は打った時ではなく有効化した時から動く**。つまり
-**タグ付けのコードを実機に届けるのが遅れた日数が、そのまま永久に取れない日数になる**——
-これが設計を書き終える前に実装した理由である。
+### ⚠️ A tag key AWS has never seen cannot be activated in advance (measured)
 
-## 決定 4 — 共有費は**配らない**。「共有」として内訳付きで出し、**super_admin だけに見せる**
+`ce update-cost-allocation-tags-status` returns
+`ValidationException: Tag keys not found: af-tenant`. The order is fixed as **"tag the resources → AWS
+discovers them (~24h) → activate"**, and **with no backfill the clock starts when you activate, not
+when you tagged**. In other words, **however many days it takes to get the tagging code onto the real
+deployment is exactly how many days are permanently unrecoverable** — which is why it was implemented
+before the design was finished.
 
-実測（sandbox・2026-08-01〜16・$9.0370）で、**人に紐づけられる上限は 22.3%**。
-残る 77.7% は NAT ($2.82) / Route53 ($1.51) / 税 ($0.82) / EFS ($0.57) / CP の Fargate ($0.43) /
-ALB / RDS / PublicIPv4 で、**頭割りした瞬間に実費が見積になる。**
+## Decision 4 — **do not distribute** shared cost. Show it as "shared" with a breakdown, **visible to super_admin only**
 
-- 共有は per-member の合計に混ぜず、**別カード＋サービス別内訳**。
-- **空きプールのスロット時間も共有**（`af-role=slot` かつ `af-membership` 無し）。
-  「誰も使っていないのに回っている箱」の実費が初めて数字で見える。
-- **共有カードは super_admin 限定。** tenant_admin にデプロイ全体の ALB / RDS 請求を
-  見せるのはテナントの外の情報を渡すこと（0043 決定 24/25 の線）。
-- ⚠️ **メンバー向けの文言は「あなたのコスト」にしない。**
-  「**あなたのワークスペースに直接ひも付く費用（共有分は含みません）**」に固定する。
-  実額の 2 割程度を指して「あなたのコスト」と呼ぶのは、この repo が繰り返し踏んでいる
-  「言っていることが違う」そのものである。
+Measured (sandbox, 2026-08-01 to 16, $9.0370): **the ceiling on what can be attributed to people is
+22.3%**. The remaining 77.7% is NAT ($2.82) / Route53 ($1.51) / tax ($0.82) / EFS ($0.57) / the CP's
+Fargate ($0.43) / ALB / RDS / PublicIPv4, and **the moment you divide it per head, actual spend becomes
+an estimate.**
 
-## 決定 5 — 名前を先に分ける。「使用量」を 3 つ目の意味で使わない
+- Shared cost is not mixed into the per-member totals; it is **a separate card with a per-service
+  breakdown**.
+- **Idle pool slot hours are shared too** (`af-role=slot` with no `af-membership`). For the first time,
+  the actual cost of "boxes running that nobody is using" appears as a number.
+- **The shared card is super_admin only.** Showing a tenant_admin the deployment-wide ALB / RDS bill
+  hands over information from outside their tenant (the line from 0043 decisions 24/25).
+- ⚠️ **The wording for members is not "your cost".** It is fixed as
+  "**cost tied directly to your workspace (shared cost not included)**". Calling roughly 20% of the
+  real figure "your cost" is exactly the "saying something different from what is true" that this repo
+  keeps falling into.
 
-Console には既に **「使用量」/ "Usage" が 3 か所**ある（個人＝トークン、管理／テナント設定＝
-稼働時間）。4 つ目として金額を足す前に:
+## Decision 5 — separate the names first. Do not use "usage" in a third sense
 
-| 概念 | ラベル | 単位 |
+The Console already has **"使用量" / "Usage" in three places** (personal = tokens; admin and tenant
+settings = running hours). Before adding money as a fourth:
+
+| Concept | Label | Unit |
 |---|---|---|
-| エージェントのトークン | **使用量** / Usage（現状維持） | token |
-| ワークスペースの稼働 | **稼働時間** / Running time（改称） | 時間 |
-| AWS の請求 | **クラウド費用** / Cloud cost（新設） | USD |
+| An agent's tokens | **使用量** / Usage (unchanged) | tokens |
+| A workspace running | **稼働時間** / Running time (renamed) | hours |
+| The AWS bill | **クラウド費用** / Cloud cost (new) | USD |
 
-改称は表示文字列（`admin.usage_title` ほか）だけ。**セクションキー・タブキー・API パスは
-触らない**——deep-link と保存済みの最後のセクションが壊れる。
+The rename touches display strings only (`admin.usage_title` and friends). **Section keys, tab keys and
+API paths are untouched** — deep links and the saved last section would break.
 
-## 決定 6 — 通貨は AWS が返したまま（USD）。`UnblendedCost` を表に出す
+## Decision 6 — the currency is whatever AWS returned (USD). `UnblendedCost` is what is displayed
 
-- **円換算しない。**
-- 表示は **`UnblendedCost`（＝請求額）**。`AmortizedCost` も同じリクエストで取って保存し、
-  乖離した（RI / Savings Plan を買った）ときだけ注記を出す。メトリクスを増やしても
-  リクエスト単価は増えない。
-- 最新日は `Estimated: true` で**動く**。「約 24 時間遅れ・本日分は未確定」を
-  数字の隣に出す（後注では読まれない）。
+- **No conversion to yen.**
+- The display is **`UnblendedCost` (i.e. the billed amount)**. `AmortizedCost` is fetched in the same
+  request and stored, with a note shown only when they diverge (an RI or Savings Plan was bought).
+  Adding metrics does not increase the per-request price.
+- The latest day **moves**, with `Estimated: true`. "About 24 hours behind; today's figure is not
+  final" goes next to the number (a footnote is not read).
 
-## 決定 7 — Console から CE を叩かない。CP が定期取得して自分の DB を配る
+## Decision 7 — the Console does not hit CE. The CP fetches periodically and serves its own database
 
-CE は **1 リクエスト $0.01**。画面のポーリングに直結させると押し放題になる。
+CE is **$0.01 per request**. Wiring it straight to screen polling makes it pressable without limit.
 
-- `usageSampler` と同じ形のバックグラウンド取得。**6 時間おきに直近 7 日を上書き**
-  （`GroupBy = [TAG af-membership, DIMENSION SERVICE]` の 1 リクエスト＝ CE の 2 軸上限）。
-  **$0.04/日 ≒ $1.2/月。**
-- 保存は `cloud_cost_daily(day, membership_id, tenant_id, service, unblended, amortized,
-  estimated)`。**`membership_id` が空の行＝共有。** 金額は整数（マイクロ単位）で持つ。
-- API は DB だけを読む。Console の「更新」は**再取得ではなく読み直し**。
-  手動再取得は super_admin 限定＋レート制限。
+- A background fetch of the same shape as `usageSampler`. **Every 6 hours it overwrites the last 7
+  days** (one request with `GroupBy = [TAG af-membership, DIMENSION SERVICE]` — CE's two-axis limit).
+  **$0.04/day ≈ $1.2/month.**
+- Stored as `cloud_cost_daily(day, membership_id, tenant_id, service, unblended, amortized,
+  estimated)`. **A row with an empty `membership_id` is shared.** Amounts are held as integers (in
+  micro-units).
+- The API reads the database only. The Console's "refresh" is **a re-read, not a re-fetch**. A manual
+  re-fetch is super_admin only and rate-limited.
 
-## 決定 8 — `ce:GetCostAndUsage` を `CpTaskRole` に**足す**（0045 決定 21 を今回はひっくり返す）
+## Decision 8 — **add** `ce:GetCostAndUsage` to `CpTaskRole` (overturning 0045 decision 21 this time)
 
-前例（vCPU 表示のために IAM を足すのを却下し env 申告にした）と判断が分かれる理由:
+Why the judgement differs from the precedent (which rejected adding IAM for a vCPU display and used an
+env declaration instead):
 
-- あのときは**同じ数字を別手段で正しく出せた**。実費に代替は無い（代替は別の数字＝見積）。
-- 足すのは**読み取り 1 アクション**。CE はリソーススコープを持たないので `Resource: "*"` だが、
-  返るのは集計金額だけでリソースにも秘密にも触れない。
-- ⚠️ **アカウントを agent-fleet 以外と共有しているデプロイでは、その分も共有費に混ざる。**
-  画面に「このアカウントの請求全体を集計しています」と書く。
-- ⚠️ **前提**: IAM ロールが Billing API を使うにはアカウント設定の
-  「IAM ユーザー/ロールによる請求情報へのアクセス」が有効である必要がある。`deploy/` に書く。
+- There, **the same number could be produced correctly by other means.** Actual spend has no
+  substitute (the substitute is a different number, i.e. an estimate).
+- What is added is **one read action**. CE has no resource scoping so it is `Resource: "*"`, but what
+  comes back is aggregate amounts only, touching neither resources nor secrets.
+- ⚠️ **In a deployment that shares the account with something other than agent-fleet, that gets mixed
+  into shared cost too.** The screen states "this aggregates the whole of this account's bill".
+- ⚠️ **Prerequisite**: for an IAM role to use the Billing API, the account setting "IAM user/role
+  access to billing information" must be enabled. Documented in `deploy/`.
 
-## 決定 11 — 有効化も CP がやる（決定 8 の但し書きを**覆す**）
+## Decision 11 — the CP does the activation too (**overturning** decision 8's proviso)
 
-- **追記（2026-08-25・[docs/67](../67-member-cloud-cost.md) §67.17）**: **組織のメンバー
-  （linked）アカウントでは、この決定は半分しか実行できない。** `ListCostAllocationTags` も
-  `UpdateCostAllocationTagsStatus` も payer にしかできず、CP は「payer が有効化したこと」
-  すら読めない（実測）。そこで **読めないときは「実際に按分できているか」で判定する**——
-  ポーラーが既に `af-membership` で group by しているので、値の入った行が返れば軸は
-  効いている。追加の Cost Explorer 呼び出しは無し、証拠が取れたら問い合わせを止める。
-  ⚠️ 断定するのは group by している 1 軸だけで、他のキーは主張しない。
+- **Addendum (2026-08-25, [docs/67](../log/67-member-cloud-cost.md) §67.17)**: **on an organisation
+  member (linked) account this decision can only be half executed.** Both `ListCostAllocationTags` and
+  `UpdateCostAllocationTagsStatus` are payer-only, and the CP cannot even read "the payer has activated
+  them" (measured). So **when it cannot read, judge by whether attribution is actually working** — the
+  poller already groups by `af-membership`, so if rows come back with values, the axis is in effect.
+  No extra Cost Explorer call, and the querying stops once the evidence is in.
+  ⚠️ Only the one axis being grouped by is asserted; no claim is made about the other keys.
 
-決定 8 では `ce:UpdateCostAllocationTagsStatus` を「請求コンソールの操作は人のもの」
-として意図的に外していた。覆した理由は**損害の非対称**である:
+Decision 8 deliberately left out `ce:UpdateCostAllocationTagsStatus`, on the basis that "operating the
+billing console belongs to a person". The reason for overturning it is **the asymmetry of the damage**:
 
-- 忘れた場合 → **恒久的なデータ欠測**。この系で唯一「後から直せない」前提条件。
-- 自動化した場合 → 請求データに列が 5 本増える。
+- If it is forgotten → **a permanent gap in the data.** The one precondition in this system that
+  cannot be fixed afterwards.
+- If it is automated → five more columns in the billing data.
 
-しかも「デプロイ時にはできず（AWS が未発見）、翌日、人が、覚えていれば」という形は
-[0044](0044-workspace-sizing.md) 決定 3 の「誰もやらない手順は存在しない手順」そのもの。
+And the shape "it cannot be done at deployment time (AWS has not discovered them), then the next day, by
+a person, if they remember" is exactly [0044](0044-workspace-sizing.md) decision 3's "a procedure nobody
+performs is a procedure that does not exist".
 
-⚠️ **これは CP がアカウントの請求設定に書き込む唯一の場所**である。ポリシーではなく
-**コードで 2 つ縛る**（`cost_tags.go`）:
+⚠️ **This is the only place the CP writes to the account's billing settings.** It is bound **in code,
+not policy**, in two ways (`cost_tags.go`):
 
-1. **固定の許可リスト 5 キー**。⚠️ **`af-workspace` は絶対に有効化しない**（決定 1・
-   値がメール由来）。テストで縛った。
-2. ⚠️ **人が Inactive にしたキーは触らない。** AWS は状態変更時に `LastUpdatedDate` を
-   打つので、「Inactive かつ打刻あり」＝人の決定。戻すのは運用者を自分の請求コンソール
-   で上書きすることになる。
+1. **A fixed allowlist of five keys.** ⚠️ **`af-workspace` is never activated** (decision 1 — its value
+   derives from the email). Bound by a test.
+2. ⚠️ **Do not touch a key a person set to Inactive.** AWS stamps `LastUpdatedDate` on a state change,
+   so "Inactive with a stamp" is a person's decision. Reverting it would mean overriding the operator in
+   their own billing console.
 
-⚠️ **一発ではなく再試行**（未発見のキーは有効化できない）。ポーラの 6 時間 tick に
-相乗りし、落ち着いたら呼ぶのをやめる。
-⚠️ **部分失敗は Go の error ではなく応答の `Errors`**。`err` だけ見ると拒否されたキーを
-「有効化した」と記録する。
-⚠️ **権限を外しても画面は壊れない。** CP は「自動有効化できない」と報告し、運用者が
-CLI でやる。画面は待っている間ずっと「いま失われつつある」と警告し続ける
-（読み込み中ではないので消さない）。
-- ⚠️ **検証は `CpTaskRole` を assume して行う。** E2E はデプロイヤ資格情報
-  （`AdministratorAccess`）で走るので必ず通ってしまう——`ec2:CreateSnapshot` が
-  `CpTaskRole` から抜けていたのを誰も捕まえられなかったのと同じ穴（docs/64 §64.22）。
+⚠️ **Retry rather than one shot** (an undiscovered key cannot be activated). It rides the poller's
+6-hour tick and stops calling once things settle.
+⚠️ **A partial failure is in the response's `Errors`, not in Go's error.** Looking only at `err` records
+a rejected key as "activated".
+⚠️ **Removing the permission does not break the screen.** The CP reports "cannot activate automatically"
+and the operator does it with the CLI. Meanwhile the screen keeps warning that data "is being lost right
+now" (it is not a loading state, so it is not dismissed).
+- ⚠️ **Verify by assuming `CpTaskRole`.** E2E runs with deployer credentials
+  (`AdministratorAccess`) and would always pass — the same hole by which nobody caught
+  `ec2:CreateSnapshot` missing from `CpTaskRole` (docs/64 §64.22).
 
-## 決定 9 — 費用の面があるかは**ランタイムが申告する**。無いデプロイにはタブを出さない
+## Decision 9 — **the runtime declares** whether a cost surface exists. A deployment without one gets no tab
 
-`SizingProfile()` / `hasPool` と同じ形で `CostProfile()` を RuntimeFactory の任意能力にし、
-`GET /api/cost/profile` が答える。`docker` / `native` は **AWS の請求が存在しない**ので
-**タブごと出さない**（「効かない項目を画面に出すのは嘘に近い」＝ 0045 決定 21 の線）。
+`CostProfile()` becomes an optional capability of RuntimeFactory in the same shape as `SizingProfile()`
+/ `hasPool`, answered by `GET /api/cost/profile`. `docker` and `native` have **no AWS bill**, so **the
+tab is not shown at all** ("putting an item on screen that does not work is close to lying" — the line
+from 0045 decision 21).
 
-⚠️ **Fargate（`ecs`）は現状どのタスクにもタグが付かない**（`CreateService` に `Tags` も
-`EnableECSManagedTags` も `PropagateTags` も無い）。`Tags` + `EnableECSManagedTags: true` +
-`PropagateTags: SERVICE` を足す（`ecs:TagResource` は既にある）。既存サービスには遡らないので
-起動経路で冪等に `TagResource` する。**sandbox は `ecs-ec2` なので実機で確かめられない
-——「実機未検証」と明記して出す。**
+⚠️ **On Fargate (`ecs`) no task is currently tagged at all** (`CreateService` has no `Tags`, no
+`EnableECSManagedTags` and no `PropagateTags`). `Tags` + `EnableECSManagedTags: true` +
+`PropagateTags: SERVICE` are added (`ecs:TagResource` is already there). It does not apply retroactively
+to existing services, so the launch path calls `TagResource` idempotently. **The sandbox is `ecs-ec2`,
+so this cannot be confirmed on real hardware — it ships explicitly labelled "unverified on real
+hardware".**
 
-## 決定 10 — 見せる範囲
+## Decision 10 — who sees what
 
-| 見る人 | 見えるもの |
+| Viewer | What they see |
 |---|---|
-| メンバー本人 | 自分に直接ひも付く費用と日次推移**のみ** |
-| tenant_admin | 自テナントのメンバー別＋テナント合計（**共有費は見えない**） |
-| super_admin | 全テナント・全メンバー・共有費の内訳・デプロイ合計 |
+| The member | **Only** cost tied directly to them, and its daily trend |
+| tenant_admin | Per member within their tenant, plus the tenant total (**shared cost is not visible**) |
+| super_admin | All tenants, all members, the shared-cost breakdown, and the deployment total |
 
-RBAC は既存の `tenantScope` / `tenantAdminFor` に合わせる。本人向けは
-`withIdentity` の非 admin 経路（`workspace-sizing` と同じ形）。
+RBAC follows the existing `tenantScope` / `tenantAdminFor`. The personal view uses the non-admin path of
+`withIdentity` (the same shape as `workspace-sizing`).
 
-## 決定 12 — 「この人はいくら」はメンバー詳細に置く。専用エンドポイントを 1 本足すが、**DTO は増やさない**
+## Decision 12 — "how much is this person" goes on the member detail. One dedicated endpoint is added, but **no new DTO**
 
-3 面（管理／テナント設定／個人設定）を作ってなお、**「このユーザーはいくら使っているか」を
-見に行く場所は一覧しか無かった**。強制停止とディスク上限のボタンが並ぶメンバー詳細に、
-費用だけが無い。
+Having built three surfaces (admin / tenant settings / personal settings), **the only place to go and
+see "how much is this user spending" was still the list**. The member detail, where the force-stop and
+disk-cap buttons sit, had everything except cost.
 
-- **粒度は合計＋日次推移＋サービス別内訳＋期間入力。** 合計だけなら一覧の再掲で終わる。
-  日次（週末も乗り続けている＝スロットを握りっぱなし）と内訳（EBS 寄り＝home が大きい／
-  EC2 Compute 寄り＝スロット時間）は、**同じ画面にある 2 つの操作にそのまま対応する読み**
-  である。`attributable` は 3 種しかないので内訳は 3 行前後にしかならない。
-- ⚠️ **リソースのタイルに 4 枚目として足さない。** あれは 4 秒ポーリングの「今」、費用は
-  約 24 時間遅れの「期間」。同じカードに時間と $ を並べないのは決定 2。独立したパネルを
-  リソースの直後に置く。
-- **API は `GET /api/admin/tenants/{slug}/members/{key}/cost` を新設。** ⚠️ 広げる前に
-  導出可否を確かめた: 既存の `/api/admin/cloud-cost` の `members[]` は**合計しか持たない**
-  ので、日次も内訳も導出できない。`/stats` への相乗りは 4 秒ポーリングと早期 return
-  （ワークスペースが無いと `{"running":false}`）で形が合わない——費用は停止中・破棄後にも
-  存在する。**応答は `/api/cost/me` と同一の形**にし、CP 側は集計を 1 関数に切り出した。
-  **新しい DTO は 0**、store の追加も無し（`ListCloudCost` は既に membership で絞れる）。
-- ⚠️ **membership だけで引く（tenant では絞らない）。** `tenantByMembership` は「今の
-  workspace 行」から解決するので、**ワークスペースを破棄したメンバーの行は `tenant_id` が
-  空で書き直される**。テナントで絞ると詳細に**自信たっぷりの $0.00** が出る。所属は
-  `resolveMember` が既に証明している。
-- **描画は `MyCloudCostView` から抽出して共有**（`useCostOne` / `CostRangeBar` /
-  `CostOneBody`）。本人向けと詳細で違うのは**合計ラベルのキー 1 つだけ**。
-  `CloudCostAdminView`（一覧＋共有カード）は形が違うので流用しない。
-- ⚠️ **ラベルは「このメンバーに直接ひも付く費用（共有分は含みません）」で固定。**
-  「このメンバーのコスト」と書けば実額の 1/5 を指すことになる（決定 4 と同じ規律）。
-  DOM テストで縛った。**共有は構造的に入らない**——共有行は `membership_id` が空なので、
-  実在の membership で絞れば来ない（「返さないよう気をつける」実装にしない）。
-- **能力の確認は部品が自分でやる。** prop で渡す形は、渡し忘れた瞬間に請求の無いデプロイ
-  （docker / native）へ金額 0 の面を出す（決定 9 の裏返し）。
+- **The granularity is the total, a daily trend, a per-service breakdown and a period input.** The total
+  alone would just repeat the list. The daily view (still running at the weekend = holding a slot) and
+  the breakdown (EBS-heavy = a big home; EC2 Compute-heavy = slot hours) are **readings that map
+  directly onto the two controls already on that screen**. There are only three `attributable`
+  categories, so the breakdown is about three rows.
+- ⚠️ **Do not add it as a fourth resource tile.** Those are "now", polled every four seconds; cost is a
+  "period", about 24 hours behind. Not putting hours and $ on the same card is decision 2. An independent
+  panel goes immediately after the resources.
+- **The API is a new `GET /api/admin/tenants/{slug}/members/{key}/cost`.** ⚠️ Before widening anything we
+  checked whether it could be derived: `members[]` in the existing `/api/admin/cloud-cost` **has only the
+  total**, so neither the daily figures nor the breakdown can be derived. Riding on `/stats` does not fit
+  its shape either, with four-second polling and an early return (`{"running":false}` when there is no
+  workspace) — cost exists while stopped and after disposal. **The response is identical in shape to
+  `/api/cost/me`**, and the CP's aggregation was factored into one function. **Zero new DTOs**, and no
+  store addition (`ListCloudCost` can already filter by membership).
+- ⚠️ **Query by membership alone (do not filter by tenant).** `tenantByMembership` resolves from "the
+  current workspace row", so **the rows of a member who disposed of their workspace are rewritten with an
+  empty `tenant_id`**. Filtering by tenant would show **a confident $0.00** on the detail. Membership is
+  already proven by `resolveMember`.
+- **The rendering is extracted from `MyCloudCostView` and shared** (`useCostOne` / `CostRangeBar` /
+  `CostOneBody`). The only difference between the personal view and the detail is **one key, the total's
+  label**. `CloudCostAdminView` (the list plus the shared card) has a different shape and is not reused.
+- ⚠️ **The label is fixed as "cost tied directly to this member (shared cost not included)".** Writing
+  "this member's cost" would point at a fifth of the real figure (the same discipline as decision 4).
+  Bound by a DOM test. **Shared cost cannot get in structurally** — shared rows have an empty
+  `membership_id`, so filtering by a real membership never returns them (rather than an implementation
+  that "is careful not to return them").
+- **The component checks the capability itself.** Passing it as a prop means that the moment someone
+  forgets, a deployment with no bill (docker / native) gets a surface showing $0 (the inverse of decision
+  9).
 
-## 決定 13 — 予約メンバーシップの費用は SHARED へ畳む。**タグは打ったまま**、畳むのは取り込み
+## Decision 13 — fold reserved memberships' cost into SHARED. **Keep tagging**; the folding happens on ingest
 
-golden スナップショットの自動焼き直し（docs/64 §64.28）が使う `af-golden-seed` /
-`af-golden-probe` は、**製品の通常の Start 経路**で workspace を作る（そうでなければ焼けた
-golden は「製品が実際に作る home」の複製ではなくなる）。だから `af-membership` が付き、
-**人のメンバーとして per-member の一覧に出ていた**。あれは誰かの仕事ではなく、デプロイが
-自分のスナップショットを温めている費用なので、共有インフラ（決定 4 の SHARED）が正しい。
+The automatic re-bake of the golden snapshot (docs/64 §64.28) uses `af-golden-seed` / `af-golden-probe`,
+and it creates the workspace **through the product's normal Start path** (otherwise the baked golden
+would not be a copy of "the home the product actually creates"). So it gets an `af-membership` and **it
+was appearing in the per-member list as a human member**. That is not anyone's work — it is the
+deployment warming its own snapshot — so shared infrastructure (decision 4's SHARED) is correct.
 
-- ⚠️ **タグを打たない案は採らない。** `af-membership` はコスト配分キーであると同時に
-  **照合キー**でもある——ランタイムは `tagValue(ap.Tags,"af-membership") == membershipID` で
-  EFS アクセスポイントと home ボリュームを引き当てる。値を空にすると引き当てが壊れるか、
-  次に現れた無タグ資源と衝突する。**タグは製品が書くとおりに書き、畳むのは取り込み側**。
-- ⚠️ **畳んだら Go 側で合算する。** `PutCloudCost` は `(day, membership_id, service)` を
-  **置き換える**（`ON CONFLICT ... DO UPDATE SET unblended=excluded.unblended`）。CE は種の行と
-  無タグの共有行を、同じ (day, service) の別グループとして日常的に返すので、足さずに 2 行
-  渡すと**後の行が前の行の金額を消す**。決定 7 の「置き換えであって加算ではない」が、ここでは
-  逆向きの罠になる。
-- 取り込みの窓は既定 7 日なので、それより古い既存行は畳まれない。読み側でも同じ畳み方をし、
-  **財務データを書き換えるマイグレーションは書かない**。
-- golden スナップショット自体は元から `af-membership` 無し＝すでに shared なので、これで
-  種・probe・スナップショットの 3 つが揃う。
+- ⚠️ **Not tagging is not an option.** `af-membership` is a cost allocation key and at the same time **a
+  matching key** — the runtime finds the EFS access point and the home volume with
+  `tagValue(ap.Tags,"af-membership") == membershipID`. Emptying the value either breaks the match or
+  collides with the next untagged resource that appears. **Write the tag exactly as the product writes
+  it, and fold on the ingest side.**
+- ⚠️ **Sum in Go when folding.** `PutCloudCost` **replaces** `(day, membership_id, service)`
+  (`ON CONFLICT ... DO UPDATE SET unblended=excluded.unblended`). CE routinely returns the seed rows and
+  the untagged shared rows as separate groups for the same (day, service), so passing two rows without
+  adding them means **the later row erases the earlier row's amount**. Decision 7's "it replaces, it does
+  not add" becomes a trap in the opposite direction here.
+- The ingest window is 7 days by default, so existing rows older than that are not folded. The read side
+  folds the same way, and **no migration that rewrites financial data is written**.
+- The golden snapshot itself never had an `af-membership` and is therefore already shared, so this
+  completes the set of three: the seed, the probe and the snapshot.
 
-## 決定 14 — メンバーの行を消しても、費用の行は消さない
+## Decision 14 — deleting a member's row does not delete their cost rows
 
-除名済みメンバーの物理削除（ADR 0043 決定 46・docs/61 §61.18）を入れるにあたっての線引き。
-`cloud_cost_daily` は cascade に**入れない**。`memberCloudCost` が membership だけで引くのは
-決定 12 の ⚠️ そのもので、**破棄されたメンバーの支出も消えない**ようにするためだった。
-行を消すと、その前提が崩れて**過去月の合計が後から変わる**。`CloudCostTotal` は元々
-「membership が消えていれば UserKey/Email が空のまま出る」設計なので、表示も破綻しない。
+The line drawn when introducing the physical deletion of removed members (ADR 0043 decision 46,
+docs/61 §61.18). `cloud_cost_daily` is **not** included in the cascade. `memberCloudCost` querying by
+membership alone is exactly decision 12's ⚠️, and it exists so that **a disposed member's spend does not
+disappear**. Deleting the rows would break that premise and **change a past month's total after the
+fact**. `CloudCostTotal` was designed from the start to "emit an empty UserKey/Email if the membership is
+gone", so the display does not break either.
 
-## 捨てた選択肢
+## Options discarded
 
-- **稼働秒 × 単価の按分を実費と並べて出す** — 決定 2。数字が 2 つあると必ず食い違う。
-- **共有費を人数割り／稼働割りで配る** — 決定 4。配った瞬間に実費でなくなる。
-- **CUR → S3 → Athena** — CE より安く柔軟だが、Glue / Athena / S3 ライフサイクルと
-  権限が増える。$1.2/月の CE で足りる規模で持ち込む構成ではない。
-- **Console から直接 CE を叩く** — 決定 7。$0.01 がユーザー操作に直結する。
-- **`af-workspace` も有効化する** — 決定 1。請求データに個人情報を入れない。
-- **メールのハッシュを新しいタグとして足す** — 決定 3。既にある乱数 ID より弱い
-  （仮名化された個人データのままで、総当たりで戻せる）。
-- **`af-tenant` にテナント ID を入れる** — 決定 3。不透明 ID では AWS 側だけで読めず、
-  テナント軸を足す唯一の利得を捨てることになる。
-- **有効化を運用者の手作業のまま残す** — 決定 11 で覆した。忘却の損害が恒久的で、
-  自動化の損害が「列が増える」だけという非対称に耐えられない。
-- **`af-workspace` も自動で有効化する** — 決定 11 の許可リストから除外。
-- **メンバー詳細の費用を一覧の応答から絞って出す** — 決定 12。合計は導出できるが、
-  日次も内訳も入っていない——そしてその 2 つが詳細に置く理由である。
-- **メンバー詳細の費用を `/stats` に相乗りさせる** — 決定 12。4 秒ポーリングと 6 時間更新の
-  DB 読みを同じ応答に載せることになる。
-- **人が切ったタグを CP が戻す** — 決定 11。運用者を自分の請求コンソールで上書きしない。
-- **NAT を送信元 IP で割る（VPC フローログ）** — 最大の共有費（31%）を割れる唯一の手だが、
-  ログの保管費と実装量が本体を上回る。共有のままにする。
-- **1 時間未満のスロット交代を秒で再按分する** — 決定 3。実費を見積で上書きすることになる。
-- **円換算** — 決定 6。
+- **Show apportionment (running seconds × unit price) alongside actual spend** — decision 2. Two numbers
+  always disagree.
+- **Distribute shared cost per head or by running time** — decision 4. The moment it is distributed it
+  stops being actual spend.
+- **CUR → S3 → Athena** — cheaper and more flexible than CE, but it adds Glue / Athena / S3 lifecycle
+  and permissions. Not a setup to bring in at a scale where $1.2/month of CE suffices.
+- **Hit CE directly from the Console** — decision 7. It wires $0.01 straight to a user action.
+- **Activate `af-workspace` too** — decision 1. No personal data in the billing data.
+- **Add a hash of the email as a new tag** — decision 3. Weaker than the random id that already exists
+  (it stays pseudonymised personal data and is reversible by brute force).
+- **Put the tenant id in `af-tenant`** — decision 3. An opaque id cannot be read on the AWS side alone,
+  which discards the only gain from adding a tenant axis.
+- **Leave activation as the operator's manual step** — overturned in decision 11. The asymmetry —
+  permanent damage from forgetting versus "more columns" from automating — is not bearable.
+- **Activate `af-workspace` automatically too** — excluded from decision 11's allowlist.
+- **Derive the member detail's cost by filtering the list's response** — decision 12. The total can be
+  derived, but neither the daily figures nor the breakdown are in it — and those two are the reason for
+  putting it on the detail.
+- **Ride the member detail's cost on `/stats`** — decision 12. It would put four-second polling and a
+  six-hourly database read in the same response.
+- **Have the CP revert a tag a person turned off** — decision 11. Do not override the operator in their
+  own billing console.
+- **Split NAT by source IP (VPC flow logs)** — the only way to split the largest shared cost (31%), but
+  the log storage cost and the implementation exceed the thing itself. It stays shared.
+- **Re-apportion a sub-hour slot handover by seconds** — decision 3. That would overwrite actual spend
+  with an estimate.
+- **Convert to yen** — decision 6.

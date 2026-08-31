@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// docs/61 P0. The real IdP is unreachable from CI, so discovery / token /
+// docs/log/61 P0. The real IdP is unreachable from CI, so discovery / token /
 // userinfo are stubbed by an httptest server; what these tests pin down is the
 // half we own: the provider abstraction, the signed state/session cookies, the
 // per-request re-check, and — the point of the whole exercise — the fail-closed
@@ -283,7 +283,7 @@ func TestGoogleTrustEmailVerified(t *testing.T) {
 
 // Entra emits no email_verified at all and its userinfo returns no email — the
 // address comes from the id_token's preferred_username, and trust=issuer is what
-// makes it acceptable (docs/61 §61.4).
+// makes it acceptable (docs/log/61 §61.4).
 func TestEntraTrustIssuerUsesIDTokenClaims(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{
 		idTokenClaims: map[string]any{
@@ -463,7 +463,7 @@ func TestLegacySessionCookieKeepsWorkingAndIsStillRechecked(t *testing.T) {
 }
 
 // The per-request re-check reads the live allowlist file, so deleting a line is
-// still the offboarding path (docs/61 受入条件 5) — no restart, no TTL wait.
+// still the offboarding path (docs/log/61 受入条件 5) — no restart, no TTL wait.
 func TestAuthGateRereadsAllowlistFileEveryRequest(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
 	file := filepath.Join(t.TempDir(), "allowed-emails.txt")
@@ -497,7 +497,7 @@ func TestAuthGateRereadsAllowlistFileEveryRequest(t *testing.T) {
 }
 
 // A provider-specific allowlist replaces the deployment-wide one for that
-// provider only (docs/61 §61.8).
+// provider only (docs/log/61 §61.8).
 func TestProviderAllowlistOverridesTheDeploymentOne(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
 	p := stubProvider("entra", idp, trustIssuer)

@@ -1,6 +1,6 @@
 package bridge
 
-// Chat-bridge P3 (docs/37): approval gate for the fleet operator's destructive actions.
+// Chat-bridge P3 (docs/log/37): approval gate for the fleet operator's destructive actions.
 // When the built-in operator conversation is driven from chat (unattended — no Console
 // human watching), a destructive tool posts an approve/reject button into the operator
 // thread and blocks until the bound user decides — the SAME buttons + interaction
@@ -12,7 +12,7 @@ package bridge
 // (bridge_approval.go), wired through the existing ReceiverDeps.Answer callback (a click
 // with kind "op" is applied by answerInteraction → bridgeApprovalDecision).
 //
-// Provider-scoped (docs/37 Slack 追随): the approval posts to whichever provider's
+// Provider-scoped (docs/log/37 Slack 追随): the approval posts to whichever provider's
 // operator store owns conv — the same conv→provider mapping PostOperatorReply uses.
 
 import (

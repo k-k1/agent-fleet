@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agent Fleet — one-liner installer for the native package (docs/35 §35.4.2).
+# Agent Fleet — one-liner installer for the native package (docs/log/35 §35.4.2).
 #
 #   curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install.sh | bash
 #
@@ -14,7 +14,7 @@
 #   AF_DIST_REPO      distribution repo (default k-k1/agent-fleet-dist)
 #   AF_DIST_URL_BASE  override the download URL base (for testing/mirrors;
 #                     requires AF_VERSION)
-#   AF_NO_AUTOUPDATE  set to 1 to skip enabling the daily update timer (docs/42)
+#   AF_NO_AUTOUPDATE  set to 1 to skip enabling the daily update timer (docs/log/42)
 set -euo pipefail
 
 REPO="${AF_DIST_REPO:-k-k1/agent-fleet-dist}"
@@ -91,7 +91,7 @@ case ":$PATH:" in
   *) echo "    note: $PREFIX/bin is not on PATH (re-login or add it to PATH)" ;;
 esac
 
-# Automatic updates (docs/42): a systemd *user* timer that runs `af update` daily
+# Automatic updates (docs/log/42): a systemd *user* timer that runs `af update` daily
 # to STAGE the newest release (sha256-verified). It never restarts a running
 # service — the new version applies when you restart agent-fleet (systemctl or the
 # Console 'restart to apply' button), so live agent sessions are never dropped

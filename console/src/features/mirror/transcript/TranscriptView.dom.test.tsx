@@ -1,5 +1,5 @@
 // TranscriptCaps の中心的な約束 —「能力が無い = その操作要素を出さない」— を jsdom で
-// 押さえる。共有セッションビュー(docs/59)は所有者向けの能力をほぼ渡さないので、ここが
+// 押さえる。共有セッションビュー(docs/log/59)は所有者向けの能力をほぼ渡さないので、ここが
 // 崩れると受信者に「押せるのに何も起きないボタン」が並ぶ。それは見た目の粗ではなく、
 // 相手のワークスペースを開こうとする導線を出してしまうということでもある。
 //
@@ -54,7 +54,7 @@ const EDIT_TURN: Turn[] = [
     idx: 2,
     ts: "2026-08-13T10:01:00Z",
     parts: [
-      // file は Agent が編集系ツールに必ず載せる座標（docs/68）。ここに無いと
+      // file は Agent が編集系ツールに必ず載せる座標（docs/log/68）。ここに無いと
       // 「このターンが直したファイル」のチップが出ない。
       { kind: "tool", tool: "Edit", info: "app.ts", file: "src/app.ts", edits: [{ old: "const a = 1", new: "const a = 2" }] },
       { kind: "text", text: "直しました" },
@@ -81,7 +81,7 @@ describe("TranscriptCaps: 能力が無ければ操作要素を出さない", () 
     expect(el.querySelector(".mt-fork")).not.toBeNull();
   });
 
-  it("所有者にはターン末尾に「このターンが直したファイル」のチップが出る（docs/68 P1）", () => {
+  it("所有者にはターン末尾に「このターンが直したファイル」のチップが出る（docs/log/68 P1）", () => {
     const el = render(EDIT_TURN, OWNER);
     const chips = el.querySelectorAll(".mtf-chip");
     expect(chips).toHaveLength(1);
@@ -300,7 +300,7 @@ describe("開いた作業過程・思考は最下部からも閉じられる", (
   });
 });
 
-describe("peer 着信の見え方（docs/58 §58.14）", () => {
+describe("peer 着信の見え方（docs/log/58 §58.14）", () => {
   const peerTurn = (text: string): Turn[] => [{ role: "user", text, idx: 1, source: "peer" }];
 
   it("送信元と種別の2つのチップが出る", () => {
@@ -338,7 +338,7 @@ describe("peer 着信の見え方（docs/58 §58.14）", () => {
     expect(el.querySelector(".mt-peer")).toBeNull();
   });
 
-  // claude 自前の cross-session チャネル(docs/58 §58.16)の着信には封筒が無い —— AF を
+  // claude 自前の cross-session チャネル(docs/log/58 §58.16)の着信には封筒が無い —— AF を
   // 通っていないので付けようが無い。名前は Agent が転写の origin から起こして peerFrom に
   // 載せるので、そこから出す。ここを繋いでいないと「別のセッション」としか出ず、
   // 利用者もオペレーターも送っていない指示の出どころが辿れない。

@@ -91,7 +91,7 @@
 .chat-msg.role-user .chat-body {
   background: color-mix(in srgb, var(--chat-accent, var(--accent)) 12%, var(--panel));
 }
-/* セッション報告カード（docs/30）: 送信者はユーザーでもアシスタントでもなく「セッション」。
+/* セッション報告カード（docs/log/30）: 送信者はユーザーでもアシスタントでもなく「セッション」。
    破線ボーダー＋左アクセントで由来の違いを示す。 */
 .chat-msg.role-report .chat-role {
   display: inline-flex;
@@ -112,7 +112,7 @@
   border-left: 3px solid var(--chat-accent, var(--accent));
   background: color-mix(in srgb, var(--chat-accent, var(--accent)) 5%, var(--panel));
 }
-/* システム通知カード（docs/30）: 自動応答が上限に達して停止した等、システム由来の告知。
+/* システム通知カード（docs/log/30）: 自動応答が上限に達して停止した等、システム由来の告知。
    ユーザー/アシスタントのバブルと区別し、中央寄せの控えめな帯で表示する。 */
 .chat-msg.role-notice {
   align-self: stretch;
@@ -154,7 +154,7 @@
 .chat-step + .chat-step {
   margin-top: 8px;
 }
-/* カラオケ読み上げ（AssistantTurn / turnTts, docs/24）: いま読んでいる文が属するブロックを
+/* カラオケ読み上げ（AssistantTurn / turnTts, docs/log/24）: いま読んでいる文が属するブロックを
    ハイライトし、scrollIntoView(nearest) で追従する。ミラーの .mirror-turn-body .tts-active と
    同趣。ブロック（p/見出し/li/blockquote 内段落）に付く。 */
 .chat-body .tts-active {
@@ -558,7 +558,7 @@
   opacity: 0;
 }
 
-/* エージェント切替（docs/19）: ヘッダの kind チップがそのままピッカーのボタンを兼ねる。
+/* エージェント切替（docs/log/19）: ヘッダの kind チップがそのままピッカーのボタンを兼ねる。
    見た目は .kind-tag のまま、押せることを caret で示す。 */
 .chat-agent-pick {
   cursor: pointer;
@@ -652,7 +652,7 @@
   resize: vertical;
   font: inherit;
 }
-/* MCP server picker in the assistant modal (docs/48 P2). One row per attachable
+/* MCP server picker in the assistant modal (docs/log/48 P2). One row per attachable
    server: checkbox, display name, and — when it won't actually attach — the reason
    inline, so the row explains itself instead of silently doing nothing. */
 .assistant-mcp-opt {
@@ -692,7 +692,7 @@
   margin-bottom: 0;
 }
 
-/* Greeting card: the assistant introduces itself before the chat has started (docs/19). */
+/* Greeting card: the assistant introduces itself before the chat has started (docs/log/19). */
 .chat-greeting {
   margin: 8px;
   padding: 12px 14px;
@@ -726,7 +726,7 @@
   line-height: 1.5;
 }
 
-/* コンテキストバー右端の「圧縮」ボタン（docs/33 第2段・要約引き継ぎ）。ContextBar の
+/* コンテキストバー右端の「圧縮」ボタン（docs/log/33 第2段・要約引き継ぎ）。ContextBar の
    action スロットに乗る小型ボタンで、バー行の 11.5px スケールに合わせる。 */
 .cb-action {
   flex: none;
@@ -753,7 +753,7 @@
   font-size: 12px;
 }
 
-/* 作業計画パネル（docs/33 第5段）— ChatPlan.tsx。
+/* 作業計画パネル（docs/log/33 第5段）— ChatPlan.tsx。
    ヘッダー直下に開く折り畳み面。会話バブルではなく「会話に付随する状態」なので、
    ContextBar と同じ薄い枠・小さめの文字で、本文の邪魔をしない見え方にする。 */
 .chat-plan-toggle {

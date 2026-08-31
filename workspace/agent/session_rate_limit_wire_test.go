@@ -1,7 +1,7 @@
 package main
 
 // 利用上限で止まったセッションが「入力待ち」ではなく 制限解除待ち（agents.StateLimited）
-// として読まれること（docs/47 §4-9）。上限モーダルの blocked（＝人がペインで選ぶまで動か
+// として読まれること（docs/log/47 §4-9）。上限モーダルの blocked（＝人がペインで選ぶまで動か
 // ない）は別のテストが押さえているので、ここで見るのはその**後**の姿: メニューは自動解除
 // 済み、あるいはそもそもメニューを出さない形で、ペインは待機プロンプトに戻っている。
 //
@@ -74,7 +74,7 @@ func TestWireSessionShowsRateLimitWait(t *testing.T) {
 	}
 }
 
-// TestWireSessionShowsSpendLimit: 支出・残高の上限（docs/47 §4-10）は 制限解除待ち では
+// TestWireSessionShowsSpendLimit: 支出・残高の上限（docs/log/47 §4-10）は 制限解除待ち では
 // なく専用の状態で出す。同じ 429 でも待っても解けないので、「待て」と読める表示にすると
 // 利用者は来ないリセットを待つ。再開予定時刻は存在しない（予約しない）ので空のまま。
 func TestWireSessionShowsSpendLimit(t *testing.T) {

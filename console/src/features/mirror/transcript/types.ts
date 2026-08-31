@@ -16,7 +16,7 @@ export interface QuestionOption {
 }
 
 export interface Question {
-  id?: string; // managed: 応答先 Interaction の id（docs/27 §5）。tui 由来は空
+  id?: string; // managed: 応答先 Interaction の id（docs/log/27 §5）。tui 由来は空
   header?: string;
   question?: string;
   multiSelect?: boolean;
@@ -48,7 +48,7 @@ export interface Part {
   model?: string; // kind=delegation: explicitly selected child model
   file?: string;
   edits?: any[];
-  // verb qualifies `file` for the changed-files list (docs/68): "add" | "edit" | "delete".
+  // verb qualifies `file` for the changed-files list (docs/log/68): "add" | "edit" | "delete".
   // Only a parser that KNOWS sends it (codex reads it out of the patch header); absent
   // means "derive it from the edits", never "deleted".
   verb?: string;
@@ -56,7 +56,7 @@ export interface Part {
   answer?: string;
   // declined marks kind=question only: the answer text is claude's own decline
   // boilerplate (an Escape out of the AskUserQuestion modal — e.g. the preview
-  // free-text bug, docs/dev/92 §6), not a genuine pick — QuestionBlock must not render
+  // free-text bug, docs/build/92 §6), not a genuine pick — QuestionBlock must not render
   // it as an answered card.
   declined?: boolean;
   plan?: string;
@@ -78,14 +78,14 @@ export interface Turn {
   idx?: number;
   // anchorId: the AGENT's own id for this turn (claude uuid / codex turn id / opencode
   // msg_…), opaque here — it is handed straight back to POST /fork {"at"} to branch from
-  // this point (docs/55). Absent for kinds that don't emit one, and for local echoes.
+  // this point (docs/log/55). Absent for kinds that don't emit one, and for local echoes.
   anchorId?: string;
   pending?: boolean; // optimistic local echo of a just-sent prompt, not yet in the jsonl
   queued?: boolean; // sitting in claude's mid-run queue (enqueued, awaiting injection)
-  source?: string; // user turn origin: "operator" = fleet-operator injected (docs/30 ②), else own input
+  source?: string; // user turn origin: "operator" = fleet-operator injected (docs/log/30 ②), else own input
   // peerFrom: the SESSION that sent a source==="peer" turn, when the Agent could name it.
   // AF 自身の peer 送信は本文の封筒に名前が載るのでこれは空 — 埋まるのは封筒を持たない
-  // 着信、つまり claude 自前の cross-session チャネル(docs/58 §58.16)のときだけ。
+  // 着信、つまり claude 自前の cross-session チャネル(docs/log/58 §58.16)のときだけ。
   peerFrom?: string;
   parts?: Part[];
   sidechain?: boolean;
@@ -126,7 +126,7 @@ export interface Group {
   // The FIRST folded turn's anchor — branching "from this block" means branching before
   // everything it shows, so a merged block must not adopt a later turn's anchor.
   anchorId?: string;
-  // origins[i] is the mark root key of parts[i] (docs/69 §69.3): "<元ターンの安定キー>#<その
+  // origins[i] is the mark root key of parts[i] (docs/log/69 §69.3): "<元ターンの安定キー>#<その
   // ターン内での part 番号>". It is a PARALLEL array rather than a field on Part because
   // partsOf() hands back `t.parts` BY REFERENCE — writing to a part here would corrupt the
   // held turn state. "" = this part cannot carry a mark (pending echo, no anchor and no text).
@@ -140,7 +140,7 @@ export interface Group {
   folded: number;
   pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
   queued?: boolean; // holds a prompt claude reports queued for the running turn
-  source?: string; // user group origin: "operator" = fleet-operator injected (docs/30 ②)
+  source?: string; // user group origin: "operator" = fleet-operator injected (docs/log/30 ②)
   peerFrom?: string; // sender of a source==="peer" group when the Agent named it (Turn.peerFrom)
 }
 
@@ -149,7 +149,7 @@ export type FoldItem =
   | { kind: "toolrun"; tools: { p: Part; i: number }[] }
   | { kind: "part"; p: Part; i: number };
 
-// カラオケ朗読（turnTts, docs/24）の配線。いま読み上げ中のターン（transcript の idx）と
+// カラオケ朗読（turnTts, docs/log/24）の配線。いま読み上げ中のターン（transcript の idx）と
 // 操作を TranscriptView 経由で各ターンのフッターへ渡す。ハイライトは turnTts が DOM
 // （classList）側で行い、React はボタンの表示切り替えだけを持つ。
 export interface TurnTtsWiring {

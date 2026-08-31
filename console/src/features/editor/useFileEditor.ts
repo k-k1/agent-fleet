@@ -55,7 +55,7 @@ interface InitialEditableFile {
 const isCleanForFollow = (model: FileEditorModel): boolean =>
   !model.dirty && CLEAN_PHASES.includes(model.phase);
 
-// 提案リクエストの識別子（docs/44 §4.1 requestId）。応答の合成先を特定できれば
+// 提案リクエストの識別子（docs/log/44 §4.1 requestId）。応答の合成先を特定できれば
 // よいので、セッション内で単調なカウンタで足りる。
 let suggestSeq = 0;
 
@@ -326,7 +326,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     }
   }, [setModel]);
 
-  // Clean auto-follow (docs/44 §7.4): the probe saw a new disk revision and the
+  // Clean auto-follow (docs/log/44 §7.4): the probe saw a new disk revision and the
   // buffer holds no edits, so fetch the full body and rebuild the model on it.
   // Returns the fetched file when the model actually followed, so the caller
   // can refresh its own copy of the pane data from the same response.
@@ -366,7 +366,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     }
   }, [setModel]);
 
-  // Route one probe observation into the model (docs/44 §7.3–§7.5). Advisory
+  // Route one probe observation into the model (docs/log/44 §7.3–§7.5). Advisory
   // by contract: apart from the clean auto-follow, the phase never moves.
   const applyProbeResult = useCallback(
     async (result: FileProbeResult): Promise<EditableFile | null> => {
@@ -405,7 +405,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     [followExternalChange, setModel],
   );
 
-  // The dirty-side "差分を確認" action (docs/44 §7.3): the user asks to see the
+  // The dirty-side "差分を確認" action (docs/log/44 §7.3): the user asks to see the
   // external change, so fetch the body and open the ordinary conflict UI. This
   // explicit action — never the probe itself — is what may create Conflict.
   const confirmExternalChange = useCallback(async (): Promise<void> => {
@@ -433,7 +433,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     }
   }, [setModel]);
 
-  // --- AI 変更提案（docs/44 §4 / Phase 4） ---
+  // --- AI 変更提案（docs/log/44 §4 / Phase 4） ---
 
   const [suggesting, setSuggesting] = useState(false);
   const suggestReqRef = useRef<string | null>(null);
@@ -506,7 +506,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     setSuggesting(false);
   }, []);
 
-  /** 提案をバッファへ適用する（docs/44 §4.3: PUT は呼ばない）。applyToView が
+  /** 提案をバッファへ適用する（docs/log/44 §4.3: PUT は呼ばない）。applyToView が
    *  与えられ true を返した場合は CodeMirror の範囲 transaction（undo 1ステップ・
    *  validator 通過済み）→ onChange → editBuffer が本文を進めるので、ここでは提案の
    *  退役だけを行う。編集面が無いときは model 側で適用し content 同期に任せる。
@@ -532,7 +532,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     [setModel],
   );
 
-  /** 提案を破棄する。バッファは変更しない（docs/44 §1.3）。 */
+  /** 提案を破棄する。バッファは変更しない（docs/log/44 §1.3）。 */
   const rejectSuggestion = useCallback(() => {
     const current = modelRef.current;
     if (current?.suggestion) setModel(setSuggestion(current, null));

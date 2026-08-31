@@ -1,4 +1,4 @@
-// Schedules Console endpoints (docs/38 P5). Member-scoped face of the CP scheduleAPI —
+// Schedules Console endpoints (docs/log/38 P5). Member-scoped face of the CP scheduleAPI —
 // read + manage only; create/edit stay on the operator MCP because a schedule is authored
 // from natural language the operator translates to a cron spec (routes.go registerSchedule
 // Routes). The tenant header rides every request via the global fetch wrapper (client.ts),

@@ -1,6 +1,6 @@
 package claude
 
-// 配達検証（docs/38）の一次記録チェック: 「snapshot 以降に user ターンが追記された」
+// 配達検証（docs/log/38）の一次記録チェック: 「snapshot 以降に user ターンが追記された」
 // だけを真とし、既存の user 行・assistant 行の追記・別 sid では偽のままであること。
 
 import (

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Admin API for tenant-defined login providers (docs/61 §61.11.6 + ADR0043 決定 30).
+// Admin API for tenant-defined login providers (docs/log/61 §61.11.6 + ADR0043 決定 30).
 //
 // The split of powers IS the feature, so it is worth stating in one place:
 //
@@ -21,14 +21,14 @@ import (
 //	               declare who somebody is, and both user_key and the deployment role
 //	               are keyed by email across the WHOLE deployment — so an admin who
 //	               could activate their own issuer could assert the operator's address
-//	               and take the deployment (docs/61 §61.11.2).
+//	               and take the deployment (docs/log/61 §61.11.2).
 //
 // Suspending is open to the tenant_admin as well: stopping is always allowed to be
 // faster than starting.
 type tenantIdPAPI struct {
 	memberAuth
 	// provs is the env-defined set, for one question only: does the issuer being
-	// registered already have a door on this deployment (docs/61 §61.17.4 (b))?
+	// registered already have a door on this deployment (docs/log/61 §61.17.4 (b))?
 	// A tenant registering a second app registration of the SAME directory the
 	// deployment itself uses is the commonest form of that, and the DB rows alone
 	// would not see it.
@@ -48,7 +48,7 @@ type tenantIdPBody struct {
 	LabelJA string `json:"label_ja,omitempty"`
 	LabelEN string `json:"label_en,omitempty"`
 	// Kind is "oidc" (default) or "github". It decides which of the fields below the
-	// form even shows, and which ones this API requires (docs/61 §61.15).
+	// form even shows, and which ones this API requires (docs/log/61 §61.15).
 	Kind           string `json:"kind,omitempty"`
 	Issuer         string `json:"issuer"`
 	ClientID       string `json:"client_id"`
@@ -58,7 +58,7 @@ type tenantIdPBody struct {
 	AllowedDomains string `json:"allowed_domains"`
 	AllowedOrgs    string `json:"allowed_orgs,omitempty"`
 	// LinkClaim names the stable claim rule 1.5 matches on when the issuer's `sub` is
-	// pairwise (docs/61 §61.15.10). Only the names in tenantLinkClaims are accepted.
+	// pairwise (docs/log/61 §61.15.10). Only the names in tenantLinkClaims are accepted.
 	LinkClaim string `json:"link_claim,omitempty"`
 	// Read-only fields.
 	ProviderID string `json:"provider_id,omitempty"`
@@ -114,7 +114,7 @@ func (a tenantIdPAPI) list(w http.ResponseWriter, r *http.Request) {
 }
 
 // queue (GET /api/admin/idp) — the super_admin approval queue across every tenant
-// (docs/61 §61.11.6). Pending rows come first: that is the list somebody is waiting on.
+// (docs/log/61 §61.11.6). Pending rows come first: that is the list somebody is waiting on.
 func (a tenantIdPAPI) queue(w http.ResponseWriter, r *http.Request, _ Identity) {
 	rows, tenants, err := a.mgr.store.ListAllTenantIdPs(r.Context())
 	if err != nil {
@@ -169,7 +169,7 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 	orgs := splitCSVLower(b.AllowedOrgs)
 	// ★ github rows do not carry an issuer or a trust rule from the form: there is
 	// exactly one GitHub and its email rule is fixed (trust=api, the verified flag on
-	// /user/emails — docs/61 §61.4). Writing them here rather than leaving them blank
+	// /user/emails — docs/log/61 §61.4). Writing them here rather than leaving them blank
 	// keeps every row readable in the register and in the audit line, where "which
 	// identity source" is the question being asked (§61.15).
 	// ★ link_claim goes the same way for a github row: the GitHub adapter's subject is
@@ -289,7 +289,7 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 // people to avoid rotating.
 // ★ For a github row the approval rests on a different pair — (allowed_orgs,
 // allowed_domains) instead of (issuer, allowed_domains) — because github.com is one
-// issuer shared by every tenant (docs/61 §61.15 + 決定 34). So ADDING an org repends:
+// issuer shared by every tenant (docs/log/61 §61.15 + 決定 34). So ADDING an org repends:
 // the approver said "the members of these organizations", and another organization
 // is another set of people they never saw. Removing one does not, for the same
 // reason narrowing the domains does not.
@@ -303,7 +303,7 @@ func repend(old, next TenantIdP) bool {
 	if old.Kind != next.Kind {
 		return true
 	}
-	// ★ link_claim too (docs/61 §61.15.10). It does not change WHO may sign in, so it
+	// ★ link_claim too (docs/log/61 §61.15.10). It does not change WHO may sign in, so it
 	// is easy to read as cosmetic — but it changes WHERE a login LANDS: rule 1.5 joins
 	// on it, so an existing account can be reached through a button that could not
 	// reach it before. That is the approver's business, exactly like the issuer.
@@ -382,7 +382,7 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// ★ Stopping a method that is somebody's ONLY door locks them out (docs/61
+	// ★ Stopping a method that is somebody's ONLY door locks them out (docs/log/61
 	// §61.17.4 の順序). The commonest way to get here is the migration this whole
 	// section is about: a second app registration goes live, and the old row is
 	// suspended before everyone has linked the new one — and after that they cannot
@@ -501,7 +501,7 @@ func (a tenantIdPAPI) checkDomainsUnclaimed(r *http.Request, tenantID, rowID str
 
 // checkPairwiseNeedsLinkClaim refuses a SECOND app registration of a directory whose
 // `sub` is pairwise, unless the row says which stable claim identifies the person
-// (docs/61 §61.17.4 (b) + 決定 41).
+// (docs/log/61 §61.17.4 (b) + 決定 41).
 //
 // The situation it catches: a tenant registers its own Entra app for a directory this
 // deployment already has a door to. Entra mints a per-client `sub`, so the same person
@@ -580,7 +580,7 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 	case tenantIdPKindGitHub:
 		// ★ The org list carries the whole weight an issuer carries for OIDC. github.com
 		// is one issuer for every tenant on earth, so "which organization vouches for
-		// this person" is what makes the login mean anything (docs/61 §61.15 + 決定 34),
+		// this person" is what makes the login mean anything (docs/log/61 §61.15 + 決定 34),
 		// and it is the same rule the env path enforces by disabling GitHub outright
 		// when AF_GITHUB_ALLOWED_ORGS is empty (§61.3).
 		if len(orgs) == 0 {
@@ -617,7 +617,7 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 		return &apiError{http.StatusBadRequest, "bad_request", "client_id is required"}
 	}
 	// ★ The whitelist, and the save-time half of the pair buildTenantProvider enforces
-	// at runtime (docs/61 §61.15.10). `oid` is a per-directory object id nobody can
+	// at runtime (docs/log/61 §61.15.10). `oid` is a per-directory object id nobody can
 	// choose; `email` / `upn` / `preferred_username` are ASSERTED, and a tenant that
 	// could name one would have an email join inside a shared realm — the takeover
 	// rule 2' refuses, arriving through another door.
@@ -632,7 +632,7 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 		return &apiError{http.StatusBadRequest, "tenant_idp_trust_invalid",
 			"trust must be " + trustEmailVerified + " (the IdP asserts email_verified) or " + trustIssuer + " (the issuer is pinned to one tenant)"}
 	}
-	// ★ allowed_domains is REQUIRED — the answer to docs/61 §61.14's open question.
+	// ★ allowed_domains is REQUIRED — the answer to docs/log/61 §61.14's open question.
 	// A tenant-defined provider does not fall back to the deployment allowlist (決定
 	// 32-3), so an empty list is not "everyone" but "nobody", and an approval that
 	// admits nobody is worse than a refusal: it looks finished. Requiring it also

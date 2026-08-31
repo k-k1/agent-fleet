@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Scheduled execution P2 (docs/38 + ADR0021): the real scheduleFirer that turns a
+// Scheduled execution P2 (docs/log/38 + ADR0021): the real scheduleFirer that turns a
 // due schedule into a running session. It fills the seam P1 left behind logFirer.
 //
 // Flow per fire:
@@ -25,7 +25,7 @@ import (
 //     under the just-woken session (★1), released after a settle window.
 //  4. wait for the Agent to become reachable, then inject a session via the Agent's
 //     create_session REST (POST /sessions) with report_to + a deterministic idempotency
-//     key. Completion rides docs/30 back to the operator conversation — no new report path.
+//     key. Completion rides docs/log/30 back to the operator conversation — no new report path.
 //
 // Deferred to later phases (kept explicit so the seam is honest): jitter / wake
 // concurrency caps / rate-limit pre-checks / unattended-failure reporting are P4; the
@@ -132,7 +132,7 @@ func (f *wakeFirer) fire(ctx context.Context, sch Schedule, slot time.Time) (str
 		_ = f.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 		_ = f.mgr.touchWorkspace(ctx, res.ws.ID)
 	}
-	// session_mode=assistant (docs/38 アシスタント発火): run one assistant-chat turn
+	// session_mode=assistant (docs/log/38 アシスタント発火): run one assistant-chat turn
 	// instead of driving a session.
 	if sch.SessionMode == "assistant" {
 		return f.fireAssistant(ctx, res, sch, slot)
@@ -267,7 +267,7 @@ func scheduleSource(sch Schedule) string {
 	return "schedule"
 }
 
-// scheduleReportTo is the docs/30 report_to target for a fire: the owner conversation
+// scheduleReportTo is the docs/log/30 report_to target for a fire: the owner conversation
 // when the schedule opted into completion reports (report=true), empty otherwise — an
 // empty report_to disables the report obligation on the Agent side, so the default is
 // a silent fire (the run history / failure notifications still surface it).
@@ -296,7 +296,7 @@ func buildInjectBody(sch Schedule, slot time.Time) []byte {
 		"driver":          injectDriver(kind),
 		"report_to":       scheduleReportTo(sch),
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
-		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/38)
+		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/log/38)
 	}
 	b, _ := json.Marshal(body)
 	return b

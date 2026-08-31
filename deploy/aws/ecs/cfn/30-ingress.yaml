@@ -34,7 +34,7 @@ Parameters:
     Description: >-
       Default Fargate CPU units for a workspace task (1024 = 1 vCPU). Valid values are
       256/512/1024/2048/4096/8192/16384 — Fargate accepts only specific (cpu, memory)
-      pairs (docs/63 §63.2). Per-user overrides are set in the Console and are snapped
+      pairs (docs/log/63 §63.2). Per-user overrides are set in the Console and are snapped
       onto a valid pair, so this is only the floor everyone starts from.
   WsTaskMemory:
     Type: String
@@ -65,7 +65,7 @@ Parameters:
     Description: >-
       Which Runtime adapter the Control Plane uses. `ecs` = Fargate (the shipped
       default: two resources per workspace, ~105s to start, home on EFS). `ecs-ec2` =
-      a pool of EC2 slots with a persistent per-user EBS home (docs/64 §64.12/§64.17,
+      a pool of EC2 slots with a persistent per-user EBS home (docs/log/64 §64.12/§64.17,
       ADR 0045 決定 10/12). Switch for I/O and persistence (small-file writes 8-30x faster
       than EFS, a home that survives) and for sizes above Fargate's ceilings — NOT for
       start latency: measured 43-110s against Fargate's ~105s. The price is six resource
@@ -91,7 +91,7 @@ Parameters:
       omitting it just omits the label (ADR 0045 決定 21 — asking EC2 instead would
       mean an extra IAM action for a label).
 
-      Two shapes, and the old one is not deprecated (docs/70 §70.4.2):
+      Two shapes, and the old one is not deprecated (docs/log/70 §70.4.2):
 
         instanceType:memoryMiB[:vcpu],…                one unnamed class, x86_64
         id|label|arch|<ladder>[;id|label|arch|<ladder>] one class per entry
@@ -138,7 +138,7 @@ Parameters:
       ⚠️ Adding a class moves nobody: Ec2DefaultSlotClass still decides where a member
       with no choice of their own lands. Changing the class of a member who already has
       a home makes their next start reinstall its architecture-dependent tools
-      (docs/70 §70.5) — that is expected, and it costs them one slow start.
+      (docs/log/70 §70.5) — that is expected, and it costs them one slow start.
   Ec2SlotAmiArm64:
     Type: String
     Default: ""
@@ -170,7 +170,7 @@ Parameters:
       it. "auto" = a fifth of the rung, clamped to 1-2 GiB: an 8 GiB slot's workspace is
       capped at 6.4 GiB, and the Console prints that number with the box beside it.
       "off" = uncapped, which is what every deployment did before this existed — and what
-      melted a live slot on 2026-08-27 (docs/64 section 64.40): one workspace took enough
+      melted a live slot on 2026-08-27 (docs/log/64 section 64.40): one workspace took enough
       anonymous memory that the kernel evicted all page cache, every daemon spent hours
       re-reading its own executable off disk, and the box stopped answering the cluster
       while still looking healthy to EC2. A plain number is that many MiB.
@@ -193,7 +193,7 @@ Parameters:
       "the same user gets the same slot"), and a slot holding NO home at all, freed by an
       eviction, a size/class change, a Destroy, or the golden bake. No warm spare is kept:
       an empty RUNNING slot saves the next arrival ~67s and costs a full instance-hour,
-      and this deployment keeps the box STOPPED instead (docs/64 §64.31).
+      and this deployment keeps the box STOPPED instead (docs/log/64 §64.31).
       Set 0 to keep every slot running forever (fastest returns, highest bill).
   Ec2SlotTerminateAfterSec:
     Type: String
@@ -206,7 +206,7 @@ Parameters:
       therefore also signs you up for Ec2MaxSlots x SlotRootVolumeGiB of gp3, permanently
       and whether or not anybody is working -- 30 x 40 GiB x $0.096/GB-month is ~$115 a
       month of stopped boxes. Measured on a live deployment; the only cure was terminating
-      them by hand (docs/64 section 64.32).
+      them by hand (docs/log/64 section 64.32).
       What it costs your users: 25 seconds, once, and only for the first arrival after the
       box is gone. Waking a dormant box that still holds its owner's home is 110s; building
       a new one from scratch is 135s. The image cache on the root volume saves the 32s cold
@@ -324,7 +324,7 @@ Parameters:
     Default: x86_64
     AllowedValues: [ x86_64, arm64 ]
     Description: >-
-      Which CPU architecture the Control Plane's own Fargate task runs on (docs/72).
+      Which CPU architecture the Control Plane's own Fargate task runs on (docs/log/72).
       arm64 = AWS Graviton: same task sizes, ~20% cheaper per vCPU-hour, and Service
       Connect works on it (AWS added Fargate/Graviton support to Service Connect in
       December 2022). Fargate platform version 1.4.0 or later is required, which
@@ -369,7 +369,7 @@ Parameters:
       Enable an OIDC IdP (Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab)
       under this id — UPPERCASE, e.g. ENTRA (it names the AF_OIDC_<ID>_* env). Empty
       = Google only. Its client secret must exist at <SsmPrefix>/oidc-client-secret.
-      docs/61.
+      docs/log/61.
   OidcIssuer:
     Type: String
     Default: ""
@@ -412,12 +412,12 @@ Parameters:
       must exist at <SsmPrefix>/github-client-secret, and the app needs the
       redirect URI https://<Fqdn>/oauth2/callback. ★ If the org restricts
       third-party OAuth apps, an org owner must approve the app or everyone is
-      rejected. docs/61 §61.7.
+      rejected. docs/log/61 §61.7.
   GithubClientId:
     Type: String
     Default: ""
     Description: GITHUB_OAUTH_CLIENT_ID (not secret; the secret comes from SSM). Sign-in
-      only since docs/71 — the Console's GitHub "Connect" button reads the OAuth app the
+      only since docs/log/71 — the Console's GitHub "Connect" button reads the OAuth app the
       TENANT registered (Tenant settings -> Integrations), not this one.
   GithubAllowedDomains:
     Type: String
@@ -478,7 +478,7 @@ Conditions:
   HasOidc: !Not [ !Equals [ !Ref OidcProviderId, "" ] ]
   # The org list, not the client id — historically GITHUB_OAUTH_CLIENT_ID also drove
   # the Console's git-connect device flow, which many deployments set without wanting a
-  # login. That flow reads the tenant's own app since docs/71, but the switch stays the
+  # login. That flow reads the tenant's own app since docs/log/71, but the switch stays the
   # org list: it is the thing that authorizes the sign-in.
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
@@ -507,7 +507,7 @@ Resources:
         - Fn::ImportValue: !Sub "${NetworkStackName}-AlbSgId"
       # Spelled out at the AWS default (60s) rather than left implicit: it is the
       # hard ceiling on every CP request, and a handler that outran it is what
-      # turned a cold workspace Start into a 504 (docs/62 §62.5). The CP now
+      # turned a cold workspace Start into a 504 (docs/log/62 §62.5). The CP now
       # answers Start immediately and reports convergence through GET
       # /api/workspace, so raise this only for a NEW long-poll — never to let a
       # handler block longer.
@@ -660,14 +660,14 @@ Resources:
       NetworkMode: awsvpc
       Cpu: !Ref CpCpu
       Memory: !Ref CpMemory
-      # Declared, not inferred (docs/72). Fargate defaults an omitted cpuArchitecture
+      # Declared, not inferred (docs/log/72). Fargate defaults an omitted cpuArchitecture
       # to X86_64 — which is why leaving this out has worked so far — but that default
       # is applied when the TASK STARTS, not when the definition is registered, so
       # `describe-task-definition` shows runtimePlatform: null and the architecture the
       # CP actually runs on is nowhere in the template. Stating it also makes the value
       # part of the definition's identity, so switching CpArch produces a new revision
       # and a rolling deployment rather than a no-op.
-      # ⚠️ EC2 does NOT share this default (docs/70 §70.8): there an omitted
+      # ⚠️ EC2 does NOT share this default (docs/log/70 §70.8): there an omitted
       # runtimePlatform stays null and placement decides. Only Fargate fills it in.
       RuntimePlatform:
         CpuArchitecture: !Ref CpArch
@@ -702,7 +702,7 @@ Resources:
             # to be TOLD, because it cannot tell — without this, r.RemoteAddr is the load
             # balancer and every request looks like it comes from the same private
             # address. That is what a tenant's source-network restriction is matched
-            # against (docs/66, ADR 0047 決定 2), so a wrong value here is either "the
+            # against (docs/log/66, ADR 0047 決定 2), so a wrong value here is either "the
             # rule never matches anyone" or "the rule matches everyone".
             - { Name: AF_TRUSTED_PROXY_HOPS, Value: "1" }
             - { Name: AUTH, Value: !Ref AuthMode }
@@ -716,7 +716,7 @@ Resources:
             - { Name: AF_OAUTH_ALLOWED_DOMAINS, Value: !Ref AllowedDomains }
             - { Name: SUPER_ADMIN_EMAILS, Value: !Ref SuperAdminEmails }
             - { Name: AF_PROVISION, Value: !Ref AfProvision }
-            # Generic OIDC IdP (docs/61). The redirect URI stays the single
+            # Generic OIDC IdP (docs/log/61). The redirect URI stays the single
             # https://<Fqdn>/oauth2/callback whether or not this is enabled.
             - { Name: AF_OIDC_PROVIDERS, Value: !Ref OidcProviderId }
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_ISSUER", Value: !Ref OidcIssuer }, !Ref "AWS::NoValue" ]
@@ -725,17 +725,17 @@ Resources:
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_ALLOWED_TIDS", Value: !Ref OidcAllowedTids }, !Ref "AWS::NoValue" ]
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_JA", Value: !Ref OidcLabelJa }, !Ref "AWS::NoValue" ]
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_EN", Value: !Ref OidcLabelEn }, !Ref "AWS::NoValue" ]
-            # GitHub sign-in (docs/61 §61.7).
+            # GitHub sign-in (docs/log/61 §61.7).
             - { Name: GITHUB_OAUTH_CLIENT_ID, Value: !Ref GithubClientId }
             - { Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs }
             - { Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains }
             # ★ No BITBUCKET_OAUTH_* and no workspace GITHUB_OAUTH_CLIENT_ID: the git
-            # providers' OAuth apps are per-tenant rows since docs/71, registered in the
+            # providers' OAuth apps are per-tenant rows since docs/log/71, registered in the
             # Console under Tenant settings -> Integrations -> Git provider OAuth. The CP
             # still owns the Bitbucket callback and derives it from PUBLIC_BASE_URL above.
             # AF_RUNTIME=ecs = the P3-7 stage-2 adapter (Fargate). AF_RUNTIME=ecs-ec2
             # keeps the same substrate but puts workspaces on a pool of EC2 slots with a
-            # persistent per-user EBS home (docs/64, ADR 0045 決定 10) — deploy the
+            # persistent per-user EBS home (docs/log/64, ADR 0045 決定 10) — deploy the
             # 40-ec2-pool stack and set WsRuntime=ecs-ec2 + Ec2SlotLaunchTemplate.
             # Rolling back is this one parameter. The AF_ECS_* below are shared by both.
             - { Name: AF_RUNTIME, Value: !Ref WsRuntime }

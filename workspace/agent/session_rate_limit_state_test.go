@@ -2,7 +2,7 @@ package main
 
 // 利用上限メニュー（claude の /rate-limit-options）に貼り付いたセッションが
 // 「進行中」ではなく blocked として読まれること — 実ペインを隔離 tmux サーバに立てて
-// driveState をそのまま走らせる（docs/47 §4-3）。
+// driveState をそのまま走らせる（docs/log/47 §4-3）。
 //
 // 判定そのもの（フレーム → 真偽）は internal/tmuxx のゴールデンコーパスが押さえている。
 // ここで見るのは配線の側: capture → 分類 → 自己修復 → 返す状態、という経路が claude の
@@ -56,7 +56,7 @@ func isolateAgentState(t *testing.T) {
 	// status ストアは HOME 直下（paths.AgentConfigDir）— 実フリートのマーカーを書かない。
 	t.Setenv("HOME", t.TempDir())
 	// claude の設定/資格情報も隔離する。HOME だけでは足りない: このコンテナでは
-	// CLAUDE_CONFIG_DIR が実フリートの木を指しているので、状態判定（認証切れ・docs/47
+	// CLAUDE_CONFIG_DIR が実フリートの木を指しているので、状態判定（認証切れ・docs/log/47
 	// §4-8）が実際のログイン期限に左右されてしまう。
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	// 専用ソケットに対してのみ kill-server が許される（dev/04 §4.11）。

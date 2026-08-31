@@ -88,7 +88,7 @@ describe("workspace store restart", () => {
 });
 
 // 収束しない `starting` から抜ける導線を固定する。ECS でタスクが配置できないと
-// desired=1/running=0 のまま State() が永久に "starting" を返す（実測・docs/70
+// desired=1/running=0 のまま State() が永久に "starting" を返す（実測・docs/log/70
 // §70.14.6）。電源トグルが running のときしか停止を出さないと、その状態で UI から
 // 出せる操作が「起動」だけになり、CP は starting の Start を no-op で捨てるので
 // **Console から停止する手段が一つも無くなる**。

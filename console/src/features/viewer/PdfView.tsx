@@ -1,4 +1,4 @@
-// PdfView — PDF をペインの中で読む面（docs/82）。
+// PdfView — PDF をペインの中で読む面（docs/log/82）。
 //
 // codeleaf の `PdfViewer`（Android の PdfRenderer・同時 1 ページ・Mutex で直列化・
 // −/＋ で 1〜3 倍）を Web に写したもの。描くのは pdf.js、直列化は下の描画キュー、

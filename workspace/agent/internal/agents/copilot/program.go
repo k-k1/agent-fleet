@@ -34,19 +34,19 @@ func configPath() string { return filepath.Join(Home(), "config.json") }
 func sessionStateDir(sid string) string { return filepath.Join(Home(), "session-state", sid) }
 
 // EventsPath is the session's events.jsonl — the transcript/state source shared
-// by every mode (TUI / -p / ACP managed) — docs/36 実測記録.
+// by every mode (TUI / -p / ACP managed) — docs/log/36 実測記録.
 func EventsPath(sid string) string { return filepath.Join(sessionStateDir(sid), "events.jsonl") }
 
 // defaultFlags is the fleet-standard permission/privacy posture:
 //   - --allow-all: fleet 既定の bypass 相当（claude の skip-permissions と同格）。
 //   - --no-remote --no-remote-export: セッションの GitHub 同期とリモート操縦は
-//     既定オフ（会話のフリート外流出と二重操縦を防ぐ — docs/36 契約）。
+//     既定オフ（会話のフリート外流出と二重操縦を防ぐ — docs/log/36 契約）。
 const defaultFlags = "--allow-all --no-remote --no-remote-export"
 
 // buildProgram returns the tmux pane program for a copilot session. Auth is
 // ambient（gh 透過認証のトークンを copilot 自身が拾う — 実測）なのでトークンは
 // 注入しない。--session-id は新規作成と resume の両方を同じ形でまかなう。
-// bypass=false は「権限確認をスキップしない」（docs/76 の利用者選択、または plan 起動）。
+// bypass=false は「権限確認をスキップしない」（docs/log/76 の利用者選択、または plan 起動）。
 // 外すのは --allow-all だけ。--no-remote / --no-remote-export（会話のフリート外流出と
 // 二重操縦の防止）は権限確認とは別軸なので必ず残す。
 func buildProgram(model, effort, mode, sid string, bypass bool) string {

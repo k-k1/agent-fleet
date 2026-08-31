@@ -7,7 +7,7 @@
 // 同じホストに載っている構成でしか成立しない**読み方である。ECS（Fargate も
 // `ecs-ec2` も）では CP タスクに docker バイナリも対象の cgroup も無いので、
 // メモリ / CPU / ディスクが 3 つとも取れず、メンバー詳細のタイルが「–」のまま
-// だった（docs/63 §63.9）。
+// だった（docs/log/63 §63.9）。
 //
 // コンテナの中からなら話は逆で、`/sys/fs/cgroup` は cgroup 名前空間で自分自身に
 // 張り替えられているため、**ランタイムが何であれ**同じ 2 ファイルを読むだけで
@@ -240,7 +240,7 @@ func readUsageUsec() (uint64, bool) {
 // の大きさを知る唯一の手段だったからで、木が大きいほど高くつく（だから CP 側は
 // 60 秒キャッシュしている）。コンテナの中では home は自分のボリュームなので、
 // statfs 1 発で使用量も容量も分かる。`ecs-ec2` では home = 永続 EBS なので、
-// この 2 つは**まさに知りたい数字そのもの**になる（docs/64）。
+// この 2 つは**まさに知りたい数字そのもの**になる（docs/log/64）。
 func homeUsage() (used, total uint64, ok bool) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(paths.HomeDir(), &st); err != nil {

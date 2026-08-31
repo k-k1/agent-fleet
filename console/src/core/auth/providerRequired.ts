@@ -1,5 +1,5 @@
 // providerRequired — a module-level latch for "this tenant needs a different
-// sign-in method" (docs/61 §61.9.4 + ADR0043 決定 18).
+// sign-in method" (docs/log/61 §61.9.4 + ADR0043 決定 18).
 //
 // A session carries exactly ONE identity provider, deliberately: letting a cookie
 // hold several would turn it into a set of authorization states and make expiry
@@ -64,7 +64,7 @@ export function subscribeProviderRequired(fn: (p: ProviderRequired) => void): ()
 // reloginForTenant sends the browser to the CP login for a specific tenant and
 // provider, carrying ?next= so the person lands back where they were. When the
 // server named no provider we fall back to the tenant's own login page, which
-// shows exactly the buttons that tenant accepts (docs/61 §61.9.3).
+// shows exactly the buttons that tenant accepts (docs/log/61 §61.9.3).
 export function reloginForTenant(p: ProviderRequired): void {
   const next = location.pathname + location.search;
   if (!p.provider) {

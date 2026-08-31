@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { setLocale } from "../../lib/i18n/index.ts";
 import { reportText } from "./report.ts";
 
-// docs/28 P6: 報告カードは「事実」だけをカタログから描く。オペレーターへの行動指示
+// docs/log/28 P6: 報告カードは「事実」だけをカタログから描く。オペレーターへの行動指示
 // （get_session_output で…）は Agent 側でプロンプトを組むときに生成されるので、
 // ここに現れてはいけない — 現れたら「訳すと指示文まで変わる」元の状態に戻っている。
-describe("reportText (docs/28 P6)", () => {
+describe("reportText (docs/log/28 P6)", () => {
   beforeEach(() => setLocale("ja"));
   afterEach(() => setLocale("ja"));
 

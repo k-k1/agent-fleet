@@ -93,7 +93,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 }));
 
 /** Poll every 4s while the tab is visible AND the workspace is running — a
- * stopped/booting agent only 502s, so polling it is pure waste (docs/35 §35.9-9).
+ * stopped/booting agent only 502s, so polling it is pure waste (docs/log/35 §35.9-9).
  * The running edge is picked up on the next tick (and wireWorkspaceRefresh fires
  * an immediate refetch). Skipped while the push channel covers this stream
  * (api/events — the poll is the fallback). Returns cleanup (StrictMode-safe). */

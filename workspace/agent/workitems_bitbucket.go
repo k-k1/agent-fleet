@@ -12,7 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// Bitbucket pull requests as work items (docs/80 §80.19 / ADR 0061 決定 17〜19).
+// Bitbucket pull requests as work items (docs/log/80 §80.19 / ADR 0061 決定 17〜19).
 //
 // The third fetch adapter, and the first one that could NOT keep "one saved query = one
 // provider search" for free: Bitbucket Cloud has no account-wide issue/PR search the way
@@ -29,7 +29,7 @@ import (
 //
 // ⚠️ No Bitbucket account exists in this workspace or in CI. What IS pinned here is
 // measured against the real api.bitbucket.org through its PUBLIC repositories
-// (docs/80 §80.19.2): the response shape, `q` overriding the implicit state=OPEN default,
+// (docs/log/80 §80.19.2): the response shape, `q` overriding the implicit state=OPEN default,
 // `sort=-updated_on`, `fields=` projection, and the 400 body for a bad filter. The
 // authenticated halves — the workspace endpoint, the `pullrequest` scope refusal — are
 // stubbed, and saying which is which is the point of that section.
@@ -154,7 +154,7 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 // connection made for cloning does not have it — the member's own credential is fine and
 // re-pasting it changes nothing. So the message names the missing permission and who can
 // add it, instead of the generic "re-connect" that would send them round a loop
-// (docs/80 §80.19.3).
+// (docs/log/80 §80.19.3).
 func bitbucketWorkItemError(status int, body []byte, q bitbucketWorkItemQuery) error {
 	text := bitbucketErrText(body)
 	switch status {
@@ -224,10 +224,10 @@ func parseBitbucketPullRequests(body []byte, queryID string) ([]workItemOut, err
 			// ★ 担当者の欄には作者を入れる。Bitbucket の PR に担当者は無く、レビュー待ちの
 			// 一覧で「誰の PR か」は行ごとに違う唯一の情報だからである。自分の PR だけを
 			// 並べたクエリでは全行同じ値になるので、uniformMeta が自動的に落とす
-			// （docs/80 §80.18.2）。
+			// （docs/log/80 §80.18.2）。
 			Assignee: firstNonEmpty(pr.Author.DisplayName, pr.Author.Nickname),
 			// Bitbucket の PR にラベルは無い。⚠️ nil スライスは JSON の null になり、
-			// Console が配列として扱えず真っ白になる（docs/80 §80.17.5）。
+			// Console が配列として扱えず真っ白になる（docs/log/80 §80.17.5）。
 			Labels: []string{},
 			Repo:   repo, UpdatedAt: bitbucketTimeToRFC3339(pr.UpdatedOn),
 		})

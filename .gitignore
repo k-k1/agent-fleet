@@ -30,3 +30,7 @@ control-plane/control-plane
 # compiled agent binary (built into image, never committed)
 workspace/agent/agent
 /tmp/af-cp
+
+# Python bytecode cache. scripts/docs-check.py は import されると生成する。
+__pycache__/
+*.pyc

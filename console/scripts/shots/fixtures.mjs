@@ -375,7 +375,7 @@ export function scmStatus(locale, repo) {
   return { branch: r?.branch || "main", ahead: r?.ahead || 0, behind: r?.behind || 0 };
 }
 
-// 変更ファイル帯（docs/68）: the files the session's agent edited, as the Agent aggregates
+// 変更ファイル帯（docs/log/68）: the files the session's agent edited, as the Agent aggregates
 // them. Deliberately overlaps `changes()` above only in part — the point of the strip is
 // that the transcript's list and the working tree's list are DIFFERENT sets:
 //   validate.ts / messages.ts  … edited and still dirty (staged / unstaged)
@@ -398,7 +398,7 @@ export function sessionFiles() {
   ];
 }
 
-// 変更ファイル帯の「コミット済み」(docs/68 P2): PriceLine.tsx は直したあとコミットまで
+// 変更ファイル帯の「コミット済み」(docs/log/68 P2): PriceLine.tsx は直したあとコミットまで
 // 済んでいる —— 作業ツリーには何も残っていないが「取り消された」わけではない、という
 // 区別がこの一覧の要点。
 export function committedFiles() {
@@ -570,7 +570,7 @@ export function conversation(locale, id) {
   return {
     ...meta,
     tools: "af_write",
-    // 作業計画（docs/33 第5段）: 計画のある会話とない会話でヘッダーの見え方が変わるので、
+    // 作業計画（docs/log/33 第5段）: 計画のある会話とない会話でヘッダーの見え方が変わるので、
     // 既定のスレッドには計画を入れておく（チップが塗られた状態＋パネルの本文が見える）。
     plan_updated_at: ms(14),
     plan: ja
@@ -620,11 +620,11 @@ export function assistants(locale) {
   ];
 }
 
-// 作業項目（docs/80）。すべて架空 —— 実在の課題やアカウントは載せない。
+// 作業項目（docs/log/80）。すべて架空 —— 実在の課題やアカウントは載せない。
 // state は正規化後の語彙（open / in_progress / done）、key は "owner/name#n"（GitHub）か
 // "PROJ-123"（Jira）。
 //
-// ⚠️ ここは実データの「形」に寄せてある（docs/80 §80.18）。3 件のスタブで作っていた頃、
+// ⚠️ ここは実データの「形」に寄せてある（docs/log/80 §80.18）。3 件のスタブで作っていた頃、
 // テストも実描画も緑なのに実機は使えなかった —— 41 件が並ぶ圧も、全行が同じ担当者に
 // なることも、3 件では 1 つも再現しないからである。だから Jira 側は
 // **同一担当者・複数プロジェクト・40 件超**で置く。
@@ -690,7 +690,7 @@ export function workItems(locale) {
   const PROJECTS = ["G3M", "RCS", "AAC", "NIS", "LINE"];
   // Bitbucket の 1 行。★ レビュー待ちの PR＝「担当者」の欄には作者が入り、行ごとに
   // 違う（自分の PR を並べたクエリなら全行同じになり uniformMeta が落とす）。
-  // ラベルは Bitbucket の PR に存在しないので常に空（docs/80 §80.19.4）。
+  // ラベルは Bitbucket の PR に存在しないので常に空（docs/log/80 §80.19.4）。
   const bb = (n, key, title, author, over = {}) => ({
     id: "wb" + n,
     queryId: "wq3",
@@ -736,7 +736,7 @@ export function workItems(locale) {
         updatedAt: ago(150),
       }),
       // ★ ラベルの無い行を 1 件混ぜておく。CP が nil スライス（JSON の null）を出して
-      // いた頃、この形が来ると Console 全体が真っ白になった（docs/80 §80.17.5）。消さないこと。
+      // いた頃、この形が来ると Console 全体が真っ白になった（docs/log/80 §80.17.5）。消さないこと。
       it("wi3", "demo/payments-api#77", ja ? "返金の冪等キーを再設計する" : "Redesign the refund idempotency key", {
         labels: null,
         updatedAt: ago(400),
@@ -1142,7 +1142,7 @@ export function cleanupArchives(locale) {
   ];
 }
 
-// --- クラウド費用（docs/67 + ADR 0048）------------------------------------------
+// --- クラウド費用（docs/log/67 + ADR 0048）------------------------------------------
 // ⚠️ 共有が請求の大半を占めるという実測の形をそのまま持たせている。ここを小さくすると
 // ハーネスの画面が「ほとんど個人に紐づく」ように見えて、この機能の一番大事な事実
 // （個人に出る額は全体の一部でしかない）が確認できなくなる。
@@ -1187,7 +1187,7 @@ export const myCloudCost = () => ({
   meta: costMeta(),
 });
 
-// --- 管理のメンバー詳細（docs/67 §67.15）---------------------------------------
+// --- 管理のメンバー詳細（docs/log/67 §67.15）---------------------------------------
 // ⚠️ このドリルダウンはこれまでスタブが 1 本も無く、管理の面は目視で確かめられな
 // かった。DOM テストが全部通っていても目視でしか出ないバグが実際に 2 件あったので、
 // 詳細（リソース → 費用 → セッション）まで描けるところまで足す。

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Slot instance classes — what does the cheaper box actually cost you? (docs/70 §70.3.1)
+# Slot instance classes — what does the cheaper box actually cost you? (docs/log/70 §70.3.1)
 #
 #   AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
 #     deploy/aws/ecs/harness/bench-instance-classes.sh [--types m7i.large,m6g.large] [--ref <git ref>]
@@ -18,7 +18,7 @@
 # ref, on the ECS-optimized AMI a real slot boots.
 #
 # ⚠️ It is NOT run inside the workspace image. It cannot be: the arm64 image does not
-# exist yet (docs/70 P1), and comparing an x86_64 container against a bare arm64 host
+# exist yet (docs/log/70 P1), and comparing an x86_64 container against a bare arm64 host
 # would measure the difference between those two things instead. Node and Go are
 # installed from the same upstream tarballs at the versions the image pins, so the five
 # boxes differ in CPU and nothing else. Once the arm64 image exists, re-run this inside
@@ -31,7 +31,7 @@
 # ## Cost
 #
 # 5 × 2 vCPU on-demand for ~30 minutes is under $1 (ap-northeast-1, measured prices in
-# docs/70 §70.3). The root volumes are billed by the second and go with the instances.
+# docs/log/70 §70.3). The root volumes are billed by the second and go with the instances.
 set -euo pipefail
 
 REGION="${AWS_REGION:-ap-northeast-1}"
@@ -39,7 +39,7 @@ PROFILE_ARG=()
 [ -n "${AWS_PROFILE:-}" ] && PROFILE_ARG=(--profile "$AWS_PROFILE")
 AWS=(aws "${PROFILE_ARG[@]+"${PROFILE_ARG[@]}"}" --region "$REGION")
 
-# The base rung of every ladder in docs/70 §70.3: 2 vCPU / 8 GiB in five families, so
+# The base rung of every ladder in docs/log/70 §70.3: 2 vCPU / 8 GiB in five families, so
 # the only variable is the CPU.
 TYPES="m7i.large,m6i.large,m8g.large,m7g.large,m6g.large"
 # A BRANCH name, not a SHA: `git clone --depth 1 --branch` only accepts a branch or a
@@ -72,7 +72,7 @@ say() { printf '==> %s\n' "$*" >&2; }
 # ⚠️ Armed FIRST and by TAG, not by a list of ids collected as we go. A run that dies
 # between RunInstances and the id being recorded would otherwise leave a box billing
 # forever, and that is precisely the window a benchmark script spends most of its time
-# in (docs/64's live harness learned this the expensive way).
+# in (docs/log/64's live harness learned this the expensive way).
 sweep() {
   local ids
   ids=$("${AWS[@]}" ec2 describe-instances \
@@ -237,7 +237,7 @@ while [ "$pending" -gt 0 ] && [ "$SECONDS" -lt "$deadline" ]; do
 done
 
 echo
-echo "=== docs/70 §70.3.1 — build times by instance family (seconds, lower is better) ==="
+echo "=== docs/log/70 §70.3.1 — build times by instance family (seconds, lower is better) ==="
 echo "ref=$REF region=$REGION"
 for ty in "${TYPE_LIST[@]}"; do
   [ -f "/tmp/bench-$ty.txt" ] || { echo "$ty: no output"; continue; }

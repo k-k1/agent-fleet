@@ -1,16 +1,16 @@
 package opencode
 
-// 指示ファイル（docs/60）の opencode 側 artifact。**フリート方針とユーザー指示で
+// 指示ファイル（docs/log/60）の opencode 側 artifact。**フリート方針とユーザー指示で
 // 置き場が違う**ので、その理由をここに書いておく。
 //
 //   フリート方針 … ~/.config/opencode/AGENTS.md にマーカー合成。
 //                   opencode の global 指示はこのファイル（実測 1.18.18）。
 //   ユーザー指示 … AF 専用ファイルを 1 本置き、opencode.json[c] の `instructions`
 //                   配列にそのパスを足す（実測: 配列のファイルは実際に読まれる）。
-//                   AGENTS.md を触らずに済む＝ docs/60 §60.5-6 の原則どおり。
+//                   AGENTS.md を触らずに済む＝ docs/log/60 §60.5-6 の原則どおり。
 //
 // ⚠️ 実測メモ: バンドルには global 指示として `<home>/.claude/CLAUDE.md` も読む経路が
-// あるが、本環境では読まれなかった（docs/60 §60.4-A）。そちらには**依存しない**。
+// あるが、本環境では読まれなかった（docs/log/60 §60.4-A）。そちらには**依存しない**。
 //
 // opencode は opencode.jsonc と opencode.json の**両方**を読んでマージするので、
 // af はどちらか一方だけを編集する（.jsonc 優先 — mcpreg と同じ規約）。JSON として

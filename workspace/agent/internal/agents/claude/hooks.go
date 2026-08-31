@@ -17,7 +17,7 @@ import (
 // --dangerously-skip-permissions there is no tool-approval QA state, so the two
 // meaningful states are working and idle(=response ready / awaiting input).
 //
-// 状態と pending ペイロードのストア本体は internal/status（docs/23 残① Wave A）;
+// 状態と pending ペイロードのストア本体は internal/status（docs/log/23 残① Wave A）;
 // このファイルは claude settings への hook 配線だけを持つ。session-status
 // サブコマンドの入口（hook stdin の解読）は package main の session_status.go。
 

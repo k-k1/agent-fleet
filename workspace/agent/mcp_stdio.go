@@ -1,6 +1,6 @@
 package main
 
-// Local stdio MCP server (docs/19 Q1). Spawned by the assistant chat's
+// Local stdio MCP server (docs/log/19 Q1). Spawned by the assistant chat's
 // `claude -p --mcp-config` as `workspace-agent mcp-stdio`, it exposes READ-ONLY
 // "Agent Fleet" tools over newline-delimited JSON-RPC 2.0 on stdio. Each tool calls
 // the local Agent's REST (127.0.0.1:<AGENT_ADDR>, AGENT_TOKEN) so the assistant can
@@ -9,7 +9,7 @@ package main
 //
 // Write tools (send_to_session, …) are exposed ONLY when the server is started with
 // --write, which chat.go passes exclusively for conversations whose assistant granted
-// af_write (docs/19 Q2). An af_read conversation's server never advertises or accepts a
+// af_write (docs/log/19 Q2). An af_read conversation's server never advertises or accepts a
 // write tool — the gate is the advertised tool set, not just a permission prompt (the
 // chat runs claude with --dangerously-skip-permissions, so a prompt would not gate).
 
@@ -38,7 +38,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// MCP の版（docs/49 + ADR0032）。2026-07-28 は initialize ハンドシェイクを廃し、版・
+// MCP の版（docs/log/49 + ADR0032）。2026-07-28 は initialize ハンドシェイクを廃し、版・
 // クライアント情報・能力を毎リクエストの `_meta` で運ぶ。この stdio サーバーは元から
 // セッション状態を持たない純粋な switch なので、両方の作法をそのまま受けられる。
 const (
@@ -78,7 +78,7 @@ const mcpSessionOutputTailBytes = 32 << 10
 var mcpWriteEnabled bool
 
 // mcpConvID is the owning conversation's id, passed as `--conv <id>` by chat.go's
-// MCP config (docs/30). create_session / send_to_session forward it as report_to so
+// MCP config (docs/log/30). create_session / send_to_session forward it as report_to so
 // the spawned/steered session reports back to THIS conversation automatically — the
 // link is tool-side plumbing, never something the model has to remember.
 var mcpConvID string
@@ -88,7 +88,7 @@ var mcpConvID string
 // CLAUDE_CODE_SESSION_ID are provider-specific and must never decide AF ownership.
 var mcpSourceSession string
 
-// mcpSelfReportOnly serves the SESSION-side server (docs/51 Phase 3 §自己申告
+// mcpSelfReportOnly serves the SESSION-side server (docs/log/51 Phase 3 §自己申告
 // ファストパス): the same stdio loop, with af_report as its base tool.
 // このモードは builtin「af」としてCLIを持つ全 kind のセッション設定へ materialize される
 // （mcpreg/builtin.go）ので、広告するツール集合そのものがスコープの境界になる。
@@ -105,7 +105,7 @@ var mcpSelfReportOnly bool
 var mcpSessionChromiumEnabled bool
 
 // mcpPeerMessagingEnabled adds ONLY the two session-to-session messaging tools to the
-// session-side server (docs/58 / ADR 0041 決定3). Enabled by `--self-report
+// session-side server (docs/log/58 / ADR 0041 決定3). Enabled by `--self-report
 // --peer-messaging`, the same additive shape as --chromium-attach, so `--self-report`
 // alone keeps its historical contract. It is deliberately NOT implied by --write: the
 // operator面 already has send_to_session, and peer messaging carries different rules
@@ -113,10 +113,10 @@ var mcpSessionChromiumEnabled bool
 var mcpPeerMessagingEnabled bool
 
 // runMCPStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
-// Pass --write to additionally expose the write tools (docs/19 Q2 af_write opt-in),
-// or --self-report for the session-side server (docs/51 Phase 3). Combining
+// Pass --write to additionally expose the write tools (docs/log/19 Q2 af_write opt-in),
+// or --self-report for the session-side server (docs/log/51 Phase 3). Combining
 // --self-report with --chromium-attach adds the narrowly scoped Chromium Attach View
-// tools without granting any other read/write tool (docs/53 §53.8).
+// tools without granting any other read/write tool (docs/log/53 §53.8).
 func runMCPStdio(args []string) {
 	mcpWriteEnabled, mcpSelfReportOnly, mcpSessionChromiumEnabled, mcpConvID, mcpSourceSession = false, false, false, "", os.Getenv("AF_SESSION_NAME")
 	mcpPeerMessagingEnabled = false
@@ -323,8 +323,8 @@ func mcpStdioInstructions() string {
 }
 
 // mcpStdioToolList is the advertised tool set. The assistant surface gets read-only
-// tools plus write tools under --write (docs/19 Q2); the session surface gets its
-// explicit narrow set (docs/51 + docs/53).
+// tools plus write tools under --write (docs/log/19 Q2); the session surface gets its
+// explicit narrow set (docs/log/51 + docs/log/53).
 func mcpStdioToolList() []map[string]any {
 	if mcpSelfReportOnly {
 		tools := append([]map[string]any{}, mcpStdioSelfReportTools...)
@@ -362,7 +362,7 @@ func mcpStdioToolAdvertised(name string) bool {
 	return false
 }
 
-// mcpStdioSelfReportTools — the SESSION-side tool set (docs/51 Phase 3): 自分が受けた
+// mcpStdioSelfReportTools — the SESSION-side tool set (docs/log/51 Phase 3): 自分が受けた
 // 指示の完了を1回申告するだけ。報告本文はサーバが組み立てるので、モデルが渡すのは
 // 「どのセッションか」だけ（ADR 0035 決定5: 申告はタイミング信号のみ）。
 var mcpStdioSelfReportTools = []map[string]any{
@@ -399,7 +399,7 @@ var mcpStdioSelfReportTools = []map[string]any{
 	},
 }
 
-// mcpStdioPeerTools — セッション同士のメッセージ（docs/58 / ADR 0041）。`--self-report
+// mcpStdioPeerTools — セッション同士のメッセージ（docs/log/58 / ADR 0041）。`--self-report
 // --peer-messaging` のときだけ広告する。
 //
 // 意図的に持たせていないもの: 相手の出力を読む（get_session_output 相当）、相手を起こす /
@@ -622,7 +622,7 @@ var mcpStdioTools = []map[string]any{
 	},
 	{
 		"name":        "list_schedules",
-		"description": "定時実行スケジュールの一覧を返す（docs/38）。各スケジュールは id / spec_kind(cron|interval|once) / spec / spec_label(登録時の自然言語) / tz / enabled / next_run(次回発火 UTC) / next_run_local(tz でのわかりやすい表記) / last_run / last_status / prompt などを持つ。利用者に「今どんな定時タスクがある?」と聞かれた時や、update_schedule / delete_schedule / pause_schedule / run_schedule_now で対象 id を選ぶ前に呼ぶ。",
+		"description": "定時実行スケジュールの一覧を返す（docs/log/38）。各スケジュールは id / spec_kind(cron|interval|once) / spec / spec_label(登録時の自然言語) / tz / enabled / next_run(次回発火 UTC) / next_run_local(tz でのわかりやすい表記) / last_run / last_status / prompt などを持つ。利用者に「今どんな定時タスクがある?」と聞かれた時や、update_schedule / delete_schedule / pause_schedule / run_schedule_now で対象 id を選ぶ前に呼ぶ。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	},
 	{
@@ -635,7 +635,7 @@ var mcpStdioTools = []map[string]any{
 		},
 	},
 	{
-		// docs/39 P4。export / import は意図して公開しない —— P3 で持ち出しに
+		// docs/log/39 P4。export / import は意図して公開しない —— P3 で持ち出しに
 		// secret スキャン＋本人の明示 ack を課したのに、MCP 経由で「モデルが ack して
 		// ファイルを吐ける」経路を作ると、その防御を迂回する二つ目の出口になる。
 		// 持ち出し／取り込みは Console の本人操作に限る。
@@ -665,7 +665,7 @@ var mcpStdioTools = []map[string]any{
 }
 
 // mcpStdioWriteTools — Agent Fleet write/orchestrate tools, advertised only under --write
-// (docs/19 af_write opt-in): drive tmux sessions (send_to_session) AND consult other
+// (docs/log/19 af_write opt-in): drive tmux sessions (send_to_session) AND consult other
 // assistants (list_assistants / ask_assistant). Consults are advisory-only by construction
 // (the sub-turn runs with no tools), so they can't loop or escalate.
 var mcpStdioWriteTools = []map[string]any{
@@ -797,14 +797,14 @@ var mcpStdioWriteTools = []map[string]any{
 	},
 	{
 		"name": "get_chat_plan",
-		"description": "この会話に固定されている作業計画（docs/33 第5段）を返す。作業計画は要約を通さず**原文のまま**新しいセッションへ毎回引き継がれる枠で、" +
+		"description": "この会話に固定されている作業計画（docs/log/33 第5段）を返す。作業計画は要約を通さず**原文のまま**新しいセッションへ毎回引き継がれる枠で、" +
 			"コンテキスト圧縮で会話の記憶が畳まれても消えない。利用者が Console 側で計画を書き換えていることがあるので、" +
 			"長い作業の再開時や、計画に沿っているか確かめたいときに読むこと（会話履歴を読み直すより安い）。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	},
 	{
 		"name": "set_chat_plan",
-		"description": "この会話の作業計画（docs/33 第5段）を書き換える。**全文置換**なので、まず get_chat_plan で現在の計画を読み、それを土台に変更点だけを反映した全文を渡すこと。" +
+		"description": "この会話の作業計画（docs/log/33 第5段）を書き換える。**全文置換**なので、まず get_chat_plan で現在の計画を読み、それを土台に変更点だけを反映した全文を渡すこと。" +
 			"ここに書いた内容は要約されず、原文のまま以降の新しいセッションへ毎回引き継がれる — つまり『圧縮されても絶対に忘れない場所』。" +
 			"利用者と壁打ちして段取り・担当・順序が決まった直後や、レーンが1つ終わって次の波に進んだときに更新する。" +
 			"書き方は次の3見出しで、**完了した作業を網羅列挙しないこと**（git や課題管理システムを見れば分かることは書かない）:\n" +
@@ -874,7 +874,7 @@ var mcpStdioWriteTools = []map[string]any{
 	},
 	{
 		"name": "create_schedule",
-		"description": "定時実行スケジュールを登録する（docs/38）。指定時刻に、必要なら停止中のワークスペースを起こして新規セッションを起動し、prompt を最初のタスクとして投入する。report=true を指定した時だけ完了報告がこの会話に届く（既定 false=報告しない。実行履歴と失敗通知は report と無関係に残る）。利用者が報告を求めたら report=true にする。" +
+		"description": "定時実行スケジュールを登録する（docs/log/38）。指定時刻に、必要なら停止中のワークスペースを起こして新規セッションを起動し、prompt を最初のタスクとして投入する。report=true を指定した時だけ完了報告がこの会話に届く（既定 false=報告しない。実行履歴と失敗通知は report と無関係に残る）。利用者が報告を求めたら report=true にする。" +
 			"利用者の自然言語（「毎朝9時」「平日夕方6時」「6時間おき」等）は、あなたが構造化 spec に翻訳して渡すこと: spec_kind=cron なら spec は5フィールドの cron 式（分 時 日 月 曜日・曜日は0=日曜）、interval なら spec は秒数（最小60）、once なら spec は RFC3339 の絶対時刻。tz は IANA タイムゾーン（例 Asia/Tokyo）で cron/once の評価基準（DST 込み）。" +
 			"登録すると解釈した spec と next_run_local（次回発火の具体日時）が返るので、必ず利用者に読み上げて確認する（例『毎日 09:00 JST に実行、次回は 7/23 09:00 でよいですか?』）。元の自然言語表現は spec_label に入れておくと一覧で人に見せられる。" +
 			"prompt には固定メタ変数 {{date}} {{time}} {{datetime}} {{tz}} {{schedule_id}} {{schedule_label}} {{last_run}} を埋め込め、発火時に置換される（未定義の変数はそのまま残る）。" +
@@ -1096,7 +1096,7 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
-		// 破壊的だが可逆（適用前に pre-restore snapshot が必ず積まれる = docs/39 ④）。
+		// 破壊的だが可逆（適用前に pre-restore snapshot が必ず積まれる = docs/log/39 ④）。
 		// この「取り消せる」性質を description に書いておかないと、モデルは安全側に
 		// 倒しすぎて利用者の依頼を実行しないか、逆に軽く見て確認を省く。
 		"name": "restore_memory_snapshot",
@@ -1168,15 +1168,15 @@ func mcpStdioCall(req mcpReq) []byte {
 		// respond_session_plan args
 		Decision string `json:"decision"`
 		Feedback string `json:"feedback"`
-		// set_chat_plan args（docs/33 第5段 案D）: 会話に固定する作業計画の全文。
+		// set_chat_plan args（docs/log/33 第5段 案D）: 会話に固定する作業計画の全文。
 		Plan string `json:"plan"`
 		// memo args (id in the path; the rest are forwarded verbatim via p.Args).
 		// ID doubles as the cleanup-archive id (restore/purge). Repo names the branch's repo.
 		ID   string `json:"id"`
 		Repo string `json:"repo"`
-		// agent-memory args (docs/39 P4). Rev/At pick the snapshot; All/Kinds/Projects
+		// agent-memory args (docs/log/39 P4). Rev/At pick the snapshot; All/Kinds/Projects
 		// are the restore scope. Limit/Path narrow the read tools.
-		// af_report（docs/51 Phase 3）: 申告元のセッション名。Name と別にするのは、
+		// af_report（docs/log/51 Phase 3）: 申告元のセッション名。Name と別にするのは、
 		// このツールが「観測対象を指す name」ではなく「自分は誰か」を運ぶから。
 		Session  string   `json:"session"`
 		Rev      string   `json:"rev"`
@@ -1186,7 +1186,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		All      bool     `json:"all"`
 		Kinds    []string `json:"kinds"`
 		Projects []string `json:"projects"`
-		// Chromium Attach View（docs/53）。MCPはsnake_case、Agent RESTはcamelCase
+		// Chromium Attach View（docs/log/53）。MCPはsnake_case、Agent RESTはcamelCase
 		// なので、この境界で明示的に変換する。hostやCDP WebSocket URLは入力に持たない。
 		Port              int    `json:"port"`
 		TargetID          string `json:"target_id"`
@@ -1197,7 +1197,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		CompletionLabel   string `json:"completion_label"`
 		AllowCancel       *bool  `json:"allow_cancel"`
 		ControlMode       string `json:"control_mode"`
-		// send_to_peer_session args（docs/58 §58.14）: 本文の種別。返信方針は Agent 側が
+		// send_to_peer_session args（docs/log/58 §58.14）: 本文の種別。返信方針は Agent 側が
 		// これから導出するので、ここでは素通しする。
 		Intent string `json:"intent"`
 	}
@@ -1311,9 +1311,9 @@ func mcpStdioCall(req mcpReq) []byte {
 	case "set_chromium_control_mode":
 		return mcpSetChromiumControlMode(req.ID, a.AttachmentID, a.ControlMode)
 	case "af_report":
-		// 自己申告ファストパス（docs/51 Phase 3）。--self-report で起動したセッション側の
+		// 自己申告ファストパス（docs/log/51 Phase 3）。--self-report で起動したセッション側の
 		// サーバー専用 — アシスタントの af_read/af_write はこのツールを広告しないので、
-		// 広告していない経路から呼ばれたら断る（広告集合がスコープの境界・docs/19 Q2 と
+		// 広告していない経路から呼ばれたら断る（広告集合がスコープの境界・docs/log/19 Q2 と
 		// 同じ作法）。
 		if !mcpSelfReportOnly {
 			return mcpToolErr(req.ID, "af_report はセッション側の Agent Fleet サーバー専用です")
@@ -1355,7 +1355,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		return mcpTextResult(req.ID, string(b))
 	case "list_models":
 		// write セットで広告するツールなので呼び出しも同じ境界で断る（広告集合が
-		// スコープの境界・docs/19 Q2）。
+		// スコープの境界・docs/log/19 Q2）。
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはモデル一覧の取得を許可されていません")
 		}
@@ -1434,7 +1434,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはスケジュールの登録を許可されていません")
 		}
-		// Route completion reports back to THIS operator conversation (docs/30): stamp
+		// Route completion reports back to THIS operator conversation (docs/log/30): stamp
 		// owner_conv = the operator's own conv id, overriding any client-supplied value.
 		out, err := cpScheduleDo(http.MethodPost, "/internal/schedules", withOwnerConv(p.Args, mcpConvID))
 		if err != nil {
@@ -1483,12 +1483,12 @@ func mcpStdioCall(req mcpReq) []byte {
 	// Write/orchestrate tools — only when this server was started with --write.
 	switch p.Name {
 	case "get_chat_plan", "set_chat_plan":
-		// 作業計画（docs/33 第5段 案D）。対象は**常に自分の会話**（mcpConvID）で、
+		// 作業計画（docs/log/33 第5段 案D）。対象は**常に自分の会話**（mcpConvID）で、
 		// 会話 id を引数に取らない — create_schedule の owner_conv 上書きと同じ作法で、
 		// 「オペレーターは自分にしか書かない」を配線側の性質にしておく。
 		//
 		// 読み取りも --write ゲート下に置く: この2本は write ツールとしてしか広告して
-		// いないので、広告集合＝スコープの境界という既存の作法（af_report・docs/19 Q2）
+		// いないので、広告集合＝スコープの境界という既存の作法（af_report・docs/log/19 Q2）
 		// に合わせる。
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
@@ -1546,7 +1546,7 @@ func mcpStdioCall(req mcpReq) []byte {
 			"branch":          a.Branch,
 			"new_branch":      a.NewBranch,
 			"driver":          driver,
-			"report_to":       mcpConvID, // docs/30: 完了報告をこの会話へ（空なら無効）
+			"report_to":       mcpConvID, // docs/log/30: 完了報告をこの会話へ（空なら無効）
 			"idempotency_key": idemKey,
 			// ADR 0029 §6: オペレーターが立てたセッションであることを出自として明示する。
 			// 無人で増える消費（自動走行・定時実行との組み合わせ）を使用量集計で
@@ -1576,7 +1576,7 @@ func mcpStdioCall(req mcpReq) []byte {
 				return mcpToolErr(req.ID, err.Error())
 			}
 		}
-		// confirm（docs/38 配達検証）: オペレーター送信は無人経路 — 打鍵 200 では
+		// confirm（docs/log/38 配達検証）: オペレーター送信は無人経路 — 打鍵 200 では
 		// なく「ターンが実際に始まった証拠」まで待つ。飲まれた場合は Agent 側が
 		// 自己修復（Enter 再送/再タイプ）し、それでも未確認なら delivery_unconfirmed
 		// がツールエラーとして返る（停止中セッションへの指示空振り bc5d685e の対策）。
@@ -1642,7 +1642,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		// tree（その時点に何が入っていたか）と diff（その snapshot が入れた変更）を
 		// 1 回で返す。restore の範囲は tree からしか作れない — 現在のルートを選択肢に
 		// すると、既に消えたプロジェクトを選べず「誤って消したメモリを戻す」という
-		// 本命が成立しない（docs/39 ③ が tree を足した理由）。
+		// 本命が成立しない（docs/log/39 ③ が tree を足した理由）。
 		if a.Rev == "" && a.At == "" {
 			return mcpToolErr(req.ID, "rev（snapshot id）か at（日時）のどちらかが必要です")
 		}
@@ -1867,10 +1867,10 @@ func mcpStdioCall(req mcpReq) []byte {
 // AF_SESSION_NAME is the contract, and it arrives two ways. TERMINAL sessions get it
 // from the tmux launch env (session_tmux.go), which codex forwards (mcpreg's
 // extraEnvVars) and claude inherits. MANAGED codex sessions get it from the THREAD
-// config instead (mcpreg.CodexThreadServers, docs/27 §9.3.1) — their MCP child is
+// config instead (mcpreg.CodexThreadServers, docs/log/27 §9.3.1) — their MCP child is
 // spawned by the ONE shared daemon the Agent started, whose process env cannot carry
 // anything per-session. That config is applied by thread/START only: a thread resumed
-// into a REPLACED daemon comes back without it (measured, docs/27 §9.3.1) and lands in
+// into a REPLACED daemon comes back without it (measured, docs/log/27 §9.3.1) and lands in
 // the fallback below.
 //
 // MANAGED OPENCODE has neither: its MCP config is global and the child is spawned per
@@ -2354,7 +2354,7 @@ func cpMemoDo(method, path string, body []byte) (string, error) {
 
 // cpScheduleDo calls the CP's /internal/schedules bridge over the public hairpin
 // (AF_CP_BASE_URL) authenticated by the per-membership AF_SCHEDULE_TOKEN — schedules
-// live in the CP store (docs/38), not the local Agent. Mirrors cpMemoDo; both env vars
+// live in the CP store (docs/log/38), not the local Agent. Mirrors cpMemoDo; both env vars
 // are injected by the CP only when PUBLIC_BASE_URL is set.
 func cpScheduleDo(method, path string, body []byte) (string, error) {
 	base := os.Getenv("AF_CP_BASE_URL")
@@ -2386,7 +2386,7 @@ func cpScheduleDo(method, path string, body []byte) (string, error) {
 }
 
 // withOwnerConv stamps owner_conv onto a create_schedule body so the schedule's
-// completion reports (docs/30) land in the operator's own conversation. A client-
+// completion reports (docs/log/30) land in the operator's own conversation. A client-
 // supplied owner_conv is overridden — the operator only ever reports to itself. On a
 // parse failure the original body is returned unchanged (the CP then validates it).
 func withOwnerConv(args json.RawMessage, conv string) []byte {

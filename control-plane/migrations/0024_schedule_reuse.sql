@@ -1,4 +1,4 @@
--- Scheduled execution P6 (docs/38 + ADR0021): long-lived session reuse mode. When a
+-- Scheduled execution P6 (docs/log/38 + ADR0021): long-lived session reuse mode. When a
 -- schedule runs with session_mode=reuse it sends each fire's prompt into the SAME
 -- long-lived session (send_to_session) instead of creating a fresh one, so the
 -- conversation context carries across fires. reuse_session is the ledger of which real

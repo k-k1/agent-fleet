@@ -196,7 +196,7 @@ func TestCollectInteractionAnswers(t *testing.T) {
 }
 
 // TestCollectInteractionAnswers_Declined pins the fix for "回答済みと表示されるのに
-// 中身は却下の定型文" (docs/dev/92 §6): an Escape/interrupt out of AskUserQuestion
+// 中身は却下の定型文" (docs/build/92 §6): an Escape/interrupt out of AskUserQuestion
 // (e.g. the preview free-text bug — a free-text answer lands on the unnumbered "Chat
 // about this" row and Enter activates it) surfaces as an is_error tool_result carrying
 // claude's own "wants to clarify"/"(No answer provided)" boilerplate — real transcript
@@ -530,7 +530,7 @@ func TestPlanAnswerDropsEmbeddedPlan(t *testing.T) {
 // TestPeerMessageTurn — claude 自前の cross-session チャネル（ListAgents / SendMessage）で
 // **隣のセッションから**届いたメッセージが、ミラーに出ることと、送信者名が付くこと。
 //
-// 行の形は 2026-08-31 の実物から取っている（docs/58 §58.16）。**着信の形は相手の状態で
+// 行の形は 2026-08-31 の実物から取っている（docs/log/58 §58.16）。**着信の形は相手の状態で
 // 変わる**のがこの機能の肝で、片方だけ通す実装だと「相手が忙しかった時だけ消える」という、
 // 再現しないバグにしか見えない壊れ方をする:
 //   - 相手が idle  → type:"user" + isMeta:true（isMeta の門に落ちていた）

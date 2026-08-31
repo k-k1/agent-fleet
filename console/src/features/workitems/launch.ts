@@ -1,4 +1,4 @@
-// Ledger write on a successful launch from a work item (docs/80 §80.8).
+// Ledger write on a successful launch from a work item (docs/log/80 §80.8).
 //
 // Split out of the section so StartHost — where a launch actually succeeds — does not
 // have to import the rail. Failures are swallowed on purpose: the session exists either

@@ -108,7 +108,7 @@ This WSL preset is fixed to a single user, so **`AUTH` is always `dev`** (writin
 `AUTH=oauth` into `oauth.env` is not honored = login auth never changes). That fixed
 user is a **super_admin**, which is what makes the tenant settings screen above
 reachable. The git providers' OAuth apps are no longer read from `oauth.env` at all
-(docs/71); token paste (PAT) also works, in which case nothing has to be registered.
+(docs/log/71); token paste (PAT) also works, in which case nothing has to be registered.
 
 ## 3. Open in a browser
 
@@ -159,9 +159,9 @@ deploy/local/run-dev.sh native
 
 This is a deliberate trade-off: no container isolation, no memory caps, no entrypoint
 initialization (automatic claude install etc.). Details and constraints:
-[docs/34-native-runtime.md](../../docs/34-native-runtime.md). The workspace HOME is
+[docs/log/34-native-runtime.md](../../docs/log/34-native-runtime.md). The workspace HOME is
 isolated at `~/.local/share/agent-fleet/dev/home` (your real `~` stays untouched) and
-is browsable from Windows Explorer at `\\wsl.localhost\<distro>\...` (docs/34 §34.4).
+is browsable from Windows Explorer at `\\wsl.localhost\<distro>\...` (docs/log/34 §34.4).
 If Docker is an option, prefer the §1 setup (`wsl-quickstart.sh`).
 
 ## 7. Troubleshooting
@@ -175,5 +175,5 @@ If Docker is an option, prefer the §1 setup (`wsl-quickstart.sh`).
 | Java not found | `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk*`; if empty, `workspace-agent install-jdk <major>` |
 | `agy` missing from the agent picker | the host CPU does not expose RDRAND (`grep -w rdrand /proc/cpuinfo` is empty). agy is a FIPS build that requires RDRAND, so it is deliberately hidden ([0008](../../docs/decisions/0008-antigravity-cli-agent-kind.md)) |
 
-For deployment forms and the env index see [docs/dev/09-deploy.md](../../docs/dev/09-deploy.md);
+For deployment forms and the env index see [docs/build/09-deploy.md](../../docs/build/09-deploy.md);
 for production Compose steps see [deploy/compose/README.md](../compose/README.md).

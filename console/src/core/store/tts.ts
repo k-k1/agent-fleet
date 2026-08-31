@@ -1,4 +1,4 @@
-// core/store/tts — 音声読み上げ（docs/24）のグローバル状態。再生はアプリ全体で 1 本だけ
+// core/store/tts — 音声読み上げ（docs/log/24）のグローバル状態。再生はアプリ全体で 1 本だけ
 // （チャットの回答も FileView の選択範囲も同じ 1 つの再生に集約）。TopBar が speaking を購読して
 // 「読み上げ中＋停止」を出し、停止ボタンは stop() を叩く。エンジン（features/chat/tts.ts）が
 // 非 React から setActive/setSpeaking を呼ぶ。

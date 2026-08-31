@@ -275,7 +275,7 @@ func handleFSFile(w http.ResponseWriter, r *http.Request) {
 		writeFSError(w, aerr)
 		return
 	}
-	// meta=1 (docs/44 §3.2): the external-change probe's metadata-only answer.
+	// meta=1 (docs/log/44 §3.2): the external-change probe's metadata-only answer.
 	// It is the ordinary GET minus `content` — same path resolution, denylist,
 	// symlink rejection, path mutex wait on in-flight PUTs, editability order,
 	// and error contract, because the flag only strips the field after the read.

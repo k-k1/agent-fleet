@@ -1,4 +1,4 @@
-// App shell for the next console — P1: terminal + layout core (docs/22).
+// App shell for the next console — P1: terminal + layout core (docs/log/22).
 //
 // The main area is the real PaneHost (split panes + live xterm PTYs) wired to
 // the zustand stores; the rail carries a provisional sessions list (full
@@ -283,7 +283,7 @@ export function App() {
     const unHistory = wireLayoutHistory();
     const unKeys = wireKeys();
     const unReconcile = wireTerminalReconcile();
-    // 操作ビーコン（docs/75 P3）: 可視のときの実操作を 60 秒に 1 回だけ CP へ。
+    // 操作ビーコン（docs/log/75 P3）: 可視のときの実操作を 60 秒に 1 回だけ CP へ。
     // 「読んでいるだけ」の人が不在に見えてコンテナを止められるのを防ぐ。
     const unAttention = wireAttentionBeacon();
     const unBrowserReconcile = wireBrowserReconcile();
@@ -297,7 +297,7 @@ export function App() {
     const stopWsPoll = startWorkspacePolling();
     const stopSessPoll = startSessionsPolling();
     const stopReposPoll = startReposPolling();
-    // 取り込みジョブ（docs/78）: 走行中だけ速く回る。ブラウザを閉じても続く処理なので、
+    // 取り込みジョブ（docs/log/78）: 走行中だけ速く回る。ブラウザを閉じても続く処理なので、
     // 再読み込み後もここが行を復元する。
     const stopRepoJobsPoll = startRepoJobsPolling();
     const stopChatPoll = startChatPolling();
@@ -430,7 +430,7 @@ export function App() {
   useSessionNotifications(notificationSource === "unsupported" && popout !== "popout");
 
   // ★ 所属ゼロ（招待前）は Console を開かず、そう言う画面に着地させる
-  // （docs/61 §61.10.2・P7-2）。招待制が新規インストールの既定になったので、これは
+  // （docs/log/61 §61.10.2・P7-2）。招待制が新規インストールの既定になったので、これは
   // 例外ではなく最初の一歩。開いてしまうと、以後すべてのリクエストが 403 で弾かれて
   // トーストが 1 つずつ出るだけになる。
   // popout より前に置く: 所属が無ければ開くべきペインも無い。
@@ -486,7 +486,7 @@ export function App() {
         />
         <nav className="app-rail">
           <LayoutMap />
-          {/* 作業グループ (docs/52): pinned OUTSIDE the scroll area so the active
+          {/* 作業グループ (docs/log/52): pinned OUTSIDE the scroll area so the active
               scope stays visible however far the rail scrolls — rendered for the
               stopped rail too (the switcher works without the agent). */}
           <WorkingSetBar />
@@ -509,7 +509,7 @@ export function App() {
             ) : (
               <>
                 <StoppedRailSection id="assistant" title={tr("ui.assistant")} icon="comment-discussion" />
-                {/* 停止中こそ本番（docs/80）: CP のキャッシュを読むので、止まっている
+                {/* 停止中こそ本番（docs/log/80）: CP のキャッシュを読むので、止まっている
                     Workspace をチケットから起こす導線がここで成立する。 */}
                 <WorkItemsSection />
                 <MemoQueueSection />

@@ -42,13 +42,13 @@ import { coarsePointer } from "../../lib/device.ts";
 // mints a provisional temp/<slug> the user renames later).
 export interface LaunchOpts {
   kind: string;
-  // driver（docs/27 P2/P3）: "managed"（共有 runtime・paneless、対応 kind の既定）|
+  // driver（docs/log/27 P2/P3）: "managed"（共有 runtime・paneless、対応 kind の既定）|
   // ""（tui、従来）。managedDriver を持たない kind では常に ""。
   driver: string;
   model: string;
   effort: string;
   startMode: "normal" | "plan";
-  /** 権限確認をスキップして起動するか（docs/76）。undefined = 既定に従う（サーバへ送らない）。
+  /** 権限確認をスキップして起動するか（docs/log/76）。undefined = 既定に従う（サーバへ送らない）。
    *  caps.permissionChoice を持つ kind でのみ選べる。 */
   skipPermissions?: boolean;
   prompt: string;
@@ -75,7 +75,7 @@ export interface LaunchResult {
   ok: boolean;
   conflict?: "local" | "remote" | "in_use";
   worktree?: string;
-  /** 作られたセッション名（ok のときだけ）。引き継ぎの受諾（docs/77）が「どのセッションで
+  /** 作られたセッション名（ok のときだけ）。引き継ぎの受諾（docs/log/77）が「どのセッションで
    *  受けたか」を差し出した側へ返すのに要る。 */
   name?: string;
 }
@@ -92,7 +92,7 @@ interface LaunchModalProps {
    * already an isolated checkout, so only in-place launch is offered; new worktrees
    * are created from the base clone. */
   allowWorktree?: boolean;
-  /** The working copy is an SVN checkout (docs/41): it has no worktree concept, so
+  /** The working copy is an SVN checkout (docs/log/41): it has no worktree concept, so
    * the in-place location note drops the worktree wording. */
   isSvn?: boolean;
   /** The git repository has no commit yet (`POST /api/repos/init`, or a clone of an
@@ -103,7 +103,7 @@ interface LaunchModalProps {
   onClose: () => void;
   /** Present when opened from the はじめる hub: はじめる に戻る returns to it. */
   onBack?: () => void;
-  /** Seed for the first-prompt field (docs/21 UI刷新): the memo send modal launches a
+  /** Seed for the first-prompt field (docs/log/21 UI刷新): the memo send modal launches a
    * new session with the composed memo text prefilled here. */
   initialPrompt?: string;
 	/** Optional initial session title, e.g. proposed by a predecessor session. */
@@ -111,13 +111,13 @@ interface LaunchModalProps {
   /** Open straight into 既存ブランチ mode with this branch picked — the SCM view's
    * "start work on this branch" actions land here. */
   initialExistingBranch?: string;
-  /** Suggested NEW branch name, prefilled into the branch field (docs/80: a launch
+  /** Suggested NEW branch name, prefilled into the branch field (docs/log/80: a launch
    * from a work item proposes feature/<key>-<slug>). Only a suggestion — clearing the
    * field falls back to the server-minted temp/<slug>. */
   initialNewBranch?: string;
   /** Pre-answer the 場所 choice. Omitted = the usual default (a new worktree wherever
    * one is offered). false = このコピーで直接, for a caller that already asked — the work
-   * item flow picks the working copy first (docs/80 §80.8), and re-defaulting to
+   * item flow picks the working copy first (docs/log/80 §80.8), and re-defaulting to
    * "new worktree" here would silently undo that answer. */
   initialWorktree?: boolean;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
@@ -179,11 +179,11 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   const [model, setModel] = useState(() => resolveModel(initialKind, repo, initialDefault.model));
   const [effort, setEffort] = useState(() => resolveEffort(initialKind, repo, initialDefault.effort));
   const [startMode, setStartMode] = useState(() => resolveStartMode(initialKind, repo, initialDefault.startMode));
-  // 権限確認（docs/76）。**undefined = このダイアログでは触っていない**で、その場合は
+  // 権限確認（docs/log/76）。**undefined = このダイアログでは触っていない**で、その場合は
   // 値を送らず Agent 側の kind 毎の既定に任せる（設定を後から変えても効くように）。
   // 触ったときだけ、このセッション限りの上書きとして送る。
   const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
-  // ドライバ（docs/27 P2/P3）: managed 対応 kind は managed が既定（§9.2）。
+  // ドライバ（docs/log/27 P2/P3）: managed 対応 kind は managed が既定（§9.2）。
   // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
   const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
   const [prompt, setPrompt] = useState(initialPrompt ?? "");
@@ -209,7 +209,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
   // package — the field shows the value, so a remembered folder is never silent.
   const [subdir, setSubdir] = useState(() => resolveSubdir(repo));
   const [base, setBase] = useState(branch || "");
-  // "" => the server mints temp/<slug>. 作業項目から来た起動（docs/80）は
+  // "" => the server mints temp/<slug>. 作業項目から来た起動（docs/log/80）は
   // feature/<key>-<slug> を提案値として入れる —— 提案なので、ここで消せば従来どおり。
   const [branchName, setBranchName] = useState(initialNewBranch || "");
   const [conflict, setConflict] = useState<"local" | "remote" | "in_use" | null>(null);
@@ -762,7 +762,7 @@ export function LaunchModal({ repo, branch, path, kinds, settling = false, allow
           open={advOpen}
           onToggle={() => toggleSection("adv", advOpen, setAdvOpen)}
         >
-          {/* ドライバ（docs/27 P2/P3）: managed 対応 kind だけに出す。既定は
+          {/* ドライバ（docs/log/27 P2/P3）: managed 対応 kind だけに出す。既定は
               managed（共有 runtime・paneless・省メモリ）。CLI(TUI) はターミナル操作が
               必要な人向けの明示的なメモリトレードオフ（セッション毎に TUI プロセス分）。 */}
           {agentOf(kind).managedDriver && (

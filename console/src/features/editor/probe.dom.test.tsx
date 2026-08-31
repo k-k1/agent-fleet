@@ -1,4 +1,4 @@
-// Phase 3.5 acceptance (docs/44 §7.2): the probe runs only when the tab is
+// Phase 3.5 acceptance (docs/log/44 §7.2): the probe runs only when the tab is
 // visible, the pane is visible, the workspace is running, and no PUT is in
 // flight; it fires on visibility/focus/pane-activation and a slow interval,
 // and it swallows unavailable results.

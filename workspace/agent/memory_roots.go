@@ -1,8 +1,8 @@
 package main
 
-// エージェントメモリの版管理（docs/39 / ADR 0022）— ルート宣言と live→staging コピー。
+// エージェントメモリの版管理（docs/log/39 / ADR 0022）— ルート宣言と live→staging コピー。
 //
-// 「エージェントメモリ」の版管理対象になるローカル実体は 2 つだけで（docs/39 の棚卸し）、
+// 「エージェントメモリ」の版管理対象になるローカル実体は 2 つだけで（docs/log/39 の棚卸し）、
 // ここではそれを宣言テーブルとして持つ。将来 opencode などが上流でメモリを実装したら
 // memoryRoots() に 1 行足すだけで snapshot / rollback / export の全機能が付く。
 //
@@ -33,7 +33,7 @@ type memoryRoot struct {
 	// Dir は live の絶対パス（呼び出しの都度解決する — テストが HOME / CLAUDE_CONFIG_DIR
 	// を差し替えるためキャッシュしない）。
 	Dir string
-	// RepoPrefix は bare repo 内での名前空間。kind ごとに分ける（docs/39 ①）。
+	// RepoPrefix は bare repo 内での名前空間。kind ごとに分ける（docs/log/39 ①）。
 	RepoPrefix string
 	// Include は Dir からの相対パスに対する allowlist glob。`**` は 0 個以上のセグメントに
 	// マッチする。これに合致しないファイルは決して読まない。
@@ -96,7 +96,7 @@ func memoryRoots() []memoryRoot {
 }
 
 // memoryInactiveRoot は「宣言はされているが今この環境では有効でない」ルートの説明
-// （docs/39 P4）。RequireDir のルートを黙って落とすと、Console 側は「codex のメモリが
+// （docs/log/39 P4）。RequireDir のルートを黙って落とすと、Console 側は「codex のメモリが
 // 出てこない」理由を示せず、利用者は有効化の導線にも辿り着けない。
 type memoryInactiveRoot struct {
 	Kind   string `json:"kind"`
@@ -269,7 +269,7 @@ func memoryCollect(r memoryRoot) []memoryFile {
 
 // memorySyncToStaging は root の allowlist 合致ファイルを staging/<RepoPrefix>/ 以下へ
 // 複製する。live 側を消したファイルが snapshot に残らないよう、先に prefix ごと消して
-// から書き直す（対象は数百 KB なので実質無料・docs/39）。
+// から書き直す（対象は数百 KB なので実質無料・docs/log/39）。
 func memorySyncToStaging(r memoryRoot, stagingRoot string) (int, error) {
 	dst := filepath.Join(stagingRoot, filepath.FromSlash(r.RepoPrefix))
 	if err := os.RemoveAll(dst); err != nil {

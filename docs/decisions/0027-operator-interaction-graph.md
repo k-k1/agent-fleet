@@ -1,51 +1,65 @@
-# 0027. オペレーター↔セッションのやり取りを SVG シーケンス図で可視化
+# 0027. Visualise the operator↔session exchange as an SVG sequence diagram
 
-- 状態: **採用・着工中**（Phase 0 契約凍結）。設計は [docs/44](../44-operator-interaction-graph.md)。
-- 関連: [0015](0015-agent-managed-driver.md)（managed driver）/ [0021](0021-scheduled-execution.md)（定時実行）/
-  docs/30（セッション完了報告→フリート・オペレーター）/ [history/19](../history/19-assistant-chat.md)（assistant-chat）
+English | [日本語](0027-operator-interaction-graph.ja.md)
 
-## 背景
+- Status: **adopted, work started** (Phase 0, the contract frozen). The design is [docs/44](../log/44-operator-interaction-graph.md).
+- See also: [0015](0015-agent-managed-driver.md) (the managed driver) / [0021](0021-scheduled-execution.md) (scheduled execution) /
+  docs/30 (session completion reports → the fleet and the operator) / [history/19](../log/19-assistant-chat.md) (assistant-chat)
 
-フリート・オペレーター（af_write 会話）は複数セッションを `create_session` / `send_to_session` で
-駆動し、各セッションは完了/異常終了を `role:"report"` メッセージで会話へ返す（docs/30）。この
-**やり取りを時系列の往復として一望する図**が無く、「いま何を投げ、どれが稼働中で、いつ返ったか」を
-チャットの行を遡って読むしかなかった。
+## Context
 
-## 決定
+The fleet operator (an af_write conversation) drives several sessions with `create_session` and
+`send_to_session`, and each session returns completion or abnormal termination to the conversation
+as a `role:"report"` message (docs/30). There was **no diagram that shows this exchange as a
+chronological back-and-forth at a glance**, so understanding "what did I just send, which are
+running, when did they come back" meant reading back up the chat lines.
 
-**1オペレーター会話ごとに、手書き SVG の UML シーケンス図で可視化する。**
+## Decision
 
-1. **描画は手書き SVG（mermaid 不採用）**。この機能の価値はライブ状態の色付け・稼働中アニメ・
-   ノードクリックでセッションを開く・`--kind-*` テーマ追従にあり、静的な mermaid では賄えない。
-   SCM コミットグラフ（`CommitGraph`/`lib/gitgraph.ts`）の「純関数レイアウト＋インライン SVG」を
-   構造テンプレートに流用する。
-2. **指示エッジは新設のディスパッチ台帳で永続化する**。往復は保存が非対称で、報告
-   （セッション→オペレーター）は会話内 `role:"report"` に永続だが、指示（オペレーター→セッション）は
-   arm ストアにしか無く報告配送時に消える。`armSessionReport()` 併置点で追記型
-   `~/.config/agent-fleet/operator-graph/<conv>.jsonl` に `{ts,session,sessionKind,kind,dir,excerpt}` を
-   書く。読み出しは `GET /api/chat/conversations/{id}/dispatches`。
-3. **範囲は 1 オペレーター会話**。データモデル（`report_to`＝会話 id）と素直に一致し、ChatView ヘッダの
-   af_write 会話向けボタンから開く。
-4. **契約先行の 3 並列**。P0 で REST DTO＋TS 型（`console/src/types/opgraph.ts`・import 専用）＋
-   doc/ADR 骨を凍結し、P1 で S-BE(Go)／S-LOGIC(`lib/opgraph.ts`)／S-VIEW(view+pane 配線+i18n) を
-   worktree 並列。共有グルー（pane union/Pane.tsx/paneTitle/ChatView/i18n）は S-VIEW 専有にして
-   衝突をマージ 1 点へ閉じる。
+**Visualise it as a hand-written SVG UML sequence diagram, one per operator conversation.**
 
-### 捨てた選択肢
+1. **Drawing is hand-written SVG (mermaid is not adopted).** This feature's value is in colouring
+   live state, animating what is running, clicking a node to open the session, and following the
+   `--kind-*` theme — none of which a static mermaid diagram provides. The "pure-function layout
+   plus inline SVG" of the SCM commit graph (`CommitGraph` / `lib/gitgraph.ts`) is reused as the
+   structural template.
+2. **Dispatch edges are persisted in a new dispatch ledger.** The two directions are stored
+   asymmetrically: reports (session → operator) persist in the conversation as `role:"report"`, but
+   dispatches (operator → session) exist only in the arm store and are erased when the report is
+   delivered. Alongside `armSessionReport()` we append
+   `{ts,session,sessionKind,kind,dir,excerpt}` to
+   `~/.config/agent-fleet/operator-graph/<conv>.jsonl`. It is read back with
+   `GET /api/chat/conversations/{id}/dispatches`.
+3. **The scope is one operator conversation.** That matches the data model (`report_to` = a
+   conversation id) directly, and it opens from the af_write button in the ChatView header.
+4. **Contract first, then three tracks in parallel.** P0 freezes the REST DTO, the TS types
+   (`console/src/types/opgraph.ts`, import only) and the skeleton of the doc/ADR; P1 runs
+   S-BE (Go), S-LOGIC (`lib/opgraph.ts`) and S-VIEW (the view, pane wiring and i18n) in parallel
+   worktrees. The shared glue (the pane union, Pane.tsx, paneTitle, ChatView, i18n) is owned
+   exclusively by S-VIEW, so conflicts are confined to one merge point.
 
-- **mermaid `sequenceDiagram`**（既存依存で最小コード）: 静的で、ライブ状態・稼働アニメ・クリック起動・
-  テーマ注入に弱い。まず安く試すなら有力だが、本機能の主眼（ライブ俯瞰）に合わないため不採用。
-- **ノードリンク（放射状ハブ）図**: トポロジは映えるが「やり取り＝時間的往復」を表現しづらい。
-  力学レイアウトの実装も重い。
-- **全フリート俯瞰を同じ図で兼ねる**: 複数会話の突合とレイアウトが重く、シーケンス図の主眼を薄める。
-  コミットグラフ×セッション×エージェント相関の**別図・別タスク**に切り出す。
-- **指示エッジを台帳無しで既存データから再現**: 報告側だけ線が引け往路が片側欠ける。約30行の台帳で
-  完全化できるため、指示側も永続化する方を採る。
+### Options rejected
 
-## 帰結
+- **mermaid's `sequenceDiagram`** (minimal code, using an existing dependency): static, and weak on
+  live state, run animation, click-to-launch and theme injection. It would be the strongest choice
+  for a cheap first attempt, but it does not fit this feature's point (a live overview).
+- **A node-link (radial hub) diagram**: the topology looks good, but it is poor at expressing "an
+  exchange is a back-and-forth in time", and a force-directed layout is heavy to implement.
+- **Using the same diagram as a fleet-wide overview**: reconciling several conversations and laying
+  them out is heavy, and it dilutes the point of a sequence diagram. Split out as **a separate
+  diagram and a separate task**, correlating the commit graph, sessions and agents.
+- **Reconstructing dispatch edges from existing data with no ledger**: only the report side can be
+  drawn, leaving the outbound half missing. About 30 lines of ledger makes it complete, so we
+  persist the dispatch side too.
 
-- 追加は Agent 側 `operator_graph.go`（台帳＋読み出し）＋ `session_handlers.go`/`session_io.go` の
-  `recordDispatch` 併置＋ルート（agent／CP 許可リスト両方）／Console（`types/opgraph.ts`・
-  `lib/opgraph.ts`・`features/opgraph/*`・pane 配線・ChatView 導線・i18n）。既存の報告・通知経路は無改造。
-- **限界（意図）**: 台帳は導入以降のみ（過去指示は遡及不可・報告は既に履歴）。managed 報告は本文なし。
-  opencode の af_write 会話は `report_to` 非注入で非リンク（docs/30 の制限を継承）。
+## Consequences
+
+- The addition is `operator_graph.go` on the Agent side (the ledger and reading it back), the
+  `recordDispatch` calls alongside in `session_handlers.go`/`session_io.go`, the routes (both the
+  agent and the CP allowlist), and the Console (`types/opgraph.ts`, `lib/opgraph.ts`,
+  `features/opgraph/*`, pane wiring, the ChatView entry point, i18n). The existing report and
+  notification paths are unmodified.
+- **A deliberate limit**: the ledger only covers what happens after it is introduced (past
+  dispatches cannot be recovered; reports are already history). Managed reports have no body. An
+  opencode af_write conversation is not linked because `report_to` is not injected (inheriting the
+  limitation in docs/30).

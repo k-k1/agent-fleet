@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stub run test for publish-dist.sh / install.sh (docs/35 §35.7.4 gate i).
+# Stub run test for publish-dist.sh / install.sh (docs/log/35 §35.7.4 gate i).
 # Uses no real GitHub: a fake gh (prepended to PATH) pins publish's call sequence,
 # and install.sh runs for real against a file:// fake dist layout, covering
 # download → sha verification → extraction → symlink.

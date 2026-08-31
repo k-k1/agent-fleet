@@ -2,7 +2,7 @@ package cursor
 
 // read 層のユニットテスト: 起動コマンド組み立て・JSONL 転写のパース（Turn.Idx
 // 単調 — agy 7354916 の教訓で必須）・live 状態分類・models パース。フィクスチャの
-// 行形式は v2026.07.20 の実測（docs/40 実測記録）。
+// 行形式は v2026.07.20 の実測（docs/log/40 実測記録）。
 
 import (
 	"encoding/json"
@@ -273,7 +273,7 @@ claude-opus-4-8-thinking-high - Opus 4.8 1M Thinking
 	}
 }
 
-// docs/68: 転写から「編集したファイル」を拾えること。Write の形は実測
+// docs/log/68: 転写から「編集したファイル」を拾えること。Write の形は実測
 // （~/.cursor/projects/*/agent-transcripts/*.jsonl に {"path","contents"} で残っていた）。
 func TestToolEditsPicksEditFamilyOnly(t *testing.T) {
 	cases := []struct {
@@ -322,7 +322,7 @@ func TestEditsFromInputIgnoresToolName(t *testing.T) {
 	}
 }
 
-// 権限確認あり（docs/76）。消えるのは --force だけで、--trust（未信頼ワークスペースの
+// 権限確認あり（docs/log/76）。消えるのは --force だけで、--trust（未信頼ワークスペースの
 // 確認スキップ）と自己更新封殺は残す — --trust を落とすと ACP でも TUI でも trust
 // プロンプトで固まる（実測）。plan ではないので --plan も付かない。
 func TestBuildProgramPermissionsOn(t *testing.T) {

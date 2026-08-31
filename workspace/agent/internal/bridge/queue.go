@@ -15,13 +15,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// maxQueue bounds the on-disk delivery queue (docs/37 「不達と滞留」: 溢れたら
+// maxQueue bounds the on-disk delivery queue (docs/log/37 「不達と滞留」: 溢れたら
 // 古い方から破棄). The queue only grows while the daemon is down or every send
 // is failing, so the bound is a backstop, not a working size.
 const maxQueue = 200
 
 // maxAttempts is the bounded-retry limit per queued message; beyond it the
-// message is dropped with a log line (fire-and-forget, docs/37 契約4).
+// message is dropped with a log line (fire-and-forget, docs/log/37 契約4).
 const maxAttempts = 5
 
 func queueDir() string { return filepath.Join(paths.AgentConfigDir(), "bridge-queue") }
@@ -29,7 +29,7 @@ func queueDir() string { return filepath.Join(paths.AgentConfigDir(), "bridge-qu
 // queued is the on-disk envelope: the message plus its delivery attempt count
 // (persisted so retries survive a daemon restart). Delivered tracks, per provider
 // name, how many of the message's sub-messages already landed, so a retry resumes
-// instead of re-posting from scratch (docs/37 重複対策 — see ResumableSender).
+// instead of re-posting from scratch (docs/log/37 重複対策 — see ResumableSender).
 type queued struct {
 	Message
 	Attempts  int            `json:"attempts,omitempty"`

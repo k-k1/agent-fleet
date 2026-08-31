@@ -71,7 +71,7 @@ func hashPAT(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// patAPI は PAT（docs/decisions/0006 P3-6）の機能ハンドラ集（docs/23 残③）。
+// patAPI は PAT（docs/decisions/0006 P3-6）の機能ハンドラ集（docs/log/23 残③）。
 // 解決は埋め込みの memberAuth（登録側で withIdentity に包む）、store は PATStore
 // の narrow view だけを持つ。create のテナント選択だけは a.mgr.membershipsFor を
 // 経由する（memberAuth が mgr を運ぶ）。

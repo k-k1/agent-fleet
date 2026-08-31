@@ -62,7 +62,7 @@ const (
 	workspacePresenceTTL       = 15 * time.Second
 )
 
-// presenceGrace は「打鍵の無い端末を、あと何分だけ在席と見なすか」（docs/75 P3）。
+// presenceGrace は「打鍵の無い端末を、あと何分だけ在席と見なすか」（docs/log/75 P3）。
 //
 // なぜ要るか: 端末ペインを開いた Console のタブを 1 枚閉じ忘れると、presence lease が
 // 5 秒ごとに更新され続け、**Workspace は永久に停止しない**。これは question と並ぶ
@@ -192,7 +192,7 @@ func (r *connRegistry) noteInput(wsID string) {
 
 // watched reports whether someone is present at this workspace right now.
 //
-// 接続の**有無**ではなく「人が触っているか」で答える（docs/75 原則 3）。端末以外の
+// 接続の**有無**ではなく「人が触っているか」で答える（docs/log/75 原則 3）。端末以外の
 // 長命接続（定時実行の起床）は打鍵という概念を持たないので無条件に在席とする。
 func (r *connRegistry) watched(wsID string, grace time.Duration, now time.Time) bool {
 	if r == nil {
@@ -298,7 +298,7 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 
 // trackWorkspaceTerminal is the same lease for an attached TERMINAL, with one
 // difference that decides whether idle-stop works at all: the lease is renewed only
-// while the human is still typing (docs/75 P3).
+// while the human is still typing (docs/log/75 P3).
 //
 // なぜ端末だけ別扱いか: 端末ペインを開いた Console のタブを閉じ忘れると、この lease が
 // 5 秒ごとに更新され続け、**Workspace は永久に停止しない**。lease は「ソケットがある」
@@ -401,7 +401,7 @@ type reaper struct {
 	mgr        *manager
 	interval   time.Duration
 	sessionDef time.Duration
-	// interactionDef は「人の判断待ちで止まっているセッション」用の既定（docs/75 §75.5）。
+	// interactionDef は「人の判断待ちで止まっているセッション」用の既定（docs/log/75 §75.5）。
 	// idle と分けるのは、答えが返るまでコンテナを起こし続けるのが費用そのものだから。
 	interactionDef time.Duration
 	wsDef          time.Duration
@@ -485,7 +485,7 @@ func (rp *reaper) sweep(ctx context.Context) {
 // 回すと、段を足すたび全呼び出しを直すことになり、しかも取り違えても型は通る。
 type tierClocks struct {
 	session     time.Duration // tier1: ターンが終わっただけの idle
-	interaction time.Duration // tier1: 人の判断待ち（docs/75 §75.5）
+	interaction time.Duration // tier1: 人の判断待ち（docs/log/75 §75.5）
 	ws          time.Duration // tier2
 	hibernate   time.Duration // tier3
 	backup      time.Duration // tier4（唯一「アイドル」ではない — 周期）
@@ -547,7 +547,7 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClock
 	// （session_activity.go）に集約してある — 状態がどちらに属するかを reaper の中の
 	// インライン式で決めていた頃は、状態が増えるたび 2 箇所を手で合わせる必要があり、
 	// 実際 blocked / limited / spend_limit で 2 回ドリフトした。
-	// 取り込み中（docs/78）はセッションが 1 つも無くても仕事中。ここを見落とすと、
+	// 取り込み中（docs/log/78）はセッションが 1 つも無くても仕事中。ここを見落とすと、
 	// 1 時間かかる clone / checkout の途中で Workspace が止まり、作業コピーは半端なまま
 	// 残る（中断そのものは検出できるが、失われた時間は戻らない）。
 	busy := env.RepoJobs > 0
@@ -559,7 +559,7 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClock
 		// session_idle_timeout、人の判断待ちは interaction_idle_timeout。テナントは
 		// 「質問は早く畳んで安くしたい／うちは数時間待ってほしい」を独立に決められる。
 		to, on := cl.tier1For(s)
-		// kind の門（docs/75 P5）: shell / ssm は halt が「走っているジョブを殺す」意味に
+		// kind の門（docs/log/75 P5）: shell / ssm は halt が「走っているジョブを殺す」意味に
 		// なるので tier1 の対象にしない（p3-9 からの割り切り。守りたいときは
 		// 「自動停止しない」ピン）。それ以外＝エージェントのセッションは、claude も
 		// managed（codex / opencode / …）も halt が resumable なので畳んでよい。
@@ -585,10 +585,10 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, cl tierClock
 
 	// Tier 2: stop the whole workspace once it is fully cold.
 	_, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
-	// 在席は「接続の有無」ではなく「直近に人が触ったか」で見る（docs/75 P3）。
+	// 在席は「接続の有無」ではなく「直近に人が触ったか」で見る（docs/log/75 P3）。
 	watched := rp.mgr.conns.watched(ws.ID, presenceGrace, now)
 	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
-	// ★観測をそのまま公開する（docs/75 P4）。管理画面はこれを読むだけで判定をやり直さない
+	// ★観測をそのまま公開する（docs/log/75 P4）。管理画面はこれを読むだけで判定をやり直さない
 	// ので、「なぜ止まらないか」を調べる画面が reaper と別の答えを出すことがない。
 	// wsOn が false のときも記録する — 「予定なし」と「機能が切ってある」は別物。
 	rp.mgr.putIdleForecast(ws.ID, idleForecast{
@@ -725,7 +725,7 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, w
 		log.Printf("idle-stop: lifecycle lost after claim %s: %v", ws.ContainerName, err)
 		return
 	}
-	// 止める前にアウトボックスを吸い出す（docs/75）。Agent の通知は Console が見に来た
+	// 止める前にアウトボックスを吸い出す（docs/log/75）。Agent の通知は Console が見に来た
 	// ときにしか drain されないので、ここで拾っておかないと「未回答のまま停止しました」が
 	// 次に Workspace を起こすまで誰にも届かない — 費用のために止めた結果、止めたことを
 	// 知らせる通知だけが止めたせいで消える。失敗しても停止は続ける（通知は次回拾える）。
@@ -757,7 +757,7 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace, w
 // sweeper deliberately has no view of it — it derives its whole world from EC2 tags
 // (ADR 0012). BeginHibernate is one STEP: it starts the capture. Advancing and finishing
 // it stays with the pool sweeper, which is what makes the operation resumable across a CP
-// restart (docs/64 §64.18.2.1).
+// restart (docs/log/64 §64.18.2.1).
 type hibernatingRuntime interface {
 	BeginHibernate(ctx context.Context) error
 }

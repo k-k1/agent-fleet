@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Work item inbox (docs/80 / ADR 0061) — external tickets (GitHub Issue / PR; Jira in
+// Work item inbox (docs/log/80 / ADR 0061) — external tickets (GitHub Issue / PR; Jira in
 // P1) listed in the left rail so a session can be started from one.
 //
 // ★ The split that makes this work: the CP owns the saved queries and a cache of
@@ -23,14 +23,14 @@ import (
 // ★ Why the cache exists at all: picking a ticket happens BEFORE a session is started,
 // which is when the Workspace is usually stopped. Without the cache the rail is empty
 // exactly when it matters, and the alternative — waking the Workspace to render a list —
-// re-opens the "Workspace never stops" hole docs/75 closed. So a stopped Workspace shows
+// re-opens the "Workspace never stops" hole docs/log/75 closed. So a stopped Workspace shows
 // the cache with its "last fetched" stamp, and only 始める starts anything.
 const (
 	// workItemsRefreshEvery rate-limits provider calls. The SSE tick is 4s; without this
 	// every tick of every open tab would hit the GitHub API.
 	workItemsRefreshEvery = 5 * time.Minute
 	// workItemsMaxQueries caps saved queries per membership. Not a UI nicety: the rail
-	// stays readable and the provider budget stays bounded (docs/80 §80.12).
+	// stays readable and the provider budget stays bounded (docs/log/80 §80.12).
 	workItemsMaxQueries = 10
 	// workItemsFetchTimeout bounds one Agent round trip (which fans out to the provider).
 	workItemsFetchTimeout = 30 * time.Second

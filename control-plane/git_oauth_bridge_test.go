@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// docs/71 §71.8 + ADR0052 決定 7. The bridge exists so the tenant's client secret stops
+// docs/log/71 §71.8 + ADR0052 決定 7. The bridge exists so the tenant's client secret stops
 // being copied into every member's workspace, and these pin the three things that would
 // quietly undo that:
 //

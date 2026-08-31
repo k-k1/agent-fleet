@@ -60,7 +60,7 @@ func readHostStats() (load1 float64, ncpu int, memUsed, memTotal uint64) {
 	return
 }
 
-// hostStats serves host load / memory（docs/23 残③: adminAPI のメソッドとして
+// hostStats serves host load / memory（docs/log/23 残③: adminAPI のメソッドとして
 // 登録側で withSuperAdmin に包む）.
 func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ Identity) {
 	load1, ncpu, memUsed, memTotal := readHostStats()
@@ -77,7 +77,7 @@ type cpuSample struct {
 }
 
 // cpuTracker derives a CPU percentage from the cumulative cpu.stat counter by
-// remembering the previous reading per container id（docs/23 P2-W4: 生の
+// remembering the previous reading per container id（docs/log/23 P2-W4: 生の
 // package 変数 map+mutex から struct 化。プロセス内キャッシュなのでマルチ
 // インスタンス CP でも各インスタンスが自分の差分を持てばよく、共有不要）。
 // Keyed by id, so a recreate (new id) starts fresh. Entries accumulate slowly
@@ -295,7 +295,7 @@ func containerStats(ctx context.Context, name string) map[string]any {
 	return out
 }
 
-// --- The runtime-neutral view (docs/63 §63.9) ---
+// --- The runtime-neutral view (docs/log/63 §63.9) ---
 //
 // containerStats above only works where the CP and the workspace share a host:
 // it shells out to `docker inspect` and reads the host's cgroup tree. On every ECS
@@ -322,7 +322,7 @@ func workspaceStats(ctx context.Context, m *manager, rt Runtime, state func() st
 	if out["running"] != true {
 		// ⚠️ The Console disables 強制停止 on exactly this field, so a docker read that
 		// cannot see the container must not be the last word — on ECS it never can
-		// (docs/64 §64.27).
+		// (docs/log/64 §64.27).
 		switch state() {
 		case "running":
 			out["running"] = true
@@ -355,7 +355,7 @@ func workspaceStats(ctx context.Context, m *manager, rt Runtime, state func() st
 	return out
 }
 
-// stats serves the own-workspace resource chip（docs/23 残③: workspaceAPI の
+// stats serves the own-workspace resource chip（docs/log/23 残③: workspaceAPI の
 // メソッドとして登録側で withResolved に包む）.
 func (a workspaceAPI) stats(w http.ResponseWriter, r *http.Request, res *resolved) {
 	ctx := r.Context()
@@ -379,7 +379,7 @@ type diskSample struct {
 	at    time.Time
 }
 
-// diskUsageCache is the TTL cache for du results（docs/23 P2-W4: 生の package
+// diskUsageCache is the TTL cache for du results（docs/log/23 P2-W4: 生の package
 // 変数 map+mutex から struct 化。プロセス内キャッシュで、外すと du の再実行が
 // 増えるだけ — マルチインスタンス CP でも共有不要）。
 type diskUsageCache struct {

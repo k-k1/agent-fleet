@@ -80,7 +80,7 @@ func formatMemHuman(b int64) string {
 // carries its three values explicitly.
 //
 // The whole table was measured against the real ECS API rather than copied from
-// documentation (docs/63 §63.2: RegisterTaskDefinition rejects an invalid pair with
+// documentation (docs/log/63 §63.2: RegisterTaskDefinition rejects an invalid pair with
 // "No Fargate configuration exists for given values", and registering is free). The
 // pre-measurement table assumed a uniform 1024 step, which produced INVALID sizes in
 // the two top tiers — e.g. a 34 GiB cap became 8192/34816 and failed the whole Start.
@@ -167,7 +167,7 @@ func fargateSize(memBytes int64, cpuUnits int, baseCPU string) (cpu, memoryMiB s
 }
 
 // Fargate's task ephemeral storage bounds, measured the same way as the size matrix
-// (docs/63 §63.2): below 21 the API answers "EphemeralStorage size should be at least
+// (docs/log/63 §63.2): below 21 the API answers "EphemeralStorage size should be at least
 // 21", above 200 "... at most 200". 20 GiB is what a task gets when the field is
 // absent, and it is the only free amount — so "unset" must stay absent rather than
 // being written as 20.

@@ -28,7 +28,7 @@ import (
 
 // ecsEC2Runtime is the `ecs-ec2` Runtime adapter: ECS on the EC2 launch type, with a
 // POOL of general-purpose slots and one PERSISTENT EBS volume per user that gets
-// swapped between them (docs/64 §64.12 / §64.15, ADR 0045 決定 8 / 決定 10).
+// swapped between them (docs/log/64 §64.12 / §64.15, ADR 0045 決定 8 / 決定 10).
 //
 // Why it exists next to the Fargate adapter rather than inside it: Fargate has no
 // "fast and persistent" home (ADR 0044 決定 4) and cannot go below ~105s on a warm
@@ -100,7 +100,7 @@ type ecsEC2Runtime struct {
 	//
 	// The golden baker sets it to ec2RoleGoldenCandidate on its probe, and that is the
 	// entire mechanism by which a freshly baked golden is proven to boot BEFORE anyone
-	// else can be given it (docs/64 §64.28.3). Set once by the baker on a runtime for
+	// else can be given it (docs/log/64 §64.28.3). Set once by the baker on a runtime for
 	// its own reserved membership, before that workspace is ever started; no session,
 	// PAT or admin path resolves that membership, so nothing else reads it.
 	seedRole string
@@ -113,7 +113,7 @@ var _ Runtime = (*ecsEC2Runtime)(nil)
 //
 // maximumPercent 100 with desiredCount 1 means ECS may never run a second task for
 // this service — so the demoted deployment cannot be handed one, which is the entire
-// mechanism of docs/64 §64.39. minimumHealthyPercent 0 is the other half: at max 100%
+// mechanism of docs/log/64 §64.39. minimumHealthyPercent 0 is the other half: at max 100%
 // there is no room to start a replacement before stopping the old one, so ECS has to
 // be allowed to reach zero. For a single-user workspace that is the RIGHT semantics
 // anyway — two tasks means two Agents behind one Service Connect alias, which is how
@@ -134,7 +134,7 @@ var ec2SingleTaskDeployment = &ecstypes.DeploymentConfiguration{
 //	Zone Rebalancing does not support maximumPercent <= 100 % as deployment
 //	configuration.
 //
-// ⚠️ This broke production on 0.12.3 (docs/64 §64.39.12), and it broke ONLY the
+// ⚠️ This broke production on 0.12.3 (docs/log/64 §64.39.12), and it broke ONLY the
 // services that already existed: `CreateService` quietly settles on DISABLED when the
 // deployment configuration cannot support rebalancing, so every service the new build
 // creates is fine — while every service created by an older build carries ENABLED and
@@ -149,7 +149,7 @@ const ec2NoAZRebalancing = ecstypes.AvailabilityZoneRebalancingDisabled
 
 const (
 	// ec2HomeDevice is the ONE device name every user's home volume is attached at,
-	// on every slot. This single constant IS the slot allocator (docs/64 §64.15.2):
+	// on every slot. This single constant IS the slot allocator (docs/log/64 §64.15.2):
 	// AWS refuses a second AttachVolume on a device name that is already taken, so
 	// "this slot is free" and "AttachVolume succeeded" are the same statement. Two
 	// workspaces racing for the last hot slot are separated by EC2 itself — there is
@@ -159,7 +159,7 @@ const (
 
 	// ec2HomeMountBase is where a slot mounts a user's volume. The task bind-mounts the
 	// `dev` subdirectory (owned by uid 1000) as /home/dev, so the filesystem root stays
-	// out of the container — same layout the sandbox harness measured (docs/64 §64.14).
+	// out of the container — same layout the sandbox harness measured (docs/log/64 §64.14).
 	ec2HomeMountBase = "/af-home"
 
 	// Where the credentials-only EFS access point lands inside the task. home now lives
@@ -173,7 +173,7 @@ const (
 	ec2TagWorkspace  = "af-workspace"
 	ec2TagSlotSize   = "af-slot-size"
 	// ec2TagTenant is the owning tenant's SLUG, and it exists only for the bill
-	// (docs/67, ADR 0048 決定 3). Nothing in the pool logic reads it: the CP can already
+	// (docs/log/67, ADR 0048 決定 3). Nothing in the pool logic reads it: the CP can already
 	// derive the tenant from af-membership through its own DB, so an opaque tenant id
 	// here would buy nothing. A slug can be read straight out of Cost Explorer, which
 	// is the whole point — grouping the invoice by tenant without the Console.
@@ -201,7 +201,7 @@ const (
 	// is nowhere else to put it — a free slot has no volume, and the CP holds no state
 	// (ADR 0012). Two replicas and a restarted CP therefore read the same answer.
 	//
-	// ★ Why it has to exist at all (docs/64 §64.31): the sleep test used to live only in
+	// ★ Why it has to exist at all (docs/log/64 §64.31): the sleep test used to live only in
 	// sweepVolume, which walks HOMES. A slot whose home was released — an eviction, a
 	// class change, the golden baker's seed and probe — left that walk entirely and no
 	// other path stopped a running instance. Measured on the live deployment: three empty
@@ -230,7 +230,7 @@ const (
 	// removes the box from the free list, from the cap, and from placement in one write —
 	// no second concept, no CP-side state (ADR 0012).
 	//
-	// Measured, 2026-08-16 (docs/64 §64.24): a workspace container whose home was
+	// Measured, 2026-08-16 (docs/log/64 §64.24): a workspace container whose home was
 	// detached under it left processes in uninterruptible sleep, XFS flushing to a device
 	// that was gone, and the kernel holding the dead volume's NVMe namespace. The next
 	// user's volume then never appeared under /dev at all, so `af-mount` failed with
@@ -249,7 +249,7 @@ const (
 	// can ever match it.
 	ec2RoleGolden = "golden"
 	// ec2RoleGoldenCandidate is a golden that has been BAKED but not yet proven to
-	// boot (docs/64 §64.28.3). Nothing seeds an ordinary home from it — the whole
+	// boot (docs/log/64 §64.28.3). Nothing seeds an ordinary home from it — the whole
 	// point is that it is invisible to goldenSnapshot()'s default lookup, so a
 	// candidate that turns out to be unbootable can never reach a real user. The
 	// baker's probe asks for this role explicitly, and only a probe that comes up
@@ -303,7 +303,7 @@ const (
 	// digests (goldenIdentity).
 	//
 	// ★ Why a second tag at all: ec2TagImage is a REFERENCE, and a reference is not an
-	// identity. Measured on the real deployment (docs/72 §72.6.4): re-tagging the
+	// identity. Measured on the real deployment (docs/log/72 §72.6.4): re-tagging the
 	// workspace image so that CP and workspace share one ImageTag left the digest
 	// byte-identical (`sha256:497ca29360ed…` on both tags) and the CP still said
 	// `no golden for …; baking one`, then spent ~10 minutes and two EC2 slots
@@ -323,7 +323,7 @@ const (
 	// of binaries: ~/.local/bin/{rtk,agy,cursor-agent,kiro}, the npm CLIs, nvm's node,
 	// the Chromium it downloaded. Handing an x86_64 golden to an arm64 slot produces a
 	// home that mounts perfectly and cannot exec anything, for every new user of that
-	// class, from their very first start (docs/70 §70.6). The image tag alone cannot
+	// class, from their very first start (docs/log/70 §70.6). The image tag alone cannot
 	// catch it: both goldens are baked from the same image reference.
 	//
 	// Absent on goldens baked before this existed. Those are x86_64 by construction —
@@ -381,7 +381,7 @@ type ec2PoolConfig struct {
 	launchTemplate string // AF_ECS_EC2_LAUNCH_TEMPLATE (id or name)
 	// amiArm64 is AF_ECS_EC2_AMI_ARM64, required only when a declared class says
 	// arm64: the launch template pins the x86_64 ECS-optimized AMI, and an arm64
-	// instance type cannot boot it (docs/70 §70.8).
+	// instance type cannot boot it (docs/log/70 §70.8).
 	//
 	// An AMI ID rather than a second launch template, and resolved by CLOUDFORMATION
 	// rather than by the CP. Everything else about a slot — instance profile, security
@@ -416,7 +416,7 @@ type ec2PoolConfig struct {
 	// workspace was using. The two run in series: person goes away → (reaper) workspace
 	// stops → (this) slot sleeps.
 	//
-	// It governs BOTH kinds of dormant slot, from the same value (docs/64 §64.31):
+	// It governs BOTH kinds of dormant slot, from the same value (docs/log/64 §64.31):
 	//   - a slot still holding its owner's home (af-idle-since on the volume) — sweepVolume;
 	//   - a slot holding nothing at all (af-slot-idle-since on the instance) — sweepFreeSlots.
 	// The second used to have no timer of any kind, which made the "~$9.6 instead of ~$95"
@@ -436,7 +436,7 @@ type ec2PoolConfig struct {
 	// of retained roots only ever grows, and its ceiling is maxSlots. A deployment that
 	// raises maxSlots to serve more people is therefore also signing up for maxSlots × the
 	// root volume, permanently — 30 × 40 GiB × $0.096/GB-month ≈ $115/month of slots that
-	// may all be stopped and idle. Measured on the live deployment (docs/64 §64.32): the
+	// may all be stopped and idle. Measured on the live deployment (docs/log/64 §64.32): the
 	// only way to get those back was an operator terminating boxes by hand.
 	//
 	// What it costs the user is 25 seconds, once, and only for the first arrival:
@@ -492,7 +492,7 @@ type ec2PoolConfig struct {
 	// reach its agent before the CP declares the box lost and rebuilds the workspace
 	// somewhere else (AF_ECS_EC2_SLOT_LOST_AFTER_SEC, default 5m).
 	//
-	// 🔥 The incident it exists for (<prod-deployment>, 2026-08-27, docs/64 §64.40): something in
+	// 🔥 The incident it exists for (<prod-deployment>, 2026-08-27, docs/log/64 §64.40): something in
 	// one workspace took several GB of anonymous memory, and with no swap the kernel's only
 	// way to reclaim was to throw away page cache — so every process on the box spent the
 	// next three hours re-reading its own executable pages off disk. The root volume holds
@@ -613,7 +613,7 @@ func (f *ecsEC2Factory) MaxSlots() int { return f.pool.maxSlots }
 // newECSEC2Factory builds the EC2-pool Runtime factory. It reuses the Fargate
 // factory's AWS config plumbing (region, cluster, subnets, EFS, Service Connect, log
 // group, image) and adds the EC2/SSM clients plus the pool settings; then it starts
-// the drift sweeper (docs/64 §64.15.6), which is what makes the "no CP-side state"
+// the drift sweeper (docs/log/64 §64.15.6), which is what makes the "no CP-side state"
 // choice survivable — every unfinished teardown is re-derived from tags.
 func newECSEC2Factory(m *manager) (RuntimeFactory, error) {
 	baseFactory, err := newECSFactory(m)
@@ -710,7 +710,7 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 // homeGiB is the persistent home size for a workspace: its own disk request, else the
 // deployment default. Unlike Fargate's ephemeral storage there is no free tier and no
 // 200 GiB ceiling here — the volume is billed as provisioned and grows online with
-// ModifyVolume (docs/64 §64.4.5).
+// ModifyVolume (docs/log/64 §64.4.5).
 func (f *ecsEC2Factory) homeGiB(ws Workspace) int32 {
 	if ws.DiskGB > 0 {
 		return int32(ws.DiskGB)
@@ -740,7 +740,7 @@ func (p ec2PoolConfig) classFor(id string) ec2SlotClass {
 
 // slotTypeFor picks the smallest slot IN THE GIVEN CLASS that holds the workspace's
 // memory request, and reports the class's architecture with it. Sizing on EC2 is a
-// choice of instance type, not Fargate's 74 discrete (cpu, memory) pairs (docs/64
+// choice of instance type, not Fargate's 74 discrete (cpu, memory) pairs (docs/log/64
 // §64.4.5): the task reserves neither cpu nor memory, so the user gets the whole box
 // (ADR 0045 決定 8).
 //
@@ -774,7 +774,7 @@ func (p ec2PoolConfig) slotRungFor(classID string, memBytes int64) (instanceType
 // slot's declared memory, less a reserve kept for the box's own daemons. 0 = no cap
 // (the behaviour every deployment had before this existed).
 //
-// 🔥 Why a cap exists at all (<prod-deployment>, 2026-08-27, docs/64 §64.40): a workspace
+// 🔥 Why a cap exists at all (<prod-deployment>, 2026-08-27, docs/log/64 §64.40): a workspace
 // took several GB of anonymous memory, and with no swap the kernel's only way to
 // reclaim was to throw away page cache — so every process on the box spent three hours
 // re-reading its own executable pages off disk (the root volume holds 8.0 GB of data
@@ -1076,7 +1076,7 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 //
 // ⚠️ This is the one place State() writes something, which is worth the exception.
 // `starting` here means only "desired >= 1 and nothing is running yet", and it has no
-// timeout — a task ECS refuses to place holds that forever (docs/70 §70.14.6: a task
+// timeout — a task ECS refuses to place holds that forever (docs/log/70 §70.14.6: a task
 // definition declaring ARM64 while pinned to an x86_64 slot). ECS says exactly why in
 // the service events; the CP was throwing that away and reporting a bare `starting`,
 // so the only way to find out was `aws ecs describe-services` by hand. Nothing else in
@@ -1145,7 +1145,7 @@ func ecsPlacementBlocked(s ecstypes.Service) string {
 
 // Start brings the workspace up on a slot. Everything that can be slow is pushed off
 // the caller's thread: Start runs inside an HTTP request behind a 60s-idle ALB
-// (docs/62 §62.5), so only the hot path — attach 3s + mount 4s + a few API calls —
+// (docs/log/62 §62.5), so only the hot path — attach 3s + mount 4s + a few API calls —
 // may run synchronously. Booting a slot (19s) or creating one (8s to running, then
 // ~20s to register) hands off to a background goroutine and State() says `starting`.
 func (e *ecsEC2Runtime) Start(ctx context.Context) error {
@@ -1404,7 +1404,7 @@ type ec2Placement struct {
 }
 
 // placeHome resolves the volume and the slot, attaching the two together when it can.
-// The order follows the AZ (docs/64 §64.15.3): the volume pins the AZ, the AZ picks
+// The order follows the AZ (docs/log/64 §64.15.3): the volume pins the AZ, the AZ picks
 // the candidate slots, and only a user with no volume yet is free to follow the pool.
 // slotTypeMatches reports whether an instance is still the size AND class this
 // workspace needs. One DescribeInstances, no caching — it is asked once per Start.
@@ -1448,7 +1448,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 			//   required by your task" — and keeps refusing, with desiredCount 1 and
 			//   nothing running, forever.
 			//
-			// Measured on a live deployment (docs/70 §70.14.5): a member moved from
+			// Measured on a live deployment (docs/log/70 §70.14.5): a member moved from
 			// the saver class (m6i, x86_64) to arm (m8g, arm64) and their workspace
 			// could not start again. So the match is checked before the affinity is
 			// honoured, and a stale slot is released rather than reused.
@@ -1483,7 +1483,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 					return ec2Placement{}, err
 				}
 				// ⚠️ RUNNING IS NOT ENOUGH, and asking only EC2 is what turned one wedged
-				// box into hours of 504s (docs/64 §64.40). `deferred` decides whether the
+				// box into hours of 504s (docs/log/64 §64.40). `deferred` decides whether the
 				// rest of this Start happens on the CALLER'S THREAD, and the caller is an
 				// HTTP handler behind a 60s-idle ingress — so it may only stay inline for
 				// work that is measured in seconds. launch()'s first act is to wait for the
@@ -1582,7 +1582,7 @@ func (e *ecsEC2Runtime) placeHome(ctx context.Context) (ec2Placement, error) {
 			// this workspace could never run on, and reuse cannot turn one of those into
 			// what it needs. Terminate one and build the right box instead of failing:
 			// "slower" is a cost the operator accepted, "cannot start at all" is not
-			// (docs/64 §64.33). Falls through to growPool below.
+			// (docs/log/64 §64.33). Falls through to growPool below.
 			e.setPhase("slot: making room")
 			freed, err := e.makeRoom(ctx)
 			if err != nil {
@@ -1708,7 +1708,7 @@ func (e *ecsEC2Runtime) converge(ctx context.Context, p ec2Placement, prep ec2Pr
 // mount the home, and only then put the service at desiredCount 1.
 //
 // ⚠️ The ORDER of those two service calls is the whole point, and it is worth ~40
-// seconds on 40% of Starts (docs/64 §64.39, measured on the production pool).
+// seconds on 40% of Starts (docs/log/64 §64.39, measured on the production pool).
 //
 // This used to be one call — `UpdateService(desiredCount=1 + taskDefinition=new +
 // forceNewDeployment)` — issued after the mount. ECS answers a task-definition change by
@@ -1770,7 +1770,7 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 		// No wait here any more, and that is the whole point of ec2SingleTaskDeployment:
 		// the service cannot run two tasks, so raising the count past a not-yet-retired
 		// deployment can no longer hand one to the old revision. Measured A/B on one
-		// substrate, same sequence, same moment (docs/64 §64.39.10):
+		// substrate, same sequence, same moment (docs/log/64 §64.39.10):
 		//   maximumPercent 200 → 2 tasks, the FIRST from the old revision (2 of 2)
 		//   maximumPercent 100 → 1 task, always the new revision  (2 of 2)
 		// Before that this spot waited 53-55s for the old deployment to leave ACTIVE.
@@ -1861,7 +1861,7 @@ func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, 
 // one that merely failed a mount, and the difference is why it cannot reuse that path:
 // there, nothing is running on the slot yet and the kernel still answers. Here a task is
 // still nominally on it, the ECS agent is unreachable, and every step of the ordinary
-// teardown quietly does the wrong thing (docs/64 §64.40, reproduced by hand during the
+// teardown quietly does the wrong thing (docs/log/64 §64.40, reproduced by hand during the
 // incident before it was written down):
 //
 //	quarantineSlot                     what a wedged box actually does
@@ -2112,7 +2112,7 @@ func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2ty
 }
 
 // waitVolumeAttachable polls until the volume leaves `creating`. Measured at ~3s for a
-// fresh volume (docs/64 §64.7), which is why this can sit in the synchronous path.
+// fresh volume (docs/log/64 §64.7), which is why this can sit in the synchronous path.
 func (e *ecsEC2Runtime) waitVolumeAttachable(ctx context.Context, volumeID string) error {
 	for i := 0; ; i++ {
 		out, err := e.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{VolumeIds: []string{volumeID}})
@@ -2208,7 +2208,7 @@ func (e *ecsEC2Runtime) ownedTags(tags []ec2types.Tag) []ec2types.Tag {
 // tagSlotOwner / untagSlotOwner put this workspace's owner tags on the INSTANCE, and
 // take them off again when the slot goes back to the pool.
 //
-// Why the instance and not just the home volume (docs/67 §67.4): measured on the live
+// Why the instance and not just the home volume (docs/log/67 §67.4): measured on the live
 // deployment, 91% of the cost that can be attributed to a person at all is the slot's
 // instance-hours, and the instance carried af-role/af-pool/af-slot-size but NO
 // af-membership. That is correct as pool logic — a slot belongs to nobody until a home
@@ -2322,7 +2322,7 @@ type ec2SlotCandidate struct {
 // place the task — "no container instance met all of its requirements" — and the service
 // stays at desiredCount 1 / runningCount 0 forever, which is a stuck workspace rather than
 // a slow one. Across architectures placeHome's own header records the same symptom
-// measured on a live deployment (docs/70 §70.14.5). Two copies of one rule is how that
+// measured on a live deployment (docs/log/70 §70.14.5). Two copies of one rule is how that
 // happened, so there is now one.
 //
 // az == "" means the whole pool: a home that does not exist yet is not pinned anywhere,
@@ -2474,7 +2474,7 @@ func (e *ecsEC2Runtime) listContainerInstanceARNs(ctx context.Context) ([]string
 // Without this, one AZ running out of the slot type stops every NEW user in the deployment
 // (everybody already placed keeps working, so it does not look like an outage) — and the
 // AZ that ran out is the one AZ the adapter ever picks, because anyAZ is deterministic.
-// docs/64 §64.20.4.
+// docs/log/64 §64.20.4.
 func (e *ecsEC2Runtime) growPool(ctx context.Context, az string) (string, string, error) {
 	if az != "" {
 		id, err := e.runSlot(ctx, az)
@@ -2756,7 +2756,7 @@ func (e *ecsEC2Runtime) evictLongestIdle(ctx context.Context, az string) (string
 // the RIGHT size, so whatever is left is a box no amount of reuse can turn into what this
 // workspace needs — while it still holds one of the maxSlots places. Before this, that
 // state failed the Start and went on failing until an operator noticed and terminated
-// something by hand (docs/64 §64.33).
+// something by hand (docs/log/64 §64.33).
 //
 // ⚠️ NOT filtered by AZ, unlike evictLongestIdle, and the difference is the whole point:
 // there the box is REUSED, so it has to be where the volume is pinned; here it is
@@ -2982,7 +2982,7 @@ func (e *ecsEC2Runtime) subnetIn(ctx context.Context, az string) (string, error)
 //
 // ⚠️ Sorted by id, which is NOT the order they were written in AF_ECS_SUBNETS — an
 // operator listing 1a first still gets 1c when its subnet id happens to be smaller
-// (measured, docs/64 §64.20.4). The order is arbitrary but it must be STABLE: every new
+// (measured, docs/log/64 §64.20.4). The order is arbitrary but it must be STABLE: every new
 // home going to the same AZ is what keeps a pool from scattering one workspace's slots
 // away from where the free ones are.
 func (e *ecsEC2Runtime) poolAZs(ctx context.Context) ([]string, error) {
@@ -3012,7 +3012,7 @@ func (e *ecsEC2Runtime) poolAZs(ctx context.Context) ([]string, error) {
 // Why spread at all, when the pool otherwise works hardest to keep homes and free slots in
 // the same place: because "the same place" turned out to mean ONE AZ for everybody. New
 // homes followed a deterministic first choice, so the blast radius of a single AZ going
-// down was not half the deployment, it was all of it (docs/64 §64.21). An EBS home cannot
+// down was not half the deployment, it was all of it (docs/log/64 §64.21). An EBS home cannot
 // be evacuated — the only lever is not putting everyone in the same AZ to begin with.
 //
 // ⚠️ It is not free. A home in 1a can only ever use a slot in 1a, so free slots in the
@@ -3135,13 +3135,13 @@ var errSlotLost = errors.New("slot lost")
 const slotRegisterPoll = 3 * time.Second
 
 // waitSlotRegistered waits until the slot is an ACTIVE, agent-connected container
-// instance. Measured at ~20s after an instance start (docs/64 §64.12.1); a hot slot
+// instance. Measured at ~20s after an instance start (docs/log/64 §64.12.1); a hot slot
 // returns on the first poll.
 //
 // Two different failures come out of here and the caller must be able to tell them apart:
 //
 //   - errSlotLost — the box is running and simply not answering the cluster any more.
-//     Waiting longer cannot help (docs/64 §64.40); the workspace has to be moved.
+//     Waiting longer cannot help (docs/log/64 §64.40); the workspace has to be moved.
 //   - anything else — still converging when the budget ran out, or the poll itself
 //     failed. The slot may well be fine, so nothing is torn down.
 //
@@ -3231,7 +3231,7 @@ func (e *ecsEC2Runtime) runOnSlot(ctx context.Context, instanceID, command strin
 		}
 	}
 	// Poll on a ramp rather than a flat 2s, and ask EARLY. Measured on the production
-	// deployment's pool (docs/64 §64.38, n=37 mounts over 5 days): `af-mount` itself runs
+	// deployment's pool (docs/log/64 §64.38, n=37 mounts over 5 days): `af-mount` itself runs
 	// in 0.6s median / 3.0s max, and SSM queues it in another 0.2–0.7s — so the command
 	// is almost always finished before the CP has even asked once. A flat 2s pre-sleep
 	// therefore spent ~1.5s per call doing nothing, twice on the swap path (umount on the
@@ -3422,7 +3422,7 @@ func (e *ecsEC2Runtime) serviceTaskDefIfFingerprint(ctx context.Context, fp stri
 //     task definition rather than on the service, so moving a user to another slot
 //     never touches the service's own shape.
 //   - no task cpu / memory. On EC2 those are RESERVATIONS against the instance
-//     (docs/64 §64.4.5); with one user per slot the right answer is to reserve nothing
+//     (docs/log/64 §64.4.5); with one user per slot the right answer is to reserve nothing
 //     and let them have the box. A small memoryReservation keeps the API happy.
 //   - /tmp is a tmpfs. The root volume is shared with whoever had the slot before, so
 //     a disk-backed /tmp would both leak (readable from the host) and let one user fill
@@ -3511,7 +3511,7 @@ func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep e
 	//
 	// Measured: on an EC2-compatibility task definition, omitting runtimePlatform
 	// leaves it null — it does NOT default to X86_64 the way it does on Fargate — so
-	// this is not what makes an arm64 slot work (docs/70 §70.8). It is stated anyway
+	// this is not what makes an arm64 slot work (docs/log/70 §70.8). It is stated anyway
 	// for two reasons: ECS then refuses to PLACE a task on a box of the wrong
 	// architecture instead of starting it and letting the image fail to exec, and the
 	// field is part of what taskDefFingerprint hashes, so a member moved to another
@@ -3628,7 +3628,7 @@ func (e *ecsEC2Runtime) scaleUpService(ctx context.Context) error {
 
 // upsertService creates or updates the workspace's service at desiredCount 1 on the EC2
 // launch type. Service Connect stays exactly as on Fargate, which is why Endpoint() did
-// not have to change (docs/64 §64.4.4).
+// not have to change (docs/log/64 §64.4.4).
 // forceNewDeployment should be false only when taskDefArn is a task definition
 // reuseOrRegisterTaskDef found unchanged from what this service is already running —
 // specifying it without forcing lets ECS notice nothing actually changed and skip
@@ -3663,7 +3663,7 @@ func (e *ecsEC2Runtime) upsertService(ctx context.Context, taskDefArn string, p 
 	}
 	// DRAINING: the same name is being deleted and ECS has not finished. CreateService
 	// answers "Create service is not idempotent" here — measured on a live deployment,
-	// where a destroy and a re-create one minute apart collided (docs/64 §64.29.5) —
+	// where a destroy and a re-create one minute apart collided (docs/log/64 §64.29.5) —
 	// and that error reads like a bug in the caller rather than "come back shortly".
 	// Neither call can succeed until the delete completes, so say so and let the retry
 	// that already exists (the bake tick, a second Start) be the wait.
@@ -3847,7 +3847,7 @@ func (e *ecsEC2Runtime) waitTasksGone(ctx context.Context) error {
 //
 // ⚠️ P0 left the second half out — it deleted the EBS volume but kept the ECS service,
 // the two EFS access points and the two SSM parameters alive forever (ADR 0045 決定 13,
-// docs/64 §64.18.1). The order matters: the slot has to come back to the pool and the
+// docs/log/64 §64.18.1). The order matters: the slot has to come back to the pool and the
 // volume has to be detached before the service goes away, because releaseSlot reads the
 // service to prove nothing is running on it.
 //
@@ -3870,7 +3870,7 @@ func (e *ecsEC2Runtime) Destroy(ctx context.Context) ([]string, error) {
 	}
 	// Backups are a different role and so are invisible to every other cleanup here.
 	// Without this they would outlive the person and bill forever — the exact thing
-	// Destroy exists to stop (docs/64 §64.18.1).
+	// Destroy exists to stop (docs/log/64 §64.18.1).
 	if err := e.deleteBackups(ctx); err != nil {
 		return nil, err
 	}
@@ -3922,7 +3922,7 @@ func (e *ecsEC2Runtime) homeSnapshots(ctx context.Context) ([]ec2types.Snapshot,
 	return out.Snapshots, nil
 }
 
-// hibernate is one STEP of putting a long-unused home to sleep (ADR 0045 決定 4, docs/64
+// hibernate is one STEP of putting a long-unused home to sleep (ADR 0045 決定 4, docs/log/64
 // §64.18.2), not the whole thing. A snapshot of a 45 GiB home takes 30–40 minutes, and
 // the sweeper cannot sit on that, so the operation is resumable: each sweep advances it
 // by one step and the state lives in AWS, not in the CP (ADR 0012).
@@ -4184,7 +4184,7 @@ func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
 		// golden and must not be reported as one: the other arch's golden is correct,
 		// it just is not ours.
 		//
-		// Measured on the real deployment (docs/70 §70.14.5): with x86_64 and arm64
+		// Measured on the real deployment (docs/log/70 §70.14.5): with x86_64 and arm64
 		// baking at the same time, the x86_64 probe was seeded from the arm64
 		// candidate. Nothing broke — §70.5's self-heal wipes the wrong-arch bits and
 		// re-runs boot-install — which is exactly why this had to be found in a log
@@ -4278,7 +4278,7 @@ func backupStamp(s ec2types.Snapshot) time.Time {
 // BackupHome keeps a copy of this home OUTSIDE its Availability Zone, because an EBS
 // volume lives in exactly one and cannot be evacuated: losing that AZ is otherwise the
 // same as losing the work. Snapshots are regional, so they are the only place a home can
-// be that its own AZ is not (docs/64 §64.21, ADR 0045 決定 17).
+// be that its own AZ is not (docs/log/64 §64.21, ADR 0045 決定 17).
 //
 // Three things this deliberately does NOT do:
 //
@@ -4395,7 +4395,7 @@ func (e *ecsEC2Runtime) deleteBackups(ctx context.Context) error {
 	return nil
 }
 
-// --- drift sweeper (docs/64 §64.15.6) ---
+// --- drift sweeper (docs/log/64 §64.15.6) ---
 
 // sweepLoop re-derives the world from tags every sweepEvery and finishes whatever a
 // crashed CP left half-done. Without it, "hold no state" would mean "lose the teardown
@@ -4542,7 +4542,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 		return
 	}
 	// A Start is in flight on this home. Everything below reads "no live service" as
-	// "dormant", and for those few seconds that is exactly wrong (docs/64 §64.31.6):
+	// "dormant", and for those few seconds that is exactly wrong (docs/log/64 §64.31.6):
 	// placeHome clears the dormancy marks FIRST and upsertService raises desiredCount
 	// LAST, with the mount — an SSM round trip, 10–30s — in between. A sweep landing in
 	// that window stamps af-idle-since back onto a workspace that is coming UP.
@@ -4660,7 +4660,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 
 // sweepFreeSlots is the sleep test for slots that hold NO home — the half sweepVolume
 // structurally cannot do, because it walks homes and a released slot has none
-// (docs/64 §64.31, ADR 0045 決定 22).
+// (docs/log/64 §64.31, ADR 0045 決定 22).
 //
 // ★ The bug it fixes: Ec2SlotSleepSec promises "a slot with no running task is STOPPED,
 // ~$9.6/month instead of ~$95". That was only ever true for a slot with a home still
@@ -4680,7 +4680,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 // somebody's home is 123–143s against the 135s of building a box from scratch, because the
 // 32s of cold pull it saves is spent again on the boot and the mount SSM round trip. So a
 // free slot is stopped after slotSleepAfter and TERMINATED after slotTerminateAfter, and
-// the second timer is the one that gives its root volume back (docs/64 §64.32).
+// the second timer is the one that gives its root volume back (docs/log/64 §64.32).
 //
 // This walk sees BOTH states for that reason. It used to list only `running` boxes, which
 // was consistent while stopping was the last thing that could happen to one — but it means
@@ -5069,7 +5069,7 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// --- pool status for the admin UI (docs/64 §64.18.6) ---
+// --- pool status for the admin UI (docs/log/64 §64.18.6) ---
 
 // ec2SlotView / ec2HomeView / ec2PoolStatus are what an operator needs to answer the three
 // questions this runtime introduces and no other one has: how many boxes am I paying for,
@@ -5131,7 +5131,7 @@ type ec2PoolStatus struct {
 	BakeRejected string `json:"bake_rejected"` // snapshot id of the last refused candidate
 	BakeReason   string `json:"bake_reason"`
 	// Goldens is the same story per CPU architecture, one entry per architecture this
-	// deployment's classes declare (docs/70 §70.6). The six scalars above are this
+	// deployment's classes declare (docs/log/70 §70.6). The six scalars above are this
 	// list's FIRST entry — the default class's architecture — kept so nothing that
 	// reads them has to change on a deployment that has only one.
 	Goldens []ec2GoldenView `json:"goldens,omitempty"`
@@ -5156,7 +5156,7 @@ type ec2PoolStatus struct {
 }
 
 // ec2GoldenView is one architecture's golden situation, including how far along a bake
-// that is under way has got (docs/64 §64.30).
+// that is under way has got (docs/log/64 §64.30).
 type ec2GoldenView struct {
 	Arch       string `json:"arch"`
 	SnapshotID string `json:"snapshot_id"`
@@ -5166,7 +5166,7 @@ type ec2GoldenView struct {
 	Rejected   string `json:"rejected"`
 	Reason     string `json:"reason"`
 
-	// --- how far the bake has got (docs/64 §64.30) ---
+	// --- how far the bake has got (docs/log/64 §64.30) ---
 	//
 	// A bake takes ~11 minutes end to end and spends most of it in steps that produce
 	// no snapshot at all (the seed's boot, boot-install, the slot release). Reporting
@@ -5353,7 +5353,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (ec2PoolStatus, error) {
 		log.Printf("ecs-ec2 pool status: snapshots unreadable: %v", err)
 		return st, nil
 	}
-	// One golden per architecture (docs/70 §70.6), so the screen answers "is every
+	// One golden per architecture (docs/log/70 §70.6), so the screen answers "is every
 	// class covered" rather than "is there a golden". byArch is keyed by the snapshot's
 	// af-arch — absent means x86_64, the only kind that existed before classes.
 	byArch := map[string]*ec2GoldenView{}

@@ -1,4 +1,4 @@
--- Tenant-distributed MCP servers (docs/48 P4 + ADR0031). A tenant_admin registers a
+-- Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031). A tenant_admin registers a
 -- remote MCP server here and every member of that tenant receives the definition in
 -- their Workspace, where the agent caches it and materializes it into each CLI config.
 -- The definition lives in the CP DB because the CP is the only thing alive while a

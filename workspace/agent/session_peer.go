@@ -1,6 +1,6 @@
 package main
 
-// セッション同士のメッセージ（docs/58 / ADR 0041）の**サーバ側の砦**。
+// セッション同士のメッセージ（docs/log/58 / ADR 0041）の**サーバ側の砦**。
 //
 // 送信そのものは既存の投入経路（/input の {prompt}）をそのまま使う。ここが持つのは
 // 「peer 送信であることによって課される制約」だけで、置き場をサーバにしたのは意図的:
@@ -8,12 +8,12 @@ package main
 // 迂回できてしまう。MCP は `peer_from` を1つ足すだけの薄い層に保ち、守るべき不変条件は
 // 全部この層で閉じる。
 //
-// **arm を触らない理由**（ADR 0041 決定4）: docs/51 のリコンサイラは「機械的 idle」を
+// **arm を触らない理由**（ADR 0041 決定4）: docs/log/51 のリコンサイラは「機械的 idle」を
 // 証拠に完了を推定する。peer メッセージは conv を持たず、idle 相手には新ターンを開始
 // するので、指示台帳に載せると「利用者の新指示」と誤認して早期 settle / 早期消費を
 // 起こす。しかも AF の投入は TUI への打鍵なので、受信側の transcript では通常入力と
 // 区別が付かない（ネイティブ経路の `origin.kind:"peer"` に相当する印を後から付けられない
-// — docs/58 §58.12 実測）。「後で出自を見て弾く」逃げ道が無いぶん、入口で載せないことが
+// — docs/log/58 §58.12 実測）。「後で出自を見て弾く」逃げ道が無いぶん、入口で載せないことが
 // 唯一の防御になる。
 
 import (
@@ -57,7 +57,7 @@ func peerReject(code, format string, a ...any) *peerRejection {
 	return &peerRejection{Code: code, Msg: fmt.Sprintf(format, a...)}
 }
 
-// peerIntent は本文の種別と、それが受信側に課す返信方針の対応表（docs/58 §58.14）。
+// peerIntent は本文の種別と、それが受信側に課す返信方針の対応表（docs/log/58 §58.14）。
 //
 // **返信方針を送信側に選ばせない**のが要点。別フィールドにすると `notice`（知らせるだけ）
 // なのに「返信を要求する」といった矛盾した封筒を作れてしまう。種別1つを必須にして、
@@ -101,7 +101,7 @@ func peerResolveIntent(intent string) (string, error) {
 // 名乗る）がそのまま通ってしまう。
 //
 // `intent` / `reply` を**封筒に**載せるのは、返信規律が効くのが着信の瞬間だからで、
-// workspace-notes.md 側だけに書くと長い文脈の後方で薄まる（docs/58 §58.14）。値は
+// workspace-notes.md 側だけに書くと長い文脈の後方で薄まる（docs/log/58 §58.14）。値は
 // 英語のまま — 既存の `from=` と同じ機械トークンの層で、ミラーの読み戻しもここを見る。
 // `reply=` は自己記述的な語にしてあり、常設ルールを読み落としていても意味が通る。
 func peerEnvelope(from, intent, reply, message string) string {

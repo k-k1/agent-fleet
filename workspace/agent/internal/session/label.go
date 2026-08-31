@@ -11,7 +11,7 @@ import (
 //
 // 形は `[AF:<name>] <title>`。`[AF]` タグは Agent Fleet が起こしたセッションを claude.ai の
 // Remote Control ピッカーで見分けるための印で、`:<name>` はそこに**セッション名**を足した
-// もの（docs/58 §58.16）。
+// もの（docs/log/58 §58.16）。
 //
 // **足した理由は誤配で、実害が出ている。** claude 自身の cross-session チャネル
 // （ListAgents / SendMessage）は宛先を**このラベル文字列**で指す。AF のセッション名はその

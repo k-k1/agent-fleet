@@ -99,7 +99,7 @@ and launch a workspace.
 The condensed version is below. For the walk-through that includes **what to create
 on the IdP's side** (Google Cloud Console, the Entra app registration, a GitHub
 OAuth App), how to verify it, and the per-IdP failure modes, see
-[docs/guide/operator/05-login-idp.md](../../docs/guide/operator/05-login-idp.md).
+[docs/operate/05-signin.md](../../docs/operate/05-signin.md).
 
 Whichever IdPs you enable, the redirect URI you register is always this one — it
 does not multiply with the number of providers:
@@ -179,7 +179,7 @@ AF_GITHUB_ALLOWED_DOMAINS=example.com    # strongly recommended; see below
 
 Login above is for the **console**. The one-click "Connect via OAuth" buttons for
 cloning private repos are configured **in the Console, per tenant** — not in `.env`
-(docs/71). A tenant administrator opens **Tenant settings → Integrations → Git
+(docs/log/71). A tenant administrator opens **Tenant settings → Integrations → Git
 provider OAuth** and registers:
 
 - **GitHub** (device flow) — `client_id` only (not a secret; the OAuth App must have

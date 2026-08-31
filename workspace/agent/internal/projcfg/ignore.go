@@ -1,9 +1,9 @@
 package projcfg
 
-// ignore.go — docs/56 §7.5 操作A（「無視に追加」の安全・取り返しがつく方；「追跡から
+// ignore.go — docs/log/56 §7.5 操作A（「無視に追加」の安全・取り返しがつく方；「追跡から
 // 外す」は操作B・P2）。Idempotent line append to .git/info/exclude (default — not
 // committed, "取り返しがつく") or .gitignore (committed, affects every colleague).
-// No marker comment (docs/57 憲章2) and no commit (憲章9) — this only ever touches
+// No marker comment (docs/log/57 憲章2) and no commit (憲章9) — this only ever touches
 // the ignore file itself.
 
 import (
@@ -15,22 +15,22 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
 
-// Ignore targets (docs/56 §7.5's table).
+// Ignore targets (docs/log/56 §7.5's table).
 const (
-	IgnoreExclude   = "exclude"   // .git/info/exclude — uncommitted; common dir, so it affects the parent clone AND every linked worktree (docs/56 §2.4 実測)
+	IgnoreExclude   = "exclude"   // .git/info/exclude — uncommitted; common dir, so it affects the parent clone AND every linked worktree (docs/log/56 §2.4 実測)
 	IgnoreGitignore = "gitignore" // .gitignore — committed; the whole team
 )
 
 // GitCommonDir resolves dir's git COMMON directory — the actual `.git` a linked
 // worktree shares with its parent clone. `.git/info/exclude` lives here, which is
-// why it is NOT a per-worktree setting (docs/56 §2.4 / §7.5, measured).
+// why it is NOT a per-worktree setting (docs/log/56 §2.4 / §7.5, measured).
 func GitCommonDir(dir string) (string, error) {
 	return gitx.Run(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 }
 
 // AddIgnorePattern appends pattern (a repo-relative path, e.g. ".mcp.json") to
 // dir's ignore file for where, unless an identical line is already present
-// (docs/56 §7.5: "既に同じパターンがあれば足さない"). Creates the file if it does
+// (docs/log/56 §7.5: "既に同じパターンがあれば足さない"). Creates the file if it does
 // not exist yet; preserves everything else in it, including a missing trailing
 // newline convention becoming present (never removed).
 func AddIgnorePattern(dir, where, pattern string) error {
@@ -43,7 +43,7 @@ func AddIgnorePattern(dir, where, pattern string) error {
 
 // HasIgnorePattern reports whether pattern is already an exact line in dir's
 // ignore file for where — the same "already covered" check AddIgnorePattern uses
-// internally, exposed so a caller (docs/56's plan step) can preview the outcome
+// internally, exposed so a caller (docs/log/56's plan step) can preview the outcome
 // without writing.
 func HasIgnorePattern(dir, where, pattern string) (bool, error) {
 	path, err := IgnoreFilePath(dir, where)

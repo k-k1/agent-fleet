@@ -9,7 +9,7 @@ import (
 )
 
 func TestParseJSONServersClaudeMCPJSON(t *testing.T) {
-	// The docs/56 §1 motivating example (novel-lab's .mcp.json), verbatim shape.
+	// The docs/log/56 §1 motivating example (novel-lab's .mcp.json), verbatim shape.
 	raw, err := decodeJSONObject([]byte(`{"mcpServers":{"syosetu":{"type":"stdio","command":"uv",
 	  "args":["run","--quiet","${HOME}/repos/narou-mcp-stdio/narou_mcp.py"],
 	  "env":{"SYOSETU_MIN_INTERVAL":"0.7"}}}}`))

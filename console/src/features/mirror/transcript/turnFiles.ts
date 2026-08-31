@@ -1,4 +1,4 @@
-// turnFiles — which files THIS turn edited (docs/68 P1).
+// turnFiles — which files THIS turn edited (docs/log/68 P1).
 //
 // The head's 変更ファイル strip answers "what did this session change"; this answers
 // "what did this reply change", which is the question a reader has while scrolling.

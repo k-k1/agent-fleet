@@ -1,6 +1,6 @@
 package cursor
 
-// CI 変数を cursor CLI に渡さない（docs/40 Track B）。
+// CI 変数を cursor CLI に渡さない（docs/log/40 Track B）。
 //
 // cursor CLI は `CI` を見つけると対話 UI を出さない: バナーだけ描いて composer を
 // 描画せず、打鍵も無視する（実測 2026-08-27・cursor 2026.08.25）。しかも CLI 自身の
@@ -14,7 +14,7 @@ package cursor
 // Workspace のコンテナ自体は CI を設定しないが、利用者は Console の設定（環境変数）で
 // 足せる。足した瞬間に cursor のセッションだけが「バナーだけの死んだペイン」になり、
 // 原因に辿り着くのは上記のとおり難しい。そこで AF は cursor を起動する全経路で外す。
-// 他の kind には広げない — copilot は CI 検出を自己更新の抑止に使っており（docs/36）、
+// 他の kind には広げない — copilot は CI 検出を自己更新の抑止に使っており（docs/log/36）、
 // 一律に外すとそちらの前提を壊す。
 
 import (

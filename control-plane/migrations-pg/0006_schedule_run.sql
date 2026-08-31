@@ -1,4 +1,4 @@
--- Scheduled execution run history (docs/38 + ADR0021), Postgres mirror of
+-- Scheduled execution run history (docs/log/38 + ADR0021), Postgres mirror of
 -- migrations/0023_schedule_run.sql. Dialect-neutral DDL, see that file for semantics.
 -- NOTE the migrator splits on the semicolon, so comments must not contain one.
 CREATE TABLE IF NOT EXISTS schedule_run(

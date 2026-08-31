@@ -8,7 +8,7 @@
 // a comment, and MirrorView keeps just the wiring.
 //
 // NEVER send an option label as text: every modal ignores typed text on an option row
-// and the Enter then confirms the highlighted first option (docs/dev/92-tui-modal-driving.md).
+// and the Enter then confirms the highlighted first option (docs/build/92-driving-a-tui.md).
 
 import type { InteractionAnswer } from "../../core/api/client.ts";
 import { previewBody } from "./optionPreview.ts";
@@ -29,7 +29,7 @@ export interface QKQuestion {
 // single-select options (the tool's own contract), and whether the row layout below
 // changes is decided per question, not once for the whole form — a later question with
 // plain options reverts to the normal layout even if an earlier one had previews
-// (実測 v2.1.232, docs/dev/92 §6).
+// (実測 v2.1.232, docs/build/92 §6).
 const hasPreview = (opts: QKOption[]): boolean => opts.some((o) => previewBody(o.preview) !== "");
 
 // The card's per-question state: the labels checked (single-select holds at most one)
@@ -107,7 +107,7 @@ export function buildClaudeSeq(qs: QKQuestion[], sel: string[][], freeText: stri
       // text is then silently swallowed there (option/menu rows ignore typed text) and
       // the trailing Enter activates "Chat about this", which claude treats as declining
       // the question — the exact "User declined to answer questions" / "(No answer
-      // provided)" rejection this was reported as (実測 v2.1.232, docs/dev/92 §6).
+      // provided)" rejection this was reported as (実測 v2.1.232, docs/build/92 §6).
       // The fix: the cursor always starts a question's tab on option 0, so 'n' opens
       // notes there with no navigation needed; typing + Enter submits with no option
       // picked ("(no option selected) notes: …" — claude's own free-text equivalent

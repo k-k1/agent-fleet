@@ -18,7 +18,7 @@ func handleNotifications(w http.ResponseWriter, _ *http.Request) {
 		}
 		if callID := codex.PendingQuestionID(m); callID != "" {
 			ev := notice.New("question", m.Name, m.Kind, session.Display(m))
-			// P2b managed (docs/37): carry the pending question payload so an
+			// P2b managed (docs/log/37): carry the pending question payload so an
 			// interact-capable provider renders option buttons. Read from the live
 			// driver handle (no resume); absent → the notice still fires, just
 			// button-less (Console fallback).

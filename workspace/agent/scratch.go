@@ -11,7 +11,7 @@ import (
 
 // scratchAutoRelocate points a freshly created working copy's regenerable build
 // artifacts (node_modules, target, .venv, build) at the task-local working disk
-// BEFORE anything installs into them — ADR 0044 決定 3 / docs/63 §63.5.
+// BEFORE anything installs into them — ADR 0044 決定 3 / docs/log/63 §63.5.
 //
 // Why at creation time and not on demand: on ECS `~` is EFS, which costs ~14.5ms
 // per file, so the FIRST `npm ci` is the expensive one (105s vs 11s). Relocating

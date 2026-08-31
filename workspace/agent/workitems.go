@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// Work item inbox — the fetching half (docs/80 / ADR 0061).
+// Work item inbox — the fetching half (docs/log/80 / ADR 0061).
 //
 // The Control Plane owns the saved queries and the cache; this Agent owns the provider
 // tokens. CP posts the queries here, we resolve them against the provider and hand back
@@ -30,7 +30,7 @@ import (
 
 const (
 	// workItemFetchPerQuery caps one query's rows. Full synchronisation is a non-goal
-	// (docs/80 §80.12) — the saved query is what keeps the rail short.
+	// (docs/log/80 §80.12) — the saved query is what keeps the rail short.
 	workItemFetchPerQuery = 50
 	// workItemFetchQueries caps how many queries one request may carry, so a bad CP
 	// request cannot fan out into an unbounded number of provider calls.
@@ -137,7 +137,7 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, erro
 //
 // ⚠️ The token is the Connections one, whose scope is `repo` (no `read:org`), and the
 // host is fixed to github.com: GitHub Enterprise Server is out of scope for v1, exactly
-// as for the `gh` wrapper (docs/dev/08 §8.3).
+// as for the `gh` wrapper (docs/build/08 §8.3).
 func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, error) {
 	u := "https://api.github.com/search/issues?per_page=" + fmt.Sprint(workItemFetchPerQuery) +
 		"&sort=updated&order=desc&q=" + url.QueryEscape(query)

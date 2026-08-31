@@ -1,4 +1,4 @@
-// 作業グループ (docs/52) — membership predicates + the normalize fail-safe.
+// 作業グループ (docs/log/52) — membership predicates + the normalize fail-safe.
 // Pure derivation only: the settings-backed mutations are thin setSetting wrappers.
 import { describe, expect, it } from "vitest";
 import {
@@ -114,7 +114,7 @@ describe("scheduleInSet", () => {
     expect(scheduleInSet(w, { id: "sch_other" })).toBe(false);
   });
 
-  // repo arrives as the ABSOLUTE agent path (docs/38 P2 "dir" passthrough / the
+  // repo arrives as the ABSOLUTE agent path (docs/log/38 P2 "dir" passthrough / the
   // operator copies list_repos' path), never as a folder name — asserting the
   // bare-name form here is what let the mismatch ship.
   it("derives from the launch repo, which the CP holds as an absolute path", () => {

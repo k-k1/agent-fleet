@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the workspace image for arm64, natively, and prove the agent CLIs run on it
-# (docs/70 §70.9 / §70.13 — the real P1 blocker).
+# (docs/log/70 §70.9 / §70.13 — the real P1 blocker).
 #
 #   AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
 #     deploy/aws/ecs/harness/build-arm64-image.sh [--type m8g.2xlarge] [--ref <branch>]
@@ -15,8 +15,8 @@
 # agent CLIs actually execute on arm64"**, and three of them have a documented reason to
 # doubt it: agy aborts on hosts that do not offer RDRAND (decisions/0008) and Graviton
 # has no such instruction at all; cursor-agent's arm64 distribution was verified by
-# INSPECTION only, never executed (docs/40 §10, forum #148408); kiro needs the musl
-# variant because its gnu build wants glibc 2.39 and the image is Debian 12 (docs/43).
+# INSPECTION only, never executed (docs/log/40 §10, forum #148408); kiro needs the musl
+# variant because its gnu build wants glibc 2.39 and the image is Debian 12 (docs/log/43).
 # QEMU would answer a different question, and a CI run would publish something.
 #
 # So: BAKE_AGENT_CLIS=1 (the fully-baked variant), which pulls every CLI's arm64 asset
@@ -153,5 +153,5 @@ while [ "$SECONDS" -lt "$deadline" ]; do
 done
 
 echo
-echo "=== docs/70 §70.9 / §70.13 — arm64 workspace image, built natively on $TYPE ==="
+echo "=== docs/log/70 §70.9 / §70.13 — arm64 workspace image, built natively on $TYPE ==="
 cat /tmp/arm64-build.txt 2>/dev/null || echo "(no output)"

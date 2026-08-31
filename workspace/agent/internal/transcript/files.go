@@ -1,6 +1,6 @@
 package transcript
 
-// 「このセッションが直したファイル」の一覧（docs/68）が共有する語彙とヘルパ。
+// 「このセッションが直したファイル」の一覧（docs/log/68）が共有する語彙とヘルパ。
 //
 // 一覧の母集合は転写側——エージェントが編集ツールを呼んだという記録——で、git の
 // 作業ツリー状態は Console 側で `(Repo, Rel)` を鍵に突き合わせる。転写だけだと
@@ -25,7 +25,7 @@ type FileEdit struct {
 	Sidechain bool   // the call happened inside a subagent sidechain
 }
 
-// FileTouch is one FILE, folded over the whole session (docs/68 §68.8.1). JSON tags are
+// FileTouch is one FILE, folded over the whole session (docs/log/68 §68.8.1). JSON tags are
 // paired with the Console's type — Path is what FileView opens, and (Repo, Rel) is the
 // join key against GET /fs/changes.
 //
@@ -52,7 +52,7 @@ type FileTouch struct {
 //
 // ⚠️ The absence of before/after must NOT be read as "delete". codex is the only parser
 // that omits Edits deliberately (its delete branch), and it says so through `explicit`.
-// A kind that merely carries no diff bodies (cursor / copilot, docs/68 §68.2.1) would
+// A kind that merely carries no diff bodies (cursor / copilot, docs/log/68 §68.2.1) would
 // otherwise have every file it touched labelled 削除.
 func EditVerb(explicit string, edits []Edit) string {
 	switch explicit {

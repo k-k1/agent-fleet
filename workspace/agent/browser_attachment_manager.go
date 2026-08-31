@@ -506,7 +506,7 @@ func (m *browserAttachmentManager) Get(id string) (browserAttachmentResponse, er
 }
 
 // List returns the live attachments, newest first, so the Console can offer a
-// way back to one whose action link has scrolled out of the mirror (docs/53
+// way back to one whose action link has scrolled out of the mirror (docs/log/53
 // §53.7). It exposes no more than the pane already shows for a single id.
 func (m *browserAttachmentManager) List() browserAttachmentListResponse {
 	m.mu.Lock()
@@ -653,7 +653,7 @@ func (m *browserAttachmentManager) SetHandoffResult(id, result string) (browserA
 	a.stopScreencast()
 	a.notifyJSON(map[string]any{"type": "handoff", "handoff": resp.Handoff, "controlMode": attachmentControlLocked})
 	// Deliver the result back into the requesting session's conversation
-	// (docs/53 完了通知節). Off the request goroutine: a human's button click
+	// (docs/log/53 完了通知節). Off the request goroutine: a human's button click
 	// must return immediately, not block on resuming a stopped session or on
 	// the CLI's own delivery-confirmation round trip (up to 45s — see
 	// agentSendToSession). The ledger row already on disk (recordBrowserHandoffRequested)

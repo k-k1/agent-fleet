@@ -169,7 +169,7 @@ func TestKiroInstallLockExcludes(t *testing.T) {
 // TestKiroInstallGETReportsPinDrift: the connection card's update affordance is driven
 // by this payload. A home copy older than the versions.json pin must report
 // updateAvailable=true with both versions, so the user can SEE that an update exists and
-// press the button when a multi-minute download suits them (docs/43 §11).
+// press the button when a multi-minute download suits them (docs/log/43 §11).
 func TestKiroInstallGETReportsPinDrift(t *testing.T) {
 	fakeKiroHome(t, "2.14.1", "2.14.2")
 	kiroInstaller = kiroInstall{}

@@ -133,7 +133,7 @@ func TestBrowserAttachmentLiveExternalOwner(t *testing.T) {
 }
 
 // TestBrowserAttachmentLivePortCollision pins the Chromium behaviour the whole
-// port contract rests on (docs/53 §53.16), measured 2026-08-08 on Chrome 151:
+// port contract rests on (docs/log/53 §53.16), measured 2026-08-08 on Chrome 151:
 // a second Chromium told to use an already-taken --remote-debugging-port does
 // NOT fail — it silently binds the other loopback family and runs on. Discovery
 // dials 127.0.0.1, so without a guard the second session attaches to the FIRST

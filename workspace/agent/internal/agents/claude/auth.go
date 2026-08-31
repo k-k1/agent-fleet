@@ -174,7 +174,7 @@ func loggedIn() bool {
 // 期限（expires_at / days_left / expired）を足しているのは、`claude auth status` が
 // **期限を一切返さない**から（--json も --text も loggedIn/email/orgId/subscriptionType
 // だけ・実測 2.1.231）。カードはそれだけを見ていたので、切れても「接続済み」のまま
-// だった（docs/47 §4-7 で書いた「カードの状態表示を根拠にするな」の続き）。期限は
+// だった（docs/log/47 §4-7 で書いた「カードの状態表示を根拠にするな」の続き）。期限は
 // authexpiry.go が資格情報から直接読む。
 func Status() map[string]any {
 	out, err := exec.Command("claude", "auth", "status").Output()

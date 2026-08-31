@@ -1,8 +1,8 @@
-// Composing the comment that goes back to the ticket (docs/80 §80.10 / ADR 0061 決定 6).
+// Composing the comment that goes back to the ticket (docs/log/80 §80.10 / ADR 0061 決定 6).
 //
 // ★ What af drafts and what it does NOT drafts is the whole design here. It assembles the
 // MECHANICAL parts — which branch, which files, which session — because those are tedious
-// to gather by hand and af is the only thing that knows them per session (docs/68's
+// to gather by hand and af is the only thing that knows them per session (docs/log/68's
 // transcript × git join). It does NOT write the narrative: there is no summary generated
 // from the transcript, because a comment on someone else's ticket is a statement the user
 // is making, and a plausible-sounding generated one is exactly the kind of thing people

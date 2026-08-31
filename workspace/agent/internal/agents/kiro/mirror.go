@@ -1,7 +1,7 @@
 package kiro
 
 // transcriptBuf は managed（ACP）セッションの転写をメモリ上で組み立てるアキュムレータ
-// （docs/43 Track A2）。cursor の mirror.go と同型で、live turn と `session/load`
+// （docs/log/43 Track A2）。cursor の mirror.go と同型で、live turn と `session/load`
 // リプレイの両方を同じ状態機械で扱う:
 //
 //   - live turn: driver が runTurn 冒頭で addUserTurn(prompt) を呼び、以後の

@@ -1,134 +1,158 @@
-# 0044. Workspace のサイズは数値 3 軸で持ち名前付きサイズは UI 層に置く／`~` は「ファイル数」で置き場を分ける
+# 0044. Workspace size is held as three numeric axes with named sizes living in the UI layer; `~` is split by "number of files"
 
-- 状態: 採用・実装中（2026-08-15。設計と実測は docs/63）。**Fargate の有効タスクサイズ全 74 通り**と
-  **EFS の I/O** を AWS sandbox で実測した上で決めた。実測が当初案を 2 つ壊している
-  （Elastic throughput は小ファイルに効かない／キャッシュだけローカルへ逃がしても効かない）。
-- 関連: [63-workspace-sizing.md](../63-workspace-sizing.md) /
-  [62-ecs-start-latency.md](../62-ecs-start-latency.md)（同じ ECS の起動レイテンシ側） /
-  [history/p3-7-aws-adapter.md](../history/p3-7-aws-adapter.md) §20b.7.4（EFS を選んだ凍結仕様） /
-  [0012-go-refactor.md](0012-go-refactor.md)（アダプタは CP に状態を持たない）
+English | [日本語](0044-workspace-sizing.ja.md)
 
-## 背景
+- Status: adopted, in implementation (2026-08-15. The design and the measurements are in docs/63.)
+  Decided after measuring **all 74 valid Fargate task sizes** and **EFS I/O** in an AWS sandbox. The
+  measurements broke two parts of the original proposal (Elastic throughput does not help small
+  files; moving only the caches to local storage does not help).
+- See also: [63-workspace-sizing.md](../log/63-workspace-sizing.md) /
+  [62-ecs-start-latency.md](../log/62-ecs-start-latency.md) (the start-latency side of the same ECS) /
+  [history/p3-7-aws-adapter.md](../log/p3-7-aws-adapter.md) §20b.7.4 (the frozen specification that chose EFS) /
+  [0012-go-internal-refactor.md](0012-go-internal-refactor.md) (the adapter holds no state in the CP)
 
-ECS ランタイムで Workspace のタスクサイズとディスクをユーザー毎に変えたい。per-user のメモリ上限は
-既に `user_limit.mem_limit` → `fargateSize()` → タスク定義まで通っているが、(1) CPU を独立に選べない、
-(2) `disk_gb` が ECS では表示にしか使われていない、(3) 既定 1024/2048（2 GiB）が実運用に対して小さい。
+## Context
 
-決定の前に 2 つ実測した（docs/63 §63.2 / §63.4）。
+We want per-user task size and disk for workspaces on the ECS runtime. A per-user memory cap already
+runs through `user_limit.mem_limit` → `fargateSize()` → the task definition, but (1) CPU cannot be
+chosen independently, (2) `disk_gb` is only used for display on ECS, and (3) the default 1024/2048
+(2 GiB) is small for real use.
 
-- **Fargate の有効サイズは飛び飛びで、刻みも一様ではない。** 8 vCPU 帯は 4096 MiB 刻み、
-  16 vCPU 帯は 8192 MiB 刻み。既存の `fargateTiers` は全帯 1024 刻みを前提にしており、
-  **34 GiB 等を設定すると無効な組み合わせを生成して Start がまるごと失敗する**バグがあった。
-- **EFS が遅いのは「バイト数」ではなく「ファイル数」に対してである。** 1 ファイルあたり
-  約 14.5 ms の固定ペナルティがあり、帯域差は 1 MiB あたり約 1 ms しかない。
-  並列度を 16→64 に上げても、vCPU を 2→4→8 に上げても改善しない。
+Two things were measured before deciding (docs/63 §63.2 / §63.4).
 
-## 決定 1 — サイズは数値 3 軸（bytes / cpu units / GiB）で持ち、名前付きサイズは UI と MCP に置く
+- **Fargate's valid sizes are discrete, and the steps are not uniform.** The 8 vCPU band steps by
+  4096 MiB and the 16 vCPU band by 8192 MiB. The existing `fargateTiers` assumed 1024 steps in every
+  band, and there was a bug where **setting something like 34 GiB generated an invalid combination
+  and made Start fail outright**.
+- **EFS is slow with respect to the number of files, not the number of bytes.** There is a fixed
+  penalty of about 14.5 ms per file, and the bandwidth difference is only about 1 ms per MiB.
+  Neither raising parallelism from 16 to 64 nor raising vCPU from 2 to 4 to 8 improves it.
 
-`user_limit` に `cpu_limit`（vCPU units・0 = 未設定）を追加し、**メモリ（bytes）・CPU（units）・
-ディスク（GiB）の 3 軸を独立に保持する**。名前付きサイズ（S/M/L…）は保存形式ではなく、
-Console と MCP が 3 軸へ展開する**選択肢の見せ方**として実装する。
+## Decision 1 — hold size as three numeric axes (bytes / cpu units / GiB), with named sizes in the UI and MCP
 
-名前付きサイズを保存の正にする案（当初の有力案）を採らない理由:
+Add `cpu_limit` (vCPU units; 0 = unset) to `user_limit`, and **hold memory (bytes), CPU (units) and
+disk (GiB) as three independent axes**. Named sizes (S/M/L, …) are not a storage format but **a way
+of presenting choices** that the Console and MCP expand into the three axes.
 
-- 既存の `mem_limit`（bytes）は API・MCP・Console・二段クォータまで通っており、**段位へ移行すると
-  既存値の移行と全経路の書き換えが要る**。3 軸なら `ALTER TABLE` 1 本の追加で済む。
-- **docker ランタイムは任意バイト指定が意味を持つ**（`WS_MEMORY=5g` 相当の粒度）。段位に丸めると
-  オンプレ側の表現力を落とす。CPU も `--cpus` に素直に入る。
-- Fargate の飛び飛び制約は `fargateSize()` が**有効な組へスナップして吸収する**（既にその形）。
-  保存側を段位にしなくても、無効な組み合わせがタスク定義に届くことはない。
-- 段位の利点（UI が制約に素直・説明が簡単）は、**選択肢を UI 層に置けばそのまま得られる**。
+Why the alternative (making named sizes canonical in storage — the original front-runner) is not
+taken:
 
-`fargateTiers` は帯ごとの刻み（`stepMiB`）を持つ形に直し、`fargateSize` は要求 CPU を下限として
-扱う（メモリだけでなく CPU からも帯を選ぶ）。
+- The existing `mem_limit` (bytes) already runs through the API, MCP, the Console and the two-level
+  quota, so **moving to tiers would require migrating existing values and rewriting every path**.
+  Three axes need one added `ALTER TABLE`.
+- **On the docker runtime an arbitrary byte figure is meaningful** (the granularity of
+  `WS_MEMORY=5g`). Rounding to tiers would reduce the on-prem side's expressiveness. CPU also drops
+  straight into `--cpus`.
+- Fargate's discrete constraint is **absorbed by `fargateSize()` snapping to a valid combination**
+  (which is already its shape). An invalid combination cannot reach a task definition even without
+  tiers in storage.
+- Tiers' advantages (the UI mirrors the constraint; it is easy to explain) are **obtained as they are
+  by putting the choices in the UI layer**.
 
-## 決定 2 — ディスクは 200 GiB を境に ephemeral と EBS を使い分け、管理者には 1 つの数として見せる
+`fargateTiers` is reshaped to hold a per-band step (`stepMiB`), and `fargateSize` treats the
+requested CPU as a lower bound (choosing the band from CPU as well as memory).
 
-- **1 – 200 GiB は ephemeral storage**（21 未満の指定は 21 に切り上げ。実測で 21 未満・201 以上は API が拒否）
-- **200 GiB 超は ECS 管理 EBS**
-- 分岐は CP の中に閉じ、管理者から見える概念は「ディスク GB」1 つに保つ
-- 既定は **20 GiB**（＝無料枠。`disk_gb` 未設定なら `EphemeralStorage` を設定しない）。
-  デプロイ既定は `AF_ECS_WS_DISK_GB` で変更できる
+## Decision 2 — split disk between ephemeral and EBS at 200 GiB, and show the admin one number
 
-価格は実測でほぼ同額（ephemeral $0.097/GB-月・EBS gp3 $0.096/GB-月）だが、**ephemeral は 20 GiB まで
-無料**で、インフラ IAM ロールもボリューム作成・アタッチ・フォーマットの起動時上乗せも要らない。
-200 GiB 超と IOPS 指定だけが EBS の領分。
+- **1–200 GiB is ephemeral storage** (anything under 21 is rounded up to 21; measured, the API
+  rejects under 21 and over 201).
+- **Over 200 GiB is ECS-managed EBS.**
+- The branch is confined inside the CP, and the concept the admin sees stays one thing: "disk GB".
+- The default is **20 GiB** (the free allowance; with `disk_gb` unset, `EphemeralStorage` is not
+  set). The deployment default can be changed with `AF_ECS_WS_DISK_GB`.
 
-## 決定 3 — `~` の置き場は「平均ファイルサイズ」で分ける
+The prices measured out to be nearly identical (ephemeral $0.097/GB-month, EBS gp3 $0.096/GB-month),
+but **ephemeral is free up to 20 GiB** and needs no infrastructure IAM role and no startup overhead
+for creating, attaching and formatting a volume. Over 200 GiB, and specifying IOPS, are EBS's only
+territory.
 
-EFS のペナルティは 1 ファイル約 14.5 ms、帯域差は 1 MiB 約 1 ms。したがって
-**平均ファイルサイズが 1 MiB を超えるものは EFS に置いてもローカルの 2 倍以内に収まる**。
-この基準で `~` を分ける。
+## Decision 3 — split where `~` lives by "average file size"
 
-| 中身 | 置き場 | 根拠（実測） |
+EFS's penalty is about 14.5 ms per file, and the bandwidth difference about 1 ms per MiB. So
+**anything whose average file size exceeds 1 MiB stays within twice local speed even on EFS**. `~` is
+split on that criterion.
+
+| Contents | Where | Grounds (measured) |
 |---|---|---|
-| 認証・接続情報・identity（`homeKeep` の 7 つ） | **EFS** | 永続が絶対・100 MiB 未満 |
-| `~/repos` の追跡ファイルと未コミット変更 | **EFS** | 永続が絶対。`git clone` 4.9s / `git status` < 0.4s で EFS でも耐える |
-| `~/.npm`・`ms-playwright` 等の大きい tarball 系 | **EFS** | `.npm` は 20.6 GiB あるがファイル数は 6,756（平均 3.1 MiB）＝ EFS が苦手としない形 |
-| `node_modules`・`target`・`dist`・`.venv` | **ローカル** | 平均 17 KiB。`npm ci` が 9.4 倍遅い主因 |
-| `go-build`・`uv`・`go/pkg/mod` | **ローカル** | `uv` は 1 GiB に 101,949 ファイル（平均 10 KiB）＝ EFS へ書くと単純計算 26 分 |
-| `~/.local`（CLI 実体） | **保留** | 24,223 ファイル。CLI 起動コストを未測定 |
+| Credentials, connections, identity (the seven in `homeKeep`) | **EFS** | persistence is absolute; under 100 MiB |
+| Tracked files and uncommitted changes in `~/repos` | **EFS** | persistence is absolute. `git clone` 4.9s, `git status` < 0.4s — bearable on EFS |
+| Large tarball-shaped things like `~/.npm` and `ms-playwright` | **EFS** | `.npm` is 20.6 GiB but only 6,756 files (average 3.1 MiB) — not a shape EFS struggles with |
+| `node_modules`, `target`, `dist`, `.venv` | **local** | average 17 KiB. The main reason `npm ci` is 9.4× slower |
+| `go-build`, `uv`, `go/pkg/mod` | **local** | `uv` has 101,949 files in 1 GiB (average 10 KiB) — writing that to EFS is 26 minutes by simple arithmetic |
+| `~/.local` (the CLI binaries) | **deferred** | 24,223 files. CLI startup cost unmeasured |
 
-この分割が成立するのは、**再取得が高いものはファイル数が少なく、ファイル数が多いものは再生成が安い**
-という関係が実測で成立しているため（パッケージマネージャは配布物を tarball で持ち、展開物と
-中間生成物が小ファイルの山になる、という構造から来る）。偶然の一致ではない。
+This split works because the relationship **"what is expensive to re-fetch has few files, and what
+has many files is cheap to regenerate"** holds in the measurements (it comes from the structure that
+package managers hold their distributions as tarballs, while the unpacked output and intermediate
+artifacts are piles of small files). It is not a coincidence.
 
-**採らなかった案**:
+**Options not taken**:
 
-- **`~/repos` ごとローカル** — 効果は最大だが、自動アイドル停止で**未コミットの作業が消える**。
-- **キャッシュ類を一律ローカル** — 実測がこの配置そのもの（npm キャッシュはローカル・書き込み先だけ EFS）
-  であり、それでも 9.4 倍遅かった。**支配項は生成物の書き込み**でキャッシュの読み出しではない。
-- **EFS を Elastic throughput へ** — 小ファイルには効かない（tar 展開 98.3s vs bursting 98.0s）。
-  効くのは逐次帯域のみ（1 GiB 書き込み 2.6s ＝ 394 MB/s）。導入するとしても理由は帯域と
-  バーストクレジット枯渇への保険であって、ビルド速度ではない。
-- **タスクサイズを上げて解決する** — vCPU 2→4→8 で EFS 側は変化なし。買えない。
+- **Put all of `~/repos` on local storage** — the largest effect, but automatic idle stop would
+  **destroy uncommitted work**.
+- **Put all the caches on local storage** — the measurement *was* exactly that arrangement (the npm
+  cache local, only the write destination on EFS), and it was still 9.4× slower. **The dominant term
+  is writing the artifacts**, not reading the cache.
+- **Switch EFS to Elastic throughput** — it does not help small files (tar unpack 98.3s versus
+  bursting's 98.0s). It helps only sequential bandwidth (writing 1 GiB in 2.6s = 394 MB/s). If it is
+  ever introduced, the reason will be bandwidth and insurance against burst-credit exhaustion, not
+  build speed.
+- **Solve it by raising the task size** — vCPU 2→4→8 changes nothing on the EFS side. It cannot be
+  bought.
 
-## 決定 4 — home を EBS に載せる案は採らない（Fargate では原理的に不可）
+## Decision 4 — putting home on EBS is not adopted (impossible in principle on Fargate)
 
-`ServiceManagedEBSVolumeConfiguration`（サービス経路＝現構成）には終了ポリシーが**無く**、
-タスク停止で必ず削除される。`TaskManagedEBSVolumeConfiguration`（`RunTask`）には
-`TerminationPolicy.DeleteOnTermination=false` があるが、**既存ボリュームを指す項目が API に無い**ため
-残したボリュームを再アタッチできない（ECS は常に新規作成する）。持ち越しは `SnapshotId` 経由のみで、
-それは「クラッシュ時に home が前回スナップショットまで巻き戻る」「復元直後は S3 からの遅延
-ハイドレートで遅い」「停止に数分かかる」「Service Connect を失う」を同時に抱える。
+`ServiceManagedEBSVolumeConfiguration` (the service path, i.e. the current setup) has **no**
+termination policy and the volume is always deleted when the task stops.
+`TaskManagedEBSVolumeConfiguration` (`RunTask`) does have
+`TerminationPolicy.DeleteOnTermination=false`, but **the API has no field pointing at an existing
+volume**, so a retained volume cannot be reattached (ECS always creates a new one). Carrying over is
+only possible via `SnapshotId`, which simultaneously brings "home rolls back to the last snapshot on
+a crash", "it is slow right after restore because of lazy hydration from S3", "stopping takes
+minutes" and "Service Connect is lost".
 
-**金額の問題ではない**（EBS $0.096 < EFS $0.36 /GB-月）。Fargate に「速くて永続」が無いだけである。
-本当に必要になったときの答えは EC2 起動タイプ ＋ インスタンス stop（停止してもボリュームが残る）で、
-これは別案件として検討する。docs/62 の `(d) EC2 起動タイプ＝却下` は理由が
-「scale-to-zero が消える」だったので、インスタンス stop を前提にすれば**再検討の余地がある**。
+**It is not a cost question** (EBS $0.096 < EFS $0.36 /GB-month). Fargate simply has no "fast and
+persistent". When it becomes genuinely necessary the answer is the EC2 launch type plus instance stop
+(the volume survives a stop), and that is considered as a separate piece of work. docs/62's
+"(d) EC2 launch type = rejected" gave its reason as "scale-to-zero disappears", so **there is room to
+reconsider** on the premise of instance stop.
 
-## 決定 5 — 退避は既定で有効にする（既定 50 GiB）／生成物は作業コピーを作った時点で逃がす
+## Decision 5 — enable relocation by default (a 50 GiB default), and move artifacts out at the moment the working copy is created
 
-決定 3 は実装したが、**出荷状態では一度も発火していなかった**。原因は 2 つで、どちらも
-「入れた」と「効く」の差である。
+Decision 3 was implemented, but **in the shipped state it never fired once**. Two causes, both the
+difference between "put in" and "in effect".
 
-1. **作業ディスクの既定が 0（＝ Fargate 無料枠 20 GiB）だった。** 退避は作業ディスクが
-   30 GiB 以上のときだけ有効になる設計（docs/63 §63.6.1）なので、既定のままではどのデプロイでも
-   条件を満たさない。→ **既定を 50 GiB に上げる**（`WsDiskGiB` / `AF_ECS_WS_DISK_GB`）。
-   無料枠超過分は **$0.097/GiB-月・タスク稼働中のみ**課金で、30 GiB 上乗せは 24/7 でも月 $2.9。
-   `WsDiskGiB=0` で従来どおりに戻せる。**既存スタックは自動では上がらない**（CFN はパラメータ値を保持する）。
-2. **生成物の退避が手動だった。** `af-scratch node_modules` は「既にある木」しか動かせず、
-   そのときには **1 回目の `npm ci` が EFS 上で走り終えている**（＝ 105 秒を払い済み・移動自体も遅い）。
-   効き幅を取れるのは**空のうちに symlink を張る**形だけなので、**Agent が clone / worktree 作成の
-   直後に `af-scratch --auto` を叩く**（docs/63 §63.6.3）。
+1. **The working disk defaulted to 0 (i.e. Fargate's free 20 GiB).** Relocation is designed to become
+   active only when the working disk is 30 GiB or more (docs/63 §63.6.1), so with the default no
+   deployment meets the condition. → **Raise the default to 50 GiB** (`WsDiskGiB` /
+   `AF_ECS_WS_DISK_GB`). Above the free allowance it is **$0.097/GiB-month, and only while the task
+   runs**, so 30 GiB extra is $2.9 a month even at 24/7. `WsDiskGiB=0` restores the old behaviour.
+   **Existing stacks do not rise automatically** (CFN retains parameter values).
+2. **Relocating artifacts was manual.** `af-scratch node_modules` can only move a tree that already
+   exists, and by then **the first `npm ci` has finished running on EFS** (the 105 seconds are already
+   paid, and the move itself is slow too). The only shape that captures the benefit is **creating the
+   symlink while it is still empty**, so **the Agent calls `af-scratch --auto` immediately after a
+   clone or a worktree creation** (docs/63 §63.6.3).
 
-**追跡物は絶対に動かさない**——実体があるものは `git check-ignore` が無視と答えたときだけ移す。
-既存の作業コピーには適用しない（再開時に巨大な木を移すとセッション起動が止まるため）。
-代償は `[ -d node_modules ] || npm install` 型のスクリプトが誤認すること（`AF_WS_SCRATCH_AUTO=0` で無効化）。
+**Tracked files are never moved** — something that exists is moved only when `git check-ignore` says
+it is ignored. It is not applied to existing working copies (moving a huge tree on resume would stall
+session startup). The price is that scripts shaped like `[ -d node_modules ] || npm install` are
+fooled (disable with `AF_WS_SCRATCH_AUTO=0`).
 
-## 影響
+## Impact
 
-- `control-plane/mem.go` — 帯ごとの刻みを持つ形へ。既存バグの修正を含む
+- `control-plane/mem.go` — reshaped to hold a per-band step. Includes fixing the existing bug
 - `control-plane/migrations/0044_user_limit_cpu.sql` / `migrations-pg/0027_user_limit_cpu.sql`
-- `control-plane/store.go`・`store_sqlite.go`・`store_postgres.go` — `UserLimit.CPULimit`
+- `control-plane/store.go`, `store_sqlite.go`, `store_postgres.go` — `UserLimit.CPULimit`
 - `control-plane/workspace_lifecycle.go` — `resolveWorkspaceCPUUnits` / `resolveWorkspaceDiskGB`
-- `control-plane/limits.go` — テナント上限 `max_workspace_cpu` / `max_workspace_disk_gb`
-- `control-plane/runtime_ecs.go` — CPU の反映・`EphemeralStorage`・200 GiB 超の EBS
-- `control-plane/runtime_docker.go` — `--cpus`（native は cgroup を持たないので従来どおり無視）
-- `control-plane/tenants.go`・`mcp.go` — 設定経路
-- `console/src/features/settings/tenantMembers.tsx` — 名前付きサイズの選択 UI
-- `workspace/entrypoint.sh` — 置き場の分割（ECS のときだけ有効化）
-- `workspace/af-scratch.sh` — `--auto`（マーカーから生成物を引き当て、空のうちに symlink）
-- `workspace/agent/scratch.go` — clone / worktree 作成後の best-effort 呼び出し
-- `deploy/aws/ecs/cfn/30-ingress.yaml` — `WsDiskGiB` の既定を 0 → 50
-- `workspace/workspace-notes.md` — 永続モデルの記述を ECS について書き換える（利用者への約束）
+- `control-plane/limits.go` — the tenant caps `max_workspace_cpu` / `max_workspace_disk_gb`
+- `control-plane/runtime_ecs.go` — applying CPU, `EphemeralStorage`, EBS above 200 GiB
+- `control-plane/runtime_docker.go` — `--cpus` (native has no cgroup, so it is ignored as before)
+- `control-plane/tenants.go`, `mcp.go` — the configuration paths
+- `console/src/features/settings/tenantMembers.tsx` — the named-size selection UI
+- `workspace/entrypoint.sh` — splitting where things live (enabled only on ECS)
+- `workspace/af-scratch.sh` — `--auto` (find the artifacts from markers and symlink them while empty)
+- `workspace/agent/scratch.go` — a best-effort call after a clone or worktree creation
+- `deploy/aws/ecs/cfn/30-ingress.yaml` — the `WsDiskGiB` default from 0 to 50
+- `workspace/workspace-notes.md` — rewrite the persistence model's description for ECS (a promise to
+  users)

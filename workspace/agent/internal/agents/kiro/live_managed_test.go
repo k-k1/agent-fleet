@@ -1,7 +1,7 @@
 package kiro
 
 // managed（ACP）ルートの実バイナリ契約テスト（opt-in・KIRO_LIVE=1）。実 `kiro-cli acp` を
-// 子として起動し、docs/43 Track A2 の契約が実 CLI で成立することを検証する:
+// 子として起動し、docs/log/43 Track A2 の契約が実 CLI で成立することを検証する:
 // spawn→initialize→session/new→prompt(completed)→転写がメモリ構築される→（別プロセスで）
 // session/load resume→文脈保持＋転写がリプレイから再構築される。read 層の liveGate
 // （live_test.go・KIRO_LIVE＋PATH）を共有する。認証は環境の kiro ログイン（ambient・

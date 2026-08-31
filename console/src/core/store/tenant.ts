@@ -19,7 +19,7 @@ interface TenantStore {
   showPicker: boolean;
   superAdmin: boolean;
   /** The CP answered `not_provisioned`: this person signed in fine but is on
-   *  nobody's roster yet (docs/61 §61.10.2). It is a normal state on an
+   *  nobody's roster yet (docs/log/61 §61.10.2). It is a normal state on an
    *  invite-run deployment — the default for new installs since P7-2 — not an
    *  error, so App renders a landing screen for it instead of a Console whose
    *  every request 403s. ★ A super_admin never reaches it: the CP answers 200
@@ -112,7 +112,7 @@ export const useTenantStore = create<TenantStore>((set) => ({
       if (data?.error) {
         // ★ not_provisioned is not a failure — the person is signed in and simply
         // not on a roster yet. Flag it so App can land them on a page that says so
-        // (docs/61 §61.10.2); without this they get the full Console with an empty
+        // (docs/log/61 §61.10.2); without this they get the full Console with an empty
         // tenant and every subsequent request 403ing one toast at a time.
         set({ notProvisioned: data.error.code === "not_provisioned" });
         // Keep the current (persisted) selection either way: a 5xx is the CP/gateway
@@ -132,7 +132,7 @@ export const useTenantStore = create<TenantStore>((set) => ({
         return true;
       }
       // ?tenant=<slug> is the hint the per-tenant login URL leaves behind
-      // (/login/<slug> → docs/61 §61.10.4), so somebody who opened their
+      // (/login/<slug> → docs/log/61 §61.10.4), so somebody who opened their
       // department's link lands in that department rather than in whichever
       // tenant this browser last used. It is only ever a preselection: it is
       // honoured only when the server already listed that tenant among this

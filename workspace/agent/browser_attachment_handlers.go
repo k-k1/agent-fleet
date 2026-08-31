@@ -591,7 +591,7 @@ func (v *browserAttachmentViewer) measureFit(pane browserViewport) (browserViewp
 // the Console can put it on the USER's clipboard. Ctrl+C inside the pane cannot
 // do it: the keystroke would copy into the container's clipboard, which nobody
 // can reach. The expression is fixed and read-only, and the text is never
-// logged or persisted — same rule as the page title and URL (docs/53 §53.10).
+// logged or persisted — same rule as the page title and URL (docs/log/53 §53.10).
 func (v *browserAttachmentViewer) handleCopySelection() {
 	v.attachment.mu.Lock()
 	locked := v.attachment.controlMode == attachmentControlLocked

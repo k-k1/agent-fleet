@@ -41,7 +41,7 @@ const groupHeading = (dir: string, head?: ArchivedSession): { repo?: string; lab
 
 // "Old" cutoff for bulk-prune. No createdAt = never pruned by age.
 const OLD_DAYS = 7;
-// 削除ロック（docs/45）済みは一括削除の対象外 — Agent が 403 で拒むので、件数にも入れない。
+// 削除ロック（docs/log/45）済みは一括削除の対象外 — Agent が 403 で拒むので、件数にも入れない。
 const isOld = (s: ArchivedSession, now: number) => {
   if (!s.createdAt || s.locked) return false;
   const ts = new Date(s.createdAt).getTime(); // ts: i18n の t を隠さない名前に

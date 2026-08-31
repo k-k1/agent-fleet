@@ -17,7 +17,7 @@ import (
 // internal repo list/create/delete is CP-NATIVE: the CP owns the bare repos, so
 // it answers directly instead of proxying to a workspace. All routes are scoped
 // to the caller's resolved tenant (X-AF-Tenant → withMembership); the handlers
-// are gitServerAPI methods (struct in git_http.go, docs/23 残③).
+// are gitServerAPI methods (struct in git_http.go, docs/log/23 残③).
 
 // cloneURL builds the clone URL a workspace container uses. It is the public
 // base (Caddy TLS terminus, reachable from the container via hairpin NAT) so the

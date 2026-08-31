@@ -1,129 +1,156 @@
-# 0039. 会話の分岐点は kind 固有の不透明アンカーで指し、claude だけ jsonl 手術を許す
+# 0039. Point at a conversation's fork point with a kind-specific opaque anchor, and allow jsonl surgery for claude only
 
-- 状態: 採用・P1〜P5 実装済み（契約＋4 kind〔claude/codex/opencode/copilot〕＋Console 導線＋「続きから」。4 種とも実 CLI 検証済み）
-- 関連: [55-fork-at-message.md](../55-fork-at-message.md) /
-  [history/fork-from-chat.md](../history/fork-from-chat.md)（本 ADR が差し替える旧判断） /
-  [27-agent-managed-driver.md](../27-agent-managed-driver.md) /
-  [0029-usage-accounting.md](0029-usage-accounting.md)（出自 `handoff` の扱い）
+English | [日本語](0039-fork-at-message.ja.md)
 
-## 背景
+- Status: adopted; P1–P5 implemented (the contract plus four kinds [claude/codex/opencode/copilot]
+  plus the Console route plus "carry on from here". All four verified against the real CLIs)
+- See also: [55-fork-at-message.md](../log/55-fork-at-message.md) /
+  [history/fork-from-chat.md](../log/fork-from-chat.md) (the old judgement this ADR replaces) /
+  [27-agent-managed-driver.md](../log/27-agent-managed-driver.md) /
+  [0029-usage-accounting.md](0029-usage-accounting.md) (how the `handoff` origin is handled)
 
-ミラーの過去のユーザー発言を選んで、そこまでの文脈を持った新セッションを起こしたい。
+## Context
 
-既存の `POST /sessions/{name}/fork` は会話まるごとの分岐しかできず、しかも Console からは
-呼ばれていない（ミラーの分岐ボタンは引き継ぎモーダルへ統合され、そちらは *LLM による要約*
-という別物）。地点分岐は 2026-06 に「Claude Code 非サポート／`idx` しかアンカーが無い／
-jsonl 改変は壊れやすい」を理由に一度却下されている。
+We want to select a past user message in the mirror and start a new session carrying the context up
+to that point.
 
-2026-08 の実測でこの前提が変わった。codex は app-server の `thread/fork` に `lastTurnId`
-（inclusive）を、opencode は `POST /session/{id}/fork` に `messageID`（exclusive）を**公式に**
-持つ。claude は `--resume-session-at <message id>` という隠しフラグを持つが **print モード
-限定**で、TUI 起動しか無い AF では使えない。一方、claude 自身の fork が書く jsonl と元
-ファイルの差分は **`sessionId` フィールドだけ**（`uuid` / `parentUuid` は元のまま）であることを
-実測した。詳細と再現手順は docs/55 §55.2 / §55.11。
+The existing `POST /sessions/{name}/fork` can only fork a whole conversation, and it is not even
+called from the Console (the mirror's fork button was folded into the handoff modal, which is a
+different thing — *an LLM summary*). Forking at a point was rejected once in 2026-06 on the grounds
+of "Claude Code does not support it / the only anchor is `idx` / modifying the jsonl is fragile".
 
-## 決定
+Measurements in 2026-08 changed that premise. codex has `lastTurnId` (inclusive) on the app-server's
+`thread/fork`, and opencode has `messageID` (exclusive) on `POST /session/{id}/fork` — both
+**officially**. claude has a hidden flag `--resume-session-at <message id>`, but it is **print mode
+only** and AF, which only starts the TUI, cannot use it. On the other hand, we measured that the
+difference between the jsonl claude's own fork writes and the original file is **only the
+`sessionId` field** (`uuid` and `parentUuid` stay as they were). The details and how to reproduce it
+are in docs/55 §55.2 / §55.11.
 
-1. **分岐点は kind 固有の不透明 ID（アンカー）で指す。** `transcript.Turn` に `AnchorID` を足し、
-   claude = メッセージ uuid、codex = turn id、opencode = message id、copilot = イベント id を入れる。転写の行番号
-   `Idx` は compaction で動くため恒久アンカーにしない。
-2. **Console はアンカーを解釈しない。** 受け取った文字列をそのまま fork API へ返すだけとし、
-   包含（inclusive / exclusive）の差異吸収を含む kind 別の知識は Agent 側に閉じる。
-3. **アンカーが空の turn からは分岐させない。** `Idx` からの推測で代用しない。分岐 affordance を
-   出さないことを正とする。
-4. **v1 の意味論は「選んだユーザー発言の直前まで」の 1 つに固定する。** 分岐先はその発言を
-   打つ直前の状態で開き、元の発言文はコンポーザーの下書きに入れる（送信はしない）。
-   「その発言と回答を含める」は v1.1 のオプションとし、アンカーを 1 つ後ろへずらして表現する。
-   *v1.1 実装（採用）*: `agents.ForkPoint{Anchor, Include}` で resolver が吸収し、`Meta.ForkAt`
-   の意味（この値の手前まで残す）は変えない。既定は「やり直す」——方針を間違えた直後が
-   いちばん多い用途で、そこでは分岐点の発言も捨てたい。下書きの投入も「やり直す」限定で、
-   「続きから」では発言が分岐先に残るため入れると二重に見える。
-   非対称が 2 つ残るが、どちらもエンジン側の都合そのものなので隠さない: **最後のやり取りを
-   「続きから」は会話まるごと**（`""` に解決して既存経路へ）、**最初のやり取りを「やり直す」は
-   codex だけ表現できない**（空 `lastTurnId` が「まるごと」の意味になるため断る）。
-5. **fork API は任意ボディ `{at}` へ広げる。** `at` 省略は従来の会話まるごと分岐で、後方互換を
-   保つ。解決できないアンカーは **4xx で失敗させる**（会話まるごと分岐へ倒さない）。
-   *実装時の補正*: エラーコードは意味で 2 つに割った — `fork_at_unsupported`（この種別／起動
-   方式に地点分岐という機能が無い＝導線を出すべきでなかった）と `fork_bad_anchor`（機能は
-   あるがこの分岐点が使えない）。前者はローカライズしたい定型文、後者は状態の問題で、
-   ユーザーの次の行動（諦める／読み込み直す）が違う。分岐点の元発言テキストを返す `draft`
-   フラグは落とした（Console が既に描画に使っており、サーバから返す意味がない）。
-6. **codex / opencode は公式パラメータだけで実装する。** 非公式な rollout / ストア操作は行わない。
-7. **claude は jsonl 手術を許す。** 元 jsonl をコピーし、切断点より前の行を取り、`sessionId`
-   だけを書き換えて新 sid のファイルとして置く。**それ以外のフィールドには触らない。**
-   `buildProgram` は自分の jsonl があれば resume するので、起動側の改修は不要。
-8. **切断点は「本物のユーザープロンプト行」に限り、検査に落ちたら失敗させる。** ツール結果も
-   `type:"user"` で載るため候補から除外し、切断後に `tool_result` を欠く `tool_use` が残らない
-   ことを確認する。落ちたときは会話まるごと分岐を提案し、**黙って全体を分岐させない**。
-9. **claude の手術は CLI ピン更新のドリフト検知に載せる。** 「切り詰めた jsonl が resume でき、
-   切り詰め後の履歴だけを見ている」ことを実 CLI テストで毎版確認する。
-   *実装*: `TestContractLiveClaudeForkAt`（`clicontract` タグ・`claude-tui-contract.yml` に相乗り）。
-10. **起動方式の可否は kind が答える（グローバルな managed 条件は置かない）。**
-   分岐点を渡せる口は opencode/codex では runtime API にしかないので managed 必須だが、
-   claude は managed driver 自体を持たず自分の転写を切るので TUI が唯一の経路。ハンドラで
-   一律に managed を要求すると claude が永久に弾かれるため、resolver が `ErrForkAtRoute` を
-   返す形にし、Console も `caps.forkAtManagedOnly` で同じ差を持つ。
-   *順序*: 分岐点の解決は `ForkSource` より**前**に行う。経路が違うセッションに
-   「分岐できる会話がまだありません」と返しても、ユーザーは会話を増やそうとするだけで直らない。
-11. **対象は claude / codex / opencode / copilot の 4 種。** kiro は CLI 側が ID を採番、agy は
-    SQLite ストアのため対象外とし、`Caps.CanForkAt` は false に保つ。
-    *P4b 調査（2026-08-09）*: **cursor は不可**と確定した — 転写の行が `{role, message.content}`
-    だけで `uuid`/`parentUuid`/`sessionId` を持たず（パーサも読んでいない）、分岐点に使える
-    恒久 ID が無い。「Claude Code 互換 JSONL」は形が似ているという意味で、識別子まで同じでは
-    なかった。行番号での代用は決定 1 が却下済み。**copilot は実装した**（events.jsonl が復元元 — `session.db` を
-    無改変のまま残しても、切り詰めた events.jsonl のほうが文脈を決めた）。単位が
-    ディレクトリ一式になるだけで claude と同型。**`session.db` はコピーして触らない**：
-    意味を知らないファイルを書き換え始めた時点で、この手術は「読めるものを同じ形で書き直す」
-    から「他プロダクトの内部状態を owns する」に変わる。索引（`session-store.db`）も書かない
-    ——未登録の session-state を resume すると copilot が自分で登録する（実測）。
-    材料化は TUI と managed の**両経路**に置く（managed を忘れると sid が無く `session/new` へ
-    落ち、分岐先が空の会話として開く）。
-12. **分岐で生えたセッションの出自は既存 fork と同じ `handoff` を継ぐ。** 「人が開いた数」に
-    混ぜない（ADR 0029 §6）。
-13. **分岐と引き継ぎは別機能として併存させる。** 引き継ぎ＝要約して別エージェントへ渡す、
-    分岐＝同じエージェントで文脈をそのまま複製する。UI でこの差を明示する。
+## Decision
 
-## 採らなかった案
+1. **The fork point is named by a kind-specific opaque ID (an anchor).** `AnchorID` is added to
+   `transcript.Turn` and holds: claude = the message uuid, codex = the turn id, opencode = the
+   message id, copilot = the event id. The transcript line number `Idx` is not used as a permanent
+   anchor, because compaction moves it.
+2. **The Console does not interpret the anchor.** It just hands the string it received straight back
+   to the fork API; kind-specific knowledge, including absorbing the inclusive/exclusive difference,
+   is confined to the Agent side.
+3. **Do not fork from a turn with an empty anchor.** Do not substitute a guess from `Idx`. Not
+   offering the fork affordance is the correct behaviour.
+4. **v1's semantics are fixed to one thing: "up to just before the selected user message".** The
+   fork opens in the state just before that message was typed, and the original message text goes
+   into the composer as a draft (it is not sent). "Include that message and its reply" is an option
+   for v1.1, expressed by shifting the anchor one step later.
+   *v1.1 as implemented (adopted)*: the resolver absorbs it via `agents.ForkPoint{Anchor, Include}`,
+   and the meaning of `Meta.ForkAt` (keep everything before this value) does not change. The default
+   is "redo" — the most common use is right after taking a wrong direction, and there you want to
+   discard the fork point's message too. Injecting the draft is limited to "redo", because with
+   "carry on from here" the message remains in the fork and would appear twice.
+   Two asymmetries remain, and neither is hidden because both are the engines' own constraints:
+   **"carry on from here" on the last exchange is a whole-conversation fork** (it resolves to `""`
+   and goes down the existing path), and **"redo" on the first exchange cannot be expressed on codex
+   alone** (an empty `lastTurnId` there means "the whole thing", so we refuse).
+5. **The fork API is widened with an optional body `{at}`.** Omitting `at` is the old
+   whole-conversation fork, preserving backward compatibility. An anchor that cannot be resolved
+   **fails with a 4xx** (it does not fall back to a whole-conversation fork).
+   *A correction made during implementation*: the error code was split in two by meaning —
+   `fork_at_unsupported` (this kind or execution method simply does not have point forking, i.e. the
+   route should not have been offered) and `fork_bad_anchor` (the feature exists but this fork point
+   cannot be used). The former wants localised boilerplate, the latter is a state problem, and the
+   user's next action differs (give up versus reload). The `draft` flag that returned the fork
+   point's original message text was dropped (the Console already uses it for rendering, so there is
+   no point returning it from the server).
+6. **codex and opencode are implemented with the official parameters only.** No unofficial rollout or
+   store manipulation.
+7. **claude is allowed jsonl surgery.** Copy the original jsonl, take the lines before the cut point,
+   rewrite **only** `sessionId`, and place it as the new sid's file. **No other field is touched.**
+   `buildProgram` resumes if its own jsonl exists, so the launch side needs no changes.
+8. **The cut point is restricted to a genuine user prompt line, and failing the check is a
+   failure.** Tool results also arrive as `type:"user"`, so they are excluded from the candidates,
+   and we confirm that no `tool_use` is left without its `tool_result` after the cut. On failure we
+   suggest a whole-conversation fork and **never silently fork the whole thing**.
+9. **claude's surgery rides the drift detection for CLI pin updates.** "A truncated jsonl can be
+   resumed, and only the truncated history is visible" is confirmed against the real CLI on every
+   version. *Implementation*: `TestContractLiveClaudeForkAt` (the `clicontract` tag, riding on
+   `claude-tui-contract.yml`).
+10. **Whether an execution method is possible is answered by the kind (there is no global managed
+    condition).** For opencode and codex the only place to pass a fork point is the runtime API, so
+    managed is required; but claude has no managed driver at all and cuts its own transcript, so the
+    TUI is the only route. Requiring managed uniformly in the handler would reject claude forever, so
+    the resolver returns `ErrForkAtRoute`, and the Console carries the same distinction in
+    `caps.forkAtManagedOnly`.
+    *Ordering*: the fork point is resolved **before** `ForkSource`. Telling a session on a different
+    route "there is no forkable conversation yet" only makes the user try to add more conversation,
+    which does not fix it.
+11. **The kinds covered are claude / codex / opencode / copilot.** kiro is out of scope because the
+    CLI assigns the ID, and agy because of its SQLite store; `Caps.CanForkAt` stays false for both.
+    *P4b investigation (2026-08-09)*: **cursor is confirmed impossible** — its transcript lines carry
+    only `{role, message.content}` with no `uuid`/`parentUuid`/`sessionId` (the parser does not read
+    them either), so there is no permanent ID usable as a fork point. "Claude Code-compatible JSONL"
+    means the shape is similar, not that the identifiers are the same. Substituting a line number was
+    already rejected by decision 1. **copilot was implemented** (events.jsonl is what it is restored
+    from — even leaving `session.db` unmodified, the truncated events.jsonl determined the context).
+    The only difference is that the unit is a whole directory; otherwise it is the same shape as
+    claude. **`session.db` is copied and not touched**: the moment you start rewriting a file whose
+    meaning you do not know, this surgery changes from "rewriting something readable into the same
+    shape" into "owning another product's internal state". The index (`session-store.db`) is not
+    written either — resuming an unregistered session-state makes copilot register it itself
+    (measured). The material is prepared on **both** the TUI and managed routes (forget managed and
+    there is no sid, so it falls to `session/new` and the fork opens as an empty conversation).
+12. **A session grown from a fork inherits the same `handoff` origin as the existing fork.** It is
+    not mixed into "the number a person opened" (ADR 0029 §6).
+13. **Forking and handoff coexist as separate features.** Handoff = summarise and pass to a different
+    agent; fork = duplicate the context as it is on the same agent. The UI makes this difference
+    explicit.
 
-### claude も公式フラグ（`-p --resume-session-at`）で材料化する
+## Options not taken
 
-分岐時に「最初の指示」を必須入力にすれば、`claude -p --resume <src> --resume-session-at <uuid>
---fork-session --session-id <new> "<指示>"` で公式に切り詰めた jsonl を作れる（実測で動作）。
-非公式な書き込みを完全に避けられるのが利点。
+### Prepare claude's material with the official flag (`-p --resume-session-at`) too
 
-採らない理由は、**その 1 ターンが headless で丸ごと走る**こと。ツールが動き、数分かかり、
-失敗しうる。「分岐する」という操作の結果としてユーザーが見るのは、まだ何も指示していない
-新しいセッションであるべきで、裏で 1 ターン完走してから開くのは別の機能になる。加えて
-`--resume-session-at` 自体が `--help` に出ない隠しフラグで、「公式だから安全」の度合いは
-手術との差ほど大きくない。**手術は行の取捨と `sessionId` 書き換えだけ**で、公式 fork の
-出力と同形であることを実測で確認できている。
+If the first instruction were made a required input at fork time, we could officially produce a
+truncated jsonl with
+`claude -p --resume <src> --resume-session-at <uuid> --fork-session --session-id <new> "<instruction>"`
+(measured to work). The advantage is avoiding unofficial writes entirely.
 
-ただしこの案は捨てず、docs/55 §55.5 に代替ルートとして残す。ドリフト検知が壊れたときの
-逃げ道になる。
+The reason not to take it is that **that one turn runs in full, headlessly**. Tools run, it takes
+minutes, and it can fail. What the user should see as the result of "fork" is a new session where
+nothing has been instructed yet; running a full turn behind the scenes and then opening it is a
+different feature. On top of that, `--resume-session-at` is itself a hidden flag absent from
+`--help`, so "official, therefore safe" does not differ from the surgery by as much as it sounds.
+**The surgery is nothing but selecting lines and rewriting `sessionId`**, and we have measured that
+the output has the same shape as the official fork's.
 
-### 転写の行番号 `idx` をアンカーにする
+This option is not discarded, though; it stays in docs/55 §55.5 as an alternative route — an escape
+hatch for when the drift detection breaks.
 
-Console まで既に届いており追加実装がほぼ要らないが、compaction で動く。分岐という
-「1 回きりだが取り返しのつく操作」で、ずれた地点から分岐しても**ユーザーは気づけない**
-（それらしい履歴が付いてくる）。静かに間違うアンカーは採らない。
+### Use the transcript line number `idx` as the anchor
 
-### 同一セッション内の巻き戻し（opencode の `revert`、claude の `/rewind`）で代替する
+It already reaches the Console and needs almost no extra implementation, but compaction moves it.
+For a fork — a one-off but recoverable operation — **the user cannot notice** having forked from the
+wrong point (plausible-looking history comes with it). We do not adopt an anchor that is silently
+wrong.
 
-元の会話が失われる、または元セッションの状態を変えてしまう。「元は残したまま別方向を試す」
-という要求そのものを満たさない。巻き戻しは別の機能であり、本 ADR の範囲外。
+### Substitute a rewind within the same session (opencode's `revert`, claude's `/rewind`)
 
-### 引き継ぎ（handoff）の要約で代替する
+Either the original conversation is lost, or the original session's state is changed. It does not
+satisfy the requirement itself, which is "try a different direction while keeping the original".
+Rewinding is a different feature and out of scope for this ADR.
 
-既に実装済みで追加コストがない。しかし要約は文脈を落とし、元の指示の言い回しも失う。
-「あの指示のところからやり直す」用途では、失われた部分こそが分岐したい理由であることが多い。
+### Substitute the handoff's summary
 
-### kind ごとに Console 側で包含を吸収する
+Already implemented, at no extra cost. But a summary drops context and loses the wording of the
+original instruction. For "start again from that instruction", what was lost is often exactly the
+reason for forking.
 
-codex が inclusive、opencode が exclusive、claude が「直前の行の uuid」と三者三様なので、
-Console に持たせると kind が増えるたびにフロントが壊れる。Agent 側の `ResolveForkAt` に
-閉じ込める（`agents.Agent` の分割方針どおり）。
+### Absorb the inclusive/exclusive difference per kind on the Console side
 
-### `agents.Forker` を拡張して地点分岐を持たせる
+codex is inclusive, opencode is exclusive, and claude wants "the uuid of the preceding line" — three
+different things. Putting that in the Console breaks the front end every time a kind is added.
+Confine it to `ResolveForkAt` on the Agent side (as the `agents.Agent` split intends).
 
-既存 `Forker` にメソッドを足すと、会話まるごと分岐だけを実装している kind のコンパイルが
-壊れる。`ForkAtResolver` を別インターフェイスにして、実装の有無を `Caps.CanForkAt` で表す。
+### Extend `agents.Forker` to carry point forking
+
+Adding a method to the existing `Forker` breaks compilation for kinds that implement only
+whole-conversation forking. `ForkAtResolver` is a separate interface, and whether it is implemented
+is expressed by `Caps.CanForkAt`.

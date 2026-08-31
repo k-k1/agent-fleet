@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// 契機判定は純関数なので、実時間を待たずに全分岐を固定できる（docs/39 の
+// 契機判定は純関数なので、実時間を待たずに全分岐を固定できる（docs/log/39 の
 // 「idle 遷移 + debounce」をポーリングで表現したもの）。
 func TestMemoryShouldSnapshot(t *testing.T) {
 	base := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
@@ -57,7 +57,7 @@ func TestMemoryShouldSnapshot(t *testing.T) {
 	}
 }
 
-// AF_MEMORY_SNAPSHOT は既定 ON（docs/39 決着 #1）。off 指定だけがループを止める。
+// AF_MEMORY_SNAPSHOT は既定 ON（docs/log/39 決着 #1）。off 指定だけがループを止める。
 func TestMemoryAutoEnabledDefaults(t *testing.T) {
 	if !memoryAutoEnabled() {
 		t.Fatal("auto snapshot should default to ON")

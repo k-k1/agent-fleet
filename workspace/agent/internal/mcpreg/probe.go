@@ -1,11 +1,11 @@
 package mcpreg
 
-// Connection test (docs/48 §10, docs/49). A registration that can't actually start is
+// Connection test (docs/log/48 §10, docs/log/49). A registration that can't actually start is
 // the single most likely failure, and without this the user only finds out by launching
 // a session and digging the error out of the CLI's startup log. So the registry speaks
 // just enough MCP itself.
 //
-// It speaks BOTH eras (docs/49 / ADR0032), because a user's registered server may be
+// It speaks BOTH eras (docs/log/49 / ADR0032), because a user's registered server may be
 // either:
 //   - 2026-07-28 (stateless): no handshake; version + clientInfo + clientCapabilities
 //     ride in `_meta` on every request, and Streamable HTTP mirrors method/version into

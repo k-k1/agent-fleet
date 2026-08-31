@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// P7-3 (docs/61 §61.17.4 (b) + 決定 41): a SECOND app registration of a directory
+// P7-3 (docs/log/61 §61.17.4 (b) + 決定 41): a SECOND app registration of a directory
 // this deployment already has a door to.
 //
 // The failure being prevented is remote from its cause: the tenant saves a row that
@@ -128,7 +128,7 @@ func TestTenantIdPPairwiseSecondRegistrationNeedsLinkClaim(t *testing.T) {
 	}
 }
 
-// The ordering rule (docs/61 §61.17.4): the old row may not be stopped until the
+// The ordering rule (docs/log/61 §61.17.4): the old row may not be stopped until the
 // people on it have another way in. It is a question, not a veto — suspending is
 // also how a compromised IdP is stopped.
 func TestSuspendWarnsWhenItIsSomebodysOnlyMethod(t *testing.T) {

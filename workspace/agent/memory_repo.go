@@ -1,6 +1,6 @@
 package main
 
-// エージェントメモリの版管理（docs/39 / ADR 0022）— bare repo とその git 実行環境。
+// エージェントメモリの版管理（docs/log/39 / ADR 0022）— bare repo とその git 実行環境。
 //
 // repo は claude 専用マウント内の bare（/var/lib/af/claude/af-memory.git）。このマウントは
 // recreate / clean-home を生き残る最も強い保証を持つため、codex 分の履歴も同居させる。
@@ -206,7 +206,7 @@ func memoryHeadTime() time.Time {
 }
 
 // memoryResolveRev は rev（sha / ref）または at（RFC3339）を snapshot の sha に解決する。
-// at は「その時刻以前の直近 snapshot」— 日時指定ロールバックの意味論（docs/39 ③）。
+// at は「その時刻以前の直近 snapshot」— 日時指定ロールバックの意味論（docs/log/39 ③）。
 func memoryResolveRev(rev, at string) (string, error) {
 	switch {
 	case rev != "":

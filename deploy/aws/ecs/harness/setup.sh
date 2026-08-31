@@ -126,7 +126,7 @@ aws iam put-role-policy --role-name $N-exec --policy-name ssm-read --policy-docu
 aws iam create-role --role-name $N-ws-task --assume-role-policy-document "$TRUST" >/dev/null
 echo "roles ok"
 
-# --- CP タスクロールの複製。E2E を**本番の権限で**回すためのもの（docs/64 §64.23） ---
+# --- CP タスクロールの複製。E2E を**本番の権限で**回すためのもの（docs/log/64 §64.23） ---
 # ⚠️ **手で書き写さない。** 20-platform.yaml の CpTaskRole のポリシーをそのまま取り出す。
 # 書き写した瞬間、ここは「テンプレートが与えている権限」ではなく「与えていると思っている
 # 権限」になり、E2E は本物の穴を緑で通す——それが決定 18-1 で起きたことである

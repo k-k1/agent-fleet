@@ -906,7 +906,7 @@ func TestBrowserAttachmentUsesWebSocketCDPAdapter(t *testing.T) {
 
 // browserId is the caller's "this must be the Chromium I launched" assertion.
 // A port collision is silent on the Chromium side, so an attach that skips this
-// check can land on another session's browser (docs/53 §53.16).
+// check can land on another session's browser (docs/log/53 §53.16).
 func TestBrowserAttachmentRejectsForeignBrowserInstance(t *testing.T) {
 	const guid = "c162d83f-b0a3-41d3-9db6-e9f6012c1491"
 	cdp := newFakeBrowserCDP()

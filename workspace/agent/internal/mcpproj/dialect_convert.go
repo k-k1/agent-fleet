@@ -1,7 +1,7 @@
 package mcpproj
 
 // dialect_convert.go — the write-side counterpart to dialect.go's detection:
-// docs/56 §5 "マージは利用者が決める…ただし方言変換の候補は AF が計算して見せる" /
+// docs/log/56 §5 "マージは利用者が決める…ただし方言変換の候補は AF が計算して見せる" /
 // §9.2's copy panel (as-is / translate / expand). AF never picks FOR the user
 // (§5), but it computes what "translate" would produce so choosing it is not a
 // manual rewrite.
@@ -12,7 +12,7 @@ import (
 )
 
 // CanTranslate reports whether kind has a native dialect to translate INTO. codex
-// expands nothing (docs/56 §2.1) — the ONE combination docs/56 §9.2 says must not
+// expands nothing (docs/log/56 §2.1) — the ONE combination docs/log/56 §9.2 says must not
 // even offer the option, rather than offer it and silently fail.
 func CanTranslate(kind string) bool {
 	return nativeDialect(kind) != ""
@@ -70,7 +70,7 @@ func translateValue(v, dst string) string {
 }
 
 // expandValue replaces every placeholder reference in v with ITS OWN resolved
-// environment value (docs/56 §9.2's non-recommended "実値へ展開して書く" — bakes a
+// environment value (docs/log/56 §9.2's non-recommended "実値へ展開して書く" — bakes a
 // host-specific value into a file that will be committed).
 func expandValue(v string) string {
 	return rewritePlaceholders(v, os.Getenv)

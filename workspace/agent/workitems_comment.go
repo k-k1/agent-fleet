@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// Posting a comment back to the ticket (docs/80 §80.10 / ADR 0061 決定 6).
+// Posting a comment back to the ticket (docs/log/80 §80.10 / ADR 0061 決定 6).
 //
 // ★ This is the ONLY write af performs against a tracker, and it is reachable only from
 // a human clicking 投稿 on a draft they have just read. There is deliberately:
@@ -63,7 +63,7 @@ func handleWorkItemsComment(w http.ResponseWriter, r *http.Request) {
 		}
 		url, err = jiraPostIssueComment(s.Jira, key, body)
 	case "bitbucket":
-		// ★ 読み取りだけを足した（docs/80 §80.19）。投稿には `pullrequest:write` が要り、
+		// ★ 読み取りだけを足した（docs/log/80 §80.19）。投稿には `pullrequest:write` が要り、
 		// それはテナント管理者がアプリの権限を広げ、全員が再認可する変更である —— 一覧を
 		// 出すために払う値段ではない。Console 側は bitbucket の行に報告ボタンを出さないので、
 		// ここに来るのは古い Console だけ。

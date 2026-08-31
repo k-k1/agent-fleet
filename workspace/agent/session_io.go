@@ -35,7 +35,7 @@ var opencodeStatusAgentRe = regexp.MustCompile(`([A-Za-z][\w-]*) +auto +·`)
 var codexFooterEffortRe = regexp.MustCompile(`([a-z]+) +· +[~/]`)
 
 // pane キャプチャ/解決の tmux プリミティブ（capturePane / sessionPaneID）は
-// internal/tmuxx へ移設（docs/23 残① Wave A）。
+// internal/tmuxx へ移設（docs/log/23 残① Wave A）。
 
 // paneTail returns the last n non-empty lines of s (the TUI's status/composer footer
 // region), so mode detection matches the STATUS LINE — not conversation text that merely
@@ -160,7 +160,7 @@ func paneMode(kind, tn string) string {
 //
 // ★**manual だけ "(shift+tab to cycle)" を出さない**（tmuxx の modeFooterRe が 2.1.212 で
 // 同じことを踏んでいる）。そして manual は「権限確認あり」で起動したセッションが落ちる先
-// （docs/76）そのものなので、旧実装の「4 つの名前 ＋ shift+tab の合言葉」では**空文字**に
+// （docs/log/76）そのものなので、旧実装の「4 つの名前 ＋ shift+tab の合言葉」では**空文字**に
 // なる。paneMode の空文字は「コンポーザ未描画」を意味し、launch-seed の readiness ゲート
 // （submitPromptTUI / 初回プロンプト配達）が 30 秒待ってから best-effort に落ちる。
 //
@@ -225,11 +225,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			K string `json:"k"` // a whitelisted named key
 			T string `json:"t"` // literal text (send-keys -l)
 		} `json:"seq"`
-		// ReportTo (docs/30) arms a one-shot session report to this conversation once
+		// ReportTo (docs/log/30) arms a one-shot session report to this conversation once
 		// the prompt's turn reaches an awaiting-input state. Sent by the af_write MCP's
 		// send_to_session, which carries its own conversation id (--conv).
 		ReportTo string `json:"report_to"`
-		// Confirm (docs/38 配達検証) makes the {prompt} path block until the prompt
+		// Confirm (docs/log/38 配達検証) makes the {prompt} path block until the prompt
 		// provably started a turn, self-heal once, and answer 502 delivery_unconfirmed
 		// otherwise. Set by unattended senders (the CP scheduler's reuse send) whose
 		// prompt is always a real task; NOT for turnless UI slash commands (/model …).
@@ -243,21 +243,21 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// session exists. Plain {prompt} only, and not combined with report_to /
 		// peer_from / confirm (those own their own delivery semantics).
 		WhenReady bool `json:"when_ready"`
-		// Source attributes an injection's origin for the mirror badge (docs/38):
+		// Source attributes an injection's origin for the mirror badge (docs/log/38):
 		// "schedule" / "schedule-manual" from the CP scheduler; anything else alongside a
 		// report_to (incl. empty — the operator MCP) records as "operator". Whitelisted
 		// server-side. A schedule origin is remembered WITHOUT report_to as well: 完了報告
 		// OFF のスケジュールは report_to を持たないが、投入されたことに変わりはない。
 		Source string `json:"source"`
 		// PeerFrom marks this as a session-to-session message and names the SENDING
-		// session (docs/58 / ADR 0041). It is not a badge string the caller picks: the
+		// session (docs/log/58 / ADR 0041). It is not a badge string the caller picks: the
 		// server validates it, refuses report_to alongside it, builds the envelope
 		// itself and applies the peer rate limit. See session_peer.go for why those
 		// invariants live server-side.
 		PeerFrom string `json:"peer_from"`
 		// PeerIntent is the message's kind (request / question / answer / notice) and is
 		// REQUIRED alongside peer_from. The server derives the reply policy from it and
-		// puts both in the envelope (docs/58 §58.14) — the sender picks what it is, never
+		// puts both in the envelope (docs/log/58 §58.14) — the sender picks what it is, never
 		// what the receiver owes back.
 		PeerIntent string `json:"peer_intent"`
 	}
@@ -278,7 +278,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("keys/seq must have at most %d elements", maxInputSteps))
 		return
 	}
-	// peer 送信（docs/58 / ADR 0041）。ここで全ての不変条件を満たしてから通常の投入経路へ
+	// peer 送信（docs/log/58 / ADR 0041）。ここで全ての不変条件を満たしてから通常の投入経路へ
 	// 合流させる。managed/tui の分岐より前に置くのは自己申告1行と同じ理由で、片方の経路
 	// だけ素通しになるのを防ぐため。
 	if body.PeerFrom == "" && strings.TrimSpace(body.PeerIntent) != "" {
@@ -291,7 +291,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if body.PeerFrom != "" {
 		// arm 非干渉は構造で担保する: 両方が載った要求は通さない。呼び出し元の実装ミスで
 		// peer メッセージが指示台帳に載ると、リコンサイラが「利用者の新指示」と誤認する
-		// （ADR 0041 決定4／docs/51 の早期 settle 事故と同型）。
+		// （ADR 0041 決定4／docs/log/51 の早期 settle 事故と同型）。
 		if body.ReportTo != "" {
 			httpx.WriteErr(w, http.StatusBadRequest, "peer_with_report_to",
 				"peer_from と report_to は同時に指定できません（peer メッセージは指示台帳に載せません）")
@@ -325,7 +325,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// 伝わった前提で先へ進んでしまう。
 		body.Confirm = true
 	}
-	// docs/51 Phase 3 §自己申告ファストパス: 報告義務を負う指示（report_to 付き）にだけ
+	// docs/log/51 Phase 3 §自己申告ファストパス: 報告義務を負う指示（report_to 付き）にだけ
 	// 「終わったら af_report を呼べ」を1行足す。managed/tui の分岐より前に置くのは、
 	// どちらの経路でも同じ1行が乗るようにするため（分岐の後だと片方で漏れる）。
 	if body.ReportTo != "" {
@@ -337,7 +337,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// tmux 存在チェックより先に ThreadHandle.Send へ回す。send_to_session（MCP の
 	// af_write ツール）など /input を直叩きする呼び出し元は tui/managed を意識しない
 	// ため、ここで分岐しないと生きているセッションにも常に not_running が返っていた
-	// （/turn の handleManagedTurn と同じ理由で、docs/27 で /turn は分岐済みだったが
+	// （/turn の handleManagedTurn と同じ理由で、docs/log/27 で /turn は分岐済みだったが
 	// /input 側の分岐が漏れていた）。{keys}/{seq}（生 TUI 駆動）は tui 専用のまま。
 	if len(body.Keys) == 0 && len(body.Seq) == 0 {
 		if meta, ok := session.ReadMeta(name); ok && meta.DriverKind() == session.DriverManaged {
@@ -473,7 +473,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// 弾く。ここで（LeaveAgentsView のように）その場で復帰させないのは、解除の可否が
 	// 画面の状態に依るから: 既定が 1（リセットまで待つ）に立っているときだけ押してよく、
 	// 人がカーソルを 2（管理者へ増枠を依頼）に動かしていたら触ってはいけない。復帰は
-	// 専用ループ（rate_limit_resume.go・docs/47 §4-4）がその判定込みで受け持ち、リセット
+	// 専用ループ（rate_limit_resume.go・docs/log/47 §4-4）がその判定込みで受け持ち、リセット
 	// 時刻の自動再開まで面倒を見る。この送信は「今は届かない」ことを呼び出し元
 	// （ミラー・オペレーター・定時実行）へ返して終わる。
 	if m, ok := session.ReadMeta(name); ok && normalizeKind(m.Kind) == session.KindClaude &&
@@ -528,7 +528,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if body.Confirm && confirmMeta.Name != "" {
 		if err := confirmPromptDelivery(confirmMeta, pane, body.Prompt, confirmBase); err != nil {
 			// 未確認は成功と偽らない: 呼び出し元（CP スケジューラ / operator MCP）が
-			// error として記録・通知し、偽 fired を作らない（docs/38 配達検証）。
+			// error として記録・通知し、偽 fired を作らない（docs/log/38 配達検証）。
 			httpx.WriteErr(w, http.StatusBadGateway, "delivery_unconfirmed", err.Error())
 			return
 		}
@@ -536,10 +536,10 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// 利用上限の自動再開は、予約時刻ではなく配達確認が通ったここを「再開した」の
 	// 真実源にする。重複防止と内部プロンプトの照合は rate_limit_resume.go が担う。
 	notifyRateLimitResumeDelivered(name, body.Prompt, body.Source, time.Now())
-	// Each delivered instruction ADDS one ledger row (docs/51 Phase 2 — 指示1件=報告1回。
+	// Each delivered instruction ADDS one ledger row (docs/log/51 Phase 2 — 指示1件=報告1回。
 	// 追加であって上書きではないので、キュー投入で先行指示が潰れない)。carrying report_to
 	// (operator / scheduler) それ自体は、ミラーが user ターンにバッジを付けるための由来
-	// としても覚える (docs/30 ② / docs/38 バッジ).
+	// としても覚える (docs/log/30 ② / docs/log/38 バッジ).
 	switch {
 	case body.PeerFrom != "":
 		// peer は台帳に載せない（arm 非干渉 — ADR 0041 決定4）。覚えるのはミラーの
@@ -556,7 +556,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// ではない。
 	default:
 		// Genuine Console-typed input (not an operator/MCP injection): mirror it into
-		// the session's Discord thread so the thread reflects both directions (docs/37
+		// the session's Discord thread so the thread reflects both directions (docs/log/37
 		// Fix ②). Best-effort + async — never blocks or fails the input.
 		go bridge.MirrorUserInput(name, body.Prompt)
 	}
@@ -587,7 +587,7 @@ func writePeerErr(w http.ResponseWriter, err error) {
 // handleManagedInputPrompt is /input's {prompt} counterpart to handleManagedTurn's
 // start op (session_turn.go) — same ThreadHandle.Send delivery, but keeps /input's
 // report_to contract (addInstruction / recordOperatorInjection) that /turn doesn't
-// carry, so send_to_session's docs/30 auto-report keeps working for managed sessions.
+// carry, so send_to_session's docs/log/30 auto-report keeps working for managed sessions.
 func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, reportTo, source, peerFrom string) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -633,7 +633,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 	case scheduleInjectionSource(source) != "":
 		// 報告 OFF の定時実行（TUI 側と同じ）— 台帳も Discord も無し。
 	default:
-		go bridge.MirrorUserInput(meta.Name, prompt) // docs/37 Fix ②: Console-input mirror
+		go bridge.MirrorUserInput(meta.Name, prompt) // docs/log/37 Fix ②: Console-input mirror
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name})
 }
@@ -652,7 +652,7 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 		writeBlockedErr(w, st)
 		return false
 	}
-	// agy: the "Signing in..." boot screen eats typed text entirely (docs/32) — a
+	// agy: the "Signing in..." boot screen eats typed text entirely (docs/log/32) — a
 	// send_to_session right after create (no initial_prompt) would vanish. Its
 	// composer footer is persistent once drawn ("? for shortcuts" idle / "esc to
 	// cancel" working), so an empty paneMode here means still booting: wait briefly.
@@ -830,7 +830,7 @@ func deliverInitialPrompt(name, prompt string) {
 	_ = tmuxx.Cmd("send-keys", "-t", pane, "Enter").Run()
 	// A real task starts a turn — mark working so the chip reacts before the agent's hook.
 	markSessionWorking(name)
-	// 配達検証（docs/38）: 打鍵と nudge の後、ターンが実際に始まった証拠を確認し、
+	// 配達検証（docs/log/38）: 打鍵と nudge の後、ターンが実際に始まった証拠を確認し、
 	// 出なければ自己修復を 1 巡試す。この経路は create 応答から切り離された goroutine
 	// なので HTTP では失敗を返せない — 最終的に未確認ならログに残す（reuse 送信側の
 	// confirm と違い、ここは best-effort のまま）。
@@ -934,11 +934,11 @@ var promptFreeStates = map[string]bool{"idle": true, "working": true}
 // highlighted row a typed line + Enter CONFIRMS — the text is swallowed and the Enter
 // decides for the user:
 //   - question:   the modal ignores typed text and Enter picks the FIRST option
-//     (v2.1.204 実測, docs/dev/92) — a silent wrong answer.
+//     (v2.1.204 実測, docs/build/92) — a silent wrong answer.
 //   - plan:       Enter confirms the first row of the ExitPlanMode dialog, which is
 //     always an approval — a prompt sent here SILENTLY APPROVES the plan. Decide it
 //     from the plan card / plan-respond instead.
-//   - permission: Enter confirms 許可 — a silent tool approval (docs/32 §agy に同型の実測)。
+//   - permission: Enter confirms 許可 — a silent tool approval (docs/log/32 §agy に同型の実測)。
 //
 // A denylist (the previous `state == "question"` check) let plan and permission
 // through for claude even though the same accident applies, and any state added
@@ -968,7 +968,7 @@ func promptBlocker(name string) string {
 	if meta.Kind == session.KindKiro {
 		return blockingState(kiro.LiveState(meta))
 	}
-	// claude: 資格情報が切れているなら、どのモーダルより先にこれで断る（docs/47 §4-8）。
+	// claude: 資格情報が切れているなら、どのモーダルより先にこれで断る（docs/log/47 §4-8）。
 	// TUI は文字を受け取り Enter も通るのに**ターンが 1 つも始まらない**ので、送信側から
 	// 見ると成功に見え、ミラーにはプロンプトが 反映待ち のまま残る（利用者報告 2026-08-14）。
 	// 断ることで初めて「認証切れです」と言える。キー操作（{keys}/{seq}）は塞がない —
@@ -1001,7 +1001,7 @@ func blockingState(state string) string {
 // blockedErrCode / blockedErrMessage give each blocking state its own wire code and
 // hint. "question_pending" keeps its exact spelling — the Console (err.<code> i18n),
 // the CP scheduler and the MCP drive tools all classify on it. New codes need their
-// own err.<code> entry in both locale catalogs (docs/28 / ADR0016).
+// own err.<code> entry in both locale catalogs (docs/log/28 / ADR0016).
 func blockedErrCode(state string) string {
 	switch state {
 	case "question":
@@ -1261,4 +1261,4 @@ func clipOutputTail(s string, max int) (string, bool) {
 
 // claude jsonl の読み出し（jsonlByMtime / transcriptRead / jsonlHasConversation /
 // transcriptLines / assistantText）は internal/agents/claude の transcript.go へ
-// 移設（docs/23 残① Wave F）。
+// 移設（docs/log/23 残① Wave F）。

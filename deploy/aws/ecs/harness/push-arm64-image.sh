@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the workspace image for arm64 natively and PUSH it to a deployment's ECR
-# (docs/70 §70.9 / P5). The read-only sibling is build-arm64-image.sh.
+# (docs/log/70 §70.9 / P5). The read-only sibling is build-arm64-image.sh.
 #
 #   AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
 #     deploy/aws/ecs/harness/push-arm64-image.sh --ref v0.10.0 --tag 0.10.0-arm64

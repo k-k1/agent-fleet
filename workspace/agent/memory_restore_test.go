@@ -44,7 +44,7 @@ func memoryReadLive(t *testing.T, p string) string {
 	return string(b)
 }
 
-// プロジェクト単位の restore（docs/39 ④）: 上書き・追加・削除の 3 方向が戻り、
+// プロジェクト単位の restore（docs/log/39 ④）: 上書き・追加・削除の 3 方向が戻り、
 // pre-restore snapshot と restore commit が履歴に積まれ、他の kind には触らない。
 func TestMemoryRestoreProjectScope(t *testing.T) {
 	home, cfg, slug := memoryTestEnv(t)
@@ -425,7 +425,7 @@ func TestMemoryRestoreBeforeAnySnapshot(t *testing.T) {
 	}
 }
 
-// 自動 snapshot の UI トグル（docs/39 決着 #1）: 設定は claude マウント内に永続し、
+// 自動 snapshot の UI トグル（docs/log/39 決着 #1）: 設定は claude マウント内に永続し、
 // 環境変数の強制 OFF はトグルより強い。
 func TestMemoryAutoToggle(t *testing.T) {
 	h := memoryAPIHandler(t)

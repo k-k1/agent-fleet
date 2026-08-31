@@ -1,6 +1,6 @@
 package bridge
 
-// Discord Gateway client (docs/37 P2a) — the receive half of the bridge. A single
+// Discord Gateway client (docs/log/37 P2a) — the receive half of the bridge. A single
 // long-lived WSS connection (gorilla/websocket) that the receiver supervisor owns:
 // it identifies with the minimal intents, keeps the connection alive with
 // heartbeats, and hands each MESSAGE_CREATE to a callback. There is no existing
@@ -37,7 +37,7 @@ const (
 // discordIntents = GUILD_MESSAGES (1<<9) | MESSAGE_CONTENT (1<<15). A reply in a
 // session's thread arrives as a guild MESSAGE_CREATE; MESSAGE_CONTENT (a privileged
 // intent, one checkbox in the Developer Portal for bots in <100 guilds) is what makes
-// the reply text readable — without it content is blank and P2a can't route (docs/37).
+// the reply text readable — without it content is blank and P2a can't route (docs/log/37).
 const discordIntents = (1 << 9) | (1 << 15) // 33280
 
 // errDisallowedIntent is the fatal Gateway close (4014): the bot tried to identify

@@ -25,7 +25,7 @@ const (
 	browserMaxLayoutWidth  = 4000
 	browserMaxLayoutHeight = 4000
 	browserFitSlack        = 8
-	// Pinch zoom (docs/31 §wire protocol). 1 is the pane's own layout — or the
+	// Pinch zoom (docs/log/31 §wire protocol). 1 is the pane's own layout — or the
 	// fitted one — and zooming out past it is not offered, so pinching back to 1
 	// is always the way out. Mirrors BROWSER_MAX_ZOOM in the Console.
 	browserMaxZoom = 4

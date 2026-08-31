@@ -26,7 +26,7 @@ interface DiffViewProps {
 }
 
 // A rendered diff row: context / addition / deletion, with old/new line numbers.
-// Exported for the editor's AI-suggestion review panel (docs/44 Phase 4), which
+// Exported for the editor's AI-suggestion review panel (docs/log/44 Phase 4), which
 // renders the selection → replacement pair through the same lineDiff.
 export interface DiffRow {
   t: "ctx" | "add" | "del";

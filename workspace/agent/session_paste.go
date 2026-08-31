@@ -223,7 +223,7 @@ func handlePastedImage(w http.ResponseWriter, r *http.Request) {
 // id (namespaced so it can't collide with a tmux session's sid).
 func chatPastedDir(convID string) string { return pastedDir("chat-" + convID) }
 
-// handleChatPasteImage saves a pasted image for an assistant chat (docs/19). Same flow as
+// handleChatPasteImage saves a pasted image for an assistant chat (docs/log/19). Same flow as
 // the session endpoint: the chat's headless agent opens the returned absolute path —
 // claude via its Read tool (`-p`), codex via view_image (`codex exec`, live-verified).
 // opencode is excluded on purpose: `opencode run` declines image input on non-vision

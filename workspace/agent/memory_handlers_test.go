@@ -9,7 +9,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// docs/39 P1 の REST を実ルート表（buildMux）越しに叩く。CP 側の登録漏れは
+// docs/log/39 P1 の REST を実ルート表（buildMux）越しに叩く。CP 側の登録漏れは
 // control-plane 側のテストでは拾えないので、こちらは Agent 側の登録と応答形を固定する。
 func memoryAPIHandler(t *testing.T) http.Handler {
 	t.Helper()
@@ -68,7 +68,7 @@ func TestMemoryAPIRoundTrip(t *testing.T) {
 	if roots.Roots[1].Kind != "codex" || roots.Roots[1].Scopes || roots.Roots[1].Files != 2 {
 		t.Errorf("codex root = %+v", roots.Roots[1])
 	}
-	// docs/39 P4: memories を有効化して codex がワークスペースを作ると、ルートは
+	// docs/log/39 P4: memories を有効化して codex がワークスペースを作ると、ルートは
 	// inactive から active へ移る。切り戻しの導線が消えないよう、有効なルートにも
 	// トグルの状態を載せる。
 	if !roots.Roots[1].Toggleable {

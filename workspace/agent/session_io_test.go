@@ -148,7 +148,7 @@ fi
 
 // A {prompt} sent while an interaction is pending would be typed into that modal,
 // which swallows the text and lets the Enter confirm its highlighted row: a wrong
-// AUQ answer (docs/dev/92), a SILENT PLAN APPROVAL, or a silent 許可. The gate is a
+// AUQ answer (docs/build/92), a SILENT PLAN APPROVAL, or a silent 許可. The gate is a
 // whitelist — only idle (new turn) and working (steering) pass — so a state added
 // upstream blocks by default instead of quietly joining the hole.
 func TestPromptBlockerGatesPrompt(t *testing.T) {

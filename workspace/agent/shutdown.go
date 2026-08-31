@@ -18,7 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// Graceful workspace stop (docs/history/p3-7-aws-adapter.md §20b.7.8 停止改訂).
+// Graceful workspace stop (docs/log/p3-7-aws-adapter.md §20b.7.8 停止改訂).
 // The runtime stops a workspace by delivering SIGTERM to the container — `docker
 // stop -t` locally, ECS task stop with stopTimeout on AWS — and SIGKILLs whatever
 // survives the grace. Before this handler existed the agent died with Go's
@@ -65,7 +65,7 @@ func stopGraceBudget() time.Duration {
 // Owned = live tmux session ∩ own meta (AF_SESSIONS_DIR). kill-server was the
 // original design — one certain command, valid while "the tmux server is mine
 // alone" held — but a second agent instance on the same default socket (dev /
-// in-container E2E, docs/32) shares that server, and its shutdown nuked every
+// in-container E2E, docs/log/32) shares that server, and its shutdown nuked every
 // real session in the workspace, four times. An instance can only know its OWN
 // sessions (its metas); anything else on the server — another instance's
 // sessions, or an orphan that lost its meta — is indistinguishable from someone
@@ -81,7 +81,7 @@ func gracefulShutdown(budget time.Duration) {
 	// Attachments own neither Page nor Chromium. Closing them detaches AF's target
 	// sessions and WebSockets only; the external owner remains responsible for exit.
 	workspaceBrowserAttachmentManager.Close()
-	// ★保留中の対話を持ち越す（docs/75 §75.6.3 の契機 2）。**abort と kill より前**に
+	// ★保留中の対話を持ち越す（docs/log/75 §75.6.3 の契機 2）。**abort と kill より前**に
 	// 置くのが要点で、ここが claude 以外にとっては最後の機会になる: claude の保留は
 	// pending-* としてホームに残るので後の契機（一覧・boot フック）が拾えるが、kiro の
 	// 承認パネルはペインの文字列、ACP 3 種の許可要求は runtime handle のメモリにしか
@@ -91,7 +91,7 @@ func gracefulShutdown(budget time.Duration) {
 	// 止めたら、止めたことで人の判断が消えた」になる（ADR 0055 決定 2）。
 	promoteCarriedOnShutdown()
 	owned := ownedLiveSessions()
-	// managed セッション（docs/27 §10.2-8）: pane の C-c に相当する abort を配る。
+	// managed セッション（docs/log/27 §10.2-8）: pane の C-c に相当する abort を配る。
 	// turn goroutine が cancelled を刻み status ストアが idle へ戻るので、下の
 	// anySessionWorking 待ちが tui と同じ条件で解ける。
 	opencode.AbortManaged()

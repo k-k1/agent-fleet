@@ -1,4 +1,4 @@
--- Tenant-defined GitHub sign-in (docs/61 §61.15 + ADR0043 決定 34 / 35).
+-- Tenant-defined GitHub sign-in (docs/log/61 §61.15 + ADR0043 決定 34 / 35).
 --
 -- P4 (0040) assumed every tenant-defined method is an OIDC client, because its
 -- trust rests on the issuer: the issuer belongs to that subsidiary alone, so the
@@ -18,7 +18,7 @@
 -- that) -- it is the row's entry in the deployment-wide one-domain-one-tenant
 -- ledger, which is what stops tenant A from claiming tenant B's domain, and it
 -- keeps a member whose GitHub address is a personal one from silently landing in
--- a SECOND workspace (docs/61 §61.7).
+-- a SECOND workspace (docs/log/61 §61.7).
 --
 -- identity_provider.realm records WHERE an identity was proven, next to the
 -- subject that was proven there. Without it, the same person pressing the

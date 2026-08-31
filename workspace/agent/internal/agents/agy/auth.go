@@ -22,7 +22,7 @@ import (
 // authorize URL and waits for a pasted code — there is no headless login
 // subcommand, so we drive the real TUI through the shared agents.Flow PTY,
 // scrape the URL, submit the code, then walk the first-run onboarding screens.
-// The measured screen sequence (docs/32 Track A 実測, v1.1.4):
+// The measured screen sequence (docs/log/32 Track A 実測, v1.1.4):
 //
 //	ログイン方式セレクタ（1=Google OAuth 既定 / 2=GCP project）
 //	→ 認可 URL ＋コード貼付欄
@@ -59,7 +59,7 @@ var flows = agents.NewFlowStore(flowTTL)
 
 // hostcapsOK rejects an auth request on hosts where agy can't run (binary
 // absent / no RDRAND) — the same gate as the Console's kind selector and
-// BuildLaunch (docs/32 Track B 契約).
+// BuildLaunch (docs/log/32 Track B 契約).
 func hostcapsOK(w http.ResponseWriter) bool {
 	supported, reason := hostcaps.AgyStatus()
 	if !supported {
@@ -92,7 +92,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 	switch req.Method {
 	case "", "oauth":
 	case "gcp-project":
-		httpx.WriteErr(w, http.StatusNotImplemented, "method_unsupported", "gcp-project 経路は M2 で実装予定です（docs/32）")
+		httpx.WriteErr(w, http.StatusNotImplemented, "method_unsupported", "gcp-project 経路は M2 で実装予定です（docs/log/32）")
 		return
 	default:
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_method", "method は oauth か gcp-project を指定してください")
@@ -270,7 +270,7 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 }
 
 // Status reports the agy connection state for GET /connections, plus the host
-// capability gate the Console uses to hide the kind (supported/reason — docs/32
+// capability gate the Console uses to hide the kind (supported/reason — docs/log/32
 // Track B 契約). Login state is the token file's existence (`agy models` is the
 // authoritative probe but hits the network — not for this polled path). method
 // is the token's auth_method ("consumer" = Starter OAuth; GCP 経路は M2);

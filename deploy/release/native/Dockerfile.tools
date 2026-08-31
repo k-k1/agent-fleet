@@ -1,4 +1,4 @@
-# Static tools builder (docs/35 §35.7.2-7 (iv); §35.9-5 decision "build ourselves").
+# Static tools builder (docs/log/35 §35.7.2-7 (iv); §35.9-5 decision "build ourselves").
 # Statically builds bwrap / git+git-http-backend / zstd — bundled into native
 # package C — from pinned-version sources on alpine (musl). No scavenged binaries
 # (the only supply source is each upstream's release tarball). Extract via

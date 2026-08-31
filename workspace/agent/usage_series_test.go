@@ -49,7 +49,7 @@ func at(r usageRecord, day string) usageRecord {
 func daysAgo(n int) string { return time.Now().UTC().AddDate(0, 0, -n).Format("2006-01-02") }
 
 // claude は1呼び出しがモデル別行に割れる。行数で数えると呼び出し回数が水増しされるので、
-// distinct call で数える（docs/46 §4）。どの軸で足しても合計が壊れないことまで見る。
+// distinct call で数える（docs/log/46 §4）。どの軸で足しても合計が壊れないことまで見る。
 func TestAggregateUsageRowsCountsDistinctCalls(t *testing.T) {
 	rows := []usageRecord{
 		row("c1", usageFeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 100),

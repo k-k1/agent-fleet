@@ -1,5 +1,5 @@
 /* Top bar — extracted from the old console's styles.css (regions 210–351,
-   .nav-toggle, .choice-seg, mobile tweaks) for pixel parity (docs/22 P6b).
+   .nav-toggle, .choice-seg, mobile tweaks) for pixel parity (docs/log/22 P6b).
    Swatch styles live in ui/ui.css (owned by ui/SwatchGrid). Trimmed at P8. */
 
 /* Legacy control styles (old element globals), scoped — the verbatim-ported
@@ -99,7 +99,7 @@
 .notification-item small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notification-empty { padding: 24px; color: var(--muted); text-align: center; }
 
-/* 音声読み上げピル（docs/24）。常時表示：再生中=停止ボタン（パルス＋ラベル）、
+/* 音声読み上げピル（docs/log/24）。常時表示：再生中=停止ボタン（パルス＋ラベル）、
    アイドル=設定 ttsEnabled の ON/OFF トグル（OFF はグレー）。 */
 .tts-status {
   display: inline-flex;
@@ -353,7 +353,7 @@
   color: var(--fg);
   opacity: 1;
 }
-/* Native host self-update nudge (docs/42). The account button carries an attention
+/* Native host self-update nudge (docs/log/42). The account button carries an attention
    dot when a newer af is staged; the menu row deep-links into 設定 → ツールチェーン. */
 .acct-btn.has-update {
   position: relative;

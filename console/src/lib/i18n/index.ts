@@ -1,4 +1,4 @@
-// Console の自前 i18n ランタイム（docs/28-i18n.md / ADR 0016）。外部ライブラリを入れず、
+// Console の自前 i18n ランタイム（docs/log/28-i18n.md / ADR 0016）。外部ライブラリを入れず、
 // ロケールの真実源は lib/settings.ts（settings.locale）に置く。ここは「現ロケール＋カタログ＋t()」
 // だけを持ち、settings.ts が applyLocale() 経由で setLocale() を push する（この向きだけ。i18n は
 // settings.ts を import しない＝循環回避）。t() は React・非React どちらからも呼べる（errText /

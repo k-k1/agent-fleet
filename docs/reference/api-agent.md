@@ -1,1 +1,0 @@
-> **このドキュメントは docs/dev/ へ再編されました（2026-07）。** [dev/05 API 契約](../dev/05-api-contracts.md)（2境界の地図・中継経路）、[dev/04 Workspace Agent](../dev/04-workspace-agent.md)（セッション制御・PTY）、[dev/07 §7.5 CP↔Agent 認証](../dev/07-security.md) に移設。正はコードと dev/。

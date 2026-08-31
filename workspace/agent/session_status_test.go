@@ -50,7 +50,7 @@ func TestWorkingToIdleQueuesDurableNotification(t *testing.T) {
 // That wipe deletes the "working" marker, so the Stop hook legitimately ending the turn
 // later reads previous=="" instead of "working". Keying answer-ready on previous=="working"
 // alone then dropped the terminal transition on the floor: no 応答あり notification and no
-// operator session report (docs/30) — the instruction's completion never reached the
+// operator session report (docs/log/30) — the instruction's completion never reached the
 // operator, while the session still read idle (LiveState defaults to idle with no file).
 func TestIdleReportsAfterHealWipedWorkingMarker(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -296,7 +296,7 @@ func TestBootDoesNotQueueAnswerReadyNotification(t *testing.T) {
 	}
 }
 
-// TestAbortedTurnReportsAsAnswerReady pins the transition the docs/47 fix rests on: a
+// TestAbortedTurnReportsAsAnswerReady pins the transition the docs/log/47 fix rests on: a
 // turn cut off by a transient error is a TERMINAL event (the session is back at 入力待ち,
 // the instruction's one report must fire) but carries the turn-aborted reason so the
 // operator is told to resume rather than to stop and fix a cause. previous=="" must work

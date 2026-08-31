@@ -1,4 +1,4 @@
-// Package opencode は opencode CLI 種別の縦割りパッケージ（docs/23 残① Wave D:
+// Package opencode は opencode CLI 種別の縦割りパッケージ（docs/log/23 残① Wave D:
 // 最初の CLI 縦割り）。Agent 実装・起動コマンド組み立て・SQLite transcript 読み
 // 出し・プロバイダ鍵の Connections ハンドラ・rtk プラグイン適用を package main
 // から移設した。挙動・ワイヤ・ディスクは main 時代とバイト同一を維持すること。
@@ -23,7 +23,7 @@ var sids = agents.NewSidStore("opencode-sid")
 // New returns the opencode Agent implementation for the kind registry.
 func New() agents.Agent { return agentImpl{} }
 
-// agentImpl — opencode 種別の Agent 実装（docs/23 P1残: CLI 縦割りファイル分割）
+// agentImpl — opencode 種別の Agent 実装（docs/log/23 P1残: CLI 縦割りファイル分割）
 type agentImpl struct{}
 
 func (agentImpl) Kind() string { return session.KindOpencode }
@@ -33,7 +33,7 @@ func (agentImpl) Kind() string { return session.KindOpencode }
 // handler. CanFork: the conversation forks via `opencode --session <src> --fork`
 // (ForkSource / BuildLaunch), aligning the fork affordance with claude. CanForkAt: the
 // fork can also be pinned to a past turn — the serve API's `POST /session/{id}/fork`
-// takes a messageID (docs/55). That route only exists on the managed driver, so the
+// takes a messageID (docs/log/55). That route only exists on the managed driver, so the
 // handler refuses a point fork for a CLI-route session rather than silently widening it.
 func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true}
@@ -60,7 +60,7 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 
 // ResolveForkAt validates a mirror anchor against this session's OWN conversation.
 // opencode's fork endpoint takes the messageID as-is and stops copying at the first
-// message that sorts >= it (docs/55 §55.2), so the anchor needs no translation — the work
+// message that sorts >= it (docs/log/55 §55.2), so the anchor needs no translation — the work
 // here is refusing the anchors that would branch something other than what was pointed at.
 func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
 	anchor := at.Anchor
@@ -130,11 +130,11 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readTranscript(m)
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。
 //
 // opencode の人待ちは question ツール**だけ**である。許可（`permission.asked`）は
 // managed driver が無条件 auto-allow するので、人が答える許可プロンプトは存在しない
-// （docs/75 §75.7 P5 に判断を明記）。
+// （docs/log/75 §75.7 P5 に判断を明記）。
 //
 // 保留は opencode 自身のストア（part テーブルの running な question ツール）にあり、
 // プロセスが死んでも残る — halt より遅い契機でも拾える。
@@ -183,7 +183,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	fork := false
 	if resume == "" && m.ForkFrom != "" {
 		// `--session <src> --fork` has no "fork up to here" argument — only the serve API
-		// does (docs/55 §55.5). Refuse rather than launch a CLI fork that would quietly
+		// does (docs/log/55 §55.5). Refuse rather than launch a CLI fork that would quietly
 		// copy the WHOLE conversation when the user asked for a point.
 		if m.ForkAt != "" {
 			return agents.LaunchPlan{}, errors.New(

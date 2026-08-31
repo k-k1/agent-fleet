@@ -1,6 +1,6 @@
 package main
 
-// メンバーへの引き継ぎ（docs/77 / ADR 0057）のストア。
+// メンバーへの引き継ぎ（docs/log/77 / ADR 0057）のストア。
 //
 // 共有 ACL の派生物なので、失効は `invalidateUnauthorizedShareDerivatives`（store_share.go）が
 // 共有変更と同じトランザクションで行う。ここが持つのは作成・読み出し・状態遷移・期限切れだけで、
@@ -84,13 +84,13 @@ func (s *sqlStore) listHandoffOffers(ctx context.Context, where string, arg stri
 }
 
 // ListSessionHandoffOffersByOwner は A の台帳（出した引き継ぎの履歴）。通知を流れ物と決めた
-// 以上、後から辿れるのはここだけなので、決着済みも返す（docs/77 §77.10）。
+// 以上、後から辿れるのはここだけなので、決着済みも返す（docs/log/77 §77.10）。
 func (s *sqlStore) ListSessionHandoffOffersByOwner(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error) {
 	return s.listHandoffOffers(ctx, `owner_membership_id=?`, membershipID)
 }
 
 // ListSessionHandoffOffersByRecipient は B の受信箱。**未処理だけ**を返し、所有者がアーカイブ
-// したセッションのものは外す —— 共有の一覧と同じ規律（docs/59 §1: 畳んだ会話は共有先に出さない）。
+// したセッションのものは外す —— 共有の一覧と同じ規律（docs/log/59 §1: 畳んだ会話は共有先に出さない）。
 // 決着済みを返さないのは、受け取ったなら新しいセッションが証拠で、辞退したなら消えてよいため。
 func (s *sqlStore) ListSessionHandoffOffersByRecipient(ctx context.Context, membershipID string) ([]SessionHandoffOffer, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+handoffOfferCols+` FROM session_handoff_offer
@@ -131,7 +131,7 @@ func (s *sqlStore) TransitionSessionHandoffOffer(ctx context.Context, id, from, 
 	return n == 1, err
 }
 
-// ExpireSessionHandoffOffers は期限切れを失効させ、**失効した行を返す**。返すのは、docs/77 §77.9 の
+// ExpireSessionHandoffOffers は期限切れを失効させ、**失効した行を返す**。返すのは、docs/log/77 §77.9 の
 // 「失効の直前に所有者へ 1 回だけ知らせる」を呼び出し側が組み立てるため —— 失効させてから
 // 誰が対象だったかを問い直すと、その問い合わせは既に空になっている。
 func (s *sqlStore) ExpireSessionHandoffOffers(ctx context.Context, now string) ([]SessionHandoffOffer, error) {

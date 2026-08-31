@@ -1,1 +1,0 @@
-> **このドキュメントは docs/dev/ へ再編されました（2026-07）。** [dev/07 §7.3 L1 Console 認証](../dev/07-security.md)（AUTH 3モード・authGate・許可リスト）と [dev/09 §9.3 入口](../dev/09-deploy.md)（Tailscale Funnel・Caddy）に移設。ホスト固有の切替手順は [HANDOFF](../HANDOFF.md)。正はコードと dev/。

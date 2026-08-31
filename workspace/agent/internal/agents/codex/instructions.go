@@ -1,6 +1,6 @@
 package codex
 
-// 指示ファイル（docs/60）の codex 側 artifact。
+// 指示ファイル（docs/log/60）の codex 側 artifact。
 //
 // codex は「追加の指示ファイルを指す設定」を持たない（0.147.0 のキー一覧を実測 —
 // project_doc_max_bytes / project_doc_fallback_filenames はあるが instructions_file 系は無い）。

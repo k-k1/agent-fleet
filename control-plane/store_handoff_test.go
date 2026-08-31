@@ -204,7 +204,7 @@ func TestHandoffOfferExpiryReturnsRows(t *testing.T) {
 	}
 }
 
-// アーカイブしたセッションの引き継ぎは受信箱に出さない（docs/59 §1 と同じ規律）。
+// アーカイブしたセッションの引き継ぎは受信箱に出さない（docs/log/59 §1 と同じ規律）。
 func TestHandoffInboxHidesArchivedSession(t *testing.T) {
 	ctx := context.Background()
 	f := newHandoffFixture(t)

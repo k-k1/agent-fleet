@@ -1,11 +1,11 @@
 package main
 
-// コンテキスト超過エラーの検知・自己修復・通知（docs/33 第3段）。
+// コンテキスト超過エラーの検知・自己修復・通知（docs/log/33 第3段）。
 //
 // resume 駆動のチャットはコンテキストが積み上がり、いずれプロバイダのウィンドウを
 // 超えて 1 ターンが 400 で失敗する。従来これは:
 //   - 対話ターン: プロバイダエラーとして利用者に返るだけ（次も同じく失敗して詰む）
-//   - 自動ターン（docs/30 オペレーター）: log に書くだけの black hole
+//   - 自動ターン（docs/log/30 オペレーター）: log に書くだけの black hole
 // だった。第3段はこれを塞ぐ:
 //   1. 超過エラーを判別（isContextOverflowErr）
 //   2. 対話/自動ターンとも、その場で自前コンパクション（第2段 compactConversation）を
@@ -79,7 +79,7 @@ func recoverForRetry(ctx context.Context, c *chatConversation, prov chatProvider
 
 // noteContextOverflow appends a one-off notice that the turn failed on context overflow
 // and could not be auto-healed, and mirrors it into the notification center (so an
-// unattended auto turn — docs/30 — is never silently lost). The caller holds the
+// unattended auto turn — docs/log/30 — is never silently lost). The caller holds the
 // conversation lock and saves afterwards.
 func noteContextOverflow(c *chatConversation) {
 	c.Messages = append(c.Messages, newNotice(noticeKeyCtxOverflow, nil, contextOverflowContent()))

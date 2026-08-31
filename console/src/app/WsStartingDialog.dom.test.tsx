@@ -5,7 +5,7 @@ import { en } from "../lib/i18n/locales/en.ts";
 
 // The dialog's whole job is to name the wait the user is actually in. On the EC2 pool
 // runtime the first minutes are a new machine and a new home disk, and calling that
-// "installing agent CLIs" is how a normal start reads as stuck (ADR 0045 / docs/64).
+// "installing agent CLIs" is how a normal start reads as stuck (ADR 0045 / docs/log/64).
 describe("phaseKey", () => {
   it("names the infrastructure waits of the EC2 pool runtime", () => {
     // ⚠️ 「片付けてから作る」は起動の中でいちばん長い経路（上限に張り付いたプールが、

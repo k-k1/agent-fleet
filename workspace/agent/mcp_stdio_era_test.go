@@ -1,6 +1,6 @@
 package main
 
-// ローカル stdio MCP の版契約（docs/49 + ADR0032）。CP の /mcp と同じく両 era を
+// ローカル stdio MCP の版契約（docs/log/49 + ADR0032）。CP の /mcp と同じく両 era を
 // 同時に serve するが、stdio には HTTP ステータスもヘッダも無いので、判別材料は
 // `_meta` と server/discover の応答だけになる。
 

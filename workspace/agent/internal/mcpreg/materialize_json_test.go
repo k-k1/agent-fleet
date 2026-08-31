@@ -2,7 +2,7 @@ package mcpreg
 
 // P5 で足した JSON 設定型 kind（opencode / copilot / cursor / kiro / agy）の materialize。
 //
-// 1 本目は claude と同じ「非破壊性」の固定（docs/48 §13）を全 kind に横断で当てる。
+// 1 本目は claude と同じ「非破壊性」の固定（docs/log/48 §13）を全 kind に横断で当てる。
 // 共通エンジン（materialize_json.go）を通っているので中身は同じ検証だが、**書く先の
 // ファイルと map のキーが kind ごとに違う**のがこのフェーズの実体であり、そこを取り違えると
 // 「登録したのに何も起きない」（別ファイルへ書いた）か「利用者の設定を壊した」になる。

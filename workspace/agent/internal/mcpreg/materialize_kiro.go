@@ -5,7 +5,7 @@ package mcpreg
 // repo, which belongs to the user, not to af).
 //
 // Measured on kiro-cli 2.14.2. `kiro-cli mcp add` REQUIRES A LOGIN — so does every
-// other `mcp` subcommand — which is why docs/48 §8.1 could only quote the flag help
+// other `mcp` subcommand — which is why docs/log/48 §8.1 could only quote the flag help
 // until now. Run against a logged-in CLI, `mcp add --scope global` produces:
 //
 //	"mcpServers": {

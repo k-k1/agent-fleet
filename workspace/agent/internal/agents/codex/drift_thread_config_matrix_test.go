@@ -1,6 +1,6 @@
 //go:build drift
 
-// Replace or merge? docs/27 §9.3 recorded "thread config REPLACES the global set",
+// Replace or merge? docs/log/27 §9.3 recorded "thread config REPLACES the global set",
 // measured on EPHEMERAL threads. Production managed sessions use PERSISTENT threads,
 // and a project-config measurement contradicted the recorded table there — so the two
 // variables (ephemeral vs persistent, empty vs non-empty map) have to be separated

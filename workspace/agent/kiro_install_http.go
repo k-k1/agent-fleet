@@ -1,6 +1,6 @@
 package main
 
-// kiro_install_http.go — the HTTP face of the on-demand Kiro installer (docs/43
+// kiro_install_http.go — the HTTP face of the on-demand Kiro installer (docs/log/43
 // Track C). Kiro's ~855MB bundle is NOT baked on the lean image (decision §4-2), so
 // a lean workspace starts with kiro-cli absent and Status() reports
 // supported=false. The connection card can't reach kiro's login flow (it needs the

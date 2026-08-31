@@ -10,7 +10,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// docs/80 §80.19 / ADR 0061 決定 17〜19 — Bitbucket 側の写像と、クエリの先頭に置く
+// docs/log/80 §80.19 / ADR 0061 決定 17〜19 — Bitbucket 側の写像と、クエリの先頭に置く
 // 「どこを見るか」。実 Bitbucket アカウントはこの環境にも CI にも無いので、
 // 認証が要らない部分（応答の形・並び・q の効き方）は公開リポジトリで実測した値を、
 // 認証が要る部分（ワークスペース横断・スコープ拒否）はスタブで固定する。
@@ -112,7 +112,7 @@ func TestParseBitbucketPullRequests(t *testing.T) {
 	if rows[2].Key != "#5321" {
 		t.Errorf("repo-less key = %q, want #5321", rows[2].Key)
 	}
-	// ⚠️ nil スライスは JSON の null になり、Console が真っ白になる（docs/80 §80.17.5）。
+	// ⚠️ nil スライスは JSON の null になり、Console が真っ白になる（docs/log/80 §80.17.5）。
 	for i, r := range rows {
 		if r.Labels == nil {
 			t.Errorf("row %d: labels must be an empty slice, not nil", i)

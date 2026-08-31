@@ -172,7 +172,7 @@ export function TranscriptTurn({
           baseDir={turn.cwd}
           repo={caps.repo}
           onOpenFile={caps.openFile}
-          // マーカーを数える範囲はこの part ひとつ（docs/69 §69.3）。ブロック相対ではなく
+          // マーカーを数える範囲はこの part ひとつ（docs/log/69 §69.3）。ブロック相対ではなく
           // 元ターン由来の root なので、共有先の tail 窓がずれても同じ場所を指す。
           markRoot={caps.marks ? turn.origins[item.i] : undefined}
           markKind={item.p.kind}
@@ -180,16 +180,16 @@ export function TranscriptTurn({
       ),
     );
   const fromOperator = isUser && turn.source === "operator";
-  // Schedule origin (docs/38): the prompt was fired by scheduled execution — either a
+  // Schedule origin (docs/log/38): the prompt was fired by scheduled execution — either a
   // timed fire ("schedule") or a run-now ("schedule-manual") — badged so schedule-driven
   // turns are never mistaken for typed or operator input, and 定期/手動 read apart.
   const fromSchedule = isUser && (turn.source === "schedule" || turn.source === "schedule-manual");
   const scheduleManual = isUser && turn.source === "schedule-manual";
-  // Automatic resume (docs/47 §4-6): the agent itself re-sent 「続けて」 after the turn was
+  // Automatic resume (docs/log/47 §4-6): the agent itself re-sent 「続けて」 after the turn was
   // cut off. Nobody typed it and no operator sent it, so it needs its own badge — an
   // unattributed "続けて" in the transcript is the most confusing kind of injected turn.
   const fromAutoResume = isUser && turn.source === "auto-resume";
-  // Peer origin (docs/58 / ADR 0041): ANOTHER SESSION typed into this one. Neither the
+  // Peer origin (docs/log/58 / ADR 0041): ANOTHER SESSION typed into this one. Neither the
   // user nor the operator sent it, and this badge is its ONLY visualisation — the
   // sender's name exists nowhere else on this side except the server-built envelope
   // prefix, so read it back from the text.
@@ -197,16 +197,16 @@ export function TranscriptTurn({
   // 由来タグ(source)が無くても封筒があれば peer と見なす。タグはサーバが投入時に覚える
   // 別ストア由来で、①記録が済む前に取ってきたターン（増分ポーリングは持っているターンを取り直さ
   // ないので、そのまま固定される）②長寿命セッションで記録が上限を超えて押し出された、のどちらでも
-  // 落ちる（docs/58 §58.15）。封筒はサーバが本文の先頭に必ず付ける（呼び出し元には組ませない）
+  // 落ちる（docs/log/58 §58.15）。封筒はサーバが本文の先頭に必ず付ける（呼び出し元には組ませない）
   // ので、表示の根拠としてはタグと同格 — そして落ちたときに残る唯一の痕跡。
   //
-  // 封筒が無い着信もある: claude 自前の cross-session チャネル（docs/58 §58.16）は AF を
+  // 封筒が無い着信もある: claude 自前の cross-session チャネル（docs/log/58 §58.16）は AF を
   // 通らないので封筒が付かない。そこは Agent が転写の `origin.name` から送信者を起こして
   // `peerFrom` に載せてくるので、封筒 → それ、の順で拾う。
   const peerFrom = isUser ? (peerSenderOf(turn.text ?? "") ?? turn.peerFrom ?? null) : null;
   const fromPeer = isUser && (turn.source === "peer" || !!peerFrom);
   const peerIntent = fromPeer ? peerIntentOf(turn.text ?? "") : null;
-  // Chat-bridge origin (docs/37 P2a): a reply the user sent from Discord/Slack, injected
+  // Chat-bridge origin (docs/log/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
     ? turn.source === "discord"
@@ -232,14 +232,14 @@ export function TranscriptTurn({
       <div className="mirror-turn-head">
         <span className="mt-who">{who}</span>
         {fromOperator && (
-          // This user turn was injected by the fleet operator (docs/30 ②), not typed by
+          // This user turn was injected by the fleet operator (docs/log/30 ②), not typed by
           // the user — badge it so the two are never confused.
           <span className="mt-op" title={tr("mirror.from_operator_title")}>
             <Icon name="broadcast" /> {tr("mirror.from_operator")}
           </span>
         )}
         {fromSchedule && (
-          // Fired by scheduled execution (docs/38) — timed (定時) vs run-now (手動発火).
+          // Fired by scheduled execution (docs/log/38) — timed (定時) vs run-now (手動発火).
           <span
             className="mt-op mt-sched"
             title={tr(scheduleManual ? "mirror.from_schedule_manual_title" : "mirror.from_schedule_title")}
@@ -249,27 +249,27 @@ export function TranscriptTurn({
           </span>
         )}
         {fromAutoResume && (
-          // Re-sent by the agent after a cut-off (docs/47 §4-6) — self-repair, not an instruction.
+          // Re-sent by the agent after a cut-off (docs/log/47 §4-6) — self-repair, not an instruction.
           <span className="mt-op mt-sched" title={tr("mirror.from_auto_resume_title")}>
             <Icon name="sync" /> {tr("mirror.from_auto_resume")}
           </span>
         )}
         {fromPeer && (
-          // Sent by another session (docs/58) — not the user, not the operator.
+          // Sent by another session (docs/log/58) — not the user, not the operator.
           <span className="mt-op mt-peer" title={tr("mirror.from_peer_title")}>
             <Icon name="arrow-swap" />{" "}
             {peerFrom ? tr("mirror.from_peer_named", { name: peerFrom }) : tr("mirror.from_peer")}
           </span>
         )}
         {peerIntent && (
-          // The message kind (docs/58 §58.14). Worth its own chip because it is the reason
+          // The message kind (docs/log/58 §58.14). Worth its own chip because it is the reason
           // a message did or did not get an answer — answer / notice are terminal.
           <span className="mt-op mt-peer mt-peer-kind" title={tr(`mirror.peer_intent_title.${peerIntent}`)}>
             {tr(`mirror.peer_intent.${peerIntent}`)}
           </span>
         )}
         {chatProvider && (
-          // Sent from a chat bridge (docs/37 P2a) — a phone reply, not typed at the console.
+          // Sent from a chat bridge (docs/log/37 P2a) — a phone reply, not typed at the console.
           <span className="mt-op mt-chat" title={tr("mirror.from_chat_title")}>
             <Icon name="comment-discussion" /> {tr("mirror.from_chat", { provider: chatProvider })}
           </span>
@@ -409,7 +409,7 @@ export function TranscriptTurn({
           <TurnSpendBar fresh={turn.inTok} create={turn.cacheCreate} out={turn.outTok} max={maxSpend} />
         )}
         {!isUser && caps.tts && <TurnTtsButtons turn={turn} tts={caps.tts} body={bodyEl} />}
-        {/* Branch from this prompt (docs/55). canBranchFrom holds the rule (landed user
+        {/* Branch from this prompt (docs/log/55). canBranchFrom holds the rule (landed user
             turn with an anchor): a block without one can't be pointed at, and offering it
             would fork the whole conversation instead of the point the user clicked. */}
         {caps.forkAt && canBranchFrom(turn) && (

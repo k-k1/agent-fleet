@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { ja } from "../../lib/i18n/locales/ja.ts";
 import { en } from "../../lib/i18n/locales/en.ts";
 
-// エージェントメモリタブ（docs/39 P2）の配線を、DOM を起こさずソース側から固定する。
+// エージェントメモリタブ（docs/log/39 P2）の配線を、DOM を起こさずソース側から固定する。
 // 本文の描画そのものより、**壊れると 404 / 空タブ / 未訳になる継ぎ目**を見るのが目的:
 //   ① 設定モーダルのレール登録と描画分岐（片方だけだと「押せるが真っ白」になる）
 //   ② 叩く REST が CP の許可リストに載っていること（載せ忘れ = FE から 404。既知の罠）

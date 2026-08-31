@@ -150,7 +150,7 @@ func liveTurn(t *testing.T, h *threadHandle, ses, prompt, id string, wantMsgs in
 	t.Fatalf("turn %s never landed in the store", id)
 }
 
-// TestContractLiveForkAtMessage is the end-to-end proof for docs/55 §55.3: a fork pinned to
+// TestContractLiveForkAtMessage is the end-to-end proof for docs/log/55 §55.3: a fork pinned to
 // a past user message carries the history up to — but NOT including — that message.
 //
 // Everything below this line in the stack is already covered by mocks (fork_at_test.go
@@ -230,7 +230,7 @@ func TestContractLiveForkAtMessage(t *testing.T) {
 		}
 		if strings.Contains(tn.Text, "BETA") {
 			t.Fatalf("the branch carried the anchored turn (%q) on opencode %s — messageID is "+
-				"NOT exclusive anymore; docs/55 §55.3 and the anchor translation need revisiting", tn.Text, ver)
+				"NOT exclusive anymore; docs/log/55 §55.3 and the anchor translation need revisiting", tn.Text, ver)
 		}
 	}
 	if fUsers != 1 {
@@ -288,7 +288,7 @@ func TestContractLiveForkAtMessage(t *testing.T) {
 		t.Errorf("include on the LAST exchange resolved to %q, want \"\" (= keep everything)", lastInc)
 	}
 
-	// Baseline: no anchor still copies everything, so the pre-docs/55 behaviour is intact.
+	// Baseline: no anchor still copies everything, so the pre-docs/log/55 behaviour is intact.
 	whole, err := serveForkSession(addr, ses, dir, "")
 	if err != nil {
 		t.Fatalf("serveForkSession (whole): %v", err)

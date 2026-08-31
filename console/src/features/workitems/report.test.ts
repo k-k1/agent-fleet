@@ -1,4 +1,4 @@
-// 報告コメントの下書き（docs/80 §80.10）。投稿されるのはここが作った文字列そのものなので、
+// 報告コメントの下書き（docs/log/80 §80.10）。投稿されるのはここが作った文字列そのものなので、
 // 「何を書くか」より「何を書かないか」を固定する。
 import { describe, expect, it } from "vitest";
 import { composeReportDraft, REPORT_FILE_CAP, reportFilePaths, reportTarget } from "./report.ts";

@@ -152,7 +152,7 @@ func TestProbeNoConversationOrDB(t *testing.T) {
 // LiveState は Probe と違い「保留でない」も状態として返す必要がある。agy は
 // status hook を持たないため、この idle 判定が唯一の turn 終端シグナルで、
 // これが無いと /input の楽観 working が消えず、オペレータへの完了報告の arm
-// が永久に消費されない（docs/30 ②）。
+// が永久に消費されない（docs/log/30 ②）。
 func TestLiveStateClassifiesEveryStepStatus(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := "/home/dev/repos/proj"

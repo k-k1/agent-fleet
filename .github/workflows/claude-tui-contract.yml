@@ -104,12 +104,12 @@ jobs:
           go test -tags tui_contract -run '^TestClaudePlanApprovalContractLive$' \
             -count=1 -v -timeout 15m .
 
-      # 発言時点からの分岐（docs/55）のドリフト検知。claude だけは公式の分岐点 API を
+      # 発言時点からの分岐（docs/log/55）のドリフト検知。claude だけは公式の分岐点 API を
       # 使えず転写 jsonl を自分で切り詰めているので、claude の転写スキーマや resume の
       # 解釈が動いた瞬間に静かに壊れる（起動はするが会話が変、という気づけない壊れ方）。
       # print モードで済むので TUI は要らないが、実クレデンシャルが要る点は同じなので
       # このジョブに相乗りする。3 ターン（haiku・各 1 行）。
-      - name: fork-at transcript contract (docs/55)
+      - name: fork-at transcript contract (docs/log/55)
         working-directory: workspace/agent
         env:
           CLAUDE_CONTRACT_LIVE: "1"

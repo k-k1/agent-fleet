@@ -55,20 +55,20 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"cursor":    cursor.Status(),
 		"kiro":      kiro.Status(),
 		"agy":       agy.Status(),
-		// copilot は GitHub 連携相乗り（docs/36 契約）: 専用フロー無し。
+		// copilot は GitHub 連携相乗り（docs/log/36 契約）: 専用フロー無し。
 		"copilot":    copilot.Status(ghConnected),
-		"jira":       jiraStatus(s), // 作業項目の取得元（docs/80 P1）
+		"jira":       jiraStatus(s), // 作業項目の取得元（docs/log/80 P1）
 		"pagerduty":  pagerdutyStatus(s),
 		"grafana":    grafanaStatus(s),
 		"cloudwatch": cloudwatchStatus(s),
 		"aws":        awsMCPStatus(s),
 		"discord":    discordStatus(s),
 		"slack":      slackStatus(s),
-		"svn":        svnConnStatus(s), // saved SVN servers (urlPrefix + username; docs/41)
+		"svn":        svnConnStatus(s), // saved SVN servers (urlPrefix + username; docs/log/41)
 	})
 }
 
-// discordStatus reports the chat-bridge Discord connection (docs/37 P1) — never
+// discordStatus reports the chat-bridge Discord connection (docs/log/37 P1) — never
 // the token. Echoes the destination mode (channel/dm), the cached bot name, and
 // the enabled event groups so the card can render the current selection.
 func discordStatus(s *secrets.Data) map[string]any {
@@ -89,7 +89,7 @@ func discordStatus(s *secrets.Data) map[string]any {
 	}
 	if d.Threads {
 		m["threads"] = true
-		// Console-input mirror (docs/37 Fix ②): default-on, so echo the resolved state
+		// Console-input mirror (docs/log/37 Fix ②): default-on, so echo the resolved state
 		// (not just when off) for the card's edit-form prefill.
 		m["mirrorInput"] = !d.MirrorInputOff
 	}
@@ -103,7 +103,7 @@ func discordStatus(s *secrets.Data) map[string]any {
 	if d.FullText {
 		m["fullText"] = true
 	}
-	// docs/37 P3先取り: signal that the standing fleet-operator thread is provisioned so
+	// docs/log/37 P3先取り: signal that the standing fleet-operator thread is provisioned so
 	// the card can show an "operator" pill (present only once 起票 succeeded).
 	if ref, ok := bridge.OperatorState(); ok && ref.Thread != "" {
 		m["operator"] = true
@@ -183,7 +183,7 @@ func handleDiscordGuilds(w http.ResponseWriter, r *http.Request) {
 		}
 		entry := map[string]any{"id": g.ID, "name": g.Name, "channels": cl}
 		// Owner = the user's own id in the recommended "your private server"
-		// setup (docs/37 P1.5) — the card auto-fills the mention target from it,
+		// setup (docs/log/37 P1.5) — the card auto-fills the mention target from it,
 		// so no Developer Mode / Copy-ID is ever needed. Best-effort.
 		if owner, err := bridge.DiscordGuildOwner(token, g.ID); err == nil && owner != "" {
 			entry["ownerId"] = owner
@@ -204,9 +204,9 @@ type discordConnReq struct {
 	Threads       bool     `json:"threads"`       // thread-per-session (channel mode)
 	MentionUserID string   `json:"mentionUserId"` // @mentioned per notification (channel mode)
 	Lang          string   `json:"lang"`          // Console locale at connect time ("ja"/"en")
-	Receive       bool     `json:"receive"`       // inbound: route thread replies back (docs/37 P2a)
-	FullText      bool     `json:"fullText"`      // post the answer-ready turn body (docs/37 全文ブリッジ)
-	// MirrorInput echoes Console-typed prompts into the session thread (docs/37 Fix ②).
+	Receive       bool     `json:"receive"`       // inbound: route thread replies back (docs/log/37 P2a)
+	FullText      bool     `json:"fullText"`      // post the answer-ready turn body (docs/log/37 全文ブリッジ)
+	// MirrorInput echoes Console-typed prompts into the session thread (docs/log/37 Fix ②).
 	// A pointer so an omitted field means "default" (on) rather than false — the card
 	// always sends it, but an older/edit request that leaves it out keeps the default.
 	MirrorInput *bool `json:"mirrorInput"`
@@ -220,9 +220,9 @@ type discordConnReq struct {
 var discordSnowflakeRe = regexp.MustCompile(`^[0-9]{5,25}$`)
 
 // handlePutDiscordConn stores the user's Discord bot token + destination in the
-// encrypted store (docs/37 P1; PagerDuty カードと同じ三点セット). Exactly one
+// encrypted store (docs/log/37 P1; PagerDuty カードと同じ三点セット). Exactly one
 // destination: a guild channel id, or the user's own Discord user id for DMs
-// (the identity binding of docs/37 契約5). The token is validated against the
+// (the identity binding of docs/log/37 契約5). The token is validated against the
 // Discord API when reachable — a network failure saves anyway (outbound may be
 // restricted; sends will surface in the daemon log), but a 401/403 rejects.
 //
@@ -297,7 +297,7 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 	if req.Lang == "en" {
 		lang = "en"
 	}
-	// Console-input mirror (docs/37 Fix ②): ON by default in channel+thread mode.
+	// Console-input mirror (docs/log/37 Fix ②): ON by default in channel+thread mode.
 	// Preserve the stored value on an edit that omits the field; an explicit value wins.
 	mirrorOff := editing && s.Discord != nil && s.Discord.MirrorInputOff
 	if req.MirrorInput != nil {
@@ -310,11 +310,11 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 	}
 	creds := &secrets.DiscordCreds{Token: token, ChannelID: channelID, UserID: userID,
 		BotName: botName, Events: events, Lang: lang,
-		// Channel-mode extras (docs/37 P1.5 / P2a); meaningless for DM, so not stored there.
+		// Channel-mode extras (docs/log/37 P1.5 / P2a); meaningless for DM, so not stored there.
 		// Receive (P2a inbound) rides thread mode — replies arrive in session threads.
 		Threads: channelID != "" && req.Threads, MentionUserID: mention,
 		Receive: channelID != "" && req.Receive,
-		// Full-text mode (docs/37 全文ブリッジ) works in either destination mode —
+		// Full-text mode (docs/log/37 全文ブリッジ) works in either destination mode —
 		// the body posts to the channel/thread or the DM alike.
 		FullText:  req.FullText,
 		NotifyOff: notifyOff,
@@ -357,7 +357,7 @@ func handlePutDiscordConn(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	// docs/37 P3先取り: with receive + channel mode, stand up (or reuse) the dedicated
+	// docs/log/37 P3先取り: with receive + channel mode, stand up (or reuse) the dedicated
 	// fleet-operator thread + conversation so @mentions route to the operator assistant.
 	// Async + best-effort — it does its own Discord round-trips, so it must not slow the
 	// PUT or fail the connect (reuse across reconnects avoids duplicate threads).
@@ -402,7 +402,7 @@ type pagerdutyConnReq struct {
 }
 
 // handlePutPagerDutyConn stores the user's PagerDuty API key in the encrypted
-// store (docs/25 Phase 1). The key is consumed only by `mcp-run pagerduty`,
+// store (docs/log/25 Phase 1). The key is consumed only by `mcp-run pagerduty`,
 // which injects it as env into `uvx pagerduty-mcp` at spawn — it never lands in
 // any MCP config file. A read-only PagerDuty key is recommended (see guide).
 func handlePutPagerDutyConn(w http.ResponseWriter, r *http.Request) {
@@ -458,7 +458,7 @@ type grafanaConnReq struct {
 }
 
 // handlePutGrafanaConn stores the user's Grafana URL + service-account token in
-// the encrypted store (docs/25). The token is consumed only by `mcp-run grafana`,
+// the encrypted store (docs/log/25). The token is consumed only by `mcp-run grafana`,
 // which injects it as env into mcp-grafana at spawn (read-only flags enforced
 // there). A Viewer-permission service account is recommended; for Amazon Managed
 // Grafana the token expires after at most 30 days and must be re-pasted.
@@ -572,7 +572,7 @@ func awsProfileStatus(p secrets.AWSProfileRef) map[string]any {
 var awsProfileRe = regexp.MustCompile(`[^A-Za-z0-9._@-]+`)
 
 // handlePutCloudWatchConn stores the AWS profile the CloudWatch MCP should use
-// (docs/25). No secret is stored: auth is the AWS credential chain (the user's
+// (docs/log/25). No secret is stored: auth is the AWS credential chain (the user's
 // `aws sso login`, same as ssm sessions). Two shapes:
 //   - SSO meta present (startUrl 等 — Console の SSM プロファイルピッカー経由):
 //     a durable ops aws config is generated from the meta (SSM profiles live in
@@ -659,7 +659,7 @@ func awsMCPEndpoint(region string) string {
 }
 
 // handlePutAWSMCPConn stores the AWS profile + endpoint the AWS MCP proxy should use
-// (docs/25 §AWS MCP). Profile handling is identical to CloudWatch — no secret, SSO
+// (docs/log/25 §AWS MCP). Profile handling is identical to CloudWatch — no secret, SSO
 // meta materialized into a durable ops config. `write` is the one addition: it opts
 // into the mutating tools (call_aws / run_script), so it is stored explicitly and
 // echoed back for the card to show.

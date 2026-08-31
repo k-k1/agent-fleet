@@ -1,6 +1,6 @@
 package main
 
-// tmux 破壊操作ガード（tripwire）: docs/32 M1 E2E で、テスト用 agent インスタンスの
+// tmux 破壊操作ガード（tripwire）: docs/log/32 M1 E2E で、テスト用 agent インスタンスの
 // shutdown が共有デフォルトソケットへ `tmux kill-server` を実行し、Workspace 内の
 // 全セッションを 4 回落としたインシデントの再発防止。
 //

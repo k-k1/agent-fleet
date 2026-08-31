@@ -1,129 +1,169 @@
-# 0038. 外部所有 Chromium はloopback CDPへattachし、ユーザークリックでConsoleペインへ開く
+# 0038. Attach to an externally owned Chromium over loopback CDP, and open it in a Console pane on a user click
 
-- 状態: 採用・P0実測で実装契約確定（P1〜P3実装済み。対話セッション直接経路を2026-08-02に補正。
-  導線の断線とport衝突を2026-08-08に補正 = 決定18〜20）
-- 関連: [53-chromium-attach-view.md](../53-chromium-attach-view.md) /
-  [53 P0実測](../53-chromium-attach-view-p0-verification.md) / [0018-container-browser-pane.md](0018-container-browser-pane.md) /
+English | [日本語](0038-chromium-attach-view.ja.md)
+
+- Status: adopted; the implementation contract fixed by the P0 measurements (P1–P3 implemented. The
+  direct route for interactive sessions was corrected on 2026-08-02. The broken entry route and the
+  port collision were corrected on 2026-08-08 = decisions 18–20)
+- See also: [53-chromium-attach-view.md](../log/53-chromium-attach-view.md) /
+  [53, the P0 measurements](../log/53-chromium-attach-view-p0-verification.md) / [0018-container-browser-pane.md](0018-container-browser-pane.md) /
   [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.md)
 
-## 背景
+## Context
 
-既存ブラウザペインはWorkspace AgentがChromium、BrowserContext、Pageを所有し、コンテナ内localhost Webアプリを
-表示する。外部top-level navigationを拒否し、raw CDPを公開しないことがセキュリティ境界である。
+In the existing browser pane the Workspace Agent owns the Chromium, the BrowserContext and the Page,
+and displays a web app on the container's localhost. Refusing external top-level navigation and not
+exposing raw CDP are the security boundary.
 
-一方、Playwright等の外部プロセスがheadless Chromiumを所有して外部管理画面を自動操作し、最後の確認や確定だけを
-ユーザーへ渡したい用途がある。この場合、業務スクリプトをAFへ移植せず、既に存在するPageの描画・入力だけを
-Consoleへ中継する必要がある。エージェントはCLAUDE.md / AGENTS.mdの指示に従い、Workspace AgentのローカルMCPから
-この引き渡しを準備できることが望ましい。
+Separately, there is a use case where an external process such as Playwright owns a headless
+Chromium, automates an external administration screen, and wants to hand only the final check or
+confirmation to the user. In that case the business script must not be ported into AF; only the
+rendering and input of an already existing Page need relaying to the Console. It is desirable for an
+agent, following the instructions in CLAUDE.md / AGENTS.md, to be able to prepare that handover from
+the Workspace Agent's local MCP.
 
-## 決定
+## Decision
 
-1. 「Chromium Attach View」を既存ブラウザペインの第2モードとして追加する。AF所有Pageと外部所有Pageは所有権、
-   navigation、lifecycleを型で分離する。
-2. 外部ownerはChromiumを`--remote-debugging-address=127.0.0.1`と明示port付きで起動する。Agentはhostを受け取らず、
-   loopback CDPだけへ接続する。
-3. Agentは既存targetへCDP sessionをattachし、既存基盤と同じscreencastと許可済みInput操作だけをConsoleへ中継する。
-   raw CDP、cookie、storage、response bodyは公開しない。
-4. detachはAFのCDP sessionとviewerだけを解放する。外部ownerのPage、BrowserContext、profile、Chromium processを
-   閉じない。
-5. 通常ブラウザペインのloopback限定は変更しない。attachmentはownerが開いたHTTP(S)外部Pageを表示できるが、
-   Consoleから任意URLを入力する汎用ブラウザにはしない。
-6. ローカルAF MCPへtarget列挙、attach、handoff要求、状態取得、detachを追加する。アシスタントチャット面では
-   target列挙と状態取得をread、表示・入力経路を作るattach/handoff/detachを`af_write`だけに広告する。
-   対話セッション面ではmcpregのbuiltin `af`を`--self-report --chromium-attach`で起動し、`af_report`と
-   Chromium 7種だけを広告する。フリート全体のread/write権限は渡さない。
-7. attach結果は短命なopaque attachment IDとConsole action URLを返す。エージェントはURLを変更せずMarkdownリンクで
-   ユーザーへ提示する。
-8. MCPやサーバーpushだけでConsole layoutを変更しない。ユーザーがaction URLを1回クリックした時に、そのConsole端末の
-   layout storeが正規経路でペインを作る。これを表示に対する明示的なユーザー意思とする。
-9. handoffの「完了」「中止」はユーザーの自己申告であり、外部サイト上の処理成功の証拠とはみなさない。
-10. v1はChromium/CDPだけを対象とし、Firefox/WebKitや任意GUIへ一般化しない。
-11. P0実測に基づき、CDP共通coreはrequest/response multiplexとbounded event queueまでとする。pipe/WebSocket framingと
-    接続が所有するresourceのcloseだけをtransport adapterへ分け、discoveryやPage ownershipを共通化しない。
-12. 複数CDP clientのscreencastはtarget sessionごとに独立して動作する。AFは自分のsessionだけをstart/stop/ACK/detachし、
-    v1のAFは入力競合を避けるため同一targetのactive attachmentを1つに制限する。
-13. attachmentの描画・入力は既存`/ws/browser`へ混在させず、専用`/ws/browser-attachments` namespaceへ分離する。
-    CP relay coreは共有してよいが、Agent handlerと許可message集合を分ける。
-14. MCP tool resultは`outputSchema`、短いJSON text、同一値の`structuredContent`を持つ。structured値をモデルへ渡さない
-    CLIが実在するため、text fallbackを全CLIで必須の正とし、client別分岐は作らない。
-15. action linkの配置は既存attachment focus、blank pane、新規slotの順とする。pane上限時は別paneを黙って上書きせず、
-    active pane置換またはcancelをユーザーに選ばせ、cancelを既定focusにする。
-16. 対話セッション面でも広告集合をcall側の認可境界にする。`--self-report`単独は`af_report` 1本の後方互換を保ち、
-    `--chromium-attach`は`--self-report`との組合せでだけ有効にする。Chromium change toolを許可しても、
-    `list_my_sessions`、`send_to_session`等の推測callは拒否する。
-17. 対話セッションは既に同じWorkspace内でshell/Playwright/loopback CDPを扱える主体で、attachmentの表示には
-    membership認証とaction linkのユーザークリックが必要なため、追加のConsole opt-inは設けない。headlessで
-    広いフリート操作を行うアシスタントの`af_write` opt-inは従来どおり維持する。
+1. Add "Chromium Attach View" as a second mode of the existing browser pane. AF-owned Pages and
+   externally owned Pages are separated by type in ownership, navigation and lifecycle.
+2. The external owner starts Chromium with `--remote-debugging-address=127.0.0.1` and an explicit
+   port. The Agent does not accept a host and connects only to loopback CDP.
+3. The Agent attaches a CDP session to an existing target and relays to the Console only the same
+   screencast and permitted Input operations as the existing foundation. Raw CDP, cookies, storage
+   and response bodies are not exposed.
+4. Detaching releases only AF's CDP session and viewer. It does not close the external owner's Page,
+   BrowserContext, profile or Chromium process.
+5. The loopback restriction on the ordinary browser pane is unchanged. An attachment can display an
+   external HTTP(S) Page the owner opened, but it does not become a general browser into which
+   arbitrary URLs can be typed from the Console.
+6. Add target enumeration, attach, handoff request, state query and detach to the local AF MCP. On
+   the assistant chat surface, target enumeration and state query are advertised as read, while
+   attach/handoff/detach — which create a display and input route — are advertised only to
+   `af_write`. On the interactive session surface, mcpreg's builtin `af` is started with
+   `--self-report --chromium-attach` and advertises only `af_report` plus the seven Chromium tools.
+   Fleet-wide read/write authority is not handed over.
+7. An attach returns a short-lived opaque attachment ID and a Console action URL. The agent presents
+   the URL to the user as a Markdown link, unchanged.
+8. MCP or a server push alone never changes the Console layout. When the user clicks the action URL
+   once, that Console client's layout store creates the pane by the normal route. That click is taken
+   as the explicit user intent to display it.
+9. "Completed" and "cancelled" on a handoff are the user's self-report and are not treated as
+   evidence that the operation on the external site succeeded.
+10. v1 targets Chromium/CDP only and is not generalised to Firefox/WebKit or arbitrary GUIs.
+11. Based on the P0 measurements, the shared CDP core goes as far as request/response multiplexing
+    and a bounded event queue. Only pipe/WebSocket framing and closing connection-owned resources are
+    split into a transport adapter; discovery and Page ownership are not shared.
+12. Screencasts from several CDP clients work independently per target session. AF starts, stops,
+    ACKs and detaches only its own session, and v1's AF limits a target to one active attachment to
+    avoid input contention.
+13. An attachment's rendering and input are not mixed into the existing `/ws/browser` but separated
+    into a dedicated `/ws/browser-attachments` namespace. The CP relay core may be shared, but the
+    Agent handler and the permitted message set are separate.
+14. An MCP tool result carries an `outputSchema`, short JSON text, and `structuredContent` with the
+    same value. Because CLIs that do not pass structured values to the model actually exist, the text
+    fallback is canonical and mandatory for every CLI, and there is no per-client branching.
+15. An action link is placed in the order: an existing attachment's focus, a blank pane, a new slot.
+    At the pane limit, another pane is not silently overwritten — the user chooses between replacing
+    the active pane and cancelling, with cancel as the default focus.
+16. On the interactive session surface too, the advertised set is the authorisation boundary for
+    calls. `--self-report` alone preserves backward compatibility with the single `af_report` tool,
+    and `--chromium-attach` is effective only in combination with `--self-report`. Permitting the
+    Chromium change tools still rejects speculative calls to `list_my_sessions`, `send_to_session`
+    and the like.
+17. An interactive session is already an actor that can use the shell, Playwright and loopback CDP
+    inside the same workspace, and displaying an attachment requires membership authentication plus a
+    user click on the action link, so no additional Console opt-in is imposed. The `af_write` opt-in
+    for the assistant, which performs broad fleet operations headlessly, is maintained as before.
 
-18. action linkは「Console routeへの遷移」だけを前提にしない。ミラーのMarkdownリンクとしてクリックされる経路が
-    実際の主経路であり、そこではファイルリンク解決より先にaction linkとして判定し、遷移せずその場でペインを
-    開く。両経路は同じ関数を通し、二重実装にしない。CP側はaction pathでConsole shellを返す（静的catch-allの
-    404がリンク導線を全滅させたため）。
-19. Chromiumのremote-debugging portは固定しない。`--remote-debugging-port=0`＋`DevToolsActivePort`を起動契約とし、
-    attachは`browserId`で個体を照合する。同一portを複数プロセスがlistenしている場合はdiscoveryを
-    `cdp_port_ambiguous`で失敗させる。Chromiumは衝突時に失敗せず別loopback familyへ逃げるため、
-    「listenを失敗させる」ことに依存しない（§53.16）。この検査はadvisoryで、procfsで判定できない場合は通す。
-20. attachmentの一覧取得（`GET /api/browser/attachments`）はConsoleの復旧用入口だけに使う。action linkに代わる
-    第二の配布経路にはせず、pushもpollingもしない。
+18. An action link does not presume "navigating to a Console route". The route actually used most is
+    clicking a Markdown link in the mirror, and there it is judged as an action link **before** file
+    link resolution, opening the pane in place without navigating. Both routes go through the same
+    function; there is no second implementation. The CP returns the Console shell on the action path
+    (a static catch-all's 404 had wiped out the whole link route).
+19. Chromium's remote-debugging port is not fixed. `--remote-debugging-port=0` plus
+    `DevToolsActivePort` is the startup contract, and an attach identifies the individual by
+    `browserId`. If several processes are listening on the same port, discovery fails with
+    `cdp_port_ambiguous`. Chromium does not fail on a collision — it escapes to the other loopback
+    family — so we do not depend on "the listen will fail" (§53.16). This check is advisory and
+    passes when procfs cannot decide.
+20. Listing attachments (`GET /api/browser/attachments`) is used only as the Console's recovery
+    entrance. It is not made a second distribution route in place of the action link, and it is
+    neither pushed nor polled.
 
-## 採らなかった案
+## Options not taken
 
-### 既存ブラウザペインの外部navigation制限を解除する
+### Lift the external-navigation restriction on the existing browser pane
 
-既存PageはAgent所有であり、外部自動化のPage・profile・sessionと同一ではない。制限解除だけではPlaywrightと同じPageを
-共有できず、localhost境界も失う。所有モードを分ける。
+The existing Page is Agent-owned and is not the same as the external automation's Page, profile and
+session. Lifting the restriction alone would not let it share the same Page as Playwright, and it
+would lose the localhost boundary. The ownership modes are kept separate.
 
-### raw CDPをConsoleまたはMCPへ公開する
+### Expose raw CDP to the Console or to MCP
 
-CDPは任意JS実行、cookie、network、target管理を含む強い権限である。Consoleに必要なのは描画と限定入力だけなので、
-Agentで高水準wireへ縮退する。
+CDP is a strong privilege, including arbitrary JS execution, cookies, network and target
+management. What the Console needs is rendering and limited input, so the Agent degrades it to a
+high-level wire.
 
 ### Xvfb + VNC/noVNC
 
-Chromium以外も表示できるが、追加daemon、画面全体の転送、認可、解像度、clipboard、process ownershipが増える。
-CDP screencast基盤が既にあるAFには過剰である。
+It can display things other than Chromium, but it adds a daemon, whole-screen transport,
+authorisation, resolution, clipboard and process ownership. It is overkill for AF, which already has
+a CDP screencast foundation.
 
-2026-08-08に「CDP合成入力をやめてOSの入力処理をそのまま使えないか」という観点で再検討し、実地計測の上で
-**この判断を維持する**と決めた。決め手はコストではなく所有権で、VNCはownerが自分のChromiumをAFの仮想
-ディスプレイ上でheadful起動する前提を要求するが、§53.2でChromiumを起動するのはownerでありAFではない。
-計測と検討の詳細は[docs/53 §53.18](../53-chromium-attach-view.md#5318-rdp--vnc-転送の検討2026-08-08-実測)。
+Re-examined on 2026-08-08 from the angle of "could we drop synthetic CDP input and use the OS's own
+input handling?", and after measurement on the spot we decided to **maintain this judgement**. The
+deciding factor is not cost but ownership: VNC requires the owner to start their own Chromium
+headful on AF's virtual display, whereas §53.2 has the owner, not AF, starting Chromium. The
+measurements and the discussion are in
+[docs/53 §53.18](../log/53-chromium-attach-view.md#5318-rdp--vnc-転送の検討2026-08-08-実測).
 
-### Playwright protocolへ接続する
+### Connect to the Playwright protocol
 
-Playwrightの`launch_server` protocolはCDPではなく、言語・版への結合が強い。Chromium標準のloopback CDPをownerとの
-最小契約にする。
+Playwright's `launch_server` protocol is not CDP and is strongly coupled to a language and a
+version. Chromium's standard loopback CDP is the minimal contract with the owner.
 
-### MCP呼び出し時に自動でペインを開く
+### Open the pane automatically on the MCP call
 
-layoutはユーザー、テナント、ブラウザ端末ごとのlocal stateであり、Agentはどの端末に表示するか決められない。
-予期しない画面変更にもなる。認証済みaction linkを返し、ユーザークリックで開く。
+The layout is local state per user, per tenant and per browser client, and the Agent cannot decide
+which client to display on. It would also be an unexpected change of screen. We return an
+authenticated action link and open on a user click.
 
-### 業務スクリプトをAFへ組み込む
+### Build the business script into AF
 
-AFがサイト固有selector、credential、規約、投稿状態を所有することになる。AFは汎用の人間操作surfaceとhandoffだけを
-提供し、業務処理は各プロジェクトに残す。
+AF would end up owning site-specific selectors, credentials, terms and posting state. AF provides
+only a generic human-operation surface and the handoff; the business logic stays in each project.
 
-### 対話セッション用に別の`af-browser` MCPサーバーを作る
+### Build a separate `af-browser` MCP server for interactive sessions
 
-同じAgent認証・同じChromium handlerを使う一方で、予約名、materialize台帳、各CLI設定、利用者に見えるサーバーが
-増える。既存builtin `af`の起動flagと厳密な広告/call集合で同じ権限分離ができるため、別serverには分けない。
+It uses the same Agent authentication and the same Chromium handler, but it adds a reserved name, a
+materialisation ledger, per-CLI configuration, and one more server the user can see. The same
+privilege separation is achievable with a startup flag on the existing builtin `af` plus a strict
+advertised/callable set, so we do not split off a separate server.
 
-### `--self-report`を無条件にChromium対応へ広げる
+### Extend `--self-report` to cover Chromium unconditionally
 
-自己申告1本という既存flagの意味と後方互換を壊す。独立した`--chromium-attach`を追加し、両flagの組合せだけを
-現行の対話セッションbuiltinにmaterializeする。
+That would break the meaning and backward compatibility of an existing flag that means "one
+self-report tool". An independent `--chromium-attach` is added, and only the combination of both
+flags is materialised for the current interactive-session builtin.
 
-## 帰結
+## Consequences
 
-- BrowserManagerのrequest/response multiplex、bounded event queue、screencast/input部分を再利用し、pipe/WebSocket framingと
-  resource所有をtransport adapterへ分割する必要がある。`browserCDPEvent`の`*pipeCDP`型漏れも解消する。
-- Console layoutへ`browserAttach` contentとaction routeが増えるが、port・target・外部URLは永続化しない。
-- CP/Agentへ`/ws/browser-attachments`が増える。既存`/ws/browser`のlookupとwire契約は変更しない。
-- attachmentは外部認証済み画面を表示し得るため、frame・入力・URL・title・console本文を永続化しない。
-- ownerと人間の同時入力は上書き競合する。`user-control`前のowner停止を利用契約上の必須条件とし、v1は
-  `view-only/user-control/locked`を表示・強制するが停止自体は検知・強制しない。
-- MCPはtext fallbackとstructured resultを重複して返す。Claude/Codex/Copilotはstructured値を利用できる一方、
-  opencode/Cursor/KiroはP0時点でtextだけをモデルへ渡す。
-- 対話セッションのbuiltin `af`は`af_report`専用ではなくなるが、Chromium 7種以外のフリートtoolは引き続き
-  広告・callとも拒否する。「広告集合がscope境界」というADR0035の性質は維持される。
-- 将来の完了自動報告は可能だが、MVPは状態取得で成立させ、永続handoff ledgerは後続段階とする。
+- BrowserManager's request/response multiplexing, bounded event queue and screencast/input parts are
+  reused, and pipe/WebSocket framing and resource ownership need splitting into a transport adapter.
+  The `*pipeCDP` type leak in `browserCDPEvent` is fixed too.
+- The Console layout gains `browserAttach` content and an action route, but the port, target and
+  external URL are not persisted.
+- The CP and the Agent gain `/ws/browser-attachments`. The lookup and wire contract of the existing
+  `/ws/browser` are unchanged.
+- Because an attachment may display an externally authenticated screen, frames, input, URLs, titles
+  and console bodies are not persisted.
+- Simultaneous input from the owner and a human contends destructively. Stopping the owner before
+  `user-control` is a mandatory condition of the usage contract, and v1 displays and enforces
+  `view-only/user-control/locked` but neither detects nor enforces the stop itself.
+- MCP returns the text fallback and the structured result redundantly. Claude/Codex/Copilot can use
+  structured values, while opencode/Cursor/Kiro pass only text to the model as of P0.
+- The interactive session's builtin `af` is no longer `af_report`-only, but fleet tools other than
+  the seven Chromium ones continue to be refused, both in advertising and in calls. ADR 0035's
+  property that "the advertised set is the scope boundary" is maintained.
+- Automatic completion reporting is possible in future, but the MVP is built on the state query, and
+  a persistent handoff ledger is a later stage.

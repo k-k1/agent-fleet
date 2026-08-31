@@ -647,7 +647,7 @@ func TestReaperSweepReachesTier3OnAStoppedWorkspace(t *testing.T) {
 
 // The deployment defaults. They were 0 (off) until 2026-08-17, which read as "safe by
 // default" and was not: a real deployment sat 9.4h with a workspace nobody had touched,
-// holding an m7i.large slot (docs/64 §64.26). Now they are on, so this test guards the
+// holding an m7i.large slot (docs/log/64 §64.26). Now they are on, so this test guards the
 // two things that make that safe: a tenant can still turn them off, and an operator can
 // still turn them off deployment-wide with an explicit "0".
 func TestIdleTimeoutDefaultsAndOverrides(t *testing.T) {

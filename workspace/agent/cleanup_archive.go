@@ -1,6 +1,6 @@
 package main
 
-// Cleanup archive — a gz safety net for destructive tidy-up (docs/32). When a session
+// Cleanup archive — a gz safety net for destructive tidy-up (docs/log/32). When a session
 // or branch is deleted to reclaim space, what would truly be LOST is bundled first into
 // a compressed archive under ~/.local/share/agent-fleet/cleanup/ (persists across
 // container recreate), so the removal is recoverable:

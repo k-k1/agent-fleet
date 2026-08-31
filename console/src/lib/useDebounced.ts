@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 // useDebounced — a value that settles `ms` after it stops changing.
 //
-// Written for the Markdown editor's preview (docs/44 §1.1): re-parsing +
+// Written for the Markdown editor's preview (docs/log/44 §1.1): re-parsing +
 // sanitising + Mermaid on every keystroke would render half-written diagrams
 // over and over. `key` identifies what the value belongs to — when it changes
 // (a different file), the new value is adopted immediately rather than after

@@ -21,7 +21,7 @@ import { useMarksController } from "../mirror/transcript/useMarks.ts";
 import { MarkStrip } from "../mirror/transcript/MarkStrip.tsx";
 import "./sharing.css";
 
-// SharedSessionView — the RECIPIENT's read of a session somebody else owns (docs/59).
+// SharedSessionView — the RECIPIENT's read of a session somebody else owns (docs/log/59).
 //
 // It renders through the very same pipeline and blocks as the mirror
 // (features/mirror/transcript), so a shared conversation reads exactly like the owner's:
@@ -32,7 +32,7 @@ import "./sharing.css";
 //
 // The transcript arrives through the control-plane's allowlist DTO, which strips cwd /
 // path / filePath and every structured coordinate before it ever reaches the browser
-// (docs/59 §3, control-plane/session_share.go sharedTranscriptDTO).
+// (docs/log/59 §3, control-plane/session_share.go sharedTranscriptDTO).
 
 // Page size, in transcript LINES (claude) / turns (store-backed agents) — the same
 // window the mirror asks for. It used to be 60 for a faster first paint, but 60 claude
@@ -40,7 +40,7 @@ import "./sharing.css";
 // line, every tool call and the reply), so the opening screen could start mid-answer
 // with the prompt that caused it out of frame, and 以前の会話を読み込む had to be
 // pressed over and over. The first-paint cost that motivated 60 was the per-request
-// inventory sync, which is now throttled per owner (docs/59 §3).
+// inventory sync, which is now throttled per owner (docs/log/59 §3).
 const WINDOW = 400;
 // Poll cadence, matching the mirror's. The server allows 120 reads/min per
 // recipient+session, so even the working cadence stays well inside the limit.
@@ -135,7 +135,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // 位置の記憶はミラーと同じモジュール内 Map を使う。所有者側はセッション名、こちらは
   // catalog id なので、鍵が混ざらないよう接頭辞を付ける。
   const markKey = `shared:${sharedSessionId}`;
-  // 会話へ引いたマーカー（docs/69 / ADR 0050）。読むのは RO でもでき、引けるのは RW だけ。
+  // 会話へ引いたマーカー（docs/log/69 / ADR 0050）。読むのは RO でもでき、引けるのは RW だけ。
   // 消せるのは自分の印だけ（判定は Agent 側、CP が login id を刻む）。所有者 Workspace が
   // 停止中は転写と同じく取りに行かない。
   const marks = useMarksController({
@@ -472,7 +472,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     marks,
   };
 
-  // 表示設定の「共有セッション」テーマ／背景(docs/59)。ミラー(.mirrorview)と同じ仕組み:
+  // 表示設定の「共有セッション」テーマ／背景(docs/log/59)。ミラー(.mirrorview)と同じ仕組み:
   // data-theme がこの面だけの基本トークンを切り替え、--chat-bg / --chat-accent はこの面の
   // 実効テーマから導く(アプリ側の色をそのまま持ち込むと、反転した面で浮く)。他人の会話を
   // 読んでいる面を自分のミラーと違う色にできることが、この設定の目的。
@@ -508,7 +508,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
         </div>
         {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
-      {/* マーカーの一覧（docs/69 §69.7）。ミラーと同じ位置＝ヘッド直下の帯に置く。 */}
+      {/* マーカーの一覧（docs/log/69 §69.7）。ミラーと同じ位置＝ヘッド直下の帯に置く。 */}
       <MarkStrip marks={marks} storageKey={`shared:${sharedSessionId}`} />
       <div
         className="shared-view-body"

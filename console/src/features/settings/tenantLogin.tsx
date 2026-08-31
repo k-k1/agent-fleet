@@ -1,4 +1,4 @@
-// テナントのログイン面（docs/61 §61.9 / §61.11・ADR0043 決定 19 / 29-33）。
+// テナントのログイン面（docs/log/61 §61.9 / §61.11・ADR0043 決定 19 / 29-33）。
 //
 // AdminTab.tsx から切り出した。P3/P4 では「IA 刷新のときにまとめて移す」と決めて
 // 管理モーダルの中に暫定で置いていたが、置き場が 2 つ（デプロイ管理者の管理モーダル /
@@ -18,25 +18,25 @@ import { useT, useLocale } from "../../lib/i18n/index.ts";
 // メンバー側の MCP フォームと同じ部品立て（1 つのデザインに保つ）。
 import { Field } from "./mcpForm.tsx";
 
-// テナント行のうち、この画面が読む 3 列だけ（docs/61 §61.9.7）。管理 API の
+// テナント行のうち、この画面が読む 3 列だけ（docs/log/61 §61.9.7）。管理 API の
 // テナント表現の部分集合なので、呼び出し側の型をそのまま渡せる。
 export interface TenantLoginFields {
   allowed_providers?: string;
   auto_join_domains?: string;
   allowed_domains?: string;
-  // 受け入れるが、このテナントのログイン画面には出さない方式（docs/61 §61.15.9）。
+  // 受け入れるが、このテナントのログイン画面には出さない方式（docs/log/61 §61.15.9）。
   // ★ 表示だけの欄で、門ではない。
   hidden_providers?: string;
 }
 
-// テナントが定義したサインイン方法（docs/61 §61.11）。client_secret は書き込み専用 —
+// テナントが定義したサインイン方法（docs/log/61 §61.11）。client_secret は書き込み専用 —
 // レスポンスには決して載らず、保存済みかどうかは has_secret で分かる。
 export interface TenantIdP {
   id: string;
   name: string;
   label_ja?: string;
   label_en?: string;
-  // kind は「どのアダプタで動くか」＝出す欄そのものを変える（docs/61 §61.15）。
+  // kind は「どのアダプタで動くか」＝出す欄そのものを変える（docs/log/61 §61.15）。
   // 既定は oidc（P4 の行はこの列より古い）。
   kind?: string;
   issuer: string;
@@ -46,7 +46,7 @@ export interface TenantIdP {
   allowed_tids?: string;
   allowed_domains?: string;
   allowed_orgs?: string;
-  // 規則 1.5 を当てるための安定クレーム名（docs/61 §61.15.10）。値ではなく「名前」だけ
+  // 規則 1.5 を当てるための安定クレーム名（docs/log/61 §61.15.10）。値ではなく「名前」だけ
   // が設定で、値は必ずトークンから読む。書けるのは CP が許した名前だけ。
   link_claim?: string;
   provider_id?: string;
@@ -67,7 +67,7 @@ interface DeployProvider {
   issuer?: string;
 }
 
-// useDeploymentProviders — このデプロイの方式（＝既定テナントの方式・docs/61 §61.17）。
+// useDeploymentProviders — このデプロイの方式（＝既定テナントの方式・docs/log/61 §61.17）。
 //
 // ★ 3 状態を分ける。以前は `res?.providers || []` で**エラーも 0 件に潰していた**ので、
 // 読めなかった相手に「設定されていません」と嘘を表示していた（§61.17.9 ②）。
@@ -98,7 +98,7 @@ function useDeploymentProviders(): DeployProvider[] | "error" | null {
   return rows;
 }
 
-// --- 「受け入れる」／「ボタンに出す」の代数（docs/61 §61.17.5）------------------
+// --- 「受け入れる」／「ボタンに出す」の代数（docs/log/61 §61.17.5）------------------
 //
 // DB 表現は CSV 2 本のまま（`allowed_providers` / `hidden_providers`）。画面がそれを
 // 行ごとの 2 トグルとして見せるだけで、スキーマは変わらない。ここに置いた関数だけが
@@ -205,7 +205,7 @@ export function toggleRule(
   };
 }
 
-// TenantLoginRules — docs/61 §61.9.7 の CSV 3 列のエディタ。
+// TenantLoginRules — docs/log/61 §61.9.7 の CSV 3 列のエディタ。
 //
 // 3 つはわざと似せていないし、ヒントもそう書いてある。高くつく誤読は
 // allowed_domains を「このテナントを使ってよい人」と読むこと。あれは「招待して
@@ -272,7 +272,7 @@ export function TenantLoginRules({
           </label>
         </div>
         {/* ★ 方式の 2 列（受け入れる／ボタンに出す）は P7-0 でこの欄から出た
-            （docs/61 §61.17.5）。自由入力に id を打つ代わりに、「サインイン方法」の面で
+            （docs/log/61 §61.17.5）。自由入力に id を打つ代わりに、「サインイン方法」の面で
             行ごとのトグルを倒す — 打てる id の一覧を別に用意する必要も、
             400 unknown_provider も無くなる。 */}
         <p className="admin-hint">{tr("admin.login_rules_methods_moved")}</p>
@@ -338,7 +338,7 @@ export function TenantLoginRulesView({
   );
 }
 
-// --- テナント定義のサインイン方法（docs/61 §61.11 / ADR0043 決定 29-33）------
+// --- テナント定義のサインイン方法（docs/log/61 §61.11 / ADR0043 決定 29-33）------
 
 // idpStatusLabel は行の status を「読み手が知りたいこと」に写す。状態名ではなく、
 // 今この方法で誰かがサインインできるのかどうか。
@@ -350,7 +350,7 @@ type IdPStatusKey =
 
 // idpSource は行の「身元の出どころ」を 1 行で言う。OIDC は issuer がその答えだが、
 // GitHub の issuer は全テナント共通の github.com なので、それを出しても何も区別が
-// つかない — 実際に効いているのは組織の方（docs/61 §61.15）。
+// つかない — 実際に効いているのは組織の方（docs/log/61 §61.15）。
 function idpSource(row: TenantIdP): string {
   if (row.kind === "github") return "GitHub: " + (row.allowed_orgs || "");
   return row.issuer;
@@ -375,7 +375,7 @@ const emptyIdP = (): TenantIdP => ({
   allowed_orgs: "",
 });
 
-// TenantSignInMethods — このテナントで使えるサインイン方法**ぜんぶ**（docs/61 §61.17.5）。
+// TenantSignInMethods — このテナントで使えるサインイン方法**ぜんぶ**（docs/log/61 §61.17.5）。
 //
 // P7-0 でここが 1 本のリストになった。自前の行（作成・編集可・承認が要る）と、
 // デプロイの方式＝既定テナントの方式（バッジ「デプロイ共通」・編集不可）が同じ並びに出て、
@@ -393,7 +393,7 @@ const emptyIdP = (): TenantIdP => ({
 //
 //  1. 新しい方法は、デプロイ管理者が承認するまで動かない。状態チップがそう言い、
 //     サインイン URL は承認後にしか出さない（ボタンの無い URL を配ると問い合わせに
-//     なるだけ・docs/61 §61.14 の 2 つ目）。
+//     なるだけ・docs/log/61 §61.14 の 2 つ目）。
 //  2. 受け入れドメインは任意項目ではない。承認は「その範囲でこの issuer を信じてよい」
 //     に対して与えるものなので、範囲こそが承認の対象。
 //
@@ -465,7 +465,7 @@ export function TenantSignInMethods({
     }
   };
 
-  // ★ 停止だけは 1 度だけ聞き返されることがある（docs/61 §61.17.4 の順序）。CP は
+  // ★ 停止だけは 1 度だけ聞き返されることがある（docs/log/61 §61.17.4 の順序）。CP は
   // 「その方式しか使ったことのない現役メンバーが N 人います」を 409 で返す — 停止すると
   // その人たちは締め出され、しかも**自力で別の方式を足せない**（紐づけにはサインインが
   // 要り、そのサインインに使うのが今止めようとしている方式だから）。
@@ -513,7 +513,7 @@ export function TenantSignInMethods({
   const loginURL = new URL("login/" + encodeURIComponent(slug), document.baseURI).toString();
   const anyActive = (rows || []).some((r) => r.status === "active" && r.usable);
 
-  // --- 統合リスト（docs/61 §61.17.5）-----------------------------------------
+  // --- 統合リスト（docs/log/61 §61.17.5）-----------------------------------------
   //
   // 並びはデプロイの方式 → 自前の行。id の集合はこの順序で固定して、CSV への
   // 書き出しにもそのまま使う（保存のたびに順番が入れ替わると監査ログが読めない）。
@@ -709,7 +709,7 @@ export function TenantSignInMethods({
       )}
       {/* ★ 絞り込みの副作用は、絞る人の画面にしか書く場所が無い。兼務の人は他テナントの
           方式で入っていることがあり、その方式の「受け入れる」を外すと切り替えが
-          provider_required で止まる（docs/61 §61.15 の運用上の注意）。 */}
+          provider_required で止まる（docs/log/61 §61.15 の運用上の注意）。 */}
       {isSuper && <p className="admin-hint">{tr("admin.allowed_providers_shared_note")}</p>}
       {/* サインイン URL は、その上で何かが動くようになって初めて出す。それ以前は
           ボタンの無いページで、早く配られた URL は配らないより悪い。 */}
@@ -719,7 +719,7 @@ export function TenantSignInMethods({
         </p>
       )}
       {/* ★ 「出さない」にした人にだけ出す。以前はここに「素の /login には効かないので
-          上の URL を配れ」という運用回避を置いていたが、P7-1（docs/61 §61.17.6）で素の
+          上の URL を配れ」という運用回避を置いていたが、P7-1（docs/log/61 §61.17.6）で素の
           /login が既定テナントのページになり、効くようになった。残っているのは
           **受け入れは続く**という一点だけ — 「隠した＝もう使えない」と読む人が居るため。 */}
       {anyHidden && <p className="admin-hint">{tr("admin.hidden_still_accepted_note")}</p>}
@@ -769,7 +769,7 @@ function IdPForm({
   const set = (patch: Partial<TenantIdP>) => setForm({ ...form, ...patch });
   // ★ 種類で「何を訊くか」が変わる。GitHub には issuer も tid も無く（発行元は
   // github.com 1 つ）、代わりに組織が要る — 空欄のまま出すと、埋めようのない欄を
-  // 見せて 400 で弾くことになる（docs/61 §61.15）。
+  // 見せて 400 で弾くことになる（docs/log/61 §61.15）。
   const isGitHub = form.kind === "github";
   const callbackURL = new URL("oauth2/callback", document.baseURI).toString();
   const valid =
@@ -864,7 +864,7 @@ function IdPForm({
         {/* ★ 自由入力ではなく選択にしてある。ここに書けるのは「IdP が割り当てる、
             本人にも選べないクレーム」だけで、主張されるクレーム（email・upn …）を
             書けると、同じ発行元を共有する方式の間で email 結合ができてしまう
-            （docs/61 §61.15.10）。選択肢は CP のホワイトリストの写しで、判断は
+            （docs/log/61 §61.15.10）。選択肢は CP のホワイトリストの写しで、判断は
             サーバが持つ（保存時に弾かれる）。 */}
         {!isGitHub && (
           <Field label={tr("admin.idp_link_claim")} wide hint={tr("admin.idp_link_claim_hint")}>
@@ -895,7 +895,7 @@ function IdPForm({
 }
 
 // SignInMethodRegister — テナント定義のサインイン方法をデプロイ全体で見る台帳
-// （docs/61 §61.11.6）。デプロイ管理者専用。
+// （docs/log/61 §61.11.6）。デプロイ管理者専用。
 //
 // ★ これは「捌けて空になるキュー」ではなく、わざと「台帳」にしてある。承認は一度
 // きりの点検だが、その先の IdP は他人の管理下にあり続け、設定は後から変わり得る

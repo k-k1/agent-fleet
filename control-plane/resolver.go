@@ -1,5 +1,5 @@
 // resolver.go — アイデンティティ／テナント／メンバーシップ解決（resolve 系）。
-// manager.go からの機械的分割（docs/23 P2-W2）。
+// manager.go からの機械的分割（docs/log/23 P2-W2）。
 package main
 
 import (
@@ -31,7 +31,7 @@ func (m *manager) resolveUser(r *http.Request) string { return m.resolveIdentity
 // request context carries the (provider, subject) the session was minted with
 // (authGate), and that pair — not the email — decides who this is: an email
 // change must not move user_key, which is the workspace home directory name
-// (docs/61 §61.5). AUTH=proxy and AUTH=dev have no IdP subject to offer, so they
+// (docs/log/61 §61.5). AUTH=proxy and AUTH=dev have no IdP subject to offer, so they
 // keep resolving by email exactly as before; failing closed here would break
 // every existing proxy deployment and dev itself.
 //
@@ -39,7 +39,7 @@ func (m *manager) resolveUser(r *http.Request) string { return m.resolveIdentity
 // so the context pair always describes the same person. Do not call this with
 // another person's key while a session context is in scope — the pair wins.
 // ★ It is also the choke point for the two things a TENANT-DEFINED provider must
-// not be able to do (docs/61 §61.11 + 決定 31/32), and they are enforced here rather
+// not be able to do (docs/log/61 §61.11 + 決定 31/32), and they are enforced here rather
 // than at each caller on purpose — identityFor, resolveFull and resolveMembership
 // all pass roleHintFor(email), and a rule that has to be repeated three times is a
 // rule that will be missed the fourth time:
@@ -61,7 +61,7 @@ func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint strin
 		// ★ No realm on this path: the request carries a provider ID from the session
 		// cookie, not the provider object, and rule 1.5 must never guess one. The
 		// callback stamped it at login, and LinkIdentity keeps a recorded realm when
-		// it is handed an empty one (docs/61 §61.15).
+		// it is handed an empty one (docs/log/61 §61.15).
 		ident, _, err := m.store.LinkIdentity(ctx, IdentityLink{
 			Provider: ref.provider, Subject: ref.subject, Email: email,
 			FallbackKey: key, RoleHint: roleHint, EmailJoin: !tenantDefined,
@@ -85,13 +85,13 @@ func identityErr(err error) *apiError {
 
 // roleHintFor names the DEPLOYMENT role a resolution should upgrade this person to.
 //
-// ★ AUTH=dev is super_admin, and that is a decision rather than a shortcut (docs/71
+// ★ AUTH=dev is super_admin, and that is a decision rather than a shortcut (docs/log/71
 // §71.6). In dev mode every request is the same fixed user (DEV_USER) with no
 // authentication and no email at all, so SUPER_ADMIN_EMAILS — which matches on the
 // address — can never name anybody: a native / WSL deployment (deploy/native/af pins
 // AUTH=dev) had NO administrator, and therefore no way into the tenant settings screen.
 // That was tolerable only while every deployment-wide setting lived in env. Now that
-// the git providers' OAuth apps are per-tenant rows (docs/71), a deployment with no
+// the git providers' OAuth apps are per-tenant rows (docs/log/71), a deployment with no
 // administrator would be one where they cannot be configured at all.
 //
 // Nothing is given away by it: in dev mode the single user already owns the host and
@@ -120,7 +120,7 @@ func (m *manager) roleHintFor(email string) string {
 // the status check has to be here. Without it, a tenant_admin who was removed
 // would still administer the tenant from a session cookie that stays valid for
 // up to AF_SESSION_TTL, and could put themselves straight back on the roster
-// (docs/61 §61.10.7 の穴 2).
+// (docs/log/61 §61.10.7 の穴 2).
 func (m *manager) tenantAdminFor(ctx context.Context, ident Identity, tID string) bool {
 	if ident.Role == "super_admin" {
 		return true
@@ -144,7 +144,7 @@ func (m *manager) identityFor(ctx context.Context, r *http.Request) (Identity, *
 }
 
 // membershipsFor returns the caller's memberships, provisioning one when the
-// person has none. The order is docs/61 §61.9.8, and it matters:
+// person has none. The order is docs/log/61 §61.9.8, and it matters:
 //
 //  1. an existing membership always wins — that is the roster, and somebody put
 //     this person on it deliberately (§61.9.5)
@@ -168,7 +168,7 @@ func (m *manager) membershipsFor(ctx context.Context, ident Identity) ([]Members
 			return nil, internalErr(err)
 		}
 		// The person now holds a membership, which is also an entry-gate term — the
-		// cached "no" for this address has to go (docs/61 §61.9.7).
+		// cached "no" for this address has to go (docs/log/61 §61.9.7).
 		m.tenantLogin.invalidate()
 		if contested {
 			// ★ Never join silently when the configuration is ambiguous: more than one
@@ -214,14 +214,14 @@ func (m *manager) membershipsFor(ctx context.Context, ident Identity) ([]Members
 
 // hasAnyMembershipRow reports whether a membership row exists at all, ACTIVE OR
 // NOT. An inactive row is a decision somebody made — auto-join must respect it
-// rather than quietly putting the person back (docs/61 §61.9.8 rule 1: an existing
+// rather than quietly putting the person back (docs/log/61 §61.9.8 rule 1: an existing
 // membership is authoritative, and "removed" is an answer too).
 func (m *manager) hasAnyMembershipRow(ctx context.Context, identityID, tenantID string) bool {
 	_, ok, err := m.store.GetMembership(ctx, identityID, tenantID)
 	return err == nil && ok
 }
 
-// checkTenantProvider enforces tenant.allowed_providers (docs/61 §61.9.4 + 決定
+// checkTenantProvider enforces tenant.allowed_providers (docs/log/61 §61.9.4 + 決定
 // 14). This is the ENFORCEMENT point; filtering the login page's buttons is only
 // presentation, and without this check a person could sign in on the generic
 // /login with any enabled provider and then simply send X-AF-Tenant for a tenant
@@ -233,7 +233,7 @@ func (m *manager) hasAnyMembershipRow(ctx context.Context, identityID, tenantID 
 // the remedy is one click away is how support tickets are made. The Console builds
 // that link from the tenant's allowed_providers, which /api/tenants reports per
 // membership (tenants.go), so this error itself needs no extra payload.
-// ★ It also pins a TENANT-DEFINED session to its own tenant (docs/61 §61.11 + 決定
+// ★ It also pins a TENANT-DEFINED session to its own tenant (docs/log/61 §61.11 + 決定
 // 32-3). That check cannot be left to allowed_providers: a tenant that names no
 // providers accepts every one of them, so without this a subsidiary's own IdP would
 // be a way into every such tenant in the deployment. The subsidiary's administrator
@@ -252,7 +252,7 @@ func (m *manager) checkTenantProvider(ctx context.Context, mv MembershipView) *a
 		"tenant " + mv.TenantSlug + " requires signing in with: " + strings.Join(allowed, ", ")}
 }
 
-// checkTenantIP enforces tenant.allowed_cidrs (docs/66 + ADR 0047 決定 3). It sits
+// checkTenantIP enforces tenant.allowed_cidrs (docs/log/66 + ADR 0047 決定 3). It sits
 // next to checkTenantProvider because it answers the same shape of question — "may
 // this request use THIS tenant" — at the same choke point, which is the first place
 // where the tenant is known at all (the login page and the OAuth round trip happen
@@ -351,7 +351,7 @@ func selectMembership(ms []MembershipView, tenantSel string) (MembershipView, *a
 }
 
 // buildResolved maps an (identity, membership) to its runtime + workspace,
-// creating the workspace on first use. docs/23 P2-W2: 旧実装（buildResolvedLocked）
+// creating the workspace on first use. docs/log/23 P2-W2: 旧実装（buildResolvedLocked）
 // は manager.mu を store/custodian I/O 越しに保持し、全メンバーシップの解決を
 // 1 本のロックで直列化していた。現在 m.mu が守るのはキャッシュ map だけで、
 // I/O は per-membership の build ロック下で走る — 同一メンバーシップの初回同時
@@ -459,7 +459,7 @@ func (m *manager) shareLockFor(ownerMembershipID string) *sync.Mutex {
 //
 // No allowed_providers check: this path has no browser session and therefore no
 // provider to match. A PAT is authorized by the membership it was issued against,
-// and deactivating that membership (docs/61 §61.10.6) is what revokes it — which
+// and deactivating that membership (docs/log/61 §61.10.6) is what revokes it — which
 // ListMemberships already enforces by only returning active rows.
 func (m *manager) resolveByMembership(ctx context.Context, identityID, membershipID string) (*resolved, *apiError) {
 	ident, ok, err := m.store.GetIdentityByID(ctx, identityID)

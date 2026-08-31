@@ -1,10 +1,10 @@
 package opencode
 
-// OpenCode の managed driver（docs/27 P2）— Driver 型（agents.Driver/ThreadHandle）の
+// OpenCode の managed driver（docs/log/27 P2）— Driver 型（agents.Driver/ThreadHandle）の
 // 初のフル実装。共有 `opencode serve` の HTTP＋SSE に turn 状態機械（§4）・
 // Interaction（§5）・reconciliation（§6）をマッピングする。
 //
-// 実測（1.17.18、docs/27 §12.2）に基づく API 選定:
+// 実測（1.17.18、docs/log/27 §12.2）に基づく API 選定:
 //   - turn 駆動は v1 の blocking POST /session/{id}/message（唯一 read 層の正本
 //     message/part に書く駆動口）。goroutine で包んで非同期化する。
 //     prompt_async は user message を書くだけで turn が始まらない（実測・不採用）。
@@ -243,7 +243,7 @@ func ManagedBusy(name string) bool {
 }
 
 // AbortManaged interrupts every running managed turn — the managed counterpart of
-// graceful shutdown's per-pane Ctrl-C（docs/27 §10.2-8）。ThreadHandle.Interrupt と
+// graceful shutdown's per-pane Ctrl-C（docs/log/27 §10.2-8）。ThreadHandle.Interrupt と
 // 同じ経路なので、abort が landing すると turn goroutine が cancelled を刻み status
 // ストアが idle に戻る（anySessionWorking の待ち条件が解ける）。
 func AbortManaged() {
@@ -455,7 +455,7 @@ func (h *threadHandle) pump() {
 // ここを読む。turn の終端で idle に戻さないと 進行中 に張り付く。
 func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.ocSid)
-	// 終端の turn 状態で idle を刻む（＋完了なら docs/30 の報告を出す）。以下の return
+	// 終端の turn 状態で idle を刻む（＋完了なら docs/log/30 の報告を出す）。以下の return
 	// 経路はすべて手前で setState 済みなので、defer 時点の state が turn の終端。
 	// failure は失敗の理由（errors.go）— オペレーター報告とチャットブリッジ本文が
 	// 「エラーで終わった」を言えるように終端まで運ぶ。
@@ -747,7 +747,7 @@ func serveCreateSession(addr, dir, title string) (string, error) {
 // serveForkSession copies src into a NEW opencode session. at, when non-empty, is the
 // message the copy stops BEFORE: opencode's fork loop breaks at the first message whose
 // id sorts >= it, so the anchored turn and everything after it stay out of the fork
-// (実測 1.18.14 — docs/55 §55.2). Empty at = the whole conversation, as before.
+// (実測 1.18.14 — docs/log/55 §55.2). Empty at = the whole conversation, as before.
 func serveForkSession(addr, src, dir, at string) (string, error) {
 	body := "{}"
 	if at != "" {

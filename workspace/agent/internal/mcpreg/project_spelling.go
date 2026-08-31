@@ -1,6 +1,6 @@
 package mcpreg
 
-// docs/56（プロジェクトスコープ MCP の管理）の 1 号機は、リポジトリ内のファイルを読む
+// docs/log/56（プロジェクトスコープ MCP の管理）の 1 号機は、リポジトリ内のファイルを読む
 // 新パッケージ internal/mcpproj を新設する。型（ServerDef・Origin・Targets・台帳）は
 // 共有しない（ADR0040 決定15）— あちらは「af が配るもの」で予約名を拒否するが、
 // mcpproj は逆に予約名を見つけて警告するのが仕事で、同じ型にすると実効レジストリの
@@ -9,7 +9,7 @@ package mcpreg
 // 一方、**kind ごとの綴り方**（この JSON メンバーが何と呼ばれるか）は共有しないと必ず
 // ドリフトする。このファイルはその 1 本のテーブルで、*Servers ビルダー群
 // （attach.go）と materialize_<kind>.go が既に体現している知識を、mcpproj が読む側
-// として再利用できるように export するだけの小リファクタ（docs/56 §4.2）。
+// として再利用できるように export するだけの小リファクタ（docs/log/56 §4.2）。
 // codex は対象外（TOML テーブルで JSON メンバーではない — CodexServerTableName を使う）。
 
 import (
@@ -45,16 +45,16 @@ type JSONEntrySpelling struct {
 	// AlwaysEnabled: this kind's own writer always states an explicit "enabled":
 	// true on every entry (opencode — OpencodeServers' comment: "opencode's
 	// default, said out loud"). A P1 write matches what the CLI itself would
-	// produce (docs/56 §6) rather than omit a key only some kinds expect.
+	// produce (docs/log/56 §6) rather than omit a key only some kinds expect.
 	AlwaysEnabled bool
 }
 
 // JSONEntrySpellings is keyed by session.Kind*. Only kinds mcpproj parses as a
 // generic "one JSON object of entries" file are present — codex (TOML) and agy (no
-// project scope, docs/56 §4.3) are not.
+// project scope, docs/log/56 §4.3) are not.
 //
 // claude and copilot share ONE entry: both consume .mcp.json, and it is written in
-// claude's own spelling (docs/56 §2.1 confirms copilot expands the same
+// claude's own spelling (docs/log/56 §2.1 confirms copilot expands the same
 // placeholders as claude when reading that shared file) — copilot's OWN spelling
 // below (used for its native $COPILOT_HOME/mcp-config.json, materialize_copilot.go)
 // only applies to a file mcpproj does not parse in v1.
@@ -85,7 +85,7 @@ var JSONEntrySpellings = map[string]JSONEntrySpelling{
 
 // CopilotNativeSpelling is copilot's OWN entry shape (materialize_copilot.go),
 // exported for documentation/future use even though v1's mcpproj parses
-// .mcp.json using JSONEntrySpellings[session.KindClaude] instead (docs/56 §2.3).
+// .mcp.json using JSONEntrySpellings[session.KindClaude] instead (docs/log/56 §2.3).
 var CopilotNativeSpelling = JSONEntrySpelling{
 	ServersKey: "mcpServers", CommandKey: "command", EnvKey: "env",
 	URLKey: "url", HeadersKey: "headers",
@@ -94,7 +94,7 @@ var CopilotNativeSpelling = JSONEntrySpelling{
 
 // IsReservedName reports whether name is one Agent Fleet itself occupies in a CLI's
 // config: the fixed reserved words, or this boot's rotated af_xxxxxxxx shape.
-// Exported for docs/56's mcpproj (§7.4), which must FIND this name in a project file
+// Exported for docs/log/56's mcpproj (§7.4), which must FIND this name in a project file
 // and flag it red (the opposite of Validate, which REJECTS it from af's own
 // registry) — reusing the same recognition here is the only way that stays in sync
 // with af_server_name.go's rotation.
@@ -106,7 +106,7 @@ func IsReservedName(name string) bool {
 // IsValidServerName reports whether name would pass Validate's own name check — the
 // intersection of every target CLI's accepted server-key charset (nameRe's doc
 // comment). mcpproj uses it to warn (not reject — a project file is the user's own)
-// when a hand-written name falls outside that intersection (docs/56 §7.4).
+// when a hand-written name falls outside that intersection (docs/log/56 §7.4).
 func IsValidServerName(name string) bool {
 	return nameRe.MatchString(name)
 }

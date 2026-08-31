@@ -1,4 +1,4 @@
-// anydoc（Firecrawl・MIT・Rust → WASM）の遅延読み込み（docs/82 §82.4）。
+// anydoc（Firecrawl・MIT・Rust → WASM）の遅延読み込み（docs/log/82 §82.4）。
 //
 // Word / Excel / PowerPoint を GFM へ変換し、Console の MarkdownView に載せるための層。
 // **見た目の再現はしない**（ページ体裁・図形の位置・セルの色は落ち、画像は alt text になる）。
@@ -12,7 +12,7 @@ import type * as AnydocModule from "@firecrawl/anydoc-wasm";
 /** anydoc が受け取る形式名（拡張子と同じ綴り）。 */
 export type AnydocFormat = AnydocModule.Format;
 
-/** 変換が失敗した理由。表示の文言はこの値で選ぶ（docs/82 §82.4）。 */
+/** 変換が失敗した理由。表示の文言はこの値で選ぶ（docs/log/82 §82.4）。 */
 export type AnydocFailure = "unsupported" | "needsOcr" | "malformed" | "encrypted" | "resourceLimit" | "missingPart" | "failed";
 
 let loading: Promise<typeof AnydocModule> | null = null;

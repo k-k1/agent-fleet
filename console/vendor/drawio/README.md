@@ -1,7 +1,7 @@
 # drawio ビューア（同梱物）
 
 `.drawio` を File ペインで図として表示するために、drawio 公式の自己完結ビューアを
-**そのまま** 置いている（docs/65 / [ADR 0046](../../../docs/decisions/0046-drawio-viewer.md)）。
+**そのまま** 置いている（docs/log/65 / [ADR 0046](../../../docs/decisions/0046-drawio-viewer.md)）。
 
 | | |
 |---|---|
@@ -32,7 +32,7 @@ npm --prefix console run drawio:check                  # 実ブラウザで描�
 
 **ビューアを上げたら台帳も必ず焼き直すこと。** ステンシルのバイト列は同梱せず
 `control-plane/assets/drawio-stencils.json`（名前 → sha256 → サイズ）だけを持ち、CP は
-その sha256 と照合してから配る（docs/65 §65.5.3）。版がずれると、名前の変わったセットが
+その sha256 と照合してから配る（docs/log/65 §65.5.3）。版がずれると、名前の変わったセットが
 黙って 404 になったり、正しいバイト列が「改竄」として弾かれたりする。
 
 **上げたら必ず `drawio:check` を通すこと。** このファイルは外部 URL を既定値として
@@ -47,5 +47,5 @@ dead value で** 潰しているが、新しい名前が増えていれば取り
 
 **このファイルを iframe に `<script src>` で読ませてはならない。** サンドボックス
 iframe はオリジンを持たないため要求が cross-site 扱いになり、`SameSite=Lax` の
-セッション cookie が付かず CP の `authGate` に 401 で弾かれる（docs/65 §65.11-7）。
+セッション cookie が付かず CP の `authGate` に 401 で弾かれる（docs/log/65 §65.11-7）。
 親が `fetch` して本文を postMessage で渡す —— それが `DrawioView.tsx` の作法。

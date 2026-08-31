@@ -142,7 +142,7 @@ describe("session-slug linkify (existing behavior guarded)", () => {
 // The link attach_chromium tells the agent to post. It looks like a repo-root
 // path, and the file resolver used to swallow it: the click answered
 // "repos/<repo>/open/browser-attachment/ba_… not found" instead of opening the
-// pane, which killed the whole hand-off (docs/53 §53.7).
+// pane, which killed the whole hand-off (docs/log/53 §53.7).
 describe("Chromium attachment action link", () => {
   const openFiles: string[] = [];
   const renderLink = async (source: string) => {
@@ -192,10 +192,10 @@ describe("Chromium attachment action link", () => {
   });
 
   it("still classifies an ordinary repo path as a file link", async () => {
-    await renderLink("[docs](/docs/53-chromium-attach-view.md)");
+    await renderLink("[docs](/docs/log/53-chromium-attach-view.md)");
     expect(links("action-link")).toHaveLength(0);
     const [a] = links("repo-link");
-    expect(a?.title).toContain("repos/novel-idea@wip-sv57pon/docs/53-chromium-attach-view.md");
+    expect(a?.title).toContain("repos/novel-idea@wip-sv57pon/docs/log/53-chromium-attach-view.md");
     await act(async () => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
     expect(attachOpened).toHaveLength(0);
   });
@@ -256,11 +256,11 @@ describe("link reference definition vs Japanese prose", () => {
 
   it("still consumes a real definition and resolves references to it", async () => {
     useChatStore.getState().setConvs([]);
-    await render("[foo]: https://example.com/x\n\nsee [foo] and [docs]\n\n[docs]: /docs/68-session-changed-files.md");
+    await render("[foo]: https://example.com/x\n\nsee [foo] and [docs]\n\n[docs]: /docs/log/68-session-changed-files.md");
 
     expect(host.textContent).not.toContain("https://example.com/x");
     const hrefs = [...host.querySelectorAll("a")].map((a) => a.getAttribute("href"));
-    expect(hrefs).toEqual(["https://example.com/x", "/docs/68-session-changed-files.md"]);
+    expect(hrefs).toEqual(["https://example.com/x", "/docs/log/68-session-changed-files.md"]);
   });
 
   it("keeps a definition whose destination is a non-ASCII URL or path", async () => {

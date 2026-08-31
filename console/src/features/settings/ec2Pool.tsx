@@ -1,4 +1,4 @@
-// EC2 スロットプール（AF_RUNTIME=ecs-ec2）の運用面。docs/64 §64.18.6 / ADR 0045 決定 13。
+// EC2 スロットプール（AF_RUNTIME=ecs-ec2）の運用面。docs/log/64 §64.18.6 / ADR 0045 決定 13。
 //
 // この面が答えるのは、このランタイムだけが持ち込む 3 つの問い:
 //   1. いま何台ぶん払っているのか（スロット数と、そのうち起動している台数）
@@ -79,7 +79,7 @@ export type PoolStatus = {
   bake_rejected?: string;
   bake_reason?: string;
   running_image?: string;
-  /** 宣言されたアーキ毎の golden（docs/70 §70.6）。上の 6 つはこの配列の先頭
+  /** 宣言されたアーキ毎の golden（docs/log/70 §70.6）。上の 6 つはこの配列の先頭
    *  （既定クラスのアーキ）と同じ値で、クラスが 1 つのデプロイでは配列も 1 要素。 */
   goldens?: Golden[];
   slot_classes?: { id: string; label: string; arch: string }[];
@@ -95,7 +95,7 @@ type Golden = {
   baking?: boolean;
   rejected?: string;
   reason?: string;
-  /** 焼き込みがどこまで進んだか（docs/64 §64.30）。BAKE_STEPS の 6 段と、
+  /** 焼き込みがどこまで進んだか（docs/log/64 §64.30）。BAKE_STEPS の 6 段と、
    *  「焼かれていない理由」4 種（idle / blocked / rejected / gave_up / off）。 */
   phase?: string;
   phase_since?: string;
@@ -339,7 +339,7 @@ export function PoolView() {
       <section className="admin-panel">
         <h4>{tr("pool.golden_title")}</h4>
         {/* ★ golden は「バイナリの詰まった home」なので、アーキ毎に別物である
-            （docs/70 §70.6）。複数アーキを宣言したデプロイでは 1 本だけ見せると
+            （docs/log/70 §70.6）。複数アーキを宣言したデプロイでは 1 本だけ見せると
             「golden はある」と読めてしまい、まだ焼けていない側のクラスの新規ユーザー
             だけが毎回空の home から始まる——という、当人以外には見えない失敗になる。 */}
         {st.goldens?.length ? (

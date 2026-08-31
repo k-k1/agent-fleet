@@ -55,7 +55,7 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
       .finally(() => { if (alive) setSearching(false); });
     return () => { alive = false; };
   }, [debouncedQuery, recipientPick]);
-  // アーカイブ済みは候補に出さない: 共有先の一覧からも外れる(docs/59 §1)ので、
+  // アーカイブ済みは候補に出さない: 共有先の一覧からも外れる(docs/log/59 §1)ので、
   // 選べても相手には何も見えない。
   const candidates = useMemo(() => [
     ...sessions.filter((s) => agentOf(s.kind).caps.transcript).map((s) => ({
@@ -89,7 +89,7 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
     <Modal title={tr("share.create_title")} onClose={onClose} as="form" onSubmit={submit} lockClose={saving} className="share-create-modal">
       <div className="ui-modal-body">
         <p className="ui-field-hint">{tr("share.exposure_warning")}</p>
-        {/* ⚠️ マーカー（docs/69 / ADR 0050 決定 6）。作成者名を出すのは「誰が引いたか分かる」
+        {/* ⚠️ マーカー（docs/log/69 / ADR 0050 決定 6）。作成者名を出すのは「誰が引いたか分かる」
             という要件のためだが、共有先どうしが互いの login id を知るのは新しい露出なので、
             伏せずにここで言う。 */}
         <p className="ui-field-hint">{tr("share.marks_warning")}</p>
@@ -106,7 +106,7 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
             </select>
           </label>
         )}
-        {/* repo 共有はプロジェクト全体(ベース＋配下 worktree)に効く(docs/59 §1)。
+        {/* repo 共有はプロジェクト全体(ベース＋配下 worktree)に効く(docs/log/59 §1)。
             どこまで見えるかは共有前に明示する。 */}
         {target.startsWith("repo:") && <p className="ui-field-hint">{tr("share.repo_scope_hint")}</p>}
         <div className="ui-field share-recipient-field">

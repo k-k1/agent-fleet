@@ -1,4 +1,4 @@
--- Which IdP account a person signed in with (docs/61 §61.5 + ADR0043 決定 4).
+-- Which IdP account a person signed in with (docs/log/61 §61.5 + ADR0043 決定 4).
 --
 -- identity.user_key is derived from the email and is also the workspace home
 -- directory name, so it must never move. This table adds the stable axis next to

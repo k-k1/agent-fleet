@@ -120,7 +120,7 @@ func (e *previewHostEnv) get(t *testing.T, slug string, port int, path string, c
 	return rec
 }
 
-// TestPreviewHostHandshakeThenProxy は docs/81 §6 のハンドシェイクを端から端まで通す:
+// TestPreviewHostHandshakeThenProxy は docs/log/81 §6 のハンドシェイクを端から端まで通す:
 // 未認証のプレビュー要求 → Console オリジンへ 302 → ワンタイム token → プレビュー
 // ホスト限定の cookie → 実際の中継、まで。
 func TestPreviewHostHandshakeThenProxy(t *testing.T) {
@@ -222,7 +222,7 @@ func TestPreviewHostHandshakeThenProxy(t *testing.T) {
 }
 
 // 起動のたびに引き直され、停止で消える。★ 固定を選んだ Workspace だけは、停止を
-// 挟んでも同じ URL に戻る（docs/81 §4.1 — 外部 IdP の redirect URI 登録のため）。
+// 挟んでも同じ URL に戻る（docs/log/81 §4.1 — 外部 IdP の redirect URI 登録のため）。
 func TestPreviewSlugRotationAndFixedOptIn(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	ctx := context.Background()
@@ -306,7 +306,7 @@ func TestPreviewUnknownSlugIsNotFound(t *testing.T) {
 	}
 }
 
-// 兄弟オリジンの opt-in（docs/81 §2.4・決定 11）。★ 既定では CP は CORS を一切足さない
+// 兄弟オリジンの opt-in（docs/log/81 §2.4・決定 11）。★ 既定では CP は CORS を一切足さない
 // —— 「クロスオリジンを既定で通す」は、URL を知っている第三者のページから利用者の
 // ブラウザ経由でプレビューを叩ける状態を既定にすること。
 func TestPreviewSiblingOriginOptIn(t *testing.T) {
@@ -404,7 +404,7 @@ func TestPreviewSiblingOriginOptIn(t *testing.T) {
 	}
 }
 
-// 再発行（docs/81 §4.1）: 配ってしまった URL をその場で捨てられる。
+// 再発行（docs/log/81 §4.1）: 配ってしまった URL をその場で捨てられる。
 func TestPreviewReissueKillsTheCurrentURL(t *testing.T) {
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer agent.Close()

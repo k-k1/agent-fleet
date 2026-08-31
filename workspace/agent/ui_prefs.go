@@ -124,7 +124,7 @@ func opencodeCatalogPref() string {
 	return opencode.CatalogPref(v)
 }
 
-// peerMessagingPref is the ON/OFF for session-to-session messaging (docs/58 / ADR 0041,
+// peerMessagingPref is the ON/OFF for session-to-session messaging (docs/log/58 / ADR 0041,
 // ui-prefs peerMessaging). Missing/invalid ⇒ **false**: this one is opt-in, unlike
 // autoTitleSuggest. Letting sessions type into each other widens the injection surface
 // (a session that read a poisoned repo can now reach every other session), so it has to
@@ -144,7 +144,7 @@ func init() { mcpreg.PeerMessagingEnabled = peerMessagingPref }
 func init() { opencode.UsagePref = opencodeCatalogPref }
 
 // skipPermissionsPref is the per-kind default for「権限確認をスキップする」（設定 >
-// エージェント > 各カード、ui-prefs agentLaunchDefaults[<kind>].skipPermissions — docs/76）。
+// エージェント > 各カード、ui-prefs agentLaunchDefaults[<kind>].skipPermissions — docs/log/76）。
 // ok=false は「その kind に設定が無い」で、既定値そのものは agents.SkipPermissions が
 // 持つ（従来どおり true）。
 //
@@ -291,7 +291,7 @@ func assistantUtilityModelPref(kind string) (string, bool) {
 }
 
 // chatAutoTurnEnabled is the global ON/OFF for the operator's automatic turn on a
-// session report (docs/30, 設定 > アシスタント「セッション報告への自動応答」). Missing/invalid
+// session report (docs/log/30, 設定 > アシスタント「セッション報告への自動応答」). Missing/invalid
 // key ⇒ true, matching the frontend default — the feature ships ON, with the
 // per-conversation maxAutoTurns cap as the safety stop.
 func chatAutoTurnEnabled() bool {
@@ -300,7 +300,7 @@ func chatAutoTurnEnabled() bool {
 }
 
 // chatAutoTurnLimit is the per-conversation ceiling on unattended auto turns
-// (docs/30, 設定 > アシスタント「自動応答の上限回数」). Missing/invalid ⇒
+// (docs/log/30, 設定 > アシスタント「自動応答の上限回数」). Missing/invalid ⇒
 // defaultAutoTurns; always clamped to [1, maxAutoTurnLimit] — there is no
 // unlimited mode, the clamp is the runaway stop.
 func chatAutoTurnLimit() int {
@@ -341,7 +341,7 @@ func chatQuietCompletionEnabled() bool {
 	return ok && v
 }
 
-// chatAutoPilotEnabled is the global ON/OFF for 自動走行 (docs/30, 設定 >
+// chatAutoPilotEnabled is the global ON/OFF for 自動走行 (docs/log/30, 設定 >
 // アシスタント「自動走行」): the operator autonomously answers a session's
 // AskUserQuestion with the session's own recommendation, and drives a presented plan
 // through review-by-another-session → feedback → approval. Missing/invalid key ⇒
@@ -354,7 +354,7 @@ func chatAutoPilotEnabled() bool {
 	return ok && v
 }
 
-// chatAutoResumeEnabled is the global ON/OFF for 中断時の自動再開 (docs/47, 設定 >
+// chatAutoResumeEnabled is the global ON/OFF for 中断時の自動再開 (docs/log/47, 設定 >
 // アシスタント): on an aborted turn (接続断・一時的なレート制限で切れた — 原因が
 // 自然に解消する中断) the operator is told to nudge the session to continue instead of
 // only relaying to the user. Missing/invalid key ⇒ TRUE, unlike 自動走行: the nudge
@@ -366,7 +366,7 @@ func chatAutoResumeEnabled() bool {
 	return !ok || v
 }
 
-// rateLimitAutoResumeEnabled is the ON/OFF for 利用上限リセット後の自動再開 (docs/47
+// rateLimitAutoResumeEnabled is the ON/OFF for 利用上限リセット後の自動再開 (docs/log/47
 // §4-4, 設定 > エージェント > Claude > 動作設定): when a claude session is cut off by
 // its usage limit, book a one-shot schedule at the reset instant that tells the session
 // to continue. Missing/invalid key ⇒ TRUE, like chatAutoResumeEnabled and for the same
@@ -381,7 +381,7 @@ func rateLimitAutoResumeEnabled() bool {
 	return !ok || v
 }
 
-// abortAutoResumeEnabled is the ON/OFF for 中断からの自動再開 (docs/47 §4-6, 設定 >
+// abortAutoResumeEnabled is the ON/OFF for 中断からの自動再開 (docs/log/47 §4-6, 設定 >
 // エージェント > Claude > 動作設定): when a claude turn is cut off by something that
 // clears on its own (接続断・一時的なレート制限・ストリームの番犬), the Agent itself
 // re-sends「続けて」instead of routing the resume through the operator assistant.
@@ -391,14 +391,14 @@ func rateLimitAutoResumeEnabled() bool {
 // 置き場所が chatAutoResumeEnabled（設定 > アシスタント）と違うのは、効く範囲が違うから:
 // こちらはアシスタント会話の有無に関わらず**すべての claude TUI セッション**に適用される
 // （rateLimitAutoResume と同じ立場）。OFF にすると中断は従来どおり即座に報告され、会話を
-// 持つセッションだけがオペレーター主導で再開される（docs/47 §3-4）。
+// 持つセッションだけがオペレーター主導で再開される（docs/log/47 §3-4）。
 func abortAutoResumeEnabled() bool {
 	v, ok := readUIPrefs()["claudeAbortAutoResume"].(bool)
 	return !ok || v
 }
 
 // chatAutoCompactEnabled is the global ON/OFF for the assistant chat's preventive
-// auto-compaction at the context threshold (docs/33 第4段, 設定 > アシスタント
+// auto-compaction at the context threshold (docs/log/33 第4段, 設定 > アシスタント
 // 「コンテキストの自動圧縮」). Missing/invalid key ⇒ true, matching the frontend
 // default — the 80% notice gives the user a manual window first, and the summary
 // handoff keeps the stored thread intact, so ON is the safe default.
@@ -473,7 +473,7 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
-	// セッション間メッセージ（docs/58）の ON/OFF は、セッション側 af サーバーの起動引数
+	// セッション間メッセージ（docs/log/58）の ON/OFF は、セッション側 af サーバーの起動引数
 	// （--peer-messaging）を変える。各 CLI のネイティブ MCP 設定は materialize 時に書かれる
 	// ので、ここで書き直さないと「トグルしたのに何も起きない」になる。既に起動している
 	// セッションは自分の設定を読み込み済みなので、効くのは次に起動するセッションから

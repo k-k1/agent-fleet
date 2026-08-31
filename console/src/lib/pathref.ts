@@ -1,4 +1,4 @@
-// Path references an agent writes as INLINE CODE in a reply — `docs/65-drawio-viewer.md`,
+// Path references an agent writes as INLINE CODE in a reply — `docs/log/65-drawio-viewer.md`,
 // `console/src/lib/filemeta.ts:73`, `_act-parts/`. They are the coordinates a reader most
 // wants to open, so MarkdownView turns the ones that actually EXIST into links.
 //

@@ -1,104 +1,119 @@
-# 0054. 開発デプロイは 1 コマンドで `develop` を載せ、配備の出し入れも同じ形にする（golden の同一性は参照ではなく内容）
+# 0054. The development deployment puts `develop` on with one command, and standing it up and tearing it down take the same shape (a golden's identity is its contents, not a reference)
 
-- 状態: **採用**（2026-08-23、P0/P1 実装済み・実機での初回実行は未）。検討の記録は [docs/73](../73-dev-deploy.md)。
-- 関連: [0053-cp-arch-and-availability.md](0053-cp-arch-and-availability.md)（`CpArch` と dev イメージ） /
-  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) 決定 8・9（`ImageTag` は 2 イメージ共有 / golden の突合） /
-  [docs/35](../35-packaging.md)（本物のリリース経路——ここは通らない）
+English | [日本語](0054-dev-deploy.ja.md)
 
-## 背景
+- Status: **adopted** (2026-08-23; P0/P1 implemented, not yet run for the first time on real
+  hardware). The record of the investigation is [docs/73](../log/73-dev-deploy.md).
+- See also: [0053-cp-arch-and-availability.md](0053-cp-arch-and-availability.md) (`CpArch` and dev images) /
+  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) decisions 8 and 9 (`ImageTag` is shared by two images / reconciling the golden) /
+  [docs/35](../log/35-packaging.md) (the real release path — which this does not go through)
 
-開発用に使いたい配備は本番相当の構成で立てた**自分たちのもの**で、実ユーザーが居るのは
-別の配備である。⚠️ **どちらがどれかはこのリポジトリに書かない**（公開リポジトリなので、
-配備の名前も FQDN もコードや文書には残さず、手元の環境ファイルが持つ）。[docs/72](../72-cp-arch-and-availability.md) §72.6 で「リリースを切らずに
-現行コードを載せる」ことを実機で通したが、手順は 4 段の手作業のままだった。開発配備の価値は
-**回数**にあるので、1 回通ったことと繰り返せることは別である。
+## Context
 
-## 決定 1 — 入口は 1 本（`dev-deploy.sh`）、出口は必ず `update.sh`
+The deployment we want for development is **our own**, stood up in a production-equivalent
+configuration; the one with real users is a different deployment. ⚠️ **Which is which is not written
+in this repository** (it is public, so neither deployment names nor FQDNs are left in code or
+documents — the local environment file holds them). [docs/72](../log/72-cp-arch-and-availability.md)
+§72.6 got "put the current code on without cutting a release" working on real hardware, but the
+procedure was still four manual steps. A development deployment's value is in **how many times you do
+it**, so having done it once and being able to repeat it are different things.
 
-前検査（`CpArch` とマニフェストの噛み合わせ／可変タグの空チェンジセット／golden の陳腐化／
-走行中 Workspace の一覧）は `update.sh` にしかない。dev 用に 2 本目の deploy 経路を書けば、
-**最初にドリフトするのは検査の方**である（§72.6.1 が「焼くのは `release.sh` 経由」と決めたのと
-同じ形）。
+## Decision 1 — one entrance (`dev-deploy.sh`), and the exit is always `update.sh`
 
-## 決定 2 — 焼くのは `dev-image.yml`、タグは `<次のパッチ>-dev-<sha8>`
+The pre-checks (the `CpArch`/manifest match, the empty-changeset check for a mutable tag, the golden's
+staleness, the list of running workspaces) exist only in `update.sh`. Writing a second deploy path for
+dev means **the checks are the first thing to drift** (the same shape as §72.6.1's decision that
+"building goes through `release.sh`").
 
-- 可変タグ（`:dev`）にしない。可変タグの唯一の利点「golden が焼き直されない」は決定 3 で
-  得られる一方、**CP の版文字列がどの commit か言えなくなる**。開発配備でこそ効く情報である。
-- タグの sha は**リモートの ref** から取り、焼いたあとに run の `headSha` と突き合わせる。
-  CI が焼くのは origin の ref なので、未 push の変更は黙って入らずデプロイは「成功」する。
+## Decision 2 — build with `dev-image.yml`, tagged `<next patch>-dev-<sha8>`
 
-## 決定 3 — golden の同一性は内容で持つ（`af-image-fp`）
+- Not a mutable tag (`:dev`). A mutable tag's only advantage — "the golden is not re-baked" — is
+  obtained by decision 3, whereas it **makes the CP's version string unable to say which commit it
+  is**. That is information that matters most on a development deployment.
+- The tag's sha is taken from **the remote ref**, and after building it is reconciled against the
+  run's `headSha`. CI builds origin's ref, so unpushed changes silently do not go in and the
+  deployment "succeeds".
 
-`af-image` が持っているのは**参照文字列であって内容ではない**。両方向に壊れる:
+## Decision 3 — a golden's identity is held by contents (`af-image-fp`)
 
-- **同じ内容を別タグへ**（開発デプロイは CP だけ焼いて workspace を再タグするので毎回やる）:
-  焼き直しが走る。実測で約 10 分・EC2 スロット 2 本（§72.6.4）。
-- **別の内容を同じタグへ**（可変タグ運用）: 一致したままなので、**新規メンバーだけが古い
-  イメージで焼かれた home を配られる**。こちらは費用ではなく正しさの誤り。
+What `af-image` holds is **a reference string, not contents**. It breaks in both directions:
 
-決め: 焼くときに `af-image` に加えて **`af-image-fp`** を刻む。値は再起動バッジと**同じ関数**
-（`imageFingerprint` ＝ プラットフォーム毎の manifest digest の集合）を `sha256:` へ畳んだもの
-——2 辺を別の関数で作らないのは `runtime_ecs_stale.go` が実測で踏んだ轍である。
+- **The same contents under a different tag** (which the development deployment does every time, since
+  it builds only the CP and re-tags the workspace): a re-bake runs. Measured at about 10 minutes and
+  two EC2 slots (§72.6.4).
+- **Different contents under the same tag** (running a mutable tag): it still matches, so **only new
+  members get a home baked from the old image**. That one is not a cost error but a correctness error.
 
-⚠️ **指紋が読めないときは文字列で比べる**（ECR ではない／権限が無い／指紋タグの無い旧 golden）。
-unknown を「不一致」と読むと、**アップグレードした瞬間に全配備の golden が捨てられる**。
-突合する場所は 4 つ（Start の `goldenSnapshot`・baker の `goldenFor`・諦め回数の
-`rejectedAttempts`・Console の `PoolStatus`）で、**どれか 1 つだけ内容に変えると画面と実挙動が
-食い違う**（使う golden を「古い」と表示する）ので同時に変える。
+Settled: when baking, stamp **`af-image-fp`** alongside `af-image`. Its value is **the same function**
+as the restart badge (`imageFingerprint` = the set of per-platform manifest digests) folded into a
+`sha256:` — not building the two sides with different functions is the rut `runtime_ecs_stale.go`
+measured itself into.
 
-## 決定 4 — workspace を焼くかは `workspace/` の差分で決める
+⚠️ **When the fingerprint cannot be read, compare the strings** (not ECR / no permission / an old
+golden with no fingerprint tag). Reading unknown as "mismatch" would **throw away every deployment's
+golden the moment they upgrade**. There are four places that reconcile (Start's `goldenSnapshot`, the
+baker's `goldenFor`, `rejectedAttempts` for the give-up count, and the Console's `PoolStatus`), and
+**changing only one of them to compare contents makes the screen disagree with the actual behaviour**
+(it would display the golden in use as "old"), so they change together.
 
-ws イメージのビルドコンテキストは `workspace/` だけ。差分が無ければ **ECR 内の再タグ**で済み、
-焼けば QEMU で +593 秒（§72.5.1）。⚠️ ビルド引数側（`BAKE_AGENT_CLIS` など）の変更は差分に
-出ないので、そのときは `--image both` を明示する。
+## Decision 4 — whether to build the workspace is decided by the diff in `workspace/`
 
-## 決定 5 — 実ユーザーの居る配備には当たらない。印は repo ではなく手元の控えに置く
+The ws image's build context is `workspace/` alone. With no diff, **re-tagging inside ECR** suffices;
+building costs +593 seconds under QEMU (§72.5.1). ⚠️ Changes on the build-argument side (`BAKE_AGENT_CLIS`
+and friends) do not show up in the diff, so in that case pass `--image both` explicitly.
 
-`ImageTag` を動かすのは、そこで走っている人に「要再起動」バッジを出す操作である。
-`dev-deploy.sh` は手元の控えに **`AF_DEV_DEPLOY=1`** がある配備にしか当たらない。
+## Decision 5 — never touch a deployment with real users. The marker lives in the local notes, not the repo
 
-★ 印をスクリプト側の既定 FQDN にしないのは、**「どの配備が開発用か」もまた配備の身元**
-だからである。このリポジトリは公開で、配備の名前・FQDN・座標はここに残さない。
+Moving `ImageTag` is an operation that raises a "restart required" badge for anyone working there.
+`dev-deploy.sh` only touches a deployment whose local notes contain **`AF_DEV_DEPLOY=1`**.
 
-## 決定 6 — 配備は **AWS プロファイル**で指す。控えるのは「立て直すための引数」だけ
+★ The marker is not a default FQDN in the script, because **"which deployment is the development one"
+is also part of a deployment's identity**. This repository is public, and deployment names, FQDNs and
+coordinates are not left here.
 
-立てる／眠らせる／畳むは**どの配備でも**使う。指し方は `--profile/--region` ＝
-`update.sh` と `release-ecr.sh` が最初からそうしている形にする。**人が別名を発明する層は
-要らない**——プロファイルは既に「どのアカウントの、どの権限で」を持ち、`~/.aws/config`
-＝リポジトリの外にある。
+## Decision 6 — point at a deployment by **AWS profile**. Keep only "the arguments needed to rebuild it"
 
-- 実体（スタック名・FQDN・プール層の有無）は**生きている配備から引く**。同じテンプレート
-  から立てても名前は揃わない（実測で、ある配備のプール層は `af-ecs-pool`、別の配備では
-  `af-ecs-ec2-pool`）ので、規約で決め打ちにせずエクスポート
-  `<stack>-SlotLaunchTemplateId` の値から**実体で**引く。
-- 手元に控えるのは**立て直すときに要る引数**だけ（`capture-env.sh`）。置き場は
-  `~/.config/agent-fleet/deploy/<profile>.<region>/` ＝ **リポジトリの外**。このリポジトリは
-  公開で、中身はアカウント固有（ホストゾーン ID・許可メール・OAuth クライアント ID）である。
-- ⚠️ **生きている配備に対して控えを読まない。** 控えは古くなるので、実物を塗り替えた瞬間に
-  「実物ではない配備」に向けて実行することになる。生きている値は常に AWS が正。
-- ⚠️ **撤収の第 0 歩はこれである。** テンプレートは repo にあるが、**そこに何を渡したかは
-  配備の中にしか無く、`delete-stack` を出した瞬間に読めなくなる**（2026-08-22 は手で JSON に
-  退避してしのいだ）。`teardown.sh` は控えが無ければ実行を拒む。
-- 秘密は運ばない。SSM SecureString は CFN の引数ではないので入らず、`standup.sh` は
-  **有無だけ**を見る。⚠️ ただし**引数にも秘密に見える値は混じる**（`BitbucketOauthKey`）
-  ので、計画表示と dry-run では伏せる。
+Standing up, putting to sleep and tearing down are used **on every deployment**. The way to point at
+one is `--profile/--region` — the shape `update.sh` and `release-ecr.sh` have had from the start.
+**No layer where a person invents an alias is needed** — a profile already carries "which account,
+with which permissions", and `~/.aws/config` is outside the repository.
 
-## 決定 7 — 既定は「何もしない」。守るのは消えることではなく**順序**
+- The concrete facts (stack names, the FQDN, whether there is a pool layer) are **read from the live
+  deployment**. Names do not line up even when stood up from the same template (measured: one
+  deployment's pool layer is `af-ecs-pool`, another's is `af-ecs-ec2-pool`), so rather than hard-coding
+  a convention we read them **from reality**, from the export `<stack>-SlotLaunchTemplateId`.
+- What is kept locally is **only the arguments needed to rebuild it** (`capture-env.sh`), stored in
+  `~/.config/agent-fleet/deploy/<profile>.<region>/` — **outside the repository**. This repository is
+  public, and the contents are account-specific (hosted zone ids, allowed emails, OAuth client ids).
+- ⚠️ **Do not read the notes against a live deployment.** The notes go stale, so the moment reality is
+  updated you would be running against "a deployment that is not the real one". The live values are
+  always AWS's.
+- ⚠️ **This is step zero of a teardown.** The templates are in the repo, but **what was passed to them
+  exists only inside the deployment, and becomes unreadable the moment `delete-stack` is issued** (on
+  2026-08-22 we got by with a hand-made JSON copy). `teardown.sh` refuses to run without the notes.
+- No secrets are carried. An SSM SecureString is not a CFN argument so it does not enter, and
+  `standup.sh` only checks **whether it exists**. ⚠️ But **some arguments look like secrets**
+  (`BitbucketOauthKey`), so they are masked in the plan display and the dry run.
 
-- `teardown.sh` / `standup.sh` / `pause.sh --down` は `--yes` が無ければ計画を出して終わる。
-  `--yes` があり端末があるときは **FQDN を打たせる**——配備が 2 つあり片方に実利用者が
-  居る以上、「どちらに向かって実行しているか」を目で確かめさせるのが唯一効く防具である。
-- 実測で踏んだ壊れ方はすべて順序だった: CP を止める前に片付けると**動いている CP が
-  作り直す**／スロットを terminate しても **home の EBS は残る**／スタックをまとめて
-  delete すると importer が居る間**削除が無言でキャンセル**される／立てる側は 20 の後に
-  イメージを入れ、40 の**新しい** launch template を 30 に渡さないと**スロットだけが
-  二度と起きない**。だからゲートは順序に張る（`deploy/local/ecs-lifecycle-stub-test.sh`）。
-- 撤収は既定で **`/af-cp/*` を残し**、`Persistence=retain` が残したもの（RDS 最終
-  スナップショット・EFS）も残す。消すのは `--purge-secrets` / `--purge-retained` を
-  明示したときだけ——retain はそう指定した人が居るという意味である。
+## Decision 7 — the default is "do nothing". What is protected is not against deletion but **the order**
 
-## 決定 8 — CI から直接デプロイ（GitHub OIDC）は採らない
+- `teardown.sh` / `standup.sh` / `pause.sh --down` print the plan and exit unless `--yes` is given.
+  With `--yes` and a terminal, they **make you type the FQDN** — with two deployments and real users on
+  one of them, making a person confirm with their eyes which one they are aimed at is the only
+  effective armour.
+- Every breakage we actually measured was about order: tidying up before stopping the CP means **the
+  running CP recreates it**; terminating a slot **leaves home's EBS behind**; deleting the stacks
+  together makes **the deletion silently cancel** while an importer is present; and on the way up, the
+  image goes in after 20, and unless 40's **new** launch template is passed to 30, **only the slots
+  never start again**. So the gates are placed on the order
+  (`deploy/local/ecs-lifecycle-stub-test.sh`).
+- A teardown by default **leaves `/af-cp/*`** and leaves what `Persistence=retain` retained (the RDS
+  final snapshot, EFS). Those are deleted only with an explicit `--purge-secrets` /
+  `--purge-retained` — retain means somebody asked for it.
 
-ボタン 1 つにはなるが、配備先のアカウントに OIDC プロバイダと deploy 権限のロールを**常設**
-することになる。1 コマンドで済む手数に対して割に合わない。将来やるとしても **push 毎の自動では
-なく手動 dispatch**——`ImageTag` を動かす操作は、人が選んだ時刻に起きるべきである。
+## Decision 8 — deploying directly from CI (GitHub OIDC) is not adopted
+
+It would come down to one button, but it means **permanently** installing an OIDC provider and a role
+with deploy permissions in the target account. Not worth it against the effort of one command. If it is
+ever done, it should be **a manual dispatch, not automatic on every push** — an operation that moves
+`ImageTag` should happen at a time a person chose.

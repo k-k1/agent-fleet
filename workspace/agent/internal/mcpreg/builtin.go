@@ -1,6 +1,6 @@
 package mcpreg
 
-// Builtin ops integrations (docs/25 Phase 1), normalized into ServerDef so the
+// Builtin ops integrations (docs/log/25 Phase 1), normalized into ServerDef so the
 // registry is ONE list instead of "builtin catalog or registered server" branching
 // everywhere (ADR0031 決定 6).
 //
@@ -35,8 +35,8 @@ type builtinSpec struct {
 }
 
 var builtinSpecs = map[string]builtinSpec{
-	// af は Agent Fleet 自身のセッション向けサーバー（docs/51 Phase 3 §自己申告
-	// ファストパス＋docs/53 §53.8 Chromium Attach View）。他の builtin と違って接続情報を持たないので常に ready で、
+	// af は Agent Fleet 自身のセッション向けサーバー（docs/log/51 Phase 3 §自己申告
+	// ファストパス＋docs/log/53 §53.8 Chromium Attach View）。他の builtin と違って接続情報を持たないので常に ready で、
 	// 向き先も逆 — アシスタントではなく**セッション**に配る。ここに置いたのは
 	// 「レジストリは1つのリスト」という ADR0031 決定6 のため: 自前のサーバーだけ
 	// materialize の外に別配線を持つと、利用者からも見えず、名前衝突の調停からも外れる
@@ -64,7 +64,7 @@ var builtinSpecs = map[string]builtinSpec{
 		runArgs: []string{"mcp-run", "cloudwatch"},
 		ready:   func(s *secrets.Data) bool { return s.CloudWatch != nil && s.CloudWatch.Profile != "" },
 	},
-	// aws = Agent Toolkit for AWS の AWS MCP Server（docs/25 §AWS MCP）。他の builtin と
+	// aws = Agent Toolkit for AWS の AWS MCP Server（docs/log/25 §AWS MCP）。他の builtin と
 	// 違い、対話セッションにも配る: 中身が「AWS 上に作る」ための道具（ドキュメント検索・
 	// スキル取得・API 呼び出し）で、使いたいのは相談チャットよりコードを書くセッションだから。
 	// 危険側（書き込みツール）は接続設定の Write opt-in で閉じてある。
@@ -83,7 +83,7 @@ func IsBuiltin(id string) bool {
 }
 
 // PeerMessagingEnabled reports whether the session-side af server should also advertise
-// the session-to-session messaging tools (docs/58 / ADR 0041). package main installs it
+// the session-to-session messaging tools (docs/log/58 / ADR 0041). package main installs it
 // at startup (it reads ui-prefs, which lives there); nil means OFF, which is also the
 // product default — peer messaging is opt-in.
 //
@@ -145,7 +145,7 @@ func builtinDefs(s *secrets.Data) []ServerDef {
 		}
 		name := id
 		if id == BuiltinAF {
-			// af's own server is the one a repository can shadow (docs/48 §8.4), so it
+			// af's own server is the one a repository can shadow (docs/log/48 §8.4), so it
 			// is the one that gets a per-boot name. Every other builtin keeps its id.
 			name = AFServerName()
 		}

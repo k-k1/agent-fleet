@@ -21,7 +21,7 @@ import "./sharing.css";
 
 function SharedSessionRow({ s }: { s: SharedSession }) {
   const tr = useT();
-  // 未処理の引き継ぎ（docs/77）。⚠️ **既読では消さない** —— 「読んだが決めていない」で
+  // 未処理の引き継ぎ（docs/log/77）。⚠️ **既読では消さない** —— 「読んだが決めていない」で
   // 消えると引き継ぎが忘れられる。消えるのは受諾/辞退/失効のときだけ（§77.10）。
   const handoff = useHandoffStore((st) => st.received.some((o) => o.sessionId === s.id));
   const st = stateInfo({ kind: s.kind, alive: s.state === "running", state: s.activity });
@@ -47,7 +47,7 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
             <Icon name="git-branch" />
           </span>
         )}
-        {/* アーカイブ済み/削除済みは CP 側で一覧から外れる(docs/59 §1)ので、ここに
+        {/* アーカイブ済み/削除済みは CP 側で一覧から外れる(docs/log/59 §1)ので、ここに
             並ぶのは所有者の手元に今ある会話だけ。
             状態チップは所有者側の SessionRow と同じ stateInfo。所有者 Workspace が
             停止中のときは、その1つの事実で全行が止まっているので、行ごとの

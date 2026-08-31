@@ -1,4 +1,4 @@
-// Office 文書の簡易プレビュー（docs/82 §82.4）の検査。
+// Office 文書の簡易プレビュー（docs/log/82 §82.4）の検査。
 //
 // 何を守るためのものか: **WASM が実ブラウザで本当に読み込まれ、実 OOXML を変換できるか**。
 // これは jsdom では絶対に分からない（WebAssembly の初期化も fetch も配信の
@@ -7,7 +7,7 @@
 //
 // 標本はこの場で組み立てる最小の OOXML（zip を自前で書く）。リポジトリにバイナリを
 // 置かないための選択で、**「実文書での再現度」はここでは測っていない**（それは
-// docs/82 §82.2 の実測に置いた）。
+// docs/log/82 §82.2 の実測に置いた）。
 //
 //   npm --prefix console run doc:check
 //   node console/scripts/doc/check.mjs --screenshot /tmp/doc.png

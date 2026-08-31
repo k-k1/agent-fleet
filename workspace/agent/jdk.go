@@ -57,7 +57,7 @@ var jdkArchSuffixes = []string{"amd64", "arm64"}
 //
 // ⚠️ This exists because the home volume OUTLIVES the architecture it was filled
 // on. On the ecs-ec2 runtime a member's `~` is an EBS volume that follows them,
-// and docs/70 makes the box they land on a per-member setting — so a home filled
+// and docs/log/70 makes the box they land on a per-member setting — so a home filled
 // on x86 can be attached to an arm64 slot, and then
 // ~/.local/share/agent-fleet/jvm holds temurin-21-jdk-amd64. Picking it would set
 // JAVA_HOME to a tree whose bin/java cannot exec, which surfaces as a gradle
@@ -128,7 +128,7 @@ func sortMajors(seen map[string]bool) []string {
 // ⚠️ Do not go back to "glob, sort, take the first". Both sources name their
 // directories temurin-<major>-jdk-<arch>, and "amd64" sorts before "arm64", so on
 // an arm64 workspace holding a home that was filled on x86 the sorted-first entry
-// is always the unusable one (docs/70 §70.5.1).
+// is always the unusable one (docs/log/70 §70.5.1).
 func javaHomeFor(major string) string {
 	for _, dir := range jvmSearchDirs() {
 		m, _ := filepath.Glob(filepath.Join(dir, "temurin-"+major+"-jdk*"))

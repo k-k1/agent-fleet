@@ -1,6 +1,6 @@
 package main
 
-// 単価カタログ（docs/46 §5-c・P2a）。内蔵表（usage_price.go）は Anthropic の一次単価しか
+// 単価カタログ（docs/log/46 §5-c・P2a）。内蔵表（usage_price.go）は Anthropic の一次単価しか
 // 持っていないので、codex / opencode の消費が「値付け不可」で残っていた。これを埋める。
 //
 // ★ 単価表を自分で育てない。**models.dev のカタログが既にワークスペースの中にある**
@@ -154,7 +154,7 @@ type catalogFile map[string]struct {
 			CacheRead  *float64 `json:"cache_read"`
 			CacheWrite *float64 `json:"cache_write"`
 			// tiers / context_over_200k（長文の割増）は**使わない**。台帳はターンごとの
-			// 入力長を持たないので当てられない＝下段固定＝推定は下振れしうる（docs/46 §5-c）。
+			// 入力長を持たないので当てられない＝下段固定＝推定は下振れしうる（docs/log/46 §5-c）。
 		} `json:"cost"`
 	} `json:"models"`
 }

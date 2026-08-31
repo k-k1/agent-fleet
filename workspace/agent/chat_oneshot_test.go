@@ -1,6 +1,6 @@
 package main
 
-// 一発ヘッドレス（タイトル/ブランチ名/返信候補）の claude 経路の契約テスト（docs/46 §1-a-2）。
+// 一発ヘッドレス（タイトル/ブランチ名/返信候補）の claude 経路の契約テスト（docs/log/46 §1-a-2）。
 //
 // この argv は「毎回払う固定オーバーヘッド」を削るためのもので、うっかり元に戻すと
 // 静かにトークンだけが 4 倍に戻る（機能は動くので気づけない）。形をここで固定する。
@@ -128,7 +128,7 @@ func TestTitleSuggestLive(t *testing.T) {
 // 「日本語文字の有無」で行う。
 
 // TestUsageLedgerLive は実 claude を1回撃ち、台帳に「実測の1行」が実際に落ちることを
-// 見る opt-in テスト（docs/46 P1 完了条件）。単体テストは組み立てた usageCall しか通らない
+// 見る opt-in テスト（docs/log/46 P1 完了条件）。単体テストは組み立てた usageCall しか通らない
 // ので、CLI の出力形が変わったこと（modelUsage のキー名・canonicalModel・total_cost_usd）は
 // ここでしか検知できない。
 // 実行例: AF_TITLE_LIVE=1 go test -run TestUsageLedgerLive -v .
@@ -162,7 +162,7 @@ func TestUsageLedgerLive(t *testing.T) {
 	if r.Kind != session.KindClaude {
 		t.Skipf("claude 以外（%s）で実行された — 以降はコスト実測の検証なのでスキップ", r.Kind)
 	}
-	// claude だけはモデル・トークン・コストが全部実測で返る（docs/46 §0）。
+	// claude だけはモデル・トークン・コストが全部実測で返る（docs/log/46 §0）。
 	if r.ModelSrc != usageModelReported || r.Model == "" || r.ModelRaw == "" {
 		t.Fatalf("モデルが報告値として記録されていない: %+v", r)
 	}

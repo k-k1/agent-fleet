@@ -1,6 +1,6 @@
 package mcpreg
 
-// Session materialize (docs/48 §8 / P3): write the effective registry into each
+// Session materialize (docs/log/48 §8 / P3): write the effective registry into each
 // CLI's OWN global config file, so an interactive session picks the servers up the
 // way it would pick up a hand-written entry.
 //
@@ -21,7 +21,7 @@ package mcpreg
 //     CLI (claude rewrites .claude.json constantly), so a no-op launch must not
 //     rewrite them and must not reformat them.
 //
-// Secrets become plaintext here. That is unavoidable and accepted by docs/48 §5.1:
+// Secrets become plaintext here. That is unavoidable and accepted by docs/log/48 §5.1:
 // the CLI has to be able to read them. The mitigation is the file mode and the
 // location (home only, never a repo).
 //
@@ -50,7 +50,7 @@ var MaterializedKinds = []string{
 }
 
 // MaterializeResult is one kind's outcome, shaped for a log line and for a future
-// Console surface (docs/48 §11.3).
+// Console surface (docs/log/48 §11.3).
 type MaterializeResult struct {
 	Kind string `json:"kind"`
 	// Written are the server names af now owns in that CLI's config.
@@ -97,7 +97,7 @@ func writerFor(kind string) writer {
 // a 5-minute tenant poll). Two interleaved passes would lose one side's write; losing it
 // on mcp-managed.json is the worse half — af would forget it owns a name, and that name
 // becomes an orphan in the user's config that nothing is allowed to remove, which is the
-// exact failure the ledger exists to prevent (docs/48 §8.2).
+// exact failure the ledger exists to prevent (docs/log/48 §8.2).
 //
 // A global lock rather than one per kind: passes are short, run at most a few times a
 // minute, and MaterializeAll's whole point is that the kinds share the same ledger file.
@@ -161,7 +161,7 @@ func MaterializeAll() []MaterializeResult {
 
 // managedNames is the per-kind list of server names af wrote into that CLI's config.
 // It is the ONLY thing that authorizes a deletion from a user's config file
-// (docs/48 §8.2).
+// (docs/log/48 §8.2).
 type managedNames struct {
 	Kinds map[string][]string `json:"kinds"`
 }

@@ -122,7 +122,7 @@ export function FilesChanges() {
 
   if (!running) return <EmptyState icon="debug-disconnect" title={tr("pj.ws_stopped")} />;
   if (changes === null) return <EmptyState icon="loading" title={tr("pj.loading")} />;
-  // 作業グループ (docs/52): keep only changes in the group's working copies —
+  // 作業グループ (docs/log/52): keep only changes in the group's working copies —
   // a worktree folder ("<base>@<slug>") resolves via its base prefix.
   const scoped = wset ? changes.filter((c) => wset.repos.includes(folderBase(c.repo))) : changes;
   if (scoped.length === 0) return <EmptyState icon="check" title={tr("pj.no_changes")} />;

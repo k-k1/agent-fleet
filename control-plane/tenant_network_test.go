@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// --- who is calling (docs/66 §66.3) -----------------------------------------
+// --- who is calling (docs/log/66 §66.3) -----------------------------------------
 
 // The whole feature rests on this function, and there is exactly one way to get it
 // wrong: read the LEFT of X-Forwarded-For. Proxies append the peer they received

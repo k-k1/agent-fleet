@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// この表が docs/75 §75.5 の条件表そのもの。状態を足したら**必ずここに 1 行足す**
+// この表が docs/log/75 §75.5 の条件表そのもの。状態を足したら**必ずここに 1 行足す**
 // （足し忘れると activityUnknown に落ちる＝畳まれず、起こし続けもしない）。
 func TestSessionActivityClassification(t *testing.T) {
 	cases := []struct {
@@ -15,7 +15,7 @@ func TestSessionActivityClassification(t *testing.T) {
 	}{
 		{"working は機械が動いている", sessionWire{Alive: true, State: stateWorking}, activityMachineBusy},
 		// codex の文脈圧縮。表から漏れていて unknown に落ちており、圧縮の最中に
-		// Workspace ごと止まりうる状態だった（docs/75 P5 で追加）。
+		// Workspace ごと止まりうる状態だった（docs/log/75 P5 で追加）。
 		{"compacting も機械が動いている", sessionWire{Alive: true, State: stateCompacting}, activityMachineBusy},
 		{"idle は畳んでよい", sessionWire{Alive: true, State: stateIdle}, activityIdleWait},
 		{"limited は時計待ちで idle と同じ", sessionWire{Alive: true, State: stateLimited}, activityIdleWait},
@@ -25,7 +25,7 @@ func TestSessionActivityClassification(t *testing.T) {
 		{"blocked は人待ち", sessionWire{Alive: true, State: stateBlocked}, activityHumanWait},
 		{"auth は人待ち", sessionWire{Alive: true, State: stateAuth}, activityHumanWait},
 		{"spend_limit は人待ち", sessionWire{Alive: true, State: stateSpendLimit}, activityHumanWait},
-		// backgroundBusy は state と直交する（docs/75 D3）。
+		// backgroundBusy は state と直交する（docs/log/75 D3）。
 		{"idle でも背景作業中なら machineBusy", sessionWire{Alive: true, State: stateIdle, BackgroundBusy: true}, activityMachineBusy},
 		{"question でも背景作業中なら machineBusy", sessionWire{Alive: true, State: stateQuestion, BackgroundBusy: true}, activityMachineBusy},
 		// 分からないものはどちらにも倒さない。
@@ -44,7 +44,7 @@ func TestSessionActivityClassification(t *testing.T) {
 }
 
 // tier2 が止めてよいか＝**機械が動いているときだけ止めない**。
-// question を含む人待ちが false であることがこの機能の核心（docs/75 §75.1: これが true
+// question を含む人待ちが false であることがこの機能の核心（docs/log/75 §75.1: これが true
 // だった間、AUQ の出ているワークスペースは永久に停止せず課金され続けた）。
 func TestHoldsWorkspace(t *testing.T) {
 	cases := []struct {
@@ -78,7 +78,7 @@ func TestHoldsWorkspace(t *testing.T) {
 }
 
 // tier1 の対象＝畳んでよいもの全部（idle 系＋人待ち）。畳んだ対話は持ち越しへ退避される
-// ので失われない（docs/75 §75.6）。unknown（shell/ssm・未知の状態）だけが対象外。
+// ので失われない（docs/log/75 §75.6）。unknown（shell/ssm・未知の状態）だけが対象外。
 func TestTier1Reapable(t *testing.T) {
 	reapable := map[string]bool{
 		stateIdle: true, stateLimited: true, stateSpendLimit: true,
@@ -157,7 +157,7 @@ func TestInteractionTimeoutFallbackChain(t *testing.T) {
 	}
 }
 
-// 停止しないピン（docs/75）。shell / ssm には state が無い＝分類の先の分岐に一切
+// 停止しないピン（docs/log/75）。shell / ssm には state が無い＝分類の先の分岐に一切
 // 引っかからないので、ピンは**分類の一番外**で効かなければ意味を持たない。
 func TestKeepAwakePin(t *testing.T) {
 	future := time.Now().Add(time.Hour).Format(time.RFC3339)
@@ -195,7 +195,7 @@ func TestKeepAwakePin(t *testing.T) {
 	}
 }
 
-// tier1 の kind の門（docs/75 P5）。shell / ssm だけが例外で、そこを間違えると
+// tier1 の kind の門（docs/log/75 P5）。shell / ssm だけが例外で、そこを間違えると
 // 走行中のジョブを halt で殺す（しかも af からは何が走っているか見えない）。
 func TestTier1Foldable(t *testing.T) {
 	for _, k := range []string{"claude", "codex", "opencode", "copilot", "cursor", "kiro", "agy", ""} {

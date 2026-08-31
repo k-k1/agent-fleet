@@ -108,18 +108,30 @@ func TestDocsBridgeRoleScoping(t *testing.T) {
 		wantAbsent []string
 	}{
 		{
-			role:       "member",
-			wantHave:   []string{"guide/member/08-advanced.md", "dev/04-workspace-agent.md"},
-			wantAbsent: []string{"guide/admin/02-limits.md", "decisions/0011-console.md", "history/p3-10.md"},
+			role:     "member",
+			wantHave: []string{"use/02-sessions.md", "ref/agents.md"},
+			wantAbsent: []string{
+				"admin/02-limits.md", "operate/01-install.md", "build/04-workspace-agent.md",
+				"dev/04-workspace-agent.md",
+				"decisions/0011-console.md", "log/p3-10.md",
+			},
 		},
 		{
-			role:       "tenant_admin",
-			wantHave:   []string{"guide/member/08-advanced.md", "guide/admin/02-limits.md"},
-			wantAbsent: []string{"decisions/0011-console.md", "history/p3-10.md"},
+			role:     "tenant_admin",
+			wantHave: []string{"use/02-sessions.md", "admin/02-limits.md"},
+			wantAbsent: []string{
+				"operate/01-install.md", "build/04-workspace-agent.md",
+				"decisions/0011-console.md", "log/p3-10.md",
+			},
 		},
 		{
 			role:     "super_admin",
-			wantHave: []string{"guide/member/08-advanced.md", "decisions/0011-console.md", "history/p3-10.md"},
+			wantHave: []string{"use/02-sessions.md", "operate/01-install.md", "build/04-workspace-agent.md"},
+			// Even the highest role is an allowlist: the decision records and the
+			// frozen journals are served to nobody.
+			wantAbsent: []string{
+				"decisions/0011-console.md", "log/p3-10.md", "dev/04-workspace-agent.md",
+			},
 		},
 	}
 	for _, c := range cases {

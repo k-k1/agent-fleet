@@ -1,6 +1,6 @@
 package copilot
 
-// 発言時点からの分岐（docs/55）の copilot 側ユニットテスト。
+// 発言時点からの分岐（docs/log/55）の copilot 側ユニットテスト。
 //
 // copilot の分岐は「session-state ディレクトリごとコピーして events.jsonl だけ切り詰める」。
 // **session.db は無改変で運ぶ**のが肝で（復元元は events.jsonl だと実測済み）、テストも

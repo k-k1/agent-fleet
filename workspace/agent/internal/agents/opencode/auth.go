@@ -136,7 +136,7 @@ func Status(s *secrets.Data) map[string]any {
 	if oa.label != "" {
 		m["oauth_label"] = oa.label // Console org 名（実測の label 解決）
 	}
-	// 利用枠の導線（docs/54 §54.7）: 数値は取り込めないので、ID とページ URL、および
+	// 利用枠の導線（docs/log/54 §54.7）: 数値は取り込めないので、ID とページ URL、および
 	// 上限に当たったときに観測できた枠情報だけを返す。
 	if id, src := WorkspaceID(); id != "" {
 		m["workspace_id"] = id
@@ -190,7 +190,7 @@ func HandlePutConn(w http.ResponseWriter, r *http.Request) {
 
 // applyKeyChange propagates a stored-key change to the places that cached it.
 //
-// 鍵は起動時に env として注入されるので（docs/27 §7）、**保存しただけでは動いている
+// 鍵は起動時に env として注入されるので（docs/log/27 §7）、**保存しただけでは動いている
 // serve daemon には効かない**。実測: Console でキーを消しても daemon は自分の環境に
 // 持ったままで、connections[] に env 接続を出し続け、そのキーで課金され得るモデルも
 // 一覧に残る（Agent を再起動しても Ensure は生きている daemon を adopt するので直らない）。

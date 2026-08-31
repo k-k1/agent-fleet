@@ -1,11 +1,11 @@
-// DocPreview — Word / Excel / PowerPoint の簡易プレビュー（docs/82 §82.4）。
+// DocPreview — Word / Excel / PowerPoint の簡易プレビュー（docs/log/82 §82.4）。
 //
 // anydoc で GFM に変換し、Console の MarkdownView にそのまま載せる。**見た目は再現しない**:
 // ページ体裁も図形の位置もセルの色も落ち、埋め込み画像は alt text になる。だから面の頭に
 // 「簡易プレビュー」と出し、原本を開くための導線（情報バーのダウンロード）を隣に残す
 // —— 再現しているように見せる方が、書式の消えた表を鵜呑みにされるぶん危ない。
 //
-// 変換は WASM で 1ms 未満（実測・docs/82 §82.2）。時間がかかるのは 2.9MB の WASM を
+// 変換は WASM で 1ms 未満（実測・docs/log/82 §82.2）。時間がかかるのは 2.9MB の WASM を
 // 初回に取ってくるところだけで、それは「この形式を開いた人」だけが払う。
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";

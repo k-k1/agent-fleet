@@ -4,7 +4,7 @@
 //
 // Each command may carry direct-accelerator `keys` (e.g. Alt+1) and/or a leader `seq`
 // (e.g. "p r" = leader → p → r). The which-key overlay and command palette both render
-// from this list. `title` is an i18n message key (lib/i18n, docs/28) — resolve for display
+// from this list. `title` is an i18n message key (lib/i18n, docs/log/28) — resolve for display
 // with cmdLabel() and search across all locales with cmdSearch() (labels.ts), so the
 // command palette matches whether the user types Japanese or English.
 //
@@ -119,14 +119,14 @@ function toggleWrap(): void {
 }
 // Walk the active Markdown file's display modes: edit, preview and (when the file
 // can be edited) split, with the Marp renderer as the inner step so a deck reaches
-// both of its previews (docs/44 §1.1). Drives FileView's local mode via the
+// both of its previews (docs/log/44 §1.1). Drives FileView's local mode via the
 // pane-view action registry; no-ops on non-Markdown and on the plain fallback.
 function toggleMarkdownMode(): void {
   const p = activePane(getLayout());
   if (p) paneViewActions(p.id)?.toggleMdMode?.();
 }
 // A markdown file is showing in the active pane (gates the preview/source toggle).
-// drawio の図も同じコマンドで図 ↔ ソースを行き来する（docs/65 §65.4）。ここは
+// drawio の図も同じコマンドで図 ↔ ソースを行き来する（docs/log/65 §65.4）。ここは
 // 拡張子だけで判定する —— 中身を見ないと分からない `.xml` はコマンドの対象外で
 // よく、ペイン内のボタンで切り替えられる。
 function activeIsMarkdown(): boolean {
@@ -135,7 +135,7 @@ function activeIsMarkdown(): boolean {
   return langFor(c.filePath) === "markdown" || isDrawioFile(c.filePath);
 }
 // The active pane can switch between the normal file view and the read-aloud view
-// (docs/24) — a text file, or one already in the reader.
+// (docs/log/24) — a text file, or one already in the reader.
 function activeCanRead(): boolean {
   const c = activePane(getLayout())?.content;
   if (!c) return false;
@@ -144,7 +144,7 @@ function activeCanRead(): boolean {
   return c.kind === "file" && !imageFormat(c.filePath) && !isDrawioFile(c.filePath);
 }
 // Toggle the active pane in place between the file view and the read-aloud view,
-// keeping the same file (docs/24). Replaces the active pane's content (openTarget).
+// keeping the same file (docs/log/24). Replaces the active pane's content (openTarget).
 function toggleReader(): void {
   const c = activePane(getLayout())?.content;
   if (!c) return;
@@ -154,7 +154,7 @@ function toggleReader(): void {
 // 文字サイズの拡大 / 縮小 / 既定へ。対象は「アクティブなペインが属する面」の設定
 // （端末＝termSize、ミラー/チャット＝chatSize、朗読＝readerSize、それ以外のビューア＝
 // viewerSize）。文字組みを持たない面（ブラウザ・画像）では null が返り、`when` が閉じて
-// キーは端末へ素通しする。docs/29 §5.7。
+// キーは端末へ素通しする。docs/log/29 §5.7。
 const fontTarget = (): FontSetting | null => fontSettingFor(activePane(getLayout())?.content);
 const bumpFont = (delta: number) => {
   const key = fontTarget();
@@ -179,7 +179,7 @@ function toggleTheme(): void {
   setSetting("theme", getSettings().theme === "light" ? "dark" : "light");
 }
 
-// 作業グループ (docs/52): すべて → 各グループ → すべて を巡回。レールが畳まれて
+// 作業グループ (docs/log/52): すべて → 各グループ → すべて を巡回。レールが畳まれて
 // いても効くよう、切替先をトーストで知らせる。グループ未作成時はその旨だけ伝える。
 function cycleWorkingSet(): void {
   if (workingSetList(getSettings()).length === 0) {
@@ -230,7 +230,7 @@ async function toggleChatNotify(kind: "discord" | "slack"): Promise<void> {
 const runChatNotify = (kind: "discord" | "slack") =>
   void toggleChatNotify(kind).catch(() => toast(t("err.network")));
 
-// Toggle the per-session voice notification (docs/24) from the keyboard — the same setting
+// Toggle the per-session voice notification (docs/log/24) from the keyboard — the same setting
 // as Settings › Notifications' セッションの音声通知. Toasts the resulting on/off state.
 function toggleTtsSessionNotify(): void {
   const next = !getSettings().ttsSessionNotify;

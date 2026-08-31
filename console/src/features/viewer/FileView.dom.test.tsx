@@ -1,4 +1,4 @@
-// Render tests for the File pane's Phase 3 modes (docs/44 §1.1, §1.8).
+// Render tests for the File pane's Phase 3 modes (docs/log/44 §1.1, §1.8).
 //
 // These cover the wiring between "what the file is" and "what the pane shows" —
 // the layer that the mode/pill unit tests cannot reach because it lives in
@@ -135,7 +135,7 @@ describe("a citation that arrives after the file is already open", () => {
   it("switches to the source surface so the cited row exists", async () => {
     // Regression: the mode was keyed on the loaded file alone, so retargeting the
     // pane at a line of the file it already showed left it in the preview and the
-    // cited row was never drawn (docs/44 §1.8).
+    // cited row was never drawn (docs/log/44 §1.8).
     await render({});
     expect(pressed()).toEqual(["Preview"]);
     expect(editorVisible()).toBe(false);
@@ -305,7 +305,7 @@ describe("the editing surface", () => {
   });
 });
 
-// docs/44 §6 Phase 3: the acceptance items that are about not losing what the
+// docs/log/44 §6 Phase 3: the acceptance items that are about not losing what the
 // pane already did.
 describe("reuse of the existing rendering assets", () => {
   it("keeps the normal preview reachable on a Marp deck", async () => {
@@ -376,7 +376,7 @@ describe("the buffer behind the preview", () => {
   });
 
   it("registers a dirty buffer with the navigation guard", async () => {
-    // Markdown panes join the same dirty registry as code panes (docs/44 §1.1),
+    // Markdown panes join the same dirty registry as code panes (docs/log/44 §1.1),
     // so every navigation guard covers them without a second mechanism.
     await render({});
     expect(hasDirtyEditors()).toBe(false);

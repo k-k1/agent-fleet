@@ -1,10 +1,10 @@
 package mcpreg
 
-// docs/56 §3 / §13 "軸の分離": internal/mcpreg.Materialize* writes ONLY each CLI's
+// docs/log/56 §3 / §13 "軸の分離": internal/mcpreg.Materialize* writes ONLY each CLI's
 // own user/global config (paths.ClaudeConfigDir / CodexHome / …), never a repo's
 // project-scope files (.mcp.json, opencode.json, .codex/config.toml, …) — those are
 // internal/mcpproj's read-only territory in P0, and any future P1 write path there
-// is a distinct, explicitly user-triggered operation (docs/56 §5's "純粋なワンショット",
+// is a distinct, explicitly user-triggered operation (docs/log/56 §5's "純粋なワンショット",
 // never an automatic materialize trigger). This test pins that boundary: a
 // project-scope-shaped file sitting in an arbitrary directory must survive
 // MaterializeAll byte-for-byte, even though MaterializeAll genuinely has a def to

@@ -1,4 +1,4 @@
--- Scheduled execution (docs/38 + ADR0021): operator-authored cron/interval/once
+-- Scheduled execution (docs/log/38 + ADR0021): operator-authored cron/interval/once
 -- tasks that fire on a wall-clock and drive a fleet session. The definition lives
 -- in the CP DB because the CP is the only thing alive while a workspace is stopped
 -- (the in-container agent is gone), so only the CP can watch the clock and wake it.

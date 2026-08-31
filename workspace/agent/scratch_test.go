@@ -45,7 +45,7 @@ func newTestRepo(t *testing.T, ignore string) string {
 
 // A fresh clone has no node_modules yet — the case the whole feature exists for.
 // The symlink must be in place BEFORE anything installs, or the first npm ci runs
-// on EFS and the 105s→11s difference is lost (docs/63 §63.5).
+// on EFS and the 105s→11s difference is lost (docs/log/63 §63.5).
 func TestScratchAutoRelocateCreatesLinkForAbsentDir(t *testing.T) {
 	scratchShim(t)
 	scratch := t.TempDir()

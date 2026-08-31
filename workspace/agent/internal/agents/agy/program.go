@@ -33,7 +33,7 @@ func settingsPath() string { return filepath.Join(stateDir(), "settings.json") }
 
 // LastConversationFor returns agy's conversation UUID for dir from its
 // cache/last_conversations.json (cwd→UUID) — the immediate source; the SQLite
-// summaries DB is lazily written and can't be relied on (docs/32 Track D-3).
+// summaries DB is lazily written and can't be relied on (docs/log/32 Track D-3).
 // "" when the file or entry is absent.
 func LastConversationFor(dir string) string {
 	return LastConversationIn(stateDir(), dir)
@@ -58,9 +58,9 @@ func LastConversationIn(stateRoot, dir string) string {
 // auth (the token file written via the Connections flow), so nothing is
 // injected. Resume is `--conversation <UUID>` with the slot's captured id —
 // NOT `--continue`, whose cwd→last mapping any other agy run in the dir
-// overwrites (docs/32 Track D-3). --model stays at agy's default in M1 unless
+// overwrites (docs/log/32 Track D-3). --model stays at agy's default in M1 unless
 // the create request pinned one.
-// bypass=false は「権限確認をスキップしない」（docs/76 の利用者選択、または plan 起動）。
+// bypass=false は「権限確認をスキップしない」（docs/log/76 の利用者選択、または plan 起動）。
 // 承認待ちは pending.go が "permission" として拾い、Console の許可カードで答えられる。
 func buildProgram(model, mode, resumeID string, bypass bool) string {
 	if override := os.Getenv("AGENT_AGY_CMD"); override != "" {

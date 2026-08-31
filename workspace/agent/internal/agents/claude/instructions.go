@@ -1,6 +1,6 @@
 package claude
 
-// ユーザー指示（docs/60）の claude 側 artifact。
+// ユーザー指示（docs/log/60）の claude 側 artifact。
 //
 // claude だけは**合成が要らない**。フリート方針は managed policy
 // /etc/claude-code/CLAUDE.md（root 所有・イメージ焼き込み・そもそも dev では書けない）
@@ -10,7 +10,7 @@ package claude
 // 置き場は **$CLAUDE_CONFIG_DIR/CLAUDE.md**（実測 2026-08-13・claude 2.1.229）。
 // ⚠️ ~/.claude/CLAUDE.md ではない: AF は CLAUDE_CONFIG_DIR=/var/lib/af/claude を
 // 渡しているので、~/.claude/CLAUDE.md に書いても **claude には届かない**
-// （opencode も本環境では拾わなかった＝どの kind にも効かない）。docs/60 §60.4-A。
+// （opencode も本環境では拾わなかった＝どの kind にも効かない）。docs/log/60 §60.4-A。
 //
 // 既定では存在しないファイルなので AF が単独所有できるが、それでも本文全体を
 // 上書きせずマーカーで囲む — 利用者が手で書いていた場合にそれを消さないため。

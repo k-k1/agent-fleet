@@ -1,4 +1,4 @@
--- Refactor SSM login config into two clear tiers (docs/history/p3-ssm-session.md).
+-- Refactor SSM login config into two clear tiers (docs/log/p3-ssm-session.md).
 -- ssm_profile is the COMMON auth bundle (SSO portal plus account/role/default region)
 -- reused by many hosts, mapping to one ~/.aws named profile. ssm_host keeps only the
 -- PER-INSTANCE bits (alias, instance id, run-as document, optional region override)

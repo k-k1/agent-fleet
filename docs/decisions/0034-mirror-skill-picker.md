@@ -1,144 +1,159 @@
-# 0034. ミラーのスキルピッカー — セッション単位 API ＋コンポーザー内補完
+# 0034. The mirror's skill picker — a per-session API plus in-composer completion
 
-- 状態: **採用・実装済み**（2026-07-28）。設計と実装記録は [50-mirror-skill-picker.md](../50-mirror-skill-picker.md)。
-- 関連: [0017](0017-keyboard-system.md)（キーボード体系）/ [0015](0015-agent-managed-driver.md)（driver 抽象 — turn 素通しの前提）
+English | [日本語](0034-mirror-skill-picker.ja.md)
 
-## 背景
+- Status: **adopted and implemented** (2026-07-28). The design and the implementation record are in [50-mirror-skill-picker.md](../log/50-mirror-skill-picker.md).
+- See also: [0017](0017-keyboard-system.md) (the keyboard system) / [0015](0015-agent-managed-driver.md) (the driver abstraction — the premise that turns pass through)
 
-セッションに定義されたスキル（`.claude/skills`）とカスタムコマンド（`.claude/commands`）を
-ミラービューから呼ぶ動線が無く、名前のフルタイプかターミナル側 TUI 補完に頼っていた。
-起動モーダルには repo 単位のテンプレ集約（`repo_prompts.go`）が既にあるが、repo 名 →
-`~/repos/<name>` 固定で worktree セッションの実体もユーザーレベルも見えない。
-要件は「キーボードだけ・マウスだけ・タップだけ、いずれの操作系でも完結」。
+## Context
 
-## 決定
+There was no route from the mirror view to invoke the skills (`.claude/skills`) and custom commands
+(`.claude/commands`) defined for a session; you either typed the full name or relied on the TUI's
+completion on the terminal side. The launch modal already has per-repo template collection
+(`repo_prompts.go`), but it is fixed to repo name → `~/repos/<name>` and can see neither the real
+path of a worktree session nor the user level. The requirement was "completable by keyboard alone,
+by mouse alone, or by tap alone".
 
-### 1. 一覧はセッション単位の新 API（repo 単位の流用ではなく）
+## Decision
 
-`GET /sessions/{name}/skills`。`session.ReadMeta(name).Dir` で worktree 実パスを、
-`claude.ConfigDir()` でユーザーレベルを走査する。repo_prompts の流用案は
-worktree（`repo@branch`）とユーザーレベルを表現できず棄却。frontmatter パーサ
-（`splitFrontmatter`）だけ共用する。`argument-hint` を新たに解釈し、
-`user-invocable: false` を除外する。重複はスラッシュ名で project > user・skill > command
-の先勝ち。claude 以外の kind は**エラーでなく空**（前方互換 — 将来 cursor/kiro の
-ACP `available_commands` を同じ形で返せる）。キャッシュ無し（都度走査で十分安い＋
-セッション途中で SKILL.md を書かせる使い方に即応）。
+### 1. The listing is a new per-session API (not a reuse of the per-repo one)
 
-### 2. UI はコンポーザー内インライン補完＋常設「/」ボタンの 2 系統
+`GET /sessions/{name}/skills`. It walks the worktree's real path via
+`session.ReadMeta(name).Dir` and the user level via `claude.ConfigDir()`. Reusing repo_prompts was
+rejected because it cannot express a worktree (`repo@branch`) or the user level; only the
+frontmatter parser (`splitFrontmatter`) is shared. `argument-hint` is newly interpreted, and
+`user-invocable: false` is excluded. Duplicates are resolved by slash name, first-wins with
+project > user and skill > command. Kinds other than claude return **empty rather than an error**
+(forward compatible — cursor's and kiro's ACP `available_commands` can be returned in the same shape
+later). No cache (walking each time is cheap enough, and it responds immediately to writing a
+SKILL.md mid-session).
 
-- キーボード派: 入力欄先頭の `/` タイプで開き、タイプで絞り込み、↑/↓ → Enter/Tab。
-- マウス/タップ派: コンポーザー左の「/」ボタン（＋添付ボタンと同寸で並ぶ）。
-- 確定は**差し込みのみ**（`/name ␣` ＋既存下書きを引数として温存）で送信しない —
-  引数を確認してから送る。修飾キー＋クリックの即送信だけ例外（返信サジェストと同じ
-  イディオム）。
-- 選択リストは CommandPalette 同型の sel-index 方式（フォーカスを textarea に残す）。
-  タッチ確定時はフォーカスを奪わない（GBoard 既存規約）。
-- kind ゲートは `AgentCaps.slashSkills`（kind 三項演算子の禁止 — registry 一元）。
+### 2. The UI is two routes: inline completion in the composer, plus a permanent "/" button
 
-### 3. 送信経路には手を入れない
+- For keyboard users: typing `/` at the start of the input opens it, typing filters, ↑/↓ then
+  Enter/Tab.
+- For mouse/tap users: a "/" button to the left of the composer (the same size as, and next to, the
+  attach button).
+- Confirming **only inserts** (`/name ␣` plus the existing draft preserved as arguments) and does not
+  send — you check the arguments before sending. The one exception is modifier+click to send
+  immediately (the same idiom as reply suggestions).
+- The selection list uses the CommandPalette's sel-index approach (focus stays on the textarea). On
+  a touch confirmation, focus is not stolen (the existing GBoard convention).
+- The kind gate is `AgentCaps.slashSkills` (no ternaries on kind — centralised in the registry).
 
-スラッシュ文字列は tui / managed とも既存経路で素通しされ、turn 抑止（`slashCmdRe`）も
-既存挙動のまま。本機能は「認識と入力補助」だけを足す。
+### 3. The send path is untouched
 
-## 捨てた案
+The slash string passes through the existing path on both tui and managed, and turn suppression
+(`slashCmdRe`) keeps its existing behaviour. This feature adds only recognition and input assistance.
 
-- **`repoPromptTemplates(sessionMeta.repo)` の流用**: worktree 名（`repo@branch`）が
-  `resolveRepoDir` の repo 名検証を通らない／ユーザーレベル・argument-hint が無い。
-- **選択で即送信**: 引数付きスキル（argument-hint 持ち）で誤爆する。差し込み一択にし、
-  即送信は修飾キーの明示操作だけに残した。
-- **返信サジェスト式のフォーカス移動リング**: スマホで textarea の blur → ソフト
-  キーボード落ちが起きる。sel-index 方式へ。
-- **タイプ起点でも空リストを表示**: `/plan` 等、列挙外コマンドの手打ちを覆い隠す。
-  該当ゼロ時は非表示（ボタン起点だけ「無い」ことを見せる）。
-- **agent 側 TTL キャッシュ**: 走査コストが小さく、鮮度（セッション中の SKILL.md
-  追加）の方が価値が高い。
+## Options rejected
 
-## 追記（同日 v2）: クロスエージェント化
+- **Reusing `repoPromptTemplates(sessionMeta.repo)`**: a worktree name (`repo@branch`) does not pass
+  `resolveRepoDir`'s repo-name validation, and there is no user level or argument-hint.
+- **Sending immediately on selection**: it misfires on skills with arguments (those with an
+  argument-hint). Insertion only, with immediate sending left to an explicit modifier action.
+- **The focus-moving ring used by reply suggestions**: on a phone, blurring the textarea drops the
+  soft keyboard. Switched to the sel-index approach.
+- **Showing an empty list when triggered by typing too**: it would cover up hand-typed commands that
+  are not enumerated, like `/plan`. Hidden when there are no matches (only the button route shows
+  "there are none").
+- **A TTL cache on the agent side**: the walk is cheap, and freshness (a SKILL.md added mid-session)
+  is worth more.
 
-利用者要望「Claude 以外でも使いたい」を受け、codex / opencode / cursor を追加した。
-全ソース・起動形をライブ実測してから実装（docs/50 §7 が根拠）。
+## Addendum (same day, v2): making it cross-agent
 
-### 4. 起動文字列は API が `invoke` として返す（UI は kind を知らない）
+Following the user's request to "use it with things other than Claude", codex / opencode / cursor
+were added. Every source and invocation form was measured live before implementing (docs/50 §7 is
+the evidence).
 
-起動形が kind で割れた（claude/opencode/cursor `/name`・codex は `$name` メンション）。
-UI に kind 分岐を持ち込まず、Agent が `invoke`（差し込む文字列そのもの）を返す契約に
-した。タイプで開くトリガ文字だけ registry（`skillTrigger`）に持つ。
+### 4. The API returns the invocation string as `invoke` (the UI does not know about kinds)
 
-### 5. cursor は CLI 広告リストが正（FS 走査ではなく）
+The invocation form differs by kind (claude/opencode/cursor use `/name`; codex uses a `$name`
+mention). Rather than bring a kind branch into the UI, the contract has the Agent return `invoke`
+(the exact string to insert). Only the trigger character for opening on typing lives in the registry
+(`skillTrigger`).
 
-ACP `available_commands_update` が builtin スキル＋global＋project の完全な一覧を
-流してくる（実測）。driver の onNotify（従来読み捨て）から in-memory ストア
-（`agents.PublishCommands`）へ publish し handler が読む。**GET から driver を
-Resume しない**（runtime を起こす副作用が出る）— 未着時は project FS へフォールバック。
+### 5. For cursor, the CLI's advertised list is canonical (not an FS walk)
 
-### 6. 未検証の経路・kind は立てない
+ACP's `available_commands_update` streams a complete list of built-in skills plus global plus
+project (measured). The driver's onNotify (which previously discarded it) publishes into an
+in-memory store (`agents.PublishCommands`) that the handler reads. **The GET does not Resume the
+driver** (that would have the side effect of waking the runtime) — if nothing has arrived, it falls
+back to the project FS.
 
-- opencode の managed（server API）経由 /command 発火は未検証 → `slashSkillsManaged:
-  false` でミラー側をゲート（TUI セッションのみ表示）。
-- kiro は広告の `prompts`（ユーザー定義）が実データ 0 件で形未検証、組み込みだけでは
-  雑音 → 見送り。copilot / agy は機構自体が未確認/suspect → 見送り。
+### 6. Do not stand up unverified paths or kinds
 
-## 追記（同日 v3・**v4 で撤回**）: スキルブリッジ＝起動時のマーカー付きコピー同期
+- Firing /command through opencode's managed (server API) path is unverified → the mirror side is
+  gated with `slashSkillsManaged: false` (shown for TUI sessions only).
+- kiro's advertised `prompts` (user-defined) had zero real entries so the shape is unverified, and
+  the built-ins alone are noise → deferred. copilot and agy have unconfirmed or suspect mechanisms →
+  deferred.
 
-利用者要望「リンクを置かず実行時に橋渡し」「両方のフォルダのスキルをどちらの
-エージェントからも」「シンボリックリンクはしたくない」を受け、一度は
-`.claude/skills` ⇄ `.codex/skills` の**マーカー付きコピー双方向同期**
-（`internal/skillbridge`・info/exclude で status 非汚染）を実装した。しかし
-**git には見えなくても実ファイルをプロジェクトディレクトリに置く**方式であり、
-利用者が「プロジェクトを汚すのか」と指摘 → 撤回（コードごと削除。実装の要点と
-安全規約はこの節の git 履歴に残る）。教訓: 「status を汚さない」と「ディレクトリを
-汚さない」は別の要件。
+## Addendum (same day, v3; **withdrawn in v4**): a skill bridge = marker-tagged copy sync at startup
 
-## 追記（同日 v4）: クロススキル注入 — ファイルに触らない橋渡し（採用）
+Following the user's requests to "bridge at run time without placing links", "have the skills in
+both folders available from either agent" and "no symlinks", a **marker-tagged bidirectional copy
+sync** between `.claude/skills` and `.codex/skills` was implemented (`internal/skillbridge`, using
+info/exclude so `status` stays clean). But it **places real files in the project directory even
+though git cannot see them**, and the user objected — "does that dirty the project?" → withdrawn
+(the code was deleted; the implementation's key points and safety rules remain in this section's git
+history). The lesson: "does not dirty status" and "does not dirty the directory" are different
+requirements.
 
-利用者提案「他のエージェントのスキルもピッカーの候補に出し、選択されたら
-プロンプトにして注入すればいい」をそのまま採った（docs/50 §8）。
+## Addendum (same day, v4): cross-skill injection — a bridge that touches no files (adopted)
 
-### 7. 橋渡しはファイル操作でなくプロンプト注入
+The user's proposal — "list other agents' skills as candidates in the picker too, and when one is
+selected, turn it into a prompt and inject that" — was adopted as stated (docs/50 §8).
 
-- API が他規約（`.claude/skills` / `.codex/skills` / `.agents/skills`）の SKILL.md を
-  **foreign エントリ**（`path`＋`origin`・`invoke` 空）として一覧に混ぜ、Console が
-  選択時に「`{path} を読んで、そのスキルの指示に従って実行して。`」を差し込む。
-- 捨てた案との比較: symlink（利用者却下）／コピー同期（v3 — ディレクトリ汚染で撤回）
-  ／codex `skills/extraRoots/set` RPC（無書込だが codex 片方向のみ・claude に相当
-  機構なし・TUI ドライバに届かない可能性）。注入は**無書込・双方向・全 kind・
-  全ドライバ**を一度に満たす唯一の案だった。
-- 副産物: ネイティブのスキル機構を持たない kiro / copilot / agy でもピッカーが成立
-  （foreign のみ・ボタン起点）。opencode の managed ゲートはネイティブ項目限定になり、
-  managed opencode でも foreign は使える。
-- 限界: ネイティブ起動と違い CLI のスキルランタイム（claude の context: fork や
-  allowed-tools 制約等）は通らず、本文解釈はモデル任せ。正確さが要る場面はネイティブ
-  規約の側にスキルを置く。
+### 7. The bridge is prompt injection, not file operations
 
-## 残る非対称（既知・本 ADR の範囲外）
+- The API mixes SKILL.md files from the other conventions (`.claude/skills` / `.codex/skills` /
+  `.agents/skills`) into the list as **foreign entries** (`path` plus `origin`, with `invoke`
+  empty), and on selection the Console inserts "read `{path}` and follow that skill's instructions".
+- Compared with the rejected options: symlinks (rejected by the user); copy sync (v3 — withdrawn for
+  dirtying the directory); codex's `skills/extraRoots/set` RPC (writes nothing, but is codex-only and
+  one-directional, has no equivalent in claude, and may not reach the TUI driver). Injection was the
+  only option that satisfies **no writes, both directions, every kind, every driver** at once.
+- A by-product: the picker works even for kiro / copilot / agy, which have no native skill mechanism
+  (foreign only, via the button). opencode's managed gate now applies only to native entries, so
+  foreign entries work under managed opencode too.
+- The limit: unlike a native invocation it does not go through the CLI's skill runtime (claude's
+  `context: fork`, allowed-tools restrictions and so on), and interpreting the body is left to the
+  model. Where accuracy matters, put the skill on the native convention's side.
 
-- managed 経路はスラッシュでも `markSessionWorking` する（tui のガードの managed 版が
-  無い）— 既存の非対称。直すなら別タスク。
-- kiro の広告リスト（`_kiro.dev/commands/available`）は引き続き読み捨て。取り込みは
-  cursor と同じ publish 経路に流すだけ（docs/50 §7.4）。
-- ブリッジは repo 内の 2 規約のみ（`.agents/skills` と user レベルは対象外 — codex は
-  `.agents/skills` をネイティブに読むので不要、claude 側から見えないのは既知）。
+## The asymmetry that remains (known; out of scope for this ADR)
 
-## 追記（2026-07-30 v5）: 引数入力中は閉じずに受動表示・修飾キー即送信は廃止
+- The managed path calls `markSessionWorking` even for a slash (there is no managed version of the
+  tui's guard) — a pre-existing asymmetry. Fixing it is a separate task.
+- kiro's advertised list (`_kiro.dev/commands/available`) is still discarded. Taking it in is just a
+  matter of routing it into the same publish path as cursor (docs/50 §7.4).
+- The bridge covers only the two conventions inside the repo (`.agents/skills` and the user level are
+  out of scope — codex reads `.agents/skills` natively so it is unnecessary, and that claude cannot
+  see it is known).
 
-利用者指摘「引数を入力しようとスペースを打つと候補が消える。引数を参照したいので
-出したままにしたい」「Ctrl＋クリックの即送信は要らない」を受けた 2 点の変更（docs/50 §2.2）。
+## Addendum (2026-07-30, v5): stay open passively while arguments are typed; modifier-click send removed
 
-### 8. 「補完」と「引数ヒント」を 1 つのリストの 2 モードに分ける
+Two changes following the user's observations — "typing a space to enter an argument makes the
+candidates vanish; I want it to stay up so I can refer to the arguments" and "I do not need
+Ctrl+click to send immediately" (docs/50 §2.2).
 
-- `slashTokenAt` はキャレットが先頭トークンの右にある間も `args=true` のトークンを
-  返す（従来は null＝閉じる）。表示は名前完全一致の 1 件だけ（`exactSkills`）に絞る —
-  目的が「打ち終えたコマンドの `argument-hint` を見ながら引数を書く」ことなので、
-  部分一致の別候補はノイズ。一致 0 件（ただの `/` 始まりの文章）は描画しない。
-- 受動表示では**キーボードを横取りしない**のが要（Enter＝送信・↑/↓＝キャレット/履歴）。
-  横取りしたままリストを生かすと、引数を書いた後 Enter で送れないという致命的な劣化に
-  なる。選択ハイライト（sel）も出さず、クリックだけを生かす＝「Enter で確定できそう」
-  という誤解も与えない。
-- 差し込み直後のキャレットは `invoke` 末尾空白の右＝引数位置なので、選んだ瞬間から
-  この受動表示に入る（＝選択 → ヒントを見ながら引数、が一続きになる）。
+### 8. Split "completion" and "argument hint" into two modes of one list
 
-### 9. 修飾キー＋クリックの即送信を廃止
+- `slashTokenAt` returns a token with `args=true` while the caret is to the right of the first token
+  as well (previously it returned null, i.e. closed). The display narrows to the single exact name
+  match (`exactSkills`) — the purpose is "write the arguments while looking at the `argument-hint` of
+  the command you have finished typing", so other partial matches are noise. Zero matches (plain prose
+  that happens to start with `/`) renders nothing.
+- In passive display the key point is **not to hijack the keyboard** (Enter = send, ↑/↓ = caret and
+  history). Keeping the list alive while hijacking would be a fatal regression: you could not press
+  Enter to send after writing the arguments. The selection highlight (sel) is not shown either, and
+  only clicking works — so it does not suggest "Enter would confirm this" either.
+- Right after an insertion the caret is to the right of `invoke`'s trailing space, i.e. at the
+  argument position, so it enters this passive display the moment you select (selecting, then writing
+  arguments while looking at the hint, is one continuous motion).
 
-v1 で「返信サジェストと同じイディオム」として残した例外（`ADR §2`）を撤回。利用者は
-使っておらず、引数付きスキルでの誤爆リスクだけが残る。§8 で引数を書く導線が主動線に
-なった以上、ピッカーは**差し込み一択**で首尾一貫させる。
+### 9. Modifier+click to send immediately is removed
+
+The exception kept in v1 as "the same idiom as reply suggestions" (§2) is withdrawn. Users did not
+use it, leaving only the risk of misfiring on a skill with arguments. Now that §8 has made writing
+arguments the main route, the picker is consistently **insertion only**.

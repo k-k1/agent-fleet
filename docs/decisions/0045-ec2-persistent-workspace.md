@@ -1,1187 +1,1298 @@
-# 0045. Workspace の EC2 起動タイプは「汎用スロットのプール ＋ ユーザー毎 EBS の差し替え」で採る
+# 0045. Adopt the EC2 launch type for workspaces as "a pool of generic slots plus swapping a per-user EBS volume"
 
-- 状態: **採用・実装中**（2026-08-15。設計と実測は [docs/64](../64-ec2-persistent-workspace.md)）。
-  成立性は AWS sandbox で**端から端まで実測**した（新規作成 → 温起動 → 停止 → 終了 → ボリューム付け替え →
-  snapshot 退避 → 復元 → サイズ変更、および第 2 ラウンドのプール型・ホットスワップ・golden snapshot）。
-  ⚠️ **本 ADR は同じ日のうちに「条件付き見送り」から「採用」へ転じている。** 決定 1〜9 は
-  見送りの記録として書かれたもので、**転じた理由と採る形は決定 10** にある。決定 2（今は採らない）は
-  決定 10 が上書きし、決定 5（着手ゲート）は**充足を待たずに着手する**判断で越えた。
-  **決定 3・4・6〜9 は生きている**——実装に持ち込む罠と形の一覧である。
-- 関連: [64-ec2-persistent-workspace.md](../64-ec2-persistent-workspace.md) /
-  [0044-workspace-sizing.md](0044-workspace-sizing.md) 決定 4（本 ADR を起こした宿題） /
-  [63-workspace-sizing.md](../63-workspace-sizing.md) §63.4（EFS の I/O 実測） /
-  [62-ecs-start-latency.md](../62-ecs-start-latency.md) §62.5（(d) EC2 起動タイプの却下・本 ADR で改訂） /
-  [0012-go-refactor.md](0012-go-refactor.md)（アダプタは CP に状態を持たない）
+English | [日本語](0045-ec2-persistent-workspace.ja.md)
 
-## 背景
+- Status: **adopted, in implementation** (2026-08-15. The design and the measurements are in
+  [docs/64](../log/64-ec2-persistent-workspace.md)). Feasibility was **measured end to end** in an AWS
+  sandbox (create from scratch → warm start → stop → terminate → move the volume → snapshot for
+  hibernation → restore → resize, plus the second round of the pool model, hot swapping and the golden
+  snapshot).
+  ⚠️ **This ADR turned from "deferred with conditions" to "adopted" within the same day.** Decisions
+  1–9 were written as the record of deferring; **the reason for turning and the shape adopted are in
+  decision 10**. Decision 2 (not adopting it now) is overridden by decision 10, and decision 5 (the
+  gate for starting) was passed by deciding **to start without waiting for it to be satisfied**.
+  **Decisions 3, 4 and 6–9 are live** — they are the list of traps and shapes to carry into the
+  implementation.
+- See also: [64-ec2-persistent-workspace.md](../log/64-ec2-persistent-workspace.md) /
+  [0044-workspace-sizing.md](0044-workspace-sizing.md) decision 4 (the homework that raised this ADR) /
+  [63-workspace-sizing.md](../log/63-workspace-sizing.md) §63.4 (measuring EFS I/O) /
+  [62-ecs-start-latency.md](../log/62-ecs-start-latency.md) §62.5 (rejecting (d) the EC2 launch type — revised by this ADR) /
+  [0012-go-internal-refactor.md](0012-go-internal-refactor.md) (adapters hold no state in the CP)
 
-ADR 0044 決定 4 で「Fargate に『速くて永続』は存在しない。本当に必要なときの答えは EC2 起動タイプ ＋
-インスタンス stop で、別案件として検討する」と書いた。その検討である。
-併せて docs/62 の「(d) EC2 起動タイプ＝却下」が今も有効かを判定する。
+## Context
 
-## 決定 1 — 技術的には成立する（実測で確認した）
+ADR 0044 decision 4 said "Fargate has no 'fast and persistent'. When it becomes genuinely necessary
+the answer is the EC2 launch type plus instance stop, to be considered as a separate piece of work."
+This is that consideration. It also judges whether docs/62's "(d) EC2 launch type = rejected" still
+holds.
 
-ECS の枠内で「1 ユーザー = 1 インスタンス ＋ 永続 EBS、使わないときは stop」は**組める**。
+## Decision 1 — it works technically (confirmed by measurement)
 
-- コンテナインスタンスは **user-data だけ**でクラスタに参加し、`ECS_INSTANCE_ATTRIBUTES` で名乗った
-  属性がそのまま登録される。サービスは `launchType=EC2` ＋ 配置制約
-  `memberOf attribute:af-membership == <id>` でそのインスタンスにだけ載る。
-  **ASG もキャパシティプロバイダも要らない**（`PlacementConstraint` は Fargate では使えないので、
-  これは EC2 起動タイプ固有の道具）。
-- **home を追加 EBS に置くと本当に残る**——インスタンスの stop/start でも、**terminate → 新インスタンスへの
-  `AttachVolume`** でも中身が保たれた（`DeleteOnTermination=false`）。
-- **イメージキャッシュが効く**（pull 31.8s → **0.09s**）。
-- **Service Connect は EC2 起動タイプでも動く**（Fargate のクライアント＝ CP 役から疎通確認）。
-  `Endpoint()` の契約は変えなくてよい。
-- **CP はステートレスのままでよい**（ADR 0012）。インスタンス・ボリューム・スナップショットは
-  すべてタグで、配置は ECS 属性で引ける。
+Within ECS, "one user = one instance plus a persistent EBS volume, stopped when unused" **can be
+built**.
 
-## 決定 2 — ~~それでも今は採らない~~（Fargate ＋ ADR 0044 決定 3 を続ける）
+- A container instance joins the cluster **from user-data alone**, and the attributes it declares via
+  `ECS_INSTANCE_ATTRIBUTES` are registered as they are. A service lands only on that instance with
+  `launchType=EC2` plus the placement constraint `memberOf attribute:af-membership == <id>`.
+  **Neither an ASG nor a capacity provider is needed** (`PlacementConstraint` cannot be used on
+  Fargate, so this is a tool specific to the EC2 launch type).
+- **Putting home on an additional EBS volume really does keep it** — through instance stop/start, and
+  through **terminate → `AttachVolume` to a new instance** (`DeleteOnTermination=false`).
+- **The image cache works** (pull 31.8s → **0.09s**).
+- **Service Connect works on the EC2 launch type too** (verified from a Fargate client acting as the
+  CP). `Endpoint()`'s contract does not have to change.
+- **The CP can stay stateless** (ADR 0012). Instances, volumes and snapshots are all found by tag, and
+  placement by ECS attributes.
 
-> ⚠️ **決定 10 で覆した（2026-08-15・同日）。** 以下は見送りを決めたときの理由の記録であり、
-> 現在の方針ではない。3 つの理由のうち (1) は決定 8 で既に「プール型には当てはまらない」と
-> 改訂済み、(2) は Fargate 経路についての比較、(3)（運用対象が 2 → 6 種類）だけが**代償として
-> 残る**——決定 10 はそれを「別アダプタで並走させ、使うデプロイだけが払う」形で受ける。
+## Decision 2 — ~~and yet we do not adopt it now~~ (continue with Fargate plus ADR 0044 decision 3)
 
-理由は 3 つで、いずれも実測に基づく。
+> ⚠️ **Overturned by decision 10 (2026-08-15, the same day).** What follows is the record of the
+> reasons at the time of deferring, and is not the current direction. Of the three reasons, (1) was
+> already revised by decision 8 as "does not apply to the pool model", (2) is a comparison about the
+> Fargate path, and only (3) (the operational surface going from 2 to 6 kinds) **remains as a price** —
+> decision 10 takes it in the form of "run it in parallel as a separate adapter, so only deployments
+> that use it pay".
 
-1. **~~起動は速くならない~~（改訂 —— 決定 8 を見よ）。** 1 ユーザー = 1 インスタンス固定なら
-   stop→start→タスク RUNNING が **83.5s** で、Fargate の温ホーム再 Start（同じ地点まで **~84s**）と
-   差が無い（pull で浮く 35 秒を、インスタンス起動 19s ＋ ECS 再登録 1s ＋ 配置 13s で使い切る）。
-   **ただしプール型なら 22〜27s** なので、「EC2 化しても速くならない」と一般化してはならない。
-   この形での見送りの根拠としては (2)(3) が残る。
-2. **効き幅の大半を決定 3 が先に取る。** EC2 化の本命は I/O だが、`node_modules` 等をローカルへ逃がす
-   ADR 0044 決定 3 が `npm ci` 105s → 11s を**タスク定義 1 行と entrypoint の分岐だけで**取る。
-   EC2 化の残りの取り分は「永続領域（`~/repos`・`~/.local`）も速い」「朝の再生成が要らない」に絞られる。
-3. **運用対象が 2 種類から 6 種類に増える。** 1 Workspace あたり「サービス ＋ EFS アクセスポイント」から
-   「インスタンス・EBS ボリューム・スナップショット・コンテナインスタンス登録・サービス・タスク定義」へ。
-   ECS 構成は**実運用実績ゼロ**であり、ここで面を広げる順番ではない。
+Three reasons, all based on measurement.
 
-**費用は見送りの理由ではない**——むしろ EC2 の方が安い（月 160h・home 45 GiB で $28.5 対 $39.6、
-完全アイドル月は $7.7 対 $16.3）。ただし **EFS は使った分、EBS は確保した分**の課金なので、
-損益分岐は充填率 **26.7%**（$0.096 / $0.36）である点は記録しておく。
+1. **~~Startup does not get faster~~ (revised — see decision 8).** With one user = one fixed instance,
+   stop→start→task RUNNING is **83.5s**, no different from Fargate's warm-home restart (**~84s** to the
+   same point) — the 35 seconds saved on the pull are spent on instance start 19s, ECS re-registration
+   1s and placement 13s. **But the pool model gives 22–27s**, so this must not be generalised into
+   "EC2 does not make it faster". As grounds for deferring *this shape*, (2) and (3) remain.
+2. **Decision 3 takes most of the benefit first.** The point of EC2 is I/O, but ADR 0044 decision 3
+   (moving `node_modules` and the like to local storage) takes `npm ci` from 105s to 11s **with one line
+   in the task definition and a branch in the entrypoint**. What is left for EC2 narrows to "the
+   persistent areas (`~/repos`, `~/.local`) are fast too" and "no regeneration each morning".
+3. **The operational surface goes from 2 kinds to 6.** Per workspace, from "a service plus an EFS
+   access point" to "an instance, an EBS volume, a snapshot, a container instance registration, a
+   service and a task definition". The ECS configuration has **zero production track record**, and this
+   is not the moment to widen the surface.
 
-## 決定 3 — 採る場合に必ず実装するもの（実測で見つけた罠）
+**Cost is not a reason for deferring** — EC2 is in fact cheaper ($28.5 versus $39.6 at 160h/month with
+a 45 GiB home; $7.7 versus $16.3 in a fully idle month). But since **EFS bills for what you use and EBS
+for what you provision**, it is worth recording that the break-even fill rate is **26.7%**
+($0.096 / $0.36).
 
-「そのうち作る」ときに忘れると必ず踏むので、ここに固定する。
+## Decision 3 — what must be implemented if it is adopted (traps found by measurement)
 
-1. **サイズ変更は 3 手セット。** 停止中に `ModifyInstanceAttribute` でタイプを変えると、ECS エージェントが
-   `Container instance type changes are not supported` で **terminal exit** し、クラスタに戻らない。
-   `DeregisterContainerInstance --force` ＋ **`/var/lib/ecs/data/*` の削除** ＋ `systemctl restart ecs`
-   を踏むこと（実測 46s で復帰し、属性も維持される）。
-2. **削除時は `DeregisterContainerInstance` を明示的に呼ぶ。** SDK のドキュメントに
-   「停止済み／エージェント切断のインスタンスは terminate しても自動 deregister されない」と明記がある。
-   放置するとゴースト登録が積もる。
-3. **パブリック IP に依存しない。** awsvpc のタスク ENI はエージェント切断中インスタンスに残り、
-   複数 ENI 構成になると **start 時に自動割当パブリック IPv4 が付かない**。実測ではそれで egress を失い、
-   エージェントが 11 分再接続できなかった。本番はプライベートサブネット ＋ NAT なので露出しないが、
-   前提として明記する。
-4. **AZ が固定される。** EBS は AZ を跨げず、停止インスタンスは AZ を保持するので、その AZ で容量が
-   取れないと start が失敗する。逃げ道は snapshot 経由で別 AZ に作り直すことだけ（45 GiB で 30〜40 分）。
-5. **`State()` はインスタンス状態との組で写す。** サービスの desired/running だけでは
-   「インスタンス起動中」を `starting` と言えない。
-6. **資格情報だけは EFS に残すハイブリッドにする。** 単一 AZ・単一ボリュームの EBS が失われたとき、
-   ログイン情報まで一緒に失わないため（`homeKeep` の 7 つは 100 MiB 未満）。
+These are pinned here because they will certainly be hit if forgotten when "we build it eventually".
 
-## 決定 4 — 長期未使用ユーザーの退避は「standard 階層の snapshot」まで。archive は使わない
+1. **Resizing is a set of three steps.** Changing the type with `ModifyInstanceAttribute` while stopped
+   makes the ECS agent **exit terminally** with `Container instance type changes are not supported` and
+   never rejoin the cluster. You must do `DeregisterContainerInstance --force`, **delete
+   `/var/lib/ecs/data/*`**, and `systemctl restart ecs` (measured at 46s to recover, with attributes
+   preserved).
+2. **Call `DeregisterContainerInstance` explicitly on deletion.** The SDK documentation states that a
+   stopped or agent-disconnected instance is not deregistered automatically when terminated. Left alone,
+   ghost registrations pile up.
+3. **Do not depend on a public IP.** An awsvpc task ENI stays on an instance while the agent is
+   disconnected, and in a multi-ENI configuration **no automatically assigned public IPv4 is attached at
+   start**. In measurement that lost egress and the agent could not reconnect for 11 minutes.
+   Production uses private subnets plus NAT so it is not exposed, but the premise is stated.
+4. **The AZ becomes fixed.** EBS cannot cross AZs and a stopped instance retains its AZ, so if capacity
+   is unavailable in that AZ the start fails. The only escape is recreating it in another AZ via a
+   snapshot (30–40 minutes for 45 GiB).
+5. **`State()` must be read together with the instance state.** A service's desired/running alone
+   cannot say "the instance is starting" as `starting`.
+6. **Keep the credentials alone on EFS, as a hybrid.** So that if a single-AZ, single-volume EBS is
+   lost, the login information does not go with it (the seven items in `homeKeep` are under 100 MiB).
 
-- 退避（タスク停止 → terminate → `CreateSnapshot` → ボリューム削除）と復帰（`CreateVolume` →
-  新インスタンス → `AttachVolume`）はどちらも実測で通った。**ユーザーを待たせるのは復帰の 122 秒だけ**で、
-  snapshot 作成（実データ 5.45 GB で 267s ＝ 約 20 MB/s。45 GiB なら 30〜40 分）は非同期でよい。
-- 費用は **実使用 20 GiB / 確保 50 GiB のユーザーで $4.80 → $1.00**（snapshot は使用ブロックのみ課金）。
-- **復元直後は 2.3 倍遅い**（4 GiB 読み出しが 57.4 MB/s、通常は 135 MB/s）。触った分だけなので
-  「初日が少し重い」程度に散る。`VolumeInitializationRate`（100〜300 MiB/s・有償）で潰せるが、
-  **Fast Snapshot Restore は $0.90/時＝月 $648** なので per-user には論外。
-- **アーカイブ階層（$0.0125/GB-月）は採らない。** `RestoreSnapshotTier` の復元に **24〜72 時間**かかり、
-  最低 90 日課金も付く。使うとしても「休眠アカウント」という別状態として Console に明示する機能であって、
-  自動アイドル停止の延長線上には置けない。
-- 退避の判定は**サイズではなく最終利用日**で行う（課金差が効くのは「長く使っていない人」だけ）。
+## Decision 4 — hibernation of long-unused users goes as far as a standard-tier snapshot; archive is not used
 
-> **決定 13 で役割が 1 つ増えた。** 退避は費用対策として書いたが、**自動削除を可逆にする仕掛け**
-> でもある。保持期間スイープの動作を「破棄」ではなく「退避」にすることで、
-> **誰も押していないのに home が消える経路が product に無い**状態を保てる。
+- Hibernation (stop the task → terminate → `CreateSnapshot` → delete the volume) and restoration
+  (`CreateVolume` → a new instance → `AttachVolume`) both worked in measurement. **The only thing the
+  user waits for is restoration's 122 seconds**; creating the snapshot (267s for 5.45 GB of real data =
+  about 20 MB/s; 30–40 minutes for 45 GiB) can be asynchronous.
+- The cost is **$4.80 → $1.00 for a user with 20 GiB used out of 50 GiB provisioned** (a snapshot bills
+  only for used blocks).
+- **It is 2.3× slower right after a restore** (reading 4 GiB at 57.4 MB/s versus a normal 135 MB/s).
+  It applies only to what is touched, so it spreads out as "the first day is a bit heavy". It can be
+  removed with `VolumeInitializationRate` (100–300 MiB/s, paid), but **Fast Snapshot Restore is
+  $0.90/hour = $648/month** and is out of the question per user.
+- **The archive tier ($0.0125/GB-month) is not adopted.** `RestoreSnapshotTier` takes **24–72 hours** to
+  restore and carries a 90-day minimum charge. If it were ever used, it would be a feature stated
+  explicitly in the Console as a separate state, "a dormant account", and could not sit on the
+  continuum of automatic idle stopping.
+- Hibernation is decided by **the last-used date, not by size** (the billing difference only matters for
+  people who have not used it for a long time).
 
-## 決定 5 — ~~着手の判定ゲート~~（充足を待たずに着手した）
+> **Decision 13 gave it one more role.** Hibernation was written as a cost measure, but it is also
+> **the mechanism that makes automatic deletion reversible**. Making the retention sweep's action
+> "hibernate" rather than "destroy" keeps the product in a state where **no path erases a home that
+> nobody pressed a button for**.
 
-> ⚠️ **決定 10 で越えた。** 下の 5 つは**どれも実測では言えていない**。ADR 0044 決定 5 の実装
-> （退避を既定で有効化）は入ったが、その後の再計測をしていない段階で、**利用者の判断として
-> 着手した**。したがってこのゲートは「充足したから進んだ」の記録ではなく、
-> **「充足しないまま進んだと分かるようにするための記録」**として残す。
+## Decision 5 — ~~the gate for starting~~ (started without waiting for it)
 
-ADR 0044 決定 3 の実装後、**次のいずれかが実測で言えたとき**に EC2 案へ進む。言えないうちは着手しない。
+> ⚠️ **Passed by decision 10.** **None of the five below can be said from measurement.** ADR 0044
+> decision 5's implementation (hibernation enabled by default) went in, but with no re-measurement
+> afterwards, **we started as a user's decision**. So this gate is not a record of "we proceeded because
+> it was satisfied" but **a record kept so it is visible that we proceeded without satisfying it**.
 
-1. 決定 3 の後でも `~/repos` 上の `git status` / `rg` が 1 操作 5 秒超で観測される
-2. 朝の再生成（`npm ci` ＋ 初回ビルド）が 5 分超のユーザーが常態化する
-3. EFS 課金がユーザーあたり月 $10 を超える
-4. **Fargate のサイズ上限（16 vCPU / 120 GiB / ephemeral 200 GiB）に当たる要望が出る**
-   —— これだけは決定 3 では解けないので、単独で理由になる
-5. **「Start を 30 秒未満に」が製品要件になる**（決定 8）—— Fargate は温ホームでも ~105s から
-   構造的に動かせず、**22〜27s を出せるのはプール型だけ**なので、他の 4 つと無関係に理由になる
+After ADR 0044 decision 3 is implemented, proceed to the EC2 proposal **when any of the following can be
+said from measurement**. Until then, do not start.
 
-## 決定 6 — ECS Managed Instances は選択肢に入らない
+1. Even after decision 3, `git status` / `rg` on `~/repos` is observed to take over 5 seconds for one
+   operation.
+2. Regeneration each morning (`npm ci` plus the first build) exceeding 5 minutes becomes normal for some
+   users.
+3. EFS billing exceeds $10 per user per month.
+4. **A request arrives that hits Fargate's size ceiling (16 vCPU / 120 GiB / ephemeral 200 GiB)** —
+   this alone cannot be solved by decision 3, so it is a reason on its own.
+5. **"Start in under 30 seconds" becomes a product requirement** (decision 8) — Fargate cannot
+   structurally move from ~105s even with a warm home, and **only the pool model can produce 22–27s**,
+   so it is a reason independent of the other four.
 
-`aws-sdk-go-v2/service/ecs@v1.87.0` の型定義で確認した: `InfrastructureOptimization.ScaleInAfter` は
-アイドルなインスタンスを**終了**し、`AutoRepairConfiguration` は不調なインスタンスを**置き換え**、
-`ManagedInstancesStorageConfiguration` は**サイズしか指定できない**（既存ボリュームを指す項目が無い）。
-**インスタンスのライフサイクルの所有者が ECS 側にあり、stop という状態が存在しない。**
-Managed Instances は「Fargate の揮発性を EC2 の価格と自由度で得る」ものであって、永続の話ではない。
+## Decision 6 — ECS Managed Instances is not an option
 
-## 決定 7 — docs/62 の「(d) EC2 起動タイプ＝却下」を改訂する
+Confirmed against the type definitions in `aws-sdk-go-v2/service/ecs@v1.87.0`:
+`InfrastructureOptimization.ScaleInAfter` **terminates** idle instances, `AutoRepairConfiguration`
+**replaces** unhealthy ones, and `ManagedInstancesStorageConfiguration` **can only specify a size**
+(there is no field pointing at an existing volume). **ECS owns the instance lifecycle, and the state
+"stopped" does not exist.** Managed Instances is about "getting Fargate's ephemerality at EC2's price
+and flexibility"; it is not about persistence.
 
-当時の却下理由は 4 つだったが、**主たる理由が誤りだった**ので書き換える（docs/62 §62.5 に追記済み）。
+## Decision 7 — revise docs/62's "(d) EC2 launch type = rejected"
 
-| 当時の理由 | 判定 |
+There were four reasons at the time, but **the main one was wrong**, so it is rewritten (already
+appended to docs/62 §62.5).
+
+| The reason at the time | Verdict |
 |---|---|
-| **scale-to-zero の経済性が消える** | ❌ **誤り。** 停止インスタンスは課金されず EBS だけになる。実測費用でも EC2 の方が安い |
-| 容量プロバイダ / ASG / ドレインが増える | ❌ **不要だった。** `launchType=EC2` は素の登録済みインスタンスで動く（実測） |
-| AMI 更新が増える | ✅ **有効。** これは残る（イメージキャッシュを持つ長寿命インスタンスの patch 経路が要る） |
-| 「per-workspace は CP がステートレス」を壊す | ❌ タグと ECS 属性で引けるので**壊れない**。ただし扱う資源の種類は 2 → 6 に増える |
-| 「1 台の VM 形は `ec2-single` として既にある」 | ❌ **別物。** `ec2-single` は全部入り 1 台で per-user 分離が無い |
+| **scale-to-zero's economics disappear** | ❌ **Wrong.** A stopped instance is not billed; only EBS is. EC2 is cheaper in the measured costs too |
+| Capacity providers / ASGs / draining are added | ❌ **Not needed.** `launchType=EC2` works on a plain registered instance (measured) |
+| AMI updates increase | ✅ **Valid.** This one remains (a long-lived instance holding an image cache needs a patch route) |
+| It breaks "per-workspace means the CP is stateless" | ❌ It **does not break**, since everything is found by tag and ECS attribute. But the kinds of resource handled go from 2 to 6 |
+| "The single-VM shape already exists as `ec2-single`" | ❌ **A different thing.** `ec2-single` is one all-in-one machine with no per-user isolation |
 
-**却下そのものは（起動レイテンシの文脈では）結論として維持する**——実測で 83.5s 対 ~84s と差が無く、
-docs/62 の目的に対しては効かないため。ただし**理由は「scale-to-zero が消えるから」ではなく
-「起動が速くならないから」**である。
+**The rejection itself stands as a conclusion (in the context of startup latency)** — measurement shows
+83.5s versus ~84s, no difference, so it does not help docs/62's purpose. But **the reason is not
+"scale-to-zero disappears" but "startup does not get faster".**
 
-⚠️ **ただしこれは「1 ユーザー = 1 インスタンス固定」の形についてのみ。** 決定 8 のプール型は
-**22〜27s** を出すので、起動レイテンシの文脈でも**効く**。docs/62 の (d) は「その形なら効かない」の
-記録であって、「EC2 では速くできない」ではない。EC2 起動タイプの検討軸は起動レイテンシではなく **I/O と永続**であり、
-そちらは本 ADR の決定 2 と決定 5 が扱う。
+⚠️ **That applies only to the "one user = one fixed instance" shape.** Decision 8's pool model produces
+**22–27s** and therefore **does help** even in the startup-latency context. docs/62's (d) is a record of
+"that shape does not help", not "EC2 cannot be made fast". The axis for considering the EC2 launch type
+is **I/O and persistence**, not startup latency, and those are handled by decisions 2 and 5 of this ADR.
 
-## 決定 8 — 採るときの形は「1 ユーザー 1 インスタンス固定」ではなく「汎用スロットのプール ＋ EBS 差し替え」
+## Decision 8 — if adopted, the shape is "a pool of generic slots plus swapping the EBS", not "one fixed instance per user"
 
-**インスタンスをユーザーに紐づけず、ユーザー毎の EBS だけを差し替える**形を実測した（docs/64 §64.12）。
+We measured the shape in which **instances are not tied to users and only the per-user EBS is swapped**
+(docs/64 §64.12).
 
-- **停止中のインスタンスへ `AttachVolume` は通る**（3s）。停止スロットから起こす経路は
-  start 19s ＋ 登録 1s ＋ attach/mount 8s ＋ タスク 22s ＝ **~50s**。
-- **ホットスロット（起動したまま）なら差し替えは 22〜27s**（降ろすのに 24s・pull は 0.045s）。
-  **Fargate の ~105s の 1/4 で、しかも永続 home を保てる唯一の形。**
-- 配置は **`ec2InstanceId == i-xxx` の配置制約**で足りる（属性の書き換えは要らない）。
-- root ボリューム（＝イメージキャッシュ）が**スロット数分**で済むので、ユーザー数分の root を持つ
-  固定型よりストレージも安い。
+- **`AttachVolume` to a stopped instance works** (3s). The path of waking from a stopped slot is start
+  19s + registration 1s + attach/mount 8s + task 22s = **~50s**.
+- **On a hot slot (left running), the swap is 22–27s** (24s to unload; the pull is 0.045s). **A quarter
+  of Fargate's ~105s, and the only shape that also keeps a persistent home.**
+- Placement needs only **the placement constraint `ec2InstanceId == i-xxx`** (no rewriting of
+  attributes).
+- Since the root volume (the image cache) is only needed **per slot**, storage is cheaper than the fixed
+  model, which needs one root per user.
 
-**スロットは 1 ユーザー排他とする。** 「1 台に複数ユーザーのタスクを同時に置く」は技術的には
-成立した（EBS を別デバイスで載せて両タスク RUNNING・`MaximumEbsAttachments` は m7i 系で **32**・
-ENI とは別枠）が、**採らない** —— **EC2 のオンデマンド価格は vCPU に対して完全に線形**
-（m7i の large / xlarge / 2xlarge がいずれも **$0.0651 / vCPU-時**）なので、**詰めても compute は
-1 円も安くならない**。同居で浮くのはスロット毎の root ボリューム（30 GiB ＝ $2.88/月）と
-ホスト固定オーバーヘッドの按分（実測 409 MiB）だけで、対価がカーネルと root の共有では釣り合わない。
-排他にしてもプール型の利点（Start 22〜27s ＋ 永続 home）はそのまま残り、ホットスロット数 ≒
-同時稼働ユーザー数なので **Fargate で同時に走らせるのと同じ量の compute しか払わない**。
-なお排他なら**タスクの `cpu` を省いて 1 台をまるごと使わせる**のが正解（EC2 では `cpu` は
-インスタンスの CPU units の予約になる）。
+**A slot is exclusive to one user.** "Placing several users' tasks on one machine" did work technically
+(mounting the EBS volumes on different devices with both tasks RUNNING; `MaximumEbsAttachments` is
+**32** on the m7i family and is separate from ENIs), but **it is not adopted** — **EC2's on-demand price
+is perfectly linear in vCPU** (m7i large / xlarge / 2xlarge are all **$0.0651 per vCPU-hour**), so
+**packing them saves nothing at all on compute**. Co-tenancy only saves the per-slot root volume
+(30 GiB = $2.88/month) and the amortised fixed host overhead (409 MiB measured), which does not balance
+against sharing a kernel and a root. With exclusivity the pool model's advantages (Start 22–27s plus a
+persistent home) survive intact, and since hot slots ≈ concurrently active users, **we pay for the same
+amount of compute as running them concurrently on Fargate**. Note that with exclusivity the correct
+thing is to **omit the task's `cpu` and let it use the whole machine** (on EC2, `cpu` is a reservation
+of the instance's CPU units).
 
-**排他にしても残る代償**（採るなら設計に含める）:
+**The prices that remain even with exclusivity** (to be designed in if adopted):
 
-1. **root ボリュームは前のユーザーと共有される** —— コンテナ書き込み層と `/tmp` が残る。
-   ECS の掃除は `ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION`（**エージェント README の既定値表で 3h**・
-   別に `..._JITTER` もある）を詰めること。
-2. **`/tmp` は「残留」と「容量の共有」の 2 つのリスクを持つ** —— 実行中は mount namespace で
-   分離されるが、実体は共有 root ボリューム上にあり、ホストに手が届けば読める（Fargate の
-   タスク毎 microVM には無かった経路）。また一人が埋めると同じスロットの全部が倒れる。
-   **EC2 なら `linuxParameters.tmpfs`（`containerPath` ＋ `size` 必須 ＋ `noexec,nosuid,nodev`）で
-   `/tmp` を tmpfs にできる**（Fargate では使えない）＝ ディスクに書かれず・終了で消え・上限も付く。
-   書き込み層のクォータ（overlay2 ＋ xfs prjquota）とスロット返却時のコンテナ削除も併せて入れる。
-3. **CP がインスタンス上で `mount` / `umount` を実行する経路が要る**（実測は SSM SendCommand）。
-   **detach の前に必ず umount**（強制 detach はファイルシステムを壊す）。
-4. **AZ ごとにプールが要る**（EBS は AZ 固定）。
+1. **The root volume is shared with the previous user** — the container's write layer and `/tmp` remain.
+   ECS's cleanup, `ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION` (**3h in the agent README's default table**;
+   there is also a `..._JITTER`), must be tightened.
+2. **`/tmp` carries two risks, residue and shared capacity** — while running it is separated by a mount
+   namespace, but it physically sits on the shared root volume and is readable by anyone who can reach
+   the host (a route that did not exist with Fargate's per-task microVM). And one person filling it takes
+   down everything on that slot. **On EC2 you can make `/tmp` a tmpfs with `linuxParameters.tmpfs`
+   (`containerPath` plus a mandatory `size` plus `noexec,nosuid,nodev`)** (unavailable on Fargate) =
+   nothing is written to disk, it vanishes at exit, and it has a cap. A quota on the write layer
+   (overlay2 plus xfs prjquota) and deleting the container when the slot is returned go in alongside.
+3. **A route is needed for the CP to run `mount` / `umount` on the instance** (measured with SSM
+   SendCommand). **Always umount before detaching** (a forced detach corrupts the filesystem).
+4. **A pool is needed per AZ** (EBS is AZ-bound).
 
-**「速さ」と「残留」のトレードオフ**（docs/64 §64.12.4）: 使い捨てスロット（返却のたび terminate）
-なら残留ゼロだが**イメージキャッシュも捨てるので ~120s に戻る**。採るのは
-**ホット ＋ 排他 ＋ tmpfs ＋ 短い cleanup**（22〜27s）。
+**The speed/residue trade-off** (docs/64 §64.12.4): disposable slots (terminate on every return) leave
+zero residue but **throw away the image cache too, returning to ~120s**. What we adopt is
+**hot + exclusive + tmpfs + a short cleanup** (22–27s).
 
-## 決定 9 — 新規ユーザーの home は「golden snapshot」から作る
+## Decision 9 — a new user's home is created from a "golden snapshot"
 
-boot-install（4CLI 41s ＋ rtk 1s ＋ agy 6s ＝ **48s**）とキャッシュ空の初回 `npm install` を
-新規ユーザー全員に払わせる必要はない。**「boot-install 済み・キャッシュ温」の home を snapshot で
-1 本焼き、新規ユーザーの EBS をそこから作る**（docs/64 §64.13 で実測）。
+There is no need to make every new user pay for boot-install (4 CLIs 41s + rtk 1s + agy 6s = **48s**) and
+a first `npm install` with an empty cache. **Bake one snapshot of a home that is boot-installed with a
+warm cache, and create new users' EBS volumes from it** (measured in docs/64 §64.13).
 
-- **`CreateVolume`（snapshot 指定）＋ attach ＋ mount は 17〜20s**。golden home のタスクは
-  **17s で RUNNING・その 4s 後に準備完了**（`npm ci` 3.8s・ネットワーク不要）。
-  空 home は初回 `npm install` にネットワークで 15.3s を払う。
-- **小ファイルでは遅延ハイドレートの税がゼロだった** —— 復元直後のフルリード 25.0s は、
-  同じ内容の元ボリュームを drop_caches して読んだ 26.1s と**同じ**。§64.7 で見た 2.3 倍の税は
-  **4 GiB の逐次リード**で出るもので、home の読み方（小ファイル・IOPS 律速）では
-  ハイドレートがその裏に隠れる。**メタデータ走査は 23,012 ファイルで 0.118s。**
-- **golden は全ユーザーで 1 本**（snapshot は何本でもボリュームを生やせる）。費用は $0.05/GB-月 × 1。
-- **焼き直しをリリースに紐づけること。** イメージや CLI のピンが上がったら golden も焼き直す
-  （1 台起こして entrypoint を通し snapshot を取るだけ）。忘れると新規ユーザーだけ古い CLI で
-  始まるので、**golden にイメージタグを刻んで CP が突合する。**
-  - **追記（2026-08-23・[docs/73](../73-dev-deploy.md) 決定 3）**: 突合は**内容**で行う。
-    刻むのは `af-image`（参照文字列）に加えて **`af-image-fp`（プラットフォーム毎の manifest
-    digest から作る指紋）**で、両側にあるときは指紋が決め、無ければこれまでどおり文字列で
-    比べる。**参照は同一性ではない**——同じ digest を別タグに置き直しただけで焼き直しが走り
-    （docs/72 §72.6.4 で 10 分・スロット 2 本）、逆に可変タグへ新しい内容を push すると
-    文字列は一致したまま**古い home が新規メンバーに配られる**。
+- **`CreateVolume` (from the snapshot) plus attach plus mount is 17–20s.** The golden home's task is
+  **RUNNING in 17s and ready 4s later** (`npm ci` 3.8s, no network needed). An empty home pays 15.3s over
+  the network for the first `npm install`.
+- **The lazy-hydration tax was zero for small files** — a full read right after a restore took 25.0s,
+  **the same** as reading the source volume with the same contents after drop_caches (26.1s). The 2.3×
+  tax seen in §64.7 shows up on **a 4 GiB sequential read**, and in home's access pattern (small files,
+  IOPS-bound) hydration hides behind it. **A metadata walk over 23,012 files takes 0.118s.**
+- **One golden for all users** (a snapshot can grow any number of volumes). The cost is $0.05/GB-month ×
+  1.
+- **Tie re-baking to releases.** When the image or a CLI pin is raised, re-bake the golden too (start one
+  machine, run the entrypoint, take a snapshot). Forgetting means only new users start on old CLIs, so
+  **the image tag is stamped on the golden and the CP reconciles it.**
+  - **Addendum (2026-08-23, [docs/73](../log/73-dev-deploy.md) decision 3)**: reconcile by **contents**.
+    In addition to `af-image` (a reference string), stamp **`af-image-fp` (a fingerprint made from the
+    per-platform manifest digests)**; when both sides have it the fingerprint decides, and otherwise
+    strings are compared as before. **A reference is not identity** — merely re-placing the same digest
+    under a different tag triggers a re-bake (10 minutes and two slots in docs/72 §72.6.4), and
+    conversely pushing new contents to a mutable tag leaves the strings matching while **an old home is
+    distributed to new members**.
 
-### 9-1 — 焼き直しは CP がやる（2026-08-21・docs/64 §64.29）
+### 9-1 — the CP does the re-baking (2026-08-21, docs/64 §64.29)
 
-上の「焼き直しを忘れると」は**手順で守る約束**であり、守られなかったときに気づく手段が
-「CP のログに警告が出続ける」しかなかった。**引き金は「デプロイした」ことではなく
-「ワークスペースイメージが変わった」ことであり、その判定は CP が既に持っている**
-（`goldenSnapshot()` が `af-image` を突合して古い golden を拒否している）。持っている判定を
-行動に変える。
+The "if you forget to re-bake" above was **a promise kept by procedure**, and the only way to notice it
+had not been kept was "a warning keeps appearing in the CP's log". **The trigger is not "we deployed"
+but "the workspace image changed", and the CP already holds that judgement** (`goldenSnapshot()`
+reconciles `af-image` and rejects an old golden). We turn a judgement it already holds into action.
 
-- **形は退避（決定 4）と同じ。1 ティック 1 手・状態は AWS のタグに置く**（ADR 0012）。
-  焼きは数分かかるので、どのループも待ってはいけない。CP が途中で落ちたら次のティックが続きから
-  進める。
-- **種は予約メンバーシップ**（テナント `af-golden` の `af-golden-seed`）を**製品の通常の
-  Start 経路**で起こして作る。entrypoint を再実装しない、という決定 9 の但し書きはここでも同じ。
-- **★ 焼いただけでは公開しない。** まず `af-role=golden-candidate` として置き、**履歴の無い
-  別の予約メンバーシップ**（`af-golden-probe`）をその候補から起こし、Agent が上がって初めて
-  `af-role=golden` へ昇格させる。**起動不能な golden は「焼けた」まで全部成功に見え、壊れるのは
-  次に来た新規ユーザーで、症状は再起動ループだけである**（docs/64 §64.28.3 で実際に踏んだ）。
-  probe が**新しいメンバーシップでなければならない**のは、その不具合が **keep 側 EFS が新規の
-  ときだけ**出たからで、種を起こし直しても捕まらない。
-- **歯止め**: スロットが 2 つ空いていなければ始めない（実利用者から奪わない。golden が無い代償は
-  初回起動が遅いことだけで、誰かを追い出す理由にはならない）／同じイメージで 2 回失敗したら
-  諦める／`AF_ECS_EC2_GOLDEN_AUTOBAKE=0` で切れる。
-- **拒否した候補は消さない。** それが「このデプロイに golden が無い理由」であり、同時に
-  諦めるための数え札でもある。運用画面（プール）にも出す——ログの 1 行は流れる。
+- **The shape is the same as hibernation (decision 4). One step per tick, with state on AWS tags**
+  (ADR 0012). Baking takes minutes, so no loop may wait on it. If the CP dies part-way, the next tick
+  continues from where it stopped.
+- **The seed is a reserved membership** (`af-golden-seed` in tenant `af-golden`) started **through the
+  product's normal Start path**. Decision 9's proviso of not reimplementing the entrypoint applies here
+  too.
+- **★ Baking alone does not publish it.** It is first placed as `af-role=golden-candidate`, and **a
+  different reserved membership with no history** (`af-golden-probe`) is started from that candidate;
+  only once the Agent comes up is it promoted to `af-role=golden`. **A golden that cannot start looks
+  entirely successful right up to "baked", and what breaks is the next new user, whose only symptom is a
+  restart loop** (actually hit in docs/64 §64.28.3). The probe **must be a new membership**, because that
+  fault only appeared **when the keep-side EFS was new**, and re-starting the seed would not catch it.
+- **The brakes**: do not begin unless two slots are free (do not take them from real users; the price of
+  having no golden is only a slow first start, which is no reason to evict anyone); give up after two
+  failures on the same image; `AF_ECS_EC2_GOLDEN_AUTOBAKE=0` turns it off.
+- **A rejected candidate is not deleted.** It is "why this deployment has no golden", and at the same
+  time the tally for giving up. It is shown in the operations screen (the pool) too — a single log line
+  flows past.
 
-**採らなかった案**: 最初の実ユーザーの home をそのまま golden に昇格させる。種が要らず一見うまいが、
-**すでに誰かのものになっているボリューム**を撮ることになり、「本人が触る前」は時間的な競争になる。
-外すとその人のデータが全員に配られる——静かに壊れる型なので採らない。
+**An option not taken**: promoting the first real user's home to be the golden. It needs no seed and
+looks neat, but it means snapshotting **a volume that already belongs to someone**, and "before they
+touch it" becomes a race against time. Get it wrong and that person's data is distributed to everybody —
+a silently broken pattern, so it is not adopted.
 
-## 決定 10 — 採用に転じる。形はプール型、**既存 Fargate 経路とは別アダプタで並走**させる
+## Decision 10 — turn to adopting it. The shape is the pool model, **run in parallel as a separate adapter from the existing Fargate path**
 
-**2026-08-15、利用者の判断で着手する。** 決定 5 のゲートは充足していない（実測では 1 つも言えていない）。
-それでも進めるのは、**待って測るより先に取りに行くと決めた**ものが 2 つあるためである。
+**On 2026-08-15 we start, on the user's decision.** Decision 5's gate is not satisfied (none of the five
+can be said from measurement). We proceed anyway because there are two things **we decided to go and get
+rather than wait and measure**.
 
-1. **Start 22〜27s**（決定 8）。Fargate は温ホームでも ~105s から構造的に動かせない。
-   ⚠️ **実装を通した実測でこの数字は下方修正された（決定 10-5）。22〜27s は Service Connect を
-   張らずに測ったものだった。**
-2. **サイズ上限の解放**（16 vCPU / 120 GiB / ephemeral 200 GiB）。決定 5-4 のとおり、
-   これだけは ADR 0044 決定 3 では解けない。
+1. **Start 22–27s** (decision 8). Fargate cannot structurally move from ~105s even with a warm home.
+   ⚠️ **That figure was revised downwards once the implementation was measured (decision 10-5). The
+   22–27s was measured without Service Connect.**
+2. **Lifting the size ceiling** (16 vCPU / 120 GiB / ephemeral 200 GiB). As in decision 5-4, this alone
+   cannot be solved by ADR 0044 decision 3.
 
-**したがってこの着手は「実測が要求した」ものではなく「製品判断が先行した」ものである**——
-決定 2 の (3)（運用対象が 2 → 6 種類に増える／ECS 構成は実運用実績ゼロ）は**代償として残ったまま**で、
-それを次の 2 つで受ける。
+**So this start is not "demanded by measurement" but "led by a product judgement"** — decision 2's (3)
+(the operational surface going from 2 to 6 kinds; the ECS configuration has zero production track record)
+**remains as a price**, and it is taken by the two things below.
 
-### 10-1. 別アダプタ `AF_RUNTIME=ecs-ec2` として並走させる（Fargate 経路は 1 行も変えない）
+### 10-1. Run it in parallel as a separate adapter, `AF_RUNTIME=ecs-ec2` (not one line of the Fargate path changes)
 
-`runtime_ecs.go`（Fargate）は**触らない**。EC2 プール型は `runtime_ecs_ec2.go` に新設し、
-`newRuntimeFactory` の profile 分岐に `ecs-ec2` を足す。
+`runtime_ecs.go` (Fargate) is **not touched**. The EC2 pool model is a new `runtime_ecs_ec2.go`, and
+`ecs-ec2` is added to `newRuntimeFactory`'s profile branch.
 
-- **退路が profile 1 行になる**ことが、充足しなかった着手ゲートの実質的な代替である。
-  1 アダプタの中で起動タイプを分岐させると、退くのに revert が要り、Fargate 経路にも分岐リスクが乗る。
-- **共通部は切り出して共有する**（SSM SecureString への token/DEK、`Endpoint()` の Service Connect 契約、
-  `watchReady`、env の組み立て）。**コピーで二重管理にしない。**
-- 起動タイプが違っても **`Endpoint()` の契約は変えない**（決定 1 のとおり Service Connect は EC2 でも動く）。
+- **The retreat being one line of profile** is the substantive substitute for the unsatisfied start gate.
+  Branching on launch type inside one adapter would require a revert to retreat, and would put branch
+  risk on the Fargate path too.
+- **Common parts are factored out and shared** (the token/DEK in an SSM SecureString, `Endpoint()`'s
+  Service Connect contract, `watchReady`, assembling the env). **Do not duplicate by copying.**
+- Even with a different launch type, **`Endpoint()`'s contract does not change** (as in decision 1,
+  Service Connect works on EC2 too).
 
-### 10-2. P0 はライフサイクルだけ。golden snapshot と退避・復帰は後段
+### 10-2. P0 is the lifecycle only. The golden snapshot, hibernation and restoration come later
 
-**P0（本着手の範囲）**: スロット確保 → `AttachVolume` → mount → タスク配置 → `umount` → `DetachVolume`
-→ スロット返却、および `Start` / `Stop` / `State` / 削除。**決定 3 と決定 8 の罠は P0 に全部入れる**
-（`/tmp` の tmpfs 化・`ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION`・detach 前の umount・AZ ごとのプール・
-`DeregisterContainerInstance`・パブリック IP 非依存・サイズ変更の 3 手・EFS ハイブリッド・1 ユーザー排他）。
-罠は「後で足す」ができない種類のもの——踏んでから直すと、そのときには壊れたファイルシステムや
-他人の `/tmp` の残骸が実在している。
+**P0 (the scope of this start)**: acquire a slot → `AttachVolume` → mount → place the task → `umount` →
+`DetachVolume` → return the slot, plus `Start` / `Stop` / `State` / deletion. **Every trap from decisions
+3 and 8 goes into P0** (making `/tmp` a tmpfs, `ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION`, umount before
+detach, a pool per AZ, `DeregisterContainerInstance`, no dependence on a public IP, the three-step resize,
+the EFS hybrid, one user per slot). These are the kind of traps that cannot be "added later" — fix them
+after hitting them and by that point a corrupted filesystem or someone else's `/tmp` residue really
+exists.
 
-**P1 以降**: golden snapshot（決定 9）／ 長期未使用ユーザーの snapshot 退避と復帰（決定 4）／
-プールの事前ウォームと縮退。
+**P1 onwards**: the golden snapshot (decision 9) / snapshot hibernation and restoration of long-unused
+users (decision 4) / pre-warming and shrinking the pool.
 
-### 10-3. 作業ディスク `/scratch` は EC2 アダプタでは注入しない
+### 10-3. The working disk `/scratch` is not injected on the EC2 adapter
 
-ADR 0044 決定 3・決定 5（生成物を作業ディスクへ逃がす）は **EFS の小ファイル税への対処**であり、
-プール型では home が per-user EBS になって**その税自体が消える**（決定 1 の実測: 小ファイル 2,000 作成が
-EFS 30.7s に対し EBS 0.04s）。実装は `AF_WS_SCRATCH` を注入しなければ丸ごと no-op になる形なので、
-**EC2 アダプタでは注入しない**——これが既定の判断である。
+ADR 0044 decisions 3 and 5 (moving artifacts to a working disk) address **EFS's small-file tax**, and on
+the pool model home becomes a per-user EBS volume so **that tax disappears** (measured in decision 1:
+creating 2,000 small files takes 30.7s on EFS versus 0.04s on EBS). The implementation is a complete
+no-op unless `AF_WS_SCRATCH` is injected, so **the EC2 adapter does not inject it** — that is the default
+judgement.
 
-ただし**別の動機はある**: 「EBS home の snapshot／退避サイズを小さく保つために、再生成できる生成物は
-root ローカルへ逃がす」。これは P1 で golden snapshot（決定 9）と退避（決定 4）を入れるときに
-初めて効くので、**そのとき再検討する**（決定 8 の代償 1「root は前のユーザーと共有」と
-書き込み層のクォータが、そのまま `/scratch` の設計制約になる点に注意）。
+There is, however, **a different motive**: "keep the EBS home's snapshot and hibernation size small by
+moving regenerable artifacts to the local root". That only starts to matter when P1 brings in the golden
+snapshot (decision 9) and hibernation (decision 4), so **it is reconsidered then** (noting that decision
+8's price 1, "the root is shared with the previous user", and the write-layer quota become design
+constraints on `/scratch` directly).
 
-### 10-5. 実装を実 AWS で通して分かったこと（詳細は docs/64 §64.16）
+### 10-5. What was learned by running the implementation on real AWS (details in docs/64 §64.16)
 
-**採用の根拠だった「Start 22〜27s」は、Service Connect 込みでは出ない。** 決定 8 が引いた
-22〜27s は docs/64 §64.12 の計測で、**bridge ＋ Service Connect 無し**で測ったものだった。
-製品は CP → Agent の到達に Service Connect を使う（`Endpoint()` の契約・決定 1）ので、
-§64.4.3 のとおり **awsvpc ＋ SC がおよそ 20 秒を足す**。アダプタを通した実測は
-**13〜95 秒の帯**（全部温なら 13.2s、既存 home の載せ替えで 52〜94s、新規 home で 82s）である。
+**"Start 22–27s", the grounds for adopting it, does not happen with Service Connect.** The 22–27s
+decision 8 quoted was from the measurements in docs/64 §64.12, taken **with bridge networking and no
+Service Connect**. The product uses Service Connect for CP → Agent reachability (`Endpoint()`'s contract,
+decision 1), so as §64.4.3 says, **awsvpc plus SC adds roughly 20 seconds**. Measured through the
+adapter, it is **a band of 13–95 seconds** (13.2s when everything is warm, 52–94s when moving an existing
+home, 82s for a new home).
 
-**Fargate の ~105s より速いことは変わらないが、「1/4」ではない。** 決定 5-5（「Start を
-30 秒未満に」が要件なら単独で着手理由になる）は、**この形では満たせない**——満たすには
-Service Connect を外して `Endpoint()` の契約を変える（インスタンスの private IP ＋ 固定ポートを
-CP が自前で解決する）必要があり、それは別の決定である。永続 home と I/O と
-サイズ上限の解放は当初のまま得られるので、採用そのものは維持する。
+**It is still faster than Fargate's ~105s, but it is not "a quarter".** Decision 5-5 ("Start in under 30
+seconds" being a requirement is a reason to start on its own) **cannot be met in this shape** — meeting
+it would require dropping Service Connect and changing `Endpoint()`'s contract (having the CP resolve the
+instance's private IP and a fixed port itself), which is a separate decision. The persistent home, the
+I/O and the lifted size ceiling are obtained as originally expected, so the adoption itself stands.
 
-実装が実測で 4 か所間違っていた（docs/64 §64.16.2）。特に 2 つは設計の穴だった:
+The implementation was wrong in four places against measurement (docs/64 §64.16.2). Two of them were
+design holes:
 
-- **EFS アクセスポイントに `PosixUser` を付けると EC2 起動タイプではタスクが起動しない**
-  （ECS が EFS を Docker に渡し、Docker がイメージ側の所有情報を複製する段の `lchown` が
-  弾かれる）。Fargate は EFS を自前でマウントするのでこの経路が無い。
-  → EC2 は `PosixUser` 無しの専用アクセスポイントを使う（`rootDirectory` は共通なので
-  プロファイルを切り替えても中身は続く）。
-- **「attach 済みだがサービス無し」を `starting` と写すと、Start が永久に no-op になる**
-  （Start は `starting` で早期 return するため、attach と CreateService の間で死んだ
-  Workspace を誰も起こせない）。→ 収束中を名乗るのは**期限付きの claim タグだけ**にした。
+- **Putting a `PosixUser` on an EFS access point makes the task fail to start on the EC2 launch type**
+  (ECS hands EFS to Docker, and the `lchown` in the stage where Docker replicates the image's ownership
+  information is rejected). Fargate mounts EFS itself and has no such path.
+  → EC2 uses a dedicated access point with no `PosixUser` (`rootDirectory` is shared, so the contents
+  continue across a profile switch).
+- **Reading "attached but no service" as `starting` makes Start a permanent no-op** (Start returns early
+  on `starting`, so nobody can start a workspace that died between the attach and the CreateService).
+  → Only **a claim tag with an expiry** is allowed to declare that convergence is in progress.
 
-残る 2 つは AWS の遅延整合への対処（デバイスは detach 応答の 8〜9 秒後に解放される／
-`DeleteVolume` が `VolumeInUse` を返す窓）。
+The other two are handling AWS's eventual consistency (a device is released 8–9 seconds after the detach
+response; a window where `DeleteVolume` returns `VolumeInUse`).
 
-### 10-4. 実装して分かって決定が動いた 2 点（詳細は docs/64 §64.15.9）
+### 10-4. Two decisions that moved once implemented (details in docs/64 §64.15.9)
 
-1. **`/tmp` の tmpfs から `noexec` を既定で外す。** 決定 8 は `noexec,nosuid,nodev` と書いたが、
-   開発コンテナではインストーラやテストランナーが `/tmp` から exec するのが日常で、
-   `noexec` は「Permission denied」の形でそれを壊す。決定 8 が実際に欲しかった
-   **「共有 root に書かれない」「上限が付く」は `noexec` 無しで両方成立する**。
-   `AF_ECS_EC2_TMP_OPTS` で戻せる。
-2. **決定 3-1（サイズ変更の 3 手セット）を踏む場面が、プール型では無くなる。**
-   ユーザーとインスタンスが紐づかないので、サイズ変更は
-   **「別サイズのスロットへ載せ替える」**（Stop → 別プールへ attach → Start）で済み、
-   `ModifyInstanceAttribute` を呼ばない。罠 1 は**形を選んだ時点で消える**種類のものだった。
-   手順自体は「スロットのタイプを運用で変えるとき」のために決定 3 に残す。
+1. **Drop `noexec` from `/tmp`'s tmpfs by default.** Decision 8 said `noexec,nosuid,nodev`, but in a
+   development container installers and test runners execute from `/tmp` every day, and `noexec` breaks
+   that in the shape of "Permission denied". What decision 8 actually wanted —
+   **"nothing is written to the shared root" and "there is a cap"** — both hold without `noexec`.
+   It can be restored with `AF_ECS_EC2_TMP_OPTS`.
+2. **The occasion for decision 3-1 (the three-step resize) disappears in the pool model.** Users are not
+   tied to instances, so a resize becomes **"move onto a slot of a different size"** (Stop → attach to a
+   different pool → Start) and never calls `ModifyInstanceAttribute`. Trap 1 was the kind that
+   **disappears the moment the shape is chosen**. The procedure itself stays in decision 3, for "changing
+   a slot's type operationally".
 
-## 決定 11 — スロットは「返さず眠らせる」（遅延返却 ＋ アイドル停止 ＋ 上限時のみ立ち退き）
+## Decision 11 — a slot is "put to sleep, not returned" (deferred return + idle stop + eviction only at the cap)
 
-実装を実 AWS で通した結果（決定 10-5）、**Start の速さは「home が既にスロットに載っているか」で
-決まる**ことが分かった（載っていれば 13.2s、載せ替えなら 52〜94s）。したがって
-**Stop で剥がさない**。詳細は docs/64 §64.17。
+Running the implementation on real AWS (decision 10-5) showed that **Start's speed is decided by whether
+home is already on the slot** (13.2s if it is, 52–94s if it must be moved). So **do not detach on Stop**.
+Details in docs/64 §64.17.
 
-1. **遅延返却**: `Stop` はサービスを desired 0 にするだけで、home は attach したまま残す。
-   **親和性は「attach そのもの」**なので、「前回どのスロットか」を別に覚える必要が無い
-   ——同じ人は自然に同じスロットへ戻り、しかも最速の経路に乗る（ADR 0012 を保ったまま）。
-2. **アイドル停止**: 掃除ループが `AF_ECS_EC2_SLOT_SLEEP_SEC`（既定 15 分）で
-   **`StopInstances`**（terminate はしない＝ イメージキャッシュは root に残る）。
-   停止スロットは **root EBS だけの課金**（月 $9.6 対 起動中 $95）で、本人の復帰は ~90s。
-   ⚠️ **これは P0 の設計漏れの修正でもある**——P0 は縮退しないので、
-   **ピーク同時稼働の台数を 24/7 払い続ける**形になっていた。
-   ⚠️ **既存の reaper（`AF_WS_IDLE_TIMEOUT` ／ テナント毎の `ws_idle_timeout`）とは別物**である。
-   あちらは**人を見て Workspace を止める**（ランタイム非依存）。こちらは**その後に効く 2 段目**で、
-   **止まった Workspace の「箱」を止める**。直列に並ぶので、実際の待ちは
-   「reaper の設定 ＋ 15 分」になる。同じ「idle」で括らないよう名前を分けた。
-3. **立ち退きは上限到達時のみ**: 上限未満ならプールを増やす（アイドル停止がある今、
-   増えた分の待機費用は root EBS だけ）。上限に達したときだけ、**最も長く休眠している**
-   ユーザーから取り上げる。**稼働中は絶対に選ばない。**
-   ⇒ `AF_ECS_EC2_MAX_SLOTS` は「確保されるスロット数」、`AF_ECS_EC2_SLOT_SLEEP_SEC` は
-   「そのうち起動している台数」を決める、という役割分担になる。
-4. **ホットな空きの事前確保は入れない**（利用者判断）。朝の 1 人目は ~90s（停止スロットを起こす）
-   または 135s（プールが空）を払う。
+1. **Deferred return**: `Stop` only sets the service's desired to 0, leaving home attached.
+   **The affinity is the attachment itself**, so there is no need to remember "which slot last time"
+   separately — the same person naturally returns to the same slot, on the fastest path (keeping
+   ADR 0012 intact).
+2. **Idle stop**: the sweep loop issues **`StopInstances`** at `AF_ECS_EC2_SLOT_SLEEP_SEC` (15 minutes by
+   default) — never terminate, so the image cache stays on the root. A stopped slot **bills only for the
+   root EBS** ($9.6/month versus $95 running), and the person's return takes ~90s.
+   ⚠️ **This also fixes a design omission in P0** — P0 never shrinks, so it **paid for the peak
+   concurrent machine count 24/7**.
+   ⚠️ **It is a different thing from the existing reaper** (`AF_WS_IDLE_TIMEOUT` / a tenant's
+   `ws_idle_timeout`). That one **watches people and stops the workspace** (runtime-independent). This is
+   **a second tier that takes effect after it** and **stops the box of a stopped workspace**. They are in
+   series, so the actual wait is "the reaper's setting + 15 minutes". They are named differently so as
+   not to be lumped together as "idle".
+3. **Eviction only at the cap**: below the cap, grow the pool (with idle stop in place, the waiting cost
+   of the extra machines is just the root EBS). Only at the cap is a slot taken from **the longest-dormant**
+   user. **A running one is never chosen.**
+   ⇒ `AF_ECS_EC2_MAX_SLOTS` decides "how many slots are held" and `AF_ECS_EC2_SLOT_SLEEP_SEC` decides "how
+   many of them are running" — a division of roles.
+4. **No pre-warming of hot free slots** (the user's decision). The first person in the morning pays ~90s
+   (waking a stopped slot) or 135s (the pool is empty).
 
-**停止スロットからの detach では umount しない**——SSM が届かず、マウントも既に外れている
-（インスタンス停止は通常のシャットダウンで systemd がアンマウントする）。届かない umount を
-待つと、眠っているスロットが永久に回収できなくなる。
+**Do not umount when detaching from a stopped slot** — SSM does not reach it, and the mount is already
+gone (stopping an instance is a normal shutdown and systemd unmounts). Waiting on an umount that cannot be
+delivered would make a sleeping slot permanently unreclaimable.
 
-## 決定 12 — 起動時間を採用理由から外す（実測 2 度目の下方修正）
+## Decision 12 — remove startup time from the reasons for adopting (a second downward revision by measurement)
 
-決定 10-5 で「22〜27s は SC 抜きの数字で、実測は 13〜95s」と直したが、**遅延返却まで入れて
-測り直したら 43〜110 秒**だった（docs/64 §64.17.5）。しかも §64.16 の 13.2s は
-**同じ条件で 3 回測って 1 回しか出ず、再現しない**（直前のタスクが `RunningCount` に
-数えられていた窓を踏んだと見るのが自然）。
+Decision 10-5 corrected it to "22–27s was without SC; measurement gives 13–95s", but **re-measuring with
+deferred return in place gave 43–110 seconds** (docs/64 §64.17.5). And §64.16's 13.2s **appeared once in
+three runs under the same conditions and does not reproduce** (most naturally read as having hit a window
+where the previous task was still counted in `RunningCount`).
 
-**Fargate の温再 Start ~105s に対して、起動時間の優位はほぼ無い。** pull の 35s が消えた分を、
-awsvpc の ENI ＋ Service Connect（約 20s）＋ CP の mount（SSM 往復 10〜20s）＋ サービス更新の
-伝播が食い潰している。
+**Against Fargate's ~105s warm restart, there is almost no startup-time advantage.** The 35s saved on the
+pull is eaten by awsvpc's ENI plus Service Connect (about 20s), the CP's mount (an SSM round trip of
+10–20s) and the propagation of the service update.
 
-> ⚠️ **訂正（docs/64 §64.38・2026-08-26）**: 「SSM 往復 10〜20s」は見積もりで、本番実測は
-> **2〜4 秒**（`af-mount` 本体は中央値 0.6s・n=37）。食い潰している中身は mount ではなく
-> **ECS のタスク配置とコンテナ起動（90〜120s）**だった。**結論（優位はほぼ無い・採用理由は
-> I/O と永続とサイズ）は変わらない。**
+> ⚠️ **Correction (docs/64 §64.38, 2026-08-26)**: the "SSM round trip 10–20s" was an estimate; measured in
+> production it is **2–4 seconds** (`af-mount` itself has a median of 0.6s, n=37). What eats the time is
+> not the mount but **ECS's task placement and container start (90–120s)**. **The conclusion (almost no
+> advantage; the reasons for adopting are I/O, persistence and size) is unchanged.**
 
-> ⚠️ **ここで 40 秒を作っていたのはこちら側だった（修正済み・docs/64 §64.39・2026-08-26）**: そのうち **40 秒**は ECS ではなく
-> **こちらの出し方**が作っている。`upsertService` が「`desiredCount` 0→1」と「タスク定義の
-> 差し替え」を **1 回の `UpdateService`** で出すため、ECS が増分を**先に古い版のデプロイで
-> 満たす**——古い版が指すスロットが生きていれば**旧イメージのタスクが 1〜2 分走って
-> Service Connect に本命と並び**、消えていれば `MemberOf` 不成立で**約 41 秒空振り**する。
-> 本番配備で**起動の 40%（15 回中 6 回）**が踏んでおり、差は +39.7〜40.7 秒とばらつかない。
-> 直し（実装済み）は①td だけ先に更新 →（`ACTIVE` な旧デプロイが消えるまで実測 10〜23 秒・
-> スロットの ECS 登録待ち 18s と重なる）→ ②`desiredCount=1`。A/B は実測済み（1 回＝2 本 /
-> 分割＝1 本）。⚠️ **②で `ForceNewDeployment` を送ると元に戻る。** 短縮量は経路で違い、
-> 起こす／建てるは約 40 秒まるごと、**running の空き箱への載せ替えは待ちが露出して 20〜30 秒**。
-> 併せて、**指紋をリビジョンの docker ラベルに焼いて `lastTaskDef` のミスを AWS に問い直す**
-> ようにした（`serviceTaskDefIfFingerprint`）。プロセスローカルのキャッシュは CP 再起動＝毎
-> デプロイで必ず外れ、**中身が同一でも新リビジョンを登録してサービスをロールしていた**。
-> ⚠️ **実機ハーネスで確かめた**（docs/64 §64.39.8）: 修正後はタスク定義が変わる Start も
-> CP 再起動を模した Start も**タスク 1 本**、後者は**新リビジョン 0 本**。
-> ⚠️ **そこで見つかった最大の誤りは待ちの上限**——Start の HTTP リクエストに収めるため 25 秒に
-> していたが、実機の退役は **53〜55 秒**で、25 秒版は打ち切って scale up し**その場で 2 本
-> 立った**。待ちは**リクエストの外**（`bg`）へ出し、上限は 90 秒にした。
-> ⚠️ **レースなのは「1 回の結合呼び出しがその条件を作るかどうか」だけ**だった（§64.39.10）。
-> **条件（`ACTIVE` が在る状態で count を上げる）＋ `maximumPercent 200` なら 2 本立つのは
-> 決定論的**で、同一 substrate の A/B で 2/2 対 2/2 に割れた。
-> ✅ **したがって本当の直しはサービスの `deploymentConfiguration`**——既定の 200% を
-> **`maximumPercent 100` / `minimumHealthyPercent 0`**（`ec2SingleTaskDeployment`）にすると
-> **ECS はこのサービスに 2 本目を立てられなくなる**。§64.39 の仕掛けが構造的に消えるので、
-> **退役待ち（実機 53〜55 秒）はまるごと削除した**。
-> ⚠️ **設定は 4 か所すべての呼び出しに乗せる**（既定は AWS 側なので、この変更より前に作られた
-> サービスは誰かが送るまで 200 のまま）。⚠️ `minimumHealthyPercent 0` は「デプロイ中に
-> running 0 になってよい」を認めることで、**max 100% では新しい方を先に立てる余地が無い**以上
-> 対になる。ワークスペースに 2 本同時は**常に害**（SC が両方に振る）なので意味論としても正しい。
-> ✅ **実機ハーネスで通した（docs/64 §64.39.11・2026-08-27）**: 新規サービスは `100/0`、
-> **200/100 に戻したサービス**（＝本番の全サービス）へのタスク定義が変わる Start は 2 回とも
-> **`100/0` に戻り・タスク 1 本・降格デプロイのタスク 0**。順序も実測で、**`max=100` が +4s、
-> `desiredCount=1` が +6s**——**配備直後の初回 Start から安全**である。
-> ⚠️⚠️ **`maximumPercent 100` は単独では送れない（§64.39.12・0.12.3 で本番障害）**: ECS の
-> **AZ リバランシングは `maximumPercent <= 100` を拒否**し（400）、
-> `availabilityZoneRebalancing` は**作成時に決まり `UpdateService` の省略は「既存値を維持」**。
-> 新しい版が作るサービスは `CreateService` が黙って DISABLED にするので通り、
-> **古い版が作ったサービスだけが起動不能になる**。`ec2NoAZRebalancing`（DISABLED）を
-> **同じ 4 か所に同送**する。タスクは 1 台に固定され home もその AZ から動けない以上、
-> **リバランス先が存在しない**＝DISABLED は回避策ではなく正しい値。
-> ★ **§64.39.11 が緑だったのは、「アップグレード前」を新サービスへの `UpdateService` で
-> 作っていたから**——**自分で作った新しい物を編集した状態は古い物ではない。**
-> ⚠️ ただし**「40 秒」は完全には消えていない**: count はいったん降格した `ACTIVE` に入り、
-> `PRIMARY` に移るまで **29〜42 秒**かかる（タスクは立てられないので害は無いが遅い）。
-> ⚠️ 100% が上限にしているのは**合計 1 本**であって「`PRIMARY` が 1 本」ではない——
-> その 1 本を降格側が先に取る観測が 1 度ある（同時 2 本にはならない）。
-> ⚠️ Fargate 側（`runtime_ecs`）は**同じ形のまま**——この決定が「変更しない」としている面。
-> ただし**実機で 1 回再現した**（Start 2 回で 2 本 / 1 本）ので、もはや推測ではない。
-> 直すかどうかは別の判断として残す（docs/64 §64.39.6.3）。
+> ⚠️ **It turned out we were creating 40 seconds of it ourselves (fixed; docs/64 §64.39, 2026-08-26)**: of
+> that, **40 seconds** are made not by ECS but by **how we issue the request**. `upsertService` issues
+> "`desiredCount` 0→1" and "swap the task definition" in **one `UpdateService`**, so ECS **satisfies the
+> increment against the old revision's deployment first** — if the slot the old revision points at is
+> alive, **a task on the old image runs for one or two minutes and sits alongside the real one in Service
+> Connect**, and if it is gone it **spins for about 41 seconds** because `MemberOf` is unsatisfiable.
+> **40% of starts (6 of 15) on the production deployment** hit it, and the difference is a consistent
+> +39.7 to +40.7 seconds.
+> The fix (implemented) is (1) update only the td first → (wait for the `ACTIVE` old deployment to
+> disappear, measured at 10–23 seconds, overlapping the 18s wait for the slot's ECS registration) → (2)
+> `desiredCount=1`. The A/B is measured (one call = 2 tasks; split = 1 task). ⚠️ **Sending
+> `ForceNewDeployment` in (2) puts it back.** The saving differs by path: waking or building saves the
+> whole ~40 seconds, while **moving onto a running free box exposes the wait and saves 20–30 seconds**.
+> Alongside that, **the fingerprint is baked into the revision's docker labels so a `lastTaskDef` miss is
+> re-asked of AWS** (`serviceTaskDefIfFingerprint`). A process-local cache is always lost on a CP restart
+> = on every deployment, and it **registered a new revision and rolled the service even when the contents
+> were identical**.
+> ⚠️ **Verified on a real-hardware harness** (docs/64 §64.39.8): after the fix, both a Start that changes
+> the task definition and a Start simulating a CP restart produce **one task**, the latter with **zero new
+> revisions**.
+> ⚠️ **The biggest error found there was the wait's cap** — it had been 25 seconds so as to fit inside the
+> Start HTTP request, but real retirement takes **53–55 seconds**, and the 25-second version cut it short,
+> scaled up and **stood up two tasks on the spot**. The wait was moved **outside the request** (`bg`) and
+> the cap raised to 90 seconds.
+> ⚠️ **The only racy part was "whether one combined call creates that condition"** (§64.39.10).
+> **Given the condition (raising the count while an `ACTIVE` exists) plus `maximumPercent 200`, two tasks
+> is deterministic**, and an A/B on the same substrate split 2/2 versus 2/2.
+> ✅ **So the real fix is the service's `deploymentConfiguration`** — changing the default 200% to
+> **`maximumPercent 100` / `minimumHealthyPercent 0`** (`ec2SingleTaskDeployment`) means **ECS cannot
+> stand up a second task for this service**. §64.39's mechanism disappears structurally, so **the
+> retirement wait (53–55 seconds on real hardware) was deleted entirely**.
+> ⚠️ **Put the setting on all four call sites** (the default is on AWS's side, so services created before
+> this change stay at 200 until somebody sends it). ⚠️ `minimumHealthyPercent 0` admits "running may reach
+> 0 during a deployment", and it is the necessary counterpart because **at max 100% there is no room to
+> stand the new one up first**. Two tasks at once on a workspace is **always harmful** (SC splits across
+> both), so it is semantically right as well.
+> ✅ **Passed on a real-hardware harness (docs/64 §64.39.11, 2026-08-27)**: a new service is `100/0`, and a
+> task-definition-changing Start against **a service reverted to 200/100** (i.e. every production service)
+> **returned to `100/0`, one task, and zero tasks on the demoted deployment**, on both runs. The ordering
+> was measured too: **`max=100` costs +4s and `desiredCount=1` +6s** — **safe from the very first Start
+> after deployment.**
+> ⚠️⚠️ **`maximumPercent 100` cannot be sent on its own (§64.39.12; a production incident on 0.12.3)**:
+> ECS's **AZ rebalancing rejects `maximumPercent <= 100`** (400), and `availabilityZoneRebalancing`
+> **is fixed at creation time, with an omission in `UpdateService` meaning "keep the existing value"**.
+> Services created by the new version pass because `CreateService` silently sets it to DISABLED, so
+> **only services created by the old version become unstartable**. `ec2NoAZRebalancing` (DISABLED) is
+> **sent on the same four call sites**. Since the task is pinned to one machine and home cannot leave that
+> AZ, **there is nowhere to rebalance to** — DISABLED is the correct value, not a workaround.
+> ★ **§64.39.11 was green because "the pre-upgrade state" was created with an `UpdateService` against a
+> new service** — **a new thing you made and then edited is not an old thing.**
+> ⚠️ But **"40 seconds" has not gone entirely**: the count first goes into the demoted `ACTIVE`, and moving
+> to `PRIMARY` takes **29–42 seconds** (harmless, since no task can be stood up, but slow).
+> ⚠️ What 100% caps is **one task in total**, not "one `PRIMARY`" — there is one observation of the demoted
+> side taking that one first (it never becomes two at once).
+> ⚠️ The Fargate side (`runtime_ecs`) is **in the same shape** — the surface this decision says it does not
+> change. But **it reproduced once on real hardware** (two Starts giving 2 tasks then 1), so it is no longer
+> speculation. Whether to fix it is left as a separate judgement (docs/64 §64.39.6.3).
 
-したがって **EC2 プール型の採用理由は「I/O と永続」と「サイズ上限の解放」の 2 つに絞る**。
-決定 5-5（「Start を 30 秒未満に」が要件なら単独で着手理由）は、**この形では満たせない**——
-満たすには Service Connect を外して `Endpoint()` の契約を変えるしかなく、それは別の決定である。
+So **the reasons for adopting the EC2 pool model narrow to two: "I/O and persistence" and "lifting the
+size ceiling"**. Decision 5-5 ("Start in under 30 seconds" being a requirement is a reason on its own)
+**cannot be met in this shape** — meeting it would require dropping Service Connect and changing
+`Endpoint()`'s contract, which is a separate decision.
 
-**採用そのものは維持する**（永続 home と小ファイル I/O 8〜30 倍、サイズ上限の解放は実機で確認済み）。
-ただし**「速くなる」を売り文句にしない**こと。
+**The adoption itself stands** (a persistent home, 8–30× small-file I/O, and the lifted size ceiling are
+all confirmed on real hardware). But **do not sell it as "faster"**.
 
-> **本番相当（プライベートサブネット ＋ NAT）で測り直しても動かなかった**（docs/64 §64.19.2）。
-> 温かい復帰 84〜97s。ネットワークの形は起動時間に効かない。
+> **Re-measuring in a production-equivalent setup (private subnets plus NAT) did not move it** (docs/64
+> §64.19.2). A warm return is 84–97s. The network's shape does not affect startup time.
 
-## 決定 13 — Workspace の「破棄」に継ぎ目を作る。**自動経路は退避までしかやらない**
+## Decision 13 — create a seam for "destroying" a workspace. **The automatic path only goes as far as hibernation**
 
-決定 10-5 で `Destroy` を実装したが、**呼び出し元がどこにも無い**。配線しようとして分かったのは、
-「既存の口に繋ぐ」作業ではなく **Workspace 破棄という操作を新設する**作業だということである。
+Decision 10-5 implemented `Destroy`, but **there is no caller anywhere**. Trying to wire it up revealed
+that this is not "connect it to an existing hole" but **creating a new operation, destroying a
+workspace**.
 
-**先に潰した 3 つの事実**（`control-plane` を読んで確認した）:
+**Three facts settled first** (confirmed by reading `control-plane`):
 
-1. **メンバーシップ削除は継ぎ目にならない。** `DELETE /api/admin/memberships` は**論理削除**
-   （`status='inactive'`）で、「workspace・home・暗号化シークレットは残す／復帰は再招待するだけ」と
-   **明示的にそう設計されている**（`tenants.go` の `removeMembership`）。ここに破棄を足すのは
-   決定 22/27 の意図に反する。
-2. **ADR 0028（削除ロック）は Workspace を対象にしていない。** 守るのはセッション・作業コピー・
-   会話の 3 つで、ロックの置き場は**すべて home の中**（`~/.config/agent-fleet/`）。つまり
-   **停止中の Workspace を破棄するとき、CP からはロックの有無を読めない**。docs/64 §64.15.9 (3) が
-   「配線は ADR 0028 側の宿題」と書いたのは、実際には「継ぎ目がどこにも無い」という意味だった。
-3. **穴は ecs-ec2 だけではない。** Fargate も per-membership の EFS アクセスポイント 2 つ・
-   SSM SecureString 2 つ・ECS サービスがメンバーシップより長生きする。docker / native も
-   `dataDir` が残る。**ecs-ec2 の `Destroy` すら不完全**で、EBS は消すがサービスと AP と SSM を
-   残していた（`base` 側の資源を畳んでいない）。
+1. **Removing a membership is not the seam.** `DELETE /api/admin/memberships` is a **logical delete**
+   (`status='inactive'`) and is **explicitly designed** as "keep the workspace, home and encrypted
+   secrets; restoring is just re-inviting" (`removeMembership` in `tenants.go`). Adding destruction there
+   contradicts the intent of decisions 22/27.
+2. **ADR 0028 (the deletion lock) does not cover workspaces.** It protects sessions, working copies and
+   conversations, and the lock lives **entirely inside home** (`~/.config/agent-fleet/`). In other words,
+   **when destroying a stopped workspace the CP cannot read whether a lock exists**. docs/64 §64.15.9 (3)
+   said "wiring is ADR 0028's homework", but what it actually meant was "there is no seam anywhere".
+3. **The hole is not only in ecs-ec2.** Fargate too has two per-membership EFS access points, two SSM
+   SecureStrings and an ECS service that outlive the membership. docker and native leave `dataDir`.
+   **Even ecs-ec2's `Destroy` was incomplete** — it deleted the EBS but left the service, the access points
+   and the SSM parameters (it did not fold up the `base`-side resources).
 
-### 13-1. 強さの違う 2 つの操作に分ける
+### 13-1. Split into two operations of different strength
 
-| | 引き金 | 何をするか | 可逆 |
+| | Trigger | What it does | Reversible |
 |---|---|---|---|
-| **退避** | 停止後 N 日の自動スイープ | snapshot を取ってからボリューム削除。次の Start で snapshot から復元 | ✅ |
-| **破棄** | 人が押したときだけ | 退避物（snapshot）も含めて全部消す | ❌ |
+| **Hibernate** | An automatic sweep N days after stopping | Take a snapshot, then delete the volume. The next Start restores from the snapshot | ✅ |
+| **Destroy** | Only when a person presses | Delete everything, including the hibernated snapshot | ❌ |
 
-**自動経路が不可逆にならないこと**がこの分け方の要点である。「誰も押していないのに home が消える」を
-製品に入れてはならない。**決定 4 の退避（standard 階層 snapshot・判定は最終利用日）が、
-そのまま自動スイープの動作になる**——決定 4 は「費用対策」として書かれたが、
-**同時に「自動削除を可逆にする仕掛け」でもある**。
+**The point of the split is that the automatic path is never irreversible.** "A home disappears though
+nobody pressed anything" must not be in the product. **Decision 4's hibernation (a standard-tier snapshot,
+decided by last-used date) becomes the automatic sweep's action directly** — decision 4 was written as a
+cost measure, but **it is simultaneously the mechanism that makes automatic deletion reversible**.
 
-### 13-2. 引き金は 3 つ。不可逆なものは人が押したときだけ
+### 13-2. Three triggers. Anything irreversible only when a person presses
 
-1. **明示的な管理者操作**（`DELETE /api/admin/workspaces {tenant_slug,user_key}`）——破棄。
-   **inactive なメンバーシップだけを対象にする**（在籍中の人の home を管理画面の誤クリックで
-   消せないようにする）。監査ログに残す。
-2. **保持期間スイープ**——退避のみ。既定オフ。
-   > **一度デプロイ単位に落ちたが、決定 14 で戻した。** 掃除ループは EC2 のタグから世界を
-   > 導出しており、テナントも CP の DB も見えない（ADR 0012）。そのため最初の実装では
-   > `AF_ECS_EC2_HIBERNATE_AFTER_SEC` だけになっていた。引き金を reaper へ上げて解消済み。
-3. **メンバーシップ削除の `purge=true`**——破棄。退職処理を 1 回で済ませたいとき用。
-   既定は false で、現行の「home を残す」契約は変わらない。
+1. **An explicit admin operation** (`DELETE /api/admin/workspaces {tenant_slug,user_key}`) — destroy.
+   **It targets inactive memberships only** (so a stray click in the admin screen cannot erase the home of
+   someone still employed). Recorded in the audit log.
+2. **The retention sweep** — hibernation only. Off by default.
+   > **It briefly fell to per-deployment, and decision 14 brought it back.** The sweep loop derives the
+   > world from EC2 tags and can see neither tenants nor the CP's database (ADR 0012), so the first
+   > implementation had only `AF_ECS_EC2_HIBERNATE_AFTER_SEC`. Resolved by moving the trigger up to the
+   > reaper.
+3. **`purge=true` on removing a membership** — destroy. For finishing an offboarding in one action.
+   The default is false, and the current "keep the home" contract does not change.
 
-### 13-3. `Destroy` は 4 アダプタ全部に実装する
+### 13-3. `Destroy` is implemented in all four adapters
 
-「同じボタンが環境によって効いたり効かなかったりする」を避ける。`runtimeDestroyer` は
-`runtime.go`（ポート側）へ移す。
+To avoid "the same button works or does not, depending on the environment". `runtimeDestroyer` moves to
+`runtime.go` (the port side).
 
-| アダプタ | 畳むもの | 残るもの |
+| Adapter | What is folded up | What remains |
 |---|---|---|
-| docker | コンテナ・ネットワーク（Stop が済ませる）・`dataDir` | なし |
-| native | プロセス（Stop）・`dataDir` | なし |
-| ecs（Fargate） | ECS サービス・EFS アクセスポイント 2・SSM パラメータ 2 | ⚠️ **EFS 上の実データ** |
-| ecs-ec2 | 上の 4 つ ＋ スロット返却 ＋ home EBS ＋ snapshot | なし |
+| docker | the container, the network (Stop handles those), `dataDir` | nothing |
+| native | the process (Stop), `dataDir` | nothing |
+| ecs (Fargate) | the ECS service, two EFS access points, two SSM parameters | ⚠️ **the actual data on EFS** |
+| ecs-ec2 | the four above plus returning the slot, the home EBS and its snapshots | nothing |
 
-⚠️ **Fargate では home の実データを CP から消せない。** EFS のディレクトリ
-（`/home/<membership>` ／ `/claude-config/<membership>`）はマウントしないと削除できず、
-アクセスポイントを消してもデータは残る。**課金も残る。**「消したつもり」にしないため、
-`Destroy` は残置したパスを**エラーではなく明示的な戻り値として報告**し、監査ログに載せる。
-EFS 側を本当に空にするなら使い捨てタスクを 1 つ走らせるしかないが、それは別の決定にする。
+⚠️ **On Fargate the CP cannot delete home's actual data.** The EFS directories
+(`/home/<membership>` and `/claude-config/<membership>`) cannot be deleted without mounting, and deleting
+the access point leaves the data. **The billing remains too.** So that nobody "thinks they deleted it",
+`Destroy` **reports the paths left behind as an explicit return value rather than an error**, and puts them
+in the audit log. Actually emptying EFS would require running a throwaway task, which is a separate
+decision.
 
-### 13-4. 削除ロックとの関係
+### 13-4. Its relationship to the deletion lock
 
-停止中の Workspace の中は読めないので、**Workspace 破棄は ADR 0028 のロックを尊重できない**。
-これは実装の手抜きではなく、ロックの置き場（home の中）から来る構造的な帰結である。
-したがって:
+The inside of a stopped workspace cannot be read, so **destroying a workspace cannot respect ADR 0028's
+lock**. That is not laziness but a structural consequence of where the lock lives (inside home).
+Therefore:
 
-- **退避はロックと衝突しない**（可逆で、中身は snapshot に残る）。自動経路がこちらしか通らないのは
-  この点でも正しい。
-- **破棄は「ロックを越える操作」であると明記する。** 管理者が押す UI に書く。
+- **Hibernation does not conflict with the lock** (it is reversible and the contents live on in the
+  snapshot). That the automatic path only goes down this route is right on this count too.
+- **State explicitly that destruction is an operation that overrides the lock.** Write it in the UI the
+  admin presses.
 
-## 決定 14 — 退避の引き金は reaper に置く（掃除ループは「再開する」だけ）
+## Decision 14 — put hibernation's trigger in the reaper (the sweep loop only "resumes" things)
 
-決定 13-2 の「テナント設定で有効化」を実装で果たす。**時期を決める層と、手を動かす層を分けた。**
+Decision 13-2's "enable it in tenant settings", delivered in implementation. **The layer that decides
+timing and the layer that does the work were separated.**
 
-| | 決めること | 見えている世界 |
+| | Decides | The world it can see |
 |---|---|---|
-| **reaper**（`hibernateHome`・tier 3） | **いつ始めるか** | テナント・`limits`・`last_active_at`（＝ DB） |
-| **掃除ループ**（`sweepVolume`） | **始まったものをどう進めるか** | EC2 のタグだけ（ADR 0012 のまま） |
+| **the reaper** (`hibernateHome`, tier 3) | **when to begin** | the tenant, `limits`, `last_active_at` (i.e. the database) |
+| **the sweep loop** (`sweepVolume`) | **how to advance what has begun** | EC2 tags only (as in ADR 0012) |
 
-- 継ぎ目は `hibernatingRuntime`（`BeginHibernate`）**1 メソッドの任意インタフェース**。
-  `runtimeDestroyer` と同じ形で、実装するのは ecs-ec2 だけ——他のランタイムでは
-  **tier 3 が半端に効くのではなく、存在しない**。
-- 設定は `limits.home_hibernate_after`。他の 2 つのアイドル設定と同じ解決規則
-  （空＝デプロイ既定 `AF_ECS_EC2_HIBERNATE_AFTER_SEC`／`"0"`＝このテナントでは退避しない）。
-- **tier 3 は停止中の Workspace を見る。** tier 1/2 は `running` でないものを即 return するので、
-  引き金はその return の**向こう側**に置くことになる。ここを間違えると、設定は有効なのに
-  一度も発火しない。
-- **tier 3 の時計に `bootTime` を混ぜてはならない。** `idleBase`（tier 2）はプロセス起動時刻を
-  下限に使う——分単位では正しいが、退避の窓は日〜週である。**CP が窓より高い頻度で
-  再起動するデプロイでは期限が永遠に後ろへ動く**（有効に見えて一度も動かない）。
-  読めるのは永続化された `last_active_at` だけで、**読めなければ「触らない」**とする。
-- **`BeginHibernate` は始めるだけ。** 既に `af-hibernating` が刻まれていたら何もしない
-  ——reaper と掃除ループが同じ退避を同時に進めると `CreateSnapshot` が 2 本走り、
-  孤児の snapshot が課金され続ける。実行中かどうかの唯一の権威は AWS 側のタグである。
-- **掃除ループは退避を開始しなくなった。** 走っているものを最後まで進める枝はそのまま
-  （ゲートも無いまま）残す——途中で機能を切っても snapshot とボリュームの両方を
-  払い続けることにならないため。**副作用として、reaper を止めたデプロイ
-  （`AF_IDLE_SWEEP_INTERVAL=0`）では退避が起きなくなる。**
+- The seam is `hibernatingRuntime` (`BeginHibernate`), **one method on an optional interface**. Like
+  `runtimeDestroyer`, only ecs-ec2 implements it — on other runtimes **tier 3 does not half-work; it does
+  not exist**.
+- The setting is `limits.home_hibernate_after`, with the same resolution rule as the other two idle
+  settings (empty = the deployment default `AF_ECS_EC2_HIBERNATE_AFTER_SEC`; `"0"` = do not hibernate for
+  this tenant).
+- **Tier 3 looks at stopped workspaces.** Tiers 1 and 2 return immediately for anything not `running`, so
+  the trigger has to go **beyond** that return. Get this wrong and it never fires despite the setting being
+  enabled.
+- **Do not mix `bootTime` into tier 3's clock.** `idleBase` (tier 2) uses the process start time as a
+  lower bound — correct at minute scale, but hibernation's window is days to weeks. **On a deployment
+  where the CP restarts more often than that window, the deadline moves backwards forever** (it looks
+  enabled and never fires). The only readable thing is the persisted `last_active_at`, and **if it cannot
+  be read, do nothing**.
+- **`BeginHibernate` only begins.** If `af-hibernating` is already stamped it does nothing — the reaper
+  and the sweep loop advancing the same hibernation at once would run two `CreateSnapshot`s and leave an
+  orphaned snapshot billing forever. The only authority on whether it is running is the tag on the AWS
+  side.
+- **The sweep loop no longer starts hibernations.** The branch that carries a running one to completion
+  stays (without a gate) — so that turning the feature off part-way does not leave you paying for both the
+  snapshot and the volume. **As a side effect, a deployment that stopped the reaper
+  (`AF_IDLE_SWEEP_INTERVAL=0`) no longer hibernates.**
 
-## 決定 15 — AZ は「まだ縛られていない人」だけが選び直せる
+## Decision 15 — only "people not yet bound" can have their AZ re-chosen
 
-docs/64 §64.20.4 で見つけた穴を閉じる。新規 home の AZ は `anyAZ()`＝**設定サブネットの
-ID 昇順の先頭**に決め打ちで、そこに容量が無いと `runSlot` が失敗して終わっていた——
-既存ユーザーは動いたまま、**新規ユーザーだけが起こせなくなる**（外形的には障害に見えない）。
+Closing the hole found in docs/64 §64.20.4. A new home's AZ was hard-coded to `anyAZ()` = **the first of
+the configured subnets in id order**, and if there was no capacity there `runSlot` simply failed —
+existing users kept working while **only new users could not be started** (which does not look like an
+outage from outside).
 
-- **新規 home に限り、`RunInstances` が容量不足を返したら次の AZ を試す**（`growPool`）。
-  既存 home は自分の AZ に固定のまま失敗させる——**動けない先にスロットを立てても、
-  attach できない箱が増えるだけ**である。
-- **容量以外の失敗は撮り直さない。** 起動テンプレート不正や枠超過はどの AZ でも同じように
-  失敗し、3 回試すと本当の理由が最後の 1 つに埋もれる。
-- **本体は「作る順序」の変更である。** 以前は AZ を決めて**先にボリュームを作って**いた。
-  空きスロットがある限り答えは同じだが、**容量不足のときに他所を試す手段が
-  「作ったボリュームを消してやり直す」しか無くなる**。空の home なら無害でも、
-  **snapshot から復元した home では消した瞬間にデータ消失**（`createHomeVolume` は復元元の
-  snapshot をボリュームが使えるようになった時点で消す）。**行き先が決まるまで作らない**ことで、
-  この選択自体を無くした。
-- 副作用として、**上限での立ち退きが AZ を跨ぐ**ようになった。以前は「誰も見ないうちに
-  決めた AZ の中で最も長く休んでいる人」で、*10 分前に離席した人を追い出して別 AZ の
-  1 週間放置を残す*ことがあり得た。
-- ~~**分散はしない**（決め打ちのまま）。~~ → **決定 16 で覆した。**
-- ⚠️ **実 AWS では未検証。** sandbox で容量不足を意図的に起こせない。fake は AWS の
-  エラー文字列を模しているが、**実際にその文字列で来るかは実機で確かめていない**。
+- **For new homes only, if `RunInstances` returns insufficient capacity, try the next AZ** (`growPool`).
+  An existing home stays pinned to its own AZ and fails — **standing up a slot somewhere it cannot go only
+  adds a box that cannot be attached to**.
+- **Do not retry on failures other than capacity.** An invalid launch template or a quota overrun fails
+  the same way in every AZ, and trying three times buries the real reason in the last one.
+- **The substance is a change to the order of creation.** Previously the AZ was decided and **the volume
+  was created first**. As long as a free slot exists the answer is the same, but **on insufficient capacity
+  the only way to try elsewhere becomes "delete the volume you created and start over"**. Harmless for an
+  empty home, but **for a home restored from a snapshot the data is lost the moment it is deleted**
+  (`createHomeVolume` deletes the source snapshot once the volume is usable). **Not creating anything until
+  the destination is decided** removes the choice entirely.
+- As a side effect, **eviction at the cap now crosses AZs**. Previously it was "the longest-dormant within
+  an AZ chosen before anyone was looking", which could *evict someone who stepped away ten minutes ago
+  while leaving a week-idle home in another AZ*.
+- ~~**No spreading** (it stays hard-coded).~~ → **Overturned by decision 16.**
+- ⚠️ **Unverified on real AWS.** Insufficient capacity cannot be induced deliberately in a sandbox. The
+  fake imitates AWS's error strings, but **whether it actually arrives with that string has not been
+  confirmed on real hardware**.
 
-### 15-1. ユーザーを別の AZ へ移す操作は作らない（退避がそれである）
+### 15-1. No operation is built to move a user to a different AZ (hibernation is that operation)
 
-EBS は AZ を越えられず、AWS 側にも「移動」は無い——実体は必ず snapshot 経由の作り直しで、
-**それは退避（決定 4）と同じ手順**である。したがって専用の操作は増やさない:
-**停止 → 退避 → 移したい AZ にだけ空きを作って Start**（docs/64 §64.20.7 に手順）。
+EBS cannot cross AZs and AWS has no "move" — in reality it is always recreation via a snapshot, **which is
+the same procedure as hibernation (decision 4)**. So no dedicated operation is added:
+**stop → hibernate → make room only in the target AZ → Start** (the procedure is in docs/64 §64.20.7).
 
-⚠️ **行き先は名指しできない。** 選べるのは「どの AZ に空きを作るか」までである。
-1 人だけ・行き先も指定したいときは AWS CLI で同じ 4 手を直接踏む（§64.20.7 に控え）。
-名指しの移動を製品の操作にするなら、置き場（管理画面のメンバー詳細）と、
-**捕獲中に Start が来たときの扱い**（§64.18.3.1 と同じ問題）を先に決めること。
+⚠️ **The destination cannot be named.** All you can choose is "in which AZ to make room". For one person
+with a named destination, do the same four steps directly with the AWS CLI (a note in §64.20.7).
+If naming the destination is ever to become a product operation, first decide where it lives (the member
+detail in the admin screen) and **what happens when a Start arrives mid-capture** (the same problem as
+§64.18.3.1).
 
-## 決定 16 — 新規 home は AZ に分散する（決定 15 の「分散しない」を覆す）
+## Decision 16 — spread new homes across AZs (overturning decision 15's "do not spread")
 
-決定 15 は「新規が同じ AZ に集まるのは意図」と書いたが、その帰結を見ていなかった:
-**1 つの AZ が落ちたときの影響範囲が、半分ではなくほぼ全員になる。** home は退避できない
-（EBS は AZ を越えない）ので、打てる手は「最初から同じ場所に置かない」しかない。
+Decision 15 said "new homes clustering in the same AZ is intentional", without looking at the consequence:
+**when one AZ goes down, the blast radius is not half but nearly everybody.** A home cannot be evacuated
+(EBS does not cross AZs), so the only available move is "do not put them in the same place to begin with".
 
-- `growPool` は AZ を **home の少ない順**に試す。同数なら従来の安定順。
-- ⚠️ **対価がある。** 1a の home は 1a のスロットにしか載らないので、もう一方の AZ の空きは
-  その人には無価値で、**再利用の代わりにプールが伸びる**（同じ人数でインスタンスが増える）。
-- **`placeHome` の「空きスロット優先」には手を付けない。** 分散が決めるのは
-  **新しいスロットをどこに立てるか**だけで、既にあるものを使うかどうかではない。
-- 数えられなかったとき（API 失敗）は従来の固定順に落ちる。配置を止める理由にはしない。
+- `growPool` tries AZs **in order of fewest homes**. Ties keep the previous stable order.
+- ⚠️ **There is a price.** A home in 1a can only ride a slot in 1a, so free capacity in the other AZ is
+  worthless to that person, and **the pool grows instead of being reused** (more instances for the same
+  number of people).
+- **`placeHome`'s "prefer a free slot" is untouched.** Spreading decides only **where to stand up a new
+  slot**, not whether to use one that already exists.
+- If counting fails (an API failure) it falls back to the previous fixed order. That is not a reason to
+  stop placement.
 
-## 決定 17 — home の予備を定期的に取る（AZ 喪失に対する唯一の逃げ道）
+## Decision 17 — take periodic spare copies of home (the only escape from losing an AZ)
 
-home の AZ 外コピーは、**たまたま退避が走っていた人にしか存在しなかった**。可用性障害なら
-復旧を待てばよいが、**AZ を喪失したらその home は失われる**。snapshot はリージョン資源なので、
-これが唯一の逃げ道である。
+An out-of-AZ copy of home **existed only for people who happened to be hibernating**. An availability
+incident can be waited out, but **if an AZ is lost, that home is gone.** Snapshots are a regional resource,
+so this is the only escape.
 
-- 引き金は reaper の **tier 4**（テナントの `home_backup_every`）。**アイドルとは無関係**に走る
-  ——守る相手は人が帰るのを待たない。継ぎ目は `backingUpRuntime` の任意インタフェースで、
-  実装は ecs-ec2 だけ（他のランタイムの home はそもそも 1 AZ に縛られていない）。
-- **使用中のまま撮る＝クラッシュ一貫の写し。** 静止させるには働いている人の home を時間で
-  取り上げることになり、そちらの方が製品として悪い。⚠️ `bake-golden.sh` の「付いたままは
-  撮らない」とは**逆の判断**で、理由も逆である（golden は全員の初期状態なので綺麗である権利がある）。
-- **自動では戻さない。** 予備は定義上 home より古く、黙って古い home を渡すのは本 ADR が
-  一貫して避けてきた失敗そのもの。戻すのは運用者の操作（docs/64 §64.21.4 に手順）。
-- **`af-role=backup` という第 3 の役割。** 既存の引き方はすべて `af-role` で絞るので、復元にも
-  退避の掃除にも golden 探しにも引っかからない。**`Destroy` は予備も消す**（役割が違うぶん
-  他の掃除から見えず、放置すると退職者ぶんが永久に課金される）。
-- **CP に状態を持たない。** 次はいつかは最新の予備の `af-backup-at` から読む（ADR 0012）。
-  2 レプリカが同じ窓で撃つと余分な 1 本ができるが、増分なので安く、保持数がすぐ落とす。
-- **間隔はテナント、本数は運用者**（`AF_ECS_EC2_BACKUP_KEEP`・既定 3）。どれだけ巻き戻って
-  よいかはテナントの判断で、何本ぶん払うかはデプロイの判断である。
-  **刈るのは完了済みだけ**——差し替え中に本数が設定より減らないため。
+- The trigger is the reaper's **tier 4** (a tenant's `home_backup_every`). It runs **regardless of idleness**
+  — what it protects does not wait for people to go home. The seam is the optional `backingUpRuntime`
+  interface, implemented only by ecs-ec2 (other runtimes' homes are not bound to one AZ in the first
+  place).
+- **Taking it while in use = a crash-consistent copy.** Quiescing would mean taking a working person's home
+  away on a timer, which is worse as a product. ⚠️ This is **the opposite judgement from `bake-golden.sh`'s
+  "do not snapshot while attached"**, and for the opposite reason (the golden is everyone's initial state
+  and has the right to be clean).
+- **It is never restored automatically.** A spare is by definition older than home, and silently handing
+  over an old home is exactly the failure this ADR has consistently avoided. Restoring is an operator
+  action (the procedure is in docs/64 §64.21.4).
+- **A third role, `af-role=backup`.** Every existing query filters on `af-role`, so it is caught by neither
+  restoration, nor hibernation's cleanup, nor the golden search. **`Destroy` deletes the spares too** (being
+  a different role they are invisible to the other cleanups, and left alone a leaver's spares bill
+  forever).
+- **No state in the CP.** When the next one is due is read from the latest spare's `af-backup-at`
+  (ADR 0012). Two replicas firing in the same window make one extra, but it is incremental so it is cheap,
+  and the retention count drops it soon.
+- **The interval is the tenant's; the count is the operator's** (`AF_ECS_EC2_BACKUP_KEEP`, default 3). How
+  far back you may roll is the tenant's judgement; how many you pay for is the deployment's.
+  **Only completed ones are pruned** — so the count does not drop below the setting during a replacement.
 
-### 17-1. 健全性を見て AZ を避けることは、今はしない
+### 17-1. Avoiding an AZ based on health is not done for now
 
-容量エラーを返さない障害（起動は通るが ECS に登録されない）では、新規ユーザーが死んだ AZ へ
-流れ込んで待たされる。自動でスキップする仕組みは入れなかった——**運用者が
-`AF_ECS_SUBNETS` から外す方が確実で、判断も明示的**だからである。入れるなら「連続失敗で
-一定時間スキップ」が最小だが、誤検知でプール全体を狭める側の失敗が怖い。
+With a failure that does not return a capacity error (instances start but never register with ECS), new
+users flow into a dead AZ and wait. No automatic skipping was added — **an operator removing it from
+`AF_ECS_SUBNETS` is more reliable and the judgement is explicit**. If it is ever added, "skip for a period
+after consecutive failures" is the minimum, but the failure mode of a false positive narrowing the whole
+pool is worrying.
 
-⚠️ **決定 15〜17 はいずれも実 AWS で未検証。** AZ 障害も容量不足も sandbox では起こせない。
+⚠️ **Decisions 15–17 are all unverified on real AWS.** Neither an AZ failure nor insufficient capacity can
+be induced in a sandbox.
 
-## 決定 18 — スロットのイメージキャッシュは AMI に焼く（各 AZ の種インスタンスではなく）
+## Decision 18 — bake the slots' image cache into an AMI (rather than a seed instance per AZ)
 
-> ⚠️ **決定 19 で撤回し、実装ごと撤去した。** 焼くと pull は本当に消える（実測 31.8s →
-> **0.185s**）が、**自前 AMI の初回起動がそれ以上に高くつく**（新規ユーザーの Start が
-> 144.0s → 179〜192s）。以下は判断の記録として残す——設計としては正しく、
-> **外れたのは前提の方**だった。
+> ⚠️ **Withdrawn by decision 19, and the implementation removed.** Baking really does remove the pull
+> (measured 31.8s → **0.185s**), but **the first start of a custom AMI costs more than that** (a new user's
+> Start goes from 144.0s to 179–192s). What follows is kept as a record of the judgement — the design was
+> right, and **what was wrong was the premise.**
 
-新しく立てたスロットの root は常に冷たいので、**その AZ の最初の 1 人・上限まで伸びるとき・
-決定 16 の分散で新しい AZ に立てるとき**が毎回イメージの pull を払っている
-（pull 31.8s → 0.09s・決定 1）。「各 AZ に停止インスタンスを 1 台置いて root だけ温める」案は
-**筋としては正しい**——停止は安く、価値は root にあり、プールに入れておく必要も無い——が、
-温めたいのはインスタンスではなく root であり、**インスタンス無しで温めた root を持つ方法が AMI** である。
+A newly stood-up slot's root is always cold, so **the first person in an AZ, growing to the cap, and
+standing one up in a new AZ under decision 16's spreading** each pay for the image pull (pull 31.8s → 0.09s,
+decision 1). The idea of "keep one stopped instance per AZ to warm just the root" is **right in principle**
+— stopping is cheap, the value is in the root, and it need not be in the pool — but what we want warm is
+the root rather than the instance, and **the way to have a warm root with no instance is an AMI.**
 
-| | 種インスタンス | **AMI（採用）** |
+| | A seed instance | **An AMI (adopted)** |
 |---|---|---|
-| 効く範囲 | 各 AZ の最初の 1 人だけ | **以後すべてのスロット作成** |
-| AZ の数 | AZ ごとに 1 台 | **リージョン資源。1 個で全 AZ** |
-| プールの帳尻 | 上限・空きリストから外す細工が要る | 出てこない |
-| 奪い合い | 調停が要る（home を先に attach してから昇格させれば同じ裁定器は使える） | 起きない |
-| 変更範囲 | アダプタに昇格経路 | **`SlotAmiId` の差し替えだけ**。アダプタは無変更 |
+| Scope | only the first person in each AZ | **every slot creation thereafter** |
+| Number of AZs | one machine per AZ | **a regional resource; one covers every AZ** |
+| Pool bookkeeping | needs contrivances to keep it out of the cap and the free list | it never appears |
+| Contention | needs arbitration (attaching home first and then promoting reuses the same arbiter) | does not arise |
+| Change footprint | a promotion path in the adapter | **just swapping `SlotAmiId`**. The adapter is unchanged |
 
-- ⚠️ **焼く前に `/var/lib/ecs/data/*` を消す。** 残すとこの AMI から立てた**すべての**
-  インスタンスが「登録済み」と思い込む——決定 3-1 で既に踏んだ罠そのもの。
-- ⚠️ **`af-role=slot` で焼かない。** CP はそのタグで世界を作るので、焼いている最中の箱に
-  誰かの home が載る。スクリプトは `af-role=bake` を使う。
-- **陳腐化の扱いは golden（決定 9）と同一。** AMI に `af-image` を刻み、CP が突合して
-  スロットタブに言い続ける。忘れても壊れず遅くなるだけで、他に気づく場所が無いため。
-  突合は**インスタンスの ImageId から**読む（テンプレートを直しただけの状態を
-  「改善済み」と報告しないため）。混在したら**まだ pull を払っている方**を出す。
-- **アダプタは AMI を選ばない。** 選ぶのは起動テンプレートで、CP がするのは報告だけである。
+- ⚠️ **Delete `/var/lib/ecs/data/*` before baking.** Leaving it makes **every** instance from this AMI
+  believe it is already registered — exactly the trap already hit in decision 3-1.
+- ⚠️ **Do not bake with `af-role=slot`.** The CP builds its world from that tag, so somebody's home would
+  land on the box being baked. The script uses `af-role=bake`.
+- **Staleness is handled exactly as for the golden (decision 9).** `af-image` is stamped on the AMI and the
+  CP reconciles it and keeps saying so in the slots tab. Forgetting does not break anything, only slows it
+  down, and there is nowhere else to notice. The reconciliation reads **from the instance's ImageId** (so
+  that merely fixing the template is not reported as "improved"). On a mixture, it reports **the side still
+  paying for the pull**.
+- **The adapter does not choose the AMI.** The launch template does; the CP only reports.
 
-### 18-1. CP のタスクロールに snapshot 権限が無かった（同時に修正）
+### 18-1. The CP's task role had no snapshot permissions (fixed at the same time)
 
-`ec2:DescribeImages` を足す作業で見つかった。`20-platform.yaml` の `Ec2SlotPool` に
-**`DescribeSnapshots` / `CreateSnapshot` / `DeleteSnapshot` がまったく無い**。実デプロイでは
-退避も予備も golden も動かず、さらに `createHomeVolume` が最初に本人の退避 snapshot を探すため
-**新規ユーザーの Start がそもそも通らない**。
+Found while adding `ec2:DescribeImages`. `Ec2SlotPool` in `20-platform.yaml` has
+**no `DescribeSnapshots` / `CreateSnapshot` / `DeleteSnapshot` at all**. On a real deployment, hibernation,
+spares and the golden would all fail, and since `createHomeVolume` first looks for the person's own
+hibernation snapshot, **a new user's Start would not work at all**.
 
-⚠️ **実機 E2E で出なかった理由が重要**: ハーネスは CFN のタスクロールではなく**デプロイヤの
-資格情報**で走っている。**「実 AWS で通した」は「本番の権限で通した」ではない。**
-以後、実機検証の作法にこの区別を含めること。
+⚠️ **Why the real-hardware E2E did not catch it matters**: the harness runs with **the deployer's
+credentials**, not the CFN task role. **"It worked on real AWS" is not "it worked with production's
+permissions."** From now on this distinction is part of the practice of hardware verification.
 
-**2026-08-16 追記（穴を塞いだ）**: ハーネスが `20-platform.yaml` の `CpTaskRole` の
-ポリシーを**そのまま取り出して**同じ権限のロールを作り、E2E は**製品側だけ**をそのロールで
-走らせるようにした（テスト自身の確認と後始末はデプロイヤのまま）。ライフサイクル E2E は
-その権限で通り、追加した snapshot 権限も実機で効くことを確認した（docs/64 §64.23）。
-⚠️ **ポリシーを手で書き写さないこと**が肝である。写した瞬間、それは「テンプレートが与えて
-いる権限」ではなく「与えていると思っている権限」になり、同じ穴をもう一度素通りさせる。
+**Addendum 2026-08-16 (the hole was closed)**: the harness now **extracts the policy of `CpTaskRole` from
+`20-platform.yaml` verbatim**, creates a role with the same permissions, and runs **the product side only**
+under that role (the test's own checks and cleanup stay on the deployer). The lifecycle E2E passed under it,
+and the added snapshot permissions were confirmed to work on real hardware (docs/64 §64.23).
+⚠️ **Not transcribing the policy by hand** is the crux. The moment you transcribe it, it stops being "the
+permissions the template grants" and becomes "the permissions we think it grants", letting the same hole
+through again.
 
-## 決定 19 — スロット AMI への焼き込みは採らない（決定 18 の撤回・実測）
+## Decision 19 — do not bake into the slot AMI (withdrawing decision 18, from measurement)
 
-`bake-slot-ami.sh` を実際に走らせ、焼いた AMI からスロットを立てて測ったところ、
-**狙いは達成されているのに、通しでは遅くなった**（本番相当ハーネス・NAT・2 AZ・m7i.large・
-同一セッション内の比較）。
+Running `bake-slot-ami.sh` for real and standing up slots from the baked AMI, measurement showed that
+**the aim was achieved and yet end to end it got slower** (a production-equivalent harness: NAT, two AZs,
+m7i.large, compared within one session).
 
-| | 素の ECS-optimized AMI | **焼いた AMI** |
+| | Plain ECS-optimized AMI | **The baked AMI** |
 |---|---|---|
-| 新規ユーザーの Start（空の home・冷たいスロット） | **144.0s** | **191.7s / 179.0s**（2 回） |
-| タスク起動時の image pull | 31.8s（決定 1） | **0.185s**（ECS エージェントのログ実測） |
-| 起動 → ECS クラスタに登録（同時起動の A/B） | **21s** | **77s** |
-| systemd の起動内訳 | loader 0.9s / initrd 1.0s / userspace 37.7s | loader 6.1s / initrd 8.9s / userspace **53.1s** |
-
-**理由は AMI の作り方そのものにある。** 自前 AMI の root は**新しい snapshot からの遅延読み込み**
-（初回アクセスのたびに S3 から取り寄せる）で、Amazon の ECS-optimized AMI のように広く使われて
-温まってはいない。しかも焼いた分だけ実データが増える（root 使用量 2.9G → 5.6G）ので、**冷たい
-ブロックが増える**。3 台目でも縮まらなかった（登録まで 77s）。pull で節約した 30 秒を、
-起動で 30〜56 秒払い直している。
-
-- **やめる**。`SlotAmiId` は素の ECS-optimized AMI のパラメータのままが速い。
-- **実装ごと撤去する**——`bake-slot-ami.sh`、CP の `af-image` 突合（`readSlotAMI`・
-  `ec2PoolStatus.SlotAmi*`）、Console の「スロットのイメージ」パネルと文言、CP タスクロールの
-  `ec2:DescribeImages`、ハーネスの後始末。**「非推奨と書いて残す」は採らない**: 既定で使わない
-  機能は誰も走らせず、静かに腐る——今回もスクリプトの誤り 3 件が**実走で初めて**出た
-  （[[scratch-disk-inert-default]] と同じ形）。判断の記録は docs と本 ADR に残るので、
-  必要になった人は git 履歴から取り出せる。
-- **効果が残る唯一の理由は速度ではない**（タスク起動時にレジストリへ行かない＝ ECR 障害や
-  pull スロットリングからの独立）。それは本 ADR の採用理由ではないし、**このプールは
-  インスタンスを terminate しない**ので新しいスロットを作る機会そのものが稀である。
-- **そもそも起動時間は採用理由ではない**（決定 12）。起動時間のための最適化が起動時間を
-  悪くしているのだから、残す理由が無い。
-
-⚠️ **これも「走らせるまで走らない」の一例**である。スクリプト自体にも実走でしか出ない誤りが
-2 件あった（`--min-count/--max-count` は CLI v2 に無い／`rm -f /var/log/ecs/*` はディレクトリで
-落ちる——2.6GB を pull した直後に）。さらに **`SlotAmiId` は AMI ID ではなく SSM パラメータ名を
-取る型**で、スクリプトも README も AMI ID を渡すよう案内していた（＝そのままでは deploy が
-落ちる）。**3 件とも、書いた時点では誰も間違いだと思っていなかった。**
-
-## 決定 20 — home をマウントできなかったスロットは隔離する
-
-実機で起きた（docs/64 §64.24）: home を剥がされたワークスペースのプロセスが
-**割り込み不可の待ち**に落ち、XFS が消えたデバイスへ書き戻そうとしたまま固まり、カーネルが
-**死んだボリュームの NVMe 名前空間を保持し続けた**。その結果、次に attach したボリュームは
-`/dev` に一切現れず `af-mount` が「デバイスが無い」で失敗する。**そしてスロットは空きのまま
-だったので、以後の Start が全員そこに入って同じように失敗した。**——1 台のカーネルの詰まりが、
-黙って全員の障害になる。
-
-- **マウントに失敗したスロットは `af-role=quarantined` に打ち直す。** プールの引き方はすべて
-  この 1 つのタグで絞っているので、**書き込み 1 回で**空きリストからも上限の勘定からも配置からも
-  同時に消える。CP 側に状態は増やさない（ADR 0012）。
-- **home は剥がして、claim も落とす。** 本人の次の Start が claim TTL を待たずに
-  別のスロットへ行けるようにするため。
-- **箱は停止する。** タスクを受けられない箱を時間課金で放置しない。終了は運用者の判断に残す
-  （このアダプタに `TerminateInstances` は無い・§64.22.1）。**なお実機では、この停止が
-  詰まった detach を完了させた**（stopping → stopped でボリュームが `available` に戻った）。
-- **画面には残す。** プールの数からは外すが表からは消さない——まだ課金されている箱が
-  画面から消えるのは、運用者が気づけない形の請求になる。理由と時刻もタグに残す。
-- 直せるかどうかは CP の管轄外である（カーネルが詰まっている）。**できるのは、他人を巻き込む
-  のを止めることだけ**——それが隔離である。
-
-## 決定 21 — サイズは「メモリ 1 軸」のまま。インスタンスタイプは選ばせず、**結果として乗る箱を表示する**
-
-同じ設定 UI が 4 ランタイム（docker / native / ecs(Fargate) / ecs-ec2）を相手にしている。
-そこに `ecs-ec2` 固有の語彙（`m7i.xlarge`）を入れると、他の 3 つでは意味を持たない項目が増える。
-逆に今のままだと、**画面に出ている 3 軸のうち 2 軸が `ecs-ec2` では嘘**である（下記）。
-採るのは 3 案のうち (c) ——**保存の形（3 軸の独立した数値・ADR 0044 決定 1）は一切変えず、
-ランタイムが「その値が何になるか」を申告し、画面がその通りに言う**。
-
-**まず、実装を読んで確定した齟齬 5 件**（設計の出発点。詳細は [docs/64](../64-ec2-persistent-workspace.md) §64.27）:
-
-1. **CPU 指定は `ecs-ec2` では捨てられている。** `fargateSize()` は Fargate 経路にしかなく、
-   `slotTypeFor(memBytes)` はメモリしか見ない。タスク定義にも CPU は入らない。
-   **画面に出ている「ワークスペースの CPU」は、このランタイムでは何もしない入力欄**である。
-2. **メモリは「上限」ではない。** EC2 のタスクは `memoryReservation: 512`（ソフト）だけで、
-   ハード上限を掛けていない（決定 8：箱は 1 人で使う）。`mem_limit` は**箱を選ぶための「必要量」**
-   であって、cgroup の上限ではない。4 GiB と入れた人は m7i.large の **8 GiB を丸ごと**使える。
-3. **ディスク軸は別物を指している。** Fargate では作業ディスク（ephemeral・停止で消える）だが、
-   `ecs-ec2` では `homeGiB()` → **永続 home の EBS サイズ**である。画面の注意書きは
-   「作業ディスクは停止すると消えます。永続するのはホームだけです」と、**事実の逆**を言っていた。
-4. **ディスク値は home 作成時にしか効かない。** `ModifyVolume` はこのアダプタに無い
-   （コメントは「オンラインで増やせる」と書いているが、それは EBS の性質であって実装ではない）。
-   既存ユーザーの値を変えても何も起きない。**EBS は縮小もできない。**
-5. **メンバー詳細の稼働表示は ECS では常に「停止」。** `containerStats()` は `docker inspect` を
-   叩くので、CP に docker が無い ECS 系では必ず `running:false` を返す。
-   その結果 **「強制停止」ボタンが永久に押せない**（`disabled={!running}`）。Fargate でも同じ。
-
-**採らなかった 2 案**:
-
-- **(a) インスタンスタイプを直接選ばせる。** テナント管理者に EC2 の型番を選ばせることになり、
-  他 3 ランタイムでは表示できない。しかも**選択肢は運用者が `AF_ECS_EC2_SLOT_TYPES` で
-  既に閉じている**ので、利用者が選べる自由度は「梯子の何段目か」しかない。それはメモリで表せる。
-  （**運用者向けの画面＝スロットタブでは型番を出す。**そこは AWS の語彙が正しい場所である）
-- **(b) 抽象サイズ（S/M/L）を保存の形にする。** S/M/L は**既にプリセットとして存在する**
-  （`WS_SIZE_PRESETS`）。それを保存の形へ格上げすると、docker のバイト精度 `--memory` と
-  Fargate の 74 通りの組を名前 5 個に落とすことになる——ADR 0044 決定 1 が独立した数値に
-  したのはそのためで、覆す理由が無い。**プリセットは「有効な組み合わせの提示」のままにする。**
-
-**採る形 (c) の仕様**:
-
-- **ランタイムがサイズの意味論を申告する。** `WorkspaceImage()` と同じ任意インタフェースで
-  `SizingProfile()` を足し、`GET /api/admin/workspace-sizing`（tenant_admin 可）が返す:
-  CPU 軸が効くか・メモリ軸が「上限」か「必要量」か・ディスク軸が作業ディスクか home か・
-  既定値・`ecs-ec2` ならスロットの梯子。**画面はこの申告だけを見て文言と項目を決める**
-  （`hasPool` で退避・予備の欄を出し分けている既存の型と同じ）。
-- **`ecs-ec2` では CPU 欄を出さない。** 何もしない入力欄を残さない。ただし**保存時は
-  読み込んだ値をそのまま送り返す**（欄を隠した副作用で、他ランタイム用に設定された値を
-  0 に潰さない——ディスク欄で既に踏んでいる形）。
-- **メモリ欄は「必要量」と言い、その下に乗る箱を出す**（例: `→ m7i.large（8 GiB・専有）`）。
-  **0（未設定）は最小スロット**である——Fargate の「0 ＝ デプロイ既定」とは違うので、
-  そこも「0 = 最小スロット（m7i.large）」と明示する。
-- **プリセットは梯子から作る。** `ecs-ec2` のときだけ、S/M/L… の代わりにスロットのメモリを
-  並べる（8 GiB / 16 GiB / 32 GiB）。存在しない中間値を勧めない。
-- **ディスク欄は「home（永続）」と言い、作成時にしか効かないこと・縮められないことを書く。**
-- **梯子の vCPU は運用者が申告する。** `AF_ECS_EC2_SLOT_TYPES` を `type:memMiB[:vcpu]` へ拡張する
-  （後方互換・省略時は vCPU を表示しない）。`ec2:DescribeInstanceTypes` を足して AWS に
-  聞く案は採らない——**表示のためだけに CP のタスクロールへ IAM 権限を 1 つ増やす**割に、
-  運用者が既に知っている 1 語を書かせる方が安く、実機に当てなくても検証できる。
-- **メンバー詳細の稼働表示は `State()` 由来にする**（齟齬 5）。docker の cgroup 読みが
-  空を返したときにランタイムへ聞き直す。ECS 系で「強制停止」が押せない状態を終わらせる。
-
-## 決定 22 — アイドル停止は「空きスロット」にも同じ 1 つのタイマーで効く（決定 11-2 の補追）
-
-**決定 11-2 は「home が載ったまま休眠しているスロット」しか止めていなかった。** 掃除ループの
-sleep 判定は `sweepVolume` の中、すなわち **`af-role=home` のボリュームを起点にした走査の中**に
-しか無く、**`releaseSlot` された瞬間にそのスロットはその走査から出る**。以後どの経路も
-`StopInstances` を撃たない（`quarantineSlot` は故障箱専用、`sweepGhostInstances` は
-**EC2 が既に消えた** container instance を deregister するだけ）。
-
-⚠️ **実デプロイで踏んだ**（開発配備・2026-08-23）: **タスク 0 の `m*.large` が 3 台、24 時間以上
-running のまま**。24 時間分のログに `sleep` の記録は **1 件も無い**。踏む経路は
-(a) 立ち退き (b) サイズ／クラス変更 (c) `Destroy` (d) **golden の seed / probe が終わったとき**。
-開発配備の 3 台は (c)(d) の残骸で、**`Ec2SlotSleepSec` の説明文が「〜$9.6/月」と書いている横で
-1 台あたり 〜$95/月 を焼いていた**。
-
-1. **スロット起点の走査を足す**（`sweepFreeSlots`）。`af-pool` ＋ `af-role=slot` ＋ running の
-   インスタンスを見て、**home が付いておらず・生きた claim も無く・ECS のタスクも 0** のものを
-   `slotSleepAfter` で停止する。`af-role=slot` で引くので**隔離箱は自然に対象外**になる。
-2. **⚠️ `taskENIsAttached` のガードは空き経路にも必ず通す。** 決定 3-3 は「タスク ENI を
-   持ったまま停止すると MULTI-ENI で復帰し、パブリック IPv4 と egress を静かに失う」であり、
-   これは実機で踏んだ実績がある。**空きスロットも同じ窓に入る。**
-   ⚠️ **「home が無い」は「何も載っていない」と同じ主張ではない。** baker の probe のように
-   home 無しでタスクが動く経路があるので、**EC2 側（ボリューム）と ECS 側（タスク数）の
-   両方に聞き、片方でも「使用中」と言えば止めない。**
-3. **「いつから空きか」はインスタンスのタグ `af-slot-idle-since`**（RFC3339・UTC）。ADR 0012
-   （状態は AWS に置く）を保つには**ここしか置き場が無い**——空きスロットには home が無いので
-   `af-idle-since` を書く先が無い。**書くのは `releaseSlot`（正確な時刻を知っている唯一の場所）、
-   欠けていたら掃除ループが押し直す**——`af-idle-since` と同じ「実行者が書き、掃除ループが直す」
-   分担。**取られたら消す**（1 スイープより短い占有で、前回の空き時刻が残るのを防ぐ）。
-   ⇒ CP 再起動でも、デプロイのたびに 51 秒重なる 2 レプリカ（ADR 0053）でも同じ答えになり、
-   `StopInstances` は冪等なので二重呼び出しは無害。
-4. **温かい空きは 1 台も残さない**（決定 11-4 の「プレウォームは入れない」をそのまま延長する）。
-   実測（docs/64 §64.17.5）は **空きホット 43.2s / 停止スロットを起こす 110.1s /
-   プールを増やす 135.4s**。**箱を停止で維持している時点で「135s を払わない」という価値は
-   既に取れており**、running のまま置くことが買うのは **67 秒**だけで、対価は
-   **月 $95 対 $9.6**。むしろ今までの実装が**誰も台数を決めていない無制限のプレウォーム**に
-   なっていた、というのが正しい整理である。欲しいデプロイは `Ec2SlotSleepSec=0` で全台温存できる。
-5. **`Ec2SlotSleepSec=0` は「眠らせない」に直す。** 説明文はずっとそう書いていたが、
-   実装は `idle < slotSleepAfter` だったので **0 は「最初のスイープで即停止」＝ 正反対**だった。
-   `hibernateAfter` の 0=OFF と揃え、§64.26 の `AF_WS_IDLE_TIMEOUT=0` と同じく
-   **運用者の明示的な off を off として読む**。
-
-6. **掃除ループの両側が「起動中（生きた `af-claim`）」を同じに扱う**（docs/64 §64.31.6）。
-   空き側は最初から見ていたが、**home 側（`sweepVolume`）は期限切れ claim を消すだけで
-   生きた claim を見ていなかった**。`Start` は `clearDormancy` が先・`upsertService` が最後で
-   間に mount が入るので、その窓（20〜120 秒。⚠️ 当初は「mount の SSM 往復 10〜30 秒」と
-   書いていたが、実測では mount は 2〜4 秒で、窓の大半はインスタンス起動と ECS 登録・配置
-   である——docs/64 §64.38）のスイープが**起動中の WS に
-   `af-idle-since` を刻み直す**。早すぎる停止は起きない（時計は前に戻る）が、**マークが起動を
-   生き延び**、運用画面が running を「アイドル」と表示し、`evictLongestIdle` の犠牲者候補になる。
-   ⚠️ 置き場所は**退避の分岐より後**（claim が捕獲を途中で止めてはいけない）で、
-   **期限切れ claim は素通し**（`claimLive` は `af-claim-at` を見る。「タグが在れば return」と
-   書くと死んだ launch がスロットを永久に固定する）。
-
-**やらなかったこと**: 空き専用の 2 つ目の猶予パラメータ（`slotSleepAfter` で足りる。空きの
-温かさは占有中の休眠より**価値が低い**ので、別枠で長くするのは逆向き）。~~**terminate**（この
-アダプタは設計上 `TerminateInstances` を持たない——箱を捨てるのは運用者の判断で、
-イメージキャッシュを捨てると 110s が 135s に戻る）。~~
-→ **撤回（決定 23）。** 「箱を捨てるのは運用者の判断」は、**運用者が気づいて手で消すまで
-root ボリュームが課金され続ける**という意味でもあった。実デプロイでそれを踏んだ（docs/64 §64.32）。
-
-## 決定 23 — 停止したスロットは、さらに時間が経ったら **terminate** する（決定 22 の次の段・2026-08-26）
-
-決定 22 で空きスロットも眠るようになったが、**眠った先が無い**。このアダプタには箱を消す経路が
-無いので、**保持される root ボリュームの本数は単調増加して `Ec2MaxSlots` に張り付く**。実運用中の
-<prod-deployment> で `Ec2MaxSlots` を 6 → 30 に上げたところ、それは同時に「30 本の root を無期限に買う」
-（30 × 40 GiB × $0.096/GB-月 ＝ **約 $115/月**）に署名することだった。停止中スロット 3 台を
-**手で terminate** して EBS 900 → 600 GiB に戻した。
-
-**`AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` / `Ec2SlotTerminateAfterSec`（既定 0 ＝ 無効）を足し、
-停止から N 経過した箱を terminate する。** 推奨値は 4h。
-
-- **停止と終了は別の課金を止める。** stopped は compute だけ $0 で、root（$3.84/月）は
-  箱が消えるまで残る。⚠️ root は `/dev/xvda`・`DeleteOnTermination: true` なので**単独では
-  消せない**——「root を消す」＝「terminate する」であり、**分離できない 1 つの決定**である。
-- **失うのは 25 秒。** 休眠箱を起こす 110s に対し、新規作成 135s（§64.17.4）。イメージキャッシュが
-  救う cold pull 32s を、インスタンス起動 19s ＋ ECS 再登録が食い潰しているため。
-  「使えないより遅い方がまし」という運用方針の下では払える。
-- ⚠️ **warm 床（最小 warm 台数）は置かない。** home が付いた箱は `occupiedInstances` が
-  stopped でも busy と答えるので `freeSlots` に出ず、**温存しても助かるのは最後に使った N 人だけ**。
-  逆に home を外して汎用にすると次の人は wake ＋ attach ＋ mount で **115〜117s**（⚠️ 当初は
-  mount を 10〜30s と見積もって 123〜143s ＝ 新規 135s とほぼ同じ、としていた。実測 2〜4s に
-  差し替えた値・docs/64 §64.38）で、**持ち主から 25 秒を取り上げて他人に 19 秒渡す**——
-  **差は 6 秒**であって「渡らない」ではない。それでも親和性を捨てる釣り合いは悪く、休止期間にも
-  固定費が残る。買う価値のある 92 秒は **running の空き箱**（$95/月）の側にあり、
-  それは決定 11-4 の「プレウォームは入れない」の再検討であって、この決定ではない。
-- ⚠️ **home は `releaseSlot` で先に外してから terminate する。** `DeleteOnTermination: False`
-  なのでどちらでも消えないが、terminate の ~60 秒の窓で持ち主が Start すると、`placeHome` は
-  **attachment から配置を導出する**ので shutting-down の箱を「自分のスロット」と読み、
-  claim してから `StartInstances` に失敗する。`releaseSlot` は **Start 世代に anchor されて**
-  いるので競合した Start は再 mount に落ちる——`TerminateInstances` にこの取り消しは無い。
-- ⚠️ **`sweepFreeSlots` の instance-state フィルタを `running, stopped` に広げる。**
-  停止が箱に起きる最後の出来事だった間は `running` だけで正しかったが、terminate 段を足すと
-  **箱は停止した瞬間に走査から永久に消える**——集めたい箱がちょうど。
-- ⚠️ **自分で terminate するときは先に `DeregisterContainerInstance`（`Force: true`）。**
-  決定 3-2 のとおり登録は `ACTIVE / agentConnected=false` で残り、**ACTIVE に見える
-  ゴーストは配置制約を満たす**。`sweepGhostInstances` は「他の理由で消えた箱」の修復路であって、
-  自分が消すときに窓を開けておく理由は無い。
-
-**結果として `Ec2MaxSlots` の役割が 1 つ減る。** それは **A**=同時実行の上限・**B**=保持される
-root の本数・**C**=立ち退きの閾値 を兼ねていたが、A と B が一致していたのは「箱を終了しない
-から」だった。定常の箱数が「活動量 ＋ 閾値」で決まるようになり、**B が外れる**。
-
-**やらなかったこと**: warm 床（上記）。空き用と占有用で別々の閾値（知りたいのは
-どちらも「箱を何時間持っておくか」の 1 つで、分けると運用が増えるだけ）。隔離済みの箱の
-自動 terminate（`af-role=quarantined` は両方の走査から外れる——**証拠は意図的に残す**）。
-
-## 決定 24 — 立ち退きは「乗れる箱」だけを奪う。ただし**テナントは跨ぐ**（2026-08-26）
-
-決定 23 の作業中に見つけた、決定 11-3（上限到達時の立ち退き）の粗 2 件。片方は不具合、
-もう片方は明文化されていなかった設計判断である（docs/64 §64.33 / §64.34）。
-
-**(1) 型を見ていなかった（不具合・修正する）。** `freeSlots` は最初から instance-type で
-絞っているのに、`evictLongestIdle` は AZ と自分自身しか絞っていなかった。`placeHome` は
-立ち退きで得た箱に `attachHomeWithRetry` でそのまま載せる（`freeSlots` を引き直さない）ので
-`slotTypeMatches` も通らない。結果、**xlarge の人が large を奪って載り、ECS が
-`no container instance met all of its requirements` で配置を拒否し続ける**——desired 1 /
-running 0 のまま永久に止まる。決定 21 の「アーキ跨ぎで実機観測」と同じ症状である。
-
-**上限に達したときにしか露出しない**ので生き延びた（上限未満なら `growPool` が走り、新しい箱は
-定義上正しい型になる）。⚠️ 直し方は**2 つの写しを 1 つにする**こと（`slotsOfMyType`）——
-§64.31.6 と同じで、「同じ判断が 2 箇所にあって片方だけ正しい」が真因だからである。
-結果として**全体の最長休眠が必ず犠牲者とは限らなくなる**。
-
-**(2) テナントを跨ぐ（そのままにする）。** テナント A の Start がテナント B の休眠スロットを
-回収し得る。禁じると、**テナント A が使っていない箱をテナント B が使えない**という規則になり、
-上限到達時に「起動できないメンバー」を作る——運用者が絶対に避けると明示した唯一の結果である。
-テナントを縛るのは `max_workspaces`（**同時に**動いてよい人数）であって、どの物理の箱に載るかでは
-ない。犠牲者の物は露出しない（`releaseSlot` が umount → detach を済ませる。root は元々
-「前に使った人と共有」の設計である）。⚠️ **テナント上限の合計がプール上限を超えている配備では
-この経路が「他テナントを奪う」形で表面化する**が、塞ぐべきはテナント上限側の検証であって
-立ち退きの制限ではない。
-
-~~**やらなかったこと**: 上限に張り付いた状態で休眠中の型違いの箱を terminate して正しい型を
-建て直すこと。~~ → **決定 26 で実装した。**「明示的に失敗する」でも**起動できない人は起動
-できないまま**であり、それは運用者が唯一「絶対に避ける」と明示した結果だった。
-
-## 決定 26 — 上限が「乗れない箱」で埋まっているなら、片付けて建て直す（決定 24 の続き・2026-08-26）
-
-決定 24 で立ち退きに型検査を入れた結果、**上限到達 ＋ 休眠中の箱が全部型違い**は「黙って詰まる」
-から「明示的に失敗する」に変わった。診断はできるようになったが、**利用者から見ればどちらも
-起動できない**。方針は「遅くなるのは許容、使えないのは不可」なので、ここは失敗させない。
-
-`placeHome` の⑤の後に段を足す: `evictLongestIdle` →（失敗したら）**`makeRoom`** → `growPool`。
-速い順（載せ替え 109.7s → 片付けて建て直し 135s ＋ terminate）に試して、**最後の 1 つが
-「失敗」ではなく「遅い成功」になった**、というのがこの決定の全部である。
-
-- **奪うのではなく終了する。** インスタンスタイプは走っている箱が変えられる属性ではない。
-  `evictLongestIdle` は**正しい大きさの箱すべてに first refusal を持っている**ので、そこで
-  見つからなかった時点で残りは「どう再利用しても乗れない箱」であり、それが 1 枠を握っている。
-  **枠を空けるには箱を消すしかない**（決定 23 と同じで root は単独では消せない）。
-- ⚠️ **AZ で絞らない（立ち退きとは逆）。** 立ち退きは箱を**再利用**するので home の AZ に
-  縛られるが、こちらは**箱を壊して枠を買う**ので、`Ec2MaxSlots` がプール全体を数える以上
-  **別 AZ の箱を空けても価値は同じ**。絞ると、空けられる箱があるのに要求者が詰まる。
-- ⚠️ **`Ec2SlotTerminateAfterSec` では門を作らない。** あれは**アイドルの費用**のつまみで
-  0 は「箱を残す」。こちらは**起動できない人**の話で、代わりが「Start の失敗」のときにしか
-  走らない。犠牲者が失うのはイメージキャッシュだけ（次回 110s→135s）で home は失わない
-  （`releaseSlot` で先に外す・`DeleteOnTermination: False`）。しかも**既定は 0** であり
-  **0 の配備こそ箱が上限まで育って張り付く**（決定 23）——門を作ると、この経路を最も必要と
-  する配備でだけ効かない。
-- **空の箱を持ち主付きより先に取る**（誰の親和性も使わないので只）。持ち主付きなら最長休眠から。
-- **生きた claim がある箱は取らない**（着地中の Start は attachment をまだ持たず claim だけが証拠）。
-  **ECS のタスクが 1 つでもあれば取らない**（home が無くてもタスクは載る——焼きの探針）。
-  **自分と同じ型は候補にしない**（立ち退きが first refusal を持っている。壊すと再利用できた
-  はずの箱を捨てて建て直すことになる）。隔離箱は両方の走査から外れたまま（決定 20）。
-- terminate 直後は `DescribeInstances` がまだ `stopped` と答えうるので **`poolSize` から
-  落ちるまで待つ**（`runSlot` が上限を読み直す。待たないと、たった今空けた枠のせいで自分の
-  Start が「一杯」で落ちる）。
-
-**片付けられる箱が 1 つも無ければ、立ち退きの元のエラーをそのまま返す**——「プールが一杯」が
-運用者の取れる手を指している唯一の文である。`makeRoom` が「何でもいいから 1 台消す」に
-ならないことはテストで固定した。起動ダイアログにも段を足した（`slot: making room`）——
-**製品でいちばん長い待ち**なので、generic に落ちると最長の待ちだけが理由を名乗らない。
-
-## 決定 25 — テナント上限とプール上限を突き合わせる。**警告であって拒否ではない**（2026-08-26）
-
-`setTenantLimits` が検証していたのは端末履歴の保持日数と時間文字列の書式だけで、整数クォータは
-**無検査で保存されていた**（docs/64 §64.35）。壊れ方が 2 つあり、扱いが違う。
-
-**(1) 負の数は拒否する（400）。** 0 = 無制限なので、負は「小さい上限」ではなく**誰も満たせない
-上限**である。`max_workspaces = -1` は `running >= limit` を誰も起動する前に真にし、そのテナントは
-二度と Workspace を開けない。数値欄の打ち間違いを、メンバーの起動失敗で気づくものにしない。
-
-**(2) プール上限の超過は警告する（保存はする）。** 容量は **`Ec2MaxSlots` − `bakeReservedSlots`(=2)**
-——golden の焼き直しは種と探針で 2 枠を同時に要り、全部配ると二度と焼けない（症状は「新しい
-メンバーの初回起動が遅い」で、数週間後に気づく）。定数は焼き側と共有する。
-
-拒否にしない理由:
-
-1. **このエンドポイントが守れる不変条件ではない。** `Ec2MaxSlots` は CP の env で、**下げるときに
-   API 呼び出しは起きない**。片方向だけを塞ぐ 400 は、与えられない保証を名乗ることになる。
-2. **オーバーサブスクライブは正当な運用である。** `max_workspaces` は**同時**利用の上限なので、
-   ピークが重ならないテナント同士なら意図的に超過させるのが正しい。
-3. **既に超過している配備が、この画面の他の欄すべてを編集できなくなる。** 自分が作ったのでもない
-   条件で、無関係な設定の保存が止まる。
-
-⚠️ **0 は「無制限」であって「0 台」ではない。** 1 テナントでもそれが居れば合計は上限を縛らないので、
-「超過」とは**別の警告**として出す（`unbounded_tenants`）。
-
-⚠️ **分母が違う。** `max_workspaces` が数えるのは *running / starting* な Workspace、`Ec2MaxSlots` が
-数えるのは*存在する箱*で、**停止中の Workspace はどちらのテナント枠にも数えられないまま箱を掴んで
-いる**（遅延返却）。したがって Σ ≤ 容量 は**必要条件であって十分条件ではない**。決定 23 を入れると
-差分は「最後の N 時間ぶん」に縮むが 0 にはならない。**画面でも 2 つを 1 つの言葉にしない**——
-上限欄には「同時に動く数」と添え、警告には必ずこの但し書きを付ける。
-
-**プール上限を持つランタイムのときだけ**成立する（`slotCapacityReporter`）。他では `ok=false` で、
-それは「大丈夫」ではなく「そういう問いが無い」である。出口は「保存の応答」と「プール画面」の
-2 つで、どちらも**問題があるときだけ**載せる（毎回の「大丈夫です」は、本当に出たときに読まれない）。
-
-## 決定 27 — 「まだ登録されていない」に時間制限を入れる。**箱の OS が死んだら待たずに捨てて置き直す**（本番事故・2026-08-27）
-
-決定 20 は「home をマウントできなかった箱」を隔離した。今回はその一つ手前で、**箱がタスクを
-受けられるかどうかを ECS に訊いている段階**で同じことが起きた——ただし誰も気づけない形で。
-
-実機で起きた（docs/64 §64.40）: ワークスペースの中の何かが匿名メモリを数 GB 握り、
-**swap がゼロなのでカーネルはページキャッシュを削り取るしか回収手段が無く**、以後あらゆる
-プロセスが実行ページを読み直し続けた。**root ボリュームは 8.0 GB しかデータを持たないのに
-39.34 GB/5 分を 3 時間**——**ディスクの中身を 5 分に 4.9 周、読み直していた**（refault thrash）。
-箱の管理系（efs-utils の stunnel → ECS エージェント → SSM エージェント）は**15 秒以内に揃って**
-落ちた。EC2 のステータスチェックは 3 つとも `passed` のまま、つまり**外形上その箱は健全**である。
-
-⚠️ **OOM killer は 1 件も発火していない**（`hung_task` も 0・`OOMKilled=false`）。
-**この状態では発火しない**——回収は「成功し続けている」からである、キャッシュを破壊することによって。
-★ **「OOM が無い ＝ メモリではない」と読んではいけない。** 調査中に実際そう読んで
-「メモリのハードリミットは効かない」という**逆の結論**を一度書いた（§64.40.2 に経緯を残した）。
-
-**したがって決定 20（隔離）に加えて、閉じ込めが要る**: `MemBytes`（ワークスペース単位の RAM 上限）は
-既に在って docker ランタイムでは使われているのに、**ecs-ec2 だけ `Memory: nil` で適用していない。**
-上限があれば追い出し圧力は**そのコンテナの cgroup 内に閉じ**、箱の管理系は生き残った。
-⚠️ ただし利用者が選ぶ「サイズ」はそのまま箱のサイズなので、`MemBytes` をそのまま入れると
-上限＝箱全体になり**管理系の余白が残らない**。**「箱のメモリ − 管理系ぶん」**でなければ意味がない。
-（この閉じ込めは決定 27 の範囲外＝別の決定として起こす。）そして 3 つの層がそれぞれ正しく振る舞った結果、
-**誰も回復できないデッドロック**になった: ECS はエージェントの居ないタスクを止められず →
-task ENI が永久に外れず → スイープは「ENI を持つ箱は停止しない」（決定 3-3）で正しく手を引き →
-Start は同じ箱を親和性で再利用して登録を待ち続け → **ingress が 60 秒で切って利用者は 504。**
-4 回押しても 4 回とも 504 で、CP のログには `500 1m0.0s` としか出ない（同じ事象の裏表）。
-
-- **`deferred` の判定に ECS 登録を加える。** homeless 経路は最初から
-  `running && registered` を見ていたのに、親和性で再利用する分岐は EC2 の `running` しか
-  見ていなかった。`deferred` は「呼び出し側のスレッドで走らせるか」を決める旗であり、
-  Start は 60 秒の ingress の内側に居る。**健全なプールでは running な箱は登録済みなので、
-  この非対称は普段まったく見えない**——見えるのは事故のときだけである。
-- **猶予（`AF_ECS_EC2_SLOT_LOST_AFTER_SEC`・既定 5 分）を過ぎ、なお EC2 が `running` と
-  言うなら、その箱は遅いのではなく失われている。** `pending` の箱は対象外にする——
-  起動途中の箱を壊すのは「遅い Start」を「壊れた Start」に変えることであり、
-  間違えたときの代償が非対称である（待ちすぎても数分遅くなるだけ）。
-- **決定 20 のテアダウンは流用できない。** あちらは「まだ何も走っておらず、カーネルは生きている」
-  前提で書かれている。OS が死んだ箱では全ステップが静かに間違ったことをする——走っている箱への
-  `DetachVolume` は永久に返らず、通常の `StopInstances` は誰も聞いていない ACPI shutdown を待ち、
-  **task ENI が付いたままの停止は multi-ENI で egress を失わせる（決定 3-3）。**
-  なので順序を反転し、先頭に 1 段足す: **タグ → 強制 deregister → ENI 消滅待ち → 強制停止 →
-  停止後に通常 detach。** 強制 deregister が許されるのは、1 スロットは home 1 本＝
-  ワークスペース 1 つなので、**消えるのは呼び出し元自身の（既に到達不能な）タスクだけ**だから。
-- **home を置き直すところまでを自動でやる。予算は 1 回。** 隔離しただけでは、決定 20 と違って
-  利用者はまだ何も得ていない（あちらは「他人を巻き込むのを止める」が目的で、本人は次の Start で
-  救われた）。ここでは本人が押した Start がまさに失敗しているので、置き直して立ち上げ直す。
-  ⚠️ **予算 1 回が肝である**——このコードが理解していない理由でプール全体が壊れている場合、
-  無制限だと Start のたびに 1 台ずつ全箱を隔離し、**「劣化したデプロイ」を「空のデプロイ」に
-  変える。** 2 台試して駄目なら諦め、`stopped` に戻す（利用者が再試行できる状態）。
-- **claim は隔離の時点では落とさない**（決定 20 とここだけ逆）。`State()` は claim を見て
-  `starting` と答える。置き直しの最中に落とすと Console が一瞬 `stopped` を出し、二重 Start を
-  招く。諦めたときに落とし、漏れても claimTTL で失効する。
-- ⚠️ **CP に増やす状態は無い。** 猶予はポーリング回数、判定は EC2 と ECS への問い合わせ、
-  結果はタグ——ADR 0012 のまま。
-
-⚠️ **残っている穴は「なぜメモリが枯渇したか」を後から証明できないこと。** スロットに
-ホストのメモリ計測が無く（CWAgent も Container Insights も未導入）、ジャーナルは tmpfs なので
-箱を停止した時点で dmesg も OOM killer の記録も消える。今回もメモリ枯渇は
-**EBS の read が爆発して write が 0 という形からの推定**にとどまった。
-
-## 決定 28 — ワークスペースを**箱から切り離す**。上限は「暴走を止める」ためではなく**巻き添えを止める**ため（2026-08-27）
-
-決定 8 は「EC2 スロットは 1 人で使うのだからタスクは何も予約しない」とし、決定 21 は
-サイズを「メモリ 1 軸で、結果として乗る箱」とした。両方とも正しいが、**その 2 つの帰結として
-ワークスペースのコンテナは箱を丸ごと取れる**（`Memory: nil`）。docs/64 §64.40 の事故は
-そこで起きた——ワークスペースの中の何かが匿名メモリを数 GB 握り、swap がゼロなので
-カーネルはページキャッシュを削るしか回収手段が無く、**箱の管理系（dockerd / containerd /
-ECS エージェント / SSM / efs stunnel）が実行ページを読み直し続けて 15 秒以内に全滅した。**
-
-★ **直すのは「暴走を止めること」ではない。** 利用者が自分のワークスペースを重くするのは
-この製品では正常な使い方で、止めるべきものではない。**止めるべきは巻き添えだけ**である。
-
-- **コンテナに cgroup の上限（`Memory`）を付ける。** 効くのは*どこに圧力が行くか*が変わるからで、
-  上限超過の回収は**その cgroup の中で**起きる。管理系は何があってもページを保持し、
-  暴走は cgroup 内で OOM kill されて `OOMKilled=true` として**外から見える**（謎ではなく診断になる）。
-  ⚠️ **タスクではなくコンテナに付ける**——タスク単位だと ECS が注入する Service Connect の
-  サイドカーぶんまで含み、その大きさは製品が予測してよいものではない
-- ⚠️ **`MemoryMin` で管理系を守る案は土台にできない**（実機判定）。docker の cgroup driver は
-  systemd なので**コンテナも `system.slice` の下に入り**、スライスへの保護はワークスペースごと
-  守ってしまう。ユニット個別なら可能だが、**ECS エージェント自身がコンテナ**なので
-  transient scope に落ち、systemd のドロップインを当てられない。補助にはなるが土台ではない
-- **予備は公称の 1/5（1024〜2048 MiB でクランプ）。** ⚠️ **「1 GiB 引く」では足りない**——
-  公称 8192 MiB の m7i.large は実際には `MemTotal` 7784 MiB しか無く（実測）、
-  予備はこの約 5% と、管理系の実測 1.2〜1.4 GiB の**両方**を吸収しなければならない。
-  実数は `DescribeContainerInstances` から取れるが、**タスク定義はスロットの登録確認より前に
-  組まれる**ので使うには `launch()` の順序を変えることになり、予備を厚くすれば吸収できる精度である。
-  段が小さすぎて分け合えないなら**上限を付けない**（使えないワークスペースを作るより、
-  その配備を今までどおりにしておく方がましである）
-- **サイズ表示を正直にする。** 上限が入る前は「8 GiB」が箱とワークスペースの両方を指していて
-  1 つの数で正直だった。入った後は違う数になるので、**箱だけを出すのは cgroup が渡さない
-  メモリを本人に約束すること**である。`usable_mem_mib` を足し、Console は
-  **本人が使える方を先に、箱を括弧で**出す。⚠️ **上限が無い配備では省く**——
-  そこでは箱が答えそのもので、2 つ出す方が嘘になる
-- **気づく仕組みは、上限が入って初めて成立する。** エージェントは既に `mem_used` / `mem_max` /
-  `oom_kill_total` を返していて、**`mem_max` は「cgroup が無制限なら意図的に落とす」実装**
-  （docs/63 §63.9 の「測れない軸を 0 で埋めるな」）。だから ecs-ec2 では**メモリだけ分母が
-  無かった**。上限を入れると**配線済みのまま点灯する**。
-  ⚠️ そして**監視は監視対象の外に置く必要がある**——事故中エージェントは凍っていたので
-  自己申告は役に立たなかった。上限が入れば凍らないので、自己申告が信頼できる情報になる
-- **運用者向けの警報は substrate（CFN）に置き、既定は off。**
-  ⚠️ **足りないのは計測ではなく警報だった**——`VolumeQueueLength` は事故の 1 分目に
-  0.005 から 2.0 へ跳ね、`EBSByteBalance%` は 99→70 まで落ちた。**指標は全部そこに在り、
-  誰も見ていなかっただけ**である。⚠️ ただし **CloudWatch はこれをスタックに絞れない**
-  （VolumeId / InstanceId 次元・Metrics Insights はタグで絞れない）ので**アカウント全体**に
-  なる。既定 off はそのためである。**CP のスイープに CloudWatch を読ませる案は採らない**
-  ——CP タスクロールに権限が要り、製品の中に「AWS の指標を解釈する層」を新設することになる
-
-## 影響
-
-- **実装する**（P0 の範囲は決定 10-2）。`control-plane/runtime_ecs_ec2.go` を新設し、
-  `control-plane/runtime.go` の `newRuntimeFactory` に `ecs-ec2` profile を足す。
-  **`runtime_ecs.go`（Fargate）は変更しない。**
-- `deploy/aws/ecs/cfn/` — スロットの起動テンプレート・インスタンスプロファイル（SSM ＋ ECS 参加）・
-  user-data（`af-mount` / `af-umount`・`ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION`）・CP のタスクロールに
-  EC2 / SSM 権限
-- `workspace/workspace-notes.md` — 永続モデルの記述（home が EBS になり、`/scratch` は存在しない）
-- [docs/62](../62-ecs-start-latency.md) §62.5 — (d) の却下理由を改訂（実施済み）
-- [docs/63](../63-workspace-sizing.md) §63.5.5 — 「別セッションで検討する」の結論へのリンク（実施済み）
-
-**決定 23〜25 で足した面（2026-08-26）**
-
-- `deploy/aws/ecs/cfn/30-ingress.yaml` — `Ec2SlotTerminateAfterSec`（決定 23・既定 0）と
-  `Ec2HibernateAfterSec`（既定 0）。⚠️ 後者は**決定 4 の機能そのものは最初から在ったのに
-  CFN パラメータが無く、ECS 配備ではデプロイ既定を設定する方法が存在しなかった**（手で
-  タスク定義を書き換えても次の deploy で消える）。「既定 0」は既定ではなく、その配備が
-  持ちうる唯一の値だった。テナント毎の `home_hibernate_after` は最初から Console で
-  設定でき、そちらはデプロイ不要（docs/64 §64.36）。
-- `deploy/aws/ecs/cfn/20-platform.yaml` — CP タスクロールに `ec2:TerminateInstances`。
-  無いと毎スイープ AccessDenied で、CP のログにしか出ないまま課金だけ増える。
-- `control-plane/limits.go` — `poolBudget`（決定 25）。テナント上限とプール上限は
-  **DB と env** に分かれて互いを知らないので、突き合わせは CP 層にしか置けない。
-
-**決定 27 で足した面（2026-08-27）**
-
-- `control-plane/runtime_ecs_ec2.go` — `slotLostAfter` / `errSlotLost` / `abandonLostSlot` /
-  `converge` の再試行予算。**CFN パラメータは足していない**: `CLAIM_TTL_SEC`・`WAIT_SEC`・
-  `SWEEP_SEC`・`GHOST_AFTER_SEC` と同じ「安全側のタイムアウト」の仲間で、
-  容量や費用のつまみ（`Ec2SlotSleepSec` など）とは別系統だからである。既定で有効。
-- CP タスクロールの追加権限は**不要**——`ecs:DeregisterContainerInstance` は
-  決定 3-2 のために最初から入っている。
-
-**決定 28 で足した面（2026-08-27）**
-
-- `control-plane/runtime_ecs_ec2.go` — `hostReserveMiB` / `workspaceMemCapMiB` /
-  `slotRungFor`、`buildTaskDef` の `container.Memory`。
-  `AF_ECS_EC2_HOST_RESERVE_MB` = `auto`（既定）| `off` | `<MiB>`。
-  ⚠️ **読めない値は auto へフォールバックする**——このつまみは利用者が使えるメモリ量を決めるので、
-  打ち間違いが「上限が消える」や「起動できない」の理由になってはいけない
-- `control-plane/workspace_sizing.go` / `console/.../adminShared.ts` — `usable_mem_mib` と
-  `slotMemLabel`。i18n は `admin.ws_slot_usable`
-- `deploy/aws/ecs/cfn/40-ec2-pool.yaml` — `PoolAlarmEmail`（既定 ""＝警報なし）と
-  SNS トピック＋アラーム 2 本
-- ⚠️ **上限はタスク定義のフィンガープリントに入る**ので、予備を変えた配備の最初の Start は
-  新リビジョンを登録して走っているタスクを置き換える（イメージや env の変更と同じ挙動）
-
-## 決定 29 — 予約ワークスペースの後片付けは、DB の行が無くても**タグで**辿る（実デプロイ・2026-08-28）
-
-決定 9 の焼き（seed → snapshot → probe → promote）は、最後に seed と probe の**ワークスペース行**を
-destroy して終わる。実デプロイでこの後片付けが漏れた（docs/64 §64.29.5）——golden は公開されたのに、
-seed の ECS サービス（desired 0）と 50 GiB の home が AWS に残り、**ログには 1 行も出なかった**。
-
-★ **原因は「掃除の入口が DB しかない」こと。** AWS 側の実体はタグ（`af-workspace` /
-`af-tenant=af-golden` / `af-role=home`）で一意に引けるのに、掃除は membership → workspace 行を
-引けたときにしか動けない。**行が消えた瞬間、タグの付いた実体は誰にも見つけられなくなる。**
-行と実体が別々に壊れうる以上、片方からしか辿れない後片付けは恒久的な漏れを作る。
-
-- **`destroy` の早期 return を全部ログにする。** 「行が無い（`!ok`）」と「読めなかった（`err`）」を
-  どちらも黙って return していたので、**掃除して何も無かった**と**掃除できなかった**が
-  ログ上で同一だった。毎ティック走る経路なので、繰り返す失敗は同じ文面のあいだ 1 回だけ出す
-- **行が引けないときはタグで掃除する（`sweepOrphans`）。** 予約名（`af-golden-seed` /
-  `af-golden-probe`・アーキ接尾辞つき）に限り、サービスと home をタグから引いて消す。
-  ⚠️ **ドリフトの sweeper には任せられない**——あれは home をタグで歩くが**削除は決してしない**。
-  切り離された home は「停止中のワークスペース」と見分けがつかないからで、
-  見分けられるのは予約名を持っている baker だけである
-- **安全は 2 段で担保する。** 呼ぶ側が「予約名 ＋ DB に行が無い」を確かめ、掃除側は
-  **タスクを載せているサービス**と**接続中またはスナップショット取得中の home** を断る。
-  EBS は取得中のソースを消させてくれるので、後者は API の制約ではなく**こちらの拒否**である
-- **削除中（`DRAINING`）のサービス名では作り直さない。** `UpdateService` も `CreateService` も
-  通らない状態で後者を投げると `Create service is not idempotent` になり、**呼び側のバグに読める**。
-  「前のサービスがまだ消えていない」と言って、既にある再試行に待たせる
-
-⚠️ **一般則**: 実体が AWS にあり名前が DB にあるとき、**掃除を DB からしか辿れないと
-「行だけ消えた」が恒久的な漏れになる**。しかも漏れているあいだ、ログは正常時と同じである。
-
-コード: `control-plane/golden_bake.go`（`destroy` / `sweep` / `warn`）・
-`control-plane/runtime_ecs_ec2_golden.go`（`sweepOrphans` / `snapshotInProgress`）・
-`control-plane/runtime_ecs_ec2.go`（`upsertService` の `DRAINING`）。
+| A new user's Start (empty home, cold slot) | **144.0s** | **191.7s / 179.0s** (two runs) |
+| Image pull at task start | 31.8s (decision 1) | **0.185s** (measured from the ECS agent's log) |
+| Boot → registration with the ECS cluster (A/B, started simultaneously) | **21s** | **77s** |
+| systemd's breakdown | loader 0.9s / initrd 1.0s / userspace 37.7s | loader 6.1s / initrd 8.9s / userspace **53.1s** |
+
+**The reason is how an AMI is made.** A custom AMI's root is **lazily loaded from a new snapshot** (fetched
+from S3 on first access) and is not warmed by wide use the way Amazon's ECS-optimized AMI is. And baking
+adds real data (root usage 2.9G → 5.6G), so **there are more cold blocks**. It did not narrow on the third
+machine either (77s to registration). The 30 seconds saved on the pull are paid back at boot, 30–56
+seconds of it.
+
+- **Stop.** `SlotAmiId` is faster left as the parameter for the plain ECS-optimized AMI.
+- **Remove the implementation entirely** — `bake-slot-ami.sh`, the CP's `af-image` reconciliation
+  (`readSlotAMI`, `ec2PoolStatus.SlotAmi*`), the Console's "slot image" panel and wording,
+  `ec2:DescribeImages` on the CP task role, and the harness's cleanup. **"Mark it deprecated and keep it"
+  is not adopted**: a feature not used by default is never run and rots quietly — and this time three
+  errors in the script showed up **only on a real run** (the same shape as [[scratch-disk-inert-default]]).
+  The record of the judgement stays in the docs and this ADR, so anyone who needs it can retrieve it from
+  git history.
+- **The only remaining reason for the effect is not speed** (not going to a registry at task start =
+  independence from an ECR outage or pull throttling). That is not this ADR's reason for adopting, and
+  **this pool does not terminate instances**, so the occasion to create a new slot is itself rare.
+- **Startup time is not a reason for adopting in the first place** (decision 12). An optimisation for
+  startup time that makes startup time worse has no reason to stay.
+
+⚠️ **This too is an instance of "it does not run until you run it".** The script itself had two errors that
+only appear on a real run (`--min-count/--max-count` do not exist in CLI v2; `rm -f /var/log/ecs/*` fails on
+a directory — right after pulling 2.6GB). And **`SlotAmiId` takes an SSM parameter name, not an AMI ID**,
+while the script and the README both told you to pass an AMI ID (i.e. the deploy would fail as written).
+**Nobody thought any of the three were wrong at the time of writing.**
+
+## Decision 20 — quarantine a slot that could not mount home
+
+It happened on real hardware (docs/64 §64.24): the processes of a workspace whose home had been ripped away
+fell into **uninterruptible sleep**, XFS froze trying to write back to a device that had gone, and the kernel
+**kept holding the dead volume's NVMe namespace**. As a result the next volume attached did not appear in
+`/dev` at all and `af-mount` failed with "no device". **And since the slot was still free, every subsequent
+Start went there and failed the same way** — one machine's kernel jam silently became everybody's outage.
+
+- **A slot that fails to mount is re-stamped `af-role=quarantined`.** Every pool query filters on that one
+  tag, so **one write** removes it from the free list, from the cap's arithmetic and from placement, all at
+  once. No state is added on the CP side (ADR 0012).
+- **Detach home and drop the claim too.** So that the person's next Start can go to a different slot
+  without waiting out the claim TTL.
+- **Stop the box.** Do not leave a box that cannot accept tasks billing by the hour. Terminating is left to
+  the operator's judgement (this adapter has no `TerminateInstances`, §64.22.1). **Note that on real hardware
+  this stop actually completed the stuck detach** (stopping → stopped returned the volume to `available`).
+- **Keep it on screen.** It is removed from the pool's counts but not from the table — a box that is still
+  billing disappearing from the screen is a bill the operator cannot notice. The reason and the time are
+  kept in tags too.
+- Whether it can be repaired is outside the CP's remit (the kernel is jammed). **All it can do is stop it
+  taking others down** — that is what quarantine is.
+
+## Decision 21 — size stays "one axis, memory". The instance type is not chosen; **the box it lands on is displayed as a result**
+
+The same settings UI faces four runtimes (docker / native / ecs (Fargate) / ecs-ec2). Putting `ecs-ec2`'s
+vocabulary (`m7i.xlarge`) in there adds an item meaningless to the other three. Conversely, as it stands
+**two of the three axes on screen are lies on `ecs-ec2`** (below). Of three options we take (c) — **change
+nothing about the storage form (three independent numbers, ADR 0044 decision 1); have the runtime declare
+what those values become, and have the screen say exactly that.**
+
+**First, the five discrepancies settled by reading the implementation** (the starting point of the design;
+details in [docs/64](../log/64-ec2-persistent-workspace.md) §64.27):
+
+1. **The CPU setting is discarded on `ecs-ec2`.** `fargateSize()` exists only on the Fargate path, and
+   `slotTypeFor(memBytes)` looks only at memory. CPU does not enter the task definition either. **"Workspace
+   CPU" on screen is an input field that does nothing on this runtime.**
+2. **Memory is not a cap.** An EC2 task has only `memoryReservation: 512` (soft) with no hard limit
+   (decision 8: one person per box). `mem_limit` is **a "requirement" for choosing a box**, not a cgroup
+   cap. Someone who entered 4 GiB can use **the whole 8 GiB** of an m7i.large.
+3. **The disk axis means a different thing.** On Fargate it is the working disk (ephemeral, lost on stop),
+   but on `ecs-ec2` `homeGiB()` means **the persistent home's EBS size**. The on-screen note said "the
+   working disk is lost when stopped; only home persists" — **the opposite of the truth**.
+4. **The disk value only takes effect when home is created.** `ModifyVolume` is not in this adapter (a
+   comment says "it can be grown online", but that is a property of EBS, not of the implementation).
+   Changing an existing user's value does nothing. **And EBS cannot be shrunk.**
+5. **The member detail's running indicator is always "stopped" on ECS.** `containerStats()` calls
+   `docker inspect`, so on ECS variants where the CP has no docker it always returns `running:false`. As a
+   result **"force stop" can never be pressed** (`disabled={!running}`). The same on Fargate.
+
+**The two options not taken**:
+
+- **(a) Let the instance type be chosen directly.** It would make tenant admins choose EC2 model numbers,
+  and it cannot be displayed on the other three runtimes. Moreover **the choices are already closed by the
+  operator via `AF_ECS_EC2_SLOT_TYPES`**, so the freedom the user has is only "which rung of the ladder" —
+  and that is expressible as memory. (**In the operator-facing screen, the slots tab, the model numbers are
+  shown** — that is where AWS's vocabulary is correct.)
+- **(b) Make abstract sizes (S/M/L) the storage form.** S/M/L **already exist as presets**
+  (`WS_SIZE_PRESETS`). Promoting them to the storage form would collapse docker's byte-accurate `--memory`
+  and Fargate's 74 combinations into five names — which is exactly why ADR 0044 decision 1 chose independent
+  numbers, and there is no reason to overturn it. **Presets stay "a presentation of valid combinations".**
+
+**The specification of the adopted option (c)**:
+
+- **The runtime declares the semantics of size.** `SizingProfile()` is added on the same optional interface
+  as `WorkspaceImage()`, and `GET /api/admin/workspace-sizing` (available to tenant_admin) returns: whether
+  the CPU axis has any effect, whether the memory axis is a "cap" or a "requirement", whether the disk axis
+  is the working disk or home, the defaults, and — on `ecs-ec2` — the slot ladder. **The screen decides its
+  wording and its fields from this declaration alone** (the same pattern as the existing use of `hasPool` to
+  decide whether to show the hibernation and spare fields).
+- **Do not show the CPU field on `ecs-ec2`.** Do not leave an input field that does nothing. But **send back
+  the value that was read when saving** (so that hiding the field does not, as a side effect, zero a value
+  configured for another runtime — a shape already hit with the disk field).
+- **The memory field says "requirement" and shows the box below it** (e.g. `→ m7i.large (8 GiB, dedicated)`).
+  **0 (unset) means the smallest slot** — different from Fargate's "0 = the deployment default" — so that is
+  stated too: "0 = the smallest slot (m7i.large)".
+- **Presets are built from the ladder.** On `ecs-ec2` only, the slots' memory values are listed instead of
+  S/M/L… (8 GiB / 16 GiB / 32 GiB). Do not recommend an intermediate value that does not exist.
+- **The disk field says "home (persistent)" and states that it only takes effect at creation and cannot be
+  shrunk.**
+- **The ladder's vCPU is declared by the operator.** `AF_ECS_EC2_SLOT_TYPES` is extended to
+  `type:memMiB[:vcpu]` (backwards compatible; the vCPU is not displayed when omitted). Adding
+  `ec2:DescribeInstanceTypes` to ask AWS is not adopted — **adding one IAM permission to the CP's task role
+  purely for a display** is not worth it against having the operator write one word they already know, and
+  the latter can be verified without real hardware.
+- **The member detail's running indicator comes from `State()`** (discrepancy 5). When docker's cgroup read
+  returns nothing, ask the runtime again. This ends the state where "force stop" cannot be pressed on the
+  ECS variants.
+
+## Decision 22 — idle stop applies to "free slots" too, through the same single timer (a supplement to decision 11-2)
+
+**Decision 11-2 only stopped slots dormant with a home attached.** The sweep loop's sleep check lives inside
+`sweepVolume`, i.e. **inside a walk rooted at `af-role=home` volumes**, and **the moment a slot is
+`releaseSlot`ed it leaves that walk**. After that no path issues `StopInstances` (`quarantineSlot` is only
+for faulty boxes, and `sweepGhostInstances` merely deregisters container instances **whose EC2 instance is
+already gone**).
+
+⚠️ **Hit on a real deployment** (the development deployment, 2026-08-23): **three `m*.large` machines with
+zero tasks, running for over 24 hours**. In 24 hours of logs there is **not a single** `sleep` record. The
+paths that hit it are (a) eviction, (b) a size or class change, (c) `Destroy`, and (d) **when the golden's
+seed/probe finish**. The three machines on the development deployment were residue from (c) and (d), and
+**they were burning ~$95/month each right next to `Ec2SlotSleepSec`'s description saying "~$9.6/month"**.
+
+1. **Add a slot-rooted walk** (`sweepFreeSlots`). It looks at instances with `af-pool` plus `af-role=slot`
+   that are running, and stops those with **no home attached, no live claim, and zero ECS tasks** after
+   `slotSleepAfter`. Because it queries `af-role=slot`, **quarantined boxes are naturally excluded**.
+2. **⚠️ The `taskENIsAttached` guard must apply to the free path too.** Decision 3-3 says "stopping with a
+   task ENI attached brings it back MULTI-ENI and silently loses the public IPv4 and egress", and that has
+   actually been hit on real hardware. **Free slots are in the same window.**
+   ⚠️ **"No home" is not the same claim as "nothing is on it".** There are paths where a task runs without a
+   home, such as the baker's probe, so **ask both the EC2 side (volumes) and the ECS side (task count), and
+   do not stop if either says "in use".**
+3. **"Free since when" lives in the instance tag `af-slot-idle-since`** (RFC3339, UTC). Keeping ADR 0012
+   (state lives on AWS) **leaves nowhere else** — a free slot has no home to write `af-idle-since` on.
+   **It is written by `releaseSlot`** (the only place that knows the exact time), **and the sweep loop
+   re-stamps it if missing** — the same "the actor writes it, the sweep loop repairs it" division as
+   `af-idle-since`. **It is deleted when taken** (so a shorter-than-one-sweep occupancy does not leave the
+   previous free time behind).
+   ⇒ The answer is the same across a CP restart and across the two replicas that overlap for 51 seconds on
+   every deployment (ADR 0053), and `StopInstances` is idempotent so a double call is harmless.
+4. **Do not keep a single warm free box** (extending decision 11-4's "no pre-warming" directly).
+   Measurement (docs/64 §64.17.5) gives **a hot free slot 43.2s / waking a stopped slot 110.1s / growing the
+   pool 135.4s**. **Keeping boxes as stopped already buys "not paying the 135s"**, and leaving them running
+   buys only **67 seconds** at a price of **$95 versus $9.6 a month**. The right way to put it is that the
+   implementation so far was **unlimited pre-warming with nobody deciding the count**. A deployment that
+   wants it can keep every machine warm with `Ec2SlotSleepSec=0`.
+5. **Fix `Ec2SlotSleepSec=0` to mean "never sleep".** The description always said so, but the
+   implementation was `idle < slotSleepAfter`, so **0 meant "stop at the first sweep" — the exact
+   opposite**. It is aligned with `hibernateAfter`'s 0=OFF and, like §64.26's `AF_WS_IDLE_TIMEOUT=0`,
+   **reads an operator's explicit off as off**.
+
+6. **Both sides of the sweep loop treat "starting (a live `af-claim`)" the same** (docs/64 §64.31.6). The
+   free side looked at it from the start, but **the home side (`sweepVolume`) only deleted expired claims and
+   never looked at live ones**. `Start` runs `clearDormancy` first and `upsertService` last with the mount in
+   between, so a sweep in that window (20–120 seconds; ⚠️ this originally said "the mount's SSM round trip,
+   10–30 seconds", but measurement puts the mount at 2–4 seconds and most of the window is instance start
+   plus ECS registration and placement — docs/64 §64.38) **re-stamps `af-idle-since` on a starting
+   workspace**. It does not cause a premature stop (the clock goes backwards), but **the mark survives the
+   start**, the operations screen shows a running workspace as "idle", and it becomes a candidate victim for
+   `evictLongestIdle`.
+   ⚠️ Its placement is **after the hibernation branch** (a claim must not stop a capture part-way), and
+   **expired claims pass through** (`claimLive` looks at `af-claim-at`; writing "return if the tag exists"
+   would let a dead launch pin a slot forever).
+
+**What was not done**: a second grace parameter just for free slots (`slotSleepAfter` suffices; a free
+slot's warmth is **worth less** than an occupied dormant one, so making it longer would be backwards).
+~~**Terminating** (this adapter by design has no `TerminateInstances` — discarding a box is the operator's
+judgement, and discarding the image cache turns 110s back into 135s).~~
+→ **Withdrawn (decision 23).** "Discarding a box is the operator's judgement" also meant **the root volume
+keeps billing until the operator notices and deletes it by hand**. That was hit on a real deployment
+(docs/64 §64.32).
+
+## Decision 23 — a stopped slot is **terminated** once more time passes (the next tier after decision 22, 2026-08-26)
+
+Decision 22 made free slots sleep too, but **there is nowhere beyond sleeping**. This adapter has no path to
+delete a box, so **the number of retained root volumes grows monotonically and sticks at `Ec2MaxSlots`**.
+Raising `Ec2MaxSlots` from 6 to 30 on the live `<prod-deployment>` was simultaneously signing up to "buying
+30 roots indefinitely" (30 × 40 GiB × $0.096/GB-month = **about $115/month**). Three stopped slots were
+**terminated by hand** to bring EBS back from 900 to 600 GiB.
+
+**Add `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` / `Ec2SlotTerminateAfterSec` (default 0 = disabled), which
+terminates a box N after it stopped.** The recommended value is 4h.
+
+- **Stopping and terminating stop different bills.** Stopped costs $0 for compute, but the root ($3.84/month)
+  remains until the box is gone. ⚠️ The root is `/dev/xvda` with `DeleteOnTermination: true` so **it cannot
+  be deleted on its own** — "delete the root" *is* "terminate", and it is **one inseparable decision**.
+- **What is lost is 25 seconds.** Waking a dormant box is 110s versus creating a new one at 135s (§64.17.4),
+  because the 32s of cold pull the image cache saves is eaten by instance start 19s plus ECS re-registration.
+  Under an operating policy of "slower is better than unusable", that is affordable.
+- ⚠️ **No warm floor (a minimum warm count).** A box with a home attached is reported busy by
+  `occupiedInstances` even when stopped, so it never appears in `freeSlots`, and **keeping it warm only helps
+  the last N people**. Conversely, detaching home to make it generic means the next person pays wake plus
+  attach plus mount = **115–117s** (⚠️ originally estimated at 123–143s using a 10–30s mount, i.e. about the
+  same as a new one at 135s; replaced with the measured 2–4s, docs/64 §64.38), i.e. **taking 25 seconds from
+  the owner to give 19 seconds to somebody else** — **a difference of 6 seconds**, not "nobody gets it".
+  Even so the trade of giving up affinity is poor, and a fixed cost remains through the dormant period. The
+  92 seconds worth buying are on **the running free box** side ($95/month), and that is a reconsideration of
+  decision 11-4's "no pre-warming", not this decision.
+- ⚠️ **Detach home with `releaseSlot` before terminating.** With `DeleteOnTermination: False` it is not
+  deleted either way, but if the owner Starts within terminate's ~60-second window, `placeHome`
+  **derives placement from the attachment** and reads the shutting-down box as "my slot", claims it, and then
+  fails at `StartInstances`. `releaseSlot` is **anchored to the Start generation** so a racing Start falls
+  back to re-mounting — `TerminateInstances` has no such undo.
+- ⚠️ **Widen `sweepFreeSlots`'s instance-state filter to `running, stopped`.** While stopping was the last
+  thing that happened to a box, `running` alone was correct, but adding the terminate tier means **a box
+  disappears from the walk forever the moment it stops** — precisely the boxes we want to collect.
+- ⚠️ **When terminating ourselves, `DeregisterContainerInstance` (`Force: true`) first.** As decision 3-2
+  says, the registration remains `ACTIVE / agentConnected=false`, and **a ghost that looks ACTIVE satisfies
+  placement constraints**. `sweepGhostInstances` is the repair path for "boxes that disappeared for other
+  reasons"; there is no reason to leave the window open when we are the ones deleting it.
+
+**As a result `Ec2MaxSlots` sheds one role.** It served as **A** the cap on concurrency, **B** the number of
+retained roots, and **C** the eviction threshold, and A and B coincided only "because boxes are never
+terminated". The steady-state box count now follows "activity plus the threshold", and **B falls away**.
+
+**What was not done**: a warm floor (above). Separate thresholds for free and occupied (both answer the same
+single question, "how many hours to keep a box", and splitting them only adds operational surface).
+Automatically terminating quarantined boxes (`af-role=quarantined` is excluded from both walks — **the
+evidence is deliberately kept**).
+
+## Decision 24 — eviction takes only "boxes you can ride". But it **does cross tenants** (2026-08-26)
+
+Two rough edges in decision 11-3 (eviction at the cap) found while working on decision 23. One is a bug, the
+other an undocumented design judgement (docs/64 §64.33 / §64.34).
+
+**(1) The type was not being checked (a bug; fixed).** `freeSlots` has filtered on instance-type from the
+start, but `evictLongestIdle` filtered only on AZ and on itself. `placeHome` puts the home onto the box won by
+eviction directly with `attachHomeWithRetry` (it does not re-query `freeSlots`), so `slotTypeMatches` is not
+consulted either. The result: **an xlarge user takes a large and lands on it, and ECS keeps refusing placement
+with `no container instance met all of its requirements`** — stuck forever at desired 1 / running 0. The same
+symptom as decision 21's "observed across architectures on real hardware".
+
+**It survived because it is only exposed at the cap** (below the cap `growPool` runs, and a new box is by
+definition the right type). ⚠️ The fix is **making two copies into one** (`slotsOfMyType`) — as in §64.31.6,
+the root cause is "the same judgement in two places, only one of which is right". A consequence is that
+**the global longest-dormant is no longer necessarily the victim**.
+
+**(2) It crosses tenants (left as is).** Tenant A's Start may reclaim tenant B's dormant slot. Forbidding it
+produces the rule "tenant B cannot use a box tenant A is not using", which creates "members who cannot start"
+at the cap — the one outcome the operator stated they would absolutely avoid. What binds a tenant is
+`max_workspaces` (how many may run **concurrently**), not which physical box they land on. The victim's data
+is not exposed (`releaseSlot` completes umount then detach; the root is "shared with the previous user" by
+design anyway). ⚠️ **On a deployment where the sum of tenant caps exceeds the pool cap, this path surfaces as
+"stealing from another tenant"**, but what should be closed is validation on the tenant-cap side, not a
+restriction on eviction.
+
+~~**What was not done**: terminating a wrong-type dormant box while pinned at the cap and rebuilding the right
+type.~~ → **Implemented in decision 26.** "Failing explicitly" still leaves **people who cannot start unable
+to start**, which is the one outcome the operator explicitly said to avoid.
+
+## Decision 26 — if the cap is filled with boxes you cannot ride, clear one and rebuild (continuing decision 24, 2026-08-26)
+
+Adding the type check to eviction in decision 24 turned "at the cap with every dormant box the wrong type"
+from "silently stuck" into "explicitly failing". Diagnosis became possible, but **from the user's point of
+view both mean they cannot start**. The policy is "slower is acceptable, unusable is not", so this must not
+fail.
+
+A tier is added after ⑤ in `placeHome`: `evictLongestIdle` → (on failure) **`makeRoom`** → `growPool`. It tries
+in order of speed (moving 109.7s → clearing and rebuilding 135s plus a terminate), and **the last one became a
+"slow success" instead of a "failure"** — that is the whole of this decision.
+
+- **Terminate rather than take.** The instance type is not an attribute a running box can change.
+  `evictLongestIdle` **has first refusal over every correctly sized box**, so not finding one there means the
+  rest are "boxes that cannot be ridden however they are reused", and one of them is holding a slot.
+  **The only way to free the slot is to delete the box** (as in decision 23, the root cannot be deleted on
+  its own).
+- ⚠️ **Do not filter by AZ (the opposite of eviction).** Eviction **reuses** the box and so is bound to
+  home's AZ, whereas this **destroys a box to buy a slot**, and since `Ec2MaxSlots` counts the whole pool,
+  **freeing a box in another AZ is worth the same**. Filtering would leave a requester stuck while a box
+  could have been freed.
+- ⚠️ **Do not gate it on `Ec2SlotTerminateAfterSec`.** That is a knob for **idle cost**, where 0 means "keep
+  the box". This is about **people who cannot start**, and it only runs when the alternative is "the Start
+  fails". The victim loses only the image cache (110s→135s next time) and not home (`releaseSlot` detaches
+  first; `DeleteOnTermination: False`). And **the default is 0**, and **deployments with 0 are exactly the
+  ones whose boxes grow to the cap and stick there** (decision 23) — a gate would leave it ineffective on
+  precisely the deployments that need this path most.
+- **Take an empty box before one with an owner** (it uses nobody's affinity, so it is free). Among owned
+  ones, the longest dormant.
+- **Do not take a box with a live claim** (a landing Start has no attachment yet, and the claim is the only
+  evidence). **Do not take one with even one ECS task** (a task can run without a home — the bake's probe).
+  **Do not consider boxes of your own type** (eviction has first refusal; destroying one would throw away a
+  box that could have been reused, and rebuild it). Quarantined boxes stay out of both walks (decision 20).
+- Right after terminating, `DescribeInstances` may still say `stopped`, so **wait until it drops out of
+  `poolSize`** (`runSlot` re-reads the cap; without waiting, your own Start fails as "full" because of the
+  slot you just freed).
+
+**If there is not a single box that can be cleared, return eviction's original error as it is** — "the pool
+is full" is the one sentence that points at what the operator can do. That `makeRoom` does not become "delete
+any box at all" is pinned by tests. A stage was added to the launch dialogue too (`slot: making room`) —
+**it is the longest wait in the product**, and falling back to something generic would leave the longest wait
+the only one that does not name its reason.
+
+## Decision 25 — reconcile the tenant caps against the pool cap. **A warning, not a refusal** (2026-08-26)
+
+`setTenantLimits` validated only the terminal history retention days and the format of a time string; integer
+quotas were **stored unchecked** (docs/64 §64.35). There are two ways it breaks, handled differently.
+
+**(1) A negative number is refused (400).** Since 0 = unlimited, negative is not "a small cap" but **a cap
+nobody can satisfy**. `max_workspaces = -1` makes `running >= limit` true before anyone starts, and that
+tenant can never open a workspace again. A typo in a number field must not be something you discover through
+a member's failed start.
+
+**(2) Exceeding the pool cap warns (and still saves).** The capacity is **`Ec2MaxSlots` −
+`bakeReservedSlots`(=2)** — a golden re-bake needs two slots at once, for the seed and the probe, and
+distributing all of them means it can never bake again (the symptom being "new members' first start is slow",
+noticed weeks later). The constant is shared with the baking side.
+
+Why it is not a refusal:
+
+1. **This endpoint cannot protect that invariant.** `Ec2MaxSlots` is a CP env, and **lowering it involves no
+   API call**. A 400 that closes one direction only would be claiming a guarantee it cannot give.
+2. **Oversubscribing is legitimate operation.** `max_workspaces` caps **concurrent** use, so deliberately
+   exceeding it is right between tenants whose peaks do not overlap.
+3. **A deployment already over the limit would be unable to edit any other field on this screen.** Saving
+   unrelated settings would stop because of a condition they did not create.
+
+⚠️ **0 means "unlimited", not "zero machines".** With even one such tenant the sum does not bind the cap, so
+it is emitted as **a separate warning** from "exceeded" (`unbounded_tenants`).
+
+⚠️ **The denominators differ.** `max_workspaces` counts *running/starting* workspaces, while `Ec2MaxSlots`
+counts *boxes that exist*, and **a stopped workspace holds a box while counting against neither tenant's
+allowance** (deferred return). So Σ ≤ capacity is **necessary but not sufficient**. Decision 23 narrows the gap
+to "the last N hours" but not to zero. **Do not use one word for the two on screen either** — the cap field is
+annotated "the number running concurrently", and the warning always carries this proviso.
+
+It only applies **on runtimes that have a pool cap** (`slotCapacityReporter`). Elsewhere it is `ok=false`,
+which means "there is no such question", not "everything is fine". There are two outlets, the save response and
+the pool screen, and both **only carry it when there is a problem** (an "all fine" every time is not read when
+it finally does appear).
+
+## Decision 27 — put a time limit on "not registered yet". **If the box's OS dies, discard it and re-place rather than wait** (a production incident, 2026-08-27)
+
+Decision 20 quarantined "a box that could not mount home". This time the same thing happened one step earlier,
+**while ECS was being asked whether the box could accept a task** — in a form nobody could notice.
+
+It happened on real hardware (docs/64 §64.40): something inside a workspace held several GB of anonymous
+memory, and **with zero swap the kernel's only means of reclaim was to shave the page cache**, so every process
+thereafter kept re-reading its executable pages. **The root volume holds only 8.0 GB of data, yet it did
+39.34 GB per 5 minutes for 3 hours** — **re-reading the disk's contents 4.9 times every five minutes** (refault
+thrash). The box's management stack (efs-utils' stunnel → the ECS agent → the SSM agent) **all died within 15
+seconds**. All three EC2 status checks stayed `passed`, i.e. **from outside the box was healthy**.
+
+⚠️ **The OOM killer never fired once** (`hung_task` is 0 too; `OOMKilled=false`). **It does not fire in this
+state** — because reclaim keeps succeeding, by destroying the cache.
+★ **Do not read "no OOM" as "not memory".** During the investigation we did read it that way and once wrote the
+**opposite conclusion**, "a hard memory limit will not help" (the history is kept in §64.40.2).
+
+**So, in addition to decision 20 (quarantine), containment is needed**: `MemBytes` (a per-workspace RAM cap)
+already exists and is used on the docker runtime, yet **only ecs-ec2 leaves `Memory: nil` and does not apply
+it**. With a cap, the eviction pressure would have been **confined to that container's cgroup** and the box's
+management stack would have survived.
+⚠️ But the "size" a user chooses is the box's size, so putting `MemBytes` in directly makes the cap equal to
+the whole box and **leaves no headroom for the management stack**. It only means anything as
+**"the box's memory minus the management stack's share"**. (That containment is out of scope for decision 27
+and is raised as a separate decision.) And with all three layers behaving correctly, the result was **a
+deadlock nobody could recover from**: ECS cannot stop a task whose agent is gone → the task ENI is never
+detached → the sweep correctly backs off with "do not stop a box with an ENI" (decision 3-3) → Start reuses the
+same box by affinity and waits forever for registration → **the ingress cuts it at 60 seconds and the user gets
+a 504.** Four presses gave four 504s, and the CP's log says only `500 1m0.0s` (two sides of the same event).
+
+- **Add ECS registration to the `deferred` check.** The homeless path looked at `running && registered` from the
+  start, but the affinity-reuse branch looked only at EC2's `running`. `deferred` is the flag deciding "run it
+  on the caller's thread", and Start is inside a 60-second ingress. **On a healthy pool a running box is
+  registered, so this asymmetry is completely invisible in normal operation** — it only appears in an incident.
+- **Once the grace (`AF_ECS_EC2_SLOT_LOST_AFTER_SEC`, default 5 minutes) has passed and EC2 still says
+  `running`, the box is not slow but lost.** `pending` boxes are excluded — destroying a box that is still
+  booting turns "a slow Start" into "a broken Start", and the cost of being wrong is asymmetric (waiting too
+  long only costs a few minutes).
+- **Decision 20's teardown cannot be reused.** That was written on the premise that "nothing is running yet and
+  the kernel is alive". On a box whose OS is dead, every step quietly does the wrong thing — `DetachVolume`
+  against a running box never returns, an ordinary `StopInstances` waits for an ACPI shutdown nobody is
+  listening for, and **stopping with a task ENI attached loses egress via multi-ENI (decision 3-3)**.
+  So the order is reversed and one step is added at the front: **tag → force deregister → wait for the ENI to
+  disappear → force stop → a normal detach after it has stopped.** Force deregistering is permissible because
+  one slot means one home means one workspace, so **what disappears is only the caller's own (already
+  unreachable) task**.
+- **Automate through re-placing home. The budget is one attempt.** Quarantine alone gives the user nothing here,
+  unlike decision 20 (whose purpose was "stop it taking others down", with the person rescued by their next
+  Start). Here the Start the person pressed is the thing failing, so we re-place and bring it back up.
+  ⚠️ **The budget of one is the crux** — if the whole pool is broken for a reason this code does not
+  understand, an unlimited budget would quarantine one box per Start and **turn "a degraded deployment" into
+  "an empty deployment"**. After two boxes it gives up and returns to `stopped` (a state the user can retry
+  from).
+- **The claim is not dropped at quarantine time** (the only place this is the reverse of decision 20).
+  `State()` looks at the claim and answers `starting`. Dropping it mid-re-placement would make the Console show
+  `stopped` for a moment and invite a double Start. It is dropped when giving up, and if that is missed it
+  expires on the claim TTL.
+- ⚠️ **No state is added to the CP.** The grace is a poll count, the judgement is queries to EC2 and ECS, and
+  the result is a tag — ADR 0012 as before.
+
+⚠️ **The hole that remains is being unable to prove afterwards why memory ran out.** The slots have no host
+memory metrics (neither CWAgent nor Container Insights is installed), and the journal is on tmpfs so dmesg and
+any OOM killer record vanish the moment the box is stopped. Even this time, memory exhaustion remained
+**an inference from the shape of exploding EBS reads with zero writes**.
+
+## Decision 28 — **detach the workspace from the box**. The cap exists not to stop a runaway but to **stop the collateral damage** (2026-08-27)
+
+Decision 8 said "an EC2 slot is used by one person, so the task reserves nothing", and decision 21 made size
+"one axis, memory, with the box it lands on as a result". Both are right, but **as a consequence of the two the
+workspace's container can take the whole box** (`Memory: nil`). The incident in docs/64 §64.40 happened there —
+something inside the workspace held several GB of anonymous memory, and with zero swap the kernel's only reclaim
+was shaving the page cache, so **the box's management stack (dockerd / containerd / the ECS agent / SSM / efs
+stunnel) kept re-reading its executable pages and all died within 15 seconds.**
+
+★ **What we fix is not "stopping the runaway".** A user making their own workspace heavy is normal use of this
+product and is not to be stopped. **What must be stopped is only the collateral damage.**
+
+- **Put a cgroup limit (`Memory`) on the container.** It works because *where the pressure goes* changes:
+  reclaim on exceeding the cap happens **inside that cgroup**. The management stack keeps its pages come what
+  may, and a runaway is OOM-killed inside the cgroup and **visible from outside as `OOMKilled=true`** (a
+  diagnosis rather than a mystery).
+  ⚠️ **Put it on the container, not the task** — per task it would include the Service Connect sidecar ECS
+  injects, whose size is not something the product may predict.
+- ⚠️ **Protecting the management stack with `MemoryMin` cannot be the foundation** (judged on real hardware).
+  docker's cgroup driver is systemd, so **the container also lands under `system.slice`**, and protecting the
+  slice protects the workspace along with it. Per unit would work, but **the ECS agent is itself a container**
+  and so falls into a transient scope where a systemd drop-in cannot be applied. It can help, but it cannot be
+  the foundation.
+- **The reserve is one fifth of nominal (clamped to 1024–2048 MiB).** ⚠️ **"Subtract 1 GiB" is not enough** —
+  an m7i.large nominally at 8192 MiB actually has only 7784 MiB of `MemTotal` (measured), and the reserve must
+  absorb **both** that ~5% and the management stack's measured 1.2–1.4 GiB. The real figure is available from
+  `DescribeContainerInstances`, but **the task definition is assembled before the slot's registration is
+  confirmed**, so using it would mean reordering `launch()` — a precision that a thicker reserve absorbs.
+  If a rung is too small to share, **do not apply a cap at all** (leaving that deployment as it was is better
+  than creating an unusable workspace).
+- **Make the size display honest.** Before the cap, "8 GiB" meant both the box and the workspace and was honest
+  as one number. Afterwards they are different numbers, so **showing only the box promises the person memory the
+  cgroup will not give them**. `usable_mem_mib` is added, and the Console shows **what they can use first, with
+  the box in parentheses**. ⚠️ **Omit it on deployments with no cap** — there the box is the answer, and showing
+  two would be the lie.
+- **The means of noticing only works once the cap is in.** The agent already returns `mem_used` / `mem_max` /
+  `oom_kill_total`, and **`mem_max` is implemented to be deliberately dropped when the cgroup is unlimited**
+  (docs/63 §63.9's "do not fill an unmeasurable axis with 0"). So on ecs-ec2 **only memory had no
+  denominator**. Adding the cap **lights it up with the wiring already in place.**
+  ⚠️ And **monitoring has to live outside what it monitors** — during the incident the agent was frozen, so
+  self-reporting was useless. With the cap it does not freeze, which makes self-reporting trustworthy
+  information.
+- **The operator-facing alarms live in the substrate (CFN), off by default.**
+  ⚠️ **What was missing was not measurement but an alarm** — `VolumeQueueLength` jumped from 0.005 to 2.0 in the
+  incident's first minute, and `EBSByteBalance%` fell from 99 to 70. **The metrics were all there; nobody was
+  looking.** ⚠️ But **CloudWatch cannot scope this to the stack** (the dimensions are VolumeId / InstanceId, and
+  Metrics Insights cannot filter by tag), so it covers **the whole account**. That is why it is off by default.
+  **Having the CP's sweep read CloudWatch is not adopted** — it needs a permission on the CP task role and
+  introduces "a layer that interprets AWS metrics" into the product.
+
+## Impact
+
+- **Implement it** (P0's scope is decision 10-2). Add `control-plane/runtime_ecs_ec2.go` and add the `ecs-ec2`
+  profile to `newRuntimeFactory` in `control-plane/runtime.go`. **`runtime_ecs.go` (Fargate) is not changed.**
+- `deploy/aws/ecs/cfn/` — the slots' launch template, the instance profile (SSM plus joining ECS), user-data
+  (`af-mount` / `af-umount`, `ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION`), and EC2/SSM permissions on the CP task
+  role.
+- `workspace/workspace-notes.md` — the description of the persistence model (home becomes EBS, and `/scratch`
+  does not exist).
+- [docs/62](../log/62-ecs-start-latency.md) §62.5 — revise (d)'s rejection reasons (done).
+- [docs/63](../log/63-workspace-sizing.md) §63.5.5 — a link to the conclusion of "to be considered in a separate
+  session" (done).
+
+**Surfaces added by decisions 23–25 (2026-08-26)**
+
+- `deploy/aws/ecs/cfn/30-ingress.yaml` — `Ec2SlotTerminateAfterSec` (decision 23, default 0) and
+  `Ec2HibernateAfterSec` (default 0). ⚠️ For the latter, **decision 4's feature existed from the start but had
+  no CFN parameter, so on an ECS deployment there was no way to set the deployment default** (hand-editing the
+  task definition is erased by the next deploy). "Default 0" was not a default but the only value that
+  deployment could hold. A tenant's `home_hibernate_after` has been settable in the Console from the start, and
+  that needs no deployment (docs/64 §64.36).
+- `deploy/aws/ecs/cfn/20-platform.yaml` — `ec2:TerminateInstances` on the CP task role. Without it, every sweep
+  is an AccessDenied that appears only in the CP's log while the bill keeps growing.
+- `control-plane/limits.go` — `poolBudget` (decision 25). The tenant caps and the pool cap live in **the
+  database and env** respectively and know nothing of each other, so the reconciliation can only live in the CP
+  layer.
+
+**Surfaces added by decision 27 (2026-08-27)**
+
+- `control-plane/runtime_ecs_ec2.go` — `slotLostAfter` / `errSlotLost` / `abandonLostSlot` / `converge`'s retry
+  budget. **No CFN parameter was added**: it is in the same family of "safe-side timeouts" as `CLAIM_TTL_SEC`,
+  `WAIT_SEC`, `SWEEP_SEC` and `GHOST_AFTER_SEC`, a different lineage from the capacity and cost knobs
+  (`Ec2SlotSleepSec` and friends). Enabled by default.
+- No additional CP task role permission is **needed** — `ecs:DeregisterContainerInstance` has been there from
+  the start for decision 3-2.
+
+**Surfaces added by decision 28 (2026-08-27)**
+
+- `control-plane/runtime_ecs_ec2.go` — `hostReserveMiB` / `workspaceMemCapMiB` / `slotRungFor`, and
+  `container.Memory` in `buildTaskDef`. `AF_ECS_EC2_HOST_RESERVE_MB` = `auto` (default) | `off` | `<MiB>`.
+  ⚠️ **An unreadable value falls back to auto** — this knob decides how much memory the user gets, and a typo
+  must not be the reason "the cap disappeared" or "it will not start".
+- `control-plane/workspace_sizing.go` / `console/.../adminShared.ts` — `usable_mem_mib` and `slotMemLabel`.
+  The i18n key is `admin.ws_slot_usable`.
+- `deploy/aws/ecs/cfn/40-ec2-pool.yaml` — `PoolAlarmEmail` (default "" = no alarms) plus an SNS topic and two
+  alarms.
+- ⚠️ **The cap goes into the task definition's fingerprint**, so the first Start on a deployment that changed
+  the reserve registers a new revision and replaces the running task (the same behaviour as changing the image
+  or the env).
+
+## Decision 29 — cleaning up reserved workspaces follows **tags**, even with no database row (a real deployment, 2026-08-28)
+
+Decision 9's bake (seed → snapshot → probe → promote) finishes by destroying the **workspace rows** of the seed
+and the probe. On a real deployment that cleanup was missed (docs/64 §64.29.5) — the golden was published, yet
+the seed's ECS service (desired 0) and its 50 GiB home remained on AWS, and **not one line appeared in the
+log**.
+
+★ **The cause is that the only entrance to cleanup was the database.** The things on the AWS side can be found
+uniquely by tag (`af-workspace` / `af-tenant=af-golden` / `af-role=home`), yet cleanup can only act when it can
+resolve membership → a workspace row. **The moment the row is gone, the tagged entities become findable by
+nobody.** Since the row and the entity can break independently, a cleanup reachable from only one of them
+creates a permanent leak.
+
+- **Log every early return in `destroy`.** "There is no row (`!ok`)" and "it could not be read (`err`)" both
+  returned silently, so **"cleaned up and there was nothing"** and **"could not clean up"** were identical in
+  the log. It runs every tick, so a repeating failure is emitted once while the message stays the same.
+- **When the row cannot be fetched, clean up by tag (`sweepOrphans`).** Limited to the reserved names
+  (`af-golden-seed` / `af-golden-probe`, with the architecture suffix), the service and home are found by tag
+  and deleted.
+  ⚠️ **The drift sweeper cannot be trusted with this** — it walks homes by tag but **never deletes**. A
+  detached home is indistinguishable from "a stopped workspace", and the only thing that can distinguish it is
+  the baker, which holds the reserved names.
+- **Safety is guaranteed in two tiers.** The caller confirms "a reserved name plus no row in the database", and
+  the cleanup side refuses **a service carrying a task** and **a home that is attached or has a snapshot in
+  progress**. EBS will happily let you delete a snapshot's source, so the latter is **our refusal**, not an API
+  constraint.
+- **Do not recreate under the name of a service being deleted (`DRAINING`).** Neither `UpdateService` nor
+  `CreateService` works in that state, and throwing the latter gives `Create service is not idempotent`, which
+  **reads as a bug in the caller**. It says "the previous service has not gone yet" and makes the existing retry
+  wait.
+
+⚠️ **A general rule**: when the entity is on AWS and the name is in the database, **a cleanup reachable only
+from the database turns "only the row was deleted" into a permanent leak** — and while it leaks, the log looks
+exactly like normal operation.
+
+Code: `control-plane/golden_bake.go` (`destroy` / `sweep` / `warn`),
+`control-plane/runtime_ecs_ec2_golden.go` (`sweepOrphans` / `snapshotInProgress`),
+`control-plane/runtime_ecs_ec2.go` (`DRAINING` in `upsertService`).

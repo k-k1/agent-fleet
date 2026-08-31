@@ -149,7 +149,7 @@ func TestSharedMarksRead(t *testing.T) {
 
 // ⚠️ 印の quote は位置復元のために共有先へ渡る。ツール行のように共有 DTO が座標を落として
 // いる part の上の印まで中継すると、落としたはずのパスが quote として出て行く
-// （docs/69 §69.4）。塗る場所の制限は Console と Agent にも掛かっているが、中継の出口でも
+// （docs/log/69 §69.4）。塗る場所の制限は Console と Agent にも掛かっているが、中継の出口でも
 // 落とす — 片側が緩んだだけでは漏れないように。
 func TestSharedMarksDropNonProseKind(t *testing.T) {
 	f := newMarksFixture(t, "ro")
@@ -169,7 +169,7 @@ func TestSharedMarksDropNonProseKind(t *testing.T) {
 	}
 }
 
-// RO は読めても書けない。書き込みは docs/59 §2 の RW と同じ線で切る（承認フローには
+// RO は読めても書けない。書き込みは docs/log/59 §2 の RW と同じ線で切る（承認フローには
 // 載せないが、権限そのものは同じ）。
 func TestSharedMarksWriteNeedsRW(t *testing.T) {
 	f := newMarksFixture(t, "ro")

@@ -373,7 +373,7 @@ describe("useFileEditor discard abort", () => {
   });
 });
 
-describe("useFileEditor external change handling (docs/44 §7)", () => {
+describe("useFileEditor external change handling (docs/log/44 §7)", () => {
   const external = "external\n";
 
   it("auto-follows a clean buffer and reports the fetched file", async () => {
@@ -531,7 +531,7 @@ describe("useFileEditor external change handling (docs/44 §7)", () => {
   });
 });
 
-describe("useFileEditor AI suggestion (docs/44 §4)", () => {
+describe("useFileEditor AI suggestion (docs/log/44 §4)", () => {
   it("records a suggestion whose envelope matches the request-time identity", async () => {
     vi.mocked(suggestEdit).mockResolvedValue({ ok: true, summary: "改善", replacement: "new" });
     const current = await renderEditor();

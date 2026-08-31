@@ -34,7 +34,7 @@ func (s stubRuntime) Token() string    { return s.token }
 func (s stubRuntime) Name() string     { return "stub" }
 
 // Agent の /sessions 1 行ぶんの実形状（workspace/agent の wireSession が出す
-// JSON と同じ key）。exit 系は docs/26（OOM で死んだ停止セッション）の実例値。
+// JSON と同じ key）。exit 系は docs/log/26（OOM で死んだ停止セッション）の実例値。
 const agentSessionsPayload = `{"sessions":[{
 	"name":"s1","tmux":"claude_s1","dir":"/home/dev/repos/x","workingCopyId":"wc_123","kind":"claude",
 	"driver":"managed","repo":"x","title":"t","display":"[AF] t","color":"#332211",
@@ -46,7 +46,7 @@ const agentSessionsPayload = `{"sessions":[{
 }]}`
 
 // TestAgentSessionsRelayKeepsFields: CP の decode→再 emit 往復で、Console が
-// 消費する field（特に docs/26 の exit chip を出す exitReason/exitCode/exitSignal、
+// 消費する field（特に docs/log/26 の exit chip を出す exitReason/exitCode/exitSignal、
 // SSM 背景色の color、ContextBar の context）が drop されないこと。
 func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +80,7 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 	}
 
 	want := map[string]any{
-		// docs/26 exit chip（OOM/クラッシュ表示）— CP 中継で drop されていた本丸。
+		// docs/log/26 exit chip（OOM/クラッシュ表示）— CP 中継で drop されていた本丸。
 		"exitReason": "oom",
 		"exitCode":   float64(137),
 		"exitSignal": float64(9),
@@ -95,7 +95,7 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		"currentBranch": "dev",
 		"branchDrift":   true,
 		"worktree":      true,
-		// 削除ロック（docs/45）— CP 中継で落とすと鍵バッジと解除メニューが消える。
+		// 削除ロック（docs/log/45）— CP 中継で落とすと鍵バッジと解除メニューが消える。
 		"locked": true,
 	}
 	for k, v := range want {

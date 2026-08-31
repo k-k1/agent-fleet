@@ -11,9 +11,9 @@ import (
 )
 
 // セッションのワイヤ変換とタイトル/ラベル導出。モデル・メタ永続化・UUID は
-// internal/session（docs/23 残① Wave A）/ tmux= session_tmux.go /
+// internal/session（docs/log/23 残① Wave A）/ tmux= session_tmux.go /
 // HTTPハンドラ= session_handlers.go / claude の CLI 起動コマンドは
-// internal/agents/claude の program.go（docs/23 残① Wave F）
+// internal/agents/claude の program.go（docs/log/23 残① Wave F）
 
 // wireSession builds the API representation from a meta and liveness.
 func wireSession(m session.Meta, alive bool) session.Session {
@@ -37,7 +37,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	// 上限で切れたターンの後始末が済んだ claude（メニューは自動解除済み／モデル別上限は
 	// そもそもメニューを出さない）はペインが待機プロンプトに戻るので、ここまでの状態は
 	// idle＝入力待ちになる。リセットを待っているだけなのに正常終了と見分けが付かない
-	// ので、開いているエピソードがある間は 制限解除待ち として名乗る（docs/47 §4-9）。
+	// ので、開いているエピソードがある間は 制限解除待ち として名乗る（docs/log/47 §4-9）。
 	// WireLive ではなくここで見るのはエピソードの持ち主が package main だからで、
 	// driveState（チャット／ミラーのチップ）にも同じ読み替えが要る。
 	if alive && s.State == "idle" && normalizeKind(m.Kind) == session.KindClaude {
@@ -55,7 +55,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 			s.ExitCode = e.Code
 			s.ExitSignal = e.Signal
 		}
-		// 畳まれたときに答えを待っていた対話（docs/75）。生きている行には出さない —
+		// 畳まれたときに答えを待っていた対話（docs/log/75）。生きている行には出さない —
 		// そちらは State（question / plan / permission）が今まさに出ているモーダルを
 		// 語っており、持ち越しと二重に見せると「もう答えたはずのものがまだ出ている」
 		// ように読める。
@@ -67,7 +67,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 }
 
 // remoteSessionURL（claude.ai Remote Control URL の導出）は internal/agents/claude
-// の claude.RemoteSessionURL へ移設（docs/23 残① Wave F）。
+// の claude.RemoteSessionURL へ移設（docs/log/23 残① Wave F）。
 
 // dirInfo is a working copy's current branch + worktree flag, cached per dir.
 type dirInfo struct {
@@ -152,4 +152,4 @@ func forkTitle(src session.Meta) string {
 	return strings.TrimSpace(base + " (fork)")
 }
 
-// shellQuote は internal/session の session.ShellQuote へ移設（docs/23 残① Wave D）。
+// shellQuote は internal/session の session.ShellQuote へ移設（docs/log/23 残① Wave D）。

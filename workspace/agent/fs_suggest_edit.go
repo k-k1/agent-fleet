@@ -1,12 +1,12 @@
 package main
 
-// エディタの AI 変更提案（docs/44 Phase 4）。Console のファイルペインが選択範囲と
+// エディタの AI 変更提案（docs/log/44 Phase 4）。Console のファイルペインが選択範囲と
 // 指示文を送り、置換文と要約を JSON で返す。生成はタイトル/返信サジェストと同じ
 // backend-agnostic な一発ヘッドレス（oneShotHeadless）＝ read-only 提案生成チャネル
-// （docs/44 §1.3: claude --tools "" / codex tool 無付与 / opencode OPENCODE_CONFIG deny /
+// （docs/log/44 §1.3: claude --tools "" / codex tool 無付与 / opencode OPENCODE_CONFIG deny /
 // cursor --mode ask）。このハンドラはディスクを一切読まない — 本文は編集バッファの
 // スナップショットとしてリクエストに載って来る（dirty な本文への提案を可能にするため。
-// docs/44 §1.3「dirtyな本文から提案を作る場合」）。range・revision・identity の検証は
+// docs/log/44 §1.3「dirtyな本文から提案を作る場合」）。range・revision・identity の検証は
 // すべて Console 側の適用境界（suggestion_stale）が持ち、サーバーは置換文の生成だけを行う。
 
 import (
@@ -38,12 +38,12 @@ const (
 	editSuggestMaxContext = 16 * 1024
 	// editSuggestMaxInstruction: 指示文の上限（UTF-8 bytes）。
 	editSuggestMaxInstruction = 4 * 1024
-	// editSuggestMaxSummary: EditSuggestion.summary の上限（UTF-8 bytes、docs/44 §4.2）。
+	// editSuggestMaxSummary: EditSuggestion.summary の上限（UTF-8 bytes、docs/log/44 §4.2）。
 	editSuggestMaxSummary = 240
 )
 
 // editSuggestPersona: 出力は JSON 1 オブジェクトのみ。置換文は「選択範囲をそのまま
-// 差し替える」契約（docs/44 §4.2 — 自動変換・trim・全体再生成をしない）なので、
+// 差し替える」契約（docs/log/44 §4.2 — 自動変換・trim・全体再生成をしない）なので、
 // 前後文脈は参考であり出力に含めないことを明示する。
 const editSuggestPersona = "あなたはコード/文書エディタの変更提案を作る専用ツールです。" +
 	"ファイルの抜粋（選択範囲とその前後の文脈）と指示を受け取り、選択範囲を置き換える新しいテキストを作ります。" +
@@ -181,7 +181,7 @@ func clampUTF8Bytes(s string, n int) string {
 	return s[:n]
 }
 
-// cleanEditSuggestion は LLM 出力を docs/44 §4.2 の契約へ整える。replacement は
+// cleanEditSuggestion は LLM 出力を docs/log/44 §4.2 の契約へ整える。replacement は
 // 一切変換しない（CR 混入は変換ではなく生成失敗として拒否）。summary は表示用
 // メタデータなので、改行の除去と 240 bytes への切り詰め、空時の指示文フォールバック
 // だけを行う。
@@ -206,7 +206,7 @@ var editSuggestLLM = func(ctx context.Context, req *editSuggestRequest) (string,
 	return oneShotHeadless(ctx, editSuggestPersona, editSuggestPrompt(req), editSuggestModel())
 }
 
-// handleFSSuggestEdit — POST /fs/suggest-edit（docs/44 Phase 4）。
+// handleFSSuggestEdit — POST /fs/suggest-edit（docs/log/44 Phase 4）。
 // 応答は {"summary":…,"replacement":…} のみ。envelope（paneId/requestId/sourceRevision）
 // は Console がリクエスト時に控えて応答へ合成するため、wire には載せない。
 func handleFSSuggestEdit(w http.ResponseWriter, r *http.Request) {

@@ -474,7 +474,7 @@ func TestNativeRuntimeLifecycle(t *testing.T) {
 }
 
 // mirrorBootProgress publishes the latest [entrypoint] line (sans prefix) to the
-// .boot-phase file for BootPhase(), and clears it when the boot ends (docs/35
+// .boot-phase file for BootPhase(), and clears it when the boot ends (docs/log/35
 // §35.9-9). The Console "starting" dialog reads this via GET /api/workspace.
 func TestNativeBootPhase(t *testing.T) {
 	dir := t.TempDir()

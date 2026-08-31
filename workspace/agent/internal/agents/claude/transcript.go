@@ -14,7 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// claude jsonl transcript の読み出しと解析（docs/23 残① Wave F: 旧 package main
+// claude jsonl transcript の読み出しと解析（docs/log/23 残① Wave F: 旧 package main
 // session_io.go の jsonl 読み出し + session_transcript.go の claude パーサ）。
 // /messages・/output の HTTP ハンドラ（ウィンドウ処理・ページング・internal/status
 // の pending 合成）は package main の session_transcript.go / session_io.go に残り、
@@ -266,7 +266,7 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 // lineOrigin is claude's own `origin` object: who this line came from, when it did not
 // come from the keyboard. `kind:"peer"` は **claude 自身の cross-session チャネル**
 // （ListAgents / SendMessage、`/tmp/cc-socks/<pid>.sock`）で**隣のセッションが**この
-// セッションへ書き込んだ、という印（docs/58 §58.16）。
+// セッションへ書き込んだ、という印（docs/log/58 §58.16）。
 //
 // この経路は AF の `send_to_peer_session` とは別物で、封筒も指示台帳も通らない。AF の
 // 設計上は塞ぐ判断だったが、**claude 2.1.251 では env の遮断を貫通して現に開いている**
@@ -312,7 +312,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		Type      string `json:"type"`
 		Timestamp string `json:"timestamp"`
 		// UUID is the line's own id in claude's uuid/parentUuid DAG. It is the fork
-		// anchor (docs/55): claude's own --fork-session rewrites only sessionId and
+		// anchor (docs/log/55): claude's own --fork-session rewrites only sessionId and
 		// leaves uuid/parentUuid untouched (実測), so a message keeps the same uuid
 		// across branches — it is a durable handle, unlike the line index.
 		UUID             string `json:"uuid"`
@@ -353,7 +353,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	// 隣のセッションからの着信（claude 自前の cross-session チャネル）。**相手が idle の
 	// ときはこの形**で、`type:"user"` + `isMeta:true` + `origin.kind:"peer"` として載る。
 	// isMeta の門より前で拾うこと — 後ろに置くと下の一行で落ちる。実際これが「送ったのに
-	// 届かない」の正体だった（CLI には届いていて、ミラーだけが捨てていた・docs/58 §58.16）。
+	// 届かない」の正体だった（CLI には届いていて、ミラーだけが捨てていた・docs/log/58 §58.16）。
 	//
 	// **AnchorID は付けない**（下の queued_command と同じ理由 + isMeta）。forkat.go の
 	// cutIndex は isMeta 行を明示的に拒むので、uuid を渡すと「ここから分岐」の導線が出て
@@ -382,7 +382,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	// Origin distinguishes WHO queued it. 人間の割り込みと、**相手が busy のときの peer
 	// 着信**（同じ queued_command に `origin.kind:"peer"` が付く）はここで合流する — 片方
 	// だけ通していたので、忙しい相手へ送ったメッセージが丸ごと画面から消えていた。
-	// 「まだ見たことが無い」は「起こらない」ではない、の実例（docs/58 §58.16）。
+	// 「まだ見たことが無い」は「起こらない」ではない、の実例（docs/log/58 §58.16）。
 	if ev.Type == "attachment" {
 		a := ev.Attachment
 		txt := a.Origin.text(a.Prompt)
@@ -393,7 +393,7 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		if a.Origin.peer() {
 			return peerTurn(a.Origin, txt)
 		}
-		// AnchorID は**付けない**（docs/55）。この行は type:"attachment" で、分岐点の検査
+		// AnchorID は**付けない**（docs/log/55）。この行は type:"attachment" で、分岐点の検査
 		// （forkat.go の cutIndex）は type:"user" の行しか受け付けないため、uuid を渡すと
 		// 「ここから分岐」の導線が出るのに必ず 400（エージェントの発言からは分岐できません）
 		// になる。割り込みはターンの途中（tool_use と tool_result の間）に注入されるので、
@@ -553,7 +553,7 @@ func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) 
 // label, free text, or a delegation's capped output) plus whether it was a DECLINE —
 // claude's own "The user doesn't want to proceed… wants to clarify these questions" /
 // "(No answer provided)" rejection boilerplate (an Escape/interrupt out of the
-// AskUserQuestion modal, e.g. docs/dev/92 §6's preview free-text bug) — rather than a
+// AskUserQuestion modal, e.g. docs/build/92 §6's preview free-text bug) — rather than a
 // genuine answer. Declined is only ever set for kind=question: ExitPlanMode already has
 // its own text-heuristic outcome classification (planDecision.ts isRejected), and a
 // delegation's tool_result is its output, not an answer to decline.
@@ -770,7 +770,7 @@ func SettledAt(lines [][]byte) (question, plan time.Time) {
 }
 
 // CollectFileEdits extracts every edit-family tool call from lines[from:] — the raw
-// material for the session's changed-files list (docs/68). `from` lets the caller fold
+// material for the session's changed-files list (docs/log/68). `from` lets the caller fold
 // only the lines it hasn't seen: the jsonl is append-only, so the answer for a prefix
 // never changes, and re-running the line differ over a whole transcript on every poll
 // would not be affordable.
