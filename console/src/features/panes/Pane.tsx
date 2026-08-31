@@ -8,6 +8,10 @@ import { ordClass } from "../../layout/badges.ts";
 import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { SessionMenu } from "../sessions/SessionMenu.tsx";
+import { useSessionActions } from "../sessions/useSessionActions.tsx";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { placeFixed } from "../../lib/placeFixed.ts";
 import { TerminalView } from "../terminal/TerminalView.tsx";
 import { MirrorView } from "../mirror/MirrorView.tsx";
 import { agentOf } from "../../agents/registry.ts";
@@ -230,6 +234,13 @@ function PopulatedPane({
   // name/kind, kept in the recipient-side store (docs/59) instead.
   const sharedSessions = useSharedSessionsStore((s) => s.sessions);
   const sharedById = useMemo(() => new Map(sharedSessions.map((s) => [s.id, s] as const)), [sharedSessions]);
+  // タブの右クリック: 左ペインのセッション行と同じメニューを、カーソル位置に出す。
+  // `open` を落としても要素は残す — メニューが閉じたあとも生き続ける引き継ぎ/共有
+  // ダイアログを SessionMenu が抱えているので、アンマウントすると道連れになる。
+  const wsRunning = useWorkspaceStore((s) => s.state) === "running";
+  const sessionActions = useSessionActions();
+  const [tabMenu, setTabMenu] = useState<{ session: string; x: number; y: number; open: boolean } | null>(null);
+  const tabMenuSession = tabMenu ? sessionByName.get(tabMenu.session) ?? null : null;
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
   const canWrap =
@@ -422,7 +433,18 @@ function PopulatedPane({
         >
           {tabInfo.map(({ view, label, state, kic }) => {
             return (
-              <div className={cx("pane-tab", view.id === cell.selectedViewId && "selected")} role="presentation" key={view.id}>
+              <div
+                className={cx("pane-tab", view.id === cell.selectedViewId && "selected")}
+                role="presentation"
+                key={view.id}
+                // 左ペインの行と同じ形: 後続の contextmenu で開く（mousedown 側の
+                // 外側クリック判定に即座に閉じられないため）。× の上でも同じ。
+                onContextMenu={(e) => {
+                  if (!wsRunning || !view.session || !sessionByName.has(view.session)) return;
+                  e.preventDefault();
+                  setTabMenu({ session: view.session, x: e.clientX, y: e.clientY, open: true });
+                }}
+              >
                 <button
                   type="button"
                   role="tab"
@@ -494,6 +516,17 @@ function PopulatedPane({
             );
           })}
         </div>
+      )}
+      {tabMenuSession && (
+        <SessionMenu
+          s={tabMenuSession}
+          actions={sessionActions}
+          running={wsRunning}
+          open={tabMenu?.open === true}
+          // カーソル位置から。ペイン内ではなくビューポートで畳むので bounds は無し。
+          place={(el) => tabMenu && placeFixed(el, tabMenu.x, tabMenu.y)}
+          onClose={() => setTabMenu((m) => (m ? { ...m, open: false } : m))}
+        />
       )}
       {canDrag && (
         // The drag grip doubles as the pane's ordinal chip: a colored number that
