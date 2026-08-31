@@ -9,7 +9,7 @@ import type { CSSProperties, FocusEvent, KeyboardEvent, ReactNode } from "react"
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
-import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat, isDrawioFile } from "../../lib/filemeta.ts";
+import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -23,6 +23,7 @@ import { MarkdownView } from "./MarkdownView.tsx";
 import { MarpView } from "./MarpView.tsx";
 import { CodeView } from "./CodeView.tsx";
 import { ImageView } from "./ImageView.tsx";
+import { PdfView } from "./PdfView.tsx";
 import { DrawioView, type DrawioState } from "./DrawioView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import type { LineMarks } from "./CodeView.tsx";
@@ -151,6 +152,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const [err, setErr] = useState("");
   const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
+  // PDF のページ数（情報バー用）。開けるまでは null で、行数と同じ場所に出す。
+  const [pdfPages, setPdfPages] = useState<number | null>(null);
   // 図の面が返す状態（ページ数・倍率）。ヘッダの表示にだけ使う。
   const [diagramState, setDiagramState] = useState<DrawioState | null>(null);
   // 図の面は **一度出したら畳んでも外さない**（hidden にするだけ）。作り直すと 4MB の
@@ -196,6 +199,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
 
   const imgFmt = imageFormat(filePath);
   const isImage = !!imgFmt;
+  const isPdf = isPdfFile(filePath);
 
   // Editor-style change marks for git-tracked working-tree files.
   useEffect(() => {
@@ -221,6 +225,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     setViewNotice("");
     setImgDims(null);
     setImgMode("preview");
+    setPdfPages(null);
     // Load the file, retrying transient gateway failures. Right after a WS start the agent
     // is briefly unreachable and api() resolves an http_5xx error (not a throw); committing
     // that as a real error would leave the pane stuck on "(…cannot load)" forever. Genuine
@@ -814,13 +819,16 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
         </span>
         {isImage ? (
           <span className="fi-tag">{imgFmt.toUpperCase()}</span>
+        ) : isPdf ? (
+          <span className="fi-tag">PDF</span>
         ) : isText ? (
           <span className="fi-tag">{langLabel(filePath)}</span>
         ) : null}
         <span className="fi-meta muted">
           {humanSize(data?.size)}
           {isImage && imgDims ? ` · ${imgDims.w}×${imgDims.h}` : ""}
-          {!isImage && isText ? tr("view.lines_meta", { n: lines }) : ""}
+          {isPdf && pdfPages != null ? tr("view.pdf.pages_meta", { n: pdfPages }) : ""}
+          {!isImage && !isPdf && isText ? tr("view.lines_meta", { n: lines }) : ""}
           {data?.truncated ? tr("view.head_only") : ""}
         </span>
         {huge && (
@@ -1105,6 +1113,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             <pre className="filebody muted">…</pre>
           ) : isImage && (!isText || imgMode === "preview") ? (
             <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={setImgDims} />
+          ) : isPdf ? (
+            // PDF は「バイナリ」の一歩手前で拾う（docs/82）。api/fs/file は中身を返さず
+            // binary:true だけを返すので、ここから先は download の生バイトが情報源。
+            <PdfView src={downloadURL(filePath)} onMeta={(m) => setPdfPages(m.pages)} />
           ) : data.binary ? (
             <pre className="filebody muted">({tr("view.binary")}, {humanSize(data.size)})</pre>
           ) : huge ? (

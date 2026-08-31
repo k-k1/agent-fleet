@@ -182,6 +182,14 @@ export function imageFormat(path: string): string {
   return IMAGE_EXT[ext] || "";
 }
 
+// PDF か（docs/82）。画像と同じく拡張子だけで決める —— バイト列は download
+// エンドポイントから取り、pdf.js が中身を見て弾くので、ここで先頭バイトまで見る
+// 必要はない。
+export function isPdfFile(path: string): boolean {
+  const name = baseName(path).toLowerCase();
+  return name.endsWith(".pdf");
+}
+
 // drawio の図か。拡張子で決まるのは .drawio / .dio の 2 つだけで、`.xml` は中身を
 // 見ないと分からない（mxfile を .xml で保存する運用がある）。`head` を渡せばその
 // 判定まで行う。**内容が無い / 取れないときは拡張子の判断だけ**を返す。

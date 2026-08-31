@@ -15,7 +15,8 @@
     "panes:heads": "node scripts/pane-heads/check.mjs",
     "mirror:scroll": "node scripts/mirror-scroll/check.mjs",
     "mirror:handoff": "node scripts/mirror-handoff/check.mjs",
-    "drawio:check": "node scripts/drawio/check.mjs"
+    "drawio:check": "node scripts/drawio/check.mjs",
+    "pdf:check": "node scripts/pdf/check.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",
@@ -52,6 +53,7 @@
     "js-yaml": "^4.3.0",
     "marked": "^18.0.5",
     "mermaid": "^11.16.0",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zustand": "^5.0.14"
