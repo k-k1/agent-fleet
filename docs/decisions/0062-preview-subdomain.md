@@ -14,6 +14,10 @@
 パスがサブパスの外へ出る ②2 ポートが 1 オリジンに同居する ③WebSocket が通らない、の 3 つで
 この形に噛み合わない。
 
+**フロントは Next.js が多い**という前提が後から加わった。Next は「ルート直下で配れること」を
+より強く要求する（Server Actions の Origin 検査、`/_next/*`、App Router のストリーミング）ので、
+ホスト方式にする理由はむしろ強まる。ただし固有の制約が決定 3・9・11 に反映されている。
+
 ## 決定
 
 ### 1. ホスト方式を**足す**。パス方式は消さない
@@ -40,6 +44,15 @@
 
 ★ **slug にテナント名・メンバー名・Workspace id を混ぜない。** URL は Slack にもチケットにも
 貼られる。推測できないことと同じくらい、そこから誰の何かが読めないことが要る。
+
+**ただし「slug を固定する」opt-in を Workspace 単位で用意する（既定 OFF）。**
+起動ごとの引き直しには実害が 1 つだけあり、それが **外部 IdP のリダイレクト URI 登録**である
+（NextAuth / Auth.js で Google や GitHub のログインを試す構成）。redirect URI は前方一致も
+ワイルドカードも効かないので、AF 側で回避する道が無い。ON にしても slug がランダムな
+20 文字であることは変わらず、変わるのは「起動ごとに引き直すか」だけ。
+
+★ **逆（既定で固定し、必要な人が回す）にはしない** —— 捨て忘れの事故は「固定していたことを
+忘れる」側にしか起きない。
 
 ### 4. 証明書は `*.{PreviewDomain}` のワイルドカード 1 枚を、既定証明書とは**別に**リスナーへ足す
 
@@ -88,6 +101,12 @@ Vite の `server.allowedHosts` のようなホスト検査を**利用者に設�
 アプリが Host を信じて絶対 URL を作っても、それは内部アドレスなので外に漏れない。
 **`X-Forwarded-Prefix` は送らない**——ホスト方式ではアプリはルート直下に居る。
 
+★ **この組み合わせは選択肢ではなく、両立点が 1 つしかない。** Next.js は Server Actions で
+**`Origin` と `x-forwarded-host` の一致**を検査して 403 を返す（リバースプロキシ越しの Next で
+最も有名な事故）。`X-Forwarded-Host` を送り忘れれば Next が壊れ、`Host` を公開名に書き換えれば
+Vite のホスト検査が壊れる。**「Host は内部・X-Forwarded-Host は公開名」以外の組み合わせは、
+どちらかのフレームワークを壊す。**
+
 ### 10. CP のプロキシを ReverseProxy 化し、WebSocket と SSE を通す
 
 ホスト方式にしても HMR が動かなければ「React を見る」は半分しか満たせない。既存の
@@ -102,6 +121,14 @@ Vite の `server.allowedHosts` のようなホスト検査を**利用者に設�
 `http://localhost:8080` の直書きは**プレビューでは動かない**（ブラウザの `localhost` は
 画面を見ている人の PC）。env を読む書き方のために、発行結果を `AF_PREVIEW_URL_{port}` 等で
 コンテナへ注入する。
+
+**Next.js では `next.config.js` の `rewrites()` が同じ役割を果たし、しかも `next start`
+（本番ビルド）でも効く**ので、dev 限定の Vite `server.proxy` より条件が良い。
+
+★ **env 注入は「後で足す飾り」ではなく P0 に置く。** Next.js のアプリは `NEXTAUTH_URL` /
+`AUTH_URL` / `metadataBase` のように**自分の公開 URL を env から知る**作りが普通で、slug が
+起動ごとに変わる以上、env が無いと「URL は出たがアプリが自分の場所を間違える」という
+中途半端な状態になる。
 
 別オリジンで直接呼びたい構成のための `SameSite=None` ＋ **同一 slug の兄弟オリジンに限った**
 CP 側 CORS 補完は **opt-in で既定 OFF**——クロスオリジンを既定で通すことは、URL を知っている
@@ -139,8 +166,9 @@ cookie を書けてしまい、Console の cookie を上書き / 固定できる
 
 - CP: Host 振り分け層・slug の発行 / 失効・ハンドシェイク・ReverseProxy 化。
   マイグレーションは **sqlite と Postgres の両方**（方言差で片方だけ通るのは既知の事故形）。
-- Console: プレビューのポップオーバー、Workspace 設定の許可ポート、公開モードの表示。
+- Console: プレビューのポップオーバー、Workspace 設定の許可ポートと slug 固定、公開モードの表示。
 - デプロイ: `30-ingress.yaml` に `PreviewDomain` パラメータ・`*.{PreviewDomain}` の ACM 証明書・
   それを Listener443 に貼る `ListenerCertificate`・Route53 のワイルドカード A エイリアス。
   ⚠️ **既存の `Cert` には触らない**（SAN を足すと置換になる — 決定 4）。
-- 案内: `docs/guide` は二言語で更新（P4）。
+- 案内: `docs/guide` は二言語で更新（P4）。実アプリでの通し確認は **Next.js と Vite の両方**で
+  行う（特に Next の Server Actions と HMR — docs/81 §13）。

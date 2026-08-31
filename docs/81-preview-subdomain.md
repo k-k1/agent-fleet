@@ -102,6 +102,8 @@ CORS も cookie の SameSite も登場しない。ローカルとプレビュー
 | React が `http://localhost:8080/...` を**直書き** | ✅ | ❌ | 不可。ブラウザの `localhost` は見ている人の PC |
 | React が `import.meta.env.VITE_API_BASE`（既定 `http://localhost:8080`）を読む | ✅ | ✅ | 可。プレビューでは AF が注入する兄弟オリジンで上書き（§8）。CORS と cookie の話が付いて回る |
 | 同一オリジンで配る（Spring が React のビルド成果物も返す） | ✅ | ✅ | 可。ポートは 1 つで済む |
+| **Next.js** が `next.config.js` の `rewrites()` で `/api` を 8080 へ流す | ✅ | ✅ | ★ 推奨。**`next start`（本番ビルド）でも効く**ので dev 限定の proxy より強い（§2.5） |
+| **Next.js** の Route Handler（`app/api/**/route.ts`）から Spring を呼ぶ | ✅ | ✅ | 可。サーバ側から `127.0.0.1:8080` を叩くので、ブラウザに 8080 が見えない |
 
 ### 2.3 Vite / CRA 側で必要になる設定
 
@@ -115,7 +117,7 @@ export default defineConfig({
 ```
 
 ⚠️ **dev server のホスト検査**（Vite の `server.allowedHosts` による DNS リバインド対策）に
-引っかからないよう、CP と Agent は上流へ `Host: 127.0.0.1:{port}` を送り続ける（§3・決定 8）。
+引っかからないよう、CP と Agent は上流へ `Host: 127.0.0.1:{port}` を送り続ける（§3・決定 9）。
 これで `allowedHosts` の設定は不要になる。
 
 ⚠️ **HMR（Vite の WebSocket）だけは、設定が要る可能性が高い。** HMR クライアントが
@@ -131,7 +133,7 @@ dev server のポートを埋め込む版がある）。**実機で 1 回確か�
 要る）が起きるが、プレビューではもう 1 つ、**AF の認証 cookie が cross-site では飛ばない**
 という問題が乗る（§6 で cookie は `SameSite=Lax`）。
 
-この構成を選ぶ人のために、Workspace 設定の opt-in を P3 に置く（決定 10）:
+この構成を選ぶ人のために、Workspace 設定の opt-in を P3 に置く（決定 11）:
 
 - 認証 cookie を `SameSite=None; Secure` にする
 - **同じ slug の兄弟オリジンに限って** CP が CORS ヘッダ（`Access-Control-Allow-Origin` は
@@ -141,6 +143,77 @@ dev server のポートを埋め込む版がある）。**実機で 1 回確か�
 既定は OFF。**「クロスオリジンを既定で通す」は、URL を知っている第三者のページから
 利用者のブラウザ経由でプレビューを叩ける状態を既定にすること**なので、選んだ人にだけ
 渡す。
+
+### 2.5 Next.js（実際にはこれが多い）
+
+**結論から言うと、Next.js はこの方式と相性が良い。** Vite より噛み合う点すらある。ただし
+**固有の落とし穴が 4 つ**あり、そのうち 1 つは §4 の「起動ごとに URL が変わる」と正面から
+ぶつかる。
+
+#### (a) API の繋ぎ方 —— `rewrites()` が Vite の `server.proxy` に当たる
+
+```js
+// next.config.js — dev / 本番 / ローカル PC / プレビューで同じファイルのまま動く
+const API = process.env.API_ORIGIN ?? "http://127.0.0.1:8080";
+module.exports = {
+  async rewrites() {
+    return [{ source: "/api/:path*", destination: `${API}/:path*` }];
+  },
+};
+```
+
+Vite の `server.proxy` が **dev server だけの機能**なのに対し、Next の `rewrites()` は
+**`next start`（本番ビルド）でも効く**。§2.1 の「ブラウザが知るオリジンは 1 つ」を、開発と
+本番の両方で同じ書き方で満たせる。App Router の Route Handler（`app/api/**/route.ts`）で
+Spring を呼ぶ形でも同じ（サーバ側から `127.0.0.1:8080` を叩くので、そもそもブラウザに
+8080 が見えない）。
+
+#### (b) HMR / Fast Refresh —— Vite より通りやすい見込み
+
+Next の dev サーバの HMR は **同一オリジンのパス**（webpack 系なら `/_next/webpack-hmr`）に
+WebSocket を張る。ポート番号をクライアントに埋め込む Vite（§2.3）と違い、**ページと同じ
+ホスト・同じ 443 に繋ぎに来る**ので、CP が Upgrade を通せば（§7.1）設定なしで通るはず——
+**ただし「はず」であって、実機で確かめるまでは案内に書かない**（§13）。
+
+#### (c) ⚠️ Server Actions の Origin 検査 —— `X-Forwarded-Host` を正しく送ることが条件
+
+Next.js は Server Actions（POST）で **`Origin` と `x-forwarded-host` が一致するか**を検査し、
+食い違うと 403 で弾く。リバースプロキシ越しの Next で最も有名な事故であり、**§3 の決定
+（上流には `Host: 127.0.0.1:{port}`、公開名は `X-Forwarded-Host`）はこの検査を通すための
+条件そのもの**になっている。
+
+- `X-Forwarded-Host` を**送り忘れる**と、Next は `127.0.0.1:3000` と
+  `https://{slug}-3000.pv.example.com` を比べて 403 にする。
+- 逆に `Host` を公開名に書き換えると、今度は Vite 側のホスト検査（§2.3）に当たる。
+- ★ つまり **「Host は内部・X-Forwarded-Host は公開名」以外の組み合わせは、どちらかの
+  フレームワークを壊す。** ここは選択肢ではなく、両立点が 1 つしか無い。
+
+#### (d) ⚠️ Next 15 の `allowedDevOrigins`
+
+Next.js 15 系は、dev サーバの内部資産（`/_next/*`）を未知のオリジンから引かせない設定
+（`allowedDevOrigins`）を持つ。**`Host` を内部アドレスに書き換えている**ので素通りする見込み
+だが、版によって判定材料が違うため §13 の確認項目に入れる。引っかかる場合は
+`AF_PREVIEW_DOMAIN`（§8）を読ませて 1 行で許可できる。
+
+#### (e) ★ 公開 URL を必要とするもの —— ここが §4 とぶつかる
+
+Next.js のアプリは「自分の公開 URL」を知りたがるものが多い。
+
+| 何が | どう必要か | プレビューでは |
+|---|---|---|
+| NextAuth v4 の `NEXTAUTH_URL` / Auth.js v5 の `AUTH_URL`・`AUTH_TRUST_HOST` | 絶対 URL の生成とコールバック | §8 の `AF_PREVIEW_URL_3000` を渡せば起動ごとに正しくなる |
+| `metadataBase`、OGP、`sitemap.xml` | 絶対 URL の生成 | 同上 |
+| 外部 IdP（Google / GitHub …）の **リダイレクト URI 登録** | IdP 側に**事前登録**が要る | ⚠️ **起動ごとに URL が変わると、毎回登録し直しになる＝実質使えない** |
+
+最後の 1 行が、**「起動の都度ランダム発行」という要件の唯一の実害**である。§4 に
+**「この Workspace の slug を固定する」opt-in** を用意して逃がす（それでもランダムな文字列
+であることは変わらない。変わるのは「起動ごとに引き直すか」だけ）。
+
+#### (f) App Router のストリーミング
+
+App Router は HTML をストリーミングで返す（`loading.tsx` / Suspense）。**プロキシが
+フラッシュしないと、全部届くまで画面が白いまま**になる——「遅い」ではなく「壊れている」
+ように見える。§7.1 の `FlushInterval` は Next のためにも必要である。
 
 ## 3. 上流へ送るヘッダ
 
@@ -169,6 +242,27 @@ Agent の `handlePreview` は今も `Host: 127.0.0.1:{port}` に書き換えて�
   衝突したら引き直す。
 - ★ **slug にテナント名・メンバー名・Workspace id を混ぜない。** URL は Slack にもチケットにも
   貼られる。推測できないことと同じくらい、**そこから誰の何かが読めないこと**が要る。
+
+### 4.1 「slug を固定する」opt-in（Workspace 単位・既定 OFF）
+
+起動ごとの引き直しには、**外部 IdP のリダイレクト URI 登録**という実害が 1 つある
+（§2.5 (e)）。NextAuth / Auth.js で Google や GitHub のログインを試す構成では、URL が
+起動ごとに変わると IdP 側の登録をそのたびに書き換えることになり、実質使えない。
+OAuth の redirect URI は前方一致もワイルドカードも効かないので、AF 側で回避する道は無い。
+
+そこで **Workspace 設定に「slug を固定する」を置く**。
+
+- **既定は OFF**（＝要件どおり起動ごとに引き直す）。ON にした Workspace だけ、発行済みの
+  slug を保存して次の起動でも同じものを使う。
+- ON にしても **slug がランダムな 20 文字であることは変わらない**。変わるのは「起動ごとに
+  引き直すか」だけで、推測不能性は落ちない。
+- 「再発行」ボタンを添える（URL を配ってしまったときに、その場で捨てられる道）。
+- ⚠️ ON にした Workspace の URL は**停止しても予約が残る**（次の起動で同じ URL に戻る）。
+  停止中にその URL が解決しないこと自体は変わらない。
+
+★ これは要件（起動ごとにランダム）を**既定として守ったうえで、守ると使えなくなる構成に
+だけ逃げ道を出す**形である。逆（既定で固定し、必要な人が回す）にはしない——**捨て忘れの
+事故は「固定していたことを忘れる」側にしか起きない。**
 
 ## 5. 許可ポート
 
@@ -342,17 +436,27 @@ ALB のリスナーは既定証明書 1 枚に加えて追加証明書を持て�
 
 | | 中身 |
 |---|---|
-| **P0-a 入口** | CFN（`PreviewDomain` / SAN / Route53）と CP の env。実機で名前が解決し TLS が張れるところまで |
-| **P0-b CP** | Host 振り分け・slug の発行 / 失効（マイグレーション: sqlite と Postgres の両方）・認証必須のハンドシェイク・許可ポート（既定 3000,8080）・ReverseProxy 化（WebSocket / SSE） |
-| **P1 Console** | プレビューのポップオーバーと Workspace 設定の許可ポート編集 |
+| **P0-a 入口** | CFN（`PreviewDomain` / `*.{PreviewDomain}` の証明書 ＋ `ListenerCertificate` / Route53）と CP の env。実機で名前が解決し TLS が張れるところまで |
+| **P0-b CP** | Host 振り分け・slug の発行 / 失効（マイグレーション: sqlite と Postgres の両方）・認証必須のハンドシェイク・許可ポート（既定 3000,8080）・ReverseProxy 化（WebSocket / SSE）・**env 注入（§8）** |
+| **P1 Console** | プレビューのポップオーバー・Workspace 設定の許可ポート編集・**slug 固定の opt-in と再発行（§4.1）** |
 | **P2 公開モード** | Workspace 単位の切替・fail-closed・監査ログ・`noindex` |
-| **P3 兄弟オリジン** | `SameSite=None` ＋ CP が補う CORS の opt-in（§2.4）・env 注入（§8） |
-| **P4 実機と案内** | 3000 + 8080 の実アプリで通し確認（特に HMR §2.3）・`docs/guide` を二言語で更新 |
+| **P3 兄弟オリジン** | `SameSite=None` ＋ CP が補う CORS の opt-in（§2.4） |
+| **P4 実機と案内** | 実アプリ（**Next.js と Vite の両方**）で通し確認・`docs/guide` を二言語で更新 |
+
+★ **env 注入（§8）を P0-b に上げてある。** Next.js のアプリは `NEXTAUTH_URL` /
+`AUTH_URL` / `metadataBase` のように**自分の公開 URL を env から知る**作りが普通で、
+slug が起動ごとに変わる以上、**env が無いと「URL は出たがアプリが自分の場所を間違える」**
+という中途半端な状態になる。後回しにできる飾りではない。
 
 ## 13. 実機でしか確かめられないこと
 
-- ACM の SAN 追加による証明書置換が、稼働中の Listener を無停止で差し替えられるか
-- Vite の HMR がプレビュー越しにどのホスト / ポートへ繋ぎに行くか（§2.3）
+- `ListenerCertificate` の追加が、稼働中の Listener を無停止で足せるか（既定証明書は
+  触らない設計なので、理屈のうえでは無停止のはず）
+- **Next.js**（§2.5）: ① HMR の WebSocket が設定なしで繋がるか ② **Server Actions が
+  403 にならないか**（`X-Forwarded-Host` の送り方がそのまま合否になる）③ Next 15 の
+  `allowedDevOrigins` に引っかからないか ④ App Router のストリーミングが白画面に
+  ならないか
+- **Vite**: HMR がプレビュー越しにどのホスト / ポートへ繋ぎに行くか（§2.3）
 - ALB のアイドルタイムアウト 60 秒と、張りっぱなしの HMR ソケットの相性
   （切れたときに dev server 側が再接続するか）
 - WAF のレートリミット（`WafRateLimitPer5Min`）が、プレビューの静的アセットの束を
