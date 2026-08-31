@@ -183,11 +183,9 @@ N worktrees means N copies of every per-project dependency tree, unless the ecos
   `node_modules`** and breaks every session using it — and `rm -rf node_modules/` (trailing slash)
   deletes through the link the same way. Remove the link with `rm -rf node_modules` (no trailing
   slash) before any install.
-- Per-language rules and the measurements behind them: `build/93-worktree-deps.md` under the
-  read-only docs mount — but that shelf **may be absent** (it is only mounted for a deployment
-  administrator), so assume it is not there: the rules above are the whole of what you need for
-  Node, and Go / Gradle / Maven / Cargo already share one cache. See "Answering questions about
-  this Workspace / environment" below for the path.
+- The per-language rules above are the whole of what you need for Node; Go / Gradle / Maven /
+  Cargo already share one cache. (The measurements behind them are in the developer
+  documentation, which is not shipped into this container.)
 
 ## What is not available (check before you plan around it)
 - **No root, no `sudo`** — you are `dev` (uid 1000); `apt install` is not possible. Install into
@@ -361,32 +359,40 @@ its `[agent-fleet]` note. Don't infer it from a directory name.
 - The clock is the workspace's local timezone (`date`), not UTC.
 
 ## Answering questions about this Workspace / environment
-The docs you are allowed to see are at `/usr/local/share/agent-fleet/docs`, scoped to your access
-level — answer from whatever is there. (Usually bind-mounted read-only by the Control Plane; where
-it can't mount, the Agent downloads the same role-scoped subset at start, so on a fresh container
-the directory may fill a moment after boot.) When asked how this environment behaves (persistence,
-"recreate" vs "clean home" vs Stop→Start, build/memory limits, gh transparent auth, connections,
-previews, MCP, toolchains, …), grep that tree and cite the file rather than answering from memory
-— specs drift: `grep -rni "<topic>" /usr/local/share/agent-fleet/docs`. If the directory is absent
-**or empty**, answer from this file's highlights and say the full docs aren't available here.
+The user guide is at `/usr/local/share/agent-fleet/docs` — answer from what is there. (Usually
+bind-mounted read-only by the Control Plane; where it can't mount, the Agent downloads the same
+tree at start, so on a fresh container the directory may fill a moment after boot.) When asked how
+this environment behaves (persistence, "recreate" vs "clean home" vs Stop→Start, build/memory
+limits, gh transparent auth, connections, previews, MCP, toolchains, …), grep that tree and cite
+the file rather than answering from memory — specs drift:
+`grep -rni "<topic>" /usr/local/share/agent-fleet/docs`. If the directory is absent **or empty**,
+answer from this file's highlights and say the docs aren't available here.
 
-**Which shelves are actually there depends on who owns this Workspace**, because the mount is
-cut by role (`docsRolePrefixes` in `control-plane/workspace_docs.go`): a member gets `use/` and
-`ref/`, a tenant administrator also gets `admin/`, and a deployment administrator additionally
-gets `operate/` and `build/`. `decisions/` and `log/` are never shipped to anybody.
+**Every container gets the same tree** — it is not cut by role (ADR 0064), so you can rely on all
+of it being there:
 
-That is why **this file repeats things the docs also say instead of linking to them**: every
-agent in every container reads it, and only `use/` + `ref/` are guaranteed to exist next to it.
-It is a deliberate duplication, not an oversight. Two rules follow, and both are checked by
-`scripts/docs-check.py`:
+| Shelf | Reader |
+|---|---|
+| `member/` | someone running agents from the Console — start here for "how do I…" |
+| `admin/` | a tenant administrator: members, limits, the audit log |
+| `operate/` | whoever installs and keeps a deployment alive (host-level; needs shell access) |
+| `ref/` | the capability tables everyone consults, and the glossary |
+| `operate/runbooks/` | the command procedures, copied in from `deploy/` at release time |
 
-- A pointer from here into `use/` or `ref/` is safe. A pointer into `admin/`, `operate/` or
-  `build/` must carry the exact words **`may be absent`** in the same paragraph, and must not be the
-  only place the reader can get the answer. (The check looks for that literal phrase — it is a
-  marker, so keep the words even if you reword the sentence around them.)
-- Any shelf path named here has to exist. When `docs/` is reorganised, this file is part of the
-  blast radius — a stale pointer here misdirects every agent in every container at once, and
-  nothing else would notice.
+**Match the shelf to who is asking.** A member's "how do I…" is answered from `member/`; do not
+hand them a host-level procedure out of `operate/` — inside a container there is no root and no
+Docker, so those steps are not theirs to run.
+
+**The developer documentation is not here and never will be.** Architecture, the decision records
+and the frozen work journals live in the repository's `docs/` tree, which ships to nobody. If a
+question genuinely needs it, say it is in the developer documentation rather than inventing a path.
+
+This file still repeats things the guide also says instead of linking to them — it is read at
+startup, before anything has been grepped, and a pointer is not an answer when the answer is
+needed in the same breath. That duplication is deliberate. One rule follows, checked by
+`scripts/docs-check.py`: **any shelf path named here has to exist in the shipped guide.** When the
+documentation is reorganised this file is in the blast radius, and a stale pointer here misdirects
+every agent in every container at once, with nothing else to notice it.
 
 ## Also
 - Outbound network may be restricted; an unreachable host is not necessarily an error.

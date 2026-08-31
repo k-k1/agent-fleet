@@ -101,4 +101,4 @@ To have the user look at a change in the Console (`console/`), serve the dev ser
   documents.
 
 The authority on usage (terminology, recommended flow, states, constraints) is
-`docs/ref/browser-pane.md`.
+`guide/ref/browser-pane.md`.

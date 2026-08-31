@@ -1,7 +1,7 @@
 // OnboardingCard — first-run guide, v2 (起動導線再設計 Phase 1). The old card was a
 // single developer-shaped checklist (WS → git → agent → session) that chat-only
 // users could never complete (it only auto-hid on session creation) and that
-// docs/use/lite.md had to patch in prose ("ステップ2と4は飛ばして大丈夫").
+// guide/member/lite.md had to patch in prose ("ステップ2と4は飛ばして大丈夫").
 // v2 splits it into the two steps everyone needs — start workspace, connect an
 // agent — followed by a goal choice: chat (repo-less Q&A / translation, done in
 // one click) or development (git → clone → first session, expanded on demand).
