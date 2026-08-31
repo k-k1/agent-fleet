@@ -3628,6 +3628,9 @@ export const en: Record<keyof typeof ja, string> = {
   "onb.paste_confirm": "Paste",
   // Disconnect notice written straight into the terminal grid (term.ts)
   "onb.term_disconnected": "[disconnected]",
+  "onb.rtt_unit": "ms",
+  "onb.rtt_title":
+    "Terminal round trip (median {med}ms / worst {max}ms / last {n} samples).\nMeasured over the same path and the same frames your keystrokes take, browser ↔ workspace. The PTY/tmux hop itself is under a millisecond, so this is very nearly the echo delay you feel.",
   "onb.term_session_stopped": "[this session is stopped — use Resume at the bottom right to bring it back]",
 
   // === P5 プロジェクト（ProjectTree/FilesSection/FilesChanges/RepoNode ほか） ===
