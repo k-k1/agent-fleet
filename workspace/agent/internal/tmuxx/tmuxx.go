@@ -1,6 +1,6 @@
 // Package tmuxx は tmux プロービングの純粋プリミティブ（存在確認・pane 解決・
 // pane キャプチャ・生存一覧・pane 種別推定）。package main の session_tmux.go /
-// session_io.go からの抽出（docs/23 残① Wave A）。tmux コマンド実行だけを持ち、
+// session_io.go からの抽出（docs/log/23 残① Wave A）。tmux コマンド実行だけを持ち、
 // オーケストレーション（起動・メタ・ツールチェーン）は main に残す。依存は
 // tmuxx→session の一方向のみ。
 package tmuxx
@@ -25,7 +25,7 @@ import (
 //
 // Background: a test instance's shutdown once ran `tmux kill-server` against the
 // shared default socket and took down every live session in the workspace
-// (docs/32 M1 E2E incident, 2026-07-20). Socket scoping here plus the
+// (docs/log/32 M1 E2E incident, 2026-07-20). Socket scoping here plus the
 // owned-sessions-only shutdown (shutdown.go) are the two halves of the fix.
 func Cmd(args ...string) *exec.Cmd {
 	if s := os.Getenv("AF_TMUX_SOCKET"); s != "" {
@@ -486,7 +486,7 @@ var rateLimitOptionRe = regexp.MustCompile(`(?m)^\s*(?:\x{276F} )?\d+\.\s+(?:Sto
 // AtRateLimitModal reports whether a claude pane is parked on that menu.
 //
 // なぜ専用の検出が要るか: 上限でターンが切れると claude は Stop hook を鳴らさないので
-// status は "working" のまま残る（docs/47）。それを直す唯一の経路は「ペインが待機プロンプト
+// status は "working" のまま残る（docs/log/47）。それを直す唯一の経路は「ペインが待機プロンプト
 // に戻っていたら HealIdle」だが、このメニューは "Esc to cancel"（modalMarkers）を必ず含み、
 // 入力欄のモード表示フッタごと置き換わるので AtIdlePrompt は恒久的に false を返す。結果、
 // セッションが永久に 進行中 に貼り付く（実測 2026-07-31・約16時間・claude 2.1.220）。
@@ -526,7 +526,7 @@ var rateLimitDefaultRe = regexp.MustCompile(`(?m)^\s*\x{276F} 1\.\s+Stop and wai
 //
 // なぜ自動で押してよいか: 選択肢は「リセットを待つ」か「管理者に上限引き上げを依頼する」
 // で、課金判断を伴うのは後者だけ。前者は待つ＝何も買わない側で、しかもメニューを人が
-// 消すまでセッションは何もできない（実測 約16時間の貼り付き・docs/47 §4-3）。よって
+// 消すまでセッションは何もできない（実測 約16時間の貼り付き・docs/log/47 §4-3）。よって
 // 既定の 1 を選ぶ操作は「回復」であって「判断の代行」ではない。2 を選ばせたい利用者は
 // メニューが出ている間に自分で選べる（この自動解除は 1 が選択された状態のときだけ動く）。
 //

@@ -139,7 +139,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     const res = await initRepo(newName.trim(), toast);
     setBusy(false);
     if (!res.ok) return; // ここに留まる（理由はトーストが言った）
-    // グループ選択中なら、作った作業コピーをそのグループへ入れる（docs/52 §1）。
+    // グループ選択中なら、作った作業コピーをそのグループへ入れる（docs/log/52 §1）。
     autoAddToActiveWorkingSet("repos", res.name);
     const repo = useReposStore.getState().repos.find((r) => r.name === res.name);
     if (repo) {
@@ -253,7 +253,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     // Tally usage so the quick-connect cards rank by frequency (recency breaks ties).
     const prev = settings.ssmHostUsage?.[id];
     setSetting("ssmHostUsage", { ...(settings.ssmHostUsage || {}), [id]: { count: (prev?.count || 0) + 1, at: Date.now() } });
-    if (res?.name) autoAddToActiveWorkingSet("sessions", res.name); // docs/52 §1: repo なしセッション
+    if (res?.name) autoAddToActiveWorkingSet("sessions", res.name); // docs/log/52 §1: repo なしセッション
     setSsmLogin((res && res.name) || "");
   };
 
@@ -263,7 +263,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const [model, setModel] = useState(() => resolveModel(kinds[0] || "claude", "", initialDefault.model));
   const [effort, setEffort] = useState(() => resolveEffort(kinds[0] || "claude", "", initialDefault.effort));
   const [startMode, setStartMode] = useState(() => resolveStartMode(kinds[0] || "claude", "", initialDefault.startMode));
-  // 権限確認（docs/76）。undefined = 触っていない＝送らない（Agent 側の kind 毎の既定に任せる）。
+  // 権限確認（docs/log/76）。undefined = 触っていない＝送らない（Agent 側の kind 毎の既定に任せる）。
   const [skipPerm, setSkipPerm] = useState<boolean | undefined>(undefined);
   const [prompt, setPrompt] = useState("");
   // kind is seeded once at mount, but kinds arrives asynchronously (the connection
@@ -288,7 +288,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
       { dir: "", repo: "" },
       {
         kind,
-        // 起動ハブの repo-less 起動も新規の既定は managed（docs/27 §9.2 — opencode）。
+        // 起動ハブの repo-less 起動も新規の既定は managed（docs/log/27 §9.2 — opencode）。
         driver: agentOf(kind).managedDriver ? "managed" : "",
         model: agentOf(kind).caps.model ? model : "",
         effort: agentOf(kind).managedDriver || agentOf(kind).caps.tuiEffort ? effort : "",
@@ -548,7 +548,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               // planMode:false でも tuiStartMode:true（起動コマンド/driver が plan 起動対応 —
               // 各 program.go / driver.go 実装済み）なので、起動時モード選択はどちらかで出す。
               const showStartMode = (a.caps.planMode || a.caps.tuiStartMode) && (a.managedDriver || a.caps.tuiStartMode);
-              // 権限確認は承認待ちを Console から答えられる kind だけ（docs/76）。
+              // 権限確認は承認待ちを Console から答えられる kind だけ（docs/log/76）。
               const showPerm = a.caps.permissionChoice;
               const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
               if (!showEffort && !showStartMode && !showPerm) return null;

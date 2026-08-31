@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agent Fleet — release orchestrator (single entry point, docs/35 §35.6.2).
+# Agent Fleet — release orchestrator (single entry point, docs/log/35 §35.6.2).
 #
 #   VERSION=0.2.0 deploy/release/build.sh [--compose] [--native] [--save] [--all]
 #
@@ -7,8 +7,8 @@
 #               D: SHA256SUMS). Delegates to deploy/compose/release.sh. Builds B
 #               (docker save) by default to satisfy the P1 gate (A+B+D). Images
 #               are the distribution variant (workspace: BAKE_AGENT_CLIS=0 lean /
-#               CP: docs distignore applied).
-#   --native  … C (native tar) + R (lean rootfs) — docs/35 §35.7.2-7.
+#               CP: docs allowlist (.distinclude) applied).
+#   --native  … C (native tar) + R (lean rootfs) — docs/log/35 §35.7.2-7.
 #   --bundle-rootfs     … with --native, also produce the self-contained variant
 #                          bundling R (-bundle tar).
 #   --rootfs-json <path> … reuse an existing rootfs.json and skip generating R
@@ -19,16 +19,16 @@
 # env: ROOTFS_URL_BASE … base of the R distribution URL baked into rootfs.json
 #      (default https://github.com/k-k1/agent-fleet-dist/releases/download — §35.4.2).
 #      WS_PLATFORMS … CPU architectures for the WORKSPACE image, e.g.
-#      "linux/amd64,linux/arm64" (docs/70 §70.9). Empty = the host's, as before.
-#      Needs --push. The native package (C/R) stays amd64 (docs/35 §35.3.1).
-#      CP_PLATFORMS … the same, for the CONTROL PLANE image (docs/72), so a
+#      "linux/amd64,linux/arm64" (docs/log/70 §70.9). Empty = the host's, as before.
+#      Needs --push. The native package (C/R) stays amd64 (docs/log/35 §35.3.1).
+#      CP_PLATFORMS … the same, for the CONTROL PLANE image (docs/log/72), so a
 #      deployment can run the Fargate service itself on Graviton. Independent of
 #      WS_PLATFORMS; also needs --push.
 #
 # Output: deploy/release/dist/ (each artifact + SHA256SUMS).
 # Run real release builds on hosted CI (release-gate.yml) or a host with enough
 # memory. Build one artifact at a time, serially (shared-host memory limits —
-# docs/35 §35.4).
+# docs/log/35 §35.4).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -77,7 +77,7 @@ if [ "$DO_COMPOSE" = 1 ]; then
   extra=()
   [ "$DO_PUSH" = 1 ] && extra+=(--push)
   [ "$DO_IMAGES_TAR" = 1 ] && extra+=(--save)
-  # WS_PLATFORMS / CP_PLATFORMS pass straight through (docs/70 §70.9, docs/72): the
+  # WS_PLATFORMS / CP_PLATFORMS pass straight through (docs/log/70 §70.9, docs/log/72): the
   # two images are the artifacts that can exist for more than one CPU architecture,
   # and it is release.sh that knows how to build one that way. The native package
   # (C/R) below stays amd64 — it is a single-host hand-off, not a fleet substrate.
@@ -87,7 +87,7 @@ if [ "$DO_COMPOSE" = 1 ]; then
 fi
 
 if [ "$DO_NATIVE" = 1 ]; then
-  # C (native tar) + R (lean rootfs) — docs/35 §35.7.2-7. amd64 first (§35.3.1).
+  # C (native tar) + R (lean rootfs) — docs/log/35 §35.7.2-7. amd64 first (§35.3.1).
   ARCH=amd64
   PKG_NAME="agent-fleet-native-$VERSION-linux-$ARCH"
   NATIVE_DIR="$HERE/native"
@@ -110,16 +110,10 @@ if [ "$DO_NATIVE" = 1 ]; then
     --output "type=local,dest=$WORK/console" "$ROOT"
   cp -R "$WORK/console/console" "$OUT/console"
 
-  # (iii) stage docs (internal denylist applied — same rules as compose/release.sh).
-  echo "==> [native] stage docs (distignore applied)"
-  mkdir -p "$OUT/docs"
-  EXCLUDES=()
-  while IFS= read -r line || [ -n "$line" ]; do
-    line="${line%%#*}"
-    line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
-    if [ -n "$line" ]; then EXCLUDES+=(--exclude="./$line"); fi
-  done < "$ROOT/docs/.distignore"
-  tar -C "$ROOT/docs" -cf - "${EXCLUDES[@]}" . | tar -C "$OUT/docs" -xf -
+  # (iii) stage docs — the shelves on the allowlist plus the runbooks (shared with
+  # compose/release.sh so the two cannot drift).
+  echo "==> [native] stage docs (shelves + runbooks)"
+  bash "$ROOT/deploy/release/stage-docs.sh" "$OUT/docs"
 
   # (iv) static bwrap / git+git-http-backend / zstd (alpine builder; versions are
   # pinned via ARGs in Dockerfile.tools).
@@ -181,7 +175,7 @@ EOF
   install -m 0755 "$ROOT/deploy/native/af" "$OUT/af"
   cp "$ROOT/deploy/native/README.md" "$ROOT/LICENSE" "$ROOT/NOTICE" "$OUT/"
   printf '%s\n' "$VERSION" > "$OUT/VERSION"
-  # dist.json — where `af update` fetches new releases from (docs/42). Formatting
+  # dist.json — where `af update` fetches new releases from (docs/log/42). Formatting
   # pairs with the af launcher's dist_get sed parser (one key per line).
   cat > "$OUT/dist.json" <<EOF
 {

@@ -1,9 +1,9 @@
-// CarriedBlock — 停止時に画面に出ていた対話（docs/75 §75.6）。
+// CarriedBlock — 停止時に画面に出ていた対話（docs/log/75 §75.6）。
 //
 // PendingQuestions（保留カード）との決定的な違いは**答え方**である。保留カードは
 // 生きた TUI モーダルへキー列（Down/Enter）を撃つ。持ち越しにはモーダルが無い —
 // セッションが畳まれた時点で消え、`claude --resume` しても戻らない（未応答の tool_use は
-// 親ポインタで迂回されて会話木から外れる。docs/75 §75.10 A で実測）。だから回答は
+// 親ポインタで迂回されて会話木から外れる。docs/log/75 §75.10 A で実測）。だから回答は
 // **文章として**配達するしかなく、このコンポーネントはキー列を 1 つも組み立てない。
 //
 // カードを分けてあるのはその不変条件を型で守るため: キーを撃つコード（questionKeys）は
@@ -41,7 +41,7 @@ export function CarriedBlock({
     setSending(true);
     const r = await sessionCarriedAnswer(session, body);
     setSending(false);
-    // 沈黙は成功と区別が付かない（docs/dev/92 §7 の教訓）。失敗は必ずトーストする。
+    // 沈黙は成功と区別が付かない（docs/build/92 §7 の教訓）。失敗は必ずトーストする。
     if (!r.ok) {
       onError(r.message || tr("err.send_failed"));
       return;
@@ -106,7 +106,7 @@ export function CarriedBlock({
               >
                 {tr("mirror.carried_plan_reject")}
               </button>
-              {/* ★承認は「承認」ではなく実行の指示である（docs/75 §75.10 E の実測: 文章で
+              {/* ★承認は「承認」ではなく実行の指示である（docs/log/75 §75.10 E の実測: 文章で
                   承認を送ると claude は ExitPlanMode を出し直さずそのまま実行する）。
                   取り消せない決定なので confirm を挟む。 */}
               <button

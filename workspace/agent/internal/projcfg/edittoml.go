@@ -1,7 +1,7 @@
 package projcfg
 
 // edittoml.go — format-preserving edits to codex's .codex/config.toml
-// (docs/56 §6). Unlike editjson.go this needs no new scanning logic of its own:
+// (docs/log/56 §6). Unlike editjson.go this needs no new scanning logic of its own:
 // mcpreg's materialize_codex.go already implements exactly this edit (strip the
 // named table(s), append fresh ones) for the USER scope, and its two primitives
 // (StripCodexServers / AppendTOMLBlocks, project_codex.go) take only a name

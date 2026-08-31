@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the CP + workspace images the way a release does, on an EC2 instance, and push
-# them to a deployment's ECR under one tag (docs/70 §70.14).
+# them to a deployment's ECR under one tag (docs/log/70 §70.14).
 #
 #   AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
 #     deploy/aws/ecs/harness/push-release-images.sh --ref temp/xyz --tag 0.10.1-dev-abc1234
@@ -11,10 +11,10 @@
 # afterwards:
 #
 #   - the workspace image is the LEAN variant (BAKE_AGENT_CLIS=0)
-#   - the CP image's docs come from a STAGED tree with docs/.distignore applied
+#   - the CP image's docs come from a STAGED tree with docs/.distinclude applied
 #
 # Getting the first one wrong produces a working image that is a different product
-# (measured once — docs/70 §70.14.2). Getting the second wrong ships internal documents.
+# (measured once — docs/log/70 §70.14.2). Getting the second wrong ships internal documents.
 # So the instance runs `deploy/compose/release.sh` and `deploy/aws/ecs/release-ecr.sh`,
 # which are the same paths a real release takes; this harness only supplies a box with
 # docker on it and a credential.
@@ -129,7 +129,7 @@ git clone --depth 1 --branch "${REF}" "${GIT_REPO}" repo || { say "clone|FAIL"; 
 cd repo
 say "head|\$(git rev-parse --short HEAD)"
 
-# The real release path: lean workspace + docs staged through .distignore.
+# The real release path: lean workspace + docs staged through .distinclude.
 s=\$SECONDS
 if VERSION="${TAG}" bash deploy/compose/release.sh >/tmp/b.log 2>&1; then
   say "build|\$((SECONDS-s))"

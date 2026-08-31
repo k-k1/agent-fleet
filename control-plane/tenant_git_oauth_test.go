@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// docs/71 + ADR0052. What these pin down is the part of "the tenant owns its git OAuth
+// docs/log/71 + ADR0052. What these pin down is the part of "the tenant owns its git OAuth
 // app" that is easy to lose in a later edit, and each one has a consequence:
 //
 //   - the secret is write-only and survives a save that omits it
@@ -211,7 +211,7 @@ func TestGitOAuthRefusesAnUnknownProvider(t *testing.T) {
 	}
 }
 
-// ★ env is NOT a fallback (docs/71 決定 2). With BITBUCKET_OAUTH_KEY/SECRET set in the
+// ★ env is NOT a fallback (docs/log/71 決定 2). With BITBUCKET_OAUTH_KEY/SECRET set in the
 // process and no row for the tenant, the start leg must still answer not_configured —
 // otherwise "which app am I being sent to" has two answers and the one that wins
 // depends on which tenant you are in.
@@ -338,7 +338,7 @@ func TestGitOAuthAvailabilityIsPerTenant(t *testing.T) {
 
 // ★ AUTH=dev is the single fixed unauthenticated user, and SUPER_ADMIN_EMAILS matches on
 // an address it does not have — so a native / WSL deployment had NO administrator and no
-// way into the tenant settings screen (docs/71 §71.6). That was survivable while every
+// way into the tenant settings screen (docs/log/71 §71.6). That was survivable while every
 // deployment setting lived in env; it is not, now that the OAuth apps are tenant rows.
 func TestDevAuthUserIsSuperAdmin(t *testing.T) {
 	m := &manager{authMode: "dev", superAdmins: map[string]bool{}}

@@ -1,6 +1,6 @@
 package main
 
-// Cleanup operations that bundle-then-remove (docs/32): the destructive tidy-up that
+// Cleanup operations that bundle-then-remove (docs/log/32): the destructive tidy-up that
 // reclaims disk. Each writes a recoverable gz archive (cleanup_archive.go) BEFORE it
 // removes anything, so a mistaken cleanup can be restored. Routes:
 //   DELETE /sessions/{name}?reclaim=1   → delete_session (forget meta + delete jsonl)
@@ -69,7 +69,7 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 			"session is running; stop it before deleting")
 		return
 	}
-	// fold-on-delete（docs/46 §3-b）: 転写が消える前に末尾ターンまで台帳へ確定させる。
+	// fold-on-delete（docs/log/46 §3-b）: 転写が消える前に末尾ターンまで台帳へ確定させる。
 	// 通常の折り込みは「開いているターン」を残すので、ここで確定しないと最後の1ターンが
 	// 永久に入らない。
 	finalizeSessionUsage(m)

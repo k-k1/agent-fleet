@@ -1,6 +1,6 @@
 package mcpproj
 
-// Inspect assembles one Snapshot (docs/56 P0's whole deliverable): read every v1
+// Inspect assembles one Snapshot (docs/log/56 P0's whole deliverable): read every v1
 // target file inside dir, parse it, warn about it, and mask every secret before it
 // leaves this package.
 
@@ -15,7 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// fileSpec is one v1 target file (docs/56 §4.3).
+// fileSpec is one v1 target file (docs/log/56 §4.3).
 type fileSpec struct {
 	path  string   // repo-relative
 	kinds []string // agent kinds that actually READ this file
@@ -23,16 +23,16 @@ type fileSpec struct {
 	// "" means codex's TOML shape (parseCodexServers) instead of a JSON spelling.
 	specKind string
 	// seed is written into a file P1 creates from scratch (opencode's "$schema"),
-	// matching what that CLI's own writer would produce (docs/56 §6) — never
+	// matching what that CLI's own writer would produce (docs/log/56 §6) — never
 	// applied to a file that already exists. nil for kinds whose own `mcp add`
 	// writes no header of its own.
 	seed map[string]any
 }
 
-// fileSpecs is v1's target list (docs/56 §4.3). .mcp.json and .github/mcp.json are
-// both parsed with claude's spelling: docs/56 §2.3 measured .mcp.json as one format
+// fileSpecs is v1's target list (docs/log/56 §4.3). .mcp.json and .github/mcp.json are
+// both parsed with claude's spelling: docs/log/56 §2.3 measured .mcp.json as one format
 // shared by claude and copilot, and .github/mcp.json is assumed the same generic
-// "mcpServers" shape pending the real measurement docs/56 §14 item 4 defers to P3.
+// "mcpServers" shape pending the real measurement docs/log/56 §14 item 4 defers to P3.
 var fileSpecs = []fileSpec{
 	{path: ".mcp.json", kinds: []string{session.KindClaude, session.KindCopilot}, specKind: session.KindClaude},
 	{path: "opencode.json", kinds: []string{session.KindOpencode}, specKind: session.KindOpencode,
@@ -43,9 +43,9 @@ var fileSpecs = []fileSpec{
 	{path: ".kiro/settings/mcp.json", kinds: []string{session.KindKiro}, specKind: session.KindKiro},
 }
 
-// kindInfos is the static per-kind facts docs/56 §2.1 / §2.2 / §8 measured,
+// kindInfos is the static per-kind facts docs/log/56 §2.1 / §2.2 / §8 measured,
 // independent of what any particular working copy's files contain — every kind
-// appears here even with no file (docs/57 憲章「未検証バッジ」/「対象外」の行).
+// appears here even with no file (docs/log/57 憲章「未検証バッジ」/「対象外」の行).
 var kindInfos = []KindInfo{
 	{Kind: session.KindClaude, HasProjectScope: true, GateCode: "approval", Dialects: []string{DialectDollarBrace}},
 	{Kind: session.KindCodex, HasProjectScope: true, GateCode: "trust"},
@@ -96,7 +96,7 @@ func Inspect(dir, repoName string) (Snapshot, error) {
 
 // readProjectFile reads and parses one target file. A missing file is not an error
 // (File.Exists stays false); an unparsable one is reported via File.Note and never
-// touched further (docs/57 憲章3) — only a real I/O error (permission, …) short-
+// touched further (docs/log/57 憲章3) — only a real I/O error (permission, …) short-
 // circuits the whole snapshot, since every OTHER file is independently readable.
 func readProjectFile(dir, vcs string, spec fileSpec) (File, map[string]Server, error) {
 	f := File{Path: spec.path, Kinds: spec.kinds}

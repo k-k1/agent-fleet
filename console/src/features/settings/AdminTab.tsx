@@ -45,7 +45,7 @@ function rootGroups(opts: { pool: boolean; cost: boolean }): RailGroup[] {
       label: "admin.group_tenants",
       items: [
         ["tenants", "admin.tenants_list"],
-        // テナントが定義したサインイン方法の登録簿（docs/61 §61.11.6）。承認できるのは
+        // テナントが定義したサインイン方法の登録簿（docs/log/61 §61.11.6）。承認できるのは
         // デプロイ管理者だけなので、デプロイ管理者にしか無い面。
         ["register", "admin.tab_register"],
       ],
@@ -68,7 +68,7 @@ function rootGroups(opts: { pool: boolean; cost: boolean }): RailGroup[] {
         ["sessions", "admin.mode_sessions"],
         ["usage", "admin.mode_usage"],
         // docker / native には AWS の請求が無い。0 が並ぶ費用の面は「無料」と読める
-        // ので、項目ごと作らない（docs/67 §67.8・ADR 0048 決定 9）。
+        // ので、項目ごと作らない（docs/log/67 §67.8・ADR 0048 決定 9）。
         ...(opts.cost ? ([["cost", "admin.mode_cost"]] as [string, string][]) : []),
         ["audit", "admin.mode_audit"],
         ["mcp", "admin.mode_mcp"],
@@ -242,7 +242,7 @@ export function AdminTab() {
   );
 }
 
-// --- Egress: allowlist + mode + observations (docs/20 M2/M3) -----------------
+// --- Egress: allowlist + mode + observations (docs/log/20 M2/M3) -----------------
 // Deployment-wide egress control (super_admin). Manages the versioned allowlist
 // (approve agent-proposed entries, add/retire), toggles log-only vs enforce, and
 // shows destination stats from the forward proxy (would-allow / would-block).
@@ -354,7 +354,7 @@ function EgressView() {
         {err && <p className="form-err">{err}</p>}
       </section>
 
-      {/* agent-proposed entries awaiting approval (docs/20 M4) */}
+      {/* agent-proposed entries awaiting approval (docs/log/20 M4) */}
       {proposed.length > 0 && (
         <section className="admin-panel">
           <h4 className="egress-h">{tr("admin.egress_proposed")}</h4>
@@ -439,7 +439,7 @@ function EgressView() {
   );
 }
 
-// --- TTS: VOICEVOX エンジンの管理者トグル（docs/24 Phase 2） -------------------
+// --- TTS: VOICEVOX エンジンの管理者トグル（docs/log/24 Phase 2） -------------------
 // super_admin のみ。AWS では ECS Service の desired count を 0↔1（オンデマンド起動・
 // 停止中コスト 0）。起動〜ready まで 1〜2 分かかるので、その間は 5s ポーリングで
 // 「準備中」を追従表示する（auto ルーティングは Polly JP が代読）。ECS 管理外（dev の

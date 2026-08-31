@@ -1,4 +1,4 @@
-// Package codex は codex CLI 種別の縦割りパッケージ（docs/23 残① Wave E）。
+// Package codex は codex CLI 種別の縦割りパッケージ（docs/log/23 残① Wave E）。
 // Agent 実装・起動コマンド組み立て・rollout JSONL transcript 読み出し・auth/usage
 // の Connections ハンドラ・rtk ブロック適用を package main から移設した。
 // 挙動・ワイヤ・ディスクは main 時代とバイト同一を維持すること。
@@ -55,7 +55,7 @@ func RememberSid(slotSid, codexID string) { sids.Write(slotSid, codexID) }
 // New returns the codex Agent implementation for the kind registry.
 func New() agents.Agent { return agentImpl{} }
 
-// agentImpl — codex 種別の Agent 実装（docs/23 P1残: CLI 縦割りファイル分割）
+// agentImpl — codex 種別の Agent 実装（docs/log/23 P1残: CLI 縦割りファイル分割）
 type agentImpl struct{}
 
 func (agentImpl) Kind() string { return session.KindCodex }
@@ -64,7 +64,7 @@ func (agentImpl) Kind() string { return session.KindCodex }
 // rollout JSONL via Transcript() (readTranscript), windowed by the generic /messages
 // handler. CanFork: the conversation forks via `codex fork <id>` (ForkSource /
 // BuildLaunch). No label (codex has no --name). CanForkAt: the fork can also be pinned to
-// a past turn via `thread/fork`'s lastTurnId (docs/55) — app-server only, so the handler
+// a past turn via `thread/fork`'s lastTurnId (docs/log/55) — app-server only, so the handler
 // refuses a point fork for a CLI-route session (`codex fork <id>` has no such argument).
 func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true}
@@ -131,12 +131,12 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readTranscript(m)
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。
 //
 // codex の人待ちは `request_user_input`（質問）**だけ**である。ツール承認は
 // managed では app-server の `item/permissions/requestApproval` を appclient.go が
 // 自動応答し、TUI ルートは bypass 起動なので許可プロンプトそのものが出ない。
-// よって permission は返さない（docs/75 §75.7 P5 に判断を明記）。
+// よって permission は返さない（docs/log/75 §75.7 P5 に判断を明記）。
 //
 // 保留の在処は TUI（rollout 末尾の未応答 function_call）と managed（handle の
 // Interaction）で違うが、readTranscript が managedEnrich で両方を Pending に畳んで
@@ -170,7 +170,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		forkFrom = m.ForkFrom
 	}
 	// `codex fork <id>` takes no fork point — only the app-server's thread/fork does
-	// (docs/55 §55.5). Refuse rather than launch a CLI fork that would quietly copy the
+	// (docs/log/55 §55.5). Refuse rather than launch a CLI fork that would quietly copy the
 	// WHOLE conversation when the user asked for a point. The handler gates on managed
 	// first; this is the second line.
 	if forkFrom != "" && m.ForkAt != "" {
@@ -182,7 +182,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// State comes from codex's -c-injected status hooks keyed by our sid (the status
 	// store; no idle-heal, no background-busy). Resumable unless the working dir is gone.
-	// managed（docs/27 P3）はhooks不在の代わりに driver が同じ status ストアへ turn
+	// managed（docs/log/27 P3）はhooks不在の代わりに driver が同じ status ストアへ turn
 	// 境界（turn/started・turn/completed 通知）を書く — 読み側はほぼ共通で済む。
 	li := agents.LiveInfo{Resumable: true}
 	if alive {

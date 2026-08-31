@@ -1,13 +1,13 @@
 package cursor
 
-// cursor の managed driver（docs/40 Track A2）— per-session child 方式。セッション毎に
+// cursor の managed driver（docs/log/40 Track A2）— per-session child 方式。セッション毎に
 // `cursor-agent acp` を子プロセスとして抱え、session/new・session/load（クロスプロセス
 // resume、実測）・session/prompt（blocking）・session/cancel・session/set_mode に turn
-// 状態機械・Interaction・reconciliation をマッピングする。copilot の driver.go（docs/36）
+// 状態機械・Interaction・reconciliation をマッピングする。copilot の driver.go（docs/log/36）
 // と同じ骨格で、cursor 固有の差分は 1 点だけ:
 //
 //   **cursor の ACP はローカル痕跡を一切書かない**（TUI/-p が書く JSONL 転写も、hooks も
-//   ACP 経路では出ない — 履歴はサーバ側。docs/40 §プローブ）。copilot は全経路で
+//   ACP 経路では出ない — 履歴はサーバ側。docs/log/40 §プローブ）。copilot は全経路で
 //   events.jsonl を書くので managed の転写もファイルから読めたが、cursor はそれが無い。
 //   よって転写は driver が `session/update` 通知（agent_message_chunk / agent_thought_chunk
 //   / tool_call / tool_call_update）から**メモリ上に構築**し、`session/load` の全量リプレイ
@@ -121,7 +121,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if h.settings.Mode == "" {
 		h.settings.Mode = m.Mode
 	}
-	// 権限確認をスキップするか（docs/76）は meta と ui-prefs から毎 Resume 解決する。
+	// 権限確認をスキップするか（docs/log/76）は meta と ui-prefs から毎 Resume 解決する。
 	// ThreadSettings に載せないのは、あちらが「空 = 変更しない」の動的更新用で bool を
 	// 3 値にできないから — 設定変更後の再 spawn でも、ここで解決し直した値が効く。
 	h.bypass = agents.SkipPermissions(m)
@@ -262,7 +262,7 @@ func ReconcileManaged(reason string) {
 }
 
 // stopChild terminates a child process group: SIGTERM → 猶予後に SIGKILL。cursor は
-// ターン後に worker-server 常駐プロセスを残す（実測 — docs/40）ので、プロセス「グループ」
+// ターン後に worker-server 常駐プロセスを残す（実測 — docs/log/40）ので、プロセス「グループ」
 // を落とすのが要点（spawn は Setpgid でグループを分けている）。reap は spawn 時の watch
 // goroutine（cmd.Wait）が担う。
 func stopChild(cmd *exec.Cmd) {
@@ -293,7 +293,7 @@ type threadHandle struct {
 
 	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・kiro A2-4 と同型）
 
-	// bypass は「権限確認をスキップする」か（docs/76）。Resume が meta から解決して
+	// bypass は「権限確認をスキップする」か（docs/log/76）。Resume が meta から解決して
 	// 置く — spawn は meta を持たないので、ここに載せて渡す。plan は Resume 時点では
 	// なく spawn の st.Mode で見る（稼働中のモード変更で再 spawn されるため）。
 	bypass bool
@@ -319,7 +319,7 @@ type threadHandle struct {
 
 // spawn starts the child runtime, initializes ACP and loads/creates the cursor
 // session. Caller must NOT hold h.mu.
-// bypassNow reports the resolved「権限確認をスキップする」choice (docs/76). Resume writes
+// bypassNow reports the resolved「権限確認をスキップする」choice (docs/log/76). Resume writes
 // it under h.mu; spawn runs without the lock, so read it through here.
 func (h *threadHandle) bypassNow() bool {
 	h.mu.Lock()
@@ -456,7 +456,7 @@ func currentModeOf(res json.RawMessage) string {
 }
 
 // currentModelOf extracts models.currentModelId from a session/new・load result
-// （Auto は `default[]`・明示指定は bracket 形式で返る — 実測。docs/40 §モデル表示）。
+// （Auto は `default[]`・明示指定は bracket 形式で返る — 実測。docs/log/40 §モデル表示）。
 func currentModelOf(res json.RawMessage) string {
 	var out struct {
 		Models struct {
@@ -600,7 +600,7 @@ func (h *threadHandle) pump() {
 }
 
 // runTurn executes ONE blocking session/prompt and lands the terminal state.
-// turn 境界の MarkTurnStart/End が status ストアと docs/30 の完了報告を駆動する。
+// turn 境界の MarkTurnStart/End が status ストアと docs/log/30 の完了報告を駆動する。
 func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.slotSid)
 	defer func() { agents.MarkTurnEnd(h.slotSid, h.currentState()) }()
@@ -794,7 +794,7 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 			RawOutput  json.RawMessage `json:"rawOutput"`
 			// ACP classifies a tool call itself: read | edit | delete | move | search |
 			// execute | think | fetch | other, with the files it touches in `locations`.
-			// That is what the changed-files list (docs/68) keys off here — the protocol's
+			// That is what the changed-files list (docs/log/68) keys off here — the protocol's
 			// own vocabulary, rather than the CLI's tool NAMES which are free to change.
 			Kind      string `json:"kind"`
 			Locations []struct {
@@ -817,7 +817,7 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	u := p.Update
 	switch u.SessionUpdate {
 	case "available_commands_update":
-		// スキルピッカー（docs/50 v2）へ publish。map store 1 回なので readLoop を塞がない。
+		// スキルピッカー（docs/log/50 v2）へ publish。map store 1 回なので readLoop を塞がない。
 		cmds := make([]agents.AdvertisedCommand, 0, len(u.AvailableCommands))
 		for _, c := range u.AvailableCommands {
 			cmds = append(cmds, agents.AdvertisedCommand{
@@ -974,7 +974,7 @@ func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method
 }
 
 // pendingPermission は保留中の ACP `session/request_permission` を「何を訊かれて
-// いたか」の 1 行へ畳む（docs/75 P5）。保留が無ければ ""。
+// いたか」の 1 行へ畳む（docs/log/75 P5）。保留が無ければ ""。
 func (h *threadHandle) pendingPermission() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -992,7 +992,7 @@ func (h *threadHandle) pendingPermission() string {
 // なぜ要るか: ACP はローカル転写を書かないので JSONL 末尾分類は managed では常に空を
 // 返し、**一覧のチップも reaper の分類材料も無いまま**だった。結果、承認待ちで固まった
 // managed セッションは「状態不明」に落ち、tier1 が畳むことも tier2 が起こし続けることも
-// 無い（docs/75 の分類でいう unknown）。turn 状態機械が唯一の情報源なので、そこから供給する。
+// 無い（docs/log/75 の分類でいう unknown）。turn 状態機械が唯一の情報源なので、そこから供給する。
 //
 // 承認待ちを **question** と名乗るのは、ミラーが描く許可カード（td.Pending）と語彙を
 // 揃えるため — 一覧のバッジと本文のチップが食い違うと、どちらが本当か利用者に分からない
@@ -1038,7 +1038,7 @@ func managedTranscript(m session.Meta) agents.TranscriptData {
 	inter := h.inter
 	modeSet := h.settings.Mode
 	// モデルバッジ: ユーザーが明示選択したモデル（settings.Model・ピッカーの dash 形式）を
-	// 優先し、Auto/未指定なら ACP の currentModelId（default[]）を使う（docs/40 §モデル表示）。
+	// 優先し、Auto/未指定なら ACP の currentModelId（default[]）を使う（docs/log/40 §モデル表示）。
 	modelID := h.settings.Model
 	if modelID == "" || modelID == "auto" {
 		modelID = h.model

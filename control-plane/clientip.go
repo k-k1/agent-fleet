@@ -1,4 +1,4 @@
-// clientip.go — who is on the other end of this request, as an IP (docs/66, ADR 0047).
+// clientip.go — who is on the other end of this request, as an IP (docs/log/66, ADR 0047).
 //
 // Until this file the CP never read r.RemoteAddr at all, which is the honest starting
 // point: behind an ALB it is the load balancer, and the real client is in

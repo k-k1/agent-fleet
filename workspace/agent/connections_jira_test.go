@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// docs/80 P1 — Jira 側の写像。実 Jira はこの環境にもアカウントも無いので、
+// docs/log/80 P1 — Jira 側の写像。実 Jira はこの環境にもアカウントも無いので、
 // 応答の形を固定して「行に何が出るか」を押さえる。
 
 func TestParseJiraSearchIssues(t *testing.T) {
@@ -231,7 +231,7 @@ func TestJiraConnectVerifiesBeforeSaving(t *testing.T) {
 	}
 }
 
-// --- OAuth（docs/80 §80.17）-------------------------------------------------
+// --- OAuth（docs/log/80 §80.17）-------------------------------------------------
 
 // ★ 3LO のトークンはサイトのホストでは通らない。API のベースが認証方式で変わることを
 // 固定する —— ここを間違えると症状は 401 になり、「トークンが違う」と読めてしまう。
@@ -491,7 +491,7 @@ func TestJiraRefreshIsSerializedAndNotRepeated(t *testing.T) {
 	}
 }
 
-// docs/80 §80.18.6 — 取得は 1 クエリ 50 件で切るので、並び順が無い JQL では
+// docs/log/80 §80.18.6 — 取得は 1 クエリ 50 件で切るので、並び順が無い JQL では
 // 「どの 50 件が残るか」が Jira 任せになる。レールは「新しい順の上位 N 件」を
 // 名乗っているので、そこを不定にしたままにはできない。
 func TestJiraOrderedJQL(t *testing.T) {

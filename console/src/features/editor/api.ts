@@ -90,7 +90,7 @@ export function putFile(
   });
 }
 
-/** What one external-change probe observed (docs/44 §7). `unavailable` covers
+/** What one external-change probe observed (docs/log/44 §7). `unavailable` covers
  *  transport failures, timeouts, and 5xx — the probe stays silent on those and
  *  the next trigger retries. The other kinds are advisory observations. */
 export type FileProbeResult =
@@ -148,7 +148,7 @@ export async function probeFileMeta(path: string): Promise<FileProbeResult> {
   }
 }
 
-// --- AI 変更提案（docs/44 Phase 4） ---
+// --- AI 変更提案（docs/log/44 Phase 4） ---
 
 // LLM 生成はファイル IO の 15 秒では足りない。Agent 側の editSuggestTimeout（90s）
 // より広く取り、通常はサーバー側のタイムアウトが先に確定する。

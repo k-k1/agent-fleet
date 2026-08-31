@@ -1,6 +1,6 @@
 package kiro
 
-// チャットミラーの ContextBar 用のセッションレベル context 充填率（Track D — docs/43 §10）。
+// チャットミラーの ContextBar 用のセッションレベル context 充填率（Track D — docs/log/43 §10）。
 // kiro の v2 JSONL 転写には per-turn のトークン数が無い（claude/codex と違う）ので、
 // claude 型の転写由来 ContextBar は出せない。代わりに managed（ACP）driver が
 // `_kiro.dev/metadata` 通知で運ぶライブの contextUsagePercentage を使う。agy が /context を

@@ -46,7 +46,7 @@ export function isNoise(t: Turn): boolean {
 // normally a smell, but the name genuinely lives nowhere else on this side: peer turns
 // are ordinary injected user turns whose only extra is the "peer" source tag. Returns
 // null for anything that doesn't match, and the badge then degrades to "別のセッション".
-// The envelope carries `intent=` / `reply=` after the name (docs/58 §58.14), so the name
+// The envelope carries `intent=` / `reply=` after the name (docs/log/58 §58.14), so the name
 // match must tolerate further words before the "]" — pinning it to "]" is exactly how this
 // silently degraded to the unnamed badge when the envelope grew.
 const PEER_ENVELOPE_RE = /^\[agent-fleet:peer from=([A-Za-z0-9][A-Za-z0-9_-]*)(?: [^\]]*)?\]/;
@@ -185,10 +185,10 @@ export function partsOf(t: Turn): Part[] {
 }
 
 // originsOf builds the mark root key of every part, keyed to the SOURCE TURN rather than
-// to the block it is about to be folded into (docs/69 §69.3). "" for a part that cannot
+// to the block it is about to be folded into (docs/log/69 §69.3). "" for a part that cannot
 // carry a mark: no stable turn key (a pending echo), or a kind whose text does not survive
 // the shared DTO verbatim — a mark there would ship a coordinate the DTO deliberately
-// dropped (docs/69 §69.4).
+// dropped (docs/log/69 §69.4).
 function originsOf(t: Turn, parts: Part[]): string[] {
   const key = turnKey(t);
   return parts.map((p, i) => (key && MARKABLE_KINDS.has(p.kind || "") ? markRootKey(key, i) : ""));
@@ -231,12 +231,13 @@ export function groupTurns(turns: Turn[]): Group[] {
       last.origins.push(...originsOf(t, parts));
       last.folded++;
       // 2 行以上畳んだ時点で、ブロックの text は「窓に何行入っていたか」で変わる文字列に
-      // なる。そこに出現番号のアンカーは置けない（docs/69 §69.3.2）。
+      // なる。そこに出現番号のアンカーは置けない（docs/log/69 §69.3.2）。
       last.bodyRoot = "";
       carryEnd(last, t); // the block's end follows the last row folded in
       if (t.pending) last.pending = true;
       if (t.queued) last.queued = true;
       if (t.source) last.source = t.source; // operator origin survives a same-role merge
+      if (t.peerFrom) last.peerFrom = t.peerFrom; // …and so does the sender behind a peer origin
       if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
       if (!last.model && t.model) last.model = t.model;
       if (!last.effort && t.effort) last.effort = t.effort;
@@ -275,6 +276,7 @@ export function groupTurns(turns: Turn[]): Group[] {
         pending: !!t.pending,
         queued: !!t.queued,
         source: t.source,
+        peerFrom: t.peerFrom,
       });
     }
   }

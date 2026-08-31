@@ -17,7 +17,7 @@ func TestWorkspaceStatsRouteRegistered(t *testing.T) {
 	}
 }
 
-// CP はここで返るキーをそのままメンバー詳細と WS バーへ載せる（docs/63 §63.9）。
+// CP はここで返るキーをそのままメンバー詳細と WS バーへ載せる（docs/log/63 §63.9）。
 // キー名が docker 経路（control-plane/metrics.go）と一致していることが契約で、
 // ずれても例外は出ない——タイルが黙って「–」に戻るだけなので、ここで固定する。
 func TestWorkspaceStatsWireKeys(t *testing.T) {

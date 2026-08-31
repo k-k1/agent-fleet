@@ -1,7 +1,7 @@
 package cursor
 
 // transcriptBuf は managed（ACP）セッションの転写をメモリ上で組み立てるアキュムレータ
-// （docs/40 Track A2）。cursor の ACP はローカル痕跡を書かない（TUI/-p の JSONL も出ない）
+// （docs/log/40 Track A2）。cursor の ACP はローカル痕跡を書かない（TUI/-p の JSONL も出ない）
 // ため、driver が `session/update` 通知から転写を構築する唯一の口。live turn と
 // `session/load` リプレイの両方を同じ状態機械で扱う:
 //
@@ -111,7 +111,7 @@ func (b *transcriptBuf) thoughtChunk(text string) {
 }
 
 // toolCall records one ACP tool_call. `file`/`verb`/`edits` are the changed-files
-// coordinate (docs/68) when this call edited something — in the ACP path they come from
+// coordinate (docs/log/68) when this call edited something — in the ACP path they come from
 // the PROTOCOL's own classification (tool_call.kind / locations), not from the tool's
 // display name, so they survive a CLI that renames its tools.
 func (b *transcriptBuf) toolCall(id, title, info, file, verb string, edits []transcript.Edit) {

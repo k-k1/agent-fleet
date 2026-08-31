@@ -1,4 +1,4 @@
-// AI提案の適用前検証と文脈切り出し（docs/44 §4.2 / Phase 4）。
+// AI提案の適用前検証と文脈切り出し（docs/log/44 §4.2 / Phase 4）。
 import { describe, expect, it } from "vitest";
 import { revisionOf } from "./buffer.ts";
 import {
@@ -31,7 +31,7 @@ function envelope(overrides: Partial<EditSuggestionEnvelope> = {}): EditSuggesti
   };
 }
 
-describe("checkSuggestion (docs/44 §4.2)", () => {
+describe("checkSuggestion (docs/log/44 §4.2)", () => {
   it("applies a valid suggestion to the exact range", () => {
     const result = checkSuggestion(envelope(), ctx);
     expect(result).toEqual({ ok: true, applied: "# concrete title\nbody line\ntail\n" });

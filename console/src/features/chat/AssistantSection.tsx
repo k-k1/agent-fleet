@@ -1,4 +1,4 @@
-// AssistantSection — left-rail home for headless-CLI chat (docs/19): a ＋新規
+// AssistantSection — left-rail home for headless-CLI chat (docs/log/19): a ＋新規
 // assistant picker popover (templates stay out of the rail) over the
 // conversation history list. Picking an assistant opens a DRAFT — nothing is
 // persisted until the first message. Port onto the zustand stores.
@@ -53,7 +53,7 @@ export const AssistantSection = memo(function AssistantSection() {
   const currentChat = activeChatId(layout);
   const toast = useToast();
   const askConfirm = useConfirm();
-  const tr = useT(); // docs/28 P3: re-render builtin assistant names/descriptions on locale switch
+  const tr = useT(); // docs/log/28 P3: re-render builtin assistant names/descriptions on locale switch
   // Conversation metas live in the chat store (not local state) so other surfaces —
   // the markdown conv-slug linkifier — can resolve slugs without mounting this rail.
   const convs = useChatStore((s) => s.convs) ?? [];
@@ -157,8 +157,8 @@ export const AssistantSection = memo(function AssistantSection() {
     fn();
   };
 
-  // Only started threads are listed — a draft is never persisted (docs/19).
-  // 作業グループ (docs/52): scope the list to the active group's conversations.
+  // Only started threads are listed — a draft is never persisted (docs/log/19).
+  // 作業グループ (docs/log/52): scope the list to the active group's conversations.
   const wsets = workingSetList(useSettings());
   const wset = useActiveWorkingSet();
   const startedConvs = useMemo(
@@ -220,7 +220,7 @@ export const AssistantSection = memo(function AssistantSection() {
     }
   };
 
-  // 削除ロック（docs/45）: この会話を削除保護に固定/解除する。保護そのものは Agent
+  // 削除ロック（docs/log/45）: この会話を削除保護に固定/解除する。保護そのものは Agent
   // 側（DELETE が 403）で、ここは切替と見た目の抑止だけ。
   const toggleConvLock = async (c: ConversationMeta) => {
     const locked = !c.locked;
@@ -237,7 +237,7 @@ export const AssistantSection = memo(function AssistantSection() {
     refresh();
   };
 
-  // Copy the conversation's short slug ("a…", docs/38 アシスタント発火) — the id humans
+  // Copy the conversation's short slug ("a…", docs/log/38 アシスタント発火) — the id humans
   // and schedules address a conversation by. UUID fallback only for a conversation the
   // agent hasn't backfilled yet.
   const copyId = (c: ConversationMeta) => {
@@ -364,7 +364,7 @@ export const AssistantSection = memo(function AssistantSection() {
                     </span>
                     <span className="chat-open-title">{c.title}</span>
                     {c.message_count > 0 && <span className="chat-open-meta">{c.message_count}</span>}
-                    {/* 削除ロック（docs/45）の鍵バッジ — セッション行と同じ語彙。 */}
+                    {/* 削除ロック（docs/log/45）の鍵バッジ — セッション行と同じ語彙。 */}
                     {c.locked && <Icon name="lock" className="sess-lock" title={tr("asst.locked_hint")} />}
                     {chatBusy[c.id] ? (
                       <span className="session-state working mini" title={tr("asst.in_progress")}>
@@ -448,7 +448,7 @@ export const AssistantSection = memo(function AssistantSection() {
                   <Icon name="edit" /> {tr("asst.rename")}
                 </button>
               </li>
-              {/* 作業グループ (docs/52): toggle this conversation's membership. */}
+              {/* 作業グループ (docs/log/52): toggle this conversation's membership. */}
               {wsets.length > 0 && (
                 <>
                   <li className="ui-menu-sep" aria-hidden="true" />

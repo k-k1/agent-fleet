@@ -1,78 +1,89 @@
-# 0060. 設定の書き出し / 取り込みは「秘密を含まないセクションの集合」1 本にし、取り込みは足すだけにする
+# 0060. Settings export/import is one bundle of "sections that contain no secrets", and importing only adds
 
-- 状態: **採用・実装済み**（2026-08-26）。設計と経緯は [docs/79](../79-settings-export-import.md)。
-- 関連: [0022-agent-memory-management.md](0022-agent-memory-management.md)（環境間の持ち出し / 取り込みの先例。
-  メモリは専用形式を持つのでこのバンドルには入れない） /
-  [0042-user-instructions.md](0042-user-instructions.md)（運ぶ 3 層のうち「エージェントへの指示」） /
-  [0036-working-sets.md](0036-working-sets.md)（ui-prefs に載る累積データの代表例）
+English | [日本語](0060-settings-export-import.ja.md)
 
-## 背景
+- Status: **adopted and implemented** (2026-08-26). The design and the background are in [docs/79](../log/79-settings-export-import.md).
+- See also: [0022-agent-memory-management.md](0022-agent-memory-management.md) (the precedent for taking things between environments. Memory has its own format and is not in this bundle) /
+  [0042-user-instructions.md](0042-user-instructions.md) ("instructions to the agent", one of the three layers carried) /
+  [0036-working-sets.md](0036-working-sets.md) (the representative example of accumulated data riding on ui-prefs)
 
-「SSM の設定を書き出し / 取り込みしたい」から始まった。SSM の登録は手入力が重く、環境を
-移るたびに入れ直している。しかし移りたいのは SSM ではなく **その人の環境**で、SSM はその
-一部でしかない。個別のボタンを足すと、同じ形の要望のたびに増え、ファイルの形式もばらける。
+## Context
 
-## 決定
+It began with "I want to export/import the SSM settings". Registering SSM entries is heavy manual
+input, and it gets re-entered every time someone moves environment. But what they want to move is not
+SSM — it is **their environment**, of which SSM is one part. Adding a button per feature means one more
+every time a request of the same shape arrives, and the file formats scatter.
 
-### 1. 1 個の JSON（`kind: "agent-fleet-settings"` / `version` / `sections`）にまとめる
+## Decision
 
-セクションの集合にする。今回運ぶのは **個人設定（ui-prefs）/ AWS SSM / エージェントへの指示**。
-環境変数・MCP 定義・内部リポジトリ登録は後からセクションを足すだけで載る。
+### 1. One JSON (`kind: "agent-fleet-settings"` / `version` / `sections`)
 
-**版は前方互換にしない。** 知らない `version` は読まずに断る。部分的に読めるふりをすると、
-何が入って何が入らなかったのかを利用者が確かめる手段が無くなる。
+A collection of sections. What travels for now is **personal settings (ui-prefs) / AWS SSM /
+instructions to the agent**. Environment variables, MCP definitions and internal repository
+registrations ride later by adding a section.
 
-### 2. 秘密は常に除外する
+**Versions are not forward compatible.** An unknown `version` is refused rather than read. Pretending
+to read part of it removes the user's means of confirming what did and did not go in.
 
-接続（Git / エージェント / AWS / チャットのトークン・API キー）は入れない。移った先では
-もう一度サインインしてもらう。
+### 2. Secrets are always excluded
 
-**理由:** このファイルは「設定ファイル」として気軽に扱われる（メールで送る、チャットに貼る、
-リポジトリにコミットする）。1 つでも秘密が混ざると、その扱いの軽さがそのまま漏洩の経路に
-なる。**除外を既定にするのではなく、除外しかしない** —— チェックボックス 1 つで含められる
-なら、事故は「そのチェックを外し忘れた」ではなく「入れたことを忘れた」で起きる。
+Connections (Git / agent / AWS / chat tokens and API keys) are not included. On the other side you sign
+in again.
 
-副次的に、バンドルは**人に渡せる**ものになる（チームの SSM 登録一式を配る、が成立する）。
+**Why:** this file gets treated casually, as "a settings file" (emailed, pasted into chat, committed to
+a repository). If even one secret is in it, that casualness becomes the leak path itself. **Excluding
+is not the default — excluding is all it does**: if a single checkbox could include them, the accident
+would not be "I forgot to untick it" but "I forgot that I had included them".
 
-### 3. ホストはプロファイルを id ではなく「表示名」で参照する
+As a side benefit the bundle becomes **something you can hand to a person** (distributing a team's whole
+set of SSM registrations becomes possible).
 
-CP の id は環境ごとに違うので、id で運ぶと取り込み先で必ず張り替えが要る。表示名は
-`~/.aws` のプロファイル名の素でもある自然キーなので、**形式の側で id 問題を消す**。
+### 3. A host references a profile by "display name", not by id
 
-### 4. 取り込みは足すだけ・既存は書き換えない
+The CP's ids differ per environment, so carrying an id always requires re-pointing on import. The
+display name is also the raw material of the profile name in `~/.aws`, i.e. a natural key, so
+**the format itself removes the id problem**.
 
-プロファイルは表示名、ホストは alias ＋ インスタンス id で既存と突き合わせ、一致したら
-スキップして理由を出す。同名で中身が違う場合にどちらが正しいかは Console に判断できず、
-上書きが正解であることは滅多にない。設定の移送で既存環境を削るのは割に合わない。
+### 4. Importing only adds; it never rewrites what exists
 
-### 5. 個人設定は「重ねる」。累積データを空で潰さない
+Profiles are matched against existing ones by display name and hosts by alias plus instance id, and a
+match is skipped with the reason shown. When the name matches but the contents differ, the Console
+cannot judge which is correct, and overwriting is rarely the right answer. Damaging an existing
+environment during a settings transfer is not worth it.
 
-ui-prefs は state をまるごと PUT・最後の書き手が勝つ。2026-08-18 に、この性質と hydrate の
-無言失敗が重なって**全端末の学習済み返信候補が消える事故**が起きている。取り込みは他所から
-来た blob を一発で書き込む操作なので、素直に実装すると同じ穴をもう一度開ける。
+### 5. Personal settings are **layered**. Do not crush accumulated data with an empty value
 
-- 既知のキーで既定値と形が合う値だけを残す（`sanitizeImportedPrefs`）。
-- 現在値へ重ねる。累積キーは**空で上書きしない**、オブジェクトは**足し算**（`mergeImportedPrefs`）。
+ui-prefs PUTs the whole state and the last writer wins. On 2026-08-18 that property combined with a
+silent failure in hydrate to cause **an incident where every device's learned reply suggestions were
+erased**. An import is an operation that writes a blob from elsewhere in one go, so implementing it
+naively would open the same hole again.
 
-### 6. サーバ側の変更はゼロ（フロント完結）
+- Keep only values under known keys whose shape matches the default (`sanitizeImportedPrefs`).
+- Layer them onto the current values. Accumulating keys are **not overwritten by an empty value**, and
+  objects are **added to** (`mergeImportedPrefs`).
 
-必要な REST（`api/env/ui-prefs`・`api/ssm/*`・`api/user-notes`）は全て既にある。新しい REST を
-足すと CP のプロキシ許可リストと Agent の両方に入れる必要があり、片方だけ入れて 404 にする
-事故を繰り返している。
+### 6. Zero server-side changes (contained in the front end)
 
-**代償:** 原子性が無い（プロファイルを作った後にホストで失敗し得る）。取り込みが「足すだけ・
-既存はスキップ」なので**同じファイルをもう一度取り込めば残りだけが入る** —— 冪等性で足りる
-と判断した。
+Every REST endpoint needed (`api/env/ui-prefs`, `api/ssm/*`, `api/user-notes`) already exists. Adding a
+new one requires entries in both the CP's proxy allowlist and the Agent, and we keep repeating the
+accident of adding only one and getting a 404.
 
-## 捨てた選択肢
+**The price:** there is no atomicity (a host can fail after a profile was created). Since importing
+"only adds and skips what exists", **importing the same file again brings in the remainder** — we
+judged idempotency to be enough.
 
-- **SSM タブにだけ書き出し / 取り込みを付ける（最小）。** 早いが、次の要望で形式を作り直す。
-  器を先に作る方が安い。
-- **秘密を明示チェックで含められるようにする。** 「自分の環境の完全な引っ越し」には便利だが、
-  ファイルの性質が「渡せる物」から「渡してはいけない物」へ変わり、**見た目では区別できない**。
-  秘密入りと秘密なしのファイルが同じ名前で混在する状態を作らない。
-- **CP に一括取り込み API を足して原子的にする。** 許可リストの二重登録という既知の事故経路を
-  増やしてまで買う価値が、冪等な再取り込みに対して無い。
-- **取り込みで既存を上書きする / 差分を選ばせる。** 前者は破壊的、後者は 3 層 × 数十項目の
-  差分 UI になる。移送の道具としては過剰。
-- **ui-prefs をそのまま PUT する（最も素直な実装）。** 事故の再演（決定 5）。
+## Options discarded
+
+- **Put export/import only on the SSM tab (the minimum).** Fast, but the next request means rebuilding
+  the format. Building the container first is cheaper.
+- **Allow secrets to be included via an explicit checkbox.** Convenient for "a complete move of my own
+  environment", but it changes the file's nature from "something you can hand over" to "something you
+  must not", and **the two are indistinguishable by sight**. We do not create a state where files with
+  and without secrets coexist under the same name.
+- **Add a bulk import API to the CP to make it atomic.** Not worth adding one more instance of the
+  known accident path (double registration in the allowlist) when idempotent re-import already suffices.
+- **Have an import overwrite what exists / let the user pick per difference.** The former is
+  destructive; the latter becomes a diff UI over three layers and dozens of items. Excessive for a
+  transfer tool.
+- **PUT ui-prefs as they are (the most straightforward implementation).** A re-run of the incident
+  (decision 5).

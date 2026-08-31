@@ -3,9 +3,9 @@ package main
 // Injected prompts that did not come from the user's own keyboard land in the CLI
 // transcript as ordinary user turns — indistinguishable from what the user typed in
 // the composer or the raw terminal. Two sources inject this way:
-//   - the fleet operator (docs/30 ②): an af_write assistant's create_session
+//   - the fleet operator (docs/log/30 ②): an af_write assistant's create_session
 //     initial_prompt / send_to_session, tagged Source="operator".
-//   - the chat bridge (docs/37 P2a): a Discord (later Slack) thread reply routed back
+//   - the chat bridge (docs/log/37 P2a): a Discord (later Slack) thread reply routed back
 //     into the session, tagged Source="discord" / "slack".
 // To let the mirror tell them apart from self-typed input, we remember each injected
 // prompt's text AND its origin per session and, when serving the transcript, tag the
@@ -24,24 +24,29 @@ import (
 
 // Turn origins recorded here (transcript.Turn.Source values). "" = the user's own input.
 const (
-	turnSourceOperator = "operator" // fleet operator injected (docs/30 ②)
-	turnSourceDiscord  = "discord"  // chat bridge — Discord thread reply (docs/37 P2a)
+	turnSourceOperator = "operator" // fleet operator injected (docs/log/30 ②)
+	turnSourceDiscord  = "discord"  // chat bridge — Discord thread reply (docs/log/37 P2a)
 	turnSourceSlack    = "slack"    // chat bridge — Slack (P2 follow-up)
-	turnSourceSchedule = "schedule" // scheduled execution fired it (docs/38 — CP scheduler create/reuse send)
+	turnSourceSchedule = "schedule" // scheduled execution fired it (docs/log/38 — CP scheduler create/reuse send)
 	// turnSourceScheduleManual is a schedule fired by run-now（手動発火）— same pipeline as
-	// "schedule" but user-initiated, so the mirror can badge 定期/手動 distinctly (docs/38).
+	// "schedule" but user-initiated, so the mirror can badge 定期/手動 distinctly (docs/log/38).
 	turnSourceScheduleManual = "schedule-manual"
-	// turnSourceAutoResume is the Agent's own nudge after a retryable cut-off (docs/47
+	// turnSourceAutoResume is the Agent's own nudge after a retryable cut-off (docs/log/47
 	// §4-6). バッジを分けるのは、これが「誰かの指示」ではなく**中断からの自己修復**
 	// だから — 利用者がミラーを見たとき、自分もオペレーターも送っていない「続けて」が
 	// 誰の仕業か分からないのが一番困る。
 	turnSourceAutoResume = "auto-resume"
-	// turnSourcePeer is another SESSION's message (docs/58 / ADR 0041). バッジを分ける
+	// turnSourcePeer is another SESSION's message (docs/log/58 / ADR 0041). バッジを分ける
 	// 理由は auto-resume と同じで、しかもこちらの方が切実 — 利用者もオペレーターも
 	// 送っていない指示がミラーに現れたとき、それが「隣の worktree のセッションから来た」
 	// と分からないと、誰の仕業か辿る手段が無い。**このバッジが peer 着信の唯一の可視化**
 	// なので、付け忘れると人間から見えない経路になる。
-	turnSourcePeer = "peer"
+	//
+	// 綴りが internal/transcript にあるのは、**claude 自前の cross-session チャネル**の
+	// 着信（AF を通らないので、この投入ストアには何も残らない）を転写パーサが直接この値で
+	// 立てるため（docs/log/58 §58.16）。両側で別々に "peer" と書くと、経路によってバッジが
+	// 出たり出なかったりする。
+	turnSourcePeer = transcript.SourcePeer
 )
 
 // injectionSource maps a caller-supplied source onto the recordable vocabulary. The
@@ -150,7 +155,7 @@ func recordInjection(name, text, source string) {
 	_ = injectionStore.Write(name, list)
 }
 
-// recordOperatorInjection is the operator-origin convenience wrapper (docs/30 ②), kept so
+// recordOperatorInjection is the operator-origin convenience wrapper (docs/log/30 ②), kept so
 // the several operator-injection call sites read unchanged.
 func recordOperatorInjection(name, text string) { recordInjection(name, text, turnSourceOperator) }
 

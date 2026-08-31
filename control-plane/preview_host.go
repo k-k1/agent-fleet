@@ -1,4 +1,4 @@
-// preview_host.go — ホスト方式のプレビュー（docs/81 / ADR 0062）。
+// preview_host.go — ホスト方式のプレビュー（docs/log/81 / ADR 0062）。
 //
 // パス方式（preview.go の /preview/{port}/…）と違い、こちらは **Host ヘッダだけ**を
 // 手がかりに Workspace を決める:
@@ -24,7 +24,7 @@ import (
 const previewSlugAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 // previewSlugLen は 36^20 ≒ 2^103。URL そのものが「まだ認証していない人から見た唯一の
-// 障壁」ではない（既定は認証必須）が、公開モード（docs/81 §6.1）では鍵そのものになる。
+// 障壁」ではない（既定は認証必須）が、公開モード（docs/log/81 §6.1）では鍵そのものになる。
 const previewSlugLen = 20
 
 // newPreviewSlug mints one start's slug. crypto/rand の失敗は握りつぶさない — 弱い
@@ -145,7 +145,7 @@ func previewOpenPathFor(ownerUserKey string, port int) string {
 	return previewOpenPath + "?" + q.Encode()
 }
 
-// defaultPreviewPorts は Workspace 設定が空のときの許可ポート（docs/81 §5・ADR 0062
+// defaultPreviewPorts は Workspace 設定が空のときの許可ポート（docs/log/81 §5・ADR 0062
 // 決定 6）。要望そのもの（React 3000 / Spring Boot 8080）を既定にしてある。
 var defaultPreviewPorts = []int{3000, 8080}
 
@@ -195,7 +195,7 @@ func auditPreviewPublic(ctx context.Context, m *manager, res *resolved, on bool)
 // 設定画面を開いて保存するたびに同じ行が積まれると、監査ログの側が使えなくなる。
 //
 // ⚠️ 閲覧者の**アクセス**は残さない。静的アセット 1 本ごとに 1 行になる。残すのは
-// 「誰が開けたか」であって「誰が見たか」ではない（docs/81 §14.7）。
+// 「誰が開けたか」であって「誰が見たか」ではない（docs/log/81 §14.7）。
 func auditPreviewShare(ctx context.Context, m *manager, res *resolved, on bool) {
 	state := "off"
 	if on {

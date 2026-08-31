@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { remainingShort, resumeClock, stateInfo } from "./sessionview.ts";
+import { displayName, remainingShort, resumeClock, stateInfo, stripLabelTag } from "./sessionview.ts";
 import { t } from "./i18n/index.ts";
 
-// 状態チップの写像。ここで固定したいのは「認証切れ（docs/47 §4-8）が独立したチップに
+// 状態チップの写像。ここで固定したいのは「認証切れ（docs/log/47 §4-8）が独立したチップに
 // なること」— 入力待ち に見せると送っても動かないセッションを利用者が延々と叩き、
 // 上限で停止 に混ぜると「待てば直る」と読めてしまう（認証切れは待っても直らない）。
 describe("stateInfo", () => {
@@ -27,7 +27,7 @@ describe("stateInfo", () => {
     expect(stateInfo({ kind: "claude", alive: false, state: "auth" }).text).toBe(t("state.stopped"));
   });
 
-  // 利用上限のリセット待ち（docs/47 §4-9）。これが 入力待ち に見えていたのが元の苦情で、
+  // 利用上限のリセット待ち（docs/log/47 §4-9）。これが 入力待ち に見えていたのが元の苦情で、
   // 「なぜ止まっているのか」「いつ動くのか」の両方が画面から消えていた。
   it("上限のリセット待ちは 入力待ち と別のチップで、予約時刻を出す", () => {
     const bare = stateInfo({ ...claude, state: "limited" });
@@ -58,7 +58,7 @@ describe("stateInfo", () => {
   });
 });
 
-// 支出・残高の上限（docs/47 §4-10）。同じ 429 で届くので、ここを取り違えると利用者は
+// 支出・残高の上限（docs/log/47 §4-10）。同じ 429 で届くので、ここを取り違えると利用者は
 // 来ないリセットを待ち続ける。
 describe("stateInfo（残高・支出の上限）", () => {
   const claude = { kind: "claude", alive: true };
@@ -99,7 +99,7 @@ describe("resumeClock", () => {
   });
 });
 
-// 停止中でも「答えを待っている対話がある」ことは出す（docs/75 §75.6.5）。人待ちも
+// 停止中でも「答えを待っている対話がある」ことは出す（docs/log/75 §75.6.5）。人待ちも
 // 畳めるようにした以上、停止中 の 1 語に丸めると未回答の質問が静かに消える。
 describe("stateInfo（停止中の持ち越し）", () => {
   const dead = { kind: "claude", alive: false };
@@ -132,7 +132,7 @@ describe("stateInfo（停止中の持ち越し）", () => {
   });
 });
 
-// 停止しないピンの残り時間（docs/75）。**切れたピンをバッジに残さない**のが要点 —
+// 停止しないピンの残り時間（docs/log/75）。**切れたピンをバッジに残さない**のが要点 —
 // 残すと利用者は「守られているつもり」で放置し、実際には次のスイープで畳まれる。
 describe("remainingShort", () => {
   const now = new Date(2026, 7, 24, 12, 0, 0);
@@ -148,5 +148,28 @@ describe("remainingShort", () => {
     expect(remainingShort(undefined, now)).toBe("");
     expect(remainingShort("", now)).toBe("");
     expect(remainingShort("いつまでも", now)).toBe("");
+  });
+});
+
+// ラベルの先頭タグ(workspace/agent/internal/session/label.go)。**新旧が同時に画面へ並ぶ**の
+// が要点 — ラベルは作成時に meta へ焼かれるので、セッション名入りへ変えても既存セッションは
+// 古い `[AF] ` のまま残る。片方しか剥がさないと、そこだけタグが見えたままになる。
+describe("stripLabelTag", () => {
+  it("新旧どちらのタグも剥がす", () => {
+    expect(stripLabelTag("[AF:s6bbilu] 94-freeze 試走2本")).toBe("94-freeze 試走2本");
+    expect(stripLabelTag("[AF] 旧形式のまま残ったラベル")).toBe("旧形式のまま残ったラベル");
+  });
+
+  it("AF のタグでない文字列には触らない", () => {
+    expect(stripLabelTag("どこか他所で付いた --name")).toBe("どこか他所で付いた --name");
+    // 名前部分の字種は Agent の ValidName と揃える。緩めると利用者のタイトルの一部を
+    // セッション名として食いかねない。
+    expect(stripLabelTag("[AF:日本語] t")).toBe("[AF:日本語] t");
+  });
+
+  it("displayName はタイトルが無いときタグを剥がしたラベルを出す", () => {
+    const s = { name: "s6bbilu", kind: "claude", label: "[AF:s6bbilu] agent-fleet @0831-1922" };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(displayName(s as any)).toBe("agent-fleet @0831-1922");
   });
 });

@@ -16,7 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// Jira connection (docs/80 P1) — the second source of the work item inbox.
+// Jira connection (docs/log/80 P1) — the second source of the work item inbox.
 //
 // Atlassian Cloud's REST v3 authenticates with HTTP Basic over
 // "<account email>:<API token>", so BOTH fields are credentials and both stay in the
@@ -25,7 +25,7 @@ import (
 //
 // ⚠️ Why a connection is still required even though a Jira MCP server exists: the MCP
 // only runs inside a conversation, so it cannot produce the rail's list (and its
-// official remote flavour is OAuth, which docs/48 §0 puts out of af's scope). The two
+// official remote flavour is OAuth, which docs/log/48 §0 puts out of af's scope). The two
 // are complements — this connection feeds the list, the MCP reads the body in-session.
 
 var jiraHTTPClient = &http.Client{Timeout: 20 * time.Second}
@@ -362,7 +362,7 @@ func jiraSearchWorkItems(c *secrets.JiraCreds, queryID, jql string) ([]workItemO
 }
 
 // jiraOrderedJQL appends `ORDER BY updated DESC` to a query that does not order itself
-// (docs/80 §80.18.6).
+// (docs/log/80 §80.18.6).
 //
 // ★ Because the fetch is capped at workItemFetchPerQuery, an unordered JQL means WHICH
 // 50 rows survive is up to Jira. The rail says "the newest N" — the GitHub adapter passes

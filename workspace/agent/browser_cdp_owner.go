@@ -9,7 +9,7 @@ import (
 )
 
 // A Chromium remote-debugging port is NOT "first process wins, the rest fail".
-// Measured (docs/53 §53.16): launching a second Chromium with the same
+// Measured (docs/log/53 §53.16): launching a second Chromium with the same
 // `--remote-debugging-port=P --remote-debugging-address=127.0.0.1` while another
 // one already holds it does not fail and does not warn — the first keeps
 // 127.0.0.1:P (IPv4) and the second silently binds [::1]:P (IPv6) and runs on.

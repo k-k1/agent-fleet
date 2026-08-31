@@ -43,7 +43,7 @@ func liveStateFromFile(path string) string {
 }
 
 // PendingPermission は未完了の許可要求の対象（"" = 許可待ちではない / 取れなかった）。
-// docs/75 P5 の持ち越しが「何を訊かれていたか」を出すために読む。
+// docs/log/75 P5 の持ち越しが「何を訊かれていたか」を出すために読む。
 func PendingPermission(m session.Meta) (string, bool) {
 	sid := SessionID(m)
 	if sid == "" {
@@ -76,7 +76,7 @@ func classify(r io.Reader) string {
 }
 
 // classifyDetail は classify に「未完了の許可が何を求めていたか」を足したもの
-// （docs/75 P5 の持ち越し用）。detail は許可待ちのときだけ埋まり、取れなければ空。
+// （docs/log/75 P5 の持ち越し用）。detail は許可待ちのときだけ埋まり、取れなければ空。
 func classifyDetail(r io.Reader) (string, string) {
 	open := false                 // user.message / turn_start 以後、turn_end 前
 	perms := map[string]bool{}    // requested かつ未 completed の requestId

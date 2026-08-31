@@ -52,10 +52,10 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	case "codex":
 		list = codex.Models()
 	case "cursor":
-		// `cursor-agent models` の行パース（id - 表示名・アカウント連動 — docs/40）。
+		// `cursor-agent models` の行パース（id - 表示名・アカウント連動 — docs/log/40）。
 		list = cursor.Models()
 	case "kiro":
-		// `kiro-cli chat --list-models -f json`（完全機械可読・アカウント連動 — docs/43）。
+		// `kiro-cli chat --list-models -f json`（完全機械可読・アカウント連動 — docs/log/43）。
 		list = kiro.Models()
 	case "opencode":
 		// 一覧の整形だけ（catalog.go）: 1 本のキーが Zen（従量）と Go（サブスク）の
@@ -67,7 +67,7 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	case "agy":
 		list = agy.Models()
 	case "copilot":
-		// TUI /model ピッカーの PTY スクレイプ（プラン反映ライブ取得 — docs/36 追補。
+		// TUI /model ピッカーの PTY スクレイプ（プラン反映ライブ取得 — docs/log/36 追補。
 		// Free は Auto のみ＝空リスト）。未指定は auto ルーティング。
 		list = copilot.Models()
 	default:

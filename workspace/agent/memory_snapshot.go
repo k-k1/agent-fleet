@@ -1,6 +1,6 @@
 package main
 
-// エージェントメモリの版管理（docs/39 / ADR 0022）— snapshot 本体。
+// エージェントメモリの版管理（docs/log/39 / ADR 0022）— snapshot 本体。
 //
 //	live ──① allowlist copy──▶ staging ──② git commit──▶ af-memory.git（bare）
 //

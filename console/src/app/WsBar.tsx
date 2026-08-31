@@ -1,4 +1,4 @@
-// WS bar — ported from the old components/WsBar.tsx (docs/22 P6a). Verbatim
+// WS bar — ported from the old components/WsBar.tsx (docs/log/22 P6a). Verbatim
 // except the useApp() reads, which map onto the zustand stores:
 //   wsState/startWs/stopWs       → core/store/workspace
 //   tenant/superAdmin            → core/store/tenant
@@ -257,7 +257,7 @@ function agoText(sec: number | null | undefined) {
   return tCount("wsbar.ago_sec", Math.max(0, sec));
 }
 
-// UsageBreakdownLink: 使用量チップ → 設定「エージェント使用量」タブへのディープリンク（docs/46 §5）。
+// UsageBreakdownLink: 使用量チップ → 設定「エージェント使用量」タブへのディープリンク（docs/log/46 §5）。
 // このチップが答えるのは「サブスク枠がどれだけ残っているか」で、「何にトークンを使ったか」は
 // 別の問い。枠を見て「で、何に消えた?」となった所からそのまま渡す導線。
 function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {
@@ -522,7 +522,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   );
 }
 
-// AgyUsageChip: Antigravity's quota chip (docs/32 — moved here from the AgyCard so
+// AgyUsageChip: Antigravity's quota chip (docs/log/32 — moved here from the AgyCard so
 // the 残量 sits beside the Claude / Codex chips). agy's wallet is split into
 // per-model-group pools (Gemini / Claude+GPT), each with a weekly window plus a
 // 5-hour window on paid tiers, and the agent reports REMAINING percent (matching
@@ -611,7 +611,7 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
               />
             ))
           )}
-          {/* 実験枠 note (採用条件 — docs/32 Track C-3): the Starter pool is tiny and
+          {/* 実験枠 note (採用条件 — docs/log/32 Track C-3): the Starter pool is tiny and
               shared with the Antigravity IDE / Jules, so the popover always says so. */}
           <div className="wu-note muted">{tr("agents.agy_exp_label")}</div>
           <div className="wu-foot">
@@ -733,7 +733,7 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
 // workspace per membership, so there is no select / create / delete. The
 // destructive "作り直す" lives deep in 設定 > 環境 (warning-gated), off this bar.
-// SharedPreview は GET /api/preview/shared の 1 行（docs/81 §14.6）。running は
+// SharedPreview は GET /api/preview/shared の 1 行（docs/log/81 §14.6）。running は
 // 「プレビューの URL が今あるか」であって、コンテナの状態そのものではない。
 type SharedPreview = {
   ownerUserKey: string;
@@ -843,17 +843,17 @@ export function WsBar() {
   // Live Chromium attachments, read when the popover opens (no polling: this is
   // a recovery entry, and the authoritative state is the pane's own socket).
   const [attachments, setAttachments] = useState<BrowserAttachmentStatus[]>([]);
-  // 発行済みのプレビュー用サブドメイン（docs/81）。起動のたびに変わるので、開いた
+  // 発行済みのプレビュー用サブドメイン（docs/log/81）。起動のたびに変わるので、開いた
   // 瞬間に読み直す。ホスト方式が無いデプロイでは previewDomain が空 = 何も出さない。
   const [pvHosts, setPvHosts] = useState<{
     domain: string;
     urls: Record<string, string>;
-    // 起動をまたいで有効な、貼れるリンク（docs/81 §14.6）。停止中でも入っている。
+    // 起動をまたいで有効な、貼れるリンク（docs/log/81 §14.6）。停止中でも入っている。
     shareLinks: Record<string, string>;
     public: boolean;
     tenantShare: boolean;
   } | null>(null);
-  // 同じテナントの他の人が共有しているプレビュー（docs/81 §14.6）。
+  // 同じテナントの他の人が共有しているプレビュー（docs/log/81 §14.6）。
   const [pvShared, setPvShared] = useState<SharedPreview[]>([]);
   const [staleOpen, setStaleOpen] = useState(false); // 要再起動 badge popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
@@ -1022,7 +1022,7 @@ export function WsBar() {
     };
   }, [pvOpen, moreOpen, running]);
 
-  // 同じテナントで共有されているプレビュー（docs/81 §14.6）。★ running を条件にしない
+  // 同じテナントで共有されているプレビュー（docs/log/81 §14.6）。★ running を条件にしない
   // —— ここに出るのは**他人の** Workspace で、自分が止まっているかは無関係である。
   useEffect(() => {
     if (!pvOpen && !moreOpen) return;
@@ -1199,7 +1199,7 @@ export function WsBar() {
         </div>
         <div className="pv-hint">{tr("wsbar.preview.hint")}</div>
       </div>
-      {/* 発行済みのプレビュー用サブドメイン（docs/81）。★ 停止中は URL を出さない
+      {/* 発行済みのプレビュー用サブドメイン（docs/log/81）。★ 停止中は URL を出さない
           —— slug は起動ごとに発行され停止で失効するので、出したところで 404 にしか
           ならないリンクは「機能が壊れている」という報告になって返ってくる。 */}
       {pvHosts && Object.keys(pvHosts.urls).length > 0 && (
@@ -1230,7 +1230,7 @@ export function WsBar() {
                 >
                   {tr("wsbar.preview.copy")}
                 </button>
-                {/* 共有中のときだけ出す、起動をまたいで有効なリンク（docs/81 §14.6）。
+                {/* 共有中のときだけ出す、起動をまたいで有効なリンク（docs/log/81 §14.6）。
                     ★ 生 URL の方は起動ごとに腐るので、人に渡すのはこちらである。 */}
                 {pvHosts.tenantShare && pvHosts.shareLinks[p] && (
                   <button
@@ -1248,7 +1248,7 @@ export function WsBar() {
           <div className="pv-hint">{tr("wsbar.preview.hosts_hint")}</div>
         </div>
       )}
-      {/* 同じテナントの他の人が共有しているプレビュー（docs/81 §14.6）。★ 開くのは
+      {/* 同じテナントの他の人が共有しているプレビュー（docs/log/81 §14.6）。★ 開くのは
           Console オリジンの固定リンクで、そこが今の slug を解決する —— 生 URL を
           持ち回ると相手が再起動した瞬間に 404 になる。 */}
       {pvShared.length > 0 && (
@@ -1283,7 +1283,7 @@ export function WsBar() {
           <div className="pv-hint">{tr("wsbar.preview.shared_hint")}</div>
         </div>
       )}
-      {/* エージェントが attach した既存 Chromium への戻り道（docs/53 §53.7）。
+      {/* エージェントが attach した既存 Chromium への戻り道（docs/log/53 §53.7）。
           本来の入口はミラーの action リンクだが、会話が流れてリンクを見失ったり
           ペインを閉じた後でも、生きている接続へ戻れるようにする。 */}
       {attachments.length > 0 && (

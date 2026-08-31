@@ -1,6 +1,6 @@
 package bridge
 
-// Fleet-operator thread (docs/37 P3先取り = @メンション→フリート・オペレーター会話).
+// Fleet-operator thread (docs/log/37 P3先取り = @メンション→フリート・オペレーター会話).
 // A standing chat thread whose replies are routed NOT to a session but to the built-in
 // operator assistant conversation (assistants.go ID "operator"). The turn machinery is
 // reused wholesale (package main's runOperatorTurn ≈ handleChatSend); this file owns only
@@ -14,7 +14,7 @@ package bridge
 // operator conversation is one continuous thread (Console can deep-link it), and a
 // reconnect re-establishes a thread against the same conv.
 //
-// Provider-scoped (docs/37 Slack 追随): each provider owns its own file and its own conv,
+// Provider-scoped (docs/log/37 Slack 追随): each provider owns its own file and its own conv,
 // so Discord and Slack operator threads coexist. A given conv belongs to exactly one
 // provider's store, which is what lets PostOperatorReply / PostOperatorApproval find the
 // right thread from a conv alone.
@@ -156,7 +156,7 @@ func SlackCreateOperatorThread(token, channelID, seed string) (string, error) {
 // --- conv-scanning posting (provider chosen by which operator store owns the conv) -----
 
 // PostOperatorReply forwards a report auto-turn's reply into whichever provider's
-// operator thread owns conv (docs/37 P3先取り), so an operator's autonomous reactions to
+// operator thread owns conv (docs/log/37 P3先取り), so an operator's autonomous reactions to
 // session reports are visible on chat too. Best-effort: no matching thread → no-op.
 func PostOperatorReply(conv, text string) error {
 	if ref, ok := discordOperator.state(); ok && ref.Conv == conv && ref.Thread != "" {

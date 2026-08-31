@@ -1,4 +1,4 @@
-// update.go — host self-update surface for the native runtime (docs/42 + ADR).
+// update.go — host self-update surface for the native runtime (docs/log/42 + ADR).
 //
 // The `af` launcher stages a new release on disk (`af update`) and re-points the
 // ~/.local/bin/af symlink, but the RUNNING af-cp keeps serving the version it was

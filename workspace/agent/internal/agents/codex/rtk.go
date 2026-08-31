@@ -8,7 +8,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// rtk (token-saving CLI proxy) — codex 側の適用 artifact（docs/23 残① Wave E で
+// rtk (token-saving CLI proxy) — codex 側の適用 artifact（docs/log/23 残① Wave E で
 // package main の agent_rtk.go から移設）。codex には command-rewrite hook が無い
 // ので、on/off の実体は ~/.codex/AGENTS.md 末尾のマーカー付き rtk 案内ブロックの
 // 有無（instruction-based / best-effort）。durable な設定と起動時 reconcile は
@@ -32,7 +32,7 @@ func home() string { return paths.CodexHome() }
 
 // AgentsPath is codex's global instruction file ($CODEX_HOME/AGENTS.md) — the one
 // file that carries the fleet guide, the user's own instructions and the rtk block
-// (docs/60 §60.7: codex has no way to point at an extra instructions file, so
+// (docs/log/60 §60.7: codex has no way to point at an extra instructions file, so
 // composing this file is the only delivery).
 func AgentsPath() string { return filepath.Join(home(), "AGENTS.md") }
 
@@ -48,7 +48,7 @@ func ApplyRTK(on bool) {
 
 // editAgents is the single read-modify-write for AGENTS.md — the fleet guide, the
 // user's instructions and the rtk block all go through it, so the three writers
-// cannot race each other into a half-written file (docs/60 §60.7「1 ファイル 1 ライター」).
+// cannot race each other into a half-written file (docs/log/60 §60.7「1 ファイル 1 ライター」).
 // Everything outside agent-fleet's markers is preserved.
 func editAgents(edit func(string) string) error {
 	path := AgentsPath()

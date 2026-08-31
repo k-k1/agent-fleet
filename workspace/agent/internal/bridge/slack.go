@@ -1,6 +1,6 @@
 package bridge
 
-// Slack chat-bridge provider (docs/37 Slack 追随): the Socket-Mode twin of the Discord
+// Slack chat-bridge provider (docs/log/37 Slack 追随): the Socket-Mode twin of the Discord
 // provider, on the SAME bridge.Provider abstraction. This file is the SEND half — the Slack
 // Web API plumbing (chat.postMessage / chat.update / reactions.add / the setup lookups) and
 // the resumable send path. The receive half (Socket Mode WSS) lives in slack_socket.go; the
@@ -32,7 +32,7 @@ var slackAPIBase = "https://slack.com/api"
 
 // slackContentLimit is a conservative cap below Slack's real 40000-char message limit —
 // well under it for readability (long answers still chunk into digestible posts), and the
-// user asked to size Slack chunking to ~4000 (docs/37 Slack 追随).
+// user asked to size Slack chunking to ~4000 (docs/log/37 Slack 追随).
 const slackContentLimit = 3900
 
 // ErrSlackUnauthorized marks a token Slack rejected (invalid_auth / not_authed /
@@ -191,7 +191,7 @@ func SlackChannels(botToken string) ([]SlackChannel, error) {
 }
 
 // SlackUserByEmail resolves the bound user's Slack id from their email (users.lookupByEmail)
-// — the zero-friction identity binding (docs/37 契約5): AF already knows the member's email,
+// — the zero-friction identity binding (docs/log/37 契約5): AF already knows the member's email,
 // so no Copy-Member-ID dance. Needs users:read.email. "" (with nil err never) if unresolved.
 func SlackUserByEmail(botToken, email string) (string, error) {
 	var res struct {
@@ -206,7 +206,7 @@ func SlackUserByEmail(botToken, email string) (string, error) {
 }
 
 // SlackResolveDM opens (or returns) the IM channel with the bound user (conversations.open)
-// — the "DM this person" shape (docs/37 契約5: only ever the explicitly bound user id).
+// — the "DM this person" shape (docs/log/37 契約5: only ever the explicitly bound user id).
 func SlackResolveDM(botToken, userID string) (string, error) {
 	var res struct {
 		Channel struct {
@@ -289,7 +289,7 @@ func (sp *slackProvider) Send(m Message) error {
 
 // SendFrom mirrors discordProvider.SendFrom: deliver m starting at sub-message `from`,
 // return the cumulative delivered count so a partial failure resumes without re-posting
-// (docs/37 重複対策). session-report is suppressed in thread mode (answer-ready already
+// (docs/log/37 重複対策). session-report is suppressed in thread mode (answer-ready already
 // delivered the completion there; operator visibility rides the operator-thread mirror).
 func (sp *slackProvider) SendFrom(m Message, from int) (int, error) {
 	if m.Kind == "session-report" && sp.creds.ChannelID != "" && sp.creds.Threads && m.SessionName != "" {
@@ -342,7 +342,7 @@ func (sp *slackProvider) buildSlackMessages(m Message) []slackMsg {
 	return msgs
 }
 
-// shouldMention is the Slack copy of discordProvider.shouldMention (docs/37 mention time-
+// shouldMention is the Slack copy of discordProvider.shouldMention (docs/log/37 mention time-
 // gate): action/abnormal events always ping; read-only events ping only after the thread
 // has been quiet for mentionQuietWindow. Reuses alwaysMentionKind + the shared window.
 func (sp *slackProvider) shouldMention(m Message) bool {
@@ -423,7 +423,7 @@ func (sp *slackProvider) postRangeToThread(session, channel, rootTS string, msgs
 	return len(msgs), nil
 }
 
-// mirrorSlackInput echoes a Console-typed prompt into the session's Slack thread (docs/37
+// mirrorSlackInput echoes a Console-typed prompt into the session's Slack thread (docs/log/37
 // Fix ②). Best-effort, gated the same way as Discord: channel+thread mode, not opted out,
 // and a thread already exists (an echo never creates one). Called from MirrorUserInput.
 func mirrorSlackInput(sessionName, text string) {

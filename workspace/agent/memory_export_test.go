@@ -28,7 +28,7 @@ func memoryTestAPI(t *testing.T) (http.Handler, string, string) {
 	return httpx.RequireToken(buildMux()), cfg, slug
 }
 
-// export の secret ゲート（★4・docs/39 決着 #2）。検出時は既定でブロックし、
+// export の secret ゲート（★4・docs/log/39 決着 #2）。検出時は既定でブロックし、
 // 明示の ack でだけ通す。UI の確認ダイアログではなく **API 単体**で止まること。
 func TestMemoryExportBlocksSecretsUntilAcked(t *testing.T) {
 	h, cfg, slug := memoryTestAPI(t)

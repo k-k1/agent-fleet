@@ -1,14 +1,14 @@
 // runtime_native.go — ネイティブ（コンテナレス）Runtime アダプタ。Docker が使えない
 // 環境（素の WSL2 等）向けに、workspace-agent をホストの子プロセスとして直接起動する。
-// docs/34-native-runtime.md 参照。
+// docs/log/34-native-runtime.md 参照。
 //
-// 割り切り（docs/34 §制約）:
+// 割り切り（docs/log/34 §制約）:
 //   - コンテナ隔離が無い。ワークスペース分離は HOME/CLAUDE_CONFIG_DIR/tmux ソケットの
 //     論理分離のみなので、単一ユーザー前提の AUTH=dev でしか構築させない（factory が拒否）。
 //   - メモリ上限（WS_MEMORY / per-user MemBytes）は強制しない（cgroup を持たない）。
 //   - 従来モードでは実行環境（tmux / git / claude 等の CLI / chromium）はホスト側に
 //     導入済みであること（Dockerfile / entrypoint.sh 相当の初期化はしない）。rootfs
-//     モード（AF_NATIVE_ROOTFS — docs/35 §35.7.2）は workspace イメージの rootfs を
+//     モード（AF_NATIVE_ROOTFS — docs/log/35 §35.7.2）は workspace イメージの rootfs を
 //     bwrap で read-only 実行し、entrypoint 初期化・ピン止めが docker と同等に働く。
 package main
 
@@ -38,7 +38,7 @@ import (
 // — so a workspace's data is portable between the two local runtimes, and
 // cleanHome / stageWorkspaceDocs / dirDiskUsage work unchanged.
 //
-// Two launch modes (docs/35 §35.7.2):
+// Two launch modes (docs/log/35 §35.7.2):
 //   - traditional (AF_NATIVE_AGENT_BIN): the host-built agent runs directly with
 //     HOME pointed at the data dir. Dev workflow (run-dev.sh native).
 //   - rootfs (AF_NATIVE_ROOTFS): the agent from an extracted workspace-image
@@ -80,7 +80,7 @@ var _ RuntimeFactory = (*nativeFactory)(nil)
 // rootfsImageEnvPath is the image ENV manifest the release builder injects into
 // the rootfs tar: docker image ENV (PATH, LANG, DISABLE_AUTOUPDATER, …) lives in
 // the image CONFIG, not its filesystem, so a plain rootfs export would lose it.
-// The rootfs launch rebuilds the env from this file (docs/35 §35.7.2-2).
+// The rootfs launch rebuilds the env from this file (docs/log/35 §35.7.2-2).
 const rootfsImageEnvPath = "usr/local/share/agent-fleet/image-env.json"
 
 // newNativeFactory builds the containerless adapter. Fail-fast gates: the
@@ -233,7 +233,7 @@ func (n *nativeRuntime) AcquireOperationFence(ctx context.Context) (func(), erro
 //
 // A spawn is instant but READINESS is not: on the rootfs path the entrypoint runs
 // the pinned boot-install (minutes) before the agent listens, and pid-alive would
-// call that "running" (docs/35 §35.9-9). So the boot window is reported as
+// call that "running" (docs/log/35 §35.9-9). So the boot window is reported as
 // "starting" while Start's marker is armed — same contract as the docker adapter.
 func (n *nativeRuntime) State(ctx context.Context) string {
 	pid := readPidFile(n.pidFile())
@@ -341,7 +341,7 @@ func (n *nativeRuntime) Start(ctx context.Context) (retErr error) {
 		// The entrypoint's boot-install writes only to agent.log, which nothing
 		// surfaces during Start — so a first-start operator sees a long, silent
 		// wait and can wrongly conclude the CLIs were baked / no install ran
-		// (docs/35 §35.9-9). Mirror the entrypoint's own [entrypoint] progress
+		// (docs/log/35 §35.9-9). Mirror the entrypoint's own [entrypoint] progress
 		// lines (boot-install, install-go/jdk, …) to the CP log — visible in the
 		// `af start` terminal — for the duration of this wait. Best-effort and
 		// read-only; the deferred cancel stops it the moment the agent is healthy.
@@ -428,7 +428,7 @@ func (n *nativeRuntime) abortSpawn(spawn nativeSpawn) {
 //     the versioned rootfs, and agentBin is only bwrap — which is byte-identical
 //     across releases. So the rootfs directory (…/shared/rootfs/<r>, version-keyed
 //     by the launcher) is the identity; its .ok marker covers a same-version
-//     re-extract. An `af update` that reuses the pinned rootfs (docs/35 §35.3
+//     re-extract. An `af update` that reuses the pinned rootfs (docs/log/35 §35.3
 //     image-immutable release) leaves this unchanged — correctly, since restarting
 //     the workspace would then run exactly the same code.
 //   - plain mode (dev: AF_NATIVE_AGENT_BIN): the workspace-agent binary itself,
@@ -469,7 +469,7 @@ func (n *nativeRuntime) Stale(context.Context) bool {
 // in-memory state. Absent = no boot in progress.
 func (n *nativeRuntime) bootPhasePath() string { return filepath.Join(n.dataDir, ".boot-phase") }
 
-// BootPhase returns the latest entrypoint boot-install phase (docs/35 §35.9-9),
+// BootPhase returns the latest entrypoint boot-install phase (docs/log/35 §35.9-9),
 // or "" when no boot is in progress. The Console's "starting" dialog polls
 // GET /api/workspace and shows this while the agent boot-installs pinned CLIs.
 func (n *nativeRuntime) BootPhase() string {
@@ -484,7 +484,7 @@ func (n *nativeRuntime) BootPhase() string {
 // own progress lines (the "[entrypoint] …" prefix — boot-install, install-go,
 // install-jdk, claude repair, …) to the CP log so a first-start operator can see
 // that pinned CLIs are being installed instead of a silent multi-minute wait
-// (docs/35 §35.9-9). Best-effort: any error just ends the mirror. It stops when
+// (docs/log/35 §35.9-9). Best-effort: any error just ends the mirror. It stops when
 // ctx is cancelled (the caller cancels the moment the agent is healthy).
 func (n *nativeRuntime) mirrorBootProgress(ctx context.Context, startOff int64) {
 	// The boot is over the moment this returns (agent healthy) — clear the phase
@@ -530,7 +530,7 @@ func (n *nativeRuntime) mirrorBootProgress(ctx context.Context, startOff int64) 
 	}
 }
 
-// bwrapArgs assembles the frozen bwrap invocation (docs/35 §35.7.2): the rootfs
+// bwrapArgs assembles the frozen bwrap invocation (docs/log/35 §35.7.2): the rootfs
 // read-only at /, the docker bind-mount layout reproduced onto container paths,
 // a single-uid userns mapping to the container's dev uid, and an unshared pid
 // namespace so a group SIGKILL of bwrap tears down every descendant (tmux

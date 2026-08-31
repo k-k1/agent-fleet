@@ -1,4 +1,4 @@
-// features/chat/tts — エージェント回答の音声読み上げ（docs/24 + ADR0013）。
+// features/chat/tts — エージェント回答の音声読み上げ（docs/log/24 + ADR0013）。
 //
 // ストリーミング中の delta を受け取り、句点で「確定した文」だけを切り出して CP の
 // /api/tts/synthesize（VOICEVOX/ずんだもん）へ逐次投げる。合成は in-flight を絞り
@@ -46,7 +46,7 @@ export interface TtsOptions {
 // settings から TtsOptions を組む共通処理（announce / speakText / startNarration / ChatView）。
 export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
   // 日本語専用の読み整形（enkana カタカナ英語・助詞ポーズ）は UI ロケールが ja のときだけ
-  // 効かせる（英語 UI では素の音声へ流し、かなパイプラインをスキップ・docs/28 §2.4）。
+  // 効かせる（英語 UI では素の音声へ流し、かなパイプラインをスキップ・docs/log/28 §2.4）。
   const ja = getLocale() === "ja";
   return {
     provider: s.ttsProvider,
@@ -60,12 +60,12 @@ export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
 }
 
 // applyReadings（辞書 → 組み込み読み補正 → 助詞ポーズ）は日本語の発音整形なので UI ロケールが
-// ja のときだけ適用する。非 ja では素のテキストをそのまま返す（既に trim 済みの前提・docs/28 §2.4）。
+// ja のときだけ適用する。非 ja では素のテキストをそのまま返す（既に trim 済みの前提・docs/log/28 §2.4）。
 function localizedReadings(t: string, dict: [string, string][], particlePause: boolean): string {
   return getLocale() === "ja" ? applyReadings(t, dict, particlePause) : t;
 }
 
-// --- セッションごとの声（docs/24） ----------------------------------------------
+// --- セッションごとの声（docs/log/24） ----------------------------------------------
 // 複数セッションの並行運用時に「どのセッションの回答か」を声で判別できるようにする。
 // セッション名のハッシュで話者プールから決定的に選ぶ（同じセッション名は常に同じ声）。
 // プールは「エンジン実カタログ（ttsSpeakers.ts）×ユーザーのキャラクター設定
@@ -103,7 +103,7 @@ export function isDefaultVoice(name: string): boolean {
   return DEFAULT_VOICE_NAMES.has(name);
 }
 
-// --- キャラクター設定（ユーザーごとの使用キャラ・基準スタイル・速度, docs/24） --------
+// --- キャラクター設定（ユーザーごとの使用キャラ・基準スタイル・速度, docs/log/24） --------
 // エンジンのスタイル名から感情 variant を導出するためのキーワード（部分一致）。
 const HAPPY_STYLES = ["あまあま", "わーい", "喜び", "たのしい", "楽々", "元気", "うきうき"];
 const ANGRY_STYLES = ["ツンツン", "おこ", "ツンギレ", "不機嫌", "怒り"];
@@ -264,7 +264,7 @@ export function workVoiceOpts(
   return { volume };
 }
 
-// --- 朗読ビューの声選択（docs/24） -----------------------------------------------
+// --- 朗読ビューの声選択（docs/log/24） -----------------------------------------------
 // ReaderView ヘッダーの「声」セレクト用。"" = 設定の話者のまま。"vv:<speaker>" は VOICEVOX
 // のキャラ（provider は auto に上げる — エンジン不在時は Polly が代読し、復帰したら選んだ
 // キャラに戻る）。"polly:<VoiceId>" は明示 Polly。一覧はキャラクター設定で有効にした
@@ -291,7 +291,7 @@ export function voiceChoiceOpts(v: string): Partial<TtsOptions> | undefined {
   return undefined;
 }
 
-// --- 感情スタイルの読み分け（docs/24） -------------------------------------------
+// --- 感情スタイルの読み分け（docs/log/24） -------------------------------------------
 // 文にエラー・失敗系の語があればツンツン系、成功・完了系ならあまあま系のスタイルで読む
 // （emotionOf の判定。文単位＝合成 1 回単位で切り替え）。感情 variant を持つ話者
 // （エンジン実カタログのスタイル名から導出。カタログ未取得時は SESSION_VOICES の
@@ -306,7 +306,7 @@ function emotionProfile(voice: string): VoiceProfile | undefined {
 }
 
 function emotionOpts(text: string, base: TtsOptions): TtsOptions {
-  if (getLocale() !== "ja") return base; // 感情スタイルは日本語の語彙判定なので ja 限定（docs/28 §2.4）
+  if (getLocale() !== "ja") return base; // 感情スタイルは日本語の語彙判定なので ja 限定（docs/log/28 §2.4）
   if (!getSettings().ttsEmotion) return base;
   const prof = emotionProfile(base.voice);
   if (!prof) return base;
@@ -536,7 +536,7 @@ export function startTts(
   onEnd?: (reason: TtsEndReason) => void,
   sessionName = "", // 発生元セッション名（左ペインの再生中アイコン用。非セッションは ""）
   // onPiece(spoken): その文が実際に鳴り始める瞬間に、読み補正前の表示テキストを通知する
-  // （ライブ配信カラオケ用・docs/19）。未指定なら一切コストは掛からない。
+  // （ライブ配信カラオケ用・docs/log/19）。未指定なら一切コストは掛からない。
   onPiece?: (spoken: string) => void,
   purpose: "reading" | "session-notification" | "usage-notification" | "manual" = "reading",
 ): TtsController {
@@ -804,7 +804,7 @@ export function startTts(
   return controller;
 }
 
-// --- アナウンス直列キュー（docs/24 Tier1: バックグラウンドのセッション通知など） ------------
+// --- アナウンス直列キュー（docs/log/24 Tier1: バックグラウンドのセッション通知など） ------------
 // 短い告知を「1 本ずつ・割り込まず」読み上げる。何か再生中（チャット読み上げ等）なら終わるのを
 // 待ってから。溜まりすぎ（>4 件）は古いものから捨てる（席を外した間の洪水を防ぐ）。
 const announceQueue: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string; purpose?: "reading" | "session-notification" | "usage-notification" | "manual" }[] = [];
@@ -853,7 +853,7 @@ useTtsStore.subscribe((st, prev) => {
 });
 
 // takeAnnounce は朗読（startNarration）がユニット境界で告知を差し挟むための取り出し口。
-// 長い朗読（ファイル・長文ターン）が終わるまでセッション通知を待たせない（docs/24）。
+// 長い朗読（ファイル・長文ターン）が終わるまでセッション通知を待たせない（docs/log/24）。
 // pumpAnnounce は何か再生中（active あり）は動かないので、再生中の取り出しはここだけ
 // ＝二重再生にはならない。
 function takeAnnounce():
@@ -873,7 +873,7 @@ export function speakText(text: string, source = "", voice?: Partial<TtsOptions>
   c.flush();
 }
 
-// --- 朗読モード（docs/24）: ファイル本文を冒頭から順次読み上げ＋カラオケ追従 --------------
+// --- 朗読モード（docs/log/24）: ファイル本文を冒頭から順次読み上げ＋カラオケ追従 --------------
 // units（各ブロックのプレーンテキスト）を上から順に合成・再生し、再生を開始した unit の index を
 // onUnit で通知する（呼び手＝FileView がその要素をハイライト＋スクロールする）。startTts と同じ
 // 合成・順次再生・グローバル 1 本再生の仕組みを流用しつつ、一時停止/再開（AudioContext の
@@ -1006,7 +1006,7 @@ export function startNarration(
     tryPlay(); // 再生が追いついて待っていた場合に備える
   };
 
-  // 告知の差し挟み（docs/24）: 長い朗読の途中でもセッション通知・確認の告知を待たせすぎない。
+  // 告知の差し挟み（docs/log/24）: 長い朗読の途中でもセッション通知・確認の告知を待たせすぎない。
   // ユニット境界で announce キューから 1 件取り出し、次のユニットの前にその場で読む。再生中は
   // TopBar のラベル/声を告知側に差し替え、終わったら朗読のものへ戻す。停止・一時停止は朗読と
   // 一体（同じ ctx・同じ adapter）。

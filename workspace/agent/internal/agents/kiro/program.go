@@ -1,12 +1,12 @@
 package kiro
 
 // kiro の起動コマンド組み立てと、セッションストア（v2 JSONL）のパス解決・sid 発見
-// （docs/43 Track A）。
+// （docs/log/43 Track A）。
 //
 // セッション ID は CLI 採番（cursor と違い AF では先取りできない — kiro.go 参照）。
 // 起動は `kiro-cli chat --agent-engine v2 --trust-all-tools [--model …] [--effort …]
 // [--resume-id …]`。--agent-engine v2 を明示ピンするのは、既定が現状 v2 でも将来
-// v3 へ既定が振れるドリフト保険（docs/43 §5-2 決定）。
+// v3 へ既定が振れるドリフト保険（docs/log/43 §5-2 決定）。
 
 import (
 	"encoding/json"
@@ -36,7 +36,7 @@ func bin() string { return envOr("AGENT_KIRO_BIN", "kiro-cli") }
 func Bin() string { return bin() }
 
 // Installed reports whether the kiro CLI is present on PATH (baked or already
-// on-demand installed). Used by the connection card's install flow (docs/43 Track C)
+// on-demand installed). Used by the connection card's install flow (docs/log/43 Track C)
 // to decide whether the ~855MB bundle still needs to land in ~/.local.
 func Installed() bool {
 	_, err := exec.LookPath(bin())
@@ -131,7 +131,7 @@ const defaultFlags = "chat --agent-engine v2 --trust-all-tools"
 
 // buildProgram returns the tmux pane program for a kiro TUI session. 認証は環境依存
 // （~/.local/share/kiro-cli を CLI 自身が拾う — 実測）なのでトークンは注入しない。
-// bypass=false は「権限確認をスキップしない」（docs/76 の利用者選択、または plan 起動）。
+// bypass=false は「権限確認をスキップしない」（docs/log/76 の利用者選択、または plan 起動）。
 // 承認待ちは state.go が "question" として拾える（明示テキスト "requires approval"）。
 // 外すのは --trust-all-tools だけで、chat.disableTrustAllConfirmation（初回の危険モード
 // 確認ダイアログの抑止・ensureSettings が固定）は権限確認とは別軸なのでそのまま。
@@ -154,7 +154,7 @@ func buildProgram(model, effort, mode, resumeID string, bypass bool) string {
 		flags += " --resume-id " + session.ShellQuote(resumeID)
 	}
 	core := strings.TrimSpace(bin() + " " + flags)
-	// On-demand first-use install (docs/43 Track B / §4-2). kiro's ~855MB bundle is
+	// On-demand first-use install (docs/log/43 Track B / §4-2). kiro's ~855MB bundle is
 	// NOT baked or boot-installed for everyone; it lands in the user's ~/.local the
 	// first time they actually launch kiro. tmux runs the pane program via /bin/sh,
 	// so guard the launch: install (progress visible in the pane), then run it.

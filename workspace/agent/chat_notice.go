@@ -21,7 +21,7 @@ const (
 	noticeKeyCompactAuto     = "chat.notice.compact_auto"
 	noticeKeyCompactRecovery = "chat.notice.compact_recovery"
 	noticeKeyAgentSwitched   = "chat.notice.agent_switched"
-	noticeKeyPlanUpdated     = "chat.notice.plan_updated" // 作業計画が動いた（docs/33 第5段）
+	noticeKeyPlanUpdated     = "chat.notice.plan_updated" // 作業計画が動いた（docs/log/33 第5段）
 )
 
 // newNotice builds a notice message from its catalog key, arguments and source-language

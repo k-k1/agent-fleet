@@ -1,5 +1,5 @@
 // golden_bake.go — keeping the pool's golden snapshot in step with the workspace
-// image, without anybody remembering to (ADR 0045 決定 9 / docs/64 §64.28).
+// image, without anybody remembering to (ADR 0045 決定 9 / docs/log/64 §64.28).
 //
 // The manual procedure works — §64.28 got one baked on a real deployment — but it is
 // a procedure, and the thing it guards against is a release nobody re-baked for. The
@@ -392,7 +392,7 @@ func (b *goldenBaker) tidy(ctx context.Context, arch string) {
 // "the database has nothing to destroy" and "the database could not be read" used to
 // both be a bare return, so a tidy that cleaned NOTHING and a tidy that had nothing to
 // clean produced the same log — no line at all. That is how a leaked seed stayed
-// invisible on a real deployment (docs/64 §64.29.5): the probe's line was printed, the
+// invisible on a real deployment (docs/log/64 §64.29.5): the probe's line was printed, the
 // seed's absence was not, and its service and 50 GiB home billed on.
 func (b *goldenBaker) destroy(ctx context.Context, key string) {
 	mem, ok, err := b.membership(ctx, key, false)

@@ -1,10 +1,10 @@
 package main
 
 // オペレーター（af_write アシスタント）からの AskUserQuestion 回答と
-// ExitPlanMode プラン承認/却下（docs/30）。
+// ExitPlanMode プラン承認/却下（docs/log/30）。
 //
 // POST /sessions/{name}/answer-question {choices:[1,2,…]} — 質問順に 1-based の
-// 選択肢番号を1つずつ渡し、フォーム全体を一括で回答する。ブリッジ（docs/37 P2b、
+// 選択肢番号を1つずつ渡し、フォーム全体を一括で回答する。ブリッジ（docs/log/37 P2b、
 // ボタン1押し=1問の逐次蓄積）と違い、呼び出し元（オペレーターの MCP ツール）は
 // 全質問の回答を一度に決めて渡す。適用はブリッジと同じ経路を共有する:
 //   - TUI claude: hooks が記録した pending 質問を検証し、Console/ブリッジと同じ

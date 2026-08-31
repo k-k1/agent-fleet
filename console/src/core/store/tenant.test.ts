@@ -74,7 +74,7 @@ describe("tenant store refreshWhoami", () => {
 });
 
 // ?tenant=<slug> is the hint the Control Plane leaves after a sign-in that started
-// at /login/<slug> (docs/61 §61.10.4), so somebody who opened their department's
+// at /login/<slug> (docs/log/61 §61.10.4), so somebody who opened their department's
 // link lands in that department rather than in whichever tenant this browser last
 // used. It is a PRESELECTION only: it is honoured just when the server already
 // listed that tenant among the person's memberships (ADR0043 決定 14).
@@ -108,7 +108,7 @@ describe("tenant store boot hint", () => {
   });
 });
 
-// 招待前（not_provisioned）の着地（docs/61 §61.10.2・P7-2）。
+// 招待前（not_provisioned）の着地（docs/log/61 §61.10.2・P7-2）。
 //
 // AF_PROVISION=invite が新規インストールの既定になったので、これは異常系ではなく
 // 「招待される前の人が最初に見る状態」。フラグが立たないと通常の Console が開き、

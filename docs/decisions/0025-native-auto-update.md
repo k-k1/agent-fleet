@@ -1,59 +1,82 @@
-# 0025. ホスト常駐 `af` の自動更新 — stage は自動 / apply（再起動）は明示
+# 0025. Auto-update for the host-resident `af` — staging is automatic, applying (the restart) is explicit
 
-- 状態: **採用・実装済み**。設計は [docs/42](../42-native-auto-update.md)。
-- 関連: [docs/35](../35-packaging.md)（パッケージング／install.sh／`af` ランチャ）/
-  [docs/34](../34-native-runtime.md)（native ランタイム）
+English | [日本語](0025-native-auto-update.ja.md)
 
-## 背景
+- Status: **adopted and implemented**. The design is [docs/42](../log/42-native-auto-update.md).
+- See also: [docs/35](../log/35-packaging.md) (packaging / install.sh / the `af` launcher) /
+  [docs/34](../log/34-native-runtime.md) (the native runtime)
 
-native パッケージ（`AF_RUNTIME=native`）は WSL2 などのホストで `af start` を常駐させて使う。
-更新は「install.sh の再実行＝版ディレクトリを差し替え、`~/.local/bin/af` symlink を張り替え」で
-手動に閉じていた。ユーザーは「放っておいても新しくなる」自動更新を望むが、native は systemd **user**
-サービスで走ることが多く、更新を素直に自動化すると2つの構造的問題を踏む。
+## Context
 
-1. **走行中の af-cp はディスクを差し替えても切り替わらない。** 版 dir を swap し symlink を張り替えても、
-   既に起動済みの `af-cp`（と読み込み済み console 資産）はそのまま。**ユニットを restart するまで新版は効かない。**
-2. **自ユニットは自分を安全に再起動できない。** af-cp 内から `systemctl --user restart` を呼ぶと自分（main PID）に
-   SIGTERM が飛び、restart コマンドが途中で殺されうる。
+The native package (`AF_RUNTIME=native`) is used by keeping `af start` resident on a host such as
+WSL2. Updating was manual — rerun install.sh, which swaps the version directory and re-points the
+`~/.local/bin/af` symlink. Users want auto-update, "it just gets newer while I ignore it", but
+native usually runs as a systemd **user** service, and automating the update naively runs into two
+structural problems.
 
-加えて、このフリートは **走行中のエージェントセッションを不用意に殺さない**ことを重視してきた。restart は
-af-cp と配下ワークスペースを落とす（systemd では unit の cgroup ごと停止）ため、無条件の自動 restart は取れない。
+1. **A running af-cp does not switch over just because the disk was swapped.** Swapping the version
+   directory and re-pointing the symlink leaves the already-started `af-cp` (and the console assets
+   it has loaded) exactly as they were. **The new version only takes effect once the unit is
+   restarted.**
+2. **A unit cannot safely restart itself.** Calling `systemctl --user restart` from inside af-cp
+   sends SIGTERM to itself (the main PID), and the restart command can be killed part-way through.
 
-## 決定
+On top of that, this fleet has always cared about **not carelessly killing running agent
+sessions**. A restart takes down af-cp and the workspaces under it (systemd stops the whole unit
+cgroup), so an unconditional automatic restart is not an option.
 
-**「更新の取得（stage）は自動・既定 ON、適用（apply＝再起動）は明示（Console 操作／手動／idle）」に分離する。**
+## Decision
 
-- **stage は `af update` に閉じる**: install.sh のロジックを `af` ランチャに内蔵。latest 解決（`releases/latest`
-  リダイレクト＝API レート非依存）→ DL → **sha256 検証**（release の SHA256SUMS）→ 版 dir を staging→atomic swap →
-  `~/.local/bin/af` 張り替え。**走行中 af-cp は無改変**。`AF_VERSION` ピンを尊重（超えない）。`WS_DATA` 不変。
-- **既定 ON は timer による自動 stage**: install.sh が systemd user 利用可なら `agent-fleet-update.timer`＋
-  `.service`（`ExecStart=af update --yes`）を enable。updater は**対象ユニットの外**なので、後段の restart で
-  自分が殺されない（＝問題2の回避）。opt-out は `AF_NO_AUTOUPDATE=1`。timer は **stage まで**で restart しない。
-- **apply は明示**: CP に `GET /api/update/status`（走行版 `buildVersion` vs symlink 先の `VERSION` を比較）と
-  `POST /api/update/apply` を追加。Console（設定→環境）が「再起動で適用」を出し、**実行中セッション数を警告**して
-  から restart する。restart は systemd 下では `systemd-run --user --collect systemctl --user restart <unit>`
-  で**切り離して**実行（自分が SIGTERM されても restart は完遂）。foreground は launcher を `syscall.Exec` で
-  置換起動（symlink が新版を指す）。unit 名は sample の `Environment=AF_SYSTEMD_UNIT=%N` で af-cp に渡る。
-- **rootfs は自然カスケード**: パッケージ更新で `rootfs.json` が新版になると、apply 後の初回 start で af-cp が
-  新 rootfs を遅延取得（旧版は保持）。走行中 ws は次回 ws 再起動まで旧 rootfs。
+**Separate the two: fetching the update (stage) is automatic and on by default; applying it (the
+restart) is explicit — from the Console, by hand, or when idle.**
 
-### 捨てた選択肢
+- **Staging is contained in `af update`**: install.sh's logic is built into the `af` launcher.
+  Resolve latest (the `releases/latest` redirect, so it does not depend on the API rate limit) →
+  download → **verify sha256** (against the release's SHA256SUMS) → stage the version directory and
+  atomically swap it → re-point `~/.local/bin/af`. **The running af-cp is untouched.** An
+  `AF_VERSION` pin is honoured (never exceeded). `WS_DATA` is unchanged.
+- **On by default means automatic staging from a timer**: if systemd user services are available,
+  install.sh enables `agent-fleet-update.timer` plus a `.service`
+  (`ExecStart=af update --yes`). The updater is **outside the target unit**, so it is not killed by
+  the later restart (avoiding problem 2). Opt out with `AF_NO_AUTOUPDATE=1`. The timer goes **as far
+  as staging** and does not restart.
+- **Applying is explicit**: the CP gains `GET /api/update/status` (comparing the running
+  `buildVersion` against the `VERSION` behind the symlink) and `POST /api/update/apply`. The
+  Console (settings → environment) offers "apply by restarting" and **warns about the number of
+  running sessions** before restarting. Under systemd the restart runs **detached** as
+  `systemd-run --user --collect systemctl --user restart <unit>` (so the restart completes even if
+  we are SIGTERMed); in the foreground the launcher replaces itself with `syscall.Exec` (the symlink
+  points at the new version). The unit name reaches af-cp via `Environment=AF_SYSTEMD_UNIT=%N` in
+  the sample.
+- **The rootfs cascades naturally**: when a package update brings a new `rootfs.json`, the first
+  start after applying has af-cp fetch the new rootfs lazily (keeping the old one). Running
+  workspaces stay on the old rootfs until they are next restarted.
 
-- **検知したら即自動 restart**: 最もシンプルだが走行中の全 workspace/agent セッションを問答無用で切る。
-  false-idle/session-kill を重んじる方針に反するため不採用。既定は stage→通知に留める。
-- **af-cp 内プロセスで in-place 自己更新（re-exec）**: systemd main-PID の in-place exec は扱いが繊細で、
-  launcher/console 資産/rootfs ハンドシェイクをまたぐと脆い。stage は外部（timer/CLI）、apply は明示 restart に分離。
-- **install.sh が主サービスまで自動生成・enable**: install がホストで af を勝手に起動する副作用が大きい。
-  主サービスは従来どおり README の手順に委ね、timer（stage 専用）だけを既定 ON にする。
+### Options rejected
 
-## 帰結
+- **Restart automatically as soon as an update is detected**: the simplest, but it cuts off every
+  running workspace/agent session without asking. That contradicts a stance that takes false-idle
+  and session-kill seriously, so it is not adopted. The default stops at stage → notify.
+- **In-place self-update (re-exec) inside the af-cp process**: an in-place exec of a systemd main
+  PID is delicate to get right and fragile once the launcher, the console assets and the rootfs
+  handshake are involved. Staging is external (timer/CLI) and applying is an explicit restart.
+- **install.sh generating and enabling the main service too**: install having the side effect of
+  starting af on the host by itself is too much. The main service is left to the README procedure as
+  before, and only the timer (staging only) is on by default.
 
-- 追加は launcher `af`（`update` サブコマンド＋dist メタ＋自己情報 env 受け渡し）／`build.sh`（`dist.json` 生成）／
-  `install.sh`（timer 既定 ON・opt-out）／native README（systemd sample に `AF_SYSTEMD_UNIT=%N`・更新節）／
-  CP `update.go`（status/apply・native gated）／Console `EnvTab`（更新セクション）。既存 start/reset/status は無改造。
-- **native 専用**: status/apply ルートは launcher が渡す `AF_SELF_LINK` があるときだけ登録。Docker/ECS（イメージ更新）と
-  dev ビルドでは未登録＝Console は自動的に非表示。
-- **ピン運用**: `AF_VERSION` を主 unit と update unit の両方に置くと、`af update` はその版を目標にし、到達後は無操作。
-- **限界（意図）**: systemd の unit cgroup 停止のため、apply（restart）は走行中セッションを中断する。だからこそ
-  apply は自動化せず、Console 警告付き／手動／idle に限定する。長寿命ワークスペースを restart から切り離す
-  （別 slice/scope）拡張は将来課題。
+## Consequences
+
+- The addition is the `af` launcher (the `update` subcommand, dist metadata, passing self-info
+  through env), `build.sh` (generating `dist.json`), `install.sh` (the timer on by default, with an
+  opt-out), the native README (`AF_SYSTEMD_UNIT=%N` in the systemd sample, plus an update section),
+  the CP's `update.go` (status/apply, gated to native) and the Console's `EnvTab` (the update
+  section). The existing start/reset/status are unmodified.
+- **Native only**: the status/apply routes are registered only when the launcher passes
+  `AF_SELF_LINK`. On Docker/ECS (updated by image) and dev builds they are not registered, so the
+  Console hides them automatically.
+- **Running against a pin**: put `AF_VERSION` in both the main unit and the update unit, and
+  `af update` targets that version and then does nothing.
+- **A deliberate limit**: because systemd stops the whole unit cgroup, applying (restarting)
+  interrupts running sessions. That is exactly why applying is not automated and is limited to the
+  Console with a warning, by hand, or when idle. Decoupling long-lived workspaces from the restart
+  (a separate slice/scope) is future work.

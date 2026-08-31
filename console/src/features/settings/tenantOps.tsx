@@ -13,7 +13,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 import { fmtDateTime, DATETIME_FULL, compareText } from "../../lib/intl.ts";
 import { useLocale, useT } from "../../lib/i18n/index.ts";
-import { stateInfo } from "../../lib/sessionview.ts";
+import { stateInfo, stripLabelTag } from "../../lib/sessionview.ts";
 import type { Tenant } from "./adminShared.ts";
 
 // --- All sessions overview (P3-9 admin) -------------------------------------
@@ -130,7 +130,7 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
                             <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                           </span>
                           <span className="asx-user mono" title={s.email || ""}>{s.user_key || tr("admin.unknown")}</span>
-                          <span className="as-name mono" title={s.dir || ""}>{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.name}</span>
+                          <span className="as-name mono" title={s.dir || ""}>{s.label ? stripLabelTag(s.label) : s.name}</span>
                           <span className="as-repo muted">{s.repo || ""}</span>
                           <span className={"session-state " + st.cls}>
                             <Icon name={st.icon} spin={st.spin} /> {st.text}
@@ -149,7 +149,7 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
   );
 }
 
-// --- Audit log (docs/20 M1) -------------------------------------------------
+// --- Audit log (docs/log/20 M1) -------------------------------------------------
 // The change-operation ledger: file / git / session mutations recorded by the CP
 // proxy (actor = the member behind the resolved request). Reads GET /api/admin/audit
 // (super_admin: whole deployment, optionally filtered by ?tenant=; tenant_admin:

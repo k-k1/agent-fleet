@@ -51,8 +51,8 @@ if [ -n "${AF_WS_KEEP:-}" ] && [ -d "$AF_WS_KEEP" ] && [ -w "$AF_WS_KEEP" ]; the
   done
 fi
 
-# --- home が別アーキの上に載ったときの自己修復（docs/70 §70.5） ---------------
-# home（`~`）は永続する。ecs-ec2 では EBS 1 本が人について回り、docs/70 で「どの箱に
+# --- home が別アーキの上に載ったときの自己修復（docs/log/70 §70.5） ---------------
+# home（`~`）は永続する。ecs-ec2 では EBS 1 本が人について回り、docs/log/70 で「どの箱に
 # 載るか」が per-member の設定になるので、**x86 で埋めた home が arm64 のスロットに付く**
 # ことが起こり得る。そのときファイルシステムは正常にマウントされ、壊れるのはバイナリ
 # だけである——症状は「昨日まで動いていた claude が Exec format error」で、原因（箱が
@@ -63,7 +63,7 @@ fi
 # 「いまのアーキで作られた」とみなして刻むだけ——それが唯一安全な既定である。
 #
 # ⚠️ 捨てる対象は下の boot-install ブロックが入れるものと 1:1 で対応する。
-#    CLI を足したらここにも足すこと（docs/70 §70.5 の表）。
+#    CLI を足したらここにも足すこと（docs/log/70 §70.5 の表）。
 # ⚠️ `~/repos` には絶対に触らない（利用者の未コミットの作業がある）。`~/.local/bin` に
 #    利用者が自分で入れたツールも消さない——消せば「勝手に消えた」になる。壊れている
 #    事実だけ伝えて、入れ直すかは本人に委ねる。
@@ -147,14 +147,14 @@ if [ "$CCD" != "$HOME/.claude" ] && [ -d "$HOME/.claude" ] && [ -z "$(ls -A "$CC
   fi
 fi
 
-# --- 作業ディスクへの退避（ADR 0044 決定 3・docs/63 §63.5） -------------------
+# --- 作業ディスクへの退避（ADR 0044 決定 3・docs/log/63 §63.5） -------------------
 # AF_WS_SCRATCH が指すのはタスクローカルの速いディスクで、**コンテナ停止で消える**。
 # CP は ECS ランタイムのときだけこれを注入する（docker/native はホストのローカル
 # ディスクを bind mount しているので、逃がす動機が無い）。
 #
 # 逃がすのは「ファイル数が多く、再生成が安い」ものだけ。EFS のペナルティは 1 ファイル
 # 約 14.5ms 固定で帯域差は 1MiB 約 1ms しか無いため、平均ファイルサイズが小さいものだけが
-# 致命的に遅い（実測 docs/63 §63.4）。~/.npm は 20GiB あってもファイル数は 6,756 なので
+# 致命的に遅い（実測 docs/log/63 §63.4）。~/.npm は 20GiB あってもファイル数は 6,756 なので
 # **EFS に残す**——残すことで、朝いちばんの npm ci がネットワーク無しで走る。
 #
 # 既にホーム側に実体がある場合は、EFS 上の削除が遅い（数万ファイルで数分）ので
@@ -194,7 +194,7 @@ if [ -n "${AF_WS_SCRATCH:-}" ]; then
   fi
 fi
 
-# --- boot-install（lean 配布 variant、docs/35 §35.4.1 / §35.7.1-6） -----------
+# --- boot-install（lean 配布 variant、docs/log/35 §35.4.1 / §35.7.1-6） -----------
 # BAKE_AGENT_CLIS=0 で焼いたイメージ/rootfs はエージェント CLI
 # （claude/opencode/codex/copilot/cursor/agy/rtk）を含まない。ここで versions.json の
 # ピン版（= e2e-smoke で動作検証した版）を ~/.local へ導入する。各デプロイ先が
@@ -208,7 +208,7 @@ cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 # agy_effective_version — 「いま在る agy は何版か」。
 #
 # ⚠️ マーカー（.agy.version）は **AF が最後に入れた版**であって、**いま在る版ではない**。
-# agy は自分を書き換えることがあり（実測・docs/70 §70.14.9: 1.1.17 で起動した 34 秒後に
+# agy は自分を書き換えることがあり（実測・docs/log/70 §70.14.9: 1.1.17 で起動した 34 秒後に
 # 1.1.19 になり、ログに `auto_updater.go:305 Spawned background update process` が
 # 残っていた）、マーカーは AF が書くファイルなのでその更新では動かない。
 #
@@ -244,13 +244,13 @@ if [ "$LEAN_CLIS" = 1 ]; then
   # 追えるように）。初回起動は npm/GitHub から数分かけて DL するが、~/.local は home
   # ボリュームに永続するので 2 回目以降（オフライン再起動含む）は下の各ブロックが
   # cli_present=true で無音スキップし即起動する。これは設計どおりの正常動作で、
-  # 「rootfs に CLI が焼かれている」わけではない（docs/35 §35.7.2-8）。
+  # 「rootfs に CLI が焼かれている」わけではない（docs/log/35 §35.7.2-8）。
   echo "[entrypoint] lean variant: ensuring pinned agent CLIs under ~/.local (versions.json)"
   # ピン再固定（repin）: self-update opt-in が OFF のこの起動では、過去の ON が
   # ~/.local を最新へ進めていても versions.json のピン版へ戻す。焼き込み variant の
   # 「OFF に戻して Stop→Start で焼き込み版へ復帰」と同じ意味論を lean にも与える。
   # 従来は cli_present の在/不在ガードだけだったため、一度 ON で進んだ版が OFF に
-  # 戻しても永久に残った（kiro の起動ガードで直したのと同型の穴 — docs/43 §4-2）。
+  # 戻しても永久に残った（kiro の起動ガードで直したのと同型の穴 — docs/log/43 §4-2）。
   # 無人起動（AF_AGENT_SELF_UPDATE_SKIP=1）は「今回は触らない」意味論なので温存。
   REPIN=0
   if [ "${AF_AGENT_SELF_UPDATE_SKIP:-0}" != "1" ] \
@@ -312,7 +312,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
       cd "$tmp"
       # --retry: a transient blip on first boot otherwise leaves rtk uninstalled
-      # until the next start (observed on the WSL2 gate — docs/35 §35.9-9).
+      # until the next start (observed on the WSL2 gate — docs/log/35 §35.9-9).
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/${asset}" -o "${asset}"
       curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "${base}/checksums.txt" -o checksums.txt
       grep " ${asset}\$" checksums.txt | sha256sum -c - >/dev/null
@@ -320,7 +320,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
       install -D -m 0755 rtk "$HOME/.local/bin/rtk"
       # ⚠️ 実行して確かめてから残す。arm64 の配布は gnu ビルドだけで GLIBC_2.39 を要求し、
       # このイメージ（Debian 12・glibc 2.36）では **DL も sha256 も通ったうえで起動だけが
-      # できない**（実測 2026-08-22・docs/70 §70.9.2）。確かめずに置くと、PATH の先頭に
+      # できない**（実測 2026-08-22・docs/log/70 §70.9.2）。確かめずに置くと、PATH の先頭に
       # 動かない rtk が居座り、失敗するのは使った瞬間になる。
       if ! err="$("$HOME/.local/bin/rtk" --version 2>&1)"; then
         rm -f "$HOME/.local/bin/rtk"
@@ -366,7 +366,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
   elif cli_present agy; then
     echo "[entrypoint] boot-install: agy already present (skip)"
   fi
-  # cursor（kind="cursor"、docs/40）: 版付き tarball の Node.js バンドルを
+  # cursor（kind="cursor"、docs/log/40）: 版付き tarball の Node.js バンドルを
   # ~/.local/share/cursor-agent/versions/<版>/ へ展開し ~/.local/bin/cursor-agent を張る
   # （上流 install.sh と同レイアウト・Dockerfile 焼き込みと同経路）。sha256 は
   # versions.json の cursor_sha256（arch 依存の焼き込み値）で検証。
@@ -414,7 +414,7 @@ if [ "$LEAN_CLIS" = 1 ]; then
   fi
 fi
 
-# Kiro CLI（kind="kiro"、docs/43 Track B / §4-2）は ~855MB と桁違いに巨大なため、
+# Kiro CLI（kind="kiro"、docs/log/43 Track B / §4-2）は ~855MB と桁違いに巨大なため、
 # 上の CLI 群と違い全ユーザー一律の boot-install は「しない」— kiro を使うユーザーの
 # 初回起動時に `workspace-agent install-kiro` が ~/.local へ manifest sha256 ピン付きで
 # 導入する（オンデマンド・利用ユーザー限定）。導入済み home 版のピン追従（versions.json
@@ -526,7 +526,7 @@ elif [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ] && [ "${AF_AGENT_SELF_UPDATE
   # マーカー）。⚠️ かつてここは marker 決め打ちで、「agy 自身の自己更新で進んでいたら
   # 比較がズレて再導入されるだけで無害」と書いてあった。無害ではなかった——自己更新は
   # marker を動かさないので、ピン側（repin）では marker == pin のまま実体だけが先へ
-  # 行って固着する（docs/70 §70.14.9）。ここ（opt-in ON 側）では逆に、実体が既に
+  # 行って固着する（docs/log/70 §70.14.9）。ここ（opt-in ON 側）では逆に、実体が既に
   # latest でも marker が古いせいで毎回 ~187MB を取り直していた。
   # install.sh は既存バイナリがあると更新せず即 exit 0 する仕様なので、空の temp dir
   # へ導入してから差し替える（失敗時は旧 shadow 温存）。
@@ -707,7 +707,7 @@ PY
 # fleet/rtk.json toggle — NOT seeded here — so the Console on/off choice survives
 # restarts. The agent runs immediately after this entrypoint (exec workspace-agent).
 
-# cursor auto-update 封殺（docs/40 Track B）: バンドル解析で背景自己更新は
+# cursor auto-update 封殺（docs/log/40 Track B）: バンドル解析で背景自己更新は
 # `disableAutoUpdate || channel==="static"` でスキップされる。AF は起動フラグ
 # --disable-auto-update を全経路で渡すが、ユーザーが素で `cursor-agent` を叩いた
 # 場合の背景更新（~/.local へ home shadow を作り PATH で焼き込みを隠す）まで防ぐには
@@ -740,7 +740,7 @@ os.replace(tmp, p)
 PY
 fi
 
-# Workspace 利用ガイドと**ユーザー指示**の配置は agent 側が持つ（docs/60 / ADR 0042 の
+# Workspace 利用ガイドと**ユーザー指示**の配置は agent 側が持つ（docs/log/60 / ADR 0042 の
 # reconcileAgentInstructions）。ここは置き場のディレクトリだけ用意する。
 #   claude   … /etc/claude-code/CLAUDE.md（イメージ焼込の managed policy。ここでは触らない）
 #              ＋ $CLAUDE_CONFIG_DIR/CLAUDE.md（ユーザー指示・agent が書く）
@@ -750,7 +750,7 @@ fi
 #
 # ⚠️ ここは以前 `cp -f` でこの 2 ファイルを丸ごと上書きしていた。つまり利用者が
 # AGENTS.md へ書き足した文章はコンテナ再起動のたびに黙って消えており、それが
-# 「ユーザー層を自力で作れない」原因そのものだった（docs/60 実害①）。いまは agent が
+# 「ユーザー層を自力で作れない」原因そのものだった（docs/log/60 実害①）。いまは agent が
 # フリート方針 + ユーザー指示 + rtk ブロックを**1 人の書き手**としてマーカー付きで
 # 合成し、マーカー外は温存する。agent はこの直後に exec され、セッションを起こすのは
 # その agent 自身なので、合成前のファイルを読むセッションは存在しない。
@@ -810,7 +810,7 @@ fi
 if [ -n "$JAVA_VER" ]; then
   # ⚠️ 「glob して先頭」に戻さないこと。どちらの置き場も temurin-<major>-jdk-<arch> と
   # いう名前で、"amd64" は "arm64" より先に並ぶ。x86 で埋めた home を arm64 のスロットに
-  # 付けた瞬間、先頭は**必ず動かない方**になる（docs/70 §70.5.1・workspace-agent 側の
+  # 付けた瞬間、先頭は**必ず動かない方**になる（docs/log/70 §70.5.1・workspace-agent 側の
   # javaHomeFor も同じ規則）。自分のアーキの接尾辞を優先し、他アーキは採らない。
   find_jh() {
     for d in /usr/lib/jvm "$HOME/.local/share/agent-fleet/jvm"; do
@@ -843,7 +843,7 @@ if [ -n "$JAVA_VER" ]; then
   fi
 fi
 
-# go: point GOROOT at the selected toolchain (docs/35 §35.7.2-5). The lean rootfs
+# go: point GOROOT at the selected toolchain (docs/log/35 §35.7.2-5). The lean rootfs
 # bakes no /usr/local/go — `workspace-agent install-go` puts the pinned version
 # under the home volume (go.dev/dl keeps all past releases + sha256, verified).
 # "system"/empty keeps the baked go, if any. Soft-fail like the JDK path.

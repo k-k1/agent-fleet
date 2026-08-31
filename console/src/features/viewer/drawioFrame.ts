@@ -1,6 +1,6 @@
-// drawio ビューアを閉じ込める iframe の中身（docs/65 §65.3・ADR 0046 決定 2）。
+// drawio ビューアを閉じ込める iframe の中身（docs/log/65 §65.3・ADR 0046 決定 2）。
 //
-// なぜ iframe なのか（実測。docs/65 §65.2.1）:
+// なぜ iframe なのか（実測。docs/log/65 §65.2.1）:
 //   - viewer-static.min.js は window にグローバルを 932 個生やし、`lang` / `dash` /
 //     `Base64` / `MathJax` のような一般名や **window.DOMPurify の上書き**まで含む。
 //     アプリの window に入れたら戻す手段が無い。
@@ -43,7 +43,7 @@ export type DrawioFrameRequest =
   /** フレームが申告したステンシルの中身と、取れなかったものの名前。
    *  閉域では `xml` が空で `missing` が全部になる（**エラーではない** —— 枠と色だけの
    *  絵に静かに落ちる）。`missing` を返すのは、フレームがそれを「頼んだ済み」から
-   *  外して次の描画でもう一度頼めるようにするため（docs/65 §65.5.4）。 */
+   *  外して次の描画でもう一度頼めるようにするため（docs/log/65 §65.5.4）。 */
   | { af: typeof DRAWIO_MSG; t: "stencils"; xml: string[]; missing?: string[] };
 
 export type DrawioFrameEvent =
@@ -99,7 +99,7 @@ export interface DrawioFrameOptions {
  *
  * CSP は default-src 'none' から始めて必要なものだけ開ける。**connect-src は 'none'
  * のまま** ——ステンシルも含め、フレームは何ひとつ自分で取りに行かない。ここを開ける
- * 変更は、そのままフレームが外部を叩ける経路の復活を意味する（docs/65 §65.5.4）。
+ * 変更は、そのままフレームが外部を叩ける経路の復活を意味する（docs/log/65 §65.5.4）。
  */
 export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   // ビューアのソースは親が postMessage で渡し、インライン script として評価する。
@@ -118,7 +118,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   // i18n-exempt-start: 中身はスクリプトとその日本語コメントで、画面に出る文字列は無い。
   const boot = `
 (function () {
-  // 外部を指す既定値を全部潰す（docs/65 §65.2.1-3）。P1 で STENCIL_PATH だけ
+  // 外部を指す既定値を全部潰す（docs/log/65 §65.2.1-3）。P1 で STENCIL_PATH だけ
   // 自オリジンの CP プロキシへ向ける。
   //
   // **空文字では潰せない**: ビューアは window.X = window.X || "https://…" の形で
@@ -184,7 +184,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
   // html,body{background:…} の形で両方に色を付けているので、html だけを inline で
   // 上書きしても **body の指定が上に塗ってしまい、一度も効かない**（実測: 組み立て時が
   // dark・描画要求が light のとき、図形はライトなのに背景は #1e1e1e のままだった。
-  // 逆向きでは白のまま。利用者が見た 2 つの症状はどちらもこれ）。docs/65 §65.11-13。
+  // 逆向きでは白のまま。利用者が見た 2 つの症状はどちらもこれ）。docs/log/65 §65.11-13。
   function setBackground(isDark) {
     var color = isDark ? "#1e1e1e" : "#ffffff";
     document.documentElement.style.background = color;
@@ -233,7 +233,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
         // **真偽値では効かない**: isDarkMode() は "dark" / "auto" という文字列と
         // 比較するので、true を渡すと黙って「ライト」になる。既定の文字色は黒のまま
         // 暗い背景に載り、既定色のラベルが黒地に黒で消える（実測: 文字 0 / 背景 30 の
-        // 輝度＝コントラスト比 1.3:1）。docs/65 §65.11-10。
+        // 輝度＝コントラスト比 1.3:1）。docs/log/65 §65.11-10。
         "dark-mode": dark ? "dark" : "light",
         highlight: "#3572b0",
         // 復元するページ。**番号ではなく id** で指す（graphConfig.pageId）——
@@ -276,7 +276,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     }
   }
 
-  // ── ステンシル（docs/65 §65.5）───────────────────────────────────────
+  // ── ステンシル（docs/log/65 §65.5）───────────────────────────────────────
   // ベンダーアイコン（\`shape=mxgraph.aws4.*\` 等）の図案はビューアに入っていない
   // （全体で 40.8 MB あるので同梱しない）。**フレームは取りに行かない**：必要な
   // ファイル名を親へ申告し、親が CP から取って postMessage で返す。
@@ -572,7 +572,7 @@ export function drawioFrameSrcdoc({ dark }: DrawioFrameOptions): string {
     }
     booted = true;
     installGestures();
-    // **ビューア自身にステンシルを取りに行かせない**（docs/65 §65.5.4）。必要な
+    // **ビューア自身にステンシルを取りに行かせない**（docs/log/65 §65.5.4）。必要な
     // ものは neededStencils() が割り出し、親が CP から取って渡す。ここを true に
     // 戻すと、認証を通れない要求・CSP の穴・失敗後に再試行しない詰まり方の 3 つが
     // まとめて戻ってくる（どれも実測）。

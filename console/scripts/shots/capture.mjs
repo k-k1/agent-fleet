@@ -5,7 +5,7 @@
 //                                          [--only hero,mirror] [--out <dir>]
 //
 // No Playwright/Puppeteer: Node 22's global WebSocket speaks CDP directly, matching
-// how the rest of this repo drives headless Chromium (docs/31, the UI harness note).
+// how the rest of this repo drives headless Chromium (docs/log/31, the UI harness note).
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -61,7 +61,7 @@ const SCENES = [
   {
     name: "mirror",
     sections: FOCUS_TREE,
-    // 変更ファイル帯を開いた状態で撮る（docs/68）。既定は畳まれているので、開いて
+    // 変更ファイル帯を開いた状態で撮る（docs/log/68）。既定は畳まれているので、開いて
     // おかないと「セッションが直したファイル」の面が絵に出ない。
     storage: { "af.mirror-files-open.sk4rq2f": "1" },
     width: 1280,
@@ -217,7 +217,7 @@ const chrome = spawn(
     `--remote-debugging-port=${CDP_PORT}`,
     "--remote-allow-origins=*",
     // ⚠️ headless は粗いポインタを名乗るので `@media (hover: none)` が当たり、ホバー時
-    // だけ出る操作要素が全行に出た「実際より混んだ絵」になる（docs/80 §80.18.7）。
+    // だけ出る操作要素が全行に出た「実際より混んだ絵」になる（docs/log/80 §80.18.7）。
     // README のスクショ集を変えないよう既定では入れず、デスクトップの見え方を確かめ
     // たいときだけ SHOTS_DESKTOP_HOVER=1 で付ける。
     ...(process.env.SHOTS_DESKTOP_HOVER
@@ -279,7 +279,7 @@ try {
       await cdp.send("Runtime.evaluate", { expression: scene.action, awaitPromise: true });
       await sleep(scene.settle || 800);
     }
-    // ★ 見た目の判断を目で決めない口（docs/80 §80.18.7）。scene.measure に式を書くと
+    // ★ 見た目の判断を目で決めない口（docs/log/80 §80.18.7）。scene.measure に式を書くと
     // その戻りを標準出力に出す —— 余白やタイトル幅が「揃っている」かは感想では決着せず、
     // getBoundingClientRect() で測るしかない。常設のシーンでは使っていない。
     if (scene.measure) {

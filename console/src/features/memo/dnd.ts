@@ -1,4 +1,4 @@
-// Cross-pane memo drag & drop (docs/21). A memo dragged from the left-pane queue can be
+// Cross-pane memo drag & drop (docs/log/21). A memo dragged from the left-pane queue can be
 // dropped onto a session's mirror composer, where it inserts its text (the note stays
 // queued — a drop is a copy, never a move out of the queue). This is separate from the
 // in-queue reorder DnD, which tracks the subject via a ref and ignores dataTransfer.

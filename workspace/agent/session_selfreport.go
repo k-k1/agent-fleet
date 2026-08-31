@@ -1,6 +1,6 @@
 package main
 
-// 自己申告ファストパス（docs/51 §自己申告ファストパス / Phase 3）の**投入側**。
+// 自己申告ファストパス（docs/log/51 §自己申告ファストパス / Phase 3）の**投入側**。
 //
 // リコンサイラは「機械的 idle」を証拠に完了を推定する。どれだけ証拠を足しても推定は
 // 推定で、意味的完了（＝指示をやり切った）を直接測れるのはセッション自身だけなので、
@@ -35,7 +35,7 @@ func selfReportToolAvailable(kind string) bool {
 }
 
 // selfReportHintLine is the sentence appended to an instruction prompt. 2言語で書くのは
-// docs/30 と同じ理由 — セッションが英語で作業しているところへ日本語だけを流し込むと、
+// docs/log/30 と同じ理由 — セッションが英語で作業しているところへ日本語だけを流し込むと、
 // 以後の出力言語がそれに引きずられる（セッションごとの言語を読む術は無い）。「出力言語を
 // 変えるな」を明示してあるのはその保険。
 func selfReportHintLine(name string) string {

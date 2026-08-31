@@ -1,4 +1,4 @@
-// Pure, DOM-free helpers for the schedules rail section (docs/38 P5). Split out from
+// Pure, DOM-free helpers for the schedules rail section (docs/log/38 P5). Split out from
 // the component so the formatting + status classification is unit-testable (the codebase
 // tests pure logic, not React rendering — see notifications/read.test.ts). The section
 // component owns fetch/poll/state; everything here is a plain function over the DTO.

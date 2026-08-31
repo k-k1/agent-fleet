@@ -1,6 +1,6 @@
 package main
 
-// docs/58 / ADR 0041 — セッション同士のメッセージの「守るべき不変条件」を固定する。
+// docs/log/58 / ADR 0041 — セッション同士のメッセージの「守るべき不変条件」を固定する。
 // ここで落ちるということは、迂回できる穴が開いたということ。
 
 import (
@@ -67,7 +67,7 @@ func TestPeerPolicyRejections(t *testing.T) {
 func TestPeerEnvelopeNamesTheSenderAndTheReplyPolicy(t *testing.T) {
 	// 封筒はサーバが必ず付ける。受け取った側が「誰から来たのか」を本文だけで判断できる
 	// 唯一の手掛かりで、workspace-notes の常設ルールがこの目印に紐づく。intent / reply が
-	// 同じ行に乗るのは、返信規律が効くのが着信の瞬間だから（docs/58 §58.14）。
+	// 同じ行に乗るのは、返信規律が効くのが着信の瞬間だから（docs/log/58 §58.14）。
 	got := peerEnvelope("s7abc12", "notice", "none", "  develop を rebase した  ")
 	if got != "[agent-fleet:peer from=s7abc12 intent=notice reply=none] develop を rebase した" {
 		t.Fatalf("peerEnvelope = %q", got)
@@ -164,9 +164,9 @@ func TestPeerLimiterDropsDuplicatesAndThrottles(t *testing.T) {
 	}
 }
 
-// **最重要**: peer メッセージが指示台帳（arm）に載る経路を作らせない。載ると docs/51 の
+// **最重要**: peer メッセージが指示台帳（arm）に載る経路を作らせない。載ると docs/log/51 の
 // リコンサイラが「利用者の新指示」と誤認して早期 settle を起こす。AF の投入は TUI 打鍵で、
-// 受信側 transcript ではネイティブ経路と違い通常入力と区別が付かない（docs/58 §58.12）ので、
+// 受信側 transcript ではネイティブ経路と違い通常入力と区別が付かない（docs/log/58 §58.12）ので、
 // 入口で拒むことが唯一の防御になる。
 func TestSessionInputRefusesPeerFromWithReportTo(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))

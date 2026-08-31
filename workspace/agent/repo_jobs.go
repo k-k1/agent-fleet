@@ -1,6 +1,6 @@
 package main
 
-// リポジトリ取り込みジョブ（docs/78）。`git clone` / `svn checkout` を **HTTP リクエストの
+// リポジトリ取り込みジョブ（docs/log/78）。`git clone` / `svn checkout` を **HTTP リクエストの
 // 寿命から切り離した名前付きジョブ**として走らせ、進捗と結末を別 API で観測できるようにする。
 //
 // なぜ要るか（実測した事故そのもの）: 大きな取り込みは分〜時間かかるが、ALB の idle timeout は

@@ -930,7 +930,7 @@ func TestECSEC2ReWakingTheSameSlotReusesTheTaskDefinition(t *testing.T) {
 // One call carrying both is what ECS answers by scaling the deployment it just demoted,
 // so a task from the OLD revision either runs alongside the real one for a minute or
 // stalls the real one for ~41s on a MemberOf that no longer matches anything
-// (docs/64 §64.39). ForceNewDeployment on the second call would put it straight back.
+// (docs/log/64 §64.39). ForceNewDeployment on the second call would put it straight back.
 func TestECSEC2MovingSlotsSplitsTheServiceUpdate(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
@@ -987,7 +987,7 @@ func TestECSEC2MovingSlotsSplitsTheServiceUpdate(t *testing.T) {
 // lastTaskDef is process-local, so it is empty after every CP restart and on whichever
 // replica did not serve the last Start. That miss must not turn into a redundant
 // revision: the fingerprint is stamped on the revision itself, so AWS can answer
-// "already registered exactly this" (docs/64 §64.39.6). Before this, every workspace's
+// "already registered exactly this" (docs/log/64 §64.39.6). Before this, every workspace's
 // FIRST Start after every deploy rolled the service for a task definition that had not
 // changed at all.
 func TestECSEC2ReuseSurvivesACPRestart(t *testing.T) {
@@ -1065,7 +1065,7 @@ func TestECSEC2ReuseAfterRestartStillNoticesAChange(t *testing.T) {
 
 // The scale-up must wait out the deployment the revision change demoted. While one is
 // still ACTIVE, ECS satisfies a desiredCount increase from it — the whole bug — so the
-// split only helps if the second call is held until it is gone (docs/64 §64.39.4).
+// split only helps if the second call is held until it is gone (docs/log/64 §64.39.4).
 func TestECSEC2ScaleUpWaitsForTheDemotedDeployment(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)
@@ -1136,7 +1136,7 @@ func TestECSEC2FailedMountLeavesTheServiceStopped(t *testing.T) {
 	}
 }
 
-// --- a slot whose OS has died (docs/64 §64.40) ---
+// --- a slot whose OS has died (docs/log/64 §64.40) ---
 
 // wedge is the shape of the incident: the workspace's own slot is EC2-`running`, its
 // task's ENI is still bolted to it, and the cluster cannot reach its agent. Every AWS
@@ -1700,7 +1700,7 @@ func TestECSEC2EvictsLongestDormantAtTheCap(t *testing.T) {
 // member on a bigger rung could take a SMALLER box and land on it. ECS then refuses to
 // place the task ("no container instance met all of its requirements") and the service
 // sits at desiredCount 1 / runningCount 0 forever. Across architectures placeHome's own
-// header records the same symptom measured on a live deployment (docs/70 §70.14.5).
+// header records the same symptom measured on a live deployment (docs/log/70 §70.14.5).
 //
 // It only ever shows at the cap, which is why it survived: below the cap growPool runs
 // and the new box is the right size by construction.
@@ -2101,7 +2101,7 @@ func TestECSEC2StartReusesExistingAttachment(t *testing.T) {
 			t.Errorf("unnecessary %s on a slot that already holds the home", c)
 		}
 	}
-	// Two calls now, not one: the revision first, desiredCount last (docs/64 §64.39).
+	// Two calls now, not one: the revision first, desiredCount last (docs/log/64 §64.39).
 	// Asserted as an invariant rather than a count so this does not re-break the day a
 	// reused task definition makes the first call unnecessary.
 	last := h.ecs.updateCalls[len(h.ecs.updateCalls)-1]
@@ -2252,7 +2252,7 @@ func TestECSEC2SweeperWaitsForTaskENIsBeforeStopping(t *testing.T) {
 
 // A Start is in flight: placeHome clears the dormancy marks first and upsertService
 // raises desiredCount last, with the mount (an SSM round trip) in between. The home walk
-// used to read that window as "dormant" — see docs/64 §64.31.6.
+// used to read that window as "dormant" — see docs/log/64 §64.31.6.
 func TestECSEC2SweeperLeavesAHomeAloneWhileItsStartIsInFlight(t *testing.T) {
 	ctx := context.Background()
 
@@ -2312,7 +2312,7 @@ func TestECSEC2SweeperLeavesAHomeAloneWhileItsStartIsInFlight(t *testing.T) {
 	})
 }
 
-// --- free slots (docs/64 §64.31, ADR 0045 決定 22) ---
+// --- free slots (docs/log/64 §64.31, ADR 0045 決定 22) ---
 //
 // A slot whose home has been released leaves the home walk entirely, so before
 // sweepFreeSlots existed NOTHING stopped it. Measured on the live deployment: three
@@ -2551,7 +2551,7 @@ func terminatedInstances(h *ec2Harness) []string {
 	return ids
 }
 
-// --- slotTerminateAfter: the stage that gives the ROOT volume back (docs/64 §64.32) ---
+// --- slotTerminateAfter: the stage that gives the ROOT volume back (docs/log/64 §64.32) ---
 //
 // Before this existed nothing ever removed a box, so the number of retained roots only
 // grew and its ceiling was maxSlots — raising maxSlots to 30 to serve more people also
@@ -2745,7 +2745,7 @@ func TestECSEC2SlotTerminateWorksWithSleepingOff(t *testing.T) {
 
 // P0's Destroy deleted the EBS home and stopped there, leaving the ECS service, both EFS
 // access points and both SSM secrets alive for a membership that no longer exists
-// (ADR 0045 決定 13, docs/64 §64.18.1). Everything the adapter created has to go — and the
+// (ADR 0045 決定 13, docs/log/64 §64.18.1). Everything the adapter created has to go — and the
 // hibernation snapshot with it, or a "deleted" home stays restorable and keeps billing.
 func TestECSEC2DestroyFoldsEveryResourceItCreated(t *testing.T) {
 	ctx := context.Background()
@@ -2796,7 +2796,7 @@ func TestECSEC2DestroyFoldsEveryResourceItCreated(t *testing.T) {
 	}
 	// The EFS directories are the one thing that cannot be removed from the API. They
 	// come back as leftovers so the caller can record them rather than believe the data
-	// is gone (docs/64 §64.18.4).
+	// is gone (docs/log/64 §64.18.4).
 	if len(leftovers) != 2 {
 		t.Errorf("expected the two EFS directories reported as leftovers, got %v", leftovers)
 	}
@@ -2826,7 +2826,7 @@ func TestECSEC2DestroyIsIdempotent(t *testing.T) {
 	}
 }
 
-// --- hibernation (ADR 0045 決定 4 + 決定 13, docs/64 §64.18.2) ---
+// --- hibernation (ADR 0045 決定 4 + 決定 13, docs/log/64 §64.18.2) ---
 
 func hibernateHarness(t *testing.T, dormantFor time.Duration) *ec2Harness {
 	t.Helper()
@@ -3211,7 +3211,7 @@ func TestECSEC2DestroyLeavesTheGoldenAlone(t *testing.T) {
 	}
 }
 
-// --- pool status for the admin UI (docs/64 §64.18.6) ---
+// --- pool status for the admin UI (docs/log/64 §64.18.6) ---
 
 // The screen exists to answer three questions no other runtime raises: how many boxes am
 // I paying for, which are asleep, and whose home is where. A hibernated home has NO
@@ -3293,7 +3293,7 @@ func TestPoolStatusIsAbsentOnOtherRuntimes(t *testing.T) {
 	}
 }
 
-// --- AZ placement (docs/64 §64.20.4, ADR 0045「未解決 — AZ の選び方」を閉じる) ---
+// --- AZ placement (docs/log/64 §64.20.4, ADR 0045「未解決 — AZ の選び方」を閉じる) ---
 
 // countCalls counts the calls whose text starts with prefix — used where the POINT is how
 // many times something happened, not that it happened.
@@ -3438,7 +3438,7 @@ func TestECSEC2EvictionForANewHomeLooksAtEveryAZ(t *testing.T) {
 // Moving a user to another AZ. An EBS home cannot be moved and the adapter has no
 // "move" operation — but it does not need one: hibernation turns the home into a
 // snapshot, and a snapshot has no AZ. The next Start rebuilds it wherever a slot is,
-// which is the whole runbook (docs/64 §64.20.7).
+// which is the whole runbook (docs/log/64 §64.20.7).
 //
 // This is a real path with real consequences, so it is pinned: the home has to come back
 // FROM THE SNAPSHOT (not as a fresh empty volume) and in the NEW AZ.
@@ -3547,7 +3547,7 @@ func TestECSEC2HibernateKeepsAMarkItDidNotWrite(t *testing.T) {
 
 // New homes used to follow one deterministic first choice, so everybody ended up in the
 // same AZ and losing it took out the whole deployment rather than half of it. An EBS home
-// cannot be evacuated, so the only lever is not putting everyone in one place (docs/64
+// cannot be evacuated, so the only lever is not putting everyone in one place (docs/log/64
 // §64.21).
 func TestECSEC2NewSlotsSpreadAcrossAZs(t *testing.T) {
 	ctx := context.Background()
@@ -3940,7 +3940,7 @@ func TestECSEC2PoolStatusHidesVolumesBeingDeleted(t *testing.T) {
 	}
 }
 
-// --- how far the bake has got (docs/64 §64.30) ---
+// --- how far the bake has got (docs/log/64 §64.30) ---
 
 // The half of a bake that produces no snapshot — the seed's slot, boot-install, the
 // slot release — is about 6 of its 11 minutes, and the screen used to call all of it
@@ -4248,7 +4248,7 @@ func (f *fakeEC2) addGoldenArch(id, pool, image, role, arch string, started time
 // the image filter stops discriminating and the tie-break is "newest wins" — a coin
 // toss decided by which bake happened to finish last.
 //
-// Measured on the dev deployment (docs/70 §70.14.5): baking x86_64 and arm64 together, the x86_64
+// Measured on the dev deployment (docs/log/70 §70.14.5): baking x86_64 and arm64 together, the x86_64
 // probe was seeded from the arm64 candidate. It did not fail — §70.5's self-heal wipes
 // the wrong-arch bits and re-runs boot-install — which is what makes it worth a test:
 // the golden's entire purpose is thrown away silently, and the probe proves the wrong
@@ -4281,7 +4281,7 @@ func TestECSEC2GoldenOfAnotherArchIsNotUsed(t *testing.T) {
 	}
 }
 
-// An untagged golden is x86_64 (docs/70 §70.6): deployments that baked one before
+// An untagged golden is x86_64 (docs/log/70 §70.6): deployments that baked one before
 // classes existed must keep working, and reading them as "unknown" would orphan every
 // existing golden on upgrade.
 func TestECSEC2UntaggedGoldenIsX86(t *testing.T) {
@@ -4313,7 +4313,7 @@ func TestECSEC2StaleCandidateIsNotUsed(t *testing.T) {
 	}
 }
 
-// --- 配置できない起動が「なぜ」を言う（docs/70 §70.14.6） ---
+// --- 配置できない起動が「なぜ」を言う（docs/log/70 §70.14.6） ---
 
 func svcWithEvents(desired, running int32, deployAt time.Time, events ...ecstypes.ServiceEvent) ecstypes.Service {
 	return ecstypes.Service{
@@ -4388,7 +4388,7 @@ func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 
 // Every service call must carry the single-task deployment configuration AND the
 // availabilityZoneRebalancing that ECS demands with it — not just the call that creates
-// the service. The defect docs/64 §64.39 describes needs maximumPercent 200, that is the
+// the service. The defect docs/log/64 §64.39 describes needs maximumPercent 200, that is the
 // AWS default, and a deployment that predates this change keeps the default until
 // something sends the new one. Measured A/B on one substrate (§64.39.10): 200% produced
 // two tasks with the FIRST from the old revision, 2 of 2; 100% produced one task from the
@@ -4454,7 +4454,7 @@ func TestECSEC2EveryServiceCallPinsOneTaskPerWorkspace(t *testing.T) {
 	}
 }
 
-// --- the workspace memory cap (ADR 0045 決定 28, docs/64 §64.41) ---
+// --- the workspace memory cap (ADR 0045 決定 28, docs/log/64 §64.41) ---
 
 // The numbers, and why they are these numbers. A cap that is too generous does not
 // contain anything (the incident's whole point was that the daemons had nowhere to
@@ -4508,7 +4508,7 @@ func TestECSEC2HostReserveParsing(t *testing.T) {
 
 // The cap has to reach the task definition, because that is the only place it does
 // anything: ECS turns container.Memory into the cgroup limit that keeps a runaway
-// workspace from evicting the box's daemons out of memory (docs/64 §64.40).
+// workspace from evicting the box's daemons out of memory (docs/log/64 §64.40).
 func TestECSEC2TaskDefinitionCarriesTheMemoryCap(t *testing.T) {
 	ctx := context.Background()
 	h := newEC2Harness(t)

@@ -1,6 +1,6 @@
 package main
 
-// MCP 2026-07-28（ステートレス版）の受理層（docs/49 + ADR0032）。
+// MCP 2026-07-28（ステートレス版）の受理層（docs/log/49 + ADR0032）。
 //
 // この版は initialize ハンドシェイクと Mcp-Session-Id を廃止し、版・クライアント情報・
 // クライアント能力を **毎リクエストの `_meta`** で運ぶ。af の /mcp は元から純粋な switch で

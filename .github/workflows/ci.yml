@@ -1,11 +1,11 @@
-# CI (docs/23 P0): automates the manual checks from CONTRIBUTING.md (gofmt / vet /
+# CI (docs/log/23 P0): automates the manual checks from CONTRIBUTING.md (gofmt / vet /
 # test / build). Verifies the 3 components in independent jobs. Extra linters
 # (golangci-lint etc.) may follow as opt-in.
 #
 # Runs on the develop trunk as well as the main gate. This file is free to run: the
 # repository is public, so GitHub-hosted standard runners cost nothing, and none of the
 # jobs below spend an external LLM quota. The billing spread described in
-# CONTRIBUTING "Commits & PRs" / docs/35-packaging.md therefore applies to e2e.yml and
+# CONTRIBUTING "Commits & PRs" / docs/log/35-packaging.md therefore applies to e2e.yml and
 # the contract workflows (which do spend quota), not here.
 #
 # Why develop needs its own trigger: "done" means merged into develop, and main moves
@@ -57,7 +57,7 @@ jobs:
       - name: scan full history
         run: /tmp/gitleaks --version && /tmp/gitleaks git --log-opts="--all --full-history -m" --redact --verbose
 
-  # 出荷物の禁止語ゲート（docs/35 §35.7.5）の本体検証。実際に成果物を走査するのは
+  # 出荷物の禁止語ゲート（docs/log/35 §35.7.5）の本体検証。実際に成果物を走査するのは
   # release-gate と publish-dist（ビルドが要る）で、ここでは **仕組みが動くこと** と
   # **ソースが清白なこと** を毎回確かめる。ユニットテストは架空の語で「検出する／
   # しない」を両方通すので、台帳の中身を知らなくてもゲートが空振りでないと言える。
@@ -112,7 +112,7 @@ jobs:
         # struct per architecture (Blksize is int64 on amd64 and int32 on arm64), so
         # code that touches syscall structs can compile here and fail on Graviton —
         # which is exactly what happened the first time the workspace image was built
-        # for arm64 (docs/70 §70.9). An ecs-ec2 slot can be arm64, so both binaries
+        # for arm64 (docs/log/70 §70.9). An ecs-ec2 slot can be arm64, so both binaries
         # have to build for it. CGO_ENABLED=0 matches how the images build them.
         env: { CGO_ENABLED: "0", GOOS: linux, GOARCH: arm64 }
         run: go build ./...
@@ -143,7 +143,7 @@ jobs:
         # struct per architecture (Blksize is int64 on amd64 and int32 on arm64), so
         # code that touches syscall structs can compile here and fail on Graviton —
         # which is exactly what happened the first time the workspace image was built
-        # for arm64 (docs/70 §70.9). An ecs-ec2 slot can be arm64, so both binaries
+        # for arm64 (docs/log/70 §70.9). An ecs-ec2 slot can be arm64, so both binaries
         # have to build for it. CGO_ENABLED=0 matches how the images build them.
         env: { CGO_ENABLED: "0", GOOS: linux, GOARCH: arm64 }
         run: go build ./...

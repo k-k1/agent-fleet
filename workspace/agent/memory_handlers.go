@@ -1,6 +1,6 @@
 package main
 
-// エージェントメモリの版管理（docs/39 / ADR 0022）— REST
+// エージェントメモリの版管理（docs/log/39 / ADR 0022）— REST
 // （P1: roots / snapshots / diff、P2: tree / restore / settings、P3: export / import）。
 //
 // ⚠️ ここに足したパスは control-plane/routes.go にも同じものを登録する（CP は明示許可
@@ -30,7 +30,7 @@ type memoryRootView struct {
 	Modified string             `json:"modified,omitempty"` // 最新 mtime（RFC3339）
 	Busy     bool               `json:"busy"`               // この kind に実行中セッションがある
 	Projects []memoryProjectRef `json:"projects"`           // claude のみ（scopes=false は空）
-	// Toggleable / Enabled は「エージェント側がメモリを書くこと」の ON/OFF（docs/39 P4）。
+	// Toggleable / Enabled は「エージェント側がメモリを書くこと」の ON/OFF（docs/log/39 P4）。
 	// 有効なルートにも載せる — codex が一度ワークスペースを作ると inactive から消えるので、
 	// ここに無いと有効化した後に切り戻す導線が UI から失われる。
 	Toggleable bool `json:"toggleable,omitempty"`
@@ -91,7 +91,7 @@ func handleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 		"roots": views,
 		// 宣言はあるが今は有効でないルート（codex memories が未有効 等）を理由付きで
 		// 返す。黙って落とすと Console が「なぜ出てこないか」も「どう有効化するか」も
-		// 示せない（docs/39 P4）。
+		// 示せない（docs/log/39 P4）。
 		"inactive": memoryInactiveRoots(),
 		"auto":     memoryAutoEnabled(),
 		// locked = 運用側が AF_MEMORY_SNAPSHOT で止めている（UI トグルでは戻せない）。
@@ -103,7 +103,7 @@ func handleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// handleMemorySettings は自動 snapshot の ON/OFF トグル（docs/39 決着 #1）。
+// handleMemorySettings は自動 snapshot の ON/OFF トグル（docs/log/39 決着 #1）。
 // 環境変数による強制 OFF は上書きできない。
 func handleMemorySettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -142,7 +142,7 @@ func handleMemorySnapshots(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"snapshots": list})
 }
 
-// handleMemorySnapshotCreate は手動 snapshot（docs/39 ②）。変更が無ければ committed=false
+// handleMemorySnapshotCreate は手動 snapshot（docs/log/39 ②）。変更が無ければ committed=false
 // を返すだけで、空コミットは積まない。
 func handleMemorySnapshotCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -214,7 +214,7 @@ func handleMemoryTree(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"rev": sha, "kinds": kinds, "projects": projects})
 }
 
-// handleMemoryRestore は指定時点への巻き戻し（docs/39 ④）。履歴は書き換えず、
+// handleMemoryRestore は指定時点への巻き戻し（docs/log/39 ④）。履歴は書き換えず、
 // pre-restore snapshot → live へ適用 → restore commit の 3 つを積む。
 func handleMemoryRestore(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -234,7 +234,7 @@ func handleMemoryRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMemoryImport は bundle / tar.gz を受領し、refs/imports/<id> へ独立系譜として
-// 取り込んで preview を返す（docs/39 ⑤）。この時点では live に一切触れない — 何を
+// 取り込んで preview を返す（docs/log/39 ⑤）。この時点では live に一切触れない — 何を
 // 適用するかは利用者が preview を見て決める。
 func handleMemoryImport(w http.ResponseWriter, r *http.Request) {
 	if err := memoryEnsureRepo(); err != nil {

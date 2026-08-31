@@ -17,7 +17,7 @@ import (
 // 落ちると何が起きるか: Next.js は Server Actions で Origin と x-forwarded-host の
 // 一致を検査して 403 を返す。ヘッダが消えていれば、プレビュー越しの Server Action は
 // 全部 403 になる —— しかも「プロキシが壊れている」ではなく「アプリが壊れている」
-// ように見える（docs/81 §2.5 (c)）。
+// ように見える（docs/log/81 §2.5 (c)）。
 func TestPreviewForwardsPublicHostHeaders(t *testing.T) {
 	var got http.Header
 	var sawHost string

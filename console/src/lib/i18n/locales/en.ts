@@ -51,11 +51,11 @@ export const en: Record<keyof typeof ja, string> = {
   "err.send_failed": "Failed to send.",
   "err.network": "Network error",
   "err.unknown": "An unknown error occurred.",
-  // per-tenant login (docs/61 §61.9). provider_required has a dedicated modal that
+  // per-tenant login (docs/log/61 §61.9). provider_required has a dedicated modal that
   // offers the re-sign-in link; this string is the fallback outside it.
   "err.provider_required": "This tenant needs a different sign-in method. Please sign in again.",
   "err.not_provisioned": "You don't belong to any tenant yet. Ask an administrator to add you.",
-  // The pre-invitation landing (docs/61 §61.10.2 · P7-2). ★ Written as the normal
+  // The pre-invitation landing (docs/log/61 §61.10.2 · P7-2). ★ Written as the normal
   // first step on an invite-run deployment, not as a failure — and it must show the
   // address to quote to the administrator.
   "notprov.title": "You haven't been invited yet",
@@ -91,7 +91,7 @@ export const en: Record<keyof typeof ja, string> = {
   "err.read_failed": "Failed to read the file.",
   "err.write_failed": "Failed to save the file.",
   "err.write_state_unknown": "The content is live, but its durability couldn't be confirmed.",
-  // docs/28 P3: workspace/agent handler stable codes (mirror of errcodes.go).
+  // docs/log/28 P3: workspace/agent handler stable codes (mirror of errcodes.go).
   "err.chat_assistant_not_found": "Assistant not found.",
   "err.chat_agent_unsupported": "Unsupported agent.",
   "err.chat_prompt_empty": "The prompt is empty.",
@@ -113,7 +113,7 @@ export const en: Record<keyof typeof ja, string> = {
   "err.conn_slack_destination_invalid": "The destination must be a Slack ID (channel C…, user U…).",
   "err.conn_slack_token_invalid": "Slack rejected the token (check the bot / app-level token).",
   "err.conn_slack_app_token_required": "Receiving replies needs an app-level token (xapp-).",
-  // MCP registry (docs/48)
+  // MCP registry (docs/log/48)
   "err.mcp_not_found": "MCP server not found.",
   "err.mcp_read_only": "This server is not editable (it can only be disabled).",
   "err.mcp_name_taken": "A server with this name is already registered.",
@@ -136,7 +136,7 @@ export const en: Record<keyof typeof ja, string> = {
   "err.mcp_kind_unknown": "Unknown agent kind.",
   "err.mcp_timeout_range": "The timeout must be between 1000 and 120000 ms.",
   "err.mcp_headers_unreadable": "The stored headers cannot be decrypted — re-enter every header value.",
-  // Egress allowlist requests (docs/48 §9 / control-plane/egress_member.go)
+  // Egress allowlist requests (docs/log/48 §9 / control-plane/egress_member.go)
   "err.egress_entry_invalid":
     "An allowlist entry must be a host or a .suffix.example.com — no scheme, port or path.",
   "err.egress_entry_too_broad": "A whole TLD (.com and the like) cannot be requested — name a domain.",
@@ -170,7 +170,7 @@ export const en: Record<keyof typeof ja, string> = {
   "err.memory_secret_detected": "The contents to export contain possible secrets.",
   "err.memory_too_large": "The file is too large.",
 
-  // --- builtin assistants (docs/28 P3; ids are the fixed set in assistants.go. The
+  // --- builtin assistants (docs/log/28 P3; ids are the fixed set in assistants.go. The
   //     Agent returns Japanese, but for builtins the Console catalog resolves display) ---
   "assistant.af.name": "Agent Fleet Assistant",
   "assistant.af.desc":
@@ -461,7 +461,7 @@ export const en: Record<keyof typeof ja, string> = {
     "Create a Slack app (api.slack.com/apps → From scratch), enable Socket Mode, add bot scopes (chat:write, channels:read, channels:history, groups:history, im:history, reactions:write, users:read, users:read.email) plus an app-level token with connections:write, subscribe to message events, then install it and /invite the bot to a channel. Paste both tokens here. They're stored encrypted inside the workspace and used only for notifications (display name and state — never logs or secrets).",
 
 
-  // === MCP servers (McpTab: the effective registry + user-scope CRUD, docs/48 P1) ===
+  // === MCP servers (McpTab: the effective registry + user-scope CRUD, docs/log/48 P1) ===
   "mcp.ws_required_title": "The workspace is stopped",
   "mcp.ws_required_hint":
     "Registered MCP servers live in the workspace's encrypted store. Start it to load them.",
@@ -532,7 +532,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mcp.enabled_on": "Enabled",
   "mcp.kv_value": "Value",
   "mcp.kv_masked_hint": "*** is the stored value. Leave it as-is to keep it unchanged.",
-  // --- egress allowlist tie-in (docs/48 §9, EgressNote.tsx) ---
+  // --- egress allowlist tie-in (docs/log/48 §9, EgressNote.tsx) ---
   // Say that a destination is (or is about to be) blocked while it can still be fixed.
   "mcp.egress_blocked":
     "This destination ({host}) is not on the outbound allowlist, so the workspace cannot reach it.",
@@ -544,7 +544,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mcp.egress_reason_for": "Used by the MCP server {name}",
   "mcp.egress_send": "Send request",
   "mcp.egress_propose_failed": "Could not send the request: {msg}",
-  // --- Tenant distribution (docs/48 P4) ---
+  // --- Tenant distribution (docs/log/48 P4) ---
   "mcp.tenant_fetched_at": "Tenant set last fetched: {when}",
   "mcp.tenant_never_fetched":
     "The tenant set has not been fetched yet (check the admin configuration or the connection).",
@@ -733,7 +733,7 @@ export const en: Record<keyof typeof ja, string> = {
   "ssm.f_region_placeholder": "Uses the profile default",
   "ssm.add_host": "Add host",
 
-  // --- settings export / import (features/settings/BackupTab.tsx, docs/79) ---
+  // --- settings export / import (features/settings/BackupTab.tsx, docs/log/79) ---
   "backup.intro":
     "Collect your settings into a single file and read them back on another deployment or account.",
   "backup.secrets_note":
@@ -928,7 +928,7 @@ export const en: Record<keyof typeof ja, string> = {
   "git.rename": "Rename",
   "git.rename_cancel": "Cancel",
   "git.github_oauth_unconfigured": "This tenant has no GitHub OAuth app. Ask a tenant administrator to register one under Tenant settings › Integrations › Git provider OAuth, or connect by pasting an access token.",
-  // Shown when the OAuth option is not offered at all (docs/71). A button nobody can
+  // Shown when the OAuth option is not offered at all (docs/log/71). A button nobody can
   // make work is worse than no button: the setting belongs to their tenant admin.
   "git.oauth_unregistered": "Connecting with OAuth isn't offered because this tenant has no OAuth app registered. Ask a tenant administrator to add one under Tenant settings › Integrations › Git provider OAuth.",
   "git.oauth_start_failed": "Failed to start OAuth: {msg}",
@@ -1217,7 +1217,7 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.destroy_leftovers": "Destroyed, but these could not be deleted: {list}",
   "admin.remove_purge": "Also destroy their workspace and home (irreversible)",
   "admin.remove_purge_warn": "Their home and everything the runtime created for them will be deleted. Re-inviting will not bring it back.",
-  // The third and last step of the clean-up (docs/61 §61.18); offered only once the
+  // The third and last step of the clean-up (docs/log/61 §61.18); offered only once the
   // workspace has been destroyed.
   "admin.delete_member_row": "Delete this member",
   "admin.delete_member_row_title": "Delete {key} from the roster for good?",
@@ -1284,7 +1284,7 @@ export const en: Record<keyof typeof ja, string> = {
   "pool.golden_rejected": "{snapshot} is not being used: {reason}. Nothing that could not be shown to boot is handed out, so new homes are built empty — a slow first start, nothing broken. Re-baking the same image stops after two attempts.",
   "pool.golden_stale": "{snapshot} was baked from {baked}, but this deployment runs {running}. It is NOT being used — new homes are built empty (slow first start) until it is re-baked.",
   "pool.golden_ok": "baked from {image}",
-  // How far a bake has got (docs/64 §64.30). A bake takes ~11 minutes and produces no
+  // How far a bake has got (docs/log/64 §64.30). A bake takes ~11 minutes and produces no
   // snapshot at all for the first half of it, so a single "preparing one" line leaves an
   // operator unable to tell progress from a stall.
   "pool.bake_step_seed": "seed slot",
@@ -1313,7 +1313,7 @@ export const en: Record<keyof typeof ja, string> = {
   "pool.idle_min": "{n} min",
   "pool.idle_hour": "{n} h",
   "pool.idle_day": "{n} d",
-  // --- Tenant-distributed MCP servers (docs/48 P4, AdminTab's McpAdminView) ---
+  // --- Tenant-distributed MCP servers (docs/log/48 P4, AdminTab's McpAdminView) ---
   "admin.mcp_intro":
     "MCP servers distributed to every member of the tenant. Only remote (Streamable HTTP) servers can be distributed — a stdio server cannot, because distributing a command is equivalent to running arbitrary code in every member's container.",
   "admin.mcp_distributed": "Distributed MCP servers",
@@ -1399,7 +1399,7 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.tts_dict_note":
     "A shared dictionary applied to every user's read-aloud (one “spelling=reading” per line; lines starting with # are comments). If a user's own reading dictionary (Read-aloud tab) has the same spelling, that user's entry wins. After saving, other users pick it up on the next Console load.",
   "admin.usage_load_error": "Failed to load.",
-  // --- Cloud cost (docs/67 + ADR 0048) ---
+  // --- Cloud cost (docs/log/67 + ADR 0048) ---
   // ⚠️ Deliberately NOT called "Usage". Three surfaces already carry that name (agent
   // tokens, and workspace running time in two places). This one is money, and it only
   // exists where there is an AWS bill.
@@ -1638,7 +1638,7 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.grant_body_2": ".",
   "admin.grant_note": "After granting, they can manage members, view resources, force-stop workspaces, and set session limits within this tenant (other tenants are unaffected).",
 
-  // --- per-tenant login (docs/61 §61.9 · P3). The three rules look alike and are
+  // --- per-tenant login (docs/log/61 §61.9 · P3). The three rules look alike and are
   // not: reading "invite domains" as "domains that may use this tenant" is the
   // mistake that breaks the operation. ---
   "admin.login_rules": "Login rules",
@@ -1652,16 +1652,16 @@ export const en: Record<keyof typeof ja, string> = {
     "An auto-join domain can belong to only one tenant.",
   "admin.login_url": "Sign-in URL for this tenant:",
 
-  // --- the deployment's methods = the default tenant's methods (docs/61 §61.17).
+  // --- the deployment's methods = the default tenant's methods (docs/log/61 §61.17).
   // Since P7-0 they appear as "deployment-wide" rows in every tenant's sign-in
   // method list. The display name leads; the id is shown next to it in <code>. ---
   "admin.providers_none": "This deployment has no sign-in method configured (the login page shows no buttons).",
   // ★ "none" and "could not read" must never share a string. The 403 used to collapse
   // into an empty array, which told an unauthorized reader the deployment was
-  // unconfigured (docs/61 §61.17.9 ②).
+  // unconfigured (docs/log/61 §61.17.9 ②).
   "admin.providers_unreadable": "Could not load the list of sign-in methods — you may not have permission, or it is temporarily unavailable.",
 
-  // --- tenant-defined sign-in methods (docs/61 §61.11 · P4), for a group whose
+  // --- tenant-defined sign-in methods (docs/log/61 §61.11 · P4), for a group whose
   // subsidiaries each have their own Entra tenant. The tenant admin writes the
   // definition, the deployment admin activates it (決定 30) — that asymmetry is the
   // feature. ---
@@ -1673,7 +1673,7 @@ export const en: Record<keyof typeof ja, string> = {
     "A new method starts as \"waiting for approval\": until a deployment administrator approves it, no button appears on the sign-in page and no one can sign in with it.",
   "admin.idp_none": "This tenant has no method of its own yet (the deployment-wide ones above still work).",
   "admin.idp_add": "Add a sign-in method",
-  // --- the two per-row toggles (docs/61 §61.17.5). The DB still stores two CSV
+  // --- the two per-row toggles (docs/log/61 §61.17.5). The DB still stores two CSV
   // columns; only the screen changed. ★ "Show" is subordinate to "Accept" — a
   // method that is not accepted never appears, however this is set. ---
   "admin.idp_accept": "Accept",
@@ -1731,7 +1731,7 @@ export const en: Record<keyof typeof ja, string> = {
   "admin.idp_repend_hint":
     "Changing the issuer, the client ID, the trust rule, the kind or how the same account is recognised — or adding a domain, tenant id or GitHub organization — sends the method back for approval, " +
     "because the approval was given to that identity source for that scope.",
-  // ★ P7-1 (docs/61 §61.17.6) removed the "has no effect on the plain /login"
+  // ★ P7-1 (docs/log/61 §61.17.6) removed the "has no effect on the plain /login"
   // workaround. What is left is the one misreading worth heading off: hidden ≠ gone.
   "admin.hidden_still_accepted_note":
     "★ A method without a button is still accepted. People signing in with it — someone who also belongs to another tenant, typically — keep getting in; it simply stops appearing on this tenant's sign-in page.",
@@ -1739,7 +1739,7 @@ export const en: Record<keyof typeof ja, string> = {
     "★ Narrowing this to your own methods locks out people who also belong to another tenant and sign in there: an account at a different IdP is a different login, even with the same address. Leave the method those people use on \"Accept\" and just clear \"Show button\", so it stays usable without appearing here. Accepting a method does not widen who can enter — the roster decides that.",
   "admin.login_rules_methods_moved":
     "★ Which sign-in methods this tenant accepts, and which of them get a button on the sign-in page, are set per row under \"Sign-in methods\".",
-  // ★ The suspend ordering guard (docs/61 §61.17.4). A confirmation, not a refusal —
+  // ★ The suspend ordering guard (docs/log/61 §61.17.4). A confirmation, not a refusal —
   // suspending is also how a compromised IdP is stopped, and stopping is always
   // allowed to be faster than starting. The count comes from the CP's own message.
   "admin.idp_suspend_title": "Suspend {name}",
@@ -1792,7 +1792,7 @@ export const en: Record<keyof typeof ja, string> = {
   "tenant.net_scope_hint": "This restricts USE of the tenant, not reaching the site: the sign-in page still loads and signing in still works from anywhere, but nothing in this tenant can be opened from a network that is not listed.",
   "tenant.net_exempt_hint": "Not covered: MCP and the internal Git provider, which are called from inside a member's own workspace and say nothing about where the person is. Revoke those by deactivating the membership. Deployment administrators are exempt from this rule so a mistake here can always be undone.",
   "tenant.net_layers_hint": "This is an access rule, not a network defence — the request still reaches the control plane and is refused after the session is verified. To stop traffic before it arrives, an operator restricts it at the load balancer instead.",
-  // Integrations (docs/71) — credentials the tenant created on the other service.
+  // Integrations (docs/log/71) — credentials the tenant created on the other service.
   "tenant.group_integrations": "Integrations",
   "tenant.tab_git_oauth": "Integration OAuth apps",
   "tenant.git_oauth_intro": "Decides which OAuth app the “Connect with OAuth” buttons use for your members (GitHub and Bitbucket under Connections › Git, Jira under Connections › Issue tracker). The app is created in your own GitHub org / Bitbucket workspace / Atlassian account, so a tenant administrator registers it here. It takes effect the moment you save — there is no approval step.",
@@ -1829,7 +1829,7 @@ export const en: Record<keyof typeof ja, string> = {
   "tenant.rules_autojoin_note": "People with an email address in this domain join this tenant on their first sign-in.",
   "tenant.rules_invite_note": "A guard that applies only when adding a member. It does not affect people who are already members.",
 
-  // --- keyboard system (features/keys · docs/29). Command/group names drive both the
+  // --- keyboard system (features/keys · docs/log/29). Command/group names drive both the
   // display and the command palette's bilingual match. {n} is the pane ordinal. ---
   "keys.grp.pane": "Panes / layout",
   "keys.grp.session": "Session",
@@ -2041,7 +2041,7 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.state.recreating": "Recreating…",
   "wsbar.state.unknown": "Unknown",
   "wsbar.state.no_tenant": "No tenant",
-  // Starting dialog (WsStartingDialog — docs/35 §35.9-9)
+  // Starting dialog (WsStartingDialog — docs/log/35 §35.9-9)
   "wsstart.title": "Starting workspace",
   "wsstart.generic": "Starting…",
   "wsstart.blocked": "Cannot start. Waiting will not help",
@@ -2289,7 +2289,7 @@ export const en: Record<keyof typeof ja, string> = {
     "Send a message to start the conversation. You can ask it to translate or summarize a Markdown document, answer questions, and more.",
   "chat.you": "You",
   "chat.report_role": "Session report",
-  // Session-report card (docs/28 P6). The card carries the FACTS only; the operator's
+  // Session-report card (docs/log/28 P6). The card carries the FACTS only; the operator's
   // marching orders are generated by the Agent when it builds the prompt, never stored.
   // {display}/{name} name the reporting session; the rest are arguments from the Agent.
   // features/chat/report.ts assembles these.
@@ -2623,7 +2623,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.freeform_ph": "or type your own (Type something / newlines ok)",
   "mirror.submit_answer": "Submit answer",
   "mirror.question_cancel": "Cancel — back to chat",
-  // Carried interaction (docs/75) — what was on screen when the session was folded away.
+  // Carried interaction (docs/log/75) — what was on screen when the session was folded away.
   "mirror.carried_question": "Question left unanswered at stop",
   "mirror.carried_plan": "Plan awaiting approval at stop",
   "mirror.carried_permission": "Permission requested at stop",
@@ -2753,7 +2753,7 @@ export const en: Record<keyof typeof ja, string> = {
   "memo.assistant_title": "Memos",
   "keys.cmd.memoAdd": "Add memo",
 
-  // === Scheduled execution (features/schedules/SchedulesSection.tsx, docs/38 P5) ===
+  // === Scheduled execution (features/schedules/SchedulesSection.tsx, docs/log/38 P5) ===
   "sched.title": "Schedules",
   "sched.empty": "No scheduled runs yet. Ask the operator (e.g. \"every morning at 9…\") to add one.",
   "sched.next_run": "Next run",
@@ -3035,7 +3035,7 @@ export const en: Record<keyof typeof ja, string> = {
   "arch.no_restorable": "No restorable archives",
   "arch.restore_all": "Restore all",
 
-  // === Cleanup panel (features/sessions/CleanupModal.tsx, docs/32) ===
+  // === Cleanup panel (features/sessions/CleanupModal.tsx, docs/log/32) ===
   "clean.title": "Clean up",
   "clean.open": "Open cleanup (survey & tidy)",
   "clean.subtitle": "Survey and tidy up accumulated stopped sessions, unneeded worktrees and merged branches.",
@@ -3380,7 +3380,7 @@ export const en: Record<keyof typeof ja, string> = {
   "repo.share": "Share…",
   "repo.shared_badge": "Shared (visible to another user)",
 
-  // === Project settings modal (docs/56 P0 + docs/57, features/repos/ProjectModal.tsx) ===
+  // === Project settings modal (docs/log/56 P0 + docs/log/57, features/repos/ProjectModal.tsx) ===
   "pmcp.title": "Project settings — {repo}",
   "pmcp.ws_required_title": "The workspace is stopped",
   "pmcp.ws_required_hint": "Reading files inside the working copy requires the workspace to be running.",
@@ -3938,7 +3938,7 @@ export const en: Record<keyof typeof ja, string> = {
   "set.group_workspace": "Workspace",
   "set.back": "All settings",
 
-  // === アカウント（サインイン方法の紐づけ・docs/61 §61.16 + 決定 37） ===
+  // === アカウント（サインイン方法の紐づけ・docs/log/61 §61.16 + 決定 37） ===
   "set.tab_account": "Account",
   "account.intro": "The sign-in methods linked to this account. Whichever one you use, you land in the same workspace, the same home and the same secrets.",
   "account.disabled": "This deployment doesn't support adding sign-in methods (only available when IdP sign-in is enabled).",
@@ -3956,7 +3956,7 @@ export const en: Record<keyof typeof ja, string> = {
     "You will no longer be able to sign in with this method. Your workspace, home and secrets are untouched, and you can add it again later.",
   "account.detach_current": "You are signed in with this method right now. Sign in with another one first, then remove it.",
   "account.detach_last": "This is the only sign-in method left. Removing it would leave you unable to sign in at all.",
-  // === 使用量ビュー（docs/46 P4・features/usage/UsageView.tsx） ===
+  // === 使用量ビュー（docs/log/46 P4・features/usage/UsageView.tsx） ===
   "usage.intro":
     "Where the tokens went, feature by feature. Interactive sessions and the auxiliary LLM calls the fleet makes on its own (title suggestions, compaction, reply suggestions…) are measured on the same yardstick.",
   "usage.ws_required_title": "The workspace is stopped",
@@ -4207,6 +4207,26 @@ export const en: Record<keyof typeof ja, string> = {
   "view.cannot_resolve_link": "Cannot resolve link: {href}",
   "view.cannot_load": "Cannot load",
   "view.lines_meta": " · {n} lines",
+  "view.doc.loading": "Converting the document…",
+  "view.doc.simple_preview_note": "A simple preview: formatting, shapes and images are not reproduced (download the original to see them).",
+  "view.doc.cannot_convert": "(Could not convert this document)",
+  "view.doc.unsupported": "(This format is not supported)",
+  "view.doc.encrypted": "(This document is password-protected)",
+  "view.doc.needs_ocr": "(The pages are images only — reading their text needs OCR, which is not available here)",
+  "view.doc.too_large": "(Too large to convert here)",
+  "view.doc.download_hint": "Open the original through the download link in the info bar.",
+  "view.pdf.pages_meta": " · {n} pages",
+  "view.pdf.loading": "Loading the PDF…",
+  "view.pdf.cannot_load": "(Cannot display this PDF)",
+  "view.pdf.password": "(This PDF is password-protected — download it to open it)",
+  "view.pdf.broken": "(The PDF is damaged or in an unsupported format)",
+  "view.pdf.page_of": "{n} / {total}",
+  "view.pdf.prev_page": "Previous page",
+  "view.pdf.next_page": "Next page",
+  "view.pdf.zoom_in": "Zoom in",
+  "view.pdf.zoom_out": "Zoom out",
+  "view.pdf.fit_width": "Fit width",
+  "view.pdf.aria": "PDF preview",
   "view.head_only": " · head only",
   "view.plain_mode_tip": "Shown as plain text without highlighting or line numbers because the file (or a line) is very large",
   "view.plain_mode": "Plain view",
@@ -4266,13 +4286,13 @@ export const en: Record<keyof typeof ja, string> = {
   "auth.expired_relogin_hint": "Log in again and you'll return to this screen and can continue working.",
   "auth.relogin": "Log in again",
 
-  // === tenant requires another sign-in method (ProviderRequiredModal · docs/61 §61.9.4) ===
+  // === tenant requires another sign-in method (ProviderRequiredModal · docs/log/61 §61.9.4) ===
   "auth.provider_required_title": "This tenant needs a different sign-in",
   "auth.provider_required_body": "{tenant} only accepts a sign-in method other than the one you used.",
   "auth.provider_required_hint": "Sign in again to enter this tenant. To go back to the tenant you were in, cancel and switch tenants instead.",
   "auth.provider_required_signin": "Sign in again",
 
-  // === Text/code editor (docs/44 Phase 2) ===
+  // === Text/code editor (docs/log/44 Phase 2) ===
   "editor.aria_label": "{path} editor",
   "editor.guard.layout": "Moving this pane will discard unsaved changes.",
   "editor.guard.history": "Navigating history will discard unsaved changes.",
@@ -4339,7 +4359,7 @@ export const en: Record<keyof typeof ja, string> = {
   "editor.diff.remote": "Remote",
   "editor.popout_dirty": "A file with unsaved changes cannot be popped out. Save or discard it, then retry.",
 
-  // === AI edit suggestions (docs/44 Phase 4) ===
+  // === AI edit suggestions (docs/log/44 Phase 4) ===
   "editor.suggestion.button": "AI suggest",
   "editor.suggestion.button_tip": "Ask AI to propose a change to the selection (or the whole file)",
   "editor.suggestion.title": "AI edit suggestion",
@@ -4357,12 +4377,12 @@ export const en: Record<keyof typeof ja, string> = {
   "editor.suggestion.invalid": "This suggestion cannot be applied.",
 
 
-  // === agent memory versioning (docs/39 P2 / ADR 0022; features/settings/MemoryTab.tsx) ===
+  // === agent memory versioning (docs/log/39 P2 / ADR 0022; features/settings/MemoryTab.tsx) ===
   // mem.trigger_* keys mirror the Agent's commit trailer (AF-Trigger) values, with
   // "-" replaced by "_". An unknown trigger falls back to the raw value.
   "mem.intro":
     "History for the memory your agents build up (Claude's auto-memory, Codex's memories). A snapshot is taken whenever it changes, so you can review diffs and roll back to any point. Memory can contain personal notes — review it before sharing.",
-  // Agent instructions (docs/60) — the personal layer between the fleet guide and a
+  // Agent instructions (docs/log/60) — the personal layer between the fleet guide and a
   // repository's own instructions.
   "instr.intro":
     "Whatever you write here is added to the instructions of every agent you start in this workspace. It is the place for how you work — the language and tone of reports, when to stop and ask, which tools to prefer. It is never committed to a repository.",
@@ -4443,7 +4463,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mem.restored": "Restored ({written} updated, {deleted} removed).",
   "mem.restore_nochange": "The contents already matched that point.",
 
-  // --- export / import (docs/39 P3) ---
+  // --- export / import (docs/log/39 P3) ---
   "mem.transfer_title": "Export / import",
   "mem.export_format_bundle": "bundle (full history)",
   "mem.export_format_tar": "tar.gz (latest only)",
@@ -4505,7 +4525,7 @@ export const en: Record<keyof typeof ja, string> = {
   "share.proposal_failed": "Could not send the proposal.",
   "share.proposal_sent": "Proposal sent to the owner.",
   "share.pending": "{count} pending approval(s)",
-  // Handing a session to another member (docs/77 / ADR 0057)
+  // Handing a session to another member (docs/log/77 / ADR 0057)
   "handoff.offer_action": "Hand off to a member",
   "handoff.offer_title": "Hand off to a member",
   "handoff.offer_intro": "Offer \"please take this over\" to someone this session is already shared with. If they accept, a new session starts in THEIR workspace.",

@@ -1,6 +1,6 @@
 package main
 
-// Role-scoped docs, pulled from the CP when nothing was mounted (docs/dev/04 §4.9).
+// Role-scoped docs, pulled from the CP when nothing was mounted (docs/build/04 §4.9).
 //
 // The agent-fleet docs under /usr/local/share/agent-fleet/docs are what the Console's
 // 利用ガイド opens and what the in-container agents grep to answer questions about this
@@ -210,7 +210,7 @@ func extractDocsTarGz(r io.Reader, dest string) (int, error) {
 }
 
 // safeDocsEntryName accepts only a relative, cleaned, forward-slash path that stays
-// inside the destination — "guide/member/README.md", never "/etc/x" or "../../x".
+// inside the destination — "use/README.md", never "/etc/x" or "../../x".
 func safeDocsEntryName(name string) (string, bool) {
 	n := strings.TrimSpace(name)
 	if n == "" || strings.ContainsRune(n, '\\') || strings.ContainsRune(n, 0) {

@@ -2,7 +2,7 @@
 // ペイロード（質問・プラン・許可・ストリーミングテキスト・直近ツール）の per-sid
 // ファイルストア。claude の hooks / opencode プラグイン / codex フック（配線は
 // package main の session_status.go）が書き、sessions リストと /messages が読む。
-// package main からの抽出（docs/23 残① Wave A）— ディスク上のレイアウト
+// package main からの抽出（docs/log/23 残① Wave A）— ディスク上のレイアウト
 // （~/.config/agent-fleet/…）と JSON タグはバイト同一を維持すること。
 package status
 
@@ -24,7 +24,7 @@ type SessionStatus struct {
 	// MarkTurnEnd completed|failed|aborted) — as opposed to an idle written because we
 	// do NOT know what is going on: the SessionStart reset, or a managed driver that
 	// lost its runtime handle mid-turn (TurnUnknown). 状態文字列だけでは「終わった」と
-	// 「分からない」が同じ "idle" になり、レベル判定（docs/51 のリコンサイラ）は不明を
+	// 「分からない」が同じ "idle" になり、レベル判定（docs/log/51 のリコンサイラ）は不明を
 	// 完了と読んでしまう。証拠側を positive に倒す1bit — フラグの無い idle は不明として
 	// 扱われ、報告は次の本物の終端まで待つ（取りこぼしは遅延、誤りは誤配送）。
 	TurnEnd bool `json:"turnEnd,omitempty"`
@@ -70,18 +70,18 @@ func ReadExit(name string) (ExitInfo, bool) { return exitFiles.Read(name) }
 func RemoveExit(name string)                { exitFiles.Remove(name) }
 
 // OOMKillCount reads the cumulative oom_kill counter from the container's own
-// cgroup v2 memory.events（record_exit.go の containerOOMKill をここへ移設 — docs/27
+// cgroup v2 memory.events（record_exit.go の containerOOMKill をここへ移設 — docs/log/27
 // §10.2-2 で opencode supervisor も使うため package main から下ろした）。
 //
 // 実装は internal/resources へ二度目の移設をした。あちらが同じ cgroup から
-// メモリ / CPU も読むようになり（docs/63 §63.9）、cgroup を読む口が 2 つに割れる
+// メモリ / CPU も読むようになり（docs/log/63 §63.9）、cgroup を読む口が 2 つに割れる
 // のを避けたためで、呼び出し側（各 driver / record_exit / supervisor）から見た
 // 意味は変わらない。ここは互換のための薄い委譲。
 func OOMKillCount() (uint64, bool) { return resources.OOMKillCount() }
 
 // ExitReasonFor interprets a wait status into a cause the Console can show
 // （record_exit.go の exitReason を移設・共用化 — pane ラッパー（tui）と daemon
-// supervisor（managed、docs/27 §10.2-2）が同じ reason enum を書くため）:
+// supervisor（managed、docs/log/27 §10.2-2）が同じ reason enum を書くため）:
 //   - 0                       → exited  (normal quit)
 //   - SIGKILL(9) + OOM        → oom     (memory cgroup / host OOM killer)
 //   - SIGKILL(9) no OOM       → killed  (a SIGKILL from something other than an OOM)

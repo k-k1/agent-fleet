@@ -1,4 +1,4 @@
-// Egress allowlist ↔ MCP registry (docs/48 §9, docs/20 M3) — the client half.
+// Egress allowlist ↔ MCP registry (docs/log/48 §9, docs/log/20 M3) — the client half.
 //
 // A remote MCP server is an outbound destination. Where the deployment routes workspace
 // egress through the forward proxy, a host that is not on the allowlist either cannot be

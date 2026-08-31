@@ -1,4 +1,4 @@
-// Display-name/description resolution for assistants (docs/28 P3). Builtin assistants'
+// Display-name/description resolution for assistants (docs/log/28 P3). Builtin assistants'
 // user-facing name/description live in the Console i18n catalog, keyed by their stable
 // id (assistant.<id>.name / .desc) — the Agent still returns Japanese values as a
 // fallback for older fleets that predate the catalog. User-defined assistants have no

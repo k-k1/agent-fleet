@@ -17,7 +17,7 @@ patent grant; no separate CLA is required.
   committing. Compiled binaries are git-ignored too.
 - **Keep the core deploy-agnostic.** Don't bake Docker/compose assumptions into
   the Control Plane. Deployment specifics belong behind the ports (Runtime,
-  KeyCustodian, MetadataStore, AuthGateway) — see `docs/dev/09-deploy.md`.
+  KeyCustodian, MetadataStore, AuthGateway) — see `docs/build/09-deploy.md`.
 - **Match the surrounding code.** Go: `gofmt` + `go vet` clean, `go test ./...`
   passing. Console: `npm run build` clean.
 - **Run `gofmt` before every commit that touches Go — this is a hard gate.**
@@ -57,7 +57,7 @@ the trunk unverified for a month at a time. `e2e.yml` and the contract workflows
 do spend an external LLM quota, so those stay concentrated on the `develop` →
 `main` PR, on pushes to `main`, and on their nightly / weekly cron over `develop`.
 Either way, the local run above is still the per-commit check — hosted CI is the
-safety net, not the first line. See `docs/35-packaging.md` for the billing
+safety net, not the first line. See `docs/log/35-packaging.md` for the billing
 rationale behind this two-tier split. Hotfixes branch from `main` → PR → `main`,
 then back-merge into `develop`. Release tags,
 release builds and public distribution are all cut from `main`.

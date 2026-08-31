@@ -1,4 +1,4 @@
-// Operator-interaction graph (docs/44 / ADR0027) — FROZEN CONTRACT (Phase 0).
+// Operator-interaction graph (docs/log/44 / ADR0027) — FROZEN CONTRACT (Phase 0).
 //
 // This file is types-only and import-only. It is the seam the three parallel
 // implementation sessions build against independently:
@@ -13,7 +13,7 @@ import type { Session, SessionKind, SessionState } from "./session.ts";
 
 // ── REST DTO ────────────────────────────────────────────────────────────────
 // One outbound instruction from the operator to a session, recorded server-side
-// where armSessionReport() already fires (the "dispatch ledger", docs/44 §backend).
+// where armSessionReport() already fires (the "dispatch ledger", docs/log/44 §backend).
 // The return direction (session → operator) is NOT here — those are the operator
 // conversation's role:"report" messages, already fetched via chatGet().
 export interface DispatchEntry {

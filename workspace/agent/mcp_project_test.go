@@ -10,10 +10,10 @@ import (
 	"testing"
 )
 
-// TestHandleRepoMCPServesSnapshot is the route-table-level smoke test for docs/56
+// TestHandleRepoMCPServesSnapshot is the route-table-level smoke test for docs/log/56
 // P0's GET /repos/{name}/mcp: real buildMux, real repoAnyDirFromPath resolution,
 // real mcpproj.Inspect over an actual git working copy — the same shape as the
-// motivating novel-lab example, checked for the masked-value contract (docs/56
+// motivating novel-lab example, checked for the masked-value contract (docs/log/56
 // §7.3) at the HTTP boundary, not just inside internal/mcpproj's own tests.
 func TestHandleRepoMCPServesSnapshot(t *testing.T) {
 	h := smokeHandler(t)
@@ -89,9 +89,9 @@ func TestHandleRepoMCPUnknownRepo404s(t *testing.T) {
 	}
 }
 
-// TestHandleRepoMCPPlanApply exercises docs/56 P1's plan → apply route pair at
+// TestHandleRepoMCPPlanApply exercises docs/log/56 P1's plan → apply route pair at
 // the HTTP boundary: real buildMux, real route registration (this is exactly the
-// "both agent AND control-plane routes.go" contract docs/56 §10 warns about — a
+// "both agent AND control-plane routes.go" contract docs/log/56 §10 warns about — a
 // route missing from one side 404s from the Console, not from a direct agent
 // test like this one).
 func TestHandleRepoMCPPlanApply(t *testing.T) {

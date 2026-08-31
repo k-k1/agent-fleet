@@ -1,63 +1,77 @@
-# 0059. リポジトリの取り込み（clone / svn checkout）は名前付きジョブにし、「応答が返ったか」で完了を決めない
+# 0059. Repository imports (clone / svn checkout) become named jobs, and completion is not decided by "did a response come back"
 
-- 状態: **採用・実装済み**（2026-08-26）。設計と経緯は [docs/78](../78-repo-import-jobs.md)。
-- 関連: [0024-svn-checkout.md](0024-svn-checkout.md)（SVN 取り込みの本体。本 ADR はその完了判定を差し替える） /
-  [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md)（止めてよいかの判定材料に
-  「取り込み中」を足す） / [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.md)（長い処理を
-  リクエストの寿命から外す、同型の先例）
+English | [日本語](0059-repo-import-jobs.ja.md)
 
-## 背景
+- Status: **adopted and implemented** (2026-08-26). The design and the background are in [docs/78](../log/78-repo-import-jobs.md).
+- See also: [0024-svn-checkout.md](0024-svn-checkout.md) (SVN import proper; this ADR replaces its completion check) /
+  [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md) (adding "importing" to what decides whether it may be stopped) /
+  [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.md) (taking a long operation out of a request's lifetime — a precedent of the same shape)
 
-<prod-deployment> 環境で、大きな SVN リポジトリのチェックアウトが **中途半端な作業コピーのまま「チェックアウト
-しました」と報告された**。利用者がそこへ 更新 を押すと `E155037`、ロックを解除 を押すと `E200033
-（database is locked）`。30 分を越えたところで作業コピーは**フォルダごと消えた**。
+## Context
 
-原因は 1 つの読み替えにある。取り込みは分〜時間かかるが、ALB の idle timeout は 60 秒
-（[30-ingress.yaml](../../deploy/aws/ecs/cfn/30-ingress.yaml)）で、大きな取り込みの応答は必ずここで切れる。
-Console はこれを見越して「エラーだが `~/repos` にフォルダが増えていれば成功」と判定していた
-（旧 `console/src/features/repos/clone.ts`）。ところが `svn checkout` は **開始 1 秒で `.svn` を作る**ので、
-この判定は必ず成功に倒れる。以降は全部その帰結である:
+On the `<prod-deployment>` environment, a large SVN repository checkout **was reported as "checked
+out" while the working copy was half-finished**. Pressing Update there gave `E155037`, and pressing
+Clean up lock gave `E200033 (database is locked)`. Past the 30-minute mark, the working copy
+**disappeared, folder and all**.
 
-- 一覧（`GET /repos`）は `.svn` があるフォルダを作業コピーとして並べる。**走行中の物**も並ぶ。
-- 一覧は行ごとに `svn info` / `svn status` を掛ける。走行中の checkout と同じ `wc.db` を触るので、
-  60 秒ごとに sqlite ロックを奪い合う。`svn status` が返す `L`（ロック中）は 未コミット と表示される。
-- 利用者が 更新 / ロックを解除 を押すと、走行中の checkout と正面衝突する（上記 2 つのエラー）。
-- 30 分（`svnNetTimeout`）で殺され、失敗パスの `os.RemoveAll(dir)` が作業コピーを消す。**このとき応答を
-  待っている者は誰も居ない**ので、消えたことは誰にも伝わらない。
+The cause is one reinterpretation. An import takes minutes to hours, while the ALB's idle timeout is 60
+seconds ([30-ingress.yaml](../../deploy/aws/ecs/cfn/30-ingress.yaml)), so a large import's response is
+always cut off there. The Console anticipated that and judged "an error, but a success if a folder
+appeared in `~/repos`" (the old `console/src/features/repos/clone.ts`). But `svn checkout` **creates
+`.svn` within a second of starting**, so that judgement always falls to success. Everything after that
+is the consequence:
 
-同じ形は git の clone にもあった（`.git` ができるのも clone の最初）。
+- The list (`GET /repos`) shows any folder with a `.svn` as a working copy. **Including one still
+  running.**
+- The list runs `svn info` / `svn status` per row. That touches the same `wc.db` as the running
+  checkout, so they fight over the sqlite lock every 60 seconds. The `L` (locked) that `svn status`
+  returns is displayed as Uncommitted.
+- When the user presses Update or Clean up lock, it collides head-on with the running checkout (the two
+  errors above).
+- At 30 minutes (`svnNetTimeout`) it is killed and the failure path's `os.RemoveAll(dir)` deletes the
+  working copy. **Nobody is waiting for the response at that point**, so nobody is told it is gone.
 
-## 決定
+The same shape existed for git clone (`.git` also appears at the start of a clone).
 
-**取り込みは Agent 側の名前付きジョブにする。** `POST /repos`・`POST /repos/svn` は検証だけ同期で行い、
-`202` とジョブを返す。ネットワーク処理は `context.Background()` のジョブとして走り、進行と結末は
-`GET /repo-jobs` で観測する。完了の唯一の根拠はジョブの `state` で、HTTP 応答が届いたかどうかではない。
+## Decision
 
-付随して 5 つ:
+**An import becomes a named job on the Agent side.** `POST /repos` and `POST /repos/svn` do only the
+validation synchronously and return `202` plus a job. The network work runs as a
+`context.Background()` job, and progress and outcome are observed with `GET /repo-jobs`. The only
+grounds for completion is the job's `state`, not whether an HTTP response arrived.
 
-1. **走行中のフォルダは `GET /repos` に出さない。** 半端な作業コピーは「起動できる・更新できる・
-   `svn status` を掛けてよい物」ではない。Console は代わりにジョブの行を描く。
-2. **失敗しても再開できる作業コピーは消さない。** svn は `cleanup` + `update` で続きから取れる。
-   消してよいのは作業コピーになっていない残骸だけ。上限は 6 時間（明らかに壊れている物を切るだけの値）で、
-   止めたいときは中止できる。
-3. **中断を検出できるようにする。** Agent はタスク入れ替えや idle-stop で取り込みごと死ぬ。marker を
-   ディスクに置き、起動時に生き残っていれば `interrupted` として一覧に戻す。さもないと半端な作業コピーが
-   「普通のリポジトリ」の顔で並び、事故前と同じ状態になる。
-4. **取り込み中は Workspace を止めない。** 走行中の件数を `GET /sessions` に載せ、reaper の busy に足す。
-   GET のポーリングは活動に数えない規約（docs/19）なので、これが無いと 1 時間の取り込みは自動停止に殺される。
-   「なぜ止まらないか」の holders にも `repojob` を出す（docs/75 決定 11）。
-5. **`svnLocked()` は `E155037` を含める。** 中断後に svn が実際に出すのは
-   「run **'cleanup'**」であって `svn cleanup` ではない。E155004 系の文言だけを見ていたので、自動修復は
-   一度も走っていなかった。
+Five things come with it:
 
-## 却下した案
+1. **A folder that is still running does not appear in `GET /repos`.** A half-finished working copy is
+   not "something you can launch in, update, or run `svn status` against". The Console draws the job's
+   row instead.
+2. **Do not delete a working copy that can be resumed after a failure.** svn can carry on with
+   `cleanup` + `update`. Only debris that never became a working copy may be deleted. The cap is six
+   hours (a value that only cuts off something obviously broken), and it can be cancelled when you
+   want to stop it.
+3. **Make an interruption detectable.** The Agent dies along with the import on a task swap or an
+   idle-stop. A marker is put on disk, and if it survives at startup the job comes back to the list as
+   `interrupted`. Otherwise a half-finished working copy lines up wearing the face of a normal
+   repository — the same state as before the incident.
+4. **Do not stop the workspace while importing.** The number of running jobs goes on `GET /sessions`
+   and is added to the reaper's busy check. GET polling does not count as activity by convention
+   (docs/19), so without this a one-hour import is killed by automatic stopping. `repojob` also appears
+   in the holders for "why will it not stop" (docs/75 decision 11).
+5. **`svnLocked()` must include `E155037`.** What svn actually says after an interruption is
+   "run **'cleanup'**", not `svn cleanup`. We were looking only at the E155004-family wording, so
+   automatic repair had never once run.
 
-- **ALB の idle timeout を伸ばす。** 60 秒は CP の全ハンドラに掛かる上限で、長い処理のために伸ばすのは
-  30-ingress.yaml のコメントが明示的に禁じている方針（伸ばしてよいのは新しい long-poll のときだけ）。
-  そもそも「取り込みが終わるまで接続を保つ」設計自体が、タブを閉じたら結末が消えることを意味する。
-- **フォルダの中身を見て完了を推定する（ファイル数・`svn status` が空か）。** 走行中と完了後を外形から
-  区別できない。`svn info` は取得先のリビジョンを最初から返すので、これも完了の証拠にならない。
-- **Console のポーリングを活動として数え、idle-stop を抑止する。** 開いたタブが Workspace を温め続ける
-  のは docs/19 が明示的に避けた失敗（課金が止まらない）。busy の根拠は「実際に走っている処理」であるべき。
-- **失敗したら常にフォルダを消す（従来）。** 今回失われたのは数十分ぶんのダウンロードで、しかも svn は
-  再開できた。消すのは利用者の選択肢であって、既定の後始末ではない。
+## Options rejected
+
+- **Raise the ALB's idle timeout.** 60 seconds is a cap on all of the CP's handlers, and raising it for
+  a long operation is explicitly forbidden by 30-ingress.yaml's comments (it may only be raised for a
+  new long-poll). And a design of "hold the connection until the import finishes" means the outcome
+  disappears if you close the tab.
+- **Infer completion by looking inside the folder** (file counts, whether `svn status` is empty). There
+  is no external way to distinguish running from finished. `svn info` returns the target revision from
+  the very beginning, so it is no evidence of completion either.
+- **Count the Console's polling as activity and suppress idle-stop.** An open tab keeping a workspace
+  warm is the failure docs/19 explicitly avoided (the billing never stops). Busy must be grounded in
+  work that is actually running.
+- **Always delete the folder on failure (the old behaviour).** What was lost here was tens of minutes of
+  downloading, and svn could have resumed. Deleting is the user's choice, not the default cleanup.

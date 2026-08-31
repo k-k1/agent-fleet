@@ -1,7 +1,7 @@
 package main
 
 // アシスタントチャットのプロバイダ実装（claude/codex/opencode/agy/cursor の headless
-// CLI 駆動）と CLI 起動まわりの下回り。chat.go からの機械的分割（docs/23 残②）。
+// CLI 駆動）と CLI 起動まわりの下回り。chat.go からの機械的分割（docs/log/23 残②）。
 
 import (
 	"bufio"
@@ -48,7 +48,7 @@ var chatProviders = map[string]chatProvider{
 	session.KindCursor:   cursorChat{},
 }
 
-// --- backend availability (claude-less workspaces, docs/19) ----------------------
+// --- backend availability (claude-less workspaces, docs/log/19) ----------------------
 //
 // A workspace may have ONLY codex or ONLY opencode connected. Every headless-LLM
 // feature (assistant chat, ask_assistant, title/branch suggestion) must then run on
@@ -98,7 +98,7 @@ func headlessAgentAvailable(kind string) bool {
 }
 
 // defaultHeadlessOrder is the built-in auto-selection order for assistant-chat
-// backends. agy sits last on purpose: its Starter/free quota is tiny (docs/32
+// backends. agy sits last on purpose: its Starter/free quota is tiny (docs/log/32
 // Track D), so out of the box it is only reached in an agy-only workspace. The
 // user can rank the backends themselves in 設定 > エージェント (ui-prefs
 // assistantAgentOrder — assistantAgentOrderPref normalizes against this list).
@@ -169,7 +169,7 @@ type claudeResult struct {
 	Usage      claudeUsage                 `json:"usage"`
 	ModelUsage map[string]claudeModelUsage `json:"modelUsage"`
 	// TotalCostUSD is claude's OWN measured cost for this call — the one backend that
-	// doesn't need a price table (docs/46 §0). Recorded as the ledger's cost_usd.
+	// doesn't need a price table (docs/log/46 §0). Recorded as the ledger's cost_usd.
 	TotalCostUSD float64 `json:"total_cost_usd"`
 }
 
@@ -236,7 +236,7 @@ type chatStreamEvent struct {
 
 // streamingProvider is the optional token-streaming variant of chatProvider. emit is called
 // per incremental event; the returned string is the final answer and the []chatStep are the
-// working steps (docs/19). A provider that doesn't implement it falls back to send() (one
+// working steps (docs/log/19). A provider that doesn't implement it falls back to send() (one
 // emit of the whole result) in handleChatStream, so every agent works through the stream.
 type streamingProvider interface {
 	sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(chatStreamEvent)) (string, []chatStep, error)
@@ -307,7 +307,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 		return "", nil, fmt.Errorf("failed to start claude: %v", err)
 	}
 
-	// Split the run into working steps and a final answer (docs/19). claude emits one
+	// Split the run into working steps and a final answer (docs/log/19). claude emits one
 	// assistant message per turn: a message that ends in stop_reason=tool_use was narration
 	// before a tool call (a working step); the message that ends in end_turn is the final
 	// answer. We accumulate the current message's text_delta into `cur`; on a tool_use turn
@@ -475,7 +475,7 @@ func codexChatBaseArgs() []string {
 }
 
 // chatCodexHome prepares the chat-only CODEX_HOME — the codex analog of claude's
-// chat-only CLAUDE_CONFIG_DIR (docs/19 Q3): an isolated sessions/config tree so the
+// chat-only CLAUDE_CONFIG_DIR (docs/log/19 Q3): an isolated sessions/config tree so the
 // headless chat's `codex exec` neither pollutes ~/.codex (its threads would appear in
 // the interactive `codex resume` picker / history) nor loads the user's config.toml
 // (their own MCP servers must not spawn on every chat turn; the chat attaches only
@@ -513,8 +513,8 @@ func chatCodexCmd(ctx context.Context, extraEnv []string, args ...string) *exec.
 
 // codexMCPArgs attaches this conversation's MCP servers to a codex exec via -c config
 // overrides (codex's mcp_servers table) — the codex analog of mcpConfigArgs: the local
-// Agent Fleet server per the tool grant, plus the attached registry servers (docs/48
-// §7). convID rides along for write grants (docs/30 report_to auto-attach).
+// Agent Fleet server per the tool grant, plus the attached registry servers (docs/log/48
+// §7). convID rides along for write grants (docs/log/30 report_to auto-attach).
 //
 // The returned env MUST be put on the codex process: codex's remote headers and any
 // stdio server's own variables are passed by NAME in argv and read from codex's
@@ -688,7 +688,7 @@ func opencodeChatPolicy() map[string]any {
 
 // opencodeChatDir prepares the working dir for a chat's opencode run, with an
 // opencode.json carrying the chat policy and the attached registry servers
-// (docs/48 §7). The dir is opencode's PROJECT: its session store is scoped to it, so
+// (docs/log/48 §7). The dir is opencode's PROJECT: its session store is scoped to it, so
 // the path a conversation runs in is part of its resume identity (実測 1.18.5:
 // `run --session <id>` from another dir hangs outright rather than erroring). That is
 // why the grant split (none/read/write) stays even though the file itself no longer
@@ -698,10 +698,10 @@ func opencodeChatPolicy() map[string]any {
 // opencode takes this config from the DIR, not per invocation, so conversations that
 // resolve to different server sets must not share one — otherwise a concurrent turn's
 // rewrite decides which servers this turn gets. The dir key is therefore the grant
-// plus a digest of the resolved registry set (docs/48 §7 制約), not the grant alone.
+// plus a digest of the resolved registry set (docs/log/48 §7 制約), not the grant alone.
 //
 // The af MCP server is NOT here, and that is load-bearing rather than tidy: it needs
-// the conversation id (docs/30 report_to), which is per conversation, not per grant.
+// the conversation id (docs/log/30 report_to), which is per conversation, not per grant.
 // opencode merges the config sources and **the project config wins the collision**
 // (実測 1.18.7), so an af entry here would not merely "resurface" — it would BEAT the
 // per-conversation one and strip --conv from every chat, silently killing セッション報告
@@ -747,7 +747,7 @@ func opencodeChatDir(c *chatConversation) string {
 // It exists because opencode's config is per FILE and the af MCP server must carry
 // `--conv <id>`: without it mcp-stdio has no conversation to attach report_to to, so
 // create_session / send_to_session arm no report and the operator never gets the
-// 【セッション報告】 it is told to wait for (docs/30). claude/codex/agy pass --conv in
+// 【セッション報告】 it is told to wait for (docs/log/30). claude/codex/agy pass --conv in
 // their own per-conversation config; opencode used to have nowhere to put it because
 // its only config was the per-GRANT project dir shared by every conversation.
 //
@@ -757,7 +757,7 @@ func opencodeChatDir(c *chatConversation) string {
 // run then falls back to the project config (policy intact, registry servers intact,
 // no af tools).
 //
-// The attached registry servers (docs/48 §7) ride here as well as in the project
+// The attached registry servers (docs/log/48 §7) ride here as well as in the project
 // config, for the same reason the policy does: opencodeChatDir degrades to the shared
 // chat workdir when it can't prepare its dir, and that fallback has no project config
 // at all — this file is then the only thing standing between the conversation and a
@@ -802,7 +802,7 @@ func opencodeChatConfig(c *chatConversation) string {
 // its path for OPENCODE_CONFIG. One-shots run in the bare chatWorkdir with no
 // opencode.json, so without this file the run inherited the user's global config —
 // the only backend of oneShotHeadless whose tool posture wasn't pinned read-only
-// (claude --tools "" / codex no tool grant / cursor --mode ask). docs/44 §1.3 の
+// (claude --tools "" / codex no tool grant / cursor --mode ask). docs/log/44 §1.3 の
 // read-only 提案生成チャネルはここで閉じる。Returns "" when the file can't be
 // written (the caller then degrades to today's behaviour rather than breaking
 // titles on a broken home).
@@ -954,14 +954,14 @@ func opencodeErrText(name, msg, ref string) string {
 // agyChat runs `agy -p` (print mode, plain-text stdout — v1.1.4 has no structured
 // output), resuming via `--conversation <UUID>`. The UUID is captured from agy's
 // cwd→last-conversation map (cache/last_conversations.json), which a `-p` run
-// writes on process exit (docs/32 Track D-3 — unlike the TUI, which flushes it
+// writes on process exit (docs/log/32 Track D-3 — unlike the TUI, which flushes it
 // only on graceful exit). agy has no system-prompt flag, so persona/knowledge ride
 // the headlessPrompt preamble.
 //
 // Tools: agy's MCP config is GLOBAL-only (~/.gemini/config/mcp_config.json — no
 // per-invocation flag like claude --mcp-config / codex -c), so every turn runs
 // under a per-conversation isolated HOME (chatAgyHome) that shares ONLY the OAuth
-// token with the user's real ~/.gemini. `-p` auto-denies tool prompts (docs/32
+// token with the user's real ~/.gemini. `-p` auto-denies tool prompts (docs/log/32
 // D-5); the isolated home's permissions.allow re-opens exactly the chat contract:
 // the read tools plus `mcp(<server>/*)` for each granted server (rule syntax
 // reverse-engineered from the binary and live-verified 2026-07-20). Command/write
@@ -1052,7 +1052,7 @@ func agyChatModel(model string, catalog []agents.ModelChoice) string {
 //     token (login is the ONLY shared state; agy resolves config from $HOME).
 //   - settings.json / config/config.json — workspace trust for wd, telemetry off,
 //     and permissions.allow (both files carry it: the effective location has
-//     shifted between builds, docs/32 D-5, and an extra copy is harmless).
+//     shifted between builds, docs/log/32 D-5, and an extra copy is harmless).
 //   - config/mcp_config.json — the granted MCP servers. agy's spawned MCP servers
 //     inherit its env, so each entry pins env.HOME back to the REAL home (the af
 //     server must read the user's actual session state — live-verified).
@@ -1099,7 +1099,7 @@ func chatAgyHome(c *chatConversation) (home, wd string, err error) {
 // file tools (knowledge dirs stay readable) plus `mcp(<server>/*)` per granted
 // server. Everything else — command execution, writes — stays auto-denied by -p,
 // which IS the chat contract. Rule syntax verified live (mcp(af) and bare tool
-// names do NOT match; docs/32 headlessChat 節).
+// names do NOT match; docs/log/32 headlessChat 節).
 func agyChatAllowRules(c *chatConversation) []string {
 	allow := []string{"read_file", "list_dir", "grep_search", "find_files", "codebase_search"}
 	for name := range agyChatServers(c) {
@@ -1116,7 +1116,7 @@ var agyChatExe = paths.ExePath
 
 // agyChatServers builds the mcp_config.json server map for this conversation —
 // the agy analog of claude's mcpConfigArgs: the local af server per the tool
-// grant, plus the attached registry servers (docs/48 §7). env.HOME pins the spawned
+// grant, plus the attached registry servers (docs/log/48 §7). env.HOME pins the spawned
 // servers back to the real home (they inherit agy's isolated-HOME env otherwise);
 // a builtin's mcp-run wrapper in particular resolves the encrypted store from HOME.
 //
@@ -1142,7 +1142,7 @@ func agyChatServers(c *chatConversation) map[string]any {
 
 // cursorChat runs `cursor-agent -p --output-format json` (headless print mode). The
 // chat UUID is minted on the first turn — cursor's `--resume <uuid>` CREATES a chat
-// under a self-minted valid v4 and resumes it thereafter (実測 docs/40 §-p / probe 8)
+// under a self-minted valid v4 and resumes it thereafter (実測 docs/log/40 §-p / probe 8)
 // — so context carries across turns via the same self-UUID identity the TUI/managed
 // routes use (cursor.go). Auth is ambient (~/.config/cursor/auth.json), so no token
 // injection. cursor has no system-prompt flag, so persona/knowledge ride the
@@ -1159,15 +1159,15 @@ func agyChatServers(c *chatConversation) map[string]any {
 // writes nothing). It is the cursor analog of claude --disallowedTools /
 // opencode edit,bash:deny. --trust only skips the workspace-trust prompt. The af MCP
 // tools are not wired for cursor v1: cursor's MCP config is global (~/.cursor), so
-// per-conversation grants would need the isolated-HOME dance agy uses (docs/40 Track D).
+// per-conversation grants would need the isolated-HOME dance agy uses (docs/log/40 Track D).
 //
-// The terminal `result.usage` is the ONLY cursor route carrying tokens (docs/40 §使用量
+// The terminal `result.usage` is the ONLY cursor route carrying tokens (docs/log/40 §使用量
 // — ACP/JSONL have none), so it feeds the context-fill snapshot. Fields are additive
 // (fresh input + cache read + cache write), same shape as opencode.
 type cursorChat struct{}
 
 // cursorResult is `cursor-agent -p --output-format json`'s single result object
-// (実測 docs/40 probe 9): {"type":"result","subtype":"success","is_error":…,
+// (実測 docs/log/40 probe 9): {"type":"result","subtype":"success","is_error":…,
 // "result":"…","session_id":"…","usage":{inputTokens,outputTokens,cacheReadTokens,
 // cacheWriteTokens}}. --output-format stream-json would be NDJSON; we use the plain
 // json form, so the whole stdout is this one object.
@@ -1244,7 +1244,7 @@ func cursorChatBaseArgs() []string {
 }
 
 // parseCursorResult decodes the -p result object. --output-format json emits one
-// object, but cursor "異常時は整形 JSON なしで終わり得る" (docs/40) and may prefix
+// object, but cursor "異常時は整形 JSON なしで終わり得る" (docs/log/40) and may prefix
 // stray lines, so fall back to scanning for the last line that parses as a result.
 func parseCursorResult(out []byte) (cursorResult, error) {
 	var r cursorResult
@@ -1287,7 +1287,7 @@ func headlessPrompt(persona string, knowledge []string, prompt string) string {
 }
 
 // claudeOneShotArgs is the argv for a claude one-shot (title / branch name / reply
-// candidate). Three deliberate departures from a chat turn (docs/46 §1-a-2, 実測
+// candidate). Three deliberate departures from a chat turn (docs/log/46 §1-a-2, 実測
 // 2026-07-25) — a one-shot is a pure classification-and-format task, so everything that
 // makes claude a coding agent is dead weight paid on every call:
 //
@@ -1324,7 +1324,7 @@ var claudeOneShotEnv = []string{"MAX_THINKING_TOKENS=0"}
 var cheapOneShotMarkers = []string{"mini", "flash", "lite", "small", "nano", "haiku"}
 
 // cheapOneShotModel picks the cheapest-looking entry of a live model catalog for a
-// one-shot (title / branch name / reply candidate) — docs/46 §2-b. claude and agy pin a
+// one-shot (title / branch name / reply candidate) — docs/log/46 §2-b. claude and agy pin a
 // cheap default explicitly (haiku / Flash); codex and opencode used to pass no model at
 // all unless AF_TITLE_MODEL_* was set, which silently ran these throwaway calls on the
 // CLI's own default — on a real workspace that was gpt-5.6-luna at "high" effort.
@@ -1378,7 +1378,7 @@ func recommendedUtilityModel(kind string) string {
 // codexOneShotArgs is the argv for a codex one-shot. --ephemeral: a one-shot never
 // needs resume, so don't persist a thread even into the chat-only CODEX_HOME.
 //
-// The two savings knobs (docs/46 §1-a-2 / §2-b), mirroring what the claude path does:
+// The two savings knobs (docs/log/46 §1-a-2 / §2-b), mirroring what the claude path does:
 //   - -m <cheap model>: without it codex ran throwaway calls on whatever config.toml
 //     pins — on a real workspace gpt-5.6-luna. AF_TITLE_MODEL_CODEX still wins, and an
 //     empty pick (unknown catalog) falls back to today's "no -m" behaviour.
@@ -1467,12 +1467,12 @@ func codexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, 
 // the reply text — the backend-agnostic core of the title/branch suggestions. persona
 // is passed natively where possible (claude --system-prompt) and as a prompt preamble
 // otherwise. claudeModel applies to the claude backend only (codex/opencode run their
-// own configured defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE — docs/46 §2-b
+// own configured defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE — docs/log/46 §2-b
 // flags that an unset override means the CLI's own default, usually the flagship).
 func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (string, error) {
 	// 使用量台帳（ADR 0029 §3）。この関数は claude → codex → opencode → cursor → agy の
 	// うち「最初に使えるもの」を選ぶので、kind は分岐の中で実行結果として埋める — 要求値を
-	// 書くと claude-less ワークスペースの消費が全部 claude に化ける（docs/46 §2）。
+	// 書くと claude-less ワークスペースの消費が全部 claude に化ける（docs/log/46 §2）。
 	// oneShotHeadless の戻り値を広げず内部で記録するのは、記録点がここの内側にある以上、
 	// 呼び出し側4箇所を触る理由がないため。
 	call := usageCall{}
@@ -1502,14 +1502,14 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		call.Kind = session.KindOpencode
 		args := []string{"run", "--format", "json", "--dir", chatWorkdir()}
 		env := opencode.Env()
-		// read-only 姿勢（docs/44 §1.3）: chat と違い one-shot は素の chatWorkdir で走り
+		// read-only 姿勢（docs/log/44 §1.3）: chat と違い one-shot は素の chatWorkdir で走り
 		// project config（opencode.json）が無いため、OPENCODE_CONFIG の deny が実効になる
 		// （実測 1.18.7 の併合優先度: project > OPENCODE_CONFIG > global — opencodeChatDir 参照）。
 		// 書けなかったときは従来どおり素で走る（title/reply を壊さない）— ホーム破損時の縮退。
 		if cfg := opencodeOneShotConfig(); cfg != "" {
 			env = append(env, "OPENCODE_CONFIG="+cfg)
 		}
-		// NOTE: deliberately NOT auto-picking a cheap model here (docs/46 §1-a-2). opencode's
+		// NOTE: deliberately NOT auto-picking a cheap model here (docs/log/46 §1-a-2). opencode's
 		// catalog is a LISTING, not an entitlement: `opencode/claude-haiku-4-5` is listed and
 		// selectable, yet running it returns "Unexpected server error" on an account without
 		// it, while the configured default answers fine (実測 2026-07-25). A hard failure of
@@ -1636,7 +1636,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	out, err := cmd.Output()
 	var r claudeResult
 	perr := json.Unmarshal(out, &r)
-	// claude だけはモデル別の実測内訳とコストが返る（docs/46 §0）— エラー result でも
+	// claude だけはモデル別の実測内訳とコストが返る（docs/log/46 §0）— エラー result でも
 	// 課金は発生しているので、OK 判定より先に採る。exec エラー（停止・非ゼロ終了）でも
 	// claude は構造化 result を吐いていることがあるので、**エラー return より先に**解析する。
 	call.Models, call.CostUSD = usageModelRows(r.ModelUsage), r.TotalCostUSD
@@ -1797,10 +1797,16 @@ func envWith(over ...string) []string {
 // are also blocked — the chat persona forbids file/command work anyway. --disallowedTools
 // is enforced by Claude Code even under --dangerously-skip-permissions (that flag only skips
 // approval prompts, not deny rules). Read/Glob/Grep/WebFetch and the MCP af tools remain.
+//
+// ListAgents / SendMessage は claude 自前の cross-session チャネル（docs/log/58 §58.17）。
+// ヘッドレスの `-p` はソケットを bind しない＝**受信はできないが送信はできる**ので、
+// 塞がないとアシスタントがワークスペース内のセッションへ AF の外から打ち込める。
+// オペレーター面の投入は af MCP の send_to_session が持っていて、そちらは台帳を通る。
 func chatToolLimits() []string {
 	return []string{"--disallowedTools",
 		"Agent", "Task", "Workflow",
-		"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"}
+		"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit",
+		"ListAgents", "SendMessage"}
 }
 
 // chatClaudeCmd runs chat turns against Claude's single shared config directory. This

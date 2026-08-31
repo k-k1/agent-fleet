@@ -1,14 +1,14 @@
--- Tenant-defined login providers (docs/61 §61.11 + ADR0043 決定 29-33). A group of
+-- Tenant-defined login providers (docs/log/61 §61.11 + ADR0043 決定 29-33). A group of
 -- companies has one Entra tenant per subsidiary, so the IdP definition itself has to
 -- be per Agent Fleet tenant rather than per deployment. Putting it in env would mean
 -- editing a file on the host and restarting CP every time a subsidiary is onboarded,
--- which contradicts "creating a tenant needs no restart" (docs/61 §61.10.3).
+-- which contradicts "creating a tenant needs no restart" (docs/log/61 §61.10.3).
 --
 -- ★ status is the whole point of this table, not a detail. A tenant_admin writes the
 -- row, a super_admin ACTIVATES it. Registering an IdP is the power to declare who
 -- someone is, and user_key plus the deployment role are keyed by email across the
 -- WHOLE deployment, so an admin who could enable their own IdP could mint a token
--- claiming the operator's address and take the deployment (docs/61 §61.11.2). Rows
+-- claiming the operator's address and take the deployment (docs/log/61 §61.11.2). Rows
 -- are therefore born pending, only active rows produce a login button or a session,
 -- and changing issuer or client_id or trust sends the row back to pending because
 -- the approval was given to that issuer and not to the row.
@@ -27,7 +27,7 @@
 --
 -- allowed_tids and allowed_domains are CSV and scoped to this row. They are NOT
 -- backed by the deployment-wide allowlist - a tenant IdP must not be able to widen
--- the deployment's entry gate (docs/61 §61.11.3-3).
+-- the deployment's entry gate (docs/log/61 §61.11.3-3).
 --
 -- Forward compatible: an older CP binary never selects this table, so rolling the
 -- binary back leaves a deployment that simply has no tenant-defined providers.

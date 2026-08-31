@@ -1,6 +1,6 @@
 package main
 
-// 使用量台帳（docs/46 / ADR0029 P1）。1行 = LLM 呼び出し1回、または折り込んだ
+// 使用量台帳（docs/log/46 / ADR0029 P1）。1行 = LLM 呼び出し1回、または折り込んだ
 // セッションの論理ターン1回。
 //
 // 非交渉の原則: プロンプト本文・応答本文は一切記録しない（トークン数とメタのみ）。
@@ -28,14 +28,14 @@ const (
 	usageFeatureAssistantAsk     = "assistant.ask"      // 単発アドバイザリ（非永続）
 	usageFeatureAssistantAutoTur = "assistant.autoturn" // セッション完了報告への自動ターン
 	usageFeatureAssistantBridge  = "assistant.bridge"   // Discord/Slack からのオペレーター応答
-	usageFeatureCompact          = "compact"            // 要約引き継ぎ（docs/33）
-	usageFeaturePlanUpdate       = "plan.update"        // 作業計画の明示更新（docs/33 第5段）
+	usageFeatureCompact          = "compact"            // 要約引き継ぎ（docs/log/33）
+	usageFeaturePlanUpdate       = "plan.update"        // 作業計画の明示更新（docs/log/33 第5段）
 	usageFeatureTitleSession     = "title.session"      // セッション件名の提案
 	usageFeatureTitleChat        = "title.chat"         // 会話タイトルの提案
 	usageFeatureBranchSuggest    = "branch.suggest"     // ブランチ名の提案
 	usageFeatureSuggestSession   = "suggest.session"    // ミラーの ✨ 返信候補
 	usageFeatureSuggestChat      = "suggest.chat"       // チャットの ✨ 返信候補
-	usageFeatureSuggestEdit      = "suggest.edit"       // エディタの ✨ AI変更提案（docs/44 Phase 4）
+	usageFeatureSuggestEdit      = "suggest.edit"       // エディタの ✨ AI変更提案（docs/log/44 Phase 4）
 	usageFeatureSession          = "session"            // 対話セッション本体（転写から折り込み）
 	// usageFeatureUnknown はタグの付いていない呼び出し。新しい補助機能がタグを付け忘れても
 	// 必ず1行残す（無記録＝見えない消費、を作らないことをタグの正しさより優先する）。

@@ -1,7 +1,7 @@
 package opencode
 
 // The fake daemon replies with the shapes measured against a live `opencode serve`
-// 1.18.13（OpenAPI /doc・docs/54 §契約）: every response is a {location, data}
+// 1.18.13（OpenAPI /doc・docs/log/54 §契約）: every response is a {location, data}
 // envelope, attempt statuses are pending|complete|failed|expired, and the Console
 // connection surfaces as connections[].type == "credential" with the org name as its
 // label（env 由来の OPENCODE_API_KEY は別 type）。

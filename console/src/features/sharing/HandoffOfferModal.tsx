@@ -1,10 +1,10 @@
-// HandoffOfferModal — 所有者が「この続きを共有先の誰かに」差し出す面（docs/77 / ADR 0057）。
+// HandoffOfferModal — 所有者が「この続きを共有先の誰かに」差し出す面（docs/log/77 / ADR 0057）。
 //
 // 宛先候補は**共有 ACL の逆引き**で、テナント名簿は引かない。だから ShareCreateModal のような
 // 検索コンボボックスではなく、素の選択肢になる（既に「この人に見せる」と決めた相手しか出ない）。
 //
 // push ゲートは CP が所有者 Agent に聞いた事実で、ここでは表示するだけ。判定をこちらで組み立て
-// 直すと、送信時のサーバ判定と条件が 2 か所に分かれて必ずずれる（docs/77 §77.5）。
+// 直すと、送信時のサーバ判定と条件が 2 か所に分かれて必ずずれる（docs/log/77 §77.5）。
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";

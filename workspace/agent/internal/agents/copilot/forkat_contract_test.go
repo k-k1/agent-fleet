@@ -1,6 +1,6 @@
 //go:build clicontract
 
-// copilot 契約テスト（**実ターンを消費する**）: 発言時点からの分岐（docs/55）のドリフト検知。
+// copilot 契約テスト（**実ターンを消費する**）: 発言時点からの分岐（docs/log/55）のドリフト検知。
 //
 // copilot にも公式の分岐口が無く、session-state ディレクトリをコピーして events.jsonl を
 // 切り詰めている。この手術が成立するのは **復元元が events.jsonl だから**で、それは実測で
@@ -135,6 +135,6 @@ func TestContractLiveCopilotForkAt(t *testing.T) {
 			"silently carry history the mirror shows as removed.\n%s", out)
 	default:
 		t.Fatalf("the branch could not answer from the carried history — a truncated events.jsonl "+
-			"is no longer resumable the way docs/55 §55.5 measured.\n%s", out)
+			"is no longer resumable the way docs/log/55 §55.5 measured.\n%s", out)
 	}
 }

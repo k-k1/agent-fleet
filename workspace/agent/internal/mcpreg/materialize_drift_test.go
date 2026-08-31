@@ -1,6 +1,6 @@
 //go:build drift
 
-// materialize のドリフト検知（docs/48 §13）。**実エージェント CLI のバイナリに当てる**
+// materialize のドリフト検知（docs/log/48 §13）。**実エージェント CLI のバイナリに当てる**
 // テストで、通常の `go test ./...` からは build tag `drift` で除外される。
 //
 // なぜ要るか: materialize は「その CLI の設定ファイルはこういう形だ」という、こちらが
@@ -91,7 +91,7 @@ func requireSameKeys(t *testing.T, kind string, got, want map[string]any, afExtr
 		if gv, ok := got[k]; !ok || !reflect.DeepEqual(gv, wv) {
 			gj, _ := json.MarshalIndent(got, "", "  ")
 			wj, _ := json.MarshalIndent(want, "", "  ")
-			t.Fatalf("%s の設定形が変わった（docs/48 §8.1 の更新が要る）: %q\n--- af\n%s\n--- %s mcp add\n%s",
+			t.Fatalf("%s の設定形が変わった（docs/log/48 §8.1 の更新が要る）: %q\n--- af\n%s\n--- %s mcp add\n%s",
 				kind, k, gj, kind, wj)
 		}
 	}
@@ -168,7 +168,7 @@ func TestDriftClaudeMatchesMCPAdd(t *testing.T) {
 			if !reflect.DeepEqual(got, want) {
 				gj, _ := json.MarshalIndent(got, "", "  ")
 				wj, _ := json.MarshalIndent(want, "", "  ")
-				t.Fatalf("claude の user スコープ設定形が変わった（docs/48 §8.1 の更新が要る）\n--- af\n%s\n--- claude mcp add\n%s", gj, wj)
+				t.Fatalf("claude の user スコープ設定形が変わった（docs/log/48 §8.1 の更新が要る）\n--- af\n%s\n--- claude mcp add\n%s", gj, wj)
 			}
 		})
 	}
@@ -222,12 +222,12 @@ func TestDriftCodexMatchesMCPAdd(t *testing.T) {
 	if !reflect.DeepEqual(got["transport"], want["transport"]) {
 		gj, _ := json.MarshalIndent(got["transport"], "", "  ")
 		wj, _ := json.MarshalIndent(want["transport"], "", "  ")
-		t.Fatalf("codex の stdio 設定形が変わった（docs/48 §8.1 の更新が要る）\n--- af\n%s\n--- codex mcp add\n%s", gj, wj)
+		t.Fatalf("codex の stdio 設定形が変わった（docs/log/48 §8.1 の更新が要る）\n--- af\n%s\n--- codex mcp add\n%s", gj, wj)
 	}
 }
 
 // TestDriftCodexRemoteKeys pins the remote half, which `codex mcp add` cannot
-// express (it has no header flags — that gap is what the old docs/48 note mistook
+// express (it has no header flags — that gap is what the old docs/log/48 note mistook
 // for "codex has no remote headers"). So the reference here is codex's own reader:
 // af writes the file, codex parses it back.
 func TestDriftCodexRemoteKeys(t *testing.T) {

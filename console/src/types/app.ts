@@ -18,7 +18,7 @@ export interface Tenant {
   slug: string;
   name?: string;
   role?: string;
-  /** Sign-in methods this tenant accepts (docs/61 §61.9.4); empty/absent = any.
+  /** Sign-in methods this tenant accepts (docs/log/61 §61.9.4); empty/absent = any.
    *  Used to turn a `provider_required` refusal into a re-sign-in link. */
   allowed_providers?: string[];
 }

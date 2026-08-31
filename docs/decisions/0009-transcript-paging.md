@@ -1,71 +1,89 @@
-# 0009 — チャット transcript の末尾ウィンドウ読み込みと逆方向ページング
+# 0009 — Load the chat transcript as a tail window, and page backwards
 
-- 状態: 採用（段階導入。P1 実装着手、P2/P3 は後続）
-- 日付: 2026-07-03
-- 関連: `workspace/agent/session_transcript.go`（`handleSessionMessages` / `collectTurns`）、`workspace/agent/session_io.go`（`transcriptRead`）、`console/src/views/MirrorView.tsx`
+English | [日本語](0009-transcript-paging.ja.md)
 
-## 背景
+- Status: adopted (introduced in stages; P1 started, P2/P3 follow)
+- Date: 2026-07-03
+- See also: `workspace/agent/session_transcript.go` (`handleSessionMessages` / `collectTurns`), `workspace/agent/session_io.go` (`transcriptRead`), `console/src/views/MirrorView.tsx`
 
-チャット（MirrorView）の初回表示は `GET …/messages?since=0` で、サーバは
-`transcriptRead`（`os.ReadFile` で全体を読み split）→ `collectTurns`（`since` から
-末尾まで全行 `parseTurn`＝JSON Unmarshal）→ 全ターンを一括返却している。以後の
-ライブ更新は `since=cursor` で末尾増分だけ取るため軽い。**重いのは初回の一回**で、
-「全 I/O ＋ 全行パース ＋ 全ターン転送」になっている。
+## Context
 
-実測（ホストの Claude Code transcript）: 最大 **19.3 MB / 2,090 行**、最長の単一行
-**≈391 KB**（画像・巨大 tool_result）、**5 MB 超が 14 本**。肥大化した会話で初回が遅い。
+The first render of the chat (MirrorView) is `GET …/messages?since=0`, and the server does
+`transcriptRead` (`os.ReadFile` of the whole file, then split) → `collectTurns` (`parseTurn`,
+i.e. a JSON Unmarshal, on every line from `since` to the end) → return every turn at once.
+Live updates after that use `since=cursor` and only take the tail delta, so they are cheap.
+**The expensive part is the single first call**, which is "all the I/O + parse every line +
+transfer every turn".
 
-コスト内訳（支配順）:
-1. **JSON パース**（全行 `Unmarshal`。数百 KB の行が混じる）— 支配的。
-2. **転送ペイロード**（全ターンの構造化 JSON）。
-3. **ファイル I/O**（全体 `ReadFile`。OS キャッシュが効けば二次的）。
-4. クライアント描画（全ターンの Markdown/ハイライト）。
+Measured (a Claude Code transcript on the host): up to **19.3 MB / 2,090 lines**, with a longest
+single line of **≈391 KB** (images, huge tool_results), and **14 lines over 5 MB**. On a bloated
+conversation the first render is slow.
 
-支配項の 1・2 は **ファイルを逆読みしなくても、返す範囲を末尾に絞るだけで消える**。
+Cost breakdown, in order of dominance:
 
-副次: `collectTurns` の 1 MiB 予算は `since` から**古い方へ**積んで打ち切るため、巨大
-transcript では「最新ターンが欠ける」向きになっている（潜在バグ）。
+1. **JSON parsing** (`Unmarshal` on every line, some of them hundreds of KB) — dominant.
+2. **The transfer payload** (structured JSON for every turn).
+3. **File I/O** (`ReadFile` of the whole thing; secondary once the OS cache is warm).
+4. Client rendering (Markdown/highlighting for every turn).
 
-## 決定
+Items 1 and 2, the dominant ones, **disappear simply by narrowing what is returned to the tail —
+no reverse reading required**.
 
-「末尾から遡って読む」を、**既存の `cursor＝先頭からの絶対行番号`（append-only ＝ 安定）
-1 本の座標系**に統合する。3 アクセスを同じ座標で扱う:
+Incidentally: `collectTurns`'s 1 MiB budget accumulates **backwards** from `since` and then cuts
+off, so on a huge transcript it tends to **drop the newest turns** (a latent bug).
 
-- **① 初回（tail）**: `?tail=1&limit=M` → 末尾ウィンドウのターン ＋ `firstLine` ＋ `cursor=len` ＋ `hasMore`
-- **② 過去へ（before）**: `?before=<firstLine>&limit=M` → firstLine より前のターン ＋ 新しい `firstLine` ＋ `hasMore`（クライアントは prepend）
-- **③ ライブ（since）**: `?since=<cursor>` → 末尾の新着（**現状のまま・無改造**）
+## Decision
 
-初回で `cursor=len` を返しさえすれば ③ は不変。② は別パラメータで ③ の `since` 空間を
-汚さない。**破壊的変更ゼロ**で足せ、`reset` 機構・fork プレビューとも同じ枠に収まる。
+Fold "read backwards from the end" into **one coordinate system, the existing
+`cursor` = an absolute line number from the start** (append-only, therefore stable). Three
+accesses in the same coordinates:
 
-### 段階
+- **① first render (tail)**: `?tail=1&limit=M` → the turns in the tail window, plus `firstLine`,
+  `cursor=len` and `hasMore`
+- **② backwards (before)**: `?before=<firstLine>&limit=M` → the turns before firstLine, plus a
+  new `firstLine` and `hasMore` (the client prepends)
+- **③ live (since)**: `?since=<cursor>` → what is new at the end (**unchanged, untouched**)
 
-| 段階 | 内容 | 効果 | 工数/リスク |
+As long as the first render returns `cursor=len`, ③ is invariant. ② uses a separate parameter so
+it does not pollute ③'s `since` space. It can be added with **zero breaking changes**, and it
+fits in the same frame as the `reset` mechanism and the fork preview.
+
+### Stages
+
+| Stage | What | Effect | Effort/risk |
 | --- | --- | --- | --- |
-| **P1** | サーバ: 末尾ウィンドウのみパース（`collectTurns` を `[lo,hi)` に）。予算を**末尾優先**へ修正。`before`/`tail`/`firstLine`/`hasMore` を後方互換で追加。`collectTasks`・`collectAnswers` を軽量化（プレフィルタ/窓内）。 | 支配項のパース/転送を大幅削減。 | 小 / 低（既存 API 内で完結・後方互換） |
-| **P2** | クライアント: 初回 `tail`、`before` ページング、prepend＋スクロール位置維持、「さらに読む」。 | 過去は必要時のみロード。初回は末尾固定で軽い。 | 中 / 中（位置維持の検証） |
-| **P3** | EOF からの seek 逆読み（長行跨ぎのチャンク拡張つき）。 | 残る I/O も削減。20 MB 常態化時の保険。 | 中 / 高（逆読み端処理・テスト） |
-| 代替 | パース結果キャッシュ（`sid＋mtime`、増分のみ再パース）。P1 と直交。 | 再オープンが速い。 | 小 / 低 |
+| **P1** | Server: parse only the tail window (`collectTurns` over `[lo,hi)`). Fix the budget to be **tail-first**. Add `before`/`tail`/`firstLine`/`hasMore` backwards-compatibly. Lighten `collectTasks` and `collectAnswers` (prefilter / stay within the window). | Cuts the dominant parse and transfer costs dramatically. | small / low (self-contained within the existing API, backwards compatible) |
+| **P2** | Client: `tail` on first render, `before` paging, prepend with scroll-position preservation, a "load more" control. | The past loads only when asked for. The first render is pinned to the tail and light. | medium / medium (verifying position preservation) |
+| **P3** | Seek and read backwards from EOF (with chunk growth across long lines). | Removes the remaining I/O. Insurance for when 20 MB becomes normal. | medium / high (reverse-read edge cases, tests) |
+| alternative | Cache parse results (`sid`+`mtime`, re-parsing only the delta). Orthogonal to P1. | Re-opening is fast. | small / low |
 
-**推奨: P1＋P2 を実装、P3 は実測後に判断。** 遅さの支配項はパースと転送で、逆読み
-せずとも末尾ウィンドウで消える。I/O（P3）は二次的。
+**Recommendation: implement P1 + P2; judge P3 after measuring.** The dominant costs are parsing
+and transfer, and the tail window removes them without reading backwards. I/O (P3) is secondary.
 
-## 難所と対処
+## The hard parts, and how they are handled
 
-- **ウィンドウ端でターンが切れる**: ② で遡れば繋がる。`groupTurns` を prepend でべき等に。
-- **回答解決の範囲依存**: `collectAnswers` を窓内に絞ると窓跨ぎの回答が空になりうる。質問と
-  回答は近接するため実用上は許容。緩和は窓幅拡大 or 行 ID 遅延解決。
-- **スクロール位置維持（UX の肝）**: prepend 前後の `scrollHeight` 差だけ `scrollTop` を
-  足して視点を固定。既存の stick-to-bottom と独立。
-- **compaction / ファイル置換**: 絶対行番号が無効化 → 既存 `reset` で末尾から引き直す。
-- **全履歴の要約（ToDo/トークン推移/コンテキスト）**: 末尾窓だけにすると痩せる。重い
-  `parseTurn` は窓に絞りつつ、**軽い全行スキャン（Task 行・usage 行の抽出）は残す**
-  非対称設計を採る（`collectTasks` は文字列プレフィルタで軽量化）。
+- **A turn is cut at the window edge**: going back with ② reconnects it. `groupTurns` is made
+  idempotent under prepend.
+- **Answer resolution depends on the range**: narrowing `collectAnswers` to the window can leave
+  an answer that spans the edge empty. Questions and answers sit close together, so this is
+  tolerable in practice. Mitigations: a wider window, or lazy resolution by line ID.
+- **Preserving scroll position (the crux of the UX)**: add the difference in `scrollHeight`
+  before and after the prepend to `scrollTop` to hold the viewpoint. Independent of the existing
+  stick-to-bottom.
+- **Compaction / file replacement**: absolute line numbers are invalidated → the existing `reset`
+  re-reads from the end.
+- **Summaries over the whole history (to-dos, token trend, context)**: restricting to the tail
+  window would starve them. So the design is deliberately asymmetric — keep the heavy `parseTurn`
+  inside the window, but **keep the cheap full-file scan (extracting Task lines and usage
+  lines)** (`collectTasks` is lightened with a string prefilter).
 
-## 帰結
+## Consequences
 
-- 初回表示が肥大化に対してスケールする（返す範囲＝末尾窓に比例）。
-- `collectTurns` の予算方向が**末尾優先**になり、最新ターン欠けの潜在バグも解消。
-- ライブ増分・reset・fork プレビューは不変。旧クライアント（`tail` 非送出）は従来どおり
-  全履歴を受け取る（P1 サーバは単独デプロイ可・後方互換）。
-- 非目標: jsonl 形式・保存方式は変更しない。全文検索・仮想スクロールは射程外（将来）。
+- The first render scales with bloat (it is proportional to what is returned = the tail window).
+- `collectTurns`'s budget now runs **tail-first**, which also removes the latent bug of dropping
+  the newest turns.
+- Live deltas, reset and the fork preview are unchanged. An old client (which does not send
+  `tail`) still receives the whole history as before (the P1 server can be deployed on its own,
+  backwards compatibly).
+- Non-goals: the jsonl format and the storage method do not change. Full-text search and virtual
+  scrolling are out of range (future work).

@@ -17,7 +17,7 @@ import { confirmDirtyNavigation } from "../../features/editor/dirtyRegistry.ts";
 interface WorkspaceStore {
   state: string;
   /** Live boot-install phase surfaced by the CP during a native rootfs first
-   * start (docs/35 §35.9-9): the latest "[entrypoint] …" line, e.g.
+   * start (docs/log/35 §35.9-9): the latest "[entrypoint] …" line, e.g.
    * "boot-install (pinned): claude-code@…". "" = no boot in progress. The
    * starting dialog shows it so the user sees the pinned-CLI download instead of
    * a silent multi-minute wait. */
@@ -102,7 +102,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     set({ state: "starting…", bootPhase: "" });
     // While the (blocking) start POST is in flight, poll bootPhase ONLY — never the
     // state — so the optimistic "starting…" holds. Native State() reports "running"
-    // the instant the process spawns (pid-alive, not health, docs/35 §35.9-9), so a
+    // the instant the process spawns (pid-alive, not health, docs/log/35 §35.9-9), so a
     // state refresh here would close the starting dialog while boot-install is still
     // downloading. bootPhase is the real "still booting" signal.
     const iv = setInterval(() => {
@@ -192,7 +192,7 @@ export const wsBusy = (state: string): boolean => state.endsWith("…");
 
 /** True when the workspace agent is up. Per-workspace pollers that proxy to the
  * agent (sessions/repos/stats/…) gate on this so a STOPPED workspace stops
- * generating 502s every few seconds (docs/35 §35.9-9; the ws-boot-view-stuck
+ * generating 502s every few seconds (docs/log/35 §35.9-9; the ws-boot-view-stuck
  * running-gate, applied to the pollers themselves). Read imperatively in poll
  * loops via `wsRunning(useWorkspaceStore.getState().state)`. */
 export const wsRunning = (state: string): boolean => state === "running";
@@ -207,7 +207,7 @@ export const wsStartBusy = (state: string): boolean => wsBusy(state) || state ==
  *
  * ⚠️ Deliberately NOT `state === "running"`. The server-reported "starting" has no
  * guaranteed exit: an ECS task the scheduler cannot place sits at desired=1/running=0
- * and State() reports "starting" forever (measured on the dev deployment — docs/70 §70.14.6,
+ * and State() reports "starting" forever (measured on the dev deployment — docs/log/70 §70.14.6,
  * a task definition declaring ARM64 while pinned to an x86_64 slot). While the toggle
  * sent START on everything that was not "running", the two exits the UI offered from
  * that state were both "start", and the CP no-ops a Start for a workspace it already
@@ -222,7 +222,7 @@ export const wsPowerStops = (state: string): boolean => state === "running" || s
  * optimistic "starting…"/"recreating…" transition, the server-reported "starting"
  * (ECS cold pull), OR a live boot phase (native rootfs boot-install — the process
  * is pid-alive so state already reads "running", but the agent is still installing
- * pinned CLIs, docs/35 §35.9-9). NOT "stopping…". */
+ * pinned CLIs, docs/log/35 §35.9-9). NOT "stopping…". */
 export const wsPreparing = (state: string, bootPhase: string): boolean =>
   bootPhase !== "" || state === "starting…" || state === "starting" || state === "recreating…";
 

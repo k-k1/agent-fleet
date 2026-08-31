@@ -1,4 +1,4 @@
-// CleanupModal — the on-demand tidy-up panel (docs/32). Two tabs:
+// CleanupModal — the on-demand tidy-up panel (docs/log/32). Two tabs:
 //   Candidates — the /sessions/cleanup survey, laid out as the two stages of the
 //     after-work tidy-up: ① stopped sessions (agent → archive, shell/ssm → delete),
 //     ② worktrees and merged branches. Each stage has a one-shot bulk button next to

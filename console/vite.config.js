@@ -1,3 +1,6 @@
+import { createRequire } from "node:module";
+import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { defineConfig } from "vite";
@@ -42,6 +45,35 @@ function afVersionManifest(build) {
   };
 }
 
+// pdf.js の cMap（CID 符号化表）と標準14フォントは、パッケージの中にディレクトリごと
+// 入っていてバンドラが辿れない。dist/assets/pdfjs/<version>/ へ丸ごと複製し、実行時は
+// src/features/viewer/pdfjs.ts がその URL を組み立てる（docs/82 §82.4）。
+//
+// - **同梱しないと日本語 PDF が壊れる**: フォントを埋め込んでいない PDF（UniJIS-UCS2-H
+//   などの符号化）は、cMap 無しでは文字が出ない。
+// - パスに版を入れるのは、assets/ 配下が CP から immutable で配られるため。版を上げると
+//   URL ごと変わるので、古い cMap が居座らない。
+const pdfjsVersion = createRequire(import.meta.url)("pdfjs-dist/package.json").version;
+
+function afPdfjsAssets(version) {
+  const from = fileURLToPath(new URL("./node_modules/pdfjs-dist", import.meta.url));
+  return {
+    name: "af-pdfjs-assets",
+    apply: "build",
+    closeBundle() {
+      const to = path.join(fileURLToPath(new URL("./dist", import.meta.url)), "assets", "pdfjs", version);
+      for (const dir of ["cmaps", "standard_fonts"]) {
+        const src = path.join(from, dir);
+        if (!fs.existsSync(src)) {
+          this.warn(`pdfjs-dist/${dir} is missing — PDFs without embedded fonts will render wrong`);
+          continue;
+        }
+        fs.cpSync(src, path.join(to, dir), { recursive: true });
+      }
+    },
+  };
+}
+
 // The Console is served as static files by the Control Plane and may live behind
 // a path-stripping proxy (Tailscale Funnel + Caddy strips /agent-fleet). All asset
 // URLs must therefore be *relative*, so we set base:'./'. The app additionally
@@ -54,8 +86,8 @@ function afVersionManifest(build) {
 export default defineConfig({
   base: "./",
   // Build id available to the client as a compile-time constant (src/lib/version.ts).
-  define: { __AF_BUILD__: JSON.stringify(AF_BUILD) },
-  plugins: [react(), afVersionManifest(AF_BUILD)],
+  define: { __AF_BUILD__: JSON.stringify(AF_BUILD), __AF_PDFJS_VERSION__: JSON.stringify(pdfjsVersion) },
+  plugins: [react(), afVersionManifest(AF_BUILD), afPdfjsAssets(pdfjsVersion)],
   resolve: {
     alias: [
       { find: /^mathjax-full(\/.*)?$/, replacement: mathStub },

@@ -21,7 +21,7 @@ package opencode
 // device の mode は "auto"（opencode 側が自前でトークンをポーリングする）なので、
 // Console からコードを貼らせる必要はない — cursor と同じ「URL を出して poll」型。
 //
-// daemon を経由する利点は反映タイミング（docs/54）: ログイン成立時に daemon 内で
+// daemon を経由する利点は反映タイミング（docs/log/54）: ログイン成立時に daemon 内で
 // integration.connection.updated が publish され、opencode プラグインがそれを購読して
 // Console org の /api/config を取り直し catalog.reload() する。つまり共有 daemon 上の
 // managed セッションは**再起動なしで**新しいモデル集合を見る。こちら側で古くなるのは
@@ -337,7 +337,7 @@ func HandleOAuthPoll(w http.ResponseWriter, r *http.Request) {
 		out["message"] = st.Message
 	}
 	if st.Status == "complete" {
-		// daemon 側のカタログはイベント購読で既に更新済み（docs/54）。こちらの
+		// daemon 側のカタログはイベント購読で既に更新済み（docs/log/54）。こちらの
 		// 60 秒キャッシュだけが古いので落とす — 起動モーダルと MCP list_models が
 		// すぐ新しいモデル集合を見るように。
 		InvalidateModels()

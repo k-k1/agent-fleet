@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// previewAPI は /preview/{port} プロキシの機能ハンドラ集（docs/23 残③）。解決は
+// previewAPI は /preview/{port} プロキシの機能ハンドラ集（docs/log/23 残③）。解決は
 // 埋め込みの memberAuth（登録側で withResolved に包む — 従来の resolvedFor と同一
 // 判定）。X-Forwarded-Prefix の組み立てに使う publicBaseURL だけ config から写す。
 type previewAPI struct {

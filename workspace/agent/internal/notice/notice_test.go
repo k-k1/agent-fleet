@@ -14,7 +14,7 @@ func TestOutboxPersistsListsAndAcknowledges(t *testing.T) {
 	if err := Put(e); err != nil {
 		t.Fatal(err)
 	}
-	// docs/37 契約4: Put fans the event out into the chat-bridge queue too.
+	// docs/log/37 契約4: Put fans the event out into the chat-bridge queue too.
 	bq, _ := os.ReadDir(filepath.Join(home, ".config", "agent-fleet", "bridge-queue"))
 	if len(bq) != 1 {
 		t.Fatalf("bridge queue entries=%d, want 1", len(bq))
@@ -29,7 +29,7 @@ func TestOutboxPersistsListsAndAcknowledges(t *testing.T) {
 	}
 }
 
-// 全文ブリッジ (docs/37): the answer-ready event's body payload rides into the
+// 全文ブリッジ (docs/log/37): the answer-ready event's body payload rides into the
 // bridge queue entry so a full-text-mode provider can render it.
 func TestPutCarriesBodyIntoBridgeQueue(t *testing.T) {
 	home := t.TempDir()

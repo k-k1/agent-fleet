@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// docs/61 P2 — the GitHub adapter. GitHub is unreachable from CI, so the REST API
+// docs/log/61 P2 — the GitHub adapter. GitHub is unreachable from CI, so the REST API
 // is stubbed; what these tests pin down is every trap §61.7 lists (the Accept
 // header on the token endpoint, primary&&verified as the only usable email, the
 // numeric id as the subject, the org 403 that means "the app was never approved")

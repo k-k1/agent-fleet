@@ -81,10 +81,10 @@ export interface RepoRowProps {
    * 含まれない（呼び出し側が sessionsInFolder でスコープ済みの件数/ハンドラを渡す）。 */
   onArchiveStopped?: () => void;
   stoppedCount?: number;
-  /** 削除ロック（docs/45）の切替。ロック中は削除メニューが無効になり、空になった
+  /** 削除ロック（docs/log/45）の切替。ロック中は削除メニューが無効になり、空になった
    * worktree の自動 prune も止まる（保護の実体は Agent 側の 403）。 */
   onToggleLock?: (locked: boolean) => void;
-  /** SVN (docs/41): update to the latest revision / clear a wedged working-copy lock. */
+  /** SVN (docs/log/41): update to the latest revision / clear a wedged working-copy lock. */
   onUpdate?: () => void;
   onCleanup?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
@@ -95,7 +95,7 @@ export interface RepoRowProps {
 }
 
 export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0 }: RepoRowProps) {
-  // SVN working copies (docs/41) are flat: no branch/SCM view/worktree, so the card
+  // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
   const isSvn = r.vcs === "svn";
@@ -115,7 +115,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   const menuRef = useRef<HTMLUListElement>(null);
   const toast = useToast();
   const tr = useT();
-  // 作業グループ (docs/52): base clones toggle membership from the context menu.
+  // 作業グループ (docs/log/52): base clones toggle membership from the context menu.
   // Worktrees follow their base (no per-worktree assignment), so they get no block.
   const wsets = workingSetList(useSettings());
   const copyBranch = () => {
@@ -205,7 +205,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 r{r.revision}
               </span>
             )}
-            {/* 削除ロック（docs/45）: 鍵バッジ。削除メニューが灰色な理由をここで示す。 */}
+            {/* 削除ロック（docs/log/45）: 鍵バッジ。削除メニューが灰色な理由をここで示す。 */}
             {r.locked && <Icon name="lock" className="repo-lock" title={tr("repo.locked_hint")} />}
             {isShared && <Icon name="broadcast" className="repo-shared" title={tr("repo.shared_badge")} />}
           </span>
@@ -407,14 +407,14 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             )}
-            {/* プロジェクトスコープの MCP 設定（docs/56 P0）— 別モーダル（設定モーダルは
-                workspace 全体＝user スコープの場所なので混ぜない、docs/57 §3）。 */}
+            {/* プロジェクトスコープの MCP 設定（docs/log/56 P0）— 別モーダル（設定モーダルは
+                workspace 全体＝user スコープの場所なので混ぜない、docs/log/57 §3）。 */}
             <li>
               <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setProjectOpen(true); }}>
                 <Icon name="gear" /> {tr("repo.project_settings")}
               </button>
             </li>
-            {/* セッション共有(docs/59): read-only/破損等で永続 marker を持てない working
+            {/* セッション共有(docs/log/59): read-only/破損等で永続 marker を持てない working
                 copy は workingCopyId が無く、repo/worktree 単位の共有対象にできない
                 (ShareCreateModal の candidates と同じ制約)。 */}
             {r.workingCopyId && (
@@ -432,7 +432,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             ))}
-            {/* 作業グループ (docs/52): membership toggles — base rows only. */}
+            {/* 作業グループ (docs/log/52): membership toggles — base rows only. */}
             {!r.worktree && wsets.length > 0 && (
               <>
                 <li className="ui-menu-sep" role="separator" />
@@ -518,7 +518,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           // From a worktree, only in-place launch is offered — spawning a worktree
           // OFF a worktree yields a confusing double-@ name off the wrong base. New
           // worktrees are created from the base clone (any base branch). SVN has no
-          // worktree at all (docs/41), so it too launches in place only.
+          // worktree at all (docs/log/41), so it too launches in place only.
           allowWorktree={!r.worktree && !isSvn && !r.unborn}
           isSvn={isSvn}
           isUnborn={!!r.unborn}

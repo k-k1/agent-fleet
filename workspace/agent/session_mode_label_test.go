@@ -4,7 +4,7 @@ package main
 //
 // 文字列は 2026-08-24 に claude 2.1.241 を実 tmux で起動して採取したもの（各
 // --permission-mode を 1 本ずつ立ててフッタを capture-pane した）。★manual だけ
-// "(shift+tab to cycle)" を出さず、しかも manual は「権限確認あり」起動（docs/76）の
+// "(shift+tab to cycle)" を出さず、しかも manual は「権限確認あり」起動（docs/log/76）の
 // 落ちる先そのものなので、ここが空文字を返すと初回プロンプトの配達が 30 秒待たされる。
 
 import "testing"

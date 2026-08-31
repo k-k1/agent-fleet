@@ -1,4 +1,4 @@
-// tts_polly.go — AWS Polly の TTS プロバイダ（docs/24 Phase 2）。
+// tts_polly.go — AWS Polly の TTS プロバイダ（docs/log/24 Phase 2）。
 //
 // 認証は SDK の既定チェーン（ECS/EC2 の IAM ロール）で、鍵は保存しない（ADR0013）。
 // 出力は MP3（フロントの AudioContext.decodeAudioData がそのまま復号できる）。速度は

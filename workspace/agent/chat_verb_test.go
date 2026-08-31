@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// A Files 翻訳/要約 opens an ad-hoc chat with NO standing assistant (docs/30 ②): the verb
+// A Files 翻訳/要約 opens an ad-hoc chat with NO standing assistant (docs/log/30 ②): the verb
 // persona is baked onto the conversation directly, so deleting the old 翻訳/汎用 builtins
 // costs no capability. Drive handleChatCreate over a mux (real routing) and assert the
 // resulting conversation carries the embedded persona, the attached file's dir as

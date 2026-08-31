@@ -1,67 +1,72 @@
-# 0037. レジストリ方針 — イメージは GHCR で配り、air-gap イメージ tar（B）は廃止する
+# 0037. Registry policy — distribute images via GHCR, and retire the air-gap image tar (B)
 
-- 状態: **採用**（2026-08-02）。docs/35 §35.9 の未決事項「レジストリ方針の決定」を決着させる。
-- 関連: [docs/35 §35.4](../35-packaging.md)（配布チャネルと air-gap）/ §35.7.7（焼き込み判断）/
-  `deploy/compose/release.sh`・`deploy/release/dist-repo/install-compose.sh`（実装）
+English | [日本語](0037-registry-policy.ja.md)
 
-## 背景
+- Status: **adopted** (2026-08-02). This settles docs/35 §35.9's open item, "decide the registry
+  policy".
+- See also: [docs/35 §35.4](../log/35-packaging.md) (distribution channels and air-gap) / §35.7.7 (the bake-in decision) /
+  `deploy/compose/release.sh` and `deploy/release/dist-repo/install-compose.sh` (the implementation)
 
-配布物 B（`agent-fleet-images-<v>.tar.gz`・約 960MB）は `docker save` した CP と
-workspace のイメージで、「air-gap イメージ」として配ってきた。既定をレジストリでなく
-tar にしたのは、当初の配布先がグループ会社で、コンテナレジストリを前提にできなかった
-ため。docs/35 §35.9 はこれを「レジストリ方針は未決」として残していた。
+## Context
 
-## 決定の契機となった問い
+Artifact B (`agent-fleet-images-<v>.tar.gz`, about 960MB) is `docker save` of the CP and workspace
+images, distributed as "air-gap images". The default was a tar rather than a registry because the
+original audience was group companies where a container registry could not be assumed. docs/35 §35.9
+left this as "the registry policy is undecided".
 
-**「ネットワーク無しで動く B の存在意義は何か。エージェントが動くにはそもそも
-ネットワークが要るのでは？」** — この問いは正しい。しかも本リポジトリは既に substance
-では同意している。§35.4.1 は、claude / agy / copilot が再配布不可であることから
-**C も B も lean（CLI 抜き）**にすると決め、**完全オフラインで CLI まで要る会社は
-自社ビルド（`BAKE_AGENT_CLIS=1`）へ誘導する**と明記している。
+## The question that prompted the decision
 
-つまり **B は最初から「オフラインで動くフリート」ではない。** 二重に効く:
+**"What is the point of B, which works with no network? Doesn't an agent need a network in the
+first place?"** — the question is right. And this repository already agrees with it in substance.
+§35.4.1 decided that because claude, agy and copilot cannot be redistributed, **both C and B are
+lean (without the CLIs)**, and states explicitly that **a company that is fully offline and needs the
+CLIs is directed to building its own** (`BAKE_AGENT_CLIS=1`).
 
-1. エージェントは LLM エンドポイントに到達できなければ動かない。
-2. それ以前に、**B 自身のブートストラップが npm / GitHub を要る**（lean なので初回起動の
-   boot-install が CLI を取りに行く）。そして 1 と違い、これは**ライセンス上、焼き込みでは
-   解決できない**。
+In other words, **B was never "a fleet that runs offline".** It fails twice over:
 
-## 決定
+1. An agent does not work unless it can reach an LLM endpoint.
+2. Before that, **B's own bootstrap needs npm and GitHub** (being lean, the boot-install on first
+   start goes and fetches the CLIs). And unlike point 1, this **cannot be solved by baking them in,
+   for licensing reasons**.
 
-**イメージは GHCR（`ghcr.io`）で配る。B は廃止する。**
+## Decision
 
-理由:
+**Distribute images via GHCR (`ghcr.io`). Retire B.**
 
-- **B の実益は「コンテナレジストリが要らない」の 1 点だけ**だった。公開 README も実際
-  そう書いている（"The images are **not** published to a registry, so ... ship on
-  Releases"）。overclaim していたのは資産表の `(air-gap images)` というラベルだけで、
-  これは実態と食い違うので、いずれにせよ改める。
-- **public 化で前提が変わった。** B の設計は public 化の決定より前のもの。public repo なら
-  **GHCR は容量・転送とも無料**で、さらに**ソースから誰でもビルドできる**ようになる。
-  B が埋めていた穴は公開によってかなり小さくなった。
-- **コストが割に合っていない。** 1 リリース約 960MB が publish 時間と保管の大半を占める
-  一方、実 DL 数は約 1。
-- **B は配布物の中で唯一 chromium を apt の厳密版 pin で焼いているアーティファクト**で、
-  **0.4.0 が再ビルドできなかった原因そのもの**（native rootfs は `BAKE_OPTIONAL_TOOLS=0`）。
-  B が無ければ 0.4.0 の `build.sh --all` は通っていた。
+The reasons:
 
-## 検討して採らなかった案
+- **B's only real benefit was "no container registry required".** The public README says exactly
+  that ("The images are **not** published to a registry, so ... ship on Releases"). The only thing
+  that overclaimed was the `(air-gap images)` label in the artifact table, and since that conflicts
+  with reality it has to be corrected in any case.
+- **Going public changed the premise.** B's design predates the decision to go public. For a public
+  repository **GHCR is free in both storage and transfer**, and moreover **anyone can build from
+  source**. The hole B was filling got considerably smaller by publishing.
+- **The cost does not add up.** About 960MB per release accounts for most of the publish time and
+  storage, while actual downloads number about one.
+- **B is the only artifact that bakes chromium at an exact apt version pin**, and it is **the very
+  reason 0.4.0 could not be rebuilt** (the native rootfs uses `BAKE_OPTIONAL_TOOLS=0`). Without B,
+  0.4.0's `build.sh --all` would have passed.
 
-- **B は残して chromium だけ抜く**: 再ビルド可能性とサイズは改善するが、**ブラウザ
-  サンドボックス強度を落とす**。§35.4.1 のとおり docker では SUID `chrome-sandbox`(4755)
-  が有効に働き、home へ DL した版は SUID を持てない。ただの改善ではなく取引なので採らない。
-  GHCR 配布なら**同じイメージをそのまま配る**ので、この犠牲は発生しない。
-- **B は残してラベルだけ正す**: 実態との食い違いは消えるが、960MB と未決事項は残る。
-- **過去版の再ビルド可能性のために脱・焼き込みする**: レバーが違う。再現性を上げたいなら
-  **取得元の固定**（apt は snapshot.debian.org）であって、焼くのをやめることではない
-  （§35.7.7）。B の存廃とは独立した論点として保留する。
+## Options considered and not taken
 
-## 帰結
+- **Keep B but drop chromium from it**: rebuildability and size improve, but it **weakens the
+  browser sandbox**. As §35.4.1 says, under docker the SUID `chrome-sandbox` (4755) works properly,
+  whereas a version downloaded into home cannot hold SUID. That is a trade rather than a plain
+  improvement, so it is not taken. With GHCR distribution **the same image ships as is**, so the
+  sacrifice does not arise.
+- **Keep B and just fix the label**: the conflict with reality goes away, but the 960MB and the open
+  question remain.
+- **Stop baking things in for the sake of rebuilding past versions**: that is the wrong lever. If you
+  want reproducibility, **pin where things are fetched from** (snapshot.debian.org for apt), not stop
+  baking (§35.7.7). Held as a point independent of whether B survives.
 
-- **真のオフライン利用者の答えは変わらない** — §35.4.1 が既に定めた「自社ビルド」。
-  B があってもどのみち CLI は自社で焼く必要があったので、失われる能力は無い。
-- **レジストリに到達できない利用者**には、`deploy/compose/release.sh --save` で手元から
-  イメージ tar を作る自助手順を残す（配布物としては出さない）。
-- compose 利用者の導入手順が変わる（`docker load` → `docker compose pull`）ので、
-  **利用者に見える変更**としてリリースノートに明記する。
-- ECS 経路（`aws/ecs/release-ecr.sh` が ECR へ push）は無関係で変更しない。
+## Consequences
+
+- **The answer for a genuinely offline user does not change** — build your own, as §35.4.1 already
+  set out. Even with B they had to bake the CLIs themselves, so no capability is lost.
+- **For users who cannot reach a registry**, the self-help procedure of making an image tar locally
+  with `deploy/compose/release.sh --save` remains (it is just not shipped as an artifact).
+- The installation procedure for compose users changes (`docker load` → `docker compose pull`), so it
+  is stated in the release notes as a **user-visible change**.
+- The ECS route (`aws/ecs/release-ecr.sh` pushing to ECR) is unrelated and unchanged.

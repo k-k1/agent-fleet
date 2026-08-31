@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Minimal stdio MCP used by docs/53 P0. The two markers intentionally differ:
+// Minimal stdio MCP used by docs/log/53 P0. The two markers intentionally differ:
 // a CLI passes structuredContent to its model only when the final answer can
 // reproduce STRUCTURED_ONLY without learning it from the text fallback.
 import readline from "node:readline";

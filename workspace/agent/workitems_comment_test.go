@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// docs/80 §80.10 — 唯一の書き戻し。壊れると「投稿したのに入っていない」か
+// docs/log/80 §80.10 — 唯一の書き戻し。壊れると「投稿したのに入っていない」か
 // 「入れてはいけないものが入る」のどちらかになるので、境界を固定する。
 
 func TestParseGitHubIssueKey(t *testing.T) {

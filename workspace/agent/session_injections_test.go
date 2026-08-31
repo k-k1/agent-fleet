@@ -6,7 +6,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// Operator-injected prompts (docs/30 ②) must tag ONLY the matching user turns, leaving the
+// Operator-injected prompts (docs/log/30 ②) must tag ONLY the matching user turns, leaving the
 // user's own prompts and assistant turns untouched — even when an assistant happens to echo
 // the injected text.
 func TestOperatorInjectionTagging(t *testing.T) {
@@ -15,7 +15,7 @@ func TestOperatorInjectionTagging(t *testing.T) {
 	recordOperatorInjection("slot01", "  リファクタして  ") // trimmed on store
 	recordOperatorInjection("slot01", "テストも直して")
 	recordOperatorInjection("slot01", "リファクタして")            // dup of the first (post-trim) — no growth
-	recordInjection("slot01", "スマホから返信", turnSourceDiscord) // chat-bridge origin (docs/37 P2a)
+	recordInjection("slot01", "スマホから返信", turnSourceDiscord) // chat-bridge origin (docs/log/37 P2a)
 
 	if got := operatorInjections("slot01"); len(got) != 3 {
 		t.Fatalf("store should hold 3 distinct texts, got %d: %v", len(got), got)
@@ -71,7 +71,7 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// Schedule-driven injections (docs/38) tag with their own origins — and a slash-command
+// Schedule-driven injections (docs/log/38) tag with their own origins — and a slash-command
 // injection must tag its <command-*> tag-block turn (either tag order), since the
 // transcript never contains the raw "/scout" text that was recorded.
 func TestScheduleInjectionTaggingCommandForm(t *testing.T) {

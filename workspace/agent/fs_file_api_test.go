@@ -812,7 +812,7 @@ func TestReadStableFileSnapshotRetriesAndBounds(t *testing.T) {
 	}
 }
 
-// The meta=1 metadata GET (docs/44 §3.2) is contractually "the ordinary GET
+// The meta=1 metadata GET (docs/log/44 §3.2) is contractually "the ordinary GET
 // minus content": every field, the editability order, and the revision-only-
 // when-editable rule must match the full response byte for byte.
 func TestFSFileGetMetaOmitsContentOnly(t *testing.T) {

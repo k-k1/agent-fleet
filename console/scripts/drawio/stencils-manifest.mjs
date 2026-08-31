@@ -1,4 +1,4 @@
-// ステンシル台帳（`control-plane/assets/drawio-stencils.json`）を焼き直す（docs/65 §65.5.3）。
+// ステンシル台帳（`control-plane/assets/drawio-stencils.json`）を焼き直す（docs/log/65 §65.5.3）。
 //
 // 台帳が CP 側に置いてあるのは、照合するのが CP だからである（go:embed）。Console 側に
 // 置いた台帳はただの飾りで、防壁にはならない。

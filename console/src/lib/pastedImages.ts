@@ -17,7 +17,7 @@ export const FILE_PROMPT_GENERIC = "Look at the following file(s):";
 // stay clean.
 export const IMG_PROMPT = "Open the following image(s) with the Read tool:";
 export const IMG_PROMPT_GENERIC = "Look at the following image file(s):";
-// i18n-exempt: 旧版のエージェント向けプロンプト（後方互換で剥がすだけ・表示されない・docs/28 §4）
+// i18n-exempt: 旧版のエージェント向けプロンプト（後方互換で剥がすだけ・表示されない・docs/log/28 §4）
 export const IMG_PROMPT_LEGACY = "次の画像を Read ツールで開いて確認してください:";
 const ATTACH_PROMPTS = [FILE_PROMPT, FILE_PROMPT_GENERIC, IMG_PROMPT, IMG_PROMPT_GENERIC, IMG_PROMPT_LEGACY];
 // Matches our pasted-attachment paths (…/pasted/<key>/paste-<n>[-name].<ext>),

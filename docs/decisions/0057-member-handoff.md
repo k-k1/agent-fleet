@@ -1,132 +1,154 @@
-# 0057. メンバー間の引き継ぎは共有 ACL の派生物として作り、越境するのは文章と座標だけにする
+# 0057. Build handing over between members as a derivative of the share ACL, and let only prose and coordinates cross the boundary
 
-- 状態: **採用・未実装**（2026-08-24）。設計と実装段階は [docs/77](../77-member-handoff.md)。
-- 関連: [59-session-sharing.md](../59-session-sharing.md)（土台の ACL・本文凍結・失効の規律。ADR は無く
-  設計ドキュメントが正） /
-  [0041-cross-session-messaging.md](0041-cross-session-messaging.md)（同一 Workspace 内のメッセージ。
-  封筒・permission laundering・「送信者が N になったら要る弁」の出典） /
-  [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.md)（arm と台帳に触れない理由）
+English | [日本語](0057-member-handoff.ja.md)
 
-## 背景
+- Status: **adopted, not implemented** (2026-08-24). The design and the implementation stages are in [docs/77](../log/77-member-handoff.md).
+- See also: [59-session-sharing.md](../log/59-session-sharing.md) (the underlying ACL, freezing the body, the discipline of expiry. There is no ADR; the design document is canonical) /
+  [0041-cross-session-messaging.md](0041-cross-session-messaging.md) (messaging within one workspace — the source of the envelope, permission laundering, and "the valve you need once there are N senders") /
+  [0035-session-report-v2-ledger.md](0035-session-report-v2-ledger.md) (why the arm and the ledger are not touched)
 
-fleet には「引き継ぎ」が 2 つあった。`propose_session_handoff` は**自分の Workspace の中**で次セッションの
-初回プロンプトを提案するもので、セッション共有（docs/59）は**同一テナントの別メンバー**へ会話を見せる
-ものである。共有ビューには既に引き継ぎカードが RO で出ている（`session_share.go:639`）が、B が
-それを受け取って自分の Workspace で走らせる導線は無い。
+## Context
 
-出発点の問いは「メンバーへ引き継ぐ MCP ツールをどう設計するか」だったが、検討の結果、**ツールの
-設計問題ではなく、共有 ACL の上に一手を足す UI の問題**だと分かった。以下はその過程で捨てた選択肢と、
-残った形の記録である。
+The fleet had two kinds of "handoff". `propose_session_handoff` proposes the first prompt for the next
+session **inside your own workspace**, while session sharing (docs/59) shows a conversation to **another
+member of the same tenant**. The shared view already displays the handoff card read-only
+(`session_share.go:639`), but there is no route for B to take it and run it in their own workspace.
 
-## 決定 1 — セッション実体は移動しない。越境するのは文章と git 座標と読み取り権だけ
+The starting question was "how should we design an MCP tool for handing over to a member?", but the
+investigation showed it is **not a tool design problem but a UI problem of adding one move on top of
+the share ACL**. What follows is the record of the options discarded on the way, and of the shape that
+remained.
 
-「引き継ぐ」は (A) 仕事の引き継ぎ (B) 会話の引き渡し (C) 所有権移転の 3 つを指す。**(C) を捨てる。**
-transcript・worktree・未コミット変更・エージェント CLI の OAuth はすべて A の home にあり、費用は
-membership 単位で付き、認証は A のアカウントのものだからである。移せば「B の作業が A の課金と
-A のアカウントで走る」ことになる。
+## Decision 1 — the session entity does not move. What crosses is prose, git coordinates and read access
 
-この決定が残りをほぼ決めてしまう。可搬なのは①文章②push 済みの git 状態③会話への読み取り権の 3 つだけで、
-決定 5 の push ゲートはここから機械的に出てくる。
+"Hand over" means three things: (A) handing over the work, (B) handing over the conversation, and
+(C) transferring ownership. **We discard (C).** The transcript, the worktree, the uncommitted changes
+and the agent CLI's OAuth all live in A's home; the cost attaches per membership; and the
+authentication is A's account. Moving it would mean "B's work runs on A's billing and A's account".
 
-## 決定 2 — 宛先は「既にそのセッションを共有している人」に限る
+This decision largely settles the rest. Only three things are portable — (1) prose, (2) pushed git
+state, (3) read access to the conversation — and decision 5's push gate falls out of that
+mechanically.
 
-宛先を任意のテナントメンバーにすると、名簿の引き方、会話を一緒に渡すか、関係が切れたときの失効、
-という設計問題が芋づるで付いてくる。**共有済みを前提条件にすると 4 つとも消える**（docs/77 §77.4）。
-共有は「A がこの人に見せると判断済み」という**既に存在する信頼関係**であり、それを引き継ぎの認可に
-再利用するのが最も安い。
+## Decision 2 — the recipient is limited to someone the session is already shared with
 
-**捨てた案**: 「共有して引き継ぐ」を 1 操作にまとめる。手数は減るが、引き継ぎのついでに会話を全部
-開くことになる。共有と引き継ぎは別の判断なので、一手を残す。
+Allowing any tenant member as the recipient drags in a chain of design problems: how the roster is
+looked up, whether the conversation is handed over with it, and expiry when the relationship ends.
+**Making "already shared" a precondition removes all four** (docs/77 §77.4). A share is **a trust
+relationship that already exists** — "A has decided to show this person" — and reusing it as the
+handoff's authorisation is the cheapest thing to do.
 
-## 決定 3 — A → B へ「実行」を流さない。起動するのは B が自分の権限で
+**Rejected**: combining "share and hand over" into one operation. It saves a step, but it opens the
+whole conversation as a side effect of handing over. Sharing and handing over are different
+judgements, so the extra move stays.
 
-CP が A の Workspace を叩いて何かを起こす形にしない。B が**自分の Console から自分の Workspace に**
-セッションを作る、既存の起動経路をそのまま使う。
+## Decision 3 — no "execution" flows from A to B. B launches with their own privileges
 
-これにより docs/59 の RW 提案が必要とした **owner lease・冪等 ledger・二重実行防止がまるごと不要**になる。
-あちらがあれを必要としたのは「共有先の提案を CP が所有者 Agent へ送る」＝越境実行だったからで、
-この機能にはその構造が無い。
+There is no shape in which the CP hits A's workspace to make something happen. B creates a session
+**in their own workspace from their own Console**, using the existing launch path unchanged.
 
-## 決定 4 — 新しい MCP ツールを配らない
+That makes docs/59's RW proposals' requirements — **the owner lease, the idempotency ledger and
+double-execution prevention — entirely unnecessary**. Those were needed there because "the CP sends a
+share recipient's proposal to the owner's Agent", i.e. cross-boundary execution. This feature has no
+such structure.
 
-決定 2・3 の結果、宛先を決めるのも送信するのも受け取るのも Console 側になった。エージェント側に残る
-仕事は「引き継ぎ本文を書く」だけで、それは `propose_session_handoff` が既にやっている。追加するのは
-同ツールの**任意 `to` ヒント**に留める。
+## Decision 4 — do not distribute a new MCP tool
 
-理由は 2 つ。ツールは**全セッションの system prompt に常駐する**（[docs/58](../58-cross-session-messaging.md)
-§58.14 が説明文の分量を 1 組の例に絞ったのと同じコスト）。
-そして、ツールを配ると**エージェントが他人の受信箱へ書ける**ようになる —— 汚染されたリポジトリを
-読んだセッションが A の名前で同僚に作業依頼を投げられる形は、ADR 0041 が封筒に取り込んだ
-permission laundering の相手が人間になったものに等しい。この形ならエージェントの権能は増えない。
+As a result of decisions 2 and 3, choosing the recipient, sending and receiving are all on the Console
+side. The only job left for the agent is writing the handoff body, and `propose_session_handoff`
+already does that. The addition is limited to an **optional `to` hint** on that same tool.
 
-**捨てた案**: `propose_member_handoff` ＋ `list_tenant_members`。後者はテナント名簿をモデルの文脈と
-transcript に残す。エージェント直送を設定で選べるようにする案も、既定オフでも「オンにした環境だけ
-無防備」になるので採らない。
+Two reasons. A tool **lives permanently in every session's system prompt** (the same cost that made
+[docs/58](../log/58-cross-session-messaging.md) §58.14 cut its description down to one worked
+example). And distributing a tool lets **an agent write into someone else's inbox** — a session that
+read a poisoned repository being able to throw a work request at a colleague under A's name is the
+permission laundering ADR 0041 took into its envelope, with a human on the other end. In this shape
+the agent gains no new authority.
 
-## 決定 5 — 未 push の commit は送信を止める。dirty は警告に留める
+**Rejected**: `propose_member_handoff` plus `list_tenant_members`. The latter leaves the tenant roster
+in the model's context and in the transcript. Making direct agent sending a configurable option is not
+adopted either, because even off by default it leaves "only environments that turned it on are
+defenceless".
 
-共有していても B のディスクに A の未コミット変更は無い。push されていない引き継ぎは文章がどれだけ
-立派でも嘘になり、B の新セッションは存在しない commit を前提に走り出す。**未 push は赤で止める。**
-未コミットは意図的に捨てる引き継ぎがあるので警告に留める。
+## Decision 5 — unpushed commits block sending; dirty is only a warning
 
-⚠️ **検査もrepo 座標の取得も Console（サーバ側）で行い、モデルに書かせない。** 座標をモデルが書ける
-構造化フィールドにすると、Console がそれをクローン導線に変えた瞬間、「図を開かせるだけで」と同型の
-—— リポジトリを読ませるだけで B に任意の remote をクローンさせる —— 道具になる。
+Even with a share, A's uncommitted changes are not on B's disk. A handoff that has not been pushed is
+a lie however well written, and B's new session starts out presuming a commit that does not exist.
+**Unpushed is a red stop.** Uncommitted stays a warning, because some handoffs deliberately discard it.
 
-## 決定 6 — A のローカル提案は送信後も残す（移譲ではなく offer）
+⚠️ **Both the check and getting the repo coordinates happen in the Console (server side); the model
+does not write them.** Making the coordinates a structured field the model can write turns it, the
+moment the Console makes it a clone route, into the same shape as "just by getting a diagram opened" —
+a tool for making B clone an arbitrary remote just by getting a repository read.
 
-送信は「ローカル提案のコピーを差し出す」ことであって、提案そのものが出ていくのではない。だから
-「引き継がれなかったら A が自分で起動する」は**既存のミラーの起動ボタンが生き続けるだけ**になり、
-新しい導線が要らない。A の起動ボタンは offer の状態で三態を取る（pending は確認＋自動撤回、
-declined/expired は素通し、accepted は二重作業の警告）。
+## Decision 6 — A's local proposal survives sending (an offer, not a transfer)
 
-⚠️ **自動撤回は起動と同一トランザクションで行う。**「A が痺れを切らして自分で始めた」と「B が受け取った」
-の競合が、この機能で最悪の失敗（同じ仕事が 2 つ走る）だからである。
+Sending means "offering a copy of the local proposal", not the proposal itself leaving. So "if nobody
+takes it, A starts it themselves" is **just the existing launch button in the mirror continuing to
+work**, and no new route is needed. A's launch button takes three states depending on the offer
+(pending → confirm and auto-withdraw; declined/expired → straight through; accepted → warn about
+duplicate work).
 
-**捨てた案**: 送信時にローカル提案を消す移譲モデル。辞退されたときに手元に何も残らない。
+⚠️ **The auto-withdrawal happens in the same transaction as the launch.** The race between "A got
+impatient and started it themselves" and "B accepted it" is the worst failure this feature has (the
+same work running twice).
 
-## 決定 7 — 送信した時点で本文の正は CP のスナップショット。ローカル編集は追従させない
+**Rejected**: a transfer model that deletes the local proposal on sending. Then nothing is left at hand
+when it is declined.
 
-A のセッションが消えても（`removeHandoffProposals` はスロット再利用で消す）、A の Workspace が
-止まっていても、B は受け取れる必要がある。よって正は CP に置く。ローカルはミラー上のカード位置
-（`CreatedAt` 不変ルール）と編集の起点として残るだけ。
+## Decision 7 — once sent, the canonical body is the CP's snapshot; local edits do not follow
 
-**送信後のローカル編集は offer に効かない。**効かせると B が読んでいる最中に本文が書き換わる —— docs/59
-の RW 提案が本文を凍結しているのと同じ理由である。変えたければ撤回して投げ直す。この非対称は UI に
-明記する（黙って効かないのが最悪）。
+B must be able to receive it even if A's session has gone (`removeHandoffProposals` deletes on slot
+reuse) and even if A's workspace is stopped. So the canonical copy is on the CP. The local one remains
+only as the card's position in the mirror (the immutable-`CreatedAt` rule) and as the starting point
+for editing.
 
-## 決定 8 — 通知は流れ物。在庫はバッジ、履歴は台帳
+**Local edits after sending do not affect the offer.** If they did, the body would change while B was
+reading it — the same reason docs/59's RW proposals freeze the body. To change it, withdraw and send
+again. This asymmetry is stated in the UI (silently having no effect is the worst outcome).
 
-3 つを混ぜない。**通知は既読で流れてよい**（取りこぼしを厳密に救済しない）。**バッジは pending である
-限り消さない**——「読んだが決めていない」で消すと引き継ぎが忘れられる。**台帳**（A の「出した引き継ぎ」
-一覧）が、流れた後に辿れる場所になる。通知を流れ物と決めるなら台帳は選択ではなく必然である。
+## Decision 8 — notifications flow past; the badge is the inventory; the ledger is the history
 
-通知は 2 kind だけ: B へ `handoff-offer`、A へ `handoff-accepted`。**辞退の通知は出さない**（A が知りたい
-のは引き継がれたかどうかで、理由は求めない）が、宙に浮いたまま忘れられないよう**失効の直前に A へ
-1 回だけ**出す。
+Do not mix the three. **A notification may flow past once read** (there is no strict rescue for a
+missed one). **The badge does not clear while it is pending** — clearing it on "read but not decided"
+gets handoffs forgotten. **The ledger** (A's list of "handoffs I sent") is the place to trace it after
+the notification has flowed past. Once notifications are declared to be ephemeral, the ledger is a
+necessity rather than a choice.
 
-⚠️ **CP から直接 `InsertNotification` する。**既存のセッション通知は `drainAgentOutbox` 経由＝Workspace が
-起動していないと出ないが、引き継ぎは A も B も Workspace が止まっている場面が主戦場である。
-⚠️ 冪等は `ON CONFLICT(event_id)` で **membership を含まない**ので、event_id は
-`offer id + 種別 + 受信者` で組む（同じ id を 2 通に使うと片方が黙って消える）。
+There are only two notification kinds: `handoff-offer` to B and `handoff-accepted` to A. **No decline
+notification** (what A wants to know is whether it was taken over, not why), but so that it is not left
+hanging and forgotten, **one goes to A just before it expires**.
 
-## 決定 9 — テーブルは別にする（`session_share_proposal` に相乗りしない）
+⚠️ **`InsertNotification` is called directly from the CP.** Existing session notifications go through
+`drainAgentOutbox`, i.e. they do not appear unless the workspace is running — but for a handoff, both
+A's and B's workspaces being stopped is the main battlefield.
+⚠️ Idempotency is `ON CONFLICT(event_id)` and **does not include the membership**, so the event_id is
+composed of `offer id + kind + recipient` (using the same id for two notifications silently deletes
+one of them).
 
-`session_share_proposal` は B → A（共有先が提案し所有者が承認）、`session_handoff_offer` は A → B
-（所有者が差し出し共有先が承認）で**方向が逆**。`owner` / `proposer` の意味が入れ替わるので、同じ
-テーブルに載せると必ず読み間違える。**流用するのは作法だけ** —— `catalog_id` への紐付けによる ACL 連動、
-本文の暗号化（tenant key custodian がある環境）、失効時の本文消去、`membershipCascade`。
+## Decision 9 — a separate table (it does not ride `session_share_proposal`)
 
-## 決定 10 — 未処理の offer は 1 セッションに 1 件・宛先 1 人
+`session_share_proposal` is B → A (a share recipient proposes and the owner approves), while
+`session_handoff_offer` is A → B (the owner offers and the share recipient accepts) — **the direction
+is reversed**. The meanings of `owner` and `proposer` swap, so putting them in the same table
+guarantees a misreading. **Only the practices are reused** — linkage to the `catalog_id` for ACL
+coupling, encrypting the body (where a tenant key custodian exists), erasing the body on expiry, and
+`membershipCascade`.
 
-共有スコープが `repo` / `worktree` だと閲覧者が複数いるのは普通で、複数人へ同時に投げられると
-**早い者勝ち＋二重作業**になる。渡し直したいときは撤回してから投げ直す（決定 6 の三態に導線がある）。
+## Decision 10 — one outstanding offer per session, to one recipient
 
-## 影響と残り
+With a share scope of `repo` or `worktree`, several viewers is normal, and being able to throw it at
+several people at once produces **a race plus duplicate work**. To hand it to someone else, withdraw
+and send again (decision 6's three states provide the route).
 
-- **エージェントの権能は増えない。**追加されるのは `propose_session_handoff` の任意ヒント 1 つだけ。
-- **B の受諾は B の Workspace を起こし、B に課金される。**受諾は 1 クリックで前埋め起動モーダルを
-  開くところまでで、確定は B が押す。編集された本文は B の指示になる。
-- **共有していない相手には渡せない**（決定 2）。運用上は「まず共有を張る」の一手が増える。
-- docs/58 のメッセージとは別物として並べる。用語は **引き継ぎ / 共有 / メッセージ** の 3 語を混ぜない。
-- 残り: 実装（docs/77 §77.14 の P0〜P3）。
+## Impact and what remains
+
+- **The agent gains no authority.** The only addition is one optional hint on
+  `propose_session_handoff`.
+- **B accepting wakes B's workspace and bills B.** Accepting goes as far as opening a pre-filled launch
+  modal in one click; B presses to confirm. The edited body becomes B's instruction.
+- **It cannot be handed to someone it is not shared with** (decision 2). Operationally that adds one
+  move, "share it first".
+- It sits alongside docs/58's messaging as a different thing. Do not mix the three words
+  **handoff / share / message**.
+- Remaining: the implementation (P0–P3 in docs/77 §77.14).

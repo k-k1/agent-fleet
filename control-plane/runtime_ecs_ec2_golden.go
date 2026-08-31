@@ -1,5 +1,5 @@
 // runtime_ecs_ec2_golden.go — the `ecs-ec2` half of the automatic golden bake
-// (ADR 0045 決定 9 / docs/64 §64.28). The state machine itself lives in
+// (ADR 0045 決定 9 / docs/log/64 §64.28). The state machine itself lives in
 // golden_bake.go and knows nothing about EC2; what is here is the two narrow
 // capabilities it needs, implemented once, on the adapter that owns the tags.
 //
@@ -36,7 +36,7 @@ type goldenBakePool interface {
 	// bakeArches lists the CPU architectures this deployment needs a golden for —
 	// one per distinct architecture among the declared slot classes, the default
 	// class's first. A golden is a home full of BINARIES, so there is no such thing
-	// as one golden for two architectures (docs/70 §70.6).
+	// as one golden for two architectures (docs/log/70 §70.6).
 	bakeArches() []string
 	// goldenFor returns the newest COMPLETED snapshot carrying this role for the
 	// running image AND this architecture, plus anything still pending.
@@ -124,7 +124,7 @@ var (
 	_ goldenSeedRuntime = (*ecsEC2Runtime)(nil)
 )
 
-// --- golden の同一性（docs/72 §72.6.4） ------------------------------------------
+// --- golden の同一性（docs/log/72 §72.6.4） ------------------------------------------
 
 // goldenIdentity answers "is this golden a golden for the image we are about to run".
 //
@@ -236,7 +236,7 @@ func (f *ecsEC2Factory) seedClassFor(arch string) string {
 // snapshotArch reads a snapshot's architecture. An untagged snapshot is x86_64:
 // goldens baked before classes existed could not have been anything else, and
 // treating them as "unknown" would orphan every deployment's existing golden on
-// upgrade (docs/70 §70.6).
+// upgrade (docs/log/70 §70.6).
 func snapshotArch(s ec2types.Snapshot) string {
 	return archOrX86(ec2TagValue(s.Tags, ec2TagArch))
 }
@@ -325,7 +325,7 @@ func (f *ecsEC2Factory) bakeBlocked(ctx context.Context) (bool, string, error) {
 
 // bakeCapacityBlocked is the arithmetic above, on its own so that the pool SCREEN can
 // answer "why is nothing being baked" with the same rule the baker actually applies
-// (docs/64 §64.30). Two copies of "needs two free" would drift, and the screen's job is
+// (docs/log/64 §64.30). Two copies of "needs two free" would drift, and the screen's job is
 // precisely to explain the baker's decisions.
 func bakeCapacityBlocked(inUse, maxSlots int) (bool, string) {
 	if inUse+bakeReservedSlots > maxSlots {
@@ -340,7 +340,7 @@ func bakeCapacityBlocked(inUse, maxSlots int) (bool, string) {
 // "new members start slowly", noticed weeks later if at all.
 const bakeReservedSlots = 2
 
-// --- what the pool screen shows about a bake in flight (docs/64 §64.30) -----------
+// --- what the pool screen shows about a bake in flight (docs/log/64 §64.30) -----------
 
 // ec2BakeHome is one reserved workspace's home as the SCREEN needs it: the two facts
 // the ordinary home view does not carry, both of which the baker itself steers by.
@@ -602,7 +602,7 @@ func (e *ecsEC2Runtime) markHomeBaked(ctx context.Context, volumeID string) erro
 // stopped workspace looks like (sweepVolume), and it cannot tell a person's home from a
 // dead seed's. Only the baker can, because only the baker owns these two names.
 //
-// Measured on a live deployment (docs/64 §64.29.5): after a promoted bake the seed's
+// Measured on a live deployment (docs/log/64 §64.29.5): after a promoted bake the seed's
 // service (desiredCount 0) and its home stayed behind and billed until an operator
 // found them by hand.
 //

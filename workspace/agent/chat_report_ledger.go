@@ -1,6 +1,6 @@
 package main
 
-// 指示台帳 — セッション報告 v2 Phase 2（docs/51 §データモデル / ADR 0035 決定1）。
+// 指示台帳 — セッション報告 v2 Phase 2（docs/log/51 §データモデル / ADR 0035 決定1）。
 //
 // v1 は「指示1件 = arm の1bit（session-report/<name>.json）」だった。1bit には
 // **同一性が無い**ので、指示が重なった瞬間に定義から事故が生まれる:
@@ -39,7 +39,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// 行の状態（docs/51 §データモデル）。
+// 行の状態（docs/log/51 §データモデル）。
 const (
 	instrPending   = "pending"
 	instrInterim   = "interim_reported" // 質問/プラン の途中経過を報告済み（**非消費**）
@@ -49,7 +49,7 @@ const (
 )
 
 // instrCursor is the row's progress cursor: 「この時刻より後にセッションが働いた証拠」を
-// 完了報告の前提にするための下限（docs/51 §progressed）。Phase 2 は投入時刻1本
+// 完了報告の前提にするための下限（docs/log/51 §progressed）。Phase 2 は投入時刻1本
 // （＝ Phase 1 の arm 時刻と同じ意味）で、kind 別の濃いカーソル（jsonl サイズ・ターン
 // 連番）は後続の課題。**秒精度の RFC3339 で持つ**のが肝で、比較相手の status マーカーも
 // 秒精度 — ここを nano にすると「投入と同じ秒に終わった速いターン」が永久に settle
@@ -67,7 +67,7 @@ type instrInterimAt struct {
 	PlanAt     string `json:"plan_at,omitempty"`
 }
 
-// instrRow is one instruction (docs/51 §データモデル).
+// instrRow is one instruction (docs/log/51 §データモデル).
 type instrRow struct {
 	ID          string         `json:"id"`     // 行ID（配送の冪等キー）
 	Conv        string         `json:"conv"`   // 報告先の会話
@@ -101,7 +101,7 @@ var instrLedgers = fstore.JSON[instrLedger](paths.AgentConfigDir, "instr-ledger"
 // セッションが何百回も steer されても台帳が太らない）。
 const instrClosedKeep = 20
 
-// 台帳の read-modify-write はセッション単位で直列化する（docs/51: 書き手はサーバ
+// 台帳の read-modify-write はセッション単位で直列化する（docs/log/51: 書き手はサーバ
 // プロセス内の投入ハンドラとリコンサイラだけ）。臨界区間はファイル1枚の read+write
 // だけで、配送（会話ロック・provider 呼び出し）はこの外側で行う。
 var (
@@ -179,7 +179,7 @@ func writeInstrRows(name string, rows []instrRow) {
 	_ = instrLedgers.Write(name, instrLedger{Rows: merged})
 }
 
-// addInstruction records one delivered instruction as a NEW ledger row (docs/51 §移行
+// addInstruction records one delivered instruction as a NEW ledger row (docs/log/51 §移行
 // Phase 2: arm の書込み箇所を行追加へ)。create_session（report_to 付き）と report_to を
 // 運ぶ /input・/turn の成功時に呼ぶ。**既存行は絶対に触らない** — 重なった指示が
 // 潰れないことがこの置き換えの目的そのもの（穴A）。
@@ -261,11 +261,11 @@ func markInstrInterim(name, kind string, at time.Time) {
 }
 
 // instrReopenMax caps how often one row may be re-opened by the compensation path
-// （docs/51 §補償）。上限に達した行は「判定が振動している」ので開き直さない。
+// （docs/log/51 §補償）。上限に達した行は「判定が振動している」ので開き直さない。
 const instrReopenMax = 2
 
 // reopenInstrRow re-opens a reported row so the real completion gets another report
-// （docs/51 §補償 — 誤「完了」の自己修復）。遷移を引く検出（reported 行の grace 監視中に
+// （docs/log/51 §補償 — 誤「完了」の自己修復）。遷移を引く検出（reported 行の grace 監視中に
 // busy 証拠が復活したか）と訂正の配送は reportReconciler.compensate（Phase 3）にあり、
 // ここは台帳側の遷移だけを持つ。**訂正を配送してから**呼ぶこと: 逆順にすると、訂正が
 // 配送できなかったときに「黙って開き直しただけ」になり、v1 の消失と同じ見え方になる。
@@ -317,7 +317,7 @@ func instrPendingSessions() []string {
 
 // instrSweepSessions splits the ledger directory into the reconciler's two work sets in
 // ONE readdir + read pass: 完了を待っている（open 行あり）セッションと、誤「完了」の
-// 監視中（grace 内の reported 行あり）セッション（docs/51 §補償）。両方に載ることは
+// 監視中（grace 内の reported 行あり）セッション（docs/log/51 §補償）。両方に載ることは
 // 普通にある — 1件が報告済みでもう1件が pending、という状態がそれ。
 func instrSweepSessions(now time.Time) (open, grace []string) {
 	ents, err := os.ReadDir(instrLedgers.Dir())
@@ -369,7 +369,7 @@ func instrDeliveryKey(r instrRow) string {
 }
 
 // instrReopenKeySuffix namespaces the COMPENSATION notice's idempotency key away from
-// the completion report's (docs/51 §補償 / Phase 3)。訂正は「その世代の完了報告」に
+// the completion report's (docs/log/51 §補償 / Phase 3)。訂正は「その世代の完了報告」に
 // 1対1で対応するので、鍵は同じ行ID＋同じ世代の別名前空間にする。行IDだけを共有すると
 // 訂正が「配送済み」の完了報告と衝突し、逆に世代を1つ進めた鍵にすると、次の本完了
 // （reopen 後の世代）の報告を握り潰す。
@@ -433,7 +433,7 @@ func instrRowsCoveredBy(rows []instrRow, at string) []instrRow {
 
 // undeliveredInstrRows filters out the rows whose report of THIS kind already exists in
 // the conversation（配送の冪等化 — 呼び出し側は会話ロックを保持していること）。kind を
-// 取るのは補償の訂正（docs/51 §補償）のため: 訂正と完了報告は同じ行・同じ世代を指すが
+// 取るのは補償の訂正（docs/log/51 §補償）のため: 訂正と完了報告は同じ行・同じ世代を指すが
 // 別々の1通なので、鍵の名前空間を分けないと片方がもう片方を握り潰す。
 func undeliveredInstrRows(c *chatConversation, rows []instrRow, kind string) []instrRow {
 	if len(rows) == 0 {
@@ -483,7 +483,7 @@ func reportedInstrTS(c *chatConversation, rows []instrRow) int64 {
 }
 
 // instrReopenCandidates returns the reported rows still inside the compensation grace
-// window (docs/51 §補償: reported 行を grace 期間監視する)。純関数なので、grace の境界と
+// window (docs/log/51 §補償: reported 行を grace 期間監視する)。純関数なので、grace の境界と
 // 「新指示があれば補償しない」規則をテーブルで固定できる。
 //
 // 「**新しい指示行が無いまま**」の実装がここ: セッションが再び busy になった理由が
@@ -516,7 +516,7 @@ func instrReopenCandidates(rows []instrRow, now time.Time, grace time.Duration) 
 	return out
 }
 
-// instrFoldAts joins the dispatch times of the rows a folded report covers (docs/51
+// instrFoldAts joins the dispatch times of the rows a folded report covers (docs/log/51
 // §データモデル): 複数の指示が同じ静穏で完了したときは1通に**明示的に束ねる**（v1 のように
 // 潰さない）。「指示N件ぶん」の文言そのものは chat_report_text.go（表示言語で組む）。
 func instrFoldAts(rows []instrRow) string {
@@ -530,7 +530,7 @@ func instrFoldAts(rows []instrRow) string {
 // --- v1 arm からの移行 ------------------------------------------------------------
 
 // migrateReportArms converts leftover v1 arm files (session-report/<name>.json,
-// armed=true) into one ledger row each, then removes them（docs/51 §移行 Phase 2:
+// armed=true) into one ledger row each, then removes them（docs/log/51 §移行 Phase 2:
 // 「起動時に既存 armed=true を1行に変換」）。起動時に1回だけ走る。
 //
 // 変換後に v1 ファイルを消すのは、再起動のたびに同じ arm を再変換して行が増えるのを
@@ -570,6 +570,6 @@ func migrateReportArms() {
 		reportLinks.Remove(name)
 	}
 	if n > 0 {
-		log.Printf("session-report: v1 の arm %d 件を指示台帳へ移行した（docs/51 Phase 2）", n)
+		log.Printf("session-report: v1 の arm %d 件を指示台帳へ移行した（docs/log/51 Phase 2）", n)
 	}
 }

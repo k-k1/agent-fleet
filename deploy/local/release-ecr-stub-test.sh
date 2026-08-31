@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stub end-to-end test for release-ecr.sh (docs/35 §35.7.3 gate g).
+# Stub end-to-end test for release-ecr.sh (docs/log/35 §35.7.3 gate g).
 # Uses no real AWS/docker: PATH-prepended fake aws / fake docker pin down the call
 # set and the assembled ECR URIs. Runs both in CI (release-gate.yml ecs-gate) and
 # locally (no docker needed).

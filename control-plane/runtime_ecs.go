@@ -72,7 +72,7 @@ type ssmAPI interface {
 // Workspace onto an ECS Service (desiredCount 0/1 = scale-to-zero) with two EFS
 // access points for the persistent home + claude-config, injects the CP↔Agent
 // token and at-rest DEK via SSM SecureString, and reaches the Agent over Service
-// Connect (frozen spec docs/history/p3-7-aws-adapter.md §20b.7). The adapter holds
+// Connect (frozen spec docs/log/p3-7-aws-adapter.md §20b.7). The adapter holds
 // NO CP-side state: every resource is addressed by a deterministic name/tag and
 // created-or-got on Start, so there is no schema change vs the docker adapter.
 type ecsRuntime struct {
@@ -87,7 +87,7 @@ type ecsRuntime struct {
 	name         string // ECS service name / SC dnsName (Workspace.ContainerName)
 	membershipID string // EFS access-point tag key (af-membership)
 	// tenantSlug is stamped as af-tenant on every billable resource this adapter
-	// creates. Read by nothing but the bill (docs/67, ADR 0048 決定 3); empty is a
+	// creates. Read by nothing but the bill (docs/log/67, ADR 0048 決定 3); empty is a
 	// valid value and simply means the resource carries no tenant tag.
 	tenantSlug string
 	token      string // CP↔Agent bearer (Workspace.AgentToken)
@@ -214,7 +214,7 @@ func (f *ecsFactory) WorkspaceImage() string { return f.cfg.workspaceImage }
 // That distinction is not academic. Until 2026-08-16 the CP task role had no snapshot
 // permissions at all, and the live E2E went green through every round of it, because it
 // was running as the deployer. "Passed against real AWS" is not "passed with the
-// permissions of production". (docs/64 §64.22.3 / §64.23.)
+// permissions of production". (docs/log/64 §64.22.3 / §64.23.)
 var awsConfigFor = func(ctx context.Context, region string) (aws.Config, error) {
 	return awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region))
 }
@@ -259,7 +259,7 @@ func newECSFactory(m *manager) (RuntimeFactory, error) {
 		// How long the BACKGROUND readiness watch keeps polling /healthz after Start
 		// returns (observability only — nothing waits on it, see watchReady). Sized
 		// over the whole convergence, not under the ALB idle timeout: a Fargate cold
-		// pull plus a fresh home's boot-install runs past 100s (docs/62 §62.3), and a
+		// pull plus a fresh home's boot-install runs past 100s (docs/log/62 §62.3), and a
 		// budget shorter than that would just log a false "not ready" every Start.
 		// Same reasoning as runtime_native's 300s health wait.
 		startTimeout: time.Duration(envInt("AF_ECS_START_TIMEOUT_SEC", 300)) * time.Second,
@@ -380,7 +380,7 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 // ⚠️ It CANNOT delete the home itself. The EFS directories the access points pointed at
 // (/home/<membership>, /claude-config/<membership>) survive the access points, and EFS
 // keeps billing for them — deleting them needs a mount, i.e. a throwaway task
-// (docs/64 §64.18.4, ADR 0045 決定 13-3). They come back as leftovers rather than as an
+// (docs/log/64 §64.18.4, ADR 0045 決定 13-3). They come back as leftovers rather than as an
 // error so the caller can record them; an error here would only make the operator retry
 // a teardown that already did everything it can.
 //
@@ -507,11 +507,11 @@ func (e *ecsRuntime) Start(ctx context.Context) error {
 // watchReady polls the Agent /healthz for the record only: it runs on its own
 // goroutine so Start returns as soon as the service sits at desiredCount 1.
 //
-// Start used to block here (docs/62 §62.5). Two things made that wait pure cost:
+// Start used to block here (docs/log/62 §62.5). Two things made that wait pure cost:
 //
 //   - It cannot succeed. Reaching this point means a task is launching FROM ZERO —
 //     "running" and "starting" both return early above — and Fargate keeps no image
-//     cache between tasks, so every launch pays a full ~1GB pull (docs/62 §62.1).
+//     cache between tasks, so every launch pays a full ~1GB pull (docs/log/62 §62.1).
 //     The "warm image" the old comment waited for does not exist on this runtime;
 //     the wait timed out every time and Start returned nil anyway.
 //   - It broke the caller. Start runs inside the HTTP request (workspace_handlers
@@ -526,7 +526,7 @@ func (e *ecsRuntime) Start(ctx context.Context) error {
 // to "failed" (P3-7 段5 finding A) — which is now structural: nothing reads it.
 //
 // What is left is the log line, and it is the cheapest instrument we have for the
-// unmeasured ~100s (docs/62 §62.7 P0): it records how long the Agent actually took
+// unmeasured ~100s (docs/log/62 §62.7 P0): it records how long the Agent actually took
 // to answer after Start, per workspace, without an AWS-side trace.
 func (e *ecsRuntime) watchReady(ctx context.Context) {
 	if e.waitReady == nil {
@@ -711,7 +711,7 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 	if e.diskGiB > 0 {
 		// Task-local working disk. Absent = Fargate's default 20 GiB, which is also the
 		// only free amount, so an unset size must stay absent rather than be written
-		// as 20 (docs/63 §63.2: the API rejects anything below 21).
+		// as 20 (docs/log/63 §63.2: the API rejects anything below 21).
 		in.EphemeralStorage = &ecstypes.EphemeralStorage{SizeInGiB: e.diskGiB}
 	}
 	out, err := e.ecs.RegisterTaskDefinition(ctx, in)
@@ -753,7 +753,7 @@ func (e *ecsRuntime) volumeConfigurations() []ecstypes.ServiceVolumeConfiguratio
 // ships its own Tag struct; an empty slug appends nothing so a Workspace built without
 // a store read (tests, the in-memory backfill path) simply carries no tenant tag
 // instead of an empty one — an empty cost allocation tag value is a real value in the
-// bill and would show up as its own group (docs/67 §67.10).
+// bill and would show up as its own group (docs/log/67 §67.10).
 func appendEFSTenantTag(slug string, tags []efstypes.Tag) []efstypes.Tag {
 	if slug == "" {
 		return tags
@@ -814,7 +814,7 @@ func (e *ecsRuntime) upsertService(ctx context.Context, taskDefArn string) error
 		DesiredCount:         aws.Int32(1),
 		LaunchType:           ecstypes.LaunchTypeFargate,
 		VolumeConfigurations: e.volumeConfigurations(),
-		// Billing only (docs/67 §67.8). On Fargate the TASK is the billed thing, and a
+		// Billing only (docs/log/67 §67.8). On Fargate the TASK is the billed thing, and a
 		// task inherits tags only when the service is told to propagate them — without
 		// this, af-membership exists nowhere on the Fargate path and the compute cannot
 		// be attributed to anyone. EnableECSManagedTags is what makes propagation legal.

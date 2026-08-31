@@ -1,4 +1,4 @@
-// features/chat/ttsDict — テナント共通の読み仮名辞書（docs/24）。CP の SettingsStore に
+// features/chat/ttsDict — テナント共通の読み仮名辞書（docs/log/24）。CP の SettingsStore に
 // 管理者が置いた辞書（GET /api/tts/dict）をモジュール内にキャッシュし、effectiveDict() が
 // ユーザー辞書（設定 ttsUserDict）と合成して返す。同じ表記はユーザー辞書が勝つ（上書き）。
 // 適用はすべてクライアント側（startTts / startNarration / turnTts / ReaderView が使う）。

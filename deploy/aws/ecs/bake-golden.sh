@@ -1,6 +1,6 @@
 #!/bin/bash
 # bake-golden.sh — 新規ユーザーの home の種になる「golden snapshot」を焼く。
-# ADR 0045 決定 9 / docs/64 §64.18。対象は AF_RUNTIME=ecs-ec2 のデプロイのみ。
+# ADR 0045 決定 9 / docs/log/64 §64.18。対象は AF_RUNTIME=ecs-ec2 のデプロイのみ。
 #
 # 何をするか: **既に立ち上げ済みの「種」Workspace の home ボリュームを snapshot に取り、
 # af-role=golden と af-image を刻む**だけ。boot-install（4CLI 41s ＋ rtk 1s ＋ agy 6s）と
@@ -29,9 +29,9 @@
 #
 # ⚠️ **リリースのたびに焼き直すこと。** イメージや CLI のピンが上がると golden は古くなる。
 # ⚠️ **ここで焼いた golden は `af-image-fp`（内容の指紋）を持たない。** CP は指紋が両側に
-# あるときだけ内容で突合し、無ければこれまでどおり af-image の**文字列**で比べる（docs/73
+# あるときだけ内容で突合し、無ければこれまでどおり af-image の**文字列**で比べる（docs/log/73
 # 決定 3）ので、手焼きの golden も普通に使われる。ただし文字列で比べる以上、**同じ中身を
-# 別タグに置き直した瞬間に「無い」ことになり、CP が焼き直しに入る**（docs/72 §72.6.4 —
+# 別タグに置き直した瞬間に「無い」ことになり、CP が焼き直しに入る**（docs/log/72 §72.6.4 —
 # 開発デプロイは毎回それをやる）。CP に焼かせた golden にはその心配は無い。
 #
 # CP は af-image を突合し、一致しない golden は**使わずに空 home を作る**（起動が遅くなるだけで

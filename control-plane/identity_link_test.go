@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// docs/61 P1 — 同一人物の判定。何を固定しているか:
+// docs/log/61 P1 — 同一人物の判定。何を固定しているか:
 //   - 既存 Google デプロイの初回ログインが (google, sub) 行を現 identity に書き、
 //     user_key を動かさないこと（移行ゼロ）
 //   - IdP 側で email が変わっても identity が増えず、表示用の email だけ変わること
@@ -42,7 +42,7 @@ func countRows(t *testing.T, st *sqlStore, table string) int {
 }
 
 // linkOf は「realm を持たない、ごく普通のログイン 1 回」。realm（規則 1.5・
-// docs/61 §61.15）を試すテストは IdentityLink を直に組み立てる — 既定で空にして
+// docs/log/61 §61.15）を試すテストは IdentityLink を直に組み立てる — 既定で空にして
 // あるのは、realm 無しの行が従来どおりに振る舞うことこそ移行の要件だから。
 func linkOf(provider, subject, email string, emailJoin bool) IdentityLink {
 	return IdentityLink{

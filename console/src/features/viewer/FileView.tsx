@@ -9,7 +9,7 @@ import type { CSSProperties, FocusEvent, KeyboardEvent, ReactNode } from "react"
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
-import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat, isDrawioFile } from "../../lib/filemeta.ts";
+import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile, documentFormat, documentLabel } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -23,6 +23,8 @@ import { MarkdownView } from "./MarkdownView.tsx";
 import { MarpView } from "./MarpView.tsx";
 import { CodeView } from "./CodeView.tsx";
 import { ImageView } from "./ImageView.tsx";
+import { PdfView } from "./PdfView.tsx";
+import { DocPreview } from "./DocPreview.tsx";
 import { DrawioView, type DrawioState } from "./DrawioView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import type { LineMarks } from "./CodeView.tsx";
@@ -145,12 +147,14 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const [data, setData] = useState<FileData | null>(null);
   const dataRef = useRef<FileData | null>(null);
   dataRef.current = data;
-  // External-change notice for panes without an editor buffer (docs/44 §7.4's
+  // External-change notice for panes without an editor buffer (docs/log/44 §7.4's
   // read-only view case); buffered panes speak through the editor status line.
   const [viewNotice, setViewNotice] = useState("");
   const [err, setErr] = useState("");
   const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
+  // PDF のページ数（情報バー用）。開けるまでは null で、行数と同じ場所に出す。
+  const [pdfPages, setPdfPages] = useState<number | null>(null);
   // 図の面が返す状態（ページ数・倍率）。ヘッダの表示にだけ使う。
   const [diagramState, setDiagramState] = useState<DrawioState | null>(null);
   // 図の面は **一度出したら畳んでも外さない**（hidden にするだけ）。作り直すと 4MB の
@@ -160,7 +164,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const [marks, setMarks] = useState<LineMarks | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   // `origin` keeps the two capture paths (the read-only grid's DOM walk and the
-  // editor's own report) from clearing each other's pill (docs/44 §1.8).
+  // editor's own report) from clearing each other's pill (docs/log/44 §1.8).
   const [sel, setSel] = useState<SelectionPill | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
   // Keyed by the loaded file so a new document re-picks its starting mode. The
@@ -172,7 +176,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     mode: FileModeState;
   }>({ key: null, targetLine: undefined, openMode: undefined, mode: { kind: "plain", mode: "view" } });
   // Bumped by each mode selection that lands on the editing surface; the effect
-  // below turns one bump into one focus move (docs/44 §5).
+  // below turns one bump into one focus move (docs/log/44 §5).
   const [focusRequest, setFocusRequest] = useState(0);
   const focusRequestRef = useRef(0);
   const consumedFocusRef = useRef(0);
@@ -183,7 +187,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const editorFocusRef = useRef<(() => void) | null>(null);
   const editorHandleRef = useRef<CodeEditorHandle | null>(null);
   const modeGroupRef = useRef<HTMLSpanElement>(null);
-  // AI 提案（docs/44 Phase 4）: compose パネルの開閉と指示文。レビュー段階は
+  // AI 提案（docs/log/44 Phase 4）: compose パネルの開閉と指示文。レビュー段階は
   // editor.model.suggestion の有無が持つので、ここには置かない。
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestInstruction, setSuggestInstruction] = useState("");
@@ -196,6 +200,11 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
 
   const imgFmt = imageFormat(filePath);
   const isImage = !!imgFmt;
+  const isPdf = isPdfFile(filePath);
+  // Word / Excel / PowerPoint …（docs/log/82 §82.4）。PDF と違って「見た目」ではなく
+  // Markdown へ変換して読む面なので、種類は別に持つ。
+  const docFmt = documentFormat(filePath);
+  const isDoc = !!docFmt;
 
   // Editor-style change marks for git-tracked working-tree files.
   useEffect(() => {
@@ -221,6 +230,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     setViewNotice("");
     setImgDims(null);
     setImgMode("preview");
+    setPdfPages(null);
     // Load the file, retrying transient gateway failures. Right after a WS start the agent
     // is briefly unreachable and api() resolves an http_5xx error (not a throw); committing
     // that as a real error would leave the pane stuck on "(…cannot load)" forever. Genuine
@@ -291,7 +301,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   }, [data]);
   // Markdown in the viewer's plain fallback offers neither control group: the
   // three-mode group needs a preview the fallback cannot render, and the
-  // non-Markdown tablist must not appear on a Markdown file (docs/44 §1.1). It
+  // non-Markdown tablist must not appear on a Markdown file (docs/log/44 §1.1). It
   // therefore stays read-only, pinned to view. Other huge text files keep their
   // editing surface — CodeMirror virtualises rows, so only the read-only grid
   // needed the fallback in the first place.
@@ -311,7 +321,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const editor = useFileEditor(paneId || `file:${filePath}`, editorInitial);
   const viewContent = editor.model?.content ?? data?.content ?? "";
 
-  // --- 外部変更の追従 (docs/44 §7, Phase 3.5) ------------------------------
+  // --- 外部変更の追従 (docs/log/44 §7, Phase 3.5) ------------------------------
   // Buffered panes route probe observations through the editor model; a pane
   // showing an editable file without a buffer (the plain-mode Markdown
   // fallback) follows by replacing the loaded data directly.
@@ -339,7 +349,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
         syncFollowedData(file);
         setViewNotice(tr("editor.external.followed"));
       } catch {
-        // Silent (docs/44 §7.5) — the next trigger retries.
+        // Silent (docs/log/44 §7.5) — the next trigger retries.
       }
       return;
     }
@@ -383,7 +393,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // re-run Mermaid on every keystroke. Debouncing also settles the Marp check:
   // a deck's front matter is edited character by character, and reacting to each
   // intermediate state would make the renderer buttons appear and disappear
-  // while typing (docs/44 §1.1).
+  // while typing (docs/log/44 §1.1).
   //
   // The delay applies to editing only. Keying on the loaded file — not its path,
   // which does not change when a GET lands — seeds the freshly read content at
@@ -392,10 +402,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const previewSource = useDebounced(viewContent, PREVIEW_DEBOUNCE_MS, data);
   const isMarp = isMarkdown && isMarpDoc(previewSource);
 
-  // What the loaded file allows. The mode state machine (docs/44 §1.1) derives
+  // What the loaded file allows. The mode state machine (docs/log/44 §1.1) derives
   // the pane's view/edit layer and the surfaces to render from these.
   // 図として開けるか。.drawio / .dio は拡張子で決まり、.xml は中身の頭で決まる
-  // （docs/65 §65.4）。2 MiB 超で content が打ち切られていても、拡張子で決まる分は
+  // （docs/log/65 §65.4）。2 MiB 超で content が打ち切られていても、拡張子で決まる分は
   // そのまま効く —— 図そのものは download 経由で取り直すので開ける。
   const isDiagram = useMemo(
     () => isDrawioFile(filePath, isText ? (data?.content ?? "").slice(0, 4096) : null),
@@ -415,7 +425,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   // since capabilities become known before the state that reads them.
   // A new citation re-picks it too: retargeting the pane at a line of the file it
   // already shows leaves `data` untouched, and staying in the preview would hide
-  // the very row that was asked for (docs/44 §1.8).
+  // the very row that was asked for (docs/log/44 §1.8).
   // A fresh open request re-picks it too, the same way a new citation does:
   // choosing 編集 for the file a pane already shows retargets that pane (same
   // `data`), and only the request is new.
@@ -433,7 +443,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const fileModeRef = useRef(fileMode);
   fileModeRef.current = fileMode;
 
-  // Focus follows the mode, but only when the user asked for the mode (docs/44
+  // Focus follows the mode, but only when the user asked for the mode (docs/log/44
   // §5). Opening a file — a citation lands in the source surface — must not pull
   // focus out of whatever the user was typing in.
   const updateMode = (next: (prev: FileModeState) => FileModeState) => {
@@ -454,7 +464,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
       // finds nothing to focus.
       //
       // Picking a preview renderer changes no surface, so it leaves focus on the
-      // renderer group the user is working in (docs/44 §5).
+      // renderer group the user is working in (docs/log/44 §5).
       setFocusRequest((n) => n + 1);
     } else {
       // Every other selection — picking a preview renderer, re-picking the mode
@@ -540,7 +550,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     setEditorNotice("");
   }, [editor.model?.bufferGeneration, editor.model?.phase]);
 
-  // Announce a clean auto-follow (docs/44 §7.4). Declared after the clearing
+  // Announce a clean auto-follow (docs/log/44 §7.4). Declared after the clearing
   // effect so the same commit's clear cannot mask the announcement; the next
   // buffer change then clears it through the effect above.
   const followEpoch = editor.model?.followEpoch ?? 0;
@@ -598,7 +608,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     setEditorNotice(messages[error.code]);
   };
 
-  // AI 提案の失敗/棄却コード → 表示文言（docs/44 §3.4: `suggestion_stale` は
+  // AI 提案の失敗/棄却コード → 表示文言（docs/log/44 §3.4: `suggestion_stale` は
   // HTTP ではなく Console 側の安定 UI code）。buffer validator のコードは既存の
   // editor.validation.* を再利用する。
   const suggestErrText = (code: string): string => {
@@ -698,7 +708,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     // would clear `sel` (the modal is gated on it), closing the modal on the first click.
     if (sendOpen) return;
     // A selection inside CodeMirror belongs to the editing surface, which reports
-    // it from its own document (docs/44 §1.8). Walking the DOM for it would read
+    // it from its own document (docs/log/44 §1.8). Walking the DOM for it would read
     // a virtualised, possibly truncated copy of the same selection.
     const editorEl = bodyRef.current?.querySelector(".file-editor-cm");
     const live = window.getSelection();
@@ -750,7 +760,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     };
   }, []);
 
-  // 朗読ビュー（docs/24）を開く。読み上げ＋縦書き閲覧は専用の ReaderView（kind="read"）に集約。
+  // 朗読ビュー（docs/log/24）を開く。読み上げ＋縦書き閲覧は専用の ReaderView（kind="read"）に集約。
   const openReader = () => openTarget({ content: { kind: "read", filePath } });
 
   if (!filePath) return <div className="fileview" />;
@@ -780,7 +790,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
     phase === "save_state_unknown" ||
     phase === "conflict" ||
     phase === "conflict_remote_unavailable";
-  // The probe's advisory (docs/44 §7.3): a polite status-line note, never an
+  // The probe's advisory (docs/log/44 §7.3): a polite status-line note, never an
   // alert, and never a phase change. The resolution panels already speak for
   // the alert phases, so the note yields to them.
   const externalObs = !editorAlert ? (editor.model?.externalObservation ?? null) : null;
@@ -814,13 +824,18 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
         </span>
         {isImage ? (
           <span className="fi-tag">{imgFmt.toUpperCase()}</span>
+        ) : isPdf ? (
+          <span className="fi-tag">PDF</span>
+        ) : isDoc ? (
+          <span className="fi-tag">{documentLabel(filePath)}</span>
         ) : isText ? (
           <span className="fi-tag">{langLabel(filePath)}</span>
         ) : null}
         <span className="fi-meta muted">
           {humanSize(data?.size)}
           {isImage && imgDims ? ` · ${imgDims.w}×${imgDims.h}` : ""}
-          {!isImage && isText ? tr("view.lines_meta", { n: lines }) : ""}
+          {isPdf && pdfPages != null ? tr("view.pdf.pages_meta", { n: pdfPages }) : ""}
+          {!isImage && !isPdf && !isDoc && isText ? tr("view.lines_meta", { n: lines }) : ""}
           {data?.truncated ? tr("view.head_only") : ""}
         </span>
         {huge && (
@@ -837,7 +852,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
           <>
             {/* Non-Markdown keeps the view/edit tablist. Markdown drives the same
                 pane layer from its own top-level button group below, so the two
-                control kinds never appear together (docs/44 §1.1, §5). */}
+                control kinds never appear together (docs/log/44 §1.1, §5). */}
             {fileMode.kind === "plain" && (
               <div
                 className="ui-seg sm file-mode-tabs"
@@ -1105,6 +1120,19 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             <pre className="filebody muted">…</pre>
           ) : isImage && (!isText || imgMode === "preview") ? (
             <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={setImgDims} />
+          ) : isPdf ? (
+            // PDF は「バイナリ」の一歩手前で拾う（docs/log/82）。api/fs/file は中身を返さず
+            // binary:true だけを返すので、ここから先は download の生バイトが情報源。
+            <PdfView src={downloadURL(filePath)} onMeta={(m) => setPdfPages(m.pages)} />
+          ) : isDoc ? (
+            <DocPreview
+              src={downloadURL(filePath)}
+              format={docFmt}
+              size={data.size}
+              basePath={filePath}
+              onOpenFile={showFile}
+              onOpenDir={(path) => revealInFiles(path, { focus: true })}
+            />
           ) : data.binary ? (
             <pre className="filebody muted">({tr("view.binary")}, {humanSize(data.size)})</pre>
           ) : huge ? (
@@ -1171,7 +1199,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
         />
       )}
 
-      {/* AI 提案（docs/44 Phase 4）。競合等のアラートパネルが出ているときは譲る
+      {/* AI 提案（docs/log/44 Phase 4）。競合等のアラートパネルが出ているときは譲る
           （プローブ advisory と同じ優先順位）。レビュー段階は model.suggestion が持ち、
           staleness は revision から導出する。 */}
       {canEdit && editor.model && !editorAlert && (suggestOpen || editor.suggesting || editor.model.suggestion) && (
@@ -1211,7 +1239,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             >
               <Icon name="comment-discussion" /> {tr("view.send")}
             </button>
-            {/* 音声読み上げが有効なときだけ、選択範囲を読み上げるピルを併置（docs/24）。 */}
+            {/* 音声読み上げが有効なときだけ、選択範囲を読み上げるピルを併置（docs/log/24）。 */}
             {settings.ttsEnabled && (
               <button
                 type="button"
@@ -1348,7 +1376,7 @@ interface EditorSuggestPanelProps {
   onClose(): void;
 }
 
-// AI 提案パネル（docs/44 Phase 4）。compose（指示文入力）→ 生成中 → レビュー
+// AI 提案パネル（docs/log/44 Phase 4）。compose（指示文入力）→ 生成中 → レビュー
 // （summary＋選択範囲→置換文の diff＋適用/却下）の3段を1つのオーバーレイで持つ。
 // 競合パネルと違いエラーではないので role="alert" にはしない。適用可否は
 // baseRevision と現在 bufferRevision の一致から導出し、stale なら適用を無効化する。

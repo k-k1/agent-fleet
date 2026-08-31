@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Tenant-defined login providers (docs/61 §61.11 + ADR0043 決定 29-33).
+// Tenant-defined login providers (docs/log/61 §61.11 + ADR0043 決定 29-33).
 //
 // P0 built the provider set ONCE, at startup, from the environment. P4 cannot: a
 // subsidiary's IdP is created by its own administrator and activated by the
@@ -37,14 +37,14 @@ const tenantProviderPrefix = "t:"
 
 // defaultTenantSlug is the tenant EnsureDefaultTenant guarantees exists at every
 // start (main.go), with id == slug. Since P7 it is also where the DEPLOYMENT's own
-// sign-in methods live (docs/61 §61.17): the env providers are read as the default
+// sign-in methods live (docs/log/61 §61.17): the env providers are read as the default
 // tenant's methods, so "the deployment's rules" and "this tenant's rules" stop being
 // two different layers. ★ Only the DISPLAY and the RULES moved — provider ids keep
 // their env shape (`google`, not `t:default:google`), because ten places branch on
 // that shape (§61.17.3).
 const defaultTenantSlug = "default"
 
-// The kinds a row can be built into (docs/61 §61.15). "" is read as oidc: rows
+// The kinds a row can be built into (docs/log/61 §61.15). "" is read as oidc: rows
 // written before 0041 predate the column, and P4 had only one kind.
 const (
 	tenantIdPKindOIDC   = "oidc"
@@ -262,7 +262,7 @@ func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) [
 // allowed_tids keeps its P0 meaning and is checked inside Exchange, on a different
 // axis (the token's tenant), so it stays AND-ed.
 //
-// ★ kind picks the adapter (docs/61 §61.15 + 決定 34). This function is the RUNTIME
+// ★ kind picks the adapter (docs/log/61 §61.15 + 決定 34). This function is the RUNTIME
 // half of the same rules validateTenantIdPBody applies on save, and the two must
 // stay in step: an approved row that only the API accepts would save cleanly and
 // then disappear from the login page with a log line nobody is watching.
@@ -328,7 +328,7 @@ func buildTenantProvider(row TenantIdP, tn TenantRef, secret string) (loginProvi
 }
 
 // tenantLinkClaims is the CLOSED set of claims a tenant row may name for rule 1.5's
-// second key (docs/61 §61.15.10 + 決定 38).
+// second key (docs/log/61 §61.15.10 + 決定 38).
 //
 // ★ It is a whitelist and not a validity check, and the reason is the whole point of
 // 決定 32. `oid` is a per-directory object id: two app registrations in one Entra
@@ -353,7 +353,7 @@ func tenantLinkClaimList() []string {
 }
 
 // tenantLabelSuffix names the company inside a tenant row's DEFAULT button label
-// (docs/61 §61.15.10).
+// (docs/log/61 §61.15.10).
 //
 // The problem it solves is only visible on /login/<slug>, where the deployment's own
 // buttons and the tenant's own rows are rendered side by side: a tenant row named
@@ -382,7 +382,7 @@ func tenantLabelSuffix(base string, tn TenantRef, lang string) string {
 	return base + "（" + who + "）"
 }
 
-// --- secret sealing (docs/61 §61.11.4 + 決定 33) ------------------------------
+// --- secret sealing (docs/log/61 §61.11.4 + 決定 33) ------------------------------
 
 // sealTenantSecret seals a client_secret with the tenant key, exactly as
 // mcp_server.sealHeaders does for header values: AES-256-GCM through the custodian,
@@ -407,7 +407,7 @@ func (m *manager) sealTenantSecret(ctx context.Context, tenantID, secret string)
 
 // openTenantSecret reverses sealTenantSecret. An unreadable value is an ERROR, never
 // an empty secret: a token exchange with an empty client_secret fails at the IdP
-// with a message nobody can trace back to a key change (docs/61 §61.11.4).
+// with a message nobody can trace back to a key change (docs/log/61 §61.11.4).
 func (m *manager) openTenantSecret(ctx context.Context, enc, keyRef string) (string, error) {
 	if enc == "" {
 		return "", nil

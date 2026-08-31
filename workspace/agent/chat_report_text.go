@@ -1,11 +1,11 @@
 package main
 
-// セッション報告の**表示テキストと指示テキストの分離**（docs/28 P6・docs/30）。
+// セッション報告の**表示テキストと指示テキストの分離**（docs/log/28 P6・docs/log/30）。
 //
 // 報告カードには読み手が 2 人いる。利用者（Console のカードを読む）と、オペレーター
 // アシスタント（同じ本文がプロンプトとして渡る）。従来はこの 2 つが 1 本の日本語文字列で、
 // 「訳すとオペレーターへの指示文まで変わってしまう」ため i18n の対象外に置かれていた
-// （docs/28 §4）。ここで両者を分ける:
+// （docs/log/28 §4）。ここで両者を分ける:
 //
 //	表示 = 事実だけ（「応答が完了し、入力待ちになりました」）。カタログキー＋引数で保存し、
 //	       Console が表示言語で描画する（notice と同じ ADR 0033 の流儀）。
@@ -315,7 +315,7 @@ func (v reportView) orders(lang string) string {
 		return "この指示については自動の完了報告を待たず、get_session_status / get_session_output で現在の状態を確認したうえで、" +
 			"判定が安定しない事実とセッションの現況を利用者に伝えてください。"
 	case reportKeyReopened:
-		// 補償（docs/51 §補償）。オペレーターは既に「完了した」と利用者へ伝えている
+		// 補償（docs/log/51 §補償）。オペレーターは既に「完了した」と利用者へ伝えている
 		// 可能性が高いので、まず取り消しを求め、次の完了報告を待つよう指示する。
 		if en {
 			return "If you already told the user it was done, take that back and tell them it is still in progress. " +
@@ -339,7 +339,7 @@ func (v reportView) orders(lang string) string {
 // 付記は「本文の後ろに足す 1 文」で、出るかどうかは引数の有無で決まる（Console 側も同じ
 // 判定で並べる）。ここに置くのは事実の部分だけで、オペレーターへの指示は prompt 側に足す。
 
-// rateLimitResumeFact は利用上限で止まり自動再開が予約済みであることの一文（docs/47 §4-4）。
+// rateLimitResumeFact は利用上限で止まり自動再開が予約済みであることの一文（docs/log/47 §4-4）。
 func rateLimitResumeFact(atMs int64, lang string) string {
 	at := time.UnixMilli(atMs).Local()
 	if lang == "en" {
@@ -357,7 +357,7 @@ func rateLimitResumeOrders(lang string) string {
 	return "再開を促す送信はせず、上限で止まったことと再開予定時刻を利用者に伝えてください。"
 }
 
-// foldFact は「この報告が指示 N 件ぶんの完了である」ことの一文（docs/51 §畳み込み）。
+// foldFact は「この報告が指示 N 件ぶんの完了である」ことの一文（docs/log/51 §畳み込み）。
 func foldFact(n int, ats, lang string) string {
 	if lang == "en" {
 		return "(This report is the completion of " + strconv.Itoa(n) + " instructions. Dispatched: " + ats + ")"
@@ -365,7 +365,7 @@ func foldFact(n int, ats, lang string) string {
 	return "（この報告は指示 " + strconv.Itoa(n) + " 件ぶんの完了です。投入: " + ats + "）"
 }
 
-// reopenTargetFact は訂正の対象がどの報告かの一文（docs/51 §補償）。
+// reopenTargetFact は訂正の対象がどの報告かの一文（docs/log/51 §補償）。
 func reopenTargetFact(atMs int64, lang string) string {
 	at := time.UnixMilli(atMs).Local().Format("2006-01-02 15:04")
 	if lang == "en" {

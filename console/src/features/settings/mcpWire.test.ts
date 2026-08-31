@@ -15,7 +15,7 @@ import {
 } from "./mcpWire.ts";
 import type { McpServer, TenantServer } from "./mcpWire.ts";
 
-// The MCP registry tab's wire contract (docs/48 P1). These rules are enforced on the
+// The MCP registry tab's wire contract (docs/log/48 P1). These rules are enforced on the
 // agent side too — the point here is that the Console never SENDS something the agent
 // must reject, and never quietly destroys a stored secret on the way back.
 
@@ -153,7 +153,7 @@ describe("formValid", () => {
 });
 
 
-// --- tenant distribution (docs/48 P4) ---------------------------------------------
+// --- tenant distribution (docs/log/48 P4) ---------------------------------------------
 //
 // The invariant worth a test rather than a review: a tenant definition can never carry
 // a command. ADR0031 決定 2 refuses distributed stdio because it is an admin running

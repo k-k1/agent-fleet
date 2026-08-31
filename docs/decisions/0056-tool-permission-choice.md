@@ -1,68 +1,79 @@
-# 0056. 権限確認のスキップは利用者が選ぶ。既定は変えない
+# 0056. The user chooses whether to skip permission prompts. The default does not change
 
-- 状態: **採用**（2026-08-24）。検討・実測の記録は [docs/76](../76-tool-permission-choice.md)。
-- 関連: [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md)（承認待ちで畳まれたときの受け皿） /
-  [dev/07 セキュリティ](../dev/07-security.md) §脅威モデル（コンテナ境界が唯一の砦、という前提そのもの）
+English | [日本語](0056-tool-permission-choice.ja.md)
 
-## 背景
+- Status: **adopted** (2026-08-24). The record of the investigation and the measurements is [docs/76](../log/76-tool-permission-choice.md).
+- See also: [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md) (what catches an approval folded up while waiting) /
+  [build/07 Security](../build/07-security.md) §threat model (the very premise that the container boundary is the only fortress)
 
-fleet はどの kind も「ツール承認を全部スキップする」フラグで起動していた（claude
-`--dangerously-skip-permissions`、cursor `--force`、copilot `--allow-all`、kiro `--trust-all-tools`、
-agy 同、codex の bypass 2 種、opencode `--auto`）。根拠は「コンテナがサンドボックス」と
-「承認で止まっても Console から答えられない」の 2 つ。後者は各 kind の承認導線（status hook の
-`permission` 状態、ACP の `session/request_permission` → Interaction）が入った時点で失効している。
+## Context
 
-## 決定 1 — 既定は現状のまま（スキップする）
+Every kind in the fleet started with a flag that skips all tool approvals (claude
+`--dangerously-skip-permissions`, cursor `--force`, copilot `--allow-all`, kiro `--trust-all-tools`,
+agy the same, codex's two bypass variants, opencode `--auto`). The grounds were two: "the container is
+the sandbox", and "if it stops for approval there is no way to answer from the Console". The latter
+expired the moment each kind's approval route went in (the status hook's `permission` state; ACP's
+`session/request_permission` → Interaction).
 
-オフにできるようにするのが目的で、既定を変えるのは目的ではない。**欠落・未設定・壊れた値は
-すべて「スキップする」に倒す**（Go の `SkipPermissions` と Console の `skipPermissions !== false`）。
-逆に倒すと、この機能より前に書かれた prefs を読んだ端末で全セッションが承認待ちになる —— 一番
-気づかれにくい壊し方になる。
+## Decision 1 — the default stays as it is (skip)
 
-## 決定 2 — 値は 3 層。セッションの明示指定 > kind 毎の既定 > true
+The goal is to make it possible to turn off, not to change the default. **Missing, unset and corrupt
+values all fall to "skip"** (`SkipPermissions` in Go and `skipPermissions !== false` in the Console).
+Falling the other way would put every session into waiting-for-approval on a client that read prefs
+written before this feature — the hardest kind of breakage to notice.
 
-kind 毎の既定だけだと「普段は承認あり、この 1 本だけ自動で走らせたい」が表現できず、セッション
-毎だけだと毎回選ばせることになる。model / effort / startMode と同じ形に揃えた。
-`Meta.SkipPermissions` を `*bool`（3 値）にするのが要で、`false` と「未指定」を潰すと
-**既定を後から変えても既存の指定が勝ち続ける**。
+## Decision 2 — three layers: an explicit session setting > the per-kind default > true
 
-## 決定 3 — 解決は Agent のプロセス内で行う（Console だけで解かない）
+A per-kind default alone cannot express "normally with approvals, but let this one run
+automatically", and per-session alone would mean choosing every time. It is aligned with the shape of
+model / effort / startMode. The crux is making `Meta.SkipPermissions` a `*bool` (three-valued) —
+collapsing `false` and "unset" means **an existing setting keeps winning even after the default is
+changed**.
 
-Console は起動リクエストに値を載せられるが、**Console を通らない起動経路**がある: MCP の
-`create_session`、定時実行、停止セッションの再起動、fork / recreate。Agent が ui-prefs を直接読む
-（`readUIPrefs` — hiddenModels / opencodeCatalog と同じ前例）ことで、どの経路でも同じ既定が効く。
+## Decision 3 — resolve it inside the Agent's process (do not resolve it in the Console alone)
 
-**捨てた案**: Console が常に明示値を送る。設定を変えても、変更前に起動したセッションが古い値を
-焼き込んだまま再起動し続ける。実際 Console は**起動ダイアログで触られたときだけ**送る。
+The Console can put the value on a launch request, but **there are launch paths that do not go through
+the Console**: MCP's `create_session`, scheduled execution, restarting a stopped session, and
+fork/recreate. Having the Agent read ui-prefs directly (`readUIPrefs` — the same precedent as
+hiddenModels and opencodeCatalog) makes the same default apply on every path.
 
-## 決定 4 — plan 起動は kind を問わずスキップしない
+**Rejected**: have the Console always send an explicit value. Then changing the setting still leaves
+sessions launched beforehand restarting with the old value baked in. In fact the Console sends it
+**only when the launch dialogue was touched**.
 
-以前からの挙動を `BypassPermissions`（= `mode != "plan" && SkipPermissions`）1 か所に畳んだ。
-各 kind に散っていた `mode == "plan"` のフラグ削り（`ReplaceAll`）は、増えるたびに書き写す形で、
-実際に kind ごとに微妙に違っていた。
+## Decision 4 — a plan launch never skips, whatever the kind
 
-## 決定 5 — 選べるのは「承認待ちを Console から答えられる kind」だけ
+The long-standing behaviour is folded into one place, `BypassPermissions`
+(= `mode != "plan" && SkipPermissions`). The flag-stripping for `mode == "plan"` (`ReplaceAll`) that
+was scattered across the kinds was copied out anew each time one was added, and it had in fact drifted
+subtly between kinds.
 
-`Caps.PermissionChoice`（Console 側 `caps.permissionChoice`）。フラグを外すのはどの kind でも
-できるが、答えようのない承認ダイアログで止まったセッションは、利用者から見れば黙って固まった
-のと同じ。**未検証の caps を立てない**（1854d の教訓）を踏襲し、claude / cursor / copilot / kiro /
-agy から始める。codex と opencode は導線を作ってから（[docs/76](../76-tool-permission-choice.md) §76.4）。
+## Decision 5 — only kinds whose approval prompts can be answered from the Console get the choice
 
-## 決定 6 — 非対応 kind の「承認あり」は黙って無視せず断る
+`Caps.PermissionChoice` (`caps.permissionChoice` on the Console side). Removing the flag is possible
+for any kind, but a session stopped on an approval dialogue nobody can answer is, from the user's point
+of view, silently frozen. Following "do not raise an unverified cap" (the lesson of 1854d), it starts
+with claude / cursor / copilot / kiro / agy. codex and opencode come after their routes are built
+([docs/76](../log/76-tool-permission-choice.md) §76.4).
 
-`POST /sessions` は `permission_choice_unsupported` で 400 を返す。無視すると、頼んだ側は承認ありで
-走っていると思い込む。ui-prefs 側は逆に**黙って無視する**（古い / 壊れた設定が原因で起動そのものが
-できなくなる方が悪い）——ここは非対称でよい。
+## Decision 6 — refuse "with approvals" on an unsupported kind rather than ignoring it silently
 
-## 影響と残り
+`POST /sessions` returns 400 with `permission_choice_unsupported`. Ignoring it would leave the caller
+believing it is running with approvals. On the ui-prefs side, conversely, it **is ignored silently**
+(being unable to launch at all because of an old or corrupt setting is worse) — the asymmetry is fine
+here.
 
-- 既定 ON のままなので、何も設定しなければ挙動は変わらない。
-- **承認待ちで畳まれても失われない**（ADR 0055 決定 12/13・docs/76 §76.5）。持ち越しは全 kind・
-  両ルートを覆う（`agents.ModalReporter`）。ただし**運ばれるのは「何を訊かれていたか」だけ**で、
-  可否そのものは運ばれない — 答えの宛先（ACP の JSON-RPC id・TUI のモーダル）はプロセスと一緒に
-  死んでいるからである。よって承認ありのセッションは、畳まれると**承認をやり直す**ことになる。
-  ⚠️ さらに、コンテナごと SIGKILL された場合は ACP handle / ペインにしかない承認待ちが失われる
-  （`halt` と正常停止では取れる）。
-- 承認ありのセッションは無人運転（定時実行 / オペレーター / MCP drive）では完了しない。設定 UI に
-  注記を出している。
-- 残り: codex / opencode の導線、一覧・ミラーでの「承認あり」表示、実 TUI での 1 周確認。
+## Impact and what remains
+
+- The default stays on, so with nothing configured the behaviour is unchanged.
+- **Nothing is lost if it is folded up while waiting for approval** (ADR 0055 decisions 12/13, docs/76
+  §76.5). Carrying over covers every kind and both routes (`agents.ModalReporter`). But **only "what
+  was being asked" is carried**, not the yes/no itself — the answer's destination (ACP's JSON-RPC id,
+  the TUI's modal) died with the process. So a session with approvals on will **redo the approval**
+  after being folded up.
+  ⚠️ And if the container is SIGKILLed, approvals living only in the ACP handle or the pane are lost
+  (they can be captured on `halt` and on a normal stop).
+- A session with approvals on will not complete under unattended operation (scheduled execution / the
+  operator / MCP drive). A note to that effect is in the settings UI.
+- Remaining: the routes for codex and opencode, showing "with approvals" in the list and the mirror,
+  and one full pass on a real TUI.

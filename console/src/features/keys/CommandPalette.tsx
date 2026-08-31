@@ -8,7 +8,7 @@
 //   - file    : recursive filename search under ~/repos (server-side via /fs/search = ripgrep
 //               --files, .gitignore-honouring) → open the file. Unlike command/changed (a
 //               static list client-fuzzed), this queries the backend per keystroke.
-//   - session : the files the ACTIVE session's agent edited (docs/68), joined with the
+//   - session : the files the ACTIVE session's agent edited (docs/log/68), joined with the
 //               working tree the same way the mirror's 変更ファイル strip joins them.
 //               A different axis from `changed`, which is per working copy and cannot
 //               tell two sessions in the same worktree apart. Appended last on purpose:
@@ -148,7 +148,7 @@ async function loadChangedItems(): Promise<Item[]> {
   return lists.flat();
 }
 
-// Load the ACTIVE session's edited files (docs/68). The list itself normally rides the
+// Load the ACTIVE session's edited files (docs/log/68). The list itself normally rides the
 // mirror's transcript poll, so it is read from the store first; a session whose mirror was
 // never open is fetched once here, with the smallest window the API accepts — the `files`
 // aggregate is whole-transcript regardless of how many turns come back with it.

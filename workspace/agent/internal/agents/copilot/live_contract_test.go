@@ -1,7 +1,7 @@
 package copilot
 
 // 実バイナリ契約テスト（opt-in）: AF_COPILOT_LIVE=1 のときだけ実 `copilot --acp`
-// を子プロセスとして起動し、docs/36 の managed 契約が実 CLI で成立することを
+// を子プロセスとして起動し、docs/log/36 の managed 契約が実 CLI で成立することを
 // 検証する — spawn→initialize→session/new→prompt(completed)→（別プロセスで）
 // session/load resume→文脈保持。認証は環境の GitHub 連携（gh 透過認証）前提。
 // 実行例: AF_COPILOT_LIVE=1 AGENT_COPILOT_BIN=<path> go test -run TestLive -v ./internal/agents/copilot/

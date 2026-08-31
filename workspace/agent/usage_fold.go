@@ -1,6 +1,6 @@
 package main
 
-// セッション本体の使用量を転写から台帳へ折り込む（docs/46 §3-b / ADR0029 §5）。
+// セッション本体の使用量を転写から台帳へ折り込む（docs/log/46 §3-b / ADR0029 §5）。
 //
 // セッションの消費は別プロセス（CLI）が出すので、補助呼び出しのように実行時に記録できない。
 // 転写を読んで差分だけを折り込み、watermark で冪等にする。
@@ -12,7 +12,7 @@ package main
 //     追加されると、入力スナップショット（置換セマンティクス）を二重に数えてしまう。
 //     次のユーザーターンで閉じた時か、セッション削除時（includeTrailing）に確定させる。
 //
-// 常駐タイマーは増やさない（メモリ制約ホスト・docs/26 の教訓）。契機は GET /sessions/usage
+// 常駐タイマーは増やさない（メモリ制約ホスト・docs/log/26 の教訓）。契機は GET /sessions/usage
 // を間借りした fold-on-read（60 秒スロットル）と、削除時の確定。
 
 import (
@@ -178,12 +178,12 @@ func usageTriggerFromTurnSource(src string) string {
 	case turnSourceSchedule, turnSourceScheduleManual:
 		return usageTriggerSchedule
 	case turnSourceAutoResume:
-		return usageTriggerRecovery // 中断からの自動再開（docs/47 §4-6）は自己修復の消費
+		return usageTriggerRecovery // 中断からの自動再開（docs/log/47 §4-6）は自己修復の消費
 	}
 	return usageTriggerUser
 }
 
-// usageMeasuredForKind は kind ごとの計測精度（docs/46 §1-c）。トークンを報告しない
+// usageMeasuredForKind は kind ごとの計測精度（docs/log/46 §1-c）。トークンを報告しない
 // エージェントの 0 を「消費 0」と読ませないための自己申告で、UI はこれで未計測分を
 // 別枠表示する。
 func usageMeasuredForKind(kind string) string {

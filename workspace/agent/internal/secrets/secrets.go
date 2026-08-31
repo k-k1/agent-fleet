@@ -1,4 +1,4 @@
-// Package secrets は Workspace の暗号化資格情報ストア（docs/23 残① Wave B で
+// Package secrets は Workspace の暗号化資格情報ストア（docs/log/23 残① Wave B で
 // package main から抽出）。git トークン・Claude OAuth トークン・Bitbucket の
 // リフレッシュ資格情報・opencode の API キーを単一ストアに保持する。
 // ディスク上のフォーマット（secrets.enc / secrets.json）は抽出前と同一。
@@ -49,7 +49,7 @@ type GitIdentity struct {
 // BitbucketCreds are the Bitbucket OAuth refresh creds (access tokens expire in
 // ~2h; the cred helper refreshes on demand — git_oauth.go in package main).
 //
-// ★ Key/Secret are the TENANT's OAuth app and are no longer written here (docs/71
+// ★ Key/Secret are the TENANT's OAuth app and are no longer written here (docs/log/71
 // §71.8): the refresh grant runs in the CP, which holds the secret, so a member's
 // container never sees another tenant-wide credential. They remain in the struct only
 // to read — and then clear — what stores written before that change still hold; see
@@ -58,8 +58,8 @@ type BitbucketCreds struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	Expiry       int64  `json:"expiry"`            // unix seconds
-	Key          string `json:"key,omitempty"`     // legacy: pre-docs/71 stores only
-	Secret       string `json:"secret,omitempty"`  // legacy: pre-docs/71 stores only
+	Key          string `json:"key,omitempty"`     // legacy: pre-docs/log/71 stores only
+	Secret       string `json:"secret,omitempty"`  // legacy: pre-docs/log/71 stores only
 	Account      string `json:"account,omitempty"` // cached real Bitbucket handle (resolved from the API)
 	Email        string `json:"email,omitempty"`   // cached account email (resolved from the API)
 }
@@ -78,7 +78,7 @@ type CPBridge struct {
 	Token   string `json:"token"`
 }
 
-// PagerDutyCreds is the user's PagerDuty API credential (docs/25 Phase 1). The
+// PagerDutyCreds is the user's PagerDuty API credential (docs/log/25 Phase 1). The
 // key is injected into `uvx pagerduty-mcp` at spawn time by the `mcp-run`
 // wrapper (workspace-agent mcp-run pagerduty) so no plaintext key ever reaches
 // the MCP config — only the wrapper reference does. Host overrides the API base
@@ -88,18 +88,18 @@ type PagerDutyCreds struct {
 	Host   string `json:"host,omitempty"`
 }
 
-// GrafanaCreds is the user's Grafana connection (docs/25). URL is the instance
+// GrafanaCreds is the user's Grafana connection (docs/log/25). URL is the instance
 // base (self-hosted, Grafana Cloud, or an Amazon Managed Grafana workspace
 // endpoint — AMG uses the same service-account token auth, just with a max
 // 30-day token life). Token is a service-account token (Viewer recommended),
 // injected into mcp-grafana at spawn by `mcp-run grafana`.
 // JiraCreds is the user's Jira (Atlassian Cloud) connection for the work item inbox
-// (docs/80 P1). Site is the instance base URL (https://<tenant>.atlassian.net), Email
+// (docs/log/80 P1). Site is the instance base URL (https://<tenant>.atlassian.net), Email
 // the Atlassian account address and Token an API token — Jira's REST v3 authenticates
 // with HTTP Basic over those two, so BOTH are credentials and neither leaves the
 // container. A read-only account is recommended (see guide): af only ever reads.
 type JiraCreds struct {
-	// AuthKind is "oauth" (Atlassian 3LO, docs/80 §80.17) or "token" (email + API
+	// AuthKind is "oauth" (Atlassian 3LO, docs/log/80 §80.17) or "token" (email + API
 	// token). "" reads as "token": stores written before OAuth existed have no field
 	// and must keep working untouched.
 	AuthKind string `json:"authKind,omitempty"`
@@ -161,12 +161,12 @@ type AWSProfileRef struct {
 	RoleName  string `json:"roleName,omitempty"`  // SSO permission-set role name
 }
 
-// CloudWatchConn is the user's CloudWatch connection settings (docs/25).
+// CloudWatchConn is the user's CloudWatch connection settings (docs/log/25).
 type CloudWatchConn struct {
 	AWSProfileRef
 }
 
-// AWSConn is the user's Agent Toolkit for AWS connection (docs/25 §AWS MCP): the
+// AWSConn is the user's Agent Toolkit for AWS connection (docs/log/25 §AWS MCP): the
 // AWS-operated MCP Server reached through the `mcp-proxy-for-aws` stdio proxy,
 // which SigV4-signs every call with the profile below. Like CloudWatch it stores no
 // secret.
@@ -187,15 +187,15 @@ type AWSConn struct {
 	Write    bool   `json:"write,omitempty"`    // opt in to the mutating tools
 }
 
-// DiscordCreds is the user's Discord chat-bridge connection (docs/37 P1). Token
+// DiscordCreds is the user's Discord chat-bridge connection (docs/log/37 P1). Token
 // is the user's OWN bot token (private guild + bot — no central shared app,
-// docs/37 契約3). Exactly one destination: ChannelID posts to a guild channel;
-// UserID DMs the bound Discord user (the identity binding of docs/37 契約5 —
+// docs/log/37 契約3). Exactly one destination: ChannelID posts to a guild channel;
+// UserID DMs the bound Discord user (the identity binding of docs/log/37 契約5 —
 // P2's inbound routing will verify against this same ID). DMChannelID caches
 // the DM channel resolved from UserID so sends don't re-resolve every time.
 // Events selects the pushed notification groups (bridge.EventKeys); empty = all.
 //
-// Channel-mode extras (docs/37 P1.5): Threads groups notifications into one
+// Channel-mode extras (docs/log/37 P1.5): Threads groups notifications into one
 // thread per session; MentionUserID is @mentioned in every notification so
 // mobile push fires regardless of the user's channel/thread notification
 // settings (Discord defaults to "only @mentions"). The wizard auto-fills it
@@ -210,13 +210,13 @@ type DiscordCreds struct {
 	Threads       bool     `json:"threads,omitempty"`       // thread-per-session (channel mode only)
 	MentionUserID string   `json:"mentionUserId,omitempty"` // @mentioned in notifications (channel mode)
 	Lang          string   `json:"lang,omitempty"`          // notification language: "en" | "" (=ja) — Console locale at connect time
-	// Receive opts into the P2a inbound Gateway (docs/37): when on, a long-lived
+	// Receive opts into the P2a inbound Gateway (docs/log/37): when on, a long-lived
 	// WSS connection routes the bound user's thread replies back into the session.
 	// Default off — it needs the MESSAGE_CONTENT privileged intent enabled on the
 	// bot (a one-checkbox step in the Developer Portal for bots in <100 guilds),
-	// and it bounds the daemon's memory to opted-in users only (docs/37「メモリ」).
+	// and it bounds the daemon's memory to opted-in users only (docs/log/37「メモリ」).
 	Receive bool `json:"receive,omitempty"`
-	// FullText opts into the P2 「全文ブリッジ」(docs/37 将来の方向): when on, the
+	// FullText opts into the P2 「全文ブリッジ」(docs/log/37 将来の方向): when on, the
 	// final assistant turn body rides along the answer-ready push so the chat is a
 	// self-sufficient remote UI (the deep link is useless on a local-only,
 	// externally-unreachable deployment). Default off — the chat side is a 写し
@@ -224,7 +224,7 @@ type DiscordCreds struct {
 	// The body is secret-scrubbed and chunked to Discord's 2000-char limit.
 	FullText bool `json:"fullText,omitempty"`
 	// MirrorInputOff opts OUT of echoing Console-typed prompts into the session's
-	// thread (docs/37 Fix ②). The mirror is ON by default in channel+thread mode so
+	// thread (docs/log/37 Fix ②). The mirror is ON by default in channel+thread mode so
 	// the thread reflects BOTH directions; stored inverted so pre-existing connections
 	// (absent field = false = on) keep mirroring without a re-save.
 	MirrorInputOff bool `json:"mirrorInputOff,omitempty"`
@@ -234,12 +234,12 @@ type DiscordCreds struct {
 	NotifyOff bool `json:"notifyOff,omitempty"`
 }
 
-// SlackCreds is the user's Slack chat-bridge connection (docs/37 Slack 追随), the
+// SlackCreds is the user's Slack chat-bridge connection (docs/log/37 Slack 追随), the
 // Socket-Mode twin of DiscordCreds. It needs TWO of the user's OWN tokens (no central
-// shared app, docs/37 契約3): BotToken (xoxb-) drives the Web API (post/react/update),
+// shared app, docs/log/37 契約3): BotToken (xoxb-) drives the Web API (post/react/update),
 // AppToken (xapp-, connections:write) opens the Socket-Mode WSS for receiving. Exactly one
 // destination: ChannelID posts to a channel; UserID DMs the bound Slack user. UserID is
-// also the identity binding of docs/37 契約5 (the receive path verifies replies/clicks
+// also the identity binding of docs/log/37 契約5 (the receive path verifies replies/clicks
 // against it) AND the @mention target in channel mode — Slack has no guild-owner concept,
 // so one field serves both, unlike Discord's separate MentionUserID.
 //
@@ -259,22 +259,22 @@ type SlackCreds struct {
 	Events      []string `json:"events,omitempty"`
 	Threads     bool     `json:"threads,omitempty"` // thread-per-session (channel mode only)
 	Lang        string   `json:"lang,omitempty"`    // notification language: "en" | "" (=ja)
-	// Receive opts into the Socket-Mode inbound WSS (docs/37 P2a): the bound user's thread
+	// Receive opts into the Socket-Mode inbound WSS (docs/log/37 P2a): the bound user's thread
 	// replies route back into the session and button clicks are honored. Default off; needs
-	// the AppToken and bounds the daemon's memory to opted-in users only (docs/37「メモリ」).
+	// the AppToken and bounds the daemon's memory to opted-in users only (docs/log/37「メモリ」).
 	Receive bool `json:"receive,omitempty"`
-	// FullText opts into the 全文ブリッジ (docs/37): the final assistant turn body rides the
+	// FullText opts into the 全文ブリッジ (docs/log/37): the final assistant turn body rides the
 	// answer-ready push. Default off; secret-scrubbed and chunked to Slack's limit.
 	FullText bool `json:"fullText,omitempty"`
 	// MirrorInputOff opts OUT of echoing Console-typed prompts into the session thread
-	// (docs/37 Fix ②); stored inverted so the default is on (mirror both directions).
+	// (docs/log/37 Fix ②); stored inverted so the default is on (mirror both directions).
 	MirrorInputOff bool `json:"mirrorInputOff,omitempty"`
 	// NotifyOff mutes ALL outbound notifications without disconnecting (see
 	// DiscordCreds.NotifyOff). Stored inverted so a pre-existing connection keeps notifying.
 	NotifyOff bool `json:"notifyOff,omitempty"`
 }
 
-// SVNCred is a stored basic-auth credential for a Subversion server (docs/41).
+// SVNCred is a stored basic-auth credential for a Subversion server (docs/log/41).
 // SVN has no credential-helper analog to git's `workspace-agent cred`, so the
 // REST checkout/update paths look these up by longest-matching URLPrefix and pass
 // them to `svn` as --username / --password-from-stdin. URLPrefix is the repository
@@ -287,11 +287,11 @@ type SVNCred struct {
 	// TrustCert accepts an otherwise-rejected server certificate (self-signed /
 	// unknown CA / hostname mismatch) for this server, so checkout/update work
 	// against a dev SVN server without a trusted cert. Not a secret — persisted
-	// independently of the password Save opt-in (docs/41).
+	// independently of the password Save opt-in (docs/log/41).
 	TrustCert bool `json:"trustCert,omitempty"`
 }
 
-// MCPServer is one registered MCP server definition (docs/48 + ADR0031). It is the
+// MCPServer is one registered MCP server definition (docs/log/48 + ADR0031). It is the
 // single shape for every origin: a user-registered server (stored here, in this
 // encrypted store), a tenant-distributed one (cached from the CP), and the builtin
 // ops integrations normalized into the same type. Name is what the target CLI sees
@@ -325,7 +325,7 @@ type MCPServer struct {
 
 	// UserSecret marks a TENANT-distributed definition that arrives with header NAMES
 	// but no values: the tenant describes the endpoint, each member supplies their own
-	// credential into this store (docs/48 §5.2 / P4). It exists because a token in a
+	// credential into this store (docs/log/48 §5.2 / P4). It exists because a token in a
 	// distributed header is readable in plaintext by every member of the tenant, which
 	// per-user container isolation cannot prevent. Never set on a user-scope row —
 	// there is nobody else to supply the value.
@@ -345,21 +345,21 @@ type Data struct {
 	Claude      string                 `json:"claude"`                // CLAUDE_CODE_OAUTH_TOKEN
 	Bitbucket   *BitbucketCreds        `json:"bitbucket"`             // OAuth refresh creds (bitbucket.org)
 	// GitOAuthBridge points at the CP endpoint that runs the git OAuth refresh grant on
-	// this workspace's behalf (docs/71 §71.8). Not a provider credential — it is how the
+	// this workspace's behalf (docs/log/71 §71.8). Not a provider credential — it is how the
 	// cred helper reaches the CP without holding the tenant's client secret.
 	GitOAuthBridge *CPBridge         `json:"gitOAuthBridge,omitempty"`
 	Opencode       map[string]string `json:"opencode"`             // provider env var name -> API key (injected for opencode sessions)
-	PagerDuty      *PagerDutyCreds   `json:"pagerduty,omitempty"`  // ops MCP credential (docs/25)
-	Grafana        *GrafanaCreds     `json:"grafana,omitempty"`    // ops MCP credential (docs/25)
-	Jira           *JiraCreds        `json:"jira,omitempty"`       // work item inbox source (docs/80 P1)
-	CloudWatch     *CloudWatchConn   `json:"cloudwatch,omitempty"` // ops MCP settings (docs/25; no secret — AWS cred chain)
-	AWS            *AWSConn          `json:"aws,omitempty"`        // Agent Toolkit for AWS MCP settings (docs/25; no secret — AWS cred chain)
-	Discord        *DiscordCreds     `json:"discord,omitempty"`    // chat-bridge connection (docs/37)
-	Slack          *SlackCreds       `json:"slack,omitempty"`      // chat-bridge connection (docs/37 Slack 追随)
-	SVN            []SVNCred         `json:"svn,omitempty"`        // SVN basic-auth creds by URL prefix (docs/41)
-	MCP            []MCPServer       `json:"mcp,omitempty"`        // user-registered MCP servers (docs/48)
+	PagerDuty      *PagerDutyCreds   `json:"pagerduty,omitempty"`  // ops MCP credential (docs/log/25)
+	Grafana        *GrafanaCreds     `json:"grafana,omitempty"`    // ops MCP credential (docs/log/25)
+	Jira           *JiraCreds        `json:"jira,omitempty"`       // work item inbox source (docs/log/80 P1)
+	CloudWatch     *CloudWatchConn   `json:"cloudwatch,omitempty"` // ops MCP settings (docs/log/25; no secret — AWS cred chain)
+	AWS            *AWSConn          `json:"aws,omitempty"`        // Agent Toolkit for AWS MCP settings (docs/log/25; no secret — AWS cred chain)
+	Discord        *DiscordCreds     `json:"discord,omitempty"`    // chat-bridge connection (docs/log/37)
+	Slack          *SlackCreds       `json:"slack,omitempty"`      // chat-bridge connection (docs/log/37 Slack 追随)
+	SVN            []SVNCred         `json:"svn,omitempty"`        // SVN basic-auth creds by URL prefix (docs/log/41)
+	MCP            []MCPServer       `json:"mcp,omitempty"`        // user-registered MCP servers (docs/log/48)
 	// MCPSecrets holds the member's OWN header values for tenant-distributed servers
-	// marked user_secret (docs/48 §5.2): server id -> header name -> value. Keyed by the
+	// marked user_secret (docs/log/48 §5.2): server id -> header name -> value. Keyed by the
 	// tenant definition's id, so it survives the tenant editing the label/URL and is
 	// dropped naturally when the definition stops being distributed.
 	MCPSecrets map[string]map[string]string `json:"mcpSecrets,omitempty"`

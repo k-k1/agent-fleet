@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// GitHub login adapter (docs/61 §61.7 + ADR0043). GitHub has no OIDC for user
+// GitHub login adapter (docs/log/61 §61.7 + ADR0043). GitHub has no OIDC for user
 // sign-in — its OIDC is the Actions token — so this is the one provider that gets
 // protocol code of its own instead of riding on oauth_oidc.go.
 //
@@ -92,7 +92,7 @@ type githubProvider struct {
 
 	// Email gate. A provider-specific list replaces the deployment-wide one
 	// entirely; with neither configured the orgs are the only gate. dbAllowed is
-	// the roster/auto-join term P3 adds (docs/61 §61.9.6) — an extra way to satisfy
+	// the roster/auto-join term P3 adds (docs/log/61 §61.9.6) — an extra way to satisfy
 	// gate 2, never a way around gate 1.
 	allowEmails   map[string]bool
 	allowDomains  map[string]bool
@@ -368,7 +368,7 @@ func (p *githubProvider) remember(subject, token string, ok bool) {
 // emailAllowed applies gate 2 (see the file header). With no list anywhere the
 // org membership is the whole allowlist, so this passes.
 //
-// ★ P3 (docs/61 §61.9.6) adds the roster/auto-join term, OR'd into this gate — an
+// ★ P3 (docs/log/61 §61.9.6) adds the roster/auto-join term, OR'd into this gate — an
 // invited person clears the email gate without also being listed in the env. It is
 // deliberately confined to gate 2: gate 1 (org membership) is a different axis and
 // stays an AND, so a membership can never let somebody outside the org sign in.
@@ -444,7 +444,7 @@ func (p *githubProvider) Allowed(ctx context.Context, pr principal) (bool, error
 // Following 決定 11, an incomplete GitHub config disables GitHub only — it never
 // stops CP from starting, because that would let one IdP's typo lock out the
 // people signing in through the others.
-// ★ GITHUB_OAUTH_CLIENT_ID means the SIGN-IN app, and since docs/71 it means only
+// ★ GITHUB_OAUTH_CLIENT_ID means the SIGN-IN app, and since docs/log/71 it means only
 // that. It used to be shared with the git-connect device flow, which CP injected
 // into every workspace container; that flow now reads the app the TENANT registered
 // (tenant_git_oauth.go), so nothing else consumes this variable. A deployment that
@@ -454,7 +454,7 @@ func (p *githubProvider) Allowed(ctx context.Context, pr principal) (bool, error
 // ★ AF_GITHUB_ALLOWED_ORGS, not the client id, is nonetheless still the signal that a
 // GitHub *login* was wanted at all. Two reasons it stays that way: org membership is
 // what actually authorizes the sign-in (§61.3), and a deployment upgrading from before
-// docs/71 has GITHUB_OAUTH_CLIENT_ID set for the git flow and must not be nagged at
+// docs/log/71 has GITHUB_OAUTH_CLIENT_ID set for the git flow and must not be nagged at
 // every startup about a feature it never asked for.
 func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.Context, string) bool, deployHasList bool) *githubProvider {
 	clientID := firstNonEmpty(os.Getenv("AF_GITHUB_LOGIN_CLIENT_ID"), os.Getenv("GITHUB_OAUTH_CLIENT_ID"))
@@ -499,7 +499,7 @@ func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 	return p
 }
 
-// --- construction from a tenant's row (docs/61 §61.15 + 決定 34) ---------------
+// --- construction from a tenant's row (docs/log/61 §61.15 + 決定 34) ---------------
 
 // newTenantGitHubProvider builds the same adapter from a tenant_idp row instead of
 // the environment. Everything protocol-level is identical — the same two gates, the
@@ -513,7 +513,7 @@ func newGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 //	allowedOrgs       required. Membership in one of them replaces "the issuer is
 //	                  yours" as the reason to believe this login belongs to that
 //	                  subsidiary — github.com is one issuer for the whole world, so
-//	                  the org IS the tenant boundary here (docs/61 §61.15).
+//	                  the org IS the tenant boundary here (docs/log/61 §61.15).
 //	allowDomains      required, from the row. No fallback to the deployment-wide
 //	                  list or the roster term, exactly as buildTenantProvider does
 //	                  for OIDC (決定 32-3).
@@ -537,7 +537,7 @@ func newTenantGitHubProvider(row TenantIdP, tn TenantRef, secret string) (*githu
 	if len(domains) == 0 {
 		return nil, errors.New("allowed_domains is empty, which would admit every address this organization's members carry")
 	}
-	// ★ The generated label names the tenant (docs/61 §61.15.10). Without it this row
+	// ★ The generated label names the tenant (docs/log/61 §61.15.10). Without it this row
 	// and the deployment's own GitHub button carry the SAME text on /login/<slug> —
 	// the ids differ, but nobody reads ids off a button. The base string stays the
 	// env one so "GitHub" keeps its casing and AF_GITHUB_LABEL_* is still honoured;

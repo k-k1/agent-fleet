@@ -1,5 +1,5 @@
 /* Settings dialog + tabs — extracted from the old console's styles.css
-   (regions 6903–7352, 2138–2150) for pixel parity (docs/22 P7). Trimmed at P8.
+   (regions 6903–7352, 2138–2150) for pixel parity (docs/log/22 P7). Trimmed at P8.
    The old .modal-head/.modal-body hooks are mapped to the ui/Modal classes. */
 
 /* Legacy control styles (old element globals), scoped — the verbatim-ported tabs
@@ -321,7 +321,7 @@
 .choice-seg {
   display: inline-flex;
   /* 選択肢が多い（話者=6個 等）と狭幅で .seg の overflow:hidden に見切れるため、
-     flex 子として縮められるよう min-width:0 にし、入り切らない分は折り返す（docs/24）。 */
+     flex 子として縮められるよう min-width:0 にし、入り切らない分は折り返す（docs/log/24）。 */
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -360,7 +360,7 @@
   max-width: min(320px, 60vw);
   cursor: pointer;
 }
-/* 音量スライダー（docs/24）: レンジ入力＋現在値のパーセント表示。アクセントで塗る。 */
+/* 音量スライダー（docs/log/24）: レンジ入力＋現在値のパーセント表示。アクセントで塗る。 */
 .ds-slider {
   display: inline-flex;
   align-items: center;
@@ -409,7 +409,7 @@
   min-width: 100px;
   font-size: 13px;
 }
-/* 読み仮名辞書エディタ（docs/24）: ラベル＋全幅テキストエリアの縦積みブロック。 */
+/* 読み仮名辞書エディタ（docs/log/24）: ラベル＋全幅テキストエリアの縦積みブロック。 */
 .ds-userdict-block {
   padding: 6px 0;
 }
@@ -570,7 +570,7 @@
   color: var(--muted, #888);
   font-weight: 500;
 }
-/* アカウント（サインイン方法の紐づけ・docs/61 §61.16）。表のすぐ下に「追加」の見出しが
+/* アカウント（サインイン方法の紐づけ・docs/log/61 §61.16）。表のすぐ下に「追加」の見出しが
    来るので段落として離し、方式の数だけ並ぶボタンは折り返す。 */
 .account-methods {
   margin-bottom: 22px;
@@ -822,7 +822,7 @@
 }
 
 /* Connections / provider cards / OAuth flows — extracted from the old console's
-   styles.css (region 5276–6118) for pixel parity (docs/22 P7b). Trimmed at P8. */
+   styles.css (region 5276–6118) for pixel parity (docs/log/22 P7b). Trimmed at P8. */
 /* connections */
 .conns {
   display: flex;
@@ -972,7 +972,7 @@
   font-family: var(--mono);
   flex: none;
 }
-/* ログインの期限（docs/47 §4-8）。期限切れ／あと数日、のどちらも同じ warn 色で
+/* ログインの期限（docs/log/47 §4-8）。期限切れ／あと数日、のどちらも同じ warn 色で
    アカウント行に置く — 隣が 再認証 ボタンなので、読んだ流れで直せる。 */
 .p-who .p-exp {
   font-size: 11px;
@@ -1457,7 +1457,7 @@
     justify-content: flex-start;
   }
 }
-/* Egress allowlist warning + request form on an MCP row / form (docs/48 §9). Shares
+/* Egress allowlist warning + request form on an MCP row / form (docs/log/48 §9). Shares
    .ps-note so it reads as one of the row's notes rather than a separate alert box. */
 .egress-mcp-note {
   display: flex;
@@ -2145,7 +2145,7 @@
   color: var(--muted);
 }
 /* 接続元制限の CIDR 一覧は 1 行に長い文字列が入るので、格子の 1 列では読めない
-   （docs/66）。ssm-fld.wide と同じ扱いで 1 行を丸ごと使う。 */
+   （docs/log/66）。ssm-fld.wide と同じ扱いで 1 行を丸ごと使う。 */
 .admin-fld.wide {
   grid-column: 1 / -1;
 }
@@ -2546,7 +2546,7 @@
   font-size: 11px;
 }
 
-/* Audit log rows (docs/20 M1): one change operation per line, action badge colored
+/* Audit log rows (docs/log/20 M1): one change operation per line, action badge colored
    by category (fs / git / session / egress). */
 .adm-audit-row {
   display: flex;
@@ -2589,7 +2589,7 @@
   border-color: #5a3a8a;
 }
 
-/* Egress observation rows (docs/20 M2): destination host + would-allow/would-block. */
+/* Egress observation rows (docs/log/20 M2): destination host + would-allow/would-block. */
 .adm-egress-row {
   display: flex;
   align-items: center;
@@ -2613,7 +2613,7 @@
   color: #f85149;
   font-variant-numeric: tabular-nums;
 }
-/* egress allowlist management (docs/20 M3) */
+/* egress allowlist management (docs/log/20 M3) */
 .egress-h {
   margin: 0 0 6px;
   font-size: 12px;
@@ -2657,7 +2657,7 @@
   padding: 2px 8px;
 }
 
-/* Tenant-distributed MCP servers (docs/48 P4, AdminTab McpAdminView). Row layout
+/* Tenant-distributed MCP servers (docs/log/48 P4, AdminTab McpAdminView). Row layout
    follows .adm-allow-row so the admin panels read as one family. */
 .adm-mcp-row {
   display: flex;
@@ -2726,7 +2726,7 @@
 /* ⚠️ The tenant's machine picker is the SAME chip row outside .limit-edit, so every
    rule below names both. Dropping the `.limit-edit` scope instead would make
    `.le-presets` a global class, and this stylesheet already learned what two
-   definitions of one global name do to each other (docs/70 §70.10 / .view-head). */
+   definitions of one global name do to each other (docs/log/70 §70.10 / .view-head). */
 .limit-edit .le-presets,
 .machine-picker .le-presets {
   display: flex;
@@ -2923,7 +2923,7 @@
   padding: 2px 10px;
 }
 
-/* Keyboard settings (KeysTab, docs/29) — rebind rows + the key-capture recorder. */
+/* Keyboard settings (KeysTab, docs/log/29) — rebind rows + the key-capture recorder. */
 .keys-settings .kb-head {
   display: flex;
   align-items: center;
@@ -3084,7 +3084,7 @@
   }
 }
 
-/* === エージェントメモリ（docs/39 P2・MemoryTab.tsx） ==========================
+/* === エージェントメモリ（docs/log/39 P2・MemoryTab.tsx） ==========================
    履歴は「一覧（左）＋差分（右）」の 2 ペイン。差分の中身は SCM と同じ .diff-files を
    使うので、ここではその器（高さ・枠・スクロール）だけを決める。狭い幅では 1 カラムに
    落として、一覧の下に差分が続く形にする。 */
@@ -3129,7 +3129,7 @@
   flex-wrap: wrap;
   font-size: 12px;
 }
-/* 未有効のルート（docs/39 P4）。一覧には出すが、有効なものと同じ強さでは見せない。 */
+/* 未有効のルート（docs/log/39 P4）。一覧には出すが、有効なものと同じ強さでは見せない。 */
 .mem-root-off .mem-kind {
   opacity: 0.65;
 }
@@ -3319,7 +3319,7 @@
   }
 }
 
-/* ── MCP サーバー（McpTab・docs/48 P1）. The registry list reuses the SSM tab's
+/* ── MCP サーバー（McpTab・docs/log/48 P1）. The registry list reuses the SSM tab's
    card/field primitives (.ssm-list / .ssm-item / .ssm-fgrid / .ssm-fld) so both
    registries read as one system; only what's genuinely new lives here — the origin
    badge, the key/value secret editor, and the connection-test result block. */
@@ -3400,7 +3400,7 @@
 .mcp-origin-builtin {
   color: var(--muted2);
 }
-/* Tenant-defined sign-in method status (docs/61 §61.11). The colours answer one
+/* Tenant-defined sign-in method status (docs/log/61 §61.11). The colours answer one
    question only — can anybody sign in with this right now — so "approved but
    unusable" reads as a warning rather than as success. */
 .idp-state {
@@ -3427,7 +3427,7 @@
   color: var(--warn, #d9a441);
   border-color: color-mix(in srgb, var(--warn, #d9a441) 45%, var(--border2));
 }
-/* The provider id on a sign-in method row (docs/61 §61.11.8 → §61.17.5). The display
+/* The provider id on a sign-in method row (docs/log/61 §61.11.8 → §61.17.5). The display
    name leads and only the id is mono, because the id is a technical identifier and
    making it the subject sends the reader elsewhere to ask what "entra" is.
 
@@ -3450,7 +3450,7 @@
   border-radius: 4px;
   padding: 0 5px;
 }
-/* The two per-row toggles on the sign-in method list (docs/61 §61.17.5 ·
+/* The two per-row toggles on the sign-in method list (docs/log/61 §61.17.5 ·
    tenantLogin.tsx TenantSignInMethods): "accept" and "show button". They lead the
    row because they are the only part of it this tenant decides — the rest (who the
    issuer is, whether it is approved) is stated, not chosen.
@@ -3528,7 +3528,7 @@ label.idp-flag {
 .mcp-kv-add {
   display: flex;
 }
-/* Tenant distribution status line (docs/48 P4): when the set was last confirmed, plus
+/* Tenant distribution status line (docs/log/48 P4): when the set was last confirmed, plus
    the explicit refresh. Stale-but-served is the fail-open contract, so the timestamp is
    the thing that makes it honest rather than silent. */
 .mcp-tenant-bar {
@@ -3564,7 +3564,7 @@ label.idp-flag {
 .mcp-newform {
   margin-top: 10px;
 }
-/* connection-test result (docs/48 §10) */
+/* connection-test result (docs/log/48 §10) */
 .mcp-probe {
   display: flex;
   gap: 8px;
@@ -3618,7 +3618,7 @@ label.idp-flag {
   }
 }
 
-/* ── エージェントへの指示（docs/60）─────────────────────────────────────
+/* ── エージェントへの指示（docs/log/60）─────────────────────────────────────
    本文エディタ + 配り先テーブル。テーブルは「どの kind に・どう配られ・いま効いて
    いるか」を1行で読ませるのが役目で、未対応の kind も薄く出したままにする
    （消すと「対応漏れ」に見える）。 */
@@ -3785,7 +3785,7 @@ label.idp-flag {
   font-family: var(--sans);
 }
 
-/* golden の焼き込み（docs/64 §64.30）。1 アーキ 1 ブロック。 */
+/* golden の焼き込み（docs/log/64 §64.30）。1 アーキ 1 ブロック。 */
 .golden-arch + .golden-arch {
   margin-top: 14px;
   padding-top: 12px;
@@ -3871,7 +3871,7 @@ label.idp-flag {
   color: var(--warn);
 }
 
-/* 自動停止の見通し（docs/75 P4）。名簿の行では控えめだが、**止まらない理由**（.hold）は
+/* 自動停止の見通し（docs/log/75 P4）。名簿の行では控えめだが、**止まらない理由**（.hold）は
    注意色にする — 「あと 20 分で停止」と「止まらない」は運用者にとって意味が正反対で、
    同じ静かさで並ぶと、コストが出続けている行を見落とす。 */
 .mr-idle {
@@ -3892,7 +3892,7 @@ label.idp-flag {
   line-height: 1.7;
 }
 
-/* 設定の書き出し / 取り込み（docs/79）。持ち出す範囲と取り込む範囲は同じ見た目のチェック
+/* 設定の書き出し / 取り込み（docs/log/79）。持ち出す範囲と取り込む範囲は同じ見た目のチェック
    リストにしてある —— 「何が入っているファイルなのか」を、書き出したときと同じ並びで
    確かめられる方が、片方だけ凝った表にするより安心して使える。 */
 .backup-tab .backup-picks {

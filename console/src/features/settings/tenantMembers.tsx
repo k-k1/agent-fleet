@@ -1,6 +1,6 @@
 // テナントのメンバー面（名簿・追加・メンバー詳細）。
 //
-// AdminTab.tsx から純粋移動した。docs/61 §61.10.6 で offboarding の一式
+// AdminTab.tsx から純粋移動した。docs/log/61 §61.10.6 で offboarding の一式
 // （メンバーを外す → ワークスペースを止める → home を掃除）は tenant_admin のもの
 // と決まった（決定 26）のに、実装は管理モーダルの中にしか無かった。
 //
@@ -14,11 +14,11 @@ import { Icon } from "../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
-// メンバー詳細のクラウド費用（docs/67 §67.15）。請求の無いデプロイでは部品自身が
+// メンバー詳細のクラウド費用（docs/log/67 §67.15）。請求の無いデプロイでは部品自身が
 // 何も描かないので、ここで出し分けは持たない。
 import { MemberCostPanel } from "../cost/CloudCostView.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { remainingShort, stateInfo } from "../../lib/sessionview.ts";
+import { remainingShort, stateInfo, stripLabelTag } from "../../lib/sessionview.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
 import type { Member, MemberIdle, WsSizing, WsSlot } from "./adminShared.ts";
 
@@ -97,7 +97,7 @@ export function MembersPanel({
   );
 }
 
-// MemberIdleChip — 自動停止の見通し（docs/75 P4）。
+// MemberIdleChip — 自動停止の見通し（docs/log/75 P4）。
 //
 // なぜ名簿に出すのか: 自動停止が効かないとき、これまで運用者に見えるものが何も無かった。
 // reaper はログを出すだけで、調べる唯一の手段が他人のコンテナへ docker exec して status
@@ -314,7 +314,7 @@ export function MemberView({
   const [memMb, setMemMb] = useState<number | string>(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
   const [cpuUnits, setCpuUnits] = useState<number | string>(member.cpu_limit ?? 0);
   const [diskGb, setDiskGb] = useState<number | string>(member.disk_gb ?? 0);
-  // Which KIND of machine, where the deployment offers a choice (docs/70). "" = the
+  // Which KIND of machine, where the deployment offers a choice (docs/log/70). "" = the
   // tenant default, which is a real value here and not "unset means smallest": there
   // is no numeric fallback for a class.
   const [slotClass, setSlotClass] = useState<string>(member.slot_class ?? "");
@@ -398,7 +398,7 @@ export function MemberView({
   // ディスクの分母は実測（disk_total = home が載る FS の容量）を優先し、無ければ
   // 設定値の上限（disk_quota）に落ちる。ecs-ec2 では disk_gb は作成時にしか効かない
   // ので、後から数字だけ変えられた場合に「設定値」を分母にすると割合が嘘になる
-  // ——実測が取れているならそちらが真である（docs/63 §63.9）。
+  // ——実測が取れているならそちらが真である（docs/log/63 §63.9）。
   const diskTotal = stats?.disk_total ?? stats?.disk_quota ?? null;
   const diskRatio = diskTotal && stats?.disk_used != null ? stats.disk_used / diskTotal : null;
 
@@ -408,7 +408,7 @@ export function MemberView({
   const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
   const slotSpec = (s: WsSlot) => (s.vcpu ? `${s.vcpu} vCPU / ${slotMemLabel(tr, s)}` : slotMemLabel(tr, s));
   // The machine-class picker exists only where the operator declared more than one
-  // (docs/70 §70.10). The memory chips below are then the SELECTED class's ladder, so
+  // (docs/log/70 §70.10). The memory chips below are then the SELECTED class's ladder, so
   // switching class re-draws them and "you land on" recomputes — the same number can
   // land on a different box in a different class, and that is the whole point.
   const classes = onSlots ? (sizing.slot_classes ?? []) : [];
@@ -488,7 +488,7 @@ export function MemberView({
     poll(); // mem_max reflects the new cap after the next start; refresh sessions/stats
     onChanged();
   };
-  // Offboarding (docs/61 §61.10.6). The membership is deactivated, not deleted:
+  // Offboarding (docs/log/61 §61.10.6). The membership is deactivated, not deleted:
   // the workspace, its home and its secrets stay put, so a transfer can be undone
   // by re-inviting. It is the step that actually revokes access — the signed
   // session cookie itself lives for up to AF_SESSION_TTL and cannot be revoked
@@ -530,7 +530,7 @@ export function MemberView({
       setBusy(false);
     }
   };
-  // 後始末の 3 段目（docs/61 §61.18）。除名（論理削除）→ Workspace の破棄 → ここ。
+  // 後始末の 3 段目（docs/log/61 §61.18）。除名（論理削除）→ Workspace の破棄 → ここ。
   //
   // ★ 出すのは「Workspace がもう無い」ときだけ。member.state は CP が
   // workspaceStateByMembership で返しているもので、workspace 行が無ければ "none"。
@@ -582,7 +582,7 @@ export function MemberView({
         {member.email && <span className="mh-email muted">{member.email}</span>}
       </header>
 
-      {/* 自動停止の見通し（docs/75 P4）。名簿の行は 1 件しか出せないので、詳細では
+      {/* 自動停止の見通し（docs/log/75 P4）。名簿の行は 1 件しか出せないので、詳細では
           止めている理由を全部並べる — 「s5 が実行中」と「s3 にピンが掛かっている」は
           運用者の次の一手が違う（待つ / 外してもらう）。 */}
       <MemberIdleDetail idle={member.idle} state={member.state} />
@@ -642,7 +642,7 @@ export function MemberView({
                   <span className={"kind-tag kind-" + kindClass(s.kind)}>
                     <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                   </span>
-                  <span className="as-name mono" title={s.dir || ""}>{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.name}</span>
+                  <span className="as-name mono" title={s.dir || ""}>{s.label ? stripLabelTag(s.label) : s.name}</span>
                   <span className="as-repo muted">{s.repo || ""}</span>
                   <span className={"session-state " + st.cls}>
                     <Icon name={st.icon} spin={st.spin} /> {st.text}
@@ -700,7 +700,7 @@ export function MemberView({
           }}>
             <Icon name="settings" /> {tr("admin.set_limits")}
           </button>
-          {/* clean-home is a tenant_admin action now (docs/61 §61.10.6 / 決定 26):
+          {/* clean-home is a tenant_admin action now (docs/log/61 §61.10.6 / 決定 26):
               the department knows who left, so the whole offboarding sequence
               belongs to it rather than half of it being a ticket to IT. */}
           <button className="danger-btn" onClick={() => setConfirmClean(true)}>
@@ -724,7 +724,7 @@ export function MemberView({
           <div className="limit-edit">
             <div className="le-head">{tr("admin.limits_edit_title")}</div>
             {/* Which KIND of machine, above the numbers — it changes what the numbers
-                below mean (docs/70 §70.10). The operator's own label is what is shown;
+                below mean (docs/log/70 §70.10). The operator's own label is what is shown;
                 the instance type appears only in the "you land on" line. */}
             {classes.length > 0 && (
               <div className="le-presets">
@@ -823,7 +823,7 @@ export function MemberView({
             {/* ⚠️ The one destructive-ish consequence in this editor. `~` is a volume
                 that follows the member, and its ~/.local CLIs, nvm node, Chromium and
                 node_modules are architecture-dependent — a class change across
-                architectures makes the next start reinstall them (docs/70 §70.5).
+                architectures makes the next start reinstall them (docs/log/70 §70.5).
                 Shown only when the architecture actually changes: within one
                 architecture the home is portable and there is nothing to warn about. */}
             {archChanged && <p className="admin-hint warn">{tr("admin.ws_machine_arch_warn")}</p>}

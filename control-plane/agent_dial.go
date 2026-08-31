@@ -1,5 +1,5 @@
 // agent_dial.go — CP→Agent の接続。Service Connect の別名が引けなかったときだけ
-// Cloud Map で引き直す（ADR: docs/dev/09 §ECS）。
+// Cloud Map で引き直す（ADR: docs/build/09 §ECS）。
 //
 // ★ なぜ要るのか（実測で分かった ECS の性質）:
 // Service Connect のクライアント別名は DNS ではない。ECS エージェントがタスク起動時に

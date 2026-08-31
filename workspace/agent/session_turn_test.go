@@ -189,7 +189,7 @@ func TestHandleSessionTurnValidation(t *testing.T) {
 	}
 }
 
-// 作成 API の driver バリデーション（docs/27 P2/P3）: managed は driver 登録済みの
+// 作成 API の driver バリデーション（docs/log/27 P2/P3）: managed は driver 登録済みの
 // kind（opencode/codex）だけ受理し、未登録 kind（claude 等）は副作用より前に明示拒否。
 // 未知値は bad_driver。受理された managed 作成は runtime 不可の環境では 502 で
 // 落ちる（tmux セッションは一切作らない）。

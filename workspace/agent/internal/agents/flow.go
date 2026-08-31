@@ -1,6 +1,6 @@
 package agents
 
-// PTY ログインフローの共有プラミング（docs/23 残① Wave F）。claude / codex の
+// PTY ログインフローの共有プラミング（docs/log/23 残① Wave F）。claude / codex の
 // WebUI 駆動ログインは、対話 CLI を PTY で起動して出力をスクレイプし、flow_id で
 // クライアントと往復する同一パターンを使う。Wave E では package main を import
 // できないため codex 側に複製していたものを、ここに一本化した。挙動は同一。
@@ -71,7 +71,7 @@ func (f *Flow) Clean() string {
 // Close kills the flow's process, releases its PTY, and reaps the child. The
 // Wait is load-bearing: workspace-agent is not PID 1, so a killed-but-unwaited
 // flow child stays a zombie forever（実機で agy /usage スクレイプ毎に
-// `[agy] <defunct>` が蓄積 — docs/32）. Wait after SIGKILL cannot block: pty.Start
+// `[agy] <defunct>` が蓄積 — docs/log/32）. Wait after SIGKILL cannot block: pty.Start
 // wires *os.File fds (no copier goroutines), so it only reaps the exit status.
 func (f *Flow) Close() {
 	_ = f.Cmd.Process.Kill()

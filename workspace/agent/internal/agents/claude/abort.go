@@ -1,11 +1,11 @@
 package claude
 
-// 中断ターンの検知（docs/47）。
+// 中断ターンの検知（docs/log/47）。
 //
 // claude は API エラーでターンが落ちたとき Stop hook を鳴らさない。よって
 // working→idle の遷移が誰にも記録されず、ペインだけが待機プロンプトに戻る。その後
 // 自己修復（driveState / WireLive）が「非 idle なのにプロンプトへ戻っている」を見て
-// 状態ファイルを黙って消していたため、応答あり通知も docs/30 の完了報告も生まれず、
+// 状態ファイルを黙って消していたため、応答あり通知も docs/log/30 の完了報告も生まれず、
 // 報告の arm が未消費のまま残っていた（実測: セッション ssiw5kb / 2026-07-26）。
 //
 // 落ちたことは transcript に残る: type=assistant かつ isApiErrorMessage=true の
@@ -31,7 +31,7 @@ type abortRecord struct {
 	Timestamp   string `json:"timestamp"`
 	// Error is claude's own MACHINE-READABLE cause ("server_error" / "rate_limit" /
 	// "invalid_request" — 実測 2026-08-05). 英文言と違ってこれは版ごとに書き換わらない
-	// ので、文言に無い形が来たときの最後の手掛かりになる（docs/47 §5「次の一手」）。
+	// ので、文言に無い形が来たときの最後の手掛かりになる（docs/log/47 §5「次の一手」）。
 	Error string `json:"error"`
 }
 
@@ -54,7 +54,7 @@ var retryableOverrides = []string{
 
 // blockedMarkers are error texts whose cause does NOT clear on its own: re-sending the
 // same turn reproduces the same error, so the operator must fix the cause first (残高
-// /上限・プロンプト長超過・認証)。実測コーパス（docs/47 §2）由来。
+// /上限・プロンプト長超過・認証)。実測コーパス（docs/log/47 §2）由来。
 var blockedMarkers = []string{
 	"reached your",       // "You've reached your <model> limit. Run /usage-credits …"
 	"usage limit",        // 別表現の上限（overrides で「上限ではない」旨を先に除外済み）
@@ -95,7 +95,7 @@ var limitMarkers = []string{
 }
 
 // LimitKind splits「上限で終わったターン」into the two kinds whose next move is opposite.
-// docs/47 §4-10。どちらも 429 / `error:"rate_limit"` で届くので、コードでは分けられない。
+// docs/log/47 §4-10。どちらも 429 / `error:"rate_limit"` で届くので、コードでは分けられない。
 type LimitKind string
 
 const (
@@ -149,7 +149,7 @@ var retryableMarkers = []string{
 // 表現できるが、このフィールドは分類までしか言わない）。
 //
 // ここに "rate_limit" は入れない: 429 は利用上限（blocked）と一時的なレート制限
-// （retryable）が同居する軸で、どちらかは文言でしか分からないから（docs/47 §2）。
+// （retryable）が同居する軸で、どちらかは文言でしか分からないから（docs/log/47 §2）。
 // 実測で見えた値だけを載せる — 未知の値は既定どおり blocked に倒れる（判定不能は
 // 自動再開しない方が安全側）ので、憶測の項目を足して穴を広げない。
 var retryableErrorKinds = map[string]bool{
@@ -216,7 +216,7 @@ func AbortedTurn(sid string) (msg string, retryable, ok bool) {
 }
 
 // AbortInfo is AbortedTurn plus WHEN the cut-off was recorded — what a level-driven
-// reader needs (docs/51): the report reconciler compares that time against the
+// reader needs (docs/log/51): the report reconciler compares that time against the
 // instruction cursor to decide which instructions this terminal event covers.
 //
 // It reads only the tail of the live transcript (lastLineWhere), because unlike the
@@ -250,7 +250,7 @@ func abortedTurnFrom(lines [][]byte) (msg string, retryable, ok bool) {
 
 // terminalRecord parses a line and reports whether it can END a turn: a real record
 // (user/assistant) that is not a subagent's. 除外リストではなく許可リストで受けるのは
-// 記帳レコードの種類が版ごとに増減するから（docs/47）。
+// 記帳レコードの種類が版ごとに増減するから（docs/log/47）。
 func terminalRecord(line []byte) (abortRecord, bool) {
 	var r abortRecord
 	if json.Unmarshal(line, &r) != nil {
@@ -289,7 +289,7 @@ func abortFrom(line []byte, r abortRecord) (Abort, bool) {
 // が classifyAbort で先に効くため、"(not your usage limit)" と自称するレコードがここの
 // "usage limit" に当たることはない。
 //
-// kind は**待てば解けるか**を分ける（docs/47 §4-10）。同じ 429 / `error:"rate_limit"` で
+// kind は**待てば解けるか**を分ける（docs/log/47 §4-10）。同じ 429 / `error:"rate_limit"` で
 // 届くのに、窓（時間）と支出（金額）はその後の一手が正反対になる — 前者は待つ、後者は
 // 待っても永久に解けず、増枠かクレジットの追加が要る。
 func UsageLimitAbort(sid string) (Abort, LimitKind, bool) {
@@ -324,8 +324,8 @@ func limitKindOf(msg string, a Abort) (Abort, LimitKind, bool) {
 // HealIdle is what the pane-based self-heal does once it has decided the session is
 // really back at its ready prompt. It replaces the bare status.Remove that used to sit
 // at both heal sites: if the transcript says the turn was CUT OFF, the turn end is a
-// real terminal event and has to go through the shared notifier (通知＋docs/30 報告)
-// — dropping it on the floor is exactly the bug docs/47 fixes. Anything else (killed+
+// real terminal event and has to go through the shared notifier (通知＋docs/log/30 報告)
+// — dropping it on the floor is exactly the bug docs/log/47 fixes. Anything else (killed+
 // resumed, rejected permission, abandoned question) stays a silent heal as before.
 //
 // MarkTurnEndErr persists idle rather than removing the marker, so the heal condition

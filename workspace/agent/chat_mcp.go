@@ -1,6 +1,6 @@
 package main
 
-// アシスタントチャットへの MCP 配線（docs/48 P2）。
+// アシスタントチャットへの MCP 配線（docs/log/48 P2）。
 //
 // アシスタントが持つ Integrations は「組み込み連携 id」から「実効レジストリ上のサーバー
 // id」へ意味が広がった（組み込み 3 種の id は文字列のままなので既存アシスタントは移行不要）。
@@ -51,7 +51,7 @@ func (c *chatConversation) mcpServersFor(kind string) []mcpreg.ServerDef {
 // afServerArgs returns the argv tail that launches the local Agent Fleet stdio MCP
 // server for this conversation's tool grant, or false when the grant is "none".
 // --conv hands the server its owning conversation id so create_session /
-// send_to_session auto-attach report_to (docs/30) — the report link is tool-side
+// send_to_session auto-attach report_to (docs/log/30) — the report link is tool-side
 // plumbing, never something the model has to carry.
 func (c *chatConversation) afServerArgs() ([]string, bool) {
 	if !c.afToolsEnabled() {
@@ -85,7 +85,7 @@ func removeChatMCPConfig(convID string) {
 
 // mcpConfigArgs builds the chat's --mcp-config, scoped strictly to this claude
 // (--strict-mcp-config: no global/project MCP leaks in, and none of these leak out to
-// the interactive sessions). docs/19 Q1, docs/25 Phase 1, docs/48 §7.
+// the interactive sessions). docs/log/19 Q1, docs/log/25 Phase 1, docs/log/48 §7.
 //   - the local Agent Fleet stdio server ("af"), when the assistant grants af tools;
 //     with af_write it also advertises the write tools (the advertised set is the gate).
 //   - one server per attached registry entry: the builtins launch via
@@ -95,7 +95,7 @@ func removeChatMCPConfig(convID string) {
 //
 // The config goes into a 0600 FILE rather than inline in argv, because a registered
 // server's env values and headers are secrets and argv is readable for the whole uid
-// (docs/48 §5.1 puts materialized secrets in 0600 files). claude accepts either form
+// (docs/log/48 §5.1 puts materialized secrets in 0600 files). claude accepts either form
 // for --mcp-config. If the file cannot be written we fall back to inline JSON with
 // the secret-bearing servers dropped — the af tools keep working, and no credential
 // is smuggled into argv by a failure path.

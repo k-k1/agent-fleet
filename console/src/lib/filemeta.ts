@@ -15,7 +15,7 @@ const EXT_LANG: Record<string, string> = {
   yml: "yaml", yaml: "yaml", toml: "ini", ini: "ini", cfg: "ini", conf: "ini",
   xml: "xml", html: "xml", htm: "xml", svg: "xml", vue: "xml",
   // .drawio / .dio は mxfile（XML）。図として開く面は別にあるが、ソース面では
-  // XML として色を付ける（docs/65 §65.4）。
+  // XML として色を付ける（docs/log/65 §65.4）。
   drawio: "xml", dio: "xml",
   css: "css", scss: "scss", sass: "scss", less: "less",
   md: "markdown", markdown: "markdown",
@@ -182,6 +182,40 @@ export function imageFormat(path: string): string {
   return IMAGE_EXT[ext] || "";
 }
 
+// PDF か（docs/log/82）。画像と同じく拡張子だけで決める —— バイト列は download
+// エンドポイントから取り、pdf.js が中身を見て弾くので、ここで先頭バイトまで見る
+// 必要はない。
+export function isPdfFile(path: string): boolean {
+  const name = baseName(path).toLowerCase();
+  return name.endsWith(".pdf");
+}
+
+// anydoc で簡易プレビューできる文書の拡張子 → anydoc の形式名（docs/log/82 §82.4）。
+// csv / txt はここに入れない —— すでにテキストとして読めるので、変換に回すと
+// コードビューも編集面も失う。
+const DOC_EXT: Record<string, string> = {
+  docx: "docx", docm: "docx", doc: "doc", odt: "odt", rtf: "rtf",
+  xlsx: "xlsx", xlsm: "xlsx", xls: "xlsx", ods: "ods",
+  pptx: "pptx", pptm: "pptx", ppsx: "pptx", ppt: "ppt", odp: "odp",
+  epub: "epub",
+};
+
+// documentFormat は Office 系文書の形式名（docx/xlsx/pptx…）を返す。対象外なら ""。
+// 拡張子だけで決めるのは画像・PDF と同じ理由で、中身は download の生バイトを
+// anydoc 自身が見て判定する（拾えなかったときの手掛かりとしてこの値を渡す）。
+export function documentFormat(path: string): string {
+  const name = baseName(path).toLowerCase();
+  const ext = name.includes(".") ? (name.split(".").pop() ?? "") : "";
+  return DOC_EXT[ext] || "";
+}
+
+// 情報バーに出す短い名前（DOCX / XLSX / PPTX …）。
+export function documentLabel(path: string): string {
+  const name = baseName(path).toLowerCase();
+  const ext = name.includes(".") ? (name.split(".").pop() ?? "") : "";
+  return ext.toUpperCase();
+}
+
 // drawio の図か。拡張子で決まるのは .drawio / .dio の 2 つだけで、`.xml` は中身を
 // 見ないと分からない（mxfile を .xml で保存する運用がある）。`head` を渡せばその
 // 判定まで行う。**内容が無い / 取れないときは拡張子の判断だけ**を返す。
@@ -245,7 +279,7 @@ export function humanSize(bytes: number | null | undefined): string {
 }
 
 // Extensions that are almost certainly non-text, used to hide actions that only make
-// sense on readable files (e.g. handing a file to an assistant — docs/19 Phase C). This
+// sense on readable files (e.g. handing a file to an assistant — docs/log/19 Phase C). This
 // is a denylist: unknown extensions (LICENSE, Dockerfile, .env, source files…) are
 // treated as text-eligible on purpose, so the check is generous rather than strict.
 const BINARY_EXT = new Set([

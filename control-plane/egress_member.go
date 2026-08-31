@@ -1,7 +1,7 @@
 package main
 
 // Member-facing egress allowlist face — the 安全弁 that ties the MCP registry to egress
-// control (docs/48 §9 / P5, docs/20 M3).
+// control (docs/log/48 §9 / P5, docs/log/20 M3).
 //
 // A remote MCP server IS an outbound destination. When the deployment routes workspace
 // egress through the forward proxy (AF_EGRESS_PROXY_ADDR), a server whose host is not on
@@ -30,7 +30,7 @@ import (
 )
 
 // Wire codes for the member face. 追加・改名時は console/src/lib/i18n/locales/{ja,en}.ts
-// の "err.<code>" も同時に（docs/48 §11.3: 1 理由 = 1 コード）。
+// の "err.<code>" も同時に（docs/log/48 §11.3: 1 理由 = 1 コード）。
 const (
 	codeEgressEntryInvalid = "egress_entry_invalid"
 	codeEgressEntryBroad   = "egress_entry_too_broad"
@@ -107,7 +107,7 @@ type egressHostVerdict struct {
 // checkHosts (GET /api/egress/check?host=a&host=b) answers, per destination, whether the
 // deployment's egress policy lets a workspace reach it.
 //
-// `configured` is the honest gate: with no forward proxy wired (the default — docs/20 M2
+// `configured` is the honest gate: with no forward proxy wired (the default — docs/log/20 M2
 // ships the container wiring OFF), nothing is constrained and the Console must stay quiet
 // rather than warn about a restriction that does not exist in this deployment.
 func (a egressAPI) checkHosts(w http.ResponseWriter, r *http.Request, _ Identity, _ MembershipView) {

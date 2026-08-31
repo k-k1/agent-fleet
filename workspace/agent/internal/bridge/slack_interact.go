@@ -1,6 +1,6 @@
 package bridge
 
-// Slack Block Kit button rendering (docs/37 Slack 追随 = P2b/P3 parity): the Slack twin of
+// Slack Block Kit button rendering (docs/log/37 Slack 追随 = P2b/P3 parity): the Slack twin of
 // interact.go's Message-Components rendering. It emits the SAME custom_id strings (interact.go
 // customID / ParseCustomID are provider-neutral), carried in each button's action_id + value,
 // so the answer path (bridge_answer.go) is shared. Interactions arrive over the same Socket

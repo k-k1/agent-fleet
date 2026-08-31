@@ -12,7 +12,7 @@ import { readerVoiceChoices } from "./tts.ts";
 import { loadSpeakers } from "./ttsSpeakers.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 
-// AssistantModal creates or edits a user-defined assistant template (docs/19 Q2):
+// AssistantModal creates or edits a user-defined assistant template (docs/log/19 Q2):
 // name, backend agent, optional model, a persona (system prompt), a tool grant, and
 // optional knowledge dirs. Builtins are never edited here (the section hides edit for
 // them), so this form always drives a user assistant.
@@ -48,7 +48,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
   const [knowledge, setKnowledge] = useState((initial?.knowledge ?? []).join("\n"));
   const [voice, setVoice] = useState(initial?.voice ?? "");
   const [busy, setBusy] = useState(false);
-  // Attachable MCP servers come from the EFFECTIVE registry (docs/48 §7): the builtin
+  // Attachable MCP servers come from the EFFECTIVE registry (docs/log/48 §7): the builtin
   // ops integrations, the user's own registrations, and anything the tenant
   // distributes — one list, exactly what the chat will actually resolve. null = still
   // loading, so an empty registry and a pending fetch don't look alike.

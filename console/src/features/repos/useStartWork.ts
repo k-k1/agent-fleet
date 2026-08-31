@@ -42,7 +42,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     if (hasModel && model) body.model = model;
     if (effort) body.effort = effort;
     if (startMode) body.mode = startMode;
-    // 権限確認（docs/76）。**既定と同じときは送らない**: 未指定なら Agent が kind 毎の
+    // 権限確認（docs/log/76）。**既定と同じときは送らない**: 未指定なら Agent が kind 毎の
     // 既定（ui-prefs）で解決するので、設定を変えたあとに立てたセッションにも新しい既定が
     // 効く。ここで毎回値を焼き込むと、その kind の既定を後から変えても効かなくなる。
     if (typeof skipPermissions === "boolean" && agentOf(kind).caps.permissionChoice) {
@@ -96,7 +96,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       writeRepoSubdir(repo, subdir || "");
     }
     // repo なし（home）セッションはグループ継承が効かないので、選択中グループへ
-    // 直接自動所属させる（docs/52 §1）。repo 内launchは repo 側の所属を継承する。
+    // 直接自動所属させる（docs/log/52 §1）。repo 内launchは repo 側の所属を継承する。
     if (!dir) autoAddToActiveWorkingSet("sessions", res.name);
     const chat = agentOf(kind).caps.chat;
     // Now that the session exists, upload any pasted images to it and fold their
@@ -135,7 +135,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     }
     void refreshSessions();
     (chat ? openSessionChat : openSessionTerminal)(res.name);
-    // 作られたセッション名を返すのは、引き継ぎの受諾（docs/77）が「どのセッションで
+    // 作られたセッション名を返すのは、引き継ぎの受諾（docs/log/77）が「どのセッションで
     // 受けたか」を所有者へ返すため。呼び出し側は ok だけ見ていてもよい。
     return { ok: true, name: res.name };
   };

@@ -21,12 +21,12 @@ import (
 // a persistent home: a workspace boot-installed under an older image still has 1.1.17
 // on disk until the REPIN path pulls it forward, and every workspace built before the
 // AGY_CLI_DISABLE_AUTO_UPDATE fix self-updated in the field (the value was `1`, which
-// agy ignores — only `true` works; docs/70 §70.14.9). Whichever way a box drifts, the
+// agy ignores — only `true` works; docs/log/70 §70.14.9). Whichever way a box drifts, the
 // parser has to cope.
 //
 // On the old form the display name IS the id — `agy --model` accepts it verbatim
 // (実機検証 2026-07-20). On the new one it is not, and passing the whole line is what
-// the CLI answered with, on a real workspace (docs/70 §70.14.8):
+// the CLI answered with, on a real workspace (docs/log/70 §70.14.8):
 //
 //	⚠ model gemini-3.5-flash-low    Gemini 3.5 Flash (Low) is not recognized as a
 //	  known model or custom model in settings. Using "Gemini 3.7 Flash (High)" instead.

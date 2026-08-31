@@ -1,180 +1,203 @@
-# 0055. 人の判断待ちでコンテナを起こし続けない。畳む前に対話を「持ち越す」
+# 0055. Do not keep a container awake waiting on a human decision. Carry the interaction over before folding it up
 
-- 状態: **採用**（2026-08-24）。検討・実測の記録は [docs/75](../75-idle-stop-and-pending-interactions.md)。
-- 関連: [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.md)（live 状態を「促す次の一手」で分ける） /
-  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md)（停止＝スロット解放＝費用） /
-  [docs/history/p3-9-idle-stop.md](../history/p3-9-idle-stop.md)（二段構えの原型）
+English | [日本語](0055-idle-stop-and-carried-interactions.ja.md)
 
-## 背景
+- Status: **adopted** (2026-08-24). The record of the investigation and the measurements is [docs/75](../log/75-idle-stop-and-pending-interactions.md).
+- See also: [0030-turn-abort-auto-resume.md](0030-turn-abort-auto-resume.md) (splitting live state by "the next move to prompt") /
+  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) (stopping = releasing a slot = cost) /
+  [docs/history/p3-9-idle-stop.md](../log/p3-9-idle-stop.md) (the prototype of the two-tier arrangement)
 
-AskUserQuestion が出たまま放置されたセッションがあると、その Workspace は**永久に停止しない**。
-`reaper.go` の busy 判定が `question` を数え、tier1 の対象からも外していたため両段とも閉じる。
-ECS / EC2 プールでは止まらない Workspace はそのまま課金で、[docs/64](../64-ec2-persistent-workspace.md)
-§64.26 では誰も触っていない Workspace が一晩 9.4 時間 m7i.large を占有していた。
+## Context
 
-同じ形は 2026-07-31 に利用上限メニュー（`blocked`）で実測済みで、そのときは blocked を busy から
-外して塞いだ。question だけが「すぐ答えが返ってくる対話」という前提で例外に残っていた。
+If a session has been left with an AskUserQuestion on screen, its workspace **never stops**.
+`reaper.go`'s busy check counted `question` and also excluded it from tier 1, so both tiers were
+closed. On ECS / EC2 pools a workspace that does not stop simply bills, and in
+[docs/64](../log/64-ec2-persistent-workspace.md) §64.26 a workspace nobody was touching occupied an
+m7i.large for 9.4 hours overnight.
 
-## 決定 1 — コンテナを起こし続ける理由は「機械が動いていること」だけ
+The same shape was measured on 2026-07-31 with the usage-limit menu (`blocked`), and that was closed
+by removing blocked from busy. Only question remained as an exception, on the premise that it is "a
+dialogue that gets an answer straight away".
 
-`holdsWorkspace` は `machineBusy`（working、または `backgroundBusy`）だけを見る。人待ち
-（question / plan / permission / blocked / auth / spend_limit）は理由にしない。人待ちは
-何日でも続きうるので、それでコンテナを上げ続けることは「答えるまで課金する」と同義になる。
+## Decision 1 — the only reason to keep a container awake is that a machine is working
 
-**捨てた案**: question だけ特別扱いを続ける。実運用で質問は夜をまたぐので、前提が成り立たない。
+`holdsWorkspace` looks only at `machineBusy` (working, or `backgroundBusy`). Waiting on a human
+(question / plan / permission / blocked / auth / spend_limit) is not a reason. Waiting on a human can
+last days, so keeping a container up for it amounts to "billing until you answer".
 
-## 決定 2 — ただし「畳んでよい」は「持ち越せる」が先に成立してから
+**Rejected**: keep treating question as a special case. In real use questions cross the night, so the
+premise does not hold.
 
-条件だけ直すと、質問は既に plan / permission が落ちていた穴に落ちる: 保留ペイロードは
-再開時の SessionStart フックが消すので、人の判断待ちだった事実ごと失われる。よって
-**P1（持ち越し）を入れてから P2（条件の切り替え）**という順序を決定として固定する。
+## Decision 2 — but "it may be folded up" holds only after "it can be carried over" does
 
-## 決定 3 — 保留(pending)と持ち越し(carried)は別ストア・別 wire キー
+Fixing the conditions alone would drop questions into the hole plan and permission had already fallen
+into: the pending payload is deleted by the SessionStart hook on resume, taking with it the very fact
+that a human decision was awaited. So the order **P1 (carrying over) before P2 (switching the
+conditions)** is fixed as a decision.
 
-`pending-*` は「今まさにモーダルが出ている」で、Console はキー列（Down/Enter）で答える。
-持ち越しはモーダルが無いので、答えは**文章として**配達するしかない。同じキーに相乗りさせると
-「今出ているか」を `alive` で見分けることになり、その見分けは一度も実装されていない
-（保留カードは今も alive を見ていない）。別ストアなら、キーを撃つコードが持ち越しに到達し得ない。
+## Decision 3 — pending and carried are different stores with different wire keys
 
-## 決定 4 — 復元するのは「モーダル」ではなく「意図」
+`pending-*` means "a modal is on screen right now", and the Console answers it with a key sequence
+(Down/Enter). A carried interaction has no modal, so the answer can only be delivered **as prose**.
+Riding on the same key would mean telling "is it on screen?" from `alive`, and that distinction has
+never once been implemented (the pending card does not look at alive today either). With separate
+stores, the code that fires keys cannot reach a carried interaction.
 
-**実測（claude 2.1.241・docs/75 §75.10）**: 未応答の `tool_use` は再開時に `parentUuid` で
-迂回され会話木から外れる。`--resume` してもモーダルは戻らず、戻す手段も無い。したがって
-持ち越しが運ぶのは回答（質問）／承認・却下（プラン）／事実（許可）だけ。
+## Decision 4 — what is restored is the intent, not the modal
 
-配達文面は**機能の一部**である。「質問し直さず、この回答を使って続けてください」の一文が
-無いと claude は質問し直す（実測）。文面は固定値としてコードに持ち、テストで縛る。
+**Measured (claude 2.1.241, docs/75 §75.10)**: an unanswered `tool_use` is bypassed via `parentUuid`
+on resume and drops out of the conversation tree. `--resume` does not bring the modal back, and there
+is no way to bring it back. So what a carried interaction carries is only the answer (for a question),
+approve/reject (for a plan) or the fact (for a permission).
 
-## 決定 5 — プランの「承認」は取り消せない実行の承認
+The delivery wording is **part of the feature**. Without the sentence "do not ask again; continue
+using this answer", claude asks again (measured). The wording is a fixed value in code, bound by
+tests.
 
-**実測**: 文章で承認を送ると claude は ExitPlanMode を出し直さず**そのまま実行する**
-（pane のフッタは plan mode のまま）。当初案「plan モードで再開すれば TUI が再提示するので
-生きたモーダルで承認させればよい」は否定された。よって Console のボタンは確認を挟む。
+## Decision 5 — approving a plan is approving an irreversible execution
 
-## 決定 6 — 人待ちには独立した時計（`interaction_idle_timeout`）
+**Measured**: sending approval as prose makes claude **execute directly** without re-emitting
+ExitPlanMode (the pane's footer stays in plan mode). The original idea — "resume in plan mode and the
+TUI will re-present it, so approve on a live modal" — was refuted. So the Console's button asks for
+confirmation.
 
-`session_idle_timeout` と分ける。両者は別の問いに答えている: 「アイドルなセッションが
-どれだけ RAM を持ってよいか」と「決めに戻ってこない人のためにコンテナをどれだけ上げておくか」。
-既定は同値。テナントが session だけを設定した場合は人待ちもその値に従う（片方だけデプロイ
-既定で走ると、管理画面に出ている数字が嘘になる）。
+## Decision 6 — waiting on a human gets its own clock (`interaction_idle_timeout`)
 
-## 決定 7 — 停止中でも「答えを待っている」ことは一覧に出す
+Separate from `session_idle_timeout`. They answer different questions: "how much RAM may an idle
+session hold?" versus "how long do we keep a container up for someone who has not come back to
+decide?". The defaults are the same value. If a tenant configured only `session`, waiting on a human
+follows that value too (having one of them run on the deployment default makes the number shown in the
+admin screen a lie).
 
-人待ちを畳めるようにした以上、畳まれた質問が一覧から見えないのは利用者から見て
-「静かに失われた」のと同じ。セッションワイヤに `carried` を足し、**CP の中継と DB ミラーの
-両方**に載せる（停止中の一覧はミラーが唯一のソースなので、片方だけだと「止めた瞬間に
-バッジが消える」）。
+## Decision 7 — show "waiting for an answer" in the list even while stopped
 
-## 決定 8 — shell / ssm は推測せず、利用者の「自動停止しない」ピンで守る
+Now that waiting on a human can be folded up, a folded question that is invisible in the list is, from
+the user's point of view, the same as "silently lost". `carried` is added to the session wire and
+carried on **both the CP's relay and the database mirror** (the mirror is the only source for the list
+while stopped, so with only one of them **the badge would vanish the moment it stopped**).
 
-前景コマンド名では**放置された `less` と実行中のビルドが区別できず**（実測）、ssm は
-`exec aws ssm start-session` を張り続けるので常に非シェル＝常時 busy になる。自動判定は
-どちらの方向にも壊れるので採らない。代わりに `Meta.KeepAwakeUntil` を置き、
-`sessionActivity` の一番外で machineBusy に倒す（shell/ssm は state が空で、分類の内側には
-引っかからないため）。**真偽値ではなく時刻**にしたのは、消し忘れたピンが閉じ忘れた端末タブと
-同じ「黙って課金し続けるもの」になるから。効くのは生きているセッションだけで、読めない値は
-ピン無しに倒す（壊れた文字列が永久にコンテナを上げ続ける方が高い）。
+## Decision 8 — do not guess for shell / ssm; protect them with the user's "do not auto-stop" pin
 
-## 決定 10 — 在席は「接続の有無」ではなく「直近の打鍵」
+The foreground command name **cannot tell an abandoned `less` from a running build** (measured), and
+ssm keeps `exec aws ssm start-session` open so it is always non-shell, i.e. always busy. Automatic
+detection breaks in both directions, so it is not adopted. Instead there is `Meta.KeepAwakeUntil`,
+which falls to machineBusy at the very outside of `sessionActivity` (shell/ssm have an empty state and
+are not caught by the inner classification). It is **a timestamp rather than a boolean** because a pin
+someone forgot to clear becomes the same thing as a terminal tab someone forgot to close: something
+that silently keeps billing. It applies only to live sessions, and an unreadable value falls to "no
+pin" (a corrupt string keeping a container up forever is the more expensive failure).
 
-端末ペインを開いた Console のタブを 1 枚閉じ忘れると、presence lease が 5 秒ごとに更新され続け
-Workspace は永久に停止しない。question と並ぶ「止まらない」の主因で、しかも利用者からは自分が
-課金し続けていることが見えない。よって端末の presence だけ打鍵で縛る
-（`AF_PRESENCE_IDLE_TIMEOUT`・既定 30 分・0 で無効）。
+## Decision 10 — presence means "recent keystrokes", not "a connection exists"
 
-- **テナント別にしない**: これは課金方針ではなく人の注意の定数。止まるまでの時間は従来どおり
-  `ws_idle_timeout`（テナント別）が決める。
-- **ping と resize を打鍵と数えない**: Console は開いたソケットへ定期的に ping を送るので、
-  「フレームが来た＝在席」にすると元の挙動がそのまま戻る。
-- **DB の presence lease も止める**: in-memory の判定だけ直しても
-  `WorkspaceHasRecentActivity` は `connected_until > now` で true を返し続け、何も変わらない。
-- 端末以外（定時実行の起床・ブラウザペイン）は無条件のまま。前者に打鍵は無く、後者は
-  可視のあいだだけ接続を張るので、可視性そのものが在席の合図になっている。
-- **対で操作ビーコンを入れる**（`POST /api/workspace/attention`）。打鍵に絞ると、打鍵も
-  送信もせずミラーで過去ログを読み続けている人が不在に見え、読んでいる最中にコンテナが
-  止まると転写すら取れなくなる。Console は**可視のときの実操作**（`isTrusted`）を 60 秒に
-  1 回だけ投げる — 送るのは「タブが開いている」ではなく「人が操作した」で、この 2 つを
-  取り違えると P3 が消したはずの挙動がそのまま戻る。**auto-start は通さない。**
+Forgetting to close one Console tab with a terminal pane open keeps the presence lease refreshing
+every five seconds and the workspace never stops. It is a main cause of "it does not stop" alongside
+question, and worse, the user cannot see that they are still being billed. So terminal presence alone
+is bound to keystrokes (`AF_PRESENCE_IDLE_TIMEOUT`, default 30 minutes, 0 disables).
 
-## 決定 11 — 「なぜ止まらないか」は reaper の決定をそのまま公開する（再計算しない）
+- **Not per tenant**: this is not a billing policy but a constant about human attention. How long
+  until it stops is still decided by `ws_idle_timeout` (which is per tenant).
+- **Ping and resize do not count as keystrokes**: the Console periodically pings an open socket, so
+  treating "a frame arrived" as presence would restore the original behaviour exactly.
+- **Stop the database presence lease too**: fixing only the in-memory judgement leaves
+  `WorkspaceHasRecentActivity` returning true from `connected_until > now`, and nothing changes.
+- Non-terminal cases (a scheduled wake, the browser pane) are left unconditional. The former has no
+  keystrokes, and the latter only holds a connection while visible, so visibility itself is the
+  presence signal.
+- **Add an activity beacon as its counterpart** (`POST /api/workspace/attention`). Restricting to
+  keystrokes makes someone reading back through the mirror — neither typing nor sending — look absent,
+  and if the container stops while they are reading they cannot even get the transcript. The Console
+  sends **a real interaction while visible** (`isTrusted`) at most once every 60 seconds — what it
+  sends is "a human interacted", not "a tab is open", and confusing the two restores exactly the
+  behaviour P3 removed. **It does not trigger auto-start.**
 
-自動停止が効かないとき、運用者に見えるものは何も無かった（reaper はログを出すだけで、
-調べる唯一の手段が他人のコンテナへ `docker exec` して status ファイルを読むこと）。
-P0〜P3 で判定材料が増えた（人待ち・背景作業・在席・ピン）ぶん、見えないままだと
-「止まらない」を説明できない。
+## Decision 11 — publish the reaper's decision as it is; do not recompute it
 
-管理画面のメンバー名簿と詳細に「いつ止まるか / 誰が止めているか」を出す。**画面側で
-再計算しない**のが決定の本体で、自前で導出すると reaper が実際に見ているものとズレ、
-原因調査のための画面が別の答えを出す。よって reaper が毎スイープで置いた観測を読むだけに
-する（鮮度はスイープ間隔。画面は観測時刻を添えて、秒単位の断言をさせない）。
+When automatic stopping does not work, the operator could see nothing (the reaper only logs, and the
+only way to investigate was `docker exec` into someone else's container to read the status file).
+P0–P3 added more inputs to the judgement (waiting on a human, background work, presence, the pin), and
+leaving it invisible makes "it does not stop" unexplainable.
 
-- 「止まらない」と「予定が出ていない」を別物として見せる。無効なテナントは「無効」と言う
-  （設定ミスと区別できる必要がある）。
-- ピンは working より先に説明する: 利用者が明示的に宣言したものは、たまたま今ターンが
-  走っていることより強い説明になる（解除すれば止まる）。
+The admin screen's member roster and detail show "when will it stop / who is holding it". **Not
+recomputing on the screen side** is the substance of this decision: deriving it separately would
+diverge from what the reaper actually looks at, and the screen built for investigating a cause would
+give a different answer. So it only reads the observations the reaper writes on each sweep (freshness
+is the sweep interval; the screen shows the observation time and does not assert to the second).
 
-## 決定 12 — 畳んでよい kind を広げたら、持ち越しも同じ幅で広げる
+- "It will not stop" and "no schedule has been produced" are shown as different things. A tenant with
+  it disabled is called "disabled" (it must be distinguishable from a misconfiguration).
+- The pin is explained before working: something the user explicitly declared is a stronger
+  explanation than a turn happening to be running (release it and it stops).
 
-tier1 の門を `kind == "claude"` から「halt が resumable か」（`tier1Foldable`。shell / ssm だけ
-例外）へ広げた。halt はどのエージェント種別でも再開可能な停止だからで、claude だけを安い
-回収経路に載せておく理由は無い。
+## Decision 12 — having widened which kinds may be folded up, widen carrying over by the same amount
 
-ただし門を広げた瞬間、**決定 2（畳んでよいのは失われないときだけ）が claude 以外でも
-要件になる**。そして保留の在処は kind ごとに違い、寿命も違う（docs/75 §75.7.2 の表）:
-ディスクに残るもの（agy の会話 DB・copilot の events.jsonl・opencode のストア）と、
-**プロセスと一緒に消えるもの**（kiro TUI の承認パネル＝ペインの文字列、ACP 3 種の
-`session/request_permission`＝ driver のメモリ）がある。読み方を畳む側に散らさないため、
-入口は `agents.ModalReporter`（`PendingModal`）1 つに寄せる。claude だけは実装しない —
-そちらは hooks が書く `pending-*` が正で、同じことを 2 か所から主張させない。
+Tier 1's gate widened from `kind == "claude"` to "is halt resumable" (`tier1Foldable`; only shell and
+ssm are excluded). halt is a stop that any agent kind can resume from, and there is no reason to keep
+only claude on the cheap reclamation path.
 
-- **写し取りは畳む前**。`halt` は `DropHandle` / `kill-session` より前、`gracefulShutdown` は
-  `AbortManaged` より前。順序を逆にすると呼ばれても必ず空になる（実際その順序で入って
-  おり、managed の持ち越しは一度も発火していなかった）。
-- **取れないものは取れたことにしない**。コンテナごと SIGKILL されると ACP / ペインの
-  保留は失われる。ディスクに痕跡を残すことは可能だが、**可否の宛先はどちらにせよ
-  死んでいる**ので戻せるのは事実だけであり、ask 時点の書き込みを増やす価値は薄い。
+But the moment the gate widened, **decision 2 (fold up only when nothing is lost) became a requirement
+for non-claude kinds too**. And where a pending interaction lives differs per kind, with different
+lifetimes (the table in docs/75 §75.7.2): some stay on disk (agy's conversation DB, copilot's
+events.jsonl, opencode's store) and some **die with the process** (kiro TUI's approval panel — a string
+in the pane; and the ACP trio's `session/request_permission` — in the driver's memory). To avoid
+scattering the reading logic across the folding side, the entrance is a single
+`agents.ModalReporter` (`PendingModal`). claude alone is not implemented — there the `pending-*` files
+the hooks write are canonical, and the same thing is not asserted from two places.
 
-## 決定 13 — 許可は question の形で持ち越さない
+- **Capture before folding.** `halt` before `DropHandle` / `kill-session`, and `gracefulShutdown`
+  before `AbortManaged`. The reverse order means it is always empty when called (it actually went in
+  that way, and carrying over on managed had never once fired).
+- **Do not pretend to have captured what cannot be captured.** If the container is SIGKILLed, the
+  pending ACP / pane interactions are lost. Leaving traces on disk is possible, but **the destination
+  for the yes/no is dead either way**, so all that could be restored is the fact — not worth adding
+  writes at ask time.
 
-ACP の Interaction も agy の合成メニューも、Console に選択カードを描かせるために
-`question` の形をしている。しかしその形のまま持ち越すと、**畳んだ後に「Yes / No」を
-選ばせて、届かない宛先へ送ったつもりにさせる**（許可したのに実行されない、あるいはその逆）。
-可否の宛先（JSON-RPC の id・TUI のモーダル）はプロセスと一緒に消えているので、持ち越しは
-`permission`＝事実だけへ落とす。決定 4「復元するのはモーダルではなく意図」の系で、
-許可には運べる意図が無い、というのがこの決定である。
+## Decision 13 — permissions are not carried over in the shape of a question
 
-表示側は逆に **`question` のままでよい**（ミラーの許可カードも一覧のチップも
-`question` を名乗る）。「今どう見せるか」と「畳んだ後に何を配達できるか」は別の軸で、
-前者を持ち越しに合わせると生きたカードの語彙が壊れる。
+Both the ACP Interaction and agy's synthesised menu are shaped as a `question` so the Console can draw
+a choice card. But carrying them over in that shape would **offer "Yes / No" after folding and let the
+user believe they sent it to a destination that no longer exists** (permission granted but nothing
+executed, or the reverse). The destination for the yes/no (the JSON-RPC id, the TUI's modal) died with
+the process, so a carried interaction degrades to `permission`, i.e. the fact alone. It is a corollary
+of decision 4's "what is restored is the intent, not the modal": for a permission there is no intent
+that can be carried.
 
-**codex / opencode に許可の持ち越しは無い** — 承認導線そのものが存在しないからである
-（codex managed は自動応答、TUI は bypass 起動、opencode managed は無条件 auto-allow）。
-両者の人待ちは質問ツールだけで、そちらは回答フォームごと持ち越す。
+The display side, conversely, **may stay `question`** (the mirror's permission card and the list's chip
+both call themselves `question`). "How to show it now" and "what can be delivered after folding" are
+different axes, and matching the former to carrying over would break the vocabulary of live cards.
 
-## 決定 9 — 分からない状態はどちらにも倒さない
+**codex and opencode have no permission carrying** — there is no approval route at all (managed codex
+auto-answers, the TUI starts in bypass, and managed opencode auto-allows unconditionally). Their
+waiting-on-a-human is only the question tool, and that is carried over complete with its answer form.
 
-`sessionActivity` の既定は `unknown`＝「起こし続けもしないし畳みもしない」。新しい状態が
-増えたとき、起こし続ける側に落ちると Workspace が永久に温まり、畳む側に落ちると理解して
-いないものを殺す。分類は表駆動テストで固定する（この判定は過去 2 回ドリフトしている）。
+## Decision 9 — an unknown state falls to neither side
 
-## 影響と残り
+`sessionActivity` defaults to `unknown`, i.e. "neither keep it awake nor fold it up". When a new state
+appears, falling to the keep-awake side warms a workspace forever, and falling to the fold-up side
+kills something we do not understand. The classification is pinned by a table-driven test (this
+judgement has drifted twice already).
 
-- 既定 ON のまま挙動が変わる: これまで停止しなかった「質問を抱えた Workspace」が
-  `interaction_idle_timeout`（既定 = `session_idle_timeout` = 1h）で畳まれ、その後 tier2 で
-  停止する。**畳まれた対話は失われず**、Console のカードから答えれば再開して届く。
-- P3（在席の TTL）まで実装済み。**打鍵の無い端末は 30 分で在席から外れる**ので、
-  端末を開いたまま席を離れた Workspace も `ws_idle_timeout` で止まるようになった。
-  長い作業を守るのは「自動停止しない」ピン（決定 8）。
-- P0〜P5 まで実装済み（畳む条件・持ち越し・停止中バッジ・ピン・在席の TTL・操作ビーコン・
-  運用画面・claude 以外の持ち越し・halt 通知・停止直前の drain）。
-- **決定 12 / 13 で挙動が変わる範囲**: claude 以外のセッションも `interaction_idle_timeout` で
-  畳まれるようになり、その保留は持ち越される。停止中の一覧にバッジが出て、ミラーの
-  カードから答えると**再開して文章で届く**（managed は `ThreadHandle.Send`、TUI は打鍵）。
-  許可については「何を訊かれていたか」だけが残り、可否は運ばれない。
-- **codex の `compacting` を machineBusy に入れた**。ワイヤに出る 10 個目の状態が
-  `sessionActivity` の表から漏れており（決定 9 が防ぐはずだったドリフトそのもの）、
-  文脈圧縮の最中に Workspace ごと止まりうる状態だった。
-- 残り: **ECS 実配備での 1 周確認**（イメージ再ビルドと実 ECS が要る）。使い捨て HOME と
-  専用 tmux ソケットで立てた本物の Agent に対する 1 周は実測済み（docs/75 §75.10.1 G）。
-  cursor / kiro / copilot の**許可**の写し取りは、実機で許可要求そのものを再現できず
-  単体テスト止まり（同 J）— 動くはず、とは書かない。
+## Impact and what remains
+
+- The behaviour changes while staying on by default: a workspace holding a question, which used not to
+  stop, is folded up at `interaction_idle_timeout` (default = `session_idle_timeout` = 1h) and then
+  stopped by tier 2. **The folded interaction is not lost**, and answering from the Console's card
+  resumes and delivers it.
+- Implemented through P3 (presence TTL). **A terminal with no keystrokes drops out of presence after 30
+  minutes**, so a workspace left with a terminal open while someone stepped away now stops at
+  `ws_idle_timeout`. Long work is protected by the "do not auto-stop" pin (decision 8).
+- P0–P5 are implemented (the folding conditions, carrying over, the stopped badge, the pin, the
+  presence TTL, the activity beacon, the operations screen, carrying over for non-claude kinds, halt
+  notifications, and draining just before a stop).
+- **What decisions 12 / 13 change**: non-claude sessions are now folded up at
+  `interaction_idle_timeout` too, and their pending interactions are carried over. A badge appears in
+  the list while stopped, and answering from the mirror's card **resumes and delivers it as prose**
+  (`ThreadHandle.Send` for managed, keystrokes for a TUI). For permissions only "what was being asked"
+  survives; the yes/no is not carried.
+- **codex's `compacting` was added to machineBusy.** The tenth state that appears on the wire was
+  missing from `sessionActivity`'s table (exactly the drift decision 9 was supposed to prevent), and it
+  was a state in which the whole workspace could stop mid-compaction.
+- Remaining: **one full pass on a real ECS deployment** (which needs an image rebuild and real ECS). A
+  full pass against a real Agent stood up with a throwaway HOME and a dedicated tmux socket has been
+  measured (docs/75 §75.10.1 G). Capturing **permissions** for cursor / kiro / copilot stops at unit
+  tests, because the permission request itself could not be reproduced on real hardware (ibid. J) — we
+  do not write "it should work".

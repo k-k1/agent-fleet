@@ -1,13 +1,13 @@
 package agents
 
-// managed driver の状態遷移通知 seam（docs/30）。
+// managed driver の状態遷移通知 seam（docs/log/30）。
 //
 // TUI ルートでは hook が `workspace-agent session-status <state>` を叩き、package main
 // の runSessionStatusHook が「status ストアを書く → recordSessionNotification で
-// 応答あり通知（notice）と オペレーターへの完了報告（docs/30）を出す」までを一息に
+// 応答あり通知（notice）と オペレーターへの完了報告（docs/log/30）を出す」までを一息に
 // 行う。managed driver（§3: codex app-server / opencode serve）は hook を持たず
 // driver 自身が status を書いていたため、報告の arm を消費する者がおらず「完了しても
-// 報告が一切飛ばない」構造的な穴があった（docs/30 の既知制限として明記されていた）。
+// 報告が一切飛ばない」構造的な穴があった（docs/log/30 の既知制限として明記されていた）。
 //
 // driver は internal/agents 配下、recordSessionNotification は package main にあり、
 // Go では main を import できない。そこで main が起動時にここへ通知関数を登録し、
@@ -71,7 +71,7 @@ func MarkTurnStart(sid string) {
 //
 // excerpt は managed では空（claude の MessageDisplay hook に当たるストリーミング
 // 捕捉が無い）。オペレーター報告は TUI/managed とも本文抜粋なしの事実のみ
-// （docs/30）なので報告経路では使われず、TUI では全文ブリッジ（docs/37）の body に
+// （docs/log/30）なので報告経路では使われず、TUI では全文ブリッジ（docs/log/37）の body に
 // だけ乗る。オペレーターは get_session_output で詳細を読む。
 func MarkTurnEnd(sid string, st TurnState) { MarkTurnEndErr(sid, st, "") }
 
@@ -88,7 +88,7 @@ const StateFailed = "failed"
 // is not a status value — the status store still gets "idle". It is separate from
 // StateFailed because the operator's next move differs: a failed turn must not be
 // re-sent until its cause is fixed, while an aborted one only needs a nudge to
-// continue — which is what makes 中断時の自動再開 safe (docs/47).
+// continue — which is what makes 中断時の自動再開 safe (docs/log/47).
 const StateAborted = "aborted"
 
 // StateBlocked is a LIVE WIRE state — unlike StateFailed / StateAborted above it is not a
@@ -110,7 +110,7 @@ const StateBlocked = "blocked"
 
 // StateAuth is the same kind of live-only wire state as StateBlocked, for the one cause
 // that no keypress in the pane can clear: **the workspace's claude login has expired**
-// (docs/47 §4-8 — 資格情報の refresh も access も過ぎている)。
+// (docs/log/47 §4-8 — 資格情報の refresh も access も過ぎている)。
 //
 // StateBlocked と分けるのは、利用者に促す次の一手が正反対だから: 上限は「待て」、
 // 認証切れは「今すぐ再認証しろ」。同じ 停止中 バッジに畳むと、待っていれば直ると
@@ -134,7 +134,7 @@ const StateAuth = "auth"
 //
 // StateBlocked と分けるのは、そのままでは「入力待ち」に見えるからではなく、**利用者に
 // 促す次の一手が違う**から: blocked は「ペインで選べ（人が消すまで動かない）」、こちらは
-// 「待て（時刻が来れば自分で動く。docs/47 §4-4 の予約があれば自動で再開する）」。
+// 「待て（時刻が来れば自分で動く。docs/log/47 §4-4 の予約があれば自動で再開する）」。
 // 逆に idle に寄せると、ターンが上限で落ちたことも再開予定も画面から消え、一覧では
 // 正常に終わったセッションと見分けが付かない（利用者報告 2026-08-19）。
 //
@@ -169,7 +169,7 @@ func MarkTurnEndErr(sid string, st TurnState, failure string) {
 	if st == TurnUnknown {
 		// runtime を見失っただけ。idle は書く（進行中に張り付かせない）が、これは
 		// 「ターンの終端」ではないので TurnEnd は立てない — レベルで判定する報告の
-		// リコンサイラ（docs/51）がこの idle を完了の証拠に数えると、まだ相手側で
+		// リコンサイラ（docs/log/51）がこの idle を完了の証拠に数えると、まだ相手側で
 		// 走っているかもしれないターンを「完了しました」と報告してしまう。
 		status.Persist(sid, "idle")
 		return

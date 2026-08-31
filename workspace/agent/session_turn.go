@@ -1,6 +1,6 @@
 package main
 
-// docs/27 P1.5/P2: セッション操作の意味論エンドポイント。Console のチャット送信・追撃・
+// docs/log/27 P1.5/P2: セッション操作の意味論エンドポイント。Console のチャット送信・追撃・
 // 中断を turn/start・turn/steer・turn/interrupt 相当の操作として受け、質問応答を
 // Interaction 応答（§5）として受ける。managed driver のセッションは driverOf →
 // ThreadHandle へ落ち（P2: opencode serve / P3: codex app-server）、tui（従来）の
@@ -25,7 +25,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// managedDrivers is the kind → managed Driver registry（docs/27 §3）。P2 で opencode
+// managedDrivers is the kind → managed Driver registry（docs/log/27 §3）。P2 で opencode
 // が初出、P3 で codex が加わった。tui ドライバはここに載らない（ThreadHandle を実装
 // しない — /turn ハンドラが tmux 経路へ直接委譲する）。
 var managedDrivers = map[string]agents.Driver{
@@ -46,11 +46,11 @@ func driverOf(m session.Meta) (agents.Driver, bool) {
 type turnReq struct {
 	Op     string `json:"op"` // "start" | "steer" | "interrupt"
 	Prompt string `json:"prompt"`
-	// Attachments: この turn に添付するファイルの絶対パス（docs/27 §10）。managed
+	// Attachments: この turn に添付するファイルの絶対パス（docs/log/27 §10）。managed
 	// driver だけが解釈する（TurnInput.Attachments → API 添付）。tui では Console が
 	// 従来どおりプロンプト本文へパスを織り込むため、ここでは受けるだけで使わない。
 	Attachments []string `json:"attachments"`
-	// ClientMessageID: AF 採番の冪等キー（docs/27 §4）。managed driver の台帳が再送を
+	// ClientMessageID: AF 採番の冪等キー（docs/log/27 §4）。managed driver の台帳が再送を
 	// 冪等化する。空なら driver が採番する。
 	ClientMessageID string `json:"clientMessageID"`
 }
@@ -124,7 +124,7 @@ func handleSessionTurn(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name, "op": req.Op})
 }
 
-// handleManagedTurn routes a turn op to the session's ThreadHandle（docs/27 P2）。
+// handleManagedTurn routes a turn op to the session's ThreadHandle（docs/log/27 P2）。
 // Resume は冪等（生きた handle があればそれを返す）なので毎回呼んでよく、halted →
 // 送信 の流れでも runtime が立ち上がる。
 func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
@@ -174,7 +174,7 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 }
 
 // handleSessionRespond (POST /sessions/{name}/respond) answers a pending
-// Interaction（docs/27 §5 — 承認/質問の一般形）by id. managed driver 専用の意味論
+// Interaction（docs/log/27 §5 — 承認/質問の一般形）by id. managed driver 専用の意味論
 // 経路で、tui セッションの質問応答は従来どおり /input の keys/seq（Console が TUI
 // モーダルをナビゲーションで駆動する）— TUI モーダルには「id で答える」口がない。
 func handleSessionRespond(w http.ResponseWriter, r *http.Request) {
@@ -229,7 +229,7 @@ func handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 }
 
 // settingsReq is the wire body of POST /sessions/{name}/settings — ThreadSettings
-// の動的更新（docs/27 §9.4-3、managed 専用）。空フィールドは「変更しない」。tui の
+// の動的更新（docs/log/27 §9.4-3、managed 専用）。空フィールドは「変更しない」。tui の
 // モード切替は従来どおり /input のキー（planCycleKey）で行う。
 type settingsReq struct {
 	Model       string `json:"model"`

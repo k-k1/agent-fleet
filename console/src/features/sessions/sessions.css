@@ -180,7 +180,7 @@
   animation: af-pulse 1.4s ease-in-out infinite;
 }
 
-/* 削除ロック（docs/45）の鍵バッジ — 行が削除保護に固定されていることを示す。
+/* 削除ロック（docs/log/45）の鍵バッジ — 行が削除保護に固定されていることを示す。
    主張しすぎないよう muted、警告色は使わない（異常ではなく利用者の意図）。
    アシスタント会話の行（.chat-row）も同じクラスを使う。 */
 .sess-lock {
@@ -189,7 +189,7 @@
   font-size: 11px;
 }
 
-/* 停止しないピン（docs/75）: アイドル自動停止の対象外であることを示す。muted ではなく
+/* 停止しないピン（docs/log/75）: アイドル自動停止の対象外であることを示す。muted ではなく
    accent 寄りにするのは、これが「コンテナを上げ続けている＝費用が発生している」状態を
    意味するから — 鍵バッジ（無害な保護）と同じ静かさで並べると気づかれない。 */
 .sess-awake {
@@ -487,7 +487,7 @@
   border-color: color-mix(in srgb, var(--warn) 40%, transparent);
   font-weight: 600;
 }
-/* 停止中だが答えを待っている対話を抱えている（docs/75）。question の色は借りる —
+/* 停止中だが答えを待っている対話を抱えている（docs/log/75）。question の色は借りる —
    停止中 の muted に混ぜると、未回答の質問がただ畳まれた行と見分けられなくなる。
    ただし太字は戻す: 今まさにモーダルが出ている行（.question）と同じ強さで並ぶと、
    「今すぐ答えれば進む」ものと「答えれば再開する」ものの区別が消える。 */
@@ -511,7 +511,7 @@
   }
 }
 
-/* === 掃除パネル（CleanupModal・docs/32）=== */
+/* === 掃除パネル（CleanupModal・docs/log/32）=== */
 .clean-modal { width: min(760px, 94vw); }
 .clean-subtitle { margin: 0; color: var(--muted); font-size: 12px; }
 .clean-tabs { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--border); }

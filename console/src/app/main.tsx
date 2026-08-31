@@ -1,4 +1,4 @@
-// Console entry (docs/22 rebuild). Loaded by index.html.
+// Console entry (docs/log/22 rebuild). Loaded by index.html.
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
@@ -41,7 +41,7 @@ wireViewport();
 consumePopoutBoot();
 
 // Install the Web Share Target service worker so the installed PWA can receive shares
-// from Android's 共有シート into the memo queue (docs/21 画像添付). Best-effort.
+// from Android's 共有シート into the memo queue (docs/log/21 画像添付). Best-effort.
 registerShareSW();
 
 createRoot(document.getElementById("root")!).render(

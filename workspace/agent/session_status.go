@@ -24,7 +24,7 @@ import (
 // --dangerously-skip-permissions there is no tool-approval QA state, so the two
 // meaningful states are working and idle(=response ready / awaiting input).
 //
-// 状態と pending ペイロードのストア本体は internal/status（docs/23 残① Wave A）、
+// 状態と pending ペイロードのストア本体は internal/status（docs/log/23 残① Wave A）、
 // claude settings への hook 配線（EnsureStatusHooks）は internal/agents/claude
 // （同 Wave F）; このファイルは session-status サブコマンドの入口だけを持つ。
 
@@ -95,7 +95,7 @@ func runSessionStatusHook(args []string) {
 		if h.source == "compact" {
 			return
 		}
-		// 消す前に持ち越す（docs/75 §75.6.3 の契機 3）。ここは「モーダルを出したまま
+		// 消す前に持ち越す（docs/log/75 §75.6.3 の契機 3）。ここは「モーダルを出したまま
 		// 畳まれたセッションが再開した」瞬間で、直後の applyPendingPayloads が
 		// pending-question/plan/perm を消してしまう — 一覧も halt も通らなかった経路
 		// （SIGKILL 直後の再開など）の最後の受け皿。既に昇格済みなら上書きしない。
@@ -127,11 +127,11 @@ func runSessionStatusHook(args []string) {
 	}
 	previous, _ := status.Read(sid)
 	// Capture the turn's streamed text BEFORE applyPendingPayloads clears it on idle:
-	// it becomes the full-text bridge body (docs/37). The operator report itself
-	// carries no excerpt (docs/30: fact-only, uniform with managed).
+	// it becomes the full-text bridge body (docs/log/37). The operator report itself
+	// carries no excerpt (docs/log/30: fact-only, uniform with managed).
 	turnText, _ := status.ReadPendingText(sid)
 	if state == "idle" {
-		// Stop フックの idle は「ターンが終わった」という主張。docs/51 のリコンサイラは
+		// Stop フックの idle は「ターンが終わった」という主張。docs/log/51 のリコンサイラは
 		// この 1bit を完了の証拠に使う（boot の idle リセットと区別するため）。
 		status.PersistTurnEnd(sid, state)
 	} else {
@@ -142,13 +142,13 @@ func runSessionStatusHook(args []string) {
 	recordSessionNotification(sid, previous.State, notifyState, notifyText)
 }
 
-// claudeAbortInfo is the transcript-tail verdict (docs/47), replaceable in tests.
+// claudeAbortInfo is the transcript-tail verdict (docs/log/47), replaceable in tests.
 var claudeAbortInfo = claude.AbortInfo
 
 // turnEndLabel refines the Stop hook's "idle" into what actually ENDED the turn.
 //
 // Stop の idle は「ターンが終わった」としか言わない。**どう**終わったかは転写の末尾に
-// あり、docs/47 はそれを読む実装（claude.HealIdle）を既に持っている — が、呼ばれるのは
+// あり、docs/log/47 はそれを読む実装（claude.HealIdle）を既に持っている — が、呼ばれるのは
 // ペイン由来の自己修復経路、つまり「Stop が鳴らなかったとき」だけだった。前提は「API
 // エラーでターンが落ちると claude は Stop を鳴らさない」で、接続断ではそのとおりだった。
 //
@@ -187,7 +187,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 	// reverse-heal only restores "working" if a poll happens to catch IsBusy, so the
 	// marker can simply stay gone — and keying answer-ready on previous=="working" alone
 	// then dropped the real Stop on the floor: no 応答あり notification and no operator
-	// report (docs/30), while the session still read idle (LiveState defaults to idle with
+	// report (docs/log/30), while the session still read idle (LiveState defaults to idle with
 	// no file). A completion must not hinge on a tmux-string heuristic never misfiring, so
 	// an absent marker counts as a turn that ended. Interim states (question/plan/
 	// permission) stay excluded — they are not completions and must not consume the arm.
@@ -204,7 +204,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 	// A turn CUT OFF before it answered, by something that clears on its own (接続断・
 	// 一時的なレート制限). Same terminal event as above — the session is at 入力待ち and
 	// the instruction's one report must fire — but here re-running the turn is the right
-	// next move, so the report says so instead of "原因を直すまで再送するな" (docs/47).
+	// next move, so the report says so instead of "原因を直すまで再送するな" (docs/log/47).
 	case state == agents.StateAborted && (previous == "working" || previous == ""):
 		kind, reason = reportKindAnswerReady, reportReasonTurnAborted
 	case state == "question" && previous != "question":
@@ -247,20 +247,20 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 			}
 		}
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
-		// 全文ブリッジ (docs/37 将来の方向): carry the turn's final prose on the
+		// 全文ブリッジ (docs/log/37 将来の方向): carry the turn's final prose on the
 		// answer-ready event so a full-text-mode provider can post it. Only
 		// answer-ready — interim attention events (question/plan/permission) have
 		// no completed turn body. Capped like the operator report excerpt; the
 		// provider scrubs secrets and chunks before any wire.
 		if kind == reportKindAnswerReady {
-			// Head-first and generously capped (docs/37 Fix ③): the full-text bridge
+			// Head-first and generously capped (docs/log/37 Fix ③): the full-text bridge
 			// stands in for the Console, so the WHOLE answer rides along (chunkMessage
 			// splits it), not a 2000-rune tail like the operator report excerpt.
 			if body := headRunes(turnText, bridgeBodyCap); body != "" {
 				ev.Payload["body"] = body
 			}
 		}
-		// P2b (docs/37): carry the pending AskUserQuestion payload on the question
+		// P2b (docs/log/37): carry the pending AskUserQuestion payload on the question
 		// event so an interact-capable provider can render option buttons.
 		if kind == "question" {
 			if q, ok := status.ReadPendingQuestion(sid); ok && len(q) > 0 {
@@ -269,7 +269,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		}
 		_ = notice.Put(ev)
 		// One-shot session report to the operator conversation that armed this
-		// session (docs/30). Only TERMINAL events CONSUME the arm: an instruction's
+		// session (docs/log/30). Only TERMINAL events CONSUME the arm: an instruction's
 		// one report must be its COMPLETION, so an interim attention event must not
 		// disarm — otherwise the eventual completion never reaches the operator
 		// (that was the observed bug). A pending QUESTION / PLAN is additionally
@@ -277,7 +277,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		// interim kinds), so the operator can relay/answer (answer_session_question)
 		// or drive the plan review loop (respond_session_plan); permission stays
 		// notification-center only.
-		// docs/51 Phase 1: この kick は終端イベントでは「配送」ではなく**起床ヒント**。
+		// docs/log/51 Phase 1: この kick は終端イベントでは「配送」ではなく**起床ヒント**。
 		// 消費してよいかの判定はリコンサイラが状態をレベルで見て決める（この関数は
 		// 「何が起きたか」を伝えるだけで、「もう報告してよいか」は決めない）。
 		if !holdReport && (kind == reportKindAnswerReady || kind == "question" || kind == "plan-approval") && sessionReportPending(m.Name) {

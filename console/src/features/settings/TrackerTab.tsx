@@ -1,4 +1,4 @@
-// TrackerTab — 課題管理: the connections that feed the work item rail (docs/80).
+// TrackerTab — 課題管理: the connections that feed the work item rail (docs/log/80).
 // ★ タブ名と左ペインのレール名（wi.title）は同じ「課題管理」。以前はレールが
 // 「作業項目」で、同じものを指す語が 2 つあり、どちらの設定なのかが読めなかった。
 // 語は UI から見える面だけ揃えてある（コード・docs の「作業項目 / work item」は
@@ -30,7 +30,7 @@ export function TrackerTab() {
   const startWs = useWorkspaceStore((s) => s.start);
   const { conns, reload } = useConnections();
   // 「OAuth で接続」を出してよいか。★ 押してから not_configured が返る形にしない ——
-  // アプリを登録するのはテナント管理者で、押した本人には直せない（docs/71 §71.4）。
+  // アプリを登録するのはテナント管理者で、押した本人には直せない（docs/log/71 §71.4）。
   // 答えは CP の DB にあるので、ワークスペースが止まっていても引ける。
   const [oauthOk, setOauthOk] = useState<boolean | null>(null);
   useEffect(() => {
@@ -67,7 +67,7 @@ export function TrackerTab() {
   );
 }
 
-// JiraCard (docs/80 P1 / §80.17). Two ways in:
+// JiraCard (docs/log/80 P1 / §80.17). Two ways in:
 //
 //   - OAuth (Atlassian 3LO) — one button, scoped access, nothing to paste. Needs the
 //     tenant administrator to have registered an app, which is why the button is gated
@@ -178,7 +178,7 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
             <DisconnectButton onClick={disconnect} />
           </div>
           {/* 1 回の認可が複数サイトを含みうる。どれに自分の作業があるかは本人しか
-              知らないので、最初の 1 件で決め打ちにしない（docs/80 §80.17）。 */}
+              知らないので、最初の 1 件で決め打ちにしない（docs/log/80 §80.17）。 */}
           {sites.length > 1 && (
             <label className="ps-row">
               <span className="ps-label">{tr("tracker.jira_site")}</span>

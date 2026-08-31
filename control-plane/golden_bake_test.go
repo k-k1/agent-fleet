@@ -398,7 +398,7 @@ func TestGoldenBakeRunsToPublication(t *testing.T) {
 
 // The failure this whole phase exists for: a candidate whose home cannot boot must
 // never become the golden, and the deployment must end up with NO golden rather than a
-// broken one (docs/64 §64.28.3).
+// broken one (docs/log/64 §64.28.3).
 func TestGoldenBakeRejectsACandidateThatWillNotBoot(t *testing.T) {
 	ctx := context.Background()
 	healthy := true
@@ -610,7 +610,7 @@ func TestGoldenBakeTearsDownASeedWhoseStartNeverGotAVolume(t *testing.T) {
 	}
 }
 
-// --- per-architecture goldens (docs/70 §70.6) --------------------------------------
+// --- per-architecture goldens (docs/log/70 §70.6) --------------------------------------
 
 // ★ The failure this guards: a golden is a home full of BINARIES, so an x86_64 one
 // handed to an arm64 slot mounts perfectly and cannot exec anything. Two goldens must
@@ -679,7 +679,7 @@ func TestGoldenArchKeysAreStableForX86(t *testing.T) {
 	}
 }
 
-// The leak measured on a live deployment (docs/64 §64.28.6): the bake finished and the
+// The leak measured on a live deployment (docs/log/64 §64.28.6): the bake finished and the
 // golden was published, but the seed's SERVICE and 50 GiB HOME stayed in AWS because the
 // workspace row that pointed at them had gone. destroy read "no row" as "nothing to do"
 // and said so in no log line at all, so the only way to find them was to go looking.

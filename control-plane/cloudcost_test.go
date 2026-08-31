@@ -429,7 +429,7 @@ func TestMyCloudCostIsScopedToTheCaller(t *testing.T) {
 	}
 }
 
-// --- one member, seen from the admin's member detail page (docs/67 §67.15) ------
+// --- one member, seen from the admin's member detail page (docs/log/67 §67.15) ------
 
 // memberCostReq builds a request against the per-member cost route with the path
 // values the mux would have filled in.

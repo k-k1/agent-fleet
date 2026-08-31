@@ -1,6 +1,6 @@
 package main
 
-// /mcp の版契約（docs/49 + ADR0032）。両 era を同時に serve するので、固定したいのは
+// /mcp の版契約（docs/log/49 + ADR0032）。両 era を同時に serve するので、固定したいのは
 // 「新版の検証が効くこと」と「旧クライアントが従来どおり通ること」の 2 点。
 // dispatchMCPHTTP を直接叩く（PAT 認証は別レイヤで、ここでは版の扱いだけを見る）。
 

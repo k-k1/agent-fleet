@@ -82,7 +82,7 @@ func providerHasResume(c *chatConversation, agent string) bool {
 
 // providerResumeKinds は resume ハンドルを持つ全バックエンド。ハンドルの一括操作
 // （anyProviderResume / clearProviderSessions）をこの1本の列挙から回すのは、種別を
-// 足すたびに「4つ書いてある条件式」の写し漏れが起きるため。実際 cursor（docs/40）は
+// 足すたびに「4つ書いてある条件式」の写し漏れが起きるため。実際 cursor（docs/log/40）は
 // providerHasResume には入ったが圧縮側の並び（4項目の代入と判定）から漏れており、
 // cursor 会話は圧縮してもハンドルが残っていた。
 var providerResumeKinds = []string{"claude", "codex", "opencode", "agy", "cursor"}

@@ -1,4 +1,4 @@
-# gitleaks 設定（docs/dev/10 §10.4「公開リポジトリでの CI の前提」）。
+# gitleaks 設定（docs/build/10 §10.4「公開リポジトリでの CI の前提」）。
 #
 # 公開リポジトリなので、資格情報の混入は「入った時点で公開」＝取り返しがつかない。
 # ci.yml の secret-scan ジョブが全履歴を毎回走査する（1995 commit / 18MB で約 3 秒）。
@@ -34,7 +34,7 @@ paths = ['''workspace/agent/errcodes\.go''']
 regexes = ['''conn_discord_destination_invalid''']
 
 [[allowlists]]
-description = """同梱した drawio ビューア（console/vendor/drawio、docs/65）の中にある \
+description = """同梱した drawio ビューア（console/vendor/drawio、docs/log/65）の中にある \
 Dropbox の **アプリ ID**。dropbox-api-token ルールと形が同じだけで秘密ではない —— \
 upstream の配布物に元から入っている公開識別子で、こちらが発行した資格情報ではない。\
 原則どおりパスごとの除外はせず、その値だけを外す（同じファイルに別の何かが入れば赤になる）。"""

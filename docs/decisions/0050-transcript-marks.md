@@ -1,113 +1,135 @@
-# 0050. 転写のマーカーは「元ターン由来の root ＋ 引用 ＋ 出現番号」で指し、実体は Agent、共有先へは別経路で配る
+# 0050. Transcript marks are addressed by "a root derived from the original turn + a quote + an occurrence number", stored on the Agent and delivered to shares by a separate path
 
-- 状態: **採用**（2026-08-19、P0〜P2 実装済み・develop 未マージ）。検討の記録は [docs/69](../69-transcript-marks.md)。
-- 関連: [0039-fork-at-message.md](0039-fork-at-message.md)（転写の anchor は `idx` ではなく `anchorId`） /
-  [docs/59](../59-session-sharing.md) §2・§3（RW は提案→承認 / 共有 DTO は座標を落とす） /
-  [0049-session-changed-files.md](0049-session-changed-files.md)（新しい PaneKind を作らず既存の面を増やす・ポーリングを増やさない）
+English | [日本語](0050-transcript-marks.ja.md)
 
-## 背景
+- Status: **adopted** (2026-08-19; P0–P2 implemented, not yet merged to develop). The record of the investigation is [docs/69](../log/69-transcript-marks.md).
+- See also: [0039-fork-at-message.md](0039-fork-at-message.md) (the transcript's anchor is `anchorId`, not `idx`) /
+  [docs/59](../log/59-session-sharing.md) §2 and §3 (RW is propose→approve; the shared DTO drops coordinates) /
+  [0049-session-changed-files.md](0049-session-changed-files.md) (add a surface to an existing pane rather than a new PaneKind; do not add polling)
 
-長い会話の「ここ」を指す手段が無い。プランには DocView 側でコメントが付けられる
-（`planComments.ts`）が、会話そのもの＝ミラーの転写には何も残せない。
+## Context
 
-一方、必要な部品はほぼ揃っている。位置指定は `viewer/quoteMarks.ts`（TextQuoteSelector 相当）が
-既にプランコメントで実運用されており、転写の描画層はミラーと共有ビューの**共通資産**で、
-`anchorId` は**既に共有 DTO の allowlist に入っている**。所有者側 state を共有先へ配る経路も
-引き継ぎ提案が先例を作っている。新規に決めるのは保存先と、共有の作法だけである。
+There is no way to point at "here" in a long conversation. Plans can be commented on from the DocView
+side (`planComments.ts`), but nothing can be left on the conversation itself, i.e. the mirror's
+transcript.
 
-## 決定 1 — アンカーは `anchorId` 由来の root。`idx` もグループ相対の part 番号も使わない
+Meanwhile nearly all the parts exist. Positioning is done by `viewer/quoteMarks.ts` (equivalent to a
+TextQuoteSelector), already in production use for plan comments; the transcript's rendering layer is
+a **shared asset** between the mirror and the shared view; and `anchorId` is **already in the shared
+DTO's allowlist**. The route for delivering owner-side state to a share has its precedent in handoff
+proposals. All that is new to decide is where it is stored and how sharing works.
 
-- `idx` は compaction で動く（Agent 自身が `transcript.go` にそう書いている）。ずれた先に付いた
-  マーカーは**もっともらしく間違っている**——fork が同じ理由で `anchorId` を選んだのと同じ。
-- ⚠️ **ブロック（`Group`）相対の part 番号も使えない。** `groupTurns()` は同 role の連続ターンの
-  parts を連結するので、番号は「そのブロックに何行畳み込まれたか」に依存する。ミラーと共有ビューは
-  それぞれ独立した tail 窓（`WINDOW=400`）を持ち、**窓の先頭がブロックの途中から始まると両側で
-  番号がずれる**。再現条件の見えない「共有先だけ 1 つ隣」を生む。
-- 決め: 印は `{turn, part, kind, quote, nth, color}` を持ち、`turn` は `anchorId`、無ければ
-  `h:<本文のハッシュ>`（FNV-1a — 要るのは「両側が同じ文字列から同じ値を出す」ことだけで、
-  暗号強度は要らない）。`part` は元ターン内での番号（ターン本文は `-1`）。
-  **`nth` はその root（`"<turn>#<part>"`）ひとつの描画後テキストの中だけで数える。**
-- root は `Group.origins?: string[]`（`parts[i]` と並行）で描画層へ運ぶ。**`Part` に生やさない**——
-  `partsOf()` は `t.parts` を参照のまま返すので、part を書き換えると保持中のターン state を汚す。
+## Decision 1 — the anchor is a root derived from `anchorId`. Neither `idx` nor a group-relative part number
 
-## 決定 2 — 塗れるのは「共有 DTO を素通りする本文」だけ。allowlist を quote で迂回させない
+- `idx` moves under compaction (the Agent says so itself in `transcript.go`). A mark landing at a
+  shifted position is **plausibly wrong** — the same reason fork chose `anchorId`.
+- ⚠️ **A block-relative (`Group`) part number cannot be used either.** `groupTurns()` concatenates the
+  parts of consecutive turns with the same role, so the number depends on "how many lines were folded
+  into that block". The mirror and the shared view each have their own independent tail window
+  (`WINDOW=400`), and **when a window starts in the middle of a block the numbers differ between the
+  two sides**. That produces "one off, but only on the share" with no visible reproduction condition.
+- Settled: a mark holds `{turn, part, kind, quote, nth, color}`, where `turn` is the `anchorId`, or
+  `h:<hash of the body>` if there is none (FNV-1a — all we need is "both sides derive the same value
+  from the same string"; no cryptographic strength is required). `part` is the number within the
+  original turn (the turn's own body is `-1`).
+  **`nth` is counted only within the rendered text of that one root (`"<turn>#<part>"`).**
+- The root is carried to the rendering layer as `Group.origins?: string[]` (parallel to `parts[i]`).
+  **Do not grow it on `Part`** — `partsOf()` returns `t.parts` by reference, so rewriting a part
+  pollutes the turn state being held.
 
-共有 DTO は `cwd` / `file` / 編集の座標を意図的に落としている。マーカーの `quote` は位置復元の
-ために共有先へ渡るので、**ファイルチップや diff 行を塗ると、落としたはずの座標が `quote` として
-復活する**（表示されなくてもネットワークには乗る）。
+## Decision 2 — only "body text that passes through the shared DTO" can be marked. Do not let the allowlist be bypassed via the quote
 
-- 送信時に検査するのではなく、**構造的に引けなくする**: マーカーを引ける root は
-  ターン本文 `text` と `kind=text`/`plan`/`answer`/`output`/`prompt` の part だけ。
-  ファイルチップ・`ToolTrace` のパス・`ContextLine`・差分行・変更ファイル帯では**選択ピルを出さない**。
-- **同じ表を Console・Agent・CP の 3 か所が持つ。** 塗る場所を絞るのは Console だが、`kind` は
-  保存時に Agent が、中継時に CP がもう一度検査する。片側が緩んだだけでは漏れない。
-- **却下**: 「CP が中継時に、その `anchorId` が共有窓の転写に無いマーカーを落とす」網。
-  marks を中継するたびに転写も取り直すことになり、「共有先 1 人あたりの所有者 Workspace への
-  往復を面ごとに増やさない」（決定 3）と正面から衝突する。
+The shared DTO deliberately drops `cwd`, `file` and the coordinates of edits. A mark's `quote` travels
+to the share so the position can be restored, so **marking a file chip or a diff line would resurrect
+the dropped coordinates as a `quote`** (it goes on the network even if it is not displayed).
 
-## 決定 3 — 実体は Agent（`session-marks/<name>.json`）、CP DB に本文を複製しない
+- Rather than checking at send time, **make it structurally impossible to draw**: the roots a mark can
+  be drawn on are the turn body `text` and parts with `kind=text`/`plan`/`answer`/`output`/`prompt`.
+  File chips, `ToolTrace` paths, `ContextLine`, diff lines and the changed-files strip **do not show
+  the selection pill**.
+- **The same table is held in three places: the Console, the Agent and the CP.** Restricting where
+  marks can be drawn is the Console's job, but the `kind` is checked again by the Agent when saving
+  and by the CP when relaying. One side loosening is not enough to leak.
+- **Rejected**: a net where "the CP drops, at relay time, any mark whose `anchorId` is absent from the
+  share's transcript window". That would mean re-fetching the transcript every time marks are
+  relayed, colliding head-on with "do not add per-surface round trips to the owner's workspace per
+  share recipient" (decision 3).
 
-引き継ぎ提案と同じ置き方。`GET/POST/DELETE /sessions/{name}/marks`。
-⚠️ **CP の `routes.go` にも同じパスを登録する**——Agent に足しただけでは所有者の Console からも
-届かない（新しい Agent REST は agent と CP の**両方**に要る、という繰り返し踏んでいる穴）。
+## Decision 3 — the store is on the Agent (`session-marks/<name>.json`); do not duplicate bodies into the CP's database
 
-共有先へは `GET /api/shared-sessions/{id}/marks` を新設し、`handoffProposals` を雛形にする
-（認可 → **転写と同じレート制限バケツ** → 所有者 Workspace が running か → `ownerGET` → allowlist DTO）。
-**新しいポーリングは作らない**——ミラーは転写のポーリングに、共有ビューは既にある
-handoff-proposals のポーリングに相乗りさせ、実際の往復は 15 秒に間引く。
+The same placement as handoff proposals. `GET/POST/DELETE /sessions/{name}/marks`.
+⚠️ **Register the same paths in the CP's `routes.go` too** — adding them only to the Agent means they
+do not even reach the owner's own Console (a new Agent REST needs **both** the agent and the CP — a
+hole we keep falling into).
 
-## 決定 4 — RW 共有先は承認なしで直接書ける。マーカーは操作ではなく注釈である
+For shares, a new `GET /api/shared-sessions/{id}/marks` is added, modelled on `handoffProposals`
+(authorise → **the same rate-limit bucket as the transcript** → is the owner's workspace running →
+`ownerGET` → the allowlisted DTO). **No new polling is created** — the mirror rides the transcript's
+poll and the shared view rides the existing handoff-proposals poll, with the actual round trip thinned
+to every 15 seconds.
 
-[docs/59](../59-session-sharing.md) §2 の「提案 → 所有者の承認」は、提案が**エージェントを動かす**
-（他人のセッションとトークンを使う副作用がある）から要る。マーカーはエージェントに届かず、
-転写にも入らない。1 本引くたびに承認待ちへ積むのは承認の意味を薄めるだけである。
+## Decision 4 — an RW share writes directly, with no approval. A mark is an annotation, not an operation
 
-- RW は直接書ける。ただし**自分のマーカーだけ**（追加と、自分が付けたものの削除）。
-- **所有者は誰のマーカーでも消せる**（自分の Workspace に置かれている）。RO は 403。
-- `id` は呼び出し側が採番し Agent は create-only。再送は no-op なので
-  `X-Agent-Fleet-Operation-ID` の台帳は要らない（あれは二重実行すると困る副作用のためのもの）。
-- ACL は毎回評価する。RO へ降格した相手はその時点から書けない。既に書いた印は残す。
+The "propose → the owner approves" of [docs/59](../log/59-session-sharing.md) §2 is required because a
+proposal **makes the agent act** (a side effect that uses someone else's session and tokens). A mark
+does not reach the agent and does not enter the transcript. Queueing each one for approval would only
+dilute what approval means.
 
-## 決定 5 — 色と作成者を同じ軸に載せない
+- RW can write directly, but **only their own marks** (adding, and deleting ones they added).
+- **The owner can delete anyone's marks** (they are stored in the owner's workspace). RO gets 403.
+- The `id` is assigned by the caller and the Agent is create-only. A resend is a no-op, so no
+  `X-Agent-Fleet-Operation-ID` ledger is needed (that exists for side effects that are a problem when
+  executed twice).
+- The ACL is evaluated every time. Someone demoted to RO cannot write from that moment. Marks they
+  already wrote remain.
 
-色は利用者が意味づけに選ぶもの（重要／要確認／後で読む）、作成者は事実。1 つの軸へ押し込むと、
-共有先が 3 人いる会話で色が意味を失う。
+## Decision 5 — do not put colour and author on the same axis
 
-- 色 = `<mark>` の背景（4 色、ライト／ダーク両方を `tokens.css` に）。
-- 作成者 = 下線（作成者ごとの色。`box-shadow: inset` で引く——`border-bottom` は行送りを変えて
-  本文を揺らす）＋ 印をクリックすると出るカード。**主経路は一覧帯**——ミラーのヘッド直下、
-  `FileChangeStrip` と同じ置き方（0049 と同じく**新しい PaneKind は作らない**）。
-- 所有者（スロット 0）には下線を引かない。1 人で使うセッションで全部に線が入るのはうるさく、
-  誰が引いたかが問題になるのは 2 人目が現れた時だから。
-- 本文中に作成者名そのものは出さない（可読性を壊す）。
+Colour is what the user chooses to give meaning (important / needs checking / read later); the author
+is a fact. Forcing them onto one axis makes colour meaningless in a conversation with three share
+recipients.
 
-## 決定 6 — 作成者の login id は共有先どうしにも見せる。伏せずに、共有作成時に伝える
+- Colour = the `<mark>` background (four colours, with both light and dark in `tokens.css`).
+- Author = an underline (a colour per author, drawn with `box-shadow: inset` — `border-bottom` changes
+  the line height and makes the body jump) plus a card shown when the mark is clicked. **The main
+  route is a list strip** — directly under the mirror's head, placed exactly like `FileChangeStrip`
+  (as in 0049, **no new PaneKind**).
+- No underline for the owner (slot 0). In a session used by one person, underlining everything is
+  noisy, and who drew it only matters once a second person appears.
+- The author's name itself does not appear in the body text (it destroys readability).
 
-「誰が引いたか判断できる」ことが要件なので伏せない。ただし共有先 A が共有先 B の login id を知る
-のは**新しい露出**である（所有者は個別に共有するので A は B を知らないことがある）。黙って露出
-させず、`ShareCreateModal` に「共有先どうしがマーカーの作成者名を見ます」の一行を出す。
+## Decision 6 — show the author's login id to other share recipients too. Do not hide it; announce it when the share is created
 
-**却下**: 他の共有先には「共有先」とだけ出す案。要件（誰が引いたか分かる）を満たさず、
-共有先が複数いる会話でこそ必要な情報が、そこでだけ消える。
+Being able to judge who drew a mark is the requirement, so it is not hidden. But share recipient A
+learning share recipient B's login id is **a new exposure** (the owner shares individually, so A may
+not know B exists). Rather than exposing it silently, `ShareCreateModal` states in one line that
+"share recipients will see each other's names on marks".
 
-## 決定 7 — 能力は表示と編集で分ける。`readOnly` フラグにしない
+**Rejected**: showing other recipients only as "a share recipient". It fails the requirement (knowing
+who drew it), and the information disappears exactly where it is needed — a conversation with several
+recipients.
 
-`TranscriptCaps.marks` が無ければ印は描かれず、選択ピルも出ない。`capabilities.ts` の規約どおり
-**無い能力の操作要素は描かない**（「出すが押せない」はバグに見え、無効化されたボタンはサポート
-質問を呼ぶ）。
+## Decision 7 — separate the capability for display and for editing; do not use a `readOnly` flag
 
-ただし「読めるが引けない」（RO の共有先）は能力の有無では割れない——印の**表示**は読み手にも
-要るからである。そこは wiring の中の `canEdit`（ピルを出すか）と `canRemove(mark)`（その印に
-消す導線を出すか）が持つ。
+Without `TranscriptCaps.marks`, marks are not drawn and the selection pill does not appear. Per the
+convention in `capabilities.ts`, **operational elements for an absent capability are not drawn** ("shown
+but unpressable" looks like a bug, and a disabled button invites support questions).
 
-## 影響
+But "can read, cannot draw" (an RO share recipient) does not split on the presence of a capability —
+**displaying** marks is needed by readers too. That is carried in the wiring by `canEdit` (whether to
+show the pill) and `canRemove(mark)` (whether to show a delete route for that mark).
 
-- ワイヤの追加は Agent 3 本、CP 3 本（所有者プロキシ）＋ 3 本（共有中継）。転写 DTO は触らない。
-- `groupTurns()` に並行配列が 1 本増える。`Part` と `Turn` の wire 型は不変。
-- ⚠️ セッション削除／スロット再利用（`?reclaim=1`）でマーカーファイルも消す。消し忘れると
-  **新しいセッションに前のセッションの印が出る**。`session-handoffs/` が同じ構造で、実装時に
-  確認したところ**消していなかった**ので併せて塞いだ（`removeSessionSideFiles`）。どちらも
-  cleanup アーカイブには入れない——消される会話についての注釈で、復元しても要らない。
-- 段階は P0（所有者・ミラーのみ）→ P1（共有先へ配送）→ P2（RW が引く・作成者表示・一覧帯）。
-  いずれも実装済みで、実機確認（スマホの長押し選択 × 横スワイプ、コントラストの実測、
-  2 アカウントでの共有）は [docs/69](../69-transcript-marks.md) §69.11 に残っている。
+## Impact
+
+- The wire gains three Agent routes and three CP routes (the owner proxy) plus three (the share
+  relay). The transcript DTO is untouched.
+- `groupTurns()` gains one parallel array. The wire types of `Part` and `Turn` are unchanged.
+- ⚠️ Delete the marks file on session deletion and slot reuse (`?reclaim=1`). Forgetting means **the
+  previous session's marks appear on the new session**. `session-handoffs/` has the same structure,
+  and checking during implementation showed it **was not being deleted**, so that was closed at the
+  same time (`removeSessionSideFiles`). Neither goes into the cleanup archive — they are annotations
+  about a conversation that is being deleted, and are not wanted even on restore.
+- The stages are P0 (owner, mirror only) → P1 (deliver to shares) → P2 (RW drawing, author display,
+  the list strip). All are implemented, and the checks on real hardware (long-press selection versus
+  horizontal swipe on a phone, measuring the contrast, sharing between two accounts) are recorded in
+  [docs/69](../log/69-transcript-marks.md) §69.11.

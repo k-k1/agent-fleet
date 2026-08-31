@@ -1,4 +1,4 @@
-// 作業項目（docs/80）の純ロジック。行が何を言うか・起動に何を渡すかを決めているのは
+// 作業項目（docs/log/80）の純ロジック。行が何を言うか・起動に何を渡すかを決めているのは
 // ここなので、UI ではなくこちらを固定する。
 import { describe, expect, it } from "vitest";
 import {
@@ -52,7 +52,7 @@ describe("readWorkItems", () => {
   });
 });
 
-// docs/80 §80.18 —— 実機で「41 行の 2 行目が全部同じ担当者」だったことへの回帰。
+// docs/log/80 §80.18 —— 実機で「41 行の 2 行目が全部同じ担当者」だったことへの回帰。
 describe("uniformMeta", () => {
   it("クエリの中で 1 種類しかない担当者・リポジトリは落とす", () => {
     const rows = [
@@ -131,7 +131,7 @@ describe("relTime", () => {
 });
 
 // 行に出す方は「放置されている行だけ」。今日動いた行では並び順が既にそれを言っており、
-// タイトルの 23%（実測 38px / 130px）を払う価値がない（docs/80 §80.18.2）。
+// タイトルの 23%（実測 38px / 130px）を払う価値がない（docs/log/80 §80.18.2）。
 describe("railWhen", () => {
   const now = Date.parse("2026-08-27T12:00:00Z");
   const at = (iso: string) => railWhen(iso, now);
@@ -169,7 +169,7 @@ describe("sortWorkItems", () => {
   });
 });
 
-// docs/80 §80.20 —— 実機で「同じ JQL を 2 本保存していて、41 件が 82 行になった」ことへの回帰。
+// docs/log/80 §80.20 —— 実機で「同じ JQL を 2 本保存していて、41 件が 82 行になった」ことへの回帰。
 describe("dedupeWorkItems", () => {
   const jira = (over: Partial<WorkItem> = {}) =>
     item({ provider: "jira", kind: "issue", key: "G3M-897", repo: "", ...over });

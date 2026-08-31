@@ -1,6 +1,6 @@
 package main
 
-// MCP レジストリの REST 面（docs/48 P0 / ADR0031）。ユーザースコープの CRUD と接続テスト。
+// MCP レジストリの REST 面（docs/log/48 P0 / ADR0031）。ユーザースコープの CRUD と接続テスト。
 // テナント配布（CP 由来）と組み込み連携は読み取り専用で一覧に混ざり、無効化だけができる。
 //
 // 秘密（env / ヘッダの値）は決して外へ返さない: GET は常にマスクし、PUT がマスク値を
@@ -8,7 +8,7 @@ package main
 //
 // ⚠️ ここに足したパスは control-plane/routes.go にも登録が要る（CP は明示許可リスト方式）。
 //
-// 変更のたびに materializeMCPAll() を呼ぶ（docs/48 §8.3）。セッション起動時にも書くので
+// 変更のたびに materializeMCPAll() を呼ぶ（docs/log/48 §8.3）。セッション起動時にも書くので
 // 冗長に見えるが、こちらが「登録した瞬間に各 CLI の設定へ反映される」を担保する — 利用者が
 // Console を閉じて手でターミナルから CLI を叩く経路には起動フックが無い。
 
@@ -116,7 +116,7 @@ type mcpEnabledReq struct {
 }
 
 // handleMCPServerEnabled is the one edit a member has over a tenant-distributed
-// server: turn it off locally (docs/48 §4). For user rows it is just the flag.
+// server: turn it off locally (docs/log/48 §4). For user rows it is just the flag.
 func handleMCPServerEnabled(w http.ResponseWriter, r *http.Request) {
 	var req mcpEnabledReq
 	if !httpx.DecodeJSON(w, r, &req) {
@@ -130,7 +130,7 @@ func handleMCPServerEnabled(w http.ResponseWriter, r *http.Request) {
 	handleMCPServersGet(w, r)
 }
 
-// handleMCPServerTest runs the handshake (docs/48 §10). The body is a definition:
+// handleMCPServerTest runs the handshake (docs/log/48 §10). The body is a definition:
 // with an id it is resolved against the stored one first, so masked secrets are
 // filled in — which lets the Console test a saved server AND an unsaved edit through
 // the same call.

@@ -73,11 +73,11 @@ import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
 import type { SessionKind } from "../../types/session.ts";
 
-// ChatView renders one assistant-chat conversation (docs/19) — a headless-CLI LLM
+// ChatView renders one assistant-chat conversation (docs/log/19) — a headless-CLI LLM
 // chat/translation thread. Unlike the terminal panes it never mounts xterm; it's a
 // plain message list + composer over the /api/chat/* endpoints.
 //
-// Draft mode (docs/19): a pane opened from an assistant in the rail carries a
+// Draft mode (docs/log/19): a pane opened from an assistant in the rail carries a
 // draftAssistantId and NO conversationId — nothing is persisted yet. It shows the
 // assistant's greeting; the conversation is created only when the user sends the first
 // message, at which point the pane is promoted to the real conversation id.
@@ -109,7 +109,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   const bumpChatList = useChatStore((s) => s.bumpList);
   const markChatBusy = useChatStore((s) => s.markBusy);
   // In-flight turn state parked in the store, so closing + re-opening this pane mid-answer
-  // re-attaches to the running turn instead of dropping its result (docs/19).
+  // re-attaches to the running turn instead of dropping its result (docs/log/19).
   const setLive = useChatStore((s) => s.setLive);
   const clearLive = useChatStore((s) => s.clearLive);
   const publishSnapshot = useChatStore((s) => s.publishSnapshot);
@@ -158,9 +158,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       return n;
     });
   const sending = !!paneKey && !!sendingKeys[paneKey];
-  const [compactKey, setCompactKey] = useState<string | null>(null); // 要約引き継ぎ実行中の会話（docs/33）
+  const [compactKey, setCompactKey] = useState<string | null>(null); // 要約引き継ぎ実行中の会話（docs/log/33）
   const compacting = !!paneKey && compactKey === paneKey;
-  // エージェント切替（docs/19）: 実行中の会話と、ピッカーの開閉。
+  // エージェント切替（docs/log/19）: 実行中の会話と、ピッカーの開閉。
   const [switchKey, setSwitchKey] = useState<string | null>(null);
   const switching = !!paneKey && switchKey === paneKey;
   const [agentPickerOpen, setAgentPickerOpen] = useState(false);
@@ -169,7 +169,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   // 接続状況は常設のリポジトリレールが温めた共有キャッシュから読む（HandoffModal と同じ
   // 作法）。冷えていれば null＝「不明」で、ピッカーは何も塞がない。
   const chatConns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
-  // 作業計画パネル（docs/33 第5段）の開閉。ペイン跨ぎで持ち回らない純粋な表示状態。
+  // 作業計画パネル（docs/log/33 第5段）の開閉。ペイン跨ぎで持ち回らない純粋な表示状態。
   const [planOpen, setPlanOpen] = useState(false);
   // a reloaded turn is still running on the backend; polling for the reply
   const [reattachKey, setReattachKey] = useState<string | null>(null);
@@ -189,7 +189,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   const attachSuggestRow = useDragScroll(suggestRef);
   // チップの右クリック / 長タップ / Menu キーで開くメニュー（ピン留め・削除）。MirrorView と共有。
   const chipMenu = useChipMenu();
-  // 読み上げ中の文（ライブ配信カラオケ・docs/19）と、直近のターンエラー。どちらも
+  // 読み上げ中の文（ライブ配信カラオケ・docs/log/19）と、直近のターンエラー。どちらも
   // 発生元の会話で括り、別チャットへ切り替えた後に相手の吹き出しへ出ないようにする。
   const [karaoke, setKaraoke] = useState<{ key: string; text: string } | null>(null);
   const [err, setErr] = useState<{ key: string; text: string } | null>(null);
@@ -207,7 +207,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   // Aborts an in-flight streaming turn, per chat: a turn left running when the pane was
   // pointed at another chat must still be the one 中断 stops when you come back to it.
   const abortsRef = useRef(new Map<string, AbortController>());
-  // 音声読み上げ（docs/24）。有効時のみ生成。The pane plays one voice at a time, so the
+  // 音声読み上げ（docs/log/24）。有効時のみ生成。The pane plays one voice at a time, so the
   // slot is tagged with the chat that owns it: a turn finishing in the chat you switched
   // AWAY from must not adopt (or tear down) the playback the current chat just started.
   const ttsRef = useRef<{ key: string; ctl: TtsController } | null>(null);
@@ -243,7 +243,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     setAgentPickerOpen(false);
   }, [conversationId]);
 
-  // アシスタントの声（docs/24）: 明示指定（assistant.voice、作成/編集で設定）を読み上げの
+  // アシスタントの声（docs/log/24）: 明示指定（assistant.voice、作成/編集で設定）を読み上げの
   // 上書きに使う。draft はロード済みの draftAsst から、既存会話は assistant_id で 1 回引く。
   // 未指定（""）は assistantVoiceOpts が「セッションごとに声」ON のときプールから割り当てる。
   const [assistVoice, setAssistVoice] = useState("");
@@ -422,7 +422,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   }, [conversationId, inProgress, sending]);
 
   // af_write conversations receive server-pushed session reports and auto turns
-  // (docs/30) with no client-initiated request, so poll lightly while the pane is
+  // (docs/log/30) with no client-initiated request, so poll lightly while the pane is
   // OPEN — not just while it's the focused pane — to pick them up. Gating this on
   // `active` (= single || focused) meant a report/auto-turn never surfaced in an open
   // but unfocused operator pane until it was closed and reopened (the mount refetch);
@@ -499,7 +499,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           const title = input.trim().slice(0, 40) || t("chat.new_title");
           const created = await chatCreate(draftAssistantId, title);
           if (!created || !created.id) return null;
-          // グループ選択中に始めた会話はそのグループへ自動所属（docs/52 §1）。
+          // グループ選択中に始めた会話はそのグループへ自動所属（docs/log/52 §1）。
           autoAddToActiveWorkingSet("convs", created.id);
           // Re-key the persisted composer draft to the real conversation, so the promotion's
           // key flip (useDraft reloads from storage) doesn't wipe the text mid-composition
@@ -583,7 +583,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     inputRef.current?.focus();
   };
 
-  // docs/33 第2段: 要約引き継ぎ（手動コンパクション）。バックエンドが要約1ターン →
+  // docs/log/33 第2段: 要約引き継ぎ（手動コンパクション）。バックエンドが要約1ターン →
   // resume ハンドル全リセット → 要約の次ターン注入準備まで行い、更新済み会話を返す。
   // 実行中は busy を店に立てて他ペインの送信もブロック（バックエンドの会話ロックと整合）。
   const doCompact = async () => {
@@ -617,7 +617,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     }
   };
 
-  // 途中でバックエンド（CLI）を切り替える（docs/19）。設定「エージェント優先順位」は新規
+  // 途中でバックエンド（CLI）を切り替える（docs/log/19）。設定「エージェント優先順位」は新規
   // 会話にしか効かないので、進行中の会話を動かす導線はここだけ。バックエンドはピン留めと
   // モデルを差し替え、新エージェントがまだ知らない履歴は次の送信でまとめて再生される。
   const doSwitchAgent = async (kind: SessionKind) => {
@@ -1264,7 +1264,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
             <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
           </span>
         )}
-        {/* 作業計画（docs/33 第5段）: 圧縮を跨いで原文のまま運ばれる枠の開閉。計画が
+        {/* 作業計画（docs/log/33 第5段）: 圧縮を跨いで原文のまま運ばれる枠の開閉。計画が
             入っている会話は塗って示す — 「アシスタントが絶対に忘れない内容」がどれかを
             一目で分かるようにするのがこのバッジの役目。 */}
         {conversationId && (
@@ -1292,10 +1292,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           onClose={() => setPlanOpen(false)}
         />
       )}
-      {/* Context fill (docs/33): the same gauge the mirror shows, fed from the
+      {/* Context fill (docs/log/33): the same gauge the mirror shows, fed from the
           conversation's per-turn usage snapshot (chat_usage.go). Hidden until the
           first turn reports usage. The trailing 圧縮 button runs the summary
-          handoff (docs/33 第2段). */}
+          handoff (docs/log/33 第2段). */}
       {conv?.context && conv.context.tokens > 0 && (
         <ContextBar
           read={conv.context.read || 0}
@@ -1359,7 +1359,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           <div className="chat-empty">{tr("chat.empty_hint")}</div>
         )}
         {conv?.messages.map((m, i) => {
-          // Session reports (docs/30) render as a session-origin card — the sender is
+          // Session reports (docs/log/30) render as a session-origin card — the sender is
           // the reporting session, not the user or the assistant.
           if (m.role === "report") {
             return (
@@ -1377,7 +1377,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
               </div>
             );
           }
-          // System notices (docs/30) — e.g. the operator's auto-turn budget ran out and
+          // System notices (docs/log/30) — e.g. the operator's auto-turn budget ran out and
           // the loop paused. Rendered as a centered informational card, not a bubble; it
           // tells the user why the operator went quiet and how to resume. The body comes
           // from the catalog (ADR 0033), so it follows the UI language even on old threads.
@@ -1394,7 +1394,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
             );
           }
           // Assistant replies render through AssistantTurn, which owns the bubble ref so
-          // its footer can karaoke-read the rendered Markdown (docs/24).
+          // its footer can karaoke-read the rendered Markdown (docs/log/24).
           if (m.role === "assistant") {
             const turnAgent = agentOf(m.agent || conv.agent);
             return (
@@ -1656,7 +1656,7 @@ function StreamingMarkdown({ text, highlight }: { text: string; highlight?: stri
     },
     [],
   );
-  // Live karaoke (docs/19): each ~120ms re-render rebuilds the bubble DOM and wipes any
+  // Live karaoke (docs/log/19): each ~120ms re-render rebuilds the bubble DOM and wipes any
   // highlight, so we (re)apply .tts-active after every render, driven by `highlight` (the
   // sentence the TTS just started). We locate the sentence's block by matching its
   // (whitespace-stripped) text against the rendered blocks — the same block set the
@@ -1712,7 +1712,7 @@ function ChatMarkdown({ source, breaks, streaming }: { source: string; breaks?: 
   );
 }
 
-// ChatSteps renders an assistant turn's 作業過程 (docs/19 分離): the narration the model
+// ChatSteps renders an assistant turn's 作業過程 (docs/log/19 分離): the narration the model
 // emitted before each tool call, kept separate from — but alongside — the final answer.
 // Collapsible; open while streaming so progress is visible, collapsed once the turn is done.
 function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpen?: boolean; live?: boolean }) {
@@ -1832,7 +1832,7 @@ function ChatToolRun({ tools }: { tools: string[] }) {
 }
 
 // AssistantTurn renders one completed assistant reply and its footer. It owns a ref to the
-// bubble body so the footer's read control can karaoke-read the RENDERED Markdown (docs/24):
+// bubble body so the footer's read control can karaoke-read the RENDERED Markdown (docs/log/24):
 // readTurn (features/mirror/turnTts) walks the .markdown DOM into blocks, speaks it sentence
 // by sentence, and highlights the block whose sentence is playing (.tts-active) with scroll
 // follow — the same engine the mirror/ReaderView use. Live streaming stays plain (the bubble

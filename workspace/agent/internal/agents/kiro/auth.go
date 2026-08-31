@@ -1,6 +1,6 @@
 package kiro
 
-// kiro の認証は Builder ID / device-flow 型（docs/43 §2.2）。資格情報は
+// kiro の認証は Builder ID / device-flow 型（docs/log/43 §2.2）。資格情報は
 // `~/.local/share/kiro-cli/data.sqlite3`（600・auth_kv テーブル）。ここでは Status() を
 // 出す: `kiro-cli whoami -f json` はクリーンな構造化 JSON を返し（`{accountType,email,
 // region,startUrl}`）、未認証は exit 1。対話ログイン（device flow start→poll・stdout
@@ -102,19 +102,19 @@ func invalidateStatus() {
 	statusMu.Unlock()
 }
 
-// --- interactive login flow (docs/43 Track C) ---------------------------------
+// --- interactive login flow (docs/log/43 Track C) ---------------------------------
 //
 // `kiro-cli login --license free --use-device-flow` prints a verification URL
 // (with the user_code pre-embedded) and a short code, then self-polls the AWS SSO
 // token endpoint until the user approves in a browser and finally writes the
-// credentials to ~/.local/share/kiro-cli/data.sqlite3（実測 docs/43 §2.2）. We hold
+// credentials to ~/.local/share/kiro-cli/data.sqlite3（実測 docs/log/43 §2.2）. We hold
 // the process on a PTY (shared agents.Flow plumbing) so we can scrape the URL/code
 // and keep the poller alive; the Console shows them and polls
 // /connections/kiro/poll until `whoami` reports authenticated. Like codex/cursor
 // this is start→poll (no pasted code — the code is only shown for the user to
 // confirm it matches in the browser). v1 is login-only（Builder ID / free）; the
 // API-key path (KIRO_API_KEY・Pro 以上) is deferred to Track D — injecting the key
-// into the TUI pane program would leak it into `ps`（docs/43 §2.2 / 決定 4）.
+// into the TUI pane program would leak it into `ps`（docs/log/43 §2.2 / 決定 4）.
 
 // loginURLRe matches the device verification URL kiro prints（実測 §2.2）:
 // https://view.awsapps.com/start/#/device?user_code=… — and the alternate

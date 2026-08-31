@@ -56,7 +56,7 @@ func handlePreview(w http.ResponseWriter, r *http.Request) {
 			// comparing the Origin header against x-forwarded-host and answers 403 when
 			// they disagree; with the header gone, every Server Action behind a preview
 			// fails. Spring Boot's forward-headers-strategy loses the public host the
-			// same way (docs/81 §2.5 (c), ADR 0062 決定 9).
+			// same way (docs/log/81 §2.5 (c), ADR 0062 決定 9).
 			for _, h := range []string{"X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-For"} {
 				if v := pr.In.Header.Get(h); v != "" {
 					pr.Out.Header.Set(h, v)

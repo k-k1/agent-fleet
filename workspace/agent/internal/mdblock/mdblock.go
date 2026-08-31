@@ -1,8 +1,8 @@
 // Package mdblock owns the marker-delimited regions agent-fleet writes into
-// markdown files that belong to an agent CLI (docs/60 §60.7).
+// markdown files that belong to an agent CLI (docs/log/60 §60.7).
 //
 // なぜ共通化したか: 同じ strip/append の実装が codex/rtk.go と agy/rtk.go に複製され、
-// ユーザー指示（docs/60）が 3 つ目の書き手になった。マーカーの綴りと「消え方」が
+// ユーザー指示（docs/log/60）が 3 つ目の書き手になった。マーカーの綴りと「消え方」が
 // ファイルごとにズレると、片方の版が残り続けたり利用者の記述を巻き込んで消したりする。
 //
 // 契約:
@@ -10,7 +10,7 @@
 //   - Set は「既存ブロックを剥がしてから末尾に積む」。よって同じファイルへ複数の
 //     ブロックを書くときは、呼ぶ順序がそのままファイル内の並び順になる。
 //   - **マーカーの外は決して触らない。** 利用者が同じファイルへ書いた文章は残る
-//     （AF が毎起動 cp -f で全消ししていた挙動の置き換え — docs/60 実害①）。
+//     （AF が毎起動 cp -f で全消ししていた挙動の置き換え — docs/log/60 実害①）。
 package mdblock
 
 import "strings"
@@ -71,7 +71,7 @@ func Get(s, name string) (string, bool) {
 // StripLegacyPrefix removes a leading *unmarked* copy of text agent-fleet used to
 // write before it started marking its regions — the era when the entrypoint `cp -f`'d
 // the whole workspace guide over $CODEX_HOME/AGENTS.md and opencode's AGENTS.md
-// (docs/60 実害①). Without this, the first run of the marker-based writer would treat
+// (docs/log/60 実害①). Without this, the first run of the marker-based writer would treat
 // 30 KB of stale guide as "the user's own text", preserve it, and append a second copy.
 //
 // 判定は legacy の**先頭行**でだけ行う。イメージの版が違えば本文は一致しないので

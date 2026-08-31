@@ -98,7 +98,7 @@ cd agent-fleet-native-<v'>-linux-amd64 && ./af start
 - Only the first-time CLI auto-install needs network access. If you need the CLIs
   fully offline, use a Docker setup you built yourself from the repo's Dockerfile
   with `BAKE_AGENT_CLIS=1` (licensing forbids redistributing builds with the CLIs
-  baked in — docs/35 §35.4.1).
+  baked in — docs/log/35 §35.4.1).
 
 ## Git provider OAuth (GitHub / Bitbucket) — optional
 
@@ -109,7 +109,7 @@ via OAuth"** buttons, register your OAuth app **in the Console**:
 
 **Tenant settings → Integrations → Git provider OAuth**
 
-There is no environment variable for this any more (docs/71). `GITHUB_OAUTH_CLIENT_ID`
+There is no environment variable for this any more (docs/log/71). `GITHUB_OAUTH_CLIENT_ID`
 and `BITBUCKET_OAUTH_KEY`/`_SECRET` are not read: the app is a per-tenant row, so it
 takes effect immediately and does not need workspaces restarted.
 

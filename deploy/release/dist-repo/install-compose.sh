@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agent Fleet — fetch helper for the Docker Compose edition (docs/35 §35.4.2).
+# Agent Fleet — fetch helper for the Docker Compose edition (docs/log/35 §35.4.2).
 #
 #   curl -fsSL https://raw.githubusercontent.com/k-k1/agent-fleet-dist/main/install-compose.sh | bash
 #

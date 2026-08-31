@@ -1,5 +1,5 @@
 // dek.go — ワークスペース DEK のエンベロープ暗号（P3-3）。
-// manager.go からの機械的分割（docs/23 P2-W2）。
+// manager.go からの機械的分割（docs/log/23 P2-W2）。
 package main
 
 import (

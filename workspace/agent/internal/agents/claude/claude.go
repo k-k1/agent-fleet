@@ -1,4 +1,4 @@
-// Package claude は claude CLI 種別の縦割りパッケージ（docs/23 残① Wave F: 最大の
+// Package claude は claude CLI 種別の縦割りパッケージ（docs/log/23 残① Wave F: 最大の
 // 縦割り）。Agent 実装・起動コマンド組み立て・jsonl transcript 解析・auth/settings/
 // usage の Connections/Console ハンドラ・status hook 配線・コンテキスト充填率・
 // バックグラウンド実行検知を package main から移設した。挙動・ワイヤ・ディスクは
@@ -22,12 +22,12 @@ import (
 // New returns the claude Agent implementation for the kind registry.
 func New() agents.Agent { return agentImpl{} }
 
-// agentImpl — claude 種別の Agent 実装（docs/23 P1残: CLI 縦割りファイル分割）
+// agentImpl — claude 種別の Agent 実装（docs/log/23 P1残: CLI 縦割りファイル分割）
 type agentImpl struct{ agents.NoGenericTranscript }
 
 func (agentImpl) Kind() string { return session.KindClaude }
 
-// CanForkAt: 発言時点からの分岐（docs/55）。claude だけは公式の口が無く、転写 jsonl を
+// CanForkAt: 発言時点からの分岐（docs/log/55）。claude だけは公式の口が無く、転写 jsonl を
 // 切り詰めて分岐先を作る（forkat.go）。TUI 起動しか無いので、他の kind と違って managed の
 // 条件は付かない — 経路の可否は ResolveForkAt が kind ごとに答える。
 func (agentImpl) Caps() agents.Caps {
@@ -103,7 +103,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 			_ = os.Remove(p)
 		}
 	}
-	// First launch of a POINT fork (docs/55): write our own truncated transcript before
+	// First launch of a POINT fork (docs/log/55): write our own truncated transcript before
 	// the pane starts. buildProgram then finds a jsonl for sid and resumes it — the fork
 	// is invisible from there on, exactly like the whole-conversation fork becomes a
 	// plain resume after its first launch. A failure must not fall through to
@@ -148,7 +148,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// idle を永続化するので 2 回目以降の poll では走らない（メニューは人が消すまで出た
 		// ままなので、これが無いと毎 poll 通知と完了報告を撃ち続ける）。
 		//
-		// 認証切れ（docs/47 §4-8）を上限メニューより先に見るのは、両方が同時に立ちうる中で
+		// 認証切れ（docs/log/47 §4-8）を上限メニューより先に見るのは、両方が同時に立ちうる中で
 		// **待っても直らない方**だから: 上限は時刻が来れば解けるが、期限切れは再認証するまで
 		// 何も動かない。メニューの自動解除はペインを直接読む（rate_limit_resume.go）ので、
 		// ここで auth を返してもその回復経路は塞がらない。
@@ -174,7 +174,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// back at the ready prompt, it's idle. HealIdle additionally recognises the one
 		// case that IS a real turn end — an API error cut the turn off, so no Stop hook
 		// ever fired — and routes it through the notifier instead of silently dropping
-		// the completion (docs/47).
+		// the completion (docs/log/47).
 		//
 		// IdleSettled, not Idle: while claude renders an answer it hides the spinner and
 		// draws a frame indistinguishable from the ready prompt (measured: 21s per block

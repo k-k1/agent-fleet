@@ -1,4 +1,4 @@
-// FileView wiring for the external-change probe (docs/44 §7, Phase 3.5).
+// FileView wiring for the external-change probe (docs/log/44 §7, Phase 3.5).
 // The probe hook itself is unit-tested in probe.dom.test.tsx; here the hook is
 // stubbed so a test can hand FileView an observation and watch the pane react:
 // a clean buffered pane follows and keeps its chosen mode, a pane without a

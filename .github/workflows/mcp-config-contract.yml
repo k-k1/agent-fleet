@@ -1,4 +1,4 @@
-# MCP レジストリの materialize 契約（docs/48 §8 / §13）。**認証も課金も不要**。
+# MCP レジストリの materialize 契約（docs/log/48 §8 / §13）。**認証も課金も不要**。
 #
 # 何を検証するか: af は「各 CLI のグローバル MCP 設定はこういう形だ」という契約の上で
 # 利用者の設定ファイルを書き換えている（claude = $CLAUDE_CONFIG_DIR/.claude.json の

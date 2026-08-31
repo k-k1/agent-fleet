@@ -31,7 +31,7 @@ type toolchains struct {
 	Java string `json:"java"`
 	// Go: ""/"system" keeps the baked /usr/local/go (or none, on a lean rootfs);
 	// a version string selects an on-demand toolchain the entrypoint installs
-	// into the home via `workspace-agent install-go` (docs/35 §35.7.2-5).
+	// into the home via `workspace-agent install-go` (docs/log/35 §35.7.2-5).
 	Go       string `json:"go,omitempty"`
 	Timezone string `json:"timezone"`
 	// AgentUpdate: member opt-in to update the baked CLIs (claude/opencode/codex) to

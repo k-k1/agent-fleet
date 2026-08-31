@@ -1,4 +1,4 @@
-// Phase 4 acceptance (docs/44 §4.2/§4.3): an accepted AI suggestion reaches the
+// Phase 4 acceptance (docs/log/44 §4.2/§4.3): an accepted AI suggestion reaches the
 // document as ONE ranged, undoable transaction through the CodeEditorHandle, and
 // a validator-violating edit is dropped by the shared transaction filter.
 import { afterEach, describe, expect, it, vi } from "vitest";

@@ -1,6 +1,6 @@
 package mcpproj
 
-// Name and secret warnings (docs/56 §7.2 / §7.4). Dialect warnings live in
+// Name and secret warnings (docs/log/56 §7.2 / §7.4). Dialect warnings live in
 // dialect.go; cross-file divergence in diff.go.
 
 import (
@@ -11,8 +11,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 )
 
-// nameWarnings flags a hijack (af / af_xxxxxxxx — docs/48 §8.4) or a name outside
-// the shared CLI charset (docs/56 §7.4). Reuses mcpreg's own recognition
+// nameWarnings flags a hijack (af / af_xxxxxxxx — docs/log/48 §8.4) or a name outside
+// the shared CLI charset (docs/log/56 §7.4). Reuses mcpreg's own recognition
 // (IsReservedName / IsValidServerName) so this can never drift from what
 // af_server_name.go actually rotates through.
 func nameWarnings(name, file string) []Warning {
@@ -26,11 +26,11 @@ func nameWarnings(name, file string) []Warning {
 }
 
 // secretKeyRE matches an env/header key name that looks like it carries a secret
-// (docs/56 §7.2's list).
+// (docs/log/56 §7.2's list).
 var secretKeyRE = regexp.MustCompile(`(?i)token|key|secret|password|passwd|credential|authorization`)
 
 // looksSecretValue flags a value as secret-shaped by simple Shannon entropy —
-// docs/56 §7.2's "高エントロピーな値". Deliberately conservative (long, no
+// docs/log/56 §7.2's "高エントロピーな値". Deliberately conservative (long, no
 // whitespace, entropy above a plain-English/path threshold) since a false negative
 // here just means one fewer warning, not a false sense of safety (the key-name
 // check above catches the common case).
@@ -56,8 +56,8 @@ func shannonEntropy(s string) float64 {
 }
 
 // secretWarnings flags an env/header entry that already looks like a credential AND
-// sits in a file whose tracked state means it either IS committed (yellow — docs/56
-// §7.2's tracked→tracked row) or CANNOT be determined (yellow, svn/no-VCS — docs/57
+// sits in a file whose tracked state means it either IS committed (yellow — docs/log/56
+// §7.2's tracked→tracked row) or CANNOT be determined (yellow, svn/no-VCS — docs/log/57
 // 憲章6). An untracked/ignored file is not warned about here: nothing has reached
 // git yet, which is the safe state this whole check exists to preserve.
 func secretWarnings(s Server, file string, tracked, trackedUncertain bool) []Warning {

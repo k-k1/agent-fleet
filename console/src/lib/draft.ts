@@ -26,7 +26,7 @@ export function clearDraft(key: string | null): void {
 }
 
 // writeDraft seeds a draft for a session the user is not looking at yet — the branch
-// flow (docs/55) puts the branched-from prompt into the NEW session's composer, so the
+// flow (docs/log/55) puts the branched-from prompt into the NEW session's composer, so the
 // pane opens with it already typed and the user can edit or resend in one move. It never
 // clobbers an existing draft: a session that already has unsent text keeps it.
 export function writeDraft(key: string | null, text: string): void {

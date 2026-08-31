@@ -1,4 +1,4 @@
--- Per-tenant source-network restriction (docs/66, ADR 0047). CSV of CIDR prefixes;
+-- Per-tenant source-network restriction (docs/log/66, ADR 0047). CSV of CIDR prefixes;
 -- empty = no restriction, which is how the feature is switched off (there is no
 -- operator on/off flag on purpose — ADR 0047 決定 5).
 --

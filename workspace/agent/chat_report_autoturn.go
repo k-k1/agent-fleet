@@ -18,7 +18,7 @@ package main
 //
 // interim（question / plan-approval）の即時ターンはここを通らない（chat_report.go
 // deliverSessionReport）: 質問への回答はレイテンシがそのまま利用者体験になる経路
-// なので、束ねの対象にしない（docs/30）。
+// なので、束ねの対象にしない（docs/log/30）。
 
 import (
 	"os"

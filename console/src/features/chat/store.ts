@@ -8,7 +8,7 @@
 // mid-answer the turn still finishes on the backend — but its result would otherwise be
 // delivered to an unmounted component and dropped. Publishing here lets a pane that is
 // re-opened on the same conversation re-attach to the live turn and pick up the final
-// answer instead of a stale pre-turn snapshot (docs/19: "close pane mid-stream" fix).
+// answer instead of a stale pre-turn snapshot (docs/log/19: "close pane mid-stream" fix).
 import { create } from "zustand";
 import { chatList } from "./api.ts";
 import { isTransientErr } from "../../core/api/client.ts";
@@ -16,7 +16,7 @@ import type { Conversation, ConversationMeta, ChatStep } from "../../types/chat.
 import type { SessionKind } from "../../types/session.ts";
 
 // Live in-flight turn state: the tentative answer text plus the working steps committed so
-// far (docs/19 分離), so a re-opened pane re-attaches to both the process and the answer.
+// far (docs/log/19 分離), so a re-opened pane re-attaches to both the process and the answer.
 export interface LiveTurn {
   text: string;
   steps: ChatStep[];

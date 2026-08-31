@@ -1,4 +1,4 @@
-// transcript/MarkLayer — 選択したところに線を引く／引いた線を確認して消す（docs/69）。
+// transcript/MarkLayer — 選択したところに線を引く／引いた線を確認して消す（docs/log/69）。
 //
 // 転写ぜんぶで 1 つだけ載る浮遊レイヤー。ターンごとに置かないのは、選択もクリックも
 // document 単位の出来事で、ターンの数だけ購読を張ると 400 ターンぶんの listener になるから。
@@ -72,7 +72,7 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
       return;
     }
     const kind = root.dataset.markKind ?? "";
-    // 置ける kind は Agent 側と同じ表で閉じている（docs/69 §69.4）。描ける場所が増えても、
+    // 置ける kind は Agent 側と同じ表で閉じている（docs/log/69 §69.4）。描ける場所が増えても、
     // 座標を持つ part の上には出さない。
     if (!MARKABLE_KINDS.has(kind)) {
       setDraft(null);

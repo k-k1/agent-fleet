@@ -1,95 +1,106 @@
-# 0047. テナント管理者が自分のテナントの接続元ネットワークを絞れるようにする（**アプリ層・認証の後**）
+# 0047. Let a tenant admin restrict where their tenant may be connected from (**at the application layer, after authentication**)
 
-- 状態: **採用**（2026-08-17）。検討の記録は [docs/66](../66-tenant-network-restriction.md)。
-- 関連: [0043-login-idp.md](0043-login-idp.md) 決定 24/25（テナントの外へ届くものは運用者、
-  中で閉じるものはテナント管理者）・決定 14（門は画面ではなく解決経路に置く） /
-  [0044-workspace-sizing.md](0044-workspace-sizing.md) 決定 3（**既定オフで出して一度も
-  発火しなかった**前例） / [docs/64](../64-ec2-persistent-workspace.md) §64.25（WAF に
-  署名系を採らなかった判断・同じ「効かないものを効くように見せない」線）
+English | [日本語](0047-tenant-network-restriction.ja.md)
 
-## 背景
+- Status: **adopted** (2026-08-17). The record of the investigation is [docs/66](../log/66-tenant-network-restriction.md).
+- See also: [0043-login-idp.md](0043-login-idp.md) decisions 24/25 (what reaches outside the tenant
+  belongs to the operator, what stays inside belongs to the tenant admin) and decision 14 (the gate
+  goes on the resolution path, not on the screen) /
+  [0044-workspace-sizing.md](0044-workspace-sizing.md) decision 3 (the precedent of **shipping
+  something off by default that then never fired once**) / [docs/64](../log/64-ec2-persistent-workspace.md) §64.25 (the
+  decision not to use signature rules in the WAF — the same line of "do not make something that does
+  not work look as though it does")
 
-接続元の制限は `00-network.yaml` の `AlbIngressCidr`（既定 `0.0.0.0/0`）**だけ**で、
-デプロイ全体・CFN 再適用・AWS 限定である。テナント管理者は AWS を触らない（触らせない）。
-一方で事故として実際に起きるのは「資格情報を持った人が、許されていない場所から入る」であり、
-それはテナント単位でしか表現できない。
+## Context
 
-## 決定 1 — 採る。ただし**ネットワーク防御ではなく「アクセス制限」**として出す
+Restricting where connections come from is **only** `AlbIngressCidr` in `00-network.yaml`
+(defaulting to `0.0.0.0/0`) — deployment-wide, requiring a CFN re-apply, and AWS-only. Tenant admins
+do not touch AWS (and are not let near it). Meanwhile what actually happens as an incident is
+"someone with credentials gets in from a place they are not allowed to be", and that can only be
+expressed per tenant.
 
-要求は ALB を通り CP に届き、TLS が解け、セッションが検証された**後で**拒否される。
-したがって認証前の脆弱性・DoS・帯域・探索には**効かない**。
+## Decision 1 — adopt it, but present it as "access restriction", not network defence
 
-- **上 2 層（`AlbIngressCidr` / WAF）を置き換えない。**私有デプロイで一番安くて強いのは
-  今も SG である。Console の説明文でもそう書く。
-- 効くのは「**誰が、どこから、データに触れるか**」だけ。それが本機能の全てである。
-- **できないことを画面に書く**——ログイン画面は見えるし、サインインも通る。
-  隠すと「IP 制限したのにログインできた＝壊れている」と読まれる。
+The request passes the ALB, reaches the CP, TLS is terminated and the session is validated, and only
+**then** is it refused. So it is **ineffective** against pre-authentication vulnerabilities, DoS,
+bandwidth and probing.
 
-## 決定 2 — 送信元 IP は **XFF を右から N 番目**で取る。N はデプロイが申告する
+- **It does not replace the two layers above (`AlbIngressCidr` / the WAF).** For a private
+  deployment, the security group is still the cheapest and strongest thing. The Console's
+  explanatory text says so.
+- What it does cover is only "**who touches the data, and from where**". That is the whole of this
+  feature.
+- **State what it cannot do on screen** — the login screen is visible and signing in succeeds.
+  Hiding that gets read as "I restricted by IP and could still log in, so it is broken".
 
-CP は今まで `RemoteAddr` すら読んでいない。同定の規則をここで固定する。
+## Decision 2 — take the source IP as **the Nth from the right of XFF**, with N declared by the deployment
 
-- **`AF_TRUSTED_PROXY_HOPS`（既定 0）**。0 = プロキシ無し（`RemoteAddr` が本物）。
-  ALB のみ = 1（`30-ingress.yaml` が CP のタスク環境に渡す）。compose + Caddy も 1。
-- **クライアント = `XFF[len-N]`**（N=1 なら右端）。プロキシは「受け取った相手」を**追記**する
-  ので、信頼できるのは右から数えた分だけ。**左端を読む実装だけが偽装可能**であり、
-  それが唯一の間違え方である。
-- **ヘッダを読むのは最外周のミドルウェア 1 箇所だけ**にし、結果を context に入れる。
-  `authGate` が識別ヘッダを `r.Header.Del` してから自分のものを入れているのと同じ理由——
-  下流に生のヘッダを信用させない。
-- 起動バナーに `trusted-proxy-hops=N` を出す。
+The CP has never read even `RemoteAddr`. The rule for identification is fixed here.
 
-## 決定 3 — 判定は `checkTenantProvider` の隣に置く。**PAT/MCP と git は対象外**
+- **`AF_TRUSTED_PROXY_HOPS` (default 0)**. 0 = no proxy (`RemoteAddr` is genuine). ALB only = 1
+  (passed into the CP's task environment by `30-ingress.yaml`). compose + Caddy is also 1.
+- **The client = `XFF[len-N]`** (with N=1, the rightmost). A proxy **appends** "whoever it received
+  from", so only as many as you count from the right can be trusted. **Only an implementation that
+  reads the leftmost is forgeable**, and that is the one way to get it wrong.
+- **Only one place — the outermost middleware — reads the header**, and it puts the result into the
+  context. The same reason `authGate` does `r.Header.Del` on the identity headers before inserting
+  its own: never let downstream trust a raw header.
+- The startup banner prints `trusted-proxy-hops=N`.
 
-テナントが決まる最初の地点は `selectMembership` の後である。そこに `checkTenantIP` を並べる
-（`resolveFull` / `resolveMembership`）。403 `ip_not_allowed`。
+## Decision 3 — the check goes next to `checkTenantProvider`. **PAT/MCP and git are out of scope**
 
-⚠️ **`resolveByMembership`（PAT）には入れない。** この経路の送信元は
-**本人の Workspace コンテナ**であり、人の所在を一切表さない（`AF_MCP_TOKEN` は起動時に
-コンテナへ注入され、git もコンテナの中から CP を叩く）。ここに IP 判定を入れると、
-オフィスの CIDR を許可したテナントは**自分のワークスペースの中からの MCP と git を全部塞ぐ**。
-止めたい人の道具は既にある——メンバーシップの無効化（PAT はそれで失効する）。
+The first point at which the tenant is known is after `selectMembership`. `checkTenantIP` goes there
+(`resolveFull` / `resolveMembership`). 403 `ip_not_allowed`.
 
-同じ理由で `/internal/*`（Agent からの折り返し）も対象外である。
+⚠️ **Do not put it in `resolveByMembership` (PAT).** The source on that path is **the person's own
+workspace container** and represents nothing about where the person is (`AF_MCP_TOKEN` is injected
+into the container at startup, and git hits the CP from inside the container too). Putting an IP
+check there means a tenant that allowed the office CIDR **blocks all MCP and git from inside its own
+workspaces**. The tool for stopping a person already exists — disabling the membership (which
+expires the PAT).
 
-## 決定 4 — 締め出しの逃げ道は 3 つ。うち 1 つは「表示」ではなく「拒否」
+For the same reason `/internal/*` (the callback from the Agent) is out of scope.
 
-1. **super_admin は対象外。** 運用者はいつでも解除できる。最終手段。
-2. **保存時に編集者自身の現在 IP を必ず通す。** 含まれなければ 400 で拒否し、
-   **CP から見えている IP をメッセージにそのまま出す**。
-3. **誤設定はその場で拒否する。** `hops==0` なのに XFF が来ている（＝プロキシの後ろなのに
-   申告が無い）／XFF が短くて取れない、のいずれでも**一切保存させない**。
+## Decision 4 — three escape hatches against locking yourself out, one of which is a refusal rather than a display
 
-⚠️ 3 が要る理由: 「あなたの現在 IP」を**表示するだけでは足りない**。誤設定時に見えている
-ALB の私有アドレス `10.20.10.5` を「これが私の IP か」と思ってそのまま登録でき、
-**絞ったつもりで全員を通す**状態になる。表示ではなく拒否にする。
+1. **super_admin is exempt.** The operator can always undo it. The last resort.
+2. **On save, the editor's own current IP must be included.** If it is not, refuse with a 400 and
+   **put the IP the CP can see straight into the message**.
+3. **Refuse a misconfiguration on the spot.** If `hops==0` but an XFF arrived (i.e. behind a proxy
+   with no declaration), or the XFF is too short to index, **nothing is saved at all**.
 
-## 決定 5 — 運用者スイッチを足さない。「オフ」はリストが空であること
+⚠️ Why 3 is needed: **displaying "your current IP" is not enough.** On a misconfiguration you can see
+the ALB's private address `10.20.10.5`, think "that must be my IP", register it as is, and end up
+**letting everyone through while believing you narrowed it**. Refuse rather than display.
 
-`AF_TENANT_IP_RULES=on/off` のような既定オフのゲートは作らない。
-[ADR 0044](0044-workspace-sizing.md) 決定 3 は**既定オフで出して一度も発火しなかった**。
-機能の有効/無効は**テナントが CIDR を 1 行書いたかどうか**だけで表す。
+## Decision 5 — do not add an operator switch. "Off" means the list is empty
 
-## 決定 6 — 置き場はテナントのログイン規則の行。持ち主はテナント管理者
+No default-off gate such as `AF_TENANT_IP_RULES=on/off`. [ADR 0044](0044-workspace-sizing.md)
+decision 3 **shipped one off by default and it never fired once**. Whether the feature is enabled is
+expressed solely by **whether the tenant wrote one CIDR line**.
 
-- **`tenant.allowed_cidrs`（CSV・1 列）**。要求毎に読むので、既に存在する
-  30 秒キャッシュ（`tenantLoginCache`・書き込みで即時 invalidate）に相乗りする。
-  `tenantLimits`（JSON）ではない——あれは super_admin が持つ上限であり、持ち主が違う。
-- **編集は `PUT /api/admin/tenants/{slug}/network`（`tenantAdminFor`）**。
-  `setTenantLogin` は super_admin 専用のまま**触らない**（あの 3 項目はテナントの外へ届く）。
-- 表記は prefix と単独 IP の両方・IPv4/IPv6。**ホスト部が残った prefix は丸めて保存し、
-  丸めたことを応答に出す**（黙って意味を変えない）。
-- 拒否は監査ログに要約して残す。**全要求のアクセスログに送信元 IP は出さない**
-  （個人データの扱いが変わる。必要になったら保存期間と併せて別途決める）。
+## Decision 6 — it lives on the tenant's login-rules row, owned by the tenant admin
 
-## 影響
+- **`tenant.allowed_cidrs` (CSV, one column)**. It is read per request, so it rides the existing
+  30-second cache (`tenantLoginCache`, invalidated immediately on write). Not `tenantLimits` (JSON) —
+  those are caps held by super_admin, a different owner.
+- **Editing is `PUT /api/admin/tenants/{slug}/network` (`tenantAdminFor`)**. `setTenantLogin` stays
+  super_admin-only and is **untouched** (those three items reach outside the tenant).
+- The notation accepts both prefixes and bare IPs, IPv4 and IPv6. **A prefix with host bits set is
+  rounded before saving, and the rounding is reported in the response** (never silently change the
+  meaning).
+- Refusals are summarised into the audit log. **The source IP is not put in the access log for every
+  request** (that changes how personal data is handled; if it becomes necessary, decide it separately
+  along with a retention period).
 
-- `control-plane/clientip.go`（新設）・`resolver.go`・`tenant_login.go`・`tenants.go`・
-  `routes.go`・`main.go`（ミドルウェアとバナー）
-- `migrations/`・`migrations-pg/` に `tenant.allowed_cidrs` の 1 列追加
-  （`0042_tenant_hidden_providers.sql` と同じ形）
-- `console/src/features/settings/` にテナント設定の 1 パネル ＋ 文言（en/ja）
-- `deploy/aws/ecs/cfn/30-ingress.yaml` に `AF_TRUSTED_PROXY_HOPS=1`、
-  `deploy/compose/.env.example` に Caddy 構成での 1 を案内
-- **実機で確かめること**: ALB の後ろで CP が本物のグローバル IP を見ていること
-  （これが全ての前提で、机上では確かめられない）
+## Impact
+
+- `control-plane/clientip.go` (new), `resolver.go`, `tenant_login.go`, `tenants.go`, `routes.go`,
+  `main.go` (the middleware and the banner)
+- One column, `tenant.allowed_cidrs`, added to `migrations/` and `migrations-pg/` (the same shape as
+  `0042_tenant_hidden_providers.sql`)
+- One tenant-settings panel plus wording (en/ja) in `console/src/features/settings/`
+- `AF_TRUSTED_PROXY_HOPS=1` in `deploy/aws/ecs/cfn/30-ingress.yaml`, and guidance for 1 under a Caddy
+  setup in `deploy/compose/.env.example`
+- **To confirm on real hardware**: that the CP, behind the ALB, sees the genuine global IP (this is
+  the premise for all of it, and cannot be confirmed on paper).

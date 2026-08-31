@@ -92,7 +92,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   };
 
   const dead = !s.alive && s.resumable === false; // dir gone → can't resume
-  // 作業グループ (docs/52): direct assignment is for repo-less sessions only —
+  // 作業グループ (docs/log/52): direct assignment is for repo-less sessions only —
   // a session living in a working copy inherits that repo's membership instead.
   const wsets = workingSetList(useSettings());
   const repos = useReposStore((st) => st.repos);
@@ -172,7 +172,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 {s.driver === "managed" ? tr("sess.switch_to_tui") : tr("sess.switch_to_managed")}
               </button>
             )}
-            {/* 変更ファイル（docs/68）— ミラーを開いて帯を広げる。専用のペイン種は
+            {/* 変更ファイル（docs/log/68）— ミラーを開いて帯を広げる。専用のペイン種は
                 作らない（ADR 0049 決定 4）ので、「覗く」導線はミラーを開くこと自体で、
                 その開閉状態は帯が per-session に憶えている localStorage を先に書いて
                 渡す。転写を持たない kind（shell/ssm）には一覧の材料が無い。 */}
@@ -251,7 +251,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
               </button>
             )}
             {/* セッション共有: 同一テナントの別ユーザーへ会話を共有する。shell/SSM は
-                transcript が無く共有対象外(docs/59)。 */}
+                transcript が無く共有対象外(docs/log/59)。 */}
             {agentOf(s.kind).caps.transcript && (
               <button
                 type="button"
@@ -264,7 +264,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 <Icon name="broadcast" /> {tr("srow.share")}
               </button>
             )}
-            {/* 作業グループ (docs/52): membership toggles — repo-less rows only. */}
+            {/* 作業グループ (docs/log/52): membership toggles — repo-less rows only. */}
             {repoLess && wsets.length > 0 && (
               <>
                 <div className="ui-menu-caption">{tr("wset.menu_caption")}</div>
@@ -283,7 +283,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 ))}
               </>
             )}
-            {/* 削除ロック（docs/45）: この行を削除保護に固定/解除する。保護の実体は
+            {/* 削除ロック（docs/log/45）: この行を削除保護に固定/解除する。保護の実体は
                 Agent 側（403）なので、ここは切替と見た目の抑止だけを担う。 */}
             <button
               type="button"
@@ -296,7 +296,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
               <Icon name={s.locked ? "unlock" : "lock"} />{" "}
               {s.locked ? tr("srow.unlock") : tr("srow.lock")}
             </button>
-            {/* 停止しないピン（docs/75）: アイドル自動停止からこのセッションと Workspace を
+            {/* 停止しないピン（docs/log/75）: アイドル自動停止からこのセッションと Workspace を
                 期限付きで守る。shell / ssm では「ジョブが走っているか」を af が判定できない
                 （放置された less と実行中のビルドが前景コマンド名で区別できず、ssm は常に
                 aws を張る）ため、推測ではなく宣言に倒した逃げ道。 */}

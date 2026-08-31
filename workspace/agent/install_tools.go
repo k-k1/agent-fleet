@@ -1,6 +1,6 @@
 package main
 
-// install_tools.go — on-demand pinned installers (docs/35 §35.7.2 items 4-6).
+// install_tools.go — on-demand pinned installers (docs/log/35 §35.7.2 items 4-6).
 // The lean rootfs (BAKE_OPTIONAL_TOOLS=0) ships without chromium, Go, the AWS
 // CLI + Session Manager plugin and the ops MCP binaries; each is installed into
 // the persistent home on first use, pinned by /usr/local/share/agent-fleet/
@@ -36,7 +36,7 @@ func agentFleetShareDir() string {
 // Testing zips, keyed by browser version (versions.json `chromium_cft`).
 // playwright 1.61 moved x64 off builds/chromium (which now only carries arm64)
 // — the P4 gate found the old x64 URL 404s on the bucket and 400s via PRSS
-// (docs/35 §35.9-7(a)). The two entry points are genuinely independent
+// (docs/log/35 §35.9-7(a)). The two entry points are genuinely independent
 // (playwright's Azure edge vs Google's official CfT bucket).
 var chromiumCFTBases = []string{
 	"https://cdn.playwright.dev/builds/cft/%s/linux64/chrome-linux64.zip",

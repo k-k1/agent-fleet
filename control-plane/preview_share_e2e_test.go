@@ -1,4 +1,4 @@
-// preview_share_e2e_test.go — 同じテナントのメンバーへの共有（docs/81 §14 / ADR 0062
+// preview_share_e2e_test.go — 同じテナントのメンバーへの共有（docs/log/81 §14 / ADR 0062
 // 決定 14〜17）。newPreviewHostEnv の実ルート表をそのまま叩き、閲覧者を「所有者では
 // ない、同じテナントの人」として通す。
 //
@@ -252,7 +252,7 @@ func TestPreviewOpenFollowsTheCurrentSlug(t *testing.T) {
 }
 
 // 共有していない相手には 404、停止中は「起動していない」。★ 後者を答え分けてよいのは、
-// 呼び手が見てよい人だと確定した後だから（docs/81 §14.6）。
+// 呼び手が見てよい人だと確定した後だから（docs/log/81 §14.6）。
 func TestPreviewOpenRefusals(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	v := e.addViewer(t, "colleague")

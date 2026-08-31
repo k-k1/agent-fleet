@@ -39,7 +39,7 @@ func Models() []string {
 	// Prefer the running daemon: `opencode models` is a one-shot process that does NOT
 	// see a Console-account login — measured with a Console credential and no
 	// OPENCODE_API_KEY, the CLI printed the 8 zero-auth models while a serve reading the
-	// same store offered 86（docs/54）. So an OAuth-only user would get a free-tier-only
+	// same store offered 86（docs/log/54）. So an OAuth-only user would get a free-tier-only
 	// launch picker while their managed sessions could use the full catalog. The daemon
 	// is started with the same injected env, so its list also covers the API-key case.
 	if ids := modelsFromDaemon(); len(ids) > 0 {
@@ -180,7 +180,7 @@ func filterDaemonModels(ms []daemonModel) []string {
 // `opencode models`. The cache key is the injected provider env (auth.go), which a
 // Console OAuth login does NOT change — the credential lands in opencode's own auth
 // store — so an authentication change has to say so explicitly or the launch picker
-// keeps the pre-login catalog for up to a minute（docs/54 の反映タイミング）.
+// keeps the pre-login catalog for up to a minute（docs/log/54 の反映タイミング）.
 func InvalidateModels() {
 	modelsMu.Lock()
 	modelsAt = time.Time{}

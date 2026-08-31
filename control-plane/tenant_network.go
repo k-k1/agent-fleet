@@ -1,5 +1,5 @@
 // tenant_network.go — the tenant's own source-network restriction: read it, and write
-// it without letting the person writing it lock their tenant out (docs/66, ADR 0047).
+// it without letting the person writing it lock their tenant out (docs/log/66, ADR 0047).
 //
 // It is a separate endpoint from setTenantLogin, which is super_admin-only because its
 // three fields reach OUTSIDE the tenant (an auto-join domain widens the deployment's

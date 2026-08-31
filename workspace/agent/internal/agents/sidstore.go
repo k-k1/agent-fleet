@@ -8,7 +8,7 @@ import (
 // SidStore maps our deterministic slot sid to an agent's own session id, so a slot
 // resumes its OWN conversation (internal/fstore の Store に薄い読み口を被せたもの:
 // Read は ok を潰して "" を返す — 呼び出し側は空文字を「無し」として扱う)。
-// docs/23 残① Wave D: package main の sidStore を CLI 縦割りパッケージから使える
+// docs/log/23 残① Wave D: package main の sidStore を CLI 縦割りパッケージから使える
 // よう移設・汎用化した。
 type SidStore struct{ files fstore.Store[string] }
 

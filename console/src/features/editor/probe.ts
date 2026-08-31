@@ -1,4 +1,4 @@
-// External-change probe (docs/44 §7, Phase 3.5) — polls the metadata-only
+// External-change probe (docs/log/44 §7, Phase 3.5) — polls the metadata-only
 // GET (`meta=1`) for the file a pane is showing, so an edit made by an agent,
 // a shell, or git is noticed before the save-time CAS would surface it. The
 // probe is advisory: it adds early warning, never a guarantee, and it must
@@ -8,7 +8,7 @@ import { probeFileMeta, type FileProbeResult } from "./api.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 
 /** Low-frequency fallback tick. Deliberately much slower than the 4s session
- *  poll (docs/44 §7.2) — the immediate triggers (tab return, window focus,
+ *  poll (docs/log/44 §7.2) — the immediate triggers (tab return, window focus,
  *  pane activation) are what make the probe feel live. */
 export const EXTERNAL_PROBE_INTERVAL_MS = 12_000;
 

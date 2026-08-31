@@ -1,5 +1,5 @@
 // WsStartingDialog — a "workspace is starting" progress dialog shown while the
-// workspace is coming up (docs/35 §35.9-9). It exists because a native rootfs
+// workspace is coming up (docs/log/35 §35.9-9). It exists because a native rootfs
 // FIRST start runs the entrypoint boot-install (pinned agent CLIs, minutes) whose
 // output only ever went to agent.log — so the operator saw a long silent wait and
 // could wrongly conclude nothing was happening / the CLIs were baked in. The CP
@@ -43,7 +43,7 @@ export function phaseKey(phase: string): MsgKey {
   if (p.startsWith("home: creating")) return "wsstart.home_creating";
   if (p.startsWith("home: attaching") || p.startsWith("home: mounting")) return "wsstart.home_attaching";
   // Not a phase of a start that is progressing — a start that is NOT going to finish.
-  // The CP sets this when ECS says it cannot place the task (docs/70 §70.14.6), which
+  // The CP sets this when ECS says it cannot place the task (docs/log/70 §70.14.6), which
   // has no timeout: it stays `starting` until somebody changes something. The raw ECS
   // sentence printed below the headline is the useful half — it names the constraint.
   if (p.startsWith("blocked:")) return "wsstart.blocked";

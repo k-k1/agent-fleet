@@ -1,1 +1,0 @@
-> **このドキュメントは docs/dev/ へ再編されました（2026-07）。** [dev/01 アーキテクチャ](../dev/01-architecture.md)（全体構成・認証2層・主要フロー）、[dev/06 データモデル](../dev/06-data-model.md)、[dev/07 セキュリティ](../dev/07-security.md)、[dev/08 §8.5 Claude 認証](../dev/08-integrations.md) に移設。正はコードと dev/。

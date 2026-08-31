@@ -1,8 +1,8 @@
 package main
 
-// エージェントメモリの版管理（docs/39 / ADR 0022）— 自動 snapshot の契機。
+// エージェントメモリの版管理（docs/log/39 / ADR 0022）— 自動 snapshot の契機。
 //
-// docs/39 は契機を「claude 全セッションの idle 遷移 + debounce」と書いているが、その遷移は
+// docs/log/39 は契機を「claude 全セッションの idle 遷移 + debounce」と書いているが、その遷移は
 // `workspace-agent session-status` という**フックの別プロセス**で観測される（session_status.go）
 // ため、常駐プロセス側に debounce タイマーを置けない。マーカーファイルで渡す手もあるが、
 // フックの取りこぼしが即「snapshot が積まれない」に直結する。そこで同じ意味論を
@@ -15,7 +15,7 @@ package main
 //	なら snapshot する。
 //
 // 走査は projects/*/memory に glob で限定するので、同じマウントにある 883MB の transcript は
-// 一切 stat しない。ポーリングなのでフックの取りこぼしで履歴が欠けることがなく、docs/39 の
+// 一切 stat しない。ポーリングなのでフックの取りこぼしで履歴が欠けることがなく、docs/log/39 の
 // 「15 分 tick の保険」も兼ねる。
 //
 // busy による先送りには上限（MaxDefer・既定 30 分）を置く。false-idle 対策で分かっている
@@ -48,7 +48,7 @@ func memoryAutoLocked() bool {
 	return v == "0" || strings.EqualFold(v, "off") || strings.EqualFold(v, "false")
 }
 
-// memoryPrefs は Console の UI トグルで切り替わる設定（docs/39 決着 #1「全体 OFF は
+// memoryPrefs は Console の UI トグルで切り替わる設定（docs/log/39 決着 #1「全体 OFF は
 // UI トグル（P2）」）。repo と同じマウントに置くので、recreate / clean-home を生き残る。
 type memoryPrefs struct {
 	Auto *bool `json:"auto,omitempty"` // nil = 未設定（= 既定 ON）
@@ -78,7 +78,7 @@ func memorySetAuto(on bool) error {
 	return os.WriteFile(memoryPrefsPath(), b, 0o600)
 }
 
-// memoryAutoEnabled は自動 snapshot の既定 ON（docs/39 決着 #1）。環境変数で強制 OFF に
+// memoryAutoEnabled は自動 snapshot の既定 ON（docs/log/39 決着 #1）。環境変数で強制 OFF に
 // できるほか、Console のトグルでも止められる。毎 tick 読み直すので、トグルは即座に効く。
 func memoryAutoEnabled() bool {
 	if memoryAutoLocked() {

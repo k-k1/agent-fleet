@@ -12,13 +12,13 @@ import (
 	"time"
 	// Embed the IANA tz database so cron evaluation resolves zones (and DST) even on
 	// a minimal image with no /usr/share/zoneinfo. Without this, scheduleLocation
-	// would silently degrade every non-UTC schedule to UTC (docs/38 TZ/DST). The
+	// would silently degrade every non-UTC schedule to UTC (docs/log/38 TZ/DST). The
 	// embedded copy is only consulted when the OS database is absent, so it is a
 	// safe ~450KB fallback that never overrides a present system zoneinfo.
 	_ "time/tzdata"
 )
 
-// Scheduled execution (docs/38 + ADR0021). A single CP-resident goroutine — the
+// Scheduled execution (docs/log/38 + ADR0021). A single CP-resident goroutine — the
 // counterpart to the reaper (reaper.go) — watches the wall clock and drives due
 // schedules. It exists on the CP, not in the workspace, because the CP is the only
 // thing alive while a workspace is stopped, and only the CP can wake it.
@@ -56,7 +56,7 @@ func (logFirer) fire(_ context.Context, sch Schedule, slot time.Time) (string, s
 	return "fired_noop", "", nil
 }
 
-// scheduleStore is the narrow store view the scheduler needs (docs/23 narrow view).
+// scheduleStore is the narrow store view the scheduler needs (docs/log/23 narrow view).
 type scheduleStore interface {
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
@@ -66,7 +66,7 @@ type scheduleStore interface {
 	InsertNotification(ctx context.Context, n Notification) error
 }
 
-// scheduleRunKeep bounds the per-schedule run history (docs/38 P3 get_schedule_runs).
+// scheduleRunKeep bounds the per-schedule run history (docs/log/38 P3 get_schedule_runs).
 const scheduleRunKeep = 50
 
 // statusMembershipInactive is the outcome the firer reports when the schedule's owner
@@ -245,7 +245,7 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 		log.Printf("scheduler: WARNING record fire %s failed — ledger did not advance; "+
 			"next tick may re-fire this slot (possible duplicate prompt delivery): %v", sch.ID, err)
 	}
-	// Append to the run history (docs/38 P3). Best-effort: a failed history write must
+	// Append to the run history (docs/log/38 P3). Best-effort: a failed history write must
 	// not affect the ledger advance above. Session links the run to what it drove; trigger
 	// records whether this was a manual run-now (flag set on the row) or an automatic fire.
 	trigger := "scheduled"
@@ -259,7 +259,7 @@ func (sc *scheduler) fireOne(ctx context.Context, sch Schedule, now time.Time) {
 	// Unattended failure/skip must not be silent (★3, P4): surface it in the
 	// notification center, which is the WS-independent durable sink (the CP store,
 	// unlike the operator conversation which lives in the possibly-stopped agent).
-	// A successful fire reports itself via the session's report_to (docs/30).
+	// A successful fire reports itself via the session's report_to (docs/log/30).
 	if scheduleNotifyStatus(status) {
 		sc.notifyOutcome(ctx, sch, slot, status, nowRFC)
 	}
@@ -425,7 +425,7 @@ func parseOnce(spec string) (time.Time, error) {
 	return t, nil
 }
 
-// minIntervalSecs is the frequency floor (docs/38 頻度下限): sub-minute schedules are
+// minIntervalSecs is the frequency floor (docs/log/38 頻度下限): sub-minute schedules are
 // rejected so a runaway interval cannot hammer the fleet. The scheduler ticks per
 // minute anyway, so anything below this is meaningless.
 const minIntervalSecs = 60

@@ -1,4 +1,4 @@
-// WorkingSetBar — the rail-top 作業グループ switcher (docs/52 + ADR 0036).
+// WorkingSetBar — the rail-top 作業グループ switcher (docs/log/52 + ADR 0036).
 // Pinned above .app-rail-scroll (outside it, so it stays visible however far the
 // rail scrolls — that visibility is the "why did my session disappear" guard)
 // and rendered for the stopped rail too. The button shows the active group name
@@ -103,7 +103,7 @@ export const WorkingSetBar = memo(function WorkingSetBar() {
 
 // Manage modal: create / rename (inline, commit on blur or Enter) / delete.
 // Deleting removes only the group definition — members are never touched
-// (docs/52 §3), which is why delete needs just a light confirm.
+// (docs/log/52 §3), which is why delete needs just a light confirm.
 function WorkingSetManageModal({ onClose }: { onClose: () => void }) {
   const tr = useT();
   const settings = useSettings();

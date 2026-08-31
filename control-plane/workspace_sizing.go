@@ -1,5 +1,5 @@
 // workspace_sizing.go — what the three size axes (memory / CPU / disk) MEAN on the
-// runtime this deployment actually runs (ADR 0045 決定 21, docs/64 §64.27).
+// runtime this deployment actually runs (ADR 0045 決定 21, docs/log/64 §64.27).
 //
 // The STORED shape does not change: three independent numbers, runtime-neutral
 // (ADR 0044 決定 1). What changes is that the runtime now SAYS what a stored value
@@ -50,7 +50,7 @@ type workspaceSizing struct {
 	// because a Console built before classes existed reads it, and because the common
 	// deployment has exactly one class — SlotClasses then holds the same rungs once.
 	Slots []workspaceSlot `json:"slots,omitempty"`
-	// SlotClasses are the machine classes this deployment offers (docs/70 §70.4).
+	// SlotClasses are the machine classes this deployment offers (docs/log/70 §70.4).
 	// Absent when the deployment declared a single unnamed ladder, which is what every
 	// existing AF_ECS_EC2_SLOT_TYPES value parses to — so a one-class deployment shows
 	// no picker rather than a picker with one entry.
@@ -65,7 +65,7 @@ type workspaceSizing struct {
 //
 // Label is the operator's words, not a generated one. The Console shows THIS, and
 // `m7g.xlarge` only as the "you land on" detail — a tenant admin is choosing
-// "省コスト（Arm）", not an EC2 instance family (docs/70 §70.10).
+// "省コスト（Arm）", not an EC2 instance family (docs/log/70 §70.10).
 type workspaceSlotClass struct {
 	ID    string          `json:"id"`
 	Label string          `json:"label"`
@@ -163,7 +163,7 @@ func (f *ecsEC2Factory) SizingProfile() workspaceSizing {
 	}
 	// A single unnamed ladder is reported the way it always was — no class list, so
 	// the Console shows the memory chips and no picker. Offering a picker with one
-	// entry would be a new question with only one possible answer (docs/70 §70.10).
+	// entry would be a new question with only one possible answer (docs/log/70 §70.10).
 	if len(f.pool.classes) > 1 {
 		for _, c := range f.pool.classes {
 			p.SlotClasses = append(p.SlotClasses, workspaceSlotClass{

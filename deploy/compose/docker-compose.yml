@@ -4,7 +4,7 @@
 #   cp deploy/compose/.env.example deploy/compose/.env   # then fill it in
 #   docker compose -f deploy/compose/docker-compose.yml up -d --build
 #
-# The three DooD constraints (docs/history/p3-10-packaging.md §20.3), encoded here:
+# The three DooD constraints (docs/log/p3-10-packaging.md §20.3), encoded here:
 #   (A) network_mode: host   — the 127.0.0.1:<port> publishes the CP issues are
 #       executed by the host daemon, so the CP must share the host loopback to
 #       reach the agents.

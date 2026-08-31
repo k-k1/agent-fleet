@@ -1,5 +1,5 @@
 // The wire contract between the MCP servers tab (McpTab.tsx) and the agent's
-// registry REST (workspace/agent/mcp_servers.go, docs/48 + ADR0031). Kept out of the
+// registry REST (workspace/agent/mcp_servers.go, docs/log/48 + ADR0031). Kept out of the
 // component so the rules that are easy to get subtly wrong — masked-secret round-trip,
 // "the transport decides which half is sent", the CLI-narrowest name charset — are
 // pinned by unit tests instead of only by a running browser.
@@ -35,7 +35,7 @@ export interface McpServer {
   timeoutMs?: number;
   // userSecret marks a TENANT-distributed definition that arrives with header NAMES but
   // no values: the tenant describes the endpoint, the member supplies their own
-  // credential (docs/48 §5.2). Such a row is the one tenant row whose content a member
+  // credential (docs/log/48 §5.2). Such a row is the one tenant row whose content a member
   // may write — through PUT /mcp-servers/{id}/secrets, not the normal edit path.
   userSecret?: boolean;
   // Derived server-side (the Console must not recompute them): may this member edit
@@ -166,7 +166,7 @@ export const formValid = (f: Form): boolean =>
   NAME_RE.test(f.name.trim()) &&
   (f.transport === "stdio" ? f.command.trim() !== "" : /^https?:\/\/.+/.test(f.url.trim()));
 
-// --- tenant distribution (docs/48 P4, AdminTab) -----------------------------------
+// --- tenant distribution (docs/log/48 P4, AdminTab) -----------------------------------
 //
 // A tenant-distributed definition is a STRICT SUBSET of the member's own: remote only,
 // with no command / args / env. That is ADR0031 決定 2 — a distributed stdio server is an
@@ -261,7 +261,7 @@ export const tenantFormValid = (f: TenantForm): boolean =>
 
 // NOTE: this file used to export a codexUnsupported() helper, on the premise that
 // codex could carry nothing but a bearer token on a remote MCP server. That premise
-// was measured false on codex-cli 0.145.0 (docs/48 §7): `http_headers` and
+// was measured false on codex-cli 0.145.0 (docs/log/48 §7): `http_headers` and
 // `env_http_headers` both round-trip through the config AND arrive on the wire. The
 // helper and its "not supported on codex" warning are gone rather than left showing a
 // warning that is not true.

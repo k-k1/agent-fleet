@@ -1,5 +1,5 @@
 // workspace_lifecycle.go — ワークスペースレコードのライフサイクルとワークスペース単位の環境変数導出。
-// manager.go からの機械的分割（docs/23 P2-W2）。
+// manager.go からの機械的分割（docs/log/23 P2-W2）。
 package main
 
 import (
@@ -240,7 +240,7 @@ func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (Runt
 
 // armPreviewForStart mints the preview slug for the container start that is about to
 // happen and returns a runtime whose env names the URLs it will answer on
-// (docs/81 §4 + §8). nil = nothing to do (previews off for this deployment) or the
+// (docs/log/81 §4 + §8). nil = nothing to do (previews off for this deployment) or the
 // slug could not be minted — the caller then starts with the runtime it already had.
 //
 // ★ なぜ runtime を作り直すのか: コンテナ env は起動の瞬間に確定し、buildResolved が
@@ -272,7 +272,7 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEn
 //
 //   - 既定は毎回引き直す（要件そのもの）。前回の URL はこの瞬間に死ぬ。
 //   - PreviewFixedSlug が ON の Workspace だけは、設定に予約した slug を使い回す
-//     （docs/81 §4.1）。外部 IdP の redirect URI 登録が前方一致もワイルドカードも
+//     （docs/log/81 §4.1）。外部 IdP の redirect URI 登録が前方一致もワイルドカードも
 //     受け付けないため、これが無いと NextAuth / Auth.js の構成が成立しない。
 //   - ★ 公開モードは起動のたびに必ず OFF へ戻す（fail-closed・決定 12）。この機能の
 //     事故は「公開のままにしていたのを忘れる」以外にほぼ無い。
@@ -332,7 +332,7 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 	if days := parseLimits(t.Limits).TerminalHistoryRetentionDays; days > 0 {
 		env = append(env, "AF_TERMINAL_HISTORY_RETENTION_DAYS="+strconv.Itoa(days))
 	}
-	// プレビュー用サブドメイン（docs/81 §8）。★ これは飾りではない: URL は起動ごとに
+	// プレビュー用サブドメイン（docs/log/81 §8）。★ これは飾りではない: URL は起動ごとに
 	// 変わるので、自分の公開 URL を env から知る作り（Next.js の NEXTAUTH_URL /
 	// AUTH_URL / metadataBase、Spring の app.base-url）に、正しい値を渡せる場所が
 	// ここしか無い。無いと「URL は出たがアプリが自分の場所を間違える」になる。
@@ -368,21 +368,21 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 		env = append(env,
 			"AF_CP_BASE_URL="+m.publicBaseURL,
 			"AF_MEMO_TOKEN="+mintMemoToken(memoSignKey(m.tokenSignMaster()), ws.MembershipID),
-			// Schedule bridge (docs/38 P3): separate per-membership token so the
+			// Schedule bridge (docs/log/38 P3): separate per-membership token so the
 			// operator MCP can drive /internal/schedules over the same hairpin. A
 			// distinct credential from the memo token — a leak is scoped to schedules.
 			"AF_SCHEDULE_TOKEN="+mintScheduleToken(scheduleSignKey(m.tokenSignMaster()), ws.MembershipID),
-			// MCP registry bridge (docs/48 P4): the agent polls /internal/mcp-servers for
+			// MCP registry bridge (docs/log/48 P4): the agent polls /internal/mcp-servers for
 			// this tenant's distributed MCP definitions. Its own credential, because the
 			// response can carry tenant secrets (a user_secret=0 server's headers) — a leak
 			// must not also grant memo/schedule access, and vice versa.
 			"AF_MCP_TOKEN="+mintMCPToken(mcpSignKey(m.tokenSignMaster()), ws.MembershipID),
-			// Docs bridge (docs/dev/04 §4.9): the agent pulls its role-scoped docs subset
+			// Docs bridge (docs/build/04 §4.9): the agent pulls its role-scoped docs subset
 			// when nothing was bind-mounted — i.e. on ECS, where no host path exists to
 			// mount. Its own credential for the same reason as the others; a leak reads
 			// this member's docs subset and nothing else.
 			"AF_DOCS_TOKEN="+mintDocsToken(docsSignKey(m.tokenSignMaster()), ws.MembershipID),
-			// Git OAuth refresh bridge (docs/71 §71.8): the agent posts its Bitbucket
+			// Git OAuth refresh bridge (docs/log/71 §71.8): the agent posts its Bitbucket
 			// refresh token here so the CP can add the TENANT's client secret, which
 			// therefore never reaches the container. Its own credential for the same
 			// reason as the others; a leak refreshes this member's git token and
@@ -448,7 +448,7 @@ func (m *manager) resolveWorkspaceSize(ctx context.Context, ws Workspace) (memBy
 }
 
 // resolveSlotClass returns the machine class ws's NEXT container start lands on, and
-// a note when the stored answer could not be honoured (docs/70 §70.4.3).
+// a note when the stored answer could not be honoured (docs/log/70 §70.4.3).
 //
 // The chain is user → tenant default → deployment default, and each candidate must be
 // both DECLARED by the deployment and ALLOWED by the tenant. "" is returned on every
@@ -526,7 +526,7 @@ func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws Workspace) in
 //
 // Only reachable from an explicit administrator action. In particular it does NOT run on
 // offboarding: removeMembership is a logical delete that keeps the home on purpose
-// (docs/61 §61.10.6), and the automatic sweep hibernates rather than destroys.
+// (docs/log/61 §61.10.6), and the automatic sweep hibernates rather than destroys.
 //
 // ⚠️ This cannot honour the deletion locks of ADR 0028. They live inside the home
 // (~/.config/agent-fleet/), which is unreadable while the workspace is stopped — a

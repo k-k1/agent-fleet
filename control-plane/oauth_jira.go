@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Jira OAuth 2.0 (3LO) — docs/80 §80.17.
+// Jira OAuth 2.0 (3LO) — docs/log/80 §80.17.
 //
 // Structurally this is the Bitbucket code grant again (oauth_bitbucket.go): the CP owns
 // the public callback, mints the CSRF state, exchanges the code, and hands the tokens to
@@ -33,7 +33,7 @@ import (
 const (
 	jiraAuthorizeURL = "https://auth.atlassian.com/authorize"
 	// jiraScopes: read for the rail, write for the "comment the work back" action
-	// (docs/80 §80.10 — the user asked for it to be included), offline_access for the
+	// (docs/log/80 §80.10 — the user asked for it to be included), offline_access for the
 	// refresh token. ⚠️ Consent shows every scope, so a deployment that never wants af
 	// to write would need a second app; that trade was accepted deliberately rather than
 	// splitting the connection in two.

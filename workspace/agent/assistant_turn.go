@@ -1,6 +1,6 @@
 package main
 
-// スケジュール発のアシスタント発火（docs/38 session_mode=assistant）の受け口。
+// スケジュール発のアシスタント発火（docs/log/38 session_mode=assistant）の受け口。
 //
 // CP スケジューラが発火時に POST /assistant-turns {conv, prompt} を叩き、指定会話
 // （UUID または "a…" slug）にプロンプトを user ターンとして投入して 1 ターン走らせる。

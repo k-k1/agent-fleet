@@ -2,7 +2,7 @@
 // (lib/keys/registry.ts) and the store (lib/settings.ts `keybindings`). Everything that
 // decides "what chord fires this action" reads through here, so a rebind takes effect for
 // the dispatcher, which-key, palette, cheat-sheet and button tooltips at once. See
-// docs/29 + ADR-0017.
+// docs/log/29 + ADR-0017.
 //
 // Two kinds of rebindable action share one override map (Settings.keybindings, id → chord):
 //   - registry commands that carry a direct accelerator (`keys`) — overridden via

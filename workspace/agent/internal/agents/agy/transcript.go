@@ -125,7 +125,7 @@ func parseTranscript(f *os.File) []transcript.Turn {
 	// has to be strictly increasing — the Console drops polled turns whose idx is not
 	// greater than the newest one it holds, and clears a prompt's 反映待ち echo only on
 	// a matching user turn with idx > the idx at send time. Leaving every agy turn at
-	// the zero value stalled both (docs/32).
+	// the zero value stalled both (docs/log/32).
 	line := -1
 	for sc.Scan() {
 		line++

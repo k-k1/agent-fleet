@@ -1,4 +1,4 @@
-# Real publish (docs/35 §35.7.4-5; runbook is §35.8.2): builds all artifacts and
+# Real publish (docs/log/35 §35.7.4-5; runbook is §35.8.2): builds all artifacts and
 # publishes them to the public dist repo (k-k1/agent-fleet-dist) Releases.
 # workflow_dispatch-only path. Implements §35.4.2 "release builds happen on the
 # private side (Actions workflow_dispatch)".
@@ -24,18 +24,18 @@ on:
         description: 'Release version (semver, e.g. 0.1.0)'
         required: true
       workspace_arm64:
-        description: 'Also build the workspace image for arm64 (needed by ecs-ec2 Graviton slots — docs/70)'
+        description: 'Also build the workspace image for arm64 (needed by ecs-ec2 Graviton slots — docs/log/70)'
         type: boolean
         default: false
       # ON by default, unlike workspace_arm64 above, and the asymmetry is the point.
-      # The CP cross-compiles (docs/72 §72.3), so the arm64 half costs a MEASURED 71
+      # The CP cross-compiles (docs/log/72 §72.3), so the arm64 half costs a MEASURED 71
       # seconds — against a 90 minute timeout. The workspace image cannot cross-compile
       # and pays 593. At 71 seconds there is no case for making an operator ask: leaving
       # it off would mean CpArch=arm64 only works on a specially-baked image, which is
       # ADR 0044 決定 3 (a feature shipped off is a feature that does not exist).
       # ⚠️ Turn it OFF only to reproduce a pre-0.10.1 single-architecture release.
       control_plane_arm64:
-        description: 'Build the control-plane image for arm64 as well as amd64, so a deployment can set CpArch=arm64 (docs/72). On by default: it costs ~71s because the CP cross-compiles.'
+        description: 'Build the control-plane image for arm64 as well as amd64, so a deployment can set CpArch=arm64 (docs/log/72). On by default: it costs ~71s because the CP cross-compiles.'
         type: boolean
         default: true
 
@@ -54,7 +54,7 @@ jobs:
       - name: preflight (secret + version format)
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "::error::secret DIST_PUBLISH_TOKEN is not set. First follow docs/35 §35.8.2 (create the PAT, then gh secret set DIST_PUBLISH_TOKEN)."
+            echo "::error::secret DIST_PUBLISH_TOKEN is not set. First follow docs/log/35 §35.8.2 (create the PAT, then gh secret set DIST_PUBLISH_TOKEN)."
             exit 1
           fi
           echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$' \
@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # arm64 only. The workspace image is the one artifact that has to exist for a
-      # second CPU architecture (an ecs-ec2 slot can be Graviton — docs/70), and the
+      # second CPU architecture (an ecs-ec2 slot can be Graviton — docs/log/70), and the
       # Dockerfile has been arch-aware from the start; what has never happened is
       # anyone BUILDING it that way.
       #
@@ -73,9 +73,9 @@ jobs:
       # not fit, the fix is not a longer timeout: it is to split this job in two
       # (`ubuntu-latest` + `ubuntu-24.04-arm`, each pushing by digest) and join them
       # with `docker buildx imagetools create`. Native arm64 runners are free for
-      # public repositories, which this one now is (docs/70 §70.9).
+      # public repositories, which this one now is (docs/log/70 §70.9).
       #
-      # The control-plane image is the second one that can want arm64 (docs/72) —
+      # The control-plane image is the second one that can want arm64 (docs/log/72) —
       # there the reason is the CP's own Fargate service, not a slot. It needs QEMU
       # too, but only for the runtime stage's apt: its console and Go stages are
       # pinned to $BUILDPLATFORM and cross-compile, so the emulator never runs a
@@ -122,7 +122,7 @@ jobs:
           [ "$got" = "amd64,arm64" ] || { echo "::error::$IMG is not a two-architecture index (got '${got:-single}')"; exit 1; }
 
       # Same question for the CP image, and it has a sharper failure mode: the ECS
-      # task definition names one image tag and one RuntimePlatform (docs/72). If an
+      # task definition names one image tag and one RuntimePlatform (docs/log/72). If an
       # operator sets CpArch=arm64 against a tag that turned out to be amd64-only,
       # the service does not serve a broken page — it cannot place the task at all,
       # and the whole deployment is down until the parameter goes back.
@@ -139,7 +139,7 @@ jobs:
       # Last line before anything becomes public and permanent: expand every
       # artifact (including the layers inside the images tar) and fail if a
       # string this project removed from its history is in any of them
-      # (docs/35 §35.7.5). 0.1.0–0.5.0 shipped one and had to be withdrawn;
+      # (docs/log/35 §35.7.5). 0.1.0–0.5.0 shipped one and had to be withdrawn;
       # nothing gets published again without passing through here.
       - name: forbidden-token scan (blocks publish)
         run: deploy/release/scan-forbidden.sh
@@ -148,7 +148,7 @@ jobs:
       # and the failure is invisible from here — the push succeeds either way.
       # This cannot be a hard failure: on the very first push the package does not
       # exist until we create it, so it is private by definition and the visibility
-      # flip can only happen afterwards (docs/35 §35.8.2). So: warn loudly.
+      # flip can only happen afterwards (docs/log/35 §35.8.2). So: warn loudly.
       - name: check GHCR packages are anonymously pullable
         run: |
           private=0
@@ -168,7 +168,7 @@ jobs:
               echo "\`docker compose pull\` will fail for everyone until this is fixed:"
               echo "1. open the package settings (Danger Zone → Change visibility → Public)"
               echo "2. enable *Inherit access from repository*"
-              echo "3. re-run the check in docs/35 §35.8.2"
+              echo "3. re-run the check in docs/log/35 §35.8.2"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 

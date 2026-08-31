@@ -1,6 +1,6 @@
 package bridge
 
-// P2b (docs/37): button-drive a session's pending AskUserQuestion / permission /
+// P2b (docs/log/37): button-drive a session's pending AskUserQuestion / permission /
 // plan approval from Discord Message Components, so the fleet can be answered
 // without the Console (composes with P2a reply-inject and the full-text bridge).
 // This file is the SEND half — turning a pending payload into action-row buttons

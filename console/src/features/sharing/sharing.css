@@ -152,7 +152,7 @@
   background: var(--leftpane-bg);
 }
 
-/* メンバーへの引き継ぎ（docs/77 / ADR 0057）。 */
+/* メンバーへの引き継ぎ（docs/log/77 / ADR 0057）。 */
 .handoff-blocked {
   color: var(--danger, #d33);
 }

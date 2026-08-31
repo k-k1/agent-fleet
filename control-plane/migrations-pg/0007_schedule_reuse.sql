@@ -1,4 +1,4 @@
--- Scheduled execution P6 (docs/38 + ADR0021), Postgres mirror of migrations/0024_schedule_reuse.sql.
+-- Scheduled execution P6 (docs/log/38 + ADR0021), Postgres mirror of migrations/0024_schedule_reuse.sql.
 -- See that file for the column semantics. DDL is dialect-neutral here (TEXT/INTEGER),
 -- so the two stay identical apart from living in the pg migration series.
 -- NOTE the migrator splits on the semicolon, so comments must not contain one.

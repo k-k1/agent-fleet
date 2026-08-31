@@ -6,7 +6,7 @@ import (
 )
 
 // 「なぜ止まらないか」の語彙。ここが reaper の判定とズレると、調べるための画面が
-// 別の答えを出す（docs/75 P4）— それなら画面が無い方がまし、という性質の機能なので、
+// 別の答えを出す（docs/log/75 P4）— それなら画面が無い方がまし、という性質の機能なので、
 // 材料と優先順位を固定しておく。
 func TestHoldersOf(t *testing.T) {
 	now := time.Now()
@@ -21,7 +21,7 @@ func TestHoldersOf(t *testing.T) {
 	})
 
 	t.Run("人待ちは止める理由にならない", func(t *testing.T) {
-		// docs/75 の本題そのもの: 質問が出ていても Workspace は止まる。
+		// docs/log/75 の本題そのもの: 質問が出ていても Workspace は止まる。
 		for _, st := range []string{stateQuestion, statePlan, statePermission, stateBlocked, stateAuth, stateSpendLimit, stateLimited} {
 			if got := holdersOf([]sessionWire{{Alive: true, Name: "s1", State: st}}, false, now, 0); len(got) != 0 {
 				t.Errorf("state %q が止める理由になっている: %+v", st, got)
@@ -52,7 +52,7 @@ func TestHoldersOf(t *testing.T) {
 
 	// ★ reaper が busy と見る状態は working だけではない。compacting（codex の文脈圧縮）
 	// を holders が落とすと、reaper は止めないのに画面は StopAt を出す＝「もうすぐ
-	// 止まります」と言いながら止まらない、という docs/75 決定 11 違反になる。
+	// 止まります」と言いながら止まらない、という docs/log/75 決定 11 違反になる。
 	t.Run("reaper が busy と見る状態は全部挙げる", func(t *testing.T) {
 		for _, st := range []string{stateWorking, stateCompacting} {
 			s := sessionWire{Alive: true, Name: "s1", State: st}
@@ -80,7 +80,7 @@ func TestHoldersOf(t *testing.T) {
 		}
 	})
 
-	// ★ セッションが 1 つも無い Workspace でも、取り込み中なら止まらない（docs/78）。
+	// ★ セッションが 1 つも無い Workspace でも、取り込み中なら止まらない（docs/log/78）。
 	// reaper 側の busy と対で入れてある — 片方だけだと「止まらないのに理由が空」になる。
 	t.Run("取り込み中はセッションが無くても理由になる", func(t *testing.T) {
 		got := holdersOf(nil, false, now, 1)

@@ -1,4 +1,4 @@
--- Work item inbox (docs/80 / ADR 0061), Postgres mirror of migrations/0051_work_item.sql.
+-- Work item inbox (docs/log/80 / ADR 0061), Postgres mirror of migrations/0051_work_item.sql.
 -- See that file for the column semantics. DDL is dialect-neutral here (TEXT/INTEGER),
 -- so the two stay identical apart from living in the pg migration series.
 -- NOTE the migrator splits on the semicolon, so comments must not contain one.

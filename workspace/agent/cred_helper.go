@@ -2,7 +2,7 @@ package main
 
 // git credential-helper glue and startup seeding/migration over the encrypted
 // store (internal/secrets). The store itself moved to internal/secrets in
-// docs/23 残① Wave B; the subcommand entry (`workspace-agent cred`), env-driven
+// docs/log/23 残① Wave B; the subcommand entry (`workspace-agent cred`), env-driven
 // seeding and legacy-file migration stay in package main.
 
 import (
@@ -128,7 +128,7 @@ func seedInternalGit() {
 }
 
 // seedGitOAuthBridge copies the CP-injected bridge coordinates into the store so the
-// `workspace-agent cred` PROCESS can reach the CP's refresh endpoint (docs/71 §71.8).
+// `workspace-agent cred` PROCESS can reach the CP's refresh endpoint (docs/log/71 §71.8).
 //
 // ★ Env is read here, at agent startup, and never at the point of use. git spawns the
 // credential helper as its own binary, frequently from a shell under a tmux server, and

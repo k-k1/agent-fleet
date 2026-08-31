@@ -8,7 +8,7 @@ import (
 )
 
 // session.ContextUsage（claude セッションの現在のコンテキスト充填率、ワイヤ型）は
-// internal/session（docs/23 残① Wave A）。ここには jsonl の解析と mtime
+// internal/session（docs/log/23 残① Wave A）。ここには jsonl の解析と mtime
 // キャッシュだけを置く（旧 package main session_context.go — 同 Wave F で移設）。
 
 // ctxCache memoizes the parsed context per sid, keyed by the transcript's mtime, so

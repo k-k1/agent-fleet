@@ -206,7 +206,7 @@ func TestContractStoreSchema(t *testing.T) {
 	}
 }
 
-// TestContractAppServer pins the managed driver's protocol (docs/27 §12.2 measured it
+// TestContractAppServer pins the managed driver's protocol (docs/log/27 §12.2 measured it
 // against 1.17.18; the fleet now runs whatever @latest is). These fail loudly at runtime
 // rather than silently, but managed is the strategic path, so pin them anyway.
 func TestContractAppServer(t *testing.T) {

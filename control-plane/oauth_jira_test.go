@@ -1,4 +1,4 @@
-// oauth_jira_test.go — Jira 3LO（docs/80 §80.17）。実 Atlassian は CI にも
+// oauth_jira_test.go — Jira 3LO（docs/log/80 §80.17）。実 Atlassian は CI にも
 // この環境にも無いので、固定するのは「af が組み立てるもの」と「秘密の置き場所」。
 package main
 
@@ -17,7 +17,7 @@ import (
 //   - audience=api.atlassian.com（無いと 3LO のトークンが API 用にならない）
 //   - offline_access（無いと refresh token が返らず 1 時間で死ぬ）
 //   - prompt=consent（無いと再認可で refresh token が返らない）
-//   - write:jira-work（利用者の選択でコメント投稿まで含める・docs/80 §80.10）
+//   - write:jira-work（利用者の選択でコメント投稿まで含める・docs/log/80 §80.10）
 func TestJiraAuthorizeURLShape(t *testing.T) {
 	au := jiraAuthorizeURL +
 		"?audience=api.atlassian.com" +

@@ -1,4 +1,4 @@
-// ReaderView — 朗読ビュー（docs/24）。ファイル本文を「読む」ためのビュー。本文を段落・文に
+// ReaderView — 朗読ビュー（docs/log/24）。ファイル本文を「読む」ためのビュー。本文を段落・文に
 // 分割して読みやすい版組で表示し、冒頭から順次読み上げ（TTS）しながら、いま読んでいる文を
 // カラオケ・ハイライト＋自動スクロールで追従する。縦書き/横書きを切り替えられる。
 //
@@ -32,7 +32,7 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
   const tr = useT();
   const settings = useSettings();
   // なろう形式ルビ・縦書きは日本語専用機能なので UI ロケールが ja のときだけ有効化する
-  // （非 ja ではルビ解釈を無効化し縦書きトグルも隠す・docs/28 §2.4）。
+  // （非 ja ではルビ解釈を無効化し縦書きトグルも隠す・docs/log/28 §2.4）。
   const ja = useLocale() === "ja";
   const [data, setData] = useState<FileData | null>(null);
   const [err, setErr] = useState("");

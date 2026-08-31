@@ -41,16 +41,28 @@ func docsSrcDir() string {
 }
 
 // docsRolePrefixes maps a membership role to the docs subtrees it may see, as paths
-// relative to docs/. A nil result means "the whole tree" (super_admin). Least
-// privilege by default: an unknown role is treated as a plain member.
+// relative to docs/. Least privilege by default: an unknown role is treated as a
+// plain member.
+//
+// Every role is an explicit allowlist — there is no "the whole tree" case, not even
+// for super_admin. That is the point: docs/ is cut by reader (docs/CONVENTIONS.md),
+// and what a container receives should be the shelves that answer that reader's
+// questions, nothing else. Shipping the rest is not a leak (the repository is public)
+// but it is noise, and noise is expensive here: the agent in the container greps this
+// tree to answer questions about its own environment, and 33k lines of frozen work
+// journals used to drown the answers. So decisions/, log/ and the handoff notes go to
+// nobody, and a shelf added later is invisible until someone lists it here.
+//
+// The listing is deliberately literal rather than clever. It is read as "who sees
+// what" during security review, and a loop over a table would hide the answer.
 func docsRolePrefixes(role string) []string {
 	switch role {
 	case "super_admin":
-		return nil // everything, incl. dev/decisions/history/talk
+		return []string{"use", "ref", "admin", "operate", "build"}
 	case "tenant_admin":
-		return []string{"guide", "dev"} // member + admin guides, plus public design docs
+		return []string{"use", "ref", "admin"}
 	default: // "member" and any unknown role
-		return []string{filepath.Join("guide", "member"), "dev"}
+		return []string{"use", "ref"}
 	}
 }
 
@@ -60,11 +72,7 @@ func docsRolePrefixes(role string) []string {
 // "what may this role see" has exactly one implementation.
 func roleDocsRoots(src, role string) []struct{ Dir, Rel string } {
 	var out []struct{ Dir, Rel string }
-	prefixes := docsRolePrefixes(role)
-	if prefixes == nil { // super_admin: the whole tree
-		return append(out, struct{ Dir, Rel string }{src, ""})
-	}
-	for _, p := range prefixes {
+	for _, p := range docsRolePrefixes(role) {
 		s := filepath.Join(src, p)
 		if !isDirPath(s) {
 			continue // source subtree absent → skip (best-effort)
@@ -75,7 +83,7 @@ func roleDocsRoots(src, role string) []struct{ Dir, Rel string } {
 }
 
 // writeRoleDocsTarGz streams the role-permitted subset as a gzipped tar whose paths are
-// relative to the docs root ("guide/member/README.md", …). It is the PULL half of the
+// relative to the docs root ("use/README.md", …). It is the PULL half of the
 // same provisioning decision stageWorkspaceDocs implements for docker/native: on ECS
 // there is no host path to bind-mount into a Fargate/EC2 task, so the container asks
 // for the identical subset over the internal bridge instead (docs_bridge.go).

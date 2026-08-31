@@ -1,52 +1,68 @@
-# 0024. SVN チェックアウト — プロバイダ無しのフラット作業コピー＋URL/基本認証
+# 0024. SVN checkout — a flat working copy with no provider, using a URL and basic authentication
 
-- 状態: **採用・実装済み**。設計は [docs/41](../41-svn-checkout.md)。
-- 関連: [0003](0003-ssh-to-connections.md)（git 認証＝Connections）/ [0005](0005-envelope-custodian.md)（封筒暗号）/
-  [0010](0010-internal-git-provider.md)（プロバイダ抽象）
+English | [日本語](0024-svn-checkout.ja.md)
 
-## 背景
+- Status: **adopted and implemented**. The design is [docs/41](../log/41-svn-checkout.md).
+- See also: [0003](0003-ssh-to-connections.md) (git auth = Connections) / [0005](0005-envelope-custodian.md) (envelope encryption) /
+  [0010](0010-internal-git-provider.md) (the provider abstraction)
 
-git だけでなく **Subversion のリポジトリでも作業したい**要求。git のような provider（GitHub/Bitbucket）は
-SVN に存在せず、社内 SVN サーバは **URL ＋ 基本認証**で十分。特定の path 以下（trunk / branches/x など）を
-チェックアウトしたい、違う path を複数回チェックアウトしたい、という使い方が中心。
+## Context
 
-## 決定
+A request to work with **Subversion repositories** as well as git. There is no provider for SVN
+the way there is for git (GitHub/Bitbucket), and an in-house SVN server needs no more than **a URL
+plus basic authentication**. The main uses are checking out a particular path (trunk,
+branches/x, …) and checking out several different paths.
 
-**SVN 作業コピーを git と同じ `~/repos/<name>` のフラットな作業コピーとして扱う。** provider 抽象には載せない。
+## Decision
 
-- **フラットモデル**: フォルダ名が id。git の `.git` に対し `.svn` で種別判定。`Repo.Vcs="svn"` で
-  Console が git 専用操作を出し分ける。branch/ahead/behind/worktree は持たない。
-- **URL がサブツリーを表す**: 「特定 path のチェックアウト」＝ URL の一部。「違う path を複数回」＝
-  複数フォルダ。これは git がクローン分離で得る隔離と同じ性質で、**worktree 不在の代替**にもなる。
-- **worktree 無し**: SVN に worktree 相当が無いので、セッションはチェックアウトフォルダ内で**直接起動**。
-  `ensureWorktree` は非 git を拒否し、create_session も svn dir への worktree 指定を明示エラーにする。
-- **認証はストア注入型（git の cred helper は流用不可）**: SVN は git の credential-helper プロトコルを
-  使わない。REST の checkout/update が暗号ストア `secrets.SVN`（URL 最長プレフィックス一致）から creds を
-  引き、`svn --username … --password-from-stdin --non-interactive --no-auth-cache` で渡す。stdin 渡しで
-  パスワードはプロセス一覧に出ず、`--no-auth-cache` で `~/.subversion/auth` に平文を残さない。保存は
-  チェックアウト時の任意 opt-in。
-- **ロックは自前で自己修復**: checkout/update が working-copy ロック（`E155004`）で落ちたら
-  `svn cleanup` を挟んで 1 回リトライ。明示の cleanup 操作も用意（ローカル・認証不要）。
+**Treat an SVN working copy as a flat working copy at `~/repos/<name>`, exactly like git.** It is
+not put on the provider abstraction.
 
-### 捨てた選択肢
+- **The flat model**: the folder name is the id. Where git has `.git`, `.svn` identifies the kind.
+  `Repo.Vcs="svn"` tells the Console which git-only operations to hide. There is no
+  branch/ahead/behind/worktree.
+- **The URL expresses the subtree**: "check out a particular path" is part of the URL, and
+  "several different paths" is several folders. This has the same character as the isolation git
+  gets from separate clones, and it **substitutes for the absent worktree**.
+- **No worktrees**: SVN has no equivalent, so a session **starts directly** inside the checkout
+  folder. `ensureWorktree` refuses non-git, and create_session raises an explicit error if a
+  worktree is specified for an svn directory.
+- **Authentication injects from the store (git's credential helper cannot be reused)**: SVN does
+  not speak git's credential-helper protocol. The REST checkout/update pulls credentials from the
+  encrypted store `secrets.SVN` (longest URL prefix match) and passes them with
+  `svn --username … --password-from-stdin --non-interactive --no-auth-cache`. Passing on stdin
+  keeps the password out of the process list, and `--no-auth-cache` leaves no plaintext in
+  `~/.subversion/auth`. Saving them is an optional opt-in at checkout time.
+- **Locks are self-healed by us**: if a checkout/update fails on a working-copy lock (`E155004`),
+  run `svn cleanup` and retry once. An explicit cleanup operation is also provided (local, no
+  authentication needed).
 
-- **専用 SVN provider/Settings タブ**: URL＋基本認証には過剰。creds はチェックアウト時に任意保存する軽量案を採用。
-- **`~/.subversion/auth` に creds をキャッシュしてエージェント svn も透過認証**: 平文保存になり方針
-  「秘密を平文で置かない」に反する。→ REST 経路のみ注入し、**セッション内のエージェント直 svn は
-  非透過**（下記の限界）とする。
-- **git cred helper の流用**: SVN は git のプロトコルを話さないため不可。
+### Options rejected
 
-## 帰結
+- **A dedicated SVN provider / settings tab**: overkill for a URL plus basic authentication. The
+  lightweight design of optionally saving credentials at checkout time was adopted.
+- **Caching credentials in `~/.subversion/auth` so the agent's own svn authenticates
+  transparently**: that means plaintext storage, which violates the "no plaintext secrets"
+  policy. → Inject only on the REST path, and accept that **direct svn inside a session is not
+  transparent** (see the limit below).
+- **Reusing git's credential helper**: impossible, since SVN does not speak git's protocol.
 
-- 追加は Agent 側 `svn.go`（checkout/update/cleanup/info/creds）＋ `git.go` の一覧/削除分岐＋ルート
-  （agent／CP 許可リスト／`auditActionTarget`）＋ Console（Repo 型・チェックアウトモーダルの Git/SVN 切替・
-  svn 行の update/cleanup・worktree 抑止）。clone/閲覧/セッション起動の git 経路は無改造。
-- **限界（意図）**: セッション内でエージェントが自分で叩く `svn`（update/commit）は透過認証されない。
-  REST 経路（Console の更新ボタン）は creds を注入するが、対話 svn は creds を都度供給する必要がある。
-- **自己署名／未信頼証明書はサーバ単位の opt-in で信頼**: 非対話では既定で失敗するので、「自己署名証明書を
-  信頼」opt-in で `--trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other`（旧
-  `--trust-server-cert` のフルセット版）を付与する。証明書信頼は秘密ではなくサーバ属性なので認証の保存とは
-  独立に扱い、checkout 時に必ず永続化して以後の update でも継続する（認証なしの公開自己署名は username 空の
-  trust-only エントリ）。トレードオフ＝そのサーバの証明書検証は無効化されるため、明示・サーバ単位の opt-in に
-  留める。
-- **限界（環境）**: native(WSL) ランタイムはホストに `svn` が要る（不在時は `svn_missing` で明示エラー）。
+## Consequences
+
+- The addition is `svn.go` on the Agent side (checkout/update/cleanup/info/creds), the listing and
+  deletion branches in `git.go`, the routes (the agent, the CP allowlist, `auditActionTarget`) and
+  the Console (the Repo type, a Git/SVN switch in the checkout modal, update/cleanup on svn rows,
+  suppressing worktrees). The git paths for clone, browsing and starting a session are unmodified.
+- **A deliberate limit**: the `svn` an agent runs itself inside a session (update/commit) does not
+  authenticate transparently. The REST path (the Console's update button) injects credentials, but
+  interactive svn has to be supplied credentials each time.
+- **Self-signed and untrusted certificates are trusted by an opt-in per server**: non-interactive
+  svn fails by default, so a "trust self-signed certificates" opt-in adds
+  `--trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other` (the full-set
+  version of the old `--trust-server-cert`). Certificate trust is a property of the server rather
+  than a secret, so it is handled independently of saving credentials: it is always persisted at
+  checkout time and carries on into later updates (a public self-signed server with no
+  authentication becomes a trust-only entry with an empty username). The trade-off is that
+  certificate verification for that server is disabled, so it stays an explicit, per-server opt-in.
+- **An environmental limit**: the native (WSL) runtime needs `svn` on the host (absent, it is an
+  explicit `svn_missing` error).

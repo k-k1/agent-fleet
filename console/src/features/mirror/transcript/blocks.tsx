@@ -654,7 +654,7 @@ function diffStat(edits: DiffEdit[]) {
 }
 
 // InlineEdits shows an edit's before/after right where the tool trace sits, for views
-// that have no diff pane to open. The shared-session DTO (docs/59 §3) keeps the diff
+// that have no diff pane to open. The shared-session DTO (docs/log/59 §3) keeps the diff
 // BODY (old/new) but drops the file path, so there is no coordinate to open — the
 // change itself is all there is to show, and showing it here is the whole affordance.
 // Reuses the diff pane's dv-* markup (viewer.css is loaded globally) so the two read
@@ -830,7 +830,7 @@ export function QuestionBlock({
   answered?: boolean;
   answer?: string;
   // declined: the tool_result was claude's own decline boilerplate (an Escape out of
-  // the modal — e.g. docs/dev/92 §6's preview free-text bug), not a genuine answer.
+  // the modal — e.g. docs/build/92 §6's preview free-text bug), not a genuine answer.
   // Rendering `answer` as if it were a pick would parse to nothing but still badge
   // "回答済み" — the exact "answered but not recognized" confusion this fixes.
   declined?: boolean;

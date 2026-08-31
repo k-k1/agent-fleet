@@ -1,5 +1,5 @@
 // drawio_stencils.go — `.drawio` ビューアのステンシルを CP がプロキシしてディスクに
-// キャッシュする（docs/65 §65.5.3 / ADR 0046 決定 5）。
+// キャッシュする（docs/log/65 §65.5.3 / ADR 0046 決定 5）。
 //
 // なぜ同梱しないのか: ステンシル全体は 203 ファイル / 40.8 MB（`aws4.xml` だけで
 // 6.2 MB）。1 枚の図が使うのはそのうち 1〜2 セットで、実行時は元からオンデマンド
@@ -17,7 +17,7 @@
 // 親ウィンドウであってサンドボックス iframe ではないため、セッション cookie が付く。
 // フレームに直接取らせる案は実測で否決した —— オリジンを持たないフレームからの要求は
 // cross-site 扱いで SameSite=Lax の cookie が付かず、authGate に 401 で弾かれる
-// （docs/65 §65.11-7 と同じ穴）。詳細は docs/65 §65.5.4。
+// （docs/log/65 §65.11-7 と同じ穴）。詳細は docs/log/65 §65.5.4。
 package main
 
 import (
@@ -163,7 +163,7 @@ func (d *drawioStencils) serve(w http.ResponseWriter, r *http.Request) {
 	body, err := d.fetch(r.Context(), m, name, entry)
 	if err != nil {
 		// 閉域では取れない。**これは異常ではなく想定された劣化**なので、Console 側は
-		// 静かに「枠と色だけ」の絵に落とす（docs/65 §65.5.3）。
+		// 静かに「枠と色だけ」の絵に落とす（docs/log/65 §65.5.3）。
 		log.Printf("drawio stencil %s unavailable: %v", name, err)
 		http.Error(w, "stencil unavailable", http.StatusBadGateway)
 		return

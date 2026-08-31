@@ -1,6 +1,6 @@
 package main
 
-// docs/27 P3: 既存セッションのドライバ排他切替（POST /sessions/{name}/driver）。
+// docs/log/27 P3: 既存セッションのドライバ排他切替（POST /sessions/{name}/driver）。
 // codex の「CLI ルート常設・双方向切替（tui ⇄ managed）」（§2）の実装で、opencode
 // にも同じ形で効く（opencode は排他不要だが、切替の意味論 — 旧ドライバを止めて
 // 新ドライバで同じ会話を再開 — は共通）。

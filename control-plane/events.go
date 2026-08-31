@@ -59,7 +59,7 @@ func registerEventsRoutes(mux *http.ServeMux, cfg config) {
 // CPU percent lose nothing visible. The REST endpoint keeps serving raw values.
 //
 // state はこの tick で workspacePayload が既に引いた State をそのまま渡す
-// （docs/63 §63.9）。ecs-ec2 の State() は DescribeVolumes + DescribeServices の
+// （docs/log/63 §63.9）。ecs-ec2 の State() は DescribeVolumes + DescribeServices の
 // 実 API 呼び出しで、購読者 1 人 × 4 秒ごとに走る——同じ tick の中で 2 度引けば
 // その AWS 呼び出しも 2 倍になる。値は同じなのだから 1 回でよい。
 func statsPayload(ctx context.Context, m *manager, rt Runtime, state string) map[string]any {
@@ -126,7 +126,7 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 		if p, aerr := a.notif.listPayload(ctx, res); aerr == nil {
 			wrote = emit("notifications", p) || wrote
 		}
-		// 作業項目（docs/80）。この payload は DB のキャッシュを読むだけで、
+		// 作業項目（docs/log/80）。この payload は DB のキャッシュを読むだけで、
 		// プロバイダへの取得は refreshAsync が別 goroutine で回す —— tick が
 		// 外部 API の往復を待つと、この購読者の他の stream まで丸ごと止まる。
 		if p, aerr := a.wi.workItemsPayload(ctx, res, state); aerr == nil {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Reproducible P0 probe for docs/53 Chromium Attach View. This is deliberately
+// Reproducible P0 probe for docs/log/53 Chromium Attach View. This is deliberately
 // outside the normal E2E suite: it exercises an externally owned Chromium and
 // two independent CDP clients, not a running Agent Fleet deployment.
 import { chromium } from "@playwright/test";

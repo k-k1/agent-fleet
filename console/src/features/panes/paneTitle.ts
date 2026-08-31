@@ -3,7 +3,7 @@
 // KIND_JA/jaKind moved here from LayoutMap.tsx so both consumers use one map.
 import type { Pane, PaneKind } from "../../layout/types.ts";
 import type { Session } from "../../types/session.ts";
-import { displayName } from "../../lib/sessionview.ts";
+import { displayName, stripLabelTag } from "../../lib/sessionview.ts";
 import { kindLabel } from "../../lib/sessionkind.ts";
 import { t as tI18n } from "../../lib/i18n/index.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
@@ -37,7 +37,7 @@ const basename = (p: string): string => p.split("/").filter(Boolean).pop() || p;
  * label (falls back to it while the shared-sessions list hasn't loaded yet). */
 export function sharedSessionLabel(meta: SharedSession | undefined): string {
   if (!meta) return tI18n("share.shared_sessions");
-  return (meta.title || meta.label || meta.name || tI18n("share.shared_sessions")).replace(/^\[AF\]\s*/, "");
+  return stripLabelTag(meta.title || meta.label || meta.name || tI18n("share.shared_sessions"));
 }
 
 /** Title for a pane: the bound session (name · agent) for terminal/mirror

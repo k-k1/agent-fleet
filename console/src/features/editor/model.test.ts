@@ -212,7 +212,7 @@ describe("file editor save model", () => {
   });
 });
 
-describe("external change observation and follow (docs/44 §7)", () => {
+describe("external change observation and follow (docs/log/44 §7)", () => {
   const remoteOf = (content: string) =>
     createRemoteSnapshot("repos/a.txt", content, revisionOf(content), 1_000);
 
@@ -287,7 +287,7 @@ describe("external change observation and follow (docs/44 §7)", () => {
   });
 });
 
-describe("AI suggestion (docs/44 §4)", () => {
+describe("AI suggestion (docs/log/44 §4)", () => {
   const envelopeFor = (model: ReturnType<typeof initial>, replacement = "head\n") => ({
     kind: "edit_suggestion" as const,
     version: 1 as const,

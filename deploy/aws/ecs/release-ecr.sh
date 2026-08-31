@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agent Fleet — ECR release push (docs/35 §35.7.3-1).
+# Agent Fleet — ECR release push (docs/log/35 §35.7.3-1).
 #
 #   VERSION=0.2.0 deploy/aws/ecs/release-ecr.sh --profile af-sandbox --region ap-northeast-1 \
 #     [--account 123456789012] [--images-tar dist/agent-fleet-images-0.2.0.tar.gz] \
@@ -74,8 +74,8 @@ for pair in "control-plane=af-control-plane" "workspace=af-workspace"; do
   local_name="$LOCAL_REGISTRY/${pair%%=*}:$VERSION"
   ecr_uri="$ECR_HOST/${pair#*=}:$VERSION"
   # ⚠️ This path goes through the LOCAL docker, so it is single-architecture by
-  # construction: a multi-arch build (WS_PLATFORMS / CP_PLATFORMS — docs/70 §70.9,
-  # docs/72) produces a manifest LIST, which buildx pushes straight to a registry and
+  # construction: a multi-arch build (WS_PLATFORMS / CP_PLATFORMS — docs/log/70 §70.9,
+  # docs/log/72) produces a manifest LIST, which buildx pushes straight to a registry and
   # never loads locally. The image is then simply absent here, and `docker tag`'s
   # "No such image" reads like a failed build rather than the wrong tool. Say so.
   if ! docker image inspect "$local_name" >/dev/null 2>&1; then

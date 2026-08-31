@@ -10,7 +10,7 @@
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { kindClass, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
-import { stateInfo } from "../../lib/sessionview.ts";
+import { stateInfo, stripLabelTag } from "../../lib/sessionview.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { openSharedSession } from "./open.ts";
 import type { SharedProjectGroup, SharedWorkingCopy } from "./sharedProject.ts";
@@ -21,11 +21,11 @@ import "./sharing.css";
 
 function SharedSessionRow({ s }: { s: SharedSession }) {
   const tr = useT();
-  // 未処理の引き継ぎ（docs/77）。⚠️ **既読では消さない** —— 「読んだが決めていない」で
+  // 未処理の引き継ぎ（docs/log/77）。⚠️ **既読では消さない** —— 「読んだが決めていない」で
   // 消えると引き継ぎが忘れられる。消えるのは受諾/辞退/失効のときだけ（§77.10）。
   const handoff = useHandoffStore((st) => st.received.some((o) => o.sessionId === s.id));
   const st = stateInfo({ kind: s.kind, alive: s.state === "running", state: s.activity });
-  const sessionName = (s.title || s.label || s.name).replace(/^\[AF\]\s*/, "");
+  const sessionName = stripLabelTag(s.title || s.label || s.name);
   return (
     <li>
       <button
@@ -39,7 +39,7 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
         <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
           <Icon name={kindIcon(s.kind)} />
         </span>
-        {/* claude の --name 由来の label は "[AF] " 接頭辞付きのことがある。 */}
+        {/* claude の --name 由来の label は "[AF:<name>] " 接頭辞付きのことがある。 */}
         <span className="name">{sessionName}</span>
         <small>{tr(s.permission === "rw" ? "share.permission_rw" : "share.permission_ro")}</small>
         {handoff && (
@@ -47,7 +47,7 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
             <Icon name="git-branch" />
           </span>
         )}
-        {/* アーカイブ済み/削除済みは CP 側で一覧から外れる(docs/59 §1)ので、ここに
+        {/* アーカイブ済み/削除済みは CP 側で一覧から外れる(docs/log/59 §1)ので、ここに
             並ぶのは所有者の手元に今ある会話だけ。
             状態チップは所有者側の SessionRow と同じ stateInfo。所有者 Workspace が
             停止中のときは、その1つの事実で全行が止まっているので、行ごとの

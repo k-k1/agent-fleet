@@ -10,10 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// claude jsonl transcript の読み出しと解析（docs/23 残① Wave F: 旧 package main
+// claude jsonl transcript の読み出しと解析（docs/log/23 残① Wave F: 旧 package main
 // session_io.go の jsonl 読み出し + session_transcript.go の claude パーサ）。
 // /messages・/output の HTTP ハンドラ（ウィンドウ処理・ページング・internal/status
 // の pending 合成）は package main の session_transcript.go / session_io.go に残り、
@@ -262,15 +263,56 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 	return turns
 }
 
+// lineOrigin is claude's own `origin` object: who this line came from, when it did not
+// come from the keyboard. `kind:"peer"` は **claude 自身の cross-session チャネル**
+// （ListAgents / SendMessage、`/tmp/cc-socks/<pid>.sock`）で**隣のセッションが**この
+// セッションへ書き込んだ、という印（docs/log/58 §58.16）。
+//
+// この経路は AF の `send_to_peer_session` とは別物で、封筒も指示台帳も通らない。AF の
+// 設計上は塞ぐ判断だったが、**claude 2.1.251 では env の遮断を貫通して現に開いている**
+// （実測）。塞ぐ塞がないに関わらず、**開いている間に来たものは画面に出す**のがここの役目
+// — 出さないと「利用者もオペレーターも送っていない指示で相手が動いた」が無言で起きる。
+type lineOrigin struct {
+	Kind string `json:"kind"` // "peer" | "human" | ""
+	Name string `json:"name"` // 送信側の claude --name（＝AF のラベル）
+	Body string `json:"body"` // 送信側が書いた本文そのもの（ラッパ無し）
+}
+
+// peer reports whether this line was written by another session.
+func (o lineOrigin) peer() bool { return o.Kind == "peer" }
+
+// text は画面に出す本文。`body` を優先するのは、行そのものには
+// `Another Claude session sent a message:\n<cross-session-message …>` という**配送の
+// 包装**が被っていて、それを人間に読ませる意味が無いため。body が無い版に当たったら
+// 包装ごと出す（何も出さないより桁違いにマシ）。
+func (o lineOrigin) text(fallback string) string {
+	if b := strings.TrimSpace(o.Body); b != "" {
+		return b
+	}
+	return strings.TrimSpace(fallback)
+}
+
+// sender は peer バッジに出す送信者名。`origin.name` は送信側の `--name` ＝ AF のラベル
+// なので、そこからセッション名を読み戻せれば**それ**を出す（利用者が list や rail で
+// 突き合わせられる唯一の識別子）。読み戻せない（他所で起動した claude・旧ラベル）ときは
+// ラベルからタグだけ落として素で出す。"" のときは Console 側が「別のセッション」に落とす。
+func (o lineOrigin) sender() string {
+	if n := session.LabelSessionName(o.Name); n != "" {
+		return n
+	}
+	return session.StripLabel(o.Name)
+}
+
 // parseTurn builds a transcript.Turn from a transcript line. ok is false for lines that
 // carry nothing displayable: tool_result-only user turns, summaries, the Remote
-// Control bridge-session line, and meta entries (isMeta).
+// Control bridge-session line, and meta entries (isMeta) — except a peer message, which
+// claude records as isMeta and which is the one meta line a human must see.
 func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	var ev struct {
 		Type      string `json:"type"`
 		Timestamp string `json:"timestamp"`
 		// UUID is the line's own id in claude's uuid/parentUuid DAG. It is the fork
-		// anchor (docs/55): claude's own --fork-session rewrites only sessionId and
+		// anchor (docs/log/55): claude's own --fork-session rewrites only sessionId and
 		// leaves uuid/parentUuid untouched (実測), so a message keeps the same uuid
 		// across branches — it is a durable handle, unlike the line index.
 		UUID             string `json:"uuid"`
@@ -286,12 +328,14 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		APIErrorStatus int    `json:"apiErrorStatus"`
 		Error          string `json:"error"`
 		Attachment     struct {
-			Type   string `json:"type"`
-			Prompt string `json:"prompt"`
-			Origin struct {
-				Kind string `json:"kind"`
-			} `json:"origin"`
+			Type   string     `json:"type"`
+			Prompt string     `json:"prompt"`
+			Origin lineOrigin `json:"origin"`
 		} `json:"attachment"`
+		// Origin sits on the user line itself when the CLI injected it on someone
+		// else's behalf — claude's own cross-session channel is the only producer
+		// seen so far. See lineOrigin.
+		Origin  lineOrigin `json:"origin"`
 		Message struct {
 			Model   string          `json:"model"`
 			Content json.RawMessage `json:"content"`
@@ -306,21 +350,50 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	if json.Unmarshal(line, &ev) != nil {
 		return transcript.Turn{}, false
 	}
+	// 隣のセッションからの着信（claude 自前の cross-session チャネル）。**相手が idle の
+	// ときはこの形**で、`type:"user"` + `isMeta:true` + `origin.kind:"peer"` として載る。
+	// isMeta の門より前で拾うこと — 後ろに置くと下の一行で落ちる。実際これが「送ったのに
+	// 届かない」の正体だった（CLI には届いていて、ミラーだけが捨てていた・docs/log/58 §58.16）。
+	//
+	// **AnchorID は付けない**（下の queued_command と同じ理由 + isMeta）。forkat.go の
+	// cutIndex は isMeta 行を明示的に拒むので、uuid を渡すと「ここから分岐」の導線が出て
+	// 必ず 400 になる。
+	peerTurn := func(o lineOrigin, txt string) (transcript.Turn, bool) {
+		if txt == "" {
+			return transcript.Turn{}, false
+		}
+		return transcript.Turn{
+			Role: "user", Parts: []transcript.Part{{Kind: "text", Text: txt}}, Text: txt,
+			Source: transcript.SourcePeer, PeerFrom: o.sender(),
+			Idx: idx, TS: ev.Timestamp, Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
+		}, true
+	}
+	if ev.Type == "user" && ev.Origin.peer() {
+		return peerTurn(ev.Origin, ev.Origin.text(contentText(ev.Message.Content)))
+	}
 	if ev.IsMeta {
 		return transcript.Turn{}, false
 	}
 	// A prompt sent INTO a running turn (steering) is never logged as a user line —
 	// claude (≥2.1.207 observed) records only an attachment/queued_command event when it
 	// injects the queued text. Surface it as the user turn it is, or the mirror never
-	// shows mid-run prompts. Origin is checked so a non-human queued command (none seen
-	// yet, but the field exists) doesn't masquerade as the user.
+	// shows mid-run prompts.
+	//
+	// Origin distinguishes WHO queued it. 人間の割り込みと、**相手が busy のときの peer
+	// 着信**（同じ queued_command に `origin.kind:"peer"` が付く）はここで合流する — 片方
+	// だけ通していたので、忙しい相手へ送ったメッセージが丸ごと画面から消えていた。
+	// 「まだ見たことが無い」は「起こらない」ではない、の実例（docs/log/58 §58.16）。
 	if ev.Type == "attachment" {
 		a := ev.Attachment
-		txt := strings.TrimSpace(a.Prompt)
-		if a.Type != "queued_command" || txt == "" || (a.Origin.Kind != "" && a.Origin.Kind != "human") {
+		txt := a.Origin.text(a.Prompt)
+		if a.Type != "queued_command" || txt == "" ||
+			(a.Origin.Kind != "" && a.Origin.Kind != "human" && !a.Origin.peer()) {
 			return transcript.Turn{}, false
 		}
-		// AnchorID は**付けない**（docs/55）。この行は type:"attachment" で、分岐点の検査
+		if a.Origin.peer() {
+			return peerTurn(a.Origin, txt)
+		}
+		// AnchorID は**付けない**（docs/log/55）。この行は type:"attachment" で、分岐点の検査
 		// （forkat.go の cutIndex）は type:"user" の行しか受け付けないため、uuid を渡すと
 		// 「ここから分岐」の導線が出るのに必ず 400（エージェントの発言からは分岐できません）
 		// になる。割り込みはターンの途中（tool_use と tool_result の間）に注入されるので、
@@ -480,7 +553,7 @@ func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) 
 // label, free text, or a delegation's capped output) plus whether it was a DECLINE —
 // claude's own "The user doesn't want to proceed… wants to clarify these questions" /
 // "(No answer provided)" rejection boilerplate (an Escape/interrupt out of the
-// AskUserQuestion modal, e.g. docs/dev/92 §6's preview free-text bug) — rather than a
+// AskUserQuestion modal, e.g. docs/build/92 §6's preview free-text bug) — rather than a
 // genuine answer. Declined is only ever set for kind=question: ExitPlanMode already has
 // its own text-heuristic outcome classification (planDecision.ts isRejected), and a
 // delegation's tool_result is its output, not an answer to decline.
@@ -697,7 +770,7 @@ func SettledAt(lines [][]byte) (question, plan time.Time) {
 }
 
 // CollectFileEdits extracts every edit-family tool call from lines[from:] — the raw
-// material for the session's changed-files list (docs/68). `from` lets the caller fold
+// material for the session's changed-files list (docs/log/68). `from` lets the caller fold
 // only the lines it hasn't seen: the jsonl is append-only, so the answer for a prefix
 // never changes, and re-running the line differ over a whole transcript on every poll
 // would not be affordable.

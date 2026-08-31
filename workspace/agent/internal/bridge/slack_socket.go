@@ -1,6 +1,6 @@
 package bridge
 
-// Slack Socket Mode receive (docs/37 Slack 追随 = P2a/P2b/P3先取り parity): the Slack twin of
+// Slack Socket Mode receive (docs/log/37 Slack 追随 = P2a/P2b/P3先取り parity): the Slack twin of
 // gateway.go + the receive half of receiver.go. Socket Mode delivers events AND interactive
 // button clicks over ONE outbound WSS (no public endpoint), exactly the constraint that made
 // Discord's Gateway the right fit. Each frame is a typed envelope; every events_api /
@@ -24,7 +24,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// sourceSlack tags turns injected from Slack so the mirror badges them (docs/37 追加要件).
+// sourceSlack tags turns injected from Slack so the mirror badges them (docs/log/37 追加要件).
 // Matches package main's turnSourceSlack.
 const sourceSlack = "slack"
 

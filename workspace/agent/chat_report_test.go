@@ -23,7 +23,7 @@ func withTempHome(t *testing.T) string {
 }
 
 // TestInstrLedgerRoundTrip is the v1 TestArmSessionReportRoundTrip read through the
-// Phase 2 ledger (docs/51): 投入は行の**追加**で、宛先の無い指示は行にならない。
+// Phase 2 ledger (docs/log/51): 投入は行の**追加**で、宛先の無い指示は行にならない。
 // 決定的な違いが最後の2行 — v1 の re-arm は前の指示の bit を上書きしたが、行は増える。
 func TestInstrLedgerRoundTrip(t *testing.T) {
 	withTempHome(t)
@@ -71,7 +71,7 @@ func TestInstrLedgerRoundTrip(t *testing.T) {
 	}
 }
 
-// TestInstrLedgerStateMachine pins the row's state machine (docs/51 §データモデル):
+// TestInstrLedgerStateMachine pins the row's state machine (docs/log/51 §データモデル):
 // pending → interim_reported（非消費）→ reported → reopened → reported、および
 // stop_session の cancelled。閉じた行が勝手に開かない・上限で reopen が止まることも。
 func TestInstrLedgerStateMachine(t *testing.T) {
@@ -155,7 +155,7 @@ func TestInstrLedgerStateMachine(t *testing.T) {
 	}
 }
 
-// TestMigrateReportArms covers the Phase 2 migration (docs/51 §移行): 起動時に v1 の
+// TestMigrateReportArms covers the Phase 2 migration (docs/log/51 §移行): 起動時に v1 の
 // armed=true を1行へ変換し、変換元のファイルは消す（再起動のたびに行が増えないこと）。
 func TestMigrateReportArms(t *testing.T) {
 	withTempHome(t)
@@ -223,7 +223,7 @@ func TestInjectPendingReports(t *testing.T) {
 	}
 }
 
-// TestRunReportAutoTurnCapNotifiesOnce covers the docs/30 auto-turn cap: at the cap
+// TestRunReportAutoTurnCapNotifiesOnce covers the docs/log/30 auto-turn cap: at the cap
 // the operator can't run another turn, so instead of a silent stop the conversation
 // gets a one-time system notice asking the user whether to continue, and the report
 // stays undelivered to ride the user's next message.
@@ -364,7 +364,7 @@ func TestMCPConvArgParsing(t *testing.T) {
 // → kickSessionReport → POST /chat/report（= リコンサイラの起床ヒント）→ tick の
 // settle → the 【セッション報告】 card in the operator's conversation. Driven in the
 // incident's exact shape — the pane heal wiped the "working" marker before Stop fired —
-// which used to end in silence. docs/51 Phase 1 では kick が消えても次の tick が同じ
+// which used to end in silence. docs/log/51 Phase 1 では kick が消えても次の tick が同じ
 // 状態を見て拾う（ここではヒント有りの経路を通す）。
 func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	home := withTempHome(t)
@@ -438,7 +438,7 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	awaitReported(t, m.Name)
 }
 
-// TestQuestionReportInterimKeepsArm pins the interim question report (docs/30):
+// TestQuestionReportInterimKeepsArm pins the interim question report (docs/log/30):
 // a pending AskUserQuestion is reported to the operator conversation so it can
 // relay/answer, but the one-shot arm survives — the instruction's completion
 // still gets its own report.
@@ -486,7 +486,7 @@ func TestQuestionReportInterimKeepsArm(t *testing.T) {
 	if got == nil {
 		t.Fatal("no interim question report reached the conversation")
 	}
-	// docs/28 P6: カードは**事実だけ**（利用者が読む面）。オペレーターへの指示
+	// docs/log/28 P6: カードは**事実だけ**（利用者が読む面）。オペレーターへの指示
 	// （answer_session_question で答えろ）は保存されず、プロンプトを組む瞬間に足される。
 	if !strings.Contains(got.Content, "質問") || strings.Contains(got.Content, "answer_session_question") {
 		t.Fatalf("question report card = %q", got.Content)
@@ -587,11 +587,11 @@ func TestPlanReportInterimKeepsArm(t *testing.T) {
 }
 
 // TestSessionReportDeferredWhileSubagentBusy pins the premature-completion fix
-// (docs/30, 実測 2026-07-24 saga5uc): claude launches background subagents and Stops
+// (docs/log/30, 実測 2026-07-24 saga5uc): claude launches background subagents and Stops
 // minutes before the instruction is actually done. That early answer-ready kick must
 // NOT consume the one-shot arm — delivery waits until the subagent transcripts go
 // stale and the session sits at idle, then fires exactly once.
-// docs/51 Phase 1 の読み替え: 「保留 waiter」という特例は消え、SubagentBusy は
+// docs/log/51 Phase 1 の読み替え: 「保留 waiter」という特例は消え、SubagentBusy は
 // リコンサイラの **busy 証拠** になった（意味論は同じ — 判定が1か所に集まっただけ）。
 func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 	home := withTempHome(t)
@@ -697,7 +697,7 @@ func TestSessionReportDeferredWhileSubagentBusy(t *testing.T) {
 // defaults to idle and the old waiter spent the one-shot arm on a turn that was still
 // running — the real completion 27 minutes later kicked into armed=false and was
 // silently dropped.
-// docs/51 Phase 1 の読み替え: waiter は消え、その配送条件は述語に畳まれた —
+// docs/log/51 Phase 1 の読み替え: waiter は消え、その配送条件は述語に畳まれた —
 // **無マーカーは「不明」であって idle ではない**、そして transcript の鮮度は busy 証拠。
 // （旧名 TestSessionReportWaiterIgnoresFalseIdle）
 func TestSessionReportIgnoresFalseIdle(t *testing.T) {
@@ -869,7 +869,7 @@ func TestInstrLedgerFileLocation(t *testing.T) {
 	}
 }
 
-// TestReportHeadForTurnAborted covers the 中断時の自動再開 wording (docs/47): ON asks the
+// TestReportHeadForTurnAborted covers the 中断時の自動再開 wording (docs/log/47): ON asks the
 // operator to resume, OFF asks it to confirm with the user first, and past the cap the
 // report escalates instead of asking for yet another resume. The language instruction is
 // part of the contract — sending JA into a session working in EN (or the reverse) flips

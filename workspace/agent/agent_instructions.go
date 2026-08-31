@@ -1,19 +1,19 @@
 package main
 
-// ユーザー指示の配布器（docs/60 / ADR 0042）。
+// ユーザー指示の配布器（docs/log/60 / ADR 0042）。
 //
 // 3 層のうち真ん中 —「その人の働き方」— を 1 本書けば、対応する全 kind のセッションに
 // 効くようにする。正本は internal/userinstr（~/.config/agent-fleet/user-notes.md）で、
 // ここはそれを各 CLI の user スコープへ**配る**役。rtk トグルと同じ型
 // （durable な設定 → 起動時 reconcile ＋ Console から live 適用）を踏襲する。
 //
-// 配り方の原則（docs/60 §60.5-6）: **「他人のファイルに書く」より「AF 専用ファイル＋
+// 配り方の原則（docs/log/60 §60.5-6）: **「他人のファイルに書く」より「AF 専用ファイル＋
 // 参照」を優先する。** 実測の結果 claude / opencode / copilot は参照で足り、合成が要る
 // のは追加指示ファイルを指す手段が無い codex だけになった（agy は P1）。
 //
 // フリート方針（イメージの workspace-notes.md）の配置もここへ移した。以前は
 // entrypoint が毎起動 `cp -f` で AGENTS.md を丸ごと上書きしており、利用者がそのファイルへ
-// 書き足した文章は次の起動で黙って消えていた（docs/60 実害①）。いまは同じ 1 本の
+// 書き足した文章は次の起動で黙って消えていた（docs/log/60 実害①）。いまは同じ 1 本の
 // 書き手がマーカー付きで合成するので、マーカー外は残る。
 //
 // ⚠️ 順序: ファイル内の並びは適用順そのまま（fleet → user-notes → rtk）。だから
@@ -42,7 +42,7 @@ import (
 
 // instrMu serializes every write into a CLI's instruction artifacts. rtk shares it:
 // codex's AGENTS.md carries both the rtk block and the user block, and two
-// independent read-modify-writes would lose one side (docs/60 §60.7).
+// independent read-modify-writes would lose one side (docs/log/60 §60.7).
 var instrMu sync.Mutex
 
 // instrErrs holds the last apply error per kind, so the Console can say "書いたが
@@ -57,7 +57,7 @@ const (
 )
 
 // instrTarget は 1 kind ぶんの配り先。未対応の kind も**行として出す**（黙って消すと
-// 「対応漏れ」に見え、同じ質問が繰り返される — docs/57 §2 の作法）。
+// 「対応漏れ」に見え、同じ質問が繰り返される — docs/log/57 §2 の作法）。
 type instrTarget struct {
 	Kind      string `json:"kind"`
 	Supported bool   `json:"supported"`
@@ -75,7 +75,7 @@ type instrTarget struct {
 // instrSupportedKinds は本文を配れる kind。順序は Console の表示順。
 var instrSupportedKinds = []string{"claude", "codex", "opencode", "copilot", "agy", "kiro"}
 
-// instrUnsupported は配れない kind と理由（docs/60 §60.3 の実測結論）。
+// instrUnsupported は配れない kind と理由（docs/log/60 §60.3 の実測結論）。
 var instrUnsupported = []struct{ kind, reason string }{
 	// ローカルにユーザー層が存在しない。User Rules は Cursor アカウント側
 	// （aiserver.v1.UserRules）で、ローカルの rules 収集は全てプロジェクト基準。
@@ -110,7 +110,7 @@ func applyInstructionsLocked() {
 	// ① フリート方針（順序の都合でユーザー指示より先）。claude は managed policy として
 	// イメージに焼かれている（/etc/claude-code/CLAUDE.md）ので AF は触らない。cursor は
 	// ローカルに user スコープが無いので配れない。それ以外の 5 種はここが唯一の配布経路
-	// — agy / copilot / kiro は docs/60 §60.13 P2 まで**運用方針を一切読んでいなかった**。
+	// — agy / copilot / kiro は docs/log/60 §60.13 P2 まで**運用方針を一切読んでいなかった**。
 	note("codex", codex.ApplyFleetNotes(fleet))
 	note("opencode", opencode.ApplyFleetNotes(fleet))
 	note("agy", agy.ApplyFleetNotes(fleet))

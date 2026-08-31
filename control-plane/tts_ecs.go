@@ -1,4 +1,4 @@
-// tts_ecs.go — VOICEVOX エンジンの ECS オンデマンド制御（docs/24 Phase 2）。
+// tts_ecs.go — VOICEVOX エンジンの ECS オンデマンド制御（docs/log/24 Phase 2）。
 //
 // AWS 本番ではエンジンを ECS Service として置き、管理者トグルで desired count を
 // 0↔1 する（停止中コスト 0）。アドレッシングは Cloud Map の固定 DNS（例

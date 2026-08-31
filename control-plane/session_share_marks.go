@@ -1,11 +1,11 @@
 package main
 
-// 共有セッションの転写マーカー（docs/69 / ADR 0050）。
+// 共有セッションの転写マーカー（docs/log/69 / ADR 0050）。
 //
 // 印の実体は所有者 Workspace（Agent の session-marks）にあり、CP は毎回 ACL を評価して
 // 中継するだけ。転写・引き継ぎ提案とまったく同じ形で、本文の複製は CP DB に持たない。
 //
-// 書き込み（RW の共有先が自分で線を引く）は、docs/59 §2 の「提案 → 所有者の承認」には
+// 書き込み（RW の共有先が自分で線を引く）は、docs/log/59 §2 の「提案 → 所有者の承認」には
 // 載せない。あの承認が要るのは提案が**エージェントを動かす**（他人のセッションとトークンを
 // 消費する副作用がある）からで、マーカーはエージェントに届かず転写にも入らない。1 本引く
 // たびに承認待ちへ積むのは承認の意味を薄めるだけである（ADR 0050 決定 4）。
@@ -28,7 +28,7 @@ import (
 // MARKABLE_KINDS と同じ内容でなければならない。
 //
 // ⚠️ ここで検査するのは、共有 DTO が落としている座標（cwd / file / 差分）を印の quote が
-// 迂回して運び出さないため（docs/69 §69.4）。塗る場所の制限は Console と Agent が既に
+// 迂回して運び出さないため（docs/log/69 §69.4）。塗る場所の制限は Console と Agent が既に
 // 掛けているが、中継の出口にも置いておくと、片側が緩んだだけでは漏れない。
 var markProseKinds = map[string]bool{"": true, "text": true, "plan": true, "answer": true, "output": true, "prompt": true}
 
@@ -177,7 +177,7 @@ func (a sessionShareAPI) ownerSend(ctx context.Context, res *resolved, method, p
 
 // sharedMarksDTO — マーカーの allowlist。表示に要るのは位置（turn/part/kind/quote/nth）、
 // 見た目（color）、そして「誰がいつ」（author/created_at）だけ。座標は元々持っていないが、
-// kind が本文以外の印はここでも落とす（docs/69 §69.4 の二重の網）。
+// kind が本文以外の印はここでも落とす（docs/log/69 §69.4 の二重の網）。
 func sharedMarksDTO(payload map[string]any) map[string]any {
 	items, _ := payload["marks"].([]any)
 	out := make([]any, 0, len(items))

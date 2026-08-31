@@ -1,5 +1,5 @@
 // tenant_git_oauth.go — the OAuth app a tenant registers for a git provider
-// (docs/71 + ADR0052).
+// (docs/log/71 + ADR0052).
 //
 // The "connect with OAuth" buttons on the member's git tab used to run on a
 // DEPLOYMENT-wide app: GITHUB_OAUTH_CLIENT_ID for GitHub's device flow (read by the
@@ -8,7 +8,7 @@
 // put the operator in the loop for something that belongs to the tenant: the OAuth
 // app lives in THEIR GitHub org / Bitbucket workspace.
 //
-// Since docs/71 the row is the only source. env is not consulted at all — not even as
+// Since docs/log/71 the row is the only source. env is not consulted at all — not even as
 // a fallback for the default tenant (決定 2). A fallback would mean two places to look
 // when a button is missing, and the one that wins would depend on which tenant you
 // happen to be in.
@@ -32,7 +32,7 @@ import (
 const (
 	gitOAuthGitHub    = "github"
 	gitOAuthBitbucket = "bitbucket"
-	// gitOAuthJira is Jira Cloud (docs/80 §80.17). ⚠️ It is not a git host, so it sits
+	// gitOAuthJira is Jira Cloud (docs/log/80 §80.17). ⚠️ It is not a git host, so it sits
 	// oddly under a table called tenant_git_oauth — but what the table actually models
 	// is "an OAuth app this tenant registered, whose secret stays in the CP while the
 	// member's token lives in their workspace", and Jira needs exactly that. A parallel

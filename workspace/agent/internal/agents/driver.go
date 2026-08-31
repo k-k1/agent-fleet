@@ -1,4 +1,4 @@
-// Driver 層の型（docs/27 §3〜§6、P1.5）。read 層（Agent IF）を無傷のまま、その上に
+// Driver 層の型（docs/log/27 §3〜§6、P1.5）。read 層（Agent IF）を無傷のまま、その上に
 // thread 単位の制御（write）と購読（live）を増築するための seam。P1.5 で確定するのは
 // この型と HTTP 受け口（POST /sessions/{name}/turn・/respond、package main の
 // session_turn.go）まで。managed 実装（ThreadHandle）は P2（opencode serve）が初出で、
@@ -18,7 +18,7 @@ import (
 // TurnInput is the payload of Send (turn/start 相当) and Steer (turn/steer 相当).
 type TurnInput struct {
 	Prompt string
-	// Attachments are absolute paths of files attached to this turn（docs/27 §10:
+	// Attachments are absolute paths of files attached to this turn（docs/log/27 §10:
 	// managed は tmux 貼り付けの代わりに API 添付へ）。TUI ルートでは Console が
 	// 従来どおりパスをプロンプト本文へ織り込むので、この欄を解釈するのは managed
 	// driver（P2/P3: codex turn/start の input items / opencode serve の file part）だけ。
@@ -103,7 +103,7 @@ const (
 	// TurnAborted は「回答を出す前に途中で落ちたが、再送すれば続きから走れる」ターン
 	// （接続断・一時的なレート制限など）。TurnFailed と分けるのは、原因が解消しない
 	// 限り再送が無意味な失敗（残高切れ・プロンプト長超過）と、再送で直る中断とで
-	// オペレーターに促すべき行動が正反対だから（docs/47）。
+	// オペレーターに促すべき行動が正反対だから（docs/log/47）。
 	TurnAborted TurnState = "aborted"
 )
 

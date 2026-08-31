@@ -1,5 +1,5 @@
 // FileChangeStrip —「変更ファイル」: the files this session's agent edited, folded into
-// one collapsible strip directly under the mirror's head (docs/68 §68.5).
+// one collapsible strip directly under the mirror's head (docs/log/68 §68.5).
 //
 // It sits beside the ToDo checklist and deliberately copies its manners — the same
 // disclosure, the same per-session remembered open/closed choice, the same re-key by
@@ -48,7 +48,7 @@ export function FileChangeStrip({ session, files }: { session: string; files: Se
     async (signal) => {
       try {
         // Two questions, one load: what does the working tree say, and which of these
-        // paths already went into a commit (docs/68 P2). The second only refines rows the
+        // paths already went into a commit (docs/log/68 P2). The second only refines rows the
         // first has nothing to say about, so a failure there is not a failure of the strip.
         const [d, c] = await Promise.all([
           api("api/fs/changes"),
@@ -67,7 +67,7 @@ export function FileChangeStrip({ session, files }: { session: string; files: Se
   );
 
   // ⚠️ No empty state. A kind that records no edit coordinates at all (kiro / agy /
-  // shell — docs/68 §68.2.1) would otherwise show a permanent「0 件」that is
+  // shell — docs/log/68 §68.2.1) would otherwise show a permanent「0 件」that is
   // indistinguishable from "this session really changed nothing".
   if (!files.length) return null;
 

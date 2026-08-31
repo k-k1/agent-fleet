@@ -9,7 +9,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// TestSlackLiveSend is the live contract test of docs/37 検証方針 for Slack (mirrors
+// TestSlackLiveSend is the live contract test of docs/log/37 検証方針 for Slack (mirrors
 // TestDiscordLiveSend): it talks to the real Slack Web API and posts. Skipped unless
 // AF_SLACK_LIVE=1; credentials come from env (never committed):
 //

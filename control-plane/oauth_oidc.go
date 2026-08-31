@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// Generic OIDC login client (docs/61 §61.6 + ADR0043 決定 1). One implementation
+// Generic OIDC login client (docs/log/61 §61.6 + ADR0043 決定 1). One implementation
 // carries Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab — and Google, which
 // is just the instance whose env names stayed GOOGLE_OAUTH_* so existing
 // deployments need no config change. The flow is discovery -> authorize -> token
@@ -35,7 +35,7 @@ import (
 // attacker controls that channel. Do not reuse decodeIDTokenClaims there.
 
 const (
-	// email trust rules (docs/61 §61.4). "api" (a second API call carrying the
+	// email trust rules (docs/log/61 §61.4). "api" (a second API call carrying the
 	// verified flag) belongs to the GitHub adapter (P2) and is not valid here.
 	trustEmailVerified = "email_verified"
 	trustIssuer        = "issuer"
@@ -68,7 +68,7 @@ type oidcEndpoints struct {
 	// SubjectTypes is `subject_types_supported`. Nothing in the login flow reads it —
 	// it is here for the admin API, which asks one question before a tenant registers
 	// a SECOND app registration of a directory it already has: does this issuer hand
-	// the same person a different `sub` per client (docs/61 §61.17.4 (b))?
+	// the same person a different `sub` per client (docs/log/61 §61.17.4 (b))?
 	// Measured 2026-08-20: Google ["public"], Entra /common ["pairwise"].
 	SubjectTypes []string `json:"subject_types_supported"`
 }
@@ -99,13 +99,13 @@ type oidcProvider struct {
 	prompt       string     // "" omits the prompt parameter
 	extraAuth    url.Values // provider-specific authorize params (Google: access_type)
 	// linkClaim names a STABLE claim to carry alongside `sub`, for rule 1.5's second
-	// key (docs/61 §61.15.10 + 決定 38). Entra's `sub` is pairwise — different per app
+	// key (docs/log/61 §61.15.10 + 決定 38). Entra's `sub` is pairwise — different per app
 	// registration — so two buttons onto one Entra tenant are two subjects; `oid` is
 	// the same value in both. "" (the default) takes no part in the rule.
 	linkClaim string
 
 	// Authorization. A provider-specific allowlist replaces the DEPLOYMENT-WIDE
-	// list entirely (docs/61 §61.8: "未設定なら共通の許可リストを使う") — that is a
+	// list entirely (docs/log/61 §61.8: "未設定なら共通の許可リストを使う") — that is a
 	// per-provider narrowing operators rely on and P3 did not change it.
 	// dbAllowed is the separate, database-derived term P3 adds on top of whichever
 	// of the two applies: see Allowed.
@@ -357,7 +357,7 @@ func (p *oidcProvider) Exchange(ctx context.Context, code, redirectURI string) (
 	pr.Subject = firstNonEmpty(uic.Sub, idc.Sub)
 	pr.Email = firstNonEmpty(uic.Email, idc.Email, emailLike(idc.PreferredUsername), emailLike(idc.UPN))
 	// ★ Rule 1.5's second key, read straight out of the token this exchange returned
-	// (docs/61 §61.15.10). The provider names the CLAIM; the VALUE is never taken from
+	// (docs/log/61 §61.15.10). The provider names the CLAIM; the VALUE is never taken from
 	// anywhere else — a tenant that could supply it could name another person. A claim
 	// the IdP did not send leaves BOTH fields empty, so the row takes no part in the
 	// rule rather than matching every other row that is also missing it.
@@ -425,7 +425,7 @@ func (p *oidcProvider) userinfo(ctx context.Context, ep oidcEndpoints, accessTok
 }
 
 // Allowed is the entry gate for this provider: a union taken strictly WITHIN the
-// email axis (docs/61 §61.9.6, revised in P3).
+// email axis (docs/log/61 §61.9.6, revised in P3).
 //
 //	(this provider's own email list, or — when it declares none — the
 //	 deployment-wide list)
@@ -613,7 +613,7 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 			continue
 		}
 		// ★ fail-closed: a provider that does not declare how it justifies the
-		// email it hands us is refused, never defaulted (docs/61 §61.4).
+		// email it hands us is refused, never defaulted (docs/log/61 §61.4).
 		trust := strings.ToLower(oidcEnv(id, "TRUST"))
 		switch trust {
 		case trustEmailVerified, trustIssuer:
@@ -642,7 +642,7 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 			dbAllowed:     c.tenantEmailAllowed,
 		}
 		// ★ AF_OIDC_<ID>_LINK_CLAIM accepts ANY claim name, unlike the tenant column,
-		// which is whitelisted (docs/61 §61.15.10). The difference is who is speaking:
+		// which is whitelisted (docs/log/61 §61.15.10). The difference is who is speaking:
 		// this is the operator's own deployment file, and an operator who wanted to
 		// join accounts by email could simply set the allowlist to do it. The hazard is
 		// still real — naming `email` here makes rule 1.5 an email join for every

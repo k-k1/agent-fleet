@@ -1,4 +1,4 @@
-// transcript/marks — 会話の「ここ」に引いた線（docs/69 / ADR 0050）。
+// transcript/marks — 会話の「ここ」に引いた線（docs/log/69 / ADR 0050）。
 //
 // ミラー（所有者）と共有ビュー（受け手）の両方が使う。ここは「どこを指すか」の決め方だけ
 // を持つ純粋なモジュールで（React も I/O も無し・model.ts から呼べる）、取得と書き込みの
@@ -7,7 +7,7 @@
 // アンカーは W3C Web Annotation の TextQuoteSelector 相当（引用文字列 + 出現番号）で、
 // 実際に DOM へ被せるのは features/viewer/quoteMarks.ts（プランコメントと同じ道具）。
 //
-// ⚠️ 数える範囲を間違えると「共有先だけ印が 1 つ隣」になる。詳細は docs/69 §69.3 だが、
+// ⚠️ 数える範囲を間違えると「共有先だけ印が 1 つ隣」になる。詳細は docs/log/69 §69.3 だが、
 // 要点は 2 つ:
 //   - 転写行の序数（idx）は compaction で動くのでアンカーに使えない。
 //   - ブロック（Group）相対の part 番号も使えない。groupTurns() は連続ターンの parts を
@@ -23,7 +23,7 @@ import type { Turn } from "./types.ts";
 export const MARK_COLORS = ["yellow", "green", "blue", "pink"] as const;
 export type MarkColor = (typeof MARK_COLORS)[number];
 
-/** 印を置ける part の kind。Agent 側の markProseKinds と同じ表（docs/69 §69.4）。 */
+/** 印を置ける part の kind。Agent 側の markProseKinds と同じ表（docs/log/69 §69.4）。 */
 export const MARKABLE_KINDS = new Set(["", "text", "plan", "answer", "output", "prompt"]);
 
 export interface TranscriptMark {

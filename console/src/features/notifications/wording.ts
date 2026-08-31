@@ -15,12 +15,12 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
   if (n.kind === "plan-approval") return { title: t("notif.plan_approval.title"), body: name, speech: t("notif.plan_approval.speech", { name }) };
   if (n.kind === "permission-request") return { title: t("notif.permission_request.title"), body: name, speech: t("notif.permission_request.speech", { name }) };
   if (n.kind === "session-report") {
-    // A session reported back to its operator conversation (docs/30); the body names
+    // A session reported back to its operator conversation (docs/log/30); the body names
     // the reporting session, the click target is the conversation.
     return { title: t("notif.session_report.title"), body: name, speech: t("notif.session_report.speech", { name }) };
   }
   if (n.kind === "chat-auto-paused") {
-    // The operator's unattended auto-turn budget ran out and the loop paused (docs/30).
+    // The operator's unattended auto-turn budget ran out and the loop paused (docs/log/30).
     // The body names the conversation; clicking opens it so the user can reply to resume.
     const title = String(n.payload.conversationTitle || name);
     return { title: t("notif.chat_auto_paused.title"), body: title, speech: t("notif.chat_auto_paused.speech") };
@@ -53,7 +53,7 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     };
   }
   if (n.kind === "carried-interaction") {
-    // 答えを待っていた対話を抱えたままセッションが畳まれた（docs/75）。畳むこと自体は
+    // 答えを待っていた対話を抱えたままセッションが畳まれた（docs/log/75）。畳むこと自体は
     // 無害（持ち越してあるので失われない）が、利用者はそれを知らない — 一覧のバッジは
     // Console を開いている人にしか見えず、質問時の通知は「答えてください」としか言って
     // いない。だから「まだ保留のままだ」と、どこで答えられるかを言う。
@@ -70,7 +70,7 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     };
   }
   if (n.kind === "handoff-offer") {
-    // 別メンバーから引き継ぎが届いた（docs/77）。body は引き継ぎの表示名で、遷移先は共有ビュー。
+    // 別メンバーから引き継ぎが届いた（docs/log/77）。body は引き継ぎの表示名で、遷移先は共有ビュー。
     return { title: t("notif.handoff_offer.title"), body: name, speech: t("notif.handoff_offer.speech") };
   }
   if (n.kind === "handoff-accepted") {

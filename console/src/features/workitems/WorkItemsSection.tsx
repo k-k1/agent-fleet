@@ -1,14 +1,14 @@
-// WorkItemsSection (docs/80 P0) — the left-rail inbox of external tickets (GitHub Issue
+// WorkItemsSection (docs/log/80 P0) — the left-rail inbox of external tickets (GitHub Issue
 // and PR; Jira in P1). Membership-scoped and Control-Plane persisted like the memo queue,
 // so it renders in BOTH the running and the stopped rail — picking a ticket happens
 // before a session exists, which is exactly when the Workspace tends to be stopped.
 //
-// ★ This is not a ticket viewer (docs/80 §80.1). No query builder, no detail pane, no
+// ★ This is not a ticket viewer (docs/log/80 §80.1). No query builder, no detail pane, no
 // sort control: composing what to fetch is the saved query's job, and the row's job is to
 // start a session with the ticket's context already in place. Anything more is a worse
 // copy of the tracker's own web UI.
 //
-// ⚠️ The line moved once, on real data (docs/80 §80.18 / ADR 0061 decision 14). One saved
+// ⚠️ The line moved once, on real data (docs/log/80 §80.18 / ADR 0061 decision 14). One saved
 // query returned 41 rows, so the rail folds at RAIL_VISIBLE and offers a one-line filter
 // over the rows it already has. Neither touches the provider, is saved, or reorders —
 // that is the whole distinction between "the rail's job" and "the query's job".
@@ -62,7 +62,7 @@ import "./workitems.css";
 interface RowProps {
   item: WorkItem;
   started: WorkItemSessionRef[];
-  /** Meta this query repeats on every row — dropped from the line (docs/80 §80.18.2). */
+  /** Meta this query repeats on every row — dropped from the line (docs/log/80 §80.18.2). */
   uniform: { repo: boolean; assignee: boolean };
   onOpen(item: WorkItem): void;
   onOpenSession(name: string): void;
@@ -72,7 +72,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
   const tr = useT();
   const tone = stateTone(item.state);
   const busy = started.length > 0;
-  // 行に出すのは「行ごとに違うもの」だけ（docs/80 §80.18.2）。全行で同じ担当者 /
+  // 行に出すのは「行ごとに違うもの」だけ（docs/log/80 §80.18.2）。全行で同じ担当者 /
   // リポジトリは落とし、★ 残りが無ければ 2 行目そのものを描かない —— Jira の既定
   // クエリはここで 1 行になり、レールの縦が半分になる。空いた高さは埋め直さない。
   const repo = uniform.repo ? "" : item.repo;
@@ -128,7 +128,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, uniform, onOpen, 
         )}
       </div>
       {/* 着手済みバッジ。台帳の一番の実利がこれ —— 同じ課題に 2 人目が入るのを、
-          起動する前に止める（docs/80 §80.8）。★ 行から消さないのは、これが操作では
+          起動する前に止める（docs/log/80 §80.8）。★ 行から消さないのは、これが操作では
           なく「この行はもう誰かが持っている」という情報だから。 */}
       {busy && (
         <button
@@ -186,13 +186,13 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
   }, [tenant, reset]);
   useEffect(() => startWorkItemPolling(), [tenant]);
 
-  // 並べ替えてから畳む（同じチケットは 1 行・docs/80 §80.20）。並べ替えの後にやるのは、
+  // 並べ替えてから畳む（同じチケットは 1 行・docs/log/80 §80.20）。並べ替えの後にやるのは、
   // 「残す 1 行」が棚の先頭に来る行 —— 未完了で一番新しい方 —— になるようにするため。
   const items = useMemo(() => dedupeWorkItems(sortWorkItems(payload?.items || [])), [payload]);
   const ledger = payload?.sessions || [];
   const folders = useMemo(() => repos.map((r) => r.name), [repos]);
 
-  // 量の壁（実測 41 件・docs/80 §80.18.4）。絞り込んでから畳む: 検索窓に打った人が
+  // 量の壁（実測 41 件・docs/log/80 §80.18.4）。絞り込んでから畳む: 検索窓に打った人が
   // 見たいのは「絞った結果の上位 10 件」であって「上位 10 件の中の一致」ではない。
   // ★ 畳むのは表示だけで payload は丸ごと持ったまま —— 停止中は取りに行けないから。
   const uniform = useMemo(() => uniformMeta(items), [items]);
@@ -214,7 +214,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
     });
   };
 
-  // 詳細で「どこで」まで決まってから既存の起動スタックへ渡す（docs/80 §80.8）。
+  // 詳細で「どこで」まで決まってから既存の起動スタックへ渡す（docs/log/80 §80.8）。
   // チケットは作業コピーを知らない —— GitHub 項目はリポジトリまで、Jira はそれすら
   // 持たない —— ので、リポジトリと 新規 worktree / 既存コピー はここで決まっている。
   const pickTarget = (item: WorkItem, target: Repo, inPlace: boolean) => {

@@ -229,7 +229,7 @@ func TestTTSAutoNoProviders(t *testing.T) {
 	}
 }
 
-// chooseTTSProvider — docs/24 の使い分け表の純関数テスト。
+// chooseTTSProvider — docs/log/24 の使い分け表の純関数テスト。
 func TestChooseTTSProvider(t *testing.T) {
 	cases := []struct {
 		name                        string

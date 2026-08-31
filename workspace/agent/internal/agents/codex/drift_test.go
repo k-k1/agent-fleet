@@ -214,7 +214,7 @@ func TestDriftCodexConfigOverridesValidated(t *testing.T) {
 }
 
 // TestDriftCodexThreadMCPConfigIsScoped verifies the prerequisite recorded in
-// docs/27 §9.3: app-server accepts an MCP configuration on a thread and does
+// docs/log/27 §9.3: app-server accepts an MCP configuration on a thread and does
 // not leak that configuration into another concurrently loaded thread.
 //
 // This is deliberately a drift (not live) test. It starts a credential-free,
@@ -240,7 +240,7 @@ func TestDriftCodexThreadMCPConfigIsScoped(t *testing.T) {
 	}
 }
 
-// TestDriftCodexThreadMCPConfigReplacesGlobalServers pins the docs/27 §9.3
+// TestDriftCodexThreadMCPConfigReplacesGlobalServers pins the docs/log/27 §9.3
 // security contract: a thread-local mcp_servers map REPLACES servers the daemon was
 // given via `-c` overrides rather than merging with them, so an empty map is a
 // working deny for that layer.
@@ -278,7 +278,7 @@ func TestDriftCodexThreadMCPConfigReplacesGlobalServers(t *testing.T) {
 	for time.Now().Before(deadline) {
 		if names := driftMCPServerNames(t, cl, cleared); len(names) > 0 {
 			t.Fatalf("thread-local empty mcp_servers no longer denies `-c`-supplied servers: "+
-				"got %v.\ndocs/27 §9.3 assumes thread config REPLACES that layer; if codex has "+
+				"got %v.\ndocs/log/27 §9.3 assumes thread config REPLACES that layer; if codex has "+
 				"switched to merging it too, the none/af_read/af_write permission boundary for "+
 				"the managed assistant chat is gone and must not be relied on. (File-configured "+
 				"servers already merge — that is expected, see the scope note above.)", names)
@@ -510,7 +510,7 @@ func keys(m map[string]string) []string {
 	return out
 }
 
-// TestDriftCodexMemoriesFeatureExists guards the P4 有効化配線 (docs/39): our toggle
+// TestDriftCodexMemoriesFeatureExists guards the P4 有効化配線 (docs/log/39): our toggle
 // writes `features.memories` into config.toml, which only means something while codex
 // still ships that gate. A rename/removal upstream turns the Console toggle into a
 // switch that writes a dead key — the memories workspace never appears and the memory

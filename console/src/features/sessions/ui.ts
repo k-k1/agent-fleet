@@ -11,7 +11,7 @@ interface SessionUI {
   branchRename: Session | null; // worktree branch-rename modal target
   ssmResume: { name: string; force: boolean } | null; // SSM re-login/resume target
   archivedOpen: boolean; // the archive browser
-  cleanupOpen: boolean; // the cleanup panel (docs/32)
+  cleanupOpen: boolean; // the cleanup panel (docs/log/32)
   openRename(s: Session): void;
   openBranchRename(s: Session): void;
   openSsmResume(name: string, force: boolean): void;

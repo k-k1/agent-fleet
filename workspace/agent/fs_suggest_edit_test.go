@@ -1,6 +1,6 @@
 package main
 
-// エディタ AI 変更提案（docs/44 Phase 4）のユニットテスト。LLM は editSuggestLLM の
+// エディタ AI 変更提案（docs/log/44 Phase 4）のユニットテスト。LLM は editSuggestLLM の
 // シームで差し替え、入力検証・JSON 抽出・整形（summary clamp / CR 拒否）・handler の
 // エラー分類を実プロセス無しで固定する。
 
@@ -101,7 +101,7 @@ func TestCleanEditSuggestion(t *testing.T) {
 	if err != nil || len(sum) > editSuggestMaxSummary || !strings.HasPrefix(long, sum) {
 		t.Fatalf("clamp: len=%d err=%v", len(sum), err)
 	}
-	// CR / NUL 入り replacement は変換せず拒否（docs/44 §4.2: 自動変換しない）。
+	// CR / NUL 入り replacement は変換せず拒否（docs/log/44 §4.2: 自動変換しない）。
 	for _, bad := range []string{"a\r\nb", "a\x00b"} {
 		if _, _, err := cleanEditSuggestion(editSuggestResult{Summary: "s", Replacement: strPtr(bad)}, "i"); err == nil {
 			t.Fatalf("replacement %q: want error", bad)
@@ -182,7 +182,7 @@ func TestFSSuggestEditRouteRegistered(t *testing.T) {
 	}
 }
 
-// opencode one-shot の read-only 姿勢（docs/44 §1.3）: 生成される OPENCODE_CONFIG が
+// opencode one-shot の read-only 姿勢（docs/log/44 §1.3）: 生成される OPENCODE_CONFIG が
 // chat と同じ deny ポリシーを載せることを固定する。
 func TestOpencodeOneShotConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

@@ -1,6 +1,6 @@
 package claude
 
-// 発言時点からの分岐（docs/55 §55.5）— claude だけが公式の口を持たないので、転写 jsonl を
+// 発言時点からの分岐（docs/log/55 §55.5）— claude だけが公式の口を持たないので、転写 jsonl を
 // 自前で切り詰めて分岐先の会話を作る。
 //
 // なぜ手術が許されるか（ADR 0039）: claude 自身の `--fork-session` が書く jsonl と元ファイル

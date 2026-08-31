@@ -85,7 +85,7 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 	// catalog's own (meaningless) order while `opencode models` prints it sorted. The
 	// picker's order therefore flipped depending on whether a serve happened to be
 	// running when the modal was opened（実測 2026-08-31・見た目は「時々並びが乱れる」）。
-	// docs/54 の取得元切り替えは維持したまま、見え方だけを揃える。
+	// docs/log/54 の取得元切り替えは維持したまま、見え方だけを揃える。
 	return agents.SortGrouped(out, func(m agents.ModelChoice) int {
 		if strings.HasPrefix(m.ID, goPrefix) {
 			return 0

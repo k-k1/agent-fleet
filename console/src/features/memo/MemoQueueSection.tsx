@@ -1,4 +1,4 @@
-// MemoQueueSection (docs/21, UI刷新) — the left-pane memo queue. Notes accumulate per
+// MemoQueueSection (docs/log/21, UI刷新) — the left-pane memo queue. Notes accumulate per
 // membership and sync across devices (Control-Plane persisted, no server push → refetch
 // on mount / store bump + slow poll while mounted). The revamp:
 //   - the composer is hidden by default; a header ＋ or leader Ctrl/⌘+K → M reveals it;

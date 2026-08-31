@@ -1,5 +1,5 @@
 // limits.go — テナント limits JSON のパースとアイドルタイムアウト解決。
-// manager.go からの機械的分割（docs/23 P2-W2）。
+// manager.go からの機械的分割（docs/log/23 P2-W2）。
 package main
 
 import (
@@ -33,7 +33,7 @@ type tenantLimits struct {
 	MaxWorkspaceDiskGB int `json:"max_workspace_disk_gb,omitempty"`
 	// SlotClass is the tenant's default machine class — which of the deployment's
 	// declared ladders a member of this tenant lands on when they have no per-user
-	// value (docs/70 §70.4.3). "" => the deployment default class. tenant_admin-set,
+	// value (docs/log/70 §70.4.3). "" => the deployment default class. tenant_admin-set,
 	// like the idle timeouts; inert on every runtime but ecs-ec2.
 	SlotClass string `json:"slot_class,omitempty"`
 	// AllowedSlotClasses restricts which classes a tenant_admin may choose from,
@@ -46,12 +46,12 @@ type tenantLimits struct {
 	// "smaller" version — resolveSlotClass falls back to the tenant default and SAYS
 	// so, rather than silently running the person somewhere they didn't ask for.
 	AllowedSlotClasses []string `json:"allowed_slot_classes,omitempty"`
-	// P3-9 idle-stop (docs/19): per-tenant, super_admin-editable.
+	// P3-9 idle-stop (docs/log/19): per-tenant, super_admin-editable.
 	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
 	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop
 	// InteractionIdleTimeout is tier-1's clock for a session parked on a HUMAN decision —
 	// a question, a plan awaiting approval, a permission prompt, the usage-limit menu, an
-	// expired login (docs/75 §75.5). Separate from SessionIdleTimeout because the two
+	// expired login (docs/log/75 §75.5). Separate from SessionIdleTimeout because the two
 	// answer different questions: "how long may an idle session hold RAM" vs "how long do
 	// we keep a container up for someone who hasn't come back to decide". A tenant that
 	// wants questions folded away quickly (they cost a running container until answered)
@@ -60,11 +60,11 @@ type tenantLimits struct {
 	// "" => the tenant's own SessionIdleTimeout when they set one, else the deployment
 	// default (AF_INTERACTION_IDLE_TIMEOUT, itself defaulting to the session default).
 	// "0" => never fold a human-wait session for this tenant. 畳まれた対話は失われない —
-	// 保留ペイロードは持ち越しへ退避され、Console から答えれば再開して届く（docs/75 §75.6）。
+	// 保留ペイロードは持ち越しへ退避され、Console から答えれば再開して届く（docs/log/75 §75.6）。
 	InteractionIdleTimeout string `json:"interaction_idle_timeout,omitempty"`
 	// HomeHibernateAfter is the third step of the same series and the only one that
 	// touches the user's data: a home nobody has opened for this long is snapshotted and
-	// its volume deleted, and the next Start restores it (ADR 0045 決定 13-2, docs/64
+	// its volume deleted, and the next Start restores it (ADR 0045 決定 13-2, docs/log/64
 	// §64.18.2). Only the ecs-ec2 runtime can do this; on every other runtime the value
 	// is inert. Same resolution as the two timeouts above — "" => deployment default
 	// (AF_ECS_EC2_HIBERNATE_AFTER_SEC), "0" => never hibernate this tenant's homes.
@@ -125,7 +125,7 @@ func idleTimeout(tenantVal string, def time.Duration) (d time.Duration, enabled 
 	return d, d > 0
 }
 
-// --- テナント上限とスロットプールの突き合わせ（docs/64 §64.35）---
+// --- テナント上限とスロットプールの突き合わせ（docs/log/64 §64.35）---
 //
 // ⚠️ この 2 つは**別の分母を数えている**。混ぜて 1 つの数字にしてはいけない。
 //

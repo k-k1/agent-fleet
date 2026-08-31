@@ -1,4 +1,4 @@
-// Work item inbox — pure read helpers (docs/80 / ADR 0061).
+// Work item inbox — pure read helpers (docs/log/80 / ADR 0061).
 //
 // Kept free of React and of the API client so the parts that decide what the rail says
 // (state tone, "last fetched", the seeded first prompt, the branch name) are testable on
@@ -119,7 +119,7 @@ export function sortWorkItems(items: WorkItem[]): WorkItem[] {
   });
 }
 
-/** 同じチケットは 1 行にする（docs/80 §80.20）。
+/** 同じチケットは 1 行にする（docs/log/80 §80.20）。
  *
  * ★ 行の重複は「クエリの重複」から来る。同じ JQL を 2 本保存する、あるいは
  * `assignee = currentUser()` と `project = G3M` のように**重なる**クエリを 2 本置く —— どちらも
@@ -150,14 +150,14 @@ function better(a: WorkItem, b: WorkItem, rank: (s: string) => number): boolean 
 }
 
 /** How many rows the rail draws before folding, and the threshold above which the
- * one-line filter appears (docs/80 §80.18.4).
+ * one-line filter appears (docs/log/80 §80.18.4).
  *
  * ★ The fold is a DISPLAY decision, not a fetch one: the stopped rail draws the CP cache
  * and cannot go and get "more" — going would mean waking the Workspace to render a list,
  * which ADR 0061 decision 1 forbids. So the payload stays whole and the section folds. */
 export const RAIL_VISIBLE = 10;
 
-/** Which meta fields carry no information for a given query's rows (docs/80 §80.18.2).
+/** Which meta fields carry no information for a given query's rows (docs/log/80 §80.18.2).
  *
  * ★ The bug this fixes: a Jira query of `assignee = currentUser()` put the SAME
  * `@display name` on all 41 rows — 41 second lines that say one thing, paid for by
@@ -182,7 +182,7 @@ export function uniformMeta(items: WorkItem[]): Record<string, { repo: boolean; 
   return out;
 }
 
-/** Rail filter: a substring search over what the row is ABOUT (docs/80 §80.18.4).
+/** Rail filter: a substring search over what the row is ABOUT (docs/log/80 §80.18.4).
  *
  * ★ Not a query. It never reaches the provider, is never saved, has no operators and does
  * not reorder — it only helps the eye find one row among 41. Assignee and repo are matched
@@ -195,7 +195,7 @@ export function matchWorkItem(item: WorkItem, needle: string): boolean {
   return q.split(/\s+/).every((w) => hay.includes(w));
 }
 
-/** Relative "last updated" for the head line (docs/80 §80.18.2). Gives the sort order a
+/** Relative "last updated" for the head line (docs/log/80 §80.18.2). Gives the sort order a
  * visible reason and makes a three-month-old ticket obvious; the absolute stamp stays in
  * the row's tooltip. Coarse on purpose — this is 4 characters at the end of a rail row,
  * not a timestamp. */
@@ -221,7 +221,7 @@ const RAIL_STALE_MS = 24 * 3600_000;
 
 /** What the row's right edge says about age — "" for anything touched today.
  *
- * ★ Measured, not assumed (docs/80 §80.18.2): at the default rail width the title gets
+ * ★ Measured, not assumed (docs/log/80 §80.18.2): at the default rail width the title gets
  * ~130px and this chip takes 38px of it. Spending a quarter of the title to say 「3時間前」
  * on the freshest rows re-commits the very sin this pass is fixing — and the list is
  * already sorted newest-first, so for the top rows the position says it. What position
@@ -314,7 +314,7 @@ export function titleSlug(title: string, max = 32): string {
  * want it. */
 export const DEFAULT_BRANCH_TEMPLATE = "feature/{key}";
 
-/** Branch name for a work item, from the user's template (docs/80 P2).
+/** Branch name for a work item, from the user's template (docs/log/80 P2).
  *
  * ⚠️ A template that yields something git would refuse is worse than no template, so the
  * result is sanitised: only [A-Za-z0-9._/-] survives, empty path segments collapse, and
@@ -343,7 +343,7 @@ export function sanitizeBranch(raw: string): string {
   return cleaned.replace(/\.\.+/g, ".").replace(/\.lock$/i, "");
 }
 
-/** The first prompt (docs/80 §80.9).
+/** The first prompt (docs/log/80 §80.9).
  *
  * ★ The body is NOT included by default. A ticket description is written by third
  * parties, so pasting it in by default is opening an injection path by default; instead
@@ -374,7 +374,7 @@ function readLine(item: WorkItem): string {
       return t("wi.prompt_read_jira");
     default:
       // Bitbucket はここ。`gh` にあたるセッション内の道具が無いので、指せるのは URL
-      // だけである（docs/80 §80.19.5）。無い道具の名前を書かないのが要点。
+      // だけである（docs/log/80 §80.19.5）。無い道具の名前を書かないのが要点。
       return t("wi.prompt_read_generic");
   }
 }
@@ -383,7 +383,7 @@ function readLine(item: WorkItem): string {
  *
  * ★ 能力が無い provider には操作要素を出さない。Bitbucket は読み取りだけを足したので
  * （投稿には `pullrequest:write` が要り、テナント管理者の再登録と全員の再認可を伴う —
- * docs/80 §80.19.3）、その行に 💬 を出すと押した先で必ず断られる。 */
+ * docs/log/80 §80.19.3）、その行に 💬 を出すと押した先で必ず断られる。 */
 export function canComment(item: WorkItem): boolean {
   return item.provider !== "bitbucket";
 }

@@ -584,7 +584,7 @@ func TestManagedEnrich(t *testing.T) {
 }
 
 // managed セッションの完了が状態通知 seam（agents.SetStateNotifier → package main の
-// recordSessionNotification）へ届くことの回帰テスト。docs/30 の報告は hook 経路にしか
+// recordSessionNotification）へ届くことの回帰テスト。docs/log/30 の報告は hook 経路にしか
 // 配線されておらず、managed driver は status を直接書いて誰にも知らせなかったため、
 // 完了しても【セッション報告】が構造的に飛ばなかった。ここでは実 turn をモック
 // app-server で走らせ、driver が seam を通ることを端から確かめる。
@@ -788,7 +788,7 @@ func TestManagedUsageLimitBlockedBadge(t *testing.T) {
 }
 
 // TestPendingInteraction pins the send-side contract for managed button rendering
-// (docs/37): the peek reads the live handle's questions without resuming, and its
+// (docs/log/37): the peek reads the live handle's questions without resuming, and its
 // bytes are exactly json.Marshal(inter.Questions) — the same shape bridge_answer
 // fingerprints from Snapshot, so the send/answer fingerprints match.
 func TestPendingInteraction(t *testing.T) {

@@ -21,7 +21,7 @@ import {
 const opts = (...labels: string[]) => ({ options: labels.map((label) => ({ label })) });
 const q3: QKQuestion = opts("赤", "青", "緑");
 // A question whose options carry a preview — claude's AskUserQuestion drops the
-// "Type something" row for these (docs/dev/92 §6), which is the shape the free-text
+// "Type something" row for these (docs/build/92 §6), which is the shape the free-text
 // tests below exercise.
 const withPreview = (...labels: string[]): QKQuestion => ({
   options: labels.map((label, i) => (i === 0 ? { label, preview: "モックアップ\n2行目" } : { label })),
@@ -180,7 +180,7 @@ describe("buildClaudeSeq — AskUserQuestion tabbed modal", () => {
   });
 });
 
-describe("buildClaudeSeq — preview options drop the free-text row (docs/dev/92 §6)", () => {
+describe("buildClaudeSeq — preview options drop the free-text row (docs/build/92 §6)", () => {
   // claude's AskUserQuestion renders single-select options with a `preview` in a wide
   // layout that has NO "Type something" row — replaced by a per-OPTION "n to add notes"
   // field. The old downs(opts.length) math assumed the free-text row still sat right

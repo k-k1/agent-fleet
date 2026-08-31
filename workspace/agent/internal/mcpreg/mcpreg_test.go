@@ -198,7 +198,7 @@ func TestComposePrecedence(t *testing.T) {
 	}
 }
 
-// dropAF removes the af builtin (docs/51 Phase 3 §自己申告ファストパス) from a registry
+// dropAF removes the af builtin (docs/log/51 Phase 3 §自己申告ファストパス) from a registry
 // slice. af は接続情報を持たず**常に**居るので、「登録したものだけが出ているか」を見る
 // アサーションからは外す — 外さないと、af とは無関係のテストが af の有無を数え始める。
 func dropAF(defs []ServerDef) []ServerDef {
@@ -245,7 +245,7 @@ func TestComposeAlwaysHasSelfReport(t *testing.T) {
 	}
 }
 
-// TestComposeAWSBuiltin: AWS MCP（Agent Toolkit for AWS — docs/25 §AWS MCP）は
+// TestComposeAWSBuiltin: AWS MCP（Agent Toolkit for AWS — docs/log/25 §AWS MCP）は
 // 接続してはじめて現れ、アシスタントと**セッションの両方**へ配られる。他の ops 連携と
 // 違ってセッションにも出るのが要点なので、ここが assistant だけに倒れると
 // 「接続したのにセッションから AWS ツールが見えない」に静かに戻る。

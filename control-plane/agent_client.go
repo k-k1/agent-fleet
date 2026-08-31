@@ -1,5 +1,5 @@
 // agent_client.go — CP→Agent HTTP クライアントヘルパ（セッション取得）。
-// manager.go からの機械的分割（docs/23 P2-W2）。
+// manager.go からの機械的分割（docs/log/23 P2-W2）。
 package main
 
 import (
@@ -53,7 +53,7 @@ var agentStatsClient = &http.Client{Timeout: 5 * time.Second, Transport: newAgen
 // source that works on a runtime the CP cannot see into (every ECS profile: no
 // docker binary, no cgroup for that workspace on the CP's host). The Agent reads
 // its OWN cgroup namespace, so the numbers mean the same thing as the host-side
-// read (docs/63 §63.9 / workspace/agent/internal/resources).
+// read (docs/log/63 §63.9 / workspace/agent/internal/resources).
 //
 // The returned map carries only the axes the Agent could actually read — a missing
 // key means "not measurable", never zero. Callers merge it into the stats map, so
@@ -166,7 +166,7 @@ func (m *manager) agentSessions(ctx context.Context, rt Runtime) ([]sessionWire,
 }
 
 // agentSessionsEnvelope is the Agent's GET /sessions body. RepoJobs is the count of
-// running repository imports (docs/78) — a workspace with none of its own sessions can
+// running repository imports (docs/log/78) — a workspace with none of its own sessions can
 // still be busy for an hour cloning, and the reaper must not stop it (the import dies
 // with the container and leaves a half-written working copy).
 type agentSessionsEnvelope struct {

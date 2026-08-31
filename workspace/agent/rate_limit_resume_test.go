@@ -1,6 +1,6 @@
 package main
 
-// 利用上限エピソードの状態機械（docs/47 §4-4）。ペイン判定は internal/tmuxx の
+// 利用上限エピソードの状態機械（docs/log/47 §4-4）。ペイン判定は internal/tmuxx の
 // ゴールデンコーパス、リセット時刻の決め方は internal/agents/claude が押さえているので、
 // ここで見るのは配線の側: 何回キーを送るか・いつ予約するか・設定が何を左右するか・
 // エピソードをいつ畳むか。tmux も CP も持たないので副作用は差し替える。
@@ -378,7 +378,7 @@ func TestRateLimitEpisodeRetired(t *testing.T) {
 	}
 }
 
-// TestRateLimitSpendLimitNeverSchedules: 支出・残高の上限（docs/47 §4-10）は「待てば解ける」
+// TestRateLimitSpendLimitNeverSchedules: 支出・残高の上限（docs/log/47 §4-10）は「待てば解ける」
 // 側の機械にかけない。予約すれば来ないリセットに向けて起こし、通知すれば利用者は待つ —
 // どちらも増枠かクレジット追加という課金側の一手を遅らせるだけになる。
 func TestRateLimitSpendLimitNeverSchedules(t *testing.T) {

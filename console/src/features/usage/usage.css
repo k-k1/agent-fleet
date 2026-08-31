@@ -1,4 +1,4 @@
-/* 使用量ビュー（docs/46 P4）— features/usage/UsageView.tsx 専用。
+/* 使用量ビュー（docs/log/46 P4）— features/usage/UsageView.tsx 専用。
  *
  * ルート class は .usage-board。AdminTab の showback にも .usage-view があるので、
  * 名前がぶつからないよう別系統にしてある。

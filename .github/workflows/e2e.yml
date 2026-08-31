@@ -1,4 +1,4 @@
-# E2E (docs/dev/10 §10.4): build the Workspace image, then verify L1 (e2e-smoke.sh:
+# E2E (docs/build/10 §10.4): build the Workspace image, then verify L1 (e2e-smoke.sh:
 # actual CLI versions = Dockerfile ARG pins etc.) -> L2 (e2e/: boot the CP headless
 # and exercise workspace/session round-trips) -> L3 (console-e2e/: Playwright
 # browser->CP->container end-to-end). The image build is heavy, so this is split
@@ -11,7 +11,7 @@
 #
 # Agent-CLI contract / drift detection does not live here (separate files, no image
 # build needed): claude-tui-contract.yml / codex-contract.yml / opencode-contract.yml.
-# Version-drift monitoring itself is cli-drift.yml. Overall layout: docs/dev/10-development.md.
+# Version-drift monitoring itself is cli-drift.yml. Overall layout: docs/build/10-development.md.
 # Note: rtk is always baked in (BAKE_RTK=1 default, ARG-pinned), so CI-built images
 # also contain rtk and the L1 smoke verifies its inclusion (the old host vendor
 # path is gone).

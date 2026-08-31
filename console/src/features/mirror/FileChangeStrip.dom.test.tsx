@@ -1,4 +1,4 @@
-// 変更ファイル帯（docs/68 §68.5）の描画。押さえたいのは見た目ではなく 3 つの約束:
+// 変更ファイル帯（docs/log/68 §68.5）の描画。押さえたいのは見た目ではなく 3 つの約束:
 //   - 材料が無いときは「0 件」ではなく帯ごと出さない（未対応 kind と本当に 0 件は
 //     利用者から区別できない）
 //   - 作業ツリーに差分が無い行も消さない（消すと「さっき直したのに居ない」になる）
@@ -122,7 +122,7 @@ describe("FileChangeStrip", () => {
     expect(other.querySelector(".mirror-files")!.classList.contains("open")).toBe(false);
   });
 
-  it("差分は無いがコミットに現れた行は「コミット済み」で出す（docs/68 P2）", async () => {
+  it("差分は無いがコミットに現れた行は「コミット済み」で出す（docs/log/68 P2）", async () => {
     apiMock.mockImplementation(route([], ["src/a.ts"]));
     const el = await render("s1", [file()]);
     await act(async () => {

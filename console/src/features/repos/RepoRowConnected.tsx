@@ -85,7 +85,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         void refreshRepos();
         toast(tr("rp.parent_ff_success", { name: r.name }), { kind: "success" });
       } : undefined}
-      // SVN (docs/41): update to the latest revision (auto-heals a wedged lock server-side).
+      // SVN (docs/log/41): update to the latest revision (auto-heals a wedged lock server-side).
       onUpdate={r.vcs === "svn" ? async () => {
         const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/svn-update`, "POST", {});
         if (res && res.error) {
@@ -105,7 +105,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         void refreshRepos();
         toast(tr("rp.svn_cleanup_success", { name: r.name }), { kind: "success" });
       } : undefined}
-      // 削除ロック（docs/45）: 作業コピー（worktree 含む）を削除保護に固定/解除する。
+      // 削除ロック（docs/log/45）: 作業コピー（worktree 含む）を削除保護に固定/解除する。
       onToggleLock={async (locked) => {
         const res = await repoSetLock(r.name, locked);
         if (res?.error) {
@@ -167,7 +167,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
             ? resolveStartMode(kind, r.name, defaults.startMode)
             : "normal";
         const body: Record<string, unknown> = { dir: r.path, kind };
-        // クイック起動も新規の既定は managed（docs/27 §9.2 — opencode）。CLI が
+        // クイック起動も新規の既定は managed（docs/log/27 §9.2 — opencode）。CLI が
         // 欲しいときは 作業を始める モーダルのドライバ選択から。
         if (agentOf(kind).managedDriver) body.driver = "managed";
         if (model) body.model = model;

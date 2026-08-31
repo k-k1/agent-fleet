@@ -2,7 +2,7 @@ package kiro
 
 // read 層のユニットテスト: 起動コマンド組み立て・v2 JSONL 転写のパース（tool 出力の
 // toolUseId 突合・Turn.Idx 単調 — agy 7354916 の教訓で必須）・TUI 文字列の状態分類・
-// models JSON パース・cwd による sid 発見。フィクスチャは 2.14.1 の実測（docs/43）。
+// models JSON パース・cwd による sid 発見。フィクスチャは 2.14.1 の実測（docs/log/43）。
 
 import (
 	"encoding/json"
@@ -336,7 +336,7 @@ func TestDiscoverSidFence(t *testing.T) {
 	}
 }
 
-// 承認パネルの本文（docs/75 P5 の持ち越し）。ペインの文字列にしか無いので halt より
+// 承認パネルの本文（docs/log/75 P5 の持ち越し）。ペインの文字列にしか無いので halt より
 // 後では取れない — ここで固定するのは「取れるときに何を取るか」だけ。
 func TestApprovalLine(t *testing.T) {
 	pane := "some earlier output\n\n  shell requires approval\n  > Enter to allow\n"
@@ -352,7 +352,7 @@ func TestApprovalLine(t *testing.T) {
 	}
 }
 
-// 権限確認あり（docs/76）。消えるのは --trust-all-tools だけで、chat サブコマンドと
+// 権限確認あり（docs/log/76）。消えるのは --trust-all-tools だけで、chat サブコマンドと
 // v2 エンジンのピンは残る。初回の危険モード確認ダイアログの抑止は settings 側
 // （chat.disableTrustAllConfirmation）なのでフラグには現れない。
 func TestBuildProgramPermissionsOn(t *testing.T) {

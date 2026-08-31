@@ -6,7 +6,7 @@
 # so `git show v0.2.3` is the quicker lookup and this file is the human-readable
 # index. gen-changelog.sh reads it to build the dist repo's CHANGELOG.
 #
-# Append a row as part of publishing (docs/35 §35.8.2), newest last.
+# Append a row as part of publishing (docs/log/35 §35.8.2), newest last.
 0.1.0	2026-07-21	f818877e98424f4ba4af489f3bc3d922aa60bc70
 0.1.1	2026-07-21	098f9f46aab766801393250734ca564c7eba7ab2
 0.1.2	2026-07-21	33fb9b8059532aa966d5d962da1edb6ff8ec9d67

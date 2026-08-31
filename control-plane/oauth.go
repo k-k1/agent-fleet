@@ -27,7 +27,7 @@ import (
 //
 // This file owns everything that is provider-independent — the loginProvider
 // abstraction, the signed state/session cookies, the allowlist, authGate and the
-// login page. The IdP-facing protocol lives in oauth_oidc.go (docs/61 §61.6);
+// login page. The IdP-facing protocol lives in oauth_oidc.go (docs/log/61 §61.6);
 // Google is one instance of that generic OIDC client, keeping its historical env
 // names (GOOGLE_OAUTH_*) so existing deployments need no config change.
 //
@@ -44,7 +44,7 @@ const (
 	googleProviderID = "google"
 )
 
-// --- provider abstraction (docs/61 §61.6) ----------------------------------
+// --- provider abstraction (docs/log/61 §61.6) ----------------------------------
 
 // principal is what a provider proves about the person who just signed in.
 // Verified means the provider's declared `trust` rule (§61.4) was satisfied —
@@ -55,12 +55,12 @@ type principal struct {
 	// Realm is the authority that verified Subject: the issuer URL for OIDC, the
 	// fixed https://github.com for the GitHub adapter. Two providers with one realm
 	// are two buttons onto the same IdP, which is what lets the deployment's GitHub
-	// and a tenant's own GitHub resolve to one person (docs/61 §61.15, rule 1.5).
+	// and a tenant's own GitHub resolve to one person (docs/log/61 §61.15, rule 1.5).
 	// It is filled in by the callback from the provider itself — never from a
 	// tenant-supplied field — so a tenant cannot name somebody else's realm.
 	Realm string
 	// RealmClaim / RealmSubject are the optional SECOND key rule 1.5 may match on:
-	// which stable claim the adapter was told to read, and what it carried (docs/61
+	// which stable claim the adapter was told to read, and what it carried (docs/log/61
 	// §61.15.10). Both are filled by the adapter out of the token it just exchanged,
 	// never from configuration — a tenant names the claim, never the value.
 	RealmClaim   string
@@ -109,7 +109,7 @@ func (c *config) setProviders(ps []loginProvider) {
 // empty id means "the deployment's first button" — that also covers bookmarked
 // /oauth2/login links and state cookies minted before P0.
 //
-// ★ A "t:<slug>:<name>" id is a tenant-defined provider (docs/61 §61.11) and is
+// ★ A "t:<slug>:<name>" id is a tenant-defined provider (docs/log/61 §61.11) and is
 // resolved through the runtime registry, which only holds APPROVED (active) rows.
 // That is what makes "a pending provider issues no session" true at the callback,
 // not merely on the login page — hiding a button is presentation, and decision 14
@@ -179,7 +179,7 @@ func (c config) setCookie(w http.ResponseWriter, name, value string, maxAge int)
 // --- session --------------------------------------------------------------
 
 // sessionClaims is the signed session cookie payload. `prov` / `sub` were added
-// in P0 (docs/61 §61.6): JSON decoding tolerates their absence, so cookies minted
+// in P0 (docs/log/61 §61.6): JSON decoding tolerates their absence, so cookies minted
 // by the previous version keep working — no forced logout on upgrade.
 type sessionClaims struct {
 	Email string `json:"email"`
@@ -258,7 +258,7 @@ func (c config) sessionAllowed(ctx context.Context, claims sessionClaims) (bool,
 	return true, ""
 }
 
-// --- carrying the IdP subject downstream (docs/61 §61.5) -------------------
+// --- carrying the IdP subject downstream (docs/log/61 §61.5) -------------------
 
 // loginRef is the (provider, subject) the current session was minted with. It
 // travels in the REQUEST CONTEXT rather than in a header like the email does:
@@ -283,7 +283,7 @@ func loginRefFrom(ctx context.Context) (loginRef, bool) {
 }
 
 // sessionProviderFrom reports WHICH sign-in button minted the current session.
-// The tenant gate needs it (tenant.allowed_providers, docs/61 §61.9.4) and, unlike
+// The tenant gate needs it (tenant.allowed_providers, docs/log/61 §61.9.4) and, unlike
 // identity resolution, it is meaningful even without a subject: a pre-P0 cookie
 // carries no `sub` but its provider is still known ("google", by the transitional
 // rule). "" means there is no IdP behind this request at all — AUTH=proxy and
@@ -297,7 +297,7 @@ func sessionProviderFrom(ctx context.Context) string {
 }
 
 // sessionLoginRef is loginRefFrom WITHOUT the "there is a subject" requirement.
-// Unlinking needs it (docs/61 §61.16.4): the method the caller is signed in with
+// Unlinking needs it (docs/log/61 §61.16.4): the method the caller is signed in with
 // must not be removable, and on a pre-P0 cookie — provider known, subject not — the
 // safe reading is "every row of that provider is the one in use", not "none is".
 func sessionLoginRef(ctx context.Context) (loginRef, bool) {
@@ -348,7 +348,7 @@ func (c config) hasDeploymentAllowlist() bool {
 	return len(c.allowEmails) > 0 || len(c.allowDomains) > 0 || c.allowEmailsFile != ""
 }
 
-// tenantEmailAllowed is the DATABASE-derived term of the entry gate (docs/61
+// tenantEmailAllowed is the DATABASE-derived term of the entry gate (docs/log/61
 // §61.9.6 + 決定 16): an auto-join domain matches, or this person is on some
 // tenant's roster because an administrator invited them.
 //
@@ -383,7 +383,7 @@ type oauthState struct {
 	// tenants a person may actually use is decided server-side from membership and
 	// the tenant rules, so this value only ever picks a VIEW.
 	Tnt string `json:"t,omitempty"`
-	// Link marks a LINK flow (docs/61 §61.16): the identity the proven method is to
+	// Link marks a LINK flow (docs/log/61 §61.16): the identity the proven method is to
 	// be attached to, plus the session that proved it. Unlike Tnt these ARE
 	// authorization inputs, which is why they travel in the signed state and are
 	// re-checked against the live session at the callback — a signed value only says
@@ -489,7 +489,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	// ★ A link flow branches here, before anything that would mint a session: the
 	// person is already signed in and stays signed in as whoever they were
-	// (docs/61 §61.16).
+	// (docs/log/61 §61.16).
 	if st.Link != "" {
 		c.finishLink(w, r, st, p)
 		return
@@ -515,7 +515,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// ★ Stamped here, from the provider CP resolved by id — not from anything the
-	// exchange returned and not from the row a tenant typed (docs/61 §61.15).
+	// exchange returned and not from the row a tenant typed (docs/log/61 §61.15).
 	pr.Realm = providerRealm(p)
 	allowed, err := p.Allowed(r.Context(), pr)
 	if err != nil || !allowed {
@@ -525,7 +525,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	isNew, err := c.linkAfterLogin(r.Context(), pr)
 	if errors.Is(err, errIdentityClaimed) {
 		// A tenant-defined provider asserted an address that already belongs to an
-		// account somebody has signed in as (docs/61 §61.11 rule 2'). No session is
+		// account somebody has signed in as (docs/log/61 §61.11 rule 2'). No session is
 		// issued: the remedy is to sign in the way that account already signs in.
 		log.Printf("oauth: provider %s: refusing %s — the address belongs to an existing account", pr.Provider, pr.Email)
 		loginRedirect(w, r, "email_taken", tenant)
@@ -541,7 +541,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 // withTenantHint appends ?tenant=<slug> to the post-login destination so the
-// Console preselects the department whose login URL was used (docs/61 §61.10.4).
+// Console preselects the department whose login URL was used (docs/log/61 §61.10.4).
 // It is a HINT: the Console only honours it if that tenant is among the
 // memberships the server returned, and every API call is authorized server-side
 // regardless (決定 14). An existing query string is preserved, and an existing
@@ -565,7 +565,7 @@ func withTenantHint(next, tenant string) string {
 
 // linkAfterLogin binds the (provider, subject) that just signed in to a person and
 // reports whether that created a NEW identity — i.e. whether this login landed in a
-// different workspace from one the person may already have (docs/61 §61.5 の 3 行目).
+// different workspace from one the person may already have (docs/log/61 §61.5 の 3 行目).
 //
 // Binding here rather than leaving it to the first API request is what makes the
 // answer available at all: by the next request the row exists and the login is no
@@ -611,7 +611,7 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 	// resolver wrote the row on the first API request instead. It now runs anyway,
 	// because that path has no provider object and therefore no realm — and a row
 	// with no realm cannot take part in rule 1.5 when the tenant later adds its own
-	// GitHub (docs/61 §61.15). What stays suppressed is the NOTICE: with one button
+	// GitHub (docs/log/61 §61.15). What stays suppressed is the NOTICE: with one button
 	// there is no second account to have landed in by mistake, so announcing a new
 	// account would be noise nobody can act on.
 	if len(c.providers) < 2 && !tenantDefined {
@@ -621,7 +621,7 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 }
 
 // writeNewAccountPage is the one page between a login that created a new account
-// and the Console — docs/61 受入条件 3: never hand someone a second workspace
+// and the Console — docs/log/61 受入条件 3: never hand someone a second workspace
 // silently. There is deliberately no "merge with my other account" action on it:
 // being able to sign in to two accounts proves control of both, not that they
 // belong to one person, and the merge could not be undone (§61.5). So the honest
@@ -701,7 +701,7 @@ func (c config) authGate(next http.Handler) http.Handler {
 		r.Header.Set(c.mgr.emailHeader, claims.Email)
 		// Hand the proven IdP subject to the identity resolution downstream, so a
 		// person whose email changed at the IdP keeps their user_key — and with it
-		// their workspace, home and secrets (docs/61 §61.5). Sessions minted before
+		// their workspace, home and secrets (docs/log/61 §61.5). Sessions minted before
 		// P0 carry no subject, and loginRefFrom keeps ignoring those — but the
 		// PROVIDER is set unconditionally, because the tenant gate (§61.9.4) has to
 		// know which button was pressed even on a cookie that predates `sub`.
@@ -711,7 +711,7 @@ func (c config) authGate(next http.Handler) http.Handler {
 }
 
 // isAuthExempt（セッション無しで到達できるパス）は routes.go の除外レジストリに
-// 移動した — 各 register 関数が自分の除外を宣言する（docs/23 P2-W1）。
+// 移動した — 各 register 関数が自分の除外を宣言する（docs/log/23 P2-W1）。
 
 // wantsHTML is true for top-level browser navigations (redirect to /login);
 // everything else (XHR, WS) gets a 401 the SPA handles.
@@ -721,7 +721,7 @@ func wantsHTML(r *http.Request) bool {
 
 // --- login landing page ---------------------------------------------------
 
-// handleLogin serves both /login and the per-tenant /login/{slug} (docs/61
+// handleLogin serves both /login and the per-tenant /login/{slug} (docs/log/61
 // §61.9.3). The slug decides which buttons to show and nothing else.
 //
 // ★ An unknown slug renders the GENERIC page rather than a 404. A 404 would tell
@@ -730,7 +730,7 @@ func wantsHTML(r *http.Request) bool {
 // page must stay byte-identical to the tenant-less one — if only one of them applied
 // the default tenant's rules, comparing the two would say whether a slug exists.
 //
-// ★ P7-1 (docs/61 §61.17.6 + 決定 42): the tenant-less page takes the DEFAULT
+// ★ P7-1 (docs/log/61 §61.17.6 + 決定 42): the tenant-less page takes the DEFAULT
 // tenant's hidden_providers — and ONLY those. This closes §61.15.13 ("hiding a
 // button has no effect on the bare /login"), which held merely because that page
 // belonged to no tenant.
@@ -788,14 +788,14 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(page))
 }
 
-// loginButtons renders one sign-in button per enabled provider (docs/61 §61.6),
+// loginButtons renders one sign-in button per enabled provider (docs/log/61 §61.6),
 // narrowed to a tenant's allowed_providers when one was named.
 //
 // ★ The narrowing is cosmetic. The same rule is enforced again at tenant
 // resolution (resolver.go), because a person can always go to the generic /login
 // and press whichever button they like (決定 14).
 //
-// ★ A tenant's OWN providers (docs/61 §61.11) are appended only when a slug was
+// ★ A tenant's OWN providers (docs/log/61 §61.11) are appended only when a slug was
 // named — /login/<slug>. On the generic page the full list would be a directory of
 // the group's subsidiaries, readable by anyone who can reach the login (決定 32-4).
 // They come last: the department's own button belongs next to the deployment-wide
@@ -809,7 +809,7 @@ func (c config) loginButtons(ctx context.Context, next, lang, tenant string, all
 	if len(providers) == 0 {
 		return `<div class="err">` + loginText[lang].errUnconfigured + `</div>`
 	}
-	// ★ hidden_providers removes a button WITHOUT removing the method (docs/61
+	// ★ hidden_providers removes a button WITHOUT removing the method (docs/log/61
 	// §61.15.9): a subsidiary that runs on its own GitHub still has to accept the
 	// parent company's method for the colleague on loan, and that person signs in on
 	// the generic /login. Applied only when something would remain — a page with no
@@ -901,7 +901,7 @@ func loginErrorBlock(code, lang string) string {
 
 // preferredUILang picks the UI language for CP-rendered pages (login / OAuth
 // callbacks) from Accept-Language, since these are served before any locale cookie
-// exists (docs/28 P3). It scans the header's language ranges in order and returns the
+// exists (docs/log/28 P3). It scans the header's language ranges in order and returns the
 // first supported one; Japanese is the default (the product's primary audience and the
 // prior hardcoded language). The Console SPA owns locale once signed in.
 func preferredUILang(r *http.Request) string {
@@ -926,14 +926,14 @@ type loginStrings struct {
 	title, signin, signinWith, note                  string
 	errForbidden, errDenied, errSession, errProvider string
 	errUnconfigured, errReauth                       string
-	// Per-tenant login page (docs/61 §61.9.3). tenantNote takes the tenant name.
+	// Per-tenant login page (docs/log/61 §61.9.3). tenantNote takes the tenant name.
 	tenantNote, errTenantNoProvider string
 	// errEmailTaken: a tenant-defined provider asserted an address that already
-	// belongs to an account on this deployment (docs/61 §61.11 rule 2').
+	// belongs to an account on this deployment (docs/log/61 §61.11 rule 2').
 	errEmailTaken string
-	// The new-account notice (docs/61 受入条件 3). newBody takes the email.
+	// The new-account notice (docs/log/61 受入条件 3). newBody takes the email.
 	newTitle, newBody, newNote, newContinue, newSwitch string
-	// The result page of a link flow (docs/61 §61.16 + 決定 37).
+	// The result page of a link flow (docs/log/61 §61.16 + 決定 37).
 	linkTitle, linkNote, linkBack          string
 	linkOK, linkTaken, linkEmail, linkGate string
 	linkSession, linkProvider, linkFailed  string

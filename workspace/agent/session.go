@@ -11,9 +11,9 @@ import (
 )
 
 // セッションのワイヤ変換とタイトル/ラベル導出。モデル・メタ永続化・UUID は
-// internal/session（docs/23 残① Wave A）/ tmux= session_tmux.go /
+// internal/session（docs/log/23 残① Wave A）/ tmux= session_tmux.go /
 // HTTPハンドラ= session_handlers.go / claude の CLI 起動コマンドは
-// internal/agents/claude の program.go（docs/23 残① Wave F）
+// internal/agents/claude の program.go（docs/log/23 残① Wave F）
 
 // wireSession builds the API representation from a meta and liveness.
 func wireSession(m session.Meta, alive bool) session.Session {
@@ -37,7 +37,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	// 上限で切れたターンの後始末が済んだ claude（メニューは自動解除済み／モデル別上限は
 	// そもそもメニューを出さない）はペインが待機プロンプトに戻るので、ここまでの状態は
 	// idle＝入力待ちになる。リセットを待っているだけなのに正常終了と見分けが付かない
-	// ので、開いているエピソードがある間は 制限解除待ち として名乗る（docs/47 §4-9）。
+	// ので、開いているエピソードがある間は 制限解除待ち として名乗る（docs/log/47 §4-9）。
 	// WireLive ではなくここで見るのはエピソードの持ち主が package main だからで、
 	// driveState（チャット／ミラーのチップ）にも同じ読み替えが要る。
 	if alive && s.State == "idle" && normalizeKind(m.Kind) == session.KindClaude {
@@ -55,7 +55,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 			s.ExitCode = e.Code
 			s.ExitSignal = e.Signal
 		}
-		// 畳まれたときに答えを待っていた対話（docs/75）。生きている行には出さない —
+		// 畳まれたときに答えを待っていた対話（docs/log/75）。生きている行には出さない —
 		// そちらは State（question / plan / permission）が今まさに出ているモーダルを
 		// 語っており、持ち越しと二重に見せると「もう答えたはずのものがまだ出ている」
 		// ように読める。
@@ -67,7 +67,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 }
 
 // remoteSessionURL（claude.ai Remote Control URL の導出）は internal/agents/claude
-// の claude.RemoteSessionURL へ移設（docs/23 残① Wave F）。
+// の claude.RemoteSessionURL へ移設（docs/log/23 残① Wave F）。
 
 // dirInfo is a working copy's current branch + worktree flag, cached per dir.
 type dirInfo struct {
@@ -101,17 +101,21 @@ func annotateSessions(sessions []session.Session, info func(string) dirInfo) {
 }
 
 // sessionLabelFor builds the claude --name for a session. When the user supplied a
-// title it's "[AF] {title}"; otherwise it falls back to the auto default
-// "[AF] {repo} @MMDD-HHMM" where {repo} is the working dir's basename and the time is
-// the workspace's local time (the entrypoint exports TZ from the per-user timezone
-// setting, default JST). The "[AF] " tag identifies Agent-Fleet-launched sessions in
-// the claude.ai Remote Control picker. Computed at create/recreate and stored in the
-// meta so relaunch keeps the same name.
-func sessionLabelFor(dir, title string) string {
+// title it's "[AF:{name}] {title}"; otherwise it falls back to the auto default
+// "[AF:{name}] {repo} @MMDD-HHMM" where {repo} is the working dir's basename and the
+// time is the workspace's local time (the entrypoint exports TZ from the per-user
+// timezone setting, default JST). The tag identifies Agent-Fleet-launched sessions in
+// the claude.ai Remote Control picker; the session name inside it is what keeps two
+// sessions with the SAME title apart — see internal/session/label.go for why that
+// matters (claude's own cross-session channel addresses sessions by this string, and
+// a duplicate title silently misdelivers). Computed at create/recreate and stored in
+// the meta so relaunch keeps the same name.
+func sessionLabelFor(dir, title, name string) string {
+	tag := session.LabelPrefix(name)
 	if title != "" {
-		return "[AF] " + title
+		return tag + title
 	}
-	return fmt.Sprintf("[AF] %s @%s", filepath.Base(dir), time.Now().Format("0102-1504"))
+	return fmt.Sprintf("%s%s @%s", tag, filepath.Base(dir), time.Now().Format("0102-1504"))
 }
 
 // sessionTitleMaxRunes is THE limit for a session's display title, in runes. Every
@@ -143,9 +147,9 @@ func cleanTitle(s string) (string, bool) {
 func forkTitle(src session.Meta) string {
 	base := src.Title
 	if base == "" {
-		base = strings.TrimPrefix(src.Label, "[AF] ")
+		base = session.StripLabel(src.Label)
 	}
 	return strings.TrimSpace(base + " (fork)")
 }
 
-// shellQuote は internal/session の session.ShellQuote へ移設（docs/23 残① Wave D）。
+// shellQuote は internal/session の session.ShellQuote へ移設（docs/log/23 残① Wave D）。

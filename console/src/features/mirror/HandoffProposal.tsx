@@ -69,7 +69,7 @@ export async function markHandoffLaunched(session: string, id: string): Promise<
 
 /** The card's chrome, without any of the owner's controls: the same box, heading and
  *  起動済み badge for whoever is reading. The shared view (a recipient who can neither
- *  edit nor launch) renders it with only the read-only body — see docs/59 §3
+ *  edit nor launch) renders it with only the read-only body — see docs/log/59 §3
  *  「能力が無い操作要素は描画しない」. */
 export function HandoffCard({ intro, launched, children }: { intro: string; launched?: boolean; children: ReactNode }) {
   const tr = useT();
@@ -125,7 +125,7 @@ export function HandoffProposal({
   const [newWorktree, setNewWorktree] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
   const repos = useReposStore((s) => s.repos);
-  // メンバーへの引き継ぎ（docs/77）は**セッション単位**の事実で、提案 1 件ごとには紐付かない
+  // メンバーへの引き継ぎ（docs/log/77）は**セッション単位**の事実で、提案 1 件ごとには紐付かない
   // （未処理は 1 セッション 1 件）。だからカードには「このセッションは今こうなっている」を出す。
   const offer = useHandoffStore((st) => offerForSession(st.owned, session));
   // 左ペインの共有セクションが定期取得しているが、そこが描かれていない配置でもカードの
@@ -283,7 +283,7 @@ export function HandoffProposal({
 }
 
 /** 引き継ぎの状態チップ。通知は流れ物なので、**二重作業を防ぐ**のはこの行の役目である
- *  （docs/77 §77.10）。 */
+ *  （docs/log/77 §77.10）。 */
 function HandoffOfferStatus({ offer }: { offer: ReturnType<typeof offerForSession> }) {
   const tr = useT();
   if (!offer) return null;

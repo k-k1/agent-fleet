@@ -2,7 +2,7 @@ package copilot
 
 // read 層のユニットテスト: 起動コマンド組み立て・trust 事前追記（コメント行
 // 保存）・events.jsonl のパース（Turn.Idx 単調 — agy 7354916 の教訓で必須）・
-// live 状態分類。fixture のイベント形は v1.0.73 実測（docs/36）。
+// live 状態分類。fixture のイベント形は v1.0.73 実測（docs/log/36）。
 
 import (
 	"encoding/json"
@@ -231,7 +231,7 @@ func TestParseModelPicker(t *testing.T) {
 	}
 }
 
-// docs/68: events.jsonl から「編集したファイル」を拾えること。`edit` の形は実測
+// docs/log/68: events.jsonl から「編集したファイル」を拾えること。`edit` の形は実測
 // （~/.copilot/session-state/*/events.jsonl に {"path","old_str","new_str"} で残っていた）。
 func TestToolEditsPicksEditFamilyOnly(t *testing.T) {
 	cases := []struct {
@@ -265,7 +265,7 @@ func TestToolEditsPicksEditFamilyOnly(t *testing.T) {
 	}
 }
 
-// 持ち越し（docs/75 P5）は「何の許可を求めていたか」を出す。events.jsonl の
+// 持ち越し（docs/log/75 P5）は「何の許可を求めていたか」を出す。events.jsonl の
 // スキーマは版で動くので**取れたら使う**扱いで、取れなくても許可待ちの判定そのものは
 // requestId だけで成立すること（detail が空でも state は question のまま）。
 func TestPendingPermissionDetail(t *testing.T) {
@@ -286,7 +286,7 @@ func TestPendingPermissionDetail(t *testing.T) {
 	}
 }
 
-// 権限確認あり（docs/76）。消えるのは --allow-all だけ。--no-remote / --no-remote-export
+// 権限確認あり（docs/log/76）。消えるのは --allow-all だけ。--no-remote / --no-remote-export
 // （会話のフリート外流出と二重操縦の防止）は権限確認とは別軸なので残る。
 func TestBuildProgramPermissionsOn(t *testing.T) {
 	sid := "3336143a-bf0b-4db3-a0b8-15957462ce0c"

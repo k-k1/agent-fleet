@@ -1,5 +1,5 @@
 // workspace_handlers.go — Workspace/Session の backend 非依存 HTTP ハンドラ群。
-// runtime.go からの機械的分割（docs/23 P2-W1）→ workspaceAPI struct に集約（docs/23 残③）。
+// runtime.go からの機械的分割（docs/log/23 P2-W1）→ workspaceAPI struct に集約（docs/log/23 残③）。
 package main
 
 import (
@@ -20,7 +20,7 @@ import (
 )
 
 // workspaceAPI は Workspace ライフサイクル + Session 管理の機能ハンドラ集
-// （docs/23 残③）。解決プリアンブルは埋め込みの memberAuth（登録側で
+// （docs/log/23 残③）。解決プリアンブルは埋め込みの memberAuth（登録側で
 // withResolved に包む）。Session 系ハンドラは末尾で Agent へ素通しするため
 // agentProxyAPI を保持し、autostart（P3-9 on-demand start フラグ）だけ config
 // から写す — それ以外の依存はすべて a.mgr 経由で足りる。
@@ -158,7 +158,7 @@ func (a workspaceAPI) whoami(w http.ResponseWriter, r *http.Request) {
 		"preferred_username": r.Header.Get("X-Forwarded-Preferred-Username"),
 		// Deployment capability flag: whether the CP scheduler goroutine is running
 		// (AF_SCHEDULER_INTERVAL > 0). The Console hides the schedules rail section when
-		// it is off, since no schedule can ever fire on this deployment (docs/38).
+		// it is off, since no schedule can ever fire on this deployment (docs/log/38).
 		"scheduler_enabled": schedulerRunning,
 	})
 }
@@ -168,12 +168,12 @@ func (a workspaceAPI) whoami(w http.ResponseWriter, r *http.Request) {
 //
 // state は呼び出し側が引いて渡す。events の tick では stats 側でも同じ状態が要り、
 // ecs-ec2 の State() は実 AWS 呼び出しなので、1 tick 1 回に束ねている
-// （docs/63 §63.9）。
+// （docs/log/63 §63.9）。
 func (a workspaceAPI) workspacePayload(ctx context.Context, res *resolved, state string) map[string]any {
 	rt := res.rt
 	m := map[string]any{"name": rt.Name(), "state": state}
 	// Live boot-install phase for the "starting" dialog (native rootfs only —
-	// docs/35 §35.9-9). State() now says "starting" for that window too, but only
+	// docs/log/35 §35.9-9). State() now says "starting" for that window too, but only
 	// bootPhase can say WHAT is taking minutes (どの CLI を落としているか), which is
 	// the difference between a progress dialog and a silent spinner. Only the native
 	// runtime implements it; a non-empty value means a boot is in progress.
@@ -438,10 +438,11 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 				fmt.Sprintf("tenant workspace limit reached (%d)", lim.MaxWorkspaces)}
 		}
 	}
-	// Stage the role-scoped docs subset (member → guide/member + dev, tenant_admin →
-	// guide/ + dev, super_admin → all) into <dataDir>/docs so the container's agents can
-	// answer environment questions from the authoritative docs. Gated here because
-	// the CP knows the role — a member's container never holds private decision/history docs.
+	// Stage the role-scoped docs subset into <dataDir>/docs so the container's agents
+	// can answer environment questions from the authoritative docs. Which shelves a
+	// role gets is docsRolePrefixes (workspace_docs.go) — one allowlist, no "all"
+	// case. Gated here because the CP is what knows the role; no container ever holds
+	// the decision records or the frozen work journals.
 	// Best-effort: a failure just means no docs mount, never a failed start.
 	//
 	// Only for the adapters that then MOUNT that directory. On ECS nothing would ever
@@ -456,7 +457,7 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	if err := lease.checkpoint(ctx); err != nil {
 		return workspaceLifecycleLeaseError(err)
 	}
-	// docs/81 §4: このコンテナ起動ぶんのプレビュー slug を、コンテナが作られる **前** に
+	// docs/log/81 §4: このコンテナ起動ぶんのプレビュー slug を、コンテナが作られる **前** に
 	// 確定させ、URL を env に載せた runtime で起動する。順番が逆だと、アプリが自分の
 	// 公開 URL を env から知る作り（Next.js の NEXTAUTH_URL / AUTH_URL / metadataBase）
 	// では「URL は出たがアプリは自分の場所を間違えている」状態になる。プレビューが
@@ -540,7 +541,7 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 type sessionWire struct {
 	Name string `json:"name"`
 	Kind string `json:"kind"`
-	// Driver（docs/27 P1.5）: "managed" = 共有 runtime 駆動の paneless セッション。
+	// Driver（docs/log/27 P1.5）: "managed" = 共有 runtime 駆動の paneless セッション。
 	// この struct は Agent 応答を decode→再 emit する中継なので、ここに無い field は
 	// silently drop される（下の Title の前科と同型）— 載せ忘れると Console の
 	// isManagedSession が一生 false になり managed UI が起動しない。DB ミラー
@@ -597,10 +598,10 @@ type sessionWire struct {
 	CurrentBranch string `json:"currentBranch,omitempty"`
 	BranchDrift   bool   `json:"branchDrift,omitempty"`
 	Worktree      bool   `json:"worktree,omitempty"`
-	// Exit cause of a STOPPED session (docs/26): "oom" | "killed" | "crashed"、
+	// Exit cause of a STOPPED session (docs/log/26): "oom" | "killed" | "crashed"、
 	// クリーン終了・意図停止では空。ExitCode は pane の生 wait status（137 = OOM
 	// SIGKILL）、ExitSignal は導出シグナル番号。この struct に無かった頃は中継で
-	// drop され、docs/26 の exit chip（OOM/クラッシュ表示）が CP 経由では一度も
+	// drop され、docs/log/26 の exit chip（OOM/クラッシュ表示）が CP 経由では一度も
 	// 表示されなかった。DB ミラーには列が無いので停止中の再配信には載らない
 	// （exit を持つのは停止セッションなので、Agent 停止中は chip も消える点は既知の割り切り）。
 	// NOTE: Agent の wire にはこの他に tmux（"claude_"+name、Console 未使用・導出可能）
@@ -610,11 +611,11 @@ type sessionWire struct {
 	ExitCode   int    `json:"exitCode,omitempty"`
 	ExitSignal int    `json:"exitSignal,omitempty"`
 	// KeepAwakeUntil: 利用者が「アイドル自動停止から守れ」と宣言した期限（RFC3339・
-	// docs/75）。この struct に無いと silent drop で、押したピンが reaper に届かない
+	// docs/log/75）。この struct に無いと silent drop で、押したピンが reaper に届かない
 	// ＝「押したのに止まった」になる。DB ミラーには列を作らない — 停止中の Workspace に
 	// 守るべき走行中のジョブは無い（次に起きたとき Agent が改めて申告する）。
 	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
-	// Carried は「畳まれたときに答えを待っていた対話」の種類（docs/75 §75.6.5）。
+	// Carried は「畳まれたときに答えを待っていた対話」の種類（docs/log/75 §75.6.5）。
 	// 中継漏れは silent drop なので、この struct と DB ミラーの**両方**に要る:
 	// 稼働中は Agent 由来のこの値、停止中は ReplaceSessions で焼いた列が一覧を作る。
 	// 片方だけだと「Workspace を止めた瞬間にバッジが消える」形の嘘になる。
@@ -662,7 +663,7 @@ func (a workspaceAPI) sessionsPayload(ctx context.Context, res *resolved) map[st
 		out = append(out, sessionWire{
 			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
 			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
-			// 停止中でも「答えを待っている質問がある」ことは出す（docs/75 §75.6.5）。
+			// 停止中でも「答えを待っている質問がある」ことは出す（docs/log/75 §75.6.5）。
 			Carried: r0.Carried,
 			// Container is down: we can't check the dir, so assume resumable; the
 			// Agent re-checks and refuses on actual attach if the dir is gone.
@@ -680,7 +681,7 @@ func (a workspaceAPI) sessionsList(w http.ResponseWriter, r *http.Request, res *
 // proxies POST /api/sessions to the Agent.
 func (a workspaceAPI) sessionCreate(w http.ResponseWriter, r *http.Request, res *resolved) {
 	ctx := r.Context()
-	// SSM sessions (docs/history/p3-ssm-session.md): resolve the host bookmark
+	// SSM sessions (docs/log/p3-ssm-session.md): resolve the host bookmark
 	// server-side and rewrite the body with the (non-secret) instance/document/SSO
 	// coordinates before proxying — the client only sends ssm_host_id.
 	if aerr := a.rewriteSSMCreate(ctx, res, r); aerr != nil {
@@ -705,7 +706,7 @@ func (a workspaceAPI) sessionCreate(w http.ResponseWriter, r *http.Request, res 
 // sessionFork forks a session's conversation into a new one (POST
 // /api/sessions/{name}/fork). Like create, it auto-starts a cold workspace and
 // enforces the per-user session quota (a fork adds a session), then proxies to the
-// Agent's fork endpoint. The optional body (`{"at": …}` — a point fork, docs/55) is
+// Agent's fork endpoint. The optional body (`{"at": …}` — a point fork, docs/log/55) is
 // relayed verbatim by proxy.rest; the Agent owns validating the anchor.
 func (a workspaceAPI) sessionFork(w http.ResponseWriter, r *http.Request, res *resolved) {
 	ctx := r.Context()
@@ -736,7 +737,7 @@ func (a workspaceAPI) sessionStart(w http.ResponseWriter, r *http.Request, res *
 	a.proxy.rest(w, r, res)
 }
 
-// attention は「人が今この Console を触っている」という 1 ビット（docs/75 P3）。
+// attention は「人が今この Console を触っている」という 1 ビット（docs/log/75 P3）。
 //
 // なぜ要るか: 在席の判定を端末の打鍵に絞った結果、**打鍵も送信もせずミラーで過去ログを
 // 読み続けている人**が不在に見える。読んでいる最中に Workspace が止まると、Agent ごと
@@ -757,7 +758,7 @@ func (a workspaceAPI) attention(w http.ResponseWriter, r *http.Request, res *res
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// sessionCarriedAnswer answers a carried interaction (docs/75): the question / plan /
+// sessionCarriedAnswer answers a carried interaction (docs/log/75): the question / plan /
 // permission that was on screen when the session was folded away. Like sessionStart it
 // auto-starts a cold workspace first — this is the ONE write whose whole point is to
 // reach a workspace the idle-stop reaper turned off, and the user pressing 回答して再開

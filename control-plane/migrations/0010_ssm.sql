@@ -1,4 +1,4 @@
--- SSM login (docs/history/p3-ssm-session.md): per-member SSO sessions and SSM host
+-- SSM login (docs/log/p3-ssm-session.md): per-member SSO sessions and SSM host
 -- bookmarks, personal scope (one row = one membership = identity × tenant). NO AWS
 -- secrets are stored here: only non-secret SSO config (start URL / account / role)
 -- and host coordinates (instance / run-as document / region). Short-lived AWS

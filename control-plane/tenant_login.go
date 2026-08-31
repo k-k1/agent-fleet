@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Per-tenant login rules (docs/61 §61.9 + ADR0043 決定 15/16/19), and the short-TTL
+// Per-tenant login rules (docs/log/61 §61.9 + ADR0043 決定 15/16/19), and the short-TTL
 // cache the entry gate reads them through.
 //
 // The design turns on keeping THREE layers apart (§61.9.2), and this file only
@@ -164,7 +164,7 @@ func contestedKey(m map[string]bool) string {
 	return strings.Join(out, ",")
 }
 
-// --- the entry gate's DB-derived term (docs/61 §61.9.6) ---------------------
+// --- the entry gate's DB-derived term (docs/log/61 §61.9.6) ---------------------
 
 // entryAllowed reports whether the DATABASE says this address may reach the login:
 // an auto-join domain matches, or the person is on some tenant's roster.
@@ -217,7 +217,7 @@ func (c *tenantLoginCache) hasMembership(ctx context.Context, email string) bool
 	return ok
 }
 
-// --- the tenant gate (docs/61 §61.9.4 / §61.9.8) ----------------------------
+// --- the tenant gate (docs/log/61 §61.9.4 / §61.9.8) ----------------------------
 
 // autoJoinTenant returns the tenant an address joins automatically, if any.
 // contested reports that more than one tenant claimed the domain, so the caller can
@@ -273,7 +273,7 @@ func (c *tenantLoginCache) providerAllowed(ctx context.Context, tenantID, prov s
 	return false, r.AllowedProviders
 }
 
-// networkAllowed enforces tenant.allowed_cidrs (docs/66, ADR 0047 決定 3). An empty
+// networkAllowed enforces tenant.allowed_cidrs (docs/log/66, ADR 0047 決定 3). An empty
 // list means "any network", which is how a tenant that never set one is unaffected —
 // and how the feature is switched off, since there is no operator flag.
 //

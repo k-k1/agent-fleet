@@ -1,4 +1,4 @@
-// Focus hand-off between FileView and the editing surface (docs/44 §5).
+// Focus hand-off between FileView and the editing surface (docs/log/44 §5).
 //
 // The editor mounts a commit after the pane's controls appear, so a mode can be
 // chosen while CodeMirror is still coming up. That window cannot be observed

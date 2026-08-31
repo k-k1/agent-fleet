@@ -1,6 +1,6 @@
 package kiro
 
-// ユーザー指示（docs/60）の kiro 側 artifact。
+// ユーザー指示（docs/log/60）の kiro 側 artifact。
 //
 // kiro の永続コンテキストは **steering**（markdown のディレクトリ）で、ワークスペース側
 // `.kiro/steering/`（リポジトリの中＝プロジェクト層）とは別に、**global な
@@ -13,7 +13,7 @@ package kiro
 // AF 専用の名前のファイルを持つ（copilot と同じ形）— ユーザー指示とフリート方針で
 // **1 本ずつ**。ディレクトリ内の他の steering は利用者やチームのものなので、列挙も
 // 削除もしない。名前は "guide" < "user" の順に並ぶようにしてあるが、読み込み順は
-// 保証されていないので優先順位は本文側にも書いてある（docs/60 §60.5-4）。
+// 保証されていないので優先順位は本文側にも書いてある（docs/log/60 §60.5-4）。
 
 import (
 	"os"
@@ -26,7 +26,7 @@ func UserInstructionsPath() string {
 }
 
 // FleetNotesPath is the AF-owned steering file carrying the baked workspace guide
-// (docs/60 §60.13 P2 — kiro read no fleet policy at all until now).
+// (docs/log/60 §60.13 P2 — kiro read no fleet policy at all until now).
 func FleetNotesPath() string {
 	return filepath.Join(Home(), "steering", "agent-fleet-guide.md")
 }

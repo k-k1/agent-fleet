@@ -29,7 +29,7 @@ import (
 // hibernation, backups, the golden lookup and therefore every brand-new user's Start
 // would have failed with AccessDenied on a real deployment — and five rounds of live
 // E2E stayed green, because they ran as the deployer. A live test that grants itself
-// more than production has proves the API calls, not the deployment. (docs/64 §64.23.)
+// more than production has proves the API calls, not the deployment. (docs/log/64 §64.23.)
 //
 // The harness (setup.sh) creates the role from the very statements in 20-platform.yaml
 // and writes an AWS profile that assumes it; the SDK re-assumes on expiry by itself,
@@ -77,7 +77,7 @@ func useCPTaskRole(t *testing.T) {
 // proves the parts no fake can: that ECS accepts a task definition pinned with
 // `ec2InstanceId ==` while using awsvpc + Service Connect, that an EBS volume mounted by
 // the CP over SSM really becomes the container's /home/dev, and that the EFS
-// credentials access points still mount on the EC2 launch type (docs/64 §64.9 listed
+// credentials access points still mount on the EC2 launch type (docs/log/64 §64.9 listed
 // that last one as 未実測).
 //
 // Opt-in, because it creates billable resources and needs a substrate:
@@ -258,7 +258,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	// --- 6. hibernation: u1's home (detached since the eviction) becomes a snapshot, the
 	// volume goes, and the next Start rebuilds it. This is the only path in the product
 	// that deletes a live home on its own, so the marker file is the whole assertion.
-	// (ADR 0045 決定 4 / docs/64 §64.18.2.) ---
+	// (ADR 0045 決定 4 / docs/log/64 §64.18.2.) ---
 	vol1 := aws.ToString(live.volumeOf(u1).VolumeId)
 	t5 := time.Now()
 	live.eventually(20*time.Minute, "home hibernated (snapshot completed, volume deleted)", func() bool {
@@ -302,7 +302,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	// a brand-new user on the home it seeds. Earlier rounds only made the same AWS calls
 	// from Go, which left the operator-facing script itself unproven and stopped at "the
 	// volume came from the right snapshot" — never at "a task starts on it". (ADR 0045
-	// 決定 9 / docs/64 §64.19.4.)
+	// 決定 9 / docs/log/64 §64.19.4.)
 	//
 	// The hibernation snapshot from step 6 cannot be reused as the golden: a successful
 	// restore deletes it, on purpose — otherwise the user pays for both the volume and a
@@ -408,7 +408,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 			_, ok, err := rt.base.describeService(ctx)
 			return err == nil && !ok && live.accessPointsOf(rt) == 0 && live.paramsOf(rt) == 0
 		})
-		// The EFS directories are the one thing Destroy cannot remove (docs/64
+		// The EFS directories are the one thing Destroy cannot remove (docs/log/64
 		// §64.18.4). Report them so the harness' teardown check stays honest about
 		// what is left on the filesystem.
 		if len(leftovers) > 0 {
@@ -672,7 +672,7 @@ func (l *liveEC2) paramsOf(rt *ecsEC2Runtime) int {
 
 // TestECSEC2LiveScale is the second live test: everything the lifecycle test does with one
 // user at a time, done with several at once and left running past the timers. Three things
-// had never been exercised before it (docs/64 §64.20):
+// had never been exercised before it (docs/log/64 §64.20):
 //
 //   - concurrent Starts. Slot allocation is a race by design — it is decided by AWS
 //     accepting exactly one AttachVolume on a fixed device name — and one user at a time
@@ -719,7 +719,7 @@ func TestECSEC2LiveScale(t *testing.T) {
 
 	// --- 1. three users start AT THE SAME TIME. The interesting outcome is not that they
 	// come up but that they come up on three DIFFERENT slots: the allocation has no lock,
-	// it relies on AttachVolume being the arbiter (docs/64 §64.15.2). ---
+	// it relies on AttachVolume being the arbiter (docs/log/64 §64.15.2). ---
 	users := []*ecsEC2Runtime{newUser("s1"), newUser("s2"), newUser("s3")}
 	var wg sync.WaitGroup
 	errs := make([]error, len(users))

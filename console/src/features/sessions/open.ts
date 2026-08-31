@@ -47,7 +47,7 @@ export function openSessionDefault(s: Session): void {
   (agentOf(s.kind).caps.chat ? openSessionChat : openSessionTerminal)(s.name);
 }
 
-/** 稼働中セッションを delta 個ぶんローテートし、アクティブなペインに開く（docs/29 の
+/** 稼働中セッションを delta 個ぶんローテートし、アクティブなペインに開く（docs/log/29 の
  * ペイン移動ではなく「セッションの持ち替え」）。行き先を返す — 対象が無い／1 件しか
  * 無ければ null で、呼び手はそのまま「他にありません」と伝えればよい。 */
 export function rotateRunningSession(delta: number): RotateTarget | null {

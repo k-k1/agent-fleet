@@ -1,6 +1,6 @@
 package main
 
-// MCP レジストリ REST のワイヤ契約（docs/48 P0）。ここで固定したいのは
+// MCP レジストリ REST のワイヤ契約（docs/log/48 P0）。ここで固定したいのは
 // 「秘密が外へ出ないこと」と「読み取り専用の行が編集できないこと」の 2 点で、
 // どちらも壊れても通常の動作では気づけない種類の退行なので、経路ごと押さえる。
 
@@ -52,7 +52,7 @@ func TestMCPServerCreateMasksSecretsOnTheWire(t *testing.T) {
 	var list mcpListResp
 	mcpDecode(t, w.Body.Bytes(), &list)
 	// 一覧には登録した 1 件に加えて、常駐の組み込み「af」（自己申告＋Chromium Attach Viewの
-	// セッション側サーバー・docs/51 Phase 3）が並ぶ。見たいのは登録した行なので名前で引く。
+	// セッション側サーバー・docs/log/51 Phase 3）が並ぶ。見たいのは登録した行なので名前で引く。
 	var got *struct {
 		mcpreg.ServerDef
 		Editable bool `json:"editable"`

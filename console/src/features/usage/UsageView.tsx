@@ -1,4 +1,4 @@
-// UsageView — 機能別トークン使用量のダッシュボード（docs/46 P4 / ADR0029 §7-5）。
+// UsageView — 機能別トークン使用量のダッシュボード（docs/log/46 P4 / ADR0029 §7-5）。
 //
 // **モーダル非依存の純粋コンポーネント**として書く。今は設定モーダルの「使用量」タブが
 // 薄いラッパとして差しているだけで、将来ペインに昇格させたくなったら PaneKind を足して
@@ -9,7 +9,7 @@
 // matrix なので、内訳（機能別・モデル別・エージェント別）もそこから起こせる。加えて末尾の
 // rtk 効果カードだけ別系（GET /api/agents/rtk/gain — RtkGainCard 参照）を1回読む。
 //
-// 表示の約束（docs/46 §1-c の非交渉ライン）:
+// 表示の約束（docs/log/46 §1-c の非交渉ライン）:
 //   * **「0」と「未計測」を混同させない。** トークンを報告しない CLI は spend 0 になるが、
 //     それは「使っていない」ではない。未計測の呼び出し回数を独立したタイルで出し、
 //     coverage から自動生成した注記を常時添える（手書きの表はドリフトする）。
@@ -49,7 +49,7 @@ const RANGES: { hours: number; key: MsgKey }[] = [
   { hours: 24 * 30, key: "usage.range_30d" },
 ];
 
-// 時系列の割り方。origin（出自）を並べているのが docs/46 §2-c の主眼 —「人が始めた
+// 時系列の割り方。origin（出自）を並べているのが docs/log/46 §2-c の主眼 —「人が始めた
 // セッション」と「オペレーター/定時が無人で立てたセッション」を同じ絵で対比する。
 const BY_DIMS: { dim: UsageDim; key: MsgKey }[] = [
   { dim: "feature", key: "usage.by_feature" },
@@ -140,7 +140,7 @@ export function UsageView() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
   // セッション本体の消費は「読まれた時に転写から台帳へ折り込む」— しかも**非同期**なので、
-  // 折り込みが走っている間の応答は直近ターンを含まない（docs/46 §3-b）。サーバはそれを
+  // 折り込みが走っている間の応答は直近ターンを含まない（docs/log/46 §3-b）。サーバはそれを
   // folding で申告してくるので、落ち着くまでこちらで取り直す。これが無いと、利用者が
   // 「最新にならない」まま再取得を何度も押して当てにいく画面になる（実際にそうなっていた）。
   const [folding, setFolding] = useState(false);
@@ -1000,7 +1000,7 @@ function Breakdown({
 
 // --- 機能 × モデルの表 --------------------------------------------------------
 
-// docs/46 §2-b の本命ビュー。「この機能はどのモデルで走っているか」— 補助呼び出しが
+// docs/log/46 §2-b の本命ビュー。「この機能はどのモデルで走っているか」— 補助呼び出しが
 // CLI 既定のフラッグシップに流れていれば、ここに calls と平均で出る。
 function MatrixTable({ src, rowDim }: { src: UsageSeries | null; rowDim: string }) {
   const tr = useT();

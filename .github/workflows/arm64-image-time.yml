@@ -1,9 +1,9 @@
-# Measure what a two-architecture image actually costs on CI (docs/70 §70.9, docs/72 §72.3).
+# Measure what a two-architecture image actually costs on CI (docs/log/70 §70.9, docs/log/72 §72.3).
 #
 # ## Why this exists as its own workflow
 #
-# publish-dist.yml has had `workspace_arm64` since docs/70 P1, and `control_plane_arm64`
-# since docs/72. Both stayed off for the same reason: one unmeasured number. Those jobs
+# publish-dist.yml has had `workspace_arm64` since docs/log/70 P1, and `control_plane_arm64`
+# since docs/log/72. Both stayed off for the same reason: one unmeasured number. Those jobs
 # emulate arm64 with QEMU on an x86_64 runner, and the timeout is 90 minutes. Nobody
 # knew whether the arm64 half takes four minutes or four hours.
 #
@@ -130,7 +130,7 @@ jobs:
       # does. Stripping `--platform=$BUILDPLATFORM` leaves a Dockerfile that is still
       # CORRECT — it just runs the Vite build and the Go compiler inside the emulator.
       # Without this number, "we cross-compile" is a belief. The measured workspace tax
-      # was ~5x, but docs/70 §70.9.2 says in as many words that the ratio holds only
+      # was ~5x, but docs/log/70 §70.9.2 says in as many words that the ratio holds only
       # because that image is I/O-bound; the CP is the compile-bound case it warned about.
       - name: time the same build WITHOUT the cross-compile pins (QEMU compiles)
         if: ${{ inputs.naive_counterfactual && inputs.target == 'control-plane' }}
@@ -185,7 +185,7 @@ jobs:
         run: |
           both="${BOTH_SEC:-0}"
           {
-            echo "## $IMG: two-architecture build time (docs/70 §70.9, docs/72 §72.3)"
+            echo "## $IMG: two-architecture build time (docs/log/70 §70.9, docs/log/72 §72.3)"
             echo ""
             echo "| | seconds | minutes |"
             echo "|---|---:|---:|"

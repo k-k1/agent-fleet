@@ -1,4 +1,4 @@
--- Memo queue (docs/21): per-membership notes accumulated across devices, then flushed
+-- Memo queue (docs/log/21): per-membership notes accumulated across devices, then flushed
 -- to a coding session as one concatenated message. Grouped by repo then a free-form
 -- category (sub-project). repo='' is the common/unfiled bucket. kind is 'file' (ref_path
 -- points at a ~/repos path, body is an optional comment) or 'text' (body is the note).

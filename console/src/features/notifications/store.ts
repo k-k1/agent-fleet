@@ -82,7 +82,7 @@ async function deliver(n: FleetNotification): Promise<void> {
 
 export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<boolean> {
   // A session report's destination is the operator CONVERSATION, not the reporting
-  // session (docs/30) — the conversation id rides the payload.
+  // session (docs/log/30) — the conversation id rides the payload.
   if ((n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
     openChat(n.payload.conversation_id);
     return true;
@@ -94,7 +94,7 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     openRepoScm(n.payload.repo);
     return true;
   }
-  // メンバーから受け取った引き継ぎ（docs/77）。行き先は自分のセッションではなく**共有ビュー**
+  // メンバーから受け取った引き継ぎ（docs/log/77）。行き先は自分のセッションではなく**共有ビュー**
   // なので、下の session 解決には落とせない。共有が切れたあとは開けないが、それは正しい
   // （offer は共有 ACL の派生物で、ACL が消えれば本文も消えている）。
   if (n.kind === "handoff-offer" && typeof n.payload.catalogId === "string" && n.payload.catalogId) {

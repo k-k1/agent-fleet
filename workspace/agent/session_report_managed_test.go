@@ -1,10 +1,10 @@
 package main
 
-// managed driver（docs/27: codex app-server / opencode serve）の完了報告 E2E。
+// managed driver（docs/log/27: codex app-server / opencode serve）の完了報告 E2E。
 //
-// 報告（docs/30）は hook 経路にしか配線されておらず、hook を持たない managed driver は
+// 報告（docs/log/30）は hook 経路にしか配線されておらず、hook を持たない managed driver は
 // status を直接書いて誰にも知らせなかった — 完了しても【セッション報告】が構造的に
-// 一切飛ばない、という穴があった（docs/30 に既知制限として記載）。driver 側が
+// 一切飛ばない、という穴があった（docs/log/30 に既知制限として記載）。driver 側が
 // agents.MarkTurnEnd を通ること自体は各 driver のユニットテストで押さえ、ここでは
 // main が張る配線（agents.SetStateNotifier → recordSessionNotification）から先を
 // 実 HTTP で通し、報告カードが会話に届くところまでを確かめる。
@@ -36,7 +36,7 @@ func managedReportFixture(t *testing.T) (session.Meta, string, string) {
 		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// 消費判定はリコンサイラの tick（docs/51 Phase 1）— managed の MarkTurnEnd も
+	// 消費判定はリコンサイラの tick（docs/log/51 Phase 1）— managed の MarkTurnEnd も
 	// 「起床ヒント＋レベルの証拠」として同じ経路を通る。
 	withTestReconciler(t, 20*time.Millisecond)
 	mux := http.NewServeMux()
@@ -110,7 +110,7 @@ func TestManagedTurnDeliversSessionReport(t *testing.T) {
 // Losing the runtime is NOT a completion: the turn may still be running on the other
 // side, so no report may go out and the arm must survive for the real completion
 // (§6 reconcile resolves it; process death is record-exit's story).
-// レベル判定（docs/51）ではここが効く: TurnUnknown も status には idle を書くので、
+// レベル判定（docs/log/51）ではここが効く: TurnUnknown も status には idle を書くので、
 // 状態文字列だけを見るリコンサイラは「完了」と読んでしまう。書込みが「ターンの終端」
 // かどうかの 1bit（status.TurnEnd）を立てないことで、不明は不明のまま扱われる。
 func TestManagedRuntimeLossDoesNotReport(t *testing.T) {

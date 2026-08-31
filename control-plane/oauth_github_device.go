@@ -11,7 +11,7 @@ import (
 )
 
 // GitHub git-connection OAuth via the Device Authorization Grant (RFC 8628), run by
-// the Control Plane (docs/71 §71.5).
+// the Control Plane (docs/log/71 §71.5).
 //
 // ★ It used to run in the Workspace Agent, reading GITHUB_OAUTH_CLIENT_ID out of the
 // container's environment, which the CP injected from its own env. Moving it here is
@@ -65,7 +65,7 @@ type ghDeviceFlow struct {
 }
 
 // ghDeviceRegistry owns the in-flight flows. Process memory, like bbFlows: a
-// multi-instance CP needs sticky routing or a DB spill (docs/dev P3-7).
+// multi-instance CP needs sticky routing or a DB spill (the AWS target).
 type ghDeviceRegistry struct {
 	mu    sync.Mutex
 	flows map[string]*ghDeviceFlow

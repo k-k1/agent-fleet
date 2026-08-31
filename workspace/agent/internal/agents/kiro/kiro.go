@@ -1,5 +1,5 @@
 // Package kiro は Kiro CLI（`kiro-cli`・旧 Amazon Q Developer CLI）種別の縦割り
-// パッケージ（docs/43 Track A）。read 層（Agent 実装・v2 JSONL セッションストアの
+// パッケージ（docs/log/43 Track A）。read 層（Agent 実装・v2 JSONL セッションストアの
 // transcript／TUI 文字列契約の状態読み）を種別内に閉じる。managed driver
 // （`kiro-cli acp`、per-session child・ACP JSON-RPC over stdio）は Track A2 で
 // driver.go/acp.go/mirror.go に実装済み（cursor/copilot 同型・session/load の
@@ -76,15 +76,15 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return li
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/75 P5）。
+// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。
 //
 // kiro の人待ちは承認だけで、在処は経路で違う: TUI はペインの承認パネル（文字列契約・
 // state.go）、managed は ACP の `session/request_permission`（driver の handle）。
 // どちらも**プロセスと一緒に消える**ので、halt / gracefulShutdown より遅い契機では
-// 何も取れない（コンテナごと SIGKILL された場合は素直に失われる — docs/75 §75.7）。
+// 何も取れない（コンテナごと SIGKILL された場合は素直に失われる — docs/log/75 §75.7）。
 //
 // Kind は **permission**: 可否の宛先（TUI のパネル / ACP の JSON-RPC id）が消えている
-// 以上、選ばせても届かない。持ち越すのは事実だけ（docs/75 §75.6.4）。
+// 以上、選ばせても届かない。持ち越すのは事実だけ（docs/log/75 §75.6.4）。
 func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	detail := ""
 	if m.DriverKind() == session.DriverManaged {

@@ -43,7 +43,7 @@ export function tenantScopeGroups(opts: { cost: boolean }): ScopeGroup[] {
     ["sessions", "tenant.tab_sessions"],
     ["usage", "tenant.tab_usage"],
     // クラウド費用は AWS の請求があるデプロイにしかない。レールから外すのでは
-    // なく、そもそも項目を作らない（docs/67 §67.8）。
+    // なく、そもそも項目を作らない（docs/log/67 §67.8）。
     ...(opts.cost ? ([["cost", "tenant.tab_cost"]] as [string, string][]) : []),
     ["audit", "tenant.tab_audit"],
     ["mcp", "tenant.tab_mcp"],
@@ -62,13 +62,13 @@ export function tenantScopeGroups(opts: { cost: boolean }): ScopeGroup[] {
       items: [
         ["signin", "tenant.tab_signin"],
         ["rules", "tenant.tab_rules"],
-        // 接続元の制限（docs/66）。ここだけテナント管理者が「書ける」面で、
+        // 接続元の制限（docs/log/66）。ここだけテナント管理者が「書ける」面で、
         // 上の 2 つ（読み取り専用 / super_admin 承認）とは持ち主が違う。
         ["network", "tenant.tab_network"],
       ],
     },
     // 連携 = 外部サービス側にテナントが用意した資格情報を、こちらに登録する面。
-    // ログインでも運用でもないので節を分けた（docs/71 §71.4）。今は git プロバイダの
+    // ログインでも運用でもないので節を分けた（docs/log/71 §71.4）。今は git プロバイダの
     // OAuth アプリ 1 項目だが、置き場所としてはここが増える側。
     {
       key: "integrations",
@@ -320,7 +320,7 @@ export function TenantLimits({
   );
 }
 
-// TenantDeletePanel — テナントを消す（docs/61 §61.18・super_admin のみ）。
+// TenantDeletePanel — テナントを消す（docs/log/61 §61.18・super_admin のみ）。
 //
 // ★ 上限の節の末尾に置く。ここが「テナントそのもの」の節で、メンバーでもログインでも
 // 運用でもないから。管理モーダルからしか出さない（テナント設定モーダルは onDelete を
@@ -400,12 +400,12 @@ export function TenantScopeBody({
   onOpenMember: (m: Member) => void;
   onCloseMember: () => void;
   onChanged: () => void;
-  /** 渡されたときだけ「テナントを削除」を出す（管理モーダルのみ・docs/61 §61.18）。 */
+  /** 渡されたときだけ「テナントを削除」を出す（管理モーダルのみ・docs/log/61 §61.18）。 */
   onDeleted?: () => void;
 }) {
   const tr = useT();
   // ★ マシン種別はテナント管理者のものなので、上限そのものと違って isSuper で
-  //   出し分けない（docs/70 §70.4.3・PUT は tenantAdminFor で門を張っている）。
+  //   出し分けない（docs/log/70 §70.4.3・PUT は tenantAdminFor で門を張っている）。
   //   クラスが 1 つしか無いデプロイでは部品自身が何も描かないので、ここに条件は無い。
   if (section === "limits") {
     return (
@@ -478,7 +478,7 @@ export function TenantScopeBody({
   if (section === "audit") return <AuditView key={slug} tenants={one} isSuper={false} />;
   if (section === "mcp") return <McpAdminView key={slug} tenants={one} />;
   // ★ tenant を渡すのは、この面が「受け入れる／ボタンに出す」の 2 トグルを持つように
-  // なったため（docs/61 §61.17.5）。倒せるのは super_admin だけで、規則の PUT は
+  // なったため（docs/log/61 §61.17.5）。倒せるのは super_admin だけで、規則の PUT は
   // withSuperAdmin 固定のまま（決定 19）。onChanged で 4 列を読み直す。
   return <TenantSignInMethods slug={slug} isSuper={isSuper} tenant={tenant} onChanged={onChanged} />;
 }

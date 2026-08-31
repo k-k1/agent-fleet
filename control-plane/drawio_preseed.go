@@ -1,4 +1,4 @@
-// drawio_preseed.go — ステンシルのキャッシュを先に埋める（docs/65 §65.5.5 / P1b）。
+// drawio_preseed.go — ステンシルのキャッシュを先に埋める（docs/log/65 §65.5.5 / P1b）。
 //
 //	control-plane drawio-preseed                 # 既定束をダウンロードして投入
 //	control-plane drawio-preseed --all           # 203 件すべて（40.8 MB）

@@ -1,6 +1,6 @@
 package main
 
-// 削除ロック（docs/45）の作業コピー側レジストリ。
+// 削除ロック（docs/log/45）の作業コピー側レジストリ。
 //
 // セッション（session.Meta.Locked）と会話（chatConversation.Locked）は自分の JSON を
 // 持っているのでそこにフラグを置けるが、作業コピー（clone / worktree）は AF が所有する
@@ -165,13 +165,13 @@ func writeSessionMetaKeepingLock(m session.Meta) session.Meta {
 }
 
 // keepAwakeMaxHours は 1 回のピンで延ばせる上限。延長は押し直せばよく、上限があることで
-// 「押しっぱなしで永久に課金」が構造的に起きない（docs/75 §75.5 の原則 3 と同じ理由）。
+// 「押しっぱなしで永久に課金」が構造的に起きない（docs/log/75 §75.5 の原則 3 と同じ理由）。
 const keepAwakeMaxHours = 24
 
 // handleSessionKeepAwake (POST /sessions/{name}/keep-awake) pins a session against the
 // idle-stop reaper for a bounded window. Body: {"hours": 4} — 0 以下で解除。
 //
-// これは shell / ssm のための逃げ道である（docs/75）: 走行中のジョブを af 側から
+// これは shell / ssm のための逃げ道である（docs/log/75）: 走行中のジョブを af 側から
 // 見分ける手段が無いので、推測でコンテナを守る代わりに、利用者に宣言してもらう。
 // claude セッションにも同じように効く（長い自動走行を止めたくないとき）。
 func handleSessionKeepAwake(w http.ResponseWriter, r *http.Request) {

@@ -7,7 +7,7 @@ import (
 )
 
 // diffLines reports which line numbers differ between a and b (1-indexed), for
-// asserting "only the entry's own lines changed" (docs/56 §13's golden-file test).
+// asserting "only the entry's own lines changed" (docs/log/56 §13's golden-file test).
 func diffLines(t *testing.T, a, b string) []int {
 	t.Helper()
 	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")

@@ -1,4 +1,4 @@
-// Package mcpreg is the MCP server registry (docs/48 + ADR0031): the definitions a
+// Package mcpreg is the MCP server registry (docs/log/48 + ADR0031): the definitions a
 // user or tenant registers, composed into one effective list and handed to the
 // assistant chat (per-invocation config) and to the interactive sessions (each CLI's
 // native config file).
@@ -35,7 +35,7 @@ const (
 
 // Transports. v1 is stdio + Streamable HTTP only. The legacy HTTP+SSE transport is
 // deprecated in the MCP spec and needs a separate two-channel client to even probe,
-// so it is left out rather than half-supported (docs/48 §14).
+// so it is left out rather than half-supported (docs/log/48 §14).
 const (
 	TransportStdio = "stdio"
 	TransportHTTP  = "http"
@@ -67,7 +67,7 @@ var knownKinds = map[string]bool{
 // Code is the stable machine code the handler puts on the wire; the Console resolves
 // it through its "err.<code>" catalog and only falls back to Msg (a language-neutral
 // developer string) when a code is unmapped. One code per REASON — reusing a single
-// "invalid" for every rule is what docs/23 P0-3 set out to remove. 追加・改名時は
+// "invalid" for every rule is what docs/log/23 P0-3 set out to remove. 追加・改名時は
 // console/src/lib/i18n/locales/{ja,en}.ts の "err.<code>" も必ず同時に足すこと。
 type ValidationError struct {
 	Code string
@@ -217,7 +217,7 @@ func KindAllowed(d ServerDef, kind string) bool {
 
 // HasSecrets reports whether a definition carries any secret VALUE. Callers use it to
 // refuse a fallback path that would put the definition somewhere weaker than a 0600
-// file (docs/48 §5.1) — a definition with no secrets has nothing to protect.
+// file (docs/log/48 §5.1) — a definition with no secrets has nothing to protect.
 func HasSecrets(d ServerDef) bool {
 	for _, v := range d.Env {
 		if v != "" {
@@ -295,7 +295,7 @@ func mergeMap(incoming, stored map[string]string) map[string]string {
 // Ready reports whether a definition has everything it needs to actually start.
 // A tenant definition marked user_secret arrives with header NAMES but no values;
 // until the member fills them in, materializing it would only produce a server that
-// fails to authenticate — so it is held back instead (docs/48 §5.2).
+// fails to authenticate — so it is held back instead (docs/log/48 §5.2).
 func Ready(d ServerDef) bool {
 	if !d.Enabled {
 		return false

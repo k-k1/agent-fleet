@@ -1,4 +1,4 @@
-// features/viewer/readerText — 朗読ビュー（docs/24）用のテキスト整形（純ロジック、依存は
+// features/viewer/readerText — 朗読ビュー（docs/log/24）用のテキスト整形（純ロジック、依存は
 // ttsText の plainify のみ）。**原文の改行・行頭スペースを保持**しつつ、**なろう形式のルビ**を
 // 解釈して表示用セグメントに割り、読み上げ用テキスト（ルビは読みを採用）を作る。
 // カラオケ・ハイライトの単位＝「行内は文（句点区切り）、行末で区切り」。node の vitest でテスト可。
@@ -120,7 +120,7 @@ function spokenOf(s: RubySeg): string {
 // ルビはすべて表示側（segs）に保持する。Markdown のコードフェンス内は表示するが読み上げない。
 // code を渡すとインラインコード（`…`）を省略読みにする（plainify に伝搬。表示は原文のまま）。
 // ruby=false（UI ロケールが非 ja のとき）は なろう形式ルビの解釈を無効化し、《》｜ を素の文字として
-// 扱う（日本語専用機能のロケールゲート・docs/28 §2.4）。
+// 扱う（日本語専用機能のロケールゲート・docs/log/28 §2.4）。
 export function buildReadUnits(content: string, isMarkdown: boolean, code?: CodeReadOpts, ruby = true): ReadUnit[] {
   const units: ReadUnit[] = [];
   const lines = content.split("\n");

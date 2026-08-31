@@ -1,81 +1,100 @@
-# 0022. エージェントメモリは agent 側 git bare repo で版管理し、bundle で環境間を移送する
+# 0022. Version agent memory in a git bare repo on the agent side, and move it between environments as a bundle
 
-- 状態: **採択**（2026-07-27。設計 2026-07-23、未決 4 点も既定値のまま決着）。
-  実装計画は [docs/39](../39-agent-memory-management.md)。
-- 関連: [0010（内部 git プロバイダ）](0010-internal-git-provider.md)・
-  `workspace/agent/cleanup_archive.go`（掃除の gz 安全網 — 専用の設計文書は無い）・`control-plane/runtime_docker.go` / `runtime_ecs.go` / `runtime_native.go`（claude-config マウント）・
-  `workspace/agent/routes.go` + `control-plane/routes.go`（REST dual allowlist）。
+English | [日本語](0022-agent-memory-management.ja.md)
 
-## 背景
+- Status: **adopted** (2026-07-27. Designed 2026-07-23; the four open points were settled at
+  their default values). The implementation plan is [docs/39](../log/39-agent-memory-management.md).
+- See also: [0010 (the internal git provider)](0010-internal-git-provider.md),
+  `workspace/agent/cleanup_archive.go` (the gz safety net in cleanup — it has no design document of its own),
+  `control-plane/runtime_docker.go` / `runtime_ecs.go` / `runtime_native.go` (the claude-config mount),
+  `workspace/agent/routes.go` + `control-plane/routes.go` (the REST dual allowlist).
 
-エージェントが書き溜める永続メモリのローカル実体は 2 つある: claude の auto-memory
-（`projects/<slug>/memory/*.md`・既定 ON）と、codex の memories ワークスペース
-（`~/.codex/memories/` の md 群＋派生状態 sqlite。feature flag は stable だが**既定 OFF**＝
-本フリートでは未使用なだけで機構は存在する）。全 8 種別を調査した結果、他はローカル実体を
-持たない: opencode はネイティブ実装なし（上流 issue open）、agy CLI は一級メモリ未確認、
-copilot（Copilot Memory）と cursor（旧 Memories は削除済・現存は Automations 用）は
-サーバー側管理、kiro は自動メモリなし（steering md＋派生状態の knowledge 索引のみ。
-global steering `~/.kiro/steering/*.md` は将来ルート候補）。
-これらメモリは消えない置き場にある一方、**履歴が無い**。誤学習・誤った書き換えを巻き戻す手段も、
-日時を指定して当時の状態を見る手段も、別の agent-fleet 環境へ持ち出す手段も無い。
-既存のバックアップは ops 層の DATA_DIR 丸ごと tar のみで、個人単位・プロジェクト単位の粒度を持たない。
+## Context
 
-## 決定
+There are two local instantiations of the persistent memory agents accumulate: claude's
+auto-memory (`projects/<slug>/memory/*.md`, on by default) and codex's memories workspace
+(the .md files under `~/.codex/memories/` plus a derived-state sqlite; the feature flag is stable
+but **off by default**, i.e. the mechanism exists but this fleet does not use it). Investigating
+all eight kinds showed the rest have no local instantiation: opencode has no native
+implementation (an upstream issue is open), the agy CLI has no confirmed first-class memory,
+copilot (Copilot Memory) and cursor (the old Memories were removed; what exists now is for
+Automations) are managed server-side, and kiro has no automatic memory (only steering .md plus a
+derived-state knowledge index; global steering at `~/.kiro/steering/*.md` is a candidate root for
+the future).
 
-1. **履歴エンジンは git**。差分閲覧・日時→時点解決（`rev-list --before`）・パススコープ復元
-   （`checkout <rev> -- <dir>`）・単一ファイル移送（`git bundle`）という要求 4 点がすべて
-   標準機能で賄え、将来の CP mirror（0010 の bare+http-backend 流用）にも形式無変更で接続できる。
-2. **実行主体は workspace-agent、repo は claude 専用マウント内の bare**
-   （`/var/lib/af/claude/af-memory.git`）。全 runtime（Docker/ECS/native）で agent からの
-   見え方が一様であり、ECS で CP がユーザーデータへ直接ファイルアクセスできない制約を踏まない。
-   CP は REST proxy（dual allowlist）だけを担う。
-3. **live ツリーに `.git` を置かず、allowlist copy → staging commit 方式**。対象は roots の
-   allowlist（claude: `*/memory/**`、codex: `memories/**` から `.git` 等を除外）で構造的に
-   限定し、transcript・credentials・派生状態 sqlite を巻き込む経路を作らない。
-   エージェント自身にはリポジトリの存在を見せない。codex は統合パイプラインが自前の
-   `~/.codex/memories/.git` を差分ベースラインに使うため、staging 方式は干渉回避の必須条件でもある。
-4. **ロールバックは履歴の書き換えではなく「restore commit の積み増し」**。適用前に
-   pre-restore snapshot を自動取得し、巻き戻しの巻き戻しを常に保証する。スコープは
-   claude が全体/プロジェクト単位（メモリがプロジェクト自己完結なので索引も壊れない）、
-   codex はワークスペース全体のみ（プロジェクト区分がファイル内エントリのため）。
-   codex の派生状態（sqlite・自前 `.git`）は復元せず、diff 駆動の統合パイプラインに
-   外部変更として再消化させる。
-5. **環境間移送は git bundle（全履歴）を既定**、tar.gz（最新のみ）を併設。import は
-   `refs/imports/<ts>` へ独立系譜として取り込み、適用はプロジェクト選択式の
-   「置き換え＝新 commit」。.md の 3-way merge は意味的衝突を機械解決できないためやらない。
-   **5-b（2026-08-25 追加）: 適用に「移設」を足す**。既定（置き換え）は最新ツリーしか使わず、
-   bundle が運んできた過去は `refs/imports` に埋もれたまま刈られる——「前の環境の履歴ごと
-   引っ越す」という一番自然な期待に応える手段が無かった。移設は main をその系譜へ**付け替える**
-   （マージでも書き換えでもない）ので、決定 4 の「履歴を書き換えない」は保たれ、一覧・差分・
-   巻き戻しの既存機能がそのまま相手の履歴に効く。入れ替えた元の main は `refs/premigrate/<ts>`
-   へ退避して消さない。範囲は**全体固定**——一部だけ入れ替えると履歴（相手の系譜）と live
-   （混在）が食い違い、以後の巻き戻しの意味を説明できなくなるため。
-6. **メモリルートは宣言テーブル化し、v1 から claude と codex の 2 件を宣言**。codex は
-   `~/.codex/memories/` の存在検知で自動有効になる。フリートとして memories 機能を ON に
-   するかは別判断で、**P4 でその配線（`features.memories` の Console トグル＋コストを抑える
-   `[memories]` seed）を入れた**が、既定は codex 自身と同じ OFF のまま——有効化は
-   バックグラウンドのトークン消費を伴うので、利用者が選ぶ。kiro global steering は第 3 ルート候補（watch）、opencode/agy は
-   上流実装待ちの watch、copilot/cursor はサーバー側管理でローカル実体が無いため対象外。
-   上流で codex が Claude Code のメモリレイアウトを直接 import する機能を開発中である
-   （`external_agent_memory_import`）こと、Gemini CLI v0.40 が完全ローカル md の階層メモリへ
-   刷新したことは、「md ディレクトリを正とする汎用ルート設計」の妥当性を裏付ける。
+These memories sit somewhere that does not get erased, but **they have no history**. There is no
+way to roll back a bad lesson or a bad rewrite, no way to name a date and see the state as it was,
+and no way to take it to another agent-fleet environment. The only existing backup is an ops-layer
+tar of the whole DATA_DIR, which has no per-person or per-project granularity.
 
-## 結果（見込みと受け入れる制約）
+## Decision
 
-- 得るもの: メモリの全変更履歴（いつ・どのプロジェクトが変わったか）、日時/履歴指定・
-  プロジェクト単位のロールバック、bundle 1 ファイルでの環境間移送、監査ログ付きの操作面。
-- 受け入れる制約: **WS 起動中のみ操作可能**（agent 側実行のため）。当初これは「P4 の
-  CP mirror で解消」する前提だったが、P4 の調査で内部 git プロバイダの認可が
-  **テナント単位で per-user ACL を持たない**ことが判明した（`git_http.go` の
-  `authorizeGitRepo`：read は当該テナントのアクティブメンバー全員に開く）。個人メモリを
-  そのまま mirror すると同僚から clone でき、本 ADR が「メモリは個人情報・export は本人
-  操作のみ」として置いた前提と衝突するため、**mirror は実装せず前提条件つきの将来トラック
-  へ送った**（内部 git に所有者限定 repo の概念を入れるか、台帳外の per-user ミラー領域と
-  専用 API を新設するか。いずれも別 ADR 相当）。よって**停止中閲覧は当面できない**。
-  import は merge しない（選択置き換えのみ）。codex のロールバック
-  粒度は全体のみ。opencode/agy はネイティブメモリが無く対象外、copilot はサーバー側で対象外。
-- リスクと手当: import は外部入力（サイズ上限・traversal 防御・bundle verify 必須）。
-  export は個人情報を含みうる（本人操作限定・監査・UI 注意書き）——加えて **v1 は平文 DL を
-  選ぶ代わりに、export 経路の secret スキャンを必須要件とする**（検出時は既定でブロックし、
-  内容を確認した本人の明示 ack でだけ通す。bundle は全履歴を運ぶので走査も全履歴を見る）。
-  repo 肥大は追記型 md の性質上緩慢で、定期 `git gc --auto` で足りる見込み。
+1. **The history engine is git.** All four requirements — viewing diffs, resolving a date to a
+   point in time (`rev-list --before`), path-scoped restore (`checkout <rev> -- <dir>`) and
+   single-file transfer (`git bundle`) — are covered by standard features, and it can connect to a
+   future CP mirror (reusing 0010's bare + http-backend) with no change of format.
+2. **The workspace-agent does the work, and the repo is a bare repo inside the claude-specific
+   mount** (`/var/lib/af/claude/af-memory.git`). It looks the same from the agent on every runtime
+   (Docker/ECS/native), and it does not run into the ECS constraint that the CP has no direct file
+   access to user data. The CP does only REST proxying (the dual allowlist).
+3. **No `.git` in the live tree — allowlist copy, then a staging commit.** The material is
+   structurally limited to an allowlist of roots (claude: `*/memory/**`; codex: `memories/**` with
+   `.git` and the like excluded), so there is no path by which transcripts, credentials or the
+   derived-state sqlite get swept in. The agent itself is never shown that the repository exists.
+   For codex the staging approach is also a hard requirement for avoiding interference, because its
+   integration pipeline uses its own `~/.codex/memories/.git` as a diff baseline.
+4. **A rollback is not a rewrite of history — it is one more restore commit on top.** A
+   pre-restore snapshot is taken automatically before applying, so undoing an undo is always
+   guaranteed. The scope is whole-tree or per-project for claude (memory is self-contained per
+   project, so the index does not break either) and whole-workspace only for codex (its project
+   division is by entries within a file). Codex's derived state (the sqlite and its own `.git`) is
+   not restored; its diff-driven integration pipeline re-digests it as an external change.
+5. **Transfer between environments defaults to a git bundle (full history)**, with tar.gz
+   (latest only) alongside. An import is taken in as an independent lineage under
+   `refs/imports/<ts>`, and applying it is "replace = a new commit" with per-project selection. We
+   do not do a 3-way merge of .md, because semantic conflicts cannot be resolved mechanically.
+   **5-b (added 2026-08-25): add "relocate" as a way to apply.** The default (replace) uses only
+   the latest tree, so the past the bundle carried stays buried in `refs/imports` and gets pruned —
+   there was no way to satisfy the most natural expectation of all, "move house, history and all".
+   Relocate **re-points** main at that lineage (neither a merge nor a rewrite), so decision 4's "do
+   not rewrite history" holds and the existing listing, diff and rollback features work on the
+   other side's history as they are. The main that was swapped out is parked at
+   `refs/premigrate/<ts>` rather than deleted. The scope is **fixed at whole-tree** — replacing
+   only part of it would leave the history (the other side's lineage) and the live tree (a mixture)
+   inconsistent, and the meaning of any later rollback would be impossible to explain.
+6. **Memory roots are a declarative table, and v1 declares two: claude and codex.** codex is
+   enabled automatically by detecting that `~/.codex/memories/` exists. Whether the fleet turns the
+   memories feature on is a separate judgement; **P4 added the wiring for it** (a Console toggle for
+   `features.memories` plus a `[memories]` seed that keeps the cost down), but the default stays off,
+   exactly as it is in codex itself — enabling it costs tokens in the background, so the user
+   chooses. kiro's global steering is a third candidate root (watch), opencode/agy are watched
+   pending an upstream implementation, and copilot/cursor are out of scope because they are managed
+   server-side with no local instantiation. That codex upstream is developing a feature to import
+   Claude Code's memory layout directly (`external_agent_memory_import`), and that Gemini CLI v0.40
+   moved to a fully local hierarchical .md memory, both support the soundness of "a general root
+   design that treats an .md directory as canonical".
+
+## Results (expected, and the constraints accepted)
+
+- What we get: the full change history of memory (when, and which project changed), rollback by
+  date or by history entry and per project, transfer between environments in a single bundle file,
+  and an operation surface with an audit log.
+- Constraints accepted: **it can only be operated while the workspace is running** (because the
+  agent does the work). The original premise was that "the P4 CP mirror will resolve this", but the
+  P4 investigation found that the internal git provider's authorisation **has no per-user ACL
+  within a tenant** (`authorizeGitRepo` in `git_http.go`: read is open to every active member of
+  that tenant). Mirroring personal memory as is would let colleagues clone it, which conflicts with
+  this ADR's premise that memory is personal data and export is the person's own operation — so
+  **the mirror was not implemented and was moved to a future track with preconditions** (either
+  introduce an owner-only repository concept into the internal git provider, or build a per-user
+  mirror area outside the ledger with a dedicated API; either is worth its own ADR). So **viewing
+  while stopped is not possible for now.** Imports do not merge (selective replacement only).
+  Codex's rollback granularity is whole-tree only. opencode/agy have no native memory and are out
+  of scope; copilot is server-side and out of scope.
+- Risks and their handling: an import is external input (a size cap, traversal defence and bundle
+  verification are mandatory). An export may contain personal data (restricted to the person, with
+  audit and a warning in the UI) — and in addition, **v1 chooses a plaintext download but makes a
+  secret scan of the export path a hard requirement** (a detection blocks by default and passes only
+  on an explicit ack from the person who has reviewed the content; the bundle carries the full
+  history, so the scan reads the full history too). Repo growth is slow given the append-only nature
+  of .md, and a periodic `git gc --auto` should suffice.

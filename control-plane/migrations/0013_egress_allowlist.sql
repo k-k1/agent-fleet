@@ -1,4 +1,4 @@
--- docs/20 M3: versioned egress allowlist plus a tiny deployment key-value store.
+-- docs/log/20 M3: versioned egress allowlist plus a tiny deployment key-value store.
 -- egress_allowlist holds one host or dot-suffix per row, scoped global (empty tenant_id)
 -- or to a tenant, with a lifecycle state of active proposed or retired. proposed rows
 -- come from the M4 agent and go active only on explicit admin approval. added_by records

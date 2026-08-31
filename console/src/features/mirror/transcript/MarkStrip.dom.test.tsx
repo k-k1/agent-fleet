@@ -1,4 +1,4 @@
-// 「誰が引いたマーカーか」が分かること（docs/69 §69.7）。本文の <mark> は下線の色でしか
+// 「誰が引いたマーカーか」が分かること（docs/log/69 §69.7）。本文の <mark> は下線の色でしか
 // 作成者を示さないので、名前が読めるのはこの帯とカードだけ。
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";

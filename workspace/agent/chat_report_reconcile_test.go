@@ -1,6 +1,6 @@
 package main
 
-// 消費判定リコンサイラ（docs/51 Phase 1 / ADR 0035）のテスト。
+// 消費判定リコンサイラ（docs/log/51 Phase 1 / ADR 0035）のテスト。
 //
 // 二層に分けてある:
 //   - 述語（evalReportEvidence）は純関数なので、証拠の交差をテーブルで固定する。
@@ -248,7 +248,7 @@ func TestReportEvidenceTable(t *testing.T) {
 		{"異常終了は busy 証拠より強い（死んだ直後は転写が新鮮）",
 			with(func(s *reportSignals) { s.Exit = "crashed"; s.TranscriptBusy = true }),
 			true, "exit", "crashed", true},
-		// 自己申告（docs/51 Phase 3 §ファストパス）はマーカーと同格の idle 証拠。
+		// 自己申告（docs/log/51 Phase 3 §ファストパス）はマーカーと同格の idle 証拠。
 		// 「busy 証拠より強くはしない」ことがファストパスを backbone にしない判断の実体。
 		{"自己申告だけでも idle 証拠（マーカーを持たない kind）",
 			reportSignals{SelfReported: true, SelfReportAt: "2026-07-29T12:00:00Z", SelfReportAged: true},
@@ -259,7 +259,7 @@ func TestReportEvidenceTable(t *testing.T) {
 		{"申告直後は申告だけで完了にしない（早呼び）",
 			reportSignals{SelfReported: true, SelfReportAt: "2026-07-29T12:00:00Z"},
 			false, "", "", false},
-		// 中断（docs/47）はマーカーを一切見ない idle 証拠。claude は中断で Stop hook を
+		// 中断（docs/log/47）はマーカーを一切見ない idle 証拠。claude は中断で Stop hook を
 		// 鳴らさないので、マーカー不在（誤ヒールで消えた実測 sp2qemx）でも報告できること、
 		// 分類がそのまま報告の reason になることを固定する。
 		{"中断はマーカー不在でも idle 証拠",
@@ -271,12 +271,12 @@ func TestReportEvidenceTable(t *testing.T) {
 		{"中断でも busy 証拠が残っていれば待つ（再開済みの可能性）",
 			reportSignals{Abort: true, AbortReason: reportReasonTurnAborted, PaneBusy: true},
 			false, "", "", false},
-		// docs/47 §4-6: 再送で直る中断は Agent 自身が先に再開させる。その間の報告は
+		// docs/log/47 §4-6: 再送で直る中断は Agent 自身が先に再開させる。その間の報告は
 		// 「もう実行済みの依頼」をアシスタントのターンで送るだけなので出さない。
 		{"自動再開が引き受けている中断は報告しない",
 			reportSignals{AbortHeld: true}, false, "", "", false},
 		// 抑止は**マーカー由来の idle 証拠にも**効かなければならない。中断でも Stop が
-		// 鳴る形（利用上限の 429 — docs/47 §4-5）ではマーカーが先に idle+turnEnd になる
+		// 鳴る形（利用上限の 429 — docs/log/47 §4-5）ではマーカーが先に idle+turnEnd になる
 		// ので、Abort を落とすだけだと「素の完了」として誤報告する。
 		{"抑止中はマーカー idle でも完了にしない",
 			with(func(s *reportSignals) { s.AbortHeld = true }), false, "", "", false},
@@ -418,7 +418,7 @@ func TestReportReconcilerBusyResetsDebounce(t *testing.T) {
 }
 
 // TestReportReconcilerSinkRetry: 配送に失敗したら台帳（arm）を動かさず、次 tick で
-// 再試行する（docs/51 §配送・穴D）。v1 は consume-then-deliver だったので、会話への
+// 再試行する（docs/log/51 §配送・穴D）。v1 は consume-then-deliver だったので、会話への
 // 追記が失敗すると arm だけが消えて報告が永久に失われた。
 func TestReportReconcilerSinkRetry(t *testing.T) {
 	m, sid, _ := armedFixture(t, "slot52")
@@ -450,7 +450,7 @@ func TestReportReconcilerSinkRetry(t *testing.T) {
 	}
 }
 
-// TestReportReconcilerRecoversWithoutHint はレイテンシの固定（docs/51 §トレードオフ）。
+// TestReportReconcilerRecoversWithoutHint はレイテンシの固定（docs/log/51 §トレードオフ）。
 // kick（ヒント）が1つも届かなくても — agent 再起動中の消失・フックの死・TUI 文字列
 // 契約のドリフト — tick が同じ状態をレベルで見て拾い、**v1 waiter の 90s 待ちより
 // 悪化しない**こと。
@@ -461,7 +461,7 @@ func TestReportReconcilerRecoversWithoutHint(t *testing.T) {
 
 	status.PersistTurnEnd(sid, "idle") // 完了したが、誰も kick しなかった
 
-	const v1WaiterWait = 90 * time.Second // v1: SubagentBusy の TTL 待ち（docs/30）
+	const v1WaiterWait = 90 * time.Second // v1: SubagentBusy の TTL 待ち（docs/log/30）
 	var elapsed time.Duration
 	for elapsed < v1WaiterWait && cs.count() == 0 {
 		clock.advance(t, rc, reportTickDefault)
@@ -504,7 +504,7 @@ func TestReportReconcilerExitReportsWithoutDebounce(t *testing.T) {
 }
 
 // TestReportReconcilerHintCarriesReason: マーカーからは読めない qualifier（中断/失敗の
-// 別・docs/47）だけはヒントが運ぶ。ヒントが busy 証拠を跨いだら捨てる — その中断は
+// 別・docs/log/47）だけはヒントが運ぶ。ヒントが busy 証拠を跨いだら捨てる — その中断は
 // もう「今の状態」ではない。
 func TestReportReconcilerHintCarriesReason(t *testing.T) {
 	_, sid, _ := armedFixture(t, "slot55")
@@ -520,7 +520,7 @@ func TestReportReconcilerHintCarriesReason(t *testing.T) {
 	}
 }
 
-// --- 指示台帳（docs/51 Phase 2） -----------------------------------------------------
+// --- 指示台帳（docs/log/51 Phase 2） -----------------------------------------------------
 
 // TestReportReconcilerQueuedInstructionSurvives は**穴A の解消**を固定する。
 // v1 では指示2の re-arm が指示1の arm（1bit）を上書きし、直後に来た指示1の Stop が
@@ -575,7 +575,7 @@ func TestReportReconcilerQueuedInstructionSurvives(t *testing.T) {
 }
 
 // TestReportReconcilerFoldsOverlappingInstructions: 同じ静穏に**両方とも覆われる**
-// 指示が複数あるときは、スパムせず1通に畳んで全行を reported にする（docs/51 §データ
+// 指示が複数あるときは、スパムせず1通に畳んで全行を reported にする（docs/log/51 §データ
 // モデル「潰れる」ではなく「明示的に束ねる」）。
 func TestReportReconcilerFoldsOverlappingInstructions(t *testing.T) {
 	m, sid, conv := ledgerFixture(t, "slot61")
@@ -613,7 +613,7 @@ func TestReportReconcilerFoldsOverlappingInstructions(t *testing.T) {
 }
 
 // TestReportReconcilerDeliveryIsIdempotent: 同一行IDの重複配送が安全であること
-// （docs/51 §配送）。deliver-then-consume なので「会話への追記は成功したが、台帳を
+// （docs/log/51 §配送）。deliver-then-consume なので「会話への追記は成功したが、台帳を
 // 進める前にプロセスが落ちた」窓が構造的に存在する — 再送はシンク側の行ID照合で
 // 二重投稿にならず、台帳だけが前に進む。
 func TestReportReconcilerDeliveryIsIdempotent(t *testing.T) {

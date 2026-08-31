@@ -22,7 +22,7 @@ export type SessionState = "" | "working" | "idle" | "question" | "plan" | "perm
 export interface Session {
   name: string; // auto-allocated unique slug ("s" + 6 base32 chars, e.g. "sukbq4s") — the session's immutable identity
   kind: SessionKind;
-  // Control route (docs/27): "managed" = 共有 runtime＋構造化 RPC（AF が唯一の
+  // Control route (docs/log/27): "managed" = 共有 runtime＋構造化 RPC（AF が唯一の
   // writer・tmux pane なし）。absent/"tui" = 従来の tmux 内 TUI。pane の有無は kind
   // でなくこの軸で決まる — 分岐は必ず isManagedSession() を介す。
   driver?: "tui" | "managed" | string;
@@ -45,7 +45,7 @@ export interface Session {
   backgroundBusyReason?: string;
   // state === "limited"（利用上限のリセット待ち）のときだけ入る、予約済み自動再開の時刻
   // （RFC3339）。空 = 再開は仕込まれていない（自動再開 OFF／時刻を決める材料が無い／
-  // モデル別上限）。チップに「いつ動くか」を出すためだけの表示用（docs/47 §4-9）。
+  // モデル別上限）。チップに「いつ動くか」を出すためだけの表示用（docs/log/47 §4-9）。
   rateLimitResumeAt?: string;
   createdAt?: string; // ISO timestamp
   model?: string; // claude model
@@ -61,14 +61,14 @@ export interface Session {
   exitReason?: "oom" | "killed" | "crashed" | string;
   exitCode?: number;
   exitSignal?: number;
-  // 畳まれたときに答えを待っていた対話の種類（docs/75）。停止中の行にだけ入り、
+  // 畳まれたときに答えを待っていた対話の種類（docs/log/75）。停止中の行にだけ入り、
   // 一覧のバッジを 停止中・質問あり にする。稼働中は state が同じことを語る。
   carried?: "question" | "plan" | "permission" | string;
-  // 削除ロック（docs/45）: true の間、削除系（削除＝メタ忘却・完全削除・停止中の
+  // 削除ロック（docs/log/45）: true の間、削除系（削除＝メタ忘却・完全削除・停止中の
   // 7日自動prune・作業コピー削除の巻き添え）を Agent が 403 で拒否する。停止/
   // アーカイブは可逆なので通る。行の鍵バッジと削除項目の無効化はこれを見る。
   locked?: boolean;
-  // 停止しないピン（docs/75）: この時刻までアイドル自動停止の対象外。過去/空 = 掛かっていない。
+  // 停止しないピン（docs/log/75）: この時刻までアイドル自動停止の対象外。過去/空 = 掛かっていない。
   keepAwakeUntil?: string;
 }
 
@@ -84,7 +84,7 @@ export interface SessionContextUsage {
 
 // isManagedSession: a managed (paneless) session has no tmux pane — the chat
 // mirror is its primary UI, no terminal view exists, and its inputs go through
-// the semantic /turn・/respond ops instead of TUI key driving (docs/27 §10).
+// the semantic /turn・/respond ops instead of TUI key driving (docs/log/27 §10).
 export const isManagedSession = (s?: { driver?: string } | null): boolean =>
   s?.driver === "managed";
 
@@ -92,14 +92,14 @@ export const isManagedSession = (s?: { driver?: string } | null): boolean =>
 export interface ProviderConn {
   connected?: boolean;
   envs?: string[]; // opencode: configured provider API-key env names (auth.go)
-  // agy: host capability (docs/32 Track B — RDRAND ガード)。false = this host
+  // agy: host capability (docs/log/32 Track B — RDRAND ガード)。false = this host
   // cannot run agy ("no_rdrand" / "not_installed"); absent = supported.
   supported?: boolean;
   reason?: string;
   // チャット連携（discord / slack）: 通知マスタの表示形（notifyOff の反転）。
   // false 明示のときだけ OFF — 未設定（旧接続）は ON 扱い。
   notify?: boolean;
-  // claude（docs/47 §4-8）: OAuth 資格情報の期限。`claude auth status` は期限を一切
+  // claude（docs/log/47 §4-8）: OAuth 資格情報の期限。`claude auth status` は期限を一切
   // 返さないので、Agent が資格情報の refreshTokenExpiresAt を直接読んで載せている。
   // expired = 更新トークンもアクセストークンも過ぎた（＝もうターンを開始できない）、
   // days_left = 期限まで 3 日以内のときだけ入る予告。無ければ判断材料が無い
@@ -107,11 +107,11 @@ export interface ProviderConn {
   expires_at?: string;
   expired?: boolean;
   days_left?: number;
-  // opencode: 選択中の課金経路（docs/54）。"free" は認証ゼロで起動できる枠なので、
+  // opencode: 選択中の課金経路（docs/log/54）。"free" は認証ゼロで起動できる枠なので、
   // 起動ゲートはこれを見て未接続でも opencode を許す。"off" は逆に、鍵や OAuth が
   // あっても起動ゲートを閉じる明示的な無効化（connected は false になる）。
   usage?: "off" | "free" | "go" | "zen";
-  // opencode: APIキー（envs）と併存する opencode アカウント接続（docs/54）。
+  // opencode: APIキー（envs）と併存する opencode アカウント接続（docs/log/54）。
   oauth?: boolean; // Console アカウントで接続済みか
   oauth_label?: string; // 接続先の組織名（opencode が返すラベル）
   oauth_known?: boolean; // false = serve daemon 未起動で未確認（未接続とは限らない）
@@ -129,15 +129,15 @@ export interface ProviderConn {
 export interface ConnectionsStatus {
   claude?: ProviderConn;
   codex?: ProviderConn;
-  // cursor（docs/40）: 専用ログインフロー型。connected = ~/.config/cursor/auth.json
+  // cursor（docs/log/40）: 専用ログインフロー型。connected = ~/.config/cursor/auth.json
   // あり、supported=false = CLI 未焼き込みの旧イメージ。
   cursor?: ProviderConn;
   opencode?: ProviderConn;
   agy?: ProviderConn;
-  // copilot は GitHub 連携相乗り（docs/36）: connected = gh トークンあり、
+  // copilot は GitHub 連携相乗り（docs/log/36）: connected = gh トークンあり、
   // supported=false = CLI 未焼き込みの旧イメージ。
   copilot?: ProviderConn;
-  // kiro（docs/43）: device-flow ログイン型。connected = 資格情報あり（whoami exit 0）、
+  // kiro（docs/log/43）: device-flow ログイン型。connected = 資格情報あり（whoami exit 0）、
   // supported=false = CLI 未導入（オンデマンド導入前・~855MB は per-user home 行き）。
   kiro?: ProviderConn;
   [provider: string]: ProviderConn | undefined;

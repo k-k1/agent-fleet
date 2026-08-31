@@ -1,6 +1,6 @@
 package kiro
 
-// 起動時モデルカタログ — アカウント連動のライブ取得（docs/43 §2.6）。kiro は
+// 起動時モデルカタログ — アカウント連動のライブ取得（docs/log/43 §2.6）。kiro は
 // `kiro-cli chat --list-models -f json` が完全機械可読の JSON を返す（cursor の行
 // スクレイプ不要）。`auto`（既定・1M ctx・フラグ無し）はカタログから外す。**Free
 // プランでも named モデル指定可**（実測）なので cursor のような Free 絞り込みは不要。

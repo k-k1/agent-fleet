@@ -1,7 +1,7 @@
 package kiro
 
 // acpClient は `kiro-cli acp` 子プロセスとの JSON-RPC 2.0（newline-delimited、stdio）
-// クライアント（docs/43 Track A2・2.14.1 実測）。cursor/copilot の acp.go と同じプロトコル
+// クライアント（docs/log/43 Track A2・2.14.1 実測）。cursor/copilot の acp.go と同じプロトコル
 // 汎用の骨格で、kiro 固有の差分は driver.go 側（onNotify の session/update 判別・
 // `_kiro.dev/metadata` 通知の扱い）が担う。
 //   - call: id 採番 → 書き込み → 応答待ち（timeout 0 = 無期限、session/prompt 用）

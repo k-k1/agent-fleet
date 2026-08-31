@@ -145,7 +145,7 @@ func TestResolveResetAt(t *testing.T) {
 	// 週次の窓（実測コーパス "You've hit your weekly limit · resets 9am (Asia/Tokyo)"）。
 	// バナーの壁時計は「今日か明日の 9時」としか読めないが、週次のリセットは数日先に
 	// あり得る。明日の 9時に起こしても同じ 429 を踏み、そのたび新しいエピソードが予約を
-	// 引き直す — 本当のリセットまで毎日 1 ターンずつ焼く（docs/47 §4-10）。
+	// 引き直す — 本当のリセットまで毎日 1 ターンずつ焼く（docs/log/47 §4-10）。
 	t.Run("週次はバナー単独では決めない", func(t *testing.T) {
 		weekly := "You've hit your weekly limit · resets 9am (Asia/Tokyo)"
 		if at, src, ok := resolveResetAt(weekly, abortedAt, nil, abortedAt.Add(time.Minute)); ok {

@@ -1,7 +1,7 @@
 package cursor
 
 // acpClient は `cursor-agent acp` 子プロセスとの JSON-RPC 2.0（newline-delimited、
-// stdio）クライアント（docs/40 managed 契約・v2026.07.20 実測）。copilot の acp.go と
+// stdio）クライアント（docs/log/40 managed 契約・v2026.07.20 実測）。copilot の acp.go と
 // 同じプロトコル汎用の骨格で、cursor 固有の差分（session/update の sessionUpdate 判別子
 // による転写構築）は driver.go が onNotify で担う。
 //   - call: id 採番 → 書き込み → 応答待ち（timeout 0 = 無期限、session/prompt 用）

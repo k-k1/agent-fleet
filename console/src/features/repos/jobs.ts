@@ -1,4 +1,4 @@
-// リポジトリ取り込みジョブ（docs/78）。`git clone` / `svn checkout` は Agent 側で
+// リポジトリ取り込みジョブ（docs/log/78）。`git clone` / `svn checkout` は Agent 側で
 // バックグラウンドのジョブになり、Console は GET /api/repo-jobs でその**実際の**進行を
 // 見る。以前は POST の応答を待つだけで、応答が返らなかった（= 上流のプロキシが 60 秒で
 // 諦めた）ときに「フォルダができているから成功」と読み替えていたため、走行中の作業コピーを

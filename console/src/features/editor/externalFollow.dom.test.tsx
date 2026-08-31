@@ -1,4 +1,4 @@
-// Phase 3.5 acceptance (docs/44 §7.4): a clean auto-follow must not leave the
+// Phase 3.5 acceptance (docs/log/44 §7.4): a clean auto-follow must not leave the
 // replaced content in the undo history — Ctrl+Z after a follow may not
 // resurrect (and then let the user save) the pre-follow text — and cursor and
 // scroll are restored by line number, clamped to the new document.

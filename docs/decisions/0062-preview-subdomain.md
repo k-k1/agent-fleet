@@ -1,228 +1,250 @@
-# 0062. プレビューは「起動ごとに発行するランダムなサブドメイン ＋ ポートをラベルに前置」で配り、パス方式は残す
+# 0062. Serve previews from a random subdomain minted on every start, with the port prefixed into the label — and keep the path route
 
-- 状態: **採用・P0〜P3 実装済み**（2026-08-31）。残るのは**実アプリでの通し確認だけ**（Next.js と
-  Vite・特に HMR と Server Actions — docs/81 §13）。設計と経緯は [docs/81](../81-preview-subdomain.md)。
-- 関連: [0018-container-browser-pane.md](0018-container-browser-pane.md)（コンテナ内 Chromium ＝
-  「中から見る」道。今回作るのは「外から見る」道で、別物として並立する） /
-  [0047-tenant-network-restriction.md](0047-tenant-network-restriction.md)（テナントの CIDR 制限は
-  プレビューにも効かせる） / [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md)
-  （張りっぱなしの接続を活動に数えない） / [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md)（ecs-ec2 プロファイル）
+English | [日本語](0062-preview-subdomain.ja.md)
 
-## 背景
+- Status: **accepted — P0 to P3 implemented** (2026-08-31). What is left is **an end-to-end check
+  against real apps** (Next.js and Vite, HMR and Server Actions in particular — docs/81 §13). The
+  design and the history are in [docs/81](../log/81-preview-subdomain.md).
+- Related: [0018-container-browser-pane.md](0018-container-browser-pane.md) (the workspace's own
+  Chromium — the "look from inside" route; this is the "look from outside" route, and the two stand
+  side by side) / [0047-tenant-network-restriction.md](0047-tenant-network-restriction.md) (a
+  tenant's CIDR restriction applies to previews too) /
+  [0055-idle-stop-and-carried-interactions.md](0055-idle-stop-and-carried-interactions.md) (a
+  connection left hanging open is not activity) /
+  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) (the ecs-ec2 profile)
 
-「React が 3000、Spring Boot が 8080」という普通の 2 ポート構成を、ecs-ec2 のデプロイで
-そのまま見たい。今の簡易プレビューはパス方式（`/preview/{port}/…`）で、①アプリが吐く絶対
-パスがサブパスの外へ出る ②2 ポートが 1 オリジンに同居する ③WebSocket が通らない、の 3 つで
-この形に噛み合わない。
+## Background
 
-**フロントは Next.js が多い**という前提が後から加わった。Next は「ルート直下で配れること」を
-より強く要求する（Server Actions の Origin 検査、`/_next/*`、App Router のストリーミング）ので、
-ホスト方式にする理由はむしろ強まる。ただし固有の制約が決定 3・9・11 に反映されている。
+The ordinary two-port setup — React on 3000, Spring Boot on 8080 — should be viewable as-is on an
+ecs-ec2 deployment. The current lightweight preview is path-based (`/preview/{port}/…`) and fails
+that shape in three places: ① the absolute paths an app emits land outside the sub-path, ② two
+ports share one origin, ③ WebSocket does not pass through.
 
-## 決定
+A premise arrived later: **the front end is usually Next.js.** Next insists harder on being served
+at the root (the Server Actions origin check, `/_next/*`, App Router streaming), which only
+strengthens the case for the host route. Its own constraints are reflected in decisions 3, 9 and 11.
 
-### 1. ホスト方式を**足す**。パス方式は消さない
+## Decision
 
-ワイルドカード DNS と証明書が無いデプロイ（local / docker / native、および
-`PreviewDomain` を設定しない ecs）ではホスト方式は成立しない。**片方しか無い状態を
-作らない**——「デプロイのプロファイルによって、あるはずの機能が黙って無い」は
-この製品で何度も踏んだ形である。
+### 1. **Add** the host route. Do not remove the path route
 
-### 2. URL は `{slug}-{port}.{PreviewDomain}` にする
+The host route cannot exist on a deployment without wildcard DNS and a certificate (local / docker /
+native, and an ecs deployment with no `PreviewDomain`). **Do not create a state where only one of
+them exists** — "a feature that is silently missing depending on the deployment profile" is a shape
+this product has walked into many times.
 
-ポートは**ラベルの中に前置**する。理由は ACM のワイルドカード証明書が**ラベル 1 つ分**しか
-受け持たないこと。`{port}.{slug}.…` は `*.*.…` を要求するので発行できず、Workspace ごとの
-証明書発行は起動を数分伸ばしクォータにも当たる。
+### 2. The URL is `{slug}-{port}.{PreviewDomain}`
 
-**代償を明記する:** `{slug}-3000` と `{slug}-8080` は兄弟なので、その Workspace のプレビュー
-だけで共有できる cookie の置き場所が無い（共通の親は全 Workspace の共通祖先）。
-認証 cookie はホストごとに 1 枚になる（決定 7）。
+The port is **prefixed inside the label**, because an ACM wildcard certificate only covers **one
+label**. `{port}.{slug}.…` would require `*.*.…`, which cannot be issued, and a per-workspace
+certificate adds minutes to a start and runs into quotas.
 
-### 3. slug は Workspace の起動ごとに発行し、停止で失効する
+**State the price:** `{slug}-3000` and `{slug}-8080` are siblings, so there is nowhere to put a
+cookie shared by just that workspace's previews (their common parent is the common ancestor of every
+workspace). The auth cookie is therefore one per host (decision 7).
 
-長生きする URL を作らない。前回の URL は起動と同時に 404 になる。20 文字の `[a-z0-9]`
-（`-` を含めない）で、DB に一意制約を張る。
+### 3. The slug is minted on every workspace start and expires on stop
 
-★ **slug にテナント名・メンバー名・Workspace id を混ぜない。** URL は Slack にもチケットにも
-貼られる。推測できないことと同じくらい、そこから誰の何かが読めないことが要る。
+No long-lived URLs. The previous URL returns 404 the moment the workspace starts again. It is 20
+characters of `[a-z0-9]` (no `-`), with a unique constraint in the database.
 
-**ただし「slug を固定する」opt-in を Workspace 単位で用意する（既定 OFF）。**
-起動ごとの引き直しには実害が 1 つだけあり、それが **外部 IdP のリダイレクト URI 登録**である
-（NextAuth / Auth.js で Google や GitHub のログインを試す構成）。redirect URI は前方一致も
-ワイルドカードも効かないので、AF 側で回避する道が無い。ON にしても slug がランダムな
-20 文字であることは変わらず、変わるのは「起動ごとに引き直すか」だけ。
+★ **Do not mix the tenant name, the member name or the workspace id into the slug.** These URLs get
+pasted into Slack and into tickets. Being unguessable matters as much as not revealing whose it is.
 
-★ **逆（既定で固定し、必要な人が回す）にはしない** —— 捨て忘れの事故は「固定していたことを
-忘れる」側にしか起きない。
+**There is, however, a per-workspace opt-in to pin the slug (off by default).** Re-minting on every
+start has exactly one real cost, and it is **registering redirect URIs with an external IdP** (a
+NextAuth / Auth.js setup trying Google or GitHub sign-in). A redirect URI accepts neither a prefix
+match nor a wildcard, so there is nothing to work around on our side. Turning it on does not make
+the slug any less random — the only thing it changes is whether it is re-minted each start.
 
-### 4. 証明書は `*.{PreviewDomain}` のワイルドカード 1 枚を、既定証明書とは**別に**リスナーへ足す
+★ **Not the other way round (pinned by default, re-minted on request)** — the accident of forgetting
+only happens on the "I forgot it was pinned" side.
 
-既存の `Cert`（Console の FQDN 用）に SAN として足すと**証明書の置換**になる。Console が
-今出せている TLS を、プレビューを足すという理由で作り直す必要はない。ALB のリスナーは
-SNI で追加証明書を選べるので、`AWS::ElasticLoadBalancingV2::ListenerCertificate` で 2 枚目
-として貼る。やめるときはそれを外すだけで、既定証明書は 1 度も動かない。
+### 4. The certificate is one `*.{PreviewDomain}` wildcard, attached to the listener **separately**
+from the default certificate
 
-`PreviewDomain` が空のデプロイでは、証明書ごと作らない（`Condition`）。
+Adding it as a SAN on the existing `Cert` (for the Console's FQDN) means **replacing the
+certificate**. There is no reason to re-issue the TLS the Console is already serving just because we
+are adding previews. An ALB listener can pick an additional certificate by SNI, so it goes on as a
+second one via `AWS::ElasticLoadBalancingV2::ListenerCertificate`. Removing it later is just
+detaching it; the default certificate never moves.
 
-### 5. DNS と証明書は、発行のたびに触らない
+On a deployment with an empty `PreviewDomain`, the certificate is not created at all (a `Condition`).
 
-ワイルドカードの A エイリアス 1 本 ＋ ワイルドカード証明書 1 枚が全 Workspace・全ポートを
-受け持つ。**発行コスト 0・伝播待ち 0** がホスト方式の数少ない「ただの得」なので、
-Workspace ごとに Route53 レコードを書く設計には**しない**（API 往復と伝播待ちが起動に乗り、
-レコード数のクォータにも当たる）。
+### 5. Neither DNS nor the certificate is touched per mint
 
-### 6. 公開ポートは Workspace 設定で利用者が列挙する（既定 3000, 8080）
+One wildcard A alias plus one wildcard certificate covers every workspace and every port. **Zero
+minting cost and zero propagation delay** is one of the few outright wins of the host route, so the
+design does **not** write a Route53 record per workspace (that would put an API round trip and a
+propagation wait into every start, and hit the record-count quota).
 
-列挙に無いポートのサブドメインは **404**——「許可されていません」ではなく存在も答えない
-（許可ポートの有無を外から探らせない）。
+### 6. The exposed ports are listed by the user in the workspace settings (3000, 8080 by default)
 
-**既定で全ポート開放にはしない。** 目的は「意図せず立っているサービス（DB 管理画面、
-デバッガ、MCP サーバ）を露出させないこと」であって、ポート番号を打つ手間を省くことでは
-ない。
+A subdomain for a port that is not on the list returns **404** — not "not permitted"; it does not
+even admit it exists (nobody probes from outside for which ports are allowed).
 
-### 7. 既定は認証必須。Console のセッション cookie はプレビューのオリジンへ渡さない
+**All ports are not opened by default.** The point is to avoid exposing services that happen to be
+running (a database console, a debugger, an MCP server), not to save the user from typing a port
+number.
 
-プレビューで動くのは利用者が書いた任意のコードである。そこに CP のセッションを渡すことは、
-そのコードに利用者としての API 呼び出し権限を渡すこと。**別オリジンなのでブラウザが
-そもそも送らない**——パス方式でヘッダを剥がして凌いでいた問題が、構造として消える。
+### 7. Authentication is required by default, and the Console's session cookie is never handed to the preview origin
 
-代わりに Console のオリジンを経由するハンドシェイクで、**プレビューのホスト限定**の
-HttpOnly cookie を発行する。cookie には **slug を含めて署名する**ので、再起動して slug が
-変われば自動的に無効になる。既定は `SameSite=Lax`。
+What runs in a preview is arbitrary code the user wrote. Handing the Control Plane's session to it
+would hand that code the right to call the API as the user. **It is a separate origin, so the
+browser does not send it in the first place** — the problem the path route was papering over by
+stripping headers disappears structurally.
 
-### 8. プレビューのホストでは、CP の API も Console も出さない（すべて 404）
+Instead, a handshake through the Console's origin issues an HttpOnly cookie **scoped to the preview
+host**. The cookie is **signed with the slug included**, so it invalidates itself as soon as a
+restart changes the slug. `SameSite=Lax` by default.
 
-同じプロセスが両方を持っている以上、ここを緩めると決定 7 で閉じた穴が裏口から開く。
-応答するのはハンドシェイク用の 1 パスとプロキシ本体だけ。振り分けは `authGate` の外側
-（プレビューは別の認証を持つ）かつ `gzip` / `etag` の外側（中身は CP の JSON ではない）に置く。
+### 8. On a preview host, neither the Control Plane API nor the Console is served (everything is 404)
 
-### 9. 上流へは `Host: 127.0.0.1:{port}` を送り続け、公開名は `X-Forwarded-*` で伝える
+Since one process owns both, loosening this reopens from the back door the hole decision 7 closed.
+Only the single handshake path and the proxy itself answer. The split sits **outside `authGate`**
+(previews carry their own authentication) and **outside `gzip` / `etag`** (the payload is not the
+Control Plane's JSON).
 
-Vite の `server.allowedHosts` のようなホスト検査を**利用者に設定させずに**素通りできる。
-アプリが Host を信じて絶対 URL を作っても、それは内部アドレスなので外に漏れない。
-**`X-Forwarded-Prefix` は送らない**——ホスト方式ではアプリはルート直下に居る。
+### 9. Keep sending `Host: 127.0.0.1:{port}` upstream and carry the public name in `X-Forwarded-*`
 
-★ **この組み合わせは選択肢ではなく、両立点が 1 つしかない。** Next.js は Server Actions で
-**`Origin` と `x-forwarded-host` の一致**を検査して 403 を返す（リバースプロキシ越しの Next で
-最も有名な事故）。`X-Forwarded-Host` を送り忘れれば Next が壊れ、`Host` を公開名に書き換えれば
-Vite のホスト検査が壊れる。**「Host は内部・X-Forwarded-Host は公開名」以外の組み合わせは、
-どちらかのフレームワークを壊す。**
+This passes host checks such as Vite's `server.allowedHosts` **without asking the user to configure
+anything**. If the app builds an absolute URL by trusting Host, that URL is an internal address and
+never leaks outside. **`X-Forwarded-Prefix` is not sent** — on the host route, the app is at the
+root.
 
-### 10. CP のプロキシを ReverseProxy 化し、WebSocket と SSE を通す
+★ **This combination is not a preference; there is exactly one point where both frameworks work.**
+Next.js validates that **`Origin` matches `x-forwarded-host`** for Server Actions and returns 403
+otherwise (the best-known accident with Next behind a reverse proxy). Forget `X-Forwarded-Host` and
+Next breaks; rewrite `Host` to the public name and Vite's host check breaks. **Any combination other
+than "Host internal, X-Forwarded-Host public" breaks one framework or the other.**
 
-ホスト方式にしても HMR が動かなければ「React を見る」は半分しか満たせない。既存の
-パス方式も同じ実装に相乗りさせる（同じ弱点を 2 つ抱えない）。
+### 10. Turn the Control Plane's proxy into a ReverseProxy so WebSocket and SSE pass through
 
-### 11. アプリに AF 専用のコードを要求しない。ローカル PC と同じ設定で動くことを受け入れ条件にする
+Even on the host route, "view the React app" is only half-met if HMR does not work. The existing
+path route rides the same implementation (we do not keep two copies of the same weakness).
 
-第一に推奨するのは **dev server の `server.proxy` で `/api` を 8080 へ流す書き方**で、これは
-ローカル PC でもプレビューでも**同じ設定ファイルのまま**動く（ブラウザが知るオリジンが
-1 つなので、CORS も SameSite も登場しない）。
+### 11. Require no AF-specific code in the app. "The same configuration as on a local PC" is the acceptance criterion
 
-`http://localhost:8080` の直書きは**プレビューでは動かない**（ブラウザの `localhost` は
-画面を見ている人の PC）。env を読む書き方のために、発行結果を `AF_PREVIEW_URL_{port}` 等で
-コンテナへ注入する。
+The first recommendation is **routing `/api` to 8080 through the dev server's `server.proxy`**,
+which works **from the same configuration file** on a local PC and in the preview alike (the browser
+knows one origin, so neither CORS nor SameSite ever enters the picture).
 
-**Next.js では `next.config.js` の `rewrites()` が同じ役割を果たし、しかも `next start`
-（本番ビルド）でも効く**ので、dev 限定の Vite `server.proxy` より条件が良い。
+Hard-coding `http://localhost:8080` **does not work in a preview** (the browser's `localhost` is the
+machine of the person looking at the screen). For apps that read their environment, the minted
+values are injected into the container as `AF_PREVIEW_URL_{port}` and friends.
 
-★ **env 注入は「後で足す飾り」ではなく P0 に置く。** Next.js のアプリは `NEXTAUTH_URL` /
-`AUTH_URL` / `metadataBase` のように**自分の公開 URL を env から知る**作りが普通で、slug が
-起動ごとに変わる以上、env が無いと「URL は出たがアプリが自分の場所を間違える」という
-中途半端な状態になる。
+**In Next.js, `rewrites()` in `next.config.js` plays the same role and works under `next start`**
+(the production build) as well, which is a better position than Vite's dev-only `server.proxy`.
 
-別オリジンで直接呼びたい構成のための `SameSite=None` ＋ **同一 slug の兄弟オリジンに限った**
-CP 側 CORS 補完は **opt-in で既定 OFF**——クロスオリジンを既定で通すことは、URL を知っている
-第三者のページから利用者のブラウザ経由でプレビューを叩ける状態を既定にすること。
+★ **The env injection is P0, not decoration to add later.** Next.js apps commonly **learn their own
+public URL from the environment** (`NEXTAUTH_URL`, `AUTH_URL`, `metadataBase`), and since the slug
+changes on every start, missing env produces the half-broken state where "the URL is there but the
+app is wrong about where it is".
 
-### 12. 公開モード（未認証で開ける）は Workspace 単位、停止 / 再起動で必ず OFF に戻る
+For setups that really do call across origins, `SameSite=None` plus a CORS completion on the Control
+Plane side **restricted to sibling origins of the same slug** is **opt-in and off by default** —
+allowing cross-origin by default would mean that, by default, a third party's page that knows the
+URL can drive the preview through the user's browser.
 
-外部の人に見せる用途は実在するので用意する。ただし **fail-closed**——この機能の事故は
-「公開のままにしていたことを忘れる」以外にほぼ無い。切替は監査ログに残し、公開中は
-`X-Robots-Tag: noindex` を付け、Console は公開中であることを常時見せる。
+### 12. Public mode (openable without signing in) is per workspace and always returns to off on stop / restart
 
-**テナントの CIDR 制限（[0047](0047-tenant-network-restriction.md)）は公開モードでも効かせる。**
-テナントが自分のネットワークを絞っているなら、プレビューも絞られている側にある。
+Showing something to an outsider is a real need, so it exists. But it is **fail-closed** — almost
+the only accident this feature has is "forgetting it was left public". The toggle is written to the
+audit log, `X-Robots-Tag: noindex` is set while it is public, and the Console shows the public state
+at all times.
 
-### 13. `PreviewDomain` は Console の FQDN の**子ではなく兄弟**を既定として案内する
+**A tenant's CIDR restriction ([0047](0047-tenant-network-restriction.md)) applies in public mode
+too.** If a tenant has narrowed its network, previews are on the narrowed side.
 
-子（`*.af.example.com`）にすると、プレビューで動くアプリが `.af.example.com` のドメイン
-cookie を書けてしまい、Console の cookie を上書き / 固定できる余地が残る。現行コードは応答の
-`Set-Cookie` から CP と認証ゲートウェイの名前を剥がしているので実害は抑えられているが、
-**構造として持たない方が良い**。完全な分離は別の登録ドメインを使うほかない（同じ登録
-ドメインである限り `.example.com` の cookie は書ける）。
+### 13. Recommend a `PreviewDomain` that is a **sibling** of the Console's FQDN, not a child
 
-### 14. 同じテナントへの共有は、名指しの ACL 表ではなく Workspace 単位のトグルで表す
+As a child (`*.af.example.com`), an app running in a preview could write a domain cookie on
+`.af.example.com` and so overwrite or fixate the Console's cookie. The current code strips the
+Control Plane's and the auth gateway's cookie names out of responses, which limits the damage, but
+**it is better not to have the structure at all**. Full separation needs a different registered
+domain (as long as the registrable domain is shared, a `.example.com` cookie can be written).
 
-「所有者だけ」と「未認証で誰でも」の間が無く、社内に見せたいという理由で公開モードを
-使わせていた。`previewTenantShare`（既定 OFF）を足し、ON の間は**その Workspace と同じテナント
-の現役メンバー全員**が、**認証を保ったまま**開けるようにする（[docs/81 §14](../81-preview-subdomain.md)）。
+### 14. Sharing within a tenant is a per-workspace toggle, not a table of named grantees
 
-[docs/59](../59-session-sharing.md) の `session_share` に `scope_type='preview'` として載せる案は
-検討して採らない。表としては載るが、(a) あの一覧は `scope_type != 'session'` の行を
-「scope_key が生きた作業コピーでなければ」削除するので**付けた端から消える**、
-(b) `permission` の `ro | rw` に対応する概念が無い（**Web アプリは開けた時点で操作できる**）、
-(c) 名指しには取り消しの運用が付いてくるが、見せたい相手はテナントの中の同僚である。
-★ トグルは「全員」という 1 行の ACL なので、粒度が要ることが分かった時点で表へ移せる。
+There was nothing between "only the owner" and "anyone, unauthenticated", so people were using
+public mode to show something to colleagues. `previewTenantShare` (off by default) is added: while
+it is on, **every active member of the same tenant as that workspace** can open it **while staying
+authenticated** ([docs/81 §14](../log/81-preview-subdomain.md)).
 
-⚠️ **決定 12 と違い、起動のたびに OFF へは戻さない。** 公開モードの fail-closed は
-「世界に開けたまま忘れる」に対する備えで、相手が**すでにログインできる同僚**である
-場合には当てはまらない。用途（数日かけて見てもらう）が必ず再起動をまたぐので、毎回
-戻すとこの機能は使えない。URL の方は起動ごとに変わり続ける（決定 3）ことが安全側の床。
+Putting it in [docs/59](../log/59-session-sharing.md)'s `session_share` as `scope_type='preview'`
+was considered and rejected. The row would fit, but (a) that list deletes rows whose
+`scope_type != 'session'` unless `scope_key` is a live working copy, so **it would be removed as
+fast as it is added**, (b) there is no concept matching `permission`'s `ro | rw` (**a web app is
+operable the moment it opens**), and (c) naming grantees brings revocation with it, while the people
+being shown are colleagues inside the tenant. ★ The toggle is a one-line ACL that says "everyone",
+so it can move to a table the day granularity turns out to be needed.
 
-### 15. 閲覧者の権限は cookie に焼かず、毎リクエスト引き直す
+⚠️ **Unlike decision 12, it does not return to off on every start.** Public mode's fail-closed
+posture guards against "leaving it open to the world and forgetting"; that does not apply when the
+audience is **a colleague who can already sign in**. The use case (letting someone look over a few
+days) necessarily spans restarts, so resetting it every time would make the feature unusable. The
+URL itself keeps changing per start (decision 3), which is the safety floor.
 
-プレビュー cookie（`af_pv`）に焼くのは「**誰が**その slug/port を開こうとしているか」だけ
-にし、「見てよい」は焼かない。毎リクエスト、`previewTenantShare` が今も ON か（設定）と、
-その membership が今も active でテナントが一致するか（`GetMembershipByID` は active 行しか
-返さない）を引き直す。
+### 15. A viewer's permission is not baked into the cookie; it is resolved on every request
 
-★ **焼くと、共有を切ってもテナントから外しても cookie の寿命（12 時間）だけが生き残る。**
-コストはローカル DB の 1 クエリで、後ろで走る CP → Agent → アプリの往復とは桁が 2 つ違う。
+The preview cookie (`af_pv`) carries only **who** is trying to open that slug/port — never "is
+allowed to". Every request re-resolves whether `previewTenantShare` is still on (settings) and
+whether that membership is still active and in the same tenant (`GetMembershipByID` only returns
+active rows).
 
-### 16. 閲覧者のアクセスは活動に数える（費用は所有者に付く）。ただし他人の Workspace は起こせない
+★ **Bake it in, and turning sharing off — or removing someone from the tenant — leaves the cookie's
+12-hour lifetime running.** The cost is one local database query, two orders of magnitude below the
+Control Plane → Agent → app round trip behind it.
 
-- **数える** …… 見ている画面が勝手に落ちるのは事故である（決定なし・docs/81 §9 の延長）。
-  ⚠️ その延命の費用は所有者に付く。これは新しい性質ではなく**公開モードで既にそう**で、
-  今回変えるのは「誰が通れるか」だけである。歯止めは §9 のまま——**張りっぱなしの
-  WebSocket は数えない**ので、開いて放置はやがてアイドル停止に落ちる。
-- **起こせない** …… 停止中の Workspace は slug を持たないので 404 のままにし、自動起動へ
-  繋がない。繋げば「**他人が、他人の課金で、他人のコンテナを起こせる**」になり、それは
-  プレビューを見せることに含まれていない権限である。
+### 16. A viewer's access counts as activity (and the cost lands on the owner), but nobody can start someone else's workspace
 
-### 17. 共有する URL は、Console オリジンの固定リダイレクタで配る
+- **It counts** — a screen someone is watching must not drop out from under them (no separate
+  decision; the extension of docs/81 §9). ⚠️ The cost of keeping it alive lands on the owner. That
+  is not a new property — **public mode already worked this way** — and all this changes is who may
+  pass. The brake is unchanged from §9: **a WebSocket left hanging open does not count**, so a page
+  opened and abandoned eventually falls to the idle stop.
+- **It cannot start one** — a stopped workspace has no slug, so it stays a 404 and is never wired to
+  an auto-start. Wiring it would mean "**someone else can start someone else's container on someone
+  else's bill**", which is not a permission included in showing a preview.
 
-slug は起動ごとに変わる（決定 3）ので、**生 URL を貼る運用は必ず腐り、腐り方が 404 という
-一番分かりにくい形で出る**。`GET /preview-open?owner={userKey}&port={n}` を Console オリジン
-（authGate の中）に置き、ACL を通ったときだけ**今の** `/preview-auth` へ 302 する。
+### 17. The URL you share is served by a fixed redirector on the Console origin
 
-- token の発行は `/preview-auth` に 1 か所のままにする。リダイレクタは「所有者 → 今の
-  slug」を解くだけで、認証の判断を二重に持たない。
-- 併せて `GET /api/preview/shared`（同じテナントで共有中の Workspace）を Console の
-  プレビューのポップオーバーに出す。**起動中かどうかは `preview_slug` 列の有無で判定する**
-  ——ここで欲しいのは「コンテナが動いているか」ではなく「URL が今あるか」そのものである。
+The slug changes on every start (decision 3), so **pasting a raw URL is guaranteed to go stale, and
+it goes stale as a 404 — the least legible failure there is**.
+`GET /preview-open?owner={userKey}&port={n}` sits on the Console origin (inside authGate) and
+302s to the **current** `/preview-auth` only when the ACL passes.
 
-## 却下した案
+- Token minting stays in exactly one place, `/preview-auth`. The redirector only resolves "owner →
+  current slug"; it does not hold a second copy of the authentication judgement.
+- Alongside it, `GET /api/preview/shared` (workspaces shared within the same tenant) feeds the
+  Console's preview popover. **Whether it is up is judged by the presence of the `preview_slug`
+  column** — what we want here is not "is the container running" but "does a URL exist right now".
 
-- **ポートごとに無関係な slug を発行する** …… 片方の漏洩が他方に波及しない利点はあるが、
-  人が無関係な文字列を 2 つ扱うことになる。漏洩の粒度は Workspace で十分。
-- **`{slug}.{PreviewDomain}` ＋ パスでポートを分ける** …… ホスト方式にする理由（絶対パスと
-  オリジン分離）がそのまま残る。
-- **Workspace ごとに ACM 証明書を発行する** …… 起動に発行と DNS 検証が乗り、クォータにも
-  当たる。
-- **ランダム URL だけを鍵にして認証を無くす**（既定として） …… URL は Slack にもチケットにも
-  貼られ、Referer にも載る。既定は認証で、公開は選ぶもの（決定 12）。
+## Rejected
 
-## 影響
+- **Mint an unrelated slug per port** — a leak of one would not spread to the other, but a human
+  would have to handle two unrelated strings. Workspace-level granularity is enough for a leak.
+- **`{slug}.{PreviewDomain}` with the port in the path** — every reason for the host route
+  (absolute paths, origin separation) survives untouched.
+- **Issue an ACM certificate per workspace** — issuance and DNS validation land in the start path,
+  and it hits quotas.
+- **Drop authentication and rely on the random URL as the key** (as the default) — these URLs get
+  pasted into Slack and tickets and travel in Referer. The default is authentication; public is
+  something you choose (decision 12).
 
-- CP: Host 振り分け層・slug の発行 / 失効・ハンドシェイク・ReverseProxy 化。
-  マイグレーションは **sqlite と Postgres の両方**（方言差で片方だけ通るのは既知の事故形）。
-- Console: プレビューのポップオーバー、Workspace 設定の許可ポートと slug 固定、公開モードの表示、
-  テナント共有のトグルと「共有されているプレビュー」の一覧（決定 14・17）。
-- デプロイ: `30-ingress.yaml` に `PreviewDomain` パラメータ・`*.{PreviewDomain}` の ACM 証明書・
-  それを Listener443 に貼る `ListenerCertificate`・Route53 のワイルドカード A エイリアス。
-  ⚠️ **既存の `Cert` には触らない**（SAN を足すと置換になる — 決定 4）。
-- 案内: `docs/guide`（member/08・09・README・用語集）を二言語で更新済み。⚠️ 併せて
-  **「軽量プレビューは WebSocket / SSE 非対応」という古い記述を訂正**した —— 決定 10 で
-  ReverseProxy に載せ替えた結果、パス方式でも通るようになっている。
-- デプロイ手順: `deploy/aws/ecs/README.md` に `PreviewDomain` の節を追加。
+## Consequences
+
+- Control Plane: the host-routing layer, minting and expiring slugs, the handshake, and the move to
+  ReverseProxy. Migrations for **both sqlite and Postgres** (only one dialect passing is a known
+  accident shape).
+- Console: the preview popover, the allowed ports and slug pinning in the workspace settings, the
+  public-mode indication, and the tenant-share toggle plus the "shared with you" list (decisions 14
+  and 17).
+- Deployment: a `PreviewDomain` parameter in `30-ingress.yaml`, the `*.{PreviewDomain}` ACM
+  certificate, the `ListenerCertificate` attaching it to Listener443, and the wildcard A alias in
+  Route53. ⚠️ **The existing `Cert` is not touched** (adding a SAN replaces it — decision 4).
+- Guidance: `docs/guide` (member/08, 09, README, the glossary) updated in both languages.
+  ⚠️ At the same time, **the stale claim that "the lightweight preview does not support WebSocket /
+  SSE" was corrected** — moving it onto the ReverseProxy in decision 10 means the path route passes
+  them too.
+- Deployment procedure: a `PreviewDomain` section added to `deploy/aws/ecs/README.md`.

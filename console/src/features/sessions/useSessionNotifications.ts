@@ -42,7 +42,7 @@ export function useSessionNotifications(enabled = true): void {
       }
       const before = prev[s.name];
       if (before !== undefined && before !== s.state && s.name !== activeSession) {
-        // ブラウザ通知（従来）＋ 音声通知（docs/24 Tier1, 有効時）。バックグラウンドのセッション
+        // ブラウザ通知（従来）＋ 音声通知（docs/log/24 Tier1, 有効時）。バックグラウンドのセッション
         // が回答/質問を返したら、名前を前置きして短くアナウンス（直列キューで割り込まない）。
         // 全ペイン自動読み上げ（ttsAutoReadAllPanes）でミラーが本文をそのまま読むセッションには
         // 告知を重ねない（回答は自動朗読、確認は ttsReadPending の読み上げが担当）。

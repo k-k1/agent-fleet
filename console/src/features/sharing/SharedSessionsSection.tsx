@@ -62,12 +62,12 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
         actions={<>
           {proposals.length > 0 && <IconButton icon="mail" label={tr("share.pending", { count: proposals.length })} onClick={() => setOpen(true)} />}
           {/* ⚠️ 上の mail は「自分が出した RW 提案の承認待ち」で**方向が逆**。同じバッジに
-              合流させると意味が壊れるので、引き継ぎ（docs/77）は別のアイコンで並べる。 */}
+              合流させると意味が壊れるので、引き継ぎ（docs/log/77）は別のアイコンで並べる。 */}
           {handoffs > 0 && (
             <IconButton icon="git-branch" label={tr("handoff.inbox_pending", { count: handoffs })} onClick={() => setInboxOpen(true)} />
           )}
           {/* 明示リロード。定期ポーリングは CP のスナップショットを読むだけで、所有者
-              Workspace の在庫は最大60秒に1回しか取り直さない(docs/59 §3)ので、状態や
+              Workspace の在庫は最大60秒に1回しか取り直さない(docs/log/59 §3)ので、状態や
               増減を今すぐ反映したいときの出口をここに置く。 */}
           <IconButton icon={reloading ? "loading" : "refresh"} spin={reloading} label={tr("share.reload")}
             disabled={reloading} onClick={() => void reload()} />

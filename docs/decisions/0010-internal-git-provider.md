@@ -1,52 +1,69 @@
-# 0010. テナント内部 git プロバイダ — bare + git-http-backend を CP に自ホスト
+# 0010. An internal git provider per tenant — bare repos + git-http-backend, self-hosted on the CP
 
-- 状態: **採用・P1 実装済み**。設計は [reference/internal-git-provider](../reference/internal-git-provider.md)。
-- 関連: [0001](0001-self-host-vs-saas.md)（SaaS 断念・自ホスト）/ [0003](0003-ssh-to-connections.md)（git 認証＝Connections）/
-  [0005](0005-envelope-custodian.md)（封筒暗号）/ [architecture](../reference/architecture.md)
+English | [日本語](0010-internal-git-provider.ja.md)
 
-## 背景
+- Status: **adopted, P1 implemented**. The design is [reference/internal-git-provider](../build/91-internal-git.md).
+- See also: [0001](0001-self-host-vs-saas.md) (SaaS abandoned, self-hosting) / [0003](0003-ssh-to-connections.md) (git auth = Connections) /
+  [0005](0005-envelope-custodian.md) (envelope encryption) / [architecture](../build/01-architecture.md)
 
-テナント内でリポジトリを**フリート内に閉じて**持ちたい要求（A. チーム内共有 / B. エージェント用の
-private scratch・seed / C. コードを外に出さない）。現状は外部プロバイダ（GitHub/Bitbucket）への
-Connections のみで、外部アカウント前提・コードが外に出る。
+## Context
 
-## 決定
+There is a requirement to hold repositories **entirely inside the fleet** within a tenant
+(A. sharing within a team / B. a private scratch or seed for agents / C. keeping code from
+leaving). Today there are only Connections to external providers (GitHub/Bitbucket), which
+presuppose an external account and put the code outside.
 
-**テナント毎の bare リポジトリを Control Plane が smart-HTTP（`git http-backend`）で自ホストし、
-既存のプロバイダ抽象に載せる。** PR/レビュー/CI は作らない（当面 read/write の 2 段）。
+## Decision
 
-- **設置は CP**: テナントを知る唯一の共有面。per-user コンテナは横断共有できない。
-- **bare + git-http-backend**: 最小コードで clone/fetch/**push** が成立。閲覧は既存 SCM（コミット
-  グラフ）を clone 後にそのまま流用。
-- **認証はトークン注入型 cred helper を流用**: membership 毎のテナントスコープ token を暗号ストア
-  `s.Git[internal-host]` に注入 → 統一 cred helper が任意ホストを既に配信するので透過。CP 側の
-  smart-HTTP は Basic の password を token として検証し、`<slug>`==tenant を全リクエスト強制。
-- **token は membership 毎の決定的 HMAC（token 用 DB なし）**: 署名鍵はデプロイ master key 派生、
-  トークンは `membershipID` を内包し tag を HMAC。CP は同じ関数で再生成できるので注入は冪等・平文保存
-  不要。検証時は埋め込み membership を**ライブ参照**して (tenant, role) を解決し、無効化された
-  membership は即座に失効する（下記「捨てた選択肢: PAT 表流用」参照）。
-- ストレージは `${DATA_DIR}/git/<slug>/<repo>.git`（既存の永続ボリューム＋bind）。
+**The Control Plane self-hosts a bare repository per tenant over smart HTTP
+(`git http-backend`), riding the existing provider abstraction.** No PRs, no review, no CI (two
+levels, read and write, for now).
 
-### 捨てた選択肢
+- **It lives on the CP**: the only shared surface that knows about tenants. A per-user container
+  cannot share across users.
+- **bare + git-http-backend**: the least code that makes clone/fetch/**push** work. For browsing,
+  the existing SCM view (the commit graph) is reused as is after cloning.
+- **Reuse the token-injecting credential helper for authentication**: a tenant-scoped token per
+  membership is injected into the encrypted store at `s.Git[internal-host]`, and the unified
+  credential helper already serves arbitrary hosts, so it is transparent. On the CP side, smart
+  HTTP validates the Basic password as a token and enforces `<slug>` == tenant on every request.
+- **The token is a deterministic HMAC per membership (no token table)**: the signing key derives
+  from the deployment master key, and the token embeds the `membershipID` with an HMAC tag. The
+  CP can regenerate it with the same function, so injection is idempotent and no plaintext needs
+  storing. On validation the embedded membership is **looked up live** to resolve (tenant, role),
+  so a disabled membership is revoked immediately (see "the PAT table" under rejected options).
+- Storage is `${DATA_DIR}/git/<slug>/<repo>.git` (the existing persistent volume + bind).
 
-- **AWS CodeCommit**: 2024 年に新規顧客受付終了で新規土台に不可。加えて IAM 認証がトークン注入型の
-  統一 cred helper と噛み合わず、テナント毎 IAM は重い。プロバイダ抽象にも乗せづらい。
-- **Gitea/Forgejo を最初から内包（②）**: org/権限/Web 操作まで揃うが、別アプリの運用が増える。
-  A–C には PR/権限マトリクスが不要なので過剰。将来 PR/CI が要る段で載せ替える段階戦略を採る。
-- **外部 SaaS（GitHub/GitLab）に寄せる**: C（外に出さない）に反する。
-- **PAT 表流用でトークンを保管**（当初の第一候補）: 却下。PAT は hash のみ保存で**平文を復元できない**ため、
-  CP がワークスペースへ注入する平文を保持できず注入が非冪等になる（毎回再発行→再注入）。加えて machine
-  token がユーザーの Console PAT 一覧を汚す。トークンは自動管理で membership 状態が実ゲートなので、
-  個別失効・有効期限といった PAT の利点は不要 → **決定的 HMAC（DB なし）**が素直。
-- **Agent 経由で内部 repo を列挙**（`git_remote.go` の switch に internal case）: Agent→CP 認証が
-  必要で複雑。CP がリポの所有者なので **repo 一覧/作成は CP ネイティブ**に分岐する方が素直。
+### Options rejected
 
-## 帰結
+- **AWS CodeCommit**: closed to new customers in 2024, so it cannot be a new foundation.
+  Additionally, IAM authentication does not mesh with the token-injecting unified credential
+  helper, and per-tenant IAM is heavy. It also does not sit well on the provider abstraction.
+- **Embedding Gitea/Forgejo from the start (option ②)**: gives orgs, permissions and web
+  operations, but adds another application to operate. A–C do not need PRs or a permission
+  matrix, so it is overkill. We take the staged strategy of swapping it in when PRs/CI are
+  actually needed.
+- **Leaning on external SaaS (GitHub/GitLab)**: contradicts C (keeping code in).
+- **Storing the token in the PAT table** (the original first choice): rejected. A PAT is stored
+  as a hash only and **the plaintext cannot be recovered**, so the CP cannot hold the plaintext
+  it injects into the workspace, making injection non-idempotent (re-issue and re-inject every
+  time). Machine tokens would also pollute the user's PAT list in the Console. The token is
+  managed automatically and the membership state is the real gate, so a PAT's advantages
+  (individual revocation, expiry) are not needed → **a deterministic HMAC (no table)** is the
+  straightforward answer.
+- **Enumerating internal repos through the Agent** (an internal case in `git_remote.go`'s
+  switch): needs Agent→CP authentication and is complicated. The CP owns the repositories, so
+  **listing and creating them natively on the CP** is the straightforward branch.
 
-- 追加は 3 ブロック（CP 側 git サーバ／管理 API／token 注入）＋小さなプロバイダ登録
-  （`gitHosts`・`RepoPicker`・`GitTab`・`handleConnectionsGet`）。clone/閲覧/コミットは**無改造**で動く。
-- CP に **git 実行面が増える**（新たな攻撃面）。refspec/パス検証を厳格化し、slug 封じ込めと
-  tenant 一致を必須にする。
-- CP イメージに `git`（http-backend）依存が入る（`control-plane/Dockerfile`）。token 用のテーブルは
-  作らず（決定的 HMAC）、新規 migration は `git_repo` のみ。clone URL は `PUBLIC_BASE_URL` 由来。
-- 将来 PR/CI が必要になれば ② へ載せ替え可能（本決定は最小の土台に留める）。
+## Consequences
+
+- The addition is three blocks (the git server on the CP, the admin API, token injection) plus a
+  small provider registration (`gitHosts`, `RepoPicker`, `GitTab`, `handleConnectionsGet`).
+  Clone, browsing and commits work **unmodified**.
+- **The CP gains a git execution surface** (a new attack surface). Refspec and path validation
+  are tightened, and slug containment plus a tenant match are mandatory.
+- The CP image gains a dependency on `git` (http-backend) (`control-plane/Dockerfile`). No table
+  is created for tokens (deterministic HMAC); the only new migration is `git_repo`. The clone URL
+  derives from `PUBLIC_BASE_URL`.
+- If PRs/CI become necessary later, option ② can be swapped in (this decision deliberately stops
+  at the minimal foundation).

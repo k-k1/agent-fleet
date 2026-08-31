@@ -1,4 +1,4 @@
-// 「作業の報告をコメントする」 (docs/80 §80.10 / ADR 0061 決定 6).
+// 「作業の報告をコメントする」 (docs/log/80 §80.10 / ADR 0061 決定 6).
 //
 // ★ The only write af makes against a tracker, and it is gated on a human reading the
 // draft. The modal therefore shows, in this order: WHERE it will be posted, WHAT will be
@@ -40,7 +40,7 @@ export function WorkItemReportModal({ item, sessions, onClose }: Props) {
     [sessions, sessionName],
   );
 
-  // 変更ファイルはミラーと同じ源（転写を Agent 側で全期間集計したもの・docs/68）。
+  // 変更ファイルはミラーと同じ源（転写を Agent 側で全期間集計したもの・docs/log/68）。
   // 取れなくても下書きは作れる —— ファイル一覧が空なのと「取れなかった」のを混同しない
   // よう、下書き側は「変更ファイルなし」とだけ言う。
   useEffect(() => {

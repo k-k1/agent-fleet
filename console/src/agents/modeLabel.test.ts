@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { agentOf, nonPlanModeLabel } from "./registry.ts";
 
-// 非 plan 側のモード表示名（docs/76）。claude の既定ラベル "Bypass" は「権限確認を
+// 非 plan 側のモード表示名（docs/log/76）。claude の既定ラベル "Bypass" は「権限確認を
 // スキップして起動したときの状態名」なので、承認ありのセッションでそのまま出すと
 // 起動ダイアログの中で「権限確認: 毎回たずねる」と「開始モード: Bypass」が並ぶ。
 describe("nonPlanModeLabel", () => {

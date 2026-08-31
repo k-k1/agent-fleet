@@ -31,7 +31,7 @@ export function StartHost() {
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const seedHandoffId = useLaunchSeed((s) => s.handoffId);
   const seedOfferId = useLaunchSeed((s) => s.handoffOfferId);
-  // 作業項目（docs/80）から来た起動。台帳への記帳は「起動できたあと」だけ。
+  // 作業項目（docs/log/80）から来た起動。台帳への記帳は「起動できたあと」だけ。
   const seedWorkItem = useLaunchSeed((s) => s.workItem);
   const clearSeed = useLaunchSeed((s) => s.clear);
   // Open the hub whenever the global tick changes (skip the mount value).
@@ -95,10 +95,10 @@ export function StartHost() {
               // Seeded by a handoff proposal: badge it 起動済み now that a session
               // really exists. The proposal itself stays — discarding is the user's call.
               if (seedHandoff && seedHandoffId) void markHandoffLaunched(seedHandoff, seedHandoffId);
-              // メンバーから受け取った引き継ぎ（docs/77）は、起動できた**あと**に受諾を
+              // メンバーから受け取った引き継ぎ（docs/log/77）は、起動できた**あと**に受諾を
               // 申告する。ここが唯一「本当にセッションができた」と分かる地点である。
               if (seedOfferId) void acceptHandoffOffer(seedOfferId, r.name || "");
-              // 作業項目の台帳（docs/80 §80.8）。ここが「本当にセッションができた」と
+              // 作業項目の台帳（docs/log/80 §80.8）。ここが「本当にセッションができた」と
               // 分かる唯一の地点で、次の人に「着手済み」と見せられるようになる。
               if (seedWorkItem && r.name) {
                 // 既存の作業コピーで始めたときは新しいブランチができないので、その

@@ -5,7 +5,7 @@
 // AF_SESSION_NAME is how a session-side MCP server identifies its owner, and for TUI
 // sessions the tmux launch env delivers it. Managed sessions have no such env: their
 // MCP children are spawned by the ONE shared `codex app-server` the Agent started, so
-// anything per-session has to ride on the thread instead. docs/27 §9.3 established
+// anything per-session has to ride on the thread instead. docs/log/27 §9.3 established
 // that `thread/start`'s `config.mcp_servers` is thread-scoped and REPLACES the global
 // set — but scoping the *inventory* is not the same as delivering a *value* to the
 // spawned process, which is what an identity needs. These tests measure that.
@@ -37,7 +37,7 @@ func TestDriftCodexThreadMCPConfigDeliversPerThreadEnv(t *testing.T) {
 		got := waitIdentityProbe(t, filepath.Join(probes, slot))
 		if got == probeUnset {
 			t.Fatalf("thread config env did not reach the MCP child (%s read %q).\n"+
-				"docs/27 §9.3 covers per-thread MCP *inventory* only; without env delivery a "+
+				"docs/log/27 §9.3 covers per-thread MCP *inventory* only; without env delivery a "+
 				"managed session cannot tell its MCP child which session it serves, and the "+
 				"handoff tool is stuck guessing from cwd.", slot, got)
 		}
@@ -81,7 +81,7 @@ func TestDriftCodexThreadMCPConfigProbeReportsMissingEnv(t *testing.T) {
 // real turn.
 
 // TestDriftCodexThreadMCPConfigForwardsEnvVarsFromDaemon settles how the SECRETS
-// travel. A thread-local map replaces the global one (docs/27 §9.3), so the af server
+// travel. A thread-local map replaces the global one (docs/log/27 §9.3), so the af server
 // would lose the `env_vars` forward that today hands it AGENT_TOKEN — and re-supplying
 // the token as a literal `env` value would push it through the app-server RPC and into
 // whatever that persists. This measures whether `env_vars` still forwards from the

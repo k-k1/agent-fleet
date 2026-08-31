@@ -1,54 +1,64 @@
-# 0036. 作業グループ — 定義は ui-prefs・選択は端末ローカル・サーバは関与しない
+# 0036. Working sets — the definitions live in ui-prefs, the selection is device-local, and the server is not involved
 
-- 状態: **採用・実装済み**（実機目視待ち）。設計は [docs/52](../52-working-sets.md)。
-- 関連: [0028](0028-deletion-lock.md)（3 実体横断の先例）/ `console/src/lib/settings.ts`・
-  `workspace/agent/ui_prefs.go`（ui-prefs の経路）/ `workspace/agent/model_deny.go`（hiddenModels — 表示フィルタの先行事例）
+English | [日本語](0036-working-sets.ja.md)
 
-## 背景
+- Status: **adopted and implemented** (awaiting a look at real hardware). The design is [docs/52](../log/52-working-sets.md).
+- See also: [0028](0028-deletion-lock.md) (the precedent for cutting across three entity types) / `console/src/lib/settings.ts` and
+  `workspace/agent/ui_prefs.go` (the ui-prefs route) / `workspace/agent/model_deny.go` (hiddenModels — the earlier example of a display filter)
 
-並行案件が増えると、左ペインにはリポジトリ・アシスタント会話・セッションが全件混在する。
-既存の整理手段はアーカイブ（非表示化）と削除ロックだけで、「いまの案件のものだけを見る」
-切り口が無い。セッションは `session.repo` でリポジトリに紐づくが、会話はどこにも紐づかない。
+## Context
 
-## 決定
+As concurrent pieces of work pile up, the left pane mixes every repository, assistant conversation
+and session together. The only existing means of tidying are archiving (hiding) and the deletion
+lock; there is no way to cut it down to "just the things for what I am working on now". A session is
+tied to a repository by `session.repo`, but a conversation is tied to nothing.
 
-**作業グループ = 名前付きの { 作業コピー, 会話, repo なしセッション } の集合。表示フィルタとして
-フロントで完結させ、サーバに新エンティティ・REST を作らない。**
+## Decision
 
-1. **定義は ui-prefs の 1 キー（`workingSets`）**。per-user・クロスデバイス同期・64KiB 内で十分、
-   という要件が既存経路そのままで満たせる。Agent は将来 `readUIPrefs()` で同じキーを読める
-   （hiddenModels がまさにこの形）ので、通知やオペレーター連携が要るとき初めてサーバを関与させればよい。
-2. **選択中グループは端末ローカル（`DEVICE_LOCAL` キー `workingSetActive`）**。「どのグループを
-   見ているか」は theme や音声 ON/OFF と同じ端末依存の状態 — PC とタブレットで別案件を見るのが自然。
-3. **セッションはグループに直接入れず、リポジトリから継承**。所属の真実源を増やさない。
-   repo なしセッション（shell/ssm 等）だけ例外的に直接割当。
-4. **worktree は親 base に自動追従**。個別割当を許すと起動フロー（worktree 作成）が
-   グループ操作を要求するようになり、追従なら何も変わらない。
-5. **選択中に新規作成したものは自動でそのグループに入る**（clone・新規会話・repo なし起動）。
-   さもないと「作った直後に見えなくなる」。
-6. **消えた実体への参照は放置**（述語が当たらないだけで無害）。ロード完了前の自動 prune は
-   「未ロード」と「削除済み」を区別できないので行わない。
-7. **スケジュール（第2弾）は導出優先**。CP 永続だが所属はフロントで導出できる —
-   起動先 repo / 作成元会話 `owner_conv` / `reuse_target`（会話・セッション）の既存所属に
-   追従し、どれにも当たらないものだけ id で直接割当。オペレーターが MCP で作るため
-   Console に作成シームが無く「選択中グループへ自動所属」がフックできない — owner_conv
-   追従がその代替になる。導出所属の行はトグルをチェック済み・無効で見せる。
+**A working set = a named collection of { working copies, conversations, sessions with no repo }.
+It is completed on the front end as a display filter, with no new entity or REST on the server.**
 
-## 影響
+1. **The definitions are one ui-prefs key (`workingSets`).** The requirements — per user,
+   synchronised across devices, and comfortably within 64KiB — are met by the existing route as is.
+   The Agent can read the same key later with `readUIPrefs()` (hiddenModels is exactly this shape),
+   so the server only needs to get involved when notifications or operator integration call for it.
+2. **The selected set is device-local** (the `DEVICE_LOCAL` key `workingSetActive`). "Which set am I
+   looking at" is device-dependent state like the theme or audio on/off — looking at different work
+   on a PC and a tablet is natural.
+3. **Sessions are not put into a set directly; they inherit from the repository.** This avoids
+   adding another source of truth for membership. Only sessions with no repo (shell/ssm and the
+   like) are assigned directly, as an exception.
+4. **A worktree automatically follows its parent base.** Allowing individual assignment would make
+   the launch flow (creating a worktree) demand a set operation, whereas following changes nothing.
+5. **Anything created while a set is selected joins that set automatically** (a clone, a new
+   conversation, a repo-less launch). Otherwise it "disappears the moment you make it".
+6. **References to entities that have gone are left alone** (the predicate simply does not match —
+   harmless). Automatically pruning before loading completes is not done, because "not loaded yet"
+   and "deleted" cannot be distinguished.
+7. **Schedules (the second instalment) prefer derivation.** They persist on the CP, but membership
+   can be derived on the front end: they follow the existing membership of the repo they launch
+   into, the conversation that created them (`owner_conv`), or `reuse_target` (a conversation or a
+   session), and only those matching none of these are assigned directly by id. Because the operator
+   creates them via MCP there is no creation seam in the Console for "automatically join the selected
+   set" to hook into — following `owner_conv` is the substitute. Rows with a derived membership are
+   shown with the toggle checked and disabled.
 
-- サーバ変更ゼロ（ワイヤ・routes.go・CP allowlist いずれも触らない）。
-- Console: 左レール最上部の固定セレクタ、行メニューの割当、`ProjectTree` /
-  `OtherSessionsSection` / `AssistantSection` / `FilesSection` の合流点に述語を AND、
-  zustand ストア＋純関数述語、パレット登録、i18n。
+## Impact
 
-## 却下した案
+- Zero server changes (the wire, routes.go and the CP allowlist are all untouched).
+- Console: a fixed selector at the top of the left rail, assignment in the row menu, ANDing a
+  predicate at the confluence of `ProjectTree` / `OtherSessionsSection` / `AssistantSection` /
+  `FilesSection`, a zustand store plus pure-function predicates, palette registration, and i18n.
 
-- **Agent 外部台帳（`working-sets.json`）＋新 REST**: サーバが一級市民として扱えるが、CP allowlist
-  両側登録などのコストに対し v1 の「表示の分離」には見合わない。ui-prefs でも Agent から読める。
-- **CP DB（`memo_category` 型テーブル）**: repo・セッション・会話の実体は Agent 側にあり、
-  参照の整合を CP が取れない。
-- **各エンティティの meta に `WorkingSet` フィールド追加**: 作業コピーは AF 所有のメタを持たず不成立。
-  複数所属も表現しにくい。
-- **「未分類」専用ビュー**: 整理導線としては有用だが v1 では不要と判断（利用者確認済み）。
-  「すべて」で足りる。
-- **worktree の個別割当**: 上記 4 のとおり、追従で十分。
+## Options rejected
+
+- **An external ledger on the Agent (`working-sets.json`) plus new REST**: it would let the server
+  treat them as first-class, but the cost (registering on both sides of the CP allowlist, and so on)
+  is not worth it for v1's "separate the display". ui-prefs is readable from the Agent anyway.
+- **The CP database (a `memo_category`-style table)**: repositories, sessions and conversations
+  actually live on the Agent side, and the CP cannot keep the references consistent.
+- **A `WorkingSet` field on each entity's meta**: a working copy has no AF-owned metadata, so it does
+  not work. Multiple memberships are also awkward to express.
+- **A dedicated "unfiled" view**: useful as a tidying route, but judged unnecessary for v1
+  (confirmed with the user). "All" is enough.
+- **Individual assignment of worktrees**: as in decision 4, following is enough.

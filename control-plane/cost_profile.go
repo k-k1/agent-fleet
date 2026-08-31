@@ -1,5 +1,5 @@
 // cost_profile.go — does this deployment HAVE an AWS bill, and what of it can be
-// attributed to a person (docs/67 §67.8, ADR 0048 決定 9).
+// attributed to a person (docs/log/67 §67.8, ADR 0048 決定 9).
 //
 // Same shape as workspace_sizing.go, for the same reason: the Console must stop
 // describing every deployment as if it were the AWS one. A docker or native deployment
@@ -19,7 +19,7 @@ type costProfile struct {
 	// Attributable lists what actually carries `af-membership`, so the Console can name
 	// what a member's number covers instead of implying it covers everything. Measured
 	// on the reference deployment: what CAN be attributed is about a fifth of the bill
-	// (docs/67 §67.3), and the rest is shared — never divided (ADR 0048 決定 4).
+	// (docs/log/67 §67.3), and the rest is shared — never divided (ADR 0048 決定 4).
 	Attributable []string `json:"attributable,omitempty"`
 	// Shared lists the big cost centres that belong to nobody. Shown only to a
 	// super_admin, but declared here so the member-facing hint can say what is EXCLUDED

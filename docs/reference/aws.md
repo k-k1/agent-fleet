@@ -1,1 +1,0 @@
-> **このドキュメントは docs/dev/ へ再編されました（2026-07）。** [dev/09 §9.5 aws ターゲット](../dev/09-deploy.md) に移設（🚧 実装済・実運用実績なし）。コスト特性（ec2-single / ECS の比較）は [dev/09 §9.8](../dev/09-deploy.md#98-コスト特性ec2-single--ecs)。正はコードと dev/。

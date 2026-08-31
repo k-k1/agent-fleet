@@ -17,7 +17,7 @@ import (
 )
 
 // The Agent interface and its input/output types live in internal/agents
-// (docs/23 残① Wave C); opencode の実装は internal/agents/opencode（Wave D）、
+// (docs/log/23 残① Wave C); opencode の実装は internal/agents/opencode（Wave D）、
 // codex は internal/agents/codex（Wave E）、claude は internal/agents/claude
 // （Wave F）。This file keeps the registry and the shared live-state helpers.
 
@@ -55,7 +55,7 @@ func normalizeKind(kind string) string {
 // --- shared live-state helpers -------------------------------------------------
 
 // sessionAlive is the driver-aware liveness test: tui = the tmux session exists,
-// managed = a live runtime handle exists（docs/27 P2）。wireSession の alive 引数を
+// managed = a live runtime handle exists（docs/log/27 P2）。wireSession の alive 引数を
 // 埋める全ハンドラはこれを使う（tmuxx.HasSession 直叩きは managed を常に停止扱い
 // にしてしまう）。
 func sessionAlive(m session.Meta) bool {
@@ -91,7 +91,7 @@ func driveState(m session.Meta, alive, heal bool) string {
 			// Turn end. agy has no Stop hook, so this poll is the only place the
 			// completion can be observed — persist idle AND fire the notification,
 			// or the operator's 完了報告 arm is never consumed and the report never
-			// arrives (docs/30 ②). MarkTurnEnd shares recordSessionNotification with
+			// arrives (docs/log/30 ②). MarkTurnEnd shares recordSessionNotification with
 			// the hook route, so "which transition counts" stays one implementation.
 			// Gated on previous=="working" so repeated polls report once; a duplicate
 			// from two concurrent polls is absorbed by handleChatReport's disarm.
@@ -104,7 +104,7 @@ func driveState(m session.Meta, alive, heal bool) string {
 	// copilot: no hooks either — events.jsonl 由来の分類が唯一の状態ソース
 	// （state.go。managed でも子プロセスが同じファイルを書くので整合する）。
 	// agy と同じく、この poll が turn 完了の唯一の観測点（TUI ルート）なので
-	// working→idle の遷移で MarkTurnEnd を発火する（docs/30 ②）。managed は
+	// working→idle の遷移で MarkTurnEnd を発火する（docs/log/30 ②）。managed は
 	// driver の runTurn が MarkTurnEnd 済みで status も idle — 二重発火しない。
 	if m.Kind == session.KindCopilot {
 		if st := copilot.LiveState(m); st != "" {
@@ -116,7 +116,7 @@ func driveState(m session.Meta, alive, heal bool) string {
 	}
 	// cursor: no hooks either — JSONL 転写末尾の分類が状態ソース（state.go）。
 	// copilot と同型で、この poll が turn 完了の唯一の観測点（TUI ルート）なので
-	// working→idle の遷移で MarkTurnEnd を発火する（docs/30 ②）。managed（Track A2）
+	// working→idle の遷移で MarkTurnEnd を発火する（docs/log/30 ②）。managed（Track A2）
 	// は driver の runTurn が MarkTurnEnd 済みで status も idle — 二重発火しない。
 	if m.Kind == session.KindCursor {
 		if st := cursor.LiveState(m); st != "" {
@@ -127,9 +127,9 @@ func driveState(m session.Meta, alive, heal bool) string {
 		}
 	}
 	// kiro: no hooks — 2.14.1 は Stop hook を持たない（hook トリガは AgentSpawn/
-	// PrePrompt/PreToolUse/PostToolUse のみ・実測 docs/43 §5-1）ので、状態源は TUI
+	// PrePrompt/PreToolUse/PostToolUse のみ・実測 docs/log/43 §5-1）ので、状態源は TUI
 	// 文字列契約（state.go）。cursor/copilot と同型で、この poll が turn 完了の唯一の
-	// 観測点（TUI ルート）なので working→idle の遷移で MarkTurnEnd を発火する（docs/30
+	// 観測点（TUI ルート）なので working→idle の遷移で MarkTurnEnd を発火する（docs/log/30
 	// ②）。承認待ち（"question"）は idle でないので発火せず素通し。managed（Track A2）は
 	// driver の runTurn が MarkTurnEnd 済みで status も idle — 二重発火しない。空（フッタ
 	// 未描画）のときは generic 経路（/input の楽観 working）へフォールバックする。
@@ -158,7 +158,7 @@ func driveState(m session.Meta, alive, heal bool) string {
 	// のコメント参照）。WireLive と同じ判定をここでも行うのは、チャット/ミラーが見るのは
 	// この関数だからで、片側だけ直すと一覧と本文でチップが食い違う。状態の書き換え
 	// （HealIdle）は heal 側にだけ寄せる。
-	// 認証切れ（docs/47 §4-8）。WireLive と同じ判定を同じ順（上限メニューより先）でここでも
+	// 認証切れ（docs/log/47 §4-8）。WireLive と同じ判定を同じ順（上限メニューより先）でここでも
 	// 行う — ミラー／チャットのチップと一覧のバッジが食い違うと、どちらが本当か利用者には
 	// 分からない。順序の理由は WireLive 側のコメント参照（待っても直らない方を先に出す）。
 	if isClaude && claude.AuthExpired() {
@@ -186,7 +186,7 @@ func driveState(m session.Meta, alive, heal bool) string {
 	if heal && state != "idle" && pane.IdleSettled {
 		state = "idle"
 		// claude は「API エラーでターンが落ちた」を transcript 末尾から見分けられるので、
-		// その 1 ケースだけ黙って消さず終端イベントとして通知する（docs/47）。判別材料が
+		// その 1 ケースだけ黙って消さず終端イベントとして通知する（docs/log/47）。判別材料が
 		// claude の jsonl 形式に固有なので、他 kind は従来どおりマーカー削除のみ。
 		// normalizeKind: 空 kind の旧セッションも claude なので、生の比較では取り逃がす。
 		if isClaude {
@@ -206,7 +206,7 @@ func driveState(m session.Meta, alive, heal bool) string {
 	// 上限で切れたターンの後（メニューは自動解除済み／モデル別上限はメニューを出さない）
 	// ペインは待機プロンプトへ戻るので、ここまでの状態は idle になる。一覧（wireSession）と
 	// 同じ読み替えをここでも行う — チップが一覧と本文で食い違うと、どちらが本当か利用者には
-	// 分からない（docs/47 §4-9）。送信は塞がない（agents.StateLimited のコメント）。
+	// 分からない（docs/log/47 §4-9）。送信は塞がない（agents.StateLimited のコメント）。
 	if isClaude && alive && state == "idle" {
 		if limited, _, waiting := rateLimitWaiting(m, time.Now()); waiting {
 			return limited

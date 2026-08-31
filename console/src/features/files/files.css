@@ -263,7 +263,7 @@
   color: var(--warn);
 }
 
-/* "アシスタントで開く" submenu (docs/19 Phase C) — old styles.css verbatim, with
+/* "アシスタントで開く" submenu (docs/log/19 Phase C) — old styles.css verbatim, with
    the .ctxmenu parent selectors mapped to the new .files-ctxmenu. */
 .files-ctxmenu li.ctx-sub {
   padding: 0;

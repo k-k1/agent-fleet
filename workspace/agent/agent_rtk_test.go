@@ -5,7 +5,7 @@ import (
 )
 
 // codex 側の適用（ApplyRTK / stripMarkedBlock）のテストは internal/agents/codex
-// へ移設（docs/23 残① Wave E）。ここには main 側に残る durable prefs の
+// へ移設（docs/log/23 残① Wave E）。ここには main 側に残る durable prefs の
 // 読み書きテストだけを置く。
 
 func TestAgentRTKPrefsDefaultOn(t *testing.T) {

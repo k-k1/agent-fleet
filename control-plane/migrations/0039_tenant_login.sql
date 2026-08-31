@@ -1,4 +1,4 @@
--- Per-tenant login rules (docs/61 §61.9.7 + ADR0043 決定 15/16/19).
+-- Per-tenant login rules (docs/log/61 §61.9.7 + ADR0043 決定 15/16/19).
 --
 -- One deployment split into departments: each tenant declares which sign-in
 -- buttons it accepts and which email domains join it automatically. All three are
