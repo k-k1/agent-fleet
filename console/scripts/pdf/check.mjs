@@ -17,10 +17,10 @@
 //   node console/scripts/pdf/check.mjs --screenshot /tmp/pdf.png
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { checker, serveDir, sleep, startBrowser, until } from "../lib/headless.mjs";
 
 const REPO = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const CONSOLE = path.join(REPO, "console");
@@ -29,10 +29,7 @@ const CHROMIUM = process.env.CHROMIUM || "/usr/bin/chromium";
 const shotArg = process.argv.indexOf("--screenshot");
 const SHOT = shotArg > 0 ? process.argv[shotArg + 1] : "";
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const fail = [];
-const ok = [];
-const check = (cond, label, detail = "") => (cond ? ok : fail).push(label + (detail ? ` — ${detail}` : ""));
+const { check, report } = checker();
 
 // ---- 作業ディレクトリ -------------------------------------------------------
 const www = fs.mkdtempSync(path.join(os.tmpdir(), "af-pdfcheck-"));
@@ -127,87 +124,13 @@ async function bundle() {
   fs.copyFileSync(path.join(CONSOLE, "src/features/viewer/viewer.css"), path.join(www, "viewer.css"));
 }
 
-// ---- 配る --------------------------------------------------------------------
-function serve() {
-  const types = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".pdf": "application/pdf", ".bcmap": "application/octet-stream" };
-  const server = http.createServer((req, res) => {
-    const file = path.join(www, decodeURIComponent(req.url.split("?")[0]));
-    if (!file.startsWith(www) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
-      res.writeHead(404).end("not found");
-      return;
-    }
-    res.writeHead(200, { "Content-Type": types[path.extname(file)] || "application/octet-stream" });
-    fs.createReadStream(file).pipe(res);
-  });
-  return new Promise((r) => server.listen(0, "127.0.0.1", () => r({ server, port: server.address().port })));
-}
-
-// ---- CDP（素の WebSocket。puppeteer は使わない）------------------------------
-async function browser() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "af-pdfchrome-"));
-  const proc = spawn(CHROMIUM, [
-    "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
-    "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
-    `--user-data-dir=${dir}`, "--window-size=1000,760", "about:blank",
-  ], { stdio: ["ignore", "ignore", "ignore"] });
-  let port = 0;
-  for (let i = 0; i < 120 && !port; i++) {
-    await sleep(100);
-    try {
-      port = Number(fs.readFileSync(path.join(dir, "DevToolsActivePort"), "utf8").split("\n")[0]) || 0;
-    } catch {}
-  }
-  if (!port) throw new Error("chromium did not open a debugging port");
-  const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-  const ws = new WebSocket(targets.find((t) => t.type === "page").webSocketDebuggerUrl);
-  await new Promise((r) => (ws.onopen = r));
-  let id = 0;
-  const pending = new Map();
-  ws.onmessage = (e) => {
-    const m = JSON.parse(e.data);
-    if (m.id && pending.has(m.id)) pending.get(m.id)(m), pending.delete(m.id);
-  };
-  const send = (method, params = {}) =>
-    new Promise((res, rej) => {
-      const i = ++id;
-      pending.set(i, (m) => (m.error ? rej(new Error(`${method}: ${m.error.message}`)) : res(m.result)));
-      ws.send(JSON.stringify({ id: i, method, params }));
-    });
-  const evaluate = async (expression) => {
-    const r = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-    if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || "evaluate failed");
-    return r.result.value;
-  };
-  const close = () => {
-    ws.close();
-    proc.kill();
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {}
-  };
-  await send("Page.enable");
-  await send("Runtime.enable");
-  return { send, evaluate, close };
-}
-
-/** 条件が満たされるまで待つ。満たされなければ最後の値を返す。 */
-async function until(evaluate, expression, want, tries = 100) {
-  let last;
-  for (let i = 0; i < tries; i++) {
-    last = await evaluate(expression);
-    if (want(last)) return last;
-    await sleep(100);
-  }
-  return last;
-}
-
 // ---- 本体 --------------------------------------------------------------------
 await makeSamplePdf();
 await bundle();
-const { server, port } = await serve();
-const b = await browser();
+const { server, port } = await serveDir(www);
+const b = await startBrowser();
 try {
-  await b.send("Page.navigate", { url: `http://127.0.0.1:${port}/index.html` });
+  await b.goto(`http://127.0.0.1:${port}/index.html`);
 
   // 1. 6 ページぶんの枠が出て、メタが親へ渡る。
   const pages = await until(b.evaluate, "document.querySelectorAll('.pdfview-page').length", (n) => n === 6);
@@ -272,12 +195,11 @@ try {
   if (SHOT) {
     await b.evaluate("document.querySelector('.pdfview-scroll').scrollTop = 0");
     await sleep(600);
-    const shot = await b.send("Page.captureScreenshot", { format: "png" });
-    fs.writeFileSync(SHOT, Buffer.from(shot.data, "base64"));
+    await b.screenshot(SHOT);
   }
 
   // 7. 壊れた PDF は、白い面ではなく理由を出す。
-  await b.send("Page.navigate", { url: `http://127.0.0.1:${port}/index.html?src=/broken.pdf` });
+  await b.goto(`http://127.0.0.1:${port}/index.html?src=/broken.pdf`);
   const failed = await until(b.evaluate, "document.querySelector('.pdfview.is-failed')?.textContent || ''", (s) => !!s);
   check(!!failed, "壊れた PDF で理由が出る", JSON.stringify(failed));
 } finally {
@@ -285,7 +207,4 @@ try {
   server.close();
 }
 
-for (const line of ok) console.log("  OK   " + line);
-for (const line of fail) console.log("  NG   " + line);
-console.log(fail.length ? `\n${fail.length} 件が NG` : `\n${ok.length} 件すべて OK`);
-process.exit(fail.length ? 1 : 0);
+process.exit(report());

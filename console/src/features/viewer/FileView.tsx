@@ -9,7 +9,7 @@ import type { CSSProperties, FocusEvent, KeyboardEvent, ReactNode } from "react"
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
-import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile } from "../../lib/filemeta.ts";
+import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat, isDrawioFile, isPdfFile, documentFormat, documentLabel } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { ViewHead } from "../../ui/ViewHead.tsx";
@@ -24,6 +24,7 @@ import { MarpView } from "./MarpView.tsx";
 import { CodeView } from "./CodeView.tsx";
 import { ImageView } from "./ImageView.tsx";
 import { PdfView } from "./PdfView.tsx";
+import { DocPreview } from "./DocPreview.tsx";
 import { DrawioView, type DrawioState } from "./DrawioView.tsx";
 import { registerPaneViewActions } from "./paneViewActions.ts";
 import type { LineMarks } from "./CodeView.tsx";
@@ -200,6 +201,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
   const imgFmt = imageFormat(filePath);
   const isImage = !!imgFmt;
   const isPdf = isPdfFile(filePath);
+  // Word / Excel / PowerPoint …（docs/82 §82.4）。PDF と違って「見た目」ではなく
+  // Markdown へ変換して読む面なので、種類は別に持つ。
+  const docFmt = documentFormat(filePath);
+  const isDoc = !!docFmt;
 
   // Editor-style change marks for git-tracked working-tree files.
   useEffect(() => {
@@ -821,6 +826,8 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
           <span className="fi-tag">{imgFmt.toUpperCase()}</span>
         ) : isPdf ? (
           <span className="fi-tag">PDF</span>
+        ) : isDoc ? (
+          <span className="fi-tag">{documentLabel(filePath)}</span>
         ) : isText ? (
           <span className="fi-tag">{langLabel(filePath)}</span>
         ) : null}
@@ -828,7 +835,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
           {humanSize(data?.size)}
           {isImage && imgDims ? ` · ${imgDims.w}×${imgDims.h}` : ""}
           {isPdf && pdfPages != null ? tr("view.pdf.pages_meta", { n: pdfPages }) : ""}
-          {!isImage && !isPdf && isText ? tr("view.lines_meta", { n: lines }) : ""}
+          {!isImage && !isPdf && !isDoc && isText ? tr("view.lines_meta", { n: lines }) : ""}
           {data?.truncated ? tr("view.head_only") : ""}
         </span>
         {huge && (
@@ -1117,6 +1124,15 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, openMode, p
             // PDF は「バイナリ」の一歩手前で拾う（docs/82）。api/fs/file は中身を返さず
             // binary:true だけを返すので、ここから先は download の生バイトが情報源。
             <PdfView src={downloadURL(filePath)} onMeta={(m) => setPdfPages(m.pages)} />
+          ) : isDoc ? (
+            <DocPreview
+              src={downloadURL(filePath)}
+              format={docFmt}
+              size={data.size}
+              basePath={filePath}
+              onOpenFile={showFile}
+              onOpenDir={(path) => revealInFiles(path, { focus: true })}
+            />
           ) : data.binary ? (
             <pre className="filebody muted">({tr("view.binary")}, {humanSize(data.size)})</pre>
           ) : huge ? (

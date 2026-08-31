@@ -1,8 +1,9 @@
-// File ペインが PDF をどう扱うか（docs/82）。
+// File ペインが PDF と Office 文書をどう扱うか（docs/82）。
 //
-// ここで見るのは「面の選択と受け渡し」だけ —— どのファイルで PDF の面に降り、生バイトの
-// URL が渡り、情報バーが PDF として読めるか。実際に絵が出るかは canvas の話なので
-// jsdom では確かめられない（`npm --prefix console run pdf:check` が実ブラウザで見る）。
+// ここで見るのは「面の選択と受け渡し」だけ —— どのファイルでどの面に降り、生バイトの
+// URL と形式が渡り、情報バーが何と読めるか。実際に絵が出るか・変換が通るかは canvas と
+// WASM の話で jsdom では確かめられない（`npm --prefix console run pdf:check` と
+// `doc:check` が実ブラウザで見る）。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -20,12 +21,21 @@ vi.mock("../../core/api/client.ts", () => ({
   rel: (p: string) => p,
 }));
 
-// PdfView 自体は canvas と pdf.js を持つので、ここでは「呼ばれた・何を渡された」だけ見る。
+// PdfView / DocPreview 自体は canvas と WASM を持つので、ここでは「呼ばれた・何を
+// 渡された」だけ見る（実物は scripts/pdf・scripts/doc のハーネスが実ブラウザで見る）。
 const pdfProps: { src: string; onMeta?: (m: { pages: number }) => void }[] = [];
 vi.mock("./PdfView.tsx", () => ({
   PdfView: (props: { src: string; onMeta?: (m: { pages: number }) => void }) => {
     pdfProps.push(props);
     return <div data-surface="pdf" />;
+  },
+}));
+
+const docProps: { src: string; format?: string; size?: number }[] = [];
+vi.mock("./DocPreview.tsx", () => ({
+  DocPreview: (props: { src: string; format?: string; size?: number }) => {
+    docProps.push(props);
+    return <div data-surface="doc" />;
   },
 }));
 
@@ -58,6 +68,7 @@ const meta = () => host.querySelector(".fi-meta")?.textContent ?? "";
 
 beforeEach(() => {
   pdfProps.length = 0;
+  docProps.length = 0;
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -124,6 +135,47 @@ describe("the File pane on a PDF", () => {
     served = binaryFile("repos/x/b.pdf");
     await render("repos/x/b.pdf");
     expect(meta()).not.toContain("12 pages");
+  });
+});
+
+describe("the File pane on an Office document", () => {
+  it("shows the simple preview instead of the binary placeholder", async () => {
+    served = binaryFile("repos/x/plan.docx");
+    await render("repos/x/plan.docx");
+    expect(surface()).toBe("doc");
+    expect(host.textContent).not.toContain("binary");
+  });
+
+  it("hands the converter the raw bytes, the format and the size", async () => {
+    // size は上限判定に要る（WASM は全体をメモリに載せる）。落とすと巨大な添付で
+    // タブごと落ちるまで気づけない。
+    served = binaryFile("repos/x/book.xlsx", 999);
+    await render("repos/x/book.xlsx");
+    expect(docProps.at(-1)).toMatchObject({ src: "/dl/repos/x/book.xlsx", format: "xlsx", size: 999 });
+  });
+
+  it("labels the file by its extension", async () => {
+    served = binaryFile("repos/x/deck.pptx");
+    await render("repos/x/deck.pptx");
+    expect(tags()).toContain("PPTX");
+    expect(meta()).not.toContain("lines");
+  });
+
+  it("leaves csv and other text files alone", async () => {
+    // csv は anydoc も読めるが、すでにテキストとして読めている。変換に回すと
+    // コードビューも編集面も失う。
+    served = {
+      path: "repos/x/data.csv",
+      size: 12,
+      binary: false,
+      truncated: false,
+      editable: false,
+      editabilityReason: "read_only_root",
+      content: "a,b\n1,2\n",
+    };
+    await render("repos/x/data.csv");
+    expect(surface()).toBeNull();
+    expect(docProps).toHaveLength(0);
   });
 });
 

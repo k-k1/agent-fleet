@@ -1,6 +1,6 @@
 # 0063. PDF は pdf.js で「描く」、Office 文書は anydoc で「読める形に変える」
 
-- 状態: **採用・P0（PDF）実装済み**（2026-08-31）。P1（Office）は着手中。
+- 状態: **採用・P0（PDF）/ P1（Office の簡易プレビュー）実装済み**（2026-08-31）。
   設計と実測は [docs/82](../82-document-preview.md)。
 - 関連: [0046-drawio-viewer.md](0046-drawio-viewer.md)（同じ「バイナリをペインの中で読む」系。
   同梱物と `?url` の作法はこれに倣った） / [0026-markdown-code-editor.md](0026-markdown-code-editor.md)
@@ -67,5 +67,5 @@ anydoc は OCR を持たないので、スキャン PDF は `needsOcr` を返す
 ## 影響
 
 - Console の配布物が +2.5 MB（cMap と標準フォント）。主チャンクは不変。
-- `console/package.json` に `pdfjs-dist`（P1 で `@firecrawl/anydoc-wasm`）が増える。
+- `console/package.json` に `pdfjs-dist` と `@firecrawl/anydoc-wasm` が増える（どちらも遅延読み込み）。
 - バックエンドの変更は無い。既存の `api/fs/download` が生バイトを返し、Range も通る。

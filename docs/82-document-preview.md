@@ -1,8 +1,8 @@
 # 82. File ペインで PDF と Office 文書をプレビューする
 
-- 状態: **P0（PDF）実装済み**（2026-08-31）。P1（Word / Excel / PowerPoint の簡易プレビュー）は着手中。
+- 状態: **P0（PDF）・P1（Word / Excel / PowerPoint の簡易プレビュー）実装済み**（2026-08-31）。
   実測はすべて開発 Workspace の headless Chromium で行い、再現コマンドを各節に残した。
-  検証ハーネスは `npm --prefix console run pdf:check`。
+  検証ハーネスは `npm --prefix console run pdf:check` と `doc:check`。
   設計判断は [decisions/0063](decisions/0063-document-preview.md)。
 - 関連: [44-markdown-code-editor.md](44-markdown-code-editor.md)（File ペインの面と編集・保存機構。
   本機能は**その面を増やす**形で載る） / [65-drawio-viewer.md](65-drawio-viewer.md)（同じ「バイナリを
@@ -133,24 +133,51 @@ OK   壊れた PDF で理由が出る
 
 ## 82.4 P1：Word / Excel / PowerPoint（anydoc で簡易プレビュー）
 
-方針は **「見た目の再現」ではなく「読むための変換」**。anydoc（Rust → WASM）で GFM へ変換し、
-既存の MarkdownView に載せる。理由は [decisions/0063](decisions/0063-document-preview.md)。
+`console/src/features/viewer/DocPreview.tsx`。方針は **「見た目の再現」ではなく「読むための変換」**。
+anydoc（Rust → WASM）で GFM へ変換し、既存の MarkdownView に載せる。理由は
+[decisions/0063](decisions/0063-document-preview.md)。
 
-- 依存 1 つで 3 形式（＋ odt / rtf / epub / csv）を賄える。3 ライブラリを別々に抱えるより、
-  更新も監査も 1 か所で済む。
-- 出力が Markdown なので、リンク・見出し・表・コピーといった既存の作法がそのまま効く。
-- 代償は**体裁が落ちること**を隠さないこと：面には「簡易プレビュー」と明示し、原本を開くための
-  ダウンロード導線を常に隣に置く。
+依存 1 つで 3 形式（＋ odt / rtf / epub）を賄えること、出力が Markdown なので既存の作法
+（リンク解決・表・コピー・読み上げ）がそのまま効くことが理由。対象は `.docx/.docm/.doc/.odt/.rtf`・`.xlsx/.xlsm/.xls/.ods`・`.pptx/.pptm/.ppsx/.ppt/.odp`・`.epub`
+（`filemeta.ts` の `documentFormat()`）。**`.csv` は入れない** —— すでにテキストとして読めており、
+変換に回すとコードビューも編集面も失う。
 
-未着手。実装時の要点は ADR 0063 の「決定 3」に置いた。
+- 面の頭に「簡易プレビューです。書式・図形・画像は再現されません」と出し、原本のダウンロード導線
+  （情報バー）を隣に残す。**再現しているように見せる方が、書式の落ちた表を鵜呑みにされるぶん危ない。**
+- 変換できない理由は黙らずに出す: パスワード付き（`encrypted`）／画像だけのページ（`needsOcr`、
+  OCR は持たない）／未対応形式（`unsupported`）／壊れている（`malformed` ほか）。
+- **40MB を超えるファイルは変換に回さない**（WASM は全体をメモリに載せる）。ダウンロードへ誘導する。
+- WASM は 6.4MB（gzip 2.9MB）の遅延アセット。主チャンクは +1.2KB gzip しか増えない
+  （`?url` の文字列と DocPreview のぶん）＝**その形式を開いた人だけが払う**。
+
+### 82.4.1 検証ハーネス
+
+`npm --prefix console run doc:check`。**WASM が実ブラウザで本当に初期化され、実 OOXML を
+変換できるか**を見る（jsdom では絶対に分からない層）。標本はその場で組み立てる最小の OOXML で、
+zip も自前で書くのでリポジトリにバイナリを置かない。Markdown の描画は MarkdownView の担当なので、
+ハーネスでは差し替えて**変換結果の文字列**を検査する。
+
+```
+OK   sample.docx / sample.xlsx / sample.pptx が Markdown に変換される
+OK   表が GFM の表として出る — "| みかん | 34 |"
+OK   簡易プレビューだと明示している
+OK   壊れたファイルで理由が出る / 原本を開く導線を出す / 本文の面は出さない
+```
+
+**このハーネスが測っていないもの**: 実文書での再現度（それは §82.2 の実測）。最小 OOXML は
+配線を確かめるためのもので、「Word が吐いた本物」ではない。
 
 ## 82.5 テスト
 
 | 層 | 何を見るか |
 |----|-----------|
 | `src/features/viewer/pdfPages.test.ts` | 配置・可視範囲・現在ページ・読み位置の保存・倍率の段・canvas 画素上限（純関数） |
-| `src/features/viewer/FileViewPdf.dom.test.tsx` | 面の選択（PDF かバイナリか）・生バイト URL の受け渡し・情報バー・編集面を出さないこと |
+| `src/features/viewer/FileViewDocuments.dom.test.tsx` | 面の選択（PDF / Office / バイナリ）・生バイト URL と形式の受け渡し・情報バー・編集面を出さないこと |
 | `scripts/pdf/check.mjs` | 実ブラウザでの描画・拡大・解放・失敗表示（82.3.3） |
+| `src/lib/filemeta.test.ts` | 拡張子 → 面の割り当て（PDF / Office / テキストのまま） |
+| `scripts/doc/check.mjs` | 実ブラウザでの WASM 初期化と OOXML 変換・失敗表示（82.4.1） |
 
-jsdom には canvas が無いので、**「本当に絵が出るか」は dom テストでは決して分からない**。
-そこはハーネスの担当と割り切って、dom テストでは `PdfView` をモックしている。
+jsdom には canvas も WebAssembly の配信も無いので、**「本当に絵が出るか」「本当に変換できるか」は
+dom テストでは決して分からない**。そこはハーネスの担当と割り切って、dom テストでは `PdfView` と
+`DocPreview` をモックしている。2 つのハーネスは `scripts/lib/headless.mjs`（一時ディレクトリを配る
+http サーバ＋素の WebSocket で叩く CDP）を共有する。

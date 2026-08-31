@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isDrawioFile, langFor, looksLikeDrawioXml, resolveMarkdownFileTarget } from "./filemeta.ts";
+import { documentFormat, documentLabel, isDrawioFile, isPdfFile, langFor, looksLikeDrawioXml, resolveMarkdownFileTarget } from "./filemeta.ts";
 
 describe("resolveMarkdownFileTarget", () => {
   it("resolves an agent absolute source citation under home", () => {
@@ -94,5 +94,38 @@ describe("langFor", () => {
   it("図のソース面は XML として色を付ける", () => {
     expect(langFor("a/b.drawio")).toBe("xml");
     expect(langFor("a/b.dio")).toBe("xml");
+  });
+});
+
+describe("isPdfFile", () => {
+  it("matches by extension, case-insensitively", () => {
+    expect(isPdfFile("repos/a/spec.pdf")).toBe(true);
+    expect(isPdfFile("repos/a/SPEC.PDF")).toBe(true);
+    expect(isPdfFile("repos/a/spec.pdf.bak")).toBe(false);
+    expect(isPdfFile("repos/a/pdf")).toBe(false);
+  });
+});
+
+describe("documentFormat", () => {
+  it("maps Office extensions onto anydoc's format names", () => {
+    expect(documentFormat("repos/a/plan.docx")).toBe("docx");
+    expect(documentFormat("repos/a/plan.DOCM")).toBe("docx"); // マクロ付きも同じ解析器
+    expect(documentFormat("repos/a/book.xlsm")).toBe("xlsx");
+    expect(documentFormat("repos/a/deck.ppsx")).toBe("pptx"); // スライドショー形式
+    expect(documentFormat("repos/a/note.odt")).toBe("odt");
+  });
+
+  it("leaves text formats alone", () => {
+    // csv も anydoc は読めるが、すでにテキストとして開けている。変換に回すと
+    // コードビューと編集面を失う（docs/82 §82.4）。
+    expect(documentFormat("repos/a/data.csv")).toBe("");
+    expect(documentFormat("repos/a/README.md")).toBe("");
+    expect(documentFormat("repos/a/spec.pdf")).toBe(""); // PDF は描く面が別にある
+    expect(documentFormat("repos/a/docx")).toBe("");
+  });
+
+  it("labels by the extension as written", () => {
+    expect(documentLabel("repos/a/plan.docx")).toBe("DOCX");
+    expect(documentLabel("repos/a/deck.PPTX")).toBe("PPTX");
   });
 });
