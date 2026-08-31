@@ -27,7 +27,7 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { fetchRtkGain, fetchUsageSeries } from "./api.ts";
-import type { RtkGain, RtkGainBucket, UsageAgg, UsageDim, UsageSeries } from "./api.ts";
+import type { RtkGain, RtkGainBucket, UsageAgg, UsageCatalog, UsageDim, UsagePrice, UsageSeries } from "./api.ts";
 import { OTHER_KEY } from "./colors.ts";
 import {
   breakdownRows,
@@ -68,7 +68,9 @@ const METRICS: { metric: UsageMetric; key: MsgKey }[] = [
   { metric: "spend", key: "usage.metric_spend" },
   { metric: "calls", key: "usage.metric_calls" },
   { metric: "cread", key: "usage.metric_cread" },
-  { metric: "cost_usd", key: "usage.metric_cost" },
+  // 金額は**推定**を出す（実測はセッション本体に無く、あの列がずっと「—」だった）。
+  // 実測は消さず、推定の隣にツールチップで併記する（別の計測法なので足さない）。
+  { metric: "cost_est_usd", key: "usage.metric_cost" },
 ];
 
 /** 軸の値 → 表示名。未知の値（新しいモデル名など）はキーをそのまま出す。 */
@@ -78,12 +80,41 @@ export const dimLabel = (dim: string, key: string): string => {
   return tMaybe(`usage.val.${dim}.${key}`) ?? key;
 };
 
-// コストは claude の実測が有るときだけ入る。0 を "$0.0000" と書くと「タダで動いた」に
-// 読めてしまうので、実測が無い＝「—」（未計測と同じ書き方）で出す。
+// 0 を "$0.0000" と書くと「タダで動いた」に読めてしまうので、値が無い＝「—」（未計測と
+// 同じ書き方）で出す。
 const fmtUSD = (v: number): string => (v <= 0 ? "—" : v >= 1 ? "$" + v.toFixed(2) : "$" + v.toFixed(4));
+
+// 推定額は必ず「≈」を付ける。実測（claude の補助呼び出し）と同じ書体で並ぶと、単価表 ×
+// トークンで起こした数字が請求額として読まれる。
+export const fmtUSDEst = (v: number): string => (v <= 0 ? "—" : "≈" + fmtUSD(v));
+
+// 単価（$/100万トークン）。末尾の 0 を残すと $2.00 / $0.0200 と並んで読みにくいので落とす。
+const fmtRate = (v: number): string => "$" + String(v >= 1 ? +v.toFixed(2) : +v.toFixed(4));
+
+/** 単価の出所を1行で。catalog:<provider>/<model> は provider まで出す（検算の手掛かり）。 */
+export function priceSrcLine(price: UsagePrice | undefined): string {
+  if (!price) return "";
+  const [kind, ref] = price.src.split(/:(.+)/);
+  return kind === "catalog"
+    ? (tMaybe("usage.price_src_catalog") ?? "").replace("{ref}", ref || "")
+    : (tMaybe("usage.price_src_builtin") ?? "");
+}
+
+/** 金額セルのツールチップ。単価・出所・実測を積む（金額だけでは検算できない）。 */
+export function costCellTitle(agg: UsageAgg, price: UsagePrice | undefined, tr: ReturnType<typeof useT>): string {
+  if (!agg.cost_est_usd) return tr("usage.cost_unpriced_hint");
+  const lines = [tr("usage.cost_est_hint")];
+  if (price) {
+    lines.push(tr("usage.price_line", { in: fmtRate(price.in), out: fmtRate(price.out) }) + priceSrcLine(price));
+    if (price.ambiguous) lines.push(tr("usage.price_ambiguous"));
+  }
+  if (agg.cost_usd) lines.push(tr("usage.cost_measured", { v: fmtUSD(agg.cost_usd) }));
+  return lines.join("\n");
+}
 
 /** 指標つきの数値整形。トークンは compact（fmtTok）、回数は桁区切り、コストは $。 */
 export function fmtMetric(metric: UsageMetric, v: number): string {
+  if (metric === "cost_est_usd") return fmtUSDEst(v);
   if (metric === "cost_usd") return fmtUSD(v);
   if (metric === "calls") return fmtNum(Math.round(v));
   return fmtTok(Math.round(v));
@@ -392,7 +423,13 @@ export function UsageView() {
             <MatrixTable src={matrixBy === "feature" ? featModel : kindModel} rowDim={matrixBy} />
           </section>
 
-          <CoverageBanner notes={notes} unmeasured={series?.unmeasured_calls || 0} />
+          <CoverageBanner
+            notes={notes}
+            unmeasured={series?.unmeasured_calls || 0}
+            priced={series?.priced_spend || 0}
+            unpriced={series?.unpriced_spend || 0}
+            catalog={series?.catalog}
+          />
         </div>
       )}
 
@@ -686,6 +723,10 @@ function matrixTotals(s: UsageSeries | null, axis: "row" | "col"): Map<string, U
 function KpiRow({ totals, unmeasured }: { totals: UsageAgg | undefined; unmeasured: number }) {
   const tr = useT();
   const t = totals;
+  // 実測は消さずに併記する（推定の答え合わせになる唯一の値）。足し算はしない。
+  const measured = t?.cost_usd || 0;
+  const costTitle =
+    tr("usage.kpi_cost_hint") + (measured > 0 ? "\n" + tr("usage.cost_measured", { v: fmtUSD(measured) }) : "");
   return (
     <div className="usage-kpis">
       <div className="ukpi hero">
@@ -700,8 +741,8 @@ function KpiRow({ totals, unmeasured }: { totals: UsageAgg | undefined; unmeasur
         <div className="ukpi-val">{fmtTok(t?.cread || 0)}</div>
         <div className="ukpi-lab muted">{tr("usage.kpi_cread")}</div>
       </div>
-      <div className="ukpi" title={tr("usage.kpi_cost_hint")}>
-        <div className="ukpi-val">{fmtUSD(t?.cost_usd || 0)}</div>
+      <div className="ukpi" title={costTitle}>
+        <div className="ukpi-val">{fmtUSDEst(t?.cost_est_usd || 0)}</div>
         <div className="ukpi-lab muted">{tr("usage.kpi_cost")}</div>
       </div>
       <div className={"ukpi" + (unmeasured > 0 ? " unmeasured" : "")} title={tr("usage.kpi_unmeasured_hint")}>
@@ -996,7 +1037,12 @@ function MatrixTable({ src, rowDim }: { src: UsageSeries | null; rowDim: string 
                 </td>
                 <td className="num">{fmtTok(c.agg.spend)}</td>
                 <td className="num">{c.agg.calls > 0 ? fmtTok(Math.round(perCall(c.agg))) : "—"}</td>
-                <td className="num">{c.agg.cost_usd ? fmtUSD(c.agg.cost_usd) : "—"}</td>
+                {/* 推定額。単価表に無いモデルは 0 ではなく「—」＋理由をツールチップに置く
+                    （0 と「値付けできない」を混同させない）。使った単価と出所、実測が
+                    あればそれも同じツールチップに積む。 */}
+                <td className="num" title={costCellTitle(c.agg, src?.prices?.[c.key], tr)}>
+                  {fmtUSDEst(c.agg.cost_est_usd || 0)}
+                </td>
               </tr>
             )),
           )}
@@ -1013,12 +1059,21 @@ function MatrixTable({ src, rowDim }: { src: UsageSeries | null; rowDim: string 
 function CoverageBanner({
   notes,
   unmeasured,
+  priced,
+  unpriced,
+  catalog,
 }: {
   notes: ReturnType<typeof coverageNotes>;
   unmeasured: number;
+  priced: number;
+  unpriced: number;
+  catalog: UsageCatalog | undefined;
 }) {
   const tr = useT();
-  if (!notes.length && unmeasured === 0) return null;
+  // 推定額をいくらぶんの消費から起こせたか。値付けできない分を黙っていると、
+  // 「≈$41」が全消費ぶんの金額として読まれる。
+  const unpricedPct = priced + unpriced > 0 ? Math.round((unpriced / (priced + unpriced)) * 100) : 0;
+  if (!notes.length && unmeasured === 0 && unpriced === 0 && !catalog) return null;
   return (
     <section className="usage-card usage-coverage">
       <div className="uc-head">
@@ -1027,6 +1082,25 @@ function CoverageBanner({
         </h4>
       </div>
       {unmeasured > 0 && <p className="uc-sub">{tr("usage.coverage_unmeasured", { n: fmtNum(unmeasured) })}</p>}
+      {/* 四捨五入で 0% になる端数を「消費の 0% は…」と書くと自己矛盾した注記になるので、
+          1% 未満は専用の言い方にする（実データで踏んだ: 57k / 34.1M）。 */}
+      {unpriced > 0 && (
+        <p className="uc-sub">
+          {unpricedPct >= 1
+            ? tr("usage.coverage_unpriced", { pct: String(unpricedPct), n: fmtTok(unpriced) })
+            : tr("usage.coverage_unpriced_sub1", { n: fmtTok(unpriced) })}
+        </p>
+      )}
+      {/* カタログの取得日を必ず出す。推定額は保存していないので、カタログが更新されると
+          過去の金額も変わる —— どの時点の単価かを言わずに額だけ動かすのは黙って嘘に近い。 */}
+      {catalog && (
+        <p className="uc-sub" title={tMaybe("usage.catalog_origin_" + catalog.origin) ?? undefined}>
+          {tr("usage.catalog_note", {
+            n: fmtNum(catalog.models),
+            when: catalog.fetched ? fmtDateTime(catalog.fetched, { month: "numeric", day: "numeric" }) : "—",
+          })}
+        </p>
+      )}
       <ul className="ucov-list">
         {notes.map((n) => (
           <li key={n.kind}>

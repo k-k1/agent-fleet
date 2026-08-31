@@ -111,8 +111,8 @@ and the preview side by side).
 **"AI suggestion"** in the editor asks an AI for a change to the selection (or to the whole file
 when nothing is selected). Write the instruction, generate with **Ctrl+Enter**, review the diff
 and choose **Apply** or **Reject** — nothing is rewritten on its own (if the text moved on after
-generation, it tells you to regenerate). The tokens it spends are recorded in ⚙ Settings → Usage
-as **"Edit suggestion (editor)"** ([12](12-settings.md#usage)).
+generation, it tells you to regenerate). The tokens it spends are recorded in ⚙ Settings → Agent usage
+as **"Edit suggestion (editor)"** ([12](12-settings.md#agent-usage)).
 
 ## Send a file to a session / chat
 

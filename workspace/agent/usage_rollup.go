@@ -58,7 +58,11 @@ type usageAgg struct {
 	CacheRead   int     `json:"cread"`
 	CacheCreate int     `json:"ccreate"`
 	Calls       int     `json:"calls"`
-	CostUSD     float64 `json:"cost_usd,omitempty"`
+	CostUSD     float64 `json:"cost_usd,omitempty"` // 実測（claude だけが返す）
+	// CostEstUSD は単価表から起こした推定（usage_price.go）。**実測とは別値**で、足さない。
+	// **rollup には書かない** — 単価は改定されるので、読み出しのたびに今の表で掛け直す
+	// （handleUsageSeries がサンプル単位で載せる）。
+	CostEstUSD float64 `json:"cost_est_usd,omitempty"`
 }
 
 func (a *usageAgg) add(b usageAgg) {
@@ -69,6 +73,7 @@ func (a *usageAgg) add(b usageAgg) {
 	a.CacheCreate += b.CacheCreate
 	a.Calls += b.Calls
 	a.CostUSD += b.CostUSD
+	a.CostEstUSD += b.CostEstUSD
 }
 
 type usageRollupEntry struct {

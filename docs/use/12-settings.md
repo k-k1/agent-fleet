@@ -18,7 +18,7 @@ Updated: 2026-08
 |---|---|
 | **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / Agent instructions |
 | **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens |
-| **Workspace** | Usage / Cloud cost / Agent memory / Toolchain / AWS SSM / Internal repositories / Export & import / Danger zone |
+| **Workspace** | Agent usage / Cloud cost / Agent memory / Toolchain / AWS SSM / Internal repositories / Export & import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
 - **On a phone it is a list → detail drill-down.** Back returns to the list; back again closes the dialog.
@@ -239,7 +239,7 @@ Tokens for driving your workspace remotely from Claude Code / Claude Desktop on 
 
 ## Workspace
 
-### Usage
+### Agent usage
 
 The ledger of **what your tokens went on**. Alongside the sessions themselves, it lists the auxiliary calls
 Agent Fleet makes behind the scenes (title suggestions, summarised handoffs, reply suggestions …) on the same
@@ -248,8 +248,17 @@ scale.
 - **Range** — 24 hours / 7 days / 30 days.
 - **Split by** — feature / agent / model / session origin (started by a person, created by the operator, created
   by a schedule, handoff) / trigger (user, automatic, schedule, operator, bridge …).
-- **Metric** — tokens spent / number of calls / cache reads / **API-equivalent cost** (what the same work would
-  have cost on the API, as a yardstick, even when it ran on a subscription).
+- **Metric** — tokens spent / number of calls / cache reads / **API-equivalent cost (estimated)** — tokens ×
+  each model's published API list price (cache writes ×1.25, cache reads ×0.1), shown with a `≈`. **It is not
+  what a flat subscription bills you.** Sessions themselves carry no measured cost, so this column used to read
+  "—" (only claude's auxiliary calls return one). The measured figure is still there: hover the amount and it is
+  shown alongside — never added to the estimate.
+- Rates come from a built-in table for Anthropic and from the **models.dev price catalog** (read from the copy
+  opencode keeps) for everything else. **Hover an amount to see which rate was used and where it came from.**
+  Consumption that went through opencode is priced at opencode's own rates — that is closer to what you actually pay.
+- Models missing from the catalog too are **not** estimated. That consumption is reported under "what is
+  measurable" as "N% of the consumption runs on models with no price on file" — which is not an amount of 0.
+  The same box shows **when the catalog was fetched**, because a newer catalog changes past estimates as well.
 - Clicking a series in the time chart filters to it. There is also a **feature × model** matrix.
 - **Measurement coverage** is stated explicitly. Calls that do not report tokens are shown as counted-only
   (which does not mean they were free).
@@ -355,7 +364,7 @@ deeper reset that also removes home except logins and connections). Both lose un
 | Follow progress while away from the desk | Chat integration |
 | Let the AI use an in-house tool | MCP servers |
 | Drive it from the Claude on my laptop | MCP tokens |
-| Find out what the tokens went on | Usage |
+| Find out what the tokens went on | Agent usage |
 | Find out what my workspace costs to run | Cloud cost |
 | It memorised something wrong | Agent memory |
 | Change the Java / Node version | Toolchain |

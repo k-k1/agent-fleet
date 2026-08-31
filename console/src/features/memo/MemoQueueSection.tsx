@@ -34,6 +34,7 @@ import { placeFixed } from "../../lib/placeFixed.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useDraft } from "../../lib/draft.ts";
+import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { useSettings } from "../../lib/settings.ts";
 import type { Memo, MemoCategory, MemoAttachment } from "../../types/memo.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
@@ -64,10 +65,7 @@ const catLabel = (cat: string) => cat || t("memo.uncategorized");
 // longer note grow without the user having to drag the resize handle first.
 function useAutosizeTextarea(ref: RefObject<HTMLTextAreaElement | null>, value: string) {
   useLayoutEffect(() => {
-    const textarea = ref.current;
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${textarea.scrollHeight}px`;
+    autoGrowTextarea(ref.current);
   }, [ref, value]);
 }
 

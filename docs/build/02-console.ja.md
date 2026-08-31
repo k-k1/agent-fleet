@@ -54,7 +54,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 | `schedules` | 定時実行の左ペインセクション + 詳細モーダル（一覧・有効切替・即時実行・実行履歴。作成/編集はオペレーター会話側）|
 | `keys` | キーボード操作体系: capture-phase dispatcher・コマンドパレット・WhichKey / CheatSheet・キー再割当ストア |
 | `notifications` | 通知センター: 未読/既読管理・トーストログ・音声通知トグル |
-| `usage` | 機能別トークン使用量ダッシュボード（UsageView。設定モーダルの「使用量」タブが薄いラッパとして表示）|
+| `usage` | 機能別トークン使用量ダッシュボード（UsageView。設定モーダルの「エージェント使用量」タブが薄いラッパとして表示）|
 | `auth` | ログインセッション切れ（401 / 端末ソケット断）検出時の再ログインモーダル（AuthExpiredModal）|
 | `settings` | SettingsDialog（3 グループ左レール × 18 タブ、§2.5）・AdminDialog・接続状態ポーリング |
 
@@ -146,7 +146,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 - **設定モーダル**: 3 グループの左レール × 18 タブ（旧 6 タブの単段バーはスケールせず再編。
   モバイルはレール→内容の 2 段ドリルダウン）。**個人設定**＝表示 / キー操作 / 読み上げ / 通知 /
   アシスタント、**接続**＝エージェント（各 kind の接続・RTK 等）/ Gitホスティング / 運用・監視 /
-  チャット連携 / MCP サーバー / MCPトークン（PAT 発行・失効）、**ワークスペース**＝使用量 /
+  チャット連携 / MCP サーバー / MCPトークン（PAT 発行・失効）、**ワークスペース**＝エージェント使用量 /
   エージェントメモリ / ツールチェーン / AWS SSM / 内部リポジトリ / 書き出し・取り込み（[docs/79](../decisions/0060-settings-export-import.ja.md)）/
   危険な操作（Workspace 作り直し等）。
   管理機能は SettingsDialog に混ぜず **AdminDialog に分離**（TopBar の shield から、super_admin のみ）。

@@ -29,7 +29,7 @@ value you set is not the value in force, look one layer out.
 | Agent instructions | text added to every agent you start in this workspace |
 | Agent memory | version management, rollback, import / export of an agent's memory |
 | Assistant | the assistant chat's agent and model |
-| Usage | your token spend, by feature, agent and model |
+| Agent usage | your token spend, by feature, agent and model |
 | Cloud cost | your share of the deployment's cloud spend |
 | Git hosting | GitHub / Bitbucket connections |
 | Internal repos | repositories hosted by the deployment itself |

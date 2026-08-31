@@ -44,6 +44,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { useDraft, writeDraft } from "../../lib/draft.ts";
 import { useDragScroll } from "../../lib/dragScroll.ts";
+import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { prettyModel } from "../../lib/modelName.ts";
@@ -1392,12 +1393,11 @@ export function MirrorView({
 
   // Auto-grow the composer to fit its content (up to ~10 lines via the CSS max-height,
   // then it scrolls). Runs on every draft change, including the per-session draft restored
-  // on mount. Reset to auto first so it can also shrink when text is deleted.
+  // on mount. 計測のために一瞬 2 行へ縮めると、その隙に転写（この入力欄の兄弟）の
+  // clientHeight が伸びて末尾に貼りついていた scrollTop が切り詰められる — 縮みを外へ
+  // 出さないのは autoGrowTextarea の仕事（lib/autoGrow.ts の注記）。
   useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = el.scrollHeight + "px";
+    autoGrowTextarea(inputRef.current);
   }, [draft]);
 
   // Focus the composer when this pane becomes the active chat — but not on touch

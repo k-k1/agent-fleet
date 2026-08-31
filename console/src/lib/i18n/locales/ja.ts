@@ -3679,6 +3679,9 @@ export const ja = {
   "onb.paste_confirm": "貼り付け",
   // ターミナルのグリッドへ直接書く切断通知（term.ts）
   "onb.term_disconnected": "[切断されました]",
+  "onb.rtt_unit": "ms",
+  "onb.rtt_title":
+    "端末の往復時間（中央値 {med}ms / 最大 {max}ms / 直近 {n} 回）。\n打鍵と同じ経路・同じフレームで測った、ブラウザ↔ワークスペース間の実測値です（PTY/tmux 自体は 1ms 未満なので、ほぼそのままエコーの遅れになります）。",
   "onb.term_session_stopped": "[このセッションは停止中です — 右下の「再開」で再開できます]",
 
   // === P5 プロジェクト（ProjectTree/FilesSection/FilesChanges/RepoNode ほか） ===
@@ -3933,7 +3936,7 @@ export const ja = {
   "set.title": "設定",
   "set.tab_display": "表示",
   "set.tab_keys": "キー操作",
-  "set.tab_usage": "使用量",
+  "set.tab_usage": "エージェント使用量",
   "set.tab_memory": "エージェントメモリ",
   "set.tab_env": "ツールチェーン",
   "set.tab_agents": "エージェント",
@@ -4001,7 +4004,7 @@ export const ja = {
   "usage.metric_spend": "消費トークン",
   "usage.metric_calls": "呼び出し回数",
   "usage.metric_cread": "キャッシュ読取",
-  "usage.metric_cost": "API換算相当額",
+  "usage.metric_cost": "API換算相当額（推定）",
   "usage.reload": "再取得",
   "usage.folding": "取り込み中",
   "usage.folding_hint":
@@ -4021,7 +4024,7 @@ export const ja = {
   "usage.col_spend": "消費",
   "usage.calls_shared": "この呼び出しは複数モデルに割れています（回数は最も消費したモデルに1回だけ計上）",
   "usage.col_avg": "1回あたり",
-  "usage.col_cost": "換算額",
+  "usage.col_cost": "推定換算額",
   "usage.breakdown_feature": "機能別",
   "usage.breakdown_kind": "エージェント別",
   "usage.breakdown_model": "モデル別",
@@ -4034,12 +4037,29 @@ export const ja = {
   "usage.kpi_cread": "キャッシュ読取",
   "usage.kpi_cost": "API換算相当額",
   "usage.kpi_cost_hint":
-    "claude だけが実測のコストを返します（他は不明）。サブスク定額では請求額と一致しないため、目安として副次表示です。",
+    "推定です。トークン数 × 各モデルの公表 API 単価（キャッシュ書込 ×1.25・読取 ×0.1）で起こしています。この消費を API で払っていたらいくらか、であって、サブスク定額の請求額ではありません。",
+  "usage.cost_est_hint":
+    "トークン数 × そのモデルの公表 API 単価から起こした推定値です（実測ではありません）。",
+  "usage.cost_measured": "実測 {v}（claude の補助呼び出しのみ）",
+  "usage.cost_unpriced_hint":
+    "このモデルの公表単価を持っていないため、金額を推定していません（消費 0 ではありません）。",
+  "usage.price_line": "単価 {in} / {out}（100万トークンあたり・入力/出力）。",
+  "usage.price_src_builtin": "出所: 内蔵の単価表（Anthropic 公表値）。",
+  "usage.price_src_catalog": "出所: models.dev のカタログ（{ref}）。",
+  "usage.price_ambiguous": "同じモデル名でもエージェントによって単価が違います（表示は消費の多い方）。",
+  "usage.catalog_note":
+    "単価カタログ: models.dev（{n} モデル・取得 {when}）。カタログが更新されると過去の推定額も変わります。",
+  "usage.catalog_origin_opencode": "opencode が保持しているカタログを読んでいます（こちらからは更新しません）。",
+  "usage.catalog_origin_file": "ワークスペースに置かれたカタログを読んでいます。",
+  "usage.catalog_origin_env": "AF_USAGE_CATALOG で指定されたカタログを読んでいます。",
   "usage.kpi_unmeasured": "未計測の呼び出し",
   "usage.kpi_unmeasured_hint":
     "トークンを報告しないエージェントの呼び出し回数です。消費 0 ではなく「測れていない」ことを表します。",
   "usage.coverage_title": "計測できている範囲",
   "usage.coverage_unmeasured": "{n} 件はトークンを報告しないため、回数だけ数えています（消費 0 ではありません）。",
+  "usage.coverage_unpriced": "消費の {pct}%（{n} トークン）は単価を持っていないモデルで走っており、推定額には入っていません。",
+  "usage.coverage_unpriced_sub1":
+    "消費の 1% 未満（{n} トークン）は単価を持っていないモデルで走っており、推定額には入っていません。",
   "usage.cov_tokens_exact": "トークン: 完全",
   "usage.cov_tokens_partial": "トークン: 一部のみ",
   "usage.cov_tokens_none": "トークン: 取得不可",

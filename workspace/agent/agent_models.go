@@ -29,6 +29,11 @@ import (
 //
 // An empty list is a valid answer (CLI absent / offline) — the Console picker then
 // offers only 既定.
+//
+// 並び順は各 kind の上流の推奨順をそのまま出す（codex の priority 順、cursor / kiro /
+// copilot / agy の列挙順は「新しい順・系列ごと」で意味を持つ）。取得経路が 2 つあって
+// 上流順が一意に決まらない opencode だけ、パッケージ側（catalog.go）で正規化する。
+// ポリシーの説明は agents/modelsort.go。
 func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	var list []agents.ModelChoice
 	switch r.PathValue("kind") {
@@ -54,8 +59,9 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 		list = kiro.Models()
 	case "opencode":
 		// 一覧の整形だけ（catalog.go）: 1 本のキーが Zen（従量）と Go（サブスク）の
-		// 両プロバイダを開けるので、同名モデルが両方に並ぶ。並び順と Zen の表示可否は
-		// ユーザー設定（ui-prefs opencodeCatalog）に従う。モデル指定の検証は
+		// 両プロバイダを開けるので、同名モデルが両方に並ぶ。Zen の表示可否はユーザー設定
+		// （ui-prefs opencodeCatalog）に従い、並びは Go 先頭＋id 昇順に正規化する
+		// （daemon 由来と CLI 由来で上流順が違うため）。モデル指定の検証は
 		// handleCreateSession が整形前の全カタログで行うので、明示指定は握り潰さない。
 		list = opencode.Catalog(opencode.Models(), opencodeCatalogPref())
 	case "agy":

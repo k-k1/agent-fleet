@@ -35,11 +35,31 @@ func useTempUsageDir(t *testing.T) string {
 // fold-on-read を踏むので、HOME を分けないと**実ワークスペースのセッションを畳んで**
 // 期待値が実データで壊れる（実際に踏んだ — 合計が数百万トークンになった）。実 CLI を撃つ
 // ライブテストでは使えない（認証が HOME 配下にある）ので、そちらは useTempUsageDir のまま。
+// **HOME だけでは足りない**（memory: ci-runner-xdg-not-home）: 単価カタログは
+// XDG_CACHE_HOME 配下の opencode キャッシュも見るので、そこも差し替えないと
+// 開発機に置かれた実カタログで期待値が動く（＝環境を検査するテストになる）。
 func useIsolatedUsageDir(t *testing.T) string {
 	t.Helper()
 	dir := useTempUsageDir(t)
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("AF_USAGE_CATALOG", "")
+	resetUsageCatalogCache(t)
 	return dir
+}
+
+// resetUsageCatalogCache はプロセス内キャッシュを捨てる（前のテストのカタログが
+// 次のテストへ漏れない）。前後どちらでも効くように Cleanup にも積む。
+func resetUsageCatalogCache(t *testing.T) {
+	t.Helper()
+	clear := func() {
+		usageCatalogMu.Lock()
+		usageCatalogCache, usageCatalogSrc = nil, ""
+		usageCatalogAt, usageCatalogChecked = time.Time{}, time.Time{}
+		usageCatalogMu.Unlock()
+	}
+	clear()
+	t.Cleanup(clear)
 }
 
 func TestRecordUsageCallSplitsClaudeModelRows(t *testing.T) {

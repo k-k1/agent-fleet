@@ -15,6 +15,7 @@ import { errText, raw, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
 import { useDragScroll } from "../../lib/dragScroll.ts";
+import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { prettyModel } from "../../lib/modelName.ts";
@@ -460,13 +461,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   }, [conv?.messages.length, sending, liveTurn, karaokeText]);
 
   // Auto-grow the composer to fit its content (up to the CSS max-height, then it scrolls),
-  // same as MirrorView's composer. Reset to auto first so it also shrinks when text is
-  // deleted; runs on every input change (including a seed prefill / cleared-on-send).
+  // same as MirrorView's composer — 縮みを外へ出さない計測は lib/autoGrow.ts に集約。
+  // 走るのは入力が変わるたび（seed の流し込み・送信時のクリアも含む）。
   useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = el.scrollHeight + "px";
+    autoGrowTextarea(inputRef.current);
   }, [input]);
 
   // Focus the composer when this pane becomes the active chat (opening a conversation or

@@ -257,7 +257,7 @@ function agoText(sec: number | null | undefined) {
   return tCount("wsbar.ago_sec", Math.max(0, sec));
 }
 
-// UsageBreakdownLink: 使用量チップ → 設定「使用量」タブへのディープリンク（docs/log/46 §5）。
+// UsageBreakdownLink: 使用量チップ → 設定「エージェント使用量」タブへのディープリンク（docs/log/46 §5）。
 // このチップが答えるのは「サブスク枠がどれだけ残っているか」で、「何にトークンを使ったか」は
 // 別の問い。枠を見て「で、何に消えた?」となった所からそのまま渡す導線。
 function UsageBreakdownLink({ onNavigate }: { onNavigate: () => void }) {

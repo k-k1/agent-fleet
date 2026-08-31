@@ -13,13 +13,16 @@ import type { SeriesPaint } from "./colors.ts";
 export const EMPTY_AGG: UsageAgg = { spend: 0, in: 0, out: 0, cread: 0, ccreate: 0, calls: 0 };
 
 /** グラフに出す指標。spend が主指標（cache_read を含まない既存定義と揃える）。 */
-export type UsageMetric = "spend" | "calls" | "cread" | "cost_usd";
+export type UsageMetric = "spend" | "calls" | "cread" | "cost_usd" | "cost_est_usd";
 
 export const metricOf = (a: UsageAgg | undefined, m: UsageMetric): number => {
   if (!a) return 0;
-  const v = m === "cost_usd" ? a.cost_usd || 0 : a[m];
+  const v = m === "cost_usd" ? a.cost_usd || 0 : m === "cost_est_usd" ? a.cost_est_usd || 0 : a[m];
   return typeof v === "number" && isFinite(v) ? v : 0;
 };
+
+/** 金額の指標か（表示に $ と「≈」を付けるかの判定を1か所に持つ）。 */
+export const isMoneyMetric = (m: UsageMetric): boolean => m === "cost_usd" || m === "cost_est_usd";
 
 export function addAgg(a: UsageAgg, b: UsageAgg | undefined): UsageAgg {
   if (!b) return a;
@@ -31,6 +34,7 @@ export function addAgg(a: UsageAgg, b: UsageAgg | undefined): UsageAgg {
     ccreate: a.ccreate + b.ccreate,
     calls: a.calls + b.calls,
     cost_usd: (a.cost_usd || 0) + (b.cost_usd || 0),
+    cost_est_usd: (a.cost_est_usd || 0) + (b.cost_est_usd || 0),
   };
 }
 

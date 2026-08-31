@@ -8,6 +8,11 @@ import { ordClass } from "../../layout/badges.ts";
 import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { SessionMenu } from "../sessions/SessionMenu.tsx";
+import { useSessionActions } from "../sessions/useSessionActions.tsx";
+import { isContextMenuKey, synthContextMenu } from "../project/contextMenuKey.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { placeFixed } from "../../lib/placeFixed.ts";
 import { TerminalView } from "../terminal/TerminalView.tsx";
 import { MirrorView } from "../mirror/MirrorView.tsx";
 import { agentOf } from "../../agents/registry.ts";
@@ -230,6 +235,13 @@ function PopulatedPane({
   // name/kind, kept in the recipient-side store (docs/log/59) instead.
   const sharedSessions = useSharedSessionsStore((s) => s.sessions);
   const sharedById = useMemo(() => new Map(sharedSessions.map((s) => [s.id, s] as const)), [sharedSessions]);
+  // タブの右クリック: 左ペインのセッション行と同じメニューを、カーソル位置に出す。
+  // `open` を落としても要素は残す — メニューが閉じたあとも生き続ける引き継ぎ/共有
+  // ダイアログを SessionMenu が抱えているので、アンマウントすると道連れになる。
+  const wsRunning = useWorkspaceStore((s) => s.state) === "running";
+  const sessionActions = useSessionActions();
+  const [tabMenu, setTabMenu] = useState<{ session: string; x: number; y: number; open: boolean } | null>(null);
+  const tabMenuSession = tabMenu ? sessionByName.get(tabMenu.session) ?? null : null;
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
   const canWrap =
@@ -421,8 +433,23 @@ function PopulatedPane({
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
         >
           {tabInfo.map(({ view, label, state, kic }) => {
+            // セッションのタブだけがメニューを持つ（SCM/ファイルのタブと、停止中の
+            // Workspace は既定動作のまま）。右クリックとメニューキーで同じ 1 つの
+            // 判定を見るため、ここで一度だけ解決する。
+            const menuSession = wsRunning && view.session && sessionByName.has(view.session) ? view.session : null;
             return (
-              <div className={cx("pane-tab", view.id === cell.selectedViewId && "selected")} role="presentation" key={view.id}>
+              <div
+                className={cx("pane-tab", view.id === cell.selectedViewId && "selected")}
+                role="presentation"
+                key={view.id}
+                // 左ペインの行と同じ形: 後続の contextmenu で開く（mousedown 側の
+                // 外側クリック判定に即座に閉じられないため）。× の上でも同じ。
+                onContextMenu={(e) => {
+                  if (!menuSession) return;
+                  e.preventDefault();
+                  setTabMenu({ session: menuSession, x: e.clientX, y: e.clientY, open: true });
+                }}
+              >
                 <button
                   type="button"
                   role="tab"
@@ -461,6 +488,15 @@ function PopulatedPane({
                   onAuxClick={(e) => {
                     if (e.button === 1) { e.preventDefault(); closeTab(view.id); }
                   }}
+                  // メニューキー / Shift+F10 — タブは素の button なので Tab で焦点が
+                  // 来る。rail の行と同じく、native な contextmenu を合成して上の
+                  // onContextMenu をそのまま通す（開き方を 2 本持たない）。メニューを
+                  // 持たないタブでは既定を止めない — ブラウザ本来のメニューを奪わない。
+                  onKeyDown={(e) => {
+                    if (!menuSession || !isContextMenuKey(e)) return;
+                    e.preventDefault();
+                    synthContextMenu(e.currentTarget);
+                  }}
                   onClick={() => selectTab(view.id)}
                 >
                   {state && (
@@ -494,6 +530,17 @@ function PopulatedPane({
             );
           })}
         </div>
+      )}
+      {tabMenuSession && (
+        <SessionMenu
+          s={tabMenuSession}
+          actions={sessionActions}
+          running={wsRunning}
+          open={tabMenu?.open === true}
+          // カーソル位置から。ペイン内ではなくビューポートで畳むので bounds は無し。
+          place={(el) => tabMenu && placeFixed(el, tabMenu.x, tabMenu.y)}
+          onClose={() => setTabMenu((m) => (m ? { ...m, open: false } : m))}
+        />
       )}
       {canDrag && (
         // The drag grip doubles as the pane's ordinal chip: a colored number that
