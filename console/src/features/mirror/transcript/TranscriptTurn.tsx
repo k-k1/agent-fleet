@@ -199,7 +199,11 @@ export function TranscriptTurn({
   // ないので、そのまま固定される）②長寿命セッションで記録が上限を超えて押し出された、のどちらでも
   // 落ちる（docs/58 §58.15）。封筒はサーバが本文の先頭に必ず付ける（呼び出し元には組ませない）
   // ので、表示の根拠としてはタグと同格 — そして落ちたときに残る唯一の痕跡。
-  const peerFrom = isUser ? peerSenderOf(turn.text ?? "") : null;
+  //
+  // 封筒が無い着信もある: claude 自前の cross-session チャネル（docs/58 §58.16）は AF を
+  // 通らないので封筒が付かない。そこは Agent が転写の `origin.name` から送信者を起こして
+  // `peerFrom` に載せてくるので、封筒 → それ、の順で拾う。
+  const peerFrom = isUser ? (peerSenderOf(turn.text ?? "") ?? turn.peerFrom ?? null) : null;
   const fromPeer = isUser && (turn.source === "peer" || !!peerFrom);
   const peerIntent = fromPeer ? peerIntentOf(turn.text ?? "") : null;
   // Chat-bridge origin (docs/37 P2a): a reply the user sent from Discord/Slack, injected

@@ -17,12 +17,21 @@ export const stamp = (iso: string | undefined): string => {
   return `${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
 };
 
+// LABEL_TAG_RE は Agent が付けるラベルの先頭タグ(workspace/agent/internal/session/label.go)。
+// 旧 `[AF] ` と、セッション名を含む新 `[AF:<name>] ` の両方に一致する。ラベルは作成時に meta へ
+// 焼かれるので、アップグレードを跨ぐと**両方の形が同時に画面に並ぶ** — 片方しか剥がさないと
+// 古いセッションの行だけタグが残る。
+export const LABEL_TAG_RE = /^\[AF(?::[A-Za-z0-9][A-Za-z0-9_-]*)?\]\s*/;
+
+// stripLabelTag removes that tag for display; a label without one travels unchanged.
+export const stripLabelTag = (label: string): string => label.replace(LABEL_TAG_RE, "").trim();
+
 // displayName: the user-supplied title when set (any kind); else a claude session's
-// --name minus the "[AF] " tag; else "{repo} @MMDD-HHMM". The kind is shown by the
+// --name minus the "[AF:<name>] " tag; else "{repo} @MMDD-HHMM". The kind is shown by the
 // badge, so no [AF]/[SH] prefix is needed. namedByLabel is false only for shell.
 export const displayName = (s: Session): string => {
   if (s.title) return s.title;
-  if (agentOf(s.kind).caps.namedByLabel && s.label) return s.label.replace(/^\[AF\]\s*/, "");
+  if (agentOf(s.kind).caps.namedByLabel && s.label) return stripLabelTag(s.label);
   return `${s.repo || s.name} @${stamp(s.createdAt)}`;
 };
 

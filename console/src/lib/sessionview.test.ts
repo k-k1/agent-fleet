@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { remainingShort, resumeClock, stateInfo } from "./sessionview.ts";
+import { displayName, remainingShort, resumeClock, stateInfo, stripLabelTag } from "./sessionview.ts";
 import { t } from "./i18n/index.ts";
 
 // 状態チップの写像。ここで固定したいのは「認証切れ（docs/47 §4-8）が独立したチップに
@@ -148,5 +148,28 @@ describe("remainingShort", () => {
     expect(remainingShort(undefined, now)).toBe("");
     expect(remainingShort("", now)).toBe("");
     expect(remainingShort("いつまでも", now)).toBe("");
+  });
+});
+
+// ラベルの先頭タグ(workspace/agent/internal/session/label.go)。**新旧が同時に画面へ並ぶ**の
+// が要点 — ラベルは作成時に meta へ焼かれるので、セッション名入りへ変えても既存セッションは
+// 古い `[AF] ` のまま残る。片方しか剥がさないと、そこだけタグが見えたままになる。
+describe("stripLabelTag", () => {
+  it("新旧どちらのタグも剥がす", () => {
+    expect(stripLabelTag("[AF:s6bbilu] 94-freeze 試走2本")).toBe("94-freeze 試走2本");
+    expect(stripLabelTag("[AF] 旧形式のまま残ったラベル")).toBe("旧形式のまま残ったラベル");
+  });
+
+  it("AF のタグでない文字列には触らない", () => {
+    expect(stripLabelTag("どこか他所で付いた --name")).toBe("どこか他所で付いた --name");
+    // 名前部分の字種は Agent の ValidName と揃える。緩めると利用者のタイトルの一部を
+    // セッション名として食いかねない。
+    expect(stripLabelTag("[AF:日本語] t")).toBe("[AF:日本語] t");
+  });
+
+  it("displayName はタイトルが無いときタグを剥がしたラベルを出す", () => {
+    const s = { name: "s6bbilu", kind: "claude", label: "[AF:s6bbilu] agent-fleet @0831-1922" };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(displayName(s as any)).toBe("agent-fleet @0831-1922");
   });
 });

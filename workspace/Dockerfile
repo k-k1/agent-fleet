@@ -516,10 +516,15 @@ ENV GIT_TERMINAL_PROMPT=0 \
 # it. (The upstream env-var table says DISABLE_TELEMETRY does not affect feature-flag
 # evaluation; it does. docs/58 §58.12 has the 3-runs-per-config matrix.)
 #
-# So this block is what currently blocks a session-to-session channel that AF cannot
-# see — one that bypasses the Console, the dispatch ledger and the mirror. Dropping
-# these two for any other reason opens it SILENTLY. Read docs/58 §58.10 first; the
-# decision to leave the feature off is ADR 0041.
+# ⚠️ THAT NO LONGER HOLDS (measured 2026-08-31 on 2.1.251, docs/58 §58.16). With BOTH
+# vars set to 1 in the live process, claude still advertises ListAgents / SendMessage and
+# still delivers over /tmp/cc-socks/<pid>.sock — verified end to end on a real pair of
+# sessions. So the session-to-session channel that bypasses the Console, the dispatch
+# ledger and the mirror is currently OPEN, and this block is not what closes it. Whether
+# to close it another way or to accept it is an open decision (ADR 0041 決定1 needs
+# revisiting); until then the mirror at least SHOWS such arrivals (transcript.go, peer
+# origin). Keep these vars anyway — they still do what the paragraph above says about
+# optional/background traffic. Read docs/58 §58.10 and §58.16 before touching them.
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
     DISABLE_TELEMETRY=1 \
     DISABLE_ERROR_REPORTING=1
