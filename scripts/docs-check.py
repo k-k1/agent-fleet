@@ -38,6 +38,7 @@ import argparse
 import os
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass, field
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -82,7 +83,7 @@ FROZEN_REF_ALLOWLIST: set[str] = {
     "docs/log/README.md",
 }
 
-LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 HEADER_KEYS = ("Audience:", "Source of truth:", "Updated:")
 UPDATED_RE = re.compile(r"^Updated:\s*(\d{4})-(\d{2})\s*$", re.M)
 
@@ -166,7 +167,7 @@ def check_links(files: list[str], f: Findings) -> None:
         src = rel(path)
         body = strip_code(read(path))
         for m in LINK_RE.finditer(body):
-            target = m.group(1)
+            target = m.group(2)
             # 先頭 "/" はサイト絶対 URL（Console が返す open link の例示など）で、
             # リポジトリ内のパスではない。
             if target.startswith(("http://", "https://", "mailto:", "#", "/")):
@@ -180,7 +181,221 @@ def check_links(files: list[str], f: Findings) -> None:
             # docs の外（../../deploy/... など）も同じ規則で実在を見る。
             if os.path.exists(resolved):
                 continue
-            f.error(f"{src}: リンク切れ -> {m.group(1)}")
+            f.error(f"{src}: リンク切れ -> {m.group(2)}")
+
+
+# --- アンカー -----------------------------------------------------------------
+
+INLINE_MARKUP = (
+    (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),  # リンクは表示文字だけ残る
+    (re.compile(r"`([^`]*)`"), r"\1"),
+    (re.compile(r"\*\*([^*]*)\*\*"), r"\1"),
+    (re.compile(r"\*([^*]*)\*"), r"\1"),
+)
+HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$", re.M)
+
+
+def heading_text(raw: str) -> str:
+    """見出し行から、ブラウザが `textContent` で見るのと同じ文字列を作る。"""
+    for pattern, repl in INLINE_MARKUP:
+        raw = pattern.sub(repl, raw)
+    return raw
+
+
+def console_slug(text: str) -> str:
+    """Console が見出しに振る id。**GitHub の規則ではない。**
+
+    正は `console/src/lib/filemeta.ts` の `slug()`——小文字化して trim、
+    文字・数字・空白・ハイフン以外を捨て、**連続する空白を 1 個の**ハイフンにする。
+
+    GitHub（github-slugger）は空白 1 個につきハイフン 1 個なので、`—` や `/` のように
+    **空白に挟まれた記号**を含む見出しで 2 つの規則は食い違う（`a — b` は Console で
+    `a-b`、GitHub で `a--b`）。全角括弧はさらに逆で、Console は捨て GitHub は残す。
+
+    どちらを正にするかは実測で決めた: リポジトリ全体で Console 規則でしか解決しない
+    リンクが 52 本、GitHub 規則でしかないものが 10 本。**読者がガイドを開くのは
+    Console** でもあり（`Source of truth` は Console）、多数派でもあるのでこちらを採る。
+    """
+    t = text.lower().strip()
+    t = "".join(
+        c for c in t if unicodedata.category(c)[0] in ("L", "N") or c in " -"
+    )
+    return re.sub(r"\s+", "-", t)
+
+
+# github-slugger: 小文字化して trim、句読点類（`—` を含む  -⁯ と ASCII 記号）を
+# 捨て、**空白 1 個につきハイフン 1 個**。`-` と `_` と全角括弧は残る。
+GITHUB_PUNCT_RE = re.compile(
+    "[ -⁯⸀-⹿\\\\'!\"#$%&()*+,./:;<=>?@\\[\\]^`{|}~]"
+)
+
+
+def github_slug(text: str) -> str:
+    return re.sub(r"\s", "-", GITHUB_PUNCT_RE.sub("", text.lower().strip()))
+
+
+def heading_slugs(path: str) -> set[str]:
+    """`path` を描画する側の規則で作った、その文書の見出し id の集合。
+
+    **規則は行き先のツリーで決まる。** `guide/` は読者がコンテナの Console で開く
+    ものなので Console の `slug()`、`docs/` とリポジトリ直下（CONTRIBUTING.md など）は
+    GitHub でしか読まれないので github-slugger。ここを一律にすると、
+    `CONTRIBUTING.md#commits--prs` のような **GitHub では正しいアンカー**を
+    「壊れている」と報告してしまう（実際にそうなった）。
+    """
+    rule = (
+        console_slug
+        if path.startswith(GUIDE + os.sep)
+        else github_slug
+    )
+    return {
+        rule(heading_text(m.group(2)))
+        for m in HEADING_RE.finditer(strip_code(read(path)))
+    }
+
+
+def check_anchors(files: list[str], f: Findings) -> None:
+    """`#fragment` が、その先のファイルに実在する見出しを指しているか。
+
+    `check_links` はファイルの実在しか見ておらず、**アンカーは無視していた**。
+    だから「ページは開くが、そこではない場所に飛ぶ」——読者から見れば切れたリンクと
+    同じもの——が検査を素通りしていた。
+    """
+    for path in files:
+        src = rel(path)
+        if shelf(src) not in LIVING:
+            continue
+        for m in LINK_RE.finditer(strip_code(read(path))):
+            target = m.group(2)
+            if target.startswith(("http://", "https://", "mailto:", "/")):
+                continue
+            if "#" not in target:
+                continue
+            p, _, frag = target.partition("#")
+            if not frag:
+                continue
+            dest = (
+                path
+                if not p
+                else os.path.normpath(os.path.join(os.path.dirname(path), p))
+            )
+            if not dest.endswith(".md") or not os.path.exists(dest):
+                continue  # 実在しないファイルは check_links の担当
+            if frag in heading_slugs(dest):
+                continue
+            who = "Console" if dest.startswith(GUIDE + os.sep) else "GitHub"
+            f.error(
+                f"{src}: 見出しの無いアンカー -> {target}"
+                f"（{who} が振る id と一致していない）"
+            )
+
+
+# --- 配布物の閉包 -------------------------------------------------------------
+
+# guide/ から外を指してよいリンク（プレフィックス -> 理由）。
+# ⚠️ 理由つきで明示する。ここに足す前に「読者はコンテナの中でそこへ辿り着けるのか」を
+# 確かめること——辿り着けないなら、それは例外ではなく直すべきリンクである。
+CLOSURE_EXEMPT: dict[str, str] = {
+    "deploy/": (
+        "runbook は操作する対象の隣に置いてあり、リリースバンドルの中身そのもの。"
+        "deploy/release/stage-docs.sh が配布時に operate/runbooks/ へ複製し、"
+        "同時にこのリンクをそちらへ書き換えるので、GitHub では deploy/、"
+        "コンテナでは runbooks/ と、両方で生きたリンクになる"
+    ),
+}
+
+
+def check_closure(files: list[str], f: Findings) -> None:
+    """配布物（guide/）が自己完結しているか——外を指すリンクが 1 本も無いこと。
+
+    これが利用者の「リンク切れが多い」の正体だった。`check_links` は**リポジトリ上の
+    実在**しか見ないので、`guide/` から開発者向けの `docs/` を指すリンクは緑のまま
+    通る。しかし読者が開くのはコンテナへ配られたツリーで、そこに `docs/` は無い。
+    リポジトリでは在るのに読者の手元では必ず切れる、という一群がこうして残っていた。
+
+    散文での言及は対象外。**リンクだけを見る**——「仕組みは開発者向けの資料にあります」
+    と書くのは正しく、それをクリックできるようにするのが誤りである。
+    """
+    for path in files:
+        src = rel(path)
+        if tree(src) != "guide":
+            continue
+        for m in LINK_RE.finditer(strip_code(read(path))):
+            target = m.group(2)
+            if target.startswith(("http://", "https://", "mailto:", "#", "/")):
+                continue
+            p = target.split("#", 1)[0]
+            if not p:
+                continue
+            dest = os.path.normpath(os.path.join(os.path.dirname(path), p))
+            if dest == GUIDE or dest.startswith(GUIDE + os.sep):
+                continue
+            out = os.path.relpath(dest, ROOT).replace(os.sep, "/")
+            if any(out.startswith(k) for k in CLOSURE_EXEMPT):
+                continue
+            f.error(
+                f"{src}: 配布物の外を指している -> {target}（{out}）"
+                "——コンテナへ配られるのは guide/ だけなので、読者の手元では切れる"
+            )
+
+
+# --- 章番号 -------------------------------------------------------------------
+
+CHAPTER_FILE_RE = re.compile(r"^(\d{2})-")
+# H1 の「NN.」と、本文の相互参照ラベルの「NN 章名」。どちらも同じ番号を指すべき。
+H1_NUM_RE = re.compile(r"^#\s+(\d{1,2})\.\s")
+LABEL_NUM_RE = re.compile(r"^(\d{1,2})[.\s]")
+
+
+def chapter_of(relpath: str) -> str | None:
+    m = CHAPTER_FILE_RE.match(os.path.basename(relpath))
+    return m.group(1) if m else None
+
+
+def check_chapters(files: list[str], f: Findings) -> None:
+    """章番号が 1 つに揃っているか。
+
+    番号付きのファイルには番号付きの H1 があり、他の章から「NN 章名」と呼ばれる。
+    3 つが揃っていないと、読者は索引で「11 困ったとき」と読み、開いた先で
+    「09. 困ったとき」を見ることになる——実際そうなっていて、しかも
+    `09-collaboration` と `11-troubleshooting` が**両方 09 を名乗っていた**。
+    番号は目次であって飾りではないので、ファイル名を正として機械で揃える。
+    """
+    numbers = {rel(p): chapter_of(rel(p)) for p in files}
+    for path in files:
+        src = rel(path)
+        if shelf(src) not in LIVING:
+            continue
+        want = numbers[src]
+        body = read(path)
+        first = body.splitlines()[0] if body else ""
+        got = H1_NUM_RE.match(first)
+        if want and not got:
+            f.error(f"{src}: H1 に章番号が無い（「# {want}. …」で始めること）")
+        elif want and got.group(1).zfill(2) != want:
+            f.error(
+                f"{src}: H1 の章番号がファイル名と違う"
+                f"（H1={got.group(1)} / ファイル名={want}）"
+            )
+        elif not want and got:
+            f.error(
+                f"{src}: 番号の無いファイルに章番号が付いている（H1={got.group(1)}）"
+            )
+        # 相互参照のラベル「NN 章名」が、指す先の番号と一致しているか。
+        for m in LINK_RE.finditer(strip_code(body)):
+            label, target = m.group(1), m.group(2).split("#", 1)[0]
+            lm = LABEL_NUM_RE.match(label.strip())
+            if not lm or not target.endswith(".md"):
+                continue
+            dest = os.path.normpath(os.path.join(os.path.dirname(path), target))
+            if not os.path.exists(dest):
+                continue  # check_links の担当
+            dest_num = chapter_of(rel(dest))
+            if dest_num and lm.group(1).zfill(2) != dest_num:
+                f.error(
+                    f"{src}: 相互参照の章番号が違う -> [{label}]({target})"
+                    f"（指し先は {dest_num}）"
+                )
 
 
 def check_lang(files: list[str], f: Findings) -> None:
@@ -194,7 +409,7 @@ def check_lang(files: list[str], f: Findings) -> None:
             f.error(f"{src}: 対訳が無い（{mate} が必要）")
         body = strip_code(read(path))
         for m in LINK_RE.finditer(body):
-            target = m.group(1).split("#", 1)[0]
+            target = m.group(2).split("#", 1)[0]
             if target.startswith(("http://", "https://", "mailto:")) or not target:
                 continue
             if not target.endswith(".md"):
@@ -249,7 +464,7 @@ def check_frozen(files: list[str], f: Findings) -> None:
         if src in FROZEN_REF_ALLOWLIST:
             continue
         for m in LINK_RE.finditer(strip_code(read(path))):
-            target = m.group(1)
+            target = m.group(2)
             dest = os.path.normpath(os.path.join(os.path.dirname(path), target))
             if dest.startswith(os.path.join(DOCS, "log")):
                 f.error(
@@ -827,7 +1042,8 @@ def main() -> int:
         default="",
         help=(
             "検査名をカンマ区切りで指定"
-            "（links,lang,header,vocab,frozen,ref,settings,features,knowledge,notes）"
+            "（links,anchors,closure,chapters,lang,header,vocab,frozen,"
+            "ref,settings,features,knowledge,notes）"
         ),
     )
     args = ap.parse_args()
@@ -839,6 +1055,12 @@ def main() -> int:
     f = Findings()
     if run("links"):
         check_links(files, f)
+    if run("anchors"):
+        check_anchors(files, f)
+    if run("closure"):
+        check_closure(files, f)
+    if run("chapters"):
+        check_chapters(files, f)
     if run("lang"):
         check_lang(files, f)
     if run("header"):
