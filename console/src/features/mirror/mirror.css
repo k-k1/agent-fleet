@@ -1810,6 +1810,44 @@ button.mt-tool-outhead {
   min-height: 0;
   overflow: hidden;
 }
+/* The closing edge of an expanded 作業過程 / 思考 (DisclosureFoot): the head's toggle repeated
+   at the BOTTOM, so a long block can be folded away from where it was read instead of scrolling
+   back up to the only control. Faint until hovered — it sits inside the body and must not
+   compete with the content above it. */
+.mirror-disclosure-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 3px 6px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 7%, transparent);
+  border-radius: 0 0 4px 4px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  /* --muted そのまま。opacity で更に落とすと、思考の本文（.mirror-thinking-body が既に
+     0.8）の中で二重に掛かって操作要素が読めなくなる — ライトでもダークでも 4.5:1 を切る。 */
+  color: var(--muted);
+}
+.mirror-disclosure-foot:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.mirror-disclosure-foot .codicon {
+  font-size: 11px;
+}
+/* 作業過程は枠のあるカードなので、閉じる帯は本文の左右 padding だけ打ち消して枠いっぱいに
+   敷く（罫線が中途半端な位置で切れないように）。下は詰めない — カードの枠線に貼り付くと
+   二重線に見える。思考には枠が無いので本文幅のまま。 */
+.mt-work-body > .mirror-disclosure-foot {
+  margin-left: -20px;
+  margin-right: -9px;
+  width: calc(100% + 29px);
+}
 @media (prefers-reduced-motion: reduce) {
   .mirror-disclosure-panel {
     transition: none;

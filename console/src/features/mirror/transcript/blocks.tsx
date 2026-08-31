@@ -77,6 +77,29 @@ export function DisclosureContent({ open, className, children }: { open: boolean
   );
 }
 
+// DisclosureFoot is the closing edge of an expanded 作業過程 / 思考: the same toggle as the
+// head, repeated at the BOTTOM of the body. Without it, folding a long block away means
+// scrolling back up past everything you just read to reach the only control there is.
+//
+// Pair it with revealHead: closing from down here deletes the body the reader is looking at,
+// and the head sits above it — often far off the top of the viewport.
+export function DisclosureFoot({ onClose }: { onClose: () => void }) {
+  return (
+    <button type="button" className="mirror-disclosure-foot" onClick={onClose}>
+      <Icon name="chevron-up" />
+      <span>{tr("mirror.collapse_section")}</span>
+    </button>
+  );
+}
+
+// revealHead brings a just-collapsed disclosure's head back into view. `nearest` is a no-op
+// when the head is already on screen, so a short block doesn't jump; the rAF lets React
+// commit the closed state first. The head is ABOVE the shrinking body, so its position is
+// stable even though the collapse animates for another ~140ms.
+export function revealHead(el: HTMLElement | null) {
+  requestAnimationFrame(() => el?.scrollIntoView({ block: "nearest" }));
+}
+
 // TaskChecklist renders the current ToDo list (reconstructed from Task tool calls) as a
 // collapsed disclosure: a done/total count, the active task on the summary, and the full
 // list on expand. The open/closed choice is remembered per session (localStorage), so it
@@ -242,18 +265,31 @@ export function ThinkingBlock({
   onOpenFile?: (path: string, line?: number, column?: number) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const head = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     setOpen(defaultOpen);
   }, [defaultOpen]);
   if (!text) return null;
   return (
     <section className={"mirror-thinking mirror-disclosure" + (open ? " open" : "")}>
-      <button type="button" className="mirror-thinking-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <button
+        type="button"
+        ref={head}
+        className="mirror-thinking-head"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
         <Icon name="lightbulb" />
         <span className="mth-title">{tr("mirror.thinking_label")}</span>
       </button>
       <DisclosureContent open={open} className="mirror-thinking-body">
         <MarkdownView source={text} baseDir={baseDir} repo={repo} onOpenFile={onOpenFile} />
+        <DisclosureFoot
+          onClose={() => {
+            setOpen(false);
+            revealHead(head.current);
+          }}
+        />
       </DisclosureContent>
     </section>
   );
@@ -399,9 +435,10 @@ export function WorkDisclosure({
   onToggle: () => void;
   children: ReactNode;
 }) {
+  const head = useRef<HTMLButtonElement>(null);
   return (
     <section className={"mt-work mirror-disclosure" + (open ? " open" : "")}>
-      <button type="button" className="mt-work-head" aria-expanded={open} onClick={onToggle}>
+      <button type="button" ref={head} className="mt-work-head" aria-expanded={open} onClick={onToggle}>
         <Icon name={open ? "chevron-down" : "chevron-right"} />
         <span className="mt-work-title">{tr("chat.work_process")}</span>
         <span className="mt-work-count muted">
@@ -409,7 +446,17 @@ export function WorkDisclosure({
           {responses > 0 ? tCount("chat.interim_count", responses) : ""}
         </span>
       </button>
-      <DisclosureContent open={open} className="mt-work-body">{children}</DisclosureContent>
+      <DisclosureContent open={open} className="mt-work-body">
+        {children}
+        {/* The owner's toggle, not a local setState: this disclosure is controlled, and the
+            foot is only ever reachable while open, so toggling closes it. */}
+        <DisclosureFoot
+          onClose={() => {
+            onToggle();
+            revealHead(head.current);
+          }}
+        />
+      </DisclosureContent>
     </section>
   );
 }
