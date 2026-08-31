@@ -137,9 +137,13 @@
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+/* ★ 明示的に指定する。指定しないと body の 14px をそのまま継いで、レールの中で
+   この行だけ大きくなる（セッション行 .sess-l1 13px / スケジュール .sched-name
+   12.5px / メモ .memo-body 12px）。倣うのは同じ idiom のスケジュール行。 */
 .wi-title {
   flex: 1 1 auto;
   min-width: 0;
+  font-size: 12.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
