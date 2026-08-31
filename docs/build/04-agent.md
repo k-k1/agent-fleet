@@ -260,7 +260,7 @@ messages as text and **raw JPEG as binary**. From the Console it accepts only vi
 pointer, wheel, key and text, navigation and visibility — **raw debugging protocol is
 never exposed**.
 
-The ceilings are in [ref/limits.md](../ref/limits.md). The frame rate is enforced **not
+The ceilings are in [ref/limits.md](../../guide/ref/limits.md). The frame rate is enforced **not
 merely by throttling the send** but by delaying the acknowledgement to a one-frame
 worker, **so Chromium is limited at capture and encode** rather than producing frames
 that are thrown away. The pipe has fixed message and queue limits, and **when a required

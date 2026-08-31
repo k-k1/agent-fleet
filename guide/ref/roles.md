@@ -68,7 +68,7 @@ read, which is why the shelves are cut by reader in the first place.
 
 | Role | Shelves in the container |
 |---|---|
-| member | [use/](../use/README.md), [ref/](README.md) |
+| member | [use/](../member/README.md), [ref/](README.md) |
 | tenant administrator | + [admin/](../admin/README.md) |
 | deployment administrator | + [operate/](../operate/README.md), [build/](../build/README.md) |
 

@@ -8,14 +8,14 @@
 
 | あなたは | 棚 | 答えるのは |
 |---|---|---|
-| Agent Fleet でエージェントを動かす人 | [use/](use/README.ja.md) | どうやるの？ |
-| テナント管理者 | [admin/](admin/README.ja.md) | チームのためにどう運用するの？ |
-| 配備を建てて維持する人 | [operate/](operate/README.ja.md) | どう建てて、どう生かし続けるの？ |
+| Agent Fleet でエージェントを動かす人 | [use/](../guide/member/README.ja.md) | どうやるの？ |
+| テナント管理者 | [admin/](../guide/admin/README.ja.md) | チームのためにどう運用するの？ |
+| 配備を建てて維持する人 | [operate/](../guide/operate/README.ja.md) | どう建てて、どう生かし続けるの？ |
 | コードを変える人 | [build/](build/README.ja.md) | どう動いているの？ |
 
 全員が読む棚が 2 つあります。
 
-- **[ref/](ref/README.ja.md) — できること。** 機能ごと・エージェントごと・
+- **[ref/](../guide/ref/README.ja.md) — できること。** 機能ごと・エージェントごと・
   リポジトリ種別ごと・デプロイ形態ごと・ロールごとの能力表。他の棚はここを
   参照するだけで、同じことを書きません。本文と表が食い違ったら**表が正**です。
 - **[decisions/](decisions/) — なぜそうなっているか。** 決定の記録（追記型）。

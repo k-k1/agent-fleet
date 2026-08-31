@@ -25,9 +25,9 @@ the integrations, and how to build and test.
   instead — an endpoint path, an environment variable name, an error code string — or
   at the code map, which is the one file allowed to enumerate paths and is expected
   to go stale.
-- **Procedures for running a deployment** — [operate/](../operate/README.md) owns
+- **Procedures for running a deployment** — [operate/](../../guide/operate/README.md) owns
   those, and this shelf links rather than copies.
-- **User-facing instructions** — [use/](../use/README.md).
+- **User-facing instructions** — [use/](../../guide/member/README.md).
 - **Journals.** A measurement, an incident post-mortem or a round-by-round
   investigation is not a design document. Put the durable conclusion here and the
   reasoning in [decisions/](../decisions/).
@@ -43,7 +43,7 @@ the integrations, and how to build and test.
 | A deployment target, adapter or variable | the deploy chapter |
 | Build, reflect or test mechanics | the development chapter |
 | Where files live (a refactor) | the code map only — nothing else should move |
-| A feature users can see | the relevant chapter, plus [ref/](../ref/README.md) and the reader's shelf |
+| A feature users can see | the relevant chapter, plus [ref/](../../guide/ref/README.md) and the reader's shelf |
 
 ## Chapters
 
@@ -71,5 +71,5 @@ its chapter. **Reviewing security?** [07](07-security.md) → [08](08-integratio
 | [92 Driving a TUI](92-driving-a-tui.md) | verifying a modal screen you drive by keystrokes |
 | [93 Worktree dependencies](93-worktree-deps.md) | what a worktree shares and what it duplicates, measured |
 
-What the product can do is [ref/](../ref/README.md); why it is like this is
+What the product can do is [ref/](../../guide/ref/README.md); why it is like this is
 [decisions/](../decisions/).

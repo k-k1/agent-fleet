@@ -67,7 +67,7 @@ IT / SRE と同じ人です。
 
 | ロール | コンテナに入る棚 |
 |---|---|
-| メンバー | [use/](../use/README.ja.md), [ref/](README.ja.md) |
+| メンバー | [use/](../member/README.ja.md), [ref/](README.ja.md) |
 | テナント管理者 | ＋ [admin/](../admin/README.ja.md) |
 | 配備管理者 | ＋ [operate/](../operate/README.ja.md), [build/](../build/README.ja.md) |
 

@@ -80,5 +80,5 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 ## 状態
 
 タブの行は Console のラベルから起こしているので、**画面を黙って取りこぼしません**。
-各タブが実際に何を意味するかは読者の棚（[use/](../use/README.ja.md) と
+各タブが実際に何を意味するかは読者の棚（[use/](../member/README.ja.md) と
 [admin/](../admin/README.ja.md)）、変数の手順は [operate/](../operate/README.ja.md) です。

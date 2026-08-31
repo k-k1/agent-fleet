@@ -103,4 +103,4 @@ remain. The member can start it again from the Console.
 ---
 
 - Back to: [02 Resource limits and sessions](02-limits.md)
-- Guide index: [../README.md](../use/README.md)
+- Guide index: [../README.md](../member/README.md)

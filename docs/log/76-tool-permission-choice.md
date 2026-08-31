@@ -3,7 +3,7 @@
 - 状態: ✅ P0 実装済み（claude / cursor / copilot / kiro / agy）・⏸ P1（codex / opencode）は保留
 - 設計判断: [decisions/0056](../decisions/0056-tool-permission-choice.ja.md)
 - 関連: [docs/75 アイドル自動停止と対話の持ち越し](75-idle-stop-and-pending-interactions.md)（承認待ちで畳まれたときの受け皿）、
-  [dev/07 セキュリティ](../build/07-security.ja.md)、[guide/operator/03](../operate/04-secure.ja.md)
+  [dev/07 セキュリティ](../build/07-security.ja.md)、[guide/operator/03](../../guide/operate/04-secure.ja.md)
 
 ## 76.1 何を変えるのか
 

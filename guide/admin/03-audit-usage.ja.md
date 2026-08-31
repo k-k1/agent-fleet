@@ -97,4 +97,4 @@ Console から起動し直せます。
 ---
 
 - 前に戻る: [02 資源上限とセッション](02-limits.ja.md)
-- ガイド全体の索引: [../README.md](../use/README.ja.md)
+- ガイド全体の索引: [../README.md](../member/README.ja.md)

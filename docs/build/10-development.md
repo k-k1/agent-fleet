@@ -81,7 +81,7 @@ Two notes:
   |---|---|
   | (none) / `local` | the development default, Docker runtime |
   | `wsl` | a WSL preset (Docker and cgroup preflight, `AUTH=dev` fixed) |
-  | `native` | containerless, no Docker (single user — [ref/deploy-targets](../ref/deploy-targets.md)). Builds the agent on the host and hands it over |
+  | `native` | containerless, no Docker (single user — [ref/deploy-targets](../../guide/ref/deploy-targets.md)). Builds the agent on the host and hands it over |
   | `reset [--all] [--yes]` | wipe local data. Refuses while the CP is running, and cleans up the leftovers of both runtimes before deleting |
 
   ⚠️ The env value `AF_RUNTIME=wsl` is an alias for *containerless*, which is a

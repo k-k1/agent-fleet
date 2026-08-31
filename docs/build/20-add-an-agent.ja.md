@@ -10,7 +10,7 @@ Updated: 2026-08
 この章はその両方の一覧です。
 
 コードを書く前に、形は [04 §4.3](04-agent.ja.md)、既存種別が実際に何に対応しているかは
-[ref/agents.md](../ref/agents.ja.md) を読んでください。
+[ref/agents.md](../../guide/ref/agents.ja.md) を読んでください。
 
 ## 20.1 先に 3 つ決める
 
@@ -36,7 +36,7 @@ pane を持たず、ターミナルは CLI 自身の画面を tmux 経由で駆�
 
 | 面 | 置き場 | 注意 |
 |---|---|---|
-| kind 定数と capability | `internal/session` と自パッケージの `Caps()` | **通しで駆動していない capability を立てない。**[ref/agents.md](../ref/agents.ja.md) は CI がここと突き合わせる |
+| kind 定数と capability | `internal/session` と自パッケージの `Caps()` | **通しで駆動していない capability を立てない。**[ref/agents.md](../../guide/ref/agents.ja.md) は CI がここと突き合わせる |
 | 起動 | 自パッケージの起動ビルダ | env は**コマンド前置**で。tmux のセッション環境では届かない（§20.3）|
 | live 状態 | フック / プラグイン / runtime イベント | working / idle / question に正規化（[04 §4.4](04-agent.ja.md)）|
 | transcript | その CLI の保存形式のリーダー | **native store を読む。会話を自前ストアへ複製しない。**パーサは統合しない |
@@ -71,7 +71,7 @@ pane を持たず、ターミナルは CLI 自身の画面を tmux 経由で駆�
 ## 20.4 駆動していない capability を立てない
 
 `Caps()` はドキュメントではありません。**Console はこれで操作要素を出し分け**、
-[ref/agents.md](../ref/agents.ja.md) は CI がここと突き合わせます。このリポジトリが学んだ規則は
+[ref/agents.md](../../guide/ref/agents.ja.md) は CI がここと突き合わせます。このリポジトリが学んだ規則は
 **「実 CLI で通しで駆動した capability だけを立てる」**。具体例: 権限確認のスキップを選べるように
 するには、**承認待ちが Console から実際に答えられる**ことが要ります。フラグを外すだけならどの
 kind でもできますが、**利用者に見えず答えられないダイアログ**で止まったセッションは、
@@ -101,9 +101,9 @@ CI が見るのは常に**ピン版**なのに、self-update を有効にした�
 動いたら完了、ではありません。次が済んで完了です。
 
 1. `Caps()` が**実際に駆動した内容**と一致している。
-2. [ref/agents.md](../ref/agents.ja.md) の列が埋まっている——**CI が fork と権限の行を `Caps()` と
+2. [ref/agents.md](../../guide/ref/agents.ja.md) の列が埋まっている——**CI が fork と権限の行を `Caps()` と
    完全一致で突き合わせる**ので、ずれるとビルドが落ちます。
-3. [use/06-agents](../use/06-agents.ja.md) に、**Console の言葉で**接続の仕方が書いてある。
+3. [use/06-agents](../../guide/member/06-agents.ja.md) に、**Console の言葉で**接続の仕方が書いてある。
 4. contract ワークフローが在り、実 CLI に対して通っている。
 5. 蒸し返され得る論点（なぜこの driver か、なぜこの id 戦略か）を決着させたなら、
    [decisions/](../decisions/) に記録が在る。

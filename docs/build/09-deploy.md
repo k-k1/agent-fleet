@@ -14,7 +14,7 @@ is the map: what forms exist, what gets swapped, and which knob controls it.
 | Form | Summary | State | Runbook |
 |---|---|---|---|
 | **local dev** | The CP as a host process. One entry script with subcommands, plus a light path that swaps only the CP | ✅ in use for development and small shared setups | the comments at the top of the scripts; the reflect-a-change table is [10](10-development.md) |
-| **wsl (personal)** | A WSL2 preset of local dev. Where Docker cannot be installed, the containerless subcommand ([ref/deploy-targets](../ref/deploy-targets.md)) | ✅ personal use | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
+| **wsl (personal)** | A WSL2 preset of local dev. Where Docker cannot be installed, the containerless subcommand ([ref/deploy-targets](../../guide/ref/deploy-targets.md)) | ✅ personal use | [deploy/local/README-wsl.md](../../deploy/local/README-wsl.md) |
 | **compose** | The self-hosting mainline: a CP container plus Caddy for automatic TLS. The CP binds loopback, and **the compose definition contains the three constraints** of driving the host's Docker daemon from a container | ✅ | [deploy/compose/README.md](../../deploy/compose/README.md) |
 | **aws** | Either the native ECS adapter, or compose on a single EC2 VM | 🚧 implemented, no production mileage | [ecs](../../deploy/aws/ecs/README.md) / [ec2-single](../../deploy/aws/ec2-single/README.md) |
 

@@ -39,7 +39,7 @@ At the very bottom of the roster there is an **"Add member"** form.
    logged in (an invite in advance). When they log in for the first time, a workspace is
    provisioned based on this membership.
 
-Point the newly added person to [member/](../use/README.md) in this guide.
+Point the newly added person to [member/](../member/README.md) in this guide.
 
 ### How email addresses relate to internal identifiers
 

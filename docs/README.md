@@ -8,14 +8,14 @@ shelves that user's role is allowed to see.
 
 | You are | Shelf | What it answers |
 |---|---|---|
-| Someone using Agent Fleet to run agents | [use/](use/README.md) | How do I do this? |
-| A tenant administrator | [admin/](admin/README.md) | How do I run this for my team? |
-| Someone who installs and operates a deployment | [operate/](operate/README.md) | How do I stand it up and keep it alive? |
+| Someone using Agent Fleet to run agents | [use/](../guide/member/README.md) | How do I do this? |
+| A tenant administrator | [admin/](../guide/admin/README.md) | How do I run this for my team? |
+| Someone who installs and operates a deployment | [operate/](../guide/operate/README.md) | How do I stand it up and keep it alive? |
 | Someone changing the code | [build/](build/README.md) | How does it work? |
 
 Two shelves are read by everyone:
 
-- **[ref/](ref/README.md) — what the product can do.** Capabilities per feature, per
+- **[ref/](../guide/ref/README.md) — what the product can do.** Capabilities per feature, per
   agent, per repository provider, per deployment target and per role. Every other
   shelf links here instead of repeating it; when prose and a table disagree, the
   table wins.

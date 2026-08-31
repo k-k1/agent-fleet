@@ -14,7 +14,7 @@ Updated: 2026-07
 | 形態 | 概要 | 状態 | runbook |
 |------|------|------|---------|
 | **local dev** | CP をホストプロセスで起動（`run-dev.sh` 一括 / `restart-cp.sh` 軽量反映）。`AUTH=dev`（単独）または `oauth`（共有）。run-dev.sh はサブコマンド式の単一エントリ（`local`/`wsl`/`native`/`reset`＝データ初期化） | ✅ 開発 + 小規模共有で運用中 | スクリプト冒頭コメント（[run-dev.sh](../../deploy/local/run-dev.sh) / [restart-cp.sh](../../deploy/local/restart-cp.sh)）。反映作法は [10](10-development.ja.md) |
-| **wsl（個人）** | local dev の WSL2 むけ即起動プリセット（native dockerd 前提・`AUTH=dev` 固定・JDK は bind-mount か on-demand）。Docker を入れられない場合は `run-dev.sh native`（コンテナレス 🚧・[ref/deploy-targets](../ref/deploy-targets.ja.md)） | ✅ 個人検証 | [../../deploy/local/README-wsl.md](../../deploy/local/README-wsl.md)（`run-dev.sh wsl`。旧 `wsl-quickstart.sh` はラッパー） |
+| **wsl（個人）** | local dev の WSL2 むけ即起動プリセット（native dockerd 前提・`AUTH=dev` 固定・JDK は bind-mount か on-demand）。Docker を入れられない場合は `run-dev.sh native`（コンテナレス 🚧・[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)） | ✅ 個人検証 | [../../deploy/local/README-wsl.md](../../deploy/local/README-wsl.md)（`run-dev.sh wsl`。旧 `wsl-quickstart.sh` はラッパー） |
 | **compose** | セルフホスト本命。CP コンテナ + Caddy（ACME 自動 TLS）。CP は loopback bind、DooD（ホストのデーモンを駆動）の3制約（host-net / `DATA_DIR` 同一絶対パス / docker gid）を compose 定義が封じ込める | ✅ | [../../deploy/compose/README.md](../../deploy/compose/README.md) |
 | **aws** | ネイティブ ECS アダプタ（CFN 4段）と、compose を単一 EC2 VM に載せる ec2-single の 2 通り | 🚧 実装済・実運用実績なし | [ecs](../../deploy/aws/ecs/README.md) / [ec2-single](../../deploy/aws/ec2-single/README.md) |
 

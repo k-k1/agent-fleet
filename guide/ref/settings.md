@@ -83,5 +83,5 @@ else:
 
 The tab rows come from the Console's own labels, so this table cannot silently miss a
 screen. What each tab means in practice is the reader's shelf —
-[use/](../use/README.md) and [admin/](../admin/README.md) — and the procedures for the
+[use/](../member/README.md) and [admin/](../admin/README.md) — and the procedures for the
 variables are [operate/](../operate/README.md).

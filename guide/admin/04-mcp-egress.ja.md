@@ -15,7 +15,7 @@ Updated: 2026-08
 テナント設定の **「運用 → MCP 配布」** で、テナントの全メンバーへ MCP サーバーを配布できます。
 配布したサーバーは、各メンバーの ⚙設定 →「MCP サーバー」に **「テナント」** の出自ラベル付きで
 並び、そのままアシスタントやセッションから使えます（メンバー側の見え方は
-[member/12 設定](../use/12-settings.ja.md#mcp-サーバー)）。
+[member/12 設定](../member/12-settings.ja.md#mcp-サーバー)）。
 
 ### 配れるのはリモート（HTTP）だけ
 
@@ -98,5 +98,5 @@ tenant_admin の権限で完結しないものは、super_admin ／ 情シスに
 ---
 
 - 前に読む: [03 監査と利用状況](03-audit-usage.ja.md)
-- メンバー側の見え方: [member/12 設定](../use/12-settings.ja.md#mcp-サーバー)
+- メンバー側の見え方: [member/12 設定](../member/12-settings.ja.md#mcp-サーバー)
 - 仕組みを知りたい人へ: [dev/08 外部連携](../build/08-integrations.ja.md)

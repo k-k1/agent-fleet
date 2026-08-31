@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
-"""docs/ の構造検査。CI（.github/workflows/docs.yml）とローカルの両方で走る。
+"""文書ツリーの構造検査。CI（.github/workflows/docs.yml）とローカルの両方で走る。
 
-docs/ は「読者で切った棚」であり、その構造がそのまま配布の権限になる
-（control-plane/workspace_docs.go の docsRolePrefixes）。棚の規約が崩れると
-配布範囲が静かに変わるので、規約は人間のレビューではなくここで機械検査する。
+文書は読者で 3 つに分かれる（ADR 0062）。① プロダクト紹介＝ルートの README、
+② 開発者向け＝`docs/`、③ 利用ガイド＝`guide/`。**`guide/` だけがコンテナへ配られる**
+ので、ディレクトリの境界がそのまま配布の境界である。境界が崩れると読者の手元で
+黙ってリンクが切れるので、規約は人間のレビューではなくここで機械検査する。
 
-検査は 10 本:
+検査は 12 本:
 
   links      相対リンクの実在（アンカーは無視）
+  anchors    #fragment が指す見出しが在る（Console の slug 規則で照合）
+  closure    guide/ から外を指すリンクが無い＝配布物が自己完結している
+  chapters   章番号がファイル名と一致し、相互参照のラベルとも一致する
   lang       二言語の閉包（en は .md へ、ja は .ja.md へ）と対訳の存在
-  header     現役の棚の全ファイルに Audience / Source of truth / Updated
+  header     現役の棚の全ファイルに front matter（audience / source_of_truth / updated）
   vocab      利用者向けの棚に実装用語（AF_* / kind= / /api/）が漏れていない
   frozen     現役の棚から docs/log/（凍結アーカイブ）へリンクしていない
   ref        ref/ の表がコードの一次情報と一致し、かつ対訳と ✓ の立ち方が揃っている
-  settings   設定タブの解説（use/12-settings）がタブの一覧（ref/settings）を覆っている
-  features   機能カタログのメンバー向けの行が、利用者の棚（use/）の手順を指している
+  settings   設定タブの解説（member/12-settings）がタブの一覧（ref/settings）を覆っている
+  features   機能カタログのメンバー向けの行が、利用者の棚（member/）の手順を指している
   knowledge  アシスタント知識が機能カタログのメンバー向けの行を覆っている
-  notes      全コンテナへ配る運用ポリシーが実在する棚だけを指している
+  notes      全コンテナへ配る運用ポリシーが、配られる棚だけを指している
 
 ref は 3 段階で見る。(a) 軸の網羅: エージェントの列がセッション種別の定数を、
 デプロイの行が runtime のプロファイルを覆っているか。(b) 行の一致: Caps() で
@@ -37,24 +41,45 @@ import sys
 from dataclasses import dataclass, field
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# --- 2 つのツリー -------------------------------------------------------------
+# 文書は読者で 3 つに分かれる（ADR 0062）。① プロダクト紹介はルートの README、
+# 残る 2 つがここで検査するツリーである。
+#
+#   guide/ … ③ 利用ガイド。**コンテナへ配る唯一のツリー**で、全員が同じものを受け取る。
+#   docs/  … ② 開発者向け。**誰にも配らない**（decisions / log / build / 規範）。
+#
+# 配布の境界がディレクトリの境界と一致していることが、この分割の全部である。
+# guide/ から docs/ を指すリンクは、読者の手元では必ず切れる（check_closure）。
 DOCS = os.path.join(ROOT, "docs")
+GUIDE = os.path.join(ROOT, "guide")
+TREES = (GUIDE, DOCS)
 
 # --- 棚の分類 -----------------------------------------------------------------
-# 現役 = これから書く新体系。規範（header / lang / vocab / frozen）が全部かかる。
-LIVING = ("use", "admin", "operate", "build", "ref")
-# 利用者向け = 実装用語を書いてはいけない棚。
-READER_FACING = ("use", "admin")
+# 現役 = 規範（header / lang / vocab / frozen / anchors）が全部かかる棚。
+# 棚の名前は 2 ツリーを通して一意なので、どちらに在るかを言わなくても棚は決まる。
+LIVING = ("member", "admin", "operate", "ref", "build")
+# 利用者向け = 実装用語を書いてはいけない棚。operate/ は端末の前の読者向けなので
+# コマンド・パス・変数を使ってよく、ref/ は「画面欄は Console・実装欄はコード」と
+# 対応表そのものを載せる棚なので、どちらもここには入らない（CONVENTIONS §4）。
+READER_FACING = ("member", "admin")
+# guide/ ツリーの棚＝コンテナへ配られるもの。ロールでは切らない（ADR 0062）。
+GUIDE_SHELVES = ("member", "admin", "operate", "ref")
 # 二言語 = 英語が正（X.md）、日本語が併記（X.ja.md）。
 # decisions/ は LIVING ではない（ADR は不変なので Updated: を持たない）が、二言語では
 # ある——読者で切った棚と同じで、英語だけ読む人が決定の理由に届かないのは同じ欠損。
-BILINGUAL = LIVING + ("guide", "decisions")
-# 日本語のみ = 二言語検査の対象外。log/ は凍結、dev/ と guide 以外の旧棚は移行待ち。
-JA_ONLY_DIRS = ("dev", "log")
-JA_ONLY_FILES = ("HANDOFF.md", "CHANGELOG-handoff.md", "roadmap.md")
+BILINGUAL = LIVING + ("decisions",)
+# 日本語のみ = 二言語検査の対象外。log/ は凍結アーカイブ。
+JA_ONLY_DIRS = ("log",)
+JA_ONLY_FILES = (
+    "docs/HANDOFF.md",
+    "docs/CHANGELOG-handoff.md",
+    "docs/roadmap.md",
+)
 
-# log/ への参照が許される現役ファイル。P4 までに空にする（plan の受け入れ条件）。
+# log/ への参照が許される現役ファイル。
 FROZEN_REF_ALLOWLIST: set[str] = {
-    "log/README.md",
+    "docs/log/README.md",
 }
 
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
@@ -83,11 +108,23 @@ class Findings:
 
 
 def rel(path: str) -> str:
-    return os.path.relpath(path, DOCS).replace(os.sep, "/")
+    """リポジトリ相対のパス（`guide/member/01-first-day.md`）。
+
+    2 ツリーになったので、棚だけを返すと `README.md` がどちらのものか分からない。
+    エラー文はそのまま `git` に渡せる形にしておく。
+    """
+    return os.path.relpath(path, ROOT).replace(os.sep, "/")
 
 
-def top(relpath: str) -> str:
+def tree(relpath: str) -> str:
+    """`guide` か `docs`。配布されるかどうかがこれで決まる。"""
     return relpath.split("/", 1)[0]
+
+
+def shelf(relpath: str) -> str:
+    """棚の名前（`member` / `build` / `log` …）。ツリー直下のファイルは空文字。"""
+    parts = relpath.split("/")
+    return parts[1] if len(parts) > 2 else ""
 
 
 def is_ja(relpath: str) -> bool:
@@ -103,20 +140,22 @@ def counterpart(relpath: str) -> str:
 
 def all_docs() -> list[str]:
     out = []
-    for dirpath, dirnames, filenames in os.walk(DOCS):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        for name in filenames:
-            if name.endswith(".md"):
-                out.append(os.path.join(dirpath, name))
+    for base in TREES:
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            for name in filenames:
+                if name.endswith(".md"):
+                    out.append(os.path.join(dirpath, name))
     return sorted(out)
 
 
 def bilingual_scope(relpath: str) -> bool:
-    if top(relpath) in JA_ONLY_DIRS or relpath in JA_ONLY_FILES:
+    s = shelf(relpath)
+    if s in JA_ONLY_DIRS or relpath in JA_ONLY_FILES:
         return False
-    if "/" not in relpath:  # docs 直下: README / CONVENTIONS だけ二言語
-        return relpath.split(".")[0] in ("README", "CONVENTIONS")
-    return top(relpath) in BILINGUAL
+    if not s:  # ツリー直下: README / CONVENTIONS だけ二言語
+        return os.path.basename(relpath).split(".")[0] in ("README", "CONVENTIONS")
+    return s in BILINGUAL
 
 
 # --- 検査 ---------------------------------------------------------------------
@@ -161,8 +200,8 @@ def check_lang(files: list[str], f: Findings) -> None:
             if not target.endswith(".md"):
                 continue
             dest = os.path.normpath(os.path.join(os.path.dirname(path), target))
-            if not dest.startswith(DOCS):
-                continue  # docs 外（deploy/ など）は言語を持たない
+            if not any(dest.startswith(b + os.sep) for b in TREES):
+                continue  # 2 ツリーの外（deploy/ など）は言語を持たない
             dest_rel = rel(dest)
             if not bilingual_scope(dest_rel):
                 continue  # 日本語のみの棚へは両言語から同じターゲットを指す
@@ -178,7 +217,7 @@ def check_lang(files: list[str], f: Findings) -> None:
 def check_header(files: list[str], f: Findings, strict: bool) -> None:
     for path in files:
         src = rel(path)
-        if top(src) not in LIVING:
+        if shelf(src) not in LIVING:
             continue
         head = "\n".join(read(path).splitlines()[:12])
         missing = [k for k in HEADER_KEYS if k not in head]
@@ -192,7 +231,7 @@ def check_header(files: list[str], f: Findings, strict: bool) -> None:
 def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
     for path in files:
         src = rel(path)
-        if top(src) not in READER_FACING:
+        if shelf(src) not in READER_FACING:
             continue
         body = strip_code(read(path))
         for pattern, label in VOCAB_BANNED:
@@ -205,7 +244,7 @@ def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
 def check_frozen(files: list[str], f: Findings) -> None:
     for path in files:
         src = rel(path)
-        if top(src) not in LIVING:
+        if shelf(src) not in LIVING:
             continue
         if src in FROZEN_REF_ALLOWLIST:
             continue
@@ -384,7 +423,7 @@ def check_knowledge(f: Findings) -> None:
     正しいかではない。台帳が「覆った」と言っているだけの可能性は消せない——消せるのは
     「カタログに増えた行を誰も見なかった」の方だけである。
     """
-    cat = os.path.join(DOCS, "ref", "features.ja.md")
+    cat = os.path.join(GUIDE, "ref", "features.ja.md")
     doc = os.path.join(ROOT, "workspace", "agent", "knowledge", "af-usage.md")
     led = os.path.join(ROOT, "workspace", "agent", "knowledge", "af-usage.coverage.tsv")
     if not (os.path.exists(cat) and os.path.exists(doc) and os.path.exists(led)):
@@ -513,9 +552,9 @@ def check_use_settings(f: Findings) -> None:
 
     ⚠️ 見るのは ref/settings.ja.md の**個人設定の表だけ**（`table_first_column_under`）。
     """
-    ref = os.path.join(DOCS, "ref", "settings.ja.md")
-    use_ja = os.path.join(DOCS, "use", "12-settings.ja.md")
-    use_en = os.path.join(DOCS, "use", "12-settings.md")
+    ref = os.path.join(GUIDE, "ref", "settings.ja.md")
+    use_ja = os.path.join(GUIDE, "member", "12-settings.ja.md")
+    use_en = os.path.join(GUIDE, "member", "12-settings.md")
     if not all(os.path.exists(p) for p in (ref, use_ja, use_en)):
         return
 
@@ -562,7 +601,7 @@ FEATURES_FILES = (
 
 
 def check_features(f: Findings) -> None:
-    """機能カタログのメンバー向けの行が、利用者の棚（use/）の手順を指しているか。
+    """機能カタログのメンバー向けの行が、利用者の棚（member/）の手順を指しているか。
 
     `ref/features` は「在るか・誰が使えるか」の索引で、**どうやるかはリンク先**だと
     自分で宣言している。だから詳細列が能力表（`agents.md` / `repos.md`）しか指して
@@ -578,7 +617,7 @@ def check_features(f: Findings) -> None:
     **片方の言語の行き先だけが古い**のはそこでは止まらない。
     """
     for name, details_head, member in FEATURES_FILES:
-        path = os.path.join(DOCS, "ref", name)
+        path = os.path.join(GUIDE, "ref", name)
         if not os.path.exists(path):
             continue
         header: list[str] = []
@@ -599,36 +638,33 @@ def check_features(f: Findings) -> None:
             if feature in FEATURES_EXEMPT:
                 continue
             details = cells[header.index(details_head)]
-            if "../use/" not in details:
+            if "../member/" not in details:
                 f.error(
-                    f"ref/{name}:「{feature}」の詳細が use/ を指していない"
+                    f"guide/ref/{name}:「{feature}」の詳細が member/ を指していない"
                     f"（{details or '空'}）"
                     "——メンバー向けの行は、やり方が読める章を必ず 1 つ指すこと"
                 )
 
 
 def check_notes(f: Findings) -> None:
-    """全コンテナへ配る運用ポリシーが、実在する棚だけを指しているか。
+    """全コンテナへ配る運用ポリシーが、コンテナに実在する棚だけを指しているか。
 
     `workspace/workspace-notes.md` はイメージに焼かれ、**すべてのエージェントが
-    起動時に読む**。docs/ を並べ替えたときここが取り残されると、1 か所の腐りが
+    起動時に読む**。ツリーを並べ替えたときここが取り残されると、1 か所の腐りが
     全コンテナの全セッションを同時に誤誘導する——しかも読み手は指示に従うだけなので、
     誰も異常だと気づかない（実際 P4 の棚の付け替えで `dev/93-…` が残っていた）。
 
-    見るのは 2 つだけ:
+    規則は 1 つ: **名指しするなら `guide/` の棚**。コンテナへ配られるのはそのツリーだけで、
+    `docs/`（開発者向け）は誰のコンテナにも無い。
 
-    (1) 名指しした棚のファイルが実在すること。
-    (2) 保証されない棚（member の mount は use/ と ref/ だけ）を指すなら、
-        「無いかもしれない」と書いてあること。書いていなければ、その一文は
-        member のコンテナでは実行不能な指示になる。
-
-    ⚠️ 本文の重複そのものは検査しない——それは意図された重複である（同ファイルに
-    理由を書いた）。検査するのは**指し先が生きているか**だけ。
+    ⚠️ かつてここには「保証されない棚を指すなら同じ段落に『may be absent』と断れ」という
+    規則があった。mount が**役割別**で、member は use/ と ref/ しか受け取らなかったからである。
+    ロール別配布をやめた（ADR 0062）ので、断り書きで逃げる余地も必要も無くなった——
+    指せるか指せないかの 2 つに 1 つで、指せないものは書き換える。
     """
     notes = os.path.join(ROOT, "workspace", "workspace-notes.md")
     if not os.path.exists(notes):
         return
-    guaranteed = ("use", "ref")  # docsRolePrefixes の default（member）
     shelves = LIVING + ("decisions", "log")
     ref_re = re.compile(
         r"`(" + "|".join(shelves) + r")/([A-Za-z0-9._-]+\.md)`"
@@ -651,18 +687,19 @@ def check_notes(f: Findings) -> None:
 
     for lineno, block in blocks:
         for m in ref_re.finditer(block):
-            shelf, name = m.group(1), m.group(2)
-            if not os.path.exists(os.path.join(DOCS, shelf, name)):
+            name, fname = m.group(1), m.group(2)
+            if name not in GUIDE_SHELVES:
                 f.error(
-                    f"workspace-notes.md:{lineno}: 無い棚のファイルを指している"
-                    f" -> {shelf}/{name}"
-                    "（全エージェントが読む指示なので、腐ると全員が誤誘導される）"
+                    f"workspace-notes.md:{lineno}: 配られない棚を指している"
+                    f" -> {name}/{fname}"
+                    "（コンテナに在るのは guide/ だけ。guide/ の棚を指すこと）"
                 )
                 continue
-            if shelf not in guaranteed and "may be absent" not in block.lower():
+            if not os.path.exists(os.path.join(GUIDE, name, fname)):
                 f.error(
-                    f"workspace-notes.md:{lineno}: {shelf}/ は member の mount に無い。"
-                    "同じ段落に「may be absent」と断るか、use/ か ref/ を指すこと"
+                    f"workspace-notes.md:{lineno}: 無い棚のファイルを指している"
+                    f" -> {name}/{fname}"
+                    "（全エージェントが読む指示なので、腐ると全員が誤誘導される）"
                 )
 
 
@@ -672,7 +709,7 @@ def check_ref_parity(f: Findings) -> None:
     対訳の存在は lang 検査が見るが、それだけでは**中身がずれた訳**を止められない。
     能力表で片方だけ古いのは、表が 2 つあるのと同じ害になる。
     """
-    refdir = os.path.join(DOCS, "ref")
+    refdir = os.path.join(GUIDE, "ref")
     if not os.path.isdir(refdir):
         return
     for name in sorted(os.listdir(refdir)):
@@ -699,7 +736,7 @@ def check_ref_parity(f: Findings) -> None:
 
 
 def check_ref(f: Findings) -> None:
-    agents = os.path.join(DOCS, "ref", "agents.md")
+    agents = os.path.join(GUIDE, "ref", "agents.md")
     if os.path.exists(agents):
         cols = {c.strip("`*") for c in table_columns(agents)}
         missing = source_kinds() - cols
@@ -731,7 +768,7 @@ def check_ref(f: Findings) -> None:
     # 設定タブは Console のラベルが正。増えた画面が黙って未記載にならないよう、
     # 両言語それぞれを自分のロケールのラベルと突き合わせる。
     for locale, name in (("en", "settings.md"), ("ja", "settings.ja.md")):
-        path = os.path.join(DOCS, "ref", name)
+        path = os.path.join(GUIDE, "ref", name)
         tabs = source_setting_tabs(locale)
         if not os.path.exists(path) or not tabs:
             continue
@@ -743,7 +780,7 @@ def check_ref(f: Findings) -> None:
                 + ", ".join(missing)
             )
 
-    targets = os.path.join(DOCS, "ref", "deploy-targets.md")
+    targets = os.path.join(GUIDE, "ref", "deploy-targets.md")
     if os.path.exists(targets):
         rows = {c.strip("`*") for c in table_first_column(targets)}
         for group in source_runtime_groups():
