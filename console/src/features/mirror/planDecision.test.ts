@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { PLAN_APPROVE_KEYS, isApproved, isRejected, planOutcome } from "./planDecision.ts";
+import { PLAN_APPROVE_KEYS, isApproved, isRejected, outcomeHead, planOutcome } from "./planDecision.ts";
+
+// A real approval tool_result from the current CLI (captured from a live transcript):
+// header, saved-plan path, then the WHOLE plan Markdown under "## Approved Plan:".
+const approvalWith = (plan: string) =>
+  "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\n\n" +
+  "Your plan has been saved to: /var/lib/af/claude/plans/immutable-dazzling-babbage.md\n" +
+  "You can refer back to it if needed during implementation.\n\n" +
+  "## Approved Plan:\n" +
+  plan;
 
 // Regression guard for the 2026-07-22 bug: clicking 却下 on a plan actually APPROVED it,
 // yet the card stayed badged 却下 (optimistic). Two separate defects, both covered here:
@@ -26,6 +35,25 @@ describe("isApproved / isRejected", () => {
     expect(isRejected("[Request interrupted by user for tool use]")).toBe(true);
     expect(isRejected("Keep planning")).toBe(true);
     expect(isRejected("却下")).toBe(true);
+  });
+
+  // 2026-08-31 regression: the CLI began embedding the approved plan in the tool_result,
+  // so the keyword match started reading the PLAN's prose instead of the verdict.
+  it("ignores the approved plan the CLI embeds in the result", () => {
+    const plan =
+      "# フロービルダー UI の移植\n\n## 非目標\n- 既存 API の作り直しはしない（前回の案は却下）。\n" +
+      "- 途中で中止せず、モックのまま出す案は refine せず reject する。\n";
+    expect(outcomeHead(approvalWith(plan))).not.toContain("却下");
+    expect(isApproved(approvalWith(plan))).toBe(true);
+    expect(isRejected(approvalWith(plan))).toBe(false);
+    // …and the badge that the user actually sees.
+    expect(planOutcome(approvalWith(plan), false)).toBe("approved");
+    expect(planOutcome(approvalWith(plan), true)).toBe("approved");
+  });
+
+  it("still reads a rejection whose feedback mentions approval words", () => {
+    // The reject side carries the user's feedback; the verdict is the header, as always.
+    expect(planOutcome("[Request interrupted by user for tool use]\nyes, but split it first", false)).toBe("rejected");
   });
 });
 
