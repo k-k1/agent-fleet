@@ -70,6 +70,14 @@ export function EnvTab() {
     else toast(tr("common.save_failed"));
   };
 
+  // プレビュー用サブドメインの設定（docs/81）。同じ ws-settings に載るので、
+  // 保存経路も応答の形も agentUpdate と同じ。
+  const savePreview = async (patch: Record<string, unknown>) => {
+    const res = await apiJSON("api/env/ws-settings", "PUT", patch);
+    if (res && !res.error) setAu(res);
+    else toast(tr("common.save_failed"));
+  };
+
   const update = async (patch: Record<string, string>) => {
     const next = {
       node: d.node || "",
@@ -97,6 +105,7 @@ export function EnvTab() {
         <p className="muted pad">{tr("common.loading")}</p>
       )}
       {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
+      {au && au.previewDomain && <PreviewSection au={au} save={savePreview} />}
       <ToolVersions running={running} />
     </div>
   );
@@ -441,6 +450,49 @@ function JavaRow({
 // in the CP DB), so — unlike the toolchains above — it can be toggled even while the
 // workspace is STOPPED; the value is applied at the next container start. Shown only
 // when the operator allows it (tenant policy).
+// PreviewSection: プレビュー用サブドメイン（docs/81）の Workspace 単位の設定。
+// ホスト方式が無いデプロイ（AF_PREVIEW_DOMAIN 未設定）では previewDomain が空なので
+// 呼び出し側ごと描画されない —— 「押しても何も起きない設定」を置かないため。
+function PreviewSection({ au, save }: { au: any; save: (patch: Record<string, unknown>) => void }) {
+  const tr = useT();
+  const [ports, setPorts] = useState((au.previewPorts || []).join(", "));
+  // 保存は入力欄を離れたときだけ。打鍵ごとに PUT すると、"3000, 80" のような
+  // 打ちかけの状態がそのまま保存されて 80 番が許可される。
+  const commitPorts = () => {
+    const parsed = ports
+      .split(/[\s,]+/)
+      .map((v: string) => Number(v))
+      .filter((n: number) => Number.isInteger(n) && n >= 1 && n <= 65535);
+    save({ previewPorts: parsed });
+  };
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">{tr("env.preview_title")}</h4>
+      <Row label={tr("env.preview_ports_label")}>
+        <input
+          className="ds-select"
+          value={ports}
+          onChange={(e) => setPorts(e.target.value)}
+          onBlur={commitPorts}
+          onKeyDown={(e) => e.key === "Enter" && commitPorts()}
+          placeholder="3000, 8080"
+          aria-label={tr("env.preview_ports_label")}
+          spellCheck={false}
+        />
+      </Row>
+      <p className="muted ds-sub">{tr("env.preview_ports_note", { n: au.previewMaxPorts || 8 })}</p>
+      <Row label={tr("env.preview_fixed_label")}>
+        <OnOff value={!!au.previewFixedSlug} onChange={(on) => save({ previewFixedSlug: on })} />
+      </Row>
+      <p className="muted ds-sub">{tr("env.preview_fixed_note")}</p>
+      <Row label={tr("env.preview_public_label")}>
+        <OnOff value={!!au.previewPublic} onChange={(on) => save({ previewPublic: on })} />
+      </Row>
+      <p className="muted ds-sub">{tr("env.preview_public_note")}</p>
+    </section>
+  );
+}
+
 function AgentUpdateRow({ au, onChange }: { au: any; onChange: (on: boolean) => void }) {
   const tr = useT();
   return (

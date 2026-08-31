@@ -832,6 +832,9 @@ export function WsBar() {
   // Live Chromium attachments, read when the popover opens (no polling: this is
   // a recovery entry, and the authoritative state is the pane's own socket).
   const [attachments, setAttachments] = useState<BrowserAttachmentStatus[]>([]);
+  // 発行済みのプレビュー用サブドメイン（docs/81）。起動のたびに変わるので、開いた
+  // 瞬間に読み直す。ホスト方式が無いデプロイでは previewDomain が空 = 何も出さない。
+  const [pvHosts, setPvHosts] = useState<{ domain: string; urls: Record<string, string>; public: boolean } | null>(null);
   const [staleOpen, setStaleOpen] = useState(false); // 要再起動 badge popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
@@ -976,6 +979,17 @@ export function WsBar() {
     void listBrowserAttachments().then(
       (list) => !cancelled && setAttachments(list),
       () => !cancelled && setAttachments((prev) => (prev.length ? [] : prev)),
+    );
+    void api("api/env/ws-settings").then(
+      (res: any) => {
+        if (cancelled) return;
+        setPvHosts(
+          res && !res.error && res.previewDomain
+            ? { domain: res.previewDomain, urls: res.previewUrls || {}, public: !!res.previewPublic }
+            : null,
+        );
+      },
+      () => !cancelled && setPvHosts(null),
     );
     return () => {
       cancelled = true;
@@ -1145,6 +1159,42 @@ export function WsBar() {
         </div>
         <div className="pv-hint">{tr("wsbar.preview.hint")}</div>
       </div>
+      {/* 発行済みのプレビュー用サブドメイン（docs/81）。★ 停止中は URL を出さない
+          —— slug は起動ごとに発行され停止で失効するので、出したところで 404 にしか
+          ならないリンクは「機能が壊れている」という報告になって返ってくる。 */}
+      {pvHosts && Object.keys(pvHosts.urls).length > 0 && (
+        <div className="pv-section">
+          <label className="pv-label">
+            {tr("wsbar.preview.hosts_label")}
+            {pvHosts.public && <span className="pv-public"> {tr("wsbar.preview.public_badge")}</span>}
+          </label>
+          {Object.keys(pvHosts.urls)
+            .sort((a, b) => Number(a) - Number(b))
+            .map((p) => (
+              <div className="pv-row pv-actions" key={p}>
+                <button
+                  className="pv-host"
+                  title={pvHosts.urls[p]}
+                  onClick={() => {
+                    window.open(pvHosts.urls[p], "_blank", "noopener");
+                    setPvOpen(false);
+                    setMoreOpen(false);
+                  }}
+                >
+                  <Icon name="globe" /> :{p}
+                </button>
+                <button
+                  className="ghost"
+                  title={tr("wsbar.preview.copy_url")}
+                  onClick={() => void navigator.clipboard?.writeText(pvHosts.urls[p])}
+                >
+                  {tr("wsbar.preview.copy")}
+                </button>
+              </div>
+            ))}
+          <div className="pv-hint">{tr("wsbar.preview.hosts_hint")}</div>
+        </div>
+      )}
       {/* エージェントが attach した既存 Chromium への戻り道（docs/53 §53.7）。
           本来の入口はミラーの action リンクだが、会話が流れてリンクを見失ったり
           ペインを閉じた後でも、生きている接続へ戻れるようにする。 */}

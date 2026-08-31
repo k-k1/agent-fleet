@@ -335,6 +335,25 @@ button.wu-manage {
 .pv-actions {
   justify-content: flex-end;
 }
+/* プレビュー用サブドメインの 1 行（docs/81）。左のボタンがポート、右がコピー。
+   ホスト名そのものは title に入れて、popover を広げない。 */
+.pv-host {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+/* 「公開中」は畳まれていても目に入る必要がある —— この機能の事故は、公開したことを
+   忘れたときにだけ起きる（ADR 0062 決定 12）。 */
+.pv-public {
+  color: var(--warn);
+  font-weight: 600;
+}
 /* An attachment is listed by its page title, which is arbitrary length — let the
    row give it the full width and ellipsize instead of widening the popover. */
 .pv-attachment {

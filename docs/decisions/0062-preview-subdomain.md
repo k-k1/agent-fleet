@@ -1,6 +1,7 @@
 # 0062. プレビューは「起動ごとに発行するランダムなサブドメイン ＋ ポートをラベルに前置」で配り、パス方式は残す
 
-- 状態: **提案**（2026-08-31）。設計と経緯は [docs/81](../81-preview-subdomain.md)。
+- 状態: **採用・P0〜P2 実装済み**（2026-08-31）。P3（兄弟オリジンの opt-in）と P4（実機確認・
+  guide）は残。設計と経緯は [docs/81](../81-preview-subdomain.md)。
 - 関連: [0018-container-browser-pane.md](0018-container-browser-pane.md)（コンテナ内 Chromium ＝
   「中から見る」道。今回作るのは「外から見る」道で、別物として並立する） /
   [0047-tenant-network-restriction.md](0047-tenant-network-restriction.md)（テナントの CIDR 制限は
