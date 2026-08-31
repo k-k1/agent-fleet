@@ -104,12 +104,17 @@ func tarNames(t *testing.T, body []byte) map[string]bool {
 func TestDocsBridgeServesTheGuideToEveryRole(t *testing.T) {
 	e := newDocsTestEnv(t)
 	want := []string{
+		// The entry page the Console's 「利用ガイド」 opens, plus one file per shelf.
+		"README.md", "README.ja.md",
 		"member/02-sessions.md", "ref/agents.md", "admin/02-limits.md",
 		"operate/01-install.md",
 	}
 	absent := []string{
 		"build/04-workspace-agent.md", "decisions/0011-console.md", "log/p3-10.md",
 		"dev/04-workspace-agent.md",
+		// Only the README is taken from the top of the tree — a wider AF_DOCS_DIR must
+		// not turn every stray root file into shipped documentation.
+		"CONVENTIONS.md",
 	}
 	for _, role := range []string{"member", "tenant_admin", "super_admin"} {
 		t.Run(role, func(t *testing.T) {

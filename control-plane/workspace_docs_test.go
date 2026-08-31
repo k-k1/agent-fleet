@@ -12,6 +12,9 @@ func buildDocsSrc(t *testing.T) string {
 	root := t.TempDir()
 	files := []string{
 		// The guide — shipped to every container, the same for everyone (ADR 0064).
+		// The tree's own README is the entry point the Console opens; it ships too.
+		"README.md",
+		"README.ja.md",
 		"member/02-sessions.md",
 		"ref/agents.md",
 		"admin/02-limits.md",
@@ -72,6 +75,10 @@ func TestStageWorkspaceDocs_ShipsTheGuideOnly(t *testing.T) {
 	got := staged(t, dataDir)
 
 	for _, f := range []string{
+		// The Console's 「利用ガイド」 opens docs/README(.ja).md — the tree's own entry
+		// page, which is the only one that branches by reader. Staging the shelves
+		// without it leaves that button opening a file that does not exist.
+		"README.md", "README.ja.md",
 		"member/02-sessions.md", "ref/agents.md", "admin/02-limits.md",
 		"operate/01-install.md", "assets/architecture.drawio",
 	} {

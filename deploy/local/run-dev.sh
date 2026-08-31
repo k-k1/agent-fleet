@@ -45,9 +45,12 @@ WS_MEMORY="${WS_MEMORY:-5g}"
 # Shared Temurin JDKs live here on the host and are bind-mounted read-only into
 # every workspace at /usr/lib/jvm (docker runtime only).
 WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
-# The host-run Control Plane is not built from control-plane/Dockerfile, so it
-# does not have the baked docs tree. Point staging at this checkout by default.
-AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/docs}"
+# The host-run Control Plane is not built from control-plane/Dockerfile, so it does
+# not have the baked docs tree. Point staging at this checkout by default — at guide/,
+# which is the whole of what a container receives (ADR 0064). docs/ is the developer
+# tree and contains none of the shelves, so it would stage nothing and leave the
+# Console's 「利用ガイド」 opening a file that does not exist.
+AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/guide}"
 WS_JDK="${WS_JDK:-1}"                  # 1=provision shared JDKs / 0=skip (rely on on-demand install-jdk)
 RTK_VERSION="${RTK_VERSION:-}"         # override the baked rtk version (empty = Dockerfile's ARG pin)
 DEV_KEY="${DEV_USER:-dev}"

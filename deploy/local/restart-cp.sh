@@ -24,9 +24,12 @@ export WS_IMAGE="${WS_IMAGE:-agent-fleet/workspace:dev}"
 export WS_DATA="${WS_DATA:-$HOME/.local/share/agent-fleet}"
 export WS_MEMORY="${WS_MEMORY:-5g}"
 export WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
-# The host-run Control Plane needs an explicit source for the role-scoped docs
-# mount; the containerized CP instead gets this tree from its image.
-export AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/docs}"
+# The host-run Control Plane needs an explicit source for the docs it stages into
+# every workspace; the containerized CP instead gets this tree baked into its image
+# (deploy/release/stage-docs.sh). What ships is guide/ and only that (ADR 0064) —
+# docs/ is the developer tree and holds none of the shelves, so pointing here at it
+# stages nothing at all and the Console's 「利用ガイド」 opens a file that is not there.
+export AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/guide}"
 CP_ADDR="${CP_ADDR:-127.0.0.1:8099}"
 PORT="${CP_ADDR##*:}"
 
