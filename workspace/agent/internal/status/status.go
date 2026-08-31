@@ -203,6 +203,13 @@ func ReadPendingQuestion(sid string) (json.RawMessage, bool) {
 
 func RemovePendingQuestion(sid string) { pendingQuestions.Remove(sid) }
 
+// PendingQuestionAt / PendingPlanAt: いつそのペイロードを捕まえたか（＝モーダルが
+// 出た瞬間）。転写に記録された決着より前に捕まえたものは、そのモーダル自身の決着で
+// あり得るので「もう畳まれている」と判定してよい — 保留の掃除（package main の
+// sweepSettledPending）が使う唯一の根拠。
+func PendingQuestionAt(sid string) (time.Time, bool) { return pendingQuestions.ModTime(sid) }
+func PendingPlanAt(sid string) (time.Time, bool)     { return pendingPlans.ModTime(sid) }
+
 // pending-text: the assistant's streaming text for the in-flight turn, accumulated from
 // the MessageDisplay hook. Kept only long enough for a pending AskUserQuestion to show
 // the prose that preceded it (the turn's text lands in the transcript only after the

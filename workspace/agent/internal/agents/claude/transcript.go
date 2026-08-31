@@ -489,12 +489,22 @@ type InteractionAnswer struct {
 	Declined bool   `json:"declined,omitempty"`
 }
 
-// isDeclinedAnswer recognizes claude's AskUserQuestion decline boilerplate — an Escape
-// out of the modal, surfaced as an is_error tool_result whose text is the "wants to
-// clarify" template with "(No answer provided)" for every question. Matched on content
-// (not is_error alone) because other tools also return is_error for unrelated reasons.
+// isDeclinedAnswer recognizes claude's AskUserQuestion decline boilerplate, surfaced as
+// an is_error tool_result. Matched on content (not is_error alone) because other tools
+// also return is_error for unrelated reasons.
+//
+// TWO wordings, and which one you get depends on HOW the modal was left (実測 2026-08-31):
+//   - "(No answer provided)" — the "wants to clarify" template, per question. Leaving the
+//     modal itself ("Chat about this").
+//   - "The tool use was rejected" — the generic tool-rejection template, which is what the
+//     Console's キャンセル produces (it interrupts the turn, so claude reports the tool as
+//     rejected rather than the question as unanswered).
+//
+// Only the first was matched until now, so a question cancelled from the Console badged
+// 回答済み and printed that English boilerplate where the user's answer goes.
 func isDeclinedAnswer(text string, isErr bool) bool {
-	return isErr && strings.Contains(text, "(No answer provided)")
+	return isErr && (strings.Contains(text, "(No answer provided)") ||
+		strings.Contains(text, "The tool use was rejected"))
 }
 
 // collectAnswers maps each tool_use id to the text of its tool_result — used to show
@@ -616,6 +626,74 @@ func CollectInteractionAnswers(lines [][]byte) map[string]InteractionAnswer {
 		}
 	}
 	return out
+}
+
+// SettledAt reports WHEN the most recent AskUserQuestion / ExitPlanMode DECISION landed
+// in the transcript — the instant that modal closed, whether it was answered, rejected or
+// interrupted (all three write a tool_result). Zero when the transcript holds no decided
+// one of that kind.
+//
+// Whole-transcript, like CollectInteractionAnswers, and for the same reason: the caller
+// (sweepSettledPending) must be able to tell that a modal is gone even when its line left
+// the emitted window long ago — that is exactly the case the windowed de-duplication
+// cannot see.
+func SettledAt(lines [][]byte) (question, plan time.Time) {
+	qids, pids := map[string]bool{}, map[string]bool{}
+	for _, ln := range lines {
+		// Cheap prefilter: only an interaction tool_use line or a tool_result line can
+		// move either watermark, and this runs over the whole transcript on every poll.
+		asks := bytes.Contains(ln, []byte(`"AskUserQuestion"`)) || bytes.Contains(ln, []byte(`"ExitPlanMode"`))
+		if !asks && !bytes.Contains(ln, []byte(`"tool_result"`)) {
+			continue
+		}
+		var ev struct {
+			Timestamp string `json:"timestamp"`
+			Message   struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(ln, &ev) != nil || len(ev.Message.Content) == 0 || ev.Message.Content[0] != '[' {
+			continue
+		}
+		var blocks []struct {
+			Type      string `json:"type"`
+			Name      string `json:"name"`
+			ID        string `json:"id"`
+			ToolUseID string `json:"tool_use_id"`
+		}
+		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			switch b.Type {
+			case "tool_use":
+				if b.ID == "" {
+					continue
+				}
+				switch b.Name {
+				case "AskUserQuestion":
+					qids[b.ID] = true
+				case "ExitPlanMode":
+					pids[b.ID] = true
+				}
+			case "tool_result":
+				if !qids[b.ToolUseID] && !pids[b.ToolUseID] {
+					continue
+				}
+				ts, err := time.Parse(time.RFC3339, ev.Timestamp)
+				if err != nil {
+					continue // no usable clock on this line: leave the watermark alone
+				}
+				if qids[b.ToolUseID] && ts.After(question) {
+					question = ts
+				}
+				if pids[b.ToolUseID] && ts.After(plan) {
+					plan = ts
+				}
+			}
+		}
+	}
+	return question, plan
 }
 
 // CollectFileEdits extracts every edit-family tool call from lines[from:] — the raw

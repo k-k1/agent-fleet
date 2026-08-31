@@ -225,9 +225,21 @@ func TestCollectInteractionAnswers_Declined(t *testing.T) {
 		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q2","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"別の質問","options":[{"label":"案A"},{"label":"案B"}]}]}}]}}`),
 		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q2","is_error":true,"content":"malformed AskUserQuestion input"}]}}`),
 	}
+	// Console の「キャンセル」で実際に来る形（2026-08-31 実測・実転写から採取）。上の
+	// declineText と違い "(No answer provided)" を**含まない** — キャンセルはターンの中断
+	// なので、claude は「質問が未回答」ではなく「ツールが却下された」として書く。これを
+	// 拾えていなかったため、キャンセルした質問が「回答済み」を名乗り、回答欄にこの英文の
+	// 定型文が入っていた。
+	lines = append(lines,
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q3","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"三つ目","options":[{"label":"案A"}]}]}}]}}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q3","is_error":true,"content":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."}]}}`),
+	)
 	ans := CollectInteractionAnswers(lines)
 	if got := ans["q1"]; !got.Declined {
 		t.Errorf("q1 = %+v, want Declined=true (claude's decline boilerplate)", got)
+	}
+	if got := ans["q3"]; !got.Declined {
+		t.Errorf("q3 = %+v, want Declined=true (the Console's キャンセル rejects the tool)", got)
 	}
 	if got := ans["q2"]; got.Declined {
 		t.Errorf("q2 = %+v, want Declined=false (is_error alone isn't a decline)", got)
