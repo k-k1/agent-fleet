@@ -207,8 +207,9 @@ func RemovePendingQuestion(sid string) { pendingQuestions.Remove(sid) }
 // 出た瞬間）。転写に記録された決着より前に捕まえたものは、そのモーダル自身の決着で
 // あり得るので「もう畳まれている」と判定してよい — 保留の掃除（package main の
 // sweepSettledPending）が使う唯一の根拠。
-func PendingQuestionAt(sid string) (time.Time, bool) { return pendingQuestions.ModTime(sid) }
-func PendingPlanAt(sid string) (time.Time, bool)     { return pendingPlans.ModTime(sid) }
+func PendingQuestionAt(sid string) (time.Time, bool)   { return pendingQuestions.ModTime(sid) }
+func PendingPlanAt(sid string) (time.Time, bool)       { return pendingPlans.ModTime(sid) }
+func PendingPermissionAt(sid string) (time.Time, bool) { return pendingPerms.ModTime(sid) }
 
 // pending-text: the assistant's streaming text for the in-flight turn, accumulated from
 // the MessageDisplay hook. Kept only long enough for a pending AskUserQuestion to show

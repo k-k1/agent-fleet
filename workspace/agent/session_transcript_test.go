@@ -217,6 +217,42 @@ func TestSweepSettledPending(t *testing.T) {
 		}
 	})
 
+	// AUQ は自分自身の permission_prompt を Pre/PostToolUse の間に鳴らす（実測: 質問の
+	// 6 秒後に state=permission）。その許可ペイロードは「質問が保留である」ことだけを
+	// 理由に伏せられていたので、質問を掃除したら一緒に捨てないと、キャンセルした直後に
+	// **決着済みのツールの承認ダイアログ**が出る（利用者報告・掃除を入れた直後の回帰）。
+	t.Run("質問が伏せていた許可も道連れにする", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		status.WritePendingQuestion(sid, raw)
+		status.WritePendingPermission(sid, "Claude needs your permission")
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"), "2026-08-31T12:00:06.000Z")
+
+		resp := map[string]any{}
+		surfacePendingPayloads(resp, sid, "permission", [][]byte{ask, decided})
+
+		if _, ok := resp["pendingPermission"]; ok {
+			t.Error("a permission prompt for an already-decided tool was surfaced — the 承認ダイアログ pops right after キャンセル")
+		}
+		if _, ok := status.ReadPendingPermission(sid); ok {
+			t.Error("stale permission payload survived; the next poll pops the dialog again")
+		}
+	})
+
+	// 逆向き: 決着より**後**に来た許可は本物（Edit/Bash の承認待ち）。掃除してはならない。
+	t.Run("決着より後の許可は本物なので残す", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		status.WritePendingPermission(sid, "Edit · /tmp/a.go")
+		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"), "2026-08-31T12:09:00.000Z")
+
+		resp := map[string]any{}
+		surfacePendingPayloads(resp, sid, "permission", [][]byte{ask, decided})
+
+		if _, ok := resp["pendingPermission"]; !ok {
+			t.Error("a live permission prompt was swept — it was captured after the last decision")
+		}
+	})
+
 	t.Run("決着がひとつも無ければ触らない", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingQuestion(sid, raw)

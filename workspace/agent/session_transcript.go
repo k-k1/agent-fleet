@@ -659,6 +659,30 @@ func sweepSettledPending(sid string, lines [][]byte) {
 			status.RemovePendingPlan(sid)
 		}
 	}
+	// ...and the permission payload the question/plan was MASKING goes with it. AUQ /
+	// ExitPlanMode fire their own permission_prompt between their Pre- and PostToolUse
+	// (実測: 質問の 6 秒後に state=permission)、and surfacePendingPayloads only ever
+	// suppressed it because a question/plan payload outranked it. Sweeping that payload
+	// without this UNMASKS a permission prompt for a tool that is already decided — the
+	// Console then pops a 承認/拒否 ダイアログ right after the user cancelled the question
+	// (利用者報告 2026-08-31、この掃除を入れた直後の回帰).
+	//
+	// Same clock rule, and it holds for a GENERIC permission (Edit/Bash) too: a permission
+	// prompt blocks the turn, so nothing else can run while it is up — if an interaction
+	// was decided AFTER the payload was captured, the turn plainly moved past that prompt.
+	// A live one is always the newer of the two and survives.
+	if decided := latest(question, plan); !decided.IsZero() {
+		if at, ok := status.PendingPermissionAt(sid); ok && at.Before(decided) {
+			status.RemovePendingPermission(sid)
+		}
+	}
+}
+
+func latest(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 // hidePendingInteraction removes the transcript part that DUPLICATES a still-pending
