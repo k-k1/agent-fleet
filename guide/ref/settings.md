@@ -1,10 +1,12 @@
+---
+audience: "everyone, but written for whoever is looking for a knob and cannot find it"
+source_of_truth: "the Console for personal and tenant settings; `deploy/compose/.env.example` for deployment variables"
+updated: "2026-08"
+---
+
 # Settings — where things are configured
 
 English | [日本語](settings.ja.md)
-
-Audience: everyone, but written for whoever is looking for a knob and cannot find it
-Source of truth: the Console for personal and tenant settings; `deploy/compose/.env.example` for deployment variables
-Updated: 2026-08
 
 Three layers set behaviour, and confusing them is the usual reason a change appears to
 have no effect. From narrowest to widest:

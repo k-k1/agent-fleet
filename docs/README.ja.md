@@ -1,10 +1,12 @@
+---
+audience: "Agent Fleet のコードを変える人"
+source_of_truth: "コード（この棚と食い違ったらコードが正）"
+updated: "2026-09"
+---
+
 # Agent Fleet 開発ドキュメント
 
 [English](README.md) | 日本語
-
-Audience: Agent Fleet のコードを変える人
-Source of truth: コード（この棚と食い違ったらコードが正）
-Updated: 2026-09
 
 **ここは開発者のための棚です。**利用者向けの手順は、コンテナへ配られる別ツリー
 [`guide/`](../guide/README.ja.md) にあります（このツリーは誰にも配られません）。

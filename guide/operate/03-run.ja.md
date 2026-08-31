@@ -1,10 +1,12 @@
+---
+audience: "動いている配備を保つ人"
+source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）"
+updated: "2026-08"
+---
+
 # 03. 日常運用
 
 [English](03-run.md) | 日本語
-
-Audience: 動いている配備を保つ人
-Source of truth: `deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）
-Updated: 2026-08
 
 構築後の定常運用 — バックアップ、リストア、アップグレード、閉域網、Workspace の停止 — を、
 判断ポイントとともに説明します。**実際のコマンド（`backup.sh` / `restore.sh` / upgrade /

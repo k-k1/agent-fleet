@@ -1,10 +1,12 @@
+---
+audience: "everyone"
+source_of_truth: "this table; the columns and the marked rows are checked against the code"
+updated: "2026-08"
+---
+
 # Agents — what each kind can do
 
 English | [日本語](agents.ja.md)
-
-Audience: everyone
-Source of truth: this table; the columns and the marked rows are checked against the code
-Updated: 2026-08
 
 Nine session kinds exist. Seven drive a coding agent; `shell` and `ssm` are terminals
 with no agent behind them, and they are in the table because "does this apply to a

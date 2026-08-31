@@ -1,10 +1,12 @@
+---
+audience: "everyone, and especially anyone translating between a screen and the code"
+source_of_truth: "the Console's own strings for the screen column; the code for the implementation column"
+updated: "2026-08"
+---
+
 # Glossary
 
 English | [日本語](glossary.ja.md)
-
-Audience: everyone, and especially anyone translating between a screen and the code
-Source of truth: the Console's own strings for the screen column; the code for the implementation column
-Updated: 2026-08
 
 Two columns on purpose. The reader-facing shelves may use only the **screen** word;
 `docs/build/` uses the **implementation** word. Keeping the mapping in

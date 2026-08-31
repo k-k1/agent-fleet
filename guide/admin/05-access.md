@@ -1,10 +1,11 @@
+---
+audience: "a tenant administrator deciding how people get in"
+updated: "2026-08"
+---
+
 # 05. Who may sign in, and from where
 
 English | [日本語](05-access.ja.md)
-
-Audience: a tenant administrator deciding how people get in
-Source of truth: the Console's tenant settings — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
 
 Four screens decide who reaches your tenant and how. Two are yours to change, one is
 read-only for you, and one is yours to register but somebody else's to approve.

@@ -1,10 +1,12 @@
+---
+audience: "デプロイ形態やアダプタを足す人"
+source_of_truth: "コード ＋ 各 runbook（`deploy/*/README.md`）"
+updated: "2026-07"
+---
+
 # 09. デプロイ — 3形態・ポート&アダプタ・env 索引
 
 [English](09-deploy.md) | 日本語
-
-Audience: デプロイ形態やアダプタを足す人
-Source of truth: コード ＋ 各 runbook（`deploy/*/README.md`）
-Updated: 2026-07
 
 実手順（コマンド）は各 runbook が正で、本書は複製しない。本書は「どの形態があり、何が差し替わり、
 どのノブで制御するか」の地図。

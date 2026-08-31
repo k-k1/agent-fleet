@@ -1,10 +1,12 @@
+---
+audience: "a tenant administrator — someone responsible for a team's members, limits and integrations"
+source_of_truth: "the Console's tenant settings — if a screen disagrees with this guide, the screen is right"
+updated: "2026-08"
+---
+
 # Administering a tenant
 
 English | [日本語](README.ja.md)
-
-Audience: a tenant administrator — someone responsible for a team's members, limits and integrations
-Source of truth: the Console's tenant settings — if a screen disagrees with this shelf, the screen is right
-Updated: 2026-08
 
 You are your team's **tenant administrator**. From tenant settings you add members,
 keep an eye on how resources are being used, and review the audit log and usage. Many

@@ -1,15 +1,14 @@
+---
+audience: "anyone using the terminal, panes, or a preview of a running app"
+updated: "2026-08"
+---
+
 # 05. Terminal — working the black screen, copy & paste, shortcuts, phones
 
 English | [日本語](05-terminal.ja.md)
 
-Audience: anyone using the terminal, panes, or a preview of a running app
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: members who operate a session's terminal. Covers copy & paste, shortcuts, using it
-> on a phone, and adjusting the font and size. Even if you're comfortable with CLIs, a browser
-> terminal has quirks of its own (copy & paste in particular), so reading this once will keep
-> you from getting stuck.
+Even if you're comfortable with CLIs, a browser terminal has quirks of its own
+(copy & paste in particular), so reading this once will keep you from getting stuck.
 
 This chapter covers sessions running as Terminal (CLI), plus shell / SSM. When you open a
 session, a **terminal** (the black screen) appears in the main area. If you started

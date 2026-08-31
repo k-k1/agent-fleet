@@ -1,10 +1,11 @@
+---
+audience: "anyone wiring monitoring tools into a conversation"
+updated: "2026-08"
+---
+
 # 13. Ops tooling PoC — incident brainstorming over MCP 🧪
 
 English | [日本語](13-ops-tooling.ja.md)
-
-Audience: anyone wiring monitoring tools into a conversation
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
 
 ## PagerDuty / Grafana / CloudWatch / AWS connect from the "Ops & monitoring" tab (recommended)
 

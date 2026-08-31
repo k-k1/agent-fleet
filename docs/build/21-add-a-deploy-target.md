@@ -1,10 +1,12 @@
+---
+audience: "someone adding a way to run workspaces"
+source_of_truth: "the existing `runtime_*.go` adapters — read all four before writing one"
+updated: "2026-08"
+---
+
 # 21. Adding a deployment target
 
 English | [日本語](21-add-a-deploy-target.ja.md)
-
-Audience: someone adding a way to run workspaces
-Source of truth: the existing `runtime_*.go` adapters — read all four before writing one
-Updated: 2026-08
 
 Four adapters exist: Docker, ECS on Fargate, ECS on an EC2 pool, and containerless host
 processes. **They differ far more from each other than a new one usually needs to**, so

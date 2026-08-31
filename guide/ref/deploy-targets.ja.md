@@ -1,10 +1,12 @@
+---
+audience: "全員（operate/ には決定的）"
+source_of_truth: "この表（行は Control Plane が受け付ける runtime プロファイルと突き合わせ）"
+updated: "2026-08"
+---
+
 # デプロイ形態 — どこに何が在るか
 
 [English](deploy-targets.md) | 日本語
-
-Audience: 全員（[operate/](../operate/README.ja.md) には決定的）
-Source of truth: この表（行は Control Plane が受け付ける runtime プロファイルと突き合わせ）
-Updated: 2026-08
 
 コアはどの形態でも同じで、変わるのは周縁のアダプタだけです。だから差は小さく具体的で、
 **だからこそ正確に書く価値があります**——ここで「うちの配備では動く」は最も高くつく

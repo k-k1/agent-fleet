@@ -1,15 +1,13 @@
+---
+audience: "anyone connecting the workspace to something outside it"
+updated: "2026-08"
+---
+
 # 10. Going further — browser pane / lightweight preview, external integrations, other hosts, environment settings
 
 English | [日本語](10-integrations.ja.md)
 
-Audience: anyone connecting the workspace to something outside it
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: members who are comfortable with the basics and want to go one step further. This chapter covers
-> checking services running inside your workspace (browser pane / lightweight preview), remote control from your
-> local Claude (MCP), logging in to other in-house hosts (SSM), and environment settings plus recreating the
-> workspace. It's fine to read only the parts you need, when you need them.
+It's fine to read only the parts you need, when you need them.
 
 ## Viewing a web app you started — browser pane and lightweight preview
 

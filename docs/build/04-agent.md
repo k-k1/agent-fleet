@@ -1,10 +1,12 @@
+---
+audience: "someone changing the workspace agent, or adding an agent kind"
+source_of_truth: "the code (this is a map and a statement of intent)"
+updated: "2026-07"
+---
+
 # 04. The workspace agent
 
 English | [日本語](04-agent.ja.md)
-
-Audience: someone changing the workspace agent, or adding an agent kind
-Source of truth: the code (this is a map and a statement of intent)
-Updated: 2026-07
 
 ## 4.1 What it is
 

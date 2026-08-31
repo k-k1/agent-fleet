@@ -1,10 +1,12 @@
+---
+audience: "someone keeping a running deployment healthy"
+source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
+updated: "2026-08"
+---
+
 # 03. Day-to-Day Operations
 
 English | [日本語](03-run.ja.md)
-
-Audience: someone keeping a running deployment healthy
-Source of truth: the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page
-Updated: 2026-08
 
 This chapter covers steady-state operations after installation — backup, restore, upgrades,
 air-gapped networks, and stopping Workspaces — together with the decision points involved.

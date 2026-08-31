@@ -84,8 +84,12 @@ FROZEN_REF_ALLOWLIST: set[str] = {
 }
 
 LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
-HEADER_KEYS = ("Audience:", "Source of truth:", "Updated:")
-UPDATED_RE = re.compile(r"^Updated:\s*(\d{4})-(\d{2})\s*$", re.M)
+# front matter（--- で囲んだ YAML）。値は必ず二重引用符で書く——`Source of truth` の
+# 値には「コマンドは deploy/ 配下のスクリプト、…」のようにコロンや読点が入る。
+FM_RE = re.compile(r"^---\n(.*?)\n---\s*\n", re.S)
+FM_KEY_RE = re.compile(r'^([a-z_]+):\s*"(.*)"\s*$', re.M)
+FM_KEYS = ("audience", "source_of_truth", "updated")
+UPDATED_RE = re.compile(r"^\d{4}-\d{2}$")
 
 # 利用者向けの棚に出てはいけない実装用語。画面の名前で書くための歯止め。
 VOCAB_BANNED = (
@@ -368,8 +372,9 @@ def check_chapters(files: list[str], f: Findings) -> None:
             continue
         want = numbers[src]
         body = read(path)
-        first = body.splitlines()[0] if body else ""
-        got = H1_NUM_RE.match(first)
+        # front matter を挟むので、H1 は「最初の行」ではなく「最初の `# ` 行」。
+        h1 = next((ln for ln in body.splitlines() if ln.startswith("# ")), "")
+        got = H1_NUM_RE.match(h1)
         if want and not got:
             f.error(f"{src}: H1 に章番号が無い（「# {want}. …」で始めること）")
         elif want and got.group(1).zfill(2) != want:
@@ -429,18 +434,61 @@ def check_lang(files: list[str], f: Findings) -> None:
                 )
 
 
+def front_matter(path: str) -> dict[str, str] | None:
+    """先頭の YAML front matter を key -> value で返す。無ければ None。
+
+    Console は front matter を本文と切り分けてメタデータ枠に描く
+    （`console/src/features/viewer/MarkdownView.tsx` の `splitYamlFrontMatter`）ので、
+    機械のための行が地の文に混ざらない。ここも文字列一致ではなく構造として読む。
+    """
+    m = FM_RE.match(read(path))
+    if m is None:
+        return None
+    return dict(FM_KEY_RE.findall(m.group(1)))
+
+
+def is_shelf_readme(relpath: str) -> bool:
+    return os.path.basename(relpath) in ("README.md", "README.ja.md")
+
+
 def check_header(files: list[str], f: Findings, strict: bool) -> None:
+    """現役の棚の全ファイルに front matter が在るか。
+
+    `source_of_truth` だけは**棚の README から継承してよい**。`guide/member/` の 16 枚と
+    `guide/admin/` の 6 枚は値が一字句同じで、同じ一文が 22 回並んでいた——読者にとっては
+    情報量ゼロの定型である。値が棚ごとに違う `guide/ref/`（10 枚すべて違う）や
+    `guide/operate/` では、これは矛盾に出会った読者がどちらを信じるかを決める本物の
+    情報なので、各ファイルに書く。
+    """
+    defaults: dict[tuple[str, bool], dict[str, str]] = {}
+    for path in files:
+        src = rel(path)
+        if shelf(src) in LIVING and is_shelf_readme(src):
+            defaults[(shelf(src), is_ja(src))] = front_matter(path) or {}
+
     for path in files:
         src = rel(path)
         if shelf(src) not in LIVING:
             continue
-        head = "\n".join(read(path).splitlines()[:12])
-        missing = [k for k in HEADER_KEYS if k not in head]
-        if missing:
-            f.error(f"{src}: 冒頭ヘッダが無い（{', '.join(missing)}）")
+        fm = front_matter(path)
+        if fm is None:
+            f.error(
+                f"{src}: 冒頭に front matter が無い"
+                "（--- で囲んで audience / source_of_truth / updated）"
+            )
             continue
-        if not UPDATED_RE.search(head):
-            f.error(f"{src}: Updated: は YYYY-MM 形式で書く")
+        inherited = (
+            {} if is_shelf_readme(src)
+            else defaults.get((shelf(src), is_ja(src)), {})
+        )
+        for key in FM_KEYS:
+            if key in fm:
+                continue
+            if key == "source_of_truth" and key in inherited:
+                continue  # 棚の README が代表して宣言している
+            f.error(f"{src}: front matter に {key} が無い")
+        if "updated" in fm and not UPDATED_RE.match(fm["updated"]):
+            f.error(f"{src}: updated は YYYY-MM 形式で書く（いまは {fm['updated']!r}）")
 
 
 def check_vocab(files: list[str], f: Findings, strict: bool) -> None:

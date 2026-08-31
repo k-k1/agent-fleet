@@ -1,14 +1,14 @@
+---
+audience: "anyone looking for a setting"
+updated: "2026-08"
+---
+
 # 12. Settings — every tab of the ⚙ settings dialog
 
 English | [日本語](12-settings.ja.md)
 
-Audience: anyone looking for a setting
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: members who want to find where a setting lives and what an item actually changes. How each setting is
-> *used* belongs to the other chapters, so read this one as a **map**. Items with a fuller explanation elsewhere
-> link to that chapter.
+How each setting is *used* belongs to the other chapters, so read this one as a
+**map**. Items with a fuller explanation elsewhere link to that chapter.
 
 ## Opening it, and how it is organised
 

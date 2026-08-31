@@ -1,10 +1,12 @@
+---
+audience: "someone standing a deployment up for the first time"
+source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
+updated: "2026-08"
+---
+
 # 02. Initial Setup
 
 English | [日本語](02-install.ja.md)
-
-Audience: someone standing a deployment up for the first time
-Source of truth: the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page
-Updated: 2026-08
 
 This page walks through your first deployment step by step, with the decision points along the
 way. **The source of truth for the actual commands is the "Quick start" section of

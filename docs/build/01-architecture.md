@@ -1,10 +1,12 @@
+---
+audience: "everyone's first chapter — anyone who wants the shape of the whole thing"
+source_of_truth: "the code (this is a map and a statement of intent)"
+updated: "2026-07"
+---
+
 # 01. Architecture
 
 English | [日本語](01-architecture.ja.md)
-
-Audience: everyone's first chapter — anyone who wants the shape of the whole thing
-Source of truth: the code (this is a map and a statement of intent)
-Updated: 2026-07
 
 ## 1.1 What it is, and how it is delivered
 

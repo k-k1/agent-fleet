@@ -48,23 +48,39 @@ python3 scripts/docs-check.py --strict  # warn を error に格上げ
 散文で「詳細は開発者向けの資料にあります」と告げるのは正しく、それをクリックできる
 ようにするのが誤りです。`check_closure` が機械で見ます。
 
-## 3. 必須の冒頭ヘッダ
+## 3. 必須の front matter
 
-`use/ admin/ operate/ build/ ref/` の全ファイルは、先頭 12 行以内にこう始めます。
+`guide/` の各棚と `docs/build/` の全ファイルは、こう始めます。
 
 ```markdown
+---
+audience: "誰のためか（一句で）"
+source_of_truth: "この文書と食い違ったとき、どちらが正か"
+updated: "2026-09"
+---
+
 # タイトル
 
 [English](title.md) | 日本語
-
-Audience: 誰のためか（一句で）
-Source of truth: この文書と食い違ったとき、どちらが正か
-Updated: 2026-08
 ```
 
-`Source of truth:` があると陳腐化に耐えられます。`build/` なら普通はコード、
-`operate/` なら `deploy/` のスクリプト、`use/` なら Console そのもの。
+**値は必ず二重引用符で囲みます**——`source_of_truth` の値にはコロンや読点が入ります。
+
+これは書き手と CI のための情報で、読者の読むものではありません。だから地の文には
+置かず front matter にします。Console は front matter を本文と切り分けてメタデータ枠に
+描くので（`splitYamlFrontMatter`）、**本文から降格したまま、失われはしません**。
+
+`source_of_truth` があると陳腐化に耐えられます。`docs/build/` なら普通はコード、
+`guide/operate/` なら `deploy/` のスクリプト、`guide/member/` なら Console そのもの。
 **明記しておけば、矛盾を見つけた読者がどちらを信じるべきか分かります。**
+
+- **`source_of_truth` だけは棚の README から継承してよい。** `guide/member/` の 16 枚と
+  `guide/admin/` の 6 枚は値が一字句同じで、同じ一文が 22 回並んでいました——読者に
+  とっては情報量ゼロの定型です。棚の README に 1 回書いて、各ファイルからは省きます。
+- **値が棚ごとに違う棚では省けません。** `guide/ref/` は 10 枚すべて違い
+  （「この表が正」「画面欄は Console・実装欄はコード」…）、これは本物の情報です。
+- **`> 対象: …` のような引用ブロックを添えないこと。** `audience` の言い換えになります。
+  1 文に価値がある章だけ、引用ではなく本文の導入として書いてください。
 
 ## 4. 棚ごとの語彙
 

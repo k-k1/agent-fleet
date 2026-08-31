@@ -1,10 +1,12 @@
+---
+audience: "API の境界に触れる人"
+source_of_truth: "コード（本書は地図と普遍設計。個々の要求 / 応答の形は code-as-contract）"
+updated: "2026-07"
+---
+
 # 05. API 境界と中継 — 契約はコードが正
 
 [English](05-api.md) | 日本語
-
-Audience: API の境界に触れる人
-Source of truth: コード（本書は地図と普遍設計。個々の要求 / 応答の形は code-as-contract）
-Updated: 2026-07
 
 境界は 2 つ: **公開面**（Console ↔ CP、`/api/*` ほか）と**内部面**（CP ↔ Workspace Agent）。
 ルート定義は CP 約 300 本・Agent 約 200 本あり（増え続けるので概数。実数は

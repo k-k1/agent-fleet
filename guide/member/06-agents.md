@@ -1,14 +1,14 @@
+---
+audience: "anyone choosing and connecting an agent"
+updated: "2026-08"
+---
+
 # 06. Agents — connecting and choosing claude / codex / opencode / GitHub Copilot / Cursor / Kiro
 
 English | [日本語](06-agents.ja.md)
 
-Audience: anyone choosing and connecting an agent
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> For: members deciding which agent to use and connecting it. Covers how the connections
-> differ, model selection, and the RTK setting shared by the three agents. All connections
-> are made from **⚙Settings → the "Agents" tab** (the workspace must be running).
+All connections are made from **⚙Settings → the "Agents" tab** (the workspace must
+be running).
 
 ## Supported agents and how to choose
 

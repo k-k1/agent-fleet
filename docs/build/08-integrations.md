@@ -1,10 +1,12 @@
+---
+audience: "someone adding an external provider or a CLI agent"
+source_of_truth: "the code (this is a map of the methods and the intent)"
+updated: "2026-07"
+---
+
 # 08. External integrations
 
 English | [日本語](08-integrations.ja.md)
-
-Audience: someone adding an external provider or a CLI agent
-Source of truth: the code (this is a map of the methods and the intent)
-Updated: 2026-07
 
 Everything about talking to an outside provider is collected here. **Two patterns
 recur**, and knowing which one you are in decides most of the design:

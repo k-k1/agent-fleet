@@ -1,13 +1,14 @@
+---
+audience: "anyone wondering what a mark on the screen means"
+updated: "2026-08"
+---
+
 # Icons, badges, and menus — common Console reference
 
 English | [日本語](badges-and-menus.ja.md)
 
-Audience: anyone wondering what a mark on the screen means
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: anyone who wants to check what the marks in the left pane mean, or what a right-click can do.
-> Menu items vary with the target's type, its state, your permissions, and the workspace state.
+Menu items vary with the target's type, its state, your permissions, and the
+workspace state.
 
 ## Session display
 

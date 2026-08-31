@@ -1,10 +1,12 @@
+---
+audience: "新しい CLI コーディングエージェントを統合する人"
+source_of_truth: "既存の `internal/agents/<kind>` パッケージ（一番近いものを写す）"
+updated: "2026-08"
+---
+
 # 20. エージェント種別を足す
 
 [English](20-add-an-agent.md) | 日本語
-
-Audience: 新しい CLI コーディングエージェントを統合する人
-Source of truth: 既存の `internal/agents/<kind>` パッケージ（一番近いものを写す）
-Updated: 2026-08
 
 この手順で 7 種類を足してきました。**埋める面は毎回同じ**で、**踏む罠も毎回同じ**です。
 この章はその両方の一覧です。

@@ -1,10 +1,11 @@
+---
+audience: "anyone working with other members on the same conversation, or tidying up after themselves"
+updated: "2026-08"
+---
+
 # 09. Working with others, and keeping things tidy
 
 English | [日本語](09-collaboration.ja.md)
-
-Audience: anyone working with other members on the same conversation, or tidying up after themselves
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
 
 This chapter covers the parts of the Console that are about **more than one person**, or
 about **what happens to work after it is finished**: highlighting a line so somebody

@@ -1,10 +1,12 @@
+---
+audience: "someone integrating a new CLI coding agent"
+source_of_truth: "the existing `internal/agents/<kind>` packages — copy the closest one"
+updated: "2026-08"
+---
+
 # 20. Adding an agent kind
 
 English | [日本語](20-add-an-agent.ja.md)
-
-Audience: someone integrating a new CLI coding agent
-Source of truth: the existing `internal/agents/<kind>` packages — copy the closest one
-Updated: 2026-08
 
 Seven kinds have been added this way. **The surfaces are the same every time**, and the
 mistakes are the same every time too — this chapter is both lists.

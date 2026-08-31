@@ -1,10 +1,12 @@
+---
+audience: "someone changing the Agent Fleet code"
+source_of_truth: "the code — if this tree disagrees with it, the code is right"
+updated: "2026-09"
+---
+
 # Agent Fleet developer documentation
 
 English | [日本語](README.ja.md)
-
-Audience: someone changing the Agent Fleet code
-Source of truth: the code — if this tree disagrees with it, the code is right
-Updated: 2026-09
 
 **This tree is for developers.** The procedures for people *using* Agent Fleet live in a
 separate tree, [`guide/`](../guide/README.md), which is what ships into a container.

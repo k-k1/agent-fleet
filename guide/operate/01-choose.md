@@ -1,10 +1,12 @@
+---
+audience: "someone deciding how and where to run a deployment"
+source_of_truth: "ref/deploy-targets.md for what each target supports; this page for how to choose between them"
+updated: "2026-08"
+---
+
 # 01. Choosing a deployment target
 
 English | [日本語](01-choose.ja.md)
-
-Audience: someone deciding how and where to run a deployment
-Source of truth: [ref/deploy-targets.md](../ref/deploy-targets.md) for what each target supports; this page for how to choose between them
-Updated: 2026-08
 
 One company runs one deployment. This page is about deciding **what it runs on** —
 which is a choice you can revisit later, but not for free, so it is worth twenty

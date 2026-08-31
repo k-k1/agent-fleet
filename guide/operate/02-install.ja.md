@@ -1,10 +1,12 @@
+---
+audience: "配備をはじめて建てる人"
+source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）"
+updated: "2026-08"
+---
+
 # 02. 初期構築
 
 [English](02-install.md) | 日本語
-
-Audience: 配備をはじめて建てる人
-Source of truth: `deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）
-Updated: 2026-08
 
 初めてのデプロイを、判断ポイントを添えて順を追って説明します。**実際のコマンドは
 [deploy/compose/README.md](../../deploy/compose/README.md) の "Quick start" 節が正**です。ここでは

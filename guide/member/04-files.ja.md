@@ -1,14 +1,11 @@
+---
+audience: "Console でファイルを読む・編集する人"
+updated: "2026-08"
+---
+
 # 04. ファイル — ツリー・ビュアー・Markdown/スライド
 
 [English](04-files.md) | 日本語
-
-Audience: Console でファイルを読む・編集する人
-Source of truth: Console そのもの（画面と食い違ったら画面が正）
-Updated: 2026-08
-
-> 対象: ワークスペース内のファイルを見る・整理する・エージェントに渡すメンバー。ファイルツリー、
-> ビュアー（ハイライト・Markdown・Mermaid・Marp スライド）、そして「ファイルを
-> セッションに送る」使い方を扱います。
 
 ## ファイルツリー
 

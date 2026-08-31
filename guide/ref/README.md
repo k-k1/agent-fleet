@@ -1,10 +1,12 @@
+---
+audience: "everyone — this is the one shelf all four readers share"
+source_of_truth: "this shelf, for capability facts (the axes are checked against the code)"
+updated: "2026-08"
+---
+
 # Reference — what Agent Fleet can do
 
 English | [日本語](README.ja.md)
-
-Audience: everyone — this is the one shelf all four readers share
-Source of truth: this shelf, for capability facts (the axes are checked against the code)
-Updated: 2026-08
 
 Every other shelf links here instead of restating what the product supports. One copy
 of each fact, readable from four directions.

@@ -1,10 +1,12 @@
+---
+audience: "everyone; most often a member asking \"why did it stop?\" and an administrator asking \"what should I set?\""
+source_of_truth: "this table for the fixed values; the limit's own screen for anything a tenant or deployment sets"
+updated: "2026-08"
+---
+
 # Limits and defaults
 
 English | [日本語](limits.ja.md)
-
-Audience: everyone; most often a member asking "why did it stop?" and an administrator asking "what should I set?"
-Source of truth: this table for the fixed values; the limit's own screen for anything a tenant or deployment sets
-Updated: 2026-08
 
 Collected in one place because a limit is only ever met at the worst possible moment,
 and the reader then needs three things at once: what the ceiling is, who can raise it,

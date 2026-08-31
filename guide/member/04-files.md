@@ -1,14 +1,11 @@
+---
+audience: "anyone reading or editing files in the Console"
+updated: "2026-08"
+---
+
 # 04. Files — tree, viewer, Markdown/slides
 
 English | [日本語](04-files.ja.md)
-
-Audience: anyone reading or editing files in the Console
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: members who view and organize files in the workspace and hand them to agents.
-> Covers the file tree, the viewer (highlighting, Markdown, Mermaid, Marp slides), and how to
-> "send a file to a session".
 
 ## File tree
 

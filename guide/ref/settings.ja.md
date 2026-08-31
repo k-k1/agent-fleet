@@ -1,10 +1,12 @@
+---
+audience: "全員（ただし「つまみが見つからない人」に向けて書く）"
+source_of_truth: "個人/テナント設定は Console、配備の変数は `deploy/compose/.env.example`"
+updated: "2026-08"
+---
+
 # 設定 — どこで何を決めるか
 
 [English](settings.md) | 日本語
-
-Audience: 全員（ただし「つまみが見つからない人」に向けて書く）
-Source of truth: 個人/テナント設定は Console、配備の変数は `deploy/compose/.env.example`
-Updated: 2026-08
 
 挙動を決める層は 3 つあり、**この 3 つの取り違えが「変えたのに効かない」の定番の原因**です。
 狭い順に:

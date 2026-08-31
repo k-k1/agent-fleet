@@ -1,10 +1,12 @@
+---
+audience: "someone with a deployment that is not behaving"
+source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
+updated: "2026-08"
+---
+
 # 06. Troubleshooting and FAQ
 
 English | [日本語](06-diagnose.ja.md)
-
-Audience: someone with a deployment that is not behaving
-Source of truth: the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page
-Updated: 2026-08
 
 This chapter organizes, by symptom, how to triage "it came up but doesn't work" and "a user
 says they can't use it." **The canonical recovery commands are in the "Troubleshooting" section

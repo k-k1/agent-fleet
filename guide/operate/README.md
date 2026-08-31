@@ -1,10 +1,12 @@
+---
+audience: "whoever installs, upgrades and protects a deployment — IT / SRE with shell access to the host and deployment-administrator rights"
+source_of_truth: "the scripts under `deploy/` for commands; this shelf for what each step decides"
+updated: "2026-08"
+---
+
 # Operating a deployment
 
 English | [日本語](README.ja.md)
-
-Audience: whoever installs, upgrades and protects a deployment — IT / SRE with shell access to the host and deployment-administrator rights
-Source of truth: the scripts under `deploy/` for commands; this shelf for what each step decides
-Updated: 2026-08
 
 For the person in the position of "if it breaks, only I can fix it". This shelf
 explains **what, why, and by which decisions**. No knowledge of the development

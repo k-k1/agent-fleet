@@ -1,14 +1,11 @@
+---
+audience: "anyone using the assistant chat or the memo queue"
+updated: "2026-08"
+---
+
 # 07. Chat and memos — quick questions, translation, and memo capture
 
 English | [日本語](07-chat-memo.ja.md)
-
-Audience: anyone using the assistant chat or the memo queue
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> For: members who want to knock out questions, translations, and summaries that don't warrant
-> spinning up a session. Covers the assistant chat, the "Chat" view for reading a running
-> agent's conversation, and the memo queue.
 
 ## What the assistant chat is
 

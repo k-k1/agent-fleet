@@ -1,10 +1,12 @@
+---
+audience: "someone changing the code — a new contributor, a future maintainer, or an agent session"
+source_of_truth: "the code (this shelf is the map and the design intent)"
+updated: "2026-08"
+---
+
 # Building Agent Fleet
 
 English | [日本語](README.ja.md)
-
-Audience: someone changing the code — a new contributor, a future maintainer, or an agent session
-Source of truth: the code (this shelf is the map and the design intent)
-Updated: 2026-08
 
 This shelf answers **"how does it work?"**: the three processes and what each owns,
 the two authentication layers, the API boundaries, the data model, the threat model,

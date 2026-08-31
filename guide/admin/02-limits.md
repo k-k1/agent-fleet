@@ -1,10 +1,11 @@
+---
+audience: "a tenant administrator managing resources and running sessions"
+updated: "2026-08"
+---
+
 # 02. Resource limits, idle auto-stop, and the sessions overview
 
 English | [日本語](02-limits.ja.md)
-
-Audience: a tenant administrator managing resources and running sessions
-Source of truth: the Console's tenant settings — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
 
 As the team grows, the questions become "who is using how much of the resources" and "can we stop a
 runaway". This chapter sorts out what you (tenant_admin) can see, what you can adjust, and what you

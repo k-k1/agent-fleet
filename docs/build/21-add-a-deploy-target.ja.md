@@ -1,10 +1,12 @@
+---
+audience: "ワークスペースを動かす場所を足す人"
+source_of_truth: "既存の `runtime_*.go`（書く前に 4 本とも読むこと）"
+updated: "2026-08"
+---
+
 # 21. デプロイ形態を足す
 
 [English](21-add-a-deploy-target.md) | 日本語
-
-Audience: ワークスペースを動かす場所を足す人
-Source of truth: 既存の `runtime_*.go`（書く前に 4 本とも読むこと）
-Updated: 2026-08
 
 アダプタは 4 本あります——Docker、Fargate 上の ECS、EC2 プール上の ECS、コンテナ無しの
 ホストプロセス。**互いの差は、新しい 1 本に普通必要な差よりずっと大きい**ので、先に読んでください。

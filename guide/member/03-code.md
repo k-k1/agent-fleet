@@ -1,14 +1,11 @@
+---
+audience: "anyone working with repositories, branches and commits"
+updated: "2026-08"
+---
+
 # 03. Repositories and git — cloning, reviewing changes, committing, pushing
 
 English | [日本語](03-code.ja.md)
-
-Audience: anyone working with repositories, branches and commits
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: members who clone repositories and work with git. Covers connecting a git provider,
-> cloning, the built-in git provider, launching from a repository row, committing in the source
-> control view, and push with authentication.
 
 ## Connect a git provider
 

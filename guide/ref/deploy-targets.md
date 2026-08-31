@@ -1,10 +1,12 @@
+---
+audience: "everyone; decisive for operate/"
+source_of_truth: "this table; the rows are checked against the runtime profiles the Control Plane accepts"
+updated: "2026-08"
+---
+
 # Deployment targets — what exists where
 
 English | [日本語](deploy-targets.ja.md)
-
-Audience: everyone; decisive for [operate/](../operate/README.md)
-Source of truth: this table; the rows are checked against the runtime profiles the Control Plane accepts
-Updated: 2026-08
 
 One core runs on every target; only the edge adapter changes. What differs is
 therefore small and specific — and worth stating precisely, because "it works on my

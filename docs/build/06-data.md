@@ -1,10 +1,12 @@
+---
+audience: "someone touching the schema or a migration"
+source_of_truth: "`control-plane/migrations/*.sql` (this is a reading of them, as of 0001–0028)"
+updated: "2026-07"
+---
+
 # 06. The data model and migrations
 
 English | [日本語](06-data.ja.md)
-
-Audience: someone touching the schema or a migration
-Source of truth: `control-plane/migrations/*.sql` (this is a reading of them, as of 0001–0028)
-Updated: 2026-07
 
 ## 6.1 Store layout
 

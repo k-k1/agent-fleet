@@ -1,10 +1,12 @@
+---
+audience: "全員（とくに画面とコードの間を行き来する人）"
+source_of_truth: "画面欄は Console の文字列、実装欄はコード"
+updated: "2026-08"
+---
+
 # 用語
 
 [English](glossary.md) | 日本語
-
-Audience: 全員（とくに画面とコードの間を行き来する人）
-Source of truth: 画面欄は Console の文字列、実装欄はコード
-Updated: 2026-08
 
 列を 2 つにしているのは意図的です。読者向けの棚は**画面**の語だけを使い、
 `docs/build/` は**実装**の語を使います。対応表を 1 箇所に置いておくことが、

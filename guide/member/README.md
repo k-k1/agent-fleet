@@ -1,10 +1,12 @@
+---
+audience: "anyone who runs agents from the Console"
+source_of_truth: "the Console itself — if a screen disagrees with this guide, the screen is right"
+updated: "2026-08"
+---
+
 # Using Agent Fleet
 
 English | [日本語](README.ja.md)
-
-Audience: anyone who runs agents from the Console
-Source of truth: the Console itself — if a screen disagrees with this shelf, the screen is right
-Updated: 2026-08
 
 This shelf answers **"how do I do this?"** for the person doing the work: starting
 sessions, following and steering an agent, working with repositories and files,

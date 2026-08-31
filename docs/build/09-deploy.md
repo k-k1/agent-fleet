@@ -1,10 +1,12 @@
+---
+audience: "someone adding a deployment target or an adapter"
+source_of_truth: "the code plus each runbook (`deploy/*/README.md`)"
+updated: "2026-07"
+---
+
 # 09. Deployment — the forms, the adapters, the environment index
 
 English | [日本語](09-deploy.ja.md)
-
-Audience: someone adding a deployment target or an adapter
-Source of truth: the code plus each runbook (`deploy/*/README.md`)
-Updated: 2026-07
 
 **The actual commands live in the runbooks and are not duplicated here.** This chapter
 is the map: what forms exist, what gets swapped, and which knob controls it.

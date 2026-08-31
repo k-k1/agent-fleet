@@ -1,10 +1,12 @@
+---
+audience: "全員（features.md の「誰が」を解決する軸）"
+source_of_truth: "この表（手で保守）。どのロールにどの棚を配るかは Control Plane の 1 箇所で決まる"
+updated: "2026-08"
+---
+
 # ロール — 誰が何をできるか
 
 [English](roles.md) | 日本語
-
-Audience: 全員（[features.md](features.ja.md) の「誰が」を解決する軸）
-Source of truth: この表（手で保守）。どのロールにどの棚を配るかは Control Plane の 1 箇所で決まる
-Updated: 2026-08
 
 ロールは 3 つ。**不明なロールは最小権限として扱います**——これは意図的で、
 新しいロールは届く範囲を明示的に与えられるべきで、黙って継承してはいけません。

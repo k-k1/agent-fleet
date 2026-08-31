@@ -1,10 +1,12 @@
+---
+audience: "everyone; the index the other tables hang off"
+source_of_truth: "this table for \"does it exist and who can use it\"; the linked page for how"
+updated: "2026-08"
+---
+
 # Features — the catalogue
 
 English | [日本語](features.ja.md)
-
-Audience: everyone; the index the other tables hang off
-Source of truth: this table for "does it exist and who can use it"; the linked page for how
-Updated: 2026-08
 
 One row per thing the product does, grouped by where the reader meets it. **Who** is
 the smallest role that can use it ([roles.md](roles.md)); **Where** is the screen,
@@ -12,10 +14,6 @@ named as the Console names it.
 
 If a feature ships and does not appear here, it is not done
 (`docs/CONVENTIONS.md` §8).
-
-> While the reader shelves are being written, the **Details** column points at the
-> guide that is still authoritative. Those links move to `use/`, `admin/` and
-> `operate/` as each shelf lands.
 
 ## Working with a session
 

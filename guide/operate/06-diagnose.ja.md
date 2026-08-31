@@ -1,10 +1,12 @@
+---
+audience: "配備の様子がおかしい人"
+source_of_truth: "`deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）"
+updated: "2026-08"
+---
+
 # 06. 障害対応と FAQ
 
 [English](06-diagnose.md) | 日本語
-
-Audience: 配備の様子がおかしい人
-Source of truth: `deploy/` 配下のスクリプト（記述がスクリプトと食い違ったら、このページのバグ）
-Updated: 2026-08
 
 「立ち上がったのに動かない」「ユーザーから使えないと言われた」ときの切り分けを、症状ベースで
 まとめます。**復旧コマンドの正は [deploy/compose/README.md](../../deploy/compose/README.md) の

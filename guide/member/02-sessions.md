@@ -1,14 +1,11 @@
+---
+audience: "anyone running and steering agents"
+updated: "2026-08"
+---
+
 # 02. Sessions — launch, switch, and stop AI conversations
 
 English | [日本語](02-sessions.ja.md)
-
-Audience: anyone running and steering agents
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: members who work with sessions day to day. Covers creating new sessions, reading
-> their state, pausing and tidying up work, the conditions for resuming, and duplicating a
-> conversation and renaming branches.
 
 A session bundles one job you delegate to the AI into a single unit — its **conversation,
 working location, and execution state**. It is a separate concept from whether a terminal

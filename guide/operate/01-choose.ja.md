@@ -1,10 +1,12 @@
+---
+audience: "配備をどこで・どう動かすか決める人"
+source_of_truth: "各形態が何に対応しているかは ref/deploy-targets.md、選び方はこのページ"
+updated: "2026-08"
+---
+
 # 01. デプロイ形態を選ぶ
 
 [English](01-choose.md) | 日本語
-
-Audience: 配備をどこで・どう動かすか決める人
-Source of truth: 各形態が何に対応しているかは [ref/deploy-targets.md](../ref/deploy-targets.ja.md)、選び方はこのページ
-Updated: 2026-08
 
 1 社 1 配備です。このページは**何の上で動かすか**を決めるためのもの。後から変えられますが
 ただでは変えられないので、いま 20 分使う価値があります。

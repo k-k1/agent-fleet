@@ -1,10 +1,11 @@
+---
+audience: "a tenant administrator managing who belongs to the team"
+updated: "2026-08"
+---
+
 # 01. Member management
 
 English | [日本語](01-members.ja.md)
-
-Audience: a tenant administrator managing who belongs to the team
-Source of truth: the Console's tenant settings — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
 
 You manage members under **"Operations → Members"** in the tenant settings rail. It is a
 two-level drill-down: roster → member detail. To go back up a level, use the "Back" button or

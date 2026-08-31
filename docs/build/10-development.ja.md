@@ -1,10 +1,12 @@
+---
+audience: "はじめてこのリポジトリをビルドする人"
+source_of_truth: "コード + CI 定義"
+updated: "2026-07"
+---
+
 # 10. 開発 — ビルド・反映・テスト・規約
 
 [English](10-development.md) | 日本語
-
-Audience: はじめてこのリポジトリをビルドする人
-Source of truth: コード + CI 定義
-Updated: 2026-07
 
 ## 10.1 リポジトリ構成（責務のみ）
 

@@ -1,10 +1,12 @@
+---
+audience: "everyone; the axis features.md resolves \"who\" against"
+source_of_truth: "this table (maintained by hand); which shelves a role receives is decided in one place in the Control Plane"
+updated: "2026-08"
+---
+
 # Roles — who may do what
 
 English | [日本語](roles.ja.md)
-
-Audience: everyone; the axis [features.md](features.md) resolves "who" against
-Source of truth: this table (maintained by hand); which shelves a role receives is decided in one place in the Control Plane
-Updated: 2026-08
 
 Three roles. An unknown role is treated as the least privileged one, deliberately: a
 new role must be granted reach explicitly, never inherit it.

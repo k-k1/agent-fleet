@@ -1,10 +1,11 @@
+---
+audience: "a tenant administrator reviewing what happened and what it cost"
+updated: "2026-08"
+---
+
 # 03. Audit log and usage
 
 English | [日本語](03-audit-usage.ja.md)
-
-Audience: a tenant administrator reviewing what happened and what it cost
-Source of truth: the Console's tenant settings — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
 
 The audit log lets you trace "who did what"; running time tallies "how much was used". Both are
 available from the tenant settings rail, scoped to your own tenant.

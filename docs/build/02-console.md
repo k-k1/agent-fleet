@@ -1,10 +1,12 @@
+---
+audience: "someone changing the Console — the browser side"
+source_of_truth: "the code (this is a map and a statement of intent)"
+updated: "2026-07"
+---
+
 # 02. Console (React + Vite + zustand)
 
 English | [日本語](02-console.ja.md)
-
-Audience: someone changing the Console — the browser side
-Source of truth: the code (this is a map and a statement of intent)
-Updated: 2026-07
 
 ## 2.1 Stack and design principles
 

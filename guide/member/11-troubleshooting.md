@@ -1,14 +1,14 @@
+---
+audience: "anyone whose screen is not doing what they expected"
+updated: "2026-08"
+---
+
 # 11. Troubleshooting — fixes by symptom and FAQ
 
 English | [日本語](11-troubleshooting.ja.md)
 
-Audience: anyone whose screen is not doing what they expected
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: members when something isn't working. Start with the "by symptom" index and look
-> for your situation; if nothing matches, check the FAQ at the end. Each entry links to the
-> relevant chapter of the main guide.
+Start with the "by symptom" index and look for your situation; if nothing matches,
+check the FAQ at the end. Each entry links to the relevant chapter of the main guide.
 
 ## Index by symptom
 

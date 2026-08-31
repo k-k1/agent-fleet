@@ -1,10 +1,12 @@
+---
+audience: "認証・暗号・隔離・監査・egress に触れる人"
+source_of_truth: "コード（本書は境界と設計意図）"
+updated: "2026-07"
+---
+
 # 07. セキュリティ — 脅威モデル・認証・暗号・監査
 
 [English](07-security.md) | 日本語
-
-Audience: 認証・暗号・隔離・監査・egress に触れる人
-Source of truth: コード（本書は境界と設計意図）
-Updated: 2026-07
 
 ## 7.1 脅威モデルと信頼境界
 

@@ -1,10 +1,12 @@
+---
+audience: "Console からエージェントを動かす人"
+source_of_truth: "Console そのもの（画面と食い違ったら画面が正）"
+updated: "2026-08"
+---
+
 # Agent Fleet を使う
 
 [English](README.md) | 日本語
-
-Audience: Console からエージェントを動かす人
-Source of truth: Console そのもの（画面と食い違ったら画面が正）
-Updated: 2026-08
 
 この棚は、実際に作業する人の**「どうやるの？」**に答えます。セッションの起こし方、
 エージェントの追い方と操縦、リポジトリとファイルの扱い、使いたいエージェントの接続、

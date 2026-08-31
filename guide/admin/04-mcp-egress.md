@@ -1,15 +1,14 @@
+---
+audience: "a tenant administrator distributing integrations to the team"
+updated: "2026-08"
+---
+
 # 04. Distributing MCP servers and controlling outbound traffic
 
 English | [日本語](04-mcp-egress.ja.md)
 
-Audience: a tenant administrator distributing integrations to the team
-Source of truth: the Console's tenant settings — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: tenant admins who want to hand the whole team's agents a shared tool (an
-> internal wiki, an issue tracker, a document search), and the super_admin who controls
-> outbound traffic. The first is yours to do; the second belongs to IT / the deployment
-> administrator.
+Handing the team a shared tool is yours to do; controlling outbound traffic belongs
+to IT / the deployment administrator.
 
 ## Distributing an MCP server to everyone in the tenant (your permission)
 

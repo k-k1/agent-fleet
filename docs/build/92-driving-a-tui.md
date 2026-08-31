@@ -1,10 +1,12 @@
+---
+audience: "anyone driving a CLI's interactive screen from code"
+source_of_truth: "the code; this is the method for verifying it against a real TUI"
+updated: "2026-08"
+---
+
 # 92. Driving a CLI's modal TUI — the verification playbook
 
 English | [日本語](92-driving-a-tui.ja.md)
-
-Audience: anyone driving a CLI's interactive screen from code
-Source of truth: the code; this is the method for verifying it against a real TUI
-Updated: 2026-08
 
 The Console answers an agent's modal screens — its question prompts, plan approval,
 permission prompts — **by sending keys to tmux on the user's behalf**. That coupling

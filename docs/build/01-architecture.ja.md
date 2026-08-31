@@ -1,10 +1,12 @@
+---
+audience: "誰でも最初に読む章。全体の形を掴みたい人"
+source_of_truth: "コード（本書は地図と設計意図）"
+updated: "2026-07"
+---
+
 # 01. 全体アーキテクチャ
 
 [English](01-architecture.md) | 日本語
-
-Audience: 誰でも最初に読む章。全体の形を掴みたい人
-Source of truth: コード（本書は地図と設計意図）
-Updated: 2026-07
 
 ## 1.1 何であるか・提供モデル
 

@@ -1,10 +1,12 @@
+---
+audience: "everyone, and specifically an agent deciding how to show a running web app to a person"
+source_of_truth: "this file for terminology, flow, states and limits; the Console for what a button is called"
+updated: "2026-08"
+---
+
 # Browser pane — the usage contract
 
 English | [日本語](browser-pane.ja.md)
-
-Audience: everyone, and specifically an agent deciding how to show a running web app to a person
-Source of truth: this file for terminology, flow, states and limits; the Console for what a button is called
-Updated: 2026-08
 
 Two different things can show a web app running inside a Workspace, and picking the
 wrong one wastes a round trip. This is the contract for both.

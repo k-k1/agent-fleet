@@ -1,10 +1,12 @@
+---
+audience: "Control Plane を変える人"
+source_of_truth: "コード（本書は地図と設計意図）"
+updated: "2026-07"
+---
+
 # 03. Control Plane
 
 [English](03-control-plane.md) | 日本語
-
-Audience: Control Plane を変える人
-Source of truth: コード（本書は地図と設計意図）
-Updated: 2026-07
 
 CP は Workspace の外側で動く唯一の常駐バックエンド（Go 単一バイナリ）。ブラウザは常に CP とだけ話し、
 CP は tmux にも working copy にも直接触れず必ず Agent 経由で操作する（[01 §1.3](01-architecture.ja.md)）。

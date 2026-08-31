@@ -1,14 +1,11 @@
+---
+audience: "someone opening the Console for the first time"
+updated: "2026-08"
+---
+
 # 01. First day — from login to your first session
 
 English | [日本語](01-first-day.ja.md)
-
-Audience: someone opening the Console for the first time
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: members opening the Console for the first time. We walk in order through logging
-> in, the welcome card (2 steps + picking a goal), cloning your first repository, and
-> whether it's OK to stop the workspace at the end of the day.
 
 ## Log in
 

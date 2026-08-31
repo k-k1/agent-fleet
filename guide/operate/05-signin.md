@@ -1,10 +1,12 @@
+---
+audience: "someone wiring an identity provider into the deployment"
+source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
+updated: "2026-08"
+---
+
 # 05. Sign-in Methods — Setting Up an IdP End to End
 
 English | [日本語](05-signin.ja.md)
-
-Audience: someone wiring an identity provider into the deployment
-Source of truth: the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page
-Updated: 2026-08
 
 This page is the **source of truth for configuring sign-in**: what to create on the IdP's side,
 which values to write down, which key in `.env` (or which field in the Console) they go into,

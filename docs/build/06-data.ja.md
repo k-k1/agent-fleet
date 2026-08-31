@@ -1,10 +1,12 @@
+---
+audience: "スキーマとマイグレーションに触れる人"
+source_of_truth: "`control-plane/migrations/*.sql`（本書はその読み解き。0001〜0028 時点）"
+updated: "2026-07"
+---
+
 # 06. データモデルとマイグレーション
 
 [English](06-data.md) | 日本語
-
-Audience: スキーマとマイグレーションに触れる人
-Source of truth: `control-plane/migrations/*.sql`（本書はその読み解き。0001〜0028 時点）
-Updated: 2026-07
 
 ## 6.1 ストア構成
 

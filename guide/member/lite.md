@@ -1,15 +1,11 @@
+---
+audience: "someone using Agent Fleet without touching the terminal"
+updated: "2026-08"
+---
+
 # Easy Guide (for people who don't use the terminal)
 
 English | [日本語](lite.ja.md)
-
-Audience: someone using Agent Fleet without touching the terminal
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Who this guide is for: people who don't do development themselves, but want to ask the AI
-> questions or for translations, peek at how development is going, read the documents and slides
-> inside repositories, or pass ideas and requests along to the development team. Product managers,
-> planners, documentation owners, and so on.
 
 **First, relax: with this way of working, you will never touch the black screen (the terminal).**
 

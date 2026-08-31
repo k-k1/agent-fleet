@@ -1,10 +1,12 @@
+---
+audience: "everyone"
+source_of_truth: "this table (maintained by hand — there is no single provider registry in the code)"
+updated: "2026-08"
+---
+
 # Repository providers — what each supports
 
 English | [日本語](repos.ja.md)
-
-Audience: everyone
-Source of truth: this table (maintained by hand — there is no single provider registry in the code)
-Updated: 2026-08
 
 Where a working copy can come from, and what the Console can do with it afterwards.
 The differences are not cosmetic: a provider with no cross-repository search changes

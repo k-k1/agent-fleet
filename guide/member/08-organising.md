@@ -1,15 +1,14 @@
+---
+audience: "anyone running several pieces of work at once"
+updated: "2026-08"
+---
+
 # 08. Fleet operator — directing multiple sessions from chat
 
 English | [日本語](08-organising.ja.md)
 
-Audience: anyone running several pieces of work at once
-Source of truth: the Console itself — if a screen disagrees with this page, the screen is right
-Updated: 2026-08
-
-> Audience: members who want to run multiple sessions in parallel, or hand over from
-> research to implementation and delegate the follow-up until completion. It helps to read
-> the assistant chat in [07 Chat and memos](07-chat-memo.md) and
-> [02 Sessions](02-sessions.md) first.
+It helps to read the assistant chat in [07 Chat and memos](07-chat-memo.md) and
+[02 Sessions](02-sessions.md) first.
 
 ## What is the fleet operator?
 

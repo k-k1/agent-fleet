@@ -1,10 +1,12 @@
+---
+audience: "someone responsible for the deployment's security posture"
+source_of_truth: "the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page"
+updated: "2026-08"
+---
+
 # 04. Security Operations
 
 English | [日本語](04-secure.ja.md)
-
-Audience: someone responsible for the deployment's security posture
-Source of truth: the scripts under `deploy/` — a command here that contradicts the script it describes is a bug in this page
-Updated: 2026-08
 
 This chapter summarizes the **assumptions an operator must understand** and the **day-to-day
 controls to apply** in order to run Agent Fleet safely. It is not a list of hidden bugs; it

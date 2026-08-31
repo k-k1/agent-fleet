@@ -1,14 +1,12 @@
+---
+audience: "someone asking \"which file does that?\""
+source_of_truth: "the code"
+updated: "2026-07"
+---
+
 # 90. Code map
 
 English | [日本語](90-code-map.ja.md)
-
-Audience: someone asking "which file does that?"
-Source of truth: the code
-Updated: 2026-07
-
-> ⚠️ **This is the only file on this shelf allowed to enumerate paths and package
-> names**, and it is here **on the assumption that it goes stale**. **A PR that moves
-> paths must update it.**
 
 It gives **grep starting points**, not an inventory. Where a subsystem's design lives is
 the chapter it belongs to; this only says where to start looking.

@@ -50,24 +50,45 @@ passes every check that only looks at the repository. Saying "the design is cove
 the developer documentation" in prose is correct; making it clickable is not.
 `check_closure` enforces this.
 
-## 3. Required header
+## 3. Required front matter
 
-Every file under `use/ admin/ operate/ build/ ref/` starts like this, within the first
-12 lines:
+Every file under `guide/` and `docs/build/` starts like this:
 
 ```markdown
+---
+audience: "who this is for, in one clause"
+source_of_truth: "what is authoritative if this file disagrees with it"
+updated: "2026-09"
+---
+
 # Title
 
 English | [日本語](title.ja.md)
-
-Audience: who this is for, in one clause
-Source of truth: what is authoritative if this file disagrees with it
-Updated: 2026-08
 ```
 
-`Source of truth:` is what makes staleness survivable. For `build/` it is usually the
-code; for `operate/` it is usually a script in `deploy/`; for `use/` it is the Console
-itself. State it, so a reader who finds a contradiction knows which side to believe.
+**Always double-quote the values** — a `source_of_truth` value contains colons and
+commas.
+
+This is information for the writer and for CI, not something the reader came for, so it
+does not belong in prose. The Console splits front matter off and renders it as a
+metadata panel (`splitYamlFrontMatter`), so it is **demoted out of the body without
+being lost**.
+
+`source_of_truth` is what makes staleness survivable. For `docs/build/` it is usually
+the code; for `guide/operate/` it is usually a script in `deploy/`; for `guide/member/`
+it is the Console itself. State it, so a reader who finds a contradiction knows which
+side to believe.
+
+- **Only `source_of_truth` may be inherited from the shelf README.** The 16 files in
+  `guide/member/` and the 6 in `guide/admin/` all carried the identical sentence — the
+  same clause 22 times, carrying nothing for the reader. State it once in the shelf
+  README and omit it from the chapters.
+- **A shelf whose values differ cannot omit it.** All ten files in `guide/ref/` say
+  something different ("this table is authoritative"; "the screen column is the Console,
+  the implementation column is the code"), and that is real information.
+- **Do not add a `> Audience: …` block quote underneath.** It restates `audience`. If a
+  chapter has one genuinely useful sentence there, write it as the opening of the body,
+  not as a quote.
 
 ## 4. Vocabulary per shelf
 

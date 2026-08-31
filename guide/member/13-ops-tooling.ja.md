@@ -1,10 +1,11 @@
+---
+audience: "監視ツールを会話につなぐ人"
+updated: "2026-08"
+---
+
 # 13. 運用ツール連携（MCP でインシデント壁打ち）🧪
 
 [English](13-ops-tooling.md) | 日本語
-
-Audience: 監視ツールを会話につなぐ人
-Source of truth: Console そのもの（画面と食い違ったら画面が正）
-Updated: 2026-08
 
 ## PagerDuty / Grafana / CloudWatch / AWS は「運用・監視」タブから接続できます（推奨）
 
