@@ -588,6 +588,119 @@
   opacity: 1;
 }
 
+/* ---- PDF (docs/82) ----
+   紙は白のまま、背景だけペインの色。暗色テーマで紙を反転させる案は採らない:
+   図や写真まで反転して「別の文書」になり、印刷物と見比べられなくなる。 */
+.pdfview {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pdfview.is-failed {
+  align-items: center;
+  justify-content: center;
+  font: 12px var(--mono);
+  color: var(--muted);
+}
+.pdfview-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  outline: none; /* キーボード操作用に focus は取るが、枠は出さない */
+}
+.pdfview-loading {
+  margin: 16px;
+  font: 12px var(--mono);
+}
+.pdfview-doc {
+  display: flex;
+  flex-direction: column;
+  /* `safe` が要る: 素の center だと、ペインより広く拡大したページは左へはみ出し、
+     はみ出した側はスクロールしても永久に届かない（実測 —— 125% で見出しの左端が
+     切れた）。safe は「収まるときだけ中央、溢れたら先頭寄せ」。 */
+  align-items: safe center;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+}
+.pdfview-page {
+  position: relative;
+  flex: none;
+  background: #fff;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 35%);
+}
+.pdfview-canvas {
+  display: block;
+}
+.pdfview-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bar);
+  font: 11px var(--mono);
+  color: var(--fg);
+}
+.pdfview-bar button {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.pdfview-bar button:hover:not(:disabled) {
+  border-color: var(--border);
+}
+.pdfview-bar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.pdfview-pageno {
+  min-width: 5.5em;
+  text-align: center;
+  color: var(--muted);
+}
+.pdfview-zoomlabel {
+  min-width: 4em;
+  justify-content: center;
+}
+.pdfview-sep {
+  flex: 1;
+}
+
+/* ---- Office 文書の簡易プレビュー (docs/82 §82.4) ---- */
+.docpreview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.docpreview-status {
+  margin: 16px;
+  font: 12px var(--mono);
+}
+/* 「これは簡易プレビューである」は、読み始める前に必ず目に入る位置に置く
+   （書式の落ちた表を原本と思われる方が危ない）。 */
+.docpreview-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bar);
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* rendered markdown */
 .md-scroll {
   flex: 1;
