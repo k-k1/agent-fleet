@@ -32,9 +32,10 @@ func TestUsageNormalizeModel(t *testing.T) {
 // 推定は4種のトークンを個別に掛ける。**キャッシュ読取は spend に入っていないが課金される**
 // ので、spend から金額を起こすと長い会話ほど安く出る（ここが一番間違えやすい）。
 func TestUsageEstCostUSD(t *testing.T) {
+	useIsolatedUsageDir(t) // カタログ無しの素の状態（内蔵表だけ）を見る
 	// claude-sonnet-5 = $2/MTok in, $10/MTok out
 	a := usageAgg{In: 1_000_000, Out: 1_000_000, CacheCreate: 1_000_000, CacheRead: 1_000_000}
-	got, ok := usageEstCostUSD("claude-sonnet-5", a)
+	got, src, ok := usageEstCostUSD(session.KindClaude, "claude-sonnet-5", a)
 	if !ok {
 		t.Fatal("claude-sonnet-5 が値付け不可になっている")
 	}
@@ -42,10 +43,13 @@ func TestUsageEstCostUSD(t *testing.T) {
 	if math.Abs(got-14.7) > 1e-9 {
 		t.Fatalf("推定額 = %v, want 14.7", got)
 	}
-	if _, ok := usageEstCostUSD("gpt-5.6-terra", a); ok {
-		t.Fatal("単価表に無いモデルを値付けしている（0 を出さず false を返すこと）")
+	if src != usagePriceSrcBuiltin {
+		t.Fatalf("出所 = %q, want %q", src, usagePriceSrcBuiltin)
 	}
-	if _, ok := usageEstCostUSD("", a); ok {
+	if _, _, ok := usageEstCostUSD(session.KindCodex, "gpt-5.6-terra", a); ok {
+		t.Fatal("カタログ無しで単価表にも無いモデルを値付けしている（0 を出さず false）")
+	}
+	if _, _, ok := usageEstCostUSD(session.KindClaude, "", a); ok {
 		t.Fatal("モデル不明の行を値付けしている")
 	}
 }

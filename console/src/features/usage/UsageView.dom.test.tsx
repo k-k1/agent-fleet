@@ -168,3 +168,60 @@ describe("UsageView の推定額", () => {
     expect(host!.querySelector(".usage-coverage")).toBe(null);
   });
 });
+
+// 単価カタログ（docs/46 §5-c / P2a）。金額だけ出して出所を言わないと検算できないので、
+// 「どの単価で・どこ由来か」と「いつ時点のカタログか」が画面に出ることを見る。
+describe("UsageView の単価の出所", () => {
+  const priced = (): UsageSeries => ({
+    ...series(1000, false, {
+      priced_spend: 1000,
+      unpriced_spend: 0,
+      catalog: { origin: "opencode", models: 518, fetched: "2026-08-31T03:29:43Z" },
+      prices: {
+        "gpt-5.6-terra": { src: "catalog:openai/gpt-5.6-terra", in: 2, out: 12, cread: 0.2, cwrite: 2.5 },
+      },
+    }),
+    matrix: {
+      session: {
+        "gpt-5.6-terra": { spend: 1000, in: 1000, out: 0, cread: 0, ccreate: 0, calls: 1, cost_est_usd: 0.002 },
+      },
+    },
+  });
+
+  it("金額セルのツールチップに単価と出所が出る", async () => {
+    fetchUsageSeries.mockImplementation(() => Promise.resolve(priced()));
+    await mount();
+    const title = [...host!.querySelectorAll("td.num")].map((td) => td.getAttribute("title") || "").join("\n");
+    expect(title).toContain("$2");
+    expect(title).toContain("$12");
+    expect(title).toContain("openai/gpt-5.6-terra");
+  });
+
+  it("カタログの取得日を出す（更新で過去の額が変わるため）", async () => {
+    fetchUsageSeries.mockImplementation(() => Promise.resolve(priced()));
+    await mount();
+    const cov = host!.querySelector(".usage-coverage")?.textContent || "";
+    expect(cov).toContain("models.dev");
+    expect(cov).toContain("518");
+  });
+
+  it("カタログが無ければ注記も出さない", async () => {
+    fetchUsageSeries.mockImplementation(() =>
+      Promise.resolve(series(1000, false, { priced_spend: 1000, unpriced_spend: 0 })),
+    );
+    await mount();
+    expect(host!.querySelector(".usage-coverage")).toBe(null);
+  });
+});
+
+// 端数の言い方。「消費の 0% は単価を持っていないモデル」は自己矛盾で、実データで出た
+// （57k / 34.1M）。1% 未満は専用の言い方にする。
+it("1% 未満の値付け漏れを「0%」と書かない", async () => {
+  fetchUsageSeries.mockImplementation(() =>
+    Promise.resolve(series(1000, false, { priced_spend: 34_074_000, unpriced_spend: 57_000 })),
+  );
+  await mount();
+  const cov = host!.querySelector(".usage-coverage")?.textContent || "";
+  expect(cov).not.toContain("0%");
+  expect(cov).toContain("1%");
+});

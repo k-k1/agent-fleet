@@ -36,6 +36,28 @@ export interface UsageAgg {
   cost_est_usd?: number;
 }
 
+/**
+ * この応答の金額に使った実効単価（$/100万トークン）と、その出所。
+ * src は "builtin"（内蔵表）か "catalog:<provider>/<model>"。金額だけ出して出所を言わないと
+ * 検算できないので、モデル名 → 単価 の形でサーバが添えてくる。
+ */
+export interface UsagePrice {
+  src: string;
+  in: number;
+  out: number;
+  cread: number;
+  cwrite: number;
+  /** 同じモデル名でも kind によって単価が違う（表示は消費の大きい方）。 */
+  ambiguous?: boolean;
+}
+
+/** 単価カタログ（models.dev）の申告。無ければフィールドごと来ない。 */
+export interface UsageCatalog {
+  origin: string; // opencode | file | env
+  models: number;
+  fetched?: string;
+}
+
 export interface UsageBucket {
   t: string; // バケット先頭時刻（RFC3339・UTC）
   series: Record<string, UsageAgg>;
@@ -62,6 +84,9 @@ export interface UsageSeries {
   /** 推定額を起こせた消費 / 単価表に無くて起こせなかった消費（spend ベース）。 */
   priced_spend?: number;
   unpriced_spend?: number;
+  /** モデル名 → この応答で使った単価。 */
+  prices?: Record<string, UsagePrice>;
+  catalog?: UsageCatalog;
   /** 要求期間の一部が raw の保持期間より古く hour 粒度で復元できなかった。 */
   truncated?: boolean;
   /**

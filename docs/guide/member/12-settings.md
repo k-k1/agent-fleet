@@ -229,9 +229,12 @@ scale.
   what a flat subscription bills you.** Sessions themselves carry no measured cost, so this column used to read
   "—" (only claude's auxiliary calls return one). The measured figure is still there: hover the amount and it is
   shown alongside — never added to the estimate.
-- Models with no published price on file (most non-Anthropic ones) are **not** estimated. That consumption is
-  reported under "what is measurable" as "N% of the consumption runs on models with no price on file" — which is
-  not an amount of 0.
+- Rates come from a built-in table for Anthropic and from the **models.dev price catalog** (read from the copy
+  opencode keeps) for everything else. **Hover an amount to see which rate was used and where it came from.**
+  Consumption that went through opencode is priced at opencode's own rates — that is closer to what you actually pay.
+- Models missing from the catalog too are **not** estimated. That consumption is reported under "what is
+  measurable" as "N% of the consumption runs on models with no price on file" — which is not an amount of 0.
+  The same box shows **when the catalog was fetched**, because a newer catalog changes past estimates as well.
 - Clicking a series in the time chart filters to it. There is also a **feature × model** matrix.
 - **Measurement coverage** is stated explicitly. Calls that do not report tokens are shown as counted-only
   (which does not mean they were free).

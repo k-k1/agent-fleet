@@ -3987,12 +3987,23 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.cost_measured": "Measured: {v} (claude auxiliary calls only)",
   "usage.cost_unpriced_hint":
     "No published price is on file for this model, so no amount is estimated (this is not a cost of 0).",
+  "usage.price_line": "Rate {in} / {out} per 1M tokens (input/output).",
+  "usage.price_src_builtin": "Source: the built-in table (Anthropic's published rates).",
+  "usage.price_src_catalog": "Source: the models.dev catalog ({ref}).",
+  "usage.price_ambiguous": "The same model name costs different amounts per agent (the busier one is shown).",
+  "usage.catalog_note":
+    "Price catalog: models.dev ({n} models, fetched {when}). Past estimates change when the catalog does.",
+  "usage.catalog_origin_opencode": "Read from the catalog opencode keeps (we never update it).",
+  "usage.catalog_origin_file": "Read from a catalog placed in this workspace.",
+  "usage.catalog_origin_env": "Read from the catalog named by AF_USAGE_CATALOG.",
   "usage.kpi_unmeasured": "Unmeasured calls",
   "usage.kpi_unmeasured_hint":
     "Calls made by agents that don't report tokens. This is “not measured”, not “spent nothing”.",
   "usage.coverage_title": "What is measurable",
   "usage.coverage_unmeasured": "{n} calls report no tokens, so only their count is known (this is not a spend of 0).",
   "usage.coverage_unpriced": "{pct}% of the consumption ({n} tokens) runs on models with no price on file, so it is left out of the estimated amount.",
+  "usage.coverage_unpriced_sub1":
+    "Under 1% of the consumption ({n} tokens) runs on models with no price on file, so it is left out of the estimated amount.",
   "usage.cov_tokens_exact": "Tokens: complete",
   "usage.cov_tokens_partial": "Tokens: partial",
   "usage.cov_tokens_none": "Tokens: unavailable",

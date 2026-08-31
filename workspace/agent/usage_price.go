@@ -23,9 +23,31 @@ import (
 )
 
 // usagePrice は 100万トークンあたりの USD（プロバイダの公表単価）。
+//
+// CacheRead / CacheWrite は出所が明示している時だけ入る。**0 は「単価 0」ではなく
+// 「未提供」**として倍率へ落とす（内蔵表は倍率が公表値なので常に 0 で置いてある）。
+// 上流が本当に 0 を公表しているごく安いモデルでは、倍率で置いた分だけ上振れするが、
+// 桁で言えば誤差（$0.075/MTok のモデルで $0.09 相当）なのでこの単純さを採る。
 type usagePrice struct {
-	In  float64
-	Out float64
+	In         float64
+	Out        float64
+	CacheRead  float64
+	CacheWrite float64
+}
+
+// cacheRead / cacheWrite は「出所が言っていればその値、言っていなければ倍率」。
+func (p usagePrice) cacheRead() float64 {
+	if p.CacheRead > 0 {
+		return p.CacheRead
+	}
+	return p.In * usageCacheReadMult
+}
+
+func (p usagePrice) cacheWrite() float64 {
+	if p.CacheWrite > 0 {
+		return p.CacheWrite
+	}
+	return p.In * usageCacheWriteMult
 }
 
 // キャッシュの倍率（Anthropic 公表）。書き込みは 5 分 TTL の 1.25 倍、読み出しは 0.1 倍。
@@ -36,10 +58,11 @@ const (
 	usageCacheReadMult  = 0.10
 )
 
-// usagePrices は正規化済みモデル名 → 単価。**Anthropic の公表単価のみ**を載せている
-// （2026-08 時点）。他プロバイダ（gpt-* / qwen* / glm-* …）は、こちらが確かな公表単価を
-// 持っていないので**意図的に載せていない** — 適当な既定値で埋めると、根拠の無い数字が
-// 「推定額」の顔をして合計に混ざる。
+// usagePrices は正規化済みモデル名 → 単価。**Anthropic の公表単価のみ**を人が確認して
+// 置いた表（2026-08 時点）。他プロバイダ（gpt-* / qwen* / glm-* …）はここでは持たず、
+// カタログ（usage_catalog.go）から引く — 手で写した表を全プロバイダぶん維持するのは
+// 続かないし、適当な既定値で埋めると根拠の無い数字が「推定額」の顔をして合計に混ざる。
+// カタログも無ければ**値付け不可のまま**（0 を出さない）。
 //
 // 版込みの生 id（claude-haiku-4-5-20251001）や provider 付き（anthropic/claude-sonnet-5）は
 // usageNormalizeModel が畳んでからここを引く。
@@ -106,24 +129,56 @@ func allDigits(s string) bool {
 	return s != ""
 }
 
-// usagePriceOf は正規化して単価を引く。第2戻り値が false = **値付け不可**（推定しない）。
-func usagePriceOf(model string) (usagePrice, bool) {
-	p, ok := usagePrices[usageNormalizeModel(model)]
-	return p, ok
+// 単価の出所（応答の prices[].src）。**どこの単価かを言わない金額は検算できない。**
+const (
+	usagePriceSrcBuiltin = "builtin" // このファイルの表（Anthropic の一次単価・検証済み）
+	usagePriceSrcCatalog = "catalog" // models.dev（usage_catalog.go）
+)
+
+// usagePriceOf は kind と model から単価を引く。第2戻り値が false = **値付け不可**
+// （推定しない＝0 を出さない）。
+//
+// 順序は「**その消費が実際に通った provider**」で決まる（docs/46 §5-c）:
+//  1. kind が anthropic 一次に当たる場合（claude など）は内蔵表を先に見る。こちらは
+//     公表値を人が確認して置いた表で、コミュニティ由来のカタログより信頼が高い
+//     （実測では models.dev の anthropic 値と完全一致した）。
+//  2. それ以外はカタログ。**opencode の消費は opencode ゲートウェイの価格**で換算する
+//     ＝利用者が実際に払う額に一番近い（2026-08-31 決定）。
+//  3. カタログに無ければ内蔵表へ落とす（モデル名が claude 系なら拾える）。
+func usagePriceOf(kind, model string) (usagePrice, string, bool) {
+	base := usageNormalizeModel(model)
+	order := usageCatalogOrder(kind)
+	builtinFirst := len(order) > 0 && order[0] == "anthropic"
+	if builtinFirst {
+		if p, ok := usagePrices[base]; ok {
+			return p, usagePriceSrcBuiltin, true
+		}
+	}
+	if p, ref, ok := usageCatalogLookup(kind, model); ok {
+		return p, usagePriceSrcCatalog + ":" + ref, true
+	}
+	if !builtinFirst {
+		if p, ok := usagePrices[base]; ok {
+			return p, usagePriceSrcBuiltin, true
+		}
+	}
+	return usagePrice{}, "", false
 }
 
 // usageEstCostUSD は集計値1つぶんの API 換算相当額（推定）。
 //
-//	= (in + ccreate×1.25 + cread×0.1) × 入力単価 + out × 出力単価
+//	= in×入力単価 + ccreate×キャッシュ書込単価 + cread×キャッシュ読取単価 + out×出力単価
 //
 // spend（= in + ccreate + out）ではなく4種を個別に掛ける。キャッシュ読取は spend の定義に
-// 入っていないが**課金はされる**（0.1 倍）ので、spend から金額を起こすと長い会話ほど
-// 実際より安く出る。
-func usageEstCostUSD(model string, a usageAgg) (float64, bool) {
-	p, ok := usagePriceOf(model)
+// 入っていないが**課金はされる**ので、spend から金額を起こすと長い会話ほど実際より安く出る。
+func usageEstCostUSD(kind, model string, a usageAgg) (float64, string, bool) {
+	p, src, ok := usagePriceOf(kind, model)
 	if !ok {
-		return 0, false
+		return 0, "", false
 	}
-	in := float64(a.In) + float64(a.CacheCreate)*usageCacheWriteMult + float64(a.CacheRead)*usageCacheReadMult
-	return (in*p.In + float64(a.Out)*p.Out) / 1_000_000, true
+	usd := float64(a.In)*p.In +
+		float64(a.CacheCreate)*p.cacheWrite() +
+		float64(a.CacheRead)*p.cacheRead() +
+		float64(a.Out)*p.Out
+	return usd / 1_000_000, src, true
 }

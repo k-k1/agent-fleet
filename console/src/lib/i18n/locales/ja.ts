@@ -4040,12 +4040,23 @@ export const ja = {
   "usage.cost_measured": "実測 {v}（claude の補助呼び出しのみ）",
   "usage.cost_unpriced_hint":
     "このモデルの公表単価を持っていないため、金額を推定していません（消費 0 ではありません）。",
+  "usage.price_line": "単価 {in} / {out}（100万トークンあたり・入力/出力）。",
+  "usage.price_src_builtin": "出所: 内蔵の単価表（Anthropic 公表値）。",
+  "usage.price_src_catalog": "出所: models.dev のカタログ（{ref}）。",
+  "usage.price_ambiguous": "同じモデル名でもエージェントによって単価が違います（表示は消費の多い方）。",
+  "usage.catalog_note":
+    "単価カタログ: models.dev（{n} モデル・取得 {when}）。カタログが更新されると過去の推定額も変わります。",
+  "usage.catalog_origin_opencode": "opencode が保持しているカタログを読んでいます（こちらからは更新しません）。",
+  "usage.catalog_origin_file": "ワークスペースに置かれたカタログを読んでいます。",
+  "usage.catalog_origin_env": "AF_USAGE_CATALOG で指定されたカタログを読んでいます。",
   "usage.kpi_unmeasured": "未計測の呼び出し",
   "usage.kpi_unmeasured_hint":
     "トークンを報告しないエージェントの呼び出し回数です。消費 0 ではなく「測れていない」ことを表します。",
   "usage.coverage_title": "計測できている範囲",
   "usage.coverage_unmeasured": "{n} 件はトークンを報告しないため、回数だけ数えています（消費 0 ではありません）。",
   "usage.coverage_unpriced": "消費の {pct}%（{n} トークン）は単価を持っていないモデルで走っており、推定額には入っていません。",
+  "usage.coverage_unpriced_sub1":
+    "消費の 1% 未満（{n} トークン）は単価を持っていないモデルで走っており、推定額には入っていません。",
   "usage.cov_tokens_exact": "トークン: 完全",
   "usage.cov_tokens_partial": "トークン: 一部のみ",
   "usage.cov_tokens_none": "トークン: 取得不可",
