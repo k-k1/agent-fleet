@@ -135,12 +135,39 @@ type usageSeriesResp struct {
 	Matrix          map[string]map[string]usageAgg `json:"matrix,omitempty"`
 	Coverage        map[string]usageCoverage       `json:"coverage"`
 	UnmeasuredCalls int                            `json:"unmeasured_calls"`
+	// PricedSpend / UnpricedSpend は「推定額をいくらぶんの消費から起こせたか」の申告
+	// （usage_price.go）。推定額だけを出すと、単価表に無いモデルの消費が黙って抜けた
+	// 合計を「API 換算相当額」として読ませてしまう。
+	PricedSpend   int `json:"priced_spend"`
+	UnpricedSpend int `json:"unpriced_spend"`
+	// Prices は**この応答に出てくるモデルに使った単価**（モデル名 → 実効単価と出所）。
+	// 金額の検算にはどこの単価かが要る。集計値には持たせない（軸で畳むと混ざる）。
+	Prices map[string]usagePriceWire `json:"prices,omitempty"`
+	// Catalog はカタログの申告（無ければ省略）。
+	Catalog *usageCatalogMeta `json:"catalog,omitempty"`
 	// Truncated は要求期間の一部が raw の保持期間より古く、hour バケットでは復元できな
 	// かったことを示す。黙って短い系列を返すと「その期間は消費が無かった」に見える。
 	Truncated bool `json:"truncated,omitempty"`
 	// Folding は「セッション本体の折り込みがこの読み出しの時点で走っている」＝この応答は
 	// 直近ターンをまだ含まないかもしれない、の申告。Console はこれが落ちるまで取り直す。
 	Folding bool `json:"folding,omitempty"`
+}
+
+// usagePriceWire は応答の prices[model]。値は**実効単価**（キャッシュ単価が出所に無ければ
+// 倍率で置いた後の値）＝画面に出した金額をそのまま検算できる形にする。
+type usagePriceWire struct {
+	Src        string  `json:"src"` // builtin | catalog:<provider>/<model>
+	In         float64 `json:"in"`  // $/1M
+	Out        float64 `json:"out"` // $/1M
+	CacheRead  float64 `json:"cread"`
+	CacheWrite float64 `json:"cwrite"`
+	// Ambiguous は「同じモデル名でも kind によって単価が違う」（例: gpt-5.6-luna を
+	// codex は openai 定価・opencode はゲートウェイ価格で換算する）。1つの行に単価を
+	// 1つしか出せないので、違うことだけは言う。
+	Ambiguous bool `json:"ambiguous,omitempty"`
+	// Spend は代表として採った側の消費（大きい方を出す — 小さい方の単価を代表に
+	// してしまうと、表の金額と単価が噛み合わなく見える）。
+	spend int
 }
 
 // usageSample は集計の入力単位（rollup の1エントリ、または raw をバケット内で畳んだもの）。
@@ -230,12 +257,24 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 			byBucket[s.T] = map[string]usageAgg{}
 			order = append(order, s.T)
 		}
+		// 推定額はここで載せる（保存しない）。サンプルはまだモデル次元を持っている＝
+		// どの軸で畳んだ後でも足し合わせが効く形になるのは、畳む前のこの位置だけ。
+		// 単価は kind でも変わる（同じモデルでも通った provider が違う）ので、
+		// **kind を落とす前**のここで引くこと。
+		agg := s.Agg
+		if est, src, priced := usageEstCostUSD(s.Key.Kind, s.Key.Model, agg); priced {
+			agg.CostEstUSD = est
+			resp.PricedSpend += agg.Spend
+			resp.notePrice(s.Key, src, agg.Spend)
+		} else {
+			resp.UnpricedSpend += agg.Spend
+		}
 		k := usageDimValue(s.Key, by)
 		a := byBucket[s.T][k]
-		a.add(s.Agg)
+		a.add(agg)
 		byBucket[s.T][k] = a
 
-		resp.Totals.add(s.Agg)
+		resp.Totals.add(agg)
 
 		if split != "" {
 			if resp.Matrix == nil {
@@ -246,14 +285,15 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 			}
 			sv := usageDimValue(s.Key, split)
 			m := resp.Matrix[k][sv]
-			m.add(s.Agg)
+			m.add(agg)
 			resp.Matrix[k][sv] = m
 		}
 		if s.Key.Measured == usageMeasuredNone {
-			resp.UnmeasuredCalls += s.Agg.Calls
+			resp.UnmeasuredCalls += agg.Calls
 		}
 		observeUsageCoverage(resp.Coverage, s.Key)
 	}
+	resp.Catalog = usageCatalogInfo()
 	sort.Strings(order)
 	// 消費の無いバケットもゼロで埋める。落とすと「離れた2日」が隣り合う棒として描かれ、
 	// 時間軸として読めなくなる（4日空いたのか連続なのかが絵から消える）。
@@ -267,6 +307,42 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 		resp.Buckets = append(resp.Buckets, usageBucketWire{T: t, Series: s})
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+// notePrice はこの応答で使った単価を model 単位に集める。**同じモデル名でも kind が
+// 違えば単価が違う**（gpt-5.6-luna を codex は openai 定価、opencode はゲートウェイ価格で
+// 引く）ので、衝突したら消費の大きい方を代表にし、違うことを ambiguous で申告する
+// （画面のモデル行は kind を持たないので、単価を1つしか出せない）。
+func (r *usageSeriesResp) notePrice(k usageKey, src string, spend int) {
+	if k.Model == "" || src == "" {
+		return
+	}
+	if r.Prices == nil {
+		r.Prices = map[string]usagePriceWire{}
+	}
+	cur, seen := r.Prices[k.Model]
+	if seen && cur.Src == src {
+		cur.spend += spend
+		r.Prices[k.Model] = cur
+		return
+	}
+	p, _, ok := usagePriceOf(k.Kind, k.Model)
+	if !ok {
+		return
+	}
+	next := usagePriceWire{
+		Src: src, In: p.In, Out: p.Out, CacheRead: p.cacheRead(), CacheWrite: p.cacheWrite(),
+		Ambiguous: seen, spend: spend,
+	}
+	if seen {
+		if cur.spend >= spend { // 代表は据え置き。ambiguous だけ立てる
+			cur.Ambiguous = true
+			r.Prices[k.Model] = cur
+			return
+		}
+		next.spend = spend
+	}
+	r.Prices[k.Model] = next
 }
 
 // usageMaxFilledBuckets はゼロ埋めの上限。これを超える密度の系列は棒グラフとして読めない

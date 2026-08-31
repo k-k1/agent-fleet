@@ -3885,7 +3885,7 @@ export const en: Record<keyof typeof ja, string> = {
   "set.title": "Settings",
   "set.tab_display": "Display",
   "set.tab_keys": "Keyboard",
-  "set.tab_usage": "Usage",
+  "set.tab_usage": "Agent usage",
   "set.tab_memory": "Agent memory",
   "set.tab_env": "Toolchains",
   "set.tab_agents": "Agents",
@@ -3951,7 +3951,7 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.metric_spend": "Tokens spent",
   "usage.metric_calls": "Calls",
   "usage.metric_cread": "Cache read",
-  "usage.metric_cost": "API-equivalent cost",
+  "usage.metric_cost": "API-equivalent cost (est.)",
   "usage.reload": "Reload",
   "usage.folding": "Catching up",
   "usage.folding_hint":
@@ -3971,7 +3971,7 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.col_spend": "Spend",
   "usage.calls_shared": "This call split across models (counted once, on the model that consumed most)",
   "usage.col_avg": "Per call",
-  "usage.col_cost": "Cost",
+  "usage.col_cost": "Est. cost",
   "usage.breakdown_feature": "By feature",
   "usage.breakdown_kind": "By agent",
   "usage.breakdown_model": "By model",
@@ -3984,12 +3984,29 @@ export const en: Record<keyof typeof ja, string> = {
   "usage.kpi_cread": "Cache read",
   "usage.kpi_cost": "API-equivalent cost",
   "usage.kpi_cost_hint":
-    "Only claude reports a measured cost. On a flat subscription this will not match your bill, so it is shown as a secondary figure.",
+    "An estimate: tokens × published API list prices (cache writes ×1.25, cache reads ×0.1). What this consumption would have cost through the API — on a flat subscription it is not what you are billed.",
+  "usage.cost_est_hint":
+    "Estimated from tokens × the model's published API list price. Not a measured cost.",
+  "usage.cost_measured": "Measured: {v} (claude auxiliary calls only)",
+  "usage.cost_unpriced_hint":
+    "No published price is on file for this model, so no amount is estimated (this is not a cost of 0).",
+  "usage.price_line": "Rate {in} / {out} per 1M tokens (input/output).",
+  "usage.price_src_builtin": "Source: the built-in table (Anthropic's published rates).",
+  "usage.price_src_catalog": "Source: the models.dev catalog ({ref}).",
+  "usage.price_ambiguous": "The same model name costs different amounts per agent (the busier one is shown).",
+  "usage.catalog_note":
+    "Price catalog: models.dev ({n} models, fetched {when}). Past estimates change when the catalog does.",
+  "usage.catalog_origin_opencode": "Read from the catalog opencode keeps (we never update it).",
+  "usage.catalog_origin_file": "Read from a catalog placed in this workspace.",
+  "usage.catalog_origin_env": "Read from the catalog named by AF_USAGE_CATALOG.",
   "usage.kpi_unmeasured": "Unmeasured calls",
   "usage.kpi_unmeasured_hint":
     "Calls made by agents that don't report tokens. This is “not measured”, not “spent nothing”.",
   "usage.coverage_title": "What is measurable",
   "usage.coverage_unmeasured": "{n} calls report no tokens, so only their count is known (this is not a spend of 0).",
+  "usage.coverage_unpriced": "{pct}% of the consumption ({n} tokens) runs on models with no price on file, so it is left out of the estimated amount.",
+  "usage.coverage_unpriced_sub1":
+    "Under 1% of the consumption ({n} tokens) runs on models with no price on file, so it is left out of the estimated amount.",
   "usage.cov_tokens_exact": "Tokens: complete",
   "usage.cov_tokens_partial": "Tokens: partial",
   "usage.cov_tokens_none": "Tokens: unavailable",
