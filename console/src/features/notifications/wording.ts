@@ -8,6 +8,26 @@ export interface NotificationWordingInput {
   payload: Record<string, unknown>;
 }
 
+// scheduleFailureReason turns the ledger's short status token into something a reader can
+// act on. The soft skips have a fixed set of causes, each with its own next step; a hard
+// failure carries the actual message after "error:" and that text IS the answer to "why
+// didn't it run", so it is passed through rather than flattened to a generic sentence.
+function scheduleFailureReason(status: string): string {
+  switch (status) {
+    case "skipped_quota":
+      return t("notif.schedule.reason_quota");
+    case "skipped_rate_limited":
+      return t("notif.schedule.reason_rate_limited");
+    case "skipped_membership_inactive":
+      return t("notif.schedule.reason_membership");
+    case "skipped_target_missing":
+      return t("notif.schedule.reason_target_missing");
+    case "skipped_overlap":
+      return t("notif.schedule.reason_overlap");
+  }
+  return status.startsWith("error:") ? status.slice("error:".length).trim() : "";
+}
+
 export function notificationWording(n: NotificationWordingInput): { title: string; body: string; speech: string } {
   const name = n.displayName || t("notif.default_name");
   if (n.kind === "answer-ready") return { title: t("notif.answer_ready.title"), body: name, speech: t("notif.answer_ready.speech", { name }) };
@@ -79,6 +99,21 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
   if (n.kind === "handoff-expired") {
     // 受領されないまま失効した。理由は求めない代わりに「宙に浮いた」ことだけは知らせる。
     return { title: t("notif.handoff_expired.title"), body: name, speech: t("notif.handoff_expired.speech") };
+  }
+  if (n.kind === "schedule-failed" || n.kind === "schedule-skipped") {
+    // 定時実行が届かなかった（docs/log/38）。⚠️ この分岐が無かった間、schedule-* は末尾の
+    // usage-reset へ落ちていた——通知センターにも OS 通知にも読み上げにも「利用上限が
+    // リセットされました」と出ており、**通知は届いているのに中身が別の出来事**だった。
+    // 未知の kind を最後の分岐へ落とす構造そのものが原因なので、新しい kind を足すときは
+    // ここも足す。
+    const label = String(n.payload.spec_label || name);
+    const reason = scheduleFailureReason(String(n.payload.status || ""));
+    const title = n.kind === "schedule-failed" ? t("notif.schedule_failed.title") : t("notif.schedule_skipped.title");
+    const speech =
+      n.kind === "schedule-failed"
+        ? t("notif.schedule_failed.speech", { name: label })
+        : t("notif.schedule_skipped.speech", { name: label });
+    return { title, body: reason ? t("notif.schedule.body_reason", { name: label, reason }) : label, speech };
   }
   if (n.kind === "rate-limit-reached") {
     return {

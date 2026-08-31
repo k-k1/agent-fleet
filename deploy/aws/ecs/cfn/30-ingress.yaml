@@ -249,6 +249,53 @@ Parameters:
       Default size of a user's persistent home volume (gp3). Unlike EFS this is billed
       as PROVISIONED ($0.096/GB-month vs EFS $0.36 for what you use), so the break-even
       fill rate is 26.7% — do not hand out volumes far larger than people fill.
+  # --- Scheduled execution (docs/log/38) ------------------------------------
+  # ⚠️ EMPTY means "keep the product default" for all four. The defaults live in the CP
+  # (control-plane/main.go); copying them here would freeze this deployment on whatever
+  # they were the day the stack was written. Until these existed the values could not be
+  # set on an ECS deployment at all (a hand-edited task definition is overwritten by the
+  # next deploy) -- the same gap Ec2HibernateAfterSec closed.
+  SchedulerInterval:
+    Type: String
+    Default: ""
+    Description: >-
+      Tick cadence of the scheduled-execution loop (Go duration, default 1m). "0"
+      hard-disables timed execution: nothing is ever woken by the clock, the Console
+      hides the Schedules section and the operator warns that a schedule will never
+      fire. Set it only if unattended wakes are unwanted for cost or policy reasons; the
+      tick is one indexed due-query and is a no-op while no schedule exists.
+  ScheduleWakeTimeout:
+    Type: String
+    Default: ""
+    Description: >-
+      How long one fire waits for the woken workspace's Agent to answer (Go duration,
+      default 300s = the window the platform already grants a boot to call itself
+      "starting").
+      ⚠️ Do not lower this on ecs-ec2 without measuring. The clock starts at the WAKE,
+      ~20s before the adapter's own "Agent healthy Ns after Start" clock (the slot's
+      StartInstances, ECS registration and mount run in the background convergence), so
+      the budget is tighter than that log line reads. Measured: the SAME workspace took
+      65-131s on consecutive mornings, so a budget inside that spread makes a stopped
+      workspace's morning fire land or drop at random (docs/log/38, docs/log/64). A miss
+      is retried for 15 minutes, but each retry re-wakes the workspace.
+  ScheduleSettle:
+    Type: String
+    Default: ""
+    Description: >-
+      How long a workspace woken by a schedule is held up afterwards so the reaper
+      cannot stop it out from under the session it just started (Go duration, default
+      5m). Also covers auto-turn follow-ups and a user opening the Console right after.
+  ScheduleJitter:
+    Type: String
+    Default: ""
+    Description: >-
+      Maximum deterministic spread applied to CRON fires so that everyone whose schedule
+      says 09:00 does not wake at once (Go duration, default 2m; "0" = fire on the exact
+      slot). Derived from the schedule id, so it is stable across restarts and next_run,
+      the read-back confirmation and {{time}} keep showing the requested time. On
+      ecs-ec2 every wake is also a slot, so keep some spread if many people share one
+      morning hour.
+
   # --- WAF (optional, OFF by default) ---------------------------------------
   # ⚠️ ONLY rate limiting and IP reputation. The signature rule sets (Core rule
   # set, SQLi, XSS, LFI) are deliberately NOT offered here: this product carries
@@ -483,6 +530,12 @@ Conditions:
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
   HasPreviewDomain: !Not [ !Equals [ !Ref PreviewDomain, "" ] ]
+  # Scheduled execution: each knob is passed ONLY when the operator set it, so an unset
+  # parameter means "whatever the CP's own default is" rather than a copy frozen here.
+  HasSchedulerInterval: !Not [ !Equals [ !Ref SchedulerInterval, "" ] ]
+  HasScheduleWakeTimeout: !Not [ !Equals [ !Ref ScheduleWakeTimeout, "" ] ]
+  HasScheduleSettle: !Not [ !Equals [ !Ref ScheduleSettle, "" ] ]
+  HasScheduleJitter: !Not [ !Equals [ !Ref ScheduleJitter, "" ] ]
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
 
@@ -762,6 +815,11 @@ Resources:
             - { Name: AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC, Value: !Ref Ec2SlotTerminateAfterSec }
             - { Name: AF_ECS_EC2_HIBERNATE_AFTER_SEC, Value: !Ref Ec2HibernateAfterSec }
             - { Name: AF_ECS_EC2_HOME_GB, Value: !Ref Ec2HomeGiB }
+            # --- Scheduled execution (docs/log/38). Unset = the CP's own default. ---
+            - !If [ HasSchedulerInterval, { Name: AF_SCHEDULER_INTERVAL, Value: !Ref SchedulerInterval }, !Ref "AWS::NoValue" ]
+            - !If [ HasScheduleWakeTimeout, { Name: AF_SCHEDULE_WAKE_TIMEOUT, Value: !Ref ScheduleWakeTimeout }, !Ref "AWS::NoValue" ]
+            - !If [ HasScheduleSettle, { Name: AF_SCHEDULE_SETTLE, Value: !Ref ScheduleSettle }, !Ref "AWS::NoValue" ]
+            - !If [ HasScheduleJitter, { Name: AF_SCHEDULE_JITTER, Value: !Ref ScheduleJitter }, !Ref "AWS::NoValue" ]
             # Start returns as soon as the service is at desiredCount 1; the Agent
             # readiness poll runs in the background for the log line only, on the
             # AF_ECS_START_TIMEOUT_SEC budget (default 300s). Nothing waits on it,

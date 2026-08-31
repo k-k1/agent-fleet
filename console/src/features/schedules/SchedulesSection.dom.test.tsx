@@ -9,9 +9,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { t } from "../../lib/i18n/index.ts";
 
 const scheduleList = vi.fn();
+const scheduleRuns = vi.fn(async () => ({ runs: [] }));
 vi.mock("./api.ts", () => ({
   scheduleList: (...a: unknown[]) => scheduleList(...a),
-  scheduleRuns: vi.fn(async () => ({ runs: [] })),
+  scheduleRuns: (...a: unknown[]) => scheduleRuns(...(a as [])),
   schedulePause: vi.fn(),
   scheduleResume: vi.fn(),
   scheduleRunNow: vi.fn(),
@@ -115,5 +116,30 @@ describe("SchedulesSection load failures", () => {
     expect(scheduleList).toHaveBeenCalledTimes(2);
     expect(failed()).toBe(false);
     expect(rows()).toBe(1);
+  });
+});
+
+// 通知センターからの導線（docs/log/38）。定時実行が落ちたことは通知にしか出ず、
+// 「なぜ動かなかったのか」は行の**実行履歴**にしか無い。だから reveal の行き先は
+// 「行を選ぶ」ではなく「節を開いて履歴を開く」でなければならない。
+describe("SchedulesSection reveal", () => {
+  it("節が畳まれていても開いて、その行の実行履歴を読み込む", async () => {
+    localStorage.setItem("af-section-schedules", "0"); // 利用者が畳んでいた状態
+    scheduleList.mockResolvedValue([sched]);
+    scheduleRuns.mockClear();
+    await render();
+    expect(host.querySelector(".sched-list")).toBeNull(); // 畳まれている＝本文は無い
+
+    const { useSchedulesStore } = await import("./store.ts");
+    await act(async () => {
+      useSchedulesStore.getState().revealSchedule("sch_1");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(host.querySelector(".sched-list")).not.toBeNull();
+    expect(scheduleRuns).toHaveBeenCalledWith("sch_1");
+    expect(host.querySelector('[data-sched-id="sch_1"]')).not.toBeNull();
+    localStorage.removeItem("af-section-schedules");
   });
 });
