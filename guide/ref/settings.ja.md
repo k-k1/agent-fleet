@@ -66,7 +66,7 @@ updated: "2026-08"
 ## 配備の変数
 
 Control Plane の起動前に設定します。注釈つきの一覧は
-[deploy/compose/.env.example](../../deploy/compose/.env.example) で、**既定値の正は
+`deploy/compose/.env.example` で、**既定値の正は
 そちら**です。ここに挙げるのは「他の全部の形を決めてしまう」ものだけ:
 
 | 変数 | 決めるもの |

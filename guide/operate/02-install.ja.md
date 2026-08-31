@@ -27,7 +27,7 @@ updated: "2026-08"
 
 `deploy/compose/.env.example` を `.env` にコピーして編集します（コマンドは runbook の "Quick start"）。
 `.env` は git 管理外で、ここが**設定の単一ソース**です。各変数の意味・生成手順・注釈は
-[.env.example](../../deploy/compose/.env.example) 自体に詳しく書いてあります。索引が欲しいときは
+`deploy/compose/.env.example` 自体に詳しく書いてあります。索引が欲しいときは
 `docs/build/09-deploy.ja.md` §9.4 を参照してください。
 
 構築時に必ず埋める主なものは、公開 URL（`PUBLIC_DOMAIN` / `PUBLIC_BASE_URL`）、ログイン IdP の

@@ -67,7 +67,7 @@ value you set is not the value in force, look one layer out.
 ## Deployment variables
 
 Set before the Control Plane starts. The annotated list is
-[deploy/compose/.env.example](../../deploy/compose/.env.example), which stays the
+`deploy/compose/.env.example`, which stays the
 source of truth for defaults; these are the ones that decide the shape of everything
 else:
 

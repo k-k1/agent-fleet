@@ -11,7 +11,7 @@
 # afterwards:
 #
 #   - the workspace image is the LEAN variant (BAKE_AGENT_CLIS=0)
-#   - the CP image's docs come from a STAGED tree with docs/.distinclude applied
+#   - the CP image's docs come from a STAGED tree holding the user guide only
 #
 # Getting the first one wrong produces a working image that is a different product
 # (measured once — docs/log/70 §70.14.2). Getting the second wrong ships internal documents.
@@ -129,7 +129,7 @@ git clone --depth 1 --branch "${REF}" "${GIT_REPO}" repo || { say "clone|FAIL"; 
 cd repo
 say "head|\$(git rev-parse --short HEAD)"
 
-# The real release path: lean workspace + docs staged through .distinclude.
+# The real release path: lean workspace + docs staged from guide/.
 s=\$SECONDS
 if VERSION="${TAG}" bash deploy/compose/release.sh >/tmp/b.log 2>&1; then
   say "build|\$((SECONDS-s))"

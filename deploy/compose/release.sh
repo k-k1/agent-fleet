@@ -13,9 +13,9 @@
 # Distribution variants (docs/log/35 §35.4.1/§35.4.3): by default
 #   - workspace is lean (BAKE_AGENT_CLIS=0; agent CLIs are pin-installed at start).
 #     The fully-baked internal build must be requested with BAKE_AGENT_CLIS=1.
-#   - CP docs come from a staged tree holding only the shelves on the allowlist
-#     (docs/.distinclude) — the decision records and the frozen work journals are
-#     never shipped.
+#   - CP docs come from a staged tree holding only the user guide (guide/) — the
+#     developer documentation, the decision records and the frozen work journals
+#     are never shipped (ADR 0064).
 #
 #   VERSION=1.0.0 deploy/compose/release.sh            # build images + bundle (A+D)
 #   VERSION=1.0.0 deploy/compose/release.sh --push     # + push images to $REGISTRY (ADR 0037)
@@ -91,8 +91,8 @@ OUT="$DIST/agent-fleet-$VERSION"
 rm -rf "$OUT"; mkdir -p "$OUT"
 
 if [ "$DO_BUILD" = 1 ]; then
-  # Bake the distribution image's docs from a staged tree holding only the shelves on
-  # the allowlist (docs/.distinclude). The stage must live inside the build context
+  # Bake the distribution image's docs from a staged tree holding only the user guide
+  # (guide/, via stage-docs.sh). The stage must live inside the build context
   # (repo root), so it goes in deploy/release/.docs-stage (gitignored).
   DOCS_STAGE_REL="deploy/release/.docs-stage"
   DOCS_STAGE="$ROOT/$DOCS_STAGE_REL"

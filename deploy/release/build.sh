@@ -7,7 +7,7 @@
 #               D: SHA256SUMS). Delegates to deploy/compose/release.sh. Builds B
 #               (docker save) by default to satisfy the P1 gate (A+B+D). Images
 #               are the distribution variant (workspace: BAKE_AGENT_CLIS=0 lean /
-#               CP: docs allowlist (.distinclude) applied).
+#               CP: docs staged from guide/ only).
 #   --native  … C (native tar) + R (lean rootfs) — docs/log/35 §35.7.2-7.
 #   --bundle-rootfs     … with --native, also produce the self-contained variant
 #                          bundling R (-bundle tar).

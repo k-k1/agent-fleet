@@ -189,7 +189,7 @@ Control Plane を公開ホスト名で出すと、**数時間のうちに脆弱�
   のときだけ自動で起こします。**ターミナルを開いても起動しませんし、閲覧や Console のリロードでも
   起動しません**（「停止しています。起動してください」を返します）。開きっぱなしのタブが Workspace を
   温め続けることはありません。
-  資源の節約に有効です。env の意味は [.env.example](../../deploy/compose/.env.example)、仕組みは
+  資源の節約に有効です。env の意味は `deploy/compose/.env.example`、仕組みは
   `docs/build/09-deploy.ja.md` §9.4。
 - **force-stop（力業）**: `docker compose down` では**ユーザーの Workspace は止まりません**（compose
   管理外）。特定の Workspace を確実に止めたいときは、super_admin が Console の Admin パネルから

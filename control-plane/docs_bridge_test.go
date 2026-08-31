@@ -97,59 +97,36 @@ func tarNames(t *testing.T, body []byte) map[string]bool {
 	return names
 }
 
-// The bridge must hand a container exactly what the bind-mount would have staged for
-// that role — the leak this whole mechanism exists to prevent is a member pulling the
-// internal decision/history docs.
-func TestDocsBridgeRoleScoping(t *testing.T) {
+// The bridge must hand a container exactly what the bind-mount would have staged: the
+// guide, and the same guide for every role (ADR 0064). The leak this mechanism still
+// exists to prevent is the developer tree — the decision records and the frozen work
+// journals — which no role and no shape of request can reach.
+func TestDocsBridgeServesTheGuideToEveryRole(t *testing.T) {
 	e := newDocsTestEnv(t)
-	cases := []struct {
-		role       string
-		wantHave   []string
-		wantAbsent []string
-	}{
-		{
-			role:     "member",
-			wantHave: []string{"use/02-sessions.md", "ref/agents.md"},
-			wantAbsent: []string{
-				"admin/02-limits.md", "operate/01-install.md", "build/04-workspace-agent.md",
-				"dev/04-workspace-agent.md",
-				"decisions/0011-console.md", "log/p3-10.md",
-			},
-		},
-		{
-			role:     "tenant_admin",
-			wantHave: []string{"use/02-sessions.md", "admin/02-limits.md"},
-			wantAbsent: []string{
-				"operate/01-install.md", "build/04-workspace-agent.md",
-				"decisions/0011-console.md", "log/p3-10.md",
-			},
-		},
-		{
-			role:     "super_admin",
-			wantHave: []string{"use/02-sessions.md", "operate/01-install.md", "build/04-workspace-agent.md"},
-			// Even the highest role is an allowlist: the decision records and the
-			// frozen journals are served to nobody.
-			wantAbsent: []string{
-				"decisions/0011-console.md", "log/p3-10.md", "dev/04-workspace-agent.md",
-			},
-		},
+	want := []string{
+		"member/02-sessions.md", "ref/agents.md", "admin/02-limits.md",
+		"operate/01-install.md",
 	}
-	for _, c := range cases {
-		t.Run(c.role, func(t *testing.T) {
-			mid := e.addMembership(t, "t-"+c.role, c.role)
+	absent := []string{
+		"build/04-workspace-agent.md", "decisions/0011-console.md", "log/p3-10.md",
+		"dev/04-workspace-agent.md",
+	}
+	for _, role := range []string{"member", "tenant_admin", "super_admin"} {
+		t.Run(role, func(t *testing.T) {
+			mid := e.addMembership(t, "t-"+role, role)
 			w := e.do(mintDocsToken(e.signKey, mid))
 			if w.Code != http.StatusOK {
 				t.Fatalf("want 200 got %d (%s)", w.Code, w.Body.String())
 			}
 			names := tarNames(t, w.Body.Bytes())
-			for _, f := range c.wantHave {
+			for _, f := range want {
 				if !names[f] {
-					t.Errorf("role %s: expected %s present, got %v", c.role, f, names)
+					t.Errorf("role %s: expected %s present, got %v", role, f, names)
 				}
 			}
-			for _, f := range c.wantAbsent {
+			for _, f := range absent {
 				if names[f] {
-					t.Errorf("role %s: LEAK — %s must not be served, got %v", c.role, f, names)
+					t.Errorf("role %s: LEAK — %s must not be served, got %v", role, f, names)
 				}
 			}
 		})

@@ -623,7 +623,7 @@ func (n *nativeRuntime) processEnv(home, claudeCfg string) []string {
 	if tz := os.Getenv("TZ"); tz != "" {
 		env["TZ"] = tz
 	}
-	// Role-scoped docs staged by the CP (stageWorkspaceDocs); the agent's fixed
+	// The user guide staged by the CP (stageWorkspaceDocs); the agent's fixed
 	// container path is overridden via AGENT_DOCS_DIR (agent fs.go — NOT the
 	// CP-side AF_DOCS_DIR, which names the staging source).
 	if docs := filepath.Join(n.dataDir, "docs"); isDirPath(docs) {

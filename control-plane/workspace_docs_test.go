@@ -6,22 +6,25 @@ import (
 	"testing"
 )
 
-// buildDocsSrc lays out a miniature docs/ tree mirroring the real layout.
+// buildDocsSrc lays out a miniature source tree mirroring the real layout.
 func buildDocsSrc(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	files := []string{
-		// Shelves, cut by reader (docs/CONVENTIONS.md).
-		"use/02-sessions.md",
+		// The guide — shipped to every container, the same for everyone (ADR 0064).
+		"member/02-sessions.md",
 		"ref/agents.md",
 		"admin/02-limits.md",
 		"operate/01-install.md",
+		"assets/architecture.drawio",
+		// The developer tree. In production these are not even baked into the CP
+		// image (stage-docs.sh copies guide/ only), but a local dev CP can be pointed
+		// at a wider AF_DOCS_DIR — so the staging code must refuse them on its own.
 		"build/04-workspace-agent.md",
-		// Shipped to nobody, whatever the role.
 		"decisions/0011-console.md",
 		"log/p3-10.md",
-		// The legacy shelves are gone entirely: guide/member became use/,
-		// guide/admin became admin/, guide/operator became operate/, dev became build/.
+		"CONVENTIONS.md",
+		// A shelf that no longer exists anywhere.
 		"dev/04-workspace-agent.md",
 	}
 	for _, f := range files {
@@ -51,109 +54,65 @@ func staged(t *testing.T, destRoot string) map[string]bool {
 	return got
 }
 
-func TestStageWorkspaceDocs_RoleScoping(t *testing.T) {
+// Every container receives the same tree, whatever the caller's role: role-scoped
+// distribution was dropped in ADR 0064 because it was never a permission boundary and
+// it made a link inside the guide resolve for some readers and not others.
+//
+// What must still never appear is the developer tree. That is the assertion worth
+// keeping: the image is built without it, and this is the second line of defence for a
+// dev CP pointed at a wider AF_DOCS_DIR.
+func TestStageWorkspaceDocs_ShipsTheGuideOnly(t *testing.T) {
 	src := buildDocsSrc(t)
 	t.Setenv("AF_DOCS_DIR", src)
 
-	cases := []struct {
-		role       string
-		wantHave   []string
-		wantAbsent []string
-	}{
-		{
-			role:     "member",
-			wantHave: []string{"use/02-sessions.md", "ref/agents.md"},
-			// A member gets the new shelves and nothing else — not even the legacy
-			// dev/ docs, which used to be handed out to everyone.
-			wantAbsent: []string{
-				"admin/02-limits.md", "operate/01-install.md", "build/04-workspace-agent.md",
-				"dev/04-workspace-agent.md",
-				"decisions/0011-console.md", "log/p3-10.md",
-			},
-		},
-		{
-			role:     "tenant_admin",
-			wantHave: []string{"use/02-sessions.md", "ref/agents.md", "admin/02-limits.md"},
-			// No legacy shelf reaches anybody now.
-			wantAbsent: []string{
-				"operate/01-install.md", "build/04-workspace-agent.md",
-				"dev/04-workspace-agent.md",
-				"decisions/0011-console.md", "log/p3-10.md",
-			},
-		},
-		{
-			role: "super_admin",
-			wantHave: []string{
-				"use/02-sessions.md", "ref/agents.md", "admin/02-limits.md",
-				"operate/01-install.md", "build/04-workspace-agent.md",
-			},
-			// super_admin is an allowlist too — "the whole tree" is not a case any
-			// more. The frozen journals, the decision records and the retired legacy
-			// shelves go to nobody.
-			wantAbsent: []string{
-				"decisions/0011-console.md", "log/p3-10.md", "dev/04-workspace-agent.md",
-			},
-		},
-		{
-			role:     "bogus-role", // unknown → least privilege (member)
-			wantHave: []string{"use/02-sessions.md", "ref/agents.md"},
-			wantAbsent: []string{
-				"admin/02-limits.md", "operate/01-install.md", "build/04-workspace-agent.md",
-				"decisions/0011-console.md", "log/p3-10.md",
-			},
-		},
+	dataDir := t.TempDir()
+	if err := stageWorkspaceDocs(dataDir); err != nil {
+		t.Fatalf("stage: %v", err)
 	}
-	for _, c := range cases {
-		t.Run(c.role, func(t *testing.T) {
-			dataDir := t.TempDir()
-			if err := stageWorkspaceDocs(dataDir, c.role); err != nil {
-				t.Fatalf("stage: %v", err)
-			}
-			got := staged(t, dataDir)
-			for _, f := range c.wantHave {
-				if !got[filepath.FromSlash(f)] {
-					t.Errorf("role %s: expected %s present, staged=%v", c.role, f, got)
-				}
-			}
-			for _, f := range c.wantAbsent {
-				if got[filepath.FromSlash(f)] {
-					t.Errorf("role %s: expected %s ABSENT (leak), staged=%v", c.role, f, got)
-				}
-			}
-		})
+	got := staged(t, dataDir)
+
+	for _, f := range []string{
+		"member/02-sessions.md", "ref/agents.md", "admin/02-limits.md",
+		"operate/01-install.md", "assets/architecture.drawio",
+	} {
+		if !got[filepath.FromSlash(f)] {
+			t.Errorf("expected %s present, staged=%v", f, got)
+		}
+	}
+	for _, f := range []string{
+		"build/04-workspace-agent.md", "decisions/0011-console.md", "log/p3-10.md",
+		"CONVENTIONS.md", "dev/04-workspace-agent.md",
+	} {
+		if got[filepath.FromSlash(f)] {
+			t.Errorf("expected %s ABSENT (leak), staged=%v", f, got)
+		}
 	}
 }
 
-// A re-stage must fully replace the previous role's subset (e.g. after a role
-// downgrade), not merge into it. The member shelves remain; the shelves only an
-// operator may read must be removed.
+// A re-stage must fully REPLACE the previous contents, not merge into them — otherwise
+// a file removed upstream would live on in every container that had already staged it.
 func TestStageWorkspaceDocs_RestageReplaces(t *testing.T) {
 	src := buildDocsSrc(t)
 	t.Setenv("AF_DOCS_DIR", src)
 	dataDir := t.TempDir()
 
-	if err := stageWorkspaceDocs(dataDir, "super_admin"); err != nil {
+	if err := stageWorkspaceDocs(dataDir); err != nil {
 		t.Fatal(err)
 	}
-	if !staged(t, dataDir)[filepath.FromSlash("operate/01-install.md")] {
-		t.Fatal("super_admin should have the operate shelf")
+	// Something left over from an older image version.
+	stale := filepath.Join(dataDir, "docs", "member", "99-removed.md")
+	if err := os.WriteFile(stale, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	// Downgrade to member → the operator and admin shelves must be gone.
-	if err := stageWorkspaceDocs(dataDir, "member"); err != nil {
+	if err := stageWorkspaceDocs(dataDir); err != nil {
 		t.Fatal(err)
 	}
 	got := staged(t, dataDir)
-	if !got[filepath.FromSlash("use/02-sessions.md")] {
-		t.Error("re-stage as member must keep the use shelf")
+	if !got[filepath.FromSlash("member/02-sessions.md")] {
+		t.Error("re-stage must keep the member shelf")
 	}
-	if !got[filepath.FromSlash("ref/agents.md")] {
-		t.Error("re-stage as member must keep the shared reference shelf")
-	}
-	if got[filepath.FromSlash("operate/01-install.md")] {
-		t.Error("re-stage as member must drop the operate shelf")
-	}
-	if got[filepath.FromSlash("admin/02-limits.md")] {
-		t.Error("re-stage as member must drop the admin shelf")
+	if got[filepath.FromSlash("member/99-removed.md")] {
+		t.Error("re-stage must drop a file that is no longer in the source")
 	}
 }
 
@@ -161,7 +120,7 @@ func TestStageWorkspaceDocs_RestageReplaces(t *testing.T) {
 func TestStageWorkspaceDocs_NoSource(t *testing.T) {
 	t.Setenv("AF_DOCS_DIR", filepath.Join(t.TempDir(), "does-not-exist"))
 	dataDir := t.TempDir()
-	if err := stageWorkspaceDocs(dataDir, "member"); err != nil {
+	if err := stageWorkspaceDocs(dataDir); err != nil {
 		t.Fatalf("expected nil error on absent source, got %v", err)
 	}
 	if isDirPath(filepath.Join(dataDir, "docs")) {

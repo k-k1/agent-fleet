@@ -209,7 +209,7 @@ hours** (measured: 172 probes for `/actuator/heapdump`, `/.env` and friends in t
   reloading the Console**: those answer "the workspace is stopped — start it first", so a tab
   left open never keeps a Workspace warm. This is effective for
   saving resources. For the meaning of the env vars, see
-  [.env.example](../../deploy/compose/.env.example); for how it works, see
+  `deploy/compose/.env.example`; for how it works, see
   `docs/build/09-deploy.md` §9.4.
 - **force-stop (brute force)**: `docker compose down` **does not stop user Workspaces** (they
   are outside compose management). To stop a specific Workspace for sure, a super_admin

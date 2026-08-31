@@ -1,9 +1,9 @@
 package main
 
-// Docs bridge — the PULL face of the role-scoped agent-fleet docs (docs/build/04 §4.9).
+// Docs bridge — the PULL face of the agent-fleet user guide (docs/build/04 §4.9).
 //
 //	tenant member's container ──(AF_DOCS_TOKEN)──▶ CP GET /internal/docs  (tar.gz)
-//	                                                   │ role-scoped by the CP
+//	                                                   │ the guide, served by the CP
 //	                                          /usr/local/share/agent-fleet/docs
 //
 // Why this exists. docker / native hand the container its docs as a read-only bind
@@ -13,11 +13,11 @@ package main
 // an EMPTY docs dir — the Console's 利用ガイド opened nothing, and the in-container
 // agents had no docs to cite for environment questions. The container pulls instead.
 //
-// Role separation still happens on the CP, exactly as it does for the mount: the token
-// resolves to a membership, the membership's LIVE role picks the subtree, and the
-// response only ever carries what that role may read. Nothing in the request selects
-// scope, so a member cannot ask for a shelf above its role — and the decision records
-// and frozen work journals are on nobody's allowlist, so no role can ask for them.
+// What is served is decided entirely on the CP, exactly as it is for the mount: the
+// token proves the caller is an active membership, and the response then carries the
+// guide — the same tree for everyone (ADR 0064). **Nothing in the request selects
+// scope**, so there is no shape of request that reaches the developer tree; the
+// decision records and the frozen work journals are not baked into the image at all.
 //
 // The token is a SEPARATE credential from the memo / schedule / MCP / git tokens
 // (mcp_server_bridge.go and friends), so a leak is scoped to reading this member's own
@@ -97,8 +97,7 @@ func (a docsAPI) docsTokenMembership(r *http.Request) (MembershipView, *apiError
 	return mv, nil
 }
 
-// download (GET /internal/docs) streams the caller's role-permitted docs subset as a
-// tar.gz. A deployment with no baked docs answers 404 so the agent can say "this
+// download (GET /internal/docs) streams the guide as a tar.gz. A deployment with no baked docs answers 404 so the agent can say "this
 // deployment ships no docs" rather than silently unpacking an empty archive.
 func (a docsAPI) download(w http.ResponseWriter, r *http.Request) {
 	mv, aerr := a.docsTokenMembership(r)
@@ -115,7 +114,7 @@ func (a docsAPI) download(w http.ResponseWriter, r *http.Request) {
 	// Status and headers are committed the moment the first byte goes out, so a
 	// mid-stream failure can only be logged — the agent sees a truncated archive,
 	// refuses it (gzip/tar both detect the truncation) and keeps whatever it had.
-	if _, err := writeRoleDocsTarGz(w, mv.Role); err != nil {
-		log.Printf("docs bridge: stream (membership=%s role=%s): %v", mv.MembershipID, mv.Role, err)
+	if _, err := writeGuideTarGz(w); err != nil {
+		log.Printf("docs bridge: stream (membership=%s): %v", mv.MembershipID, err)
 	}
 }

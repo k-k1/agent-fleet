@@ -35,7 +35,7 @@ These do not vary by deployment.
 
 ## Set by the deployment
 
-Defaults come from [deploy/compose/.env.example](../../deploy/compose/.env.example),
+Defaults come from `deploy/compose/.env.example`,
 which stays the source of truth.
 
 | Limit | Default | Set by |

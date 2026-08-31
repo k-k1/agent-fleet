@@ -33,7 +33,7 @@ updated: "2026-08"
 
 ## 配備が決めるもの
 
-既定値は [deploy/compose/.env.example](../../deploy/compose/.env.example) が正です。
+既定値は `deploy/compose/.env.example` が正です。
 
 | 上限 | 既定 | 決める変数 |
 |---|---|---|

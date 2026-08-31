@@ -32,7 +32,7 @@ Before starting the build-out, confirm you have the 4 items listed under "Prereq
 Copy `deploy/compose/.env.example` to `.env` and edit it (the commands are in the runbook's
 "Quick start"). `.env` is outside git management and is the **single source of configuration**.
 The meaning of each variable, generation steps, and annotations are described in detail in
-[.env.example](../../deploy/compose/.env.example) itself. If you want an index, see
+`deploy/compose/.env.example` itself. If you want an index, see
 `docs/build/09-deploy.md` §9.4.
 
 The main values you must fill in at build time are the public URL (`PUBLIC_DOMAIN` /

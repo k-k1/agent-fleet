@@ -299,13 +299,22 @@ def check_anchors(files: list[str], f: Findings) -> None:
 # guide/ から外を指してよいリンク（プレフィックス -> 理由）。
 # ⚠️ 理由つきで明示する。ここに足す前に「読者はコンテナの中でそこへ辿り着けるのか」を
 # 確かめること——辿り着けないなら、それは例外ではなく直すべきリンクである。
+_RUNBOOK_REASON = (
+    "runbook は操作する対象の隣に置いてあり、リリースバンドルの中身そのもの。"
+    "deploy/release/stage-docs.sh が配布時に operate/runbooks/ へ複製し、"
+    "同時にこのリンクをそちらへ書き換えるので、GitHub では deploy/、"
+    "コンテナでは runbooks/ と、両方で生きたリンクになる"
+)
+# ⚠️ 個別のパスで持つ。以前ここは `deploy/` というプレフィックスだった——書き換えの
+# 対象は runbook 5 本だけなのに、`deploy/compose/.env.example` への 6 本まで一緒に
+# 免除してしまい、**配布物の中では死んでいるリンクが緑のまま**だった。
+# 例外は「なぜ届くのか」を 1 本ずつ説明できる形でしか持たない。
 CLOSURE_EXEMPT: dict[str, str] = {
-    "deploy/": (
-        "runbook は操作する対象の隣に置いてあり、リリースバンドルの中身そのもの。"
-        "deploy/release/stage-docs.sh が配布時に operate/runbooks/ へ複製し、"
-        "同時にこのリンクをそちらへ書き換えるので、GitHub では deploy/、"
-        "コンテナでは runbooks/ と、両方で生きたリンクになる"
-    ),
+    "deploy/compose/README.md": _RUNBOOK_REASON,
+    "deploy/native/README.md": _RUNBOOK_REASON,
+    "deploy/local/README-wsl.md": _RUNBOOK_REASON,
+    "deploy/aws/ecs/README.md": _RUNBOOK_REASON,
+    "deploy/aws/ec2-single/README.md": _RUNBOOK_REASON,
 }
 
 
@@ -335,7 +344,7 @@ def check_closure(files: list[str], f: Findings) -> None:
             if dest == GUIDE or dest.startswith(GUIDE + os.sep):
                 continue
             out = os.path.relpath(dest, ROOT).replace(os.sep, "/")
-            if any(out.startswith(k) for k in CLOSURE_EXEMPT):
+            if out in CLOSURE_EXEMPT:
                 continue
             f.error(
                 f"{src}: 配布物の外を指している -> {target}（{out}）"
