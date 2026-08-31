@@ -6,8 +6,8 @@ Audience: a tenant administrator reviewing what happened and what it cost
 Source of truth: the Console's tenant settings — if a screen disagrees with this page, the screen is right
 Updated: 2026-08
 
-The audit log lets you trace "who did what"; usage tallies "how much was used". Both are available
-from the tenant settings rail, scoped to your own tenant.
+The audit log lets you trace "who did what"; running time tallies "how much was used". Both are
+available from the tenant settings rail, scoped to your own tenant.
 
 ## Audit log ("Audit")
 
@@ -40,10 +40,10 @@ Therefore the audit log cannot trace "what exactly that member typed in the term
 trace is "when, who, against which file or session, made what kind of change". The design intent
 behind the recording scope is laid out in [dev/07 §7.7 Audit](../build/07-security.md).
 
-## Usage ("Usage")
+## Running time ("Running time")
 
-The **"Usage"** section tallies each member's **workspace running time**. Usage here means "how much
-infrastructure was occupied" — the time a workspace was up — not Claude fees. Claude is
+The **"Running time"** section tallies each member's **workspace running time**. What is counted is
+"how much infrastructure was occupied" — the time a workspace was up — not Claude fees. Claude is
 "bring your own" (BYO): each member logs in with their own subscription (seat), so the cost borne
 by the operator is the occupancy time. The value is sampled roughly every 5 minutes, so it is an
 approximation with some margin of error.
@@ -54,8 +54,8 @@ approximation with some margin of error.
 - **CSV** — the "CSV" button exports the data for the displayed period and scope as-is (usable for
   cost allocation — showback — and internal reporting).
 
-The option to switch tenants appears only for super_admin. Your usage screen is always scoped to
-your own tenant.
+The option to switch tenants appears only for super_admin. Your running-time screen is always scoped
+to your own tenant.
 
 ---
 
@@ -73,15 +73,15 @@ and the Console shows a "limit reached" message. Once they tidy up, they can con
 see "What members experience when a limit is hit" in [02-limits.md](02-limits.md).
 
 **Q. Can I only see my own tenant?**
-Yes. Members, sessions, audit, and usage are all scoped to your own tenant. The option to switch
+Yes. Members, sessions, audit, and running time are all scoped to your own tenant. The option to switch
 tenants is not shown. Only a super_admin can see the whole deployment.
 
 **Q. Can I see in the audit log the actual commands a member typed in the terminal?**
 No. Raw terminal input/output is not stored. What the audit log can trace is the kind, actor,
 target, and time of change operations (files, git, sessions, etc.).
 
-**Q. Does usage include Claude fees?**
-No. Usage is workspace running time (infrastructure occupancy). Claude charges sit on each member's
+**Q. Does running time include Claude fees?**
+No. What is counted is workspace running time (infrastructure occupancy). Claude charges sit on each member's
 own subscription.
 
 **Q. I want to promote a member to administrator, but there's no button.**
