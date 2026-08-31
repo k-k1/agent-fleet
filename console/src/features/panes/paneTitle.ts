@@ -40,11 +40,26 @@ export function sharedSessionLabel(meta: SharedSession | undefined): string {
   return stripLabelTag(meta.title || meta.label || meta.name || tI18n("share.shared_sessions"));
 }
 
+/** Display name for a chat tab: the conversation's own title, so several chat
+ * tabs read apart instead of all showing the generic kind label (falls back to
+ * it for a draft that isn't a conversation yet, or before the title is known). */
+export function chatLabel(title: string | undefined): string {
+  return title?.trim() || tI18n("pane.kind.chat");
+}
+
+/** Identities `paneTitle` can't derive from the pane alone, resolved by the caller
+ * from the relevant store: the recipient-side name of a shared session, the title
+ * of an assistant conversation. Absent members just fall back to the kind label. */
+export interface PaneTitleMeta {
+  shared?: SharedSession;
+  chatTitle?: string;
+}
+
 /** Title for a pane: the bound session (name · agent) for terminal/mirror
  * panes, else the content's own identity (file name, repo, doc title, …).
- * `sharedMeta` resolves a sharedSession pane's own name — callers that have
- * it (Pane.tsx tab strip, PopoutTitleBar) should pass it in. */
-export function paneTitle(pane: Pane, session: Session | null, sharedMeta?: SharedSession): string {
+ * `meta` resolves the identities that live outside the pane — callers that have
+ * them (Pane.tsx tab strip, PopoutTitleBar) should pass them in. */
+export function paneTitle(pane: Pane, session: Session | null, meta: PaneTitleMeta = {}): string {
   const c = pane.content;
   switch (c.kind) {
     case "terminal":
@@ -64,12 +79,12 @@ export function paneTitle(pane: Pane, session: Session | null, sharedMeta?: Shar
     case "diff":
       return c.docTitle;
     case "chat":
-      return jaKind("chat");
+      return chatLabel(meta.chatTitle);
     case "browser":
       return `127.0.0.1:${c.port}${c.path === "/" ? "" : c.path}`;
     case "browserAttach":
       return jaKind("browserAttach");
     case "sharedSession":
-      return sharedSessionLabel(sharedMeta);
+      return sharedSessionLabel(meta.shared);
   }
 }
