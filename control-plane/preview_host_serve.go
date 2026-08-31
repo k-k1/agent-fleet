@@ -104,7 +104,22 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		return
 	}
 	if r.URL.Path == previewAuthCallbackPath {
-		a.acceptToken(w, r, ph)
+		a.acceptToken(w, r, ph, st)
+		return
+	}
+	// 兄弟オリジン（同じ slug の別ポート）からの呼び出し（docs/81 §2.4・決定 11）。
+	// opt-in のときだけ、CP が preflight に答え、応答に CORS を足す。
+	allowOrigin := a.siblingOrigin(r, ph, st)
+	if allowOrigin != "" && r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+		// ★ preflight はアプリへ渡さない。素の dev サーバや Spring は OPTIONS に 403 /
+		// 405 を返すのが普通で、そこで落ちると「CORS を許可したのに通らない」になる。
+		writePreviewCORS(w.Header(), allowOrigin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+		if h := r.Header.Get("Access-Control-Request-Headers"); h != "" {
+			w.Header().Set("Access-Control-Allow-Headers", h)
+		}
+		w.Header().Set("Access-Control-Max-Age", "600")
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if !st.PreviewPublic && !a.authorized(r, ph, ws) {
@@ -127,6 +142,7 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		proto:          forwardedProto(r),
 		public:         st.PreviewPublic,
 		identityHeader: a.mgr.emailHeader,
+		allowOrigin:    allowOrigin,
 	}
 	relayPreview(w, r, rt, opts)
 }
@@ -204,7 +220,7 @@ func (a previewHostAPI) startHandshake(w http.ResponseWriter, r *http.Request, p
 
 // acceptToken is the preview-origin end of the handshake: verify the one-shot token,
 // mint the host-scoped cookie, and send the browser to where it was going.
-func (a previewHostAPI) acceptToken(w http.ResponseWriter, r *http.Request, ph previewHost) {
+func (a previewHostAPI) acceptToken(w http.ResponseWriter, r *http.Request, ph previewHost, st wsSettings) {
 	cl, ok := a.verifyClaims(r.URL.Query().Get("t"))
 	if !ok || cl.Slug != ph.slug || cl.Port != ph.port {
 		http.Error(w, "preview sign-in expired — reload from the Console", http.StatusForbidden)
@@ -218,12 +234,56 @@ func (a previewHostAPI) acceptToken(w http.ResponseWriter, r *http.Request, ph p
 		HttpOnly: true,
 		Secure:   forwardedProto(r) == "https",
 		// Lax: a top-level navigation carries it, a cross-site sub-request does not.
-		// Loosening this to None is the opt-in for apps that call a sibling preview
-		// origin directly (docs/81 §2.4) — not the default.
-		SameSite: http.SameSiteLaxMode,
+		// None is the opt-in for apps that call a sibling preview origin directly
+		// (docs/81 §2.4) — not the default, because it also means any third-party page
+		// that knows the URL can drive the preview with the user's browser.
+		SameSite: previewCookieSameSite(st),
 		MaxAge:   int(previewSessionTTL.Seconds()),
 	})
 	http.Redirect(w, r, safePreviewNext(r.URL.Query().Get("next")), http.StatusFound)
+}
+
+// previewCookieSameSite picks Lax (default) or None (cross-origin opt-in).
+func previewCookieSameSite(st wsSettings) http.SameSite {
+	if st.PreviewCrossOrigin {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
+}
+
+// siblingOrigin returns the Origin to allow for this request, or "" for "no CORS from
+// us". It allows exactly one shape: the opt-in is on, and the caller is a preview host
+// of the SAME workspace start (same slug) on a port that workspace also allows.
+//
+// ★ slug が一致することを条件にしているので、他人の Workspace のプレビューからは決して
+// 通らない。ポートの許可も見るのは、列挙から外したポートを「呼び出し元としてなら使える」
+// 状態にしないため。
+func (a previewHostAPI) siblingOrigin(r *http.Request, ph previewHost, st wsSettings) string {
+	if !st.PreviewCrossOrigin {
+		return ""
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return ""
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	other, ok := parsePreviewHost(u.Host, a.mgr.previewDomain)
+	if !ok || other.slug != ph.slug || !previewPortAllowed(st, other.port) {
+		return ""
+	}
+	return origin
+}
+
+// writePreviewCORS sets the pair that has to travel together: naming the origin (never
+// `*`, which cannot carry credentials) and allowing credentials, plus Vary so a cache
+// never serves one origin's answer to another.
+func writePreviewCORS(h http.Header, origin string) {
+	h.Set("Access-Control-Allow-Origin", origin)
+	h.Set("Access-Control-Allow-Credentials", "true")
+	h.Add("Vary", "Origin")
 }
 
 // safePreviewNext keeps the post-handshake destination on the preview host: a
@@ -306,6 +366,9 @@ type previewRelayOptions struct {
 	proto      string
 	prefix     string // X-Forwarded-Prefix (path mode only; empty in host mode)
 	public     bool   // public mode: add X-Robots-Tag
+	// allowOrigin is the sibling preview origin the response may be read by, or ""
+	// (the default: the CP adds no CORS at all and the app's own headers stand).
+	allowOrigin string
 	// identityHeader is manager.emailHeader — the deployment's own identity header,
 	// which must never reach the previewed app. Passed in rather than read from a
 	// global so a handler built in a test strips exactly what the real one does.
@@ -361,6 +424,15 @@ func relayPreview(w http.ResponseWriter, r *http.Request, rt Runtime, o previewR
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			stripAppLoginCookies(resp)
+			if o.allowOrigin != "" {
+				// アプリが自前で付けた分は捨ててから上書きする。2 つ並ぶと
+				// ブラウザは「不正なヘッダ」として両方を無視するので、
+				// 「アプリ側でも許可しているのに通らない」という一番分かりにくい
+				// 壊れ方になる。
+				resp.Header.Del("Access-Control-Allow-Origin")
+				resp.Header.Del("Access-Control-Allow-Credentials")
+				writePreviewCORS(resp.Header, o.allowOrigin)
+			}
 			if o.public {
 				// 公開中の画面が検索結果に載るのは事故なので、常に付ける。
 				resp.Header.Set("X-Robots-Tag", "noindex, nofollow")

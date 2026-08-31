@@ -673,6 +673,8 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	wss := newWSSettingsAPI(cfg.mgr)
 	mux.HandleFunc("GET /api/env/ws-settings", wss.withResolved(wss.get))
 	mux.HandleFunc("PUT /api/env/ws-settings", wss.withResolved(wss.put))
+	// プレビュー URL の再発行（docs/81 §4.1）。GET/PUT と違い状態を捨てる操作なので POST。
+	mux.HandleFunc("POST /api/env/ws-settings/preview/reissue", wss.withResolved(wss.reissuePreview))
 	// Per-user UI preferences (Console display settings) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/ui-prefs", rest)
 	mux.HandleFunc("PUT /api/env/ui-prefs", rest)

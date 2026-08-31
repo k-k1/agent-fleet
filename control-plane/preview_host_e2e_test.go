@@ -77,6 +77,7 @@ func newPreviewHostEnv(t *testing.T, agentURL string) *previewHostEnv {
 	}
 	mux := http.NewServeMux()
 	registerTerminalPreviewRoutes(mux, cfg)
+	registerAgentEnvRoutes(mux, cfg) // ws-settings（許可ポート・再発行）も実ルート表から叩く
 	return &previewHostEnv{
 		mgr: mgr, cfg: cfg, mux: mux,
 		host:   newPreviewHostAPI(cfg).dispatch(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })),
@@ -302,5 +303,148 @@ func TestPreviewUnknownSlugIsNotFound(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	if rec := e.get(t, "zzzzzzzzzzzzzzzzzzzz", 3000, "/"); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown slug: code=%d, want 404", rec.Code)
+	}
+}
+
+// 兄弟オリジンの opt-in（docs/81 §2.4・決定 11）。★ 既定では CP は CORS を一切足さない
+// —— 「クロスオリジンを既定で通す」は、URL を知っている第三者のページから利用者の
+// ブラウザ経由でプレビューを叩ける状態を既定にすること。
+func TestPreviewSiblingOriginOptIn(t *testing.T) {
+	var appSaw string
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appSaw = r.Method
+		// アプリが自前で付けた CORS。opt-in のときは CP の値で上書きされる
+		// （2 つ並ぶとブラウザは両方無視する）。
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer agent.Close()
+	e := newPreviewHostEnv(t, agent.URL)
+	slug := e.mintSlug(t)
+	ctx := context.Background()
+
+	// 公開モードにして cookie の往復を省く（見たいのは CORS の有無だけ）。
+	setPreview := func(mut func(*wsSettings)) {
+		raw, _ := e.mgr.store.GetWorkspaceSettings(ctx, e.ws.ID)
+		st := parseWSSettings(raw)
+		mut(&st)
+		if err := e.mgr.store.SetWorkspaceSettings(ctx, e.ws.ID, toWSSettingsJSON(t, st)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setPreview(func(st *wsSettings) { st.PreviewPublic = true })
+
+	sibling := "https://" + previewHostname(slug, 3000, e.domain)
+	call := func(method string, hdr map[string]string) *httptest.ResponseRecorder {
+		host := previewHostname(slug, 8080, e.domain)
+		req := httptest.NewRequest(method, "https://"+host+"/api/orders", nil)
+		req.Host = host
+		req.Header.Set("X-Forwarded-Proto", "https")
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		e.host.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// 既定（OFF）: CP は何も足さない。アプリの `*` はそのまま通る（=アプリの自由）。
+	rec := call(http.MethodGet, map[string]string{"Origin": sibling})
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("CORS credentials allowed with the opt-in OFF: %q", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("the app's own CORS header was rewritten with the opt-in OFF: %q", got)
+	}
+
+	setPreview(func(st *wsSettings) { st.PreviewCrossOrigin = true })
+
+	// preflight は CP が答え、アプリには届かない（素の dev サーバは OPTIONS に
+	// 405 を返すのが普通で、そこで落ちると原因が最も分かりにくい）。
+	appSaw = ""
+	rec = call(http.MethodOptions, map[string]string{
+		"Origin":                         sibling,
+		"Access-Control-Request-Method":  "POST",
+		"Access-Control-Request-Headers": "content-type",
+	})
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("preflight: code=%d, want 204", rec.Code)
+	}
+	if appSaw != "" {
+		t.Errorf("preflight reached the app as %s", appSaw)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != sibling {
+		t.Errorf("preflight ACAO=%q, want the sibling origin", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "content-type" {
+		t.Errorf("preflight ACAH=%q", got)
+	}
+
+	// 実リクエストには CP の値が 1 つだけ乗る（アプリの `*` は捨てる）。
+	rec = call(http.MethodGet, map[string]string{"Origin": sibling})
+	if got := rec.Header().Values("Access-Control-Allow-Origin"); len(got) != 1 || got[0] != sibling {
+		t.Errorf("ACAO=%v, want exactly [%s]", got, sibling)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Errorf("ACAC=%q, want true", got)
+	}
+	if got := rec.Header().Get("Vary"); !strings.Contains(got, "Origin") {
+		t.Errorf("Vary=%q, want it to include Origin", got)
+	}
+
+	// ★ 他人の Workspace のプレビューからは通らない（slug が違う）。
+	rec = call(http.MethodGet, map[string]string{"Origin": "https://zzzzzzzzzzzzzzzzzzzz-3000." + e.domain})
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("a foreign workspace's preview origin was allowed: %q", got)
+	}
+	// 許可していないポートを名乗るオリジンも通らない。
+	rec = call(http.MethodGet, map[string]string{"Origin": "https://" + previewHostname(slug, 5432, e.domain)})
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("a non-allowlisted port was accepted as an origin: %q", got)
+	}
+}
+
+// 再発行（docs/81 §4.1）: 配ってしまった URL をその場で捨てられる。
+func TestPreviewReissueKillsTheCurrentURL(t *testing.T) {
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer agent.Close()
+	e := newPreviewHostEnv(t, agent.URL)
+	ctx := context.Background()
+	// 固定 ON で予約を作ってから再発行する（予約も捨てないと、次の起動で
+	// 「捨てたはずの URL」が戻ってくる）。
+	raw, _ := e.mgr.store.GetWorkspaceSettings(ctx, e.ws.ID)
+	st := parseWSSettings(raw)
+	st.PreviewFixedSlug = true
+	if err := e.mgr.store.SetWorkspaceSettings(ctx, e.ws.ID, toWSSettingsJSON(t, st)); err != nil {
+		t.Fatal(err)
+	}
+	old := e.mintSlug(t)
+	// 公開は起動の **あと** に入れる —— 起動のたびに OFF へ戻る（fail-closed）ので、
+	// 先に入れても消える。ここで見たいのは再発行の効きなので、認証の往復は省く。
+	raw, _ = e.mgr.store.GetWorkspaceSettings(ctx, e.ws.ID)
+	st = parseWSSettings(raw)
+	st.PreviewPublic = true
+	if err := e.mgr.store.SetWorkspaceSettings(ctx, e.ws.ID, toWSSettingsJSON(t, st)); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.get(t, old, 3000, "/"); rec.Code != http.StatusOK {
+		t.Fatalf("before reissue: code=%d, want 200", rec.Code)
+	}
+
+	rec := httptest.NewRecorder()
+	e.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/env/ws-settings/preview/reissue", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reissue: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec2 := e.get(t, old, 3000, "/"); rec2.Code != http.StatusNotFound {
+		t.Fatalf("after reissue the old URL still resolves: code=%d", rec2.Code)
+	}
+	ws, ok, err := e.mgr.store.GetWorkspaceByMembership(ctx, e.ws.MembershipID)
+	if err != nil || !ok || ws.PreviewSlug == "" || ws.PreviewSlug == old {
+		t.Fatalf("reissue did not mint a new slug (got %q, old %q)", ws.PreviewSlug, old)
+	}
+	raw, _ = e.mgr.store.GetWorkspaceSettings(ctx, e.ws.ID)
+	if parseWSSettings(raw).PreviewReservedSlug == old {
+		t.Fatal("the discarded slug is still reserved — it would come back on the next start")
 	}
 }

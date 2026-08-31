@@ -75,7 +75,8 @@ a pane can be popped out into its own browser tab
 | Shared session | Showing a session's — or a project's — conversation to another member of the same tenant, read-only. Permission is either "view only" or "may propose" |
 | Cleanup | The modal that inspects stopped sessions, stale worktrees and merged branches and tidies them away. Deleted sessions and branches are stashed in the **trash** and can be restored |
 | Browser pane | A method that renders a web service started inside the workspace (`127.0.0.1:{port}`) in a Console pane, with display and interaction (clicking, typing, scrolling, etc.). HMR, WebSocket, SSE, cookies, and redirects all work. "Open in pane" in the UI. localhost only — external URLs cannot be opened ([08](08-advanced.md)) |
-| Lightweight preview | A lighter way to check the same web service by opening it in another tab through a simple HTTP proxy. Suited to one-off checks of JSON or simple static pages; HMR / WebSocket / SSE are unavailable ([08](08-advanced.md)) |
+| Lightweight preview | Opens the same web service in another tab under a `/preview/{port}/` sub-path. WebSocket and SSE pass through, but an app that emits absolute-path assets breaks ([08](08-advanced.md)) |
+| Preview subdomains | A `https://<random>-<port>.<domain>/` URL issued every time the workspace starts. The app is served at the root and several ports are open at once. Issued only on deployments that configure it ([08](08-advanced.md)) |
 
 ## Writing conventions
 

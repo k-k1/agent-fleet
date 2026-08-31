@@ -20,13 +20,18 @@ Enter a port number in the **port input field** on the right of the workspace ac
   go back/forward, reload, and navigate paths, and **HMR (hot reload), WebSocket, SSE, cookies, redirects, and
   absolute-path assets** all work just like ordinary localhost. Use this when you want to touch the screen and
   verify it.
-- **Lightweight preview** — a simple HTTP proxy that opens the port in a **new tab**, for quick checks. It suits
-  **one-time looks** at a JSON health endpoint or a simple static page. **HMR / WebSocket / SSE do not work**,
-  and rendering is not guaranteed for apps that depend on the root path, absolute assets, redirects, or cookie
-  paths.
+- **Lightweight preview** — opens the port in a **new tab**. **WebSocket and SSE do pass through** (HMR works
+  too, depending on the app's own configuration), but the URL is a **sub-path** (`/preview/{port}/`), so an app
+  that emits **absolute paths** like `/static/...`, or a screen that depends on the root path or a cookie path,
+  will break.
+- **Preview subdomains** — on some deployments a URL such as
+  `https://xxxxxxxx-3000.<preview domain>/` is **issued automatically every time the workspace starts**. The app
+  is served **at the root**, so the sub-path problem above cannot happen, and **several ports** (3000 and 8080,
+  say) are open at the same time. See "Preview subdomains" below.
 
-**When in doubt, use "Open in pane".** The lightweight preview is a resource-saving exception for when you can
-settle for "just looking at an HTTP response once".
+**When in doubt:** if a preview URL has been issued, that is the most straightforward option. Otherwise use
+"Open in pane" when you want to touch the screen, and the lightweight preview when one look at an HTTP response
+is enough.
 
 On a touch screen such as a tablet, **swipe to scroll** (a flick keeps coasting after you lift your finger),
 **tap to click**, **press and hold to drag** (text selection, sliders), and **pinch with two fingers to zoom**.
@@ -50,6 +55,44 @@ left of the pane; it stays open while you keep tapping the page.
 For example, once you start an API server on 8080 in a shell, enter `8080` in the port field and press
 "Open in pane", and the app appears in a pane. There is no need to ask IT to open extra ports.
 
+### Preview subdomains (only where they are issued)
+
+A URL containing a random label is issued **every time the workspace starts**.
+
+```
+https://k7f2q9x1w3ub5nzt0abc-3000.pv.example.com/   → port 3000 (e.g. React / Next.js)
+https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring Boot)
+```
+
+- **Where to find them** — open "Preview" on the workspace action bar; they are listed per port under
+  **Preview URLs (this start)**. Click to open in a new tab, or use "Copy" to take the URL.
+- **They change on every start**, and stop working when the workspace stops (the old URL returns 404). Assume
+  any document you paste one into goes stale quickly.
+- **Signing in is required by default.** The first visit bounces through the Console login once and comes back.
+- **You choose which ports are exposed.** The default is `3000, 8080`; change it under Settings › Toolchains ›
+  **Preview subdomains**. A port that is not listed has no URL — the list is what keeps an admin console you
+  did not mean to expose off the internet.
+
+#### What the app has to get right
+
+- **Do not hard-code `http://localhost:8080` as the API origin.** From the browser's point of view `localhost`
+  is **the machine of the person looking at the screen**. Route `/api` to 8080 through the dev server instead
+  (Vite's `server.proxy`, Next.js's `rewrites()`), and the same configuration works both on your own PC and in
+  the preview.
+- If the page on 3000 really must call 8080 **directly**, turn on **"Allow calls between ports"** in the
+  settings (off by default).
+- Set `server.forward-headers-strategy=framework` for Spring Boot. Next.js Server Actions are validated
+  correctly over this path as well.
+- `AF_PREVIEW_URL_3000`, `AF_PREVIEW_URL_8080` and `AF_PREVIEW_DOMAIN` are present inside the container. Pass
+  them to anything that reads its own public URL from the environment, such as `NEXTAUTH_URL`.
+
+#### Showing it to someone else / throwing the URL away
+
+- **Open without signing in** lets anyone with the URL open it. It **always returns to off when the workspace
+  stops or restarts** (and the URL changes).
+- If a URL went to the wrong place, press **"Discard and mint a new one"**. Tabs that are open now start
+  returning 404 immediately.
+
 ### Examples by setup
 
 | Setup | Example input | Which to open with |
@@ -57,7 +100,8 @@ For example, once you start an API server on 8080 in a shell, enter `8080` in th
 | **Node / Vite** | `5173` + `/` | Uses HMR (WebSocket), so **browser pane**. |
 | **Spring Boot** | `8080` + `/` or `/actuator/health` | Screens involving redirects, absolute `/assets/*`, and cookies: **browser pane**. Just a one-time look at the health JSON: lightweight preview. |
 | **API only** | `8080` + `/api/health` | One-time JSON / status checks: **lightweight preview**. SSE, auth cookies, redirects, and interactive checks: **browser pane**. |
-| **Frontend + API (multiple ports)** | frontend `5173` / API `8080` | Open the frontend's `5173` in a **browser pane**. From there, fetch / WebSocket / SSE to another port (`8080`) works (as in a normal browser, CORS configuration is required). If you also want to see the API, open `8080` in a second pane. |
+| **Frontend + API (multiple ports)** | frontend `5173` / API `8080` | **Preview subdomains are the best fit if you have them** (each port gets its own URL). Otherwise open the frontend's `5173` in a **browser pane**; fetch / WebSocket / SSE to another port (`8080`) works from there (as in a normal browser, CORS configuration is required). |
+| **React 3000 + Spring Boot 8080** | `3000` / `8080` | Preview subdomains serve both at the root. Routing the API through the dev server's proxy onto `/api` is the least trouble — the same configuration then works on your own PC too. |
 
 > **Spring Boot links / redirects** — to have them resolve correctly, set
 > `server.forward-headers-strategy=framework` (or `native`) on the app side.

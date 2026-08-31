@@ -1,7 +1,7 @@
 # 0062. プレビューは「起動ごとに発行するランダムなサブドメイン ＋ ポートをラベルに前置」で配り、パス方式は残す
 
-- 状態: **採用・P0〜P2 実装済み**（2026-08-31）。P3（兄弟オリジンの opt-in）と P4（実機確認・
-  guide）は残。設計と経緯は [docs/81](../81-preview-subdomain.md)。
+- 状態: **採用・P0〜P3 実装済み**（2026-08-31）。残るのは**実アプリでの通し確認だけ**（Next.js と
+  Vite・特に HMR と Server Actions — docs/81 §13）。設計と経緯は [docs/81](../81-preview-subdomain.md)。
 - 関連: [0018-container-browser-pane.md](0018-container-browser-pane.md)（コンテナ内 Chromium ＝
   「中から見る」道。今回作るのは「外から見る」道で、別物として並立する） /
   [0047-tenant-network-restriction.md](0047-tenant-network-restriction.md)（テナントの CIDR 制限は
@@ -171,5 +171,7 @@ cookie を書けてしまい、Console の cookie を上書き / 固定できる
 - デプロイ: `30-ingress.yaml` に `PreviewDomain` パラメータ・`*.{PreviewDomain}` の ACM 証明書・
   それを Listener443 に貼る `ListenerCertificate`・Route53 のワイルドカード A エイリアス。
   ⚠️ **既存の `Cert` には触らない**（SAN を足すと置換になる — 決定 4）。
-- 案内: `docs/guide` は二言語で更新（P4）。実アプリでの通し確認は **Next.js と Vite の両方**で
-  行う（特に Next の Server Actions と HMR — docs/81 §13）。
+- 案内: `docs/guide`（member/08・09・README・用語集）を二言語で更新済み。⚠️ 併せて
+  **「軽量プレビューは WebSocket / SSE 非対応」という古い記述を訂正**した —— 決定 10 で
+  ReverseProxy に載せ替えた結果、パス方式でも通るようになっている。
+- デプロイ手順: `deploy/aws/ecs/README.md` に `PreviewDomain` の節を追加。

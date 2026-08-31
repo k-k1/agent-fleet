@@ -20,6 +20,7 @@ import { pinDrift } from "../../lib/pinDrift.ts";
 export function EnvTab() {
   const tr = useT();
   const toast = useToast();
+  const askConfirm = useConfirm();
   const wsState = useWorkspaceStore((s) => s.state);
   const running = wsState === "running";
   const [d, setD] = useState<any>(null);
@@ -78,6 +79,21 @@ export function EnvTab() {
     else toast(tr("common.save_failed"));
   };
 
+  // 再発行（docs/81 §4.1）: 配ってしまった URL をその場で捨てる。取り消せないので
+  // 確認を挟み、何が起きるか（今開いているタブが 404 になる）を先に言う。
+  const reissuePreview = async () => {
+    const ok = await askConfirm({
+      title: tr("env.preview_reissue_confirm_title"),
+      body: tr("env.preview_reissue_confirm_body"),
+      confirmLabel: tr("env.preview_reissue_go"),
+      danger: true,
+    });
+    if (!ok) return;
+    const res = await apiJSON("api/env/ws-settings/preview/reissue", "POST", {});
+    if (res && !res.error) setAu(res);
+    else toast(tr("common.save_failed"));
+  };
+
   const update = async (patch: Record<string, string>) => {
     const next = {
       node: d.node || "",
@@ -105,7 +121,7 @@ export function EnvTab() {
         <p className="muted pad">{tr("common.loading")}</p>
       )}
       {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
-      {au && au.previewDomain && <PreviewSection au={au} save={savePreview} />}
+      {au && au.previewDomain && <PreviewSection au={au} save={savePreview} reissue={reissuePreview} />}
       <ToolVersions running={running} />
     </div>
   );
@@ -453,7 +469,15 @@ function JavaRow({
 // PreviewSection: プレビュー用サブドメイン（docs/81）の Workspace 単位の設定。
 // ホスト方式が無いデプロイ（AF_PREVIEW_DOMAIN 未設定）では previewDomain が空なので
 // 呼び出し側ごと描画されない —— 「押しても何も起きない設定」を置かないため。
-function PreviewSection({ au, save }: { au: any; save: (patch: Record<string, unknown>) => void }) {
+function PreviewSection({
+  au,
+  save,
+  reissue,
+}: {
+  au: any;
+  save: (patch: Record<string, unknown>) => void;
+  reissue: () => void;
+}) {
   const tr = useT();
   const [ports, setPorts] = useState((au.previewPorts || []).join(", "));
   // 保存は入力欄を離れたときだけ。打鍵ごとに PUT すると、"3000, 80" のような
@@ -489,6 +513,16 @@ function PreviewSection({ au, save }: { au: any; save: (patch: Record<string, un
         <OnOff value={!!au.previewPublic} onChange={(on) => save({ previewPublic: on })} />
       </Row>
       <p className="muted ds-sub">{tr("env.preview_public_note")}</p>
+      <Row label={tr("env.preview_cross_origin_label")}>
+        <OnOff value={!!au.previewCrossOrigin} onChange={(on) => save({ previewCrossOrigin: on })} />
+      </Row>
+      <p className="muted ds-sub">{tr("env.preview_cross_origin_note")}</p>
+      <Row label={tr("env.preview_reissue_label")}>
+        <button className="ghost" onClick={reissue}>
+          {tr("env.preview_reissue")}
+        </button>
+      </Row>
+      <p className="muted ds-sub">{tr("env.preview_reissue_note")}</p>
     </section>
   );
 }

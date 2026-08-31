@@ -37,6 +37,12 @@ type wsSettings struct {
 	// 必ず空に戻る（停止中の URL は解決しない）ので、そこに予約を兼ねさせると
 	// 「固定したのに再起動で変わった」になる。
 	PreviewReservedSlug string `json:"previewReservedSlug,omitempty"`
+	// PreviewCrossOrigin: 兄弟のプレビューオリジンどうしの呼び出しを通す（docs/81
+	// §2.4）。ON にすると認証 cookie が SameSite=None になり、CP が **同じ slug の
+	// 兄弟オリジンに限って** CORS を補う。★ 既定 OFF —— クロスオリジンを既定で通す
+	// ことは、URL を知っている第三者のページから利用者のブラウザ経由でプレビューを
+	// 叩ける状態を既定にすること。
+	PreviewCrossOrigin bool `json:"previewCrossOrigin,omitempty"`
 }
 
 // parseWSSettings unmarshals the stored JSON blob ("" => zero value).
@@ -95,6 +101,7 @@ func (a wsSettingsAPI) addPreview(r *http.Request, res *resolved, st wsSettings,
 	out["previewPorts"] = previewPortsOf(st)
 	out["previewFixedSlug"] = st.PreviewFixedSlug
 	out["previewPublic"] = st.PreviewPublic
+	out["previewCrossOrigin"] = st.PreviewCrossOrigin
 	out["previewMaxPorts"] = maxPreviewPorts
 	urls := map[string]string{}
 	if domain != "" {
@@ -107,6 +114,53 @@ func (a wsSettingsAPI) addPreview(r *http.Request, res *resolved, st wsSettings,
 	// 停止中は空のまま返す。★ 発行されていない URL を見せない —— 押しても 404 になる
 	// リンクは、機能が壊れているという報告になって返ってくる。
 	out["previewUrls"] = urls
+}
+
+// reissuePreview (POST /api/env/ws-settings/preview/reissue) throws this workspace's
+// preview URLs away and mints new ones — the remedy for "I pasted the URL somewhere I
+// should not have".
+//
+// ⚠️ 稼働中のコンテナは作り直さないので、**中の `AF_PREVIEW_URL_*` は次の起動まで古い
+// ままになる**。それでも即時に捨てられる方を選ぶ: 配ってしまった URL を生かしたまま
+// 「次の再起動で変わります」と言うのは、対処になっていない。
+func (a wsSettingsAPI) reissuePreview(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if a.mgr.previewDomain == "" {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_configured", "preview subdomains are not configured"})
+		return
+	}
+	ws, ok, err := a.store.GetWorkspaceByMembership(r.Context(), res.ws.MembershipID)
+	if err != nil || !ok {
+		writeAPIErr(w, &apiError{http.StatusInternalServerError, "internal", "workspace lookup failed"})
+		return
+	}
+	raw, _ := a.store.GetWorkspaceSettings(r.Context(), ws.ID)
+	st := parseWSSettings(raw)
+	// 予約（固定 ON のときの持ち越し）も一緒に捨てる。捨てないと、次の起動で
+	// 「捨てたはずの URL」がそのまま戻ってくる。
+	if st.PreviewReservedSlug != "" {
+		st.PreviewReservedSlug = ""
+		out, _ := json.Marshal(st)
+		if err := a.store.SetWorkspaceSettings(r.Context(), ws.ID, string(out)); err != nil {
+			writeAPIErr(w, &apiError{http.StatusInternalServerError, "internal", "save failed"})
+			return
+		}
+	}
+	// 稼働中（= slug が発行済み）のときだけ、その場で引き直す。停止中は発行されて
+	// いないので、予約を捨てた時点で用は済んでいる。
+	if ws.PreviewSlug != "" {
+		if _, err := a.mgr.rotatePreviewSlug(r.Context(), ws); err != nil {
+			writeAPIErr(w, &apiError{http.StatusInternalServerError, "internal", "could not mint a new preview slug"})
+			return
+		}
+	}
+	a.mgr.evictMembershipCache(ws.MembershipID)
+	raw, _ = a.store.GetWorkspaceSettings(r.Context(), ws.ID)
+	body := map[string]any{
+		"agentUpdate":      parseWSSettings(raw).AgentUpdate,
+		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
+	}
+	a.addPreview(r, res, parseWSSettings(raw), body)
+	writeJSON(w, http.StatusOK, body)
 }
 
 // put (PUT /api/env/ws-settings) merges the posted known keys into the
@@ -138,6 +192,9 @@ func (a wsSettingsAPI) put(w http.ResponseWriter, r *http.Request, res *resolved
 	}
 	if v, ok := body["previewFixedSlug"].(bool); ok {
 		st.PreviewFixedSlug = v
+	}
+	if v, ok := body["previewCrossOrigin"].(bool); ok {
+		st.PreviewCrossOrigin = v
 	}
 	if v, ok := body["previewPublic"].(bool); ok {
 		st.PreviewPublic = v

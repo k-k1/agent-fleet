@@ -155,6 +155,7 @@ const exact = {
     previewPorts: [3000, 8080],
     previewFixedSlug: false,
     previewPublic: false,
+    previewCrossOrigin: false,
     previewMaxPorts: 8,
     previewUrls: {
       "3000": "https://k7f2q9x1w3ub5nzt0abc-3000.pv.example.com",
