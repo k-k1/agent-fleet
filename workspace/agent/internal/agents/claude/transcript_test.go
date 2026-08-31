@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -468,5 +469,48 @@ func TestCollectFileEdits(t *testing.T) {
 	tail := CollectFileEdits(lines, 2)
 	if len(tail) != 1 || tail[0].Path != "b.ts" {
 		t.Fatalf("tail = %+v", tail)
+	}
+}
+
+// TestPlanAnswerDropsEmbeddedPlan pins the 2026-08-31 report「プランを承認したのに
+// "却下" バッジが付いた」. The CLI now appends the whole approved plan to the
+// ExitPlanMode tool_result ("## Approved Plan:" + Markdown, 9 KB+ in the wild). The
+// Console badges the card by keyword-matching that text, so a plan whose own prose says
+// 「却下」/「やり直し」/"reject" flipped its APPROVAL to 却下 — and every poll carried a
+// second copy of a plan the Console already holds. Only the verdict header survives.
+func TestPlanAnswerDropsEmbeddedPlan(t *testing.T) {
+	result := "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\\n\\n" +
+		"Your plan has been saved to: /var/lib/af/claude/plans/immutable-dazzling-babbage.md\\n" +
+		"You can refer back to it if needed during implementation.\\n\\n" +
+		"## Approved Plan:\\n# フロービルダー UI の移植\\n\\n## 非目標\\n- 前回の案は却下。途中で中止はしない。\\n"
+	lines := [][]byte{
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"p1","name":"ExitPlanMode","input":{"plan":"# フロービルダー UI の移植"}}]}}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"p1","content":"` + result + `"}]}}`),
+	}
+	want := "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\n\n" +
+		"Your plan has been saved to: /var/lib/af/claude/plans/immutable-dazzling-babbage.md\n" +
+		"You can refer back to it if needed during implementation."
+	// The whole-transcript map (what the Console patches onto a split-out plan card)…
+	if got := CollectInteractionAnswers(lines)["p1"].Text; got != want {
+		t.Errorf("interaction answer = %q, want %q", got, want)
+	}
+	// …and the window-local resolution inside CollectTurns.
+	turns := CollectTurns(lines, 0, len(lines))
+	var plan *transcript.Part
+	for i := range turns {
+		for pi := range turns[i].Parts {
+			if turns[i].Parts[pi].Kind == "plan" {
+				plan = &turns[i].Parts[pi]
+			}
+		}
+	}
+	if plan == nil {
+		t.Fatalf("no plan part in %+v", turns)
+	}
+	if plan.Answer != want {
+		t.Errorf("plan part Answer = %q, want %q", plan.Answer, want)
+	}
+	if strings.Contains(plan.Answer, "却下") {
+		t.Errorf("approved plan's body leaked into the answer: %q", plan.Answer)
 	}
 }

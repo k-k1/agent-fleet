@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -236,6 +237,9 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 			if (t.Parts[pi].Kind == "question" || t.Parts[pi].Kind == "plan") && t.Parts[pi].QID != "" {
 				a := answers[t.Parts[pi].QID]
 				t.Parts[pi].Answer = a.Text
+				if t.Parts[pi].Kind == "plan" {
+					t.Parts[pi].Answer = planAnswerHead(a.Text) // 承認結果に丸ごと載る計画本文は落とす
+				}
 				if t.Parts[pi].Kind == "question" {
 					t.Parts[pi].Declined = a.Declined
 				}
@@ -497,6 +501,28 @@ func isDeclinedAnswer(text string, isErr bool) bool {
 // collectAnswers maps each tool_use id to the text of its tool_result — used to show
 // which option an answered AskUserQuestion resolved to. Best-effort: the answer text
 // is whatever text the tool_result carried (a selected label, or a free-text reply).
+// planAnswerHead drops the approved plan that claude appends to an ExitPlanMode
+// tool_result. The current CLI writes:
+//
+//	User has approved your plan. You can now start coding. …
+//	Your plan has been saved to: …/plans/immutable-dazzling-babbage.md
+//	## Approved Plan:
+//	<the entire plan Markdown>
+//
+// The verdict is the header; the body is a verbatim copy of a plan the Console already
+// holds as the plan part. Keeping it would ship every approved plan twice on every poll
+// (9 KB+ each, in a map that is re-sent whole), and the Console badges the card by
+// keyword — reading the plan's own prose ("却下"/"やり直し"/"reject") flipped an APPROVED
+// plan's badge to 却下 (2026-08-31). The Console cuts it too; this keeps the wire small.
+var planBodyMarker = regexp.MustCompile(`(?im)^[ \t]*#{1,6}[ \t]*(approved plan|承認されたプラン)[ \t]*[:：]`)
+
+func planAnswerHead(s string) string {
+	if m := planBodyMarker.FindStringIndex(s); m != nil {
+		return strings.TrimRight(s[:m[0]], " \t\r\n")
+	}
+	return s
+}
+
 func collectAnswers(lines [][]byte) map[string]InteractionAnswer {
 	out := map[string]InteractionAnswer{}
 	for _, ln := range lines {
@@ -544,6 +570,7 @@ func CollectInteractionAnswers(lines [][]byte) map[string]InteractionAnswer {
 	interactive := map[string]bool{} // qid the Console may need to patch later
 	delegation := map[string]bool{}  // subset whose value is a (capped) delegation output
 	question := map[string]bool{}    // subset that can be Declined (AskUserQuestion only)
+	plan := map[string]bool{}        // subset whose result embeds the approved plan body
 	out := map[string]InteractionAnswer{}
 	for _, ln := range lines {
 		var ev struct {
@@ -577,6 +604,8 @@ func CollectInteractionAnswers(lines [][]byte) map[string]InteractionAnswer {
 						interactive[b.ID] = true
 						if b.Name == "AskUserQuestion" {
 							question[b.ID] = true
+						} else {
+							plan[b.ID] = true
 						}
 					}
 				case "Agent", "Task":
@@ -595,6 +624,9 @@ func CollectInteractionAnswers(lines [][]byte) map[string]InteractionAnswer {
 					if t := contentText(b.Content); t != "" {
 						if delegation[b.ToolUseID] {
 							t = transcript.CapOutput(t)
+						}
+						if plan[b.ToolUseID] {
+							t = planAnswerHead(t) // 承認結果に丸ごと載る計画本文は落とす
 						}
 						out[b.ToolUseID] = InteractionAnswer{
 							Text:     t,
