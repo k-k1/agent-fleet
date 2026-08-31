@@ -1,16 +1,18 @@
+---
+audience: "someone integrating a new CLI coding agent"
+source_of_truth: "the existing `internal/agents/<kind>` packages — copy the closest one"
+updated: "2026-08"
+---
+
 # 20. Adding an agent kind
 
 English | [日本語](20-add-an-agent.ja.md)
-
-Audience: someone integrating a new CLI coding agent
-Source of truth: the existing `internal/agents/<kind>` packages — copy the closest one
-Updated: 2026-08
 
 Seven kinds have been added this way. **The surfaces are the same every time**, and the
 mistakes are the same every time too — this chapter is both lists.
 
 Before writing code, read [04 §4.3](04-agent.md) for the shape and
-[ref/agents.md](../ref/agents.md) for what the existing kinds actually support.
+[ref/agents.md](../../guide/ref/agents.md) for what the existing kinds actually support.
 
 ## 20.1 Decide three things first
 
@@ -38,7 +40,7 @@ prompt producing a real answer.** This has been wrong enough times to be a rule
 
 | Surface | Where | Notes |
 |---|---|---|
-| The kind constant and its capabilities | `internal/session`, and the `Caps()` of your package | **Do not set a capability you have not driven end to end.** [ref/agents.md](../ref/agents.md) is checked against this by CI |
+| The kind constant and its capabilities | `internal/session`, and the `Caps()` of your package | **Do not set a capability you have not driven end to end.** [ref/agents.md](../../guide/ref/agents.md) is checked against this by CI |
 | Launch | your package's launch builder | Environment goes **prefixed onto the command**, never through the tmux session environment (§20.3) |
 | Live state | hooks, a plugin, or runtime events | Normalise to working / idle / question ([04 §4.4](04-agent.md)) |
 | Transcript | a reader for the CLI's own storage | **Read its native store; never copy conversations into a store of ours.** The parsers stay separate |
@@ -79,7 +81,7 @@ Every one of these cost real debugging time.
 ## 20.4 Do not set a capability you have not driven
 
 `Caps()` is not documentation — the Console shows or hides controls by it, and
-[ref/agents.md](../ref/agents.md) is compared against it in CI. The rule this repository
+[ref/agents.md](../../guide/ref/agents.md) is compared against it in CI. The rule this repository
 learned: **a capability is set only when the path has been driven end to end on the real
 CLI.** The specific case: allowing the permission prompt to be skipped requires that
 **a pending approval can actually be answered from the Console**. Removing the flag is
@@ -112,9 +114,9 @@ it" is how a regression ships.
 A kind is not done when it runs. It is done when:
 
 1. `Caps()` matches what you actually drove;
-2. [ref/agents.md](../ref/agents.md) has its column filled — **CI compares the fork and
+2. [ref/agents.md](../../guide/ref/agents.md) has its column filled — **CI compares the fork and
    permission rows against `Caps()` exactly**, so a mismatch fails the build;
-3. [use/06-agents](../use/06-agents.md) tells a user how to connect it, using the
+3. [use/06-agents](../../guide/member/06-agents.md) tells a user how to connect it, using the
    Console's own words;
 4. the contract workflow exists and has passed against the real CLI;
 5. if anything was settled that could plausibly be reopened — why this driver, why this

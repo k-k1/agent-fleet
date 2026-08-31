@@ -1,10 +1,12 @@
+---
+audience: "anyone dealing with worktree dependencies and build caches"
+source_of_truth: "measurement inside a container (this records what was measured, and how)"
+updated: "2026-08"
+---
+
 # 93. Worktree dependencies and build caches, measured per ecosystem
 
 English | [日本語](93-worktree-deps.ja.md)
-
-Audience: anyone dealing with worktree dependencies and build caches
-Source of truth: measurement inside a container (this records what was measured, and how)
-Updated: 2026-08
 
 A session usually runs in its own worktree, so ten worktrees of one repository can
 exist at once. What that costs is **not memory but disk, and whether a thing is

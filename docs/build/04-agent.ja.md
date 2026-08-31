@@ -1,10 +1,12 @@
+---
+audience: "Workspace Agent、またはエージェント種別を変える人"
+source_of_truth: "コード（本書は地図と設計意図）"
+updated: "2026-07"
+---
+
 # 04. Workspace Agent と Workspace イメージ
 
 [English](04-agent.md) | 日本語
-
-Audience: Workspace Agent、またはエージェント種別を変える人
-Source of truth: コード（本書は地図と設計意図）
-Updated: 2026-07
 
 ## 4.1 位置づけ
 

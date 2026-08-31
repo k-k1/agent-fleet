@@ -1,10 +1,12 @@
+---
+audience: "worktree の依存とビルドキャッシュを扱う人"
+source_of_truth: "コンテナ実測（本書は測った結果と手順）"
+updated: "2026-08"
+---
+
 # 93. Worktree の依存とビルドキャッシュ（言語別・実測）
 
 [English](93-worktree-deps.md) | 日本語
-
-Audience: worktree の依存とビルドキャッシュを扱う人
-Source of truth: コンテナ実測（本書は測った結果と手順）
-Updated: 2026-08
 
 Workspace のセッションは基本的に 1 セッション = 1 worktree で走るので、同じレポの worktree が
 同時に 10 個並ぶことがある。このとき効いてくるのは**メモリではなくディスクと「共有されるか

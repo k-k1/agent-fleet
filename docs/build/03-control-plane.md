@@ -1,10 +1,12 @@
+---
+audience: "someone changing the Control Plane"
+source_of_truth: "the code (this is a map and a statement of intent)"
+updated: "2026-07"
+---
+
 # 03. Control Plane
 
 English | [日本語](03-control-plane.ja.md)
-
-Audience: someone changing the Control Plane
-Source of truth: the code (this is a map and a statement of intent)
-Updated: 2026-07
 
 The CP is the only resident backend outside the workspaces — one Go binary. The
 browser only ever talks to it, and **it never touches tmux or a working copy itself**:

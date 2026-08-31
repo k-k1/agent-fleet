@@ -1,14 +1,25 @@
-// workspace_docs.go — role-scoped provisioning of the agent-fleet docs into each
-// Workspace container.
+// workspace_docs.go — provisioning of the agent-fleet user guide into each Workspace
+// container.
 //
 // Goal: the in-container agents (claude/codex/opencode) should answer questions about
 // this environment (persistence, recreate vs clean-home, build limits, gh auth, …)
-// from the authoritative docs rather than memory — but a tenant member must not be
-// able to read the internal dev/decisions/history docs. A shared workspace image can't
-// enforce that (any member could `cat` baked files), so the docs are baked into the
-// CP image and the CP stages only the role-permitted subset into <dataDir>/docs at
-// each start. dockerRuntime.Start then mounts that read-only into the container. Role
-// separation is thus enforced at provisioning time, per container.
+// from the authoritative documentation rather than memory — and the Console's user
+// guide should have something to open.
+//
+// What ships is the guide/ tree and nothing else (ADR 0064). The developer tree —
+// docs/build, docs/decisions, docs/log, the writing conventions — is never baked into
+// the image in the first place (deploy/release/stage-docs.sh), so no container can
+// receive it and no request can ask for it.
+//
+// ⚠️ This USED to be cut by the reader's role: a member got use/ + ref/, a tenant admin
+// added admin/, a deployment admin added operate/ + build/. That was dropped because it
+// was never a permission boundary — the comment justifying it said so itself ("not a
+// leak (the repository is public) but it is noise") — and the noise it was actually
+// removing was docs/build, which now lives outside the shipped tree entirely. Cutting
+// by role also made a link inside the guide resolve for some readers and not others,
+// which is how the guide accumulated links that were live in the repository and dead in
+// the reader's hands. Everyone now receives the same tree, so a link either reaches
+// everybody or nobody — and `check_closure` in scripts/docs-check.py can decide which.
 package main
 
 import (
@@ -40,39 +51,22 @@ func docsSrcDir() string {
 	return bakedDocsDefault
 }
 
-// docsRolePrefixes maps a membership role to the docs subtrees it may see, as paths
-// relative to docs/. Least privilege by default: an unknown role is treated as a
-// plain member.
+// guideShelves are the subtrees of the baked source that are staged into a container.
 //
-// Every role is an explicit allowlist — there is no "the whole tree" case, not even
-// for super_admin. That is the point: docs/ is cut by reader (docs/CONVENTIONS.md),
-// and what a container receives should be the shelves that answer that reader's
-// questions, nothing else. Shipping the rest is not a leak (the repository is public)
-// but it is noise, and noise is expensive here: the agent in the container greps this
-// tree to answer questions about its own environment, and 33k lines of frozen work
-// journals used to drown the answers. So decisions/, log/ and the handoff notes go to
-// nobody, and a shelf added later is invisible until someone lists it here.
-//
-// The listing is deliberately literal rather than clever. It is read as "who sees
-// what" during security review, and a loop over a table would hide the answer.
-func docsRolePrefixes(role string) []string {
-	switch role {
-	case "super_admin":
-		return []string{"use", "ref", "admin", "operate", "build"}
-	case "tenant_admin":
-		return []string{"use", "ref", "admin"}
-	default: // "member" and any unknown role
-		return []string{"use", "ref"}
-	}
-}
+// The baked tree is already exactly the guide (stage-docs.sh applies the allowlist when
+// the image is built), so this list is defence in depth rather than the primary gate —
+// it matters when AF_DOCS_DIR points a local dev CP at something wider. Keeping it
+// literal also keeps "what does a container receive" answerable by reading one line,
+// which is how it gets read during a security review.
+var guideShelves = []string{"member", "admin", "operate", "ref", "assets"}
 
-// roleDocsRoots resolves a role to the absolute source subtrees it may read, paired
-// with their path relative to the docs root. Both provisioning paths (the bind-mount
-// staging below and the tar stream in docs_bridge.go) go through this one function, so
-// "what may this role see" has exactly one implementation.
-func roleDocsRoots(src, role string) []struct{ Dir, Rel string } {
+// guideRoots resolves the absolute source subtrees to ship, paired with their path
+// relative to the docs root. Both provisioning paths (the bind-mount staging below and
+// the tar stream in docs_bridge.go) go through this one function, so "what does a
+// container receive" has exactly one implementation.
+func guideRoots(src string) []struct{ Dir, Rel string } {
 	var out []struct{ Dir, Rel string }
-	for _, p := range docsRolePrefixes(role) {
+	for _, p := range guideShelves {
 		s := filepath.Join(src, p)
 		if !isDirPath(s) {
 			continue // source subtree absent → skip (best-effort)
@@ -82,23 +76,23 @@ func roleDocsRoots(src, role string) []struct{ Dir, Rel string } {
 	return out
 }
 
-// writeRoleDocsTarGz streams the role-permitted subset as a gzipped tar whose paths are
-// relative to the docs root ("use/README.md", …). It is the PULL half of the
-// same provisioning decision stageWorkspaceDocs implements for docker/native: on ECS
-// there is no host path to bind-mount into a Fargate/EC2 task, so the container asks
-// for the identical subset over the internal bridge instead (docs_bridge.go).
+// writeGuideTarGz streams the guide as a gzipped tar whose paths are relative to the
+// docs root ("member/README.md", …). It is the PULL half of the same provisioning
+// decision stageWorkspaceDocs implements for docker/native: on ECS there is no host
+// path to bind-mount into a Fargate/EC2 task, so the container asks for the identical
+// set over the internal bridge instead (docs_bridge.go).
 //
 // Regular files only. A symlink in the source tree could point outside it, and the
 // extractor in the workspace refuses non-regular entries anyway — dropping them here
 // means the archive never even describes something the other side must defend against.
-func writeRoleDocsTarGz(w io.Writer, role string) (files int, err error) {
+func writeGuideTarGz(w io.Writer) (files int, err error) {
 	src := docsSrcDir()
 	if !isDirPath(src) {
 		return 0, nil // no baked docs → a valid, empty archive
 	}
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
-	for _, root := range roleDocsRoots(src, role) {
+	for _, root := range guideRoots(src) {
 		walkErr := filepath.WalkDir(root.Dir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -145,12 +139,11 @@ func writeRoleDocsTarGz(w io.Writer, role string) (files int, err error) {
 	return files, gz.Close()
 }
 
-// stageWorkspaceDocs (re)builds <dataDir>/docs with only the docs the given role may
-// read, copied from the CP-baked source. Rebuilt on every start so a role change
-// takes effect on the next start and the copy tracks the image version. Best-effort:
-// the caller ignores errors so a failure just means the container starts without a
-// docs mount, never a failed start.
-func stageWorkspaceDocs(dataDir, role string) error {
+// stageWorkspaceDocs (re)builds <dataDir>/docs from the CP-baked source. Rebuilt on
+// every start so the copy tracks the image version. Best-effort: the caller ignores
+// errors so a failure just means the container starts without a docs mount, never a
+// failed start.
+func stageWorkspaceDocs(dataDir string) error {
 	src := docsSrcDir()
 	if !isDirPath(src) {
 		return nil // no baked docs (e.g. local dev without AF_DOCS_DIR) → skip silently
@@ -159,7 +152,7 @@ func stageWorkspaceDocs(dataDir, role string) error {
 	if err := os.RemoveAll(dest); err != nil {
 		return fmt.Errorf("clear docs stage: %w", err)
 	}
-	for _, root := range roleDocsRoots(src, role) {
+	for _, root := range guideRoots(src) {
 		d := filepath.Join(dest, root.Rel)
 		if err := os.MkdirAll(filepath.Dir(d), 0o755); err != nil {
 			return err

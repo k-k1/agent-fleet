@@ -1,11 +1,11 @@
-# af-usage.md が docs/ref/features.ja.md のメンバー向けの行を覆っているかの台帳。
+# af-usage.md が guide/ref/features.ja.md のメンバー向けの行を覆っているかの台帳。
 #
 # 1 行 = 機能カタログの 1 行。右は af-usage.md の章番号（`## N.`）か、
 # `-` ＋ 案内しない理由。scripts/docs-check.py の knowledge 検査が読む。
 # カタログに行が増えると、ここに書くまで CI が赤くなる —— それがこの台帳の全部である。
 #
 # ⚠️ ここは「覆ったつもり」の記録に過ぎない。章番号が在ることは検査できるが、
-# その章の記述が正しいことは検査できない。正は docs/use/ と docs/ref/。
+# その章の記述が正しいことは検査できない。正は guide/member/ と guide/ref/。
 
 セッションの起動（エージェント・モデル・effort・開始モード）	4
 新しい git worktree で動かす	4

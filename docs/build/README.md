@@ -1,10 +1,12 @@
+---
+audience: "someone changing the code — a new contributor, a future maintainer, or an agent session"
+source_of_truth: "the code (this shelf is the map and the design intent)"
+updated: "2026-08"
+---
+
 # Building Agent Fleet
 
 English | [日本語](README.ja.md)
-
-Audience: someone changing the code — a new contributor, a future maintainer, or an agent session
-Source of truth: the code (this shelf is the map and the design intent)
-Updated: 2026-08
 
 This shelf answers **"how does it work?"**: the three processes and what each owns,
 the two authentication layers, the API boundaries, the data model, the threat model,
@@ -25,9 +27,9 @@ the integrations, and how to build and test.
   instead — an endpoint path, an environment variable name, an error code string — or
   at the code map, which is the one file allowed to enumerate paths and is expected
   to go stale.
-- **Procedures for running a deployment** — [operate/](../operate/README.md) owns
+- **Procedures for running a deployment** — [operate/](../../guide/operate/README.md) owns
   those, and this shelf links rather than copies.
-- **User-facing instructions** — [use/](../use/README.md).
+- **User-facing instructions** — [use/](../../guide/member/README.md).
 - **Journals.** A measurement, an incident post-mortem or a round-by-round
   investigation is not a design document. Put the durable conclusion here and the
   reasoning in [decisions/](../decisions/).
@@ -43,7 +45,7 @@ the integrations, and how to build and test.
 | A deployment target, adapter or variable | the deploy chapter |
 | Build, reflect or test mechanics | the development chapter |
 | Where files live (a refactor) | the code map only — nothing else should move |
-| A feature users can see | the relevant chapter, plus [ref/](../ref/README.md) and the reader's shelf |
+| A feature users can see | the relevant chapter, plus [ref/](../../guide/ref/README.md) and the reader's shelf |
 
 ## Chapters
 
@@ -54,6 +56,7 @@ its chapter. **Reviewing security?** [07](07-security.md) → [08](08-integratio
 
 | | |
 |---|---|
+| [00 Project context](00-project-context.md) | status, the settled assumptions (v1), and what this was built out of |
 | [01 Architecture](01-architecture.md) | delivery model, terms, the three processes, two auth layers, the main flows, the adapter seams |
 | [02 Console](02-console.md) | the browser SPA |
 | [03 Control Plane](03-control-plane.md) | responsibilities, the life of a request, background jobs |
@@ -71,5 +74,5 @@ its chapter. **Reviewing security?** [07](07-security.md) → [08](08-integratio
 | [92 Driving a TUI](92-driving-a-tui.md) | verifying a modal screen you drive by keystrokes |
 | [93 Worktree dependencies](93-worktree-deps.md) | what a worktree shares and what it duplicates, measured |
 
-What the product can do is [ref/](../ref/README.md); why it is like this is
+What the product can do is [ref/](../../guide/ref/README.md); why it is like this is
 [decisions/](../decisions/).

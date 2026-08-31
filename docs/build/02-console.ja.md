@@ -1,10 +1,12 @@
+---
+audience: "Console（ブラウザ側）を変える人"
+source_of_truth: "コード（本書は地図と設計意図）"
+updated: "2026-07"
+---
+
 # 02. Console（React + Vite + zustand）
 
 [English](02-console.md) | 日本語
-
-Audience: Console（ブラウザ側）を変える人
-Source of truth: コード（本書は地図と設計意図）
-Updated: 2026-07
 
 ## 2.1 スタックと設計原則
 

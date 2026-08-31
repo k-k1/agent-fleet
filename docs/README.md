@@ -1,48 +1,44 @@
-# Agent Fleet documentation
+---
+audience: "someone changing the Agent Fleet code"
+source_of_truth: "the code — if this tree disagrees with it, the code is right"
+updated: "2026-09"
+---
+
+# Agent Fleet developer documentation
 
 English | [日本語](README.ja.md)
 
-Start with the shelf that matches who you are. Each shelf is written for one reader,
-and the shelf is also the unit we ship: the Control Plane hands a container only the
-shelves that user's role is allowed to see.
+**This tree is for developers.** The procedures for people *using* Agent Fleet live in a
+separate tree, [`guide/`](../guide/README.md), which is what ships into a container.
+Nothing here is shipped to anybody.
 
-| You are | Shelf | What it answers |
+| Shelf | What is in it |
+|---|---|
+| [build/](build/README.md) | How it works — wire contracts, responsibilities, data flow, the shape of an extension |
+| [decisions/](decisions/) | Why it is like this. Append-only decision records, **including the options that were rejected**, so nobody retries them by accident |
+| [CONVENTIONS.md](CONVENTIONS.md) | The writing conventions for every tree. `scripts/docs-check.py` enforces the mechanical parts in CI and locally |
+
+## Three readers
+
+Documents are split by reader ([ADR 0064](decisions/0064-docs-three-audiences.md)).
+
+| Reader | Where | Shipped |
 |---|---|---|
-| Someone using Agent Fleet to run agents | [use/](use/README.md) | How do I do this? |
-| A tenant administrator | [admin/](admin/README.md) | How do I run this for my team? |
-| Someone who installs and operates a deployment | [operate/](operate/README.md) | How do I stand it up and keep it alive? |
-| Someone changing the code | [build/](build/README.md) | How does it work? |
+| Someone deciding whether to try it | root [README.md](../README.md) | GitHub only |
+| Someone using it | [`guide/`](../guide/README.md) | **into every container**, not cut by role |
+| Someone changing the code | `docs/` (here) | **to nobody** |
 
-Two shelves are read by everyone:
+**The directory boundary is the distribution boundary**, which is why `guide/` may not
+link into `docs/` (the other direction is free). See [CONVENTIONS §2](CONVENTIONS.md).
 
-- **[ref/](ref/README.md) — what the product can do.** Capabilities per feature, per
-  agent, per repository provider, per deployment target and per role. Every other
-  shelf links here instead of repeating it; when prose and a table disagree, the
-  table wins.
-- **[decisions/](decisions/) — why it is like this.** Decision records, append-only,
-  including the options we discarded so nobody retries them by accident.
+## Not shelves
 
-## Writing here
-
-[CONVENTIONS.md](CONVENTIONS.md) is the norm for every file on every shelf: the
-three-lifetime rule, the required file header, the vocabulary each shelf may use, and
-the bilingual rule (English is canonical, Japanese lives beside it as `X.ja.md`).
-`scripts/docs-check.py` enforces it, in CI and locally.
-
-## Not a shelf
-
-- **[log/](log/README.md)** — a frozen archive of the work journals that used to be
-  `docs/NN-*.md` and `docs/history/`. Not maintained, not shipped. It exists so we can
-  look up **measurements, production-incident causes, upstream CLI contracts, and the
-  reasons we abandoned things** — facts that live nowhere else. Living documents never
-  link into it.
-- [HANDOFF.md](HANDOFF.md) — the development host's runtime state and host-specific
-  practices. Changes daily.
-- [roadmap.md](roadmap.md) and [CHANGELOG-handoff.md](CHANGELOG-handoff.md) — forward
-  plans, and a dated work log.
-
-## Migration in progress
-
-`dev/` and `guide/` are the previous layout and are still the source of truth until
-the new shelves are written. Each new shelf's README says what it already covers and
-what still lives in the old place.
+- **[log/](log/README.md)** — the frozen archive of the work journals that used to be
+  `docs/NN-*.md` and `docs/history/`. Not maintained, not shipped. It exists only so you
+  can look up the things recorded nowhere else: **measurements, the causal chain of a
+  production incident, an upstream CLI's contract, why something was abandoned.** Living
+  documents never link here.
+- [HANDOFF.md](HANDOFF.md) — the development host's own runtime state and local
+  conventions. Changes daily.
+- [roadmap.md](roadmap.md) / [CHANGELOG-handoff.md](CHANGELOG-handoff.md) — the
+  forward-looking plan, and the dated work log.

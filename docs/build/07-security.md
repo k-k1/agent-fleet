@@ -1,10 +1,12 @@
+---
+audience: "anyone touching authentication, crypto, isolation, audit or egress"
+source_of_truth: "the code (this is the boundaries and the intent)"
+updated: "2026-07"
+---
+
 # 07. Security — threat model, authentication, crypto, audit
 
 English | [日本語](07-security.ja.md)
-
-Audience: anyone touching authentication, crypto, isolation, audit or egress
-Source of truth: the code (this is the boundaries and the intent)
-Updated: 2026-07
 
 ## 7.1 Threat model and trust boundary
 

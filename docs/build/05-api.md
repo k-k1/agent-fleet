@@ -1,10 +1,12 @@
+---
+audience: "someone touching an API boundary"
+source_of_truth: "the code (this is the map and the invariants; individual request and response shapes are code-as-contract)"
+updated: "2026-07"
+---
+
 # 05. API boundaries and relaying — the code is the contract
 
 English | [日本語](05-api.ja.md)
-
-Audience: someone touching an API boundary
-Source of truth: the code (this is the map and the invariants; individual request and response shapes are code-as-contract)
-Updated: 2026-07
 
 There are two boundaries: the **public** one (Console ↔ CP) and the **internal** one
 (CP ↔ workspace agent). There are roughly 300 routes on the CP and 200 on the agent —

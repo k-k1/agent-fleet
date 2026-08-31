@@ -79,25 +79,27 @@ jobs:
           # no key material (gitignored) slipped into the bundle
           ! tar tzf "agent-fleet-$VERSION.tar.gz" | grep -E '(-key|\.pem)$'
 
-      - name: assert CP image (docs allowlist + /api/version stamp)
+      - name: assert CP image (shipped docs + /api/version stamp)
         run: |
           set -eux
-          # The distribution-variant CP bakes only the shelves on the allowlist
-          # (docs/.distinclude). Assert both directions: every shipped shelf is
-          # present, and nothing that is shipped to nobody made it in. The negative
-          # half is the one that matters — an allowlist fails safe, but a mistake
-          # while editing it would ship the internal work journals to customers.
+          # The distribution-variant CP bakes the user guide and nothing else
+          # (ADR 0064: guide/ ships, docs/ ships to nobody). Assert both directions:
+          # every shelf of the guide is present, and nothing from the developer tree
+          # made it in. The negative half is the one that matters — shipping only one
+          # directory fails safe, but a mistake in stage-docs.sh would put the internal
+          # work journals in front of customers.
           docker run --rm --entrypoint /bin/sh "agent-fleet/control-plane:$VERSION" -c '
             set -e
             d=/usr/local/share/agent-fleet/docs
-            for s in use admin operate build ref; do test -d "$d/$s"; done
+            for s in member admin operate ref assets; do test -d "$d/$s"; done
             # The runbooks are copied in at staging time (deploy/release/stage-docs.sh)
             # so an operator can read them from inside a workspace.
             test -f "$d/operate/runbooks/compose.md"
             test -f "$d/operate/runbooks/aws-ecs.md"
-            test ! -e "$d/log" && test ! -e "$d/decisions"
-            test ! -e "$d/guide" && test ! -e "$d/dev"
-            test ! -e "$d/HANDOFF.md" && test ! -e "$d/CHANGELOG-handoff.md"
+            test ! -e "$d/log" && test ! -e "$d/decisions" && test ! -e "$d/build"
+            test ! -e "$d/use" && test ! -e "$d/guide" && test ! -e "$d/dev"
+            test ! -e "$d/CONVENTIONS.md" && test ! -e "$d/HANDOFF.md"
+            test ! -e "$d/CHANGELOG-handoff.md"
             test ! -e "$d/roadmap.md" && test ! -e "$d/img"'
           # version stamp: after boot, /api/version behind auth returns VERSION
           # (AUTH=dev has no gate). Booting with no mounts is intentional — the CP's
@@ -196,9 +198,15 @@ jobs:
           # the rootfs.json pin matches R (af verifies/extracts against this sha)
           sha="$(sed -n 's/.*"sha256": *"\([^"]*\)".*/\1/p' "$C/rootfs.json")"
           echo "$sha  $R" | sha256sum -c -
-          # console / docs (denylist applied) / LICENSE / NOTICE / VERSION are bundled
+          # console / docs (the user guide only) / LICENSE / NOTICE / VERSION are bundled
           test -f "$C/console/index.html"
-          test -f "$C/docs/log/35-packaging.md" && test -d "$C/docs/dev"
+          # ⚠️ This used to assert docs/log/35-packaging.md and docs/dev — paths from the
+          # denylist era. build.sh has staged through the allowlist since docs/.distinclude
+          # landed, so neither has been in the tar for a long time and this gate could only
+          # fail. Assert what is actually shipped: the guide, and none of the developer tree.
+          test -d "$C/docs/member" && test -d "$C/docs/ref"
+          test -f "$C/docs/operate/runbooks/compose.md"
+          test ! -e "$C/docs/build" && test ! -e "$C/docs/decisions" && test ! -e "$C/docs/log"
           test ! -e "$C/docs/HANDOFF.md" && test ! -e "$C/docs/talk" && test ! -e "$C/docs/history"
           test -f "$C/NOTICE" && test -f "$C/README.md" && test -f "$C/LICENSE"
           grep -q "github.com/k-k1/agent-fleet-dist" "$C/NOTICE"

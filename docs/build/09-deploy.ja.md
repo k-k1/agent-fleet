@@ -1,10 +1,12 @@
+---
+audience: "デプロイ形態やアダプタを足す人"
+source_of_truth: "コード ＋ 各 runbook（`deploy/*/README.md`）"
+updated: "2026-07"
+---
+
 # 09. デプロイ — 3形態・ポート&アダプタ・env 索引
 
 [English](09-deploy.md) | 日本語
-
-Audience: デプロイ形態やアダプタを足す人
-Source of truth: コード ＋ 各 runbook（`deploy/*/README.md`）
-Updated: 2026-07
 
 実手順（コマンド）は各 runbook が正で、本書は複製しない。本書は「どの形態があり、何が差し替わり、
 どのノブで制御するか」の地図。
@@ -14,7 +16,7 @@ Updated: 2026-07
 | 形態 | 概要 | 状態 | runbook |
 |------|------|------|---------|
 | **local dev** | CP をホストプロセスで起動（`run-dev.sh` 一括 / `restart-cp.sh` 軽量反映）。`AUTH=dev`（単独）または `oauth`（共有）。run-dev.sh はサブコマンド式の単一エントリ（`local`/`wsl`/`native`/`reset`＝データ初期化） | ✅ 開発 + 小規模共有で運用中 | スクリプト冒頭コメント（[run-dev.sh](../../deploy/local/run-dev.sh) / [restart-cp.sh](../../deploy/local/restart-cp.sh)）。反映作法は [10](10-development.ja.md) |
-| **wsl（個人）** | local dev の WSL2 むけ即起動プリセット（native dockerd 前提・`AUTH=dev` 固定・JDK は bind-mount か on-demand）。Docker を入れられない場合は `run-dev.sh native`（コンテナレス 🚧・[ref/deploy-targets](../ref/deploy-targets.ja.md)） | ✅ 個人検証 | [../../deploy/local/README-wsl.md](../../deploy/local/README-wsl.md)（`run-dev.sh wsl`。旧 `wsl-quickstart.sh` はラッパー） |
+| **wsl（個人）** | local dev の WSL2 むけ即起動プリセット（native dockerd 前提・`AUTH=dev` 固定・JDK は bind-mount か on-demand）。Docker を入れられない場合は `run-dev.sh native`（コンテナレス 🚧・[ref/deploy-targets](../../guide/ref/deploy-targets.ja.md)） | ✅ 個人検証 | [../../deploy/local/README-wsl.md](../../deploy/local/README-wsl.md)（`run-dev.sh wsl`。旧 `wsl-quickstart.sh` はラッパー） |
 | **compose** | セルフホスト本命。CP コンテナ + Caddy（ACME 自動 TLS）。CP は loopback bind、DooD（ホストのデーモンを駆動）の3制約（host-net / `DATA_DIR` 同一絶対パス / docker gid）を compose 定義が封じ込める | ✅ | [../../deploy/compose/README.md](../../deploy/compose/README.md) |
 | **aws** | ネイティブ ECS アダプタ（CFN 4段）と、compose を単一 EC2 VM に載せる ec2-single の 2 通り | 🚧 実装済・実運用実績なし | [ecs](../../deploy/aws/ecs/README.md) / [ec2-single](../../deploy/aws/ec2-single/README.md) |
 
@@ -112,7 +114,7 @@ Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JA
     ここで同期待ちが成立し得ないのは、`running`/`starting` が手前で早期 return する以上、
     `waitReady` に届く時点で必ず**タスクをゼロから起動している**ため（Fargate はイメージキャッシュ無し）。
     収束は Console の `GET /api/workspace` ポーリングが拾う（Start 応答の `state` は元々見ていない）。
-- コスト特性（ec2-single との比較）は [§9.8](#98-コスト特性ec2-single--ecs)。
+- コスト特性（ec2-single との比較）は [§9.8](#98-コスト特性（ec2-single--ecs）)。
 
 ## 9.6 パリティと相違点
 
@@ -198,7 +200,7 @@ runbook が t3.medium で `WS_MEMORY` を下げろと言うのはこの制約。
 | 24/7（アイドル停止が効いていない状態） | $36 | $720 | ≈ $830/月 |
 
 24/7 の列は **scale-to-zero が壊れたときの請求額**でもある。`AF_AUTOSTART` /
-`AF_WS_IDLE_TIMEOUT` 系（[§9.4](#94-環境変数リファレンス索引)）が意図通り効いているかは、
+`AF_WS_IDLE_TIMEOUT` 系（[§9.4](#94-環境変数リファレンス（索引）)）が意図通り効いているかは、
 コスト面でも監視対象。
 
 ### 9.8.3 使い分け

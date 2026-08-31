@@ -1,10 +1,12 @@
+---
+audience: "someone changing the workspace agent, or adding an agent kind"
+source_of_truth: "the code (this is a map and a statement of intent)"
+updated: "2026-07"
+---
+
 # 04. The workspace agent
 
 English | [日本語](04-agent.ja.md)
-
-Audience: someone changing the workspace agent, or adding an agent kind
-Source of truth: the code (this is a map and a statement of intent)
-Updated: 2026-07
 
 ## 4.1 What it is
 
@@ -260,7 +262,7 @@ messages as text and **raw JPEG as binary**. From the Console it accepts only vi
 pointer, wheel, key and text, navigation and visibility — **raw debugging protocol is
 never exposed**.
 
-The ceilings are in [ref/limits.md](../ref/limits.md). The frame rate is enforced **not
+The ceilings are in [ref/limits.md](../../guide/ref/limits.md). The frame rate is enforced **not
 merely by throttling the send** but by delaying the acknowledgement to a one-frame
 worker, **so Chromium is limited at capture and encode** rather than producing frames
 that are thrown away. The pipe has fixed message and queue limits, and **when a required

@@ -133,10 +133,10 @@ describe("MarkdownView path auto-linking", () => {
   it("leaves a directory outside home as text — the rail is rooted at home", async () => {
     // The resolver legitimately places these (the staged docs mount, the scratch base),
     // and a FILE there opens fine; a directory has nowhere to be revealed.
-    resolved["docs/use"] = { path: "/usr/local/share/agent-fleet/docs/use", type: "dir" };
-    resolved["docs/use/a.md"] = { path: "/usr/local/share/agent-fleet/docs/use/a.md", type: "file" };
-    await render("`docs/use` の中の `docs/use/a.md`");
-    expect(pathLinks().map((a) => a.textContent)).toEqual(["docs/use/a.md"]);
+    resolved["docs/member"] = { path: "/usr/local/share/agent-fleet/docs/member", type: "dir" };
+    resolved["docs/member/a.md"] = { path: "/usr/local/share/agent-fleet/docs/member/a.md", type: "file" };
+    await render("`docs/member` の中の `docs/member/a.md`");
+    expect(pathLinks().map((a) => a.textContent)).toEqual(["docs/member/a.md"]);
   });
 
   it("re-resolves on click, so a file that vanished says so instead of opening a pane", async () => {

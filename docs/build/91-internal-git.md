@@ -1,10 +1,12 @@
+---
+audience: "anyone touching the internal git provider"
+source_of_truth: "the code"
+updated: "2026-07"
+---
+
 # 91. The tenant's internal git provider (bare + smart HTTP)
 
 English | [日本語](91-internal-git.ja.md)
-
-Audience: anyone touching the internal git provider
-Source of truth: the code
-Updated: 2026-07
 
 Related: [01](01-architecture.md) · [05](05-api.md) · [07 §7.6](07-security.md) ·
 ADR [0010](../decisions/0010-internal-git-provider.md) (whether to build it) ·

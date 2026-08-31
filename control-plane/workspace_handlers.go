@@ -438,20 +438,19 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 				fmt.Sprintf("tenant workspace limit reached (%d)", lim.MaxWorkspaces)}
 		}
 	}
-	// Stage the role-scoped docs subset into <dataDir>/docs so the container's agents
-	// can answer environment questions from the authoritative docs. Which shelves a
-	// role gets is docsRolePrefixes (workspace_docs.go) — one allowlist, no "all"
-	// case. Gated here because the CP is what knows the role; no container ever holds
-	// the decision records or the frozen work journals.
+	// Stage the user guide into <dataDir>/docs so the container's agents can answer
+	// environment questions from the authoritative documentation. Everyone receives the
+	// same tree (ADR 0064); the developer tree is not baked into the CP image at all,
+	// so no container ever holds the decision records or the frozen work journals.
 	// Best-effort: a failure just means no docs mount, never a failed start.
 	//
 	// Only for the adapters that then MOUNT that directory. On ECS nothing would ever
 	// read it (the task has no path into the CP's filesystem), so staging there would
 	// just copy megabytes onto the CP's disk for nobody; that container pulls the same
-	// subset over /internal/docs instead (docs_bridge.go).
+	// tree over /internal/docs instead (docs_bridge.go).
 	if _, mounts := rt.(runtimeDocsMounter); mounts {
-		if err := stageWorkspaceDocs(a.mgr.rootedDataDir(res.ws), res.mv.Role); err != nil {
-			log.Printf("stage workspace docs (ws=%s role=%s): %v", res.ws.ID, res.mv.Role, err)
+		if err := stageWorkspaceDocs(a.mgr.rootedDataDir(res.ws)); err != nil {
+			log.Printf("stage workspace docs (ws=%s): %v", res.ws.ID, err)
 		}
 	}
 	if err := lease.checkpoint(ctx); err != nil {

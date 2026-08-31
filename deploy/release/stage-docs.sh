@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Stage the docs tree that gets shipped: the shelves on the allowlist, plus the
-# runbooks copied in where a workspace can read them.
+# Stage the docs tree that gets shipped: the user guide, plus the runbooks copied in
+# where a workspace can read them.
 #
 #   deploy/release/stage-docs.sh <dest-dir>
 #
@@ -11,14 +11,20 @@
 #
 # What is staged:
 #
-#   1. docs/<shelf> for each entry in docs/.distinclude — the reader-cut shelves. The
-#      decision records and the frozen work journals are not on that list and so are
-#      never shipped.
+#   1. guide/ — the whole tree, and only that tree (ADR 0064). The developer
+#      documentation lives in docs/ and is never shipped, so "what does a customer
+#      receive" is answered by a directory name rather than by an allowlist file that
+#      somebody has to remember to update. That allowlist (docs/.distinclude) is gone.
 #   2. deploy/*/README.md -> <dest>/operate/runbooks/<name>.md — the actual command
 #      procedures. They stay where they are in the repository, next to the scripts and
 #      templates they operate, and they are part of the release bundle itself. What
 #      they were NOT was reachable from inside a workspace, which is the one place an
 #      operator reads them under pressure. So: copied, not moved.
+#   3. The links to those runbooks are rewritten in the staged copy. In the repository
+#      `guide/operate/…` points at `../../deploy/compose/README.md`, which is right on
+#      GitHub and absent in a container; here it becomes `runbooks/compose.md`, which is
+#      right in a container. One source, correct in both places — and the reason
+#      check_closure grants deploy/ its single documented exemption.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -26,21 +32,12 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 DEST="${1:?usage: stage-docs.sh <dest-dir>}"
 mkdir -p "$DEST"
 
-# --- 1. the shelves -----------------------------------------------------------
-SHELVES=()
-while IFS= read -r line || [ -n "$line" ]; do
-  line="${line%%#*}"
-  line="${line#"${line%%[![:space:]]*}"}"; line="${line%"${line##*[![:space:]]}"}"
-  [ -n "$line" ] || continue
-  # A listed shelf that does not exist is a mistake in .distinclude, not something to
-  # ship silently short — tar would fail anyway; say why first.
-  [ -d "$ROOT/docs/$line" ] || {
-    echo "ERROR: docs/.distinclude lists '$line', which is not a directory" >&2
-    exit 1
-  }
-  SHELVES+=("$line")
-done < "$ROOT/docs/.distinclude"
-tar -C "$ROOT/docs" -cf - "${SHELVES[@]}" | tar -C "$DEST" -xf -
+# --- 1. the guide -------------------------------------------------------------
+[ -d "$ROOT/guide" ] || {
+  echo "ERROR: guide/ is missing — there is nothing to ship" >&2
+  exit 1
+}
+tar -C "$ROOT/guide" -cf - . | tar -C "$DEST" -xf -
 
 # --- 2. the runbooks ----------------------------------------------------------
 # The map is explicit rather than a glob: which files are runbooks is an editorial
@@ -84,4 +81,23 @@ The shelf that explains what each step decides, and what to watch for, is
 [operate/](../README.md).
 EOF
 
-echo "==> staged docs: shelves=${SHELVES[*]} + ${#RUNBOOKS[@]} runbooks -> $DEST"
+# --- 3. point the guide at the staged runbooks --------------------------------
+# In the repository the links read `../../deploy/<x>/README.md`, which is correct on
+# GitHub. In a container the same files are at operate/runbooks/, so rewrite them here.
+rewrite_runbook_links() {  # <dir> <prefix>
+  local dir="$1" prefix="$2" f
+  [ -d "$dir" ] || return 0
+  while IFS= read -r -d "" f; do
+    sed -i \
+      -e "s#\.\./\.\./deploy/compose/README\.md#${prefix}compose.md#g" \
+      -e "s#\.\./\.\./deploy/native/README\.md#${prefix}native.md#g" \
+      -e "s#\.\./\.\./deploy/local/README-wsl\.md#${prefix}wsl.md#g" \
+      -e "s#\.\./\.\./deploy/aws/ecs/README\.md#${prefix}aws-ecs.md#g" \
+      -e "s#\.\./\.\./deploy/aws/ec2-single/README\.md#${prefix}aws-ec2-single.md#g" \
+      "$f"
+  done < <(find "$dir" -maxdepth 1 -name "*.md" -print0)
+}
+rewrite_runbook_links "$DEST/operate" "runbooks/"
+rewrite_runbook_links "$DEST/ref" "../operate/runbooks/"
+
+echo "==> staged docs: guide/ + ${#RUNBOOKS[@]} runbooks -> $DEST"

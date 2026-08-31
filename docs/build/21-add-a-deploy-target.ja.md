@@ -1,17 +1,19 @@
+---
+audience: "ワークスペースを動かす場所を足す人"
+source_of_truth: "既存の `runtime_*.go`（書く前に 4 本とも読むこと）"
+updated: "2026-08"
+---
+
 # 21. デプロイ形態を足す
 
 [English](21-add-a-deploy-target.md) | 日本語
-
-Audience: ワークスペースを動かす場所を足す人
-Source of truth: 既存の `runtime_*.go`（書く前に 4 本とも読むこと）
-Updated: 2026-08
 
 アダプタは 4 本あります——Docker、Fargate 上の ECS、EC2 プール上の ECS、コンテナ無しの
 ホストプロセス。**互いの差は、新しい 1 本に普通必要な差よりずっと大きい**ので、先に読んでください。
 コンテナ無しのものが最小で「最低限」を、EC2 プールのものが「難しいとはどういうことか」を示します。
 
-利用者向けの比較は [ref/deploy-targets.md](../ref/deploy-targets.ja.md)、運用者の視点は
-[operate/01](../operate/01-choose.ja.md)。
+利用者向けの比較は [ref/deploy-targets.md](../../guide/ref/deploy-targets.ja.md)、運用者の視点は
+[operate/01](../../guide/operate/01-choose.ja.md)。
 
 ## 21.1 「形態」とは何か
 
@@ -68,8 +70,8 @@ Agent・Workspace イメージ——は**どこでも同一の成果物**です�
 ## 21.6 完了の条件
 
 1. ファクトリがプロファイルを受け付け、未知の値を大きな声で拒否する。
-2. [ref/deploy-targets.md](../ref/deploy-targets.ja.md) に列が在る（**正直な「—」も含めて**）。
-3. [operate/01](../operate/01-choose.ja.md) に**いつ選ぶか**——そして自明な選択でないなら
+2. [ref/deploy-targets.md](../../guide/ref/deploy-targets.ja.md) に列が在る（**正直な「—」も含めて**）。
+3. [operate/01](../../guide/operate/01-choose.ja.md) に**いつ選ぶか**——そして自明な選択でないなら
    **いつ選ばないか**——が書いてある。
 4. runbook が、それが操作するスクリプトの隣に在り、`deploy/release/stage-docs.sh` が
    コンテナ向けに写している。

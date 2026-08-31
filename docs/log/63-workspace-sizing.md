@@ -8,7 +8,7 @@
 > **P1〜P2 実装済み**（§63.7）。残る未決は `~/.local`（CLI 実体）の置き場のみ（§63.5.3）。
 > 関連: [62-ecs-start-latency.md](62-ecs-start-latency.md)（同じ ECS の起動レイテンシ側の調査） /
 > [history/p3-7-aws-adapter.md](p3-7-aws-adapter.md) §20b.7.4（EFS を選んだ凍結仕様） /
-> [admin/02-limits.md](../admin/02-limits.md)（管理者向けの上限の説明）
+> [admin/02-limits.md](../../guide/admin/02-limits.md)（管理者向けの上限の説明）
 > 対象: `control-plane/mem.go`（Fargate サイズ表）/ `control-plane/runtime_ecs.go`（タスク定義）/
 > `control-plane/store.go`・`migrations/`（`user_limit`）/ `control-plane/tenants.go`・`mcp.go`（設定経路）/
 > `console/src/features/settings/tenantMembers.tsx`（UI）/ `deploy/aws/ecs/cfn/`（既定値）

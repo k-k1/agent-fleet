@@ -1,7 +1,7 @@
 # HANDOFF — 次セッションへの引き継ぎ
 
 このファイルは**このホストの稼働状態・実行の作法・落とし穴・現在地**に絞った引き継ぎメモ。
-機能仕様の正は **[dev/](build/README.md)（開発者向け）とコード**、利用者の操作は **[use/](use/README.ja.md)**、
+機能仕様の正は **[dev/](build/README.md)（開発者向け）とコード**、利用者の操作は **[use/](../guide/member/README.ja.md)**、
 時系列の作業ログは [CHANGELOG-handoff.md](CHANGELOG-handoff.md)、前向きの計画は [roadmap](roadmap.md)、
 意思決定は [decisions/](decisions/)、使い終わった実装プランは [log/](log/README.md)。
 **まず読む順**: この HANDOFF（§1〜§3）→ [dev/01 アーキテクチャ](build/01-architecture.md) → §4 の現在地。
@@ -60,7 +60,7 @@
 
 - **仕様を知りたい** → [dev/](build/README.md): アーキテクチャ(01) / Console(02) / Control Plane(03) / Agent(04) /
   API 契約(05) / データモデル(06) / セキュリティ(07) / 外部連携(08) / デプロイ(09) / 開発作法(10) / コードマップ(90)。
-- **操作を知りたい** → [use/](use/README.ja.md): member / admin / operator / lite の分冊。
+- **操作を知りたい** → [use/](../guide/member/README.ja.md): member / admin / operator / lite の分冊。
 - **恒久的に有効な検証知見**: `/login` は localhost 非依存（`redirect_uri=platform.claude.com/oauth/code/callback`）で
   ヘッドレス/リモートに無条件成立、認証と onboarding は別物、`/login` URL 折返し復元 →
   詳細は [dev/08 §8.5](build/08-integrations.md) と [history/phase1-plan §11.10](log/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
@@ -83,7 +83,7 @@ curl -s http://127.0.0.1:8099/api/workspace            # {"state":"running"|"sto
 # 旧来の手動経路: 端末で claude → /login（⧉ sign-in URL でURL取得）も併用可
 ```
 
-利用者視点の詳しい手順は [use/01-first-day.ja.md](use/01-first-day.ja.md)。
+利用者視点の詳しい手順は [use/01-first-day.ja.md](../guide/member/01-first-day.ja.md)。
 
 ## 6. コミット規約
 

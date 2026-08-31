@@ -1,10 +1,12 @@
+---
+audience: "someone adding a way to run workspaces"
+source_of_truth: "the existing `runtime_*.go` adapters — read all four before writing one"
+updated: "2026-08"
+---
+
 # 21. Adding a deployment target
 
 English | [日本語](21-add-a-deploy-target.ja.md)
-
-Audience: someone adding a way to run workspaces
-Source of truth: the existing `runtime_*.go` adapters — read all four before writing one
-Updated: 2026-08
 
 Four adapters exist: Docker, ECS on Fargate, ECS on an EC2 pool, and containerless host
 processes. **They differ far more from each other than a new one usually needs to**, so
@@ -12,8 +14,8 @@ read them first — the containerless one is the smallest and shows the minimum,
 EC2 pool one shows what "hard" looks like.
 
 The user-facing comparison is
-[ref/deploy-targets.md](../ref/deploy-targets.md); the operator's view is
-[operate/01](../operate/01-choose.md).
+[ref/deploy-targets.md](../../guide/ref/deploy-targets.md); the operator's view is
+[operate/01](../../guide/operate/01-choose.md).
 
 ## 21.1 What a target actually is
 
@@ -75,9 +77,9 @@ Two lessons from the existing targets, both of which cost real money to learn:
 ## 21.6 Finishing
 
 1. The factory accepts the profile, and rejects unknown values loudly.
-2. [ref/deploy-targets.md](../ref/deploy-targets.md) has its column, including the
+2. [ref/deploy-targets.md](../../guide/ref/deploy-targets.md) has its column, including the
    honest "—" cells.
-3. [operate/01](../operate/01-choose.md) says **when to choose it** — and, if it is not
+3. [operate/01](../../guide/operate/01-choose.md) says **when to choose it** — and, if it is not
    the obvious choice, when not to.
 4. A runbook exists next to the scripts it operates, and
    `deploy/release/stage-docs.sh` copies it in for the container.
