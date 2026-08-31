@@ -56,6 +56,7 @@ its chapter. **Reviewing security?** [07](07-security.md) → [08](08-integratio
 
 | | |
 |---|---|
+| [00 Project context](00-project-context.md) | status, the settled assumptions (v1), and what this was built out of |
 | [01 Architecture](01-architecture.md) | delivery model, terms, the three processes, two auth layers, the main flows, the adapter seams |
 | [02 Console](02-console.md) | the browser SPA |
 | [03 Control Plane](03-control-plane.md) | responsibilities, the life of a request, background jobs |

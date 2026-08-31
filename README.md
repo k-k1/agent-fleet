@@ -1,57 +1,22 @@
 # Agent Fleet — a self-hosted console for running AI coding agents as a fleet
 
+English | [日本語](README.ja.md)
+
 ![The Agent Fleet Console: repo tree with live sessions, a chat mirror of a running agent, and the repository's commit graph side by side](docs/img/console-en.webp)
 
-Agent Fleet is a web service that lets a team share AI coding agents — Claude Code,
-Codex CLI, GitHub Copilot CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode — efficiently and safely.
-Each member gets an isolated per-user environment — a Docker container with cgroup
-CPU/memory quotas (or a bubblewrap sandbox in the Docker-less native runtime) — with
-a persistent home and git working copies, and starts, drives and manages agent
-sessions from the browser. A Go control plane orchestrates the workspaces; the same
-core runs **both locally (Docker) and on AWS ECS (CloudFormation)** — the deployment
-layer is separated via ports & adapters ([portability](docs/build/09-deploy.md)).
+**Close your laptop. The agents keep working.**
 
-**Status: Phase 2 complete, Phase 3 in progress.** Multiple users can work in
-parallel, mutually invisible, on a single on-prem host (per-user Workspace /
-AuthGateway / network isolation / at-rest encryption). Phase 3 productization has
-reached the packaging & distribution milestone (P3-10): the full Console rebuild
-(React+Vite), the AWS ECS adapter (P3-7) and the compose / ECS / Docker-less native
-distribution targets are shipped, with 0.x releases published to the
-[distribution repo](https://github.com/k-k1/agent-fleet-dist)
-([docs/log/p3-10-packaging.md](docs/log/p3-10-packaging.md),
-[docs/roadmap.md](docs/roadmap.md)).
-**Documentation starts at [docs/README.md](docs/README.md)**, which branches by
-reader. (`docs/HANDOFF.md` is the development host's own runtime state and pitfalls —
-useful if you are working on *this* host, not an entry point for the project.)
-Code: [`workspace/`](workspace/) (Agent + image) / [`control-plane/`](control-plane/) /
-[`console/`](console/); start via [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)
-(subcommands: `local` = Docker default / `wsl` = WSL preset / `native` = no Docker /
-`reset` = wipe data. [docs/build/10 §10.3](docs/build/10-development.md)).
+Agent Fleet lets a team share AI coding agents — Claude Code, Codex CLI, GitHub Copilot
+CLI, Antigravity CLI, Cursor CLI, Kiro, OpenCode — from one browser console. Each member
+gets an isolated per-user environment (a Docker container with cgroup CPU/memory quotas,
+or a bubblewrap sandbox in the Docker-less native edition) with a persistent home and its
+own git working copies, and starts, follows and steers agent sessions from the browser.
+There is no need to sit in front of a terminal: check progress and send the next
+instruction from Discord, Slack, or a phone.
 
-## Self-hosting (on-prem / Docker Compose)
-
-Each company runs one deployment on its own infrastructure. Just `compose up` the
-image set (Caddy handles automatic TLS via Let's Encrypt; login uses the CP-native
-Google OAuth).
-
-```bash
-cd deploy/compose
-cp .env.example .env     # generate and fill in secrets (AF_MASTER_KEY etc.)
-docker build -t agent-fleet/workspace:dev ../../workspace   # per-user workspace image
-docker compose up -d --build
-```
-
-The snippet above builds the images from this tree, which is what you want while
-developing. A **release** is consumed the other way round: the bundle from the
-[distribution repo](https://github.com/k-k1/agent-fleet-dist) pulls pinned images from
-GHCR ([decisions/0037](docs/decisions/0037-registry-policy.md)).
-
-Procedures, key generation, backup/restore, upgrades, incident response and DooD
-constraints are collected in **[deploy/compose/README.md](deploy/compose/README.md)
-(runbook)**. Local dev (host processes) remains
-[`deploy/local/run-dev.sh`](deploy/local/run-dev.sh); personal WSL use (with or
-without Docker) is covered by
-[deploy/local/README-wsl.md](deploy/local/README-wsl.md).
+It is **self-hosted**. One company runs one deployment on its own infrastructure, so the
+credentials, the source and the conversations stay inside it. The same core runs on a
+single Linux host with Docker Compose and on AWS ECS.
 
 ## A look around
 
@@ -65,60 +30,50 @@ without Docker) is covered by
 | **See where the tokens went** — per feature, per agent and per model, over 24h / 7d / 30d. Calls that report no tokens are counted separately, never as zero. | **A real terminal, too** — every session (agent or plain shell) is attachable as a live PTY. |
 
 The UI is English or Japanese, switched per user in ⚙ Settings — every view above also
-exists in Japanese (`docs/img/*-ja.webp`, e.g.
-[the console](docs/img/console-ja.webp)). Screenshots are captured from the real
-Console bundle against a demo dataset — regenerate them with
-`node console/scripts/shots/capture.mjs --locale en` (the default locale is `ja`;
-[how](console/scripts/shots/README.md)).
+exists in Japanese (`docs/img/*-ja.webp`, e.g. [the console](docs/img/console-ja.webp)).
 
-## Settled assumptions (v1)
+## Trying it
 
-| Topic | Decision | Rationale / notes |
-|------|------|-----------|
-| Agent auth | each user connects their own account/seat from the Console (Claude: OAuth code paste; Codex: ChatGPT device code or API key; Copilot rides the GitHub connection; Cursor / Kiro: browser sign-in; OpenCode: provider API keys or an opencode account) | the console surfaces each user's auth state and prompts re-login; a manual `/login` in the terminal still works as a fallback |
-| User isolation | one container per user | highly portable, strong isolation, fits AWS well |
-| Target scale | ~20 users (concurrent) | a single cluster + an orchestration layer is enough |
-| Persistence | `local`=bind mount / `aws`=EBS/EFS | home, clones, credentials and history are kept on disk |
-| Git auth | HTTPS tokens/OAuth via Console (Connections) | downgraded from SSH keys; the CP holds no secrets ([decisions/0003](docs/decisions/0003-ssh-to-connections.md)) |
-| Tech stack | Console=React+Vite / Backend=Go | Go suits daemons, WS proxying and container control ([decisions/0004](docs/decisions/0004-vanilla-to-react.md)) |
-| Delivery model | packaged product, self-hosted per company | 1 company = 1 deployment. SaaS abandoned due to ToS ([decisions/0001](docs/decisions/0001-self-host-vs-saas.md)) |
-| Deployment layer | local / aws switchable over one core | separated via ports & adapters (local = Docker, local-first) |
+Which edition suits you is a twenty-minute decision, laid out in
+[Choosing a deployment target](guide/operate/01-choose.md):
 
-## Documentation layout
-
-Everything starts at **[docs/README.md](docs/README.md)**, which branches by reader.
-The shelves are cut by *who reads them*, and that is also how they ship: a container
-receives only the shelves its user's role may see.
-
-| Shelf | Reader |
+| Edition | For |
 |---|---|
-| [docs/use/](docs/use/README.md) | using Agent Fleet to run agents |
-| [docs/admin/](docs/admin/README.md) | administering a tenant |
-| [docs/operate/](docs/operate/README.md) | installing and operating a deployment |
-| [docs/build/](docs/build/README.md) | changing the code |
-| [docs/ref/](docs/ref/README.md) | what the product can do — shared by all four |
-| [docs/decisions/](docs/decisions/) | why it is like this, including the discarded options |
+| **compose** | the default — a team, on one Linux host with Docker |
+| **native** | no Docker available; single user (WSL2, a personal Linux box) |
+| **ecs / ecs-ec2** | AWS, when you want task-level isolation |
+| **ec2-single** | AWS, small team — compose on one VM |
 
-[docs/CONVENTIONS.md](docs/CONVENTIONS.md) is the norm every file follows;
-`scripts/docs-check.py` enforces it in CI.
+Released bundles pull pinned images from GHCR and are published to the
+[distribution repository](https://github.com/k-k1/agent-fleet-dist); the command
+procedures live next to what they operate ([compose](deploy/compose/README.md),
+[native](deploy/native/README.md), [AWS](deploy/aws/ecs/README.md)). To build the images
+from this tree instead — which is what you want while developing:
 
-> The work journals that used to be `docs/NN-*.md` are frozen in
-> [docs/log/](docs/log/README.md); they are not maintained and not shipped.
+```bash
+cd deploy/compose
+cp .env.example .env     # generate and fill in secrets (AF_MASTER_KEY etc.)
+docker build -t agent-fleet/workspace:dev ../../workspace   # per-user workspace image
+docker compose up -d --build
+```
 
-## Existing prototype assets (reused from)
+Caddy handles TLS via Let's Encrypt; sign-in uses the control plane's own OAuth. What
+each step decides, and what to watch out for afterwards, is in
+[Operating a deployment](guide/operate/README.md).
 
-A personal fleet-operation setup already existed; this project turns it into a
-product.
+## Documentation
 
-- **`oauth2-proxy`** — Google domain-restricted auth gate (`emails.txt` allowlist).
-  **Now replaced by CP-native Google OAuth (`AUTH=oauth`)** — the allowlist is
-  `deploy/local/allowed-emails.txt` (emails / `@domain`). Design:
-  [docs/build/07 §7.3](docs/build/07-security.md)
-- **`scripts/tmux-claude.sh`** — idempotently starts, resumes and generation-manages
-  multiple Claude CLIs in detached tmux
-- **`CLAUDE_CONFIG_DIR` profile separation** — per-directory separate `~/.claude`
-- **`~/.claude/settings.json`** — `remoteControlAtStartup` /
-  `skipDangerousModePermissionPrompt` preconfigured
+Documents are split by reader, and the split is also how they ship.
+
+| You are | Read |
+|---|---|
+| Using Agent Fleet | **[guide/](guide/README.md)** — how to do things. This is the tree that ships into every workspace container, and the Console opens it from **"User guide"** |
+| Changing the code | **[docs/](docs/README.md)** — how it works, and why it is like this |
+
+The code is [`workspace/`](workspace/) (the agent and its image),
+[`control-plane/`](control-plane/) and [`console/`](console/); a local dev stack starts
+with [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh) (`local` = Docker, `wsl`, `native`,
+`reset`), described in [10 Development](docs/build/10-development.md).
 
 ## Terminology
 
@@ -134,8 +89,7 @@ product.
 
 ## License
 
-[Apache License 2.0](LICENSE) (permissive, with a patent grant). Publishing the
-source of a credential-handling tool so each company can audit the crypto/isolation
-implementation is part of the adoption pitch. Contributions:
-[CONTRIBUTING.md](CONTRIBUTING.md); vulnerability reports and the threat model:
-[SECURITY.md](SECURITY.md).
+[Apache License 2.0](LICENSE) (permissive, with a patent grant). Publishing the source of
+a credential-handling tool so each company can audit the crypto and isolation
+implementation is part of the pitch. Contributions: [CONTRIBUTING.md](CONTRIBUTING.md);
+vulnerability reports and the threat model: [SECURITY.md](SECURITY.md).
