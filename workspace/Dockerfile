@@ -519,12 +519,15 @@ ENV GIT_TERMINAL_PROMPT=0 \
 # ⚠️ THAT NO LONGER HOLDS (measured 2026-08-31 on 2.1.251, docs/58 §58.16). With BOTH
 # vars set to 1 in the live process, claude still advertises ListAgents / SendMessage and
 # still delivers over /tmp/cc-socks/<pid>.sock — verified end to end on a real pair of
-# sessions. So the session-to-session channel that bypasses the Console, the dispatch
-# ledger and the mirror is currently OPEN, and this block is not what closes it. Whether
-# to close it another way or to accept it is an open decision (ADR 0041 決定1 needs
-# revisiting); until then the mirror at least SHOWS such arrivals (transcript.go, peer
-# origin). Keep these vars anyway — they still do what the paragraph above says about
-# optional/background traffic. Read docs/58 §58.10 and §58.16 before touching them.
+# sessions. **So do NOT read this block as the cross-session block any more.**
+#
+# The block now lives in the Agent, as launch settings on every claude session it starts:
+# workspace/agent/internal/agents/claude/program.go `nativePeerSettings`
+# (permissions.deny on the two tools + crossSessionInbound:"refuse", docs/58 §58.17).
+# It is code, so it takes effect on an Agent restart rather than an image rebuild — which
+# is also why it is no longer here. Keep these vars anyway: they still do what the
+# paragraph above says about optional/background traffic. ADR 0041 決定1 is unchanged
+# (the native path stays off); only the mechanism moved.
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
     DISABLE_TELEMETRY=1 \
     DISABLE_ERROR_REPORTING=1
