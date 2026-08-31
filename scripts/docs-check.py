@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """文書ツリーの構造検査。CI（.github/workflows/docs.yml）とローカルの両方で走る。
 
-文書は読者で 3 つに分かれる（ADR 0062）。① プロダクト紹介＝ルートの README、
+文書は読者で 3 つに分かれる（ADR 0064）。① プロダクト紹介＝ルートの README、
 ② 開発者向け＝`docs/`、③ 利用ガイド＝`guide/`。**`guide/` だけがコンテナへ配られる**
 ので、ディレクトリの境界がそのまま配布の境界である。境界が崩れると読者の手元で
 黙ってリンクが切れるので、規約は人間のレビューではなくここで機械検査する。
@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # --- 2 つのツリー -------------------------------------------------------------
-# 文書は読者で 3 つに分かれる（ADR 0062）。① プロダクト紹介はルートの README、
+# 文書は読者で 3 つに分かれる（ADR 0064）。① プロダクト紹介はルートの README、
 # 残る 2 つがここで検査するツリーである。
 #
 #   guide/ … ③ 利用ガイド。**コンテナへ配る唯一のツリー**で、全員が同じものを受け取る。
@@ -64,7 +64,7 @@ LIVING = ("member", "admin", "operate", "ref", "build")
 # コマンド・パス・変数を使ってよく、ref/ は「画面欄は Console・実装欄はコード」と
 # 対応表そのものを載せる棚なので、どちらもここには入らない（CONVENTIONS §4）。
 READER_FACING = ("member", "admin")
-# guide/ ツリーの棚＝コンテナへ配られるもの。ロールでは切らない（ADR 0062）。
+# guide/ ツリーの棚＝コンテナへ配られるもの。ロールでは切らない（ADR 0064）。
 GUIDE_SHELVES = ("member", "admin", "operate", "ref")
 # 二言語 = 英語が正（X.md）、日本語が併記（X.ja.md）。
 # decisions/ は LIVING ではない（ADR は不変なので Updated: を持たない）が、二言語では
@@ -874,7 +874,7 @@ def check_notes(f: Findings) -> None:
 
     ⚠️ かつてここには「保証されない棚を指すなら同じ段落に『may be absent』と断れ」という
     規則があった。mount が**役割別**で、member は use/ と ref/ しか受け取らなかったからである。
-    ロール別配布をやめた（ADR 0062）ので、断り書きで逃げる余地も必要も無くなった——
+    ロール別配布をやめた（ADR 0064）ので、断り書きで逃げる余地も必要も無くなった——
     指せるか指せないかの 2 つに 1 つで、指せないものは書き換える。
     """
     notes = os.path.join(ROOT, "workspace", "workspace-notes.md")

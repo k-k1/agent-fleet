@@ -21,37 +21,12 @@ of each fact, readable from four directions.
 | [glossary.md](glossary.md) | What is this word, on screen and in the code? |
 | [browser-pane.md](browser-pane.md) | How do I show a running web app to a person? |
 
-## Why a shared shelf
+## How to read these tables
 
-The same question arrives from four readers with different stakes. "Does Cursor
-support plan mode?" is asked by a member choosing an agent, by an administrator
-deciding what to offer, and by a developer adding the eighth kind. When each shelf
-keeps its own copy of the answer, they drift, and the reader cannot tell which copy is
-stale — so capability facts live here and nowhere else
-(`docs/CONVENTIONS.md` §6).
-
-## How these tables stay true
-
-Where an axis exists in the code, CI compares the table against it — it does not
-generate the table, so the wording stays yours:
-
-- the agent columns must cover the `Kind*` constants in
-  `workspace/agent/internal/session/session.go`;
-- the deployment rows must cover the profiles `newRuntimeFactory` accepts in
-  `control-plane/runtime.go`.
-
-Axes that have no single definition in the code — repository providers, roles, limits
-— are maintained by hand, and their tables say so.
-
-**When prose and a table disagree, the table wins.** If you are about to write a
-capability sentence outside this shelf, link instead.
-
-## Status
-
-All nine tables are filled. Two things they deliberately do *not* do:
+**When another page's prose and one of these tables disagree, the table wins.**
 
 - **They do not invent numbers.** A limit nobody measures is written as "read the
   screen", never as a plausible-looking default ([limits.md](limits.md)).
 - **A dash is not always "impossible".** In [features.md](features.md) a dash in the
-  Details column means no reader-facing page covers that feature yet, not that the
-  feature is missing. Closing those gaps is phase P2.
+  Details column means no page describes the steps yet, not that the feature is
+  missing.

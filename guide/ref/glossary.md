@@ -41,22 +41,3 @@ thing.
 | Tenant | tenant | One team or department. Members of different tenants are invisible to each other |
 | Slot | slot | On the EC2 target, one pooled instance a workspace can be placed on |
 | Deployment | deployment | One installation of Agent Fleet. One company runs one |
-
-## Words to avoid on the reader-facing shelves
-
-`driver`, `runtime`, `TUI`, `PTY`, `tmux`, `pane` as an implementation term, `kind` —
-these describe how it is built, not what the reader sees. Use them in
-`docs/build/`, and in a user-facing document only when the reader has
-explicitly asked how the machinery works.
-
-The same rule applies to agents talking to people: say "execution method" and
-"Managed", not "driver"; say "session", not "tmux session".
-
-## Writing conventions
-
-- On-screen names are written **Repositories**, **Files**, **Sessions**.
-- Session kinds are written `claude`, `codex`, `opencode`, `shell`, `ssm`.
-- The product or the speaker may be written Claude, Codex.
-- A button is written "Clone"; a command is written `git clone`.
-- An **icon** is picture-only, a **status display** is a coloured state, and a **badge**
-  is a small count or pane number.
