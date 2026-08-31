@@ -44,10 +44,24 @@ func handlePreview(w http.ResponseWriter, r *http.Request) {
 			pr.Out.URL.RawPath = "" // let net/http re-encode from Path
 			pr.Out.Host = host
 			// The CP↔Agent bearer is for us, not the previewed app. Drop it so the
-			// user's process never sees the internal token. X-Forwarded-* set by the
-			// CP are preserved (we deliberately do not call SetXForwarded, which would
-			// rewrite Host/Proto with the agent hop).
+			// user's process never sees the internal token.
 			pr.Out.Header.Del("Authorization")
+			// ★ Re-apply the CP's X-Forwarded-Host / -Proto by hand. In Rewrite mode
+			// ReverseProxy DELETES Forwarded / X-Forwarded-For / -Host / -Proto from
+			// Out before calling us (they are client-provided as far as it knows), so
+			// "we just don't touch them and they pass through" is false — measured on
+			// go1.26: only X-Forwarded-Prefix survives, because it is not on that list.
+			//
+			// That silent drop is not cosmetic. Next.js validates Server Actions by
+			// comparing the Origin header against x-forwarded-host and answers 403 when
+			// they disagree; with the header gone, every Server Action behind a preview
+			// fails. Spring Boot's forward-headers-strategy loses the public host the
+			// same way (docs/81 §2.5 (c), ADR 0062 決定 9).
+			for _, h := range []string{"X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-For"} {
+				if v := pr.In.Header.Get(h); v != "" {
+					pr.Out.Header.Set(h, v)
+				}
+			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			httpx.WriteErr(w, http.StatusBadGateway, "preview_unreachable",

@@ -65,6 +65,9 @@ type config struct {
 	// dev は host 起動の CP から docker 公開の 127.0.0.1:50021 へ。AWS は ECS + Cloud Map
 	// の固定 DNS を差し込む（Phase 2）。
 	voicevoxURL string
+	// previewDomain mirrors manager.previewDomain (AF_PREVIEW_DOMAIN) — the parent of
+	// the per-start preview subdomains (docs/81). Empty = host-mode preview is off.
+	previewDomain string
 }
 
 func main() {
@@ -213,6 +216,10 @@ func main() {
 	}
 	// Full public base (scheme+host) for the in-container memo bridge (AF_CP_BASE_URL).
 	mgr.publicBaseURL = strings.TrimRight(publicBaseURL, "/")
+	// docs/81: プレビュー用サブドメインの親（例 pv.example.com）。先頭の "." と
+	// 大文字は落として比較できる形に正規化する — 設定ミスで丸ごと無効になるより、
+	// 素直に読める方がよい。
+	mgr.previewDomain = strings.ToLower(strings.Trim(strings.TrimSpace(os.Getenv("AF_PREVIEW_DOMAIN")), "."))
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),
 		consoleDir:    envOr("CONSOLE_DIR", "./console"),
@@ -237,6 +244,9 @@ func main() {
 		egressProxyAddr: egressProxyAddr,
 		// docs/24 TTS: 既定は dev の docker 公開先（host loopback）。
 		voicevoxURL: envOr("AF_VOICEVOX_URL", "http://127.0.0.1:50021"),
+		// docs/81: プレビュー用サブドメインの親。空 = ホスト方式は無効（ワイルドカードの
+		// DNS も証明書も無いデプロイでは成立しない）で、従来のパス方式だけが残る。
+		previewDomain: mgr.previewDomain,
 	}
 
 	// P3-9 idle-stop (docs/19): a background reaper halts idle claude sessions
@@ -442,10 +452,29 @@ func main() {
 	}
 	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, wsImage, cfg.mgr.authMode, rtProfile)
 	log.Print("edge: " + clientIPBanner())
+	// Host-mode preview (docs/81). The dispatcher sits OUTSIDE authGate (the preview
+	// hosts carry their own handshake cookie, and going through the gate would bounce
+	// them to the login page) and OUTSIDE gzip/etag (what it relays is the user's app,
+	// not the CP's JSON). A Host that does not parse as {slug}-{port}.<domain> — the
+	// Console's own, and the ALB health check's — passes straight through.
+	if cfg.previewDomain != "" {
+		if len(cfg.cookieSecret) == 0 {
+			// The handshake token and the preview cookie are signed with this key.
+			// With no key they are signed with an empty one, i.e. forgeable.
+			log.Printf("WARNING: AF_PREVIEW_DOMAIN is set without AF_COOKIE_SECRET — preview sign-in cannot be trusted")
+		}
+		if cfg.publicBaseURL == "" {
+			log.Printf("WARNING: AF_PREVIEW_DOMAIN is set without PUBLIC_BASE_URL — the preview handshake has no Console origin to bounce to")
+		}
+		log.Printf("preview subdomains: *.%s (ports are per-workspace; default %v)", cfg.previewDomain, defaultPreviewPorts)
+	}
 	// withClientIP is OUTERMOST on purpose: it is the only place the forwarding
 	// headers are read, so nothing downstream can be tempted to trust a client's own
-	// claim about where it is calling from (docs/66 §66.6).
-	srv := &http.Server{Addr: cfg.addr, Handler: withClientIP(logRequests(gzipMiddleware(etagJSON(handler)))), ReadHeaderTimeout: 10 * time.Second}
+	// claim about where it is calling from (docs/66 §66.6) — the preview dispatcher
+	// below reads the resolved client IP for the tenant network check, so it has to
+	// sit inside it.
+	served := newPreviewHostAPI(cfg).dispatch(gzipMiddleware(etagJSON(handler)))
+	srv := &http.Server{Addr: cfg.addr, Handler: withClientIP(logRequests(served)), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}

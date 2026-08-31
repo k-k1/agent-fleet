@@ -870,6 +870,10 @@ func registerTerminalPreviewRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /ws/terminal", proxy.withResolved(proxy.terminal))
 	mux.HandleFunc("/preview/{port}", pv.redirect)
 	mux.HandleFunc("/preview/{port}/{rest...}", pv.withPreviewResolved(pv.proxy))
+	// Console-origin half of the preview-subdomain handshake (docs/81 §6). It lives
+	// HERE, on the authenticated origin, precisely so an unauthenticated visitor meets
+	// the normal login before any token exists.
+	mux.HandleFunc("GET "+previewHandshakePath, newPreviewHostAPI(cfg).handshake)
 }
 
 // Legacy path compatibility: the deployment used to be served under

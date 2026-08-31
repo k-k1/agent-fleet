@@ -426,3 +426,75 @@ func TestMigrationsHaveNoStatementSplittingSemicolonInComments(t *testing.T) {
 		}
 	}
 }
+
+// TestFreshSQLiteKeepsWorkspaceColumns は「新規 DB でも workspace の列が揃っている」を
+// 固定する。
+//
+// ★ なぜ要るか（2026-08-31 に実測で見つけた）。migrate() は番号付きマイグレーションを
+// 全部流したあとに legacyHook（migrateMemberships）を呼び、そのフックは新規 DB で
+// `DROP TABLE workspace` → `ALTER TABLE workspace_new RENAME TO workspace` を実行する。
+// つまり **0002 より後に ALTER で足した列は、足した直後に捨てられる**。schema_migrations
+// には適用済みと記録されているので、次の起動でも復活しない。
+//
+// 実害は静かだった: `settings`（ワークスペース設定）は新規 SQLite デプロイにだけ存在せず、
+// 読み出しはエラーを握りつぶすので「保存だけが 500」という形でしか出なかった。
+// preview_slug（docs/81）も同じ穴に落ちる。
+func TestFreshSQLiteKeepsWorkspaceColumns(t *testing.T) {
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	have := map[string]bool{}
+	rows, err := st.db.QueryContext(ctx, `PRAGMA table_info(workspace)`)
+	if err != nil {
+		t.Fatalf("table_info: %v", err)
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			t.Fatalf("scan: %v", err)
+		}
+		have[name] = true
+	}
+	rows.Close()
+	for _, col := range []string{"settings", "preview_slug"} {
+		if !have[col] {
+			t.Errorf("fresh SQLite workspace table is missing %q (the membership swap dropped it)", col)
+		}
+	}
+	// 実際に読み書きできるところまで確かめる（列があるだけでは索引の張り直し漏れを拾えない）。
+	dflt, err := st.EnsureDefaultTenant(ctx)
+	if err != nil {
+		t.Fatalf("default tenant: %v", err)
+	}
+	ident, err := st.UpsertIdentity(ctx, "", "colcheck", "")
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	mem, err := st.EnsureMembership(ctx, ident.ID, dflt.ID, "member")
+	if err != nil {
+		t.Fatalf("membership: %v", err)
+	}
+	ws := Workspace{ID: "ws-cols", TenantID: dflt.ID, MembershipID: mem.ID, ContainerName: "c",
+		Network: "n", DataDir: "d", AgentPort: "1", AgentToken: "t", State: "stopped", CreatedAt: nowTS()}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := st.SetWorkspaceSettings(ctx, ws.ID, `{"agentUpdate":true}`); err != nil {
+		t.Fatalf("SetWorkspaceSettings on a fresh DB: %v", err)
+	}
+	if err := st.SetWorkspacePreviewSlug(ctx, ws.ID, "abcdefghij0123456789"); err != nil {
+		t.Fatalf("SetWorkspacePreviewSlug on a fresh DB: %v", err)
+	}
+	if got, ok, err := st.GetWorkspaceByPreviewSlug(ctx, "abcdefghij0123456789"); err != nil || !ok || got.ID != ws.ID {
+		t.Fatalf("GetWorkspaceByPreviewSlug = (%v, %v, %v), want the workspace back", got.ID, ok, err)
+	}
+}

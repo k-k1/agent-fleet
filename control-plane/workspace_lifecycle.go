@@ -4,11 +4,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -235,6 +238,80 @@ func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (Runt
 	return m.runtimeFor(ws, dekHex, env...), nil
 }
 
+// armPreviewForStart mints the preview slug for the container start that is about to
+// happen and returns a runtime whose env names the URLs it will answer on
+// (docs/81 §4 + §8). nil = nothing to do (previews off for this deployment) or the
+// slug could not be minted — the caller then starts with the runtime it already had.
+//
+// ★ なぜ runtime を作り直すのか: コンテナ env は起動の瞬間に確定し、buildResolved が
+// 組んだ runtime はこの起動の slug をまだ知らない。「URL は発行したが、コンテナの中の
+// アプリはそれを知らない」は、Next.js のように自分の公開 URL を env から読む作りでは
+// 半分壊れた状態そのものになる。
+func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, extraEnv []string) Runtime {
+	if m.previewDomain == "" {
+		return nil
+	}
+	slug, err := m.rotatePreviewSlug(ctx, res.ws)
+	if err != nil {
+		log.Printf("preview slug for ws %s: %v (starting without preview URLs)", res.ws.ID, err)
+		return nil
+	}
+	dekHex, err := m.resolveDEK(ctx, res.ws, res.ident.UserKey)
+	if err != nil {
+		log.Printf("preview arm: resolve DEK for ws %s: %v (starting without preview URLs)", res.ws.ID, err)
+		return nil
+	}
+	ws := res.ws
+	ws.PreviewSlug = slug
+	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
+	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
+	return m.runtimeFor(ws, dekHex, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
+}
+
+// rotatePreviewSlug decides which slug THIS start runs under and persists it.
+//
+//   - 既定は毎回引き直す（要件そのもの）。前回の URL はこの瞬間に死ぬ。
+//   - PreviewFixedSlug が ON の Workspace だけは、設定に予約した slug を使い回す
+//     （docs/81 §4.1）。外部 IdP の redirect URI 登録が前方一致もワイルドカードも
+//     受け付けないため、これが無いと NextAuth / Auth.js の構成が成立しない。
+//   - ★ 公開モードは起動のたびに必ず OFF へ戻す（fail-closed・決定 12）。この機能の
+//     事故は「公開のままにしていたのを忘れる」以外にほぼ無い。
+func (m *manager) rotatePreviewSlug(ctx context.Context, ws Workspace) (string, error) {
+	raw, _ := m.store.GetWorkspaceSettings(ctx, ws.ID)
+	st := parseWSSettings(raw)
+	dirty := false
+	if st.PreviewPublic {
+		st.PreviewPublic = false
+		dirty = true
+	}
+	slug := st.PreviewReservedSlug
+	if !st.PreviewFixedSlug || slug == "" {
+		fresh, err := newPreviewSlug()
+		if err != nil {
+			return "", err
+		}
+		slug = fresh
+		if st.PreviewFixedSlug {
+			st.PreviewReservedSlug = slug // 次の起動からは同じ URL に戻る
+			dirty = true
+		} else if st.PreviewReservedSlug != "" {
+			st.PreviewReservedSlug = "" // 固定を解除したら予約も捨てる
+			dirty = true
+		}
+	}
+	if dirty {
+		if out, err := json.Marshal(st); err == nil {
+			if err := m.store.SetWorkspaceSettings(ctx, ws.ID, string(out)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if err := m.store.SetWorkspacePreviewSlug(ctx, ws.ID, slug); err != nil {
+		return "", err
+	}
+	return slug, nil
+}
+
 func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string {
 	t, err := m.store.GetTenant(ctx, ws.TenantID)
 	if err != nil {
@@ -254,6 +331,24 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 	}
 	if days := parseLimits(t.Limits).TerminalHistoryRetentionDays; days > 0 {
 		env = append(env, "AF_TERMINAL_HISTORY_RETENTION_DAYS="+strconv.Itoa(days))
+	}
+	// プレビュー用サブドメイン（docs/81 §8）。★ これは飾りではない: URL は起動ごとに
+	// 変わるので、自分の公開 URL を env から知る作り（Next.js の NEXTAUTH_URL /
+	// AUTH_URL / metadataBase、Spring の app.base-url）に、正しい値を渡せる場所が
+	// ここしか無い。無いと「URL は出たがアプリが自分の場所を間違える」になる。
+	// ws.PreviewSlug が入るのは起動直前の armPreviewForStart 経由の呼び出しだけで、
+	// 通常の解決（buildResolved）では空 = 何も注入しない。
+	if m.previewDomain != "" && ws.PreviewSlug != "" {
+		ports := previewPortsOf(st)
+		strs := make([]string, 0, len(ports))
+		for _, p := range ports {
+			strs = append(strs, strconv.Itoa(p))
+			env = append(env, "AF_PREVIEW_URL_"+strconv.Itoa(p)+"="+previewURLFor(ws.PreviewSlug, p, m.previewDomain))
+		}
+		env = append(env,
+			"AF_PREVIEW_DOMAIN="+m.previewDomain,
+			"AF_PREVIEW_SLUG="+ws.PreviewSlug,
+			"AF_PREVIEW_PORTS="+strings.Join(strs, ","))
 	}
 	// Internal git provider: inject the host + this membership's deterministic git
 	// token so the Agent seeds its cred store (secrets.go seedInternalGit) and

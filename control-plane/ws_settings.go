@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 )
 
 // Per-workspace member settings owned by the Control Plane. Unlike the toolchain
@@ -16,6 +17,26 @@ type wsSettings struct {
 	// latest at container start. Operator-gated by the tenant's allow_agent_self_update
 	// (workspaceExtraEnv only emits AF_AGENT_SELF_UPDATE=1 when the tenant allows it).
 	AgentUpdate bool `json:"agentUpdate"`
+
+	// --- プレビュー用サブドメイン（docs/81） --------------------------------
+	// PreviewPorts はホスト方式のプレビューで外に出してよいポート（空 = 既定の
+	// 3000,8080）。列挙に無いポートのサブドメインは 404 —— 「許可されていない」では
+	// なく存在も答えない（許可ポートの有無を外から探らせない・ADR 0062 決定 6）。
+	PreviewPorts []int `json:"previewPorts,omitempty"`
+	// PreviewFixedSlug: slug を起動ごとに引き直さず、この Workspace では固定する
+	// （docs/81 §4.1）。既定 false ＝ 要件どおり毎回引き直す。ON にする理由は実質
+	// 1 つで、外部 IdP の redirect URI 登録（NextAuth / Auth.js）が前方一致も
+	// ワイルドカードも受け付けないこと。
+	PreviewFixedSlug bool `json:"previewFixedSlug,omitempty"`
+	// PreviewPublic: 認証なしで開ける（docs/81 §6.1）。★ 起動のたびに false へ
+	// 戻す（fail-closed）—— この機能の事故は「公開のままにしていたのを忘れる」以外に
+	// ほぼ無いので、忘れても閉じる側に倒す。
+	PreviewPublic bool `json:"previewPublic,omitempty"`
+	// PreviewReservedSlug は PreviewFixedSlug が ON のときだけ使う予約。★ 起動中の
+	// slug（workspace.preview_slug 列）とは別物である必要がある —— 列の方は停止で
+	// 必ず空に戻る（停止中の URL は解決しない）ので、そこに予約を兼ねさせると
+	// 「固定したのに再起動で変わった」になる。
+	PreviewReservedSlug string `json:"previewReservedSlug,omitempty"`
 }
 
 // parseWSSettings unmarshals the stored JSON blob ("" => zero value).
@@ -56,10 +77,36 @@ func (a wsSettingsAPI) tenantAllowsAgentUpdate(r *http.Request, ws Workspace) bo
 func (a wsSettingsAPI) get(w http.ResponseWriter, r *http.Request, res *resolved) {
 	raw, _ := a.store.GetWorkspaceSettings(r.Context(), res.ws.ID)
 	st := parseWSSettings(raw)
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"agentUpdate":      st.AgentUpdate,
 		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
-	})
+	}
+	a.addPreview(r, res, st, out)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// addPreview appends the preview-subdomain block (docs/81). The issued URLs are read
+// from the STORE rather than res.ws: the resolved workspace comes from the runtime
+// cache, which was built before this container start rotated the slug, so trusting it
+// would show the previous start's (now dead) URLs.
+func (a wsSettingsAPI) addPreview(r *http.Request, res *resolved, st wsSettings, out map[string]any) {
+	domain := a.mgr.previewDomain
+	out["previewDomain"] = domain
+	out["previewPorts"] = previewPortsOf(st)
+	out["previewFixedSlug"] = st.PreviewFixedSlug
+	out["previewPublic"] = st.PreviewPublic
+	out["previewMaxPorts"] = maxPreviewPorts
+	urls := map[string]string{}
+	if domain != "" {
+		if ws, ok, err := a.store.GetWorkspaceByMembership(r.Context(), res.ws.MembershipID); err == nil && ok && ws.PreviewSlug != "" {
+			for _, p := range previewPortsOf(st) {
+				urls[strconv.Itoa(p)] = previewURLFor(ws.PreviewSlug, p, domain)
+			}
+		}
+	}
+	// 停止中は空のまま返す。★ 発行されていない URL を見せない —— 押しても 404 になる
+	// リンクは、機能が壊れているという報告になって返ってくる。
+	out["previewUrls"] = urls
 }
 
 // put (PUT /api/env/ws-settings) merges the posted known keys into the
@@ -77,6 +124,25 @@ func (a wsSettingsAPI) put(w http.ResponseWriter, r *http.Request, res *resolved
 	if v, ok := body["agentUpdate"].(bool); ok {
 		st.AgentUpdate = v && a.tenantAllowsAgentUpdate(r, res.ws)
 	}
+	// プレビュー（docs/81）。ホスト方式が無いデプロイ（AF_PREVIEW_DOMAIN 未設定）でも
+	// 値は保存する —— 設定が「デプロイの都合で黙って消える」より、効かないだけの方が
+	// 説明できる。
+	if raw, ok := body["previewPorts"].([]any); ok {
+		ports := make([]int, 0, len(raw))
+		for _, v := range raw {
+			if f, ok := v.(float64); ok {
+				ports = append(ports, int(f))
+			}
+		}
+		st.PreviewPorts = sanitizePreviewPorts(ports)
+	}
+	if v, ok := body["previewFixedSlug"].(bool); ok {
+		st.PreviewFixedSlug = v
+	}
+	if v, ok := body["previewPublic"].(bool); ok {
+		st.PreviewPublic = v
+		auditPreviewPublic(r.Context(), a.mgr, res, v)
+	}
 	out, _ := json.Marshal(st)
 	if err := a.store.SetWorkspaceSettings(r.Context(), res.ws.ID, string(out)); err != nil {
 		http.Error(w, "save failed", http.StatusInternalServerError)
@@ -84,8 +150,10 @@ func (a wsSettingsAPI) put(w http.ResponseWriter, r *http.Request, res *resolved
 	}
 	// Drop the cached runtime so the next start rebuilds its env from the new setting.
 	a.mgr.evictMembershipCache(res.ws.MembershipID)
-	writeJSON(w, http.StatusOK, map[string]any{
+	body2 := map[string]any{
 		"agentUpdate":      st.AgentUpdate,
 		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
-	})
+	}
+	a.addPreview(r, res, st, body2)
+	writeJSON(w, http.StatusOK, body2)
 }
