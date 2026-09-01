@@ -22,6 +22,18 @@ These in particular are mandatory.
 - Immediately before committing, re-read the finished message and confirm it meets
   the convention.
 
+Real host names, customer names and the like must never enter the history — the
+scanner behind `ci.yml`'s `release-scan` job only says so after the merge. Run the
+same check on what you are about to commit:
+
+```
+git config core.hooksPath .githooks   # once per clone; worktrees share it
+.githooks/pre-commit                  # or just run it by hand, any time
+```
+
+Anything it flags is fixed in the file *before* the commit, never in a follow-up
+one. Don't reach for `--no-verify`.
+
 ## `console/node_modules` in a worktree
 
 Installing it is ~350 MB per worktree, and sessions usually get one worktree each. When this

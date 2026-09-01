@@ -15,6 +15,17 @@ patent grant; no separate CLA is required.
   allowlists live in git-ignored files (`deploy/compose/.env`,
   `deploy/local/oauth.env`, `allowed-emails.txt`). Double-check `git diff` before
   committing. Compiled binaries are git-ignored too.
+- **Install the pre-commit hook, once per clone** (its worktrees share it):
+  ```bash
+  git config core.hooksPath .githooks
+  ```
+  It runs the forbidden-token gate (`deploy/release/scan-forbidden.sh`) over the
+  staged content only — a fraction of a second — and refuses the commit if a
+  string this project keeps out of its history (real host names, customer names)
+  is in it. `ci.yml`'s `release-scan` job runs the same scanner over the whole
+  tracked tree, but only *after* the merge, when the string is already in
+  `develop` and taking it out costs a second commit. Deliberate exception:
+  a path glob in `deploy/release/forbidden.allow` — third-party content only.
 - **Keep the core deploy-agnostic.** Don't bake Docker/compose assumptions into
   the Control Plane. Deployment specifics belong behind the ports (Runtime,
   KeyCustodian, MetadataStore, AuthGateway) — see `docs/build/09-deploy.md`.
