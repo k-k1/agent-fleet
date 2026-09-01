@@ -229,7 +229,7 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/admin/host", adm.withSuperAdmin(adm.hostStats))
 	mux.HandleFunc("GET /api/admin/ec2-pool", adm.withSuperAdmin(adm.poolStatus))                   // EC2 slot pool (ecs-ec2 only)                            // host load / memory (super_admin)
 	mux.HandleFunc("GET /api/admin/workspace-sizing", adm.withIdentity(adm.workspaceSizingProfile)) // what mem/CPU/disk MEAN on this runtime (ADR 0045 決定 21)
-	mux.HandleFunc("GET /api/admin/usage", adm.usage) // showback: occupancy per tenant/member (json|csv)
+	mux.HandleFunc("GET /api/admin/usage", adm.usage)                                               // showback: occupancy per tenant/member (json|csv)
 	// The same occupancy at hour resolution, for the 稼働時間 heatmap (docs/log/83). A
 	// separate endpoint rather than a `bucket=hour` parameter on the one above: that one
 	// answers "how many hours in the window" and streams CSV for chargeback, this one

@@ -3,6 +3,12 @@
 // ⚠️ タイムゾーンをこのファイルで固定する。既定のままだと CI と開発機で違う結果になり、
 // 「+09:00 で日付がずれる」という**この機能の要点そのもの**が検査できない。
 // Node は process.env.TZ の変更を後から反映する（実測）。
+//
+// 🔥 **固定はモジュールの本体でやる。`beforeAll` では遅い。** describe のコールバックは
+// 収集時（beforeAll より前）に走るので、そこで `buildGrid` を呼んでいると開発機の時計で
+// 畳まれる。開発機が JST なら緑、CI（UTC）だけ赤——という「開発機の状態を検査している
+// テスト」そのものを踏んだ（2026-09-01・develop を赤くした）。念のためグリッドの構築も
+// beforeAll へ移してある。
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   buildGrid,
@@ -19,9 +25,7 @@ import {
 import type { UptimeResponse } from "./uptime.ts";
 
 const ORIGINAL_TZ = process.env.TZ;
-beforeAll(() => {
-  process.env.TZ = "Asia/Tokyo";
-});
+process.env.TZ = "Asia/Tokyo";
 afterAll(() => {
   process.env.TZ = ORIGINAL_TZ;
 });
@@ -108,7 +112,12 @@ const RES: UptimeResponse = {
 };
 
 describe("マス目の組み立て", () => {
-  const grid = buildGrid(RES);
+  // ⚠️ describe の本体（＝収集時）で畳まない。上のタイムゾーン固定より前に走る作りだと
+  // 開発機の時計で畳まれ、JST の開発機だけ緑になる。
+  let grid: Map<string, ReturnType<typeof buildGrid> extends Map<string, infer C> ? C : never>;
+  beforeAll(() => {
+    grid = buildGrid(RES);
+  });
 
   it("メンバーの寄与を 1 マスに積む", () => {
     const c = grid.get("2026-09-01|9")!;

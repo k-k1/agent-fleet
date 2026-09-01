@@ -16,10 +16,13 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { UptimeHeatmap } = await import("./UptimeHeatmap.tsx");
 
+// ⚠️ タイムゾーンの固定はモジュール本体で。`beforeAll` に置くと describe の収集より
+// 後になり、収集時に時計を読む書き方をした瞬間「開発機だけ緑」になる（uptime.test.ts の
+// 同じ罠を 2026-09-01 に踏んだ）。
 const ORIGINAL_TZ = process.env.TZ;
+process.env.TZ = "Asia/Tokyo";
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 beforeAll(() => {
-  process.env.TZ = "Asia/Tokyo";
   g.IS_REACT_ACT_ENVIRONMENT = true;
 });
 afterAll(() => {

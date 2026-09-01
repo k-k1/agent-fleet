@@ -2337,7 +2337,7 @@ func (s *sqlStore) AddUsageHour(ctx context.Context, membershipID, tenantID, hou
 // with the same LEFT JOIN labelling as ListUsage so a deleted membership's history
 // still surfaces.
 //
-// ⚠️ The tenant filter deliberately lets `membership_id=''` through. Those are the
+// ⚠️ The tenant filter deliberately lets an EMPTY membership_id through. Those are the
 // sampler heartbeats (tenant_id is empty on them by construction), and they are what
 // tells the UI that an empty hour was observed rather than unrecorded. Filtering them
 // out with the tenant would make every tenant-scoped heatmap blank.
