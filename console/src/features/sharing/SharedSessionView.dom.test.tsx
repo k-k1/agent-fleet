@@ -25,6 +25,8 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 import { SharedSessionView } from "./SharedSessionView.tsx";
+import { useHandoffStore, type HandoffOffer } from "./handoffStore.ts";
+import { ToastProvider } from "../../ui/ToastProvider.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -95,6 +97,79 @@ describe("SharedSessionView の引き継ぎ提案", () => {
     const nodes = [...el.querySelectorAll(".mirror-turn, .mirror-handoff")];
     expect(nodes.at(-1)?.classList.contains("mirror-handoff")).toBe(true);
     expect(nodes.length).toBeGreaterThan(1);
+  });
+});
+
+// メンバーから受け取った引き継ぎ（docs/log/77）。通知「引き継ぎが届きました」の行き先はこの面
+// なので、受け取る口がここに無いと押した人はどこにも辿り着けない（実際、唯一の口はレール
+// 見出しのアイコンだった＝「開始するボタンが見当たらない」）。
+describe("SharedSessionView の受け取った引き継ぎ", () => {
+  const OFFER: HandoffOffer = {
+    id: "ho_1",
+    sessionId: "catalog-1", // 共有カタログ id = この面の sharedSessionId
+    sessionName: "sess-a",
+    recipientUserKey: "b@example.com",
+    ownerUserKey: "a@example.com",
+    title: "残作業の続き",
+    status: "pending",
+    branch: "feature/x",
+    repoRemote: "https://github.com/k-k1/agent-fleet.git",
+    headSha: "0123456789ab",
+    prompt: "未完了: 表示の実装。次はここから。",
+  };
+  const withOffer = (offer: HandoffOffer | null) =>
+    api.mockImplementation(async (path: string) => {
+      if (path.includes("session-handoff-offers/received")) return { offers: offer ? [offer] : [] };
+      if (path.includes("session-handoff-offers")) return { offers: [] };
+      if (path.includes("/handoff-proposals")) return { proposals: [] };
+      if (path.includes("/messages")) return MESSAGES;
+      return { sessions: [] };
+    });
+
+  // 在庫はこの面自身が取りに行く（レールが無い切り離しタブでも帯が出る）ので、ストアは
+  // テストごとに戻す。
+  afterEach(() => useHandoffStore.setState({ owned: [], received: [] }));
+
+  async function renderWithToast() {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      // 受諾は起動導線に載るので、行は toast を要求する（受信箱と同じ文脈で描く）。
+      root!.render(
+        <ToastProvider>
+          <SharedSessionView sharedSessionId="catalog-1" />
+        </ToastProvider>,
+      );
+    });
+    // 転写・提案・受信箱はそれぞれ別のポーリングで入ってくる（受信箱は 2 本を Promise.all）。
+    await act(async () => {
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+    });
+    return host;
+  }
+
+  it("自分宛の未処理があると帯と受諾の口を出す", async () => {
+    withOffer(OFFER);
+    const el = await renderWithToast();
+    const banner = el.querySelector(".shared-view-handoff");
+    expect(banner).toBeTruthy();
+    expect(banner!.textContent).toContain("a@example.com");
+    // 帯のボタンから受信箱（受諾/辞退）に辿り着けること。Modal はポータルで body 直下。
+    await act(async () => {
+      banner!.querySelector("button")!.click();
+    });
+    const modal = document.body.querySelector(".ui-modal");
+    expect(modal).toBeTruthy();
+    expect(modal!.textContent).toContain("未完了: 表示の実装。次はここから。");
+    // 受諾と辞退の 2 つ（文言はロケール依存なので構造で見る）。
+    expect(modal!.querySelectorAll(".handoff-inbox-actions button").length).toBe(2);
+  });
+
+  it("別のセッション宛の引き継ぎでは出さない", async () => {
+    withOffer({ ...OFFER, sessionId: "catalog-2" });
+    const el = await renderWithToast();
+    expect(el.querySelector(".shared-view-handoff")).toBeNull();
   });
 });
 

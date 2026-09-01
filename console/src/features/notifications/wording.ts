@@ -1,4 +1,35 @@
-import { t } from "../../lib/i18n/index.ts";
+import { t, type MsgKey } from "../../lib/i18n/index.ts";
+
+// 通知センターの行見出し。⚠️ **wording() が扱う kind はすべてここにも要る** —— 欠けた kind は
+// 訳ではなく生の識別子（`handoff-offer`）がそのまま行に出る（実際に引き継ぎの 3 種と
+// carried-interaction がそうなっていた）。落としても型では気付けないので、隣の wording.test.ts が
+// **このファイルのソースから** `n.kind === "…"` を拾って表と突き合わせている。
+export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
+  "answer-ready": "noti.kind_answer_ready",
+  question: "noti.kind_question",
+  "plan-approval": "noti.kind_plan_approval",
+  "permission-request": "noti.kind_permission_request",
+  "usage-reset": "noti.kind_usage_reset",
+  "session-report": "noti.kind_session_report",
+  "chat-auto-paused": "noti.kind_chat_auto_paused",
+  "chat-context-pressure": "noti.kind_chat_context_pressure",
+  "chat-context-overflow": "noti.kind_chat_context_overflow",
+  "rate-limit-reached": "noti.kind_rate_limit_reached",
+  "rate-limit-resumed": "noti.kind_rate_limit_resumed",
+  "submodule-sync": "noti.kind_submodule_sync",
+  "schedule-failed": "noti.kind_schedule_failed",
+  "schedule-skipped": "noti.kind_schedule_skipped",
+  "carried-interaction": "noti.kind_carried_interaction",
+  "handoff-offer": "noti.kind_handoff_offer",
+  "handoff-accepted": "noti.kind_handoff_accepted",
+  "handoff-expired": "noti.kind_handoff_expired",
+};
+
+/** 行見出しの訳。未知の kind（新しい CP と古い Console）だけ生の識別子へ落とす。 */
+export function notificationKindLabel(kind: string): string {
+  const key = NOTIFICATION_KIND_LABELS[kind];
+  return key ? t(key) : kind;
+}
 
 // Notification wording is deliberately browser-state free: the center, desktop
 // delivery, TTS replay, and node tests must all resolve the same localized text.

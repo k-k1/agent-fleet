@@ -16,6 +16,8 @@ import type { Question, Turn } from "../mirror/transcript/types.ts";
 import { coalesceUserActions, groupTurns, mergeTurns } from "../mirror/transcript/model.ts";
 import { patchAnswers } from "../mirror/interactionAnswers.ts";
 import { ownerLabel, useSharedSessionsStore } from "./store.ts";
+import { HandoffInboxModal } from "./HandoffInboxModal.tsx";
+import { startHandoffPolling, useHandoffStore } from "./handoffStore.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useMarksController } from "../mirror/transcript/useMarks.ts";
 import { MarkStrip } from "../mirror/transcript/MarkStrip.tsx";
@@ -96,6 +98,16 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // だけで、本文は所有者側の別ストアにある — 出さないと「引き継いだ」ことしか分からず、
   // 何を引き継いだのかが共有先には見えない。
   const [handoffs, setHandoffs] = useState<Proposal[]>([]);
+  // メンバーから自分宛に届いた引き継ぎ（docs/log/77）。通知の行き先はこの面なので、受け取る口が
+  // ここに無いと「引き継ぎが届きました」を押した人が**どこにも辿り着けない**（唯一の口が
+  // レール見出しのアイコンだった）。⚠️ セレクタは id/名前だけを返す — offer 自体を返すと
+  // 15 秒ごとの取り直しで毎回別オブジェクトになり、読んでいる面が丸ごと再描画される。
+  const offerId = useHandoffStore((st) => st.received.find((o) => o.sessionId === sharedSessionId)?.id ?? "");
+  const offerFrom = useHandoffStore((st) => st.received.find((o) => o.sessionId === sharedSessionId)?.ownerUserKey ?? "");
+  const [offerOpen, setOfferOpen] = useState(false);
+  // 在庫はこの面でも自分で持つ（レールが無い切り離しタブでも帯が出るように）。ポーリングは
+  // 参照カウントで 1 本に束ねてある。
+  useEffect(() => startHandoffPolling(), []);
   // いま出ているモーダル(AskUserQuestion / ExitPlanMode)。所有者向けの応答と同じく転写とは
   // **別枠**で届く — Agent は開いているあいだ、その質問/プランを messages から外して
   // カーソルも手前で止める(hidePendingInteraction)ので、ここを描かないと共有先は
@@ -508,6 +520,22 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
         </div>
         {headerActions && <span className="view-head-actions">{headerActions}</span>}
       </header>
+      {/* 自分宛の引き継ぎ（docs/log/77）。本文と一緒にスクロールさせない —— 転写は末尾に
+          追従するので、中に置くと「届いているのに画面外」になる。押すと受信箱がこの 1 件に
+          絞って開き、受諾も辞退もそこで完結する。 */}
+      {offerId && (
+        <div className="shared-view-handoff">
+          <Icon name="git-branch" />
+          <span className="shared-view-handoff-text">
+            <strong>{tr("handoff.banner_title")}</strong>
+            {offerFrom && <small>{tr("handoff.from", { who: offerFrom })}</small>}
+          </span>
+          <Button variant="primary" onClick={() => setOfferOpen(true)}>
+            <Icon name="run" /> {tr("handoff.banner_open")}
+          </Button>
+        </div>
+      )}
+      {offerOpen && <HandoffInboxModal offerId={offerId} onClose={() => setOfferOpen(false)} />}
       {/* マーカーの一覧（docs/log/69 §69.7）。ミラーと同じ位置＝ヘッド直下の帯に置く。 */}
       <MarkStrip marks={marks} storageKey={`shared:${sharedSessionId}`} />
       <div
