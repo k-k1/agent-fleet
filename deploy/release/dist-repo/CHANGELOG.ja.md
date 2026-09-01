@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.14.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.2) — 2026-09-01
+
+マネージドなデータベースを使うデプロイが、配備の 1 週間ほど後にすべてのリクエストへ 500 を
+返すようになり、しかもどこにも出ていませんでした。稼働時間はヒートマップになり、プレビュー
+の設定は独立した画面になりました。
+
 ## [0.14.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.1) — 2026-09-01
 
 Postgres を使うデプロイで、ワークスペースの設定がまったく保存できていませんでした。
