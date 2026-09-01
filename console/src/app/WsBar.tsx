@@ -355,6 +355,8 @@ interface UsageSource {
   // sense. When false (codex), the reading is a snapshot from the last turn — no
   // manual refresh; a note explains it instead.
   live: boolean;
+  // noteKey = a caveat about what the numbers ARE, shown under the rows. Not tied to
+  // `live`: claude's reading is live and still needs one, because the source rounds.
   noteKey?: MsgKey;
   // manageURL = the agent vendor's own usage/limits page (opened in a new tab from the
   // dropdown), so the user can jump to the authoritative source for the exact numbers.
@@ -371,6 +373,7 @@ const USAGE_SOURCES: UsageSource[] = [
     fiveLabelKey: "wsbar.usage.claude.five",
     weekLabelKey: "wsbar.usage.claude.week",
     live: true,
+    noteKey: "wsbar.usage.claude.note",
     manageURL: "https://claude.ai/new#settings/usage",
   },
   {
@@ -509,7 +512,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
               </button>
             )}
           </div>
-          {!unavailable && !src.live && src.noteKey && <div className="wu-note muted">{tr(src.noteKey)}</div>}
+          {!unavailable && src.noteKey && <div className="wu-note muted">{tr(src.noteKey)}</div>}
           <UsageBreakdownLink onNavigate={() => setOpen(false)} />
           {src.manageURL && (
             <a className="wu-manage" href={src.manageURL} target="_blank" rel="noopener">
