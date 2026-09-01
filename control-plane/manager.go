@@ -48,6 +48,13 @@ type manager struct {
 	// from "nothing was spent" if it is not shown.
 	costPoller *cloudCostPoller
 
+	// usageInterval is AF_USAGE_SAMPLE_INTERVAL, recorded at boot because the 稼働時間
+	// heatmap needs it as a DENOMINATOR: an hour's cell is running_secs ÷ (samples ×
+	// interval), and a deployment that samples every minute stores twelve times the
+	// samples for the same occupancy (docs/log/83). 0 when the sampler is switched off,
+	// which is also the honest answer to "why is the heatmap empty".
+	usageInterval time.Duration
+
 	// autoBakeGolden is AF_ECS_EC2_GOLDEN_AUTOBAKE, recorded at boot for the pool
 	// screen. It is the one thing about the golden that is NOT visible in AWS, and
 	// without it "no golden, nothing under way" cannot be told apart from "no golden,

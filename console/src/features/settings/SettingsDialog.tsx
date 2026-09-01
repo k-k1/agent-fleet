@@ -47,6 +47,7 @@ import { UsageView } from "../usage/UsageView.tsx";
 // 隣に置くが、同じパネルには入れない——時間と $ を並べると、片方が実測でもう片方が
 // 請求である差が消える（ADR 0048 決定 5）。
 import { MyCloudCostView, useCostProfile } from "../cost/CloudCostView.tsx";
+import { MyUptimeView } from "../usage/UptimeHeatmap.tsx";
 
 // Rail groups. Each item = [section key, i18n label key]. Order here IS the rail order.
 const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
@@ -82,6 +83,9 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
     items: [
       ["usage", "set.tab_usage"],
       ["cost", "set.tab_cost"],
+      // 稼働時間（docs/log/83）。使用量＝トークン、クラウド費用＝金額、ここ＝占有。
+      // 3 つ並べるのは、そのどれを見たいのかが人によって違うから。
+      ["uptime", "set.tab_uptime"],
       ["memory", "set.tab_memory"],
       ["env", "set.tab_env"],
       ["ssm", "set.tab_ssm"],
@@ -192,6 +196,9 @@ export function SettingsDialog() {
             {section === "git" && <GitTab />}
             {section === "usage" && <UsageView />}
             {section === "cost" && costProfile?.available && <MyCloudCostView />}
+            {/* ⚠️ 費用と違い、能力の確認は要らない。占有はどのランタイムでも記録される
+                （AWS の請求が無いデプロイでも「いつ動いていたか」は在る）。 */}
+            {section === "uptime" && <MyUptimeView />}
             {section === "memory" && <MemoryTab />}
             {section === "env" && <EnvTab />}
             {section === "ssm" && <SsmTab />}

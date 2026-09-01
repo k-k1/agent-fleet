@@ -131,6 +131,23 @@
   --viz-7: #9085e9;
   --viz-8: #e66767;
   --viz-other: #6e7781;
+  /* Sequential (ORDINAL) ramp for the 稼働時間 heatmap (docs/log/83). One hue, five
+     monotone steps — magnitude, not identity, so it is NOT taken from the categorical
+     slots above. Warm on purpose: the reader's question is "when was this hot", and
+     the idiom carries it without a legend lookup.
+     Dark steps run surface→bright as the value rises (the anchor flips in dark mode).
+     Verified with the dataviz validator in --ordinal mode against --panel #181818:
+     monotone L / adjacent ΔL ≥ 0.06 / low end 2.07:1 vs surface / single hue, all PASS.
+     ⚠️ Do not hand-tune one step — re-run the validator on the whole ramp. */
+  --uh-1: #7a3a18;
+  --uh-2: #a44f1e;
+  --uh-3: #c96827;
+  --uh-4: #e08a4a;
+  --uh-5: #f0b07c;
+  /* "Observed, and it was NOT running." A neutral, deliberately quiet — it must read
+     as absence next to the warm ramp, and must not be confused with the unobserved
+     cell, which is left unpainted (see uptime.css). */
+  --uh-stopped: #37373a;
   /* Chart chrome: gridlines/axes one step off the surface (recessive, hairline). */
   --viz-grid: #333;
 }
@@ -245,6 +262,16 @@
   --viz-7: #4a3aa7;
   --viz-8: #e34948;
   --viz-other: #8a919b;
+  /* The 稼働時間 heatmap ramp, light steps (docs/log/83). Light→dark as the value
+     rises; the light end still clears 2:1 on --panel #f4f5f7 so an occupied hour is
+     never invisible. Validated with the dataviz validator in --ordinal mode against
+     that surface: monotone L / adjacent ΔL ≥ 0.06 / low end 2.09:1 / single hue. */
+  --uh-1: #ec9861;
+  --uh-2: #d97030;
+  --uh-3: #bb5518;
+  --uh-4: #93400f;
+  --uh-5: #682a08;
+  --uh-stopped: #d7dade;
   --viz-grid: #d2d6dc;
 }
 

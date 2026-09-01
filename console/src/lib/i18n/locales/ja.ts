@@ -1481,6 +1481,46 @@ export const ja = {
   "cost.centre_idle_pool": "空きスロット",
   "cost.centre_cp": "コントロールプレーン",
   "cost.centre_tax": "税",
+  // --- 稼働時間ヒートマップ（docs/log/83）---
+  // ⚠️ ここは占有であって金額ではない。実費は日単位でしか取れないので、時間別の金額は
+  // 見積にしかならず、ADR 0048 決定 2 がそれを否定している。ヒートマップは請求書の
+  // 1 日を「説明する」のであって、値段を付けない。
+  "set.tab_uptime": "稼働時間",
+  "uptime.my_title": "ワークスペースが動いていた時間",
+  "uptime.my_intro":
+    "1 マスが 1 時間です。灰色は停止していた時間、濃いほど同時に開いていたセッションが多い時間です。金額ではありません — その日のクラウド費用がそうなっている理由の方です。",
+  "uptime.member_title": "このワークスペースが動いていた時間",
+  "uptime.member_intro":
+    "1 マスが 1 時間です。夜通し帯が続いているときは、働いていたのではなく止め忘れていることの方が多いです。",
+  "uptime.admin_title": "ワークスペースが動いていた時間",
+  "uptime.admin_intro":
+    "メンバー全員の稼働を 1 枚に重ねたものです。マスの値はその時間のテナント全体の平均で、内訳はマスに合わせると出ます。",
+  "uptime.metric_label": "濃さが表すもの",
+  "uptime.metric_sessions": "開いていた本数",
+  "uptime.metric_busy": "動いていた本数",
+  "uptime.metric_running": "稼働時間",
+  "uptime.state_unobserved": "記録なし",
+  "uptime.state_stopped": "停止",
+  "uptime.state_unmeasured": "稼働中・本数不明",
+  "uptime.legend_zero": "稼働中・セッション 0 本",
+  "uptime.ro_workspaces": "平均 {n} 台",
+  "uptime.ro_minutes": "{n} 分 稼働",
+  "uptime.ro_sessions": "平均 {n} 本",
+  "uptime.ro_detail": "稼働 {min} 分 ・ 最大 {peak} 本",
+  "uptime.ro_more": "ほか {n} 名",
+  "uptime.show_table": "表",
+  "uptime.show_map": "ヒートマップ",
+  "uptime.col_when": "時刻",
+  "uptime.col_running": "稼働（分）",
+  "uptime.col_value": "値",
+  "uptime.col_peak": "最大",
+  "uptime.no_records": "この期間に動いていた時間はありません。",
+  "uptime.load_error": "稼働時間を読み込めませんでした。",
+  "uptime.hint": "マスに合わせると内訳が出ます。",
+  "uptime.note_sampling":
+    "約 {n} 分ごとのサンプリングなので、マスの精度はサンプル 1 回ぶんです。記録を始める前の時間は空白のままで、後から取ることはできません。",
+  "uptime.note_halfhour":
+    "お使いのタイムゾーンは UTC から時間単位でずれていないため、マスは開始時刻の属する時間に丸めています。",
   "admin.usage_title": "稼働時間（ワークスペースの占有）",
   "admin.usage_intro":
     "インフラ占有＝ワークスペースが起動していた時間の集計です（Claude 利用料は各自のサブスクで、ここには含みません）。約 5 分ごとのサンプリングのため誤差があります。",

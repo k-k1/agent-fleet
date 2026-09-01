@@ -173,6 +173,9 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	// keyed by membership instead of by the caller — the per-member LIST carries a total
 	// and nothing else, so the daily shape and the breakdown are not derivable from it.
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/cost", adm.memberCloudCost)
+	// One member's hourly occupancy — the heatmap next to the stop / disk-quota buttons
+	// (docs/log/83). Same body as /api/usage/me/hourly, keyed by membership.
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/usage-hourly", adm.memberUsageHourly)
 	// 後始末の 3 段目（docs/log/61 §61.18）。除名（DELETE /api/admin/memberships）と破棄
 	// （DELETE /api/admin/workspaces）を済ませた行だけを、ここで実際に消す。
 	mux.HandleFunc("DELETE /api/admin/tenants/{slug}/members/{key}", adm.deleteMembership)
@@ -226,7 +229,14 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/admin/host", adm.withSuperAdmin(adm.hostStats))
 	mux.HandleFunc("GET /api/admin/ec2-pool", adm.withSuperAdmin(adm.poolStatus))                   // EC2 slot pool (ecs-ec2 only)                            // host load / memory (super_admin)
 	mux.HandleFunc("GET /api/admin/workspace-sizing", adm.withIdentity(adm.workspaceSizingProfile)) // what mem/CPU/disk MEAN on this runtime (ADR 0045 決定 21)
-	mux.HandleFunc("GET /api/admin/usage", adm.usage)                                               // showback: occupancy per tenant/member (json|csv)
+	mux.HandleFunc("GET /api/admin/usage", adm.usage) // showback: occupancy per tenant/member (json|csv)
+	// The same occupancy at hour resolution, for the 稼働時間 heatmap (docs/log/83). A
+	// separate endpoint rather than a `bucket=hour` parameter on the one above: that one
+	// answers "how many hours in the window" and streams CSV for chargeback, this one
+	// answers "when, and with how many sessions open", and only one of them has a
+	// heartbeat series telling the reader which hours were observed at all.
+	mux.HandleFunc("GET /api/admin/usage/hourly", adm.adminUsageHourly)
+	mux.HandleFunc("GET /api/usage/me/hourly", adm.withMembership(adm.myUsageHourly)) // the caller's OWN occupancy
 	// Cloud cost — the AWS invoice (docs/log/67 + ADR 0048). Deliberately NOT folded into
 	// /api/admin/usage: that one is occupancy in seconds and exists everywhere, this one
 	// is money and exists only on AWS. Same reason the Console gives them different names.

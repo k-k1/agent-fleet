@@ -58,6 +58,7 @@ separated per tenant.
 | `pat` | The personal access token for MCP. **Only the hash is stored**, and **the role is resolved live at call time, not frozen at issue** |
 | `audit_log` | Actor kind, action, target, tenant (empty means deployment-wide) and the upstream status. Where it is written is [05 §5.5](05-api.md) |
 | `usage_daily` | Showback: a daily bucket of **occupied workspace seconds**. With bring-your-own credentials the operator's cost is occupancy, not tokens. A sampler adds to it — an approximation is enough by design |
+| `usage_hourly` | The same occupancy per HOUR, plus how many sessions were open ([decisions/0066](../decisions/0066-uptime-heatmap.md)). ⚠️ `membership_id = ''` is not a member: it is the sampler's heartbeat for that hour, which is what makes "observed and stopped" different from "never recorded". Retained 92 days |
 
 **Per feature**
 

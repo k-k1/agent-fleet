@@ -2307,6 +2307,80 @@ func (s *sqlStore) ListUsage(ctx context.Context, tenantID, fromDay, toDay strin
 	return out, rows.Err()
 }
 
+// AddUsageHour accumulates one sample into the (membership, hour) bucket (docs/log/83).
+//
+// ⚠️ Sums accumulate, peaks do not. max_sessions/max_busy take a CASE-based maximum
+// rather than SQLite's MAX(a,b) or Postgres's GREATEST(a,b): those are different
+// spellings in the two dialects, and this store writes one SQL string for both.
+func (s *sqlStore) AddUsageHour(ctx context.Context, membershipID, tenantID, hour string, d UsageHourCounters) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO usage_hourly(membership_id, tenant_id, hour, samples, running_secs,
+		                          measured_secs, session_secs, busy_secs, max_sessions, max_busy)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(membership_id, hour) DO UPDATE SET
+		   tenant_id     = excluded.tenant_id,
+		   samples       = usage_hourly.samples       + excluded.samples,
+		   running_secs  = usage_hourly.running_secs  + excluded.running_secs,
+		   measured_secs = usage_hourly.measured_secs + excluded.measured_secs,
+		   session_secs  = usage_hourly.session_secs  + excluded.session_secs,
+		   busy_secs     = usage_hourly.busy_secs     + excluded.busy_secs,
+		   max_sessions  = CASE WHEN excluded.max_sessions > usage_hourly.max_sessions
+		                        THEN excluded.max_sessions ELSE usage_hourly.max_sessions END,
+		   max_busy      = CASE WHEN excluded.max_busy > usage_hourly.max_busy
+		                        THEN excluded.max_busy ELSE usage_hourly.max_busy END`,
+		membershipID, tenantID, hour, d.Samples, d.RunningSecs,
+		d.MeasuredSecs, d.SessionSecs, d.BusySecs, d.MaxSessions, d.MaxBusy)
+	return err
+}
+
+// ListUsageHourly returns per-hour occupancy rows in [fromHour, toHour] (inclusive),
+// with the same LEFT JOIN labelling as ListUsage so a deleted membership's history
+// still surfaces.
+//
+// ⚠️ The tenant filter deliberately lets `membership_id=''` through. Those are the
+// sampler heartbeats (tenant_id is empty on them by construction), and they are what
+// tells the UI that an empty hour was observed rather than unrecorded. Filtering them
+// out with the tenant would make every tenant-scoped heatmap blank.
+func (s *sqlStore) ListUsageHourly(ctx context.Context, tenantID, fromHour, toHour string) ([]UsageHourRow, error) {
+	q := `SELECT u.tenant_id, COALESCE(t.slug,''), u.membership_id,
+	             COALESCE(i.user_key,''), COALESCE(i.email,''), u.hour,
+	             u.samples, u.running_secs, u.measured_secs, u.session_secs, u.busy_secs,
+	             u.max_sessions, u.max_busy
+	      FROM usage_hourly u
+	      LEFT JOIN tenant t ON t.id = u.tenant_id
+	      LEFT JOIN membership m ON m.id = u.membership_id
+	      LEFT JOIN identity i ON i.id = m.identity_id
+	      WHERE u.hour BETWEEN ? AND ?`
+	args := []any{fromHour, toHour}
+	if tenantID != "" {
+		q += ` AND (u.tenant_id=? OR u.membership_id='')`
+		args = append(args, tenantID)
+	}
+	q += ` ORDER BY u.membership_id, u.hour`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UsageHourRow
+	for rows.Next() {
+		var u UsageHourRow
+		if err := rows.Scan(&u.TenantID, &u.TenantSlug, &u.MembershipID,
+			&u.UserKey, &u.Email, &u.Hour,
+			&u.Samples, &u.RunningSecs, &u.MeasuredSecs, &u.SessionSecs, &u.BusySecs,
+			&u.MaxSessions, &u.MaxBusy); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) PruneUsageHourly(ctx context.Context, beforeHour string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM usage_hourly WHERE hour < ?`, beforeHour)
+	return err
+}
+
 // nullable maps "" to a SQL NULL so empty optional columns stay NULL.
 func nullable(s string) any {
 	if s == "" {

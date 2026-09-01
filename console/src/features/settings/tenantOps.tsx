@@ -15,6 +15,7 @@ import { fmtDateTime, DATETIME_FULL, compareText } from "../../lib/intl.ts";
 import { useLocale, useT } from "../../lib/i18n/index.ts";
 import { stateInfo, stripLabelTag } from "../../lib/sessionview.ts";
 import type { Tenant } from "./adminShared.ts";
+import { UptimeAdminView } from "../usage/UptimeHeatmap.tsx";
 
 // --- All sessions overview (P3-9 admin) -------------------------------------
 // A flat, cross-user list of every session so an operator can see at a glance
@@ -389,6 +390,11 @@ export function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
           </div>
         )}
       </section>
+
+      {/* 時間まで割った同じ占有（docs/log/83）。上の合計は「8 月に何時間」までしか答えず、
+          止め忘れと働いていた時間を区別できない。テナントの選択はここにも効かせる
+          （フィルタはその下の全部を絞る）。 */}
+      <UptimeAdminView tenant={tenant} />
     </div>
   );
 }

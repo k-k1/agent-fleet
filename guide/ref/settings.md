@@ -33,6 +33,7 @@ value you set is not the value in force, look one layer out.
 | Assistant | the assistant chat's agent and model |
 | Agent usage | your token spend, by feature, agent and model |
 | Cloud cost | your share of the deployment's cloud spend |
+| Running time | when your workspace was running (a 24-hour x date heatmap) |
 | Git hosting | GitHub / Bitbucket connections |
 | Internal repos | repositories hosted by the deployment itself |
 | AWS SSM | remote login targets |
@@ -61,7 +62,7 @@ value you set is not the value in force, look one layer out.
 | Integration OAuth apps | your tenant's own OAuth apps for GitHub / Bitbucket |
 | MCP distribution | integration servers handed to every member |
 | Audit | who changed what, when |
-| Running time | per-member workspace uptime, exportable |
+| Running time | per-member workspace uptime, exportable, plus an hour-by-hour heatmap of the whole tenant |
 | Cloud cost | the tenant's cloud spend |
 
 ## Deployment variables
