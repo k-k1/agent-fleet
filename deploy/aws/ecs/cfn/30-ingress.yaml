@@ -355,8 +355,24 @@ Parameters:
       .af.example.com のドメイン cookie を書けてしまい、Console の cookie を上書き /
       固定できる余地が残る（ADR 0062 決定 13）。
 
-      ⚠️ この名前を含むゾーンが HostedZoneId でなければ、ACM の DNS 検証が終わらず
-      **失敗ではなく「進まない」**形でスタックが止まる。
+      ⚠️ この名前を含むゾーンが HostedZoneId（または PreviewHostedZoneId）でなければ、
+      ACM の DNS 検証が終わらず **失敗ではなく「進まない」**形でスタックが止まる。
+  PreviewHostedZoneId:
+    Type: String
+    Default: ""
+    Description: >-
+      Route53 hosted zone id that contains PreviewDomain, when that is NOT the zone
+      the Console lives in. Empty (the default) = use HostedZoneId, which is right
+      whenever PreviewDomain sits inside the Console's own zone.
+
+      ★ 兄弟を勧めている（上記・ADR 0062 決定 13）のに Console のゾーンが委任された
+      サブドメイン（af.example.com そのものが 1 つのゾーン）だと、pv.example.com は
+      **そのゾーンの外**になる —— 兄弟にするには別ゾーン＋親からの NS 委任が要り、
+      その id をここで渡す。これが無いと「勧めている形が、このテンプレートでは
+      表現できない」ことになる。
+
+      ⚠️ Console 側（Cert / DnsRecord）は常に HostedZoneId のままで、ここが効くのは
+      プレビューの証明書検証とワイルドカード A レコードだけ。
   CpPort:
     Type: Number
     Default: 8099
@@ -530,6 +546,9 @@ Conditions:
   HasGithub: !Not [ !Equals [ !Ref GithubAllowedOrgs, "" ] ]
   # The rate limit is what creates the web ACL; reputation is an extra rule on it.
   HasPreviewDomain: !Not [ !Equals [ !Ref PreviewDomain, "" ] ]
+  # プレビューを別ゾーンに置くとき（兄弟にするには委任した別ゾーンが要る）。空なら
+  # Console と同じゾーン ＝ 今までどおり。
+  HasPreviewZone: !Not [ !Equals [ !Ref PreviewHostedZoneId, "" ] ]
   # Scheduled execution: each knob is passed ONLY when the operator set it, so an unset
   # parameter means "whatever the CP's own default is" rather than a copy frozen here.
   HasSchedulerInterval: !Not [ !Equals [ !Ref SchedulerInterval, "" ] ]
@@ -654,7 +673,9 @@ Resources:
       ValidationMethod: DNS
       DomainValidationOptions:
         - DomainName: !Sub "*.${PreviewDomain}"
-          HostedZoneId: !Ref HostedZoneId
+          # ★ 検証レコード `_xxx.{PreviewDomain}` を書くゾーン。`*.` は取れるので、
+          # 要るのは **PreviewDomain 自身を含むゾーン**であって Console のゾーンではない。
+          HostedZoneId: !If [ HasPreviewZone, !Ref PreviewHostedZoneId, !Ref HostedZoneId ]
 
   PreviewListenerCert:
     Type: AWS::ElasticLoadBalancingV2::ListenerCertificate
@@ -672,7 +693,7 @@ Resources:
     Type: AWS::Route53::RecordSet
     Condition: HasPreviewDomain
     Properties:
-      HostedZoneId: !Ref HostedZoneId
+      HostedZoneId: !If [ HasPreviewZone, !Ref PreviewHostedZoneId, !Ref HostedZoneId ]
       Name: !Sub "*.${PreviewDomain}"
       Type: A
       AliasTarget:
