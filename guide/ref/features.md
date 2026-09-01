@@ -88,6 +88,7 @@ explains them.
 | Display, language and keys | member | Display / Keyboard |
 | Export / import settings | member | Export / import |
 | Toolchains | member | Toolchains |
+| Preview-subdomain settings | member | Preview subdomains (only where they are issued) |
 | Destructive actions | member | Danger zone |
 
 ## Tenant administration

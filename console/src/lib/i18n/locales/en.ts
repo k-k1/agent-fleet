@@ -620,6 +620,8 @@ export const en: Record<keyof typeof ja, string> = {
   "env.preview_reissue_done": "A new preview URL was issued. The previous one no longer opens.",
   "env.preview_reissue_nothing": "There was no issued URL to discard (the workspace is stopped). The next start gets a new one.",
   "env.preview_title": "Preview subdomains",
+  "env.preview_unavailable":
+    "This deployment does not issue preview subdomains. Use Preview on the workspace action bar to open your app in a pane instead.",
   "env.preview_current_label": "Current URL",
   "env.preview_current_none": "None issued yet (starting the workspace issues one)",
   "env.preview_current_note": "This deployment previews on {domain}, so a URL looks like https://<random>-<port>.{domain}/. A new one is issued on every start, and it stops working when the workspace stops.",
@@ -3977,6 +3979,7 @@ export const en: Record<keyof typeof ja, string> = {
   "set.tab_usage": "Agent usage",
   "set.tab_memory": "Agent memory",
   "set.tab_env": "Toolchains",
+  "set.tab_preview": "Preview subdomains",
   "set.tab_agents": "Agents",
   "set.tab_assistant": "Assistant",
   "set.tab_instructions": "Agent instructions",

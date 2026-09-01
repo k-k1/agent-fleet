@@ -64,7 +64,7 @@ the God-context structure — the reasoning is
 | `notifications` | The notification centre: unread state, the toast log, the sound toggle |
 | `usage` | The per-feature token usage dashboard |
 | `auth` | The re-login modal shown when the session expires |
-| `settings` | The settings dialog (three groups × 18 tabs, §2.5), the admin dialog, connection-state polling |
+| `settings` | The settings dialog (three groups × 24 tabs, §2.5), the admin dialog, connection-state polling |
 
 ## 2.3 State and server sync
 
@@ -158,9 +158,12 @@ the God-context structure — the reasoning is
   > is by definition an accident. **The test itself was not loosened**, so genuinely
   > bidirectional surfaces like code and diff views are unaffected.
 
-- **The settings dialog** is a three-group rail × 18 tabs (the old single row of six did
-  not scale; mobile drills rail → content). Admin functions are **not** mixed in — they
-  are a separate dialog, reachable only by a deployment administrator.
+- **The settings dialog** is a three-group rail × 24 tabs (the old single row of six did
+  not scale; mobile drills rail → content). **Two of them appear only where the capability
+  exists**: cloud cost on a deployment with an AWS bill, preview subdomains on one that
+  issues them — a tab whose every control would be inert is not shown at all. Admin
+  functions are **not** mixed in — they are a separate dialog, reachable only by a
+  deployment administrator.
 - **The admin and tenant-settings dialogs share one shell and one rail.** The admin
   rail has two levels, and opening a tenant swaps the whole rail into that tenant.
   **One tenant's surface is a single component both dialogs point at** — it is the same

@@ -24,6 +24,10 @@ import { DisplayTab } from "./DisplayTab.tsx";
 import { AccountTab } from "./AccountTab.tsx";
 import { KeysTab } from "./KeysTab.tsx";
 import { EnvTab } from "./EnvTab.tsx";
+// プレビュー用サブドメイン（docs/log/81）。ツールチェーンの一節だったが、公開範囲を
+// 決める設定が言語のバージョン選択の下にあるのは見つけにくいので独立させた。
+// ★ 発行されるデプロイでしかレールに出さない（usePreviewAvailable）。
+import { PreviewTab, usePreviewAvailable } from "./PreviewTab.tsx";
 import { AgentsTab } from "./AgentsTab.tsx";
 import { AssistantTab } from "./AssistantTab.tsx";
 import { InstructionsTab } from "./InstructionsTab.tsx";
@@ -88,6 +92,7 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       ["uptime", "set.tab_uptime"],
       ["memory", "set.tab_memory"],
       ["env", "set.tab_env"],
+      ["preview", "set.tab_preview"],
       ["ssm", "set.tab_ssm"],
       ["internalrepos", "set.tab_internalrepos"],
       ["backup", "set.tab_backup"],
@@ -100,6 +105,8 @@ const ALL_SECTIONS = GROUPS.flatMap((g) => g.items.map(([k]) => k));
 export function SettingsDialog() {
   const tr = useT();
   const costProfile = useCostProfile();
+  // null（判定中）のあいだは出さない —— 出してから消える項目を作らないため。
+  const previewAvail = usePreviewAvailable();
   const closeSettings = useSettingsUI((s) => s.closeSettings);
   const settingsSection = useSettingsUI((s) => s.settingsSection);
   // Initial section comes from the store (a requested deep-link, else the restored
@@ -165,17 +172,20 @@ export function SettingsDialog() {
             {GROUPS.map((g) => (
               <div key={g.key} className="settings-rail-group">
                 <div className="settings-rail-head">{tr(g.label as Parameters<typeof tr>[0])}</div>
-                {g.items.filter(([key]) => key !== "cost" || costProfile?.available).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={"settings-rail-item" + (section === key ? " active" : "")}
-                    aria-current={section === key ? "page" : undefined}
-                    onClick={() => pick(key)}
-                  >
-                    {tr(label as Parameters<typeof tr>[0])}
-                  </button>
-                ))}
+                {g.items
+                  .filter(([key]) => key !== "cost" || costProfile?.available)
+                  .filter(([key]) => key !== "preview" || previewAvail === true)
+                  .map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={"settings-rail-item" + (section === key ? " active" : "")}
+                      aria-current={section === key ? "page" : undefined}
+                      onClick={() => pick(key)}
+                    >
+                      {tr(label as Parameters<typeof tr>[0])}
+                    </button>
+                  ))}
               </div>
             ))}
           </nav>
@@ -201,6 +211,10 @@ export function SettingsDialog() {
             {section === "uptime" && <MyUptimeView />}
             {section === "memory" && <MemoryTab />}
             {section === "env" && <EnvTab />}
+            {/* ⚠️ レールから隠していても、前回開いたタブの記憶で section だけが残ることが
+                ある。PreviewTab 自身も previewDomain を見て「このデプロイには無い」と
+                言うので、ここでは能力の確認を重ねない（費用と違い、白紙にはならない）。 */}
+            {section === "preview" && <PreviewTab />}
             {section === "ssm" && <SsmTab />}
             {section === "ops" && <OpsTab />}
             {section === "tracker" && <TrackerTab />}

@@ -16,11 +16,12 @@ import { pinDrift } from "../../lib/pinDrift.ts";
 // be running. Changes apply to sessions/shells started AFTER the change (the Agent
 // injects the selection at launch); already-running ones and the agent process itself
 // pick it up on the next Stop → Start. The destructive lifecycle actions (recreate /
-// clean home) live in their own 危険な操作 tab (DangerTab).
+// clean home) live in their own 危険な操作 tab (DangerTab), and the preview-subdomain
+// settings that used to sit at the bottom of this tab are now their own
+// プレビュー用サブドメイン tab (PreviewTab) — shown only where they are issued.
 export function EnvTab() {
   const tr = useT();
   const toast = useToast();
-  const askConfirm = useConfirm();
   const wsState = useWorkspaceStore((s) => s.state);
   const running = wsState === "running";
   const [d, setD] = useState<any>(null);
@@ -71,33 +72,6 @@ export function EnvTab() {
     else toast(tr("common.save_failed"));
   };
 
-  // プレビュー用サブドメインの設定（docs/log/81）。同じ ws-settings に載るので、
-  // 保存経路も応答の形も agentUpdate と同じ。
-  const savePreview = async (patch: Record<string, unknown>) => {
-    const res = await apiJSON("api/env/ws-settings", "PUT", patch);
-    if (res && !res.error) setAu(res);
-    else toast(tr("common.save_failed"));
-  };
-
-  // 再発行（docs/log/81 §4.1）: 配ってしまった URL をその場で捨てる。取り消せないので
-  // 確認を挟み、何が起きるか（今開いているタブが 404 になる）を先に言う。
-  const reissuePreview = async () => {
-    const ok = await askConfirm({
-      title: tr("env.preview_reissue_confirm_title"),
-      body: tr("env.preview_reissue_confirm_body"),
-      confirmLabel: tr("env.preview_reissue_go"),
-      danger: true,
-    });
-    if (!ok) return;
-    const res = await apiJSON("api/env/ws-settings/preview/reissue", "POST", {});
-    if (res && !res.error) {
-      setAu(res);
-      // ★ 成功しても停止中は画面が変わらない（発行済みの URL が無いので捨てる先が
-      // 無い）。黙って終えると「押しても無反応」になるので、どちらだったかを必ず言う。
-      toast(tr(res.previewReissued ? "env.preview_reissue_done" : "env.preview_reissue_nothing"));
-    } else toast(tr("common.save_failed"));
-  };
-
   const update = async (patch: Record<string, string>) => {
     const next = {
       node: d.node || "",
@@ -125,7 +99,6 @@ export function EnvTab() {
         <p className="muted pad">{tr("common.loading")}</p>
       )}
       {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
-      {au && au.previewDomain && <PreviewSection au={au} save={savePreview} reissue={reissuePreview} />}
       <ToolVersions running={running} />
     </div>
   );
@@ -470,97 +443,6 @@ function JavaRow({
 // in the CP DB), so — unlike the toolchains above — it can be toggled even while the
 // workspace is STOPPED; the value is applied at the next container start. Shown only
 // when the operator allows it (tenant policy).
-// PreviewSection: プレビュー用サブドメイン（docs/log/81）の Workspace 単位の設定。
-// ホスト方式が無いデプロイ（AF_PREVIEW_DOMAIN 未設定）では previewDomain が空なので
-// 呼び出し側ごと描画されない —— 「押しても何も起きない設定」を置かないため。
-function PreviewSection({
-  au,
-  save,
-  reissue,
-}: {
-  au: any;
-  save: (patch: Record<string, unknown>) => void;
-  reissue: () => void;
-}) {
-  const tr = useT();
-  const [ports, setPorts] = useState((au.previewPorts || []).join(", "));
-  // 発行済みの URL（停止中は空 = CP が発行されていないものを返さない）。ポート順に
-  // 並べる —— オブジェクトのキー順に頼ると 8080 が 3000 より前に来ることがある。
-  const issuedPorts = Object.keys(au.previewUrls || {}).sort((a, b) => Number(a) - Number(b));
-  // 保存は入力欄を離れたときだけ。打鍵ごとに PUT すると、"3000, 80" のような
-  // 打ちかけの状態がそのまま保存されて 80 番が許可される。
-  const commitPorts = () => {
-    const parsed = ports
-      .split(/[\s,]+/)
-      .map((v: string) => Number(v))
-      .filter((n: number) => Number.isInteger(n) && n >= 1 && n <= 65535);
-    save({ previewPorts: parsed });
-  };
-  return (
-    <section className="ds-group">
-      <h4 className="ds-title">{tr("env.preview_title")}</h4>
-      {/* ★ いま何が割り当てられているかを、設定を触る前に見せる。ここが無いと
-          「公開するポート」も「再発行」も**見えない何かに効く操作**になり、押しても
-          変化が分からない（実際に「再発行が無反応」として報告された）。 */}
-      <Row label={tr("env.preview_current_label")}>
-        <span className="ds-sub pv-current">
-          {issuedPorts.length > 0 ? (
-            issuedPorts.map((p) => (
-              <a key={p} className="pv-current-url" href={au.previewUrls[p]} target="_blank" rel="noreferrer noopener">
-                {au.previewUrls[p].replace(/^https:\/\//, "")}
-              </a>
-            ))
-          ) : (
-            <span className="muted">{tr("env.preview_current_none")}</span>
-          )}
-        </span>
-      </Row>
-      <p className="muted ds-sub">
-        {/* 停止中でもドメインだけは出す —— 「どのドメインに割り当てられているか」は
-            URL が発行されていなくても分かってよい情報で、設定の前提そのものである。 */}
-        {tr("env.preview_current_note", { domain: au.previewDomain || "" })}
-      </p>
-      <Row label={tr("env.preview_ports_label")}>
-        <input
-          className="ds-select"
-          value={ports}
-          onChange={(e) => setPorts(e.target.value)}
-          onBlur={commitPorts}
-          onKeyDown={(e) => e.key === "Enter" && commitPorts()}
-          placeholder="3000, 8080"
-          aria-label={tr("env.preview_ports_label")}
-          spellCheck={false}
-        />
-      </Row>
-      <p className="muted ds-sub">{tr("env.preview_ports_note", { n: au.previewMaxPorts || 8 })}</p>
-      <Row label={tr("env.preview_fixed_label")}>
-        <OnOff value={!!au.previewFixedSlug} onChange={(on) => save({ previewFixedSlug: on })} />
-      </Row>
-      <p className="muted ds-sub">{tr("env.preview_fixed_note")}</p>
-      {/* 同じテナントへの共有（docs/log/81 §14）。公開モードの「手前」に置く —— 社内に
-          見せたいだけの人が、そのために公開モードへ手を伸ばすのを止めるのが目的。 */}
-      <Row label={tr("env.preview_share_label")}>
-        <OnOff value={!!au.previewTenantShare} onChange={(on) => save({ previewTenantShare: on })} />
-      </Row>
-      <p className="muted ds-sub">{tr("env.preview_share_note")}</p>
-      <Row label={tr("env.preview_public_label")}>
-        <OnOff value={!!au.previewPublic} onChange={(on) => save({ previewPublic: on })} />
-      </Row>
-      <p className="muted ds-sub">{tr("env.preview_public_note")}</p>
-      <Row label={tr("env.preview_cross_origin_label")}>
-        <OnOff value={!!au.previewCrossOrigin} onChange={(on) => save({ previewCrossOrigin: on })} />
-      </Row>
-      <p className="muted ds-sub">{tr("env.preview_cross_origin_note")}</p>
-      <Row label={tr("env.preview_reissue_label")}>
-        <button className="ghost" onClick={reissue}>
-          {tr("env.preview_reissue")}
-        </button>
-      </Row>
-      <p className="muted ds-sub">{tr("env.preview_reissue_note")}</p>
-    </section>
-  );
-}
-
 function AgentUpdateRow({ au, onChange }: { au: any; onChange: (on: boolean) => void }) {
   const tr = useT();
   return (

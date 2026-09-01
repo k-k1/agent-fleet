@@ -18,7 +18,7 @@ How each setting is *used* belongs to the other chapters, so read this one as a
 |---|---|
 | **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / Agent instructions |
 | **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens |
-| **Workspace** | Agent usage / Cloud cost / Running time / Agent memory / Toolchain / AWS SSM / Internal repositories / Export & import / Danger zone |
+| **Workspace** | Agent usage / Cloud cost / Running time / Agent memory / Toolchain / Preview subdomains / AWS SSM / Internal repositories / Export & import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
 - **On a phone it is a list → detail drill-down.** Back returns to the list; back again closes the dialog.
@@ -324,6 +324,14 @@ Timezone, Node.js / Java / Go versions, the table of effective tool versions, **
 default), and applying an Agent Fleet update.
 → [10 Going further](10-integrations.md#environment-settings-and-recreating-the-workspace)
 
+### Preview subdomains
+
+Settings for opening the app you are building at `https://<random>-<port>.<domain>/`. **The tab is only
+there on a deployment that issues preview subdomains** (elsewhere no URL would ever be minted, whatever
+you set here). Which ports are exposed, pinning the URL, sharing it with your tenant, opening it without a
+login, and re-issuing the URL all live here.
+→ [10 Going further](10-integrations.md#preview-subdomains-only-where-they-are-issued)
+
 ### AWS SSM
 
 Profiles (shared settings) and SSM hosts (individual) for logging in to another in-house host.
@@ -388,6 +396,7 @@ deeper reset that also removes home except logins and connections). Both lose un
 | I want to know when my workspace was actually running | Running time |
 | It memorised something wrong | Agent memory |
 | Change the Java / Node version | Toolchain |
+| Show the app you are building to someone | Preview subdomains |
 | Get into another server | AWS SSM |
 | Keep code that cannot leave the building | Internal repositories |
 | Take my settings to another environment | Export / import |

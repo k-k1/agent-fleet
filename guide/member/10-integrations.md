@@ -71,7 +71,7 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
 - **They change on every start**, and stop working when the workspace stops (the old URL returns 404). Assume
   any document you paste one into goes stale quickly.
 - **Signing in is required by default.** The first visit bounces through the Console login once and comes back.
-- **You choose which ports are exposed.** The default is `3000, 8080`; change it under Settings › Toolchains ›
+- **You choose which ports are exposed.** The default is `3000, 8080`; change it under Settings ›
   **Preview subdomains**. A port that is not listed has no URL — the list is what keeps an admin console you
   did not mean to expose off the internet.
 
@@ -108,7 +108,7 @@ What you use depends on who you want to show it to. **Each step opens it wider.*
 
 1. **Only you** — do nothing (the default).
 2. **Colleagues in the same tenant** — turn on **"Show it to your tenant"** under
-   Settings › Toolchains › Preview subdomains.
+   Settings › Preview subdomains.
    - They open it **after signing in to the Console** (nobody outside the tenant can see it).
    - **This does NOT return to off when the workspace stops or restarts.** Turn it off yourself
      when you are done.
@@ -121,7 +121,7 @@ What you use depends on who you want to show it to. **Each step opens it wider.*
      billed to you.** (A page left open and untouched does eventually stop.)
 3. **People outside the tenant** — **Open without signing in** lets anyone with the URL open it. It
    **always returns to off when the workspace stops or restarts** (and the URL changes).
-- **The URL you currently have is shown under Settings › Toolchains › Preview subdomains, as
+- **The URL you currently have is shown under Settings › Preview subdomains, as
   "Current URL".** While the workspace is stopped it says none is issued — but the domain it will
   use is written just below.
 - If a URL went to the wrong place, press **"Discard and mint a new one"**. Tabs that are open now start
