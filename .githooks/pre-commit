@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Pre-commit half of the forbidden-token gate (deploy/release/scan-forbidden.sh).
+#
+# CI's release-scan job scans the whole tracked tree at HEAD, so it only speaks
+# up once the string is already in the history — and taking it out then costs a
+# follow-up commit on develop (2026-09-01: a real deployment host name pasted
+# into docs/log/81 reddened two merges in a row). This runs the same scanner
+# over just what the commit adds, while it is still only in the index.
+#
+# Install once per clone — worktrees of that clone share it:
+#
+#     git config core.hooksPath .githooks
+#
+# Run it by hand any time: .githooks/pre-commit
+#
+# This is an early warning, not the authority. CI still scans the full tree,
+# `git commit --no-verify` skips it, and it deliberately lets the commit through
+# when it cannot run at all (no Go toolchain) rather than blocking work on a
+# machine that cannot build the scanner.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+scan="$root/deploy/release/scan-forbidden.sh"
+[ -x "$scan" ] || exit 0
+
+if ! command -v go >/dev/null 2>&1; then
+  echo "pre-commit: no go toolchain — skipping the forbidden-token scan" >&2
+  exit 0
+fi
+
+# Only what this commit adds or changes. Deletions carry no bytes, and the rest
+# of the tree was already scanned by whatever commit put it there.
+if git rev-parse --verify -q HEAD >/dev/null; then
+  base=HEAD
+else
+  base="$(git hash-object -t tree /dev/null)" # unborn branch: diff the empty tree
+fi
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# The staged bytes, not the working tree's — those may already have moved on,
+# and it is the index that becomes the commit. --prefix creates the leading
+# directories, so the scanner reports a repo-relative path you can act on.
+git diff --cached --name-only --diff-filter=ACMR -z "$base" |
+  git checkout-index --prefix="$tmp/staged/" -z --stdin -f
+
+# Nothing with content staged (a pure deletion or mode change) — nothing to scan,
+# and handing the scanner an empty directory is an error, not a pass.
+[ -n "$(find "$tmp/staged" -type f -print -quit 2>/dev/null)" ] || exit 0
+
+if ! "$scan" "$tmp/staged" >"$tmp/out" 2>&1; then
+  # Strip the temp prefix and the GitHub annotation markers: this output is
+  # being read in a terminal, not by a workflow log.
+  sed -e "s#$tmp/staged/##g" -e 's/^::\(error\|warning\):://' "$tmp/out" >&2
+  cat >&2 <<'EOF'
+
+pre-commit: a forbidden token is in the staged content (path and offset above).
+  Take the string out of the file and stage it again. Do not commit it and fix
+  it in the next commit — by then it is in the history, which is the expensive
+  part to undo.
+  Third-party content that legitimately contains the word: add the narrowest
+  path glob that works to deploy/release/forbidden.allow.
+EOF
+  exit 1
+fi
