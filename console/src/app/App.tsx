@@ -451,6 +451,10 @@ export function App() {
         {tenantOpen && <TenantDialog />}
         {guideOpen && <GuideModal />}
         <SessionModals />
+        {/* 起動スタック（StartModal / LaunchModal）。target が無いあいだは何も描かないので
+            最小クロームの邪魔にはならず、逆に無いと切り離したペインからの起動——共有ビューの
+            引き継ぎ受諾（docs/log/77）やメモ送信——が押しても何も起きない口になる。 */}
+        <StartHost />
         <WsStartingDialog />
         <AuthExpiredModal />
         <ProviderRequiredModal />

@@ -187,6 +187,31 @@
   gap: 0.5rem;
   justify-content: flex-end;
 }
+/* 共有ビューの「自分宛の引き継ぎが届いている」帯。ヘッド直下に固定で、本文と一緒には
+   流さない（転写は末尾に追従するので、流すと届いているのに画面外になる）。 */
+.shared-view-handoff {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  color: var(--accent, #6aa9ff);
+}
+.shared-view-handoff-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--fg);
+}
+.shared-view-handoff-text small {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* 未処理の在庫を示す行バッジ。既読では消さない（§77.10）ので、通知とは別の色域を使う。 */
 .shared-rail-handoff {
   color: var(--accent, #6aa9ff);

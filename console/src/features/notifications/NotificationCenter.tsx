@@ -7,20 +7,8 @@ import { useToastLog, type ToastLogItem } from "../../lib/toastLog.ts";
 import { openNotificationTarget, replayNotification, useNotificationStore, type FleetNotification } from "./store.ts";
 import { useOpenSignal } from "../../core/store/uiOpen.ts";
 import { relTime } from "../../lib/intl.ts";
-import { useT, type MsgKey } from "../../lib/i18n/index.ts";
-
-const labelKeys: Record<string, MsgKey> = {
-  "answer-ready": "noti.kind_answer_ready", question: "noti.kind_question", "plan-approval": "noti.kind_plan_approval",
-  "permission-request": "noti.kind_permission_request", "usage-reset": "noti.kind_usage_reset",
-  "session-report": "noti.kind_session_report", "chat-auto-paused": "noti.kind_chat_auto_paused",
-  "chat-context-pressure": "noti.kind_chat_context_pressure",
-  "chat-context-overflow": "noti.kind_chat_context_overflow",
-  "rate-limit-reached": "noti.kind_rate_limit_reached",
-  "rate-limit-resumed": "noti.kind_rate_limit_resumed",
-  "submodule-sync": "noti.kind_submodule_sync",
-  "schedule-failed": "noti.kind_schedule_failed",
-  "schedule-skipped": "noti.kind_schedule_skipped",
-};
+import { useT } from "../../lib/i18n/index.ts";
+import { notificationKindLabel } from "./wording.ts";
 // 通知の相対時刻。共通実装（lib/intl）へ委譲する。
 const relative = (at: string): string => relTime(at);
 
@@ -141,8 +129,9 @@ function FleetRow({ n, onActivate }: { n: FleetNotification; onActivate: (n: Fle
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onActivate(n, true); } }}>
       <Icon name={n.kind === "answer-ready" ? "check"
         : n.kind.startsWith("schedule-") ? "watch" // 左レールのスケジュール節と同じ字面
-          : ["usage-reset", "rate-limit-reached", "rate-limit-resumed"].includes(n.kind) ? "pulse" : "comment-discussion"} />
-      <span><b>{labelKeys[n.kind] ? tr(labelKeys[n.kind]) : n.kind}</b><small>{n.displayName} · {relative(n.createdAt)}</small></span>
+          : n.kind.startsWith("handoff-") ? "git-branch" // 共有レールの引き継ぎバッジと同じ字面
+            : ["usage-reset", "rate-limit-reached", "rate-limit-resumed"].includes(n.kind) ? "pulse" : "comment-discussion"} />
+      <span><b>{notificationKindLabel(n.kind)}</b><small>{n.displayName} · {relative(n.createdAt)}</small></span>
     </button>
     <button className="notification-replay" title={tr("noti.replay")} aria-label={tr("noti.replay")} onClick={() => replayNotification(n)}><Icon name="unmute" /></button>
   </div>;

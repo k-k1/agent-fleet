@@ -67,11 +67,25 @@ export function offerForSession(offers: HandoffOffer[], sessionName: string): Ha
   return mine.find((o) => o.status === "pending") ?? mine[0];
 }
 
+// ポーリングは**参照カウント**で 1 本に束ねる。呼び手はレールの共有セクションと共有ビュー
+// （通知から直接開かれる面。レールが無い切り離しタブでも自力で在庫を持てるように、面の側でも
+// 呼ぶ）で、素直に window.setInterval を並べると開いているペインの数だけ 2 本の GET が増える。
+let pollers = 0;
+let pollTimer = 0;
+
 export function startHandoffPolling(): () => void {
   const load = () => {
     if (!document.hidden) void useHandoffStore.getState().refresh();
   };
-  load();
-  const timer = window.setInterval(load, 15000);
-  return () => window.clearInterval(timer);
+  load(); // 新しい購読者にはその場で最新を（15 秒待たせない）
+  if (++pollers === 1) pollTimer = window.setInterval(load, 15000);
+  let stopped = false;
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    if (--pollers === 0) {
+      window.clearInterval(pollTimer);
+      pollTimer = 0;
+    }
+  };
 }
