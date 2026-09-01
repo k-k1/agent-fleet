@@ -70,7 +70,7 @@ https 前置きが Secure cookie の前提。
 | scale-to-zero / showback | `AF_AUTOSTART`（on）・`AF_SESSION_IDLE_TIMEOUT`（1h）・`AF_INTERACTION_IDLE_TIMEOUT`（既定=session。人の判断待ち・docs/75）・`AF_WS_IDLE_TIMEOUT`（2h）・`AF_PRESENCE_IDLE_TIMEOUT`（30m。打鍵の無い端末を在席と数える猶予・0 で無効）・`AF_IDLE_SWEEP_INTERVAL`・`AF_STOP_GRACE_SEC`（30・上限 120）・`AF_USAGE_SAMPLE_INTERVAL`（5m） | 自動起動・アイドル停止・停止猶予・利用量サンプリング | [03](03-control-plane.ja.md) |
 | MCP | `AF_MCP_ENABLED` | CP `/mcp` エンドポイント有効化 | [08](08-integrations.ja.md) |
 | egress 🚧 | `AF_EGRESS_LISTEN`（:3128）・`AF_EGRESS_TOKEN`・`AF_EGRESS_{INGEST,POLICY}_URL`・`AF_EGRESS_PROXY_ADDR`・`AF_EGRESS_ENFORCE`・`AF_EGRESS_ALLOWLIST` | forward proxy サブコマンドと CP 集約 | [07 §7.8](07-security.ja.md) |
-| Postgres | `AF_DATABASE_URL` または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}` | Store=postgres 選択時のみ | [06](06-data.ja.md) |
+| Postgres | `AF_DATABASE_URL` または `AF_DB_{HOST,PORT,USER,PASSWORD,NAME,SSLMODE}`＋**パスワードの真値が居る場所** `AF_DB_PASSWORD_SECRET_ARN` / `AF_DB_PASSWORD_SECRET_KEY` | Store=postgres 選択時のみ。部品から DSN を組む。ARN は、ローテートされたパスワードを**タスクを作り直さずに**拾うためのもの（[§9.9](#99-ヘルスとレディネスと動くパスワード)） | [06](06-data.ja.md) |
 | ECS アダプタ 🚧 | `AF_ECS_{CLUSTER,REGION,SUBNETS,SECURITY_GROUP,NAMESPACE_ARN,EFS_ID,EXEC_ROLE,TASK_ROLE,LOG_GROUP,TASK_CPU,TASK_MEMORY,POSIX_UID,POSIX_GID,START_TIMEOUT_SEC}` | CFN が作った静的基盤の座標を CP に渡す | [ecs runbook](../../deploy/aws/ecs/README.md) |
 | native アダプタ 🚧 | `AF_NATIVE_AGENT_BIN`（PATH の `workspace-agent`） | コンテナレス実行時の workspace-agent バイナリの所在 | — |
 | コンテナ内（CP が注入・運用者は直接設定しない） | `AGENT_ADDR`（:7700）・`AGENT_TOKEN`・`AF_SECRET_KEY`・`AGENT_STOP_GRACE_SEC`・`AGENT_SESSION_CMD`・`CLAUDE_CONFIG_DIR`・`AF_AGENT_SELF_UPDATE_ALLOWED`・`AF_TMUX_SOCKET`/`AGENT_DOCS_DIR`（native のみ）・`AF_DOCS_TOKEN`（docs 取得ブリッジ・[04 §4.9](04-agent.ja.md)） | CP↔Agent 認証・DEK・停止猶予ほか | [04](04-agent.ja.md) / [07 §7.5](07-security.ja.md) |
@@ -220,3 +220,50 @@ VM 集約と同額」まで薄めるための仕組み**、と捉えるのが実
 - **小規模・単一チーム → ec2-single**（= AWS 上の compose。形態としては compose の変種）。
 - **隔離要件やユーザー単位の可用性が要る → ECS**。ただし床 $110 とアイドル停止の健全性を前提条件として引き受ける。
 - どちらも 🚧 実運用実績なし（[§9.1](#91-デプロイ3形態)）。実額は最初の 1 か月の Cost Explorer で必ず答え合わせすること。
+
+## 9.9 ヘルスとレディネスと動くパスワード
+
+**`/healthz` は liveness だけ。** リテラルの `ok` を書くだけで、他には何にも触れない —— DB にも
+ファイルシステムにもアダプタにも。`deploy/local/restart-cp.sh` は body をこの文字列と verbatim
+比較しており、ALB のターゲットグループもここをヘルスチェックしている。**凍結された契約**として扱うこと。
+
+**ストアを実際に見に行くのは `/readyz`。** MetadataStore に 2 秒の予算で ping し、届かなければ
+`503 database unavailable` を返す。セッション無しで届く（監視はログインできないので）。body には
+未認証の呼び出し元に見せてよくないものを意図的に一切書かない。
+
+**ALB は意図的に `/healthz` のまま。** `/readyz` へ向けると、DB の一瞬の不可用が CP タスクを
+殺してしまう。CP は `desiredCount 1` なので、CP が今や自力でやる自己修復と引き換えに、恒久的な
+再起動リスクを買うことになる（[decisions/0065](../decisions/0065-db-credential-rotation.ja.md)）。
+
+### RDS で DB パスワードを環境変数にできない理由
+
+ECS タスク定義の `secrets` が解決されるのは**タスク起動時の 1 回だけ**である。RDS のマネージドな
+マスターパスワードは定期的（既定 7 日）にローテートするので、長く走っているタスクは DB が受け付け
+なくなったパスワードを提示し続け、全クエリが `28P01` で落ちる。**これは外からは一切見えない** ——
+プロセスは生きているので `/healthz` は `ok`、だからターゲットは healthy、だからサービスは
+steady state である。
+
+そこで CP は注入された値をブートストラップの手掛かりとして扱い、Postgres に拒否されたら
+`AF_DB_PASSWORD_SECRET_ARN` を Secrets Manager から読み直して、コネクタの中でリトライする。
+これが効くには 2 つが真である必要がある。
+
+1. **`secretsmanager:GetSecretValue` が要るのは実行ロールではなく `CpTaskRole`。** 実行ロール側の
+   同じ許可は起動時に変数を注入するためのもので、その後は何もしない。タスクロールに無いと、CP は
+   注入値のまま動き続けて `DB_SECRET_REFRESH_FAILED` を吐く —— 機構は消えているが、**次の
+   ローテーションまで何も壊れない**。
+2. **`AF_DB_PASSWORD_SECRET_ARN` が設定されていること。** 未設定＝注入値がすべて。compose・
+   オンプレ・SQLite では正しく、RDS では潜在的な障害である。
+
+### 聞こえるようにする
+
+CP は接続を開けないとき `DB_UNAVAILABLE` を出す。`30-ingress.yaml` はこれを CloudWatch メトリクス
+`AgentFleet/<stack>/DbUnavailable` に**無条件で**変換し、`CpAlarmEmail`（既定は空）がそのアラームに
+宛先を購読させる。
+
+**設定すること。** 2026-09-01、本番のデプロイが全呼び出しに 500 を返していたという記録は、誰も
+開く理由の無かったロググループの 1 行だけだった。最後の手段としての復旧は、blue/green なので
+4 分・断無し:
+
+```sh
+aws ecs update-service --cluster <cluster> --service <cp-service> --force-new-deployment
+```

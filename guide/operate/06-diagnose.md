@@ -19,12 +19,21 @@ included here as well. The working directory is `deploy/compose/`.
 - **CP logs**: `docker compose logs -f cp` (the reason for startup failures and
   authentication rejections is almost always here).
 - **CP health**: whether `curl -s http://127.0.0.1:8099/healthz` returns `ok`.
+- **CP readiness**: whether `curl -s http://127.0.0.1:8099/readyz` returns `ok`.
+
+> ⚠️ **`ok` from `/healthz` does not mean the product works.** It reports that a process is
+> running; it does not open the database, and it cannot. There is a real incident behind this
+> warning: a deployment answered 500 to **every** API call for fifteen minutes while `/healthz`
+> returned `ok`, the load balancer's target stayed healthy and the orchestrator stayed at steady
+> state. `/readyz` is the one that actually consults the database. **When somebody says "it
+> doesn't work" and `/healthz` says `ok`, believe the person.**
 
 ## Symptom-based checklist
 
 | Symptom | What to check |
 |------|-------------|
 | CP does not start | `docker compose logs cp`. Whether `curl -s http://127.0.0.1:8099/healthz` returns `ok` |
+| Everything returns 500 but health is `ok` | `/readyz`. A `503` there means the database. On a managed database whose password rotates, a Control Plane that has been running since before the rotation may be holding the old one — `grep DB_UNAVAILABLE` and `grep DB_SECRET_REFRESH_FAILED` in the CP log. Replacing the CP task makes it read the password again |
 | "permission denied" on docker.sock | Whether `DOCKER_GID` matches the host's docker group GID (DooD constraint C) |
 | Workspace starts but home is empty | Whether `DATA_DIR` is the same absolute path inside and outside the CP. The same path at restore time too (DooD constraint B) |
 | Cannot reach a started Workspace | Whether both the CP and Caddy have `network_mode: host` (DooD constraint A) |

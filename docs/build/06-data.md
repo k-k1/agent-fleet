@@ -17,6 +17,16 @@ English | [日本語](06-data.ja.md)
   the workspace's home ([07 §7.6](07-security.md)). All the database holds is the
   wrapped DEK.
 - The internal git repositories are files on disk; the database is only the ledger.
+- **On RDS, the password is not a value the process may keep.** The DSN is composed
+  from `AF_DB_*`, and `AF_DB_PASSWORD` arrives through the task definition's
+  `secrets` — which **ECS resolves once, at task start**. RDS rotates its managed
+  master password every seven days, so the CP re-reads the secret named by
+  `AF_DB_PASSWORD_SECRET_ARN` whenever Postgres answers `28P01`, and retries inside
+  the connector so no caller sees it ([decisions/0065](../decisions/0065-db-credential-rotation.md);
+  the env var alone cost fifteen minutes of total outage on 2026-09-01). Unset ARN =
+  the injected value is all there is, which is every non-RDS deployment.
+- **`GET /readyz` is the endpoint that actually consults this store.** `/healthz`
+  reports that a process is running and nothing more; see [09 §9.9](09-deploy.md).
 
 ## 6.2 Entities
 

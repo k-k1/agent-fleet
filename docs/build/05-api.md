@@ -51,7 +51,7 @@ membership check (§5.4).
 | browser | `POST/GET/DELETE /api/browser/pages*`, `GET /ws/browser` | CP → agent | §5.3 / [decisions/0018](../decisions/0018-container-browser-pane.md) |
 | WebSocket | `GET /ws/terminal` | CP → agent | §5.3 |
 | internal (agent → CP, per-membership tokens) | memos, schedules, MCP servers, docs; **and a Bitbucket refresh proxy**, which lets the tenant's client secret stay in the CP ([decisions/0052](../decisions/0052-tenant-git-oauth.md)) | CP | [08](08-integrations.md) |
-| auth and the rest | login and OAuth, health, the egress and docs internal endpoints, and `/` — the Console bundle, `no-store` | CP | [07](07-security.md) |
+| auth and the rest | login and OAuth, health and readiness ([09 §9.9](09-deploy.md)), the egress and docs internal endpoints, and `/` — the Console bundle, `no-store` | CP | [07](07-security.md) |
 
 - Long operations — start, clone — are **synchronous plus polling**; a job queue was
   considered and not adopted.

@@ -165,6 +165,25 @@ Resources:
                   - ssm:DeleteParameter
                   - ssm:AddTagsToResource
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
+              # --- Re-reading the database password while the task runs ---
+              # 🔥 2026-09-01: RDS rotated its managed master password (every 7 days)
+              # and a production deployment served 500 on every /api/* until the CP
+              # service was force-new-deployment'd. ECS resolves a task definition's `secrets`
+              # ONCE, at task start, so the injected AF_DB_PASSWORD is a snapshot of a
+              # value that moves. The CP now re-reads the secret when Postgres refuses
+              # its credentials (control-plane/store_postgres_secret.go).
+              #
+              # ⚠️ THIS role, not the exec role. The exec role's identical statement
+              # (above) is what injects the env var at task start and does nothing
+              # afterwards — the running process has its own identity. Missing this is
+              # the silent kind of failure ADR 0045 決定 21 keeps warning about: the CP
+              # falls back to the injected value, works perfectly, and only stops
+              # working at the next rotation. Grep the log for DB_SECRET_REFRESH_FAILED
+              # to tell whether it is actually allowed.
+              - Sid: DbSecretRefresh
+                Effect: Allow
+                Action: [ secretsmanager:GetSecretValue ]
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*"
               # --- EC2 slot pool (AF_RUNTIME=ecs-ec2 only; harmless on Fargate) ---
               # The CP owns the whole swap: find slots and volumes by tag, attach the
               # user's home, mount it over SSM, and hand the slot back. docs/log/64 §64.15.8.

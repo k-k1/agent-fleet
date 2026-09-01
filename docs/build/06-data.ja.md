@@ -15,6 +15,15 @@ updated: "2026-07"
 - ユーザーの資格情報は DB に入れない: Workspace home の暗号ストア `secrets.enc`（[07 §7.6](07-security.ja.md)）。
   DB が持つのは wrap 済み DEK（`wrapped_dek`）のみ。
 - 内部 git のリポジトリ実体は FS（`${DATA_DIR}/git/<slug>/<name>.git`）で、DB は台帳（`git_repo` ほか）。
+- **RDS ではパスワードはプロセスが持ち続けてよい値ではない。** DSN は `AF_DB_*` から組み立て、
+  `AF_DB_PASSWORD` はタスク定義の `secrets` で来る —— これを **ECS が解決するのはタスク起動時の
+  1 回だけ**である。RDS のマネージドなマスターパスワードは 7 日ごとにローテートするので、CP は
+  Postgres が `28P01` を返したら `AF_DB_PASSWORD_SECRET_ARN` のシークレットを読み直し、
+  **コネクタの中でリトライ**して呼び出し側に見せない（[decisions/0065](../decisions/0065-db-credential-rotation.ja.md)。
+  env だけだった 2026-09-01 には全面 500 が 15 分続いた）。ARN 未設定＝注入値がすべて、で、
+  RDS 以外のデプロイはすべてこちら。
+- **このストアを実際に見に行くのは `GET /readyz`。** `/healthz` はプロセスが走っていることしか
+  報告しない（[09 §9.9](09-deploy.ja.md)）。
 
 ## 6.2 エンティティ（migrations 0001〜0028 の現在形）
 

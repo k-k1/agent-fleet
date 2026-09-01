@@ -71,7 +71,7 @@ files** ([compose](../../deploy/compose/.env.example),
 | Scale-to-zero and showback | autostart, the several idle timeouts, the sweep interval, the stop grace, the sampling interval | auto-start, idle stop, the grace period, usage sampling | [03](03-control-plane.md) |
 | MCP | the enable flag | whether the endpoint exists at all | [08](08-integrations.md) |
 | Egress 🚧 | the listen address, the token, the ingest and policy URLs, the proxy address, the enforce flag, the allowlist | the forward proxy and the CP's aggregation | [07 §7.8](07-security.md) |
-| Postgres | a URL, or the individual parts | only when the store is Postgres | [06](06-data.md) |
+| Postgres | a URL, or the individual parts, and **the ARN of the secret the password really lives in** | only when the store is Postgres. The parts are composed into a DSN; the ARN is what lets a rotated password be picked up without replacing the task (§9.9) | [06](06-data.md) |
 | ECS adapter 🚧 | the cluster, region, subnets, security group, namespace, filesystem, roles, log group, task size, uid/gid, start timeout | handing the CP the coordinates of the static infrastructure the templates built | [ecs runbook](../../deploy/aws/ecs/README.md) |
 | Containerless adapter 🚧 | the agent binary path | where the agent lives when there is no container | — |
 | Inside the container (injected by the CP; **an operator never sets these**) | the agent address and token, the secret key, the stop grace, the session command, the config directory, the self-update permission, the docs token | CP ↔ agent authentication, the DEK, the grace period | [04](04-agent.md) / [07 §7.5](07-security.md) |
@@ -220,3 +220,55 @@ the premium down to "about the same as a VM, at twenty people".**
   fact that idle-stop must actually work.
 - Both are still 🚧 with no production mileage. **Check the real numbers against the
   first month's actual bill.**
+
+## 9.9 Health, readiness, and a credential that moves
+
+**`/healthz` is liveness only.** It writes the literal `ok` and touches nothing else —
+no database, no filesystem, no adapter. `deploy/local/restart-cp.sh` compares its body
+to that string verbatim, and the ALB target group health-checks it. Treat it as a frozen
+contract.
+
+**`/readyz` is the one that consults the store.** It pings the metadata store with a two
+second budget and answers `503 database unavailable` when it cannot. It is reachable
+without a session, because a monitor cannot sign in, and the body deliberately carries
+nothing an unauthenticated caller should not see.
+
+**The ALB stays on `/healthz` on purpose.** Pointing it at `/readyz` would let a
+momentary database unavailability kill the CP task, and the CP runs at `desiredCount 1`
+— a permanent restart risk in exchange for a self-heal the CP now performs by itself
+([decisions/0065](../decisions/0065-db-credential-rotation.md)).
+
+### Why the database password cannot be an environment variable on RDS
+
+An ECS task definition's `secrets` block is resolved **once, when the task starts**. RDS
+rotates its managed master password on a schedule (seven days by default), so a
+long-running task ends up presenting a password the database has stopped accepting, and
+every query fails with `28P01`. **Nothing about this is visible from outside**: the
+process is up, so `/healthz` is `ok`, so the target is healthy, so the service is at
+steady state.
+
+So the CP treats the injected value as a bootstrap hint and re-reads
+`AF_DB_PASSWORD_SECRET_ARN` from Secrets Manager when Postgres refuses it, retrying
+inside the connector. Two things have to be true for that to work:
+
+1. **`CpTaskRole` — not the execution role — needs `secretsmanager:GetSecretValue`.** The
+   execution role's copy is what injects the variable at start and does nothing
+   afterwards. When the task role lacks it, the CP keeps running on the injected value
+   and logs `DB_SECRET_REFRESH_FAILED`; the mechanism is gone but nothing breaks until
+   the next rotation.
+2. **`AF_DB_PASSWORD_SECRET_ARN` has to be set.** Unset means the injected value is all
+   there is — correct for compose, on-prem and SQLite, and a latent outage on RDS.
+
+### Making it audible
+
+The CP logs `DB_UNAVAILABLE` when it cannot open a connection. `30-ingress.yaml` turns
+that into the CloudWatch metric `AgentFleet/<stack>/DbUnavailable` **unconditionally**,
+and `CpAlarmEmail` — empty by default — subscribes an address to an alarm on it.
+
+**Set it.** On 2026-09-01 the only record that a production deployment was returning 500
+to every caller was a line in a log group nobody had reason to open. Recovery of last
+resort, four minutes and no interruption because it is blue/green:
+
+```sh
+aws ecs update-service --cluster <cluster> --service <cp-service> --force-new-deployment
+```

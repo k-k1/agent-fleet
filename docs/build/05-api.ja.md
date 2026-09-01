@@ -46,7 +46,7 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | browser | `POST/GET/DELETE /api/browser/pages*`・`GET /ws/browser?id=&tenant=` | CP → Agent `/browser/pages*`・`/ws/browser` | §5.3 / [設計31](../decisions/0018-container-browser-pane.ja.md) |
 | WebSocket | `GET /ws/terminal?session=&tenant=` | CP → Agent `/ws/pty` | §5.3 |
 | internal（Agent → CP・per-membership トークン）| `GET /internal/{memos,schedules,mcp-servers,docs}`・**`POST /internal/git-oauth/bitbucket/refresh`**（`AF_GIT_OAUTH_TOKEN`。テナントの client_secret を CP に残したまま refresh grant を代行＝[71](../decisions/0052-tenant-git-oauth.ja.md) §71.8）| CP | [08](08-integrations.ja.md) |
-| auth / その他 | `GET /login`・`/oauth2/{login,callback,logout}`・`GET /api/oauth/bitbucket/callback`・`GET /healthz`・`/internal/egress{,/policy}`（`AF_EGRESS_TOKEN`）・`GET /internal/docs`（`AF_DOCS_TOKEN`・ロール別 docs の tar.gz／[04 §4.9](04-agent.ja.md)）・`/` = Console 静的配信（no-store）| CP | [07](07-security.ja.md) |
+| auth / その他 | `GET /login`・`/oauth2/{login,callback,logout}`・`GET /api/oauth/bitbucket/callback`・`GET /healthz`（liveness のみ）・`GET /readyz`（DB まで見る。[09 §9.9](09-deploy.ja.md)）・`/internal/egress{,/policy}`（`AF_EGRESS_TOKEN`）・`GET /internal/docs`（`AF_DOCS_TOKEN`・ロール別 docs の tar.gz／[04 §4.9](04-agent.ja.md)）・`/` = Console 静的配信（no-store）| CP | [07](07-security.ja.md) |
 
 - 旧 `/agent-fleet` プレフィクスは**廃止**（ルート配信）。`/agent-fleet*` は互換リダイレクトのみ。
 - 非同期操作（起動・clone）は**同期 + ポーリング**で運用（`/jobs` 構想は未採用）。

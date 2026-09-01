@@ -532,6 +532,16 @@ Parameters:
       identity with NO login — sandbox/E2E gates only: restrict the ALB security
       group to your own IP before using it (an internet-facing ALB with dev auth
       hands out an authenticated session to anyone who reaches it).
+  CpAlarmEmail:
+    Type: String
+    Default: ""
+    Description: >-
+      Where to send "the Control Plane cannot reach its database". Empty (the default)
+      = no topic and no alarm, and the only trace is the CP log. ⚠️ On 2026-09-01 that
+      was the whole problem: the database went away, /healthz kept answering 200, the
+      ALB target stayed healthy, ECS stayed at steady state, and nobody found out until
+      a person tried to use the product. The metric below is always collected; this
+      parameter is what makes it reach someone. Set it.
 
 Conditions:
   # Each IdP's client secret is pulled from SSM, and a Secrets entry pointing at a
@@ -555,6 +565,7 @@ Conditions:
   HasScheduleWakeTimeout: !Not [ !Equals [ !Ref ScheduleWakeTimeout, "" ] ]
   HasScheduleSettle: !Not [ !Equals [ !Ref ScheduleSettle, "" ] ]
   HasScheduleJitter: !Not [ !Equals [ !Ref ScheduleJitter, "" ] ]
+  HasCpAlarms: !Not [ !Equals [ !Ref CpAlarmEmail, "" ] ]
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
 
@@ -717,6 +728,72 @@ Resources:
       LogGroupName: !Sub "/af/${AWS::StackName}/cp"
       RetentionInDays: 7
 
+  # --- "the Control Plane cannot reach its database", made visible -------------
+  #
+  # The 2026-09-01 outage was not a monitoring gap in the sense of "we had no
+  # metric". Every metric was green: the process was up, so /healthz returned 200,
+  # so the ALB target was healthy, so ECS was at steady state. The product was
+  # entirely broken and every instrument agreed it was fine. The only signal that
+  # existed at all was a line in this log group.
+  #
+  # So: turn that line into a metric. The marker is a constant shared with
+  # control-plane/store_postgres_secret.go (logDBUnavailable) — change one and you
+  # change the other, and nothing will tell you if you don't.
+  #
+  # Unconditional on purpose. A filter that matches nothing publishes nothing and
+  # therefore costs nothing, and the point of an incident like this is that you want
+  # the history to already exist by the time you think to look.
+  CpDbUnavailableFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: DB_UNAVAILABLE
+      MetricTransformations:
+        - MetricNamespace: !Sub "AgentFleet/${AWS::StackName}"
+          MetricName: DbUnavailable
+          MetricValue: "1"
+          DefaultValue: 0
+          Unit: Count
+
+  CpAlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasCpAlarms
+    Properties:
+      TopicName: !Sub "af-${AWS::StackName}-cp-alarms"
+      DisplayName: agent-fleet control plane
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref CpAlarmEmail
+
+  # One breach is enough. The CP rate-limits this line to one a minute, so a single
+  # datapoint already means "for a whole minute, connections were failing" — not a
+  # blip. Waiting for a second period would only add five minutes to an outage in
+  # which the product returns 500 to everybody.
+  CpDbUnavailableAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasCpAlarms
+    Properties:
+      AlarmName: !Sub "af-${AWS::StackName}-cp-db-unavailable"
+      AlarmDescription: >-
+        The Control Plane could not open a database connection. If this coincides with
+        the RDS secret's rotation schedule, the credential refresh
+        (control-plane/store_postgres_secret.go) did not work — check the log for
+        DB_SECRET_REFRESH_FAILED, which usually means CpTaskRole lost
+        secretsmanager:GetSecretValue. Recovery of last resort, ~4 minutes and no
+        outage because it is blue/green:
+        aws ecs update-service --cluster <cluster> --service <cp-service> --force-new-deployment
+      Namespace: !Sub "AgentFleet/${AWS::StackName}"
+      MetricName: DbUnavailable
+      Statistic: Sum
+      Period: 300
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+      AlarmActions: [ !Ref CpAlarmTopic ]
+      OKActions: [ !Ref CpAlarmTopic ]
+
   # Workspace tasks (created by the CP at runtime) log here — the CP passes this
   # group name to each task definition via AF_ECS_LOG_GROUP.
   WsLogGroup:
@@ -772,6 +849,19 @@ Resources:
             - { Name: AF_DB_PORT, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbPort" } }
             - { Name: AF_DB_NAME, Value: agentfleet }
             - { Name: AF_DB_USER, Value: afadmin }
+            # …and where to go and read the password AGAIN when the injected one stops
+            # working, because RDS rotates it every 7 days and `secrets` below is
+            # resolved once, at task start (the 2026-09-01 outage; ADR 0065).
+            #
+            # ⚠️ Environment, NOT Secrets. An ARN is not a credential, and putting it
+            # under `secrets` would make it another start-time snapshot — which is the
+            # very thing being fixed. Unset = the CP keeps using the injected value and
+            # nothing else changes, which is how every non-RDS deployment behaves.
+            - Name: AF_DB_PASSWORD_SECRET_ARN
+              Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbSecretArn" }
+            # The JSON field inside the RDS-managed secret — the same `password` the
+            # `:password::` suffix picks out below.
+            - { Name: AF_DB_PASSWORD_SECRET_KEY, Value: password }
             # ⚠️ Exactly one proxy sits in front of the CP here: this ALB. The CP needs
             # to be TOLD, because it cannot tell — without this, r.RemoteAddr is the load
             # balancer and every request looks like it comes from the same private

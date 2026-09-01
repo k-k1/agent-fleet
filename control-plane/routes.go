@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // buildMux は CP の全ルートを登録した mux を返す（docs/log/23 P0-2 で main() から抽出、
@@ -101,11 +103,32 @@ func isAuthExempt(p string) bool {
 // endpoints, health check and the login page's brand asset are reachable without
 // a session; see oauth.go (flow/session) and oauth_oidc.go (the IdP client).
 func registerAuthRoutes(mux *http.ServeMux, cfg config) {
-	exemptExact("/login", "/healthz")
+	exemptExact("/login", "/healthz", "/readyz")
 	// /login/<tenant-slug> is the per-tenant sign-in page (docs/log/61 §61.9.3) and is
 	// reachable without a session, like /login itself.
 	exemptPrefix("/oauth2/", "/brand/", "/login/")
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
+	// /readyz — liveness is not readiness. /healthz above says "ok" as long as the
+	// process is up; on 2026-09-01 it did exactly that for fifteen minutes while RDS
+	// rotated the password out from under the running task and every /api/* returned
+	// 500. ALB targets healthy, ECS steady, CloudFormation unchanged, product dead.
+	//
+	// ⚠️ The ALB health check stays on /healthz on purpose (30-ingress.yaml
+	// HealthCheckPath). Pointing it here would let a momentary RDS blip kill the CP
+	// task, and the CP runs at desiredCount 1 — a restart loop bought in exchange for
+	// a self-heal that store_postgres.go now performs without one.
+	//
+	// The body says nothing an unauthenticated caller should not see: no DSN, no
+	// user, no SQLSTATE. Whoever can act on the detail can read the log.
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := cfg.mgr.store.Ping(ctx); err != nil {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	})
 	// Build version + the images this deployment runs (docs/log/35 §35.6.1,
 	// version_info.go). Deliberately NOT auth-exempt: /healthz is frozen
 	// (restart-cp.sh compares the body to "ok" verbatim) and none of this should

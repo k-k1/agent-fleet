@@ -57,6 +57,15 @@ func openSQLite(path string) (*sqlStore, error) {
 
 func (s *sqlStore) Close() error { return s.db.Close() }
 
+// Ping opens (or reuses) a connection and asks the database if it is there. It
+// backs GET /readyz — the endpoint that exists because /healthz answers "ok"
+// whether or not this store works, which is how the 2026-09-01 outage stayed
+// invisible for fifteen minutes (store_postgres_secret.go).
+//
+// Deliberately not a query: a stale password fails at CONNECT, so PingContext —
+// which has to hand out a connection — is exactly the check that catches it.
+func (s *sqlStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+
 // migrate applies embedded numbered migrations idempotently, then runs the
 // identity/membership data migration (docs/14, P3-2).
 func (s *sqlStore) migrate(ctx context.Context) error {
