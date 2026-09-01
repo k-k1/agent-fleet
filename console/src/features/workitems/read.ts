@@ -307,11 +307,13 @@ export function titleSlug(title: string, max = 32): string {
 
 /** The default branch template. `{key}` is the item key with the owner/name prefix
  * dropped (the working copy already says which repo it is) and "#" turned into
- * "issue-" — "#" cannot appear in a git ref. `{slug}` is the ASCII slug of the title and
- * is available, but NOT in the default: the key already identifies the work, the title
- * is often non-ASCII (so the slug is empty anyway), and a long English title made names
- * like feature/issue-45-empty-list-after-login-when. Add {slug} in the setting if you
- * want it. */
+ * "issue-" — "#" cannot appear in a git ref. The key keeps the case it was written in:
+ * G3-1234 is how the ticket, the commit message and the PR title all spell it, so
+ * lower-casing it to g3-1234 only made the branch the odd one out. `{slug}` is the ASCII
+ * slug of the title and is available, but NOT in the default: the key already identifies
+ * the work, the title is often non-ASCII (so the slug is empty anyway), and a long
+ * English title made names like feature/issue-45-empty-list-after-login-when. Add {slug}
+ * in the setting if you want it. */
 export const DEFAULT_BRANCH_TEMPLATE = "feature/{key}";
 
 /** Branch name for a work item, from the user's template (docs/log/80 P2).
@@ -321,7 +323,7 @@ export const DEFAULT_BRANCH_TEMPLATE = "feature/{key}";
  * an empty `{slug}` (every Japanese title) must not leave a trailing separator behind —
  * "feature/issue-45-" is not a name anyone typed on purpose. */
 export function branchForItem(item: { key: string; title: string }, template?: string): string {
-  const key = shortKey(item.key).replace(/^#/, "issue-").replace(/[^A-Za-z0-9._-]+/g, "-").toLowerCase();
+  const key = shortKey(item.key).replace(/^#/, "issue-").replace(/[^A-Za-z0-9._-]+/g, "-");
   const slug = titleSlug(item.title);
   const raw = (template && template.trim() ? template.trim() : DEFAULT_BRANCH_TEMPLATE)
     .replace(/\{key\}/g, key)

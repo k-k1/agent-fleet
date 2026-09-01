@@ -238,7 +238,12 @@ describe("branchForItem", () => {
   });
 
   it("Jira キーはそのまま使える形にする", () => {
-    expect(branchForItem({ key: "PROJ-123", title: "Fix it" })).toBe("feature/proj-123");
+    expect(branchForItem({ key: "PROJ-123", title: "Fix it" })).toBe("feature/PROJ-123");
+  });
+
+  it("キーの大文字を落とさない（チケット番号は G3-1234 のまま）", () => {
+    expect(branchForItem({ key: "G3-1234", title: "ログイン後に一覧が空になる" })).toBe("feature/G3-1234");
+    expect(branchForItem({ key: "G3-1234", title: "Fix it" }, "{key}")).toBe("G3-1234");
   });
 
   it("git の ref に使えない文字が残らない", () => {
@@ -347,7 +352,7 @@ describe("repoForItem — Jira", () => {
 
 describe("branchForItem — Jira", () => {
   it("Jira キーはそのままブランチ名に使える", () => {
-    expect(branchForItem({ key: "PROJ-123", title: "ログイン後に一覧が空になる" })).toBe("feature/proj-123");
+    expect(branchForItem({ key: "PROJ-123", title: "ログイン後に一覧が空になる" })).toBe("feature/PROJ-123");
   });
 });
 
@@ -363,13 +368,13 @@ describe("branchForItem — テンプレート（P2）", () => {
   });
 
   it("差し込みは {key} と {slug}", () => {
-    expect(branchForItem({ key: "PROJ-123", title: "Fix it" }, "{key}")).toBe("proj-123");
-    expect(branchForItem({ key: "PROJ-123", title: "Fix it" }, "bugfix/{key}/{slug}")).toBe("bugfix/proj-123/fix-it");
+    expect(branchForItem({ key: "PROJ-123", title: "Fix it" }, "{key}")).toBe("PROJ-123");
+    expect(branchForItem({ key: "PROJ-123", title: "Fix it" }, "bugfix/{key}/{slug}")).toBe("bugfix/PROJ-123/fix-it");
   });
 
   it("★ {slug} が空でも区切りが取り残されない（日本語タイトル）", () => {
-    expect(branchForItem({ key: "PROJ-1", title: "日本語のみ" }, "feature/{key}-{slug}")).toBe("feature/proj-1");
-    expect(branchForItem({ key: "PROJ-1", title: "日本語のみ" }, "{slug}/{key}")).toBe("proj-1");
+    expect(branchForItem({ key: "PROJ-1", title: "日本語のみ" }, "feature/{key}-{slug}")).toBe("feature/PROJ-1");
+    expect(branchForItem({ key: "PROJ-1", title: "日本語のみ" }, "{slug}/{key}")).toBe("PROJ-1");
   });
 
   it("git が拒む形にはしない", () => {
@@ -379,7 +384,7 @@ describe("branchForItem — テンプレート（P2）", () => {
   });
 
   it("テンプレートが空文字に潰れても既定へ落ちる", () => {
-    expect(branchForItem({ key: "PROJ-1", title: "日本語" }, "{slug}")).toBe("feature/proj-1");
+    expect(branchForItem({ key: "PROJ-1", title: "日本語" }, "{slug}")).toBe("feature/PROJ-1");
   });
 });
 
