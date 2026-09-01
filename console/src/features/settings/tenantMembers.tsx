@@ -17,6 +17,7 @@ import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 // メンバー詳細のクラウド費用（docs/log/67 §67.15）。請求の無いデプロイでは部品自身が
 // 何も描かないので、ここで出し分けは持たない。
 import { MemberCostPanel } from "../cost/CloudCostView.tsx";
+import { MemberUptimePanel } from "../usage/UptimeHeatmap.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { remainingShort, stateInfo, stripLabelTag } from "../../lib/sessionview.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "./adminShared.ts";
@@ -626,6 +627,12 @@ export function MemberView({
           しないのは ADR 0048 決定 2（時間と $ を並べない）——上のタイルは 4 秒ごとの
           実測、こちらは約 24 時間遅れの請求で、読み方が違う。 */}
       <MemberCostPanel slug={slug} userKey={key} />
+
+      {/* 費用のすぐ下に、同じ期間の占有を時間まで割ったもの（docs/log/83）。並べる意味は
+          「この日だけ高い」の理由がその場で読めること — 夜通しの帯なら止め忘れ、昼だけ
+          濃いなら働いていた。⚠️ 費用と違って能力の確認は要らない（請求の無いデプロイでも
+          占有は在る）。 */}
+      <MemberUptimePanel slug={slug} userKey={key} />
 
       <section className="admin-panel">
         <h4>{tr("admin.sessions_heading")} {sessions ? `(${sessions.length})` : ""}</h4>

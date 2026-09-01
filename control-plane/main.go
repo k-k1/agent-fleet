@@ -314,6 +314,9 @@ func main() {
 	// destructive (DB writes only), so it is on by default; AF_USAGE_SAMPLE_INTERVAL=0
 	// disables it.
 	if iv := parseDurationOr(os.Getenv("AF_USAGE_SAMPLE_INTERVAL"), 5*time.Minute); iv > 0 {
+		// Recorded before the goroutine starts: the heatmap API divides by it, and a
+		// zero here would make every cell read as "ran the whole hour" (docs/log/83).
+		mgr.usageInterval = iv
 		go newUsageSampler(mgr, iv).run(context.Background())
 	}
 

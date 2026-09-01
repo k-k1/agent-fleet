@@ -20,6 +20,23 @@ import (
 
 const usageDayFmt = "2006-01-02"
 
+// usageHourFmt is the hourly bucket key (docs/log/83). UTC, like the day bucket —
+// the client shifts it to local time for display, because a 24-row heatmap drawn in
+// UTC tells a reader in Tokyo that they work at four in the morning.
+const usageHourFmt = "2006-01-02T15"
+
+// usageSessionTimeout bounds ONE workspace's session read inside a sweep. The shared
+// agent client allows two minutes, which is right for a user-facing call and wrong
+// here: a handful of wedged agents would run the sampler past its own tick, and a
+// missed tick loses occupancy that cannot be recovered. A read that does not answer
+// quickly is recorded as "running, sessions unmeasured" instead.
+const usageSessionTimeout = 10 * time.Second
+
+// usageHourlyRetentionDays caps how far back the hourly buckets are kept. They are 24x
+// the rows of usage_daily and answer a question nobody asks about last spring; the daily
+// ledger, which does get asked, is never pruned.
+const usageHourlyRetentionDays = 92
+
 // usageSampler periodically credits running-seconds to each running workspace.
 // Separate from the reaper (which only visits idle-stop-enabled tenants); showback
 // must account for every tenant regardless of idle settings.
@@ -50,31 +67,111 @@ func (u *usageSampler) run(ctx context.Context) {
 // this instant. This approximates occupancy to within one interval (a workspace
 // that starts or stops mid-interval is over/under-counted by at most that much) —
 // acceptable for internal showback with no external billing.
+//
+// The same pass fills the hourly bucket behind the 稼働時間 heatmap (docs/log/83). It
+// rides here rather than on a timer of its own on purpose: this sweep already resolves
+// every tenant's workspaces and asks each runtime for its state, and a second resident
+// ticker doing the same walk is how this host has run out of memory before (docs/log/26).
 func (u *usageSampler) sample(ctx context.Context) {
 	secs := int(u.interval.Seconds())
 	if secs <= 0 {
 		return
 	}
-	day := time.Now().UTC().Format(usageDayFmt)
+	now := time.Now().UTC()
+	day, hour := now.Format(usageDayFmt), now.Format(usageHourFmt)
 	tenants, err := u.mgr.store.ListTenants(ctx)
 	if err != nil {
 		log.Printf("showback: list tenants: %v", err)
 		return
 	}
+	// ⚠️ A sweep that could not enumerate everything must not claim the hour was
+	// observed. The heartbeat is what makes an empty cell mean "stopped" rather than
+	// "unknown", so writing it after a partial walk would paint grey over workspaces
+	// this pass never reached — a confident answer produced by a failure.
+	complete := true
 	for _, t := range tenants {
 		wss, err := u.mgr.store.ListWorkspaces(ctx, t.ID)
 		if err != nil {
 			log.Printf("showback: list workspaces (%s): %v", t.Slug, err)
+			complete = false
 			continue
 		}
 		for _, ws := range wss {
-			if u.mgr.runtimeFor(ws, "").State(ctx) != "running" {
+			rt := u.mgr.runtimeFor(ws, "")
+			if rt.State(ctx) != "running" {
 				continue
 			}
 			if err := u.mgr.store.AddUsage(ctx, ws.MembershipID, ws.TenantID, day, secs); err != nil {
 				log.Printf("showback: add usage (%s): %v", ws.ContainerName, err)
 			}
+			if err := u.mgr.store.AddUsageHour(ctx, ws.MembershipID, ws.TenantID, hour,
+				u.counters(ctx, rt, secs)); err != nil {
+				log.Printf("showback: add hourly usage (%s): %v", ws.ContainerName, err)
+			}
 		}
+	}
+	if !complete {
+		return
+	}
+	if err := u.mgr.store.AddUsageHour(ctx, "", "", hour, UsageHourCounters{Samples: 1}); err != nil {
+		log.Printf("showback: heartbeat: %v", err)
+	}
+	u.prune(ctx, now)
+}
+
+// counters turns one running workspace into this sample's contribution.
+//
+// ⚠️ An unreachable Agent leaves MeasuredSecs at 0 rather than recording zero sessions.
+// A workspace mid-start, or one whose Agent is wedged, is exactly the case where the
+// count is unknown, and "0 sessions" would draw a cold cell over a busy hour — the same
+// 0-vs-unmeasured confusion the usage ledger keeps re-teaching.
+func (u *usageSampler) counters(ctx context.Context, rt Runtime, secs int) UsageHourCounters {
+	c := UsageHourCounters{Samples: 1, RunningSecs: secs}
+	sctx, cancel := context.WithTimeout(ctx, usageSessionTimeout)
+	defer cancel()
+	env, err := u.mgr.agentSessionsEnv(sctx, rt)
+	if err != nil {
+		return c
+	}
+	alive, busy := 0, 0
+	for _, s := range env.Sessions {
+		if !s.Alive {
+			continue
+		}
+		alive++
+		// ★ 「動いている」の定義は sessionActivity ただ一つ（session_activity.go）。
+		// reaper が「この Workspace を止めてはならない」と判断する集合とヒートマップの
+		// 濃い色が同じものを指す、というのがこの指標の意味であって、述語をここへ写すと
+		// 状態が増えたときに片方だけ古くなる。keepAwake のピンが machineBusy に入るのも
+		// 意図どおり — 週末ずっと濃いまま残るピンこそ、この画面が見せたい浪費である。
+		if sessionActivity(s) == activityMachineBusy {
+			busy++
+		}
+	}
+	c.MeasuredSecs = secs
+	c.SessionSecs = alive * secs
+	c.BusySecs = busy * secs
+	c.MaxSessions = alive
+	c.MaxBusy = busy
+	return c
+}
+
+// prune drops hourly buckets past the retention window, once an hour rather than on
+// every sweep (the delete is cheap, but twelve identical no-op deletes an hour are
+// twelve write locks nobody needs).
+func (u *usageSampler) prune(ctx context.Context, now time.Time) {
+	// ⚠️ 下限 1 分。素直に interval.Minutes() で割ると、30 秒間隔の設定で窓が 0 分幅に
+	// なって条件が常に真になり、毎スイープ削除が走る。
+	window := int(u.interval.Minutes())
+	if window < 1 {
+		window = 1
+	}
+	if now.Minute() >= window {
+		return
+	}
+	cutoff := now.AddDate(0, 0, -usageHourlyRetentionDays).Format(usageHourFmt)
+	if err := u.mgr.store.PruneUsageHourly(ctx, cutoff); err != nil {
+		log.Printf("showback: prune hourly usage: %v", err)
 	}
 }
 

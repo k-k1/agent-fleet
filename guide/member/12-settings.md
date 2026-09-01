@@ -18,7 +18,7 @@ How each setting is *used* belongs to the other chapters, so read this one as a
 |---|---|
 | **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / Agent instructions |
 | **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens |
-| **Workspace** | Agent usage / Cloud cost / Agent memory / Toolchain / AWS SSM / Internal repositories / Export & import / Danger zone |
+| **Workspace** | Agent usage / Cloud cost / Running time / Agent memory / Toolchain / AWS SSM / Internal repositories / Export & import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
 - **On a phone it is a list → detail drill-down.** Back returns to the list; back again closes the dialog.
@@ -282,6 +282,25 @@ AWS**, because nowhere else has a cloud bill to read.
 - **Nothing at all is available from before the day cost attribution was switched on** — it only
   counts from that moment and cannot be backfilled. The screen says which day that is.
 
+### Running time
+
+When your workspace was actually running, as a grid of 24 hours (down) by date (across). Each
+square is one hour.
+
+- **The colour is not money.** Cloud costs are only available per day, so there is no such thing as
+  an hourly charge here (that is the Cloud cost tab next door). What this shows is how long the
+  workspace ran and how many sessions were open — usually the *reason* a particular day's cost
+  looks the way it does.
+- **There are three kinds of square.** Grey means **stopped**, a coloured square means **running**
+  (warmer = more sessions), and a **blank square means "not recorded"** — the control plane was not
+  watching that hour. Blank and grey do not mean the same thing.
+- **You can switch what the shading means**: sessions open / sessions actually working / running
+  time.
+- Point at a square and the detail for that hour appears below it (minutes running, peak count).
+  **Table** shows the same thing as numbers.
+- Times are shown in **your device's time zone**.
+- **Hours from before recording started stay blank** and cannot be filled in later.
+
 ### Agent memory
 
 Version control over the memory an agent accumulates by itself (claude's auto-memory, codex's memories), so
@@ -366,6 +385,7 @@ deeper reset that also removes home except logins and connections). Both lose un
 | Drive it from the Claude on my laptop | MCP tokens |
 | Find out what the tokens went on | Agent usage |
 | Find out what my workspace costs to run | Cloud cost |
+| I want to know when my workspace was actually running | Running time |
 | It memorised something wrong | Agent memory |
 | Change the Java / Node version | Toolchain |
 | Get into another server | AWS SSM |

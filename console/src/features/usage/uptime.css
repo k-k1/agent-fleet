@@ -1,0 +1,213 @@
+/* 稼働時間ヒートマップ（docs/log/83）。縦 24 時間 × 横 日付。
+   色は tokens.css の --uh-1..5（検証済みの単色ランプ）。ここでは形だけを決める。 */
+
+.uptime-heatmap {
+  --uh-gutter: 26px;
+  --uh-gap: 2px;
+  --uh-cell-w: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.uh-lede {
+  margin: 0 0 8px;
+}
+
+.uh-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.uh-metrics {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.uh-metric {
+  background: transparent;
+  border: 0;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.uh-metric:last-child {
+  border-right: 0;
+}
+.uh-metric.active {
+  background: var(--sel-bg);
+  color: var(--fg);
+}
+
+.uh-tablebtn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* --- 凡例 ---------------------------------------------------------------- */
+
+.uh-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+.uh-lg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.uh-lg-scale {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--uh-gap);
+}
+.uh-lg-max {
+  margin-left: 4px;
+}
+.uh-swatch {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border-radius: 2px;
+}
+
+/* --- マス目 -------------------------------------------------------------- */
+
+/* 列数は inline style（日数で変わる）。行は見出し 1 + 24 時間。
+   ⚠️ マスは 1 列を 1fr にしない。14 列を横いっぱいに伸ばすと 1 マスが 59×9px の
+   「横棒」になり、ヒートマップではなく積み上げ棒に見える（実測・headless で確認）。
+   幅に上限を置いて左寄せし、縦横の比を 1 に近く保つ。 */
+.uh-grid {
+  display: grid;
+  gap: var(--uh-gap);
+  grid-auto-rows: 14px;
+  justify-content: start;
+}
+
+.uh-corner,
+.uh-rowhead,
+.uh-colhead {
+  font-size: 10px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+}
+.uh-rowhead {
+  justify-content: flex-end;
+  padding-right: 4px;
+}
+.uh-colhead {
+  justify-content: center;
+  padding-bottom: 2px;
+  white-space: nowrap;
+}
+
+.uh-cell {
+  border-radius: 2px;
+  background: var(--uh-stopped);
+  cursor: default;
+}
+
+/* 未観測 = 塗らない。停止（灰色）と見分けがつく必要があるので、面ではなく
+   薄い破線の枠だけを置く。⚠️ ここを灰色にすると「CP が落ちていた日」が
+   「誰も働かなかった日」として自信たっぷりに表示される。 */
+.uh-unobserved {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--viz-grid);
+  opacity: 0.5;
+}
+
+.uh-stopped {
+  background: var(--uh-stopped);
+}
+
+.uh-lv-1 { background: var(--uh-1); }
+.uh-lv-2 { background: var(--uh-2); }
+.uh-lv-3 { background: var(--uh-3); }
+.uh-lv-4 { background: var(--uh-4); }
+.uh-lv-5 { background: var(--uh-5); }
+
+/* 「起きてはいたが本数が分からない」。0 本と同じ見た目にしないための地模様。
+   色覚に依らない二次符号化も兼ねる。 */
+.uh-unmeasured {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent 0 2px,
+    color-mix(in srgb, var(--bg) 55%, transparent) 2px 4px
+  );
+}
+
+/* ホバー / フォーカスでマスが「応答する」。枠は面の外側に出す（2px の隙間ぶん）。 */
+.uh-cell:hover,
+.uh-cell:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 0;
+  z-index: 1;
+}
+.uh-cell:focus {
+  outline: 2px solid var(--accent);
+}
+
+/* --- 読み出し ------------------------------------------------------------ */
+
+.uh-foot {
+  min-height: 34px;
+}
+.uh-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+/* 値が主役・ラベルは従（読み手は場所を知っていて数字が欲しい）。 */
+.uh-ro-val {
+  font-weight: 600;
+  color: var(--fg);
+}
+.uh-ro-when,
+.uh-ro-sub,
+.uh-ro-top {
+  color: var(--muted);
+}
+.uh-hint,
+.uh-note {
+  font-size: 11px;
+  margin: 0;
+}
+
+/* --- 表ビュー ------------------------------------------------------------ */
+
+.uh-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.uh-table th,
+.uh-table td {
+  text-align: right;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.uh-table th:first-child,
+.uh-table td:first-child {
+  text-align: left;
+}
+.uh-table th {
+  color: var(--muted);
+  font-weight: 500;
+}

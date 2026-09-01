@@ -54,6 +54,7 @@ updated: "2026-07"
 | `pat` | MCP 用 Personal Access Token（0006）。`token_hash`=SHA-256（平文非保存）・`scope`(read\|write\|admin)。**role は発行時に凍結せず呼び出し時に live 解決** |
 | `audit_log` | 監査（0007）。`actor_kind`(user\|admin\|mcp\|system)・`action`・`target`・`tenant_id`(''=デプロイ全体)・`http_status`（0027: 上流応答の保存、0=未記録）。書き込み点は [05 §5.5](05-api.ja.md) |
 | `usage_daily` | showback（0008）。**workspace 占有秒**の日次バケツ（BYO モデルでは Claude 使用量でなく占有が運用者コスト）。サンプラーが加算＝近似で十分の設計 |
+| `usage_hourly` | 同じ占有の**時間**バケツ＋開いていたセッション本数（[decisions/0066](../decisions/0066-uptime-heatmap.ja.md)）。⚠️ `membership_id = ''` はメンバーではなく**その時間のハートビート**で、「観測できて停止」と「記録なし」を分けるのがこれ。保持 92 日 |
 
 **機能別**
 

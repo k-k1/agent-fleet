@@ -1474,6 +1474,46 @@ export const en: Record<keyof typeof ja, string> = {
   "cost.centre_idle_pool": "Idle slot pool",
   "cost.centre_cp": "Control plane",
   "cost.centre_tax": "Tax",
+  // --- 稼働時間 heatmap (docs/log/83) ---
+  // ⚠️ Occupancy, never money. Cost Explorer only reports per day, so an hourly
+  // figure could only be an estimate — which ADR 0048 決定 2 refused. The heatmap
+  // explains a day's bill by showing what the workspace was doing; it never prices it.
+  "set.tab_uptime": "Running time",
+  "uptime.my_title": "When your workspace was running",
+  "uptime.my_intro":
+    "Each square is one hour: grey means the workspace was stopped, warmer means more sessions were open. Nothing here is a charge — it is what your workspace was doing, which is usually the reason a day's cloud cost looks the way it does.",
+  "uptime.member_title": "When this workspace was running",
+  "uptime.member_intro":
+    "One hour per square. A warm band running through the night usually means a workspace nobody stopped, rather than work being done.",
+  "uptime.admin_title": "When workspaces were running",
+  "uptime.admin_intro":
+    "Every member's occupancy stacked into one grid. A square's value is the average across the whole tenant for that hour; hover to see who it was.",
+  "uptime.metric_label": "What the shading shows",
+  "uptime.metric_sessions": "Sessions open",
+  "uptime.metric_busy": "Sessions working",
+  "uptime.metric_running": "Running time",
+  "uptime.state_unobserved": "Not recorded",
+  "uptime.state_stopped": "Stopped",
+  "uptime.state_unmeasured": "Running, session count unknown",
+  "uptime.legend_zero": "Running, no sessions open",
+  "uptime.ro_workspaces": "{n} workspaces on average",
+  "uptime.ro_minutes": "Ran {n} min",
+  "uptime.ro_sessions": "{n} sessions on average",
+  "uptime.ro_detail": "running {min} min · peak {peak}",
+  "uptime.ro_more": "and {n} more",
+  "uptime.show_table": "Table",
+  "uptime.show_map": "Heatmap",
+  "uptime.col_when": "Hour",
+  "uptime.col_running": "Running (min)",
+  "uptime.col_value": "Value",
+  "uptime.col_peak": "Peak",
+  "uptime.no_records": "Nothing was running in this range.",
+  "uptime.load_error": "Could not load running time.",
+  "uptime.hint": "Point at a square for the detail.",
+  "uptime.note_sampling":
+    "Sampled about every {n} minutes, so a square is accurate to within one sample. Hours before this was first recorded stay blank — they cannot be recovered.",
+  "uptime.note_halfhour":
+    "Your time zone is not a whole number of hours from UTC, so squares are rounded to the hour they start in.",
   "admin.usage_title": "Running time (workspace occupancy)",
   "admin.usage_intro":
     "Infrastructure occupancy = the total time workspaces were running (Claude usage fees are on each person's own subscription and not included here). Sampled about every 5 minutes, so there's some error.",

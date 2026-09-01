@@ -144,6 +144,39 @@ type UsageRow struct {
 	RunningSecs                                             int
 }
 
+// UsageHourRow is one (membership, hour) occupancy bucket — the same claim as UsageRow
+// at hour resolution, plus how many sessions were open inside the running workspace
+// (docs/log/83). Labels are joined at read time exactly like UsageRow.
+//
+// ⚠️ MembershipID=="" is the sampler HEARTBEAT for that hour, not a member: it records
+// that a sweep completed, which is what makes "observed, not running" (grey) different
+// from "never observed" (blank). Aggregation must skip it — summing it into a fleet
+// total would double-count nothing real, but rendering it as a member would invent one.
+type UsageHourRow struct {
+	TenantID, TenantSlug, MembershipID, UserKey, Email, Hour string
+	UsageHourCounters
+}
+
+// UsageHourCounters is what one hour accumulates. Split out from the row so the
+// sampler's per-sample delta and the stored total are literally the same shape —
+// AddUsageHour adds the sums and takes the max of the peaks, field by field.
+//
+// ⚠️ MeasuredSecs is not RunningSecs. Session counters accumulate only while the Agent
+// actually answered, so RunningSecs>0 with MeasuredSecs==0 means "running, session
+// count unknown" and must not be read as zero sessions.
+// The json tags carry omitempty because these ride the API as-is: a window is up to
+// 24x30 buckets, and an hour where nothing was busy should not spend seven zeros
+// saying so.
+type UsageHourCounters struct {
+	Samples      int `json:"samples,omitempty"`
+	RunningSecs  int `json:"running_secs,omitempty"`
+	MeasuredSecs int `json:"measured_secs,omitempty"`
+	SessionSecs  int `json:"session_secs,omitempty"`
+	BusySecs     int `json:"busy_secs,omitempty"`
+	MaxSessions  int `json:"max_sessions,omitempty"`
+	MaxBusy      int `json:"max_busy,omitempty"`
+}
+
 // SSMProfile is the COMMON auth bundle shared by many hosts (docs/log/p3-ssm-
 // session.md): the AWS IAM Identity Center (SSO) portal + account/role/default region.
 // It maps to one ~/.aws named profile; `aws sso login` authenticates it. Personal
@@ -976,6 +1009,17 @@ type SettingsStore interface {
 type UsageStore interface {
 	AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error
 	ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error)
+	// AddUsageHour accumulates one sample into the (membership, hour) bucket: sums add,
+	// peaks take the max. membershipID=="" writes the sampler heartbeat for the hour.
+	AddUsageHour(ctx context.Context, membershipID, tenantID, hour string, d UsageHourCounters) error
+	// ListUsageHourly returns the rows in [fromHour, toHour] (inclusive, YYYY-MM-DDTHH,
+	// UTC). tenantID=="" spans every tenant; a tenant filter still returns the heartbeat
+	// rows, because "was the CP even watching" is not a per-tenant fact.
+	ListUsageHourly(ctx context.Context, tenantID, fromHour, toHour string) ([]UsageHourRow, error)
+	// PruneUsageHourly drops rows strictly before beforeHour. usage_hourly is 24x the
+	// rows of usage_daily and answers a question nobody asks about last spring, so it
+	// has the retention usage_daily never needed.
+	PruneUsageHourly(ctx context.Context, beforeHour string) error
 }
 
 // CloudCostRow is one (day, membership, service) slice of the AWS invoice, as landed
