@@ -115,7 +115,7 @@ from then on you can clone / push without entering tokens ([04](03-code.md) · [
   **"Share"** button in the preview popover instead: **that one survives restarts** and sends the
   visitor to whatever the URL is at the time they open it.
 - If they see **nothing under "Shared with you", or a 404**, check that **"Show it to your tenant"**
-  is on under Settings › Toolchains › Preview subdomains. Turning it off closes the preview
+  is on under Settings › Preview subdomains. Turning it off closes the preview
   **from their very next request**, even mid-session — that is deliberate.
 - **"Stopped" on their side** means your workspace is not running. **They cannot start your
   workspace** — start it and tell them.

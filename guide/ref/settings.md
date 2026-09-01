@@ -44,6 +44,7 @@ value you set is not the value in force, look one layer out.
 | Notifications | what you are told about, and how |
 | Read aloud | speech engine and voice |
 | Toolchains | JDK and other per-workspace toolchains |
+| Preview subdomains | the URL that opens the app you are building (only where they are issued) |
 | Ops & monitoring | monitoring integrations |
 | Export / import | take your settings to another deployment |
 | Account | sign-in methods linked to your account |
