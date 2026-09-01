@@ -2136,6 +2136,8 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.usage.copilot.pool_premium": "Premium requests",
   "wsbar.usage.codex.note":
     "The last value codex recorded (a snapshot from that moment). It refreshes the next time you run codex.",
+  "wsbar.usage.claude.note":
+    "Read from claude's own rate-limit headers, which report utilization to two decimals — so 0% means below 0.5%, not necessarily nothing used.",
   "wsbar.usage.full_reset_one": "{count} full reset",
   "wsbar.usage.full_reset_other": "{count} full resets",
   "wsbar.usage.full_reset_soonest": " · soonest by {when}",

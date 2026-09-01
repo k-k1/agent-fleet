@@ -54,6 +54,25 @@ func TestUsageEstCostUSD(t *testing.T) {
 	}
 }
 
+// fable 5.1 は「入出力は 5 と同額・cache read だけ $0.25/MTok」という単独の例外なので、
+// 倍率（$10×0.1 = $1.00）で置かれていないことを固定する。**版が増えたら表に足す**しかない
+// （usageNormalizeModel は 8 桁の日付しか落とさないので "-1" は畳まれない＝値付け不可に
+// なる）ことも、ここで一緒に見張る。
+func TestUsageEstCostUSDFable51CacheRead(t *testing.T) {
+	useIsolatedUsageDir(t)
+	a := usageAgg{CacheRead: 1_000_000}
+	got, src, ok := usageEstCostUSD(session.KindClaude, "claude-fable-5-1", a)
+	if !ok {
+		t.Fatal("claude-fable-5-1 が値付け不可（単価表に無い＝unpriced_spend に落ちる）")
+	}
+	if src != usagePriceSrcBuiltin {
+		t.Fatalf("出所 = %q, want %q", src, usagePriceSrcBuiltin)
+	}
+	if math.Abs(got-0.25) > 1e-9 {
+		t.Fatalf("cache read 100万トークン = $%v, want $0.25（倍率だと $1.00 になる）", got)
+	}
+}
+
 // セッション本体（実測コストを持たない）にも推定が乗り、実測とは別値で返ること。
 // 値付けできなかった消費は unpriced_spend で申告される。
 func TestUsageSeriesEstimatesSessionCost(t *testing.T) {

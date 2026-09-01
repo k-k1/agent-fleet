@@ -68,14 +68,19 @@ const (
 // usageNormalizeModel が畳んでからここを引く。
 var usagePrices = map[string]usagePrice{
 	// 現行世代
-	"claude-fable-5":  {In: 10, Out: 50},
-	"claude-mythos-5": {In: 10, Out: 50},
-	"claude-opus-5":   {In: 5, Out: 25},
-	"claude-opus-4-8": {In: 5, Out: 25},
-	"claude-opus-4-7": {In: 5, Out: 25},
-	"claude-opus-4-6": {In: 5, Out: 25},
-	"claude-opus-4-5": {In: 5, Out: 25},
-	"claude-sonnet-5": {In: 2, Out: 10},
+	// fable 5.1 は 5 と同額（$10/$50）だが **cache read だけ $0.25/MTok**（倍率 0.1 =
+	// $1.00 ではない）。倍率で置くと 4 倍に膨らむので明示する。mythos 5.1 が同じ
+	// cache read かは上流が明言していない（launch 時点で未確定）ので倍率のままにする。
+	"claude-fable-5-1":  {In: 10, Out: 50, CacheRead: 0.25},
+	"claude-mythos-5-1": {In: 10, Out: 50},
+	"claude-fable-5":    {In: 10, Out: 50},
+	"claude-mythos-5":   {In: 10, Out: 50},
+	"claude-opus-5":     {In: 5, Out: 25},
+	"claude-opus-4-8":   {In: 5, Out: 25},
+	"claude-opus-4-7":   {In: 5, Out: 25},
+	"claude-opus-4-6":   {In: 5, Out: 25},
+	"claude-opus-4-5":   {In: 5, Out: 25},
+	"claude-sonnet-5":   {In: 2, Out: 10},
 	// sonnet 4.6 は 4.5 と同じ $3/$15（sonnet 5 で $2/$10 に下がった）
 	"claude-sonnet-4-6": {In: 3, Out: 15},
 	"claude-sonnet-4-5": {In: 3, Out: 15},

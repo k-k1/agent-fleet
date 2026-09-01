@@ -2152,6 +2152,8 @@ export const ja = {
   "wsbar.usage.copilot.pool_premium": "プレミアムリクエスト",
   "wsbar.usage.codex.note":
     "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
+  "wsbar.usage.claude.note":
+    "claude 自身のレート制限ヘッダから読んだ値です。利用率は小数2桁で届くため、0% は「0.5% 未満」を含みます（未使用とは限りません）。",
   "wsbar.usage.full_reset_one": "Full reset {count}件",
   "wsbar.usage.full_reset_other": "Full reset {count}件",
   "wsbar.usage.full_reset_soonest": "・最短 {when}まで",
