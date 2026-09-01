@@ -185,6 +185,43 @@ func TestBackgroundToolHeartbeatKeepsPendingPlan(t *testing.T) {
 	}
 }
 
+// 裏で回っているサブエージェントの道具は、待機中のセッションを 進行中 に見せてはいけない。
+// PostToolUse は agent_id 付き（実測 2.1.252: サブエージェント発の道具だけが持ち、session_id
+// は親のまま）で来るので、それを見分ける。見分けなかった頃は、待機プロンプトのまま 7〜12 秒
+// ごとに working が打ち直され、停止ボタン付きの 進行中 になり、idle でしか走らない BG 検出
+// （入力待ち · サブエージェント実行中）に一度も到達しなかった（2026-09-01 sf2ykxk）。
+func TestSubagentHeartbeatDoesNotResurrectIdle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-bg-idle", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	// ターンは終わっている（Stop フックの idle）。裏の BG エージェントだけが走っている。
+	feedStatusHook(t, "idle", `{"session_id":"`+sid+`"}`)
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","tool_name":"Bash","agent_id":"a9b653db412c21662","agent_type":"general-purpose"}`)
+
+	if st, _ := status.Read(sid); st.State != "idle" {
+		t.Fatalf("status = %q, want idle（BG サブエージェントの道具でターンが復活した）", st.State)
+	}
+	if got := wireSession(m, true).State; got != "idle" {
+		t.Errorf("sessions-list badge = %q, want idle", got)
+	}
+
+	// 見分けの軸は agent_id だけ。同じ道具でも親スレッド発（agent_id 無し）なら、ターンが
+	// 生きている証拠として従来どおり working を立て直す。
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","tool_name":"Bash"}`)
+	if st, _ := status.Read(sid); st.State != "working" {
+		t.Fatalf("status = %q, want working（親スレッドのハートビートまで止めてはいけない）", st.State)
+	}
+
+	// 走っているターンの打ち直しは通す — 前景サブエージェントの長いターンでは、その道具が
+	// 唯一のハートビートで、落とすと false-idle が戻る。
+	feedStatusHook(t, "working", `{"session_id":"`+sid+`","tool_name":"Bash","agent_id":"a9b653db412c21662"}`)
+	if st, _ := status.Read(sid); st.State != "working" {
+		t.Fatalf("status = %q, want working（前景サブエージェントの心拍を落とした）", st.State)
+	}
+}
+
 // ツールを伴わない working（UserPromptSubmit = 新しいターンの開始）は従来どおり消す。
 // ここを残したままにすると、次のターンに前の質問のゴーストカードが持ち越される。
 func TestUserPromptSubmitClearsPendingQuestion(t *testing.T) {

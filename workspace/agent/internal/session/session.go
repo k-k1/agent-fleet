@@ -108,6 +108,12 @@ type Session struct {
 	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
 	// running under the pane. Lets the Console mark 入力待ち as "still working in bg".
 	BackgroundBusy bool `json:"backgroundBusy"`
+	// BackgroundBusyReason: WHAT is running behind the idle prompt — "process" (a
+	// run_in_background worker), "subagent" (a background Task/Workflow agent, which
+	// spawns no process), "shell" (a Monitor / waiting background shell). Display only:
+	// the badge lights on BackgroundBusy, this only chooses its wording, so an unknown
+	// (or dropped) value falls back to the generic 「BG実行中」.
+	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
 	// RateLimitResumeAt: State == agents.StateLimited のとき**だけ**入る、予約済み自動再開の
 	// 時刻（RFC3339）。空 = 上限では止まっているが再開は仕込まれていない（自動再開 OFF、
 	// リセット時刻を決める材料が無い、モデル別上限 — docs/log/47 §4-5）。チップに「いつ動くか」を

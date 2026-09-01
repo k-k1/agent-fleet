@@ -2035,6 +2035,10 @@ export const ja = {
   "state.rate_limited_at": "制限解除待ち · {at}",
   "state.auth_expired": "認証切れ — 再認証が必要",
   "state.idle_bg": "入力待ち · BG実行中",
+  // 何が走っているかまで分かったときの文言（backgroundBusyReason）。理由が付かない／
+  // 知らない値のときは上の汎用文言に落ちる。
+  "state.idle_bg_subagent": "入力待ち · サブエージェント実行中",
+  "state.idle_bg_shell": "入力待ち · BGコマンド実行中",
   "state.idle": "入力待ち",
 
   // === P2 共有: 異常終了ラベル（lib/sessionview.ts の exitLabel。hint はツールチップ）===

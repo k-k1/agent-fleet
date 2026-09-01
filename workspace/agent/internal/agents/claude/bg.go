@@ -158,6 +158,38 @@ func BackgroundBusy(name string) bool {
 	return false
 }
 
+// Background-work reasons, the vocabulary the Console maps to a badge label. Kept as
+// constants because the string travels the whole wire (agents.LiveInfo → session.Session
+// → CP → Console) and a typo anywhere reads as "no reason" and silently falls back to the
+// generic text.
+const (
+	BGReasonProcess  = "process"  // a run_in_background worker process under the pane
+	BGReasonSubagent = "subagent" // an in-process background subagent / Workflow agent
+	BGReasonShell    = "shell"    // a Monitor / waiting background shell
+)
+
+// BackgroundWork names what is still running while the session's own turn reads idle.
+// The three detectors see structurally different things and none subsumes another:
+// BackgroundBusy sees run_in_background worker processes under the pane; SubagentBusy
+// sees in-process background subagents / Workflow agents, which spawn no such process at
+// all; BackgroundShellBusy sees a Monitor / sleep- or I/O-bound background shell that
+// sits in S state and so slips past both.
+//
+// First hit wins, in the original evaluation order — when several are true at once any of
+// them is a true statement about the session, and the order keeps the cheap cached /proc
+// snapshot ahead of the transcript reads.
+func BackgroundWork(name, sid string) (bool, string) {
+	switch {
+	case BackgroundBusy(name):
+		return true, BGReasonProcess
+	case SubagentBusy(sid):
+		return true, BGReasonSubagent
+	case BackgroundShellBusy(name):
+		return true, BGReasonShell
+	}
+	return false, ""
+}
+
 // BackgroundShellBusy reports whether a long-lived background shell runs under the
 // session's pane while claude is idle — a Monitor's poll loop, or any
 // run_in_background shell that spends its life sleeping or waiting on I/O. It closes
@@ -275,15 +307,31 @@ func isClaudeProc(pid int) bool {
 // appended to count as "still running". A window shorter than the gap between an
 // agent's writes (a long tool call or think) would flap the badge off mid-run; 90s
 // bridges those gaps while still clearing soon after the agent stops writing.
+//
+// 90s は生成中の無音（実測 215s/342s/396s・bg_agents.go）には全く足りない。それを埋める
+// のは主転写の開閉ペア（BackgroundAgentsRunning）で、こちらは**その形で痕跡を残さない
+// もの**の受け皿として残っている: Workflow の wf_* エージェント、SendMessage で再開され
+// たエージェント（再開は launch 記録を書き直さない）、そして claude が記録の形を変えた
+// 版。窓を広げないのは、こちらが陽性のときは本当に「今書いている」から。
 const subagentFreshTTL = 90 * time.Second
 
 // SubagentBusy reports whether the session (keyed by its deterministic sid) has an
-// in-process background subagent or Workflow agent still working. claude writes each
-// agent's turns to ConfigDir()/projects/*/<sid>/subagents/agent-*.jsonl (regular
-// subagents) or subagents/workflows/wf_*/agent-*.jsonl (Workflow agents); a
-// recently-appended log means one is live. Complements BackgroundBusy, which covers
-// the process-tree case it structurally cannot see.
+// in-process background subagent or Workflow agent still working. Two arms, in order of
+// strength:
+//
+//   - the main transcript's launch/notification pairing (bg_agents.go) — a positive
+//     open/close signal with no time window, so it holds through a long generation;
+//   - transcript freshness: claude writes each agent's turns to
+//     ConfigDir()/projects/*/<sid>/subagents/agent-*.jsonl (regular subagents) or
+//     subagents/workflows/wf_*/agent-*.jsonl (Workflow agents), and a just-appended log
+//     means one is live even when no pairing record exists for it.
+//
+// Complements BackgroundBusy, which covers the process-tree case both structurally
+// cannot see.
 func SubagentBusy(sid string) bool {
+	if BackgroundAgentsRunning(sid) {
+		return true
+	}
 	cutoff := time.Now().Add(-subagentFreshTTL)
 	for _, p := range SubagentLogs(sid) {
 		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(cutoff) {

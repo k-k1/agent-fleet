@@ -39,7 +39,8 @@ const agentSessionsPayload = `{"sessions":[{
 	"name":"s1","tmux":"claude_s1","dir":"/home/dev/repos/x","workingCopyId":"wc_123","kind":"claude",
 	"driver":"managed","repo":"x","title":"t","display":"[AF] t","color":"#332211",
 	"label":"[AF] t","started":"07/15 12:00","createdAt":"2026-07-15T12:00:00+09:00",
-	"remoteUrl":"","state":"","alive":false,"resumable":true,"locked":true,"backgroundBusy":false,
+	"remoteUrl":"","state":"","alive":false,"resumable":true,"locked":true,
+	"backgroundBusy":true,"backgroundBusyReason":"subagent",
 	"context":{"read":1000,"create":200,"fresh":30,"model":"claude-fable-5"},
 	"branch":"main","currentBranch":"dev","branchDrift":true,"worktree":true,
 	"exitReason":"oom","exitCode":137,"exitSignal":9
@@ -97,6 +98,10 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		"worktree":      true,
 		// 削除ロック（docs/log/45）— CP 中継で落とすと鍵バッジと解除メニューが消える。
 		"locked": true,
+		// BG 実行中とその理由 — 落とすとバッジが「入力待ち」に戻る／理由だけ落とすと
+		// 何が走っているか言えない汎用文言に固定される。
+		"backgroundBusy":       true,
+		"backgroundBusyReason": "subagent",
 	}
 	for k, v := range want {
 		if got[k] != v {
