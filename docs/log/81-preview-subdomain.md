@@ -222,7 +222,7 @@ Next.js 15 系は、dev サーバの内部資産（`/_next/*`）を未知のオ�
 
 ```
 ⚠ Blocked cross-origin request to Next.js dev resource /_next/webpack-hmr
-  from "<スラッグ>-3100.pv.af.acrt.link".
+  from "<スラッグ>-3100.pv.example.com".
 ```
 
 ```ts
