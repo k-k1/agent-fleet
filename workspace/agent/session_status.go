@@ -125,6 +125,24 @@ func runSessionStatusHook(args []string) {
 	if state == "permission" && h.ntype != "permission_prompt" {
 		return
 	}
+	// A hook carrying agent_id fired INSIDE a subagent, not on the session's own thread
+	// (実測 2.1.252: サブエージェントの Bash の PostToolUse は agent_id/agent_type 付きで、
+	// **親と同じ session_id** で来る。メインスレッド側にはどちらも無い)。PostToolUse(*) の
+	// working ハートビートはそれを見分けないので、裏でサブエージェントが回っているだけの
+	// セッションが「自分のターンが走っている」と名乗ってしまう — 実測 2026-09-01、sf2ykxk
+	// は待機プロンプトのまま 7〜12 秒ごとに working を打ち直されて 進行中＋停止ボタンになり、
+	// idle でしか走らない BG 検出（claude.BackgroundWork）はそもそも一度も評価されなかった。
+	//
+	// 既にある working の打ち直しは通す: 前景サブエージェントの長いターンでは、その道具こそが
+	// 唯一のハートビートで、落とすと false-idle が戻る。通さないのは idle からの復活だけ —
+	// 裏で回っているセッションは idle のままでいてもらわないと、何が走っているかを名乗る
+	// バッジ（入力待ち · サブエージェント実行中）に到達しない。working が丸ごと失われた
+	// ターンの復旧は、ペインを直接見る reverse-heal（agent.go）の担当。
+	if h.agentID != "" && state == "working" {
+		if cur, _ := status.Read(sid); cur.State != "working" {
+			return
+		}
+	}
 	previous, _ := status.Read(sid)
 	// Capture the turn's streamed text BEFORE applyPendingPayloads clears it on idle:
 	// it becomes the full-text bridge body (docs/log/37). The operator report itself
@@ -317,6 +335,11 @@ type hookInput struct {
 	delta      string // MessageDisplay: a streaming chunk of the assistant's text
 	source     string // SessionStart: startup | resume | clear | compact
 	toolName   string // PreToolUse/PostToolUse: which tool fired this hook ("" = not a tool event)
+	// agentID is claude's agent_id: set only when the hook fired from within a subagent
+	// (its own docs: "Use this field (not agent_type) to distinguish subagent calls from
+	// main-thread calls"), and empty on the session's own thread — including --agent
+	// sessions, where agent_type IS set. So agent_type must not be used in its place.
+	agentID string
 }
 
 func decodeHookStdin() hookInput {
@@ -326,6 +349,7 @@ func decodeHookStdin() hookInput {
 		NotificationType string `json:"notification_type"` // Notification
 		Delta            string `json:"delta"`             // MessageDisplay (streaming text chunk)
 		ToolName         string `json:"tool_name"`         // PreToolUse
+		AgentID          string `json:"agent_id"`          // set only inside a subagent
 		Source           string `json:"source"`            // SessionStart (startup/resume/clear/compact)
 		ToolInput        struct {
 			Questions    json.RawMessage `json:"questions"` // AskUserQuestion
@@ -346,6 +370,7 @@ func decodeHookStdin() hookInput {
 		delta:      in.Delta,
 		source:     in.Source,
 		toolName:   in.ToolName,
+		agentID:    in.AgentID,
 		toolDetail: permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command),
 	}
 }

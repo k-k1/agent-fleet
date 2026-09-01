@@ -99,6 +99,32 @@ describe("resumeClock", () => {
   });
 });
 
+// 裏で動いているものの名前を出す。汎用の「BG実行中」だけだと、サブエージェントが長文を
+// 書いている 5 分間と、何も起きていない 入力待ち の区別が利用者に付かない。
+describe("stateInfo（BG 実行中の理由）", () => {
+  const idleBg = { kind: "claude", alive: true, state: "idle", backgroundBusy: true };
+
+  it("理由ごとに文言が変わる", () => {
+    expect(stateInfo({ ...idleBg, backgroundBusyReason: "subagent" }).text).toBe(t("state.idle_bg_subagent"));
+    expect(stateInfo({ ...idleBg, backgroundBusyReason: "shell" }).text).toBe(t("state.idle_bg_shell"));
+  });
+
+  // 理由は文言を選ぶだけ。知らない値／古い Agent／中継で落ちた場合でも、バッジ自体を
+  // 失って 入力待ち に戻ってはいけない（それが元の不具合そのもの）。
+  it("理由が無い・知らない値でも汎用文言で点灯する", () => {
+    expect(stateInfo(idleBg).text).toBe(t("state.idle_bg"));
+    expect(stateInfo({ ...idleBg, backgroundBusyReason: "" }).text).toBe(t("state.idle_bg"));
+    expect(stateInfo({ ...idleBg, backgroundBusyReason: "process" }).text).toBe(t("state.idle_bg"));
+    expect(stateInfo({ ...idleBg, backgroundBusyReason: "なにか新しい種別" }).text).toBe(t("state.idle_bg"));
+  });
+
+  it("BG が立っていなければ理由は無視される", () => {
+    expect(stateInfo({ ...idleBg, backgroundBusy: false, backgroundBusyReason: "subagent" }).text).toBe(
+      t("state.idle"),
+    );
+  });
+});
+
 // 停止中でも「答えを待っている対話がある」ことは出す（docs/log/75 §75.6.5）。人待ちも
 // 畳めるようにした以上、停止中 の 1 語に丸めると未回答の質問が静かに消える。
 describe("stateInfo（停止中の持ち越し）", () => {

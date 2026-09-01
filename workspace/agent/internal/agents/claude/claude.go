@@ -197,13 +197,9 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 			status.Persist(sid, "working")
 		}
 		// Still idle: background work may yet be running — surface it so 入力待ち isn't
-		// mistaken for "done". BackgroundBusy sees run_in_background worker processes under
-		// the pane; SubagentBusy sees in-process background subagents / Workflow agents
-		// (which spawn no such process) via their transcript freshness; BackgroundShellBusy
-		// sees a Monitor / sleep- or I/O-bound background shell that sits in S state and so
-		// slips past both.
+		// mistaken for "done".
 		if li.State == "idle" {
-			li.BackgroundBusy = BackgroundBusy(m.Name) || SubagentBusy(sid) || BackgroundShellBusy(m.Name)
+			li.BackgroundBusy, li.BackgroundBusyReason = BackgroundWork(m.Name, sid)
 		}
 	} else if !session.DirExists(m.Dir) {
 		// A stopped claude whose working dir was removed (its repo deleted) can't be

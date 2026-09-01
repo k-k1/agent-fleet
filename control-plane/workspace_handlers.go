@@ -580,6 +580,10 @@ type sessionWire struct {
 	// still running" flag so the Console can badge it. Not persisted to the DB mirror
 	// (a stopped workspace has no live background work).
 	BackgroundBusy bool `json:"backgroundBusy"`
+	// BackgroundBusyReason passes through WHAT is running ("process" | "subagent" |
+	// "shell"), which only picks the badge's wording. Dropping it here would not hide the
+	// badge, just silently pin every session to the generic 「BG実行中」.
+	BackgroundBusyReason string `json:"backgroundBusyReason,omitempty"`
 	// RateLimitResumeAt passes through the Agent's「予約済み自動再開の時刻」(state ==
 	// "limited" のときだけ入る RFC3339)。これが落ちると Console のチップは
 	// 「制限解除待ち」とだけ言い、いつ動くのかを言えなくなる。DB ミラーには列が無い

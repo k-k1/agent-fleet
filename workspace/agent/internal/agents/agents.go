@@ -120,6 +120,9 @@ type LiveInfo struct {
 	Context        *session.ContextUsage // claude context fill, nil otherwise
 	Resumable      bool                  // false = stopped agent whose working dir is gone
 	BackgroundBusy bool                  // claude: idle turn but a run_in_background task lingers
+	// BackgroundBusyReason names WHAT is running (claude.BGReason*): "process" | "subagent"
+	// | "shell". "" when nothing is. Display-only — the badge lights on BackgroundBusy.
+	BackgroundBusyReason string
 }
 
 // Agent is the per-kind behavior seam. Implementations are stateless value types

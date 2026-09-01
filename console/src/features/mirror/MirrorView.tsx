@@ -267,6 +267,7 @@ export function MirrorView({
   const [compactProg, setCompactProg] = useState<{ pct: number; elapsed?: string } | null>(null);
   const [status, setStatus] = useState("");
   const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
+  const [bgBusyReason, setBgBusyReason] = useState(""); // WHAT lingers: process | subagent | shell
   // "Finalizing" bridges the gap between claude finishing (status flips to idle — its
   // Stop hook, or the TUI heal firing once the spinner clears during answer streaming)
   // and the reply actually landing in the transcript jsonl a poll later. In that window
@@ -947,6 +948,7 @@ export function MirrorView({
           setAlive(!!d.alive);
           bgBusyRef.current = !!d.backgroundBusy;
           setBgBusy(!!d.backgroundBusy);
+          setBgBusyReason(typeof d.backgroundBusyReason === "string" ? d.backgroundBusyReason : "");
           setTasks(Array.isArray(d.tasks) ? d.tasks : []);
           setFiles(Array.isArray(d.files) ? d.files : []);
           setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
@@ -2593,6 +2595,7 @@ export function MirrorView({
         alive: status !== "stopped",
         state: status,
         backgroundBusy: bgBusy,
+        backgroundBusyReason: bgBusyReason,
         rateLimitResumeAt: sessionMeta?.rateLimitResumeAt,
       } as any)
     : sessionMeta

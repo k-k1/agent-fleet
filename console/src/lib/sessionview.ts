@@ -7,6 +7,18 @@ import { agentOf } from "../agents/registry.ts";
 import type { StateInfo } from "../agents/registry.ts";
 import type { Session } from "../types/session.ts";
 import { t } from "./i18n/index.ts";
+import type { MsgKey } from "./i18n/index.ts";
+
+// backgroundBusyKey maps the agent's reason (claude.BGReason*) to the chip's wording.
+// Unknown / absent → the generic line: the reason only refines the label, so a value we
+// don't recognise must never cost the user the badge itself. "process" has no entry
+// because a run_in_background worker IS what the generic wording already describes.
+const BG_REASON_KEYS: Record<string, MsgKey> = {
+  subagent: "state.idle_bg_subagent",
+  shell: "state.idle_bg_shell",
+};
+const backgroundBusyKey = (reason: string | undefined): MsgKey =>
+  (reason && BG_REASON_KEYS[reason]) || "state.idle_bg";
 
 // stamp formats a timestamp as MMDD-HHMM (matching the agent's claude --name), so
 // shell rows show a launch time consistent with claude rows.
@@ -45,6 +57,8 @@ export interface SessionState {
   state?: string;
   resumable?: boolean;
   backgroundBusy?: boolean;
+  /** 何が走っているか: "process" | "subagent" | "shell"。未知/未設定は汎用文言に落ちる。 */
+  backgroundBusyReason?: string;
   exitReason?: string;
   exitCode?: number;
   exitSignal?: number;
@@ -171,9 +185,14 @@ export const stateInfo = (s: SessionState): StateInfo => {
     case "auth":
       return { cls: "question", icon: "key", text: t("state.auth_expired") };
     default:
-      // Idle by hook, but a run_in_background task is still running under the pane:
-      // show it's not actually done (spinner + "BG実行中" alongside 入力待ち).
-      if (s.backgroundBusy) return { cls: "bg", icon: "loading", spin: true, text: t("state.idle_bg") };
+      // Idle by hook, but background work is still running: show it's not actually done
+      // (spinner + "BG実行中" alongside 入力待ち). When the agent could name WHAT is
+      // running, say that instead — 「サブエージェント実行中」 tells the user their Task
+      // is still writing, where the generic line leaves them guessing whether anything
+      // is happening at all. An unknown reason (older agent, a value we don't map) falls
+      // back to the generic text rather than showing nothing.
+      if (s.backgroundBusy)
+        return { cls: "bg", icon: "loading", spin: true, text: t(backgroundBusyKey(s.backgroundBusyReason)) };
       return { cls: "on", icon: "check", text: t("state.idle") };
   }
 };

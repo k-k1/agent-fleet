@@ -2023,6 +2023,10 @@ export const en: Record<keyof typeof ja, string> = {
   "state.rate_limited_at": "Waiting for limit reset · {at}",
   "state.auth_expired": "Login expired — sign in again",
   "state.idle_bg": "Ready · running in background",
+  // Wording for when we know WHAT is running (backgroundBusyReason); an absent or
+  // unknown reason falls back to the generic line above.
+  "state.idle_bg_subagent": "Ready · subagent running",
+  "state.idle_bg_shell": "Ready · background command running",
   "state.idle": "Ready",
 
   // === P2 shared: abnormal-exit label (lib/sessionview.ts exitLabel; hint = tooltip). ===
