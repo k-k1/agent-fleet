@@ -160,9 +160,18 @@ func previewNotFound(w http.ResponseWriter) {
 	http.Error(w, "not found", http.StatusNotFound)
 }
 
+// mustSettings reads a workspace's settings blob and falls back to "" (= no overrides)
+// when the store cannot answer, because refusing to serve a preview over a settings
+// read is worse than serving it with the defaults.
+//
+// 🔥 ただし **黙って落とさない**（2026-09-01）。`workspace.settings` が Postgres 側の
+// マイグレーションに無いまま何週間も動いていたとき、この握りつぶしのせいで症状は
+// 「設定が全部既定値に見える」だけになり、**書き込みの 500 を誰かが踏むまで**表に
+// 出なかった。フォールバックは残すが、痕跡は残す。
 func mustSettings(ctx context.Context, m *manager, wsID string) string {
 	raw, err := m.store.GetWorkspaceSettings(ctx, wsID)
 	if err != nil {
+		log.Printf("workspace settings unreadable (ws=%s): %v — falling back to defaults", wsID, err)
 		return ""
 	}
 	return raw

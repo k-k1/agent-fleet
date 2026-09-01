@@ -90,6 +90,16 @@ func TestPostgresStore(t *testing.T) {
 	if got, ok, err := st.GetWorkspaceByMembership(ctx, m1.ID); err != nil || !ok || got.State != "running" {
 		t.Fatalf("get ws: ok=%v err=%v %+v", ok, err, got)
 	}
+	// 🔥 ワークスペース設定の往復（2026-09-01 の本番不具合の回帰）。`workspace.settings`
+	// は SQLite にしか無く、Postgres のデプロイでは **PUT /api/env/ws-settings が常に 500**
+	// だった。★ 読み出しは呼び出し側がエラーを握りつぶすので、書けるかどうかを見ない限り
+	// この壊れ方は緑のまま通る —— スキーマのパリティ検査（skip されがち）だけに任せない。
+	if err := st.SetWorkspaceSettings(ctx, ws.ID, `{"previewPorts":[3000]}`); err != nil {
+		t.Fatalf("set ws settings: %v", err)
+	}
+	if got, err := st.GetWorkspaceSettings(ctx, ws.ID); err != nil || got != `{"previewPorts":[3000]}` {
+		t.Fatalf("get ws settings: %q err=%v", got, err)
+	}
 	// Nine same-key waiters must poll without pinning the remaining nine pool
 	// connections; the holder still needs one for checkpoint/finalization work.
 	releaseFence, err := st.AcquireWorkspaceOperationFence(ctx, ws.ID)

@@ -91,7 +91,7 @@ func (a wsSettingsAPI) tenantAllowsAgentUpdate(r *http.Request, ws Workspace) bo
 // settings plus the relevant operator gates. DB-backed, so it works whether the
 // container is running or stopped.
 func (a wsSettingsAPI) get(w http.ResponseWriter, r *http.Request, res *resolved) {
-	raw, _ := a.store.GetWorkspaceSettings(r.Context(), res.ws.ID)
+	raw := mustSettings(r.Context(), a.mgr, res.ws.ID)
 	st := parseWSSettings(raw)
 	out := map[string]any{
 		"agentUpdate":      st.AgentUpdate,
@@ -223,7 +223,7 @@ func (a wsSettingsAPI) reissuePreview(w http.ResponseWriter, r *http.Request, re
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "internal", "workspace lookup failed"})
 		return
 	}
-	raw, _ := a.store.GetWorkspaceSettings(r.Context(), ws.ID)
+	raw := mustSettings(r.Context(), a.mgr, ws.ID)
 	st := parseWSSettings(raw)
 	// 予約（固定 ON のときの持ち越し）も一緒に捨てる。捨てないと、次の起動で
 	// 「捨てたはずの URL」がそのまま戻ってくる。
@@ -244,7 +244,7 @@ func (a wsSettingsAPI) reissuePreview(w http.ResponseWriter, r *http.Request, re
 		}
 	}
 	a.mgr.evictMembershipCache(ws.MembershipID)
-	raw, _ = a.store.GetWorkspaceSettings(r.Context(), ws.ID)
+	raw = mustSettings(r.Context(), a.mgr, ws.ID)
 	body := map[string]any{
 		"agentUpdate":      parseWSSettings(raw).AgentUpdate,
 		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
@@ -263,7 +263,7 @@ func (a wsSettingsAPI) put(w http.ResponseWriter, r *http.Request, res *resolved
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
-	raw, _ := a.store.GetWorkspaceSettings(r.Context(), res.ws.ID)
+	raw := mustSettings(r.Context(), a.mgr, res.ws.ID)
 	st := parseWSSettings(raw)
 	if v, ok := body["agentUpdate"].(bool); ok {
 		st.AgentUpdate = v && a.tenantAllowsAgentUpdate(r, res.ws)

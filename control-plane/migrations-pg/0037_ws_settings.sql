@@ -1,0 +1,17 @@
+-- Per-workspace member settings owned by the Control Plane (not the Agent) so they
+-- can be edited while the container is stopped and mapped to env at start (see
+-- workspaceExtraEnv). JSON blob, empty means no overrides. New settings become JSON
+-- fields rather than new columns.
+--
+-- 🔥 これは 2026-09-01 まで **Postgres 側だけ丸ごと欠けていた**。SQLite には
+-- `migrations/0009_ws_settings.sql` で 入っていたのに、こちらへ写されないまま
+-- RDS のデプロイが動き続けていた。
+--
+-- 症状が最悪の形だった: `GetWorkspaceSettings` は読み出しのエラーを握りつぶすので
+-- **設定画面はいつも既定値に見え**、`PUT /api/env/ws-settings` だけが 500 を返す
+-- （= 「保存に失敗しました」）。つまり Postgres のデプロイでは、エージェント CLI の
+-- 更新もプレビューの許可ポートも公開モードも、**一度も保存できていなかった**。
+--
+-- 既存行には DEFAULT '' が入る ＝ 「上書き無し」で、これは設定を触っていない
+-- Workspace の状態そのものなので、移行で失われるものは無い。
+ALTER TABLE workspace ADD COLUMN settings TEXT NOT NULL DEFAULT '';
