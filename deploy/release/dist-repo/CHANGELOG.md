@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.14.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.2) — 2026-09-01
+
+A deployment backed by a managed database would start answering 500 to everything about a
+week after it was deployed, and nothing said so. Uptime is now drawn as a heatmap, and the
+preview settings have a screen of their own.
+
 ## [0.14.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.1) — 2026-09-01
 
 A workspace setting could not be saved at all on a deployment backed by Postgres, and
