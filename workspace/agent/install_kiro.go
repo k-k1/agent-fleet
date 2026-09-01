@@ -201,7 +201,7 @@ func kiroInstallCurrent() bool {
 // kiroBinVersion returns the version `<bin> --version` reports ("kiro-cli 2.14.2" →
 // "2.14.2"), or "" when it can't be determined (probe failed / unparsable output).
 func kiroBinVersion(bin string) string {
-	tb := probeVersion(bin, nil) // 5s timeout, nil when the path is gone
+	tb := probeVersion(context.Background(), bin, nil) // probeTimeout, nil when the path is gone
 	if tb == nil || !verNumRe.MatchString(tb.Version) {
 		return ""
 	}
