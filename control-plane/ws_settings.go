@@ -237,17 +237,24 @@ func (a wsSettingsAPI) reissuePreview(w http.ResponseWriter, r *http.Request, re
 	}
 	// 稼働中（= slug が発行済み）のときだけ、その場で引き直す。停止中は発行されて
 	// いないので、予約を捨てた時点で用は済んでいる。
+	rotated := false
 	if ws.PreviewSlug != "" {
 		if _, err := a.mgr.rotatePreviewSlug(r.Context(), ws); err != nil {
 			writeAPIErr(w, &apiError{http.StatusInternalServerError, "internal", "could not mint a new preview slug"})
 			return
 		}
+		rotated = true
 	}
 	a.mgr.evictMembershipCache(ws.MembershipID)
 	raw = mustSettings(r.Context(), a.mgr, ws.ID)
 	body := map[string]any{
 		"agentUpdate":      parseWSSettings(raw).AgentUpdate,
 		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
+		// ★ 「その場で URL が変わったか」を返す。停止中の Workspace には発行済みの
+		// slug が無いので、この操作は成功しても**画面上は何も変わらない** —— 呼び手が
+		// それを言い分けられないと、成功が「押しても無反応」として報告されて返ってくる
+		// （実際に報告された）。
+		"previewReissued": rotated,
 	}
 	a.addPreview(r, res, parseWSSettings(raw), body)
 	writeJSON(w, http.StatusOK, body)

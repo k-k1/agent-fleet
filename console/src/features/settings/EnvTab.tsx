@@ -90,8 +90,12 @@ export function EnvTab() {
     });
     if (!ok) return;
     const res = await apiJSON("api/env/ws-settings/preview/reissue", "POST", {});
-    if (res && !res.error) setAu(res);
-    else toast(tr("common.save_failed"));
+    if (res && !res.error) {
+      setAu(res);
+      // ★ 成功しても停止中は画面が変わらない（発行済みの URL が無いので捨てる先が
+      // 無い）。黙って終えると「押しても無反応」になるので、どちらだったかを必ず言う。
+      toast(tr(res.previewReissued ? "env.preview_reissue_done" : "env.preview_reissue_nothing"));
+    } else toast(tr("common.save_failed"));
   };
 
   const update = async (patch: Record<string, string>) => {
@@ -480,6 +484,9 @@ function PreviewSection({
 }) {
   const tr = useT();
   const [ports, setPorts] = useState((au.previewPorts || []).join(", "));
+  // 発行済みの URL（停止中は空 = CP が発行されていないものを返さない）。ポート順に
+  // 並べる —— オブジェクトのキー順に頼ると 8080 が 3000 より前に来ることがある。
+  const issuedPorts = Object.keys(au.previewUrls || {}).sort((a, b) => Number(a) - Number(b));
   // 保存は入力欄を離れたときだけ。打鍵ごとに PUT すると、"3000, 80" のような
   // 打ちかけの状態がそのまま保存されて 80 番が許可される。
   const commitPorts = () => {
@@ -492,6 +499,27 @@ function PreviewSection({
   return (
     <section className="ds-group">
       <h4 className="ds-title">{tr("env.preview_title")}</h4>
+      {/* ★ いま何が割り当てられているかを、設定を触る前に見せる。ここが無いと
+          「公開するポート」も「再発行」も**見えない何かに効く操作**になり、押しても
+          変化が分からない（実際に「再発行が無反応」として報告された）。 */}
+      <Row label={tr("env.preview_current_label")}>
+        <span className="ds-sub pv-current">
+          {issuedPorts.length > 0 ? (
+            issuedPorts.map((p) => (
+              <a key={p} className="pv-current-url" href={au.previewUrls[p]} target="_blank" rel="noreferrer noopener">
+                {au.previewUrls[p].replace(/^https:\/\//, "")}
+              </a>
+            ))
+          ) : (
+            <span className="muted">{tr("env.preview_current_none")}</span>
+          )}
+        </span>
+      </Row>
+      <p className="muted ds-sub">
+        {/* 停止中でもドメインだけは出す —— 「どのドメインに割り当てられているか」は
+            URL が発行されていなくても分かってよい情報で、設定の前提そのものである。 */}
+        {tr("env.preview_current_note", { domain: au.previewDomain || "" })}
+      </p>
       <Row label={tr("env.preview_ports_label")}>
         <input
           className="ds-select"

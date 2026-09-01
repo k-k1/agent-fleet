@@ -447,4 +447,40 @@ func TestPreviewReissueKillsTheCurrentURL(t *testing.T) {
 	if parseWSSettings(raw).PreviewReservedSlug == old {
 		t.Fatal("the discarded slug is still reserved — it would come back on the next start")
 	}
+	// ★ 「その場で引き直した」ことを応答で言う。Console はこれで文言を分けるので、
+	// 落とすと成功が「押しても無反応」に見える（実際にそう報告された）。
+	if !decodeReissued(t, rec) {
+		t.Error("previewReissued=false although a new slug was minted")
+	}
+}
+
+// 停止中（slug 未発行）の再発行は **成功するが何も起きない**。★ その区別が応答に
+// 出ていることを固定する —— ここが無いと、Console は成功と無反応を言い分けられない。
+func TestPreviewReissueOnStoppedWorkspaceSaysNothingHappened(t *testing.T) {
+	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
+	ctx := context.Background()
+	e.mintSlug(t)
+	// 停止 = slug の失効。
+	if err := e.mgr.store.SetWorkspacePreviewSlug(ctx, e.ws.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	e.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/env/ws-settings/preview/reissue", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reissue while stopped: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if decodeReissued(t, rec) {
+		t.Error("previewReissued=true although the workspace had no slug to discard")
+	}
+}
+
+func decodeReissued(t *testing.T, rec *httptest.ResponseRecorder) bool {
+	t.Helper()
+	var body struct {
+		PreviewReissued bool `json:"previewReissued"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode reissue response: %v (%s)", err, rec.Body.String())
+	}
+	return body.PreviewReissued
 }
