@@ -203,11 +203,26 @@ Route53 alias, and `AF_PREVIEW_DOMAIN` in the CP's environment. **The existing
 certificate is not touched** — adding a SAN to it would replace it, and there is no
 reason to re-issue the Console's TLS to add a preview.
 
-- ⚠️ `HostedZoneId` must be the zone that contains `PreviewDomain`; otherwise ACM's DNS
+- ⚠️ The zone used for the preview must **contain `PreviewDomain`**; otherwise ACM's DNS
   validation never completes and the stack sits there — a stall, not a failure.
 - ⚠️ Prefer a **sibling** of the Console FQDN (`pv.example.com` next to
   `af.example.com`), not a child (`*.af.example.com`): a previewed app is the member's
-  own code, and as a child it could write a `.af.example.com` domain cookie.
+  own code, and as a child it could write a `.af.example.com` domain cookie. (Neither is
+  airtight while both share one registrable domain — an app on `pv.example.com` can still
+  write `.example.com`. Full separation needs a different registered domain.)
+- **`PreviewHostedZoneId` when the sibling is not in the Console's zone.** If
+  `HostedZoneId` is a *delegated* zone for the Console's own name (`af.example.com` is
+  itself the zone), then `pv.example.com` lives outside it, and the sibling needs its own
+  hosted zone plus an `NS` delegation from the parent — pass that zone's id here. Leave it
+  empty whenever `PreviewDomain` sits inside the Console's zone (e.g.
+  `pv.af.example.com`), which needs no DNS work at all:
+
+  ```bash
+  # sibling, delegated zone
+  --parameter-overrides PreviewDomain=pv.example.com PreviewHostedZoneId=<pv zone id> ...
+  # child of the Console's zone — nothing to delegate
+  --parameter-overrides PreviewDomain=pv.af.example.com ...
+  ```
 - Nothing is written to DNS per workspace — one wildcard record and one certificate
   serve every workspace and port, so issuing a URL costs no API call and no
   propagation wait.

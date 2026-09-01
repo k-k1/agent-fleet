@@ -164,6 +164,15 @@ Control Plane's and the auth gateway's cookie names out of responses, which limi
 **it is better not to have the structure at all**. Full separation needs a different registered
 domain (as long as the registrable domain is shared, a `.example.com` cookie can be written).
 
+⚠️ **When the Console's zone IS the Console's own name** (`af.example.com` is itself a delegated
+zone), the sibling falls *outside* that zone, so 30-ingress carries `PreviewHostedZoneId` (empty =
+`HostedZoneId`) and points **only the preview certificate's validation and wildcard A record** at
+another zone — otherwise the shape this decision recommends could not be expressed by the template
+at all. A sibling then needs its own hosted zone plus an `NS` delegation from the parent, which is
+a request someone else has to complete when the parent is managed elsewhere
+([docs/81 §10.2](../log/81-preview-subdomain.md)). Decision 14 widened who browses a member's own
+code, so choosing the child shape now means accepting that cookie reach knowingly.
+
 ### 14. Sharing within a tenant is a per-workspace toggle, not a table of named grantees
 
 There was nothing between "only the owner" and "anyone, unauthenticated", so people were using
