@@ -110,9 +110,13 @@ window.fetch = (input: RequestInfo | URL, init: RequestInit = {}): Promise<Respo
 };
 
 // A server error payload: a stable machine `code` plus a developer-facing message.
+// `status` is NOT from the server — api() stamps the HTTP status onto an error body it
+// parsed, so callers can tell "the backend is unwell" from "this request is wrong"
+// without each of them re-reading the response themselves (see isTransientErr).
 export interface ApiError {
   code?: string;
   message?: string;
+  status?: number;
 }
 
 // The common file-management result: an HTTP status plus whatever JSON the
@@ -124,17 +128,27 @@ export type FsResult = { status: number } & Record<string, unknown>;
 // an unmapped code falls back to the server's message. Go 側の対は
 // control-plane/errcodes.go / workspace/agent/errcodes.go（docs/log/23 P0-3）— コードを増減・
 // 変更するときは必ず両側同時に、対応する "err.<code>" キーを i18n カタログにも足す。
-// isTransientErr reports whether an api() result is a gateway/transport failure the UI
-// should RETRY rather than treat as real (empty/not-found) data. api() synthesizes an
-// `http_<status>` code ONLY for a non-JSON/empty response — which is exactly what the CP
-// writes ("workspace agent unreachable", plain-text 502) while the workspace agent is
-// still booting after a WS start. App-level errors always carry their own JSON code
-// (chat_conversation_not_found, …) and are terminal, so a 5xx `http_*` code is a precise
-// "backend not ready yet" signal. A thrown fetch (network drop) is transient too, but
-// that surfaces as a rejected promise and is handled at the call site's .catch.
+// isTransientErr reports whether an api() result is a backend/transport failure the UI
+// should RETRY rather than treat as real (empty/not-found) data. Two shapes say so:
+//
+//   • `http_<5xx>` — the code api() synthesizes for a non-JSON/empty response, which is
+//     exactly what the CP writes ("workspace agent unreachable", plain-text 502) while
+//     the workspace agent is still booting after a WS start;
+//   • any error body whose HTTP status was 5xx. ★ A JSON body does NOT make a 500 an
+//     application error: the CP answers a DB failure with `{"error":{"code":"internal"}}`
+//     and status 500 (writeAPIErr / internalErr). Judging by the code alone read that as
+//     terminal and the caller stopped retrying — which is how a Console that booted
+//     during the RDS password rotation kept superAdmin=false for the life of the tab and
+//     silently lost its admin menu until the person happened to reload.
+//
+// App-level errors (chat_conversation_not_found, not_provisioned, …) come with a 4xx and
+// stay terminal. A thrown fetch (network drop) is transient too, but that surfaces as a
+// rejected promise and is handled at the call site's .catch.
 export const isTransientErr = (d: unknown): boolean => {
-  const code = (d as { error?: { code?: string } } | null | undefined)?.error?.code;
-  return typeof code === "string" && /^http_5\d\d$/.test(code);
+  const err = (d as { error?: { code?: string; status?: number } } | null | undefined)?.error;
+  if (!err || typeof err !== "object") return false;
+  if (typeof err.status === "number" && err.status >= 500) return true;
+  return typeof err.code === "string" && /^http_5\d\d$/.test(err.code);
 };
 
 // errText turns a `res.error` ({code, message}) into a user-facing string.
@@ -204,6 +218,10 @@ export const api = (path: string, opts?: RequestInit): Promise<any> => {
         if (parsed?.error?.code === "provider_required" && selectedTenant) {
           signalProviderRequired({ tenant: selectedTenant, provider: "" });
         }
+        // Keep the HTTP status with the payload: the code alone cannot say whether a
+        // failure is the backend's (retry) or the request's (stop) — see isTransientErr.
+        // Only error bodies are stamped, and those are never ETag-cached (2xx only).
+        if (!r.ok && parsed?.error && typeof parsed.error === "object") parsed.error.status = r.status;
         if (method === "GET" && r.ok) {
           const etag = r.headers.get("ETag");
           if (etag) {

@@ -67,13 +67,24 @@ describe("repos store refresh", () => {
     expect(settled).toBe(false);
   });
 
-  // An app-level failure always carries its own JSON code, so it is NOT the boot window
-  // and must settle rather than retry forever.
+  // An app-level failure — the request itself is refused — settles rather than retrying
+  // forever. Those come with a 4xx; a JSON body alone does not make one (see below).
   it("treats a coded app error as terminal", async () => {
     useReposStore.setState({ repos: [repo("agent-fleet")] });
-    fetchMock.mockResolvedValue(json({ error: { code: "repos_unavailable" } }, 500));
+    fetchMock.mockResolvedValue(json({ error: { code: "forbidden_tenant" } }, 403));
     await expect(useReposStore.getState().refresh()).resolves.toBe(true);
     expect(useReposStore.getState().repos).toEqual([]);
+  });
+
+  // ★ A JSON body does NOT make a 500 an app error: the CP answers a database failure
+  // with {"error":{"code":"internal"}} and status 500. Reading that as terminal blanks
+  // the rail and stops the retry — the same misreading that silently emptied the account
+  // menu's admin items for a whole session (core/api isTransientErr).
+  it("keeps them on a JSON-bodied 500 and asks to retry", async () => {
+    useReposStore.setState({ repos: [repo("agent-fleet")] });
+    fetchMock.mockResolvedValue(json({ error: { code: "internal", message: "db down" } }, 500));
+    await expect(useReposStore.getState().refresh()).resolves.toBe(false);
+    expect(useReposStore.getState().repos).toEqual([repo("agent-fleet")]);
   });
 
   it("clear() settles to empty for a caller that knows the repos are unreachable", () => {

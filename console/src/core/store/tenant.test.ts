@@ -34,29 +34,57 @@ const advance = (ms: number) => (now += ms);
 vi.spyOn(Date, "now").mockImplementation(() => now);
 
 describe("tenant store refreshWhoami", () => {
+  // 再接続では whoami と /api/tenants の 2 本を読む（= 1 リフレッシュあたり fetch 2 回）。
+  const reconnectRes = (tenants: unknown) =>
+    fetchMock.mockImplementation((...args: unknown[]) =>
+      Promise.resolve(
+        String(args[0]).includes("whoami") ? jsonRes({ user: "u1", scheduler_enabled: true }) : jsonRes(tenants),
+      ),
+    );
+
   beforeEach(() => {
     fetchMock.mockReset();
-    useTenantStore.setState({ whoami: { user: "u1", scheduler_enabled: false } });
+    useTenantStore.setState({ whoami: { user: "u1", scheduler_enabled: false }, superAdmin: false });
     advance(60_000); // 前テストの取得から十分に離す
   });
 
   it("adopts the re-read deployment flags (a CP restart flips them)", async () => {
-    fetchMock.mockResolvedValue(jsonRes({ user: "u1", scheduler_enabled: true }));
+    reconnectRes({ tenants: [{ slug: "dev" }], super_admin: false });
     await useTenantStore.getState().refreshWhoami();
     expect(useTenantStore.getState().whoami?.scheduler_enabled).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // ★ 本命の再発防止: superAdmin と名簿はブート 1 回きりの読み出しで、
+  // その 1 回が DB 障害に当たると「管理 / テナント管理」がタブの寿命ぶん消えたままだった。
+  // 再接続はまさに答えが変わり得る瞬間なので、ここで読み直して自力で回復する。
+  it("re-reads the roster so a boot-time failure heals without a reload", async () => {
+    reconnectRes({ tenants: [{ slug: "dev", role: "member" }], super_admin: true });
+    await useTenantStore.getState().refreshWhoami();
+    expect(useTenantStore.getState().superAdmin).toBe(true);
+  });
+
+  // ?tenant= は「着地の初期選択」なので、再接続のたびに効かせると、その後に自分で
+  // 切り替えたテナントから引き戻される。ブートのときだけ見る。
+  it("does not re-apply the ?tenant= boot hint on a reconnect", async () => {
+    vi.stubGlobal("location", { search: "?tenant=sales", pathname: "/" });
+    setTenant("dev");
+    reconnectRes({ tenants: [{ slug: "dev" }, { slug: "sales" }], super_admin: false });
+    await useTenantStore.getState().refreshWhoami();
+    expect(useTenantStore.getState().tenant).toBe("dev");
+    vi.stubGlobal("location", { search: "", pathname: "/" });
   });
 
   it("throttles back-to-back reconnects (tab show/hide reconnects too)", async () => {
-    fetchMock.mockResolvedValue(jsonRes({ user: "u1", scheduler_enabled: true }));
+    reconnectRes({ tenants: [{ slug: "dev" }], super_admin: false });
     await useTenantStore.getState().refreshWhoami();
     await useTenantStore.getState().refreshWhoami();
     await useTenantStore.getState().refreshWhoami();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
 
     advance(60_000);
     await useTenantStore.getState().refreshWhoami();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it("never clobbers a resolved identity with an error payload", async () => {
@@ -157,5 +185,21 @@ describe("tenant store not_provisioned", () => {
     const s = useTenantStore.getState();
     expect(s.notProvisioned).toBe(false);
     expect(s.superAdmin).toBe(true);
+  });
+
+  // ★ CP は DB 障害を **JSON 本文つきの 500**（`{"error":{"code":"internal"}}`）で返す。
+  // コードだけで判定すると「アプリの恒久エラー」に見えてリトライが止まり、superAdmin が
+  // false のまま固定される＝管理メニューが無言で消える（実デプロイで踏んだ）。
+  it("retries a JSON-bodied 500 instead of settling on it", async () => {
+    let calls = 0;
+    useTenantStore.setState({ superAdmin: false });
+    await boot(() => {
+      calls++;
+      return calls === 1 ? errRes("internal", 500) : jsonRes({ tenants: [], super_admin: true });
+    });
+    expect(useTenantStore.getState().superAdmin).toBe(false); // 1 回目は落ちたまま
+    await new Promise((r) => setTimeout(r, 900)); // バックオフ 700ms のリトライを待つ
+    expect(useTenantStore.getState().superAdmin).toBe(true);
+    expect(calls).toBeGreaterThan(1);
   });
 });

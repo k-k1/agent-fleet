@@ -33,7 +33,7 @@ interface TenantStore {
   identityRev: number;
   /** Resolve identity + memberships once at boot. */
   init(): Promise<void>;
-  /** Re-read whoami after a CP reconnect (see refreshWhoami). */
+  /** Re-read whoami AND the memberships after a CP reconnect (see refreshWhoami). */
   refreshWhoami(): Promise<void>;
   /** Switch the active tenant (picker). Callers re-sync their own data. */
   select(slug: string): Promise<void>;
@@ -58,6 +58,60 @@ function tenantHintFromURL(): string {
     return "";
   }
 }
+
+// loadTenants reads GET /api/tenants and applies the membership state (superAdmin /
+// tenants / notProvisioned / selection). Returns true on a TERMINAL result (success or a
+// genuine app error — stop), false on a backend failure worth retrying.
+//
+// ★ One code path for the boot read and the reconnect re-read, because these two facts
+// must not drift apart: superAdmin used to be written at boot and never again, so a
+// single failed read left the account menu without 管理 / テナント管理 — with no error
+// shown anywhere — until the person happened to reload.
+//
+// `boot` gates the ?tenant= hint: it is a landing preselection, so re-applying it on
+// every reconnect would yank somebody back out of the tenant they picked afterwards.
+const loadTenants = async (set: (p: Partial<TenantStore>) => void, boot: boolean): Promise<boolean> => {
+  let data;
+  try {
+    data = await api("api/tenants");
+  } catch {
+    return false; // network drop — retry
+  }
+  if (data?.error) {
+    // ★ not_provisioned is not a failure — the person is signed in and simply
+    // not on a roster yet. Flag it so App can land them on a page that says so
+    // (docs/log/61 §61.10.2); without this they get the full Console with an empty
+    // tenant and every subsequent request 403ing one toast at a time.
+    set({ notProvisioned: data.error.code === "not_provisioned" });
+    // Keep the current (persisted) selection either way: a 5xx is the CP/gateway still
+    // booting or its database being unwell (retry); anything else is a CP without the
+    // endpoint (dev/single-tenant) — terminal.
+    return !isTransientErr(data);
+  }
+  // A later attempt succeeding clears it (an admin added them while the tab
+  // was open, and the retry loop or a reconnect re-read /api/tenants).
+  set({ notProvisioned: false });
+  const list: Tenant[] = data.tenants || [];
+  set({ superAdmin: !!data.super_admin, tenants: list });
+  if (list.length <= 1) {
+    const slug = list[0] ? list[0].slug : "";
+    setTenant(slug);
+    set({ tenant: slug, showPicker: false });
+    return true;
+  }
+  // ?tenant=<slug> is the hint the per-tenant login URL leaves behind
+  // (/login/<slug> → docs/log/61 §61.10.4), so somebody who opened their
+  // department's link lands in that department rather than in whichever
+  // tenant this browser last used. It is only ever a preselection: it is
+  // honoured only when the server already listed that tenant among this
+  // person's memberships, and every request is authorized server-side
+  // regardless (ADR0043 決定 14).
+  let cur = (boot && tenantHintFromURL()) || getTenant();
+  if (!list.some((t) => t.slug === cur)) cur = list[0].slug;
+  setTenant(cur);
+  set({ tenant: cur, showPicker: true });
+  return true;
+};
 
 export const useTenantStore = create<TenantStore>((set) => ({
   whoami: null,
@@ -103,46 +157,7 @@ export const useTenantStore = create<TenantStore>((set) => ({
           set((s) => ({ identityRev: s.identityRev + 1 }));
         }
       }
-      let data;
-      try {
-        data = await api("api/tenants");
-      } catch {
-        return false; // network drop — retry
-      }
-      if (data?.error) {
-        // ★ not_provisioned is not a failure — the person is signed in and simply
-        // not on a roster yet. Flag it so App can land them on a page that says so
-        // (docs/log/61 §61.10.2); without this they get the full Console with an empty
-        // tenant and every subsequent request 403ing one toast at a time.
-        set({ notProvisioned: data.error.code === "not_provisioned" });
-        // Keep the current (persisted) selection either way: a 5xx is the CP/gateway
-        // still booting (retry); anything else is a CP without the endpoint
-        // (dev/single-tenant) — terminal.
-        return !isTransientErr(data);
-      }
-      // A later attempt succeeding clears it (an admin added them while the tab
-      // was open, and the retry loop or a reconnect re-read /api/tenants).
-      set({ notProvisioned: false });
-      const list: Tenant[] = data.tenants || [];
-      set({ superAdmin: !!data.super_admin, tenants: list });
-      if (list.length <= 1) {
-        const slug = list[0] ? list[0].slug : "";
-        setTenant(slug);
-        set({ tenant: slug, showPicker: false });
-        return true;
-      }
-      // ?tenant=<slug> is the hint the per-tenant login URL leaves behind
-      // (/login/<slug> → docs/log/61 §61.10.4), so somebody who opened their
-      // department's link lands in that department rather than in whichever
-      // tenant this browser last used. It is only ever a preselection: it is
-      // honoured only when the server already listed that tenant among this
-      // person's memberships, and every request is authorized server-side
-      // regardless (ADR0043 決定 14).
-      let cur = tenantHintFromURL() || getTenant();
-      if (!list.some((t) => t.slug === cur)) cur = list[0].slug;
-      setTenant(cur);
-      set({ tenant: cur, showPicker: true });
-      return true;
+      return loadTenants(set, true);
     };
     // First attempt is awaited (boot fast-path unchanged); on a transient failure
     // boot proceeds and retries continue in the background with capped backoff,
@@ -168,15 +183,23 @@ export const useTenantStore = create<TenantStore>((set) => ({
     }
     // Never clobber a resolved identity with an error payload (same rule as the
     // boot path): a 5xx during a CP restart must not blank the account chip.
-    if (!who || who.error) return;
-    set({ whoami: who });
-    // Identity can legitimately change here (re-login as another account in the
-    // same tab) — keep the layout scoping key in step, exactly as init() does.
-    const uid = who.email || who.user || "";
-    if (uid !== getUser()) {
-      setUser(uid);
-      set((s) => ({ identityRev: s.identityRev + 1 }));
+    if (who && !who.error) {
+      set({ whoami: who });
+      // Identity can legitimately change here (re-login as another account in the
+      // same tab) — keep the layout scoping key in step, exactly as init() does.
+      const uid = who.email || who.user || "";
+      if (uid !== getUser()) {
+        setUser(uid);
+        set((s) => ({ identityRev: s.identityRev + 1 }));
+      }
     }
+    // ★ Re-read the memberships too — and independently of how whoami went. They carry
+    // the deployment role (super_admin) and the roster, which gate 管理 / テナント管理
+    // in the account menu, and nothing re-read them after boot: a Console that booted
+    // while the CP's database was down kept superAdmin=false for the life of the tab and
+    // dropped both items silently. A reconnect is precisely the moment the answer may
+    // have changed (CP restarted, an administrator edited the roster).
+    await loadTenants(set, false);
   },
 
   async select(slug: string) {
