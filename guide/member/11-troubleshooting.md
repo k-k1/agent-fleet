@@ -121,14 +121,32 @@ from then on you can clone / push without entering tokens ([04](03-code.md) · [
   workspace** — start it and tell them.
 - Removing the port from the exposed-ports list also produces a 404 ([08](10-integrations.md)).
 
-### HMR (live reload) doesn't work / no automatic refresh
+### HMR (live reload) doesn't work / no automatic refresh / the shell renders but no data
 
+- **If this is Next.js (15.2 and later, including 16.x) opened on a preview subdomain**, suspect this first.
+  **Only the layout shell renders and not one row of the data fetched from the API appears** — not blank, no
+  error, so it looks like a bug in your own app, yet `127.0.0.1:<port>` shows it correctly. The dev server
+  **blocks cross-origin access to `/_next/*` by default**, so HMR never connects and hydration never finishes.
+  `⚠ Blocked cross-origin request to Next.js dev resource` in the dev server log confirms it. Add
+  **`allowedDevOrigins`** to `next.config.ts` (the URL changes on every start, so a wildcard is required —
+  see [08](10-integrations.md) for the exact form).
 - **The lightweight preview and the preview subdomains both pass WebSocket and SSE through.** If HMR still does not
   connect, the dev server may be **embedding its own port into the client** (Vite does this). Then the app needs a
   setting such as `server.hmr.clientPort: 443`.
 - To avoid adding configuration — or to isolate the cause — use **"Open in pane"** (browser pane). A browser inside
   the workspace opens `127.0.0.1` directly, so HMR, WebSocket and SSE behave exactly like plain localhost
   ([08](10-integrations.md)).
+
+### Every API call in the preview returns 401 (`preview requires sign-in`)
+
+- **Did you repoint the dev server's proxy at the preview URL?** Keep Vite's `server.proxy` `target` and
+  Next.js's `rewrites()` `destination` as **`http://127.0.0.1:8080`**. The proxy is a **server-side** call made
+  by the dev server inside the container; it does not carry the login state your browser has, so pointing it at
+  a preview URL gets it rejected at authentication. Assuming the frontend "cannot see" 8080 is the usual way
+  into this mistake ([08](10-integrations.md)).
+- **If the browser is calling the 8080 URL directly**, note that signing in is per port. Open
+  `https://<random>-8080.…` **in a tab once** to sign in there too. And if the page on 3000 calls 8080
+  directly, turn on **"Allow calls between ports"** in the settings (off by default).
 
 ### The browser pane shows `crashed` / `disconnected`, or keeps dying
 

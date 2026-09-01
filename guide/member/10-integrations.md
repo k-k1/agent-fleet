@@ -81,10 +81,24 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → port 8080 (e.g. Spring B
   is **the machine of the person looking at the screen**. Route `/api` to 8080 through the dev server instead
   (Vite's `server.proxy`, Next.js's `rewrites()`), and the same configuration works both on your own PC and in
   the preview.
+- ⚠️ **Leave the proxy's target (`destination` / `target`) as `http://127.0.0.1:8080`.** Rewriting it to the
+  preview URL — the natural move if you assume the frontend "cannot see" 8080 — makes **every API call return
+  401 (`preview requires sign-in`)**. The proxy is a **server-side** call made by the dev server inside the
+  container, and it does not carry the login state your browser has.
 - If the page on 3000 really must call 8080 **directly**, turn on **"Allow calls between ports"** in the
   settings (off by default).
 - Set `server.forward-headers-strategy=framework` for Spring Boot. Next.js Server Actions are validated
   correctly over this path as well.
+- ⚠️ **Next.js (15.2 and later, including 16.x) needs `allowedDevOrigins`.** The dev server **blocks
+  cross-origin access to `/_next/*` by default**, so on a preview subdomain **only the layout shell renders and
+  none of the data fetched from the API appears** — not blank, no error, so it looks like a bug in your own app.
+  The giveaway is `⚠ Blocked cross-origin request to Next.js dev resource` in the dev server log.
+  **The URL changes on every start, so use a wildcard.**
+
+  ```ts
+  // next.config.ts
+  allowedDevOrigins: ["127.0.0.1", "*.pv.example.com"],  // the domain is in AF_PREVIEW_DOMAIN
+  ```
 - `AF_PREVIEW_URL_3000`, `AF_PREVIEW_URL_8080` and `AF_PREVIEW_DOMAIN` are present inside the container. Pass
   them to anything that reads its own public URL from the environment, such as `NEXTAUTH_URL`.
 
