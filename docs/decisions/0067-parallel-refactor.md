@@ -1,0 +1,173 @@
+# 0067. Refactor Go and the Console in parallel sessions — alias transfer, file ownership, and the fleet operator as the relay
+
+English | [日本語](0067-parallel-refactor.ja.md)
+
+- Status: **accepted — in progress** (2026-09-02). Phase 0 first; the waves follow.
+- Related: [0012-go-internal-refactor.md](0012-go-internal-refactor.md) (what the layering is
+  and why the two binaries stay separate — this record does not revisit it) /
+  [0011-console-rebuild.md](0011-console-rebuild.md) (the feature-sliced Console layout the
+  front-end work continues) / [0041-cross-session-messaging.md](0041-cross-session-messaging.md)
+  (the peer channel this record deliberately does *not* use as the backbone)
+
+## Background
+
+The measurement, taken 2026-09-02:
+
+| Tree | Size | Layering |
+|---|---|---|
+| `control-plane/` | 115 non-test files / 48,505 lines, 117 test files / 35,516 lines (820 tests) | **no `internal/` at all** — one `package main` with 399 types, 794 functions, a 221-method `sqlStore` |
+| `workspace/agent/` | root 149 files / 51,177 lines plus `internal/` (19 packages, ~39,000 lines), 884 tests | layered by [0012](0012-go-internal-refactor.md), but the root still holds 51k lines |
+| `console/src/` | 122,094 lines of TS/TSX (632 files) plus 19,666 of CSS, 200 test files | feature-sliced, but `settings/` alone is 15,858 lines and single components reach 3,498 |
+
+[0012](0012-go-internal-refactor.md) did this to the agent and stopped before the control plane.
+Doing the rest one session at a time is months of wall clock, so the question is not *what* to
+extract — 0012 settled that — but **how several sessions extract at once without spending the
+saved time on merge conflicts.**
+
+The obstacle is specific. Extracting a package out of a single `package main` the ordinary way
+rewrites every call site, which is an edit spanning the whole tree. Two sessions doing that at
+once conflict on nearly every file, and the second one to merge re-does its work.
+
+## Decisions
+
+**決定 1. Transfer behind an alias; never touch the call sites.** The implementation moves to
+`internal/x`; the origin package keeps one line per moved name:
+
+```go
+// control-plane/alias_store.go — owned by the session that did the move
+type Store = store.Store
+var openSQLite = store.OpenSQLite
+```
+
+The hundred files that call it are unchanged, so a package extraction becomes **an edit confined
+to the files the session owns** — which is what makes parallelism possible at all. Two
+consequences are accepted: a moved type takes all of its methods with it (Go cannot define a
+method on an alias), and a family that would have to reach back into the origin package is not a
+candidate for this wave.
+
+**決定 2. The alias layer is collected at a wave boundary, by one session, alone.** Removing the
+aliases *is* the tree-wide edit that 決定 1 avoids, so it runs when nobody else holds the module.
+It is mechanical (`gopls rename`), it changes no behaviour, and it is a separate PR. Aliases left
+standing during a wave are not a defect; they are the cost of having gone parallel.
+
+**決定 3. One file has one owner.** Every work package declares its files as globs before it
+starts. A PR that touches a file outside its own set is returned unread — the check is mechanical,
+so it costs the reviewer nothing and is not a judgement call. Files nobody owns (`main.go`,
+`routes.go`, `client.ts`, the design tokens) are **shared**: append-only, one line at a time.
+
+**決定 4. Dismantle the collision sources before fanning out, not during.** A 4,700-line
+`locales/ja.ts` that every front-end session must append to is a guaranteed conflict on every
+merge; so is a `routes.go` that every Go session registers into. Phase 0 splits them, alone,
+while nothing else is running. Phase 0 is not overhead — **it is what makes the waves cheap.**
+
+**決定 5. The compiler produces the seam; nobody designs it on paper.** The procedure is: move the
+files, set the new package clause, run `go build ./...`, and read the `undefined:` list. That list
+*is* the family's outward dependency set, exactly, with no judgement involved. Each name is then
+sorted into "move it too", "accept it as a parameter or a consumer-defined interface", or "leave
+it and alias". Guessing the seam in advance is how a cut is found to be impossible after a day of
+work.
+
+**決定 6. Wire compatibility is not negotiable, and it is proved mechanically.** Phase 0 adds a
+golden of every `(method, path)` that `buildMux` registers, and goldens of the main response
+shapes. A move that drops a route or renames a JSON tag then fails a test instead of reaching a
+user. This is the same premise as [0012](0012-go-internal-refactor.md); what is new is that a
+reviewer who cannot read 40,000 moved lines can still rely on it.
+
+**決定 7. The reviewer is a separate session and writes no production code.** It verifies wire
+compatibility and that the gates were actually run, detects ownership violations, holds the merge
+queue (one branch enters `develop` at a time) and keeps the ledger. A session that both writes and
+reviews reviews itself, and a reviewer that also implements becomes the bottleneck it was meant to
+remove. **Merging into `develop` stays with the maintainer** — the reviewer says "pass" and where
+the branch sits in the queue.
+
+**決定 8. Coordination is relayed by the fleet operator, not sent peer to peer.** Workers and the
+reviewer never message each other. A worker finishes its instruction with `af_report`; the
+operator conversation receives it, dispatches "review `<branch>` `<range>`" to the reviewer, and
+relays the verdict back. The topology is a hub, and the hub is a conversation the maintainer can
+read.
+
+The reason is the record, not the plumbing. A peer message lands in the recipient's input and
+leaves nothing behind — with 13 work packages and a review round each, "what was asked of whom,
+and what came back" would exist only inside two agents' contexts. Operator dispatches are written
+to the dispatch ledger (`operator-graph/<conv>.jsonl`, [0027](0027-operator-interaction-graph.md))
+and the reports stay in the conversation, so one screen shows the whole refactor. The operator
+also holds the tools this loop needs anyway — `get_session_status`, `stop_session`,
+`resume_session`, the cleanup tools — and its delivery resumes a stopped session, which a wave
+boundary will hit constantly.
+
+Two guards carry over unchanged: **the operator must not turn a session's reported text into a
+shell command or a `shell`-kind dispatch** (the report-injection rule in the operator persona),
+and **auto-pilot stays off** at the start — a refactor's open questions are cut decisions, which
+are the maintainer's, not a recommended default. Peer messaging remains as the fallback for when
+the operator conversation is not running.
+
+**決定 9. A pure-move commit and a fix-up commit are never the same commit.** The move commit must
+show zero content change under `--find-renames`; anything the compiler forced follows in its own
+commit with the reason in the message. This is the only way a 5,000-line diff stays reviewable,
+and it is how a behavioural change gets noticed instead of riding along.
+
+**決定 10. One worktree per work package, and the reviewer never checks out a worker's branch.**
+Git refuses to check out a branch that another worktree holds, and the flag that overrides it is
+forbidden — two worktrees sharing one branch ref silently revert each other's commits. So the
+reviewer reads with `git diff origin/develop...origin/<branch>` and, when it needs to run the
+gates, **checks out a detached HEAD** at that commit, which git allows while the branch is held
+elsewhere. The reviewer's worktree therefore has no branch of its own and never pushes.
+
+The rest of the worktree rules follow from the same principle — a worktree is a desk, and
+changing what somebody else's desk *is* is what breaks a session:
+
+- Each work package is launched as its own Console worktree session and **renames its branch to
+  `refactor/<track>` before its first push**, so the merge queue and the PR list are legible.
+  Renaming afterwards means pushing a second remote branch and deleting the first.
+- A worktree is kept until its PR has merged, and is then cleaned up **from the Console**, not by
+  an agent.
+- Integration is always inward: `git fetch origin && git merge origin/develop` inside one's own
+  worktree. **The parent clone is never fast-forwarded to help somebody else** — with unrelated
+  edits `pull --ff-only` succeeds and swaps files out under a working session.
+- `console/node_modules` is ~350 MB per worktree and the volume is at 85%; front-end worktrees
+  symlink the parent's tree when the lockfiles match, and remove the link (no trailing slash)
+  before any `npm ci`.
+
+**決定 11. The pre-merge gate is the reviewer's local run, because CI does not see these PRs.**
+`ci.yml` triggers on pushes to `main`/`develop` and on pull requests **into `main` only**, so a PR
+into `develop` is unchecked until after it has merged. For 13 refactor PRs that is the wrong place
+to find a break, so Phase 0 — the one session that touches `.github/workflows/` — adds `develop`
+to the `pull_request` trigger. The repository is public and the runners are free; the reason this
+was never noticed is that `develop` gets its own push trigger, which turns red *after* the merge.
+
+## Rejected
+
+- **Rewriting the call sites (`gopls rename`) as the moves happen.** Correct, and it serialises
+  every Go session onto one module. Rejected as the *default*; it is exactly what 決定 2 does once
+  per wave, when it is safe.
+- **One long-lived refactor branch.** Unreviewable, and it drifts from `develop` — which took
+  1,500 commits in the month the CI gate was watching only `main`.
+- **A shared module for the two binaries.** Already rejected in
+  [0012](0012-go-internal-refactor.md). Recorded here so a parallel wave does not rediscover it.
+- **Peer messaging as the coordination backbone.** It works and it is cheaper per message, but it
+  leaves no record outside two contexts, and an incoming message interrupts a build mid-turn. Kept
+  as the fallback path only.
+- **A ledger file in the repository that every track updates.** The coordination artefact would
+  then be the hottest conflict in the tree. The live ledger sits outside git, one file per track;
+  only the durable conclusion lands here and in `docs/`.
+- **Letting the reviewer merge.** Faster, and it automates the one outward-facing step where a
+  human veto is cheap and a mistake is expensive.
+- **Six workers at once.** The host is shared and memory-constrained, two concurrent `go test
+  ./...` runs are already the usual way to exhaust it, and one reviewer cannot absorb six PR
+  streams. Four workers plus a reviewer, in waves.
+
+## Consequences
+
+- Aliases exist between a move and its collection. `grep alias_` shows the debt; a wave is not
+  finished until it is zero.
+- `migrations/`, `migrations-pg/` and `assets/` move *with* the package that embeds them —
+  `//go:embed` cannot reach above its own directory. This is the one mechanical trap that will
+  break the store extraction if it is missed.
+- Pushing the `ci.yml` change needs a token with the `workflow` scope. The device flow asks for it
+  now, but a token stored before that fix does not have it — if Phase 0's push is rejected,
+  reconnect GitHub from the Console rather than working around it.
+- Reports only carry text for sessions whose kind produces them; a managed codex/opencode worker
+  reports without a body, which the operator relay depends on. Workers are launched as `claude`.
+- The previous layering was merged with every test green and **never verified against a live
+  fleet**. This one ends with an image rebuild and one pass through session creation, chat, git,
+  LFS and the connection flows before it is called done.
