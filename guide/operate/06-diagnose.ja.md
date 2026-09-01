@@ -17,12 +17,21 @@ updated: "2026-08"
 
 - **CP のログ**: `docker compose logs -f cp`（起動失敗・認証拒否の理由はほぼここ）。
 - **CP のヘルス**: `curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか。
+- **CP のレディネス**: `curl -s http://127.0.0.1:8099/readyz` が `ok` を返すか。
+
+> ⚠️ **`/healthz` の `ok` は「製品が動いている」ではありません。** 報告しているのは
+> 「プロセスが走っている」ことだけで、DB は開きませんし、開けません。この注意書きには実際の
+> 障害があります —— あるデプロイは API の呼び出し**すべて**に 15 分間 500 を返し続けましたが、
+> その間ずっと `/healthz` は `ok`、ロードバランサのターゲットは healthy、オーケストレータは
+> steady state でした。DB を実際に見に行くのは `/readyz` です。**「動かない」と言われていて
+> `/healthz` が `ok` なら、信じるべきは人のほうです。**
 
 ## 症状別・確認表
 
 | 症状 | 確認すること |
 |------|-------------|
 | CP が起動しない | `docker compose logs cp`。`curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか |
+| 全部 500 なのにヘルスは `ok` | `/readyz`。ここが `503` なら DB。パスワードがローテートするマネージド DB では、ローテーション前から走っている Control Plane が古いパスワードを握ったままのことがある —— CP のログを `grep DB_UNAVAILABLE` と `grep DB_SECRET_REFRESH_FAILED`。CP のタスクを作り直せばパスワードを読み直す |
 | docker.sock で "permission denied" | `DOCKER_GID` がホストの docker グループ GID と一致しているか（DooD 制約 C）|
 | Workspace は起動するのに home が空 | `DATA_DIR` が CP の内外で同一絶対パスか。リストア時も同じパスか（DooD 制約 B）|
 | 起動した Workspace に到達できない | CP と Caddy が両方 `network_mode: host` か（DooD 制約 A）|

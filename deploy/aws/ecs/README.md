@@ -230,6 +230,43 @@ reason to re-issue the Console's TLS to add a preview.
   and whether it is readable without signing in (off by default, and it returns to off
   on every start).
 
+### Alarms — the Control Plane cannot reach its database (set this one)
+
+```bash
+--parameter-overrides CpAlarmEmail=oncall@example.com ...
+```
+
+`30-ingress` always turns the CP's `DB_UNAVAILABLE` log line into the CloudWatch metric
+`AgentFleet/<stack>/DbUnavailable`. `CpAlarmEmail` is what makes it reach a person:
+empty (the default) means the metric exists and nobody is told. **Confirm the SNS
+subscription email** — an unconfirmed subscription is the same as no alarm.
+
+⚠️ **Why this is not an optional nicety.** On 2026-09-01 a production deployment answered
+500 to every `GET /api/*` for fifteen minutes. RDS had rotated its managed master
+password; ECS resolves a task definition's `secrets` **once, at task start**, so the
+running CP was still presenting the old one. `/healthz` returned `ok` throughout — it
+does not touch the database — so the ALB target was healthy, the service was at steady
+state and CloudFormation showed no drift. **Every instrument agreed the deployment was
+fine.** The CP now re-reads the secret when Postgres refuses it
+([ADR 0065](../../../docs/decisions/0065-db-credential-rotation.md)), and this alarm is
+what tells you when even that did not work.
+
+⚠️ **This needs `20-platform` redeployed**, not just `30-ingress`: the refresh runs as
+`CpTaskRole`, which gained `secretsmanager:GetSecretValue`. The execution role's existing
+copy only injects the variable at start. Without the task-role statement the CP falls
+back to the injected password and works perfectly — until the next rotation. Check with:
+
+```bash
+aws logs filter-log-events --log-group-name "/af/<ingress-stack>/cp" \
+  --filter-pattern DB_SECRET_REFRESH_FAILED
+```
+
+Recovery of last resort, four minutes and no interruption (blue/green):
+
+```bash
+aws ecs update-service --cluster <cluster> --service <cp-service> --force-new-deployment
+```
+
 ### WAF (optional, off by default)
 
 `30-ingress` can put an AWS WAF web ACL in front of the ALB. Two knobs, and only two on

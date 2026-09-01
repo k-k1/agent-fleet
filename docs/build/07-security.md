@@ -70,7 +70,8 @@ Selected by `AUTH`. All three sanitise the resolved email into the identity key.
 - It inspects every request and **always deletes any inbound identity header** before
   injecting the verified one — so an edge that passes headers through cannot be used to
   impersonate.
-- The exempt paths are declared in one place: the login routes and the health check;
+- The exempt paths are declared in one place: the login routes, the health check and
+  the readiness check (a monitor cannot sign in);
   the surfaces with their own authentication (MCP with a bearer PAT, git with basic
   auth, the internal endpoints with per-purpose tokens); and the legacy redirect.
 - Three allowlist mechanisms compose: emails, domains, and **a file re-read on every

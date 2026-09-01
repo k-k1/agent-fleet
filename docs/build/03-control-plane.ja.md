@@ -48,7 +48,7 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 
 公開 API はどれも同じ前段を通る（認可の原則・エラー形は [05 §5.4](05-api.ja.md) が正）:
 
-1. **authGate**（oauth モードのみ）— cookie 検証と email 注入。`/oauth2/*`・`/login`・`/healthz` 等は除外、
+1. **authGate**（oauth モードのみ）— cookie 検証と email 注入。`/oauth2/*`・`/login`・`/healthz`・`/readyz` 等は除外、
    `/mcp`（Bearer PAT）と `/git/*`（Basic git token）は自前認証（[07 §7.3](07-security.ja.md)）。
 2. **resolveIdentity** — email → `identity`（dev は固定 `DEV_USER`）。未知なら `AF_PROVISION=auto` で
    既定テナントへ自動プロビジョン、`invite` なら拒否。

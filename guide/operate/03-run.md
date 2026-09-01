@@ -179,8 +179,8 @@ Put the Control Plane on a public hostname and **vulnerability scanners find it 
 hours** (measured: 172 probes for `/actuator/heapdump`, `/.env` and friends in the first
 9 hours). Nothing to panic about, but three things are worth knowing.
 
-- **Very little is reachable without a session**: `/healthz`, `/login`, `/oauth2/*`,
-  `/brand/*` and a legacy redirect. Everything else answers 401. `/internal/*` (egress
+- **Very little is reachable without a session**: `/healthz`, `/readyz`, `/login`,
+  `/oauth2/*`, `/brand/*` and a legacy redirect. Everything else answers 401. `/internal/*` (egress
   ingestion), `/mcp` and `/git/*` sit outside the session gate but carry **their own
   authentication** (404 when the feature is off).
 - **The access log carries the status code**, e.g. `GET /actuator/heapdump 401 0s`, so

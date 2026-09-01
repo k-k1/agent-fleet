@@ -63,7 +63,7 @@ CLI 自身の設定経路まで塞いではいない。つまり承認確認は*
 - 全リクエストを検査し、**受信した `X-Forwarded-Email` を必ず削除**してから検証済み email を自ら注入
   （エッジがヘッダ素通しでも成りすまし不可）。以降の identity/membership 解決は `proxy` と共通経路。
 - 除外パス（`routes.go` の `exemptExact`/`exemptPrefix` 宣言が正）: ログイン導線と死活の
-  `/oauth2/*`・`/login`・`/healthz`・`/brand/*`、自前認証を持つ `/mcp`・`/mcp/*`（Bearer PAT）・
+  `/oauth2/*`・`/login`・`/healthz`・`/readyz`・`/brand/*`、自前認証を持つ `/mcp`・`/mcp/*`（Bearer PAT）・
   `/git/*`（Basic git token）・`/internal/*`（デプロイ内部の Bearer トークン: egress ingest /
   schedule bridge / mcp-servers poll）、旧パス互換リダイレクトの `/agent-fleet[/…]`。
 - 許可リスト 3 系統の併用可: `AF_OAUTH_ALLOWED_EMAILS`（CSV）/ `AF_OAUTH_ALLOWED_DOMAINS`（CSV）/
