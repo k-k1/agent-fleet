@@ -435,12 +435,12 @@ ALB のリスナーは既定証明書 1 枚に加えて追加証明書を持て�
 ### 10.2 兄弟にするなら、ゾーンをもう 1 つ渡せないと成立しない（`PreviewHostedZoneId`）
 
 ⚠️ **上の「兄弟を勧める」は、`HostedZoneId` が Console の FQDN そのものの委任ゾーンだと
-表現できない。** 実例（`af.acrt.link` のデプロイ）:
+表現できない。** 実際の運用デプロイがこの形で、有効化しようとして分かった:
 
 | Console のゾーン | `PreviewDomain` | 収まるか |
 |---|---|---|
-| `af.acrt.link`（委任済みサブドメインゾーン） | `pv.af.acrt.link`（**子**） | ✅ ゾーンの中。DNS 作業ゼロ |
-| 同上 | `pv.acrt.link`（**兄弟**） | ❌ ゾーンの外。**別ゾーン＋親 `acrt.link` からの NS 委任**が要る |
+| `af.example.com`（委任済みサブドメインゾーン） | `pv.af.example.com`（**子**） | ✅ ゾーンの中。DNS 作業ゼロ |
+| 同上 | `pv.example.com`（**兄弟**） | ❌ ゾーンの外。**別ゾーン＋親 `example.com` からの NS 委任**が要る |
 
 そこで `PreviewHostedZoneId`（既定 空 = `HostedZoneId` を使う）を足した。効くのは
 **プレビューの証明書検証とワイルドカード A レコードだけ**で、Console 側は常に
