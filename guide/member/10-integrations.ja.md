@@ -76,10 +76,25 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → 8080 番（例: Spring B
   **画面を見ている人の PC** です。dev サーバーの proxy（Vite の `server.proxy`、Next.js の
   `rewrites()`）で `/api` を 8080 へ流す書き方にすると、**手元の PC でもプレビューでも同じ設定のまま**
   動きます。
+- ⚠️ **proxy の転送先（`destination` / `target`）は `http://127.0.0.1:8080` のままにしてください。**
+  「フロントから 8080 が見えないのでは」と考えてここをプレビューの URL に書き換えると、
+  **API が全部 401（`preview requires sign-in`）になります**。proxy はコンテナの中の dev サーバーが
+  **サーバー側から**出す通信で、あなたのブラウザのログイン状態を持っていないためです。
 - どうしても 3000 の画面から 8080 を**直接**呼ぶ構成にするなら、設定の
   **「ポート間の呼び出しを許可する」**をオンにしてください（既定はオフ）。
 - Spring Boot は `server.forward-headers-strategy=framework` を設定してください。
   Next.js の Server Actions もこの経路で正しく判定されます。
+- ⚠️ **Next.js（15.2 以降・16 系も同じ）は `allowedDevOrigins` の設定が要ります。** dev サーバーは
+  `/_next/*` への**別オリジンからのアクセスを既定でブロック**するので、プレビュー用サブドメインで
+  開くと **レイアウトの枠だけ描画され、API から取るデータが出ません**（真っ白でもエラーでもないので
+  アプリのバグに見えます）。dev サーバーのログに
+  `⚠ Blocked cross-origin request to Next.js dev resource` が出ていたらこれです。
+  **URL は起動のたびに変わるので、ワイルドカードで書いてください。**
+
+  ```ts
+  // next.config.ts
+  allowedDevOrigins: ["127.0.0.1", "*.pv.example.com"],  // ドメインは AF_PREVIEW_DOMAIN
+  ```
 - コンテナの中には `AF_PREVIEW_URL_3000` / `AF_PREVIEW_URL_8080` / `AF_PREVIEW_DOMAIN` が入っています。
   `NEXTAUTH_URL` のように「自分の公開 URL」を環境変数から読むアプリは、これを渡してください。
 

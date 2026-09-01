@@ -2,9 +2,10 @@
 
 English | [日本語](0062-preview-subdomain.ja.md)
 
-- Status: **accepted — P0 to P3 implemented** (2026-08-31). What is left is **an end-to-end check
-  against real apps** (Next.js and Vite, HMR and Server Actions in particular — docs/81 §13). The
-  design and the history are in [docs/81](../log/81-preview-subdomain.md).
+- Status: **accepted — P0 to P3 implemented** (2026-08-31). **The end-to-end check against Next.js is
+  done** (2026-09-01, on the real acrt deployment; it turned up two pitfalls, both now in the guide —
+  docs/81 §13.1). What is left is **Vite's HMR**. The design and the history are in
+  [docs/81](../log/81-preview-subdomain.md).
 - Related: [0018-container-browser-pane.md](0018-container-browser-pane.md) (the workspace's own
   Chromium — the "look from inside" route; this is the "look from outside" route, and the two stand
   side by side) / [0047-tenant-network-restriction.md](0047-tenant-network-restriction.md) (a
@@ -135,6 +136,14 @@ values are injected into the container as `AF_PREVIEW_URL_{port}` and friends.
 
 **In Next.js, `rewrites()` in `next.config.js` plays the same role and works under `next start`**
 (the production build) as well, which is a better position than Vite's dev-only `server.proxy`.
+
+🔥 **[2026-09-01 — the real deployment produced one exception]** This acceptance criterion cannot be
+met for the Next.js dev server. Next 15.2 and later block cross-origin access to `/_next/*` by
+default, so **the one line `allowedDevOrigins: ["*.{PreviewDomain}"]` has to be written by the user**
+(rewriting `Host` to the internal address does not get past it, so there is nothing AF can do on its
+side). ★ The problem is not the line but **the symptom: "the shell renders and no data appears",
+which looks exactly like a bug in the user's own app**. The only thing AF can do is get ahead of it
+in the guide, so `guide/member/10` and `11` name that symptom explicitly (docs/81 §2.5 (d), §13.1).
 
 ★ **The env injection is P0, not decoration to add later.** Next.js apps commonly **learn their own
 public URL from the environment** (`NEXTAUTH_URL`, `AUTH_URL`, `metadataBase`), and since the slug
