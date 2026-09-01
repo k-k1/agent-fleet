@@ -2,8 +2,9 @@
 
 [English](0062-preview-subdomain.md) | 日本語
 
-- 状態: **採用・P0〜P3 実装済み**（2026-08-31）。残るのは**実アプリでの通し確認だけ**（Next.js と
-  Vite・特に HMR と Server Actions — docs/81 §13）。設計と経緯は [docs/81](../log/81-preview-subdomain.md)。
+- 状態: **採用・P0〜P3 実装済み**（2026-08-31）。**Next.js での通し確認は済み**（2026-09-01・acrt
+  実機。落とし穴 2 件が出て案内に反映 — docs/81 §13.1）。残るのは **Vite の HMR** だけ。
+  設計と経緯は [docs/81](../log/81-preview-subdomain.md)。
 - 関連: [0018-container-browser-pane.md](0018-container-browser-pane.ja.md)（コンテナ内 Chromium ＝
   「中から見る」道。今回作るのは「外から見る」道で、別物として並立する） /
   [0047-tenant-network-restriction.md](0047-tenant-network-restriction.ja.md)（テナントの CIDR 制限は
@@ -127,6 +128,14 @@ Vite のホスト検査が壊れる。**「Host は内部・X-Forwarded-Host は
 
 **Next.js では `next.config.js` の `rewrites()` が同じ役割を果たし、しかも `next start`
 （本番ビルド）でも効く**ので、dev 限定の Vite `server.proxy` より条件が良い。
+
+🔥 **【2026-09-01・実機で例外が 1 つ出た】この受け入れ条件は Next.js の dev サーバでは
+満たせない。** Next 15.2 以降は `/_next/*` への別オリジンアクセスを既定でブロックするので、
+**`allowedDevOrigins: ["*.{PreviewDomain}"]` の 1 行だけは利用者に書いてもらうしかない**
+（`Host` を内部アドレスに書き換えても素通りしない＝AF 側で回避する手が無い）。
+★ 悪いのは 1 行そのものではなく**症状で、「画面の枠だけ出てデータが 0」＝アプリのバグに
+しか見えない**。AF 側でできる唯一のことは**案内で先回りすること**なので、
+`guide/member/10`・`11` に症状名ごと書いた（docs/81 §2.5 (d)・§13.1）。
 
 ★ **env 注入は「後で足す飾り」ではなく P0 に置く。** Next.js のアプリは `NEXTAUTH_URL` /
 `AUTH_URL` / `metadataBase` のように**自分の公開 URL を env から知る**作りが普通で、slug が
