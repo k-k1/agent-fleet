@@ -296,6 +296,24 @@
   flex-shrink: 0;
   font-size: 13px;
 }
+/* プレビューの「いまの URL」（docs/log/81 §11）。ポートぶん縦に積み、長いホスト名は
+   折り返さず省略する —— 設定モーダルの幅を URL 1 本で広げない。 */
+.pv-current {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.pv-current-url {
+  color: var(--accent);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pv-current-url:hover {
+  text-decoration: underline;
+}
 .font-choices {
   display: flex;
   flex-wrap: wrap;

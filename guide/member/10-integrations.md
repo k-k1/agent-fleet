@@ -107,8 +107,12 @@ What you use depends on who you want to show it to. **Each step opens it wider.*
      billed to you.** (A page left open and untouched does eventually stop.)
 3. **People outside the tenant** — **Open without signing in** lets anyone with the URL open it. It
    **always returns to off when the workspace stops or restarts** (and the URL changes).
+- **The URL you currently have is shown under Settings › Toolchains › Preview subdomains, as
+  "Current URL".** While the workspace is stopped it says none is issued — but the domain it will
+  use is written just below.
 - If a URL went to the wrong place, press **"Discard and mint a new one"**. Tabs that are open now start
-  returning 404 immediately.
+  returning 404 immediately. ⚠️ **Pressing it while the workspace is stopped does nothing**, because
+  there is no issued URL to discard (the next start gets a new one anyway).
 
 ### Examples by setup
 
