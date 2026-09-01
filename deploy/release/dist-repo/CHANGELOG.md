@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.14.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.1) — 2026-09-01
+
+A workspace setting could not be saved at all on a deployment backed by Postgres, and
+the user guide would not open from inside a workspace. Preview settings now show the URL
+you actually have.
+
 ## [0.14.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.0) — 2026-08-31
 
 A web app running in a workspace can be opened at a URL of its own — a subdomain minted

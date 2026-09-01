@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.14.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.1) — 2026-09-01
+
+Postgres を使うデプロイで、ワークスペースの設定がまったく保存できていませんでした。
+ワークスペースの中から利用ガイドが開かない件も直しています。プレビューの設定には
+「いまの URL」が出るようになりました。
+
 ## [0.14.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.0) — 2026-08-31
 
 ワークスペースで動かしている Web アプリを、専用の URL で開けるようにしました。起動のたびに
