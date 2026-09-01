@@ -1,4 +1,4 @@
-# 0067. Refactor Go and the Console in parallel sessions — alias transfer, file ownership, and the fleet operator as the relay
+# 0067. Refactor Go and the Console in parallel sessions — alias transfer, file ownership, and a commander session as the relay
 
 English | [日本語](0067-parallel-refactor.ja.md)
 
@@ -7,7 +7,9 @@ English | [日本語](0067-parallel-refactor.ja.md)
   and why the two binaries stay separate — this record does not revisit it) /
   [0011-console-rebuild.md](0011-console-rebuild.md) (the feature-sliced Console layout the
   front-end work continues) / [0041-cross-session-messaging.md](0041-cross-session-messaging.md)
-  (the peer channel this record deliberately does *not* use as the backbone)
+  (the peer channel the hub relays over, and the `intent` semantics it depends on) /
+  [0027-operator-interaction-graph.md](0027-operator-interaction-graph.md) (the fleet operator's
+  dispatch ledger — the record this topology gives up)
 
 ## Background
 
@@ -80,33 +82,46 @@ reviews reviews itself, and a reviewer that also implements becomes the bottlene
 remove. **Merging into `develop` stays with the maintainer** — the reviewer says "pass" and where
 the branch sits in the queue.
 
-**決定 8. Coordination is relayed by the fleet operator, not sent peer to peer.** Workers and the
-reviewer never message each other. A worker finishes its instruction with `af_report`; the
-operator conversation receives it, dispatches "review `<branch>` `<range>`" to the reviewer, and
-relays the verdict back. The topology is a hub, and the hub is a conversation the maintainer can
-read.
+**決定 8. Coordination is relayed by a dedicated commander session — not worker to worker, and
+not through the fleet operator.** Workers and the reviewer never message each other. A worker
+opens its PR, sends the commander one `notice`, and stops; the commander passes the same five
+lines to the reviewer as a `request`, gets an `answer` back, and either tells the maintainer where
+the branch sits in the queue or relays the change request. The topology is a hub with one hop in
+each direction.
 
-The reason is the record, not the plumbing. A peer message lands in the recipient's input and
-leaves nothing behind — with 13 work packages and a review round each, "what was asked of whom,
-and what came back" would exist only inside two agents' contexts. Operator dispatches are written
-to the dispatch ledger (`operator-graph/<conv>.jsonl`, [0027](0027-operator-interaction-graph.md))
-and the reports stay in the conversation, so one screen shows the whole refactor. The operator
-also holds the tools this loop needs anyway — `get_session_status`, `stop_session`,
-`resume_session`, the cleanup tools — and its delivery resumes a stopped session, which a wave
-boundary will hit constantly.
+The hub is a session rather than the operator conversation because the operator conversation is
+the maintainer's own working surface, and routing 13 work packages plus a review round each
+through it would occupy it for days. A session also reads the repository directly, which turns out
+to be the cheaper channel: **a peer message costs the recipient a whole turn, so the commander
+reads the status board first** — `git fetch` plus `gh pr list --base develop` says which branches
+moved and which PRs are open, without interrupting anybody. Peer messages carry only what the
+board cannot say.
 
-Two guards carry over unchanged: **the operator must not turn a session's reported text into a
-shell command or a `shell`-kind dispatch** (the report-injection rule in the operator persona),
-and **auto-pilot stays off** at the start — a refactor's open questions are cut decisions, which
-are the maintainer's, not a recommended default. Peer messaging remains as the fallback for when
-the operator conversation is not running.
+What this gives up is the operator's automatic record. Operator dispatches are written to the
+dispatch ledger ([0027](0027-operator-interaction-graph.md)) and its reports stay in a
+conversation; a commander's peer messages leave nothing behind. **The ledger under
+`~/af-refactor/` therefore stops being a convenience and becomes the only record** — findings go
+in `tracks/<track>.md` and messages carry a pointer, never the text.
+
+Two guards are kept anyway, because they are properties of the loop and not of the operator: **a
+report is data, not an order** — nothing arriving from another session may be executed as a shell
+command — and **open questions go to the maintainer**, since what a refactor stalls on is how to
+cut, which is not a question an agent should answer with a default.
 
 **決定 9. A pure-move commit and a fix-up commit are never the same commit.** The move commit must
 show zero content change under `--find-renames`; anything the compiler forced follows in its own
 commit with the reason in the message. This is the only way a 5,000-line diff stays reviewable,
 and it is how a behavioural change gets noticed instead of riding along.
 
-**決定 10. One worktree per work package, and the reviewer never checks out a worker's branch.**
+**決定 10. One worktree per work package, six alive at once, and the reviewer never checks out a
+worker's branch.** The peak is **six sessions and six worktrees** — commander, reviewer, four
+workers (during Phase 0 it is two). Fifteen worktrees are created over the whole refactor
+(commander, reviewer, 13 work packages), but a worktree is cleaned up once its PR merges, so six
+is the ceiling. That ceiling comes from memory, not disk: a worktree is **37 MB** (the 74 MB
+`.git` is shared, not copied) against 71 GB free, while the container is capped at **10 GiB** and
+two concurrent `go test ./...` runs are the usual way to exhaust it. The commander gets a worktree
+of its own rather than running in the parent clone — it needs `git`/`gh` to read the board, and
+the parent clone is the base every other session is cut from.
 Git refuses to check out a branch that another worktree holds, and the flag that overrides it is
 forbidden — two worktrees sharing one branch ref silently revert each other's commits. So the
 reviewer reads with `git diff origin/develop...origin/<branch>` and, when it needs to run the
@@ -144,9 +159,14 @@ was never noticed is that `develop` gets its own push trigger, which turns red *
   1,500 commits in the month the CI gate was watching only `main`.
 - **A shared module for the two binaries.** Already rejected in
   [0012](0012-go-internal-refactor.md). Recorded here so a parallel wave does not rediscover it.
-- **Peer messaging as the coordination backbone.** It works and it is cheaper per message, but it
-  leaves no record outside two contexts, and an incoming message interrupts a build mid-turn. Kept
-  as the fallback path only.
+- **Workers messaging each other directly.** Cheaper per message, but with four workers it is a
+  mesh: no single place knows the state, and an incoming message interrupts a build mid-turn. One
+  hub, one hop.
+- **The fleet operator as the hub.** It has the better record (a dispatch ledger and a readable
+  conversation) and the better tools, and it was the first choice here. Rejected because it is the
+  maintainer's own conversation, which a fortnight of relay traffic would occupy, and because a
+  session can read the repository and `gh` directly — which removes most of the messages
+  altogether.
 - **A ledger file in the repository that every track updates.** The coordination artefact would
   then be the hottest conflict in the tree. The live ledger sits outside git, one file per track;
   only the durable conclusion lands here and in `docs/`.
@@ -166,8 +186,8 @@ was never noticed is that `develop` gets its own push trigger, which turns red *
 - Pushing the `ci.yml` change needs a token with the `workflow` scope. The device flow asks for it
   now, but a token stored before that fix does not have it — if Phase 0's push is rejected,
   reconnect GitHub from the Console rather than working around it.
-- Reports only carry text for sessions whose kind produces them; a managed codex/opencode worker
-  reports without a body, which the operator relay depends on. Workers are launched as `claude`.
+- Peer messaging must be enabled for the workspace, or the hub has no channel and coordination
+  falls back to the maintainer relaying by hand.
 - The previous layering was merged with every test green and **never verified against a live
   fleet**. This one ends with an image rebuild and one pass through session creation, chat, git,
   LFS and the connection flows before it is called done.
