@@ -6,7 +6,8 @@ package main
 // （/usr/local/share/agent-fleet/versions.json、Dockerfile が ARG から書き出す）を
 // 返す。PATH は ~/.local/bin が /usr/local より先なので実効≠焼き込みが平気で起きる
 // （gh の home shadow、docs/build/08 §8.3 と同型）— その可視化が目的。
-// claude --version などは ~1s かかるため結果は短時間キャッシュし、各ツールは並列に叩く。
+// claude --version などは ~1s かかるため結果は短時間キャッシュし、各ツールは並列に叩く
+// （ただし同時実行は probeSlots で絞り、同じ実体は toolProbe が一度しか起動しない）。
 
 import (
 	"context"
@@ -119,12 +120,31 @@ var toolVerCache struct {
 
 const toolVerCacheTTL = 3 * time.Minute
 
+// 版取得の時間予算。--version は「速いはず」だが、それは温まった local disk の話で、
+// 実測（acrt / 0.14.0）では opencode と copilot だけが実効列で (timeout) になった —
+// 同じ実体を指す ~/.local 列は同じリクエスト中に取れているので、実体が壊れていた
+// わけではなく **初回起動が 5s に収まらなかった**だけである。効くのは 3 つ:
+//   - Bun / Node の大きな束（opencode は単一ファイル ~100MB、copilot は多数の JS）
+//   - home がネットワークストレージの配備（ECS）— 初回読み出しが桁で遅い
+//   - 全ツールを一斉に exec する自分自身の負荷（下の probeSlots）
+//
+// なので 1 実体あたりを緩め（probeTimeout）、代わりに全体（collectBudget）で縛る。
+// 「壊れた実体でハンドラが吊るまない」という元の目的は後者が引き受ける。
+const (
+	probeTimeout  = 15 * time.Second
+	collectBudget = 45 * time.Second
+)
+
+// probeSlots は版取得を同時に何本まで走らせるかの上限。ツールの数だけ goroutine が
+// 一斉に exec すると、CPU の少ない Workspace では起動の重い CLI が**自分たちの作る
+// 負荷で**タイムアウトする（枠待ちは exec の締切を食わない — 締切は起動してから）。
+var probeSlots = make(chan struct{}, 4)
+
 // verNumRe は --version 出力から版番号を抜く（1.2 / 1.2.3 / 3.11.2 など）。
 var verNumRe = regexp.MustCompile(`[0-9]+\.[0-9]+(\.[0-9]+)?`)
 
 // probeVersion は path の版を取得して toolBin にする。バイナリが無ければ nil。
-// 5s タイムアウト（壊れた実体でハンドラが吊るまないように）。
-func probeVersion(path string, args []string) *toolBin {
+func probeVersion(ctx context.Context, path string, args []string) *toolBin {
 	fi, err := os.Stat(path)
 	if err != nil || fi.IsDir() {
 		return nil
@@ -132,7 +152,13 @@ func probeVersion(path string, args []string) *toolBin {
 	if len(args) == 0 {
 		args = []string{"--version"}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	select {
+	case probeSlots <- struct{}{}:
+		defer func() { <-probeSlots }()
+	case <-ctx.Done():
+		return &toolBin{Path: path, Raw: "(timeout)"}
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, path, args...).Output()
 	if ctx.Err() != nil {
@@ -187,11 +213,47 @@ func globSorted(pattern string) []string {
 }
 
 // probeTool は 1 実体分の版取得。uv tool の Python サーバーだけ exec を避ける。
-func probeTool(spec toolSpec, path, home string) *toolBin {
+func probeTool(ctx context.Context, spec toolSpec, path, home string) *toolBin {
 	if spec.PyDist != "" {
 		return uvToolVersion(path, spec.PyDist, home)
 	}
-	return probeVersion(path, spec.Args)
+	return probeVersion(ctx, path, spec.Args)
+}
+
+// toolProbe は 1 ツール分の版取得をまとめる。実効／焼き込み／~/.local の 3 列は
+// **同じ実体を指すことが多い**（lean variant では 3 列とも ~/.local/bin/<cmd>）のに、
+// 以前は列ごとに起動していた＝同じバイナリを 3 回。重い CLI ではそれ自体が上の
+// タイムアウトの原因で、しかも「実効は (timeout) なのに ~/.local は 1.18.25」という
+// 同一実体の食い違いになって出た。実体パスで一度だけ起動し、結果を各列へ配る。
+type toolProbe struct {
+	spec toolSpec
+	home string
+	ctx  context.Context
+	seen map[string]*toolBin // 実体パス → 結果（nil＝実体なし。これも憶える）
+}
+
+func newToolProbe(ctx context.Context, spec toolSpec, home string) *toolProbe {
+	return &toolProbe{spec: spec, home: home, ctx: ctx, seen: map[string]*toolBin{}}
+}
+
+// at は path の版を返す。返す Path は**要求されたパスのまま**にする（symlink を
+// 解決した実体で揃えると、どの列がどこを指しているかという tooltip の情報が消える）。
+func (tp *toolProbe) at(path string) *toolBin {
+	real := path
+	if abs, err := filepath.EvalSymlinks(path); err == nil {
+		real = abs
+	}
+	b, ok := tp.seen[real]
+	if !ok {
+		b = probeTool(tp.ctx, tp.spec, path, tp.home)
+		tp.seen[real] = b
+	}
+	if b == nil {
+		return nil
+	}
+	c := *b
+	c.Path = path
+	return &c
 }
 
 func extractVer(raw string) string {
@@ -210,6 +272,8 @@ func readBuildPins() map[string]string {
 }
 
 func collectToolVersions() []toolReport {
+	ctx, cancel := context.WithTimeout(context.Background(), collectBudget)
+	defer cancel()
 	pins := readBuildPins()
 	home := homeDir()
 	out := make([]toolReport, len(toolSpecs))
@@ -218,6 +282,7 @@ func collectToolVersions() []toolReport {
 		wg.Add(1)
 		go func(i int, spec toolSpec) {
 			defer wg.Done()
+			tp := newToolProbe(ctx, spec, home)
 			r := toolReport{Name: spec.Name, Pin: pins[spec.Pin]}
 			effPath := ""
 			if p, err := exec.LookPath(spec.Cmd); err == nil {
@@ -226,14 +291,14 @@ func collectToolVersions() []toolReport {
 				if abs, err := filepath.EvalSymlinks(p); err == nil {
 					effPath = abs
 				}
-				r.Effective = probeTool(spec, p, home)
+				r.Effective = tp.at(p)
 			}
-			r.Baked = probeTool(spec, spec.Baked, home)
+			r.Baked = tp.at(spec.Baked)
 			// go: a lean rootfs bakes no /usr/local/go — surface the on-demand
 			// toolchain (install-go, docs/log/35 §35.7.2-5) in the image column instead.
 			if r.Baked == nil && spec.Name == "go" {
 				if vers := installedGoVersions(); len(vers) > 0 {
-					r.Baked = probeVersion(filepath.Join(goHomeRoot(), vers[len(vers)-1], "bin", "go"), spec.Args)
+					r.Baked = tp.at(filepath.Join(goHomeRoot(), vers[len(vers)-1], "bin", "go"))
 				}
 			}
 			// Overridden は「隠される焼き込み実体がある」時だけ（struct コメント参照）。
@@ -246,7 +311,7 @@ func collectToolVersions() []toolReport {
 				}
 				r.Overridden = strings.HasPrefix(effPath, home+string(os.PathSeparator)) && effPath != bakedPath
 			}
-			r.UserLocal = probeTool(spec, filepath.Join(home, ".local", "bin", spec.Cmd), home)
+			r.UserLocal = tp.at(filepath.Join(home, ".local", "bin", spec.Cmd))
 			out[i] = r
 		}(i, spec)
 	}

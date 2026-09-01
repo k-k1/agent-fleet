@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,8 +32,47 @@ func TestExtractVer(t *testing.T) {
 
 // probeVersion: 存在しないパスは nil（UI は「—」表示）。
 func TestProbeVersionMissing(t *testing.T) {
-	if got := probeVersion("/no/such/binary", nil); got != nil {
+	if got := probeVersion(context.Background(), "/no/such/binary", nil); got != nil {
 		t.Errorf("probeVersion(missing) = %+v, want nil", got)
+	}
+}
+
+// toolProbe は同じ実体を二度起動しない。acrt（0.14.0）で出た「実効列だけ (timeout)、
+// ~/.local 列は版が取れている」は、lean variant で 3 列とも同じ ~/.local/bin/<cmd> を
+// 指しているのに列ごとに起動していたのが原因なので、ここを緩めると再発する。
+// symlink 越しでも実体が同じなら 1 回（Path は列ごとに要求されたパスのまま）。
+func TestToolProbeDedupesByRealPath(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "tool-real")
+	// 起動のたびに追記するので、実行回数がファイルの行数で数えられる。
+	counter := filepath.Join(dir, "runs")
+	script := "#!/bin/sh\necho run >> " + counter + "\necho 'tool 1.2.3'\n"
+	if err := os.WriteFile(real, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "tool-link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+
+	tp := newToolProbe(context.Background(), toolSpec{Name: "t", Cmd: "tool-real"}, dir)
+	a, b := tp.at(link), tp.at(real)
+	if a == nil || a.Version != "1.2.3" || b == nil || b.Version != "1.2.3" {
+		t.Fatalf("versions = %+v / %+v, want 1.2.3 both", a, b)
+	}
+	if a.Path != link || b.Path != real {
+		t.Errorf("paths = %q / %q, want %q / %q（列ごとの実体を tooltip に残す）", a.Path, b.Path, link, real)
+	}
+	runs, err := os.ReadFile(counter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(runs), "run"); got != 1 {
+		t.Errorf("起動回数 = %d, want 1（同じ実体は使い回す）", got)
+	}
+	// 実体が無い列は nil のまま（「—」表示）で、こちらも憶えて再試行しない。
+	if got := tp.at(filepath.Join(dir, "nope")); got != nil {
+		t.Errorf("at(missing) = %+v, want nil", got)
 	}
 }
 
