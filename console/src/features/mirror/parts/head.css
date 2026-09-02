@@ -1,0 +1,33 @@
+/* ミラーのヘッダに出る managed セッションの実行設定ボタン
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* The `.view-head` band moved to ui/ui.css (ui/ViewHead.tsx). Its min-height of
+   36px — 23px seg-control content + 12px padding + 1px border — is what keeps
+   the chat head from rendering ~4px shorter than the mirror head, and it lives
+   with the rest of the band now. */
+
+.managed-settings-btn {
+  margin-left: auto;
+  min-width: 0;
+  max-width: 220px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.managed-settings-btn:hover:not(:disabled) {
+  color: var(--fg);
+}
+.managed-settings-error {
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--del) 45%, var(--border));
+  border-radius: 6px;
+  color: var(--del);
+  background: color-mix(in srgb, var(--del) 8%, transparent);
+}

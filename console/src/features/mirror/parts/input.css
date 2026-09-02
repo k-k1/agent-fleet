@@ -1,0 +1,76 @@
+/* 入力行そのもの: 履歴 / 再開時の代替表示・textarea・右列（モード＋送信）・履歴ボタン
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* Read-only (history) / resuming composer: centered affordance instead of the input. */
+.mirror-compose-resume {
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 54px;
+}
+.mirror-resume-hint,
+.mirror-resuming {
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mirror-input {
+  flex: 1;
+  /* Height is driven by content (auto-grow in MirrorView); cap at ~10 lines, then scroll.
+     border-box so the JS-set height (from scrollHeight, which includes padding) matches. */
+  resize: none;
+  box-sizing: border-box;
+  min-height: 38px;
+  max-height: calc(14em + 18px);
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--chat-font, system-ui, sans-serif);
+  font-size: var(--chat-size, 14px);
+  line-height: 1.4;
+}
+.mirror-input:focus {
+  outline: none;
+  border-color: var(--chat-accent);
+}
+/* Right column: mode chip (15) + gap (6) + send (26). Bottom-aligned by the parent's
+   align-items:flex-end, so the send button sits flush with the textarea bottom and the
+   chip rides just above; the column holds its place as the textarea grows. */
+.mirror-send-col {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch; /* chip + send share one width → read as a unit */
+  gap: 6px;
+}
+.mirror-send {
+  flex: none;
+  height: 31px;
+  padding: 0 16px;
+}
+/* Composer history buttons: only on phones (no arrow keys). Hidden elsewhere. */
+.mirror-hist {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+}
+.mirror-hist-btn {
+  width: 34px;
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.mirror-hist-btn:disabled {
+  opacity: 0.4;
+}

@@ -1,0 +1,43 @@
+/* 持ち越した対話（docs/log/75）と、引き継ぎの状態行（docs/log/77）
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* 持ち越した対話（docs/log/75）— 停止時に画面に出ていたが答えが届かなかったもの。
+   保留カード（.mt-question / .mt-perm）と**見た目で区別できること**が要件:
+   同じ質問文が同じ形で出ていると、利用者は「さっき答えたのにまた出ている」と読み、
+   キーで答えられるカードとの違いに気づけない。注意色ではなく中立の枠にして、
+   1 行目の説明文（.mt-carried-note）で「まだ届いていない」ことを言う。 */
+.mt-carried .mirror-turn-body {
+  border: 1px dashed color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+.mt-carried-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+.mt-carried-text {
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+  opacity: 0.85;
+}
+
+/* 引き継ぎの状態行（docs/log/77 §77.10）。通知は流れ物なので、二重作業を防ぐのはここの役目。 */
+.mirror-handoff-offer {
+  margin: 0.35rem 0 0;
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+.mirror-handoff-offer.is-pending {
+  opacity: 1;
+  font-weight: 600;
+}

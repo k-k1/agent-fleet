@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, ReactNode } from "react";
-import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, sessionSkills, downloadURL } from "../../core/api/client.ts";
-import type { CarriedInteraction, InteractionAnswer, ManagedThreadSettings, SessionSkill, TurnResult } from "../../core/api/client.ts";
+import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionPlanRespond, sessionSettings, downloadURL } from "../../core/api/client.ts";
+import type { CarriedInteraction, InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
 import { buildImagePrompt } from "../../lib/pastedImages.ts";
@@ -16,98 +16,63 @@ import {
   effectiveTheme,
   expandThinking,
 } from "../../lib/settings.ts";
-import {
-  rankQuickReplies,
-  recordQuickReply,
-  isQuickReplyCandidate,
-  forgetQuickReply,
-  hideQuickReply,
-  unhideQuickReply,
-  pinQuickReply,
-  unpinQuickReply,
-  isQuickReplyPinned,
-  quickReplyKey,
-} from "../../lib/quickReplies.ts";
-import {
-  stepSuggestCycle,
-  suggestFilterDraft,
-  cycledSuggestion,
-  type SuggestCycle,
-} from "../../lib/suggestCycle.ts";
-import { useChipMenu, SuggestChipMenu } from "./SuggestChipMenu.tsx";
+import { isQuickReplyCandidate, isQuickReplyPinned, recordQuickReply, unhideQuickReply } from "../../lib/quickReplies.ts";
+import { SuggestChipMenu } from "./SuggestChipMenu.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 // 失敗ブロックの再認証導線が 設定 > エージェント を開くのに使う（ErrorBlock）。
 import { useSettingsUI } from "../settings/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
-import FileIcon from "../../ui/FileIcon.tsx";
 import { useDraft, writeDraft } from "../../lib/draft.ts";
-import { useDragScroll } from "../../lib/dragScroll.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { prettyModel } from "../../lib/modelName.ts";
-import { MarkdownView } from "../viewer/MarkdownView.tsx";
-import {
-  readTurn,
-  collectBlocks,
-  finalAnswerStart,
-  blockIndexAt,
-  turnSpokenText,
-  claimTurnReader,
-  isTurnReader,
-  type TurnReadHandle,
-} from "./turnTts.ts";
-import {
-  sessionVoiceOpts,
-  announce,
-  onTtsStop,
-  startTts,
-  stopTtsForReplacement,
-  ttsOptsFromSettings,
-  workVoiceOpts,
-  type TtsController,
-} from "../chat/tts.ts";
-import { pendingSpeech } from "../chat/ttsText.ts";
-import { askAssistant } from "../chat/api.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
+import { MirrorBanners } from "./parts/MirrorBanners.tsx";
+import { useMirrorTts } from "./parts/useMirrorTts.tsx";
+import { useMirrorScroll } from "./parts/useMirrorScroll.ts";
+import { useSkillPicker } from "./parts/useSkillPicker.ts";
+import { useReplySuggest } from "./parts/useReplySuggest.ts";
+import { JumpPills } from "./parts/JumpPills.tsx";
+import { AttachChips } from "./parts/AttachChips.tsx";
+import { HistoryNav } from "./parts/HistoryNav.tsx";
+import { SendColumn } from "./parts/SendColumn.tsx";
+import { SkillButton, SkillList } from "./parts/SkillList.tsx";
+import { SuggestRow } from "./parts/SuggestRow.tsx";
+import {
+  DirGoneNotice,
+  ResumeNotice,
+  ResumingNotice,
+  TerminalResumeNotice,
+  TerminalUpdateNotice,
+  WsStoppedNotice,
+} from "./parts/ComposerNotices.tsx";
 import { ContextBar } from "./ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { t as tr, useT } from "../../lib/i18n/index.ts";
-import { Trans } from "../../lib/i18n/Trans.tsx";
-import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { takeLaunchSeed } from "../../lib/launchSeed.ts";
-import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { stateInfo } from "../../lib/sessionview.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
 // workSplit はターン描画とともに transcript/ へ移った（TranscriptTurn が持つ）。
-import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts } from "./mirrorParts.ts";
-import { echoLanded, echoNeedsResync, type PendingEcho } from "./pendingEcho.ts";
-import { applyMark, captureMark, saveMark, scrollTopForTurn, loadMark, type ScrollMark } from "./scrollMark.ts";
+import { awaitingReply, latestWorkPromptIndex, textOfParts } from "./mirrorParts.ts";
+import { echoLanded, echoNeedsResync } from "./pendingEcho.ts";
+import { echoStore, nextEchoId, type SendEcho } from "./parts/sendEcho.ts";
+import { findDiffPane, findPane, findPlanPane } from "./parts/panes.ts";
 import { PLAN_APPROVE_KEYS } from "./planDecision.ts";
 import { deliverPlanComments, planKey } from "./planComments.ts";
 import { type InteractionAnswerWire, patchAnswers } from "./interactionAnswers.ts";
 import { coarsePointer } from "../../lib/device.ts";
-import { useDismiss } from "../../lib/useDismiss.ts";
-import {
-  applySkillToDraft,
-  exactSkills,
-  filterSkills,
-  hasTriggerHead,
-  originKind,
-  pickerTokenAt,
-  slashTokenAt,
-  type SlashToken,
-} from "./skillPicker.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 import { ForkAtModal } from "./ForkAtModal.tsx";
 import type { ForkAtTarget } from "./ForkAtModal.tsx";
 import { canBranchFrom, canBranchInSession, carriedUserTurns } from "./forkAt.ts";
 import { HandoffProposal, useHandoffProposals, type Proposal as HandoffProposalT } from "./HandoffProposal.tsx";
-import { PendingQuestions } from "./PendingQuestions.tsx";
+import { PlanPendingCard, PermissionCard, QuestionCard, TypingRow } from "./parts/pendingCards.tsx";
 import { CarriedBlock } from "./CarriedBlock.tsx";
 import { FileChangeStrip } from "./FileChangeStrip.tsx";
 import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
@@ -116,26 +81,13 @@ import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
 // in every capability; a recipient fills in almost none. See transcript/capabilities.ts.
 import { TranscriptView } from "./transcript/TranscriptView.tsx";
 import type { TranscriptCaps } from "./transcript/capabilities.ts";
-import type { Group, Part, Question, TaskItem, Turn, TurnTtsWiring } from "./transcript/types.ts";
+import type { Group, Part, Question, TaskItem, Turn } from "./transcript/types.ts";
 import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, spendOf } from "./transcript/model.ts";
-import { PlanBlock, TaskChecklist, planTitle } from "./transcript/blocks.tsx";
+import { TaskChecklist, planTitle } from "./transcript/blocks.tsx";
 import { useMarksController } from "./transcript/useMarks.ts";
 import { MarkStrip } from "./transcript/MarkStrip.tsx";
 
 const q = encodeURIComponent;
-
-// foreign スキルの出所バッジ（docs/log/50 §8）: kind 色（--kind-* 1 ソース）のミニチップで
-// 出所エージェントを示す。.agents はどの kind でもない共有規約 → 中立の「共有」。
-// ネイティブ項目はバッジ無し（従来どおり）。
-function SkillOriginBadge({ origin }: { origin: string }) {
-  const k = originKind(origin);
-  if (!k) return <span className="mirror-skill-src" title={origin}>{tr("mirror.skills_src_shared")}</span>;
-  return (
-    <span className={"mirror-skill-src kind-" + kindClass(k)} title={origin}>
-      <Icon name={kindIcon(k)} /> {kindLabel(k)}
-    </span>
-  );
-}
 
 // Transcript window size (jsonl lines) for the initial tail load and each backward page.
 // The server clamps it; matches docs/decisions/0009 (P2).
@@ -146,32 +98,6 @@ const WINDOW = 400;
 // jsonl-write / poll-cadence lag, short enough that a genuinely reply-less turn (e.g. an
 // interrupt) doesn't leave a phantom spinner. See `finalizing`.
 const FINALIZE_GRACE_MS = 8000;
-
-// The user counts as "stuck to the bottom" (auto-follow on) while within this many px of
-// the end. Above it, following stops and the jump-to-latest button appears. Narrower than
-// before by request, so follow drops more readily on scroll-up — note this sits close to
-// the typing indicator / stop-button row's ~40–60px height swing between polls, so that
-// swing can occasionally nudge us out of "at bottom" on its own.
-const NEAR_BOTTOM_PX = 80;
-
-// After an interaction inside the transcript, hold off the bottom re-pin for this long, so
-// content the READER grew (expanding a 作業過程 disclosure, switching code wrapping) keeps
-// their position instead of snapping past it. Only needs to outlive the reflow the click
-// causes — everything else that grows the transcript is content, and is followed.
-const INTERACT_HOLD_MS = 600;
-
-// 「返信を頭から」の頭出しで、返信ブロックの上端に残す余白（px）。0 だと切り出しに見える。
-const REPLY_TOP_PAD = 8;
-
-// Optimistic send echoes ("反映待ち"), stashed per session at module level. MirrorView
-// unmounts on a チャット→ターミナル switch, so keeping them only in component state made a
-// just-sent (or worse, never-delivered) message vanish from the chat on return. They are
-// restored on mount and removed exactly as before — when the real turn lands or the POST
-// fails. The id counter is module-level for the same reason: a remount must not reissue
-// ids still held by stashed echoes.
-type SendEcho = PendingEcho & { id: number };
-const echoStore = new Map<string, SendEcho[]>();
-let echoSeqCounter = 0;
 
 // MirrorView (user-facing: チャット) is a read-mostly Markdown view of a claude
 // session, built on the same Agent endpoints the MCP drive tools use: GET
@@ -283,12 +209,6 @@ export function MirrorView({
   // follow and the 作業過程 fold all read it, so they can't disagree — a fold that flips
   // while the spinner is still up is exactly what shifts the text under a reader.
   const busy = status === "working" || bgBusy || finalizing;
-  // Show a "jump to latest ↓" affordance whenever the user has scrolled up off the bottom
-  // (auto-follow is paused) so new/streaming content below is discoverable with one click.
-  const [showJump, setShowJump] = useState(false);
-  // 「返信を頭から」— 最新の回答ブロックの先頭が画面より上に流れていて、かつ末尾追従が切れて
-  // いるときだけ出す（末尾では出さない: 押すべきボタンの上に被るため。syncReplyTop の注記）。
-  const [showReplyTop, setShowReplyTop] = useState(false);
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
   // Files this session's agent edited (docs/log/68). Aggregated server-side over the WHOLE
   // transcript and delivered on this same poll — deriving it from `turns` would count
@@ -342,36 +262,6 @@ export function MirrorView({
   // absorbed into nothing), leaving the second optimistic echo with no turn to reconcile
   // against — stuck at 反映待ち forever. Set/read synchronously, before any state commit.
   const sendingRef = useRef(false);
-  // 返信サジェスト v2: ✨ボタンで取得した LLM 文脈候補（Layer A のチップ列にマージ）と取得中フラグ。
-  const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
-  const [suggesting, setSuggesting] = useState(false);
-  // 入力途中の Tab 補完サイクル（lib/suggestCycle）。null = サイクル中でない。
-  const [cycle, setCycle] = useState<SuggestCycle | null>(null);
-  const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
-  // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）。
-  // 返り値をチップ行の ref に渡す — この行は条件付きレンダーで出入りするので、ref オブジェクト
-  // 任せだと戻ってきた要素にリスナーが付かない（dragScroll.ts の注記）。
-  const attachSuggestRow = useDragScroll(suggestRef);
-  // チップの右クリック / 長タップ / Menu キーで開くメニュー（ピン留め・削除）。
-  const chipMenu = useChipMenu();
-  // スキルピッカー（docs/log/50 / ADR0034、v2 クロスエージェント＋§8 クロススキル注入）:
-  // セッションで呼べるスキル/コマンドの補完リスト。ネイティブ起動（invoke — "/name" や
-  // codex "$name"）に加え、他規約の SKILL.md（foreign — path/origin 付き）は「path を
-  // 読んで指示に従え」プロンプトとして差し込む — ただの指示文なので kind/ドライバ不問。
-  // 開き方は 2 系統 — 先頭トリガ文字のタイプ（キーボード派。skillTrigger="" の kind は
-  // ボタンのみ）と専用ボタン（マウス/タップ派）。選択はフォーカスを textarea に残す
-  // sel-index 方式（CommandPalette と同型）。managed 発火未検証の kind（opencode）は
-  // ネイティブ項目だけ slashSkillsManaged=false で落とす — foreign はゲート対象外。
-  const canSkills = agent.caps.slashSkills;
-  const skillTrigger = agent.skillTrigger; // "" = ボタンのみ（タイプでは開かない）
-  const [skills, setSkills] = useState<SessionSkill[] | null>(null); // null = 未取得
-  const [slashTok, setSlashTok] = useState<SlashToken | null>(null); // 入力中の先頭 /トークン
-  const [skillBtnOpen, setSkillBtnOpen] = useState(false); // ボタン起点で開いた（全件表示）
-  const [skillSel, setSkillSel] = useState(0);
-  const skillDismissRef = useRef<string | null>(null); // Esc/外クリックで閉じた時点の token（変わるまで再表示しない）
-  const skillPopRef = useRef<HTMLDivElement>(null);
-  const skillBtnRef = useRef<HTMLButtonElement>(null);
-  const skillSelRef = useRef<HTMLButtonElement>(null);
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
@@ -387,275 +277,40 @@ export function MirrorView({
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history, or null
   const cursorRef = useRef(0);
   // Backward paging (P2): firstLineRef = oldest jsonl line currently held; hasMore = there
-  // is older history above it to page in. loadingOlderRef guards against overlapping loads;
-  // prependAdjustRef carries the pre-prepend scrollHeight so we can pin the viewport.
+  // is older history above it to page in. loadingOlderRef guards against overlapping loads
+  // （継ぎ足しの前後で視点を保つ高さは useMirrorScroll が持つ）。
   const firstLineRef = useRef(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const loadingOlderRef = useRef(false);
-  const prependAdjustRef = useRef<number | null>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const diagRef = useRef(""); // last transcript-diagnostic signature (warn once per change)
   const statusRef = useRef("");
   const bgBusyRef = useRef(false); // mirrors bgBusy for the poll-cadence closure (fast-poll while BG runs)
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
-  const mirrorRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const scrollBoxRef = useRef<HTMLDivElement>(null); // inner content wrapper — its height tracks the transcript
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  // Is auto-follow on (keep the end of the transcript in view)? This tracks the user's
-  // INTENT, not raw geometry: it goes false when they actually move the viewport up, and
-  // true again when they come back to the end (or send, or press 最新へ). Content growing
-  // under a pinned viewport is not a reason to drop it — see onBodyScroll.
-  const atBottomRef = useRef(true);
-  // The scrollTop WE last wrote. onBodyScroll compares against it to tell "content grew
-  // under our own pin" (not user intent) from "the user scrolled up" — see there.
-  const selfTopRef = useRef(0);
-  // Until this ms, a geometry change is attributed to the reader's own click, not to content.
-  const interactUntilRef = useRef(0);
-  // 位置復元（scrollMark）: このセッションに戻ってきたときに復元すべき位置。復元中（= restoring
-  // が true）は、末尾ピンではなくこのアンカーを保つ。
-  //
-  // 時間で切らないのは末尾ピンと同じ理由 — 高さは何段にも分かれて遅れて確定し、その最後の一段が
-  // いつ来るかは端末しだい。実測（4x スロットリング / 400 ターン）では、遅延レイアウトが 1 回の
-  // 大きなコミットで片付き、ResizeObserver が鳴ったのは着地の 3.6 秒後だった。3 秒で切る設計だと
-  // その 1 回を取りこぼし、目的地の 24〜729px 手前で固まる。抜けるのは「読者が触った」ときと
-  // 「末尾追従に戻った」とき（送信・最新へ）だけにする。
-  const restoreMarkRef = useRef<ScrollMark | null>(null);
-  const restoringRef = useRef(false);
-  // 「返信を頭から」の対象＝最新の回答ブロックの idx。レンダごとに書き、[] で作られる
-  // ResizeObserver / onScroll のクロージャからも今の値が読めるようにする（ttsCaptureRef と同型）。
-  const lastReplyIdxRef = useRef<number | undefined>(undefined);
-  // The idx of the assistant block whose TOP we last brought to the viewport top. A fresh
-  // reply is anchored there once (so the user reads it from its first line) and then left
-  // alone as it streams; this remembers which reply we've already anchored.
-  const anchoredIdxRef = useRef<number | undefined>(undefined);
-  // The idx of the reply whose FINAL ANSWER top we've already brought to the viewport top.
-  // On completion a following pane collapses the 作業過程 into a disclosure, so the reply's
-  // top becomes that collapsed row; we then re-anchor once to the final answer's first line
-  // (docs/log/24). Kept separate from anchoredIdxRef so the top-anchor and the answer-anchor each
-  // fire exactly once per reply.
-  const answerAnchoredRef = useRef<number | undefined>(undefined);
-  // False until the first content settle for a session. On open we land at the bottom (as
-  // before) and mark the reply already present as "seen", so only replies that arrive while
-  // the user is watching get anchored to the top — history isn't retro-scrolled.
-  const didInitRef = useRef(false);
+  // 転写のスクロール位置ぜんぶ（末尾追従・完了時の頭出し・位置復元・浮くピル・古い履歴の
+  // 継ぎ足し）は parts/useMirrorScroll。読み上げが bodyRef を要るのでその手前で呼ぶ。
+  const scroll = useMirrorScroll();
+  const { bodyRef, atBottomRef } = scroll;
 
   // --- カラオケ朗読（turnTts, docs/log/24） -----------------------------------------
-  // 読み上げ中のターン（transcript の idx）と一時停止状態。onEnd（自然終了・TopBar 停止・
-  // 他の再生開始）で自分の分だけ片づける。
-  const [ttsReading, setTtsReading] = useState<{ idx: number; paused: boolean } | null>(null);
-  const ttsHandleRef = useRef<TurnReadHandle | null>(null);
-  // 選択位置から読み上げるピル（ReaderView の「ここから朗読」と同パターン）。
-  const [ttsPill, setTtsPill] = useState<{ x: number; y: number; idx: number; body: HTMLElement; block: number } | null>(
-    null,
-  );
-  // 自動読み上げ（P2）: 基準 idx（これ以前の履歴は読まない）／読むべきグループ idx のキュー／
-  // グループごとの読み上げ済みブロック数（グループは追記で育つので、増えた分だけ読む）。
-  const ttsAutoSeenRef = useRef<number | null>(null);
-  // seen 基準（上記）が属するセッション。基準は裸の jsonl 行番号なので、セッションが変わると
-  // 意味を失う。ペイン D&D の swap は同一インスタンスのまま session prop だけ差し替える
-  // （＋ドロップ先を active 化する）ため、前セッションの turns が残ったまま自動読み上げ effect が
-  // 走り、その行番号で seen を作ってしまう→新セッションの本文が「新着」に見えて最後の最終回答を
-  // 勝手に読み上げる。session 一致を確認するまで基準を取り直しに留めるためのガード。
-  const ttsAutoSessionRef = useRef(session);
-  const ttsAutoQueueRef = useRef<number[]>([]);
-  const ttsAutoDoneRef = useRef(new Map<number, number>());
-  // 確定済み作業過程の小声読み。part index で既読を持ち、最後の tool/question/plan までに
-  // 確定した text だけを読む。最終回答（idle）到着時はキューごと破棄して通常朗読へ譲る。
-  const ttsWorkRef = useRef<TtsController | null>(null);
-  const ttsWorkQueueRef = useRef<string[]>([]);
-  const ttsWorkDoneRef = useRef(new Map<number, number>());
-  // 読み上げ担当の登録（turnTts.ts）。同じセッションを複数ペインで開いても読むのは先着の
-  // 1 ペインだけ。readOnly（未アタッチ）ペインは読まないので登録しない。
-  const ttsTokenRef = useRef(Symbol("ttsReader"));
-  useEffect(() => {
-    if (readOnly) return;
-    return claimTurnReader(session, ttsTokenRef.current);
-  }, [session, readOnly]);
-  // 明示的な停止（TopBar・フッター等。プリエンプトは除く）は「静かにして」の意思なので、
-  // 自分の自動読み上げキューも捨てる（全ペイン読みでは他ペイン発の停止もここに届く）。
-  useEffect(
-    () =>
-      onTtsStop(() => {
-        ttsAutoQueueRef.current.length = 0;
-        ttsWorkQueueRef.current.length = 0;
-      }),
-    [],
-  );
-  const ttsStart = (idx: number, body: HTMLElement, fromBlock = 0) => {
-    ttsHandleRef.current?.stop("replaced"); // 内部置換なので自動読み上げキューは温存
-    const h = readTurn(
-      body,
-      sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback"),
-      fromBlock,
-      (reason) => {
-        ttsHandleRef.current = null;
-        setTtsReading((cur) => (cur?.idx === idx ? null : cur));
-        // ユーザーの明示停止だけキューを捨てる。他再生への置換はキューを温存し、置換先が
-        // active に登録された後の状態を見るため microtask から再開判定する。
-        if (reason === "explicit") ttsAutoQueueRef.current.length = 0;
-        else queueMicrotask(() => ttsAutoPumpRef.current());
-      },
-      { ...(sessionVoiceOpts(session) ?? {}), paneId }, // セッション声＋発生元ペインのステレオ位置
-      session, // 左ペインの再生中アイコン用
-    );
-    if (!h) return; // 読み上げられる本文が無い（ツールだけのターン等）
-    ttsHandleRef.current = h;
-    setTtsReading({ idx, paused: false });
-  };
-  // 長い回答の要約読み上げ（設定 ttsSummaryRead）。この文字数を超える新着分は、全文を
-  // 読む代わりにアシスタント（headless CLI・ツールなし one-shot）へ 2 文要約させて読む。
-  const TTS_SUMMARY_MIN = 500;
-  // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/log/28 §4）
-  const TTS_SUMMARY_PROMPT =
-    "次のテキストはコーディングエージェントの回答です。音声で聞くための要約を、日本語で最大2文・120字以内で書いてください。" +
-    "記号・コード・URL・箇条書きは使わず、プレーンな文章だけを返してください。要約以外の前置きや説明は書かないでください。\n\n---\n";
-  // i18n-exempt-end
-  const ttsSummaryBusyRef = useRef(false); // 要約の生成中（1 本ずつ。終わるまでキューは待つ）
-
-  // 要約を生成してアナウンス（announce = 再生が空くのを待つ直列キュー・TopBar 停止と統合）で
-  // 読む。カラオケ・ハイライトは付けない（要約文は画面に無いため）— フル本文はフッターの
-  // 読み上げボタンでいつでもカラオケ再生できる。失敗・タイムアウトは全文読みへフォールバック。
-  const ttsSummarize = async (gi: number, body: HTMLElement, fromBlock: number, text: string) => {
-    const label = (sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback")) + tr("mirror.tts.summary_suffix");
-    try {
-      const r = await Promise.race([
-        askAssistant(TTS_SUMMARY_PROMPT + text.slice(0, 6000)),
-        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000)),
-      ]);
-      const reply = (r?.reply || "").trim();
-      if (!r?.error && reply)
-        announce(tr("mirror.tts.summary_prefix") + reply, label, { ...(sessionVoiceOpts(session) ?? {}), paneId }, session);
-      else ttsStart(gi, body, fromBlock); // 要約が得られない → 全文読み
-    } catch {
-      ttsStart(gi, body, fromBlock); // ワークスペース停止・タイムアウト等 → 全文読み
-    } finally {
-      ttsSummaryBusyRef.current = false;
-      ttsAutoPumpRef.current(); // 待たせていた後続へ（再生中なら speaking 解放で再開）
-    }
-  };
-
-  // キューの先頭から「まだ読んでいないブロック」を読む。何か再生中（自分・チャット読み上げ・
-  // アナウンス）なら待つ — 再開のトリガは onEnd と speaking の解放（下の subscribe）。
-  const ttsAutoPump = () => {
-    if (!settings.ttsEnabled || !settings.ttsAutoReadMirror) {
-      ttsAutoQueueRef.current.length = 0;
-      return;
-    }
-    // ポーリング途中の本文だけを見て最終回答か判定すると、ナレーションがツール表示より
-    // 1 ポール先行した場合だけ作業過程を読み始めてしまう。作業完了まではキューに貯め、
-    // status が working を抜けた時点の完成 DOM から最後のツール以降だけを読む。
-    if (statusRef.current === "working") return;
-    if (ttsSummaryBusyRef.current) return; // 要約の生成中 → 終わってから順に
-    // 何か再生中/準備中なら待つ。speaking だけだと合成待ち（登録済みで最初の音がまだ）の
-    // 再生へ割り込むため active も見る（全ペイン読みでは他ペインのポンプと直列になる要）。
-    const st = useTtsStore.getState();
-    if (ttsHandleRef.current || st.speaking || st.active) return;
-    const q = ttsAutoQueueRef.current;
-    while (q.length) {
-      const gi = q.shift()!;
-      const body = bodyRef.current?.querySelector<HTMLElement>(`[data-turn-idx="${gi}"] .mirror-turn-body`);
-      if (!body) continue; // リセット等で消えたターン
-      const done = ttsAutoDoneRef.current.get(gi) ?? 0;
-      const total = collectBlocks(body).length;
-      ttsAutoDoneRef.current.set(gi, total);
-      if (total <= done) continue; // 増分なし（ツールだけの追記等）
-      // 過程スキップ（chat の分離と同趣・docs/log/19）: 完成した本文からツール前ナレーションを
-      // 飛ばし、最後のツール以降の本文（＝最終回答）だけを自動読み上げする。
-      // 完了後の作業過程は disclosure 内へ移るため、DOM 直下を読む手動朗読も最終回答に揃う。
-      const from = Math.max(done, finalAnswerStart(body));
-      if (total <= from) continue; // 読むべき最終回答ブロックがまだ無い（過程だけの追記）
-      if (settings.ttsSummaryRead) {
-        const text = turnSpokenText(body, from);
-        if (text.length > TTS_SUMMARY_MIN) {
-          ttsSummaryBusyRef.current = true;
-          void ttsSummarize(gi, body, from, text);
-          return;
-        }
-      }
-      ttsStart(gi, body, from);
-      if (ttsHandleRef.current) return; // 読み始めた（読める文が無ければ次の候補へ）
-    }
-  };
-  const ttsAutoPumpRef = useRef(ttsAutoPump);
-  ttsAutoPumpRef.current = ttsAutoPump;
-  const ttsWorkPump = () => {
-    if (!settings.ttsEnabled || !settings.ttsAutoReadMirror || settings.ttsWorkRead === "off") {
-      ttsWorkQueueRef.current.length = 0;
-      return;
-    }
-    if (statusRef.current !== "working" || ttsWorkRef.current) return;
-    const st = useTtsStore.getState();
-    if (st.active || st.speaking) return; // 最終回答・告知など重要な再生へ割り込まない
-    const text = ttsWorkQueueRef.current.shift();
-    if (!text) return;
-    const voice = { ...(sessionVoiceOpts(session) ?? {}), paneId };
-    const c = startTts(
-      { ...ttsOptsFromSettings(settings), ...voice, ...workVoiceOpts(voice, settings.ttsWorkRead) },
-      (sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback")) + tr("mirror.tts.work_suffix"),
-      (reason) => {
-        ttsWorkRef.current = null;
-        if (reason === "explicit") ttsWorkQueueRef.current.length = 0;
-        else queueMicrotask(() => ttsWorkPumpRef.current());
-      },
-      session,
-    );
-    ttsWorkRef.current = c;
-    c.push(text);
-    c.flush();
-  };
-  const ttsWorkPumpRef = useRef(ttsWorkPump);
-  ttsWorkPumpRef.current = ttsWorkPump;
-  // 他の再生が終わって音声が空いたら、待たせていた自動読み上げを再開する。zustand の
-  // subscribe は setState 中に同期で呼ばれ、プリエンプト（旧再生 stop → 新再生の登録）の
-  // 途中は active が一瞬 null になるため、microtask に逃がして置き換え完了後の状態で判定する。
-  useEffect(() => {
-    return useTtsStore.subscribe((st, prev) => {
-      if (prev.speaking && !st.speaking)
-        queueMicrotask(() => {
-          ttsWorkPumpRef.current();
-          ttsAutoPumpRef.current();
-        });
-    });
-  }, []);
-
-  // 確認・質問の読み上げ（設定 ttsReadPending）: 保留中の AskUserQuestion／プラン承認／
-  // 許可要求が「新しく現れたら」内容を読む（アクティブなペインのみ。全ペイン読み
-  // ttsAutoReadAllPanes では開いている全ペイン。ペインに無いセッションは
-  // useSessionNotifications の短い告知が担当）。開いた時点で既に出ていた
-  // 保留は基準として飲み込み、読まない（ペインを行き来するたびに再読しないため）。
-  const ttsPendingInitRef = useRef(false);
-  const ttsPendingSigRef = useRef("");
-  useEffect(() => {
-    if (!loaded) return;
-    const sig = pending
-      ? "q:" + JSON.stringify(pending)
-      : pendingPlan
-        ? "plan:" + pendingPlan.slice(0, 200)
-        : pendingPerm
-          ? "perm:" + pendingPerm
-          : "";
-    if (!ttsPendingInitRef.current) {
-      ttsPendingInitRef.current = true;
-      ttsPendingSigRef.current = sig;
-      return;
-    }
-    if (sig === ttsPendingSigRef.current) return;
-    ttsPendingSigRef.current = sig;
-    if (!sig || readOnly) return;
-    // 対象ペインは自動読み上げと同じ規則（アクティブのみ／全ペイン読みなら担当ペイン）。
-    if (settings.ttsAutoReadAllPanes ? !isTurnReader(session, ttsTokenRef.current) : !active) return;
-    if (!settings.ttsEnabled || !settings.ttsReadPending) return;
-    const label = (sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback")) + tr("mirror.tts.confirm_suffix");
-    const text = pending
-      ? pendingSpeech(pending)
-      : pendingPlan
-        ? tr("mirror.tts.plan_ready")
-        : tr("mirror.tts.permission_wait") + (pendingPerm || "").slice(0, 100);
-    announce(text, label, { ...(sessionVoiceOpts(session) ?? {}), paneId });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, pending, pendingPlan, pendingPerm]);
+  // 読み上げ一式（カラオケ・自動読み上げ・作業過程の小声読み・確認の告知・「ここから朗読」）は
+  // parts/useMirrorTts へ。リセットの呼び出し口だけがこの下の 2 箇所に残る。
+  const tts = useMirrorTts({
+    session,
+    sessionMeta,
+    paneId,
+    active,
+    readOnly,
+    settings,
+    bodyRef,
+    statusRef,
+    loaded,
+    pending,
+    pendingPlan,
+    pendingPerm,
+  });
   // 会話へ引いたマーカー（docs/log/69 / ADR 0050）。ここは所有者なので、誰の印でも消せる側。
   // ⚠️ ポーリングは増やさない — 転写のロードに合わせて reload() を呼ぶ（下の effect）。
   const marks = useMarksController({
@@ -669,78 +324,7 @@ export function MirrorView({
   // 転写のポーリング effect は購読を張り直したくないので、最新の reload を ref で渡す。
   const marksReloadRef = useRef(marks.reload);
   marksReloadRef.current = marks.reload;
-  const ttsWiring: TurnTtsWiring = {
-    reading: ttsReading,
-    start: ttsStart,
-    pause: () => {
-      ttsHandleRef.current?.pause();
-      setTtsReading((c) => (c ? { ...c, paused: true } : c));
-    },
-    resume: () => {
-      ttsHandleRef.current?.resume();
-      setTtsReading((c) => (c ? { ...c, paused: false } : c));
-    },
-    stop: () => ttsHandleRef.current?.stop(), // 後始末は onEnd 側で
-  };
-  // セッション切替で停止（本文 DOM ごと入れ替わるため）。アンマウント（ターミナルへの
-  // 切替・ペインを閉じる）では止めない — 再生はグローバル 1 本でビューに依存しないので
-  // そのまま流し、操作は TopBar の停止で足りる。カラオケ・ハイライトは外れた DOM に付いた
-  // まま破棄されるだけで無害（ミラーへ戻ったときのハイライト復元まではしない）。
-  const ttsSessionRef = useRef(session);
-  useEffect(() => {
-    if (ttsSessionRef.current === session) return;
-    ttsSessionRef.current = session;
-    ttsHandleRef.current?.stop("replaced");
-  }, [session]);
 
-  // 本文内でテキスト選択が確定したら「ここから読み上げ」ピルを出す（assistant ターン内のみ）。
-  const captureTtsSel = () => {
-    const sel = window.getSelection();
-    const root = bodyRef.current;
-    if (!settings.ttsEnabled || !sel || sel.isCollapsed || sel.rangeCount === 0 || !root) {
-      setTtsPill(null);
-      return;
-    }
-    const range = sel.getRangeAt(0);
-    const node = range.startContainer;
-    const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
-    // 完了後に畳んだ作業過程は自動・フッター朗読の対象外。展開中の選択から最終回答へ
-    // 飛ぶピルを出すと誤解を招くので、disclosure 内の選択には操作を出さない。
-    if (el?.closest(".mt-work")) {
-      setTtsPill(null);
-      return;
-    }
-    const turnEl = root.contains(node) ? el?.closest<HTMLElement>(".mirror-turn.assistant") : null;
-    const turnBody = turnEl ? el?.closest<HTMLElement>(".mirror-turn-body") : null;
-    const idx = turnEl?.dataset.turnIdx;
-    if (!turnEl || !turnBody || idx === undefined) {
-      setTtsPill(null);
-      return;
-    }
-    const block = blockIndexAt(collectBlocks(turnBody), node);
-    if (block < 0) {
-      setTtsPill(null);
-      return;
-    }
-    const rect = range.getBoundingClientRect();
-    setTtsPill({ x: Math.round(rect.left), y: Math.round(rect.top - 34), idx: Number(idx), body: turnBody, block });
-  };
-  // タッチ選択（長押し＋ドラッグ）は mouseup を出さないので selectionchange でも更新する
-  // （デバウンス・最新クロージャを ref 経由で。ReaderView と同じ）。
-  const ttsCaptureRef = useRef(captureTtsSel);
-  ttsCaptureRef.current = captureTtsSel;
-  useEffect(() => {
-    let t: ReturnType<typeof setTimeout> | null = null;
-    const onSelChange = () => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => ttsCaptureRef.current(), 250);
-    };
-    document.addEventListener("selectionchange", onSelChange);
-    return () => {
-      document.removeEventListener("selectionchange", onSelChange);
-      if (t) clearTimeout(t);
-    };
-  }, []);
 
   // Reset accumulated turns when the session changes (cursor is a line index into
   // that session's jsonl, meaningless across sessions).  This MUST be a layout
@@ -753,7 +337,7 @@ export function MirrorView({
     cursorRef.current = 0;
     firstLineRef.current = 0;
     loadingOlderRef.current = false;
-    prependAdjustRef.current = null;
+    scroll.resetPrepend();
     setHasMore(false);
     setLoadingOlder(false);
     diagRef.current = "";
@@ -789,47 +373,15 @@ export function MirrorView({
       prev.forEach((a) => URL.revokeObjectURL(a.url)); // don't leak the old session's previews
       return [];
     });
-    atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
-    // The old scroller can be reused for another session (pane D&D / opening a row
-    // in the current mirror). Clear its physical offset in the same pre-paint phase;
-    // the first transcript layout effect below then pins the new content to its end.
-    if (bodyRef.current) { bodyRef.current.scrollTop = 0; selfTopRef.current = 0; }
-    // 「読者自身が広げた」窓は前のセッションの話なので、持ち越さない。スマホの横スワイプで
-    // セッションを持ち替えると、その指の pointerdown が transcript の上に降りて
-    // noteInteraction を 600ms 武装する（.mirror-scroll の capture ハンドラ）。ミラーの高さは
-    // ほぼ全部が遅れて入るので、窓が開いたままだと下の ResizeObserver の再ピンが握りつぶされ、
-    // 着地位置が中途半端なところで止まりうる。
-    //
-    // ただし正直に言うと、これは塞いだ穴であって再現した不具合ではない: mirror-scroll の
-    // swipe シナリオでは、この 1 行の有無にかかわらず末尾に着地した（fetch とレンダが毎回
-    // 600ms より長くかかり、窓が閉じたあとの成長で再ピンが効いてしまう）。窓が実際に効く
-    // 速さの端末では効く、という理屈のぶんだけの手当て。
-    interactUntilRef.current = 0;
-    // このセッションを最後に見ていた位置（あれば）。実際に戻すのは transcript が載ってから＝
-    // 下の初回 settle で、そこまでは末尾ピンのまま待つ。
-    restoreMarkRef.current = loadMark(session);
-    restoringRef.current = false;
-    setShowJump(false); // …so no jump-to-latest affordance until they scroll up
-    setShowReplyTop(false); // 新しいセッションの回答が載るまで頭出しの対象が無い
-    anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
-    answerAnchoredRef.current = undefined; // …nor its final answer
-    didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
-    ttsAutoSeenRef.current = null; // 自動読み上げの基準も取り直す（履歴は読まない）
-    ttsAutoQueueRef.current.length = 0;
-    ttsAutoDoneRef.current.clear();
-    stopTtsForReplacement(ttsWorkRef.current);
-    ttsWorkRef.current = null;
-    ttsWorkQueueRef.current.length = 0;
-    ttsWorkDoneRef.current.clear();
-    ttsPendingInitRef.current = false; // 確認読み上げの基準も取り直す
-    ttsPendingSigRef.current = "";
+    scroll.resetForSession(session); // 末尾ピン・復元アンカー・浮くピル・完了アンカーの取り直し
+    tts.resetForSession(); // 自動読み上げ・小声読み・確認告知の基準を取り直す（履歴は読まない）
     // 離脱時（別セッションへの持ち替え・ターミナルへの切替・ペインを閉じる）に、いま見ていた
     // 位置を控える。cleanup が読む session / DOM は「出ていく側」のもの: React はこの
     // クリーンアップを、新しい props でのレンダを DOM に反映したあと・次の layout effect
     // より前に走らせるが、transcript の中身は state（turns）なので、まだ古いセッションの
     // ターンが載ったままで scrollTop も動いていない。
     return () => {
-      saveMark(session, captureMark(bodyRef.current, atBottomRef.current));
+      scroll.saveMarkFor(session);
     };
   }, [session]);
 
@@ -877,14 +429,7 @@ export function MirrorView({
             // whole-file reset from an older server (fork preview still sends one).
             firstLineRef.current = 0;
             setHasMore(false);
-            ttsHandleRef.current?.stop("replaced"); // 本文 DOM の入れ替え。全体停止にはしない
-            ttsAutoSeenRef.current = null; // idx が振り直されるので基準も取り直す
-            ttsAutoQueueRef.current.length = 0;
-            ttsAutoDoneRef.current.clear();
-            stopTtsForReplacement(ttsWorkRef.current);
-            ttsWorkRef.current = null;
-            ttsWorkQueueRef.current.length = 0;
-            ttsWorkDoneRef.current.clear();
+            tts.resetForTranscript(); // 本文 DOM の入れ替え（全体停止にはしない）＋基準の取り直し
           } else if (Array.isArray(d.messages) && d.messages.length) {
             // Idempotent merge: normally a poll only appends turns. Store-backed agents
             // (notably OpenCode) also update the parts of their current assistant turn
@@ -1034,309 +579,18 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns, status]);
 
-  // Keep the conversation in view as it grows — but ONLY while the user is stuck to the
-  // bottom (atBottomRef). If they've scrolled up to read, we never move them.
+  // 転写が動いたら末尾追従／完了時の頭出し／位置復元を採り直す。判断は
+  // parts/useMirrorScroll.applyFollow が持ち、ここに残るのは deps だけ。
   //
-  // Runs as a LAYOUT effect: it fires synchronously after the DOM mutates but BEFORE the
-  // browser paints or dispatches scroll events. That matters at completion, when the work
-  // trace folds into a disclosure and the content height suddenly shrinks — reading/
-  // scrolling here first means we set a valid scrollTop before the browser would clamp it
-  // and fire a stray scroll (which used to race this effect and mis-place the viewport).
-  //
-  // While a reply is still WORKING we follow the bottom so the streamed 作業過程 / answer stays
-  // in view. We do NOT strand the user at the end of a long answer, though: the moment the
-  // reply COMPLETES we re-anchor once to the FINAL ANSWER's first line at the viewport top
-  // (tracked by its idx), so it reads from the start instead of the tail. That upward scroll
-  // honestly flips atBottomRef→false via onBodyScroll, so afterwards the user is left alone.
+  // LAYOUT effect であることが要点（DOM の変更後・描画とスクロールイベントの発火前に走る）。
+  // `groups` と `loaded` は下の deps と一緒に動くのでクロージャは毎回新しく、deps から
+  // 外しておくと無関係な再レンダ（コンポーサーの 1 打鍵ごと）で再発火しない。
   useLayoutEffect(() => {
-    scheduleReplyTopSync(); // 内容が変わるたび「返信を頭から」の要否を採り直す（末尾追従の有無に依らない）
-    if (!atBottomRef.current) return;
-    const el = bodyRef.current;
-    if (!el) return;
-    const toBottom = () => {
-      el.scrollTop = el.scrollHeight;
-      selfTopRef.current = el.scrollTop;
-      atBottomRef.current = true; // authoritative now (don't wait for the async scroll event)
-    };
-
-    // Actionable prompts (question / plan / permission) render at the very bottom and need
-    // a response — always surface them fully.
-    if (pending || pendingPlan || pendingPerm) {
-      toBottom();
-      return;
-    }
-
-    // The reply to the latest user prompt is the first assistant block after the last user
-    // turn. Its idx is stable for the whole reply (further streamed turns and any subagent
-    // blocks append after it), so a change of idx marks a genuinely new reply.
-    let u = -1;
-    for (let i = groups.length - 1; i >= 0; i--) {
-      if (groups[i].role === "user") { u = i; break; }
-    }
-    const reply = groups[u + 1];
-    const replyIdx = reply && reply.role !== "user" ? reply.idx : undefined;
-
-    // First settle for this session: land at the bottom (the familiar "open shows the
-    // latest" position) and remember whatever reply is already there, so history isn't
-    // retro-anchored — only replies that arrive while watching get the top treatment below.
-    if (!didInitRef.current) {
-      if (groups.length || loaded) {
-        didInitRef.current = true;
-        anchoredIdxRef.current = replyIdx;
-        answerAnchoredRef.current = replyIdx; // a reply already present at open isn't re-anchored
-        // …ただし、このセッションを「途中まで読んだ状態」で離れていたなら、そこへ戻す
-        // （scrollMark）。末尾で離れていた（atBottom）ときは意図が「最新を見る」なので
-        // 従来どおり末尾。アンカーのターンが tail ウィンドウに載っていなければ復元は
-        // 諦めて末尾＝どのみち読み直せる位置に落とす。
-        const mark = restoreMarkRef.current;
-        if (mark && !mark.atBottom && applyMark(el, mark)) {
-          selfTopRef.current = el.scrollTop;
-          atBottomRef.current = false; // 末尾ではない ⇒ 追従は切れ、最新へ の導線が出る
-          restoringRef.current = true; // 以後、遅れて入る高さのたびにこのアンカーへ置き直す
-          setShowJump(true);
-          scheduleReplyTopSync();
-          return;
-        }
-        restoreMarkRef.current = null;
-      }
-      toBottom();
-      return;
-    }
-
-    if (replyIdx !== undefined) {
-      // Start tracking a newly-arrived reply, but do NOT anchor its top: while it streams we
-      // follow the bottom (below) so the user watches progress. answerAnchoredRef resets so the
-      // final-answer anchor fires once this reply completes.
-      if (replyIdx !== anchoredIdxRef.current) {
-        anchoredIdxRef.current = replyIdx;
-        answerAnchoredRef.current = undefined; // this reply's final answer hasn't been anchored yet
-      }
-      // Still working, a background run (サブエージェント/Workflow) is appending, or we're
-      // bridging the idle→reply gap (finalizing) — follow the bottom so the streamed tail
-      // (and the typing indicator) stay in view.
-      if (busy) {
-        toBottom();
-        return;
-      }
-      // Completed: a following pane collapses the 作業過程 into a disclosure (defaultWorkOpen=
-      // !atBottom, and we've been at the bottom) so the reply's top becomes that collapsed row —
-      // re-anchor once to the FINAL ANSWER's first line at the viewport top, so the user reads
-      // it from the start rather than the tail we followed to. Only when work was actually
-      // folded; a reply with no foldable work already sits with its answer at the top.
-      if (answerAnchoredRef.current !== replyIdx) {
-        const body = el.querySelector<HTMLElement>(`[data-turn-idx="${replyIdx}"] .mirror-turn-body`);
-        const work = body?.querySelector<HTMLElement>(":scope > .mt-work");
-        const answer = work?.nextElementSibling as HTMLElement | null;
-        if (work && answer) {
-          answerAnchoredRef.current = replyIdx;
-          const top = el.scrollTop + (answer.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
-          el.scrollTop = Math.max(0, top);
-          selfTopRef.current = el.scrollTop;
-          atBottomRef.current = false; // parked at the answer top — leave the user here (and stop the RO re-pin)
-        } else if (body && !work) {
-          answerAnchoredRef.current = replyIdx; // nothing folded — top already is the answer
-        }
-      }
-      return;
-    }
-
-    // No reply yet (the user's own just-sent prompt is the newest thing): keep it in view.
-    toBottom();
-    // `groups` and `loaded` are derived from / move with the listed deps, so the closure is
-    // fresh on every run; keeping them out of the deps avoids re-firing on unrelated
-    // re-renders (e.g. every composer keystroke).
+    scroll.applyFollow({ groups, loaded, busy, pending, pendingPlan, pendingPerm });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns, pending, pendingPlan, pendingPerm, status, bgBusy, finalizing, pendingSends, queuedPrompts]);
 
-  // Keep a bottom-stuck view pinned as geometry changes OUTSIDE the poll-driven follow
-  // effect: the body's own box resizing (ToDo / 消費推移 / コンテキスト panels above it, the
-  // composer auto-growing, a pane/window resize) AND — via the inner wrapper — the
-  // transcript's content height changing as late content lays out (images, code
-  // highlighting, math) or streams in. This is what makes opening a session settle at the
-  // TRUE bottom instead of a stale pre-layout position, and keeps streaming glued to the
-  // tail. atBottomRef is authoritative (the follow effect sets it synchronously right after
-  // it scrolls), so a completion-anchored view that was scrolled up is left alone.
-  useEffect(() => {
-    const el = mirrorRef.current;
-    if (!el) return;
-    const syncHeight = () => el.style.setProperty("--mirror-todo-max-height", el.clientHeight * 0.2 + "px");
-    syncHeight();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(syncHeight);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
-  // Re-pin whenever the geometry changes while follow is on: the body's own box resizing
-  // (ToDo / 消費推移 / コンテキスト panels above it, the composer auto-growing, a pane/window
-  // resize) AND — via the inner wrapper — the transcript's content height changing as late
-  // content lays out or streams in.
-  //
-  // There is deliberately NO list of late-layout sources here and no time window. The
-  // transcript's body is rendered by MarkdownView into innerHTML from a PASSIVE effect, so
-  // at the moment the follow effect pins the bottom the turns are still empty: essentially
-  // ALL of a transcript's height arrives late, in several steps (parse → highlight → math →
-  // mermaid → image decode → web fonts). Enumerating those sources is what the previous
-  // rounds of this fix tried; each new source (and each slow machine) reopened the bug. The
-  // rule is simply "while following, keep the end in view".
-  //
-  // The one growth we must NOT chase is the one the user caused themselves — expanding a
-  // 作業過程 disclosure while parked at the bottom must keep their position, not snap them
-  // past what they just opened. That is decided by cause, not by timing: interactUntilRef
-  // is armed by an interaction inside the transcript (see the handlers on .mirror-scroll).
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => {
-      scheduleReplyTopSync();
-      // 位置復元中は、末尾ではなくアンカーを保つ。理由は末尾ピンと同じ（高さが遅れて入る）で、
-      // 向き先だけが違う。atBottomRef が立っていたら誰かが末尾追従へ戻した合図（送信・最新へ）
-      // なので、そちらを優先して復元を畳む。
-      if (restoringRef.current) {
-        const mark = restoreMarkRef.current;
-        if (mark && !atBottomRef.current && applyMark(el, mark)) {
-          selfTopRef.current = el.scrollTop;
-          return;
-        }
-        endRestore();
-      }
-      if (!atBottomRef.current) return; // scrolled up, or parked at a completion anchor
-      if (Date.now() < interactUntilRef.current) return; // the reader's own click grew it
-      if (el.scrollHeight - el.scrollTop - el.clientHeight < 1) return;
-      el.scrollTop = el.scrollHeight;
-      selfTopRef.current = el.scrollTop;
-    });
-    ro.observe(el);
-    if (scrollBoxRef.current) ro.observe(scrollBoxRef.current);
-    return () => ro.disconnect();
-  }, []);
-
-  // Arm the "the reader caused this reflow" window. A pointer or keyboard interaction inside
-  // the transcript can toggle a disclosure (作業過程 / thinking / tool run), switch code
-  // wrapping, or open a plan comment box — all of which grow the content under a reader who
-  // is sitting at the bottom. Both are captured on .mirror-scroll, so the pointer path and
-  // the keyboard path (Enter/Space on a <summary>) arm it before the reflow lands. A fold
-  // that WE change (foldWork on completion) is content, not interaction, and is followed.
-  const noteInteraction = () => {
-    interactUntilRef.current = Date.now() + INTERACT_HOLD_MS;
-    endRestoreOnInput(); // 読者が触った ⇒ 位置の復元より、その手を優先する
-  };
-
-  // Follow state, from user INTENT rather than from raw geometry.
-  //
-  // The trap this replaces: a scroll EVENT is dispatched asynchronously, so by the time the
-  // handler runs the content may have grown past the offset we ourselves just pinned.
-  // Measuring "distance to the bottom" at that point reads our own pin as "the user scrolled
-  // up", drops follow, and thereby disarms every re-pin path above — the view then stays
-  // wherever the last late layout left it (measured: 754→1246px above the end when opening
-  // a long transcript). Only an actual UPWARD move relative to the offset we last wrote is
-  // the user. Comparing positions is not the old "suppress the next event" dance: nothing is
-  // skipped, so the flag cannot drift out of sync with a scroll we never hear about.
-  const onBodyScroll = () => {
-    const el = bodyRef.current;
-    if (!el) return;
-    scheduleReplyTopSync();
-    const movedUp = el.scrollTop < selfTopRef.current - 1;
-    if (atBottomRef.current && !movedUp) {
-      // Following, and the viewport did not move up — the gap (if any) is content that grew
-      // after our pin, and the ResizeObserver above closes it. Stay armed.
-      selfTopRef.current = el.scrollTop;
-      setShowJump((s) => (s === false ? s : false));
-      return;
-    }
-    // Either the user moved up (drop follow), or they are scrolling back down (re-arm once
-    // they are within NEAR_BOTTOM_PX of the end).
-    const stuck = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
-    atBottomRef.current = stuck;
-    if (stuck) selfTopRef.current = el.scrollTop;
-    setShowJump((s) => (s === !stuck ? s : !stuck));
-  };
-
-  // 位置復元をやめる（ユーザーが触った／末尾追従へ戻った）。以後は従来どおり atBottomRef だけが
-  // 追従を決める。
-  const endRestore = () => {
-    restoringRef.current = false;
-    restoreMarkRef.current = null;
-  };
-
-  // 復元を打ち切るのは「ユーザーが入力した」ときだけ — scrollTop が自分の書いた値からズレた
-  // ことを根拠にしてはいけない。ブラウザ自身のスクロールアンカリング（上の内容が伸びた分だけ
-  // scrollTop を勝手に足して見た目を保つ機構）が遅延レイアウトのたびに動かすので、それを
-  // 「触られた」と読むと復元を途中でやめてしまう（実測: 目的地の 354px 手前で固まり、以後
-  // 二度と直らなかった）。入力（ホイール・タッチ・キー・ポインタ）だけを退出条件にすれば、
-  // アンカリングのズレは次の再適用で必ず上書きされる。
-  //
-  // 取りこぼすのはネイティブのスクロールバーをドラッグした場合（Chromium は要素へ
-  // pointerdown を出さない）。復元が畳まれるまで引っぱり合いになるが、掴み直せば済む。
-  const endRestoreOnInput = () => {
-    if (restoringRef.current) endRestore();
-  };
-
-  // Jump-to-latest button: snap to the bottom and re-arm auto-follow.
-  const jumpToBottom = () => {
-    const el = bodyRef.current;
-    if (!el) return;
-    endRestore(); // 明示的に末尾を選んだ ⇒ 復元アンカーは捨てる
-    el.scrollTop = el.scrollHeight;
-    selfTopRef.current = el.scrollTop;
-    atBottomRef.current = true;
-    setShowJump(false);
-    syncReplyTop();
-  };
-
-  // 「返信を頭から」— 最新の回答ブロックの上端を画面の一番上へ。長い回答の途中から 1 タップで
-  // 頭出しするための導線（末尾に貼り付いている間は出さない — syncReplyTop の注記）。
-  //
-  // 対象はユーザー発言ではなく回答ブロックの先頭（＝畳まれた 作業過程 の行から）。完了時の
-  // 自動アンカー（answerAnchoredRef、回答本文の 1 行目）より 1 段上を見せる位置で、「この
-  // 返信は何をやったのか」から読み直せる。
-  const jumpToReplyTop = () => {
-    const el = bodyRef.current;
-    const idx = lastReplyIdxRef.current;
-    if (!el || idx === undefined) return;
-    const top = scrollTopForTurn(el, idx, REPLY_TOP_PAD);
-    if (top === null) return;
-    endRestore();
-    el.scrollTop = top;
-    selfTopRef.current = el.scrollTop;
-    // 末尾から離れた ⇒ 追従は切る（ここで切らないと、次の poll でまた末尾へ引き戻される）。
-    atBottomRef.current = false;
-    setShowJump(true);
-    syncReplyTop();
-  };
-
-  // ピルの出し入れ（＝下の setState）は、必ず次のフレームへ逃がす。末尾ピンと同じフレームで
-  // DOM を足し引きすると着地を壊す — 実測: ResizeObserver や follow の layout effect から
-  // 直接呼んだ版は、末尾着地が 4 回に 1 回ほど 240px（＝画像 1 枚ぶんの遅延レイアウト）手前で
-  // 止まり、そのまま直らなかった。mirror-scroll ハーネスの long シナリオが赤くなる。
-  // 1 フレーム遅れて出ることに実害はないので、素直に逃がす。
-  const replyTopSyncRef = useRef(false);
-  const scheduleReplyTopSync = () => {
-    if (replyTopSyncRef.current) return;
-    replyTopSyncRef.current = true;
-    requestAnimationFrame(() => {
-      replyTopSyncRef.current = false;
-      syncReplyTop();
-    });
-  };
-
-  // 「返信を頭から」を出すべきか — 最新の回答ブロックの先頭が、ビューポート上端より上に
-  // 流れているときだけ。すでに頭が見えているなら押しても何も起きないので出さない。
-  const syncReplyTop = () => {
-    const el = bodyRef.current;
-    const idx = lastReplyIdxRef.current;
-    const turn = el && idx !== undefined ? el.querySelector<HTMLElement>(`[data-turn-idx="${idx}"]`) : null;
-    const on = !!(
-      el &&
-      turn &&
-      // 末尾に貼り付いている間は出さない。末尾には押すべきものが並ぶ面（引き継ぎカードの
-      // 起動ボタン、質問 / プラン / 許可の回答ボタン、コピー…）で、その上に浮くピルが被って
-      // 押せなくなる。読んでいる途中＝追従が切れているときだけの導線にする。
-      !atBottomRef.current &&
-      turn.getBoundingClientRect().top < el.getBoundingClientRect().top - REPLY_TOP_PAD
-    );
-    setShowReplyTop((s) => (s === on ? s : on));
-  };
 
   // Page older history in (P2): fetch the window before the oldest line we hold and
   // prepend it. Guard via refs so overlapping triggers (button + observer) can't double it.
@@ -1349,8 +603,7 @@ export function MirrorView({
       const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${WINDOW}`);
       if (d && !d.error && Array.isArray(d.messages)) {
         if (d.messages.length) {
-          const el = bodyRef.current;
-          prependAdjustRef.current = el ? el.scrollHeight : null; // pin the viewport across the prepend
+          scroll.capturePrependHeight(); // 継ぎ足しの前後で視点を保つ
           const older = d.messages;
           setTurns((t) => [...older, ...t]);
         }
@@ -1365,15 +618,9 @@ export function MirrorView({
     }
   };
 
-  // After an older page is prepended, restore the viewport: scrollTop grows by exactly the
-  // height added on top, so the user stays on the same content instead of jumping up.
+  // 継ぎ足したぶんだけ視点を戻す（本体は useMirrorScroll.applyPrependAdjust）。
   useLayoutEffect(() => {
-    const el = bodyRef.current;
-    if (el && prependAdjustRef.current != null) {
-      el.scrollTop += el.scrollHeight - prependAdjustRef.current;
-      selfTopRef.current = el.scrollTop;
-      prependAdjustRef.current = null;
-    }
+    scroll.applyPrependAdjust();
   }, [turns]);
 
   // Auto-load older history when the top sentinel scrolls into view (prefetch a little
@@ -1494,11 +741,10 @@ export function MirrorView({
     // Sending is an explicit "take me to the conversation": re-arm auto-follow so the
     // optimistic echo below and the incoming reply are surfaced, even if the user had
     // scrolled up to read history.
-    atBottomRef.current = true;
-    setShowJump(false);
+    scroll.armFollow();
     // Show the message immediately (optimistic echo) so it never looks lost while claude
     // is busy — reconciled away once its real user turn appears in the transcript.
-    const echoId = ++echoSeqCounter;
+    const echoId = nextEchoId();
     applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), attachmentPaths: attachments, at: Date.now() }]);
     const res = await postInput(t, op, attachments);
     if (!res.ok) {
@@ -1544,7 +790,7 @@ export function MirrorView({
     const seed = takeLaunchSeed(session);
     if (!seed) return;
     seededRef.current = true;
-    const echoId = ++echoSeqCounter;
+    const echoId = nextEchoId();
     applyEchoes((p) => [...p, { id: echoId, text: seed.trim(), sinceIdx: -1, at: Date.now() }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, stateSession]);
@@ -1808,175 +1054,20 @@ export function MirrorView({
     if (!coarsePointer()) inputRef.current?.focus();
   };
 
-  // 返信サジェストのチップ: 通常クリックはコンポーサーへ差し込み（編集してから Enter）、
-  // ⌥/Alt 併用で即送信。差し込み時はキャレットを末尾に置いてフォーカスする。
-  const applySuggestion = (text: string, immediate: boolean) => {
-    if (composerLocked) return;
-    if (immediate) {
-      void send(text);
-      return;
-    }
-    setDraft(text);
-    setHistIdx(null);
-    // スマホ: チップ差し込みで textarea にフォーカスすると GBoard が開いて画面を覆う。タッチ端末では
-    // フォーカスしない（キーボードを出さない）— ユーザーは送信 or タップして編集を選べる。
-    if (coarsePointer()) {
-      inputRef.current?.blur(); // 既に開いていたキーボードも畳む
-      return;
-    }
-    requestAnimationFrame(() => {
-      const el = inputRef.current;
-      if (el) {
-        el.focus();
-        el.setSelectionRange(el.value.length, el.value.length);
-      }
-    });
-  };
 
-  // メニューの「この候補を消す」: 学習を消し、かつ隠しリストへ積む（消すだけではシード/再学習で
-  // 戻ってくる）。ピン留めしていたなら当然そのピンも外す。LLM 候補（✨）は学習物ではないので、
-  // その場の候補列から外すだけでよい。
-  const forgetSuggestion = (text: string, llm: boolean) => {
-    if (llm) {
-      setLlmSuggestions((prev) => prev.filter((s) => s !== text));
-      return;
-    }
-    setSetting("quickReplies", forgetQuickReply(settings.quickReplies || {}, text));
-    setSetting("quickRepliesHidden", hideQuickReply(settings.quickRepliesHidden || [], text));
-    setSetting("quickRepliesPinned", unpinQuickReply(settings.quickRepliesPinned || [], text));
-  };
+  // --- スキルピッカー（docs/log/50） --- 本体は parts/useSkillPicker（composerLocked を
+  // 見るのでここで呼ぶ）。
+  const skillPicker = useSkillPicker({
+    session,
+    agent,
+    managed,
+    draft,
+    setDraft,
+    setHistIdx,
+    inputRef,
+    composerLocked,
+  });
 
-  // メニューの「常に表示（ピン留め）」/「ピン留めを解除」。ピンは隠しより強い意思表示なので、
-  // ピンするときは隠しも外す（以前に消した文をピンし直せる）。✨の候補もそのままピンできる
-  // ——「この一文はこれから常用する」と決めた時点で、学習を待つ理由がない。
-  const togglePin = (text: string) => {
-    const pinned = settings.quickRepliesPinned || [];
-    if (isQuickReplyPinned(pinned, text)) {
-      setSetting("quickRepliesPinned", unpinQuickReply(pinned, text));
-      return;
-    }
-    setSetting("quickRepliesPinned", pinQuickReply(pinned, text));
-    setSetting("quickRepliesHidden", unhideQuickReply(settings.quickRepliesHidden || [], text));
-  };
-
-  // --- スキルピッカー（docs/log/50） ---
-  // slashOpen: 先頭トリガのトークンが生きていて、かつ直前に閉じられていない。
-  // skillListVisible: 実際にリストを描く条件 — タイプ起点は該当ゼロなら出さない
-  // （素の /plan 等の手打ちを覆い隠さない）。ボタン起点は空でも「無い」ことを見せる。
-  // 開く条件はトリガのタイプ（bare トークンでは開かない）、絞り込みはどちらの起点でも
-  // 同じトークンで効かせる — ボタンで開いてからタイプしても候補が絞れる。
-  // skillArgs（受動表示）: コマンドを打ち終えて引数を書いている間。引数ヒントを見ながら書け
-  // るようにリストは出したままにするが、確定した 1 件だけに絞り、キーボードは横取りしない
-  // （Enter は送信のまま — ここで Enter を奪うと引数入力中に送信できなくなる）。
-  const slashOpen = canSkills && !composerLocked && slashTok !== null && !slashTok.bare && skillDismissRef.current !== slashTok.token;
-  const skillArgs = slashOpen && !!slashTok?.args;
-  const skillsOpen = canSkills && !composerLocked && (skillBtnOpen || slashOpen);
-  const skillQuery = slashTok?.token ?? "";
-  const skillItems = (skillArgs ? exactSkills(skills ?? [], skillQuery) : skills ? filterSkills(skills, skillQuery) : [])
-    // managed 発火未検証 kind はネイティブ項目だけ落とす（foreign=注入はただのプロンプト）。
-    .filter((s) => !!s.path || !managed || agent.caps.slashSkillsManaged);
-  // 受動表示は「一致した 1 件があるときだけ」— 読み込み中や不一致で "/" 始まりの文章を書いて
-  // いる間にポップが出入りしないように、ボタン起点/タイプ起点の緩い条件は使わない。
-  const skillListVisible = skillsOpen && (skillArgs ? skillItems.length > 0 : skillBtnOpen || skills === null || skillItems.length > 0);
-  // キーボード（↑↓移動・Enter/Tab 確定）を横取りするのは能動表示のときだけ。
-  const skillNavActive = skillListVisible && !skillArgs;
-  // ネイティブは invoke をそのまま、foreign は「path を読んで指示に従え」プロンプトに組む
-  // （末尾空白 — 続けて引数を打てる）。
-  const skillInsertText = (s: SessionSkill): string =>
-    s.invoke || tr("mirror.skills_use_foreign", { path: s.path ?? "" }) + " ";
-
-  // 開いた時に取得（セッション替えでリセット）。都度取得 — セッション途中で SKILL.md を
-  // 作らせる使い方が普通にあるので、開くたびに新鮮なリストを引く（走査は安い）。
-  useEffect(() => setSkills(null), [session]);
-  useEffect(() => {
-    if (!skillsOpen || !session) return;
-    let live = true;
-    sessionSkills(session)
-      .then((d) => live && setSkills(d.skills || []))
-      .catch(() => live && setSkills((s) => s ?? [])); // 失敗時: 既取得はそのまま、未取得は空扱い
-    return () => {
-      live = false;
-    };
-  }, [skillsOpen, session]);
-
-  // draft が手元の token とずれたら（送信でクリア・履歴呼び出し等の setDraft 直書き）閉じる。
-  // 先頭は全角エイリアス（／・＄ — JP IME）も許すので startsWith でなく hasTriggerHead
-  // （bare トークンはそもそもトリガを持たないので、この確認は非 bare のときだけ）。
-  useEffect(() => {
-    if (!slashTok) return;
-    if ((!slashTok.bare && !hasTriggerHead(draft, skillTrigger)) || !draft.slice(0, slashTok.end).endsWith(slashTok.token))
-      setSlashTok(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft]);
-
-  // 絞り込みが変わったら選択を先頭へ戻し、選択が動いたら見える位置へ追従。
-  useEffect(() => setSkillSel(0), [slashTok?.token, skillBtnOpen]);
-  // ★ ブロック本体で書くこと（式のまま返さない）: Chrome 150 以降 scrollIntoView() は
-  // スクロール完了の Promise を返すので、暗黙 return するとその Promise が effect の
-  // クリーンアップとして保存され、次回実行時に React が関数として呼んで TypeError →
-  // 未捕捉のまま root ごとアンマウント＝画面真っ黒になる（候補件数が変わるたびに再実行
-  // される effect なので、絞り込みが 1→0 件に変わった瞬間に踏む）。
-  useEffect(() => {
-    skillSelRef.current?.scrollIntoView({ block: "nearest" });
-  }, [skillSel, skillItems.length]);
-
-  // 差し込み: 入力中のトークン（無ければ下書き全体の頭）を起動文字列（invoke —
-  // "/name " や "$name "）に置換し、既存の本文は引数として残す。タッチ端末はフォーカス
-  // しない（GBoard が画面を覆う — applySuggestion と同じ規約）。送信はしない —
-  // 引数を足してからユーザーが送る。
-  const pickSkill = (invoke: string) => {
-    const el = inputRef.current;
-    const caret = el ? (el.selectionStart ?? draft.length) : draft.length;
-    const { next, caret: nc } = applySkillToDraft(draft, caret, invoke, skillTrigger, skillBtnOpen);
-    setDraft(next);
-    setHistIdx(null);
-    setSkillBtnOpen(false);
-    skillDismissRef.current = null;
-    // invoke 直後のキャレットは末尾空白の右＝引数位置なので args トークンになる → リストは
-    // 受動表示のまま残り、選んだスキルの引数ヒントを見ながら引数を書ける。
-    setSlashTok(slashTokenAt(next, nc, skillTrigger));
-    if (coarsePointer()) {
-      inputRef.current?.blur();
-      return;
-    }
-    requestAnimationFrame(() => {
-      const el2 = inputRef.current;
-      if (el2) {
-        el2.focus();
-        el2.setSelectionRange(nc, nc);
-      }
-    });
-  };
-
-  // 閉じる（Esc・外クリック・ボタン再押下）。タイプ起点は「いまの token のままなら
-  // 再表示しない」印を残す — 消して打ち直したら（token が変われば）また開く。
-  const closeSkillPicker = () => {
-    setSkillBtnOpen(false);
-    skillDismissRef.current = slashTok?.token ?? null;
-  };
-  // 外クリックで閉じる。textarea 内クリック（キャレット移動）は対象外 — onSelect が
-  // token を追い直してリストが生きるべき操作なので、refs に inputRef も含める。
-  useDismiss([skillPopRef, skillBtnRef, inputRef], skillListVisible, closeSkillPicker);
-
-  // v2: ✨ボタン — 直近の会話ログを一発ヘッドレス LLM に渡し、文脈に沿った返信候補を取得して
-  // チップ列にマージする（session_suggest_reply.go）。押した時だけトークンを使う on-demand。
-  const fetchLlmSuggestions = async () => {
-    if (!session || suggesting || wsDown()) return;
-    setSuggesting(true);
-    try {
-      const j = await apiJSON(`api/sessions/${q(session)}/suggest-replies`, "POST", {});
-      const list = Array.isArray(j?.suggestions) ? (j.suggestions as unknown[]).filter((x): x is string => typeof x === "string") : [];
-      // LLM が同文を重複して返すことがある — チップの React key は本文由来なので畳んでおく。
-      setLlmSuggestions([...new Set(list)]);
-      // 候補ゼロ = バックエンド不在（claude/codex/opencode いずれも無い）か会話が浅い。無反応だと
-      // 壊れて見えるので一言知らせる（Layer A のチップはそのまま残る）。
-      if (!list.length) toast(tr("mirror.suggest_none"));
-    } catch {
-      toast(tr("mirror.suggest_failed")); // 生成失敗（機能OFF含む）— 学習チップはそのまま
-    } finally {
-      setSuggesting(false);
-    }
-  };
 
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
   // The pane carries docSession so it becomes a REVIEW surface (select → comment);
@@ -2067,7 +1158,7 @@ export function MirrorView({
       return;
     }
     if (res.via === "reject") {
-      const echoId = ++echoSeqCounter; // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
+      const echoId = nextEchoId(); // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
       applyEchoes((p) => [...p, { id: echoId, text: res.feedback, sinceIdx: newestIdx(), at: Date.now() }]);
       setTimeout(() => tickRef.current?.(), 400);
     }
@@ -2169,121 +1260,15 @@ export function MirrorView({
     inputRef.current?.focus();
   };
 
-  // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。✨も候補の一員として
-  // 巡回に含める（Enter はボタン既定の click ＝ LLM 候補取得がそのまま走る）。
-  const suggestRing = (): HTMLButtonElement[] =>
-    Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
-
-  // チップ行は1行スクロール（はみ出した候補は画面外）。キー移動のフォーカス先が隠れないよう
-  // 横だけ最小限スクロールして追従させる。focus 既定のスクロールは縦にも効いて本文が飛ぶので
-  // preventScroll で殺し、inline/block:nearest の scrollIntoView で必要分だけ動かす。
-  const focusRingItem = (el: HTMLButtonElement) => {
-    el.focus({ preventScroll: true });
-    el.scrollIntoView({ block: "nearest", inline: "nearest" });
-  };
-
-  // リング内の移動。Tab/Shift+Tab は「候補＋入力欄」を一巡（端まで来たら入力欄へ戻る＝
-  // 入力欄→候補1→候補2→入力欄…のループ）。←/→ は候補内だけで循環。Escape で入力欄へ。
-  // 処理したら true を返し、呼び出し側はそこで打ち切る。
-  const onSuggestNav = (e: RKeyboardEvent<HTMLButtonElement>): boolean => {
-    if (e.nativeEvent.isComposing) return false;
-    if (e.key === "Escape") {
-      e.preventDefault();
-      inputRef.current?.focus();
-      return true;
-    }
-    const ring = suggestRing();
-    const i = ring.indexOf(e.currentTarget);
-    if (i < 0 || !ring.length) return false;
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const next = e.shiftKey ? i - 1 : i + 1;
-      if (next < 0 || next >= ring.length) inputRef.current?.focus(); // 端 → 入力欄へ戻る
-      else focusRingItem(ring[next]);
-      return true;
-    }
-    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-      e.preventDefault();
-      const d = e.key === "ArrowRight" ? 1 : -1;
-      focusRingItem(ring[(i + d + ring.length) % ring.length]); // ←/→ は候補内で循環
-      return true;
-    }
-    return false;
-  };
-
-  // チップ上のキー操作。移動系は onSuggestNav に委ね、Enter/Ctrl(⌘)+Enter の役割はコンポーサーの
-  // 送信キー設定に合わせる: modSend（Ctrl+Enter で送信）なら mod+Enter=送信・素の Enter=差し込み、
-  // enter モード（Enter で送信）なら逆。
-  const onSuggestKeyDown = (e: RKeyboardEvent<HTMLButtonElement>, text: string, llm: boolean) => {
-    if (onSuggestNav(e)) return;
-    if (chipMenu.onKeyDown(e, text, llm)) return; // Menu キー / Shift+F10 → ピン留め・削除メニュー
-    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
-    const mod = e.ctrlKey || e.metaKey;
-    e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
-    applySuggestion(text, modSend ? mod : !mod);
-  };
 
   const onKeyDown = (e: RKeyboardEvent) => {
-    // スキルピッカーが開いている間は ↑/↓（選択移動）・Enter/Tab（確定）・Esc（閉じる）を
-    // ここで横取りする — 下の履歴呼び出し（↑/↓）・チップ Tab・送信 Enter より先。IME の
-    // 変換中は触らない。Ctrl/⌘+Enter と Shift+Enter は素通し（そのまま送信/改行できる逃げ道）。
-    // 受動表示（引数入力中 = skillArgs）は横取りしない — 引数ヒントを見せているだけなので、
-    // Enter は送信・↑/↓ はキャレット移動のまま。閉じる Esc だけは受け付ける。
-    if (skillListVisible && !e.nativeEvent.isComposing) {
-      if (skillNavActive && (e.key === "ArrowDown" || e.key === "ArrowUp") && skillItems.length) {
-        e.preventDefault();
-        const n = skillItems.length;
-        setSkillSel((s) => (s + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
-        return;
-      }
-      if (skillNavActive && ((e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey) || e.key === "Tab") && skillItems[skillSel]) {
-        e.preventDefault();
-        pickSkill(skillInsertText(skillItems[skillSel]));
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeSkillPicker();
-        return;
-      }
-    }
-    // 入力欄が空なら Tab で返信サジェストへ入る（＝入力欄→候補1→候補2→入力欄…のループ）。
-    // 素の Tab は最初の「候補チップ」から始める（先頭の✨は飛ばす／Shift+Tab で戻れる）。
-    // Shift+Tab は逆回りなのでリング末尾から入る。テキストがあるときは従来どおりの Tab。
-    if (e.key === "Tab" && !e.nativeEvent.isComposing && draft === "") {
-      const ring = suggestRing();
-      const target = e.shiftKey
-        ? ring[ring.length - 1]
-        : suggestRef.current?.querySelector<HTMLButtonElement>(".mirror-suggest-chip");
-      if (target) {
-        e.preventDefault();
-        focusRingItem(target);
-        return;
-      }
-    }
-    // 入力途中の Tab は候補の補完サイクル（シェル流）。打った文字に前方一致する候補＝チップ行に
-    // 見えているものを順に入力欄へ入れ、一周したら自分が打った文字へ戻る。Shift+Tab は逆回り。
-    // 補完できる候補が無ければ何もせず、従来どおりの Tab（フォーカス移動）に落とす。
-    if (e.key === "Tab" && !e.nativeEvent.isComposing && draft !== "" && !composerLocked) {
-      const next = stepSuggestCycle(cycle, draft, suggestChips.map((c) => c.text), e.shiftKey);
-      if (next) {
-        e.preventDefault();
-        setCycle(next);
-        setDraft(next.text);
-        setHistIdx(null);
-        // 値の差し替えでキャレットが動く（先頭に残る）ブラウザがあるので末尾に置き直す。
-        requestAnimationFrame(() => {
-          const el = inputRef.current;
-          if (el) el.setSelectionRange(el.value.length, el.value.length);
-        });
-        return;
-      }
-    }
+    if (skillPicker.handleKeyDown(e)) return; // スキルピッカーが開いていれば ↑↓/Enter/Tab/Esc を横取り
+    if (suggest.handleKeyDown(e)) return; // Tab: チップ行への入場 / 補完サイクル
     // Scroll the transcript without leaving the composer: Ctrl/⌘+↑/↓ nudges, PageUp/PageDown
     // (and Ctrl/⌘+[ / ]) page, Ctrl/⌘+End snaps to the newest turn and re-arms auto-follow.
     // Checked before history recall so the modified arrows don't get swallowed by the ↑/↓
     // recall path below.
-    if (!e.nativeEvent.isComposing && scrollComposerViewport(e, bodyRef.current, jumpToBottom)) return;
+    if (!e.nativeEvent.isComposing && scrollComposerViewport(e, bodyRef.current, scroll.jumpToBottom)) return;
     // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once
     // recall is underway). With text present, arrows move the caret as usual. Only the BARE
     // arrows recall — Shift+↑/↓ must stay the textarea's select-by-line (it no longer scrolls
@@ -2374,44 +1359,23 @@ export function MirrorView({
   const lastReplyText = replyGroup && replyGroup.role === "assistant" ? textOfParts(replyGroup.parts) : "";
   // 「返信を頭から」の対象。レンダ中に ref へ落とすのは、[] で 1 度だけ作られる
   // ResizeObserver / onScroll のクロージャからも今の値を読ませるため（ttsCaptureRef と同型）。
-  lastReplyIdxRef.current = replyGroup && replyGroup.role !== "user" ? replyGroup.idx : undefined;
-  // Tab 補完サイクル中は、絞り込みキーを「ユーザーが打った文字」に凍結する（入力欄は補完で
-  // 候補そのものに変わっているので、そのまま渡すとチップ列が1件に痩せてサイクルが崩れる）。
-  const suggestDraft = suggestFilterDraft(cycle, draft);
-  const cycledText = cycledSuggestion(cycle, draft); // いま入力欄に入っている候補（強調用）
-  const learned = settings.quickRepliesEnabled
-    ? rankQuickReplies(settings.quickReplies || {}, {
-        draft: suggestDraft,
-        lastReply: lastReplyText,
-        locale: settings.locale,
-        hidden: settings.quickRepliesHidden || [],
-        pinned: settings.quickRepliesPinned || [],
-        limit: 20, // チップ行は横スクロールなので、画面幅に収まらない分は流して見せる（ピンは別枠）
-      })
-    : [];
-  // v2 の LLM 候補を先頭に、Layer A の学習候補を後ろにマージ（重複は畳む）。llm フラグで見た目を分ける。
-  // 重複判定は学習キーと同じ畳み方（大小・空白に加えて全角半角）で行う。
-  const llmSet = new Set(llmSuggestions.map((s) => quickReplyKey(s)));
-  const suggestChips: { text: string; llm: boolean }[] = [
-    ...llmSuggestions.map((text) => ({ text, llm: true })),
-    ...learned.filter((s) => !llmSet.has(quickReplyKey(s))).map((text) => ({ text, llm: false })),
-  ];
-  // Tab 補完でたどっている候補が、1行スクロールのチップ行からはみ出していたら見える位置へ。
-  // 入力欄のフォーカスは動かさないので scrollIntoView だけ（横方向の最小限）。
-  useEffect(() => {
-    if (!cycledText) return;
-    const el = suggestRef.current?.querySelector<HTMLElement>(".mirror-suggest-chip.cycling");
-    // scrollIntoView は Chrome 150 で Promise を返す — 暗黙 return にすると effect の
-    // クリーンアップ扱いで落ちるので、必ずブロック本体で捨てる（effect-implicit-return）。
-    if (el) {
-      el.scrollIntoView({ block: "nearest", inline: "nearest" });
-    }
-  }, [cycledText]);
-  // 会話が進む（新しい回答が来る）と古い LLM 候補は文脈遅れになるので、直近回答の変化とセッション
-  // 切替で捨てる。lastReplyText 確定後に置くことで依存の TDZ を避ける。
-  useEffect(() => {
-    setLlmSuggestions([]);
-  }, [session, lastReplyText]);
+  scroll.lastReplyIdxRef.current = replyGroup && replyGroup.role !== "user" ? replyGroup.idx : undefined;
+  // 返信サジェスト（lib/quickReplies ＋ v2 の LLM 候補）。本体は parts/useReplySuggest。
+  // 直近回答の最終テキストが候補の文脈なので、それが確定したここで呼ぶ。
+  const suggest = useReplySuggest({
+    session,
+    settings,
+    draft,
+    setDraft,
+    setHistIdx,
+    inputRef,
+    composerLocked,
+    modSend,
+    lastReplyText,
+    send,
+    toast,
+    wsDown,
+  });
 
   // Hold the "working" indicator across the idle→reply-renders gap (see `finalizing`).
   // finalizingRef is set SYNCHRONOUSLY alongside the state so the poll loop's next-tick
@@ -2455,87 +1419,10 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, bgBusy, replyPending]);
 
-  // 新しい回答の自動読み上げ（P2）: ポーリングで append された新規 assistant ターンを
-  // 朗読キューへ（通常はアクティブなペインのみ、ttsAutoReadAllPanes なら開いている全ペイン。
-  // ペイン間は 1 本の再生を待ち合って直列）。初回ロード（tail）とリセット（idx の巻き戻り）は
-  // 基準 idx を取り直すだけで履歴は読まない。連続 assistant ターンは同じグループに折り畳まれて
-  // 育つので、キューはグループ idx 単位（重複なし）に持ち、pump が増えたブロックだけ読む。
-  // DOM は commit 後（この effect 実行時）に描画済み。
+  // 新しい回答の自動読み上げ（P2）。判断は parts/useMirrorTts の syncAutoRead が持つ。ここに
+  // 残すのは「いつ見直すか」＝ deps だけ（フックの中では turns / groups を購読できない）。
   useEffect(() => {
-    // セッションが変わった直後は、まだ前セッションの turns が残ったまま（swap は同一インスタンスの
-    // まま session prop だけ差し替え、ドロップ先を active 化する）この effect が active 変化で走る
-    // ことがある。その turns の idx で seen を作ると新セッションの本文を誤読するので、session が
-    // 揃うまでは基準を捨てて何も読まない（新セッションの turns が届いた回で改めて基準化する）。
-    if (ttsAutoSessionRef.current !== session) {
-      ttsAutoSessionRef.current = session;
-      ttsAutoSeenRef.current = null;
-      return;
-    }
-    let newest = -1;
-    for (let i = turns.length - 1; i >= 0; i--) {
-      const x = turns[i].idx;
-      if (x !== undefined) {
-        newest = x;
-        break;
-      }
-    }
-    if (newest < 0) return;
-    const seen = ttsAutoSeenRef.current;
-    ttsAutoSeenRef.current = newest; // 非対象ペインでも履歴を飲み込み、後から一括再読しない
-    const canRead =
-      !readOnly &&
-      settings.ttsEnabled &&
-      settings.ttsAutoReadMirror &&
-      (settings.ttsAutoReadAllPanes ? isTurnReader(session, ttsTokenRef.current) : active);
-
-    if (status === "working" && settings.ttsWorkRead !== "off") {
-      // 現在のユーザープロンプト以後だけを見る。送信直後の pending echo も境界に含め、
-      // 実ターンが履歴へ着地するまでの間に一つ前の作業過程へ巻き戻らないようにする。
-      // まだ実行されていない queued prompt は現在の作業境界にはしない。
-      const lastUser = latestWorkPromptIndex(groups);
-      for (let i = lastUser + 1; i < groups.length; i++) {
-        const g = groups[i];
-        if (g.role !== "assistant" || g.sidechain || g.compact || g.idx === undefined) continue;
-        const end = confirmedWorkEnd(g.parts);
-        const done = ttsWorkDoneRef.current.get(g.idx) ?? 0;
-        if (end <= done) continue;
-        ttsWorkDoneRef.current.set(g.idx, end);
-        const text = textOfParts(g.parts.slice(done, end));
-        if (canRead && seen !== null && text) ttsWorkQueueRef.current.push(text);
-      }
-      while (ttsWorkQueueRef.current.length > 4) ttsWorkQueueRef.current.shift();
-      if (canRead) ttsWorkPumpRef.current();
-    } else {
-      // idle = 最終回答が確定。残っている小声を置換停止し、通常の最終回答朗読へ譲る。
-      stopTtsForReplacement(ttsWorkRef.current);
-      ttsWorkRef.current = null;
-      ttsWorkQueueRef.current.length = 0;
-      ttsWorkDoneRef.current.clear();
-    }
-    if (!canRead) {
-      stopTtsForReplacement(ttsWorkRef.current);
-      ttsWorkRef.current = null;
-      ttsWorkQueueRef.current.length = 0;
-      return;
-    }
-    if (seen !== null && newest > seen) {
-      const q = ttsAutoQueueRef.current;
-      for (const t of turns) {
-        if (t.idx === undefined || t.idx <= seen) continue;
-        if (t.role !== "assistant" || t.sidechain || t.compact) continue;
-        // このターンが属するグループ＝idx が t.idx 以下で最後のグループ
-        let g: Group | null = null;
-        for (const gg of groups) {
-          if (gg.idx === undefined) continue;
-          if (gg.idx <= t.idx) g = gg;
-          else break;
-        }
-        if (!g || g.idx === undefined || g.role !== "assistant" || g.sidechain || g.compact) continue;
-        if (!q.includes(g.idx)) q.push(g.idx);
-      }
-      while (q.length > 4) q.shift();
-    }
-    ttsAutoPumpRef.current();
+    tts.syncAutoRead({ turns, groups, status });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns, status, active, readOnly, session, settings.ttsEnabled, settings.ttsAutoReadMirror, settings.ttsAutoReadAllPanes, settings.ttsWorkRead]);
 
@@ -2574,7 +1461,7 @@ export function MirrorView({
     planSendDisabled: planSendBlocked,
     forkAt: canForkAt ? openForkAt : undefined,
     onReauth: () => useSettingsUI.getState().openSettings("agents"),
-    tts: ttsWiring,
+    tts: tts.wiring,
     expandThinking: expandThinking(settings, sessionMeta?.kind),
     isRejectedPlan: (p: string) => rejectedPlansRef.current.has(p.trim()),
     maxSpend,
@@ -2616,7 +1503,7 @@ export function MirrorView({
 
   return (
     <div
-      ref={mirrorRef}
+      ref={scroll.mirrorRef}
       className={"mirrorview" + (dragging ? " dragging" : "")}
       data-theme={settings.mirrorTheme !== "inherit" ? settings.mirrorTheme : undefined}
       style={{
@@ -2671,77 +1558,20 @@ export function MirrorView({
       {tasks.length > 0 && <TaskChecklist key={"todo-" + session} tasks={tasks} session={session} />}
       <FileChangeStrip key={"files-" + session} session={session} files={files} />
       <MarkStrip key={"marks-" + session} marks={marks} storageKey={session} />
-      {isPlan && (
-        <div className="mirror-planmode">
-          <Icon name="debug-pause" /> {tr("mirror.plan_mode_note")}
-        </div>
-      )}
-      {termState === "resume" && (
-        // The startup resume menu is showing in the terminal (invisible from chat) —
-        // prompt the user to go choose. "2. Resume full session as-is" keeps the full
-        // context; the recommended summary option would drop it.
-        <div className="mirror-attention">
-          <Icon name="warning" />
-          <span className="ma-text">{tr("mirror.resume_choice_note")}</span>
-          <button type="button" className="btn primary ma-btn" onClick={() => onToggleMirror(false)}>
-            <Icon name="terminal" /> {tr("mirror.open_terminal")}
-          </button>
-        </div>
-      )}
-      {termState === "update" && (
-        // codex's startup update menu is showing in the terminal (invisible from chat).
-        // "1. Update now" exits the process and the tmux session dies with it — CLI
-        // updates belong to the image pin — so the offered action is skip. The digit
-        // key alone selects and confirms (verified on 0.144.3), hence a single "2".
-        <div className="mirror-attention">
-          <Icon name="warning" />
-          <span className="ma-text">{tr("mirror.codex_update_note")}</span>
-          <button
-            type="button"
-            className="btn primary ma-btn"
-            onClick={() => {
-              postKeys(["2"]);
-              setTimeout(() => tickRef.current?.(), 500);
-            }}
-          >
-            {tr("mirror.skip_continue")}
-          </button>
-        </div>
-      )}
-      {termState === "compacting" && (
-        <div className="mirror-compacting">
-          <div className="mc-head">
-            <Icon name="loading" spin /> {tr("mirror.compacting")}
-            {compactProg?.elapsed && <span className="mc-elapsed">{compactProg.elapsed}</span>}
-            {compactProg && compactProg.pct >= 0 && <span className="mc-pct">{compactProg.pct}%</span>}
-          </div>
-          {compactProg && compactProg.pct >= 0 && (
-            <div className="mc-track" role="progressbar" aria-valuenow={compactProg.pct} aria-valuemin={0} aria-valuemax={100}>
-              <div className="mc-fill" style={{ width: compactProg.pct + "%" }} />
-            </div>
-          )}
-        </div>
-      )}
-      {suggestedTitle && (
-        <div className="mirror-title-suggest">
-          <Icon name="lightbulb" />
-          <span className="mts-text">
-            <Trans k="mirror.title_suggestion" vars={{ title: suggestedTitle }} components={[<strong />]} />
-          </span>
-          <button type="button" className="btn primary mts-btn" disabled={titleActing} onClick={acceptTitle}>
-            <Icon name={titleActing ? "loading" : "check"} spin={titleActing} /> {tr("mirror.adopt")}
-          </button>
-          <button
-            type="button"
-            className="icon mts-dismiss"
-            disabled={titleActing}
-            onClick={dismissTitle}
-            title={tr("mirror.dismiss_suggestion")}
-          >
-            <Icon name="close" />
-          </button>
-        </div>
-      )}
+      <MirrorBanners
+        isPlan={isPlan}
+        termState={termState}
+        compactProg={compactProg}
+        suggestedTitle={suggestedTitle}
+        titleActing={titleActing}
+        onOpenTerminal={() => onToggleMirror(false)}
+        onSkipUpdate={() => {
+          postKeys(["2"]);
+          setTimeout(() => tickRef.current?.(), 500);
+        }}
+        onAcceptTitle={acceptTitle}
+        onDismissTitle={dismissTitle}
+      />
 
       <div
         className="mirror-body"
@@ -2749,12 +1579,12 @@ export function MirrorView({
         // それを理由にスマホの横スワイプ（セッションの持ち替え）を殺さない（app/swipeGuard.ts）。
         data-swipe-y=""
         ref={bodyRef}
-        onScroll={onBodyScroll}
-        onMouseUp={captureTtsSel}
+        onScroll={scroll.onBodyScroll}
+        onMouseUp={tts.captureSel}
         // 位置復元の打ち切り条件（endRestoreOnInput の注記）。ホイールとタッチはここで拾う —
         // .mirror-scroll の pointerdown/keydown（noteInteraction）はホイールでは出ない。
-        onWheelCapture={endRestoreOnInput}
-        onTouchStartCapture={endRestoreOnInput}
+        onWheelCapture={scroll.endRestoreOnInput}
+        onTouchStartCapture={scroll.endRestoreOnInput}
       >
         {/* Wrapper whose height == the transcript's total height, so a ResizeObserver can
             re-pin a bottom-stuck view to the true bottom as late content lays out — that's
@@ -2764,9 +1594,9 @@ export function MirrorView({
             observer which reflows the READER caused (noteInteraction). */}
         <div
           className="mirror-scroll"
-          ref={scrollBoxRef}
-          onPointerDownCapture={noteInteraction}
-          onKeyDownCapture={noteInteraction}
+          ref={scroll.scrollBoxRef}
+          onPointerDownCapture={scroll.noteInteraction}
+          onKeyDownCapture={scroll.noteInteraction}
         >
         {loaded && hasMore && (
           <div className="mirror-loadmore" ref={topSentinelRef}>
@@ -2844,222 +1674,93 @@ export function MirrorView({
           />
         )}
         {pendingPlan && (
-          <div className="mirror-turn assistant">
-            <div className="mirror-turn-head">
-              <span className="mt-who">{agentName}</span>
-              <span className="mt-model muted">{tr("mirror.plan_pending")}</span>
-            </div>
-            <div className="mirror-turn-body">
-              <PlanBlock
-                plan={pendingPlan}
-                session={session}
-                pending
-                sending={sending}
-                onOpen={() => openPlan(pendingPlan)}
-                onSendComments={() => void sendPlanComments(pendingPlan)}
-                sendDisabled={planSendBlocked}
-                onApprove={() => {
-                  // A rejected plan may be refined and re-presented with identical Markdown.
-                  // The optimistic marker is keyed by that Markdown (the pending payload has
-                  // no tool-use id), so it belongs only until the next decision. Clear it
-                  // before approving the new presentation; its real tool_result still keeps
-                  // the older historical card correctly badged 却下.
-                  rejectedPlansRef.current.delete(pendingPlan.trim());
-                  void sendKeys([...PLAN_APPROVE_KEYS]);
-                }}
-                // 却下 = 中断（Escape）で keep-planning に倒す。ExitPlanMode メニューの
-                // 選択肢数/順序は claude 版依存で、位置固定キー（旧 Down×3 で「4. Tell Claude
-                // what to change」を狙う実装）は短いラップするメニューでは先頭の「Yes」行へ
-                // 回り込み、却下したのに承認してしまう（2026-07-22 実障害）。中断はレイアウト
-                // 非依存にモーダルを閉じて plan モードへ戻し、composer を解放する。tool_result は
-                // interrupt になり planDecision.isRejected が拾う。詳細は planDecision.ts。
-                onReject={() => {
-                  rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge（実 outcome で planOutcome が調停）
-                  void sendInterrupt();
-                }}
-              />
-            </div>
-          </div>
+          <PlanPendingCard
+            agentName={agentName}
+            plan={pendingPlan}
+            session={session}
+            sending={sending}
+            sendDisabled={planSendBlocked}
+            onOpen={() => openPlan(pendingPlan)}
+            onSendComments={() => void sendPlanComments(pendingPlan)}
+            onApprove={() => {
+              // A rejected plan may be refined and re-presented with identical Markdown.
+              // The optimistic marker is keyed by that Markdown (the pending payload has
+              // no tool-use id), so it belongs only until the next decision. Clear it
+              // before approving the new presentation; its real tool_result still keeps
+              // the older historical card correctly badged 却下.
+              rejectedPlansRef.current.delete(pendingPlan.trim());
+              void sendKeys([...PLAN_APPROVE_KEYS]);
+            }}
+            // 却下 = 中断（Escape）で keep-planning に倒す。ExitPlanMode メニューの
+            // 選択肢数/順序は claude 版依存で、位置固定キー（旧 Down×3 で「4. Tell Claude
+            // what to change」を狙う実装）は短いラップするメニューでは先頭の「Yes」行へ
+            // 回り込み、却下したのに承認してしまう（2026-07-22 実障害）。中断はレイアウト
+            // 非依存にモーダルを閉じて plan モードへ戻し、composer を解放する。tool_result は
+            // interrupt になり planDecision.isRejected が拾う。詳細は planDecision.ts。
+            onReject={() => {
+              rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge（実 outcome で planOutcome が調停）
+              void sendInterrupt();
+            }}
+          />
         )}
         {pendingPerm && !pending && !pendingPlan && (
           // Defense-in-depth: a question/plan always wins over a generic permission
           // dialog (the server already suppresses the permission in that case). This
           // guards against a poll race ever showing 許可/拒否 over an AskUserQuestion,
           // whose buttons would send keystrokes that mis-answer the question underneath.
-          <div className="mirror-turn assistant">
-            <div className="mirror-turn-head">
-              <span className="mt-who">{agentName}</span>
-              <span className="mt-model muted">{tr("mirror.perm_pending")}</span>
-            </div>
-            <div className="mirror-turn-body">
-              <div className="mt-perm">
-                <div className="mt-perm-head">
-                  <Icon name="shield" /> {tr("mirror.perm_asking")}
-                </div>
-                <div className="mt-perm-msg">{pendingPerm}</div>
-                <div className="mt-perm-actions">
-                  <button
-                    type="button"
-                    className="btn primary mt-perm-btn"
-                    disabled={sending}
-                    onClick={() => sendKeys(["Enter"])}
-                  >
-                    <Icon name="check" /> {tr("mirror.allow")}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost mt-perm-btn"
-                    disabled={sending}
-                    title={tr("mirror.auto_allow")}
-                    onClick={() => sendKeys(["Down", "Enter"])}
-                  >
-                    {tr("mirror.always_allow")}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost mt-perm-btn"
-                    disabled={sending}
-                    onClick={() => sendKeys(["Down", "Down", "Enter"])}
-                  >
-                    <Icon name="close" /> {tr("mirror.deny")}
-                  </button>
-                </div>
-                <div className="mt-perm-hint muted">{tr("mirror.perm_hint")}</div>
-              </div>
-            </div>
-          </div>
+          <PermissionCard
+            agentName={agentName}
+            message={pendingPerm}
+            sending={sending}
+            onAllow={() => sendKeys(["Enter"])}
+            onAlwaysAllow={() => sendKeys(["Down", "Enter"])}
+            onDeny={() => sendKeys(["Down", "Down", "Enter"])}
+          />
         )}
         {pending && pending.length > 0 && (
-          <div className="mirror-turn assistant">
-            <div className="mirror-turn-head">
-              <span className="mt-who">{agentName}</span>
-              <span className="mt-model muted">{tr("mirror.questioning")}</span>
-            </div>
-            <div className="mirror-turn-body">
-              {pendingText && <MarkdownView source={pendingText} repo={sessionMeta?.repo ?? null} onOpenFile={openFile} />}
-              <PendingQuestions
-                key={"pq-" + (pending[0]?.question || "")}
-                questions={pending}
-                sending={sending}
-                onSubmitKeys={sendKeys}
-                onSubmitSeq={sendSeq}
-                onRespond={
-                  // managed は id の有無に関わらず semantic 経路に固定する — keys/seq へ
-                  // 落とすと存在しない tmux pane を叩きに行く。id を欠く質問（P2 まで
-                  // の過渡・再同期待ち）はサーバが bad_interaction で却下し、sendRespond
-                  // がトーストで知らせる。
-                  managed ? (answers) => void sendRespond(pending[0]?.id || "", answers) : undefined
-                }
-                // Cancel maps to the same stop primitive as the chat 停止 button: TUI sends
-                // Escape (dismisses the AUQ modal, doesn't mark a turn), managed calls
-                // Interrupt. Either way the pending question clears and the composer is free.
-                onCancel={() => void sendInterrupt()}
-                answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
-                multiPage={sessionMeta?.kind === "codex"}
-                writeIn={sessionMeta?.kind === "agy"}
-              />
-            </div>
-          </div>
+          <QuestionCard
+            agentName={agentName}
+            questions={pending}
+            pendingText={pendingText}
+            repo={sessionMeta?.repo ?? null}
+            sending={sending}
+            answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
+            multiPage={sessionMeta?.kind === "codex"}
+            writeIn={sessionMeta?.kind === "agy"}
+            onOpenFile={openFile}
+            onSubmitKeys={sendKeys}
+            onSubmitSeq={sendSeq}
+            onRespond={
+              // managed は id の有無に関わらず semantic 経路に固定する — keys/seq へ
+              // 落とすと存在しない tmux pane を叩きに行く。id を欠く質問（P2 まで
+              // の過渡・再同期待ち）はサーバが bad_interaction で却下し、sendRespond
+              // がトーストで知らせる。
+              managed ? (answers) => void sendRespond(pending[0]?.id || "", answers) : undefined
+            }
+            onCancel={() => void sendInterrupt()}
+          />
         )}
-        {busy && !pending && (
-          <div className="mirror-typing" aria-label={tr("mirror.typing", { name: agentName })}>
-            <span className="mt-who">{agentName}</span>
-            <span className="typing-dots">
-              <i />
-              <i />
-              <i />
-            </span>
-            {/* Stop the running turn (Escape) — lives with the typing indicator so it shows
-                while working OR while a background run (サブエージェント/Workflow) lingers on an
-                otherwise-idle session, and never shifts the composer. */}
-            <button
-              type="button"
-              className="ghost mirror-stop"
-              disabled={sending}
-              title={tr("mirror.stop_run")}
-              onClick={() => void sendInterrupt()}
-            >
-              <Icon name="debug-stop" /> {tr("chat.stop")}
-            </button>
-          </div>
-        )}
+        {busy && !pending && <TypingRow agentName={agentName} sending={sending} onStop={() => void sendInterrupt()} />}
         </div>
-        {(showJump || showReplyTop) && (
-          // 入力欄のすぐ上に浮くピル。sticky で本文の最後に置く（bottom 指定の sticky は
-          // 「本来の位置より下へ行きそうなときだけ上へ留める」ので、先頭に置くと二度と
-          // 降りてこない — 実測で本文の 42,000px 上に取り残された）。
-          //
-          // ラッパは height:0、ボタンはその中で absolute。in-flow のまま置くと、はみ出した
-          // ボタンぶん（実測 12px）がスクロール可能領域を伸ばし、末尾に貼り付いているのに
-          // 12px の余白が残る。「最新へ」は末尾から離れたときしか出ないので誰も踏まなかったが、
-          // 「返信を頭から」は末尾でも出るので表に出た。bottom:0 の absolute なら、ボタンの箱は
-          // ラッパの上へ伸びる＝末尾より下へはみ出さない。
-          //
-          // 「返信を頭から」は逆向きの導線で、条件も別（最新の回答の先頭が画面より上にある）。
-          // 同じ帯に並べる — 両方出る場面（回答の途中を読んでいて、かつ末尾から離れている）
-          // では、上へ・下への 2 択がそのまま並んで見える。
-          <div className="mirror-jump-wrap">
-            <div className="mirror-jump-row">
-              {showReplyTop && (
-                <button
-                  type="button"
-                  // 見た目は 最新へ と同じピル。クラスを足すのは検証のため — mirror-scroll の
-                  // ハーネスは「最新へ が出ていないこと」で末尾着地を判定しており、素の
-                  // .mirror-jump が 2 種類あると区別が付かない。
-                  className="mirror-jump mirror-jump-top"
-                  onClick={jumpToReplyTop}
-                  title={tr("mirror.jump_reply_top")}
-                  aria-label={tr("mirror.jump_reply_top")}
-                >
-                  <Icon name="arrow-up" /> {tr("mirror.jump_reply_top")}
-                </button>
-              )}
-              {showJump && (
-                <button
-                  type="button"
-                  className="mirror-jump"
-                  onClick={jumpToBottom}
-                  title={tr("mirror.jump_latest")}
-                  aria-label={tr("mirror.jump_latest")}
-                >
-                  <Icon name="arrow-down" /> {tr("mirror.jump_latest")}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        <JumpPills
+          showJump={scroll.showJump}
+          showReplyTop={scroll.showReplyTop}
+          onJumpBottom={scroll.jumpToBottom}
+          onJumpReplyTop={scroll.jumpToReplyTop}
+        />
       </div>
 
       {readOnly ? (
         dirGone ? (
-          // Dir removed: no resume path, so drop the button and just say so — the
-          // history above is fully readable, it simply can't be continued.
-          <div className="mirror-compose mirror-compose-resume">
-            <span className="muted mirror-resume-hint">
-              <Icon name="circle-slash" /> {tr("mirror.folder_missing_history")}
-            </span>
-          </div>
+          <DirGoneNotice />
         ) : (
-          // History (read-only): the session isn't attached, so input is disabled. The
-          // button attaches (resumes) in the background while keeping this chat open —
-          // the composer enables once the session is live (alive from the poll).
-          <div className="mirror-compose mirror-compose-resume">
-            <button
-              type="button"
-              className="btn primary mirror-resume"
-              disabled={!running}
-              title={running ? tr("mirror.resume_session") : tr("mirror.ws_stopped")}
-              onClick={() => {
-                wantResumeFocusRef.current = true;
-                onResume?.();
-              }}
-            >
-              <Icon name="play" /> {tr("mirror.resume_continue")}
-            </button>
-            <span className="muted mirror-resume-hint">
-              {running ? tr("mirror.viewing_history_resume") : tr("mirror.viewing_history_ws_stopped")}
-            </span>
-          </div>
+          <ResumeNotice
+            running={running}
+            onResume={() => {
+              wantResumeFocusRef.current = true;
+              onResume?.();
+            }}
+          />
         )
       ) : !running ? (
         // Workspace stopped (or not yet running): the agent is down, so the composer can't
@@ -3070,233 +1771,87 @@ export function MirrorView({
         // read-only history it now is; Start from the top bar brings it back. (readOnly handles
         // its own stopped case above; a live agent's resume/update menu can't be up with the WS
         // down, so this precedes those checks.)
-        <div className="mirror-compose mirror-compose-resume">
-          <span className="muted mirror-resume-hint">
-            <Icon name="circle-slash" /> {tr("mirror.viewing_history_ws_stopped")}
-          </span>
-        </div>
+        <WsStoppedNotice />
       ) : termState === "resume" ? (
-        // Resume menu is up in the terminal: block the composer (keystrokes would go to
-        // the menu) and send the user there to choose.
-        <div className="mirror-compose mirror-compose-resume">
-          <button type="button" className="btn primary mirror-resume" onClick={() => onToggleMirror(false)}>
-            <Icon name="terminal" /> {tr("mirror.select_in_terminal")}
-          </button>
-          <span className="muted mirror-resume-hint">{tr("mirror.resume_choice_hint")}</span>
-        </div>
+        <TerminalResumeNotice onOpenTerminal={() => onToggleMirror(false)} />
       ) : termState === "update" ? (
-        // codex's update menu is up: block the composer (typed digits would pick menu
-        // entries) and offer the two skip choices directly — each digit key selects and
-        // confirms on its own, so one key dismisses the menu.
-        <div className="mirror-compose mirror-compose-resume">
-          <button
-            type="button"
-            className="btn primary mirror-resume"
-            onClick={() => {
-              postKeys(["2"]);
-              setTimeout(() => tickRef.current?.(), 500);
-            }}
-          >
-            {tr("mirror.skip_continue")}
-          </button>
-          <button
-            type="button"
-            className="btn mirror-resume"
-            onClick={() => {
-              postKeys(["3"]);
-              setTimeout(() => tickRef.current?.(), 500);
-            }}
-          >
-            {tr("mirror.skip_until_next")}
-          </button>
-          <span className="muted mirror-resume-hint">{tr("mirror.update_choice_hint")}</span>
-        </div>
+        <TerminalUpdateNotice
+          onSkip={() => {
+            postKeys(["2"]);
+            setTimeout(() => tickRef.current?.(), 500);
+          }}
+          onSkipUntilNext={() => {
+            postKeys(["3"]);
+            setTimeout(() => tickRef.current?.(), 500);
+          }}
+        />
       ) : !alive ? (
-        // Attached but the session is still coming up (resume in flight).
-        <div className="mirror-compose mirror-compose-resume">
-          <span className="muted mirror-resuming">
-            <Icon name="loading" spin /> {tr("mirror.resuming")}
-          </span>
-        </div>
+        <ResumingNotice />
       ) : (
         <div className="mirror-compose">
           {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
               クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。 */}
-          {!composerLocked && (suggestChips.length > 0 || settings.replySuggestEnabled) && (
-            <div className="mirror-suggest" ref={attachSuggestRow}>
-              {settings.replySuggestEnabled && (
-                <button
-                  type="button"
-                  className="mirror-suggest-ai"
-                  title={tr("mirror.suggest_ai")}
-                  disabled={suggesting || !running} // wsDown() はトースト副作用があるのでレンダー中は呼ばない
-                  onClick={fetchLlmSuggestions}
-                  onKeyDown={onSuggestNav} // Enter は既定の click（＝候補取得）に任せる
-                >
-                  <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
-                </button>
-              )}
-              {suggestChips.map((sg) => (
-                // ピン留めした候補は先頭に固定で並び、📌 を付けて「消えない側」だと分かるようにする。
-                // 削除・ピン留めは右クリック / 長タップ / Menu キーのメニュー（SuggestChipMenu）。
-                <button
-                  key={(sg.llm ? "l:" : "a:") + sg.text}
-                  type="button"
-                  className={
-                    "mirror-suggest-chip" +
-                    (sg.llm ? " llm" : "") +
-                    (isQuickReplyPinned(settings.quickRepliesPinned, sg.text) ? " pinned" : "") +
-                    (sg.text === cycledText ? " cycling" : "") // Tab でいま入力欄に入れている候補
-                  }
-                  aria-current={sg.text === cycledText ? "true" : undefined}
-                  title={tr("mirror.suggest_hint")}
-                  onClick={(e) => {
-                    if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
-                    applySuggestion(sg.text, e.ctrlKey || e.altKey || e.metaKey);
-                  }}
-                  onKeyDown={(e) => onSuggestKeyDown(e, sg.text, sg.llm)}
-                  {...chipMenu.chipProps(sg.text, sg.llm)}
-                >
-                  {isQuickReplyPinned(settings.quickRepliesPinned, sg.text) && (
-                    <Icon name="pinned" className="mirror-suggest-pin" />
-                  )}
-                  {sg.text}
-                </button>
-              ))}
-            </div>
-          )}
-          {chipMenu.menu && (
-            <SuggestChipMenu
-              menu={chipMenu.menu}
-              pinned={isQuickReplyPinned(settings.quickRepliesPinned, chipMenu.menu.text)}
-              onClose={chipMenu.close}
-              onTogglePin={togglePin}
-              onForget={forgetSuggestion}
+          {!composerLocked && (suggest.chips.length > 0 || settings.replySuggestEnabled) && (
+            <SuggestRow
+              rowRef={suggest.rowRef}
+              chips={suggest.chips}
+              pinned={settings.quickRepliesPinned}
+              cycledText={suggest.cycledText}
+              aiEnabled={!!settings.replySuggestEnabled}
+              suggesting={suggest.suggesting}
+              running={running}
+              onFetchLlm={suggest.fetchLlmSuggestions}
+              onNav={suggest.onNav}
+              onChipKeyDown={suggest.onChipKeyDown}
+              onChipClick={(e, text) => {
+                if (suggest.chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
+                suggest.applySuggestion(text, e.ctrlKey || e.altKey || e.metaKey);
+              }}
+              chipProps={suggest.chipMenu.chipProps}
             />
           )}
-          {(attachments.length > 0 || pasting) && (
-            <div className="mirror-attach">
-              {attachments.map((a, i) => (
-                <div className={"ma-chip" + (a.image ? "" : " ma-file")} key={a.path}>
-                  {a.image ? (
-                    <img className="ma-thumb" src={a.url} alt="" />
-                  ) : (
-                    <span className="ma-fname" title={a.name}>
-                      <FileIcon name={a.name} />
-                      <span className="ma-fname-text">{a.name}</span>
-                    </span>
-                  )}
-                  <button type="button" className="ma-del" title={tr("chat.remove")} onClick={() => removeAttachment(i)}>
-                    <Icon name="close" />
-                  </button>
-                </div>
-              ))}
-              {pasting && (
-                <span className="ma-loading">
-                  <Icon name="loading" spin /> {tr("chat.uploading")}
-                </span>
-              )}
-            </div>
+          {suggest.chipMenu.menu && (
+            <SuggestChipMenu
+              menu={suggest.chipMenu.menu}
+              pinned={isQuickReplyPinned(settings.quickRepliesPinned, suggest.chipMenu.menu.text)}
+              onClose={suggest.chipMenu.close}
+              onTogglePin={suggest.togglePin}
+              onForget={suggest.forgetSuggestion}
+            />
           )}
-          {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
-          <div className="mirror-hist">
-            <button
-              type="button"
-              className="ghost mirror-hist-btn"
-              title={tr("mirror.prev_input")}
-              disabled={!history.length}
-              onClick={recallPrev}
-            >
-              <Icon name="chevron-up" />
-            </button>
-            <button
-              type="button"
-              className="ghost mirror-hist-btn"
-              title={tr("mirror.next_input")}
-              disabled={histIdx === null}
-              onClick={recallNext}
-            >
-              <Icon name="chevron-down" />
-            </button>
-          </div>
+          <AttachChips attachments={attachments} pasting={pasting} onRemove={removeAttachment} />
+          <HistoryNav
+            canPrev={history.length > 0}
+            canNext={histIdx !== null}
+            onPrev={recallPrev}
+            onNext={recallNext}
+          />
           {/* スキルピッカー（docs/log/50）: コンポーサー上に浮く補完リスト。マウスは onMouseMove で
               選択追従＋クリック確定（mousedown は preventDefault でフォーカスを奪わない —
               CommandPalette と同型）、タップはそのまま確定、キーボードは onKeyDown が駆動。
               引数入力中（skillArgs）は受動表示 — キーボード選択を持たないので sel も付けず、
               クリックだけ（引数は残したままコマンドを差し替える）が生きる。 */}
-          {skillListVisible && (
-            <div
-              className={"mirror-skills" + (skillArgs ? " passive" : "")}
-              ref={skillPopRef}
-              role="listbox"
-              aria-label={tr("mirror.skills_btn")}
-            >
-              {skills === null ? (
-                <div className="mirror-skills-note">
-                  <Icon name="loading" spin /> {tr("mirror.skills_loading")}
-                </div>
-              ) : skillItems.length === 0 ? (
-                // 絞り込みの結果ゼロ（ボタン起点だけがここへ来る — タイプ起点は非表示にする）と
-                // そもそも 1 つも無いのは別の話なので、文言を分ける。
-                <div className="mirror-skills-note">{tr(skillQuery ? "mirror.skills_no_match" : "mirror.skills_empty")}</div>
-              ) : (
-                skillItems.map((s, i) => (
-                  <button
-                    type="button"
-                    key={s.type + ":" + s.source + ":" + s.name}
-                    ref={!skillArgs && i === skillSel ? skillSelRef : undefined}
-                    className={"mirror-skill-item" + (!skillArgs && i === skillSel ? " sel" : "")}
-                    role="option"
-                    aria-selected={!skillArgs && i === skillSel}
-                    title={tr("mirror.skills_item_hint")}
-                    onMouseMove={() => setSkillSel(i)}
-                    onMouseDown={(ev) => ev.preventDefault()}
-                    onClick={() => pickSkill(skillInsertText(s))}
-                  >
-                    {/* 1 行目＝起動文字列＋引数ヒント＋出所バッジ、2 行目＝説明。説明を
-                        独立行にすることで、名前と引数に幅を食われず全幅で読める。 */}
-                    <span className="mirror-skill-head">
-                      <span className="mirror-skill-name">{s.invoke ? s.invoke.trim() : s.name}</span>
-                      {s.argumentHint ? <span className="mirror-skill-hint">{s.argumentHint}</span> : null}
-                      {/* バッジは 1 つの入れ物に — 直接並べて margin-left:auto を各々に付けると、
-                          2 つ出たとき余白が両者に均等配分されて右端に寄らない。 */}
-                      <span className="mirror-skill-badges">
-                        {s.origin ? <SkillOriginBadge origin={s.origin} /> : null}
-                        {s.source === "user" ? <span className="mirror-skill-src">{tr("mirror.skills_src_user")}</span> : null}
-                        {s.source === "cli" ? <span className="mirror-skill-src">{tr("mirror.skills_src_cli")}</span> : null}
-                      </span>
-                    </span>
-                    {s.description ? <span className="mirror-skill-desc">{s.description}</span> : null}
-                  </button>
-                ))
-              )}
-            </div>
+          {skillPicker.listVisible && (
+            <SkillList
+              popRef={skillPicker.popRef}
+              selRef={skillPicker.selRef}
+              passive={skillPicker.passive}
+              skills={skillPicker.skills}
+              items={skillPicker.items}
+              sel={skillPicker.sel}
+              query={skillPicker.query}
+              onHover={skillPicker.setSel}
+              onPick={skillPicker.pick}
+            />
           )}
-          {/* 「/」ボタン: マウス/タップだけでスキルを呼ぶ入口（キーボード派は素の「/」タイプ）。 */}
-          {canSkills && (
-            <button
-              type="button"
-              ref={skillBtnRef}
-              className={"ghost mirror-skill-btn" + (skillListVisible ? " on" : "")}
-              title={tr("mirror.skills_btn")}
+          {skillPicker.canSkills && (
+            <SkillButton
+              btnRef={skillPicker.btnRef}
+              open={skillPicker.listVisible}
               disabled={composerLocked}
-              onClick={() => {
-                if (skillListVisible) {
-                  closeSkillPicker();
-                  return;
-                }
-                skillDismissRef.current = null;
-                setSkillBtnOpen(true);
-                // 既に書いてある先頭トークンを即クエリにする（開いた瞬間から絞り込まれた
-                // 状態で出す）。2 語目以降にキャレットがあれば null＝全件のまま。
-                const el = inputRef.current;
-                setSlashTok(pickerTokenAt(draft, el?.selectionStart ?? draft.length, skillTrigger, true));
-              }}
-            >
-              <span className="mirror-skill-glyph" aria-hidden="true">
-                {skillTrigger || "✦"}
-              </span>
-            </button>
+              trigger={skillPicker.trigger}
+              onToggle={skillPicker.toggleFromButton}
+            />
           )}
           {/* ＋ attach: the drag&drop-less path (phones foremost, handy everywhere).
               Any file type; the same addFiles upload the paste/drop paths use. */}
@@ -3344,65 +1899,39 @@ export function MirrorView({
             onChange={(e) => {
               setDraft(e.target.value);
               setHistIdx(null); // typing leaves history-recall mode
-              if (canSkills) {
-                // スキルピッカーのトリガ追跡: 先頭トリガ文字の 1 トークン内にキャレットが
-                // ある間だけ token が立つ。トークンが死んだら Esc 抑止も解除（打ち直しで再表示）。
-                // ボタンで開いている間はトリガ無しの先頭トークンも拾う（＝そのまま絞り込める）。
-                const tok = pickerTokenAt(e.target.value, e.target.selectionStart ?? e.target.value.length, skillTrigger, skillBtnOpen);
-                if (!tok) skillDismissRef.current = null;
-                setSlashTok(tok);
-              }
+              skillPicker.trackTyping(e.target.value, e.target.selectionStart ?? e.target.value.length);
             }}
-            onSelect={(e) => {
-              // キャレット移動（クリック・矢印）でも token の生死を追い直す。
-              if (canSkills) setSlashTok(pickerTokenAt(e.currentTarget.value, e.currentTarget.selectionStart ?? 0, skillTrigger, skillBtnOpen));
-            }}
+            onSelect={(e) => skillPicker.trackCaret(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
           />
-          {/* Right column: a small mode chip stacked over the send button. The chip is a
-              rarely-used control, so it rides above send (compact, not competing with the
-              textarea) and only appears for agents with a plan toggle. */}
-          <div className="mirror-send-col">
-            {agent.caps.planMode && agent.planCycleKey && (
-              <button
-                type="button"
-                className={"mirror-mode" + (isPlan ? " on" : "")}
-                disabled={sending || decisionPending}
-                title={tr("mirror.toggle_mode")}
-                onClick={() => {
-                  const toPlan = !isPlan;
-                  // Optimistic label (codex/opencode only report the new mode after a turn);
-                  // the poll reconciles from the terminal via paneMode.
-                  setMode(toPlan ? "Plan" : lastNonPlanMode.current || agent.defaultModeLabel);
-                  // managed のモード切替は ThreadSettings の更新（POST /settings →
-                  // UpdateSettings、docs/log/27 §9.4-3）— 次 turn の agent/mode に効く。
-                  // tui は従来どおりキー駆動（planEnterCmd / planCycleKey）。
-                  if (managed) {
-                    void sessionSettings(session, { mode: toPlan ? "plan" : "normal" });
-                    return;
-                  }
-                  // Low-level sends (no working status / no quick re-poll) so the optimistic
-                  // label holds until the regular poll reads the real mode.
-                  // スラッシュコマンドは turn を始めない（サーバ側 slashCmdRe が
-                  // working を付けない）— op は形式上 start で送る。
-                  if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd, "start");
-                  else postKeys([agent.planCycleKey]);
-                }}
-              >
-                {mode || "…"}
-              </button>
-            )}
-            <button
-              type="button"
-              className="btn primary mirror-send"
-              disabled={(!draft.trim() && !attachments.length) || sending || composerLocked}
-              onClick={() => send()}
-              title={tr("chat.send")}
-            >
-              <Icon name="send" />
-            </button>
-          </div>
+          <SendColumn
+            showMode={!!(agent.caps.planMode && agent.planCycleKey)}
+            isPlan={isPlan}
+            modeLabel={mode}
+            modeDisabled={sending || decisionPending}
+            sendDisabled={(!draft.trim() && !attachments.length) || sending || composerLocked}
+            onToggleMode={() => {
+              const toPlan = !isPlan;
+              // Optimistic label (codex/opencode only report the new mode after a turn);
+              // the poll reconciles from the terminal via paneMode.
+              setMode(toPlan ? "Plan" : lastNonPlanMode.current || agent.defaultModeLabel);
+              // managed のモード切替は ThreadSettings の更新（POST /settings →
+              // UpdateSettings、docs/log/27 §9.4-3）— 次 turn の agent/mode に効く。
+              // tui は従来どおりキー駆動（planEnterCmd / planCycleKey）。
+              if (managed) {
+                void sessionSettings(session, { mode: toPlan ? "plan" : "normal" });
+                return;
+              }
+              // Low-level sends (no working status / no quick re-poll) so the optimistic
+              // label holds until the regular poll reads the real mode.
+              // スラッシュコマンドは turn を始めない（サーバ側 slashCmdRe が
+              // working を付けない）— op は形式上 start で送る。
+              if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd, "start");
+              else postKeys([agent.planCycleKey!]);
+            }}
+            onSend={() => send()}
+          />
         </div>
       )}
       {lightbox &&
@@ -3437,62 +1966,7 @@ export function MirrorView({
           onClose={() => setForkAtTarget(null)}
         />
       )}
-      {ttsPill &&
-        createPortal(
-          <div className="sel-pill-group" style={{ left: ttsPill.x, top: Math.max(4, ttsPill.y) }}>
-            <button
-              type="button"
-              className="sel-send-pill"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                ttsStart(ttsPill.idx, ttsPill.body, ttsPill.block);
-                setTtsPill(null);
-                window.getSelection()?.removeAllRanges();
-              }}
-            >
-              <Icon name="unmute" /> {tr("chat.read_from_here")}
-            </button>
-          </div>,
-          document.body,
-        )}
+      {tts.pillPortal}
     </div>
   );
-}
-
-
-// findPlanPane returns the id of a pane already reviewing THIS session's plan, if any.
-// Read straight from the store (not a subscription): it is consulted at click time,
-// and subscribing would re-render the whole mirror on every layout change.
-// Stays here rather than in transcript/: opening a pane is an owner action, and the
-// shared view has no local layout to open a plan into.
-function findPlanPane(session: string): string | null {
-  const layout = useLayoutStore.getState().layout;
-  for (const col of layout?.cols || []) {
-    for (const cell of col.cells) for (const pane of cell.views) {
-      if (pane.content.kind === "doc" && pane.content.docSession === session) return pane.id;
-    }
-  }
-  return null;
-}
-
-// findDiffPane returns the id of an already-open captured-edit diff pane. Clicking one
-// edit trace after another retargets that single pane instead of spawning one each — the
-// same reuse the SCM list does for working diffs (features/scm/open.ts).
-function findDiffPane(): string | null {
-  const layout = useLayoutStore.getState().layout;
-  for (const col of layout?.cols || []) {
-    for (const cell of col.cells) for (const pane of cell.views) {
-      if (pane.content.kind === "diff") return pane.id;
-    }
-  }
-  return null;
-}
-
-/** findPane reads one pane out of the live layout (same no-subscription rationale). */
-function findPane(id: string) {
-  const layout = useLayoutStore.getState().layout;
-  for (const col of layout?.cols || []) {
-    for (const cell of col.cells) for (const pane of cell.views) if (pane.id === id) return pane;
-  }
-  return null;
 }

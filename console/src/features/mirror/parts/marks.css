@@ -1,0 +1,105 @@
+/* 転写のマーカー（docs/log/69 / ADR 0050）: 引いた線・色ピル・カード・一覧帯
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* ── 転写のマーカー（docs/log/69 / ADR 0050）─────────────────────────────────────
+   色は利用者が選ぶ「意味」の軸、作成者は下線の色。2つを1つの軸へ押し込むと、
+   共有先が3人いる会話で色が意味を失う（ADR 0050 決定 5）。 */
+mark.tmark {
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+  cursor: pointer;
+  /* 下線ぶんの高さで行が揺れないよう、box-shadow で引く（border-bottom は行送りを変える）。 */
+  box-shadow: inset 0 -2px 0 0 var(--tmark-author, transparent);
+}
+mark.tmark-yellow { background: var(--mark-yellow); }
+mark.tmark-green { background: var(--mark-green); }
+mark.tmark-blue { background: var(--mark-blue); }
+mark.tmark-pink { background: var(--mark-pink); }
+/* 所有者（a0）は下線を出さない: 1人で使っているセッションで全部に線が入ると煩い。
+   誰が引いたかが問題になるのは共有して2人目が現れた時なので、そこから色が付く。 */
+mark.tmark-a1 { --tmark-author: var(--mark-author-1); }
+mark.tmark-a2 { --tmark-author: var(--mark-author-2); }
+mark.tmark-a3 { --tmark-author: var(--mark-author-3); }
+mark.tmark-a4 { --tmark-author: var(--mark-author-4); }
+mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
+
+/* 選択したときに出る色ピル。 */
+.tmark-pill {
+  position: fixed; z-index: 60; display: flex; gap: 6px;
+  padding: 6px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.tmark-swatch {
+  width: 22px; height: 22px; padding: 0; border-radius: 5px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent);
+}
+.tmark-swatch.tmark-yellow { background: var(--mark-yellow); }
+.tmark-swatch.tmark-green { background: var(--mark-green); }
+.tmark-swatch.tmark-blue { background: var(--mark-blue); }
+.tmark-swatch.tmark-pink { background: var(--mark-pink); }
+.tmark-swatch:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 引いてある線をクリックしたときのカード（誰が・いつ・引用・消す）。 */
+.tmark-card {
+  position: fixed; z-index: 60; max-width: min(360px, 92vw);
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); font-size: 12px;
+}
+.tmark-card-who { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.tmark-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--mark-author-0); }
+.tmark-dot.tmark-a1 { background: var(--mark-author-1); }
+.tmark-dot.tmark-a2 { background: var(--mark-author-2); }
+.tmark-dot.tmark-a3 { background: var(--mark-author-3); }
+.tmark-dot.tmark-a4 { background: var(--mark-author-4); }
+.tmark-dot.tmark-a5 { background: var(--mark-author-5); }
+.tmark-card-quote {
+  max-height: 96px; overflow: auto; padding: 6px 7px;
+  border-radius: 5px; background: var(--panel2); color: var(--muted); white-space: pre-wrap;
+}
+.tmark-card-del { align-self: flex-start; }
+
+/* マーカーの一覧帯（docs/log/69 §69.7）。畳み方と寸法は変更ファイル帯（.mirror-files）に
+   揃える — 同じ帯に並ぶパネルが別々の作法だと、無関係な機能が2つあるように読める。 */
+.mirror-marks {
+  margin: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar);
+}
+.mirror-marks-head { display: flex; align-items: center; padding: 0; }
+.mirror-marks.open .mirror-marks-head { border-bottom: 1px solid var(--border); }
+.mirror-marks-toggle {
+  min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border: 0; border-radius: 5px; background: transparent;
+  color: var(--muted); cursor: pointer; font-size: 12px; text-align: left;
+}
+.mirror-marks-head .mfl-title { color: var(--fg); font-weight: 600; }
+.mirror-marks-head .mfl-count { font-variant-numeric: tabular-nums; }
+.mirror-marks-head .mfl-lead { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mirror-marks-list { margin: 0; padding: 4px; list-style: none; max-height: 220px; overflow: auto; }
+.tmark-row { display: flex; align-items: center; gap: 2px; }
+.tmark-row-btn {
+  min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; border: 0; border-radius: 4px; background: transparent;
+  color: var(--fg); cursor: pointer; font-size: 12px; text-align: left;
+}
+.tmark-row-btn:hover:not(:disabled) { background: var(--hover, var(--panel2)); }
+/* 押せない行 = その印のターンがまだ tail 窓の外（スクロール先が画面に無い）。 */
+.tmark-row-btn:disabled { opacity: 0.5; cursor: default; }
+.tmark-chip { flex: none; width: 10px; height: 10px; border-radius: 3px; }
+.tmark-chip.tmark-yellow { background: var(--mark-yellow); }
+.tmark-chip.tmark-green { background: var(--mark-green); }
+.tmark-chip.tmark-blue { background: var(--mark-blue); }
+.tmark-chip.tmark-pink { background: var(--mark-pink); }
+.tmark-row-quote { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tmark-row-who { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
+.tmark-row-del {
+  flex: none; padding: 3px 5px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.tmark-row-del:hover { color: var(--fg); background: var(--hover, var(--panel2)); }

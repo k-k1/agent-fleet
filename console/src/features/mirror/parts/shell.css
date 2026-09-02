@@ -1,0 +1,166 @@
+/* ミラーの器そのもの: 面の背景／転写ホストへスコープした旧 styles.css の要素グローバル／
+ターミナル⇄チャットのトグル／転写のスクローラと空・読み込み・「さらに古い履歴」
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+/* The chat (Markdown mirror) has its own surface, independent of the file viewer;
+   when unset it falls back to the viewer surface, then the theme --bg. */
+.mirrorview {
+  flex: 1;
+  min-width: 0;
+  /* Inline-size container (like .termview) so the head's ターミナル⇄チャット controls
+     and kind badge can collapse when the pane is narrow (@container paneview rules). */
+  container: paneview / inline-size;
+  /* min-height:0 lets the view shrink to its flex track in .pane instead of
+     overflowing it (the height chain runs through nested grids → flex). */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--chat-bg, var(--viewer-bg, var(--bg)));
+}
+/* Legacy control styles (old styles.css element globals), scoped to the views that
+   host the transcript render layer — the mirror AND the recipient's shared session
+   (docs/log/59). The blocks in features/mirror/transcript are shared by both and still
+   carry this raw <button className="ghost|primary"> markup, so scoping these to
+   .mirrorview alone made the very same footer render as a plain bordered button in
+   the shared view (the コピー button stood out like a primary action). :where() keeps
+   the specificity at zero, so ui/Button's .ui-btn rules still win where used.
+   Historical note follows.
+
+   Legacy control styles (old styles.css element globals), scoped to the mirror.
+   The verbatim-ported MirrorView keeps raw <button className="ghost|primary">
+   markup that relied on the old console's global button rules — the next entry
+   deliberately has no element globals (ui/ uses .ui-btn), so replicate them here.
+   :where() zeroes the scope's specificity so these behave exactly like the old
+   element-level globals (a single class rule like .mirror-mode must still win).
+   Placed before the co-located rules below so later rules win ties, matching the
+   old cascade. Dissolved when MirrorView moves to ui/Button (P8). */
+:where(.mirrorview, .shared-view) button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+:where(.mirrorview, .shared-view) button:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+:where(.mirrorview, .shared-view) button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+:where(.mirrorview, .shared-view) button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 2px 6px;
+}
+:where(.mirrorview, .shared-view) button.ghost:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+:where(.mirrorview, .shared-view) button.icon {
+  padding: 1px 6px;
+  font-size: 12px;
+  line-height: 1.3;
+}
+:where(.mirrorview, .shared-view) button.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+:where(.mirrorview, .shared-view) button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, #fff);
+}
+/* The chat head runs the session name a half-pixel larger than the terminal head
+   does (shared look with the sessions rail). The rest of the chip is shared —
+   panes/PaneSessionChip.tsx, .pane-session-name in terminal.css. */
+:where(.mirrorview) .pane-session-name {
+  font-size: 12.5px;
+}
+/* ---- Markdown mirror (case-A: read-mostly view of a claude session) ---- */
+/* Right-align the ターミナル/ミラー switch in the view-head, left of the pane
+   control cluster (the head already reserves 84px on the right for it). */
+.mirror-toggle {
+  margin-left: auto;
+  /* This switch is a global chrome control (like the top bar), not part of the
+     viewer surface, so its selected segment follows the top bar accent, not
+     --viewer-accent. Needs the sel-scope class on the element (MirrorToggle.tsx) —
+     rebinding --sel-accent alone can't reach the :root-derived --sel-bg/--sel-fg
+     (tokens.css). */
+  --sel-accent: var(--topbar-accent);
+}
+/* The head's action cluster is .view-head-actions (ui/ui.css) — it was declared
+   identically here and in terminal.css. */
+/* Each ターミナル/チャット segment is an icon + label; center them with a small gap
+   so the button reads well both with the label and (on narrow panes) icon-only. */
+.mirror-toggle .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+/* Narrow pane (mobile or a slim split): collapse the head's text controls to
+   icon-only. Driven by the paneview container (.termview / .mirrorview), so it
+   tracks the PANE width, not the viewport — a narrow split in a wide window
+   collapses too. The title attributes keep the words reachable as tooltips. */
+@container paneview (max-width: 560px) {
+  .mirror-toggle .seg-label {
+    display: none;
+  }
+}
+/* （.ds-check は使用箇所なし・.admin-check は settings.css 側に集約済みのため削除。
+   .ds-sub は EnvTab の注記が使う。） */
+.ds-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+/* Flat transcript (not cards): a scrolling column of full-width turns separated by
+   a hairline, each with a small speaker header. block layout (not flex) so a turn
+   takes its natural height and the column scrolls — a flex column shrinks children
+   and, with overflow, clips them. */
+.mirror-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0;
+}
+/* Inner wrapper whose height tracks the transcript (observed to re-pin the bottom as late
+   content lays out). flow-root contains the turns' margins exactly like the old direct
+   children of the overflow:auto body did, so spacing is unchanged. */
+.mirror-scroll {
+  display: flow-root;
+}
+.mirror-empty {
+  max-width: 42ch;
+  margin: 0 auto;
+  padding: 32px 16px;
+  text-align: center;
+  line-height: 1.6;
+}
+/* Loading spinner shown while the first transcript fetch is in flight. */
+.mirror-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+/* "Load older" affordance at the top of the transcript (backward paging, P2). */
+.mirror-loadmore {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 6px;
+}
+.mirror-loadmore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  padding: 4px 14px;
+  border-radius: 999px;
+}

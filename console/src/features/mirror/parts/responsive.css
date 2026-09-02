@@ -1,0 +1,27 @@
+/* スマホ幅（max-width:760px）の上書き。**ここだけは面をまたぐ** — 上のどのファイルの
+クラスも再定義しうるので、必ず最後から 5 番目のこの位置で読み込むこと（元の 1 枚での位置）
+ *
+ * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
+ *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
+ *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ */
+@media (max-width: 760px) {
+  .mirror-hist {
+    display: flex;
+  }
+  /* スマホは横幅が貴重: 補助ボタンをさらに細くし、行の隙間も詰めて textarea に返す。 */
+  .mirror-compose {
+    gap: 5px;
+  }
+  .mirror-attach-btn,
+  .mirror-skill-btn {
+    width: 24px;
+  }
+  /* スマホは選択肢が縦1列に折り返るので省略の必要が薄い。タップ前に全文を読めるよう
+     2行クランプを外す（PC/タブレットは省略のまま = .mq-opt-desc 本体）。 */
+  .mq-opt-desc {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+  }
+}
