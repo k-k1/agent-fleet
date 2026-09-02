@@ -57,14 +57,9 @@ import { placeFixed } from "../../lib/placeFixed.ts";
 import { SESSION_KINDS } from "../../types/session.ts";
 import { getCachedConns, subscribeConns } from "../repos/connsCache.ts";
 import { assistantName, assistantDesc } from "./assistantI18n.ts";
-import { noticeText } from "./notice.ts";
-import { reportText } from "./report.ts";
-import { formatMsgTS } from "./parts/chatFormat.ts";
 import { ChatMarkdown, StreamingMarkdown } from "./parts/ChatMarkdown.tsx";
 import { ChatSteps } from "./parts/ChatSteps.tsx";
-import { AssistantTurn } from "./parts/AssistantTurn.tsx";
-import { ChatCopyButton } from "./parts/ChatCopyButton.tsx";
-import { ChatPastedThumb } from "./parts/ChatPastedThumb.tsx";
+import { ChatMessageRow } from "./parts/ChatMessageRow.tsx";
 import { kindClass } from "../../lib/sessionkind.ts";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
@@ -1363,86 +1358,17 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         {empty && !draftAsst && !isDraft && (
           <div className="chat-empty">{tr("chat.empty_hint")}</div>
         )}
-        {conv?.messages.map((m, i) => {
-          // Session reports (docs/log/30) render as a session-origin card — the sender is
-          // the reporting session, not the user or the assistant.
-          if (m.role === "report") {
-            return (
-              <div key={i} className="chat-msg role-report">
-                <div className="chat-role">
-                  <Icon name="broadcast" /> {tr("chat.report_role")}
-                  {m.session && <span className="chat-report-session">{m.session}</span>}
-                </div>
-                <div className="chat-body">
-                  <ChatMarkdown source={reportText(m)} breaks />
-                </div>
-                <div className="chat-msg-foot">
-                  {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}
-                </div>
-              </div>
-            );
-          }
-          // System notices (docs/log/30) — e.g. the operator's auto-turn budget ran out and
-          // the loop paused. Rendered as a centered informational card, not a bubble; it
-          // tells the user why the operator went quiet and how to resume. The body comes
-          // from the catalog (ADR 0033), so it follows the UI language even on old threads.
-          if (m.role === "notice") {
-            return (
-              <div key={i} className="chat-msg role-notice">
-                <div className="chat-notice">
-                  <Icon name="info" />
-                  <div className="chat-notice-body">
-                    <ChatMarkdown source={noticeText(m)} breaks />
-                  </div>
-                </div>
-              </div>
-            );
-          }
-          // Assistant replies render through AssistantTurn, which owns the bubble ref so
-          // its footer can karaoke-read the rendered Markdown (docs/log/24).
-          if (m.role === "assistant") {
-            const turnAgent = agentOf(m.agent || conv.agent);
-            return (
-              <div key={i} className="chat-msg role-assistant">
-                <AssistantTurn
-                  text={m.content}
-                  steps={m.steps}
-                  ts={m.ts}
-                  agentName={turnAgent?.assistantName || tr("chat.assistant_fallback")}
-                  model={m.model}
-                  voice={{ ...(assistantVoiceOpts(assistId, assistVoice) ?? {}), paneId }}
-                  highlight={i === conv.messages.length - 1 ? karaokeText : null}
-                />
-              </div>
-            );
-          }
-          // Split off any pasted-image references so a user bubble shows the user's
-          // words + clickable thumbnails, not the machine-facing paths — and so the
-          // copy button copies the words, not the image instruction.
-          const { text, images } = splitPastedImages(m.content);
-          return (
-            <div key={i} className="chat-msg role-user">
-              <div className="chat-role">{tr("chat.you")}</div>
-              <div className="chat-body">
-                {/* Both roles render as Markdown; `breaks` keeps plain newlines as
-                    line breaks (mirrors MirrorView's user turns). */}
-                {text && <ChatMarkdown source={text} breaks />}
-                {images.length > 0 && conv && (
-                  <div className="chat-imgs">
-                    {images.map((nm) => (
-                      <ChatPastedThumb key={nm} convId={conv.id} name={nm} />
-                    ))}
-                  </div>
-                )}
-              </div>
-              {/* Footer under the bubble — time + copy, mirroring MirrorView's turn foot. */}
-              <div className="chat-msg-foot">
-                {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}
-                <ChatCopyButton text={text} />
-              </div>
-            </div>
-          );
-        })}
+        {conv?.messages.map((m, i) => (
+          <ChatMessageRow
+            key={i}
+            m={m}
+            conv={conv}
+            assistId={assistId}
+            assistVoice={assistVoice}
+            paneId={paneId}
+            highlight={i === conv.messages.length - 1 ? karaokeText : null}
+          />
+        ))}
         {showStreaming && (
           <div className="chat-msg role-assistant">
             <div className="chat-role">{agent?.assistantName || tr("chat.assistant_fallback")}</div>
