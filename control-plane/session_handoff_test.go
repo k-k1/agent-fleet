@@ -29,7 +29,7 @@ func newHandoffAPIFixture(t *testing.T, sessions []map[string]any) handoffAPIFix
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)

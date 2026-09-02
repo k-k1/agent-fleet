@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // docs/log/23 P2-W2: manager.mu を DB I/O 跨ぎで保持する直列化をやめた際の要件 —
@@ -13,9 +15,12 @@ import (
 // （per-membership build ロックが守る）、かつ全 goroutine が同じ workspace に
 // 解決すること。
 func TestBuildResolvedSingleFlight(t *testing.T) {
-	prev := dockerInspectOut
-	dockerInspectOut = func(args ...string) ([]byte, error) { return nil, errors.New("no docker in tests") }
-	t.Cleanup(func() { dockerInspectOut = prev })
+	// Swapped on the adapters' package, not through an alias here: a `var x = pkg.Y`
+	// on this side is a COPY, and reassigning it would leave the adapter calling the
+	// real docker binary while the test believed it was stubbed.
+	prev := runtime.DockerInspectOut
+	runtime.DockerInspectOut = func(args ...string) ([]byte, error) { return nil, errors.New("no docker in tests") }
+	t.Cleanup(func() { runtime.DockerInspectOut = prev })
 
 	ctx := context.Background()
 	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
@@ -23,7 +28,7 @@ func TestBuildResolvedSingleFlight(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	dt, err := st.EnsureDefaultTenant(ctx)

@@ -177,7 +177,7 @@ func TestSharedMessagesAuthorizeAndRemoveWorkspacePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)
@@ -340,7 +340,7 @@ func TestSyncCatalogCapturesWorktreeAndParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)
@@ -413,7 +413,7 @@ func TestListReceivedCoversWorktreesAndHidesArchived(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)
@@ -535,7 +535,7 @@ func TestSearchRecipientsFiltersByEmailAndExcludesSelf(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)
@@ -606,7 +606,7 @@ func TestWorkspaceStopWaitsForSharedApprovalLifecycleLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)
@@ -648,7 +648,7 @@ func TestShareDowngradeWaitsForAuthorizedAgentOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)
@@ -697,7 +697,7 @@ func TestOwnerLeaseSerializesShareAndLifecycleAcrossManagers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)
@@ -809,7 +809,7 @@ func TestLifecycleLeaseHeartbeatAndFencingCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)
@@ -913,7 +913,7 @@ func TestSharedHandoffProposalsAuthorize(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
 	tenant, _ := st.EnsureDefaultTenant(ctx)

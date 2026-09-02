@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 func TestParseLimitsTerminalHistoryRetention(t *testing.T) {
@@ -30,12 +32,12 @@ func TestParseLimitsTerminalHistoryRetention(t *testing.T) {
 // **空振りで通る**のではなく**存在しない**ことを確かめたいので、上限を持たない方も要る。
 type poolFactory struct{ max int }
 
-func (f *poolFactory) New(Workspace, string, []string) Runtime { return nil }
-func (f *poolFactory) MaxSlots() int                           { return f.max }
+func (f *poolFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
+func (f *poolFactory) MaxSlots() int                                   { return f.max }
 
 type poollessFactory struct{}
 
-func (f *poollessFactory) New(Workspace, string, []string) Runtime { return nil }
+func (f *poollessFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
 
 func budgetFixture(t *testing.T, max int, quotas map[string]int) (*sqlStore, *manager) {
 	t.Helper()
@@ -105,7 +107,7 @@ func TestPoolBudgetSkipsSuspendedTenants(t *testing.T) {
 	tn, _, _ := st.GetTenantBySlug(ctx, "gone")
 	// テナントを止める API はまだ無いので、行を直接落とす。列は存在し ListTenants は
 	// 状態で絞らずに返すので、この分岐は「まだ誰も通らない」であって「無い」ではない。
-	if _, err := st.db.ExecContext(ctx, `UPDATE tenant SET status='suspended' WHERE id=?`, tn.ID); err != nil {
+	if _, err := st.DB().ExecContext(ctx, `UPDATE tenant SET status='suspended' WHERE id=?`, tn.ID); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
 	b, _, _ := mgr.poolBudget(ctx, "", 0)

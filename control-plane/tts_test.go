@@ -267,7 +267,7 @@ func TestTTSAdminToggleSetting(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer store.Close()
-	if err := store.migrate(t.Context()); err != nil {
+	if err := store.Migrate(t.Context()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	mgr := &manager{store: store}
@@ -331,7 +331,7 @@ func TestTTSDict(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer store.Close()
-	if err := store.migrate(t.Context()); err != nil {
+	if err := store.Migrate(t.Context()); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	const dict = "GPT-4=ジーピーティーフォー\n# コメント\nk-k1=ケーケーワン"

@@ -38,11 +38,7 @@
 //	ecs-ec2: 同上（同じ実装に委譲）。どちらも runtime_ecs_stale.go
 package main
 
-import (
-	"context"
-	"sync"
-	"time"
-)
+import "context"
 
 // staleRuntime は Runtime の任意実装。停止→起動で走るコードが変わるなら true。
 // 判定できない（イメージが引けない・記録が無い）ときは false を返す契約。
@@ -58,63 +54,10 @@ func workspaceStale(ctx context.Context, rt Runtime) bool {
 }
 
 // --- 小さな TTL キャッシュ ---------------------------------------------------
-
-// freshness memoizes the probes above. /api/workspace is polled every 4s per open
-// Console (and pushed over SSE), so an uncached docker inspect per request would
-// multiply across tabs and users. The probed facts change only when an image is
-// rebuilt or a container restarts, so a short TTL is plenty.
-var freshness = &ttlCache{m: map[string]ttlEntry{}}
-
-type ttlEntry struct {
-	v  string
-	at time.Time
-}
-
-type ttlCache struct {
-	mu  sync.Mutex
-	m   map[string]ttlEntry
-	now func() time.Time // tests
-}
-
-func (c *ttlCache) clock() time.Time {
-	if c.now != nil {
-		return c.now()
-	}
-	return time.Now()
-}
-
-// get returns the cached value for key, or runs load (OUTSIDE the lock, so one
-// slow docker inspect never blocks another user's poll) and caches the result.
-func (c *ttlCache) get(key string, ttl time.Duration, load func() string) string {
-	c.mu.Lock()
-	e, ok := c.m[key]
-	fresh := ok && c.clock().Sub(e.at) < ttl
-	c.mu.Unlock()
-	if fresh {
-		return e.v
-	}
-	v := load()
-	c.mu.Lock()
-	c.m[key] = ttlEntry{v: v, at: c.clock()}
-	c.mu.Unlock()
-	return v
-}
-
-// set overwrites an entry. Used when the caller has just learned the authoritative
-// value (docker Start) and a stale cached one would produce a wrong answer.
-func (c *ttlCache) set(key, v string) {
-	c.mu.Lock()
-	c.m[key] = ttlEntry{v: v, at: c.clock()}
-	c.mu.Unlock()
-}
-
-// peek returns the last value stored under key REGARDLESS of the TTL, or "" if
-// nothing was ever stored. It is the "last known good" reader: a caller that has
-// just probed and got nothing can prefer an old-but-real answer over "unknown",
-// where "unknown" would be more expensive than being slightly behind. Never use it
-// for the comparison itself — that is what get's TTL exists for.
-func (c *ttlCache) peek(key string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.m[key].v
-}
+//
+// freshness / ttlCache / ttlEntry used to live here. They moved to the adapters'
+// package (internal/runtime/freshness.go) with the probes that are their only
+// writers and readers — a Go alias cannot carry ttlCache's methods, and nothing on
+// this side of the seam touches the cache, so no alias is left behind either. A var
+// that could still be reassigned here while the adapters read another one would be a
+// trap, not compatibility.

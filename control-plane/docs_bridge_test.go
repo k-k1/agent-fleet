@@ -28,7 +28,7 @@ func newDocsTestEnv(t *testing.T) *docsTestEnv {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	if err := st.migrate(ctx); err != nil {
+	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	master := []byte("master-key-for-docs-bridge-tests0")
@@ -57,7 +57,7 @@ func (e *docsTestEnv) addMembership(t *testing.T, tenantSlug, role string) strin
 		t.Fatalf("identity: %v", err)
 	}
 	mid := newID()
-	if _, err := e.st.db.ExecContext(ctx,
+	if _, err := e.st.DB().ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at) VALUES(?,?,?,?, 'active', ?)`,
 		mid, ident.ID, tn.ID, role, nowTS()); err != nil {
 		t.Fatalf("membership: %v", err)
@@ -158,26 +158,12 @@ func TestDocsBridgeAuth(t *testing.T) {
 	}
 	// Deactivating the membership stops the same deterministic token immediately —
 	// role/scope is resolved live, never carried in the token.
-	if _, err := e.st.db.ExecContext(context.Background(),
+	if _, err := e.st.DB().ExecContext(context.Background(),
 		`UPDATE membership SET status='disabled' WHERE id=?`, mid); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if w := e.do(tok); w.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked: want 401 got %d", w.Code)
-	}
-}
-
-// Which adapters stage <dataDir>/docs is a fact the start path reads off the type. If an
-// ECS adapter ever claimed the marker it would copy megabytes onto the CP's disk that no
-// task can read; if docker/native lost it, their bind mount would go empty.
-func TestDocsMounterMarker(t *testing.T) {
-	var _ runtimeDocsMounter = (*dockerRuntime)(nil)
-	var _ runtimeDocsMounter = (*nativeRuntime)(nil)
-	if _, ok := any((*ecsRuntime)(nil)).(runtimeDocsMounter); ok {
-		t.Error("ecsRuntime has no host seam to mount from — it must not claim staged docs")
-	}
-	if _, ok := any((*ecsEC2Runtime)(nil)).(runtimeDocsMounter); ok {
-		t.Error("ecsEC2Runtime has no host seam to mount from — it must not claim staged docs")
 	}
 }
 

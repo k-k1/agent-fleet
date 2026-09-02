@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // createWorkspaceMu serializes port allocation (MaxAgentPort+1) と CreateWorkspace
@@ -219,7 +221,10 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 // ~/.local shadow to fall back to the baked pin — on a baked image an unattended start
 // would then uninstall ~1.3GB of CLIs that the next interactive start reinstalls. This
 // is a per-boot skip, not a policy change.
-const unattendedStartEnv = "AF_AGENT_SELF_UPDATE_SKIP=1"
+// The literal lives with the docker adapter (internal/runtime/deps.go), which reads it
+// back off a container's env to decide the health grace: the string is a contract with
+// the workspace image's entrypoint, so two spellings of it would rot in silence.
+const unattendedStartEnv = runtime.UnattendedStartEnv
 
 // runtimeForUnattended rebuilds a workspace's Runtime so its NEXT container start
 // carries unattendedStartEnv. Mirrors the construction in resolveByMembership (the
