@@ -54,15 +54,15 @@ func TestResolveRepoDirUnicode(t *testing.T) {
 	ok := []string{"日本語プロジェクト", "repo", "repo-2", "my.repo", "x@feat-1", "数字123", "café"}
 	for _, name := range ok {
 		if dir, valid := gitx.ResolveRepoDir(name); !valid {
-			t.Errorf("resolveRepoDir(%q) rejected a valid name", name)
+			t.Errorf("gitx.ResolveRepoDir(%q) rejected a valid name", name)
 		} else if filepath.Base(dir) != name {
-			t.Errorf("resolveRepoDir(%q) mapped to %q", name, dir)
+			t.Errorf("gitx.ResolveRepoDir(%q) mapped to %q", name, dir)
 		}
 	}
 	bad := []string{"", "..", "../evil", "a/b", ".hidden", "-flag", "@at", "a b", "sub\x00null"}
 	for _, name := range bad {
 		if _, valid := gitx.ResolveRepoDir(name); valid {
-			t.Errorf("resolveRepoDir(%q) accepted an unsafe name", name)
+			t.Errorf("gitx.ResolveRepoDir(%q) accepted an unsafe name", name)
 		}
 	}
 }

@@ -69,7 +69,7 @@ func TestInitRepoCreatesListedWorkingCopy(t *testing.T) {
 		t.Fatalf("GET /repos = %+v, want the new working copy", env.Repos)
 	}
 	if !env.Repos[0].Unborn {
-		t.Error("GET /repos reported unborn = false; gitStatus must read # branch.oid (initial)")
+		t.Error("GET /repos reported unborn = false; gitx.GitStatus must read # branch.oid (initial)")
 	}
 	if env.Repos[0].Branch != repo.Branch {
 		t.Errorf("branch drifted between init (%q) and list (%q)", repo.Branch, env.Repos[0].Branch)

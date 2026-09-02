@@ -193,7 +193,7 @@ func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 // コンパイルエラーになる。**この関数を経由しない assistants 呼び出しを増やさないこと。**
 func assistantDeps() assistants.Deps {
 	return assistants.NewDeps(
-		ensureBuiltinKnowledge, // //go:embed が main に残るため
-		chatx.PreferredHeadlessAgent,
+		ensureBuiltinKnowledge,       // //go:embed が main に残るため
+		chatx.PreferredHeadlessAgent, // chat 家系にあるため
 	)
 }

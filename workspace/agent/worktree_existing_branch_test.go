@@ -141,11 +141,11 @@ func TestWorktreeExistingBranchSync(t *testing.T) {
 	}
 	gitx.EnsureBranchRef(parent, "hot")
 	if _, remote := gitx.BranchNameStatus(parent, "hot"); !remote {
-		t.Fatal("ensureBranchRef did not fetch the newly pushed branch")
+		t.Fatal("gitx.EnsureBranchRef did not fetch the newly pushed branch")
 	}
 	wt, err := gitx.EnsureWorktree(parent, "hot", "", "")
 	if err != nil {
-		t.Fatalf("ensureWorktree on a remote-only branch: %v", err)
+		t.Fatalf("gitx.EnsureWorktree on a remote-only branch: %v", err)
 	}
 	if br, _ := gitx.Run(wt, "rev-parse", "--abbrev-ref", "HEAD"); br != "hot" {
 		t.Fatalf("worktree is on %q, want hot", br)
