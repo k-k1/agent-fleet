@@ -26,7 +26,7 @@ import (
 // It is a variable for the same reason `awsConfigFor` in the owning binary is one:
 // the live E2E has to run the PRODUCT under a copy of the CP task role while its own
 // verification calls keep the deployer's ambient credentials (docs/log/64 §64.22.3).
-// `control-plane/alias_store.go` therefore points this at that variable through a
+// `control-plane/store_seam.go` therefore points this at that variable through a
 // closure — resolved at call time, so overriding it in a test still reaches here.
 // The default below only matters if nobody wires it.
 var AWSConfigFor = func(ctx context.Context, region string) (aws.Config, error) {

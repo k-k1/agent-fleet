@@ -101,7 +101,7 @@ func acquireRuntimeOperationFence(ctx context.Context, rt Runtime) (func(), erro
 
 // AcquireOperationFence is the exported half of the CP's workspace fence: the DB lease
 // is the CP's to take (it owns the store), the OS-level fence is the adapter's. The CP
-// composes the two in alias_runtime.go so the order — DB first, runtime second, both
+// composes the two in runtime_seam.go so the order — DB first, runtime second, both
 // released in reverse — stays in one place.
 func AcquireOperationFence(ctx context.Context, rt Runtime) (func(), error) {
 	return acquireRuntimeOperationFence(ctx, rt)

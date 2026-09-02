@@ -21,11 +21,13 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // trustedProxyHops is how many proxies sit between the client and this process.
 // Read once at boot so a request cannot change it.
-var trustedProxyHops = envInt("AF_TRUSTED_PROXY_HOPS", 0)
+var trustedProxyHops = runtime.EnvInt("AF_TRUSTED_PROXY_HOPS", 0)
 
 type clientIPKey struct{}
 

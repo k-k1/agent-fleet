@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -484,7 +485,7 @@ func (m *manager) resolveByMembership(ctx context.Context, identityID, membershi
 }
 
 // resolve returns just the runtime (proxy/terminal handlers).
-func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (Runtime, *apiError) {
+func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (runtime.Runtime, *apiError) {
 	res, aerr := m.resolveFull(ctx, key, email, tenantSel)
 	if aerr != nil {
 		return nil, aerr

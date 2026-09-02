@@ -38,7 +38,10 @@
 //	ecs-ec2: 同上（同じ実装に委譲）。どちらも runtime_ecs_stale.go
 package main
 
-import "context"
+import (
+	"context"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+)
 
 // staleRuntime は Runtime の任意実装。停止→起動で走るコードが変わるなら true。
 // 判定できない（イメージが引けない・記録が無い）ときは false を返す契約。
@@ -48,7 +51,7 @@ type staleRuntime interface {
 
 // workspaceStale は running なワークスペースについて判定する。呼び出し元は
 // state=="running" のときだけ呼ぶこと（停止中は次の起動で必ず新しくなるので無意味）。
-func workspaceStale(ctx context.Context, rt Runtime) bool {
+func workspaceStale(ctx context.Context, rt runtime.Runtime) bool {
 	sr, ok := rt.(staleRuntime)
 	return ok && sr.Stale(ctx)
 }

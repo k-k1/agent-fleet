@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -546,7 +547,7 @@ func (a memoAPI) deleteCategory(w http.ResponseWriter, r *http.Request, _ store.
 // runtime, and stamps sent_at on those memos. Returns the flush summary. Shared core
 // between the session HTTP handler, the internal operator-token bridge, and the CP MCP
 // tool — every face funnels through this so the "send once + mark sent" stays atomic.
-func memoFlushFor(ctx context.Context, st store.MemoStore, rt Runtime, membershipID, sessionName string, ids []string, textOverride string) (map[string]any, *apiError) {
+func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, membershipID, sessionName string, ids []string, textOverride string) (map[string]any, *apiError) {
 	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
 		return nil, &apiError{http.StatusBadRequest, "bad_session", "sessionName is required"}
@@ -599,7 +600,7 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt Runtime, membershi
 // memo there incorrectly reports not_running. Old workspace images can briefly lag
 // the Control Plane during a rollout, hence the narrow fallback when /turn itself is
 // absent (a plain 404/405 rather than a structured Agent error).
-func sendMemoPrompt(ctx context.Context, rt Runtime, sessionName, prompt string) *apiError {
+func sendMemoPrompt(ctx context.Context, rt runtime.Runtime, sessionName, prompt string) *apiError {
 	path := "/sessions/" + url.PathEscape(sessionName)
 	payload, _ := json.Marshal(map[string]string{"op": "start", "prompt": prompt})
 	if _, err := agentText(ctx, rt, http.MethodPost, path+"/turn", payload); err == nil {

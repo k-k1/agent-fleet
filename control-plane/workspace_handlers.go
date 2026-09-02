@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -235,7 +236,7 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 	// Stop は「まだ存在しない」等は許容する(best-effort)が、まだ生きているなら中断する
 	// — ライブ bind-mount 配下の削除は不整合を起こすため。"starting"（起動途中で
 	// Agent 未応答）も生きている側: コンテナは走っていて home に書き込みうる。
-	if err := res.rt.Stop(lease.Context()); err != nil && workspaceAlive(res.rt.State(r.Context())) {
+	if err := res.rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(res.rt.State(r.Context())) {
 		log.Printf("recreate: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; recreate aborted"})
 		return
@@ -246,7 +247,7 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 	}
 	// Clear the working copies while the container is down. Targeted: we keep the
 	// encrypted secrets store and everything else in home.
-	if err := removeAllContext(lease.Context(), filepath.Join(a.mgr.rootedDataDir(res.ws), "home", "repos")); err != nil {
+	if err := runtime.RemoveAllContext(lease.Context(), filepath.Join(a.mgr.rootedDataDir(res.ws), "home", "repos")); err != nil {
 		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
 			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
 		} else {
@@ -297,7 +298,7 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 	}
 	// recreate と同じく、Stop 失敗かつまだ生きているなら中断(ライブ bind-mount 配下
 	// の削除を避ける)。
-	if err := res.rt.Stop(lease.Context()); err != nil && workspaceAlive(res.rt.State(r.Context())) {
+	if err := res.rt.Stop(lease.Context()); err != nil && runtime.WorkspaceAlive(res.rt.State(r.Context())) {
 		log.Printf("clean-home: stop failed for ws %s (still running, aborting wipe): %v", res.ws.ID, err)
 		writeAPIErr(w, &apiError{http.StatusInternalServerError, "stop_failed", "could not stop the workspace; clean-home aborted"})
 		return
@@ -308,7 +309,7 @@ func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *res
 	}
 	// Wipe home (keep-list preserved) while the container is down — deleting under a
 	// live bind-mount risks inconsistency (see cleanHome's contract in runtime_docker.go).
-	if err := cleanHomeContext(lease.Context(), a.mgr.rootedDataDir(res.ws)); err != nil {
+	if err := runtime.CleanHomeContext(lease.Context(), a.mgr.rootedDataDir(res.ws)); err != nil {
 		if leaseErr := lease.checkpoint(r.Context()); leaseErr != nil {
 			writeAPIErr(w, workspaceLifecycleLeaseError(leaseErr))
 		} else {
@@ -350,7 +351,7 @@ func (a workspaceAPI) ensureWorkspaceStarted(ctx context.Context, res *resolved)
 func (a workspaceAPI) ensureWorkspaceReady(ctx context.Context, res *resolved) *apiError {
 	// 期限は **入口で 1 回** 決める。Start 自身も同期猶予ぶん待つので、そこを数えないと
 	// 「起動の待ち＋到達の待ち」で合計が ingress の上限を越え、応答ごと消える。
-	deadline := time.Now().Add(agentReadyWait())
+	deadline := time.Now().Add(runtime.AgentReadyWait())
 	if aerr := a.ensureWorkspaceStarted(ctx, res); aerr != nil {
 		return aerr
 	}
@@ -358,7 +359,7 @@ func (a workspaceAPI) ensureWorkspaceReady(ctx context.Context, res *resolved) *
 		return nil // 既に応答している(=印が落ちている)。追加の probe すら要らない。
 	}
 	if remaining := time.Until(deadline); remaining > 0 {
-		err := waitAgentHealthy(ctx, res.rt.Endpoint(), remaining)
+		err := runtime.WaitAgentHealthy(ctx, res.rt.Endpoint(), remaining)
 		if err == nil {
 			return nil
 		}
@@ -389,7 +390,7 @@ func (a workspaceAPI) ensureWorkspaceStartedUnattended(ctx context.Context, res 
 // Serialized per workspace locally (startLockFor) and across CP replicas (owner
 // lease): the state check and Start form a check-then-act that explicit starts,
 // auto-starts and scheduler wake must not interleave.
-func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolved, rt Runtime, extraEnv ...string) *apiError {
+func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolved, rt runtime.Runtime, extraEnv ...string) *apiError {
 	lock := a.mgr.startLockFor(res.ws.ID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -406,7 +407,7 @@ func (a workspaceAPI) ensureWorkspaceStartedRT(ctx context.Context, res *resolve
 	return a.ensureWorkspaceStartedRTLocked(lease.Context(), res, rt, lease, extraEnv...)
 }
 
-func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *resolved, rt Runtime, lease *workspaceLifecycleLeaseGuard, extraEnv ...string) *apiError {
+func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *resolved, rt runtime.Runtime, lease *workspaceLifecycleLeaseGuard, extraEnv ...string) *apiError {
 	if err := lease.checkpoint(ctx); err != nil {
 		return workspaceLifecycleLeaseError(err)
 	}
@@ -450,7 +451,7 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	// read it (the task has no path into the CP's filesystem), so staging there would
 	// just copy megabytes onto the CP's disk for nobody; that container pulls the same
 	// tree over /internal/docs instead (docs_bridge.go).
-	if _, mounts := rt.(runtimeDocsMounter); mounts {
+	if _, mounts := rt.(runtime.DocsMounter); mounts {
 		if err := stageWorkspaceDocs(a.mgr.rootedDataDir(res.ws)); err != nil {
 			log.Printf("stage workspace docs (ws=%s): %v", res.ws.ID, err)
 		}
@@ -471,14 +472,14 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		return internalErr(err)
 	}
 	if err := lease.checkpoint(ctx); err != nil {
-		if f, ok := rt.(runtimeStartFencer); ok {
+		if f, ok := rt.(runtime.StartFencer); ok {
 			abortCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			_ = f.AbortUncommittedStart(abortCtx)
 			cancel()
 		}
 		return workspaceLifecycleLeaseError(err)
 	}
-	if f, ok := rt.(runtimeStartFencer); ok {
+	if f, ok := rt.(runtime.StartFencer); ok {
 		f.CommitStart()
 	}
 	_ = a.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")

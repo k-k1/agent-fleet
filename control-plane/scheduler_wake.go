@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -188,10 +189,10 @@ func (f *wakeFirer) scheduleRelease(release func()) {
 // after Start" clock even begins. A budget picked against that number is ~20s tighter than
 // it reads (measured on the acrt deployment: a fire that logged "healthy 73s after Start"
 // was 93.8s after the wake, and was dropped by the old 90s budget).
-func (f *wakeFirer) awaitAgentReady(ctx context.Context, rt Runtime) error {
+func (f *wakeFirer) awaitAgentReady(ctx context.Context, rt runtime.Runtime) error {
 	deadline := time.Now().Add(f.readyTimeout)
 	if f.readyTimeout <= 0 {
-		deadline = time.Now().Add(agentBootBudget)
+		deadline = time.Now().Add(runtime.AgentBootBudget)
 	}
 	var lastErr error
 	for {
@@ -215,7 +216,7 @@ func (f *wakeFirer) awaitAgentReady(ctx context.Context, rt Runtime) error {
 // returns the created session's name so the run history can link to it. The idempotency
 // key collapses a retry onto the first session, and the Agent replays that session's wire
 // body verbatim, so the returned name is stable across a CP restart that re-fires the slot.
-func (f *wakeFirer) injectSession(ctx context.Context, rt Runtime, body []byte) (string, error) {
+func (f *wakeFirer) injectSession(ctx context.Context, rt runtime.Runtime, body []byte) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", rt.Endpoint()+"/sessions", bytes.NewReader(body))
 	if err != nil {
 		return "", err

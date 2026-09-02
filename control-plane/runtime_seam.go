@@ -1,19 +1,16 @@
-// alias_runtime.go — the CP's side of the Runtime seam.
+// runtime_seam.go — the CP's side of the Runtime seam.
 //
-// The four Runtime adapters (docker / ecs / ecs-ec2 / native), the health probes and
-// the EC2 golden reader live in internal/runtime. This file is the only place that
-// knows that: every other file in the CP goes on writing `Runtime`, `ec2PoolStatus`,
-// `waitAgentHealthy` and the rest exactly as before (ADR 0067 決定 3 — エイリアス移送).
+// The four Runtime adapters (docker / ecs / ecs-ec2 / native), the health probes and the
+// EC2 golden reader live in internal/runtime, and the rest of the CP now names them
+// directly as runtime.X (ADR 0067 決定 2 — the alias-collection pass; this file is what
+// alias_runtime.go left behind once its 39 aliases were gone).
 //
-// Three kinds of entry live here and nothing else:
-//   - aliases, so a moved name still resolves on this side;
-//   - the boot wiring the adapters cannot do for themselves (the shared /healthz
-//     client, the Cloud Map resolver), injected once from main;
-//   - the two compositions that genuinely span the seam — the workspace fence (DB
-//     lease + OS fence) and the hibernation assertion.
-//
-// Collapsing this file is a job for the alias-collection pass at the wave boundary,
-// not for the tracks running in parallel with it.
+// What stays here is only what is NOT an alias:
+//   - the boot wiring the adapters cannot do for themselves (the shared /healthz client,
+//     the Cloud Map resolver), injected once from main;
+//   - awsConfigFor, which must dispatch per call and therefore cannot be an alias;
+//   - the two compositions that genuinely span the seam — the workspace fence (DB lease +
+//     OS fence) and the hibernation assertion.
 package main
 
 import (
@@ -25,85 +22,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// --- the port and its data ----------------------------------------------------------
-
-type (
-	// Runtime / RuntimeFactory are the port itself.
-	Runtime        = runtime.Runtime
-	RuntimeFactory = runtime.RuntimeFactory
-
-	// The optional capabilities the CP tests a Runtime value for.
-	runtimeDocsMounter = runtime.DocsMounter
-	runtimeStartFencer = runtime.StartFencer
-
-	// The EC2 pool's reported shape, and the golden bake's view of a snapshot and of
-	// the seed's home volume.
-	ec2PoolStatus     = runtime.EC2PoolStatus
-	goldenBakePool    = runtime.GoldenBakePool
-	goldenSeedRuntime = runtime.GoldenSeedRuntime
-	goldenSnap        = runtime.GoldenSnap
-	goldenHome        = runtime.GoldenHome
-)
-
-// --- constants the CP quotes back ---------------------------------------------------
-
-const (
-	// The EC2 resource tags. The CP reads them when it audits or explains a resource;
-	// the adapter is what writes them.
-	ec2TagPool       = runtime.EC2TagPool
-	ec2TagRole       = runtime.EC2TagRole
-	ec2TagTenant     = runtime.EC2TagTenant
-	ec2TagMembership = runtime.EC2TagMembership
-	ec2TagSlotSize   = runtime.EC2TagSlotSize
-	ec2TagWorkspace  = runtime.EC2TagWorkspace
-	ec2TagBakeReason = runtime.EC2TagBakeReason
-
-	// Tags the cost/audit views quote back when they explain a resource.
-	ec2TagClaim       = runtime.EC2TagClaim
-	ec2TagIdleSince   = runtime.EC2TagIdleSince
-	ec2TagHibernating = runtime.EC2TagHibernating
-	ec2TagBackupAt    = runtime.EC2TagBackupAt
-
-	ec2RoleGolden          = runtime.EC2RoleGolden
-	ec2RoleGoldenCandidate = runtime.EC2RoleGoldenCandidate
-	ec2RoleGoldenRejected  = runtime.EC2RoleGoldenRejected
-
-	ec2ArchX86 = runtime.EC2ArchX86
-	ec2ArchArm = runtime.EC2ArchArm
-
-	// Bake phases the CP's pool-status glue rewrites (workspace_lifecycle.go).
-	ec2BakePhaseIdle    = runtime.EC2BakePhaseIdle
-	ec2BakePhaseBlocked = runtime.EC2BakePhaseBlocked
-	ec2BakePhaseOff     = runtime.EC2BakePhaseOff
-
-	// bakeReservedSlots is what a bake needs free at once, subtracted from the pool
-	// cap by the tenant-quota comparison in limits.go.
-	bakeReservedSlots = runtime.BakeReservedSlots
-
-	// agentBootBudget is the ceiling on how long a first boot may take.
-	agentBootBudget = runtime.AgentBootBudget
-)
-
-// --- functions ----------------------------------------------------------------------
-//
-// These ten are plain funcs on the far side, so binding them once to a var here is a
-// stable copy of a function value and holds no surprise. awsConfigFor below is NOT one
-// of them — see why.
-
-var (
-	agentReadyWait      = runtime.AgentReadyWait
-	waitAgentHealthy    = runtime.WaitAgentHealthy
-	workspaceAlive      = runtime.WorkspaceAlive
-	destroyRuntime      = runtime.DestroyRuntime
-	cleanHomeContext    = runtime.CleanHomeContext
-	removeAllContext    = runtime.RemoveAllContext
-	dockerPublishedPort = runtime.DockerPublishedPort
-	dockerEnvValue      = runtime.DockerEnvValue
-	envInt              = runtime.EnvInt
-)
-
 // awsConfigFor is where the CP's own AWS clients get their credentials (cloudcost.go's
-// Cost Explorer, and the store's Secrets Manager reader via alias_store.go).
+// Cost Explorer, and the store's Secrets Manager reader via store_seam.go).
 //
 // ⚠️ It is a FUNCTION, deliberately, and must not become `var awsConfigFor =
 // runtime.AWSConfigFor`. runtime.AWSConfigFor is itself a variable — the one seam the
@@ -129,7 +49,7 @@ func awsConfigFor(ctx context.Context, region string) (aws.Config, error) {
 // discovers its default tenant id late — workspace_lifecycle.go's adoption pass assigns
 // it after boot — and a factory that had copied the value would keep re-basing homes
 // against the empty one.
-func newRuntimeFactory(profile string, m *manager) (RuntimeFactory, error) {
+func newRuntimeFactory(profile string, m *manager) (runtime.RuntimeFactory, error) {
 	return runtime.NewFactory(profile, runtime.Config{
 		Image:       m.image,
 		AgentHost:   m.agentHost,
@@ -159,7 +79,7 @@ func init() {
 // acquireWorkspaceOperationFence takes both fences a lifecycle operation needs: the DB
 // lease (the CP owns the store) and, on the adapters that have one, an OS-level fence.
 // Released in reverse.
-func (m *manager) acquireWorkspaceOperationFence(ctx context.Context, workspaceID string, rt Runtime) (func(), error) {
+func (m *manager) acquireWorkspaceOperationFence(ctx context.Context, workspaceID string, rt runtime.Runtime) (func(), error) {
 	releaseDB, err := m.store.AcquireWorkspaceOperationFence(ctx, workspaceID)
 	if err != nil {
 		return nil, err

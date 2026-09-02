@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 const (
@@ -102,7 +103,7 @@ func browserAgentHTTPURL(endpoint string, r *http.Request) (string, error) {
 	return target.String(), nil
 }
 
-func browserRuntimeReady(w http.ResponseWriter, r *http.Request, rt Runtime) bool {
+func browserRuntimeReady(w http.ResponseWriter, r *http.Request, rt runtime.Runtime) bool {
 	switch rt.State(r.Context()) {
 	case "running":
 		return true

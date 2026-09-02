@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -185,7 +186,7 @@ func TestCloudCostPollerAsksOnceWithBothAxes(t *testing.T) {
 	if len(in.GroupBy) != 2 {
 		t.Fatalf("GroupBy = %+v, want (tag, service)", in.GroupBy)
 	}
-	if aws.ToString(in.GroupBy[0].Key) != ec2TagMembership || in.GroupBy[0].Type != cetypes.GroupDefinitionTypeTag {
+	if aws.ToString(in.GroupBy[0].Key) != runtime.EC2TagMembership || in.GroupBy[0].Type != cetypes.GroupDefinitionTypeTag {
 		t.Errorf("first axis = %+v, want the af-membership tag", in.GroupBy[0])
 	}
 	// End is EXCLUSIVE. Asking through today would leave today out — and today is the

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -99,7 +100,7 @@ func (m *manager) tenantsInScope(ctx context.Context, tenantID string) ([]store.
 // sessionsForOverview returns a workspace's sessions for the admin overview: live
 // from the Agent when running (with a computed Started), else the DB mirror marked
 // stopped/resumable. Mirrors workspaceAPI.sessionsList so the two views agree.
-func (m *manager) sessionsForOverview(ctx context.Context, ws store.Workspace, rt Runtime, state string) []sessionWire {
+func (m *manager) sessionsForOverview(ctx context.Context, ws store.Workspace, rt runtime.Runtime, state string) []sessionWire {
 	if state == "running" {
 		if list, err := m.agentSessions(ctx, rt); err == nil {
 			for i := range list {
