@@ -129,7 +129,7 @@ type TenantIdPRegistry struct {
 // every admin write only reaches this process).
 //
 // ★ One value serves both caches — this registry and the tenant login-rule cache
-// in control-plane/tenant_login.go, which reads it back through alias_auth.go.
+// in control-plane/tenant_login.go, which reads it back directly.
 // They answer the same operational question ("how long until an admin change is
 // live everywhere"), so they must not be allowed to drift apart.
 const TenantRuleTTL = 30 * time.Second
@@ -396,5 +396,5 @@ func TenantLabelSuffix(base string, tn store.TenantRef, lang string) string {
 
 // TenantLinkClaimAllowed reports membership in the closed set above. The set is a
 // map and therefore a variable; callers outside this package go through this
-// function so that nobody ends up reading a copy of it (alias_auth.go).
+// function so that nobody ends up reading a copy of it.
 func TenantLinkClaimAllowed(claim string) bool { return TenantLinkClaims[claim] }

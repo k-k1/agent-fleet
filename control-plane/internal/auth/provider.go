@@ -15,7 +15,7 @@ import (
 // built on, so bringing them along would mean moving those two types with them
 // (ADR 0067 決定 1: a family that reaches back into the original package is out of
 // scope for the transport). They stay in control-plane/oauth*.go and reach in
-// here through the aliases in alias_auth.go.
+// here directly (the alias_auth.go layer was reclaimed in RECLAIM-B).
 
 // googleProviderID is also the transitional default for sessions and state
 // cookies minted before providers existed (they carry no provider id).

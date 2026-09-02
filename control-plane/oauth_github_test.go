@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"io"
 	"log"
 	"net/http"
@@ -109,17 +110,17 @@ func newStubGitHub(t *testing.T, s *stubGitHub) *stubGitHub {
 
 // stubGitHubProvider wires the adapter at its defaults (10m TTL / 1h grace)
 // against the stub, with acme.co.jp as the email gate.
-func stubGitHubProvider(gh *stubGitHub, orgs ...string) *githubProvider {
+func stubGitHubProvider(gh *stubGitHub, orgs ...string) *auth.GitHubProvider {
 	if len(orgs) == 0 {
 		orgs = []string{"acme"}
 	}
-	return &githubProvider{
-		ProviderID: githubProviderID, LabelJA: "GitHub でサインイン", LabelEN: "Sign in with GitHub",
+	return &auth.GitHubProvider{
+		ProviderID: auth.GithubProviderID, LabelJA: "GitHub でサインイン", LabelEN: "Sign in with GitHub",
 		ClientID: "client-id", ClientSecret: "client-secret",
 		AllowedOrgs:  orgs,
 		AllowDomains: domainSet("acme.co.jp"),
-		TTL:          githubDefaultTTL,
-		Grace:        githubDefaultGrace,
+		TTL:          auth.GithubDefaultTTL,
+		Grace:        auth.GithubDefaultGrace,
 		WebBase:      gh.URL, APIBase: gh.URL, HTTPClient: gh.Client(),
 	}
 }
@@ -147,8 +148,8 @@ func TestGitHubLoginUsesTheNumericIDAndPrimaryVerifiedEmail(t *testing.T) {
 	if !strings.HasPrefix(au.String(), gh.URL+"/login/oauth/authorize") {
 		t.Fatalf("authorize URL = %s", au)
 	}
-	if got := au.Query().Get("scope"); got != githubScopes {
-		t.Fatalf("scope = %q, want %q (read:org drives the membership check, user:email the verified address)", got, githubScopes)
+	if got := au.Query().Get("scope"); got != auth.GithubScopes {
+		t.Fatalf("scope = %q, want %q (read:org drives the membership check, user:email the verified address)", got, auth.GithubScopes)
 	}
 
 	w := callback(t, cfg, state, "code", au.Query().Get("state"))
@@ -168,7 +169,7 @@ func TestGitHubLoginUsesTheNumericIDAndPrimaryVerifiedEmail(t *testing.T) {
 		t.Fatalf("claims: %v", err)
 	}
 	switch {
-	case claims.Prov != githubProviderID:
+	case claims.Prov != auth.GithubProviderID:
 		t.Fatalf("prov = %q", claims.Prov)
 	case claims.Sub != "99001":
 		t.Fatalf("sub = %q, want the numeric account id 99001 (a login name can be renamed and re-registered)", claims.Sub)
@@ -294,7 +295,7 @@ func TestGitHubProviderRequiresItsOrgList(t *testing.T) {
 			t.Setenv("AF_GITHUB_LOGIN_CLIENT_SECRET", "")
 			var logs strings.Builder
 			restore := captureLog(&logs)
-			p := newGitHubProvider(func(string) bool { return true }, nil, true)
+			p := auth.NewGitHubProvider(func(string) bool { return true }, nil, true)
 			restore()
 			if (p != nil) != tc.wantProvider {
 				t.Fatalf("provider = %v, want configured=%v", p, tc.wantProvider)
@@ -311,7 +312,7 @@ func TestGitHubProviderRequiresItsOrgList(t *testing.T) {
 			if strings.Join(p.AllowedOrgs, ",") != strings.Join(tc.wantOrgsLowercase, ",") {
 				t.Fatalf("orgs = %v, want %v (org 名は大小文字を区別しない)", p.AllowedOrgs, tc.wantOrgsLowercase)
 			}
-			if p.TTL != githubDefaultTTL || p.Grace != githubDefaultGrace {
+			if p.TTL != auth.GithubDefaultTTL || p.Grace != auth.GithubDefaultGrace {
 				t.Fatalf("ttl=%s grace=%s, want the documented defaults", p.TTL, p.Grace)
 			}
 		})
@@ -326,7 +327,7 @@ func TestGitHubLoginClientIDOverridesTheSharedOne(t *testing.T) {
 	t.Setenv("AF_GITHUB_LOGIN_CLIENT_ID", "login-app")
 	t.Setenv("AF_GITHUB_LOGIN_CLIENT_SECRET", "login-secret")
 	t.Setenv("AF_GITHUB_ALLOWED_ORGS", "acme")
-	p := newGitHubProvider(func(string) bool { return true }, nil, true)
+	p := auth.NewGitHubProvider(func(string) bool { return true }, nil, true)
 	if p == nil {
 		t.Fatal("provider not configured")
 	}
@@ -342,7 +343,7 @@ func TestGitHubIDIsReservedAgainstAnOIDCProvider(t *testing.T) {
 	t.Setenv("AF_OIDC_GITHUB_ISSUER", "https://github.example.com")
 	t.Setenv("AF_OIDC_GITHUB_CLIENT_ID", "cid")
 	t.Setenv("AF_OIDC_GITHUB_CLIENT_SECRET", "sec")
-	t.Setenv("AF_OIDC_GITHUB_TRUST", trustEmailVerified)
+	t.Setenv("AF_OIDC_GITHUB_TRUST", auth.TrustEmailVerified)
 	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "cid")
 	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "sec")
 	t.Setenv("AF_GITHUB_ALLOWED_ORGS", "acme")
@@ -353,9 +354,9 @@ func TestGitHubIDIsReservedAgainstAnOIDCProvider(t *testing.T) {
 	}
 	var n int
 	for _, p := range ps {
-		if p.ID() == githubProviderID {
+		if p.ID() == auth.GithubProviderID {
 			n++
-			if _, isGH := p.(*githubProvider); isGH {
+			if _, isGH := p.(*auth.GitHubProvider); isGH {
 				t.Fatal("OIDC 側が先に id を取っているのに GitHub アダプタも登録された")
 			}
 		}
@@ -372,7 +373,7 @@ func TestGitHubIDIsReservedAgainstAnOIDCProvider(t *testing.T) {
 func TestGitHubMembershipIsRecheckedAfterTheTTL(t *testing.T) {
 	gh := newStubGitHub(t, &stubGitHub{})
 	p := stubGitHubProvider(gh)
-	pr := principal{Provider: githubProviderID, Subject: "4242", Email: "yamada@acme.co.jp"}
+	pr := auth.Principal{Provider: auth.GithubProviderID, Subject: "4242", Email: "yamada@acme.co.jp"}
 
 	if _, err := p.Exchange(t.Context(), "code", "https://af.example.com/oauth2/callback"); err != nil {
 		t.Fatalf("login: %v", err)
@@ -411,7 +412,7 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 
 	b, _ := json.Marshal(sessionClaims{
 		Email: "yamada@acme.co.jp", Exp: time.Now().Add(time.Hour).Unix(),
-		Prov: githubProviderID, Sub: "4242",
+		Prov: auth.GithubProviderID, Sub: "4242",
 	})
 	cookie := &http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)}
 	gate := cfg.authGate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -431,7 +432,7 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 	if got := u.Query().Get("error"); got != "reauth" {
 		t.Fatalf("error = %q, want reauth（メンバーのままの人に「許可されていません」は誤り）", got)
 	}
-	if page := loginErrorBlock("reauth", "ja"); !strings.Contains(page, "もう一度サインイン") {
+	if page := auth.LoginErrorBlock("reauth", "ja"); !strings.Contains(page, "もう一度サインイン") {
 		t.Fatalf("reauth の文言が出ていない: %s", page)
 	}
 
@@ -447,7 +448,7 @@ func TestGitHubSessionAfterARestartAsksForAFreshLogin(t *testing.T) {
 	// 一方、本当に許可されていない人（ドメイン外）は従来どおり forbidden のまま。
 	b, _ = json.Marshal(sessionClaims{
 		Email: "someone@personal.dev", Exp: time.Now().Add(time.Hour).Unix(),
-		Prov: githubProviderID, Sub: "4242",
+		Prov: auth.GithubProviderID, Sub: "4242",
 	})
 	r = httptest.NewRequest(http.MethodGet, "/api/tenants", nil)
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: cfg.signCookie(b)})

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -31,7 +32,7 @@ import (
 
 // tenantRuleTTL moved to internal/auth (auth.TenantRuleTTL) because the
 // tenant-defined provider registry went there and uses the same value; it is
-// reachable here under its original name through alias_auth.go.
+// called directly on internal/auth (the alias_auth.go layer was reclaimed).
 
 // tenantLoginStore is the narrow store view this cache needs.
 type tenantLoginStore interface {
@@ -71,7 +72,7 @@ type memberAnswer struct {
 }
 
 func newTenantLoginCache(st tenantLoginStore) *tenantLoginCache {
-	return &tenantLoginCache{store: st, ttl: tenantRuleTTL, members: map[string]memberAnswer{}}
+	return &tenantLoginCache{store: st, ttl: auth.TenantRuleTTL, members: map[string]memberAnswer{}}
 }
 
 // invalidate drops everything. Called by every admin write that can change who may

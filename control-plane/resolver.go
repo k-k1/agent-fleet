@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -57,7 +58,7 @@ func (m *manager) resolveUser(r *http.Request) string { return m.resolveIdentity
 //     proof of being that person (LinkIdentity's rule 2').
 func (m *manager) upsertIdentity(ctx context.Context, email, key, roleHint string) (store.Identity, error) {
 	if ref, ok := loginRefFrom(ctx); ok {
-		tenantDefined := isTenantProviderID(ref.provider)
+		tenantDefined := auth.IsTenantProviderID(ref.provider)
 		if tenantDefined {
 			roleHint = ""
 		}
@@ -243,7 +244,7 @@ func (m *manager) hasAnyMembershipRow(ctx context.Context, identityID, tenantID 
 // controls that issuer, so the only tenant its assertions may open is theirs.
 func (m *manager) checkTenantProvider(ctx context.Context, mv store.MembershipView) *apiError {
 	prov := sessionProviderFrom(ctx)
-	if slug, _, ok := parseTenantProviderID(prov); ok && slug != mv.TenantSlug {
+	if slug, _, ok := auth.ParseTenantProviderID(prov); ok && slug != mv.TenantSlug {
 		return &apiError{http.StatusForbidden, "provider_required",
 			"tenant " + mv.TenantSlug + " cannot be used with a sign-in method defined by tenant " + slug}
 	}

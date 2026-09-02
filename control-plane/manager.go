@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -111,7 +112,7 @@ type manager struct {
 	// gives: config is copied by value into every handler, so a set stored there
 	// could never change without a restart — and approving or suspending a
 	// subsidiary's IdP has to take effect at once.
-	tenantIdP *tenantIdPRegistry
+	tenantIdP *auth.TenantIdPRegistry
 	// knownProviderIDs is the set of ENV-defined login provider ids this deployment
 	// enabled, so the admin API can refuse a tenant rule naming one that does not
 	// exist. nil in AUTH=proxy/dev, where the check is skipped.
@@ -183,7 +184,7 @@ type resolved struct {
 // default tenant keeps the flat af-ws-<key> scheme so the existing live
 // deployment is reused unchanged; other tenants are scoped by slug.
 func (m *manager) workspaceNames(slug, key string) (name, network, dataDir string) {
-	if slug == defaultTenantSlug {
+	if slug == auth.DefaultTenantSlug {
 		return "af-ws-" + key, "af-net-" + key, filepath.Join(m.dataRoot, key)
 	}
 	return "af-ws-" + slug + "-" + key, "af-net-" + slug + "-" + key, filepath.Join(m.dataRoot, slug, key)

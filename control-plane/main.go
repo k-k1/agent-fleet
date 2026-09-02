@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -51,8 +52,8 @@ type config struct {
 	allowEmailsFile    string          // emails.txt-style allowlist, read live per callback
 	// Enabled login providers, in login-page display order, plus the id lookup the
 	// callback resolves state against. Built by buildLoginProviders/setProviders.
-	providers    []loginProvider
-	providerByID map[string]loginProvider
+	providers    []auth.LoginProvider
+	providerByID map[string]auth.LoginProvider
 	autostart    bool // P3-9: on-demand start of a stopped workspace on intentful access
 	// Egress observation (docs/log/20 M2, log-only). egressToken authenticates the
 	// forward proxy's POST /internal/egress; egressDedup collapses would-block audit
@@ -160,7 +161,7 @@ func main() {
 	// Tenant-defined login providers (docs/log/61 §61.11). Unlike the env providers built
 	// below, this set is read from the database on demand, so approving a subsidiary's
 	// IdP needs no restart (決定 29).
-	mgr.tenantIdP = newTenantIdPRegistry(st, mgr.openTenantSecret)
+	mgr.tenantIdP = auth.NewTenantIdPRegistry(st, mgr.openTenantSecret)
 	if dt, err := st.EnsureDefaultTenant(ctx); err != nil {
 		log.Fatalf("ensure default tenant: %v", err)
 	} else {
@@ -397,7 +398,7 @@ func main() {
 		// the set just built knows which id is which IdP — and rule 1.5 refuses to
 		// act on a realm it had to guess. A failure is logged, never fatal: the
 		// consequence is one join that falls back to today's behavior.
-		if realm := providerRealm(p); realm != "" {
+		if realm := auth.ProviderRealm(p); realm != "" {
 			if err := mgr.store.FillProviderRealm(ctx, p.ID(), realm); err != nil {
 				log.Printf("WARNING: recording the realm of login provider %q: %v", p.ID(), err)
 			}
@@ -424,7 +425,7 @@ func main() {
 		// domain (docs/log/61 §61.9.6), which is the whole point of the invite-run
 		// deployment — no AF_OAUTH_ALLOWED_* at all. So check the database before
 		// warning, and only say "every login is denied" when that is actually true.
-		if !cfg.hasDeploymentAllowlist() && !anyProviderAllowlist(cfg.providers) {
+		if !cfg.hasDeploymentAllowlist() && !auth.AnyProviderAllowlist(cfg.providers) {
 			hasRoster, err := mgr.store.AnyActiveMembership(ctx)
 			// A tenant-defined provider carries its own (mandatory) domain list
 			// (docs/log/61 §61.11), so an approved one is also a way in — counting it keeps

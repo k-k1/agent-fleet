@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -131,7 +132,7 @@ func TestRule15IgnoresRowsWithoutAStableClaim(t *testing.T) {
 func TestAttachRefusesAnAccountFoundByTheStableClaim(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 
-	me, _, err := st.LinkIdentity(ctx, linkOf(googleProviderID, "g-1", "yamada@acme.co.jp", true))
+	me, _, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-1", "yamada@acme.co.jp", true))
 	if err != nil {
 		t.Fatalf("me: %v", err)
 	}
@@ -189,10 +190,10 @@ func TestTenantLinkClaimIsWhitelistedOnSaveAndAtRuntime(t *testing.T) {
 	// プロバイダに組まれない。
 	bad := rows[0]
 	bad.LinkClaim = "email"
-	if _, err := buildTenantProvider(bad, store.TenantRef{Slug: "sub", Name: "子会社"}, "s"); err == nil {
+	if _, err := auth.BuildTenantProvider(bad, store.TenantRef{Slug: "sub", Name: "子会社"}, "s"); err == nil {
 		t.Fatal("実行時側の検証が無い — 保存できてしまえば承認後に効いてしまう")
 	}
-	if _, err := buildTenantProvider(rows[0], store.TenantRef{Slug: "sub", Name: "子会社"}, "s"); err != nil {
+	if _, err := auth.BuildTenantProvider(rows[0], store.TenantRef{Slug: "sub", Name: "子会社"}, "s"); err != nil {
 		t.Fatalf("oid の行は組めるはず: %v", err)
 	}
 	// ★ github 行は 2 本目の鍵を持たない（subject が最初から全アプリ共通）。
@@ -201,7 +202,7 @@ func TestTenantLinkClaimIsWhitelistedOnSaveAndAtRuntime(t *testing.T) {
 	}
 	rows, _ = stt.ListTenantIdPs(ctx, tn.ID)
 	for _, row := range rows {
-		if row.Kind == tenantIdPKindGitHub && row.LinkClaim != "" {
+		if row.Kind == auth.TenantIdPKindGitHub && row.LinkClaim != "" {
 			t.Fatalf("github 行に link_claim が残っている: %+v", row)
 		}
 	}
@@ -211,8 +212,8 @@ func TestTenantLinkClaimIsWhitelistedOnSaveAndAtRuntime(t *testing.T) {
 // が変わる — 既存アカウントに届くボタンが増えるので、承認者が見るべき変更。
 func TestLinkClaimChangeRepends(t *testing.T) {
 	active := store.TenantIdP{
-		Kind: tenantIdPKindOIDC, Status: "active", ClientID: "c", Issuer: entraIssuer,
-		Trust: trustIssuer, AllowedDomains: "sub.co.jp",
+		Kind: auth.TenantIdPKindOIDC, Status: "active", ClientID: "c", Issuer: entraIssuer,
+		Trust: auth.TrustIssuer, AllowedDomains: "sub.co.jp",
 	}
 	next := active
 	next.LinkClaim = "oid"
@@ -238,7 +239,7 @@ func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 		},
 		userinfoClaims: map[string]any{"sub": "pairwise-A", "email": "yamada@acme.co.jp", "email_verified": true},
 	})
-	p := stubProvider("entra", idp, trustEmailVerified)
+	p := stubProvider("entra", idp, auth.TrustEmailVerified)
 	p.LinkClaim = "oid"
 	pr, err := p.Exchange(t.Context(), "code", "https://af.example.com/oauth2/callback")
 	if err != nil {
@@ -251,7 +252,7 @@ func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 		t.Fatalf("realm claim = %q / %q", pr.RealmClaim, pr.RealmSubject)
 	}
 	// クレームを出さない IdP では両方空 — 空同士で当たらないための前提。
-	p2 := stubProvider("okta", idp, trustEmailVerified)
+	p2 := stubProvider("okta", idp, auth.TrustEmailVerified)
 	p2.LinkClaim = "employee_id"
 	pr2, err := p2.Exchange(t.Context(), "code", "https://af.example.com/oauth2/callback")
 	if err != nil {
@@ -261,7 +262,7 @@ func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 		t.Fatalf("出ていないクレームで値が入った: %q / %q", pr2.RealmClaim, pr2.RealmSubject)
 	}
 	// 名乗らなければ何も読まない。
-	p3 := stubProvider("plain", idp, trustEmailVerified)
+	p3 := stubProvider("plain", idp, auth.TrustEmailVerified)
 	pr3, err := p3.Exchange(t.Context(), "code", "https://af.example.com/oauth2/callback")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -25,14 +26,14 @@ import (
 
 func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 	base := store.TenantIdP{
-		Name: "github", Kind: tenantIdPKindGitHub, ClientID: "c",
+		Name: "github", Kind: auth.TenantIdPKindGitHub, ClientID: "c",
 		AllowedOrgs: "Acme-Sub, other", AllowedDomains: "@sub.co.jp",
 	}
-	p, err := buildTenantProvider(base, store.TenantRef{Slug: "sub"}, "s")
+	p, err := auth.BuildTenantProvider(base, store.TenantRef{Slug: "sub"}, "s")
 	if err != nil {
 		t.Fatalf("the valid row must build: %v", err)
 	}
-	gh, ok := p.(*githubProvider)
+	gh, ok := p.(*auth.GitHubProvider)
 	if !ok {
 		t.Fatalf("kind=github must build the GitHub adapter, got %T", p)
 	}
@@ -53,8 +54,8 @@ func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 	}
 	// realm は「どこで身元が証明されたか」。これが env の GitHub と一致することが
 	// 規則 1.5 の前提（一致しなければ別人になる）。
-	if providerRealm(gh) != githubWebBase {
-		t.Fatalf("realm = %q", providerRealm(gh))
+	if auth.ProviderRealm(gh) != auth.GithubWebBase {
+		t.Fatalf("realm = %q", auth.ProviderRealm(gh))
 	}
 	// ★ デプロイ共通の許可リストにも名簿にもフォールバックしない（決定 32-3）。
 	if gh.DeployAllowed != nil || gh.DBAllowed != nil || gh.DeployHasList {
@@ -71,12 +72,12 @@ func TestTenantGitHubRowBuildsTheGitHubAdapter(t *testing.T) {
 	for label, mutate := range bad {
 		row := base
 		mutate(&row)
-		if _, err := buildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s"); err == nil {
+		if _, err := auth.BuildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s"); err == nil {
 			t.Fatalf("%s: must be refused", label)
 		}
 	}
 	// 秘密が空（復号できなかった等）でも組めてはいけない。
-	if _, err := buildTenantProvider(base, store.TenantRef{Slug: "sub"}, ""); err == nil {
+	if _, err := auth.BuildTenantProvider(base, store.TenantRef{Slug: "sub"}, ""); err == nil {
 		t.Fatal("an empty client_secret must be refused")
 	}
 }
@@ -127,10 +128,10 @@ func TestTenantGitHubSaveTimeValidation(t *testing.T) {
 	// ★ issuer と trust はフォームから来ない。github 行の身元の出どころは 1 つしか
 	// なく、そこを行が名乗れると登録簿と監査ログが嘘をつく。
 	switch row := rows[0]; {
-	case row.Issuer != githubWebBase:
-		t.Fatalf("issuer = %q, want the constant %q", row.Issuer, githubWebBase)
-	case row.Trust != trustAPI:
-		t.Fatalf("trust = %q, want %q", row.Trust, trustAPI)
+	case row.Issuer != auth.GithubWebBase:
+		t.Fatalf("issuer = %q, want the constant %q", row.Issuer, auth.GithubWebBase)
+	case row.Trust != auth.TrustAPI:
+		t.Fatalf("trust = %q, want %q", row.Trust, auth.TrustAPI)
 	case row.AllowedOrgs != "acme-sub":
 		t.Fatalf("orgs = %q (must be normalized on save)", row.AllowedOrgs)
 	case row.AllowedDomains != "sub.co.jp":
@@ -144,8 +145,8 @@ func TestTenantGitHubSaveTimeValidation(t *testing.T) {
 // 増えれば対象の人の集合が変わるので、承認をやり直す。減るのは戻さない。
 func TestGitHubRowRepends(t *testing.T) {
 	active := store.TenantIdP{
-		Kind: tenantIdPKindGitHub, Status: "active", ClientID: "c", Issuer: githubWebBase,
-		Trust: trustAPI, AllowedOrgs: "acme-sub", AllowedDomains: "sub.co.jp",
+		Kind: auth.TenantIdPKindGitHub, Status: "active", ClientID: "c", Issuer: auth.GithubWebBase,
+		Trust: auth.TrustAPI, AllowedOrgs: "acme-sub", AllowedDomains: "sub.co.jp",
 	}
 	widened := active
 	widened.AllowedOrgs = "acme-sub,acme-parent"
@@ -163,7 +164,7 @@ func TestGitHubRowRepends(t *testing.T) {
 		t.Fatal("a client_secret rotation must not repend (or nobody rotates)")
 	}
 	switched := active
-	switched.Kind = tenantIdPKindOIDC
+	switched.Kind = auth.TenantIdPKindOIDC
 	if !repend(active, switched) {
 		t.Fatal("changing the kind changes what was approved")
 	}
@@ -179,7 +180,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 	const email = "yamada@acme.co.jp"
 
 	first, _, err := st.LinkIdentity(ctx, store.IdentityLink{
-		Provider: githubProviderID, Subject: "42", Realm: githubWebBase, Email: email,
+		Provider: auth.GithubProviderID, Subject: "42", Realm: auth.GithubWebBase, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: true,
 	})
 	if err != nil {
@@ -187,7 +188,7 @@ func TestRule15JoinsTheSameIdPAccountAcrossButtons(t *testing.T) {
 	}
 	// テナント定義の行なので EmailJoin=false — つまり規則 2 は使えない。
 	second, isNew, err := st.LinkIdentity(ctx, store.IdentityLink{
-		Provider: "t:sub:github", Subject: "42", Realm: githubWebBase, Email: email,
+		Provider: "t:sub:github", Subject: "42", Realm: auth.GithubWebBase, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
 	})
 	if err != nil {
@@ -225,22 +226,22 @@ func TestFillProviderRealmMakesOldRowsJoinable(t *testing.T) {
 	const email = "yamada@acme.co.jp"
 
 	// realm を知らなかった頃のログイン。
-	first, _, err := st.LinkIdentity(ctx, linkOf(githubProviderID, "42", email, true))
+	first, _, err := st.LinkIdentity(ctx, linkOf(auth.GithubProviderID, "42", email, true))
 	if err != nil {
 		t.Fatalf("legacy login: %v", err)
 	}
 	if _, _, err := st.LinkIdentity(ctx, store.IdentityLink{
-		Provider: "t:sub:github", Subject: "42", Realm: githubWebBase, Email: email,
+		Provider: "t:sub:github", Subject: "42", Realm: auth.GithubWebBase, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
 	}); err == nil {
 		t.Fatal("埋め戻す前は拒否される（この状態を直すのが FillProviderRealm）")
 	}
 
-	if err := st.FillProviderRealm(ctx, githubProviderID, githubWebBase); err != nil {
+	if err := st.FillProviderRealm(ctx, auth.GithubProviderID, auth.GithubWebBase); err != nil {
 		t.Fatalf("fill: %v", err)
 	}
 	joined, _, err := st.LinkIdentity(ctx, store.IdentityLink{
-		Provider: "t:sub:github", Subject: "42", Realm: githubWebBase, Email: email,
+		Provider: "t:sub:github", Subject: "42", Realm: auth.GithubWebBase, Email: email,
 		FallbackKey: sanitizeUser(email), EmailJoin: false,
 	})
 	if err != nil {
@@ -260,7 +261,7 @@ func TestFillProviderRealmMakesOldRowsJoinable(t *testing.T) {
 		`SELECT realm FROM identity_provider WHERE provider='t:sub:github'`).Scan(&realm); err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	if realm != githubWebBase {
+	if realm != auth.GithubWebBase {
 		t.Fatalf("realm was overwritten: %q", realm)
 	}
 }
@@ -288,7 +289,7 @@ func TestHiddenProvidersHideTheButtonButNotTheDoor(t *testing.T) {
 		cookieSecret:  []byte("0123456789abcdef0123456789abcdef"),
 		mgr:           mgr,
 	}
-	cfg.setProviders([]loginProvider{&oidcProvider{ProviderID: "google", LabelJA: "Google でサインイン"}})
+	cfg.setProviders([]auth.LoginProvider{&auth.OIDCProvider{ProviderID: "google", LabelJA: "Google でサインイン"}})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin)
 	body := func(path string) string {
@@ -337,8 +338,8 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 	mgr := p4Manager(t, st)
 	tn, _ := st.CreateTenant(ctx, "sub", "子会社")
 	row := store.TenantIdP{
-		ID: store.NewID(), TenantID: tn.ID, Name: "github", Kind: tenantIdPKindGitHub,
-		Issuer: githubWebBase, ClientID: "c", SecretEnc: "s", Trust: trustAPI,
+		ID: store.NewID(), TenantID: tn.ID, Name: "github", Kind: auth.TenantIdPKindGitHub,
+		Issuer: auth.GithubWebBase, ClientID: "c", SecretEnc: "s", Trust: auth.TrustAPI,
 		AllowedOrgs: "acme-sub", AllowedDomains: "@sub.co.jp",
 		Status: "active", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS(),
 	}
@@ -352,8 +353,8 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 		mgr:           mgr,
 	}
 	// デプロイ自身の GitHub ボタン（env 由来）。既定の文言を持っている。
-	cfg.setProviders([]loginProvider{&githubProvider{
-		ProviderID: githubProviderID, LabelJA: "GitHub でサインイン", LabelEN: "Sign in with GitHub",
+	cfg.setProviders([]auth.LoginProvider{&auth.GitHubProvider{
+		ProviderID: auth.GithubProviderID, LabelJA: "GitHub でサインイン", LabelEN: "Sign in with GitHub",
 	}})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin)
@@ -379,7 +380,7 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 			t.Fatalf("%s: %q の出現が %d（env の 1 つ＋テナント行の接頭辞 1 つ = 2 のはず）:\n%s",
 				tc.lang, tc.env, n, page)
 		}
-		if !strings.Contains(page, "provider="+githubProviderID) || !strings.Contains(page, "t%3Asub%3Agithub") {
+		if !strings.Contains(page, "provider="+auth.GithubProviderID) || !strings.Contains(page, "t%3Asub%3Agithub") {
 			t.Fatalf("%s: 両方のボタンが出ていない:\n%s", tc.lang, page)
 		}
 	}
@@ -387,7 +388,7 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 	// ★ 行が自分でラベルを書いていればそちらが勝つ。既定を補うのが目的で、
 	// 管理者が選んだ文言を上書きするのは別のこと。
 	row.LabelJA, row.LabelEN = "子会社の GitHub", "Subsidiary GitHub"
-	p, err := buildTenantProvider(row, store.TenantRef{Slug: "sub", Name: "子会社"}, "s")
+	p, err := auth.BuildTenantProvider(row, store.TenantRef{Slug: "sub", Name: "子会社"}, "s")
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
@@ -399,14 +400,14 @@ func TestTenantGitHubButtonSaysWhichCompanyItIs(t *testing.T) {
 // 表示名の無いテナント（name が空）では slug で代用する。会社名が読めなくても、
 // 「どちらのボタンか」が分かることのほうが大事。
 func TestTenantLabelFallsBackToTheSlug(t *testing.T) {
-	if got := tenantLabelSuffix("GitHub でサインイン", store.TenantRef{Slug: "sub"}, "ja"); got != "GitHub でサインイン（sub）" {
+	if got := auth.TenantLabelSuffix("GitHub でサインイン", store.TenantRef{Slug: "sub"}, "ja"); got != "GitHub でサインイン（sub）" {
 		t.Fatalf("ja = %q", got)
 	}
-	if got := tenantLabelSuffix("Sign in with GitHub", store.TenantRef{Slug: "sub"}, "en"); got != "Sign in with GitHub (sub)" {
+	if got := auth.TenantLabelSuffix("Sign in with GitHub", store.TenantRef{Slug: "sub"}, "en"); got != "Sign in with GitHub (sub)" {
 		t.Fatalf("en = %q", got)
 	}
 	// slug も名前も無いのは実際には起きないが、そのときは接尾辞を足さない。
-	if got := tenantLabelSuffix("x", store.TenantRef{}, "ja"); got != "x" {
+	if got := auth.TenantLabelSuffix("x", store.TenantRef{}, "ja"); got != "x" {
 		t.Fatalf("empty tenant = %q", got)
 	}
 }

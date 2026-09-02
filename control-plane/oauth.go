@@ -37,7 +37,7 @@ import (
 // Why the split runs here: everything below hangs off config, which is the Control
 // Plane's own settings struct — Go cannot grow those methods from another package,
 // and config's fields are read across the whole binary, so it does not travel
-// (ADR 0067 決定 1). The names the handlers use are re-bound in alias_auth.go.
+// (ADR 0067 決定 1). The handlers call internal/auth directly (alias_auth.go was reclaimed).
 //
 // Security note: because CP is now the edge (Funnel forwards client headers
 // verbatim), authGate strips any inbound identity header before trusting our own
@@ -51,13 +51,13 @@ const (
 // The provider abstraction (docs/log/61 §61.6) — principal, loginProvider,
 // providerRealm — and the login page vocabulary moved to internal/auth together
 // with the adapters that implement them. They are reachable here under their
-// original names through alias_auth.go, so nothing below changed.
+// internal/auth directly (the alias_auth.go layer was reclaimed in RECLAIM-B).
 
 // buildLoginProviders assembles the enabled login providers in display order.
 // The assembly itself moved to internal/auth with the adapters it constructs;
 // this is the seam that hands it the five terms it used to read off config,
 // which package auth cannot see. main.go calls it exactly as before.
-func buildLoginProviders(c config) ([]loginProvider, error) {
+func buildLoginProviders(c config) ([]auth.LoginProvider, error) {
 	return auth.BuildLoginProviders(auth.Deployment{
 		GoogleClientID:     c.googleClientID,
 		GoogleClientSecret: c.googleClientSecret,
@@ -69,9 +69,9 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 
 // setProviders installs the enabled providers in display order and builds the
 // id lookup used by the callback (an unknown id must never reach a provider).
-func (c *config) setProviders(ps []loginProvider) {
+func (c *config) setProviders(ps []auth.LoginProvider) {
 	c.providers = ps
-	c.providerByID = make(map[string]loginProvider, len(ps))
+	c.providerByID = make(map[string]auth.LoginProvider, len(ps))
 	for _, p := range ps {
 		c.providerByID[p.ID()] = p
 	}
@@ -86,14 +86,14 @@ func (c *config) setProviders(ps []loginProvider) {
 // That is what makes "a pending provider issues no session" true at the callback,
 // not merely on the login page — hiding a button is presentation, and decision 14
 // says presentation is never the enforcement.
-func (c config) providerFor(ctx context.Context, id string) loginProvider {
+func (c config) providerFor(ctx context.Context, id string) auth.LoginProvider {
 	if id == "" {
 		if len(c.providers) == 0 {
 			return nil
 		}
 		return c.providers[0]
 	}
-	if isTenantProviderID(id) {
+	if auth.IsTenantProviderID(id) {
 		if c.mgr == nil {
 			return nil
 		}
@@ -164,12 +164,12 @@ type sessionClaims struct {
 // predates multi-IdP support, and back then the only IdP was Google.
 func (s sessionClaims) provider() string {
 	if s.Prov == "" {
-		return googleProviderID
+		return auth.GoogleProviderID
 	}
 	return s.Prov
 }
 
-func (c config) issueSession(w http.ResponseWriter, p principal) {
+func (c config) issueSession(w http.ResponseWriter, p auth.Principal) {
 	b, _ := json.Marshal(sessionClaims{
 		Email: p.Email,
 		Exp:   time.Now().Add(c.sessionTTL).Unix(),
@@ -218,11 +218,11 @@ func (c config) sessionAllowed(ctx context.Context, claims sessionClaims) (bool,
 	if p == nil {
 		return false, "forbidden"
 	}
-	ok, err := p.Allowed(ctx, principal{
+	ok, err := p.Allowed(ctx, auth.Principal{
 		Provider: claims.provider(), Subject: claims.Sub, Email: claims.Email, Verified: true,
 	})
 	switch {
-	case errors.Is(err, errNeedsReauth):
+	case errors.Is(err, auth.ErrNeedsReauth):
 		return false, "reauth"
 	case err != nil || !ok:
 		return false, "forbidden"
@@ -394,7 +394,7 @@ func (c config) handleOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	// A tenant-defined provider belongs to exactly one department, so carry ITS slug
 	// rather than whatever the query said: an error then goes back to the page the
 	// button actually lives on, and the post-login hint preselects the right tenant.
-	if slug, _, ok := parseTenantProviderID(p.ID()); ok {
+	if slug, _, ok := auth.ParseTenantProviderID(p.ID()); ok {
 		tenant = slug
 	}
 	next := sanitizeNext(r.URL.Query().Get("next"))
@@ -475,7 +475,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	pr, err := p.Exchange(r.Context(), code, c.oauthRedirectURI())
 	if err != nil {
 		log.Printf("oauth: provider %s exchange: %v", p.ID(), err)
-		if errors.Is(err, errNotAllowed) { // e.g. a tid outside ALLOWED_TIDS
+		if errors.Is(err, auth.ErrNotAllowed) { // e.g. a tid outside ALLOWED_TIDS
 			loginRedirect(w, r, "forbidden", tenant)
 		} else {
 			loginRedirect(w, r, "exchange", tenant)
@@ -488,7 +488,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	// ★ Stamped here, from the provider CP resolved by id — not from anything the
 	// exchange returned and not from the row a tenant typed (docs/log/61 §61.15).
-	pr.Realm = providerRealm(p)
+	pr.Realm = auth.ProviderRealm(p)
 	allowed, err := p.Allowed(r.Context(), pr)
 	if err != nil || !allowed {
 		loginRedirect(w, r, "forbidden", tenant)
@@ -556,11 +556,11 @@ func withTenantHint(next, tenant string) string {
 // is matched on the email alone, and a subsidiary's IdP must not be able to hand out
 // the deployment role by asserting the operator's address. The same suppression is
 // applied again in upsertIdentity, which is the choke point for every OTHER path.
-func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
+func (c config) linkAfterLogin(ctx context.Context, p auth.Principal) (bool, error) {
 	if c.mgr == nil || c.mgr.store == nil {
 		return false, nil
 	}
-	tenantDefined := isTenantProviderID(p.Provider)
+	tenantDefined := auth.IsTenantProviderID(p.Provider)
 	roleHint := c.mgr.roleHintFor(p.Email)
 	if tenantDefined {
 		roleHint = ""
@@ -598,9 +598,9 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 // being able to sign in to two accounts proves control of both, not that they
 // belong to one person, and the merge could not be undone (§61.5). So the honest
 // advice is to come back with the address they normally use.
-func (c config) writeNewAccountPage(w http.ResponseWriter, r *http.Request, p principal, next string) {
-	lang := preferredUILang(r)
-	t := loginTextFor(lang)
+func (c config) writeNewAccountPage(w http.ResponseWriter, r *http.Request, p auth.Principal, next string) {
+	lang := auth.PreferredUILang(r)
+	t := auth.LoginText[lang]
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	buttons := `<a class="gbtn" href="` + html.EscapeString(next) + `">` + t.NewContinue + "</a>\n" +
@@ -611,7 +611,7 @@ func (c config) writeNewAccountPage(w http.ResponseWriter, r *http.Request, p pr
 		"{{NOTE}}", t.NewNote,
 		"{{ERROR}}", `<div class="msg">`+fmt.Sprintf(t.NewBody, html.EscapeString(p.Email))+`</div>`,
 		"{{BUTTONS}}", buttons,
-	).Replace(loginPageHTML)
+	).Replace(auth.LoginPageHTML)
 	_, _ = w.Write([]byte(page))
 }
 
@@ -720,8 +720,8 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	lang := preferredUILang(r)
-	t := loginTextFor(lang)
+	lang := auth.PreferredUILang(r)
+	t := auth.LoginText[lang]
 	title, note := t.Title, t.Note
 	slug := sanitizeTenantSlug(r.PathValue("slug"))
 	rules, known := c.mgr.tenantLogin.rulesForSlug(r.Context(), slug)
@@ -734,7 +734,7 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// tenant, and the default tenant's own t:default:* rows are not appended
 		// (決定 32-4 keeps that list off the generic page).
 		slug, rules = "", store.TenantLoginRules{}
-		if d, ok := c.mgr.tenantLogin.rulesForSlug(r.Context(), defaultTenantSlug); ok {
+		if d, ok := c.mgr.tenantLogin.rulesForSlug(r.Context(), auth.DefaultTenantSlug); ok {
 			rules.HiddenProviders = d.HiddenProviders
 		}
 	} else {
@@ -753,10 +753,10 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"{{LANG}}", lang,
 		"{{TITLE}}", html.EscapeString(title),
 		"{{NOTE}}", note,
-		"{{ERROR}}", loginErrorBlock(r.URL.Query().Get("error"), lang),
+		"{{ERROR}}", auth.LoginErrorBlock(r.URL.Query().Get("error"), lang),
 		"{{BUTTONS}}", c.loginButtons(r.Context(), sanitizeNext(r.URL.Query().Get("next")), lang, slug,
 			rules.AllowedProviders, rules.HiddenProviders),
-	).Replace(loginPageHTML)
+	).Replace(auth.LoginPageHTML)
 	_, _ = w.Write([]byte(page))
 }
 
@@ -775,11 +775,11 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (c config) loginButtons(ctx context.Context, next, lang, tenant string, allowed, hidden []string) string {
 	providers := c.providers
 	if tenant != "" && c.mgr != nil {
-		providers = append(append([]loginProvider(nil), providers...),
+		providers = append(append([]auth.LoginProvider(nil), providers...),
 			c.mgr.tenantIdP.ProvidersForSlug(ctx, tenant)...)
 	}
 	if len(providers) == 0 {
-		return `<div class="err">` + loginTextFor(lang).ErrUnconfigured + `</div>`
+		return `<div class="err">` + auth.LoginText[lang].ErrUnconfigured + `</div>`
 	}
 	// ★ hidden_providers removes a button WITHOUT removing the method (docs/log/61
 	// §61.15.9): a subsidiary that runs on its own GitHub still has to accept the
@@ -788,9 +788,9 @@ func (c config) loginButtons(ctx context.Context, next, lang, tenant string, all
 	// buttons is a dead end, and the tenant's own mistake must not become one.
 	visible := providers
 	if len(hidden) > 0 {
-		kept := make([]loginProvider, 0, len(providers))
+		kept := make([]auth.LoginProvider, 0, len(providers))
 		for _, p := range providers {
-			if providerInList(allowed, p.ID()) && !providerInList(hidden, p.ID()) {
+			if auth.ProviderInList(allowed, p.ID()) && !auth.ProviderInList(hidden, p.ID()) {
 				kept = append(kept, p)
 			}
 		}
@@ -801,7 +801,7 @@ func (c config) loginButtons(ctx context.Context, next, lang, tenant string, all
 	var b strings.Builder
 	shown := 0
 	for _, p := range visible {
-		if !providerInList(allowed, p.ID()) {
+		if !auth.ProviderInList(allowed, p.ID()) {
 			continue
 		}
 		shown++
@@ -813,14 +813,14 @@ func (c config) loginButtons(ctx context.Context, next, lang, tenant string, all
 			q.Set("tenant", tenant)
 		}
 		b.WriteString(`<a class="gbtn" href="/oauth2/login?` + html.EscapeString(q.Encode()) + `">`)
-		b.WriteString(providerIcon(p.ID()))
+		b.WriteString(auth.ProviderIcon(p.ID()))
 		b.WriteString(html.EscapeString(p.Label(lang)))
 		b.WriteString("</a>\n")
 	}
 	if shown == 0 {
 		// The tenant named providers this deployment does not have — an operator
 		// error, and one nobody can work around from the page.
-		return `<div class="err">` + loginTextFor(lang).ErrTenantNoProvider + `</div>`
+		return `<div class="err">` + auth.LoginText[lang].ErrTenantNoProvider + `</div>`
 	}
 	return b.String()
 }
