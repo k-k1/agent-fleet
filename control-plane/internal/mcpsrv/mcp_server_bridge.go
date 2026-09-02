@@ -1,4 +1,4 @@
-package main
+package mcpsrv
 
 // MCP registry bridge — the internal (per-membership token) face of tenant-distributed
 // MCP servers (docs/log/48 P4 + ADR0031). It mirrors the memo / schedule bridges

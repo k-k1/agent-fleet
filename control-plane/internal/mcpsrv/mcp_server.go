@@ -1,4 +1,4 @@
-package main
+package mcpsrv
 
 // Tenant-distributed MCP servers (docs/log/48 P4 + ADR0031) — the CP half.
 //
