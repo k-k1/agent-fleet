@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"context"
@@ -37,30 +37,30 @@ import (
 const (
 	// email trust rules (docs/log/61 §61.4). "api" (a second API call carrying the
 	// verified flag) belongs to the GitHub adapter (P2) and is not valid here.
-	trustEmailVerified = "email_verified"
-	trustIssuer        = "issuer"
-	trustAPI           = "api"
+	TrustEmailVerified = "email_verified"
+	TrustIssuer        = "issuer"
+	TrustAPI           = "api"
 
 	// Google's well-known endpoints, seeded statically so the historical
 	// deployment path performs no discovery request at all (受入条件 6).
 	googleIssuer       = "https://accounts.google.com"
-	googleAuthorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
-	googleTokenURL     = "https://oauth2.googleapis.com/token"
+	GoogleAuthorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
+	GoogleTokenURL     = "https://oauth2.googleapis.com/token"
 	googleUserinfoURL  = "https://openidconnect.googleapis.com/v1/userinfo"
 
 	oidcDiscoveryTTL = 24 * time.Hour
 )
 
-// errNotAllowed marks an authorization failure inside Exchange (e.g. a `tid`
+// ErrNotAllowed marks an authorization failure inside Exchange (e.g. a `tid`
 // outside AF_OIDC_<ID>_ALLOWED_TIDS) so the callback shows "forbidden" rather
 // than the generic transport error.
-var errNotAllowed = errors.New("principal not allowed")
+var ErrNotAllowed = errors.New("principal not allowed")
 
 // oidcHTTPClient bounds every IdP call: an unresponsive IdP must not pin a CP
 // request goroutine (http.DefaultClient has no timeout).
 var oidcHTTPClient = &http.Client{Timeout: 20 * time.Second}
 
-type oidcEndpoints struct {
+type Endpoints struct {
 	Issuer    string `json:"issuer"`
 	Authorize string `json:"authorization_endpoint"`
 	Token     string `json:"token_endpoint"`
@@ -78,7 +78,7 @@ type oidcEndpoints struct {
 //
 // ★ Read from discovery, never guessed from the issuer's hostname: "microsoftonline"
 // is not a rule, it is a coincidence that holds until the next IdP.
-func (ep oidcEndpoints) pairwiseSubjects() bool {
+func (ep Endpoints) pairwiseSubjects() bool {
 	for _, t := range ep.SubjectTypes {
 		if strings.EqualFold(strings.TrimSpace(t), "pairwise") {
 			return true
@@ -87,119 +87,119 @@ func (ep oidcEndpoints) pairwiseSubjects() bool {
 	return false
 }
 
-type oidcProvider struct {
-	id           string
-	labelJA      string
-	labelEN      string
-	issuer       string
-	clientID     string
-	clientSecret string
-	trust        string
-	scope        string
-	prompt       string     // "" omits the prompt parameter
-	extraAuth    url.Values // provider-specific authorize params (Google: access_type)
+type OIDCProvider struct {
+	ProviderID   string
+	LabelJA      string
+	LabelEN      string
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	Trust        string
+	Scope        string
+	Prompt       string     // "" omits the prompt parameter
+	ExtraAuth    url.Values // provider-specific authorize params (Google: access_type)
 	// linkClaim names a STABLE claim to carry alongside `sub`, for rule 1.5's second
 	// key (docs/log/61 §61.15.10 + 決定 38). Entra's `sub` is pairwise — different per app
 	// registration — so two buttons onto one Entra tenant are two subjects; `oid` is
 	// the same value in both. "" (the default) takes no part in the rule.
-	linkClaim string
+	LinkClaim string
 
 	// Authorization. A provider-specific allowlist replaces the DEPLOYMENT-WIDE
 	// list entirely (docs/log/61 §61.8: "未設定なら共通の許可リストを使う") — that is a
 	// per-provider narrowing operators rely on and P3 did not change it.
 	// dbAllowed is the separate, database-derived term P3 adds on top of whichever
 	// of the two applies: see Allowed.
-	allowedTIDs   map[string]bool
-	allowEmails   map[string]bool
-	allowDomains  map[string]bool
-	deployAllowed func(email string) bool
-	dbAllowed     func(ctx context.Context, email string) bool
+	AllowedTIDs   map[string]bool
+	AllowEmails   map[string]bool
+	AllowDomains  map[string]bool
+	DeployAllowed func(email string) bool
+	DBAllowed     func(ctx context.Context, email string) bool
 
-	client *http.Client
+	HTTPClient *http.Client
 
 	mu    sync.Mutex
-	ep    oidcEndpoints
+	ep    Endpoints
 	epExp time.Time // discovery cache expiry; zero+filled ep = seeded statically
 }
 
-func (p *oidcProvider) ID() string { return p.id }
+func (p *OIDCProvider) ID() string { return p.ProviderID }
 
 // Label falls back per language: a provider that declared only AF_OIDC_<ID>_LABEL_JA
 // still gets a readable English button (generated from the id) rather than Japanese
 // text on an English page.
-func (p *oidcProvider) Label(lang string) string {
-	if lang == "en" && p.labelEN != "" {
-		return p.labelEN
+func (p *OIDCProvider) Label(lang string) string {
+	if lang == "en" && p.LabelEN != "" {
+		return p.LabelEN
 	}
-	if lang != "en" && p.labelJA != "" {
-		return p.labelJA
+	if lang != "en" && p.LabelJA != "" {
+		return p.LabelJA
 	}
-	return defaultProviderLabel(p.id, lang)
+	return DefaultProviderLabel(p.ProviderID, lang)
 }
 
-// issuerURL names the identity source for the admin list (login_provider_api.go).
+// IssuerURL names the identity source for the admin list (login_provider_api.go).
 // Not a credential: the same URL is in the deployment's own discovery traffic.
-func (p *oidcProvider) issuerURL() string { return p.issuer }
+func (p *OIDCProvider) IssuerURL() string { return p.Issuer }
 
-// hasOwnAllowlist reports whether this provider carries its own allowlist (used
+// HasOwnAllowlist reports whether this provider carries its own allowlist (used
 // by the startup warning about a deployment where every login would be denied).
-func (p *oidcProvider) hasOwnAllowlist() bool {
-	return len(p.allowEmails) > 0 || len(p.allowDomains) > 0
+func (p *OIDCProvider) HasOwnAllowlist() bool {
+	return len(p.AllowEmails) > 0 || len(p.AllowDomains) > 0
 }
 
 // --- discovery -------------------------------------------------------------
 
-func (p *oidcProvider) httpClient() *http.Client {
-	if p.client != nil {
-		return p.client
+func (p *OIDCProvider) httpClient() *http.Client {
+	if p.HTTPClient != nil {
+		return p.HTTPClient
 	}
 	return oidcHTTPClient
 }
 
 // seedEndpoints installs endpoints statically (no discovery). Used for Google,
 // whose endpoints this code has always had hardcoded.
-func (p *oidcProvider) seedEndpoints(ep oidcEndpoints) {
+func (p *OIDCProvider) seedEndpoints(ep Endpoints) {
 	p.ep, p.epExp = ep, time.Now().Add(100*365*24*time.Hour)
 }
 
 // endpoints returns the provider's endpoints, running (and caching) OIDC
 // discovery when they are not already known. Discovery is lazy on purpose: doing
 // it at startup would make CP boot depend on the IdP being reachable.
-func (p *oidcProvider) endpoints(ctx context.Context) (oidcEndpoints, error) {
+func (p *OIDCProvider) endpoints(ctx context.Context) (Endpoints, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.ep.Authorize != "" && p.ep.Token != "" && time.Now().Before(p.epExp) {
 		return p.ep, nil
 	}
-	du := strings.TrimRight(p.issuer, "/") + "/.well-known/openid-configuration"
+	du := strings.TrimRight(p.Issuer, "/") + "/.well-known/openid-configuration"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, du, nil)
 	if err != nil {
-		return oidcEndpoints{}, err
+		return Endpoints{}, err
 	}
 	req.Header.Set("Accept", "application/json")
 	resp, err := p.httpClient().Do(req)
 	if err != nil {
-		return oidcEndpoints{}, fmt.Errorf("discovery %s: %w", du, err)
+		return Endpoints{}, fmt.Errorf("discovery %s: %w", du, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return oidcEndpoints{}, fmt.Errorf("discovery %s: HTTP %d", du, resp.StatusCode)
+		return Endpoints{}, fmt.Errorf("discovery %s: HTTP %d", du, resp.StatusCode)
 	}
-	var ep oidcEndpoints
+	var ep Endpoints
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&ep); err != nil {
-		return oidcEndpoints{}, fmt.Errorf("discovery %s: %w", du, err)
+		return Endpoints{}, fmt.Errorf("discovery %s: %w", du, err)
 	}
 	if ep.Authorize == "" || ep.Token == "" {
-		return oidcEndpoints{}, fmt.Errorf("discovery %s: no authorization/token endpoint", du)
+		return Endpoints{}, fmt.Errorf("discovery %s: no authorization/token endpoint", du)
 	}
 	// The discovered issuer must be the configured one. The one exception is
 	// Entra's multi-tenant document, which returns the literal template
 	// "https://login.microsoftonline.com/{tenantid}/v2.0" — that configuration is
 	// only reachable at all when ALLOWED_TIDS is set (決定 7), which is the real
 	// check there.
-	if ep.Issuer != "" && strings.TrimRight(ep.Issuer, "/") != strings.TrimRight(p.issuer, "/") &&
+	if ep.Issuer != "" && strings.TrimRight(ep.Issuer, "/") != strings.TrimRight(p.Issuer, "/") &&
 		!strings.Contains(ep.Issuer, "{tenantid}") {
-		return oidcEndpoints{}, fmt.Errorf("discovery %s: issuer mismatch (got %q)", du, ep.Issuer)
+		return Endpoints{}, fmt.Errorf("discovery %s: issuer mismatch (got %q)", du, ep.Issuer)
 	}
 	p.ep, p.epExp = ep, time.Now().Add(oidcDiscoveryTTL)
 	return ep, nil
@@ -207,22 +207,22 @@ func (p *oidcProvider) endpoints(ctx context.Context) (oidcEndpoints, error) {
 
 // --- authorize -------------------------------------------------------------
 
-func (p *oidcProvider) AuthorizeURL(ctx context.Context, state, redirectURI string) (string, error) {
+func (p *OIDCProvider) AuthorizeURL(ctx context.Context, state, redirectURI string) (string, error) {
 	ep, err := p.endpoints(ctx)
 	if err != nil {
 		return "", err
 	}
 	q := url.Values{
-		"client_id":     {p.clientID},
+		"client_id":     {p.ClientID},
 		"redirect_uri":  {redirectURI},
 		"response_type": {"code"},
-		"scope":         {p.scope},
+		"scope":         {p.Scope},
 		"state":         {state},
 	}
-	if p.prompt != "" {
-		q.Set("prompt", p.prompt)
+	if p.Prompt != "" {
+		q.Set("prompt", p.Prompt)
 	}
-	for k, vs := range p.extraAuth {
+	for k, vs := range p.ExtraAuth {
 		q[k] = vs
 	}
 	sep := "?"
@@ -257,7 +257,7 @@ type oidcClaims struct {
 	Email             string   `json:"email"`
 	EmailVerified     flexBool `json:"email_verified"`
 	PreferredUsername string   `json:"preferred_username"`
-	UPN               string   `json:"upn"` // Entra's user principal name
+	UPN               string   `json:"upn"` // Entra's user Principal name
 	TID               string   `json:"tid"` // Entra tenant id (never in userinfo)
 	// raw is the same payload as a plain object. AF_OIDC_<ID>_LINK_CLAIM and
 	// tenant_idp.link_claim name a claim at RUNTIME, so it cannot be a struct field
@@ -299,24 +299,24 @@ func decodeIDTokenClaims(idToken string) (oidcClaims, error) {
 	return c, nil
 }
 
-func (p *oidcProvider) Exchange(ctx context.Context, code, redirectURI string) (principal, error) {
+func (p *OIDCProvider) Exchange(ctx context.Context, code, redirectURI string) (Principal, error) {
 	ep, err := p.endpoints(ctx)
 	if err != nil {
-		return principal{}, err
+		return Principal{}, err
 	}
 	form := url.Values{
-		"code": {code}, "client_id": {p.clientID}, "client_secret": {p.clientSecret},
+		"code": {code}, "client_id": {p.ClientID}, "client_secret": {p.ClientSecret},
 		"redirect_uri": {redirectURI}, "grant_type": {"authorization_code"},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.Token, strings.NewReader(form.Encode()))
 	if err != nil {
-		return principal{}, err
+		return Principal{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	resp, err := p.httpClient().Do(req)
 	if err != nil {
-		return principal{}, fmt.Errorf("token endpoint: %w", err)
+		return Principal{}, fmt.Errorf("token endpoint: %w", err)
 	}
 	defer resp.Body.Close()
 	var tok struct {
@@ -327,10 +327,10 @@ func (p *oidcProvider) Exchange(ctx context.Context, code, redirectURI string) (
 	}
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tok)
 	if tok.Error != "" {
-		return principal{}, fmt.Errorf("token endpoint: %s (%s)", tok.Error, tok.ErrorDesc)
+		return Principal{}, fmt.Errorf("token endpoint: %s (%s)", tok.Error, tok.ErrorDesc)
 	}
 	if tok.AccessToken == "" && tok.IDToken == "" {
-		return principal{}, fmt.Errorf("token endpoint: HTTP %d, no token in response", resp.StatusCode)
+		return Principal{}, fmt.Errorf("token endpoint: HTTP %d, no token in response", resp.StatusCode)
 	}
 
 	// id_token first: it carries claims userinfo omits (Entra's tid), and it lets
@@ -338,22 +338,22 @@ func (p *oidcProvider) Exchange(ctx context.Context, code, redirectURI string) (
 	var idc oidcClaims
 	if tok.IDToken != "" {
 		if idc, err = decodeIDTokenClaims(tok.IDToken); err != nil {
-			log.Printf("oauth: provider %s: %v (continuing with userinfo)", p.id, err)
+			log.Printf("oauth: provider %s: %v (continuing with userinfo)", p.ProviderID, err)
 		}
 	}
 	// ★ Tenant pinning (決定 7): with ALLOWED_TIDS set, the token must name one of
 	// those tenants. A missing tid is a denial, not a pass — a personal Microsoft
 	// account can rewrite its own email, so this is what keeps the email allowlist
 	// meaningful on the common/organizations endpoints.
-	if len(p.allowedTIDs) > 0 {
-		if idc.TID == "" || !p.allowedTIDs[strings.ToLower(idc.TID)] {
-			return principal{}, fmt.Errorf("%w: tid %q not in AF_OIDC_%s_ALLOWED_TIDS", errNotAllowed, idc.TID, strings.ToUpper(p.id))
+	if len(p.AllowedTIDs) > 0 {
+		if idc.TID == "" || !p.AllowedTIDs[strings.ToLower(idc.TID)] {
+			return Principal{}, fmt.Errorf("%w: tid %q not in AF_OIDC_%s_ALLOWED_TIDS", ErrNotAllowed, idc.TID, strings.ToUpper(p.ProviderID))
 		}
 	}
 
 	uic, uiOK := p.userinfo(ctx, ep, tok.AccessToken)
 
-	pr := principal{Provider: p.id}
+	pr := Principal{Provider: p.ProviderID}
 	pr.Subject = firstNonEmpty(uic.Sub, idc.Sub)
 	pr.Email = firstNonEmpty(uic.Email, idc.Email, emailLike(idc.PreferredUsername), emailLike(idc.UPN))
 	// ★ Rule 1.5's second key, read straight out of the token this exchange returned
@@ -361,20 +361,20 @@ func (p *oidcProvider) Exchange(ctx context.Context, code, redirectURI string) (
 	// anywhere else — a tenant that could supply it could name another person. A claim
 	// the IdP did not send leaves BOTH fields empty, so the row takes no part in the
 	// rule rather than matching every other row that is also missing it.
-	if p.linkClaim != "" {
-		if v := firstNonEmpty(claimString(uic.raw, p.linkClaim), claimString(idc.raw, p.linkClaim)); v != "" {
-			pr.RealmClaim, pr.RealmSubject = p.linkClaim, v
+	if p.LinkClaim != "" {
+		if v := firstNonEmpty(claimString(uic.raw, p.LinkClaim), claimString(idc.raw, p.LinkClaim)); v != "" {
+			pr.RealmClaim, pr.RealmSubject = p.LinkClaim, v
 		} else {
-			log.Printf("oauth: provider %s: no %q claim in the token (rule 1.5 will fall back to sub)", p.id, p.linkClaim)
+			log.Printf("oauth: provider %s: no %q claim in the token (rule 1.5 will fall back to sub)", p.ProviderID, p.LinkClaim)
 		}
 	}
-	switch p.trust {
-	case trustIssuer:
+	switch p.Trust {
+	case TrustIssuer:
 		// The issuer is pinned (single-tenant issuer URL, or tid checked above),
 		// so the email this IdP hands out is the tenant's own directory value.
 		// Entra never emits email_verified, which is exactly why this rule exists.
 		pr.Verified = pr.Email != ""
-	default: // trustEmailVerified
+	default: // TrustEmailVerified
 		if uiOK && uic.Email != "" {
 			pr.Verified = bool(uic.EmailVerified)
 		} else {
@@ -382,7 +382,7 @@ func (p *oidcProvider) Exchange(ctx context.Context, code, redirectURI string) (
 		}
 	}
 	if pr.Email == "" {
-		return principal{}, errors.New("no email claim from id_token or userinfo")
+		return Principal{}, errors.New("no email claim from id_token or userinfo")
 	}
 	return pr, nil
 }
@@ -390,7 +390,7 @@ func (p *oidcProvider) Exchange(ctx context.Context, code, redirectURI string) (
 // userinfo fetches the userinfo endpoint. Failures are not fatal: the id_token
 // from the same token response is an equally trustworthy source for the claims we
 // need, so a userinfo blip must not deny a valid sign-in.
-func (p *oidcProvider) userinfo(ctx context.Context, ep oidcEndpoints, accessToken string) (oidcClaims, bool) {
+func (p *OIDCProvider) userinfo(ctx context.Context, ep Endpoints, accessToken string) (oidcClaims, bool) {
 	var c oidcClaims
 	if ep.Userinfo == "" || accessToken == "" {
 		return c, false
@@ -403,21 +403,21 @@ func (p *oidcProvider) userinfo(ctx context.Context, ep oidcEndpoints, accessTok
 	req.Header.Set("Accept", "application/json")
 	resp, err := p.httpClient().Do(req)
 	if err != nil {
-		log.Printf("oauth: provider %s userinfo: %v", p.id, err)
+		log.Printf("oauth: provider %s userinfo: %v", p.ProviderID, err)
 		return c, false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("oauth: provider %s userinfo: HTTP %d", p.id, resp.StatusCode)
+		log.Printf("oauth: provider %s userinfo: HTTP %d", p.ProviderID, resp.StatusCode)
 		return c, false
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		log.Printf("oauth: provider %s userinfo: %v", p.id, err)
+		log.Printf("oauth: provider %s userinfo: %v", p.ProviderID, err)
 		return c, false
 	}
 	if err := json.Unmarshal(body, &c); err != nil {
-		log.Printf("oauth: provider %s userinfo: %v", p.id, err)
+		log.Printf("oauth: provider %s userinfo: %v", p.ProviderID, err)
 		return c, false
 	}
 	_ = json.Unmarshal(body, &c.raw) // the runtime-named claims — see decodeIDTokenClaims
@@ -441,20 +441,20 @@ func (p *oidcProvider) userinfo(ctx context.Context, ep oidcEndpoints, accessTok
 // Second, only the email axis is union-ed. Terms of a different kind stay AND-ed:
 // the GitHub adapter checks org membership separately, so holding an Agent Fleet
 // membership can never be a way past its org gate (決定 2).
-func (p *oidcProvider) Allowed(ctx context.Context, pr principal) (bool, error) {
+func (p *OIDCProvider) Allowed(ctx context.Context, pr Principal) (bool, error) {
 	email := strings.ToLower(strings.TrimSpace(pr.Email))
 	at := strings.LastIndexByte(email, '@')
 	if email == "" || at < 0 {
 		return false, nil
 	}
-	if p.hasOwnAllowlist() {
-		if p.allowEmails[email] || p.allowDomains[email[at+1:]] {
+	if p.HasOwnAllowlist() {
+		if p.AllowEmails[email] || p.AllowDomains[email[at+1:]] {
 			return true, nil
 		}
-	} else if p.deployAllowed != nil && p.deployAllowed(email) {
+	} else if p.DeployAllowed != nil && p.DeployAllowed(email) {
 		return true, nil
 	}
-	return p.dbAllowed != nil && p.dbAllowed(ctx, email), nil
+	return p.DBAllowed != nil && p.DBAllowed(ctx, email), nil
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -480,24 +480,24 @@ func emailLike(s string) string {
 // newGoogleProvider builds the historical Google login as one instance of the
 // generic client. Its env names, scope, prompt and endpoints are unchanged, so an
 // existing deployment behaves exactly as before (受入条件 6).
-func newGoogleProvider(clientID, clientSecret string, deployAllowed func(string) bool, dbAllowed func(context.Context, string) bool) *oidcProvider {
-	p := &oidcProvider{
-		id:            googleProviderID,
-		labelJA:       loginText["ja"].signin,
-		labelEN:       loginText["en"].signin,
-		issuer:        googleIssuer,
-		clientID:      clientID,
-		clientSecret:  clientSecret,
-		trust:         trustEmailVerified,
-		scope:         "openid email",
-		prompt:        "select_account",
-		extraAuth:     url.Values{"access_type": {"online"}},
-		deployAllowed: deployAllowed,
-		dbAllowed:     dbAllowed,
+func newGoogleProvider(clientID, clientSecret string, deployAllowed func(string) bool, dbAllowed func(context.Context, string) bool) *OIDCProvider {
+	p := &OIDCProvider{
+		ProviderID:    GoogleProviderID,
+		LabelJA:       LoginText["ja"].Signin,
+		LabelEN:       LoginText["en"].Signin,
+		Issuer:        googleIssuer,
+		ClientID:      clientID,
+		ClientSecret:  clientSecret,
+		Trust:         TrustEmailVerified,
+		Scope:         "openid email",
+		Prompt:        "select_account",
+		ExtraAuth:     url.Values{"access_type": {"online"}},
+		DeployAllowed: deployAllowed,
+		DBAllowed:     dbAllowed,
 	}
-	p.seedEndpoints(oidcEndpoints{
-		Issuer: googleIssuer, Authorize: googleAuthorizeURL,
-		Token: googleTokenURL, Userinfo: googleUserinfoURL,
+	p.seedEndpoints(Endpoints{
+		Issuer: googleIssuer, Authorize: GoogleAuthorizeURL,
+		Token: GoogleTokenURL, Userinfo: googleUserinfoURL,
 	})
 	return p
 }
@@ -508,9 +508,9 @@ func oidcEnv(id, key string) string {
 	return strings.TrimSpace(os.Getenv("AF_OIDC_" + strings.ToUpper(strings.ReplaceAll(id, "-", "_")) + "_" + key))
 }
 
-// validProviderID keeps ids to what can round-trip through an env var name and a
+// ValidProviderID keeps ids to what can round-trip through an env var name and a
 // URL query parameter.
-func validProviderID(id string) bool {
+func ValidProviderID(id string) bool {
 	if id == "" || len(id) > 32 {
 		return false
 	}
@@ -525,9 +525,9 @@ func validProviderID(id string) bool {
 	return true
 }
 
-// validIssuerURL requires an https issuer, with the customary loopback carve-out
+// ValidIssuerURL requires an https issuer, with the customary loopback carve-out
 // so a developer can point at a local Keycloak/Dex over http.
-func validIssuerURL(s string) bool {
+func ValidIssuerURL(s string) bool {
 	u, err := url.Parse(s)
 	if err != nil || u.Host == "" {
 		return false
@@ -542,10 +542,10 @@ func validIssuerURL(s string) bool {
 	return false
 }
 
-// multiTenantIssuer reports an Entra-style issuer that accepts *any* Microsoft
+// MultiTenantIssuer reports an Entra-style issuer that accepts *any* Microsoft
 // tenant (or personal accounts). Such a deployment is only safe with an explicit
 // tenant allowlist — see buildLoginProviders (決定 7).
-func multiTenantIssuer(issuer string) bool {
+func MultiTenantIssuer(issuer string) bool {
 	u, err := url.Parse(issuer)
 	if err != nil {
 		return false
@@ -568,21 +568,39 @@ func multiTenantIssuer(issuer string) bool {
 // exception is the multi-tenant Entra hazard, which returns an error and is fatal
 // at startup, because ignoring it would silently put "anyone with a Microsoft
 // account" in front of an email allowlist that can be spoofed (決定 7).
-func buildLoginProviders(c config) ([]loginProvider, error) {
-	var out []loginProvider
+// Deployment is what BuildLoginProviders needs from the deployment's configuration.
+// It is taken by value rather than reading the root package's config, which the
+// adapters cannot see from here — the fields are exactly the five terms the
+// assembly used before, and nothing else about it changed.
+type Deployment struct {
+	GoogleClientID     string // GOOGLE_OAUTH_CLIENT_ID
+	GoogleClientSecret string // GOOGLE_OAUTH_CLIENT_SECRET
+	// DeployAllowed / DBAllowed are the two terms of the deployment-wide entry
+	// gate (config.emailAllowed / config.tenantEmailAllowed): the env allowlists,
+	// and the database-derived one that lets an invite-run deployment stop
+	// maintaining them (docs/log/61 §61.9.6).
+	DeployAllowed func(string) bool
+	DBAllowed     func(context.Context, string) bool
+	// HasAllowlist mirrors config.hasDeploymentAllowlist() — the GitHub adapter is
+	// the conditional door and needs to know whether anything else guards it.
+	HasAllowlist bool
+}
+
+func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
+	var out []LoginProvider
 	seen := map[string]bool{}
 
 	switch {
-	case c.googleClientID != "" && c.googleClientSecret != "":
-		out = append(out, newGoogleProvider(c.googleClientID, c.googleClientSecret, c.emailAllowed, c.tenantEmailAllowed))
-		seen[googleProviderID] = true
-	case c.googleClientID != "" || c.googleClientSecret != "":
+	case c.GoogleClientID != "" && c.GoogleClientSecret != "":
+		out = append(out, newGoogleProvider(c.GoogleClientID, c.GoogleClientSecret, c.DeployAllowed, c.DBAllowed))
+		seen[GoogleProviderID] = true
+	case c.GoogleClientID != "" || c.GoogleClientSecret != "":
 		log.Printf("WARNING: google login disabled — set both GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET")
 	}
 
 	for _, raw := range splitCSV(os.Getenv("AF_OIDC_PROVIDERS")) {
 		id := strings.ToLower(raw)
-		if !validProviderID(id) {
+		if !ValidProviderID(id) {
 			log.Printf("WARNING: AF_OIDC_PROVIDERS: ignoring invalid provider id %q (allowed: a-z 0-9 - _)", raw)
 			continue
 		}
@@ -596,11 +614,11 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 		tids := emailSet(oidcEnv(id, "ALLOWED_TIDS")) // plain lowercased CSV set (tenant GUIDs)
 		// ★ Checked before the "disable on missing config" rules below so a
 		// dangerous issuer can never be waved through by an unrelated typo.
-		if issuer != "" && multiTenantIssuer(issuer) && len(tids) == 0 {
+		if issuer != "" && MultiTenantIssuer(issuer) && len(tids) == 0 {
 			return nil, fmt.Errorf("AF_OIDC_%s_ISSUER is a multi-tenant endpoint (%s): set AF_OIDC_%s_ALLOWED_TIDS, or pin the issuer to one tenant — otherwise every Microsoft account in the world reaches the login, and personal accounts can rewrite their own email",
 				strings.ToUpper(id), issuer, strings.ToUpper(id))
 		}
-		if !validIssuerURL(issuer) {
+		if !ValidIssuerURL(issuer) {
 			log.Printf("WARNING: login provider %q disabled — AF_OIDC_%s_ISSUER must be the IdP's https issuer URL (http is accepted only for loopback, e.g. a local Keycloak)", id, strings.ToUpper(id))
 			continue
 		}
@@ -616,30 +634,30 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 		// email it hands us is refused, never defaulted (docs/log/61 §61.4).
 		trust := strings.ToLower(oidcEnv(id, "TRUST"))
 		switch trust {
-		case trustEmailVerified, trustIssuer:
-		case trustAPI:
+		case TrustEmailVerified, TrustIssuer:
+		case TrustAPI:
 			log.Printf("WARNING: login provider %q disabled — AF_OIDC_%s_TRUST=api is the GitHub adapter's rule (P2) and is not valid for OIDC", id, strings.ToUpper(id))
 			continue
 		default:
-			log.Printf("WARNING: login provider %q disabled — AF_OIDC_%s_TRUST must be %q (the IdP asserts email_verified) or %q (the issuer is pinned to one tenant, e.g. Entra ID)", id, strings.ToUpper(id), trustEmailVerified, trustIssuer)
+			log.Printf("WARNING: login provider %q disabled — AF_OIDC_%s_TRUST must be %q (the IdP asserts email_verified) or %q (the issuer is pinned to one tenant, e.g. Entra ID)", id, strings.ToUpper(id), TrustEmailVerified, TrustIssuer)
 			continue
 		}
 
-		p := &oidcProvider{
-			id:            id,
-			labelJA:       oidcEnv(id, "LABEL_JA"),
-			labelEN:       oidcEnv(id, "LABEL_EN"),
-			issuer:        issuer,
-			clientID:      clientID,
-			clientSecret:  clientSecret,
-			trust:         trust,
-			scope:         envOr("AF_OIDC_"+strings.ToUpper(strings.ReplaceAll(id, "-", "_"))+"_SCOPES", "openid email profile"),
-			prompt:        "select_account",
-			allowedTIDs:   tids,
-			allowEmails:   emailSet(oidcEnv(id, "ALLOWED_EMAILS")),
-			allowDomains:  domainSet(oidcEnv(id, "ALLOWED_DOMAINS")),
-			deployAllowed: c.emailAllowed,
-			dbAllowed:     c.tenantEmailAllowed,
+		p := &OIDCProvider{
+			ProviderID:    id,
+			LabelJA:       oidcEnv(id, "LABEL_JA"),
+			LabelEN:       oidcEnv(id, "LABEL_EN"),
+			Issuer:        issuer,
+			ClientID:      clientID,
+			ClientSecret:  clientSecret,
+			Trust:         trust,
+			Scope:         envOr("AF_OIDC_"+strings.ToUpper(strings.ReplaceAll(id, "-", "_"))+"_SCOPES", "openid email profile"),
+			Prompt:        "select_account",
+			AllowedTIDs:   tids,
+			AllowEmails:   emailSet(oidcEnv(id, "ALLOWED_EMAILS")),
+			AllowDomains:  domainSet(oidcEnv(id, "ALLOWED_DOMAINS")),
+			DeployAllowed: c.DeployAllowed,
+			DBAllowed:     c.DBAllowed,
 		}
 		// ★ AF_OIDC_<ID>_LINK_CLAIM accepts ANY claim name, unlike the tenant column,
 		// which is whitelisted (docs/log/61 §61.15.10). The difference is who is speaking:
@@ -647,11 +665,11 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 		// join accounts by email could simply set the allowlist to do it. The hazard is
 		// still real — naming `email` here makes rule 1.5 an email join for every
 		// provider sharing that realm — so the guide says so in as many words.
-		p.linkClaim = strings.ToLower(oidcEnv(id, "LINK_CLAIM"))
+		p.LinkClaim = strings.ToLower(oidcEnv(id, "LINK_CLAIM"))
 		if v := oidcEnv(id, "PROMPT"); v != "" {
-			p.prompt = strings.TrimSpace(strings.ToLower(v))
-			if p.prompt == "none" || p.prompt == "-" {
-				p.prompt = "" // omit the parameter entirely
+			p.Prompt = strings.TrimSpace(strings.ToLower(v))
+			if p.Prompt == "none" || p.Prompt == "-" {
+				p.Prompt = "" // omit the parameter entirely
 			}
 		}
 		out = append(out, p)
@@ -660,25 +678,56 @@ func buildLoginProviders(c config) ([]loginProvider, error) {
 	// GitHub last: it is the conditional door (§61.7), and putting the OIDC
 	// providers — where the company's own directory lives — above it keeps the
 	// button people should normally press at the top.
-	if seen[githubProviderID] {
-		log.Printf("WARNING: %q is the GitHub adapter's reserved id and cannot be used for an OIDC provider — the GitHub login is disabled", githubProviderID)
-	} else if gh := newGitHubProvider(c.emailAllowed, c.tenantEmailAllowed, c.hasDeploymentAllowlist()); gh != nil {
+	if seen[GithubProviderID] {
+		log.Printf("WARNING: %q is the GitHub adapter's reserved id and cannot be used for an OIDC provider — the GitHub login is disabled", GithubProviderID)
+	} else if gh := NewGitHubProvider(c.DeployAllowed, c.DBAllowed, c.HasAllowlist); gh != nil {
 		out = append(out, gh)
 	}
 	return out, nil
 }
 
-// providerAllowlister is implemented by providers that can carry an allowlist of
-// their own (an email list for OIDC, the org list for GitHub).
-type providerAllowlister interface{ hasOwnAllowlist() bool }
+// OIDCSpec is the part of an OIDC provider's configuration that can be named from
+// outside this package. It exists for the two callers that legitimately need to
+// construct one without going through the environment — the admin API's issuer
+// probe and the tests that hand a provider list to the admin endpoints — and it
+// deliberately does NOT expose the authorization fields (allowlists, trust,
+// linkClaim). Those decide who gets in, and a provider built out there with them
+// half-filled would be a door nobody meant to open.
+type OIDCSpec struct {
+	ID, LabelJA, LabelEN string
+	Issuer               string
+	ClientID             string
+	ClientSecret         string
+}
 
-// anyProviderAllowlist reports whether at least one provider carries its own
-// allowlist — with none, and no deployment-wide list, every login is denied.
-func anyProviderAllowlist(ps []loginProvider) bool {
-	for _, p := range ps {
-		if a, ok := p.(providerAllowlister); ok && a.hasOwnAllowlist() {
-			return true
-		}
+// NewOIDCProvider builds a provider that can answer ID / Label / IssuerURL and run
+// discovery. It performs no authorization on its own: with no allowlist and no
+// deployAllowed/dbAllowed term, Allowed denies (fail closed).
+func NewOIDCProvider(s OIDCSpec) *OIDCProvider {
+	return &OIDCProvider{
+		ProviderID: s.ID, LabelJA: s.LabelJA, LabelEN: s.LabelEN,
+		Issuer: s.Issuer, ClientID: s.ClientID, ClientSecret: s.ClientSecret,
 	}
-	return false
+}
+
+// IssuerUsesPairwiseSubjects runs OIDC discovery against issuer and reports whether
+// it declares `subject_types_supported: ["pairwise"]` — an issuer that gives each
+// app registration a different `sub` for the same person (docs/log/61 §61.17.4 (b)).
+// Read from discovery, never guessed from the hostname.
+func IssuerUsesPairwiseSubjects(ctx context.Context, issuer string) (bool, error) {
+	probe := &OIDCProvider{ProviderID: "probe", Issuer: issuer}
+	ep, err := probe.endpoints(ctx)
+	if err != nil {
+		return false, err
+	}
+	return ep.pairwiseSubjects(), nil
+}
+
+// CachedEndpoints returns the endpoints this provider already knows, WITHOUT
+// running discovery: what was seeded statically (Google) or fetched by an earlier
+// call. Empty when nothing has been resolved yet.
+func (p *OIDCProvider) CachedEndpoints() Endpoints {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.ep
 }

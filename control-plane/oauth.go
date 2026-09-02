@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -27,11 +28,16 @@ import (
 // so the entire downstream (resolveIdentity / tenants / bitbucket) is unchanged.
 // Enabled by AUTH=oauth.
 //
-// This file owns everything that is provider-independent — the loginProvider
-// abstraction, the signed state/session cookies, the allowlist, authGate and the
-// login page. The IdP-facing protocol lives in oauth_oidc.go (docs/log/61 §61.6);
-// Google is one instance of that generic OIDC client, keeping its historical env
-// names (GOOGLE_OAUTH_*) so existing deployments need no config change.
+// This file owns the HTTP half: the signed state/session cookies, the allowlist,
+// authGate and the login page handlers. The IdP-facing protocol and the provider
+// abstraction it implements moved to internal/auth (docs/log/61 §61.6); Google is one
+// instance of that generic OIDC client, keeping its historical env names
+// (GOOGLE_OAUTH_*) so existing deployments need no config change.
+//
+// Why the split runs here: everything below hangs off config, which is the Control
+// Plane's own settings struct — Go cannot grow those methods from another package,
+// and config's fields are read across the whole binary, so it does not travel
+// (ADR 0067 決定 1). The names the handlers use are re-bound in alias_auth.go.
 //
 // Security note: because CP is now the edge (Funnel forwards client headers
 // verbatim), authGate strips any inbound identity header before trusting our own
@@ -40,61 +46,25 @@ import (
 const (
 	sessionCookie = "af_session"
 	stateCookie   = "af_oauth_state"
-
-	// googleProviderID is also the transitional default for sessions and state
-	// cookies minted before providers existed (they carry no provider id).
-	googleProviderID = "google"
 )
 
-// --- provider abstraction (docs/log/61 §61.6) ----------------------------------
+// The provider abstraction (docs/log/61 §61.6) — principal, loginProvider,
+// providerRealm — and the login page vocabulary moved to internal/auth together
+// with the adapters that implement them. They are reachable here under their
+// original names through alias_auth.go, so nothing below changed.
 
-// principal is what a provider proves about the person who just signed in.
-// Verified means the provider's declared `trust` rule (§61.4) was satisfied —
-// not merely that an email claim was present.
-type principal struct {
-	Provider string
-	Subject  string // the IdP's stable subject id (unlike email, it never changes)
-	// Realm is the authority that verified Subject: the issuer URL for OIDC, the
-	// fixed https://github.com for the GitHub adapter. Two providers with one realm
-	// are two buttons onto the same IdP, which is what lets the deployment's GitHub
-	// and a tenant's own GitHub resolve to one person (docs/log/61 §61.15, rule 1.5).
-	// It is filled in by the callback from the provider itself — never from a
-	// tenant-supplied field — so a tenant cannot name somebody else's realm.
-	Realm string
-	// RealmClaim / RealmSubject are the optional SECOND key rule 1.5 may match on:
-	// which stable claim the adapter was told to read, and what it carried (docs/log/61
-	// §61.15.10). Both are filled by the adapter out of the token it just exchanged,
-	// never from configuration — a tenant names the claim, never the value.
-	RealmClaim   string
-	RealmSubject string
-	Email        string
-	Verified     bool
-}
-
-// providerRealm answers "where would this provider prove someone", reusing the
-// optional interface the admin provider list already relies on (login_provider_api.go).
-// A provider that does not implement it simply takes no part in rule 1.5.
-func providerRealm(p loginProvider) string {
-	if pi, ok := p.(providerIssuer); ok {
-		return pi.issuerURL()
-	}
-	return ""
-}
-
-// loginProvider is one sign-in button: an IdP the deployment enabled. Every
-// provider shares the single redirect_uri (/oauth2/callback) — which provider a
-// callback belongs to is carried in the signed state cookie, so the operator
-// registers exactly one URI per IdP no matter how many are configured (決定 8).
-type loginProvider interface {
-	ID() string
-	Label(lang string) string // login page button text
-	// AuthorizeURL may hit the network (OIDC discovery is lazy), hence ctx+error.
-	AuthorizeURL(ctx context.Context, state, redirectURI string) (string, error)
-	Exchange(ctx context.Context, code, redirectURI string) (principal, error)
-	// Allowed re-checks authorization. It is called at login AND on every
-	// request (authGate) — removing someone from the allowlist is the
-	// offboarding path and must not wait for the session cookie to expire.
-	Allowed(ctx context.Context, p principal) (bool, error)
+// buildLoginProviders assembles the enabled login providers in display order.
+// The assembly itself moved to internal/auth with the adapters it constructs;
+// this is the seam that hands it the five terms it used to read off config,
+// which package auth cannot see. main.go calls it exactly as before.
+func buildLoginProviders(c config) ([]loginProvider, error) {
+	return auth.BuildLoginProviders(auth.Deployment{
+		GoogleClientID:     c.googleClientID,
+		GoogleClientSecret: c.googleClientSecret,
+		DeployAllowed:      c.emailAllowed,
+		DBAllowed:          c.tenantEmailAllowed,
+		HasAllowlist:       c.hasDeploymentAllowlist(),
+	})
 }
 
 // setProviders installs the enabled providers in display order and builds the
@@ -127,7 +97,7 @@ func (c config) providerFor(ctx context.Context, id string) loginProvider {
 		if c.mgr == nil {
 			return nil
 		}
-		return c.mgr.tenantIdP.providerFor(ctx, id)
+		return c.mgr.tenantIdP.ProviderFor(ctx, id)
 	}
 	return c.providerByID[id]
 }
@@ -630,16 +600,16 @@ func (c config) linkAfterLogin(ctx context.Context, p principal) (bool, error) {
 // advice is to come back with the address they normally use.
 func (c config) writeNewAccountPage(w http.ResponseWriter, r *http.Request, p principal, next string) {
 	lang := preferredUILang(r)
-	t := loginText[lang]
+	t := loginTextFor(lang)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	buttons := `<a class="gbtn" href="` + html.EscapeString(next) + `">` + t.newContinue + "</a>\n" +
-		`<a class="gbtn ghost" href="/oauth2/logout">` + t.newSwitch + `</a>`
+	buttons := `<a class="gbtn" href="` + html.EscapeString(next) + `">` + t.NewContinue + "</a>\n" +
+		`<a class="gbtn ghost" href="/oauth2/logout">` + t.NewSwitch + `</a>`
 	page := strings.NewReplacer(
 		"{{LANG}}", lang,
-		"{{TITLE}}", t.newTitle,
-		"{{NOTE}}", t.newNote,
-		"{{ERROR}}", `<div class="msg">`+fmt.Sprintf(t.newBody, html.EscapeString(p.Email))+`</div>`,
+		"{{TITLE}}", t.NewTitle,
+		"{{NOTE}}", t.NewNote,
+		"{{ERROR}}", `<div class="msg">`+fmt.Sprintf(t.NewBody, html.EscapeString(p.Email))+`</div>`,
 		"{{BUTTONS}}", buttons,
 	).Replace(loginPageHTML)
 	_, _ = w.Write([]byte(page))
@@ -751,8 +721,8 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := preferredUILang(r)
-	t := loginText[lang]
-	title, note := t.title, t.note
+	t := loginTextFor(lang)
+	title, note := t.Title, t.Note
 	slug := sanitizeTenantSlug(r.PathValue("slug"))
 	rules, known := c.mgr.tenantLogin.rulesForSlug(r.Context(), slug)
 	if !known {
@@ -774,8 +744,8 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		// Only the display name — never the member count or anything else that would
 		// turn the login page into a directory (§61.9.3).
-		title = t.title + " — " + name
-		note = fmt.Sprintf(t.tenantNote, html.EscapeString(name))
+		title = t.Title + " — " + name
+		note = fmt.Sprintf(t.TenantNote, html.EscapeString(name))
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -806,10 +776,10 @@ func (c config) loginButtons(ctx context.Context, next, lang, tenant string, all
 	providers := c.providers
 	if tenant != "" && c.mgr != nil {
 		providers = append(append([]loginProvider(nil), providers...),
-			c.mgr.tenantIdP.providersForSlug(ctx, tenant)...)
+			c.mgr.tenantIdP.ProvidersForSlug(ctx, tenant)...)
 	}
 	if len(providers) == 0 {
-		return `<div class="err">` + loginText[lang].errUnconfigured + `</div>`
+		return `<div class="err">` + loginTextFor(lang).ErrUnconfigured + `</div>`
 	}
 	// ★ hidden_providers removes a button WITHOUT removing the method (docs/log/61
 	// §61.15.9): a subsidiary that runs on its own GitHub still has to accept the
@@ -850,252 +820,7 @@ func (c config) loginButtons(ctx context.Context, next, lang, tenant string, all
 	if shown == 0 {
 		// The tenant named providers this deployment does not have — an operator
 		// error, and one nobody can work around from the page.
-		return `<div class="err">` + loginText[lang].errTenantNoProvider + `</div>`
+		return `<div class="err">` + loginTextFor(lang).ErrTenantNoProvider + `</div>`
 	}
 	return b.String()
 }
-
-// providerInList reports membership in a tenant's allowed_providers; an empty list
-// means "every provider the deployment enabled".
-func providerInList(allowed []string, id string) bool {
-	if len(allowed) == 0 {
-		return true
-	}
-	for _, a := range allowed {
-		if a == id {
-			return true
-		}
-	}
-	return false
-}
-
-// providerIcon returns the inline SVG mark for a provider's button: the Google
-// wordmark for Google (unchanged), a neutral key glyph for everything else — CP
-// must not ship third-party logos it has no license for.
-func providerIcon(id string) string {
-	if id == googleProviderID {
-		return googleIconSVG
-	}
-	return genericIconSVG
-}
-
-func loginErrorBlock(code, lang string) string {
-	t := loginText[lang]
-	var msg string
-	switch code {
-	case "forbidden":
-		msg = t.errForbidden
-	case "denied":
-		msg = t.errDenied
-	case "session", "exchange":
-		msg = t.errSession
-	case "reauth":
-		msg = t.errReauth
-	case "provider":
-		msg = t.errProvider
-	case "email_taken":
-		msg = t.errEmailTaken
-	default:
-		return ""
-	}
-	return `<div class="err">` + msg + `</div>`
-}
-
-// preferredUILang picks the UI language for CP-rendered pages (login / OAuth
-// callbacks) from Accept-Language, since these are served before any locale cookie
-// exists (docs/log/28 P3). It scans the header's language ranges in order and returns the
-// first supported one; Japanese is the default (the product's primary audience and the
-// prior hardcoded language). The Console SPA owns locale once signed in.
-func preferredUILang(r *http.Request) string {
-	for _, part := range strings.Split(r.Header.Get("Accept-Language"), ",") {
-		tag := strings.TrimSpace(part)
-		if i := strings.IndexByte(tag, ';'); i >= 0 { // drop the q-value
-			tag = tag[:i]
-		}
-		switch tag = strings.ToLower(strings.TrimSpace(tag)); {
-		case strings.HasPrefix(tag, "ja"):
-			return "ja"
-		case strings.HasPrefix(tag, "en"):
-			return "en"
-		}
-	}
-	return "ja"
-}
-
-// loginText holds the localized strings for the CP-rendered login page. ja is the
-// default; en is served when Accept-Language prefers English (preferredUILang).
-type loginStrings struct {
-	title, signin, signinWith, note                  string
-	errForbidden, errDenied, errSession, errProvider string
-	errUnconfigured, errReauth                       string
-	// Per-tenant login page (docs/log/61 §61.9.3). tenantNote takes the tenant name.
-	tenantNote, errTenantNoProvider string
-	// errEmailTaken: a tenant-defined provider asserted an address that already
-	// belongs to an account on this deployment (docs/log/61 §61.11 rule 2').
-	errEmailTaken string
-	// The new-account notice (docs/log/61 受入条件 3). newBody takes the email.
-	newTitle, newBody, newNote, newContinue, newSwitch string
-	// The result page of a link flow (docs/log/61 §61.16 + 決定 37).
-	linkTitle, linkNote, linkBack          string
-	linkOK, linkTaken, linkEmail, linkGate string
-	linkSession, linkProvider, linkFailed  string
-}
-
-var loginText = map[string]loginStrings{
-	"ja": {
-		title:           "Agent Fleet — サインイン",
-		signin:          "Google でサインイン",
-		signinWith:      "%s でサインイン",
-		note:            "アクセスは許可されたアカウントに限定されています。",
-		errForbidden:    "このアカウントはアクセスを許可されていません。管理者にメールアドレスの追加を依頼してください。",
-		errDenied:       "サインインがキャンセルされました。もう一度お試しください。",
-		errSession:      "セッションの確立に失敗しました。もう一度サインインしてください。",
-		errProvider:     "指定されたサインイン方法は利用できません。下のボタンから選び直してください。",
-		errUnconfigured: "サインイン方法が設定されていません。管理者に連絡してください。",
-		errReauth:       "セッションの確認ができなくなりました。もう一度サインインしてください。",
-		tenantNote:      "%s のサインインページです。アクセスは許可されたアカウントに限定されています。",
-		errTenantNoProvider: "このテナントに設定されたサインイン方法は、現在このデプロイでは利用できません。" +
-			"管理者に連絡してください。",
-		errEmailTaken: "このメールアドレスは、すでにこのデプロイの別のサインイン方法で使われています。" +
-			"いつも使っているサインイン方法でログインしたうえで、" +
-			"<b>設定 → アカウント → サインイン方法</b> からこの方式を追加してください。",
-		newTitle: "Agent Fleet — 新しいアカウント",
-		newBody: "%s でサインインしました。このメールアドレスはこのデプロイで使われたことがないため、" +
-			"<b>新しいワークスペース</b>を作成しました。以前から使っているワークスペースがある場合、" +
-			"このアカウントからは入れません。",
-		newNote: "以前のワークスペースに入るには、いつも使っているメールアドレスでサインインし直してください。" +
-			"メールアドレスの違うアカウント同士を後から 1 つにまとめることはできません。",
-		newContinue: "新しいワークスペースで続ける",
-		newSwitch:   "サインアウトして入り直す",
-		linkTitle:   "Agent Fleet — サインイン方法の追加",
-		linkNote:    "この画面はサインイン方法を追加したときだけ表示されます。",
-		linkBack:    "Agent Fleet に戻る",
-		linkOK:      "このサインイン方法を、いまのアカウントに追加しました。次回からどちらの方法でも同じワークスペースに入れます。",
-		linkTaken: "このサインイン方法は、すでにこのデプロイの別のアカウントで使われています。" +
-			"アカウント同士を 1 つにまとめることはできません。",
-		linkEmail: "このサインイン方法が名乗ったメールアドレスは、いまのアカウントのものと違います。" +
-			"追加できるのは、同じメールアドレスを名乗る方法だけです。",
-		linkGate: "このサインイン方法では、いまのアカウントは許可されていません。" +
-			"組織（org）への参加やドメインの許可について、管理者に確認してください。",
-		linkSession: "サインインの状態が確認できませんでした。サインインし直してから、もう一度お試しください。",
-		linkProvider: "指定されたサインイン方法は利用できません。" +
-			"設定の「サインイン方法」から選び直してください。",
-		linkFailed: "サインイン方法の追加に失敗しました。もう一度お試しください。",
-	},
-	"en": {
-		title:           "Agent Fleet — Sign in",
-		signin:          "Sign in with Google",
-		signinWith:      "Sign in with %s",
-		note:            "Access is limited to allowed accounts.",
-		errForbidden:    "This account isn't allowed access. Ask an administrator to add your email address.",
-		errDenied:       "Sign-in was canceled. Please try again.",
-		errSession:      "Couldn't establish a session. Please sign in again.",
-		errProvider:     "That sign-in method isn't available. Pick one of the buttons below.",
-		errUnconfigured: "No sign-in method is configured. Please contact your administrator.",
-		errReauth:       "We couldn't re-verify your session. Please sign in again.",
-		tenantNote:      "Sign-in page for %s. Access is limited to allowed accounts.",
-		errTenantNoProvider: "The sign-in methods configured for this tenant aren't available on this " +
-			"deployment. Please contact your administrator.",
-		errEmailTaken: "This email address is already used by another sign-in method on this deployment. " +
-			"Sign in the way you normally do, then add this method under " +
-			"<b>Settings → Account → Sign-in methods</b>.",
-		newTitle: "Agent Fleet — New account",
-		newBody: "You signed in as %s. That address hasn't been used on this deployment, " +
-			"so a <b>new workspace</b> was created. A workspace you already had is not " +
-			"reachable from this account.",
-		newNote: "To get back to it, sign in again with the address you normally use. " +
-			"Accounts under different email addresses cannot be merged afterwards.",
-		newContinue: "Continue to the new workspace",
-		newSwitch:   "Sign out and use another account",
-		linkTitle:   "Agent Fleet — Add a sign-in method",
-		linkNote:    "This page only appears when you add a sign-in method.",
-		linkBack:    "Back to Agent Fleet",
-		linkOK: "This sign-in method was added to your account. From now on either method " +
-			"takes you to the same workspace.",
-		linkTaken: "That sign-in method already belongs to another account on this deployment. " +
-			"Accounts cannot be merged.",
-		linkEmail: "The address that sign-in method asserted is not the one on your account. " +
-			"Only a method that asserts the same address can be added.",
-		linkGate: "That sign-in method doesn't allow this account. Ask your administrator about " +
-			"the organization membership or the allowed domains.",
-		linkSession:  "We couldn't confirm you were signed in. Please sign in again and retry.",
-		linkProvider: "That sign-in method isn't available. Pick one under Settings → Sign-in methods.",
-		linkFailed:   "Couldn't add the sign-in method. Please try again.",
-	},
-}
-
-// defaultProviderLabel builds a button label for a provider that declared no
-// AF_OIDC_<ID>_LABEL_*: "<Id> でサインイン" / "Sign in with <Id>".
-func defaultProviderLabel(id, lang string) string {
-	t, ok := loginText[lang]
-	if !ok {
-		t = loginText["ja"]
-	}
-	name := id
-	if name != "" {
-		name = strings.ToUpper(name[:1]) + name[1:]
-	}
-	return fmt.Sprintf(t.signinWith, name)
-}
-
-const googleIconSVG = `<svg viewBox="0 0 48 48" aria-hidden="true">
-    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
-    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
-    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
-    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
-   </svg>
-   `
-
-const genericIconSVG = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="#1f2937" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-   </svg>
-   `
-
-// loginPageHTML — self-contained (inline CSS, no external assets but the brand
-// banner). The banner carries the wordmark + tagline; if it fails to load the
-// text wordmark below it shows instead. Tokens {{ERROR}} and {{BUTTONS}} are
-// substituted by handleLogin (no fmt verbs — the CSS contains literal % units).
-const loginPageHTML = `<!doctype html><html lang="{{LANG}}"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{TITLE}}</title>
-<style>
-:root{--teal:#2aa79b;--ink:#e8eef6;--muted:#9fb0c4}
-*{box-sizing:border-box}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
- font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);
- background:radial-gradient(1200px 600px at 50% -10%,#1d3357,#0c1626)}
-.card{width:min(94vw,560px);background:#0f1c30;border:1px solid #22344f;border-radius:16px;
- overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.45)}
-.hero{display:block;width:100%;height:auto;background:#0d3b66}
-.body{padding:28px 32px 32px;text-align:center}
-.wordmark{display:none;font-size:34px;font-weight:800;letter-spacing:.5px;margin:8px 0}
-.wordmark b{color:var(--teal)}
-.tag{color:var(--muted);letter-spacing:3px;font-size:12px;text-transform:uppercase;margin:0 0 22px}
-.btns{display:grid;gap:10px}
-.gbtn{display:inline-flex;align-items:center;gap:12px;justify-content:center;width:100%;
- padding:13px 18px;border-radius:10px;border:0;cursor:pointer;background:#fff;color:#1f2937;
- font-size:15px;font-weight:600;text-decoration:none}
-.gbtn:hover{background:#f1f3f5}
-.gbtn svg{width:20px;height:20px}
-.note{margin-top:18px;color:var(--muted);font-size:13px}
-.err{margin:0 0 18px;padding:11px 14px;border-radius:9px;background:rgba(220,68,68,.12);
- border:1px solid rgba(220,68,68,.4);color:#ffb4b4;font-size:14px;text-align:left}
-.msg{margin:0 0 18px;padding:11px 14px;border-radius:9px;background:rgba(42,167,155,.12);
- border:1px solid rgba(42,167,155,.45);color:#cfe9e5;font-size:14px;text-align:left}
-.gbtn.ghost{background:transparent;color:var(--ink);border:1px solid #22344f}
-.gbtn.ghost:hover{background:#16273f}
-</style></head><body>
-<main class="card">
- <img class="hero" src="/brand/agent-fleet-banner.webp" alt="Agent Fleet — Deploy. Connect. Scale."
-  onerror="this.style.display='none';document.getElementById('wm').style.display='block';document.getElementById('tg').style.display='block'">
- <div class="body">
-  <div id="wm" class="wordmark">Agent <b>Fleet</b></div>
-  <p id="tg" class="tag" style="display:none">Deploy. Connect. Scale.</p>
-  {{ERROR}}
-  <div class="btns">
-  {{BUTTONS}}
-  </div>
-  <p class="note">{{NOTE}}</p>
- </div>
-</main>
-</body></html>`

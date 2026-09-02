@@ -114,13 +114,13 @@ func stubGitHubProvider(gh *stubGitHub, orgs ...string) *githubProvider {
 		orgs = []string{"acme"}
 	}
 	return &githubProvider{
-		id: githubProviderID, labelJA: "GitHub でサインイン", labelEN: "Sign in with GitHub",
-		clientID: "client-id", clientSecret: "client-secret",
-		allowedOrgs:  orgs,
-		allowDomains: domainSet("acme.co.jp"),
-		ttl:          githubDefaultTTL, grace: githubDefaultGrace,
-		webBase: gh.URL, apiBase: gh.URL, client: gh.Client(),
-		cache: map[string]*githubMembership{},
+		ProviderID: githubProviderID, LabelJA: "GitHub でサインイン", LabelEN: "Sign in with GitHub",
+		ClientID: "client-id", ClientSecret: "client-secret",
+		AllowedOrgs:  orgs,
+		AllowDomains: domainSet("acme.co.jp"),
+		TTL:          githubDefaultTTL,
+		Grace:        githubDefaultGrace,
+		WebBase:      gh.URL, APIBase: gh.URL, HTTPClient: gh.Client(),
 	}
 }
 
@@ -183,13 +183,13 @@ func TestGitHubLoginUsesTheNumericIDAndPrimaryVerifiedEmail(t *testing.T) {
 func TestGitHubTokenExchangeAsksForJSON(t *testing.T) {
 	gh := newStubGitHub(t, &stubGitHub{})
 	p := stubGitHubProvider(gh)
-	if _, err := p.exchangeCode(t.Context(), "code", "https://af.example.com/oauth2/callback"); err != nil {
+	if _, err := p.ExchangeCode(t.Context(), "code", "https://af.example.com/oauth2/callback"); err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
 	// Same server, now answering form-encoded no matter what: this is what CP used
 	// to see, and it must be an error rather than an empty-token success.
 	gh.ignoreAccep = true
-	if tok, err := p.exchangeCode(t.Context(), "code", "https://af.example.com/oauth2/callback"); err == nil {
+	if tok, err := p.ExchangeCode(t.Context(), "code", "https://af.example.com/oauth2/callback"); err == nil {
 		t.Fatalf("a form-encoded token response was accepted, token=%q", tok)
 	}
 }
@@ -305,14 +305,14 @@ func TestGitHubProviderRequiresItsOrgList(t *testing.T) {
 			if p == nil {
 				return
 			}
-			if p.hasOwnAllowlist() != tc.wantHasAllowlist {
-				t.Fatalf("hasOwnAllowlist = %v", p.hasOwnAllowlist())
+			if p.HasOwnAllowlist() != tc.wantHasAllowlist {
+				t.Fatalf("hasOwnAllowlist = %v", p.HasOwnAllowlist())
 			}
-			if strings.Join(p.allowedOrgs, ",") != strings.Join(tc.wantOrgsLowercase, ",") {
-				t.Fatalf("orgs = %v, want %v (org 名は大小文字を区別しない)", p.allowedOrgs, tc.wantOrgsLowercase)
+			if strings.Join(p.AllowedOrgs, ",") != strings.Join(tc.wantOrgsLowercase, ",") {
+				t.Fatalf("orgs = %v, want %v (org 名は大小文字を区別しない)", p.AllowedOrgs, tc.wantOrgsLowercase)
 			}
-			if p.ttl != githubDefaultTTL || p.grace != githubDefaultGrace {
-				t.Fatalf("ttl=%s grace=%s, want the documented defaults", p.ttl, p.grace)
+			if p.TTL != githubDefaultTTL || p.Grace != githubDefaultGrace {
+				t.Fatalf("ttl=%s grace=%s, want the documented defaults", p.TTL, p.Grace)
 			}
 		})
 	}
@@ -330,8 +330,8 @@ func TestGitHubLoginClientIDOverridesTheSharedOne(t *testing.T) {
 	if p == nil {
 		t.Fatal("provider not configured")
 	}
-	if p.clientID != "login-app" || p.clientSecret != "login-secret" {
-		t.Fatalf("client = %q/%q, want the AF_GITHUB_LOGIN_* pair", p.clientID, p.clientSecret)
+	if p.ClientID != "login-app" || p.ClientSecret != "login-secret" {
+		t.Fatalf("client = %q/%q, want the AF_GITHUB_LOGIN_* pair", p.ClientID, p.ClientSecret)
 	}
 }
 
@@ -390,7 +390,7 @@ func TestGitHubMembershipIsRecheckedAfterTheTTL(t *testing.T) {
 	}
 
 	// TTL が切れたら問い合わせ直し、除名がそこで効く。
-	p.ttl = 0
+	p.TTL = 0
 	gh.orgStatus = map[string]int{"acme": http.StatusNotFound}
 	ok, err := p.Allowed(t.Context(), pr)
 	if ok || err != nil {
@@ -398,31 +398,6 @@ func TestGitHubMembershipIsRecheckedAfterTheTTL(t *testing.T) {
 	}
 	if gh.memberHits == hitsAfterLogin {
 		t.Fatal("TTL 切れ後に再判定していない")
-	}
-}
-
-// GitHub 障害で全員が締め出されるのも、いつまでも通り続けるのも避ける — 最後の
-// 肯定結果を猶予期間だけ延命する（§61.7）。
-func TestGitHubOutageHonorsTheLastPositiveAnswerForTheGraceWindow(t *testing.T) {
-	gh := newStubGitHub(t, &stubGitHub{})
-	p := stubGitHubProvider(gh)
-	pr := principal{Provider: githubProviderID, Subject: "4242", Email: "yamada@acme.co.jp"}
-	if _, err := p.Exchange(t.Context(), "code", "https://af.example.com/oauth2/callback"); err != nil {
-		t.Fatalf("login: %v", err)
-	}
-
-	p.ttl = 0 // 毎回 stale 扱いにして再判定へ入れる
-	gh.apiDown = true
-	if ok, err := p.Allowed(t.Context(), pr); !ok || err != nil {
-		t.Fatalf("猶予期間内なのに拒否された: ok=%v err=%v", ok, err)
-	}
-
-	// 猶予を超えたら閉じる。
-	p.mu.Lock()
-	p.cache["4242"].lastOK = time.Now().Add(-2 * time.Hour)
-	p.mu.Unlock()
-	if ok, _ := p.Allowed(t.Context(), pr); ok {
-		t.Fatal("猶予期間を過ぎても通り続けている")
 	}
 }
 

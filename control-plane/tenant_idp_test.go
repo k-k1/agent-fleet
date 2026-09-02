@@ -94,7 +94,7 @@ func TestTenantProviderGateDoesNotFallBackToTheDeployment(t *testing.T) {
 		t.Fatalf("membership: %v", err)
 	}
 	mgr.tenantLogin.invalidate()
-	if ok, _ := (&oidcProvider{deployAllowed: cfg.emailAllowed, dbAllowed: cfg.tenantEmailAllowed}).
+	if ok, _ := (&oidcProvider{DeployAllowed: cfg.emailAllowed, DBAllowed: cfg.tenantEmailAllowed}).
 		Allowed(ctx, principal{Email: "member@acme.co.jp"}); !ok {
 		t.Fatal("precondition: an env provider does admit this person")
 	}
@@ -164,21 +164,21 @@ func TestOnlyApprovedTenantProvidersResolve(t *testing.T) {
 
 	row := seedTenantIdP(t, st, tn.ID, "entra", "sub.co.jp", "pending")
 	id := tenantProviderID("sub", "entra")
-	if mgr.tenantIdP.providerFor(ctx, id) != nil {
+	if mgr.tenantIdP.ProviderFor(ctx, id) != nil {
 		t.Fatal("a pending sign-in method must not resolve to a provider")
 	}
 	if err := st.SetTenantIdPStatus(ctx, tn.ID, row.ID, "active", "boss", store.NowTS(), store.NowTS()); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	mgr.tenantIdP.invalidate()
-	if mgr.tenantIdP.providerFor(ctx, id) == nil {
+	mgr.tenantIdP.Invalidate()
+	if mgr.tenantIdP.ProviderFor(ctx, id) == nil {
 		t.Fatal("an approved sign-in method must resolve without a restart")
 	}
 	if err := st.SetTenantIdPStatus(ctx, tn.ID, row.ID, "suspended", "", "", store.NowTS()); err != nil {
 		t.Fatalf("suspend: %v", err)
 	}
-	mgr.tenantIdP.invalidate()
-	if mgr.tenantIdP.providerFor(ctx, id) != nil {
+	mgr.tenantIdP.Invalidate()
+	if mgr.tenantIdP.ProviderFor(ctx, id) != nil {
 		t.Fatal("a suspended sign-in method must stop resolving")
 	}
 
@@ -453,7 +453,7 @@ func TestTenantProviderAppearsOnlyOnItsOwnLoginPage(t *testing.T) {
 		cookieSecret:  []byte("0123456789abcdef0123456789abcdef"),
 		mgr:           mgr,
 	}
-	cfg.setProviders([]loginProvider{&oidcProvider{id: "google", labelJA: "Google でサインイン"}})
+	cfg.setProviders([]loginProvider{&oidcProvider{ProviderID: "google", LabelJA: "Google でサインイン"}})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login", cfg.handleLogin)
 	mux.HandleFunc("GET /login/{slug}", cfg.handleLogin)

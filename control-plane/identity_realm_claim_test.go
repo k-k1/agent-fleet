@@ -239,7 +239,7 @@ func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 		userinfoClaims: map[string]any{"sub": "pairwise-A", "email": "yamada@acme.co.jp", "email_verified": true},
 	})
 	p := stubProvider("entra", idp, trustEmailVerified)
-	p.linkClaim = "oid"
+	p.LinkClaim = "oid"
 	pr, err := p.Exchange(t.Context(), "code", "https://af.example.com/oauth2/callback")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
@@ -252,7 +252,7 @@ func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 	}
 	// クレームを出さない IdP では両方空 — 空同士で当たらないための前提。
 	p2 := stubProvider("okta", idp, trustEmailVerified)
-	p2.linkClaim = "employee_id"
+	p2.LinkClaim = "employee_id"
 	pr2, err := p2.Exchange(t.Context(), "code", "https://af.example.com/oauth2/callback")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)

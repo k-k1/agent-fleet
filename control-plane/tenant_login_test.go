@@ -53,7 +53,7 @@ func TestEntryGateAdmitsAnInvitedPersonWithNoDeploymentAllowlist(t *testing.T) {
 	cfg := config{mgr: mgr, allowEmails: emailSet(""), allowDomains: domainSet("")}
 
 	// No allowlist anywhere, so the provider's only remaining term is the database.
-	p := &oidcProvider{id: "entra", deployAllowed: cfg.emailAllowed, dbAllowed: cfg.tenantEmailAllowed}
+	p := &oidcProvider{ProviderID: "entra", DeployAllowed: cfg.emailAllowed, DBAllowed: cfg.tenantEmailAllowed}
 
 	if ok, _ := p.Allowed(ctx, principal{Email: "yamada@acme.co.jp"}); ok {
 		t.Fatal("nobody is listed and nobody is a member — the deployment must stay closed")
@@ -91,7 +91,7 @@ func TestEntryGateAdmitsAnAutoJoinDomain(t *testing.T) {
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
 	cfg := config{mgr: mgr, allowEmails: emailSet(""), allowDomains: domainSet("")}
-	p := &oidcProvider{id: "entra", deployAllowed: cfg.emailAllowed, dbAllowed: cfg.tenantEmailAllowed}
+	p := &oidcProvider{ProviderID: "entra", DeployAllowed: cfg.emailAllowed, DBAllowed: cfg.tenantEmailAllowed}
 
 	tn, _ := st.CreateTenant(ctx, "acme", "Acme")
 	if err := st.SetTenantLogin(ctx, tn.ID, "", "acme.co.jp", "", ""); err != nil {
@@ -118,8 +118,8 @@ func TestProviderOwnAllowlistStillReplacesTheDeploymentWideOne(t *testing.T) {
 	cfg := config{mgr: mgr, allowEmails: emailSet(""), allowDomains: domainSet("acme.co.jp")}
 
 	narrowed := &oidcProvider{
-		id: "entra_sub", allowDomains: domainSet("sub.acme.co.jp"),
-		deployAllowed: cfg.emailAllowed, dbAllowed: cfg.tenantEmailAllowed,
+		ProviderID: "entra_sub", AllowDomains: domainSet("sub.acme.co.jp"),
+		DeployAllowed: cfg.emailAllowed, DBAllowed: cfg.tenantEmailAllowed,
 	}
 	if ok, _ := narrowed.Allowed(ctx, principal{Email: "someone@acme.co.jp"}); ok {
 		t.Fatal("a provider narrowed to sub.acme.co.jp must not inherit the deployment-wide acme.co.jp")
@@ -158,11 +158,10 @@ func TestMembershipDoesNotBypassTheGitHubOrgGate(t *testing.T) {
 	}
 
 	gh := &githubProvider{
-		id: githubProviderID, allowedOrgs: []string{"acme"},
-		allowDomains: domainSet("acme.co.jp"),
-		dbAllowed:    cfg.tenantEmailAllowed,
-		ttl:          githubDefaultTTL, grace: githubDefaultGrace,
-		cache: map[string]*githubMembership{},
+		ProviderID: githubProviderID, AllowedOrgs: []string{"acme"},
+		AllowDomains: domainSet("acme.co.jp"),
+		DBAllowed:    cfg.tenantEmailAllowed,
+		TTL:          githubDefaultTTL, Grace: githubDefaultGrace,
 	}
 	// The email gate passes (twice over: domain and membership) — but with nothing
 	// cached about this subject there is no org answer, so the honest result is
@@ -172,7 +171,7 @@ func TestMembershipDoesNotBypassTheGitHubOrgGate(t *testing.T) {
 		t.Fatalf("Allowed = (%v, %v), want (false, errNeedsReauth) — a membership must not answer the org question", ok, err)
 	}
 	// And an org answer of "no" stays "no" for someone who holds a membership.
-	gh.remember("42", "tok", false)
+	gh.Remember("42", "tok", false)
 	if ok, err := gh.Allowed(ctx, principal{Provider: githubProviderID, Subject: "42", Email: "outsider@acme.co.jp"}); ok || err != nil {
 		t.Fatalf("Allowed = (%v, %v), want (false, nil) for a non-member of the org", ok, err)
 	}
@@ -509,8 +508,8 @@ func TestPerTenantLoginPage(t *testing.T) {
 		mgr:           mgr,
 	}
 	cfg.setProviders([]loginProvider{
-		&oidcProvider{id: "entra", labelJA: "Microsoft でサインイン"},
-		&githubProvider{id: githubProviderID, labelJA: "GitHub でサインイン"},
+		&oidcProvider{ProviderID: "entra", LabelJA: "Microsoft でサインイン"},
+		&githubProvider{ProviderID: githubProviderID, LabelJA: "GitHub でサインイン"},
 	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login", cfg.handleLogin)
@@ -583,8 +582,8 @@ func TestBareLoginAppliesDefaultTenantHiddenOnly(t *testing.T) {
 		mgr:           mgr,
 	}
 	cfg.setProviders([]loginProvider{
-		&oidcProvider{id: "entra", labelJA: "Microsoft でサインイン"},
-		&githubProvider{id: githubProviderID, labelJA: "GitHub でサインイン"},
+		&oidcProvider{ProviderID: "entra", LabelJA: "Microsoft でサインイン"},
+		&githubProvider{ProviderID: githubProviderID, LabelJA: "GitHub でサインイン"},
 	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /login", cfg.handleLogin)
@@ -742,16 +741,16 @@ func TestAdminProvidersListsEnabledProvidersWithoutSecrets(t *testing.T) {
 
 	api := newLoginProviderAPI(mgr, []loginProvider{
 		&oidcProvider{
-			id: "entra", labelJA: "Microsoft でサインイン", labelEN: "Sign in with Microsoft",
-			issuer:   "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0",
-			clientID: "cid-entra", clientSecret: "sekrit-entra",
+			ProviderID: "entra", LabelJA: "Microsoft でサインイン", LabelEN: "Sign in with Microsoft",
+			Issuer:   "https://login.microsoftonline.com/11111111-2222-3333-4444-555555555555/v2.0",
+			ClientID: "cid-entra", ClientSecret: "sekrit-entra",
 		},
 		// No labels declared: the endpoint must still hand the Console something
 		// printable, or every caller re-invents defaultProviderLabel.
-		&oidcProvider{id: "okta", issuer: "https://acme.okta.com", clientID: "cid-okta", clientSecret: "sekrit-okta"},
+		&oidcProvider{ProviderID: "okta", Issuer: "https://acme.okta.com", ClientID: "cid-okta", ClientSecret: "sekrit-okta"},
 		&githubProvider{
-			id: githubProviderID, labelJA: "GitHub でサインイン", labelEN: "Sign in with GitHub",
-			clientID: "cid-gh", clientSecret: "sekrit-gh",
+			ProviderID: githubProviderID, LabelJA: "GitHub でサインイン", LabelEN: "Sign in with GitHub",
+			ClientID: "cid-gh", ClientSecret: "sekrit-gh",
 		},
 	})
 

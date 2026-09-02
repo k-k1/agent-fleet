@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"context"
@@ -34,38 +34,38 @@ import (
 // how every gate downstream recognises a tenant-defined session — sessionClaims.prov
 // carries this id, so resolveFull only has to look at the string.
 
-// tenantProviderPrefix marks a provider id as database-derived.
-const tenantProviderPrefix = "t:"
+// TenantProviderPrefix marks a provider id as database-derived.
+const TenantProviderPrefix = "t:"
 
-// defaultTenantSlug is the tenant EnsureDefaultTenant guarantees exists at every
+// DefaultTenantSlug is the tenant EnsureDefaultTenant guarantees exists at every
 // start (main.go), with id == slug. Since P7 it is also where the DEPLOYMENT's own
 // sign-in methods live (docs/log/61 §61.17): the env providers are read as the default
 // tenant's methods, so "the deployment's rules" and "this tenant's rules" stop being
 // two different layers. ★ Only the DISPLAY and the RULES moved — provider ids keep
 // their env shape (`google`, not `t:default:google`), because ten places branch on
 // that shape (§61.17.3).
-const defaultTenantSlug = "default"
+const DefaultTenantSlug = "default"
 
 // The kinds a row can be built into (docs/log/61 §61.15). "" is read as oidc: rows
 // written before 0041 predate the column, and P4 had only one kind.
 const (
-	tenantIdPKindOIDC   = "oidc"
-	tenantIdPKindGitHub = "github"
+	TenantIdPKindOIDC   = "oidc"
+	TenantIdPKindGitHub = "github"
 )
 
-// tenantProviderID builds the deployment-wide id of a tenant's provider.
-func tenantProviderID(slug, name string) string {
-	return tenantProviderPrefix + slug + ":" + name
+// TenantProviderID builds the deployment-wide id of a tenant's provider.
+func TenantProviderID(slug, name string) string {
+	return TenantProviderPrefix + slug + ":" + name
 }
 
-// parseTenantProviderID splits a tenant provider id back into (slug, name). ok is
+// ParseTenantProviderID splits a tenant provider id back into (slug, name). ok is
 // false for an env-defined id, which is what every "is this tenant-defined?" caller
 // actually asks.
-func parseTenantProviderID(id string) (slug, name string, ok bool) {
-	if !strings.HasPrefix(id, tenantProviderPrefix) {
+func ParseTenantProviderID(id string) (slug, name string, ok bool) {
+	if !strings.HasPrefix(id, TenantProviderPrefix) {
 		return "", "", false
 	}
-	rest := id[len(tenantProviderPrefix):]
+	rest := id[len(TenantProviderPrefix):]
 	i := strings.IndexByte(rest, ':')
 	if i <= 0 || i == len(rest)-1 {
 		return "", "", false
@@ -73,32 +73,32 @@ func parseTenantProviderID(id string) (slug, name string, ok bool) {
 	return rest[:i], rest[i+1:], true
 }
 
-// isTenantProviderID reports a database-derived provider id.
-func isTenantProviderID(id string) bool {
-	_, _, ok := parseTenantProviderID(id)
+// IsTenantProviderID reports a database-derived provider id.
+func IsTenantProviderID(id string) bool {
+	_, _, ok := ParseTenantProviderID(id)
 	return ok
 }
 
-// validTenantIdPName keeps the per-tenant half of the id to the same character set
-// env ids use. ★ It is deliberately a SEPARATE function from validProviderID rather
-// than a relaxation of it: validProviderID rejects ":" and must keep doing so, or an
+// ValidTenantIdPName keeps the per-tenant half of the id to the same character set
+// env ids use. ★ It is deliberately a SEPARATE function from ValidProviderID rather
+// than a relaxation of it: ValidProviderID rejects ":" and must keep doing so, or an
 // env provider could be named into the tenant namespace.
-func validTenantIdPName(name string) bool { return validProviderID(name) }
+func ValidTenantIdPName(name string) bool { return ValidProviderID(name) }
 
 // --- the runtime registry ---------------------------------------------------
 
-// tenantIdPStoreView is the narrow store view the registry needs.
-type tenantIdPStoreView interface {
+// TenantIdPStoreView is the narrow store view the registry needs.
+type TenantIdPStoreView interface {
 	ListActiveTenantIdPs(ctx context.Context) ([]store.TenantIdP, map[string]store.TenantRef, error)
 }
 
 // tenantProviderSnapshot is one consistent read of every ACTIVE tenant provider.
 //
-// ★ loginProvider, not *oidcProvider: since §61.15 a row can also be built into the
+// ★ LoginProvider, not *OIDCProvider: since §61.15 a row can also be built into the
 // GitHub adapter, which is not an OIDC client at all (it reads the REST API).
 type tenantProviderSnapshot struct {
-	byID   map[string]loginProvider
-	bySlug map[string][]loginProvider // login-page order, per tenant
+	byID   map[string]LoginProvider
+	bySlug map[string][]LoginProvider // login-page order, per tenant
 }
 
 // builtProvider caches the constructed provider so an unchanged row keeps its OIDC
@@ -107,11 +107,11 @@ type tenantProviderSnapshot struct {
 // making everyone sign in again (oauth_github.go: an empty cache answers reauth).
 type builtProvider struct {
 	updatedAt string
-	prov      loginProvider
+	prov      LoginProvider
 }
 
-type tenantIdPRegistry struct {
-	store  tenantIdPStoreView
+type TenantIdPRegistry struct {
+	store  TenantIdPStoreView
 	secret func(ctx context.Context, enc, keyRef string) (string, error)
 	ttl    time.Duration
 
@@ -124,9 +124,19 @@ type tenantIdPRegistry struct {
 	warned map[string]string
 }
 
-func newTenantIdPRegistry(st tenantIdPStoreView, secret func(context.Context, string, string) (string, error)) *tenantIdPRegistry {
-	return &tenantIdPRegistry{
-		store: st, secret: secret, ttl: tenantRuleTTL,
+// TenantRuleTTL is short on purpose: it bounds how long a rule change takes to
+// reach a deployment whose admin API is served by another replica (the drop on
+// every admin write only reaches this process).
+//
+// ★ One value serves both caches — this registry and the tenant login-rule cache
+// in control-plane/tenant_login.go, which reads it back through alias_auth.go.
+// They answer the same operational question ("how long until an admin change is
+// live everywhere"), so they must not be allowed to drift apart.
+const TenantRuleTTL = 30 * time.Second
+
+func NewTenantIdPRegistry(st TenantIdPStoreView, secret func(context.Context, string, string) (string, error)) *TenantIdPRegistry {
+	return &TenantIdPRegistry{
+		store: st, secret: secret, ttl: TenantRuleTTL,
 		built: map[string]builtProvider{}, warned: map[string]string{},
 	}
 }
@@ -135,7 +145,7 @@ func newTenantIdPRegistry(st tenantIdPStoreView, secret func(context.Context, st
 // exist — create, edit, approve, suspend, delete — calls it, so approving a
 // subsidiary's IdP puts its button on the login page immediately (決定 29: no
 // restart), and suspending one takes the button away just as fast.
-func (r *tenantIdPRegistry) invalidate() {
+func (r *TenantIdPRegistry) Invalidate() {
 	if r == nil {
 		return
 	}
@@ -151,7 +161,7 @@ func (r *tenantIdPRegistry) invalidate() {
 // every request through sessionAllowed), so a failed refresh keeps serving the
 // previous snapshot. With no snapshot at all the answer is "no tenant providers",
 // which is fail-closed — nothing is admitted on a definition that could not be read.
-func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapshot {
+func (r *TenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapshot {
 	if r == nil {
 		return nil
 	}
@@ -173,8 +183,8 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 	}
 
 	snap := &tenantProviderSnapshot{
-		byID:   map[string]loginProvider{},
-		bySlug: map[string][]loginProvider{},
+		byID:   map[string]LoginProvider{},
+		bySlug: map[string][]LoginProvider{},
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -184,13 +194,13 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 		if tn.Slug == "" {
 			continue // tenant vanished between the join and here
 		}
-		id := tenantProviderID(tn.Slug, row.Name)
+		id := TenantProviderID(tn.Slug, row.Name)
 		p, ok := r.built[id]
 		if !ok || p.updatedAt != row.UpdatedAt {
 			secret, err := r.secret(ctx, row.SecretEnc, row.KeyRef)
 			if err == nil {
-				var prov loginProvider
-				prov, err = buildTenantProvider(row, tn, secret)
+				var prov LoginProvider
+				prov, err = BuildTenantProvider(row, tn, secret)
 				if err == nil {
 					p = builtProvider{updatedAt: row.UpdatedAt, prov: prov}
 				}
@@ -217,8 +227,8 @@ func (r *tenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 }
 
 // providerFor resolves an active tenant provider by id (callback / session re-check).
-func (r *tenantIdPRegistry) providerFor(ctx context.Context, id string) loginProvider {
-	if !isTenantProviderID(id) {
+func (r *TenantIdPRegistry) ProviderFor(ctx context.Context, id string) LoginProvider {
+	if !IsTenantProviderID(id) {
 		return nil
 	}
 	snap := r.snapshot(ctx)
@@ -235,7 +245,7 @@ func (r *tenantIdPRegistry) providerFor(ctx context.Context, id string) loginPro
 // ★ Only /login/<slug> ever calls this. The generic /login must not show a
 // subsidiary's button: the full set of buttons would be a directory of the group's
 // companies, readable without signing in (決定 32-4).
-func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) []loginProvider {
+func (r *TenantIdPRegistry) ProvidersForSlug(ctx context.Context, slug string) []LoginProvider {
 	if r == nil || slug == "" {
 		return nil
 	}
@@ -243,12 +253,12 @@ func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) [
 	if snap == nil {
 		return nil
 	}
-	return append([]loginProvider(nil), snap.bySlug[slug]...)
+	return append([]LoginProvider(nil), snap.bySlug[slug]...)
 }
 
 // --- building one provider from its row --------------------------------------
 
-// buildTenantProvider turns a stored row into the same generic OIDC client env
+// BuildTenantProvider turns a stored row into the same generic OIDC client env
 // providers use (oauth_oidc.go). The differences are all in the authorization
 // terms, and each is a decision:
 //
@@ -268,30 +278,30 @@ func (r *tenantIdPRegistry) providersForSlug(ctx context.Context, slug string) [
 // half of the same rules validateTenantIdPBody applies on save, and the two must
 // stay in step: an approved row that only the API accepts would save cleanly and
 // then disappear from the login page with a log line nobody is watching.
-func buildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string) (loginProvider, error) {
-	if !validTenantIdPName(row.Name) {
+func BuildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string) (LoginProvider, error) {
+	if !ValidTenantIdPName(row.Name) {
 		return nil, fmt.Errorf("invalid provider name %q", row.Name)
 	}
-	if row.Kind == tenantIdPKindGitHub {
+	if row.Kind == TenantIdPKindGitHub {
 		return newTenantGitHubProvider(row, tn, secret)
 	}
-	if row.Kind != "" && row.Kind != tenantIdPKindOIDC {
+	if row.Kind != "" && row.Kind != TenantIdPKindOIDC {
 		return nil, fmt.Errorf("unknown sign-in method kind %q", row.Kind)
 	}
 	if row.ClientID == "" || secret == "" {
 		return nil, errors.New("client_id / client_secret are required")
 	}
-	if !validIssuerURL(row.Issuer) {
+	if !ValidIssuerURL(row.Issuer) {
 		return nil, fmt.Errorf("issuer %q is not an https URL", row.Issuer)
 	}
 	tids := emailSet(row.AllowedTIDs)
-	if multiTenantIssuer(row.Issuer) && len(tids) == 0 {
+	if MultiTenantIssuer(row.Issuer) && len(tids) == 0 {
 		return nil, fmt.Errorf("issuer %q is a multi-tenant endpoint and no allowed_tids are set", row.Issuer)
 	}
 	switch row.Trust {
-	case trustEmailVerified, trustIssuer:
+	case TrustEmailVerified, TrustIssuer:
 	default:
-		return nil, fmt.Errorf("trust must be %q or %q", trustEmailVerified, trustIssuer)
+		return nil, fmt.Errorf("trust must be %q or %q", TrustEmailVerified, TrustIssuer)
 	}
 	domains := domainSet(row.AllowedDomains)
 	if len(domains) == 0 {
@@ -301,35 +311,35 @@ func buildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string)
 	// validateTenantIdPBody because those are two different moments: a row saved
 	// before the list changed, or written by an older binary, must not be built into
 	// a provider that joins accounts on a claim this deployment never allowed.
-	if row.LinkClaim != "" && !tenantLinkClaims[row.LinkClaim] {
+	if row.LinkClaim != "" && !TenantLinkClaims[row.LinkClaim] {
 		return nil, fmt.Errorf("link_claim %q is not one this deployment allows a tenant to name (%s)",
-			row.LinkClaim, strings.Join(tenantLinkClaimList(), ", "))
+			row.LinkClaim, strings.Join(TenantLinkClaimList(), ", "))
 	}
-	id := tenantProviderID(tn.Slug, row.Name)
+	id := TenantProviderID(tn.Slug, row.Name)
 	labelJA, labelEN := row.LabelJA, row.LabelEN
 	if labelJA == "" {
-		labelJA = tenantLabelSuffix(defaultProviderLabel(row.Name, "ja"), tn, "ja")
+		labelJA = TenantLabelSuffix(DefaultProviderLabel(row.Name, "ja"), tn, "ja")
 	}
 	if labelEN == "" {
-		labelEN = tenantLabelSuffix(defaultProviderLabel(row.Name, "en"), tn, "en")
+		labelEN = TenantLabelSuffix(DefaultProviderLabel(row.Name, "en"), tn, "en")
 	}
-	return &oidcProvider{
-		id:           id,
-		labelJA:      labelJA,
-		labelEN:      labelEN,
-		issuer:       row.Issuer,
-		clientID:     row.ClientID,
-		clientSecret: secret,
-		trust:        row.Trust,
-		scope:        "openid email profile",
-		prompt:       "select_account",
-		allowedTIDs:  tids,
-		allowDomains: domains,
-		linkClaim:    row.LinkClaim,
+	return &OIDCProvider{
+		ProviderID:   id,
+		LabelJA:      labelJA,
+		LabelEN:      labelEN,
+		Issuer:       row.Issuer,
+		ClientID:     row.ClientID,
+		ClientSecret: secret,
+		Trust:        row.Trust,
+		Scope:        "openid email profile",
+		Prompt:       "select_account",
+		AllowedTIDs:  tids,
+		AllowDomains: domains,
+		LinkClaim:    row.LinkClaim,
 	}, nil
 }
 
-// tenantLinkClaims is the CLOSED set of claims a tenant row may name for rule 1.5's
+// TenantLinkClaims is the CLOSED set of claims a tenant row may name for rule 1.5's
 // second key (docs/log/61 §61.15.10 + 決定 38).
 //
 // ★ It is a whitelist and not a validity check, and the reason is the whole point of
@@ -342,19 +352,19 @@ func buildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string)
 //
 // Adding to this list is a decision about which claims an IdP does not let its
 // tenants choose, not a convenience.
-var tenantLinkClaims = map[string]bool{"oid": true}
+var TenantLinkClaims = map[string]bool{"oid": true}
 
-// tenantLinkClaimList is the same set, sorted, for error messages and the API.
-func tenantLinkClaimList() []string {
-	out := make([]string, 0, len(tenantLinkClaims))
-	for c := range tenantLinkClaims {
+// TenantLinkClaimList is the same set, sorted, for error messages and the API.
+func TenantLinkClaimList() []string {
+	out := make([]string, 0, len(TenantLinkClaims))
+	for c := range TenantLinkClaims {
 		out = append(out, c)
 	}
 	sort.Strings(out)
 	return out
 }
 
-// tenantLabelSuffix names the company inside a tenant row's DEFAULT button label
+// TenantLabelSuffix names the company inside a tenant row's DEFAULT button label
 // (docs/log/61 §61.15.10).
 //
 // The problem it solves is only visible on /login/<slug>, where the deployment's own
@@ -370,7 +380,7 @@ func tenantLinkClaimList() []string {
 //
 // The display name is preferred over the slug because it is what a human calls that
 // company; the slug is the fallback for a tenant that never set one.
-func tenantLabelSuffix(base string, tn store.TenantRef, lang string) string {
+func TenantLabelSuffix(base string, tn store.TenantRef, lang string) string {
 	who := strings.TrimSpace(tn.Name)
 	if who == "" {
 		who = strings.TrimSpace(tn.Slug)
@@ -384,45 +394,7 @@ func tenantLabelSuffix(base string, tn store.TenantRef, lang string) string {
 	return base + "（" + who + "）"
 }
 
-// --- secret sealing (docs/log/61 §61.11.4 + 決定 33) ------------------------------
-
-// sealTenantSecret seals a client_secret with the tenant key, exactly as
-// mcp_server.sealHeaders does for header values: AES-256-GCM through the custodian,
-// with the key reference as AAD so the ciphertext is bound to the tenant.
-//
-// With no master key configured (dev / a single node without one) the value is
-// stored as plaintext with an empty key_ref — the same degradation as everywhere
-// else in CP, rather than refusing to work.
-func (m *manager) sealTenantSecret(ctx context.Context, tenantID, secret string) (enc, keyRef string, err error) {
-	if secret == "" {
-		return "", "", nil
-	}
-	if len(m.master32) == 0 || m.custodian == nil {
-		return secret, "", nil
-	}
-	ct, err := m.custodian.Wrap(ctx, tenantID, []byte(secret))
-	if err != nil {
-		return "", "", err
-	}
-	return ct, tenantID, nil
-}
-
-// openTenantSecret reverses sealTenantSecret. An unreadable value is an ERROR, never
-// an empty secret: a token exchange with an empty client_secret fails at the IdP
-// with a message nobody can trace back to a key change (docs/log/61 §61.11.4).
-func (m *manager) openTenantSecret(ctx context.Context, enc, keyRef string) (string, error) {
-	if enc == "" {
-		return "", nil
-	}
-	if keyRef == "" {
-		return enc, nil
-	}
-	if m.custodian == nil {
-		return "", errors.New("the client secret is sealed with a tenant key but no key custodian is configured")
-	}
-	b, err := m.custodian.Unwrap(ctx, keyRef, enc)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
-}
+// TenantLinkClaimAllowed reports membership in the closed set above. The set is a
+// map and therefore a variable; callers outside this package go through this
+// function so that nobody ends up reading a copy of it (alias_auth.go).
+func TenantLinkClaimAllowed(claim string) bool { return TenantLinkClaims[claim] }

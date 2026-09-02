@@ -29,10 +29,9 @@ import (
 // explicit drop on every admin write keeps "remove someone and it takes effect
 // immediately" true, which is the property offboarding depends on.
 
-// tenantRuleTTL is short on purpose: it bounds how long a rule change takes to
-// reach a deployment whose admin API is served by another replica (the drop below
-// only reaches this process).
-const tenantRuleTTL = 30 * time.Second
+// tenantRuleTTL moved to internal/auth (auth.TenantRuleTTL) because the
+// tenant-defined provider registry went there and uses the same value; it is
+// reachable here under its original name through alias_auth.go.
 
 // tenantLoginStore is the narrow store view this cache needs.
 type tenantLoginStore interface {
