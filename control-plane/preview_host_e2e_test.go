@@ -8,13 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // previewHostFactory hands every workspace the same stub runtime pointed at the fake
 // Agent, so the relay can be exercised without docker.
 type previewHostFactory struct{ endpoint string }
 
-func (f previewHostFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
+func (f previewHostFactory) New(ws runtime.Workspace, secretKey string, extraEnv []string) Runtime {
 	return previewTestRuntime{endpoint: f.endpoint, token: "tok-" + ws.ID}
 }
 

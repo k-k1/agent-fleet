@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // versionFakeFactory is a RuntimeFactory that also declares a workspace image — the
@@ -12,13 +14,13 @@ import (
 // the interface).
 type versionFakeFactory struct{ image string }
 
-func (f *versionFakeFactory) New(Workspace, string, []string) Runtime { return nil }
-func (f *versionFakeFactory) WorkspaceImage() string                  { return f.image }
+func (f *versionFakeFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
+func (f *versionFakeFactory) WorkspaceImage() string                          { return f.image }
 
 // versionPlainFactory has no image to declare (docker / native).
 type versionPlainFactory struct{}
 
-func (f *versionPlainFactory) New(Workspace, string, []string) Runtime { return nil }
+func (f *versionPlainFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
 
 // resetCPImageCache clears the process-wide cache so each test probes for itself.
 func resetCPImageCache(t *testing.T) {

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 func TestParseLimitsTerminalHistoryRetention(t *testing.T) {
@@ -30,12 +32,12 @@ func TestParseLimitsTerminalHistoryRetention(t *testing.T) {
 // **空振りで通る**のではなく**存在しない**ことを確かめたいので、上限を持たない方も要る。
 type poolFactory struct{ max int }
 
-func (f *poolFactory) New(Workspace, string, []string) Runtime { return nil }
-func (f *poolFactory) MaxSlots() int                           { return f.max }
+func (f *poolFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
+func (f *poolFactory) MaxSlots() int                                   { return f.max }
 
 type poollessFactory struct{}
 
-func (f *poollessFactory) New(Workspace, string, []string) Runtime { return nil }
+func (f *poollessFactory) New(runtime.Workspace, string, []string) Runtime { return nil }
 
 func budgetFixture(t *testing.T, max int, quotas map[string]int) (*sqlStore, *manager) {
 	t.Helper()

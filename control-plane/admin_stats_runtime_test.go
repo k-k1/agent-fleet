@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
 // stateOnlyFactory answers a fixed State and nothing else — the shape every cloud
@@ -20,7 +22,7 @@ type stateOnlyRuntime struct {
 
 func (r stateOnlyRuntime) State(context.Context) string { return r.state }
 
-func (f stateOnlyFactory) New(Workspace, string, []string) Runtime {
+func (f stateOnlyFactory) New(runtime.Workspace, string, []string) Runtime {
 	return stateOnlyRuntime{state: f.state}
 }
 
